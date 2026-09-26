@@ -164,34 +164,41 @@ describe('上下界与取整', () => {
  * 的文件就是第二份换算的起点（属性页以前正是没有这一步才与样式面板差出 0.6 倍）。界面一律过写入器，
  * 写入器过 `pagePtLens`。
  *
- * 判的是 AST，不是子串（注释里提到这几个名字不算）。主语是「**值能不能从换算模块流出去**」，
- * 判据按下面三条收口（#557 评审三轮 P1：namespace import、只扫三个目录、转出口断链，都是同一个
- * 「只量了一部分流法」）：
+ * 判的是 AST，不是子串（注释里提到这几个名字不算）。主语是「**值能不能从换算模块流出去**」：
  *
  * 1. **扫描面 = `src/` 下全部生产源码**，只做显式排除（`EXCLUDED`：测试文件、`.d.ts`），不按目录列白名单；
  *    换算模块本身与豁免文件**也在扫描面里**，只是换了判法（见 2、3）。
- * 2. **碰到换算模块的地方就地判**：定义者（`src/` 里顶层声明了这几个名字的模块，现场认出来、再与期望
- *    的两个对拍）之外的任何生产文件，从定义者取值——具名（按原名，`as` 改名不豁免）、`{ default as x }`、
- *    default、namespace、`import x = require()`、`require()`、`import()`（字面量或拼出来的路径）、命中定义者的
- *    `import.meta.glob`（或模式不是字面量）——一律红；`export … from 定义者` 转出换算名也红。豁免只认
- *    `ALLOW` 里点名的具名 import。纯类型 import、纯副作用 import、取定义者的其它导出（`pagePtLens`）不算。
+ * 2. **碰到换算模块的地方就地判**：定义者（`src/` 里顶层声明或导出了这几个名字的模块，现场认出来、再与
+ *    期望的两个对拍）之外的任何生产文件，从定义者取值——具名（按原名，`as` 改名不豁免）、`{ default as x }`、
+ *    default、namespace、`import x = require()`、`require()`、`import()`、`new URL(…, import.meta.url)`——一律红；
+ *    `export … from 定义者` 转出换算名也红。豁免只认 `ALLOW` 里点名的具名 import。纯类型 import、纯副作用
+ *    import、取定义者的其它导出（`pagePtLens`）不算。
  * 3. **合法拿到的绑定不许再流出去**（定义者自己的声明、定义者之间的 import、豁免文件的 import）：绑定只许
- *    出现在被调用的位置（`panelScale(p)`、`ns.panelScale(p)`），其余一切出现——`export { b }` / `export default b`、
- *    `const y = b`、`{ b }`、`f(b)`、`ns.panelScale` 不调用、`ns['panelScale']`、`new b()`——按逃逸判红。
- *    定义者用 `export { toPageValue }` 原名导出自己的声明不算逃逸。
- * 4. **说明符先规范化再比**（#557 评审四轮 P1：glob 里的 `./../` 没归一就漏判）：import / export-from /
- *    require / `import()` / glob 全走 `canonicalPath` 一处——去查询与片段、别名（从 vite / vitest 配置、
- *    tsconfig `paths`、package.json `imports` 读，不写死）、相对 / 根绝对、posix 归一、不分大小写，模块键再去
- *    扩展名与 `/index`；glob 的否定模式同样归一后再排除。读不出的别名写法直接报错。
+ *    出现在被调用的位置（`panelScale(p)`、`ns.panelScale(p)`），其余一切出现按逃逸判红。定义者用
+ *    `export { toPageValue }` 原名导出自己的声明不算逃逸。
+ * 4. **fail closed：语法面无法穷举，认不出的一律红，不再为它扩解析器**（#557 评审五轮 P1：glob 的字符类
+ *    `[tj]` 被当字面量——手写解析器每补一个语法角落，就还有下一个）：
+ *    - `import.meta.glob` **不解析模式**：出现即红，只有 `QUOTA` 里按处数点名的文件放行（现在 0 处）。
+ *    - 路径不是字面量的 `import()` / `require()` / `new URL(…, import.meta.url)`：出现即红，同样按处数点名。
+ *    - `import.meta` 只认 `.env` 与 `new URL(字面量, import.meta.url)` 两种用法，其余（`.resolve`、`.hot`、
+ *      把 `.glob` / `.url` 取出来）一律红。
+ *    - 字面量说明符只认四种：别名（从 vite / vitest 配置、tsconfig `paths`、package.json `imports` 读）、
+ *      相对路径、根绝对路径（`/src/...`）、package.json 里声明过的包（与 `node:` 内建）。字符集之外的
+ *      （`%` 编码、空白、通配符）、带协议的（`https:`、`virtual:`）、没声明的包名、没配上别名的 `#…`——一律红。
+ *      认得的这几种再做 posix 归一（`.`、`..`、重复斜杠）、去查询与片段（偏严：`?raw` 也按拿到了算）、
+ *      不分大小写、去扩展名与 `/index`。
+ *    - 配置读不出（别名目标不是认得的两种写法、`alias` 出现在认不出的位置、`resolve.extensions`、tsconfig 的
+ *      `extends` / `rootDirs` / `moduleSuffixes`、`imports` 里认不出的值与通配）：直接报错。
+ *    - 源码有语法错误（AST 不完整）：判红。
  *
  * 为什么这样就闭合：值要到达任何文件，第一跳必然是「某个文件从定义者取值」。第一跳在非豁免文件里 → 2 当场红；
- * 在定义者 / 豁免文件里 → 取到的绑定只能被调用，流不出去（3）。于是转出链（`export default scale` 再转、
- * namespace 再转）不需要沿链追：链的第一个转出口就是红的。
+ * 在定义者 / 豁免文件里 → 取到的绑定只能被调用，流不出去（3）；第一跳的写法认不出 → 4 当场红。于是转出链
+ * 不需要沿链追：链的第一个转出口就是红的。
  *
  * 盲点（静态看不到的，写在明处，样本里标 blind）：定义者与豁免文件里**调用**换算函数的包装再导出
  * （`export const s = (p) => panelScale(p)`——定义者本来就是换算的唯一出处，豁免文件按名审过）；不 import、
- * 自己重写一遍乘除；`eval` / `globalThis` 这类运行时取值；测试文件与 `.d.ts`（不是生产代码）。判据按名字、
- * 不做作用域分析——同名的影子变量只会让它偏严（误红），不会漏。
+ * 自己重写一遍乘除；`eval` / `globalThis` 这类运行时取值；vite 插件在运行时加的别名（配置文件里看不见）；
+ * 测试文件与 `.d.ts`（不是生产代码）。判据按名字、不做作用域分析——同名的影子变量只会让它偏严（误红），不会漏。
  */
 const FORBIDDEN = new Set(['panelScale', 'toPageValue', 'toScriptValue', 'pageField'])
 
@@ -218,25 +225,37 @@ const ALLOW: Record<string, string[]> = {
   '/src/lib/stylePanelModel.ts': ['toPageValue'],
 }
 
-/**
- * 路径看不见的 `import()` 的豁免：文件 → 允许几处（多一处就红）。只收指向 `src/` 之外的——
- * 构建产物里的源码模块没有可寻址的 URL，这类加载拿不到换算模块。
- */
-const OPAQUE_IMPORT_ALLOW: Record<string, number> = {
-  // 从运行时给的 CDN 基址加载 Pyodide 自己的 `pyodide.mjs`（`${pyodideBaseUrl}pyodide.mjs`）
-  '/src/playground/pyodide.worker.ts': 1,
+/** 「出现即红」的写法按处数豁免：文件 → 每种写法允许几处（多一处就红；少了也红，豁免不许悬着） */
+interface Quota {
+  /** 路径不是字面量的 `import()` / `require()` / `new URL(…, import.meta.url)` */
+  opaque?: number
+  /** `import.meta.glob`（不解析模式） */
+  glob?: number
+}
+const QUOTA: Record<string, Quota> = {
+  // 从运行时给的 CDN 基址加载 Pyodide 自己的 `pyodide.mjs`（`${pyodideBaseUrl}pyodide.mjs`）：
+  // 构建产物里的源码模块没有可寻址的 URL，这一处拿不到换算模块
+  '/src/playground/pyodide.worker.ts': { opaque: 1 },
+  // `import.meta.glob`：main 上生产源码里 0 处（2026-09-26 核对），所以这里没有条目
 }
 
+/** `.ts` 按 TS 解析、`.tsx` 按 TSX 解析（`.ts` 里的 `<T>(x) => …` 在 TSX 下会解析错） */
 const parse = (path: string, src: string) =>
-  ts.createSourceFile(path, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+  ts.createSourceFile(
+    path,
+    src,
+    ts.ScriptTarget.Latest,
+    true,
+    path.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+  )
 
-// ---- 说明符 → 规范路径：import / export-from / require / import() / glob 全走这一处（#557 评审四轮 P1）----
+/** 语法错误：AST 不完整，判不了就按红算 */
+const hasSyntaxErrors = (file: ts.SourceFile) =>
+  ((file as unknown as { parseDiagnostics?: readonly unknown[] }).parseDiagnostics?.length ?? 0) > 0
+
+// ---- 说明符 → 规范路径：import / export-from / require / import() / new URL 全走这一处 ----
 //
 // 键空间：web 根 = `/`，源码在 `/src/...`；web 根之外的路径留着开头的 `/..`，永远不会与 `src` 里的模块相撞。
-// 规范化做的事：去查询（`?raw` / `?url`，偏严：拿到的是源码文本或 URL 也按拿到了算）与 `#` 片段 → 别名
-// （vite 的 `resolve.alias`、tsconfig 的 `paths`、package.json 的 `imports`，**都从配置里读**）→ 相对 / 根
-// 绝对路径 → posix 归一（`.`、`..`、重复斜杠）→ 比较时不分大小写（macOS 的文件系统不分）。模块键再去扩展名、
-// 去 `/index`。读不出的别名写法直接报错——认不全别名的判据等于没判。
 
 interface Alias {
   /** `@`、`@profiles`、`#conv/`（`prefix` 为真时按前缀匹配，剩下的部分接在 `target` 后面） */
@@ -272,17 +291,6 @@ function applyAlias(spec: string, aliases: readonly Alias[]): string | null {
   return null
 }
 
-/** 说明符 → web 根下的规范绝对路径（未去扩展名）；包名回 null。`glob` 为真时不去 `?`（那是通配符） */
-function canonicalPath(from: string, spec: string, aliases: readonly Alias[], glob = false): string | null {
-  let s = glob ? spec : spec.replace(/\?.*$/, '')
-  if (!s.startsWith('#')) s = s.replace(/#.*$/, '')
-  const aliased = applyAlias(s, aliases)
-  if (aliased !== null) s = aliased
-  else if (s.startsWith('./') || s.startsWith('../') || s === '.' || s === '..') s = `${dirOf(from)}/${s}`
-  else if (!s.startsWith('/')) return null
-  return posixNormalize(s)
-}
-
 /** 规范路径 → 模块键：去扩展名、去 `/index`、小写 */
 const keyOfPath = (abs: string) =>
   abs
@@ -292,64 +300,89 @@ const keyOfPath = (abs: string) =>
 
 const moduleKey = (path: string) => keyOfPath(posixNormalize(path))
 
+type Resolved = { kind: 'module'; key: string } | { kind: 'package' } | { kind: 'unknown'; why: string }
+
+/** 说明符只许用这些字符（去掉查询与片段之后）；之外的——`%` 编码、空白、通配符——不认 */
+const SPEC_CHARS = /^[A-Za-z0-9@#~._\-/:+]+$/
+
+/** 包名：`@scope/name` 或第一段 */
+const packageName = (spec: string) => spec.split('/').slice(0, spec.startsWith('@') ? 2 : 1).join('/')
+
+/** 字面量说明符 → 四种认得的去处之一；认不出就是 `unknown`（调用方判红） */
+function resolveSpec(
+  from: string,
+  spec: string,
+  aliases: readonly Alias[],
+  deps: ReadonlySet<string> = REAL_DEPS,
+): Resolved {
+  let s = spec.replace(/\?.*$/, '')
+  if (!s.startsWith('#')) s = s.replace(/#.*$/, '')
+  if (!SPEC_CHARS.test(s)) return { kind: 'unknown', why: '字符集之外' }
+  const aliased = applyAlias(s, aliases)
+  if (aliased !== null) return { kind: 'module', key: keyOfPath(posixNormalize(aliased)) }
+  if (s.startsWith('./') || s.startsWith('../') || s === '.' || s === '..') {
+    return { kind: 'module', key: keyOfPath(posixNormalize(`${dirOf(from)}/${s}`)) }
+  }
+  if (s.startsWith('/')) return { kind: 'module', key: keyOfPath(posixNormalize(s)) }
+  if (/^node:[a-z_/]+$/.test(s)) return { kind: 'package' }
+  if (s.includes(':')) return { kind: 'unknown', why: '带协议' }
+  if (s.startsWith('#')) return { kind: 'unknown', why: '没配上别名的 #' }
+  if (deps.has(packageName(s))) return { kind: 'package' }
+  return { kind: 'unknown', why: '没声明的包' }
+}
+
 function resolveModule(from: string, spec: string, aliases: readonly Alias[]): string | null {
-  const abs = canonicalPath(from, spec, aliases)
-  return abs === null ? null : keyOfPath(abs)
+  const r = resolveSpec(from, spec, aliases)
+  return r.kind === 'module' ? r.key : null
 }
 
 const specText = (node: ts.Node | undefined) =>
   node && ts.isStringLiteralLike(node) ? node.text : undefined
 
-/** vite 的 glob 模式 → 正则（`**`、`*`、`?`、`{a,b}`；不分大小写），先走同一个规范化 */
-function globRegex(from: string, pattern: string, aliases: readonly Alias[]): RegExp | null {
-  const abs = canonicalPath(from, pattern, aliases, true)
-  if (abs === null) return null
-  let re = ''
-  for (let i = 0; i < abs.length; i++) {
-    const c = abs[i]
-    if (c === '*' && abs[i + 1] === '*') {
-      re += abs[i + 2] === '/' ? '(?:.*/)?' : '.*'
-      i += abs[i + 2] === '/' ? 2 : 1
-    } else if (c === '*') re += '[^/]*'
-    else if (c === '?') re += '[^/]'
-    else if (c === '{') re += '(?:'
-    else if (c === '}') re += ')'
-    else if (c === ',') re += '|'
-    else re += c.replace(/[.+^$()|[\]\\]/g, '\\$&')
-  }
-  return new RegExp(`^${re}$`, 'i')
-}
+// ---- 别名与依赖从配置里读；读不出一律报错 ----
 
-/** 一组 glob 模式会不会命中这个文件：任一正模式命中、且没有否定模式（`!`）把它排掉 */
-function globHits(from: string, patterns: readonly string[], file: string, aliases: readonly Alias[]): boolean {
-  const pos = patterns.filter((p) => !p.startsWith('!')).map((p) => globRegex(from, p, aliases))
-  const neg = patterns.filter((p) => p.startsWith('!')).map((p) => globRegex(from, p.slice(1), aliases))
-  return pos.some((r) => r?.test(file)) && !neg.some((r) => r?.test(file))
-}
+const isImportMetaUrl = (node: ts.Node) =>
+  ts.isPropertyAccessExpression(node) && ts.isMetaProperty(node.expression) && node.name.text === 'url'
 
-// ---- 别名从配置里读 ----
-
-/** vite / vitest 配置里的 `resolve.alias`：对象形式与 `{ find, replacement }` 数组形式；值必须是读得出的路径 */
+/** vite / vitest 配置里的 `resolve.alias`：对象形式与 `{ find, replacement }` 数组形式；目标只认两种写法 */
 function viteAliases(configPath: string, src: string): Alias[] {
   const file = parse(configPath, src)
+  if (hasSyntaxErrors(file)) throw new Error(`${configPath}: 语法错误`)
   const out: Alias[] = []
+  const handled = new Set<ts.Node>()
   const target = (node: ts.Expression): string => {
     // fileURLToPath(new URL('<相对路径>', import.meta.url))
-    if (ts.isCallExpression(node) && node.arguments.length === 1) {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === 'fileURLToPath' &&
+      node.arguments.length === 1
+    ) {
       const inner = node.arguments[0]
-      if (ts.isNewExpression(inner) && inner.arguments?.length === 2) {
+      if (
+        ts.isNewExpression(inner) &&
+        ts.isIdentifier(inner.expression) &&
+        inner.expression.text === 'URL' &&
+        inner.arguments?.length === 2 &&
+        isImportMetaUrl(inner.arguments[1])
+      ) {
         const rel = specText(inner.arguments[0])
         if (rel !== undefined) return posixNormalize(`${dirOf(configPath)}/${rel}`)
       }
     }
+    // 字面量的相对 / 根绝对路径
     const lit = specText(node)
     if (lit !== undefined && (lit.startsWith('./') || lit.startsWith('../') || lit.startsWith('/'))) {
       return posixNormalize(lit.startsWith('/') ? lit : `${dirOf(configPath)}/${lit}`)
     }
     throw new Error(`${configPath}: 读不出别名的目标 ${node.getText(file)}`)
   }
+  /** 属性名 / 标识符 / 字符串里的这个词（`alias:`、`'alias':`、`resolve['alias']` 都算） */
+  const word = (node: ts.Node) =>
+    ts.isIdentifier(node) || ts.isStringLiteralLike(node) ? node.text : undefined
   const visit = (node: ts.Node) => {
-    if (ts.isPropertyAssignment(node) && node.name.getText(file) === 'alias') {
+    if (ts.isPropertyAssignment(node) && word(node.name) === 'alias') {
+      handled.add(node.name)
       const init = node.initializer
       if (ts.isObjectLiteralExpression(init)) {
         for (const p of init.properties) {
@@ -365,10 +398,17 @@ function viteAliases(configPath: string, src: string): Alias[] {
             props.filter(ts.isPropertyAssignment).find((p) => p.name.getText(file) === k)
           const find = specText(get('find')?.initializer)
           const repl = get('replacement')?.initializer
-          if (find === undefined || !repl) throw new Error(`${configPath}: 读不出别名 ${el.getText(file)}`)
+          if (find === undefined || !repl || props.length !== 2) {
+            throw new Error(`${configPath}: 读不出别名 ${el.getText(file)}`)
+          }
           out.push({ find, prefix: false, target: target(repl) })
         }
       } else throw new Error(`${configPath}: alias 不是字面量 ${init.getText(file)}`)
+    } else if (word(node) === 'alias' && !handled.has(node)) {
+      // `resolve: { alias }` 简写、`config.resolve.alias = …`、`resolve['alias']`——都读不出
+      throw new Error(`${configPath}: alias 出现在认不出的位置`)
+    } else if (word(node) === 'extensions') {
+      throw new Error(`${configPath}: resolve.extensions 会改变解析，判据不认`)
     }
     ts.forEachChild(node, visit)
   }
@@ -394,20 +434,38 @@ function wildcardAlias(where: string, key: string, value: string, base: string):
 function tsconfigAliases(configPath: string, src: string): Alias[] {
   const { config, error } = ts.parseConfigFileTextToJson(configPath, src)
   if (error) throw new Error(`${configPath}: 解析失败`)
-  const opts = (config?.compilerOptions ?? {}) as { paths?: Record<string, string[]>; baseUrl?: string }
-  const base = posixNormalize(`${dirOf(configPath)}/${opts.baseUrl ?? '.'}`)
-  return Object.entries(opts.paths ?? {}).flatMap(([key, targets]) =>
+  if (config?.extends !== undefined) throw new Error(`${configPath}: extends 进来的 paths 读不到`)
+  const opts = (config?.compilerOptions ?? {}) as Record<string, unknown>
+  for (const k of ['rootDirs', 'moduleSuffixes']) {
+    if (opts[k] !== undefined) throw new Error(`${configPath}: ${k} 会改变解析，判据不认`)
+  }
+  const base = posixNormalize(`${dirOf(configPath)}/${(opts.baseUrl as string | undefined) ?? '.'}`)
+  return Object.entries((opts.paths ?? {}) as Record<string, string[]>).flatMap(([key, targets]) =>
     targets.map((t) => wildcardAlias(configPath, key, t, base)),
   )
 }
 
-/** package.json 的 `imports`（`#` 开头的子路径导入）；条件对象里的每一个字符串目标都算 */
+/** package.json 的 `imports`（`#` 开头的子路径导入）；条件对象里的每一个字符串目标都算，认不出的值报错 */
 function packageImportAliases(path: string, src: string): Alias[] {
   const imports = (JSON.parse(src) as { imports?: Record<string, unknown> }).imports ?? {}
-  const flat = (v: unknown): string[] =>
-    typeof v === 'string' ? [v] : v && typeof v === 'object' ? Object.values(v).flatMap(flat) : []
+  const flat = (v: unknown): string[] => {
+    if (typeof v === 'string') return [v]
+    if (v === null) return [] // 显式排除
+    if (typeof v === 'object') return Object.values(v).flatMap(flat)
+    throw new Error(`${path}: imports 里认不出的值 ${JSON.stringify(v)}`)
+  }
   return Object.entries(imports).flatMap(([key, v]) =>
     flat(v).map((t) => wildcardAlias(path, key, t, dirOf(path))),
+  )
+}
+
+/** package.json 声明过的包（dependencies / devDependencies / peer / optional） */
+function declaredPackages(src: string): Set<string> {
+  const pkg = JSON.parse(src) as Record<string, Record<string, string> | undefined>
+  return new Set(
+    ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies'].flatMap((k) =>
+      Object.keys(pkg[k] ?? {}),
+    ),
   )
 }
 
@@ -427,8 +485,42 @@ function aliasesFrom(sources: typeof CONFIG_SOURCES): Alias[] {
 }
 
 const REAL_ALIASES = aliasesFrom(CONFIG_SOURCES)
+const REAL_DEPS = declaredPackages(CONFIG_SOURCES.pkg['/package.json'])
 
-/** 定义者：顶层声明了换算名的生产模块（模块键 → 文件路径） */
+// ---- 定义者：顶层声明或导出了换算名的生产模块 ----
+
+/** 绑定模式里的全部名字（`const { a, b: [c] } = …`） */
+function bindingNames(name: ts.BindingName): string[] {
+  if (ts.isIdentifier(name)) return [name.text]
+  return name.elements.flatMap((el) => (ts.isOmittedExpression(el) ? [] : bindingNames(el.name)))
+}
+
+/** 顶层声明或导出的换算名：函数 / 类 / 枚举 / 命名空间 / 变量（含解构）/ `import x = …` / `export { y as x }` */
+function ownDefinitions(file: ts.SourceFile): Set<string> {
+  const own = new Set<string>()
+  const add = (n: string) => FORBIDDEN.has(n) && own.add(n)
+  for (const st of file.statements) {
+    if (
+      (ts.isFunctionDeclaration(st) ||
+        ts.isClassDeclaration(st) ||
+        ts.isEnumDeclaration(st) ||
+        ts.isModuleDeclaration(st) ||
+        ts.isImportEqualsDeclaration(st)) &&
+      st.name &&
+      ts.isIdentifier(st.name)
+    ) {
+      add(st.name.text)
+    }
+    if (ts.isVariableStatement(st)) {
+      for (const d of st.declarationList.declarations) bindingNames(d.name).forEach(add)
+    }
+    if (ts.isExportDeclaration(st) && !st.moduleSpecifier && st.exportClause && ts.isNamedExports(st.exportClause)) {
+      for (const el of st.exportClause.elements) add(el.name.text)
+    }
+  }
+  return own
+}
+
 function definersOf(sources: Sources): Map<string, string> {
   const out = new Map<string, string>()
   for (const [path, src] of Object.entries(sources)) {
@@ -436,21 +528,6 @@ function definersOf(sources: Sources): Map<string, string> {
     if (ownDefinitions(parse(path, src)).size > 0) out.set(moduleKey(path), path)
   }
   return out
-}
-
-function ownDefinitions(file: ts.SourceFile): Set<string> {
-  const own = new Set<string>()
-  for (const st of file.statements) {
-    if ((ts.isFunctionDeclaration(st) || ts.isClassDeclaration(st)) && st.name && FORBIDDEN.has(st.name.text)) {
-      own.add(st.name.text)
-    }
-    if (ts.isVariableStatement(st)) {
-      for (const d of st.declarationList.declarations) {
-        if (ts.isIdentifier(d.name) && FORBIDDEN.has(d.name.text)) own.add(d.name.text)
-      }
-    }
-  }
-  return own
 }
 
 const isConversionName = (name: string) => FORBIDDEN.has(name) || name === 'default'
@@ -483,22 +560,29 @@ function conversionHits(
   src: string,
   defs: Map<string, string>,
   allow: readonly string[] = [],
-  opaqueAllowed = 0,
+  quota: Quota = {},
   aliases: readonly Alias[] = REAL_ALIASES,
 ): string[] {
   const hits: string[] = []
-  const opaque: string[] = []
+  const counted: Record<keyof Quota, string[]> = { opaque: [], glob: [] }
   const file = parse(path, src)
-  const isDefiner = defs.has(moduleKey(path))
-  const toDefiner = (spec: string | undefined) =>
-    spec !== undefined && defs.has(resolveModule(path, spec, aliases) ?? '')
   const hit = (what: string) => hits.push(`${path}: ${what}`)
+  if (hasSyntaxErrors(file)) hit('语法错误，AST 不完整')
+  const isDefiner = defs.has(moduleKey(path))
+  /** 字面量说明符：认不出就红；认得出、落在定义者上回 true */
+  const toDefiner = (spec: string | undefined, where: string) => {
+    if (spec === undefined) return false
+    const r = resolveSpec(path, spec, aliases)
+    if (r.kind === 'unknown') hit(`${where} 认不出的说明符 '${spec}'（${r.why}）`)
+    return r.kind === 'module' && defs.has(r.key)
+  }
   /** 本文件里合法拿到、指向换算函数（或装着它的命名空间）的绑定 */
   const own = isDefiner ? ownDefinitions(file) : new Set<string>()
   const bindings = new Set(own)
 
   for (const st of file.statements) {
-    if (ts.isImportDeclaration(st) && toDefiner(specText(st.moduleSpecifier))) {
+    if (ts.isImportDeclaration(st)) {
+      if (!toDefiner(specText(st.moduleSpecifier), 'import')) continue
       const clause = st.importClause
       if (!clause || clause.isTypeOnly) continue // 纯副作用 / 纯类型：拿不到值
       if (clause.name) {
@@ -518,20 +602,12 @@ function conversionHits(
           if (!isDefiner && !allow.includes(name)) hit(`import { ${name} }`)
         }
       }
-    } else if (
-      ts.isImportEqualsDeclaration(st) &&
-      !st.isTypeOnly &&
-      ts.isExternalModuleReference(st.moduleReference) &&
-      toDefiner(specText(st.moduleReference.expression))
-    ) {
+    } else if (ts.isImportEqualsDeclaration(st) && ts.isExternalModuleReference(st.moduleReference)) {
+      if (!toDefiner(specText(st.moduleReference.expression), 'import = require') || st.isTypeOnly) continue
       bindings.add(st.name.text)
       if (!isDefiner) hit(`import ${st.name.text} = require()`)
-    } else if (
-      ts.isExportDeclaration(st) &&
-      st.moduleSpecifier &&
-      !st.isTypeOnly &&
-      toDefiner(specText(st.moduleSpecifier))
-    ) {
+    } else if (ts.isExportDeclaration(st) && st.moduleSpecifier) {
+      if (!toDefiner(specText(st.moduleSpecifier), 'export from') || st.isTypeOnly) continue
       const clause = st.exportClause
       if (!clause || ts.isNamespaceExport(clause)) hit('export * from 换算模块')
       else {
@@ -544,27 +620,36 @@ function conversionHits(
   }
 
   const visit = (node: ts.Node) => {
+    // import() / require()：字面量按说明符判；不是字面量 → 出现即红（按处数豁免）
     if (ts.isCallExpression(node)) {
       const callee = node.expression
-      const arg = node.arguments[0]
-      // import() / require()：路径看不见（不是字面量）就按红算
       if (callee.kind === ts.SyntaxKind.ImportKeyword || (ts.isIdentifier(callee) && callee.text === 'require')) {
-        const spec = specText(arg)
-        if (spec === undefined) opaque.push(`${path}: import(<非字面量>)`)
-        else if (toDefiner(spec)) hit(`import('${spec}')`)
+        const spec = specText(node.arguments[0])
+        if (spec === undefined) counted.opaque.push(`${path}: import(<非字面量>)`)
+        else if (toDefiner(spec, 'import()')) hit(`import('${spec}')`)
       }
-      if (
-        ts.isPropertyAccessExpression(callee) &&
-        ts.isMetaProperty(callee.expression) &&
-        callee.name.text.startsWith('glob')
+    }
+    // import.meta：只认 `.env` 与 `new URL(字面量, import.meta.url)`；`.glob` 出现即红（按处数豁免）
+    if (ts.isMetaProperty(node) && node.keywordToken === ts.SyntaxKind.ImportKeyword) {
+      const pa = node.parent
+      const prop = ts.isPropertyAccessExpression(pa) && pa.expression === node ? pa.name.text : undefined
+      if (prop === 'env') {
+        // 构建期常量，拿不到模块
+      } else if (prop?.startsWith('glob') && ts.isCallExpression(pa.parent) && pa.parent.expression === pa) {
+        counted.glob.push(`${path}: import.meta.${prop}(…)（不解析模式，出现即红）`)
+      } else if (
+        prop === 'url' &&
+        ts.isNewExpression(pa.parent) &&
+        ts.isIdentifier(pa.parent.expression) &&
+        pa.parent.expression.text === 'URL' &&
+        pa.parent.arguments?.length === 2 &&
+        pa.parent.arguments[1] === pa
       ) {
-        const pats = arg && ts.isArrayLiteralExpression(arg) ? [...arg.elements] : arg ? [arg] : []
-        const literal = pats.map((e) => specText(e))
-        if (pats.length === 0 || literal.some((s) => s === undefined)) hit('import.meta.glob(<非字面量>)')
-        else {
-          const patterns = literal as string[]
-          if ([...defs.values()].some((f) => globHits(path, patterns, f, aliases))) hit('import.meta.glob 命中换算模块')
-        }
+        const spec = specText(pa.parent.arguments[0])
+        if (spec === undefined) counted.opaque.push(`${path}: new URL(<非字面量>, import.meta.url)`)
+        else if (toDefiner(spec, 'new URL')) hit(`new URL('${spec}', import.meta.url)`)
+      } else {
+        hit(`认不出的 import.meta 用法：${pa.getText(file)}`)
       }
     }
     if (ts.isIdentifier(node) && bindings.has(node.text) && !notAValueUse(node)) {
@@ -586,9 +671,23 @@ function conversionHits(
     ts.forEachChild(node, visit)
   }
   visit(file)
-  // 路径看不见的加载：超出点名的处数就全部报出来（不猜是哪一处新加的）
-  if (opaque.length > opaqueAllowed) hits.push(...opaque)
+  // 出现即红的写法：超出点名的处数就全部报出来（不猜是哪一处新加的）
+  for (const kind of ['opaque', 'glob'] as const) {
+    if (counted[kind].length > (quota[kind] ?? 0)) hits.push(...counted[kind])
+  }
   return hits
+}
+
+/** 一个文件里「出现即红」的写法各有几处（核对豁免处数不悬着） */
+function quotaUse(path: string, src: string, defs: Map<string, string>): Required<Quota> {
+  const count = (kind: keyof Quota, n: number) =>
+    conversionHits(path, src, defs, ALLOW[path], { opaque: 1e9, glob: 1e9, [kind]: n }).length
+  const used = (kind: keyof Quota) => {
+    let n = 0
+    while (count(kind, n) > 0 && n < 100) n++
+    return n
+  }
+  return { opaque: used('opaque'), glob: used('glob') }
 }
 
 /** 全部生产源码一起判 */
@@ -602,7 +701,7 @@ function scanAll(
   for (const [path, src] of Object.entries(sources)) {
     if (!isProduction(path)) continue
     scanned.push(path)
-    hits.push(...conversionHits(path, src, defs, ALLOW[path], OPAQUE_IMPORT_ALLOW[path], aliases))
+    hits.push(...conversionHits(path, src, defs, ALLOW[path], QUOTA[path], aliases))
   }
   return { hits, scanned, defs }
 }
@@ -630,26 +729,24 @@ describe('界面代码与 store 不自己做页面 pt 换算', () => {
   })
 
   it('豁免表里的每个文件都在扫描面里（改名 / 删掉后的豁免不会悬着）', () => {
-    for (const path of [...Object.keys(ALLOW), ...Object.keys(OPAQUE_IMPORT_ALLOW)]) {
+    for (const path of [...Object.keys(ALLOW), ...Object.keys(QUOTA)]) {
       expect(REAL.scanned, path).toContain(path)
     }
   })
 
-  it('路径看不见的 import() 豁免按处数点名：多一处就红，豁免文件以外一处就红', () => {
-    const W = '/src/playground/pyodide.worker.ts'
-    const one = 'await import(`${base}pyodide.mjs`)'
-    expect(conversionHits(W, one, REAL.defs, [], OPAQUE_IMPORT_ALLOW[W])).toEqual([])
-    expect(conversionHits(W, `${one}\nawait import(other)`, REAL.defs, [], OPAQUE_IMPORT_ALLOW[W])).not.toEqual([])
-    expect(conversionHits(UI, one, REAL.defs)).not.toEqual([])
+  it('按处数的豁免与实际处数相等（多一处红、少一处也红：豁免不许悬着）', () => {
+    for (const [path, quota] of Object.entries(QUOTA)) {
+      expect(quotaUse(path, ALL[path], REAL.defs), path).toEqual({ opaque: 0, glob: 0, ...quota })
+    }
   })
 
   it('没有文件让换算函数流出去（豁免表之外）', () => {
     expect(REAL.hits).toEqual([])
   })
 
-  // ---- 流法全表：导入方式 × 转出方式 × 绑定种类，每格一条样本（#557 评审三轮 P1 收口）----
+  // ---- 流法全表：导入方式 × 转出方式 × 绑定种类，每格一条样本 ----
   //
-  // 位置：UI = 普通生产文件（这里用 hooks/，上一版漏扫的目录）；ALLOWED = 豁免文件（点名 panelScale）；
+  // 位置：UI = 普通生产文件（这里用 hooks/）；ALLOWED = 豁免文件（点名 panelScale）；
   // DEF = 定义者（stylePresets，可以从另一个定义者 preflight 取值）。
   // 期望：red = 判红；ok = 合法不红；blind = 盲点，静态看不到（写在上面的注释里，样本钉住现状）。
 
@@ -670,16 +767,41 @@ describe('界面代码与 store 不自己做页面 pt 换算', () => {
     ['动态 import 字面量', UI, "const { panelScale } = await import('@/lib/preflight')", 'red'],
     ['动态 import 模板字面量', UI, 'const m = await import(`@/lib/preflight`)', 'red'],
     ['动态 import 拼路径', UI, "const m = await import('@/lib/' + name)", 'red'],
-    ['import.meta.glob 命中', UI, "const m = import.meta.glob('/src/lib/*.ts', { eager: true })", 'red'],
-    ['import.meta.glob 数组 + 花括号', UI, "import.meta.glob(['@/lib/{preflight,api}.ts'])", 'red'],
-    ['import.meta.glob 非字面量', UI, 'import.meta.glob(pattern)', 'red'],
-    ['import.meta.glob 不命中', UI, "import.meta.glob('/src/i18n/locales/**/*.json')", 'ok'],
     ['纯类型 import', UI, "import type * as pf from '@/lib/preflight'", 'ok'],
     ['纯类型具名', UI, "import { type toPageValue, pagePtLens } from '@/lib/stylePresets'", 'ok'],
     ['纯副作用 import', UI, "import '@/lib/preflight'", 'ok'],
     ['定义者的其它导出', UI, "import { pagePtLens, PT_DECIMALS } from '@/lib/stylePresets'", 'ok'],
     ['别的模块', UI, "import * as api from '@/lib/api'\nconst { useRenderStore } = await import('@/store/renderStore')", 'ok'],
     ['注释里提到', UI, "// import * as pf from '@/lib/preflight'", 'ok'],
+    // -- import.meta：不解析 glob 模式，出现即红（#557 评审五轮 P1）--
+    ['glob 任意模式（不解析）', UI, "import.meta.glob('/src/i18n/locales/**/*.json')", 'red'],
+    ['glob 字符类（五轮 P1 的例子）', UI, "import.meta.glob('/src/lib/preflight.[tj]s')", 'red'],
+    ['glob extglob', UI, "import.meta.glob('/src/lib/+(preflight).ts')", 'red'],
+    ['glob 非字面量', UI, 'import.meta.glob(pattern)', 'red'],
+    ['glob 不调用、取出来', UI, 'const g = import.meta.glob', 'red'],
+    ['import.meta.env', UI, 'if (import.meta.env?.DEV) f()', 'ok'],
+    ['new URL 指向别的模块', UI, "new Worker(new URL('../playground/pyodide.worker.ts', import.meta.url))", 'ok'],
+    ['new URL 指向定义者', UI, "new Worker(new URL('../lib/preflight.ts', import.meta.url))", 'red'],
+    ['new URL 路径非字面量', UI, 'new URL(p, import.meta.url)', 'red'],
+    ['import.meta.url 别的用法', UI, 'fetch(import.meta.url)', 'red'],
+    ['import.meta.url 当 new URL 的第一个实参', UI, "new URL(import.meta.url, 'https://x')", 'red'],
+    ['new URL 只有 import.meta.url 一个实参', UI, 'new URL(import.meta.url)', 'red'],
+    ['import.meta.resolve', UI, "import.meta.resolve('@/lib/api')", 'red'],
+    ['import.meta.hot', UI, 'import.meta.hot?.accept()', 'red'],
+    ['import.meta 整个取出来', UI, 'const m = import.meta', 'red'],
+    // -- 说明符：认得的四种之外一律红（fail closed）--
+    ['认不出：带协议 https', UI, "import x from 'https://cdn.example/x.js'", 'red'],
+    ['认不出：virtual:', UI, "import x from 'virtual:foo'", 'red'],
+    ['认不出：% 编码', UI, "import { panelScale } from '@/lib/%70reflight'", 'red'],
+    ['认不出：空白', UI, "import { panelScale } from '@/lib/ preflight'", 'red'],
+    ['认不出：通配符', UI, "import x from '@/lib/pre*'", 'red'],
+    ['认不出：没声明的包', UI, "import x from 'left-pad'", 'red'],
+    ['认不出：没配上别名的 #', UI, "import x from '#conv/preflight'", 'red'],
+    ['认不出：export from', UI, "export * from 'virtual:foo'", 'red'],
+    ['认不出：require', UI, "require('data:text/javascript,1')", 'red'],
+    ['声明过的包（含 scope 与子路径）', UI, "import { create } from 'zustand'\nimport * as D from '@radix-ui/react-dialog'\nimport x from 'react-dom/client'", 'ok'],
+    ['node: 内建', UI, "import fs from 'node:fs'", 'ok'],
+    ['语法错误', UI, 'import { panelScale from', 'red'],
     // -- 转出方式（任何文件：转出换算名本身就红，不必沿链追）--
     ['export { x } from', UI, "export { panelScale } from '@/lib/preflight'", 'red'],
     ['export { x as y } from', UI, "export { toPageValue as page } from '@/lib/stylePresets'", 'red'],
@@ -721,22 +843,12 @@ describe('界面代码与 store 不自己做页面 pt 换算', () => {
     ['定义者 namespace 绑定 × 下标', DEF, "import * as pf from './preflight'\npf['panelScale'](p)", 'red'],
     ['定义者 default 绑定 × 转出', DEF, "import pf from './preflight'\nexport default pf", 'red'],
     ['定义者 require 绑定 × 转出', DEF, "import pf = require('./preflight')\nexport { pf }", 'red'],
-    // -- 盲点：静态看不到（写在上面的注释里）--
-    // -- 说明符规范化（#557 评审四轮 P1）：import / export-from / require / import() / glob 走同一个归一 --
-    ['glob 相对上级 ./../', UI, "import.meta.glob('./../lib/preflight.ts', { eager: true })", 'red'],
-    ['glob 相对上级 ../', UI, "import.meta.glob('../lib/*.ts')", 'red'],
-    ['glob 重复斜杠与 ./', UI, "import.meta.glob('..//lib/./preflight.ts')", 'red'],
-    ['glob 大小写', UI, "import.meta.glob('/src/LIB/PreFlight.ts')", 'red'],
-    ['glob 别名 + ..', UI, "import.meta.glob('@/hooks/../lib/stylePresets.ts')", 'red'],
-    ['glob 否定排掉两个定义者', UI, "import.meta.glob(['/src/lib/*.ts', '!/src/lib/preflight.ts', '!/src/**/stylePresets.ts'])", 'ok'],
-    ['glob 否定没排掉定义者', UI, "import.meta.glob(['/src/lib/*.ts', '!/src/lib/api.ts'])", 'red'],
-    ['glob 否定模式也归一', UI, "import.meta.glob(['/src/lib/*.ts', '!./../lib/preflight.ts', '!../lib/stylePresets.ts'])", 'ok'],
-    ['glob 单字符通配 ?（不当查询去掉）', UI, "import.meta.glob('/src/lib/preflig?t.ts')", 'red'],
-    ['glob 只有否定', UI, "import.meta.glob(['!/src/lib/*.ts'])", 'ok'],
+    // -- 认得的说明符做规范化（#557 评审四轮 P1）--
     ['相对 .. 绕一圈', UI, "import { panelScale } from '../lib/../lib/preflight'", 'red'],
     ['重复斜杠', UI, "import { panelScale } from '@/lib//preflight'", 'red'],
     ['./ 段', UI, "import { panelScale } from '@/./lib/preflight'", 'red'],
     ['根绝对路径', UI, "import { panelScale } from '/src/lib/preflight.ts'", 'red'],
+    ['根绝对路径指向别的模块', UI, "import { x } from '/src/lib/api.ts'", 'ok'],
     ['.js 扩展名', UI, "import { panelScale } from '@/lib/preflight.js'", 'red'],
     ['?raw 查询', UI, "import src from '@/lib/preflight.ts?raw'", 'red'],
     ['?url 查询', UI, "import { panelScale } from '@/lib/preflight?url'", 'red'],
@@ -747,6 +859,7 @@ describe('界面代码与 store 不自己做页面 pt 换算', () => {
     ['动态 import 归一 + 查询', UI, "await import('../hooks/../lib/preflight.ts?x')", 'red'],
     ['归一后是别的模块', UI, "import { x } from '../lib/../store/renderStore'", 'ok'],
     ['tsconfig 精确别名（src 之外）', UI, "import p from '@profiles'", 'ok'],
+    // -- 盲点：静态看不到（写在上面的注释里）--
     ['盲点：豁免文件里调用后包一层导出', ALLOWED, "import { panelScale } from '@/lib/preflight'\nexport const s = (p) => panelScale(p)", 'blind'],
     ['盲点：不 import、自己重写乘除', UI, 'export const scaleOf = (p) => p.w / p.nativeW', 'blind'],
     ['盲点：运行时取值', UI, "export const s = (globalThis as any)['panel' + 'Scale']", 'blind'],
@@ -756,6 +869,27 @@ describe('界面代码与 store 不自己做页面 pt 换算', () => {
     const hits = conversionHits(at, src, REAL.defs, ALLOW[at])
     if (expected === 'red') expect(hits).not.toEqual([])
     else expect(hits).toEqual([])
+  })
+
+  it('出现即红的写法按处数点名：处数之内不红、多一处就红、豁免文件以外一处就红', () => {
+    const W = '/src/playground/pyodide.worker.ts'
+    const one = 'await import(`${base}pyodide.mjs`)'
+    expect(conversionHits(W, one, REAL.defs, [], QUOTA[W])).toEqual([])
+    expect(conversionHits(W, `${one}\nawait import(other)`, REAL.defs, [], QUOTA[W])).not.toEqual([])
+    expect(conversionHits(UI, one, REAL.defs)).not.toEqual([])
+    const glob = "import.meta.glob('/src/i18n/*.json')"
+    expect(conversionHits(UI, glob, REAL.defs, [], { glob: 1 })).toEqual([])
+    expect(conversionHits(UI, `${glob}\n${glob}`, REAL.defs, [], { glob: 1 })).not.toEqual([])
+    // 把 glob 取出来不调用：不算一处 glob，是认不出的 import.meta 用法，glob 的额度不放行它
+    expect(conversionHits(UI, 'const g = import.meta.glob', REAL.defs, [], { glob: 1 })).not.toEqual([])
+    // import.meta.url 不在 `new URL(字面量, import.meta.url)` 的第二个实参上：认不出，opaque 的额度也不放行它
+    for (const src of ['new URL(import.meta.url)', "new URL(import.meta.url, 'https://x')"]) {
+      expect(conversionHits(UI, src, REAL.defs, [], { opaque: 1 }), src).not.toEqual([])
+    }
+    // 两种写法各算各的：opaque 的额度不给 glob 用
+    expect(conversionHits(UI, glob, REAL.defs, [], { opaque: 1 })).not.toEqual([])
+    // 核对处数的工具本身：数得出 1 就是 1
+    expect(quotaUse(UI, `${one}\n${glob}`, REAL.defs)).toEqual({ opaque: 1, glob: 1 })
   })
 
   it('#557 评审的两条转出链：链的第一个转出口当场红（default 链、namespace 链）', () => {
@@ -777,9 +911,9 @@ describe('界面代码与 store 不自己做页面 pt 换算', () => {
     }
   })
 
-  // ---- 别名从配置里读（不写死 `@/`）----
+  // ---- 别名与依赖从配置里读（不写死 `@/`）----
 
-  it('别名是从配置里读出来的：每份 vite / vitest 配置与 tsconfig 的 `@` 都指向 src', () => {
+  it('别名是从配置里读出来的：每份 vite / vitest 配置与 tsconfig 的 `@` 都指向 src；依赖表来自 package.json', () => {
     expect(Object.keys(CONFIG_SOURCES.vite).sort()).toEqual(
       ['/vite.config.ts', '/vite.mcp.config.ts', '/vite.playground.config.ts', '/vitest.config.ts'].sort(),
     )
@@ -795,10 +929,13 @@ describe('界面代码与 store 不自己做页面 pt 换算', () => {
     }
     // 读到了 src 之外的别名，也落在 src 之外
     expect(resolveModule(UI, '@profiles', REAL_ALIASES)).toMatch(/^\/\.\.\//)
+    expect(REAL_DEPS.has('react')).toBe(true)
+    expect(REAL_DEPS.has('vitest'), 'devDependencies 也算').toBe(true)
   })
 
   const withAliases = (extra: Alias[], src: string) =>
-    conversionHits(UI, src, REAL.defs, [], 0, [...REAL_ALIASES, ...extra])
+    conversionHits(UI, src, REAL.defs, [], {}, [...REAL_ALIASES, ...extra])
+  const reachedDefiner = (hits: string[]) => hits.some((h) => /import \{ panelScale \}/.test(h))
 
   it.each([
     [
@@ -833,21 +970,25 @@ describe('界面代码与 store 不自己做页面 pt 换算', () => {
     ],
     [
       'package.json imports 条件对象',
-      () => packageImportAliases('/package.json', '{"imports": {"#pf": {"browser": "./src/lib/preflight.ts", "default": "./x.ts"}}}'),
+      () => packageImportAliases('/package.json', '{"imports": {"#pf": {"browser": "./src/lib/preflight.ts", "default": null}}}'),
       "import { panelScale } from '#pf'",
     ],
   ])('配置里新加的别名自动进视野：%s', (_what, read, src) => {
     const extra = read()
     expect(extra.length).toBeGreaterThan(0)
-    expect(withAliases(extra, src)).not.toEqual([])
-    // 同一句在没有这条别名时是包名（不红）：红来自别名的读取，不是别处
-    expect(conversionHits(UI, src, REAL.defs)).toEqual([])
+    expect(reachedDefiner(withAliases(extra, src))).toBe(true)
+    // 同一句在没有这条别名时认不出（fail closed 照样红），但不是「追到了定义者」：追到来自别名的读取
+    const without = conversionHits(UI, src, REAL.defs)
+    expect(without).not.toEqual([])
+    expect(reachedDefiner(without)).toBe(false)
   })
 
-  it('精确别名只配它自己和 `它/…`：`~preflight` 不是 `~` 别名', () => {
+  it('精确别名只配它自己和 `它/…`：`~preflight` 不是 `~` 别名（认不出，按红算，但没追到定义者）', () => {
     const tilde = viteAliases('/vite.config.ts', "export default { resolve: { alias: { '~': './src/lib' } } }")
-    expect(withAliases(tilde, "import { panelScale } from '~/preflight'")).not.toEqual([])
-    expect(withAliases(tilde, "import { panelScale } from '~preflight'")).toEqual([])
+    expect(reachedDefiner(withAliases(tilde, "import { panelScale } from '~/preflight'"))).toBe(true)
+    const other = withAliases(tilde, "import { panelScale } from '~preflight'")
+    expect(reachedDefiner(other)).toBe(false)
+    expect(other.join()).toMatch(/认不出的说明符/)
   })
 
   it('三类配置都进了同一张别名表（任何一类没读，对应的解析就断）', () => {
@@ -864,9 +1005,23 @@ describe('界面代码与 store 不自己做页面 pt 换算', () => {
   it.each([
     ['vite 别名的目标是变量', () => viteAliases('/vite.config.ts', "export default { resolve: { alias: { '@': somePath } } }")],
     ['vite alias 是函数调用', () => viteAliases('/vite.config.ts', 'export default { resolve: { alias: makeAliases() } }')],
+    ['vite alias 简写', () => viteAliases('/vite.config.ts', 'const alias = {}\nexport default { resolve: { alias } }')],
+    ['vite alias 事后赋值', () => viteAliases('/vite.config.ts', 'config.resolve.alias = {}')],
+    ['vite alias 下标赋值', () => viteAliases('/vite.config.ts', "config.resolve['alias'] = {}")],
+    ['vite 别名展开进来', () => viteAliases('/vite.config.ts', "export default { resolve: { alias: { ...base, '~': './src' } } }")],
     ['vite 数组形式 find 是正则', () => viteAliases('/vite.config.ts', "export default { resolve: { alias: [{ find: /^~/, replacement: './src' }] } }")],
+    ['vite 数组形式带 customResolver', () => viteAliases('/vite.config.ts', "export default { resolve: { alias: [{ find: '~', replacement: './src', customResolver: r }] } }")],
+    ['vite 目标形状对、函数名不对', () => viteAliases('/vite.config.ts', "export default { resolve: { alias: { '~': toPath(new URL('./src', import.meta.url)) } } }")],
+    ['vite 目标是别的函数', () => viteAliases('/vite.config.ts', "export default { resolve: { alias: { '~': path.resolve('./src') } } }")],
+    ['vite 目标的 URL 基址不是 import.meta.url', () => viteAliases('/vite.config.ts', "export default { resolve: { alias: { '~': fileURLToPath(new URL('./src', base)) } } }")],
+    ['vite resolve.extensions', () => viteAliases('/vite.config.ts', "export default { resolve: { extensions: ['.foo'] } }")],
+    ['vite 配置语法错误', () => viteAliases('/vite.config.ts', 'export default { resolve: {')],
     ['tsconfig 通配在中间', () => tsconfigAliases('/tsconfig.app.json', '{"compilerOptions": {"paths": {"a*b": ["src/*"]}}}')],
-  ])('读不出的别名写法直接报错（认不全别名的判据等于没判）：%s', (_what, read) => {
+    ['tsconfig extends', () => tsconfigAliases('/tsconfig.app.json', '{"extends": "./base.json"}')],
+    ['tsconfig rootDirs', () => tsconfigAliases('/tsconfig.app.json', '{"compilerOptions": {"rootDirs": ["src", "gen"]}}')],
+    ['tsconfig moduleSuffixes', () => tsconfigAliases('/tsconfig.app.json', '{"compilerOptions": {"moduleSuffixes": [".ios", ""]}}')],
+    ['package.json imports 认不出的值', () => packageImportAliases('/package.json', '{"imports": {"#x": 1}}')],
+  ])('读不出的配置写法直接报错（fail closed）：%s', (_what, read) => {
     expect(read).toThrow()
   })
 
@@ -878,13 +1033,18 @@ describe('界面代码与 store 不自己做页面 pt 换算', () => {
     }
   })
 
-  it('定义者是现场认的：别处新声明一个换算名，它就成了定义者，从它取值照样红', () => {
-    // 函数声明与常量声明两种写法都认
-    for (const decl of ['export function panelScale() { return 1 }', 'export const panelScale = () => 1']) {
-      const extra = { '/src/lib/scale2.ts': decl }
-      const { defs, hits } = scanAll({ ...ALL, ...extra, [UI]: "import { panelScale } from '@/lib/scale2'" })
-      expect([...defs.keys()], decl).toContain('/src/lib/scale2')
-      expect(hits.some((h) => h.startsWith(`${UI}:`)), decl).toBe(true)
-    }
+  it.each([
+    ['函数声明', 'export function panelScale() { return 1 }'],
+    ['常量声明', 'export const panelScale = () => 1'],
+    ['解构声明', 'export const { panelScale } = impl'],
+    ['改名导出', 'const s = () => 1\nexport { s as panelScale }'],
+    ['枚举', 'export enum panelScale { A }'],
+    ['命名空间', 'export namespace panelScale { export const a = 1 }'],
+    ['类', 'export class panelScale {}'],
+  ])('定义者是现场认的（%s）：别处新声明或导出一个换算名，它就成了定义者，从它取值照样红', (_what, decl) => {
+    const extra = { '/src/lib/scale2.ts': decl }
+    const { defs, hits } = scanAll({ ...ALL, ...extra, [UI]: "import { panelScale } from '@/lib/scale2'" })
+    expect([...defs.keys()], decl).toContain('/src/lib/scale2')
+    expect(hits.some((h) => h.startsWith(`${UI}:`)), decl).toBe(true)
   })
 })
