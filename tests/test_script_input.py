@@ -252,7 +252,7 @@ def test_no_answerer_fails_fast_with_the_prompt(plane, figs, frontend):
     with pytest.raises(pool.WorkerError) as ei:
         pool.build("one.py", str(figs), "__main__")
     assert ei.value.code == "script_needs_input"
-    assert "which: " in str(ei.value)
+    assert "which:" in str(ei.value)
     assert ei.value.extra.get("prompt") == "which: "
     # 绝不卡死：一次往返，不是等人的 10 分钟
     assert time.monotonic() - t0 < 60
