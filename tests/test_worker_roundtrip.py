@@ -3345,8 +3345,9 @@ def main():
 """
 
 #: (广播 gid, 广播 prop, 广播值, 窄 gid, 窄 prop, 窄值)。三族别名各取一条。
-#: 窄端一律避开成员 0——整组字段报的是成员 0，覆盖它会让「广播落没落」在
-#: manifest 上分不出来（同 test_equivalence_matrix 里那条说明）。
+#: 窄端一律避开成员 0——整组字段报的是成员 0（图例 2026-09-25 起改报 `_fontsize`，
+#: 其余族照旧），覆盖它会让「广播落没落」在 manifest 上分不出来（同
+#: test_equivalence_matrix 里那条说明）。
 ALIAS_CASES = [
     ("axes_0.legend", "fontsize", 7.5, "axes_0.legend.texts_1", "fontsize", 9.5),
     ("axes_0.legend", "title_fontsize", 7.0, "axes_0.legend.title", "fontsize", 11.0),

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { revertSession } from './revertSession'
+import { currentProjectId } from '@/lib/session'
 import {
   ArrowDown,
   ArrowUp,
@@ -47,7 +49,7 @@ import {
   type AiSession,
 } from '@/store/aiStore'
 import { useDocumentStore } from '@/store/documentStore'
-import { usePanelDisplayManifest, useRenderStore } from '@/store/renderStore'
+import { usePanelDisplayManifest } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import type { PanelObject } from '@/types/document'
@@ -183,7 +185,16 @@ function useAssistantTarget() {
   }, [panel, selectedGid, elements])
 }
 
+/**
+ * 以 aiStore 的项目代际为 key 重挂：切项目时草稿、错误提示、打开着的历史视图这些组件内状态
+ * 跟着换代，不把 A 的东西留在 B 的面板里（#589）。
+ */
 export function AssistantPanel() {
+  const generation = useAiStore((s) => s.generation)
+  return <AssistantPanelBody key={generation} />
+}
+
+function AssistantPanelBody() {
   useTranslation('ai')
   const sessions = useAiStore((s) => s.sessions)
   const storedScope = useAiStore((s) => s.scope)
@@ -832,6 +843,10 @@ const PAGE = 20
  */
 export function TaskHistory({ onClose }: { onClose: () => void }) {
   useTranslation('ai')
+  // 历史按项目存：这个视图说的是**打开它那一刻**的项目，查询与每一条的动作都钉在它上面（#589）
+  // （ref 而不是 state：它一经定下就不变，也不该成为下面那个查询 effect 的依赖）
+  const pjRef = useRef(currentProjectId())
+  const pj = pjRef.current
   const [query, setQuery] = useState('')
   const [status, setStatus] = useState('')
   const [entries, setEntries] = useState<AiHistoryEntry[]>([])
@@ -849,7 +864,8 @@ export function TaskHistory({ onClose }: { onClose: () => void }) {
 
   const load = async (q: string, st: string, off: number) => {
     try {
-      const res = await fetchAiHistory({ q, status: st, limit: PAGE, offset: off })
+      const res = await fetchAiHistory({ q, status: st, limit: PAGE, offset: off }, pjRef.current)
+      if (currentProjectId() !== pjRef.current) return
       setEntries(res.sessions)
       setTotal(res.total)
       setError(null)
@@ -918,6 +934,7 @@ export function TaskHistory({ onClose }: { onClose: () => void }) {
               <HistoryRow
                 key={s.id}
                 entry={s}
+                pj={pj}
                 onChanged={() => void load(query, status, offset)}
               />
             ))}
@@ -945,8 +962,19 @@ export function TaskHistory({ onClose }: { onClose: () => void }) {
   )
 }
 
-function HistoryRow({ entry, onChanged }: { entry: AiHistoryEntry; onChanged: () => void }) {
+function HistoryRow({
+  entry,
+  pj,
+  onChanged,
+}: {
+  entry: AiHistoryEntry
+  /** 这条记录所属的项目（历史视图打开时认领的那个） */
+  pj: string | null
+  onChanged: () => void
+}) {
   useTranslation('ai')
+  // 动作回来时已经换了项目：后果（提示、重查）属于那个项目，不写进现在这个
+  const stillMine = () => currentProjectId() === pj
   const caps = useAiStore((s) => s.caps)
   const [detailsOpen, setDetailsOpen] = useState(false)
   const failed = entry.status === 'failed' || entry.status === 'timeout' || entry.status === 'interrupted'
@@ -974,7 +1002,7 @@ function HistoryRow({ entry, onChanged }: { entry: AiHistoryEntry; onChanged: ()
             active={entry.pinned}
             aria-pressed={entry.pinned}
             aria-label={ai(entry.pinned ? 'history.unpin' : 'history.pin')}
-            onClick={() => void pinAiHistory(entry.id, !entry.pinned).then(onChanged)}
+            onClick={() => void pinAiHistory(entry.id, !entry.pinned, pj).then(() => stillMine() && onChanged())}
           >
             <Pin size={ICON_SIZE.xs} filled={entry.pinned} className={entry.pinned ? undefined : 'text-ink-3'} />
           </Button>
@@ -986,13 +1014,17 @@ function HistoryRow({ entry, onChanged }: { entry: AiHistoryEntry; onChanged: ()
               className="text-danger"
               aria-label={ai('history.revert')}
               onClick={() =>
-                void aiRevert(entry.id).then(
+                void aiRevert(entry.id, pj).then(
                   () => {
+                    if (!stillMine()) return
                     useUiStore.getState().setStatus(msg('history.reverted', undefined, 'ai'))
                     onChanged()
                   },
-                  // 脚本在这次修改之后又变过（`ai_revert_conflict`）等：说出口，不装作已回滚
-                  (e) => useUiStore.getState().setStatus(backendErrorMsg(e), 'error'),
+                  // 脚本在这次修改之后又变过（`ai_revert_conflict`）等：说出口，不装作已回滚——
+                  // 但只在还是那个项目的时候说（#589）
+                  (e) => {
+                    if (stillMine()) useUiStore.getState().setStatus(backendErrorMsg(e), 'error')
+                  },
                 )
               }
             >
@@ -1004,7 +1036,7 @@ function HistoryRow({ entry, onChanged }: { entry: AiHistoryEntry; onChanged: ()
           <Button
             size="icon-sm"
             aria-label={ai('history.delete')}
-            onClick={() => void deleteAiHistory(entry.id).then(onChanged)}
+            onClick={() => void deleteAiHistory(entry.id, pj).then(() => stillMine() && onChanged())}
           >
             <Trash2 size={ICON_SIZE.xs} className="text-ink-3" />
           </Button>
@@ -1224,18 +1256,6 @@ function ProcessRow({ kind, text }: { kind: string; text: string }) {
   )
 }
 
-async function revertSession(session: AiSession) {
-  try {
-    await useAiStore.getState().revert(session.id)
-  } catch (e) {
-    // 脚本在这次修改之后又变过（`ai_revert_conflict`）等：说出口，不装作已回滚
-    useUiStore.getState().setStatus(backendErrorMsg(e), 'error')
-    return
-  }
-  // 回滚后 worker 会话同样失效，重建让画布自动回到改动前的样子
-  if (session.fileId) useRenderStore.getState().markStale([session.fileId])
-  useUiStore.getState().setStatus(msg('session.revertedStatus', undefined, 'ai'))
-}
 
 /**
  * 正文。流式阶段**照样按 markdown 渲染**（与 ChatGPT / Claude 一致，不等终稿），

@@ -17,7 +17,14 @@ preflight.runSpec()      规则求值（两份求值器，golden vectors 对齐�
   与 `rawIssuesFor(canvasId)`（样式检查报告要的聚合投影，**同一次求值的另一份
   投影**）。摘要的组装只有 `lib/validation.summaryFor()` 一份——**按导出目标
   取范围**（`objectId`：按原图导出只算那张图，页面级问题不算；按画布算整张
-  画布），报告那份用 `rawIssuesForObject()` 裁同一刀（审计 T33）。**裁完
+  画布），报告那份用 `rawIssuesForObject()` 裁同一刀（审计 T33）。**画布摆放类
+  规则**（目录里 `placement: true`：`out-of-page` / `outside-margin` / `overlap`，
+  判的是对象在画布页面上的摆法）按原图也不算（`appliesToOriginal()`，QA FLAG-B1）；
+  原图范围的报告 `page_mm` = 图幅、`objects` 只有那张图（`buildProofPayload` 的
+  `settings.original` 直接交那张图本身）。原图范围的检查**按那张图所在的画布**裁
+  （`findFigurePanel()` 的 `canvasId`），它不一定在当前画布上；**规范也从那张画布的绑定
+  解析一次**，摘要、导出上下文检查、报告的规范戳、严格核验的 `profile_id` 都认它
+  （Codex 评审 #596 P1）——那张画布不是当前画布时规范下拉置灰并说明，不改错画布。**裁完
   `message` / `detail` 要按留下来的那些命中重挑一次**（尺子与 `Sink` 完全一样：
   带排名的取最糟那次，不带排名的第一次说了算）——它们原本属于**全画布**最糟
   那一次，而 `buildProofPayload()` 序列化的正是这两个字段（不是 occurrences）；

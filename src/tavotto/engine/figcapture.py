@@ -644,6 +644,44 @@ def _within(real: str, root: str, *, pathmod=os.path) -> bool:
     return real_n == root_n or real_n.startswith(root_n + pathmod.sep)
 
 
+def interpreter_dirs_within(root: str) -> tuple[str, ...]:
+    """**这个进程的解释器**自己的目录里、严格落在项目根 `root`（已 realpath）之内的那些（realpath）。
+
+    主语：观察器所在的进程（safe worker / native bridge 里跑用户脚本的那个解释器）。项目自带的 `.venv`
+    放在项目根里是 ADR 0057 首开第 4 条的标准形态——它的 site-packages 里的扩展模块、字体、mplstyle
+    被库在 import / 初始化时读到，不是脚本的数据输入，也不是用户的本地模块（QA 2026-09-24 PATH-B2：
+    一个脚本 41–67 条，把 256 条的预算挤满、真数据被挤出回执）。候选：`sys.prefix` / `base_prefix` /
+    `exec_prefix` / `base_exec_prefix` 与 `sysconfig` 的 purelib / platlib。
+
+    只收**严格在项目根之内**的：等于项目根、或把项目根包在里面的前缀（项目放在某个 conda 环境目录底下）
+    若也排除，项目里的每一个数据文件都会跟着消失——那时宁可多记，不能全丢。"""
+    candidates = [
+        getattr(sys, name, None)
+        for name in ("prefix", "base_prefix", "exec_prefix", "base_exec_prefix")
+    ]
+    try:
+        import sysconfig
+
+        paths = sysconfig.get_paths()
+        candidates += [paths.get("purelib"), paths.get("platlib")]
+    except Exception:  # noqa: BLE001 —— 拿不到就只用 sys 的四个前缀
+        pass
+    out: list[str] = []
+    for cand in candidates:
+        if not isinstance(cand, str) or not cand:
+            continue
+        try:
+            real = os.path.realpath(cand)
+        except (OSError, ValueError):
+            continue
+        if real in out or not _within(real, root):
+            continue
+        if os.path.normcase(real) == os.path.normcase(root.rstrip(os.sep) or root):
+            continue
+        out.append(real)
+    return tuple(out)
+
+
 class InputObserver:
     """记下脚本执行期间经 `builtins.open` / `io.open` / `Path.open` / numpy 的 `DataSource.open` **以只读模式成功打开**的、落在项目根之内的
     文件（ExecutionReceipt 的「已观察的数据身份」，ADR 0070）。
@@ -665,6 +703,11 @@ class InputObserver:
         self._uninstall = None
         #: 实际装上了的观察通道（`report()` 的 `channels`）：numpy 没载入时就没有 `numpy_datasource`
         self._channels: list[str] = []
+        #: 解释器自己落在项目根里的目录（项目 `.venv`）：库文件不是数据输入，也不占预算（PATH-B2）
+        try:
+            self._interpreter_dirs = interpreter_dirs_within(os.path.realpath(self.project_root))
+        except Exception:  # noqa: BLE001 —— 观察器绝不影响脚本
+            self._interpreter_dirs = ()
 
     # ---- 记账 ----
     def _note(self, file) -> None:
@@ -679,6 +722,8 @@ class InputObserver:
                 return
             root = os.path.realpath(self.project_root)
             if not _within(real, root):
+                return
+            if any(_within(real, d) for d in self._interpreter_dirs):
                 return
             if not os.path.isfile(real):
                 return
@@ -790,6 +835,8 @@ def observed_local_modules(
     按名字排好序、有界（与文件同一个上限）。"""
     root = os.path.realpath(os.path.abspath(project_root))
     excl = os.path.realpath(exclude_dir) if exclude_dir else ""
+    # 项目 `.venv` 里 import 进来的第三方包（matplotlib / numpy…）不是用户的本地模块（PATH-B2，与文件观察同一份判据）
+    interp = interpreter_dirs_within(root)
     out: list[dict] = []
     for name in sorted(modules):
         mod = modules.get(name)
@@ -804,6 +851,8 @@ def observed_local_modules(
             continue
         # 引擎自己平铺 import 的那些不是用户的；不在同一个盘也只是 False、不抛
         if excl and _within(real, excl):
+            continue
+        if any(_within(real, d) for d in interp):
             continue
         entry: dict = {
             "name": name,

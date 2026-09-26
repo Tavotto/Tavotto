@@ -51,6 +51,7 @@ from . import (
     envlease,
     execspec,
     importscan,
+    logsafe,
     managedenv,
     pool,
     privatepython,
@@ -612,7 +613,12 @@ def create_plan(
     _prune_plans()
     with _lock:
         _plans[plan.plan_id] = plan
-    LOG.info("依赖修复计划: %s → %s（%s）", plan.requirement.requirement(), target_kind, script)
+    LOG.info(
+        "依赖修复计划: %s → %s（%s）",
+        plan.requirement.requirement(),
+        logsafe.known(target_kind, TARGETS),
+        script,
+    )
     return plan
 
 
@@ -799,7 +805,12 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
             "generation": outcome["generation"],
         }
         _emit(plan.plan_id, STATE_DONE, on_event, plan=plan, result=result)
-        LOG.info("依赖修复成功: %s %s → %s", req.distribution, version, plan.target_kind)
+        LOG.info(
+            "依赖修复成功: %s %s → %s",
+            req.distribution,
+            logsafe.version(version),
+            logsafe.known(plan.target_kind, TARGETS),
+        )
         return result
     if cancel_ev.is_set():
         return _finish_cancelled(plan, on_event, python)
@@ -883,7 +894,12 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
         "target_kind": plan.target_kind,
     }
     _emit(plan.plan_id, STATE_DONE, on_event, plan=plan, result=result)
-    LOG.info("依赖修复成功: %s %s → %s", req.distribution, version, plan.target_kind)
+    LOG.info(
+        "依赖修复成功: %s %s → %s",
+        req.distribution,
+        logsafe.version(version),
+        logsafe.known(plan.target_kind, TARGETS),
+    )
     return result
 
 
@@ -1989,7 +2005,7 @@ def create_package_job(project: str | Path, op: str, spec: str) -> PackageJob:
         for stale in [k for k, j in _jobs.items() if j.expires_at < now]:
             _jobs.pop(stale, None)
         _jobs[job.job_id] = job
-    LOG.info("包操作作业: %s %s", op, requirement)
+    LOG.info("包操作作业: %s %s", logsafe.known(op, PACKAGE_OPS), requirement)
     return job
 
 
@@ -2106,7 +2122,12 @@ def _run_package_job(job: PackageJob, env_key: str, on_event, cancel_ev: threadi
             "generation": outcome["generation"],
         }
         _emit_job(job.job_id, STATE_DONE, on_event, job=job, result=result)
-        LOG.info("包操作完成: %s %s %s", job.op, job.distribution, version)
+        LOG.info(
+            "包操作完成: %s %s %s",
+            logsafe.known(job.op, PACKAGE_OPS),
+            job.distribution,
+            logsafe.version(version),
+        )
         return result
     if cancel_ev.is_set():
         managedenv.mark_incomplete(project, f"{job.op} 被取消")
@@ -2192,7 +2213,12 @@ def _run_package_job(job: PackageJob, env_key: str, on_event, cancel_ev: threadi
         "python_version": (managedenv.read_manifest(project) or {}).get("python_version", ""),
     }
     _emit_job(job.job_id, STATE_DONE, on_event, job=job, result=result)
-    LOG.info("包操作完成: %s %s %s", job.op, job.distribution, version)
+    LOG.info(
+        "包操作完成: %s %s %s",
+        logsafe.known(job.op, PACKAGE_OPS),
+        job.distribution,
+        logsafe.version(version),
+    )
     return result
 
 
@@ -2552,7 +2578,12 @@ def create_joint_plan(
     _prune_plans()
     with _lock:
         _joint_plans[plan.plan_id] = plan
-    LOG.info("联合依赖计划: %s → %s（%s）", ", ".join(plan.requirements), kind, script)
+    LOG.info(
+        "联合依赖计划: %s → %s（%s）",
+        ", ".join(plan.requirements),
+        logsafe.known(kind, TARGETS),
+        script,
+    )
     return plan
 
 
@@ -3453,9 +3484,32 @@ def _plan_imports(plan: dict) -> tuple[list[dict], list[str]]:
     return needed, list(plan.get("unknown") or [])
 
 
+def _user_env_discovery_off() -> bool:
+    return os.environ.get("TAVOTTO_USER_ENV_DISCOVERY", "").strip() == "0"
+
+
+def unknown_imports_missing(plan: dict, python: str) -> list[str]:
+    """计划里映射不到包名的无条件 import，此刻的解释器里**确实** import 不到的那几个（ADR 0079 修订
+    2026-09-25，QA ENV-08-B1）。
+
+    这类 import 永远不装（FO-034），计划因此是 `nothing_needed`、不是 `ready`，以前也就从不去找用户环境——
+    装了这个包的 Conda 环境就在磁盘上，脚本照样在内置环境里缺包失败。现在先在此刻的解释器里量一次
+    （与「装齐」同一条体检、同一个缓存）：import 得到的不算缺，量不出的不算缺，条件式 import 本来就不在
+    `unknown` 里。开关关着时不量。"""
+    if _user_env_discovery_off() or not python:
+        return []
+    unknown = [u for u in plan.get("unknown") or [] if u]
+    if not unknown:
+        return []
+    # 内置 runtime 由 worker 按 `runtime.child_env()` / `child_args()` 起：体检用同一套（Codex #609 P2）
+    bundled = pool.same_python(python, runtime.bundled_python())
+    return userenvs.imports_missing(python, unknown, bundled=bundled)
+
+
 def user_environment_offer(project: str | Path, script: str, plan: dict, python: str) -> list[dict]:
-    """对一份 `ready` 的联合计划：每个用户环境装没装齐（`userenvs.evaluate` 的结果表，按挑选顺序排）。"""
-    if os.environ.get("TAVOTTO_USER_ENV_DISCOVERY", "").strip() == "0":
+    """对一份 `ready` 的联合计划（或只缺映射不到包名的 import 的计划，见 `unknown_imports_missing`）：
+    每个用户环境装没装齐（`userenvs.evaluate` 的结果表，按挑选顺序排）。"""
+    if _user_env_discovery_off():
         # 关掉：不发现、不体检、不自动改用（用户的逃生口；测试进程默认关，见 tests/conftest.py）
         return []
     root = str(Path(project))
@@ -3553,8 +3607,15 @@ def _preparation_offer(project: str | Path, script: str) -> tuple[dict, list[dic
         private = privatepython.offer_payload() or privatepython.present_payload()
     plan_payload = joint.to_payload()
     user_envs: list[dict] = []
+    unknown_missing: list[str] = []
     if joint.status == depplan.STATUS_READY and not clean:
         user_envs = user_environment_offer(root, script, plan_payload, python)
+    elif joint.status == depplan.STATUS_NOTHING_NEEDED and not clean:
+        # 没有能装的，但有映射不到包名、此刻又确实 import 不到的：同样的三步去找用户环境（只找、只改用，
+        # 仍不装）。门不因此弹框——弹窗是「授权安装」，这里没有可装的东西；决定在 `decide_environment`
+        unknown_missing = unknown_imports_missing(plan_payload, python)
+        if unknown_missing:
+            user_envs = user_environment_offer(root, script, plan_payload, python)
     offer = {
         "code": ERROR_PREPARATION_REQUIRED,
         "script": script,
@@ -3568,6 +3629,8 @@ def _preparation_offer(project: str | Path, script: str) -> tuple[dict, list[dic
         # 用户自己的环境（ADR 0079）：装齐的排前面、按挑选顺序；界面据此列「改用这个环境」。
         # 只带 id 不带路径（ADR 0053 §二）；采用时 `PATCH /api/engine/environment` 交回 id
         "user_environments": [userenvs.public(e) for e in user_envs],
+        # 此刻的解释器里确实 import 不到、又映射不到包名的那几个（ADR 0079 修订）：只有 import 名，不带路径
+        "unknown_missing": unknown_missing,
     }
     return offer, user_envs
 
@@ -3597,7 +3660,7 @@ def decide_environment(project: str | Path, script: str) -> dict | None:
     if got is None:
         return None
     offer, user_envs = got
-    if offer["plan"]["status"] != depplan.STATUS_READY:
+    if offer["plan"]["status"] != depplan.STATUS_READY and not offer.get("unknown_missing"):
         return None
     return _auto_adopt(root, offer, user_envs)
 

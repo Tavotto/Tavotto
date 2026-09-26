@@ -42,7 +42,7 @@ import {
 } from '@/store/renderStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useDisplayedExactManifest, useMountedSvgStore } from '@/store/mountedSvgStore'
-import { reattachPreview, settleFailedAuthority } from '@/store/svgPreviewStore'
+import { reattachPreview, settleFailedAuthority, settleUnbackedCommit } from '@/store/svgPreviewStore'
 import { useUiStore } from '@/store/uiStore'
 import { mmToWorld, useViewportStore } from '@/store/viewportStore'
 import type { PanelObject, PanelRotation } from '@/types/document'
@@ -141,6 +141,15 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   // exact manifest（不变量 4）。
   const svgHtml = editing && !bitmapOnly ? (render?.svg ?? null) : null
   const panelId = obj.id
+
+  // 文档变了（撤销 / 重置 / 历史跳转）：已提交、还在等图的预览，它代表的正式值若已不在
+  // 文档里，就地还原（QA STATE-04-B1）。依赖是渲染键（= overrides 的内容），不是 obj
+  // 引用；判据收在 svgPreviewStore。
+  const docKey = renderKeyOf(obj)
+  useEffect(() => {
+    settleUnbackedCommit(panelId, obj.overrides)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [docKey, panelId])
 
   // 权威渲染失败：等不到那一版 SVG 了，会话就地收尾。
   // **预览留在画布上**——文档里已经是用户要的值，把预览撤掉会让画布与属性页

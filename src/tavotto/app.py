@@ -73,6 +73,7 @@ from .engine import (
     figcapture as engine_figcapture,
     handoff as engine_handoff,
     locate as engine_locate,
+    logsafe as engine_logsafe,
     managedenv as engine_managedenv,
     nativehandoff as engine_nativehandoff,
     nativeperm as engine_nativeperm,
@@ -199,9 +200,30 @@ def setup_logging() -> None:
         CACHE_DIR / "app.log", maxBytes=1_000_000, backupCount=3, encoding="utf-8"
     )
     file.setFormatter(fmt)
+    # 诊断包的那份（REL-05）：同一批记录，模板原样、参数按类型换形——报错文字、脚本名、
+    # 请求的查询串在写入那一刻就不进这个文件（engine/diagnostics.py `ExportLogFormatter`）。
+    # cache/app.log 仍是完整的，留给用户自己看。
+    export = RotatingFileHandler(
+        CACHE_DIR / engine_diagnostics.EXPORT_LOG_NAME,
+        maxBytes=1_000_000,
+        backupCount=1,
+        encoding="utf-8",
+    )
+    export.setFormatter(engine_diagnostics.ExportLogFormatter(route_of=_route_rule_of))
     root.setLevel(logging.INFO)
     root.addHandler(stream)
     root.addHandler(file)
+    root.addHandler(export)
+
+
+def _route_rule_of(method: str, path: str) -> str | None:
+    """请求路径 → Flask 路由规则的字符串（`/api/native/sessions/<session_id>`），匹配不上 None。
+    诊断用的访问日志只写规则，不写请求里的具体值（REL-05-B2）。"""
+    try:
+        rule, _args = app.url_map.bind("localhost").match(path, method=method, return_rule=True)
+    except Exception:  # noqa: BLE001 — 404 / 405 / 重定向都按「不认识」处理
+        return None
+    return rule.rule
 
 
 def prune_render_cache(max_bytes: int = RENDER_CACHE_MAX_BYTES) -> int:
@@ -527,7 +549,12 @@ def _atomic_write_error(exc):
     """
     if exc.code == "non_finite_number":
         return jsonify(exc.as_payload()), 400
-    LOG.error("原子写失败: %s %s: %s", request.method, request.path, exc.message)
+    LOG.error(
+        "原子写失败: %s %s: %s",
+        engine_logsafe.known(request.method, engine_logsafe.HTTP_METHODS),
+        engine_logsafe.route(request.url_rule),
+        exc.message,
+    )
     return jsonify(exc.as_payload()), 500
 
 
@@ -537,7 +564,12 @@ def _refresh_error(exc):
     （注册表被手改坏了、目录读不动），重试一百次也是同样的结果，用户要看到
     的是"你的注册表怎么了"，不是一句"服务器错误"。内存里的注册表原封不动，
     已打开的项目照常能用（`engine/project_refresh.py` 的失败语义）。"""
-    LOG.warning("项目刷新失败: %s %s: %s", request.method, request.path, exc.message)
+    LOG.warning(
+        "项目刷新失败: %s %s: %s",
+        engine_logsafe.known(request.method, engine_logsafe.HTTP_METHODS),
+        engine_logsafe.route(request.url_rule),
+        exc.message,
+    )
     return jsonify(exc.as_payload()), 400
 
 
@@ -664,7 +696,12 @@ def _worker_error(exc):
     没有这个处理器时它们会掉进通用 Exception 处理器，`code` 全丢，前端就分不出
     「缺渲染环境」（该给引导）和「脚本报错」（该给 traceback）。
     """
-    LOG.error("worker 错误: %s %s: %s", request.method, request.path, exc)
+    LOG.error(
+        "worker 错误: %s %s: %s",
+        engine_logsafe.known(request.method, engine_logsafe.HTTP_METHODS),
+        engine_logsafe.route(request.url_rule),
+        exc,
+    )
     return jsonify(_worker_error_payload(exc)), 500
 
 
@@ -706,7 +743,11 @@ def _unhandled(exc):
     # 渲染后端「此刻不可用」由契约层判（实现各自声明 UNAVAILABLE_ERRORS），HTTP 层不认识实现的异常类
     if pdfbackend.is_backend_unavailable(exc):
         return _backend_unavailable(exc)
-    LOG.exception("未处理异常: %s %s", request.method, request.path)
+    LOG.exception(
+        "未处理异常: %s %s",
+        engine_logsafe.known(request.method, engine_logsafe.HTTP_METHODS),
+        engine_logsafe.route(request.url_rule),
+    )
     return jsonify(
         {
             "error": f"{type(exc).__name__}: {exc}",
@@ -1421,13 +1462,13 @@ def api_export():
         classify_error=_classify_export_error,
     )
     LOG.info(
-        "导出[%s]: %s（scope=%s, %s, %.0fms）%s",
-        job.status,
+        "导出[%s]: %s（scope=%s, %s, %.0fms，%d 条警告）",
+        engine_logsafe.known(job.status, engine_exportjob.STATUSES),
         [o.name for o in job.outputs if o.name],
-        job.request.scope,
-        list(job.request.formats),
+        engine_logsafe.known(job.request.scope, engine_exportreq.SCOPES),
+        engine_logsafe.known_each(job.request.formats, engine_exportreq.ENGINE_FORMATS),
         (time.time() - t0) * 1000,
-        f"，{len(job.warnings)} 条警告" if job.warnings else "",
+        len(job.warnings),
     )
     if job.warnings:
         LOG.warning("导出警告: %s", job.warnings)
@@ -1870,7 +1911,9 @@ def open_project(path_str: str, make_default: bool = True) -> dict:
         "项目已打开: %s（%d 个脚本%s）",
         path,
         len(reg.all_scripts()),
-        "，注册表为静态扫描草稿" if drafted else "",
+        engine_logsafe.known(
+            "，注册表为静态扫描草稿" if drafted else "", ("，注册表为静态扫描草稿", "")
+        ),
     )
     return {**project_status(ctx), "drafted": drafted, "conflicts": conflicts, "reused": False}
 
@@ -3750,7 +3793,7 @@ def api_engine_render():
         "引擎渲染: %s %.0fms%s timings=%s",
         stem,
         (time.time() - t0) * 1000,
-        "（冷启动）" if cold else "",
+        engine_logsafe.known("（冷启动）" if cold else "", ("（冷启动）", "")),
         json.dumps(timings, sort_keys=True),
     )
     sse_publish("render.done", {"pj": pj, "id": rel_id, "rev": worker.rev})
@@ -5407,7 +5450,12 @@ def api_engine_workdir_set():
     state = engine_workdir.set_mode(root, mode)
     if state["mode"] != before:
         engine_pool.shutdown_all(root)
-        LOG.info("项目工作目录模式: %s → %s（%s）", before, state["mode"], root)
+        LOG.info(
+            "项目工作目录模式: %s → %s（%s）",
+            engine_logsafe.known(before, engine_workdir.MODES),
+            engine_logsafe.known(state["mode"], engine_workdir.MODES),
+            root,
+        )
     return jsonify({"ok": True, "workdir": state, "project": _project_environment_state()})
 
 
@@ -6259,7 +6307,11 @@ def api_update_apply():
             }
         ), 409
     result = engine_updater.apply_upgrade()
-    LOG.info("升级 %s: %s", "成功" if result["ok"] else "失败", result["command"])
+    LOG.info(
+        "升级 %s: %s",
+        engine_logsafe.known("成功" if result["ok"] else "失败", ("成功", "失败")),
+        result["command"],
+    )
     return jsonify(result), (200 if result["ok"] else 500)
 
 
@@ -6382,7 +6434,8 @@ def api_ai_run():
             prompt,
             str(ctx.path),
             context=context,
-            on_event=sse_publish,
+            # 事件带上发起它的项目：SSE 是全进程一条流，切到 B 的标签页不许接 A 的任务的话（#589）
+            on_event=lambda event, data: sse_publish(event, {**data, "pj": ctx.id}),
             model=body.get("model") or None,
             effort=body.get("effort") or None,
             endpoint_id=body.get("endpoint"),
@@ -7657,7 +7710,7 @@ def main():
     engine_ai_history.purge(keep_days=180)
     # 选中的 PDF 后端在起服务前装载好（契约层是惰性装载的）：第一次 probe 不再多付一次
     # import 的延迟；选了装不上的后端在这里就报出来，不静默回退（ADR 0067 / 0072）
-    LOG.info("PDF 后端: %s", pdfbackend.warm())
+    LOG.info("PDF 后端: %s", engine_logsafe.known(pdfbackend.warm(), pdfbackend.BACKENDS))
     if not args.desktop_sidecar:
         # 桌面模式的升级由 Tauri 层负责，Python updater 连后台检查都不跑
         engine_updater.check_in_background()  # 默认每天一次；设置里可关，关了不联网

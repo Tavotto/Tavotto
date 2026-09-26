@@ -22,7 +22,7 @@ import time
 import uuid
 from pathlib import Path
 
-from . import config, envlease, execspec, patchspec, projectenv, runtime, workdir
+from . import config, envlease, execspec, logsafe, patchspec, projectenv, runtime, workdir
 
 LOG = logging.getLogger("tavotto.engine")
 
@@ -683,6 +683,29 @@ def _explain_empty_capture(err: "WorkerError", script_name: str, known, log_tail
     return out
 
 
+def missing_stem_error(worker, stem: str, known) -> "WorkerError | None":
+    """build 完了、请求的 `stem` 不在捕获表里：给出**渲染入口会给的那个错误**（同一个 code、同一段脚本输出）。
+
+    渲染入口是 worker 报 `unknown_stem`（`known` = 捕获到的 stem 表）再经 `_explain_empty_capture` 换码；
+    准备接口只拿到 build 响应、不发 stem 命令，要在这里按同一条路拼出来（QA 2026-09-24 PATH-B1：一张图都
+    没捕获的面板，准备接口曾给 `ready`，只有渲染入口报 `no_figures_captured`）。`known` 不是列表（没告诉我）
+    → None：与 `_explain_empty_capture` 同一条「只认显式」的纪律，不猜。"""
+    if not isinstance(known, (list, tuple)):
+        return None
+    known = sorted(str(s) for s in known)
+    if stem in known:
+        return None
+    script_name = getattr(worker, "script_name", "") or ""
+    err = WorkerError(f"stem 不存在: {stem}", "", code="unknown_stem")
+    err.extra = {"known": known}
+    err.script_name = script_name
+    try:
+        tail = worker._log_tail()
+    except Exception:  # noqa: BLE001 —— 读不到日志就按「一个字没打印」
+        tail = ""
+    return _explain_empty_capture(err, script_name, known, tail or "")
+
+
 #: worker 侧 `worker.SCRIPT_NEEDS_ARGUMENTS` 的镜像（Flask 进程不 import worker.py）。
 SCRIPT_NEEDS_ARGUMENTS = "script_needs_arguments"
 
@@ -981,7 +1004,7 @@ def select_worker_python() -> tuple[str, str]:
         seen.add(cand)  # 同一个解释器不重复探测（每次探测最多 30s）
         if _has_matplotlib(cand, bundled=source == SOURCE_BUNDLED):
             _worker_python, _worker_source = cand, source
-            LOG.info("渲染解释器: %s（来源 %s）", cand, source)
+            LOG.info("渲染解释器: %s（来源 %s）", cand, logsafe.known(source, SOURCE_LABELS))
             return cand, source
         if source in _EXPLICIT_SOURCES:
             raise _explicit_unusable(source, cand, "no_matplotlib")
@@ -1200,6 +1223,10 @@ def _project_python_unusable(python: str, reason: str, record: dict) -> "WorkerE
     return err
 
 
+#: 会话重建的原因（闭集，诊断日志按它放行明文）。
+_REBUILD_REASONS = ("已死", "入口已变", "渲染解释器已变")
+
+
 def _invalidate_remembered(figures_dir: str | Path, python: str, reason: str, record: dict) -> None:
     """自动记住的项目解释器已失效：作废记录（回到「没记住」），把事实留下。"""
     LOG.warning("项目自动记住的解释器已不可用（%s），作废并重新发现: %s", reason, python)
@@ -1342,6 +1369,9 @@ class EngineWorker:
         self.last_patch_hash_by_stem: dict[str, str] = {}
         self.lock = threading.Lock()
         self.built = False
+        #: 上一次**跑完的** build 是失败的（`built=False` 分不出「还没 build / 正在 build」与「build 过但失败了」，
+        #: 复用前的工作目录门只管后者——Codex #599 P2）。成功那一刻清掉。
+        self.build_failed = False
         #: 最近一次 build 响应里的 CapturedFigureDescriptor payload 列表。
         #: RuntimeFigureAsset 的 cache 物化从这里取（app 层复制预览文件 +
         #: 描述符即可），**不必为拿描述符再跑一次脚本**。
@@ -1382,7 +1412,10 @@ class EngineWorker:
             cwd_mode=workdir.mode_for(figures_dir),
         )
         LOG.info(
-            "worker 启动: %s（entry=%s，解释器来源=%s）", script_name, entry, self.python_source
+            "worker 启动: %s（entry=%s，解释器来源=%s）",
+            script_name,
+            entry,
+            logsafe.known(self.python_source, SOURCE_LABELS),
         )
         self.proc = subprocess.Popen(
             execspec.worker_argv(
@@ -1726,7 +1759,12 @@ class EngineWorker:
     def ensure_built(self) -> dict:
         # build 要跑用户整个脚本。传的是**兜底上限**——真正判死的是静默看门狗
         # （ADR 0050），所以这里不再需要先知道这个脚本有多慢。
-        resp = self.request({"cmd": "build"}, BUILD_HARD_TIMEOUT)
+        try:
+            resp = self.request({"cmd": "build"}, BUILD_HARD_TIMEOUT)
+        except BaseException:
+            self.build_failed = True
+            raise
+        self.build_failed = False
         self.built = True
         self.last_build_descriptors = list(resp.get("descriptors") or [])
         self.last_build_runtime = _runtime_of(resp)
@@ -2033,6 +2071,7 @@ class WorkerdWorker:
         # 「一个慢请求占死整条会话」重新绑回来。
         self.lock = threading.Lock()
         self.built = False
+        self.build_failed = False  # 与 EngineWorker 同一个判据
         self.last_build_descriptors: list = []
         self.last_build_runtime: dict | None = None
         self.child_pid: int | None = None
@@ -2084,7 +2123,7 @@ class WorkerdWorker:
             "workerd 会话打开: %s（entry=%s，解释器来源=%s）",
             self.script_name,
             self.entry,
-            self.python_source,
+            logsafe.known(self.python_source, SOURCE_LABELS),
         )
         # 这一代从日志的哪个字节开始：workerd 也是 append 到同一个文件
         self._log_offset = start_log_generation(self.log_path)
@@ -2227,7 +2266,12 @@ class WorkerdWorker:
     def ensure_built(self) -> dict:
         # 与 Python 池同一条判据（ADR 0050）：兜底上限 + 静默看门狗，
         # 看门狗由 workerd 那侧执行（它 stat 的是同一个 worker.log）。
-        resp = self._call("build", BUILD_HARD_TIMEOUT, idle_timeout=BUILD_IDLE_TIMEOUT)
+        try:
+            resp = self._call("build", BUILD_HARD_TIMEOUT, idle_timeout=BUILD_IDLE_TIMEOUT)
+        except BaseException:
+            self.build_failed = True  # 与 EngineWorker 同一个判据
+            raise
+        self.build_failed = False
         self.built = True
         self.last_build_descriptors = list(resp.get("descriptors") or [])
         self.last_build_runtime = _runtime_of(resp)
@@ -2366,6 +2410,19 @@ def register_environment_decider(decider) -> None:
         ENVIRONMENT_DECIDERS.append(decider)
 
 
+def _workdir_gate(figures_dir: str, script_name: str) -> None:
+    """工作目录那道门（U03，ADR 0057 §三）：要问就抛带 `confirmation` 载荷的
+    `workdir_confirmation_required`。起新会话（`_new_worker`）与复用**没 build 成的**会话（`acquire`）
+    过的是这同一处。"""
+    try:
+        workdir.resolve_mode(figures_dir, script_name)
+    except workdir.ConfirmationRequired as exc:
+        err = WorkerError(str(exc), code=workdir.ERROR_CONFIRMATION_REQUIRED)
+        err.confirmation = dict(exc.payload)
+        err.script_name = script_name
+        raise err from None
+
+
 def _new_worker(script_name: str, figures_dir: str, entry: str):
     """按可用性挑控制面。**任何失败都回退 Python 池**——渲染不能因为一个
     可选的加速件起不来就整个不可用。
@@ -2377,13 +2434,7 @@ def _new_worker(script_name: str, figures_dir: str, entry: str):
     """
     from . import workerd_client
 
-    try:
-        workdir.resolve_mode(figures_dir, script_name)
-    except workdir.ConfirmationRequired as exc:
-        err = WorkerError(str(exc), code=workdir.ERROR_CONFIRMATION_REQUIRED)
-        err.confirmation = dict(exc.payload)
-        err.script_name = script_name
-        raise err from None
+    _workdir_gate(figures_dir, script_name)
     # 第二道门：依赖（U04，ADR 0061 §六）。判据住在 `deprepair`（它 import 本模块，所以这里
     # 不能反过来 import 它——它在 import 时把自己的门登记进 `SPAWN_GATES`）。门要问就抛带
     # `dependency_preparation` 载荷的 WorkerError；放行就什么都不做。
@@ -2702,8 +2753,20 @@ def acquire(script_name: str, figures_dir: str, entry: str) -> tuple[EngineWorke
             if (w is None or why) and not decided:
                 force_decide = True
                 continue  # 出锁：决定要体检子进程，不能占着池锁
+            if w is not None and not why and getattr(w, "build_failed", False):
+                # 活着、上一次跑完的 build 失败了：下一次用它就是在它起会话时的 cwd 里**重跑整个脚本**——
+                # 那是一次新的执行，要过与起新会话同一道门。门在它起会话之后变了（静态证据变了：数据出现在
+                # 项目根 / 两处同名）时，这里就停下来问，与准备接口、新会话同一个 code（QA 2026-09-24 PATH-B3）。
+                # 会话本身不动；用户答完 `PATCH /api/engine/workdir` 会收掉这个项目的全部会话。
+                # 判据是 `build_failed` 不是 `not built`（Codex #599 P2）：**正在 build 的**会话 `built` 也是
+                # False，第二个调用方只是在 worker 锁上排队、复用那次 build 的结果，不会重跑脚本，不该被拦。
+                # 已 build 的热态会话同理不过门。已知边界：排在一次**将要失败**的 build 后面的调用方，进门时它还
+                # 没失败，这里看不见——它随后会自己再跑一次 build；这一窗口与起会话本身的竞态同形，不在这里加锁。
+                _workdir_gate(figures_dir, script_name)
             if why:
-                LOG.warning("worker %s，重建: %s", why, script_name)
+                LOG.warning(
+                    "worker %s，重建: %s", logsafe.known(why, _REBUILD_REASONS), script_name
+                )
                 w.shutdown()
                 w = None
             if w is None:

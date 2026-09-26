@@ -6,7 +6,7 @@ Python」「日志在哪」）才能定位一次。有了这个包，用户点�
 包里有什么：
     report.json   版本 / 系统 / 安装方式 / 数据目录 / 渲染解释器 / matplotlib /
                   端口 / AI CLI 探测结果 / 项目与注册表概况 / 最近错误
-    app.log       最近若干行日志
+    app.log       最近若干行日志（取自 cache/diagnostics.log：模板原样、参数换形，见 ExportLogFormatter）
     config.json   用户配置（**密钥已抹掉**）
 
 脱敏两件事，缺一不可：
@@ -23,16 +23,28 @@ import builtins
 import hashlib
 import io
 import json
+import logging
 import os
 import platform
 import re
 import sys
 import time
+import traceback
 import unicodedata
 import zipfile
 from pathlib import Path
 
-from . import ai_bridge, bootstrap, config, diagnostics_frontend, pool, runtime, telemetry, updater
+from . import (
+    ai_bridge,
+    bootstrap,
+    config,
+    diagnostics_frontend,
+    logsafe,
+    pool,
+    runtime,
+    telemetry,
+    updater,
+)
 
 LOG_TAIL_LINES = 400
 ERROR_TAIL = 30  # 报告里单列的最近错误条数
@@ -412,8 +424,219 @@ def _project_section(project: dict | None, roots: list[tuple[str, str]]) -> dict
     return out
 
 
-def _log_path() -> Path:
+#: 诊断包里的 `app.log` 与 report.json 的 `recent_errors` **只读这一份**（`cache/diagnostics.log`），
+#: 不读 `cache/app.log`。那份是写给用户自己看的：日志参数原样（报错文字、脚本名、请求的查询串），
+#: 窗口化打包下 stdout / stderr 也改道进去（`packaging/entry.py`）——事后在它身上做脱敏只能靠
+#: 正则猜哪一段是用户的字（REL-05-B1：`引擎渲染失败: boom: 脚本执行失败: <用户 raise 的文字>`
+#: 原样进了包）。这一份由 `ExportLogFormatter` 在**写入那一刻**从日志记录的结构生成，唯一的写入者
+#: 是 `app.setup_logging` 挂上的那个 handler。
+EXPORT_LOG_NAME = "diagnostics.log"
+
+
+def _app_log_path() -> Path:
+    """用户自己的完整日志（report.json 的 `paths.log` 告诉维护者去哪要）。"""
     return config.data_dir() / "cache" / "app.log"
+
+
+def _log_path() -> Path:
+    """进诊断包的那份日志。"""
+    return config.data_dir() / "cache" / EXPORT_LOG_NAME
+
+
+#: 模板（`record.msg`）可信的 logger：Tavotto 自己的（`tavotto` / `tavotto.*`，
+#: `tests/test_diagnostics_log_privacy.py` 用 AST 看护每一处调用的模板都是字符串字面量）与
+#: werkzeug（访问日志，模板是它源码里的常量）。其余第三方 logger 的模板不归我们管——
+#: 它可能是 f-string 拼好的——只留级别与 logger 名，正文 `…`。
+_TRUSTED_TEMPLATE_LOGGERS = ("tavotto", "werkzeug")
+_ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
+#: werkzeug 访问日志的请求行：路径换成 Flask 的**路由规则**（`/api/render`、
+#: `/api/native/sessions/<session_id>`——代码里写的字符串），查询串一律不带；
+#: 匹配不上任何路由（404 / 越界探测）的整段哈希（REL-05-B2）。
+_REQUEST_LINE = re.compile(r"^([A-Z]{3,7}) (\S+) (HTTP/\d(?:\.\d)?)$")
+#: 纯数字串（werkzeug 以字符串传状态码 / 字节数）与 `-`：与 int 参数同等对待。
+_NUMERIC_TEXT = re.compile(r"^-?[0-9]+(?:\.[0-9]+)?$|^-$")
+#: 异常的错误 code：小写标识符（`script_error`、`missing_dependency`）。
+_ERROR_CODE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+#: 像文件名的参数（无空白、带扩展名或路径分隔符）走路径缩写（`…/file:<哈希>.py`），其余 `str:<哈希>`。
+_FILE_LIKE_EXT = re.compile(r"\.[A-Za-z0-9]{1,8}$")
+
+
+class _ExportArg:
+    """已换好形的日志参数：`%s` 与 `%r` 都打印同一段文字。"""
+
+    __slots__ = ("text",)
+
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+    def __str__(self) -> str:
+        return self.text
+
+    __repr__ = __str__
+
+
+def _exception_label(exc: BaseException) -> str:
+    """异常参数 → 类型 + 错误 code（+ errno），**不带 message**。
+
+    类型名按来历放行：`builtins` 原样；定义在 `tavotto` 包里的类原样（这是 Flask 进程里
+    真实的类对象，用户脚本不在这个进程里跑，`__module__` 冒充不进来）；其余走与收尾行同一条
+    `_exception_type_for_export`（点分名只留闭集里的包名，其余哈希）。"""
+    cls = type(exc)
+    module = cls.__module__ or ""
+    if module == "builtins":
+        label = cls.__name__
+    elif module == "tavotto" or module.startswith("tavotto."):
+        label = cls.__qualname__
+    else:
+        label = _exception_type_for_export(f"{module}.{cls.__qualname__}")
+    code = getattr(exc, "code", None)
+    if isinstance(code, int) and not isinstance(code, bool):
+        label += f"[{code}]"
+    elif isinstance(code, str) and _ERROR_CODE.match(code):
+        label += f"[{code}]"
+    errno = getattr(exc, "errno", None)
+    if isinstance(errno, int) and not isinstance(errno, bool):
+        label += f"[errno={errno}]"
+    return label
+
+
+def _numeric_json(text: str) -> str | None:
+    """`{"build_total_ms": 17.4, …}` 这种**键是标识符、值全是数**的 JSON 对象原样放行
+    （渲染计时那一行；排「慢」要它）。别的 JSON 不认。"""
+    if not text.startswith("{"):
+        return None
+    try:
+        obj = json.loads(text)
+    except ValueError:
+        return None
+    if not isinstance(obj, dict):
+        return None
+    for key, value in obj.items():
+        if not _ERROR_CODE.match(key):
+            return None
+        if value is None or isinstance(value, (bool, int, float)):
+            continue
+        return None
+    return json.dumps(obj, sort_keys=True)
+
+
+def _arg_for_export(value, route_of=None):
+    """一个日志参数 → 出门的形态。**出门的每一段要么是数、要么是闭集成员、要么是哈希**。
+
+    闭集成员由调用点用 `logsafe` 标出来（`known` / `known_each` / `route` / `version`，判据是值的
+    出处）；没标的字符串一律按下面的规则缩写或哈希。"""
+    if isinstance(value, logsafe.Plain):
+        return _ExportArg(value.text)
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, BaseException):
+        return _ExportArg(_exception_label(value))
+    if isinstance(value, os.PathLike):
+        return _ExportArg(_path_arg(os.fspath(value)))
+    if isinstance(value, dict):
+        try:
+            numeric = _numeric_json(json.dumps(value))
+        except (TypeError, ValueError):
+            numeric = None
+        return _ExportArg(numeric or f"str:{_digest(repr(value))}")
+    if not isinstance(value, str):
+        return _ExportArg(f"str:{_digest(repr(value))}")
+    text = _ANSI_ESCAPE.sub("", value)
+    if not text or _NUMERIC_TEXT.match(text):
+        return _ExportArg(text)
+    request = _REQUEST_LINE.match(text)
+    if request:
+        method, target, proto = request.groups()
+        rule = None
+        if route_of is not None:
+            try:
+                rule = route_of(method, target.split("?", 1)[0])
+            except Exception:  # noqa: BLE001 — 查不到路由就按「不认识」哈希
+                rule = None
+        return _ExportArg(f"{method} {rule or 'route:' + _digest(target)} {proto}")
+    numeric = _numeric_json(text)
+    if numeric is not None:
+        return _ExportArg(numeric)
+    if _is_absolute_path(text):
+        return _ExportArg(_path_arg(text))
+    if not re.search(r"\s", text) and ("/" in text or "\\" in text or _FILE_LIKE_EXT.search(text)):
+        return _ExportArg(_shorten_path_text(text))
+    return _ExportArg(f"str:{_digest(text)}")
+
+
+#: 绝对路径参数在 diagnostics.log 里先**括起来原样存**（本机文件），出包那一刻由
+#: `_export_log_lines` 换成 `_path_fact`：项目根 → 与 report.json 同一个 `<project:…>` 记号、
+#: 主目录 → `~`、其余段只留 `_KNOWN_SEGMENTS`，别的 `seg:<哈希>`。写入时还不知道哪些是项目根。
+#: 括号是**结构**：由这里写、只在这里写；路径自己带了括号字符的直接缩成哈希，不给它拆括号的机会。
+_PATH_OPEN, _PATH_CLOSE = "⟦", "⟧"
+_WRAPPED_PATH = re.compile(f"{_PATH_OPEN}([^{_PATH_OPEN}{_PATH_CLOSE}\n]*){_PATH_CLOSE}")
+
+
+def _is_absolute_path(text: str) -> bool:
+    return os.path.isabs(text) or re.match(r"^(?:[A-Za-z]:[\\/]|\\\\)", text) is not None
+
+
+def _path_arg(raw: str) -> str:
+    if not _is_absolute_path(raw) or any(c in raw for c in (_PATH_OPEN, _PATH_CLOSE, "\n", "\r")):
+        return _shorten_path_text(raw)
+    return f"{_PATH_OPEN}{raw}{_PATH_CLOSE}"
+
+
+class ExportLogFormatter(logging.Formatter):
+    """`cache/diagnostics.log` 的格式：**日志模板原样、参数按类型换形**。
+
+    存在的理由（REL-05-B1 / B2）：事后看一行文字，分不出哪一段是代码写的、哪一段是用户的——
+    `LOG.error("引擎渲染失败: %s: %s", stem, exc)` 格式化之后，异常 message（用户脚本 raise 的
+    文字）与模板长在同一行里。写入那一刻两者是分开的：`record.msg` 是源码里的字面量，
+    `record.args` 是运行时的值。于是：
+
+    * 模板只在 `_TRUSTED_TEMPLATE_LOGGERS` 的 logger 上原样，其余 logger 正文 `…`；
+    * 参数：数原样；异常只留类型 + 错误 code（`_exception_label`，message 不出门）；
+      像路径 / 文件名的走 `_shorten_path_text`（`…/file:<哈希>.py`，脚本名 `fig_priv.py` 同样）；
+      请求行只留方法 + 路由规则；键是标识符、值全是数的 JSON 原样（渲染计时）；其余 `str:<哈希>`；
+    * `exc_info` 的 traceback 走 `evidence_lines`（帧行只留缩写路径 + 行号、收尾行只留类型）；
+    * 绝对路径参数括成 `⟦…⟧` 原样存，出包时才换成与 report 同一套记号（`_export_log_lines`）；
+    * 一条记录一行，形如 `<时间> <级别> <logger> | <正文>`（正文里的换行换成 ` ⏎ `），证据块跟在它
+      下面。` | ` 是**出处标记**：`cache/app.log` 的记录是 `<logger>: `，`recent_errors` 靠它分辨
+      一条 ERROR 行是不是这里写的（`_EXPORT_RECORD`）。
+
+    不在事后猜哪一段是用户的字，也就不依赖任何「像不像敏感信息」的正则。"""
+
+    def __init__(self, route_of=None) -> None:
+        super().__init__()
+        self._route_of = route_of
+
+    def _message(self, record: logging.LogRecord) -> str:
+        name = record.name
+        trusted = any(name == n or name.startswith(n + ".") for n in _TRUSTED_TEMPLATE_LOGGERS)
+        if not trusted or not isinstance(record.msg, str):
+            return "…"
+        args = record.args
+        if not args:
+            return record.msg
+        try:
+            if isinstance(args, dict):
+                return record.msg % {k: _arg_for_export(v, self._route_of) for k, v in args.items()}
+            return record.msg % tuple(_arg_for_export(a, self._route_of) for a in args)
+        except (TypeError, ValueError, KeyError):
+            return f"{record.msg} （参数 {len(args)} 个，未能套进模板）"
+
+    def format(self, record: logging.LogRecord) -> str:
+        # 不调 `super().format`：它会把格式化好的 traceback 缓存到 `record.exc_text` 上，
+        # 同一条记录接着交给 app.log 的 handler 时就会用上这份删节版。
+        try:
+            message = self._message(record)
+        except Exception:  # noqa: BLE001 — 日志不许因为出门版本出错而丢
+            message = "…"
+        message = message.replace("\r", "").replace("\n", " ⏎ ")
+        line = f"{self.formatTime(record)} {record.levelname} {record.name} | {message}"
+        exc = record.exc_info[1] if record.exc_info else None
+        if exc is not None:
+            text = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+            evidence, _dropped = evidence_lines(text.splitlines())
+            if evidence:
+                line += "\n" + "\n".join(evidence)
+        return line
 
 
 def _log_tail(n: int = LOG_TAIL_LINES) -> list[str]:
@@ -424,6 +647,22 @@ def _log_tail(n: int = LOG_TAIL_LINES) -> list[str]:
     return lines[-n:]
 
 
+def _export_log_lines(roots: list[tuple[str, str]]) -> list[str]:
+    """diagnostics.log 的尾巴，括起来的绝对路径换成 `_path_fact`（项目记号 / `~` / 段哈希）。
+    report.json 的 `recent_errors`、复制诊断与包里的 app.log 都从这里取。"""
+    return [_WRAPPED_PATH.sub(lambda m: _path_fact(m.group(1), roots), ln) for ln in _log_tail()]
+
+
+#: `ExportLogFormatter` 写的记录行：`<时间> <级别> <logger> | <正文>`。
+_EXPORT_RECORD = re.compile(r"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d{3} (?P<level>[A-Z]+) [\w.\-]+ \| ")
+#: 任何其它出处的 ERROR 行（`cache/app.log` 的 `<logger>: <正文>`）只认得出这个前缀：时间、级别、
+#: logger 名。正文不知道哪一段是用户的字，一律 `…`；前缀都凑不齐的（脚本 print 进来的一句
+#: 「… ERROR …」）整行不要。
+_FOREIGN_ERROR_PREFIX = re.compile(
+    r"^(\d{4}-\d\d-\d\d[ T]\d\d:\d\d:\d\d(?:[,.]\d+)? ERROR [\w.\-]+)(?::|\s|$)"
+)
+
+
 def recent_errors(lines: list[str], limit: int = ERROR_TAIL) -> list[str]:
     """app.log 尾巴里的错误条目：ERROR 行，以及每段 traceback **最后那一句**。
 
@@ -432,6 +671,11 @@ def recent_errors(lines: list[str], limit: int = ERROR_TAIL) -> list[str]:
     `OSError: [WinError 5] …`）一个字都没带出来——报告长了一屏，信息量为零。
     这里把 traceback 头与它的收尾异常行配成一条；文件路径那些帧不进报告
     （脱敏面更小，读的人要的也只是那一句）。
+
+    ERROR 行**按出处**放行（REL-05-B1）：`ExportLogFormatter` 写的（`_EXPORT_RECORD`，正文由
+    日志模板 + 换过形的参数组成）原样；别的形状的只留「时间 级别 logger: …」——
+    `引擎渲染失败: boom: 脚本执行失败: <用户 raise 的文字>` 这种行里，哪一段是代码写的、
+    哪一段是用户的，事后分不出来，缩路径也救不了。
     """
     out: list[str] = []
     i = 0
@@ -451,8 +695,14 @@ def recent_errors(lines: list[str], limit: int = ERROR_TAIL) -> list[str]:
             out.append(f"{ln.strip()} → {_closer_for_export(tail)}" if tail else ln)
             i = j + 1 if tail else j
             continue
-        if " ERROR " in ln:
-            out.append(shorten_paths(ln))
+        exported = _EXPORT_RECORD.match(ln)
+        if exported:
+            if exported.group("level") == "ERROR":
+                out.append(shorten_paths(ln))
+        elif " ERROR " in ln:
+            foreign = _FOREIGN_ERROR_PREFIX.match(ln)
+            if foreign:
+                out.append(f"{foreign.group(1)}: …")
         i += 1
     return out[-limit:]
 
@@ -706,6 +956,10 @@ def _exception_type_for_export(head: str) -> str:
     return "exc:" + digest
 
 
+#: `_exception_type_for_export` 的哈希形态（`exc:…` / `matplotlib.exc:…`）开头的收尾行。
+_EXPORTED_EXC_TYPE = re.compile(r"^((?:[A-Za-z_]\w*\.)?exc:[0-9a-f]{10})(:.*)?$")
+
+
 def _closer_for_export(line: str) -> str:
     """traceback 的收尾行 → 进包的形态：类型名按闭集放行（否则哈希），自由文本的
     message 换成 `…`。
@@ -716,6 +970,11 @@ def _closer_for_export(line: str) -> str:
     加载器那几种形状时保留，而且只保留形状本身（模块名是标识符，`DLL load failed while
     importing X` 之后的操作系统文案也不带）。
     """
+    exported = _EXPORTED_EXC_TYPE.match(line)
+    if exported:
+        # 已经出过门的收尾行（`diagnostics.log` 里由 `ExportLogFormatter` 写的）：类型名本身
+        # 就是哈希，再按冒号切会把 `exc:…` 切成 `exc` 再哈希一遍
+        return exported.group(1) + (": …" if exported.group(2) else "")
     head, sep, message = line.partition(":")
     exc_type = _exception_type_for_export(head)
     if not sep or not message.strip():
@@ -996,7 +1255,7 @@ def build_report(project: dict | None = None, port: int | None = None) -> dict:
     mpl = bootstrap.matplotlib_version(worker_python) if worker_python else None
     roots = project_roots(project)
     caps = ai_bridge.capabilities()
-    lines = _log_tail()
+    lines = _export_log_lines(roots)
     errors = recent_errors(lines)
 
     report = {
@@ -1022,7 +1281,7 @@ def build_report(project: dict | None = None, port: int | None = None) -> dict:
         "paths": {
             "data_dir": str(config.data_dir()),
             "config_dir": str(config.config_dir()),
-            "log": str(_log_path()),
+            "log": str(_app_log_path()),
         },
         "render": {
             "worker_python": worker_python,
@@ -1127,7 +1386,8 @@ def build_bundle(
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("report.json", json.dumps(report, ensure_ascii=False, indent=1))
-        z.writestr("app.log", _redact_text("\n".join(_log_tail()), roots))
+        # 包里的 app.log 取自 diagnostics.log（`ExportLogFormatter` 写的出门版），不是 cache/app.log
+        z.writestr("app.log", _redact_text("\n".join(_export_log_lines(roots)), roots))
         try:
             cfg = json.loads(config.config_path().read_text(encoding="utf-8"))
             z.writestr(
@@ -1216,7 +1476,8 @@ def _readme(has_state: bool, has_trace: bool, project_keys: list[str] | None = N
         "\n"
         "包含 / This package contains:\n"
         "- report.json：系统、运行环境与探测结果\n"
-        "- app.log：最近的应用日志\n"
+        "- app.log：最近的应用日志（只有日志语句本身的固定文字；其中的文件名、路径、报错文字、\n"
+        "  请求参数换成哈希，异常只留类型与错误码）\n"
         "- config.json：用户配置（密钥已抹掉）\n"
         "  （report.json 的 render.worker_logs 段：渲染进程日志里的 Python 报错块与崩溃栈——\n"
         "  只留 traceback 的帧行（文件名换成哈希 + 行号，函数名不带；第三方库的文件多留一个\n"
@@ -1224,7 +1485,9 @@ def _readme(has_state: bool, has_trace: bool, project_keys: list[str] | None = N
         "  打印的内容与源码行已略去）\n" + extra_zh + "- manifest.json：本诊断包自身的格式说明\n"
         "\n"
         "- report.json: system and runtime information\n"
-        "- app.log: recent Tavotto application logs\n"
+        "- app.log: recent Tavotto application logs (the fixed text of each log statement only;\n"
+        "  file names, paths, error messages and request parameters in it are hashed, exceptions\n"
+        "  keep only their type and error code)\n"
         "- config.json: user configuration (secrets removed)\n"
         "  (report.json, render.worker_logs: Python traceback blocks and crash stacks from\n"
         "  the render process logs — only frame lines (hashed file name + line number, no\n"

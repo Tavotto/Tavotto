@@ -665,6 +665,44 @@ export function reattachPreview(panelId: string, renderKey: string): void {
   }
 }
 
+/**
+ * 文档变了之后来认领：**已提交、还在等权威渲染的预览，它代表的正式值还在不在文档里。**
+ *
+ * 松手后预览挂着等「拖动那一版」的权威 SVG（`awaitKey`）。这期间撤销（或重置元素、
+ * 历史跳转）把那几条 override 拿掉了：面板的渲染键回到缓存里的旧变体，而那份 SVG
+ * 字符串恰好就是画布上正挂着的显示退路——`svgHtml` 不变、`reattachPreview` 不跑，
+ * 拖动那一版晚到时也只入库。于是画布一直挂着文档里已经没有的位移，选择框（按 exact
+ * manifest 画在原位）、文档、画面三方各说各话（QA STATE-04-B1）。
+ *
+ * 判据是「这次手势提交的那组 patch（`commitElementPreview` 只交手势新写 / 改写的，
+ * 不含手势之前就有的无关 override）是否仍逐条在文档里」，而**不是**「文档的键还等不等于
+ * awaitKey」：松手后又改了别的东西（键变了、但拖动那条还在）时，新一版权威渲染照样
+ * 带着这次拖动，预览必须继续挂着，撤掉就是先弹回原位再跳回来。
+ * 不成立 → 结束会话、把这块面板上的预览全部还原到当前 DOM 的 base（同一面板上更早
+ * 交班、仍在等图的预览一并还原：宁可暂时显示旧图，也不显示文档里没有的东西）。
+ * 拖动进行中（还没提交）不归这里管。
+ */
+export function settleUnbackedCommit(panelId: string, overrides: readonly PreviewPatch[]): void {
+  const s = session
+  if (!s || s.panelId !== panelId || !s.pendingCommit) return
+  const current = new Set(overrides.map(patchId))
+  if (s.pendingCommit.every((p) => current.has(patchId(p)))) return
+  recordDiagnosticEvent({
+    type: 'preview.retire',
+    session: previewHash(s.id),
+    panel: panelHash(panelId),
+    // 闭集原因里没有「被撤销」一档；这与 reset 同性质：预览失去依据、账本作废并还原
+    reason: 'reset',
+    duration_ms: Math.max(0, Math.round((performance?.now?.() ?? Date.now()) - s.startedAt)),
+  })
+  s.settled = true
+  session = null
+  restorePanel(panelId)
+}
+
+/** patch 的身份（gid + prop + 值）：「这条正式值还在不在文档里」只按这一份比 */
+export const patchId = (p: PreviewPatch): string => `${p.gid}\u0000${p.prop}\u0000${JSON.stringify(p.value)}`
+
 /** 账本里记着的那些节点是不是还在文档里、还是同一批（= DOM 没被重插） */
 function domIntact(p: PanelPreview, svg: SVGSVGElement): boolean {
   if (!p.baseNodes.size && !p.edits.length) return false
