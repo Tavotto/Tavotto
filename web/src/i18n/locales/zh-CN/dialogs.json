@@ -1,6 +1,6 @@
 {
   "closeGuard": {
-    "body": "这份文档还有未保存的修改。关闭前要保存吗？",
+    "body": "这份排版还有未保存的修改。关闭前要保存吗？",
     "discard": "不保存",
     "save": "保存并关闭",
     "saveFailed": "保存失败，窗口保持打开。请先解决保存问题，或选择「不保存」直接关闭。",
@@ -26,7 +26,7 @@
     "conflict": "导出目录里已经有 {{files}}。",
     "conflictRename": "另存一份",
     "conflictReplace": "覆盖",
-    "editedDuringExport": "导出期间文档又改了。文件里是点「导出」时的内容。",
+    "editedDuringExport": "导出期间排版又改了。文件里是点「导出」时的内容。",
     "epsHint": "矢量 · 不支持透明度",
     "epsUnavailable": {
       "canvas_scope": "EPS 只支持按「原图尺寸」导出单张图。画布由 PDF 引擎合成，不支持 PostScript。",
@@ -140,18 +140,18 @@
     }
   },
   "layout": {
-    "conflict": "磁盘上已存在名为「{{name}}」的文档，由其他窗口或外部工具写入。",
+    "conflict": "磁盘上已存在名为「{{name}}」的排版，由其他窗口或外部工具写入。",
     "conflictDisk": "磁盘上那份：{{canvases}} 张画布 / {{objects}} 个对象",
-    "empty": "项目里还没有命名文档",
+    "empty": "项目里还没有排版",
     "load": "载入",
-    "nameLabel": "文档名",
-    "namePlaceholder": "文档名",
-    "nameTaken": "已有同名文档。继续会覆盖它。",
-    "openTitle": "打开文档",
+    "nameLabel": "排版名",
+    "namePlaceholder": "排版名",
+    "nameTaken": "已有同名排版。继续会覆盖它。",
+    "openTitle": "打开排版",
     "overwrite": "仍然覆盖",
     "saveAs": "另存为",
-    "saveTitle": "另存为文档",
-    "saved": "已另存为文档：{{name}}",
+    "saveTitle": "另存为新排版",
+    "saved": "已另存为新排版：{{name}}",
     "saving": "正在保存…",
     "savesIntoLabel": "保存到"
   },
@@ -266,24 +266,24 @@
         "label": "打开图层"
       },
       "load-layout": {
-        "keywords": "open load layout zr zairu",
-        "label": "载入画布文件…"
+        "keywords": "open load layout zr zairu dk dakai pb paiban",
+        "label": "打开排版…"
       },
       "new-doc": {
-        "keywords": "new blank xj xinjian",
-        "label": "新建空白文档"
+        "keywords": "new blank xj xinjian pb paiban",
+        "label": "新建空白排版"
       },
       "rulers": {
         "keywords": "ruler bc biaochi",
         "label": "显示 / 隐藏标尺"
       },
       "save-document": {
-        "keywords": "save document bc baocun cunpan",
-        "label": "保存当前文档"
+        "keywords": "save layout bc baocun cunpan pb paiban",
+        "label": "保存排版"
       },
       "save-layout": {
-        "keywords": "save layout bc baocun",
-        "label": "保存为画布文件…"
+        "keywords": "save as layout lcw lingcunwei bc baocun pb paiban",
+        "label": "另存为新排版…"
       },
       "select-all": {
         "keywords": "select all qx quanxuan",
@@ -307,7 +307,7 @@
       },
       "versions": {
         "keywords": "version history timeline bb sjx banben",
-        "label": "文档版本…"
+        "label": "排版版本…"
       },
       "tutorial-start": {
         "label": "开始教程",
@@ -684,7 +684,7 @@
     "refCount_other": "（{{count}} 张图引用）",
     "selectAria": "为 {{name}} 选择替代素材",
     "skipPanel": "跳过这张图",
-    "titleDoc": "文档里的图缺少素材",
+    "titleDoc": "排版里的图缺少素材",
     "titlePaste": "粘贴的图缺少素材"
   },
   "settings": {
@@ -733,7 +733,7 @@
           "app_started": "应用启动：桌面版还是浏览器版。",
           "canvas_created": "新建画布：空白、来自项目还是复制。",
           "context_bar_multi_used": "多选浮动栏：按钮类型与选中数量档位。",
-          "document_saved": "文档保存：手动还是自动、结果如何。",
+          "document_saved": "排版保存：手动还是自动、结果如何。",
           "export_completed": "导出完成：格式、是否带报告、图的数量。",
           "figure_edit_completed": "完成编辑：改动类别与数量。",
           "figure_opened": "打开图内编辑：PDF 还是位图、是否可编辑。",
@@ -1182,7 +1182,7 @@
       "restartAfter": "后生效。当前进程仍运行旧版本代码。",
       "restartBefore": "升级完成。",
       "restartStrong": "请重启 Tavotto",
-      "signatureNote": "更新包由官方签名，安装前会校验；校验不过不会安装。项目、画布与设置都在用户数据目录，升级不受影响。",
+      "signatureNote": "更新包由官方签名，安装前会校验；校验不过不会安装。你的项目、排版与设置都不在应用的安装目录里，升级不受影响。",
       "sourceUpgrade": "源码检出，请执行",
       "upgrading": "升级中…",
       "lastCheckedNoUpdate": "{{time}} · 没有新版本",
@@ -1209,7 +1209,7 @@
     "annotationGroup": "标注与页面",
     "annotationText": "标注文字",
     "bold": "粗体",
-    "deleteBody": "删除后无法找回。已应用到文档的修改不受影响。",
+    "deleteBody": "删除后无法找回。已应用到排版的修改不受影响。",
     "deleteTitle": "删除样式「{{name}}」？",
     "descriptionEmpty": "把字号、线宽、刻度、配色存成命名样式，批量应用。只写图内修改，不改源文件。",
     "emptyBody": "还没有保存的样式。选中一张已渲染、可编辑的图，提取字号、线宽、刻度、配色作为起点。",
@@ -1303,13 +1303,13 @@
   "versions": {
     "autoBadge": "自动",
     "beforeRestore": "恢复前（{{time}}）",
-    "close": "关闭文档版本",
+    "close": "关闭排版版本",
     "compareAria": "叠加对比",
     "compareDescription": "底图 = 该版本；半透明描边 = 当前画布",
     "compareTip": "大尺寸叠加对比（底图 = 该版本，描边 = 当前）",
     "compareTitle": "叠加对比",
     "delete": "删除版本",
-    "deleteBody": "删除后无法找回，当前文档不受影响。",
+    "deleteBody": "删除后无法找回，当前排版不受影响。",
     "deleteTitle": "删除版本「{{name}}」？",
     "diff": {
       "added": "当前新增：{{name}}",
@@ -1334,7 +1334,7 @@
       "unlocked": "{{name}}：已解锁",
       "zorder": "对象层级顺序不同"
     },
-    "drawerLabel": "文档版本",
+    "drawerLabel": "排版版本",
     "duplicate": "复制版本",
     "emptyTitle": "还没有版本",
     "fromCanvas": "来自画布「{{name}}」",
@@ -1348,16 +1348,16 @@
     "previewApproximate": "图内修改预览不可用，下方缩略图是磁盘原图。",
     "rename": "重命名版本",
     "restore": "恢复为新版本",
-    "restoreHistory": "恢复文档版本「{{name}}」",
+    "restoreHistory": "恢复排版版本「{{name}}」",
     "restoreMissingCanvasBody": "这个检查点来自已删除的画布「{{from}}」。继续会写进当前画布「{{to}}」，覆盖现有内容。",
     "restoreMissingCanvasTitle": "原画布已不存在",
     "restoreOtherCanvasBody": "这个检查点拍自画布「{{from}}」，你当前在「{{to}}」。恢复会切到「{{from}}」写入，不动当前画布。",
     "restoreOtherCanvasTitle": "恢复到画布「{{name}}」？",
     "restoreUnknownCanvasBody": "它由旧版本留下，未记录来自哪张画布。继续会写进当前画布「{{to}}」，覆盖现有内容。",
     "restoreUnknownCanvasTitle": "这个检查点没有来源画布",
-    "restored": "已恢复文档版本「{{name}}」，可撤销，未改动源文件。",
+    "restored": "已恢复排版版本「{{name}}」，可撤销，未改动源文件。",
     "save": "存版本",
-    "saved": "已把当前文档存成新版本",
+    "saved": "已把当前排版存成新版本",
     "summary": {
       "added_other": "新增 {{count}} 个对象",
       "baseline_other": "{{count}} 个对象",
@@ -1366,7 +1366,7 @@
       "resized": "图幅 {{fromW}} × {{fromH}} → {{toW}} × {{toH}} mm",
       "sameMetrics": "对象数与图幅未变"
     },
-    "title": "文档版本",
+    "title": "排版版本",
     "versionName": "版本名称",
     "viewLabel": "预览哪一版",
     "viewCurrent": "当前",
@@ -1407,14 +1407,14 @@
       "unavailable": "教程资源不完整。请重新安装 Tavotto。",
       "open_failed": "教程项目打不开。再试一次，或打开自己的项目。",
       "locked": "教程项目里有文件正被其他程序占用，关掉后再试。",
-      "document_failed": "教程画布读不出来，版本不兼容或文件缺失。试试「重置教程项目」。",
+      "document_failed": "教程排版读不出来，版本不兼容或文件缺失。试试「重置教程项目」。",
       "cancelled": "已取消。",
       "no_api": "这个环境没有提供教程。"
     },
     "reset": {
       "title": "重置教程项目？",
       "body": "教程项目恢复成刚安装的样子。你的改动、写回的图和进度都会清除，别的项目不受影响。",
-      "bodyWithLayouts": "教程项目恢复成刚安装的样子。你另存的画布文件也会清除：{{names}}；要保留请先导出，别的项目不受影响。",
+      "bodyWithLayouts": "教程项目恢复成刚安装的样子。你在里面另存的排版也会清除：{{names}}；要保留请先导出，别的项目不受影响。",
       "confirm": "重置并重新开始"
     },
     "steps": {

@@ -91,7 +91,7 @@ class DocumentError(ValueError):
 def _reject_non_finite(literal: str) -> Any:
     raise DocumentError(
         "non_finite_on_disk",
-        f"这份文档里含有 {literal}——它不是合法的 JSON，浏览器读不出来（Tavotto 没有改动这个文件）",
+        f"这份排版里含有 {literal}——它不是合法的 JSON，浏览器读不出来（Tavotto 没有改动这个文件）",
     )
 
 
@@ -138,23 +138,23 @@ def validate_document(raw: Any) -> dict:
     那不是"有点怪"，那是写出去谁都读不回来。
     """
     if not isinstance(raw, dict):
-        raise DocumentError("invalid_document", "无效的文档（需要一个 JSON 对象）")
+        raise DocumentError("invalid_document", "无效的排版（需要一个 JSON 对象）")
 
     schema = raw.get("schema")
     if schema not in SUPPORTED_SCHEMAS:
         if isinstance(schema, int) and schema > SCHEMA_CURRENT:
             raise DocumentError(
                 "schema_too_new",
-                f"这份文档来自更新的 Tavotto（schema {schema}），请升级后再打开",
+                f"这份排版来自更新的 Tavotto（schema {schema}），请升级后再打开",
             )
         raise DocumentError(
             "invalid_document",
-            f"无效的文档（需要 schema {' 或 '.join(str(s) for s in SUPPORTED_SCHEMAS)}）",
+            f"无效的排版（需要 schema {' 或 '.join(str(s) for s in SUPPORTED_SCHEMAS)}）",
         )
 
     if schema == SCHEMA_PROJECT:
         canvases = raw.get("canvases")
         if not isinstance(canvases, list) or not canvases:
-            raise DocumentError("invalid_document", "项目文档至少要有一张画布")
+            raise DocumentError("invalid_document", "一份排版至少要有一张画布")
 
     return raw

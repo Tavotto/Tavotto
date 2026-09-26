@@ -68,8 +68,8 @@ export function LeftPanel({
           <DrawerCount value={objectCount} label={t('layerTree.count', { count: objectCount })} />
         )}
         {tab === 'elements' && <ElementCount />}
-        {/* 问题面板的标题不再带计数（二审 C2，拍板「乙」）：页签「当前图 13 · 整个文档 14」
-            已经把两个范围各说了一遍，轨道角标说的是整个文档；标题再来一个 13 就是
+        {/* 问题面板的标题不再带计数（二审 C2，拍板「乙」）：页签「当前图 13 · 整份排版 14」
+            已经把两个范围各说了一遍，轨道角标说的是整份排版；标题再来一个 13 就是
             一个概念三个数字 */}
         <span className="flex-1" />
         {/* 面板头的图标钮走默认档（16px 图标）：`sm` 只给与 11–12px 文字并排的行内小钮

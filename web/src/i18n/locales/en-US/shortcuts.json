@@ -20,7 +20,7 @@
     "tutorial": "Tutorial"
   },
   "key": {
-    "copyPaste": "Copy / paste objects across documents",
+    "copyPaste": "Copy / paste objects across layouts",
     "delete": "Delete objects; in figure editing, hides the element instead — restorable.",
     "duplicate": "Duplicate the selection in place",
     "enter": "Edit the selection: text enters editing, editable figures enter figure editing",
@@ -32,8 +32,8 @@
     "nudge": "Nudge 0.5 mm / 5 mm",
     "palette": "Command palette",
     "pan": "Pan the canvas",
-    "saveDocument": "Save this document",
-    "saveLayout": "Save as canvas file",
+    "saveDocument": "Save layout",
+    "saveLayout": "Save layout as",
     "script": "Superscript / subscript (in the properties panel text box)",
     "selectAll": "Select all",
     "tools": "Select / text / arrow / rectangle / ellipse / line",

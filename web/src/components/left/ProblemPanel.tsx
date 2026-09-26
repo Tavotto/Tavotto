@@ -71,7 +71,7 @@ export const MIN_HIDDEN_ROWS = 3
  *
  * ### 呈现（审计 T09；2026-09-11 Visual Consolidation Session 4 定形）
  *
- * * **范围**：「当前图 / 整个文档」两档等分的下划线页签。判据在 `lib/problemList.ts`，
+ * * **范围**：「当前图 / 整份排版」两档等分的下划线页签。判据在 `lib/problemList.ts`，
  *   抽屉标题的计数与这里同一份。轨道角标仍是全文档数——它是入口，不跟着范围变。
  * * **筛选条**：`● 阻断 25   ● 警告 110   ● 建议 30` 一行轻量的开关，等级色只在
  *   6px 的点上；选中是 selected 轻 tint + 字重，不是一整块红 / 黄。
@@ -168,7 +168,7 @@ export function ProblemPanel() {
 
   const expandGroup = (ruleCode: string) => setExpanded((prev) => new Set(prev).add(ruleCode))
 
-  // 两个页签各带自己的计数（审计 B55：「当前图 14 / 整个文档 16」两个数得同时看得见，
+  // 两个页签各带自己的计数（审计 B55：「当前图 14 / 整份排版 16」两个数得同时看得见，
   // 用户才知道切过去会多出几条）。判据与清单同一份 `issuesInScope`
   const figureCount = figureId ? issuesInScope(all, 'figure', figureId).length : 0
   const documentCount = all.length
@@ -263,7 +263,7 @@ export function ProblemPanel() {
              问题」），删掉一份（左栏审计 L35） */
           <EmptyState icon={CircleCheck} title={pr('none')} />
         ) : issues.length === 0 ? (
-          /* 范围裁掉了：整个文档里有问题、这张图上没有——是两句不同的话 */
+          /* 范围裁掉了：整份排版里有问题、这张图上没有——是两句不同的话 */
           <EmptyState
             icon={CircleCheck}
             title={pr('noneInScope')}
@@ -330,7 +330,7 @@ export function ProblemPanel() {
 /* ------------------------------- 范围 ------------------------------------- */
 
 /**
- * 「当前图 / 整个文档」两个页签。没有当前图时那一档留在原位灰掉、
+ * 「当前图 / 整份排版」两个页签。没有当前图时那一档留在原位灰掉、
  * 说明为什么——消失的选项解释不了自己。
  */
 function ScopeBar({
@@ -354,7 +354,7 @@ function ScopeBar({
     ) : null
   return (
     <div className="shrink-0 px-3">
-      {/* 「当前图 / 整个文档」是看哪一页的清单，不是一个取值：下划线页签（`Tabs`），
+      {/* 「当前图 / 整份排版」是看哪一页的清单，不是一个取值：下划线页签（`Tabs`），
           与右栏「属性 / 画布」同一条线；取值控件是 `Segmented` */}
       {/* 页签条 36：同一个 Tabs 原语在左栏 32、右栏 36 是两档头高（左栏审计 L25） */}
       <div className="flex h-9 items-center border-b border-border">

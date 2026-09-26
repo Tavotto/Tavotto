@@ -479,7 +479,7 @@ async function seedThree() {
 }
 
 const rows = () => [...container.querySelectorAll<HTMLElement>('[data-issue-row]')]
-// 「当前图 / 整个文档」是看哪一页的清单——页签（role=tab），不是取值（radio）
+// 「当前图 / 整份排版」是看哪一页的清单——页签（role=tab），不是取值（radio）
 const radios = () => [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
 const checkedRadio = () => radios().find((r) => r.getAttribute('aria-selected') === 'true')
 const radioNamed = (s: string) => radios().find((r) => r.textContent?.includes(s))!
@@ -529,18 +529,18 @@ describe('按规则聚合（审计 T09）', () => {
   })
 })
 
-describe('范围：当前图 / 整个文档（审计 T09）', () => {
-  it('在图内编辑里打开面板，默认只看这张图；切到整个文档才列别的图', async () => {
+describe('范围：当前图 / 整份排版（审计 T09）', () => {
+  it('在图内编辑里打开面板，默认只看这张图；切到整份排版才列别的图', async () => {
     await seedThree()
     useUiStore.setState({ elementPanelId: 'p1' })
     await mount(<ProblemPanel />)
     expect(checkedRadio()?.textContent).toContain('当前图')
     expect(text()).toContain('X 轴刻度')
     expect(text()).not.toContain('Y 轴刻度')
-    await click(radioNamed('整个文档'))
+    await click(radioNamed('整份排版'))
     expect(useUiStore.getState().problemScope).toBe('document')
     expect(text()).toContain('Y 轴刻度')
-    // 页面级那条（主语是整张画布）也只在「整个文档」里出现
+    // 页面级那条（主语是整张画布）也只在「整份排版」里出现
     expect(rows().length).toBe(total())
     expect(text()).toContain('页面比例不合规范')
   })
@@ -557,25 +557,25 @@ describe('范围：当前图 / 整个文档（审计 T09）', () => {
     expect(checkedRadio()?.getAttribute('title')).toContain('Fig2.pdf')
   })
 
-  it('没有正在编辑或选中的图：「当前图」灰掉并说明原因，实际看整个文档', async () => {
+  it('没有正在编辑或选中的图：「当前图」灰掉并说明原因，实际看整份排版', async () => {
     await seedThree()
     useUiStore.setState({ problemScope: 'figure' })
     await mount(<ProblemPanel />)
     const fig = radioNamed('当前图')
     expect(fig.disabled).toBe(true)
     expect(fig.getAttribute('title')).toContain('没有正在编辑或选中的图')
-    expect(checkedRadio()?.textContent).toContain('整个文档')
+    expect(checkedRadio()?.textContent).toContain('整份排版')
     expect(rows().length).toBe(total())
   })
 
-  it('范围裁到一张没有问题的图：说「这张图上没有问题」并给回整个文档的出口，不冒充「未发现问题」', async () => {
+  it('范围裁到一张没有问题的图：说「这张图上没有问题」并给回整份排版的出口，不冒充「未发现问题」', async () => {
     await seedThree()
     useUiStore.setState({ elementPanelId: 'p3' })
     await mount(<ProblemPanel />)
     expect(text()).toContain('这张图上没有问题')
-    expect(text()).toContain(`整个文档里还有 ${total()} 项问题`)
+    expect(text()).toContain(`整份排版里还有 ${total()} 项问题`)
     expect(text()).not.toContain('未发现问题')
-    await click(byText('整个文档')!)
+    await click(byText('整份排版')!)
     expect(rows().length).toBe(total())
   })
 
@@ -744,12 +744,12 @@ describe('长列表：一组默认只展开前几行', () => {
  * 带一行小标题，排在需要处理的组之后——它不是通过，也不是错误。
  */
 describe('页签计数与「无法自动检查」分段', () => {
-  it('「当前图」与「整个文档」各带自己的数，两个数同时看得见', async () => {
+  it('「当前图」与「整份排版」各带自己的数，两个数同时看得见', async () => {
     await seedThree()
     useUiStore.setState({ elementPanelId: 'p1' })
     await mount(<ProblemPanel />)
     const fig = radioNamed('当前图')
-    const doc = radioNamed('整个文档')
+    const doc = radioNamed('整份排版')
     const figureCount = useValidationStore
       .getState()
       .issues.filter((i) => i.objectRef.objectId === 'p1').length

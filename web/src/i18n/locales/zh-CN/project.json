@@ -90,6 +90,7 @@
     "emptyRecent": "打开过的项目会出现在这里",
     "filter": "按名称或路径筛选",
     "filterLabel": "筛选项目",
+    "hint": "项目是你的脚本文件夹；一个项目可以有多份排版。",
     "listLabel": "{{section}}项目",
     "moveDown": "下移",
     "moveUp": "上移",
