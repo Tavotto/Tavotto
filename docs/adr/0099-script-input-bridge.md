@@ -29,7 +29,7 @@ safe worker 的 `sys.stdin` **就是协议管道**（`worker.main()` 从它逐�
 | --- | --- | --- |
 | `builtins.input(prompt)` | 桥接函数 | 提示写进脚本的 stdout（和终端一样落进 worker.log），问一次，回答不带换行；EOF → `EOFError` |
 | `sys.stdin` | `BridgedStdin`（`io.TextIOBase`） | `readline()` 问一次，回答补 `\n`；EOF → `""`。`read()` 问一次，把答案当成全部内容，之后一律 EOF。`readlines()` / 迭代建在 `readline()` 上 |
-| `getpass.getpass(prompt)` | 桥接函数 | **只转发提示、不做掩码**：界面上这个框显示的是明文（ADR 在此写明，不假装保密）；答案同样按项目记住 |
+| `getpass.getpass(prompt)` | 桥接函数 | **只转发提示、不做掩码**：界面上这个框显示的是明文（ADR 在此写明，不假装保密）；**答案不记住**，每次都问（口令不落盘） |
 
 - 这三样装上就不卸：build 之后脚本已经跑完，再有谁读 stdin（极少见，比如导出时回调里的 input），拿到的是 EOF，
   **绝不会再读到协议管道**。协议循环持有的是 `main()` 开头留下的原始 stdin 引用。
@@ -74,13 +74,15 @@ safe worker 的 `sys.stdin` **就是协议管道**（`worker.main()` 从它逐�
 - **键** = (脚本相对项目的 POSIX 路径, 本次运行里第 N 次读取, 提示原文)。提示文字变了就当成新问题重新问；
   同一序号的旧条目被新条目替换。`getpass` / `readline` / `read` 与 `input` 共用一个序号计数。
 - **位置**（用户拍板中，先按 A）：
-  - **A（当前实现）**：项目里的 `tavottofile/_script_inputs.json`。重跑、换电脑都能复现；会随项目包一起走。
+  - **A（当前实现）**：项目里的 `tavottofile/_script_inputs.json`。重跑、换电脑都能复现：随项目**文件夹**一起复制、
+    同步、进 git。**项目包（`/api/package`，只打画布 + 素材 + 脚本）不含它**——这是现状，不是为本 ADR 新加的剔除。
     登记进 `documents.RESERVED_DOCUMENT_FILENAMES`，免得被当成画布列出来。
   - B：本机 `data_dir` 按项目存。不外泄，但换电脑、分享项目后会重新问。
   - C：放在项目里，打项目包时剔除。
   位置**只**由 `scriptanswers.answers_path(project_root)` 决定，换成 B / C 只改这一个函数（外加 C 的剔除）。
-- **隐私**：答案可能含路径。答案管理里明写「答案保存在项目里，会随项目一起分享」；答案不进遥测、不进诊断包、
-  不进 app.log（日志只记「第 N 问已作答」）。
+- **隐私**：答案可能含路径。答案管理里明写「答案保存在项目文件夹的 tavottofile/_script_inputs.json 里，会随项目文件夹
+  一起复制、同步或分享；项目包不包含它」；答案不进遥测、不进诊断包、不进 app.log（日志只记「第 N 问已作答」）。
+  `getpass` 读的那一问不记住。
 - 写入一律 `atomicio.write_json`；读用 `documents.loads_document` 的同一条非有限数纪律（答案只是字符串，读坏了当作空）。
 
 ### 五、谁来答：三种策略
@@ -116,6 +118,8 @@ safe worker 的 `sys.stdin` **就是协议管道**（`worker.main()` 从它逐�
   下一问来了再打开（界面上表现为同一个框换了内容）。
 - 对话框上有「停止脚本」：走现成的 `pool.force_cancel`（硬杀会话，与试运行的取消同一条路），在飞的请求以
   `execution_cancelled` 落地。循环里无上限的 `input()` 靠它中止。
+- 答案管理的入口：素材库「脚本」区那一行上的「记住的输入」图标钮——**只在这个脚本真有记住的答案时出现**，其余
+  脚本行一个像素不变（没有给每一行加 ⋯ 菜单）；自动回填的轻提示上的「修改」也打开它。
 - 「结束输入」按钮回 EOF（给 `for line in sys.stdin` 这类读到 EOF 才停的循环）。
 - 对话框不能用 Esc / 点外面关掉：关掉而不答，worker 会白等 10 分钟。
 
@@ -134,9 +138,17 @@ safe worker 的 `sys.stdin` **就是协议管道**（`worker.main()` 从它逐�
 - stdout 片段有上限：最近 `TAIL_LINES = 40` 行、`TAIL_CHARS = 4000` 字符；提示本身截到 `PROMPT_CHARS = 2000`。
 - 会话认证不开旁路：新端点全在 guard 之内；会合目录只在 Tavotto 自己的缓存里；worker 沙盒与删除守卫原样。
 
+## 用例的等待上限
+
+用例把 `TAVOTTO_SCRIPT_INPUT_TIMEOUT` 缩到 20 秒（超时用例 1.5 秒）：桥接的某一环回归时（比如父进程不再当答题方），
+用例在几十秒内红，而不是挂满 10 分钟。**唯一例外**是「桥接根本没装」：那时脚本读的是协议管道，按
+`BUILD_IDLE_TIMEOUT` 的静默看门狗才会被收——这正是本 ADR 要修的症状本身。
+
 ## 看护
 
 `tests/test_script_input.py`（worker 层：input / readline / read / getpass 被桥接；超时 EOFError 与 `script_input_timeout`；
 `except Exception` 吞不掉 `ScriptNeedsInput`；两条控制面同一行为）、`tests/test_script_input_api.py`（端点、SSE、
 记住的答案、缓存失效先热缓存再改答案、数据绑定修订、verify 重放用同一组答案、没有能答题的界面立即报错）、
-`web/src/store/scriptInputStore.test.ts`、`web/src/components/ScriptInputDialog.test.tsx`、`web/e2e/script-input.spec.ts`。
+`tests/test_write_back.py::test_verify_replay_answers_script_input_with_the_hot_answers`、
+`web/src/store/scriptInputStore.test.ts`、`web/src/components/ScriptInputDialog.test.tsx`、
+`web/src/components/ScriptAnswersDialog.test.tsx`、`web/e2e/script-input.spec.ts`。

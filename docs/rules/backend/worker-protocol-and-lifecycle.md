@@ -113,6 +113,16 @@
   `test_workerd_client.py` 的假 supervisor 两条（每处 call site 各一条，
   合并成一条就抓不到只漏改一处的回归）。
 
+- **脚本里的 `input()` 不走协议管道（ADR 0099，2026-09-26）**。safe worker 的 `sys.stdin` 就是协议管道：
+  build 期间 `scriptinput.install()` 换掉 `builtins.input` / `sys.stdin` / `getpass.getpass`，每一问写成会话缓存目录
+  `out/script-input/` 里的 `req-<n>.json`，父进程在 **`ensure_built` 这一次请求期间**由 `inputbroker.serving()` 轮询作答
+  （两条控制面同一个 context manager；Rust 与信封一个字节不动，build 响应只加 `script_inputs` 字段）。协议循环读的是
+  `main()` 开头定死的 `protocol_in`，不是 `sys.stdin`。等人上限 `scriptinput.INPUT_WAIT_TIMEOUT` **必须小于**
+  `BUILD_IDLE_TIMEOUT`（到点 EOF，看门狗轮不到杀等人的 worker）；发问与作答各往 worker.log 写一行，静默计时各清零一次。
+  没人能答 → `ScriptNeedsInput`（**BaseException**，脚本的 `except Exception` 吞不掉）→ `script_needs_input`；超时后脚本没接住
+  EOF → `script_input_timeout`。写回的 `one_shot(script_inputs=热态 last_build_script_inputs)` 严格重放、从不问人。
+  看护：`tests/test_script_input.py`（两条控制面）、`tests/test_script_input_api.py`。
+
 ## 速查表原要点（2026-09-25 迁入，#608）
 
 `src/tavotto/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
