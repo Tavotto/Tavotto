@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import ast
+import math
 from pathlib import Path
 
 import pytest
@@ -61,6 +62,8 @@ def _is_round_2(node: ast.expr) -> bool:
         and len(node.args) == 2
         and not node.keywords
         and not isinstance(node.args[0], ast.Starred)
+        # `round(1e309, 2)` / `round(float("inf"), 2)` 取整完还是无穷：写死的非有限数不因为包了 round 就合格
+        and not _is_non_finite_literal(node.args[0])
         and isinstance(node.args[1], ast.Constant)
         and type(node.args[1].value) is int
         and node.args[1].value == 2
@@ -85,10 +88,47 @@ _MAX_DEPTH = 4
 
 
 def _is_two_decimal_number(value: object) -> bool:
+    """两位以内的**有限**小数。
+
+    `round(inf, 2) == inf`：只比「取整前后相等」的话，溢出成无穷的字面量（`1e309`）会被当成两位小数
+    放行，manifest 就能报出非有限的页面 pt 值（#557 评审 P2）。先判有限，再判位数。
+    """
     return (
         isinstance(value, (int, float))
         and not isinstance(value, bool)
+        and math.isfinite(float(value))
         and round(float(value), 2) == float(value)
+    )
+
+
+def _is_non_finite_literal(node: ast.expr) -> bool:
+    """写死的非有限数：溢出的字面量（`1e309`）、`float("inf")` / `float("nan")`、`math.inf` / `math.nan`。
+
+    只认这几种能在源码上读出来的形状；运行时算出来的无穷（`round(float(p.lw), 2)` 里 `p.lw` 是 inf）
+    不在 AST 的视野里——那是引擎取值的事，这把尺子判不了，也不假装判。
+    """
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.USub, ast.UAdd)):
+        return _is_non_finite_literal(node.operand)
+    if isinstance(node, ast.Constant):
+        v = node.value
+        return isinstance(v, (int, float)) and not isinstance(v, bool) and not math.isfinite(v)
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "float"
+        and len(node.args) == 1
+        and isinstance(node.args[0], ast.Constant)
+        and isinstance(node.args[0].value, str)
+    ):
+        try:
+            return not math.isfinite(float(node.args[0].value))
+        except ValueError:
+            return False
+    return (
+        isinstance(node, ast.Attribute)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "math"
+        and node.attr in {"inf", "nan"}
     )
 
 
@@ -375,6 +415,9 @@ def test_every_traced_source_must_be_two_decimals(tmp_path):
         ('bb = {"lw": round(float(p.lw), 2)}', 'bb = {"lw": float(p.lw)}'),
         ('bb = {"lw": round(float(p.lw), 2)}', 'bb = {"lw": round(float(p.lw), 1)}'),
         ('TABLE = {"bbox_linewidth": 0.0}', 'TABLE = {"bbox_linewidth": 0.125}'),
+        # 常量表里溢出成无穷的字面量（#557 评审 P2）
+        ('TABLE = {"bbox_linewidth": 0.0}', 'TABLE = {"bbox_linewidth": 1e309}'),
+        ('bb = {"lw": round(float(p.lw), 2)}', 'bb = {"lw": 1e309}'),
         ('TABLE = {"bbox_linewidth": 0.0}', "TABLE = dict(bbox_linewidth=0.0)"),
         (
             'bb = {"lw": TABLE["bbox_linewidth"]}',
@@ -406,6 +449,16 @@ def test_every_traced_source_must_be_two_decimals(tmp_path):
         "round(float(p.lw), 2) if p else -0.5",  # 一元负号：读不出就红
         "round(float(p.lw), 2.0)",
         "round(float(p.lw), ndigits=2)",
+        # 非有限的字面量（#557 评审 P2）：AST 把 `1e309` 存成 inf，而 `round(inf, 2) == inf`
+        "round(float(p.lw), 2) if p else 1e309",
+        "round(float(p.lw), 2) or 1e309",
+        "1e309",
+        "round(1e309, 2)",
+        "round(-1e309, 2)",
+        "round(float('inf'), 2)",
+        "round(float('nan'), 2)",
+        "round(math.inf, 2)",
+        "round(math.nan, 2)",
     ],
 )
 def test_every_branch_and_fallback_is_two_decimals(tmp_path, value):
@@ -420,6 +473,9 @@ def test_every_branch_and_fallback_is_two_decimals(tmp_path, value):
         "round(float(p.lw), 2) if p else 8",
         "round(float(p.lw), 2) if p else (0.5 if q else 1.0)",
         "round(float(p.lw), 2) or 0.0",
+        # 有限判据不误伤：写死的有限数包 round 照样合格
+        "round(0.125, 2)",
+        "round(float('1.5'), 2)",
     ],
 )
 def test_two_decimal_fallbacks_still_pass(tmp_path, value):
