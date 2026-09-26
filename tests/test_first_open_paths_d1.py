@@ -629,9 +629,10 @@ def test_path06_probe_then_read_is_a_guided_stop_in_the_sandbox_and_correct_in_p
     tmp_path,
 ):
     """默认沙盒：`np.loadtxt` 直读（经 numpy DataSource 的只读回退）自动成功、全序列 = 真值；而先
-    `exists/glob/listdir` 再读的脚本在沙盒里看到的是空目录——**不**算自动成功：产品报
-    `no_figures_captured`（带脚本自己的输出），不发布图；用户改「在脚本目录里运行」后三个探测
-    与读取一致、全序列 = 真值。"""
+    `exists/glob/listdir` 再读的脚本在沙盒里看到的是空目录——ADR 0084 起这些探路调用是首开证据：
+    准备接口先问（`script_dir_evidence`，推荐脚本目录），一行脚本不跑；用户选「继续沙盒」时盲区如实
+    保留（`no_figures_captured`，带脚本自己的输出，不发布图）；选推荐的「在脚本目录里运行」后三个
+    探测与读取一致、全序列 = 真值。"""
     paper, truth = _d1(tmp_path)
     a = paper / "analysis"
     a.mkdir()
@@ -650,13 +651,20 @@ def test_path06_probe_then_read_is_a_guided_stop_in_the_sandbox_and_correct_in_p
         assert state["plan"]["launch_context"]["cwd_origin"] == "sandbox"
         assert _input_files(state["result"]) == [("analysis/points.csv", truth["true_sha"])]
         assert _plotted_y(app.render(panel["id"])) == _approx_seq(TRUE_Y)
-        # 盲区：exists / glob / listdir 在沙盒里是沙盒的真话
+        # exists / glob / listdir 在沙盒里是沙盒的真话——静态证据说「只有脚本目录找得到」（ADR 0084）
+        # → 首开先问、推荐脚本目录；以前这里判 default_ok、不问、沙盒里跑出零张图
         panel = _panel(app, "analysis/probe_read.pdf")
         state = app.prepare(panel["id"])
-        # 静态证据说「脚本目录找得到」（default_ok）→ 不问；准备接口此刻的终局见 QA 台账
-        # （repro/repro_path06_prepare_ready_without_figure.py）——这里只钉用户看得到的那条路：渲染。
-        assert state["plan"]["workdir_decision"]["needs_confirmation"] is False
-        assert state["plan"]["workdir_decision"]["evidence"]["verdict"] == "default_ok"
+        result = state["result"]
+        assert result["status"] == "needs_input", result
+        need = result["required_input"]
+        assert need["code"] == "workdir_confirmation_required"
+        assert need["reason"] == "script_dir_evidence" and need["recommended"] == "project"
+        assert state["plan"]["workdir_decision"]["evidence"]["verdict"] == "script_parent"
+        assert result["receipt"] is None
+        assert _blocked_code(app, panel["id"]) == "workdir_confirmation_required"
+        # 用户选「继续沙盒」：盲区如实保留（回退不扩到 exists / glob，ADR 0047）
+        app.call("/api/engine/workdir", {"mode": "sandbox"}, method="PATCH")
         with pytest.raises(fa.HttpError) as blocked:
             app.render(panel["id"])
         assert blocked.value.body["code"] == "no_figures_captured", blocked.value.body

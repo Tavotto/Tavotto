@@ -186,6 +186,9 @@ def test_all_three_spawn_paths_take_the_mode_from_one_place(monkeypatch, tmp_pat
 # --------------------------------------------------------------- 真 worker
 @needs_worker
 def test_sandbox_mode_still_hides_relative_data_from_exists_and_glob(figs):
+    # 没决定过的话首开会先问（ADR 0084：exists / glob 是「沙盒不够用」的证据）；这里钉的是
+    # 用户**选了沙盒**之后盲区依旧——回退不扩到 exists / glob
+    workdir.set_mode(figs, workdir.MODE_SANDBOX)
     worker, resp = engine_pool.build("run_all.py", str(figs), "__main__")
     assert resp.get("stems") == {}
     assert worker.spec.cwd_mode == execspec.CWD_SANDBOX
@@ -219,6 +222,7 @@ def test_switching_the_mode_restarts_the_sessions_of_that_project(client, figs):
     from tavotto import app as m
 
     m.open_project(str(figs))
+    workdir.set_mode(figs, workdir.MODE_SANDBOX)  # 已决定用沙盒（否则首开先问，ADR 0084）
     before, _ = engine_pool.build("run_all.py", str(figs), "__main__")
     assert (
         client.get("/api/engine/environment").get_json()["project"]["workdir"]["mode"] == "sandbox"
