@@ -131,6 +131,37 @@ const mount = async () => {
   await flush()
 }
 
+/**
+ * 逐次提交记下卡片的 style，报出每一次位置变化那一版：挪到哪、带没带过渡。
+ * 看的是**位置变化那一次提交**：停在原地时过渡开着无所谓（没东西可滑）。
+ * 一次提交里 React 逐条改 style 属性，MutationObserver 看到的中间态不是任何一帧会画出来
+ * 的东西，微任务分批又会把几次提交并成一批——所以挂在 Profiler 上：每次提交之后取一次
+ */
+function trackMoves() {
+  const styles: string[] = ['left: -9999px; top: -9999px;']
+  const onCommit = () => {
+    const v = card()?.getAttribute('style')
+    if (v && v !== styles.at(-1)) styles.push(v)
+  }
+  const pos = (v: string) => /left: ([^;]+);.*top: ([^;]+);/.exec(v)?.slice(1).join(',')
+  const moves = () =>
+    styles
+      .filter((v, i) => i > 0 && pos(v) !== pos(styles[i - 1]))
+      .map((v) => ({ at: pos(v), glide: /transition: left/.test(v) }))
+  return { onCommit, moves }
+}
+
+const mountTracked = async (onCommit: () => void) => {
+  await act(async () => {
+    root.render(
+      <Profiler id="coachmark" onRender={onCommit}>
+        <OnboardingLayer />
+      </Profiler>,
+    )
+  })
+  await flush()
+}
+
 describe('出现与欢迎页', () => {
   it('不在教程里什么都不画；开始后欢迎页居中、有「开始」、没有遮罩', async () => {
     await mount()
@@ -400,32 +431,12 @@ describe('锚点', () => {
   it('落位不扫过锚点：第一次直接出现；之后路上碰到锚点就跳过去，碰不到才滑（issue #581）', async () => {
     // 曾经：挂载那一帧卡片在 -9999，落位与 left/top 过渡同一帧生效 → 从屏幕外斜着飞进来，
     // 半路扫过它指着的素材卡；慢机器上双击的第二下落在飞过来的「跳过此步」上。
-    // 看的是**位置变化那一次提交**带没带过渡：停在原地时过渡开着无所谓（没东西可滑）。
-    // 一次提交里 React 逐条改 style 属性，MutationObserver 看到的中间态不是任何一帧会画出来
-    // 的东西，微任务分批又会把几次提交并成一批——所以用 Profiler：每次提交之后取一次
-    const styles: string[] = ['left: -9999px; top: -9999px;']
-    const onCommit = () => {
-      const v = card()?.getAttribute('style')
-      if (v && v !== styles.at(-1)) styles.push(v)
-    }
-    // 每一次位置变化的那一版：挪到哪、带没带过渡
-    const pos = (v: string) => /left: ([^;]+);.*top: ([^;]+);/.exec(v)?.slice(1).join(',')
-    const moves = () =>
-      styles
-        .filter((v, i) => i > 0 && pos(v) !== pos(styles[i - 1]))
-        .map((v) => ({ at: pos(v), glide: /transition: left/.test(v) }))
+    const { onCommit, moves } = trackMoves()
     const anchor = document.createElement('div')
     anchor.setAttribute('data-object-id', 'p2')
     document.body.appendChild(anchor)
     giveRect(anchor, { x: 200, y: 100, w: 80, h: 40 })
-    await act(async () => {
-      root.render(
-        <Profiler id="coachmark" onRender={onCommit}>
-          <OnboardingLayer />
-        </Profiler>,
-      )
-    })
-    await flush()
+    await mountTracked(onCommit)
     await act(async () => {
       ob().start({ projectId: 'p_tut', documentId: META.document_id })
       ob().goTo('open_fast_edit')
@@ -501,6 +512,39 @@ describe('锚点', () => {
       await vi.advanceTimersByTimeAsync(1)
     })
     expect(card()!.style.pointerEvents).toBe('')
+    anchor.remove()
+  })
+
+  it('滑到半路又改道：按卡片此刻可能在的整段路判断，不拿上一段的终点当起点（Codex #654）', async () => {
+    const { onCommit, moves } = trackMoves()
+    const anchor = document.createElement('div')
+    anchor.setAttribute('data-object-id', 'p2')
+    document.body.appendChild(anchor)
+    const moveAnchor = async (x: number, y: number) => {
+      giveRect(anchor, { x, y, w: 40, h: 40 })
+      await act(async () => {
+        window.dispatchEvent(new Event('resize'))
+      })
+    }
+    giveRect(anchor, { x: 100, y: 100, w: 40, h: 40 })
+    await mountTracked(onCommit)
+    await act(async () => {
+      ob().start({ projectId: 'p_tut', documentId: META.document_id })
+      ob().goTo('open_fast_edit')
+    })
+    await flush()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(DURATION.fast + 50)
+    })
+    // 锚点挪到右下角（下方放不下 → 卡片在它上方）：路上不碰锚点 → 滑
+    await moveAnchor(600, 700)
+    // 还没滑完（过渡事件没来、兜底计时没到）锚点又挪回左上：卡片此刻可能还在起点附近，
+    // 从那儿到新落点会扫过新锚点。只看「上一段终点 → 新终点」这一段是碰不到的
+    await moveAnchor(150, 300)
+    expect(moves().slice(-2)).toEqual([
+      { at: '600px,570px', glide: true },
+      { at: '150px,350px', glide: false },
+    ])
     anchor.remove()
   })
 

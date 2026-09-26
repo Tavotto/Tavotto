@@ -155,8 +155,11 @@ function ActiveStep({ stepId }: { stepId: StepId }) {
     /** 从上一个位置滑过来，还是直接出现（`shouldGlide`：途中不许扫过锚点） */
     glide: boolean
   } | null>(null)
-  // 卡片此刻在屏幕上的框（容器坐标）；还没落过位是 null——挂载那一帧它在 -9999
+  // 卡片此刻**可能在**的区域（容器坐标）：停着时就是它的框；滑行中是起点区域与终点的外接
+  // 矩形——半路再改道时卡片在那段直线上的某处，只拿上一段的终点当起点会漏判（Codex #654）。
+  // 还没落过位是 null（挂载那一帧它在 -9999）。`dest` 是最近一次的落点
   const shown = useRef<Box | null>(null)
+  const dest = useRef<Box | null>(null)
   // 正在滑：这段时间卡片不接指针（#581）。`shouldGlide` 只护着锚点，路上压过的别的可点目标
   // 它不管；滑行中的卡片一律让点击穿过去，才是「移动中的浮层不抢点击」的通用保证。
   // `moveSeq` 每滑一次 +1，让复位计时器从最后一次起算
@@ -254,14 +257,17 @@ function ActiveStep({ stepId }: { stepId: StepId }) {
       : { ...placeCentered(size, { w: frame.w, h: frame.h }), side: 'center' as const }
     const next: Box = { x: p.x, y: p.y, w: size.w, h: size.h }
     const glide = shouldGlide(shown.current, next, local)
-    const moved = !!shown.current && (shown.current.x !== next.x || shown.current.y !== next.y)
+    const prev = dest.current
+    const moved = !!prev && (prev.x !== next.x || prev.y !== next.y)
     setPlacement({ ...p, glide })
-    shown.current = next
+    dest.current = next
     if (glide && moved && !prefersReducedMotion()) {
+      shown.current = unionBoxes([shown.current ?? next, next])
       setMoving(true)
       setMoveSeq((n) => n + 1)
-    } else if (moved) {
-      // 跳过去了：上一段滑行（若有）已被打断，卡片此刻就停在落点上
+    } else if (moved || !prev) {
+      // 第一次落位 / 跳过去了：上一段滑行（若有）已被打断，卡片此刻就停在落点上
+      shown.current = next
       setMoving(false)
     }
   }, [measured, ctx])
@@ -272,7 +278,10 @@ function ActiveStep({ stepId }: { stepId: StepId }) {
   useEffect(() => {
     if (!moveSeq) return
     const card = cardRef.current
-    const done = () => setMoving(false)
+    const done = () => {
+      shown.current = dest.current
+      setMoving(false)
+    }
     const onEnd = (e: TransitionEvent) => {
       if (e.target === card && (e.propertyName === 'left' || e.propertyName === 'top')) done()
     }
