@@ -130,5 +130,6 @@ a drag of a figure element. Before: the "Rendering…" badge lit up on every
 release and the figure could blur for a moment while the new version's
 embedded images decoded. Now the badge appears only when an ordinary
 re-render takes longer than 700 ms (a cold start still says so at once), and
-the previous picture — at the dragged position — stays until the new one's
-images are decoded. (#575)
+the previous picture — at the dragged position — stays while the new one's
+images decode, for at most 250 ms; after that the new picture is shown
+anyway. (#575)
