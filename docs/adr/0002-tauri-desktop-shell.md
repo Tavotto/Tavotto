@@ -150,6 +150,11 @@ matplotlib worker（用户/内置 Python，独立子进程）
   `/`；同源其他路径（如 `/exports/x.pdf`）拒绝——导出文件走原生「在文件夹中
   显示」（`reveal_export` 命令，仅接受「目录 + 纯文件名」）；外部 http(s)/mailto
   一律交系统默认程序，WebView 永不加载外部网页。
+- 左栏工作区右键「在 Finder / 文件资源管理器 / 文件管理器中打开」（2026-09-26）走
+  `reveal_project_dir`：只收此刻存在的绝对目录，选中顶层第一个 `.py`（没有就选中目录
+  本身）。**只 reveal、从不 open**——macOS 的 `.app` 也是目录，`open_path` 会把它当应用
+  启动。浏览器模式不摆这一项、也不在后端补：服务器可能不在浏览器那台机器上（`ssh -L`），
+  为此加一个 spawn 进程的端点不值。
 - capability 最小化（`src-tauri/capabilities/main.json`）：远程上下文
   （`http://127.0.0.1:*`）只拿 `core:event:default` + `dialog:allow-open`，
   不开放 shell/fs/任意 opener。

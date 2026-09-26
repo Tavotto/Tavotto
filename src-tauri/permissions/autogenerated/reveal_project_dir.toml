@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-reveal-project-dir"
+description = "Enables the reveal_project_dir command without any pre-configured scope."
+commands.allow = ["reveal_project_dir"]
+
+[[permission]]
+identifier = "deny-reveal-project-dir"
+description = "Denies the reveal_project_dir command without any pre-configured scope."
+commands.deny = ["reveal_project_dir"]

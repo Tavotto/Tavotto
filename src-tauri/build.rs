@@ -7,6 +7,7 @@ fn main() {
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
         tauri_build::AppManifest::new().commands(&[
             "reveal_export",
+            "reveal_project_dir",
             "set_menu_locale",
             "codex_integration",
             "arm_close_guard",

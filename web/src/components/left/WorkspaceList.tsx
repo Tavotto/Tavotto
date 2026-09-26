@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { t as translate } from '@/i18n'
+import { msg, t as translate } from '@/i18n'
 import {
   ArrowDown,
   ArrowUp,
   Bookmark,
   Ellipsis,
   ExternalLink,
+  Folder,
   FolderOpen,
   FolderPlus,
   SearchX,
@@ -15,6 +16,12 @@ import {
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { listRowClass } from '@/components/ui/listRow'
 import { backendErrorMsg, type ProjectStatus, type RecentProject } from '@/lib/api'
+import {
+  canRevealInFileManager,
+  fileManagerKind,
+  revealProjectFolder,
+  type FileManagerKind,
+} from '@/lib/desktop'
 import { disambiguateRecent, matchesRecent, splitRecent } from '@/lib/recentProjects'
 import { cn } from '@/lib/utils'
 import { useProjectStore } from '@/store/projectStore'
@@ -22,7 +29,7 @@ import { useUiStore } from '@/store/uiStore'
 import { TailPath, useProjectEntry } from '../ProjectPicker'
 import { Button, IconButton } from '../ui/Button'
 import { EmptyState } from '../ui/EmptyState'
-import { Menu, MenuItem, MenuSeparator } from '../ui/Menu'
+import { Menu, MenuItem, MenuSeparator, PointMenu } from '../ui/Menu'
 import { SearchInput } from '../ui/SearchInput'
 
 /** 本组文案在 project:workspace.* 下 */
@@ -32,6 +39,49 @@ const ws = (key: string, values?: Record<string, unknown>) =>
 /** 带 pj 的地址在新标签页里认下那个项目（项目绑在标签页上，lib/session.ts） */
 function openInNewTab(id: string) {
   window.open(`${location.pathname}?pj=${encodeURIComponent(id)}`, '_blank', 'noopener')
+}
+
+/** 「在 Finder 中打开」按平台说出文件管理器的名字（键写全，方便按键名查到用处） */
+const REVEAL_LABEL: Record<FileManagerKind, string> = {
+  finder: 'revealInFinder',
+  explorer: 'revealInExplorer',
+  files: 'revealInFileManager',
+}
+
+/**
+ * 在系统文件管理器里打开项目文件夹（有脚本就选中脚本）。只有桌面壳做得到（`canRevealInFileManager`），
+ * 浏览器模式不摆这一项；失败绝不静默——把完整路径告诉用户。
+ */
+function RevealItem({ path }: { path: string }) {
+  const reveal = () =>
+    void revealProjectFolder(path).then((ok) => {
+      if (!ok) useUiStore.getState().setStatus(msg('workspace.revealFailed', { path }, 'project'), 'error')
+    })
+  return (
+    <MenuItem data-workspace-reveal onSelect={reveal}>
+      <span className="flex items-center gap-2">
+        <Folder size={ICON_SIZE.sm} className="text-ink-3" />
+        {ws(REVEAL_LABEL[fileManagerKind()])}
+      </span>
+    </MenuItem>
+  )
+}
+
+/**
+ * 右键 = 在光标处开出与「…」同一份菜单（项目一份清单，两个入口）。
+ * 菜单里一项都没有时不拦右键。
+ */
+function useRowContextMenu(enabled: boolean) {
+  const [at, setAt] = useState<{ x: number; y: number } | null>(null)
+  const onContextMenu = enabled
+    ? (e: React.MouseEvent) => {
+        // 菜单本身 portal 在别处，React 事件却照着组件树冒上来：在菜单里右键不算「在行上右键」
+        if (!e.currentTarget.contains(e.target as Node)) return
+        e.preventDefault()
+        setAt({ x: e.clientX, y: e.clientY })
+      }
+    : undefined
+  return { at, onContextMenu, close: () => setAt(null) }
 }
 
 /**
@@ -213,11 +263,43 @@ function Section({ id, label, children }: { id: string; label: string; children:
 function CurrentProject({ project, pinned }: { project: ProjectStatus; pinned: boolean }) {
   useTranslation('project')
   const readOnly = project.settings?.allow_write_back === false
+  const menu = useRowContextMenu(true)
+  const items = (
+    <>
+      {project.figures_dir && (
+        <MenuItem
+          onSelect={() => void useProjectStore.getState().togglePin(project.figures_dir!)}
+        >
+          <span className="flex items-center gap-2">
+            <Bookmark size={ICON_SIZE.sm} filled={pinned} className="text-ink-3" />
+            {pinned ? ws('unpin') : ws('pin')}
+          </span>
+        </MenuItem>
+      )}
+      {project.id && (
+        <MenuItem onSelect={() => openInNewTab(project.id!)}>
+          <span className="flex items-center gap-2">
+            <ExternalLink size={ICON_SIZE.sm} className="text-ink-3" />
+            {ws('openInNewTab')}
+          </span>
+        </MenuItem>
+      )}
+      {project.figures_dir && canRevealInFileManager() && <RevealItem path={project.figures_dir} />}
+      <MenuSeparator />
+      <MenuItem onSelect={() => useUiStore.getState().setRegistryOpen(true)}>
+        {ws('registry')}
+      </MenuItem>
+    </>
+  )
   return (
     <section data-workspace-section="current" className="pt-1">
       <h3 className="type-section flex h-7 items-center px-3">{ws('current')}</h3>
       {/* 选中底（selected）上 ink-3 只有 4.38:1，元数据在这里升一档用 ink-2（axe 实测） */}
-      <div className={cn(listRowClass({ selected: true }), 'h-auto gap-2 px-2 py-1.5')}>
+      <div
+        data-workspace-current
+        onContextMenu={menu.onContextMenu}
+        className={cn(listRowClass({ selected: true }), 'h-auto gap-2 px-2 py-1.5')}
+      >
         <div className="min-w-0 flex-1" aria-current="true">
           <span className="block truncate text-sm text-ink">{project.name}</span>
           {project.tutorial ? (
@@ -241,29 +323,21 @@ function CurrentProject({ project, pinned }: { project: ProjectStatus; pinned: b
             </IconButton>
           }
         >
-          {project.figures_dir && (
-            <MenuItem
-              onSelect={() => void useProjectStore.getState().togglePin(project.figures_dir!)}
-            >
-              <span className="flex items-center gap-2">
-                <Bookmark size={ICON_SIZE.sm} filled={pinned} className="text-ink-3" />
-                {pinned ? ws('unpin') : ws('pin')}
-              </span>
-            </MenuItem>
-          )}
-          {project.id && (
-            <MenuItem onSelect={() => openInNewTab(project.id!)}>
-              <span className="flex items-center gap-2">
-                <ExternalLink size={ICON_SIZE.sm} className="text-ink-3" />
-                {ws('openInNewTab')}
-              </span>
-            </MenuItem>
-          )}
-          <MenuSeparator />
-          <MenuItem onSelect={() => useUiStore.getState().setRegistryOpen(true)}>
-            {ws('registry')}
-          </MenuItem>
+          {items}
         </Menu>
+        {menu.at && (
+          <PointMenu
+            open
+            onOpenChange={(open) => {
+              if (!open) menu.close()
+            }}
+            at={menu.at}
+            ariaLabel={ws('currentActions')}
+            width={200}
+          >
+            {items}
+          </PointMenu>
+        )}
       </div>
     </section>
   )
@@ -311,8 +385,48 @@ function ProjectRow({
   const moveBy = (delta: number) =>
     void useProjectStore.getState().movePinned(entry.path, { delta })
   const canNewTab = !!entry.id && !current
-  // 菜单里一项都没有时不摆「…」（筛选中的收藏行、且项目没开着）
-  const hasMenu = !!order || canNewTab || !!onRemove
+  const canReveal = entry.exists && canRevealInFileManager()
+  // 菜单里一项都没有时不摆「…」、也不拦右键（筛选中的收藏行、且项目没开着、浏览器模式）
+  const hasMenu = !!order || canNewTab || canReveal || !!onRemove
+  const menu = useRowContextMenu(hasMenu)
+  const items = (
+    <>
+      {/* 拖动只有鼠标能用：菜单里给键盘一条同样的路 */}
+      {order && (
+        <>
+          <MenuItem disabled={order.index === 0} onSelect={() => moveBy(-1)}>
+            <span className="flex items-center gap-2">
+              <ArrowUp size={ICON_SIZE.sm} className="text-ink-3" />
+              {ws('moveUp')}
+            </span>
+          </MenuItem>
+          <MenuItem disabled={order.index >= order.count - 1} onSelect={() => moveBy(1)}>
+            <span className="flex items-center gap-2">
+              <ArrowDown size={ICON_SIZE.sm} className="text-ink-3" />
+              {ws('moveDown')}
+            </span>
+          </MenuItem>
+        </>
+      )}
+      {/* 新标签页要带 pj：只有后端已经打开着的项目才有 id */}
+      {canNewTab && (
+        <MenuItem onSelect={() => openInNewTab(entry.id!)}>
+          <span className="flex items-center gap-2">
+            <ExternalLink size={ICON_SIZE.sm} className="text-ink-3" />
+            {ws('openInNewTab')}
+          </span>
+        </MenuItem>
+      )}
+      {canReveal && <RevealItem path={entry.path} />}
+      {onRemove && (
+        <>
+          {(canNewTab || canReveal) && <MenuSeparator />}
+          {/* 只动列表、不删磁盘：不用垃圾桶，也不标 danger */}
+          <MenuItem onSelect={onRemove}>{ws('removeFromList')}</MenuItem>
+        </>
+      )}
+    </>
+  )
 
   return (
     <li
@@ -320,6 +434,7 @@ function ProjectRow({
       // 稳定的身份锚点（e2e / 诊断按它找行，不按可达名——名字会重复、会翻译）
       data-project-path={entry.path}
       data-project-tutorial={entry.tutorial || undefined}
+      onContextMenu={menu.onContextMenu}
       draggable={!!order}
       onDragStart={() => {
         if (order) order.dragFrom.current = entry.path
@@ -417,43 +532,21 @@ function ProjectRow({
           </IconButton>
         }
       >
-        {/* 拖动只有鼠标能用：菜单里给键盘一条同样的路 */}
-        {order && (
-          <>
-            <MenuItem disabled={order.index === 0} onSelect={() => moveBy(-1)}>
-              <span className="flex items-center gap-2">
-                <ArrowUp size={ICON_SIZE.sm} className="text-ink-3" />
-                {ws('moveUp')}
-              </span>
-            </MenuItem>
-            <MenuItem
-              disabled={order.index >= order.count - 1}
-              onSelect={() => moveBy(1)}
-            >
-              <span className="flex items-center gap-2">
-                <ArrowDown size={ICON_SIZE.sm} className="text-ink-3" />
-                {ws('moveDown')}
-              </span>
-            </MenuItem>
-          </>
-        )}
-        {/* 新标签页要带 pj：只有后端已经打开着的项目才有 id */}
-        {canNewTab && (
-          <MenuItem onSelect={() => openInNewTab(entry.id!)}>
-            <span className="flex items-center gap-2">
-              <ExternalLink size={ICON_SIZE.sm} className="text-ink-3" />
-              {ws('openInNewTab')}
-            </span>
-          </MenuItem>
-        )}
-        {onRemove && (
-          <>
-            {canNewTab && <MenuSeparator />}
-            {/* 只动列表、不删磁盘：不用垃圾桶，也不标 danger */}
-            <MenuItem onSelect={onRemove}>{ws('removeFromList')}</MenuItem>
-          </>
-        )}
+        {items}
       </Menu>
+      )}
+      {menu.at && (
+        <PointMenu
+          open
+          onOpenChange={(open) => {
+            if (!open) menu.close()
+          }}
+          at={menu.at}
+          ariaLabel={ws('rowActions', { name: entry.name })}
+          width={180}
+        >
+          {items}
+        </PointMenu>
       )}
     </li>
   )
