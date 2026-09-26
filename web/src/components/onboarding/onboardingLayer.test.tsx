@@ -491,6 +491,14 @@ describe('锚点', () => {
     await glideTo(500)
     expect(card()!.style.transition).toContain('left')
     expect(card()!.style.pointerEvents).toBe('none')
+    // 「路上可能在的区域 = 起点与终点的外接矩形」只在路径是**直线**时成立：left 与 top
+    // 必须同一时长、同一曲线。哪天只给 top 换个缓动，路径就弯出这个矩形，扫不扫过锚点的判断
+    // 随之失效——所以把两者的过渡规格钉成同一份
+    const specs = card()!
+      .style.transition.split(/,(?![^(]*\))/)
+      .map((t) => t.trim().split(/\s+/))
+    expect(specs.map(([prop]) => prop).sort()).toEqual(['left', 'top'])
+    expect(specs[0].slice(1).join(' ')).toBe(specs[1].slice(1).join(' '))
     // 过渡结束事件到了就恢复（别的属性的 transitionend 不算）
     const end = (prop: string) => {
       const e = new Event('transitionend')
