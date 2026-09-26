@@ -26,10 +26,11 @@ import {
   type AlignRef,
 } from '@/store/actions'
 import { useArrangeStore } from '@/store/arrangeStore'
-import type { CanvasObject } from '@/types/document'
+import type { CanvasObject, TextObject } from '@/types/document'
 import type { BarVariant } from './position'
 import { openArrangeInInspector } from './openArrange'
 import { Sep } from './shared'
+import { CanvasTextQuick } from './SingleObjectBar'
 import { qb } from './text'
 
 /**
@@ -66,6 +67,16 @@ export function MultiSelectionBar({
   const count = objs.length
   const ref = useArrangeStore((s) => s.alignRef)
   const grouped = selectionHasGroupIn(objs)
+  /**
+   * 选区全是画布文字（ADR 0089）：计数后面接一行快捷排版——与单选文字栏同一份控件、
+   * 同一个适配器（`useCanvasTypography` 吃的就是数组，一次改动 = 一次 `updateObjects`
+   * = 一条历史）。右栏停靠或栏宽不够时按单选那条判据缩成字号 / 加粗 / 斜体。
+   * 混着面板 / 标注时不给：那时没有一组「公共的文字属性」可言，右栏照旧可达。
+   */
+  const texts = objs.every((o) => o.type === 'text') ? (objs as TextObject[]) : null
+  const textRow = texts ? (
+    <CanvasTextQuick objs={texts} compact={docked || variant === 'compact'} />
+  ) : null
 
   const countEl = (
     <span
@@ -84,6 +95,7 @@ export function MultiSelectionBar({
       <Bar>
         {countEl}
         <Sep />
+        {textRow}
         <AlignRow modes={ALIGN_BUTTONS} refName={ref} count={count} />
         <Sep />
         <div className="flex items-center gap-0.5">
@@ -99,6 +111,7 @@ export function MultiSelectionBar({
       <Bar>
         {countEl}
         <Sep />
+        {textRow}
         {/* 三个弹层入口是同一档控件，彼此按组内 2px 排 */}
         <div className="flex items-center gap-0.5">
           <MenuPopover label={qb('alignMenu')} width={232} testId="align">
@@ -125,6 +138,7 @@ export function MultiSelectionBar({
     <Bar>
       {countEl}
       <Sep />
+      {textRow}
       <RefPicker />
       <Sep />
       <AlignRow modes={ALIGN_BUTTONS} refName={ref} count={count} />

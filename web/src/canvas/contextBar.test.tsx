@@ -205,7 +205,7 @@ describe('ContextBar', () => {
     expect(trigger.textContent).toContain('无衬线')
   })
 
-  it('多选换成多选栏：单选的文字控件不出现', async () => {
+  it('多选换成多选栏：两个文字对象时排版行是多选栏里的那一份（ADR 0089），不是单选栏', async () => {
     useDocumentStore.getState().commit(literal('再放一个'), (d) => {
       d.objects.push({ ...textObj(), id: 't2' })
     })
@@ -214,6 +214,10 @@ describe('ContextBar', () => {
     })
     expect(bar()).not.toBeNull()
     expect(bar()!.hasAttribute('data-multi-selection-context-bar')).toBe(true)
-    expect(bar()!.querySelector('[aria-label="加粗"]')).toBeNull()
+    expect(bar()!.getAttribute('data-context-bar-mode')).toBe('multi')
+    // 全是文字：计数后接一行快捷排版（与单选文字栏同一份控件），对齐照旧在
+    expect(bar()!.querySelector('[data-text-quick]')).not.toBeNull()
+    expect(bar()!.querySelector('[aria-label="加粗"]')).not.toBeNull()
+    expect(bar()!.querySelector('[data-align-mode="left"]')).not.toBeNull()
   })
 })
