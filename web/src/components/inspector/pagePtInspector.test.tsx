@@ -50,6 +50,21 @@ vi.mock('@/store/svgPreviewStore', async (importOriginal) => {
   }
 })
 
+/**
+ * 这里没有真引擎：渲染由用例自己种（`seedExactRender` / `engineReturns`）。写入器排下的防抖渲染
+ * （`renderScheduler`，300 ms）要是真发出去，会拿到桩 fetch 的 `{}`、把种下的精确渲染盖成「没有
+ * manifest」，属性页退回「等待引擎渲染…」——平时断言跑在 300 ms 之内看不见，全量满负载时就红。
+ * 所以请求渲染在这个文件里只记账不发（`wantPatches` 照写，与产品同一个判据）。
+ */
+vi.mock('@/store/renderScheduler', async (importOriginal) => {
+  const real = await importOriginal<typeof import('@/store/renderScheduler')>()
+  return {
+    ...real,
+    requestRender: (panel: Parameters<typeof real.requestRender>[0]) => real.requestRender(panel, 'none'),
+    flushRender: () => {},
+  }
+})
+
 declare global {
   // eslint-disable-next-line no-var
   var IS_REACT_ACT_ENVIRONMENT: boolean
