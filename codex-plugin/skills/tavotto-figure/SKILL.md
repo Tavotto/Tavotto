@@ -8,26 +8,31 @@ description: 画 matplotlib 论文级图表，并用 Tavotto 继续微调（拖�
 一句话：**数据与结构归代码，版式微调归鼠标。**
 
 你只负责把图做成「Tavotto 能接手」的形状。图例位置、字号、线宽、刻度朝向这些，
-用 Tavotto 的 MCP 工具改（在 Codex 里就能改完）——**不要在对话里追问这类参数，
+用 Tavotto 的 MCP 工具改（在当前宿主里就能改完）——**不要在对话里追问这类参数，
 更不要为这种改动重跑脚本**。唯一的例外是「开工三问」：那三件事决定整张图的
 骨架，动手前先问清。
 
 ## 会话入口：先检查，不安装
 
-1. 本会话第一次使用 Tavotto 时，优先调用 `tavotto_health`，只调用一次。
+1. 本会话第一次使用 Tavotto 时，优先调用 `tavotto_health`，只调用一次。宿主可能给工具名
+   加命名空间前缀（如 `mcp__tavotto__tavotto_health`）——**按原始名认工具**，语义不变。
 2. `ok: true`：立即进入任务；本会话绝不执行插件安装、升级、pip/pipx 或
    provision——健康的会话里一次联网安装都不该发生。
 3. 工具存在但引擎不可用：按健康检查返回的错误码，只给出或执行**对应的一条**
    恢复动作（动作清单见 `references/first-run-and-recovery.md`）。缺什么修
    什么：缺引擎只修引擎，绝不顺手重装插件。
 4. `desktop_only`：不要说「没有安装 Tavotto」——用户装了桌面版。桌面交接仍然
-   可用；只有用户需要 Codex 内嵌画布/MCP 工具时，才建议 provision 或
+   可用；只有用户需要宿主内嵌画布/MCP 工具时，才建议 provision 或
    `pipx install "tavotto[worker]"`。
-5. 当前会话没有 `tavotto_health` 这个工具：说明插件没有在本会话加载。给出
-   README 的两条插件安装命令（见 `references/first-run-and-recovery.md`），
-   要求**新开会话**，然后**停止**；不要在旧会话里继续假装工具可用。
-6. 发现插件更新：当前任务照常完成，只在收尾提醒一次
-   `codex plugin marketplace upgrade tavotto`，不自动升级、不反复提醒。
+5. 当前会话没有 `tavotto_health` 这个工具：说明 Tavotto 没有在本会话加载。按**当前
+   宿主**给安装说明：Codex 给 README 的两条插件安装命令（见
+   `references/first-run-and-recovery.md`）；其他宿主按 `references/other-hosts.md` 里那一家
+   的步骤；认不出宿主就给那里的中性步骤——**不要默认让所有人执行 `codex plugin add`**。
+   然后要求**新开会话**（或按宿主要求重载 MCP 服务），然后**停止**；
+   不要在旧会话里继续假装工具可用。
+6. 发现插件更新：当前任务照常完成，只在收尾提醒一次（Codex：
+   `codex plugin marketplace upgrade tavotto`；其他宿主：下载新版完整包、解压、重新生成配置），
+   不自动升级、不反复提醒。
 7. 健康检查或恢复失败：报告结构化错误与下一步，不循环重试，不退回源码构建。
 
 ## 什么情况下读哪份 reference
@@ -36,6 +41,7 @@ description: 画 matplotlib 论文级图表，并用 Tavotto 继续微调（拖�
 | --- | --- |
 | 写任何画图脚本之前 | `references/figure-contract.md`（契约详解 + 模板）、`references/publication-style.md`（默认值 / 克制 / 组图） |
 | 工具缺失、引擎不可用、要装/升级/provision、工作区授权 | `references/first-run-and-recovery.md` |
+| 宿主不是 Codex（Cursor / Claude / VS Code / Trae / DSH / WorkBuddy / ZCode …）的安装、重载、能力差异 | `references/other-hosts.md` |
 | 要交给 Tavotto 桌面窗口 | `references/desktop-handoff.md`（含全部错误码分诊） |
 | 用户撞上 Tavotto 的缺陷 | `references/issue-reporting.md` |
 | 用户要改的东西鼠标改不了 | `references/compatibility.md`（能改 / 必须回代码改） |
@@ -45,7 +51,8 @@ description: 画 matplotlib 论文级图表，并用 Tavotto 继续微调（拖�
 
 ## 开工三问（用提问工具，不用自由文本追问）
 
-先读已记录的偏好（脚本路径相对本技能目录）：
+先读已记录的偏好（脚本路径相对本技能目录；解释器用能跑起来的那个——Windows 上 `python3`
+可能是商店别名，用 `tavotto_health` 回报的 `server.python`）：
 
 ```
 python3 scripts/prefs.py --json
@@ -54,7 +61,9 @@ python3 scripts/prefs.py --json
 三个键里**记录过的直接用，不再问**——唯一例外是 `width` 记的是 `ask`：
 那个哨兵值的含义就是「宽度每次都问」，撞见它宽度照问（另外两个键照常）。
 没记录的用宿主的**向用户提问工具**
-（ask user question / request_user_input，一次问卷问齐，别拆成三轮对话）问：
+（ask user question / request_user_input，一次问卷问齐，别拆成三轮对话）问；宿主没有专用
+提问工具时，用**一条普通消息**把三件事一次问齐。宿主不能在本机执行脚本（例如 Claude Desktop
+聊天）时跳过偏好文件：直接问，也**不声称已经记住**：
 
 1. **画幅宽度**——选项：单栏 **8 cm**、双栏 **15 cm**。用户不清楚就按这次
    任务自己推荐并说明理由：单张简单曲线/单组对比 → 单栏 8 cm；曲线多、
@@ -79,7 +88,9 @@ python3 scripts/prefs.py --set font="Times New Roman" --set legend_frame=off --j
 ## 图文件契约（核心，违反即死图）
 
 1. **脚本与产物同目录，而且必须先落成文件**——绝不用 `python -c`、
-   `python - <<EOF` 或临时目录出图。落点是用户当前目录下的 `figures/`
+   `python - <<EOF` 或临时目录出图。宿主没有本机文件写入 / 执行能力（Claude Desktop 聊天）
+   时：把脚本给用户，请他存进项目目录并运行，**不要声称已经保存或运行过**；云端代码执行
+   环境里的路径不是本机路径，不能传给 Tavotto。落点是用户当前目录下的 `figures/`
    （已有 `tavotto_registry.json` 的图库就沿用）。
 2. **入口是无参 `main()`**，import 期零副作用。
 3. **产物名写成静态可解析的字面量**，不来自 argv/时间戳/随机串；一图一 stem。
@@ -101,7 +112,8 @@ tavotto_open_figure { "project_path": "/absolute/path/to/figures", "stem": "Fig1
 第一次 open 的工作区授权规则（绝对路径、用户确认、拒绝后不重试）在
 `references/first-run-and-recovery.md` 的「工作区授权」一节。回来的是
 `session_id` + `manifest`（哪些元素可改）+ 预览 SVG + 出版规范 + 预检结果。
-支持 UI 的 Codex 会同时开出一块交互画布，用户可以直接拖。**图很大时**（几百个
+支持 MCP Apps 的宿主会同时开出一块交互画布，用户可以直接拖；没有画布的宿主用下面同一组
+工具照样走完，不要把外部窗口叫作「内嵌画布」。**图很大时**（几百个
 元素）结果里会带 `elided`，manifest / SVG 没随本次返回——画布会自己取，你只在确实
 要逐元素 gid 时才调 `tavotto_session_state { session_id }`（只读，不重渲染）。
 

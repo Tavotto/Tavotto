@@ -3,7 +3,7 @@
     "tavotto": {
       "title": "Tavotto",
       "description": "打开 Tavotto 交互画布：拖图例与图内文字、改字号线宽刻度、跑出版规范预检、导出真矢量 PDF。",
-      "command": "python3",
+      "command": "./mcp/launch.cmd",
       "args": ["./mcp/server.py"],
       "cwd": ".",
       "env_vars": ["TAVOTTO_CLI", "TAVOTTO_MCP_PYTHON", "TAVOTTO_MCP_ROOTS", "TAVOTTO_MCP_WORKSPACE", "CODEX_WORKSPACE_ROOT", "CODEX_PROJECT_ROOT", "CODEX_WORKSPACE_DIR", "TAVOTTO_MCP_WIDGET", "TAVOTTO_WORKER_PYTHON", "TAVOTTO_CONFIG_DIR", "TAVOTTO_DATA_DIR", "PATH", "HOME", "USERPROFILE", "LOCALAPPDATA"],

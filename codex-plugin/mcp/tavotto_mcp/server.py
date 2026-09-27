@@ -45,6 +45,19 @@ SUPPORTED_PROTOCOL_VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-1
 ROOTS_REQUEST_TIMEOUT_S = 2.0
 # 工作区授权需要真人看清路径再点选，不能沿用 roots 探针的 2 秒预算。
 ELICITATION_REQUEST_TIMEOUT_S = 300.0
+#: 拒绝 / 取消快于这个值，就不是人作的选择：真人要先看见框、读完整路径再点。
+#: 实测 Codex 0.155.1 在 approval_policy = never（桌面版「完全访问」）与
+#: ``codex exec`` 下都在 0 ms 内回 ``{"action": "decline"}``、不带任何标记
+#: （codex-rs ``core/src/session/mcp.rs`` 的 ``mcp_elicitation_decline_without_message``）。
+#: 误判两头不对称：把真人 0.9 s 的拒绝报成宿主自动拒绝，只是多一句关于权限设置的话；
+#: 反过来就是 #173 的原样——让用户去点一个根本不存在的框。
+HUMAN_RESPONSE_FLOOR_S = 1.0
+#: 新版 codex-rs 在替用户作答时给回应带上 ``_meta.approvals_reviewer = "auto_review"``。
+#: 有这个标记就不看耗时——自动审核可以慢，但它仍然不是用户。
+AUTO_REVIEWER_META = ("approvals_reviewer", "auto_review")
+#: 量「宿主多久作答」的钟。单列出来是为了让用例能模拟真人的作答耗时，
+#: 不必真的睡一秒；``_client_request`` 的超时仍用 ``time.monotonic``。
+_confirmation_clock = time.monotonic
 
 #: Codex 把每个 MCP 工具结果的**事件副本**——送给桌面 UI 去喂 iframe、写进 rollout
 #: 的那一份——封顶在 1 MiB（codex-rs `core/src/mcp_tool_call.rs` 的
@@ -750,6 +763,8 @@ def _call_session_state(args: dict) -> dict:
         f"hash {out['patch_hash'][:19]}…",
         _brief_manifest(out.get("manifest")),
     ]
+    if out.get("restored"):
+        lines.append(RESTORED_NOTE)
     return {"content": _text(*lines), "structuredContent": out}
 
 
@@ -886,6 +901,11 @@ def _shrink_content_to_fit(result: dict, budget: int) -> None:
     result["content"] = _text(CONTENT_TRUNCATED_MARKER)
 
 
+#: 会话是从落盘记录在这个 server 进程里重建的（ADR 0078）——如实说一句，别让它看起来
+#: 像一直开着：渲染修订号从头计、上一进程里没提交的东西（没有）不会回来。
+RESTORED_NOTE = "会话已在新的 server 进程里按落盘记录恢复（上一进程已退出），已提交的修改都在。"
+
+
 def _call_apply(args: dict) -> dict:
     out = bridge.apply_overrides(
         str(args.get("session_id") or ""),
@@ -897,6 +917,8 @@ def _call_apply(args: dict) -> dict:
         f"已应用 {out['applied']} 条 override（hash {out['patch_hash'][:19]}…）",
         _brief_manifest(out.get("manifest")),
     ]
+    if out.get("restored"):
+        lines.append(RESTORED_NOTE)
     if out.get("contract_released"):
         lines.append("规范化约定已按用户明确要求解除：之前的验收报告作废，导出时会如实说明。")
     if out["rejected"]:
@@ -1207,6 +1229,21 @@ def _call_health(args: dict) -> dict:
     }
     if not widget.available():
         out["canvas"]["reason"] = widget.missing_reason()
+    out["server"] = _package_identity()
+    # 分层结论：**服务器只能回答它自己知道的那几层**。宿主 UI 有没有真的把画布显示出来、
+    # 当前智能体有没有启用这些工具，server 无从得知——如实写 unknown_to_server，
+    # 不从「资源在」推断「画布已显示」。
+    out["checks"] = {
+        "package": {
+            "ok": out["server"]["plugin_version"] is not None,
+            "release_build": out["server"]["release_build"],
+        },
+        "engine": {"ok": True},
+        "tools_listed": {"ok": True, "count": len(_tools())},
+        "workspace_authorized": {"ok": bool(out["roots"]), "source": root_info["source"]},
+        "canvas_resource": {"ok": out["canvas"]["available"]},
+        "host_ui_rendered": {"status": "unknown_to_server"},
+    }
     if args.get("probe_worker"):
         try:
             from tavotto.engine import pool as _pool
@@ -1225,6 +1262,27 @@ def _call_health(args: dict) -> dict:
         "根来源: " + root_info["source"],
     ]
     return {"content": _text(*lines), "structuredContent": out}
+
+
+def _package_identity() -> dict:
+    """这个 server 进程**实际**从哪份包起来的（同名 tavotto 被多处登记时靠它分辨）。"""
+    plugin_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    version = None
+    try:
+        with open(
+            os.path.join(plugin_dir, ".codex-plugin", "plugin.json"), "r", encoding="utf-8"
+        ) as fh:
+            data = json.load(fh)
+        v = data.get("version") if isinstance(data, dict) else None
+        version = v if isinstance(v, str) and v.strip() else None
+    except (OSError, ValueError):
+        pass
+    return {
+        "package_dir": plugin_dir,
+        "plugin_version": version,
+        "release_build": os.path.isfile(os.path.join(plugin_dir, "plugin-build.json")),
+        "python": sys.executable,
+    }
 
 
 HANDLERS = {
@@ -1328,6 +1386,20 @@ def call_tool(name: str, args: dict) -> dict:
             else:
                 result["content"] = _text(note)
     return result
+
+
+def _answered_without_a_person(result: dict, answered_in: float) -> bool:
+    """这次拒绝 / 取消是不是宿主替用户作的答（没有人看见过框）。
+
+    判据的主语是**作答的那一方**，不是回应里写的 action——宿主替用户回的
+    ``decline`` 与用户亲手点的 ``decline`` 字面上一模一样。两条证据任一成立即是：
+    宿主自己标明了代答（``_meta``），或快到没有人来得及读完路径。
+    """
+    meta = result.get("_meta")
+    key, value = AUTO_REVIEWER_META
+    if isinstance(meta, dict) and meta.get(key) == value:
+        return True
+    return answered_in < HUMAN_RESPONSE_FLOOR_S
 
 
 # ------------------------------- 协议主循环 ---------------------------------
@@ -1455,6 +1527,7 @@ class Server:
             "仅当它是本次任务要使用的工作区时批准。授权只在当前 Tavotto "
             "MCP 连接内有效；拒绝不会修改任何文件。"
         )
+        asked_at = _confirmation_clock()
         response, transport_error = self._client_request(
             "elicitation",
             "elicitation/create",
@@ -1491,6 +1564,15 @@ class Server:
             return
         action = result.get("action")
         if action != "accept":
+            answered_in = _confirmation_clock() - asked_at
+            if _answered_without_a_person(result, answered_in):
+                # 宿主替用户回的：框从没到过用户面前，报成用户拒绝会把人送去
+                # 「再点一次」——与 #173 同一个缺陷，只是宿主答得快而不是不答。
+                bridge.fail_user_binding(
+                    f"宿主在 {answered_in * 1000:.0f} ms 内替用户回了 {action or 'cancel'}",
+                    state="auto_declined",
+                )
+                return
             state = "declined" if action == "decline" else "cancelled"
             bridge.fail_user_binding(f"用户选择 {action or 'cancel'}", state=state)
             return
@@ -1548,6 +1630,9 @@ class Server:
                 "tavotto_preflight 体检 → tavotto_export 出图。"
                 "数据本身、坐标范围、加删曲线/子图、colorbar 方向这些必须回代码改；"
                 "改完 .py 之后调 tavotto_refresh_project（不是重跑脚本），Tavotto 界面会自己更新。"
+                "第一次用先调 tavotto_health（健康就不要安装任何东西）；项目路径必须在允许的根内，"
+                "模型传的路径不是授权。结果带 elided 时用 tavotto_session_state 取件，别猜 gid。"
+                "宿主没有内嵌画布时，同一组工具照样能走完打开→修改→预检→导出。"
             ),
         }
 

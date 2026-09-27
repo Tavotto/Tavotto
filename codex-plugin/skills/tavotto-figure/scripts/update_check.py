@@ -84,6 +84,16 @@ RETRY_INTERVAL = 3600
 TIMEOUT = 1.5
 #: 这个插件的升级方式（比一个 zip 链接有用：它就是用户要敲的那一行）
 UPGRADE_COMMAND = "codex plugin marketplace upgrade tavotto"
+#: 不经 Codex、用完整包 + `integrations/configure.py` 接入的宿主怎么升级。同一个脚本被两种
+#: 安装方式共用，它分不出自己跑在哪种里——所以提示两条都说，不只给 Codex 的命令
+#: （Codex 在 #560 上指出：非 Codex 用户会被告知去跑一条与他无关的命令）。
+OTHER_HOSTS_UPGRADE = (
+    "下载新版完整包 codex-plugin-<版本>.zip，解压到新目录，"
+    "再运行其中的 integrations/configure.py 重新生成配置；"
+    "并刷新技能——复制过的就把新包里整个 skills/tavotto-figure/ 覆盖复制过去，"
+    "粘贴过等价说明的就重新运行 --emit instructions 并替换原来那段"
+    "（重新生成配置不会更新它们，旧技能配新服务会按过时的流程走）"
+)
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -290,6 +300,7 @@ def check(
         "release_notes_url": manifest.get("release_notes_url"),
         "download_url": manifest.get("download_url"),
         "upgrade_command": UPGRADE_COMMAND,
+        "upgrade_other_hosts": OTHER_HOSTS_UPGRADE,
         "channel": manifest.get("channel"),
         "source": source,
     }
@@ -325,9 +336,10 @@ def hint(update: dict) -> str | None:
     if not update or update.get("status") != "available":
         return None
     lines = [
-        f"Tavotto Codex 插件有新版本：{update.get('latest_version')}",
+        f"Tavotto 插件有新版本：{update.get('latest_version')}",
         f"当前版本：{update.get('current_version')}",
-        f"更新：{update.get('upgrade_command')}",
+        f"在 Codex 里更新：{update.get('upgrade_command')}",
+        f"在其他宿主里更新：{update.get('upgrade_other_hosts') or OTHER_HOSTS_UPGRADE}",
     ]
     if update.get("release_notes_url"):
         lines.append(f"更新说明：{update['release_notes_url']}")
