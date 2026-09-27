@@ -272,6 +272,52 @@ describe('缺依赖的修复卡片', () => {
     expect(byName(en('repairInstallToManaged', { module: 'lmfit', product: PRODUCT_NAME }))).toBeUndefined()
     expect(byName(en('repairUseProjectEnv'))).toBeTruthy()
   })
+
+  it('只有旧 Python 且私有 Python 未开放时，说清缺的是建环境的基础解释器', async () => {
+    await render({
+      ...OFFER,
+      targets: [{ ...OFFER.targets[1], available: false, reason: 'managed_env_unavailable' }],
+      system_rejected: [{
+        python: 'C:\\Python37\\python.exe', code: 'project_env_unsupported_python', python_version: '3.7.6',
+      }],
+    })
+    expect(text()).toContain(en('repairTitle', { module: 'lmfit' }))
+    expect(text()).toContain(en('repairManagedUnavailable', { product: PRODUCT_NAME }))
+    expect(text()).toContain(en('repairSystemRejectedUnsupported', {
+      python: 'C:\\Python37\\python.exe', module: 'lmfit', version: '3.7.6', product: PRODUCT_NAME,
+    }))
+    expect(byName(en('repairInstallToManaged', { module: 'lmfit', product: PRODUCT_NAME }))).toBeUndefined()
+    expect(text()).toContain(en('repairUseOtherPythonShort'))
+  })
+
+  it('私有 Python 可用时，选目标及最终确认都明示下载大小', async () => {
+    const privatePython = {
+      id: 'pinned', version: '3.13.15', target: 'windows-x86_64', source_host: 'github.com',
+      download_bytes: 47131996, required: true, cached: false, network_required: true,
+    }
+    planMock.mockResolvedValue({
+      plan: { ...PLAN, target_kind: 'tavotto_managed', private_python: privatePython },
+    })
+    await render({
+      ...OFFER,
+      targets: [{ ...OFFER.targets[1], private_python: privatePython }],
+    })
+    const disclosure = en('dependencyPreparePrivatePython', { version: '3.13.15', mb: 45, product: PRODUCT_NAME })
+    expect(text()).toContain(disclosure)
+    await click(en('repairInstallToManaged', { module: 'lmfit', product: PRODUCT_NAME }))
+    expect(text()).toContain(disclosure)
+    expect(byName(en('repairPrepareAndContinue'))).toBeTruthy()
+  })
+
+  it('下载 Python 的进度仍在运行中，允许取消且不显示关闭', async () => {
+    useDepRepairStore.setState({
+      progress: { plan_id: 'plan-abc', state: 'downloading_python', log: '', error: null, code: '' },
+    })
+    await render()
+    expect(text()).toContain(en('dependencyPrepareState_downloading_python'))
+    expect(byName(en('repairCancel'))).toBeTruthy()
+    expect(byName(en('repairClose'))).toBeUndefined()
+  })
 })
 
 describe('无障碍与窄栏', () => {
@@ -399,7 +445,9 @@ describe('这台机器上已有的解释器（ADR 0044）', () => {
       ],
     })
     expect(text()).toContain(
-      en('repairSystemRejectedUnsupported', { python: '/usr/bin/python3', module: 'lmfit', version: '3.9.6' }),
+      en('repairSystemRejectedUnsupported', {
+        python: '/usr/bin/python3', module: 'lmfit', version: '3.9.6', product: PRODUCT_NAME,
+      }),
     )
     expect(text()).toContain(
       en('repairSystemRejectedNoMatplotlib', { python: '/opt/py/bin/python3', module: 'lmfit' }),

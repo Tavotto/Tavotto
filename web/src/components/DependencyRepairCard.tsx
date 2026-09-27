@@ -37,6 +37,7 @@ const en = (key: string, values?: Record<string, unknown>) =>
 /** 安装状态 → 一句话（前端**只按 state 换文案**，不解析日志） */
 const STATE_KEY: Record<string, string> = {
   preparing: 'repairPreparing',
+  downloading_python: 'dependencyPrepareState_downloading_python',
   creating_env: 'repairCreatingEnv',
   installing: 'repairInstalling',
   verifying: 'repairVerifying',
@@ -110,6 +111,7 @@ export function DependencyRepairCard({
             {en('repairWillInstall', { requirement: plan.requirement })}
             {plan.network_required ? ` · ${en('repairNeedsNetwork')}` : ''}
           </p>
+          {plan.private_python && <PrivatePythonDisclosure offer={plan.private_python} />}
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
           <Button variant="primary" disabled={busy} onClick={() => install()}>
@@ -136,6 +138,9 @@ export function DependencyRepairCard({
   //（采用它一个字节都不装），排在最前时也不能被当成装包的地方。
   const installTarget = offer.targets.find((tg) => tg.kind !== 'system_interpreter')
   const rejected = offer.system_rejected ?? []
+  const managedUnavailable = offer.targets.some(
+    (tg) => tg.kind === 'tavotto_managed' && tg.available === false && tg.reason === 'managed_env_unavailable',
+  )
   return (
     <div className="flex flex-col gap-2.5 rounded-md bg-surface p-3 shadow-card">
       <div>
@@ -147,6 +152,11 @@ export function DependencyRepairCard({
         </p>
         {exhausted && (
           <p className="mt-1 text-xs leading-relaxed text-ink-3">{en('repairExhausted')}</p>
+        )}
+        {managedUnavailable && (
+          <p className="mt-1 text-xs leading-relaxed text-ink-2" data-managed-env-unavailable>
+            {en('repairManagedUnavailable', { product: PRODUCT_NAME })}
+          </p>
         )}
       </div>
 
@@ -178,6 +188,9 @@ export function DependencyRepairCard({
                   <span className="truncate text-xs text-ink-3" title={tg.python || undefined}>
                     {detail}
                   </span>
+                )}
+                {tg.kind === 'tavotto_managed' && tg.private_python && (
+                  <PrivatePythonDisclosure offer={tg.private_python} />
                 )}
               </div>
             )
@@ -236,6 +249,21 @@ export function DependencyRepairCard({
 
       <Failure code={errorCode} text={errorText} />
     </div>
+  )
+}
+
+/** Both the offer and the final plan must disclose the Python download before authorization. */
+function PrivatePythonDisclosure({ offer }: { offer: NonNullable<DependencyTarget['private_python']> }) {
+  return (
+    <p className="mt-1 text-xs leading-relaxed text-ink-2" data-dependency-private-python>
+      {offer.cached
+        ? en('dependencyPreparePrivatePythonCached', { version: offer.version, product: PRODUCT_NAME })
+        : en('dependencyPreparePrivatePython', {
+            version: offer.version,
+            mb: Math.max(1, Math.round(offer.download_bytes / 1048576)),
+            product: PRODUCT_NAME,
+          })}
+    </p>
   )
 }
 
@@ -389,6 +417,7 @@ function rejectionText(r: SystemInterpreterRejection, pkg: string): string {
         python: r.python,
         module: pkg,
         version: r.python_version || '?',
+        product: PRODUCT_NAME,
       })
     case 'project_env_no_matplotlib':
       return en('repairSystemRejectedNoMatplotlib', { python: r.python, module: pkg })

@@ -214,6 +214,56 @@ class TestPrivateBase:
         assert managed["private_python"] is None
         assert server.requests == [] and privatepython.python_of(src) is None
 
+    def test_old_system_python_is_a_rejected_alternative_not_the_bundled_worker(
+        self, tmp_path, house, no_base, fake, monkeypatch
+    ):
+        """User report: bundled worker 3.13 works, another Python 3.7 has the missing package.
+
+        Only a qualified private base may make the managed action available. The rejected
+        alternative remains visible, and neither offering nor planning runs/downloads it.
+        This mechanism test does not qualify Windows for enabled=true (ADR 0064).
+        """
+        server, src, _ = fake
+        project = _project(tmp_path)
+        legacy = r"C:\Python37\python.exe"
+        detail = {
+            "system": [
+                {
+                    "python": legacy,
+                    "ok": False,
+                    "code": "project_env_unsupported_python",
+                    "python_version": "3.7.6",
+                    "requested_module_ok": True,
+                }
+            ],
+        }
+        # The separate installed rendering worker is healthy; only the full base is missing.
+        monkeypatch.setattr(deprepair, "_base_python", None)
+        monkeypatch.setattr(deprepair, "_base_python_known", True)
+        monkeypatch.setenv("TAVOTTO_PRIVATE_PYTHON", "0")
+        before = deprepair.offer(project, "figure.py", ALPHA[1], project_env=detail)
+        target = next(t for t in before["targets"] if t["kind"] == deprepair.TARGET_MANAGED)
+        assert target["available"] is False and target["private_python"] is None
+        assert before["system_rejected"] == [
+            {
+                "python": legacy,
+                "code": "project_env_unsupported_python",
+                "python_version": "3.7.6",
+            }
+        ]
+
+        # Engineering override stands in for a target that has earned product qualification.
+        monkeypatch.setenv("TAVOTTO_PRIVATE_PYTHON", "1")
+        after = deprepair.offer(project, "figure.py", ALPHA[1], project_env=detail)
+        target = next(t for t in after["targets"] if t["kind"] == deprepair.TARGET_MANAGED)
+        assert target["available"] is True
+        assert target["private_python"]["download_bytes"] == src.size
+        plan = deprepair.create_plan(
+            project, "figure.py", ALPHA[1], target_kind=deprepair.TARGET_MANAGED
+        )
+        assert plan.to_payload()["private_python"]["download_bytes"] == src.size
+        assert plan.python == "" and server.requests == []
+
     @needs_real_base
     def test_offer_and_single_package_plan_carry_the_download(self, tmp_path, house, no_base, fake):
         """运行后缺包那条路（`offer` → `create_plan`）同样把下载说出口，再经同一个事务执行。"""
