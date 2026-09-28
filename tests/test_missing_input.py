@@ -366,6 +366,29 @@ def test_a_script_that_checks_first_gets_the_static_list(figs):
     ]
 
 
+def test_absolute_paths_that_are_only_probed_get_no_picker(tmp_path):
+    """绝对路径被 `exists()` / `listdir()` / `glob()` / `Path(...).exists()` 问的是探路，不是读：改指表救不回，
+    给了选择器就是死循环（指认 → 重跑 → `exists()` 照样 False → 同一个框再弹）。同一串还被读过也算探路。"""
+    (tmp_path / "fig.py").write_text(
+        "import glob, os\nfrom pathlib import Path\n"
+        'if not os.path.exists("/nonexistent/tavotto/a/x.csv"):\n    raise SystemExit(1)\n'
+        'os.listdir("/nonexistent/tavotto/b/runs")\n'
+        'glob.glob("/nonexistent/tavotto/c/*.csv")\n'
+        'Path("/nonexistent/tavotto/d/y.csv").exists()\n'
+        'open("/nonexistent/tavotto/e/z.csv")\n'
+        'open("/nonexistent/tavotto/a/x.csv")\n',
+        encoding="utf-8",
+    )
+    got = {o["path"]: o["via"] for o in inputremap.static_missing("fig.py", tmp_path, [])}
+    assert got == {
+        "/nonexistent/tavotto/a/x.csv": inputremap.VIA_PROBE,
+        "/nonexistent/tavotto/b/runs": inputremap.VIA_PROBE,
+        "/nonexistent/tavotto/c/*.csv": inputremap.VIA_GLOB,
+        "/nonexistent/tavotto/d/y.csv": inputremap.VIA_PROBE,
+        "/nonexistent/tavotto/e/z.csv": inputremap.VIA_OPEN,
+    }
+
+
 @needs_worker
 def test_a_plain_script_error_stays_a_script_error(figs):
     (figs / "fig.py").write_text("raise ValueError('boom')\n", encoding="utf-8")
