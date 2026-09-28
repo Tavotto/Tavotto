@@ -71,6 +71,8 @@ class Pending:
     directory: Path
     stdout_tail: str = ""
     done: threading.Event = field(default_factory=threading.Event, repr=False)
+    #: 同一问的作答 / 丢弃串行：只有赢下的那一次能落盘答案（两个界面同时答时，记住的 == worker 拿到的）
+    guard: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def event_payload(self) -> dict:
         return {
@@ -128,14 +130,19 @@ def answer(pending_id: str, text: str | None, *, eof: bool = False) -> Pending |
         p = _pending.get(pending_id)
     if p is None:
         return None
-    if not (eof or text is None) and p.kind != "getpass":
-        # 先校验、先落盘，**成功之后才出队**：答案不合法（太长）或写盘失败时这一问仍在等，界面改好再交一次
-        # 照样答得上（Codex #680 P2）。先出队的话改好的那次拿到 404，而 worker 白等到超时。
-        # 口令不落盘：getpass 的答案每次都问（ADR 0099 §四）
-        scriptanswers.remember(p.project_root, p.script, p.index, p.prompt, text, p.kind)
-    with _lock:
-        if _pending.pop(pending_id, None) is None:
-            return None  # 同一问被并发答掉 / 被停止了
+    # 占住这一问再校验、落盘：两个界面同时答同一问时，后到的等先到的做完——先到的成功了它就拿到「不在等」，
+    # 绝不在输掉之后再改写记住的答案（否则 worker 拿到 A、下次运行却用 B，Codex #680 P1）
+    with p.guard:
+        with _lock:
+            if _pending.get(pending_id) is not p:
+                return None  # 同一问已被答掉 / 被停止了
+        if not (eof or text is None) and p.kind != "getpass":
+            # 先校验、先落盘，**成功之后才出队**：答案不合法（太长）或写盘失败时这一问仍在等，界面改好再交一次
+            # 照样答得上（Codex #680 P2）。先出队的话改好的那次拿到 404，而 worker 白等到超时。
+            # 口令不落盘：getpass 的答案每次都问（ADR 0099 §四）
+            scriptanswers.remember(p.project_root, p.script, p.index, p.prompt, text, p.kind)
+        with _lock:
+            del _pending[pending_id]
     if eof or text is None:
         _reply(p.directory, p.index, {"eof": True})
     else:
@@ -149,10 +156,15 @@ def answer(pending_id: str, text: str | None, *, eof: bool = False) -> Pending |
 def discard(pending_id: str, reason: str) -> Pending | None:
     """不再等这一问（停止脚本 / build 结束）。不写回复——worker 这时已经被杀或已经不在了。"""
     with _lock:
-        p = _pending.pop(pending_id, None)
-    if p is not None:
-        p.done.set()
-        _emit("script.input_closed", p.project_root, {"id": p.id, "reason": reason})
+        p = _pending.get(pending_id)
+    if p is None:
+        return None
+    with p.guard:  # 正在落盘的作答先做完：它赢了就不再是「丢弃」
+        with _lock:
+            if _pending.pop(pending_id, None) is None:
+                return None
+    p.done.set()
+    _emit("script.input_closed", p.project_root, {"id": p.id, "reason": reason})
     return p
 
 

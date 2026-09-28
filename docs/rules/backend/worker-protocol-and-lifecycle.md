@@ -118,7 +118,7 @@
   `out/script-input/` 里的 `req-<n>.json`，父进程在 **`ensure_built` 这一次请求期间**由 `inputbroker.serving()` 轮询作答
   （两条控制面同一个 context manager；Rust 与信封一个字节不动，build 响应只加 `script_inputs` 字段）。协议循环读的是
   `main()` 开头定死的 `protocol_in`，不是 `sys.stdin`。等人上限 `scriptinput.INPUT_WAIT_TIMEOUT` **必须小于**
-  `BUILD_IDLE_TIMEOUT`（到点 EOF，看门狗轮不到杀等人的 worker）；发问与作答各往 worker.log 写一行，静默计时各清零一次。
+  `BUILD_IDLE_TIMEOUT`（到点 EOF，看门狗轮不到杀等人的 worker）；发问与作答各往 worker.log 写一行（getpass 的作答只写固定标记，口令绝不进日志），静默计时各清零一次。
   没人能答 → `ScriptNeedsInput`（**BaseException**，脚本的 `except Exception` 吞不掉）→ `script_needs_input`；超时后脚本没接住
   EOF → `script_input_timeout`。写回的 `one_shot(script_inputs=热态 last_build_script_inputs)` 严格重放、从不问人。
   看护：`tests/test_script_input.py`（两条控制面）、`tests/test_script_input_api.py`。

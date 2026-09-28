@@ -212,12 +212,31 @@ def test_all_four_entry_points_are_bridged_on_both_planes(plane, figs, tmp_path,
         (2, "line-answer"),
         (4, "line-answer"),
     ]
+    # 口令绝不进 worker.log（它会进诊断包与错误里的日志尾巴，Codex #680 P1）；别的答案照常转录——
+    # 先证明读的是这条会话的日志，「没有口令」才有意义
+    log = worker.log_path.read_text(encoding="utf-8", errors="replace")
+    assert "line-answer" in log
+    assert "s3cret" not in log
     # 会合目录在 build 结束时删掉
     assert not (worker.out_dir / scriptinput.DIRNAME).exists()
     # 协议管道没被脚本读走：之后的请求照常
     stems = [s for s in (resp.get("stems") or [])]
     assert "Pick" in stems
     worker.override("Pick", [])
+
+
+def test_a_getpass_answer_leaves_no_trace_on_disk_or_in_the_log(tmp_path, capsys):
+    """口令：worker.log 只有固定标记，回复文件读完即删；普通 input 照常转录（Codex #680 P1）。"""
+    ch = scriptinput.Channel(tmp_path, "s.py")
+    (tmp_path / scriptinput.reply_name(1)).write_text(json.dumps({"answer": "hunter2"}), "utf-8")
+    assert ch.ask("secret: ", "getpass") == "hunter2"
+    (tmp_path / scriptinput.reply_name(2)).write_text(json.dumps({"answer": "plain"}), "utf-8")
+    assert ch.ask("pick: ", "input") == "plain"
+    err = capsys.readouterr().err
+    assert "hunter2" not in err
+    assert "plain" in err
+    assert not (tmp_path / scriptinput.reply_name(1)).exists()
+    assert not any("hunter2" in f.read_text("utf-8") for f in tmp_path.iterdir() if f.is_file())
 
 
 @needs_worker

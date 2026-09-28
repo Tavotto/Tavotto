@@ -96,6 +96,27 @@ async function changeAnswer(
   }
 }
 
+/**
+ * 报「在看哪个项目」**串行**：同一时刻只有一条 listen 在路上，其间再报的只留最新的一份，等前一条回来再发。
+ * 并发发出去的话后端可能按乱序处理——旧项目那条后到、盖掉新的，于是正在看的项目没人答、立即
+ * `script_needs_input`，旧项目的问却白等（Codex #680 P1）。前一条回来了才发下一条，后端就按报的顺序认。
+ */
+let listenInFlight = false
+let listenNext: { streamId: string; pj: string } | null = null
+
+function sendListen(streamId: string, pj: string) {
+  listenInFlight = true
+  // 报不上（流刚断 / 后端重启）不打扰用户：重连会带来新的 hello，再报一次
+  void listenScriptInput(streamId, pj)
+    .catch(() => {})
+    .finally(() => {
+      listenInFlight = false
+      const next = listenNext
+      listenNext = null
+      if (next) sendListen(next.streamId, next.pj)
+    })
+}
+
 export const useScriptInputStore = create<ScriptInputState>((set, get) => ({
   epoch: 0,
   queue: [],
@@ -195,8 +216,8 @@ export const useScriptInputStore = create<ScriptInputState>((set, get) => ({
   announce: (pj) => {
     const streamId = get().streamId
     if (!streamId || !pj) return
-    // 报不上（流刚断 / 后端重启）不打扰用户：重连会带来新的 hello，再报一次
-    void listenScriptInput(streamId, pj).catch(() => {})
+    if (listenInFlight) listenNext = { streamId, pj }
+    else sendListen(streamId, pj)
   },
 
   clear: () => {

@@ -19,6 +19,7 @@ safe worker 的 `sys.stdin` 就是协议管道：脚本一 `input()` 就阻塞�
 from __future__ import annotations
 
 import builtins
+import contextlib
 import io
 import json
 import os
@@ -209,8 +210,15 @@ class Channel:
             self.record.append({"index": index, "kind": kind, "prompt": prompt, "answer": None})
             return None
         answer = reply["answer"]
-        # 转录「提示 → 答案」：和终端里看到的一样（getpass 也记——ADR 写明不掩码）
-        self._log(f"{answer}\n")
+        if kind == "getpass":
+            # 口令绝不落盘：worker.log 活得比会合目录久，还会进诊断包与错误里的日志尾巴（Codex #680 P1）。
+            # 只写一行固定的标记——看门狗照样在作答这一点清零；回复文件读完当场删掉
+            self._log(f"[input] 第 {index} 问已作答（口令不转录）\n")
+            with contextlib.suppress(OSError):
+                reply_path.unlink()
+        else:
+            # 转录「提示 → 答案」：和终端里看到的一样
+            self._log(f"{answer}\n")
         self.record.append({"index": index, "kind": kind, "prompt": prompt, "answer": answer})
         return answer
 

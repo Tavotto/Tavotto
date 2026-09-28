@@ -313,6 +313,48 @@ def test_a_rejected_answer_keeps_the_question_waiting(client, figs, events, monk
     assert _stems(out["json"]) == ["sel_1_2"]
 
 
+def test_concurrent_answers_only_the_winner_is_remembered(tmp_path, monkeypatch):
+    """两个界面同时答同一问：只有赢下的那次落盘，记住的答案 == worker 拿到的答案（Codex #680 P1）。
+    先到的 A 卡在落盘里时 B 到了；A 做完出队后 B 必须拿到「不在等」，不许再改写记住的答案。"""
+    saved: list[str] = []
+    a_in_remember = threading.Event()
+    release_a = threading.Event()
+
+    def remember(root, script, index, prompt, text, kind):
+        saved.append(text)
+        if text == "A":
+            a_in_remember.set()
+            release_a.wait(10)
+
+    monkeypatch.setattr(scriptanswers, "remember", remember)
+    monkeypatch.setattr(inputbroker, "_publish", None)
+    p = inputbroker.Pending(
+        id="q1",
+        project_root=str(tmp_path),
+        script="pick.py",
+        index=1,
+        prompt="numbers: ",
+        kind="input",
+        directory=tmp_path,
+    )
+    monkeypatch.setattr(inputbroker, "_pending", {"q1": p})
+    got: dict = {}
+    ta = threading.Thread(target=lambda: got.__setitem__("A", inputbroker.answer("q1", "A")))
+    ta.start()
+    assert a_in_remember.wait(10)
+    tb = threading.Thread(target=lambda: got.__setitem__("B", inputbroker.answer("q1", "B")))
+    tb.start()
+    time.sleep(0.3)  # 让 B 走到能走的最远处
+    release_a.set()
+    ta.join(10)
+    tb.join(10)
+    reply = json.loads((tmp_path / scriptinput.reply_name(1)).read_text(encoding="utf-8"))
+    assert reply == {"answer": "A"}
+    assert saved == ["A"]
+    assert got["A"] is p and got["B"] is None
+    assert inputbroker.get_pending("q1") is None
+
+
 def test_render_endpoint_error_body_carries_the_prompt():
     """渲染端点那条出口（`_worker_error_payload`）也带 params.prompt——界面按 code 翻译时要它。"""
     for code in ("script_needs_input", "script_input_timeout"):

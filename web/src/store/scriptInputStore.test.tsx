@@ -139,9 +139,33 @@ describe('能答题的事件流报它在看哪个项目（Codex #680 P1）', () 
     }
     ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
     act(() => root.render(<Probe />))
+    // 报项目是串行的：先让 A 那条回来
+    await act(async () => {})
     act(() => useProjectStore.setState({ project: { open: true, id: 'B' } as never }))
     expect(listen).toHaveBeenLastCalledWith('s1', 'B')
     act(() => root.unmount())
     useProjectStore.setState({ project: null })
+  })
+
+  it('报项目串行：前一条回来之前不发下一条，其间只留最新的那份（Codex #680 P1）', async () => {
+    const listen = vi.mocked(listenScriptInput)
+    const pending: Array<() => void> = []
+    listen.mockImplementation(() => new Promise((r) => pending.push(() => r({ ok: true }))))
+    useScriptInputStore.setState({ streamId: 's1' })
+    const { announce } = useScriptInputStore.getState()
+    announce('A')
+    announce('B')
+    announce('C')
+    // 乱序的来源是同时在路上的两条：此刻只许有一条
+    expect(listen.mock.calls).toEqual([['s1', 'A']])
+    await act(async () => pending.shift()!())
+    // A 回来了才发，且发的是最新的 C（B 已经过时，不发）
+    expect(listen.mock.calls).toEqual([
+      ['s1', 'A'],
+      ['s1', 'C'],
+    ])
+    await act(async () => pending.shift()!())
+    expect(listen).toHaveBeenCalledTimes(2)
+    listen.mockResolvedValue({ ok: true })
   })
 })
