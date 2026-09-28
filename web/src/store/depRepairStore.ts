@@ -482,7 +482,9 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
         // 素材库「脚本」行上因缺包停下的那次运行同样重跑（图还没上画布时，修复入口在脚本行上）：
         // 只重跑这份计划所属的脚本，且只在它此刻仍停在 missing_dependency 时——用户已经重跑 /
         // 收起过的不动
-        rerun = rerunScriptAfterRepair(p.script)
+        // 从脚本行发起、中途切过项目的（#729）：那次停在缺包上的运行已随切项目清空，按收放回来的 offer 认
+        const { request, scriptOffer } = get()
+        rerun = rerunScriptAfterRepair(p.script, !!scriptOffer && request?.script === p.script)
         // 联合准备装完：授权框收掉（渲染会重排；缺的那一次错误也随之清）
         if (p.flow === 'joint') useEnvStore.getState().dismissDependencyPreparation()
       }
@@ -546,6 +548,13 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
       progress: back,
       parked: next,
     })
+    // 从脚本行发起的修复在切走期间装好了（#729）：终态副作用当时不在别的项目上派发，切回来补上与「没切走」
+    // 同一件事——重跑那一行（同一条 `rerunScriptAfterRepair`）、收起卡片。收起之后这份作业不再被收放，
+    // 再切走切回不会重复触发
+    if (back?.state === 'done' && retryCtx?.scriptOffer) {
+      const script = back.script ?? retryCtx.request?.script
+      if (rerunScriptAfterRepair(script, true)) get().reset()
+    }
   },
 }))
 
@@ -611,11 +620,16 @@ function lateFailure(planId: string, e: unknown): void {
   useDepRepairStore.setState({ parked: { ...store.parked, [key]: { ...p, state: 'failed', code, error: text } } })
 }
 
-/** 修好之后把素材库里因缺这个包停下的那次脚本运行重跑一遍（见 `onProgress` 的 done 分支） */
-function rerunScriptAfterRepair(script: string | undefined): boolean {
+/**
+ * 修好之后把素材库里因缺这个包停下的那次脚本运行重跑一遍（见 `onProgress` 的 done 分支）。
+ * `fromScriptRow`：修复是从这一行发起、offer 随作业收放回来的（#729）——切项目把那次运行清空了，
+ * 这一行此刻**没有运行记录**也算「仍停在缺包上」；用户切回来之后自己跑过（有记录）就不动
+ */
+function rerunScriptAfterRepair(script: string | undefined, fromScriptRow = false): boolean {
   if (!script) return false
   const runs = useScriptRunStore.getState()
-  if (runs.byScript[script]?.phase !== 'missing_dependency') return false
+  const phase = runs.byScript[script]?.phase
+  if (phase !== 'missing_dependency' && !(fromScriptRow && phase === undefined)) return false
   void runs.run(script)
   return true
 }

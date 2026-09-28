@@ -546,6 +546,36 @@ describe('脚本行发起的修复切项目再切回（#729）', () => {
     expect(card(), '重试之后卡片仍在脚本行上').toBeTruthy()
   })
 
+  it('成功：切走期间装好了，切回 A 自动重跑那一行一次（与没切走时同一条路），B 上不触发、再切回不重复', async () => {
+    await installFromRowThenLeave()
+    mockProbe.mockClear()
+    mockProbe.mockResolvedValue({ ...ok([desc('Fig1')]), script: 'fig_labels.py' })
+    await act(async () => useDepRepairStore.getState().onProgress(progress('done')))
+    await flush()
+    expect(mockProbe, 'B 上不该重跑 A 的脚本').not.toHaveBeenCalled()
+    await switchTo('pA')
+    expect(mockProbe, '切回 A 后没有自动重跑').toHaveBeenCalledTimes(1)
+    expect(mockProbe.mock.calls[0][0]).toBe('fig_labels.py')
+    expect(card(), '重跑后卡片应随之收起').toBeNull()
+    // 重跑出了图：这一行回到「发现了图」
+    expect(host.textContent).toContain('已发现 1 张图')
+    // 再切走、切回：不重复触发
+    await switchTo('pB')
+    await switchTo('pA')
+    expect(mockProbe).toHaveBeenCalledTimes(1)
+  })
+
+  it('成功：切回 A 时还在装，之后在 A 上装好——同样自动重跑那一行一次', async () => {
+    await installFromRowThenLeave()
+    await switchTo('pA')
+    mockProbe.mockClear()
+    mockProbe.mockResolvedValue({ ...ok([desc('Fig1')]), script: 'fig_labels.py' })
+    await act(async () => useDepRepairStore.getState().onProgress(progress('done')))
+    await flush()
+    expect(mockProbe, '切回后装好没有自动重跑').toHaveBeenCalledTimes(1)
+    expect(card()).toBeNull()
+  })
+
   it('取消：切走期间取消了，切回 A，脚本行上有取消结局与「重试」', async () => {
     await installFromRowThenLeave()
     await act(async () =>
