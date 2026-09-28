@@ -75,7 +75,8 @@
 窗口失焦。
 
 按下指针收尾是在 window 捕获阶段；同一个事件随后进命中层 / 选中框手柄时，处理器闭包里的面板与
-manifest 还是提交前那一帧的。图内这一段若刚写了 override，这一下**吞掉**（`inFigureBasisStale`：
+manifest 还是提交前那一帧的。图内这一段若刚写了 override，这一下**吞掉**（`guardStale` 包装命中层的主键按下、
+右键菜单、双击与选中框手柄，判据 `inFigureBasisStale`：
 overrides 换了或几何权威不在画面上），等这一版的权威挂上再起手——与第五节同一条：不拿旧几何起手，
 否则新拖动的基线来自旧 override，松手会把刚提交的键盘位移盖掉（Codex #671）。画布对象的拖动起手时
 从 store 现取，不受影响。

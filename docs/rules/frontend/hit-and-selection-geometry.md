@@ -140,7 +140,8 @@
     keydown 到达）与原生 copy / paste 事件（桌面壳预置「粘贴」直达）一律经 `runDiscreteAction` 闸门：
     焦点在输入框 / 对话框里让位、不收手势，否则先收再执行（看护 `hooks/discreteActionGate.test.tsx`）。
   * 按下指针时这一段在 window 捕获阶段收尾，**同一个事件**随后进命中层 / 选中框手柄时它们闭包里的
-    obj / manifest 已经过期：`inFigureBasisStale` 为真（overrides 换了或权威不在画面上）就吞掉这一下，
+    obj / manifest 已经过期：`inFigureBasisStale` 为真（overrides 换了或权威不在画面上）就吞掉这一下
+    （读闭包几何的指针处理器——主键按下、右键菜单、双击、选中框手柄——一律经 `guardStale` 包装，清单在它的注释里），
     等这一版的权威挂上再起手——绝不拿旧基线起拖，否则松手会把刚提交的键盘位移盖掉（Codex #671）。
     画布对象的拖动在起手时从 store 现取（`draggableSelection` / `startMoveDrag(objectId)`），不受影响。
   * 几何权威缺席（上一段的渲染还没回来）时不建 `InFigureMove`、不写文档，只记位移，权威挂上画面

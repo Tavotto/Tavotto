@@ -29,7 +29,7 @@ import { useDisplayedExactManifest } from '@/store/mountedSvgStore'
 import type { CanvasObject, LinearObject, PanelObject } from '@/types/document'
 import { isLinear, lineEndpoints, objectRotation, panelRotation } from '@/types/document'
 import {
-  inFigureBasisStale,
+  guardStale,
   startArrowDrag,
   startAxesDrag,
   startCropDrag,
@@ -787,14 +787,8 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
     ? `rotate(${rot} ${panelBox.x + panelBox.w / 2} ${panelBox.y + panelBox.h / 2})`
     : undefined
   // 手柄与命中层同一道闸：这一下按下之前捕获阶段刚提交了方向键微调，闭包里的 panel /
-  // 包围框已经过期——吞掉，不拿旧基线起手（见 inFigureBasisStale）
-  const guarded = (start: (e: React.PointerEvent) => void) => (e: React.PointerEvent) => {
-    if (inFigureBasisStale(panel)) {
-      e.stopPropagation()
-      return
-    }
-    start(e)
-  }
+  // 包围框已经过期——吞掉，不拿旧基线起手（清单见 guardStale）
+  const guarded = (start: (e: React.PointerEvent) => void) => guardStale(panel, start)
   // 多选且全是子图 → 组包围框接管手柄，成组缩放
   const group = resolveGroup(panel, manifest, selectedGids)
   const groupBox = group ? toBox(preview?.group ?? group.box) : null

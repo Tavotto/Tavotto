@@ -1357,6 +1357,36 @@ export function inFigureBasisStale(panel: PanelObject): boolean {
   return live?.type !== 'panel' || live.overrides !== panel.overrides || !displayedExactManifest(live)
 }
 
+/**
+ * 图内指针处理器的统一包装：`inFigureBasisStale(panel)` 为真时吞掉这一下（`stopPropagation`；
+ * 右键再 `preventDefault`，不让系统菜单冒出来），否则照常交给 `handler`。
+ *
+ * 闭包里读 obj / manifest 的指针处理器一律经它（清单，新增处理器照此登记）：
+ *   - 命中层（PanelView `ElementHitLayer`）：主键 `pointerdown`（选中 / ⌥ 轮换 / 切刻度 /
+ *     框选 / 起拖）、`contextmenu`（命中 → 选中 → 快速编辑）、`dblclick`（命中 → 快速改字）；
+ *   - 选中框手柄（OverlaySvg `ElementBoxes`）：组缩放 / 子图缩放 / 图例缩放 / 箭头端点的 `pointerdown`。
+ * 不经它的，理由写在这里：
+ *   - 命中层非主键 `pointerdown`：处理器直接 return、不读几何，而且必须冒到画布（中键平移）；
+ *     右键真正读几何的是随后的 `contextmenu`；
+ *   - 命中层 `pointermove` / `pointerleave`：只改悬停高亮与光标，不改选中、不弹出；权威一走
+ *     命中层就重渲染成停摆层，悬停随之清掉；
+ *   - 命中层与手柄都没有 `wheel` 处理器（滚轮缩放在画布层，只读视口）；
+ *   - OverlaySvg 的画布对象手柄（参考线 / 缩放 / 端点 / 裁剪）：按 id 从 store 现取，不读闭包。
+ */
+export function guardStale<E extends { type: string; stopPropagation(): void; preventDefault(): void }>(
+  panel: PanelObject,
+  handler: (e: E) => void,
+): (e: E) => void {
+  return (e) => {
+    if (inFigureBasisStale(panel)) {
+      e.stopPropagation()
+      if (e.type === 'contextmenu') e.preventDefault()
+      return
+    }
+    handler(e)
+  }
+}
+
 /** 按下图内元素开始拖动（PanelView 的单选分派）。回 false = 这个元素不能移动 */
 export function startInFigureDrag(
   e: ReactPointerEvent,

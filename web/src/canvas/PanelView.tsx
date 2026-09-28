@@ -57,7 +57,7 @@ import {
 } from '@/types/document'
 import {
   cycleOverlapAt,
-  inFigureBasisStale,
+  guardStale,
   isElementHidden,
   pickElement,
   startElementGroupMove,
@@ -668,6 +668,73 @@ function ElementHitLayer({
     })
   }
 
+  /** 主键按下：选中 / ⌥ 轮换 / 切刻度 / 框选 / 起拖（过期守卫见 guardStale） */
+  const onPrimaryDown = guardStale(obj, (e: React.PointerEvent) => {
+    e.stopPropagation()
+    const { fx, fy } = frac(e)
+    const hit = pickElement(manifest, fx, fy, obj.lockedGids)
+    const ui = useUiStore.getState()
+    // ⌥ 点击 = 在压在这一点上的重叠候选之间轮换（issue #216）。**排在边框
+    // 命中区之前**：孪生轴与宿主的边框线逐位重合，正是最需要轮换的那一点，
+    // 让位给「切这一边的刻度」的话用户永远换不到 twin 容器上。⇧ 归加选，
+    // 两个修饰键各管一件事；⌥ 只换选中，不起拖动（这一层的 ⌥ 此前没有语义，
+    // 拖动照旧不按修饰键分档）。
+    if (e.altKey && !e.shiftKey && cycleOverlapAt(obj, fx, fy)) {
+      setSpineHover(null)
+      return
+    }
+    // 边框的内 / 外侧命中带：一次点击 = 切这一边的向内 / 向外刻度（一条历史）。
+    // 选中落到那条边所属的子图上（刻度卡随之出现、状态同源，ADR 0035）；只有
+    // 已经选着**这个子图本身或这条边那条轴的刻度组**时才不动选区——两者的
+    // 属性页都带刻度卡。以前写成 `startsWith(`${gid}.`)`，把子图名下的散点 /
+    // 图例 / 文字全算了进去：选着散点点边框带，刻度切了、选区却留在散点上，
+    // 刻度卡不出现、60 段轮廓原样留在覆盖层（issue #343）。
+    // 中线（neutral）不切刻度，走下面的普通选中。
+    const zone = spineZoneUnder(fx, fy, e.pointerType, hit)
+    if (zone && zone.zone !== 'neutral' && zone.plan) {
+      applyTickSidePlan(obj.id, zone.plan)
+      const sel = ui.selectedGids.length === 1 ? ui.selectedGids[0] : null
+      const keep = sel === zone.gid || sel === zone.tickGid
+      if (!keep) ui.setSelectedGid(zone.gid)
+      setSpineHover(null)
+      return
+    }
+    if (zone && zone.zone === 'neutral' && (!hit || hit.gid === 'figure')) {
+      // 偏出去的边框线本身：点它选中它的子图（框内那条本来就会命中子图）
+      ui.setSelectedGid(zone.gid)
+      return
+    }
+    // shift 加选放开到任何具体元素（曲线、柱形系列、误差棒都要能多选，
+    // 批量改颜色/线宽靠它）。figure 除外——它是兜底命中，混进多选没有意义。
+    // 加选不挑几何能力：对齐与整组平移那边由 alignEntries 自行过滤，
+    // 非几何元素进了选区也不会搅乱它们。
+    if (e.shiftKey && hit && hit.gid !== 'figure') {
+      ui.toggleSelectedGid(hit.gid)
+      return
+    }
+    // 空白处（兜底命中 figure）按下 → 拖出框选带；点一下不拖仍是选中 figure
+    if (!hit || hit.gid === 'figure') {
+      startBandSelect(e)
+      return
+    }
+    // 拖多选里的任一成员 = 整组平移，且不改动选择（与画布层多选拖动一致）
+    if (hit && manifest && ui.selectedGids.length > 1) {
+      const entries = alignEntries(obj, manifest, ui.selectedGids)
+      if (entries.length > 1 && entries.some((en) => en.key === geomGid(hit))) {
+        startElementGroupMove(e, obj, entries, layout)
+        return
+      }
+    }
+    // 点已经在多选里的成员不收敛选区（与画布对象层的 ObjectView 一致）：
+    // 「框好一组再挨个确认」是常见动作，点一下就把批量表单收掉等于惩罚确认。
+    // 收窄多选仍有退路——点图内空白命中 figure 即可。
+    const keepSelection = !!hit && ui.selectedGids.length > 1 && ui.selectedGids.includes(hit.gid)
+    if (!keepSelection) ui.setSelectedGid(hit?.gid ?? 'figure')
+    // 保持选区归保持选区，该拖的照样拖：位图没有自己的几何属性，拖它等于拖宿主
+    // 子图。按哪一种平移走只在 `inFigureMoveOf` 判（方向键微调认的是同一处）
+    if (hit) startInFigureDrag(e, obj, manifest, hit, layout)
+  })
+
   // 权威没就位：留着这一层占位（布局不跳），但不接任何指针事件。
   // 选区不动——等精确 manifest 回来，框会自己回到正确位置。
   if (!manifest) {
@@ -708,76 +775,14 @@ function ElementHitLayer({
         setHoverGid(null)
         setSpineHover(null)
       }}
+      // 读闭包 obj / manifest 的三个处理器都先过 guardStale（清单与不经它的理由见那里）：
+      // 捕获阶段刚把方向键微调那一段提交掉时，选中、切刻度、起拖、快速编辑都不许拿旧几何算
       onPointerDown={(e) => {
+        // 非主键不读几何，而且要冒到画布（中键平移）；右键读几何的是下面的 contextmenu
         if (e.button !== 0) return
-        e.stopPropagation()
-        // 这一下按下之前，捕获阶段刚把方向键微调那一段提交掉：闭包里的 obj / manifest 已经
-        // 过期，选中、切刻度、起拖都不许拿它算——吞掉，等这一版的权威（见 inFigureBasisStale）
-        if (inFigureBasisStale(obj)) return
-        const { fx, fy } = frac(e)
-        const hit = pickElement(manifest, fx, fy, obj.lockedGids)
-        const ui = useUiStore.getState()
-        // ⌥ 点击 = 在压在这一点上的重叠候选之间轮换（issue #216）。**排在边框
-        // 命中区之前**：孪生轴与宿主的边框线逐位重合，正是最需要轮换的那一点，
-        // 让位给「切这一边的刻度」的话用户永远换不到 twin 容器上。⇧ 归加选，
-        // 两个修饰键各管一件事；⌥ 只换选中，不起拖动（这一层的 ⌥ 此前没有语义，
-        // 拖动照旧不按修饰键分档）。
-        if (e.altKey && !e.shiftKey && cycleOverlapAt(obj, fx, fy)) {
-          setSpineHover(null)
-          return
-        }
-        // 边框的内 / 外侧命中带：一次点击 = 切这一边的向内 / 向外刻度（一条历史）。
-        // 选中落到那条边所属的子图上（刻度卡随之出现、状态同源，ADR 0035）；只有
-        // 已经选着**这个子图本身或这条边那条轴的刻度组**时才不动选区——两者的
-        // 属性页都带刻度卡。以前写成 `startsWith(`${gid}.`)`，把子图名下的散点 /
-        // 图例 / 文字全算了进去：选着散点点边框带，刻度切了、选区却留在散点上，
-        // 刻度卡不出现、60 段轮廓原样留在覆盖层（issue #343）。
-        // 中线（neutral）不切刻度，走下面的普通选中。
-        const zone = spineZoneUnder(fx, fy, e.pointerType, hit)
-        if (zone && zone.zone !== 'neutral' && zone.plan) {
-          applyTickSidePlan(obj.id, zone.plan)
-          const sel = ui.selectedGids.length === 1 ? ui.selectedGids[0] : null
-          const keep = sel === zone.gid || sel === zone.tickGid
-          if (!keep) ui.setSelectedGid(zone.gid)
-          setSpineHover(null)
-          return
-        }
-        if (zone && zone.zone === 'neutral' && (!hit || hit.gid === 'figure')) {
-          // 偏出去的边框线本身：点它选中它的子图（框内那条本来就会命中子图）
-          ui.setSelectedGid(zone.gid)
-          return
-        }
-        // shift 加选放开到任何具体元素（曲线、柱形系列、误差棒都要能多选，
-        // 批量改颜色/线宽靠它）。figure 除外——它是兜底命中，混进多选没有意义。
-        // 加选不挑几何能力：对齐与整组平移那边由 alignEntries 自行过滤，
-        // 非几何元素进了选区也不会搅乱它们。
-        if (e.shiftKey && hit && hit.gid !== 'figure') {
-          ui.toggleSelectedGid(hit.gid)
-          return
-        }
-        // 空白处（兜底命中 figure）按下 → 拖出框选带；点一下不拖仍是选中 figure
-        if (!hit || hit.gid === 'figure') {
-          startBandSelect(e)
-          return
-        }
-        // 拖多选里的任一成员 = 整组平移，且不改动选择（与画布层多选拖动一致）
-        if (hit && manifest && ui.selectedGids.length > 1) {
-          const entries = alignEntries(obj, manifest, ui.selectedGids)
-          if (entries.length > 1 && entries.some((en) => en.key === geomGid(hit))) {
-            startElementGroupMove(e, obj, entries, layout)
-            return
-          }
-        }
-        // 点已经在多选里的成员不收敛选区（与画布对象层的 ObjectView 一致）：
-        // 「框好一组再挨个确认」是常见动作，点一下就把批量表单收掉等于惩罚确认。
-        // 收窄多选仍有退路——点图内空白命中 figure 即可。
-        const keepSelection = !!hit && ui.selectedGids.length > 1 && ui.selectedGids.includes(hit.gid)
-        if (!keepSelection) ui.setSelectedGid(hit?.gid ?? 'figure')
-        // 保持选区归保持选区，该拖的照样拖：位图没有自己的几何属性，拖它等于拖宿主
-        // 子图。按哪一种平移走只在 `inFigureMoveOf` 判（方向键微调认的是同一处）
-        if (hit) startInFigureDrag(e, obj, manifest, hit, layout)
+        onPrimaryDown(e)
       }}
-      onContextMenu={(e) => {
+      onContextMenu={guardStale(obj, (e: React.MouseEvent) => {
         e.preventDefault()
         e.stopPropagation()
         const { fx, fy } = frac(e)
@@ -786,8 +791,8 @@ function ElementHitLayer({
         // 已在多选里就保持多选（属性页跟着它走），否则先选中再弹
         if (!ui.selectedGids.includes(gid)) ui.setSelectedGid(gid)
         openQuickEdit({ kind: 'element', panelId: obj.id, gid }, e)
-      }}
-      onDoubleClick={(e) => {
+      })}
+      onDoubleClick={guardStale(obj, (e: React.MouseEvent) => {
         // 始终拦下：不能让外层 ObjectView 的双击把编辑态切成裁剪/重进编辑
         e.stopPropagation()
         // ⌥ 双击 = 连着轮换两下，**不进快速改字**。两个 pointerdown 已经各换了
@@ -801,7 +806,7 @@ function ElementHitLayer({
         if (!hit?.editable.some((f) => f.prop === 'text' && f.type === 'text')) return
         useUiStore.getState().setSelectedGid(hit.gid)
         openQuickEdit({ kind: 'element', panelId: obj.id, gid: hit.gid, focusText: true }, e)
-      }}
+      })}
     >
       {band && (
         <div

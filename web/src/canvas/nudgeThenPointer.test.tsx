@@ -32,6 +32,7 @@ import { seedExactRender } from '@/test/renderFixtures'
 import { emptyProject, type PanelObject } from '@/types/document'
 import { nudgeActive, resetNudge } from './nudge'
 import { OverlaySvg } from './OverlaySvg'
+import { useQuickEdit } from './quickEditStore'
 import { PanelView } from './PanelView'
 
 declare global {
@@ -50,7 +51,8 @@ const title: ManifestElement = {
   role: 'title',
   label: '标题',
   bbox: [0.3, 0.05, 0.2, 0.05],
-  editable: [],
+  // 带文字内容：双击它 = 快速改字（dblclick 那一格要它）
+  editable: [{ prop: 'text', type: 'text', value: 'T' } as never],
   draggable: true,
   anchor: [0.3, 0.08],
   drag_prop: 'pos_frac',
@@ -186,6 +188,7 @@ beforeEach(async () => {
   useRenderStore.getState().clear()
   // 权威渲染一律悬着：提交之后这一版的权威由用例自己决定什么时候「到」
   useRenderStore.setState({ render: async () => {} })
+  useQuickEdit.getState().close()
   await useDocumentStore.getState().switchDocument(emptyProject(), 'd_nudge_then_pointer')
   useDocumentStore.getState().commit(literal('加面板'), (d) => {
     d.objects.push(panel())
@@ -315,5 +318,89 @@ describe('选中框手柄：同一道闸', () => {
     expect(past()).toHaveLength(1)
     act(() => overlayRoot.unmount())
     overlay.remove()
+  })
+})
+
+/* ------------------- guardStale 清单：命中层每个读几何的指针事件 ------------------- */
+
+const at = ([fx, fy]: [number, number]) => ({ clientX: fx * LAYOUT.width, clientY: fy * LAYOUT.height })
+
+/** 按下（带捕获阶段的微调收尾）+ 随后那个读几何的事件，同一个 act 里派发：React 不重渲染 */
+function fireSeq(layer: HTMLElement, events: [string, MouseEventInit][], point: [number, number]): Event[] {
+  const sent: Event[] = []
+  act(() => {
+    for (const [type, init] of events) {
+      const ev = new MouseEvent(type, { bubbles: true, cancelable: true, ...at(point), ...init })
+      if (type.startsWith('pointer')) Object.assign(ev, { pointerType: 'mouse', pointerId: 1 })
+      layer.dispatchEvent(ev)
+      sent.push(ev)
+    }
+  })
+  act(() => {
+    window.dispatchEvent(new MouseEvent('pointerup', { bubbles: true, ...at(point) }))
+  })
+  return sent
+}
+
+/** 子图里、离标题远的一点：命中 axes_0——被旧 manifest 命中就会把选区从标题改走 */
+const ON_AXES: [number, number] = [0.5, 0.6]
+
+/**
+ * 清单（与 `guardStale` 注释一一对应）：每一格是「用户的一次操作」派发的事件序列、按在哪、
+ * 没过期时它该产生的可见效果——对照组先证明这个效果真的会发生，被吞那组断言它没发生。
+ */
+const HIT_LAYER_EVENTS: {
+  name: string
+  events: [string, MouseEventInit][]
+  point: [number, number]
+  effect: () => boolean
+}[] = [
+  {
+    name: '主键 pointerdown（选中）',
+    events: [['pointerdown', { button: 0 }]],
+    point: ON_AXES,
+    effect: () => useUiStore.getState().selectedGids.join() === 'axes_0',
+  },
+  {
+    name: '右键 contextmenu（选中 + 快速编辑）',
+    events: [
+      ['pointerdown', { button: 2 }],
+      ['contextmenu', { button: 2 }],
+    ],
+    point: ON_AXES,
+    effect: () => useQuickEdit.getState().target != null,
+  },
+  {
+    name: 'dblclick（快速改字）',
+    events: [
+      ['pointerdown', { button: 0, detail: 2 }],
+      ['dblclick', { button: 0, detail: 2 }],
+    ],
+    point: ON_TITLE,
+    effect: () => useQuickEdit.getState().target != null,
+  },
+]
+
+describe('命中层：每一个读闭包几何的指针事件都过 guardStale', () => {
+  it.each(HIT_LAYER_EVENTS)('对照：$name 在权威就位时照常生效', ({ events, point, effect }) => {
+    fireSeq(hitLayer()!, events, point)
+    expect(effect()).toBe(true)
+  })
+
+  it.each(HIT_LAYER_EVENTS)('$name：微调这一段刚在捕获阶段提交 → 被吞', ({ events, point, effect }) => {
+    const layer = hitLayer()!
+    tap('ArrowRight')
+    expect(nudgeActive()).toBe(true)
+    const sent = fireSeq(layer, events, point)
+
+    expect(nudgeActive()).toBe(false)
+    expect(titlePos()![0]).toBeCloseTo(0.3 + 0.5 / PAGE_W, 9)
+    expect(past()).toHaveLength(1)
+    expect(useQuickEdit.getState().target).toBeNull()
+    expect(useInteractionStore.getState().kind).toBe('none')
+    if (events.some(([t]) => t === 'contextmenu')) expect(sent.at(-1)!.defaultPrevented).toBe(true)
+    expect(effect()).toBe(false)
+    // 选区原样：没有被旧 manifest 的命中改写成别的
+    expect(useUiStore.getState().selectedGids).toEqual([title.gid])
   })
 })
