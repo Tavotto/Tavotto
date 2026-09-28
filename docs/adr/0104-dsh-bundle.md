@@ -37,6 +37,11 @@ DSH 以前只能靠配置生成器打印一段 Cordis YAML，用户手工合并�
 6. **不做**：内嵌画布（DSH 只投影文本与图片）、npm 发布、`dsh plugin` 以外的安装入口。YAML patch 路线保留，
    与 bundle 二选一（同名 serverName 的第二行加载失败）。
 
+## 对外口径（2026-09-28 用户决定）
+
+README 的 DeepSeek Harness 章节标「(Beta)」：支持矩阵里 `dsh` 为 `status: beta`、`channel: dsh-bundle`，验收矩阵
+`dsh · bundle` 子行的工具流程是 `local_smoke`（同一条三向对拍，见 ADR 0103）。YAML patch 那条路仍是实验。
+
 ## 看护
 
 `tests/test_dsh_bundle.py`：包身份与版本；`dsh.bundle.patch` / `main` 指到真文件；`files` 覆盖胶水读的路径；

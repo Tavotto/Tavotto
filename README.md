@@ -395,7 +395,7 @@ app. Update with `claude plugin update tavotto@tavotto`.
 Claude Desktop's chat and claude.ai don't start local MCP servers from plugins. For Claude Desktop, use the
 config generator below.
 
-### Using Tavotto with DeepSeek Harness (experimental)
+### Using Tavotto with DeepSeek Harness (Beta)
 
 The same plugin is also a DeepSeek Harness bundle. Add it to the profile you use (`web` here, the one
 `dsh web` starts):
