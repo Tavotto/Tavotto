@@ -62,8 +62,11 @@ export function startVersionCheckpoints(): () => void {
 
   // 关键时刻：导出 / 写回 / 保存 / 打开 / 关闭 / 恢复前。**不去重**（服务器端也不），
   // 打完点重新计间隔——刚打过关键时刻，紧接着再拍一个自动节点只是重复
+  // 关键时刻**空画布也打**（Codex #679）：「清空之后保存」「打开 / 离开一个空项目」都是发生过的
+  // 事，与命名节点、恢复前一样不因为画布空着就静默缺席；只有普通自动节点在空画布上不拍。
+  // 「空」按节点实际拍的那份判——带快照时是快照里那份（`takeCheckpoint` 里同一个 `id.doc`）
   setMomentSink(async (moment, snapshot) => {
-    const res = await takeCheckpoint({ auto: true, moment }, snapshot)
+    const res = await takeCheckpoint({ auto: true, moment, allowEmpty: true }, snapshot)
     if (res?.version) lastSaved = Date.now()
     return res
   })
