@@ -43,13 +43,13 @@ import { Tab, TabList, TabPanel } from '../ui/Tabs'
 import { Tip } from '../ui/Tooltip'
 import { ArrangeSection } from './ArrangeSection'
 import { CanvasPage } from './CanvasPage'
-import { ElementInspector } from './ElementInspector'
+import { PanelElementPage } from './GroupPage'
 import { displayLabel, identityCrumbs, untruncatedLabel } from './identityCrumbs'
-import { containerGid } from './roles/hierarchy'
+import { ancestorsOf, containerGid, groupByGid, structuralParent } from './roles/hierarchy'
 import { KIND_SWITCH_ICON } from './kindSwitchIcons'
 import { ObjectKindSwitch } from './ObjectKindSwitch'
 import { RestoreMenu } from './RestoreMenu'
-import { roleName } from './roles/registry'
+import { groupName, roleName } from './roles/registry'
 import { roleIcon } from './roles/roleIcons'
 import { PanelSection } from './PanelSection'
 import { ArrowSection, ShapeSection } from './StrokeSection'
@@ -283,7 +283,7 @@ function PropertiesPage() {
       <>
         <IdentityHeader panel={elementPanel} />
         <div className="min-h-0 flex-1 overflow-y-auto">
-          <ElementInspector panel={elementPanel} />
+          <PanelElementPage panel={elementPanel} />
         </div>
       </>
     )
@@ -340,9 +340,21 @@ function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: P
     // 图名），不因为选中方式不同而换一副面孔（2026-09-13 审计 B54 / B56 的连续性）
     const picked = gid ? manifest?.elements.find((e) => e.gid === gid) : undefined
     const el = picked?.gid === 'figure' ? undefined : picked
+    // 选中的是一个真实的组（`Manifest.groups`）：它不是元素，头部按组写
+    const selGroup = gid && manifest ? groupByGid(manifest, gid) : undefined
     // gid 形如 axes_1.images_0：中段就是宿主子图，拼出「面板 / 子图 / 元素」
     const axesGid = gid?.includes('.') ? gid.split('.')[0] : undefined
-    const axes = axesGid ? manifest?.elements.find((e) => e.gid === axesGid) : undefined
+    const axes0 = axesGid ? manifest?.elements.find((e) => e.gid === axesGid) : undefined
+    // 真实祖先链（显式父级优先，`roles/hierarchy.structuralParent`）：组进面包屑；
+    // 色条轴是色条的承载轴、属性页本来就把它换成色条，面包屑里不再单列这一级——
+    // 单宿主色条的上一级是宿主子图，共享色条的上一级是组
+    const chain = gid && manifest ? ancestorsOf(structuralParent(manifest), gid) : []
+    const ancGroup = chain.map((g) => groupByGid(manifest, g)).find((g) => !!g)
+    const axes = axes0?.is_colorbar
+      ? manifest?.elements.find(
+          (e) => e.gid === axes0.parent_gid && (e.role === 'axes' || e.role === 'axes3d'),
+        )
+      : axes0
     // 子图与元素之间那一级（图例 / X 轴刻度 / 柱形系列）：归属进面包屑
     const has = (g: string) => !!manifest?.elements.some((e) => e.gid === g)
     const containerOf = gid
@@ -358,15 +370,21 @@ function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: P
       panel.name ?? panel.fileId,
       axes && axes.gid !== gid ? axes.label : undefined,
       // 标题显示可读文本：mathtext 源码只在下面的「名称」框里（审计 B48）
-      el ? displayLabel(untruncatedLabel(el.label, typeof text === 'string' ? text : undefined)) : undefined,
+      el
+        ? displayLabel(untruncatedLabel(el.label, typeof text === 'string' ? text : undefined))
+        : selGroup && manifest
+          ? groupName(selGroup, manifest)
+          : undefined,
       selectedGids.length,
       container?.label,
+      ancGroup && manifest ? groupName(ancGroup, manifest) : undefined,
     )
     // 面包屑里每一级祖先都能点（2026-09-14 审计 A4）：往上走的路就是它本身，
     // 「所属子图 / 所属系列」那种再写一行的链接删掉。与 identityCrumbs 同一套条件，
     // 顺序一致：整张图 → 宿主子图 → 容器（图例 / X 轴刻度 / 柱形系列）
     const crumbTargets = [
       'figure',
+      ancGroup ? ancGroup.gid : null,
       axes && axes.gid !== gid ? axes.gid : null,
       container ? container.gid : null,
     ].filter((g): g is string => !!g)
@@ -374,10 +392,14 @@ function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: P
       el && el.gid !== 'figure' && el.editable.some((f) => f.prop === 'visible')
     // 来源状态：选中元素时报它自己被改了几项，没选（整张图）时报面板总数。
     // 「多少项被 Tavotto 修改、怎么恢复」是右栏头部要直接回答的问题。
-    const modified = el
-      ? panel.overrides.filter((o) => o.gid === el.gid).length
-      : panel.overrides.length
-    const RoleIcon = roleIcon(el?.role ?? 'figure')
+    // 组没有自己的属性、也没有「恢复这个组」——恢复菜单在组页上不出现（没选元素时
+    // 那个菜单恢复的是整张图，挂在组的头上会读成「恢复这个组」）
+    const modified = selGroup
+      ? 0
+      : el
+        ? panel.overrides.filter((o) => o.gid === el.gid).length
+        : panel.overrides.length
+    const RoleIcon = roleIcon(el?.role ?? (selGroup ? 'group' : 'figure'))
 
     return (
       <header className="shrink-0 pl-3 pr-2 pb-2">
@@ -386,7 +408,7 @@ function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: P
               与左栏元素树同一张脸；以前不管选了什么都是同一个图片图标 */}
           <RoleIcon size={ICON_SIZE.sm} className="shrink-0 text-ink-3" aria-hidden />
           {/* 没选元素时标题是面板名：标出「整张图」这一层，免得与画布上的面板混淆（审计 T01） */}
-          {!el && (
+          {!el && !selGroup && (
             <span data-object-kind className="shrink-0 rounded-sm bg-surface-active px-1 text-xs text-ink-2">
               {roleName('figure')}
             </span>

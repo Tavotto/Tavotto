@@ -247,8 +247,28 @@ export interface AlignEntry extends AlignItem {
 }
 
 /**
+ * 选区里的组展开成它的成员（`Manifest.groups`）。组自己没有几何属性：整组平移 / 缩放
+ * 就是成员（子图 + 共享的色条轴）按同一个参照框一起变换，每个成员写自己那条 position。
+ * 有成员落位不归 Tavotto 管（`resizable: false`）的组不展开——只挪一部分会拆散它。
+ */
+export function expandGroups(manifest: Manifest, gids: readonly string[]): string[] {
+  if (!manifest.groups?.length) return [...gids]
+  const out: string[] = []
+  for (const gid of gids) {
+    const group = manifest.groups.find((g) => g.gid === gid)
+    const parts = group ? (group.resizable ? group.members : []) : [gid]
+    for (const g of parts) if (!out.includes(g)) out.push(g)
+  }
+  return out
+}
+
+/** 选区里有组 */
+export const selectionHasGroup = (manifest: Manifest | null | undefined, gids: readonly string[]) =>
+  !!manifest?.groups?.some((g) => gids.includes(g.gid))
+
+/**
  * 把选中的 gid 列表整理成对齐用的条目：
- * 位图归并到宿主子图，同一几何落点只保留一条。
+ * 组先展开成成员（`expandGroups`），位图归并到宿主子图，同一几何落点只保留一条。
  * 子图的框从 position 换算（而不是 manifest bbox）—— aspect="equal" 的子图
  * 渲染后会贴合长宽比，bbox 与请求值略有出入，用请求空间算才不会反复回写。
  */
@@ -260,7 +280,7 @@ export function alignEntries(
   const out: AlignEntry[] = []
   const seen = new Set<string>()
 
-  for (const gid of gids) {
+  for (const gid of expandGroups(manifest, gids)) {
     const el = manifest.elements.find((e) => e.gid === gid)
     if (!el || !isAlignable(el)) continue
     const key = geomGid(el)

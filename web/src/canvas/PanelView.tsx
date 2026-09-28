@@ -7,7 +7,7 @@ import { useDecodedSvg } from '@/lib/useDecodedSvg'
 import { useHtmlMarkup } from '@/lib/useHtmlMarkup'
 import { useRetryingSrc } from '@/lib/imgRetry'
 import { engineTransport } from '@/lib/engineTransport'
-import { alignEntries, geomGid, segIntersectsRect } from '@/lib/elementGeom'
+import { alignEntries, geomGid, segIntersectsRect, selectionHasGroup } from '@/lib/elementGeom'
 import { DURATION, prefersReducedMotion, usePresence } from '@/lib/motion'
 import { geomHitsRect } from '@/lib/pathGeom'
 import { pickBucket } from '@/lib/units'
@@ -717,11 +717,20 @@ function ElementHitLayer({
       startBandSelect(e)
       return
     }
-    // 拖多选里的任一成员 = 整组平移，且不改动选择（与画布层多选拖动一致）
-    if (hit && manifest && ui.selectedGids.length > 1) {
+    // 拖多选里的任一成员 = 整组平移，且不改动选择（与画布层多选拖动一致）。
+    // 选中的是一个**组**（从元素树选的）时同理：拖它的任一成员 = 整组走；
+    // 只点不拖 = 钻进去选中那个成员——选中子图不会误触发组操作，反过来也一样
+    const groupSelected = selectionHasGroup(manifest, ui.selectedGids)
+    if (hit && manifest && (ui.selectedGids.length > 1 || groupSelected)) {
       const entries = alignEntries(obj, manifest, ui.selectedGids)
       if (entries.length > 1 && entries.some((en) => en.key === geomGid(hit))) {
-        startElementGroupMove(e, obj, entries, layout)
+        startElementGroupMove(
+          e,
+          obj,
+          entries,
+          layout,
+          groupSelected ? () => useUiStore.getState().setSelectedGid(hit.gid) : undefined,
+        )
         return
       }
     }

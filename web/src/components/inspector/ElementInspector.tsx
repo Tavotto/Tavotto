@@ -2528,7 +2528,7 @@ const ALIGN_BUTTONS: {
  * 会以为没生效（审计 T12）；一颗明确的按钮把「缩放一次」说清楚，
  * 也不用再配一句解释文字。
  */
-function ScaleField({ panel, group, meta }: { panel: PanelObject; group: Group; meta?: ReactNode }) {
+export function ScaleField({ panel, group, meta }: { panel: PanelObject; group: Group; meta?: ReactNode }) {
   const [pct, setPct] = useState(100)
   const ready = Number.isFinite(pct) && pct !== 100
   const apply = () => {

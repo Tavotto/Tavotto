@@ -1488,6 +1488,8 @@ function trackInFigureMove(
   panel: PanelObject,
   layout: { width: number; height: number },
   mv: InFigureMove,
+  /** 按下又松开、没拖动（也没被作废）时调用 */
+  onTap?: () => void,
 ) {
   e.stopPropagation()
   interaction().begin('element')
@@ -1516,7 +1518,10 @@ function trackInFigureMove(
     onEnd: (moved, ev, end) => {
       unwatchKeys()
       interaction().end()
-      if (!moved || end.cancelled) mv.cancel(end.cancelled)
+      if (!moved || end.cancelled) {
+        mv.cancel(end.cancelled)
+        if (!moved && !end.cancelled) onTap?.()
+      }
       // 跟随集合按松手那一下的修饰键定（见 carriesContents）
       else mv.commit(last[0], last[1], carriesContents(ev))
     },
@@ -2161,8 +2166,10 @@ export function startElementGroupMove(
   panel: PanelObject,
   entries: AlignEntry[],
   layout: { width: number; height: number },
+  /** 按下又松开、没拖动时调用（选中的是组时 = 钻进去选中点到的成员） */
+  onTap?: () => void,
 ) {
-  trackInFigureMove(e, panel, layout, groupMove(panel, entries))
+  trackInFigureMove(e, panel, layout, groupMove(panel, entries), onTap)
 }
 
 /**
