@@ -6,11 +6,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/lib/api', async (orig) => {
   const real = await orig<typeof import('@/lib/api')>()
-  return { ...real, fetchScriptAnswers: vi.fn() }
+  return {
+    ...real,
+    fetchScriptAnswers: vi.fn(),
+    listenScriptInput: vi.fn().mockResolvedValue({ ok: true }),
+    subscribeEvents: vi.fn(() => () => {}),
+  }
 })
 
-import { fetchScriptAnswers, type ServerEvent } from '@/lib/api'
-import { handleServerEvent } from '@/hooks/useServerEvents'
+import { act } from 'react'
+import { createRoot } from 'react-dom/client'
+import { fetchScriptAnswers, listenScriptInput, type ServerEvent } from '@/lib/api'
+import { handleServerEvent, useServerEvents } from '@/hooks/useServerEvents'
+import { useProjectStore } from '@/store/projectStore'
 import { setCurrentProjectId } from '@/lib/session'
 import { useScriptInputStore } from '@/store/scriptInputStore'
 
@@ -106,5 +114,34 @@ describe('scriptInputStore', () => {
     const s = useScriptInputStore.getState()
     expect(s.answers).toBeNull()
     expect(s.queue).toEqual([])
+  })
+})
+
+describe('能答题的事件流报它在看哪个项目（Codex #680 P1）', () => {
+  it('收到 hello 就报当前项目；换项目再报一次；没有项目不报', async () => {
+    const listen = vi.mocked(listenScriptInput)
+    setCurrentProjectId(null)
+    handleServerEvent({ kind: 'stream.hello', stream_id: 's1' })
+    expect(listen).not.toHaveBeenCalled()
+    setCurrentProjectId('A')
+    handleServerEvent({ kind: 'stream.hello', stream_id: 's1' })
+    expect(listen).toHaveBeenLastCalledWith('s1', 'A')
+
+    // 流 id 跨项目存活：换代不清它
+    useScriptInputStore.getState().clear()
+    expect(useScriptInputStore.getState().streamId).toBe('s1')
+
+    const host = document.createElement('div')
+    const root = createRoot(host)
+    function Probe() {
+      useServerEvents()
+      return null
+    }
+    ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+    act(() => root.render(<Probe />))
+    act(() => useProjectStore.setState({ project: { open: true, id: 'B' } as never }))
+    expect(listen).toHaveBeenLastCalledWith('s1', 'B')
+    act(() => root.unmount())
+    useProjectStore.setState({ project: null })
   })
 })

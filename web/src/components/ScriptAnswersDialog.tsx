@@ -87,9 +87,11 @@ function AnswerRow({ script, entry }: { script: string; entry: RememberedAnswer 
           size="md"
           disabled={!dirty}
           onClick={async () => {
-            const err = await useScriptInputStore.getState().saveAnswer(script, entry.index, value)
-            setError(err)
-            if (!err) rerun()
+            const res = await useScriptInputStore.getState().saveAnswer(script, entry.index, value)
+            // 请求在飞时换了项目：什么都不做——尤其不在新项目里重跑同名脚本
+            if (res.status === 'stale') return
+            setError(res.status === 'error' ? res.error : null)
+            if (res.status === 'ok') rerun()
           }}
         >
           {si('manageSave')}
@@ -99,9 +101,11 @@ function AnswerRow({ script, entry }: { script: string; entry: RememberedAnswer 
           size="md"
           aria-label={si('manageForgetAria', { index: entry.index })}
           onClick={async () => {
-            const err = await useScriptInputStore.getState().forgetAnswer(script, entry.index)
-            setError(err)
-            if (!err) rerun()
+            const res = await useScriptInputStore.getState().forgetAnswer(script, entry.index)
+            // 请求在飞时换了项目：什么都不做——尤其不在新项目里重跑同名脚本
+            if (res.status === 'stale') return
+            setError(res.status === 'error' ? res.error : null)
+            if (res.status === 'ok') rerun()
           }}
         >
           {si('manageForget')}

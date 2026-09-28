@@ -159,7 +159,7 @@ def frontend(monkeypatch):
         fe = Frontend(answers, present=present)
         holder["fe"] = fe
         monkeypatch.setattr(inputbroker, "_publish", fe.publish)
-        monkeypatch.setattr(inputbroker, "_has_answerer", lambda: fe.present)
+        monkeypatch.setattr(inputbroker, "_has_answerer", lambda project: fe.present)
         return fe
 
     return install

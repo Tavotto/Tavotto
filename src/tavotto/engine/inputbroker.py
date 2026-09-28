@@ -85,15 +85,16 @@ class Pending:
 
 
 _publish: Callable[[str, str, dict], None] | None = None
-_has_answerer: Callable[[], bool] | None = None
+_has_answerer: Callable[[str], bool] | None = None
 _pending: dict[str, Pending] = {}
 _lock = threading.Lock()
 
 
 def set_frontend(
-    publish: Callable[[str, str, dict], None], has_answerer: Callable[[], bool]
+    publish: Callable[[str, str, dict], None], has_answerer: Callable[[str], bool]
 ) -> None:
-    """app 接进来：`publish(事件名, 项目根, 载荷)`；`has_answerer()` = 此刻有没有能答题的界面连着。"""
+    """app 接进来：`publish(事件名, 项目根, 载荷)`；`has_answerer(项目根)` = 此刻有没有能答题、**且正在看这个
+    项目**的界面（开着别的项目的界面按 `pj` 丢掉这一问的事件，算不上答题方）。"""
     global _publish, _has_answerer
     _publish, _has_answerer = publish, has_answerer
 
@@ -124,15 +125,20 @@ def get_pending(pending_id: str) -> Pending | None:
 def answer(pending_id: str, text: str | None, *, eof: bool = False) -> Pending | None:
     """界面作答（`eof=True` = 「结束输入」）。答案按项目记住（getpass 的除外）。不在等的回 None。"""
     with _lock:
-        p = _pending.pop(pending_id, None)
+        p = _pending.get(pending_id)
     if p is None:
         return None
+    if not (eof or text is None) and p.kind != "getpass":
+        # 先校验、先落盘，**成功之后才出队**：答案不合法（太长）或写盘失败时这一问仍在等，界面改好再交一次
+        # 照样答得上（Codex #680 P2）。先出队的话改好的那次拿到 404，而 worker 白等到超时。
+        # 口令不落盘：getpass 的答案每次都问（ADR 0099 §四）
+        scriptanswers.remember(p.project_root, p.script, p.index, p.prompt, text, p.kind)
+    with _lock:
+        if _pending.pop(pending_id, None) is None:
+            return None  # 同一问被并发答掉 / 被停止了
     if eof or text is None:
         _reply(p.directory, p.index, {"eof": True})
     else:
-        if p.kind != "getpass":
-            # 口令不落盘：getpass 的答案每次都问（ADR 0099 §四）
-            scriptanswers.remember(p.project_root, p.script, p.index, p.prompt, text, p.kind)
         _reply(p.directory, p.index, {"answer": text})
     LOG.info("脚本输入：第 %d 问已作答", p.index)
     p.done.set()
@@ -174,7 +180,7 @@ def _decide(worker, directory: Path, request: dict) -> None:
             {"script": script, "index": index, "prompt": prompt, "answer": remembered},
         )
         return
-    if _has_answerer is None or not _has_answerer():
+    if _has_answerer is None or not _has_answerer(project_root):
         _reply(directory, index, {"no_answer": True, "reason": REASON_NO_CLIENT})
         return
     tail = str(request.get("stdout_tail") or "")[-scriptinput.TAIL_CHARS :]

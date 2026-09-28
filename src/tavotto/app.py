@@ -1743,14 +1743,20 @@ def sse_publish(event: str, data: dict) -> None:
             pass
 
 
-#: 此刻连着的、声明能答脚本 `input()` 的事件流数（ADR 0099 §五）。只有主界面带这个标记；
-#: 它是同一条 `/api/events` 的查询参数，认证与普通事件流完全相同（ADR 0008），不是新通道。
-_answerer_subs = 0
+#: 此刻连着的、声明能答脚本 `input()` 的事件流（ADR 0099 §五）：流 id → 它**此刻**在看的项目 id（还没说 = None）。
+#: 只有主界面带 `answers=1`；它是同一条 `/api/events` 的查询参数，认证与普通事件流完全相同（ADR 0008），不是新通道。
+#: **按项目认**：界面开着 A 时，B 的后台 / MCP 渲染问到 input 必须立即 `script_needs_input`——A 的界面按 `pj`
+#: 丢掉 B 的事件，没人会答（Codex #680 P1）。事件流是全进程一条、跨项目切换存活的，所以项目不取连接那一刻的 pj，
+#: 由界面在拿到 `stream.hello` 与每次换项目时经 `/api/script_input/listen` 报上来。
+_answerer_streams: dict[str, str | None] = {}
 _answerer_lock = threading.Lock()
 
 
-def _has_script_input_answerer() -> bool:
-    return _answerer_subs > 0
+def _has_script_input_answerer(project: str | Path) -> bool:
+    """此刻有没有一条能答题的事件流正在看 `project`。"""
+    pids = set(_project_ids_at(project))
+    with _answerer_lock:
+        return any(pid in pids for pid in _answerer_streams.values() if pid)
 
 
 @app.get("/api/events")
@@ -1760,12 +1766,16 @@ def api_events():
     answers = request.args.get("answers") == "1"
 
     def gen():
-        global _answerer_subs
-        if answers:
+        stream_id = uuid.uuid4().hex if answers else ""
+        if stream_id:
             with _answerer_lock:
-                _answerer_subs += 1
+                _answerer_streams[stream_id] = None
         try:
             yield ": connected\n\n"
+            if stream_id:
+                # 告诉界面这条流叫什么：它据此报「我在看哪个项目」
+                hello = json.dumps({"stream_id": stream_id})
+                yield f"event: stream.hello\ndata: {hello}\n\n"
             while True:
                 try:
                     ev, data = q.get(timeout=15)
@@ -1775,9 +1785,9 @@ def api_events():
                 yield f"event: {ev}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
         finally:
             _sse_subs.remove(q)
-            if answers:
+            if stream_id:
                 with _answerer_lock:
-                    _answerer_subs -= 1
+                    _answerer_streams.pop(stream_id, None)
 
     return Response(
         gen(),
@@ -3180,6 +3190,20 @@ def _script_input_pending_of(ctx: "ProjectCtx", pending_id: str):
 
 def _script_input_gone():
     return jsonify({"error": "这一问已经不在等待作答了", "code": "script_input_not_pending"}), 404
+
+
+@app.post("/api/script_input/listen")
+def api_script_input_listen():
+    """能答题的事件流报「我此刻在看这个项目」（项目取请求的 pj，与其它端点同一个出处）。流不存在 → 404。"""
+    ctx = current_ctx()
+    stream_id = str((request.get_json(force=True) or {}).get("stream_id") or "")
+    with _answerer_lock:
+        if stream_id not in _answerer_streams:
+            return jsonify(
+                {"error": "事件流已经断开", "code": "script_input_stream_gone"}
+            ), 404
+        _answerer_streams[stream_id] = ctx.id
+    return jsonify({"ok": True})
 
 
 @app.post("/api/script_input/answer")

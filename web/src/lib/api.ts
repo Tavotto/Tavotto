@@ -2399,6 +2399,8 @@ export type ServerEvent =
   | ({ kind: 'script.input_requested' } & ScriptInputRequest & ProjectScoped)
   /** 那一问不再等了：`answered` / `stopped` / `finished`（build 结束，含等到超时）。 */
   | ({ kind: 'script.input_closed'; id: string; reason?: string } & ProjectScoped)
+  /** 能答题的事件流（`answers=1`）连上时报的流 id：界面据此报「我此刻在看哪个项目」（`listenScriptInput`）。 */
+  | { kind: 'stream.hello'; stream_id: string }
   /** 用记住的答案自动回填了一问：界面给一条「已用上次的答案（修改）」的轻提示。 */
   | ({
       kind: 'script.input_autofilled'
@@ -2518,6 +2520,7 @@ const EVENT_KINDS = [
   'script.input_requested',
   'script.input_closed',
   'script.input_autofilled',
+  'stream.hello',
 ] as const
 
 /**
@@ -3676,6 +3679,22 @@ export const answerScriptInput = (id: string, answer: string | null) =>
   postJson<{ ok: boolean }>(
     '/api/script_input/answer',
     answer === null ? { id, eof: true } : { id, answer },
+  )
+
+/**
+ * 这条能答题的事件流此刻在看 `pj`（ADR 0099 §五）。后端只把**正在看那个项目**的流算作答题方——开着 A 的界面
+ * 按 `pj` 丢掉 B 的问，算进来的话 B 的脚本会白等 10 分钟（Codex #680 P1）。项目显式传：换项目的那一刻
+ * 会话里认领的 pj 与 store 里的可能还没对齐。
+ */
+export const listenScriptInput = (streamId: string, pj: string) =>
+  jsonFetch<{ ok: boolean }>(
+    '/api/script_input/listen',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ stream_id: streamId }),
+    },
+    pj,
   )
 
 export const stopScriptInput = (id: string) =>

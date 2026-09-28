@@ -4,6 +4,7 @@ import {
   ApiError,
   fetchScriptAnswers,
   forgetScriptAnswer,
+  listenScriptInput,
   stopScriptInput,
   updateScriptAnswer,
   type RememberedAnswer,
@@ -25,6 +26,12 @@ import { currentProjectId } from '@/lib/session'
 export const AUTOFILL_NOTICE_MS = 12_000
 export const autofillDismissTimer = createDismissTimer()
 
+/**
+ * 改 / 删答案的结果。`stale` = 请求在飞时换了项目：响应属于旧项目，调用方**什么都不许做**（尤其不许
+ * 接着「重新运行」——那会在新项目里跑同名脚本，Codex #680 P1）。
+ */
+export type AnswerChange = { status: 'ok' } | { status: 'stale' } | { status: 'error'; error: string }
+
 export interface AutofillNotice {
   script: string
   answer: string
@@ -43,6 +50,8 @@ interface ScriptInputState {
   location: string
   /** 答案管理对话框正开着的脚本 */
   managing: string | null
+  /** 本页那条能答题事件流的 id（`stream.hello`）。**不随项目换代清掉**：事件流跨项目存活 */
+  streamId: string | null
 
   onRequested: (req: ScriptInputRequest) => void
   onClosed: (id: string) => void
@@ -53,12 +62,39 @@ interface ScriptInputState {
   loadAnswers: () => Promise<void>
   openManager: (script: string) => void
   closeManager: () => void
-  saveAnswer: (script: string, index: number, answer: string) => Promise<string | null>
-  forgetAnswer: (script: string, index: number) => Promise<string | null>
+  saveAnswer: (script: string, index: number, answer: string) => Promise<AnswerChange>
+  forgetAnswer: (script: string, index: number) => Promise<AnswerChange>
+  /** `stream.hello`：记下流 id 并报一次在看哪个项目 */
+  onStreamHello: (streamId: string) => void
+  /** 报「这条事件流此刻在看 `pj`」；没有流 / 没有项目时什么都不做 */
+  announce: (pj: string | null | undefined) => void
   clear: () => void
 }
 
 const errorText = (e: unknown): string => (e instanceof Error ? e.message : String(e))
+
+type Get = () => ScriptInputState
+type Set = (partial: Partial<ScriptInputState>) => void
+
+/** 改 / 删一条答案：代际与发请求那一刻的项目两道闸都过了才算 `ok`，否则 `stale`。 */
+async function changeAnswer(
+  get: Get,
+  set: Set,
+  request: () => Promise<{ scripts: Record<string, RememberedAnswer[]>; location: string }>,
+): Promise<AnswerChange> {
+  const epoch = get().epoch
+  const pj = currentProjectId()
+  const stale = () => get().epoch !== epoch || currentProjectId() !== pj
+  try {
+    const res = await request()
+    if (stale()) return { status: 'stale' }
+    set({ answers: res.scripts, location: res.location })
+    return { status: 'ok' }
+  } catch (e) {
+    if (stale()) return { status: 'stale' }
+    return { status: 'error', error: errorText(e) }
+  }
+}
 
 export const useScriptInputStore = create<ScriptInputState>((set, get) => ({
   epoch: 0,
@@ -69,6 +105,7 @@ export const useScriptInputStore = create<ScriptInputState>((set, get) => ({
   answers: null,
   location: '',
   managing: null,
+  streamId: null,
 
   onRequested: (req) => {
     if (get().queue.some((q) => q.id === req.id)) return
@@ -145,26 +182,21 @@ export const useScriptInputStore = create<ScriptInputState>((set, get) => ({
   openManager: (script) => set({ managing: script }),
   closeManager: () => set({ managing: null }),
 
-  saveAnswer: async (script, index, answer) => {
-    const epoch = get().epoch
-    try {
-      const res = await updateScriptAnswer(script, index, answer)
-      if (get().epoch === epoch) set({ answers: res.scripts, location: res.location })
-      return null
-    } catch (e) {
-      return errorText(e)
-    }
+  saveAnswer: (script, index, answer) =>
+    changeAnswer(get, set, () => updateScriptAnswer(script, index, answer)),
+
+  forgetAnswer: (script, index) => changeAnswer(get, set, () => forgetScriptAnswer(script, index)),
+
+  onStreamHello: (streamId) => {
+    set({ streamId })
+    get().announce(currentProjectId())
   },
 
-  forgetAnswer: async (script, index) => {
-    const epoch = get().epoch
-    try {
-      const res = await forgetScriptAnswer(script, index)
-      if (get().epoch === epoch) set({ answers: res.scripts, location: res.location })
-      return null
-    } catch (e) {
-      return errorText(e)
-    }
+  announce: (pj) => {
+    const streamId = get().streamId
+    if (!streamId || !pj) return
+    // 报不上（流刚断 / 后端重启）不打扰用户：重连会带来新的 hello，再报一次
+    void listenScriptInput(streamId, pj).catch(() => {})
   },
 
   clear: () => {

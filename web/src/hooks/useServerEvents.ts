@@ -134,6 +134,10 @@ export function handleServerEvent(ev: ServerEvent) {
         stdout_tail: ev.stdout_tail ?? '',
       })
       break
+    case 'stream.hello':
+      // 能答题的事件流连上了：记下流 id，报一次在看哪个项目（后端只把在看那个项目的流算作答题方）
+      useScriptInputStore.getState().onStreamHello(ev.stream_id)
+      break
     case 'script.input_closed':
       useScriptInputStore.getState().onClosed(ev.id)
       break
@@ -280,6 +284,15 @@ export function handleServerEvent(ev: ServerEvent) {
 
 /** 后端事件 → 渲染状态 / AI 会话 / 素材库刷新 / 状态栏 */
 export function useServerEvents() {
+  // 换了项目就重报一次「这条能答题的事件流在看哪个项目」（ADR 0099 §五，Codex #680 P1）
+  useEffect(
+    () =>
+      useProjectStore.subscribe((s, prev) => {
+        const pj = s.project?.id
+        if (pj && pj !== prev.project?.id) useScriptInputStore.getState().announce(pj)
+      }),
+    [],
+  )
   useEffect(
     () =>
       subscribeEvents(handleServerEvent, () => {

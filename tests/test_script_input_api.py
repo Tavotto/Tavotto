@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import json
 import threading
 import time
 
@@ -94,6 +95,11 @@ def events(monkeypatch):
     return Box()
 
 
+def _listening(monkeypatch, project) -> None:
+    """一条能答题的事件流正在看 `project`（等价于界面收到 hello 后报了 listen）。"""
+    monkeypatch.setattr(m, "_answerer_streams", {"s": m._project_id(project.resolve())})
+
+
 def _probe_async(script="pick.py"):
     out: dict = {}
 
@@ -114,7 +120,7 @@ def _stems(result: dict) -> list[str]:
 @needs_worker
 def test_answer_remember_rerun_change_rerun(client, figs, events, monkeypatch):
     client.post("/api/projects/open", json={"path": str(figs)})
-    monkeypatch.setattr(m, "_answerer_subs", 1)  # 主界面的事件流连着
+    _listening(monkeypatch, figs)  # 主界面的事件流连着，且正在看这个项目
 
     # 1) 第一次运行：弹问，界面看得到编号清单与提示；作答
     th, out = _probe_async()
@@ -155,7 +161,7 @@ def test_answer_remember_rerun_change_rerun(client, figs, events, monkeypatch):
 @needs_worker
 def test_no_answerer_reports_script_needs_input_with_the_prompt(client, figs, events, monkeypatch):
     client.post("/api/projects/open", json={"path": str(figs)})
-    monkeypatch.setattr(m, "_answerer_subs", 0)  # 没有能答题的界面（MCP / CLI / 后台）
+    monkeypatch.setattr(m, "_answerer_streams", {})  # 没有能答题的界面（MCP / CLI / 后台）
     t0 = time.time()
     resp = client.post("/api/registry/probe", json={"script": "pick.py"})
     body = resp.get_json()
@@ -168,7 +174,7 @@ def test_no_answerer_reports_script_needs_input_with_the_prompt(client, figs, ev
 @needs_worker
 def test_stop_kills_the_waiting_script(client, figs, events, monkeypatch):
     client.post("/api/projects/open", json={"path": str(figs)})
-    monkeypatch.setattr(m, "_answerer_subs", 1)
+    _listening(monkeypatch, figs)
     th, out = _probe_async()
     asked = events.wait_for("script.input_requested")[0]
     assert client.post("/api/script_input/stop", json={"id": asked["id"]}).status_code == 200
@@ -232,18 +238,77 @@ def test_binding_revision_is_unchanged_without_answers(tmp_path):
     assert with_answers["revision"] != plain["revision"]
 
 
-def test_only_event_streams_that_declare_answers_count_as_answerers(client):
-    """「能答题」只认主界面那条带 `answers=1` 的事件流；流断了就不再算（ADR 0099 §五）。"""
-    assert m._answerer_subs == 0
+def _hello(resp) -> str:
+    """读到 `stream.hello`，交出流 id。"""
+    for chunk in resp.response:
+        text = chunk.decode() if isinstance(chunk, bytes) else chunk
+        if "stream.hello" in text:
+            return json.loads(text.split("data: ", 1)[1])["stream_id"]
+    raise AssertionError("没有 stream.hello")
+
+
+def test_answerers_are_counted_per_project_and_only_while_the_stream_lives(client, tmp_path):
+    """「能答题」= 一条带 `answers=1` 的事件流**正在看这个项目**（Codex #680 P1）。开着 A 的界面对 B 不算；
+    不带标记的流不算；流断了就不算（ADR 0099 §五）。"""
+    a = tmp_path / "a"
+    b = tmp_path / "b"
+    a.mkdir()
+    b.mkdir()
+    pid_a = client.post("/api/projects/open", json={"path": str(a)}).get_json()["id"]
+    pid_b = client.post("/api/projects/open", json={"path": str(b)}).get_json()["id"]
+    assert m._answerer_streams == {}
     plain = client.get("/api/events", buffered=False)
-    next(plain.response)  # 连上
-    assert not m._has_script_input_answerer()
+    next(plain.response)
+    assert m._answerer_streams == {}
     ui = client.get("/api/events?answers=1", buffered=False)
-    next(ui.response)
-    assert m._has_script_input_answerer()
+    sid = _hello(ui)
+    # 还没报在看哪个项目：谁都不算
+    assert not m._has_script_input_answerer(a) and not m._has_script_input_answerer(b)
+    resp = client.post(f"/api/script_input/listen?pj={pid_a}", json={"stream_id": sid})
+    assert resp.status_code == 200
+    assert m._has_script_input_answerer(a)
+    assert not m._has_script_input_answerer(b)
+    # 换到 B：A 不再有人答
+    client.post(f"/api/script_input/listen?pj={pid_b}", json={"stream_id": sid})
+    assert m._has_script_input_answerer(b) and not m._has_script_input_answerer(a)
     ui.close()
     plain.close()
-    assert m._answerer_subs == 0
+    assert m._answerer_streams == {}
+    assert not m._has_script_input_answerer(b)
+    gone = client.post(f"/api/script_input/listen?pj={pid_b}", json={"stream_id": sid})
+    assert gone.status_code == 404
+
+
+@needs_worker
+def test_a_ui_on_another_project_does_not_hold_the_script(client, figs, tmp_path, events, monkeypatch):
+    """界面开着别的项目时，这个项目的脚本问到 input 立即 `script_needs_input`，不干等（Codex #680 P1）。"""
+    other = tmp_path / "other"
+    other.mkdir()
+    pid_other = client.post("/api/projects/open", json={"path": str(other)}).get_json()["id"]
+    pid = client.post("/api/projects/open", json={"path": str(figs)}).get_json()["id"]
+    monkeypatch.setattr(m, "_answerer_streams", {"s": pid_other})
+    t0 = time.time()
+    body = client.post(f"/api/registry/probe?pj={pid}", json={"script": "pick.py"}).get_json()
+    assert body["error"]["code"] == "script_needs_input"
+    assert time.time() - t0 < 15  # 远小于等人的上限（本文件缩到 20 秒）
+    assert events.of("script.input_requested") == []
+
+
+@needs_worker
+def test_a_rejected_answer_keeps_the_question_waiting(client, figs, events, monkeypatch):
+    """答案不合法（太长）时 400，这一问**仍在等**：改好再交一次照样答得上（Codex #680 P2）。"""
+    pid = client.post("/api/projects/open", json={"path": str(figs)}).get_json()["id"]
+    monkeypatch.setattr(m, "_answerer_streams", {"s": pid})
+    monkeypatch.setattr(scriptanswers, "MAX_ANSWER_CHARS", 5)
+    th, out = _probe_async()
+    asked = events.wait_for("script.input_requested")[0]
+    bad = client.post("/api/script_input/answer", json={"id": asked["id"], "answer": "1,2,1,2,1,2"})
+    assert bad.status_code == 400
+    assert inputbroker.get_pending(asked["id"]) is not None
+    good = client.post("/api/script_input/answer", json={"id": asked["id"], "answer": "1,2"})
+    assert good.status_code == 200
+    th.join(120)
+    assert _stems(out["json"]) == ["sel_1_2"]
 
 
 def test_render_endpoint_error_body_carries_the_prompt():

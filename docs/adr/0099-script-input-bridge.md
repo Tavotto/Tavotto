@@ -93,10 +93,15 @@ safe worker 的 `sys.stdin` **就是协议管道**（`worker.main()` 从它逐�
 
 1. **记住的答案**（池会话）：命中键就立即回填，发 SSE `script.input_autofilled`，界面给一条轻提示
    「已用上次的答案：1,2,4（修改）」。不弹框。
-2. **问界面**（池会话，没记住）：此刻至少有一个**声明能答题**的界面连着（`/api/events?answers=1`——主界面那条事件流带
-   这个标记，MCP 画布等其它消费者不带），就发 `script.input_requested`（提示、序号、stdout 最近片段），等回填。
+2. **问界面**（池会话，没记住）：此刻至少有一个**声明能答题、且正在看这个项目**的界面连着，就发
+   `script.input_requested`（提示、序号、stdout 最近片段），等回填。声明 = `/api/events?answers=1`（主界面那条事件流带
+   这个标记，MCP 画布等其它消费者不带）；这条流连上时收到 `stream.hello`（流 id），界面据此经
+   `POST /api/script_input/listen` 报「我此刻在看哪个项目」，每次换项目再报一次。**按项目认**是因为事件流是全进程一条、
+   跨项目存活的，而界面按 `pj` 丢掉别的项目的事件：开着 A 的界面算作 B 的答题方的话，B 的后台 / MCP 渲染会白等
+   10 分钟（Codex #680 P1）。
    能力标记只是同一条 `/api/events` 的查询参数，**认证与普通事件流完全相同**（ADR 0008 的全局 guard），不是新通道。
-   回填端点 `POST /api/script_input/answer` 同样在 guard 之内。
+   `listen` 与回填端点 `POST /api/script_input/answer` 同样在 guard 之内。回填**先校验、先落盘、成功之后才出队**：
+   答案不合法时这一问仍在等，改好再交一次照样答得上（Codex #680 P2）。
 3. **没人能答** → 立即回「无答案」，worker 抛 `ScriptNeedsInput`，build 以 **`script_needs_input`** 失败，
    文案带提示原文：「脚本需要输入：<提示>，请在 Tavotto 界面里运行一次」。**绝不卡死。**
 
@@ -152,5 +157,5 @@ safe worker 的 `sys.stdin` **就是协议管道**（`worker.main()` 从它逐�
 `except Exception` 吞不掉 `ScriptNeedsInput`；两条控制面同一行为）、`tests/test_script_input_api.py`（端点、SSE、
 记住的答案、缓存失效先热缓存再改答案、数据绑定修订、verify 重放用同一组答案、没有能答题的界面立即报错）、
 `tests/test_write_back.py::test_verify_replay_answers_script_input_with_the_hot_answers`、
-`web/src/store/scriptInputStore.test.ts`、`web/src/components/ScriptInputDialog.test.tsx`、
+`web/src/store/scriptInputStore.test.tsx`、`web/src/components/ScriptInputDialog.test.tsx`、
 `web/src/components/ScriptAnswersDialog.test.tsx`、`web/e2e/script-input.spec.ts`。

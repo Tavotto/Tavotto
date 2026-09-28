@@ -16,6 +16,7 @@ import { forgetScriptAnswer, updateScriptAnswer } from '@/lib/api'
 import { ScriptAnswersDialog } from '@/components/ScriptAnswersDialog'
 import { useScriptInputStore } from '@/store/scriptInputStore'
 import { useScriptRunStore } from '@/store/scriptRunStore'
+import { setCurrentProjectId } from '@/lib/session'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -82,6 +83,32 @@ describe('ScriptAnswersDialog', () => {
     await click(buttonWith('保存并重新运行'))
     expect(mockUpdate).toHaveBeenCalledWith('pick.py', 1, '2')
     expect(runSpy).toHaveBeenCalledWith('pick.py')
+  })
+
+  it('请求在飞时换了项目：不在新项目里重新运行（Codex #680 P1）', async () => {
+    setCurrentProjectId('A')
+    let resolve!: (v: Awaited<ReturnType<typeof updateScriptAnswer>>) => void
+    mockUpdate.mockReturnValue(new Promise((r) => (resolve = r)))
+    useScriptInputStore.setState({ answers: ANSWERS })
+    useScriptInputStore.getState().openManager('pick.py')
+    render()
+    const box = dialog()!.querySelector<HTMLInputElement>('input')!
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(box, '2')
+      box.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await click(buttonWith('保存并重新运行'))
+    // 换项目：store 换代、会话认领 B
+    await act(async () => {
+      useScriptInputStore.getState().clear()
+      setCurrentProjectId('B')
+    })
+    await act(async () => {
+      resolve({ scripts: {}, location: '', pending: [] })
+    })
+    expect(runSpy).not.toHaveBeenCalled()
+    expect(useScriptInputStore.getState().answers).toBeNull()
+    setCurrentProjectId(null)
   })
 
   it('删除：删这一条并重新运行', async () => {
