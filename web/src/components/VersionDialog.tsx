@@ -103,19 +103,31 @@ export function VersionDrawer() {
     versions: LayoutVersionMeta[]
     budget: TimelineBudget | null
   } | null>(null)
-  const [failure, setFailure] = useState<{ ctx: string; text: string } | null>(null)
+  /**
+   * 错误分两槽（Codex #679）：**读列表**的错误（`reload`）与**做操作**的错误（行操作、
+   * 存为命名节点、取预览正文）。只有一槽的时候，操作失败之后照常刷新列表，刷新成功的
+   * `setError(null)` 当场把「命名节点已满」之类的话清掉，用户什么都看不见。现在刷新只管
+   * 读列表那一槽；操作那一槽只由下一次操作的成败改写。
+   *
+   * 两槽都记在**发出它的那一次渲染**的上下文名下，而且**只有那个上下文还是此刻的才写**：
+   * A 的旧完成写进来会把 B 的真实错误换成 A 的、或清成 null（同为 Codex #679）。
+   */
+  const [loadFailure, setLoadFailure] = useState<{ ctx: string; text: string } | null>(null)
+  const [actionFailure, setActionFailure] = useState<{ ctx: string; text: string } | null>(null)
   const loaded = list?.ctx === ctx
   const versions = useMemo(() => (loaded ? list.versions : []), [loaded, list])
   const budget = loaded ? list.budget : null
-  const error = failure?.ctx === ctx ? failure.text : null
-  /**
-   * 错误记在**发出它的那一次渲染**的上下文名下，而且**只有那个上下文还是此刻的才写**：
-   * 错误槽只有一个，A 的旧完成（它捕获的是 A 的 setError）写进来会把 B 的真实错误
-   * 换成 A 的、或清成 null——B 就又回到无限的「正在读取」（Codex #679）。
-   */
+  const loadError = loadFailure?.ctx === ctx ? loadFailure.text : null
+  const actionError = actionFailure?.ctx === ctx ? actionFailure.text : null
+  const setLoadError = useCallback(
+    (text: string | null) => {
+      afterAwait(ctx)(() => setLoadFailure(text == null ? null : { ctx, text }))
+    },
+    [ctx],
+  )
   const setError = useCallback(
     (text: string | null) => {
-      afterAwait(ctx)(() => setFailure(text == null ? null : { ctx, text }))
+      afterAwait(ctx)(() => setActionFailure(text == null ? null : { ctx, text }))
     },
     [ctx],
   )
@@ -167,12 +179,12 @@ export function VersionDrawer() {
       if (!fresh()) return
       // 最新在上
       setList({ ctx, versions: res.versions.slice().reverse(), budget: res.budget ?? null })
-      setError(null)
+      setLoadError(null) // 只清读列表那一槽：操作的错误不因为刷新成功而消失
     } catch (e) {
       // 旧请求的失败同样不落地：它说的是一份已经过期的列表
-      if (fresh()) setError(backendErrorText(e))
+      if (fresh()) setLoadError(backendErrorText(e))
     }
-  }, [ctx, docId, setError])
+  }, [ctx, docId, setLoadError])
 
   useEffect(() => {
     if (!open) return
@@ -240,6 +252,7 @@ export function VersionDrawer() {
       await saveNamedNode(name)
       // 换走之后才回来：名字框里已经是 B 的名字了，不清
       after(() => setSaveName(''))
+      setError(null)
     } catch (e) {
       // 错误按上下文记账（`setError` 记的是这次渲染的上下文），换走之后不显示
       setError(backendErrorText(e))
@@ -344,7 +357,7 @@ export function VersionDrawer() {
       <div className="min-h-0 flex-1 overflow-y-auto">
         {!loaded ? (
           // 这个上下文的列表还没到（或第一次就失败了：错误在下面）——不是「没有节点」
-          !error && (
+          !loadError && (
             <p data-timeline-loading className="p-6 text-center text-xs text-ink-3">
               {vd('loadingList')}
             </p>
@@ -379,10 +392,11 @@ export function VersionDrawer() {
             ))}
           </div>
         )}
-        {error && (
-          <p data-timeline-error className="px-3 py-2 text-xs text-danger">
-            {error}
-          </p>
+        {(actionError || loadError) && (
+          <div data-timeline-error className="px-3 py-2 text-xs text-danger">
+            {actionError && <p data-timeline-error-kind="action">{actionError}</p>}
+            {loadError && <p data-timeline-error-kind="load">{loadError}</p>}
+          </div>
         )}
       </div>
       <TimelinePreviewDialog />
