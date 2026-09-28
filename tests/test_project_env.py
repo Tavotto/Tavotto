@@ -1327,6 +1327,29 @@ def test_the_adopted_record_is_what_the_diagnostics_read(tmp_path, monkeypatch):
     assert engine_pool.remembered_source(project, py) == engine_pool.SOURCE_SYSTEM
 
 
+def test_the_silent_adoption_puts_no_switch_toast_on_the_render_response(tmp_path, monkeypatch):
+    """Codex #713 P2：渲染端点的重试路径（`app._switched_to_project_env`）上，无提示采用的系统解释器
+    （`adopted=system`）不挂 `environment_switched`——那是前端「已改用项目的 Python 环境」toast 的来源，
+    既违背 ADR 0107 §三的「不弹通知」，又把项目外的解释器说成项目 venv。项目 venv 接手的照旧挂。"""
+    import types
+
+    from flask import g
+
+    from tavotto import app as m
+
+    exc = engine_pool.WorkerError("缺 adjustText", code="missing_dependency", module="adjustText")
+    worker = types.SimpleNamespace(script_name="fig.py")
+    monkeypatch.setattr(m, "require_project", lambda: tmp_path)
+    for adopted, toast in ((engine_pool.SOURCE_SYSTEM, False), (None, True)):
+        outcome = {"ok": True, "python": str(tmp_path / "py"), "module": "adjustText"}
+        if adopted:
+            outcome["adopted"] = adopted
+        monkeypatch.setattr(engine_pool, "try_project_env", lambda *a, _o=outcome: _o)
+        with m.app.test_request_context():
+            assert m._switched_to_project_env(worker, exc) is True
+            assert ("environment_switched" in g) is toast, adopted
+
+
 def test_only_an_unsupported_interpreter_with_the_module_is_not_adopted(tmp_path, monkeypatch):
     """Windows 实测里的 Python 3.7.6 装着 adjustText：不采用，照旧列在 `system_rejected` 里走修复卡片。"""
     _auto_on(monkeypatch)
