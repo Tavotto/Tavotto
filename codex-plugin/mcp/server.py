@@ -739,46 +739,140 @@ def _redact_url(url: str) -> str:
     return urlunsplit(parts._replace(netloc="***@" + host))
 
 
-def pip_index(environ=None) -> "dict | None":
-    """pip 现在从哪个索引装包（**只读**：环境变量 + pip 配置文件，不起 pip）。
+#: Windows 商店版 Python 的包名前缀（`PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0`）。
+_STORE_PYTHON_PREFIX = "PythonSoftwareFoundation.Python."
 
-    回 `{"url": 地址（口令已抹）, "source": 来自哪个文件或 PIP_INDEX_URL, "mirror": bool}`；
-    没有任何配置（= 用 PyPI 默认值）回 None。镜像滞后是 #721 的现场：阿里云镜像上只有
-    0.15.0，`pipx install "tavotto[worker]"` 就装到 0.15.0，照常 `pipx upgrade` 也升不上去。
-    """
+
+def _store_python_pip_configs(environ) -> "list[str]":
+    """Windows 商店版 Python 的 pip 配置：它写 `%APPDATA%` 时被**文件系统虚拟化**到
+    `%LOCALAPPDATA%/Packages/PythonSoftwareFoundation.Python.*/LocalCache/Roaming`，只有商店版
+    Python 进程在 `%APPDATA%/pip/pip.ini` 看得到它（#721 真机：`pip config debug` 说文件在
+    `%APPDATA%/pip/pip.ini`，PowerShell 在那儿找不到）。启动器跑在别的 Python 上时照原路径
+    读会漏掉镜像，所以把每个商店版 Python 的那一份都列出来。只看 `LOCALAPPDATA`，不判平台：
+    没设它的机器上这里什么都不列。"""
+    local = (environ.get("LOCALAPPDATA") or "").strip()
+    if not local:
+        return []
+    packages = os.path.join(local, "Packages")
+    try:
+        names = sorted(os.listdir(packages))
+    except OSError:
+        return []
+    return [
+        os.path.join(packages, n, "LocalCache", "Roaming", "pip", "pip.ini")
+        for n in names
+        if n.startswith(_STORE_PYTHON_PREFIX)
+    ]
+
+
+def _index_url_in(path: str) -> "str | None":
+    """一个 pip 配置文件里的 index-url（同一文件里 `[install]` 覆盖 `[global]`）；读不到回 None。"""
     import configparser  # noqa: PLC0415 — 只有降级 / 体检路径用得到
 
-    env = os.environ if environ is None else environ
-    url, source = None, None
-    # PIP_CONFIG_FILE=os.devnull 是 pip 约定的「一个配置文件都不读」
-    if (env.get("PIP_CONFIG_FILE") or "").strip() != os.devnull:
-        for path in _pip_config_files(env):
-            if not os.path.isfile(path):
-                continue
-            parser = configparser.RawConfigParser()
-            try:
-                parser.read(path, encoding="utf-8")
-            except (configparser.Error, OSError, UnicodeDecodeError):
-                continue
-            # 同一文件里 [install] 覆盖 [global]（装包走的是 install 子命令）
-            for section in ("global", "install"):
-                for key in ("index-url", "index_url"):
-                    if parser.has_option(section, key):
-                        value = parser.get(section, key).strip()
-                        if value:
-                            url, source = value, path
-    from_env = (env.get("PIP_INDEX_URL") or "").strip()
-    if from_env:
-        url, source = from_env, "PIP_INDEX_URL"
-    if not url:
+    if not os.path.isfile(path):
         return None
+    parser = configparser.RawConfigParser()
+    try:
+        parser.read(path, encoding="utf-8")
+    except (configparser.Error, OSError, UnicodeDecodeError):
+        return None
+    url = None
+    for section in ("global", "install"):
+        for key in ("index-url", "index_url"):
+            if parser.has_option(section, key):
+                value = parser.get(section, key).strip()
+                if value:
+                    url = value
+    return url
+
+
+def _is_mirror(url: str) -> bool:
     from urllib.parse import urlsplit  # noqa: PLC0415
 
     try:
         host = (urlsplit(url).hostname or "").lower()
     except ValueError:
         host = ""
-    return {"url": _redact_url(url), "source": source, "mirror": host not in _PYPI_HOSTS}
+    return host not in _PYPI_HOSTS
+
+
+def pip_index(environ=None) -> "dict | None":
+    """pip 现在从哪个索引装包（**只读**：环境变量 + pip 配置文件，不起 pip）。
+
+    回 `{"url": 地址（口令已抹）, "source": 来自哪个文件或 PIP_INDEX_URL, "mirror": bool}`；
+    没有任何配置（= 用 PyPI 默认值）回 None。镜像滞后是 #721 的现场：阿里云镜像上只有
+    0.15.0，`pipx install "tavotto[worker]"` 就装到 0.15.0，照常 `pipx upgrade` 也升不上去。
+
+    顺序照 pip：配置文件按加载顺序后读的覆盖先读的，`PIP_INDEX_URL` 压过全部（它对每个 Python
+    都生效）。商店版 Python 的虚拟化配置（`_store_python_pip_configs`）是另一个 Python 的配置，
+    排不进同一条覆盖链——那几份里**任一**指向非 PyPI 且上面没判出镜像时，就按镜像报：
+    宁可多给一个 `--index-url`（直连 PyPI 照样装得上），也不能让滞后的镜像再装回旧版。
+    """
+    env = os.environ if environ is None else environ
+    url, source = None, None
+    # PIP_CONFIG_FILE=os.devnull 是 pip 约定的「一个配置文件都不读」
+    read_files = (env.get("PIP_CONFIG_FILE") or "").strip() != os.devnull
+    if read_files:
+        for path in _pip_config_files(env):
+            found = _index_url_in(path)
+            if found:
+                url, source = found, path
+    from_env = (env.get("PIP_INDEX_URL") or "").strip()
+    if from_env:
+        url, source = from_env, "PIP_INDEX_URL"
+    elif read_files and not (url and _is_mirror(url)):
+        for path in _store_python_pip_configs(env):
+            found = _index_url_in(path)
+            if found and _is_mirror(found):
+                url, source = found, path
+                break
+    if not url:
+        return None
+    return {"url": _redact_url(url), "source": source, "mirror": _is_mirror(url)}
+
+
+def pip_index_of(python: "str | None", timeout: float = 15.0) -> "dict | None":
+    """**那个解释器**看到的 pip 索引：在它里面跑一遍本文件的 `pip_index()`。
+
+    装引擎的是 pipx / pip 背后的那个 Python，不一定是跑启动器的这个——商店版 Python 的
+    pip 配置只有商店版进程看得见（`_store_python_pip_configs`），一台机器上 python.org 与
+    商店版并存时两边读到的不是同一份。问不到（起不来 / 超时 / 输出不对）回 None。
+    本文件只依赖标准库、没有 import 副作用，所以在旧引擎的解释器里 import 它是安全的。
+    """
+    if not python:
+        return None
+    code = (
+        "import json, sys; sys.path.insert(0, sys.argv[1]); import server; "
+        "print(json.dumps(server.pip_index()))"
+    )
+    try:
+        proc = subprocess.run(
+            [python, "-c", code, HERE],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return None
+    if proc.returncode != 0:
+        return None
+    lines = (proc.stdout or b"").decode("utf-8", "replace").strip().splitlines()
+    try:
+        data = json.loads(lines[-1]) if lines else None
+    except ValueError:
+        return None
+    return data if isinstance(data, dict) and isinstance(data.get("url"), str) else None
+
+
+def effective_pip_index(engine_python: "str | None" = None) -> "dict | None":
+    """给升级命令用的索引结论：启动器这边读到的 + 引擎背后那个解释器读到的，**任一是镜像
+    就按镜像报**（理由同 `pip_index` 末段）；都不是镜像时优先报引擎那边的。"""
+    here = pip_index()
+    there = pip_index_of(engine_python)
+    for cand in (there, here):
+        if cand and cand.get("mirror"):
+            return cand
+    return there or here
 
 
 def upgrade_commands(target: "str | None", index: "dict | None") -> "list[str]":
@@ -800,10 +894,11 @@ def mirror_note(target: "str | None", index: "dict | None") -> str:
     """pip 指向镜像时补的那句；不是镜像（或没配置）回空串。"""
     if not index or not index.get("mirror"):
         return ""
-    want = f" {target}" if target else "新版"
+    # 版本号两侧留空格（中文里数字紧贴汉字会读成一个词）；没有版本号时说「新版」
+    want = f"到 {target}" if target else "到新版"
     return (
         f"注意：pip 的 index-url 指向镜像 {index['url']}（来自 {index['source']}），"
-        f"镜像可能还没同步到{want}，照常升级只会再装回镜像上那一版——命令里的 "
+        f"镜像可能还没同步{want}，照常升级只会再装回镜像上那一版——命令里的 "
         f"`--index-url {PYPI_SIMPLE}` 就是为此绕开镜像直连 PyPI。"
     )
 
@@ -841,7 +936,9 @@ def engine_incompatible_hint(
     版本不低于下限却照样 import 不全（装残了）。不知道是独立一档：不说「太旧」，更不说
     「装的是桌面版」。恢复方向与太旧相同：把引擎装成与插件同一版（插件版本 == 引擎版本）。
     """
-    who = f"插件 {plugin}" if plugin else "这个插件"
+    # 版本号两侧都要留空格（真机上看到过「插件 0.17.0的桥」）：空格随版本号走，
+    # 没有版本号时「这个插件的桥」不该多出一个空格
+    who = f"插件 {plugin} " if plugin else "这个插件"
     cmds = upgrade_commands(plugin, index)
     return (
         f"这台机器上装着 Tavotto 引擎 {engine['version']}（在 {engine['python']} 里），"
@@ -865,19 +962,22 @@ def diagnosis(found: dict) -> dict:
     if found.get("cmd"):
         engine = engine_behind_cli(found["cmd"])
         too_old = engine_too_old(found["cmd"], behind_version=(engine or {}).get("version"))
+        if too_old is not None or engine is not None:
+            # 升级命令要不要绕开镜像，以**装着引擎的那个解释器**看到的 pip 配置为准
+            index = effective_pip_index((engine or {}).get("python"))
         if too_old is not None:
             return {
                 "code": "engine_too_old",
-                "hint": engine_too_old_hint(*too_old, plugin=_plugin_version(), index=pip_index()),
+                "hint": engine_too_old_hint(*too_old, plugin=_plugin_version(), index=index),
                 "engine": engine or {"python": None, "version": too_old[0]},
+                "index": index,
             }
         if engine is not None:
             return {
                 "code": "engine_incompatible",
-                "hint": engine_incompatible_hint(
-                    engine, plugin=_plugin_version(), index=pip_index()
-                ),
+                "hint": engine_incompatible_hint(engine, plugin=_plugin_version(), index=index),
                 "engine": engine,
+                "index": index,
             }
         return {"code": "desktop_only", "hint": DESKTOP_ONLY_HINT, "engine": None}
     if found.get("desktop"):
@@ -1141,7 +1241,11 @@ NORMAL_TOOLS = (
 
 
 #: 恢复步骤（结构化，降级 server 与 --health 共用一份）
-def _recovery_steps(code: str) -> "list[str]":
+_UNSET = object()
+
+
+def _recovery_steps(code: str, index=_UNSET) -> "list[str]":
+    """`index` 是诊断时已经得出的索引结论（`diagnosis()["index"]`）；没给才就地读一次。"""
     steps = []
     if code in ("engine_too_old", "engine_incompatible"):
         # 这两格的用户**已经装了**引擎，缺的不是「一个环境」而是「对得上的版本」。
@@ -1151,7 +1255,8 @@ def _recovery_steps(code: str) -> "list[str]":
         target = (
             required_tavotto_version() if code == "engine_too_old" else None
         ) or _plugin_version()
-        index = pip_index()
+        if index is _UNSET:
+            index = pip_index()
         steps.append(
             "升级引擎：" + "，或 ".join(upgrade_commands(target, index)) + "；桌面版用户升级桌面版"
         )
@@ -1187,6 +1292,12 @@ def _recovery_steps(code: str) -> "list[str]":
 
 
 def _degraded_payload(code: str, hint: str, resolution: "dict | None") -> dict:
+    if resolution and "pip_index" in resolution:
+        index = resolution["pip_index"]
+    elif code in ("engine_too_old", "engine_incompatible"):
+        index = pip_index()
+    else:
+        index = None
     return {
         "ok": False,
         "code": code,
@@ -1203,14 +1314,14 @@ def _degraded_payload(code: str, hint: str, resolution: "dict | None") -> dict:
             ),
         },
         # pip 从哪个索引装包（只读探测；镜像滞后时升级命令要绕开它，#721）
-        "pip_index": pip_index() if code in ("engine_too_old", "engine_incompatible") else None,
+        "pip_index": index,
         "canvas": {
             "available": False,
             "reason": "内嵌画布跑在 MCP server 里，引擎不可用时它也"
             "不可用。桌面窗口 / 浏览器**不是**内嵌画布的替代品。",
         },
         "unavailable_tools": list(NORMAL_TOOLS),
-        "recovery": _recovery_steps(code),
+        "recovery": _recovery_steps(code, index),
         "tried": (resolution or {}).get("tried", []),
         **(
             {"auto_provision": resolution["auto_provision"]}
@@ -1428,7 +1539,11 @@ def health() -> "tuple[dict, int]":
         else:
             diag = diagnosis_resolved(found, resolution)
             code, hint = diag["code"], diag["hint"]
-            report.update(code=code, error=hint, recovery=_recovery_steps(code))
+            report.update(
+                code=code, error=hint, recovery=_recovery_steps(code, diag.get("index", _UNSET))
+            )
+            if "index" in diag:
+                report["pip_index"] = diag["index"]
             if diag.get("engine"):
                 # 引擎在、只是版本对不上：版本与下限都说出口（`tavotto codex doctor` 读这两个字段）
                 report["engine_version"] = diag["engine"].get("version")
@@ -1452,7 +1567,8 @@ def health() -> "tuple[dict, int]":
                 )
     # pip 从哪个索引装包（只读：环境变量 + pip 配置文件）。引擎要升级时，镜像滞后会让
     # 照常的升级命令装回旧版——读体检的一侧（`tavotto codex doctor`）据此给绕开写法（#721）
-    report["pip_index"] = pip_index()
+    if "pip_index" not in report:
+        report["pip_index"] = pip_index()
     report["timings"] = {"health_ms": int((time.monotonic() - t0) * 1000)}
     return report, (0 if report["ok"] else 3)
 
@@ -1746,6 +1862,8 @@ def main() -> int:
     code, hint = diag["code"], diag["hint"]
     if diag.get("engine"):
         resolution = {**resolution, "found_engine": diag["engine"]}
+    if "index" in diag:
+        resolution = {**resolution, "pip_index": diag["index"]}
     if code == "managed_runtime_stale":
         auto = kick_background_provision()
         resolution = {**resolution, "auto_provision": auto}

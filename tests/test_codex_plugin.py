@@ -1438,8 +1438,16 @@ def test_launcher_reuses_the_plugin_locator_instead_of_a_third_copy():
     """
     src = (PLUGIN / "mcp" / "server.py").read_text(encoding="utf-8")
     assert "find_tavotto" in src, "启动器没有复用插件自带的定位器"
+    # 判据的主语是「Tavotto 装在哪」这条路径规则，不是某个环境变量名：pip 的配置位置
+    # （#721：商店版 Python 的虚拟化 pip.ini 在 %LOCALAPPDATA%\Packages\… 下）不归定位器管。
+    # 所以 LOCALAPPDATA 只在「与 Tavotto 安装目录连用」时算越界；定位器那组键里 pip 用不到的
+    # PROGRAMFILES 照旧整词禁止。
+    for line in src.splitlines():
+        assert not ("LOCALAPPDATA" in line and "Tavotto" in line), (
+            f"启动器里出现了 Tavotto 安装位置的规则（{line.strip()}）——路径规则该由定位器说了算"
+        )
     for owned_by_the_locator in (
-        "LOCALAPPDATA",
+        "PROGRAMFILES",
         "install.json",
         "SIDECAR_REL",
         "UNINSTALL_KEY",
