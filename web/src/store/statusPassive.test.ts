@@ -36,3 +36,19 @@ describe('被动通知', () => {
     expect(shown()).toBe('已修复 1 项')
   })
 })
+
+describe('有主人的 toast', () => {
+  it('只有同一个主人撤得掉；换了主人 / 没有主人的一律不动', () => {
+    const ui = useUiStore.getState()
+    ui.setStatus(literal('无法渲染 A'), 'error', { owner: 'render.failed:p1:A.pdf' })
+    ui.clearStatusOwnedBy('render.failed:p1:B.pdf')
+    expect(shown()).toBe('无法渲染 A')
+    ui.clearStatusOwnedBy('render.failed:p1:A.pdf')
+    expect(useUiStore.getState().status).toBeNull()
+
+    ui.setStatus(literal('无法渲染 A'), 'error', { owner: 'render.failed:p1:A.pdf' })
+    ui.setStatus(literal('导出失败'), 'error')
+    ui.clearStatusOwnedBy('render.failed:p1:A.pdf')
+    expect(shown()).toBe('导出失败')
+  })
+})

@@ -117,7 +117,14 @@ beforeEach(() => {
   })
   useRenderStore.getState().clear()
   useSelectionStore.getState().set([])
-  useUiStore.setState({ status: null, statusTone: 'info', elementPanelId: null, selectedGids: [] })
+  useUiStore.setState({
+    status: null,
+    statusTone: 'info',
+    statusPassive: false,
+    statusOwner: null,
+    elementPanelId: null,
+    selectedGids: [],
+  })
   seed([])
 })
 
@@ -383,6 +390,60 @@ describe('project.error', () => {
   it('本构建还不认识的 code 退回一句通用的可恢复说明', () => {
     handleServerEvent(ev({ kind: 'project.error', pj: 'p1', code: 'from_the_future' }))
     expect(statusKey()).toBe('status.projectBackgroundError')
+  })
+})
+
+describe('渲染失败的 toast 在同一张图渲染成功后撤掉', () => {
+  // 2026-09-28 Windows 实测：缺依赖时弹「无法渲染 Fig_labels。脚本用到的 adjustText……」，在修复卡片里
+  // 装好依赖、同一张图自动重渲染成功之后，这条红色 toast 还挂着，直到手动点 ×。
+  const failed = (id: string, pj = 'p1') =>
+    handleServerEvent(ev({ kind: 'render.failed', pj, id, error: '脚本用到的 adjustText 在当前渲染环境里没有。' }))
+  const done = (id: string, pj = 'p1') => handleServerEvent(ev({ kind: 'render.done', pj, id }))
+
+  it('同一张图随后渲染成功：错误 toast 撤掉，换成被动的「渲染完成」', () => {
+    failed('Fig_labels.pdf')
+    expect(statusKey()).toBe('status.renderFailedWithError')
+    expect(useUiStore.getState().statusTone).toBe('error')
+
+    done('Fig_labels.pdf')
+    expect(statusKey()).toBe('status.renderDone')
+    expect(useUiStore.getState().statusTone).toBe('info')
+  })
+
+  it('另一张图渲染成功不撤它（短名相同、路径不同也算另一张）', () => {
+    failed('a/Fig1.pdf')
+    done('Fig2.pdf')
+    done('b/Fig1.pdf')
+    expect(statusKey()).toBe('status.renderFailedWithError')
+    expect(useUiStore.getState().statusTone).toBe('error')
+  })
+
+  it('错误 toast 已经换成别的提示（后一张图失败 / 别的类别）：前一张图成功不碰它', () => {
+    failed('Fig1.pdf')
+    failed('Fig2.pdf')
+    done('Fig1.pdf')
+    expect(useUiStore.getState().status?.values).toMatchObject({ name: 'Fig2' })
+    expect(useUiStore.getState().statusTone).toBe('error')
+
+    handleServerEvent(ev({ kind: 'project.error', pj: 'p1', code: 'scan_failed', params: { reason: '坏了' } }))
+    done('Fig2.pdf')
+    expect(statusKey()).toBe('backend.scan_failed')
+  })
+
+  it('另一个项目里同名文件的渲染成功不撤它（主人带项目）', () => {
+    failed('Fig1.pdf', 'p1')
+    project = 'p2' // 切到另一个图库：之后只收 p2 的事件
+    done('Fig1.pdf', 'p2')
+    expect(statusKey()).toBe('status.renderFailedWithError')
+    expect(useUiStore.getState().statusTone).toBe('error')
+  })
+
+  it('用户已经关掉的不会被重新挂回来', () => {
+    failed('Fig1.pdf')
+    useUiStore.getState().setStatus(null)
+    done('Fig1.pdf')
+    expect(statusKey()).toBe('status.renderDone')
+    expect(useUiStore.getState().statusTone).toBe('info')
   })
 })
 

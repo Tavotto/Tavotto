@@ -228,6 +228,13 @@ interface UiState extends Persisted {
    * 一提交就触发重渲染，几十毫秒后回来的「渲染完成」会把它盖掉——用户什么都没看到。
    */
   statusPassive: boolean
+  /**
+   * 这条 toast 的主人（可选，`setStatus` 的 `owner`）。**错误 toast 不会自己消失**（要等用户点 ×），
+   * 而它说的事情可能随后就不成立了——「无法渲染 Fig_labels」挂着，修好依赖后同一张图重新渲染成功，
+   * toast 还在（2026-09-28 Windows 实测）。有主人的 toast 才能被同一个主人后来的结论撤掉
+   * （`clearStatusOwnedBy`），别的图、别的类别的提示碰不到它。
+   */
+  statusOwner: string | null
   /** 正在双击编辑的文字对象 */
   editingTextId: string | null
   /** 进入裁剪模式的面板 */
@@ -331,7 +338,16 @@ interface UiState extends Persisted {
   setCanvasPref: (patch: Partial<Persisted>) => void
   setShowRulers: (v: boolean) => void
   setShowGrid: (v: boolean) => void
-  setStatus: (msg: UiMessage | null, tone?: 'info' | 'error', opts?: { passive?: boolean }) => void
+  setStatus: (
+    msg: UiMessage | null,
+    tone?: 'info' | 'error',
+    opts?: { passive?: boolean; owner?: string },
+  ) => void
+  /**
+   * 撤掉**这个主人**挂上的 toast；此刻挂着的不是它的（换成了别的图 / 别的类别的提示、或已被关掉）
+   * 就什么都不做。主人是 `setStatus` 的 `owner`，由挂提示的那一处自己定（如 `renderFailureOwner`）。
+   */
+  clearStatusOwnedBy: (owner: string) => void
   setEditingText: (id: string | null) => void
   setIssueHighlight: (v: { objectId: string | null; gid: string | null } | null) => void
   setProblemFilter: (v: Severity[] | null) => void
@@ -419,6 +435,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   status: null,
   statusTone: 'info',
   statusPassive: false,
+  statusOwner: null,
   editingTextId: null,
   cropTargetId: null,
   cropBaseline: null,
@@ -563,14 +580,25 @@ export const useUiStore = create<UiState>((set, get) => ({
   setStatus: (status, statusTone = 'info', opts) => {
     const passive = !!opts?.passive
     if (passive && get().status && !get().statusPassive) return
-    set({ status, statusTone, statusPassive: passive })
+    set({
+      status,
+      statusTone,
+      statusPassive: passive,
+      statusOwner: status ? (opts?.owner ?? null) : null,
+    })
     statusDismissTimer.cancel()
     // 普通状态短暂即逝；错误保留到用户处理（toast 上有关闭键）
     if (status && statusTone !== 'error') {
       statusDismissTimer.start(STATUS_AUTO_DISMISS_MS, () =>
-        set({ status: null, statusTone: 'info', statusPassive: false }),
+        set({ status: null, statusTone: 'info', statusPassive: false, statusOwner: null }),
       )
     }
+  },
+
+  clearStatusOwnedBy: (owner) => {
+    if (!get().status || get().statusOwner !== owner) return
+    statusDismissTimer.cancel()
+    set({ status: null, statusTone: 'info', statusPassive: false, statusOwner: null })
   },
 
   setIssueHighlight: (v) =>
