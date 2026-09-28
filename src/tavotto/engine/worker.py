@@ -231,6 +231,8 @@ SCRIPT_NEEDS_ARGUMENTS = "script_needs_arguments"
 #: 脚本要输入而没有人能答（ADR 0099 §五）/ 有一问等到超时、脚本没接住 EOF（§三）。
 SCRIPT_NEEDS_INPUT = "script_needs_input"
 SCRIPT_INPUT_TIMEOUT = "script_input_timeout"
+#: 脚本要读的文件不存在，且说得出是哪个（ADR 0106）：界面据此请用户指认，不是笼统的 script_error。
+MISSING_INPUT = "missing_input"
 SCRIPT_EXITED = "script_exited"
 
 
@@ -403,6 +405,10 @@ class Worker(wireproto.V1Handler):
         self._inputs_report: dict | None = None
         #: 本次 build 的问答通道（ADR 0099）：build 开始时建，响应的 `script_inputs` 从它取。
         self._input_channel: "scriptinput.Channel | None" = None
+        #: 数据改指（ADR 0106）：用户指认过的只读改指表（`--input-remap`，父进程按项目给），
+        #: 与本次 build 里落空的只读打开——`missing_input` 靠它说出缺的是哪个。
+        self.input_remap = _parse_remap(getattr(args, "input_remap", None))
+        self._input_misses = figcapture.InputMisses()
         SESSION = SafeSession(self.out_dir, self.preview_dpi)
         SESSION.frame_project_root = str(self.figures_dir)
         super().__init__(SESSION)
@@ -506,6 +512,12 @@ class Worker(wireproto.V1Handler):
         # 卸会把叠在外层的回退一起摘掉；观察器只记不改，留着也只是多几条项目外的忽略。
         self._input_observer = figcapture.InputObserver(str(self.figures_dir))
         self._input_observer.install()
+        # 数据改指（ADR 0106）装在观察器**外**、只读回退**内**：回退先找脚本目录，找不到才轮到
+        # 用户指认的改指表；改道来的读经观察器记下。没有规则也装——落空的读要记账。
+        self._input_misses = figcapture.InputMisses()
+        figcapture.install_input_remap(
+            self.input_remap, self._input_misses, str(self.workdir or self.sandbox)
+        )
         if self.workdir is None:
             figcapture.install_relative_read_fallback(
                 str(self.script.parent), str(self.figures_dir)
@@ -753,6 +765,17 @@ class Worker(wireproto.V1Handler):
                     traceback_text=traceback.format_exc(),
                     extra={"prompt": timed_out[-1].get("prompt", ""), "minutes": minutes},
                 ) from exc
+            missing = figcapture.missing_input_of(exc, self._input_misses)
+            if missing is not None:
+                # 脚本要读的文件不存在、而且对得上是哪一次只读打开落空的（ADR 0106 §一）：
+                # 用户的下一步是指认数据在哪，不是去读 traceback
+                raise ProtocolError(
+                    MISSING_INPUT,
+                    f"脚本要读取的文件不存在: {missing['requested']}",
+                    retryable=False,
+                    traceback_text=traceback.format_exc(),
+                    extra={"missing_input": missing},
+                ) from exc
             raise ProtocolError(
                 "script_error",
                 f"脚本执行失败: {exc}",
@@ -787,6 +810,16 @@ def _json_default(o):
         return str(o)
 
 
+def _parse_remap(raw) -> list[dict]:
+    """`--input-remap` 的 JSON → 校验过的规则；坏了就当没有（渲染照跑，只是不改道）。"""
+    if not raw:
+        return []
+    try:
+        return figcapture.clean_remap_rules(json.loads(raw))
+    except ValueError:
+        return []
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--script", required=True)
@@ -795,6 +828,8 @@ def main() -> None:
     ap.add_argument("--sandbox", required=True)
     # ADR 0047：给了就把 cwd 切到这里（脚本目录）而不是沙盒；沙盒仍是写入边界的参照
     ap.add_argument("--cwd", default=None)
+    # ADR 0106：用户指认过的只读改指表（JSON 数组）；没有规则时不出现
+    ap.add_argument("--input-remap", default=None)
     ap.add_argument("--entry", default="main")
     ap.add_argument("--preview-dpi", type=int, default=200)
 
