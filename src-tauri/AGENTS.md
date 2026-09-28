@@ -23,7 +23,8 @@
   三处同步——`build.rs` 的 `AppManifest::commands`、`capabilities/main.json`
   加 `allow-<命令名连字符化>`、`main.rs` 的 `generate_handler`。漏掉前两处
   invoke 会被**静默拒绝**（reveal_export「点了没反应」就是这么坏的）；
-  失败路径不许吞——回退时把完整文件路径告诉用户。
+  失败路径不许吞——回退时把完整文件路径告诉用户。三处齐全的看护读结构不读子串
+  （`tests/support/rustsrc.py`，枚举在 `tests/test_desktop_codex_button.py`）。
 - **关窗询问闸**（issue #223，ADR 0002 的「关窗询问闸」一节）：
   `WindowEvent::CloseRequested` → `CloseGate` → 事件 `tavotto:close-requested`
   → 前端答 `hold`/`close`/`cancel`。三条别改坏：**默认不拦**（前端 arm 之后才拦，

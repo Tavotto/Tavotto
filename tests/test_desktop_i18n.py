@@ -20,6 +20,14 @@ from pathlib import Path
 
 import pytest
 
+from tests.support.rustsrc import (
+    allow_permission,
+    capability_permissions,
+    handler_commands,
+    manifest_commands,
+    tauri_commands,
+)
+
 ROOT = Path(__file__).resolve().parent.parent
 TAURI = ROOT / "src-tauri"
 I18N_RS = TAURI / "src" / "i18n.rs"
@@ -210,15 +218,11 @@ def test_error_page_shows_the_raw_message_untranslated():
 
 
 def test_set_menu_locale_is_declared_in_all_three_places():
-    build_rs = (TAURI / "build.rs").read_text(encoding="utf-8")
-    main_rs = (TAURI / "src" / "main.rs").read_text(encoding="utf-8")
-    cap = json.loads((TAURI / "capabilities" / "main.json").read_text(encoding="utf-8"))
-
-    assert '"set_menu_locale"' in build_rs, "build.rs 的 AppManifest::commands 里没有它"
-    assert "allow-set-menu-locale" in cap["permissions"], "capability 没放行它"
-    assert "set_menu_locale" in main_rs.split("generate_handler![")[1].split("]")[0], (
-        "generate_handler 里没有它"
-    )
+    # 三处都读结构（`tests/support/rustsrc.py`）：注释里、无关字符串里写着命令名不算登记
+    assert "set_menu_locale" in tauri_commands(), "main.rs 里没有这个 #[tauri::command]"
+    assert "set_menu_locale" in manifest_commands(), "build.rs 的 AppManifest::commands 里没有它"
+    assert allow_permission("set_menu_locale") in capability_permissions(), "capability 没放行它"
+    assert "set_menu_locale" in handler_commands(), "generate_handler 里没有它"
 
 
 # 菜单项 id / 加速键 / 两种语言下逐项相同：看护在壳里

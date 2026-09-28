@@ -22,11 +22,18 @@
 
 from __future__ import annotations
 
-import json
 import re
 from pathlib import Path
 
 import pytest
+
+from tests.support.rustsrc import (
+    allow_permission,
+    capability_permissions,
+    handler_commands,
+    manifest_commands,
+    tauri_commands,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 TAURI = ROOT / "src-tauri"
@@ -82,13 +89,11 @@ def test_the_decision_vocabulary_is_the_same_closed_set_on_both_sides():
 
 @pytest.mark.parametrize("command", CLOSE_COMMANDS)
 def test_the_close_guard_commands_are_declared_in_all_three_places(command: str):
-    build_rs = (TAURI / "build.rs").read_text(encoding="utf-8")
-    cap = json.loads((TAURI / "capabilities" / "main.json").read_text(encoding="utf-8"))
-    handler = _main_rs().split("generate_handler![")[1].split("]")[0]
-
-    assert f'"{command}"' in build_rs, "build.rs 的 AppManifest::commands 里没有它"
-    assert f"allow-{command.replace('_', '-')}" in cap["permissions"], "capability 没放行它"
-    assert command in handler, "generate_handler 里没有它"
+    # 三处都读结构（`tests/support/rustsrc.py`）：注释里、无关字符串里写着命令名不算登记
+    assert command in tauri_commands(), "main.rs 里没有这个 #[tauri::command]"
+    assert command in manifest_commands(), "build.rs 的 AppManifest::commands 里没有它"
+    assert allow_permission(command) in capability_permissions(), "capability 没放行它"
+    assert command in handler_commands(), "generate_handler 里没有它"
 
 
 def test_only_one_place_in_the_shell_can_stop_a_window_from_closing():
