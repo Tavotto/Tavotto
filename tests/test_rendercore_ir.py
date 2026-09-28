@@ -7,7 +7,9 @@
 
 from __future__ import annotations
 
+import json
 import math
+from pathlib import Path
 
 import pytest
 
@@ -323,3 +325,27 @@ def test_imported_page_never_claims_to_know_its_inside():
     node = ir.ImportedPage("pdf", (0, 0, 1, 1))
     assert node.internal == "unknown"
     assert not any(f in ir.ImportedPage.__dataclass_fields__ for f in ("axes", "texts", "children"))
+
+
+# ---------------------------------------------------------------- 裁剪框（同源对）
+
+CROP_GOLDEN = json.loads(
+    (Path(__file__).parent / "golden" / "crop_bounds_vectors.json").read_text(encoding="utf-8")
+)
+
+
+@pytest.mark.parametrize("crop", CROP_GOLDEN["accept"])
+def test_crop_bounds_accept_is_the_golden_pair(crop):
+    """「引擎收得下的裁剪框」与前端 `types/document.cropInBounds` 同源：两侧各读
+    `tests/golden/crop_bounds_vectors.json`（前端那一侧是 `web/src/types/cropBounds.golden.test.ts`）。
+    前端写进文档之前拿同一条判据把关，写出去的 crop 不会让整份排版被这里拒掉（#688）。"""
+    page = _page(ir.ImportedPage("pdf", (0, 0, 5, 5), crop=tuple(crop)), resources={"pdf": PDF})
+    ir.validate(page)
+
+
+@pytest.mark.parametrize("crop", CROP_GOLDEN["reject"])
+def test_crop_bounds_reject_is_the_golden_pair(crop):
+    page = _page(ir.ImportedPage("pdf", (0, 0, 5, 5), crop=tuple(crop)), resources={"pdf": PDF})
+    with pytest.raises(ir.IRError) as err:
+        ir.validate(page)
+    assert err.value.code == "non_positive_size"

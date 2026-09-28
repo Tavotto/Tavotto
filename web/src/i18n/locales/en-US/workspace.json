@@ -416,7 +416,8 @@
     "runtimeRerunFailed": "Re-run failed",
     "stale": "Script changed",
     "frameLegacy": "Shown at figsize",
-    "frameLegacyHint": "The script saved this figure cropped differently. Select it and switch to the saved figure size in the properties on the right."
+    "frameLegacyHint": "The script saved this figure cropped differently. Select it and switch to the saved figure size in the properties on the right.",
+    "frameLegacyBlockedHint": "The script saved this figure cropped differently, but this figure's crop lies entirely outside the saved figure size. To switch to it, first adjust or reset the crop in the properties on the right."
   },
   "quickEdit": {
     "aria": "Quick edit",

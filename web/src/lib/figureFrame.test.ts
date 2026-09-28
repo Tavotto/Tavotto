@@ -16,6 +16,7 @@ import {
   type ManifestFrame,
 } from '@/lib/figureFrame'
 import {
+  cropInBounds,
   migrateToProject,
   panelFullSize,
   panelRotation,
@@ -74,10 +75,11 @@ const POINTS: [number, number][] = [
   [70, 50],
 ]
 
-function expectContentFixed(before: PanelObject) {
-  const patch = frameSwitchPatch(before, FRAME)
-  const after: PanelObject = { ...before, ...patch }
-  const [sx, sy, fw, fh] = FRAME.savefig_mm
+function expectContentFixed(before: PanelObject, frame: ManifestFrame = FRAME) {
+  const patch = frameSwitchPatch(before, frame)
+  expect(patch).not.toBeNull()
+  const after: PanelObject = { ...before, ...patch! }
+  const [sx, sy, fw, fh] = frame.savefig_mm
   for (const [u, v] of POINTS) {
     const a = pageOf(before, [0, 0, 80, 57.6], u, v)
     const b = pageOf(after, [sx, sy, fw, fh], u, v)
@@ -164,7 +166,7 @@ describe('切换：内容在页面上不动、外框变', () => {
     })
     const [sx, sy, fw, fh] = FRAME.savefig_mm
     const [gw, gh] = FRAME.figsize_mm
-    const out = frameSwitchPatch(p, FRAME).overrides
+    const out = frameSwitchPatch(p, FRAME)!.overrides
     const title = out[0].value as number[]
     expect(title[0] * fw + sx).toBeCloseTo(0.5 * gw, 9)
     expect(title[1] * fh + sy).toBeCloseTo(0.05 * gh, 9)
@@ -180,7 +182,33 @@ describe('切换：内容在页面上不动、外框变', () => {
 
   it('改过图幅的面板：那条 size_mm 换成同一个 figsize 对应的图幅尺寸', () => {
     const p = panel({ overrides: [{ gid: 'figure', prop: 'size_mm', value: [80, 57.6] }, { ...LEGACY_FRAME_OVERRIDE }] })
-    expect(frameSwitchPatch(p, FRAME).overrides[0].value).toEqual([76, 58])
+    expect(frameSwitchPatch(p, FRAME)!.overrides[0].value).toEqual([76, 58])
+  })
+})
+
+describe('旧裁剪与新图幅不相交：不采用（#688）', () => {
+  // 脚本图幅正好是 figsize 的左半边：分数 {x: 0, y: 0, w: 0.5, h: 1}，边界是个精确的 0.5
+  const HALF: ManifestFrame = { ...FRAME, savefig_mm: [0, 0, 40, 57.6] }
+  const cropped = (crop: PanelObject['crop']) => panel({ crop, w: 30, h: 21.6 })
+
+  it('不相交：返回 null（以前退回旧可见范围，算出 x = 1.8 的裁剪框，RenderCore 拒掉整份排版）', () => {
+    expect(frameSwitchPatch(cropped({ x: 0.6, y: 0.2, w: 0.3, h: 0.5 }), HALF)).toBeNull()
+    // 竖直方向不相交同样拒（FRAME 的上边在 figsize 里 2.1 mm 处）
+    expect(frameSwitchPatch(cropped({ x: 0.2, y: 0, w: 0.5, h: 0.02 }), FRAME)).toBeNull()
+  })
+
+  it('只有一条边相接（交集零面积）：返回 null', () => {
+    expect(frameSwitchPatch(cropped({ x: 0.5, y: 0.2, w: 0.3, h: 0.5 }), HALF)).toBeNull()
+  })
+
+  it('部分相交：采用，裁剪框收到交集、引擎收得下，内容在页面上不动', () => {
+    const after = expectContentFixed(cropped({ x: 0.4, y: 0.2, w: 0.3, h: 0.5 }), HALF)
+    expect(after.crop).toBeDefined()
+    expect(cropInBounds(after.crop!)).toBe(true)
+    expect(after.crop!.x).toBeCloseTo(0.8, 9)
+    expect(after.crop!.w).toBeCloseTo(0.2, 9)
+    // 交集只剩原来可见宽度的三分之一：外框按它收
+    expect(after.w).toBeCloseTo(10, 9)
   })
 })
 
