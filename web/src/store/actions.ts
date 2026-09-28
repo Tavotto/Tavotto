@@ -47,15 +47,19 @@ import type {
   TextObject,
 } from '@/types/document'
 import { emptyProject, objectLabel, type ProjectDocument } from '@/types/document'
+import type { ProjectFileBinding } from '@/lib/projectFile'
 import { useAssetStore } from './assetStore'
 import {
   readAutosaveDoc,
   saveNow,
+  setProjectFile,
   useDocumentStore,
   type CommitOptions,
   type HistoryEntry,
 } from './documentStore'
 import { finishActiveGesture } from './gestureCoordinator'
+import { writeBoundProjectFile } from './projectSave'
+import { captureSaveContext, reportSaveSkipped, stillCurrent } from './saveContext'
 import { useInteractionStore } from './interactionStore'
 import { exactPanelManifest, renderKeyOf, useRenderStore } from './renderStore'
 import { useSelectionStore } from './selectionStore'
@@ -510,7 +514,11 @@ function afterSwitch(): void {
  *
  * 改造前这个组合键打开的是「保存为画布文件」对话框，而快捷键帮助里写的就是
  * 「保存为画布文件」——两边一致，但用户按 ⌘S 想要的从来不是"另存一份"。
- * 现在 ⌘S 存当前文档（目标已知，直接写），⇧⌘S 才是另存为。
+ * 现在 ⌘S 存当前排版（目标已知，直接写），⇧⌘S 才是另存为。
+ *
+ * **存到哪（ADR 0096）**：先存本机自动保存（崩溃恢复的那一份，与以前一样等到写完），
+ * 再看这份排版和项目的关系——绑定了项目里的文件就原子写回它；开着项目但还没有
+ * 项目文件，弹「存进项目」命名框；没开项目，就只存本机并说清「存在本机」。
  *
  * 保存是离散动作：先把还开着的那一轮连续编辑收干净，否则存下去的是一个
  * 事务开着、值还没落定的中间态（与 runUndoRedo 同一条理由，issue #131）。
@@ -518,9 +526,27 @@ function afterSwitch(): void {
 export async function runManualSave(): Promise<void> {
   finishActiveGesture()
   const ui = useUiStore.getState()
+  // 按下 ⌘S 那一刻的排版 / 项目 / 绑定：整条链只用它（`saveContext.ts`）
+  const ctx = captureSaveContext()
   const state = await saveNow()
+  // saveNow 途中切走了：本机那一份（入口那份）已经照常落盘，项目文件这一步不再做——
+  // 此刻开着的是另一份，写它、给它弹「存进项目」都不是用户要的；没写进项目要说出来
+  if (ctx.pj !== null && !stillCurrent(ctx)) {
+    reportSaveSkipped(ctx)
+    return
+  }
+  // 本机那一份跟别的窗口撞了（docConflict）：先裁决哪一版是对的，再谈写项目文件
+  if (state !== 'conflict' && ctx.pj !== null) {
+    if (ctx.file) {
+      await writeBoundProjectFile(ctx)
+    } else {
+      // 老数据（只在本机的排版）也走这里：按一次 ⌘S 问一次名字，不自动批量写进项目
+      ui.setLayoutOpen(true, 'saveToProject')
+    }
+    return
+  }
   if (state === 'saved' || state === 'clean') {
-    ui.setStatus(msg('save.done', undefined, 'workspace'))
+    ui.setStatus(msg('save.doneLocal', undefined, 'workspace'))
   } else if (state === 'conflict') {
     ui.setStatus(msg('save.conflict', undefined, 'workspace'), 'error')
   } else if (state === 'save_error') {
@@ -537,12 +563,22 @@ export async function newBlankDocument(): Promise<void> {
   status(note('blankCreated'))
 }
 
-/** 载入画布文件：每次载入都是一个新的编辑会话，因此给一个新的文档身份 */
-export async function openLayoutDocument(doc: FigureDocument | ProjectDocument): Promise<void> {
-  if (!(await useDocumentStore.getState().switchDocument(doc, newId('d'), confirmLoss))) return
+/**
+ * 载入画布文件：每次载入都是一个新的编辑会话，因此给一个新的文档身份。
+ *
+ * `projectFile`：从「项目里的排版」打开时，新会话绑定那个文件（ADR 0096）——之后
+ * ⌘S 写回它。项目包之类不是项目文件的来源不传，打开后是一份还没存进项目的排版。
+ */
+export async function openLayoutDocument(
+  doc: FigureDocument | ProjectDocument,
+  projectFile?: ProjectFileBinding,
+): Promise<boolean> {
+  if (!(await useDocumentStore.getState().switchDocument(doc, newId('d'), confirmLoss))) return false
+  if (projectFile) setProjectFile(projectFile)
   afterSwitch()
   const s = useDocumentStore.getState()
   status(note('documentLoaded', { name: s.projectMeta.name, count: s.canvases.length }))
+  return true
 }
 
 /** 切回本机自动保存过的文档；沿用它原来的身份，槽位因此不会分叉 */

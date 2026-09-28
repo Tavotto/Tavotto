@@ -14,6 +14,13 @@ import {
 import { emitActivity } from '@/lib/activity'
 import { announceDocOpen } from '@/lib/docPresence'
 import { currentProjectLabel } from '@/lib/projectLabel'
+import {
+  bindingForProject,
+  forgetProjectFile,
+  readProjectFile,
+  writeProjectFile,
+  type ProjectFileBinding,
+} from '@/lib/projectFile'
 import { currentProjectId } from '@/lib/session'
 import { msg, t, type UiMessage } from '@/i18n'
 import { newId } from '@/lib/id'
@@ -227,6 +234,13 @@ interface DocumentState {
   derivedSeq: number
   /** 上次写入本机自动保存的时间戳 */
   lastPersisted: number | null
+  /**
+   * 这份排版绑定的项目文件（ADR 0096，`lib/projectFile.ts`）：⌘S 写回的目标。
+   * 与 `saveState` 是**两根轴**——`saveState` 说本机自动保存走到哪一步，这里的
+   * `dirty` 说项目里那份文件是不是落后于工作副本。存的是这份排版的原始绑定，
+   * 属于别的项目时由 `activeProjectFile()` 滤掉（不抹掉）。
+   */
+  projectFile: ProjectFileBinding | null
   /** 本机自动保存过的文档（含当前文档），按最近保存时间倒序 */
   recentDocs: RecentDoc[]
   past: HistoryEntry[]
@@ -388,6 +402,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   loadSeq: 0,
   derivedSeq: 0,
   lastPersisted: null,
+  projectFile: null,
   recentDocs: [],
   past: [],
   future: [],
@@ -752,7 +767,10 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   renameProject: (name) => {
     const clean = name.trim()
     if (!clean) return
+    const changed = clean !== get().projectMeta.name
     set((s) => ({ projectMeta: { ...s.projectMeta, name: clean } }))
+    // 排版名写在项目文件里：改名之后项目里那份就旧了
+    if (changed) markProjectFileDirty()
     // 项目名不进撤销历史，但要立即落快照（最近文档列表显示它）
     flushAutosave()
   },
@@ -786,6 +804,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       docNotice: null,
       loadSeq: get().loadSeq + 1,
       lastPersisted: null,
+      projectFile: readProjectFile(nextId),
       past: [],
       future: [],
       txn: null,
@@ -1116,6 +1135,8 @@ function flushAutosaveNow(): FlushResult {
   for (const e of before) {
     if (!keptIds.has(e.id) && e.id !== state.documentId) {
       void deleteAutosave(e.id).catch(() => {})
+      // 槽位没了，绑定也就没有工作副本可指了（项目里的文件一个字节不动）
+      forgetProjectFile(e.id)
     }
   }
   writeCurrentId(state.documentId)
@@ -1254,6 +1275,7 @@ export function forgetLocalDocument(id: string): void {
   } catch {
     /* 删不掉只是留几个垃圾键 */
   }
+  forgetProjectFile(id)
   const kept = writeIndex(readIndex().filter((e) => e.id !== id))
   useDocumentStore.setState({ recentDocs: kept })
 }
@@ -1424,6 +1446,65 @@ export async function readAutosaveDoc(id: string): Promise<LoadedDoc> {
 const persistedIdentity = (s: DocumentState) =>
   [s.documentId, s.loadSeq, s.doc, s.canvases, s.activeCanvasId, s.projectMeta] as const
 
+/* -------------------------------------------------------------------------- */
+/*  项目文件绑定（ADR 0096）                                                     */
+/* -------------------------------------------------------------------------- */
+
+/** 此刻这个标签页能写回的项目文件；属于别的项目 / 没有绑定 = null */
+export function activeProjectFile(): ProjectFileBinding | null {
+  return bindingForProject(useDocumentStore.getState().projectFile, currentProjectId())
+}
+
+/**
+ * 绑定的写入口（state 与本机记录一起改）；`null` = 解绑。`documentId` 给的是
+ * **发起保存那一刻**的排版：写盘途中切走了的话，只改那一份的本机记录，不去碰
+ * 此刻开着的另一份的 state。
+ */
+export function setProjectFile(
+  binding: ProjectFileBinding | null,
+  documentId = useDocumentStore.getState().documentId,
+): void {
+  if (binding) writeProjectFile(documentId, binding)
+  else forgetProjectFile(documentId)
+  if (useDocumentStore.getState().documentId === documentId) {
+    useDocumentStore.setState({ projectFile: binding })
+  }
+}
+
+/**
+ * 每份文档在本会话里被**用户**编辑过几次（编辑代次）。与绑定里的 `dirty` 同源：只在
+ * `markProjectFileDirty()` 里前进——也就是 `saveState` 推 `dirty` 的那一处（派生同步
+ * `applyDerivedUpdate` 不算）外加改排版名。载入 / 换文档 / 重新载入都不是编辑。
+ *
+ * 项目文件写成之后判「途中改没改过」要比的是**被提交那份文档自己的**代次，不是此刻开着
+ * 哪一份（#674 评审第 4 轮），也不能是「要落盘的内容变没变」——派生同步也会改内容，按那个
+ * 算的话写的途中来一次元数据同步，圆点就亮了、要求一次多余的保存（评审第 6 轮）。
+ */
+const editGeneration = new Map<string, number>()
+const editGenerationOf = (documentId: string) => editGeneration.get(documentId) ?? 0
+
+/**
+ * 用户编辑之后：项目里那份落后了。编辑代次一律前进；绑定没有 / 已经是 dirty 就不再写。
+ * **项目文件那根轴的唯一入口**——判「是不是用户编辑」的只有调用它的那两处，这里不再判第二遍。
+ */
+function markProjectFileDirty(): void {
+  const s = useDocumentStore.getState()
+  editGeneration.set(s.documentId, editGenerationOf(s.documentId) + 1)
+  const b = s.projectFile
+  if (b && !b.dirty) setProjectFile({ ...b, dirty: true })
+}
+
+/**
+ * 「这份排版此刻的样子」的快照令牌：写项目文件前取一个（与 `buildProject()` 同步，同一份），
+ * 写成之后问一下——**这份**排版在写的途中又改过的话，项目里那份仍然落后，圆点不能灭；
+ * 途中切到别的排版不算改过。
+ */
+export function projectFileSnapshot(): () => boolean {
+  const documentId = useDocumentStore.getState().documentId
+  const before = editGenerationOf(documentId)
+  return () => editGenerationOf(documentId) !== before
+}
+
 /**
  * 读自动保存槽位并切到这份文档（同一个 documentId），**切过去之后**再把读盘带回来的待裁决事项
  * （上次没写进盘的恢复副本、schema 太新）挂到 `docNotice` 上——`switchDocument` 会清掉它，
@@ -1459,6 +1540,7 @@ function applyProject(pd: ProjectDocument, id: string, opts: { dirty: boolean })
     canvasSessions: {},
     openTabs: restoreTabs(id, pd.canvases, active.id),
     dirty: opts.dirty,
+    projectFile: readProjectFile(id),
     loadSeq: useDocumentStore.getState().loadSeq + 1,
     past: [],
     future: [],
@@ -1620,6 +1702,8 @@ export function startAutosave(): () => void {
     // 冲突未决时不覆盖状态：它要用户裁决，被一次编辑顶掉就等于替用户按了
     // 「算了」，而下一次防抖写盘又会去撞同一堵墙。编辑照常进本机副本。
     if (!derived && !blocksDiskWrite(state.saveState)) setSaveState('dirty')
+    // 项目文件那根轴只跟用户编辑：派生同步不是用户做的事，圆点不该因它亮起
+    if (!derived) markProjectFileDirty()
     cancelPendingAutosave()
     autosaveTimer = window.setTimeout(flushAutosave, DEBOUNCE_MS)
   })

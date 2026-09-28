@@ -329,3 +329,18 @@ def content_revision(path: Path) -> str | None:
     except OSError:
         return None
     return revision_of(data)
+
+
+def existing_revision(path: Path) -> str | None:
+    """写之前判冲突用的修订号：**只有文件不存在才是 `None`**，存在却读不出来就抛 `OSError`。
+
+    `content_revision()` 把两者揉成一个 `None`，给「显示当前修订号」用没问题；给写入判据用
+    就是一个洞——`_revision_conflict` 对 `None` 的解释是「文件被删了，放行重建」，于是一份
+    读不出来（mode 000、被别的程序独占）却能被替换的文件，会在没人核对过它内容的情况下被整份
+    盖掉。读不出来 = 不知道那里是什么，调用方必须拒写。
+    """
+    try:
+        data = Path(path).read_bytes()
+    except FileNotFoundError:
+        return None
+    return revision_of(data)
