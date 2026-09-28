@@ -53,8 +53,10 @@
 - **多 Figure 结果进 Dialog**（自带 focus trap），每张各有「添加到画布」，
   `dropped_figures` 如实显示——绝不只显示第一张。
 - **safe 失败的恢复路径**：文案解释「可能依赖原来的 Python 环境 / cwd /
-  参数」，真实入口只有「选择渲染环境」（设置 about 段的
-  EngineEnvironmentCard）与「复制诊断」；**native 未落地前不渲染任何
+  参数」，真实入口只有「选择渲染环境」（就地打开 `EngineEnvironmentDialog`，
+  开关 `uiStore.engineEnvOpen`，正文就是那一份 `EngineEnvironmentCard`——**不深链设置页**：
+  卡片在设置里住在「诊断」页、环境正常时还折叠在技术详情里，此前深链的「关于」段早已
+  没有它，用户被扔进一页毫不相干的内容）与「复制诊断」；**native 未落地前不渲染任何
   可点但无功能的按钮**（PR 2 合并后再升级为实际入口）。
 - **素材卡的两个动作各说各的后果（UI 审计 T06）**：「编辑原图」（Enter / 双击）
   进快速编辑——图还不在文档里时它**必然**把图加进来（ADR 0028：快速编辑的
