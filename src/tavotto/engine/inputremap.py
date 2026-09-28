@@ -194,6 +194,29 @@ def _probe_via_of_constants(tree: ast.AST) -> dict[int, str]:
     目标；这里要的是**反过来**的事实——一个绝对常量若是被 `exists()` 问的，改指表救不回它，
     对话框不能给它选择器（否则指认 → 重跑 → `exists()` 照样 False → 同一个框再弹）。
     """
+    # 只赋值过一次的名字 → 它的常量（`DATA = "/abs/x.csv"` 再 `exists(DATA)` 是最常见的写法）。
+    # 赋值不止一次的不跟：说不清探的是哪一个值
+    stores: dict[str, int] = {}
+    consts: dict[str, ast.Constant] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+            stores[node.id] = stores.get(node.id, 0) + 1
+        if (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+        ):
+            consts[node.targets[0].id] = node.value
+
+    def _const_of(expr: ast.expr | None) -> ast.Constant | None:
+        if isinstance(expr, ast.Constant):
+            return expr
+        if isinstance(expr, ast.Name) and stores.get(expr.id) == 1:
+            return consts.get(expr.id)
+        return None
+
     out: dict[int, str] = {}
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
@@ -202,21 +225,19 @@ def _probe_via_of_constants(tree: ast.AST) -> dict[int, str]:
         first = node.args[0] if node.args else None
         if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Call):
             ctor = node.func.value
-            if (
-                databinding._func_name(ctor.func) in databinding._PATH_CTORS
-                and len(ctor.args) == 1
-                and isinstance(ctor.args[0], ast.Constant)
-            ):
+            inner = _const_of(ctor.args[0]) if len(ctor.args) == 1 else None
+            if databinding._func_name(ctor.func) in databinding._PATH_CTORS and inner is not None:
                 if name in databinding.PATH_METHOD_PROBES:
-                    out[id(ctor.args[0])] = VIA_PROBE
+                    out[id(inner)] = VIA_PROBE
                 elif name in databinding.PATH_METHOD_GLOBS:
-                    out[id(ctor.args[0])] = VIA_GLOB
+                    out[id(inner)] = VIA_GLOB
         target = first
         if target is None:
             target = next(
                 (k.value for k in node.keywords if k.arg in ("path", "top", "pathname")), None
             )
-        if not isinstance(target, ast.Constant):
+        target = _const_of(target)
+        if target is None:
             continue
         if name in databinding.PATH_PROBE_FUNCS or name in databinding.DIR_PROBE_FUNCS:
             out[id(target)] = VIA_PROBE
