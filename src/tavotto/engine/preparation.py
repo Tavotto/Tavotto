@@ -121,9 +121,10 @@ _STALE_MESSAGES = {
 class _StaleBeforeRetry(Exception):
     """`before_retry` 发现计划在两次执行之间过期了（理由是 `STALE_REASONS` 之一）。"""
 
-    def __init__(self, reason: str) -> None:
+    def __init__(self, reason: str, detail: dict | None = None) -> None:
         super().__init__(reason)
         self.reason = reason
+        self.detail = detail or {}
 
 
 #: 作业保留多久（秒）——与导出作业同一口径：界面拿 plan_id 补拉要在窗口内。
@@ -578,10 +579,12 @@ class PreparationService:
         tr.mark("spawn")
 
         def before_retry() -> None:
-            # 缺包后自动接手换了解释器（ADR 0107：用户自己的 Python → 默认在脚本目录跑）：授权此刻已与
-            # 计划记下的不同的话，第二次执行就是在计划没写过的 cwd 里跑、回执却还说没授权——不跑，作废
-            if workdir.grant_for(plan.project_root) != plan.grant:
-                raise _StaleBeforeRetry(STALE_GRANT)
+            # 缺包后自动接手换了解释器（项目 venv / ADR 0107 的系统解释器，后者还把默认工作目录改成脚本
+            # 目录）：计划记下的授权 / 解释器 / 数据绑定与此刻再比一次——与起会话之前同一份判据。第二次执行
+            # 会在计划没写过的解释器或 cwd 里跑、回执却挂在这份不可变计划上——不跑，作废（Codex #713 P1 ×2）
+            stale = self._stale_reason(plan)
+            if stale is not None:
+                raise _StaleBeforeRetry(*stale)
 
         try:
             worker, resp, created = runner(plan, before_retry=before_retry)
@@ -590,14 +593,15 @@ class PreparationService:
             result.error = {
                 "code": ERROR_PLAN_STALE,
                 "reason": exc.reason,
-                # 第一次（按计划的 cwd）已经跑过、报了缺包；换了解释器之后的那一次没跑
+                # 第一次（按计划的解释器与 cwd）已经跑过、报了缺包；换了解释器之后的那一次没跑
                 "executed": True,
                 "message": _STALE_MESSAGES[exc.reason],
+                **exc.detail,
             }
             self._finish(
                 entry,
                 STATUS_ERROR,
-                note="缺包后自动换了解释器，工作目录授权随之变了：计划作废，没有在新目录里重跑；请重新准备",
+                note=f"缺包后自动换了解释器，计划随之过期（{exc.reason}）：没有按新环境重跑；请重新准备",
             )
             return
         except pool.WorkerError as exc:

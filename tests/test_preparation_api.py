@@ -464,6 +464,46 @@ def test_a_retry_that_would_run_under_a_changed_grant_is_stale_and_does_not_run_
     assert result.receipt is None
 
 
+def test_a_retry_under_a_different_interpreter_is_stale_even_when_the_grant_did_not_change(
+    tmp_path, fake_pool, monkeypatch
+):
+    """Codex #713 P1 第二轮：授权没变（用户早就定过工作目录）、但缺包后自动接手换了解释器——第二次执行会在
+    计划没写过的解释器里跑，回执却挂在这份不可变计划上。与起会话之前同一份判据：`environment_changed`。"""
+    svc = preparation.PreparationService()
+    root = _project(tmp_path, "p")
+    plan = preparation.plan_for(
+        project_id="pj",
+        project_root=str(root),
+        asset_id="fig.pdf",
+        stem="fig",
+        script="fig.py",
+        entry="__main__",
+        original_artifact="fig.pdf",
+    )
+    assert plan.interpreter, "前提：计划记下了解释器"
+    svc.register(plan)
+    ran = []
+
+    def runner(pl, before_retry=None):
+        ran.append("first")
+        monkeypatch.setattr(engine_pool, "same_python", lambda a, b: a == b)
+        monkeypatch.setattr(
+            engine_pool, "resolve_worker_python", lambda *a, **k: ("/elsewhere/python3", "system")
+        )
+        before_retry()
+        ran.append("second")
+        raise AssertionError("解释器变了还在重跑")
+
+    svc.start(plan.plan_id, runner=runner)
+    assert svc.wait(plan.plan_id, 30)
+    _, result = svc.get(plan.plan_id, "pj")
+    assert ran == ["first"]
+    assert result.error["code"] == preparation.ERROR_PLAN_STALE
+    assert result.error["reason"] == preparation.STALE_ENVIRONMENT
+    assert result.error["executed"] is True
+    assert result.receipt is None
+
+
 # ---------------------------------------------------------------- 项目绑定（FO-008）
 
 
