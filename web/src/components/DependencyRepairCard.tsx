@@ -55,10 +55,16 @@ export function DependencyRepairCard({
   offer,
   module,
   script,
+  fromScriptRow = false,
 }: {
   offer: DependencyRepairOffer
   module: string
   script: string
+  /**
+   * 挂在素材库脚本行上（#729）：发起时把这份 offer 交给 store 随作业收放——脚本行的 offer 住在切项目会被
+   * 清空的 `scriptRunStore` 里，切回来那一行要靠它重新挂出卡片
+   */
+  fromScriptRow?: boolean
 }) {
   useTranslation('errors')
   const {
@@ -78,6 +84,7 @@ export function DependencyRepairCard({
     reset,
   } = useDepRepairStore()
   const [manual, setManual] = useState('')
+  const origin = fromScriptRow ? { offer, module } : null
   const running = isRepairRunning(progress)
   const pkg = offer.requirement?.distribution || module
 
@@ -208,8 +215,9 @@ export function DependencyRepairCard({
                               target_kind: 'tavotto_managed',
                               private_python: tg.private_python ?? null,
                             },
+                            origin,
                           )
-                        : makePlan({ module, script, target: tg.kind })
+                        : makePlan({ module, script, target: tg.kind }, origin)
                   }
                 >
                   {label(tg, pkg)}
@@ -272,7 +280,7 @@ export function DependencyRepairCard({
                   target:
                     installTarget?.kind === 'project_venv' ? 'project_venv' : 'tavotto_managed',
                   distribution: manual.trim(),
-                })
+                }, origin)
               }
             >
               {en('repairContinue')}

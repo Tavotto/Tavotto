@@ -23,10 +23,12 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   fetchRuntimeAssets: vi.fn().mockResolvedValue({ assets: [] }),
   createDependencyPlan: vi.fn(),
   installDependencyPlan: vi.fn(),
+  cancelDependencyPlan: vi.fn().mockResolvedValue({}),
   fetchEngineEnvironment: vi.fn().mockResolvedValue({}),
 }))
 
 import {
+  cancelDependencyPlan,
   cancelProbe,
   createDependencyPlan,
   fetchRegistry,
@@ -39,6 +41,7 @@ import {
   type ScriptInventoryEntry,
 } from '@/lib/api'
 import { i18n } from '@/i18n'
+import { setCurrentProjectId } from '@/lib/session'
 import { EngineEnvironmentDialog } from '@/components/EngineEnvironmentDialog'
 import { ScriptLibrary } from '@/components/left/ScriptLibrary'
 import { TooltipProvider } from '@/components/ui/Tooltip'
@@ -412,5 +415,153 @@ describe('运行 / 取消 / 结果', () => {
     expect(mockProbe.mock.calls[0][0]).toBe('fig_labels.py')
     expect(host.querySelector('[data-script-dependency-repair]')).toBeNull()
     useDepRepairStore.getState().reset()
+  })
+})
+
+/**
+ * #729：从脚本行发起的修复，A → B → A 之后仍挂在那一行上。
+ *
+ * 脚本行的卡片以前只读 `scriptRunStore` 里那次运行的 `missing_dependency` offer，而换项目时
+ * `resetForNewProject()` 刻意清空 `scriptRunStore`——作业进度与重试上下文由 `depRepairStore.clear()` 放回来了，
+ * 那一行却因为没有 offer 不渲染卡片：进度、取消、重试都够不着。修法是发起时把 offer 随作业一起收放
+ * （`depRepairStore.scriptOffer`）。这里按 `resetForNewProject()` 里的同两步（`scriptRunStore.clear()` →
+ * `depRepairStore.clear()`，此前 `setCurrentProjectId` 已经换成新项目）模拟切项目，三种终局各一条。
+ */
+describe('脚本行发起的修复切项目再切回（#729）', () => {
+  const privatePython = {
+    id: 'pbs', version: '3.13.15', target: 'windows-x86_64', source_host: 'github.com',
+    download_bytes: 47131996, required: true, cached: false, network_required: true,
+  }
+  const offer: DependencyRepairOffer = {
+    import_name: 'adjustText',
+    script: 'fig_labels.py',
+    requirement: {
+      import_name: 'adjustText', distribution: 'adjustText', specifier: '', requirement: 'adjustText',
+      resolution_source: 'curated', confidence: 'high', installable: true,
+    },
+    targets: [{
+      kind: 'tavotto_managed', venv: '', python: '', modifies_user_environment: false,
+      creates_environment: true, available: true, reason: '', private_python: privatePython,
+    }],
+    rounds_remaining: 3,
+    python_supported: { min: '3.10', max: '3.14' },
+  }
+  const card = () => host.querySelector('[data-script-dependency-repair]')
+  const progress = (state: string, over: Record<string, unknown> = {}) =>
+    ({
+      plan_id: 'plan-row', state, log: '', error: null, code: '', target_kind: 'tavotto_managed',
+      script: 'fig_labels.py', distribution: 'adjustText', ...over,
+    }) as never
+  /** 与 `resetForNewProject()` 同样的两步（顺序也相同） */
+  const switchTo = async (id: string) => {
+    await act(async () => {
+      setCurrentProjectId(id)
+      useScriptRunStore.getState().clear()
+      useDepRepairStore.getState().clear()
+    })
+    await flush()
+  }
+
+  beforeEach(() => {
+    setCurrentProjectId('pA')
+    useDepRepairStore.setState({ parked: {} })
+    useDepRepairStore.getState().reset()
+    vi.mocked(createDependencyPlan).mockReset()
+    vi.mocked(installDependencyPlan).mockReset()
+    vi.mocked(cancelDependencyPlan).mockClear()
+    mockRegistry.mockResolvedValue(view([entry({ script: 'fig_labels.py' })]))
+    mockProbe.mockResolvedValue({
+      ...ok([]),
+      script: 'fig_labels.py',
+      registered: false,
+      error: {
+        code: 'missing_dependency',
+        message: '缺少依赖包：adjustText（当前渲染环境里没有它）',
+        params: { module: 'adjustText' },
+        dependency_repair: offer,
+      },
+    })
+    vi.mocked(createDependencyPlan).mockResolvedValue({
+      plan: {
+        plan_id: 'plan-row', target_kind: 'tavotto_managed', python: '', creates_environment: true,
+        modifies_user_environment: false, network_required: true, expires_at: 0,
+        private_python: privatePython, ...offer.requirement!,
+      },
+    })
+    vi.mocked(installDependencyPlan).mockResolvedValue({ started: true } as never)
+  })
+  afterEach(() => {
+    useDepRepairStore.setState({ parked: {} })
+    useDepRepairStore.getState().reset()
+    setCurrentProjectId(null)
+  })
+
+  /** A 上：脚本行跑出缺包 → 在那一行点一次安装 → SSE 推到 installing，然后切到 B */
+  async function installFromRowThenLeave() {
+    await mount()
+    await act(async () => runButton().click())
+    await flush()
+    await act(async () => buttonByText('将 adjustText 安装到').click())
+    await flush()
+    expect(installDependencyPlan).toHaveBeenCalledWith('plan-row')
+    await act(async () => useDepRepairStore.getState().onProgress(progress('installing')))
+    expect(buttonByText('取消'), 'A 上安装中应有「取消」').toBeTruthy()
+    await switchTo('pB')
+    // B 上同名的脚本行不显示 A 的修复（scriptRunStore 已清空，offer 也不属于 B）
+    expect(card(), 'B 上不该显示 A 的修复卡片').toBeNull()
+    expect(host.textContent).not.toContain('正在安装')
+  }
+
+  it('运行中：切回 A，脚本行上仍是进度，「取消」可用', async () => {
+    await installFromRowThenLeave()
+    await switchTo('pA')
+    expect(useScriptRunStore.getState().byScript['fig_labels.py'], '前提：scriptRunStore 确实被清空').toBeUndefined()
+    expect(card(), '切回 A 后脚本行上看不到修复进度').toBeTruthy()
+    expect(card()!.textContent).toContain('正在安装')
+    await act(async () => buttonByText('取消').click())
+    expect(cancelDependencyPlan).toHaveBeenCalledWith('plan-row')
+  })
+
+  it('失败：切走期间失败，切回 A，脚本行上有失败结局与「重试」，重试按原授权再装一次', async () => {
+    await installFromRowThenLeave()
+    await act(async () =>
+      useDepRepairStore.getState().onProgress(
+        progress('failed', { code: 'dependency_network_unavailable', error: '断网' }),
+      ),
+    )
+    expect(card(), '失败的结局不该落到 B 的脚本行上').toBeNull()
+    await switchTo('pA')
+    expect(card(), '切回 A 后脚本行上看不到失败结局').toBeTruthy()
+    expect(card()!.textContent).toContain('安装未完成')
+    const retry = card()!.querySelector<HTMLButtonElement>('[data-dependency-repair-retry]')
+    expect(retry, '失败结局上没有「重试」').toBeTruthy()
+    vi.mocked(createDependencyPlan).mockClear()
+    vi.mocked(installDependencyPlan).mockClear()
+    await act(async () => retry!.click())
+    await flush()
+    expect(createDependencyPlan).toHaveBeenCalledWith({
+      module: 'adjustText', script: 'fig_labels.py', target: 'tavotto_managed',
+    })
+    expect(installDependencyPlan).toHaveBeenCalledWith('plan-row')
+    expect(card(), '重试之后卡片仍在脚本行上').toBeTruthy()
+  })
+
+  it('取消：切走期间取消了，切回 A，脚本行上有取消结局与「重试」', async () => {
+    await installFromRowThenLeave()
+    await act(async () =>
+      useDepRepairStore.getState().onProgress(progress('cancelled', { code: 'dependency_install_cancelled' })),
+    )
+    await switchTo('pA')
+    expect(card(), '切回 A 后脚本行上看不到取消结局').toBeTruthy()
+    expect(card()!.textContent).toContain('安装已取消')
+    const retry = card()!.querySelector<HTMLButtonElement>('[data-dependency-repair-retry]')
+    expect(retry, '取消结局上没有「重试」').toBeTruthy()
+    vi.mocked(createDependencyPlan).mockClear()
+    await act(async () => retry!.click())
+    await flush()
+    expect(createDependencyPlan).toHaveBeenCalledTimes(1)
+    // 「知道了」收起：offer 随之放掉，这一行回到没有卡片（scriptRunStore 里也没有那次运行了）
+    await act(async () => useDepRepairStore.getState().reset())
+    expect(card()).toBeNull()
   })
 })

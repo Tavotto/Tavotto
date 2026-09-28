@@ -11,6 +11,7 @@ import {
   setProjectUserEnvironment,
   skipDependencyPreparation,
   type DependencyProgress,
+  type DependencyRepairOffer,
   type DependencyRepairPlan,
   type InterpreterPin,
   type JointDependencyPlan,
@@ -41,7 +42,10 @@ const startedPlans = new Map<string, string | null>()
  * 放回——不然切回来看到失败 / 取消的结局，卡片却没有「重试」（`onRetry` 要 `request`，Codex #709）。
  * 模块级而不进 store：界面不读它，只有 `clear()` 收放。
  */
-const parkedRetry = new Map<string, { request: RepairRequest | null; authorized: RepairDisclosure | null }>()
+const parkedRetry = new Map<
+  string,
+  { request: RepairRequest | null; authorized: RepairDisclosure | null; scriptOffer: ScriptRepairOffer | null }
+>()
 const projectKey = (project: string | null): string => project ?? ''
 
 /** 单包修复的一次请求（重试时原样再发一次） */
@@ -50,6 +54,18 @@ export interface RepairRequest {
   script: string
   target: 'project_venv' | 'tavotto_managed'
   distribution?: string
+}
+
+/**
+ * 从素材库**脚本行**发起的修复：那一行卡片的前提（`missing_dependency` 的 offer）。脚本行的卡片本来读
+ * `scriptRunStore` 里那次运行的 offer，而换项目时 `resetForNewProject()` 刻意把 `scriptRunStore` 清空——
+ * A → B → A 之后作业与重试上下文放回来了，那一行却因为没有 offer 不渲染卡片，进度 / 取消 / 重试都够不着
+ * （#729）。所以发起时把 offer 与请求一起记下，随作业一起收放（`parkedRetry`）；脚本行在自己的运行里没有
+ * offer 时用它。画布上那张卡发起的不记（它的前提在文档里，不会被清）。
+ */
+export interface ScriptRepairOffer {
+  offer: DependencyRepairOffer
+  module: string
 }
 
 /**
@@ -114,16 +130,19 @@ interface DepRepairState {
   pinned: InterpreterPin | null
   makePlan: (
     args: { module: string; script: string; target: 'project_venv' | 'tavotto_managed'; distribution?: string },
+    scriptOffer?: ScriptRepairOffer | null,
   ) => Promise<void>
   install: () => Promise<void>
   /**
    * 一次授权（受管环境）：形成计划，与用户看到的 `seen` 逐项相符就直接执行；不符停在确认页（`plan`）。
    */
-  installNow: (args: RepairRequest, seen: RepairDisclosure) => Promise<void>
+  installNow: (args: RepairRequest, seen: RepairDisclosure, scriptOffer?: ScriptRepairOffer | null) => Promise<void>
   /** 失败 / 取消之后在同一张卡上再来一次：受管环境按上次授权的要素走一次授权，项目环境回到确认页 */
   retry: () => Promise<void>
   /** 最近一次请求（`retry` 用它；脚本行据 `script` 判断这张卡是不是自己的） */
   request: RepairRequest | null
+  /** 最近一次请求若是从脚本行发起的：那一行卡片的 offer（随作业收放，#729；画布发起的为 null） */
+  scriptOffer: ScriptRepairOffer | null
   /** 最近一次真正执行过的受管环境授权（`retry` 按它判计划有没有超出用户看到的） */
   authorized: RepairDisclosure | null
   /**
@@ -189,6 +208,7 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
   jointBlocked: null,
   request: null,
   authorized: null,
+  scriptOffer: null,
   parked: {},
   rebuilding: {},
   rebuildRunningFor: (project) => !!get().rebuilding[projectKey(project)],
@@ -260,10 +280,10 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
     useRenderStore.getState().retryEnvironmentFailures()
   },
 
-  makePlan: async (args) => {
+  makePlan: async (args, scriptOffer = null) => {
     if (get().busy) return
     const epoch = projectEpoch
-    set({ busy: true, errorCode: '', errorText: '', plan: null, request: args })
+    set({ busy: true, errorCode: '', errorText: '', plan: null, request: args, scriptOffer })
     try {
       const { plan } = await createDependencyPlan(args)
       if (epoch !== projectEpoch) return // A 的计划不落进 B 的确认卡片
@@ -275,10 +295,10 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
     }
   },
 
-  installNow: async (args, seen) => {
+  installNow: async (args, seen, scriptOffer = null) => {
     if (get().busy) return
     const epoch = projectEpoch
-    set({ busy: true, errorCode: '', errorText: '', plan: null, progress: null, request: args })
+    set({ busy: true, errorCode: '', errorText: '', plan: null, progress: null, request: args, scriptOffer })
     let plan: DependencyRepairPlan
     try {
       plan = (await createDependencyPlan(args)).plan
@@ -296,14 +316,14 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
   },
 
   retry: async () => {
-    const { request, authorized } = get()
+    const { request, authorized, scriptOffer } = get()
     if (!request || get().busy) return
     if (authorized && request.target === 'tavotto_managed') {
-      await get().installNow(request, authorized)
+      await get().installNow(request, authorized, scriptOffer)
       return
     }
     set({ progress: null })
-    await get().makePlan(request)
+    await get().makePlan(request, scriptOffer)
   },
 
   install: async () => {
@@ -490,19 +510,20 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
       jointBlocked: null,
       request: null,
       authorized: null,
+      scriptOffer: null,
     }),
 
   clear: () => {
     // 换代**排在清空之前**：清空只处置已经落地的那份，换代处置还在飞的那些
     projectEpoch += 1
-    const { progress, parked, request, authorized } = get()
+    const { progress, parked, request, authorized, scriptOffer } = get()
     const next = { ...parked }
     // 此刻显示的作业收进它**所属**项目那格（`resetForNewProject` 跑的时候 currentProjectId 已经是新项目，
     // 所属项目只能问作业自己）。认不出所属的（不是本标签页起的）不收——本来也不该显示
     if (progress && startedPlans.has(progress.plan_id)) {
       const owner = projectKey(startedPlans.get(progress.plan_id) ?? null)
       next[owner] = progress
-      parkedRetry.set(owner, { request, authorized })
+      parkedRetry.set(owner, { request, authorized, scriptOffer })
     }
     // 新项目上次切走时收着的作业放回来：还在跑就接着显示，切走期间结束了就把结局交出来（不静默丢）
     const here = projectKey(currentProjectId())
@@ -518,6 +539,7 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
       pinned: null,
       request: retryCtx?.request ?? null,
       authorized: retryCtx?.authorized ?? null,
+      scriptOffer: retryCtx?.scriptOffer ?? null,
       busy: false,
       errorCode: ended ? back.code || '' : '',
       errorText: ended ? back.error || '' : '',

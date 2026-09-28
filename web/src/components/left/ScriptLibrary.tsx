@@ -227,14 +227,18 @@ function ScriptRow({ entry, stems }: { entry: ScriptInventoryEntry; stems: strin
  */
 function ScriptDependencyRepair({ script, run }: { script: string; run: ScriptRunState | undefined }) {
   const owner = useDepRepairStore((s) => s.request?.script ?? s.progress?.script ?? '')
-  const offer = run?.phase === 'missing_dependency' ? run.error?.dependency_repair : undefined
-  const module = String(run?.error?.params?.module ?? offer?.import_name ?? '')
+  // 从这一行发起、随作业收放的那份 offer（#729）：A → B → A 之后 `scriptRunStore` 已被清空，这一行自己的
+  // 运行里没有 offer 了，靠它把进度 / 取消 / 重试挂回这一行。属于别的脚本的不认
+  const held = useDepRepairStore((s) => (s.request?.script === script ? s.scriptOffer : null))
+  const fresh = run?.phase === 'missing_dependency' ? run.error?.dependency_repair : undefined
+  const offer = fresh ?? held?.offer
+  const module = fresh ? String(run?.error?.params?.module ?? fresh.import_name ?? '') : (held?.module ?? '')
   if (!offer || !module) return null
   if (owner && owner !== script) return null
   return (
     // 与下面的恢复说明同一列缩进：它是这一行的延续，不是另一块区域
     <div className="mb-1.5 mt-0.5 pl-8 pr-2" data-script-dependency-repair>
-      <DependencyRepairCard offer={offer} module={module} script={offer.script || script} />
+      <DependencyRepairCard offer={offer} module={module} script={offer.script || script} fromScriptRow />
     </div>
   )
 }

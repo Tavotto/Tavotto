@@ -256,6 +256,22 @@ describe('换项目时的依赖修复状态（issue #590）', () => {
     expect(s.request).toMatchObject({ module: 'lmfit', script: 'fig.py', target: 'tavotto_managed' })
   })
 
+  it('脚本行发起的修复：它那份 offer 随作业收放——B 上没有，切回 A 回来（#729）', async () => {
+    // 脚本行卡片的前提住在切项目会被清空的 scriptRunStore 里；不随作业收放，切回来那一行挂不出卡片
+    const rowOffer = { offer: { import_name: 'lmfit', script: 'fig.py' }, module: 'lmfit' } as never
+    await useDepRepairStore
+      .getState()
+      .makePlan({ module: 'lmfit', script: 'fig.py', target: 'tavotto_managed' }, rowOffer)
+    await useDepRepairStore.getState().install()
+    useDepRepairStore.getState().onProgress(progress('installing'))
+    expect(useDepRepairStore.getState().scriptOffer).toBe(rowOffer)
+    await switchTo('p2')
+    expect(useDepRepairStore.getState().scriptOffer).toBeNull()
+    await switchTo('p1')
+    expect(useDepRepairStore.getState().scriptOffer).toBe(rowOffer)
+    expect(useDepRepairStore.getState().progress?.state).toBe('installing')
+  })
+
   it('A 的安装请求在切项目之后才被拒：A 那格记成失败，B 不动', async () => {
     await useDepRepairStore.getState().makePlan({ module: 'lmfit', script: 'fig.py', target: 'tavotto_managed' })
     holding.add('/api/engine/dependency/install')
