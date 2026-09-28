@@ -20,5 +20,11 @@
   起一遍并失败），条目是同一个启动器的 `${CLAUDE_PLUGIN_ROOT}/` 写法、`timeout` 由 `tool_timeout_sec`
   换算成毫秒、不带 Codex 字段；不写 `skills` 键（会替换默认位置）；授权走 `roots/list`。进
   `STAGE_REQUIRED`、不进 `REQUIRED`。安装命令唯一出处 `brand.CLAUDE_*`。看护 `tests/test_claude_plugin.py`。
+- **DSH bundle（ADR 0104）**：同一份目录兼作 npm 包 `tavotto-dsh`（`package.json` + `dsh/`），`dsh plugin add`
+  经 pnpm 的 git 子目录规格从发行分支装。补丁没有包目录变量 → 胶水插件按 `import.meta.url` 提供服务
+  `tavotto`，mcp-client / 技能提供者两行 `inject` 它；**补丁里的 `!!js` 只读 `ctx.tavotto` 与
+  `process.cwd()`**。启动器经 sh / cmd 起（不靠执行位）；serverName 与 `.mcp.json` 同名；超时按毫秒换算；
+  技能提供者 `includeDefaultRoots: false` 且不与 base 的 `filesystem` 同名。`package.json` 的 `files` 覆盖
+  胶水读的全部路径；三份文件进 `STAGE_REQUIRED`。安装规格唯一出处 `brand.DSH_*`。看护 `tests/test_dsh_bundle.py`。
 - 看护：`tests/test_mcp_configure.py`（解包到树外按生成配置真起 server）、`tests/test_mcp_host_profiles.py`
   （八个 profile 的独立期望）、`tests/test_plugin_candidate.py` 末条（真实候选）。

@@ -1,0 +1,34 @@
+# Tavotto 的 DSH bundle 补丁（ADR 0104）。叠在 dsh-base 之上：
+#
+# - `tavotto`：胶水插件，只提供 `ctx.tavotto`（启动参数与技能目录的绝对路径）；
+# - `tavotto-mcp`：官方 MCP 客户端直连 Tavotto 的 stdio server，工具暴露为
+#   `mcp__tavotto__<原名>`；授权目录是 dsh 的启动目录（DSH 不回 MCP roots，
+#   server 退回自己的 cwd，这里显式设成 dsh 的 cwd）；
+# - `tavotto-skills`：再挂一个只看包内 `skills/` 的本地技能提供者，不碰用户的
+#   默认技能根，也不改 base 里那一行 skill-filesystem 的配置。
+#
+# 这里没有任何需要宿主执行的用户代码：`!!js` 只读 `ctx.tavotto` 的字段。
+- insert:
+    - id: tavotto
+      name: tavotto-dsh
+
+    - id: tavotto-mcp
+      name: '@deepseek-ai/dsh-mcp-client'
+      inject: [tavotto]
+      config:
+        transport: stdio
+        serverName: tavotto
+        command: !!js ctx.tavotto.command
+        args: !!js ctx.tavotto.args
+        # 与 DSH 官方 MCP 指南同一写法：server 的 cwd = dsh 的启动目录 = 授权目录
+        cwd: !!js process.cwd()
+        toolCallTimeoutMs: !!js ctx.tavotto.toolCallTimeoutMs
+
+    - id: tavotto-skills
+      name: '@deepseek-ai/dsh-skill-filesystem'
+      inject: [tavotto]
+      config:
+        providerName: tavotto
+        includeDefaultRoots: false
+        customSkillDirs: !!js '[ctx.tavotto.skillsDir]'
+        watch: false
