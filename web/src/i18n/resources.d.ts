@@ -1280,6 +1280,7 @@ export default interface Resources {
         "setDefaultAria": "把 {{name}} 设为默认编码 Agent",
         "source": {
           "chatgpt_bundle": "ChatGPT 应用内置",
+          "codex_desktop_bundled": "Codex 桌面版内置",
           "common_location": "常见安装位置",
           "custom": "自定义路径",
           "homebrew": "Homebrew",

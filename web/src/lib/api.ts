@@ -2100,7 +2100,7 @@ export interface AiAgentCaps {
   executable_path: string | null
   /** 用户设过的自定义可执行文件；null = 自动检测 */
   path_override: string | null
-  /** 从哪儿找到的：path / homebrew / npm_global / chatgpt_bundle … */
+  /** 从哪儿找到的：path / homebrew / npm_global / chatgpt_bundle / codex_desktop_bundled …（闭集是后端 ai_agents.SOURCES） */
   detection_source: string | null
 
   models: string[]

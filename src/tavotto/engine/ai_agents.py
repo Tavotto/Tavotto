@@ -43,6 +43,7 @@ SOURCES: tuple[str, ...] = (
     "common_location",  # 各平台常见安装目录（bun / volta / scoop / winget / choco…）
     "npm_global",  # npm 全局前缀
     "chatgpt_bundle",  # macOS ChatGPT 应用内置的 codex
+    "codex_desktop_bundled",  # Windows Codex 桌面版自带的 codex（%LOCALAPPDATA%\OpenAI\Codex\bin）
     "windows_alias",  # %LOCALAPPDATA%\Microsoft\WindowsApps 执行别名
     "windows_store",  # MSIX 包体内的真身
     "package_binary",  # npm 包内部的平台原生二进制
@@ -177,6 +178,44 @@ def search_locations(name: str) -> list[SearchLocation]:
         ("/opt/homebrew/opt/node/bin", "homebrew"),
     ]
     return [SearchLocation(p, s) for p, s in raw]
+
+
+def _is_windows() -> bool:
+    """单独一个函数：Windows 专属的候选要能在 POSIX 用例里走到（与 codexinstall 同一做法）。"""
+    return os.name == "nt"
+
+
+def desktop_codex_glob(localappdata: str | None) -> str:
+    """Codex 桌面版自带 CLI 的落点模式（也是 `searched` 诊断里写出来的那一行）。"""
+    return os.path.join(
+        localappdata or "%LOCALAPPDATA%", "OpenAI", "Codex", "bin", "*", "codex.exe"
+    )
+
+
+def desktop_codex_candidates(localappdata: str | None) -> list[str]:
+    """Codex 桌面版（Windows）自带的 CLI：`<LOCALAPPDATA>\\OpenAI\\Codex\\bin\\<哈希>\\codex.exe`。
+
+    **唯一实现**：`tavotto codex install` 的 `codexinstall.find_codex()` 与 AI 桥
+    Codex 适配器的 `extra_candidates()` 都从这里取（#722 / #726），两边的发现口径
+    不许各写一份。
+
+    桌面版每次更新换一个哈希目录，旧目录可能还留着——按修改时间**新到旧**排，调用方逐个
+    跑 `--version`，第一个起得来的才用（与「能不能用只看启动验证」同一条判据）。
+    这里只列文件、不判能不能跑；单个条目读不了 mtime 就跳过它，不连累其余的。
+    """
+    if not localappdata:
+        return []
+    import glob as _glob
+
+    hits: list[tuple[float, str]] = []
+    for p in _glob.glob(desktop_codex_glob(localappdata)):
+        try:
+            if os.path.isfile(p):
+                hits.append((os.path.getmtime(p), p))
+        except OSError:
+            continue
+    hits.sort(key=lambda t: t[0], reverse=True)
+    return [p for _m, p in hits]
 
 
 def search_dirs(name: str) -> list[str]:
@@ -329,6 +368,18 @@ class AgentDefinition:
         """该 Agent 独有的落点（排在通用落点之后）。"""
         return []
 
+    def extra_candidates(self) -> list[CliCandidate]:
+        """该 Agent 独有的**具体可执行文件**（落点不是一个固定目录、要按规则挑的那种）。
+
+        排在全部目录落点之后、npm 包内二进制与 MSIX 包体兜底之前；与其它候选一样要过
+        `--version` 启动验证才算数。
+        """
+        return []
+
+    def extra_searched(self) -> list[str]:
+        """`extra_candidates` 找过的位置（写进 `diagnostics.searched`，找不到时告诉用户找过哪儿）。"""
+        return []
+
     # -- 能力 --------------------------------------------------------------
     def model_capabilities(self) -> ModelCapabilities:
         return ModelCapabilities()
@@ -381,6 +432,21 @@ class CodexAgent(AgentDefinition):
             SearchLocation("/Applications/ChatGPT.app/Contents/Resources", "chatgpt_bundle"),
             SearchLocation(home + "/Applications/ChatGPT.app/Contents/Resources", "chatgpt_bundle"),
         ]
+
+    def extra_candidates(self) -> list[CliCandidate]:
+        if not _is_windows():
+            return []
+        # Windows 上只装了 Codex 桌面版的用户，唯一一份 codex 在
+        # %LOCALAPPDATA%\OpenAI\Codex\bin\<哈希>\codex.exe、不在 PATH 上（#726）。
+        # 与 `tavotto codex install` 同一份探测（desktop_codex_candidates），新到旧；
+        # 旧哈希目录里那份起不来时 resolve() 自然落到下一个。
+        local = os.environ.get("LOCALAPPDATA")
+        return [CliCandidate(p, "codex_desktop_bundled") for p in desktop_codex_candidates(local)]
+
+    def extra_searched(self) -> list[str]:
+        if not _is_windows():
+            return []
+        return [desktop_codex_glob(os.environ.get("LOCALAPPDATA"))]
 
     # -- codex 的模型清单来自它自己的 config.toml ---------------------------
     @staticmethod
@@ -690,7 +756,8 @@ def path_override(agent_id: str) -> str | None:
 
 
 def candidates(agent: AgentDefinition, override: str | None = None) -> list[CliCandidate]:
-    """该 Agent 的候选（按优先级、按实际路径去重）：设置 → PATH → 常见位置。
+    """该 Agent 的候选（按优先级、按实际路径去重）：设置 → PATH → 常见位置 →
+    Agent 独有的具体文件（Codex 桌面版自带那份）→ npm 包内二进制 → MSIX 包体。
 
     刻意返回**全部**候选而不是第一个：Windows 上
     `%LOCALAPPDATA%\\Microsoft\\WindowsApps` 里的执行别名可能存在却根本启动不了
@@ -720,6 +787,11 @@ def candidates(agent: AgentDefinition, override: str | None = None) -> list[CliC
     for loc in locs:
         for name in agent.command_names:
             add(shutil.which(name, path=loc.path), loc.source)
+    # Agent 独有的具体文件（Windows Codex 桌面版自带的 CLI，#726）。排在全部目录落点
+    # 之后：用户单独装的 CLI（PATH / npm / 商店别名）是他自己选的那份，通常也更新；
+    # 排在下面两手兜底之前：桌面版那份是完整可用的安装，不是残缺安装的补救。
+    for cand in agent.extra_candidates():
+        add(cand.path, cand.source)
     # npm 包内部的平台原生二进制（外层 .cmd 外壳缺失时的最后一手）
     for loc in locs:
         for name in agent.command_names:
@@ -769,7 +841,7 @@ def resolve(agent: AgentDefinition, probe_readiness: bool = True) -> Resolution:
         if cached is not None:
             return cached
         gen = _RESOLVE_GEN
-    searched = [loc.path for loc in agent_search_locations(agent)]
+    searched = [loc.path for loc in agent_search_locations(agent)] + agent.extra_searched()
     broken: str | None = None
     found: CliCandidate | None = None
     argv: list[str] | None = None
