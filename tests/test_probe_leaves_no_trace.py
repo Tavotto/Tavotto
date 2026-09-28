@@ -311,6 +311,7 @@ _OWNED_SPAWNS = {
     "bootstrap._probe": lambda py: bootstrap._probe(py, "pass"),
     "bootstrap._run (worker-env 的 pip install)": lambda py: bootstrap._run([py, "-m", "pip"]),
     "managedenv._run": lambda py: managedenv._run([py, "-c", "pass"], 5),
+    "depplan.target_facts": lambda py: depplan.target_facts(py, use_cache=False),
 }
 
 
