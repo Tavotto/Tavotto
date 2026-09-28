@@ -140,6 +140,7 @@ export function CanvasTabs() {
       <Tip label={t('tabs.newCanvas')}>
         <Button
           size="icon-sm"
+          data-new-canvas-tab
           aria-label={t('tabs.newCanvas')}
           onClick={() => void createCanvasAndActivate()}
         >
@@ -202,6 +203,7 @@ function TabItem({
         autoFocus
         value={draft}
         aria-label={t('tabs.canvasName')}
+        data-canvas-tab-rename
         onChange={(e) => setDraft(e.target.value)}
         onBlur={() => onRenamed(draft.trim() || null)}
         onKeyDown={(e) => {

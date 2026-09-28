@@ -224,14 +224,16 @@ const styleWith = (id: string, snapshot: Record<string, unknown>, owned: OwnedMa
 /* ------------------------------- 代次 -------------------------------------- */
 
 /**
- * 「此刻是哪一份文档的哪一张画布」：项目 · 文档 · 载入代次 · 画布。`loadSeq` 在每一次整份替换
+ * 「此刻是哪一份文档的哪一张画布」（样式面板按它给行重挂，`StylePanel` 复用这一份，不写第二份）：项目 · 文档 · 载入代次 · 画布。`loadSeq` 在每一次整份替换
  * 文档时都会前进，**即使 id 全都一样**（版面恢复、崩溃恢复重载同一份文档）——只比 id 的话，
  * 旧编辑会写进新载入的那一份（Codex #547 P1）。
  */
-function generation(): string {
-  const s = useDocumentStore.getState()
+export function documentGeneration(
+  s: Pick<ReturnType<typeof useDocumentStore.getState>, 'documentId' | 'loadSeq' | 'activeCanvasId'>,
+): string {
   return JSON.stringify([currentProjectId(), s.documentId, s.loadSeq, s.activeCanvasId])
 }
+const generation = (): string => documentGeneration(useDocumentStore.getState())
 /** 会话记账的键：代次 + 绑的是哪一条（换绑定 = 换一本账） */
 const ledgerKey = (doc: FigureDocument = docNow()) => `${generation()}|${doc.style?.id ?? ''}`
 

@@ -218,7 +218,7 @@ test('页签少但放不下时也给「全部画布」菜单，能切到条外�
 async function fitsWithoutMenu(strip: Locator) {
   return strip.evaluate((el) => {
     const row = el.parentElement!
-    const plus = el.nextElementSibling as HTMLElement
+    const plus = row.querySelector('[data-new-canvas-tab]') as HTMLElement
     const pad = parseFloat(getComputedStyle(row).paddingRight)
     const plusRight = plus.getBoundingClientRect().right - el.clientWidth + el.scrollWidth
     const rowRight = row.getBoundingClientRect().right - pad
@@ -234,17 +234,20 @@ test('「条放不下」出现的菜单：窗口拉宽到不带菜单放得下�
 
   const strip = page.locator('[data-canvas-tabs]')
   const menu = page.locator('[data-all-canvases]')
-  const newCanvas = page.getByRole('button', { name: '新建画布', exact: true }).first()
+  await expect(strip).toHaveCount(1)
+  // 定位全认稳定 data-*（web/AGENTS.md）：「+」与改名框各是单例，locator 的严格模式在多于一个时直接报错
+  const newCanvas = page.locator('[data-new-canvas-tab]')
+  await expect(newCanvas).toHaveCount(1)
   for (let i = 0; i < 3; i++) await newCanvas.click()
-  const tabs = strip.getByRole('tab')
+  const tabs = strip.locator('[data-canvas-tab]')
   await expect(tabs).toHaveCount(4)
   for (let i = 0; i < 4; i++) {
     await tabs.nth(i).dblclick()
-    const input = strip.getByRole('textbox')
+    const input = strip.locator('[data-canvas-tab-rename]')
     await expect(input).toBeVisible()
     await input.fill(`很长很长的画布名字第${i + 1}个`)
     await input.press('Enter')
-    await expect(strip.getByRole('textbox')).toHaveCount(0)
+    await expect(strip.locator('[data-canvas-tab-rename]')).toHaveCount(0)
   }
   await expect(menu, '放不下：菜单出现').toHaveCount(1)
 
@@ -254,9 +257,9 @@ test('「条放不下」出现的菜单：窗口拉宽到不带菜单放得下�
   expect(start.fits, JSON.stringify(start)).toBe(false)
   const exact = 600 - start.slack
   // 那一段的宽 = 菜单 + 它前面那道 gap（按量到的算，不抄 Tailwind 的数）
-  const band = await menu.evaluate(
-    (m) => m.getBoundingClientRect().width + parseFloat(getComputedStyle(document.querySelector('[data-canvas-tabs]')!.parentElement!).columnGap),
-  )
+  const band =
+    (await menu.evaluate((m) => m.getBoundingClientRect().width)) +
+    (await strip.evaluate((el) => parseFloat(getComputedStyle(el.parentElement!).columnGap)))
   const seen: string[] = []
   let inBand = 0
   const up = Array.from({ length: 15 }, (_, i) => Math.round(exact - 8 + 4 * i))

@@ -671,6 +671,32 @@ describe('Codex #662 P2：绑定样式时连点，按最后一次排进去的值
     expect(w).toBe('bold')
   })
 
+  it('#688 挂着一笔没落定时整份重载同一份文档（文档 / 画布 / 图的 id 全同、载入代次前进）：重载后的图从真实读数起算', async () => {
+    await seed(panel, faceManifest())
+    const saves = slowLibrary()
+    bindCanvasStyle('s1')
+    await new Promise((r) => setTimeout(r, 50))
+    seedExactRender(current(), faceManifest() as never)
+    await mount()
+    await click(button('标题加粗'))
+    expect(button('标题加粗').getAttribute('aria-pressed')).toBe('true')
+    const ids = [s().documentId, s().activeCanvasId]
+    const seqBefore = s().loadSeq
+    await act(async () => {
+      await s().switchDocument(s().buildProject(), s().documentId)
+      seedExactRender(current(), faceManifest() as never)
+      useSelectionStore.getState().set(['p1'])
+    })
+    expect([s().documentId, s().activeCanvasId], '夹具要的就是 id 全同的重载').toEqual(ids)
+    expect(s().loadSeq).toBeGreaterThan(seqBefore)
+    const afterReload = button('标题加粗')?.getAttribute('aria-pressed')
+    // 先放行再断言：断言先红的话那一笔卡在队列里，会把后面的用例一起堵住
+    await drain()
+    saves[0].release()
+    await drain()
+    expect(afterReload, '重载前那一笔的挂起值盖到了新载入的内容上').toBe('false')
+  })
+
   it('那一笔存失败（库写不进去）：放掉挂着的值，按钮回到真实读数', async () => {
     await seed(panel, faceManifest())
     bindCanvasStyle('s1')
