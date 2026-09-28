@@ -94,6 +94,19 @@ names = {str(e.name) for e in fm.fontManager.ttflist if e.fname == only_zh}
 # 同一个文件只多出一个名字，就是真名
 assert {n for n in names if "?" not in n} == {ONLY_ZH}, names
 
+# 1b) 本机实例（【肆柒】忍冬藤）：typographic family（nameID 16）与 family（nameID 1）是
+#     两个中文名，FreeType 读的是 16、读坏了；matplotlib 3.11 自己按英文语言 ID 的
+#     nameID 1 记录补登记了一个正确的 Unicode 名。这张脸已经有真名，不再补第二个
+#     （3.10 没有那条补登记，这里补的就是唯一的那个）
+two = make_font(os.path.join(tmp, "two-names.ttf"), [
+    (16, 3, 1, 0x0404, "中药合集乙"), (1, 3, 1, 0x0409, "忍冬藤乙"),
+    (2, 3, 1, 0x0409, "Regular"), (6, 3, 1, 0x0409, "TavottoTwoNames"),
+])
+fm.fontManager.addfont(two)
+overrides.register_font_name_aliases()
+two_names = {str(e.name) for e in fm.fontManager.ttflist if e.fname == two}
+assert len({n for n in two_names if "?" not in n}) == 1, two_names
+
 # 2) 增量：之后才 addfont 的字体照样补上
 late = make_font(os.path.join(tmp, "late.ttf"), [
     (1, 3, 1, 0x0804, "后加测试体"), (2, 3, 1, 0x0804, "Regular"),
