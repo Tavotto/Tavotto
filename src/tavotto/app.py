@@ -2915,14 +2915,25 @@ def _drive_roots() -> list[dict]:
     return roots
 
 
+#: 常用起点：(稳定 id, 老前端回退用的显示名, 主目录下的文件夹名)。界面按 `id` 翻译
+#: （`web/src/components/ProjectPicker.tsx` 的 `shortcutLabel`，闭集 `ShortcutId` 严格同源，
+#: `tests/test_ui_terminology.py` 对拍）；`name` 只给还不认识 `id` 的老前端。
+#: 「文稿」是 macOS 访达里 Documents 的中文名——界面名词里没有「文档」（ADR 0001 2026-09-26 修订）。
+BROWSE_SHORTCUTS = (
+    ("desktop", "桌面", "Desktop"),
+    ("documents", "文稿", "Documents"),
+    ("downloads", "下载", "Downloads"),
+)
+
+
 def _browse_shortcuts() -> list[dict]:
-    """常用起点。桌面/文档只在真实存在时给出（非英文系统上未必叫这个名字）。"""
+    """常用起点。桌面/文稿/下载只在真实存在时给出（非英文系统上未必叫这个名字）。"""
     home = Path.home()
-    out = [{"name": "主目录", "path": str(home)}]
-    for label, name in (("桌面", "Desktop"), ("文档", "Documents"), ("下载", "Downloads")):
-        p = home / name
+    out = [{"id": "home", "name": "主目录", "path": str(home)}]
+    for sid, label, folder in BROWSE_SHORTCUTS:
+        p = home / folder
         if p.is_dir():
-            out.append({"name": label, "path": str(p)})
+            out.append({"id": sid, "name": label, "path": str(p)})
     return out
 
 

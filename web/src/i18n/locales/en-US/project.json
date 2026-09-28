@@ -19,6 +19,12 @@
     "pathLabel": "Current path",
     "pathPlaceholder": "Type or paste a path, then press Enter",
     "projectName": "Project name",
+    "shortcut": {
+      "desktop": "Desktop",
+      "documents": "Documents",
+      "downloads": "Downloads",
+      "home": "Home"
+    },
     "subdirsLabel": "Subfolders",
     "titleCreate": "New project",
     "titleOpen": "Open project folder"

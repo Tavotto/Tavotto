@@ -3560,6 +3560,12 @@ export default interface Resources {
       "pathLabel": "当前路径",
       "pathPlaceholder": "输入或粘贴路径后回车",
       "projectName": "项目名",
+      "shortcut": {
+        "desktop": "桌面",
+        "documents": "文稿",
+        "downloads": "下载",
+        "home": "主目录"
+      },
       "subdirsLabel": "子目录",
       "titleCreate": "新建项目",
       "titleOpen": "打开项目目录"
