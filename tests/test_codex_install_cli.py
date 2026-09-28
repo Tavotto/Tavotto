@@ -1265,3 +1265,45 @@ def test_plugin_relative_command_resolves_like_codex_on_each_platform(tmp_path):
     assert Path(
         plugin_relative_command(tmp_path, "./mcp/launch", windows=True, pathext=".CMD")
     ) == (tmp_path / "mcp" / "launch")
+
+
+def _old_launcher_shape(plugin: Path) -> str:
+    """把一份合成发行件改成 0.17.0 的形态（command 是 `./mcp/launch.cmd`），清单照改后的字节
+    重写——发布器当年就是这么写的；本分支的 `describe()` 会拒绝这种形态，所以这里手工重算。
+    回新的 content_digest。"""
+    from tavotto.engine import pluginmanifest
+
+    manifest = json.loads((plugin / pluginmanifest.BUILD_MANIFEST).read_text(encoding="utf-8"))
+    for rel in (".mcp.json", "skills/tavotto-figure/agents/openai.yaml"):
+        f = plugin / rel
+        f.write_text(
+            f.read_text(encoding="utf-8").replace("./mcp/launch", "./mcp/launch.cmd"), "utf-8"
+        )
+        entry = next(e for e in manifest["files"] if e["path"] == rel)
+        entry["sha256"] = pluginmanifest.sha256_file(f)
+        entry["size"] = f.stat().st_size
+    manifest["content_digest"] = pluginmanifest.content_digest(
+        [(e["path"], e["mode"], e["sha256"]) for e in manifest["files"]]
+    )
+    (plugin / pluginmanifest.BUILD_MANIFEST).write_text(json.dumps(manifest), encoding="utf-8")
+    return manifest["content_digest"]
+
+
+def test_an_installed_relative_launcher_resolves_against_the_plugin_root(tmp_path, monkeypatch):
+    """已装副本体检（`installed=True`）里 `./` 开头的 command 按插件根解析，不按本进程 cwd。
+    真 codex 0.157 + 已发行的 0.17.0（command `./mcp/launch.cmd`）：新引擎的 doctor 画布步以前报
+    「指向不存在的解释器」——文件明明就在插件里（挪自 #725，#722 真机撞到）。"""
+    sys.path.insert(0, str(SRC))
+    from tavotto.engine import pluginmanifest
+    from tests.support import pluginkit
+
+    plugin = tmp_path / "p"
+    pluginkit.synthetic_staging(plugin, version="0.17.0")
+    _old_launcher_shape(plugin)
+    elsewhere = tmp_path / "cwd"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)  # 本进程 cwd 里当然没有 mcp/launch.cmd
+    assert pluginmanifest.verify_dir(plugin, installed=True) == []
+    (plugin / "mcp" / "launch.cmd").unlink()
+    problems = pluginmanifest.verify_dir(plugin, installed=True)
+    assert any("./mcp/launch.cmd" in p and "不存在" in p for p in problems), problems
