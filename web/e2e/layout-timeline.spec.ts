@@ -223,5 +223,7 @@ test('排版时间线：自动节点 → 命名 → 预览不改排版 → 恢�
   await expect(canvasText(page, '甲版标注')).toBeVisible({ timeout: 30_000 })
   await page.keyboard.press('ControlOrMeta+Shift+H')
   await expect(drawer).toBeVisible()
-  await expect(drawer.locator('[data-timeline-moment="open"]')).toHaveCount(1, { timeout: 15_000 })
+  // 两个「打开」：第一次启动那一次（那时画布还是空的——关键时刻空画布也打，Codex #679）
+  // 与这次重开
+  await expect(drawer.locator('[data-timeline-moment="open"]')).toHaveCount(2, { timeout: 15_000 })
 })
