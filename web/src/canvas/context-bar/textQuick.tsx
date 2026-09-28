@@ -3,7 +3,7 @@ import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import { fontStackOf } from '@/components/inspector/controls/fontStack'
 import { StyleToggle } from '@/components/inspector/controls/textRows'
-import { optionLabel } from '@/components/inspector/roles/registry'
+import { fontFamilyOptionLabel } from '@/components/inspector/roles/registry'
 import type { TypographyAdapter } from '@/components/inspector/typographyAdapter'
 import { ColorField, NumberField } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
@@ -46,7 +46,11 @@ export function TextQuickControls({
           onChange={(v) => a.writeOnce('fontFamily', v)}
           options={(family.options ?? []).map((o) => ({
             value: o,
-            label: <span style={{ fontFamily: fontStackOf(o) }}>{optionLabel('fontfamily', o)}</span>,
+            label: (
+              <span style={{ fontFamily: fontStackOf(o) }}>
+                {fontFamilyOptionLabel(o, family.option_labels)}
+              </span>
+            ),
           }))}
         />
       )}

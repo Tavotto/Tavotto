@@ -36,7 +36,7 @@ import {
 import { useUiStore } from '@/store/uiStore'
 import type { PanelObject, TextObject } from '@/types/document'
 import { useCanvasTypography } from '../inspector/typographyAdapter'
-import { optionLabel } from '../inspector/roles/registry'
+import { fontFamilyOptionLabel, optionLabel } from '../inspector/roles/registry'
 import { useTextStyleAdapter } from '../inspector/textStyleAdapter'
 import type { ControlValue } from '../inspector/textStyleModel'
 import { StyleToggle } from '../inspector/controls/textRows'
@@ -262,12 +262,15 @@ function FamilySelect({
   label,
   value,
   options,
+  labels,
   onChange,
   locked,
 }: {
   label: string
   value: CellValue
   options: readonly string[]
+  /** 字体的中文显示名（manifest 顶层 `font_family_names`），只影响显示 */
+  labels?: Readonly<Record<string, string>>
   onChange: (v: string) => void
   /** 此刻不许写（见 `FigureRowProps.locked`）：置灰并说原因 */
   locked?: boolean
@@ -286,7 +289,7 @@ function FamilySelect({
       onChange={onChange}
       disabled={locked}
       title={locked ? sp('waitingRender') : undefined}
-      options={opts.map((o) => ({ value: o, label: optionLabel('fontfamily', o) }))}
+      options={opts.map((o) => ({ value: o, label: fontFamilyOptionLabel(o, labels) }))}
     />
   )
 }
@@ -505,6 +508,7 @@ const FigureTextRow = memo(function FigureTextRow({
               label={sp('familyOf', { row: label })}
               value={pw.shown('fontfamily', family.valueOf('fontfamily'))}
               options={familyField.options ?? []}
+              labels={manifest.font_family_names}
               locked={locked}
               onChange={(v) =>
                 pw.write('fontfamily', v, () =>

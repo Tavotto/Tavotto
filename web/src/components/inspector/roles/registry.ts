@@ -1,6 +1,6 @@
 import { optionLabel as baseOptionLabel, propLabel as basePropLabel } from '@/store/actions'
 import { displayLabel } from './mathtext'
-import { t } from '@/i18n'
+import { currentLocale, t } from '@/i18n'
 
 /**
  * 图内元素属性的显示注册表。
@@ -73,6 +73,21 @@ export const roleName = (role: string): string =>
  * （`propLabel`）不一样，它**真有**角色专属的第一跳，所以留着。
  */
 export const optionLabel = (prop: string, value: string): string => baseOptionLabel(prop, value)
+
+/**
+ * 字体下拉一项的显示名。中文界面下有中文名的字体显示「宋体-简（Songti SC）」：
+ * 认得出是哪个字体，也看得到写进去的是哪个名字；其余（英文界面、没有中文名的、
+ * 通用族 serif 等）照旧走 `optionLabel`。`labels` 是字段上的 `option_labels`
+ * （`withMachineFamilies` 从 manifest 挂上来的）。只管显示，写入值永远是 `value`。
+ */
+export function fontFamilyOptionLabel(
+  value: string,
+  labels?: Readonly<Record<string, string>>,
+): string {
+  const zh = labels?.[value]
+  if (zh && zh !== value && currentLocale().startsWith('zh')) return `${zh}（${value}）`
+  return optionLabel('fontfamily', value)
+}
 
 /* ---------------------- 引擎发过来的分组名 → 显示名 ------------------------ */
 
