@@ -284,7 +284,10 @@ function CurrentProject({ project, pinned }: { project: ProjectStatus; pinned: b
           </span>
         </MenuItem>
       )}
-      {project.figures_dir && canRevealInFileManager() && <RevealItem path={project.figures_dir} />}
+      {/* 目录被删 / 卷被卸下时当前项目仍是 open，只是 exists 为 false：与行同一个判据，不给这一项 */}
+      {project.figures_dir && project.exists !== false && canRevealInFileManager() && (
+        <RevealItem path={project.figures_dir} />
+      )}
       <MenuSeparator />
       <MenuItem onSelect={() => useUiStore.getState().setRegistryOpen(true)}>
         {ws('registry')}

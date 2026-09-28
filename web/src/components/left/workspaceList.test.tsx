@@ -359,6 +359,15 @@ describe('右键「在 Finder 中打开」', () => {
     expect(reveal()).toBeNull()
   })
 
+  it('当前项目的目录已不在（exists: false）时卡片也不给这一项', async () => {
+    desktop.can = true
+    useProjectStore.setState({ project: { ...current, exists: false } })
+    await mount()
+    rightClick(host.querySelector('[data-workspace-current]')!)
+    expect(menu()).not.toBeNull()
+    expect(reveal()).toBeNull()
+  })
+
   it('浏览器模式不摆这一项（服务器可能不在这台机器上）', async () => {
     await mount()
     rightClick(row('/work/p-3'))
