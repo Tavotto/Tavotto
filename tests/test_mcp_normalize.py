@@ -678,6 +678,7 @@ def test_original_artifact_mismatch_is_reported_not_replaced(tmp_path):
         cwd=project,
         capture_output=True,
         text=True,
+        encoding="utf-8",
     )
     assert stale.returncode == 0, stale.stderr
     orig_sha = _sha(project / "Cropped.pdf")

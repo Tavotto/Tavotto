@@ -127,7 +127,12 @@ def _project(tmp_path: Path, name: str, body: str) -> Path:
     figs.mkdir(exist_ok=True)
     (figs / f"{name}.py").write_text(HEAD + body, encoding="utf-8")
     proc = subprocess.run(
-        [WORKER_PY, f"{name}.py"], cwd=figs, capture_output=True, text=True, timeout=300
+        [WORKER_PY, f"{name}.py"],
+        cwd=figs,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=300,
     )
     assert proc.returncode == 0, proc.stderr[-2000:]
     return figs
