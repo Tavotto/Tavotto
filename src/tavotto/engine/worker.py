@@ -762,7 +762,8 @@ class Worker(wireproto.V1Handler):
                 # 用户的下一步是指认数据在哪，不是去读 traceback
                 raise ProtocolError(
                     MISSING_INPUT,
-                    f"脚本要读取的文件不存在: {missing['requested']}",
+                    # 原始异常原样接在后面：只拿到 message 的入口（准备接口）也看得到真正的报错
+                    f"脚本要读取的文件不存在: {missing['requested']}（{type(exc).__name__}: {exc}）",
                     retryable=False,
                     traceback_text=traceback.format_exc(),
                     extra={"missing_input": missing},

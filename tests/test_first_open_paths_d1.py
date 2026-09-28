@@ -722,7 +722,9 @@ def test_path07_symlinks_inside_are_read_and_escaping_ones_are_not_followed_by_t
         assert evidence["verdict"] == "unknown"
         result = state["result"]
         assert result["status"] == "error", result
-        assert result["error"]["code"] == "script_error", result["error"]
+        # 数据找不到（ADR 0106）：明确失败、说得出缺的是哪个，请用户指认——仍不跟出项目去读
+        assert result["error"]["code"] == "missing_input", result["error"]
+        assert "link_out.csv" in result["error"]["message"]
         assert result["receipt"] is None
         with pytest.raises(fa.HttpError):
             app.render(panel["id"])
@@ -771,7 +773,8 @@ def test_path08_deleted_or_unreadable_data_fails_explicitly_and_never_falls_back
         result = state["result"]
         assert result["status"] == "error", result
         assert result["receipt"] is None
-        assert result["error"]["code"] == "script_error", result["error"]
+        # 数据找不到（ADR 0106）：明确失败并说出缺的是哪个（界面据此请用户指认），不读诱饵
+        assert result["error"]["code"] == "missing_input", result["error"]
         assert "data/points.csv" in result["error"]["message"]
         with pytest.raises(fa.HttpError):
             app.render(panel["id"])
