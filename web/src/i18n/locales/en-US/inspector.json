@@ -693,7 +693,8 @@
     "fitRow": "Fit",
     "frameLegacyTitle": "Differs from the figure the script saved",
     "frameLegacyBody": "On this layout the figure is still shown at its figsize; the script saved it cropped to {{w}} × {{h}} mm, which keeps the edge labels whole. Switching keeps the figure where it is on the layout; only its outer box changes.",
-    "frameLegacyAdopt": "Use the saved figure size"
+    "frameLegacyAdopt": "Use the saved figure size",
+    "frameLegacyAdoptBlocked": "The cropped part of this figure lies entirely outside the saved figure size, so nothing would be left after switching. Adjust or reset the crop first."
   },
   "panelLabel": "Right panel",
   "pinnedAria": "Right panel is pinned; click to auto-hide it",

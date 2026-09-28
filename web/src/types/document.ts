@@ -75,6 +75,17 @@ export interface CropRect {
   h: number
 }
 
+/**
+ * 引擎收得下的裁剪框：四个数有限、宽高为正、落在 [0,1]² 里（右 / 下边容 1e-9 的浮点误差）。
+ * 与 `rendercore/ir._crop` 是同一条判据（同源对，两侧各读 `tests/golden/crop_bounds_vectors.json`）；
+ * 不合的 crop 会让 RenderCore 拒掉整份排版，写进文档之前拿它把关。
+ */
+export function cropInBounds(c: CropRect): boolean {
+  const { x, y, w, h } = c
+  if (![x, y, w, h].every(Number.isFinite)) return false
+  return w > 0 && h > 0 && x >= 0 && y >= 0 && x + w <= 1 + 1e-9 && y + h <= 1 + 1e-9
+}
+
 /** 面板旋转只做 90° 步进：合成时非 90 倍数不填满目标矩形，语义对不上（`rendercore/placement.py` 同一合同）。 */
 export type PanelRotation = 0 | 90 | 180 | 270
 

@@ -2166,7 +2166,9 @@ export function adoptScriptFrame(panelId: string): boolean {
   if (panel?.type !== 'panel') return false
   const frame = frameSwitchAvailable(panel, exactPanelManifest(useRenderStore.getState(), panel))
   if (!frame) return false
+  // 旧裁剪与新图幅不相交：不采用（界面上按钮已禁用并说明原因）
   const patch = frameSwitchPatch(panel, frame)
+  if (!patch) return false
   commit(hist('adoptScriptFrame'), (d) => {
     const o = d.objects.find((x) => x.id === panelId)
     if (o?.type !== 'panel') return

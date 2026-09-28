@@ -41,7 +41,7 @@ import {
   usePanelRender,
   useRenderStore,
 } from '@/store/renderStore'
-import { frameSwitchAvailable } from '@/lib/figureFrame'
+import { frameSwitchAvailable, frameSwitchPatch } from '@/lib/figureFrame'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useDisplayedExactManifest, useMountedSvgStore } from '@/store/mountedSvgStore'
 import { reattachPreview, settleFailedAuthority, settleUnbackedCommit } from '@/store/svgPreviewStore'
@@ -1032,7 +1032,10 @@ function RenderStatusBadge({ obj, approx = false }: { obj: PanelObject; approx?:
   const nativeState = useNativePanelState(obj)
   const zoom = useViewportStore((s) => s.zoom)
   // 升级前按 figsize 放上排版的 tight 图（ADR 0098 §三）：信息级，一句话 + 提示去属性里切换
-  const frameLegacy = !!frameSwitchAvailable(obj, useExactPanelManifest(obj))
+  const legacyFrame = frameSwitchAvailable(obj, useExactPanelManifest(obj))
+  const frameLegacy = !!legacyFrame
+  // 旧裁剪与脚本图幅不相交时属性里切不过去：提示改说要先调裁剪
+  const frameBlocked = !!legacyFrame && !frameSwitchPatch(obj, legacyFrame)
 
   // 角标画在世界层里，反向缩放保持屏幕上恒定大小
   const scale = 1 / zoom
@@ -1123,10 +1126,15 @@ function RenderStatusBadge({ obj, approx = false }: { obj: PanelObject; approx?:
       return { tone: runtimeBadge.tone, cold: false, text: badge(runtimeBadge.key) }
     }
     if (frameLegacy) {
-      return { tone: 'info', cold: false, text: badge('frameLegacy'), hint: badge('frameLegacyHint') }
+      return {
+        tone: 'info',
+        cold: false,
+        text: badge('frameLegacy'),
+        hint: badge(frameBlocked ? 'frameLegacyBlockedHint' : 'frameLegacyHint'),
+      }
     }
     return null
-  }, [render, relevant, building, runtimeBadge, nativeState, rasterEditing, approx, quietBusy, slowBusy, frameLegacy])
+  }, [render, relevant, building, runtimeBadge, nativeState, rasterEditing, approx, quietBusy, slowBusy, frameLegacy, frameBlocked])
 
   // 退场那 90ms 里 info 已经是 null 了，留住最后一版才播得完
   const last = useRef(info)

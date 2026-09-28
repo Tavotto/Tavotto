@@ -15,7 +15,7 @@
  */
 import type { Manifest } from '@/lib/api'
 import type { CropRect, PanelObject, PanelOverride } from '@/types/document'
-import { panelFullSize, panelRotation, rotateVec, rotationSwaps } from '@/types/document'
+import { cropInBounds, panelFullSize, panelRotation, rotateVec, rotationSwaps } from '@/types/document'
 import { hasLegacyFrame, isLegacyFrameOverride } from '@/lib/figureFrameMigration'
 
 export {
@@ -93,8 +93,12 @@ export interface FrameSwitchPatch {
 /**
  * 「改用脚本保存时的图幅」：内容在页面上不动、外框变成新图幅（裁过的面板只在原来的可见范围与
  * 新图幅的交集里）。`frame` 取自这张面板**精确**的 manifest（ADR 0017：几何写操作只认权威）。
+ *
+ * 裁过的面板若原来的可见范围与新图幅不相交（或只剩一条边、零面积），换过去什么都不剩：
+ * 返回 null，不采用——算出来的裁剪框会落在 [0,1]² 之外，RenderCore 拒掉整份排版、之后导出全坏。
+ * 判据就是引擎收不收这个裁剪框（`cropInBounds`，与 `rendercore/ir._crop` 同源）。
  */
-export function frameSwitchPatch(panel: PanelObject, frame: ManifestFrame): FrameSwitchPatch {
+export function frameSwitchPatch(panel: PanelObject, frame: ManifestFrame): FrameSwitchPatch | null {
   const [gw, gh] = frame.figsize_mm
   const [sx, sy, fw, fh] = frame.savefig_mm
   // 新图幅在 figsize 里的分数（top-origin）
@@ -106,8 +110,13 @@ export function frameSwitchPatch(panel: PanelObject, frame: ManifestFrame): Fram
     const y0 = Math.max(oldVis.y, f.y)
     const x1 = Math.min(oldVis.x + oldVis.w, f.x + f.w)
     const y1 = Math.min(oldVis.y + oldVis.h, f.y + f.h)
-    vis = x1 > x0 && y1 > y0 ? { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } : oldVis
+    // 不相交时宽或高 ≤ 0，下面的裁剪框过不了 `cropInBounds`
+    vis = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }
   }
+  const crop = panel.crop
+    ? { x: (vis.x - f.x) / f.w, y: (vis.y - f.y) / f.h, w: vis.w / f.w, h: vis.h / f.h }
+    : undefined
+  if (crop && !cropInBounds(crop)) return null
   // 内容空间（未旋转、未翻转）里，整张 figsize 在页面上多大
   const full = panelFullSize(panel)
   let dx = (vis.x + vis.w / 2 - (oldVis.x + oldVis.w / 2)) * full.w
@@ -121,9 +130,6 @@ export function frameSwitchPatch(panel: PanelObject, frame: ManifestFrame): Fram
   const [w, h] = rotationSwaps(r) ? [ch, cw] : [cw, ch]
   const cx = panel.x + panel.w / 2 + px
   const cy = panel.y + panel.h / 2 + py
-  const crop = panel.crop
-    ? { x: (vis.x - f.x) / f.w, y: (vis.y - f.y) / f.h, w: vis.w / f.w, h: vis.h / f.h }
-    : undefined
   return {
     overrides: panel.overrides.filter((o) => !isLegacyFrameOverride(o)).map((o) => rebaseOverride(o, f, frame)),
     x: cx - w / 2,

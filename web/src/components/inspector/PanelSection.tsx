@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useId, useMemo, useState } from 'react'
 import { useInspectorPrefs } from '@/store/inspectorPrefs'
 import { useTranslation } from 'react-i18next'
 import {
@@ -17,7 +17,7 @@ import {
 } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { useExactPanelManifest, usePanelRender, useRenderStore } from '@/store/renderStore'
-import { frameSwitchAvailable } from '@/lib/figureFrame'
+import { frameSwitchAvailable, frameSwitchPatch } from '@/lib/figureFrame'
 import { msg, t as translate, type UiMessage } from '@/i18n'
 import { formatQuantity } from '@/i18n/format'
 import { BASE_FONT_PT, effectiveDpi, effectivePt, formatCm, formatMm, round1 } from '@/lib/units'
@@ -136,9 +136,12 @@ export function PanelCapabilityNote({ panel }: { panel: PanelObject }) {
  */
 export function PanelFrameNote({ panel }: { panel: PanelObject }) {
   useTranslation('inspector')
+  const blockedId = useId()
   const manifest = useExactPanelManifest(panel)
   const frame = frameSwitchAvailable(panel, manifest)
   if (!frame) return null
+  // 旧裁剪与新图幅不相交：换过去什么都不剩，不给切换，说清为什么（判据只在 `frameSwitchPatch`）
+  const blocked = !frameSwitchPatch(panel, frame)
   return (
     <div data-frame-note className="mx-3 mb-1.5 rounded-md bg-surface-2 px-2 py-1.5">
       <p className="text-xs font-medium text-ink">{pn('frameLegacyTitle')}</p>
@@ -153,12 +156,19 @@ export function PanelFrameNote({ panel }: { panel: PanelObject }) {
         size="sm"
         className="-ml-2 mt-0.5"
         data-frame-adopt
+        disabled={blocked}
+        aria-describedby={blocked ? blockedId : undefined}
         onClick={() => {
           adoptScriptFrame(panel.id)
         }}
       >
         {pn('frameLegacyAdopt')}
       </Button>
+      {blocked && (
+        <p id={blockedId} data-frame-adopt-blocked className="text-xs leading-relaxed text-ink-2">
+          {pn('frameLegacyAdoptBlocked')}
+        </p>
+      )}
     </div>
   )
 }

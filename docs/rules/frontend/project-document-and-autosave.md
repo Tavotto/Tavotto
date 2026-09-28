@@ -19,7 +19,10 @@
   `lib/figureFrameMigration.migrateFigureFrames` 迁移：此刻样子来自引擎的（runtime、带图内修改的
   PDF）补一条 `figure.frame = "figsize"`、其余只打记号；新建面板的入口生来带记号。标记放在
   面板上不放在项目上：面板会经检查点、粘贴、项目包在项目之间流动。切换到脚本的图幅只经
-  `adoptScriptFrame`（内容在页面上不动的换算在 `lib/figureFrame.frameSwitchPatch`）。
+  `adoptScriptFrame`（内容在页面上不动的换算在 `lib/figureFrame.frameSwitchPatch`）。裁过的面板
+  旧可见范围与脚本图幅不相交（含只剩一条边）时 `frameSwitchPatch` 返回 null、不采用，属性里的
+  按钮禁用并说明原因——判据是换算出的 crop 过不过 `cropInBounds`（与 `rendercore/ir._crop` 同源对），
+  越界的 crop 会让 RenderCore 拒掉整份排版（#688）。
 - 文档模型可选字段（schema 仍为 2，旧文档兼容）：
   `PanelObject.lockedGids / flipH / flipV`、`ObjectBase.layoutPinned`、
   `FigureDocument.layoutGroups`（行/列/网格约束，id 即 groupId，
