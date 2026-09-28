@@ -645,3 +645,74 @@ def test_an_aliased_glob_decides_the_first_open_like_the_plain_one(tmp_path):
     assert (
         db.evidence(root / "长时间 数据/analysis.py", root)["verdict"] == db.VERDICT_SCRIPT_PARENT
     )
+
+
+# ---------------------------------------------------------------- Codex 评 #699 P2：别名被重新绑定时取并集语义
+#: Codex 的反例原样：模块级 `import glob as g`，函数参数 `g` 其实是个 `Path`——`g.glob` 是
+#: `Path.glob`（含隐藏名）。按模块 glob（不含隐藏名）判的话只有 `.x.csv` 时是 none，不问。
+CODEX_SHADOW = (
+    "import glob as g\nfrom pathlib import Path\n"
+    "def find(g):\n    return g.glob('*.csv')\n"
+    "find(Path('.'))\n"
+)
+
+
+@pytest.mark.parametrize(
+    "src",
+    [
+        CODEX_SHADOW,
+        # 赋值遮蔽
+        "import glob as g\nfrom pathlib import Path\ng = Path('.')\ng.glob('*.csv')\n",
+        # for 目标遮蔽
+        "import glob as g\nfrom pathlib import Path\nfor g in [Path('.')]:\n    g.glob('*.csv')\n",
+    ],
+)
+def test_a_rebound_glob_alias_still_asks_when_only_hidden_files_match(tmp_path, src):
+    root = _project(tmp_path, "s/fig.py", src, {"s/.x.csv": "1"})
+    ev = db.evidence(root / "s/fig.py", root)
+    assert ev["candidates"]["script.parent"]["probes"]["found"] == ["*.csv"]
+    assert ev["verdict"] == db.VERDICT_SCRIPT_PARENT
+
+
+def test_an_unshadowed_alias_keeps_the_glob_module_semantics(tmp_path):
+    """对照：没被重新绑定的别名照旧按模块 glob 判——隐藏名不算，普通名算。"""
+    src = "import glob as g\ng.glob('*.csv')\n"
+    hidden = _project(tmp_path / "a", "s/fig.py", src, {"s/.x.csv": "1"})
+    assert db.evidence(hidden / "s/fig.py", hidden)["verdict"] == db.VERDICT_NONE
+    plain = _project(tmp_path / "b", "s/fig.py", src, {"s/x.csv": "1"})
+    assert db.evidence(plain / "s/fig.py", plain)["verdict"] == db.VERDICT_SCRIPT_PARENT
+
+
+@pytest.mark.parametrize(
+    "binding",
+    [
+        "def f(g): pass",
+        "def f(*g): pass",
+        "def f(**g): pass",
+        "def f(*, g): pass",
+        "lambda g: 0",
+        "g = 1",
+        "g += 1",
+        "g: int = 1",
+        "for g in []: pass",
+        "with open('x') as g: pass",
+        "try:\n    pass\nexcept Exception as g:\n    pass",
+        "[0 for g in []]",
+        "(g := 1)",
+        "del g",
+        "def f():\n    global g",
+        "def f():\n    def h():\n        nonlocal g",
+        "def g(): pass",
+        "class g: pass",
+        "match 1:\n    case g:\n        pass",
+        "match []:\n    case [*g]:\n        pass",
+        "match {}:\n    case {**g}:\n        pass",
+        "import fnmatch as g",
+        "from os import path as g",
+        "from pylab import *",
+    ],
+)
+def test_every_binding_form_marks_the_alias_as_rebound(binding):
+    src = f"import glob as g\n{binding}\ng.glob('*.csv')\n"
+    (probe,) = db.probe_literals(src)
+    assert (probe["recursive"], probe["hidden"]) == (True, True)

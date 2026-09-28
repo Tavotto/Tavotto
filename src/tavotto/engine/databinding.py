@@ -250,7 +250,8 @@ _GLOB_CHARS = "*?["
 #: 一次 `evidence()` 展开全部 glob 模式（两个候选、所有探路目标合计）最多**看**这么多个目录条目
 #: （不是匹配数）：够回答「有没有」（找到一个项目内的匹配就停），又不至于让没有匹配的 `**` 在大目录
 #: 树里把首开的同步判断（Flask 父进程里）拖上几秒——按单个模式计的话 64 个模式 × 2 个候选就又是
-#: 几十万条。用完还没答案就是「判不出」（`unjudged`），不说话。
+#: 几十万条。用完还没答案就是「判不出」（`unjudged`），不说话：`unjudged` 只列在候选的
+#: `probes` 里，**不驱动任何结论**（`_with_probes` 只看 `found`），也就不会让首开去问。
 MAX_GLOB_SCAN = 5000
 
 
@@ -290,25 +291,48 @@ class _Aliases:
     原名本身始终认得（`glob.glob`、裸 `glob(...)`、`Path(...)`，与以前一样不要求 import）——
     别名只**加**名字，写死原名的话 `import glob as g; g.glob('*.csv')` 这类合法写法认不出，
     首开不问、脚本在空沙盒里跑（Codex 评 #673 P2）。
+
+    不做作用域解析，所以另记 `rebound`：这些名字在树里**任何地方**还被别的方式绑定过（参数、
+    赋值、`for` / `with` / `except … as`、推导式、walrus、`del`、`global` / `nonlocal`、`def` /
+    `class`、`match` 捕获、别的模块的 import、非 glob / pathlib 的 `import *`）。用到它们的调用
+    说不清是模块 glob 还是 `Path.glob`（`def find(g): g.glob('*.csv')`）——仍记成探路目标，
+    匹配语义取两者的并集（`**` 递归、含隐藏名），宁可多问一次，不让它判成「没有」而不问
+    （Codex 评 #699 P2）。
     """
 
     def __init__(self, tree: ast.AST) -> None:
         self.glob_modules = {"glob"}
         self.glob_funcs = {name: name for name in GLOB_FUNCS}
         self.path_ctors = set(_PATH_CTORS)
+        bound: set[str] = set()
+        star = False
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 for alias in node.names:
                     if alias.name == "glob":
                         self.glob_modules.add(alias.asname or "glob")
-            elif isinstance(node, ast.ImportFrom) and node.level == 0:
+                    else:
+                        bound.add(alias.asname or alias.name.split(".")[0])
+            elif isinstance(node, ast.ImportFrom):
                 for alias in node.names:
-                    if node.module == "glob" and alias.name == "*":
-                        continue  # 原名已经认得
-                    if node.module == "glob" and alias.name in GLOB_FUNCS:
+                    ours = node.level == 0 and node.module in ("glob", "pathlib")
+                    if alias.name == "*":
+                        star = star or not ours  # 原名已经认得；别的模块的 * 什么都可能绑
+                    elif ours and node.module == "glob" and alias.name in GLOB_FUNCS:
                         self.glob_funcs[alias.asname or alias.name] = alias.name
-                    elif node.module == "pathlib" and alias.name in _PATH_CTORS:
+                    elif ours and node.module == "pathlib" and alias.name in _PATH_CTORS:
                         self.path_ctors.add(alias.asname or alias.name)
+                    else:
+                        bound.add(alias.asname or alias.name)
+            else:
+                bound.update(_bound_names(node))
+        names = self.glob_modules | set(self.glob_funcs) | self.path_ctors
+        self.rebound = names if star else names & bound
+
+    def glob_call_rebound(self, func: ast.expr) -> bool:
+        """`glob_call` 认出来的这个调用用到的名字是不是在别处还被重新绑定过。"""
+        owner = func.value if isinstance(func, ast.Attribute) else func
+        return isinstance(owner, ast.Name) and owner.id in self.rebound
 
     def glob_call(self, func: ast.expr) -> str | None:
         """`glob.glob(...)` / `g.iglob(...)` / `gg(...)` → `glob` / `iglob`；别的回 None——不是随便
@@ -323,6 +347,25 @@ class _Aliases:
         ):
             return func.attr
         return None
+
+
+def _bound_names(node: ast.AST) -> list[str]:
+    """这个节点**本身**绑定的名字（import 另算）：`_Aliases` 判重新绑定用。"""
+    if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+        return [node.id]
+    if isinstance(node, ast.arg):
+        return [node.arg]
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return [node.name]
+    if isinstance(node, (ast.Global, ast.Nonlocal)):
+        return list(node.names)
+    if isinstance(node, ast.ExceptHandler) and node.name:
+        return [node.name]
+    if isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name:
+        return [node.name]
+    if isinstance(node, ast.MatchMapping) and node.rest:
+        return [node.rest]
+    return []
 
 
 def _path_receiver(node: ast.expr, aliases: _Aliases) -> str | None:
@@ -429,16 +472,20 @@ def probe_literals(source: str) -> list[dict]:
                 ):
                     continue
                 pattern = _join_probe(base, pattern)
-            flags = {}
-            for key in ("recursive", "include_hidden"):
-                value = kw(node, key)
-                if value is None:
-                    flags[key] = False
-                elif isinstance(value, ast.Constant) and isinstance(value.value, bool):
-                    flags[key] = value.value
-                else:
-                    flags = None  # 动态的开关：匹配语义说不出，不判
-                    break
+            flags: dict[str, bool] | None = {}
+            if aliases.glob_call_rebound(node.func):
+                # 说不清是模块 glob 还是 `Path.glob`：取两者的并集，宁可多问一次
+                flags = {"recursive": True, "include_hidden": True}
+            else:
+                for key in ("recursive", "include_hidden"):
+                    value = kw(node, key)
+                    if value is None:
+                        flags[key] = False
+                    elif isinstance(value, ast.Constant) and isinstance(value.value, bool):
+                        flags[key] = value.value
+                    else:
+                        flags = None  # 动态的开关：匹配语义说不出，不判
+                        break
             if flags is not None:
                 add(
                     "glob",
@@ -709,7 +756,7 @@ def evidence(script_path: str | os.PathLike, project_root: str | os.PathLike) ->
     探路目标（`probe_literals`）只在「脚本目录 / 项目根」里**找得到**时说话：只有脚本目录找得到
     → `script_parent`（沙盒的只读回退救不回它们）；只有项目根 → `project_root`；两处都有 →
     `ambiguous`。与打开类字面量的结论指向不同的目录时也是 `ambiguous`——机器不挑。一处都找不到
-    时它不说话，结论与没有探路调用时逐字相同。
+    时它不说话，结论与没有探路调用时逐字相同；预算用完判不出（`unjudged`）同样不说话——不会因此问。
     """
     root = Path(project_root)
     # 脚本本身也钉在项目根之内再读（realpath；`..` / 指到项目外的软链接都出局）：
