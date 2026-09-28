@@ -96,7 +96,7 @@ def fake_pool(monkeypatch):
     }
     box["gate"].set()  # 默认不阻塞
 
-    def build_owned(script, root, entry):
+    def build_owned(script, root, entry, **_kw):
         """替身按 pool 的合同回 `(worker, resp, created)`：所有权由这里**原子**给出，
         默认「第一次调用创建、之后复用」——与真 pool 的 `get()` 同形。"""
         box["build_calls"] += 1
@@ -419,8 +419,49 @@ def test_cancel_before_the_thread_touches_the_pool_runs_no_user_code(tmp_path, f
     _, result = svc.get(plan.plan_id, "pj")
     assert result.status == preparation.STATUS_CANCELLED
     calls = []
-    svc.start(plan.plan_id, runner=lambda pl: calls.append(pl))  # 已终局：不起线程
+    svc.start(plan.plan_id, runner=lambda pl, **_kw: calls.append(pl))  # 已终局：不起线程
     assert svc.wait(plan.plan_id, 1.0) and calls == []
+
+
+def test_a_retry_that_would_run_under_a_changed_grant_is_stale_and_does_not_run_again(
+    tmp_path, fake_pool, monkeypatch
+):
+    """Codex #713 P1：计划按沙盒记下授权；第一次执行报缺包、自动采用了用户自己的 Python（ADR 0107 §二：
+    默认随之改成脚本目录）。第二次执行之前（`before_retry`）授权已与计划不同——不重跑、计划作废，
+    回执不会拿旧计划的「没授权」去描述一次在项目目录里的执行。"""
+    from tavotto.engine import workdir
+
+    svc = preparation.PreparationService()
+    root = _project(tmp_path, "p")
+    plan = preparation.plan_for(
+        project_id="pj",
+        project_root=str(root),
+        asset_id="fig.pdf",
+        stem="fig",
+        script="fig.py",
+        entry="__main__",
+        original_artifact="fig.pdf",
+    )
+    svc.register(plan)
+    ran = []
+
+    def runner(pl, before_retry=None):
+        ran.append("first")  # 按计划的 cwd 跑过一次、报了缺包；自动接手换成了用户自己的 Python
+        changed = {**pl.grant, "implied_by": workdir.IMPLIED_BY_USER_INTERPRETER}
+        monkeypatch.setattr(workdir, "grant_for", lambda r: changed)
+        before_retry()
+        ran.append("second")
+        raise AssertionError("授权变了还在新目录里重跑")
+
+    svc.start(plan.plan_id, runner=runner)
+    assert svc.wait(plan.plan_id, 30)
+    _, result = svc.get(plan.plan_id, "pj")
+    assert ran == ["first"]
+    assert result.status == preparation.STATUS_ERROR
+    assert result.error["code"] == preparation.ERROR_PLAN_STALE
+    assert result.error["reason"] == preparation.STALE_GRANT
+    assert result.error["executed"] is True
+    assert result.receipt is None
 
 
 # ---------------------------------------------------------------- 项目绑定（FO-008）

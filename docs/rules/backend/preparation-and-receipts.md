@@ -53,7 +53,9 @@
   证据变成要问就抛同一个 `workdir_confirmation_required`；会话本身不动（答完 `PATCH /api/engine/workdir` 会收掉）。
   已 build 的热态会话不再跑脚本，不过门。
 - **过期计划不执行**（FO-007）：执行线程在起会话之前把 `workdir.grant_for(root)` 与计划记下的
-  `grant` 比一次，不一致就 `preparation_plan_stale`，一行脚本不跑。
+  `grant` 比一次，不一致就 `preparation_plan_stale`，一行脚本不跑。缺包后自动接手换了解释器（ADR 0107：
+  用户自己的 Python 默认在脚本目录跑）时，`pool.build_owned(before_retry=…)` 在**第二次执行之前**再比一次，
+  不一致同样作废（`executed=True`：第一次按计划的 cwd 跑过），不在计划没写过的 cwd 里重跑。
 - **自报只收这一条会话的（U09，ADR 0070）**：worker 的 `runtime_report()` 带 `report_origin=build` 与 `pid`；
   `receipt.from_worker` 核 origin，并把 pid 与控制面自己起的那个子进程对（`EngineWorker.child_pid` /
   `WorkerdWorker.child_pid` / `NativeSession.child_pid`）。体检 / 探针 / 手拼的字典**一律拒收**：`runtime=None`、

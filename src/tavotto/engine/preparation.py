@@ -117,6 +117,15 @@ _STALE_MESSAGES = {
     STALE_DATA_BINDING: "脚本要读的数据在预检之后变了，这份计划作废；请重新准备",
 }
 
+
+class _StaleBeforeRetry(Exception):
+    """`before_retry` 发现计划在两次执行之间过期了（理由是 `STALE_REASONS` 之一）。"""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
 #: 作业保留多久（秒）——与导出作业同一口径：界面拿 plan_id 补拉要在窗口内。
 _TTL_S = 15 * 60
 
@@ -487,7 +496,7 @@ class PreparationService:
         return result
 
     def start(self, plan_id: str, *, runner, bind=None) -> None:
-        """起执行线程。`runner(plan) -> (worker, build_resp, created)`（app 注入
+        """起执行线程。`runner(plan, before_retry=…) -> (worker, build_resp, created)`（app 注入
         `pool.build_owned`），`bind()` 是项目绑定上下文（app 注入 `bound_project(ctx)`）。"""
         entry = self._entry(plan_id)
         if entry is None:
@@ -567,8 +576,30 @@ class PreparationService:
             self._finish(entry, STATUS_READY, note=note)
             return
         tr.mark("spawn")
+
+        def before_retry() -> None:
+            # 缺包后自动接手换了解释器（ADR 0107：用户自己的 Python → 默认在脚本目录跑）：授权此刻已与
+            # 计划记下的不同的话，第二次执行就是在计划没写过的 cwd 里跑、回执却还说没授权——不跑，作废
+            if workdir.grant_for(plan.project_root) != plan.grant:
+                raise _StaleBeforeRetry(STALE_GRANT)
+
         try:
-            worker, resp, created = runner(plan)
+            worker, resp, created = runner(plan, before_retry=before_retry)
+        except _StaleBeforeRetry as exc:
+            tr.fail("execute", ERROR_PLAN_STALE, reason=exc.reason)
+            result.error = {
+                "code": ERROR_PLAN_STALE,
+                "reason": exc.reason,
+                # 第一次（按计划的 cwd）已经跑过、报了缺包；换了解释器之后的那一次没跑
+                "executed": True,
+                "message": _STALE_MESSAGES[exc.reason],
+            }
+            self._finish(
+                entry,
+                STATUS_ERROR,
+                note="缺包后自动换了解释器，工作目录授权随之变了：计划作废，没有在新目录里重跑；请重新准备",
+            )
+            return
         except pool.WorkerError as exc:
             confirmation = getattr(exc, "confirmation", None)
             if isinstance(confirmation, dict):

@@ -3038,24 +3038,40 @@ def build(script_name: str, figures_dir: str, entry: str, *, allow_project_env: 
     return worker, resp
 
 
-def build_owned(script_name: str, figures_dir: str, entry: str, *, allow_project_env: bool = True):
+def build_owned(
+    script_name: str,
+    figures_dir: str,
+    entry: str,
+    *,
+    allow_project_env: bool = True,
+    before_retry=None,
+):
     """`build()` + 所有权：回 `(worker, build 响应, created)`。
 
     `created` 来自 `acquire()`（池里那把锁），两次取会话（自动切环境重试）任一次建了
     会话就算这次调用的。准备接口据此决定取消时能不能关这条会话（ADR 0053 §四）。
     再来一次 `build_owned()` 只是一次往返：worker 侧对已 build 的会话早返回，用户脚本
     不重跑（`test_worker_runtime_report` 用脚本自己的副作用计数钉着）。
+
+    `before_retry()`：缺包后自动接手成功、**第二次执行之前**调一次（见 `_build_with`）。
     """
     return _build_with(
         lambda: acquire(script_name, figures_dir, entry),
         script_name,
         figures_dir,
         allow_project_env=allow_project_env,
+        before_retry=before_retry,
     )
 
 
-def _build_with(take, script_name: str, figures_dir: str, *, allow_project_env: bool):
-    """`build` / `build_owned` 共用的编排：`take()` 回 `(worker, created)`。"""
+def _build_with(
+    take, script_name: str, figures_dir: str, *, allow_project_env: bool, before_retry=None
+):
+    """`build` / `build_owned` 共用的编排：`take()` 回 `(worker, created)`。
+
+    `before_retry()`：自动接手换了项目的解释器决策——连同它派生的工作目录默认（用户自己的 Python →
+    脚本目录，ADR 0107 §二）——之后、第二次执行之前调一次。按计划执行的调用方（准备接口）在这里核
+    计划记下的授权还成不成立，不成立就抛出：不在计划没写过的 cwd 里重跑（Codex #713 P1）。"""
     worker, created = take()
     try:
         return worker, worker.ensure_built(), created
@@ -3066,6 +3082,8 @@ def _build_with(take, script_name: str, figures_dir: str, *, allow_project_env: 
         if not outcome.get("ok"):
             exc.project_env = outcome
             raise
+    if before_retry is not None:
+        before_retry()
     worker, created_again = take()
     return worker, worker.ensure_built(), created or created_again
 

@@ -5748,7 +5748,9 @@ def api_engine_preparation_start():
             plan.plan_id,
             # 「真的把 runtime 起起来」只有一份实现：`pool.build`（带一次项目环境
             # 自动 fallback）。这里不另写 get + ensure_built。
-            runner=lambda pl: engine_pool.build_owned(pl.script, pl.project_root, pl.entry),
+            runner=lambda pl, before_retry=None: engine_pool.build_owned(
+                pl.script, pl.project_root, pl.entry, before_retry=before_retry
+            ),
             bind=lambda: bound_project(ctx),
         )
     resp = jsonify(_preparation_payload(plan, result))

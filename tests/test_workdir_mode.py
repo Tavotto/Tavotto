@@ -354,6 +354,67 @@ def test_the_user_interpreter_probe_is_the_pools_and_absent_means_sandbox(monkey
     assert workdir.default_mode(tmp_path) == workdir.MODE_PROJECT
 
 
+def test_build_asks_before_retry_between_the_two_executions(monkeypatch):
+    """`_build_with`：缺包 → 自动接手成功之后、**第二次执行之前**问一次 `before_retry`；它抛出就不再执行
+    （准备接口据此在授权变了时作废计划，Codex #713 P1）。"""
+    events = []
+
+    class W:
+        def __init__(self, n):
+            self.n = n
+
+        def ensure_built(self):
+            events.append(f"build{self.n}")
+            if self.n == 1:
+                raise engine_pool.WorkerError("缺 lmfit", code="missing_dependency", module="lmfit")
+            return {}
+
+    takes = iter([W(1), W(2)])
+    monkeypatch.setattr(
+        engine_pool, "try_project_env", lambda *a: events.append("adopt") or {"ok": True}
+    )
+
+    class Stale(Exception):
+        pass
+
+    def guard():
+        events.append("guard")
+        raise Stale
+
+    with pytest.raises(Stale):
+        engine_pool._build_with(
+            lambda: (next(takes), True), "fig.py", "/p", allow_project_env=True, before_retry=guard
+        )
+    assert events == ["build1", "adopt", "guard"]
+
+
+def test_an_unpersisted_adoption_changes_neither_the_interpreter_nor_the_workdir(
+    tmp_path, monkeypatch
+):
+    """Codex #713 P2 的前提核对：数据目录只读 / 满时 `remember()` 写不进项目设置（只进进程缓存），而
+    `resolve_worker_python` 与 `user_interpreter_in_effect` 读的都是**持久化的记录**——两边一致地
+    认为「没换」：不会出现「解释器是用户的、工作目录还是沙盒」的错位。"""
+    from tavotto.engine import projectenv
+
+    _no_global_choice(monkeypatch)
+    root = tmp_path / "proj"
+    root.mkdir()
+    outside = _python_file(tmp_path / "machine" / "python")
+
+    def full(*_a, **_kw):
+        raise OSError("磁盘满")
+
+    monkeypatch.setattr(engine_config, "set_project_settings", full)
+    try:
+        projectenv.remember(root, outside, automatic=True, trigger="missing_dependency")
+        python_now = engine_pool.resolve_worker_python(root, discover=False)[0]
+        assert not engine_pool.same_python(python_now, outside)
+        assert engine_pool.user_interpreter_in_effect(root) is False
+        assert workdir.mode_for(root) == workdir.MODE_SANDBOX
+    finally:
+        projectenv.forget(root)
+
+
 def test_a_users_choice_beats_the_implied_default_and_reverting_the_interpreter_reverts_it(
     tmp_path, monkeypatch
 ):
