@@ -56,6 +56,8 @@
   **从脚本行发起时，那份 offer 随作业一起收放**（#729）：卡片带 `fromScriptRow`，发起时把 offer 交进
   `depRepairStore.scriptOffer`，`clear()` 把它与重试上下文收进所属项目那格、切回来放回；脚本行在自己的运行里
   没有 offer（`scriptRunStore` 换项目被刻意清空）时用它——A → B → A 之后进度 / 取消 / 重试仍在那一行，B 上没有。
+  装好（切走期间，或切回之后）同样重跑那一行、收起卡片，走同一条 `rerunScriptAfterRepair`：这类修复里那一行
+  **没有运行记录**也算仍停在缺包上；收起后作业不再收放，再切走切回不重复触发，B 上不触发。
   看护 `ScriptLibrary.test.tsx`「脚本行发起的修复切项目再切回」、`projectSwitchDepRepair.test.ts`。
 - **运行/取消是同一个按钮**（busy 态翻转）：取消后焦点天然留在原脚本行，
   不做焦点搬运。状态行 aria-live=polite，只随相位变化播报。
