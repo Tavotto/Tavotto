@@ -385,7 +385,8 @@ def test_a_script_that_checks_then_exits_gets_the_static_list(figs):
 
 def test_absolute_paths_that_are_only_probed_get_no_picker(tmp_path):
     """绝对路径被 `exists()` / `listdir()` / `glob()` / `Path(...).exists()` 问的是探路，不是读：改指表救不回，
-    给了选择器就是死循环（指认 → 重跑 → `exists()` 照样 False → 同一个框再弹）。同一串还被读过也算探路。"""
+    给了选择器就是死循环（指认 → 重跑 → `exists()` 照样 False → 同一个框再弹）。同一串还被读过也算探路；
+    先赋给一个只赋值一次的名字再探（`DATA = "…"; exists(DATA)`）同样算。"""
     (tmp_path / "fig.py").write_text(
         "import glob, os\nfrom pathlib import Path\n"
         'if not os.path.exists("/nonexistent/tavotto/a/x.csv"):\n    raise SystemExit(1)\n'
@@ -393,7 +394,11 @@ def test_absolute_paths_that_are_only_probed_get_no_picker(tmp_path):
         'glob.glob("/nonexistent/tavotto/c/*.csv")\n'
         'Path("/nonexistent/tavotto/d/y.csv").exists()\n'
         'open("/nonexistent/tavotto/e/z.csv")\n'
-        'open("/nonexistent/tavotto/a/x.csv")\n',
+        'open("/nonexistent/tavotto/a/x.csv")\n'
+        'DATA = "/nonexistent/tavotto/f/w.csv"\n'  # 最常见的写法：常量先进名字，再被探
+        "if not os.path.exists(DATA):\n    raise SystemExit(1)\n"
+        'TWICE = "/nonexistent/tavotto/g/v.csv"\nTWICE = "/nonexistent/tavotto/g/u.csv"\n'
+        "os.path.exists(TWICE)\n",  # 赋值两次：说不清探的是哪个，不跟
         encoding="utf-8",
     )
     got = {o["path"]: o["via"] for o in inputremap.static_missing("fig.py", tmp_path, [])}
@@ -403,6 +408,9 @@ def test_absolute_paths_that_are_only_probed_get_no_picker(tmp_path):
         "/nonexistent/tavotto/c/*.csv": inputremap.VIA_GLOB,
         "/nonexistent/tavotto/d/y.csv": inputremap.VIA_PROBE,
         "/nonexistent/tavotto/e/z.csv": inputremap.VIA_OPEN,
+        "/nonexistent/tavotto/f/w.csv": inputremap.VIA_PROBE,
+        "/nonexistent/tavotto/g/v.csv": inputremap.VIA_OPEN,
+        "/nonexistent/tavotto/g/u.csv": inputremap.VIA_OPEN,
     }
 
 
