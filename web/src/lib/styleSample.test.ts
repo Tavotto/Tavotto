@@ -71,4 +71,29 @@ describe('sampleFitScale（示例图画得下这套字号吗）', () => {
   it('线宽不参与：线粗不会把版面撑开', () => {
     expect(sampleFitScale(styleSampleGeometry({ element: { line: { linewidth: 9.5 } } }))).toBe(1)
   })
+
+  it('每类文字各自的字面：图例的在 legend_text 上；粗斜体不从「其余文字」回落（应用时不会跟着变）', () => {
+    const g = styleSampleGeometry({
+      element: {
+        text: { fontfamily: 'serif', weight: 'bold' },
+        title: { weight: 'bold', fontfamily: 'Arial' },
+        legend_text: { style: 'italic' },
+      },
+    })
+    expect(g.faces.title).toEqual({ fontFamily: '"Arial", sans-serif', bold: true, italic: false })
+    expect(g.faces.legend).toEqual({ fontFamily: 'serif', bold: false, italic: true })
+    expect(g.faces.axis.bold).toBe(false)
+    expect(g.faces.tick.bold).toBe(false)
+  })
+
+  it('刻度：方向 / 长度 / 线宽按样式；长度 0 是真值，线宽没设跟边框', () => {
+    const g = styleSampleGeometry({ element: { ticks: { direction: 'in', length: 0 }, axes: { spine_linewidth: 0.4 } } })
+    expect(g.tickDirection).toBe('in')
+    expect(g.tickLengthPt).toBe(0)
+    expect(g.tickWidthPt).toBe(0.4)
+    const d = styleSampleGeometry({ element: { ticks: { direction: 'sideways', width: 1.2 } } })
+    expect(d.tickDirection).toBe('out')
+    expect(d.tickLengthPt).toBe(SAMPLE_DEFAULTS.tickLengthPt)
+    expect(d.tickWidthPt).toBe(1.2)
+  })
 })

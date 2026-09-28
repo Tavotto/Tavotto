@@ -496,16 +496,178 @@ describe('样式页有示例图，字段按用途分组（审计 T42）', () => 
     expect(preview()).toBeNull()
   })
 
-  it('字段按文字 / 刻度 / 线条分组，不是一长列数字', async () => {
+  it('字段按文字 / 线条分组（与左栏样式面板同两组），不是一长列数字', async () => {
     await mount()
-    for (const g of ['text', 'ticks', 'lines']) {
+    for (const g of ['text', 'lines']) {
       expect(document.body.querySelector(`[data-field-group="${g}"]`), g).toBeTruthy()
     }
+    // 刻度字号是「文字」里的「刻度」一行（与面板同一张行表），不再单独成组
+    expect(document.body.querySelector('[data-field-group="ticks"]')).toBeNull()
     expect(document.body.querySelector('[data-field-group="text"]')!.textContent).toContain('文字')
     expect(document.body.querySelector('[data-field-group="lines"]')!.textContent).toContain('线宽')
     // 规范页是另一组，别把两套字段混在一张表单里
     await mount('spec')
     expect(document.body.querySelector('[data-field-group="ticks"]')).toBeNull()
     expect(document.body.querySelector('[data-field-group="page"]')).toBeTruthy()
+  })
+})
+
+/* ------------------------------------------------------------------------- */
+/*  2026-09-28：样式页补齐左栏面板能改的那几维（字体 / 粗体 / 斜体 / 刻度方向…）  */
+/* ------------------------------------------------------------------------- */
+
+describe('样式页与左栏样式面板同一张行表：字体 / 字号 / 粗斜体 / 刻度', () => {
+  const rowIds = (group: string) =>
+    [...document.body.querySelectorAll(`[data-field-group="${group}"] [data-style-row]`)].map(
+      (r) => (r as HTMLElement).dataset.styleRow,
+    )
+  const input = (label: string) =>
+    document.body.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)
+  const toggle = (row: string, which: 'weight' | 'style') =>
+    document.body.querySelector<HTMLButtonElement>(`[data-style-face="${row}.${which}"] button`)
+
+  async function typeInto(el: HTMLInputElement, value: string) {
+    await act(async () => {
+      el.focus()
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+      setter.call(el, value)
+      el.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => {
+      el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+    })
+  }
+
+  /** 选中「投稿用」并截住保存时交给后端的内容 */
+  async function editUserStyle() {
+    await mount()
+    await act(async () => {
+      buttons().find((b) => b.textContent?.includes('投稿用'))!.click()
+    })
+    const saves: Record<string, unknown>[] = []
+    const real = useProfileStore.getState().save
+    useProfileStore.setState({
+      save: async (kind, id, data) => {
+        saves.push(data)
+        return real(kind, id, data)
+      },
+    })
+    return saves
+  }
+
+  it('行与面板一致：文字五行 + 其余文字，线条五行（期望值写死，不从行表读）', async () => {
+    await editUserStyle()
+    expect(rowIds('text')).toEqual(['title', 'axis_label', 'ticks', 'legend', 'text', 'annotation'])
+    expect(rowIds('lines')).toEqual(['dataLine', 'frame', 'tickDirection', 'tickLength', 'tickWidth'])
+    // 每行文字都有字体下拉与字号框
+    for (const row of ['title', 'axis_label', 'ticks', 'legend', 'text', 'annotation']) {
+      expect(document.body.querySelector(`[data-style-cell="${row}.family"] [role="combobox"]`), row).toBeTruthy()
+      expect(document.body.querySelector(`[data-style-cell="${row}.size"] input`), row).toBeTruthy()
+    }
+    // 刻度文字的引擎字段没有 weight / style：不摆点了不生效的开关（与面板同一条）
+    expect(toggle('ticks', 'weight')).toBeNull()
+    expect(toggle('ticks', 'style')).toBeNull()
+    expect(toggle('title', 'weight')).toBeTruthy()
+    expect(document.body.querySelector('[data-style-cell="tickDirection"] [role="combobox"]')).toBeTruthy()
+  })
+
+  it('没管的格显示「未设置」，不写「多个值」', async () => {
+    await editUserStyle()
+    expect(input('标题字号')!.value).toBe('')
+    expect(input('标题字号')!.placeholder).toBe('未设置')
+    expect(input('刻度长度')!.placeholder).toBe('未设置')
+    expect(document.body.querySelector('[data-style-cell="title.family"]')!.textContent).toContain('未设置')
+  })
+
+  it('加粗 / 倾斜写进样式：图内是 weight / style 的取值，图例的在 legend_text 上，画布标注是 boolean', async () => {
+    const saves = await editUserStyle()
+    await act(async () => toggle('title', 'weight')!.click())
+    await act(async () => toggle('legend', 'style')!.click())
+    await act(async () => toggle('annotation', 'weight')!.click())
+    expect(toggle('title', 'weight')!.getAttribute('aria-pressed')).toBe('true')
+    // 再按一次 = 明确「不加粗」，不是回到「不管」
+    await act(async () => toggle('title', 'weight')!.click())
+    await typeInto(input('刻度字号')!, '7')
+    await typeInto(input('刻度长度')!, '0')
+    await act(async () => {
+      byText('保存')!.click()
+    })
+    expect(saves[0]).toEqual({
+      element: {
+        line: { linewidth: 1.25 },
+        title: { weight: 'normal' },
+        legend_text: { style: 'italic' },
+        ticks: { fontsize: 7, length: 0 },
+      },
+      annotation: { bold: true },
+      pt_basis: 'page',
+    })
+  })
+
+  it('先改字号再选字体：两样都留着（字体下拉按数据 memo，回调里不能捏着旧草稿）', async () => {
+    const saves = await editUserStyle()
+    await typeInto(input('标题字号')!, '10')
+    // jsdom 没有 scrollIntoView，Radix 打开下拉时要滚到当前项
+    if (!Element.prototype.scrollIntoView) {
+      Object.defineProperty(Element.prototype, 'scrollIntoView', { value: () => {}, configurable: true })
+    }
+    const trigger = document.body.querySelector<HTMLElement>('[data-style-cell="title.family"] [role="combobox"]')!
+    await act(async () => trigger.click())
+    const options = [...document.body.querySelectorAll<HTMLElement>('[role="option"]')]
+    // 通用三族在前（没有渲染过的图时就只有它们），第一项是 serif
+    expect(options).toHaveLength(3)
+    const serif = options[0]
+    await act(async () => serif.click())
+    await act(async () => {
+      byText('保存')!.click()
+    })
+    expect((saves[0].element as Record<string, unknown>).title).toEqual({ fontsize: 10, fontfamily: 'serif' })
+  })
+
+  it('行尾的 × 把整行清回「未设置」（字体、字号、粗斜体一起），空了的角色不留空壳', async () => {
+    const saves = await editUserStyle()
+    await typeInto(input('标题字号')!, '10')
+    await act(async () => toggle('title', 'style')!.click())
+    const clear = () =>
+      document.body.querySelector<HTMLButtonElement>('[data-style-row="title"] button[aria-label="清除标题"]')
+    expect(clear()).toBeTruthy()
+    await act(async () => clear()!.click())
+    expect(clear()).toBeNull()
+    expect(input('标题字号')!.value).toBe('')
+    // 草稿回到原样，保存钮随之不可点（名字也没改）
+    expect(byText('保存')!.disabled).toBe(true)
+    expect(saves).toEqual([])
+  })
+
+  it('内置只读那份：每行一句摘要（字体 · 字号 · 粗斜体），没管的写「未设置」', async () => {
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) =>
+      new Response(
+        JSON.stringify({
+          profiles: String(input).includes('/style')
+            ? [
+                {
+                  ...BUILTIN_STYLE,
+                  data: {
+                    element: {
+                      title: { fontfamily: 'Arial', fontsize: 9, weight: 'bold' },
+                      ticks: { direction: 'in' },
+                    },
+                    annotation: { sizePt: 8, italic: true },
+                  },
+                },
+              ]
+            : BUILTIN_SPECS,
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    ) as typeof fetch
+    await mount()
+    const summary = (row: string) =>
+      document.body.querySelector(`[data-summary-row][data-style-row="${row}"]`)!.textContent
+    expect(summary('title')).toContain('Arial · 9 pt · 粗体')
+    expect(summary('annotation')).toContain('8 pt · 斜体')
+    expect(summary('axis_label')).toContain('未设置')
+    expect(summary('tickDirection')).not.toContain('未设置')
+    expect(document.body.querySelectorAll('input:not([type="file"])')).toHaveLength(0)
   })
 })

@@ -867,23 +867,21 @@ export default interface Resources {
       "duplicateToEdit": "复制一份再修改",
       "empty": "还没有配置",
       "export": "导出为文件",
+      "face": {
+        "bold": "粗体",
+        "italic": "斜体",
+        "notBold": "不加粗",
+        "notItalic": "不倾斜"
+      },
       "field": {
-        "annotationFont": "标注字号",
-        "axisFont": "轴标题字号",
-        "baseFont": "正文字号",
         "defaultFont": "正文字号",
         "doubleWidth": "双栏宽",
         "exportDpi": "推荐导出分辨率",
         "floorFont": "绝对下限",
-        "legendFont": "图例字号",
-        "lineWidth": "线宽",
         "maxFont": "最大字号",
         "minDpi": "最低分辨率",
         "minFont": "最小字号",
         "singleWidth": "单栏宽",
-        "spineWidth": "边框线宽",
-        "tickFont": "刻度字号",
-        "titleFont": "标题字号",
         "widthTolerance": "宽度容差"
       },
       "follow": "跟随更新",
@@ -892,8 +890,7 @@ export default interface Resources {
         "lines": "线条",
         "page": "页面与栏宽",
         "raster": "位图",
-        "text": "文字",
-        "ticks": "刻度"
+        "text": "文字"
       },
       "import": "从文件导入",
       "inUse": "本项目在用",
@@ -920,6 +917,9 @@ export default interface Resources {
       "restoreConfirm": "恢复",
       "restoreNeedsOrigin": "不是从内置复制来的，没有可恢复的默认值",
       "restoreTitle": "把「{{name}}」恢复成默认值？",
+      "row": {
+        "text": "其余文字"
+      },
       "save": "保存",
       "saved": "已保存「{{name}}」",
       "snapshotHint": "项目保存选中时的规则快照。全局规范之后的修改不影响本项目，除非打开「跟随更新」。",

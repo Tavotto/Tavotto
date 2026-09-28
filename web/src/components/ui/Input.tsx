@@ -195,6 +195,11 @@ interface NumberFieldProps {
   disabled?: boolean
   /** 多选且取值不一致：留空并显示占位符，而不是谎报一个数 */
   mixed?: boolean
+  /**
+   * `mixed` 时的占位文字，缺省「多个值」。留空的原因不是「几处不一样」时换掉它：设置 › 样式页
+   * 里留空是「这份样式没管这一项」，写「多个值」就是在说一件不存在的事
+   */
+  mixedPlaceholder?: string
   className?: string
   title?: string
   /** 无障碍名。缺省时从字符串 prefix/unit 推导（"X (mm)"）；prefix 不是
@@ -224,6 +229,7 @@ export function NumberField({
   fill,
   disabled,
   mixed,
+  mixedPlaceholder,
   className,
   title,
   ariaLabel,
@@ -372,7 +378,7 @@ export function NumberField({
           aria-label={derivedLabel}
           disabled={disabled}
           value={text}
-          placeholder={mixed ? t('mixed') : undefined}
+          placeholder={mixed ? (mixedPlaceholder ?? t('mixed')) : undefined}
           onChange={(e) => setText(e.target.value)}
           onFocus={(e) => {
             setFocused(true)
