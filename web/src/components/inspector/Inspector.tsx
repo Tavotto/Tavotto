@@ -181,6 +181,8 @@ export function Inspector({
             side="bottom"
             iconSize="sm"
             className="text-ink-3 hover:text-ink"
+            // 稳定定位（e2e）：不认 aria-label 文案
+            data-inspector-close
             onClick={() => useUiStore.getState().toggleRight()}
           >
             <X size={ICON_SIZE.sm} />

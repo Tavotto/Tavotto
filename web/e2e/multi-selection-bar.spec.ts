@@ -13,7 +13,8 @@ import type { Page, Request } from '@playwright/test'
  *   * 两侧之间放不下完整栏时（压缩档）：整条栏都在窗口里，右半截的控件够得着（Codex #666 P1）。
  *
  * 定位一律认稳定的 `data-*`（素材卡 `data-card`、返回 `data-context-back`、文字工具
- * `data-tool`、字号 `data-inspector-prop`），不认界面文案 / 可达名。
+ * `data-tool`、字号 `data-inspector-prop`、右栏关闭 `data-inspector-close`、适应画布
+ * `data-fit-canvas`），不认界面文案 / 可达名。
  *
  * 判据的主语：图内那条量的是后端渲染响应里的 manifest（引擎按 override 重画的结果），
  * 不是前端 store，也不是控件显示的数。
@@ -191,24 +192,45 @@ test('图内多选在两侧之间放不下完整栏时：压缩档，整条栏�
   page,
 }) => {
   const a = await app()
-  // medium 断点、左右两栏都停靠：两侧之间不到 600 px。右栏切到「画布」页——属性页不在眼前，
-  // 停靠缩减（textBarCompact）不成立，只剩「放不下」这一条判据在起作用
-  await page.setViewportSize({ width: 1100, height: 860 })
+  // 宽屏里从素材卡进图内编辑，再把窗口收到窄断点：侧栏变成覆盖式抽屉，两侧之间
+  // 就是整个窗口，不到 600 px。属性页不停靠，停靠缩减（textBarCompact）不成立，只剩
+  // 「放不下」这一条判据在起作用
+  await page.setViewportSize({ width: 1440, height: 860 })
   await page.goto(a.baseURL)
   await page.locator('[data-card="Fig1_kinetics.pdf"]').dblclick({ timeout: 30_000 })
   await expect(page.locator('[data-element-svg] svg').first()).toBeVisible({ timeout: 60_000 })
   await expect(page.locator('[data-authority="ready"]').first()).toBeVisible({ timeout: 60_000 })
-  await page.locator('[data-inspector-tab="canvas"]').click()
+  await page.setViewportSize({ width: 560, height: 860 })
+  // 窄断点下右栏成了盖在画布上的抽屉：先收起，再适应画布把图放回眼前
+  await page.locator('[data-inspector-close]').click()
+  await page.locator('[data-fit-canvas]').click()
+  // 适应画布带过渡：等图停稳再量点击位置
+  await expect
+    .poll(async () => {
+      const p0 = await center(page, 'axes_0.title')
+      await page.waitForTimeout(200)
+      return JSON.stringify(p0) === JSON.stringify(await center(page, 'axes_0.title'))
+    })
+    .toBe(true)
 
+  // 窄断点下每次选中都会把属性抽屉弹出来盖住画布（抽屉开着时浮动栏让位）：每点一次收一次
+  const closeDrawer = async () => {
+    await expect(page.locator('[data-inspector-close]')).toBeVisible()
+    await page.locator('[data-inspector-close]').click()
+    await expect(page.locator('[data-inspector-close]')).toHaveCount(0)
+  }
   const c0 = (await center(page, 'axes_0.title'))!
   const c1 = (await center(page, 'axes_0.ylabel'))!
   await page.mouse.click(c0.x, c0.y)
+  await closeDrawer()
   await page.keyboard.down('Shift')
   await page.mouse.click(c1.x, c1.y)
   await page.keyboard.up('Shift')
+  await closeDrawer()
 
   const bar = page.locator('[data-context-bar][data-context-bar-mode="elements"]')
   await expect(bar).toBeVisible()
+  await expect(bar.locator('[data-selection-count="2"]')).toBeVisible()
   // 场景自检：确实走到了「放不下」那一档，而不是停靠缩减
   await expect(bar).toHaveAttribute('data-variant', 'compact')
   await expect(bar).not.toHaveAttribute('data-context-bar-compact', '')
