@@ -78,10 +78,14 @@ def test_each_block_is_primed_with_the_previous_blocks_last_32k(monkeypatch):
     monkeypatch.setattr(deflate, "_deflate", spy)
     blocks = [_payload(40_000), _payload(20_000), _payload(50_000)]
     deflate.zlib_stream(blocks)
-    assert [t[0] for t in seen] == blocks
-    assert seen[0][1] is None
-    assert seen[1][1] == blocks[0][-32 * 1024 :] and seen[2][1] == blocks[1][-32 * 1024 :]
-    assert [t[2] for t in seen] == [False, False, True]
+    # spy 在线程池里跑：`seen` 的次序是调度次序、不是块序（macOS runner 上实测会乱）——按块内容对回去再比
+    assert len(seen) == len(blocks)
+    by_block = {t[0]: t for t in seen}
+    assert set(by_block) == set(blocks)
+    first, second, third = (by_block[b] for b in blocks)
+    assert first[1] is None
+    assert second[1] == blocks[0][-32 * 1024 :] and third[1] == blocks[1][-32 * 1024 :]
+    assert [t[2] for t in (first, second, third)] == [False, False, True]
 
 
 def test_compress_each_is_serial_zlib_per_item_in_order(monkeypatch):
