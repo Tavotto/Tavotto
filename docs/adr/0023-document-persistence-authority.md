@@ -178,3 +178,9 @@ Prompt 02 §四 提议留一个未知字段兜底位。但现在 `migrateToProje
 今天不存在；现在加等于加一个没有写入方的抽象（与 1.0 收敛纪律相悖）。
 **条件**：出现 schema 4，或出现需要在文档里寄存数据的插件时再加，
 并在同一个改动里带上写入方与 round-trip 用例。
+
+## 修订（2026-09-29，[ADR 0108](0108-desktop-stable-origin-and-backend-session-state.md)，issue #715）
+
+「上次打开的排版」等会话状态迁到后端后（ADR 0108 §三，PR-B），新文件 `data_dir()/state/layout-sessions.json`
+同样只经 `engine/atomicio.py` 写；它不在收纳目录里，不进 `RESERVED_DOCUMENT_FILENAMES`，也绝不放进 `_autosave/`、
+`layouts/` 或项目的 `tavottofile/`。

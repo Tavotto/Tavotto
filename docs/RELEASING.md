@@ -441,7 +441,7 @@ dispatch，后 attach 的旧链 dmg 顶掉了 Tauri dmg）。
 ### Tauri 桌面壳（desktop-tauri.yml）
 
 真正的桌面窗口（不再开系统浏览器）：Tauri 2 壳 + `tavotto --desktop-sidecar`
-后端（127.0.0.1 动态端口 + 一次性 nonce 认证），架构与安全模型见
+后端（127.0.0.1 本机端口，尽量跨重启不变（ADR 0108）+ 一次性 nonce 认证），架构与安全模型见
 `docs/adr/0002-tauri-desktop-shell.md`。
 
 手动触发（Actions → **Desktop apps (Tauri)** → 填 tag，需 tag 含 `src-tauri/`）。
