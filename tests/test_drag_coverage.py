@@ -597,6 +597,11 @@ for gid, prop, good in CASES:
         row["back"] = snap(st) == base
         out.append(row)
         plt.close(st.fig)
+# 正向：合法的形状照收——JSON 里 1.0 到这边是 int 1，元组来自 pin 表，numpy 数值标量也是数
+import numpy as np
+legit = ([0, 1], (0.25, 0.5), [np.float64(0.2), np.int64(0)], [np.float32(0.1), 1, 0.5, 0.5])
+out.append({"case": "legit forms", "accepted": all(
+    overrides._drag_value(v, len(v)) == [float(x) for x in v] for v in legit)})
 print(json.dumps(out))
 """
 
@@ -618,7 +623,7 @@ def test_malformed_drag_value_is_rejected_before_any_state_changes():
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
     rows = json.loads(proc.stdout.strip().splitlines()[-1])
-    assert len(rows) == 49, rows
+    assert len(rows) == 50, rows
     bad = [r for r in rows if not all(v for k, v in r.items() if k != "case")]
     assert not bad, json.dumps(bad, ensure_ascii=False, indent=1)
 
