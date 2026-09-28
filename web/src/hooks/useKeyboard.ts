@@ -16,7 +16,11 @@ import {
 } from '@/store/actions'
 import { finishNudge, nudgeKeyDown, nudgeKeyUp } from '@/canvas/nudge'
 import { useDocumentStore } from '@/store/documentStore'
-import { cancelActivePointerGesture, finishActiveGesture } from '@/store/gestureCoordinator'
+import {
+  cancelActivePointerGesture,
+  finishActiveGesture,
+  yieldsCanvasShortcuts,
+} from '@/store/gestureCoordinator'
 import { useInteractionStore } from '@/store/interactionStore'
 import { panelRender, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
@@ -62,20 +66,8 @@ function hideSelectedElements(panelId: string, gids: string[]) {
   useUiStore.getState().setSelectedGid(null)
 }
 
-/**
- * 焦点在这里时画布快捷键让位（输入框里的原生编辑、对话框自己的键）。
- * keydown 按 `e.target` 问它，系统菜单的转发（`hooks/menuActions.ts`）按
- * `document.activeElement` 问它——菜单加速键可能先于 keydown 截获按键，
- * 两条路必须是同一条判据，否则 ⌘D 在输入框里会被菜单变成「创建副本」。
- */
-export function yieldsCanvasShortcuts(el: EventTarget | null) {
-  if (!(el instanceof HTMLElement)) return false
-  return (
-    el.isContentEditable ||
-    /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) ||
-    el.closest('[role="dialog"]') != null
-  )
-}
+/** 画布快捷键的让位判据：唯一一份在 gestureCoordinator（菜单、剪贴板事件同一条） */
+export { yieldsCanvasShortcuts }
 
 const inEditableTarget = (e: KeyboardEvent) => yieldsCanvasShortcuts(e.target)
 

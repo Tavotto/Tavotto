@@ -17,7 +17,8 @@
   读 bbox / anchor / position / geometry 之后要写文档的一律走 `exactPanelRender`
   一族；权威缺席时命中层停摆、不清选区、入口置灰。
 - **撤销防线**：`txnUpdate` 无事务时丢弃更新，绝不静默直写 doc；一切撤销入口走
-  `runUndoRedo`；离散动作执行前先 `gestureCoordinator.finishActiveGesture()`。
+  `runUndoRedo`；离散动作执行前先 `gestureCoordinator.finishActiveGesture()`，不经 keydown / 指针的
+  入口（系统菜单、原生剪贴板事件）一律走 `runDiscreteAction` 闸门（先判让位、不让位才收）。
 - **渲染态按「文件 + 变体」分键**（`renderKeyOf`）；SVG 与 manifest 必须同一次
   响应；只有含 `role=="image"` 的面板在连续调整期间降 dpi。
 - **画法可以换，能编辑的东西一个都不许少**：`raster` ≠ 只读；二道闸只在

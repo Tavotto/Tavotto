@@ -4,6 +4,7 @@ import { newId } from '@/lib/id'
 import { migrateFigureFrames } from '@/lib/figureFrameMigration'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
+import { runDiscreteAction } from '@/store/gestureCoordinator'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import type { CanvasObject, LayoutGroup, PanelObject } from '@/types/document'
@@ -93,33 +94,29 @@ export async function copySelectedObjects(): Promise<boolean> {
   return true
 }
 
-/** copy/paste 事件不该被劫持的目标：输入框、可编辑区、对话框 */
-function editableTarget(t: EventTarget | null): boolean {
-  if (!(t instanceof HTMLElement)) return false
-  return (
-    t.isContentEditable ||
-    /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) ||
-    t.closest('[role="dialog"]') != null
-  )
-}
-
 /**
  * ⌘C 的主路径：原生 copy 事件。`e.clipboardData.setData` 同步写、无权限门槛，
  * Safari / 桌面壳的 WKWebView / Firefox 都认——异步的 `writeText` 在 WebKit 里
  * 会被拒，正是「复制的素材无法跨标签页粘贴」的根源。返回 true = 消费了本次复制。
  */
 export function handleCopyEvent(e: ClipboardEvent): boolean {
-  if (editableTarget(e.target)) return false
   // 页面上有真实文字选区（比如在报错 toast 里选了段文字）时让位给原生文本复制
   const sel = document.getSelection?.()
   if (sel && !sel.isCollapsed) return false
-  if (!e.clipboardData) return false
-  const payload = buildClipPayload()
-  if (!payload) return false
-  e.preventDefault()
-  e.clipboardData.setData('text/plain', JSON.stringify(payload))
-  announceCopied(payload)
-  return true
+  const data = e.clipboardData
+  if (!data) return false
+  // 离散动作闸门（输入框 / 对话框里让位、不收手势）：不让位时先落定开着的连续编辑，
+  // 复制到的是画面上看到的那一版（方向键微调那一段只动了预览、还没写进文档）
+  return (
+    runDiscreteAction('canvas', e.target, () => {
+      const payload = buildClipPayload()
+      if (!payload) return false
+      e.preventDefault()
+      data.setData('text/plain', JSON.stringify(payload))
+      announceCopied(payload)
+      return true
+    }) ?? false
+  )
 }
 
 /**
@@ -127,13 +124,19 @@ export function handleCopyEvent(e: ClipboardEvent): boolean {
  * 不是本工具的负载就不拦（返回 false），普通文本粘贴照旧。
  */
 export function handlePasteEvent(e: ClipboardEvent): boolean {
-  if (editableTarget(e.target)) return false
   const text = e.clipboardData?.getData('text/plain') ?? ''
   const payload = parsePayload(text)
   if (!payload) return false
-  e.preventDefault()
-  consumePayload(payload)
-  return true
+  // 桌面壳「编辑 → 粘贴」与预置 ⌘V 加速键直达这里，不经 keydown：先过离散动作闸门——
+  // 输入框 / 对话框里让位（不收手势），否则先落定开着的连续编辑，粘贴不并进方向键
+  // 微调那条撤销（Codex #671）
+  return (
+    runDiscreteAction('canvas', e.target, () => {
+      e.preventDefault()
+      consumePayload(payload)
+      return true
+    }) ?? false
+  )
 }
 
 export function parsePayload(text: string): ClipPayload | null {

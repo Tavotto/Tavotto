@@ -41,6 +41,14 @@ export function registerGesture(finish: () => void): () => void {
  *
  * 一切**离散动作**执行前必须先调它：对齐、分布、等宽等高、重置元素、
  * 清理孤儿 override、版本保存/恢复、写回历史恢复、undo/redo。
+ *
+ * **不经 keydown / 指针按下的入口必须走 `runDiscreteAction` 闸门，不许自己调它**：
+ * 系统菜单（`runMenuAction` 全部分支，加速键可能先于 keydown 到达、甚至替代它）、
+ * 原生剪贴板事件（`handleCopyEvent` / `handlePasteEvent`，桌面壳的预置「粘贴」直达）。
+ * 这些入口前后被 Codex #671 抓到三次同一形状——有的忘了收（⌘D、⌘V 并进方向键微调那条
+ * 撤销），有的收早了（焦点在属性输入框里、本该让位的 ⌘D 把连续编辑结掉）。闸门把「先判
+ * 让位、不让位才收、再执行」钉成一处；`hooks/discreteActionGate.test.tsx` 逐个 action id
+ * 与剪贴板事件查它。
  */
 export function finishActiveGesture(): void {
   if (finishing) return
@@ -88,4 +96,43 @@ export const hasActiveGesture = (): boolean => active != null
 export function resetGestureCoordinator(): void {
   active = null
   finishing = false
+}
+
+/**
+ * 焦点 / 事件目标在这里时画布动作让位（输入框、可编辑文本里的原生编辑，对话框自己的键）。
+ * 唯一一份判据：keydown 按 `e.target` 问它，系统菜单按 `document.activeElement` 问它，
+ * 剪贴板事件按 `e.target` 问它——菜单加速键可能先于 keydown 截获按键、预置「粘贴」
+ * 不经 keydown，几条路必须同一条判据，否则 ⌘D 在输入框里会被菜单变成「创建副本」。
+ */
+export function yieldsCanvasShortcuts(el: EventTarget | null): boolean {
+  if (!(el instanceof HTMLElement)) return false
+  return (
+    el.isContentEditable ||
+    /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) ||
+    el.closest('[role="dialog"]') != null
+  )
+}
+
+/**
+ * 离散动作的作用域：
+ *   - `canvas`：画布动作（复制对象、删除、缩放、撤销重做、剪贴板）——焦点在输入框 / 对话框里
+ *     时**让位**：不收手势、不执行（有 `onYield` 的交给它做原生那一份，如文本框里的撤销）；
+ *   - `app`：不看焦点的应用级动作（保存、打开对话框、对齐、切换侧栏……）——总是先收再执行。
+ */
+export type DiscreteScope = 'canvas' | 'app'
+
+/**
+ * 离散动作的唯一闸门：先按 `yieldsCanvasShortcuts` 判让位——让位就不收手势、只跑
+ * `onYield`；不让位才 `finishActiveGesture()`，再执行 `run`。回 `run` 的返回值，让位时回
+ * `onYield` 的返回值（没有则 undefined）。
+ */
+export function runDiscreteAction<T>(
+  scope: DiscreteScope,
+  target: EventTarget | null,
+  run: () => T,
+  onYield?: () => T,
+): T | undefined {
+  if (scope === 'canvas' && yieldsCanvasShortcuts(target)) return onYield?.()
+  finishActiveGesture()
+  return run()
 }

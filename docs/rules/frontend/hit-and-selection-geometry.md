@@ -137,7 +137,8 @@
     连发首延迟会长于阈值）；图内这一段只动预览平面、零渲染，收尾一次 `commit`。微调不占
     `interactionStore.kind`（占了 ⌘Z 会被 `undoRedoBlocked` 挡掉），靠 `registerGesture` 与
     `useKeyboard` 顶部的 `finishNudge` 在离散动作 / 别的键之前落定；系统菜单（加速键可能先于
-    keydown 到达）由 `runMenuAction` 入口统一 `finishActiveGesture()`。
+    keydown 到达）与原生 copy / paste 事件（桌面壳预置「粘贴」直达）一律经 `runDiscreteAction` 闸门：
+    焦点在输入框 / 对话框里让位、不收手势，否则先收再执行（看护 `hooks/discreteActionGate.test.tsx`）。
   * 按下指针时这一段在 window 捕获阶段收尾，**同一个事件**随后进命中层 / 选中框手柄时它们闭包里的
     obj / manifest 已经过期：`inFigureBasisStale` 为真（overrides 换了或权威不在画面上）就吞掉这一下，
     等这一版的权威挂上再起手——绝不拿旧基线起拖，否则松手会把刚提交的键盘位移盖掉（Codex #671）。
