@@ -87,8 +87,14 @@
     开销），只读、目标是文件才改；判据 `figcapture.remap_target` 父进程与 worker 共用一份。改指表进
     `ExecutionSpec.input_remap`（本机路径，**不进** `stable_payload`），`worker_argv` 只在非空时多
     `--input-remap <json>`，三条 spawn 路径都从 `inputremap.rules_for` 取。**探路调用（exists / glob /
-    listdir）与 C++ 读取器救不回**——载荷里 `via` 标 `probe` / `glob`，对话框如实说、不给按钮。
-    native 不改指。④ **代次 + 按项目的一把互斥锁**（ADR 0106 §五，`inputremap.project_mutex`，可重入）：改指表按项目一个代次（跨重启单调）。
+    listdir）与 C++ 读取器救不回**——载荷里 `via` 标 `probe` / `glob` / `native`，对话框不给选择器；
+    绝对路径常量的 `via` 同样按它所在的调用判（被 `exists()` 问的给了选择器就是「指认 → 重跑 → 又弹」
+    的死循环）。先判空再 `sys.exit` 的（`script_exited`）与「没出图」一样挂静态载荷。**C++ 读取器**
+    （ADR 0108 §一）：`missing_input_of` 说不出时 worker 给 `script_error` 多带 `extra.enoent`
+    （`figcapture.enoent_fact`：`filename`，或 h5py 那种只在消息里的 `named`，加 cwd），父进程
+    `inputremap.native_miss` 拿静态证据对——整串相等或按路径段是前缀、只认对上的那条，对不上就不判、
+    码一字不变；对上了码仍是 `script_error`，只挂 `via = native` 的载荷。这几档的出口是经确认改写脚本
+    （`script-edits.md`）。native 不改指。④ **代次 + 按项目的一把互斥锁**（ADR 0106 §五，`inputremap.project_mutex`，可重入）：改指表按项目一个代次（跨重启单调）。
     同一把锁里：改表与换代、`state()` / `snapshot()` 的「表 + 代次」、注册表整段读改写（`discover.register`）与登记标记、
     所有落地提交（渲染回包的核对、runtime 物化、试运行登记与重新登记、写回的备份 + 整个 replace 循环、导出作业
     经 `exportjob.run(commit_guard=)` 的整个发布循环）。对不上报 `input_remap_changed`（409 可重试）。**锁序：池锁 →

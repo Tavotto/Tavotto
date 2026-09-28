@@ -3,8 +3,11 @@
  * 变成一次指认——
  * ① 以 worker 说出来的那串为主、如实列出其余也找不到的；② 桌面上「找到这个文件…」/「选择所在
  *   文件夹…」各发一次请求（带脚本写的原串与用户选的位置），成功后关框并把「找不到数据」的面板重排；
- *   取消选择器什么都不发；③ 失败留在框里说原因；④ 探路（exists / glob）救不回来时不给按钮、说清怎么办；
- * ⑤ 浏览器模式拿不到本机路径：粘贴路径、按 `auto` 发；⑥ 「稍后」之后错误块里能再打开。
+ *   取消选择器什么都不发；③ 失败留在框里说原因；④ 探路（exists / glob）与 C++ 读取器救不回来：不记改指，
+ *   出口是经确认改写脚本（ADR 0108）——选位置 → 后端给的逐行 diff → 勾选才能「修改脚本」→ 提交后关框重排；
+ *   一处都改不了时列出逐条原因；提交失败回到选位置那一步说原因；
+ * ⑤ 浏览器模式拿不到本机路径：粘贴路径、按 `auto` 发；⑥ 「稍后」之后错误块里能再打开；
+ * ⑦ 设置里的改写备份：此刻的状态决定给哪个复原按钮（状态是后端现算的，前端只翻译）。
  */
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -15,6 +18,10 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   addInputRemap: vi.fn(),
   removeInputRemap: vi.fn(),
   fetchEngineEnvironment: vi.fn(),
+  previewInputPathEdit: vi.fn(),
+  commitScriptEdit: vi.fn(),
+  listScriptBackups: vi.fn(),
+  restoreScriptBackup: vi.fn(),
 }))
 vi.mock('@/lib/desktop', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/desktop')>()),
@@ -26,14 +33,20 @@ vi.mock('@/lib/desktop', async (importOriginal) => ({
 import {
   addInputRemap,
   ApiError,
+  commitScriptEdit,
   fetchEngineEnvironment,
+  listScriptBackups,
   MISSING_INPUT_CODE,
+  previewInputPathEdit,
+  restoreScriptBackup,
   type EngineEnvironment,
   type MissingInputOffer,
+  type ScriptBackup,
+  type ScriptEditPreview,
 } from '@/lib/api'
 import { isDesktop, pickAnyFile, pickDirectory } from '@/lib/desktop'
 import { MissingInputDialog } from '@/components/MissingInputDialog'
-import { InputRemapRows, MissingInputButton } from '@/components/WorkdirRow'
+import { InputRemapRows, MissingInputButton, ScriptBackupRows } from '@/components/WorkdirRow'
 import { i18n, t } from '@/i18n'
 import { useEnvStore } from '@/store/envStore'
 import { useRenderStore } from '@/store/renderStore'
@@ -45,6 +58,10 @@ declare global {
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
 const addMock = vi.mocked(addInputRemap)
+const previewMock = vi.mocked(previewInputPathEdit)
+const commitMock = vi.mocked(commitScriptEdit)
+const listMock = vi.mocked(listScriptBackups)
+const restoreMock = vi.mocked(restoreScriptBackup)
 const fileMock = vi.mocked(pickAnyFile)
 const dirMock = vi.mocked(pickDirectory)
 const desktopMock = vi.mocked(isDesktop)
@@ -83,6 +100,36 @@ const probeOnly = (): MissingInputOffer => ({
   others: [{ path: 'run-*.traj', absolute: false, via: 'glob' }],
 })
 
+const native = (): MissingInputOffer => ({
+  script: 'fig.py',
+  requested: '/Users/a/proj/run/x.h5',
+  absolute: true,
+  via: 'native',
+  others: [],
+})
+
+const preview = (): ScriptEditPreview => ({
+  ok: true,
+  token: 'tok-1',
+  script: 'fig.py',
+  script_abs: '/Volumes/Work/proj/fig.py',
+  rows: [{ line: 3, before: 'f = h5py.File("/Users/a/proj/run/x.h5")', after: 'f = h5py.File("/Volumes/B/run/x.h5")' }],
+  edits: [
+    {
+      line: 3,
+      before: '"/Users/a/proj/run/x.h5"',
+      after: '"/Volumes/B/run/x.h5"',
+      value_before: '/Users/a/proj/run/x.h5',
+      value_after: '/Volumes/B/run/x.h5',
+    },
+  ],
+  skipped: [{ line: 7, value: '/Users/a/proj/run/', reason: 'fstring' }],
+  encoding: 'utf-8',
+  backups: { project: '/Volumes/Work/proj/tavottofile/script-backups/fig.py', mirror: '/data/script_backups/p/fig.py' },
+  git: { tracked: true, dirty: false },
+  checksums: ['SHA256SUMS'],
+})
+
 let host: HTMLDivElement
 let root: Root
 async function render(node: React.ReactNode) {
@@ -100,12 +147,23 @@ const byTestId = (id: string) => document.querySelector(`[data-testid="${id}"]`)
 
 beforeEach(() => {
   addMock.mockReset()
+  previewMock.mockReset()
+  commitMock.mockReset()
+  listMock.mockReset()
+  restoreMock.mockReset()
   fileMock.mockReset()
   dirMock.mockReset()
   desktopMock.mockReturnValue(true)
   // 作废之后会刷新一次环境：这里不关心它的内容，失败就是保持原样
   vi.mocked(fetchEngineEnvironment).mockRejectedValue(new Error('offline'))
-  useEnvStore.setState({ env: env(), missingInput: null, inputRemapSeen: null })
+  useEnvStore.setState({
+    env: env(),
+    missingInput: null,
+    inputRemapSeen: null,
+    rewritePreview: null,
+    rewriteSkipped: [],
+    rewriteError: null,
+  })
 })
 afterEach(async () => {
   await act(async () => root.unmount())
@@ -209,14 +267,114 @@ describe('MissingInputDialog', () => {
     )
   })
 
-  it('只剩探路（glob）救不回来：说清怎么办，不给点了也没用的按钮', async () => {
+  it('只剩探路（glob）：不记改指，只给「选择所在文件夹」，选了之后去预览改写', async () => {
+    dirMock.mockResolvedValue('/Volumes/B/runs')
+    previewMock.mockResolvedValue(preview())
     await render(<MissingInputDialog />)
     await act(async () => useEnvStore.getState().requestMissingInput(probeOnly()))
     expect(document.querySelector('[data-missing-input-path]')!.textContent).toBe('run-*.traj')
     expect(text()).toContain(en('missingInputProbe'))
-    expect(byTestId('missing-input-pick-file')).toBeNull()
-    expect(byTestId('missing-input-pick-dir')).toBeNull()
+    expect(text()).toContain(en('missingInputRewriteHint'))
+    expect(byTestId('missing-input-pick-file'), 'glob 没有「那个文件」可找').toBeNull()
     expect(text()).not.toContain(en('missingInputReadOnly'))
+    await act(async () => byTestId('missing-input-pick-dir')!.click())
+    await act(async () => {})
+    expect(addMock, '探路救不回来，不许记改指').not.toHaveBeenCalled()
+    expect(previewMock).toHaveBeenCalledWith('fig.py', 'run-*.traj', '/Volumes/B/runs', 'dir')
+    expect(document.querySelector('[data-dialog="missing-input-rewrite"]')).not.toBeNull()
+  })
+
+  it('C++ 读取器：说清是读取器直接打开的；确认页只渲染后端给的行，勾选之后才能「修改脚本」', async () => {
+    fileMock.mockResolvedValue('/Volumes/B/run/x.h5')
+    previewMock.mockResolvedValue(preview())
+    commitMock.mockResolvedValue({ ok: true, script: 'fig.py', backup: {} as never })
+    useRenderStore.setState({
+      byKey: {
+        k: {
+          fileId: 'fig.png', status: 'error', code: 'script_error', missingInput: native(),
+          lastPatches: '[]', wantPatches: '[]', stale: false,
+        } as never,
+      },
+      tracked: {},
+    })
+    const gen = useEnvStore.getState().inputRemapGeneration
+    await render(<MissingInputDialog />)
+    await act(async () => useEnvStore.getState().requestMissingInput(native()))
+    expect(text()).toContain(en('missingInputNative'))
+    await act(async () => byTestId('missing-input-pick-file')!.click())
+    await act(async () => {})
+    expect(previewMock).toHaveBeenCalledWith('fig.py', '/Users/a/proj/run/x.h5', '/Volumes/B/run/x.h5', 'file')
+    const confirmPage = document.querySelector('[data-dialog="missing-input-rewrite"]')!
+    expect(confirmPage.querySelector('[data-rewrite-warning]')!.textContent).toContain('/Volumes/Work/proj/fig.py')
+    const rows = confirmPage.querySelector('[data-rewrite-rows]')!.textContent!
+    expect(rows).toContain('/Users/a/proj/run/x.h5')
+    expect(rows).toContain('/Volumes/B/run/x.h5')
+    expect(confirmPage.querySelector('[data-rewrite-skipped]')!.textContent).toContain(en('rewriteSkip.fstring'))
+    expect(text()).toContain(en('rewriteChecksums', { files: 'SHA256SUMS' }))
+    expect(text()).toContain(en('rewriteGitClean'))
+    const apply = byTestId('missing-input-rewrite-apply')!
+    expect(apply.disabled, '没勾选不能改').toBe(true)
+    expect(document.activeElement === apply, '「修改脚本」不能是默认焦点').toBe(false)
+    await act(async () => byTestId('missing-input-rewrite-confirm')!.click())
+    expect(apply.disabled).toBe(false)
+    await act(async () => apply.click())
+    await act(async () => {})
+    expect(commitMock).toHaveBeenCalledWith('tok-1')
+    expect(dialog()).toBeNull()
+    expect(document.querySelector('[data-dialog="missing-input-rewrite"]')).toBeNull()
+    expect(useRenderStore.getState().byKey.k.stale, 'C++ 读取器那条 script_error 没重新排上').toBe(true)
+    expect(useEnvStore.getState().inputRemapGeneration).toBe(gen + 1)
+  })
+
+  it('「返回」丢掉这份预览、不提交', async () => {
+    fileMock.mockResolvedValue('/Volumes/B/run/x.h5')
+    previewMock.mockResolvedValue(preview())
+    await render(<MissingInputDialog />)
+    await act(async () => useEnvStore.getState().requestMissingInput(native()))
+    await act(async () => byTestId('missing-input-pick-file')!.click())
+    await act(async () => {})
+    const back = [...document.querySelectorAll('button')].find(
+      (b) => b.textContent?.trim() === en('rewriteBack'),
+    )!
+    await act(async () => back.click())
+    expect(document.querySelector('[data-dialog="missing-input-rewrite"]')).toBeNull()
+    expect(dialog()).not.toBeNull()
+    expect(commitMock).not.toHaveBeenCalled()
+  })
+
+  it('一处都改不了：留在框里，逐条说出为什么', async () => {
+    fileMock.mockResolvedValue('/Volumes/B/run/x.h5')
+    previewMock.mockRejectedValue(
+      new ApiError('x', 409, {
+        code: 'script_edit_nothing_to_change',
+        params: { skipped: [{ line: 4, value: '/Users/a/proj/run/', reason: 'fstring' }] },
+      }),
+    )
+    await render(<MissingInputDialog />)
+    await act(async () => useEnvStore.getState().requestMissingInput(native()))
+    await act(async () => byTestId('missing-input-pick-file')!.click())
+    await act(async () => {})
+    expect(dialog()).not.toBeNull()
+    expect(text()).toContain(t('backend.script_edit_nothing_to_change', { ns: 'errors' }))
+    expect(document.querySelector('[data-rewrite-skipped]')!.textContent).toContain(en('rewriteSkip.fstring'))
+  })
+
+  it('提交失败（预览之后脚本被改过）：回到选位置那一步说原因', async () => {
+    fileMock.mockResolvedValue('/Volumes/B/run/x.h5')
+    previewMock.mockResolvedValue(preview())
+    commitMock.mockRejectedValue(
+      new ApiError('x', 409, { code: 'script_changed_since_preview', params: { script: 'fig.py' } }),
+    )
+    await render(<MissingInputDialog />)
+    await act(async () => useEnvStore.getState().requestMissingInput(native()))
+    await act(async () => byTestId('missing-input-pick-file')!.click())
+    await act(async () => {})
+    await act(async () => byTestId('missing-input-rewrite-confirm')!.click())
+    await act(async () => byTestId('missing-input-rewrite-apply')!.click())
+    await act(async () => {})
+    expect(document.querySelector('[data-dialog="missing-input-rewrite"]')).toBeNull()
+    expect(dialog()).not.toBeNull()
+    expect(text()).toContain(t('backend.script_changed_since_preview', { ns: 'errors', script: 'fig.py' }))
   })
 
   it('浏览器模式：粘贴路径后才可点，按 auto 发', async () => {
@@ -263,6 +421,29 @@ describe('MissingInputDialog', () => {
     expect(useEnvStore.getState().missingInput).toBeNull()
   })
 
+  it('设置里的改写备份：此刻的状态决定给哪个复原按钮', async () => {
+    const backups: ScriptBackup[] = [
+      { id: 'fig.py/0929_1', kind: 'input_path', script: 'fig.py', created: 1, pristine: true, state: 'current' },
+      { id: 'b.py/0929_2', kind: 'input_path', script: 'b.py', created: 2, pristine: true, state: 'changed' },
+      { id: 'c.py/0929_3', kind: 'input_path', script: 'c.py', created: 3, pristine: true, state: 'before' },
+      { id: 'c.py/0929_4', kind: 'restore', script: 'c.py', created: 4, pristine: false, state: 'current' },
+    ]
+    listMock.mockResolvedValue({ ok: true, backups })
+    restoreMock.mockResolvedValue({ ok: true, script: 'b.py' })
+    await render(<ScriptBackupRows />)
+    await act(async () => {})
+    const row = (id: string) => document.querySelector(`[data-script-backup="${id}"]`)!
+    const buttons = (id: string) => [...row(id).querySelectorAll('button')].map((b) => b.textContent?.trim())
+    expect(buttons('fig.py/0929_1')).toEqual([en('scriptBackupRestore')])
+    expect(buttons('b.py/0929_2')).toEqual([en('scriptBackupUndoEdits'), en('scriptBackupRestoreFull')])
+    expect(buttons('c.py/0929_3')).toEqual([])
+    expect(document.querySelector('[data-script-backup="c.py/0929_4"]'), '复原前的快照不列').toBeNull()
+    await act(async () => (row('b.py/0929_2').querySelector('button') as HTMLButtonElement).click())
+    await act(async () => {})
+    expect(restoreMock).toHaveBeenCalledWith('b.py/0929_2', 'undo_edits')
+    expect(listMock, '复原之后重读列表').toHaveBeenCalledTimes(2)
+  })
+
   it('英文界面：对话框与设置行没有中文', async () => {
     await i18n.changeLanguage('en-US')
     useEnvStore.setState({
@@ -282,6 +463,13 @@ describe('MissingInputDialog', () => {
     )
     await act(async () => useEnvStore.getState().requestMissingInput(relative()))
     expect(text()).toContain(en('inputRemapTargetGone'))
+    expect(text()).not.toMatch(/[一-鿿]/)
+    // 确认页（路径与代码行是用户自己的，本来就不含中文）
+    await act(async () => useEnvStore.getState().dismissMissingInput())
+    await act(async () => useEnvStore.getState().requestMissingInput(native()))
+    await act(async () => useEnvStore.setState({ rewritePreview: preview() }))
+    expect(document.querySelector('[data-dialog="missing-input-rewrite"]')).not.toBeNull()
+    expect(text()).toContain(en('rewriteConfirm'))
     expect(text()).not.toMatch(/[一-鿿]/)
   })
 })

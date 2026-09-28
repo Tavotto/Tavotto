@@ -2,7 +2,12 @@ import { create } from 'zustand'
 import { t } from '@/i18n'
 import {
   addInputRemap,
+  ApiError,
   backendErrorText,
+  commitScriptEdit,
+  previewInputPathEdit,
+  type ScriptEditPreview,
+  type ScriptEditSkipped,
   type DependencyPreparationOffer,
   type InputRemapRule,
   type MissingInputOffer,
@@ -106,6 +111,24 @@ interface EnvState {
   /** 设置里删一条改指规则；回 null 或一句失败原文 */
   forgetInputRemap: (rule: InputRemapRule) => Promise<string | null>
   /**
+   * 经确认改写脚本里的数据路径（ADR 0108）：改指救不回的条目（exists / glob / C++ 读取器）。
+   * `rewritePreview` 非空时对话框显示确认页（逐行 diff、备份位置、勾选）；`rewriteSkipped` 是
+   * 「一处都改不了」时后端逐条说的原因（对话框列出来，回到「请把数据放回原处」）。
+   */
+  rewritePreview: ScriptEditPreview | null
+  rewriteSkipped: ScriptEditSkipped[]
+  /** 提交失败的原因（令牌单次，确认页随之作废）：回到选位置那一步时显示 */
+  rewriteError: string | null
+  /** 用户指认了数据现在的位置：请后端生成改写预览（脚本一个字节都不改）。回 null 或失败原文 */
+  previewRewrite: (entry: string, chosen: string, kind: 'file' | 'dir' | 'auto') => Promise<string | null>
+  /** 确认页的「返回」：丢掉这份预览（令牌过十分钟自己失效） */
+  cancelRewrite: () => void
+  /** 用户勾选确认后提交：两处备份 → 替换 → 关框、重跑因「找不到数据」失败的面板与脚本 */
+  commitRewrite: () => Promise<string | null>
+  /** 设置里的备份列表要重读：每次改写 / 复原加一 */
+  scriptBackupGeneration: number
+  bumpScriptBackups: () => void
+  /**
    * 跑前的门刚刚**自动改用**了用户自己的环境（ADR 0079，SSE `engine.environment_adopted`）：
    * 通知轨上说一句「改用了哪个」并给「改回」。只是说出口，不是一次授权——改用已经发生了。
    */
@@ -193,6 +216,10 @@ export const useEnvStore = create<EnvState>((set, get) => ({
   inputRemapGeneration: 0,
   probeResultsGeneration: 0,
   inputRemapSeen: null,
+  rewritePreview: null,
+  rewriteSkipped: [],
+  rewriteError: null,
+  scriptBackupGeneration: 0,
 
   requestWorkdirConfirmation: (payload, projectId) => {
     if (projectId !== undefined && projectId !== currentProjectId()) return
@@ -205,7 +232,59 @@ export const useEnvStore = create<EnvState>((set, get) => ({
     if (get().missingInput) return
     set({ missingInput: offer })
   },
-  dismissMissingInput: () => set({ missingInput: null }),
+  dismissMissingInput: () =>
+    set({ missingInput: null, rewritePreview: null, rewriteSkipped: [], rewriteError: null }),
+  previewRewrite: async (entry, chosen, kind) => {
+    const epoch = projectEpoch
+    const offer = get().missingInput
+    if (!offer) return null
+    set({ rewriteSkipped: [], rewriteError: null })
+    try {
+      const preview = await previewInputPathEdit(offer.script, entry, chosen, kind)
+      if (epoch !== projectEpoch || get().missingInput !== offer) return null
+      set({ rewritePreview: preview })
+      return null
+    } catch (e) {
+      if (epoch !== projectEpoch) return null
+      // 一处都改不了：后端逐条说了为什么（f-string 拼的、在字典键里……），对话框列出来
+      const skipped = e instanceof ApiError ? (e.body?.params as { skipped?: unknown })?.skipped : null
+      if (Array.isArray(skipped)) set({ rewriteSkipped: skipped as ScriptEditSkipped[] })
+      return backendErrorText(e)
+    }
+  },
+  cancelRewrite: () => set({ rewritePreview: null }),
+  commitRewrite: async () => {
+    const epoch = projectEpoch
+    const preview = get().rewritePreview
+    if (!preview) return null
+    try {
+      const res = await commitScriptEdit(preview.token)
+      if (epoch !== projectEpoch) return null
+      set((s) => ({
+        missingInput: null,
+        rewritePreview: null,
+        rewriteSkipped: [],
+        rewriteError: null,
+        scriptBackupGeneration: s.scriptBackupGeneration + 1,
+      }))
+      // 后端已经关掉会话、发了 panel.file_changed；因「找不到数据」失败的面板与素材库脚本也各自重排
+      const { useRenderStore } = await import('@/store/renderStore')
+      if (epoch !== projectEpoch) return null
+      useRenderStore.getState().retryEnvironmentFailures()
+      set((s) => ({ inputRemapGeneration: s.inputRemapGeneration + 1 }))
+      useUiStore
+        .getState()
+        .setStatus(msg('engine.rewriteDone', { script: res.script }, 'errors'))
+      return null
+    } catch (e) {
+      if (epoch !== projectEpoch) return null
+      // 令牌失效 / 预览之后脚本或数据又变了：确认页作废（令牌单次），回到选位置那一步说原因
+      const text = backendErrorText(e)
+      set({ rewritePreview: null, rewriteError: text })
+      return text
+    }
+  },
+  bumpScriptBackups: () => set((s) => ({ scriptBackupGeneration: s.scriptBackupGeneration + 1 })),
   pointAtData: async (requested, chosen, kind) => {
     const epoch = projectEpoch
     try {
@@ -413,6 +492,9 @@ export const useEnvStore = create<EnvState>((set, get) => ({
         workdirConfirmation: null,
         dependencyPreparation: null,
         missingInput: null,
+        rewritePreview: null,
+        rewriteSkipped: [],
+        rewriteError: null,
         adoptedEnvironment: null,
       })
     else
@@ -421,6 +503,9 @@ export const useEnvStore = create<EnvState>((set, get) => ({
         workdirConfirmation: null,
         dependencyPreparation: null,
         missingInput: null,
+        rewritePreview: null,
+        rewriteSkipped: [],
+        rewriteError: null,
         adoptedEnvironment: null,
       })
     void get().refresh()

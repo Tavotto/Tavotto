@@ -56,6 +56,10 @@ MAX_OTHERS = 20
 VIA_OPEN = "open"  # 经四个打开入口读：改指救得回来
 VIA_PROBE = "probe"  # exists / listdir / stat / import_file：改指救不回来（ADR 0106 §四）
 VIA_GLOB = "glob"  # glob 模式：同上，而且不是一个文件
+#: C++ 读取器（h5py / netCDF4 / xarray）的 ENOENT 对上了脚本里的一串常量（ADR 0108 §一）：同样救不回
+VIA_NATIVE = "native"
+#: 改指表救不回、只能改写脚本里那串常量的几档（ADR 0108 §八：对话框只给它们「改写脚本」）
+VIAS_NEED_REWRITE = (VIA_PROBE, VIA_GLOB, VIA_NATIVE)
 
 
 class RemapError(ValueError):
@@ -322,6 +326,111 @@ def derive(requested: str, chosen: str, *, chosen_is_dir: bool) -> dict:
         raise RemapError(
             ERROR_NOT_FOUND_IN_DIR, "推出的规则落不到这个文件上", name=body[-1], path=chosen
         )
+    return rule
+
+
+def _has_glob(text: str) -> bool:
+    return any(ch in text for ch in "*?[")
+
+
+def _looks_like_file(last: str) -> bool:
+    return "." in last.strip(".")
+
+
+def glob_has_match(pattern: str) -> bool:
+    """模式至少匹配一个（`**` 才递归）；见到一个就停。"""
+    try:
+        return next(glob.iglob(pattern, recursive="**" in pattern), None) is not None
+    except (OSError, ValueError):
+        return False
+
+
+def location_exists(path: str) -> bool:
+    """改写后的目标在不在：glob 至少匹配一个，其余 `os.path.exists`（文件或文件夹都算）。"""
+    if _has_glob(path):
+        return glob_has_match(path)
+    try:
+        return os.path.exists(path)
+    except (OSError, ValueError):
+        return False
+
+
+def _derive_dir(requested: str, chosen: str) -> dict:
+    """条目是个**文件夹**（`listdir("data")` / `exists("data/runs")`），用户指认了文件夹 `chosen`。
+
+    从最长的后缀试起：`chosen/<后缀>` 是文件夹就定规则；都不是 → `chosen` 本身就是那个文件夹
+    （改了名）。条目最后一段像文件名（带扩展名）时不走这里——文件夹顶替不了文件。
+    """
+    parsed = figcapture.remap_parts(requested)
+    if parsed is None or not parsed[1] or parsed[1][-1] == "..":
+        raise RemapError(ERROR_REQUESTED_INVALID, f"说不清脚本要的路径: {requested!r}")
+    absolute, rparts = parsed
+    body = rparts[1:] if absolute else rparts
+    if not body or _looks_like_file(body[-1]):
+        raise RemapError(
+            ERROR_NOT_FOUND_IN_DIR,
+            f"这个文件夹里没有 {body[-1] if body else requested}",
+            name=body[-1] if body else requested,
+            path=chosen,
+        )
+    for k in range(len(body), 0, -1):
+        if os.path.isdir(os.path.join(chosen, *body[-k:])):
+            return {
+                "kind": figcapture.REMAP_PREFIX,
+                "from": _join(rparts[: len(rparts) - k]),
+                "to": chosen,
+            }
+    return {"kind": figcapture.REMAP_PREFIX, "from": _join(rparts), "to": chosen}
+
+
+def derive_location(requested: str, chosen: str, *, chosen_is_dir: bool) -> dict:
+    """`derive` 的扩展（ADR 0108 §三）：条目还可能是文件夹或 glob 模式——改写脚本要用。
+
+    * glob（`data/*.csv`）：取不含通配符的目录前缀当「文件夹条目」推（指认的是其中一个文件时取
+      它所在的文件夹），推完要求新模式**至少匹配一个**；
+    * 文件夹：先按文件推（文件夹里找得到那个文件就是它），找不到再按文件夹推（`_derive_dir`）；
+    * 其余就是 `derive`。
+    推出的规则一律自检：`remap_target(..., whole=True)` 落到一个存在的位置上。
+    """
+    if not isinstance(chosen, str) or not os.path.isabs(chosen):
+        raise RemapError(ERROR_CHOSEN_INVALID, "指认的位置必须是本机的绝对路径", path=str(chosen))
+    chosen = os.path.abspath(chosen)
+    if _has_glob(requested):
+        parsed = figcapture.remap_parts(requested)
+        if parsed is None or not parsed[1]:
+            raise RemapError(ERROR_REQUESTED_INVALID, f"说不清脚本要的路径: {requested!r}")
+        absolute, parts = parsed
+        i = next(n for n, p in enumerate(parts) if _has_glob(p))
+        head = parts[:i]
+        if absolute and len(head) < 2:
+            raise RemapError(ERROR_REQUESTED_INVALID, f"说不清脚本要的路径: {requested!r}")
+        folder = chosen if chosen_is_dir else os.path.dirname(chosen)
+        if not os.path.isdir(folder):
+            raise RemapError(ERROR_CHOSEN_INVALID, f"不是文件夹: {folder}", path=folder)
+        if head:
+            rule = _derive_dir(_join(head), folder)
+        else:  # `glob("*.csv")`：相对 cwd 的模式——「相对路径都到这里找」
+            rule = {"kind": figcapture.REMAP_PREFIX, "from": "", "to": folder}
+        target = figcapture.remap_target([rule], requested)
+        if target is None or not glob_has_match(target):
+            name = "/".join(parts[i:])
+            raise RemapError(
+                ERROR_NOT_FOUND_IN_DIR, f"这个文件夹里没有 {name}", name=name, path=folder
+            )
+        return rule
+    if not chosen_is_dir:
+        return derive(requested, chosen, chosen_is_dir=False)
+    if not os.path.isdir(chosen):
+        raise RemapError(ERROR_CHOSEN_INVALID, f"不是文件夹: {chosen}", path=chosen)
+    try:
+        return derive(requested, chosen, chosen_is_dir=True)
+    except RemapError as exc:
+        if exc.code != ERROR_NOT_FOUND_IN_DIR:
+            raise
+        rule = _derive_dir(requested, chosen)
+    target = figcapture.remap_target([rule], requested, whole=True)
+    if target is None or not os.path.isdir(target):  # pragma: no cover — `_derive_dir` 已逐支保证
+        raise RemapError(ERROR_NOT_FOUND_IN_DIR, "推出的规则落不到这个文件夹上", path=chosen)
     return rule
 
 
@@ -689,18 +798,23 @@ def static_missing(
 
 
 def payload_for(
-    script: str, root: str | os.PathLike, missing: dict | None, *, rules: list[dict] | None = None
+    script: str,
+    root: str | os.PathLike,
+    missing: dict | None,
+    *,
+    rules: list[dict] | None = None,
+    via: str = VIA_OPEN,
 ) -> dict | None:
     """弹窗载荷。`missing` 是 worker 报的 `missing_input` 事实（没有就是「没出图」路径，只剩静态的）。
 
     `{script, requested, absolute, via, others: [{path, absolute, via}]}`——`requested` 为 None 时
-    界面以 `others` 的第一条为主。两样都没有回 None（没什么可问的）。
+    界面以 `others` 的第一条为主。两样都没有回 None（没什么可问的）。`via` 是主条目的：worker 报的
+    `missing_input` 是 `open`；C++ 读取器对上的（`native_miss`）是 `native`。
     """
     rules = rules if rules is not None else rules_for(root)
     others = static_missing(script, root, rules)
     requested = None
     absolute = False
-    via = VIA_OPEN
     if isinstance(missing, dict) and isinstance(missing.get("requested"), str):
         requested = missing["requested"]
         absolute = bool(missing.get("absolute"))
@@ -717,4 +831,58 @@ def payload_for(
         "absolute": absolute,
         "via": via,
         "others": others,
+    }
+
+
+def _as_written(filename: str, cwd: str) -> str:
+    """异常里的路径 → 脚本写法那一侧：cwd 之内的绝对路径换回相对那段（xarray 先 abspath 再报）。"""
+    if cwd and os.path.isabs(filename):
+        try:
+            rel = os.path.relpath(filename, cwd)
+        except ValueError:  # Windows 跨盘
+            return filename
+        if not rel.startswith(".."):
+            return rel.replace("\\", "/")
+    return filename
+
+
+def native_miss(
+    script: str, root: str | os.PathLike, enoent: dict | None, *, rules: list[dict] | None = None
+) -> dict | None:
+    """`script_error` 里的 ENOENT 事实（`figcapture.enoent_fact`）→ `missing_input` 事实，对不上回 None。
+
+    ADR 0108 §一：C++ 读取器不经四个打开入口，worker 说不出是哪串常量；这里拿脚本的静态证据对。
+    候选只来自 `static_missing`（脚本里以常量出现、此刻哪儿都找不到的）。异常里的路径（`filename`，
+    没有就是消息里引号括着的 `named`）按脚本写法那一侧（cwd 之内换回相对）与候选按路径段比：
+    整串相等优先，其次候选是它的前缀（目录常量拼出来的）、路径段最长的那条。对不上任何一条——
+    不判，调用方照旧是 `script_error`（判不出就别判）。
+    """
+    if not isinstance(enoent, dict):
+        return None
+    raw = enoent.get("filename") or enoent.get("named")
+    if not isinstance(raw, str) or not raw:
+        return None
+    cwd = enoent.get("cwd") if isinstance(enoent.get("cwd"), str) else ""
+    written = _as_written(raw, cwd)
+    parsed = figcapture.remap_parts(written)
+    if parsed is None or not parsed[1]:
+        return None
+    rules = rules if rules is not None else rules_for(root)
+    best: tuple[int, str] | None = None
+    for cand in static_missing(script, root, rules):
+        cparsed = figcapture.remap_parts(cand["path"])
+        if cparsed is None or cparsed[0] != parsed[0] or not cparsed[1]:
+            continue
+        n = len(cparsed[1])
+        if parsed[1][:n] != cparsed[1]:
+            continue
+        if best is None or n > best[0]:
+            best = (n, cand["path"])
+    if best is None:
+        return None
+    return {
+        "requested": written,
+        "absolute": bool(parsed[0]),
+        "cwd": cwd,
+        "literal": best[1],
     }

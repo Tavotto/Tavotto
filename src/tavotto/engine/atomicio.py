@@ -230,8 +230,12 @@ def dumps_json(obj: Any, *, indent: int | None = None) -> bytes:
     return text.encode("utf-8")
 
 
-def write_bytes(path: Path, data: bytes) -> None:
-    """原子写字节。见模块文档的六步序列。"""
+def write_bytes(path: Path, data: bytes, *, mode: int | None = None) -> None:
+    """原子写字节。见模块文档的六步序列。
+
+    `mode`：替换前把临时文件的权限位设成它（替换用户的脚本要保留原来的可执行位——临时文件按
+    umask 建出来，直接 replace 会把 0755 变成 0644；ADR 0108 §五）。设不上就整次失败、原件未动。
+    """
     path = Path(path)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -247,6 +251,13 @@ def write_bytes(path: Path, data: bytes) -> None:
     except OSError as exc:
         _discard(tmp)
         raise AtomicWriteError("write_failed", f"写入失败：{exc}", path) from exc
+
+    if mode is not None:
+        try:
+            os.chmod(tmp, mode)
+        except OSError as exc:
+            _discard(tmp)
+            raise AtomicWriteError("write_failed", f"权限位设不上：{exc}", path) from exc
 
     try:
         os.replace(tmp, path)

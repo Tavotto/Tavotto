@@ -116,6 +116,28 @@
       ]
     },
     {
+      "id": "assets.missing-input-rewrite",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "改指救不回的数据路径（exists / glob / C++ 读取器）：预览逐行改动、勾选确认后改写脚本里的那串，先备份、可复原",
+        "en-US": "For data paths a read remap can't fix (exists / glob / C++ readers): preview the line changes, confirm, and rewrite that string in the script — backed up first and restorable"
+      },
+      "entry": "「找不到脚本要读的数据」对话框里 exists / glob / C++ 读取器的条目：选择数据位置 →「预览要改的地方」；设置 →「环境诊断」里的改写备份与复原",
+      "e2e": [
+        {
+          "spec": "missing-input-rewrite.spec.ts",
+          "title": "探路找不到数据：预览逐行改动 → 勾选确认 → 改写脚本、留备份 → 重跑按那份数据出图"
+        }
+      ],
+      "desktop_manual": [
+        "写一个先 os.path.exists(\"/某个不存在的绝对路径/x.csv\") 判空再 sys.exit 的脚本，拖进 Tavotto：弹出「找不到脚本要读的数据」，只有改写的出口",
+        "点「找到这个文件…」选中数据：出现「确认修改脚本」，写着完整路径与逐行改动；不勾选「我已查看」时「修改脚本」是灰的",
+        "勾选后点「修改脚本」：框关闭、自动重跑、图画出来；项目 tavottofile/script-backups/ 里有原脚本",
+        "设置 →「环境诊断」里点「恢复原脚本」：脚本逐字节回到改写前"
+      ]
+    },
+    {
       "id": "canvas.place-and-render",
       "status": "active",
       "platform": "both",
