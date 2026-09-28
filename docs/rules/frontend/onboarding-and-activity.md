@@ -112,11 +112,16 @@
   「跳过此步」上——教程被推到第 2 步、图却没打开，合并组里连踢三个无关 PR。
   **滑行中卡片 `pointer-events: none`**（`transitionend` 复位，兜底 `DURATION.fast + 50` ms，卸载即清）：
   `shouldGlide` 只护锚点，路上压过的其它目标靠这一条——移动中的浮层不接点击。
+  **锚点被 DOM 插删挤动时当场让开（2026-09-29）**：`shouldGlide` 判的是起滑那一刻的锚点，之后锚点自己
+  挪进路径、或把停着的卡片压在身下，它管不着。素材库重取时网格上方冒出「正在检查新文件…」一行，整排卡片
+  下移 24 px（大于 10 px 间距）；那一行是组件 state、不经过任何订阅的 store，只剩 300 ms 兜底重测——
+  windows-exe-smoke 上 PR #711 / #717 连红。层在 `document.body` 上挂 `MutationObserver`（childList + subtree），
+  在插删节点的那个微任务里 `flushSync(refresh)`，赶在下一帧之前重新落位。
 * 看护：`onboardingStore.test.ts` / `activity.test.ts` / `selectionStore.test.ts` /
   `lib/onboarding/{position,flow,tutorial,hints}.test.ts` / `components/onboarding/onboardingLayer.test.tsx` /
   `components/home/HomeView.test.tsx`（两版判据、示例入口不改状态）/ `e2e/home.spec.ts` /
   `e2e/tutorial.spec.ts`（完整走完 / 刷新恢复 + Esc + 更多菜单 + axe / 重新开始 / 启动恢复晚到时拖动 /
-  落位不扫过锚点（动画放慢 20 倍逐帧量渲染框）/ 切项目暂停继续）。
+  落位不扫过锚点（动画放慢 20 倍逐帧量渲染框）/ 锚点被刷新行挤动也不压上去 / 切项目暂停继续）。
   jsdom 里所有盒子都是 0×0：层的用例要给锚点 `getBoundingClientRect` 假矩形；用假计时器时 flush 要
   `advanceTimersByTimeAsync`，别等真的 setTimeout。
 
