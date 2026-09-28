@@ -9,7 +9,21 @@ Tavotto 在所有宿主里是**同一份完整包、同一个 MCP 服务、同�
 
 ## 工具缺失时（本会话里没有 `tavotto_health`）
 
-按用户**当前所在的宿主**只给那一家的步骤，给完就停，不在旧会话里假装工具可用：
+按用户**当前所在的宿主**只给那一家的步骤，给完就停，不在旧会话里假装工具可用。
+
+**Claude Code（终端 / IDE 扩展 / 桌面 Code 标签页）优先走插件**，不用下面的三步。在终端里
+一条一条运行：
+
+```text
+claude plugin marketplace add Tavotto/Tavotto --sparse .claude-plugin
+claude plugin install tavotto@tavotto
+```
+
+引擎没装过的再加 `pipx install "tavotto[worker]"`。装完新开 Claude Code 会话（或在已开的会话里
+`/reload-plugins`），用 `/mcp` 确认 `plugin:tavotto:tavotto` 已连接。插件版的授权目录就是
+Claude Code 启动时所在的目录（`/add-dir` 加的也算）。
+
+其余宿主（以及不想装插件的 Claude Code 用户）：
 
 1. 下载 GitHub Releases 里的 `codex-plugin-<版本>.zip`，解压到一个会长期保留的目录
    （名字带 codex 是历史原因，内容对所有宿主都一样）。
@@ -40,7 +54,8 @@ Tavotto 在所有宿主里是**同一份完整包、同一个 MCP 服务、同�
 | 宿主 | 让已开的会话拿到工具 | Skill 入口 |
 | --- | --- | --- |
 | Cursor | 在 MCP 设置里确认已连接后，新开 Agent 对话 | 复制整个 `tavotto-figure/` 到 `.cursor/skills/` |
-| Claude Code（CLI） | 重开会话，用 `/mcp` 确认 connected（项目 `.mcp.json` 第一次要批准） | 复制到 `.claude/skills/` |
+| Claude Code（CLI，插件版） | 新开会话或 `/reload-plugins`，用 `/mcp` 确认 `plugin:tavotto:tavotto` connected | 插件自带，不用复制 |
+| Claude Code（CLI，配置版） | 重开会话，用 `/mcp` 确认 connected（项目 `.mcp.json` 第一次要批准） | 复制到 `.claude/skills/` |
 | Claude Desktop（聊天） | **完全退出**再打开 | 没有原生入口：`--emit instructions` 放进项目说明 |
 | VS Code（Copilot Agent） | MCP: List Servers → 启动 tavotto；在 Configure Tools 里勾选 | 复制到 `.github/skills/` |
 | Trae | MCP 列表确认已连接，**并把 tavotto 加进所用智能体** | `--emit instructions` 放进规则或智能体提示词 |

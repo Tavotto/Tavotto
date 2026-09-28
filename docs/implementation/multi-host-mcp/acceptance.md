@@ -37,7 +37,11 @@ JSON 的 profile **各自**生成的配置原样起 server、握手、列工具�
 | `trae` | Trae / TraeCode 本地 IDE | config_tested | protocol_tested | instruction_fallback: config_tested | not_run | not_run | 登记与「智能体已启用」分开记；CN / 国际版、IDE / SOLO 均未跑 |
 | `vscode` | VS Code GitHub Copilot Agent | config_tested | protocol_tested | native_skill: not_run | not_run | not_run | `chat.mcp.apps.enabled` 与组织策略只记录、不替用户开 |
 
-子行（已测的其他 surface 在这里加行，不替代上面的主行）：暂无。
+子行（已测的其他 surface 在这里加行，不替代上面的主行）：
+
+| id | 宿主 / surface | 配置 | 工具完整流程 | Skill | 内嵌画布 | 桌面交接 | 备注 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `claude-code` · 插件 | Claude Code CLI 2.1.283，macOS，`.claude-plugin/`（ADR 0103） | config_tested | local_smoke | plugin_skill: not_run | not_applicable | not_run | 工作副本 `--plugin-dir` + 隔离 `CLAUDE_CONFIG_DIR` 下的本地 git-subdir 安装；**不是发行件**，不算 host_verified。证据在 ADR 0103 |
 
 每条变成 `host_verified` 时，在下面补一段证据：宿主品牌、surface / harness、CN / 国际版（适用时）、
 客户端版本、OS、是否本地会话、完整包版本与 `content_digest`、安装方式、配置来源（生成命令）、
