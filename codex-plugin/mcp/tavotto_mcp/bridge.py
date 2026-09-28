@@ -61,6 +61,7 @@ from .roots import (
     CODE_AMBIGUOUS_ROOT,
     CODE_NO_WORKSPACE_ROOT,
     CODE_PATH_OUT_OF_SCOPE,
+    CODE_ROOT_TOO_BROAD,
     CODE_ROOTS_ERROR,
     CODE_ROOTS_NO_RESPONSE,
     ROOTS_ENV,
@@ -162,7 +163,7 @@ def _no_roots_error() -> "BridgeError":
     diagnostics = root_diagnostics()
     confirmation = diagnostics.get("workspace_confirmation") or {}
     failure = workspace_failure()
-    if failure.code in {CODE_ROOTS_NO_RESPONSE, CODE_ROOTS_ERROR}:
+    if failure.code in {CODE_ROOTS_NO_RESPONSE, CODE_ROOTS_ERROR, CODE_ROOT_TOO_BROAD}:
         detail = "；".join(diagnostics.get("warnings") or ())
     elif failure.code == CODE_NO_WORKSPACE_ROOT:
         detail = (
