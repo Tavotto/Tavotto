@@ -223,23 +223,48 @@ export function useFlip(container: RefObject<HTMLElement | null>, attr = 'data-f
       const id = el.getAttribute(attr)
       if (!id) continue
       const r = el.getBoundingClientRect()
-      next.set(id, { left: r.left - ox, top: r.top - oy })
+      // 量的是**布局位置**：上一段滑动还没播完时，getBoundingClientRect 里含着那段动画的
+      // translate。此前把它当成位置存下、又拿它和上一次比，一次与位置无关的重渲染（点一下
+      // 页签激活它）就会从半路再起一段反向的滑动——双击刚改完名的邻居页签时，第二下落在
+      // 挪走之后的空白上，改名框出不来（WebKit，e2e/canvas-tabs-scroll.spec.ts）
+      const t = runningTranslate(el)
+      const left = r.left - t.x - ox
+      const top = r.top - t.y - oy
+      next.set(id, { left, top })
       if (reduced) continue
       const old = prev.current.get(id)
       if (!old) continue // 新来的项没有「原来的位置」，直接就位
-      const dx = old.left - (r.left - ox)
-      const dy = old.top - (r.top - oy)
-      if (Math.abs(dx) < 1 && Math.abs(dy) < 1) continue
+      // 布局没变：正在播的那段（如果有）照常播完，不打断、不重起
+      if (Math.abs(old.left - left) < 1 && Math.abs(old.top - top) < 1) continue
       // jsdom 没有 Web Animations API（真实浏览器全都有）。不判这一下，
       // 任何渲染到这类列表的单测都会在这里 TypeError
       if (typeof el.animate !== 'function') continue
-      el.animate(
-        [{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'none' }],
-        { duration: DURATION.base, easing: EASE_POP },
+      // 起点 = 它此刻在屏幕上的位置（旧布局 + 半路的 translate），从那里接着滑到新位置
+      const dx = old.left - left + t.x
+      const dy = old.top - top + t.y
+      // 只停自己上一段滑动：元素身上的颜色过渡之类不归这里管
+      flipAnimations.get(el)?.cancel()
+      flipAnimations.set(
+        el,
+        el.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'none' }], {
+          duration: DURATION.base,
+          easing: EASE_POP,
+        }),
       )
     }
     prev.current = next
   })
+}
+
+/** useFlip 在每个元素上正在播的那一段；新的一段开始前停掉旧的 */
+const flipAnimations = new WeakMap<Element, Animation>()
+
+/** 元素此刻 computed transform 里的平移量（WAAPI 动画也反映在这里）；没有或量不了就是 0 */
+function runningTranslate(el: HTMLElement): { x: number; y: number } {
+  const tf = getComputedStyle(el).transform
+  if (!tf || tf === 'none' || typeof DOMMatrixReadOnly === 'undefined') return { x: 0, y: 0 }
+  const m = new DOMMatrixReadOnly(tf)
+  return { x: m.e, y: m.f }
 }
 
 /**

@@ -77,7 +77,7 @@ describe('画布标签条', () => {
     const [first, second] = tabs()
     expect(first.getAttribute('aria-selected')).toBe('true')
     // 钉的是**选中 / 未选中这两套词**取自 `tabClass`，不是把它整串抄一遍：
-    // 共同的那几类（h-full 之流）会被 tab 自己的 h-9 合并掉，抄整串等于钉一件不成立的事
+    // 共同的那几类会被 tab 自己的类合并掉，抄整串等于钉一件不成立的事
     const only = (a: string, b: string) => a.split(' ').filter((c) => !b.split(' ').includes(c))
     for (const cls of only(tabClass(true), tabClass(false))) {
       expect(first.className, '选中态的词来自 tabClass').toContain(cls)
@@ -89,9 +89,16 @@ describe('画布标签条', () => {
     expect(second.className, '未选中不加粗').not.toContain('font-semibold')
   })
 
-  it('条高 36：与右栏页签同档（此前 32）', () => {
+  it('条高 36：与右栏页签同档（此前 32）；页签填满条的内容盒，不另写 36', () => {
     mount()
-    for (const t of tabs()) expect(t.className).toContain('h-9')
+    const strip = host.querySelector('[data-canvas-tabs]') as HTMLElement
+    expect(strip.parentElement!.className, '条本身 36').toContain('h-9')
+    // 条带 border-b，内容盒只剩 35：页签再写 h-9 就纵向多出 1px，横滚条的 overflow-y 被算成
+    // auto，WebKit 画出一根竖滚动条。像素由 e2e/canvas-tabs-scroll.spec.ts 在真浏览器里量
+    for (const t of tabs()) {
+      expect(t.className).toContain('h-full')
+      expect(t.className).not.toContain('h-9')
+    }
   })
 
   it('下划线挂在文字盒上，不是整个 tab——可关闭的那个不会把线延到 × 底下', () => {
@@ -127,6 +134,82 @@ describe('画布标签条', () => {
       }
     } finally {
       proto.getBoundingClientRect = real
+    }
+  })
+
+  it('当前页签认稳定的 data 钩子：每个页签带自己的 id，只有当前那一个带 data-active', () => {
+    mount()
+    const hooked = () =>
+      tabs().map((t) => [t.getAttribute('data-canvas-tab'), t.hasAttribute('data-active')])
+    expect(hooked()).toEqual([
+      ['c1', true],
+      ['c2', false],
+    ])
+    act(() => useDocumentStore.setState({ activeCanvasId: 'c2' }))
+    expect(hooked()).toEqual([
+      ['c1', false],
+      ['c2', true],
+    ])
+  })
+
+  it('当前页签的位置或宽度、条宽变了就再滚进视野；无关的重渲染不把用户横滑走的条拽回来', () => {
+    // jsdom 没有布局：按 data-canvas-tab 桩出页签的 offsetLeft / offsetWidth，条宽 120，
+    // 条的 scrollLeft 用一个普通字段顶上（jsdom 的 setter 什么都不做）。挂载前就桩好：
+    // 首次渲染量到的就是这套几何
+    const geo: Record<string, [number, number]> = { c1: [0, 80], c2: [100, 80] }
+    let scrollLeft = 0
+    let stripWidth = 120
+    const isStrip = (el: Element) => el.hasAttribute('data-canvas-tabs')
+    const of = (el: Element, i: 0 | 1) => geo[el.getAttribute('data-canvas-tab') ?? '']?.[i] ?? 0
+    const stubs: [object, string, PropertyDescriptor][] = [
+      [HTMLElement.prototype, 'offsetLeft', { get(this: Element) { return of(this, 0) } }],
+      [HTMLElement.prototype, 'offsetWidth', { get(this: Element) { return of(this, 1) } }],
+      [Element.prototype, 'clientWidth', { get(this: Element) { return isStrip(this) ? stripWidth : 0 } }],
+      [
+        Element.prototype,
+        'scrollLeft',
+        {
+          get(this: Element) { return isStrip(this) ? scrollLeft : 0 },
+          set(this: Element, v: number) { if (isStrip(this)) scrollLeft = v },
+        },
+      ],
+    ]
+    const real = stubs.map(([o, k]) => Object.getOwnPropertyDescriptor(o, k)!)
+    for (const [o, k, d] of stubs) Object.defineProperty(o, k, { configurable: true, ...d })
+    // 窗口 / 抽屉改宽度不经过 React：只有 ResizeObserver 知道。jsdom 没有它，桩一个手动触发的
+    const resized: (() => void)[] = []
+    const realRO = globalThis.ResizeObserver
+    globalThis.ResizeObserver = class {
+      constructor(cb: () => void) {
+        resized.push(cb)
+      }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    } as unknown as typeof ResizeObserver
+    try {
+      mount()
+      expect(scrollLeft).toBe(0)
+
+      // 用户横滑到第二个页签那里；随后一次与页签几何无关的重渲染（改了图 → dirty）
+      scrollLeft = 100
+      act(() => useDocumentStore.setState({ dirty: true }))
+      expect(scrollLeft, '当前页签没动：不许把条拽回来').toBe(100)
+
+      // 当前页签改了名、变宽了（activeId 与 openTabs 都没变）：它在条外，要滚回来
+      geo.c1 = [0, 96]
+      act(() =>
+        useDocumentStore.setState({ doc: { ...useDocumentStore.getState().doc, name: '更长的名字' } }),
+      )
+      expect(scrollLeft, '当前页签变了几何：滚进视野').toBe(0)
+
+      // 条变窄（没有重渲染）：当前页签右半截出界，ResizeObserver 里要滚到它的右缘
+      stripWidth = 60
+      act(() => resized.forEach((cb) => cb()))
+      expect(scrollLeft, '条变窄：滚到当前页签右缘').toBe(96 - 60)
+    } finally {
+      stubs.forEach(([o, k], i) => Object.defineProperty(o, k, real[i]))
+      globalThis.ResizeObserver = realRO
     }
   })
 })

@@ -531,6 +531,17 @@
   outline-offset: 1px;
 }
 
+/* 可滚但不画滚动条：只给画布页签条这种「一行、36px 高」的横滚区（2026-09-27 用户拍板）。
+   全局的 ::-webkit-scrollbar 是 10px 自定义条，WebKit 里它占掉条内 10px、页签被压到 25px。
+   两行都要：scrollbar-width 给 Firefox / 新版 WebKit，伪元素给 WKWebView 与旧 Chromium。
+   触控板横滑、Shift+滚轮照常滚——只是不画出来。 */
+@utility scrollbar-none {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
 /* AI 进行中的状态文字：ink-3 的字上一道 ink 的亮带扫过（背景裁成字形）。宽 200%、亮带占 30%，
    关键帧从 125% 扫到 -25%，两头都完全离开文字。只给「正在进行」的那一行，不给正文。
    reduced-motion：退回一行静止的 ink-3 文字（不能留一道停在半途的亮带）。 */
