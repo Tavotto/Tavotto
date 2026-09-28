@@ -18,6 +18,15 @@ interface ArrangeState {
   setAlignRef: (ref: AlignRef) => void
 }
 
+/**
+ * 这一次对齐实际用哪个参照：**单选只有「画布」说得通**（对齐到选区 / 主选 = 对齐到
+ * 自己，原地不动还白占一条历史），多选才用存着的那一档。属性页的单选行
+ * （`AlignToCanvasRow`）写死的就是 `page`；系统菜单这类不分单选多选的入口走这里。
+ */
+export function alignRefFor(count: number): AlignRef {
+  return count > 1 ? useArrangeStore.getState().alignRef : 'page'
+}
+
 export const useArrangeStore = create<ArrangeState>((set) => ({
   alignRef: 'selection',
   setAlignRef: (alignRef) => set((s) => (s.alignRef === alignRef ? s : { alignRef })),

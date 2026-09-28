@@ -89,12 +89,49 @@ def test_interpolation_placeholders_match_across_languages():
 # 与界面说同一件事
 # --------------------------------------------------------------------------- #
 
-# Rust 字段 → 前端 (命名空间, 点分 key)。菜单项后面的省略号不参与比较。
+# Rust 字段 → 前端 (命名空间, 点分 key)。菜单项后面的省略号不参与比较；
+# 大小写也不比——macOS 菜单是 Title Case（Zoom In），界面是句首大写（Zoom in），
+# 那是各自平台的写法，不是两个词。
 SHARED_WITH_UI = {
     "edit_undo": ("workspace", "topbar.undo"),
     "edit_redo": ("workspace", "topbar.redo"),
     "file_export": ("workspace", "topbar.export"),
+    "edit_duplicate": ("workspace", "quickEdit.duplicate"),
+    "edit_delete": ("common", "actions.delete"),
+    "align_left": ("inspector", "alignMode.left"),
+    "align_hcenter": ("inspector", "alignMode.hcenter"),
+    "align_right": ("inspector", "alignMode.right"),
+    "align_top": ("inspector", "alignMode.top"),
+    "align_vcenter": ("inspector", "alignMode.vcenter"),
+    "align_bottom": ("inspector", "alignMode.bottom"),
+    "align_hdist": ("inspector", "alignMode.hdist"),
+    "align_vdist": ("inspector", "alignMode.vdist"),
+    "view_zoom_in": ("workspace", "topbar.zoomIn"),
+    "view_zoom_out": ("workspace", "topbar.zoomOut"),
+    "view_fit": ("workspace", "topbar.fitCanvas"),
+    "help_shortcuts": ("workspace", "topbar.shortcutHelp"),
+    "help_diagnostics": ("dialogs", "settings.about.exportBundle"),
 }
+
+
+def test_menu_uses_the_four_ui_nouns():
+    """
+    界面名词只有四个：项目 / 排版 / 画布 / 项目包。「文档」「画布文件」是旧词——
+    菜单文案在 Rust 里，前端的名词检查扫不到这里，所以在这里单独看住。
+    `help_docs`（使用文档）指的是帮助手册，不是那个旧词，豁免。
+    """
+    old = {
+        k: v
+        for k, v in _table("ZH").items()
+        if k != "help_docs" and ("文档" in v or "画布文件" in v)
+    }
+    assert not old, f"菜单里还有旧名词：{old}"
+    old_en = {
+        k: v
+        for k, v in _table("EN").items()
+        if k != "help_docs" and re.search(r"\bdocument\b|canvas file", v, re.I)
+    }
+    assert not old_en, f"英文菜单里还有旧名词：{old_en}"
 
 
 def _dig(node: dict, dotted: str) -> str:
@@ -110,7 +147,9 @@ def test_menu_and_ui_agree_on_shared_actions(locale: str, table: str):
     for field, (ns, key) in SHARED_WITH_UI.items():
         menu = rs[field].rstrip("…").strip()
         ui = _dig(_web(locale, ns), key).rstrip("…").strip()
-        assert menu == ui, f"{locale} 的「{field}」菜单写「{menu}」、界面写「{ui}」"
+        assert menu.casefold() == ui.casefold(), (
+            f"{locale} 的「{field}」菜单写「{menu}」、界面写「{ui}」"
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -182,13 +221,42 @@ def test_set_menu_locale_is_declared_in_all_three_places():
     )
 
 
-def test_language_switch_does_not_touch_accelerators():
+# 菜单项 id / 加速键 / 两种语言下逐项相同：看护在壳里
+# （`src-tauri/src/main.rs` 的 `menu_spec` 单测，量的是真正挂上去的项，不是源码里
+# 出现过的字符串）；与前端的 id 同源对各自比 `tests/golden/menu_actions.json`。
+
+
+def test_shell_repo_url_comes_from_the_brand_constant():
     """
-    切语言只换显示文案：菜单项 id 与加速键必须只出现一次定义。
-    改坏了的表现是「切成英文之后 ⌘Z 没反应」——用户不会往语言上联想。
+    壳的 `REPO_URL` 由 `build.rs` 编译期从 `web/src/lib/brand.ts` 读出注入，壳里不许再有
+    手写的仓库地址；`brand.ts` 与 `engine/brand.py` 是同一个地址。
     """
     main_rs = (TAURI / "src" / "main.rs").read_text(encoding="utf-8")
-    for accel in ("CmdOrCtrl+Z", "CmdOrCtrl+Shift+Z", "CmdOrCtrl+O", "CmdOrCtrl+E"):
-        assert main_rs.count(f'accelerator("{accel}")') == 1, f"{accel} 被写了不止一次"
-    for menu_id in ("menu-undo", "menu-redo", "menu-open-project", "menu-export"):
-        assert main_rs.count(f'with_id("{menu_id}"') == 1, f"{menu_id} 被写了不止一次"
+    assert 'const REPO_URL: &str = env!("TAVOTTO_REPO_URL");' in main_rs
+    assert "github.com" not in main_rs, "main.rs 里又手写了仓库地址"
+    build_rs = (TAURI / "build.rs").read_text(encoding="utf-8")
+    assert '"../web/src/lib/brand.ts"' in build_rs and "TAVOTTO_REPO_URL" in build_rs
+    brand_ts = (ROOT / "web" / "src" / "lib" / "brand.ts").read_text(encoding="utf-8")
+    (ts,) = re.findall(r"^export const REPO_URL = '([^']+)'$", brand_ts, re.M)
+    from tavotto.engine import brand
+
+    assert ts == brand.REPO_URL
+
+
+def test_ui_sources_never_handwrite_the_repo_url():
+    """
+    界面与壳里的仓库地址一律取品牌常量（`brand.ts` 及从它派生的常量、壳里 build.rs 注入
+    的 `REPO_URL`）。这里扫的是**会进界面的源码**：web/src（用例除外）与 src-tauri/src；
+    发行配置（pyproject、tauri.conf.json、Codex 插件清单等）读不到 brand，不在这里。
+    """
+    brand = ROOT / "web" / "src" / "lib" / "brand.ts"
+    roots = [ROOT / "web" / "src", TAURI / "src"]
+    hits = []
+    for root in roots:
+        for f in root.rglob("*"):
+            if f.suffix not in {".ts", ".tsx", ".rs"} or f == brand or ".test." in f.name:
+                continue
+            for i, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
+                if "github.com/Tavotto" in line:
+                    hits.append(f"{f.relative_to(ROOT)}:{i}")
+    assert not hits, f"手写了仓库地址：{hits}"

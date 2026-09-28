@@ -1,5 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
+import { PRIVACY_DOC_URL } from '@/lib/brand'
 import { useTelemetryStore } from '@/store/telemetryStore'
 import { Button } from './ui/Button'
 import { Dialog } from './ui/Dialog'
@@ -71,7 +72,7 @@ export function TelemetryConsentDialog() {
         <p className="text-ink-3">
           {tt('later')}{' '}
           <a
-            href="https://github.com/Tavotto/Tavotto/blob/main/docs/privacy.md"
+            href={PRIVACY_DOC_URL}
             target="_blank"
             rel="noreferrer"
             className="text-accent hover:underline"

@@ -58,19 +58,57 @@ export async function bootstrapDesktopSession(): Promise<BootstrapResult> {
   }
 }
 
-/** 系统菜单动作 id（与 src-tauri/src/main.rs 的 MenuItem id 严格同源） */
-export type MenuAction = 'menu-open-project' | 'menu-export' | 'menu-undo' | 'menu-redo'
+/**
+ * 系统菜单转发过来的动作 id——与 `src-tauri/src/main.rs` 里 `menu-*` 的
+ * MenuItem id **严格同源**（`tests/test_desktop_i18n.py` 两侧比集合）。
+ * 帮助菜单的两条链接（`help-*`）由壳自己打开，不在这里。
+ */
+export const MENU_ACTIONS = [
+  'menu-settings',
+  'menu-check-updates',
+  'menu-open-project',
+  'menu-save',
+  'menu-save-layout',
+  'menu-export',
+  'menu-undo',
+  'menu-redo',
+  'menu-duplicate',
+  'menu-delete',
+  'menu-align-left',
+  'menu-align-hcenter',
+  'menu-align-right',
+  'menu-align-top',
+  'menu-align-vcenter',
+  'menu-align-bottom',
+  'menu-align-hdist',
+  'menu-align-vdist',
+  'menu-zoom-in',
+  'menu-zoom-out',
+  'menu-zoom-actual',
+  'menu-zoom-fit',
+  'menu-toggle-left',
+  'menu-toggle-right',
+  'menu-shortcut-help',
+  'menu-diagnostics',
+] as const
+export type MenuAction = (typeof MENU_ACTIONS)[number]
+
+const isMenuAction = (id: string): id is MenuAction =>
+  (MENU_ACTIONS as readonly string[]).includes(id)
 
 /**
  * 订阅系统菜单事件。返回取消函数；浏览器模式下是空订阅。
  * 菜单只转发动作，状态与行为全部复用现有 store action——绝不复制文档状态。
+ * 认不出的 id 丢掉（新壳配旧前端时不该落进 switch 的哪个分支）。
  */
 export async function onDesktopMenu(
   handler: (action: MenuAction) => void,
 ): Promise<() => void> {
   if (!isDesktop()) return () => {}
   const { listen } = await import('@tauri-apps/api/event')
-  return listen<string>('tavotto:menu', (e) => handler(e.payload as MenuAction))
+  return listen<string>('tavotto:menu', (e) => {
+    if (isMenuAction(e.payload)) handler(e.payload)
+  })
 }
 
 /** 桌面交接事件的载荷（与 src-tauri/src/main.rs 的 OpenRequest 严格同源） */
