@@ -462,6 +462,10 @@
         {
           "spec": "asset-library.spec.ts",
           "title": "完整链：保存 → 关闭 → 重开 → 重放 → 预检 → 导出 PDF/PNG"
+        },
+        {
+          "spec": "layout-session.spec.ts",
+          "title": "新开一个空存储的浏览器 context：恢复上次的排版"
         }
       ],
       "desktop_manual": [

@@ -17,6 +17,7 @@ import {
 } from '@/lib/api'
 import {
   documentHasContent,
+  loadProjectDocument,
   readProjectDocument,
   rememberProjectDocument,
   type ProjectDocumentRef,
@@ -305,7 +306,9 @@ export const useProjectStore = create<ProjectState>((set, get) => {
     // 「这个项目上次开着哪份」要在换代**之前**读：换代会先换上一份空白文档，
     // 而那一档记的是「最近一份有内容的文档」，空白不会盖掉它——但读在前面
     // 才不依赖这条细节。
-    const last = status.id ? readProjectDocument(status.id) : null
+    // 读的是**后端**的记录（#715 PR-B）：桌面版换了端口就是换了 origin，本机那份缓存是空的；
+    // 后端没有这组端点（404）时 `loadProjectDocument` 退回本机缓存，即改造前的行为。
+    const last = status.id ? await loadProjectDocument(status.id) : null
     await resetForNewProject()
     // 空白文档已经就位、`currentDoc` 已经指向它；要换成别的文档就在这里换，
     // 必须赶在 `phase: 'open'` 之前（见接口注释）
@@ -517,6 +520,8 @@ setNoProjectHandler(() => useProjectStore.getState().dropProject())
  *
  * 只记有内容的文档（理由见 `projectDocs.ts`）；已经记着同一份 (id, 名字) 就
  * 不再写——文档 store 每次拖动都会变，不能每帧写一次 localStorage。
+ * `rememberProjectDocument` 同时推给后端（#715 PR-B，后端为准），所以「同值不写」也挡住了
+ * 每帧一个 PUT。
  */
 useDocumentStore.subscribe((s, prev) => {
   if (
