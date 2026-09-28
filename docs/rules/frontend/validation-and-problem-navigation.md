@@ -80,8 +80,10 @@ preflight.runSpec()      规则求值（两份求值器，golden vectors 对齐�
   `uiStore.fixing` 把所有修复入口置灰（同一时刻只跑一轮，第二轮回 `busy`）。修复结果
   是非被动 toast，后台渲染通知以 `{ passive: true }` 发、顶不掉它（`uiStore.statusPassive`）。
   错误 toast 不自动消失，所以它可以带**主人**（`setStatus(…, { owner })`）：`render.failed` 挂
-  `renderFailureOwner(pj, 文件 id)`，同一项目同一文件随后的 `render.done` 经 `clearStatusOwnedBy` 撤掉它
-  （修好依赖后自动重渲染成功，红色「无法渲染」不再挂着）；此刻挂着的是别的图 / 别的类别的提示就不动。
+  `renderFailureOwner(pj, 文件 id)`，同一项目同一文件随后的 `render.done` 经 `settleRenderFailureToast` 撤掉它
+  （修好依赖后自动重渲染成功，红色「无法渲染」不再挂着）——前提是**这个文件没有一个变体还坏着 / 还在渲染**
+  （同文件不同覆盖的面板各自成败；SSE 的 done 与变体自己的响应谁先到不定，两处各问一次）；此刻挂着的是
+  别的图 / 别的类别的提示就不动。
   看护 `web/src/hooks/useServerEvents.test.ts`、`web/src/store/statusPassive.test.ts`。
 * **就绪度不混进问题清单**：面板底部只放一条通往接入状态的链接。
 * **面板的呈现层在 `lib/problemList.ts`（2026-09-06，审计 T09）**，纯函数，

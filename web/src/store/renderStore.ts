@@ -187,6 +187,28 @@ function prepareSvg(text: string): string {
   })
 }
 
+/**
+ * 「无法渲染」这条 toast 的主人：**哪个项目的哪个文件**。SSE 的 `render.failed` 挂它
+ * （`uiStore.setStatus` 的 `owner`），`settleRenderFailureToast` 撤它。文件 id 是渲染事件自己的键
+ * （后端按 `rel_id` 发 started / done / failed 三件套），toast 上显示的短名不唯一（`a/Fig1.pdf` 与
+ * `b/Fig1.pdf` 都叫 Fig1），不能拿它认主人。
+ */
+export const renderFailureOwner = (pj: string | null | undefined, id: string) =>
+  `render.failed:${pj ?? ''}:${id}`
+
+/**
+ * 同一文件的「无法渲染」toast 只在**这个文件没有一个变体还坏着 / 还在渲染**时撤（Codex #710 P2）：
+ * 两个面板引用同一文件、覆盖不同，各自的请求独立成败——一个变体画成了不说明另一个好了。
+ * SSE 的 `render.done` 与这个变体自己的响应谁先到不定，所以两处各来问一次：先到的那次看见
+ * 本变体还在 `rendering` 就不撤，后到的那次再撤。
+ */
+export function settleRenderFailureToast(pj: string | null | undefined, fileId: string) {
+  const unsettled = Object.values(useRenderStore.getState().byKey).some(
+    (r) => r.fileId === fileId && (r.status === 'error' || r.status === 'rendering'),
+  )
+  if (!unsettled) useUiStore.getState().clearStatusOwnedBy(renderFailureOwner(pj, fileId))
+}
+
 /** 诊断用：这次渲染是怎么被触发的。**与渲染行为无关**，只进 trace */
 export type RenderRequestPolicy = 'immediate' | 'defer' | 'none' | 'sync'
 
@@ -671,6 +693,8 @@ export const useRenderStore = create<RenderState>((set, get) => ({
           // （外层 finally）才是让它收敛的那一次。
           perfRenderApplied(perfHandle)
           get().evictSvgBudget()
+          // 这个变体画成了：若这个文件已没有变体还坏着，撤掉它先前那条「无法渲染」
+          settleRenderFailureToast(projectAtStart, fileId)
           recordDiagnosticEvent({
             type: 'render.success',
             file: fileHash(fileId),

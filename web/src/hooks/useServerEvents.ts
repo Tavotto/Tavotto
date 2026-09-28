@@ -16,7 +16,11 @@ import { recoverAfterReconnect, refreshAssetsAndSync } from '@/store/liveSync'
 import { useNativeSessionStore } from '@/store/nativeSessionStore'
 import { useProjectStore } from '@/store/projectStore'
 import { currentProjectId, onCurrentProjectChange } from '@/lib/session'
-import { useRenderStore } from '@/store/renderStore'
+import {
+  renderFailureOwner,
+  settleRenderFailureToast,
+  useRenderStore,
+} from '@/store/renderStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useScriptLibraryStore } from '@/store/scriptLibraryStore'
 import { useScriptInputStore } from '@/store/scriptInputStore'
@@ -34,14 +38,7 @@ const costHint = (cost: string): string =>
     ? t(`status.coldHint.${cost}`, { ns: 'workspace' })
     : ''
 
-/**
- * 「无法渲染」这条 toast 的主人：**哪个项目的哪个文件**。`render.failed` 挂它，同一个文件随后的
- * `render.done` 撤它（`uiStore.clearStatusOwnedBy`）。文件 id 是渲染事件自己的键（后端按
- * `rel_id` 发 started / done / failed 三件套），toast 上显示的短名不唯一（`a/Fig1.pdf` 与
- * `b/Fig1.pdf` 都叫 Fig1），不能拿它认主人。
- */
-export const renderFailureOwner = (pj: string | undefined, id: string) =>
-  `render.failed:${pj ?? ''}:${id}`
+export { renderFailureOwner }
 
 /**
  * 单条事件的处理。**导出是为了让用例驱动同一份判断**——与 `useEngineSync`
@@ -115,9 +112,9 @@ export function handleServerEvent(ev: ServerEvent) {
     }
     case 'render.done':
       render.noteBuilding(ev.id, null)
-      // 同一张图先前那条「无法渲染」已经不成立了（修好依赖后自动重渲染成功）：撤掉它。
-      // 只认同一个主人——此刻挂着的是别的图 / 别的类别的提示就不动
-      useUiStore.getState().clearStatusOwnedBy(renderFailureOwner(ev.pj, ev.id))
+      // 同一张图先前那条「无法渲染」可能已经不成立了（修好依赖后自动重渲染成功）：这个文件没有
+      // 一个变体还坏着 / 还在渲染时撤掉它。只认同一个主人——挂着的是别的图 / 别的类别的提示就不动
+      settleRenderFailureToast(ev.pj, ev.id)
       // 被动通知：不顶掉用户刚触发的那句结果（「已修复 N 项」之类，见 uiStore.statusPassive）
       setStatus(msg('status.renderDone', { name: short(ev.id) }, 'workspace'), 'info', {
         passive: true,
