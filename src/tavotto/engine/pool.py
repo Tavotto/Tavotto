@@ -2936,14 +2936,15 @@ def _adopt_system_interpreter(
     与项目 venv 那一层同一套机制：`remember(automatic=True, trigger=missing_dependency)` → 登记体检结论 →
     作废旧会话，调用方重取一次会话就是新解释器；防循环的是调用方已经登记过的 `mark_attempted`。
 
-    五道判据，缺一不采用：
+    六道判据，缺一不采用：
 
     1. 开关没关（`projectenv.auto_adoption_off()`，与跑前的门同一个）；
     2. 项目里**没有** venv（`project_env_not_found`）：有 venv 而它缺包 / 不合格时，那是用户为这个项目备的环境，
        缺包该装进它（ADR 0079 §四），不绕过它去换一个项目外的解释器；
     3. 候选合格（`projectenv.auto_adoptable_system_candidate`：第一个健康者、支持档、那个包确实 import 得到）；
     4. 此刻的解释器是机器替用户挑的（`machine_chosen_interpreter`；项目记录那一半在写入锁里再判一次）；
-    5. 那个环境此刻没有正在被改动（`is_mutating`：体检读的可能是装了一半的 site-packages）。
+    5. 那个环境此刻没有正在被改动（`is_mutating`：体检读的可能是装了一半的 site-packages）；
+    6. 现场再体检一次仍合格（`projectenv.reprobe_system_candidate`：体检表可能是进程内缓存里的旧观测）。
     """
     if projectenv.auto_adoption_off():
         return None
@@ -2954,6 +2955,12 @@ def _adopt_system_interpreter(
         return None
     python = found["python"]
     if is_mutating(python):
+        return None
+    # 体检表可能来自进程内缓存（不带环境指纹）：采用之前对选中的这一个现场再体检一次，仍合格才采用
+    found = projectenv.auto_adoptable_system_candidate(
+        [projectenv.reprobe_system_candidate(found, module)]
+    )
+    if found is None:
         return None
     if not projectenv.remember(
         figures_dir,

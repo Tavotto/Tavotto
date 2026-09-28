@@ -587,20 +587,38 @@ def probe_system_candidates(
             health = probe_environment(python, module)
             with _lock:
                 _system_probe_cache[key] = health
-        entry = {
-            "python": python,
-            "source": source,
-            "ok": bool(health.get("ok")),
-            "code": health.get("code", ""),
-            "support": health.get("support", ""),
-            "python_version": health.get("python_version", ""),
-            "matplotlib_version": health.get("matplotlib_version") or "",
-            "requested_module_ok": health.get("requested_module_ok"),
-        }
+        entry = _system_entry(python, source, health)
         out.append(entry)
         if entry["ok"]:
             break
     return out
+
+
+def _system_entry(python: str, source: str, health: dict) -> dict:
+    """体检结果 → 体检表里的一条（`probe_system_candidates` 与 `reprobe_system_candidate` 同一个形状）。"""
+    return {
+        "python": python,
+        "source": source,
+        "ok": bool(health.get("ok")),
+        "code": health.get("code", ""),
+        "support": health.get("support", ""),
+        "python_version": health.get("python_version", ""),
+        "matplotlib_version": health.get("matplotlib_version") or "",
+        "requested_module_ok": health.get("requested_module_ok"),
+    }
+
+
+def reprobe_system_candidate(entry: dict, module: str) -> dict:
+    """对体检表里的一条**现场再体检一次**（绕过并刷新进程内缓存）。
+
+    `_system_probe_cache` 按 (解释器, 包) 缓存、不带环境指纹：同一进程里早先体检过、之后那个环境的包被卸掉 /
+    换掉，表里就是一条过期的「健康」。无提示采用之前用它复核（Codex #713）——采用之后要把用户脚本再跑一遍，
+    拿旧观测替用户换环境，结果多半是同一个缺包再报一次，还白跑了一遍脚本。"""
+    python = str(entry.get("python") or "")
+    health = probe_environment(python, module)
+    with _lock:
+        _system_probe_cache[(_executable_key(python), module)] = health
+    return _system_entry(python, str(entry.get("source") or ""), health)
 
 
 def healthy_system_candidate(system: list[dict] | None) -> dict | None:
@@ -825,9 +843,6 @@ def remember(
 
 
 def _remember(figures_dir, python, automatic, trigger, module, health) -> bool:
-    key = _key(figures_dir)
-    with _lock:
-        _resolved[key] = python
     root = Path(figures_dir)
     payload = {"automatic": bool(automatic), "trigger": trigger or "", "module": module or ""}
     # 把体检当时的事实一并存下来：诊断包要回答「为什么用了这个 Python」，
@@ -847,6 +862,10 @@ def _remember(figures_dir, python, automatic, trigger, module, health) -> bool:
     except OSError as exc:  # 配置目录只读/满：记不住不该让渲染失败
         LOG.warning("项目环境决策未能持久化: %s", exc)
         return False
+    # 写进去之后才进进程缓存：`resolve_worker_python()` 读持久化的记录，`remembered()`（环境状态 API 经
+    # `state()` 读它）若先于持久化更新，写失败时两边就说的不是同一个解释器（Codex #713）
+    with _lock:
+        _resolved[_key(figures_dir)] = python
     return True
 
 

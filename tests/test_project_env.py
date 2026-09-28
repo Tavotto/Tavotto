@@ -1368,8 +1368,29 @@ def test_an_adoption_that_cannot_be_persisted_is_not_reported_as_adopted(tmp_pat
         outcome = engine_pool.try_project_env(str(project), "fig.py", "adjustText")
         assert outcome.get("ok") is not True and "adopted" not in outcome, outcome
         assert invalidated == []
+        # 进程缓存也不许先于持久化更新：环境状态 API（`state()` → `remembered()`）与解释器权威说同一件事
+        assert projectenv.remembered(project) is None
     finally:
         projectenv.forget(project)
+
+
+def test_a_stale_cached_probe_is_rechecked_before_silent_adoption(tmp_path, monkeypatch):
+    """Codex #713 P2：体检表可能来自进程内缓存（按 (解释器, 包)、不带环境指纹）。早先体检时装着那个包、之后被
+    卸掉——无提示采用之前现场再体检一次，不合格就不采用（不然会作废会话、换个解释器把脚本白跑一遍）。"""
+    _auto_on(monkeypatch)
+    project = tmp_path / "p"
+    project.mkdir()
+    [py] = _fake_system(tmp_path, monkeypatch, {"py312": _health()})
+    before = projectenv.probe_system_candidates([(py, engine_pool.SOURCE_SYSTEM)], "adjustText")
+    assert before[0]["requested_module_ok"] is True  # 缓存里是「装着」
+    monkeypatch.setattr(
+        projectenv,
+        "probe_environment",
+        lambda python, module=None, **kw: dict(_health(module_ok=False), python=python),
+    )  # 之后用户把包卸了
+    outcome = engine_pool.try_project_env(str(project), "fig.py", "adjustText")
+    assert outcome.get("ok") is not True and "adopted" not in outcome, outcome
+    assert projectenv.remembered_record(project) is None
 
 
 def test_only_an_unsupported_interpreter_with_the_module_is_not_adopted(tmp_path, monkeypatch):
@@ -1435,7 +1456,8 @@ def test_with_several_healthy_candidates_the_first_by_priority_wins(tmp_path, mo
     )
     outcome = engine_pool.try_project_env(str(project), "fig.py", "adjustText")
     assert outcome["ok"] is True and outcome["python"] == paths[1]
-    assert _PROBED == paths[:2], "第一个健康的（b）之后不该再探 c"
+    # 第一个健康的（b）之后不该再探 c；b 多出的那一次是采用之前的现场复核（`reprobe_system_candidate`）
+    assert _PROBED == [paths[0], paths[1], paths[1]], "第一个健康的（b）之后不该再探 c"
     assert projectenv.remembered_record(project)["path"] == paths[1]
 
 
