@@ -139,6 +139,11 @@ function FontFamilyRowView({
   overridden?: boolean
   onReset?: () => void
   optionLabelOf: (v: string) => string
+  /**
+   * 选项显示名表（`option_labels`，字体的中文名）。组件体不读它——显示走
+   * `optionLabelOf`；它在这里只为让 memo 在显示名到达 / 变化时重画
+   */
+  optionLabels?: Readonly<Record<string, string>>
   /** 多选且字体不一致：显示「多个值」占位，绝不谎报其中某一个的字体 */
   mixed?: boolean
   /**
@@ -206,6 +211,7 @@ const FontFamilyRowMemo = memo(
     a.overridden === b.overridden &&
     a.labelWidth === b.labelWidth &&
     a.lang === b.lang &&
+    a.optionLabels === b.optionLabels &&
     !!a.onReset === !!b.onReset &&
     sameList(a.options, b.options) &&
     sameList(a.unavailable, b.unavailable),

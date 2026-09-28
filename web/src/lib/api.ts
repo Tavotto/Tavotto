@@ -1420,6 +1420,12 @@ export interface EditableField {
    */
   options_unavailable?: string[]
   /**
+   * 选项的**显示名**（只有字体族会有：{族名: 中文名}）。前端并表时从 manifest 顶层
+   * `font_family_names` 挂上来（`withMachineFamilies`），引擎不按元素发。只影响显示——
+   * 写入的仍是 `options` 里的原名（matplotlib 按名字找得到的是它）。
+   */
+  option_labels?: Record<string, string>
+  /**
    * marker 一族字段专有的**只读事实**：图上此刻画的是什么形状（见
    * `MarkerShape`）。`value` 说的是「选中的是哪个取值」，它说的是形状。
    */
@@ -1664,6 +1670,11 @@ export interface Manifest {
    * 字体下拉把它并在首选项（`options`）之后；老引擎不发它，下拉照旧只有首选项。
    */
   font_families?: string[]
+  /**
+   * `font_families` 里有中文名的那些：{族名: 中文名}（引擎读 name 表，`Songti SC` →
+   * `宋体-简`）。只给下拉显示用，值仍是族名；老引擎不发它，下拉照旧显示族名。
+   */
+  font_family_names?: Record<string, string>
   /**
    * 脚本存盘时按 `bbox_inches` 裁过的图才有（ADR 0098）：脚本那个图幅在 figsize 里的位置、此刻
    * 生不生效。前端只拿它给升级前的面板提示与「内容不动」的换算；几何照旧只认 `size_mm` 与分数。
