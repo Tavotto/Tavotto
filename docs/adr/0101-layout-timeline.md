@@ -90,11 +90,13 @@ B 拒绝再命名。选 **B**：A 的文件越大，**每一次**自动节点的
 节点落进下一个项目、缩略图画的是另一个项目的同名素材。看护
 `timelineCheckpoint.test.ts` 的「节点属于拍的那一刻的项目」。
 
-**上下文**（Codex #679）：节点拍的是**此刻**的文档，而导出 / 保存 / 写回都要 await——完成时用户
-可能已经换了排版或项目。这三处在发起那一刻取 `currentTimelineCtx()`（`lib/timelineContext`，项目代际 +
-排版 id），完成时经 `markMoment(moment, ctx)`（保存经 `emitLayoutSaved(via, { ctx })`，`ctx` 必填）带过来；
-上下文不再是此刻的就丢掉这个点，**不回头给原来那一份补**——那要离开 documentStore 另拍一份快照（画布身份、
-缩略图图源、pj 都得另取），是 `takeCheckpoint` 的第二份实现。打开 / 离开是同步调用，不带。
+**快照**（Codex #679）：节点若在完成时现拍，拍的是**此刻**的文档，而导出 / 保存 / 写回都要 await——完成时
+用户可能已经换了排版或项目，也可能在同一份里接着改。这三处在发起那一刻取 `captureMoment()`（时间线上下文 =
+项目代际 + 排版 id、送出去的那份文档与画布身份、面板图源；`lib/timelineCheckpoint`），完成时经
+`markMoment(moment, snapshot)`（保存经 `emitLayoutSaved(via, { moment })`，必填）带过来：上下文不再是此刻的就
+丢掉这个点；是的话**拍快照里那份**（缩略图也用快照时取的图源），不拍之后的样子。documentStore 的文档不可变，
+留住引用就是留住那一刻。不回头给原来那一份补点——那要另起一条绕开「当前」的拍节点路径。打开 / 离开是同步调用，
+不带。三处都拿得到送出去的那份文档，所以没有「只能按编辑代次丢弃」的路径。
 
 「保存」时刻为什么是事件而不是保存侧直接调 `markMoment('save')`：写排版文件的路不止一条、
 还在变，而 #674 的「存进项目」分支提前 return，挂在 `runManualSave` 末尾的打点在那条路上
@@ -169,11 +171,11 @@ e2e 把间隔**注入**调小（`window.__TAVOTTO_TIMELINE_TIMING__ = { debounce
   「排版写成了」，**写成之后立刻发、在任何后续步骤（记账、关对话框、状态条）之前**——后续步骤
   出错也不能吞掉这个点（Codex #679）：
   1. `store/projectSave.ts` 的 `writeOnce()`（⌘S 写回已绑定的项目文件）：`await saveLayout(...)`
-     一返回 → `emitLayoutSaved('project_file', { ctx: ctx.timeline })`；
+     一返回 → `emitLayoutSaved('project_file', { moment })`，`moment` 在 `buildProject()` 那一刻取（排队之后才序列化，写出去的是那一份）；
   2. `components/LayoutDialog.tsx` 的 `doSave`（另存为 / 第一次存进项目）：同样紧跟 `saveLayout` →
-     `emitLayoutSaved(toProject ? 'project_file' : 'layout_file', { ctx: ctx.timeline })`；
-  3. `store/actions.ts` 的 `runManualSave()` 本机那一支（没开项目）：`emitLayoutSaved('local', { ctx: ctx.timeline })`。
-  `ctx.timeline` 是 #674 入口 `captureSaveContext()` **同一次捕获**里取的时间线上下文，不另算一份。
+     `emitLayoutSaved(toProject ? 'project_file' : 'layout_file', { moment: ctx.moment })`；
+  3. `store/actions.ts` 的 `runManualSave()` 本机那一支（没开项目）：`emitLayoutSaved('local', { moment: ctx.moment })`。
+  `ctx.moment` 是 #674 入口 `captureSaveContext()` **同一次捕获**里取的时间线快照，不另算一份。
   两者维度不同、各管各的：保存上下文（载入代次 / pj / 绑定文件）判「还要不要继续写、弹框」；时间线上下文
   （项目代际 + 排版 id）判「这一刻属于谁的时间线」——同一份排版被重新载入或改绑文件之后，节点仍属于它。
   beta 侧在 `writeBoundProjectFile` 里直接加的 `markMoment('save')` 要删掉，否则同一次保存打两个点。
