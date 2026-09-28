@@ -554,6 +554,12 @@ class _ScanBudgetExhausted(Exception):
     pass
 
 
+#: `_glob_hit` 列目录走的入口。测试替换**它**来数「这次 `evidence()` 看了多少条」——替换
+#: `os.scandir` 的话换掉的是全进程的，同进程里别的线程（watcher 的 `os.walk`）也被数进来、
+#: 还会拿到测试的替身。
+_scandir = os.scandir
+
+
 class _Listing:
     """一个真实目录的列表，按需往下列：`seen` 是已经看过（扣过预算）的条目；`pull()` 再取一条，
     列完 / 出错回 None 并关掉 scandir。命中后没列完的由 `_glob_hit` 统一 `close()`。"""
@@ -569,7 +575,7 @@ class _Listing:
         try:
             if self._it is None:
                 self._stack = contextlib.ExitStack()
-                self._it = iter(self._stack.enter_context(os.scandir(self.pending)))
+                self._it = iter(self._stack.enter_context(_scandir(self.pending)))
             entry = next(self._it)
         except (StopIteration, OSError):
             self.close()

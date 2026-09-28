@@ -141,6 +141,49 @@ def _isolated_interpreter_env():
             os.environ[k] = v
 
 
+_WATCH_THREAD_PREFIX = "tavotto-project-watch-"
+
+
+def _watch_threads() -> dict[int, threading.Thread]:
+    return {
+        t.ident: t
+        for t in threading.enumerate()
+        if t.name.startswith(_WATCH_THREAD_PREFIX) and t.ident is not None
+    }
+
+
+@pytest.fixture(autouse=True)
+def _stop_project_watchers_started_by_this_test():
+    """用例里 `open_project()` 起的 watcher 线程，用例结束时停掉并等它退出。
+
+    不少用例自己的 fixture 只开项目不关（2026-09-29 实测 7 个文件 77 条），watcher 线程
+    就一直活着、每秒 `os.walk` 一遍已经没人要的目录——同进程里后面的用例若替换了
+    `os.scandir` 来计数，数到的是全进程（合并队列 run 36434650944 / 36441131048 的
+    `assert 44 <= 41`、`assert 5003 <= 5000`）。**只对这条用例起的负责**：进来之前已经在的
+    watcher / 线程（模块级 fixture 开的项目）一概不碰，也不断言「全局为空」。
+    `stop()` 只 set 事件，正在跑的那一轮要跑完，所以要 join；join 不回来就是真泄漏。
+    """
+    watch = sys.modules.get("tavotto.engine.project_watch")
+    before = {id(w) for w in watch._watchers.values()} if watch is not None else set()
+    threads_before = set(_watch_threads())
+    yield
+    watch = sys.modules.get("tavotto.engine.project_watch")
+    if watch is None:
+        return
+    with watch._lock:
+        mine = [w for w in watch._watchers.values() if id(w) not in before]
+    for w in mine:
+        watch.stop(w.ctx.path)
+    stuck = []
+    for ident, t in _watch_threads().items():
+        if ident in threads_before:
+            continue
+        t.join(10)
+        if t.is_alive():
+            stuck.append(t.name)
+    assert not stuck, f"本用例起的 project watcher 线程停不下来：{stuck}"
+
+
 @pytest.fixture(autouse=True)
 def _isolated_user_config(tmp_path_factory, monkeypatch):
     """所有测试的用户级配置（最近项目等）落在临时目录，绝不碰真实用户配置。"""

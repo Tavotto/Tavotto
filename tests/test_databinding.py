@@ -6,7 +6,10 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -381,7 +384,7 @@ def _spy_scandir(monkeypatch) -> list[str]:
         listed.append(os.path.realpath(path))
         return real(path)
 
-    monkeypatch.setattr(db.os, "scandir", spy)
+    monkeypatch.setattr(db, "_scandir", spy)
     return listed
 
 
@@ -455,7 +458,7 @@ def test_the_scan_budget_covers_the_whole_evidence_call_not_each_pattern(tmp_pat
                 seen[0] += 1
                 yield entry
 
-    monkeypatch.setattr(db.os, "scandir", lambda path=".": _Counting(real(path)))
+    monkeypatch.setattr(db, "_scandir", lambda path=".": _Counting(real(path)))
     monkeypatch.setattr(db, "MAX_GLOB_SCAN", 40)
     ev = db.evidence(root / "s/fig.py", root)
     assert len(ev["candidates"]["project.root"]["probes"]["unjudged"]) == 30
@@ -566,7 +569,7 @@ def _ordered_scandir(monkeypatch, *, hit_first: bool) -> list[int]:
                 taken[0] += 1
                 yield entry
 
-    monkeypatch.setattr(db.os, "scandir", lambda path=".": _Ordered(path))
+    monkeypatch.setattr(db, "_scandir", lambda path=".": _Ordered(path))
     return taken
 
 
@@ -603,6 +606,48 @@ def test_a_hit_beyond_the_budget_is_still_unjudged_not_missing(tmp_path, monkeyp
     assert probes["unjudged"] == ["data/*.csv"] and probes["missing"] == []
     assert taken[0] <= db.MAX_GLOB_SCAN
     assert ev["verdict"] == db.VERDICT_NONE
+
+
+@contextlib.contextmanager
+def _walking_in_another_thread(tree: Path):
+    """同进程里另一条线程不停地 `os.walk`——合并队列上是别的用例遗留的 project_watch 线程
+    （run 36434650944 / 36441131048）。先等它走完至少一遍再交还控制权。"""
+    for i in range(50):
+        (tree / f"d{i}").mkdir(parents=True, exist_ok=True)
+        (tree / f"d{i}" / "f.txt").touch()
+    stop, walked, errors = threading.Event(), threading.Event(), []
+
+    def run():
+        while not stop.is_set():
+            try:
+                for _ in os.walk(tree):
+                    pass
+            except Exception as exc:  # noqa: BLE001 — 记下来交给断言
+                errors.append(exc)
+            walked.set()
+
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    assert walked.wait(10)
+    try:
+        yield errors
+    finally:
+        stop.set()
+        t.join(10)
+
+
+def test_counting_the_scan_ignores_other_threads_walking_directories(tmp_path, monkeypatch):
+    """判据的主语是**这次 `evidence()`** 看了多少条，不是全进程：替身只换 `databinding` 自己的
+    列目录入口，别的线程的 `os.walk` 既不被数进来，也拿不到替身（CI 上报过
+    `'_Ordered' object is not an iterator`）。"""
+    root = _big_data_dir(tmp_path / "p", hit=False)
+    with _walking_in_another_thread(tmp_path / "other") as errors:
+        taken = _ordered_scandir(monkeypatch, hit_first=True)
+        ev = db.evidence(root / "s/fig.py", root)
+        time.sleep(0.05)  # 给那条线程在替身生效期间再走几遍的机会
+    assert ev["candidates"]["script.parent"]["probes"]["unjudged"] == ["data/*.csv"]
+    assert taken[0] <= db.MAX_GLOB_SCAN
+    assert errors == []
 
 
 def test_no_match_in_a_directory_larger_than_the_budget_is_unjudged(tmp_path, monkeypatch):
