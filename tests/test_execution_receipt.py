@@ -127,6 +127,7 @@ class TestGrant:
         assert workdir.grant_for(root) == {
             "cwd_write": {"granted": False, "granted_at": None, "mode": None},
             "decided": False,
+            "implied_by": None,
         }
         state = workdir.set_mode(root, workdir.MODE_PROJECT)
         grant = workdir.grant_for(root)["cwd_write"]
@@ -145,6 +146,7 @@ class TestGrant:
         assert workdir.grant_for(root) == {
             "cwd_write": {"granted": False, "granted_at": None, "mode": None},
             "decided": True,
+            "implied_by": None,
         }
 
     def test_legacy_setting_without_a_moment_is_granted_but_undated(self, tmp_path):
@@ -155,6 +157,7 @@ class TestGrant:
         assert workdir.grant_for(root) == {
             "cwd_write": {"granted": True, "granted_at": None, "mode": workdir.MODE_PROJECT},
             "decided": True,
+            "implied_by": None,
         }
         assert workdir.mode_for(root) == workdir.MODE_PROJECT
 

@@ -1222,7 +1222,7 @@ class TestGate:
         service = preparation.PreparationService()
         result = service.register(plan)
 
-        def runner(_plan):
+        def runner(_plan, **_kw):
             raise err
 
         service.start("p", runner=runner)

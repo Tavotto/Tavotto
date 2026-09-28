@@ -112,7 +112,9 @@ Conda / pyenv 名、版本、还缺什么；SSE 同样不带路径。弹窗里�
 * 往用户的 Conda / pyenv / 系统环境里装包。它们仍不是安装目标（ADR 0019 §一 / ADR 0044）。
 * 问 `conda env list` / `pyenv versions` 之类的 CLI。磁盘记录已经够了，而且不会卡几秒。
 * 运行后（`missing_dependency`）那条修复卡片的候选表暂不换成这份发现：跑前的门已经覆盖了静态可见的
-  import，运行时才暴露的缺包仍走 ADR 0044 的那一层。
+  import，运行时才暴露的缺包仍走 ADR 0044 的那一层。（2026-09-28 起那一层也会无提示自动采用第一个合格的
+  系统解释器，判据与本 ADR §四的「机器替用户挑的」同一份，见 [ADR 0107](0107-silent-system-interpreter-adoption-and-native-workdir.md)；
+  候选表仍是 ADR 0044 的那一份。）
 * Windows 上的登录 shell（PowerShell profile）：不问。Conda / pyenv-win / 项目线索照常发现。
 
 ## 修订（2026-09-25）：映射不到包名、此刻又确实 import 不到的 import，也去找用户环境

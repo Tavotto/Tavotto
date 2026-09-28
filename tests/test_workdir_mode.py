@@ -249,3 +249,231 @@ def client():
 
     m.app.config["TESTING"] = True
     return m.app.test_client()
+
+
+# ------------------------------- 用户自己的 Python：默认在脚本目录里跑（ADR 0107 §二）
+# 用户 2026-09-28 拍板：采用用户自己的 Python（缺包时自动采用的，或在渲染环境里为项目挑的）时，脚本的
+# 默认运行目录是脚本目录——与原生 `cd 脚本目录 && python fig.py` 一致。派生的默认，不写设置；用户选过
+# 任何一档都按他选的；内置 / 受管 / 项目 venv / 全局显式选择仍默认沙盒。
+def _no_global_choice(monkeypatch):
+    """外面带进来的 `TAVOTTO_WORKER_PYTHON` / 设置不许让用例结果随机器变。"""
+    monkeypatch.setattr(engine_pool, "explicit_worker_python", lambda: None)
+    monkeypatch.setattr(engine_pool.config, "worker_python", lambda: None)
+
+
+def _python_file(path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("", encoding="utf-8")
+    return str(path)
+
+
+@pytest.mark.parametrize(
+    "case, expected",
+    [
+        ("nothing_remembered", workdir.MODE_SANDBOX),  # 内置 / 老链条
+        ("project_venv", workdir.MODE_SANDBOX),
+        ("managed", workdir.MODE_SANDBOX),
+        ("default_chain", workdir.MODE_SANDBOX),
+        ("system_auto", workdir.MODE_PROJECT),
+        ("system_user_picked", workdir.MODE_PROJECT),
+        ("system_but_global_explicit", workdir.MODE_SANDBOX),
+        ("system_but_configured", workdir.MODE_SANDBOX),
+        ("system_file_gone", workdir.MODE_SANDBOX),
+    ],
+)
+def test_the_undecided_default_follows_the_users_own_interpreter(
+    tmp_path, monkeypatch, case, expected
+):
+    from tavotto.engine import managedenv, projectenv
+
+    _no_global_choice(monkeypatch)
+    root = tmp_path / "proj"
+    root.mkdir()
+    outside = _python_file(tmp_path / "machine" / "python")
+    if case == "project_venv":
+        projectenv.remember(
+            root,
+            _python_file(root / ".venv" / "bin" / "python"),
+            automatic=True,
+            trigger="first_open",
+        )
+    elif case == "managed":
+        projectenv.remember(root, outside, automatic=False, trigger="dependency_repair")
+        monkeypatch.setattr(managedenv, "is_managed_python", lambda r, p: True)
+    elif case == "default_chain":
+        projectenv.remember_default(root)
+    elif case == "system_auto":
+        projectenv.remember(root, outside, automatic=True, trigger="missing_dependency")
+    elif case == "system_user_picked":
+        projectenv.remember(root, outside, automatic=False, trigger="user_selected")
+    elif case == "system_but_global_explicit":
+        projectenv.remember(root, outside, automatic=True, trigger="missing_dependency")
+        monkeypatch.setattr(
+            engine_pool, "explicit_worker_python", lambda: ("/usr/bin/python3", "env_override")
+        )
+    elif case == "system_but_configured":
+        projectenv.remember(root, outside, automatic=True, trigger="missing_dependency")
+        monkeypatch.setattr(engine_pool.config, "worker_python", lambda: "/usr/bin/python3")
+    elif case == "system_file_gone":
+        projectenv.remember(root, outside, automatic=True, trigger="missing_dependency")
+        Path(outside).unlink()
+    try:
+        assert workdir.mode_for(root) == expected, case
+        # 准备计划读的那一份（`decision_for`：LaunchContext 的 cwd_mode）与 spawn 读的同一个默认
+        (root / "fig.py").write_text("import matplotlib\n", encoding="utf-8")
+        decision = workdir.decision_for(root, "fig.py")
+        assert (decision["mode"], decision["decided"]) == (expected, False), case
+        implied = expected == workdir.MODE_PROJECT
+        assert workdir.implied_by(root) == (
+            workdir.IMPLIED_BY_USER_INTERPRETER if implied else None
+        )
+        grant = workdir.grant_for(root)
+        # 派生的默认：写入许可成立、但没有那一次点头的时刻；「决定过」仍是 False（没写任何设置）
+        assert grant["cwd_write"] == {
+            "granted": implied,
+            "granted_at": None,
+            "mode": workdir.MODE_PROJECT if implied else None,
+        }
+        assert grant["decided"] is False and workdir.decided(root) is False
+        assert grant["implied_by"] == workdir.implied_by(root)
+        assert workdir.state(root)["implied_by"] == workdir.implied_by(root)
+        assert workdir.SETTINGS_KEY not in (engine_config.project_settings(str(root)) or {})
+    finally:
+        projectenv.forget(root)
+
+
+def test_the_user_interpreter_probe_is_the_pools_and_absent_means_sandbox(monkeypatch, tmp_path):
+    """workdir 不 import pool（否则进 bootstrap / managedenv / pool 那个环）：判据由 pool 加载时登记。
+    登记的必须就是 pool 那一份；没登记时默认回沙盒（更窄那一档），不因缺判据放宽。"""
+    assert workdir._user_interpreter_probe is engine_pool.user_interpreter_in_effect
+    monkeypatch.setattr(workdir, "_user_interpreter_probe", None)
+    assert workdir.implied_by(tmp_path) is None
+    assert workdir.default_mode(tmp_path) == workdir.MODE_SANDBOX
+    monkeypatch.setattr(workdir, "_user_interpreter_probe", lambda root: True)
+    assert workdir.implied_by(tmp_path) == workdir.IMPLIED_BY_USER_INTERPRETER
+    assert workdir.default_mode(tmp_path) == workdir.MODE_PROJECT
+
+
+def test_build_asks_before_retry_between_the_two_executions(monkeypatch):
+    """`_build_with`：缺包 → 自动接手成功之后、**第二次执行之前**问一次 `before_retry`；它抛出就不再执行
+    （准备接口据此在授权变了时作废计划，Codex #713 P1）。"""
+    events = []
+
+    class W:
+        def __init__(self, n):
+            self.n = n
+
+        def ensure_built(self):
+            events.append(f"build{self.n}")
+            if self.n == 1:
+                raise engine_pool.WorkerError("缺 lmfit", code="missing_dependency", module="lmfit")
+            return {}
+
+    takes = iter([W(1), W(2)])
+    monkeypatch.setattr(
+        engine_pool, "try_project_env", lambda *a: events.append("adopt") or {"ok": True}
+    )
+
+    class Stale(Exception):
+        pass
+
+    def guard():
+        events.append("guard")
+        raise Stale
+
+    with pytest.raises(Stale):
+        engine_pool._build_with(
+            lambda: (next(takes), True), "fig.py", "/p", allow_project_env=True, before_retry=guard
+        )
+    assert events == ["build1", "adopt", "guard"]
+
+
+def test_an_unpersisted_adoption_changes_neither_the_interpreter_nor_the_workdir(
+    tmp_path, monkeypatch
+):
+    """Codex #713 P2 的前提核对：数据目录只读 / 满时 `remember()` 写不进项目设置（只进进程缓存），而
+    `resolve_worker_python` 与 `user_interpreter_in_effect` 读的都是**持久化的记录**——两边一致地
+    认为「没换」：不会出现「解释器是用户的、工作目录还是沙盒」的错位。"""
+    from tavotto.engine import projectenv
+
+    _no_global_choice(monkeypatch)
+    root = tmp_path / "proj"
+    root.mkdir()
+    outside = _python_file(tmp_path / "machine" / "python")
+
+    def full(*_a, **_kw):
+        raise OSError("磁盘满")
+
+    monkeypatch.setattr(engine_config, "set_project_settings", full)
+    try:
+        projectenv.remember(root, outside, automatic=True, trigger="missing_dependency")
+        python_now = engine_pool.resolve_worker_python(root, discover=False)[0]
+        assert not engine_pool.same_python(python_now, outside)
+        assert engine_pool.user_interpreter_in_effect(root) is False
+        assert workdir.mode_for(root) == workdir.MODE_SANDBOX
+    finally:
+        projectenv.forget(root)
+
+
+def test_a_users_choice_beats_the_implied_default_and_reverting_the_interpreter_reverts_it(
+    tmp_path, monkeypatch
+):
+    """用户在渲染环境里改回沙盒 → 按他选的（不再被派生默认盖掉）；选项目根同理。解释器改回默认链条（「改回」）
+    → 默认随之回到沙盒——派生默认不是写下来的设置，环境一变它就跟着变（不把临时状况变成长期设置）。"""
+    from tavotto.engine import projectenv
+
+    _no_global_choice(monkeypatch)
+    root = tmp_path / "proj"
+    root.mkdir()
+    outside = _python_file(tmp_path / "machine" / "python")
+    projectenv.remember(root, outside, automatic=True, trigger="missing_dependency")
+    try:
+        assert workdir.mode_for(root) == workdir.MODE_PROJECT
+        workdir.set_mode(root, workdir.MODE_SANDBOX)
+        assert workdir.mode_for(root) == workdir.MODE_SANDBOX
+        assert workdir.implied_by(root) is None
+        assert workdir.grant_for(root)["cwd_write"]["granted"] is False
+        workdir.set_mode(root, workdir.MODE_PROJECT_ROOT)
+        assert workdir.mode_for(root) == workdir.MODE_PROJECT_ROOT
+        workdir.forget(root)
+        assert workdir.mode_for(root) == workdir.MODE_PROJECT
+        projectenv.remember_default(root)  # 界面上的「改回」
+        assert workdir.mode_for(root) == workdir.MODE_SANDBOX
+        assert workdir.implied_by(root) is None
+    finally:
+        projectenv.forget(root)
+        workdir.forget(root)
+
+
+@needs_worker
+def test_the_users_own_python_runs_the_script_where_it_lives_until_they_pick_the_sandbox(
+    figs, tmp_path, monkeypatch
+):
+    """真 worker：项目用的是用户自己的 Python（项目外的解释器）→ 没决定过也在脚本目录里跑——exists / glob /
+    相对写全部成立，**不问**（ADR 0084 的证据只指向脚本目录，答案就是默认）；守卫与 savefig 捕获一字不动。
+    用户改回沙盒之后按他选的：盲区回来，相对写不进项目。"""
+    from tavotto.engine import projectenv
+
+    _no_global_choice(monkeypatch)
+    workdir.forget(figs)
+    projectenv.remember(figs, WORKER_PY, automatic=False, trigger="user_selected")
+    try:
+        assert engine_pool.remembered_source(figs, WORKER_PY) == engine_pool.SOURCE_SYSTEM
+        worker, resp = engine_pool.build("run_all.py", str(figs), "__main__")
+        assert sorted(resp.get("stems") or {}) == ["impact_histogram"]
+        assert worker.spec.cwd_mode == execspec.CWD_PROJECT
+        assert "exists=True glob=1 listdir=True" in worker._log_tail()
+        assert (figs / "cache" / "impact.txt").read_text(encoding="utf-8") == "4"
+        assert (figs / "stale_output.png").read_bytes() == b"orig", "守卫原样"
+        assert not (figs / "impact_histogram.png").exists(), "savefig 仍是捕获"
+        assert workdir.decided(figs) is False, "派生的默认，没写设置"
+
+        (figs / "cache" / "impact.txt").unlink()
+        workdir.set_mode(figs, workdir.MODE_SANDBOX)  # 用户改回沙盒
+        engine_pool.shutdown_all(str(figs), wait=True)
+        worker, resp = engine_pool.build("run_all.py", str(figs), "__main__")
+        assert worker.spec.cwd_mode == execspec.CWD_SANDBOX
+        assert resp.get("stems") == {}
+        assert not (figs / "cache" / "impact.txt").exists()
+    finally:
+        projectenv.forget(figs)

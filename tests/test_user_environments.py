@@ -273,7 +273,7 @@ def adopt_env(tmp_path, monkeypatch):
     heard = []
     monkeypatch.setattr(deprepair, "_adoption_listeners", [lambda p, e: heard.append((p, e))])
     monkeypatch.setattr(engine_pool, "explicit_worker_python", lambda: "")
-    monkeypatch.setattr(deprepair, "_config_worker_python", lambda: "")
+    monkeypatch.setattr(engine_pool.config, "worker_python", lambda: "")
     return project, env, heard
 
 
@@ -332,7 +332,7 @@ def test_decide_never_overrides_a_user_decision(adopt_env, monkeypatch, case):
     elif case == "explicit":
         monkeypatch.setattr(engine_pool, "explicit_worker_python", lambda: "/usr/bin/python3")
     else:
-        monkeypatch.setattr(deprepair, "_config_worker_python", lambda: "/usr/bin/python3")
+        monkeypatch.setattr(engine_pool.config, "worker_python", lambda: "/usr/bin/python3")
     other = _python(Path(str(env)).parent.parent.parent / "other-env")
     envs = [_entry(str(other), userenvs.SOURCE_LOGIN_SHELL)]
     monkeypatch.setattr(

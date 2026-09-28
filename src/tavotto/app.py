@@ -3808,6 +3808,10 @@ def _switched_to_project_env(worker, exc) -> bool:
     except NoProjectError:
         return False
     outcome = engine_pool.try_project_env(root, worker.script_name, getattr(exc, "module", ""))
+    if outcome.get("ok") and outcome.get("adopted") == engine_pool.SOURCE_SYSTEM:
+        # 无提示采用这台机器上的解释器（ADR 0107 §三「不发 SSE、不弹通知」）：不挂 toast——那条说的是
+        # 「已改用项目的环境」，拿来说一个项目外的解释器既违背无提示、又说错了来源。可追溯在项目记录里。
+        return True
     if outcome.get("ok"):
         # 记在**请求作用域**里：渲染端点据此在响应里带一句「已自动使用这个
         # 项目的 Python 环境」，前端给一条轻量 toast。用户不该被一个阻断式
@@ -5775,7 +5779,9 @@ def api_engine_preparation_start():
             plan.plan_id,
             # 「真的把 runtime 起起来」只有一份实现：`pool.build`（带一次项目环境
             # 自动 fallback）。这里不另写 get + ensure_built。
-            runner=lambda pl: engine_pool.build_owned(pl.script, pl.project_root, pl.entry),
+            runner=lambda pl, before_retry=None: engine_pool.build_owned(
+                pl.script, pl.project_root, pl.entry, before_retry=before_retry
+            ),
             bind=lambda: bound_project(ctx),
         )
     resp = jsonify(_preparation_payload(plan, result))

@@ -3668,7 +3668,8 @@ def _plan_imports(plan: dict) -> tuple[list[dict], list[str]]:
 
 
 def _user_env_discovery_off() -> bool:
-    return os.environ.get("TAVOTTO_USER_ENV_DISCOVERY", "").strip() == "0"
+    # 判据唯一出处在 projectenv：运行后缺包的接手（`pool.try_project_env`，ADR 0107）读同一个开关
+    return projectenv.auto_adoption_off()
 
 
 def unknown_imports_missing(plan: dict, python: str) -> list[str]:
@@ -3711,25 +3712,12 @@ def _auto_adopt_allowed(project: str, offer: dict) -> bool:
     明确选回默认链条）一个都不碰；项目自己的 venv 也不碰——那本来就是用户的环境，缺包该装进它。"""
     if offer.get("target_kind") == TARGET_PROJECT_VENV or offer.get("clean_machine"):
         return False
-    if pool.explicit_worker_python():
-        return False
-    configured = _config_worker_python()
-    if configured and pool._configured_source(configured) != pool.SOURCE_MANAGED:
-        return False
-    return _record_allows_auto_adopt(projectenv.remembered_record(project))
+    # 「机器替用户挑的」判据唯一出处 `pool.machine_chosen_interpreter`（运行后缺包的接手同用，ADR 0107）
+    return pool.machine_chosen_interpreter(project)
 
 
-def _record_allows_auto_adopt(record: dict | None) -> bool:
-    """项目记录这一半：没记过，或记着的是机器替用户挑的。用户为本项目挑过 / 明确选回默认链条就不碰。"""
-    return record is None or (
-        record.get("mode") != projectenv.MODE_DEFAULT_CHAIN and bool(record.get("automatic", False))
-    )
-
-
-def _config_worker_python() -> str:
-    from . import config
-
-    return config.worker_python() or ""
+#: 项目记录这一半的判据，唯一出处在 projectenv（运行后缺包的接手同用）
+_record_allows_auto_adopt = projectenv.record_allows_auto_adopt
 
 
 def _auto_adopt(project: str, offer: dict, user_envs: list[dict]) -> dict | None:

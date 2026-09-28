@@ -28,7 +28,8 @@
   全文在 `docs/rules/repo/same-origin-pairs.md`——改到表里任一侧先开那张表。
 - **安全边界**：会话认证（ADR 0008）不许被任何新端点绕过；worker 沙盒与
   `Path.unlink` 守卫不放松（safe 档的 cwd 可按项目显式切到脚本目录，ADR 0047——
-  守卫原样，变的只是相对路径写到哪，且要用户按项目确认）。
+  守卫原样，变的只是相对路径写到哪，且要用户按项目确认；项目用的是用户自己的 Python 时默认即脚本目录，
+  那是他「像终端里那样跑」的意思表示，ADR 0107）。
 - **渲染闭包零 PyMuPDF（ADR 0072，2026-09-22 起）**：Tavotto 的应用 / 发行 / runtime 闭包里
   没有 pymupdf / fitz——PDF 的读、写、栅格全经 `pdfbackend/` 契约层走 `rendercore/`
   （pikepdf / HarfBuzz / PDFium render child 与批准字体）。看护是 `scripts/ci/retirement_scan.py`

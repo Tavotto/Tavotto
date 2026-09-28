@@ -48,10 +48,11 @@
 （`probe_system_candidates`）。与 venv 那一层的两点不同，都来自「它在用户交给
 我们的边界之外」：
 
-* **不无感切换**。项目内 venv 无感是因为它在边界之内；系统环境一台机器上
-  往往好几个，静默选中哪个都可能不是用户想的那个。体检结果只是**候选**，
-  挂在接手失败的结构上交给依赖修复面板，用户点一次才记进项目设置
-  （`app._set_project_environment`，绝对路径——它本来就不跟项目走）。
+* ~~不无感切换~~（2026-09-28 起由 ADR 0107 修订：用户拍板「全自动、无提示」）。项目里没有 venv、
+  第一个健康的系统解释器支持档在 `AUTO_ADOPT_SUPPORT` 里、缺的那个包确实 import 得到、此刻的解释器
+  又是机器替用户挑的，`pool.try_project_env` 就直接采用它（`automatic=True, trigger=missing_dependency`）
+  并重跑。不满足时体检结果仍只是**候选**，挂在接手失败的结构上交给依赖修复面板，用户点一次才记进
+  项目设置（`app._set_project_environment`，绝对路径——它本来就不跟项目走）。
 * **探到了但不合格的也要说出来**。「找到 /usr/bin/python3 装了 ovito，但
   Python 3.9 低于支持下限」比一句「缺 ovito」有解释力得多——用户明明有一套
   能跑的环境，界面却只提议建受管环境，那才是困惑的来源。
@@ -559,8 +560,8 @@ def probe_system_candidates(
       `matplotlib_version` / `requested_module_ok`，**不带** `executable` /
       `prefix`（那是体检脚本的原始输出，界面用不上，诊断也不该多带路径）。
 
-    这里**只体检不决策**：谁被采用由用户在界面上点，记录由 `remember()`
-    完成——与 venv 那一层「本模块只做发现与体检」的分工一致。
+    这里**只体检不决策**：采不采用由 `pool.try_project_env`（自动，ADR 0107）或用户在界面上点，
+    记录由 `remember()` 完成——与 venv 那一层「本模块只做发现与体检」的分工一致。
     """
     if not module or not valid_module_name(module):
         return []
@@ -586,20 +587,38 @@ def probe_system_candidates(
             health = probe_environment(python, module)
             with _lock:
                 _system_probe_cache[key] = health
-        entry = {
-            "python": python,
-            "source": source,
-            "ok": bool(health.get("ok")),
-            "code": health.get("code", ""),
-            "support": health.get("support", ""),
-            "python_version": health.get("python_version", ""),
-            "matplotlib_version": health.get("matplotlib_version") or "",
-            "requested_module_ok": health.get("requested_module_ok"),
-        }
+        entry = _system_entry(python, source, health)
         out.append(entry)
         if entry["ok"]:
             break
     return out
+
+
+def _system_entry(python: str, source: str, health: dict) -> dict:
+    """体检结果 → 体检表里的一条（`probe_system_candidates` 与 `reprobe_system_candidate` 同一个形状）。"""
+    return {
+        "python": python,
+        "source": source,
+        "ok": bool(health.get("ok")),
+        "code": health.get("code", ""),
+        "support": health.get("support", ""),
+        "python_version": health.get("python_version", ""),
+        "matplotlib_version": health.get("matplotlib_version") or "",
+        "requested_module_ok": health.get("requested_module_ok"),
+    }
+
+
+def reprobe_system_candidate(entry: dict, module: str) -> dict:
+    """对体检表里的一条**现场再体检一次**（绕过并刷新进程内缓存）。
+
+    `_system_probe_cache` 按 (解释器, 包) 缓存、不带环境指纹：同一进程里早先体检过、之后那个环境的包被卸掉 /
+    换掉，表里就是一条过期的「健康」。无提示采用之前用它复核（Codex #713）——采用之后要把用户脚本再跑一遍，
+    拿旧观测替用户换环境，结果多半是同一个缺包再报一次，还白跑了一遍脚本。"""
+    python = str(entry.get("python") or "")
+    health = probe_environment(python, module)
+    with _lock:
+        _system_probe_cache[(_executable_key(python), module)] = health
+    return _system_entry(python, str(entry.get("source") or ""), health)
 
 
 def healthy_system_candidate(system: list[dict] | None) -> dict | None:
@@ -609,6 +628,40 @@ def healthy_system_candidate(system: list[dict] | None) -> dict | None:
         if entry.get("ok"):
             return entry
     return None
+
+
+#: 缺包之后可以**无提示自动采用**的系统解释器支持档（ADR 0107 §一）。`unsupported`（Python 在支持区间外）
+#: 永远不在其中——体检本来就把它判成 `ok=False`，这里再按档位明写一遍，判据不靠「ok 恰好蕴含」。
+#: `unverified_but_compatible`（Python 在区间内、matplotlib 在钉版区间外但 import 得到）在其中：与跑前的门
+#: （ADR 0079 §三：同档 verified 优先，未验证的照样可以被自动挑中）同一个口径——拒绝它等于把一个能出图的
+#: 环境判死，而 `support_status` 的文档本来就说它「照用，但如实标注」（标注进项目记录与诊断包）。
+AUTO_ADOPT_SUPPORT = (SUPPORT_VERIFIED, SUPPORT_UNVERIFIED)
+
+
+def auto_adoptable_system_candidate(system: list[dict] | None) -> dict | None:
+    """体检表里可以无提示直接采用的那一条（ADR 0107 §一）；没有回 None。
+
+    就是 `healthy_system_candidate()` 那一条（按候选优先级的第一个健康者——体检本来就在它那里停），
+    再加两道明写的判据：支持档在 `AUTO_ADOPT_SUPPORT` 里、缺的那个包**确实** import 得到
+    （`requested_module_ok is True`：None = 没量到，不算）。第一个健康者不合格时**不往后找**——后面的根本
+    没体检过（第一个健康的就停），拿没体检过的去换环境就是替用户做了一个没根据的决定。
+    """
+    found = healthy_system_candidate(system)
+    if found is None:
+        return None
+    if found.get("support") not in AUTO_ADOPT_SUPPORT:
+        return None
+    if found.get("requested_module_ok") is not True:
+        return None
+    return found
+
+
+def auto_adoption_off() -> bool:
+    """「找用户自己的 Python 并自动改用」整个关掉（`TAVOTTO_USER_ENV_DISCOVERY=0`，ADR 0079 §六）——
+    跑前的门（`deprepair`）与运行后缺包的接手（`pool.try_project_env`，ADR 0107）同一个开关、同一个判据。
+    关着时运行后那一层照旧体检、列成修复卡片上的候选（ADR 0044 的行为），只是不自动采用。
+    **测试进程默认关**（`tests/conftest.py`）：否则用例结果随 CI 机器上碰巧装了什么而变。"""
+    return os.environ.get("TAVOTTO_USER_ENV_DISCOVERY", "").strip() == "0"
 
 
 def rejected_system_candidates(system: list[dict] | None) -> list[dict]:
@@ -752,6 +805,17 @@ def project_relative(figures_dir: str | Path, python: str) -> str:
 _decision_lock = threading.RLock()
 
 
+def record_allows_auto_adopt(record: dict | None) -> bool:
+    """项目记录这一半的「可以替用户自动换解释器」：没记过，或记着的是机器替用户挑的（`automatic=True`）。
+    用户为本项目挑过（`automatic=False`）/ 明确选回默认链条（`mode=default`）就不碰（ADR 0079 §四）。
+
+    跑前的门（`deprepair._auto_adopt`）与运行后缺包的接手（`pool.try_project_env`）共用这一份，并都当
+    `remember(only_if=…)` 在写入锁里再判一次。"""
+    return record is None or (
+        record.get("mode") != MODE_DEFAULT_CHAIN and bool(record.get("automatic", False))
+    )
+
+
 def remember(
     figures_dir: str | Path,
     python: str,
@@ -765,6 +829,9 @@ def remember(
     """记住这个项目该用哪个解释器（进程缓存 + 项目设置持久化）；回写了没有。
 
     `only_if(record)`：给了就在写入锁里拿此刻的 `remembered_record()` 问一次，False 就不写（回 False）。
+    项目设置写不进去（数据目录只读 / 满）同样回 False：`resolve_worker_python()` 读的是持久化的记录，
+    没写进去的决策**不生效**——自动采用的调用方据此不当它成功（不然会作废会话、在原来的解释器里把
+    用户脚本白跑一遍，Codex #713）。
 
     **绝不写全局 `worker.python` 设置**：那会让 A 项目找到的 `.venv` 变成
     B 项目的渲染环境——两个项目各有各的环境正是本轮要解决的事。
@@ -772,14 +839,10 @@ def remember(
     with _decision_lock:
         if only_if is not None and not only_if(remembered_record(figures_dir)):
             return False
-        _remember(figures_dir, python, automatic, trigger, module, health)
-        return True
+        return _remember(figures_dir, python, automatic, trigger, module, health)
 
 
-def _remember(figures_dir, python, automatic, trigger, module, health) -> None:
-    key = _key(figures_dir)
-    with _lock:
-        _resolved[key] = python
+def _remember(figures_dir, python, automatic, trigger, module, health) -> bool:
     root = Path(figures_dir)
     payload = {"automatic": bool(automatic), "trigger": trigger or "", "module": module or ""}
     # 把体检当时的事实一并存下来：诊断包要回答「为什么用了这个 Python」，
@@ -798,6 +861,12 @@ def _remember(figures_dir, python, automatic, trigger, module, health) -> None:
         config.set_project_settings(str(root), {SETTINGS_KEY: payload})
     except OSError as exc:  # 配置目录只读/满：记不住不该让渲染失败
         LOG.warning("项目环境决策未能持久化: %s", exc)
+        return False
+    # 写进去之后才进进程缓存：`resolve_worker_python()` 读持久化的记录，`remembered()`（环境状态 API 经
+    # `state()` 读它）若先于持久化更新，写失败时两边就说的不是同一个解释器（Codex #713）
+    with _lock:
+        _resolved[_key(figures_dir)] = python
+    return True
 
 
 #: 「这个项目明确用默认链条（内置 / 自身 / 系统）」的记录形状：`mode == "default"`。
@@ -906,7 +975,8 @@ def resolve_for_missing_dependency(
 
     venv 那一层没成（找不到 / 也缺包 / 不合格）时，`system_candidates` 给了
     就再把这台机器上已有的解释器体检一遍，结果挂在失败结构的 `system` 键上
-    （ADR 0044）。**`ok` 仍是 False**：系统解释器只是候选，采用要用户点。
+    （ADR 0044）。**`ok` 仍是 False**：本函数只判断；自动采用其中一条是 `pool.try_project_env` 的决定
+    （ADR 0107，判据 `auto_adoptable_system_candidate`），否则它只是修复面板上的候选。
     `exclude_python` 是刚报缺包的那个解释器，不再体检。
     """
     outcome = _resolve_project_venv(figures_dir, script, module)
@@ -986,6 +1056,10 @@ def cached_first_open(figures_dir: str | Path) -> dict | None:
         return None
     return outcome
 
+
+#: 运行后缺包、自动接手时记进项目设置的 trigger（项目 venv 那一层与 ADR 0107 的系统解释器那一层同一个：
+#: 触发的事件是同一件——「此刻的解释器跑脚本时报了缺包」；接手的是哪一种由 `pool.remembered_source` 分）
+TRIGGER_MISSING_DEPENDENCY = "missing_dependency"
 
 #: 首开自动采用项目 venv 时记进项目设置的 trigger（与 `missing_dependency` 分开：那条是
 #: 「内置跑错一次之后接手」，这条是「一次都没跑错、开门就选对」）。

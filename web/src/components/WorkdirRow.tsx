@@ -39,6 +39,11 @@ export function WorkdirRow() {
   const project = env?.project
   if (!project?.open || !project.workdir) return null
   const mode = project.workdir.mode
+  // 没决定过、因为用的是用户自己的 Python 而默认在脚本目录（ADR 0107 §二）：现状那句说出这个来由
+  const status =
+    project.workdir.implied_by === 'user_interpreter' && mode === 'project'
+      ? 'engine.workdirHintProjectNative'
+      : MODE_STATUS[mode]
   // 老服务端只有两档：它报的 `modes` 里没有第三档时不摆出来
   const available = MODES.filter((m) => (project.workdir?.modes ?? MODES).includes(m))
   const pick = async (next: WorkdirMode) => {
@@ -50,7 +55,7 @@ export function WorkdirRow() {
     <div className="mt-1.5 border-t border-border pt-1.5">
       {/* 标准设置行（全面打磨 D14）。当前档那句话是**现状**不是说明（§13：低调提醒走
           `status`），常驻在标题列里，不收进问号。控件整行宽：三档分段放不进定宽控件列 */}
-      <SettingRow label={en('workdirLabel')} status={t(MODE_STATUS[mode])} control="fill">
+      <SettingRow label={en('workdirLabel')} status={t(status)} control="fill">
         <Segmented
           value={mode}
           onChange={(v) => void pick(v)}
