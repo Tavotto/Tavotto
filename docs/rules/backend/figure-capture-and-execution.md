@@ -109,6 +109,9 @@
     独立一档：`None` = 没观察到（`paper_style.save` 捷径整个被替换、看不见它里面那句
     savefig；旧 payload 没这个键也是这一档）、`[]` = pyplot 捕获从没存过盘、非空 = 调用
     列表。**只记不用**——渲染、几何、导出一个字节都不读它；它不进 fingerprint。
+    实效值跟着 matplotlib 自己的 `setdefault` 走：`transparent` 时没给的底色是 `"none"`。native
+    里先在 `show()` 屏障按 pyplot 兜底捕获、之后又被按同一个 stem 存盘的图，来源升级为 savefig
+    （钩子与会话同步各一处），调用照记，不再报「从没存过盘」。
     怎么用（tight 当不当图幅）是另一份 ADR 的决定（tight 图幅）。看护 `tests/test_savefig_capture_params.py`、
     `tests/bridge/test_bridge_savefig_params.py`。
 - 安全：worker `cwd=沙盒`（挡相对路径写出/删除）+ `Path.unlink` 守卫
