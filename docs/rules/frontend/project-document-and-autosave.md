@@ -118,7 +118,9 @@
   写成之后判「途中改没改过」（`projectFileSnapshot()`）比的是**被提交那份排版自己的编辑代次**，
   不拿此刻开着的文档去比；代次与上面的 `dirty` 同源（只在 `markProjectFileDirty()` 里前进，
   派生同步 / 载入 / 换文档不算），不另写判据；对话框 await 之后的界面变更一律
-  `ifStillCurrent(ctx, …)`，切走了改在状态条上说；「仍然覆盖」写冲突那份文件、不改文档标题；await 之后的落账（修订号缓存、绑定、冲突岔口）一律记在
+  `ifStillCurrent(ctx, …)`，切走了改在状态条上说；「仍然覆盖」写冲突那份文件、不改文档标题；
+  绑定以本会话内存为准（`lib/projectFile.ts` 的会话层），localStorage 只是刷新后还认得的尽力而为副本——
+  保存链不许只读持久副本；await 之后的落账（修订号缓存、绑定、冲突岔口）一律记在
   **发请求那一刻**的 pj 名下（`rememberLayoutRevision(name, rev, pj)`），切走之后不开冲突岔口。
 - **启动恢复不覆盖已经装好的文档（2026-09-26）**：工作台挂载时 `restoreSession()` 读
   `tavotto.currentDoc` 那一份——但教程 / 切项目的 `prepareDocument` 往往**挂载前**就把它装好了，

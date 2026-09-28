@@ -6,7 +6,7 @@
  * 是在请求上量的，不是在调用参数上。冲突判据照后端 `_revision_conflict` 两条边写。
  */
 import { formatMessage, literal } from '@/i18n'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { emptyProject, type TextObject } from '@/types/document'
 import { readProjectFile, type ProjectFileBinding } from '@/lib/projectFile'
 import { setCurrentProjectId } from '@/lib/session'
@@ -516,5 +516,29 @@ describe('⌘S 链上每个 await 点之后切走', () => {
     expect(useUiStore.getState().layoutOpen).toBe(false)
     expect(useUiStore.getState().statusTone).toBe('error')
     expect(statusText()).toContain('这次没有写进项目')
+  })
+})
+
+/** ADR 0096 评审第 7 轮：本机存储写不进（被禁用 / 配额满）时，本会话以内存里的绑定为准 */
+describe('localStorage 写失败', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  it('setItem 一律抛 QuotaExceededError：连按两次 ⌘S 都写成，第二次带第一次写成的修订号，不报冲突', async () => {
+    bind()
+    edit('t1')
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('quota', 'QuotaExceededError')
+    })
+    await runManualSave()
+    edit('t2')
+    await runManualSave()
+    expect(requests).toHaveLength(2)
+    expect(requests[0].searchParams.get('base_revision')).toBe('absent')
+    expect(requests[1].searchParams.get('base_revision')).toBe(revisionOf(written[0]))
+    expect(useUiStore.getState().layoutConflict).toBeNull()
+    expect(useUiStore.getState().statusTone).not.toBe('error')
+    expect(s().projectFile).toMatchObject({ dirty: false, revision: revisionOf(written[1]) })
+    // 持久副本停在 bind 那一刻（之后的写全失败了）：上面的修订号推进只能来自会话层
+    expect(JSON.parse(localStorage.getItem('tavotto.projectFile.d_save')!)).toMatchObject({ revision: null })
   })
 })

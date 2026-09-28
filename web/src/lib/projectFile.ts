@@ -47,7 +47,16 @@ function isBinding(v: unknown): v is ProjectFileBinding {
   )
 }
 
+/**
+ * 本会话里的绑定：**以它为准**，localStorage 只是让刷新之后还认得的尽力而为的副本
+ * （#674 评审第 7 轮）。`setItem` 失败（存储被禁用、配额满——排版大时本机副本真会撞满）
+ * 时只读持久副本的话，⌘S 写成之后修订号推进不了、圆点灭不掉，下一次带着旧修订号去撞一个
+ * 假冲突。读先看这里，写先写这里再尽力持久化；本会话的行为与存储成败无关。
+ */
+const inSession = new Map<string, ProjectFileBinding | null>()
+
 export function readProjectFile(documentId: string): ProjectFileBinding | null {
+  if (inSession.has(documentId)) return inSession.get(documentId) ?? null
   try {
     const raw = localStorage.getItem(PREFIX + documentId)
     if (!raw) return null
@@ -59,6 +68,7 @@ export function readProjectFile(documentId: string): ProjectFileBinding | null {
 }
 
 export function writeProjectFile(documentId: string, binding: ProjectFileBinding): void {
+  inSession.set(documentId, binding)
   try {
     localStorage.setItem(PREFIX + documentId, JSON.stringify(binding))
   } catch {
@@ -67,12 +77,17 @@ export function writeProjectFile(documentId: string, binding: ProjectFileBinding
 }
 
 export function forgetProjectFile(documentId: string): void {
+  // 记成「已解绑」而不是删掉：删掉的话 removeItem 也失败时会读回那份旧的持久副本
+  inSession.set(documentId, null)
   try {
     localStorage.removeItem(PREFIX + documentId)
   } catch {
     /* 同上 */
   }
 }
+
+/** 仅供用例：模块级 Map 会跨用例活下来（用例清 localStorage 时一并清这里） */
+export const forgetProjectFilesInSession = (): void => inSession.clear()
 
 /**
  * 此刻这个标签页能用的绑定：**只认当前项目的**。一份在项目 A 里绑定的排版被从「最近
