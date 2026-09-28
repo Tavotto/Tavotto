@@ -1002,6 +1002,10 @@ jobs:
           TAVOTTO_FOUNDATION_NEWER_PYTHON: ${{ steps.newer.outputs.python-path }}
           TAVOTTO_FOUNDATION_UNSUPPORTED_PYTHON: ${{ steps.unsupported.outputs.python-path }}
           TAVOTTO_FOUNDATION_ONLINE: "1"
+          # FO18 / FO05 在用例里起联网的 `pip download`（子进程继承这一步的环境）——同装包步骤一样给超时与重试；
+          # 同一步里其余用例走离线 PIP_NO_INDEX / 本机 find-links，不受影响（FO27 的慢速本机源只睡 6 s，远小于 30 s）
+          PIP_DEFAULT_TIMEOUT: "30"
+          PIP_RETRIES: "5"
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/foundation-observing"
