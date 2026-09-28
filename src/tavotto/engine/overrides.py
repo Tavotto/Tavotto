@@ -13,6 +13,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import math
+import numbers
 import os
 import sys
 import weakref
@@ -447,11 +448,17 @@ def _drag_value(value, n: int) -> list[float]:
     warning、不记进 applied，之后的空列表还不回来——图例的位置模型槽位留着坏值、之后改任何一条
     位置 prop 都重抛；NaN / inf 则一声不响落进 artist，下一次排版整张图画不出来。pin 表里的值
     只在 setter 成功之后登记，`_pin_put_native` / `_pin_place` 拿到的都已过这一关。
+
+    形状也要对，不靠 `float()` 兜：它会迭代任何可迭代对象、收数字字符串与布尔值——
+    `"12"` 成了 `[1.0, 2.0]`、`[true, false]` 成了 `[1.0, 0.0]`，对象跳到意外位置还被持久化。
+    只收 list / tuple（前端 / MCP 的 JSON 数组、pin 表的元组），元素是实数且不是布尔
+    （`numbers.Real` 认 int / float 与 numpy 的数值标量；`np.bool_` 不是 `Real`，也拒）。
     """
-    try:
-        vals = [float(x) for x in value]
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"拖动位置要 {n} 个数: {value!r}") from exc
+    if not isinstance(value, (list, tuple)) or not all(
+        isinstance(x, numbers.Real) and not isinstance(x, bool) for x in value
+    ):
+        raise ValueError(f"拖动位置要 {n} 个数的数组: {value!r}")
+    vals = [float(x) for x in value]
     if len(vals) != n or not all(math.isfinite(x) for x in vals):
         raise ValueError(f"拖动位置要 {n} 个有限数: {value!r}")
     return vals

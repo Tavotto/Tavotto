@@ -544,7 +544,16 @@ def snap(st):
     }
 
 
-BAD = ([0.3], [0.3, math.nan], [0.3, math.inf], ["x", 0.3])
+BAD = (
+    [0.3],
+    [0.3, math.nan],
+    [0.3, math.inf],
+    ["x", 0.3],
+    # 形状不对、float() 却收得下的（Codex #681 第三条 P2）：字符串被逐字拆成数、布尔成 1 / 0
+    "12",
+    [True, False],
+    ["0.3", 0.4],
+)
 CASES = (
     ("axes_0.legend", "loc_frac", [0.4, 0.4]),
     ("axes_0.artists_0", "pos_frac", [0.4, 0.4]),
@@ -557,8 +566,14 @@ CASES = (
 out = []
 for gid, prop, good in CASES:
     for bad in BAD:
-        # 长度对、内容坏的那几种补齐到这条 prop 的长度（[0.3] 本身就是长度不对）
-        badv = list(bad) + [0.5] * (len(good) - len(bad)) if len(bad) > 1 else list(bad)
+        # 长度对、内容坏的那几种补齐到这条 prop 的长度（[0.3] 本身就是长度不对）；字符串原样
+        # 传，长度与这条 prop 相同——修前它被逐字拆成一组「合法」的数
+        if isinstance(bad, str):
+            badv = "1234"[: len(good)]
+        elif len(bad) > 1:
+            badv = list(bad) + [0.5] * (len(good) - len(bad))
+        else:
+            badv = list(bad)
         row = {"case": f"{gid}.{prop} <- {badv!r}"}
         st = build()  # 每行一张新图：一行的污染不许拖累下一行的判据
         base = snap(st)
@@ -587,8 +602,8 @@ print(json.dumps(out))
 
 
 def test_malformed_drag_value_is_rejected_before_any_state_changes():
-    """拖动类 setter 先把值校验完（个数、有限数）再动任何状态（Codex #681 第二条 P2）：坏值
-    给 warning，热模型**当场**零改动——图例的位置模型槽位、锚框，锚定框 / 插框 / 形状 / 独立
+    """拖动类 setter 先把值校验完（list / tuple、非布尔实数、个数、有限数）再动任何状态
+    （Codex #681 第二、三条 P2）：坏值给 warning，热模型**当场**零改动——图例的位置模型槽位、锚框，锚定框 / 插框 / 形状 / 独立
     箭头 / 子图 / 文字的落位都不变；之后的空列表、图例的 loc、同一条 prop 的合法值都照常。
 
     上一条用例在坏值之后先写了一次合法拖动，正好把被污染的 loc_frac 槽冲掉，所以没量到
@@ -603,7 +618,7 @@ def test_malformed_drag_value_is_rejected_before_any_state_changes():
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
     rows = json.loads(proc.stdout.strip().splitlines()[-1])
-    assert len(rows) == 28, rows
+    assert len(rows) == 49, rows
     bad = [r for r in rows if not all(v for k, v in r.items() if k != "case")]
     assert not bad, json.dumps(bad, ensure_ascii=False, indent=1)
 
