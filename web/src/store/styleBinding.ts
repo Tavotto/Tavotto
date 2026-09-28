@@ -371,8 +371,9 @@ export const whenLibraryIdle = (): Promise<unknown> => tail
  */
 const redirects = new Map<string, string>() // 键：`${generation()}|${来源样式 id}`
 /**
- * 顺着**同一个代次**里我们自己做的改绑走。键带代次、且只在改绑真的 commit 进那张画布之后才记：
- * A 画布上的复制任务回来时代次已经变了（用户切到了也绑着内置样式的 B），它没有改绑 A，也就不该
+ * 顺着**同一个代次**里我们自己做的改绑走。键带代次、且只在确定改绑会 commit 进那张画布时才记
+ * （核过代次与绑定之后、commit 之前，commit 抛了就撤回——先于 commit 是为了订阅者看不到「已改绑、
+ * 未登记」的中间身份，#688）：A 画布上的复制任务回来时代次已经变了（用户切到了也绑着内置样式的 B），它没有改绑 A，也就不该
  * 让 B 上排着的改动以为「内置已经被换成副本」而把自己作废（Codex #547 P1）。
  */
 function followRedirects(gen: string, id: string | null): string | null {
@@ -638,20 +639,29 @@ export function editBoundStyle(edit: StyleEdit): Promise<boolean> {
     const plan = changesFor(delta, panelsOf(doc), doc, true)
     const missing = missingNow(doc)
     const owned = nextOwned(doc, ownedWrites(doc, plan))
-    commitWith(
-      hist('editStyle', { name }),
-      (d) => {
-        d.style = styleWith(stored.id, stored.data, owned)
-        // 写的是**变化量**：标注只改了字号时，不把颜色 / 字体一起重新套一遍（Codex #547 P1）
-        writeStylePlan(d, plan, { ...delta, name })
-      },
-      plan,
-      detachOnUndo,
-    )
+    // 这一笔要把画布改绑到副本上（复制内置 / 「库里没有这一条、按快照新建」两条路，Codex #547 P1）：
+    // 转发**先于**改绑登记，让同一个代次里排在后面的改动顺着落到新的那一条上。上面已经核过代次与
+    // 绑定，这次 commit 落的就是发起的那张画布；先登记是因为 commit 会同步通知 store 的订阅者——
+    // 那一刻 `doc.style.id` 已是副本，转发还没登记的话 `canvasScope` 会把它当成「用户改绑了」，
+    // 样式面板随之重挂、清掉后面那一笔的挂起值（#688）。commit 抛了就撤回登记
+    const redirectKey = copied ? `${origin}|${binding.id}` : null
+    if (redirectKey) redirects.set(redirectKey, stored.id)
+    try {
+      commitWith(
+        hist('editStyle', { name }),
+        (d) => {
+          d.style = styleWith(stored.id, stored.data, owned)
+          // 写的是**变化量**：标注只改了字号时，不把颜色 / 字体一起重新套一遍（Codex #547 P1）
+          writeStylePlan(d, plan, { ...delta, name })
+        },
+        plan,
+        detachOnUndo,
+      )
+    } catch (e) {
+      if (redirectKey) redirects.delete(redirectKey)
+      throw e
+    }
     owe(docNow(), delta, missing, presetDelta(null, data))
-    // 改绑真的落进了发起的那张画布：记下转发，让同一个代次里排在后面的改动顺着落到新的那一条上。
-    // 复制内置与「库里没有这一条、按快照新建」两条路都算（Codex #547 P1）
-    if (copied) redirects.set(`${origin}|${binding.id}`, stored.id)
     if (copied) useUiStore.getState().setStatus(msg('stylePanel.copiedBuiltin', { name }, 'workspace'))
     else if (upgraded) useUiStore.getState().setStatus(msg('stylePanel.upgradedLegacy', { name }, 'workspace'))
     return true

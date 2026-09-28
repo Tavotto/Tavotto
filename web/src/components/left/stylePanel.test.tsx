@@ -827,6 +827,13 @@ describe('Codex #662 P2：绑定样式时连点，按最后一次排进去的值
     await new Promise((r) => setTimeout(r, 50))
     seedExactRender(current(), faceManifest() as never)
     const before = figureScope(s(), current())
+    // 订阅者每一次被通知时看到的归属（样式面板的 key 就是在这一刻算的）：commit 同步通知订阅者，
+    // 改绑与转发登记之间要是有一瞬「已改绑、未登记」，这里会记到一个不同的值（#688）
+    const seen: string[] = []
+    const unsubscribe = useDocumentStore.subscribe((st) => {
+      const p = st.doc.objects.find((o) => o.id === 'p1') as PanelObject
+      seen.push(figureScope(st, p))
+    })
     // 连点两下：第一笔复制内置并改绑，第二笔还排着（挂起值就挂在它身上）
     const first = editBoundStyle({ kind: 'element', role: 'title', prop: 'weight', value: 'bold' })
     const second = editBoundStyle({ kind: 'element', role: 'title', prop: 'weight', value: 'normal' })
@@ -835,6 +842,9 @@ describe('Codex #662 P2：绑定样式时连点，按最后一次排进去的值
     expect(await first).toBe(true)
     expect(s().doc.style?.id, '夹具要的就是「复制成副本并改绑」那条路').toBe('s1copy')
     expect(figureScope(s(), current()), '第二笔还排着时归属变了：它的挂起值会被清掉').toBe(before)
+    unsubscribe()
+    expect(seen.length, '改绑那次 commit 应当通知到订阅者').toBeGreaterThan(0)
+    expect(seen.filter((x) => x !== before), '订阅回调里看到了「已改绑、转发未登记」的中间身份').toEqual([])
     await drain()
     saves[1].release()
     expect(await second, '第二笔顺着转发落到副本上').toBe(true)
