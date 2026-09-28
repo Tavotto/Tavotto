@@ -541,3 +541,107 @@ def test_a_symlink_cycle_inside_the_project_does_not_spin_the_recursive_walk(tmp
     os.symlink(root, root / "a" / "loop")  # 项目里一条指回项目根的软链接
     ev = db.evidence(root / "fig.py", root)
     assert ev["candidates"]["project.root"]["probes"]["missing"] == ["**/*.nomatch"]
+
+
+# ---------------------------------------------------------------- Codex 评 #673 P2：大目录边列边匹配、glob 的别名
+def _ordered_scandir(monkeypatch, *, hit_first: bool) -> list[int]:
+    """把 `databinding` 看到的目录条目排成确定的顺序（命中的 `hit.csv` 排最前或最后——真实
+    scandir 的顺序由文件系统定），并记下它**实际取走**了多少条。"""
+    taken = [0]
+    real = os.scandir
+
+    class _Ordered:
+        def __init__(self, path):
+            with real(path) as it:
+                self._entries = sorted(it, key=lambda e: (e.name == "hit.csv") != hit_first)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return None
+
+        def __iter__(self):
+            for entry in self._entries:
+                taken[0] += 1
+                yield entry
+
+    monkeypatch.setattr(db.os, "scandir", lambda path=".": _Ordered(path))
+    return taken
+
+
+def _big_data_dir(tmp_path: Path, *, hit: bool) -> Path:
+    """科研项目常见的形状：`data/` 下几千个文件，脚本 `glob('data/*.csv')` 找其中的一个。"""
+    root = _project(tmp_path, "s/fig.py", "import glob\nglob.glob('data/*.csv')\n", {})
+    data = root / "s" / "data"
+    data.mkdir()
+    for i in range(db.MAX_GLOB_SCAN + 100):
+        (data / f"f{i:05d}.txt").touch()
+    if hit:
+        (data / "hit.csv").touch()
+    return root
+
+
+def test_a_hit_early_in_a_directory_larger_than_the_budget_is_found(tmp_path, monkeypatch):
+    """P2：起始目录条目数超过 `MAX_GLOB_SCAN` 时，以前先把整个目录列完才匹配——第一条就命中也
+    抛预算用完 → `unjudged` → 首开不问、脚本在空沙盒里跑。现在边列边匹配，命中即停。"""
+    root = _big_data_dir(tmp_path, hit=True)
+    taken = _ordered_scandir(monkeypatch, hit_first=True)
+    ev = db.evidence(root / "s/fig.py", root)
+    assert ev["candidates"]["script.parent"]["probes"]["found"] == ["data/*.csv"]
+    assert ev["verdict"] == db.VERDICT_SCRIPT_PARENT
+    assert taken[0] <= 1  # 命中之后一条都不再取
+
+
+def test_a_hit_beyond_the_budget_is_still_unjudged_not_missing(tmp_path, monkeypatch):
+    """预算只约束「还没命中」的遍历量：命中排在第 5101 条时看满预算就停，结论仍是「判不出」
+    ——不是错误地判「没有」。"""
+    root = _big_data_dir(tmp_path, hit=True)
+    taken = _ordered_scandir(monkeypatch, hit_first=False)
+    ev = db.evidence(root / "s/fig.py", root)
+    probes = ev["candidates"]["script.parent"]["probes"]
+    assert probes["unjudged"] == ["data/*.csv"] and probes["missing"] == []
+    assert taken[0] <= db.MAX_GLOB_SCAN
+    assert ev["verdict"] == db.VERDICT_NONE
+
+
+def test_no_match_in_a_directory_larger_than_the_budget_is_unjudged(tmp_path, monkeypatch):
+    root = _big_data_dir(tmp_path, hit=False)
+    taken = _ordered_scandir(monkeypatch, hit_first=True)
+    ev = db.evidence(root / "s/fig.py", root)
+    probes = ev["candidates"]["script.parent"]["probes"]
+    assert probes["unjudged"] == ["data/*.csv"] and probes["missing"] == []
+    assert taken[0] <= db.MAX_GLOB_SCAN
+    # 对照：同一个目录、预算够时列得完，结论是 missing（不是 unjudged）
+    monkeypatch.setattr(db, "MAX_GLOB_SCAN", 10 * db.MAX_GLOB_SCAN)
+    probes = db.evidence(root / "s/fig.py", root)["candidates"]["script.parent"]["probes"]
+    assert probes["missing"] == ["data/*.csv"]
+
+
+@pytest.mark.parametrize(
+    "source,expected",
+    [
+        ("import glob as g\ng.glob('run-*.traj')\n", [("glob", "run-*.traj")]),
+        ("from glob import glob as gg\ngg('run-*.traj')\n", [("glob", "run-*.traj")]),
+        ("from glob import iglob\niglob('run-*.traj')\n", [("glob", "run-*.traj")]),
+        (
+            "from pathlib import Path as P\nP('d').rglob('*.x')\nP.cwd().glob('*.n')\n",
+            [("glob", "d/**/*.x"), ("glob", "*.n")],
+        ),
+        # 别名只加名字：不是 glob 模块的 `g` 上的 `.glob()` 仍不算
+        ("import fnmatch as g\ng.glob('run-*.traj')\n", []),
+    ],
+)
+def test_aliased_glob_and_path_imports_are_recognised(source, expected):
+    """P2：以前写死 `glob.glob` / 裸 `glob` / `Path` 这几个名字，`import glob as g` 这类合法写法
+    认不出 → 没有探路证据 → 首开不问。"""
+    got = [(p["kind"], p["target"]) for p in db.probe_literals(source)]
+    assert got == expected
+
+
+def test_an_aliased_glob_decides_the_first_open_like_the_plain_one(tmp_path):
+    src = "import glob as g\nfiles = sorted(g.glob('run-*-*[Ll]ongrun.traj'))\n"
+    root = _project(tmp_path, "长时间 数据/analysis.py", src, TRAJ)
+    assert (
+        db.evidence(root / "长时间 数据/analysis.py", root)["verdict"] == db.VERDICT_SCRIPT_PARENT
+    )
