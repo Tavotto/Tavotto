@@ -393,26 +393,35 @@ function redirectRoot(gen: string, id: string): string {
 }
 
 /**
- * 「这一格排进去的样式改动属于谁」：样式面板按它给图的那组行重挂（`StylePanel`），它变了，挂着的
- * 还没落定的值（`usePendingWrites`）就不属于眼前这张图了（#688）。维度逐条说清：
+ * 「这一格排进去的样式改动属于谁」：样式面板按它给一组行重挂（`StylePanel`），它变了，挂着的
+ * 还没落定的值（`usePendingWrites`）就不属于眼前这一组了（#688）。**每一行按它真正的归属取范围**：
  *
- * * **代次**（`documentGeneration`：项目 · 文档 · 载入代次 · 画布）——与 `editBoundStyle` 作废排队
- *   写入的判据同一份；
- * * **图**：`figKey` = 面板 id + 素材。换素材（`replacePanelAsset`）保留 id、换文件，是另一张图；
- * * **绑定**：绑的是哪一条（解绑 / 脱离 = 没有）。改绑到别的样式、解绑之后，挂着的值说的是另一条
- *   样式；但**我们自己**在这一代次里做的改绑（改内置样式时复制成副本并改绑，`redirects`）倒回最初
- *   那一条——那是同一串编辑，排在后面的那一笔照样顺着落到副本上，不能因此丢掉它的挂起值。
+ * * `canvasScope`——画布级的行（画布标注：改的是这张画布上的文字 / 样式里的 `annotation`）：
+ *   * **代次**（`documentGeneration`：项目 · 文档 · 载入代次 · 画布）——与 `editBoundStyle` 作废
+ *     排队写入的判据同一份；
+ *   * **绑定**：绑的是哪一条（解绑 / 脱离 = 没有）。改绑到别的样式、解绑之后，挂着的值说的是另一条
+ *     样式；但**我们自己**在这一代次里做的改绑（改内置样式时复制成副本并改绑，`redirects`）倒回
+ *     最初那一条——那是同一串编辑，排在后面的那一笔照样顺着落到副本上，不能因此丢掉它的挂起值。
+ *   同一张画布上换选中的图**不在**里面：标注不属于哪一张图，切图就清的话，「加字号 → 切图 → 再加」
+ *   第二下会按旧值算、丢一次增量。
+ * * `figureScope`——图级的行（图内元素的字号 / 字体 / 线宽……）：画布级那几维 + **图**
+ *   （`figKey` = 面板 id + 素材；换素材 `replacePanelAsset` 保留 id、换文件，是另一张图）。
  *
- * 不在里面的：渲染变体、同一素材的重跑 / 新一版 manifest。挂起值是「排进这条样式的值」，与画成
+ * 两者都不含：渲染变体、同一素材的重跑 / 新一版 manifest。挂起值是「排进这条样式的值」，与画成
  * 哪一版无关；把它们算进来，引擎每画回一版就清一次，连点两下的 #662 又回来了。
  */
-export function styleEditScope(
+export function canvasScope(
   s: Pick<ReturnType<typeof useDocumentStore.getState>, 'documentId' | 'loadSeq' | 'activeCanvasId' | 'doc'>,
-  panel: Pick<PanelObject, 'id' | 'fileId'>,
 ): string {
   const gen = documentGeneration(s)
   const binding = canvasStyle(s.doc)
-  return JSON.stringify([gen, figKey(panel), binding ? redirectRoot(gen, binding.id) : null])
+  return JSON.stringify([gen, binding ? redirectRoot(gen, binding.id) : null])
+}
+export function figureScope(
+  s: Pick<ReturnType<typeof useDocumentStore.getState>, 'documentId' | 'loadSeq' | 'activeCanvasId' | 'doc'>,
+  panel: Pick<PanelObject, 'id' | 'fileId'>,
+): string {
+  return JSON.stringify([canvasScope(s), figKey(panel)])
 }
 
 /** 测试用：清掉会话记账与队列状态 */

@@ -34,7 +34,7 @@ import {
   editBoundStyle,
   followLibrary,
   resetStyleBindingSession,
-  styleEditScope,
+  figureScope,
 } from '@/store/styleBinding'
 import { StylePanel } from './StylePanel'
 
@@ -705,7 +705,7 @@ describe('Codex #662 P2：绑定样式时连点，按最后一次排进去的值
   })
 
   /**
-   * `styleEditScope` 的每一维各一行：**只变这一维**，挂起值不许串到变化之后的那张图上。
+   * `figureScope` 的每一维各一行：**只变这一维**，挂起值不许串到变化之后的那张图上。
    * 真实读数一律是正体（夹具的 manifest），所以按钮该是 `aria-pressed=false`。
    */
   const other = { ...styleRecord, id: 's2', display_name: '另一套' }
@@ -765,6 +765,40 @@ describe('Codex #662 P2：绑定样式时连点，按最后一次排进去的值
     }
   })
 
+  it('#688 画布级的行（画布标注）不随切图重挂：字号 加 → 切到同画布另一张图 → 再加，两下都算数', async () => {
+    await seed(panel, faceManifest())
+    const other: PanelObject = { ...panel, id: 'p2', name: 'Fig2', x: 50 }
+    s().commit(literal('第二张图 + 标注'), (d) => {
+      d.objects.push({ ...other })
+      d.objects.push({
+        id: 't1', type: 'text', text: '注释', sizePt: 9, color: '#000000', align: 'left', x: 0, y: 40, w: 10, h: 5,
+      } as never)
+    })
+    const saves = slowLibrary()
+    bindCanvasStyle('s1')
+    await new Promise((r) => setTimeout(r, 50))
+    seedExactRender(current(), faceManifest() as never)
+    seedExactRender(s().doc.objects.find((o) => o.id === 'p2') as PanelObject, faceManifest() as never)
+    await mount()
+    const up = async () =>
+      act(async () => {
+        const box = input('画布标注字号')
+        box.focus()
+        box.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true, cancelable: true }))
+      })
+    const start = Number(input('画布标注字号').value)
+    await up()
+    await act(async () => useSelectionStore.getState().set(['p2']))
+    expect(container.querySelector('[data-style-figure]')?.textContent, '夹具要的是真的切到了另一张图').toBe('Fig2')
+    await up()
+    await drain()
+    saves[0]?.release()
+    await drain()
+    saves[1]?.release()
+    await drain()
+    expect(saves.map((x) => x.data.annotation?.sizePt), '切图之后第二下按旧值算，丢了一次增量').toEqual([start + 0.5, start + 1])
+  })
+
   it('#688 反向：改内置样式时我们自己复制成副本并改绑（同一串编辑），归属不变——排在后面那一笔的挂起值不因此被清掉', async () => {
     // 量的是归属函数本身：组件层面这一刻夹具里的显示 manifest 会短暂缺席（override 变了、新一版没画回来），
     // 整个面板先换成「需要渲染」的空态，量不到行是否因 key 重挂
@@ -792,7 +826,7 @@ describe('Codex #662 P2：绑定样式时连点，按最后一次排进去的值
     bindCanvasStyle('s1')
     await new Promise((r) => setTimeout(r, 50))
     seedExactRender(current(), faceManifest() as never)
-    const before = styleEditScope(s(), current())
+    const before = figureScope(s(), current())
     // 连点两下：第一笔复制内置并改绑，第二笔还排着（挂起值就挂在它身上）
     const first = editBoundStyle({ kind: 'element', role: 'title', prop: 'weight', value: 'bold' })
     const second = editBoundStyle({ kind: 'element', role: 'title', prop: 'weight', value: 'normal' })
@@ -800,13 +834,13 @@ describe('Codex #662 P2：绑定样式时连点，按最后一次排进去的值
     saves[0].release()
     expect(await first).toBe(true)
     expect(s().doc.style?.id, '夹具要的就是「复制成副本并改绑」那条路').toBe('s1copy')
-    expect(styleEditScope(s(), current()), '第二笔还排着时归属变了：它的挂起值会被清掉').toBe(before)
+    expect(figureScope(s(), current()), '第二笔还排着时归属变了：它的挂起值会被清掉').toBe(before)
     await drain()
     saves[1].release()
     expect(await second, '第二笔顺着转发落到副本上').toBe(true)
     // 对照：用户自己改绑到副本（不是这一串编辑的转发）——归属变了
     s().commit(literal('改绑'), (d) => void (d.style = { ...d.style!, id: 's2' }))
-    expect(styleEditScope(s(), current())).not.toBe(before)
+    expect(figureScope(s(), current())).not.toBe(before)
   })
 
   it('那一笔存失败（库写不进去）：放掉挂着的值，按钮回到真实读数', async () => {
