@@ -194,6 +194,40 @@ describe('不带加速键的几条', () => {
     expect(doc().past).toHaveLength(1)
   })
 
+  it('单选时对齐的参照是画布，不是它自己（与属性页的单选行同一条规则）', () => {
+    useArrangeStore.setState({ alignRef: 'selection' })
+    useSelectionStore.getState().set(['p2'])
+    act(() => runMenuAction('menu-align-right'))
+    const p2 = doc().doc.objects.find((o) => o.id === 'p2')!
+    expect(p2.x + p2.w).toBe(300)
+    expect(doc().past).toHaveLength(1)
+  })
+
+  it('快速编辑里对齐与创建副本都不动版面（按键与菜单一致）', () => {
+    useArrangeStore.setState({ alignRef: 'page' })
+    useSelectionStore.getState().set(['p1'])
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    const before = observe()
+    for (const a of MENU_ACTIONS.filter((x) => x.startsWith('menu-align-'))) {
+      act(() => runMenuAction(a))
+    }
+    act(() => runMenuAction('menu-duplicate'))
+    act(() => {
+      document.body.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'd', metaKey: true, bubbles: true, cancelable: true }),
+      )
+    })
+    expect(observe()).toEqual(before)
+    expect(doc().doc.objects.find((o) => o.id === 'p1')!.x).toBe(10)
+
+    // 对照：同一个选区回到排版态，两条路都真的生效
+    useWorkspaceStore.getState().clear()
+    act(() => runMenuAction('menu-align-right'))
+    act(() => runMenuAction('menu-duplicate'))
+    expect(doc().past).toHaveLength(2)
+    expect(doc().doc.objects).toHaveLength(3)
+  })
+
   it('没选东西时对齐要说出口，而不是点了没反应', () => {
     useSelectionStore.getState().set([])
     act(() => runMenuAction('menu-align-left'))

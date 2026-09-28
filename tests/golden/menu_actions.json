@@ -1,0 +1,35 @@
+{
+  "_comment": "原生菜单的动作 id（严格同源对）：壳侧 src-tauri/src/main.rs::menu_spec 真正挂上去的项与它比，前端 web/src/lib/desktop.ts 的 MENU_ACTIONS 与它比，两侧都不读对方源码。forwarded 经 tavotto:menu 转发给前端；shell 由壳自己开链接，不进前端。",
+  "forwarded": [
+    "menu-settings",
+    "menu-check-updates",
+    "menu-open-project",
+    "menu-save",
+    "menu-save-layout",
+    "menu-export",
+    "menu-undo",
+    "menu-redo",
+    "menu-duplicate",
+    "menu-delete",
+    "menu-align-left",
+    "menu-align-hcenter",
+    "menu-align-right",
+    "menu-align-top",
+    "menu-align-vcenter",
+    "menu-align-bottom",
+    "menu-align-hdist",
+    "menu-align-vdist",
+    "menu-zoom-in",
+    "menu-zoom-out",
+    "menu-zoom-actual",
+    "menu-zoom-fit",
+    "menu-toggle-left",
+    "menu-toggle-right",
+    "menu-shortcut-help",
+    "menu-diagnostics"
+  ],
+  "shell": [
+    "help-docs",
+    "help-report-issue"
+  ]
+}

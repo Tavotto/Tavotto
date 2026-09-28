@@ -12,7 +12,9 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
-use tauri::menu::{AboutMetadataBuilder, Menu, MenuItem, MenuItemBuilder, SubmenuBuilder};
+use tauri::menu::{
+    AboutMetadata, AboutMetadataBuilder, Menu, MenuItemBuilder, PredefinedMenuItem, Submenu,
+};
 use tauri::{Emitter, Manager};
 use tauri_plugin_opener::OpenerExt;
 
@@ -500,10 +502,10 @@ fn on_close_requested(window: &tauri::Window, api: &tauri::CloseRequestApi) {
 
 /// 仓库地址：帮助菜单的两条链接与「关于」里的网站都从它派生。
 ///
-/// **与 `web/src/lib/brand.ts` / `engine/brand.py` 的 `REPO_URL` 严格同源**——壳在
-/// webview 起来之前就要建菜单，读不到前端的常量，只能镜像一份。看护
-/// `tests/test_desktop_i18n.py::test_shell_repo_url_mirrors_the_brand_constant`。
-const REPO_URL: &str = "https://github.com/Tavotto/Tavotto";
+/// **不在这里手写**：`build.rs` 编译时从品牌常量的唯一出处
+/// `web/src/lib/brand.ts`（与 `engine/brand.py` 同源）读出来注入——壳在 webview
+/// 起来之前就要建菜单，运行时读不到前端的常量。
+const REPO_URL: &str = env!("TAVOTTO_REPO_URL");
 
 /// 由壳自己处理的帮助链接（不转发给前端）：这两条在前端还没起来、sidecar 起不来
 /// 的时候最有用，而前端也没有开外部链接的权限（capability 不开放任意 opener）。
@@ -528,24 +530,48 @@ fn on_menu_event<R: tauri::Runtime>(app: &tauri::AppHandle<R>, id: &str) {
     }
 }
 
-/// 一条转发给前端的自定义菜单项（id 以 `menu-` 开头）。
-fn menu_item<R: tauri::Runtime>(
-    handle: &tauri::AppHandle<R>,
-    id: &str,
-    text: &str,
-    accelerator: Option<&str>,
-) -> tauri::Result<MenuItem<R>> {
-    let item = MenuItemBuilder::with_id(id, text);
-    match accelerator {
-        Some(a) => item.accelerator(a),
-        None => item,
-    }
-    .build(handle)
+/// 系统预定义角色（行为归操作系统：剪贴板、隐藏、关窗……）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Native {
+    About,
+    Hide,
+    HideOthers,
+    ShowAll,
+    Quit,
+    CloseWindow,
+    Cut,
+    Copy,
+    Paste,
+    SelectAll,
+    Fullscreen,
+    Minimize,
+    Maximize,
+    BringAllToFront,
 }
 
-/// 建菜单。**菜单项 id 与加速键在两种语言下完全相同**——只有显示文案换，
-/// 事件转发（`tavotto:menu`）与 `CmdOrCtrl+*` 一个字节不动：切语言绝不能
-/// 让 ⌘Z 失灵，那种坏法用户根本不会往语言上联想。
+/// 菜单的声明式结构。**`build_menu_in` 只照着它建，单测也只量它**——量的是真正
+/// 会挂到菜单上的项，而不是源码里出现过的字符串（注释、死代码里的 id 不算数）。
+#[derive(Debug)]
+enum Entry {
+    /// 自定义项：`menu-*` 经 `tavotto:menu` 转发给前端，`help-*` 由壳开链接
+    Item {
+        id: &'static str,
+        text: &'static str,
+        accel: Option<&'static str>,
+    },
+    Native(Native, &'static str),
+    Separator,
+    Submenu(&'static str, Vec<Entry>),
+}
+
+fn item(id: &'static str, text: &'static str, accel: Option<&'static str>) -> Entry {
+    Entry::Item { id, text, accel }
+}
+
+/// 整棵菜单。**菜单项 id 与加速键在两种语言下完全相同**——只有显示文案换：
+/// 切语言绝不能让 ⌘Z 失灵，那种坏法用户根本不会往语言上联想（单测逐项比两种语言）。
+///
+/// `macos` 是参数而不是 `cfg`：两个平台的形状在任何一台机器上的单测里都量得到。
 ///
 /// **菜单只接前端已有的命令**，动作全部落到前端既有的 action 上
 /// （`web/src/hooks/menuActions.ts`）。加速键只挂在前端**本来就认**的键上
@@ -553,6 +579,191 @@ fn menu_item<R: tauri::Runtime>(
 /// 菜单加速键可能先于 webview 的 keydown 截获按键（Windows 一定如此），
 /// 输入框聚焦时 ⌘D / ⌘0 / ⌘± 不能被菜单劫持成画布动作。
 /// Delete / ? 这类不带修饰键的前端键位**不挂**加速键：挂上等于在输入框里打不了字。
+fn menu_spec(m: &'static i18n::ShellText, macos: bool) -> Vec<Entry> {
+    use Entry::{Native as N, Separator as Sep, Submenu as Sub};
+    use Native::*;
+
+    // 设置 / 检查更新：macOS 放应用菜单，别的平台（没有应用菜单）分别放「文件」与「帮助」
+    let settings = || item("menu-settings", m.app_settings, Some("CmdOrCtrl+Comma"));
+    let check_updates = || item("menu-check-updates", m.app_check_updates, None);
+
+    let mut menus = Vec::new();
+    if macos {
+        menus.push(Sub(
+            "Tavotto",
+            vec![
+                N(About, m.app_about),
+                Sep,
+                settings(),
+                check_updates(),
+                Sep,
+                N(Hide, m.app_hide),
+                N(HideOthers, m.app_hide_others),
+                N(ShowAll, m.app_show_all),
+                Sep,
+                N(Quit, m.app_quit),
+            ],
+        ));
+    }
+
+    let mut file = vec![
+        item(
+            "menu-open-project",
+            m.file_open_project,
+            Some("CmdOrCtrl+O"),
+        ),
+        Sep,
+        item("menu-save", m.file_save, Some("CmdOrCtrl+S")),
+        item(
+            "menu-save-layout",
+            m.file_save_layout,
+            Some("CmdOrCtrl+Shift+S"),
+        ),
+        Sep,
+        item("menu-export", m.file_export, Some("CmdOrCtrl+E")),
+        Sep,
+        // 预定义角色：macOS 走 performClose:、Windows 发 WM_CLOSE，两条都会进
+        // `WindowEvent::CloseRequested` → 关窗询问闸，与点红灯同一条路。
+        N(CloseWindow, m.file_close_window),
+    ];
+    if !macos {
+        file.extend([Sep, settings(), Sep, N(Quit, m.quit)]);
+    }
+    menus.push(Sub(m.file, file));
+
+    // 撤销/重做是自定义项：走事件转发给前端（画布 undo 栈），文本框内的
+    // 原生撤销由前端按焦点分派。剪贴板项必须用预定义角色——macOS 的
+    // WKWebView 里没有这些菜单角色时 ⌘C/⌘V 在输入框里完全失效。
+    menus.push(Sub(
+        m.edit,
+        vec![
+            item("menu-undo", m.edit_undo, Some("CmdOrCtrl+Z")),
+            item("menu-redo", m.edit_redo, Some("CmdOrCtrl+Shift+Z")),
+            Sep,
+            N(Cut, m.edit_cut),
+            N(Copy, m.edit_copy),
+            N(Paste, m.edit_paste),
+            item("menu-duplicate", m.edit_duplicate, Some("CmdOrCtrl+D")),
+            // 不挂 Delete / Backspace：那是输入框里删字的键
+            item("menu-delete", m.edit_delete, None),
+            N(SelectAll, m.edit_select_all),
+            Sep,
+            // 对齐与分布：id 的后缀就是前端 `AlignMode`，参照与属性页、多选浮动栏
+            // 同一套（`arrangeStore.alignRefFor`）。菜单感知不到选区，选得不够时由前端说出口。
+            Sub(
+                m.edit_arrange,
+                vec![
+                    item("menu-align-left", m.align_left, None),
+                    item("menu-align-hcenter", m.align_hcenter, None),
+                    item("menu-align-right", m.align_right, None),
+                    Sep,
+                    item("menu-align-top", m.align_top, None),
+                    item("menu-align-vcenter", m.align_vcenter, None),
+                    item("menu-align-bottom", m.align_bottom, None),
+                    Sep,
+                    item("menu-align-hdist", m.align_hdist, None),
+                    item("menu-align-vdist", m.align_vdist, None),
+                ],
+            ),
+        ],
+    ));
+
+    let mut view = vec![
+        item("menu-zoom-in", m.view_zoom_in, Some("CmdOrCtrl+Equal")),
+        item("menu-zoom-out", m.view_zoom_out, Some("CmdOrCtrl+Minus")),
+        item("menu-zoom-actual", m.view_actual_size, Some("CmdOrCtrl+0")),
+        item("menu-zoom-fit", m.view_fit, Some("CmdOrCtrl+1")),
+        Sep,
+        item("menu-toggle-left", m.view_toggle_left, None),
+        item("menu-toggle-right", m.view_toggle_right, None),
+    ];
+    if macos {
+        // 全屏的预定义角色只有 macOS 有（muda：Windows / Linux 不支持）
+        view.extend([Sep, N(Fullscreen, m.view_fullscreen)]);
+    }
+    menus.push(Sub(m.view, view));
+
+    // 「窗口」是 macOS 的标准菜单；Windows 的最小化 / 最大化在标题栏上，不另开一栏。
+    if macos {
+        menus.push(Sub(
+            m.window,
+            vec![
+                N(Minimize, m.window_minimize),
+                N(Maximize, m.window_zoom),
+                Sep,
+                N(BringAllToFront, m.window_bring_all),
+            ],
+        ));
+    }
+
+    let mut help = vec![
+        item("menu-shortcut-help", m.help_shortcuts, None),
+        item("help-docs", m.help_docs, None),
+        item("help-report-issue", m.help_report_issue, None),
+        Sep,
+        item("menu-diagnostics", m.help_diagnostics, None),
+    ];
+    // macOS 的「关于」与「检查更新」在应用菜单里，帮助菜单不再重复一份
+    if !macos {
+        help.extend([Sep, check_updates(), N(About, m.app_about)]);
+    }
+    menus.push(Sub(m.help, help));
+    menus
+}
+
+fn build_native<R: tauri::Runtime>(
+    handle: &tauri::AppHandle<R>,
+    kind: Native,
+    text: &str,
+    about: &AboutMetadata<'static>,
+) -> tauri::Result<PredefinedMenuItem<R>> {
+    let t = Some(text);
+    match kind {
+        Native::About => PredefinedMenuItem::about(handle, t, Some(about.clone())),
+        Native::Hide => PredefinedMenuItem::hide(handle, t),
+        Native::HideOthers => PredefinedMenuItem::hide_others(handle, t),
+        Native::ShowAll => PredefinedMenuItem::show_all(handle, t),
+        Native::Quit => PredefinedMenuItem::quit(handle, t),
+        Native::CloseWindow => PredefinedMenuItem::close_window(handle, t),
+        Native::Cut => PredefinedMenuItem::cut(handle, t),
+        Native::Copy => PredefinedMenuItem::copy(handle, t),
+        Native::Paste => PredefinedMenuItem::paste(handle, t),
+        Native::SelectAll => PredefinedMenuItem::select_all(handle, t),
+        Native::Fullscreen => PredefinedMenuItem::fullscreen(handle, t),
+        Native::Minimize => PredefinedMenuItem::minimize(handle, t),
+        Native::Maximize => PredefinedMenuItem::maximize(handle, t),
+        Native::BringAllToFront => PredefinedMenuItem::bring_all_to_front(handle, t),
+    }
+}
+
+fn build_submenu<R: tauri::Runtime>(
+    handle: &tauri::AppHandle<R>,
+    text: &str,
+    entries: &[Entry],
+    about: &AboutMetadata<'static>,
+) -> tauri::Result<Submenu<R>> {
+    let sub = Submenu::new(handle, text, true)?;
+    for entry in entries {
+        match entry {
+            Entry::Item { id, text, accel } => {
+                let b = MenuItemBuilder::with_id(*id, *text);
+                let b = match accel {
+                    Some(a) => b.accelerator(*a),
+                    None => b,
+                };
+                sub.append(&b.build(handle)?)?;
+            }
+            Entry::Native(kind, text) => sub.append(&build_native(handle, *kind, text, about)?)?,
+            Entry::Separator => sub.append(&PredefinedMenuItem::separator(handle)?)?,
+            Entry::Submenu(text, children) => {
+                sub.append(&build_submenu(handle, text, children, about)?)?
+            }
+        }
+    }
+    Ok(sub)
+}
+
+/// 照 `menu_spec` 建菜单；结构与 id / 加速键的判据全在 `menu_spec` 与它的单测里。
 fn build_menu_in<R: tauri::Runtime>(
     handle: &tauri::AppHandle<R>,
     locale: i18n::Locale,
@@ -566,226 +777,12 @@ fn build_menu_in<R: tauri::Runtime>(
         .build();
 
     let menu = Menu::new(handle)?;
-
-    // 设置 / 检查更新各建一次：macOS 放应用菜单，别的平台（没有应用菜单）分别
-    // 放「文件」与「帮助」。建一次的意思是加速键只写一处（看护见 test_desktop_i18n）。
-    let settings = menu_item(
-        handle,
-        "menu-settings",
-        m.app_settings,
-        Some("CmdOrCtrl+Comma"),
-    )?;
-    let check_updates = menu_item(handle, "menu-check-updates", m.app_check_updates, None)?;
-
-    #[cfg(target_os = "macos")]
-    {
-        let app_menu = SubmenuBuilder::new(handle, "Tavotto")
-            .about_with_text(m.app_about, Some(about))
-            .separator()
-            .item(&settings)
-            .item(&check_updates)
-            .separator()
-            .hide_with_text(m.app_hide)
-            .hide_others_with_text(m.app_hide_others)
-            .show_all_with_text(m.app_show_all)
-            .separator()
-            .quit_with_text(m.app_quit)
-            .build()?;
-        menu.append(&app_menu)?;
+    for top in menu_spec(m, cfg!(target_os = "macos")) {
+        let Entry::Submenu(text, entries) = top else {
+            unreachable!("菜单栏顶层只放子菜单");
+        };
+        menu.append(&build_submenu(handle, text, &entries, &about)?)?;
     }
-
-    #[cfg_attr(target_os = "macos", allow(unused_mut))]
-    let mut file = SubmenuBuilder::new(handle, m.file)
-        .item(&menu_item(
-            handle,
-            "menu-open-project",
-            m.file_open_project,
-            Some("CmdOrCtrl+O"),
-        )?)
-        .separator()
-        .item(&menu_item(
-            handle,
-            "menu-save",
-            m.file_save,
-            Some("CmdOrCtrl+S"),
-        )?)
-        .item(&menu_item(
-            handle,
-            "menu-save-layout",
-            m.file_save_layout,
-            Some("CmdOrCtrl+Shift+S"),
-        )?)
-        .separator()
-        .item(&menu_item(
-            handle,
-            "menu-export",
-            m.file_export,
-            Some("CmdOrCtrl+E"),
-        )?)
-        .separator()
-        // 预定义角色：macOS 走 performClose:、Windows 发 WM_CLOSE，两条都会进
-        // `WindowEvent::CloseRequested` → 关窗询问闸，与点红灯同一条路。
-        .close_window_with_text(m.file_close_window);
-    #[cfg(not(target_os = "macos"))]
-    {
-        file = file
-            .separator()
-            .item(&settings)
-            .separator()
-            .quit_with_text(m.quit);
-    }
-    menu.append(&file.build()?)?;
-
-    // 对齐与分布：id 的后缀就是前端 `AlignMode`，参照取 `arrangeStore` 当前那一档
-    // ——与属性页、多选浮动栏同一个 `alignSelectedTo`。菜单感知不到选区，
-    // 选得不够时由前端说出口。
-    let arrange = SubmenuBuilder::new(handle, m.edit_arrange)
-        .item(&menu_item(handle, "menu-align-left", m.align_left, None)?)
-        .item(&menu_item(
-            handle,
-            "menu-align-hcenter",
-            m.align_hcenter,
-            None,
-        )?)
-        .item(&menu_item(handle, "menu-align-right", m.align_right, None)?)
-        .separator()
-        .item(&menu_item(handle, "menu-align-top", m.align_top, None)?)
-        .item(&menu_item(
-            handle,
-            "menu-align-vcenter",
-            m.align_vcenter,
-            None,
-        )?)
-        .item(&menu_item(
-            handle,
-            "menu-align-bottom",
-            m.align_bottom,
-            None,
-        )?)
-        .separator()
-        .item(&menu_item(handle, "menu-align-hdist", m.align_hdist, None)?)
-        .item(&menu_item(handle, "menu-align-vdist", m.align_vdist, None)?)
-        .build()?;
-
-    // 撤销/重做是自定义项：走事件转发给前端（画布 undo 栈），文本框内的
-    // 原生撤销由前端按焦点分派。剪贴板项必须用预定义角色——macOS 的
-    // WKWebView 里没有这些菜单角色时 ⌘C/⌘V 在输入框里完全失效。
-    let edit = SubmenuBuilder::new(handle, m.edit)
-        .item(&menu_item(
-            handle,
-            "menu-undo",
-            m.edit_undo,
-            Some("CmdOrCtrl+Z"),
-        )?)
-        .item(&menu_item(
-            handle,
-            "menu-redo",
-            m.edit_redo,
-            Some("CmdOrCtrl+Shift+Z"),
-        )?)
-        .separator()
-        .cut_with_text(m.edit_cut)
-        .copy_with_text(m.edit_copy)
-        .paste_with_text(m.edit_paste)
-        .item(&menu_item(
-            handle,
-            "menu-duplicate",
-            m.edit_duplicate,
-            Some("CmdOrCtrl+D"),
-        )?)
-        // 不挂 Delete / Backspace：那是输入框里删字的键
-        .item(&menu_item(handle, "menu-delete", m.edit_delete, None)?)
-        .select_all_with_text(m.edit_select_all)
-        .separator()
-        .item(&arrange)
-        .build()?;
-    menu.append(&edit)?;
-
-    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
-    let mut view = SubmenuBuilder::new(handle, m.view)
-        .item(&menu_item(
-            handle,
-            "menu-zoom-in",
-            m.view_zoom_in,
-            Some("CmdOrCtrl+Equal"),
-        )?)
-        .item(&menu_item(
-            handle,
-            "menu-zoom-out",
-            m.view_zoom_out,
-            Some("CmdOrCtrl+Minus"),
-        )?)
-        .item(&menu_item(
-            handle,
-            "menu-zoom-actual",
-            m.view_actual_size,
-            Some("CmdOrCtrl+0"),
-        )?)
-        .item(&menu_item(
-            handle,
-            "menu-zoom-fit",
-            m.view_fit,
-            Some("CmdOrCtrl+1"),
-        )?)
-        .separator()
-        .item(&menu_item(
-            handle,
-            "menu-toggle-left",
-            m.view_toggle_left,
-            None,
-        )?)
-        .item(&menu_item(
-            handle,
-            "menu-toggle-right",
-            m.view_toggle_right,
-            None,
-        )?);
-    #[cfg(target_os = "macos")]
-    {
-        // 全屏的预定义角色只有 macOS 有（muda：Windows / Linux 不支持）
-        view = view.separator().fullscreen_with_text(m.view_fullscreen);
-    }
-    menu.append(&view.build()?)?;
-
-    // 「窗口」是 macOS 的标准菜单；Windows 的最小化 / 最大化在标题栏上，不另开一栏。
-    #[cfg(target_os = "macos")]
-    {
-        let window = SubmenuBuilder::new(handle, m.window)
-            .minimize_with_text(m.window_minimize)
-            .maximize_with_text(m.window_zoom)
-            .separator()
-            .bring_all_to_front_with_text(m.window_bring_all)
-            .build()?;
-        menu.append(&window)?;
-    }
-
-    #[cfg_attr(target_os = "macos", allow(unused_mut))]
-    let mut help = SubmenuBuilder::new(handle, m.help)
-        .item(&menu_item(
-            handle,
-            "menu-shortcut-help",
-            m.help_shortcuts,
-            None,
-        )?)
-        .item(&MenuItemBuilder::with_id("help-docs", m.help_docs).build(handle)?)
-        .item(&MenuItemBuilder::with_id("help-report-issue", m.help_report_issue).build(handle)?)
-        .separator()
-        .item(&menu_item(
-            handle,
-            "menu-diagnostics",
-            m.help_diagnostics,
-            None,
-        )?);
-    // macOS 的「关于」与「检查更新」在应用菜单里，帮助菜单不再重复一份
-    #[cfg(not(target_os = "macos"))]
-    {
-        help = help
-            .separator()
-            .item(&check_updates)
-            .about_with_text(m.app_about, Some(about));
-    }
-    menu.append(&help.build()?)?;
-
     Ok(menu)
 }
 
@@ -1138,6 +1135,128 @@ mod tests {
                 "build_menu 里碰了 path()：那时 PathResolver 还没被 manage：{code}"
             );
         }
+    }
+
+    /// `menu_spec` 里**真正会挂上去**的自定义项（id, 加速键），按出现顺序。
+    fn spec_items(entries: &[Entry], out: &mut Vec<(&'static str, Option<&'static str>)>) {
+        for e in entries {
+            match e {
+                Entry::Item { id, accel, .. } => out.push((id, *accel)),
+                Entry::Submenu(_, children) => spec_items(children, out),
+                Entry::Native(..) | Entry::Separator => {}
+            }
+        }
+    }
+
+    fn items_of(locale: i18n::Locale, macos: bool) -> Vec<(&'static str, Option<&'static str>)> {
+        let mut out = Vec::new();
+        spec_items(&menu_spec(i18n::text(locale), macos), &mut out);
+        out
+    }
+
+    const LOCALES: [i18n::Locale; 2] = [i18n::Locale::ZhCn, i18n::Locale::EnUs];
+
+    /// 与前端 `MENU_ACTIONS` 的严格同源对：两侧各自与这份 golden 比，不读对方源码
+    /// （前端那一侧是 `web/src/lib/desktop.golden.test.ts`）。壳多一条 = 点了没反应，
+    /// 前端多一条 = 死分支；`help-*` 由壳开链接，不进前端。
+    #[test]
+    fn menu_ids_match_the_golden_pair_on_both_platforms() {
+        let golden: serde_json::Value =
+            serde_json::from_str(include_str!("../../tests/golden/menu_actions.json")).unwrap();
+        let set = |k: &str| -> std::collections::BTreeSet<String> {
+            golden[k]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v.as_str().unwrap().to_string())
+                .collect()
+        };
+        let (forwarded, shell) = (set("forwarded"), set("shell"));
+        assert!(!forwarded.is_empty() && !shell.is_empty());
+        for macos in [true, false] {
+            for locale in LOCALES {
+                let mut seen = std::collections::BTreeSet::new();
+                for (id, _) in items_of(locale, macos) {
+                    assert!(
+                        seen.insert(id.to_string()),
+                        "{id} 挂了不止一次（macos={macos}）"
+                    );
+                }
+                let got_fwd = seen
+                    .iter()
+                    .filter(|i| i.starts_with("menu-"))
+                    .cloned()
+                    .collect();
+                let got_shell = seen
+                    .iter()
+                    .filter(|i| !i.starts_with("menu-"))
+                    .cloned()
+                    .collect();
+                assert_eq!(
+                    forwarded, got_fwd,
+                    "转发给前端的 id 与 golden 不同（macos={macos}）"
+                );
+                assert_eq!(
+                    shell, got_shell,
+                    "壳自己处理的 id 与 golden 不同（macos={macos}）"
+                );
+                for id in &shell {
+                    assert!(help_link(id).is_some(), "{id} 挂在菜单上却没有链接");
+                }
+            }
+        }
+    }
+
+    /// 切语言只换显示文案：id 与加速键逐项相同。改坏了的表现是「切成英文之后 ⌘Z
+    /// 没反应」——用户不会往语言上联想。
+    #[test]
+    fn language_switch_does_not_touch_ids_or_accelerators() {
+        for macos in [true, false] {
+            assert_eq!(
+                items_of(i18n::Locale::ZhCn, macos),
+                items_of(i18n::Locale::EnUs, macos),
+                "macos={macos}"
+            );
+        }
+    }
+
+    /// 自定义项的加速键全集，每条都是前端 `hooks/useKeyboard.ts` 本来就认的键
+    /// （⌘, 除外：前端没有这个键），菜单转发与 keydown 的让位判据同一条
+    /// （`web/src/hooks/menuActions.test.tsx` 逐键比）。**加一条就要回答它在输入框里
+    /// 会不会被菜单劫持**——Delete / ? 这类不带修饰键的键因此一律不挂。
+    #[test]
+    fn accelerators_are_the_audited_set_each_once() {
+        let expected: std::collections::BTreeSet<&str> = [
+            "CmdOrCtrl+Comma",
+            "CmdOrCtrl+O",
+            "CmdOrCtrl+S",
+            "CmdOrCtrl+Shift+S",
+            "CmdOrCtrl+E",
+            "CmdOrCtrl+Z",
+            "CmdOrCtrl+Shift+Z",
+            "CmdOrCtrl+D",
+            "CmdOrCtrl+Equal",
+            "CmdOrCtrl+Minus",
+            "CmdOrCtrl+0",
+            "CmdOrCtrl+1",
+        ]
+        .into();
+        for macos in [true, false] {
+            let accels: Vec<&str> = items_of(i18n::DEFAULT_LOCALE, macos)
+                .into_iter()
+                .filter_map(|(_, a)| a)
+                .collect();
+            let set: std::collections::BTreeSet<&str> = accels.iter().copied().collect();
+            assert_eq!(set.len(), accels.len(), "有加速键挂了两次（macos={macos}）");
+            assert_eq!(set, expected, "加速键集合变了（macos={macos}）");
+        }
+    }
+
+    /// 仓库地址来自品牌常量（build.rs 注入），不是空串、不是手写的第二份。
+    #[test]
+    fn repo_url_is_injected_from_the_brand_source() {
+        let brand = include_str!("../../web/src/lib/brand.ts");
+        assert!(brand.contains(&format!("export const REPO_URL = '{REPO_URL}'")));
     }
 
     /// 帮助菜单的两条链接由壳自己打开，而且只从 `REPO_URL` 派生；

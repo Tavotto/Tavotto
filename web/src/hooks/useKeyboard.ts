@@ -32,7 +32,7 @@ import { useWorkspaceStore } from '@/store/workspace'
  * 而两者都会进文档、进历史、跟着导出。顶栏把这组按钮藏了起来，快捷键必须
  * 走同一条判据，否则藏的只是入口不是能力。
  */
-const inFastEdit = () => useWorkspaceStore.getState().mode === 'fast_edit'
+export const inFastEdit = () => useWorkspaceStore.getState().mode === 'fast_edit'
 
 const TOOL_KEYS: Record<string, Tool> = {
   v: 'select',
@@ -197,7 +197,8 @@ export function useKeyboard() {
       }
       if (mod && e.key.toLowerCase() === 'd') {
         e.preventDefault()
-        duplicateSelected()
+        // 副本落在版面上、快速编辑这一屏看不见它（与方向键 / 工具字母同一条判据）
+        if (!inFastEdit()) duplicateSelected()
         return
       }
       // ⌘C / ⌘V 不在 keydown 层拦：让浏览器派发原生 copy/paste 事件，

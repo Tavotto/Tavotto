@@ -221,76 +221,42 @@ def test_set_menu_locale_is_declared_in_all_three_places():
     )
 
 
-def _menu_builder() -> str:
-    """`build_menu_in` 的函数体（菜单项 id 与加速键只该在这里出现）。"""
-    main_rs = (TAURI / "src" / "main.rs").read_text(encoding="utf-8")
-    start = main_rs.index("fn build_menu_in<R: tauri::Runtime>(")
-    return main_rs[start : main_rs.index("\n}\n", start)]
+# 菜单项 id / 加速键 / 两种语言下逐项相同：看护在壳里
+# （`src-tauri/src/main.rs` 的 `menu_spec` 单测，量的是真正挂上去的项，不是源码里
+# 出现过的字符串）；与前端的 id 同源对各自比 `tests/golden/menu_actions.json`。
 
 
-# 自定义菜单项的加速键全集。每一条都是前端 `hooks/useKeyboard.ts` 本来就认的键
-# （⌘, 除外：前端没有这个键，它只在菜单里），菜单转发与 keydown 的让位判断同一条
-# （`web/src/hooks/menuActions.test.tsx` 逐键比）。**加一条就要回答它在输入框里
-# 会不会被菜单劫持**——Delete / ? 这类不带修饰键的键因此一律不挂。
-ACCELERATORS = {
-    "CmdOrCtrl+Comma",
-    "CmdOrCtrl+O",
-    "CmdOrCtrl+S",
-    "CmdOrCtrl+Shift+S",
-    "CmdOrCtrl+E",
-    "CmdOrCtrl+Z",
-    "CmdOrCtrl+Shift+Z",
-    "CmdOrCtrl+D",
-    "CmdOrCtrl+Equal",
-    "CmdOrCtrl+Minus",
-    "CmdOrCtrl+0",
-    "CmdOrCtrl+1",
-}
-
-
-def test_language_switch_does_not_touch_accelerators():
+def test_shell_repo_url_comes_from_the_brand_constant():
     """
-    切语言只换显示文案：菜单项 id 与加速键必须只出现一次定义。
-    改坏了的表现是「切成英文之后 ⌘Z 没反应」——用户不会往语言上联想。
-    """
-    body = _menu_builder()
-    accels = re.findall(r'"(CmdOrCtrl\+[^"]+)"', body)
-    assert set(accels) == ACCELERATORS, f"加速键集合变了：{set(accels) ^ ACCELERATORS}"
-    for accel in ACCELERATORS:
-        assert accels.count(accel) == 1, f"{accel} 被写了不止一次"
-    ids = re.findall(r'"((?:menu|help)-[a-z-]+)"', body)
-    assert ids, "没解析出菜单项 id——解析逻辑跟着源码走样了"
-    for menu_id in set(ids):
-        assert ids.count(menu_id) == 1, f"{menu_id} 被写了不止一次"
-    # id 不许从 i18n 表里来（那样换语言就换了 id）
-    assert "with_id(m." not in body and "menu_item(handle, m." not in body
-
-
-def test_menu_ids_are_the_same_set_on_both_sides():
-    """
-    壳里转发的 `menu-*` 与前端 `MENU_ACTIONS` 严格同源：壳多一条 = 点了没反应，
-    前端多一条 = 死分支。`help-*` 由壳自己开链接，不进前端。
-    """
-    rust = set(re.findall(r'"(menu-[a-z-]+)"', _menu_builder()))
-    ts = (ROOT / "web" / "src" / "lib" / "desktop.ts").read_text(encoding="utf-8")
-    block = ts[ts.index("export const MENU_ACTIONS = [") :]
-    block = block[: block.index("] as const")]
-    front = set(re.findall(r"'(menu-[a-z-]+)'", block))
-    assert rust, "没解析出壳里的 menu-* id"
-    assert rust == front, f"壳与前端的菜单 id 对不上：{rust ^ front}"
-
-
-def test_shell_repo_url_mirrors_the_brand_constant():
-    """
-    壳在 webview 起来之前就建菜单，读不到前端常量，只能镜像一份 `REPO_URL`
-    （帮助菜单的链接与「关于」的网站）。三处必须是同一个地址。
+    壳的 `REPO_URL` 由 `build.rs` 编译期从 `web/src/lib/brand.ts` 读出注入，壳里不许再有
+    手写的仓库地址；`brand.ts` 与 `engine/brand.py` 是同一个地址。
     """
     main_rs = (TAURI / "src" / "main.rs").read_text(encoding="utf-8")
-    (rust,) = re.findall(r'^const REPO_URL: &str = "([^"]+)";', main_rs, re.M)
+    assert 'const REPO_URL: &str = env!("TAVOTTO_REPO_URL");' in main_rs
+    assert "github.com" not in main_rs, "main.rs 里又手写了仓库地址"
+    build_rs = (TAURI / "build.rs").read_text(encoding="utf-8")
+    assert '"../web/src/lib/brand.ts"' in build_rs and "TAVOTTO_REPO_URL" in build_rs
     brand_ts = (ROOT / "web" / "src" / "lib" / "brand.ts").read_text(encoding="utf-8")
-    (ts,) = re.findall(r"^export const REPO_URL = '([^']+)'", brand_ts, re.M)
+    (ts,) = re.findall(r"^export const REPO_URL = '([^']+)'$", brand_ts, re.M)
     from tavotto.engine import brand
 
-    assert rust == ts == brand.REPO_URL
-    # 壳里不许再有第二处手写的仓库地址
-    assert main_rs.count("github.com/") == 1, "main.rs 里还有别处手写了仓库地址"
+    assert ts == brand.REPO_URL
+
+
+def test_ui_sources_never_handwrite_the_repo_url():
+    """
+    界面与壳里的仓库地址一律取品牌常量（`brand.ts` 及从它派生的常量、壳里 build.rs 注入
+    的 `REPO_URL`）。这里扫的是**会进界面的源码**：web/src（用例除外）与 src-tauri/src；
+    发行配置（pyproject、tauri.conf.json、Codex 插件清单等）读不到 brand，不在这里。
+    """
+    brand = ROOT / "web" / "src" / "lib" / "brand.ts"
+    roots = [ROOT / "web" / "src", TAURI / "src"]
+    hits = []
+    for root in roots:
+        for f in root.rglob("*"):
+            if f.suffix not in {".ts", ".tsx", ".rs"} or f == brand or ".test." in f.name:
+                continue
+            for i, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
+                if "github.com/Tavotto" in line:
+                    hits.append(f"{f.relative_to(ROOT)}:{i}")
+    assert not hits, f"手写了仓库地址：{hits}"

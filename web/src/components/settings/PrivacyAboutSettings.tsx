@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
 import { postDiagnosticsBundle, type TelemetrySettings } from '@/lib/api'
 import { buildDiagnosticPayload } from '@/diagnostics'
-import { PRODUCT_NAME } from '@/lib/brand'
+import { PRIVACY_DOC_URL, PRODUCT_NAME, REPO_URL } from '@/lib/brand'
 import { TELEMETRY_DISCLOSED_EVENTS } from '@/lib/telemetryDisclosure'
 import { useTelemetryStore } from '@/store/telemetryStore'
 import { useUpdateStore } from '@/store/updateStore'
@@ -58,7 +58,7 @@ function ProductBlock({ version }: { version?: string }) {
         <p className="type-meta">
           {st('about.licenseBefore')}{' '}
           <a
-            href="https://github.com/Tavotto/Tavotto"
+            href={REPO_URL}
             target="_blank"
             rel="noreferrer"
             // 正文句子里的链接必须**不靠颜色**也能认出来（axe
@@ -140,7 +140,7 @@ function PrivacyBlock() {
       )}
       <TelemetryDataDisclosure />
       <a
-        href="https://github.com/Tavotto/Tavotto/blob/main/docs/privacy.md"
+        href={PRIVACY_DOC_URL}
         target="_blank"
         rel="noreferrer"
         className="self-start text-xs text-accent underline underline-offset-2"

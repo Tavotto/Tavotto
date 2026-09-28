@@ -2,12 +2,18 @@ import { msg } from '@/i18n'
 import type { MenuAction } from '@/lib/desktop'
 import type { AlignMode } from '@/lib/geometry'
 import { alignSelectedTo, duplicateSelected, runManualSave } from '@/store/actions'
-import { useArrangeStore } from '@/store/arrangeStore'
+import { alignRefFor } from '@/store/arrangeStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { useUpdateStore } from '@/store/updateStore'
-import { deleteSelection, runUndoRedo, runZoomCommand, yieldsCanvasShortcuts } from './useKeyboard'
+import {
+  deleteSelection,
+  inFastEdit,
+  runUndoRedo,
+  runZoomCommand,
+  yieldsCanvasShortcuts,
+} from './useKeyboard'
 
 const ALIGN_PREFIX = 'menu-align-'
 
@@ -48,13 +54,17 @@ export function runMenuAction(action: MenuAction) {
   if (useProjectStore.getState().phase !== 'open') return
 
   if (action.startsWith(ALIGN_PREFIX)) {
+    // 对齐写的是版面上的 x/y：快速编辑这一屏没有版面，改了用户也看不见
+    // （与方向键 / ⌘D / 工具字母同一条判据 `inFastEdit`）
+    if (inFastEdit()) return
     // 菜单看不见选区：没选东西时说出口，而不是点了没反应
-    if (!useSelectionStore.getState().ids.length) {
+    const count = useSelectionStore.getState().ids.length
+    if (!count) {
       ui.setStatus(msg('quickEdit.needObjects', { count: 1 }, 'workspace'), 'error')
       return
     }
-    // id 后缀就是 AlignMode；参照与属性页 / 多选浮动栏共用 arrangeStore 那一份
-    alignSelectedTo(action.slice(ALIGN_PREFIX.length) as AlignMode, useArrangeStore.getState().alignRef)
+    // id 后缀就是 AlignMode；参照与属性页 / 多选浮动栏同一条规则：单选对画布，多选用 arrangeStore
+    alignSelectedTo(action.slice(ALIGN_PREFIX.length) as AlignMode, alignRefFor(count))
     return
   }
 
@@ -80,7 +90,8 @@ export function runMenuAction(action: MenuAction) {
       ui.setExportOpen(true)
       break
     case 'menu-duplicate':
-      if (!yieldsCanvasShortcuts(focused)) duplicateSelected()
+      // 与 keydown 的 ⌘D 同一组判据：输入框 / 对话框里让位，快速编辑里不往看不见的版面上加副本
+      if (!yieldsCanvasShortcuts(focused) && !inFastEdit()) duplicateSelected()
       break
     case 'menu-delete':
       // 没挂加速键，只会是点出来的：文本框里就删选中的字（与 macOS「编辑 → 删除」一致）
