@@ -66,31 +66,34 @@ os.environ["TAVOTTO_NO_TELEMETRY"] = "1"
 # 那一条就以真 `_post` 发到 PostHog——#440 里 249 个「source」幻影安装全是这么来的。
 #
 # 判据的主语：**这个 pytest 进程**里、**任何线程**、**整个会话任何时刻**（含用例之间与
-# 收集期），对**遥测 endpoint 那台主机**调用了 `urllib.request.urlopen`。探针在 conftest
-# import 时就装上（早于任何用例模块与 tavotto 的 import），命中就记下线程与当时的用例并
+# 收集期），经 `urllib.request.OpenerDirector.open` 请求了**遥测 endpoint 那台主机**。探针在
+# conftest import 时就装上（早于任何用例模块与 tavotto 的 import），命中就记下线程与当时的用例并
 # **拒绝发出**，会话结束时有记录就判红。
 #
-# 前提与盲点（写在明处）：`engine/telemetry.py` 纯标准库，唯一的传输是按属性名调用的
-# `urllib.request.urlopen`——这正是它能被这里截住的原因。哪天遥测换了传输（http.client
-# 直连、`from urllib.request import urlopen` 早绑定），这道探针就量不到了，要跟着改。
-# 用例自己 monkeypatch `urlopen` 期间调用走的是它的替身，也不经过这里；undo 之后回到探针。
-_REAL_URLOPEN = urllib.request.urlopen
+# 为什么截 `OpenerDirector.open` 而不是 `urlopen`（2026-09-28 起）：遥测投递改成每次现建的
+# `build_opener(tlstrust.https_handler(ctx)).open(...)`（平台原生证书校验）——只截模块级 `urlopen`
+# 的话探针当场变空。`urlopen` 本身也是 `build_opener().open(...)`，两条路都经过这一个方法。
+#
+# 前提与盲点（写在明处）：`engine/telemetry.py` 纯标准库，传输只经 urllib 的 opener。哪天遥测换了
+# 传输（http.client 直连、自己的 socket），这道探针就量不到了，要跟着改。用例自己 monkeypatch
+# `OpenerDirector.open` 期间调用走的是它的替身，也不经过这里；undo 之后回到探针。
+_REAL_OPENER_OPEN = urllib.request.OpenerDirector.open
 #: 命中记录：`线程名 | 当时的用例 | URL`。为空 = 本会话一次都没请求过遥测 endpoint。
 _TELEMETRY_LEAKS: list[str] = []
 
 
-def _refuse_telemetry_urlopen(url, *args, **kwargs):
+def _refuse_telemetry_open(self, fullurl, *args, **kwargs):
     from tavotto.engine.telemetry import DEFAULT_ENDPOINT  # 地址唯一出处；调用时才 import
 
-    target = url.full_url if isinstance(url, urllib.request.Request) else str(url)
+    target = fullurl.full_url if isinstance(fullurl, urllib.request.Request) else str(fullurl)
     if urllib.parse.urlsplit(target).hostname == urllib.parse.urlsplit(DEFAULT_ENDPOINT).hostname:
         current = os.environ.get("PYTEST_CURRENT_TEST", "（不在任何用例里）")
         _TELEMETRY_LEAKS.append(f"{threading.current_thread().name} | {current} | {target}")
         raise urllib.error.URLError("测试进程不许请求真实遥测 endpoint（tests/conftest.py，#440）")
-    return _REAL_URLOPEN(url, *args, **kwargs)
+    return _REAL_OPENER_OPEN(self, fullurl, *args, **kwargs)
 
 
-urllib.request.urlopen = _refuse_telemetry_urlopen
+urllib.request.OpenerDirector.open = _refuse_telemetry_open
 
 
 def _fail_session_on_telemetry_leaks(session) -> None:

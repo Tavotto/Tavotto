@@ -103,30 +103,8 @@ ERROR_CODES = (
     ERROR_TLS,
 )
 
-#: 传输层失败的根异常类型名（日志里明文出门的闭集，`logsafe.known`；不在表里的照样哈希）。
-TRANSPORT_ERROR_NAMES = frozenset(
-    {
-        "SSLCertVerificationError",
-        "SSLError",
-        "SSLEOFError",
-        "SSLZeroReturnError",
-        "SSLSyscallError",
-        "URLError",
-        "HTTPException",
-        "RemoteDisconnected",
-        "IncompleteRead",
-        "BadStatusLine",
-        "TimeoutError",
-        "timeout",
-        "gaierror",
-        "ConnectionError",
-        "ConnectionRefusedError",
-        "ConnectionResetError",
-        "ConnectionAbortedError",
-        "BrokenPipeError",
-        "OSError",
-    }
-)
+#: 传输层失败的根异常类型名（闭集唯一出处在 `tlstrust`：遥测 / 检查更新记同一张表）。
+TRANSPORT_ERROR_NAMES = tlstrust.TRANSPORT_ERROR_NAMES
 
 #: 下载阶段（`on_progress(stage, done, total)` 的第一个参数；闭集）。
 STAGE_DOWNLOADING = "downloading"

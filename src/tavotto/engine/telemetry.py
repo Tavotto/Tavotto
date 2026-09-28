@@ -16,6 +16,12 @@
   「opted-in anonymous install」，不说「user」。
 - **绝不影响产品行为**。队列满、超时、DNS 失败、代理挂了、返回体畸形——一律
   当场丢弃。`capture()` 不抛异常、不阻塞调用方、不写用户可见的日志。
+  **唯一的日志是证书校验失败**（每进程一条 WARNING，只进 app.log / 诊断包那份日志，不弹任何
+  界面）：断网是常态、不值一行；证书不被信任不是断网——#439（macOS 冻结 sidecar 缺 CA）与
+  2026-09-28 干净 Windows 缺 ISRG Root X1 都是「遥测静默全丢」，事后只能另起进程复现。
+- **证书按平台原生校验**（`tlstrust`：truststore）。投递用每次现建的
+  `build_opener(tlstrust.https_handler(ctx))`，不是模块级 `urlopen`（后者走 OpenSSL 读到的根证书快照；
+  干净 Windows 的证书库起初没有 `telemetry.tavotto.com` 链上的 ISRG Root X1，2026-09-28 实测 6/6 失败）。
 - **只发白名单里的事件与属性**，且值只能是 bool / 有界整数 / 短枚举 / 受控
   版本串。没有任意字典、没有自由文本——文件名、路径、脚本、提示词、图内文字
   在**结构上**就发不出去，而不是靠调用方自觉。
@@ -31,6 +37,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import platform
 import queue
@@ -40,7 +47,9 @@ import urllib.error
 import urllib.request
 import uuid
 
-from . import brand, config
+from . import brand, config, logsafe, tlstrust
+
+LOG = logging.getLogger("tavotto.telemetry")
 
 SCHEMA_VERSION = 1
 #: 同意书版本。将来**实质性扩大采集范围**时 +1：保存下来的同意会立刻失效
@@ -556,18 +565,51 @@ def _post(payload: dict) -> None:
             "User-Agent": f"{brand.PRODUCT_NAME}/{__version__}",
         },
     )
-    # 发出前紧挨着再判一次硬开关（#440）。`_run_sender` 出队时判的 `enabled()` 要读一次盘，
-    # 那一判与这里之间，测试的 teardown 可能已经把 `TAVOTTO_NO_TELEMETRY=1` 恢复了——
-    # 这一道把窗口从「一次读盘」缩到几个字节码；真正收口的是 `reset_for_tests()` 的 join。
+    # 每次现建 opener（代理按投递那一刻的 `HTTP(S)_PROXY` / `NO_PROXY` 现读，与 privatepython 同一张脸），
+    # HTTPS 上下文来自 `tlstrust`：平台原生校验（CERT_REQUIRED + 主机名），不降级。
+    ctx = tlstrust.client_context()
+    opener = urllib.request.build_opener(tlstrust.https_handler(ctx))
+    # 发出前紧挨着再判一次硬开关（#440）——**排在建上下文 / opener 之后**：第一次建上下文要 import
+    # truststore、建 opener 要读代理，都比几个字节码长；`TAVOTTO_NO_TELEMETRY=1` 在那段时间里被设上
+    # （用户关掉 / 测试 teardown），这里仍拦得住（Codex #714 P1）。`_run_sender` 出队时判的 `enabled()`
+    # 要读一次盘，真正收口的是 `reset_for_tests()` 的 join。
     if hard_disabled():
         return
     try:
-        with urllib.request.urlopen(req, timeout=NETWORK_TIMEOUT_S) as resp:
+        with opener.open(req, timeout=NETWORK_TIMEOUT_S) as resp:
             resp.read(1024)  # 读掉响应体好让连接能复用/关闭
-    except (urllib.error.URLError, TimeoutError, OSError):
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
         # 离线、代理挂了、DNS 失败——都不是错误，是常态。**不记日志**：
-        # 一个断网的用户不该在 app.log 里看到几十条遥测投递失败。
+        # 一个断网的用户不该在 app.log 里看到几十条遥测投递失败。证书校验失败例外（见下）。
+        _note_transport_failure(exc, tlstrust.source_of(ctx))
         return
+
+
+#: 本进程是否已经记过一次「遥测投递证书校验失败」（每进程一条，不刷屏）。
+_tls_failure_logged = False
+
+
+def _note_transport_failure(exc: BaseException, trust_source: str) -> None:
+    """投递失败：**只有证书校验失败**记一条 WARNING（每进程一次），别的传输失败照旧一个字不写。
+
+    判据沿用 `tlstrust.cert_verification_error`（与私有 Python 的 `private_python_tls` 同一口径）；
+    参数按 logsafe：根异常类型与信任来源是闭集明文，OpenSSL 的 verify_code 是数，消息是自由文本
+    （app.log 原样、诊断包那份哈希）。不弹界面、不影响任何产品行为——用户看不见，排障的人看得见。"""
+    global _tls_failure_logged
+    cert = tlstrust.cert_verification_error(exc)
+    if cert is None:
+        return
+    with _LOCK:
+        if _tls_failure_logged:
+            return
+        _tls_failure_logged = True
+    LOG.warning(
+        "遥测投递失败：证书校验失败（%s，信任来源 %s，verify_code=%s；本进程只记这一次）: %s",
+        logsafe.known(type(cert).__name__, tlstrust.TRANSPORT_ERROR_NAMES),
+        logsafe.known(trust_source, tlstrust.SOURCES),
+        getattr(cert, "verify_code", None),
+        str(cert),
+    )
 
 
 def flush(timeout: float = 2.0) -> bool:
@@ -597,7 +639,7 @@ def reset_for_tests() -> None:
     `TAVOTTO_NO_TELEMETRY` 换回真的之后，那一条会用真 `_post` 发到真实 endpoint——
     每个 pytest 会话漏一条 `telemetry_enabled`。有上限：投递本身有网络超时兜着。
     """
-    global _QUEUE, _SENDER, _session_mode, _app_started_sent
+    global _QUEUE, _SENDER, _session_mode, _app_started_sent, _tls_failure_logged
     _drop_pending()
     with _LOCK:
         old, sender, _QUEUE, _SENDER = _QUEUE, _SENDER, None, None
@@ -610,3 +652,4 @@ def reset_for_tests() -> None:
         sender.join(NETWORK_TIMEOUT_S + 2)
     _session_mode = None
     _app_started_sent = False
+    _tls_failure_logged = False

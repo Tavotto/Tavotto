@@ -13,6 +13,10 @@
   在源码树里跑 pip 会把用户的工作副本覆盖掉。
 - **升级后必须重启**。运行中的进程已经把旧代码 import 进内存了，就地热替换
   只会得到半新半旧的状态机。升级完成回 restart_required，由界面提示重启。
+- **证书按平台原生校验**（`tlstrust`：truststore，2026-09-28 起）。`api.github.com` 的链根是
+  USERTrust ECC；干净 Windows 的证书库起初没有它，模块级 `urlopen`（OpenSSL + 已装的根）6/6
+  `CERTIFICATE_VERIFY_FAILED`。查询失败照旧只如实回报、不打断任何操作；日志里分得清是
+  证书校验失败（WARNING）还是连不上（INFO）。
 - **不做静默自动升级**。学术制图要的是可复现：版本什么时候变、变成什么，
   必须是用户按下按钮的结果。
 """
@@ -20,6 +24,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import subprocess
@@ -30,7 +35,9 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from . import brand, config, runtime, telemetry
+from . import brand, config, logsafe, runtime, telemetry, tlstrust
+
+LOG = logging.getLogger("tavotto.updater")
 
 CHECK_INTERVAL_S = 24 * 3600
 NETWORK_TIMEOUT_S = 6
@@ -142,8 +149,40 @@ def _fetch_latest_release() -> dict:
             "User-Agent": f"{brand.PRODUCT_NAME}/{current_version()}",
         },
     )
-    with urllib.request.urlopen(req, timeout=NETWORK_TIMEOUT_S) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+    # 每次现建 opener：代理按请求那一刻的 `HTTP(S)_PROXY` / `NO_PROXY` 现读；HTTPS 上下文来自
+    # `tlstrust`（平台原生校验，CERT_REQUIRED + 主机名，不降级）。
+    ctx = tlstrust.client_context()
+    opener = urllib.request.build_opener(tlstrust.https_handler(ctx))
+    try:
+        with opener.open(req, timeout=NETWORK_TIMEOUT_S) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        _log_fetch_failure(exc, tlstrust.source_of(ctx))
+        raise
+
+
+def _log_fetch_failure(exc: BaseException, trust_source: str) -> None:
+    """查询失败进日志（调用方照旧吞掉、如实回报）：证书校验失败 WARNING，别的传输失败 INFO。
+
+    口径与私有 Python 下载相同（`tlstrust.cert_verification_error`）：根异常类型与信任来源是闭集明文，
+    verify_code 是数，消息是自由文本（app.log 原样、诊断包那份哈希）。一天至多一次自动查询，不刷屏。"""
+    cert = tlstrust.cert_verification_error(exc)
+    if cert is not None:
+        LOG.warning(
+            "检查更新失败：证书校验失败（%s，信任来源 %s，verify_code=%s）: %s",
+            logsafe.known(type(cert).__name__, tlstrust.TRANSPORT_ERROR_NAMES),
+            logsafe.known(trust_source, tlstrust.SOURCES),
+            getattr(cert, "verify_code", None),
+            str(cert),
+        )
+        return
+    root = tlstrust.root_cause(exc)
+    LOG.info(
+        "检查更新失败：%s（信任来源 %s）: %s",
+        logsafe.known(type(root).__name__, tlstrust.TRANSPORT_ERROR_NAMES),
+        logsafe.known(trust_source, tlstrust.SOURCES),
+        str(root),
+    )
 
 
 def check(force: bool = False) -> dict:

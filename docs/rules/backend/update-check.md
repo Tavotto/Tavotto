@@ -6,6 +6,12 @@
 - `engine/updater.py`（纯标准库）：查 GitHub Releases 最新 tag → 与
   `tavotto.__version__` 比 → 按安装方式给升级命令。仓库地址等常量在
   `engine/brand.py`，别处不得手写。
+- **证书按平台原生校验**（2026-09-28）：`_fetch_latest_release` 用每次现建的
+  `build_opener(tlstrust.https_handler(tlstrust.client_context()))`（truststore），不是模块级
+  `urlopen`——`api.github.com` 的链根 USERTrust ECC 在干净 Windows 的证书库里起初没有（实测剔除侧
+  6/6 `CERTIFICATE_VERIFY_FAILED`）。失败照旧只如实回报（`update_check_failed`，接口形状不变）；
+  日志分得清：证书校验失败 WARNING、别的传输失败 INFO，根异常类型与信任来源闭集明文、消息在诊断包里
+  哈希。看护：`tests/test_outbound_https_trust.py`。
 - 默认每天一次、可在设置里关（关了**一个包都不发**）；升级永不静默进行，
   且升级后 `restart_required`（进程内存里还是旧代码）。
 - **桌面版走另一条通道**（tauri-plugin-updater）：后端在桌面模式把

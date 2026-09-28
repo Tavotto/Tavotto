@@ -365,7 +365,7 @@ def test_real_post_swallows_network_errors(monkeypatch):
     def refuse(*_a, **_kw):
         raise OSError("connection refused")
 
-    monkeypatch.setattr(urllib.request, "urlopen", refuse)
+    monkeypatch.setattr(urllib.request.OpenerDirector, "open", refuse)
     telemetry._post({"event": "app_started", "properties": {}})
 
 
@@ -409,13 +409,14 @@ def test_real_post_rechecks_the_hard_switch(monkeypatch):
         calls.append(a)
         raise OSError("不该走到这里")
 
-    monkeypatch.setattr(urllib.request, "urlopen", record)
+    monkeypatch.setattr(urllib.request.OpenerDirector, "open", record)
     telemetry._post({"event": "app_started", "properties": {}})
     assert calls == []
 
 
-def test_leak_probe_itself_fires():
-    """被下面那条用例当子进程里的「内层会话」跑：直接请求真实遥测 endpoint。
+def test_leak_probe_itself_fires(monkeypatch):
+    """被下面那条用例当子进程里的「内层会话」跑：请求真实遥测 endpoint **两次**——一次走产品真实的
+    投递路径（`_post`：现建的 `build_opener(tlstrust.https_handler(ctx))`），一次走模块级 `urlopen`。
 
     外层会话里它跳过——否则外层自己就被判红。
     """
@@ -425,13 +426,20 @@ def test_leak_probe_itself_fires():
 
     if not os.environ.get("TAVOTTO_TEST_TELEMETRY_LEAK_PROBE"):
         pytest.skip("只在 test_session_fails_when_the_telemetry_endpoint_is_requested 的子进程里跑")
+    monkeypatch.delenv("TAVOTTO_NO_TELEMETRY", raising=False)
+    monkeypatch.delenv("TAVOTTO_TELEMETRY_ENDPOINT", raising=False)
+    assert telemetry.endpoint() == telemetry.DEFAULT_ENDPOINT
+    telemetry._post({"event": "app_started", "properties": {}})  # 被探针拦下、`_post` 自己吞掉
     with pytest.raises(urllib.error.URLError):
         urllib.request.urlopen(telemetry.DEFAULT_ENDPOINT, timeout=1)
 
 
 def test_session_fails_when_the_telemetry_endpoint_is_requested():
-    """conftest 的会话级零网络断言是活的（#440）：内层会话请求一次遥测 endpoint →
-    请求被拦下（内层用例本身是绿的）、而整个会话 rc=1、报告点名线程与用例。
+    """conftest 的会话级零网络断言是活的（#440）：内层会话请求两次遥测 endpoint（产品投递路径 +
+    `urlopen`）→ 两次都被拦下（内层用例本身是绿的）、而整个会话 rc=1、报告点名线程与用例、数到 2 次。
+
+    「2 次」钉的是探针的主语：只截 `urlopen` 的探针在产品改用现建 opener 之后只数得到 1 次——
+    遥测的真实投递从探针底下溜过去（2026-09-28 改走 tlstrust 时的形状）。
     """
     import os
     import pathlib
@@ -457,6 +465,7 @@ def test_session_fails_when_the_telemetry_endpoint_is_requested():
     assert proc.returncode == 1, out
     assert "真实遥测 endpoint" in proc.stderr, out
     assert "test_leak_probe_itself_fires" in proc.stderr, out
+    assert "本会话请求了 2 次真实遥测 endpoint" in proc.stderr, out
 
 
 # ---------------------------------------------------------------------------
