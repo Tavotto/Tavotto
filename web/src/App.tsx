@@ -30,6 +30,7 @@ import { TopBar } from '@/components/TopBar'
 import { UpdateBanner } from '@/components/UpdateBanner'
 import { UpdateNoticeDialog } from '@/components/UpdateNoticeDialog'
 import { DependencyPrepareDialog } from '@/components/DependencyPrepareDialog'
+import { EngineEnvironmentDialog } from '@/components/EngineEnvironmentDialog'
 import { WorkdirConfirmDialog } from '@/components/WorkdirConfirmDialog'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { EngineRenderSync, useEngineDocumentSync } from '@/hooks/useEngineSync'
@@ -263,6 +264,8 @@ function Workspace() {
         <LayoutDialog />
         <StyleDialog />
         <RegistryDialog />
+        {/* 渲染环境（脚本区「选择渲染环境」就地打开，不深链设置页） */}
+        <EngineEnvironmentDialog />
         <FigurePickerDialog />
         <NativeConfirmDialog />
         {/* 脚本里的 input()（ADR 0099）：等作答的问 + 记住的答案 */}

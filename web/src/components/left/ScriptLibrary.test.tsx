@@ -31,10 +31,13 @@ import {
   type ScriptInventoryEntry,
 } from '@/lib/api'
 import { i18n } from '@/i18n'
+import { EngineEnvironmentDialog } from '@/components/EngineEnvironmentDialog'
 import { ScriptLibrary } from '@/components/left/ScriptLibrary'
 import { TooltipProvider } from '@/components/ui/Tooltip'
+import { useEnvStore } from '@/store/envStore'
 import { useScriptLibraryStore } from '@/store/scriptLibraryStore'
 import { useScriptRunStore } from '@/store/scriptRunStore'
+import { useUiStore } from '@/store/uiStore'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -107,6 +110,8 @@ async function mount(query = '') {
     root.render(
       <TooltipProvider>
         <ScriptLibrary query={query} />
+        {/* 与 App 根一样挂着：「选择渲染环境」就地打开的就是它 */}
+        <EngineEnvironmentDialog />
       </TooltipProvider>,
     )
   })
@@ -133,6 +138,7 @@ beforeEach(() => {
   localStorage.clear()
   useScriptLibraryStore.getState().clear()
   useScriptRunStore.getState().clear()
+  useUiStore.setState({ engineEnvOpen: false, settingsOpen: false, settingsSection: null, dialogStack: [] })
   mockRegistry.mockReset()
   mockProbe.mockReset()
   mockCancel.mockClear()
@@ -276,6 +282,42 @@ describe('运行 / 取消 / 结果', () => {
         (b.textContent ?? '').includes('按项目原方式运行'),
       ),
     ).toBe(false)
+  })
+
+  it('「选择渲染环境」就地打开渲染环境对话框（卡片在里面），不跳设置页', async () => {
+    // 环境状态先备好：卡片挂上就有东西可画，不去真的请求 /api/engine
+    useEnvStore.setState({
+      env: {
+        ok: true,
+        python: '/usr/bin/python3',
+        source: 'system',
+        matplotlib: '3.10.8',
+        managed: false,
+        bundled: false,
+        state: 'idle',
+      } as never,
+    })
+    mockRegistry.mockResolvedValue(view([entry({ script: 'show.py' })]))
+    mockProbe.mockResolvedValue({
+      ...ok([]),
+      registered: false,
+      error: { code: 'missing_dependency', message: '缺少依赖包：pandas', params: { module: 'pandas' } },
+    })
+    await mount()
+    await act(async () => runButton().click())
+    await flush()
+    await act(async () => buttonByText('选择渲染环境').click())
+    await flush()
+    const ui = useUiStore.getState()
+    expect(ui.engineEnvOpen).toBe(true)
+    // 旧缺陷：深链到设置的「关于与隐私」页，那里没有任何渲染环境内容
+    expect(ui.settingsOpen).toBe(false)
+    const dialog = document.querySelector('[data-dialog="engine-environment"]')
+    expect(dialog).not.toBeNull()
+    // 对话框的正文就是那一份渲染环境卡片（含「使用其他 Python 环境…」出口）
+    expect(dialog!.querySelector('[data-engine-env-card]')).not.toBeNull()
+    expect(dialog!.textContent).toContain('使用其他 Python 环境')
+    expect(dialog!.textContent).toContain('/usr/bin/python3')
   })
 
   it('没出图（script_no_figure）不进「可能需要原环境」组', async () => {

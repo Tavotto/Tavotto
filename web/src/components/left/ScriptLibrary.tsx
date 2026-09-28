@@ -302,7 +302,7 @@ function StatusLine({
 
 /**
  * safe 失败的恢复路径（总纲 §四）：解释可能的原因、给「选择渲染环境」的
- * 真实入口与「复制诊断」。**不渲染任何 native 按钮**——PR 2 未落地，
+ * 真实入口（就地打开渲染环境对话框）与「复制诊断」。**不渲染任何 native 按钮**——PR 2 未落地，
  * 只有文案里的一句「后续版本还将支持」（不许出现可点但无功能的入口）。
  */
 function FailureRecovery({ script, run }: { script: string; run: ScriptRunState | undefined }) {
@@ -337,8 +337,9 @@ function FailureRecovery({ script, run }: { script: string; run: ScriptRunState 
         <Button
           variant="secondary"
           size="sm"
-          // 渲染环境卡片住在设置的「关于」段（EngineEnvironmentCard）
-          onClick={() => useUiStore.getState().setSettingsOpen(true, 'about')}
+          // 就地打开渲染环境对话框（EngineEnvironmentDialog），不深链设置页：
+          // 卡片在设置里住在「诊断」页、环境正常时还折叠着，跳过去用户找不到
+          onClick={() => useUiStore.getState().setEngineEnvOpen(true)}
         >
           <Settings size={ICON_SIZE.sm} />
           {sc('openEnvSettings')}

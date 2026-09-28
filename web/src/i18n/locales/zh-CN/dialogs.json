@@ -6,6 +6,10 @@
     "saveFailed": "保存失败，窗口保持打开。请先解决保存问题，或选择「不保存」直接关闭。",
     "title": "有未保存的修改"
   },
+  "engineEnv": {
+    "description": "{{product}} 用这个 Python 环境运行你的脚本。",
+    "title": "渲染环境"
+  },
   "export": {
     "advanced": "高级选项",
     "blockedTitle": "有阻断性问题或无法自动核验的项。勾选上方确认后再导出。",

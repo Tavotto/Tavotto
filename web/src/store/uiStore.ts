@@ -301,6 +301,12 @@ interface UiState extends Persisted {
    * 出处；聚焦哪一张图由 `projectReadinessStore.focusId` 管，那是另一件事。
    */
   registryOpen: boolean
+  /**
+   * 「渲染环境」对话框：`EngineEnvironmentCard` 的独立出口。脚本区「可能需要原环境」
+   * 那一组的「选择渲染环境」直接开它，不把用户扔进设置页去找那张卡（卡在设置里
+   * 住在「诊断」页、环境正常时还折叠在技术详情里）。这是它**唯一**的开关。
+   */
+  engineEnvOpen: boolean
   /** 快捷键帮助 */
   shortcutHelpOpen: boolean
   /** 设置面板 */
@@ -355,6 +361,7 @@ interface UiState extends Persisted {
   /** `presetId`：打开时预选哪一条已存样式（设置页「应用到当前图」带过来的） */
   setStylesOpen: (v: boolean, opts?: { presetId?: string | null }) => void
   setRegistryOpen: (v: boolean) => void
+  setEngineEnvOpen: (v: boolean) => void
   setShortcutHelpOpen: (v: boolean) => void
   /**
    * 从导出面板深链进来时**不要先关导出面板**：设置压在它上面（`dialogStack`），
@@ -437,6 +444,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   stylesPresetId: null,
   dialogStack: [],
   registryOpen: false,
+  engineEnvOpen: false,
   shortcutHelpOpen: false,
   settingsOpen: false,
   settingsSection: null,
@@ -637,6 +645,7 @@ export const useUiStore = create<UiState>((set, get) => ({
         : popDialog(s.dialogStack, 'styles'),
     })),
   setRegistryOpen: (registryOpen) => set({ registryOpen }),
+  setEngineEnvOpen: (engineEnvOpen) => set({ engineEnvOpen }),
   setShortcutHelpOpen: (shortcutHelpOpen) => set({ shortcutHelpOpen }),
   setSettingsOpen: (settingsOpen, settingsSection = undefined) =>
     set((s) => ({

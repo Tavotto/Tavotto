@@ -6,6 +6,10 @@
     "saveFailed": "Saving failed, so the window stays open. Resolve the problem, or choose “Don’t save” to close anyway.",
     "title": "Unsaved changes"
   },
+  "engineEnv": {
+    "description": "{{product}} runs your scripts in this Python environment.",
+    "title": "Rendering environment"
+  },
   "export": {
     "advanced": "Advanced",
     "blockedTitle": "Blocking problems or items that can’t be verified automatically. Tick the confirmation above before exporting.",
