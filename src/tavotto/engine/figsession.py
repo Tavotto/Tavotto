@@ -296,6 +296,9 @@ class LiveFigureSession:
             # 拿掉它不会红——它兜的是「直接用默认 FontProperties 新建 Text」
             # 这条今天还不存在的路。
             overrides_mod.ensure_rcparams_fallback()
+            # 只有中文名的字体按真名补登记：override 里存的是真名，应用之前就得解析得到
+            # （中日韩尾巴关掉时 `font_installed` 不会先被问到，这里不靠它顺带）
+            overrides_mod.register_font_name_aliases()
         # 图幅（ADR 0098）在一切之前定：字体回退尾巴与 override 都不该改变「脚本存盘时
         # 裁成什么样」——原件是在它们之前存下的
         for stem, fig in fresh:

@@ -632,6 +632,207 @@ def cjk_fallback_candidates() -> tuple[str, ...]:
     return tuple(seen)
 
 
+# ---------------------------------------------------------------------------
+# 字体的中文名（name 表）
+#
+# matplotlib 给字体登记的名字是 FreeType 的 `family_name`，而 FreeType 把 name 表
+# 记录转成 ASCII 时每个非 ASCII 码元都换成 `?`。于是：
+#   * 同时有英文名的字体（Songti SC / 宋体-简）登记成英文名——能用，但下拉里认不出；
+#   * 只有中文名的字体（狮尾、方正、汉仪……）登记成 `??????SC`——下拉不列
+#     （`manifest.installed_font_families`），按名字也分不清是哪一张。
+# 两件事都从 name 表的原始记录解决：前者给英文名配一个中文显示名（只用于显示，
+# 值仍是 matplotlib 认的那个名字），后者用 FreeType 本来想用的那条记录**正确解码**
+# 出的真名给同一批脸补登记一个别名，按真名就选得中、画得出。
+# ---------------------------------------------------------------------------
+
+#: name 表里「族名」的两个 nameID：16 = typographic family（FreeType 优先），1 = family。
+_FAMILY_NAME_IDS = (16, 1)
+#: 中文记录的偏好顺序：Windows 平台的语言 ID（简体大陆 / 新加坡 → 繁体台湾 / 香港 / 澳门），
+#: 再到 Mac 平台（33 = 简体、19 = 繁体）。
+_ZH_WIN_LANGS = (0x0804, 0x1004, 0x0404, 0x0C04, 0x1404)
+_ZH_MAC_LANGS = (33, 19)
+#: Mac 平台记录的编码 → Python 编解码器（其它编码的 Mac 记录跳过）
+_MAC_CODECS = {0: "mac_roman", 25: "gb2312", 2: "big5"}
+
+
+def _decode_sfnt_name(plat: int, enc: int, raw: bytes) -> str | None:
+    try:
+        if plat in (0, 3):
+            s = raw.decode("utf-16-be")
+        elif plat == 1 and enc == 0 and any(b >= 0x80 for b in raw):
+            # Mac Roman 记录里的高位字节多半是被标错编码的 GBK / Big5（实测
+            # 「【肆柒】忍冬藤」解成 `Áèç`）：猜不准就不解
+            return None
+        elif plat == 1 and enc in _MAC_CODECS:
+            s = raw.decode(_MAC_CODECS[enc])
+        else:
+            return None
+    except UnicodeDecodeError:
+        return None
+    s = s.strip("\x00").strip()
+    return s or None
+
+
+def _freetype_ascii(plat: int, raw: bytes) -> str:
+    """FreeType 把一条 name 记录变成 `family_name` 的方式：Unicode 平台按 UTF-16
+    码元、其它平台按字节，可打印 ASCII 原样、其余一律 `?`。matplotlib 登记的名字
+    就是这个——用它反推 FreeType 当初读的是哪一条记录。"""
+    if plat in (0, 3):
+        units = [int.from_bytes(raw[i : i + 2], "big") for i in range(0, len(raw) - 1, 2)]
+    else:
+        units = list(raw)
+    return "".join(chr(u) if 32 <= u < 127 else "?" for u in units).strip()
+
+
+def _family_records(font) -> list[tuple[int, int, int, str, str]]:
+    """一张脸 name 表里的族名记录 → (nameID, 平台, 语言, 解码后的名字, FreeType 会读成的样子)。"""
+    out = []
+    try:
+        sfnt = font.get_sfnt()
+    except (RuntimeError, ValueError):
+        return out
+    for (plat, enc, lang, nid), raw in sfnt.items():
+        if nid not in _FAMILY_NAME_IDS:
+            continue
+        text = _decode_sfnt_name(plat, enc, raw)
+        if text:
+            out.append((nid, plat, lang, text, _freetype_ascii(plat, raw)))
+    return out
+
+
+def _zh_rank(plat: int, lang: int) -> int | None:
+    if plat == 3 and lang in _ZH_WIN_LANGS:
+        return _ZH_WIN_LANGS.index(lang)
+    if plat == 1 and lang in _ZH_MAC_LANGS:
+        return len(_ZH_WIN_LANGS) + _ZH_MAC_LANGS.index(lang)
+    return None
+
+
+def _font_face(entry):
+    from matplotlib import ft2font
+
+    idx = int(getattr(entry, "index", 0) or 0)
+    return ft2font.FT2Font(entry.fname, face_index=idx) if idx else ft2font.FT2Font(entry.fname)
+
+
+def _true_name(registered: str, records) -> str | None:
+    """登记名里有 `?` 时，FreeType 当初读的那条记录的真名（正确解码）。
+
+    按「那条记录经 FreeType 的 ASCII 化等于登记名」认，nameID 16 优先于 1、
+    中文记录优先；认不出就 None（宁可不列，也不给一张脸安错名字）。
+    """
+    hits = [r for r in records if r[4] == registered and r[3] != registered]
+    if not hits:
+        return None
+    hits.sort(key=lambda r: (_FAMILY_NAME_IDS.index(r[0]), _zh_rank(r[1], r[2]) is None))
+    return hits[0][3]
+
+
+def _zh_display_name(name: str, records) -> str | None:
+    """`name`（matplotlib 认的名字）在同一 nameID 下的中文名；没有或相同就 None。"""
+    nids = [r[0] for r in records if r[3] == name]
+    for nid in sorted(set(nids), key=_FAMILY_NAME_IDS.index):
+        zh = sorted(
+            (r for r in records if r[0] == nid and _zh_rank(r[1], r[2]) is not None),
+            key=lambda r: _zh_rank(r[1], r[2]),
+        )
+        if zh and zh[0][3] != name:
+            return zh[0][3]
+    return None
+
+
+#: `fontManager.ttflist` 里已经看过的条数。`addfont` 只往尾部追加，脚本自己注册的
+#: 字体（重跑时也会）从这里接着补，已看过的不再读 name 表。
+_ALIAS_CURSOR = 0
+
+
+def register_font_name_aliases() -> int:
+    """给登记名被 FreeType 读成 `?` 的脸补登记真名（幂等、增量）。返回补了几条。
+
+    别名是同一张脸的**另一条登记**（`dataclasses.replace(entry, name=真名)`），
+    字重 / 字形 / 文件 / 面索引全部照抄，所以按真名解析与按 `??` 名解析落到同一个
+    文件。写回不改脚本，override 里存的就是这个真名；热会话、一次性重放 worker 与
+    native bridge 都在第一次问字体之前调到这里（`font_installed` /
+    `manifest.installed_font_families` / `figsession.instrument_all`），同一台机器
+    上三处解析一致。换一台没有这个字体的机器，真名照样报「未安装」。
+    """
+    global _ALIAS_CURSOR
+    import dataclasses
+
+    from matplotlib import font_manager
+
+    fm = font_manager.fontManager
+    if _ALIAS_CURSOR >= len(fm.ttflist):
+        return 0
+    fresh = fm.ttflist[_ALIAS_CURSOR:]
+    added = []
+
+    def key_of(e) -> tuple[str, int]:
+        return (str(e.fname), int(getattr(e, "index", 0) or 0))
+
+    registered: dict[tuple[str, int], set[str]] = {}
+    for entry in fm.ttflist:
+        registered.setdefault(key_of(entry), set()).add(str(entry.name))
+    # 一张脸只认**第一条**登记（FreeType 的 family_name）。matplotlib 3.11 自己会按
+    # 英文语言 ID 的记录补登记别名（`_get_font_alt_names`）——那条记录里装的若本来
+    # 就是中文，它已经登记了一个正确的 Unicode 名，再补一个同一个文件就会在下拉里
+    # 出现两个名字，这种脸跳过
+    names: dict[tuple[str, int], tuple[str, str | None]] = {}
+    for entry in fresh:
+        key = key_of(entry)
+        if key in names:
+            first, true = names[key]
+            if str(entry.name) == first and true:
+                added.append(dataclasses.replace(entry, name=true))
+            continue
+        true = None
+        if "?" in str(entry.name):
+            try:
+                records = _family_records(_font_face(entry))
+            except (OSError, RuntimeError, ValueError):
+                records = []
+            decoded = {r[3] for r in records if any(ord(c) > 127 for c in r[3])}
+            if not (decoded & registered[key]):
+                true = _true_name(str(entry.name), records)
+            if true and "?" in true:
+                true = None
+        names[key] = (str(entry.name), true)
+        if true:
+            added.append(dataclasses.replace(entry, name=true))
+    if added:
+        fm.ttflist.extend(added)
+        fm._findfont_cached.cache_clear()
+        _FONT_PRESENT.clear()
+    _ALIAS_CURSOR = len(fm.ttflist)
+    return len(added)
+
+
+def font_display_names(families) -> dict[str, str]:
+    """{matplotlib 认的族名: 中文显示名}——只收有中文名且与原名不同的。
+
+    只用于**显示**：写进 override、交给 `set_fontfamily` 的仍是原名（英文名才是
+    matplotlib 按名字找得到的那个）。每个族读一张脸的 name 表（本机 758 个族约
+    0.2 s），调用方按进程缓存。
+    """
+    from matplotlib import font_manager
+
+    wanted = set(families)
+    out: dict[str, str] = {}
+    done: set[str] = set()
+    for entry in font_manager.fontManager.ttflist:
+        name = str(entry.name)
+        if name not in wanted or name in done:
+            continue
+        done.add(name)
+        try:
+            zh = _zh_display_name(name, _family_records(_font_face(entry)))
+        except (OSError, RuntimeError, ValueError):
+            continue
+        if zh:
+            out[name] = zh
+    return out
+
+
 #: 探测结果按进程缓存，随字体注册表的代次失效（`sync_font_caches`）。
 #: （`manifest._font_installed` 读的也是这一张表——「这个名字画不画得出」
 #: 全 worker 只有一个判据。）
@@ -680,6 +881,7 @@ def font_installed(name: str) -> bool:
     正是它让 playground 里选 Times New Roman 静默变成 DejaVuSans——链路全通、
     override 记下了、图重绘了，只有字形没变，界面还报告成功。
     """
+    register_font_name_aliases()  # 只有中文名的字体按真名才找得到（补登记会让代次变）
     sync_font_caches()
     hit = _FONT_PRESENT.get(name)
     if hit is None:
