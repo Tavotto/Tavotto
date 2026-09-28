@@ -21,7 +21,7 @@
   1、四条 workflow 的顶层 env 也钉成 1、smoke/bench 脚本各自注入——**CI 绝不
   产生真实的产品事件**，一台每天跑几十次的机器足以让「有多少人在用」失真。
   硬开关管不到「判定之后」：`reset_for_tests()` 必须 join 发送线程、`_post` 发出前再判一次
-  硬开关，conftest 的会话级探针拦下并判红任何对遥测 endpoint 的真实 `urlopen`（#440：
+  硬开关（排在建 TLS 上下文 / opener 之后、紧挨着 `open`：那两步比几个字节码长），conftest 的会话级探针拦下并判红任何对遥测 endpoint 的真实 `urlopen`（#440：
   曾经每个 pytest 会话漏一条 `telemetry_enabled`）。
 - **distinct_id 是本机随机 UUIDv4**，不从任何机器信息推导（没有 MAC、
   machine GUID、主机名、用户名）。它是**假名不是身份**，所以指标文档里一律

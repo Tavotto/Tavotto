@@ -565,15 +565,16 @@ def _post(payload: dict) -> None:
             "User-Agent": f"{brand.PRODUCT_NAME}/{__version__}",
         },
     )
-    # 发出前紧挨着再判一次硬开关（#440）。`_run_sender` 出队时判的 `enabled()` 要读一次盘，
-    # 那一判与这里之间，测试的 teardown 可能已经把 `TAVOTTO_NO_TELEMETRY=1` 恢复了——
-    # 这一道把窗口从「一次读盘」缩到几个字节码；真正收口的是 `reset_for_tests()` 的 join。
-    if hard_disabled():
-        return
     # 每次现建 opener（代理按投递那一刻的 `HTTP(S)_PROXY` / `NO_PROXY` 现读，与 privatepython 同一张脸），
     # HTTPS 上下文来自 `tlstrust`：平台原生校验（CERT_REQUIRED + 主机名），不降级。
     ctx = tlstrust.client_context()
     opener = urllib.request.build_opener(tlstrust.https_handler(ctx))
+    # 发出前紧挨着再判一次硬开关（#440）——**排在建上下文 / opener 之后**：第一次建上下文要 import
+    # truststore、建 opener 要读代理，都比几个字节码长；`TAVOTTO_NO_TELEMETRY=1` 在那段时间里被设上
+    # （用户关掉 / 测试 teardown），这里仍拦得住（Codex #714 P1）。`_run_sender` 出队时判的 `enabled()`
+    # 要读一次盘，真正收口的是 `reset_for_tests()` 的 join。
+    if hard_disabled():
+        return
     try:
         with opener.open(req, timeout=NETWORK_TIMEOUT_S) as resp:
             resp.read(1024)  # 读掉响应体好让连接能复用/关闭

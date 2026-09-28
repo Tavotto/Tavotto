@@ -174,6 +174,21 @@ class TestTelemetry:
         assert seen == [source]
         assert _records(caplog, "tavotto.telemetry") == []
 
+    def test_the_hard_switch_is_rechecked_after_the_slow_setup(self, tmp_path, monkeypatch):
+        """Codex #714 P1：建上下文（第一次要 import truststore）与 opener（读代理）比几个字节码长。
+        `TAVOTTO_NO_TELEMETRY=1` 在这段时间里被设上（用户关掉 / 测试 teardown），事件照样不许发出。"""
+        real = tlstrust.client_context
+
+        def _slow_setup():
+            monkeypatch.setenv("TAVOTTO_NO_TELEMETRY", "1")  # 建上下文期间硬开关被打开
+            return real()
+
+        monkeypatch.setattr(tlstrust, "client_context", _slow_setup)
+        with LoopbackServer(tmp_path) as server:
+            monkeypatch.setenv("TAVOTTO_TELEMETRY_ENDPOINT", server.url("v1/events"))
+            telemetry._post(_PAYLOAD)
+            assert server.connections == 0 and server.posts == []
+
     def test_offline_and_non_certificate_tls_errors_stay_silent(
         self, tmp_path, monkeypatch, caplog
     ):
