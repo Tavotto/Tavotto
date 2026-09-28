@@ -1114,7 +1114,8 @@ class TestIsolation:
         )
 
     def test_the_downloader_reads_no_project_or_pip_settings(self):
-        """下载器只用 urllib + 环境变量代理（AST 判）：import 闭集里没有 ssl / configparser / 第三方；
+        """下载器只用 urllib + 环境变量代理（AST 判）：import 闭集里没有 ssl / configparser / 第三方
+        （TLS 上下文只经 `tlstrust` 来——平台原生校验，不降级，`tests/test_private_python_tls.py` 钉）；
         对 `config` 只调 `data_path` / `data_dir`（不读用户配置、不读项目设置）。"""
         import ast
 
@@ -1139,7 +1140,7 @@ class TestIsolation:
         allowed = {
             "dataclasses", "hashlib", "http", "json", "logging", "os", "platform", "posixpath", "re", "secrets", "shutil",
             "socket", "stat", "subprocess", "tarfile", "threading", "time", "urllib", "pathlib",
-            "importlib", "__future__", "brand", "config", "runtime", "files", "__version__",
+            "importlib", "__future__", "brand", "config", "logsafe", "runtime", "tlstrust", "files", "__version__",
         }  # fmt: skip
         assert imported <= allowed, imported - allowed
         assert "ssl" not in imported and "configparser" not in imported

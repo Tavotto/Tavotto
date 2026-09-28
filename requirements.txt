@@ -4,6 +4,7 @@
 # 科学栈由 worker 解释器提供（pool.find_worker_python / TAVOTTO_WORKER_PYTHON）。
 # RenderCore 自 U10 起是默认后端（ADR 0072）：五个包的版本与 ADR 0055 §1 实测钉死的相同；
 # PyMuPDF 已退役，不在这里（测试的读取器走 `pip install -e ".[dev]"` 的 legacy-pymupdf extra）。
+# truststore：出站 HTTPS 的平台原生证书校验（engine/tlstrust.py；冻结产物由 packaging/tavotto.spec 点名收进）。
 flask==3.1.3
 packaging==26.3
 pikepdf==10.13.0.post1
@@ -11,3 +12,4 @@ fonttools==4.65.0
 uharfbuzz==0.56.1
 pypdfium2==5.13.0
 pillow==12.3.0
+truststore==0.10.4

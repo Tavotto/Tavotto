@@ -194,6 +194,20 @@ if not _pdfium_libs:
 print(f"[tavotto.spec] PDFium: {[os.path.basename(b[0]) for b in _pdfium_libs]}；"
       f"pikepdf 收进 {len(_pk_binaries)} 个二进制")
 
+# 出站 HTTPS 的平台原生证书校验（engine/tlstrust.py）：truststore 在 tlstrust 里**延后** import，静态分析
+# 看不见这条边——漏了的表现是冻结产物里 tlstrust 退回 OpenSSL 默认信任库（日志一条 WARNING），干净 Windows
+# 上缺 ISRG Root X1 时私有 Python 下载以 `private_python_tls` 失败，而源码模式一切正常（2026-09-28 实测的
+# 就是这个形状）。整包子模块点名收进（`_windows` / `_macos` / `_openssl` 按平台条件 import）；打包环境里
+# 没装它就在这里失败，不留到用户机器上。
+from PyInstaller.utils.hooks import collect_submodules  # noqa: E402
+
+TRUSTSTORE_MODULES = collect_submodules("truststore")
+if "truststore" not in TRUSTSTORE_MODULES:
+    raise SystemExit(
+        "打包环境里没有 truststore（pip install -r requirements.txt）——冻结产物会退回 OpenSSL 默认信任库，"
+        "干净 Windows 上私有 Python 下载会因缺根证书失败")
+print(f"[tavotto.spec] truststore 子模块: {', '.join(TRUSTSTORE_MODULES)}")
+
 a = Analysis(
     [str(ROOT / "packaging" / "entry.py")],
     pathex=[str(ROOT / "src")],
@@ -208,6 +222,8 @@ a = Analysis(
         # 契约层按名字装载的后端实现（见上；清单取自 _IMPL_MODULES，不手写）
         *BACKEND_IMPLS,
         *_pk_hidden,
+        # 平台原生证书校验（见上；tlstrust 延后 import）
+        *TRUSTSTORE_MODULES,
     ],
     hookspath=[],
     runtime_hooks=[],

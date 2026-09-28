@@ -2056,6 +2056,7 @@ export default interface Resources {
         "private_python_not_offered": "这台电脑上还不能由 Tavotto 自备 Python。请安装 Python 3.10 以上，或选择已有环境。",
         "private_python_offline": "无法下载 Python。检查网络后重试；已有的环境不受影响。",
         "private_python_source_unavailable": "下载地址上没有这份 Python。请升级 Tavotto 后再试。",
+        "private_python_tls": "无法验证下载地址的证书（证书校验失败），已停止下载 Python。这不是网络断开：可能是这台电脑缺少根证书，或网络中的代理替换了证书。请运行系统更新或联系网络管理员后重试；已有的环境不受影响。",
         "private_python_write_failed": "无法写入 Tavotto 的数据目录。",
         "repair_plan_stale": "确认期间，Python 环境发生了变化。请重新开始。"
       },
