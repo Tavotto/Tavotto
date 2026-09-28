@@ -175,6 +175,8 @@ e2e 把间隔**注入**调小（`window.__TAVOTTO_TIMELINE_TIMING__ = { debounce
   2. `components/LayoutDialog.tsx` 的 `doSave`（另存为 / 第一次存进项目）：同样紧跟 `saveLayout` →
      `emitLayoutSaved(toProject ? 'project_file' : 'layout_file', { moment: ctx.moment })`；
   3. `store/actions.ts` 的 `runManualSave()` 本机那一支（没开项目）：`emitLayoutSaved('local', { moment: ctx.moment })`。
+     发不发看 `saveNowWithResult().wrote`（按下那一刻的内容写没写成），不看写完之后的实时 `saveState`——
+     写的途中又改过的话状态照实是 dirty，内容却已经在盘上（Codex #679）。
   `ctx.moment` 是 #674 入口 `captureSaveContext()` **同一次捕获**里取的时间线快照，不另算一份。
   两者维度不同、各管各的：保存上下文（载入代次 / pj / 绑定文件）判「还要不要继续写、弹框」；时间线上下文
   （项目代际 + 排版 id）判「这一刻属于谁的时间线」——同一份排版被重新载入或改绑文件之后，节点仍属于它。
