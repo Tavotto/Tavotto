@@ -45,6 +45,7 @@ I18N_RS = ROOT / "src-tauri" / "src" / "i18n.rs"
 DESKTOP_I18N_TEST = ROOT / "tests" / "test_desktop_i18n.py"
 SHELL_NOUN_TEST = "test_menu_uses_the_four_ui_nouns"
 API_TS = ROOT / "web" / "src" / "lib" / "api.ts"
+PROJECT_PICKER_TSX = ROOT / "web" / "src" / "components" / "ProjectPicker.tsx"
 
 #: 被禁的词。英文按整词（document / documents，大小写不论）：`docs`、`Documentation`
 #: 都不是这个概念，也不会被它咬到。
@@ -166,13 +167,22 @@ def test_shell_menu_is_guarded_somewhere():
 
 
 def test_shortcut_ids_match_the_frontend_closed_set():
-    """后端常用起点的 `id` 与前端 `ShortcutId` 联合类型、两种语言的翻译 key 三方逐字相等。"""
+    """严格同源对（`docs/rules/repo/same-origin-pairs.md`）：后端常用起点实际发出的 `id`、
+    前端 `ShortcutId` 联合类型、`shortcutLabel` 逐个翻译的 `case`、两种语言的翻译 key，
+    四方逐字相等。少了 `case` 的那个 id 会静默回退成后端写死的中文名。"""
     backend = {loc for src, loc in _backend_strings()}
     src = API_TS.read_text(encoding="utf-8")
     m = re.search(r"export type ShortcutId = ([^\n]+)", src)
     assert m, "api.ts 里找不到 ShortcutId"
     frontend = set(re.findall(r"'(\w+)'", m.group(1)))
     assert backend == frontend, f"后端 {sorted(backend)} ≠ 前端 {sorted(frontend)}"
+    picker = PROJECT_PICKER_TSX.read_text(encoding="utf-8")
+    body = picker.split("function shortcutLabel(", 1)[1].split("\n}\n", 1)[0]
+    cases = re.findall(
+        r"^\s*case '(\w+)':\s*\n\s*return translate\('browser\.shortcut\.(\w+)'", body, re.M
+    )
+    assert all(c == k for c, k in cases), f"case 与它翻译的 key 不是同一个 id：{cases}"
+    assert {c for c, _ in cases} == backend, f"shortcutLabel 的 case {sorted(c for c, _ in cases)}"
     for locale in ("zh-CN", "en-US"):
         data = json.loads((LOCALES / locale / "project.json").read_text(encoding="utf-8"))
         assert set(data["browser"]["shortcut"]) == backend, locale
