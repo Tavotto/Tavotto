@@ -36,6 +36,12 @@ let projectEpoch = 0
  * 所属项目那格，终态副作用只在所属项目此刻开着时派发，切回 A 接得上（与 `packageStore` 的作业同一形状）。
  */
 const startedPlans = new Map<string, string | null>()
+/**
+ * 与 `parked` 同一格收着的「就地重试」上下文（最近一次请求 + 受管环境那次授权）：切走时随作业收起、切回来随作业
+ * 放回——不然切回来看到失败 / 取消的结局，卡片却没有「重试」（`onRetry` 要 `request`，Codex #709）。
+ * 模块级而不进 store：界面不读它，只有 `clear()` 收放。
+ */
+const parkedRetry = new Map<string, { request: RepairRequest | null; authorized: RepairDisclosure | null }>()
 const projectKey = (project: string | null): string => project ?? ''
 
 /** 单包修复的一次请求（重试时原样再发一次） */
@@ -489,24 +495,29 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
   clear: () => {
     // 换代**排在清空之前**：清空只处置已经落地的那份，换代处置还在飞的那些
     projectEpoch += 1
-    const { progress, parked } = get()
+    const { progress, parked, request, authorized } = get()
     const next = { ...parked }
     // 此刻显示的作业收进它**所属**项目那格（`resetForNewProject` 跑的时候 currentProjectId 已经是新项目，
     // 所属项目只能问作业自己）。认不出所属的（不是本标签页起的）不收——本来也不该显示
-    if (progress && startedPlans.has(progress.plan_id))
-      next[projectKey(startedPlans.get(progress.plan_id) ?? null)] = progress
+    if (progress && startedPlans.has(progress.plan_id)) {
+      const owner = projectKey(startedPlans.get(progress.plan_id) ?? null)
+      next[owner] = progress
+      parkedRetry.set(owner, { request, authorized })
+    }
     // 新项目上次切走时收着的作业放回来：还在跑就接着显示，切走期间结束了就把结局交出来（不静默丢）
     const here = projectKey(currentProjectId())
     const back = next[here] ?? null
     delete next[here]
+    const retryCtx = back ? parkedRetry.get(here) : undefined
+    parkedRetry.delete(here)
     const ended = !!back && (back.state === 'failed' || back.state === 'cancelled')
     set({
       plan: null,
       jointPlan: null,
       jointBlocked: null,
       pinned: null,
-      request: null,
-      authorized: null,
+      request: retryCtx?.request ?? null,
+      authorized: retryCtx?.authorized ?? null,
       busy: false,
       errorCode: ended ? back.code || '' : '',
       errorText: ended ? back.error || '' : '',

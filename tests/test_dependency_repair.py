@@ -1474,6 +1474,23 @@ def test_the_terminal_progress_says_whether_the_same_requirement_can_be_retried(
         assert err.value.code == deprepair.ERROR_ALREADY_ATTEMPTED
 
 
+def test_an_async_failure_after_pip_ran_is_not_offered_as_retryable(project, monkeypatch, tmp_path):
+    """Codex #709 第二轮：后台安装（`install_async` → `_install_guarded`）的失败终态也要带 `retryable`。计划在
+    `install()` 的 finally 里就被摘掉了，失败出口要事先拿住它——pip 跑成之后再失败（验证没过 / 写激活失败）的，
+    再形成计划必然 `dependency_already_attempted`，终态说 `retryable=False`。"""
+    plan = _managed_plan(project, monkeypatch, tmp_path, private=False)
+    _stub_generation_until_pip(monkeypatch, pip_code="")
+
+    def _write_failed(python, modules):
+        raise deprepair.RepairError(deprepair.ERROR_MANAGED_WRITE_FAILED, "磁盘满")
+
+    monkeypatch.setattr(deprepair, "_verify_imports", _write_failed)
+    rec = deprepair._install_guarded(plan.plan_id, None)
+    assert rec["state"] == deprepair.STATE_FAILED
+    assert rec["code"] == deprepair.ERROR_MANAGED_WRITE_FAILED
+    assert rec["retryable"] is False
+
+
 def test_a_successful_managed_pip_run_still_blocks_the_same_requirement(
     project, monkeypatch, tmp_path
 ):

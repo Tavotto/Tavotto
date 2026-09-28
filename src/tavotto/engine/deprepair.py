@@ -691,6 +691,9 @@ def install_async(plan_id: str, on_event=None) -> None:
 
 
 def _install_guarded(plan_id: str, on_event) -> dict:
+    # 计划是一次性的：`install()` 的 finally 会把它从表里摘掉，失败的终态要在这之前拿住它——
+    # 终态上的 `retryable`（pip 跑成之后再失败的不给重试）按计划里的项目与需求算（Codex #709）
+    plan = get_plan(plan_id)
     try:
         return install(plan_id, on_event)
     except RepairError as exc:
@@ -699,13 +702,14 @@ def _install_guarded(plan_id: str, on_event) -> dict:
             plan_id,
             STATE_FAILED,
             on_event,
+            plan=plan,
             code=exc.code,
             error=str(exc),
             pinned=pinned if isinstance(pinned, dict) else None,
         )
     except Exception as exc:  # noqa: BLE001
         LOG.exception("依赖安装线程异常")
-        return _emit(plan_id, STATE_FAILED, on_event, code=ERROR_FAILED, error=str(exc))
+        return _emit(plan_id, STATE_FAILED, on_event, plan=plan, code=ERROR_FAILED, error=str(exc))
 
 
 def install(plan_id: str, on_event=None) -> dict:
