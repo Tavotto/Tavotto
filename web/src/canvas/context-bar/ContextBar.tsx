@@ -24,10 +24,13 @@ import {
   barVariant,
   elementObstacles,
   freeWidthOf,
+  narrowerVariant,
+  nextNarrowerVariant,
   placeToolbar,
   placeToolbarAvoiding,
   selectionScreenRect,
   sidebarInsets,
+  type BarVariant,
   type Placement,
   type ScreenRect,
 } from './position'
@@ -108,9 +111,10 @@ export function ContextBar() {
   const [pos, setPos] = useState<Placement | null>(null)
   // 窗口尺寸一变就重算落位与宽窄档（断点没变时 layout 不会动，得自己听）
   const [resizeTick, setResizeTick] = useState(0)
-  // 完整栏量出来比两侧之间还宽（英文文案、大字号）：降成压缩档。可用宽度一变就
-  // 清掉重量——这是「量了才知道」的第二道判据，静态阈值是第一道
-  const [overflow, setOverflow] = useState(false)
+  // 量出来比两侧之间还宽（英文文案、大字号、窄窗口里的压缩档）：再降一档，最窄到
+  // `minimal`。可用宽度或选区一变就清掉重量——这是「量了才知道」的第二道判据，静态
+  // 阈值是第一道
+  const [overflow, setOverflow] = useState<BarVariant | null>(null)
   const ref = useRef<HTMLDivElement>(null)
 
   // 目标解析：裁剪态最优先（那时选区不该再出别的条），其次图内编辑态看 gid，
@@ -224,11 +228,12 @@ export function ContextBar() {
 
   const insets = sidebarInsets({ layout, leftOpen, leftWidth, rightOpen, rightWidth })
   const freeWidth = freeWidthOf(window.innerWidth, insets)
-  const variant = overflow ? 'compact' : barVariant(freeWidth)
+  const staticVariant = barVariant(freeWidth)
+  const variant = overflow ? narrowerVariant(staticVariant, overflow) : staticVariant
 
   // 换了一组对象或一组图内元素都重新从完整档量起（图内多选的选区在 gids 里，不在 ids 里）
   useLayoutEffect(() => {
-    setOverflow(false)
+    setOverflow(null)
   }, [freeWidth, idsKey, gidsKey])
 
   // Esc 关闭只作用于**这一次选择**；选择一变就重新出现
@@ -332,9 +337,14 @@ export function ContextBar() {
     }
     const w = ref.current?.offsetWidth ?? 220
     const h = ref.current?.offsetHeight ?? 36
-    // 两种多选栏都按内容量宽（`w-max`）：完整档量出来比两侧之间还宽就降成压缩档
-    if ((mode === 'multi' || mode === 'elements') && variant === 'full' && w > freeWidth - 2 * MARGIN) {
-      setOverflow(true)
+    // 两种多选栏都按内容量宽（`w-max`）：量出来比两侧之间还宽就再降一档（完整 → 压缩 →
+    // 最窄）。`w-max` 的栏不会自己收缩，`placeToolbar` 只能夹位置，不降档右半截就出屏
+    if (
+      (mode === 'multi' || mode === 'elements') &&
+      variant !== 'minimal' &&
+      w > freeWidth - 2 * MARGIN
+    ) {
+      setOverflow(nextNarrowerVariant(variant))
       return
     }
     const viewport = { width: window.innerWidth, height: window.innerHeight }

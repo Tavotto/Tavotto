@@ -41,7 +41,9 @@ import { qb } from './text'
  * 两个入口切的是同一个值。按钮表（图标 / 顺序 / 最少对象数）也从 `ArrangeSection`
  * 取，不再抄一份。
  *
- * 宽度不够（`variant === 'compact'`）时压成三个弹层入口 + 成组 + 更多。
+ * 宽度不够（`variant === 'compact'`）时压成三个弹层入口 + 成组 + 更多；压缩档量出来
+ * 仍放不下（`minimal`，窄窗口里全是文字时最常见）再收成「排列」一个弹层，文字的
+ * 字号 / 加粗 / 斜体也进「文字」弹层——`w-max` 的栏不会自己收缩，不降档右半截就出屏。
  *
  * `docked`：右栏属性页正停靠着——参照三选一、分布、等宽等高整套就在那边的
  * 「排列」组里，这条再铺一遍是同一批控件的第二份摆放（审计 T29）。此时只留
@@ -88,6 +90,33 @@ export function MultiSelectionBar({
       {qb('selectedCount', { count })}
     </span>
   )
+
+  if (variant === 'minimal') {
+    return (
+      <Bar>
+        {countEl}
+        <Sep />
+        <div className="flex items-center gap-0.5">
+          <MenuPopover label={qb('arrangeMenu')} width={232} testId="arrange">
+            <RefPicker />
+            <AlignRow modes={ALIGN_BUTTONS} refName={ref} count={count} />
+            <AlignRow modes={DISTRIBUTE_BUTTONS} refName={ref} count={count} />
+            <AlignRow modes={SIZE_BUTTONS} refName={ref} count={count} />
+          </MenuPopover>
+          {texts && (
+            <MenuPopover label={qb('textMenu')} width={176} testId="text">
+              <CanvasTextQuick objs={texts} compact />
+            </MenuPopover>
+          )}
+        </div>
+        <Sep />
+        <div className="flex items-center gap-0.5">
+          <GroupButtons grouped={grouped} />
+          <MoreButton count={count} />
+        </div>
+      </Bar>
+    )
+  }
 
   if (docked) {
     return (

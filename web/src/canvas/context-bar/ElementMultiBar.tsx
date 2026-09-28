@@ -93,7 +93,8 @@ export function ElementMultiBar({
   }
 
   const count = gids.length + annotations.length
-  const narrow = variant === 'compact'
+  // 图内多选栏本来就短：最窄档与压缩档同一种摆法
+  const narrow = variant !== 'full'
   /**
    * 权威没就位时按钮**仍可聚焦、提示仍说得出原因**（`aria-disabled`，点了只报一句
    * 「正在同步」）：原生 `disabled` 不发指针事件、也进不了 Tab 序，气泡与状态句会一起

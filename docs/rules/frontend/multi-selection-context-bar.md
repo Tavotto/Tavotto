@@ -29,7 +29,9 @@
   后续 coachmark 都锚在这两个节点上，别改名。
 * **落位不查 DOM**：联合选区经 `position.selectionScreenRect`（与 OverlaySvg 的
   `toScreen` 同一份换算 + 视口原点）算窗口坐标。宽窄档两道判据：静态阈值
-  `FULL_BAR_MIN_WIDTH` + 量出来放不下就降级；工具条盒子必须 `w-max`，否则
+  `FULL_BAR_MIN_WIDTH` + 量出来放不下就再降一档（完整 → 压缩 → 最窄 `minimal`，
+  最窄档只由量出来的溢出降到：画布多选收成「排列」一个弹层，全是文字时字号 / 加粗 /
+  斜体进「文字」弹层；图内多选的最窄档与压缩档同一种摆法）；工具条盒子必须 `w-max`，否则
   `fixed` 盒子被可用宽度压扁、量到的不是自然宽度。
 * **锁定对象不动但算进参照框**：`alignSelectedTo` 与拖动同用 `movableTargets`；
   对齐 / 成组 / 取消成组执行前 `finishActiveGesture()`。

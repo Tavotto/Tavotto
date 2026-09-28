@@ -244,3 +244,66 @@ test('图内多选在两侧之间放不下完整栏时：压缩档，整条栏�
   await expect(left).toBeInViewport({ ratio: 1 })
   await left.click()
 })
+
+test('画布多选全是文字、窗口很窄：压缩档仍放不下就降到最窄档，整条栏在窗口里、排列与文字都够得着', async ({
+  app,
+  page,
+}) => {
+  const a = await app()
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto(a.baseURL)
+  await page.locator('[data-card="Fig1_kinetics.pdf"]').dblclick({ timeout: 30_000 })
+  await expect(page.locator('[data-exit-element-edit]')).toBeVisible({ timeout: 60_000 })
+  await page.locator('[data-context-back]').click()
+  await expect(page.locator('[data-object-id]').first()).toBeVisible()
+  for (const [x, y, s] of [
+    [160, 140, 'alpha'],
+    [360, 560, 'beta'],
+  ] as const) {
+    await page.locator('[data-tool="text"]').click()
+    await page.locator('[data-canvas-stage]').click({ position: { x, y } })
+    await page.keyboard.type(s)
+    await page.keyboard.press('Escape')
+  }
+  await page.keyboard.press('Escape')
+  const texts = page.locator('[data-object-id]').filter({ hasText: /^(alpha|beta)$/ })
+  await expect(texts).toHaveCount(2)
+  await texts.nth(0).click()
+  await page.keyboard.down('Shift')
+  await texts.nth(1).click()
+  await page.keyboard.up('Shift')
+
+  // 收到 400 宽（窄断点，两侧之间就是整个窗口）：压缩档的全文字栏量出来约 470 px，放不下。
+  // 右栏在窄断点下成了盖住画布的抽屉（开着时浮动栏让位），收起它
+  await page.setViewportSize({ width: 400, height: 900 })
+  await expect(page.locator('[data-inspector-close]')).toBeVisible()
+  await page.locator('[data-inspector-close]').click()
+
+  const bar = page.locator('[data-multi-selection-context-bar]')
+  await expect(bar).toBeVisible()
+  await expect(bar.locator('[data-selection-count="2"]')).toBeVisible()
+  // 场景自检：走到的是「压缩档量出来仍放不下」那一档
+  await expect(bar).toHaveAttribute('data-variant', 'minimal')
+  // 整条栏都在窗口里，自身也没有被撑破
+  await expect(bar).toBeInViewport({ ratio: 1 })
+  expect(await horizontalOffenders(page, '[data-context-bar]')).toEqual([])
+  await expect(bar.locator('[data-multi-more]')).toBeInViewport({ ratio: 1 })
+
+  // 文字弹层：字号在窗口里、改得动
+  await bar.locator('[data-multi-menu="text"]').click()
+  const size = page.locator('[data-radix-popper-content-wrapper] [data-inspector-prop="sizePt"]')
+  await expect(size).toBeInViewport({ ratio: 1 })
+  // 再点一次入口收起（Esc 会连浮动栏一起关掉本次显示）
+  await bar.locator('[data-multi-menu="text"]').click()
+  await expect(size).toHaveCount(0)
+
+  // 排列弹层：左对齐在窗口里，点了真的对齐
+  const lefts = () =>
+    texts.evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().left)))
+  expect(new Set(await lefts()).size).toBe(2)
+  await bar.locator('[data-multi-menu="arrange"]').click()
+  const left = page.locator('[data-radix-popper-content-wrapper] [data-align-mode="left"]')
+  await expect(left).toBeInViewport({ ratio: 1 })
+  await left.click()
+  await expect.poll(async () => new Set(await lefts()).size).toBe(1)
+})

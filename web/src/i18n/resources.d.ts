@@ -3783,6 +3783,7 @@ export default interface Resources {
     "contextBar": {
       "alignMenu": "对齐",
       "aria": "快速编辑",
+      "arrangeMenu": "排列",
       "countTitle": "{{hint}} · 对齐参照：{{ref}}",
       "cropAria": "裁剪",
       "distributeMenu": "分布",
@@ -3793,7 +3794,8 @@ export default interface Resources {
       "openInspector": "全部属性",
       "primaryHint": "最后选中的对象是主选，轮廓更粗；「主选」参照以它为基准。",
       "selectedCount_other": "已选 {{count}} 个",
-      "sizeMenu": "尺寸"
+      "sizeMenu": "尺寸",
+      "textMenu": "文字"
     },
     "crash": {
       "blank": "打开空白文档",

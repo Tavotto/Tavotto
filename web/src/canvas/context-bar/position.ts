@@ -37,7 +37,21 @@ export interface Placement {
   placement: 'above' | 'below'
 }
 
-export type BarVariant = 'full' | 'compact'
+/**
+ * 宽窄三档。`minimal` 只由「压缩档量出来仍放不下」降到（没有静态阈值）：画布多选的
+ * 排列三件收成一个「排列」弹层、全是文字时字号 / 加粗 / 斜体也进「文字」弹层
+ */
+export type BarVariant = 'full' | 'compact' | 'minimal'
+
+const VARIANT_ORDER: readonly BarVariant[] = ['full', 'compact', 'minimal']
+
+/** 两档里更窄的那个（静态阈值给的档与量出来降到的档取窄者） */
+export const narrowerVariant = (a: BarVariant, b: BarVariant): BarVariant =>
+  VARIANT_ORDER.indexOf(a) >= VARIANT_ORDER.indexOf(b) ? a : b
+
+/** 再降一档；已经最窄就还是它 */
+export const nextNarrowerVariant = (v: BarVariant): BarVariant =>
+  VARIANT_ORDER[Math.min(VARIANT_ORDER.length - 1, VARIANT_ORDER.indexOf(v) + 1)]
 
 /** 停靠布局下侧栏占掉的窗口宽度；narrow 断点的侧栏是覆盖层，工具条那时整个让位 */
 export function sidebarInsets(ui: {

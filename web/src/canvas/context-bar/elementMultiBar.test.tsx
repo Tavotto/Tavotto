@@ -409,7 +409,7 @@ describe('图内多选出浮动栏', () => {
     try {
       await mount()
       await selectGids('axes_0.legend.texts_0', 'axes_0.legend.texts_1')
-      expect(bar()!.getAttribute('data-variant')).toBe('compact')
+      expect(bar()!.getAttribute('data-variant')).not.toBe('full')
       barW = 300
       await selectGids('axes_0.title', 'axes_0.ylabel')
       expect(bar()!.getAttribute('data-variant')).toBe('full')

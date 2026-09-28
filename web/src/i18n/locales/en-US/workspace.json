@@ -120,6 +120,7 @@
   },
   "contextBar": {
     "alignMenu": "Align",
+    "arrangeMenu": "Arrange",
     "aria": "Quick edit",
     "countTitle": "{{hint}} · Align to: {{ref}}",
     "cropAria": "Crop",
@@ -132,7 +133,8 @@
     "primaryHint": "The last selected object is the primary, with a thicker outline. The Primary reference aligns to it.",
     "selectedCount_one": "{{count}} selected",
     "selectedCount_other": "{{count}} selected",
-    "sizeMenu": "Size"
+    "sizeMenu": "Size",
+    "textMenu": "Text"
   },
   "crash": {
     "blank": "Open a blank document",
