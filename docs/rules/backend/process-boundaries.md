@@ -13,7 +13,8 @@
   `pyproject.toml` 声明的运行时依赖（flask / packaging + RenderCore 的五个包，U10 起；ADR 0072）是父进程自己的
   ——`packaging` 自 U04（ADR 0061）起只在 `engine/depresolve.py` 的 intent 读法里延后 import，别处不许 import 它；
   pikepdf / pypdfium2 / uharfbuzz / fontTools / Pillow 只在 `rendercore/` 的 native 适配层里 import，PDFium 只在
-  render child 进程里。PyMuPDF 不在闭包里（`scripts/ci/retirement_scan.py` 看护）。
+  render child 进程里。`truststore`（出站 HTTPS 的平台原生证书校验，2026-09-28 起）只在 `engine/tlstrust.py` 里
+  延后 import，import 不了退回标准库并记 WARNING（`tests/test_private_python_tls.py` 钉「只有一处」）。PyMuPDF 不在闭包里（`scripts/ci/retirement_scan.py` 看护）。
 - 渲染解释器由 `pool.resolve_worker_python(项目, script=…)` 决定（ADR 0018 / 0044 / 0057）：
   显式（环境变量 / 设置）> 项目记住的 > **项目自带的 venv（首开发现 + 体检，每进程每项目一次）**
   > 内置 / 自身 / 系统。**失效的显式选择不静默替换**：`explicit_python_unusable` /

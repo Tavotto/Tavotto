@@ -184,8 +184,14 @@ def source_from(
 class LoopbackServer:
     """本地供应服务。`mode`：`ok` / `truncate` / `corrupt` / `missing`；`throttle_bps` 限速。"""
 
-    def __init__(self, directory: Path):
+    def __init__(self, directory: Path, *, tls=None, host: str = "127.0.0.1"):
+        """`tls`：服务端 `ssl.SSLContext`（给了就说 HTTPS，握手在每条连接上各做一次）；`host`：URL 里写的
+        主机名（证书只签了 IP 127.0.0.1，写 `localhost` 就是主机名不符的形状）。"""
         self.directory = Path(directory)
+        self.tls = tls
+        self.host = host
+        #: 到达服务的 TCP 连接数（握手之前数）：TLS 失败时 `requests` 为空，这个数证明客户端确实来过
+        self.connections = 0
         self.requests: list[str] = []
         self.mode = "ok"
         self.throttle_bps = 0
@@ -198,7 +204,8 @@ class LoopbackServer:
     @property
     def base(self) -> str:
         assert self._server is not None
-        return f"http://127.0.0.1:{self._server.server_address[1]}"
+        scheme = "https" if self.tls is not None else "http"
+        return f"{scheme}://{self.host}:{self._server.server_address[1]}"
 
     def url(self, name: str) -> str:
         return f"{self.base}/{name}"
@@ -241,7 +248,20 @@ class LoopbackServer:
                     if outer.mode == "hold" and i == 0:
                         outer.gate.wait(60)
 
-        self._server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        class Server(http.server.ThreadingHTTPServer):
+            def get_request(self):
+                sock, addr = self.socket.accept()
+                outer.connections += 1
+                if outer.tls is not None:
+                    # 握手在这里做：失败抛 SSLError（OSError），socketserver 吞掉、接着等下一条连接
+                    try:
+                        sock = outer.tls.wrap_socket(sock, server_side=True)
+                    except OSError:
+                        sock.close()
+                        raise
+                return sock, addr
+
+        self._server = Server(("127.0.0.1", 0), Handler)
         self._server.daemon_threads = True
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
         self._thread.start()

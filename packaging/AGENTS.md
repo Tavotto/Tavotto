@@ -139,6 +139,13 @@ Python，首次渲染也不联网：
   而源码模式一切正常（#476 三条冒烟腿）。`tavotto.spec` 从契约层 `_IMPL_MODULES` 取清单铺进
   hiddenimports，**不手写模块名**（U10 起闭集只剩 `rendercore/facade.py`，退役模块的 hidden import
   随模块一起消失）；`tests/test_runtime_build.py::test_spec_ships_every_backend_the_contract_layer_can_select` 看护。
+- **延后 import 的 truststore 要显式进 PyInstaller 的 hiddenimports**（2026-09-28）：出站 HTTPS 的平台原生证书
+  校验在 `engine/tlstrust.py` 里**延后** `import truststore`（Flask 进程启动不为它付代价），静态分析看不见这条边。
+  漏收的表现是冻结产物里退回 OpenSSL 默认信任库（app.log 一条 WARNING）——干净 Windows 缺 ISRG Root X1 时私有
+  Python 下载以 `private_python_tls` 失败，而源码树 / wheel 一切正常。`tavotto.spec` 用 `collect_submodules("truststore")`
+  把整包子模块铺进 hiddenimports（`_windows` / `_macos` / `_openssl` 按平台条件 import），打包环境里没装它就拒绝打包；
+  wheel 那边它是 `dependencies` 的一员（`requirements.txt` 钉死镜像）。看护 `tests/test_private_python_tls.py::
+  TestStructure`。
 - **包内数据文件要显式进 PyInstaller 的 datas**（2026-09-02，ADR 0039）：
   `Analysis` 只把 .py 编进 PYZ，`tavotto/profiles/publication.json` 与
   `tavotto/resources/tutorial_project/` 这类数据在冻结产物里**本来是没有的**

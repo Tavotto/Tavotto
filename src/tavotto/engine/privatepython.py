@@ -25,9 +25,11 @@
   一律拒绝，不靠 `tarfile` 的默认行为），落点再过一次 `_assert_under`。不改 PATH、shell、
   注册表、默认 Python、用户的 `.python-version`——本模块没有任何一行写到那些地方，用例用
   HOME / PATH 前后快照钉住。
-* **联网只有一条路**：`urllib`（与 `updater` 同一张脸：TLS 校验默认开、代理只从
-  `HTTP(S)_PROXY` / `NO_PROXY` 环境变量来），不读 pip.conf / uv 配置 / 项目设置，
-  不带任何身份。离线 = 传输层失败，`private_python_offline`，不重试到天亮（FO25）。
+* **联网只有一条路**：`urllib`（代理只从 `HTTP(S)_PROXY` / `NO_PROXY` 环境变量来），证书按
+  **平台原生**校验（`tlstrust`：truststore——干净 Windows 缺 ISRG Root X1 时由 CryptoAPI 按需补装，
+  2026-09-28 实测），不读 pip.conf / uv 配置 / 项目设置，不带任何身份。离线 = 传输层失败，
+  `private_python_offline`，不重试到天亮（FO25）；证书校验失败单列 `private_python_tls`
+  （那不是网络问题），底层异常类型与消息都进日志。
 * **取消按消费者管理（D11）**：同一个 id 的并发请求只下一次（`_inflight`），每个消费者
   各自等；一个消费者取消只是它自己退出，下载在最后一个消费者放弃时才中止；提交点
   （`os.replace` 到最终目录）之后取消无效——目录不可变，留下的永远是完整的一份。
@@ -58,7 +60,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from . import brand, config, runtime
+from . import brand, config, logsafe, runtime, tlstrust
 
 LOG = logging.getLogger("tavotto.privatepython")
 
@@ -86,6 +88,8 @@ ERROR_CANCELLED = "private_python_cancelled"
 ERROR_INVALID_ARCHIVE = "private_python_invalid_archive"
 ERROR_LAUNCH_FAILED = "private_python_launch_failed"
 ERROR_WRITE_FAILED = "private_python_write_failed"
+#: 证书校验失败（缺根 / 过期 / 主机名不符 / 被中间设备换了证书）：不是离线，「检查网络」帮不上忙。
+ERROR_TLS = "private_python_tls"
 ERROR_CODES = (
     ERROR_NOT_OFFERED,
     ERROR_OFFLINE,
@@ -96,6 +100,32 @@ ERROR_CODES = (
     ERROR_INVALID_ARCHIVE,
     ERROR_LAUNCH_FAILED,
     ERROR_WRITE_FAILED,
+    ERROR_TLS,
+)
+
+#: 传输层失败的根异常类型名（日志里明文出门的闭集，`logsafe.known`；不在表里的照样哈希）。
+TRANSPORT_ERROR_NAMES = frozenset(
+    {
+        "SSLCertVerificationError",
+        "SSLError",
+        "SSLEOFError",
+        "SSLZeroReturnError",
+        "SSLSyscallError",
+        "URLError",
+        "HTTPException",
+        "RemoteDisconnected",
+        "IncompleteRead",
+        "BadStatusLine",
+        "TimeoutError",
+        "timeout",
+        "gaierror",
+        "ConnectionError",
+        "ConnectionRefusedError",
+        "ConnectionResetError",
+        "ConnectionAbortedError",
+        "BrokenPipeError",
+        "OSError",
+    }
 )
 
 #: 下载阶段（`on_progress(stage, done, total)` 的第一个参数；闭集）。
@@ -527,6 +557,7 @@ class _Inflight:
         self.error: ProvisionError | None = None
         self.progress: tuple[str, int, int] = (STAGE_DOWNLOADING, 0, int(source.size))
         self.listeners: list = []
+        self.trust_source = ""  # 最近一次传输用的信任来源（`tlstrust.SOURCES`；只进日志）
 
 
 _inflight: dict[str, _Inflight] = {}
@@ -697,7 +728,9 @@ def _sha256_file(path: Path) -> str:
 def _download(source: PythonSource, job: _Inflight) -> Path:
     """校验过的归档路径。缓存命中且 sha256 一致就不联网；否则下到 `.part`、整份校验通过才改名。
 
-    传输层失败（连不上 / TLS / 超时 / 读到一半断）有界重试后报 `private_python_offline`；
+    传输层失败（连不上 / 超时 / 读到一半断）有界重试后报 `private_python_offline`；最后一次失败的
+    根是**证书校验失败**时报 `private_python_tls`（2026-09-28 干净 Windows 实测：缺 ISRG Root X1 被报成
+    「检查网络」）；每次失败的根异常类型与消息都记 WARNING（诊断包里消息按 REL-05 哈希）；
     HTTP 4xx / 5xx 报 `private_python_source_unavailable`（钉死的地址上没有这个文件——那是
     要升级 Tavotto 的事，不是重试的事）；hash 不符报 `private_python_hash_mismatch`，**不重试**。
     """
@@ -734,6 +767,7 @@ def _download(source: PythonSource, job: _Inflight) -> Path:
         ) as exc:
             part.unlink(missing_ok=True)
             last = exc
+            _log_transport_failure(attempt, exc, job.trust_source)
             if attempt < DOWNLOAD_ATTEMPTS:
                 time.sleep(1.0)
             continue
@@ -761,7 +795,27 @@ def _download(source: PythonSource, job: _Inflight) -> Path:
                 return dest
             raise ProvisionError(ERROR_WRITE_FAILED, f"归档落盘失败: {exc}") from exc
         return dest
+    cert = tlstrust.cert_verification_error(last) if last is not None else None
+    if cert is not None:
+        raise ProvisionError(ERROR_TLS, f"证书校验失败: {cert}")
     raise ProvisionError(ERROR_OFFLINE, f"下载失败: {last}")
+
+
+def _log_transport_failure(attempt: int, exc: BaseException, trust_source: str) -> None:
+    """一次传输失败进日志：根异常类型（闭集明文）、信任来源（闭集明文）、OpenSSL 的 verify_code（数）、
+    消息（自由文本：app.log 原样，诊断包里哈希）。2026-09-28 那台机器上 app.log 里什么都没有——
+    「无法下载」到底是超时还是证书，只能靠事后另起进程复现。"""
+    root = tlstrust.root_cause(exc)
+    cert = tlstrust.cert_verification_error(exc)
+    LOG.warning(
+        "私有 Python 下载第 %d/%d 次失败：%s（信任来源 %s，verify_code=%s）: %s",
+        attempt,
+        DOWNLOAD_ATTEMPTS,
+        logsafe.known(type(root).__name__, TRANSPORT_ERROR_NAMES),
+        logsafe.known(trust_source, tlstrust.SOURCES),
+        getattr(cert, "verify_code", None) if cert is not None else None,
+        str(root),
+    )
 
 
 def _is_verified_archive(dest: Path, source: PythonSource) -> bool:
@@ -785,6 +839,7 @@ def _fetch(source: PythonSource, part: Path, job: _Inflight) -> str:
     h = hashlib.sha256()
     done = 0
     _emit(job, STAGE_DOWNLOADING, 0, source.size)
+    ctx = tlstrust.client_context()
     # `.part` 打不开 / 写不进（只读目录、配额、预检之后磁盘满了）是**本机**的事，报 write_failed；
     # 传输层的 OSError 才是离线——两种恢复动作不同，不能混成一个 code（Codex #464 第二轮 P2）
     try:
@@ -793,8 +848,10 @@ def _fetch(source: PythonSource, part: Path, job: _Inflight) -> str:
         raise ProvisionError(ERROR_WRITE_FAILED, f"归档缓存不可写: {exc}") from exc
     # 每次现建 opener 而不是模块级 `urlopen`：后者第一次调用时把 `ProxyHandler` 连同**当时**的
     # `HTTP(S)_PROXY` / `NO_PROXY` 缓存进全局 opener，之后环境变量再变它也不看——代理配置要在
-    # 下载那一刻读（用例的死代理对照就是这样量的）。TLS 校验仍是 `HTTPSHandler` 的默认。
-    opener = urllib.request.build_opener()
+    # 下载那一刻读（用例的死代理对照就是这样量的）。HTTPS 的上下文来自 `tlstrust`：平台原生校验
+    # （CERT_REQUIRED + 主机名），不是 OpenSSL 读到的根证书快照（干净 Windows 缺根，见模块头）。
+    job.trust_source = tlstrust.source_of(ctx)
+    opener = urllib.request.build_opener(tlstrust.https_handler(ctx))
     with fh, opener.open(req, timeout=NETWORK_TIMEOUT_S) as resp:
         while True:
             _check_abort(job)

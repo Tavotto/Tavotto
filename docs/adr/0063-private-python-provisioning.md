@@ -180,3 +180,10 @@ spike 里「一条 resolver」的选择；产品里再下载一个 37 MB 的 uv 
 * 改了：ADR 0019 §一 的「基础解释器从哪来」多了末级；ADR 0061 §四 的接入规则按 §二 兑现（uv 不进产品）；
   `packaging/AGENTS.md`「内置渲染 runtime」多一段「私有 Python 与它的关系」。
 * U09 / U11 拿走：`base_runtime` 进回执的环境身份；发行时的目标资格与 `enabled` 的翻转。
+* **修订（2026-09-28，§六）**：「TLS 校验默认开」原来靠 `HTTPSHandler` 的默认上下文，即 OpenSSL 读到的根证书快照。
+  干净 Windows（Server 2025 实测）的证书库起初没有 ISRG Root X1——Windows 只在 CryptoAPI 建链时按需补装，
+  `ssl.create_default_context()` 只枚举已装的根——于是下载 `CERTIFICATE_VERIFY_FAILED`，被报成
+  `private_python_offline`。现在上下文来自 `engine/tlstrust.py`（truststore：平台原生校验，与 pip 一致；
+  `CERT_REQUIRED` + 主机名，不降级，AST 钉），证书校验失败单列 `private_python_tls`（第十个 code），每次传输失败
+  的根异常进日志。`privatepython.py` 仍不 import `ssl`；运行时依赖多一个 truststore（纯 Python、MIT），冻结产物经
+  `tavotto.spec` 的 hiddenimports 收进。细则见 `docs/rules/backend/private-python.md`。

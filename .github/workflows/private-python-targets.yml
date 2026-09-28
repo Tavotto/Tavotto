@@ -40,6 +40,7 @@ on:
       - "scripts/ci/runtime_pins.py"
       - "packaging/runtime-lock.json"
       - "src/tavotto/engine/privatepython.py"
+      - "src/tavotto/engine/tlstrust.py"
       - "src/tavotto/engine/deprepair.py"
       - "src/tavotto/engine/managedenv.py"
       - "src/tavotto/engine/depplan.py"
@@ -52,9 +53,11 @@ on:
       - "src/tavotto/engine/config.py"
       - "src/tavotto/resources/private_python_lock.json"
       - "tests/test_private_python.py"
+      - "tests/test_private_python_tls.py"
       - "tests/test_private_python_transaction.py"
       - "tests/test_private_python_windows_snapshot.py"
       - "tests/support/private_python.py"
+      - "tests/support/tls_certs.py"
       - "tests/support/dependency_repair.py"
       - "tests/support/venvfixture.py"
       - "tests/test_foundation_join.py"
@@ -197,10 +200,12 @@ jobs:
           REL=$(python -c "import json,os; print(json.load(open(os.environ['TAVOTTO_PRIVATE_PYTHON_REPORT']))['python_rel'])")
           bash scripts/ci/private_python_empty_image.sh "$RT" "$REL" "$PP_WHEELHOUSE" "$PP_EVIDENCE/empty-image"
 
+      # 证书校验那一份（test_private_python_tls.py）在 Windows 腿上走的是 truststore 的 CryptoAPI 分支——
+      # 缺根 → private_python_tls、注入测试根能下（2026-09-28 干净 Windows 缺 ISRG Root X1 的机制面）
       - name: 机制用例在本目标上跑一遍（本地供应服务 + 假归档；Windows 的替身是 venvlauncher 副本；真归档那条上面已经跑过，不再下第二次）
         shell: bash
         run: |
-          python -m pytest tests/test_private_python.py -p no:cacheprovider -rs -q \
+          python -m pytest tests/test_private_python.py tests/test_private_python_tls.py -p no:cacheprovider -rs -q \
             -k "not TestRealArchive" \
             --junitxml="$PP_EVIDENCE/pytest-mechanism.xml"
 

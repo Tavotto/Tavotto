@@ -28,9 +28,19 @@
   传输层失败才有界重试；缓存里对不上的归档不是复用对象。
 - **离线三档**：有校验过的缓存 → 零请求（FO24）；无缓存连不上 → `private_python_offline`，有界、不建目录（FO25，
   safe_stop 不计自动成功）；来源回 4xx / 5xx → `private_python_source_unavailable`（要升级 Tavotto，不是重试）。
-- **联网只有一条路**：`urllib.request.urlopen`——TLS 校验默认开（源码里没有 `ssl`，AST 钉）、代理只从
-  `HTTP(S)_PROXY` / `NO_PROXY` 环境变量来（与 `updater` / pip 同一张脸）、`User-Agent: Tavotto/<版本>`、不带身份；
-  **不读** pip.conf / uv 配置 / 用户配置 / 项目设置（对 `config` 只调 `data_path` / `data_dir`，AST 钉）。
+  **证书校验失败不是离线**：有界重试后最后一次失败的根是 `ssl.SSLCertVerificationError`（缺根 / 过期 / 主机名不符 /
+  被中间设备换证书）→ `private_python_tls`，文案说「证书校验失败」而不是「检查网络」；别的 `SSLError`（协议层）仍归
+  offline。每次传输失败一条 WARNING：根异常类型与信任来源按闭集明文（`logsafe.known`），消息本机原样、诊断包里哈希。
+- **联网只有一条路**：每次现建的 `urllib.request.build_opener(tlstrust.https_handler(ctx))`——代理只从
+  `HTTP(S)_PROXY` / `NO_PROXY` 环境变量来、在下载那一刻读（与 `updater` / pip 同一张脸）、`User-Agent: Tavotto/<版本>`、
+  不带身份；**不读** pip.conf / uv 配置 / 用户配置 / 项目设置（对 `config` 只调 `data_path` / `data_dir`，AST 钉）。
+  **证书按平台原生校验**（2026-09-28 起）：上下文唯一出处 `engine/tlstrust.client_context()` = `truststore.SSLContext
+  (PROTOCOL_TLS_CLIENT)`（Windows CryptoAPI 建链、缺根按需补装；macOS SecTrust；Linux OpenSSL + 系统 CA——与 pip 一致）。
+  起因：干净 Windows 的证书库起初没有 ISRG Root X1（归档 302 到 `release-assets.githubusercontent.com`），
+  `ssl.create_default_context()` 只枚举已装的根，下载两次 `CERTIFICATE_VERIFY_FAILED` 却报成 offline、日志一个字没有。
+  `privatepython.py` 自己仍不 import `ssl`（AST 钉），`tlstrust.py` 里没有 `CERT_NONE` / `_create_unverified_context` /
+  给 `check_hostname` / `verify_mode` 赋值（AST 钉）；truststore 只在 `tlstrust` 里延后 import，import 不了退回
+  `ssl.create_default_context()` 并 WARNING 一次（不静默）。
 - **授权绑在计划上**：没有合格 base 且本目标提供私有 Python 时，`create_plan` / `create_joint_plan` 在计划上挂
   `private_python` 载荷（`offer_payload()`：id / 版本 / 目标 / `download_bytes` / `cached` / `network_required`，
   无机器路径），`offer()` 的受管目标同样带它；界面必须把 `download_bytes` 说出口。执行端按
@@ -60,13 +70,16 @@
 - **能力默认关**：锁文件每个目标的 `enabled` 在无系统 Python 的资格取得前保持 `false`（06 §2）；
   `TAVOTTO_PRIVATE_PYTHON=1|0` 是工程 / CI 目标腿的逃生门（与 `TAVOTTO_RUNTIME_HOST_ARCH` 同一档），不是产品设置。
   换版本 = 改锁（新 sha256 → 新 id → 新目录）+ 每个目标重新取得资格，不自动追最新。
-- **错误码闭集** `privatepython.ERROR_CODES`（九条 `private_python_*`），文案在 `web/src/i18n/locales/*/errors.json` 的
+- **错误码闭集** `privatepython.ERROR_CODES`（十条 `private_python_*`，`private_python_tls` 2026-09-28 加），文案在 `web/src/i18n/locales/*/errors.json` 的
   `engine.repairError`（与 deprepair 同一张表；`tests/test_private_python.py` 钉两种语言都有）。
 - 看护：`tests/test_private_python.py`（锁 / 同源对 / 目标名 / 逃生门；本地供应服务 + 假归档跑真实状态机：正例、
   缓存零请求、坏缓存不复用、篡改 / 截断 / 错期望值 / 离线 / 死代理对照 / 404 / zip-slip 六种 + 成员校验逐形状 /
   起不来 / 版本不符 / 无可执行位 / 磁盘配额；并发去重、消费者取消、最后一个取消中止、提交前中止、提交后取消无效、
   退役、孤儿 staging；HOME / 环境隔离、AST 判 import 闭集；`TestRealArchive` 真 pbs 归档要
-  `TAVOTTO_PRIVATE_PYTHON_REAL=1`）+ `tests/test_private_python_transaction.py`（真事务：一次授权供应 + 建代、
+  `TAVOTTO_PRIVATE_PYTHON_REAL=1`）+ `tests/test_private_python_tls.py`（本地 HTTPS 回环 + 每会话现造的私有 CA：
+  缺根 → `private_python_tls` 且日志带异常、主机名不符同样拒、注入带根的上下文（truststore / 标准库各一）能下、协议层
+  SSLError 与连不上仍是 offline、truststore 缺失时响亮退回；AST 钉不降级 / 只有一处 import / spec 收得进）
+  + `tests/test_private_python_transaction.py`（真事务：一次授权供应 + 建代、
   资格未取得时行为不变、offer / 单包计划带下载、重建 / 首装不下载、离线 safe_stop 不登记代、坏 hash 旧 active 原样、
   下载期间取消无残留、两项目共享一份、有代记着的旧 runtime 不删；`TestCleanMachine` 四条干净机器；`TestRealChain`
   真归档要 `TAVOTTO_PRIVATE_PYTHON_REAL=1`）+ `tests/test_foundation_private_python.py`（FO24 / FO25 / FO26 经产品 HTTP
