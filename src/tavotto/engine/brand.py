@@ -71,6 +71,10 @@ CLAUDE_SPARSE_PATHS = (".claude-plugin",)
 #: `claude plugin install` 的目标（插件名@marketplace 名）；两个名字各自的唯一出处是
 #: `.claude-plugin/marketplace.json` 的 `plugins[0].name` 与 `name`
 CLAUDE_PLUGIN_REF = "tavotto@tavotto"
+#: WorkBuddy 装的是**同一份** Claude 插件（ADR 0106）：它的「插件市场 → 添加市场」收 `owner/repo`，
+#: 读仓库根 `.claude-plugin/marketplace.json`，装 `CLAUDE_PLUGIN_REF`。界面里没有稀疏检出选项。
+#: 看护：`tests/test_claude_plugin.py`
+WORKBUDDY_MARKETPLACE = CODEX_MARKETPLACE
 
 #: DeepSeek Harness 的 bundle（ADR 0104）。同一份插件目录兼作 npm 包：`package.json`
 #: 声明 `dsh.bundle.patch`，由 `dsh plugin --profile <名> add <规格>` 经 pnpm 装进 profile。

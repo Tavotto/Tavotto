@@ -356,7 +356,7 @@ python3 skills/tavotto-figure/scripts/handoff.py figures/fig_removal_rate.py
 ```
 codex-plugin/
 ├── .codex-plugin/plugin.json          # 插件清单（Codex 认的唯一入口）
-├── .mcp.json                          # MCP server 声明（本地 stdio）
+├── codex.mcp.json                     # Codex 的 MCP server 声明（本地 stdio；不叫 .mcp.json，ADR 0106）
 ├── assets/tavotto.svg                 # composer 图标 / logo
 ├── integrations/configure.py         # 给非 Codex 宿主打印配置片段（只打印，不写文件）
 ├── mcp/
@@ -435,12 +435,13 @@ cwd 正是插件目录，拿它当边界会把每张用户图判成越界。一�
 把权限切到「请求批准」后重新打开即可弹框）；
 路径越界是 `path_out_of_scope`（`narrow_the_path`，错误里列出允许的根）；
 宿主既没给目录也不支持确认是 `no_workspace_root`（`configure_roots`，直接给
-`TAVOTTO_MCP_ROOTS` 的用法）。`tavotto_health` 的
+`TAVOTTO_MCP_ROOTS` 的用法）。给出的目录是整个用户主目录（或它的上级）是 `workspace_root_too_broad`
+（`configure_roots`：在具体项目目录里启动宿主，或设 `TAVOTTO_MCP_ROOTS`）。`tavotto_health` 的
 `root_authority.authorization` 不用先失败一次就能看到当前这一档。
 
 ## 已知限制
 
-**启动命令是插件自带的 `./mcp/launch`（#266）。** Codex 的 `.mcp.json` 只有一个
+**启动命令是插件自带的 `./mcp/launch`（#266）。** Codex 的 MCP 配置（`codex.mcp.json`）只有一个
 `command` 字符串、没有按平台分支，而 Windows 上 `python3.exe` 常常只是 Microsoft Store
 的执行别名存根（macOS 12.3 起又没有 `python`，两边没有通用的名字）。所以插件自带一对
 启动器：POSIX 上 Codex 执行 `mcp/launch`，它就是 `exec python3 "$@"`；Windows 上 Codex

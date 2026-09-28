@@ -36,7 +36,7 @@
   compatibility（能改什么）。**SKILL.md 里必须写清什么情况读哪份**。
 
 - `agents/openai.yaml` 的 `dependencies.tools` 声明本插件的 MCP server 依赖：
-  `type: mcp` + `value` == `.mcp.json` 的 server key（`tavotto`）+
-  `transport: stdio` + `command` == `.mcp.json` 的 `command`。schema 来自
+  `type: mcp` + `value` == `codex.mcp.json` 的 server key（`tavotto`）+
+  `transport: stdio` + `command` == `codex.mcp.json` 的 `command`。schema 来自
   codex-rs 的 `SkillToolDependency`（type/value/description/transport/
-  command/url），改 `.mcp.json` 必须同步这里（pytest 看护）。
+  command/url），改 `codex.mcp.json` 必须同步这里（pytest 看护）。

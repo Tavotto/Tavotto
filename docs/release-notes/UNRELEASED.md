@@ -109,3 +109,24 @@ second one fail to load. Like the Claude Code plugin, this works once this versi
 ## Codex plugin: an old pip/pipx engine is no longer reported as "desktop app only"
 
 If the `tavotto` engine installed with pip or pipx was too old for the plugin, the plugin's health check could report `desktop_only` ("only the desktop app is installed") and suggest steps that did not fix it. This happened when the plugin could not state a minimum engine version (a plugin installed from a local marketplace or source checkout) or when the engine's CLI could not report its version. A common trigger is a pip mirror that has not synced the new release yet, so `pipx install "tavotto[worker]"` installs an older version. The health check now asks the engine's own Python environment for its version. It reports `engine_too_old` with both versions when it knows the minimum, and a new code, `engine_incompatible`, when it doesn't. Both give upgrade commands such as `pipx install --force "tavotto[worker]==<version>"`. If pip's `index-url` points to a mirror (from `PIP_INDEX_URL` or a pip config file, read only), the message says the mirror may lag and adds `--index-url https://pypi.org/simple` to each command. `tavotto codex doctor` reports the same code and text.
+
+## WorkBuddy plugin (Beta), and more hosts
+
+WorkBuddy installs the same plugin as Claude Code: in WorkBuddy's plugin marketplace choose **Add marketplace**,
+enter `Tavotto/Tavotto`, then install `tavotto@tavotto`. The conversation's working folder is the authorized
+project. If you had added Tavotto to WorkBuddy by hand with the config generator, remove that entry after
+installing the plugin. Like the other plugins, this works once this version is on `plugin-stable`.
+
+The config generator gained `--host minimax-code` (a project `.mcp.json` for MiniMax Code), and for Trae it now
+prints one-click install links (`trae://` for the international edition, `trae-cn://` for the China edition), puts
+Trae's timeouts in `env`, and refuses a Python path with spaces, which Trae can't parse. Trae's skill now goes in
+`.trae/skills/`. ZCode's generated config now carries `timeoutMs`, so long exports no longer time out after 30 s.
+
+Tavotto no longer accepts your whole home folder (or a folder above it) as the authorized workspace, from any
+source: `TAVOTTO_MCP_ROOTS`, the host's MCP roots, a confirmation prompt, or the folder the server was started in.
+Before, a host that reported the home folder as its root let Tavotto open anything under it. Start the host in a
+project folder, or set `TAVOTTO_MCP_ROOTS` to the project; the error now says so (`workspace_root_too_broad`).
+
+In the plugin, Codex's MCP config is now `codex.mcp.json` instead of `.mcp.json`, because other hosts read a
+plugin's `.mcp.json` on their own and tried to start Tavotto from the wrong folder. Codex users don't need to do
+anything: plugin updates pick it up, and an already-installed older version still checks out as healthy.

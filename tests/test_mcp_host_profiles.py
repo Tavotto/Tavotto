@@ -1,10 +1,10 @@
-"""八个宿主 profile 的**独立期望**（多宿主 PR 2）。
+"""九个宿主 profile 的**独立期望**（多宿主 PR 2）。
 
 判据不从生成器的 `HOSTS` 表里取：下面的 `EXPECTED` 是照着官方文档（`docs/implementation/
 multi-host-mcp/hosts.md` 逐条带链接与查证日期）另写的一份，生成器与断言如果共用一份错误模板
 就能自证正确，那样的测试没有意义。
 
-* 范围契约：八个 id 一个不少（独立书写的闭集），支持矩阵与验收矩阵的行与它三方一致；
+* 范围契约：九个 id 一个不少（独立书写的闭集），支持矩阵与验收矩阵的行与它三方一致；
 * 形状：每家的顶层 key、条目字段、超时字段与单位；VS Code 是 `servers`，误写 `mcpServers` 要红；
 * 值：只有绝对路径，没有 `${…}` / `~` / `<占位>` / `!!js`，不带 Codex 专有字段与 CODEX_* 变量；
 * 落点：Claude Code 项目 `.mcp.json`、VS Code `.vscode/mcp.json`、Claude Desktop 配置三者互不相同；
@@ -41,16 +41,28 @@ SCOPE = {
     "claude-desktop",
     "trae",
     "vscode",
+    "minimax-code",
 }
 
 #: 照官方文档写的期望：顶层 key、允许的条目字段、必须出现的固定字段、超时字段、Skill 模式
 EXPECTED = {
     "cursor": {"top": "mcpServers", "fields": {"command", "args", "env"}, "fixed": {}},
-    "zcode": {"top": "mcpServers", "fields": {"command", "args", "env"}, "fixed": {}},
+    # ZCode 的条目只认 timeoutMs（毫秒，连接与工具调用共用，默认 30 s）
+    "zcode": {
+        "top": "mcpServers",
+        "fields": {"command", "args", "env", "timeoutMs"},
+        "fixed": {"timeoutMs": 1_800_000},
+    },
     "workbuddy": {"top": "mcpServers", "fields": {"command", "args", "env"}, "fixed": {}},
     "trae": {"top": "mcpServers", "fields": {"command", "args", "env"}, "fixed": {}},
     "claude-desktop": {"top": "mcpServers", "fields": {"command", "args", "env"}, "fixed": {}},
     "claude-code": {
+        "top": "mcpServers",
+        "fields": {"type", "command", "args", "env", "timeout"},
+        "fixed": {"type": "stdio", "timeout": 1_800_000},
+    },
+    # MiniMax Code 项目 .mcp.json：与 Claude Code 同形（开源源码 project-config.ts）
+    "minimax-code": {
         "top": "mcpServers",
         "fields": {"type", "command", "args", "env", "timeout"},
         "fixed": {"type": "stdio", "timeout": 1_800_000},
@@ -67,7 +79,8 @@ SKILL_MODE = {
     "vscode": "native",
     "dsh": "native",
     "claude-desktop": "instruction_fallback",
-    "trae": "instruction_fallback",
+    "trae": "native",
+    "minimax-code": "native",
     "workbuddy": "instruction_fallback",
     "zcode": "instruction_fallback",
 }
@@ -122,7 +135,7 @@ def test_support_matrix_and_acceptance_matrix_cover_the_same_hosts(mod):
     acceptance = (DOCS / "acceptance.md").read_text(encoding="utf-8")
     matrix_section = acceptance.split("## 矩阵", 1)[1].split("\n## ", 1)[0]
     rows = set(re.findall(r"^\| `([a-z-]+)` \|", matrix_section, flags=re.M))
-    assert rows == SCOPE | {"codex"}, "验收矩阵要逐行包含八个宿主 + Codex 回归行"
+    assert rows == SCOPE | {"codex"}, "验收矩阵要逐行包含九个宿主 + Codex 回归行"
 
 
 def test_no_host_is_claimed_verified_without_evidence():
@@ -137,10 +150,12 @@ def test_no_host_is_claimed_verified_without_evidence():
             assert f"### 证据：{host['id']}" in acceptance
 
 
-#: beta 档的一键安装渠道 → (验收矩阵子行的标签, README 章节里的宿主名)
+#: beta 档的宿主 → (一键安装渠道, 验收矩阵子行的标签, README 章节里的宿主名)。
+#: WorkBuddy 装的是同一份 Claude 插件与同一个仓库根市场（ADR 0106），渠道相同、章节各写各的。
 BETA_CHANNELS = {
-    "claude-plugin": ("插件", "Claude Code"),
-    "dsh-bundle": ("bundle", "DeepSeek Harness"),
+    "claude-code": ("claude-plugin", "插件", "Claude Code"),
+    "workbuddy": ("claude-plugin", "插件", "WorkBuddy"),
+    "dsh": ("dsh-bundle", "bundle", "DeepSeek Harness"),
 }
 
 
@@ -158,7 +173,8 @@ def test_beta_label_follows_the_matrix_and_its_evidence():
         if host["status"] != "beta":
             assert "channel" not in host, host
             continue
-        sub, name = BETA_CHANNELS[host["channel"]]
+        channel, sub, name = BETA_CHANNELS[host["id"]]
+        assert host["channel"] == channel, host
         row = re.search(rf"^\| `{host['id']}` · {sub} \|.*$", acceptance, flags=re.M)
         assert row, f"{host['id']} 标 beta，但验收矩阵没有「{sub}」子行"
         # 只看「工具完整流程」那一格：备注里「不算 host_verified」这类话会让整行子串匹配恒真
@@ -257,6 +273,44 @@ def test_timeouts_are_converted_from_the_single_source(mod, project):
     assert mod.serialize("claude-code", desc)["mcpServers"]["tavotto"]["timeout"] == seconds * 1000
     dsh = mod.serialize("dsh", desc)[0]["insert"][0]["config"]
     assert dsh["toolCallTimeoutMs"] == seconds * 1000
+    assert mod.serialize("zcode", desc)["mcpServers"]["tavotto"]["timeoutMs"] == seconds * 1000
+    assert mod.serialize("minimax-code", desc)["mcpServers"]["tavotto"]["timeout"] == seconds * 1000
+    # Trae 的超时写在 env 里（毫秒、字符串）：工具调用 ← tool_timeout_sec，启动 ← startup_timeout_sec
+    startup = json.loads((PLUGIN / "codex.mcp.json").read_text(encoding="utf-8"))["mcpServers"][
+        "tavotto"
+    ]["startup_timeout_sec"]
+    env = mod.serialize("trae", desc)["mcpServers"]["tavotto"]["env"]
+    assert env["RUN_MCP_TIMEOUT_MS"] == str(seconds * 1000)
+    assert env["START_MCP_TIMEOUT_MS"] == str(startup * 1000)
+
+
+def test_trae_install_links_carry_the_same_entry_for_both_editions(mod, project):
+    """一键链接：国际版 trae://、国内版 trae-cn://，config 是单个条目的 JSON → Base64 → URL 编码。
+    解码回来必须与粘贴用的那份条目逐字段相同（链接与手贴是同一份配置）。"""
+    import base64
+    from urllib.parse import parse_qs, urlsplit
+
+    desc = _descriptor(mod, project)
+    entry = mod.serialize("trae", desc)["mcpServers"]["tavotto"]
+    links = mod.install_links("trae", entry)
+    assert sorted(urlsplit(u).scheme for u in links.values()) == ["trae", "trae-cn"]
+    for url in links.values():
+        parts = urlsplit(url)
+        assert (parts.netloc, parts.path) == ("trae.ai-ide", "/mcp-import")
+        query = parse_qs(parts.query)
+        assert query["type"] == ["stdio"] and query["name"] == ["tavotto"]
+        assert json.loads(base64.b64decode(query["config"][0]).decode("utf-8")) == entry
+    assert mod.install_links("cursor", entry) == {}
+
+
+def test_trae_refuses_a_command_with_spaces(mod, project):
+    """官方：Trae 的 command 里不能有空格（解析出错）。这时报错叫人换解释器，而不是给一份坏配置。"""
+    desc = dict(_descriptor(mod, project), command="/Applications/My Python/bin/python3")
+    with pytest.raises(mod.ConfigureError) as err:
+        mod._result("trae", {}, desc["command"], {"rc": 0, "detail": ""}, {}, None, "", desc)
+    assert err.value.code == "command_has_space"
+    # 别家不受这条约束
+    mod._result("cursor", {}, desc["command"], {"rc": 0, "detail": ""}, {}, None, "", desc)
 
 
 # ======================================================== 值
@@ -345,8 +399,11 @@ def test_skill_modes_follow_the_evidence(mod):
     for host, mode in SKILL_MODE.items():
         dirs = mod.HOSTS[host]["skill_dirs"]
         assert bool(dirs) == (mode == "native"), host
-    # Trae 不抄别家的目录
-    assert mod.HOSTS["trae"]["skill_dirs"] == []
+    # Trae 只用它自己文档写明的目录（项目 .trae/skills、国际版 ~/.trae、国内版 ~/.trae-cn），
+    # 不抄 .claude/skills（官方没说认）
+    trae = mod.HOSTS["trae"]["skill_dirs"]
+    assert trae[0] == "<项目>/.trae/skills/tavotto-figure/"
+    assert not any(".claude" in d or ".cursor" in d for d in trae)
 
 
 def test_instruction_fallback_is_generated_from_skill_md_and_resolves_in_the_package(mod):

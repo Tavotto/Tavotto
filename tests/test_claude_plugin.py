@@ -199,6 +199,17 @@ def test_install_lines_are_published_where_the_matrix_says():
         assert f"`{line}`" in pending, f"待发说明里没有 {line!r}：发版时 README 拿什么加回去"
 
 
+def test_workbuddy_section_installs_the_same_plugin_from_brand():
+    """WorkBuddy 章节（ADR 0106）：「添加市场」那一格填的整行就是 `brand.WORKBUDDY_MARKETPLACE`，装的是
+    `brand.CLAUDE_PLUGIN_REF`——同一份市场、同一个插件，不另起名字。"""
+    text = (ROOT / "README.md").read_text(encoding="utf-8")
+    section = text.split("### Using Tavotto with WorkBuddy (Beta)", 1)[1].split("\n### ", 1)[0]
+    blocks = re.findall(r"```text\n(.*?)\n```", section, flags=re.S)
+    assert blocks == [brand.WORKBUDDY_MARKETPLACE]
+    assert f"`{brand.CLAUDE_PLUGIN_REF}`" in section
+    assert brand.WORKBUDDY_MARKETPLACE == brand.CLAUDE_MARKETPLACE
+
+
 @pytest.mark.skipif(shutil.which("claude") is None, reason="本机没有 Claude Code CLI")
 @pytest.mark.parametrize("target", [PLUGIN, ROOT], ids=["plugin", "marketplace"])
 def test_claude_validates_the_manifests(target):

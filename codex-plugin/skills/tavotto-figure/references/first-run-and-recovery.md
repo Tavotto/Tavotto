@@ -136,6 +136,7 @@ clone 源码或本地构建**。已经画好的图和脚本都在磁盘上，联
 | `workspace_roots_no_response` / `workspace_roots_error` | `fix_host_wiring` | 宿主声明了 roots 却没给出目录：查宿主接线 |
 | `path_out_of_scope` | `narrow_the_path` | 路径越界：改用 `roots` 里列出的目录 |
 | `no_workspace_root` | `configure_roots` | 宿主什么都没给：让用户设 `TAVOTTO_MCP_ROOTS` 后重启 |
+| `workspace_root_too_broad` | `configure_roots` | 给出的目录是整个用户主目录（或它的上级）：请用户在具体项目目录里启动宿主，或把 `TAVOTTO_MCP_ROOTS` 设成项目目录后重启 |
 
 **`fix_host_wiring` 那几档不是用户拒绝**：再让用户点多少次都不会有提示，只能
 去查宿主，或退回 `TAVOTTO_MCP_ROOTS`。这两件事的处置相反，别混着说。
