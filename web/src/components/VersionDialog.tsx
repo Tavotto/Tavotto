@@ -40,6 +40,7 @@ import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { finishActiveGesture } from '@/store/gestureCoordinator'
 import { useTimelineStore } from '@/store/timelineStore'
+import { useInFlight } from '@/hooks/useInFlight'
 import { useVariantPng } from '@/hooks/useVariantPng'
 import {
   documentDigest,
@@ -158,6 +159,7 @@ export function VersionDrawer() {
   // busy 同样记着是哪个上下文忙：A 的保存还在飞时换到 B，B 不该被「忙」锁住
   const [busyCtx, setBusyCtx] = useState<string | null>(null)
   const busy = busyCtx === ctx
+  const submitOnce = useInFlight()
   const asideRef = useRef<HTMLElement>(null)
   const nameRef = useRef<HTMLInputElement>(null)
   const restoreFocus = useRef<HTMLElement | null>(null)
@@ -259,21 +261,24 @@ export function VersionDrawer() {
       return
     }
     const at = ctx
-    const after = afterAwait(at)
-    setBusyCtx(at)
-    try {
-      await saveNamedNode(name)
-      // 换走之后才回来：名字框里已经是 B 的名字了，不清
-      after(() => setSaveName(''))
-      setError(null)
-    } catch (e) {
-      // 错误按上下文记账（`setError` 记的是这次渲染的上下文），换走之后不显示
-      setError(backendErrorText(e))
-    } finally {
-      // 只摘掉**自己**挂上的忙标记（不碰 B 的任何状态）；不摘的话 A → B → A 回来时
-      // A 会一直显示在忙
-      setBusyCtx((c) => (c === at ? null : c))
-    }
+    // 在途时回车 / 再点一次都不再发（`useInFlight`：同步标记，与顶栏浮层同一份）
+    await submitOnce(at, async () => {
+      const after = afterAwait(at)
+      setBusyCtx(at)
+      try {
+        await saveNamedNode(name)
+        // 换走之后才回来：名字框里已经是 B 的名字了，不清
+        after(() => setSaveName(''))
+        setError(null)
+      } catch (e) {
+        // 错误按上下文记账（`setError` 记的是这次渲染的上下文），换走之后不显示
+        setError(backendErrorText(e))
+      } finally {
+        // 只摘掉**自己**挂上的忙标记（不碰 B 的任何状态）；不摘的话 A → B → A 回来时
+        // A 会一直显示在忙
+        setBusyCtx((c) => (c === at ? null : c))
+      }
+    })
   }
 
   const groups = useMemo(

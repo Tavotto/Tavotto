@@ -1320,6 +1320,53 @@ describe('预览取正文失败：下一次预览把这句话作废（Codex #679
   })
 })
 
+/* ----------------------- 命名请求在途时不重复提交（Codex #679） ----------------------- */
+
+describe('存为命名节点：第一次请求还没回来，再回车 / 再提交都不再发', () => {
+  const setValue = async (input: HTMLInputElement, value: string) => {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+    await act(async () => {
+      setter.call(input, value)
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+  }
+
+  it('抽屉的名字框：连按两次回车只发一次 POST', async () => {
+    await mount([meta({ id: 'a1' })])
+    let release!: (v: { version: LayoutVersionMeta }) => void
+    mockCreate.mockImplementationOnce(() => new Promise((r) => (release = r)))
+    const input = $<HTMLInputElement>('[data-timeline-name-input]')!
+    await setValue(input, '投稿前')
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    })
+    await act(async () => $<HTMLButtonElement>('[data-timeline-save-named]')!.click())
+    expect(mockCreate).toHaveBeenCalledTimes(1)
+    await act(async () => release({ version: meta({ id: 'n1' }) }))
+    await flush()
+    expect(mockCreate).toHaveBeenCalledTimes(1)
+  })
+
+  it('顶栏命名浮层：连着提交两次只发一次 POST', async () => {
+    await mount([meta({ id: 'a1' })])
+    let release!: (v: { version: LayoutVersionMeta }) => void
+    mockCreate.mockImplementationOnce(() => new Promise((r) => (release = r)))
+    await act(async () => useTimelineStore.getState().setNamingOpen(true))
+    await flush()
+    const input = $<HTMLInputElement>('[data-timeline-quick-name-input]')!
+    await setValue(input, '投稿前')
+    await act(async () => {
+      input.form!.requestSubmit()
+      input.form!.requestSubmit()
+    })
+    expect(mockCreate).toHaveBeenCalledTimes(1)
+    await act(async () => release({ version: meta({ id: 'n1' }) }))
+    await flush()
+    expect(mockCreate).toHaveBeenCalledTimes(1)
+  })
+})
+
 /* ------------------------------ 每行说什么 -------------------------------- */
 
 describe('列表每行说什么', () => {
