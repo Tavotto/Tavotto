@@ -1220,6 +1220,26 @@ def test_missing_dependency_evidence_is_bounded_and_scoped_to_the_project(tmp_pa
     assert len(deprepair.recent_missing_dependencies(a)) == limit - 1
 
 
+def test_version_shaped_segments_stay_only_on_interpreter_version_positions():
+    """`3.7.6` 这类纯版本号只在解释器布局的版本位（`versions/` / `Versions/` 之下）原样；
+    用户起名的 Conda 环境、导出目录叫 `12.34` / `3.7.6` 时照样哈希（Codex #708 P1）。"""
+    d = engine_diagnostics
+    home = str(Path.home())
+    roots = [(home, "~")]
+    assert d._path_fact(f"{home}/.pyenv/versions/3.7.6/bin/python3.7", roots) == (
+        "~/.pyenv/versions/3.7.6/bin/python3.7"
+    )
+    assert (
+        d._path_fact("/Library/Frameworks/Python.framework/Versions/3.11/bin/python3", roots)
+        == "/Library/Frameworks/Python.framework/Versions/3.11/bin/python3"
+    )
+    for private in (f"{home}/miniconda3/envs/12.34/bin/python", f"{home}/Desktop/3.7.6/out.pdf"):
+        fact = d._path_fact(private, roots)
+        segs = fact.split("/")
+        assert "12.34" not in segs and "3.7.6" not in segs, fact
+        assert any(s.startswith("seg:") for s in segs), fact
+
+
 def test_missing_dependency_export_is_a_whitelist_of_closed_values():
     """原值里多出来的键不出门；来源 / code / 版本不在闭集里就哈希（放行口不许变成后门）。"""
     record = {

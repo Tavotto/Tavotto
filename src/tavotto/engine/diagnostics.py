@@ -393,11 +393,14 @@ _KNOWN_SEGMENTS = frozenset(
         "envs",
     }
 )
-#: 解释器文件名 / 版本目录：`python3.EXE`、`pythonw.exe`、`Python37`、`python3.11`、`3.7.6`——只由固定词与
-#: 数字组成，放不下用户的字
-_INTERPRETER_SEGMENT = re.compile(
-    r"(?i)^(?:python[w]?(?:\d{1,3}|\d\.\d{1,2})?(?:\.exe)?|\d{1,2}(?:\.\d{1,3}){1,2})$"
-)
+#: 解释器文件名 / 目录：`python3.EXE`、`pythonw.exe`、`Python37`、`python3.11`——固定词加至多三位数字，
+#: 放不下用户的字
+_INTERPRETER_SEGMENT = re.compile(r"(?i)^python[w]?(?:\d{1,3}|\d\.\d{1,2})?(?:\.exe)?$")
+#: 纯版本号目录（`3.7.6`）：**只在解释器布局的版本位上**原样（`.pyenv/versions/3.7.6`、
+#: `Python.framework/Versions/3.11`）。别处的 `12.34` / `3.7.6` 可能是用户起的名字（Conda 环境、导出目录、
+#: 课题编号），照样哈希。
+_VERSION_SEGMENT = re.compile(r"^\d{1,2}(?:\.\d{1,3}){1,2}$")
+_VERSION_PARENTS = frozenset({"versions", "Versions"})
 #: 「项目在云盘同步目录里」：同步冲突 / 按需下载的占位文件是一类常见故障，值得留一个布尔
 _CLOUD_HINT = re.compile(
     r"CloudStorage|Mobile Documents|OneDrive|Dropbox|Google Drive|Nutstore|坚果云|iCloud", re.I
@@ -415,6 +418,11 @@ def _path_fact(value: str, roots: list[tuple[str, str]]) -> str:
             seg in ("", "~", "<user>")
             or seg in _KNOWN_SEGMENTS
             or _INTERPRETER_SEGMENT.match(seg) is not None
+            or (
+                bool(out)
+                and out[-1] in _VERSION_PARENTS
+                and _VERSION_SEGMENT.match(seg) is not None
+            )
             or seg.startswith(("<project:", "seg:"))
             or "-acct:" in seg
             or re.fullmatch(r"[A-Za-z]:", seg) is not None
