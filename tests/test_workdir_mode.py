@@ -319,6 +319,10 @@ def test_the_undecided_default_follows_the_users_own_interpreter(
         Path(outside).unlink()
     try:
         assert workdir.mode_for(root) == expected, case
+        # 准备计划读的那一份（`decision_for`：LaunchContext 的 cwd_mode）与 spawn 读的同一个默认
+        (root / "fig.py").write_text("import matplotlib\n", encoding="utf-8")
+        decision = workdir.decision_for(root, "fig.py")
+        assert (decision["mode"], decision["decided"]) == (expected, False), case
         implied = expected == workdir.MODE_PROJECT
         assert workdir.implied_by(root) == (
             workdir.IMPLIED_BY_USER_INTERPRETER if implied else None
