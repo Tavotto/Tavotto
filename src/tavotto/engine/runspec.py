@@ -45,7 +45,7 @@ import shutil
 import subprocess
 import sys
 
-from . import runcodes
+from . import runcodes, runtime
 from .runcodes import RunError
 
 #: 目标解释器的最低版本。与 `projectenv.PYTHON_MIN` / `pyproject.requires-python`
@@ -239,7 +239,8 @@ def probe_interpreter(interpreter: str, *, run=subprocess.run) -> dict:
     """
     try:
         proc = run(
-            [interpreter, "-c", _PROBE_SRC],
+            # `-B`：只读探针，不往用户解释器的安装目录写 .pyc（`runtime.probe_args`）
+            [interpreter, *runtime.probe_args(), "-c", _PROBE_SRC],
             capture_output=True,
             text=True,
             # **Windows 上必须钉 encoding**：默认按系统区域解码（cp936/cp1252），

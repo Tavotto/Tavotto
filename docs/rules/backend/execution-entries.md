@@ -44,7 +44,14 @@
   `load_engine_modules` 的装载窗口、`projectenv._PROBE_SRC` 执行 `worker.py` 那一段各自把
   `sys.dont_write_bytecode` 打开、finally 还原；一次性的 `discover.TARGET_PARSE_ARGS` 直接带 `-B`。
   新增「用户解释器执行安装目录里的引擎代码」的入口，要在 `tests/test_install_dir_bytecode_free.py`
-  加一条（它两条边都钉：安装目录零 .pyc、用户模块照常缓存）。
+  加一条（它两条边都钉：安装目录零 .pyc、项目外的用户模块照常缓存）。
+- **safe worker 不往用户项目目录里写字节码**（2026-09-28 Windows 实测：entry=main 按模块 import 脚本，
+  项目里多出 `__pycache__/fig_data.cpython-312.pyc`，而 `python fig_data.py` 从不写它）：`worker.build`
+  在第一次 import 用户代码之前装 `_suppress_project_bytecode`——`SourceFileLoader.set_data` 对落在项目根 /
+  脚本目录之下的 `.pyc` 不写，**但当前解释器的包目录（`sysconfig` 的 stdlib / purelib / platlib）之下的照写**
+  （项目根里的 `.venv` 是用户的环境）；只认包目录、不认整个前缀——前缀包住项目或就是项目根（`python -m venv .`）时
+  项目源码照样不写。只挡项目目录、不是 `-B`：项目外的包照常缓存。native 档不装（它的契约是与 `python fig.py`
+  逐字相同）。看护 `tests/test_install_dir_bytecode_free.py`（两种 entry + 项目内 `.venv` + 前缀包住项目 + venv 就在项目根）。
 - **`bridge_runner` / `bridgeboot` 启动阶段不许 import matplotlib**，
   钩子挂在 `sys.meta_path` 的后置 import 回调上。
 - **native 侧不许起后台线程**：Figure 归主线程，`LiveFigureSession` 有线程

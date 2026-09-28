@@ -1421,7 +1421,7 @@ def _runtime_section() -> dict:
         "imports": {},
     }
     if st["valid"] and st["python"]:
-        section["imports"] = runtime.probe_packages(st["python"])
+        section["imports"] = runtime.probe_packages(st["python"], bundled=True)
     return section
 
 
@@ -1435,7 +1435,13 @@ def build_report(project: dict | None = None, port: int | None = None) -> dict:
     except pool.WorkerError as exc:
         worker_error = str(exc)
 
-    mpl = bootstrap.matplotlib_version(worker_python) if worker_python else None
+    mpl = (
+        bootstrap.matplotlib_version(
+            worker_python, bundled=pool.source_of(worker_python) == pool.SOURCE_BUNDLED
+        )
+        if worker_python
+        else None
+    )
     roots = project_roots(project)
     caps = ai_bridge.capabilities()
     lines = _export_log_lines(roots)

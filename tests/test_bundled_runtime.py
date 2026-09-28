@@ -497,7 +497,7 @@ def test_bootstrap_status_says_bundled_and_offers_no_install(tmp_path, monkeypat
     ——那时什么都不缺，弹窗只会让人以为出了问题。"""
     py = _bundled(tmp_path, monkeypatch)
     monkeypatch.setattr(pool, "find_worker_python", lambda: py)
-    monkeypatch.setattr(bootstrap, "matplotlib_version", lambda p: "3.11.1")
+    monkeypatch.setattr(bootstrap, "matplotlib_version", lambda p, **_kw: "3.11.1")
     st = bootstrap.status()
     assert st["ok"] is True
     assert st["source"] == pool.SOURCE_BUNDLED and st["bundled"] is True
@@ -526,7 +526,7 @@ def test_source_mode_bootstrap_behaviour_is_unchanged(monkeypatch):
     """源码模式的自建 venv 是另一条路，本次改动不许碰它。"""
     monkeypatch.setattr(runtime, "ships_bundled_runtime", lambda: False)
     monkeypatch.setattr(bootstrap, "find_base_python", lambda: "/usr/bin/python3")
-    monkeypatch.setattr(bootstrap, "matplotlib_version", lambda p: "3.11.1")
+    monkeypatch.setattr(bootstrap, "matplotlib_version", lambda p, **_kw: "3.11.1")
     calls = []
 
     def fake_run(cmd):
@@ -553,7 +553,7 @@ def client():
 def test_environment_endpoint_exposes_source_and_runtime(client, tmp_path, monkeypatch):
     py = _bundled(tmp_path, monkeypatch)
     monkeypatch.setattr(pool, "find_worker_python", lambda: py)
-    monkeypatch.setattr(bootstrap, "matplotlib_version", lambda p: "3.11.1")
+    monkeypatch.setattr(bootstrap, "matplotlib_version", lambda p, **_kw: "3.11.1")
     body = client.get("/api/engine/environment").get_json()
     assert body["source"] == "bundled" and body["bundled"] is True
     assert body["runtime"]["python"] == "3.13.15"
@@ -563,9 +563,11 @@ def test_environment_probe_reports_each_package(client, tmp_path, monkeypatch):
     """「内置环境能导入并报告所有固定科学包版本」——冒烟就是断言这一条。"""
     py = _bundled(tmp_path, monkeypatch)
     monkeypatch.setattr(pool, "find_worker_python", lambda: py)
-    monkeypatch.setattr(bootstrap, "matplotlib_version", lambda p: "3.11.1")
+    monkeypatch.setattr(bootstrap, "matplotlib_version", lambda p, **_kw: "3.11.1")
     monkeypatch.setattr(
-        runtime, "probe_packages", lambda p, names=None: {n: "1.0" for n in (names or ["numpy"])}
+        runtime,
+        "probe_packages",
+        lambda p, names=None, **kw: {n: "1.0" for n in (names or ["numpy"])},
     )
     body = client.get("/api/engine/environment?probe=numpy,PIL").get_json()
     assert body["imports"] == {"numpy": "1.0", "PIL": "1.0"}

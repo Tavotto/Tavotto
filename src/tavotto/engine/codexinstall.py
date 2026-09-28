@@ -43,7 +43,7 @@ import sys
 from pathlib import Path
 
 from . import ai_agents, atomicio, brand, pluginmanifest
-from .runtime import CREATE_NO_WINDOW
+from .runtime import CREATE_NO_WINDOW, probe_args
 
 #: 每一步的稳定 code。message 随时可改，code 不许改（调用方按它分诊）。
 ERR_CODEX_MISSING = "codex_cli_missing"
@@ -218,8 +218,18 @@ def _runs_python(candidate: str) -> bool:
     Python——它打开商店并回 9009（issue #172 的现场报告）。
     退出码才是真话，所以这里跑一遍并要回显记号。
     """
-    rc, out = _run([candidate, "-c", f"print('{_PY_PROBE}')"], timeout=60)
+    # `-B`：只读探测，不往这个（多半是用户的）解释器的安装目录写 .pyc（`runtime.probe_args`）
+    rc, out = _run([candidate, *probe_args(), "-c", f"print('{_PY_PROBE}')"], timeout=60)
     return rc == 0 and _PY_PROBE in out
+
+
+def _health_env() -> dict[str, str]:
+    """跑插件 `server.py --health` 用的环境：`PYTHONDONTWRITEBYTECODE=1`。
+
+    `--health` 自己还会起孙进程（插件 resolver 逐个探候选解释器、问引擎版本）；命令行的 `-B` 不传给
+    孙进程，环境变量传——只读体检的整棵进程树都不往被探的解释器里写 .pyc（Codex #717 P2）。
+    `launcher_starts` 跑的是 `.mcp.json` 里那条命令本身（可能是启动脚本，塞不进 `-B`），只能靠它。"""
+    return {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
 
 
 def launcher_starts(command: str, server: Path) -> tuple[bool, str]:
@@ -234,7 +244,7 @@ def launcher_starts(command: str, server: Path) -> tuple[bool, str]:
     代价说清楚：命令若真是商店别名，跑这一次可能会弹一次商店窗口。那正是 Codex
     每次起 server 时已经在发生的事，这里花一次把它换掉。
     """
-    rc, out = _run([command, str(server), "--health"], timeout=120)
+    rc, out = _run([command, str(server), "--health"], timeout=120, env=_health_env())
     if _last_json(out) is not None:
         return True, f"退出码 {rc}，启动器回了体检 JSON"
     return False, f"退出码 {rc}，没有体检 JSON：{(out[-160:] or '（零输出）')}"
@@ -628,7 +638,7 @@ def _verified_interpreter(server: Path, py: str | None) -> str | None:
     """
     candidates: list[str] = []
     if py:
-        rc, out = _run([py, str(server), "--health"], timeout=120)
+        rc, out = _run([py, *probe_args(), str(server), "--health"], timeout=120, env=_health_env())
         report = _last_json(out) or {}
         chosen = report.get("python")
         if isinstance(chosen, str) and chosen.strip():
@@ -844,7 +854,7 @@ def _engine_step(plugin_dir: Path | None, py: str | None, *, apply: bool) -> dic
     server = plugin_dir / "mcp" / "server.py"
     if not server.is_file():
         return _step("engine", ok=False, detail=f"插件里没有 {server}", code=ERR_PROVISION)
-    rc, _out = _run([py, str(server), "--health"], timeout=90)
+    rc, _out = _run([py, *probe_args(), str(server), "--health"], timeout=90, env=_health_env())
     if rc == 0:
         return _step("engine", ok=True, skipped=True, detail="插件已能解析到引擎")
     if not apply:
@@ -938,7 +948,7 @@ def _health_step(plugin_dir: Path | None, py: str | None, summary: dict) -> dict
             detail="PATH 上找不到真的 python3/python，跑不了插件的体检",
         )
     server = plugin_dir / "mcp" / "server.py"
-    rc, out = _run([py, str(server), "--health"], timeout=90)
+    rc, out = _run([py, *probe_args(), str(server), "--health"], timeout=90, env=_health_env())
     report = _last_json(out) or {}
     engine_version = report.get("engine_version")
     required = (summary.get("canvas") or {}).get("min_tavotto_version")

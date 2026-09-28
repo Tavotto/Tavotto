@@ -491,7 +491,10 @@ def base_python() -> str | None:
 
 
 def _run(argv: list[str], timeout: int) -> tuple[int, str]:
-    """跑一条子进程。**shell=False、argv 是 list**（全模块唯一的执行入口）。"""
+    """跑一条子进程。**shell=False、argv 是 list**（全模块唯一的执行入口）。
+
+    受管环境自己的解释器按 `runtime.owned_env` 起（缓存落回数据目录）；基础解释器
+    （`-m venv` 那一步，可能是用户的系统 Python）原样继承。"""
     try:
         proc = subprocess.run(
             argv,
@@ -501,6 +504,7 @@ def _run(argv: list[str], timeout: int) -> tuple[int, str]:
             errors="replace",
             timeout=timeout,
             stdin=subprocess.DEVNULL,
+            env=runtime.owned_env(argv[0]) if argv else None,
             creationflags=runtime.CREATE_NO_WINDOW,
         )
     except subprocess.TimeoutExpired:
@@ -531,7 +535,9 @@ def _venv_built(base: str, root: Path, target: Path, rc: int, out: str) -> tuple
     pyvenv.cfg 都在、下一步就 create_failed）。所以建完再让它自报一次 prefix，起不来就是没建成，detail 说清。"""
     if rc != 0 or not target.is_file():
         return False, _venv_failure_detail(base, root, target, rc, out)
-    prc, pout = _run([str(target), "-I", "-c", "import sys; print(sys.prefix)"], 60)
+    prc, pout = _run(
+        [str(target), "-I", *runtime.probe_args(), "-c", "import sys; print(sys.prefix)"], 60
+    )
     if prc != 0:
         return False, (
             f"venv 建成但里面的解释器起不来（`{target}` 退出码 {prc}）: "
@@ -564,7 +570,15 @@ def create_venv(project: str | Path, base: str) -> tuple[bool, str]:
 
 def python_version_of(python: str) -> str:
     """目标解释器自报的版本；问不出来回空串。"""
-    rc, out = _run([str(python), "-c", "import platform;print(platform.python_version())"], 60)
+    rc, out = _run(
+        [
+            str(python),
+            *runtime.probe_args(),
+            "-c",
+            "import platform;print(platform.python_version())",
+        ],
+        60,
+    )
     return out.strip().splitlines()[-1].strip() if rc == 0 and out.strip() else ""
 
 

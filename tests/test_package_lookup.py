@@ -302,6 +302,8 @@ def test_lookup_runs_a_list_argv_and_never_a_shell(monkeypatch):
         for n in ast.walk(fn)
         if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
     }
+    # `runtime.probe_args` / `owned_env` 只拼参数与环境变量（`-B`、缓存目录），不执行任何东西
+    called -= {"runtime.probe_args", "runtime.owned_env"}
     assert called == {"subprocess.run"}, f"_run_lookup 里出现了别的执行方式：{called}"
 
 

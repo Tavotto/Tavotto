@@ -438,12 +438,15 @@ def repair_hint() -> str:
 # ---------------------------------------------------------------------------
 # 实测
 # ---------------------------------------------------------------------------
-def probe_packages(python: str, names: list[str] | None = None) -> dict[str, str | None]:
+def probe_packages(
+    python: str, names: list[str] | None = None, *, bundled: bool = False
+) -> dict[str, str | None]:
     """在指定解释器里 import 一遍并报版本；import 不到的回 None。
 
     「装完了但用不了」是最难查的一档（DLL 缺失、杀毒软件隔离了某个 .pyd、
     macOS 上某个 .so 没被签名于是被 Gatekeeper 拦下），只看 manifest 说装了
-    什么不算数，得真去 import。
+    什么不算数，得真去 import。启动条件走 `probe_args()` / `probe_env()`（`bundled`
+    时就是 worker 起内置 runtime 的那一套）。
     """
     names = names or default_packages()
     if not names:
@@ -461,13 +464,14 @@ def probe_packages(python: str, names: list[str] | None = None) -> dict[str, str
     )
     try:
         proc = subprocess.run(
-            [python, "-c", expr],
+            [python, *probe_args(bundled=bundled), "-c", expr],
             capture_output=True,
             text=True,
             encoding="utf-8",
             errors="replace",
             timeout=PROBE_TIMEOUT_S,
             stdin=subprocess.DEVNULL,
+            env=probe_env(python, bundled=bundled),
             creationflags=CREATE_NO_WINDOW,
         )
     except (OSError, subprocess.SubprocessError):
@@ -574,3 +578,126 @@ def child_env(base: dict[str, str] | None = None) -> dict[str, str]:
     except OSError:
         pass
     return env
+
+
+# ---------------------------------------------------------------------------
+# 起「不是内置 runtime」的解释器：只读探测与 Tavotto 自己的环境
+# ---------------------------------------------------------------------------
+def probe_args(*, bundled: bool = False) -> list[str]:
+    """**只读体检 / 探测**起解释器时加在它后面的参数：永远带 `-B`。
+
+    体检、探版本、问 pip、量 marker 环境……这些子进程是 Tavotto 单方面去看一眼，
+    用户什么都没让它跑。不带 `-B` 时，那个解释器 import 标准库 / matplotlib 时顺手把
+    缺的 `.pyc` 写回**它自己的安装目录**——2026-09-28 Windows 实测：体检用户的
+    Python 3.7.6 之后，`Lib\\__pycache__\\dataclasses.cpython-37.pyc` / `uuid.cpython-37.pyc`
+    的时间戳正好是体检那一刻。产品承诺不改动用户环境。
+
+    **为什么是 `-B` 而不是 `PYTHONDONTWRITEBYTECODE=1`**：
+
+    * 命令行参数任何时候都算数；环境变量在 `-E` / `-I` 与带 `._pth` 的 embeddable
+      发行版（隔离模式）下被忽略——用户的解释器是什么形态我们不知道（`child_args()`
+      的 docstring 是同一条理由）；
+    * 体检刻意 `env` 原样继承（与 worker 的启动条件对齐，`projectenv.probe_environment`
+      的 docstring），而 `-B` 不碰 `sys.path` / site / env，对齐的那几个维度一个都不变；
+    * 这些探测不起孙进程，环境变量「会传给孙进程」的那一点好处在这里用不上。唯一的例外是插件的
+      `server.py --health`（它还要探候选解释器）：`codexinstall._health_env()` 另带环境变量。
+
+    代价：没预编译过的环境（uv 建的 venv 默认不编）每次体检都在内存里现编一遍
+    matplotlib——只是读得慢，一个字节都不写。**worker 不在此列**：那是替用户跑他的
+    脚本，用户自己的包照常缓存（`test_only_the_bundled_runtime_gets_b_flag`）；
+    worker 只对项目目录里的源码不写字节码（`worker._suppress_project_bytecode`）。
+    """
+    return child_args() if bundled else ["-B"]
+
+
+#: 数据目录下 Tavotto **自己建解释器**的那几个顶层目录：受管环境（`managedenv.ENVIRONMENTS_DIRNAME`，
+#: 其下各代 `envs/` 与旧布局 `venv/`）、源码模式自建的 worker 环境（`bootstrap.VENV_DIR_NAME`）、私有 Python
+#: （`privatepython.DIRNAME`）。本模块不 import 它们（会成环），三者由 `tests/test_probe_leaves_no_trace.py`
+#: 逐个对拍。
+OWNED_ENV_DIRNAMES = ("environments", "worker-env", "private-python")
+
+
+def is_owned_python(python: str | os.PathLike | None) -> bool:
+    """这个解释器是不是 **Tavotto 自己建的**：数据目录下 `OWNED_ENV_DIRNAMES` 那几个目录里的
+    （受管环境各代、源码模式自建的 `worker-env/`、私有 Python）。
+
+    判据是路径：Tavotto 只往 `config.data_dir()` 写（根 AGENTS.md 的不变量），它建出来的解释器都在
+    那几个目录下。**不是「数据目录下的都算」**：`TAVOTTO_DATA_DIR` 可以被设成一个不专用的祖先目录
+    （`$HOME`、`/opt`），那下面的 `~/.pyenv`、`/opt/conda` 是用户的环境（Codex #717）。按路径字符串判、
+    **不 realpath**——venv 的 python 是指向基础解释器的软链接，落到真身就把受管环境判成了它的 base。
+    """
+    if not python:
+        return False
+    from . import config
+
+    try:
+        root = os.path.normcase(os.path.abspath(str(config.data_dir())))
+        path = os.path.normcase(os.path.abspath(os.fspath(python)))
+    except (OSError, TypeError, ValueError):
+        return False
+    return any(
+        path.startswith(os.path.join(root, os.path.normcase(name)) + os.sep)
+        for name in OWNED_ENV_DIRNAMES
+    )
+
+
+def _user_matplotlib_dirs() -> list[str]:
+    """这台机器上用户自己的 matplotlib 配置 / 缓存目录**可能在哪**（matplotlib
+    `_get_config_or_cache_dir` 的平台分支；Windows 上 3.11 起默认 `%LOCALAPPDATA%\\matplotlib`，
+    老目录 `~/.matplotlib` 在就沿用它）。"""
+    home = os.path.expanduser("~")
+    if sys.platform.startswith(("linux", "freebsd")):
+        config_home = os.environ.get("XDG_CONFIG_HOME") or os.path.join(home, ".config")
+        cache_home = os.environ.get("XDG_CACHE_HOME") or os.path.join(home, ".cache")
+        return [os.path.join(config_home, "matplotlib"), os.path.join(cache_home, "matplotlib")]
+    out = [os.path.join(home, ".matplotlib")]
+    if sys.platform == "win32" and os.environ.get("LOCALAPPDATA"):
+        out.append(os.path.join(os.environ["LOCALAPPDATA"], "matplotlib"))
+    return out
+
+
+def owned_env(
+    python: str | os.PathLike | None, base: dict[str, str] | None = None
+) -> dict[str, str] | None:
+    """起 **Tavotto 自己的环境**（`is_owned_python`）时的环境变量；别人的环境回 None（原样继承）。
+
+    base 给 `{}` 时回的就是**增量**（workerd 的 spawn 规格只收增量，`pool._spawn_spec`）。
+    两个缓存落回数据目录（`<data_dir>/cache/<名字>`，与 `child_env()` 的 `mpl` 同一个约定）：
+
+    * `PIP_CACHE_DIR` → `cache/pip`：受管环境里跑的 pip（装包 / 查找 / 包管理）默认把
+      缓存写在 `%LOCALAPPDATA%\\pip`（2026-09-28 Windows 实测）。**只改缓存的位置**：
+      用户 pip 配置里的 index-url / 代理 / 证书照样生效（没有 `--isolated`）；用户明确
+      关掉缓存（`no-cache-dir`，配置文件或 `PIP_NO_CACHE_DIR`）时 pip 仍然不缓存——
+      实测 `no-cache-dir` 压过 `PIP_CACHE_DIR`。缓存照样跨次复用，重复安装的速度与原来
+      一样；只是升级到这一版后第一次安装用不上旧位置那份。
+    * `MPLCONFIGDIR` → `cache/mpl`：matplotlib 3.11 在 Windows 上默认建 `%LOCALAPPDATA%\\matplotlib`
+      写字体缓存。**只在用户自己一个 matplotlib 目录都没有时改道**：有的话那里可能放着
+      他的 `matplotlibrc` / `stylelib`（受管环境跑的是他的脚本，`plt.style.use("我的样式")`
+      得认得），而那个目录本来就是他的 matplotlib 在用的，不是我们新建的。用户自己设了
+      `MPLCONFIGDIR` 的一律不动。
+
+    清理：两者都在数据目录里，删 Tavotto 的数据目录就一并删掉（与受管环境 `envs/`、
+    私有 Python 同一个归宿），不在数据目录之外留任何东西。
+    """
+    if not is_owned_python(python):
+        return None
+    from . import config
+
+    env = dict(base if base is not None else os.environ)
+    cache = os.path.join(str(config.data_dir()), "cache")
+    env["PIP_CACHE_DIR"] = os.path.join(cache, "pip")
+    if not os.environ.get("MPLCONFIGDIR") and not any(
+        os.path.isdir(d) for d in _user_matplotlib_dirs()
+    ):
+        env["MPLCONFIGDIR"] = os.path.join(cache, "mpl")
+        try:
+            os.makedirs(env["MPLCONFIGDIR"], exist_ok=True)
+        except OSError:
+            pass
+    return env
+
+
+def probe_env(python: str | os.PathLike | None, *, bundled: bool = False) -> dict[str, str] | None:
+    """只读探测起解释器时的 env：内置 runtime 用 `child_env()`（与 worker 同一套），
+    Tavotto 自己的环境用 `owned_env()`，用户的环境原样继承（None）。"""
+    return child_env() if bundled else owned_env(python)

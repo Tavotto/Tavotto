@@ -45,6 +45,7 @@ import json
 import os
 import shutil
 import sys
+import sysconfig  # 模块层：项目目录进 sys.path 之前就拿住标准库这一份（见 `_INTERPRETER_PACKAGE_DIRS`）
 import time
 import traceback
 from pathlib import Path
@@ -295,6 +296,63 @@ def _exit_status(code) -> int:
     return 1
 
 
+def _inside(path: str, roots: tuple[str, ...]) -> bool:
+    return any(path == r or path.startswith(r.rstrip(os.sep) + os.sep) for r in roots)
+
+
+def _norm_path(p) -> str:
+    return os.path.normcase(os.path.realpath(os.fspath(p)))
+
+
+#: 当前解释器的包目录（stdlib / purelib / platlib）。**模块加载时就算好**：`sysconfig.get_paths()` 第一次调用
+#: 会惰性 import `_sysconfigdata_*`，放到 build 里项目目录已进 `sys.path` 之后再算，项目里同名的文件会被当成它
+#: import——在删除守卫与 savefig 拦截装好之前执行用户代码（Codex #717）。
+_INTERPRETER_PACKAGE_DIRS = tuple(
+    _norm_path(p)
+    for p in {sysconfig.get_paths().get(k) for k in ("stdlib", "platstdlib", "purelib", "platlib")}
+    if p
+)
+
+
+def _suppress_project_bytecode(roots) -> None:
+    """用户**项目目录里**的源码不写字节码：脚本自己（entry 不是 `__main__` 时按模块 import）与
+    它 import 的项目内模块，都不在项目里留 `__pycache__/*.pyc`。
+
+    2026-09-28 Windows 实测：系统 Python 3.12 渲染 `fig_data.py`（entry=main）之后，项目目录里多了
+    `__pycache__/fig_data.cpython-312.pyc`——`python fig_data.py` 跑主脚本从不写它。Tavotto 只是
+    替用户看图，项目目录里不该因此多出任何东西。
+
+    **只挡项目目录，不是整个进程**（所以不是 `-B`，也不是全程 `sys.dont_write_bytecode`）：
+    worker 起在用户的解释器上时，脚本运行期间才 import 的 numpy / scipy 子模块照常缓存——
+    没预编译的环境（uv 建的 venv 默认不编）关掉它，每次冷启动都要从源码重编
+    （`test_only_the_bundled_runtime_gets_b_flag`）。判据落在 `SourceFileLoader.set_data`
+    （它在 `SourceFileLoader` 里只被写字节码的那一步调用）：要写的 `.pyc` 落在项目根之下就不写；
+    但落在**当前解释器的包目录**（`sysconfig` 的 stdlib / purelib / platlib）之下的照写——项目根里放着
+    `.venv` 是常态，那是用户的环境，不是项目源码。只认包目录、不认整个解释器前缀：前缀包住项目
+    （项目在 Conda 环境目录里、`/usr/local` 下）或前缀就是项目根（`python -m venv .`）时，项目源码照样是
+    项目源码（Codex #717 两轮）。内置 runtime 本来就带 `-B`（`runtime.child_args`），这一段对它是 no-op。
+    """
+    from importlib.machinery import SourceFileLoader  # noqa: PLC0415
+
+    project = tuple(_norm_path(r) for r in roots if r)
+    # 只豁免解释器的**包目录**（项目里的 `.venv/lib/.../site-packages`，模块加载时算好）；前缀本身不算——
+    # 它可能包住项目，也可能就是项目根
+    envs = _INTERPRETER_PACKAGE_DIRS
+    real_set_data = getattr(SourceFileLoader.set_data, "_tavotto_real", SourceFileLoader.set_data)
+
+    def set_data(self, path, data, *args, **kwargs):
+        try:
+            target = _norm_path(path)
+        except (OSError, TypeError, ValueError):
+            target = ""
+        if target and _inside(target, project) and not _inside(target, envs):
+            return None
+        return real_set_data(self, path, data, *args, **kwargs)
+
+    set_data._tavotto_real = real_set_data
+    SourceFileLoader.set_data = set_data
+
+
 @contextlib.contextmanager
 def _real_output():
     global _intercept
@@ -363,6 +421,9 @@ class Worker(wireproto.V1Handler):
         sys.path.insert(0, str(self.figures_dir))
         if self.script.parent != self.figures_dir:
             sys.path.insert(0, str(self.script.parent))
+        # 项目目录里的源码（脚本本身按模块 import 时、它 import 的本地模块）不写 .pyc——
+        # 必须在第一次 import 用户代码（paper_style / 脚本）之前装好。
+        _suppress_project_bytecode((self.figures_dir, self.script.parent))
 
         # 删除守卫：fig6 用绝对路径删“过期输出”（ROOT/figures/...），沙盒 cwd
         # 挡不住，这里直接拒绝任何指向真实图库目录的删除（渲染用不到删除）
