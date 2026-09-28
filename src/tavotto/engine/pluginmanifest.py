@@ -449,10 +449,14 @@ def verify_dir(
                         )
             else:
                 for cmd in commands:
+                    # `./` 开头的相对 command 按**插件根**解析（Codex 起 server 的 cwd），不按本进程
+                    # 的 cwd——否则已发行的 0.17.0（command 是 `./mcp/launch.cmd`）装在任何机器上
+                    # 都会被判成「指向不存在的解释器」（#722 在真 codex 0.157 上撞到，挪自 #725）。
+                    target = plugin_dir / cmd[2:] if cmd.startswith("./") else Path(cmd)
                     if (
                         _is_path_like(cmd)
                         and not _is_bundled_launcher(cmd, plugin_dir, listed_modes)
-                        and not Path(cmd).is_file()
+                        and not target.is_file()
                     ):
                         problems.append(f"{path} 的 command 指向不存在的解释器 {cmd}")
     if installed:
