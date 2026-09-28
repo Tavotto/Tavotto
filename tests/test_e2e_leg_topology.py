@@ -192,3 +192,94 @@ class TestPlatformSkipsHaveALegThatRunsThem:
                     f"{name} 的 skip 理由「{reason}」没点出哪条腿会执行它；"
                     f"理由里必须出现 {legs} 之一（issue #30）"
                 )
+
+
+# ---------------------------------------------------------------------------
+# 真 Tauri 窗口用例（issue #542，`tests/desktop_windows/`）：同一条不变式的另一份主语
+# ---------------------------------------------------------------------------
+
+DESKTOP_WINDOW = ROOT / "tests" / "desktop_windows"
+#: 真跑那个目录的唯一一条腿：(workflow, job id, 矩阵档)
+DESKTOP_WINDOW_LEG = ("nightly.yml", "windows-install", "none")
+
+
+def _step_blocks(job_block: str) -> list[str]:
+    """一个 job 的 steps 逐条切开（剥注释后）；切不出来当场抛。"""
+    m = re.search(r"(?m)^    steps:\n", job_block)
+    assert m, "job 里没有 steps:"
+    parts = re.split(r"(?m)^      - ", job_block[m.end() :])[1:]
+    assert parts, "steps: 下一条都切不出来"
+    return parts
+
+
+class TestDesktopWindowLeg:
+    """`tests/desktop_windows/` 在别处整目录 skip；**必须点得出一条真执行它的腿**，而且那条腿
+    上缺前提是红不是 skip（`TAVOTTO_DESKTOP_WINDOW_REQUIRED=1`）——否则它就是一组永远 skip、
+    而 CI 一直绿的用例（issue #30 的同一种形状）。"""
+
+    def _runners(self) -> list[tuple[str, str]]:
+        """全仓 workflow 里点名跑 `tests/desktop_windows` 的 step：(文件名, step 块)。"""
+        hits = []
+        for wf in _workflows():
+            code = _code(wf.read_text(encoding="utf-8"))
+            start = re.search(r"(?m)^jobs:\n", code)
+            assert start, f"{wf.name} 里没有 jobs:"
+            for m in re.finditer(r"(?m)^  ([\w-]+):\n", code[start.end() :]):
+                block = _job(code, m.group(1))
+                if not re.search(r"(?m)^    steps:\n", block):
+                    continue  # 调可复用 workflow 的 job（uses:）没有自己的 steps
+                for step in _step_blocks(block):
+                    if re.search(r"(?m)^\s*python -m pytest tests/desktop_windows\b", step):
+                        hits.append((wf.name, m.group(1), step))
+        return hits
+
+    def test_exactly_one_leg_runs_the_directory(self):
+        wf, job, _tier = DESKTOP_WINDOW_LEG
+        hits = [(f, j) for f, j, _ in self._runners()]
+        assert hits == [(wf, job)], (
+            f"跑 tests/desktop_windows 的 step 应当恰好在 {wf} 的 {job} 里：{hits}"
+        )
+
+    def test_that_leg_is_windows_the_none_tier_and_required(self):
+        wf, job, tier = DESKTOP_WINDOW_LEG
+        ((_, _, step),) = [h for h in self._runners() if h[:2] == (wf, job)]
+        block = _job(_code((WF / wf).read_text(encoding="utf-8")), job)
+        assert re.search(r"(?m)^\s+runs-on: windows-latest\s*$", block), f"{job} 不在 Windows 上跑"
+        assert re.search(rf"(?m)^\s+if: matrix\.python == '{tier}'\s*$", step), (
+            f"真窗口用例那一步必须挂在「{tier}」档（刚装好的 NSIS 产物就在那一档）"
+        )
+        assert re.search(r'(?m)^\s+TAVOTTO_DESKTOP_WINDOW_REQUIRED: "1"\s*$', step), (
+            "那条腿没带 TAVOTTO_DESKTOP_WINDOW_REQUIRED=1：缺前提时整目录 skip、而 step 照样绿"
+        )
+        # skip 不是绿：pytest 退 0 不够，junit 里除 xfail 之外的 skip 要判红、执行条数要钉住
+        # 判的是**会抛的那一行**，不是变量名出没出现（报错文案里也有它）
+        assert "type -ne 'pytest.xfail'" in step, (
+            "那一步数 skip 时没把 xfail 排除出去（或根本没数）"
+        )
+        assert re.search(r"(?m)^\s*if \(\$skipped\.Count\) \{ throw ", step), (
+            "数出来的 skip 不进控制流"
+        )
+        assert re.search(r"(?m)^\s*if \(\$cases\.Count -ne \d+\) \{ throw ", step), (
+            "那一步没有钉执行条数"
+        )
+
+    def test_pinned_case_count_matches_the_directory(self):
+        """step 里钉的条数与目录里真有的用例数一致（加一条用例忘了改那里 = 那条永远不被数到）。"""
+        ((_, _, step),) = self._runners()
+        pinned = int(re.search(r"\$cases\.Count -ne (\d+)", step).group(1))
+        count = sum(
+            len(re.findall(r"(?m)^def test_\w+\(", p.read_text(encoding="utf-8")))
+            for p in sorted(DESKTOP_WINDOW.glob("test_*.py"))
+        )
+        assert count == pinned, (
+            f"tests/desktop_windows 里有 {count} 条用例，nightly 那一步钉的是 {pinned}"
+        )
+
+    def test_the_skip_reason_names_that_leg(self):
+        wf, job, _ = DESKTOP_WINDOW_LEG
+        src = (DESKTOP_WINDOW / "conftest.py").read_text(encoding="utf-8")
+        m = re.search(r'(?m)^LEG = "([^"]+)"', src)
+        assert m, "tests/desktop_windows/conftest.py 里读不出 LEG"
+        assert wf in m.group(1) and job in m.group(1), (
+            f"skip 理由里的腿「{m.group(1)}」没点出 {wf} / {job}"
+        )

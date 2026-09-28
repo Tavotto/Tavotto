@@ -65,6 +65,36 @@
 - **黄金路径 E2E**：`cd web && pnpm e2e`（Playwright，`TAVOTTO_EXE` 指打包产物、
   缺省用 `python -m tavotto`）。跑之前先 `python scripts/build_frontend.py`——
   包内 `src/tavotto/web/` 优先于 `web/dist`，只跑 `pnpm build` 测的还是旧界面。
+- **真 Tauri 窗口用例**（issue #542，`tests/desktop_windows/`）：只有**真壳里的 WebView2**
+  才量得到的那一段——Playwright 起的是浏览器，不是这个窗口，**不许拿它冒充**。
+  * 腿：**只有** `nightly.yml` 的 `windows-install`「无 Python」档，在刚装好的 NSIS 产物上跑，
+    带 `TAVOTTO_DESKTOP_WINDOW_REQUIRED=1`（缺前提即红）；junit 里 xfail 以外的 skip 判红、
+    执行条数钉在实测值。别处整目录 skip 并点名这条腿（`tests/test_e2e_leg_topology.py::TestDesktopWindowLeg`）。
+    不进 PR 快档。
+  * 通道：HKLM 策略 `SOFTWARE\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments`
+    （值名 = 壳的文件名）开调试端口，用完即删——`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` 会被
+    Tauri 自带参数覆盖、HKCU 策略不生效；与本机 WebView2 Runtime 同版本的 msedgedriver（验
+    Authenticode）以 `debuggerAddress` **附着**，不用 tauri-driver（没有预编译、也不需要）。
+  * **不注入全局输入**：键鼠经 CDP 进这个 WebView 的渲染进程；窗口级动作按**句柄**投消息
+    （`WM_CLOSE`、菜单 `WM_COMMAND`、对话框控件 `WM_SETTEXT` / `BM_CLICK`）；剪贴板由测试进程
+    以「另一个应用」的身份读写。`SendInput` 一类名字不许出现在夹具里；muda 的预定义剪切 /
+    复制 / 粘贴 / 全选在 Windows 上就是 `SendInput`，那几个菜单项一概不点。
+
+  | #542 | 内容 | Windows 真窗口 | 盲点（判不出就不判） |
+  | --- | --- | --- | --- |
+  | 5 | 系统文件选择器打开 `.py` | `test_file_picker.py`：主页「导入我的脚本」→ 原生 `#32770` 对话框 → 中文 + 空格路径 → 项目打开、后端最近项目即此目录 | **拖入**：真 OLE 拖放要系统指针输入；Windows 壳也不旁听拖放（ADR 0092 §五），拖入后同样落到这个选择器。拖放区的 DOM 降级由 `web/e2e/home.spec.ts` 量 |
+  | 6 | 中文 / 英文 IME | **不覆盖** | IME 组字（TSF / IMM32 候选窗、上屏）只有真键盘 + 真输入法才有；CDP 的 `imeSetComposition` 是渲染进程里的合成事件，不是输入法，拿它判「IME 能用」是冒充。靠人工清单 |
+  | 7 | 剪贴板跨应用 | `test_clipboard.py`：⌃C 后系统剪贴板里是对象载荷、所有者在本实例进程树里；别的应用改写载荷后 ⌃V 粘出改写后的样子；普通文字 ⌃V 不产生对象（没有内存兜底） | 图片 / 富文本格式没有用例（产品只收 `text/plain` 载荷） |
+  | 8 | 真 WebView 拖动与 undo/redo | `test_drag_undo.py`：CDP 指针拖动、⌃Z 逐像素回原位、⌃⇧Z 回拖后 | 触控板 / 高 DPI 缩放下的指针换算 |
+  | 9 | 关掉再开恢复 | `test_restart_restore.py`：`WM_CLOSE` → 无参重开；**xfail(strict) 指向 #715**（origin 随端口变），同源 `location.reload()` 对照为绿 | — |
+  | 12 | 强杀后恢复 | 同上，`TerminateProcess` 壳、断言子进程跟着退；**xfail(strict) 指向 #715** | 「改动还没落盘就被杀」那一刻的崩溃副本：时序抢不稳，没有稳定的被测状态 |
+  | 13 | 菜单 / 快捷键 / 焦点 | `test_menu_keyboard_focus.py`：真菜单栏上加速键逐条在位；菜单撤销 / 重做、⌃D 在输入框里让位、「设置」开关后焦点；纯键盘 Tab 到素材卡 → 放图 → 撤销 / 重做（#37 真机那一段） | 加速键表的**查表**（真按键 → 哪条命令）要真按键；这里投的是查表之后那条 `WM_COMMAND`，菜单栏上的加速键文字是它的镜像。#37 的完整键盘闭环仍在 `keyboard-golden-path.spec.ts`（chromium 与 WebView2 同引擎） |
+
+  **macOS**：WKWebView 没有 WebDriver，**整张表都不覆盖**（包括 9 / 12 / 13）——壳里没有对外的
+  自动化入口，AppleScript / System Events 只能发全局按键（落进用户前台的别的应用，禁用）。
+  macOS 上这些格靠发版前的人工清单；将来若给壳加一个只在测试构建里编进去的驱动命令，再补。
+  反证方法：`TAVOTTO_DW_INJECT_JS=<脚本>` 在每次界面就绪后注进一段把被测行为弄坏的脚本（只给
+  反证用，报告头会标出来），每条的记录在 PR #542 的实现 PR 正文里。
 - **性能基线**：`python scripts/bench_render.py --python .venv/bin/python`。
   结论与前后对照都写进 `docs/perf-baseline.md`——**改性能前先在那儿指出一个
   数字**。它**默认不隔离 HOME**（重置 HOME 会让每次冷启动多出 9 秒字体缓存
