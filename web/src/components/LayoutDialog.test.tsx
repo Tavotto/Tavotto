@@ -179,6 +179,36 @@ describe('「保存」点属于被保存的那一份（Codex #679）', () => {
   })
 })
 
+describe('写成了立刻发「排版写成了」，与后续步骤的成败无关（Codex #679）', () => {
+  it.each([
+    ['save', 'layout_file', '另存为'],
+    ['saveToProject', 'project_file', '存进项目'],
+  ] as const)('%s：写成之后状态条出错，事件照发（%s）', async (intent, via, label) => {
+    const { onLayoutSaved } = await import('@/lib/layoutSaved')
+    const seen: string[] = []
+    const off = onLayoutSaved((v) => seen.push(v))
+    setCurrentProjectId('p1')
+    await open(['Fig 1'], intent)
+    const real = useUiStore.getState().setStatus
+    useUiStore.setState({
+      setStatus: () => {
+        throw new Error('状态条坏了')
+      },
+    })
+    try {
+      await act(async () => {
+        buttonByText(label)!.click()
+      })
+    } finally {
+      useUiStore.setState({ setStatus: real })
+      setCurrentProjectId(null)
+      off()
+    }
+    expect(mockSave).toHaveBeenCalledTimes(1)
+    expect(seen).toEqual([via])
+  })
+})
+
 describe('409 之后的出口', () => {
   it('冲突不显示成普通错误，而是给出磁盘上那份 + 一个「仍然覆盖」', async () => {
     mockSave.mockRejectedValueOnce(conflictError('rev-theirs'))
