@@ -299,9 +299,12 @@ test(
     // 读数一致：刚进页面时视图还在做适配缩放，分两次量会把缩放过程算进位移里
     const read = () =>
       objs.evaluateAll((els) => {
-        const sh = [...document.querySelectorAll('[data-page-sheet]')]
+        // 纸面也只数看得见的（别的画布标签的纸同样 display:none），且必须恰好一张
+        const sheets = [...document.querySelectorAll('[data-page-sheet]')]
           .map((e) => e.getBoundingClientRect())
-          .find((r) => r.width > 0)!
+          .filter((r) => r.width > 0)
+        if (sheets.length !== 1) throw new Error(`看得见的纸面应恰有一张，实际 ${sheets.length}`)
+        const sh = sheets[0]
         return els.map((e) => {
           const r = e.getBoundingClientRect()
           return {
@@ -331,11 +334,14 @@ test(
     await expect(page.locator('[data-status-live]')).toHaveText(/已复制/)
     const [src] = await boxes()
 
-    // 新建第二张画布：它被激活、上面什么都没有。产品没给「+」data 锚点，按可达名认
+    // 新建第二张画布：它被激活、上面什么都没有。「+」认 `data-new-canvas-tab`，并断言它是单例
+    // （左栏画布列表里另有一颗同名按钮，按可达名认会挑中哪一颗不确定）
     const tabs = page.locator('[data-canvas-tab]')
     await expect(tabs).toHaveCount(1)
     const first = await tabs.first().getAttribute('data-canvas-tab')
-    await page.getByRole('button', { name: '新建画布', exact: true }).first().click()
+    const newTab = page.locator('[data-new-canvas-tab]')
+    await expect(newTab).toHaveCount(1)
+    await newTab.click()
     await expect(tabs).toHaveCount(2)
     const active = page.locator('[data-canvas-tab][data-active]')
     await expect(active).not.toHaveAttribute('data-canvas-tab', first!)
