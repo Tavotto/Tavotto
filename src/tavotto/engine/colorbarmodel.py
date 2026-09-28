@@ -3,7 +3,7 @@
 
 2026-09-18 审计任务书 PR D 第二步的第三刀（`docs/architecture/figstate-dependencies.md` 的顺序：
 spine → tick → **colorbar** → legend），从 `overrides.py` 按 artist family 切出来。只依赖标准库 +
-matplotlib + 更早切出的族（`axestraversal` / `tickmodel`）：不 import `overrides`，也不 import
+matplotlib + 基座 `pathgeom`（图幅换算，ADR 0098）+ 更早切出的族（`axestraversal` / `tickmodel`）：不 import `overrides`，也不 import
 `manifest`——`overrides.HANDLERS` 只登记这里导出的 getter / setter（`HANDLERS` 按原位置展开进去，
 顺序一个字节不变），撤销登记走 `RESTORE`，`manifest` 直接从这里取只读判据与随行表。正文逐字未改。
 
@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
+import pathgeom
 import tickmodel
 from axestraversal import ordered_axes
 
@@ -316,7 +317,10 @@ def _cb_target_rect(p: "ColorbarProxy", to: str, state: FollowState):
     if (p.cbax_gid, "position") in pending:
         return None
     host_rect = pending.get((p.host_gid, "position"))
-    if not (isinstance(host_rect, (list, tuple)) and len(host_rect) == 4):
+    if isinstance(host_rect, (list, tuple)) and len(host_rect) == 4:
+        # pending 里的是 patch 值：图幅（frame，ADR 0098）里的分数，与 setter 同一道换算
+        host_rect = pathgeom.axes_rect_to_figsize(p.cb.ax.get_figure(), host_rect)
+    else:
         if p.host is None:
             return None
         host_rect = p.host.get_position().bounds

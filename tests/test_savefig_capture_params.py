@@ -5,10 +5,10 @@ Tavotto 里按 figsize 出图、紧贴图幅的轴标题被切掉半截（审计
 参数一个都没留下——将来怎么用它们都无从谈起。这里钉住的是**记**这一步：
 
 * 记的是**实效值**：显式参数 > 调用那一刻的 `rcParams["savefig.*"]`；
-* 三档：`None` = 没观察到（`paper_style.save` 捷径）、`[]` = pyplot 捕获从没存过盘、
-  非空 = 调用列表——「不知道」不许被压成「没有」；
+* 三档：`None` = 没观察到、`[]` = pyplot 捕获从没存过盘、非空 = 调用列表——「不知道」
+  不许被压成「没有」（`paper_style.save` 捷径自 ADR 0098 §四起执行用户那份 `save`，看得见了）；
 * safe worker 与浏览器 playground 逐字段一致（同一份 `figcapture` 实现）；
-* 只记不用：`size_mm` 仍是 figsize（tight 图幅落地之前渲染与几何一个字节都不变）。
+* 怎么用这些参数（图幅）在 `tests/test_savefig_frame.py`（ADR 0098）。
 
 记账规则是纯函数，单测直接驱动；实效值要真 matplotlib，经真 worker / 真浏览器
 驱动跑（本进程不 import matplotlib，与 `test_compat_capture_parity.py` 同一条纪律）。
@@ -161,6 +161,26 @@ class TestRecordingRule:
             figcapture.record_savefig_call(calls, capture, "Fig1", fig, {"i": i})
         assert [c["i"] for c in calls["Fig1"]] == list(range(figcapture.MAX_SAVEFIG_CALLS))
 
+    def test_a_format_first_seen_past_the_cap_is_still_recorded(self):
+        """上限之后第一次出现的格式照记（图幅按「与原件同格式的第一次」挑）；已记过的格式、
+        以及总数到了 `MAX_SAVEFIG_CALLS_HARD` 之后，照旧丢。只追加：下标对齐不变。"""
+        calls, fig = {}, object()
+        capture = {"Fig1": fig}
+        kept = [
+            figcapture.record_savefig_call(calls, capture, "Fig1", fig, {"format": "png", "i": i})
+            for i in range(figcapture.MAX_SAVEFIG_CALLS + 2)
+        ]
+        assert kept == [True] * figcapture.MAX_SAVEFIG_CALLS + [False, False]
+        assert figcapture.record_savefig_call(calls, capture, "Fig1", fig, {"format": "PDF"})
+        assert not figcapture.record_savefig_call(calls, capture, "Fig1", fig, {"format": "pdf"})
+        assert figcapture.record_savefig_call(calls, capture, "Fig1", fig, {"format": "tiff"})
+        assert not figcapture.record_savefig_call(calls, capture, "Fig1", fig, {"format": "tif"})
+        assert [c["format"] for c in calls["Fig1"]][-2:] == ["PDF", "tiff"]
+        assert figcapture.frame_call(calls["Fig1"], "Fig1.pdf")["format"] == "PDF"
+        for i in range(figcapture.MAX_SAVEFIG_CALLS_HARD):
+            figcapture.record_savefig_call(calls, capture, "Fig1", fig, {"format": f"x{i}"})
+        assert len(calls["Fig1"]) == figcapture.MAX_SAVEFIG_CALLS_HARD
+
     def test_the_descriptor_value_keeps_unknown_apart_from_none(self):
         calls = {"a": [{"format": "pdf"}], "b": None}
         assert figcapture.savefig_calls_of(calls, "a", figcapture.SOURCE_SAVEFIG) == [
@@ -301,23 +321,16 @@ class TestRecordedOnEveryEntry:
         assert d["capture_source"] == "pyplot"
         assert d["savefig_calls"] == []
 
-    def test_the_paper_style_shortcut_says_it_did_not_see(self, tmp_path):
-        """捷径被整个替换，它里面那句 savefig 的参数看不见：不知道，不是「没有参数」。
-
-        脚本随后又用原生 savefig 存了同一个 stem——那一次看得见，但只记它就会把
-        「捷径里的 tight」当成不存在。"""
+    def test_the_paper_style_shortcut_is_observed(self, tmp_path):
+        """ADR 0098 §四起捷径执行用户那份 `save`：它里面那句 savefig 与之后原生 savefig 存的
+        同一个 stem 都看得见（以前捷径整个被替换，这里记的是「没观察到」）。"""
         figs = tmp_path / "figs"
         write(figs, "paper_style.py", PAPER_STYLE)
         write(figs, "uses.py", USES_PAPER_STYLE)
         (d,) = desktop_build(figs, "uses.py")["descriptors"]
         assert d["stem"] == "Fig9"
         assert d["capture_source"] == "savefig"
-        assert d["savefig_calls"] is None
-
-    def test_recording_changes_no_geometry(self, tmp_path):
-        """只记不用：tight 脚本的 size_mm 仍是 figsize（tight 图幅落地前）。"""
-        figs = tmp_path / "figs"
-        write(figs, "tight.py", TIGHT)
-        resp = desktop_build(figs, "tight.py")
-        assert resp["stems"]["tight"]["size_mm"] == [80.01, 57.66]
-        assert resp["descriptors"][0]["size_mm"] == [80.01, 57.66]
+        assert [(c["format"], c["bbox_inches"], c["dpi"]) for c in d["savefig_calls"]] == [
+            ("pdf", "tight", "figure"),
+            ("png", None, 300.0),
+        ]

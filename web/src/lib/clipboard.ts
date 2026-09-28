@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { msg, type UiMessage } from '@/i18n'
 import { newId } from '@/lib/id'
+import { migrateFigureFrames } from '@/lib/figureFrameMigration'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useSelectionStore } from '@/store/selectionStore'
@@ -311,7 +312,9 @@ export function materializePaste(payload: ClipPayload, resolved: MissingAsset[])
   const clones: CanvasObject[] = []
   let skipped = 0
 
-  for (const src of payload.objects) {
+  // 负载可能出自升级前的标签页 / 版本（面板没有 `figureFrame` 记号）：与读档同一道迁移（ADR 0098
+  // §三），否则它先按新图幅出图、存盘重开时才补上 figsize 那条——版面在重开时变样
+  for (const src of migrateFigureFrames(payload.objects)) {
     if (src.type === 'panel') {
       const missing = relink.has(src.fileId) ? relink.get(src.fileId) : undefined
       if (relink.has(src.fileId) && !missing) {

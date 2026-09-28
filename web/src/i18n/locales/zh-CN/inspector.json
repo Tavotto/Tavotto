@@ -671,7 +671,10 @@
     "restore": "恢复",
     "replaceAction": "选择…",
     "cropRow": "取景",
-    "fitRow": "适配"
+    "fitRow": "适配",
+    "frameLegacyTitle": "与脚本保存的原图大小不同",
+    "frameLegacyBody": "这张图在排版上仍按 figsize 显示；脚本保存时把它裁成了 {{w}} × {{h}} mm，边上的标签才完整。改用那个图幅后，图在排版上的位置不变，只是外框变化。",
+    "frameLegacyAdopt": "改用原图的图幅"
   },
   "panelLabel": "右侧面板",
   "pinnedAria": "右栏常驻，点击改为自动收起",

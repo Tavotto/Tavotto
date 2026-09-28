@@ -6,6 +6,7 @@ import { useDocumentStore } from '@/store/documentStore'
 import { renderKey, svgPayloadBytes, useRenderStore } from '@/store/renderStore'
 import { useUiStore } from '@/store/uiStore'
 import { newId } from '@/lib/id'
+import { FIGURE_FRAME_VERSION } from '@/lib/figureFrame'
 import type { PanelObject, PanelOverride } from '@/types/document'
 
 /**
@@ -94,6 +95,7 @@ export function seedEmbeddedSession(
     script: fig.script,
     cost: fig.cost,
     overrides,
+    figureFrame: FIGURE_FRAME_VERSION,
   }
 
   const store = useDocumentStore.getState()

@@ -126,6 +126,8 @@ _CAPTURE: dict = {}
 _CAPTURE_SOURCE: dict = {}
 #: stem -> 认领它的 savefig 调用（`figcapture.record_savefig_call` 记账），同步进会话
 _CAPTURE_SAVEFIG: dict = {}
+#: stem -> 与 `_CAPTURE_SAVEFIG[stem]` 逐项对齐的 `bbox_extra_artists` 对象（算图幅用，ADR 0098）
+_CAPTURE_EXTRAS: dict = {}
 #: pyplot 兜底因上限丢掉的张数
 _DROPPED = 0
 #: 引擎自己写盘（预览 / 导出）时暂停捕获——否则 export 到任意路径会被
@@ -173,9 +175,10 @@ def _install_savefig_hook(mfigure) -> None:
                 # stem 存了盘：它从此是显式存过盘的图（来源升级为 savefig，调用照记）。只在
                 # native 发生——safe worker 与浏览器的 pyplot 兜底在脚本跑完之后才收
                 _CAPTURE_SOURCE[stem] = figcapture.SOURCE_SAVEFIG
-            figcapture.record_savefig_call(
+            if figcapture.record_savefig_call(
                 _CAPTURE_SAVEFIG, _CAPTURE, stem, self, figcapture.savefig_call(fname, kwargs)
-            )
+            ):
+                _CAPTURE_EXTRAS.setdefault(stem, []).append(kwargs.get("bbox_extra_artists"))
         return _REAL_SAVEFIG(self, fname, *args, **kwargs)
 
     mfigure.Figure.savefig = _patched_savefig
@@ -542,6 +545,7 @@ class BridgeRun:
         # 调用记录整份覆盖：屏障之后脚本还可能再存同一个 stem，模块级表是全貌
         for stem, calls in _CAPTURE_SAVEFIG.items():
             self.session.savefig_calls[stem] = None if calls is None else list(calls)
+            self.session.savefig_extras[stem] = list(_CAPTURE_EXTRAS.get(stem, []))
 
     def _ensure_session(self):
         self._ensure_engine()
@@ -674,6 +678,11 @@ class BridgeRun:
                 # 这一轮**新出现**的图：`instrument_all()` 刚给它建过状态、
                 # 出过预览，baseline 就是此刻。再来一遍纯属重复渲染。
                 continue
+            # 图幅（ADR 0098）在重放之前定：此刻 Figure 是脚本原样（离开上一个屏障时已还原）。
+            # 上一个屏障按 pyplot 兜底捕获、之后才被按同一个 stem 存盘的图，第一次有了调用——
+            # `instrument_all()` 只管新图，不在这里补的话它在 native 里永远按 figsize、切边。
+            # 已有图幅 / 没有调用的图 `establish_frame` 当场返回
+            self.session.establish_frame(stem, state.fig)
             manifest.instrument(state)
             patches = self.saved_patches.get(stem) or []
             warnings = overrides.apply(state, patches) if patches else []

@@ -16,13 +16,15 @@ import {
   Unlink2,
 } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
-import { usePanelRender, useRenderStore } from '@/store/renderStore'
+import { useExactPanelManifest, usePanelRender, useRenderStore } from '@/store/renderStore'
+import { frameSwitchAvailable } from '@/lib/figureFrame'
 import { msg, t as translate, type UiMessage } from '@/i18n'
 import { formatQuantity } from '@/i18n/format'
 import { BASE_FONT_PT, effectiveDpi, effectivePt, formatCm, formatMm, round1 } from '@/lib/units'
 import { cn } from '@/lib/utils'
 import type { PanelInfo } from '@/lib/api'
 import {
+  adoptScriptFrame,
   beginCrop,
   enterElementEdit,
   fillPanels,
@@ -81,6 +83,7 @@ export function PanelSection({ objs }: { objs: PanelObject[] }) {
           变换 → 内容适配 → 排列 → 更多 → 源文件（2026-09-13 审计 B09 的固定顺序） */}
       {one?.script && <ElementEditEntry panel={one} />}
       {one && <PanelCapabilityNote panel={one} />}
+      {one && <PanelFrameNote panel={one} />}
       <GeometrySection objs={objs} />
       <ImageOpsSection objs={objs} />
       {/* 单选的排列（对齐到画布 + 层级）就在这里；多选的排列由属性页统一摆在最后 */}
@@ -121,6 +124,40 @@ export function PanelCapabilityNote({ panel }: { panel: PanelObject }) {
         onClick={() => useProjectReadinessStore.getState().focusPanel(panel.fileId, 'panel')}
       >
         {translate('readiness.openCenter', { ns: 'workspace' })}
+      </Button>
+    </div>
+  )
+}
+
+/**
+ * 升级前放上排版的 tight 图（ADR 0098 §三，用户 2026-09-26 选 C）：它保持着升级前按 figsize 的
+ * 样子，这里说一句为什么与脚本保存的原图不同，并给一键切换（内容在排版上不动、外框变）。
+ * 判据与换算都在 `lib/figureFrame`，依据是这张面板精确的 manifest——没有就不出现。
+ */
+export function PanelFrameNote({ panel }: { panel: PanelObject }) {
+  useTranslation('inspector')
+  const manifest = useExactPanelManifest(panel)
+  const frame = frameSwitchAvailable(panel, manifest)
+  if (!frame) return null
+  return (
+    <div data-frame-note className="mx-3 mb-1.5 rounded-md bg-surface-2 px-2 py-1.5">
+      <p className="text-xs font-medium text-ink">{pn('frameLegacyTitle')}</p>
+      <p className="mt-0.5 text-xs leading-relaxed text-ink-2">
+        {pn('frameLegacyBody', {
+          w: round1(frame.savefig_mm[2]),
+          h: round1(frame.savefig_mm[3]),
+        })}
+      </p>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="-ml-2 mt-0.5"
+        data-frame-adopt
+        onClick={() => {
+          adoptScriptFrame(panel.id)
+        }}
+      >
+        {pn('frameLegacyAdopt')}
       </Button>
     </div>
   )

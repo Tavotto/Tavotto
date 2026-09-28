@@ -977,10 +977,10 @@ def element_overflow(el: dict, w_mm: float, h_mm: float) -> tuple[str, float] | 
 def _check_panel_clipping(panel: dict, sink: _Sink) -> None:
     """图内元素超出图幅——导出时超出的部分会被**静默**裁掉（审计 T14）。
 
-    live 图的框是脚本的 figsize；脚本存盘时若用了 `bbox_inches="tight"`，磁盘
-    原件的页面会被裁/垫到内容范围，而引擎渲染与导出都不套用它（`_patched_savefig`
-    不看 kwargs）。于是一条紧贴图幅的轴标题在用户自己的 PDF 里完好，在这里的预览
-    与导出里却被切掉半截，且没有任何东西会说出来。这条规则就是那句话。
+    live 图的框是这张图的图幅：没有 `bbox_inches` 的脚本是 figsize，按 `bbox_inches` 存盘的
+    是 savefig 裁出来的那个框（ADR 0098；以前一律按 figsize，tight 图紧贴图幅的轴标题在预览
+    与导出里被切掉半截，审计 T14）。伸出图幅的元素在导出里会被静默裁掉——用户编辑让它伸出去、
+    或升级前的排版仍按 figsize（`figure.frame = "figsize"`）。这条规则就是那句话。
 
     判据：bbox **先折进 `clip_bbox`**（matplotlib 真会画出来的那部分），再看四边
     超出 [0, 1] 多少、折成图自身 mm 后大于 `FIGURE_CLIP_EPS_MM` 就报；一个元素
