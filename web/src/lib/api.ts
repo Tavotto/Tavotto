@@ -2401,7 +2401,24 @@ export type ServerEvent =
       kind: 'panel.file_changed'
       scripts?: string[]
       stems?: string[]
-      reason?: 'watcher' | 'ai'
+      reason?: 'watcher' | 'ai' | 'script_input'
+    } & ProjectScoped)
+  /**
+   * 脚本里的 `input()` 在等作答（ADR 0099）。`prompt` / `stdout_tail` 是用户脚本的文字——**只能**当纯文本渲染。
+   * `input_kind` 不叫 `kind`：载荷里的 kind 会与事件名冲突（见 `subscribeEvents`）。
+   */
+  | ({ kind: 'script.input_requested' } & ScriptInputRequest & ProjectScoped)
+  /** 那一问不再等了：`answered` / `stopped` / `finished`（build 结束，含等到超时）。 */
+  | ({ kind: 'script.input_closed'; id: string; reason?: string } & ProjectScoped)
+  /** 能答题的事件流（`answers=1`）连上时报的流 id：界面据此报「我此刻在看哪个项目」（`listenScriptInput`）。 */
+  | { kind: 'stream.hello'; stream_id: string }
+  /** 用记住的答案自动回填了一问：界面给一条「已用上次的答案（修改）」的轻提示。 */
+  | ({
+      kind: 'script.input_autofilled'
+      script: string
+      index: number
+      prompt: string
+      answer: string
     } & ProjectScoped)
   /**
    * 注册表变了。**一次刷新一条事件**（后端统一刷新服务批量发布，不为十几个
@@ -2511,6 +2528,10 @@ const EVENT_KINDS = [
   'export.progress',
   'ai.delta',
   'ai.done',
+  'script.input_requested',
+  'script.input_closed',
+  'script.input_autofilled',
+  'stream.hello',
 ] as const
 
 /**
@@ -2567,7 +2588,8 @@ export function subscribeEvents(
   let closed = false
 
   try {
-    source = new EventSource(apiUrl('/api/events'))
+    // `answers=1`：这条事件流背后是能答脚本 `input()` 的主界面（ADR 0099 §五）。同一个端点、同一道会话认证
+    source = new EventSource(apiUrl('/api/events?answers=1'))
   } catch {
     return () => {}
   }
@@ -3634,6 +3656,72 @@ export const probeScript = (script: string, cost?: string) =>
  * 阻塞中的 probe 请求随即以 `execution_cancelled` 返回。幂等：没有在跑的
  * 返回 `{cancelling: false}`（取消与跑完天然赛跑，输了不是错误）。
  */
+/* ------------------------- 脚本 input() 的作答（ADR 0099） ------------------------- */
+
+export interface ScriptInputRequest {
+  id: string
+  script: string
+  index: number
+  input_kind: 'input' | 'readline' | 'read' | 'getpass'
+  prompt: string
+  stdout_tail: string
+}
+
+export interface RememberedAnswer {
+  index: number
+  prompt: string
+  answer: string
+  kind: string
+}
+
+export interface ScriptAnswersResponse {
+  scripts: Record<string, RememberedAnswer[]>
+  /** 答案文件相对项目的位置（界面如实说存在哪） */
+  location: string
+  /** 此刻还在等作答的问（事件流重连后据此把对话框接回来） */
+  pending: ScriptInputRequest[]
+}
+
+const postJson = <T,>(url: string, body: unknown) =>
+  jsonFetch<T>(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+
+export const answerScriptInput = (id: string, answer: string | null) =>
+  postJson<{ ok: boolean }>(
+    '/api/script_input/answer',
+    answer === null ? { id, eof: true } : { id, answer },
+  )
+
+/**
+ * 这条能答题的事件流此刻在看 `pj`（ADR 0099 §五）。后端只把**正在看那个项目**的流算作答题方——开着 A 的界面
+ * 按 `pj` 丢掉 B 的问，算进来的话 B 的脚本会白等 10 分钟（Codex #680 P1）。项目显式传：换项目的那一刻
+ * 会话里认领的 pj 与 store 里的可能还没对齐。
+ */
+export const listenScriptInput = (streamId: string, pj: string) =>
+  jsonFetch<{ ok: boolean }>(
+    '/api/script_input/listen',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ stream_id: streamId }),
+    },
+    pj,
+  )
+
+export const stopScriptInput = (id: string) =>
+  postJson<{ ok: boolean }>('/api/script_input/stop', { id })
+
+export const fetchScriptAnswers = () => jsonFetch<ScriptAnswersResponse>('/api/script_input/answers')
+
+export const updateScriptAnswer = (script: string, index: number, answer: string) =>
+  postJson<ScriptAnswersResponse>('/api/script_input/answers', { script, index, answer })
+
+export const forgetScriptAnswer = (script: string, index: number) =>
+  postJson<ScriptAnswersResponse>('/api/script_input/answers', { script, index, forget: true })
+
 export const cancelProbe = (script: string) =>
   jsonFetch<{ cancelling: boolean }>('/api/registry/probe/cancel', {
     method: 'POST',

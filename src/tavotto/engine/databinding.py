@@ -23,7 +23,7 @@ safe worker 默认把 cwd 切到会话沙盒，只读的 `open` 回退到**脚�
 `script_parent`——首开要问。窄的代价是「少问一次」——那时走默认，与今天一样；宽的代价是
 「多问一次」——用户每个项目多点一下。两边都不会把错的数据画出来。
 
-纯标准库（只 import 同包的 `projectenv` 取「在不在项目里」那一个判据）；Flask 父进程 import 链上（被 `workdir` / `preparation` 用）。
+纯标准库（只 import 同包的 `projectenv` 取「在不在项目里」那一个判据、`scriptanswers` 取记住的答案摘要）；Flask 父进程 import 链上（被 `workdir` / `preparation` 用）。
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ import json
 import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
-from . import projectenv
+from . import projectenv, scriptanswers
 
 #: 「像数据文件」的扩展名（小写、不带点）。表外的名字只有带目录分隔符时才算候选：
 #: `os.path` / `matplotlib.pyplot` 这类模块名带点但不带分隔符，不该被当成文件。
@@ -820,6 +820,15 @@ def binding_for(script_path: str | os.PathLike, project_root: str | os.PathLike,
         "missing": sorted(missing),
         "outside": sorted(outside),
     }
+    # 脚本 `input()` 记住的答案（ADR 0099 §七）：答案也是这次运行的输入——换一个答案就换一份数据。
+    # **只在有答案时加这个键**：没有答案的脚本修订一个字节不变。
+    try:
+        rel_script = script.resolve(strict=False).relative_to(real_root).as_posix()
+    except (OSError, ValueError):
+        rel_script = ""
+    answers = scriptanswers.digest(root, rel_script) if rel_script else ""
+    if answers:
+        out["script_inputs"] = answers
     out["revision"] = _binding_revision(out)
     return out
 
@@ -833,5 +842,7 @@ def _binding_revision(binding: dict) -> str:
         "missing": sorted(binding.get("missing") or []),
         "outside": sorted(binding.get("outside") or []),
     }
+    if binding.get("script_inputs"):
+        payload["script_inputs"] = binding["script_inputs"]
     canon = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return "sha256:" + hashlib.sha256(canon.encode("utf-8")).hexdigest()

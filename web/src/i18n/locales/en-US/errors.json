@@ -9,7 +9,7 @@
     "ai_agent_probe_timeout": "Checking {{path}} timed out. You can try again; your previous setting is unchanged.",
     "ai_agent_unknown": "Unknown coding agent: {{agent}}.",
     "ai_revert_conflict": "{{script}} has changed since this AI edit. Reverting would overwrite those later changes, so nothing was reverted.",
-    "ai_revert_failed":"Couldn’t revert the AI changes: {{reason}}",
+    "ai_revert_failed": "Couldn’t revert the AI changes: {{reason}}",
     "ai_start_failed": "Couldn’t start the AI task: {{reason}}",
     "annotations_need_pdf": "This asset has no vector PDF. Annotations can’t be written back to the original yet.",
     "artifact_rejected": "The exported file didn’t pass the {{policy}} check ({{failed}}) and was not published.",
@@ -192,7 +192,13 @@
     "write_back_persist_failed": "Can’t write back: the backup or the new file couldn’t be flushed to disk ({{reason}}). Nothing was changed — check disk space and permissions, then retry.",
     "write_back_warnings": "Can’t write back. The engine reported warnings during replay.",
     "write_failed": "Couldn’t write to disk. Your local copy is still here — try again: {{reason}}",
-    "pinned_full": "You can bookmark up to {{max}} projects. Remove a bookmark first."
+    "pinned_full": "You can bookmark up to {{max}} projects. Remove a bookmark first.",
+    "script_input_invalid": "This answer can’t be saved (too long, or not text).",
+    "script_input_not_found": "That remembered answer was not found; it may have been removed.",
+    "script_input_not_pending": "This question is no longer waiting for an answer (the script may have finished or been stopped).",
+    "script_input_timeout": "The script waited 10 minutes for an answer to “{{prompt}}”, got none, and failed after being told the input had ended. Run it again and answer.",
+    "script_needs_input": "The script is asking for input: “{{prompt}}”. Run it once in the Tavotto window and answer; the answer is remembered for this project.",
+    "script_input_stream_gone": "The event stream disconnected; reconnecting."
   },
   "engine": {
     "apply": "Apply",

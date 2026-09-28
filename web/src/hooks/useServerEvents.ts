@@ -19,6 +19,7 @@ import { currentProjectId } from '@/lib/session'
 import { useRenderStore } from '@/store/renderStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useScriptLibraryStore } from '@/store/scriptLibraryStore'
+import { useScriptInputStore } from '@/store/scriptInputStore'
 import { useScriptRunStore } from '@/store/scriptRunStore'
 import { useUiStore } from '@/store/uiStore'
 
@@ -122,6 +123,28 @@ export function handleServerEvent(ev: ServerEvent) {
       )
       break
 
+    case 'script.input_requested':
+      // 脚本里的 input() 在等作答（ADR 0099）：带 pj，上面那道判别已经挡掉别的项目的
+      useScriptInputStore.getState().onRequested({
+        id: ev.id,
+        script: ev.script,
+        index: ev.index,
+        input_kind: ev.input_kind,
+        prompt: ev.prompt ?? '',
+        stdout_tail: ev.stdout_tail ?? '',
+      })
+      break
+    case 'stream.hello':
+      // 能答题的事件流连上了：记下流 id，报一次在看哪个项目（后端只把在看那个项目的流算作答题方）
+      useScriptInputStore.getState().onStreamHello(ev.stream_id)
+      break
+    case 'script.input_closed':
+      useScriptInputStore.getState().onClosed(ev.id)
+      break
+    case 'script.input_autofilled':
+      useScriptInputStore.getState().onAutofilled(ev.script, ev.answer)
+      break
+
     case 'panel.file_changed': {
       const stems = new Set(affectedStemsOf(ev))
       // stems 是脚本产出的面板名，映射回文档里用到的文件 id。
@@ -147,8 +170,9 @@ export function handleServerEvent(ev: ServerEvent) {
       // /api/panels 里的 mtime 一动不动，等它等不来。派生元数据的同步照常
       // 跟在刷新后面（走合并入口，与同一批里的其它事件共用一个请求）。
       void refreshAssetsAndSync()
-      // AI 那条路紧跟着一条 `ai.done` 在说同一件事：一次修改只留一条提示
-      if (affected.length && ev.reason !== 'ai') {
+      // AI 那条路紧跟着一条 `ai.done` 在说同一件事：一次修改只留一条提示；改记住的输入（script_input）
+      // 是用户在答案管理里刚点的，那边自己说「正在重新运行」，这里不再说「脚本已更新」
+      if (affected.length && ev.reason !== 'ai' && ev.reason !== 'script_input') {
         setStatus(msg('status.scriptChanged', { count: affected.length }, 'workspace'))
       }
       break
@@ -260,6 +284,15 @@ export function handleServerEvent(ev: ServerEvent) {
 
 /** 后端事件 → 渲染状态 / AI 会话 / 素材库刷新 / 状态栏 */
 export function useServerEvents() {
+  // 换了项目就重报一次「这条能答题的事件流在看哪个项目」（ADR 0099 §五，Codex #680 P1）
+  useEffect(
+    () =>
+      useProjectStore.subscribe((s, prev) => {
+        const pj = s.project?.id
+        if (pj && pj !== prev.project?.id) useScriptInputStore.getState().announce(pj)
+      }),
+    [],
+  )
   useEffect(
     () =>
       subscribeEvents(handleServerEvent, () => {
@@ -267,6 +300,8 @@ export function useServerEvents() {
         window.dispatchEvent(new Event('mm:sse-open'))
         // 断线期间发生的事件全都没收到：补一次素材刷新 + 派生同步（节流）
         recoverAfterReconnect()
+        // 还在等作答的脚本输入（ADR 0099）也要接回来；顺带取记住的答案（脚本行的入口靠它）
+        void useScriptInputStore.getState().loadAnswers()
       }),
     [],
   )

@@ -22,7 +22,17 @@ import time
 import uuid
 from pathlib import Path
 
-from . import config, envlease, execspec, logsafe, patchspec, projectenv, runtime, workdir
+from . import (
+    config,
+    envlease,
+    execspec,
+    inputbroker,
+    logsafe,
+    patchspec,
+    projectenv,
+    runtime,
+    workdir,
+)
 
 LOG = logging.getLogger("tavotto.engine")
 
@@ -369,6 +379,12 @@ _lock = threading.Lock()
 #: 空 patch 列表的规范哈希（`last_patch_hash` 的初值：刚 build 完的 figure
 #: 就是「一条 override 都没应用」的状态）。
 _EMPTY_PATCH_HASH = patchspec.patch_hash([])
+
+
+def _script_inputs_of(resp: dict) -> list:
+    """build 响应里的 `script_inputs`（ADR 0099）；老 worker 没带就是空表。"""
+    items = resp.get("script_inputs")
+    return [dict(r) for r in items if isinstance(r, dict)] if isinstance(items, list) else []
 
 
 def _runtime_of(resp: dict) -> dict | None:
@@ -1441,6 +1457,11 @@ class EngineWorker:
     #: 消除的竞态。workerd 那侧的会话本来就用逻辑标记（`alive() → not _dead`），
     #: 两条控制面在「还活着吗」这件事上必须给出同一个答案。
     _dead = False
+    #: 脚本 `input()` 怎么答（ADR 0099 §五）：None = 池会话（记住的答案 / 问界面 / 立即报错）；
+    #: `inputbroker.ReplayAnswers` = 写回的一次性重放，只按热态用过的答案严格重放。
+    script_input_policy = None
+    #: 最近一次 build 实际用到的每一问（build 响应的 `script_inputs`）。
+    last_build_script_inputs: list = []
 
     def alive(self) -> bool:
         return not self._dead and self.proc.poll() is None
@@ -1760,7 +1781,9 @@ class EngineWorker:
         # build 要跑用户整个脚本。传的是**兜底上限**——真正判死的是静默看门狗
         # （ADR 0050），所以这里不再需要先知道这个脚本有多慢。
         try:
-            resp = self.request({"cmd": "build"}, BUILD_HARD_TIMEOUT)
+            # 脚本里的 input()（ADR 0099）：build 期间父进程当它的答题方——两条控制面同一个 context manager
+            with inputbroker.serving(self):
+                resp = self.request({"cmd": "build"}, BUILD_HARD_TIMEOUT)
         except BaseException:
             self.build_failed = True
             raise
@@ -1768,6 +1791,7 @@ class EngineWorker:
         self.built = True
         self.last_build_descriptors = list(resp.get("descriptors") or [])
         self.last_build_runtime = _runtime_of(resp)
+        self.last_build_script_inputs = _script_inputs_of(resp)
         self.last_patch_hash = _EMPTY_PATCH_HASH
         self.last_patch_hash_by_stem.clear()  # 每个 stem 都回到脚本原样
         return resp
@@ -2033,6 +2057,10 @@ class WorkerdWorker:
     结构一字不差，切控制面对上层透明。
     """
 
+    #: 与 EngineWorker 同形（ADR 0099）。
+    script_input_policy = None
+    last_build_script_inputs: list = []
+
     def __init__(
         self,
         script_name: str,
@@ -2267,7 +2295,8 @@ class WorkerdWorker:
         # 与 Python 池同一条判据（ADR 0050）：兜底上限 + 静默看门狗，
         # 看门狗由 workerd 那侧执行（它 stat 的是同一个 worker.log）。
         try:
-            resp = self._call("build", BUILD_HARD_TIMEOUT, idle_timeout=BUILD_IDLE_TIMEOUT)
+            with inputbroker.serving(self):  # 与 EngineWorker 同一个答题方（ADR 0099）
+                resp = self._call("build", BUILD_HARD_TIMEOUT, idle_timeout=BUILD_IDLE_TIMEOUT)
         except BaseException:
             self.build_failed = True  # 与 EngineWorker 同一个判据
             raise
@@ -2275,6 +2304,7 @@ class WorkerdWorker:
         self.built = True
         self.last_build_descriptors = list(resp.get("descriptors") or [])
         self.last_build_runtime = _runtime_of(resp)
+        self.last_build_script_inputs = _script_inputs_of(resp)
         self.last_patch_hash = _EMPTY_PATCH_HASH
         self.last_patch_hash_by_stem.clear()  # 每个 stem 都回到脚本原样
         return resp
@@ -2448,7 +2478,7 @@ def _new_worker(script_name: str, figures_dir: str, entry: str):
     return EngineWorker(script_name, figures_dir, entry)
 
 
-def one_shot(script_name: str, figures_dir: str, entry: str):
+def one_shot(script_name: str, figures_dir: str, entry: str, *, script_inputs=None):
     """一次性 worker：**不进池、目录独立、用完即毁**。写回前的干净重放用。
 
     热会话是长期活着的：build 之后经历过任意多次 override / 还原，applied 与
@@ -2467,6 +2497,10 @@ def one_shot(script_name: str, figures_dir: str, entry: str):
     目录放在 ENGINE_CACHE 顶层（`_replay-…`）而不是数据目录别处：进程在写回
     途中被杀时，留下的空壳会被 `prune_engine_cache()` 当成最久未用的会话目录
     正常回收，不需要另写一套清理。
+
+    `script_inputs`：脚本 `input()` 的答案（ADR 0099 §五）——传热态会话 build 时实际用到的那一组
+    （`last_build_script_inputs`）。重放只按它严格作答、从不问人；不传 = 一问都答不上，脚本要输入就
+    `script_needs_input`。热态 == 重放因此成立。
     """
     from . import workerd_client
 
@@ -2476,9 +2510,11 @@ def one_shot(script_name: str, figures_dir: str, entry: str):
     with _lock:
         _oneshot_bases.add(str(base))
     try:
+        policy = inputbroker.ReplayAnswers.of(script_inputs)
+        worker = None
         if workerd_client.find_workerd():
             try:
-                return WorkerdWorker(
+                worker = WorkerdWorker(
                     script_name,
                     figures_dir,
                     entry,
@@ -2487,7 +2523,10 @@ def one_shot(script_name: str, figures_dir: str, entry: str):
                 )
             except (WorkerdUnavailable, WorkerError, OSError) as exc:
                 LOG.warning("workerd 一次性会话建立失败，回退到 Python 渲染池: %s", exc)
-        return EngineWorker(script_name, figures_dir, entry, base_dir=base)
+        if worker is None:
+            worker = EngineWorker(script_name, figures_dir, entry, base_dir=base)
+        worker.script_input_policy = policy
+        return worker
     except BaseException:
         # 构造失败与正常 discard 走**同一套**删除：两条路径各有一套 Windows
         # 行为的话，只有一条会被用例覆盖到，另一条迟早悄悄回到 ignore_errors。

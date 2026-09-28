@@ -314,6 +314,11 @@ USER_VISIBLE_CODES = {
     #     `bad_inspection` 是请求里的检查政策不合法 / 指向的规范不可用 ---
     "artifact_rejected": {"failed", "policy"},
     "bad_inspection": {"value"},
+    # --- ADR 0099：脚本 input() 的作答与答案管理 ---
+    "script_input_not_pending": set(),
+    "script_input_not_found": set(),
+    "script_input_invalid": set(),
+    "script_input_stream_gone": set(),
 }
 
 pytestmark = pytest.mark.skipif(

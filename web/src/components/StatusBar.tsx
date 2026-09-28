@@ -17,6 +17,11 @@ import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { adoptedDismissTimer, useEnvStore, type AdoptedEnvironment } from '@/store/envStore'
+import {
+  autofillDismissTimer,
+  useScriptInputStore,
+  type AutofillNotice,
+} from '@/store/scriptInputStore'
 import { statusDismissTimer, useUiStore } from '@/store/uiStore'
 import { userEnvironmentName } from '@/lib/userEnvironmentText'
 import { useWorkspaceStore } from '@/store/workspace'
@@ -286,7 +291,27 @@ export function NotificationRail() {
       )
   }
 
-  const hintHasSlot = [justAdded, !!adopted, !!status].filter(Boolean).length < 2
+  // 「已用上次的答案：…（修改）」（ADR 0099 §四）：与「已改用你的环境」同一档——带一个一次性出口。
+  // 两条同时在时让它让位（最多两条的规则），它 12 秒就走，环境那条更重要
+  const autofilled = useScriptInputStore((s) => s.autofilled)
+  const lastAutofilled = useRef<AutofillNotice | null>(null)
+  if (autofilled) lastAutofilled.current = autofilled
+  const autofillHasSlot = !adopted && !(justAdded && !!status)
+  const autofillPresence = usePresence(!!autofilled && autofillHasSlot, DURATION.exit)
+  const autofillShown = autofilled ?? lastAutofilled.current
+  const autofillText = autofillShown
+    ? translate('scriptInput.autofilled', { ns: 'dialogs', answer: autofillShown.answer })
+    : ''
+  const changeAutofilled = () => {
+    const script = autofillShown?.script
+    useScriptInputStore.getState().dismissAutofilled()
+    if (script) {
+      void useScriptInputStore.getState().loadAnswers()
+      useScriptInputStore.getState().openManager(script)
+    }
+  }
+
+  const hintHasSlot = [justAdded, !!adopted || !!autofilled, !!status].filter(Boolean).length < 2
   const hintPresence = usePresence(!!hint && hintHasSlot, DURATION.exit)
 
   return (
@@ -307,6 +332,9 @@ export function NotificationRail() {
       </div>
       <div aria-live="polite" className="sr-only">
         {adopted ? adoptedText : ''}
+      </div>
+      <div aria-live="polite" className="sr-only">
+        {autofilled ? autofillText : ''}
       </div>
       {/* 顺序 = 出现的先后：加入说明最早、提示其次、刚说的状态最靠近底边 */}
       {addedPresence.mounted && (
@@ -330,6 +358,20 @@ export function NotificationRail() {
           text={adoptedText}
           action={{ label: translate('engine.userEnvRevert', { ns: 'errors' }), onClick: revertAdopted }}
           onClose={() => useEnvStore.getState().dismissAdoptedEnvironment()}
+          closeLabel={translate('actions.close')}
+        />
+      )}
+      {autofillPresence.mounted && autofillShown && (
+        <Toast
+          key={`autofill-${autofillShown.token}`}
+          tone="info"
+          state={autofillPresence.state}
+          data-script-input-autofilled=""
+          timer={autofillDismissTimer}
+          icon={<Info size={ICON_SIZE.sm} className="shrink-0 text-ink-3" aria-hidden />}
+          text={autofillText}
+          action={{ label: translate('scriptInput.autofilledAction', { ns: 'dialogs' }), onClick: changeAutofilled }}
+          onClose={() => useScriptInputStore.getState().dismissAutofilled()}
           closeLabel={translate('actions.close')}
         />
       )}
