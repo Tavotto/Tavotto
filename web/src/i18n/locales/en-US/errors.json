@@ -201,7 +201,12 @@
     "script_input_not_pending": "This question is no longer waiting for an answer (the script may have finished or been stopped).",
     "script_input_timeout": "The script waited 10 minutes for an answer to “{{prompt}}”, got none, and failed after being told the input had ended. Run it again and answer.",
     "script_needs_input": "The script is asking for input: “{{prompt}}”. Run it once in the Tavotto window and answer; the answer is remembered for this project.",
-    "script_input_stream_gone": "The event stream disconnected; reconnecting."
+    "script_input_stream_gone": "The event stream disconnected; reconnecting.",
+    "missing_input": "The script's data file can't be found: {{error}}",
+    "input_remap_chosen_invalid": "That location can't be used: {{path}}. Pick an existing file or folder.",
+    "input_remap_not_found_in_dir": "There is no {{name}} in {{path}}. Pick the folder that contains it, or pick the file itself.",
+    "input_remap_requested_invalid": "Couldn't tell which path the script wants, so this location can't be remembered.",
+    "input_remap_rule_unknown": "That data location is no longer on record: {{source}}"
   },
   "engine": {
     "apply": "Apply",
@@ -523,7 +528,27 @@
     "repairFactEnvBundled": "Uses the {{product}} Python {{version}} that came with the installer; no internet needed.",
     "repairFactEnvCached": "Uses the {{product}} Python {{version}} that is already set up; no internet needed.",
     "repairAlternatives": "Other ways (alternatives)",
-    "repairEnvNotApplied": "The switch didn’t take effect: this project still isn’t using that Python, so the scripts weren’t rerun."
+    "repairEnvNotApplied": "The switch didn’t take effect: this project still isn’t using that Python, so the scripts weren’t rerun.",
+    "missingInputTitle": "The script's data can't be found",
+    "missingInputBody": "“{{script}}” wants to read the file below, but it isn't where the script says:",
+    "missingInputWhyRelative": "This is a relative path, counted from the script's folder. The script may have been copied on its own, leaving the data behind. Show Tavotto where the data is now.",
+    "missingInputWhyAbsolute": "This is a fixed full path. The data may have been moved, or this is a different computer. Show Tavotto where the data is now.",
+    "missingInputProbe": "The script checks for the data with exists / glob / listdir first, and Tavotto can't redirect those checks. Put the data back where the script expects it (relative paths count from the script's folder).",
+    "missingInputPickFile": "Locate this file…",
+    "missingInputPickDir": "Choose its folder…",
+    "missingInputPickFileTitle": "Locate {{name}}",
+    "missingInputPickDirTitle": "Choose the folder that holds the data",
+    "missingInputUsePath": "Use this path",
+    "missingInputPathPlaceholder": "Paste the full path of the data file or its folder",
+    "missingInputOthers": "These paths in the script are missing too; any that follow the same pattern will be fixed as well:",
+    "missingInputReadOnly": "Reading only: Tavotto doesn't move or copy your data, and doesn't change the script. The location is remembered for this project only and can be removed under Settings → “Environment diagnostics”.",
+    "missingInputLater": "Later",
+    "missingInputOpen": "Show where the data is…",
+    "missingInputRemembered": "Data location remembered; running again",
+    "inputRemapLabel": "Remembered data locations",
+    "inputRemapAnyRelative": "(relative paths)",
+    "inputRemapTargetGone": "(this location no longer exists)",
+    "inputRemapForget": "Remove"
   },
   "preflight": {
     "axisLabelFormat": "The axis title “{{label}}” isn't in the profile's “{{want}}” form.",

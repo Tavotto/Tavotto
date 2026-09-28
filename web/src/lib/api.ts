@@ -1777,6 +1777,11 @@ export class EngineError extends Error {
    * 整份联合计划——同样不是错误块，是一次授权（`DependencyPrepareDialog`）。
    */
   dependencyPreparation?: DependencyPreparationOffer
+  /**
+   * 数据找不到（ADR 0106）：`missing_input`（说得出缺的是哪一串）或「脚本跑完没出图」时脚本里写着、
+   * 此刻哪儿都找不到的路径——一次「指认数据位置」的对话框（`MissingInputDialog`），不是错误文字。
+   */
+  missingInput?: MissingInputOffer
   constructor(
     message: string,
     traceback = '',
@@ -1788,6 +1793,7 @@ export class EngineError extends Error {
       confirmation?: WorkdirConfirmation
       explicit?: ExplicitInterpreterFailure
       dependencyPreparation?: DependencyPreparationOffer
+      missingInput?: MissingInputOffer
     },
   ) {
     super(message)
@@ -1799,6 +1805,7 @@ export class EngineError extends Error {
     this.confirmation = extra?.confirmation
     this.explicit = extra?.explicit
     this.dependencyPreparation = extra?.dependencyPreparation
+    this.missingInput = extra?.missingInput
   }
 }
 
@@ -1853,6 +1860,7 @@ export async function engineRender(
         dependencyPreparation: body.dependency_preparation as
           | DependencyPreparationOffer
           | undefined,
+        missingInput: body.missing_input as MissingInputOffer | undefined,
       },
     )
   }
@@ -2973,6 +2981,8 @@ export interface ProjectEnvironment {
   can_use_project_venv?: string[]
   /** safe worker 的工作目录模式（ADR 0047）：沙盒（默认）/ 脚本目录 */
   workdir?: WorkdirState
+  /** 数据找不到时用户指认过的只读改指表（ADR 0106）；老后端没有这个字段 */
+  input_remap?: InputRemapState
   /** Tavotto 替这个项目建过的隔离环境（ADR 0019）；没建过 exists=false */
   managed?: ManagedEnvironment
   /**
@@ -3093,6 +3103,63 @@ export const setProjectUserEnvironment = (id: string, script: string) =>
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ scope: 'project', user_environment: id, script }),
+  })
+
+/** worker 报「脚本要读的文件不存在，且说得出是哪个」（ADR 0106）的稳定码 */
+export const MISSING_INPUT_CODE = 'missing_input'
+
+/** 缺的东西是怎么被脚本用到的：`open` 改指救得回来；`probe`（exists / listdir）与 `glob` 救不回来 */
+export type MissingInputVia = 'open' | 'probe' | 'glob'
+
+export interface MissingInputItem {
+  /** 脚本里写的原串（用户自己的路径，不翻译） */
+  path: string
+  absolute: boolean
+  via: MissingInputVia | string
+}
+
+/** 「指认数据位置」对话框的载荷（ADR 0106，后端 `inputremap.payload_for`） */
+export interface MissingInputOffer {
+  script: string
+  /** worker 说得出缺的是哪一串时有；「脚本跑完没出图」时为 null，以 `others[0]` 为主 */
+  requested: string | null
+  absolute: boolean
+  via: MissingInputVia | string
+  /** 脚本里写着、此刻哪儿都找不到的其它路径（这次指认可能顺带修好） */
+  others: MissingInputItem[]
+}
+
+export interface InputRemapRule {
+  kind: 'prefix' | 'file'
+  /** 脚本那一侧（相对或绝对；`''` = 任意相对路径） */
+  from: string
+  /** 本机上用户指认的位置 */
+  to: string
+  added_at?: number | null
+  target_exists?: boolean
+}
+
+export interface InputRemapState {
+  rules: InputRemapRule[]
+}
+
+/** 用户指认了数据位置：后端推一条规则、按项目记住、关掉该项目的会话（ADR 0106） */
+export const addInputRemap = (requested: string, chosen: string, chosenKind: 'file' | 'dir' | 'auto') =>
+  jsonFetch<{ ok: boolean; rule: InputRemapRule; input_remap: InputRemapState }>(
+    '/api/engine/input-remap',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requested, chosen, chosen_kind: chosenKind }),
+    },
+  )
+
+/** 删一条改指规则：删了就回到「找不到就报错」 */
+export const removeInputRemap = (kind: InputRemapRule['kind'], from: string) =>
+  jsonFetch<{ ok: boolean; input_remap: InputRemapState }>('/api/engine/input-remap', {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ kind, from }),
   })
 
 /** 只为**当前项目**切 safe worker 的工作目录模式（ADR 0047）。改了后端会关掉该项目的会话。 */

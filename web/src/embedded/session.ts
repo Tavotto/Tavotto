@@ -133,6 +133,7 @@ export function seedEmbeddedSession(
       dependencyRepair: null,
         confirmation: null,
         dependencyPreparation: null,
+        missingInput: null,
         traceback: '',
         warnings: fig.warnings ?? [],
         timings: {},
