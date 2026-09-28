@@ -18,7 +18,8 @@ doctor` 体检已装副本）都消费它。前两者按路径 import（scripts/
 绝对路径。`installed=True` 按**具体字段**验：两份 command 相等，且要么等于发行原值、
 要么是本机一个真实存在的绝对路径；这两份文件其余内容（换行归一后）与发行时一致；
 其它任何文件都不许改。发行件本身不许含机器相关的路径形态 command——唯一例外是
-插件自带、可执行、按 `./` 相对插件根给出的那一个启动器（`./mcp/launch.cmd`，#266）。
+插件自带、可执行、按 `./` 相对插件根给出的那一个启动器（`./mcp/launch`，#266；它的 Windows
+半边 `mcp/launch.cmd` 必须同在）。
 
 **纯标准库，不 import 本包的任何其它模块**——脚本按路径加载它时没有包上下文。
 """
@@ -116,8 +117,12 @@ def _is_path_like(command: str) -> bool:
     return os.path.isabs(command) or "\\" in command or "/" in command
 
 
-#: 插件自带的启动器（#266）：发行件的 command 唯一允许的路径形态。
-BUNDLED_LAUNCHER = "mcp/launch.cmd"
+#: 插件自带的启动器（#266）：发行件的 command 唯一允许的路径形态。POSIX 上 Codex 直接执行
+#: 它（sh 脚本，须 100755）；Windows 上 Codex 的 program resolver 给无扩展名的 `./mcp/launch`
+#: 按 PATHEXT 补扩展名，实际跑的是同目录的 `WINDOWS_LAUNCHER`（真 Windows 11 + Codex Desktop
+#: 实测）——所以两份必须同在，缺了 .cmd 在 Windows 上就是零工具。
+BUNDLED_LAUNCHER = "mcp/launch"
+WINDOWS_LAUNCHER = "mcp/launch.cmd"
 
 
 def _fs_exec_bit_observable() -> bool:
@@ -141,7 +146,8 @@ def _launcher_mode(plugin_dir: Path, modes: dict[str, str] | None) -> str:
 
 
 def _is_bundled_launcher(command: str, plugin_dir: Path, modes: dict[str, str] | None) -> bool:
-    """`./mcp/launch.cmd` 且它真在插件里、且是 100755——发行件里 command 唯一允许的路径形态。
+    """`./mcp/launch` 且它真在插件里、是 100755、Windows 半边 `mcp/launch.cmd` 也在——发行件里
+    command 唯一允许的路径形态。
 
     只认**这一个**文件，不是「插件里任何一个存在的文件」：`./mcp/server.py` 也在插件里，
     可它不是可执行文件，POSIX 上 Codex 起它就是 permission denied，正好又回到零工具
@@ -150,6 +156,8 @@ def _is_bundled_launcher(command: str, plugin_dir: Path, modes: dict[str, str] |
     if command != "./" + BUNDLED_LAUNCHER:
         return False
     if not (plugin_dir / BUNDLED_LAUNCHER).is_file():
+        return False
+    if not (plugin_dir / WINDOWS_LAUNCHER).is_file():
         return False
     return _launcher_mode(plugin_dir, modes) == "100755"
 

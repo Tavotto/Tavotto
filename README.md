@@ -307,8 +307,16 @@ the marketplace entry (it leaves the engine alone).
 `tavotto codex install` (again after upgrading the plugin, if the tools disappear).
 The plugin starts its MCP server through a bundled launcher that looks for a Python
 that really runs and skips the Microsoft Store `python3` alias; when it finds none,
-this command pins a verified interpreter into the installed copy. The mechanism and
-the symptoms are in [`codex-plugin/README.md`](codex-plugin/README.md).
+this command pins a verified interpreter into the installed copy. Plugin 0.17.0 had a
+launcher bug on Windows that left every user with no tools. Run
+`codex plugin marketplace upgrade tavotto`, then start a new session. The mechanism and
+the symptoms are in
+[`codex-plugin/README.md`](codex-plugin/README.md).
+
+On Windows the two `codex plugin` commands need the Codex CLI and Git for Windows on
+your `PATH`: `codex plugin marketplace add` clones the marketplace with `git`, and fails
+with `program not found` without it. The CLI that ships inside Codex Desktop is not on
+`PATH`.
 
 Desktop-app-only users: the desktop installer deliberately does not touch your `PATH`,
 so a bare `tavotto` is not available — run the two `codex plugin` commands above

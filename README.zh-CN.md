@@ -259,8 +259,14 @@ tavotto codex install
 
 插件用自带的启动器起 MCP server：它会找一个真能跑的 Python，并跳过微软商店的
 `python3` 别名；一个都找不到时，这条命令把已装副本的启动命令钉到一个验证过的
-解释器（`tavotto codex doctor` 只诊断不改）。成因与症状见
+解释器（`tavotto codex doctor` 只诊断不改）。插件 0.17.0 在 Windows 上有一个启动器
+缺陷，会让所有人都一个工具都没有：跑 `codex plugin marketplace upgrade tavotto`，
+再新开会话。成因与症状见
 [`codex-plugin/README.md`](codex-plugin/README.md)。
+
+Windows 上那两条 `codex plugin` 命令需要 `PATH` 上有 Codex CLI 和 Git for Windows：
+`codex plugin marketplace add` 用 `git` 克隆市场，没有 Git 时报 `program not found`。
+Codex 桌面版自带的 CLI 不在 `PATH` 上。
 
 新会话里可以直接说：
 
