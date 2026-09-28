@@ -9,6 +9,7 @@ import { emitActivity } from '@/lib/activity'
 import { effectiveOverride, effectiveOverrideIndex } from '@/lib/effectiveOverride'
 import { applyAlign, boundsOf, readingOrder, type AlignMode } from '@/lib/geometry'
 import { clamp } from '@/lib/units'
+import { placePanelInPage } from '@/lib/panelPlacement'
 import {
   FIGURE_FRAME_VERSION,
   frameSwitchAvailable,
@@ -108,11 +109,9 @@ export const selectedObjects = (): CanvasObject[] => {
 /* ------------------------------- 新增对象 --------------------------------- */
 
 export function addPanel(info: PanelInfo, atX?: number, atY?: number) {
-  const page = doc().page
-  // 按原始尺寸放入（100% 缩放）：等效字号即原字号，所见即出版效果；
-  // 比页面宽也不自动缩小，要多大用户自己定
-  const w = info.native_w_mm
-  const h = info.native_h_mm
+  // 装得下按原始尺寸（100%，等效字号即原字号），比页面大就等比缩进页面（`lib/panelPlacement`）
+  const at = atX != null && atY != null ? { x: atX, y: atY } : undefined
+  const box = placePanelInPage(info.native_w_mm, info.native_h_mm, doc().page, at)
   const obj: PanelObject = {
     id: newId('p'),
     type: 'panel',
@@ -128,10 +127,7 @@ export function addPanel(info: PanelInfo, atX?: number, atY?: number) {
     overrides: info.baked_overrides ? structuredClone(info.baked_overrides) : [],
     name: info.name,
     figureFrame: FIGURE_FRAME_VERSION,
-    x: clamp(atX != null ? atX - w / 2 : (page.w - w) / 2, -w * 0.9, page.w - w * 0.1),
-    y: clamp(atY != null ? atY - h / 2 : (page.h - h) / 2, -h * 0.9, page.h - h * 0.1),
-    w,
-    h,
+    ...box,
   }
   commit(hist('addPanel', { name: info.name }), (d) => {
     d.objects.push(obj)
@@ -148,8 +144,9 @@ export function addPanel(info: PanelInfo, atX?: number, atY?: number) {
  * 「写回基线」可继承（没有原件就没有写回）。
  */
 export function addRuntimePanel(desc: CapturedFigureDescriptor, atX?: number, atY?: number) {
-  const page = doc().page
   const [w, h] = desc.size_mm
+  const at = atX != null && atY != null ? { x: atX, y: atY } : undefined
+  const box = placePanelInPage(w, h, doc().page, at)
   const obj: PanelObject = {
     id: newId('p'),
     type: 'panel',
@@ -169,10 +166,7 @@ export function addRuntimePanel(desc: CapturedFigureDescriptor, atX?: number, at
     overrides: [],
     name: desc.stem,
     figureFrame: FIGURE_FRAME_VERSION,
-    x: clamp(atX != null ? atX - w / 2 : (page.w - w) / 2, -w * 0.9, page.w - w * 0.1),
-    y: clamp(atY != null ? atY - h / 2 : (page.h - h) / 2, -h * 0.9, page.h - h * 0.1),
-    w,
-    h,
+    ...box,
   }
   commit(hist('addPanel', { name: desc.stem }), (d) => {
     d.objects.push(obj)

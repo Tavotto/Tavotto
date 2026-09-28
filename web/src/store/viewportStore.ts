@@ -56,6 +56,11 @@ interface ViewportState {
   fit: (pageW: number, pageH: number, padding?: number) => void
   /** 带缓动的 fit（prefers-reduced-motion 时瞬时完成）；用户点「适应画布」时用 */
   fitAnimated: (pageW: number, pageH: number, padding?: number) => void
+  /**
+   * 带缓动地取景文档里任意一块矩形（mm），同样进入适应模式——之后舞台尺寸变了按
+   * 这块矩形重算。给「刚加的图伸出页面一点」用：取景页面 ∪ 那张图（`addFigureToLayout`）。
+   */
+  fitRectAnimated: (rect: { x: number; y: number; w: number; h: number }, padding?: number) => void
   /** 把一块区域挪到视口中央（放不下才缩小），带缓动；「定位到这个对象」用 */
   revealRect: (rect: { x: number; y: number; w: number; h: number }, padding?: number) => void
   /**
@@ -147,7 +152,7 @@ function animateTo(set: Setter, get: Getter, target: ViewTarget) {
 }
 
 /** 最近一次要求适配的取景框；舞台尺寸变了、仍在适应模式时按它重算 */
-let lastFit: { pageW: number; pageH: number; padding: number } | null = null
+let lastFit: { x: number; y: number; pageW: number; pageH: number; padding: number } | null = null
 
 /**
  * 用户自己动过视口 = 退出适应模式：之后舞台尺寸再变也不重算。
@@ -161,11 +166,23 @@ function leaveFitMode(set: Setter, get: Getter) {
 }
 
 /** 按取景框算落点；调用方保证视口已量到尺寸 */
-function fitTarget(viewW: number, viewH: number, pageW: number, pageH: number, padding: number): ViewTarget {
+function fitTarget(
+  viewW: number,
+  viewH: number,
+  pageW: number,
+  pageH: number,
+  padding: number,
+  x = 0,
+  y = 0,
+): ViewTarget {
   const wPx = mmToWorld(pageW)
   const hPx = mmToWorld(pageH)
   const zoom = clamp(Math.min((viewW - padding) / wPx, (viewH - padding) / hPx), MIN_ZOOM, MAX_ZOOM)
-  return { zoom, panX: (viewW - wPx * zoom) / 2, panY: (viewH - hPx * zoom) / 2 }
+  return {
+    zoom,
+    panX: (viewW - wPx * zoom) / 2 - mmToWorld(x) * zoom,
+    panY: (viewH - hPx * zoom) / 2 - mmToWorld(y) * zoom,
+  }
 }
 
 export const useViewportStore = create<ViewportState>((set, get) => ({
@@ -193,8 +210,10 @@ export const useViewportStore = create<ViewportState>((set, get) => ({
     // 空画布的起步提示被挤到可视区右缘——审计 B01）。用户动过视口就不在适应
     // 模式里，这里一个字不碰。
     if (resized && s.fitted && lastFit && width && height) {
-      const { pageW, pageH, padding } = lastFit
-      get().fit(pageW, pageH, padding)
+      const { x, y, pageW, pageH, padding } = lastFit
+      const target = fitTarget(width, height, pageW, pageH, padding, x, y)
+      stopAnim()
+      set({ ...target, readoutZoom: target.zoom, readoutRolls: false })
     }
   },
   setSpaceDown: (v) => set((s) => (s.spaceDown === v ? s : { spaceDown: v })),
@@ -238,7 +257,7 @@ export const useViewportStore = create<ViewportState>((set, get) => ({
 
   fit: (pageW, pageH, padding = 72) => {
     stopAnim()
-    lastFit = { pageW, pageH, padding }
+    lastFit = { x: 0, y: 0, pageW, pageH, padding }
     const { viewW, viewH } = get()
     // 舞台还没挂载（Project Picker → 工作台的那个空档）：现在算不出缩放，
     // 进入适应模式等 `setViewRect` 第一次量到尺寸再做。丢掉的话新项目会沿用
@@ -252,14 +271,18 @@ export const useViewportStore = create<ViewportState>((set, get) => ({
   },
 
   fitAnimated: (pageW, pageH, padding = 72) => {
-    lastFit = { pageW, pageH, padding }
+    get().fitRectAnimated({ x: 0, y: 0, w: pageW, h: pageH }, padding)
+  },
+
+  fitRectAnimated: ({ x, y, w, h }, padding = 72) => {
+    lastFit = { x, y, pageW: w, pageH: h, padding }
     const s = get()
     if (!s.viewW || !s.viewH) {
       set({ fitted: true })
       return
     }
     set({ fitted: true })
-    animateTo(set, get, fitTarget(s.viewW, s.viewH, pageW, pageH, padding))
+    animateTo(set, get, fitTarget(s.viewW, s.viewH, w, h, padding, x, y))
   },
 
   revealRect: ({ x, y, w, h }, padding = 96) => {

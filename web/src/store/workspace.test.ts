@@ -248,6 +248,16 @@ describe('快速编辑 ↔ 画布排版共享同一个对象', () => {
     expect(s().doc.objects.filter((o) => o.type === 'panel')).toHaveLength(1)
   })
 
+  it('「添加到画布」真的添加时取景整张页面并留在适应模式；只是聚焦时退出', () => {
+    useViewportStore.getState().setViewRect({ left: 0, top: 0, width: 800, height: 600 })
+    useViewportStore.getState().setView({ zoom: 3, panX: -500, panY: -400 })
+    addFigureToLayout('b.pdf')
+    // 适应模式：之后素材抽屉收起 / 窗口缩放时按页面重算，页面保持居中
+    expect(useViewportStore.getState().fitted).toBe(true)
+    addFigureToLayout('b.pdf')
+    expect(useViewportStore.getState().fitted).toBe(false)
+  })
+
   it('从画布进图内编辑再返回：位置、尺寸、edits 全都不动', () => {
     addFigureToLayout('a.pdf')
     const id = panelOf('a.pdf').id

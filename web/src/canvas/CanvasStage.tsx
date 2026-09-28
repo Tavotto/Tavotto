@@ -23,6 +23,7 @@ import { OverlaySvg } from './OverlaySvg'
 import { PageSheet } from './PageSheet'
 import { ContextBar } from './context-bar/ContextBar'
 import { QuickEdit } from './QuickEdit'
+import { PageOutsideMask } from './PageOutsideMask'
 import { Rulers, RULER_SIZE } from './Rulers'
 import { startDraw, startMarquee, startPan } from './interactions'
 
@@ -240,6 +241,9 @@ export function CanvasStage() {
           )}
           <CanvasLayers only={fastEdit ? activePanelId : null} />
         </div>
+
+        {/* 页面外画淡、页面轮廓压在内容之上：在世界层之后、选框覆盖层之前 */}
+        {!fastEdit && <PageOutsideMask />}
 
         <OverlaySvg />
 

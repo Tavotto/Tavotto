@@ -297,6 +297,19 @@ export function addFigureToLayout(figureId: string): AddToLayoutOutcome {
     return 'missing'
   }
   focusLayoutPanel(got.panel.id)
+  // 新加的图：取景「页面 ∪ 这张图」并**留在适应模式**——容差内保持原尺寸的图会稍微
+  // 伸出页面（`lib/panelPlacement`），伸出去的那截也要看得见；随后素材抽屉收起 / 窗口
+  // 缩放时仍按这块取景居中。只滚到那张图的话会退出适应模式，抽屉一收页面就偏在一边
+  // （2026-09-28 用户反馈）。已在文档里的只是聚焦，视口照旧
+  if (got.created) {
+    const { page } = useDocumentStore.getState().doc
+    const p = got.panel
+    const x0 = Math.min(0, p.x)
+    const y0 = Math.min(0, p.y)
+    const x1 = Math.max(page.w, p.x + p.w)
+    const y1 = Math.max(page.h, p.y + p.h)
+    useViewportStore.getState().fitRectAnimated({ x: x0, y: y0, w: x1 - x0, h: y1 - y0 })
+  }
   const name = got.panel.name ?? got.panel.fileId
   useUiStore
     .getState()

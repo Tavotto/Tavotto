@@ -330,3 +330,35 @@ describe('切画布还原会话：适应模式跟着会话走', () => {
     expect(vp().panY).toBeCloseTo(want.panY, 6)
   })
 })
+
+/**
+ * 取景任意矩形（加图后「页面 ∪ 那张图」）：落点按矩形算，舞台尺寸变了仍按同一块
+ * 矩形重算——不能退回按 (0, 0) 起点的页面算（那样伸出页面左上的那截就出屏了）。
+ */
+describe('fitRectAnimated', () => {
+  const expected = (vw: number, vh: number, r: { x: number; y: number; w: number; h: number }) => {
+    const pad = 72
+    const k = BASE_PX_PER_MM
+    const z = Math.min((vw - pad) / (r.w * k), (vh - pad) / (r.h * k))
+    return { zoom: z, panX: (vw - r.w * k * z) / 2 - r.x * k * z, panY: (vh - r.h * k * z) / 2 - r.y * k * z }
+  }
+
+  it('按矩形取景、进入适应模式；舞台变尺寸后按同一块矩形重算', () => {
+    setReducedMotion(true)
+    const rect = { x: -10, y: -5, w: 110, h: 70 }
+    useViewportStore.getState().fitRectAnimated(rect)
+    let want = expected(VIEW.width, VIEW.height, rect)
+    let s = useViewportStore.getState()
+    expect(s.fitted).toBe(true)
+    expect(s.zoom).toBeCloseTo(want.zoom)
+    expect(s.panX).toBeCloseTo(want.panX)
+    expect(s.panY).toBeCloseTo(want.panY)
+
+    useViewportStore.getState().setViewRect({ ...VIEW, width: 1100 })
+    want = expected(1100, VIEW.height, rect)
+    s = useViewportStore.getState()
+    expect(s.zoom).toBeCloseTo(want.zoom)
+    expect(s.panX).toBeCloseTo(want.panX)
+    expect(s.panY).toBeCloseTo(want.panY)
+  })
+})
