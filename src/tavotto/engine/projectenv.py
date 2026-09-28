@@ -811,6 +811,9 @@ def remember(
     """记住这个项目该用哪个解释器（进程缓存 + 项目设置持久化）；回写了没有。
 
     `only_if(record)`：给了就在写入锁里拿此刻的 `remembered_record()` 问一次，False 就不写（回 False）。
+    项目设置写不进去（数据目录只读 / 满）同样回 False：`resolve_worker_python()` 读的是持久化的记录，
+    没写进去的决策**不生效**——自动采用的调用方据此不当它成功（不然会作废会话、在原来的解释器里把
+    用户脚本白跑一遍，Codex #713）。
 
     **绝不写全局 `worker.python` 设置**：那会让 A 项目找到的 `.venv` 变成
     B 项目的渲染环境——两个项目各有各的环境正是本轮要解决的事。
@@ -818,11 +821,10 @@ def remember(
     with _decision_lock:
         if only_if is not None and not only_if(remembered_record(figures_dir)):
             return False
-        _remember(figures_dir, python, automatic, trigger, module, health)
-        return True
+        return _remember(figures_dir, python, automatic, trigger, module, health)
 
 
-def _remember(figures_dir, python, automatic, trigger, module, health) -> None:
+def _remember(figures_dir, python, automatic, trigger, module, health) -> bool:
     key = _key(figures_dir)
     with _lock:
         _resolved[key] = python
@@ -844,6 +846,8 @@ def _remember(figures_dir, python, automatic, trigger, module, health) -> None:
         config.set_project_settings(str(root), {SETTINGS_KEY: payload})
     except OSError as exc:  # 配置目录只读/满：记不住不该让渲染失败
         LOG.warning("项目环境决策未能持久化: %s", exc)
+        return False
+    return True
 
 
 #: 「这个项目明确用默认链条（内置 / 自身 / 系统）」的记录形状：`mode == "default"`。

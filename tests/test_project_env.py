@@ -1350,6 +1350,28 @@ def test_the_silent_adoption_puts_no_switch_toast_on_the_render_response(tmp_pat
             assert ("environment_switched" in g) is toast, adopted
 
 
+def test_an_adoption_that_cannot_be_persisted_is_not_reported_as_adopted(tmp_path, monkeypatch):
+    """Codex #713 P2：数据目录只读 / 满时项目设置写不进去，而 `resolve_worker_python()` 读的是持久化的
+    记录——那条决策不生效。不当它成功：不作废会话、不在原来的解释器里把用户脚本白跑一遍，照旧交给修复卡片。"""
+    _auto_on(monkeypatch)
+    project = tmp_path / "p"
+    project.mkdir()
+    _fake_system(tmp_path, monkeypatch, {"py312": _health()})
+
+    def full(*_a, **_kw):
+        raise OSError("磁盘满")
+
+    monkeypatch.setattr(projectenv.config, "set_project_settings", full)
+    invalidated: list = []
+    monkeypatch.setattr(engine_pool, "invalidate", lambda *a, **k: invalidated.append(a))
+    try:
+        outcome = engine_pool.try_project_env(str(project), "fig.py", "adjustText")
+        assert outcome.get("ok") is not True and "adopted" not in outcome, outcome
+        assert invalidated == []
+    finally:
+        projectenv.forget(project)
+
+
 def test_only_an_unsupported_interpreter_with_the_module_is_not_adopted(tmp_path, monkeypatch):
     """Windows 实测里的 Python 3.7.6 装着 adjustText：不采用，照旧列在 `system_rejected` 里走修复卡片。"""
     _auto_on(monkeypatch)
