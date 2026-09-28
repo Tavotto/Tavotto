@@ -95,6 +95,26 @@ describe('关键时刻', () => {
     expect(posts).toHaveLength(0)
   })
 
+  it.each([
+    ['保存（事件带快照）', async () => {
+      const { emitLayoutSaved } = await import('@/lib/layoutSaved')
+      emitLayoutSaved('local', { moment: captureMoment() })
+    }, 'save'],
+    ['打开', () => markMoment('open'), 'open'],
+    ['离开', () => markMoment('close'), 'close'],
+  ] as const)('空画布上%s也打一个关键时刻（Codex #679）', async (_name, fire, moment) => {
+    const stop = startVersionCheckpoints()
+    expect(useDocumentStore.getState().doc.objects).toHaveLength(0)
+    await fire()
+    await vi.waitFor(() => expect(posts.map((p) => p.body.moment)).toEqual([moment]))
+    stop()
+  })
+
+  it('对照：普通自动节点在空画布上仍然不拍', async () => {
+    await takeCheckpoint({ auto: true })
+    expect(posts).toHaveLength(0)
+  })
+
   it('时间线在跑：每个关键时刻打一个带标记的点', async () => {
     const stop = startVersionCheckpoints()
     edit('t1')
