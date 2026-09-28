@@ -461,3 +461,174 @@ test('图内只有 marker 的曲线：也描每颗 marker 的轮廓，不描那�
     `点两颗 marker 之间的空白（离最近墨迹 ${Math.round(gap!.dist)}px、离边框 ${Math.round(gap!.spine)}px）不该还选中整条曲线`,
   ).toBeLessThan(probe!.markers.length)
 })
+
+/**
+ * 误差棒（ErrorbarContainer 伪元素）：选中时描的是**误差线 + 帽 + 数据点**的真实轮廓，
+ * 不是罩住整组的矩形（2026-09-26 用户反馈，ADR 0086）。两组误差棒交错摆放，并集
+ * bbox 互相罩住——从前点这组的误差线，选中的常是 bbox 更小的另一组。
+ *
+ * 独立的一侧是 matplotlib 自己画的 SVG：误差线是 `LineCollection_*` 组里的 `<path>`，
+ * 数据点与帽是 `line2d_*` 组里的 `<use>`（成员没有登记成独立元素，保留 matplotlib 的
+ * 默认 id）。覆盖层描出来的那条 path 要贴着这些墨迹走，不能落进空白。
+ */
+function errorbarLibrary(): string {
+  const dir = path.join(mkdtempSync(path.join(os.tmpdir(), 'tavotto-e2e-errorbar-')), 'figures')
+  mkdirSync(dir)
+  writeFileSync(
+    path.join(dir, 'fig_errorbar.py'),
+    [
+      'import matplotlib',
+      'matplotlib.use("Agg")',
+      'import matplotlib.pyplot as plt',
+      'import numpy as np',
+      '',
+      '',
+      'def main():',
+      '    fig, ax = plt.subplots(figsize=(4.0, 3.0))',
+      '    x = np.arange(1.0, 9.0, 1.5)',
+      '    ax.errorbar(x, 5 + np.sin(x), yerr=1.2, fmt="o", capsize=4, ms=5)',
+      '    ax.errorbar(x + 0.6, 4 + np.cos(x), yerr=1.0, fmt="s", capsize=3, ms=4)',
+      '    ax.set_xlim(0, 10)',
+      '    ax.set_ylim(0, 8)',
+      '    fig.savefig("Fig_errorbar.pdf")',
+      '',
+    ].join('\n'),
+    'utf-8',
+  )
+  writeFileSync(
+    path.join(dir, 'tavotto_registry.json'),
+    JSON.stringify({
+      scripts: { 'fig_errorbar.py': { entry: 'main', cost: 'light', stems: ['Fig_errorbar'] } },
+    }),
+    'utf-8',
+  )
+  const fallback = process.platform === 'win32' ? 'python' : 'python3'
+  const py = process.env.TAVOTTO_WORKER_PYTHON || fallback
+  execFileSync(py, ['-c', 'import fig_errorbar; fig_errorbar.main()'], { cwd: dir, timeout: 120_000 })
+  return dir
+}
+
+test('图内误差棒：描误差线 + 帽 + 数据点的轮廓，贴着墨迹，点这组不会选中那组', async ({
+  app,
+  page,
+}) => {
+  const a = await app({ figures: errorbarLibrary() })
+  const manifestOf = captureManifest(page)
+  await page.goto(a.baseURL)
+  await page.getByText('Fig_errorbar.pdf').dblclick({ timeout: 30_000 })
+  const svgWrap = page.locator('[data-element-svg]').first()
+  await expect(svgWrap.locator('svg')).toBeVisible({ timeout: 60_000 })
+  await page.waitForTimeout(1500)
+
+  /**
+   * 两组误差棒的墨迹（屏幕坐标）：误差线沿线采样、marker / 帽取 `<use>` 的中心与半径。
+   * 按 SVG 里的绘制顺序分组：每组一个 `LineCollection_*`，其后的 `line2d_*` 是帽与数据点。
+   */
+  const probe = await page.evaluate(() => {
+    const svg = document.querySelector('[data-element-svg] svg')
+    if (!svg) return null
+    const toScreen = (el: SVGGraphicsElement, x: number, y: number) => {
+      const m = el.getScreenCTM()!
+      return { x: x * m.a + y * m.c + m.e, y: x * m.b + y * m.d + m.f }
+    }
+    const groups: { bars: { x: number; y: number }[][]; marks: { x: number; y: number; r: number }[] }[] = []
+    for (const g of svg.querySelectorAll('g[id^="LineCollection_"], g[id^="line2d_"]')) {
+      if (g.closest('[id^="matplotlib.axis"]')) continue
+      if (g.id.startsWith('LineCollection_')) {
+        const bars = [...g.querySelectorAll('path')].map((p) => {
+          const len = (p as SVGPathElement).getTotalLength()
+          return Array.from({ length: 21 }, (_, i) => {
+            const q = (p as SVGPathElement).getPointAtLength((len * i) / 20)
+            return toScreen(p as SVGGraphicsElement, q.x, q.y)
+          })
+        })
+        groups.push({ bars, marks: [] })
+      } else if (groups.length) {
+        for (const u of g.querySelectorAll('use')) {
+          const r = u.getBoundingClientRect()
+          groups.at(-1)!.marks.push({
+            x: r.x + r.width / 2,
+            y: r.y + r.height / 2,
+            r: Math.max(r.width, r.height) / 2,
+          })
+        }
+      }
+    }
+    return groups
+  })
+  expect(probe, '图里应当有两组误差棒').not.toBeNull()
+  expect(probe!.length).toBe(2)
+  const man = manifestOf()
+  expect(man, '应当截到 render 响应里的 manifest').not.toBeNull()
+  const ebs = man!.elements.filter((e) => e.role === 'errorbar')
+  expect(ebs.length).toBe(2)
+  const expectPaths = (gid: string) =>
+    (ebs.find((e) => e.gid === gid)!.geometry as { paths: unknown[] }).paths.length
+  const inkOf = (g: NonNullable<typeof probe>[number]) => [
+    ...g.bars.flat().map((q) => ({ ...q, r: 0 })),
+    ...g.marks,
+  ]
+
+  /** 覆盖层里那条最长的 path 沿线采样（屏幕坐标） */
+  const overlaySamples = () =>
+    page.evaluate(() => {
+      const svg = document.querySelector('[data-overlay-svg]')
+      const paths = [...(svg?.querySelectorAll('path[d]') ?? [])].filter((p) =>
+        (p.getAttribute('d') ?? '').startsWith('M'),
+      ) as SVGPathElement[]
+      if (!paths.length) return []
+      const p = paths.sort(
+        (a, b) => (b.getAttribute('d')!.match(/M/g)!.length - a.getAttribute('d')!.match(/M/g)!.length),
+      )[0]
+      const m = p.getScreenCTM()!
+      const len = p.getTotalLength()
+      return Array.from({ length: 400 }, (_, i) => {
+        const q = p.getPointAtLength((len * i) / 399)
+        return { x: q.x * m.a + q.y * m.c + m.e, y: q.x * m.b + q.y * m.d + m.f }
+      })
+    })
+
+  for (const [k, gid] of ['axes_0.errorbar_0', 'axes_0.errorbar_1'].entries()) {
+    const g = probe![k]
+    // 点在第二根误差线 30% 处（离数据点与帽都有距离，是纯粹的误差线墨迹）
+    const bar = g.bars[1]
+    const at = bar[6]
+    await page.mouse.click(at.x, at.y)
+    await page.waitForTimeout(300)
+    const ov = await overlayOf(page)
+    expect(ov.rects, `${gid}：误差棒不该再有罩住整组的矩形选中框`).toBe(0)
+    expect(
+      Math.max(0, ...ov.subpaths),
+      `${gid}：点它自己的误差线要选中它自己（子路径数 = 误差线 + 帽 + 数据点）`,
+    ).toBe(expectPaths(gid))
+
+    // 描出来的轮廓处处贴着这组的墨迹：每个采样点离最近墨迹不超过 3px
+    const ink = inkOf(g)
+    const samples = await overlaySamples()
+    expect(samples.length).toBeGreaterThan(0)
+    const worst = Math.max(
+      ...samples.map((s) => Math.min(...ink.map((q) => Math.hypot(q.x - s.x, q.y - s.y) - q.r))),
+    )
+    expect(worst, `${gid}：选中轮廓离墨迹最远 ${worst.toFixed(1)}px`).toBeLessThan(3)
+  }
+
+  // 第一组并集 bbox 里、离两组全部墨迹都最远、又不在边框命中带里的空白：不再选中第一组
+  const allInk = [...inkOf(probe![0]), ...inkOf(probe![1])]
+  const frame = await page.evaluate(inkInBrowser)
+  const blank = blankSpot(gridInside(bboxOf(inkOf(probe![0]))), {
+    ink: allInk,
+    spines: frame.spines,
+    boxes: hitBoxes(man!, frame.layer),
+  })
+  expect(blank, '第一组的并集 bbox 里应当有一块空白').not.toBeNull()
+  const gap = blank!.dist
+  const mid = blank!
+  expect(gap, '误差线之间应当有一块足够大的空白').toBeGreaterThan(12)
+  await page.mouse.click(mid.x, mid.y)
+  await page.waitForTimeout(300)
+  const atGap = await overlayOf(page)
+  expect(
+    Math.max(0, ...atGap.subpaths),
+    `点两根误差线之间的空白（离最近墨迹 ${Math.round(gap)}px）不该还选中误差棒`,
+  ).toBeLessThan(expectPaths('axes_0.errorbar_0'))
+})

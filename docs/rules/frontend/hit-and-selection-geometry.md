@@ -17,6 +17,11 @@
   选中描的是每根柱。**色条元素的几何代理到它的轴**（`resizable` + `geom_gid = axes_i`，
   与位图 → 宿主子图同一套 `geomTarget`；2026-09-24 起铺满子图的面状色图集合——pcolormesh / contourf 等——也走这一套，引擎侧判据 `manifest._is_area_field`）：点色条就有八个手柄、拖动写的是色条轴的
   `position`，前端一个字没改——看护 `elementPathSelection.test.tsx` 的柱形与色条两组。
+  **误差棒 / 茎叶系列、圆 / 椭圆 / 扇形等全部 Patch、带字注释的箭头同样有 geometry**（2026-09-26，
+  ADR 0086，引擎侧见 `docs/rules/backend/marker-and-path-geometry.md`），前端一个字没改；真浏览器
+  看护 `e2e/element-path-selection.spec.ts` 的误差棒用例（选中轮廓与 SVG 墨迹逐点 < 3px）。
+  **已知未修**：命中评分只看墨迹面积，两个元素的命中带重叠时面积小的恒胜、哪怕点正落在另一个的
+  墨迹上（箱线图各段、小提琴中线、极坐标径向刻度），排查表与建议修法在 ADR 0086。
 - **文字 / 图例 / 子图 / 组选择继续用矩形**——它们本来就是矩形语义，别为了统一
   硬转路径。画布**原生**形状同理：`lib/shapeGeometry.ts` 的 `shapeOutline` 是
   ShapeView 显示、透明命中层、覆盖层选中描示**三处唯一的一份轮廓**
