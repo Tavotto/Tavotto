@@ -1,0 +1,857 @@
+[
+ {
+  "case": "pg_kinetics",
+  "script": "examples/kinetics.py",
+  "stem": "kinetics",
+  "results": [
+   {
+    "category": "color",
+    "patches": [
+     "axes_0.lines_0.color=#d6278f"
+    ],
+    "hot_warnings": [],
+    "skipped": [],
+    "written": 1,
+    "idempotent": true,
+    "roundtrip": true,
+    "residual_overrides": 0,
+    "fresh_warnings": [],
+    "geometry_ok": true,
+    "geometry_diffs": [],
+    "elements": 25,
+    "pixels_ok": true,
+    "pixels": {
+     "identical": true
+    },
+    "verdict": "pass"
+   },
+   {
+    "category": "linewidth",
+    "patches": [
+     "axes_0.lines_0.linewidth=2.6"
+    ],
+    "hot_warnings": [],
+    "skipped": [],
+    "written": 1,
+    "idempotent": true,
+    "roundtrip": true,
+    "residual_overrides": 0,
+    "fresh_warnings": [],
+    "geometry_ok": true,
+    "geometry_diffs": [],
+    "elements": 25,
+    "pixels_ok": true,
+    "pixels": {
+     "identical": true
+    },
+    "verdict": "pass"
+   },
+   {
+    "category": "fontsize",
+    "patches": [
+     "axes_0.title.fontsize=10.5"
+    ],
+    "hot_warnings": [],
+    "skipped": [],
+    "written": 1,
+    "idempotent": true,
+    "roundtrip": true,
+    "residual_overrides": 0,
+    "fresh_warnings": [],
+    "geometry_ok": true,
+    "geometry_diffs": [],
+    "elements": 25,
+    "pixels_ok": true,
+    "pixels": {
+     "identical": true
+    },
+    "verdict": "pass"
+   },
+   {
+    "category": "fontsize",
+    "patches": [
+     "axes_0.xlabel.fontsize=10.5"
+    ],
+    "hot_warnings": [],
+    "skipped": [],
+    "written": 1,
+    "idempotent": true,
+    "roundtrip": true,
+    "residual_overrides": 0,
+    "fresh_warnings": [],
+    "geometry_ok": true,
+    "geometry_diffs": [],
+    "elements": 25,
+    "pixels_ok": true,
+    "pixels": {
+     "identical": true
+    },
+    "verdict": "pass"
+   },
+   {
+    "category": "fontsize",
+    "patches": [
+     "axes_0.xticks.fontsize=9.0"
+    ],
+    "hot_warnings": [],
+    "skipped": [],
+    "written": 1,
+    "idempotent": true,
+    "roundtrip": true,
+    "residual_overrides": 0,
+    "fresh_warnings": [],
+    "geometry_ok": true,
+    "geometry_diffs": [],
+    "elements": 25,
+    "pixels_ok": true,
+    "pixels": {
+     "identical": true
+    },
+    "verdict": "pass"
+   },
+   {
+    "category": "text_position",
+    "patches": [
+     "axes_0.xlabel.pos_frac=[0.575, 0.8785]"
+    ],
+    "hot_warnings": [],
+    "skipped": [],
+    "written": 1,
+    "idempotent": true,
+    "roundtrip": true,
+    "residual_overrides": 0,
+    "fresh_warnings": [],
+    "geometry_ok": true,
+    "geometry_diffs": [],
+    "elements": 25,
+    "pixels_ok": true,
+    "pixels": {
+     "identical": true
+    },
+    "verdict": "pass"
+   },
+   {
+    "category": "text_position",
+    "patches": [
+     "axes_0.title.pos_frac=[0.575, 0.0707]"
+    ],
+    "hot_warnings": [],
+    "skipped": [
+     {
+      "stem": "kinetics",
+      "gid": "axes_0.title",
+      "prop": "pos_frac",
+      "reason": "标题拖动需要关自动定位（私有 API），这一版不写回"
+     }
+    ],
+    "written": 0,
+    "verdict": "not_emitted"
+   },
+   {
+    "category": "legend_position",
+    "patches": [
+     "axes_0.legend.loc=lower left"
+    ],
+    "hot_warnings": [],
+    "skipped": [],
+    "written": 1,
+    "idempotent": true,
+    "roundtrip": true,
+    "residual_overrides": 0,
+    "fresh_warnings": [],
+    "geometry_ok": true,
+    "geometry_diffs": [],
+    "elements": 25,
+    "pixels_ok": true,
+    "pixels": {
+     "identical": true
+    },
+    "verdict": "pass"
+   },
+   {
+    "category": "legend_position",
+    "patches": [
+     "axes_0.legend.loc_frac=[0.7121, 0.8242]"
+    ],
+    "hot_warnings": [],
+    "skipped": [],
+    "written": 1,
+    "idempotent": true,
+    "roundtrip": true,
+    "residual_overrides": 0,
+    "fresh_warnings": [],
+    "geometry_ok": true,
+    "geometry_diffs": [],
+    "elements": 25,
+    "pixels_ok": true,
+    "pixels": {
+     "identical": true
+    },
+    "verdict": "pass"
+   },
+   {
+    "category": "fontsize",
+    "patches": [
+     "axes_0.legend.fontsize=9.5"
+    ],
+    "hot_warnings": [],
+    "skipped": [],
+    "written": 1,
+    "idempotent": true,
+    "roundtrip": true,
+    "residual_overrides": 0,
+    "fresh_warnings": [],
+    "geometry_ok": false,
+    "geometry_diffs": [
+     {
+      "gid": "axes_0.legend",
+      "field": "bbox",
+      "hot": [
+       0.6212498085171568,
+       0.6247977430555556,
+       0.3024838516135621,
+       0.1652810329861111
+      ],
+      "fresh": [
+       0.6463723575367647,
+       0.6403914930555555,
+       0.28042502808415026,
+       0.15385394965277782
+      ]
+     },
+     {
+      "gid": "axes_0.legend",
+      "field": "anchor",
+      "hot": [
+       0.6212498085171568,
+       0.7900787760416667
+      ],
+      "fresh": [
+       0.6463723575367647,
+       0.7942454427083334
+      ]
+     },
+     {
+      "gid": "axes_0.legend.texts_0",
+      "field": "bbox",
+      "hot": [
+       0.7454328150531045,
+       0.6462057291666666,
+       0.16277796926062088,
+       0.04803808593750001
+      ],
+      "fresh": [
+       0.7509475209354575,
+       0.6581692708333333,
+       0.16277796926062088,
+       0.04803808593750001
+      ]
+     },
+     {
+      "gid": "axes_0.legend.texts_1",
+      "field": "bbox",
+      "hot": [
+       0.7454328150531045,
+       0.7209295789930555,
+       0.09270067401960792,
+       0.04803808593750001
+      ],
+      "fresh": [
+       0.7509475209354575,
+       0.7284295789930556,
+       0.09270067401960792,
+       0.04803808593750001
+      ]
+     }
+    ],
+    "elements": 25,
+    "pixels_ok": false,
+    "pixels": {
+     "metrics": {
+      "changed_pixel_ratio": 0.00841,
+      "mean_abs_diff": 1.5274,
+      "max_abs_diff": 255
+     },
+     "exceeded": {
+      "changed_pixel_ratio": 0.00841,
+      "mean_abs_diff": 1.5274,
+      "max_abs_diff": 255
+     }
+    },
+    "verdict": "reject"
+   },
+   {
+    "category": "fontsize",
+    "patches": [
+     "axes_0.legend.texts_0.fontsize=9.0"
+    ],
+    "hot_warnings": [],
+    "skipped": [],
+    "written": 1,
+    "idempotent": true,
+    "roundtrip": true,
+    "residual_overrides": 0,
+    "fresh_warnings": [],
+    "geometry_ok": true,
+    "geometry_diffs": [],
+    "elements": 25,
+    "pixels_ok": true,
+    "pixels": {
+     "identical": true
+    },
+    "verdict": "pass"
+   },
+   {
+    "category": "ALL",
+    "patches": [
+     "axes_0.lines_0.color=#d6278f",
+     "axes_0.lines_0.linewidth=2.6",
+     "axes_0.title.fontsize=10.5",
+     "axes_0.xlabel.fontsize=10.5",
+     "axes_0.xticks.fontsize=9.0",
+     "axes_0.xlabel.pos_frac=[0.575, 0.8785]",
+     "axes_0.title.pos_frac=[0.575, 0.0707]",
+     "axes_0.legend.loc=lower left",
+     "axes_0.legend.loc_frac=[0.7121, 0.8242]",
+     "axes_0.legend.fontsize=9.5",
+     "axes_0.legend.texts_0.fontsize=9.0"
+    ],
+    "hot_warnings": [],
+    "skipped": [
+     {
+      "stem": "kinetics",
+      "gid": "axes_0.title",
+      "prop": "pos_frac",
+      "reason": "标题拖动需要关自动定位（私有 API），这一版不写回"
+     }
+    ],
+    "written": 10,
+    "idempotent": true,
+    "roundtrip": true,
+    "residual_overrides": 1,
+    "fresh_warnings": [],
+    "geometry_ok": false,
+    "geometry_diffs": [
+     {
+      "gid": "axes_0.legend",
+      "field": "bbox",
+      "hot": [
+       0.7121,
+       0.6595184678819446,
+       0.29391659007352944,
+       0.16468153211805556
+      ],
+      "fresh": [
+       0.7121,
+       0.6728743706597222,
+       0.27185776654411764,
+       0.15132562934027782
+      ]
+     },
+     {
+      "gid": "axes_0.legend.texts_0",
+      "field": "bbox",
+      "hot": [
+       0.8362830065359476,
+       0.6828552734375,
+       0.15421070772058823,
+       0.04550976562500002
+      ],
+      "fresh": [
+       0.8166751633986926,
+       0.6906521484375,
+       0.15421070772058823,
+       0.04550976562500002
+      ]
+     },
+     {
+      "gid": "axes_0.legend.texts_1",
+      "field": "bbox",
+      "hot": [
+       0.8362830065359476,
+       0.7550508029513889,
+       0.09270067401960778,
+       0.04803808593750001
+      ],
+      "fresh": [
+       0.8166751633986926,
+       0.7583841362847222,
+       0.09270067401960778,
+       0.04803808593750001
+      ]
+     }
+    ],
+    "elements": 25,
+    "pixels_ok": false,
+    "pixels": {
+     "metrics": {
+      "changed_pixel_ratio": 0.008495,
+      "mean_abs_diff": 1.512,
+      "max_abs_diff": 255
+     },
+     "exceeded": {
+      "changed_pixel_ratio": 0.008495,
+      "mean_abs_diff": 1.512,
+      "max_abs_diff": 255
+     }
+    },
+    "verdict": "reject"
+   }
+  ],
+  "build_s": 1.0,
+  "total_s": 10.6
+ },
+ {
+  "case": "user_a",
+  "script": "<用户脚本副本，未入库>",
+  "stem": "<user-stem>",
+  "results": [
+   {
+    "category": "color",
+    "patches": [
+     "axes_2.lines_0.color=#d6278f"
+    ],
+    "hot_warnings": [],
+    "skipped": [],
+    "written": 1,
+    "idempotent": true,
+    "roundtrip": true,
+    "residual_overrides": 0,
+    "fresh_warnings": [],
+    "geometry_ok": true,
+    "geometry_diffs": [],
+    "elements": 58,
+    "pixels_ok": true,
+    "pixels": {
+     "identical": true
+    },
+    "verdict": "pass"
+   },
+   {
+    "category": "linewidth",
+    "patches": [
+     "axes_2.lines_0.linewidth=2.25"
+    ],
+    "hot_warnings": [],
+    "skipped": [],
+    "written": 1,
+    "idempotent": true,
+    "roundtrip": true,
+    "residual_overrides": 0,
+    "fresh_warnings": [],
+    "geometry_ok": true,
+    "geometry_diffs": [],
+    "elements": 58,
+    "pixels_ok": true,
+    "pixels": {
+     "identical": true
+    },
+    "verdict": "pass"
+   },
+   {
+    "category": "fontsize",
+    "patches": [
+     "axes_2.xlabel.fontsize=10.8"
+    ],
+    "hot_warnings": [],
+    "skipped": [],
+    "written": 1,
+    "idempotent": true,
+    "roundtrip": true,
+    "residual_overrides": 0,
+    "fresh_warnings": [],
+    "geometry_ok": true,
+    "geometry_diffs": [],
+    "elements": 58,
+    "pixels_ok": true,
+    "pixels": {
+     "identical": true
+    },
+    "verdict": "pass"
+   },
+   {
+    "category": "fontsize",
+    "patches": [
+     "axes_0.texts_0.fontsize=9.2"
+    ],
+    "hot_warnings": [],
+    "skipped": [],
+    "written": 1,
+    "idempotent": true,
+    "roundtrip": true,
+    "residual_overrides": 0,
+    "fresh_warnings": [],
+    "geometry_ok": true,
+    "geometry_diffs": [],
+    "elements": 58,
+    "pixels_ok": true,
+    "pixels": {
+     "identical": true
+    },
+    "verdict": "pass"
+   },
+   {
+    "category": "color",
+    "patches": [
+     "axes_0.texts_0.color=#1b7837"
+    ],
+    "hot_warnings": [],
+    "skipped": [],
+    "written": 1,
+    "idempotent": true,
+    "roundtrip": true,
+    "residual_overrides": 0,
+    "fresh_warnings": [],
+    "geometry_ok": true,
+    "geometry_diffs": [],
+    "elements": 58,
+    "pixels_ok": true,
+    "pixels": {
+     "identical": true
+    },
+    "verdict": "pass"
+   },
+   {
+    "category": "fontsize",
+    "patches": [
+     "axes_2.xticks.fontsize=9.1"
+    ],
+    "hot_warnings": [],
+    "skipped": [],
+    "written": 1,
+    "idempotent": true,
+    "roundtrip": true,
+    "residual_overrides": 0,
+    "fresh_warnings": [],
+    "geometry_ok": true,
+    "geometry_diffs": [],
+    "elements": 58,
+    "pixels_ok": true,
+    "pixels": {
+     "identical": true
+    },
+    "verdict": "pass"
+   },
+   {
+    "category": "text_position",
+    "patches": [
+     "axes_0.texts_0.pos_frac=[0.1597, 0.2937]"
+    ],
+    "hot_warnings": [],
+    "skipped": [],
+    "written": 1,
+    "idempotent": true,
+    "roundtrip": true,
+    "residual_overrides": 0,
+    "fresh_warnings": [],
+    "geometry_ok": true,
+    "geometry_diffs": [],
+    "elements": 58,
+    "pixels_ok": true,
+    "pixels": {
+     "identical": true
+    },
+    "verdict": "pass"
+   },
+   {
+    "category": "text_position",
+    "patches": [
+     "axes_2.xlabel.pos_frac=[0.3242, 0.9262]"
+    ],
+    "hot_warnings": [],
+    "skipped": [],
+    "written": 1,
+    "idempotent": true,
+    "roundtrip": true,
+    "residual_overrides": 0,
+    "fresh_warnings": [],
+    "geometry_ok": true,
+    "geometry_diffs": [],
+    "elements": 58,
+    "pixels_ok": true,
+    "pixels": {
+     "identical": true
+    },
+    "verdict": "pass"
+   },
+   {
+    "category": "legend_position",
+    "patches": [
+     "axes_3.legend.loc=lower left"
+    ],
+    "hot_warnings": [],
+    "skipped": [],
+    "written": 1,
+    "idempotent": true,
+    "roundtrip": true,
+    "residual_overrides": 0,
+    "fresh_warnings": [],
+    "geometry_ok": true,
+    "geometry_diffs": [],
+    "elements": 58,
+    "pixels_ok": true,
+    "pixels": {
+     "identical": true
+    },
+    "verdict": "pass"
+   },
+   {
+    "category": "legend_position",
+    "patches": [
+     "axes_3.legend.loc_frac=[0.6182, 0.7165]"
+    ],
+    "hot_warnings": [],
+    "skipped": [],
+    "written": 1,
+    "idempotent": true,
+    "roundtrip": true,
+    "residual_overrides": 0,
+    "fresh_warnings": [],
+    "geometry_ok": true,
+    "geometry_diffs": [],
+    "elements": 58,
+    "pixels_ok": true,
+    "pixels": {
+     "identical": true
+    },
+    "verdict": "pass"
+   },
+   {
+    "category": "fontsize",
+    "patches": [
+     "axes_3.legend.fontsize=8.4"
+    ],
+    "hot_warnings": [],
+    "skipped": [],
+    "written": 1,
+    "idempotent": true,
+    "roundtrip": true,
+    "residual_overrides": 0,
+    "fresh_warnings": [],
+    "geometry_ok": false,
+    "geometry_diffs": [
+     {
+      "gid": "axes_3.legend",
+      "field": "bbox",
+      "hot": [
+       0.5104650130815337,
+       0.567024503968254,
+       0.3691406673934108,
+       0.14761618634259258
+      ],
+      "fresh": [
+       0.5246786758722314,
+       0.5652606150793651,
+       0.3567729348352713,
+       0.14205405671296295
+      ]
+     },
+     {
+      "gid": "axes_3.legend",
+      "field": "anchor",
+      "hot": [
+       0.5104650130815337,
+       0.7146406903108466
+      ],
+      "fresh": [
+       0.5246786758722314,
+       0.707314671792328
+      ]
+     },
+     {
+      "gid": "axes_3.legend.texts_2",
+      "field": "bbox",
+      "hot": [
+       0.5717991216086655,
+       0.6429933610284392,
+       0.2543168846899225,
+       0.029969023437499964
+      ],
+      "fresh": [
+       0.5750602650195182,
+       0.6379104212136243,
+       0.25431688468992253,
+       0.029969023437499964
+      ]
+     },
+     {
+      "gid": "axes_3.legend.texts_3",
+      "field": "bbox",
+      "hot": [
+       0.5717991216086655,
+       0.6770987039103836,
+       0.29988136506782953,
+       0.029969023437499964
+      ],
+      "fresh": [
+       0.5750602650195182,
+       0.6711250002066799,
+       0.2998813650678294,
+       0.029969023437499964
+      ]
+     }
+    ],
+    "elements": 58,
+    "pixels_ok": false,
+    "pixels": {
+     "metrics": {
+      "changed_pixel_ratio": 0.019472,
+      "mean_abs_diff": 2.6605,
+      "max_abs_diff": 254
+     },
+     "exceeded": {
+      "changed_pixel_ratio": 0.019472,
+      "mean_abs_diff": 2.6605,
+      "max_abs_diff": 254
+     }
+    },
+    "verdict": "reject"
+   },
+   {
+    "category": "fontsize",
+    "patches": [
+     "axes_3.legend.texts_0.fontsize=7.9"
+    ],
+    "hot_warnings": [],
+    "skipped": [],
+    "written": 1,
+    "idempotent": true,
+    "roundtrip": true,
+    "residual_overrides": 0,
+    "fresh_warnings": [],
+    "geometry_ok": true,
+    "geometry_diffs": [],
+    "elements": 58,
+    "pixels_ok": true,
+    "pixels": {
+     "identical": true
+    },
+    "verdict": "pass"
+   },
+   {
+    "category": "ALL",
+    "patches": [
+     "axes_2.lines_0.color=#d6278f",
+     "axes_2.lines_0.linewidth=2.25",
+     "axes_2.xlabel.fontsize=10.8",
+     "axes_0.texts_0.fontsize=9.2",
+     "axes_0.texts_0.color=#1b7837",
+     "axes_2.xticks.fontsize=9.1",
+     "axes_0.texts_0.pos_frac=[0.1597, 0.2937]",
+     "axes_2.xlabel.pos_frac=[0.3242, 0.9262]",
+     "axes_3.legend.loc=lower left",
+     "axes_3.legend.loc_frac=[0.6182, 0.7165]",
+     "axes_3.legend.fontsize=8.4",
+     "axes_3.legend.texts_0.fontsize=7.9"
+    ],
+    "hot_warnings": [],
+    "skipped": [],
+    "written": 12,
+    "idempotent": true,
+    "roundtrip": true,
+    "residual_overrides": 0,
+    "fresh_warnings": [],
+    "geometry_ok": false,
+    "geometry_diffs": [
+     {
+      "gid": "axes_3.legend",
+      "field": "bbox",
+      "hot": [
+       0.6182,
+       0.5693067948254245,
+       0.3691406673934108,
+       0.1471932051745756
+      ],
+      "fresh": [
+       0.6182,
+       0.5762298137297455,
+       0.3567729348352713,
+       0.14027018627025462
+      ]
+     },
+     {
+      "gid": "axes_3.legend.texts_0",
+      "field": "bbox",
+      "hot": [
+       0.6795341085271318,
+       0.5784573052903164,
+       0.13765601683624035,
+       0.028153703100887387
+      ],
+      "fresh": [
+       0.6685815891472868,
+       0.5824819117717979,
+       0.13765601683624026,
+       0.028153703100887387
+      ]
+     },
+     {
+      "gid": "axes_3.legend.texts_1",
+      "field": "bbox",
+      "hot": [
+       0.6795341085271318,
+       0.6107473278356481,
+       0.09950102349806202,
+       0.029969023437500006
+      ],
+      "fresh": [
+       0.6685815891472868,
+       0.6138811704282408,
+       0.0995010234980621,
+       0.029969023437500006
+      ]
+     },
+     {
+      "gid": "axes_3.legend.texts_2",
+      "field": "bbox",
+      "hot": [
+       0.6795341085271318,
+       0.6448526707175926,
+       0.2543168846899225,
+       0.029969023437500006
+      ],
+      "fresh": [
+       0.6685815891472868,
+       0.6470957494212963,
+       0.25431688468992253,
+       0.029969023437499964
+      ]
+     },
+     {
+      "gid": "axes_3.legend.texts_3",
+      "field": "bbox",
+      "hot": [
+       0.6795341085271318,
+       0.678958013599537,
+       0.29988136506782953,
+       0.029969023437500006
+      ],
+      "fresh": [
+       0.6685815891472868,
+       0.6803103284143519,
+       0.2998813650678294,
+       0.029969023437500006
+      ]
+     }
+    ],
+    "elements": 58,
+    "pixels_ok": false,
+    "pixels": {
+     "metrics": {
+      "changed_pixel_ratio": 0.016017,
+      "mean_abs_diff": 2.1616,
+      "max_abs_diff": 255
+     },
+     "exceeded": {
+      "changed_pixel_ratio": 0.016017,
+      "mean_abs_diff": 2.1616,
+      "max_abs_diff": 255
+     }
+    },
+    "verdict": "reject"
+   }
+  ],
+  "build_s": 1.55,
+  "total_s": 51.0
+ }
+]

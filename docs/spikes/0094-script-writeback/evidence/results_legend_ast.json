@@ -1,0 +1,190 @@
+[
+ {
+  "case": "fig1_kinetics",
+  "results": [
+   {
+    "patch": "axes_0.legend.fontsize=9.5",
+    "edit": "25 行新增 fontsize=9.5",
+    "geometry_ok": true,
+    "geometry_diffs": [],
+    "elements": 25,
+    "pixels_ok": true,
+    "pixels": {
+     "identical": true
+    },
+    "verdict": "pass"
+   }
+  ]
+ },
+ {
+  "case": "fig2_correlation",
+  "results": [
+   {
+    "patch": "axes_0.legend.fontsize=9.5",
+    "edit": "44 行新增 fontsize=9.5",
+    "geometry_ok": true,
+    "geometry_diffs": [],
+    "elements": 21,
+    "pixels_ok": true,
+    "pixels": {
+     "identical": true
+    },
+    "verdict": "pass"
+   }
+  ]
+ },
+ {
+  "case": "pg_kinetics",
+  "results": [
+   {
+    "patch": "axes_0.legend.fontsize=9.5",
+    "edit": "16 行新增 fontsize=9.5",
+    "geometry_ok": true,
+    "geometry_diffs": [],
+    "elements": 25,
+    "pixels_ok": true,
+    "pixels": {
+     "identical": true
+    },
+    "verdict": "pass"
+   }
+  ]
+ },
+ {
+  "case": "pg_calibration",
+  "results": [
+   {
+    "patch": "axes_0.legend.fontsize=9.5",
+    "edit": "16 行新增 fontsize=9.5",
+    "geometry_ok": true,
+    "geometry_diffs": [],
+    "elements": 23,
+    "pixels_ok": true,
+    "pixels": {
+     "identical": true
+    },
+    "verdict": "pass"
+   }
+  ]
+ },
+ {
+  "case": "user_a",
+  "results": [
+   {
+    "patch": "axes_3.legend.fontsize=8.4",
+    "edit": "491 行改 fontsize=<略> → 8.4",
+    "geometry_ok": true,
+    "geometry_diffs": [],
+    "elements": 58,
+    "pixels_ok": true,
+    "pixels": {
+     "identical": true
+    },
+    "verdict": "pass"
+   }
+  ]
+ },
+ {
+  "case": "user_b",
+  "results": [
+   {
+    "patch": "axes_0.legend.fontsize=15.5",
+    "edit": "116 行新增 fontsize=15.5",
+    "geometry_ok": false,
+    "geometry_diffs": [
+     {
+      "gid": "axes_0",
+      "field": "bbox",
+      "hot": [
+       0.07180764105902779,
+       0.07208484722222219,
+       0.8985590256076388,
+       0.6777860746527777
+      ],
+      "fresh": [
+       0.07180764105902779,
+       0.07208484722222219,
+       0.8985590256076388,
+       0.6682082131076389
+      ]
+     },
+     {
+      "gid": "axes_0.legend",
+      "field": "bbox",
+      "hot": [
+       0.1790716706452546,
+       0.8963642479166666,
+       0.6840309664351852,
+       0.0684959396701389
+      ],
+      "fresh": [
+       0.1790716706452546,
+       0.8848708140625,
+       0.6840309664351852,
+       0.0684959396701389
+      ]
+     },
+     {
+      "gid": "axes_0.legend",
+      "field": "anchor",
+      "hot": [
+       0.1790716706452546,
+       0.9648601875868055
+      ],
+      "fresh": [
+       0.1790716706452546,
+       0.9533667537326389
+      ]
+     },
+     {
+      "gid": "axes_0.legend.texts_0",
+      "field": "bbox",
+      "hot": [
+       0.23739759657118054,
+       0.9052361680555555,
+       0.15185815538194447,
+       0.019907994140625
+      ],
+      "fresh": [
+       0.23739759657118054,
+       0.8937427342013888,
+       0.15185815538194447,
+       0.019907994140625
+      ]
+     },
+     {
+      "gid": "axes_0.legend.texts_1",
+      "field": "bbox",
+      "hot": [
+       0.23739759657118054,
+       0.9362033045572916,
+       0.07742709707754626,
+       0.019907994140625
+      ],
+      "fresh": [
+       0.23739759657118054,
+       0.9247098707031249,
+       0.07742709707754626,
+       0.019907994140625006
+      ]
+     }
+    ],
+    "elements": 32,
+    "pixels_ok": false,
+    "pixels": {
+     "metrics": {
+      "changed_pixel_ratio": 0.038867,
+      "mean_abs_diff": 5.7073,
+      "max_abs_diff": 255
+     },
+     "exceeded": {
+      "changed_pixel_ratio": 0.038867,
+      "mean_abs_diff": 5.7073,
+      "max_abs_diff": 255
+     }
+    },
+    "verdict": "reject"
+   }
+  ]
+ }
+]

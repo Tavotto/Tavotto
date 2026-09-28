@@ -1,0 +1,576 @@
+[
+ {
+  "case": "fig1_kinetics",
+  "patch": "axes_0.lines_0.color",
+  "class": "C",
+  "why": "18 行 color=PALETTE[0]",
+  "hook": "pass"
+ },
+ {
+  "case": "fig1_kinetics",
+  "patch": "axes_0.lines_0.linewidth",
+  "class": "A",
+  "why": "18 行 lw=1.2",
+  "hook": "pass"
+ },
+ {
+  "case": "fig1_kinetics",
+  "patch": "axes_0.title.fontsize",
+  "class": "D",
+  "why": "22 行没有 fontsize 参数（取 rcParams / 默认值）",
+  "hook": "pass"
+ },
+ {
+  "case": "fig1_kinetics",
+  "patch": "axes_0.xlabel.fontsize",
+  "class": "D",
+  "why": "20 行没有 fontsize 参数（取 rcParams / 默认值）",
+  "hook": "pass"
+ },
+ {
+  "case": "fig1_kinetics",
+  "patch": "axes_0.xticks.fontsize",
+  "class": "D",
+  "why": "刻度文字不是一次调用建出来的（tick_params / rcParams）",
+  "hook": "pass"
+ },
+ {
+  "case": "fig1_kinetics",
+  "patch": "axes_0.xlabel.pos_frac",
+  "class": "C",
+  "why": "位置是 figure 分数，要换算回脚本的坐标系（数据 / 轴分数）再改实参",
+  "hook": "pass"
+ },
+ {
+  "case": "fig1_kinetics",
+  "patch": "axes_0.title.pos_frac",
+  "class": "C",
+  "why": "位置是 figure 分数，要换算回脚本的坐标系（数据 / 轴分数）再改实参",
+  "hook": "not_emitted"
+ },
+ {
+  "case": "fig1_kinetics",
+  "patch": "axes_0.legend.loc",
+  "class": "A",
+  "why": "25 行 loc='lower right'",
+  "hook": "pass"
+ },
+ {
+  "case": "fig1_kinetics",
+  "patch": "axes_0.legend.loc_frac",
+  "class": "C",
+  "why": "拖出来的位置要换算成 loc 元组并清掉 bbox_to_anchor——不是改一个字面量",
+  "hook": "pass"
+ },
+ {
+  "case": "fig1_kinetics",
+  "patch": "axes_0.legend.fontsize",
+  "class": "D",
+  "why": "25 行没有 fontsize 参数（取 rcParams / 默认值）",
+  "hook": "not_emitted"
+ },
+ {
+  "case": "fig1_kinetics",
+  "patch": "axes_0.legend.texts_0.fontsize",
+  "class": "D",
+  "why": "单条图例文字没有自己的调用（legend() 统一建）",
+  "hook": "pass"
+ },
+ {
+  "case": "fig2_correlation",
+  "patch": "axes_0.lines_0.color",
+  "class": "C",
+  "why": "40 行 color=PALETTE[1]",
+  "hook": "pass"
+ },
+ {
+  "case": "fig2_correlation",
+  "patch": "axes_0.lines_0.linewidth",
+  "class": "A",
+  "why": "40 行 lw=1.2",
+  "hook": "pass"
+ },
+ {
+  "case": "fig2_correlation",
+  "patch": "axes_0.title.fontsize",
+  "class": "D",
+  "why": "43 行没有 fontsize 参数（取 rcParams / 默认值）",
+  "hook": "pass"
+ },
+ {
+  "case": "fig2_correlation",
+  "patch": "axes_0.xlabel.fontsize",
+  "class": "D",
+  "why": "41 行没有 fontsize 参数（取 rcParams / 默认值）",
+  "hook": "pass"
+ },
+ {
+  "case": "fig2_correlation",
+  "patch": "axes_0.xticks.fontsize",
+  "class": "D",
+  "why": "刻度文字不是一次调用建出来的（tick_params / rcParams）",
+  "hook": "pass"
+ },
+ {
+  "case": "fig2_correlation",
+  "patch": "axes_0.xlabel.pos_frac",
+  "class": "C",
+  "why": "位置是 figure 分数，要换算回脚本的坐标系（数据 / 轴分数）再改实参",
+  "hook": "pass"
+ },
+ {
+  "case": "fig2_correlation",
+  "patch": "axes_0.title.pos_frac",
+  "class": "C",
+  "why": "位置是 figure 分数，要换算回脚本的坐标系（数据 / 轴分数）再改实参",
+  "hook": "not_emitted"
+ },
+ {
+  "case": "fig2_correlation",
+  "patch": "axes_0.legend.loc",
+  "class": "A",
+  "why": "44 行 loc='upper left'",
+  "hook": "pass"
+ },
+ {
+  "case": "fig2_correlation",
+  "patch": "axes_0.legend.loc_frac",
+  "class": "C",
+  "why": "拖出来的位置要换算成 loc 元组并清掉 bbox_to_anchor——不是改一个字面量",
+  "hook": "pass"
+ },
+ {
+  "case": "fig2_correlation",
+  "patch": "axes_0.legend.fontsize",
+  "class": "D",
+  "why": "44 行没有 fontsize 参数（取 rcParams / 默认值）",
+  "hook": "not_emitted"
+ },
+ {
+  "case": "fig2_correlation",
+  "patch": "axes_0.legend.texts_0.fontsize",
+  "class": "D",
+  "why": "单条图例文字没有自己的调用（legend() 统一建）",
+  "hook": "pass"
+ },
+ {
+  "case": "fig2_yield",
+  "patch": "axes_0.title.fontsize",
+  "class": "D",
+  "why": "26 行没有 fontsize 参数（取 rcParams / 默认值）",
+  "hook": "pass"
+ },
+ {
+  "case": "fig2_yield",
+  "patch": "axes_0.ylabel.fontsize",
+  "class": "D",
+  "why": "25 行没有 fontsize 参数（取 rcParams / 默认值）",
+  "hook": "pass"
+ },
+ {
+  "case": "fig2_yield",
+  "patch": "axes_0.xticks.fontsize",
+  "class": "D",
+  "why": "刻度文字不是一次调用建出来的（tick_params / rcParams）",
+  "hook": "pass"
+ },
+ {
+  "case": "fig2_yield",
+  "patch": "axes_0.ylabel.pos_frac",
+  "class": "C",
+  "why": "位置是 figure 分数，要换算回脚本的坐标系（数据 / 轴分数）再改实参",
+  "hook": "pass"
+ },
+ {
+  "case": "fig2_yield",
+  "patch": "axes_0.title.pos_frac",
+  "class": "C",
+  "why": "位置是 figure 分数，要换算回脚本的坐标系（数据 / 轴分数）再改实参",
+  "hook": "not_emitted"
+ },
+ {
+  "case": "pg_spectrum",
+  "patch": "axes_0.lines_0.color",
+  "class": "D",
+  "why": "9 行没有 color 参数（取 rcParams / 默认值）",
+  "hook": "pass"
+ },
+ {
+  "case": "pg_spectrum",
+  "patch": "axes_0.lines_0.linewidth",
+  "class": "A",
+  "why": "9 行 lw=1.3",
+  "hook": "pass"
+ },
+ {
+  "case": "pg_spectrum",
+  "patch": "axes_0.title.fontsize",
+  "class": "D",
+  "why": "15 行没有 fontsize 参数（取 rcParams / 默认值）",
+  "hook": "pass"
+ },
+ {
+  "case": "pg_spectrum",
+  "patch": "axes_0.xlabel.fontsize",
+  "class": "D",
+  "why": "13 行没有 fontsize 参数（取 rcParams / 默认值）",
+  "hook": "pass"
+ },
+ {
+  "case": "pg_spectrum",
+  "patch": "axes_0.texts_0.fontsize",
+  "class": "A",
+  "why": "11 行 fontsize=9",
+  "hook": "pass"
+ },
+ {
+  "case": "pg_spectrum",
+  "patch": "axes_0.texts_0.color",
+  "class": "D",
+  "why": "11 行没有 color 参数（取 rcParams / 默认值）",
+  "hook": "pass"
+ },
+ {
+  "case": "pg_spectrum",
+  "patch": "axes_0.xticks.fontsize",
+  "class": "D",
+  "why": "刻度文字不是一次调用建出来的（tick_params / rcParams）",
+  "hook": "pass"
+ },
+ {
+  "case": "pg_spectrum",
+  "patch": "axes_0.texts_0.pos_frac",
+  "class": "C",
+  "why": "位置是 figure 分数，要换算回脚本的坐标系（数据 / 轴分数）再改实参",
+  "hook": "pass"
+ },
+ {
+  "case": "pg_spectrum",
+  "patch": "axes_0.xlabel.pos_frac",
+  "class": "C",
+  "why": "位置是 figure 分数，要换算回脚本的坐标系（数据 / 轴分数）再改实参",
+  "hook": "pass"
+ },
+ {
+  "case": "pg_spectrum",
+  "patch": "axes_0.title.pos_frac",
+  "class": "C",
+  "why": "位置是 figure 分数，要换算回脚本的坐标系（数据 / 轴分数）再改实参",
+  "hook": "not_emitted"
+ },
+ {
+  "case": "pg_kinetics",
+  "patch": "axes_0.lines_0.color",
+  "class": "D",
+  "why": "9 行没有 color 参数（取 rcParams / 默认值）",
+  "hook": "pass"
+ },
+ {
+  "case": "pg_kinetics",
+  "patch": "axes_0.lines_0.linewidth",
+  "class": "A",
+  "why": "9 行 lw=1.4",
+  "hook": "pass"
+ },
+ {
+  "case": "pg_kinetics",
+  "patch": "axes_0.title.fontsize",
+  "class": "A",
+  "why": "13 行 fontsize=9",
+  "hook": "pass"
+ },
+ {
+  "case": "pg_kinetics",
+  "patch": "axes_0.xlabel.fontsize",
+  "class": "D",
+  "why": "11 行没有 fontsize 参数（取 rcParams / 默认值）",
+  "hook": "pass"
+ },
+ {
+  "case": "pg_kinetics",
+  "patch": "axes_0.xticks.fontsize",
+  "class": "D",
+  "why": "刻度文字不是一次调用建出来的（tick_params / rcParams）",
+  "hook": "pass"
+ },
+ {
+  "case": "pg_kinetics",
+  "patch": "axes_0.xlabel.pos_frac",
+  "class": "C",
+  "why": "位置是 figure 分数，要换算回脚本的坐标系（数据 / 轴分数）再改实参",
+  "hook": "pass"
+ },
+ {
+  "case": "pg_kinetics",
+  "patch": "axes_0.title.pos_frac",
+  "class": "C",
+  "why": "位置是 figure 分数，要换算回脚本的坐标系（数据 / 轴分数）再改实参",
+  "hook": "not_emitted"
+ },
+ {
+  "case": "pg_kinetics",
+  "patch": "axes_0.legend.loc",
+  "class": "A",
+  "why": "16 行 loc='lower right'",
+  "hook": "pass"
+ },
+ {
+  "case": "pg_kinetics",
+  "patch": "axes_0.legend.loc_frac",
+  "class": "C",
+  "why": "拖出来的位置要换算成 loc 元组并清掉 bbox_to_anchor——不是改一个字面量",
+  "hook": "pass"
+ },
+ {
+  "case": "pg_kinetics",
+  "patch": "axes_0.legend.fontsize",
+  "class": "D",
+  "why": "16 行没有 fontsize 参数（取 rcParams / 默认值）",
+  "hook": "not_emitted"
+ },
+ {
+  "case": "pg_kinetics",
+  "patch": "axes_0.legend.texts_0.fontsize",
+  "class": "D",
+  "why": "单条图例文字没有自己的调用（legend() 统一建）",
+  "hook": "pass"
+ },
+ {
+  "case": "pg_calibration",
+  "patch": "axes_0.lines_0.color",
+  "class": "A",
+  "why": "11 行 color='#b03a2e'",
+  "hook": "pass"
+ },
+ {
+  "case": "pg_calibration",
+  "patch": "axes_0.lines_0.linewidth",
+  "class": "A",
+  "why": "11 行 lw=1.2",
+  "hook": "pass"
+ },
+ {
+  "case": "pg_calibration",
+  "patch": "axes_0.title.fontsize",
+  "class": "D",
+  "why": "15 行没有 fontsize 参数（取 rcParams / 默认值）",
+  "hook": "pass"
+ },
+ {
+  "case": "pg_calibration",
+  "patch": "axes_0.xlabel.fontsize",
+  "class": "D",
+  "why": "13 行没有 fontsize 参数（取 rcParams / 默认值）",
+  "hook": "pass"
+ },
+ {
+  "case": "pg_calibration",
+  "patch": "axes_0.xticks.fontsize",
+  "class": "D",
+  "why": "刻度文字不是一次调用建出来的（tick_params / rcParams）",
+  "hook": "pass"
+ },
+ {
+  "case": "pg_calibration",
+  "patch": "axes_0.xlabel.pos_frac",
+  "class": "C",
+  "why": "位置是 figure 分数，要换算回脚本的坐标系（数据 / 轴分数）再改实参",
+  "hook": "pass"
+ },
+ {
+  "case": "pg_calibration",
+  "patch": "axes_0.title.pos_frac",
+  "class": "C",
+  "why": "位置是 figure 分数，要换算回脚本的坐标系（数据 / 轴分数）再改实参",
+  "hook": "not_emitted"
+ },
+ {
+  "case": "pg_calibration",
+  "patch": "axes_0.legend.loc",
+  "class": "A",
+  "why": "16 行 loc='upper left'",
+  "hook": "pass"
+ },
+ {
+  "case": "pg_calibration",
+  "patch": "axes_0.legend.loc_frac",
+  "class": "C",
+  "why": "拖出来的位置要换算成 loc 元组并清掉 bbox_to_anchor——不是改一个字面量",
+  "hook": "pass"
+ },
+ {
+  "case": "pg_calibration",
+  "patch": "axes_0.legend.fontsize",
+  "class": "D",
+  "why": "16 行没有 fontsize 参数（取 rcParams / 默认值）",
+  "hook": "not_emitted"
+ },
+ {
+  "case": "pg_calibration",
+  "patch": "axes_0.legend.texts_0.fontsize",
+  "class": "D",
+  "why": "单条图例文字没有自己的调用（legend() 统一建）",
+  "hook": "pass"
+ },
+ {
+  "case": "user_a",
+  "patch": "axes_2.lines_0.color",
+  "class": "C",
+  "why": "474 行 color=<略>",
+  "hook": "pass"
+ },
+ {
+  "case": "user_a",
+  "patch": "axes_2.lines_0.linewidth",
+  "class": "B",
+  "why": "474 行 lw=<略> 执行了 2 次",
+  "hook": "pass"
+ },
+ {
+  "case": "user_a",
+  "patch": "axes_2.xlabel.fontsize",
+  "class": "D",
+  "why": "205 行没有 fontsize 参数（取 rcParams / 默认值）",
+  "hook": "pass"
+ },
+ {
+  "case": "user_a",
+  "patch": "axes_0.texts_0.fontsize",
+  "class": "A",
+  "why": "395 行 fontsize=<略>",
+  "hook": "pass"
+ },
+ {
+  "case": "user_a",
+  "patch": "axes_0.texts_0.color",
+  "class": "A",
+  "why": "395 行 color=<略>",
+  "hook": "pass"
+ },
+ {
+  "case": "user_a",
+  "patch": "axes_2.xticks.fontsize",
+  "class": "D",
+  "why": "刻度文字不是一次调用建出来的（tick_params / rcParams）",
+  "hook": "pass"
+ },
+ {
+  "case": "user_a",
+  "patch": "axes_0.texts_0.pos_frac",
+  "class": "C",
+  "why": "位置是 figure 分数，要换算回脚本的坐标系（数据 / 轴分数）再改实参",
+  "hook": "pass"
+ },
+ {
+  "case": "user_a",
+  "patch": "axes_2.xlabel.pos_frac",
+  "class": "C",
+  "why": "位置是 figure 分数，要换算回脚本的坐标系（数据 / 轴分数）再改实参",
+  "hook": "pass"
+ },
+ {
+  "case": "user_a",
+  "patch": "axes_3.legend.loc",
+  "class": "A",
+  "why": "491 行 loc=<略> right'",
+  "hook": "pass"
+ },
+ {
+  "case": "user_a",
+  "patch": "axes_3.legend.loc_frac",
+  "class": "C",
+  "why": "拖出来的位置要换算成 loc 元组并清掉 bbox_to_anchor——不是改一个字面量",
+  "hook": "pass"
+ },
+ {
+  "case": "user_a",
+  "patch": "axes_3.legend.fontsize",
+  "class": "A",
+  "why": "491 行 fontsize=<略>",
+  "hook": "not_emitted"
+ },
+ {
+  "case": "user_a",
+  "patch": "axes_3.legend.texts_0.fontsize",
+  "class": "D",
+  "why": "单条图例文字没有自己的调用（legend() 统一建）",
+  "hook": "pass"
+ },
+ {
+  "case": "user_b",
+  "patch": "axes_0.lines_0.color",
+  "class": "C",
+  "why": "94 行 color=<略>",
+  "hook": "pass"
+ },
+ {
+  "case": "user_b",
+  "patch": "axes_0.lines_0.linewidth",
+  "class": "B",
+  "why": "94 行 linewidth=<略> 执行了 3 次",
+  "hook": "pass"
+ },
+ {
+  "case": "user_b",
+  "patch": "axes_0.title.fontsize",
+  "class": "A",
+  "why": "111 行 fontsize=<略>",
+  "hook": "pass"
+ },
+ {
+  "case": "user_b",
+  "patch": "axes_0.xlabel.fontsize",
+  "class": "D",
+  "why": "107 行没有 fontsize 参数（取 rcParams / 默认值）",
+  "hook": "pass"
+ },
+ {
+  "case": "user_b",
+  "patch": "axes_0.xticks.fontsize",
+  "class": "D",
+  "why": "刻度文字不是一次调用建出来的（tick_params / rcParams）",
+  "hook": "pass"
+ },
+ {
+  "case": "user_b",
+  "patch": "axes_0.xlabel.pos_frac",
+  "class": "C",
+  "why": "位置是 figure 分数，要换算回脚本的坐标系（数据 / 轴分数）再改实参",
+  "hook": "pass"
+ },
+ {
+  "case": "user_b",
+  "patch": "axes_0.title.pos_frac",
+  "class": "C",
+  "why": "位置是 figure 分数，要换算回脚本的坐标系（数据 / 轴分数）再改实参",
+  "hook": "not_emitted"
+ },
+ {
+  "case": "user_b",
+  "patch": "axes_0.legend.loc",
+  "class": "A",
+  "why": "116 行 loc=<略> center'",
+  "hook": "pass"
+ },
+ {
+  "case": "user_b",
+  "patch": "axes_0.legend.loc_frac",
+  "class": "C",
+  "why": "拖出来的位置要换算成 loc 元组并清掉 bbox_to_anchor——不是改一个字面量",
+  "hook": "pass"
+ },
+ {
+  "case": "user_b",
+  "patch": "axes_0.legend.fontsize",
+  "class": "D",
+  "why": "116 行没有 fontsize 参数（取 rcParams / 默认值）",
+  "hook": "not_emitted"
+ },
+ {
+  "case": "user_b",
+  "patch": "axes_0.legend.texts_0.fontsize",
+  "class": "D",
+  "why": "单条图例文字没有自己的调用（legend() 统一建）",
+  "hook": "pass"
+ }
+]

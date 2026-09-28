@@ -1,0 +1,118 @@
+{
+ "encoding": [
+  {
+   "variant": "utf8_lf",
+   "encoding": "utf-8",
+   "newline": "'\\n'",
+   "indent": "'    '",
+   "ascii_block": false,
+   "bom_kept": true,
+   "newline_kept": true,
+   "roundtrip": true,
+   "idempotent": true,
+   "terminal_applied": true,
+   "terminal_warnings": [],
+   "tavotto_imported": false
+  },
+  {
+   "variant": "utf8_crlf",
+   "encoding": "utf-8",
+   "newline": "'\\r\\n'",
+   "indent": "'    '",
+   "ascii_block": false,
+   "bom_kept": true,
+   "newline_kept": true,
+   "roundtrip": true,
+   "idempotent": true,
+   "terminal_applied": true,
+   "terminal_warnings": [],
+   "tavotto_imported": false
+  },
+  {
+   "variant": "utf8_bom_crlf",
+   "encoding": "utf-8-sig",
+   "newline": "'\\r\\n'",
+   "indent": "'    '",
+   "ascii_block": false,
+   "bom_kept": true,
+   "newline_kept": true,
+   "roundtrip": true,
+   "idempotent": true,
+   "terminal_applied": true,
+   "terminal_warnings": [],
+   "tavotto_imported": false
+  },
+  {
+   "variant": "gbk_cookie",
+   "encoding": "gbk",
+   "newline": "'\\n'",
+   "indent": "'    '",
+   "ascii_block": false,
+   "bom_kept": true,
+   "newline_kept": true,
+   "roundtrip": true,
+   "idempotent": true,
+   "terminal_applied": true,
+   "terminal_warnings": [],
+   "tavotto_imported": false
+  },
+  {
+   "variant": "tabs",
+   "encoding": "utf-8",
+   "newline": "'\\n'",
+   "indent": "'\\t'",
+   "ascii_block": false,
+   "bom_kept": true,
+   "newline_kept": true,
+   "roundtrip": true,
+   "idempotent": true,
+   "terminal_applied": true,
+   "terminal_warnings": [],
+   "tavotto_imported": false
+  },
+  {
+   "variant": "latin1_cookie",
+   "encoding": "iso-8859-1",
+   "newline": "'\\n'",
+   "indent": "'    '",
+   "ascii_block": true,
+   "bom_kept": true,
+   "newline_kept": true,
+   "roundtrip": true,
+   "idempotent": true,
+   "terminal_applied": true,
+   "terminal_warnings": [],
+   "tavotto_imported": false
+  }
+ ],
+ "guard": [
+  {
+   "case": "reordered",
+   "magenta_on": [
+    "Catalyst (k = 0.125 $\\mathrm{min^{-1}}$)"
+   ],
+   "warnings": []
+  },
+  {
+   "case": "catalyst_deleted",
+   "magenta_on": [],
+   "warnings": [
+    "Tavotto 调整未应用（Fig1_kinetics · axes_0.lines_0.color）：找不到唯一一条名为 'Catalyst (k = 0.125 $\\\\mathrm{min^{-1}}$)' 的曲线"
+   ]
+  },
+  {
+   "case": "unchanged",
+   "magenta_on": [
+    "Catalyst (k = 0.125 $\\mathrm{min^{-1}}$)"
+   ],
+   "warnings": []
+  },
+  {
+   "case": "unlabelled_inserted_before",
+   "magenta_line_index": [
+    0
+   ],
+   "note": "无 label 按位置：新插的灰线被染色（已知边界）"
+  }
+ ]
+}
