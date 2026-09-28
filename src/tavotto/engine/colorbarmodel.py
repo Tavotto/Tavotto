@@ -1041,9 +1041,13 @@ def _field_fit(arr, tube: "_ColourTube") -> float:
     return float(len(got)) / float(n_opaque)
 
 
-def _declared_parents(cb):
+def declared_parents(cb):
     """色条自己声明的宿主（`fig.colorbar(..., ax=...)` 记在 `_colorbar_info["parents"]`）；
-    `cax=` 建的没有这份记录，回 None。"""
+    `cax=` 建的没有这份记录，回 None。
+
+    这是 matplotlib 在**建色条那一刻**按调用参数记下的 `ax` 列表（`make_axes` /
+    `make_axes_gridspec` 写、constrained layout 读），不是从渲染结果反推的——共享色条
+    成组（manifest 的 `groups`）与色条的结构归属都只认它。没有它就不下结论。"""
     info = getattr(getattr(cb, "ax", None), "_colorbar_info", None)
     parents = info.get("parents") if isinstance(info, dict) else None
     return list(parents) if parents else None
@@ -1062,7 +1066,7 @@ def _orphan_scopes(cbar_of_ax: dict, axes) -> list[tuple]:
     for cb in cbar_of_ax.values():
         if not _orphan_mappable(getattr(cb, "mappable", None)):
             continue
-        parents = _declared_parents(cb)
+        parents = declared_parents(cb)
         scope = [ax for ax in free if ax in parents] if parents else free
         out.append((parents is None, cb, scope))
     out.sort(key=lambda t: t[0])  # 稳定排序：有宿主的在前，各组内保持原序
@@ -1387,6 +1391,12 @@ def follow_map(fig, cbar_of_ax: dict, host_of_cbax: dict, axes) -> dict[str, lis
             bucket.append(o)
 
     for cbax, host in host_of_cbax.items():
+        # 横跨多个子图的色条（`fig.colorbar(im, ax=[b, c])`）不归任何**一个**宿主：
+        # 挂到第一个宿主名下的话，单独拖 B 会把整条共享色条拖走、C 留在原地。
+        # 它随整组走（manifest 的 `groups`，前端把组展开成成员一起平移 / 缩放）。
+        cb = cbar_of_ax.get(cbax)
+        if cb is not None and colorbar_host_count(cb) > 1:
+            continue
         link(host, cbax)
 
     for ax, other in coincident_shared_axes_pairs(ordered, cbar_of_ax):
