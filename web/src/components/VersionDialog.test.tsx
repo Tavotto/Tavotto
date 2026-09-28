@@ -29,7 +29,10 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   putVersionThumb: vi.fn(),
 }))
 // 缩略图合成在 jsdom 里没有 canvas；这里只关心节点有没有拍、拍的是什么
-vi.mock('@/lib/timelineThumb', () => ({ composeTimelineThumb: vi.fn(async () => null) }))
+vi.mock('@/lib/timelineThumb', () => ({
+  captureThumbSources: vi.fn(() => new Map()),
+  composeTimelineThumb: vi.fn(async () => null),
+}))
 
 import {
   ApiError,

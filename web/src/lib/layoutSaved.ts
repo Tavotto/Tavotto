@@ -10,11 +10,13 @@
  *
  * 纯同步、无依赖；`via` 只用来区分来路（诊断与用例），不参与判据。
  *
- * `ctx`（必填）：**发起保存那一刻**的时间线上下文（`currentTimelineCtx()`，在第一个
- * await 之前取）。保存要 await，完成时用户可能已经换了排版——「保存」点只打给真的被
- * 保存的那一份，换走了就不打（Codex #679）。必填是故意的：新增一条保存路径时，类型
- * 检查会逼它想清楚这一刻属于谁。
+ * `moment`（必填）：**写出去的那份**的快照（`captureMoment()`，与序列化那份文档同一刻取）。
+ * 保存要 await：完成时用户可能已经换了排版（点只打给被保存的那一份，换走了就不打），也可能
+ * 在同一份里接着改（节点拍的是写出去的那份，不是之后的样子）——Codex #679。必填是故意的：
+ * 新增一条保存路径时，类型检查会逼它想清楚「存的是哪一刻」。
  */
+import type { MomentSnapshot } from './timelineCheckpoint'
+
 export type LayoutSavedVia =
   /** ⌘S：本机自动保存写完（没绑定项目文件时） */
   | 'local'
@@ -24,8 +26,8 @@ export type LayoutSavedVia =
   | 'project_file'
 
 export interface LayoutSavedEvent {
-  /** 发起保存那一刻的时间线上下文 */
-  ctx: string
+  /** 写出去的那份：上下文 + 文档 + 面板图源 */
+  moment: MomentSnapshot
 }
 
 type Listener = (via: LayoutSavedVia, event: LayoutSavedEvent) => void

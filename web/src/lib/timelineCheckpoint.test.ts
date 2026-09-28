@@ -4,14 +4,17 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/lib/timelineThumb', () => ({ composeTimelineThumb: vi.fn(async () => null) }))
+vi.mock('@/lib/timelineThumb', () => ({
+  captureThumbSources: vi.fn(() => new Map()),
+  composeTimelineThumb: vi.fn(async () => null),
+}))
 
 import { emptyProject, type TextObject } from '@/types/document'
 import { useDocumentStore } from '@/store/documentStore'
 import { currentProjectId, setCurrentProjectId } from '@/lib/session'
 import { DEBOUNCE_MS, MIN_GAP_MS, startVersionCheckpoints } from '@/hooks/useVersionCheckpoints'
-import { markMoment, takeCheckpoint } from './timelineCheckpoint'
-import { currentTimelineCtx } from './timelineContext'
+import { captureMoment, markMoment, takeCheckpoint } from './timelineCheckpoint'
+import { composeTimelineThumb } from './timelineThumb'
 import { groupTimeline } from './timelineGroups'
 
 const text = (id: string): TextObject => ({
@@ -104,6 +107,45 @@ describe('关键时刻', () => {
   })
 })
 
+describe('关键时刻拍发起那一刻的内容（快照；Codex #679）', () => {
+  const ids = (p: Post) => (p.body.doc as { objects: { id: string }[] }).objects.map((o) => o.id)
+
+  it('发起之后又改了同一份排版：节点里是发起时那份，缩略图用发起时取的图源', async () => {
+    const stop = startVersionCheckpoints()
+    edit('t1')
+    const snap = captureMoment()
+    edit('t2') // 导出 / 保存 / 写回途中接着改
+    await markMoment('writeback', snap)
+    await vi.waitFor(() => expect(posts.filter((p) => p.body.moment)).toHaveLength(1))
+    stop()
+    const node = posts.find((p) => p.body.moment)!
+    expect(ids(node)).toEqual(['t1'])
+    expect(vi.mocked(composeTimelineThumb)).toHaveBeenLastCalledWith(snap.identity.doc, snap.thumb)
+  })
+
+  it('对照：不带快照（打开 / 离开这类同步时刻）拍的是此刻', async () => {
+    const stop = startVersionCheckpoints()
+    edit('t1')
+    edit('t2')
+    await markMoment('open')
+    await vi.waitFor(() => expect(posts.filter((p) => p.body.moment)).toHaveLength(1))
+    stop()
+    expect(ids(posts.find((p) => p.body.moment)!)).toEqual(['t1', 't2'])
+  })
+
+  it('保存事件：拍的是事件带来的那份（写出去的那份），不是此刻', async () => {
+    const stop = startVersionCheckpoints()
+    edit('t1')
+    const written = captureMoment()
+    edit('t2')
+    const { emitLayoutSaved } = await import('@/lib/layoutSaved')
+    emitLayoutSaved('project_file', { moment: written })
+    await vi.waitFor(() => expect(posts.filter((p) => p.body.moment === 'save')).toHaveLength(1))
+    stop()
+    expect(ids(posts.find((p) => p.body.moment === 'save')!)).toEqual(['t1'])
+  })
+})
+
 describe('关键时刻挂在各自的成功点上', () => {
   const job = (status: string) =>
     ({ job_id: 'j1', status, outputs: [], warnings: [], conflicts: [], error: null }) as never
@@ -129,16 +171,16 @@ describe('关键时刻挂在各自的成功点上', () => {
     const { emitLayoutSaved } = await import('@/lib/layoutSaved')
     const stop = startVersionCheckpoints()
     edit('t1')
-    emitLayoutSaved('project_file', { ctx: currentTimelineCtx() })
+    emitLayoutSaved('project_file', { moment: captureMoment() })
     await vi.waitFor(() => expect(posts).toHaveLength(1))
     expect(posts[0].body.moment).toBe('save')
     stop()
-    emitLayoutSaved('layout_file', { ctx: currentTimelineCtx() })
+    emitLayoutSaved('layout_file', { moment: captureMoment() })
     await new Promise((r) => setTimeout(r, 0))
     expect(posts).toHaveLength(1)
     // 停了再起（换项目重挂）：旧的订阅不能留着——留着的话一次保存打两个点
     const again = startVersionCheckpoints()
-    emitLayoutSaved('local', { ctx: currentTimelineCtx() })
+    emitLayoutSaved('local', { moment: captureMoment() })
     await vi.waitFor(() => expect(posts).toHaveLength(2))
     await new Promise((r) => setTimeout(r, 0))
     again()
@@ -148,16 +190,16 @@ describe('关键时刻挂在各自的成功点上', () => {
   it('关键时刻带着发起那一刻的上下文：换了排版才完成的，不给新排版打点', async () => {
     const stop = startVersionCheckpoints()
     edit('t1')
-    const atA = currentTimelineCtx()
+    const atA = captureMoment()
     await useDocumentStore.getState().switchDocument(emptyProject(), 'd_cp_other')
     edit('t2')
     await markMoment('writeback', atA)
     const { emitLayoutSaved } = await import('@/lib/layoutSaved')
-    emitLayoutSaved('local', { ctx: atA })
+    emitLayoutSaved('local', { moment: atA })
     await new Promise((r) => setTimeout(r, 0))
     expect(posts.filter((p) => p.body.moment)).toEqual([])
     // 对照：带上此刻的上下文就照常打
-    await markMoment('writeback', currentTimelineCtx())
+    await markMoment('writeback', captureMoment())
     await vi.waitFor(() => expect(posts.map((p) => p.body.moment)).toContain('writeback'))
     expect(posts.find((p) => p.body.moment)!.url).toContain('d_cp_other')
     stop()

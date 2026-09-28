@@ -24,8 +24,7 @@ import { Dialog } from '../ui/Dialog'
 import { CopyButton } from '../settings/CopyButton'
 import { Toggle } from '../ui/Toggle'
 import { Tip } from '../ui/Tooltip'
-import { markMoment } from '@/lib/timelineCheckpoint'
-import { currentTimelineCtx } from '@/lib/timelineContext'
+import { captureMoment, markMoment } from '@/lib/timelineCheckpoint'
 
 const stemOf = (fileId: string) => fileId.split('/').pop()?.replace(/\.[^.]+$/, '') ?? fileId
 
@@ -240,7 +239,8 @@ export function WriteBackDialog({
   }, [panels, objects])
 
   const run = async () => {
-    const ctx = currentTimelineCtx() // 写回完成时可能已经换了排版：「写回」点只打给这一份
+    // 写回完成时可能已经换了排版、或接着改了：「写回」点只打给这一份、拍的是发起时的内容
+    const moment = captureMoment()
     setBusy(true)
     setError(null)
     try {
@@ -252,7 +252,7 @@ export function WriteBackDialog({
       )
       setResult(res)
       // 排版时间线的关键时刻（ADR 0101）：写回成功，原图已经变了
-      void markMoment('writeback', ctx)
+      void markMoment('writeback', moment)
       if (useAnn) {
         // 标注已经烙进原图：画布上的原件移除（可撤销），否则成图里会出现两份
         const ids = [...annMap.values()].flatMap((a) => a.objectIds)

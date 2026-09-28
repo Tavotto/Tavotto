@@ -165,7 +165,7 @@ describe('「保存」点属于被保存的那一份（Codex #679）', () => {
     const { currentTimelineCtx } = await import('@/lib/timelineContext')
     const { useTimelineStore } = await import('@/store/timelineStore')
     const ctxs: string[] = []
-    const off = onLayoutSaved((_via, { ctx }) => ctxs.push(ctx))
+    const off = onLayoutSaved((_via, { moment }) => ctxs.push(moment.ctx))
     await open()
     const before = currentTimelineCtx()
     mockSave.mockImplementationOnce(async () => {

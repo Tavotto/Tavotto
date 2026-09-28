@@ -1,12 +1,13 @@
 import { createVersion, putVersionThumb, type LayoutMoment, type LayoutVersionMeta } from '@/lib/api'
 import { currentProjectId } from '@/lib/session'
 import { currentTimelineCtx } from '@/lib/timelineContext'
-import { composeTimelineThumb } from '@/lib/timelineThumb'
+import { captureThumbSources, composeTimelineThumb, type ThumbSources } from '@/lib/timelineThumb'
 import { documentDigest, recordDiagnosticEvent, versionHash } from '@/diagnostics'
 import { useDocumentStore } from '@/store/documentStore'
 import { useTimelineStore } from '@/store/timelineStore'
 import { useUiStore } from '@/store/uiStore'
 import { msg } from '@/i18n'
+import type { FigureDocument } from '@/types/document'
 
 /**
  * 给排版时间线打一个节点（ADR 0101）——自动节点、关键时刻、手动 / 命名节点、
@@ -36,6 +37,32 @@ export function activeCanvasIdentity() {
   }
 }
 
+/**
+ * 一个关键时刻的**快照**：发起那一刻的上下文、那份文档（连画布身份、项目）与面板图源，
+ * **一起取、一次取**（Codex #679）。
+ *
+ * 导出 / 保存 / 写回都要 await；完成时现拍的话，拍到的是之后又改过的样子——「导出」节点
+ * 里放着一份从没被导出过的内容，从它恢复就不是用户导出的那一版。所以这三处在发起时取
+ * 快照、完成时拿它打点。documentStore 里的文档是不可变的（每次 commit 换新对象），留住
+ * 引用就是留住那一刻。
+ */
+export interface MomentSnapshot {
+  /** 发起那一刻的时间线上下文（项目代际 + 排版 id） */
+  readonly ctx: string
+  readonly identity: ReturnType<typeof activeCanvasIdentity>
+  readonly thumb: ThumbSources
+}
+
+/**
+ * 在操作发起那一刻取快照。`doc` 给的话用它（这次操作**实际送出**的那一份，例如导出请求
+ * 里的文档），画布身份、项目仍取此刻的。
+ */
+export function captureMoment(doc?: FigureDocument): MomentSnapshot {
+  const identity = activeCanvasIdentity()
+  if (doc) identity.doc = doc
+  return { ctx: currentTimelineCtx(), identity, thumb: captureThumbSources(identity.doc) }
+}
+
 export interface CheckpointOptions {
   auto: boolean
   moment?: LayoutMoment
@@ -49,12 +76,14 @@ export interface CheckpointOptions {
 
 export async function takeCheckpoint(
   opts: CheckpointOptions,
+  snapshot?: MomentSnapshot,
 ): Promise<{ version?: LayoutVersionMeta; skipped?: boolean } | null> {
-  const id = activeCanvasIdentity()
+  // 给了快照就拍快照里那一刻（关键时刻，见 `MomentSnapshot`）；没给就拍此刻
+  const id = snapshot?.identity ?? activeCanvasIdentity()
   if (!opts.allowEmpty && !id.doc.objects.length) return null
   const name = opts.name?.trim() || undefined
-  // 缩略图的图源在这里、在任何 await 之前取（见 `composeTimelineThumb`）
-  const thumbP = composeTimelineThumb(id.doc)
+  // 缩略图的图源在这里、在任何 await 之前取（见 `composeTimelineThumb`）；快照带着的用快照的
+  const thumbP = composeTimelineThumb(id.doc, snapshot ? snapshot.thumb : undefined)
   const res = await createVersion(
     id.documentId,
     {
@@ -110,26 +139,31 @@ export async function saveNamedNode(name: string): Promise<void> {
  * **只有时间线在跑（`startVersionCheckpoints` 挂上了）时才打点**：单元测试里
  * 那些成功路径不会因此多发一个请求，而应用里它总是在跑的。
  *
- * **`ctx`：这件事发生在哪个上下文**（项目代际 + 排版 id，`lib/timelineContext`）。
- * 节点拍的是**此刻**的文档，所以跨了 await 的调用点必须在发起那一刻取 `ctx` 带过来：
- * 完成时已经换了排版 / 项目，这一刻就丢掉——给 B 打点，B 的时间线上会多一个内容从没
- * 被导出 / 保存 / 写回过的节点（Codex #679）。不回头给 A 补：那要离开 documentStore
- * 另拍一份快照（画布身份、缩略图图源、pj 都得另取），是 `takeCheckpoint` 的第二份实现。
+ * **快照**（`MomentSnapshot`，`captureMoment()` 在操作发起那一刻取）：跨了 await 的调用点
+ * 必须带。完成时两件事都用它——
+ * - **上下文**：已经换了排版 / 项目，这一刻就丢掉。给换上来的那一份打点，它的时间线上会
+ *   多一个内容从没被导出 / 保存 / 写回过的节点。不回头给原来那一份补（要离开 documentStore
+ *   另起一条拍节点的路：pj、缩略图请求都得绕开「当前」）。
+ * - **内容**：节点拍的是快照里那份文档、缩略图用快照里的面板图源——同一份排版里途中又改过
+ *   的话，现拍的是之后的样子，从它恢复不是那一版（Codex #679）。
  *
  * 调用点清单：
- * - 跨 await、带 ctx：导出（`runExport` 起作业时记进 exportStore，终局时带上）、
- *   保存（`emitLayoutSaved` 的发出点在 await 之前取，事件带过来）、写回（两处按钮）；
+ * - 带快照（内容 = 发起时那份）：导出（`runExport` 用导出请求里的那份文档取，记进
+ *   exportStore，终局时带上）；保存（⌘S 本机与另存为在 `captureSaveContext()` 里取、
+ *   ⌘S 写回项目文件在 `buildProject()` 那一刻取——那才是写出去的那份；经
+ *   `emitLayoutSaved` 的事件带过来）；写回（两处按钮在发起时取）；
  * - 同步、不带：打开（`adoptNow` 换完代之后、`markWorkspaceOpened`）、离开（`adoptNow`
- *   认领新项目之前、`showPicker`）——调的那一刻就是那件事发生的上下文。
+ *   认领新项目之前、`showPicker`）——调的那一刻就是那件事发生的上下文与内容。
+ * 没有「拿不到快照、只能按编辑代次丢弃」的路径：三处都在发起时拿得到送出去的那份文档。
  */
-let momentSink: ((moment: LayoutMoment) => Promise<unknown>) | null = null
+let momentSink: ((moment: LayoutMoment, snapshot?: MomentSnapshot) => Promise<unknown>) | null = null
 
 export function setMomentSink(sink: typeof momentSink): void {
   momentSink = sink
 }
 
-export function markMoment(moment: LayoutMoment, ctx?: string | null): Promise<unknown> {
+export function markMoment(moment: LayoutMoment, snapshot?: MomentSnapshot | null): Promise<unknown> {
   if (!momentSink) return Promise.resolve(null)
-  if (ctx != null && ctx !== currentTimelineCtx()) return Promise.resolve(null)
-  return momentSink(moment).catch(() => null)
+  if (snapshot && snapshot.ctx !== currentTimelineCtx()) return Promise.resolve(null)
+  return momentSink(moment, snapshot ?? undefined).catch(() => null)
 }

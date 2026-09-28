@@ -62,8 +62,8 @@ export function startVersionCheckpoints(): () => void {
 
   // 关键时刻：导出 / 写回 / 保存 / 打开 / 关闭 / 恢复前。**不去重**（服务器端也不），
   // 打完点重新计间隔——刚打过关键时刻，紧接着再拍一个自动节点只是重复
-  setMomentSink(async (moment) => {
-    const res = await takeCheckpoint({ auto: true, moment })
+  setMomentSink(async (moment, snapshot) => {
+    const res = await takeCheckpoint({ auto: true, moment }, snapshot)
     if (res?.version) lastSaved = Date.now()
     return res
   })
@@ -71,7 +71,7 @@ export function startVersionCheckpoints(): () => void {
   // 「排版写进了文件」→「保存」时刻。订阅而不是让保存侧调时间线：写文件的路不止一条、
   // 还在变（#674），见 `lib/layoutSaved.ts`
   // 点打给发起保存时的那一份排版：完成时已经换走了就不打（`markMoment` 的 ctx）
-  const unsubSaved = onLayoutSaved((_via, { ctx }) => void markMoment('save', ctx))
+  const unsubSaved = onLayoutSaved((_via, { moment }) => void markMoment('save', moment))
 
   const unsub = useDocumentStore.subscribe((state, prev) => {
     if (state.doc === prev.doc) return

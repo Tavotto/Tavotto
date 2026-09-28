@@ -41,9 +41,27 @@ describe('runManualSave → emitLayoutSaved', () => {
       return 'saved'
     })
     const ctxs: string[] = []
-    off = onLayoutSaved((_via, { ctx }) => ctxs.push(ctx))
+    off = onLayoutSaved((_via, { moment }) => ctxs.push(moment.ctx))
     await runManualSave()
     expect(ctxs).toEqual([before])
     expect(currentTimelineCtx()).not.toBe(before)
+  })
+
+  it('本机保存途中接着改：事件带的快照是按下 ⌘S 那一刻（序列化出去的那一份）', async () => {
+    const { useDocumentStore } = await import('@/store/documentStore')
+    const { literal } = await import('@/i18n')
+    const pressed = useDocumentStore.getState().doc
+    saveNow.mockImplementationOnce(async () => {
+      useDocumentStore.getState().commit(literal('保存途中加字'), (d) => {
+        d.guides.push({ axis: 'x', pos: 3 })
+      })
+      return 'saved'
+    })
+    const docs: unknown[] = []
+    off = onLayoutSaved((_via, { moment }) => docs.push(moment.identity.doc))
+    await runManualSave()
+    expect(docs).toEqual([pressed])
+    expect(docs[0]).toBe(pressed)
+    expect(useDocumentStore.getState().doc).not.toBe(pressed)
   })
 })
