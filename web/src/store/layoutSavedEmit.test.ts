@@ -1,16 +1,28 @@
 /**
- * ⌘S 存完（本机那一档）发「排版写成了」（ADR 0101 §7）；存失败 / 冲突不发。
+ * ⌘S 存完（本机那一档）发「排版写成了」（ADR 0101 §7）：跟**这次写没写成**走（`wrote`），
+ * 不跟写完之后的实时状态走——写的途中又改过，状态照实是 dirty，按下那一刻的内容却已经在盘上
+ * （Codex #679）。没写成（失败 / 冲突）不发。
  *
  * 时间线的「保存」点挂在这个事件上而不是 `runManualSave` 里——#674 的「存进项目」
  * 分支提前 return，直接挂在函数末尾的打点在那条路上永远不执行。
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-const saveNow = vi.fn()
+const saveNowImpl = vi.fn()
 vi.mock('@/store/documentStore', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/store/documentStore')>()),
-  saveNow: () => saveNow(),
+  saveNowWithResult: () => saveNowImpl(),
 }))
+/** 旧写法的替身：只给最终状态时，写成与否按「是不是存好了」推 */
+const saveNow = {
+  mockResolvedValueOnce: (state: string) =>
+    saveNowImpl.mockResolvedValueOnce({ state, wrote: state === 'saved' || state === 'clean' }),
+  mockImplementationOnce: (fn: () => Promise<string>) =>
+    saveNowImpl.mockImplementationOnce(async () => {
+      const state = await fn()
+      return { state, wrote: state === 'saved' || state === 'clean' }
+    }),
+}
 
 import { onLayoutSaved } from '@/lib/layoutSaved'
 import { currentTimelineCtx } from '@/lib/timelineContext'
@@ -28,6 +40,17 @@ describe('runManualSave → emitLayoutSaved', () => {
     ['save_error', []],
   ])('saveNow 回 %s → 事件 %j', async (state, expected) => {
     saveNow.mockResolvedValueOnce(state)
+    const seen: string[] = []
+    off = onLayoutSaved((via) => seen.push(via))
+    await runManualSave()
+    expect(seen).toEqual(expected)
+  })
+
+  it.each([
+    [{ state: 'dirty', wrote: true }, ['local']],
+    [{ state: 'saved', wrote: false }, []],
+  ])('跟「写没写成」走，不跟最终状态走：%j → 事件 %j', async (result, expected) => {
+    saveNowImpl.mockResolvedValueOnce(result)
     const seen: string[] = []
     off = onLayoutSaved((via) => seen.push(via))
     await runManualSave()

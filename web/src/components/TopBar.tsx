@@ -57,6 +57,7 @@ import { Popover } from './ui/Popover'
 import { saveNamedNode } from '@/lib/timelineCheckpoint'
 import { useTimelineStore } from '@/store/timelineStore'
 import { afterAwait, timelineCtxKey } from '@/lib/timelineContext'
+import { useInFlight } from '@/hooks/useInFlight'
 import { Tip } from './ui/Tooltip'
 import { ALT, MOD, cn } from '@/lib/utils'
 import { msg } from '@/i18n'
@@ -376,6 +377,7 @@ export function NamedNodeButton() {
   const error = failure?.ctx === ctx ? failure.text : null
   const [busyCtx, setBusyCtx] = useState<string | null>(null)
   const busy = busyCtx === ctx
+  const submitOnce = useInFlight()
   useEffect(() => {
     if (open) {
       setName('')
@@ -387,18 +389,21 @@ export function NamedNodeButton() {
     // await 之后的状态一律经 `afterAwait`（清单在 `lib/timelineContext.ts`）：换走之后才
     // 回来的，不关 B 里开着的浮层
     const at = ctx
-    const after = afterAwait(at)
-    setBusyCtx(at)
-    try {
-      await saveNamedNode(name)
-      after(() => useTimelineStore.getState().setNamingOpen(false))
-    } catch (e) {
-      // 旧上下文的失败不碰错误槽：槽只有一个，写进来会顶掉 B 自己的错误
-      after(() => setFailure({ ctx: at, text: backendErrorText(e) }))
-    } finally {
-      // 只摘自己挂的忙标记（A → B → A 回来时 A 不该一直在忙）
-      setBusyCtx((c) => (c === at ? null : c))
-    }
+    // 在途时回车 / 再点一次都不再发（`useInFlight`：同步标记，与时间线抽屉同一份）
+    await submitOnce(at, async () => {
+      const after = afterAwait(at)
+      setBusyCtx(at)
+      try {
+        await saveNamedNode(name)
+        after(() => useTimelineStore.getState().setNamingOpen(false))
+      } catch (e) {
+        // 旧上下文的失败不碰错误槽：槽只有一个，写进来会顶掉 B 自己的错误
+        after(() => setFailure({ ctx: at, text: backendErrorText(e) }))
+      } finally {
+        // 只摘自己挂的忙标记（A → B → A 回来时 A 不该一直在忙）
+        setBusyCtx((c) => (c === at ? null : c))
+      }
+    })
   }
   return (
     <Popover

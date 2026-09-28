@@ -51,7 +51,7 @@ import type { ProjectFileBinding } from '@/lib/projectFile'
 import { useAssetStore } from './assetStore'
 import {
   readAutosaveDoc,
-  saveNow,
+  saveNowWithResult,
   setProjectFile,
   useDocumentStore,
   type CommitOptions,
@@ -534,7 +534,7 @@ export async function runManualSave(): Promise<void> {
   const ui = useUiStore.getState()
   // 按下 ⌘S 那一刻的排版 / 项目 / 绑定：整条链只用它（`saveContext.ts`）
   const ctx = captureSaveContext()
-  const state = await saveNow()
+  const { state, wrote } = await saveNowWithResult()
   // saveNow 途中切走了：本机那一份（入口那份）已经照常落盘，项目文件这一步不再做——
   // 此刻开着的是另一份，写它、给它弹「存进项目」都不是用户要的；没写进项目要说出来
   if (ctx.pj !== null && !stillCurrent(ctx)) {
@@ -551,10 +551,12 @@ export async function runManualSave(): Promise<void> {
     }
     return
   }
+  // 「排版写成了」由保存侧发，时间线订阅它打「保存」点（ADR 0101 §7）；点属于按下 ⌘S 那一份。
+  // 跟**这次写没写成**走，不跟最终的实时状态走：写的途中又改过的话状态照实是 dirty，
+  // 但按下那一刻的内容已经在盘上了（Codex #679）
+  if (wrote) emitLayoutSaved('local', { moment: ctx.moment })
   if (state === 'saved' || state === 'clean') {
     ui.setStatus(msg('save.doneLocal', undefined, 'workspace'))
-    // 「排版写成了」由保存侧发，时间线订阅它打「保存」点（ADR 0101 §7）；点属于按下 ⌘S 那一份
-    emitLayoutSaved('local', { moment: ctx.moment })
   } else if (state === 'conflict') {
     ui.setStatus(msg('save.conflict', undefined, 'workspace'), 'error')
   } else if (state === 'save_error') {

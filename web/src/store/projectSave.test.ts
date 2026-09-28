@@ -225,6 +225,25 @@ describe('写成了就发「排版写成了」（时间线的「保存」点，A
     expect(docs).toEqual([sent])
   })
 
+  it('没开项目、本机写的途中接着改：照样发 local（内容是按下 ⌘S 那一刻的），状态照实是 dirty', async () => {
+    setCurrentProjectId(null)
+    edit('t1')
+    const docs: string[][] = []
+    const offDocs = onLayoutSaved((_via, { moment }) => docs.push(moment.identity.doc.objects.map((o) => o.id)))
+    let open!: () => void
+    autosaveGate = new Promise<void>((r) => (open = r))
+    const saving = runManualSave()
+    await new Promise((r) => setTimeout(r, 20))
+    edit('t2') // 写盘请求已经在路上
+    autosaveGate = null
+    open()
+    await saving
+    offDocs()
+    expect(seen.map(([via]) => via)).toEqual(['local'])
+    expect(docs).toEqual([['t1']])
+    expect(s().saveState).toBe('dirty')
+  })
+
   it('没写成（409）不发', async () => {
     projectFiles.set('排版一', '{"theirs":1}')
     bind({ revision: 'stale' })
