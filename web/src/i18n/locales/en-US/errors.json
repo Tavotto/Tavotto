@@ -197,7 +197,8 @@
     "script_input_not_found": "That remembered answer was not found; it may have been removed.",
     "script_input_not_pending": "This question is no longer waiting for an answer (the script may have finished or been stopped).",
     "script_input_timeout": "The script waited 10 minutes for an answer to “{{prompt}}”, got none, and failed after being told the input had ended. Run it again and answer.",
-    "script_needs_input": "The script is asking for input: “{{prompt}}”. Run it once in the Tavotto window and answer; the answer is remembered for this project."
+    "script_needs_input": "The script is asking for input: “{{prompt}}”. Run it once in the Tavotto window and answer; the answer is remembered for this project.",
+    "script_input_stream_gone": "The event stream disconnected; reconnecting."
   },
   "engine": {
     "apply": "Apply",

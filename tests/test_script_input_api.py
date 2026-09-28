@@ -280,7 +280,9 @@ def test_answerers_are_counted_per_project_and_only_while_the_stream_lives(clien
 
 
 @needs_worker
-def test_a_ui_on_another_project_does_not_hold_the_script(client, figs, tmp_path, events, monkeypatch):
+def test_a_ui_on_another_project_does_not_hold_the_script(
+    client, figs, tmp_path, events, monkeypatch
+):
     """界面开着别的项目时，这个项目的脚本问到 input 立即 `script_needs_input`，不干等（Codex #680 P1）。"""
     other = tmp_path / "other"
     other.mkdir()

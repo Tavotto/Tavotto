@@ -197,7 +197,8 @@
     "script_input_not_found": "没有找到这条记住的答案，可能已被删除。",
     "script_input_not_pending": "这个问题已经不在等待作答了（脚本可能已经结束或被停止）。",
     "script_input_timeout": "脚本在等输入「{{prompt}}」，等了 10 分钟没有回答，按输入结束处理后脚本失败了。重新运行并作答即可。",
-    "script_needs_input": "脚本需要输入：「{{prompt}}」。请在 Tavotto 界面里运行一次这个脚本并作答，答案会按项目记住。"
+    "script_needs_input": "脚本需要输入：「{{prompt}}」。请在 Tavotto 界面里运行一次这个脚本并作答，答案会按项目记住。",
+    "script_input_stream_gone": "事件流已经断开，正在重新连接。"
   },
   "engine": {
     "apply": "应用",

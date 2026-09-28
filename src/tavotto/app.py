@@ -3199,9 +3199,7 @@ def api_script_input_listen():
     stream_id = str((request.get_json(force=True) or {}).get("stream_id") or "")
     with _answerer_lock:
         if stream_id not in _answerer_streams:
-            return jsonify(
-                {"error": "事件流已经断开", "code": "script_input_stream_gone"}
-            ), 404
+            return jsonify({"error": "事件流已经断开", "code": "script_input_stream_gone"}), 404
         _answerer_streams[stream_id] = ctx.id
     return jsonify({"ok": True})
 

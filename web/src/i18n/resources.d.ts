@@ -1882,6 +1882,7 @@ export default interface Resources {
       "script_input_invalid": "这个答案不能保存（太长或不是文字）。",
       "script_input_not_found": "没有找到这条记住的答案，可能已被删除。",
       "script_input_not_pending": "这个问题已经不在等待作答了（脚本可能已经结束或被停止）。",
+      "script_input_stream_gone": "事件流已经断开，正在重新连接。",
       "script_input_timeout": "脚本在等输入「{{prompt}}」，等了 10 分钟没有回答，按输入结束处理后脚本失败了。重新运行并作答即可。",
       "script_name_missing": "缺少脚本名",
       "script_needs_arguments": "脚本要求命令行参数，而 Tavotto 运行脚本时不带任何参数（sys.argv 只有脚本自己），参数解析于是退出了。给这些参数写默认值，或在终端里用「tavotto run -- python 脚本.py 参数…」让 Tavotto 跟着你自己的命令跑。展开输出看它要哪些参数。",
