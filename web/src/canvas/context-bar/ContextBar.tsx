@@ -226,9 +226,10 @@ export function ContextBar() {
   const freeWidth = freeWidthOf(window.innerWidth, insets)
   const variant = overflow ? 'compact' : barVariant(freeWidth)
 
+  // 换了一组对象或一组图内元素都重新从完整档量起（图内多选的选区在 gids 里，不在 ids 里）
   useLayoutEffect(() => {
     setOverflow(false)
-  }, [freeWidth, idsKey])
+  }, [freeWidth, idsKey, gidsKey])
 
   // Esc 关闭只作用于**这一次选择**；选择一变就重新出现
   useEffect(() => {

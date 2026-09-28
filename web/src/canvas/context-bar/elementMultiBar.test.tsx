@@ -396,6 +396,29 @@ describe('图内多选出浮动栏', () => {
     }
   })
 
+  it('量出来放不下才降档：换一组图内元素重新从完整档量起，不沿用上一组的压缩档', async () => {
+    // 静态阈值给完整档（jsdom 默认 1024 宽、两栏都收起），降档只能来自「量出来溢出」
+    const originalW = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetWidth')
+    let barW = 2000
+    Object.defineProperty(HTMLElement.prototype, 'offsetWidth', {
+      configurable: true,
+      get() {
+        return (this as HTMLElement).hasAttribute('data-context-bar') ? barW : 0
+      },
+    })
+    try {
+      await mount()
+      await selectGids('axes_0.legend.texts_0', 'axes_0.legend.texts_1')
+      expect(bar()!.getAttribute('data-variant')).toBe('compact')
+      barW = 300
+      await selectGids('axes_0.title', 'axes_0.ylabel')
+      expect(bar()!.getAttribute('data-variant')).toBe('full')
+      expect(bar()!.querySelector('[data-align-mode="left"]')).not.toBeNull()
+    } finally {
+      if (originalW) Object.defineProperty(HTMLElement.prototype, 'offsetWidth', originalW)
+    }
+  })
+
   it('单选照旧是单元素栏，不是多选栏', async () => {
     await mount()
     await selectGids('axes_0.title')
