@@ -29,11 +29,13 @@ safe worker 默认把 cwd 切到会话沙盒，只读的 `open` 回退到**脚�
 from __future__ import annotations
 
 import ast
+import contextlib
 import fnmatch
 import hashlib
 import itertools
 import json
 import os
+from collections.abc import Iterator
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from . import projectenv, scriptanswers
@@ -248,7 +250,8 @@ _GLOB_CHARS = "*?["
 #: 一次 `evidence()` 展开全部 glob 模式（两个候选、所有探路目标合计）最多**看**这么多个目录条目
 #: （不是匹配数）：够回答「有没有」（找到一个项目内的匹配就停），又不至于让没有匹配的 `**` 在大目录
 #: 树里把首开的同步判断（Flask 父进程里）拖上几秒——按单个模式计的话 64 个模式 × 2 个候选就又是
-#: 几十万条。用完还没答案就是「判不出」（`unjudged`），不说话。
+#: 几十万条。用完还没答案就是「判不出」（`unjudged`），不说话：`unjudged` 只列在候选的
+#: `probes` 里，**不驱动任何结论**（`_with_probes` 只看 `found`），也就不会让首开去问。
 MAX_GLOB_SCAN = 5000
 
 
@@ -278,7 +281,94 @@ def _const_str(node: ast.expr | None) -> str | None:
     return None
 
 
-def _path_receiver(node: ast.expr) -> str | None:
+class _Aliases:
+    """脚本里 import 进来的别名（整棵 AST 里的 `import` / `from … import`，不分作用域）：
+
+    * `glob_modules`：指 glob 模块的名字（`import glob as g` → `g`）；
+    * `glob_funcs`：指 `glob.glob` / `glob.iglob` 的名字 → 原名（`from glob import glob as gg`）；
+    * `path_ctors`：指 pathlib 路径类的名字（`from pathlib import Path as P` → `P`）。
+
+    原名本身始终认得（`glob.glob`、裸 `glob(...)`、`Path(...)`，与以前一样不要求 import）——
+    别名只**加**名字，写死原名的话 `import glob as g; g.glob('*.csv')` 这类合法写法认不出，
+    首开不问、脚本在空沙盒里跑（Codex 评 #673 P2）。
+
+    不做作用域解析，所以另记 `rebound`：这些名字在树里**任何地方**还被别的方式绑定过（参数、
+    赋值、`for` / `with` / `except … as`、推导式、walrus、`del`、`global` / `nonlocal`、`def` /
+    `class`、`match` 捕获、别的模块的 import、非 glob / pathlib 的 `import *`）。用到它们的调用
+    说不清是模块 glob 还是 `Path.glob`（`def find(g): g.glob('*.csv')`）——仍记成探路目标，
+    匹配语义取两者的并集（`**` 递归、含隐藏名），宁可多问一次，不让它判成「没有」而不问
+    （Codex 评 #699 P2）。
+    """
+
+    def __init__(self, tree: ast.AST) -> None:
+        self.glob_modules = {"glob"}
+        self.glob_funcs = {name: name for name in GLOB_FUNCS}
+        self.path_ctors = set(_PATH_CTORS)
+        bound: set[str] = set()
+        star = False
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name == "glob":
+                        self.glob_modules.add(alias.asname or "glob")
+                    else:
+                        bound.add(alias.asname or alias.name.split(".")[0])
+            elif isinstance(node, ast.ImportFrom):
+                for alias in node.names:
+                    ours = node.level == 0 and node.module in ("glob", "pathlib")
+                    if alias.name == "*":
+                        star = star or not ours  # 原名已经认得；别的模块的 * 什么都可能绑
+                    elif ours and node.module == "glob" and alias.name in GLOB_FUNCS:
+                        self.glob_funcs[alias.asname or alias.name] = alias.name
+                    elif ours and node.module == "pathlib" and alias.name in _PATH_CTORS:
+                        self.path_ctors.add(alias.asname or alias.name)
+                    else:
+                        bound.add(alias.asname or alias.name)
+            else:
+                bound.update(_bound_names(node))
+        names = self.glob_modules | set(self.glob_funcs) | self.path_ctors
+        self.rebound = names if star else names & bound
+
+    def glob_call_rebound(self, func: ast.expr) -> bool:
+        """`glob_call` 认出来的这个调用用到的名字是不是在别处还被重新绑定过。"""
+        owner = func.value if isinstance(func, ast.Attribute) else func
+        return isinstance(owner, ast.Name) and owner.id in self.rebound
+
+    def glob_call(self, func: ast.expr) -> str | None:
+        """`glob.glob(...)` / `g.iglob(...)` / `gg(...)` → `glob` / `iglob`；别的回 None——不是随便
+        哪个对象的 `.glob()`（`Path(__file__).parent.glob` 起算点是绝对的，变量上的起算点说不出话）。"""
+        if isinstance(func, ast.Name):
+            return self.glob_funcs.get(func.id)
+        if (
+            isinstance(func, ast.Attribute)
+            and func.attr in GLOB_FUNCS
+            and isinstance(func.value, ast.Name)
+            and func.value.id in self.glob_modules
+        ):
+            return func.attr
+        return None
+
+
+def _bound_names(node: ast.AST) -> list[str]:
+    """这个节点**本身**绑定的名字（import 另算）：`_Aliases` 判重新绑定用。"""
+    if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+        return [node.id]
+    if isinstance(node, ast.arg):
+        return [node.arg]
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return [node.name]
+    if isinstance(node, (ast.Global, ast.Nonlocal)):
+        return list(node.names)
+    if isinstance(node, ast.ExceptHandler) and node.name:
+        return [node.name]
+    if isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name:
+        return [node.name]
+    if isinstance(node, ast.MatchMapping) and node.rest:
+        return [node.rest]
+    return []
+
+
+def _path_receiver(node: ast.expr, aliases: _Aliases) -> str | None:
     """`Path("d")` / `Path()` / `Path.cwd()` / `pathlib.Path("d")` → 相对 cwd 的目录（`.` 是 cwd 本身）；
     别的接收者（`Path(__file__).parent`、变量）回 None——那是绝对的，或说不出话。"""
     if not isinstance(node, ast.Call):
@@ -286,10 +376,10 @@ def _path_receiver(node: ast.expr) -> str | None:
     func = node.func
     if isinstance(func, ast.Attribute) and func.attr == "cwd":
         owner = func.value
-        if _func_name(owner) in _PATH_CTORS and not node.args and not node.keywords:
+        if _func_name(owner) in aliases.path_ctors and not node.args and not node.keywords:
             return "."
         return None
-    if _func_name(func) not in _PATH_CTORS or node.keywords:
+    if _func_name(func) not in aliases.path_ctors or node.keywords:
         return None
     if not node.args:
         return "."
@@ -299,18 +389,6 @@ def _path_receiver(node: ast.expr) -> str | None:
     if text is None or not _relative_probe_target(text) or any(ch in text for ch in _GLOB_CHARS):
         return None
     return text
-
-
-def _is_glob_module_call(func: ast.expr) -> bool:
-    """`glob.glob(...)` / `from glob import glob; glob(...)`——不是随便哪个对象的 `.glob()`
-    （`Path(__file__).parent.glob` 起算点是绝对的，变量上的起算点说不出话）。"""
-    if isinstance(func, ast.Name):
-        return True
-    return (
-        isinstance(func, ast.Attribute)
-        and isinstance(func.value, ast.Name)
-        and func.value.id == "glob"
-    )
 
 
 #: glob 模块认得的关键字（3.10–3.13）：`root_dir` 拼进目标、两个开关进匹配语义；`dir_fd` 等不认。
@@ -339,6 +417,7 @@ def probe_literals(source: str) -> list[dict]:
     except (SyntaxError, ValueError):
         return []
     out: list[dict] = []
+    aliases = _Aliases(tree)
 
     def add(kind: str, target: str, **flags: bool) -> None:
         item = {"kind": kind, "target": target, **flags}
@@ -358,7 +437,11 @@ def probe_literals(source: str) -> list[dict]:
             continue
         name = _func_name(node.func)
         first = node.args[0] if node.args else None
-        receiver = _path_receiver(node.func.value) if isinstance(node.func, ast.Attribute) else None
+        receiver = (
+            _path_receiver(node.func.value, aliases)
+            if isinstance(node.func, ast.Attribute)
+            else None
+        )
         if receiver is not None and name in PATH_METHOD_PROBES and not node.args:
             if not node.keywords:
                 add("dir" if name == "iterdir" else "path", receiver)
@@ -372,7 +455,7 @@ def probe_literals(source: str) -> list[dict]:
                 tail = f"**/{pattern}" if name == "rglob" else pattern
                 # pathlib 的 `**` 总是递归；隐藏文件照样匹配（与 glob 模块不同）
                 add("glob", _join_probe(receiver, tail), recursive=True, hidden=True)
-        elif name in GLOB_FUNCS and _is_glob_module_call(node.func):
+        elif aliases.glob_call(node.func) is not None:
             if not only_kw(node, _GLOB_KWARGS):
                 continue
             pattern = _const_str(first if first is not None else kw(node, "pathname"))
@@ -389,16 +472,20 @@ def probe_literals(source: str) -> list[dict]:
                 ):
                     continue
                 pattern = _join_probe(base, pattern)
-            flags = {}
-            for key in ("recursive", "include_hidden"):
-                value = kw(node, key)
-                if value is None:
-                    flags[key] = False
-                elif isinstance(value, ast.Constant) and isinstance(value.value, bool):
-                    flags[key] = value.value
-                else:
-                    flags = None  # 动态的开关：匹配语义说不出，不判
-                    break
+            flags: dict[str, bool] | None = {}
+            if aliases.glob_call_rebound(node.func):
+                # 说不清是模块 glob 还是 `Path.glob`：取两者的并集，宁可多问一次
+                flags = {"recursive": True, "include_hidden": True}
+            else:
+                for key in ("recursive", "include_hidden"):
+                    value = kw(node, key)
+                    if value is None:
+                        flags[key] = False
+                    elif isinstance(value, ast.Constant) and isinstance(value.value, bool):
+                        flags[key] = value.value
+                    else:
+                        flags = None  # 动态的开关：匹配语义说不出，不判
+                        break
             if flags is not None:
                 add(
                     "glob",
@@ -467,6 +554,42 @@ class _ScanBudgetExhausted(Exception):
     pass
 
 
+#: `_glob_hit` 列目录走的入口。测试替换**它**来数「这次 `evidence()` 看了多少条」——替换
+#: `os.scandir` 的话换掉的是全进程的，同进程里别的线程（watcher 的 `os.walk`）也被数进来、
+#: 还会拿到测试的替身。
+_scandir = os.scandir
+
+
+class _Listing:
+    """一个真实目录的列表，按需往下列：`seen` 是已经看过（扣过预算）的条目；`pull()` 再取一条，
+    列完 / 出错回 None 并关掉 scandir。命中后没列完的由 `_glob_hit` 统一 `close()`。"""
+
+    def __init__(self) -> None:
+        self.seen: list[os.DirEntry] = []
+        self.pending: Path | None = None
+        self.done = False
+        self._stack: contextlib.ExitStack | None = None
+        self._it: Iterator[os.DirEntry] | None = None
+
+    def pull(self) -> os.DirEntry | None:
+        try:
+            if self._it is None:
+                self._stack = contextlib.ExitStack()
+                self._it = iter(self._stack.enter_context(_scandir(self.pending)))
+            entry = next(self._it)
+        except (StopIteration, OSError):
+            self.close()
+            return None
+        self.seen.append(entry)
+        return entry
+
+    def close(self) -> None:
+        self.done = True
+        if self._stack is not None:
+            self._stack.close()
+            self._stack = None
+
+
 def _is_magic(segment: str) -> bool:
     return any(ch in segment for ch in _GLOB_CHARS)
 
@@ -497,35 +620,39 @@ def _glob_hit(
             return "found" if start.exists() else "missing"
         except OSError:
             return "missing"
-    listings: dict[str, list[os.DirEntry]] = {}
+    listings: dict[str, _Listing] = {}
     expanded: set[tuple[str, int]] = set()
 
-    def entries(directory: Path) -> list[os.DirEntry]:
-        # 每个真实目录只列一次（预算只扣一次），不同的段可以反复看同一份列表
+    def entries(directory: Path) -> Iterator[os.DirEntry]:
+        # 边列边吐：调用方匹配到一个就停，没看的条目不扣预算——大目录里命中在前时不至于先把
+        # 几千个条目列完再抛「判不出」（Codex 评 #673 P2）。每个真实目录只列一次（预算只扣一次），
+        # 不同的段、嵌套的遍历共用同一份（已看过的从缓存吐，没看过的接着往下列）
         try:
             real = os.path.realpath(directory)
         except (OSError, ValueError):
-            return []
-        if real in listings:
-            return listings[real]
-        listings[real] = []
-        if not projectenv.within(root, directory):
-            return []
-        # 先判再取：预算是整次 `evidence()` 合用的，用完之后别的模式连一个目录都不再打开
-        if budget[0] <= 0:
-            raise _ScanBudgetExhausted
-        out: list[os.DirEntry] = []
-        try:
-            with os.scandir(directory) as it:
-                for entry in it:
-                    if budget[0] <= 0:
-                        raise _ScanBudgetExhausted
-                    budget[0] -= 1
-                    out.append(entry)
-        except OSError:
-            return []
-        listings[real] = out
-        return out
+            return
+        listing = listings.get(real)
+        if listing is None:
+            listing = listings[real] = _Listing()
+            if projectenv.within(root, directory):
+                listing.pending = directory
+            else:
+                listing.done = True
+        i = 0
+        while True:
+            if i < len(listing.seen):
+                yield listing.seen[i]
+                i += 1
+                continue
+            if listing.done:
+                return
+            # 先判再取：预算是整次 `evidence()` 合用的，用完之后别的模式连一个目录都不再打开
+            if budget[0] <= 0:
+                raise _ScanBudgetExhausted
+            entry = listing.pull()
+            if entry is None:
+                return
+            budget[0] -= 1
 
     def is_dir(entry: os.DirEntry) -> bool:
         try:
@@ -584,6 +711,9 @@ def _glob_hit(
         return "found" if walk(start, 0) else "missing"
     except _ScanBudgetExhausted:
         return "unjudged"
+    finally:
+        for listing in listings.values():
+            listing.close()
 
 
 def _sha1_of(path: Path) -> str:
@@ -632,7 +762,7 @@ def evidence(script_path: str | os.PathLike, project_root: str | os.PathLike) ->
     探路目标（`probe_literals`）只在「脚本目录 / 项目根」里**找得到**时说话：只有脚本目录找得到
     → `script_parent`（沙盒的只读回退救不回它们）；只有项目根 → `project_root`；两处都有 →
     `ambiguous`。与打开类字面量的结论指向不同的目录时也是 `ambiguous`——机器不挑。一处都找不到
-    时它不说话，结论与没有探路调用时逐字相同。
+    时它不说话，结论与没有探路调用时逐字相同；预算用完判不出（`unjudged`）同样不说话——不会因此问。
     """
     root = Path(project_root)
     # 脚本本身也钉在项目根之内再读（realpath；`..` / 指到项目外的软链接都出局）：

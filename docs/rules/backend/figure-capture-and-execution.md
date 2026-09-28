@@ -61,6 +61,10 @@
     常量相对目标认成**探路证据**；只在脚本目录找得到 → 结论 `script_parent` → 首开问
     （`script_dir_evidence`，推荐 `project`），沙盒那档的 `found` 不列探路目标。列 cwd 本身
     （`listdir()`）只记脚本目录那档。用户选「继续沙盒」后盲区如实保留，走上面的零张图路径。
+    结论只看**找得到**（`found`）：glob 预算用完的 `unjudged` 只记在候选里、**不驱动结论、不会问**。
+    别名按 import 认（`import glob as g` / `from glob import glob as gg` / `Path as P`）；名字在别处
+    被重新绑定过（参数、赋值、`for` …）时不做作用域解析，按模块 glob 与 `Path.glob` 的并集匹配
+    （`**` 递归、含隐藏名）——宁可多问一次。
     一个字都没打印是**另一个 code** `no_figures_captured_silent`（占位是界面
     文案，不塞进 traceback 区）。日志尾部按**这一代的偏移**读（`_log_offset`，
     两条控制面都在启动前记；目录跨代复用、append 模式，不记的话读到的是上一代
