@@ -377,6 +377,7 @@
     "workdirChooseLater": "Later",
     "workdirChooseRootEvidence": "The data {{script}} reads is only found under the project root. Pick a working directory; this project is asked once.",
     "workdirChooseRun": "Run",
+    "workdirChooseScriptDirEvidence": "{{script}} looks for its data files in the current directory (glob / listdir / exists), which finds nothing in the sandbox; it needs to run in its own directory. Pick a working directory; this project is asked once.",
     "workdirChooseSuggest": "This figure hasn't been assigned a working directory yet.",
     "workdirChooseTitle": "Which directory should the script run in?",
     "workdirChooseWrites": "In a real directory, files the script writes by relative path land in the project directory exactly as in a terminal, overwriting same-name files. Tavotto still doesn’t save its figures, and blocks deleting, renaming, or moving project files.",

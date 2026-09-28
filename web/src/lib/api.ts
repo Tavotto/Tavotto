@@ -2816,9 +2816,10 @@ export interface WorkdirState {
 
 /**
  * 首开需要用户先选运行目录（U03，ADR 0057 §三）：后端起第一个 worker 之前按脚本的静态证据
- * 判出「数据只有项目根找得到」或「两处同名不同值」，抛这份结构化的「需要输入」。
- * 三个选项各带该目录下找得到的字面量；`recommended` 只在证据唯一指向项目根时给，歧义时
- * `null`——界面不预选，机器不裁决。
+ * 判出「数据只有项目根找得到」「两处同名不同值」或「脚本用 glob / listdir / exists 找数据、
+ * 只有脚本目录找得到」（ADR 0084），抛这份结构化的「需要输入」。三个选项各带该目录下找得到的
+ * 字面量；`recommended` 只在证据唯一指向一个目录时给（项目根 / 脚本目录），歧义时 `null`——
+ * 界面不预选，机器不裁决。
  */
 export const WORKDIR_CONFIRMATION_CODE = 'workdir_confirmation_required'
 export interface WorkdirConfirmationOption {
@@ -2833,11 +2834,13 @@ export interface WorkdirConfirmation {
   code: typeof WORKDIR_CONFIRMATION_CODE
   /** 项目相对 POSIX 路径 */
   script: string
-  reason: 'project_root_evidence' | 'ambiguous_data'
+  reason: 'project_root_evidence' | 'ambiguous_data' | 'script_dir_evidence'
   recommended: WorkdirMode | null
   options: WorkdirConfirmationOption[]
   conflicts: string[]
   reads: string[]
+  /** 探路调用的目标（glob 模式 / 列的目录 / 问的路径，ADR 0084）；老后端没有这个字段 */
+  probes?: string[]
 }
 
 /**

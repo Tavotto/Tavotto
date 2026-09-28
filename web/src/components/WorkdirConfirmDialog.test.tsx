@@ -81,6 +81,24 @@ const ambiguous = (): WorkdirConfirmation => ({
   reads: ['data.csv'],
 })
 
+//: 用户实报（2026-09-26）的形状：脚本 `glob.glob('run-*-*[Ll]ongrun.traj')` 找同目录的轨迹，
+//: 沙盒里找不到——证据指向脚本目录（ADR 0084）；沙盒那档不列探路目标（回退救不回 glob）
+const scriptDirEvidence = (): WorkdirConfirmation => ({
+  kind: 'workdir',
+  code: WORKDIR_CONFIRMATION_CODE,
+  script: '长时间 数据/analysis.py',
+  reason: 'script_dir_evidence',
+  recommended: 'project',
+  options: [
+    option('project_root', []),
+    option('project', ['run-*-*[Ll]ongrun.traj'], true),
+    option('sandbox', []),
+  ],
+  conflicts: [],
+  reads: [],
+  probes: ['run-*-*[Ll]ongrun.traj'],
+})
+
 let host: HTMLDivElement
 let root: Root
 async function render(node: React.ReactNode) {
@@ -129,6 +147,16 @@ describe('WorkdirConfirmDialog', () => {
     expect(text()).toContain(en('workdirRecommended'))
     expect(text()).toContain('data/points.csv')
     expect(text()).toContain(en('workdirOptionFoundNone'))
+  })
+
+  it('探路调用只在脚本目录找得到：说清原因、预选脚本目录（ADR 0084）', async () => {
+    await render(<WorkdirConfirmDialog />)
+    await act(async () => useEnvStore.getState().requestWorkdirConfirmation(scriptDirEvidence()))
+    expect(text()).toContain(en('workdirChooseScriptDirEvidence', { script: '长时间 数据/analysis.py' }))
+    expect(text()).not.toContain(en('workdirChooseRootEvidence', { script: '长时间 数据/analysis.py' }))
+    expect(radio('project')!.checked).toBe(true)
+    expect(radio('project_root')!.checked).toBe(false)
+    expect(text()).toContain('run-*-*[Ll]ongrun.traj')
   })
 
   it('歧义时不预选（机器不裁决），「运行」在选之前不可点', async () => {

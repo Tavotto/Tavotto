@@ -333,3 +333,74 @@ def test_project_root_mode_really_runs_at_the_project_root_with_cjk_and_spaces(t
         not (root / "fig.pdf").exists() and not (root / "scripts" / "fig.pdf").exists()
     )  # savefig 不落盘
     assert os.path.isdir(worker.spec.sandbox)  # 沙盒仍在，只是不当 cwd
+
+
+# ---------------------------------------------------------------- 探路调用（ADR 0084）
+#: 用户实报（2026-09-26）的形状：相对 glob 找脚本同目录的数据，找不到就打印一句退出——
+#: 脚本就在项目根，路径里有中文与空格。
+GLOB_SCRIPT = (
+    "import glob\nimport matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt\n"
+    "all_files = sorted(glob.glob('run-*-*[Ll]ongrun.traj'))\n"
+    "if not all_files:\n"
+    "    print('[ERROR] no data files found')\n"
+    "    exit()\n"
+    "fig, ax = plt.subplots()\n"
+    "ax.plot(range(len(all_files)), [len(open(f).read()) for f in all_files])\n"
+    "fig.savefig('longrun_summary.png')\n"
+)
+
+
+def _glob_project(tmp_path: Path) -> Path:
+    root = tmp_path / "外置 盘" / "长时间 数据"
+    root.mkdir(parents=True)
+    (root / "analysis.py").write_text(GLOB_SCRIPT, encoding="utf-8")
+    for tag in ("Ar", "O", "ArO11"):
+        (root / f"run-{tag}-longrun.traj").write_text(tag * 3, encoding="utf-8")
+    return root
+
+
+def test_a_relative_glob_asks_first_and_recommends_the_script_directory(tmp_path, monkeypatch):
+    """门在 `pool.get()`：一个进程都不起就回结构化的「需要输入」，推荐脚本所在目录；沙盒那档不说
+    「找得到」（回退救不回 glob）。"""
+    root = _glob_project(tmp_path)
+    monkeypatch.setattr(
+        engine_pool, "resolve_worker_python", lambda *a, **k: ("/nonexistent/python", "system")
+    )
+    spawned = []
+    monkeypatch.setattr(engine_pool.subprocess, "Popen", lambda *a, **k: spawned.append(a) or 0)
+    with pytest.raises(engine_pool.WorkerError) as err:
+        engine_pool.get("analysis.py", str(root), "__main__")
+    assert err.value.code == workdir.ERROR_CONFIRMATION_REQUIRED
+    c = err.value.confirmation
+    assert c["reason"] == workdir.REASON_SCRIPT_DIR_EVIDENCE
+    assert c["recommended"] == workdir.MODE_PROJECT
+    by_mode = {o["mode"]: o for o in c["options"]}
+    assert by_mode["project"]["recommended"] is True
+    assert by_mode["project"]["found"] == ["run-*-*[Ll]ongrun.traj"]
+    assert by_mode["sandbox"]["found"] == []
+    assert c["probes"] == ["run-*-*[Ll]ongrun.traj"]
+    assert spawned == [] and not engine_pool._workers
+
+
+@needs_worker
+def test_answering_the_recommended_mode_makes_the_relative_glob_script_draw(tmp_path):
+    """端到端：没决定过 → 问；按推荐回答（`set_mode` 是 `PATCH /api/engine/workdir` 的落点）→
+    glob 在脚本目录里找到三个文件、图被捕获、savefig 不落盘。对照：用户选「继续沙盒」时脚本仍然
+    一张图都不画——盲区没被偷偷填上（ADR 0047：回退不扩到 glob）。"""
+    root = _glob_project(tmp_path)
+    with pytest.raises(engine_pool.WorkerError) as err:
+        engine_pool.build("analysis.py", str(root), "__main__")
+    assert err.value.code == workdir.ERROR_CONFIRMATION_REQUIRED
+
+    workdir.set_mode(root, workdir.MODE_SANDBOX)
+    worker, resp = engine_pool.build("analysis.py", str(root), "__main__")
+    assert resp.get("stems") == {}
+    assert "[ERROR] no data files found" in worker._log_tail()
+    engine_pool.shutdown_all(str(root), wait=True)
+
+    workdir.set_mode(root, err.value.confirmation["recommended"])
+    worker, resp = engine_pool.build("analysis.py", str(root), "__main__")
+    assert sorted(resp["stems"]) == ["longrun_summary"]
+    assert worker.spec.cwd_mode == execspec.CWD_PROJECT
+    assert Path(resp["runtime"]["cwd"]).resolve() == root.resolve()
+    assert not (root / "longrun_summary.png").exists()

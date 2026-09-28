@@ -55,6 +55,12 @@
     **根治是 ADR 0047 的项目级开关「在脚本目录里运行」**：cwd 换成脚本目录、
     不装回退，守卫与 savefig 捕获不动；错误块直接给这个入口。**不扩回退到
     `exists` / `glob`**——救不了 C++ 读取器，只会让脚本「以为」数据在。
+    **首开就把用户带到这个开关前（ADR 0084，2026-09-26 用户实报 `glob.glob('run-*…')`）**：
+    `databinding.probe_literals` 把 `glob` / `iglob` / `Path(常量).glob|rglob|iterdir|exists…` /
+    `listdir` / `scandir` / `walk` / `exists` / `isfile` / `isdir` / `stat` / ovito `import_file` 的
+    常量相对目标认成**探路证据**；只在脚本目录找得到 → 结论 `script_parent` → 首开问
+    （`script_dir_evidence`，推荐 `project`），沙盒那档的 `found` 不列探路目标。列 cwd 本身
+    （`listdir()`）只记脚本目录那档。用户选「继续沙盒」后盲区如实保留，走上面的零张图路径。
     一个字都没打印是**另一个 code** `no_figures_captured_silent`（占位是界面
     文案，不塞进 traceback 区）。日志尾部按**这一代的偏移**读（`_log_offset`，
     两条控制面都在启动前记；目录跨代复用、append 模式，不记的话读到的是上一代
@@ -79,7 +85,8 @@
   * **首开的一次确认（U03，ADR 0057 §三）**：`workdir` 键不存在 = 没决定过。起第一个 worker
     之前 `pool._new_worker()` 调 `workdir.resolve_mode(root, script)`：决定过就用记住的；没决定过
     按 `engine/databinding.py` 的静态证据——脚本里的相对数据路径字面量只在项目根找得到
-    （`project_root`）、或脚本目录与项目根各有一份同名而内容不同（`ambiguous`）——才抛
+    （`project_root`）、脚本目录与项目根各有一份同名而内容不同（`ambiguous`）、或探路调用
+    （glob / listdir / exists）只在脚本目录找得到（`script_parent`，ADR 0084）——才抛
     `workdir_confirmation_required`（结构化选项 / 证据 / 怎么回答，四类入口同一个 code）；
     证据说不出话（`none` / `unknown`）或默认够用（`default_ok`）不问。**不猜、不就近替换、
     不搜同名、不自动切到真实 cwd**；决定项目级、问一次记一次，切回沙盒撤销授权但决定留着。

@@ -214,3 +214,330 @@ def test_a_script_outside_the_project_root_yields_no_evidence_and_is_not_read(
 def test_only_files_count_as_evidence_not_directories(tmp_path):
     root = _project(tmp_path, "s/fig.py", "open('data/run1')\n", {"data/run1/.keep": ""})
     assert db.evidence(root / "s/fig.py", root)["verdict"] == db.VERDICT_UNKNOWN
+
+
+# ---------------------------------------------------------------- 探路调用（ADR 0084）
+#: 用户实报（2026-09-26）的原样形状：相对 glob 找
+#: 同目录的轨迹，找不到就打印一句退出。沙盒 cwd 下 glob 是空的，而旧判据把 glob 模式当「动态」
+#: 不算证据（verdict none）→ 首开不问、沙盒里跑、一张图都不画。
+USER_GLOB = (
+    "import glob\n"
+    "all_files = sorted(glob.glob('run-*-*[Ll]ongrun.traj'))\n"
+    "if not all_files:\n"
+    "    print('[ERROR] no data files found')\n"
+    "    exit()\n"
+)
+TRAJ = {
+    "长时间 数据/run-Ar-longrun.traj": "ITEM: TIMESTEP\n0\n",
+    "长时间 数据/run-O-longrun.traj": "ITEM: TIMESTEP\n0\n",
+}
+
+
+@pytest.mark.parametrize(
+    "source,expected",
+    [
+        (USER_GLOB, [("glob", "run-*-*[Ll]ongrun.traj")]),
+        (
+            "from glob import glob, iglob\nglob('*.csv')\niglob(pathname='d/*.x')\n",
+            [("glob", "*.csv"), ("glob", "d/*.x")],
+        ),
+        (
+            "import os\nos.listdir()\nos.listdir('runs')\nos.scandir('.')\nos.walk('1')\n",
+            [("dir", "."), ("dir", "runs"), ("dir", "1")],
+        ),
+        (
+            "import os\nos.path.exists('1/run_1.traj')\nos.path.isdir('1')\n",
+            [("path", "1/run_1.traj"), ("path", "1")],
+        ),
+        (
+            "from ovito.io import import_file\nimport_file('a.traj')\n",
+            [("path", "a.traj")],
+        ),
+        (
+            "from pathlib import Path\nPath('d').glob('*.csv')\nPath('d').rglob('*.x')\nPath().iterdir()\n",
+            [("glob", "d/*.csv"), ("glob", "d/**/*.x"), ("dir", ".")],
+        ),
+        (
+            "import pathlib\npathlib.Path.cwd().glob('*.npy')\npathlib.Path('1/x.dat').exists()\n",
+            [("glob", "*.npy"), ("path", "1/x.dat")],
+        ),
+        # 说不出话的一律不算：绝对的、动态的、`Path(__file__)` 起算的、`~`、模板
+        (
+            "import glob, os\nfrom pathlib import Path\nglob.glob('/abs/*.csv')\nglob.glob(f'{p}/*.csv')\n"
+            "Path(__file__).parent.glob('*.csv')\nos.listdir(d)\nos.path.exists('~/x')\nos.path.exists('%s.csv')\n",
+            [],
+        ),
+    ],
+)
+def test_probe_calls_are_recognised_only_from_constant_relative_targets(source, expected):
+    got = [(p["kind"], p["target"]) for p in db.probe_literals(source)]
+    assert got == expected
+
+
+def test_a_relative_glob_that_only_matches_in_the_script_directory_is_script_parent_evidence(
+    tmp_path,
+):
+    """主语：脚本目录（路径含中文与空格）下有匹配、项目根下没有 → `script_parent`；打开类字面量为空。"""
+    root = _project(tmp_path, "长时间 数据/analysis.py", USER_GLOB, TRAJ)
+    ev = db.evidence(root / "长时间 数据/analysis.py", root)
+    assert ev["reads"] == []
+    assert ev["probes"] == ["run-*-*[Ll]ongrun.traj"]
+    assert ev["candidates"]["script.parent"]["probes"]["found"] == ["run-*-*[Ll]ongrun.traj"]
+    assert ev["candidates"]["project.root"]["probes"]["missing"] == ["run-*-*[Ll]ongrun.traj"]
+    assert ev["verdict"] == db.VERDICT_SCRIPT_PARENT
+
+
+def test_the_same_glob_with_the_script_at_the_project_root_is_still_script_parent(tmp_path):
+    """用户的真实布局：脚本就在项目根（两个候选是同一个目录），仍然要问——沙盒救不回 glob。"""
+    root = _project(
+        tmp_path, "analysis.py", USER_GLOB, {k.split("/", 1)[1]: v for k, v in TRAJ.items()}
+    )
+    ev = db.evidence(root / "analysis.py", root)
+    assert ev["same_dir"] is True and ev["verdict"] == db.VERDICT_SCRIPT_PARENT
+
+
+def test_exists_on_a_file_the_fallback_would_open_is_no_longer_default_ok(tmp_path):
+    """ADR 0047 背景里那九个 ovito 脚本的形状：`exists("1/x")` 先判再交给 C++。字面量在脚本目录
+    找得到，旧判据说 `default_ok`（沙盒回退够用）——对 `open` 够，对 `exists` 不够。"""
+    src = "import os\nif os.path.exists('1/run_1.traj'):\n    open('1/run_1.traj')\n"
+    root = _project(tmp_path, "s/fig.py", src, {"s/1/run_1.traj": "a b"})
+    assert db.evidence(root / "s/fig.py", root)["verdict"] == db.VERDICT_SCRIPT_PARENT
+    # 对照：只有 open、没有探路调用的同一份数据，结论照旧
+    root2 = _project(
+        tmp_path / "b",
+        "s/fig.py",
+        "open('1/run_1.traj')\n",
+        {"s/1/run_1.traj": "a b"},
+    )
+    assert db.evidence(root2 / "s/fig.py", root2)["verdict"] == db.VERDICT_DEFAULT_OK
+
+
+@pytest.mark.parametrize(
+    "files,expected",
+    [
+        ({"x-1.csv": "1"}, db.VERDICT_PROJECT_ROOT),  # 只有项目根有匹配
+        ({"x-1.csv": "1", "s/x-2.csv": "2"}, db.VERDICT_AMBIGUOUS),  # 两处都有：机器不挑
+        ({}, db.VERDICT_NONE),  # 哪儿都没有：不说话，与没有探路调用时逐字相同
+    ],
+)
+def test_where_the_glob_matches_decides_and_nowhere_means_silence(tmp_path, files, expected):
+    root = _project(tmp_path, "s/fig.py", "import glob\nglob.glob('x-*.csv')\n", files)
+    assert db.evidence(root / "s/fig.py", root)["verdict"] == expected
+
+
+def test_probe_and_open_evidence_pointing_at_different_directories_is_ambiguous(tmp_path):
+    src = "import glob\nglob.glob('*.traj')\nopen('data/x.csv')\n"
+    root = _project(tmp_path, "s/fig.py", src, {"s/a.traj": "1", "data/x.csv": "x"})
+    assert db.evidence(root / "s/fig.py", root)["verdict"] == db.VERDICT_AMBIGUOUS
+
+
+def test_a_glob_that_escapes_the_project_is_neither_listed_nor_found(tmp_path, monkeypatch):
+    """与 `_lookup` 同一条纪律：`../` 出到项目外的探路目标不列目录、不算找到。"""
+    (tmp_path / "outside").mkdir()
+    (tmp_path / "outside" / "secret.csv").write_text("k", encoding="utf-8")
+    root = _project(
+        tmp_path,
+        "fig.py",
+        "import glob, os\nglob.glob('../outside/*.csv')\nos.listdir('../outside')\n",
+        {},
+    )
+    listed = _spy_scandir(monkeypatch)
+    ev = db.evidence(root / "fig.py", root)
+    assert ev["candidates"]["project.root"]["probes"]["outside"] == [
+        "../outside/*.csv",
+        "../outside",
+    ]
+    assert not [d for d in listed if "outside" in d], "项目外的目录被列了"
+    # `../outside` 同时是一条打开类字面量（带分隔符），出界、不参与判决 → 与旧判据相同的 unknown
+    assert ev["verdict"] == db.VERDICT_UNKNOWN
+
+
+def test_listing_the_cwd_itself_counts_for_the_script_directory_only(tmp_path):
+    """`os.listdir()` 不指名任何东西，在哪个候选下都「存在」：只记脚本目录那档（产品的默认假设），
+    否则任何不在项目根上的脚本 `listdir()` 一下就成了歧义（QA PATH-06 的形状）。"""
+    src = "import os\nnames = os.listdir()\n"
+    root = _project(tmp_path, "s/fig.py", src, {"data/x.csv": "x"})
+    ev = db.evidence(root / "s/fig.py", root)
+    assert ev["candidates"]["script.parent"]["probes"]["found"] == ["."]
+    assert ev["candidates"]["project.root"]["probes"] == {
+        "found": [],
+        "missing": [],
+        "outside": [],
+        "unjudged": [],
+    }
+    assert ev["verdict"] == db.VERDICT_SCRIPT_PARENT
+    # 与只在项目根找得到的打开类字面量同在：两个方向 → 歧义，机器不挑
+    root2 = _project(tmp_path / "b", "s/fig.py", src + "open('data/x.csv')\n", {"data/x.csv": "x"})
+    assert db.evidence(root2 / "s/fig.py", root2)["verdict"] == db.VERDICT_AMBIGUOUS
+
+
+# ---------------------------------------------------------------- Codex 评 #673：glob 自己走、有界、认 root_dir
+def _spy_scandir(monkeypatch) -> list[str]:
+    """记下 `databinding` 列过的每一个目录（realpath）。判据的主语：**准备阶段列了谁**，不是结论。"""
+    listed: list[str] = []
+    real = os.scandir
+
+    def spy(path="."):
+        listed.append(os.path.realpath(path))
+        return real(path)
+
+    monkeypatch.setattr(db.os, "scandir", spy)
+    return listed
+
+
+@pytest.mark.skipif(os.name == "nt", reason="软链接在 Windows 上要特权")
+def test_a_wildcard_matching_a_symlink_out_of_the_project_never_lists_the_outside(
+    tmp_path, monkeypatch
+):
+    """P1：通配段在软链接**之前**（`*/*.dat` 匹配到 `link -> <项目外>`）——stdlib glob 会先把项目外
+    的目录列完再吐匹配，事后按 `within` 过滤已经晚了。自己走的遍历在进目录之前就判。"""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.dat").write_text("k", encoding="utf-8")
+    root = _project(tmp_path, "fig.py", "import glob\nglob.glob('*/*.dat')\n", {"inside/.keep": ""})
+    os.symlink(outside, root / "link")
+    listed = _spy_scandir(monkeypatch)
+    ev = db.evidence(root / "fig.py", root)
+    assert str(outside.resolve()) not in listed, "项目外的目录被列了"
+    assert ev["candidates"]["project.root"]["probes"]["found"] == []
+    assert ev["verdict"] == db.VERDICT_NONE
+    # 对照：同样的形状、目标在项目里 → 找得到（判据不是恒假）
+    (root / "inside" / "x.dat").write_text("1", encoding="utf-8")
+    assert db.evidence(root / "fig.py", root)["verdict"] == db.VERDICT_SCRIPT_PARENT
+
+
+def test_a_recursive_glob_with_no_match_is_bounded_by_entries_seen_not_matches(
+    tmp_path, monkeypatch
+):
+    """P1：预算按**看过的目录条目**计。没有匹配的 `**` 以前会把整棵树走完；现在看满预算就停，
+    结论是「判不出」（`unjudged`），不说话。"""
+    files = {f"d{i}/f{j}.txt": "" for i in range(20) for j in range(20)}
+    root = _project(
+        tmp_path, "fig.py", "import glob\nglob.glob('**/*.nomatch', recursive=True)\n", files
+    )
+    monkeypatch.setattr(db, "MAX_GLOB_SCAN", 50)
+    listed = _spy_scandir(monkeypatch)
+    ev = db.evidence(root / "fig.py", root)
+    probes = ev["candidates"]["project.root"]["probes"]
+    assert probes["unjudged"] == ["**/*.nomatch"] and probes["found"] == []
+    assert len(listed) <= 50  # 远少于 21 个目录 × 2 个候选
+    assert ev["verdict"] == db.VERDICT_NONE
+    # 对照：预算够时同一棵树走得完，结论是 missing（不是 unjudged）
+    monkeypatch.setattr(db, "MAX_GLOB_SCAN", 10_000)
+    assert db.evidence(root / "fig.py", root)["candidates"]["project.root"]["probes"][
+        "missing"
+    ] == ["**/*.nomatch"]
+
+
+def test_the_scan_budget_covers_the_whole_evidence_call_not_each_pattern(tmp_path, monkeypatch):
+    """P1：预算是整次 `evidence()` 合用的一份——按模式各给一份的话，64 个没有匹配的模式 × 2 个候选
+    又能把同一棵大树走几十万条。主语：**准备阶段一共看了多少个目录条目**。"""
+    files = {f"d{i}/f{j}.txt": "" for i in range(10) for j in range(10)}
+    src = "import glob\n" + "".join(
+        f"glob.glob('**/*.nomatch{k}', recursive=True)\n" for k in range(30)
+    )
+    root = _project(tmp_path, "s/fig.py", src, files)
+    seen = [0]
+    real = os.scandir
+
+    class _Counting:
+        def __init__(self, it):
+            self._it = it
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            self._it.close()
+
+        def __iter__(self):
+            for entry in self._it:
+                seen[0] += 1
+                yield entry
+
+    monkeypatch.setattr(db.os, "scandir", lambda path=".": _Counting(real(path)))
+    monkeypatch.setattr(db, "MAX_GLOB_SCAN", 40)
+    ev = db.evidence(root / "s/fig.py", root)
+    assert len(ev["candidates"]["project.root"]["probes"]["unjudged"]) == 30
+    assert seen[0] <= 40 + 1  # 第 41 条就停；按模式各给一份的话是 30 × 2 × 40
+    assert ev["verdict"] == db.VERDICT_NONE
+
+
+@pytest.mark.parametrize(
+    "call,nested_found",
+    [
+        ("glob.glob('**/*.csv')", False),  # 非递归：`**` 等同 `*`，只看一层
+        ("glob.glob('**/*.csv', recursive=True)", True),
+        ("Path('.').rglob('*.csv')", True),
+    ],
+)
+def test_the_walker_keeps_globs_matching_semantics(tmp_path, call, nested_found):
+    """自己走的遍历与 glob 模块的匹配语义一致：`recursive` 开关、隐藏名。"""
+    src = f"import glob\nfrom pathlib import Path\n{call}\n"
+    root = _project(tmp_path, "fig.py", src, {"a/b/x.csv": "1"})
+    got = db.evidence(root / "fig.py", root)["verdict"] == db.VERDICT_SCRIPT_PARENT
+    assert got is nested_found
+
+
+def test_hidden_names_follow_the_glob_module_rules(tmp_path):
+    root = _project(tmp_path, "fig.py", "import glob\nglob.glob('*.csv')\n", {".x.csv": "1"})
+    assert db.evidence(root / "fig.py", root)["verdict"] == db.VERDICT_NONE
+    root2 = _project(
+        tmp_path / "b",
+        "fig.py",
+        "import glob\nglob.glob('*.csv', include_hidden=True)\n",
+        {".x.csv": "1"},
+    )
+    assert db.evidence(root2 / "fig.py", root2)["verdict"] == db.VERDICT_SCRIPT_PARENT
+
+
+@pytest.mark.parametrize(
+    "source,expected",
+    [
+        # P2：`root_dir=` 换了起算点——常量相对的拼进目标
+        ("import glob\nglob.glob('*.csv', root_dir='data')\n", [("glob", "data/*.csv")]),
+        (
+            "from glob import iglob\niglob(pathname='*.csv', root_dir='data')\n",
+            [("glob", "data/*.csv")],
+        ),
+        # 动态 / 绝对的 root_dir、认不出的关键字、动态开关：说不出话，不判（而不是判另一条路径）
+        ("import glob\nglob.glob('*.csv', root_dir=d)\n", []),
+        ("import glob\nglob.glob('*.csv', root_dir='/abs')\n", []),
+        ("import glob\nglob.glob('*.csv', dir_fd=fd)\n", []),
+        ("import glob\nglob.glob('*.csv', recursive=flag)\n", []),
+        (
+            "import os\nos.listdir(path='runs')\nos.walk(top='1', topdown=False)\n",
+            [("dir", "runs"), ("dir", "1")],
+        ),
+        ("import os\nos.listdir(dir_fd)\nos.scandir(path=p)\n", []),
+        (
+            "import os\nos.path.exists(path='1/x.dat')\nos.stat('1/y.dat', dir_fd=fd)\n",
+            [("path", "1/x.dat")],
+        ),
+        ("from pathlib import Path\nPath('d').glob('*.csv', case_sensitive=False)\n", []),
+    ],
+)
+def test_arguments_that_move_the_lookup_are_honoured_or_declined(source, expected):
+    got = [(p["kind"], p["target"]) for p in db.probe_literals(source)]
+    assert got == expected
+
+
+def test_glob_root_dir_evidence_decides_like_the_real_lookup(tmp_path):
+    """P2 的失败场景原样：只有 `data/x.csv`，脚本 `glob('*.csv', root_dir='data')`——以前查的是
+    `<候选>/x.csv`，查不到、不问、沙盒里失败。"""
+    src = "import glob\nglob.glob('*.csv', root_dir='data')\n"
+    root = _project(tmp_path, "s/fig.py", src, {"s/data/x.csv": "1"})
+    assert db.evidence(root / "s/fig.py", root)["verdict"] == db.VERDICT_SCRIPT_PARENT
+
+
+@pytest.mark.skipif(os.name == "nt", reason="软链接在 Windows 上要特权")
+def test_a_symlink_cycle_inside_the_project_does_not_spin_the_recursive_walk(tmp_path):
+    root = _project(
+        tmp_path,
+        "fig.py",
+        "import glob\nglob.glob('**/*.nomatch', recursive=True)\n",
+        {"a/x.txt": ""},
+    )
+    os.symlink(root, root / "a" / "loop")  # 项目里一条指回项目根的软链接
+    ev = db.evidence(root / "fig.py", root)
+    assert ev["candidates"]["project.root"]["probes"]["missing"] == ["**/*.nomatch"]

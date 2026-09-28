@@ -9,11 +9,12 @@ import { Radio } from './ui/Radio'
 
 /**
  * 首开的那一次确认（U03，ADR 0057 §三）：后端起第一个 worker 之前按脚本的静态证据判出
- * 「数据只有项目根找得到」或「脚本目录与项目根各有一份同名数据、内容不同」，渲染以
+ * 「数据只有项目根找得到」、「脚本目录与项目根各有一份同名数据、内容不同」或「脚本用 glob /
+ * listdir / exists 找数据、只有脚本目录找得到」（ADR 0084），渲染以
  * `workdir_confirmation_required` 回来——这不是错误，是缺一个决定。
  *
  * 三档一次选：项目根 / 脚本目录 / 继续沙盒。每档列出**该目录下找得到的文件**（后端只按
- * 字面量查存在性，不猜、不搜同名）；推荐项只在证据唯一指向项目根时预选，歧义时**不预选**
+ * 字面量查存在性，不猜、不搜同名）；推荐项只在证据唯一指向一个目录时预选，歧义时**不预选**
  * ——机器不裁决。选定 = 记住（项目级）+ 真实 cwd 写入许可（沙盒除外）+ 重排失败的面板；
  * 「稍后」只关框，错误块里还能再打开。机制在后端（`workdir.decision_for`），这里只翻译。
  */
@@ -62,7 +63,9 @@ export function WorkdirConfirmDialog() {
       description={
         payload.reason === 'ambiguous_data'
           ? en('engine.workdirChooseAmbiguous', { script: payload.script })
-          : en('engine.workdirChooseRootEvidence', { script: payload.script })
+          : payload.reason === 'script_dir_evidence'
+            ? en('engine.workdirChooseScriptDirEvidence', { script: payload.script })
+            : en('engine.workdirChooseRootEvidence', { script: payload.script })
       }
       size="sm"
       busy={busy}
