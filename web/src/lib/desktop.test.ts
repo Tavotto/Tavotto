@@ -11,6 +11,9 @@ import {
   isDesktop,
   onDesktopMenu,
   pickDirectory,
+  nativeFileDropAvailable,
+  onNativeFileDrop,
+  pickScriptFile,
   relaunchDesktop,
   revealExportedFile,
   runCodexIntegration,
@@ -95,6 +98,17 @@ describe('浏览器回退', () => {
 
   it('pickDirectory 返回 null（调用方回退服务器端目录浏览器）', async () => {
     expect(await pickDirectory()).toBeNull()
+  })
+
+  it('系统拖放：浏览器里拿不到路径、订阅是空的', async () => {
+    expect(await nativeFileDropAvailable()).toBe(false)
+    const off = await onNativeFileDrop(() => {})
+    expect(typeof off).toBe('function')
+    off()
+  })
+
+  it('pickScriptFile 返回 null（调用方回退服务器端目录浏览器）', async () => {
+    expect(await pickScriptFile()).toBeNull()
   })
 
   it('revealExportedFile 返回 false（调用方保留 <a> 行为）', async () => {

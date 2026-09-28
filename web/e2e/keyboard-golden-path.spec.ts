@@ -202,7 +202,9 @@ test('纯键盘走完核心闭环：开项目 → 编辑元素 → undo/redo →
   await page.goto(a.baseURL)
   await expect(page.getByRole('main', { name: '选择项目' })).toBeVisible()
 
-  // ── 1. 打开项目：Tab 到路径输入框，粘路径，Enter 提交 ────────────────
+  // ── 1. 打开项目：主页 Tab 到「其他打开方式」进全部项目，Tab 到路径输入框，粘路径，Enter 提交 ──
+  await tabTo(page, 'css=[data-home-all]')
+  await page.keyboard.press('Enter')
   await tabTo(page, 'css=input')
   await page.keyboard.insertText(dir)
   await page.keyboard.press('Enter')
@@ -366,6 +368,8 @@ test('键盘错误恢复：路径打不开报错，改对路径后继续', async
   await page.goto(a.baseURL)
   await expect(page.getByRole('main', { name: '选择项目' })).toBeVisible()
 
+  await tabTo(page, 'css=[data-home-all]')
+  await page.keyboard.press('Enter')
   await tabTo(page, 'css=input')
   await page.keyboard.insertText(path.join(os.tmpdir(), 'no-such-dir-kbd'))
   await page.keyboard.press('Enter')

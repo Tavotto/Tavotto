@@ -19,6 +19,7 @@
     "allow-arm-close-guard",
     "allow-resolve-close-request",
     "updater:default",
-    "process:allow-restart"
+    "process:allow-restart",
+    "allow-native-file-drop"
   ]
 }

@@ -61,6 +61,10 @@ const RULES: Rule[] = [
         count: 1,
         why: '轨道图标角上的问题计数：9px 是 28px 图标钮上唯一放得下两位数的字号',
       },
+      '/src/components/home/HomeView.tsx': {
+        count: 3,
+        why: '主页（没有打开项目时的落地页）的展示级字号：产品名 26px、新手版大标题 24px、老手版拖放区标题 20px——与 /try 首屏同一类，不是工作台界面',
+      },
       '/src/playground/components/PlaygroundLanding.tsx': {
         count: 1,
         why: '网站 /try 的首屏标题（19px）：营销页的展示级字号，不是产品界面',

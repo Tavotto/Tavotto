@@ -52,6 +52,10 @@ async function mount() {
   await act(async () => {
     root.render(<ProjectPicker />)
   })
+  // 这些入口在「全部项目」视图里：主页的「浏览更多项目 / 其他打开方式」进去
+  await act(async () => {
+    host.querySelector<HTMLButtonElement>('[data-home-all]')!.click()
+  })
 }
 
 const button = (label: string) =>

@@ -11,7 +11,7 @@ import {
 import os from 'node:os'
 import path from 'node:path'
 import { inflateRawSync } from 'node:zlib'
-import { expect, openWorkspace, test, writeRuntimeNamedProject } from './fixtures'
+import { expect, openWorkspace, showAllProjects, test, writeRuntimeNamedProject } from './fixtures'
 
 const REPO = path.resolve(import.meta.dirname, '..', '..')
 
@@ -42,10 +42,16 @@ test('首次启动：用户目录为空时进项目选择器，而不是白屏',
   await page.goto(a.baseURL)
 
   await expect(page.getByRole('main', { name: '选择项目' })).toBeVisible()
-  await expect(page.getByRole('button', { name: '新建项目' })).toBeVisible()
-  // 路径可以直接粘贴——不是只能一层层点
-  await expect(page.getByLabel('项目路径')).toBeVisible()
+  // 第一次来：新手版主页，两个主动作都在
+  await expect(page.locator('main[data-home-variant="newcomer"]')).toBeVisible()
+  await expect(page.getByRole('button', { name: '用示例体验一次' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '导入我的脚本' })).toBeVisible()
   // 空目录时不该报错
+  await expect(page.getByRole('alert')).toHaveCount(0)
+  // 新建 / 粘贴路径在「全部项目」里，一次点击就到——路径可以直接粘贴，不是只能一层层点
+  await showAllProjects(page)
+  await expect(page.getByRole('button', { name: '新建项目' })).toBeVisible()
+  await expect(page.getByLabel('项目路径')).toBeVisible()
   await expect(page.getByRole('alert')).toHaveCount(0)
 })
 
@@ -59,6 +65,7 @@ test('直接粘贴路径打开项目（含中文与空格）', async ({ app, pag
 
   const a = await app({ noProject: true })
   await page.goto(a.baseURL)
+  await showAllProjects(page)
   await page.getByLabel('项目路径').fill(dir)
   await page.getByRole('button', { name: '打开' }).click()
 

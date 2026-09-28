@@ -32,6 +32,7 @@ fn main() {
             "codex_integration",
             "arm_close_guard",
             "resolve_close_request",
+            "native_file_drop",
         ]),
     ))
     .expect("failed to run tauri-build");

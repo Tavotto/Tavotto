@@ -68,3 +68,28 @@ export function formatTime(ts: number | Date): string {
 export function formatDate(ts: number | Date): string {
   return new Intl.DateTimeFormat(currentLocale(), { dateStyle: 'medium' }).format(ts)
 }
+
+const RELATIVE_STEPS: [Intl.RelativeTimeFormatUnit, number][] = [
+  ['second', 60],
+  ['minute', 60],
+  ['hour', 24],
+  ['day', 7],
+  ['week', 4.35],
+  ['month', 12],
+  ['year', Number.POSITIVE_INFINITY],
+]
+
+/**
+ * 「2 小时前 / 1 天前 / 3 weeks ago」：按最大的整单位取整（最近项目的时间列）。
+ * 一律数字写法（`numeric: 'always'`）：「昨天 / 上周」与同一列里的「3 天前」混排读起来参差。
+ * 不到一分钟按一分钟说（「0 秒前」不是人话）；未来的时间（本机时钟被调过）同样按一分钟算。
+ */
+export function formatRelativeTime(ts: number, now: number = Date.now()): string {
+  let value = Math.max(60, (now - ts) / 1000)
+  const rtf = new Intl.RelativeTimeFormat(currentLocale(), { numeric: 'always' })
+  for (const [unit, size] of RELATIVE_STEPS) {
+    if (value < size) return rtf.format(-Math.floor(value), unit)
+    value /= size
+  }
+  return rtf.format(-Math.floor(value), 'year')
+}

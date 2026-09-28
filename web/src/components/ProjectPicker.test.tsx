@@ -60,6 +60,10 @@ async function mount() {
   await act(async () => {
     root.render(<ProjectPicker />)
   })
+  // 这些入口在「全部项目」视图里：主页的「浏览更多项目 / 其他打开方式」进去
+  await act(async () => {
+    host.querySelector<HTMLButtonElement>('[data-home-all]')!.click()
+  })
 }
 
 const typeInto = (input: HTMLInputElement, value: string) => {
@@ -222,7 +226,7 @@ describe('切换进行中（Codex #550）', () => {
     const byText = (t: string) => buttons.find((b) => b.textContent?.includes(t))!
     expect(byText('新建项目').disabled).toBe(true)
     expect(byText('浏览目录').disabled).toBe(true)
-    expect(byText('返回').disabled).toBe(true)
+    expect(byText('返回当前项目').disabled).toBe(true)
     expect(submitButton().disabled).toBe(true)
     expect(openButtons().length).toBeGreaterThan(20)
     expect(openButtons().every((b) => b.disabled)).toBe(true)
@@ -232,7 +236,7 @@ describe('切换进行中（Codex #550）', () => {
     expect(removes.some((b) => !b.disabled)).toBe(true)
 
     await act(async () => useProjectStore.setState({ switching: false }))
-    expect(byText('返回').disabled).toBe(false)
+    expect(byText('返回当前项目').disabled).toBe(false)
     expect(openButtons().some((b) => !b.disabled)).toBe(true)
   })
 })

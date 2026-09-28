@@ -1,7 +1,7 @@
 import { copyFileSync, mkdirSync, readdirSync, statSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { expect, test } from './fixtures'
+import { expect, showAllProjects, test } from './fixtures'
 
 const REPO = path.resolve(import.meta.dirname, '..', '..')
 
@@ -69,6 +69,8 @@ for (const L of LOCALES) {
       const a = await app({ noProject: true })
       await page.goto(a.baseURL)
 
+      await expect(page.getByRole('main', { name: L.picker })).toBeVisible()
+      await showAllProjects(page)
       await expect(page.getByRole('main', { name: L.picker })).toBeVisible()
       await expect(page.getByRole('button', { name: L.create })).toBeVisible()
       await expect(page.getByLabel(L.pathLabel)).toBeVisible()
@@ -219,6 +221,7 @@ test.describe('英文界面的排版', () => {
     await page.setViewportSize({ width: 1024, height: 700 })
     const a = await app({ noProject: true })
     await page.goto(a.baseURL)
+    await showAllProjects(page)
     await page.getByLabel('Project path').fill(dir)
     await page.getByRole('button', { name: 'Open', exact: true }).click()
 

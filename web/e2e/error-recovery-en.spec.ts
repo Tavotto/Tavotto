@@ -24,7 +24,7 @@ import { copyFileSync, chmodSync, mkdirSync, readdirSync, writeFileSync } from '
 import os from 'node:os'
 import path from 'node:path'
 import type { Locator, Page } from '@playwright/test'
-import { expect, test } from './fixtures'
+import { expect, showAllProjects, test } from './fixtures'
 
 const REPO = path.resolve(import.meta.dirname, '..', '..')
 
@@ -157,6 +157,7 @@ test('项目目录不可读：ProjectPicker 英文报错，改对路径可继续
   const a = await app({ noProject: true })
   await page.goto(a.baseURL)
   await expect(page.getByRole('main')).toBeVisible()
+  await showAllProjects(page)
   const input = page.getByRole('textbox').first()
   await input.fill(locked)
   await input.press('Enter')
