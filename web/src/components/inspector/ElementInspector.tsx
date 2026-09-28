@@ -470,7 +470,9 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
                   {legendCardCoversSelf && (
                     <LegendCard panel={panel} manifest={manifest} legend={element} labelWidth={LABEL_W} />
                   )}
-                  <LegendSpacingCard panel={panel} element={element} />
+                  {/* 按图例 gid 取 key：直接从一个图例点到另一个时组件不复用，收起状态不带过去
+                      （「换一次选中又是展开的」） */}
+                  <LegendSpacingCard key={element.gid} panel={panel} element={element} />
                 </>
               ) : null
             }

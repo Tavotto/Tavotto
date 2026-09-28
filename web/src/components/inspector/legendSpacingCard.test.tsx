@@ -84,11 +84,16 @@ const legendOf = (ncol = 1): ManifestElement =>
     editable: legendFields(ncol),
   }) as unknown as ManifestElement
 
+/** 第二个子图与它的图例：用来量「从一个图例直接点到另一个」 */
+const axesEl2: ManifestElement = { ...axesEl, gid: 'axes_1', label: '子图 2' } as ManifestElement
+const legend2Of = (ncol = 1): ManifestElement =>
+  ({ ...legendOf(ncol), gid: 'axes_1.legend', bbox: [0.1, 0.5, 0.3, 0.3] }) as ManifestElement
+
 const manifestOf = (ncol = 1): Manifest =>
   ({
     rev: 1,
     size_mm: [101.6, 76.2],
-    elements: [axesEl, legendOf(ncol)],
+    elements: [axesEl, legendOf(ncol), axesEl2, legend2Of(ncol)],
   }) as unknown as Manifest
 
 const panelOf = (overrides: PanelObject['overrides'] = []): PanelObject =>
@@ -208,6 +213,17 @@ describe('图例的排版详情（审计 T17）', () => {
     for (const prop of ['handlelength', 'handletextpad', 'labelspacing', 'borderpad']) {
       expect(allRows(prop)).toHaveLength(0)
     }
+  })
+
+  it('收起后直接选中另一个图例：新图例又是展开的（收起不跨图例带过去）', async () => {
+    await mount()
+    await click(cardToggle())
+    expect(cardToggle()?.getAttribute('aria-expanded')).toBe('false')
+    await act(async () => {
+      useUiStore.setState({ selectedGids: ['axes_1.legend'] })
+    })
+    expect(cardRow('handlelength')?.getAttribute('data-gid')).toBe('axes_1.legend')
+    expect(cardToggle()?.getAttribute('aria-expanded')).toBe('true')
   })
 
   it('五条都在，且通用列表里没有第二套控件（「更多」也打开着数）', async () => {
