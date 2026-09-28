@@ -302,7 +302,9 @@ describe('插图：挪过的跟着宿主走，没挪过的由定位器带着走'
       editable: [{ prop: 'position', type: 'rect', value: [0.55, 0.6, 0.08, 0.08] }],
       inset_of: 'axes_1',
     }
-    manifest.elements.push(inner)
+    // 内层排在外层前面：引擎现在按广度优先排（先父后子），但沿 inset_of 走链不该替它假定这个
+    // 顺序——一遍扫过去碰到内层时外层还不在宿主集合里，要反复扫到不再长
+    manifest.elements.unshift(inner)
     try {
       await setup([
         { gid: 'axes_2', prop: 'position', value: [0.55, 0.6, 0.08, 0.08] },
@@ -318,7 +320,7 @@ describe('插图：挪过的跟着宿主走，没挪过的由定位器带着走'
       expect(overrideOf('axes_1.title', 'pos_frac')![0]).toBeCloseTo(0.6 + dfx, 4)
       expect(past()).toHaveLength(1)
     } finally {
-      manifest.elements.pop()
+      manifest.elements.shift()
     }
   })
 
