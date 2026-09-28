@@ -2,6 +2,7 @@ import { msg } from '@/i18n'
 import type { MenuAction } from '@/lib/desktop'
 import type { AlignMode } from '@/lib/geometry'
 import { alignSelectedTo, duplicateSelected, runManualSave } from '@/store/actions'
+import { alignSelectedPanelElements, type AlignBlocked } from '@/store/alignAction'
 import { alignRefFor } from '@/store/arrangeStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useSelectionStore } from '@/store/selectionStore'
@@ -16,6 +17,22 @@ import {
 } from './useKeyboard'
 
 const ALIGN_PREFIX = 'menu-align-'
+
+/**
+ * 图内对齐被拒时说什么。前三条与属性页对齐工具条（`ElementInspector` 的 `AlignSection`）
+ * 同一句；工具条在选得不够时把按钮置灰，菜单没法置灰，只能说出口。
+ */
+function reportElementAlignBlocked(reason: AlignBlocked, mode: AlignMode) {
+  const ui = useUiStore.getState()
+  if (reason === 'syncing') ui.setStatus(msg('element.alignSyncing', undefined, 'inspector'))
+  else if (reason === 'noop') ui.setStatus(msg('element.alignNoop', undefined, 'inspector'))
+  else if (reason === 'invalid') {
+    ui.setStatus(msg('element.alignInvalid', undefined, 'inspector'), 'error')
+  } else if (reason === 'too-few') {
+    const count = mode === 'hdist' || mode === 'vdist' ? 3 : 2
+    ui.setStatus(msg('quickEdit.needObjects', { count }, 'workspace'), 'error')
+  }
+}
 
 /**
  * 系统菜单（Tauri 壳，`tavotto:menu`）→ 现有 action 的转发。**这里没有第二套行为**：
@@ -54,7 +71,16 @@ export function runMenuAction(action: MenuAction) {
   if (useProjectStore.getState().phase !== 'open') return
 
   if (action.startsWith(ALIGN_PREFIX)) {
-    // 对齐写的是版面上的 x/y：快速编辑这一屏没有版面，改了用户也看不见
+    const mode = action.slice(ALIGN_PREFIX.length) as AlignMode
+    // 图内编辑态选着图内元素：对齐的是这些元素（与属性页对齐工具条同一个动作、同一道
+    // 几何权威闸），不是把面板在版面上挪走。判据与 Delete 的 `deleteSelection` 同一条；
+    // 写的是 override，快速编辑这一屏看得见，所以排在快速编辑闸前面。
+    if (ui.elementPanelId && ui.selectedGids.length) {
+      const res = alignSelectedPanelElements(ui.elementPanelId, mode)
+      if (!res.ok) reportElementAlignBlocked(res.reason, mode)
+      return
+    }
+    // 画布对齐写的是版面上的 x/y：快速编辑这一屏没有版面，改了用户也看不见
     // （与方向键 / ⌘D / 工具字母同一条判据 `inFastEdit`）
     if (inFastEdit()) return
     // 菜单看不见选区：没选东西时说出口，而不是点了没反应
@@ -64,7 +90,7 @@ export function runMenuAction(action: MenuAction) {
       return
     }
     // id 后缀就是 AlignMode；参照与属性页 / 多选浮动栏同一条规则：单选对画布，多选用 arrangeStore
-    alignSelectedTo(action.slice(ALIGN_PREFIX.length) as AlignMode, alignRefFor(count))
+    alignSelectedTo(mode, alignRefFor(count))
     return
   }
 

@@ -17,10 +17,12 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { literal } from '@/i18n'
+import type { Manifest, ManifestElement } from '@/lib/api'
 import { MENU_ACTIONS, type MenuAction } from '@/lib/desktop'
 import { useArrangeStore } from '@/store/arrangeStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useProjectStore } from '@/store/projectStore'
+import { renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { useViewportStore } from '@/store/viewportStore'
@@ -234,6 +236,80 @@ describe('不带加速键的几条', () => {
     expect(doc().past).toHaveLength(0)
     expect(useUiStore.getState().status).not.toBeNull()
     expect(useUiStore.getState().statusTone).toBe('error')
+  })
+
+  describe('图内编辑态：对齐的是选中的图内元素，不是版面上的面板', () => {
+    const text = (gid: string, x: number, y: number): ManifestElement =>
+      ({
+        gid,
+        role: 'text',
+        label: gid,
+        bbox: [x, y, 0.2, 0.05],
+        editable: [],
+        draggable: true,
+        anchor: [x, y],
+        drag_prop: 'pos_frac',
+      }) as ManifestElement
+    const live = () => doc().doc.objects.find((o) => o.id === 'p1') as PanelObject
+    const positions = () => doc().doc.objects.map((o) => [o.id, o.x, o.y])
+
+    /** 与属性页对齐工具条同一个场景：权威就位、面板在画布选区里、选着两个图内文字 */
+    function enterElementEdit({ exact = true } = {}) {
+      useRenderStore.getState().clear()
+      useRenderStore.setState({ render: vi.fn() })
+      if (exact) {
+        const p = live()
+        const manifest: Manifest = {
+          stem: 'p1',
+          size_mm: [80, 60],
+          elements: [text('t1', 0.1, 0.1), text('t2', 0.4, 0.3)],
+        }
+        useRenderStore.getState().patch(renderKeyOf(p), {
+          fileId: p.fileId,
+          rev: 1,
+          manifest,
+          svg: '<svg/>',
+          status: 'ready',
+          stale: false,
+          lastPatches: JSON.stringify(p.overrides),
+          wantPatches: JSON.stringify(p.overrides),
+        })
+        useRenderStore.setState((s) => ({ latest: { ...s.latest, [p.fileId]: renderKeyOf(p) } }))
+      }
+      // 画布选区里有两个面板：走错到 alignSelectedTo 的话，面板会在版面上动
+      useSelectionStore.getState().set(['p1', 'p2'])
+      useUiStore.setState({ elementPanelId: 'p1', selectedGids: ['t1', 't2'] })
+    }
+
+    it.each(['layout', 'fast_edit'] as const)('%s：写图内 override、面板不动、一条历史', (mode) => {
+      enterElementEdit()
+      if (mode === 'fast_edit') useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+      const before = positions()
+      act(() => runMenuAction('menu-align-left'))
+      expect(positions()).toEqual(before)
+      expect(live().overrides.some((o) => o.gid === 't2')).toBe(true)
+      expect(doc().past).toHaveLength(1)
+    })
+
+    it('权威没就位：与工具条同一句「正在同步」，什么都不写', () => {
+      enterElementEdit({ exact: false })
+      const before = positions()
+      act(() => runMenuAction('menu-align-left'))
+      expect(positions()).toEqual(before)
+      expect(live().overrides).toEqual([])
+      expect(doc().past).toHaveLength(0)
+      expect(useUiStore.getState().status).not.toBeNull()
+    })
+
+    it('只选了一个图内元素：说出口，也不退回去挪面板', () => {
+      enterElementEdit()
+      useUiStore.setState({ selectedGids: ['t2'] })
+      const before = positions()
+      act(() => runMenuAction('menu-align-left'))
+      expect(positions()).toEqual(before)
+      expect(doc().past).toHaveLength(0)
+      expect(useUiStore.getState().statusTone).toBe('error')
+    })
   })
 
   it('每一个 menu-align-* 的后缀都是 alignSelectedTo 认得的模式（落下一条历史）', () => {
