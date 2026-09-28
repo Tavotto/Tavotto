@@ -67,3 +67,21 @@
 * `tests/test_glyph_coverage_figure.py` 在 `TAVOTTO_CJK_FALLBACK=0` 下继续量「方框被报成问题」；
 * `tests/golden/preflight_vectors.json` 新增 `cjk-drawn-by-accepted-fallback-face` /
   `cjk-drawn-by-unaccepted-fallback-face`，pytest 与 vitest 各跑一遍。
+
+## 5. 补充（2026-09-28）：`FontProperties(fname=…)` 锁住的文字
+
+用户反馈（Windows 截图）：改图助手把脚本的全局字体从 `fname="msyh.ttc"` 换成
+`fname="times.ttf"`，数字与拉丁字母正常、汉字全是方框。实测：matplotlib 里 `fname`
+一旦有值，族列表**整个被忽略**，`_find_fonts_by_props` 对链上每一项都解析回那一个
+文件——§1 的回退尾巴接上了也不起作用。更坏的是 manifest 的 `face` / 缺字扫描只看族
+列表，报成「中文由回退链画出、没有缺字」，问题面板对方框一盏灯不亮，下拉显示的是
+一张根本没参与画字的中文脸；下拉里改字体也改不动它（fname 照样压着）。
+
+| 问题 | 裁决 |
+|---|---|
+| fname 文字怎么接尾巴 | `overrides._release_font_file`（在 `ensure_text_fallback` 里，同一时刻、写回重放同一段代码）：读那个文件第 0 张脸的族名 / 字形 / 字重（400/700 回成 normal/bold，下拉选得中），没注册的先 `addfont`，再按这些属性反查 |
+| 什么时候不换 | 反查解析不回**同一个文件（或字节相同的拷贝）的第 0 张脸**时原样不动：同名不同版本、字重对不上的兄弟文件都会换掉拉丁字的脸，宁可留着方框也不改正文 |
+| 换不开时 manifest 怎么报 | `_resolved_font_paths(families, file)`：有 fname 就只报那一个文件——`face` 是它、缺的汉字进 `glyphs_missing`，不再按族列表说「画出来了」 |
+| 提示词 | `ai_bridge._build_prompt` 第 4 条：字体用族名设，不用 fname |
+
+看护：`tests/test_cjk_figure_text.py` 的 `test_fname_*` 两条（worker 端到端 + 拉丁字换前换后 PNG 逐字节相同 / 字节相同拷贝 / 换不开时照实报缺字）。
