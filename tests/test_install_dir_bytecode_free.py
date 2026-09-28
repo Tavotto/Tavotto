@@ -243,6 +243,33 @@ def test_a_project_inside_the_interpreter_prefix_is_still_project_source(install
     assert _pycs(proj) == [], "项目放在解释器前缀之下时，项目源码被当成环境写了字节码"
 
 
+def test_a_venv_created_at_the_project_root_does_not_exempt_the_project(install, tmp_path):
+    """`python -m venv .`：解释器前缀**就是**项目根（Codex #717）。豁免只认包目录——venv 自己 site-packages 里的
+    模块照常缓存，项目源码照样不写。"""
+    proj = _data_project(tmp_path / "proj", extra_import="venvmod")
+    subprocess.run(
+        [USER_PYTHON, "-m", "venv", "--without-pip", str(proj)],
+        check=True,
+        env=_env(),
+        timeout=120,
+    )
+    py = str(proj / ("Scripts/python.exe" if os.name == "nt" else "bin/python"))
+    site = Path(_capture([py, "-c", "import sysconfig; print(sysconfig.get_paths()['purelib'])"]))
+    host_site = _capture(
+        [
+            USER_PYTHON,
+            "-c",
+            "import matplotlib, os; print(os.path.dirname(os.path.dirname(matplotlib.__file__)))",
+        ]
+    )
+    (site / "host.pth").write_text(host_site + "\n", encoding="utf-8")
+    (site / "venvmod.py").write_text("X = 1\n", encoding="utf-8")
+    _run_safe_worker(py, install, proj, "main", tmp_path, _env())
+    pycs = _pycs(proj)
+    assert [p for p in pycs if "venvmod" in p], pycs
+    assert [p for p in pycs if "fig_data" in p or "helper" in p] == [], pycs
+
+
 def test_the_environment_probe_writes_no_bytecode_into_the_install_dir(install, monkeypatch):
     """体检按文件执行 `worker.py`（`spec_from_file_location`）——SourceFileLoader 会把
     `engine/__pycache__/worker.cpython-3xx.pyc` 写在源码旁边，这正是 QA 复核里那一个。"""

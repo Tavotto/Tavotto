@@ -312,10 +312,10 @@ def _suppress_project_bytecode(roots) -> None:
     没预编译的环境（uv 建的 venv 默认不编）关掉它，每次冷启动都要从源码重编
     （`test_only_the_bundled_runtime_gets_b_flag`）。判据落在 `SourceFileLoader.set_data`
     （它在 `SourceFileLoader` 里只被写字节码的那一步调用）：要写的 `.pyc` 落在项目根之下就不写；
-    但落在**项目根里的、当前解释器自己的前缀**之下的照写——项目根里放着 `.venv` 是常态，那是用户的
-    环境，不是项目源码。反过来的包含（项目本身放在解释器前缀之下，如 Conda 环境目录里、`/usr/local`
-    下）不豁免：那时项目源码照样是项目源码（Codex #717）。内置 runtime 本来就带 `-B`
-    （`runtime.child_args`），这一段对它是 no-op。
+    但落在**当前解释器的包目录**（`sysconfig` 的 stdlib / purelib / platlib）之下的照写——项目根里放着
+    `.venv` 是常态，那是用户的环境，不是项目源码。只认包目录、不认整个解释器前缀：前缀包住项目
+    （项目在 Conda 环境目录里、`/usr/local` 下）或前缀就是项目根（`python -m venv .`）时，项目源码照样是
+    项目源码（Codex #717 两轮）。内置 runtime 本来就带 `-B`（`runtime.child_args`），这一段对它是 no-op。
     """
     from importlib.machinery import SourceFileLoader  # noqa: PLC0415
 
@@ -323,15 +323,15 @@ def _suppress_project_bytecode(roots) -> None:
         return os.path.normcase(os.path.realpath(os.fspath(p)))
 
     project = tuple(_norm(r) for r in roots if r)
-    # 只豁免**项目里面**的解释器前缀（项目根里的 `.venv`）；包住项目的前缀不算
+    import sysconfig  # noqa: PLC0415
+
+    # 只豁免解释器的**包目录**（项目里的 `.venv/lib/.../site-packages`）；前缀本身不算——它可能包住项目，
+    # 也可能就是项目根
+    paths = sysconfig.get_paths()
     envs = tuple(
-        e
-        for e in (
-            _norm(p)
-            for p in {sys.prefix, sys.exec_prefix, sys.base_prefix, sys.base_exec_prefix}
-            if p
-        )
-        if _inside(e, project)
+        _norm(p)
+        for p in {paths.get(k) for k in ("stdlib", "platstdlib", "purelib", "platlib")}
+        if p
     )
     real_set_data = getattr(SourceFileLoader.set_data, "_tavotto_real", SourceFileLoader.set_data)
 
