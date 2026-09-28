@@ -120,6 +120,9 @@ jobs:
           python-version: ${{ matrix.python }}
 
       - name: 装依赖（版本由 tests/compat/matrix.json 指到的锁文件决定）
+        env:
+          PIP_DEFAULT_TIMEOUT: "60"
+          PIP_RETRIES: "10"
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
@@ -254,12 +257,17 @@ jobs:
           key: cpython-embed-${{ hashFiles('packaging/runtime-lock.json') }}
 
       - name: 构建内置渲染 runtime
+        env:
+          PIP_DEFAULT_TIMEOUT: "60"
+          PIP_RETRIES: "10"
         run: python scripts/build_worker_runtime.py --clean
 
       - name: 打包（内置 runtime 必须进包）
         # 装 requirements.txt 那份钉死的运行时闭包（U10 起含 RenderCore 的五个包，ADR 0072）；批准字体在
         # PyInstaller 之前按 allowlist 取到包内目录（tavotto.spec 缺了就拒绝打包）
         env:
+          PIP_DEFAULT_TIMEOUT: "60"
+          PIP_RETRIES: "10"
           TAVOTTO_REQUIRE_RUNTIME: "1"
         run: |
           python -m pip install --upgrade pip pyinstaller
@@ -277,7 +285,10 @@ jobs:
 
       - name: 准备「用户的 Python」— 官方
         if: matrix.python == 'cpython'
-        run: python -m pip install matplotlib
+        env:
+          PIP_DEFAULT_TIMEOUT: "60"
+          PIP_RETRIES: "10"
+        run: python -m pip install --only-binary=matplotlib matplotlib
 
       - name: 装 matplotlib 到 conda 环境
         if: matrix.python == 'conda'
@@ -382,6 +393,9 @@ jobs:
       - name: 生成的中间 NSIS 脚本也得是这套页面
         if: matrix.python == 'none'
         shell: pwsh
+        env:
+          PIP_DEFAULT_TIMEOUT: "60"
+          PIP_RETRIES: "10"
         run: |
           $ErrorActionPreference = "Stop"
           $gen = @(Get-ChildItem src-tauri\target\release\nsis -Recurse `
@@ -964,6 +978,9 @@ jobs:
         id: app
         with: { python-version: "3.13" }
       - name: 装依赖（应用 3.13 按锁文件钉科学栈；alt 3.12 只装 matplotlib——「用户本来就有」）
+        env:
+          PIP_DEFAULT_TIMEOUT: "60"
+          PIP_RETRIES: "10"
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
@@ -971,7 +988,7 @@ jobs:
           # shellcheck disable=SC2046
           pip install $(python scripts/ci/runtime_pins.py)
           "${{ steps.alt.outputs.python-path }}" -m pip install --upgrade pip
-          "${{ steps.alt.outputs.python-path }}" -m pip install matplotlib
+          "${{ steps.alt.outputs.python-path }}" -m pip install --only-binary=matplotlib matplotlib
           python -c "import sys, matplotlib; print('app', sys.version, matplotlib.__version__)"
           "${{ steps.alt.outputs.python-path }}" -c "import sys, matplotlib; print('alt', sys.version, matplotlib.__version__)"
           "${{ steps.newer.outputs.python-path }}" -c "import sys; print('newer', sys.version)"
