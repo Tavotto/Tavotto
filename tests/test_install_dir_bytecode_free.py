@@ -285,7 +285,11 @@ def test_a_project_sysconfig_module_does_not_shadow_the_workers(tmp_path, monkey
     monkeypatch.syspath_prepend(str(tmp_path))
     monkeypatch.delitem(sys.modules, "sysconfig")  # 标准库那份没被缓存的情形
     monkeypatch.setattr(SourceFileLoader, "set_data", SourceFileLoader.set_data)  # 用完还原
+    # `sysconfig.get_paths()` 首次调用会惰性 import `_sysconfigdata_*`：装守卫时一律不许再问它（包目录在
+    # worker 模块加载时、项目目录进 sys.path 之前就算好了）
+    monkeypatch.setattr(worker.sysconfig, "get_paths", lambda *a, **k: 1 / 0)
     worker._suppress_project_bytecode((str(tmp_path),))
+    assert worker._INTERPRETER_PACKAGE_DIRS
 
 
 def test_the_environment_probe_writes_no_bytecode_into_the_install_dir(install, monkeypatch):

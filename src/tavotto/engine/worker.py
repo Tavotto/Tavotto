@@ -45,7 +45,7 @@ import json
 import os
 import shutil
 import sys
-import sysconfig  # 模块层：项目目录进 sys.path 之前就拿住标准库这一份（项目里的 sysconfig.py 遮不住它）
+import sysconfig  # 模块层：项目目录进 sys.path 之前就拿住标准库这一份（见 `_INTERPRETER_PACKAGE_DIRS`）
 import time
 import traceback
 from pathlib import Path
@@ -300,6 +300,20 @@ def _inside(path: str, roots: tuple[str, ...]) -> bool:
     return any(path == r or path.startswith(r.rstrip(os.sep) + os.sep) for r in roots)
 
 
+def _norm_path(p) -> str:
+    return os.path.normcase(os.path.realpath(os.fspath(p)))
+
+
+#: 当前解释器的包目录（stdlib / purelib / platlib）。**模块加载时就算好**：`sysconfig.get_paths()` 第一次调用
+#: 会惰性 import `_sysconfigdata_*`，放到 build 里项目目录已进 `sys.path` 之后再算，项目里同名的文件会被当成它
+#: import——在删除守卫与 savefig 拦截装好之前执行用户代码（Codex #717）。
+_INTERPRETER_PACKAGE_DIRS = tuple(
+    _norm_path(p)
+    for p in {sysconfig.get_paths().get(k) for k in ("stdlib", "platstdlib", "purelib", "platlib")}
+    if p
+)
+
+
 def _suppress_project_bytecode(roots) -> None:
     """用户**项目目录里**的源码不写字节码：脚本自己（entry 不是 `__main__` 时按模块 import）与
     它 import 的项目内模块，都不在项目里留 `__pycache__/*.pyc`。
@@ -320,23 +334,15 @@ def _suppress_project_bytecode(roots) -> None:
     """
     from importlib.machinery import SourceFileLoader  # noqa: PLC0415
 
-    def _norm(p) -> str:
-        return os.path.normcase(os.path.realpath(os.fspath(p)))
-
-    project = tuple(_norm(r) for r in roots if r)
-    # 只豁免解释器的**包目录**（项目里的 `.venv/lib/.../site-packages`）；前缀本身不算——它可能包住项目，
-    # 也可能就是项目根
-    paths = sysconfig.get_paths()
-    envs = tuple(
-        _norm(p)
-        for p in {paths.get(k) for k in ("stdlib", "platstdlib", "purelib", "platlib")}
-        if p
-    )
+    project = tuple(_norm_path(r) for r in roots if r)
+    # 只豁免解释器的**包目录**（项目里的 `.venv/lib/.../site-packages`，模块加载时算好）；前缀本身不算——
+    # 它可能包住项目，也可能就是项目根
+    envs = _INTERPRETER_PACKAGE_DIRS
     real_set_data = getattr(SourceFileLoader.set_data, "_tavotto_real", SourceFileLoader.set_data)
 
     def set_data(self, path, data, *args, **kwargs):
         try:
-            target = _norm(path)
+            target = _norm_path(path)
         except (OSError, TypeError, ValueError):
             target = ""
         if target and _inside(target, project) and not _inside(target, envs):
