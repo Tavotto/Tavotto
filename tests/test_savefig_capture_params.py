@@ -100,6 +100,21 @@ def test_missing_arguments_fall_back_to_rcparams_at_call_time(fake_mpl):
     assert call["bbox_extra_artists"] is None
 
 
+def test_transparent_makes_unset_backgrounds_none(fake_mpl):
+    """`Figure.savefig` 在 transparent 时 `kwargs.setdefault("facecolor"/"edgecolor", "none")`：
+    没给的那一项是 "none"，显式给了的（哪怕是 None → rcParams）照旧。"""
+    call = figcapture.savefig_call("a.png", {"transparent": True})
+    assert (call["facecolor"], call["edgecolor"]) == ("none", "none")
+    call = figcapture.savefig_call("a.png", {"transparent": True, "facecolor": "white"})
+    assert (call["facecolor"], call["edgecolor"]) == ("#ffffffff", "none")
+    call = figcapture.savefig_call("a.png", {"transparent": True, "edgecolor": None})
+    assert call["edgecolor"] == "auto", "显式给了 None：setdefault 不动它，print_figure 取 rcParams"
+    fake_mpl["savefig.transparent"] = True
+    assert figcapture.savefig_call("a.png", {})["facecolor"] == "none", (
+        "rcParams 打开的 transparent 同样"
+    )
+
+
 def test_explicit_format_beats_the_suffix(fake_mpl):
     assert figcapture.savefig_call("a.pdf", {"format": "SVG"})["format"] == "svg"
 
@@ -232,7 +247,8 @@ TIGHT_EXPECTED = [
         "dpi": 300.0,
         "transparent": True,
         "facecolor": "#ffffffff",
-        "edgecolor": "auto",
+        # transparent 而没给 edgecolor：matplotlib 自己 setdefault 成 "none"
+        "edgecolor": "none",
         "bbox_extra_artists": None,
     },
     {

@@ -52,3 +52,43 @@ def test_native_descriptor_carries_the_savefig_calls(tmp_path, bridge_session):
         sess.wait_event("barrier")  # 脚本跑完那次
         sess.resume()
         sess.wait_event("exit")
+
+
+LATE_SAVE = """\
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+fig, ax = plt.subplots(figsize=(3.0, 2.0))
+ax.plot([1, 2, 3])
+plt.show()
+fig.savefig("paper.pdf", bbox_inches="tight", pad_inches=0.02)
+plt.show()
+"""
+
+
+def test_a_figure_shown_first_and_saved_later_is_a_savefig_capture(tmp_path, bridge_session):
+    """第一个屏障按 pyplot 兜底捕获（stem = 脚本名），继续之后脚本把同一张图按同一个 stem
+    存了盘：第二个屏障里它是 savefig 捕获、调用照记——不许还报「从没存过盘」（`[]`）。"""
+    proj = tmp_path / "proj"
+    write(proj / "paper.py", LATE_SAVE)
+    with bridge_session(proj / "paper.py", cwd=str(proj)) as sess:
+        sess.wait_event("barrier")
+        (first,) = sess.ensure_built()["descriptors"]
+        assert (first["stem"], first["capture_source"], first["savefig_calls"]) == (
+            "paper",
+            "pyplot",
+            [],
+        )
+        sess.resume()
+        sess.wait_event("barrier")
+        (desc,) = sess.ensure_built()["descriptors"]
+        assert desc["stem"] == "paper"
+        assert desc["capture_source"] == "savefig"
+        assert [(c["format"], c["bbox_inches"]) for c in desc["savefig_calls"]] == [
+            ("pdf", "tight")
+        ]
+        sess.resume()
+        sess.wait_event("barrier")  # 脚本跑完那次
+        sess.resume()
+        sess.wait_event("exit")

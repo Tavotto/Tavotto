@@ -168,6 +168,11 @@ def _install_savefig_hook(mfigure) -> None:
             if stem and stem not in _CAPTURE:
                 _CAPTURE[stem] = self
                 _CAPTURE_SOURCE[stem] = figcapture.SOURCE_SAVEFIG
+            elif stem and _CAPTURE.get(stem) is self:
+                # 先在 `show()` 屏障处按 pyplot 兜底捕获、继续之后脚本又把**同一张图**按这个
+                # stem 存了盘：它从此是显式存过盘的图（来源升级为 savefig，调用照记）。只在
+                # native 发生——safe worker 与浏览器的 pyplot 兜底在脚本跑完之后才收
+                _CAPTURE_SOURCE[stem] = figcapture.SOURCE_SAVEFIG
             figcapture.record_savefig_call(
                 _CAPTURE_SAVEFIG, _CAPTURE, stem, self, figcapture.savefig_call(fname, kwargs)
             )
@@ -531,7 +536,9 @@ class BridgeRun:
         那些带着用户的 override，重建等于把编辑丢掉。
         """
         for stem, fig in _CAPTURE.items():
-            self.session.add_figure(stem, fig, _CAPTURE_SOURCE[stem])
+            if not self.session.add_figure(stem, fig, _CAPTURE_SOURCE[stem]):
+                # 已在会话里的图：来源只会从 pyplot 升级到 savefig（见钩子），同步过去
+                self.session.capture_source[stem] = _CAPTURE_SOURCE[stem]
         # 调用记录整份覆盖：屏障之后脚本还可能再存同一个 stem，模块级表是全貌
         for stem, calls in _CAPTURE_SAVEFIG.items():
             self.session.savefig_calls[stem] = None if calls is None else list(calls)

@@ -616,7 +616,8 @@ def savefig_call(fname, kwargs: dict) -> dict:
       （英寸，figure 左下为原点）；认不出的形态记成 `str`，不猜；
     * `pad_inches`：数值或 `"layout"`（matplotlib 3.8+）；
     * `dpi`：数值或 `"figure"`；`transparent`：布尔；
-    * `facecolor` / `edgecolor`：`#rrggbbaa`、`"auto"` 或 `"none"`；认不出的记 `str`；
+    * `facecolor` / `edgecolor`：`#rrggbbaa`、`"auto"` 或 `"none"`；认不出的记 `str`。
+      `transparent` 为真而这个键没给时是 `"none"`（matplotlib 自己的 `setdefault`）；
     * `bbox_extra_artists`：给了几个（对象本身进不了 JSON）；没给是 None。
 
     纯标准库：matplotlib 此刻必然已载入（调用方手里就有一张 Figure），按
@@ -663,14 +664,23 @@ def savefig_call(fname, kwargs: dict) -> dict:
         extra_count = None if extra is None else len(extra)
     except TypeError:
         extra_count = None
+    transparent = bool(_pick("transparent", "savefig.transparent"))
+
+    def _background(key: str):
+        # `Figure.savefig` 在 transparent 时 `kwargs.setdefault(key, "none")`（3.8 与 3.11 同一句）：
+        # 只有**没给这个键**时才换成 "none"；显式给了（哪怕是 None）照旧按给的值 / rcParams 走
+        if transparent and key not in kwargs:
+            return "none"
+        return _color(_pick(key, f"savefig.{key}"))
+
     return {
         "format": str(fmt).lower() if fmt else None,
         "bbox_inches": bbox,
         "pad_inches": _num(_pick("pad_inches", "savefig.pad_inches")),
         "dpi": _num(_pick("dpi", "savefig.dpi")),
-        "transparent": bool(_pick("transparent", "savefig.transparent")),
-        "facecolor": _color(_pick("facecolor", "savefig.facecolor")),
-        "edgecolor": _color(_pick("edgecolor", "savefig.edgecolor")),
+        "transparent": transparent,
+        "facecolor": _background("facecolor"),
+        "edgecolor": _background("edgecolor"),
         "bbox_extra_artists": extra_count,
     }
 
