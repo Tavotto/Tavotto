@@ -20,7 +20,7 @@ import { MATPLOTLIB_SVG } from '@/lib/__fixtures__/matplotlibSvg'
 import type { EngineRenderOptions, Manifest, ManifestElement } from '@/lib/api'
 import { runUndoRedo, useKeyboard } from '@/hooks/useKeyboard'
 import { useDocumentStore } from '@/store/documentStore'
-import { resetGestureCoordinator } from '@/store/gestureCoordinator'
+import { registerGesture, resetGestureCoordinator } from '@/store/gestureCoordinator'
 import { useInteractionStore } from '@/store/interactionStore'
 import { renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
@@ -290,6 +290,26 @@ describe('画布对象：步长与撤销', () => {
     expect(obj('r').x).toBeCloseTo(8 * 0.5, 9)
     expect(past()).toHaveLength(1)
 
+    keydown('z', { metaKey: true })
+    expect(obj('r').x).toBe(0)
+  })
+
+  it('上一轮连续编辑（属性页字段的安静计时器）还开着时按方向键：先收掉它，这一段照常移动', async () => {
+    await setup({ extra: [rect('r', 0)] })
+    useSelectionStore.getState().set(['r'])
+    // 属性页改了个值、安静计时器还没到就 Tab 到工具栏按方向键（Codex #671）
+    const doc = useDocumentStore.getState()
+    doc.beginTxn('field')
+    let finished = 0
+    registerGesture(() => {
+      finished++
+      useDocumentStore.getState().endTxn()
+    })
+    tap('ArrowRight')
+    expect(finished).toBe(1)
+    expect(obj('r').x).toBeCloseTo(NUDGE_STEP_MM.base, 9)
+    settle()
+    expect(obj('r').x).toBeCloseTo(NUDGE_STEP_MM.base, 9)
     keydown('z', { metaKey: true })
     expect(obj('r').x).toBe(0)
   })

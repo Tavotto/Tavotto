@@ -23,7 +23,7 @@ import { alignEntries, isElementHidden, panelFullRect } from '@/lib/elementGeom'
 import { msg } from '@/i18n'
 import type { Manifest } from '@/lib/api'
 import { useDocumentStore } from '@/store/documentStore'
-import { registerGesture } from '@/store/gestureCoordinator'
+import { finishActiveGesture, registerGesture } from '@/store/gestureCoordinator'
 import { useInteractionStore } from '@/store/interactionStore'
 import { displayedExactManifest, useMountedSvgStore } from '@/store/mountedSvgStore'
 import { useRenderStore } from '@/store/renderStore'
@@ -179,6 +179,10 @@ function settleBurst(): void {
 }
 
 function beginBurst(key: string): boolean {
+  // 先收掉上一轮连续编辑（属性页字段的安静计时器等），再开这一段的事务 / 预览会话：
+  // 顺序反过来的话，`registerGesture` 收尾别人时那边的 `endTxn()` 会把刚开的微调事务
+  // 一起结掉，这一段的 `txnUpdate()` 落空、第一串按键什么都不动（Codex #671）。
+  finishActiveGesture()
   const common = {
     key,
     dx: 0,
