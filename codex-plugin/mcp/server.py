@@ -562,6 +562,9 @@ def _tavotto_cli_version(cmd: "list[str]", timeout: float = 30.0) -> "str | None
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             timeout=timeout,
+            # 只读探测不往那个 Tavotto 所在的环境写 .pyc：`cmd` 多半是 pip / pipx 的控制台脚本，塞不进
+            # `-B`，只能靠环境变量（它起的解释器继承）
+            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
         )
     except (OSError, subprocess.TimeoutExpired, ValueError):
         return None

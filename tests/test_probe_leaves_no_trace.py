@@ -117,6 +117,19 @@ def test_read_only_probes_write_no_bytecode_into_the_probed_interpreter(name, se
     assert _pycs(sensor) == [], f"{name} 起的解释器写了字节码"
 
 
+def test_the_plugins_cli_version_probe_writes_no_bytecode(sensor, tmp_path, monkeypatch):
+    """插件降级路径上问 `tavotto doctor --json` 的那一跳（`server._tavotto_cli_version`，Codex #717 P2）：
+    `cmd` 多半是 pip / pipx 的控制台脚本，塞不进 `-B`——它起的解释器也不许写字节码。"""
+    import importlib
+
+    monkeypatch.syspath_prepend(str(_PLUGIN_SERVER.parent))
+    launcher = importlib.import_module("server")
+    fake = tmp_path / "tavotto_cli.py"
+    fake.write_text('print(\'{"version": "0.10.0"}\')\n', encoding="utf-8")
+    assert launcher._tavotto_cli_version([USER_PYTHON, str(fake)]) == "0.10.0"
+    assert _pycs(sensor) == []
+
+
 def test_the_diagnostics_endpoint_probe_writes_no_bytecode(sensor, monkeypatch):
     """`/api/diagnostics` 的 matplotlib 探测（路由里内联的那一条）。"""
     from tavotto import app as m
