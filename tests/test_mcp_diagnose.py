@@ -414,6 +414,7 @@ def old_engine(tmp_path):
 
 def _no_mirror(monkeypatch):
     monkeypatch.setattr(launcher, "pip_index", lambda environ=None: None)
+    monkeypatch.setattr(launcher, "pip_index_of", lambda python, **kw: None)
 
 
 def _mirror(monkeypatch):
@@ -422,6 +423,7 @@ def _mirror(monkeypatch):
         "pip_index",
         lambda environ=None: {"url": ALIYUN, "source": "/etc/pip.conf", "mirror": True},
     )
+    monkeypatch.setattr(launcher, "pip_index_of", lambda python, **kw: None)
 
 
 def test_an_old_pipx_engine_without_a_manifest_is_not_a_desktop_install(old_engine, monkeypatch):
@@ -611,3 +613,89 @@ def test_upgrade_commands_follow_the_mirror_verdict():
     mirrored = launcher.upgrade_commands("0.17.0", {"url": ALIYUN, "mirror": True})
     assert all(c.endswith("--index-url https://pypi.org/simple") for c in mirrored)
     assert not any(c.startswith("pipx upgrade") for c in mirrored)
+
+
+# --------------- 商店版 Python 的虚拟化 pip 配置 / 以引擎那边为准（#721 真机） ---------------
+def _store_pip_ini(local: Path, package: str, url: str) -> Path:
+    ini = local / "Packages" / package / "LocalCache" / "Roaming" / "pip" / "pip.ini"
+    ini.parent.mkdir(parents=True)
+    ini.write_text(f"[global]\nindex-url = {url}\n", encoding="utf-8")
+    return ini
+
+
+def test_pip_index_reads_the_store_pythons_virtualized_config(tmp_path):
+    """#721 真机：商店版 Python 的 pip.ini 实际在 `%LOCALAPPDATA%\\Packages\\PythonSoftwareFoundation.
+    Python.*\\LocalCache\\Roaming\\pip\\pip.ini`，别的进程在 `%APPDATA%\\pip\\pip.ini` 看不到它。
+    多份都读，任一指向非 PyPI 就按镜像报；别的包名不算；`PIP_INDEX_URL` 仍压过一切。"""
+    local = tmp_path / "LocalAppData"
+    base = {
+        "HOME": str(tmp_path),
+        "USERPROFILE": str(tmp_path),
+        "XDG_CONFIG_DIRS": str(tmp_path / "none"),
+        "LOCALAPPDATA": str(local),
+    }
+    assert launcher.pip_index(base) is None, "前提：没有任何 pip 配置"
+
+    _store_pip_ini(local, "SomeVendor.Python.3.12_abc", ALIYUN)
+    assert launcher.pip_index(base) is None, "不是商店版 Python 的包不算"
+
+    _store_pip_ini(local, "PythonSoftwareFoundation.Python.3.11_x", "https://pypi.org/simple")
+    ini = _store_pip_ini(local, "PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0", ALIYUN)
+    got = launcher.pip_index(base)
+    assert got == {"url": ALIYUN, "source": str(ini), "mirror": True}
+
+    # 普通配置说 PyPI、商店版那份说镜像 → 仍报镜像（宁可多给一个 --index-url）
+    conf = tmp_path / "pip.conf"
+    conf.write_text("[global]\nindex-url = https://pypi.org/simple\n", encoding="utf-8")
+    assert launcher.pip_index({**base, "PIP_CONFIG_FILE": str(conf)})["mirror"] is True
+
+    got = launcher.pip_index({**base, "PIP_INDEX_URL": "https://pypi.org/simple"})
+    assert got == {"url": "https://pypi.org/simple", "source": "PIP_INDEX_URL", "mirror": False}
+    assert launcher.pip_index({**base, "PIP_CONFIG_FILE": os.devnull}) is None
+
+
+def test_the_engine_interpreters_view_of_pip_wins(monkeypatch):
+    """启动器解释器 ≠ 装引擎的解释器时，以引擎背后那个解释器看到的 pip 配置为准：
+    这边读到 PyPI，那边（真起一个子进程跑本文件的 `pip_index()`）读到镜像 → 报镜像。"""
+    monkeypatch.setattr(
+        launcher,
+        "pip_index",
+        lambda environ=None: {"url": "https://pypi.org/simple", "source": "x", "mirror": False},
+    )
+    monkeypatch.setenv("PIP_INDEX_URL", ALIYUN)  # 只有子进程里那份真的 pip_index 读得到
+    there = launcher.pip_index_of(sys.executable)
+    assert there == {"url": ALIYUN, "source": "PIP_INDEX_URL", "mirror": True}
+    assert launcher.effective_pip_index(sys.executable)["mirror"] is True
+    assert launcher.pip_index_of(None) is None
+    assert launcher.effective_pip_index(None)["mirror"] is False
+
+
+def test_diagnosis_takes_the_index_from_the_engines_interpreter(old_engine, monkeypatch):
+    """接线：诊断的升级命令用的是引擎 venv 那边看到的镜像，即使启动器这边看到的是 PyPI。"""
+    monkeypatch.setattr(launcher, "required_tavotto_version", lambda: "0.16.0")
+    monkeypatch.setattr(launcher, "pip_index", lambda environ=None: None)
+    monkeypatch.setenv("PIP_INDEX_URL", ALIYUN)
+    monkeypatch.delenv("PYTHONPATH", raising=False)
+    code, hint = launcher.diagnose_resolved(old_engine["found"], NOTHING_IMPORTABLE)
+    assert code == "engine_too_old"
+    assert "--index-url https://pypi.org/simple" in hint and ALIYUN in hint
+
+
+def test_version_numbers_never_touch_chinese_characters(old_engine, monkeypatch):
+    """#721 真机看到「插件 0.17.0的桥」：话术里每个版本号两侧都要留空格。"""
+    monkeypatch.setattr(launcher, "_plugin_version", lambda: "0.17.0")
+    _mirror(monkeypatch)
+    texts = [
+        launcher.engine_incompatible_hint(
+            {"python": "/p/python", "version": "0.15.0"}, plugin="0.17.0", index=None
+        ),
+        launcher.engine_too_old_hint("0.15.0", "0.16.0", plugin="0.17.0", index=None),
+        launcher.mirror_note("0.16.0", {"url": ALIYUN, "source": "x", "mirror": True}),
+        *launcher._recovery_steps("engine_incompatible"),
+    ]
+    glued = re.compile(r"[\u4e00-\u9fff]\d+\.\d+\.\d+|\d+\.\d+\.\d+[\u4e00-\u9fff]")
+    for text in texts:
+        assert not glued.search(text), text
+    # 没有版本号时也不能多出空格
+    bare = launcher.engine_incompatible_hint({"python": "/p", "version": "0.15.0"}, plugin=None)
+    assert "这个插件的桥" in bare
