@@ -707,17 +707,25 @@ def _explain_empty_capture(err: "WorkerError", script_name: str, known, log_tail
 
 #: worker 侧 `worker.MISSING_INPUT` 的镜像（Flask 进程不 import worker.py）。
 MISSING_INPUT_CODE = "missing_input"
+#: worker 侧 `worker.SCRIPT_EXITED` 的镜像：脚本自己 `sys.exit(...)`——最常见的是先 `exists()` 判空
+#: 再退出（「找不到数据」），与「跑完没出图」一样只挂静态那部分（ADR 0106 §一.3）。
+SCRIPT_EXITED_CODE = "script_exited"
 
 
 def _offer_missing_input(err: "WorkerError", script_name: str, figures_dir) -> "WorkerError":
     """数据找不到（ADR 0106）：给错误挂上弹窗载荷 `missing_input`。
 
-    `missing_input`（worker 说得出缺的是哪一串）与「脚本跑完没出图」（`no_figures_captured*`，
-    多半是先 `exists()` 判空再自己退出）两条路都挂：后者只剩脚本里写着、此刻哪儿都找不到的
+    `missing_input`（worker 说得出缺的是哪一串）与「脚本跑完没出图」/「脚本自己 exit 了」
+    （`no_figures_captured*` / `script_exited`，多半是先 `exists()` 判空再自己退出）两条路都挂：后者只剩脚本里写着、此刻哪儿都找不到的
     路径（`inputremap.static_missing`）。两样都没有就不挂——没什么可问的，错误块照旧。
     两条控制面与准备接口各调一处，载荷只在 `inputremap.payload_for` 里拼。
     """
-    if err.code not in (MISSING_INPUT_CODE, NO_FIGURES_CODE, NO_FIGURES_SILENT_CODE):
+    if err.code not in (
+        MISSING_INPUT_CODE,
+        NO_FIGURES_CODE,
+        NO_FIGURES_SILENT_CODE,
+        SCRIPT_EXITED_CODE,
+    ):
         return err
     if not script_name or not figures_dir:
         return err

@@ -127,12 +127,17 @@ def _error_from_worker(
         # 文案由前端按 code 翻；`error` 给 `script_exited` 的占位符（`SystemExit: 2`
         # 那一行），`script_needs_arguments` 的 usage 在 traceback 里（pool 已接上）。
         lines = [ln for ln in (exc.traceback_text or "").splitlines() if ln.strip()]
-        return _err(
+        out = _err(
             exc.code,
             str(exc),
             params={"error": (lines[-1].strip() if lines else str(exc))[:200]},
             traceback_text=exc.traceback_text,
         )
+        # 先 `exists()` 判空再 exit（ADR 0106）：脚本里写着、此刻哪儿都找不到的路径随错误带出
+        offer = getattr(exc, "missing_input", None)
+        if isinstance(offer, dict):
+            out["missing_input"] = offer
+        return out
     if exc.code == ERROR_MISSING_INPUT:
         offer = getattr(exc, "missing_input", None)
         # 占位符与渲染入口同一个：`{{error}}` 是 traceback 的最后一行（`FileNotFoundError: …`）
