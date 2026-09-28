@@ -2415,6 +2415,29 @@ def api_diagnostics_bundle_post():
     return _diagnostics_bundle_response(frontend=frontend, frontend_dropped=dropped)
 
 
+def _read_body_capped(limit: int) -> bytes:
+    """从请求流**最多读 `limit + 1` 字节**——收请求体的端点共用这一份有界读取。
+
+    **上限卡在读取本身，不卡 `Content-Length`**：chunked transfer encoding 的请求根本
+    没有那个头，`request.content_length` 是 None；`get_data()` / `get_json()` 会把任意大
+    的 body 先整份缓冲再交出来，出了错的客户端就能把内存吃满。调用方拿到的字节数
+    `> limit` 就是「超了」的判据，无论有没有 Content-Length 都成立。
+
+    循环读到够数或 EOF：流的一次 `read(n)` 可以少给（分块到达的 chunked 输入），
+    只读一次的话「超了」会被判成「没超」、截断的数据会被当成完整的收下。
+    """
+    want = limit + 1
+    chunks: list[bytes] = []
+    got = 0
+    while got < want:
+        chunk = request.stream.read(want - got)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        got += len(chunk)
+    return b"".join(chunks)
+
+
 def _read_frontend_payload() -> tuple[dict | None, bool]:
     """请求体 → (载荷, 是不是被整份丢掉了)。**不抛异常**。
 
@@ -2426,7 +2449,7 @@ def _read_frontend_payload() -> tuple[dict | None, bool]:
     """
     limit = engine_diagnostics_frontend.MAX_REQUEST_BYTES
     try:
-        raw = request.stream.read(limit + 1)
+        raw = _read_body_capped(limit)
     except Exception:  # noqa: BLE001 — 读流失败不该 500
         return None, False
     if not raw:
@@ -2465,9 +2488,9 @@ def api_perf_report():
     文件名由后端生成；请求体只校验形状（schema 字面量 + 片段列表 + 大小上限），
     不参与拼路径。不上传、不进遥测。
     """
-    # 上限卡在读取本身（chunked 请求没有 Content-Length，理由同诊断包的
-    # `_read_frontend_payload`）：多读一个字节就是「超了」的判据
-    raw = request.stream.read(engine_perfprobe.MAX_REPORT_BYTES + 1)
+    # 上限卡在读取本身（chunked 请求没有 Content-Length，见 `_read_body_capped`）：
+    # 多读一个字节就是「超了」的判据
+    raw = _read_body_capped(engine_perfprobe.MAX_REPORT_BYTES)
     try:
         dest = engine_perfprobe.save_report(raw)
     except engine_perfprobe.ReportRejected as exc:
@@ -7988,7 +8011,9 @@ def api_versions_thumb_put(doc_id, vid):
     ext = _VERSION_THUMB_TYPES.get((request.mimetype or "").lower())
     if ext is None:
         return jsonify({"error": "缩略图只收 webp / png", "code": "version_thumb_invalid"}), 400
-    data = request.get_data(cache=False)
+    # 上限卡在读取本身（Codex #679）：`get_data()` 先把整个 body 读进内存才轮到这里判大小，
+    # chunked 请求没有 Content-Length，出错的客户端可以把内存吃满
+    data = _read_body_capped(VERSION_THUMB_MAX_BYTES)
     if not data or len(data) > VERSION_THUMB_MAX_BYTES:
         return jsonify({"error": "缩略图为空或太大", "code": "version_thumb_invalid"}), 400
     if not _VERSION_ID_RE.match(vid):

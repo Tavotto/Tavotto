@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import ast
+import io
 import json
 import re
 import threading
@@ -399,6 +400,57 @@ def test_orphan_thumbnails_are_swept_on_the_next_write_and_strangers_are_left_al
     assert sorted(p.name for p in _thumbs_dir().iterdir()) == sorted(
         [f"{v['id']}.png", "notes.txt"]
     )
+
+
+class _CountingStream(io.RawIOBase):
+    """chunked 上传的替身：总共 `total` 字节、每次最多给 `step` 字节（短读），记下被读走多少。"""
+
+    def __init__(self, total: int, step: int = 4096):
+        self.total, self.step, self.read_bytes = total, step, 0
+
+    def readable(self):
+        return True
+
+    def readinto(self, buf):
+        n = min(len(buf), self.step, self.total - self.read_bytes)
+        buf[:n] = b"p" * n
+        self.read_bytes += n
+        return n
+
+
+def _put_chunked(client, vid, stream):
+    """没有 Content-Length 的 PUT（chunked）：werkzeug 按 `wsgi.input_terminated` 原样交出流。"""
+    resp = client.put(
+        f"/api/versions/d1/{vid}/thumb",
+        content_type="image/png",
+        headers={"Transfer-Encoding": "chunked"},
+        environ_overrides={
+            "wsgi.input": stream,
+            "wsgi.input_terminated": True,
+            "CONTENT_LENGTH": "",
+        },
+    )
+    assert resp.request.content_length is None  # 判据真的量到了「没有 Content-Length」这一种
+    return resp
+
+
+def test_an_oversized_chunked_thumbnail_is_refused_without_reading_it_all(client):
+    """上限卡在读取本身（Codex #679）：没有 Content-Length 的超限流，读到上限 + 1 就停、拒收。"""
+    v = _create(client, auto=True)
+    stream = _CountingStream(m.VERSION_THUMB_MAX_BYTES * 8)
+    resp = _put_chunked(client, v["id"], stream)
+    assert resp.status_code == 400 and resp.get_json()["code"] == "version_thumb_invalid"
+    assert stream.read_bytes <= m.VERSION_THUMB_MAX_BYTES + 1
+    assert not _thumbs_dir().exists() or not any(_thumbs_dir().iterdir())
+
+
+def test_a_chunked_thumbnail_exactly_at_the_limit_is_accepted_whole(client):
+    """刚好上限：收下，而且是**完整**的（流每次只给一小段，也要读到底）。"""
+    v = _create(client, auto=True)
+    stream = _CountingStream(m.VERSION_THUMB_MAX_BYTES, step=1000)
+    resp = _put_chunked(client, v["id"], stream)
+    assert resp.status_code == 200, resp.get_json()
+    assert (_thumbs_dir() / f"{v['id']}.png").stat().st_size == m.VERSION_THUMB_MAX_BYTES
 
 
 def _break_thumb_listing(monkeypatch):
