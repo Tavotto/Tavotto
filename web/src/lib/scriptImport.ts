@@ -21,12 +21,22 @@ export type DropTarget =
   | { kind: 'path'; folder: string }
   /** 是 .py，但宿主没给路径：退回选择器，并说出是哪个文件 */
   | { kind: 'no-path'; name: string }
-  /** 放下的不是 .py（也不是带路径的目录） */
+  /** 放下的不是 .py（也不是目录；带了 file:// 路径的文件同样落在这里） */
   | { kind: 'not-script'; name: string }
   /** 什么文件都没有（拖进来的是文字 / 链接） */
   | { kind: 'none' }
 
 const isScriptName = (name: string) => /\.py$/i.test(name.trim())
+
+/** 路径的最后一段（去掉结尾的分隔符）；分隔符两种都认 */
+const baseName = (path: string) => path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? path
+
+/**
+ * 页面只拿到一串路径、不能 stat：以分隔符结尾，或最后一段没有扩展名，才当目录。
+ * 带扩展名的非 .py（pdf、png、csv……）当文件——与壳的 `drop_paths::classify`
+ * 「.py → 脚本、目录 → 项目、其余不收」同一个分法，只是「是不是目录」这里只能看形状。
+ */
+const looksLikeDir = (path: string) => /[\\/]$/.test(path) || !/\.[^.]+$/.test(baseName(path))
 
 /** 路径的上一级；分隔符两种都认（Windows 路径经 file URI 解出来是正斜杠，手输的可能是反斜杠） */
 export function parentDir(path: string): string {
@@ -83,7 +93,11 @@ export function dropTargetOf(dt: DropData): DropTarget {
       .map((l) => l.trim())
       .find((l) => l && !l.startsWith('#'))
     const path = first ? pathFromFileUri(first) : null
-    if (path) return { kind: 'path', folder: folderForPath(path) }
+    if (path) {
+      if (isScriptName(path) || looksLikeDir(path)) return { kind: 'path', folder: folderForPath(path) }
+      // 拿到了路径但放下的是 pdf 之类：如实说不收，不拿它当项目去开（Codex #688）
+      return { kind: 'not-script', name: baseName(path) }
+    }
   }
   const file = dt.files.length > 0 ? dt.files[0] : null
   if (!file) return { kind: 'none' }

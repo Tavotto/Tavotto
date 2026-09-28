@@ -173,6 +173,8 @@ function useScriptImport(openPath: (path: string) => Promise<boolean>) {
   if (!arbiter.current) arbiter.current = createDropArbiter({ graceMs: NATIVE_DROP_GRACE_MS })
 
   const openDropped = (drop: NativeFileDrop) => {
+    // 壳的事件不经过页面的 onDrop，切换中的闸要在这里再挡一次（与主页其它入口的 disabled 同一个判据）
+    if (useProjectStore.getState().switching) return
     if (drop.kind === 'unsupported') {
       setNotice({ tone: 'error', text: t('home.import.dropNotScript', { name: drop.name }) })
       return
@@ -229,13 +231,15 @@ function useScriptImport(openPath: (path: string) => Promise<boolean>) {
 
   /** 拿不到路径时的那条路（浏览器 / 不支持的平台，或壳这次没交来路径） */
   const degrade = (target: DropTarget) => {
+    // 在壳里这条是等过 grace 才跑的：放下时没在切换，到这会儿可能已经在切了
+    if (useProjectStore.getState().switching) return
     switch (target.kind) {
       case 'path':
         setNotice(null)
         void openPath(target.folder)
         return
       case 'no-path':
-        setNotice({ tone: 'info', text: t('home.import.dropNoPath', { name: target.name }) })
+        setNotice({ tone: 'info', text: t('home.import.dropNoPath', { name: target.name, product: PRODUCT_NAME }) })
         choose()
         return
       case 'not-script':

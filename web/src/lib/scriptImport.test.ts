@@ -60,6 +60,16 @@ describe('dropTargetOf', () => {
     expect(dropTargetOf(drop({ uris: 'file:///Users/a/paper' }))).toEqual({ kind: 'path', folder: '/Users/a/paper' })
   })
 
+  it('带 file URI 但放下的不是 .py 也不像目录：如实说不收，不当项目去开（#688）', () => {
+    expect(dropTargetOf(drop({ uris: 'file:///Users/a/paper/fig.pdf', files: ['fig.pdf'] }))).toEqual({
+      kind: 'not-script',
+      name: 'fig.pdf',
+    })
+    expect(dropTargetOf(drop({ uris: 'file:///C:/work/data.CSV' }))).toEqual({ kind: 'not-script', name: 'data.CSV' })
+    // 以分隔符结尾的总是目录，最后一段带点也一样
+    expect(dropTargetOf(drop({ uris: 'file:///Users/a/v1.2/' }))).toEqual({ kind: 'path', folder: '/Users/a/v1.2/' })
+  })
+
   it('只有文件、没有路径（浏览器与桌面壳的常态）：.py 退回选择器，别的说不收', () => {
     expect(dropTargetOf(drop({ files: ['plot.py'] }))).toEqual({ kind: 'no-path', name: 'plot.py' })
     expect(dropTargetOf(drop({ files: ['fig.pdf', 'plot.py'] }))).toEqual({ kind: 'not-script', name: 'fig.pdf' })
