@@ -196,8 +196,8 @@ describe('字体的中文显示名（manifest 顶层 font_family_names）', () =
     expect(again).toBe(merged)
   })
 
-  it('中文界面显示「中文名（族名）」，英文界面、没有中文名的、通用族照旧', async () => {
-    expect(fontFamilyOptionLabel('Songti SC', NAMES)).toBe('宋体-简（Songti SC）')
+  it('中文界面只显示中文名，英文界面只显示族名；没有中文名的、通用族照旧', async () => {
+    expect(fontFamilyOptionLabel('Songti SC', NAMES)).toBe('宋体-简')
     expect(fontFamilyOptionLabel('Songti SC', undefined)).toBe('Songti SC')
     expect(fontFamilyOptionLabel('Zapfino', NAMES)).toBe('Zapfino')
     // 显示名与族名相同就不重复一遍
@@ -206,6 +206,19 @@ describe('字体的中文显示名（manifest 顶层 font_family_names）', () =
     expect(fontFamilyOptionLabel('serif', NAMES)).toBe(optionLabelOfSerif())
     await applyLocale('en-US')
     expect(fontFamilyOptionLabel('Songti SC', NAMES)).toBe('Songti SC')
+  })
+
+  it('两个族中文名相同：只有它们补上族名，分得开', () => {
+    const shared = {
+      BiauKaiHK: '標楷體-港澳',
+      'BiauKaiHK Regular': '標楷體-港澳',
+      'Songti SC': '宋体-简',
+    }
+    expect(fontFamilyOptionLabel('BiauKaiHK', shared)).toBe('標楷體-港澳（BiauKaiHK）')
+    expect(fontFamilyOptionLabel('BiauKaiHK Regular', shared)).toBe(
+      '標楷體-港澳（BiauKaiHK Regular）',
+    )
+    expect(fontFamilyOptionLabel('Songti SC', shared)).toBe('宋体-简')
   })
 
   it('下拉显示中文名，写进 override 的仍是族名', async () => {
