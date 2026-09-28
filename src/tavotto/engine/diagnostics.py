@@ -38,9 +38,11 @@ from . import (
     ai_bridge,
     bootstrap,
     config,
+    depresolve,
     diagnostics_frontend,
     logsafe,
     pool,
+    projectenv,
     runtime,
     telemetry,
     updater,
@@ -67,8 +69,10 @@ WORKER_LOG_SCAN_BYTES = 4 * 1024 * 1024
 #: 2 = 增加了 frontend-state.json / interaction-trace.jsonl / manifest.json；
 #: 3 = report.json 的 project 段换形（#524）：去掉 `name`，`figures_dir` 只剩 `<project:哈希>`，
 #: 新增 `location`，导出 / 备份 / 文档目录按段哈希——schema 2 的读法认不出这些，必须升号（#524 评审）。
+#: 4 = report.json 的 project 段新增 `missing_dependencies`（最近几次缺依赖的现场：import 名、脚本哈希、
+#: 当时的解释器来源、体检过的系统候选表、修复目标可用性；2026-09-28 Windows 实测诊断包说不清缺依赖）。
 #: 与 `web/src/diagnostics/types.ts` 的同名常量是严格同源对。
-BUNDLE_SCHEMA_VERSION = 3
+BUNDLE_SCHEMA_VERSION = 4
 #: 两个子 schema 各自独立演进（ADR 0016 §20）。读取方**忽略不认识的字段**。
 FRONTEND_SNAPSHOT_SCHEMA = 1
 TRACE_SCHEMA = 1
@@ -360,7 +364,39 @@ _KNOWN_SEGMENTS = frozenset(
         "var",
         "opt",
         "Applications",
+        # 解释器的常见安装布局（缺依赖现场的系统候选表要让读的人认出「那是 WindowsApps 的
+        # 占位 python3.EXE」「那是 pyenv 的 3.7.6」）：系统 / 发行版起的目录名，不是用户起的
+        "AppData",
+        "Local",
+        "Roaming",
+        "Microsoft",
+        "WindowsApps",
+        "Programs",
+        "Program Files",
+        "Program Files (x86)",
+        "usr",
+        "local",
+        "Frameworks",
+        "Python.framework",
+        "Versions",
+        "Current",
+        "Cellar",
+        "homebrew",
+        ".pyenv",
+        "pyenv",
+        "versions",
+        "shims",
+        "miniconda3",
+        "anaconda3",
+        "miniforge3",
+        "mambaforge",
+        "envs",
     }
+)
+#: 解释器文件名 / 版本目录：`python3.EXE`、`pythonw.exe`、`Python37`、`python3.11`、`3.7.6`——只由固定词与
+#: 数字组成，放不下用户的字
+_INTERPRETER_SEGMENT = re.compile(
+    r"(?i)^(?:python[w]?(?:\d{1,3}|\d\.\d{1,2})?(?:\.exe)?|\d{1,2}(?:\.\d{1,3}){1,2})$"
 )
 #: 「项目在云盘同步目录里」：同步冲突 / 按需下载的占位文件是一类常见故障，值得留一个布尔
 _CLOUD_HINT = re.compile(
@@ -378,6 +414,7 @@ def _path_fact(value: str, roots: list[tuple[str, str]]) -> str:
         keep = (
             seg in ("", "~", "<user>")
             or seg in _KNOWN_SEGMENTS
+            or _INTERPRETER_SEGMENT.match(seg) is not None
             or seg.startswith(("<project:", "seg:"))
             or "-acct:" in seg
             or re.fullmatch(r"[A-Za-z]:", seg) is not None
@@ -421,6 +458,122 @@ def _project_section(project: dict | None, roots: list[tuple[str, str]]) -> dict
             out[key] = _path_fact(out[key], roots)
     if isinstance(out.get("settings"), dict):
         out["settings"] = _paths_in(out["settings"], roots)
+    if "missing_dependencies" in out:
+        records = out.get("missing_dependencies")
+        out["missing_dependencies"] = [
+            _missing_dependency_for_export(r, roots)
+            for r in (records if isinstance(records, list) else [])
+            if isinstance(r, dict)
+        ]
+    return out
+
+
+# ---- 最近的缺依赖现场（bundle schema 4）----------------------------------------------------------
+# 原值来自 `deprepair.recent_missing_dependencies`（渲染出错那一刻已经算好的结论，不重新体检）。
+# 出门规则与日志的明文放行同一条：**按出处放行**——值是源码里某个闭集的成员才原样，其余哈希；
+# 路径走 `_path_fact`（项目根 → 记号、主目录 → `~`、其余段只有已知布局名原样）。
+#: 解释器来源（`pool.SOURCE_*`）
+_DEP_SOURCES = frozenset(pool.SOURCE_LABELS)
+#: 体检给出的全部 code：`projectenv` 里 `ERROR_*` 常量的值（源码里的闭集，不是按形状猜）
+_DEP_CODES = frozenset(
+    v for k, v in vars(projectenv).items() if k.startswith("ERROR_") and isinstance(v, str)
+) | {pool.PROJECT_ENV_ALREADY_ATTEMPTED}
+_DEP_SUPPORT = frozenset(
+    {projectenv.SUPPORT_VERIFIED, projectenv.SUPPORT_UNVERIFIED, projectenv.SUPPORT_UNSUPPORTED}
+)
+#: 修复 offer 那几个字段（offer code / 目标 kind / 不可用原因 / 解析来源 / 钉住的来源）的闭集在
+#: `deprepair` 里，而本模块不能 import 它（`deprepair` 的安装日志反过来用 `redact_text`，两边互相
+#: import 会把 deprepair 拉进 diagnostics | telemetry | updater 那个登记过的环）。所以那几个值由
+#: **产出方按自己的常量**放行（`deprepair._evidence_value`：不是自家常量的值在记录那一刻就换成
+#: `str:<哈希>`）；这里只再验一道形状——小写标识符或 `str:<十六进制>`，其余一律再哈希一次。
+_VETTED_VALUE = re.compile(r"^(?:[a-z][a-z0-9_]{0,63}|str:[0-9a-f]{10})$")
+
+
+def _closed(value, allowed: frozenset) -> str:
+    """闭集成员原样、空串原样，其余 `str:<sha1 前 10 位>`。"""
+    text = str(value or "")
+    if not text or text in allowed:
+        return text
+    return "str:" + _digest(text)
+
+
+def _vetted(value) -> str:
+    """产出方已按自家常量放行过的值（见 `_VETTED_VALUE`）：形状对原样，不对再哈希。"""
+    text = str(value or "")
+    if not text or _VETTED_VALUE.match(text):
+        return text
+    return "str:" + _digest(text)
+
+
+def _version_for_export(value) -> str:
+    text = str(value or "")
+    if not text or isinstance(logsafe.version(text), logsafe.Plain):
+        return text
+    return "str:" + _digest(text)
+
+
+def _import_name_for_export(name: str) -> str:
+    """缺的 import 名：标准库 / 已知科学栈 / `depresolve` 的两张 curated 表里的名字原样，其余 `mod:<哈希>`。
+
+    与 worker 证据块里加载器文案的规则同源（`_module_name_for_export`），多认的只有 curated 表——
+    那是 Tavotto 源码里登记过的公开 PyPI 包名（`adjustText`），不会是用户的私有包名。"""
+    text = str(name or "")
+    if text in depresolve.CURATED or text in depresolve.SAME_NAME:
+        return text
+    return _module_name_for_export(text) if text else ""
+
+
+def _missing_dependency_for_export(record: dict, roots: list[tuple[str, str]]) -> dict:
+    """一条缺依赖现场 → report.json 里的样子。字段是白名单：原值里多出来的键一概不出门。"""
+    at = record.get("at")
+    offer = record.get("offer") if isinstance(record.get("offer"), dict) else None
+    rounds = offer.get("rounds_remaining") if offer else None
+    out = {
+        "at": _iso(at) if isinstance(at, (int, float)) else "",
+        "import_name": _import_name_for_export(record.get("module", "")),
+        # 脚本名与日志里同一种写法（`file:<哈希>.py`），读的人能把两处对上，反推不回名字
+        "script": _shorten_path_text(str(record["script"])) if record.get("script") else "",
+        "python_source": _closed(record.get("python_source"), _DEP_SOURCES),
+        "project_env_code": _closed(record.get("project_env_code"), _DEP_CODES),
+        "system_candidates": [
+            {
+                "python": _path_fact(str(e.get("python") or ""), roots) if e.get("python") else "",
+                "source": _closed(e.get("source"), _DEP_SOURCES),
+                "ok": bool(e.get("ok")),
+                "code": _closed(e.get("code"), _DEP_CODES),
+                "support": _closed(e.get("support"), _DEP_SUPPORT),
+                "python_version": _version_for_export(e.get("python_version")),
+                "matplotlib_version": _version_for_export(e.get("matplotlib_version")),
+                "requested_module_ok": e.get("requested_module_ok")
+                if isinstance(e.get("requested_module_ok"), bool)
+                else None,
+            }
+            for e in (record.get("system") or [])
+            if isinstance(e, dict)
+        ],
+        "repair": None,
+    }
+    if offer is not None:
+        out["repair"] = {
+            "code": _vetted(offer.get("code")),
+            "resolution_source": _vetted(offer.get("resolution_source")),
+            "installable": bool(offer.get("installable")),
+            "rounds_remaining": rounds if isinstance(rounds, int) else None,
+            "pinned_source": _closed(offer.get("pinned_source"), _DEP_SOURCES),
+            "targets": [
+                {
+                    "kind": _vetted(t.get("kind")),
+                    "available": t.get("available")
+                    if isinstance(t.get("available"), bool)
+                    else None,
+                    "reason": _vetted(t.get("reason")),
+                    "modifies_user_environment": bool(t.get("modifies_user_environment")),
+                    "creates_environment": bool(t.get("creates_environment")),
+                }
+                for t in (offer.get("targets") or [])
+                if isinstance(t, dict)
+            ],
+        }
     return out
 
 
@@ -1482,7 +1635,12 @@ def _readme(has_state: bool, has_trace: bool, project_keys: list[str] | None = N
         "  （report.json 的 render.worker_logs 段：渲染进程日志里的 Python 报错块与崩溃栈——\n"
         "  只留 traceback 的帧行（文件名换成哈希 + 行号，函数名不带；第三方库的文件多留一个\n"
         "  包名）与异常类型名；崩溃栈只留故障名与帧行、扩展模块只留计数；报错文字、脚本自己\n"
-        "  打印的内容与源码行已略去）\n" + extra_zh + "- manifest.json：本诊断包自身的格式说明\n"
+        "  打印的内容与源码行已略去）\n"
+        "  （report.json 的 project.missing_dependencies 段：最近几次「缺依赖」的现场——缺的包名\n"
+        "  （只有公开的常见科研包原样，其余换成哈希）、脚本文件名哈希、当时用的是哪类 Python、\n"
+        "  体检过的其他 Python 的版本与结论、一键修复各选项能否使用；路径按段换成哈希）\n"
+        + extra_zh
+        + "- manifest.json：本诊断包自身的格式说明\n"
         "\n"
         "- report.json: system and runtime information\n"
         "- app.log: recent Tavotto application logs (the fixed text of each log statement only;\n"
@@ -1495,6 +1653,11 @@ def _readme(has_state: bool, has_trace: bool, project_keys: list[str] | None = N
         "  and the exception type; crash stacks keep the fault name, frames and the\n"
         "  extension-module count; error messages, anything your script printed, and source\n"
         "  lines are left out)\n"
+        "  (report.json, project.missing_dependencies: the last few missing-dependency failures —\n"
+        "  the missing package (well-known public packages by name, anything else hashed), the\n"
+        "  hashed script name, which kind of Python was rendering, the version and verdict of\n"
+        "  every other Python that was checked, and whether each one-click fix was available;\n"
+        "  paths are hashed segment by segment)\n"
         + extra_en
         + "- manifest.json: describes this package's own format\n"
         "\n"

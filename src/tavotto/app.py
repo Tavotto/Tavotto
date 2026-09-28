@@ -627,6 +627,7 @@ def _worker_error_payload(exc, stage: str = "") -> dict:
         repair = _dependency_repair_offer(exc, detail)
         if repair is not None:
             body["dependency_repair"] = repair
+        _note_missing_dependency(exc, detail, repair)
     # 首开要先问用户运行目录（U03，ADR 0057）：结构化的「需要输入」原样带出去——
     # 选项 / 证据 / 怎么回答都在里面，前端据此弹一次确认框，不是错误块。状态码与别的
     # worker 错误一样是 500（三条门禁钉着字面量 `, 500`），语义全在 `code` 上。
@@ -673,6 +674,29 @@ def _dependency_repair_offer(exc, project_env: dict | None) -> dict | None:
     except (OSError, ValueError) as err:  # 修复建议失败不该盖掉原始错误
         LOG.warning("依赖修复建议生成失败: %s", err)
         return None
+
+
+def _note_missing_dependency(exc, project_env: dict | None, repair: dict | None) -> None:
+    """把这一次缺依赖的现场记进进程内的最近记录，诊断包导出时带上（`deprepair.note_missing_dependency`）。
+
+    记的是**这份响应里已经算好的**结论（体检表、修复 offer），不另起解释器。没有打开项目时不记：
+    诊断包只带当前项目的现场，没有项目就没有归属。记录失败不许盖掉原始错误。
+    """
+    try:
+        root = str(require_project())
+    except NoProjectError:
+        return
+    try:
+        engine_deprepair.note_missing_dependency(
+            root,
+            script=getattr(exc, "script_name", "") or "",
+            module=exc.module,
+            python_source=getattr(exc, "python_source", "") or "",
+            project_env=project_env,
+            offer=repair,
+        )
+    except (OSError, ValueError, TypeError) as err:
+        LOG.warning("缺依赖现场记录失败: %s", err)
 
 
 def _project_relative(path: str) -> str:
@@ -2497,6 +2521,9 @@ def _diagnostics_project_status() -> dict:
         # **不含** index 地址、pip 配置、绝对路径——那三样是这一族功能里
         # 最容易顺手泄漏凭据的地方。
         status["dependency_repair"] = engine_deprepair.diagnostics_state(str(ctx.path))
+        # 最近几次缺依赖的现场（缺哪个包、当时谁在渲染、体检过哪些系统解释器、修复目标可不可用）。
+        # 这里交原值，换形与脱敏在 `diagnostics._project_section`（bundle schema 4）。
+        status["missing_dependencies"] = engine_deprepair.recent_missing_dependencies(str(ctx.path))
     return status
 
 

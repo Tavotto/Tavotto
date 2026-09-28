@@ -562,6 +562,9 @@ class WorkerError(RuntimeError):
         #: 哪个脚本报的（missing_dependency 时由 `_error_of` 填）。依赖修复
         #: 按 (项目, 脚本) 记轮次、按脚本所在目录找依赖声明，都要它。
         self.script_name = ""
+        #: 报错那条会话的解释器来源（`SOURCE_*`；`_build_with` 在 build 失败时填，诊断包的缺依赖
+        #: 现场据此说「当时是内置环境还是用户的环境缺的」）。不知道时空串。
+        self.python_source = ""
         #: worker 错误信封里多带的字段（`known` / `exit_code` / 退出状态 `exit`…），
         #: 两条控制面都往这里放——上层按键取，不必知道是哪条控制面给的。
         self.extra: dict = {}
@@ -1674,6 +1677,8 @@ class EngineWorker:
             # **谁的脚本缺这个包**：依赖修复要按 (项目, 脚本) 记轮次、按脚本
             # 所在目录找依赖声明。异常一路抛到 app 层时那边只剩下 exc。
             exc.script_name = self.script_name
+            # 当时是谁在渲染（内置 / 受管 / 用户的环境）：诊断包的缺依赖现场要说出来
+            exc.python_source = getattr(self, "python_source", "") or ""
             return exc
         out = WorkerError(msg, tb, code=code)
         out.script_name = self.script_name
@@ -2214,6 +2219,7 @@ class WorkerdWorker:
         err = _worker_error(message, code, tb, exc.extra)
         # 两条控制面在「缺包时上层拿得到哪些事实」上必须给同一个答案
         err.script_name = self.script_name
+        err.python_source = getattr(self, "python_source", "") or ""
         # ……「脚本跑完没出图」「脚本要命令行参数」也是同一条纪律：workerd 把
         # `known` 透传在 extra 里，argparse 的 usage 在 worker.log 里
         tail = self._log_tail()
