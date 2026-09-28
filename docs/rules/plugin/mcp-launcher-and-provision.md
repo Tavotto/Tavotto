@@ -71,6 +71,18 @@
   `canvas_ui: {available: false, code: "widget_missing"}` 并在文字里说出口，
   `resources/read` 对缺失产物报「缺失 + 修法」而不是回空 HTML。
   看护 `tests/test_mcp_resolver.py` + `tests/test_mcp_stdio.py`。
+- **降级诊断窄的先判、宽的兜底（#285、#721）**：`found["cmd"]` 有东西时依次判
+  `engine_too_old`（清单有下限、版本低于它）→ `engine_incompatible`（CLI 背后**有**装着 tavotto
+  的解释器，桥却 import 不全，而说不出是不是太旧：插件没带 `plugin-build.json`，或版本够了却
+  装残了）→ `desktop_only`（只剩 CLI 背后没有解释器的 frozen `tavotto-cli`）。版本先问 CLI 背后
+  那个解释器的 `importlib.metadata`（`engine_behind_cli`，只读分发元数据、不 import tavotto），
+  问不出再问 `tavotto doctor --json`；「不知道」各是独立一档，不许并进相邻取值。这两格的恢复
+  是**升级引擎**（`upgrade_commands`：`pipx upgrade tavotto` / `pipx install --force
+  "tavotto[worker]==<版本>"`），不给 `--provision`。pip 的 index-url 指向镜像时
+  （`pip_index`：`PIP_INDEX_URL` + pip 配置文件，只读，地址里的口令抹掉）文案说镜像可能滞后、
+  每条命令带 `--index-url https://pypi.org/simple`、不给裸的 `pipx upgrade`。`--health` 带
+  `engine_version` / `min_tavotto_version` / `pip_index`；`tavotto codex doctor` 原样转述插件
+  这份话术（`codexinstall._health_step`），不写第二份。看护 `tests/test_mcp_diagnose.py`。
 - **`--provision` 建 venv 之前先验基础解释器的版本**（2026-09-20）：启动器允许在很老的
   `python3` 上跑（纯标准库），但 venv 继承它的版本——macOS 上 `python3` 常是 Xcode CLT
   的 3.9，而引擎的 `requires-python` 是 `>=3.10,<3.15`，区间外的解释器上 pip 只会说一句

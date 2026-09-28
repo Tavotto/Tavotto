@@ -67,6 +67,11 @@ ERR_PLUGIN_AMBIGUOUS = "plugin_install_ambiguous"
 ERR_CANVAS = "canvas_incomplete"
 #: 引擎版本低于已装插件要求的最低版本
 ERR_ENGINE_OLD = "engine_too_old"
+#: 引擎在（pip / pipx 装的），桥却 import 不全，而说不出它是不是太旧（插件没带构建清单 /
+#: 装残了）。与插件降级 server 的同名 code 同义（#721）；「不知道」不并进「太旧」
+ERR_ENGINE_INCOMPATIBLE = "engine_incompatible"
+#: 插件体检报出的、要原样沿用的引擎版本类 code（降级 server 与本命令口径一致）
+_ENGINE_VERSION_CODES = (ERR_ENGINE_OLD, ERR_ENGINE_INCOMPATIBLE)
 
 #: 单条 Codex 命令的上限。marketplace add 要拉一次稀疏检出，给宽一点；
 #: 但必须有上限——没有网络时它会一直挂着，而调用方在等那行 JSON。
@@ -1014,6 +1019,18 @@ def _health_step(plugin_dir: Path | None, py: str | None, summary: dict) -> dict
         "python": report.get("python"),
         "mode": report.get("mode"),
     }
+    code = report.get("code")
+    if rc != 0 and code in _ENGINE_VERSION_CODES and isinstance(report.get("error"), str):
+        # 插件的降级诊断已经判出「引擎在、版本对不上」：话术（两个版本号、升级命令、镜像
+        # 提示）**只在插件那一份里写**，这里原样转述，不写第二份（#721：两边口径一致）
+        recovery = [r for r in report.get("recovery") or [] if isinstance(r, str)]
+        return _step(
+            "health",
+            ok=False,
+            code=code,
+            detail=report["error"]
+            + ("\n恢复步骤：\n- " + "\n- ".join(recovery) if recovery else ""),
+        )
     if rc != 0:
         return _step("health", ok=False, detail=out[-400:], code=ERR_HEALTH)
     if satisfied is False:
@@ -1023,9 +1040,21 @@ def _health_step(plugin_dir: Path | None, py: str | None, summary: dict) -> dict
             code=ERR_ENGINE_OLD,
             detail=f"引擎 {engine_version} 低于已装插件要求的最低版本 {required}——插件的桥 import "
             f"不动这么老的引擎。升级引擎（pipx upgrade tavotto / 升级桌面版），"
-            f"或把插件退回与引擎匹配的版本。",
+            f"或把插件退回与引擎匹配的版本。" + _mirror_detail(report.get("pip_index"), required),
         )
     return _step("health", ok=True, detail=out[-400:])
+
+
+def _mirror_detail(index: object, required: str | None) -> str:
+    """插件体检报出 pip 指向镜像时补的那句（探测只在插件那侧做：`server.pip_index`）。"""
+    if not isinstance(index, dict) or not index.get("mirror"):
+        return ""
+    pin = f'"tavotto[worker]=={required}"' if required else '"tavotto[worker]"'
+    return (
+        f"pip 的 index-url 指向镜像 {index.get('url')}（来自 {index.get('source')}），"
+        f"镜像可能还没同步到新版；绕开镜像：pipx install --force {pin} "
+        "--index-url https://pypi.org/simple"
+    )
 
 
 # ------------------------------ 三个子命令 ------------------------------

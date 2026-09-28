@@ -794,7 +794,8 @@
             "plugin_add_failed": "插件还没装上。这次只是诊断，没有改动；装一次就会补上。",
             "provision_failed": "插件还没有匹配版本的 Tavotto 引擎。这次只是诊断，没有改动；装一次就会补上。"
           },
-          "engine_too_old": "本机 Tavotto 引擎低于插件要求的最低版本，桥接层无法驱动它。升级引擎（pipx upgrade tavotto，或升级桌面版），或把插件退回与引擎匹配的版本。",
+          "engine_incompatible": "本机装着 Tavotto 引擎，但插件的桥接层无法驱动它：多半是引擎比插件旧，也可能装残了（这份插件说不出它要求的最低版本）。把引擎装成与插件同一版，下面详情里有可照抄的命令；pip 配了镜像时，详情里会提示镜像可能滞后，并给出绕开镜像的写法。",
+          "engine_too_old": "本机 Tavotto 引擎低于插件要求的最低版本，桥接层无法驱动它。升级引擎（pipx upgrade tavotto，或升级桌面版），或把插件退回与引擎匹配的版本。pip 配了镜像时，镜像可能还没同步新版，详情里有绕开镜像的写法。",
           "health_failed": "组件已装好，但检查未通过：插件仍找不到可用的 Tavotto 引擎。展开下面的详情看它报了什么。",
           "interpreter_unusable": "插件的启动命令在这台机器上无法运行，Codex 里将没有工具。Windows 上的 python3 常是微软商店的占位程序，看似存在，运行即退出。安装时会改用已验证可用的解释器；若找不到，请安装 Python，或用 TAVOTTO_MCP_PYTHON 指定一个后重试。",
           "marketplace_add_failed": "没能把 Tavotto 登记为 Codex 的插件市场。常见原因是没有网络，或没有权限写 Codex 的配置目录。",

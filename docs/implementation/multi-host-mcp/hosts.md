@@ -136,7 +136,7 @@
 | --- | --- | --- | --- |
 | 宿主 MCP 列表里 tavotto 红 / 起不来 | 服务器没启动 | 宿主日志；`<python> <包>/mcp/server.py --health` 在终端跑不跑得起来 | 重新生成配置（`--python` 指一个真能跑的解释器）；包目录挪过就重新生成 |
 | 列表里是绿的，但对话里没有工具 | 工具没发现 / 当前智能体未启用 | VS Code Configure Tools、Trae 智能体 MCP 栏、DSH 等 `mcp__tavotto__*` 出现 | 在所用智能体里启用；重开对话 |
-| 只有 `tavotto_health` 一个工具 | 引擎不可用（降级 server） | health 的 `code`：`desktop_only` / `tavotto_missing` / `engine_too_old` / `engine_unavailable` | 按 code 只修那一项（provision / pipx / 升级引擎） |
+| 只有 `tavotto_health` 一个工具 | 引擎不可用（降级 server） | health 的 `code`：`desktop_only` / `tavotto_missing` / `engine_too_old` / `engine_incompatible` / `engine_unavailable` | 按 code 只修那一项（provision / pipx / 升级引擎） |
 | 工具在，但打开图报 `path_out_of_scope` / `no_workspace_root` | 项目未授权 | health 的 `roots` / `root_authority.source` | 用正确的 `--project-root` 重新生成；不要放宽到 HOME |
 | 工具正常、没有画布 | UI 没显示 | `checks.canvas_resource.ok` 为真但宿主不渲染 MCP Apps | 这是宿主能力 / 设置；工具流程照常走完，不要把外部窗口叫「内嵌画布」 |
 | 宿主提示被管理员 / 策略禁止 | 组织策略 | 宿主的策略提示 | 找管理员；**不要**把「全部工具自动批准 / 关闭安全策略」当通用修复 |
