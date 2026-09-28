@@ -164,6 +164,13 @@ test('流程 C2：图例放到子图外面（外侧锚点），检查随即报�
   const legendOutside = problems
     .locator('[data-issue-row][data-issue-rule="element-outside-figure"]')
     .filter({ has: page.locator('span', { hasText: /^图例$/ }) })
+  // 问题面板先是卡片层（2026-09-28）：多子图的图要先点开装着这条规则的卡片；
+  // 单子图的图没有卡片层，行直接就在
+  const card = problems
+    .locator('li[data-problem-card][data-problem-card-rules~="element-outside-figure"] > button')
+    .first()
+  await expect(legendOutside.or(card).first()).toBeVisible({ timeout: 30_000 })
+  if (await card.isVisible()) await card.click()
   await expect(legendOutside).toHaveCount(1, { timeout: 30_000 })
 
   // 点回九宫格 = 回到子图内侧：那句提示与图例超出图幅的问题一起消失

@@ -1465,7 +1465,7 @@
         "body": "Open “Problems” on the left; it lists what breaks the spec in this figure.",
         "row": {
           "title": "Locate from “Problems”",
-          "body": "Click a problem; Tavotto selects the object and focuses the matching property field."
+          "body": "Click a problem; Tavotto selects the object and focuses the matching property field. If it sits inside a card, open the card first."
         }
       },
       "export_original": {

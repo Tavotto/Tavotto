@@ -20,6 +20,8 @@
  * 两份判据各管一件事，列表里照样列出源文件不见了的图——点它会得到一句
  * 「源文件找不到」而不是它凭空消失（ADR 0031 §六：不隐藏、说原因）。
  */
+import { panelSrc } from './api'
+import { engineTransport } from './engineTransport'
 import { stemOf } from './openRequest'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
@@ -58,34 +60,54 @@ function kindOf(panel: PanelObject | null, assetKind: string | undefined): Expor
  * 同一张素材在几个画布上各有一个面板时只列一次（激活画布优先，与
  * `findFigurePanel()` 同一个优先级）。
  */
+/**
+ * 文档里的一个面板 → 它作为「一张图」的描述（名字、画法、缩略图换代、图幅）。
+ * 导出候选清单与问题面板的缩略图共用这一份（2026-09-28 问题面板卡片化）。
+ */
+export function figureOfPanel(p: PanelObject): ExportableFigure {
+  const info = useAssetStore.getState().byId[p.fileId]
+  const runtimeStore = useRuntimeAssetStore.getState()
+  const runtime = (runtimeStore.assets ?? []).find((a) => a.id === p.fileId)
+  const kind = kindOf(p, info?.kind)
+  return {
+    figureId: p.fileId,
+    name: p.name?.trim() || stemOf(p.fileId),
+    panel: p,
+    kind,
+    stamp: kind === 'runtime' ? runtimeStore.previewNonce[p.fileId] : info?.mtime,
+    cached: kind === 'runtime' ? (runtimeStore.byId[p.fileId]?.cached ?? runtime?.cached ?? false) : true,
+    sizeMm:
+      p.nativeW > 0 && p.nativeH > 0
+        ? [p.nativeW, p.nativeH]
+        : info
+          ? [info.native_w_mm, info.native_h_mm]
+          : (runtime?.size_mm ?? null),
+  }
+}
+
+/**
+ * 缩略图的图片地址：认得出是哪张图就够（核对修改归画布）。画法未知、runtime 图
+ * 还没有缓存预览时给 null——不猜地址。内嵌画布走它自己的传输层。
+ */
+export function figureThumbSrc(figure: ExportableFigure, bucket: number): string | null {
+  if (figure.kind === 'unknown' || (figure.kind === 'runtime' && !figure.cached)) return null
+  const transport = engineTransport()
+  return transport
+    ? transport.panelSrc(figure.figureId, figure.kind, bucket, figure.stamp)
+    : panelSrc(figure.figureId, figure.kind, bucket, figure.stamp)
+}
+
 export function listExportableFigures(): ExportableFigure[] {
   const doc = useDocumentStore.getState()
   const assets = useAssetStore.getState()
   const runtimeStore = useRuntimeAssetStore.getState()
-  const runtimeById = new Map((runtimeStore.assets ?? []).map((a) => [a.id, a]))
   const out: ExportableFigure[] = []
   const seen = new Set<string>()
 
   const pushPanel = (p: PanelObject) => {
     if (seen.has(p.fileId)) return
     seen.add(p.fileId)
-    const info = assets.byId[p.fileId]
-    const runtime = runtimeById.get(p.fileId)
-    const kind = kindOf(p, info?.kind)
-    out.push({
-      figureId: p.fileId,
-      name: p.name?.trim() || stemOf(p.fileId),
-      panel: p,
-      kind,
-      stamp: kind === 'runtime' ? runtimeStore.previewNonce[p.fileId] : info?.mtime,
-      cached: kind === 'runtime' ? (runtimeStore.byId[p.fileId]?.cached ?? runtime?.cached ?? false) : true,
-      sizeMm:
-        p.nativeW > 0 && p.nativeH > 0
-          ? [p.nativeW, p.nativeH]
-          : info
-            ? [info.native_w_mm, info.native_h_mm]
-            : (runtime?.size_mm ?? null),
-    })
+    out.push(figureOfPanel(p))
   }
   doc.doc.objects.filter(isPanel).forEach(pushPanel)
   for (const c of doc.canvases) {

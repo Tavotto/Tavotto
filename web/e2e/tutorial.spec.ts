@@ -91,7 +91,18 @@ test('完整走完教程：每一步都由真实动作完成', async ({ app, pag
   const row = page
     .locator('[data-issue-row][data-issue-rule="font-below-absolute-floor"][data-issue-object="p2"]')
     .first()
-  await expect(row).toBeVisible({ timeout: 30_000 })
+  // 问题面板先是卡片层（2026-09-28）：那一行在它所在的卡片里；只有一张单子图的图时
+  // 没有卡片层，行直接就在。两种都认，出现的是卡片就先点开它
+  const card = page
+    .locator('li[data-problem-card][data-problem-card-rules~="font-below-absolute-floor"][data-problem-card-objects~="p2"] > button')
+    .first()
+  await expect(row.or(card).first()).toBeVisible({ timeout: 30_000 })
+  if (await card.isVisible()) {
+    // coachmark 此刻指着卡片（锚点选择器列表里行不在，就落到卡片上）
+    await expect(coachmark(page)).toContainText('先点开那张卡片')
+    await card.click()
+  }
+  await expect(row).toBeVisible()
   await expect(coachmark(page)).toContainText('点击问题')
   await row.click()
 

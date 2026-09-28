@@ -5,7 +5,7 @@ import type { DiskDocumentSummary } from '@/lib/api'
 import { emitActivity } from '@/lib/activity'
 import { createDismissTimer } from '@/lib/dismissTimer'
 import type { Severity } from '@/lib/profile'
-import type { ProblemCursor, ProblemScope } from '@/lib/problemList'
+import type { ProblemCursor, ProblemDrill, ProblemScope, ProblemView } from '@/lib/problemList'
 
 export type LeftTab = 'workspace' | 'canvases' | 'assets' | 'layers' | 'elements' | 'style' | 'problems'
 /** 右栏三模式：属性 / 改图助手 / 画布设置 */
@@ -286,6 +286,12 @@ interface UiState extends Persisted {
    */
   problemCursor: ProblemCursor | null
   /**
+   * 问题面板的卡片怎么分（按图 / 按类别）与点进了哪一张（null = 卡片总览）。
+   * 会话状态，同 `problemFilter`。换范围时退回总览：那张卡片在新范围里未必还在。
+   */
+  problemView: ProblemView
+  problemDrill: ProblemDrill | null
+  /**
    * 修复正在跑（后端事务要真实渲染，几秒钟）。问题面板据此把「全部处理」与每行的
    * 「修复」都置灰，免得第二轮拿着第一轮还没提交的旧文档当基准。会话状态。
    */
@@ -381,6 +387,8 @@ interface UiState extends Persisted {
   /** 命令面板跑完一条命令就记一笔（去重、最近在前、封顶） */
   pushRecentCommand: (id: string) => void
   setProblemCursor: (v: ProblemCursor | null) => void
+  setProblemView: (v: ProblemView) => void
+  setProblemDrill: (v: ProblemDrill | null) => void
   /** 关掉设置、打开左栏「样式」面板（设置 › 样式页「用于当前画布」绑完之后去看结果） */
   openStylePanel: () => void
   setFixing: (v: boolean) => void
@@ -478,6 +486,8 @@ export const useUiStore = create<UiState>((set, get) => ({
   problemFilter: null,
   problemScope: null,
   problemCursor: null,
+  problemView: 'figure',
+  problemDrill: null,
   fixing: false,
   tool: 'select',
   exportOpen: false,
@@ -644,7 +654,7 @@ export const useUiStore = create<UiState>((set, get) => ({
         : null,
     })),
   setProblemFilter: (problemFilter) => set({ problemFilter }),
-  setProblemScope: (problemScope) => set({ problemScope }),
+  setProblemScope: (problemScope) => set({ problemScope, problemDrill: null }),
   openStylePanel: () => {
     get().setSettingsOpen(false)
     get().setLeftTab('style')
@@ -654,6 +664,8 @@ export const useUiStore = create<UiState>((set, get) => ({
     persist(get())
   },
   setProblemCursor: (problemCursor) => set({ problemCursor }),
+  setProblemView: (problemView) => set({ problemView, problemDrill: null }),
+  setProblemDrill: (problemDrill) => set({ problemDrill }),
   setFixing: (fixing) => set({ fixing }),
   setEditingText: (editingTextId) => set({ editingTextId }),
   setCropTarget: (cropTargetId, cropBaseline = null) => set({ cropTargetId, cropBaseline }),
