@@ -31,6 +31,7 @@ Tavotto 给出的仍然是一句 `ModuleNotFoundError` ——用户得先知道 
 
 from __future__ import annotations
 
+import copy
 import dataclasses
 import hashlib
 import json
@@ -43,6 +44,7 @@ import subprocess
 import tempfile
 import threading
 import time
+from collections import deque
 from pathlib import Path
 
 from . import (
@@ -1471,6 +1473,117 @@ def diagnostics_state(project: str | Path) -> dict:
         # 只给份数：快照文件名里有时间戳与操作名，内容（freeze 全文）不进诊断
         "snapshots": len(managedenv.list_snapshots(root)),
     }
+
+
+# ---------------------------------------------------------------------------
+# 最近的缺依赖现场（诊断包用）
+#
+# 2026-09-28 Windows 实测：渲染报 missing_dependency 时，错误响应里有缺的模块名、体检过的系统
+# 候选（3.7.6 装了但版本不支持、WindowsApps 的 python3.EXE 起不来）与修复 offer，但导出的诊断包
+# 一样都没有——那些结论只活在那一次 HTTP 响应里，模块名只剩 app.log 里一行文字。这里把**已经算好
+# 的**结论记一份（进程内存、有上限、不写盘），诊断包导出时再按出门规则换形
+# （`diagnostics._missing_dependency_for_export`）。**不为诊断重新体检任何解释器**。
+#
+# 这里存的是原值（路径未脱敏）：脱敏只在出口做，与 `render.worker_logs` 按未脱敏的项目目录取会话
+# 同一条纪律。`reset_state()` 不清它——用户点「重试」之后，上一次为什么失败正是要看的东西。
+# ---------------------------------------------------------------------------
+#: 进程里最多记几条（跨项目共用；诊断包只取当前项目的）。
+MISSING_DEPENDENCY_EVIDENCE_LIMIT = 8
+_missing_evidence: deque[dict] = deque(maxlen=MISSING_DEPENDENCY_EVIDENCE_LIMIT)
+
+
+def _constants(prefix: str) -> frozenset[str]:
+    """本模块 `<prefix>*` 常量的值（源码里的闭集）。调用时取：有几组 `ERROR_*` 定义在本段之后。
+
+    offer 里会出现的 code / 目标 kind 按它放行。诊断包不能 import 本模块（见
+    `diagnostics._VETTED_VALUE`），所以这几个值的放行在记录这一刻、由产出方做。"""
+    return frozenset(
+        v for k, v in list(globals().items()) if k.startswith(prefix) and isinstance(v, str)
+    )
+
+
+def _evidence_value(value, allowed) -> str:
+    """闭集成员 / 空串原样，其余 `str:<sha1 前 10 位>`（与诊断包的哈希同一种写法）。"""
+    text = str(value or "")
+    if not text or text in allowed:
+        return text
+    return "str:" + hashlib.sha1(text.encode("utf-8")).hexdigest()[:10]
+
+
+def note_missing_dependency(
+    project: str | Path,
+    *,
+    script: str,
+    module: str,
+    python_source: str,
+    project_env: dict | None,
+    offer: dict | None,
+) -> None:
+    """记一次缺依赖现场。只抄诊断要的字段（深拷贝出来，调用方之后改自己的 dict 不影响这里）。"""
+    detail = project_env if isinstance(project_env, dict) else {}
+    repair = offer if isinstance(offer, dict) else {}
+    ev = _evidence_value
+    codes, kinds = _constants("ERROR_"), _constants("TARGET_")
+    requirement = repair.get("requirement") if isinstance(repair.get("requirement"), dict) else {}
+    record = {
+        "at": time.time(),
+        "project_id": managedenv.project_fingerprint(project),
+        "script": str(script or ""),
+        "module": str(module or ""),
+        "python_source": str(python_source or ""),
+        "project_env_code": str(detail.get("code") or ""),
+        "system": [
+            {
+                "python": str(e.get("python") or ""),
+                "source": str(e.get("source") or ""),
+                "ok": bool(e.get("ok")),
+                "code": str(e.get("code") or ""),
+                "support": str(e.get("support") or ""),
+                "python_version": str(e.get("python_version") or ""),
+                "matplotlib_version": str(e.get("matplotlib_version") or ""),
+                "requested_module_ok": e.get("requested_module_ok"),
+            }
+            for e in (detail.get("system") or [])
+            if isinstance(e, dict)
+        ],
+        "offer": None
+        if not repair
+        else {
+            "code": ev(repair.get("code"), codes),
+            "resolution_source": ev(
+                requirement.get("resolution_source"), depresolve.INSTALLABLE_SOURCES
+            ),
+            "installable": bool(requirement.get("installable")),
+            "rounds_remaining": repair.get("rounds_remaining"),
+            "pinned_source": str((repair.get("pinned") or {}).get("source") or ""),
+            "targets": [
+                {
+                    "kind": ev(t.get("kind"), kinds),
+                    "available": t.get("available"),
+                    "reason": ev(t.get("reason"), codes),
+                    "modifies_user_environment": bool(t.get("modifies_user_environment")),
+                    "creates_environment": bool(t.get("creates_environment")),
+                }
+                for t in (repair.get("targets") or [])
+                if isinstance(t, dict)
+            ],
+        },
+    }
+    with _lock:
+        _missing_evidence.append(record)
+
+
+def recent_missing_dependencies(project: str | Path) -> list[dict]:
+    """这个项目最近的缺依赖现场（旧 → 新，最多 `MISSING_DEPENDENCY_EVIDENCE_LIMIT` 条）。"""
+    pid = managedenv.project_fingerprint(project)
+    with _lock:
+        return [copy.deepcopy(r) for r in _missing_evidence if r["project_id"] == pid]
+
+
+def clear_missing_dependency_evidence() -> None:
+    """测试之间清空（用户侧没有入口：进程退出即消失）。"""
+    with _lock:
+        _missing_evidence.clear()
 
 
 # ---------------------------------------------------------------------------

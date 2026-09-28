@@ -64,6 +64,28 @@
     再改字段的形状或语义（删字段、把路径换成记号），同样要升号——读包的人靠 manifest 分辨格式，
     不靠 Tavotto 版本号猜。后端 `BUNDLE_SCHEMA_VERSION` ↔ `web/src/diagnostics/types.ts` 同名常量
     是严格同源对（`test_bundle_schema_is_one_number_on_both_sides`）。
+- **缺依赖的现场要进包（2026-09-28 Windows 实测，bundle schema 4）**：渲染报 `missing_dependency` 时
+  错误响应里有模块名、体检过的系统候选（3.7.6 装了但版本不支持、WindowsApps 占位起不来）与修复 offer，
+  以前诊断包里一样都没有，只看得到「3.7.6 不在支持范围」的片段，读的人以为内置 Python 坏了。现在
+  `app._worker_error_payload` 在算完 offer 之后把**这份响应里已经算好的结论**记进
+  `deprepair.note_missing_dependency`（进程内存、全局最多 `MISSING_DEPENDENCY_EVIDENCE_LIMIT` 条、不写盘、
+  `reset_state()` 不清——用户点重试之后上一次为什么失败正是要看的），诊断包只取**当前项目**的
+  （`recent_missing_dependencies`），写在 `project.missing_dependencies`。**不为诊断重新体检任何解释器**。
+  当时谁在渲染由异常的产出点带上（`WorkerError.python_source`：`EngineWorker._error_of` 与
+  `WorkerdWorker._to_worker_error` 两条控制面同一个答案）。出门换形在 `diagnostics._missing_dependency_for_export`，
+  **字段是白名单**，值按出处放行：import 名只有标准库 / `_KNOWN_SITE_PACKAGES` / `depresolve` 的两张 curated
+  表里的原样，其余 `mod:<哈希>`；脚本走 `_shorten_path_text`（与出门版日志同一个 `file:<哈希>.py`）；解释器来源
+  认 `pool.SOURCE_LABELS`、体检 code 认 `projectenv` 的 `ERROR_*`、support 认 `SUPPORT_*`、版本认
+  `logsafe.version`，不在集合里的 `str:<哈希>`；候选解释器路径走 `_path_fact`（`_KNOWN_SEGMENTS` 为此加了
+  解释器的常见安装布局名；**只有候选解释器路径**（`_path_fact(..., interpreter=True)`）才认 `python3.EXE` / `Python37`
+  这类固定词加数字的段（在 `bin/` / `Scripts/` / `WindowsApps/` / 盘符根 / `Programs/Python/` / 已原样的解释器目录之下）
+  与纯版本号 `3.7.6`（在 `versions/` / `Versions/` 之下）；导出 / 备份 / 文档目录、项目设置、日志里的路径一律不认——
+  那里每一段连同父目录名都可能是用户起的，叫 `Python37` / `12.34` 的目录可能是课题编号，照样哈希）。offer 的
+  code / 目标 kind / 不可用原因 / 解析来源的闭集在 `deprepair`，而本模块不能 import 它（`deprepair` 的安装日志
+  反过来用 `redact_text`，互相 import 会把它拉进登记过的环）——所以这几个值由**产出方**在记录那一刻按自家常量
+  放行（`deprepair._evidence_value`），这里只再验一道形状（小写标识符或 `str:<十六进制>`）。看护：
+  `tests/test_diagnostics_bundle.py` 末节（真走 `/api/engine/render` 出错 → 导出包 → 全文搜用户名目录 /
+  项目路径 / 脚本名 / 私有模块名，并反证现场写出来了）。
 - **诊断包 schema 2（ADR 0016，改前先读；schema 3 只改了 report.json 的 project 段，见上）**：老三件
   （report.json / app.log / config.json）名字与语义一个字节没动，新增
   `frontend-state.json` / `interaction-trace.jsonl` / `manifest.json`。
@@ -151,7 +173,7 @@
 
 - 先脱敏再交出、项目清单只留条数
 - 项目根在所有文本里先于主目录换成 `<project:哈希>`、项目名不出门、云盘账号与邮箱兜底抹掉（`project_roots` / `_project_section`）
-- report.json 换形必升 bundle schema（现 3）
+- report.json 换形必升 bundle schema（现 4）
 - 服务端第二道校验刻意与前端判据不同
 - 坏载荷退化成不带前端文件的包、不 400
 - 不写盘不上传不进 telemetry

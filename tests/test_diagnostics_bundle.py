@@ -151,7 +151,7 @@ def test_get_bundle_still_works_and_keeps_the_old_three_files(client):
 def test_manifest_declares_its_own_schema(client):
     z = open_bundle(client.get("/api/diagnostics/bundle").data)
     manifest = json.loads(z.read("manifest.json"))
-    assert manifest["schema_version"] == 3
+    assert manifest["schema_version"] == 4
     assert manifest["frontend_snapshot_schema"] == 1
     assert manifest["trace_schema"] == 1
     assert manifest["privacy_mode"] == "safe-default"
@@ -1034,3 +1034,356 @@ def test_any_unicode_inside_an_address_is_redacted_whole():
         escaped = json.dumps(text)
         expect = json.dumps("前 ")[:-1] + "<email>" + json.dumps(" 后")[1:]
         assert engine_diagnostics._redact_text(escaped) == expect, (escaped, address)
+
+
+# ---------------------------------------------------------------------------
+# 最近的缺依赖现场（bundle schema 4）：2026-09-28 Windows 实测，渲染报 missing_dependency、
+# 响应里有模块名 / 体检过的系统候选 / 修复 offer，诊断包里一样都没有，只看得到
+# 「3.7.6 不在支持范围」的片段，用户与我们都以为内置 Python 坏了
+# ---------------------------------------------------------------------------
+WIN_USER = "PRIVATE_WIN_USER"
+LAB_DIR = "PRIVATE_LAB_TOOLS"
+SCRIPT = "PRIVATE_SCRIPT_patient.py"
+PRIVATE_MODULE = "patient_private_mod"
+
+
+@pytest.fixture
+def no_evidence():
+    from tavotto.engine import deprepair
+
+    deprepair.clear_missing_dependency_evidence()
+    yield
+    deprepair.clear_missing_dependency_evidence()
+
+
+def _missing(module: str, project_env: dict | None = None):
+    from tavotto.engine import pool as engine_pool
+
+    exc = engine_pool.WorkerError("缺包", "tb", code="missing_dependency", module=module)
+    exc.script_name = SCRIPT
+    exc.python_source = engine_pool.SOURCE_BUNDLED
+    if project_env is not None:
+        exc.project_env = project_env
+    return exc
+
+
+def test_bundle_carries_recent_missing_dependency_evidence_without_leaking_paths(
+    client, tmp_path, monkeypatch, no_evidence
+):
+    """渲染缺 adjustText（内置环境没有；系统里 3.7.6 装了但版本不支持、WindowsApps 占位起不来）→
+    诊断包的 report.json 要答得出「缺哪个包、当时谁在渲染、别的 Python 为什么没被采用、修复目标
+    能不能用」，而用户名目录、项目路径、脚本名、私有模块名一个字都不出门。"""
+    from tavotto.engine import deprepair, projectenv
+
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    project = home / "Documents" / PERSON / PAPER
+    project.mkdir(parents=True)
+    (project / "p1.pdf").write_bytes(b"%PDF-1.4\n")
+    assert client.post("/api/projects/open", json={"path": str(project)}).status_code == 200
+    monkeypatch.setattr(
+        m.engine_registry.Registry,
+        "for_stem",
+        lambda self, s: {"script": SCRIPT, "entry": "main", "cost": "light"},
+    )
+    # 受管环境探不到基础解释器：修复目标里要如实写「不可用 + 原因」，且不为此起任何子进程
+    monkeypatch.setattr(deprepair, "managed_available", lambda: False)
+    monkeypatch.setattr(deprepair.privatepython, "offer_payload", lambda: None)
+
+    win_store = f"C:\\Users\\{WIN_USER}\\AppData\\Local\\Microsoft\\WindowsApps\\python3.EXE"
+    pyenv = str(home / ".pyenv" / "versions" / "3.7.6" / "bin" / "python3.7")
+    lab = f"/opt/{LAB_DIR}/bin/python3"
+    venv_python = str(project / ".venv" / "bin" / "python")
+    system = [
+        {
+            "python": pyenv,
+            "source": "system",
+            "ok": False,
+            "code": projectenv.ERROR_UNSUPPORTED_PYTHON,
+            "support": projectenv.SUPPORT_UNSUPPORTED,
+            "python_version": "3.7.6",
+            "matplotlib_version": "3.5.3",
+            "requested_module_ok": True,
+        },
+        {
+            "python": win_store,
+            "source": "system",
+            "ok": False,
+            "code": projectenv.ERROR_UNUSABLE,
+            "support": "",
+            "python_version": "",
+            "matplotlib_version": "",
+            "requested_module_ok": None,
+        },
+        {"python": lab, "source": "system", "ok": False, "code": projectenv.ERROR_NO_MATPLOTLIB},
+        {"python": venv_python, "source": "project_venv", "ok": False, "code": "x"},
+    ]
+    envs = iter(
+        [
+            {
+                "ok": False,
+                "code": projectenv.ERROR_NOT_FOUND,
+                "module": "adjustText",
+                "system": system,
+            },
+            None,
+        ]
+    )
+
+    def boom(*_a, **_kw):
+        env = next(envs)
+        raise _missing("adjustText" if env else PRIVATE_MODULE, env)
+
+    monkeypatch.setattr(m.engine_pool, "get", boom)
+    for _ in range(2):
+        body = client.post("/api/engine/render", json={"id": "p1.pdf", "patches": []}).get_json()
+        assert body["code"] == "missing_dependency", body
+
+    z = open_bundle(client.get("/api/diagnostics/bundle").data)
+    texts = {n: z.read(n).decode("utf-8", errors="replace") for n in z.namelist()}
+    texts["<复制诊断>"] = client.get("/api/diagnostics/summary").get_data(as_text=True)
+    for name, text in texts.items():
+        for secret in (PERSON, PAPER, WIN_USER, LAB_DIR, SCRIPT, "PRIVATE_SCRIPT", PRIVATE_MODULE):
+            assert secret not in text, f"{secret} 出现在 {name} 里"
+        assert str(home) not in text, name
+
+    # 反证：现场确实写出来了，而且是读得懂的那几样
+    proj = json.loads(texts["report.json"])["project"]
+    token = proj["figures_dir"]
+    first, second = proj["missing_dependencies"]
+    assert first["import_name"] == "adjustText"
+    assert first["script"] == engine_diagnostics._shorten_path_text(SCRIPT)
+    assert re.fullmatch(r"…/file:[0-9a-f]{10}\.py", first["script"]), first["script"]
+    assert first["python_source"] == "bundled"
+    assert first["project_env_code"] == projectenv.ERROR_NOT_FOUND
+    old, store, lab_entry, venv = first["system_candidates"]
+    assert old == {
+        "python": "~/.pyenv/versions/3.7.6/bin/python3.7",
+        "source": "system",
+        "ok": False,
+        "code": projectenv.ERROR_UNSUPPORTED_PYTHON,
+        "support": projectenv.SUPPORT_UNSUPPORTED,
+        "python_version": "3.7.6",
+        "matplotlib_version": "3.5.3",
+        "requested_module_ok": True,
+    }
+    assert re.fullmatch(
+        r"C:/Users/seg:[0-9a-f]{10}/AppData/Local/Microsoft/WindowsApps/python3\.EXE",
+        store["python"],
+    ), store["python"]
+    assert store["code"] == projectenv.ERROR_UNUSABLE and store["requested_module_ok"] is None
+    assert re.fullmatch(r"/opt/seg:[0-9a-f]{10}/bin/python3", lab_entry["python"])
+    assert venv["python"] == f"{token}/.venv/bin/python"
+    assert venv["source"] == "project_venv"
+    assert venv["code"].startswith("str:"), "不在 code 闭集里的值哈希"
+    repair = first["repair"]
+    assert repair["resolution_source"] == "curated" and repair["installable"] is True
+    managed = [t for t in repair["targets"] if t["kind"] == deprepair.TARGET_MANAGED]
+    assert managed == [
+        {
+            "kind": deprepair.TARGET_MANAGED,
+            "available": False,
+            "reason": deprepair.ERROR_MANAGED_UNAVAILABLE,
+            "modifies_user_environment": False,
+            "creates_environment": True,
+        }
+    ]
+    assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d", first["at"])
+    # 第二次：私有模块名只剩哈希，没有体检表
+    assert re.fullmatch(r"mod:[0-9a-f]{10}", second["import_name"]), second["import_name"]
+    assert second["system_candidates"] == []
+    assert second["repair"]["code"] == deprepair.ERROR_UNRESOLVED
+    assert "project.missing_dependencies[0].import_name: adjustText" in texts["<复制诊断>"]
+    assert "missing_dependencies" in _readme_project_fields(texts["README.txt"])
+
+
+def test_missing_dependency_evidence_is_bounded_and_scoped_to_the_project(tmp_path, no_evidence):
+    """进程里只留最近 `MISSING_DEPENDENCY_EVIDENCE_LIMIT` 条；取的时候只取这个项目的。"""
+    from tavotto.engine import deprepair
+
+    a, b = tmp_path / "a", tmp_path / "b"
+    limit = deprepair.MISSING_DEPENDENCY_EVIDENCE_LIMIT
+    for i in range(limit + 3):
+        deprepair.note_missing_dependency(
+            a, script="s.py", module=f"m{i}", python_source="bundled", project_env=None, offer=None
+        )
+    deprepair.note_missing_dependency(
+        b, script="s.py", module="other", python_source="bundled", project_env=None, offer=None
+    )
+    # 全局上限是 limit 条：a 的前 4 条（3 条溢出 + 给 b 让出的 1 条）被挤掉
+    mine = deprepair.recent_missing_dependencies(a)
+    assert [r["module"] for r in mine] == [f"m{i}" for i in range(4, limit + 3)]
+    assert [r["module"] for r in deprepair.recent_missing_dependencies(b)] == ["other"]
+    # 用户点「重试」（按项目重置修复状态）之后，上一次为什么失败仍要看得到
+    deprepair.reset_state(a)
+    assert len(deprepair.recent_missing_dependencies(a)) == limit - 1
+
+
+def test_version_shaped_segments_stay_only_on_interpreter_version_positions():
+    """`3.7.6` 这类纯版本号只在解释器布局的版本位（`versions/` / `Versions/` 之下）原样；
+    用户起名的 Conda 环境、导出目录叫 `12.34` / `3.7.6` 时照样哈希（Codex #708 P1）。"""
+    d = engine_diagnostics
+    home = str(Path.home())
+    roots = [(home, "~")]
+    assert d._path_fact(f"{home}/.pyenv/versions/3.7.6/bin/python3.7", roots, interpreter=True) == (
+        "~/.pyenv/versions/3.7.6/bin/python3.7"
+    )
+    assert (
+        d._path_fact(
+            "/Library/Frameworks/Python.framework/Versions/3.11/bin/python3",
+            roots,
+            interpreter=True,
+        )
+        == "/Library/Frameworks/Python.framework/Versions/3.11/bin/python3"
+    )
+    for private, interp in (
+        (f"{home}/miniconda3/envs/12.34/bin/python", True),
+        (f"{home}/Desktop/3.7.6/out.pdf", False),
+        (f"{home}/Desktop/versions/3.7.6/out.pdf", False),  # 父目录名也可以是用户起的
+    ):
+        fact = d._path_fact(private, roots, interpreter=interp)
+        segs = fact.split("/")
+        assert "12.34" not in segs and "3.7.6" not in segs, fact
+        assert any(s.startswith("seg:") for s in segs), fact
+
+
+def test_interpreter_shaped_segments_stay_only_on_interpreter_layout_positions():
+    """`Python37` / `python3.11` 这类段只在解释器布局的位置上原样（`bin/` 之下、`WindowsApps/` 之下、盘符
+    根下、`Programs/Python/` 之下）；用户起名的 Conda 环境、导出目录叫 `Python37` / `python911` 时照样
+    哈希（Codex #708 P1，第二处放行口）。"""
+    d = engine_diagnostics
+    home = str(Path.home())
+    roots = [(home, "~")]
+    for layout in (
+        "/usr/local/bin/python3.11",
+        "C:/Python37/python.exe",
+        "C:/Users/<user>/AppData/Local/Programs/Python/Python37/pythonw.exe",
+        "C:/Users/<user>/AppData/Local/Microsoft/WindowsApps/python3.EXE",
+    ):
+        assert d._path_fact(layout, roots, interpreter=True) == layout
+    for private, interp in (
+        (f"{home}/miniconda3/envs/python911/bin/python", True),
+        (f"{home}/Desktop/Python37/fig.pdf", False),
+        # 导出 / 设置里的路径不认解释器布局：`bin/` 这个父目录名同样可以是用户起的（第三轮）
+        (f"{home}/Desktop/bin/Python911/out.pdf", False),
+        ("C:/Python37/out.pdf", False),
+    ):
+        segs = d._path_fact(private, roots, interpreter=interp).split("/")
+        assert not {"python911", "Python37", "Python911"} & set(segs), segs
+
+
+def test_missing_dependency_export_is_a_whitelist_of_closed_values():
+    """原值里多出来的键不出门；来源 / code / 版本不在闭集里就哈希（放行口不许变成后门）。"""
+    record = {
+        "at": 0,
+        "project_id": "p",
+        "script": "",
+        "module": "numpy",
+        "python_source": "SECRET_SOURCE",
+        "project_env_code": "SECRET_CODE",
+        "raw_stdout": "SECRET_STDOUT",
+        "system": [
+            {
+                "python": "",
+                "source": "system",
+                "code": "project_env_unsupported_python",
+                "support": "SECRET_SUPPORT",
+                "python_version": "3.7.6 SECRET_VERSION",
+                "matplotlib_version": "3.5.3",
+                "requested_module_ok": "yes",
+                "executable": "/SECRET/python",
+            }
+        ],
+        "offer": {
+            "code": "",
+            "resolution_source": "SECRET_RESOLUTION",
+            "rounds_remaining": "2",
+            "targets": [{"kind": "SECRET_KIND", "available": "yes", "python": "/SECRET/py"}],
+        },
+    }
+    out = engine_diagnostics._missing_dependency_for_export(record, [])
+    text = json.dumps(out, ensure_ascii=False)
+    assert "SECRET" not in text, text
+    assert out["import_name"] == "numpy"
+    assert out["python_source"].startswith("str:")
+    assert out["project_env_code"].startswith("str:")
+    (cand,) = out["system_candidates"]
+    assert set(cand) == {
+        "python",
+        "source",
+        "ok",
+        "code",
+        "support",
+        "python_version",
+        "matplotlib_version",
+        "requested_module_ok",
+    }
+    assert cand["code"] == "project_env_unsupported_python" and cand["source"] == "system"
+    assert cand["matplotlib_version"] == "3.5.3" and cand["python_version"].startswith("str:")
+    assert cand["requested_module_ok"] is None
+    assert out["repair"]["rounds_remaining"] is None
+    (target,) = out["repair"]["targets"]
+    assert target["kind"].startswith("str:")
+    assert set(target) == {
+        "kind",
+        "available",
+        "reason",
+        "modifies_user_environment",
+        "creates_environment",
+    }
+    assert target["available"] is None
+
+
+def test_offer_values_are_vetted_by_their_producer_against_its_own_constants(tmp_path, no_evidence):
+    """offer 的 code / kind / reason 的闭集在 deprepair（诊断模块 import 不到它），放行在记录那一刻：
+    长得像 code 的小写标识符（诊断侧的形状检查放得过）只要不是 deprepair 的常量，照样只剩哈希。"""
+    from tavotto.engine import deprepair
+
+    offer = {
+        "code": "patient_secret_code",
+        "requirement": {"resolution_source": "patient_secret_source", "installable": True},
+        "targets": [
+            {"kind": "patient_secret_kind", "available": True, "reason": "patient_secret_reason"},
+            {
+                "kind": deprepair.TARGET_MANAGED,
+                "available": False,
+                "reason": deprepair.ERROR_MANAGED_UNAVAILABLE,
+            },
+        ],
+    }
+    deprepair.note_missing_dependency(
+        tmp_path, script="s.py", module="x", python_source="", project_env=None, offer=offer
+    )
+    (record,) = deprepair.recent_missing_dependencies(tmp_path)
+    repair = engine_diagnostics._missing_dependency_for_export(record, [])["repair"]
+    assert "patient_secret" not in json.dumps(repair), repair
+    assert repair["code"].startswith("str:") and repair["resolution_source"].startswith("str:")
+    secret, managed = repair["targets"]
+    assert secret["kind"].startswith("str:") and secret["reason"].startswith("str:")
+    assert managed["kind"] == deprepair.TARGET_MANAGED
+    assert managed["reason"] == deprepair.ERROR_MANAGED_UNAVAILABLE
+
+
+def test_both_control_planes_say_which_interpreter_was_missing_the_module():
+    """缺依赖异常要带着「当时谁在渲染」：Python 池与 workerd 两条控制面同一个答案。"""
+    from tavotto.engine import pool as engine_pool
+
+    tb = "Traceback…\nModuleNotFoundError: No module named 'adjustText'\n"
+    py = object.__new__(engine_pool.EngineWorker)
+    py.script_name, py.python_source = "fig.py", engine_pool.SOURCE_MANAGED_PROJECT
+    err = py._error_of(
+        {"ok": False, "error": {"code": "script_error", "message": "x", "traceback": tb}}
+    )
+    assert err.code == "missing_dependency"
+    assert err.python_source == engine_pool.SOURCE_MANAGED_PROJECT
+
+    class _SupervisorError(Exception):
+        code, traceback_text, extra = "script_error", tb, {}
+
+    wd = object.__new__(engine_pool.WorkerdWorker)
+    wd.script_name, wd.python_source, wd._dead = "fig.py", engine_pool.SOURCE_BUNDLED, False
+    wd._log_tail = lambda n=30: ""
+    err = wd._to_worker_error(_SupervisorError("x"))
+    assert err.code == "missing_dependency"
+    assert err.python_source == engine_pool.SOURCE_BUNDLED
