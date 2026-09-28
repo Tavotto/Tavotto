@@ -3745,6 +3745,8 @@ export interface ProbeError {
    * 图还没上画布时，那是新用户走到安装的唯一入口。
    */
   dependency_repair?: DependencyRepairOffer
+  /** 数据找不到（ADR 0106）：与渲染入口同一份「指认数据位置」载荷（`missing_input` / 没出图时可能有） */
+  missing_input?: MissingInputOffer
 }
 
 export interface ProbeResult {
