@@ -12,6 +12,7 @@ import { configureOnboardingPersistence, useOnboardingStore, type OnboardingStat
 import { useProjectStore } from '@/store/projectStore'
 import { useTutorialStore } from '@/lib/onboarding/tutorial'
 import { useUiStore } from '@/store/uiStore'
+import { PRODUCT_NAME } from '@/lib/brand'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -278,6 +279,9 @@ describe('老手版', () => {
     desktop.pickScriptFile.mockResolvedValueOnce(null)
     await dropOn(main(), { files: ['figure.py'] })
     expect(host.textContent).toContain('「figure.py」')
+    // 文案里的产品名是插值出来的：调用点漏传就会露出原样占位符（#688）
+    expect(host.textContent).toContain(`系统没有告诉 ${PRODUCT_NAME}「figure.py」`)
+    expect(host.textContent).not.toContain('{{')
     expect(desktop.pickScriptFile).toHaveBeenCalledTimes(1)
     expect(open).not.toHaveBeenCalled()
     // 选中了：打开它所在的目录，说明收起
@@ -289,6 +293,14 @@ describe('老手版', () => {
   it('放下的不是 .py：报错、什么都不打开', async () => {
     await mount()
     await dropOn(main(), { files: ['fig.pdf'] })
+    expect(host.querySelector('[role="alert"]')!.textContent).toContain('fig.pdf')
+    expect(open).not.toHaveBeenCalled()
+    expect(desktop.pickScriptFile).not.toHaveBeenCalled()
+  })
+
+  it('放下带 file:// 路径的 pdf：说不收，不拿它当项目去开（#688）', async () => {
+    await mount()
+    await dropOn(main(), { uris: 'file:///Users/me/fig/fig.pdf', files: ['fig.pdf'] })
     expect(host.querySelector('[role="alert"]')!.textContent).toContain('fig.pdf')
     expect(open).not.toHaveBeenCalled()
     expect(desktop.pickScriptFile).not.toHaveBeenCalled()
@@ -344,6 +356,18 @@ describe('系统拖放（桌面壳交来真实路径，ADR 0092）', () => {
     expect(JSON.stringify(status())).toContain('"total":3')
   })
 
+  it('切换项目进行中：壳交来的放下不接（它不经过页面的 onDrop 闸），切完再放照常开', async () => {
+    await mount()
+    act(() => useProjectStore.setState({ switching: true }))
+    await fire({ kind: 'script', folder: '/Users/me/fig', script: '/Users/me/fig/plot.py', name: 'plot.py', ignored: 0 })
+    await fire({ kind: 'unsupported', name: 'fig.pdf' })
+    expect(open).not.toHaveBeenCalled()
+    expect(host.querySelector('[role="alert"]')).toBeNull()
+    act(() => useProjectStore.setState({ switching: false }))
+    await fire({ kind: 'script', folder: '/Users/me/fig', script: '/Users/me/fig/plot.py', name: 'plot.py', ignored: 0 })
+    expect(open).toHaveBeenCalledWith('/Users/me/fig', false)
+  })
+
   it('不支持的类型：说不收，什么都不打开', async () => {
     await mount()
     await fire({ kind: 'unsupported', name: 'fig.pdf' })
@@ -382,6 +406,25 @@ describe('系统拖放（桌面壳交来真实路径，ADR 0092）', () => {
       vi.advanceTimersByTime(1500)
     })
     expect(desktop.pickScriptFile).toHaveBeenCalledTimes(1)
+  })
+
+  it('等壳期间开始切换项目：到点的降级不再弹选择器、不说话（放下时没在切，到点时在切）', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    await mount()
+    const ev = new Event('drop', { bubbles: true, cancelable: true })
+    Object.defineProperty(ev, 'dataTransfer', {
+      value: { types: ['Files'], getData: () => '', files: [{ name: 'figure.py' }], dropEffect: 'none' },
+    })
+    await act(async () => {
+      main().dispatchEvent(ev)
+    })
+    act(() => useProjectStore.setState({ switching: true }))
+    await act(async () => {
+      vi.advanceTimersByTime(3000)
+    })
+    expect(desktop.pickScriptFile).not.toHaveBeenCalled()
+    expect(host.textContent).not.toContain('「figure.py」')
+    expect(open).not.toHaveBeenCalled()
   })
 
   it('能力探测与订阅先后不定：订阅先好、探测还没回，壳的事件与页面 drop 同时到也不弹选择器', async () => {

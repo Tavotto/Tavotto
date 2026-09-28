@@ -22,7 +22,8 @@
  *   3. 资源里有、代码里从没用过的 key（多余）；
  *   4. 空翻译；
  *   5. 两种语言的插值变量是否一致；
- *   6. 两种语言的复数形态是否配套。
+ *   6. 两种语言的复数形态是否配套；
+ *   7. 调用点有没有把文案里的插值变量传齐（看得全的实参才判）。
  *
  * 硬编码字符串由 `i18next-cli lint` 查，生成的类型是否过期由
  * `i18next-cli types --ci` 查——三条一起构成 `i18n:check`。
@@ -32,6 +33,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { topLevelKeys } from './i18n-args.mjs'
 
 const WEB = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const LOCALES_DIR = path.join(WEB, 'src/i18n/locales')
@@ -266,6 +268,7 @@ function scanFile(file) {
   const src = fs.readFileSync(file, 'utf8')
   const used = new Set()
   const prefixes = new Set()
+  const calls = []
   const helpers = helperTable(src)
   const defaults = fileNsDefaults(src)
 
@@ -277,11 +280,17 @@ function scanFile(file) {
     const open = m.index + m[0].length - 1
     const { args } = splitArgs(src, open)
     if (!args.length) continue
+    /** 字面量 key 的调用点连同它的插值实参记下来，给第 7 组核「文案要的变量传齐没有」 */
+    const site = (nsKey, values) =>
+      calls.push({ nsKey, values, where: `${path.relative(WEB, file)}:${src.slice(0, m.index).split('\n').length}` })
 
     if (name === 'nsMsg') {
       const ns = literalsIn(args[0])[0]
       if (!ns) continue
-      for (const key of literalsIn(args[1] ?? '')) used.add(`${ns}:${key}`)
+      for (const key of literalsIn(args[1] ?? '')) {
+        used.add(`${ns}:${key}`)
+        site(`${ns}:${key}`, args[2])
+      }
       for (const pre of templatePrefixes(args[1] ?? '')) prefixes.add(`${ns}:${pre}`)
       continue
     }
@@ -292,6 +301,7 @@ function scanFile(file) {
       for (const raw of literalsIn(args[0])) {
         const [realNs, key] = splitNs(raw, ns)
         used.add(`${realNs}:${key}`)
+        site(`${realNs}:${key}`, args[1])
       }
       for (const pre of templatePrefixes(args[0])) {
         const [realNs, p] = splitNs(pre, ns)
@@ -306,6 +316,7 @@ function scanFile(file) {
       for (const raw of literalsIn(args[0])) {
         const [ns, key] = splitNs(raw, fallback)
         used.add(`${ns}:${key}`)
+        site(`${ns}:${key}`, args[1])
       }
       for (const pre of templatePrefixes(args[0])) {
         const [ns, p] = splitNs(pre, fallback)
@@ -317,12 +328,15 @@ function scanFile(file) {
 
     // 模块自己的短助手
     const { ns, prefix } = helpers.get(name)
-    for (const key of literalsIn(args[0])) used.add(`${ns}:${prefix}${key}`)
+    for (const key of literalsIn(args[0])) {
+      used.add(`${ns}:${prefix}${key}`)
+      site(`${ns}:${prefix}${key}`, args[1])
+    }
     for (const pre of templatePrefixes(args[0])) prefixes.add(`${ns}:${prefix}${pre}`)
     if (isBareIdentifier(args[0])) prefixes.add(`${ns}:${prefix}`)
   }
 
-  return { used, prefixes }
+  return { used, prefixes, calls }
 }
 
 /* --------------------------------- 检查 ------------------------------------ */
@@ -338,10 +352,12 @@ function main() {
 
   const used = new Set(ALWAYS_USED)
   const prefixes = new Set()
+  const calls = []
   for (const file of sourceFiles(SRC)) {
     const r = scanFile(file)
     for (const k of r.used) used.add(k)
     for (const p of r.prefixes) prefixes.add(p)
+    calls.push(...r.calls)
   }
   const coveredByPrefix = (nsKey) => [...prefixes].some((p) => nsKey.startsWith(p))
 
@@ -450,6 +466,33 @@ function main() {
       if (used.has(nsKey) || coveredByPrefix(nsKey)) continue
       add('unused', `${nsKey} 在资源里，但代码里找不到引用`)
     }
+  }
+
+  /* --- 7. 调用点把文案要的插值变量传齐 ---
+   *
+   * 第 3 组只比两种语言彼此一致；两边都写了 `{{product}}`、调用点却只传 `name` 时它是绿的，
+   * 用户看到的是原样的 `{{product}}`（#688）。这里只判**看得全**的实参：没传、或是一个不含
+   * 展开 / 计算键的对象字面量；变量、展开、函数调用给出的值看不见内容，不猜。只认**顶层**键
+   * （`{ name }` 与 `name: x` 都算传了，嵌套对象里的同名键不算），解析见 `i18n-args.mjs`。 */
+  const varsOfKey = (nsKey) => {
+    const [ns, key] = nsKey.split(/:(.+)/)
+    const out = new Set()
+    for (const locale of LOCALES) {
+      const table = res[locale][ns]
+      if (!table) continue
+      for (const k of [key, ...PLURAL_SUFFIXES.map((s) => `${key}${s}`)]) {
+        for (const v of varsOf(table.get(k))) out.add(v.split('.')[0])
+      }
+    }
+    return out
+  }
+  for (const { nsKey, values, where } of calls) {
+    const want = varsOfKey(nsKey)
+    if (!want.size) continue
+    const passed = topLevelKeys(values)
+    if (!passed) continue
+    const missing = [...want].filter((v) => !passed.has(v))
+    if (missing.length) add('interpolation-args', `${where} 调 ${nsKey} 没传 [${missing}]`)
   }
 
   /* --------------------------------- 报告 ---------------------------------- */
