@@ -342,6 +342,16 @@ describe('画布对象：步长与撤销', () => {
     expect(past()).toHaveLength(0)
   })
 
+  it('⌥ 细调一去一回（浮点累加有残差）：同样算净位移为零，不留历史', async () => {
+    await setup({ extra: [rect('r', 0)] })
+    useSelectionStore.getState().set(['r'])
+    for (let i = 0; i < 3; i++) tap('ArrowRight', { altKey: true })
+    for (let i = 0; i < 3; i++) tap('ArrowLeft', { altKey: true })
+    settle()
+    expect(obj('r').x).toBe(0)
+    expect(past()).toHaveLength(0)
+  })
+
   it('与鼠标拖动同一套可移动判据：锁定的、隐藏的不动', async () => {
     await setup({ extra: [rect('a', 0), rect('l', 20, { locked: true }), rect('h', 40, { hidden: true })] })
     useSelectionStore.getState().set(['a', 'l', 'h'])
@@ -525,6 +535,40 @@ describe('图内元素：与拖动同一套移动规则', () => {
     expect(overrideOf(title.gid, 'pos_frac')![0]).toBeCloseTo(0.3 + 1.5 / PAGE_W, 9)
     expect(past()).toHaveLength(2)
     expect(nudgeActive()).toBe(false)
+  })
+
+  it('等权威期间停过、又接着按住：权威到了不在按住途中收尾，松手停顿后才是一条撤销', async () => {
+    await setup()
+    editFigure([title.gid])
+    tap('ArrowRight')
+    settle()
+    tap('ArrowRight')
+    settle() // 等权威的这一段停下来了：记成「权威一到就提交」
+    keydown('ArrowRight') // 接着按住
+    act(() => seedRender())
+    expect(nudgeActive(), '按住途中不该收尾').toBe(true)
+    expect(past()).toHaveLength(1)
+    keydown('ArrowRight', { repeat: true })
+    keyup('ArrowRight')
+    settle()
+    expect(past()).toHaveLength(2)
+    expect(overrideOf(title.gid, 'pos_frac')![0]).toBeCloseTo(0.3 + 2 / PAGE_W, 9)
+  })
+
+  it('等权威期间停过、又接着点按：权威到了不提前收尾，接着的点按仍是同一段', async () => {
+    await setup()
+    editFigure([title.gid])
+    tap('ArrowRight')
+    settle()
+    tap('ArrowRight')
+    settle()
+    tap('ArrowRight') // 停过之后接着点
+    act(() => seedRender())
+    expect(nudgeActive(), '权威一到就把接着点的这一段收掉了').toBe(true)
+    tap('ArrowRight')
+    settle()
+    expect(past()).toHaveLength(2)
+    expect(overrideOf(title.gid, 'pos_frac')![0]).toBeCloseTo(0.3 + 2 / PAGE_W, 9)
   })
 
   it('权威缺席时被要求立刻收尾（按了别的键）：放弃这一段，文档不变', async () => {

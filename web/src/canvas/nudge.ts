@@ -53,6 +53,12 @@ const ARROWS: Record<string, [number, number]> = {
   ArrowDown: [0, 1],
 }
 
+/**
+ * 累计位移逐步取整到 1e-6 mm：0.1 不是二进制可表示的数，⌥ 细调一去一回会留下 1e-17 量级的
+ * 残差，「净位移为零」就判不出来了（画布对象会多出一条看不出改了什么的撤销）
+ */
+const roundMm = (v: number): number => Math.round(v * 1e6) / 1e6
+
 /** 这一下按键的步长（页面 mm）。⇧ 优先于 ⌥ */
 export function nudgeStepMm(e: { shiftKey: boolean; altKey: boolean }): number {
   if (e.shiftKey) return NUDGE_STEP_MM.large
@@ -137,8 +143,10 @@ export function nudgeKeyDown(e: KeyboardEvent): boolean {
   held.add(e.key)
   const step = nudgeStepMm(e)
   const b = burst!
-  b.dx += dir[0] * step
-  b.dy += dir[1] * step
+  b.dx = roundMm(b.dx + dir[0] * step)
+  b.dy = roundMm(b.dy + dir[1] * step)
+  // 等几何权威期间停过（记成「权威一到就提交」）又接着按了：这一段还没完
+  if (b.kind === 'figure') b.settleOnAuthority = false
   apply(b)
   armQuietTimer()
   return true
