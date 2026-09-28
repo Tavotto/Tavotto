@@ -12,3 +12,13 @@ release.yml 的「拼 release body」当场红（scripts/check_pending_release_n
 英文写，与 release notes 一致：**按症状和触发条件写，不要按提交写**。
 -->
 
+## Claude Code plugin (experimental)
+
+Tavotto now installs into Claude Code as a plugin:
+`claude plugin marketplace add Tavotto/Tavotto --sparse .claude-plugin`, then
+`claude plugin install tavotto@tavotto`. It is the same plugin as for Codex (same MCP server and
+skill); Claude Code has no embedded canvas, so you edit through the tools. The folder Claude Code
+was started in is the authorized project. If you had set Tavotto up in Claude Code with the config
+generator, remove that `.mcp.json` entry after installing the plugin, or you will have two servers.
+The install path only works once this version has been promoted to the `plugin-stable` branch.
+

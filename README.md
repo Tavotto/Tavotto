@@ -374,6 +374,27 @@ Send Codex this message, in full:
 > plugin and the Tavotto engine it needs, then run the health check; when a new
 > session is required, tell me so explicitly and stop.
 
+### Using Tavotto with Claude Code (experimental)
+
+The same plugin installs into Claude Code (terminal, IDE extensions and the desktop app's Code tab).
+Run these in a terminal, one at a time:
+
+```sh
+claude plugin marketplace add Tavotto/Tavotto --sparse .claude-plugin
+claude plugin install tavotto@tavotto
+pipx install "tavotto[worker]"
+```
+
+Then start a new Claude Code session, or run `/reload-plugins` in the one you have open. `/mcp` should list
+`plugin:tavotto:tavotto` as connected; ask Claude to call `tavotto_health` to confirm the engine is found.
+Tavotto may only open and write inside the folder Claude Code was started in (Claude Code reports it
+through MCP roots; `/add-dir` adds more). Claude Code shows no embedded canvas, so you work through the
+same tools: open, adjust, preflight, export. To keep editing by hand, hand the figure off to the desktop
+app. Update with `claude plugin update tavotto@tavotto`.
+
+Claude Desktop's chat and claude.ai don't start local MCP servers from plugins. For Claude Desktop, use the
+config generator below.
+
 ### Using Tavotto from other AI editors and clients (experimental)
 
 Cursor, Claude Code, Claude Desktop (local chat), VS Code (GitHub Copilot agent), Trae, DeepSeek Harness,
