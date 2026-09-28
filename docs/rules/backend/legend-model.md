@@ -40,6 +40,20 @@
   truthfulness）。改色时整格同色（`frozen_color_uniform`）就写到这一格**每个** artist。示意线指纹带**未缩放的虚线节奏**（`_dash_key`）：
   `get_linestyle()` 对任何虚线元组都回 `'--'`，脚本给代理示意线的短虚线曾被误判成跟随源、
   第一次 apply 就换回源的长虚线。看护 `tests/test_legend_custom_handler.py`。
+- **色带跟随它描述的那块图元的色图（2026-09-26，用户 Figure2 (c)：「图例无法与背景颜色相关联」）**：
+  上一条定格下来的色带（脚本 handler 用网格的色图画的 24 段矩形）与网格没有任何 matplotlib 层面的
+  关系，从色条 / 网格换色图后背景变了、色带还是原来那组颜色，条目在界面上显示「未关联」。
+  `bind_colormap_swatches`（紧跟 `bind_legend_entries`，候选 = 同一子图里 `color_mapping_is_live`
+  且有 cmap handler 的图元，figure 级图例看全图）**按颜色认**：定格格子里每一段看得见的单一填充色都
+  落在候选色图的某一格上（`_RAMP_TOL` = 两级 8 位）、至少 3 个不同的格、铺开色图全长 ≥ 25%
+  （`colormap_ramp`）；多块图元都对得上且不共用 norm 对象时不绑（不伪造）。认出来的项有源
+  （`source_gid` 指向网格）、脚本原样 `follow_source`，记一份 `ColormapRamp`（绑定时的色图 + 每段在
+  色图上的位置）。这种项**跟随中也整格定格复刻**（`is_frozen` / `base_of` 先看 `ramps`，不从网格按
+  默认 handler 派生——那会画成一块纯色），`is_script_drawn` 为真（不摆 handle_* 控件）。颜色在
+  `sync_legends` 里现算（`_sync_ramp`，派生显示、不进 applied）：跟随且源的色图与绑定时不同
+  （`_same_cmap`：同一对象或 LUT 逐项相等）→ 每段按位置从新色图取色、透明度保留脚本的；否则写回
+  定格副本的原色——所以没换色图时逐字节原样，撤销色图 / 断开后退回原色，热态 == 全量重放。
+  看护 `tests/test_legend_custom_handler.py` 的「色带跟随色图」一节。
 - **图例位置模型（2026-09-07，ADR 0034 修订）**：「图例摆在哪」的三条 prop
   （`loc` 预设 / `loc_frac` 画布拖动 / `loc_anchor` 外侧锚点）改的是同一件事，
   而且会互相盖写（`set_loc` 之前必须清锚框，设锚框又不能动 loc）——所以走边框 /

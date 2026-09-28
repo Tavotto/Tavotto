@@ -2,15 +2,15 @@
  * 图例的排版详情与位置参照（审计 T17）。
  *
  * 钉住的合同：
- *   1. 五条间距（示意线长度 / 线与文字间距 / 行距 / 列距 / 内边距）不在首屏
- *      平铺，收进默认折叠的「排版详情」；通用列表里一条都不再出现——
- *      同一属性不出两套控件；
+ *   1. 五条间距（示意线长度 / 线与文字间距 / 行距 / 列距 / 内边距）由「排版详情」
+ *      一节承接，**默认展开**（2026-09-26 用户反馈：折叠着找不到）；通用列表里
+ *      一条都不再出现——同一属性不出两套控件；
  *   2. 折叠段里标签**独占一列、不定宽**：审计点名的「线与文字间…」正是被
  *      72px 定宽标签列截掉的。判据是「这一行的标签没有内联宽度」——那是
  *      截断的机制本身，不是它的外观（jsdom 量不出裁剪）；
  *   3. 数值带真实单位 `em`（matplotlib 这五条按字号的倍数计），小节顶上
  *      有一句说明；
- *   4. 用户改过任意一条时小节**自动展开**：override 不因折叠而不可发现；
+ *   4. 用户改过任意一条时小节**收不起来**：override 不因折叠而不可发现；
  *   5. 列距只在多列时出现，与通用列表共用 `fieldVisible` 一条判据；
  *   6. 位置九宫格下面写出参照的容器（「相对子图 1」），容器认不出来时不写。
  */
@@ -20,6 +20,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { MATPLOTLIB_SVG } from '@/lib/__fixtures__/matplotlibSvg'
+import { DURATION } from '@/lib/motion'
 import type { EditableField, EngineRenderOptions, Manifest, ManifestElement } from '@/lib/api'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useDocumentStore } from '@/store/documentStore'
@@ -83,11 +84,16 @@ const legendOf = (ncol = 1): ManifestElement =>
     editable: legendFields(ncol),
   }) as unknown as ManifestElement
 
+/** 第二个子图与它的图例：用来量「从一个图例直接点到另一个」 */
+const axesEl2: ManifestElement = { ...axesEl, gid: 'axes_1', label: '子图 2' } as ManifestElement
+const legend2Of = (ncol = 1): ManifestElement =>
+  ({ ...legendOf(ncol), gid: 'axes_1.legend', bbox: [0.1, 0.5, 0.3, 0.3] }) as ManifestElement
+
 const manifestOf = (ncol = 1): Manifest =>
   ({
     rev: 1,
     size_mm: [101.6, 76.2],
-    elements: [axesEl, legendOf(ncol)],
+    elements: [axesEl, legendOf(ncol), axesEl2, legend2Of(ncol)],
   }) as unknown as Manifest
 
 const panelOf = (overrides: PanelObject['overrides'] = []): PanelObject =>
@@ -187,18 +193,41 @@ afterEach(async () => {
 /* --------------------------------- 用例 ---------------------------------- */
 
 describe('图例的排版详情（审计 T17）', () => {
-  it('默认折叠：五条间距一条都不在 DOM 里，只有一个「排版详情」入口', async () => {
+  it('默认展开：一次都没点过，四条间距就在卡里（用户找得到）', async () => {
     await mount()
     expect(card()).not.toBeNull()
+    expect(cardToggle()?.getAttribute('aria-expanded')).toBe('true')
+    for (const prop of ['handlelength', 'handletextpad', 'labelspacing', 'borderpad']) {
+      expect(cardRow(prop)).not.toBeNull()
+    }
+  })
+
+  it('仍可收起：收起后五条都不在 DOM 里，入口还在', async () => {
+    await mount()
+    await click(cardToggle())
     expect(cardToggle()?.getAttribute('aria-expanded')).toBe('false')
+    // 收起有一段退场动画（`Reveal` 在 DURATION.exit 之后才卸载内容），等它走完再数
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, DURATION.exit + 50))
+    })
     for (const prop of ['handlelength', 'handletextpad', 'labelspacing', 'borderpad']) {
       expect(allRows(prop)).toHaveLength(0)
     }
   })
 
-  it('展开后五条都在，且通用列表里没有第二套控件（「更多」也打开着数）', async () => {
-    await mount({ ncol: 2 })
+  it('收起后直接选中另一个图例：新图例又是展开的（收起不跨图例带过去）', async () => {
+    await mount()
     await click(cardToggle())
+    expect(cardToggle()?.getAttribute('aria-expanded')).toBe('false')
+    await act(async () => {
+      useUiStore.setState({ selectedGids: ['axes_1.legend'] })
+    })
+    expect(cardRow('handlelength')?.getAttribute('data-gid')).toBe('axes_1.legend')
+    expect(cardToggle()?.getAttribute('aria-expanded')).toBe('true')
+  })
+
+  it('五条都在，且通用列表里没有第二套控件（「更多」也打开着数）', async () => {
+    await mount({ ncol: 2 })
     // **「更多」必须一起打开**：没让出来的字段会落进这个默认折叠的桶，
     // 只数首屏的话「有没有第二套控件」这条判据在折叠状态下恒真
     await click(moreToggle())
@@ -212,7 +241,6 @@ describe('图例的排版详情（审计 T17）', () => {
 
   it('这一行与全检查器同一条控件竖线：标签列 88，「线与文字间距」完整', async () => {
     await mount()
-    await click(cardToggle())
     const row = cardRow('handletextpad') as HTMLElement
     const labelSpan = row.querySelector('span') as HTMLElement
     // 打磨 E4 / L1：此前标签是 flex-1、112 宽的框贴右缘，是页内第三种行语法。
@@ -223,7 +251,6 @@ describe('图例的排版详情（审计 T17）', () => {
 
   it('数值带真实单位 em；「1 em = 一个图例字号」不常驻，只在框的 title 里', async () => {
     await mount()
-    await click(cardToggle())
     const row = cardRow('labelspacing') as HTMLElement
     expect(row.textContent).toContain('em')
     // 打磨 L8：常驻说明删掉——单位 em 已经在框里，解释进 title
@@ -232,18 +259,18 @@ describe('图例的排版详情（审计 T17）', () => {
     expect(titles.some((t) => t.includes('1 em'))).toBe(true)
   })
 
-  it('改过一条时自动展开：override 不因折叠而不可发现', async () => {
+  it('改过一条时收不起来：override 不因折叠而不可发现', async () => {
     await mount({
       overrides: [{ gid: 'axes_0.legend', prop: 'handlelength', value: 3.2 }],
     })
-    // 一次都没点过折叠按钮
+    expect(cardToggle()?.getAttribute('aria-expanded')).toBe('true')
+    await click(cardToggle())
     expect(cardToggle()?.getAttribute('aria-expanded')).toBe('true')
     expect(cardRow('handlelength')).not.toBeNull()
   })
 
   it('列距只在多列时出现（与通用列表共用 fieldVisible 一条判据）', async () => {
     await mount({ ncol: 1 })
-    await click(cardToggle())
     expect(cardRow('columnspacing')).toBeNull()
     expect(cardRow('labelspacing')).not.toBeNull()
   })

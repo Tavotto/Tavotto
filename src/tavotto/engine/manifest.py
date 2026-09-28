@@ -63,6 +63,7 @@ from legendmodel import (
     _frame_rounded,
     _legend_entry_order,
     _legend_loc_name,
+    bind_colormap_swatches,
     bind_legend_entries,
     legend_anchor_state,
     legend_entries,
@@ -898,6 +899,14 @@ def _bind_legends(state: FigState) -> None:
                 continue
         owner = el["gid"].split(".", 1)[0]
         sources.append((owner, el["gid"], art))
+    # 色带的候选：此刻真在按数组上色、色图改得动的图元（`legendmodel.bind_colormap_swatches`）
+    maps: list[tuple[str, str, object]] = []
+    for el in state.elements:
+        art = el["artist"]
+        if el["role"] == "colorbar" or not state.has_handler(art, "cmap"):
+            continue
+        if color_mapping_is_live(art):
+            maps.append((el["gid"].split(".", 1)[0], el["gid"], art))
     for el in state.elements:
         if el["role"] != "legend":
             continue
@@ -906,12 +915,14 @@ def _bind_legends(state: FigState) -> None:
         if isinstance(parent, Axes):
             owner = axes_gid_of.get(id(parent))
             cands = [(g, a) for o, g, a in sources if o == owner]
+            map_cands = [(g, a) for o, g, a in maps if o == owner]
             try:
                 auto = list(parent.get_legend_handles_labels()[0])
             except Exception:  # noqa: BLE001 — 拿不到就没有位置线索
                 auto = []
         else:
             cands = [(g, a) for _o, g, a in sources]
+            map_cands = [(g, a) for _o, g, a in maps]
             auto = []
             for ax in ordered_axes(state.fig)[0]:
                 try:
@@ -922,6 +933,10 @@ def _bind_legends(state: FigState) -> None:
             bind_legend_entries(leg, cands, auto)
         except Exception as exc:  # noqa: BLE001 — 绑定失败只是没有绑定，不拦渲染
             print(f"[legend] {el['gid']} 的源对象绑定失败: {exc}", file=sys.stderr)
+        try:
+            bind_colormap_swatches(leg, map_cands)
+        except Exception as exc:  # noqa: BLE001 — 同上
+            print(f"[legend] {el['gid']} 的色带关联失败: {exc}", file=sys.stderr)
 
 
 #: 每张 Axes 上属于 matplotlib 自己的结构件——它们不是「Tavotto 漏掉的用户
