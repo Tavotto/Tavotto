@@ -678,6 +678,38 @@ describe('右栏停靠着时浮动栏只留高频动作（审计 T29）', () => 
     expect(multiBar()).toBeNull()
   })
 
+  it('停靠 + 最窄档：排列弹层里也只有对齐那一行，参照 / 分布 / 等宽等高不在弹层里再出一份（#688）', async () => {
+    const originalW = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetWidth')
+    const widths: Record<string, number> = { full: 882, compact: 471, minimal: 280 }
+    Object.defineProperty(HTMLElement.prototype, 'offsetWidth', {
+      configurable: true,
+      get() {
+        const el = this as HTMLElement
+        return el.hasAttribute('data-context-bar') ? (widths[el.dataset.variant ?? ''] ?? 0) : 0
+      },
+    })
+    try {
+      setWindow(480, 800)
+      await act(async () => window.dispatchEvent(new Event('resize')))
+      await select(['t1', 't2', 't3'])
+      await dock()
+      const el = multiBar()!
+      expect(el.getAttribute('data-variant')).toBe('minimal')
+      expect(el.hasAttribute('data-multi-docked')).toBe(true)
+      await click(btn('[data-multi-menu="arrange"]'))
+      const pop = document.querySelector('[data-radix-popper-content-wrapper]')!
+      expect(pop).toBeTruthy()
+      expect(pop.querySelector('[data-align-ref-picker]')).toBeNull()
+      expect(pop.querySelector('[data-align-mode="hdist"]')).toBeNull()
+      expect(pop.querySelector('[data-align-mode="samew"]')).toBeNull()
+      expect(pop.querySelectorAll('[data-align-mode]')).toHaveLength(6)
+      await click(pop.querySelector<HTMLElement>('[data-align-mode="left"]')!)
+      expect(objs().map((o) => o.x)).toEqual([10, 10, 10])
+    } finally {
+      if (originalW) Object.defineProperty(HTMLElement.prototype, 'offsetWidth', originalW)
+    }
+  })
+
   it('停靠着仍能对齐，动作还是同一个 action', async () => {
     await select(['t1', 't2', 't3'])
     await dock()

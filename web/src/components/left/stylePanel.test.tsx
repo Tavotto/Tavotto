@@ -18,6 +18,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createRoot, type Root } from 'react-dom/client'
 import { literal, setLocale } from '@/i18n'
 import { TooltipProvider } from '@/components/ui/Tooltip'
+import { currentProjectId, setCurrentProjectId } from '@/lib/session'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useProfileStore } from '@/store/profileStore'
@@ -28,7 +29,13 @@ import { runValidation, useValidationStore } from '@/store/validationStore'
 import { useWorkspaceStore } from '@/store/workspace'
 import { seedExactRender } from '@/test/renderFixtures'
 import { emptyProject, type PanelObject } from '@/types/document'
-import { bindCanvasStyle, resetStyleBindingSession } from '@/store/styleBinding'
+import {
+  bindCanvasStyle,
+  editBoundStyle,
+  followLibrary,
+  resetStyleBindingSession,
+  figureScope,
+} from '@/store/styleBinding'
 import { StylePanel } from './StylePanel'
 
 declare global {
@@ -631,6 +638,219 @@ describe('Codex #662 P2：绑定样式时连点，按最后一次排进去的值
     saves[1]?.release()
     await drain()
     expect(saves.map((x) => x.data.element.title.fontsize)).toEqual([start + 0.5, start + 1])
+  })
+
+  it('#688 挂着一笔没落定时切画布：新画布的图从真实读数起算，不显示上一张的挂起值；那一笔照旧存进样式库', async () => {
+    await seed(panel, faceManifest())
+    const saves = slowLibrary()
+    bindCanvasStyle('s1')
+    await new Promise((r) => setTimeout(r, 50))
+    seedExactRender(current(), faceManifest() as never)
+    await mount()
+    await click(button('标题加粗'))
+    expect(button('标题加粗').getAttribute('aria-pressed')).toBe('true')
+    // 另一张画布上一张正体标题的图（id 在项目内唯一，引擎读数与 A 上那张一样）
+    const other: PanelObject = { ...panel, id: 'p2' }
+    await act(async () => {
+      const b = s().addCanvas('B')
+      s().switchCanvas(b)
+      s().commit(literal('B 上放图'), (d) => {
+        d.page = { w: 80, h: 60 }
+        d.objects = [{ ...other }]
+      })
+      seedExactRender(other, faceManifest() as never)
+      useSelectionStore.getState().set(['p2'])
+    })
+    const onB = button('标题加粗')?.getAttribute('aria-pressed')
+    // 先放行再断言：断言先红的话那一笔卡在队列里，会把后面的用例一起堵住
+    await drain()
+    saves[0].release()
+    await drain()
+    expect(onB, 'A 上那一笔的挂起值串到了 B').toBe('false')
+    expect(saves.map((x) => x.data.element.title.weight)).toEqual(['bold'])
+    // 回到 A：库里那条变过，A 按库跟上（同步器在切画布时调的就是 followLibrary）——那一笔没被重挂丢掉
+    await act(async () => {
+      s().switchCanvas(s().canvases[0].id)
+      useSelectionStore.getState().set(['p1'])
+      followLibrary()
+    })
+    const w = current().overrides.filter((o) => o.gid === 'axes_0.title' && o.prop === 'weight').at(-1)?.value
+    expect(w).toBe('bold')
+  })
+
+  it('#688 挂着一笔没落定时整份重载同一份文档（文档 / 画布 / 图的 id 全同、载入代次前进）：重载后的图从真实读数起算', async () => {
+    await seed(panel, faceManifest())
+    const saves = slowLibrary()
+    bindCanvasStyle('s1')
+    await new Promise((r) => setTimeout(r, 50))
+    seedExactRender(current(), faceManifest() as never)
+    await mount()
+    await click(button('标题加粗'))
+    expect(button('标题加粗').getAttribute('aria-pressed')).toBe('true')
+    const ids = [s().documentId, s().activeCanvasId]
+    const seqBefore = s().loadSeq
+    await act(async () => {
+      await s().switchDocument(s().buildProject(), s().documentId)
+      seedExactRender(current(), faceManifest() as never)
+      useSelectionStore.getState().set(['p1'])
+    })
+    expect([s().documentId, s().activeCanvasId], '夹具要的就是 id 全同的重载').toEqual(ids)
+    expect(s().loadSeq).toBeGreaterThan(seqBefore)
+    const afterReload = button('标题加粗')?.getAttribute('aria-pressed')
+    // 先放行再断言：断言先红的话那一笔卡在队列里，会把后面的用例一起堵住
+    await drain()
+    saves[0].release()
+    await drain()
+    expect(afterReload, '重载前那一笔的挂起值盖到了新载入的内容上').toBe('false')
+  })
+
+  /**
+   * `figureScope` 的每一维各一行：**只变这一维**，挂起值不许串到变化之后的那张图上。
+   * 真实读数一律是正体（夹具的 manifest），所以按钮该是 `aria-pressed=false`。
+   */
+  const other = { ...styleRecord, id: 's2', display_name: '另一套' }
+  const DIMENSIONS: [string, () => void][] = [
+    ['项目', () => {
+      setCurrentProjectId('proj_other')
+      // 项目 id 不在 store 里：真实换项目总伴着一次文档替换，这里只推一下 store 让选择器重算
+      useDocumentStore.setState({ dirty: !s().dirty })
+    }],
+    ['文档 id', () => useDocumentStore.setState({ documentId: 'd_other' })],
+    ['载入代次', () => useDocumentStore.setState({ loadSeq: s().loadSeq + 1 })],
+    ['画布', () => useDocumentStore.setState({ activeCanvasId: 'c_other' })],
+    ['图（面板 id）', () => {
+      s().commit(literal('换一张图'), (d) => {
+        d.objects = d.objects.map((o) => (o.id === 'p1' ? { ...o, id: 'p9' } : o))
+      })
+      seedExactRender(current9(), faceManifest() as never)
+      useSelectionStore.getState().set(['p9'])
+    }],
+    ['素材（同 id 换文件）', () => {
+      useAssetStore.setState({ byId: { 'Fig1.pdf': { id: 'Fig1.pdf', mtime: 1 }, 'Fig2.pdf': { id: 'Fig2.pdf', mtime: 1 } } } as never)
+      s().commit(literal('替换素材'), (d) => {
+        d.objects = d.objects.map((o) => (o.id === 'p1' ? { ...o, fileId: 'Fig2.pdf', overrides: [] } : o))
+      })
+      seedExactRender(current(), faceManifest() as never)
+    }],
+    ['改绑到另一套样式', () => {
+      s().commit(literal('改绑'), (d) => void (d.style = { ...d.style!, id: 's2' }))
+    }],
+    ['解绑 / 脱离', () => {
+      s().commit(literal('脱离'), (d) => void (d.style!.detached = true))
+    }],
+  ]
+  const current9 = () => s().doc.objects.find((o) => o.id === 'p9') as PanelObject
+
+  it.each(DIMENSIONS)('#688 挂着一笔没落定时只变「%s」：变化之后的图从真实读数起算', async (_name, change) => {
+    const project = currentProjectId()
+    try {
+      await seed(panel, faceManifest())
+      useProfileStore.setState({ styles: [styleRecord as never, other as never] })
+      const saves = slowLibrary()
+      bindCanvasStyle('s1')
+      await new Promise((r) => setTimeout(r, 50))
+      seedExactRender(current(), faceManifest() as never)
+      await mount()
+      await click(button('标题加粗'))
+      expect(button('标题加粗').getAttribute('aria-pressed')).toBe('true')
+      await act(async () => change())
+      const after = button('标题加粗')?.getAttribute('aria-pressed')
+      // 先放行再断言：断言先红的话那一笔卡在队列里，会把后面的用例一起堵住
+      await drain()
+      saves[0]?.release()
+      await drain()
+      expect(after, '挂起值串到了变化之后的图上').toBe('false')
+    } finally {
+      setCurrentProjectId(project)
+    }
+  })
+
+  it('#688 画布级的行（画布标注）不随切图重挂：字号 加 → 切到同画布另一张图 → 再加，两下都算数', async () => {
+    await seed(panel, faceManifest())
+    const other: PanelObject = { ...panel, id: 'p2', name: 'Fig2', x: 50 }
+    s().commit(literal('第二张图 + 标注'), (d) => {
+      d.objects.push({ ...other })
+      d.objects.push({
+        id: 't1', type: 'text', text: '注释', sizePt: 9, color: '#000000', align: 'left', x: 0, y: 40, w: 10, h: 5,
+      } as never)
+    })
+    const saves = slowLibrary()
+    bindCanvasStyle('s1')
+    await new Promise((r) => setTimeout(r, 50))
+    seedExactRender(current(), faceManifest() as never)
+    seedExactRender(s().doc.objects.find((o) => o.id === 'p2') as PanelObject, faceManifest() as never)
+    await mount()
+    const up = async () =>
+      act(async () => {
+        const box = input('画布标注字号')
+        box.focus()
+        box.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true, cancelable: true }))
+      })
+    const start = Number(input('画布标注字号').value)
+    await up()
+    await act(async () => useSelectionStore.getState().set(['p2']))
+    expect(container.querySelector('[data-style-figure]')?.textContent, '夹具要的是真的切到了另一张图').toBe('Fig2')
+    await up()
+    await drain()
+    saves[0]?.release()
+    await drain()
+    saves[1]?.release()
+    await drain()
+    expect(saves.map((x) => x.data.annotation?.sizePt), '切图之后第二下按旧值算，丢了一次增量').toEqual([start + 0.5, start + 1])
+  })
+
+  it('#688 反向：改内置样式时我们自己复制成副本并改绑（同一串编辑），归属不变——排在后面那一笔的挂起值不因此被清掉', async () => {
+    // 量的是归属函数本身：组件层面这一刻夹具里的显示 manifest 会短暂缺席（override 变了、新一版没画回来），
+    // 整个面板先换成「需要渲染」的空态，量不到行是否因 key 重挂
+    await seed(panel, faceManifest())
+    const builtIn = { ...styleRecord, built_in: true, read_only: true }
+    const saves: { release: () => void }[] = []
+    useProfileStore.setState({
+      styles: [builtIn as never],
+      duplicate: async () => {
+        const copy = { ...styleRecord, id: 's1copy', display_name: '投稿用 副本' }
+        useProfileStore.setState({ styles: [builtIn as never, copy as never] })
+        return copy as never
+      },
+      save: (_k, id, data) =>
+        new Promise((resolve) => {
+          const rec = { ...styleRecord, id, data } as never
+          saves.push({
+            release: () => {
+              useProfileStore.setState((st) => ({ styles: [...st.styles.filter((x) => x.id !== id), rec] }))
+              resolve(rec)
+            },
+          })
+        }),
+    })
+    bindCanvasStyle('s1')
+    await new Promise((r) => setTimeout(r, 50))
+    seedExactRender(current(), faceManifest() as never)
+    const before = figureScope(s(), current())
+    // 订阅者每一次被通知时看到的归属（样式面板的 key 就是在这一刻算的）：commit 同步通知订阅者，
+    // 改绑与转发登记之间要是有一瞬「已改绑、未登记」，这里会记到一个不同的值（#688）
+    const seen: string[] = []
+    const unsubscribe = useDocumentStore.subscribe((st) => {
+      const p = st.doc.objects.find((o) => o.id === 'p1') as PanelObject
+      seen.push(figureScope(st, p))
+    })
+    // 连点两下：第一笔复制内置并改绑，第二笔还排着（挂起值就挂在它身上）
+    const first = editBoundStyle({ kind: 'element', role: 'title', prop: 'weight', value: 'bold' })
+    const second = editBoundStyle({ kind: 'element', role: 'title', prop: 'weight', value: 'normal' })
+    await drain()
+    saves[0].release()
+    expect(await first).toBe(true)
+    expect(s().doc.style?.id, '夹具要的就是「复制成副本并改绑」那条路').toBe('s1copy')
+    expect(figureScope(s(), current()), '第二笔还排着时归属变了：它的挂起值会被清掉').toBe(before)
+    unsubscribe()
+    expect(seen.length, '改绑那次 commit 应当通知到订阅者').toBeGreaterThan(0)
+    expect(seen.filter((x) => x !== before), '订阅回调里看到了「已改绑、转发未登记」的中间身份').toEqual([])
+    await drain()
+    saves[1].release()
+    expect(await second, '第二笔顺着转发落到副本上').toBe(true)
+    // 对照：用户自己改绑到副本（不是这一串编辑的转发）——归属变了
+    s().commit(literal('改绑'), (d) => void (d.style = { ...d.style!, id: 's2' }))
+    expect(figureScope(s(), current())).not.toBe(before)
   })
 
   it('那一笔存失败（库写不进去）：放掉挂着的值，按钮回到真实读数', async () => {

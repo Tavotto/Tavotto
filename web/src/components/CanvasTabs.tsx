@@ -58,11 +58,25 @@ export function CanvasTabs() {
   // 条放不下时也给「全部画布」菜单：横滚条不画之后，只有鼠标、又不在 macOS 上按 Shift 的人
   // 没有别的办法够到条外的页签。每次渲染量一次（页签增删、改名都会重渲染），窗口 / 抽屉
   // 改宽度不重渲染，交给 ResizeObserver——与 `ui/slidingIndicator` 同一写法
+  //
+  // 菜单只因「放不下」才在时，判「放不放得下」要按撤掉菜单之后的宽度量：菜单自己占着条右边
+  // 一截，按含菜单的 clientWidth 判的话，窗口拉宽到「不带菜单放得下、带菜单放不下」之间时
+  // 菜单永远收不起来（#688）。条缩着时右侧的弹性空白是 0，撤掉菜单能多出来的就是空白起点
+  // 到菜单右缘这一段（菜单 + 它前面那道 gap）；菜单因别的条件常驻时只算空白
+  const spacer = useRef<HTMLSpanElement>(null)
+  const menuPinned = canvases.length > openTabs.length || canvases.length > 6
   const [overflowing, setOverflowing] = useState(false)
   const measureOverflow = useCallback(() => {
     const el = strip.current
-    if (el) setOverflowing(el.scrollWidth > el.clientWidth + 1)
-  }, [])
+    const gap = spacer.current
+    if (!el || !gap) return
+    const menu = menuPinned
+      ? null
+      : gap.parentElement?.querySelector<HTMLElement>('[data-all-canvases]')
+    const from = gap.getBoundingClientRect()
+    const slack = (menu ? menu.getBoundingClientRect().right : from.right) - from.left
+    setOverflowing(el.scrollWidth > el.clientWidth + slack + 1)
+  }, [menuPinned])
   useLayoutEffect(() => {
     measureOverflow()
     keepActiveInView()
@@ -126,15 +140,16 @@ export function CanvasTabs() {
       <Tip label={t('tabs.newCanvas')}>
         <Button
           size="icon-sm"
+          data-new-canvas-tab
           aria-label={t('tabs.newCanvas')}
           onClick={() => void createCanvasAndActivate()}
         >
           <Plus size={ICON_SIZE.sm} />
         </Button>
       </Tip>
-      <span className="flex-1" />
+      <span ref={spacer} className="flex-1" />
 
-      {canvases.length > openTabs.length || canvases.length > 6 || overflowing ? (
+      {menuPinned || overflowing ? (
         <AllCanvasesMenu activate={activate} />
       ) : null}
     </div>
@@ -188,6 +203,7 @@ function TabItem({
         autoFocus
         value={draft}
         aria-label={t('tabs.canvasName')}
+        data-canvas-tab-rename
         onChange={(e) => setDraft(e.target.value)}
         onBlur={() => onRenamed(draft.trim() || null)}
         onKeyDown={(e) => {

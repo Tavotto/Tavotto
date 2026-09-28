@@ -224,14 +224,16 @@ const styleWith = (id: string, snapshot: Record<string, unknown>, owned: OwnedMa
 /* ------------------------------- 代次 -------------------------------------- */
 
 /**
- * 「此刻是哪一份文档的哪一张画布」：项目 · 文档 · 载入代次 · 画布。`loadSeq` 在每一次整份替换
+ * 「此刻是哪一份文档的哪一张画布」（样式面板按它给行重挂，`StylePanel` 复用这一份，不写第二份）：项目 · 文档 · 载入代次 · 画布。`loadSeq` 在每一次整份替换
  * 文档时都会前进，**即使 id 全都一样**（版面恢复、崩溃恢复重载同一份文档）——只比 id 的话，
  * 旧编辑会写进新载入的那一份（Codex #547 P1）。
  */
-function generation(): string {
-  const s = useDocumentStore.getState()
+export function documentGeneration(
+  s: Pick<ReturnType<typeof useDocumentStore.getState>, 'documentId' | 'loadSeq' | 'activeCanvasId'>,
+): string {
   return JSON.stringify([currentProjectId(), s.documentId, s.loadSeq, s.activeCanvasId])
 }
+const generation = (): string => documentGeneration(useDocumentStore.getState())
 /** 会话记账的键：代次 + 绑的是哪一条（换绑定 = 换一本账） */
 const ledgerKey = (doc: FigureDocument = docNow()) => `${generation()}|${doc.style?.id ?? ''}`
 
@@ -369,14 +371,58 @@ export const whenLibraryIdle = (): Promise<unknown> => tail
  */
 const redirects = new Map<string, string>() // 键：`${generation()}|${来源样式 id}`
 /**
- * 顺着**同一个代次**里我们自己做的改绑走。键带代次、且只在改绑真的 commit 进那张画布之后才记：
- * A 画布上的复制任务回来时代次已经变了（用户切到了也绑着内置样式的 B），它没有改绑 A，也就不该
+ * 顺着**同一个代次**里我们自己做的改绑走。键带代次、且只在确定改绑会 commit 进那张画布时才记
+ * （核过代次与绑定之后、commit 之前，commit 抛了就撤回——先于 commit 是为了订阅者看不到「已改绑、
+ * 未登记」的中间身份，#688）：A 画布上的复制任务回来时代次已经变了（用户切到了也绑着内置样式的 B），它没有改绑 A，也就不该
  * 让 B 上排着的改动以为「内置已经被换成副本」而把自己作废（Codex #547 P1）。
  */
 function followRedirects(gen: string, id: string | null): string | null {
   let cur = id
   for (let i = 0; cur && redirects.has(`${gen}|${cur}`) && i < 8; i++) cur = redirects.get(`${gen}|${cur}`)!
   return cur
+}
+/** `followRedirects` 的反方向：同一个代次里、我们自己把哪一条改绑成了 `id`，一路倒回最初那一条 */
+function redirectRoot(gen: string, id: string): string {
+  let cur = id
+  for (let i = 0; i < 8; i++) {
+    let from: string | null = null
+    for (const [k, v] of redirects) if (v === cur && k.startsWith(`${gen}|`)) from = k.slice(gen.length + 1)
+    if (from === null) break
+    cur = from
+  }
+  return cur
+}
+
+/**
+ * 「这一格排进去的样式改动属于谁」：样式面板按它给一组行重挂（`StylePanel`），它变了，挂着的
+ * 还没落定的值（`usePendingWrites`）就不属于眼前这一组了（#688）。**每一行按它真正的归属取范围**：
+ *
+ * * `canvasScope`——画布级的行（画布标注：改的是这张画布上的文字 / 样式里的 `annotation`）：
+ *   * **代次**（`documentGeneration`：项目 · 文档 · 载入代次 · 画布）——与 `editBoundStyle` 作废
+ *     排队写入的判据同一份；
+ *   * **绑定**：绑的是哪一条（解绑 / 脱离 = 没有）。改绑到别的样式、解绑之后，挂着的值说的是另一条
+ *     样式；但**我们自己**在这一代次里做的改绑（改内置样式时复制成副本并改绑，`redirects`）倒回
+ *     最初那一条——那是同一串编辑，排在后面的那一笔照样顺着落到副本上，不能因此丢掉它的挂起值。
+ *   同一张画布上换选中的图**不在**里面：标注不属于哪一张图，切图就清的话，「加字号 → 切图 → 再加」
+ *   第二下会按旧值算、丢一次增量。
+ * * `figureScope`——图级的行（图内元素的字号 / 字体 / 线宽……）：画布级那几维 + **图**
+ *   （`figKey` = 面板 id + 素材；换素材 `replacePanelAsset` 保留 id、换文件，是另一张图）。
+ *
+ * 两者都不含：渲染变体、同一素材的重跑 / 新一版 manifest。挂起值是「排进这条样式的值」，与画成
+ * 哪一版无关；把它们算进来，引擎每画回一版就清一次，连点两下的 #662 又回来了。
+ */
+export function canvasScope(
+  s: Pick<ReturnType<typeof useDocumentStore.getState>, 'documentId' | 'loadSeq' | 'activeCanvasId' | 'doc'>,
+): string {
+  const gen = documentGeneration(s)
+  const binding = canvasStyle(s.doc)
+  return JSON.stringify([gen, binding ? redirectRoot(gen, binding.id) : null])
+}
+export function figureScope(
+  s: Pick<ReturnType<typeof useDocumentStore.getState>, 'documentId' | 'loadSeq' | 'activeCanvasId' | 'doc'>,
+  panel: Pick<PanelObject, 'id' | 'fileId'>,
+): string {
+  return JSON.stringify([canvasScope(s), figKey(panel)])
 }
 
 /** 测试用：清掉会话记账与队列状态 */
@@ -593,20 +639,29 @@ export function editBoundStyle(edit: StyleEdit): Promise<boolean> {
     const plan = changesFor(delta, panelsOf(doc), doc, true)
     const missing = missingNow(doc)
     const owned = nextOwned(doc, ownedWrites(doc, plan))
-    commitWith(
-      hist('editStyle', { name }),
-      (d) => {
-        d.style = styleWith(stored.id, stored.data, owned)
-        // 写的是**变化量**：标注只改了字号时，不把颜色 / 字体一起重新套一遍（Codex #547 P1）
-        writeStylePlan(d, plan, { ...delta, name })
-      },
-      plan,
-      detachOnUndo,
-    )
+    // 这一笔要把画布改绑到副本上（复制内置 / 「库里没有这一条、按快照新建」两条路，Codex #547 P1）：
+    // 转发**先于**改绑登记，让同一个代次里排在后面的改动顺着落到新的那一条上。上面已经核过代次与
+    // 绑定，这次 commit 落的就是发起的那张画布；先登记是因为 commit 会同步通知 store 的订阅者——
+    // 那一刻 `doc.style.id` 已是副本，转发还没登记的话 `canvasScope` 会把它当成「用户改绑了」，
+    // 样式面板随之重挂、清掉后面那一笔的挂起值（#688）。commit 抛了就撤回登记
+    const redirectKey = copied ? `${origin}|${binding.id}` : null
+    if (redirectKey) redirects.set(redirectKey, stored.id)
+    try {
+      commitWith(
+        hist('editStyle', { name }),
+        (d) => {
+          d.style = styleWith(stored.id, stored.data, owned)
+          // 写的是**变化量**：标注只改了字号时，不把颜色 / 字体一起重新套一遍（Codex #547 P1）
+          writeStylePlan(d, plan, { ...delta, name })
+        },
+        plan,
+        detachOnUndo,
+      )
+    } catch (e) {
+      if (redirectKey) redirects.delete(redirectKey)
+      throw e
+    }
     owe(docNow(), delta, missing, presetDelta(null, data))
-    // 改绑真的落进了发起的那张画布：记下转发，让同一个代次里排在后面的改动顺着落到新的那一条上。
-    // 复制内置与「库里没有这一条、按快照新建」两条路都算（Codex #547 P1）
-    if (copied) redirects.set(`${origin}|${binding.id}`, stored.id)
     if (copied) useUiStore.getState().setStatus(msg('stylePanel.copiedBuiltin', { name }, 'workspace'))
     else if (upgraded) useUiStore.getState().setStatus(msg('stylePanel.upgradedLegacy', { name }, 'workspace'))
     return true

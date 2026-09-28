@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Bold, Italic, Paintbrush, RotateCcw } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
@@ -17,7 +17,9 @@ import {
   alignCanvasToStyle,
   bindCanvasStyle,
   bindingName,
+  canvasScope,
   editBoundStyle,
+  figureScope,
   restoreCanvasStyle,
   restoreReady,
   styleMismatchCount,
@@ -83,6 +85,29 @@ const ROW_LABEL: Record<string, () => string> = {
  *   属性页恢复菜单同一个 `clearOverrides`。样式库的管理仍在设置里（「管理样式…」）。
  */
 export function StylePanel() {
+  // 各行挂着的「还没落定的写入」（`usePendingWrites`）按**这一行真正的归属**取范围，范围一变那组行
+  // 重挂、从真实读数起算（#688；维度清单与理由在 `styleBinding.canvasScope` / `figureScope`）：
+  // * 画布级（画布标注）：挂起值住在这里的 `CanvasPendingScope` 里，只随 `canvasScope` 重挂——同一张
+  //   画布上切选中的图不清它；
+  // * 图级（图内文字、线条）：各行自己的状态，所在的 `FigureStyle` 按 `figureScope` 重挂。
+  // 写入本身排在 `styleBinding` 的队列里、不随组件卸载，那一笔照旧按发起时的代次落定。
+  const scope = useDocumentStore(canvasScope)
+  return (
+    <CanvasPendingScope key={scope}>
+      <StylePanelBody />
+    </CanvasPendingScope>
+  )
+}
+
+type PendingWrites = ReturnType<typeof usePendingWrites>
+/** 画布级行的挂起值：挂在画布范围上，不跟着图级子树（`FigureStyle`）重挂 */
+const CanvasPending = createContext<PendingWrites | null>(null)
+function CanvasPendingScope({ children }: { children: ReactNode }) {
+  const pw = usePendingWrites()
+  return <CanvasPending.Provider value={pw}>{children}</CanvasPending.Provider>
+}
+
+function StylePanelBody() {
   useTranslation(['workspace', 'inspector'])
   const figure = useCurrentFigure()
   const panel = useDocumentStore((s) => {
@@ -92,6 +117,7 @@ export function StylePanel() {
   const manifest = usePanelDisplayManifest(panel)
   const exact = useExactPanelManifest(panel)
   const rendering = usePanelRender(panel)?.status === 'rendering'
+  const figureKey = useDocumentStore((s) => (panel ? figureScope(s, panel) : ''))
 
   if (!panel) {
     // 跟随样式是**画布**一级的事：没选中图时底部的绑定照样在（上面只说怎么看一张图的样式）
@@ -113,7 +139,7 @@ export function StylePanel() {
       </p>
       <div className="min-h-0 flex-1 overflow-y-auto">
         {manifest ? (
-          <FigureStyle panel={panel} manifest={exact ?? manifest} exact={!!exact} />
+          <FigureStyle key={figureKey} panel={panel} manifest={exact ?? manifest} exact={!!exact} />
         ) : panel.script ? (
           /* 可编辑、但这一会话还没渲染过：值要引擎读出来。**不自动跑脚本**（「只带基线、
              还没动过」的面板不渲染，heavy 脚本要几分钟——`useEngineSync.renderTargets`），
@@ -591,7 +617,8 @@ function AnnotationRow({
   texts: TextObject[]
 }) {
   const adapter = useCanvasTypography(texts)
-  const pw = usePendingWrites()
+  // 画布级：挂起值在 `CanvasPendingScope` 里，切选中的图不清（#688）
+  const pw = useContext(CanvasPending)!
   const label = ROW_LABEL.annotation()
   const face = (prop: 'weight' | 'style'): TypographyValue | null =>
     adapter.fieldOf(prop) ? pw.shown(prop, adapter.valueOf(prop)) : null

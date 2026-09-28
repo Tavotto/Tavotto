@@ -207,3 +207,74 @@ test('页签少但放不下时也给「全部画布」菜单，能切到条外�
   await expect.poll(() => strip.evaluate((el) => el.clientWidth)).toBeLessThan(sizes.cw)
   await expect.poll(async () => JSON.stringify(await activeTabInView(strip))).toContain('"inView":true')
 })
+
+/**
+ * 「条放不下」这一条让菜单出现之后，窗口再拉宽，菜单要能收起来（#688）。
+ *
+ * 菜单自己占着条右边一截：按含菜单的宽度判「放不放得下」的话，宽度落在「不带菜单放得下、
+ * 带菜单放不下」那一段时菜单撑着自己不走。判据不借实现的算式：从行的几何独立推——页签条按
+ * 内容宽（scrollWidth）排开时「+」的右缘落在哪里，落在行的内容盒里 = 不带菜单放得下。
+ */
+async function fitsWithoutMenu(strip: Locator) {
+  return strip.evaluate((el) => {
+    const row = el.parentElement!
+    const plus = row.querySelector('[data-new-canvas-tab]') as HTMLElement
+    const pad = parseFloat(getComputedStyle(row).paddingRight)
+    const plusRight = plus.getBoundingClientRect().right - el.clientWidth + el.scrollWidth
+    const rowRight = row.getBoundingClientRect().right - pad
+    return { fits: plusRight <= rowRight + 0.5, slack: rowRight - plusRight }
+  })
+}
+
+test('「条放不下」出现的菜单：窗口拉宽到不带菜单放得下时收起，再变窄时回来（宽度扫描）', async ({ app, page }) => {
+  await page.setViewportSize({ width: 600, height: 700 })
+  const a = await app()
+  await page.goto(a.baseURL)
+  await page.locator('[data-canvas-stage]').waitFor({ timeout: 60_000 })
+
+  const strip = page.locator('[data-canvas-tabs]')
+  const menu = page.locator('[data-all-canvases]')
+  await expect(strip).toHaveCount(1)
+  // 定位全认稳定 data-*（web/AGENTS.md）：「+」与改名框各是单例，locator 的严格模式在多于一个时直接报错
+  const newCanvas = page.locator('[data-new-canvas-tab]')
+  await expect(newCanvas).toHaveCount(1)
+  for (let i = 0; i < 3; i++) await newCanvas.click()
+  const tabs = strip.locator('[data-canvas-tab]')
+  await expect(tabs).toHaveCount(4)
+  for (let i = 0; i < 4; i++) {
+    await tabs.nth(i).dblclick()
+    const input = strip.locator('[data-canvas-tab-rename]')
+    await expect(input).toBeVisible()
+    await input.fill(`很长很长的画布名字第${i + 1}个`)
+    await input.press('Enter')
+    await expect(strip.locator('[data-canvas-tab-rename]')).toHaveCount(0)
+  }
+  await expect(menu, '放不下：菜单出现').toHaveCount(1)
+
+  // 从「刚好放得下」往两边各扫几档：左边放不下，右边放得下，中间那段（差不到菜单 + gap
+  // 那么宽）正是原来菜单撑着不走的地方——扫描必须真的落进这段，否则这条用例是空的
+  const start = await fitsWithoutMenu(strip)
+  expect(start.fits, JSON.stringify(start)).toBe(false)
+  const exact = 600 - start.slack
+  // 那一段的宽 = 菜单 + 它前面那道 gap（按量到的算，不抄 Tailwind 的数）
+  const band =
+    (await menu.evaluate((m) => m.getBoundingClientRect().width)) +
+    (await strip.evaluate((el) => parseFloat(getComputedStyle(el.parentElement!).columnGap)))
+  const seen: string[] = []
+  let inBand = 0
+  const up = Array.from({ length: 15 }, (_, i) => Math.round(exact - 8 + 4 * i))
+  for (const w of [...up, ...up.slice().reverse()]) {
+    await page.setViewportSize({ width: w, height: 700 })
+    // 窗口改宽之后等页签条量完（ResizeObserver 一帧之后才回调）
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))))
+    const f = await fitsWithoutMenu(strip)
+    seen.push(`${w}:${f.fits ? 'fit' : 'over'}`)
+    // 正好卡在边上（±2px）：scrollWidth 是取整的，两边的判据可以差不到 1px，这一档不判
+    if (Math.abs(f.slack) < 2) continue
+    if (f.fits && f.slack < band) inBand++
+    await expect(menu, `宽 ${w}：${JSON.stringify(f)}`).toHaveCount(f.fits ? 0 : 1)
+  }
+  expect(seen.some((x) => x.endsWith('fit')), seen.join(' ')).toBe(true)
+  expect(seen.some((x) => x.endsWith('over')), seen.join(' ')).toBe(true)
+  expect(inBand, `扫描没落进「不带菜单放得下、带菜单放不下」那一段：${seen.join(' ')}`).toBeGreaterThan(0)
+})
