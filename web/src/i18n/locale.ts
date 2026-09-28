@@ -62,13 +62,13 @@ export function writeStoredLocale(locale: Locale | null): void {
 /**
  * 桌面壳带过来的语言（落地 URL 的 `?lang=`）。
  *
- * 桌面模式下 sidecar 绑 `127.0.0.1:0`，**端口每次启动都不一样**，而端口是
- * Web Storage origin 的一部分——存进 `localStorage` 的偏好活不过一次重启。
- * 于是下次启动 `detectLocale()` 退回系统语言，`main.tsx` 再把这个退回值报给
+ * 桌面模式下 sidecar 优先绑上次记住的端口（ADR 0108），但**端口被占时本次仍会换一个**，
+ * 而端口是 Web Storage origin 的一部分——那一次存进 `localStorage` 的偏好读不到
+ * （ADR 0108 之前每次启动都是这样）。于是 `detectLocale()` 退回系统语言，`main.tsx` 再把这个退回值报给
  * 壳，把用户真正选过的那门语言连同原生菜单一起**覆盖掉**：选了跟系统不同
  * 语言的桌面用户，每次重启都被打回去。
  *
- * 唯一活得下来的存储在壳那边（应用配置目录里的 `menu-locale`），所以由它在
+ * 不随 origin 走的存储在壳那边（应用配置目录里的 `menu-locale`），所以由它在
  * 落地 URL 上把**用户亲手选过**的那门语言带过来。壳不带这个参数就说明用户
  * 从没选过，照旧走系统语言。浏览器模式下永远没有它，行为一个字节不变。
  */

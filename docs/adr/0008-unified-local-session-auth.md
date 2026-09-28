@@ -80,3 +80,9 @@ pytest 的 `test_client` 天然无状态即旁路，行为与从前零差异。
 - `scripts/smoke_app.py`：真产物上**先断言未认证 401、再凭凭据文件继续**
   ——打包链路里认证没生效会当场红，而不是绿着发出去。
 - e2e / bench 显式走 `TAVOTTO_INSECURE_NO_AUTH=1`（各自注释了理由）。
+
+## 修订（2026-09-29，[ADR 0108](0108-desktop-stable-origin-and-backend-session-state.md)，issue #715）
+
+桌面 sidecar 的端口**不再每次都变**：优先绑壳记住的端口（被占时本次退回系统分配）。认证边界一个字不改——Host /
+Origin 仍只认 `127.0.0.1:<实际端口>` 一种写法（`state.port` 取自真正 bind 上的 socket），端口可猜与否本来就不影响
+攻击面（见上文「与审计最低验收标准的对照」）。浏览器模式的 5089 顺延不变。

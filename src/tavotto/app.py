@@ -7993,7 +7993,7 @@ def main():
     ap.add_argument(
         "--desktop-sidecar",
         action="store_true",
-        help="作为 Tavotto 桌面应用的后端运行：127.0.0.1 动态端口 + "
+        help="作为 Tavotto 桌面应用的后端运行：127.0.0.1（优先壳建议的端口）+ "
         "桌面认证 + 父进程跟随退出（由桌面壳启动，不建议手动使用）",
     )
     ap.add_argument(

@@ -329,9 +329,9 @@ export async function revealProjectFolder(path: string): Promise<boolean> {
  * 不该因为壳不在就失败。
  *
  * `explicit` 区分「用户在设置里换了语言」与「i18n 就绪时汇报当前生效的那门」。
- * 桌面模式下 sidecar 绑 `127.0.0.1:0`，端口每次都变，前端 localStorage 的偏好
- * 活不过一次重启——壳记的那份是唯一活得下来的存储，而它必须知道哪次是真正的
- * 选择，否则一次「跟随系统」的汇报就把用户选过的语言洗掉了。
+ * 桌面模式下 sidecar 优先绑上次记住的端口（ADR 0108），但端口被占时本次仍会换一个，
+ * 那一次前端 localStorage 的偏好就读不到——壳记的那份不随 origin 走，而它必须知道
+ * 哪次是真正的选择，否则一次「跟随系统」的汇报就把用户选过的语言洗掉了。
  */
 export async function setDesktopMenuLocale(
   locale: string,

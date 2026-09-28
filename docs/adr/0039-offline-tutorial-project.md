@@ -147,3 +147,8 @@ wheel 里都在，冻结产物里本来是没有的）。CI 装 wheel 的冒烟�
 `tests/test_tutorial.py`（47 条）：资源 / 副本 / API 边界 / 读 wheel 与 sdist 成员 / 解包后子进程
 经 `importlib.resources` 真读 / worker 真跑两张图；变异反证 22 条（20 红，2 存活各自处置：M9
 补用例，M22 是语义 no-op 删掉）；`scripts/smoke_app.py --tutorial` 在真进程上跑通。
+
+## 修订（2026-09-29，[ADR 0108](0108-desktop-stable-origin-and-backend-session-state.md)，issue #715）
+
+「上次打开的排版」与排版归属迁到后端 `layout-sessions.json` 之后（PR-B），**重新开始教程**时除了作废教程画布的
+自动保存槽位，还要一并清掉后端里教程项目的这两条记录——否则重开教程会被「接回上次的排版」接到旧副本上。
