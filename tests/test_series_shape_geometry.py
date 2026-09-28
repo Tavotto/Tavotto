@@ -70,12 +70,18 @@ def main():
     eb4 = ax.errorbar(xs, [9.0, 9.4, 9.0, 9.4, 9.0], yerr=0.3, fmt="-", capsize=3)
     for cap in eb4[1]:
         cap.set_marker("o")
+    # errorbar_5：数据点 marker 尺寸为 0（`ms=0`，只要误差线的常见写法）——数据线
+    # 一颗 marker 也不画，不该让整组退回 bbox（#670 评审）
+    ax.errorbar(xs, np.full(5, 3.0), yerr=0.3, fmt="o", ms=0, capsize=3)
     ax.set_xlim(0.0, 10.0)
     ax.set_ylim(0.0, 10.0)
     fig.savefig("SeriesFig.pdf")
 
     fig2, ax2 = plt.subplots(figsize=(4.0, 3.0))
     ax2.stem([1.0, 2.0, 3.0, 4.0], [1.0, 3.0, 2.0, 4.0])
+    # stemseries_1：markerline 的尺寸设成 0——只剩茎
+    st = ax2.stem([1.5, 2.5, 3.5], [2.0, 1.0, 3.0])
+    st.markerline.set_markersize(0)
     ax2.set_xlim(0.0, 5.0)
     ax2.set_ylim(-0.5, 5.0)
     fig2.savefig("StemFig.pdf")
@@ -288,6 +294,25 @@ def test_stem_series_outlines_stems_and_markers(manifests):
     # 两根茎之间、高处的空白：在并集 bbox 里，离墨迹远
     fx, fy = _data_frac(man, "axes_0", 1.5, 3.5, *lim)
     assert _dist_mm(man, geom, fx, fy) > 3.0
+
+
+def test_zero_markersize_errorbar_still_outlines_bars_and_caps(manifests):
+    """`fmt="o", ms=0`：数据线一颗 marker 也不画（`Line2D.draw` 的 `markersize > 0`），
+    它给不出几何不是「给不出」而是「本来就空」——整组照样出五根误差线 + 十个帽，
+    不退回罩住整组的 bbox（#670 评审）。"""
+    el = _el(manifests("SeriesFig"), "axes_0.errorbar_5")
+    assert "geometry" in el, "ms=0 的数据线让整组退回了 bbox"
+    seg, poly, closed = _split(el["geometry"])
+    assert (len(seg), len(poly), len(closed)) == (15, 0, 0)
+    assert el["geometry"]["fill"] is False
+
+
+def test_zero_markersize_stem_still_outlines_its_stems(manifests):
+    """茎叶的 markerline 设 `ms=0`：只剩三根茎，照样逐根描，不退回 bbox。"""
+    el = _el(manifests("StemFig"), "axes_0.stemseries_1")
+    assert "geometry" in el, "ms=0 的 markerline 让整组退回了 bbox"
+    seg, poly, closed = _split(el["geometry"])
+    assert (len(seg), len(poly), len(closed)) == (3, 0, 0)
 
 
 # ---------------------------------------------------------------------------
