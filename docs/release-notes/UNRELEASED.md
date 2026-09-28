@@ -12,7 +12,7 @@ release.yml 的「拼 release body」当场红（scripts/check_pending_release_n
 英文写，与 release notes 一致：**按症状和触发条件写，不要按提交写**。
 -->
 
-## Claude Code plugin (experimental)
+## Claude Code plugin (Beta)
 
 Tavotto now installs into Claude Code as a plugin:
 `claude plugin marketplace add Tavotto/Tavotto --sparse .claude-plugin`, then

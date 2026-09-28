@@ -32,6 +32,13 @@ Claude Code 早已能用 Tavotto：`integrations/configure.py --host claude-code
    只在那两处有机会显示——要做就是远程渲染，另立项）；`bin/`（有它 claude.ai / Cowork 拒装整个插件）；
    `userConfig`。Claude Desktop 聊天仍走配置生成器。
 
+## 对外口径（2026-09-28 用户决定）
+
+README 的 Claude Code 章节标「(Beta)」，由 `docs/support-matrix.json` 的 `mcp_hosts` 派生：`claude-code` 为
+`status: beta`、`channel: claude-plugin`。beta 这一档要求验收矩阵里有该渠道的子行且「工具完整流程」至少
+`local_smoke`；`tests/test_mcp_host_profiles.py::test_beta_label_follows_the_matrix_and_its_evidence` 三向对拍。
+配置生成器那条路仍是实验。
+
 ## 看护
 
 `tests/test_claude_plugin.py`：身份与版本随 Codex 清单与产品；server 名覆盖 `.mcp.json`；条目是
