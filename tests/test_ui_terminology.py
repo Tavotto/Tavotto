@@ -16,10 +16,11 @@ ADR 0001 早在 2026-08-15 就规定界面不再出现「文档」，后来的�
 * 前端两种语言的全部语言包（八个命名空间、每一个叶子值，含命令面板的搜索关键词）；
 * 后端原样交给界面显示的标签：目录选择器的常用起点（`app._browse_shortcuts` 的 `name`，
   老前端直接显示它；新前端按 `id` 翻译，`id` 闭集与前端 `ShortcutId` 在这里对拍）；
-* 桌面壳自己那份（`src-tauri/src/i18n.rs`，原生菜单文案不经语言包）——**只在
-  `tests/test_desktop_i18n.py` 还没有自己的名词用例（`test_menu_uses_the_four_ui_nouns`，
-  #663 带来）时由这里扫**。那条用例一出现，壳内就归它，这里让位，免得同一条判据有两个
-  出处；它不在的时候这里不让位，免得壳内在两者之间无人看管（#668 评审）。
+* 桌面壳自己那份（`src-tauri/src/i18n.rs`，原生菜单文案不经语言包）——**始终在这里扫**，
+  用同一个 `BANNED`。`tests/test_desktop_i18n.py` 的 `test_menu_uses_the_four_ui_nouns` 是
+  菜单侧的用例，但这里不因为它存在就让位：让位的前提是它的禁用词集合与这里相同，而它
+  曾经只认单数 document，「Recent Documents」两边都放行（#668 评审）。禁用词集合只有
+  `BANNED` 这一个出处。
 
 **不看** key 名（改 key 代价大、与界面无关）、代码注释与开发者文档（「文档」在那里指代码概念）。
 
@@ -32,18 +33,17 @@ ADR 0001 早在 2026-08-15 就规定界面不再出现「文档」，后来的�
 
 from __future__ import annotations
 
-import ast
 import json
 import re
 from pathlib import Path
 
 import pytest
 
+from tests.support.tsconst import exported_string_union, function_string_switch
+
 ROOT = Path(__file__).resolve().parent.parent
 LOCALES = ROOT / "web" / "src" / "i18n" / "locales"
 I18N_RS = ROOT / "src-tauri" / "src" / "i18n.rs"
-DESKTOP_I18N_TEST = ROOT / "tests" / "test_desktop_i18n.py"
-SHELL_NOUN_TEST = "test_menu_uses_the_four_ui_nouns"
 API_TS = ROOT / "web" / "src" / "lib" / "api.ts"
 PROJECT_PICKER_TSX = ROOT / "web" / "src" / "components" / "ProjectPicker.tsx"
 
@@ -63,6 +63,7 @@ EXEMPT: dict[tuple[str, str], str] = {
         "web:en-US",
         "project:browser.shortcut.documents",
     ): "系统文件夹名 Documents（目录选择器的常用起点）",
+    ("shell:ZH", "help_docs"): "「使用文档」= 帮助手册（菜单「帮助」里那一项）",
 }
 
 
@@ -113,20 +114,9 @@ def _backend_strings() -> dict[tuple[str, str], str]:
     return {("backend:_browse_shortcuts", e["id"]): e["name"] for e in entries}
 
 
-def _shell_guarded_elsewhere() -> bool:
-    """`test_desktop_i18n.py` 里有没有壳内菜单自己的名词用例（按 AST 找函数定义，不按子串）。"""
-    if not DESKTOP_I18N_TEST.is_file():
-        return False
-    tree = ast.parse(DESKTOP_I18N_TEST.read_text(encoding="utf-8"))
-    return any(
-        isinstance(node, ast.FunctionDef) and node.name == SHELL_NOUN_TEST
-        for node in ast.walk(tree)
-    )
-
-
 def _shell_strings() -> dict[tuple[str, str], str]:
     """`const ZH/EN: ShellText = ShellText { 字段: "……", };` 的每一个字段值。"""
-    if not I18N_RS.is_file() or _shell_guarded_elsewhere():  # wheel / sdist 不含桌面壳
+    if not I18N_RS.is_file():  # wheel / sdist 不含桌面壳
         return {}
     src = I18N_RS.read_text(encoding="utf-8")
     found: dict[tuple[str, str], str] = {}
@@ -154,16 +144,10 @@ def test_the_scan_sees_what_it_claims_to():
     # 后端常用起点：主目录 + 三个文件夹一个不少（少了就是有分支没跑到）
     backend = {loc for src, loc in strings if src == "backend:_browse_shortcuts"}
     assert backend == {"home", "desktop", "documents", "downloads"}, backend
-
-
-def test_shell_menu_is_guarded_somewhere():
-    """壳内菜单文案要么这里在扫，要么 `test_desktop_i18n.py` 有自己的名词用例——不能两头都不管。"""
-    if not I18N_RS.is_file():
-        pytest.skip("没有 src-tauri/（wheel/sdist 里不含桌面壳）")
-    scanned_here = {src for src, _ in _shell_strings()} == {"shell:ZH", "shell:EN"}
-    assert scanned_here or _shell_guarded_elsewhere()
-    if scanned_here:
-        assert _shell_strings()[("shell:EN", "edit_undo")]  # 解析没有漏字段
+    # 壳内菜单：两张表都读到了、字段没漏（有 src-tauri/ 的树上）
+    if I18N_RS.is_file():
+        assert {src for src, _ in strings} >= {"shell:ZH", "shell:EN"}
+        assert strings[("shell:EN", "edit_undo")]
 
 
 def test_shortcut_ids_match_the_frontend_closed_set():
@@ -171,18 +155,23 @@ def test_shortcut_ids_match_the_frontend_closed_set():
     前端 `ShortcutId` 联合类型、`shortcutLabel` 逐个翻译的 `case`、两种语言的翻译 key，
     四方逐字相等。少了 `case` 的那个 id 会静默回退成后端写死的中文名。"""
     backend = {loc for src, loc in _backend_strings()}
-    src = API_TS.read_text(encoding="utf-8")
-    m = re.search(r"export type ShortcutId = ([^\n]+)", src)
-    assert m, "api.ts 里找不到 ShortcutId"
-    frontend = set(re.findall(r"'(\w+)'", m.group(1)))
-    assert backend == frontend, f"后端 {sorted(backend)} ≠ 前端 {sorted(frontend)}"
-    picker = PROJECT_PICKER_TSX.read_text(encoding="utf-8")
-    body = picker.split("function shortcutLabel(", 1)[1].split("\n}\n", 1)[0]
-    cases = re.findall(
-        r"^\s*case '(\w+)':\s*\n\s*return translate\('browser\.shortcut\.(\w+)'", body, re.M
+    frontend = exported_string_union(API_TS.read_text(encoding="utf-8"), "ShortcutId")
+    assert set(frontend) == backend, f"后端 {sorted(backend)} ≠ 前端 {frontend}"
+    discriminant, clauses = function_string_switch(
+        PROJECT_PICKER_TSX.read_text(encoding="utf-8"), "shortcutLabel"
     )
-    assert all(c == k for c, k in cases), f"case 与它翻译的 key 不是同一个 id：{cases}"
-    assert {c for c, _ in cases} == backend, f"shortcutLabel 的 case {sorted(c for c, _ in cases)}"
+    assert discriminant == "entry.id", discriminant
+    cases = {}
+    for label, code, lits in clauses:
+        if label == "":
+            continue  # default：认不出的 id / 老后端回退 name
+        # 每个 case 恰好是 `return translate('browser.shortcut.<同一个 id>', { ns: 'project' })`
+        assert re.fullmatch(r"\s*return\s+translate\(\s+,\s*\{\s*ns:\s+\}\s*\)\s*;?\s*", code), (
+            f"case {label!r} 的分支不是一句 translate：{code!r}"
+        )
+        assert lits == [f"browser.shortcut.{label}", "project"], (label, lits)
+        cases[label] = lits[0]
+    assert set(cases) == backend, f"shortcutLabel 的 case {sorted(cases)}"
     for locale in ("zh-CN", "en-US"):
         data = json.loads((LOCALES / locale / "project.json").read_text(encoding="utf-8"))
         assert set(data["browser"]["shortcut"]) == backend, locale
