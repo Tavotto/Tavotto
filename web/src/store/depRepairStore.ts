@@ -473,4 +473,4 @@ function lateFailure(planId: string, e: unknown): void {
 
 /** 安装是不是正在进行（界面据此禁用按钮、显示进度而不是选项） */
 export const isRepairRunning = (p: DependencyProgress | null): boolean =>
-  !!p && ['preparing', 'creating_env', 'installing', 'verifying'].includes(p.state)
+  !!p && ['preparing', 'downloading_python', 'creating_env', 'installing', 'verifying'].includes(p.state)

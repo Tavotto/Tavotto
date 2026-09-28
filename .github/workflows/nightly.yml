@@ -928,6 +928,42 @@ jobs:
           if (Test-Path $manifest) { throw "卸载后安装清单仍在: $manifest" }
           Write-Host "✓ 自选目录卸载清干净"
 
+      # 手动派发时保留这次安装链实际使用的 NSIS 字节，供干净 VM 做目标验收。
+      # 定时 nightly 不上传；摘要把文件绑定到本次 checkout 的精确 SHA。
+      - name: 冻结手动验收用 Windows NSIS 安装包与 SHA-256
+        if: github.event_name == 'workflow_dispatch' && matrix.python == 'none'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $nsis = @(Get-ChildItem "src-tauri\target\release\bundle\nsis" -Filter "*.exe")
+          if ($nsis.Count -ne 1) { throw "NSIS 产物数量异常（$($nsis.Count) 个）" }
+
+          $bundle = Join-Path $env:RUNNER_TEMP "frozen-windows-installer"
+          New-Item -ItemType Directory -Force -Path $bundle | Out-Null
+          $copy = Join-Path $bundle $nsis[0].Name
+          Copy-Item $nsis[0].FullName $copy
+          $sha256 = (Get-FileHash -Path $copy -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$sha256  $($nsis[0].Name)" | Set-Content -Path (Join-Path $bundle "SHA256SUMS.txt") -Encoding ascii
+          @(
+            "source_sha=$env:GITHUB_SHA"
+            "workflow_run_id=$env:GITHUB_RUN_ID"
+            "workflow_run_attempt=$env:GITHUB_RUN_ATTEMPT"
+            "installer=$($nsis[0].Name)"
+            "sha256=$sha256"
+          ) | Set-Content -Path (Join-Path $bundle "BUILD.txt") -Encoding ascii
+          Write-Host "冻结安装包: $copy"
+          Write-Host "source SHA: $env:GITHUB_SHA"
+          Write-Host "SHA-256: $sha256"
+
+      - name: 上传手动 Windows 安装验收产物
+        if: github.event_name == 'workflow_dispatch' && matrix.python == 'none'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tavotto-windows-nsis-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}\frozen-windows-installer\
+          if-no-files-found: error
+          retention-days: 7
+
       - name: 失败时收集日志
         if: failure()
         uses: actions/upload-artifact@v4

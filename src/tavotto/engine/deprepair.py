@@ -381,6 +381,12 @@ def base_python() -> str | None:
     return _probe_base_python()
 
 
+def supported_python_range() -> dict:
+    """支持的 Python 次版本闭区间 `{"min": "3.10", "max": "3.14"}`（界面文案用）。"""
+    lo, hi = projectenv.PYTHON_MIN, projectenv.PYTHON_TESTED[-1]
+    return {"min": f"{lo[0]}.{lo[1]}", "max": f"{hi[0]}.{hi[1]}"}
+
+
 def offer(project: str | Path, script: str, module: str, project_env: dict | None = None) -> dict:
     """缺 `module` 时「能怎么修」——**只读判断，不装任何东西**。
 
@@ -402,6 +408,10 @@ def offer(project: str | Path, script: str, module: str, project_env: dict | Non
         "rounds_remaining": rounds_remaining(root, script),
         "targets": [],
         "system_rejected": [],
+        # 界面让用户「装一个受支持的 Python」时要说出范围：取支持口径的运行时镜像
+        # （`projectenv.PYTHON_MIN` / `PYTHON_TESTED`，与 docs/support-matrix.json
+        # 由 test_support_matrix 对拍），文案里不再手写版本号。
+        "python_supported": supported_python_range(),
     }
     # ---- 全局显式解释器生效：下面每一条路都写项目级决策，一条也轮不到 ----
     # （#465）自动接手 / 采用系统解释器 / 装进项目 .venv 或受管环境，最后都落到

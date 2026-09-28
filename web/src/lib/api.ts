@@ -3140,6 +3140,8 @@ export interface DependencyRepairOffer {
   managed?: ManagedEnvironment
   /** 探到了但不合格的系统解释器（老服务端没有这个字段） */
   system_rejected?: SystemInterpreterRejection[]
+  /** 支持的 Python 次版本范围（`docs/support-matrix.json` 的运行时镜像）；文案不手写版本号 */
+  python_supported: { min: string; max: string }
   /** dependency_unresolved / dependency_repair_rounds_exhausted / dependency_interpreter_pinned */
   code?: string
   /**
@@ -3166,12 +3168,14 @@ export interface DependencyRepairPlan extends DependencyRequirementInfo {
   modifies_user_environment: boolean
   network_required: boolean
   expires_at: number
+  /** This authorization also downloads a complete private Python before creating the environment. */
+  private_python?: PrivatePythonOffer | null
 }
 
 /** 安装进度。前端**按 state 换文案，不解析日志**。 */
 export interface DependencyProgress {
   plan_id: string
-  state: 'idle' | 'preparing' | 'creating_env' | 'installing' | 'verifying' | 'done' | 'failed' | 'cancelled'
+  state: 'idle' | 'preparing' | 'downloading_python' | 'creating_env' | 'installing' | 'verifying' | 'done' | 'failed' | 'cancelled'
   log: string
   error: string | null
   code: string

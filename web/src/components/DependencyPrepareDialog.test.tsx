@@ -34,6 +34,7 @@ import {
 import { DependencyPrepareDialog } from '@/components/DependencyPrepareDialog'
 import { DependencyPrepareButton } from '@/components/WorkdirRow'
 import { i18n, t } from '@/i18n'
+import { PRODUCT_NAME } from '@/lib/brand'
 import { setCurrentProjectId } from '@/lib/session'
 import { useDepRepairStore } from '@/store/depRepairStore'
 import { useEnvStore } from '@/store/envStore'
@@ -345,7 +346,7 @@ describe('DependencyPrepareDialog', () => {
     await render(<DependencyPrepareDialog />)
     await act(async () => useEnvStore.getState().requestDependencyPreparation(clean({})))
     expect(document.querySelector('[data-dependency-private-python]')).not.toBeNull()
-    expect(text()).toContain(en('dependencyPreparePrivatePython', { version: '3.13.15', mb: 24 }))
+    expect(text()).toContain(en('dependencyPreparePrivatePython', { version: '3.13.15', mb: 24, product: PRODUCT_NAME }))
     expect(radio('tavotto_managed')!.disabled).toBe(false)
     // 同一时刻只开一份：换载荷要先关掉这一份
     await act(async () => useEnvStore.setState({ dependencyPreparation: null }))
@@ -354,7 +355,7 @@ describe('DependencyPrepareDialog', () => {
         clean({ cached: true, download_bytes: 0, network_required: false }),
       ),
     )
-    expect(text()).toContain(en('dependencyPreparePrivatePythonCached', { version: '3.13.15' }))
+    expect(text()).toContain(en('dependencyPreparePrivatePythonCached', { version: '3.13.15', product: PRODUCT_NAME }))
     expect(text()).not.toContain('MB')
     // 别的项目已经把私有 Python 供应好了（required=false、零字节）：本项目照样要建自己的一代，来源照样说出口
     await act(async () => useEnvStore.setState({ dependencyPreparation: null }))
@@ -363,7 +364,7 @@ describe('DependencyPrepareDialog', () => {
         clean({ required: false, cached: true, download_bytes: 0, network_required: false }),
       ),
     )
-    expect(text()).toContain(en('dependencyPreparePrivatePythonCached', { version: '3.13.15' }))
+    expect(text()).toContain(en('dependencyPreparePrivatePythonCached', { version: '3.13.15', product: PRODUCT_NAME }))
     expect(radio('tavotto_managed')!.disabled).toBe(false)
     // 没有这一段（有基础解释器）时一个字都不出现
     await act(async () => useEnvStore.setState({ dependencyPreparation: null }))

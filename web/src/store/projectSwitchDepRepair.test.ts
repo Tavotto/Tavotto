@@ -100,6 +100,7 @@ const offer = (script: string): DependencyPreparationOffer =>
     target_kind: 'tavotto_managed',
     targets: [],
     rounds_remaining: 3,
+    python_supported: { min: '3.10', max: '3.14' },
     skipped: false,
     user_environments: [],
   }) as unknown as DependencyPreparationOffer

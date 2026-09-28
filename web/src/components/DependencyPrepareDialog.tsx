@@ -8,6 +8,7 @@ import { Details, Summary } from './ui/Details'
 import { Dialog } from './ui/Dialog'
 import { Radio } from './ui/Radio'
 import { userEnvironmentName } from '@/lib/userEnvironmentText'
+import { PRODUCT_NAME } from '@/lib/brand'
 
 /**
  * 跑前的那一次授权（U04，ADR 0061 §六）：后端起第一个 worker 之前看一眼脚本开跑要的第三方包
@@ -231,10 +232,12 @@ export function DependencyPrepareDialog() {
                     {opt.private_python.cached
                       ? en('engine.dependencyPreparePrivatePythonCached', {
                           version: opt.private_python.version,
+                          product: PRODUCT_NAME,
                         })
                       : en('engine.dependencyPreparePrivatePython', {
                           version: opt.private_python.version,
                           mb: Math.max(1, Math.round(opt.private_python.download_bytes / 1048576)),
+                          product: PRODUCT_NAME,
                         })}
                   </span>
                 )}
