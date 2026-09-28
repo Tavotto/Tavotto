@@ -654,11 +654,12 @@ describe('Codex #662 P2：绑定样式时连点，按最后一次排进去的值
       seedExactRender(other, faceManifest() as never)
       useSelectionStore.getState().set(['p2'])
     })
-    expect(container.querySelector('[data-style-panel]')).toBeTruthy()
-    expect(button('标题加粗').getAttribute('aria-pressed'), 'A 上那一笔的挂起值串到了 B').toBe('false')
+    const onB = button('标题加粗')?.getAttribute('aria-pressed')
+    // 先放行再断言：断言先红的话那一笔卡在队列里，会把后面的用例一起堵住
     await drain()
     saves[0].release()
     await drain()
+    expect(onB, 'A 上那一笔的挂起值串到了 B').toBe('false')
     expect(saves.map((x) => x.data.element.title.weight)).toEqual(['bold'])
     // 回到 A：库里那条变过，A 按库跟上（同步器在切画布时调的就是 followLibrary）——那一笔没被重挂丢掉
     await act(async () => {
