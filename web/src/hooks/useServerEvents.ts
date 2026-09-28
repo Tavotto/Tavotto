@@ -15,7 +15,7 @@ import { applyExportJob } from '@/store/exportStore'
 import { recoverAfterReconnect, refreshAssetsAndSync } from '@/store/liveSync'
 import { useNativeSessionStore } from '@/store/nativeSessionStore'
 import { useProjectStore } from '@/store/projectStore'
-import { currentProjectId } from '@/lib/session'
+import { currentProjectId, onCurrentProjectChange } from '@/lib/session'
 import { useRenderStore } from '@/store/renderStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useScriptLibraryStore } from '@/store/scriptLibraryStore'
@@ -284,13 +284,10 @@ export function handleServerEvent(ev: ServerEvent) {
 
 /** 后端事件 → 渲染状态 / AI 会话 / 素材库刷新 / 状态栏 */
 export function useServerEvents() {
-  // 换了项目就重报一次「这条能答题的事件流在看哪个项目」（ADR 0099 §五，Codex #680 P1）
+  // 换了项目就重报一次「这条能答题的事件流在看哪个项目」（ADR 0099 §五）。跟**认领**走、不跟 `project`
+  // 字段走：事件过滤从认领那一刻就换成新项目了，`project` 要等换代做完才赋值（Codex #680 P1）
   useEffect(
-    () =>
-      useProjectStore.subscribe((s, prev) => {
-        const pj = s.project?.id
-        if (pj && pj !== prev.project?.id) useScriptInputStore.getState().announce(pj)
-      }),
+    () => onCurrentProjectChange((pj) => useScriptInputStore.getState().announce(pj)),
     [],
   )
   useEffect(

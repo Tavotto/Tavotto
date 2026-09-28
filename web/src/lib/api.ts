@@ -2408,7 +2408,7 @@ export type ServerEvent =
    * `input_kind` 不叫 `kind`：载荷里的 kind 会与事件名冲突（见 `subscribeEvents`）。
    */
   | ({ kind: 'script.input_requested' } & ScriptInputRequest & ProjectScoped)
-  /** 那一问不再等了：`answered` / `stopped` / `finished`（build 结束，含等到超时）。 */
+  /** 那一问不再等了：`answered` / `stopped` / `timed_out`（worker 等到超时、按 EOF 往下跑了）/ `finished`（build 结束）。 */
   | ({ kind: 'script.input_closed'; id: string; reason?: string } & ProjectScoped)
   /** 能答题的事件流（`answers=1`）连上时报的流 id：界面据此报「我此刻在看哪个项目」（`listenScriptInput`）。 */
   | { kind: 'stream.hello'; stream_id: string }

@@ -6,6 +6,8 @@ safe worker 的 `sys.stdin` 就是协议管道：脚本一 `input()` 就阻塞�
 
 * 发问：`<会合目录>/req-<n>.json`（tmp + `os.replace`）；
 * 等答：每 `WORKER_POLL` 秒看一次 `reply-<n>.json`，最多 `INPUT_WAIT_TIMEOUT` 秒；
+* 定案：人答上与等到超时只能有一方算数——谁先用 `O_EXCL` 建成 `claim-<n>.json` 谁赢（`claim()`）。
+  超时赢了，迟到的答案既不回给脚本也不记住，父进程据此收起那一问；答题方赢了，worker 等它把回复写完；
 * 回复三种形状：`{"answer": "…"}` / `{"eof": true}` / `{"no_answer": true, "reason": "…"}`。
 
 会合目录是 worker 的 `out_dir/script-input/`——Tavotto 自己的会话缓存，**不是用户目录**。
@@ -36,6 +38,8 @@ INPUT_WAIT_TIMEOUT = 600.0
 TIMEOUT_ENV = "TAVOTTO_SCRIPT_INPUT_TIMEOUT"
 #: worker 看回复文件的间隔（秒）。
 WORKER_POLL = 0.1
+#: 到点时界面恰好已经定案（正在落盘答案）：再给它这么久把回复写出来。
+ANSWER_GRACE = 30.0
 #: 带给界面的 stdout 片段上限：最近多少行、最多多少字符；提示本身的上限。
 TAIL_LINES = 40
 TAIL_CHARS = 4000
@@ -50,6 +54,43 @@ def request_name(index: int) -> str:
 
 def reply_name(index: int) -> str:
     return f"reply-{index}.json"
+
+
+def claim_name(index: int) -> str:
+    return f"claim-{index}.json"
+
+
+#: `claim-<n>.json` 的两种内容：界面答上了 / worker 等到超时、按 EOF 往下跑了。
+CLAIM_ANSWER = "answer"
+CLAIM_TIMEOUT = "timeout"
+
+
+def claim(directory: str | os.PathLike, index: int, who: str) -> bool:
+    """给第 `index` 问定案：`O_EXCL` 建 `claim-<n>.json`，建成的一方赢，另一方回 False。
+
+    会合目录已经不在（build 结束被删）时抛 `OSError`，由调用方决定算输还是算赢。"""
+    path = Path(directory) / claim_name(index)
+    try:
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except FileExistsError:
+        return False
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(who)
+    return True
+
+
+def claimed_by(directory: str | os.PathLike, index: int) -> str | None:
+    """第 `index` 问由谁定的案；还没定（或刚建、内容未写完）回 None。"""
+    try:
+        return (Path(directory) / claim_name(index)).read_text(encoding="utf-8") or None
+    except OSError:
+        return None
+
+
+def release(directory: str | os.PathLike, index: int) -> None:
+    """答题方定案后没能落盘（答案不合法等）：放掉定案，这一问照旧在等。"""
+    with contextlib.suppress(OSError):
+        (Path(directory) / claim_name(index)).unlink()
 
 
 def index_of(name: str, prefix: str) -> int | None:
@@ -166,6 +207,13 @@ class Channel:
         except (OSError, ValueError):
             pass
 
+    def _claim_timeout(self, index: int) -> bool:
+        """到点了：抢「超时」这一案。抢不到 = 界面正在答（它会写回复）；会合目录没了 = 没人会答。"""
+        try:
+            return claim(self.dir, index, CLAIM_TIMEOUT)
+        except OSError:
+            return True
+
     def ask(self, prompt: str, kind: str) -> str | None:
         """问一次；回答案字符串，EOF 回 None；没人能答抛 `ScriptNeedsInput`。"""
         if self.closed:
@@ -186,8 +234,10 @@ class Channel:
         self._log(f"[input] 第 {index} 问等待作答\n")
         reply_path = self.dir / reply_name(index)
         deadline = time.monotonic() + wait_timeout()
+        # 答题方定了案却迟迟写不出回复（不该发生）时的兜底：再等这么久就按超时处理
+        hard_stop = deadline + ANSWER_GRACE
         reply = None
-        while time.monotonic() < deadline:
+        while True:
             if reply_path.exists():
                 try:
                     reply = json.loads(reply_path.read_text(encoding="utf-8"))
@@ -195,6 +245,11 @@ class Channel:
                     reply = None  # 写到一半不可能（原子写），读失败就下一轮再读
                 if isinstance(reply, dict):
                     break
+            now = time.monotonic()
+            if now >= deadline and (now >= hard_stop or self._claim_timeout(index)):
+                # 超时定了案：父进程据此收起这一问，迟到的答案不再算数（Codex #680 P2）
+                reply = None
+                break
             time.sleep(WORKER_POLL)
         if not isinstance(reply, dict):
             self._log(f"[input] 第 {index} 问等待超时，按 EOF 处理\n")

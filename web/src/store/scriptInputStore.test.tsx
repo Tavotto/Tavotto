@@ -141,9 +141,23 @@ describe('能答题的事件流报它在看哪个项目（Codex #680 P1）', () 
     act(() => root.render(<Probe />))
     // 报项目是串行的：先让 A 那条回来
     await act(async () => {})
+    // 切项目：`adoptOpenedProject` 先认领 B、再 await 换代，`project` 最后才赋值。事件过滤从认领那一刻
+    // 就按 B 了，所以必须在认领的同一时刻报 B——不能等 `project` 变（Codex #680 P1）
+    useProjectStore.setState({ project: { open: true, id: 'A' } as never })
+    await act(async () => {})
+    listen.mockClear()
+    act(() => setCurrentProjectId('B'))
+    expect(useProjectStore.getState().project?.id).toBe('A') // 换代还没做完
+    expect(listen).toHaveBeenCalledWith('s1', 'B')
+    await act(async () => {})
+    // 换代做完、`project` 赋值：不再重复报
     act(() => useProjectStore.setState({ project: { open: true, id: 'B' } as never }))
-    expect(listen).toHaveBeenLastCalledWith('s1', 'B')
+    await act(async () => {})
+    expect(listen).toHaveBeenCalledTimes(1)
+    // 卸载之后不再报
     act(() => root.unmount())
+    setCurrentProjectId('C')
+    expect(listen).toHaveBeenCalledTimes(1)
     useProjectStore.setState({ project: null })
   })
 
