@@ -382,7 +382,7 @@ Send Codex this message, in full:
 > plugin and the Tavotto engine it needs, then run the health check; when a new
 > session is required, tell me so explicitly and stop.
 
-### Using Tavotto with Claude Code (experimental)
+### Using Tavotto with Claude Code (Beta)
 
 The same plugin installs into Claude Code (terminal, IDE extensions and the desktop app's Code tab).
 Run these in a terminal, one at a time:
