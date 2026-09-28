@@ -825,6 +825,18 @@ def _marker_subpaths(coll, budget: Budget) -> list[tuple] | None:
     return _stamp_markers(paths, np.asarray(master.get_matrix(), dtype=float), per, toffs, budget)
 
 
+def _line_marker_style(line: Line2D) -> MarkerStyle:
+    return getattr(line, "_marker", None) or MarkerStyle(line.get_marker(), line.get_fillstyle())
+
+
+def _draws_markers(line: Line2D) -> bool:
+    """这条 Line2D 画不画 marker——与 `Line2D.draw` 的 `if self._marker and
+    self._markersize > 0` 同一个判据：marker 是 none，或 `markersize` ≤ 0
+    （`errorbar(..., ms=0)`、茎叶的 markerline 设 `ms=0`）都一颗也不画。
+    `_line_marker_subpaths` 与 `_member_draws` 共用这一份，别各写一份。"""
+    return bool(_line_marker_style(line)) and line.get_markersize() > 0
+
+
 def _line_marker_subpaths(line: Line2D, budget: Budget) -> list[tuple] | None:
     """只有 marker、没有连线的 Line2D 每一颗 marker 的 display 空间轮廓。
 
@@ -845,9 +857,9 @@ def _line_marker_subpaths(line: Line2D, budget: Budget) -> list[tuple] | None:
     形状只有一份、尺寸只有一个，所以这是 `_stamp_markers` 最简单的一档：
     整体矩阵是单位阵，逐点矩阵只有一个（半填充时两个），偏移就是各数据点。
     """
-    marker = getattr(line, "_marker", None) or MarkerStyle(line.get_marker(), line.get_fillstyle())
-    if not marker or not line.get_markersize() > 0:
+    if not _draws_markers(line):
         return []
+    marker = _line_marker_style(line)
     xy = np.asarray(line.get_xydata(), dtype=float).reshape(-1, 2)
     if len(xy) == 0:
         return []
@@ -1251,8 +1263,7 @@ def _member_draws(m) -> bool:
         if len(m.get_xydata()) == 0:
             return False
         no_line = str(m.get_linestyle()).lower() in ("none", "", " ")
-        no_marker = str(m.get_marker()).lower() in ("none", "", " ")
-        return not (no_line and no_marker)
+        return not no_line or _draws_markers(m)
     if isinstance(m, Collection):
         return len(m.get_paths()) > 0
     return True
