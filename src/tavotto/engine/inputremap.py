@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import ast
+import glob
 import os
 import time
 from pathlib import Path
@@ -185,8 +186,51 @@ def _join(parts: tuple[str, ...]) -> str:
 # ---------------------------------------------------------------- 弹窗载荷
 
 
-def _absolute_literals(source: str) -> list[str]:
-    """脚本里**以字符串常量出现**的绝对数据路径（存图调用的实参除外）。只认常量，不求值。"""
+def _probe_via_of_constants(tree: ast.AST) -> dict[int, str]:
+    """`id(Constant)` → `probe` / `glob`：这个常量是探路调用问的那条路径（绝对的也算）。
+
+    与 `databinding.probe_literals` 同一张表（`PATH_PROBE_FUNCS` / `DIR_PROBE_FUNCS` /
+    `GLOB_FUNCS` / `Path(<常量>)` 上的 `PATH_METHOD_PROBES` / `PATH_METHOD_GLOBS`）。那边只收相对
+    目标；这里要的是**反过来**的事实——一个绝对常量若是被 `exists()` 问的，改指表救不回它，
+    对话框不能给它选择器（否则指认 → 重跑 → `exists()` 照样 False → 同一个框再弹）。
+    """
+    out: dict[int, str] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        name = databinding._func_name(node.func)
+        first = node.args[0] if node.args else None
+        if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Call):
+            ctor = node.func.value
+            if (
+                databinding._func_name(ctor.func) in databinding._PATH_CTORS
+                and len(ctor.args) == 1
+                and isinstance(ctor.args[0], ast.Constant)
+            ):
+                if name in databinding.PATH_METHOD_PROBES:
+                    out[id(ctor.args[0])] = VIA_PROBE
+                elif name in databinding.PATH_METHOD_GLOBS:
+                    out[id(ctor.args[0])] = VIA_GLOB
+        target = first
+        if target is None:
+            target = next(
+                (k.value for k in node.keywords if k.arg in ("path", "top", "pathname")), None
+            )
+        if not isinstance(target, ast.Constant):
+            continue
+        if name in databinding.PATH_PROBE_FUNCS or name in databinding.DIR_PROBE_FUNCS:
+            out[id(target)] = VIA_PROBE
+        elif name in databinding.GLOB_FUNCS and databinding._is_glob_module_call(node.func):
+            out[id(target)] = VIA_GLOB
+    return out
+
+
+def _absolute_literals(source: str) -> list[tuple[str, str]]:
+    """脚本里**以字符串常量出现**的绝对数据路径（存图调用的实参除外）→ `[(路径, via)]`。只认常量，不求值。
+
+    `via` 按常量所在的调用判：被探路调用问的是 `probe` / `glob`，其余是 `open`；同一串在几处出现、
+    有一处是探路就算探路（与相对路径「同一串也被探路问过」同一条规则）。
+    """
     try:
         tree = ast.parse(source)
     except (SyntaxError, ValueError):
@@ -200,22 +244,30 @@ def _absolute_literals(source: str) -> list[str]:
             for arg in list(node.args) + [kw.value for kw in node.keywords]:
                 if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
                     outputs.add(arg.value)
-    out: list[str] = []
+    probed = _probe_via_of_constants(tree)
+    out: dict[str, str] = {}
     for node in ast.walk(tree):
         if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
             continue
         text = node.value
-        if text in outputs or text in out:
+        if text in outputs:
+            continue
+        via = probed.get(id(node), VIA_OPEN)
+        if text in out:
+            if via != VIA_OPEN:
+                out[text] = via
             continue
         parsed = figcapture.remap_parts(text)
         if parsed is None or not parsed[0] or len(parsed[1]) < 2:
             continue
-        # 去掉根之后按「像不像数据路径」的同一份判据判（扩展名 / 目录分隔符）
-        if databinding.looks_like_relative_data_path("/".join(parsed[1][1:])):
-            out.append(text)
-        if len(out) >= databinding.MAX_LITERALS:
-            break
-    return out
+        tail = "/".join(parsed[1][1:])
+        # 去掉根之后按「像不像数据路径」的同一份判据判（扩展名 / 目录分隔符）；glob 模式那一判
+        # 会因通配符拒掉，它已经知道是 glob 的实参，按 glob 目标收
+        if via == VIA_GLOB or databinding.looks_like_relative_data_path(tail):
+            if len(out) >= databinding.MAX_LITERALS:
+                break
+            out[text] = via
+    return list(out.items())
 
 
 def _script_source(root: Path, script_path: Path) -> str:
@@ -269,13 +321,17 @@ def static_missing(
         if target in p_probes and target in t_probes:
             via = VIA_GLOB if any(c in target for c in "*?[") else VIA_PROBE
             _add(target, False, via)
-    for text in _absolute_literals(_script_source(root_path, script_path)):
+    for text, via in _absolute_literals(_script_source(root_path, script_path)):
         try:
-            present = os.path.exists(text)
+            if via == VIA_GLOB:
+                # 父进程里同步判：`**` 递归可能扫整棵树，判不出就不列；其余非递归、见到一个就停
+                present = "**" in text or next(glob.iglob(text), None) is not None
+            else:
+                present = os.path.exists(text)
         except (OSError, ValueError):
             present = True  # 判不出就不列
         if not present:
-            _add(text, True, VIA_OPEN)
+            _add(text, True, via)
     return out
 
 
