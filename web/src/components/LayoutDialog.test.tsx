@@ -142,6 +142,43 @@ describe('另存为的基线', () => {
   })
 })
 
+describe('排版写进文件之后发「写成了」（ADR 0101 §7：时间线订阅它打「保存」点）', () => {
+  it('写成了发一次 layout_file；写失败（409）一次都不发', async () => {
+    const { onLayoutSaved } = await import('@/lib/layoutSaved')
+    const seen: string[] = []
+    const off = onLayoutSaved((via) => seen.push(via))
+    mockSave.mockRejectedValueOnce(conflictError('rev-theirs'))
+    await open()
+    await clickSave()
+    expect(seen).toEqual([])
+    await act(async () => {
+      buttonByText('仍然覆盖')!.click()
+    })
+    off()
+    expect(seen).toEqual(['layout_file'])
+  })
+})
+
+describe('「保存」点属于被保存的那一份（Codex #679）', () => {
+  it('写的途中换了项目：事件带的仍是发起保存那一刻的上下文', async () => {
+    const { onLayoutSaved } = await import('@/lib/layoutSaved')
+    const { currentTimelineCtx } = await import('@/lib/timelineContext')
+    const { useTimelineStore } = await import('@/store/timelineStore')
+    const ctxs: string[] = []
+    const off = onLayoutSaved((_via, { ctx }) => ctxs.push(ctx))
+    await open()
+    const before = currentTimelineCtx()
+    mockSave.mockImplementationOnce(async () => {
+      useTimelineStore.getState().clear() // await 期间换了项目（代际 +1）
+      return { ok: true, revision: 'rev-new' }
+    })
+    await clickSave()
+    off()
+    expect(ctxs).toEqual([before])
+    expect(currentTimelineCtx()).not.toBe(before)
+  })
+})
+
 describe('409 之后的出口', () => {
   it('冲突不显示成普通错误，而是给出磁盘上那份 + 一个「仍然覆盖」', async () => {
     mockSave.mockRejectedValueOnce(conflictError('rev-theirs'))

@@ -769,10 +769,11 @@
     "undo": "撤销",
     "undoWith": "撤销 {{label}}",
     "updateAvailable": "有新版本 {{version}}",
-    "versionTimeline": "排版版本…",
+    "versionTimeline": "排版时间线…",
     "zoomIn": "放大",
     "zoomOut": "缩小",
-    "zoomValue": "缩放 {{percent}}%"
+    "zoomValue": "缩放 {{percent}}%",
+    "timelineButton": "排版时间线"
   },
   "update": {
     "banner": "工具已更新，刷新后使用新版本",

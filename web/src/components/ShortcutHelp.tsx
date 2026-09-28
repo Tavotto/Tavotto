@@ -37,6 +37,8 @@ export const GROUPS: { id: string; rows: Row[] }[] = [
     rows: [
       { keys: `${MOD}S`, desc: 'saveDocument' },
       { keys: `⇧${MOD}S`, desc: 'saveLayout' },
+      { keys: `⇧${MOD}H`, desc: 'timeline' },
+      { keys: `${ALT}${MOD}S`, desc: 'saveNamed' },
       { keys: `${MOD}E`, desc: 'export' },
       { keys: `${MOD}K`, desc: 'palette' },
       { keys: '?', desc: 'help' },

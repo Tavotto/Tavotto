@@ -19,6 +19,8 @@ import { useDocumentStore } from './documentStore'
 import { emptyProject, type PanelObject } from '@/types/document'
 import { literal } from '@/i18n'
 import type { ExportRequestInput } from '@/lib/exportRequest'
+import { setMomentSink } from '@/lib/timelineCheckpoint'
+import { useTimelineStore } from './timelineStore'
 
 const panel: PanelObject = {
   id: 'p1',
@@ -314,5 +316,45 @@ describe('陈旧的轮询不许改排当下的轮询', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+describe('「导出」时刻属于被导出的那份排版（ADR 0101；Codex #679）', () => {
+  /** 起作业回 running，终局由用例自己喂 */
+  const startRunning = () => {
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify(job({ status: 'running' })), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })) as typeof fetch
+  }
+  let moments: string[] = []
+  beforeEach(() => {
+    moments = []
+    setMomentSink(async (m) => {
+      moments.push(`${m}@${useDocumentStore.getState().documentId}`)
+      return null
+    })
+  })
+  afterEach(() => setMomentSink(null))
+
+  it('不换排版：完成时照常给它打「导出」点', async () => {
+    startRunning()
+    await runExport(inputOf())
+    applyExportJob(job({ status: 'done', outputs: [doneOutput] }))
+    expect(moments).toEqual(['export@d_store'])
+  })
+
+  it.each([
+    ['同项目里换了排版', () => useDocumentStore.getState().switchDocument(emptyProject(), 'd_other')],
+    ['换了项目（排版 id 恰好相同）', async () => useTimelineStore.getState().clear()],
+  ])('导出途中%s：完成时不给换上来的那一份打点', async (_name, leave) => {
+    startRunning()
+    await runExport(inputOf())
+    await leave()
+    applyExportJob(job({ status: 'done', outputs: [doneOutput] }))
+    expect(moments).toEqual([])
+    // 作业本身照常进终局：丢的只是时间线上的那一个点
+    expect(useExportStore.getState().job?.status).toBe('done')
   })
 })

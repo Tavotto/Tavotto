@@ -23,6 +23,7 @@ import {
 } from './documentStore'
 import { reportSaveSkipped, stillCurrent, type SaveContext } from './saveContext'
 import { useUiStore } from './uiStore'
+import { emitLayoutSaved } from '@/lib/layoutSaved'
 
 /**
  * 写回队列里的一项。`started` 之前同一个保存上下文再按 ⌘S 都并进它（它开始时现读绑定与内容）。
@@ -94,6 +95,9 @@ async function writeOnce(ctx: SaveContext): Promise<boolean> {
     const res = await saveLayout(binding.name, pd, binding.revision ?? REVISION_ABSENT, {
       target: 'project',
     })
+    // 写成了：立刻说「排版写成了」，时间线打「保存」点（ADR 0101 §7）——在后面任何一步之前，
+    // 与它们的成败无关；点属于按下 ⌘S 那一份（`ctx.timeline`），不管此刻开着的是谁
+    emitLayoutSaved('project_file', { ctx: ctx.timeline })
     // ③ 写成了是事实：修订号与那份排版的绑定记在 ctx 名下，不管此刻开着的是谁
     const name = res.name ?? binding.name
     const file = res.file ?? binding.file

@@ -15,6 +15,7 @@ import {
   Type,
   Undo2,
   RotateCcwClock,
+  Bookmark,
 } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import {
@@ -23,10 +24,11 @@ import {
   openLayoutDocument,
   openRecentDocument,
   setDocumentName,
+  toggleTimeline,
 } from '@/store/actions'
 import { requestRelinkMissing } from '@/lib/clipboard'
 import { runUndoRedo } from '@/hooks/useKeyboard'
-import { createPackage, openPackage } from '@/lib/api'
+import { backendErrorText, createPackage, openPackage } from '@/lib/api'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { foreignProjectLabel } from '@/lib/projectLabel'
 import { currentProjectId } from '@/lib/session'
@@ -48,11 +50,15 @@ import { useUpdateStore } from '@/store/updateStore'
 import { useViewportStore } from '@/store/viewportStore'
 import { Numbers } from '@sfinterface/numbers'
 import { BrandMark } from './ui/BrandMark'
-import { Button } from './ui/Button'
+import { Button, IconButton } from './ui/Button'
 import { Menu, MenuItem, MenuLabel, MenuRadioGroup, MenuRadioItem, MenuSeparator } from './ui/Menu'
 import { TextInput } from './ui/Input'
+import { Popover } from './ui/Popover'
+import { saveNamedNode } from '@/lib/timelineCheckpoint'
+import { useTimelineStore } from '@/store/timelineStore'
+import { afterAwait, timelineCtxKey } from '@/lib/timelineContext'
 import { Tip } from './ui/Tooltip'
-import { MOD, cn } from '@/lib/utils'
+import { ALT, MOD, cn } from '@/lib/utils'
 import { msg } from '@/i18n'
 import { formatTime } from '@/i18n/format'
 import { useFormatMessage } from '@/i18n/react'
@@ -92,7 +98,8 @@ const ZOOM_PRESETS = [0.5, 0.75, 1, 1.5, 2, 4]
 export function TopBar() {
   const fastEdit = useWorkspaceStore((s) => s.mode === 'fast_edit')
   return (
-    <header className="flex h-11 shrink-0 items-center justify-between gap-3 bg-surface px-3">
+    // `data-topbar`：顶栏的稳定机器标识（e2e 量它里面的按钮，不认 <header> 标签）
+    <header data-topbar className="flex h-11 shrink-0 items-center justify-between gap-3 bg-surface px-3">
       <div className="flex min-w-0 flex-1 items-center gap-1.5">
         {/* 回到项目列表：左上角是「离开这里」的位置（桌面壳用系统标题栏，红绿灯不在网页里） */}
         <HomeButton />
@@ -105,6 +112,8 @@ export function TopBar() {
         </span>
         <DocumentMenu />
         <SaveStateLabel />
+        <TimelineButton />
+        <NamedNodeButton />
         <RecoveryNotice />
       </div>
 
@@ -194,7 +203,8 @@ function Brand() {
   return (
     <span className="flex shrink-0 items-center gap-2 text-sm font-medium tracking-tight text-ink">
       <BrandMark size={20} />
-      {PRODUCT_NAME}
+      {/* 窄于 900 只留标志：顶栏左段要给面包屑与时间线两颗钮让地方（ADR 0101 §8） */}
+      <span className="max-[899px]:sr-only">{PRODUCT_NAME}</span>
     </span>
   )
 }
@@ -293,18 +303,152 @@ export function SaveStateLabel() {
       })
     : t(projectOpen ? 'topbar.saveTitleLocalInProject' : 'topbar.saveTitleLocal', { mod: MOD })
 
+  // 窄于 900 时文字收成一个状态点（文字仍在，只是只给读屏；悬停气泡照旧）：
+  // 顶栏左段放不下「新文档 · 已自动保存 14:03」再加时间线两颗钮，文字不收的话
+  // 会被右边的按钮压住（#677 集成时 600 宽下实测重叠，ADR 0101 §8）
+  // 项目文件落后于这份排版（ADR 0096）也算「还没落定」
+  const pending = saveState === 'dirty' || saveState === 'saving' || !!bound?.dirty
   return (
     <span
       aria-live="polite"
+      data-save-state
       data-save-destination={bound ? 'project' : 'local'}
-      className={cn(
-        'hidden shrink-0 text-xs min-[900px]:inline',
-        bad ? 'text-danger' : 'text-ink-3',
-      )}
-      title={title}
+      className={cn('flex min-w-0 shrink items-center text-xs', bad ? 'text-danger' : 'text-ink-3')}
+      // 窄时文字只给读屏，悬停气泡要连状态一起说
+      title={`${text} · ${title}`}
     >
-      {text}
+      <span
+        aria-hidden
+        className={cn(
+          'size-1.5 shrink-0 rounded-full min-[900px]:hidden',
+          bad ? 'bg-danger' : pending ? 'bg-ink-3' : 'bg-ok',
+        )}
+      />
+      <span className="sr-only min-[900px]:not-sr-only min-[900px]:truncate">{text}</span>
     </span>
+  )
+}
+
+/**
+ * 排版时间线的常驻入口（ADR 0101）：保存状态旁一颗时钟钮。
+ *
+ * 用户反馈「不知道有这个功能」——它此前只在排版菜单的第六项里。放在保存状态旁边，
+ * 是因为两者回答的是同一件事的两半：「存到哪一步了」与「能回到哪一步」。
+ * 抽屉开着时按下态（`aria-pressed`），再点一下收起。
+ */
+function TimelineButton() {
+  const { t } = useTranslation('workspace')
+  const open = useUiStore((s) => s.versionsOpen)
+  return (
+    <IconButton
+      label={t('topbar.timelineButton')}
+      shortcut={`⇧${MOD}H`}
+      aria-pressed={open}
+      data-timeline-button
+      className={cn('shrink-0', open && 'bg-selected')}
+      onClick={toggleTimeline}
+    >
+      <RotateCcwClock size={ICON_SIZE.md} className="text-ink-2" />
+    </IconButton>
+  )
+}
+
+/**
+ * 「存为命名节点」（ADR 0101；用户 2026-09-27 反馈：命名很重要，要有自己的按钮）。
+ *
+ * 书签钮 → 小浮层：名字框 + 保存；回车保存、Esc 取消，**不用先打开时间线抽屉**。
+ * ⌥⌘S 与命令面板开的是同一个浮层（`timelineStore.namingOpen`）。保存失败（例如
+ * 命名节点超出上限的 409）那句话留在浮层里，名字不丢。
+ */
+export function NamedNodeButton() {
+  const { t } = useTranslation('dialogs')
+  const open = useTimelineStore((s) => s.namingOpen)
+  // 失败那句话记在它所属的上下文（项目代际 + 排版 id）名下：A 排版的「命名节点已满」
+  // 不挂到换上来的 B 下面（Codex #679 同形状扫查，与时间线抽屉同一套记账）
+  const gen = useTimelineStore((s) => s.gen)
+  const docId = useDocumentStore((s) => s.documentId)
+  const ctx = timelineCtxKey(gen, docId)
+  // 草稿同样按上下文记账：浮层开着换了排版，A 的名字不留到 B 里被存进 B（Codex #679）
+  const [draft, setDraft] = useState<{ ctx: string; text: string } | null>(null)
+  const name = draft?.ctx === ctx ? draft.text : ''
+  const setName = (text: string) => setDraft({ ctx, text })
+  const [failure, setFailure] = useState<{ ctx: string; text: string } | null>(null)
+  const error = failure?.ctx === ctx ? failure.text : null
+  const [busyCtx, setBusyCtx] = useState<string | null>(null)
+  const busy = busyCtx === ctx
+  useEffect(() => {
+    if (open) {
+      setName('')
+      setFailure(null)
+    }
+  }, [open])
+  const save = async () => {
+    if (!name.trim() || busy) return
+    // await 之后的状态一律经 `afterAwait`（清单在 `lib/timelineContext.ts`）：换走之后才
+    // 回来的，不关 B 里开着的浮层
+    const at = ctx
+    const after = afterAwait(at)
+    setBusyCtx(at)
+    try {
+      await saveNamedNode(name)
+      after(() => useTimelineStore.getState().setNamingOpen(false))
+    } catch (e) {
+      // 旧上下文的失败不碰错误槽：槽只有一个，写进来会顶掉 B 自己的错误
+      after(() => setFailure({ ctx: at, text: backendErrorText(e) }))
+    } finally {
+      // 只摘自己挂的忙标记（A → B → A 回来时 A 不该一直在忙）
+      setBusyCtx((c) => (c === at ? null : c))
+    }
+  }
+  return (
+    <Popover
+      open={open}
+      onOpenChange={(v) => useTimelineStore.getState().setNamingOpen(v)}
+      align="start"
+      width={300}
+      ariaLabel={t('versions.save', { ns: 'dialogs' })}
+      trigger={
+        <IconButton
+          label={t('versions.save', { ns: 'dialogs' })}
+          shortcut={`${ALT}${MOD}S`}
+          aria-pressed={open}
+          data-timeline-name-button
+          className={cn('shrink-0', open && 'bg-selected')}
+        >
+          <Bookmark size={ICON_SIZE.md} className="text-ink-2" />
+        </IconButton>
+      }
+    >
+      <form
+        className="flex flex-col gap-2"
+        data-timeline-quick-name
+        onSubmit={(e) => {
+          e.preventDefault()
+          void save()
+        }}
+      >
+        <p className="text-xs text-ink-2">{t('versions.quickTitle', { ns: 'dialogs' })}</p>
+        <div className="flex gap-1.5">
+          <TextInput
+            autoFocus
+            value={name}
+            aria-label={t('versions.versionName', { ns: 'dialogs' })}
+            placeholder={t('versions.namePlaceholder', { ns: 'dialogs' })}
+            data-timeline-quick-name-input
+            onChange={(e) => setName(e.target.value)}
+            className="min-w-0 flex-1"
+          />
+          <Button type="submit" variant="primary" size="sm" loading={busy} disabled={!name.trim()} data-timeline-quick-name-save>
+            {t('versions.quickSave', { ns: 'dialogs' })}
+          </Button>
+        </div>
+        {error && (
+          <p role="alert" className="text-xs leading-relaxed text-danger">
+            {error}
+          </p>
+        )}
+      </form>
+    </Popover>
   )
 }
 
@@ -353,7 +497,7 @@ export function DocumentMenu() {
   return (
     <Menu
       trigger={
-        <Button size="md" className="max-w-52 text-ink-2" aria-label={t('topbar.documentLabel', { name })}>
+        <Button size="md" className="min-w-0 max-w-52 shrink text-ink-2" aria-label={t('topbar.documentLabel', { name })}>
           <span className="truncate">{name}</span>
           {/* 项目里的文件落后于这份排版（ADR 0096）：与画布页签的「未保存」同一颗圆点 */}
           {projectFile?.dirty && (
@@ -382,7 +526,7 @@ export function DocumentMenu() {
       <MenuItem onSelect={() => useUiStore.getState().setLayoutOpen(true, 'load')}>
         {t('topbar.openDocument')}
       </MenuItem>
-      <MenuItem onSelect={() => useUiStore.getState().setVersionsOpen(true)}>
+      <MenuItem onSelect={() => useUiStore.getState().setVersionsOpen(true)} shortcut={`⇧${MOD}H`}>
         {t('topbar.versionTimeline')}
       </MenuItem>
       <MenuItem onSelect={() => void exportPackage()}>{t('topbar.exportPackage')}</MenuItem>
@@ -513,7 +657,8 @@ function MarkTools() {
         trigger={
           <Button size="md" active={markActive} aria-label={t('workspace:topbar.annotate')}>
             {ActiveMark ? <ActiveMark size={ICON_SIZE.md} filled /> : <Shapes size={ICON_SIZE.md} />}
-            {t('workspace:topbar.annotate')}
+            {/* 窄于 900 只留图标（名字仍在 aria-label 与读屏里）：顶栏三段放不下时不许互相压住 */}
+            <span className="max-[899px]:sr-only">{t('workspace:topbar.annotate')}</span>
             <ChevronDown size={ICON_SIZE.xs} className="text-ink-3" />
           </Button>
         }
@@ -624,6 +769,9 @@ function ZoomControls() {
           aria-label={t('topbar.fitCanvas')}
           // e2e 的稳定锚点（选择器不认 aria-label / 文案，web/AGENTS.md）
           data-fit-canvas
+          // 窄于 900 收起：缩放菜单里有同一条「适应画布」、⌘1 也在，顶栏三段放不下时
+          // 这一颗是右段唯一能让的（ADR 0101 §8，e2e/topbar-narrow.spec.ts）
+          className="max-[899px]:hidden"
         >
           <Maximize2 size={ICON_SIZE.md} />
         </Button>
@@ -643,7 +791,8 @@ function ExportButton() {
         onClick={() => useUiStore.getState().setExportOpen(true)}
       >
         <Download size={ICON_SIZE.md} />
-        {t('topbar.export')}
+        {/* 窄于 900 只留图标：文字进读屏（sr-only），按钮的可达名不变 */}
+        <span className="max-[899px]:sr-only">{t('topbar.export')}</span>
       </Button>
     </Tip>
   )

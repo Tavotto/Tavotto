@@ -28,6 +28,7 @@ import { useUiStore } from '@/store/uiStore'
 import { dirTail } from '@/lib/pathDisplay'
 import { FormRow } from './FormRow'
 import { InlineWarning } from './settings/SettingRow'
+import { emitLayoutSaved } from '@/lib/layoutSaved'
 import { Button } from './ui/Button'
 import { Dialog } from './ui/Dialog'
 import { TextInput } from './ui/Input'
@@ -157,6 +158,10 @@ export function LayoutDialog() {
         baseRevision,
         toProject ? { target: 'project' } : undefined,
       )
+      // 写成了：立刻说「排版写成了」，时间线打「保存」点（ADR 0101 §7）——在后面任何一步
+      // （关对话框、记账、状态条）之前，与它们的成败无关（Codex #679）；点属于点下另存为的
+      // 那一份（`ctx.timeline`）。存进项目的是项目文件，另存为画布文件的是画布文件
+      emitLayoutSaved(toProject ? 'project_file' : 'layout_file', { ctx: ctx.timeline })
       // await 之后（清单见 saveContext.ts）：对话框是此刻界面上的东西，切走了就不替别人关——
       // 先判，下面记账会改绑定，改完之后 ctx 本来就不再「当前」
       ifStillCurrent(ctx, () => setOpen(false))

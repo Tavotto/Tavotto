@@ -36,6 +36,8 @@ import { useDocumentStore } from '@/store/documentStore'
 import { findFigurePanel } from '@/store/workspace'
 import type { FilenameReason } from '@/lib/exportName'
 import { filenameProblem } from '@/lib/exportRequest'
+import { markMoment } from '@/lib/timelineCheckpoint'
+import { currentTimelineCtx } from '@/lib/timelineContext'
 
 /** 轮询间隔。SSE 通的时候它几乎不出场；不通的时候它是唯一的通道 */
 const POLL_MS = 600
@@ -85,6 +87,12 @@ interface ExportState {
    * `null` = 这个标签页此刻没有自己的作业，**任何快照都不收**。
    */
   ownedJobId: string | null
+  /**
+   * 起这次导出那一刻的时间线上下文（项目代际 + 排版 id）。导出要跑很久，完成时用户
+   * 可能已经在同项目里换了排版（换排版不调 `resetExportState`）：「导出」点只打给
+   * 被导出的那一份，换走了就不打（Codex #679，`markMoment` 的 ctx）。
+   */
+  momentCtx: string | null
 }
 
 export const useExportStore = create<ExportState>(() => ({
@@ -95,6 +103,7 @@ export const useExportStore = create<ExportState>(() => ({
   startedRevision: null,
   editedDuringExport: false,
   ownedJobId: null,
+  momentCtx: null,
 }))
 
 /** 请求成形 + 就地校验。**不发网络**，输入框每敲一个字都可以调。 */
@@ -153,6 +162,9 @@ export function applyExportJob(job: ExportJob): void {
   if (s.job && s.job.job_id === job.job_id && TERMINAL.has(s.job.status)) return
   const terminal = TERMINAL.has(job.status)
   if (terminal) stopPolling()
+  // 排版时间线的关键时刻（ADR 0101）：导出**交付了文件**的那一刻打一个点。
+  // 上面那道闸保证同一个作业只会进一次终局，所以这里不会重复打
+  if (job.status === 'done' || job.status === 'partial') void markMoment('export', s.momentCtx)
   useExportStore.setState({
     job,
     running: !terminal,
@@ -211,6 +223,7 @@ export async function runExport(input: ExportRequestInput): Promise<ExportJob | 
     editedDuringExport: false,
     // 起之前先清空归属：这一刻起，旧作业的迟到快照一律不收
     ownedJobId: null,
+    momentCtx: currentTimelineCtx(),
   })
   const mine = ++generation
   let job: ExportJob

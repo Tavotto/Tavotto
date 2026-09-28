@@ -5,7 +5,7 @@ import { msg } from '@/i18n'
 import { Search } from '@/components/ui/icons'
 import { rankCommands, type PaletteSection } from '@/lib/commandRanking'
 import { ICON_SIZE } from '@/components/ui/Icon'
-import { cn, MOD } from '@/lib/utils'
+import { ALT, cn, MOD } from '@/lib/utils'
 import {
   addSubLabels,
   addText,
@@ -16,6 +16,7 @@ import {
   runManualSave,
   selectAll,
   ungroupSelected,
+  startNamedNode,
 } from '@/store/actions'
 import { canCycleOverlapSelection, cycleOverlapSelection } from '@/canvas/interactions'
 import { resetHints, resetTutorial, runTutorialEntry, tutorialEntry } from '@/lib/onboarding/tutorial'
@@ -109,7 +110,8 @@ const COMMANDS: Command[] = [
   { id: 'save-document', shortcut: `${MOD}S`, run: () => void runManualSave() },
   { id: 'save-layout', shortcut: `⇧${MOD}S`, run: () => ui().setLayoutOpen(true, 'save') },
   { id: 'load-layout', run: () => ui().setLayoutOpen(true, 'load') },
-  { id: 'versions', run: () => ui().setVersionsOpen(true) },
+  { id: 'versions', shortcut: `⇧${MOD}H`, run: () => ui().setVersionsOpen(true) },
+  { id: 'save-named-version', shortcut: `${ALT}${MOD}S`, run: startNamedNode },
   { id: 'styles', run: () => ui().setStylesOpen(true) },
   { id: 'new-doc', run: () => void newBlankDocument() },
   { id: 'add-text', shortcut: 'T', run: () => void addText() },

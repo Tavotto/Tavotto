@@ -149,6 +149,24 @@ def main(argv: list[str] | None = None) -> int:
                 ),
                 args.repeat,
             )
+            # 排版时间线（ADR 0101）：2 分钟一次的自动节点每次追加多大、列表多慢、
+            # 挂一张缩略图多慢。条目大小 ≈ 文件每次增长多少（到字节上限之前）。
+            vpath = m.VERSIONS_DIR / f"bench{n}.json"
+            row["version_file_bytes_at_cap"] = vpath.stat().st_size
+            row["version_entry_bytes"] = len(
+                atomicio.dumps_json({"id": "v0-0", "name": "x", "ts": 0, "auto": True, "doc": doc})
+            )
+            row["version_list_ms"] = med(
+                lambda: client.get(f"/api/versions/bench{n}?sketch=40&sketchText=24"), args.repeat
+            )
+            last = client.get(f"/api/versions/bench{n}").get_json()["versions"][-1]["id"]
+            thumb = b"\x89PNG" + b"\0" * 12_000  # 与前端合成的 240 px 缩略图同一量级
+            row["version_thumb_put_ms"] = med(
+                lambda: client.put(
+                    f"/api/versions/bench{n}/{last}/thumb", data=thumb, content_type="image/png"
+                ),
+                args.repeat,
+            )
             rows.append(row)
             print(json.dumps(row, ensure_ascii=False), flush=True)
     if args.json:
