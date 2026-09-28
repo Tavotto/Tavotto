@@ -13,6 +13,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { trackPointer } from '@/canvas/interactions'
 import { HomeButton } from '@/components/ProjectSwitcher'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { usePickerHistory } from '@/hooks/usePickerHistory'
@@ -117,6 +118,39 @@ describe('离开编辑器之前的收尾', () => {
     expect(savedX()).toBe(77)
   })
 
+  // Codex #661 P1：拖动中按浏览器「前进」进 Picker。trackPointer 的监听挂在 window 上、
+  // 工作台卸载后还活着——不收的话在 Picker 上松手才提交，那一笔落在冲刷之后
+  it.each([
+    ['showPicker', () => useProjectStore.getState().showPicker()],
+    ['dropProject（项目失效退回 Picker）', () => useProjectStore.getState().dropProject()],
+    [
+      '换项目（外部交接可能在拖动中到达）',
+      () =>
+        useProjectStore
+          .getState()
+          .adoptOpenedProject({ ...PROJECT, id: 'pB', name: 'B' })
+          .catch(() => {}),
+    ],
+  ])('进行中的指针拖动在 %s 时按取消收掉，松手不再提交', async (_name, leave) => {
+    const ends: boolean[] = []
+    const down = { clientX: 0, clientY: 0, nativeEvent: new MouseEvent('pointerdown') }
+    trackPointer(down as never, {
+      onMove: () => {},
+      onEnd: (_moved, _ev, end) => {
+        ends.push(end.cancelled)
+        if (!end.cancelled) moveTo(99)
+      },
+    })
+    window.dispatchEvent(new MouseEvent('pointermove', { clientX: 40, clientY: 0 }))
+    const x = useDocumentStore.getState().doc.objects[0]?.x
+    await leave()
+    expect(ends).toEqual([true])
+    window.dispatchEvent(new MouseEvent('pointerup', { clientX: 40, clientY: 0 }))
+    expect(ends).toEqual([true]) // 监听已摘，Picker 上松手什么都不发生
+    expect(x).toBe(10)
+    expect(savedX() ?? 10).toBe(10) // 冲刷进去的也不是那一笔
+  })
+
   it('切换进行中什么都不做：不冲刷、不动 phase、不占历史', () => {
     useProjectStore.setState({ switching: true })
     moveTo(5)
@@ -178,6 +212,26 @@ describe('浏览器历史', () => {
     act(() => useProjectStore.getState().returnToCurrent())
     expect(back).toHaveBeenCalledTimes(1)
     back.mockRestore()
+  })
+
+  // Codex #661 P2：停在 Picker 格上刷新。init() 把 phase 从 loading 定成 open 时不能退那一格
+  it('停在 Picker 格上刷新：留在 Picker，不消耗历史', () => {
+    window.history.pushState({ tavottoPicker: true }, '')
+    useProjectStore.setState({ phase: 'loading' })
+    const back = vi.spyOn(window.history, 'back').mockImplementation(() => {})
+    act(() => useProjectStore.setState({ phase: 'open', project: PROJECT })) // init() 落定
+    expect(useProjectStore.getState().phase).toBe('none')
+    expect(back).not.toHaveBeenCalled()
+    act(() => useProjectStore.getState().returnToCurrent()) // 项目照旧开着，能回去
+    expect(useProjectStore.getState().phase).toBe('open')
+    expect(back).toHaveBeenCalledTimes(1)
+    back.mockRestore()
+  })
+
+  it('不在 Picker 格上刷新：照常进编辑器', () => {
+    useProjectStore.setState({ phase: 'loading' })
+    act(() => useProjectStore.setState({ phase: 'open', project: PROJECT }))
+    expect(useProjectStore.getState().phase).toBe('open')
   })
 
   it('没有当前项目时后退不强行回编辑器（409 退回 Picker 的那条路）', () => {

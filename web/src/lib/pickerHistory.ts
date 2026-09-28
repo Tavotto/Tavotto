@@ -7,8 +7,9 @@
  *   * 后退到非 Picker 格而界面还停在 Picker：回当前项目（`returnToCurrent`）；
  *   * 前进到 Picker 格而界面在编辑器：再去一次 Picker（此时已在 Picker 格上，不再 push）；
  *   * 从 Picker 走别的路回到编辑器（「返回当前项目」/ 打开一个项目）：把那一格退掉，
- *     免得之后按一次后退什么都不发生。
- * 四条都在 `App.tsx` 的 `usePickerHistory` 里接线；这里只管记号本身。
+ *     免得之后按一次后退什么都不发生。只认 Picker → 编辑器这一种迁移；
+ *   * 停在 Picker 格上刷新：启动探测（loading → open）改判回 Picker，不退那一格（Codex #661）。
+ * 五条都在 `hooks/usePickerHistory.ts` 里接线；这里只管记号本身。
  */
 const MARK = 'tavottoPicker'
 

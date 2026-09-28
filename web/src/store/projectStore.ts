@@ -23,6 +23,7 @@ import {
 } from '@/lib/projectDocs'
 import { currentProjectId, setCurrentProjectId } from '@/lib/session'
 import { pushPickerEntry } from '@/lib/pickerHistory'
+import { cancelActivePointerGesture } from '@/canvas/interactions'
 import { finishActiveGesture } from '@/store/gestureCoordinator'
 import { openRecentDocument } from '@/store/actions'
 import { useAssetBrowseStore } from '@/store/assetBrowseStore'
@@ -155,9 +156,24 @@ async function restoreProjectDocument(ref: ProjectDocumentRef): Promise<boolean>
   }
 }
 
+/**
+ * 离开当前文档（去 Picker / 换项目 / 项目失效）之前，把还开着的手势收掉，**再**冲刷。
+ *
+ *  - 指针手势（拖动 / 缩放 / 框选 / 绘制）按取消处理，与拖动中按 Esc 同一条出口：
+ *    `trackPointer` 的监听挂在 window 上、工作台卸载后还活着，不收的话用户在 Picker 上
+ *    松手才提交——那时冲刷已经做完、自动保存的订阅也摘了，这一笔只在内存里（Codex #661）。
+ *  - 属性栏的连续编辑（安静计时器）按完成处理：卸载时它只注销不收尾，事务会悬着。
+ */
+function settleGesturesBeforeLeaving(): void {
+  cancelActivePointerGesture()
+  finishActiveGesture()
+}
+
 /** 换项目时把属于旧项目的前端会话状态全部丢掉。 */
 async function resetForNewProject() {
-  // 1. 冲刷当前文档的自动保存（切走的文档可从「最近文档」取回）
+  // 1. 冲刷当前文档的自动保存（切走的文档可从「最近文档」取回）；手势先收掉，
+  //    否则松手那一笔会落进换上来的空白文档
+  settleGesturesBeforeLeaving()
   flushAutosave()
   // 2. 清选择 / 图内编辑态 / 渲染缓存
   useSelectionStore.getState().set([])
@@ -449,10 +465,10 @@ export const useProjectStore = create<ProjectState>((set, get) => {
   showPicker: () => {
     if (get().switching) return
     // 去 Picker = 工作台整个卸载：自动保存的防抖计时器被取消、beforeunload 兜底被摘掉，
-    // 开着的连续编辑（改字号的安静计时器）只注销不收尾。所以离开之前先把那一轮收干净、
+    // 开着的手势（拖动、改字号的安静计时器）不会自己收尾。所以离开之前先把它们收干净、
     // 再立刻冲刷一次——防抖窗口里的最后一下改动，不能等到用户在 Picker 上关掉窗口才发现没了。
     // 与切项目（`resetForNewProject`）、`dropProject` 是同一句 `flushAutosave()`。
-    finishActiveGesture()
+    settleGesturesBeforeLeaving()
     flushAutosave()
     set({ phase: 'none' })
     pushPickerEntry()
@@ -474,6 +490,7 @@ export const useProjectStore = create<ProjectState>((set, get) => {
     if (get().phase === 'none' && !get().project && !currentProjectId()) return
     // 编辑中的文档先落本机兜底副本。此刻磁盘那一份必然写不进去（同样 409），
     // 但 flushAutosave 绝不会因为写盘失败去清本机副本，改动不会丢。
+    settleGesturesBeforeLeaving()
     flushAutosave()
     // 先冲刷再忘掉 pj：反过来的话这份自动保存会落到后端的默认项目里去。
     setCurrentProjectId(null)
