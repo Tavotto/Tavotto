@@ -221,7 +221,11 @@ def test_pip_in_a_tavotto_environment_caches_inside_the_data_dir(fake_home, tmp_
     code, out = deprepair._run_pip(
         [py, "-m", "pip", "cache", "dir"], deprepair.threading.Event(), None
     )
-    assert code == "" and out.strip().splitlines()[-1] == expected, out
+    # Windows 上 pip 报的路径被规范成小写（`c:\users\…`）：比的是同一个路径，不是同一串字符
+    got = out.strip().splitlines()[-1] if out.strip() else ""
+    assert code == "" and os.path.normcase(os.path.normpath(got)) == os.path.normcase(
+        os.path.normpath(expected)
+    ), out
     rc, out = deprepair._run([py, "-m", "pip", "config", "list"], 60)
     assert rc == 0 and "pypi.example.invalid" in out, "用户的 pip 配置被一起屏蔽了"
 
@@ -255,8 +259,11 @@ def test_matplotlib_in_a_tavotto_environment_caches_inside_the_data_dir(fake_hom
 def test_an_existing_user_matplotlib_dir_is_kept(fake_home, tmp_path):
     """用户已经有自己的 matplotlib 目录（里面可能有 matplotlibrc / stylelib）：不改道，受管环境
     渲染他的脚本时认得他的配置；我们不在数据目录外**新建**任何东西。"""
-    mine = fake_home / ".matplotlib"
-    mine.mkdir()
+    # 平台上 matplotlib 真正读配置的那个位置（Linux / FreeBSD 是 XDG 的 `~/.config/matplotlib`，别处
+    # `~/.matplotlib`）：写死 `~/.matplotlib` 在 Linux 上量的是 matplotlib 根本不读的目录
+    mine = Path(runtime._user_matplotlib_dirs()[0])
+    assert str(mine).startswith(str(fake_home)), "前提：假家目录生效"
+    mine.mkdir(parents=True)
     (mine / "matplotlibrc").write_text("lines.linewidth: 7\n", encoding="utf-8")
     py = _owned_python(tmp_path)
     env = runtime.owned_env(py)
