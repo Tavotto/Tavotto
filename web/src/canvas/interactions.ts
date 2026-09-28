@@ -1393,10 +1393,11 @@ export function guardStale<E extends { type: string; stopPropagation(): void; pr
  * `inFigureMoveOf`、只读同一份 manifest 事实，别在别处另写一份「谁能拖」。
  *
  * - `series`：数据系列（曲线、散点、柱、误差棒、等值线……）——位置就是数据，按设计不拖；
- * - `annotationArrow`：带文字的标注的箭头——尖钉在数据点上、尾巴跟着文字走，拖文字；
+ * - `annotationArrow`：带文字的标注的箭头（manifest `arrow_of`）——尖钉在数据点上、尾巴跟着
+ *   文字走，拖文字；别的给不出端点的箭头归 `unsupported`；
  * - `legendEntry`：图例项跟着图例走；`ticks`：刻度文字跟着刻度走；
  * - `axisLabel3d`：3D 轴标题的位置由视角算，属性页调它离轴的距离；
- * - `pixelCoords`：按像素 / 字号单位定位的文字或插框，换分辨率导出时会漂，不宣称可拖；
+ * - `pixelCoords`：按像素 / 字号单位或别的对象定位的文字，换分辨率导出时会漂，不宣称可拖；
  * - `hostPlaced`：次坐标轴 / 寄生轴，落位由宿主子图决定（引擎给了 `position` 的理由码）；
  * - `unsupported`：其余（表格、认不出来的 Artist）——暂不支持，说实话。
  */
@@ -1424,7 +1425,9 @@ const SERIES_ROLES = new Set([
 
 export function inFigureImmovableReason(el: ManifestElement): ImmovableReason {
   if (SERIES_ROLES.has(el.role)) return 'series'
-  if (el.role === 'arrow_patch') return 'annotationArrow'
+  // 只有「属于一段有字的标注」的箭头才是拖文字的那回事；给不出端点的独立箭头
+  // （`FancyArrowPatch(path=…)`）、坐标系逆算不回去的纯箭头注释都没有文字可拖
+  if (el.role === 'arrow_patch') return el.arrow_of ? 'annotationArrow' : 'unsupported'
   if (el.role === 'legend_text') return 'legendEntry'
   if (el.role === 'ticks' || el.role === 'ticklabel') return 'ticks'
   if (el.role === 'axis_label') return 'axisLabel3d'

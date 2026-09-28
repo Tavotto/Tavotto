@@ -657,7 +657,7 @@
       "axisLabel3d": "A 3D axis title is placed by the view angle and can’t be dragged; adjust its distance from the axis in the inspector",
       "hostPlaced": "“{{label}}” is placed by its host axes and moves with it — drag the host axes instead",
       "legendEntry": "Legend entries move with the legend — drag the legend itself",
-      "pixelCoords": "“{{label}}” is positioned in pixels or font units and would drift at another export resolution, so it can’t be dragged yet",
+      "pixelCoords": "“{{label}}” is positioned in pixels, font units or relative to another object, so a dragged position would drift at another export resolution or when that object changes; it can’t be dragged yet",
       "series": "“{{label}}” is placed by its data and can’t be dragged; to move the whole axes, drag an empty spot in it or select it in the element tree",
       "ticks": "Tick labels follow their ticks and can’t be dragged on their own; change ticks in the inspector",
       "unsupported": "Dragging “{{label}}” isn’t supported yet"

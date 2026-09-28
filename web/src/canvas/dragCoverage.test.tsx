@@ -234,7 +234,7 @@ describe('按设计不能拖的元素：拖起来才说为什么，不写项目'
     ['errorbar', 'series'],
     ['stem_series', 'series'],
     ['collection', 'series'],
-    ['arrow_patch', 'annotationArrow'],
+    ['arrow_patch', 'unsupported'],
     ['legend_text', 'legendEntry'],
     ['ticklabel', 'ticks'],
     ['axis_label', 'axisLabel3d'],
@@ -243,6 +243,16 @@ describe('按设计不能拖的元素：拖起来才说为什么，不写项目'
     ['artist', 'unsupported'],
   ])('%s → %s', (role, reason) => {
     expect(inFigureImmovableReason({ ...lineEl, role })).toBe(reason)
+  })
+
+  it('箭头：属于有字标注的（arrow_of）说「拖文字」，给不出端点的独立箭头只说暂不支持', () => {
+    const arrow = { ...lineEl, role: 'arrow_patch' }
+    expect(inFigureImmovableReason({ ...arrow, gid: 'axes_0.texts_1.arrow', arrow_of: 'axes_0.texts_1' })).toBe(
+      'annotationArrow',
+    )
+    // `FancyArrowPatch(path=…)` 与坐标系逆算不回去的纯箭头注释：没有文字可拖，gid 形状不作数
+    expect(inFigureImmovableReason({ ...arrow, gid: 'axes_0.arrows_2' })).toBe('unsupported')
+    expect(inFigureImmovableReason({ ...arrow, gid: 'axes_0.texts_3.arrow' })).toBe('unsupported')
   })
 })
 
@@ -281,6 +291,65 @@ describe('插图：挪过的跟着宿主走，没挪过的由定位器带着走'
     expect(v[1]).toBeCloseTo(INSET_POS[1] - dfy, 4)
     expect(v[2]).toBeCloseTo(INSET_POS[2], 9)
     expect(past()).toHaveLength(1)
+  })
+
+  it('插图套插图：外层没挪过（跟定位器走），挪过的内层照样写同样的位移；插图里挪过的标题也跟', async () => {
+    const inner: ManifestElement = {
+      ...insetEl,
+      gid: 'axes_2',
+      label: '插图 2',
+      bbox: [0.55, 0.32, 0.08, 0.08],
+      editable: [{ prop: 'position', type: 'rect', value: [0.55, 0.6, 0.08, 0.08] }],
+      inset_of: 'axes_1',
+    }
+    manifest.elements.push(inner)
+    try {
+      await setup([
+        { gid: 'axes_2', prop: 'position', value: [0.55, 0.6, 0.08, 0.08] },
+        { gid: 'axes_1.title', prop: 'pos_frac', value: [0.6, 0.3] },
+      ])
+      startAxesDrag(down(0, 0), livePanel(), axesEl, layout, 'move')
+      dragTo(40, 20)
+      fire('pointerup', 40, 20)
+      const [dfx, dfy] = [40 / layout.width, 20 / layout.height]
+      expect(overrideOf('axes_1', 'position'), '没挪过的外层不多写').toBeUndefined()
+      expect(overrideOf('axes_2', 'position')![0]).toBeCloseTo(0.55 + dfx, 4)
+      expect(overrideOf('axes_2', 'position')![1]).toBeCloseTo(0.6 - dfy, 4)
+      expect(overrideOf('axes_1.title', 'pos_frac')![0]).toBeCloseTo(0.6 + dfx, 4)
+      expect(past()).toHaveLength(1)
+    } finally {
+      manifest.elements.pop()
+    }
+  })
+
+  it('插图自己的随行色条轴（平级、固定落位）跟着宿主走，且单独预览', async () => {
+    const cbax: ManifestElement = {
+      ...axesEl,
+      gid: 'axes_5',
+      label: '色条轴',
+      bbox: [0.72, 0.3, 0.02, 0.2],
+      editable: [{ prop: 'position', type: 'rect', value: [0.72, 0.5, 0.02, 0.2] }],
+      follow_gids: undefined,
+    }
+    const insetWithCbar = { ...insetEl, follow_gids: ['axes_5'] }
+    const i = manifest.elements.indexOf(insetEl)
+    manifest.elements.splice(i, 1, insetWithCbar)
+    manifest.elements.push(cbax)
+    try {
+      await setup()
+      const svg = document.querySelector('[data-element-svg="p1"] svg')!
+      const g = document.createElementNS('http://www.w3.org/2000/svg', 'g')
+      g.setAttribute('id', 'axes_5')
+      svg.appendChild(g)
+      startAxesDrag(down(0, 0), livePanel(), axesEl, layout, 'move')
+      dragTo(40, 20)
+      expect(tf('axes_5')).not.toBeNull()
+      fire('pointerup', 40, 20)
+      expect(overrideOf('axes_5', 'position')![0]).toBeCloseTo(0.72 + 40 / layout.width, 4)
+    } finally {
+      manifest.elements.pop()
+      manifest.elements.splice(i, 1, insetEl)
+    }
   })
 
   it('没挪过的插图不平白多一条 override', async () => {

@@ -415,3 +415,135 @@ def test_missing_private_api_falls_back_to_not_draggable():
     assert got["anchor"] == [False, False], got
     assert got["warnings"], "不支持时必须给 warning"
     assert got["moved"] is False and got["back"] is True, got
+
+
+# ---------------------------------------------------------------------------
+# 坏值先抛、再动 artist（Codex #681 P2）
+# ---------------------------------------------------------------------------
+
+_BAD_VALUE_DRIVER = """\
+import json
+import sys
+sys.path.insert(0, sys.argv[1])
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib.offsetbox import AnchoredText, AnnotationBbox, TextArea
+from matplotlib.patches import Rectangle
+
+import manifest
+import overrides
+
+fig, ax = plt.subplots(figsize=(4, 3), layout="constrained")
+ax.plot([0, 1], [0, 1], label="l")
+ax.legend(loc="upper left")
+ax.add_artist(AnchoredText("(a)", loc="upper right"))
+ax.add_artist(AnnotationBbox(TextArea("note"), (0.5, 0.5)))
+ax.add_patch(Rectangle((0.1, 0.1), 0.2, 0.2))
+st = overrides.FigState(fig)
+manifest.instrument(st)
+
+
+def snap():
+    m = {e["gid"]: e for e in manifest.build_manifest(st, "Bad")["elements"]}
+    ab = st.index["axes_0.artists_1"]
+    return {
+        "boxes": {g: e["bbox"] for g, e in m.items()},
+        "ab_align": [float(v) for v in ab._box_alignment],
+        "ab_xybox": [float(v) for v in ab.xybox],
+    }
+
+
+base = snap()
+out = {}
+for gid, prop in (
+    ("axes_0.artists_1", "pos_frac"),
+    ("axes_0.artists_0", "pos_frac"),
+    ("axes_0.legend", "loc_frac"),
+    ("axes_0.patches_0", "pos_frac"),
+):
+    bad = [{"gid": gid, "prop": prop, "value": [0.3]}]
+    # ① 第一次写就是坏值（Codex 的场景：外部改坏的项目）
+    warn = overrides.apply(st, bad)
+    overrides.apply(st, [])
+    first = snap() == base
+    # ② 先拖过一次、再被改坏
+    overrides.apply(st, [{"gid": gid, "prop": prop, "value": [0.4, 0.4]}])
+    warn2 = overrides.apply(st, bad)
+    overrides.apply(st, [])
+    same = first and snap() == base
+    if prop == "loc_frac":
+        # 图例的坏值要是留在位置模型的槽位里，之后改任何一条位置 prop 都会重抛
+        same = same and not overrides.apply(st, [{"gid": gid, "prop": "loc", "value": "lower right"}])
+        overrides.apply(st, [])
+    out[gid] = {"warned": bool(warn) and bool(warn2), "same": same}
+print(json.dumps(out))
+"""
+
+
+def test_malformed_drag_value_leaves_no_half_applied_state():
+    """坏值（长度不对）落到拖动 setter 上：给 warning，而且**动 artist 之前**就抛——之后的
+    空列表把图还原到逐位原样（热态 == 干净重放）。修前 AnnotationBbox 先改了对齐方式再抛，
+    这条 key 不进 applied，撤销还不回来。"""
+    proc = subprocess.run(
+        [WORKER_PY, "-c", _BAD_VALUE_DRIVER, str(ENGINE_DIR)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=180,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    got = json.loads(proc.stdout.strip().splitlines()[-1])
+    for gid, r in got.items():
+        assert r["warned"], f"{gid}：坏值必须给 warning"
+        assert r["same"], f"{gid}：坏值之后撤销没回到原样"
+
+
+_ARROW_DRIVER = """\
+import json
+import sys
+sys.path.insert(0, sys.argv[1])
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib.patches import FancyArrowPatch
+from matplotlib.path import Path
+
+import manifest
+import overrides
+
+fig, ax = plt.subplots(figsize=(4, 3))
+ax.plot([0, 1], [0, 1])
+ax.annotate("peak", xy=(0.5, 0.5), xytext=(0.2, 0.8), arrowprops={"arrowstyle": "->"})
+ax.annotate("", xy=(0.8, 0.2), xytext=(0.6, 0.4), arrowprops={"arrowstyle": "->"})
+ax.annotate("", xy=(0.8, 0.8), xytext=(15, 15), textcoords="offset pixels",
+            arrowprops={"arrowstyle": "->"})
+ax.add_patch(FancyArrowPatch(path=Path([(0.1, 0.1), (0.3, 0.2)]), arrowstyle="->",
+                             mutation_scale=10, transform=ax.transData))
+st = overrides.FigState(fig)
+manifest.instrument(st)
+m = {e["gid"]: e for e in manifest.build_manifest(st, "Arr")["elements"]}
+print(json.dumps({g: {"arrow_of": e.get("arrow_of"), "ends": "arrow_endpoints" in e}
+                  for g, e in m.items() if e["role"] == "arrow_patch"}))
+"""
+
+
+def test_only_arrows_of_text_annotations_name_their_text():
+    """`arrow_of` 只给「属于一段有字的标注」的箭头（前端据此说「拖文字」）；纯箭头注释、
+    坐标系逆算不回去的纯箭头注释、`FancyArrowPatch(path=…)` 都不给——它们没有文字可拖。"""
+    proc = subprocess.run(
+        [WORKER_PY, "-c", _ARROW_DRIVER, str(ENGINE_DIR)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=180,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    got = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert got["axes_0.texts_0.arrow"] == {"arrow_of": "axes_0.texts_0", "ends": False}, got
+    assert got["axes_0.texts_1.arrow"] == {"arrow_of": None, "ends": True}, got
+    assert got["axes_0.texts_2.arrow"] == {"arrow_of": None, "ends": False}, got
+    path_arrow = [g for g in got if ".arrows_" in g]
+    assert len(path_arrow) == 1 and got[path_arrow[0]] == {"arrow_of": None, "ends": False}, got

@@ -65,7 +65,8 @@
 拖过之后框**以左下角挂在写下的点上**（锚定框：lower left + borderpad 0 + figure 分数锚点；
 AnnotationBbox：box_alignment (0, 0) + `xybox` 按自己的坐标系逆算）。不保留原挂点再平移锚框：
 框的像素宽高随 dpi 不成比例地变（字形度量取整），预览按 72 dpi、manifest 按图的 dpi 成图，挂在
-右上角的框左下角两边差 0.1–0.3 mm（本排查实测，变异 E10 钉着）。原样记在 artist 上，撤销放回。
+右上角的框左下角两边差 0.1–0.3 mm（本排查实测，变异 E10 钉着）。原样记在 artist 上，撤销放回。落位要算的都**先算完再动 artist**：坏值（外部改坏的项目里长度不对的
+`pos_frac`）抛在半路的话，apply 把它收成 warning、不记进 applied，之后的空列表还不回来。
 
 `AnchoredOffsetbox.draw` 不开 SVG 组，前端的乐观预览找不到它的节点（框不跟手、松手才跳）。
 `manifest._svg_group` 给它包一层实例级 draw：只在 SVG 里多一个 `<g id=gid>`，别的后端的
@@ -78,7 +79,8 @@ AnnotationBbox：box_alignment (0, 0) + `xybox` 按自己的坐标系逆算）�
 「贴在父轴哪一边」的语义，后者由宿主 draw 代画），而 mpl_toolkits 插图、`make_axes_locatable`、
 `ImageGrid` 不再「宣称了、弹回去」。挪过的插图从此钉在图幅上：manifest 给插图带 `inset_of`
 （宿主 gid），前端拖宿主时由 `axesCompanions` 带着**挪过的**插图写同样的位移（SVG 里嵌在宿主的
-`<g>` 里，不单独预览）；没挪过的照旧由定位器带着走、不多写一条。
+`<g>` 里，不单独预览）；没挪过的照旧由定位器带着走、不多写一条。插图里还能套插图：沿 `inset_of`
+一路走完，走到的每一层里挪过的插图、插图里挪过的标题、插图自己的随行色条轴都一起写。
 
 ### 三、布局引擎下拖过的东西不许挤动排版：一张 pin 表
 
@@ -106,7 +108,7 @@ tight 布局下子图仍由 `PinnedTightLayoutEngine`（ADR 0042）钉住，不�
 | 理由 | 角色 | 说什么 |
 | --- | --- | --- |
 | `series` | 曲线、散点、柱、误差棒、茎叶、填充、等值线 / 集合、线组 | 位置由数据决定；要挪整个子图，拖子图空白处或在元素树里选中子图 |
-| `annotationArrow` | 带文字的标注的箭头 | 尖指向数据点、尾巴跟着文字走：拖文字 |
+| `annotationArrow` | 带文字的标注的箭头（manifest `arrow_of` 点名它所属的文字；给不出端点的独立箭头、坐标系逆算不回去的纯箭头注释没有它，归 `unsupported`） | 尖指向数据点、尾巴跟着文字走：拖文字 |
 | `legendEntry` | 图例项 | 跟着图例走：拖图例本身 |
 | `ticks` | 刻度组 / 单个刻度 | 跟着刻度走；刻度在属性页改 |
 | `axisLabel3d` | 3D 轴标题 | 位置由视角决定；属性页调它离轴的距离 |

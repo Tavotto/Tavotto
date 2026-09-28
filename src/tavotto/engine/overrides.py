@@ -1091,6 +1091,7 @@ def _place_patch(p, value) -> None:
     base = _patch_base_transform(p)
     p.set_transform(base)  # 先回到基准再量：这一段要幂等（重放 / 二次拖动）
     bb = p.get_window_extent()
+    # 坏值在这里抛时形状停在基准 transform 上 = 脚本原样，与干净重放同一个结果，不必挪前面
     tx, ty = pathgeom.frac_to_display(fig, float(value[0]), float(value[1]))
     dpi = float(fig.dpi)
     shift = ScaledTranslation((tx - bb.x0) / dpi, (ty - bb.y0) / dpi, fig.dpi_scale_trans)
@@ -1203,22 +1204,24 @@ def _place_offsetbox(a, value) -> None:
     """把框的左下角挂到 figure 分数 `value`（top-origin）上（见本节开头）。"""
     if not offsetbox_draggable(a):
         raise ValueError(f"{type(a).__name__} 的坐标系不支持拖动定位")
-    a.__dict__.setdefault("_mm_offsetbox_native", _offsetbox_native_state(a))
     fig = pathgeom.root_figure(a.get_figure())
+    # 可能失败的都在前面（坏值：长度不对、不是数、逆算不出来），**先算完再动 artist**：
+    # 抛在半路的话 apply 把它收成 warning、不记进 applied，之后的空列表也还不回来，
+    # 热态留着半截改动而干净重放没有（与 `_set_axes_position` 的顺序不变式同一条）
+    disp = pathgeom.frac_to_display(fig, float(value[0]), float(value[1]))
     if isinstance(a, AnchoredOffsetbox):
-        fx, fy = fig.transFigure.inverted().transform(
-            pathgeom.frac_to_display(fig, float(value[0]), float(value[1]))
-        )
+        fx, fy = (float(v) for v in fig.transFigure.inverted().transform(disp))
+    else:
+        tr = a._get_xy_transform(fig._get_renderer(), a.boxcoords)  # noqa: SLF001
+        fx, fy = (float(v) for v in tr.inverted().transform(disp))
+    a.__dict__.setdefault("_mm_offsetbox_native", _offsetbox_native_state(a))
+    if isinstance(a, AnchoredOffsetbox):
         a.loc = 3  # lower left
         a.borderpad = 0.0
-        a.set_bbox_to_anchor((float(fx), float(fy)), transform=fig.transFigure)
+        a.set_bbox_to_anchor((fx, fy), transform=fig.transFigure)
     else:
         a._box_alignment = (0.0, 0.0)  # noqa: SLF001
-        tr = a._get_xy_transform(fig._get_renderer(), a.boxcoords)  # noqa: SLF001
-        x, y = tr.inverted().transform(
-            pathgeom.frac_to_display(fig, float(value[0]), float(value[1]))
-        )
-        a.xybox = (float(x), float(y))
+        a.xybox = (fx, fy)
     a.stale = True
 
 

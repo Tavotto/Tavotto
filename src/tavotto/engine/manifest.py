@@ -4740,6 +4740,11 @@ def _measure_manifest(state: FigState, stem: str, arm, fig, renderer) -> dict:
         # xyann / xy，patch 每次 draw 按它们重定位——所以从注释算，不读 patch 上一帧
         # 的缓存）。有字的注释、坐标系逆算不回去的注释不出（`annotation_arrow_owner`）
         if el["role"] == "arrow_patch":
+            # 带文字的标注的箭头：位置归文字（尾巴从文字框算、尖钉在 xy），前端拖它时说
+            # 「拖文字」——得先知道它**属于**一段有字的标注，别按 gid 形状猜（ADR 0100）
+            owner = getattr(artist, "_mm_annotation", None)
+            if owner is not None and owner.get_text():
+                entry["arrow_of"] = el["gid"].rsplit(".", 1)[0]
             disp = None
             ann = annotation_arrow_owner(artist)
             try:
