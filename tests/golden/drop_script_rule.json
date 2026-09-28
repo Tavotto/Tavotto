@@ -1,10 +1,30 @@
 {
-  "_comment": "主页拖放「什么算脚本、打开哪个目录」的共享向量（严格同源对，docs/rules/repo/same-origin-pairs.md）。壳 src-tauri/src/drop_paths.rs::classify 与页面 web/src/lib/scriptImport.ts::dropTargetOf 各自与它比，不读对方源码。结论三档：script = 打开它的上级目录；folder = 打开它自己；unsupported = 不收。name 是拖进来的那一项的最后一段，on_disk 是它在磁盘上的真实类型（壳能 stat，页面只看得到路径串）。page 与 shell 不同的条目必须写 page_blind（页面为什么判不出），反过来也一样；posix_only 的条目 Windows 上建不出来（Win32 会削掉结尾的空格），壳那侧在 Windows 上跳过。on_disk = dir 的条目两侧另外各量一次带结尾分隔符的路径：页面看得见分隔符时必须与壳同为 folder。",
+  "_comment": "主页拖放「什么算脚本、打开哪个目录」的共享向量（严格同源对，docs/rules/repo/same-origin-pairs.md）。壳 src-tauri/src/drop_paths.rs::classify 与页面 web/src/lib/scriptImport.ts::dropTargetOf 各自与它比，不读对方源码。结论三档：script = 打开它的上级目录；folder = 打开它自己；unsupported = 不收。name 是拖进来的那一项的最后一段；on_disk 是它在磁盘上的真实类型：file / dir / symlink（symlink 时 link_to 给出目标的名字与类型，目标放在另一个目录里）。壳先 canonicalize 再判，所以链接按**目标**判、打开的是目标那一侧的目录；页面只看得到链接自己的路径串，不能 stat、不能解析链接。两侧不同的条目必须写 page_blind（页面为什么判不出），反过来也一样——「不同」指结论不同，或者是符号链接（结论相同时打开的目录也不同）；这条两侧的用例都断言，page_blind 的清单以这里为准。posix_only 的条目 Windows 上建不出来，壳那侧在 Windows 上跳过。on_disk = dir 的条目两侧另外各量一次带结尾分隔符的路径：页面看得见分隔符时必须与壳同为 folder。",
   "cases": [
-    { "name": "plot.py", "on_disk": "file", "shell": "script", "page": "script" },
-    { "name": "Plot.PY", "on_disk": "file", "shell": "script", "page": "script" },
-    { "name": "a..py", "on_disk": "file", "shell": "script", "page": "script" },
-    { "name": "图 1.py", "on_disk": "file", "shell": "script", "page": "script" },
+    {
+      "name": "plot.py",
+      "on_disk": "file",
+      "shell": "script",
+      "page": "script"
+    },
+    {
+      "name": "Plot.PY",
+      "on_disk": "file",
+      "shell": "script",
+      "page": "script"
+    },
+    {
+      "name": "a..py",
+      "on_disk": "file",
+      "shell": "script",
+      "page": "script"
+    },
+    {
+      "name": "图 1.py",
+      "on_disk": "file",
+      "shell": "script",
+      "page": "script"
+    },
     {
       "name": "plot.py ",
       "on_disk": "file",
@@ -12,12 +32,42 @@
       "page": "unsupported",
       "posix_only": "Win32 建文件时削掉结尾的空格，建出来的是 plot.py"
     },
-    { "name": ".py", "on_disk": "file", "shell": "unsupported", "page": "unsupported" },
-    { "name": "plot.py.txt", "on_disk": "file", "shell": "unsupported", "page": "unsupported" },
-    { "name": "fig.pdf", "on_disk": "file", "shell": "unsupported", "page": "unsupported" },
-    { "name": "data.CSV", "on_disk": "file", "shell": "unsupported", "page": "unsupported" },
-    { "name": "paper figs", "on_disk": "dir", "shell": "folder", "page": "folder" },
-    { "name": "论文 图", "on_disk": "dir", "shell": "folder", "page": "folder" },
+    {
+      "name": ".py",
+      "on_disk": "file",
+      "shell": "unsupported",
+      "page": "unsupported"
+    },
+    {
+      "name": "plot.py.txt",
+      "on_disk": "file",
+      "shell": "unsupported",
+      "page": "unsupported"
+    },
+    {
+      "name": "fig.pdf",
+      "on_disk": "file",
+      "shell": "unsupported",
+      "page": "unsupported"
+    },
+    {
+      "name": "data.CSV",
+      "on_disk": "file",
+      "shell": "unsupported",
+      "page": "unsupported"
+    },
+    {
+      "name": "paper figs",
+      "on_disk": "dir",
+      "shell": "folder",
+      "page": "folder"
+    },
+    {
+      "name": "论文 图",
+      "on_disk": "dir",
+      "shell": "folder",
+      "page": "folder"
+    },
     {
       "name": "report.py",
       "on_disk": "dir",
@@ -38,6 +88,66 @@
       "shell": "unsupported",
       "page": "folder",
       "page_blind": "页面不能 stat：没有扩展名的文件只看得出是目录的形状（打开时由后端的目录校验拒绝）"
+    },
+    {
+      "name": "alias.py",
+      "on_disk": "symlink",
+      "link_to": {
+        "name": "data.csv",
+        "on_disk": "file"
+      },
+      "shell": "unsupported",
+      "page": "script",
+      "page_blind": "页面不能解析符号链接：只看得到链接自己的名字与所在目录",
+      "posix_only": "Windows 建符号链接要开发者模式或管理员权限"
+    },
+    {
+      "name": "data.csv",
+      "on_disk": "symlink",
+      "link_to": {
+        "name": "real.py",
+        "on_disk": "file"
+      },
+      "shell": "script",
+      "page": "unsupported",
+      "page_blind": "页面不能解析符号链接：只看得到链接自己的名字与所在目录",
+      "posix_only": "Windows 建符号链接要开发者模式或管理员权限"
+    },
+    {
+      "name": "alias.py",
+      "on_disk": "symlink",
+      "link_to": {
+        "name": "real.py",
+        "on_disk": "file"
+      },
+      "shell": "script",
+      "page": "script",
+      "page_blind": "页面不能解析符号链接：只看得到链接自己的名字与所在目录（结论相同，但壳打开的是目标的上级目录）",
+      "posix_only": "Windows 建符号链接要开发者模式或管理员权限"
+    },
+    {
+      "name": "figs",
+      "on_disk": "symlink",
+      "link_to": {
+        "name": "paper",
+        "on_disk": "dir"
+      },
+      "shell": "folder",
+      "page": "folder",
+      "page_blind": "页面不能解析符号链接：只看得到链接自己的名字与所在目录（结论相同，但壳打开的是目标目录）",
+      "posix_only": "Windows 建符号链接要开发者模式或管理员权限"
+    },
+    {
+      "name": "figs.py",
+      "on_disk": "symlink",
+      "link_to": {
+        "name": "paper",
+        "on_disk": "dir"
+      },
+      "shell": "folder",
+      "page": "script",
+      "page_blind": "页面不能解析符号链接：只看得到链接自己的名字与所在目录",
+      "posix_only": "Windows 建符号链接要开发者模式或管理员权限"
     }
   ]
 }

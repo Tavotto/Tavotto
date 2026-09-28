@@ -226,10 +226,16 @@ mod tests {
         for (i, c) in cases.iter().enumerate() {
             let name = c["name"].as_str().unwrap();
             let shell = c["shell"].as_str().unwrap();
-            // 差异只许出现在明处：与页面不同 ⇔ 写了 page_blind
+            let kind = c["on_disk"].as_str().unwrap();
+            // 差异只许出现在明处：结论与页面不同、或者是符号链接（打开的目录必然不同）⇔ 写了 page_blind
             assert_eq!(
                 c.get("page_blind").is_some(),
-                c["page"].as_str().unwrap() != shell,
+                c["page"].as_str().unwrap() != shell || kind == "symlink",
+                "{name:?}"
+            );
+            // 符号链接在 Windows 上要权限才建得出来：一律 posix_only
+            assert!(
+                kind != "symlink" || c.get("posix_only").is_some(),
                 "{name:?}"
             );
             if cfg!(windows) && c.get("posix_only").is_some() {
@@ -239,21 +245,36 @@ mod tests {
             let parent = d.join(i.to_string());
             fs::create_dir(&parent).unwrap();
             let p = parent.join(name);
-            match c["on_disk"].as_str().unwrap() {
-                "file" => touch(&p),
-                "dir" => fs::create_dir(&p).unwrap(),
-                other => panic!("on_disk 只有 file / dir：{other}"),
-            }
+            let make = |p: &Path, kind: &str| match kind {
+                "file" => touch(p),
+                "dir" => fs::create_dir(p).unwrap(),
+                other => panic!("on_disk 只有 file / dir / symlink：{other}"),
+            };
+            // 壳按什么判、打开哪里：普通条目就是它自己；链接按目标（目标放在另一个目录里）
+            let judged = if kind == "symlink" {
+                let to = &c["link_to"];
+                let elsewhere = parent.join("target");
+                fs::create_dir(&elsewhere).unwrap();
+                let target = elsewhere.join(to["name"].as_str().unwrap());
+                make(&target, to["on_disk"].as_str().unwrap());
+                #[cfg(unix)]
+                std::os::unix::fs::symlink(&target, &p).unwrap();
+                target
+            } else {
+                make(&p, kind);
+                p.clone()
+            };
             let got = match classify(std::slice::from_ref(&p)) {
                 Some(DropTarget::Script {
                     folder, name: n, ..
                 }) => {
-                    assert_eq!(folder, display_path(&parent).unwrap(), "{name:?}");
-                    assert_eq!(n, name);
+                    let up = judged.parent().unwrap();
+                    assert_eq!(folder, display_path(up).unwrap(), "{name:?}");
+                    assert_eq!(n, name_of(&judged));
                     "script"
                 }
                 Some(DropTarget::Folder { folder, .. }) => {
-                    assert_eq!(folder, display_path(&p).unwrap(), "{name:?}");
+                    assert_eq!(folder, display_path(&judged).unwrap(), "{name:?}");
                     "folder"
                 }
                 Some(DropTarget::Unsupported { .. }) => "unsupported",
@@ -262,7 +283,7 @@ mod tests {
             assert_eq!(got, shell, "{name:?}");
             seen.insert(got);
             // 目录带结尾分隔符交来也一样（页面那侧同一条：看得见分隔符就与壳同一个结论）
-            if c["on_disk"] == "dir" {
+            if kind == "dir" {
                 let mut slashed = p.clone().into_os_string();
                 slashed.push(std::path::MAIN_SEPARATOR_STR);
                 assert!(

@@ -3,8 +3,8 @@
  * `tests/golden/drop_script_rule.json` 比，不读对方源码（壳那一侧是
  * `src-tauri/src/drop_paths.rs` 的 `the_script_rule_matches_the_golden_pair`）。
  *
- * 页面只看得到路径串、不能 stat，所以量的是 golden 的 `page` 一栏；与壳不同的条目
- * golden 里必须写明 `page_blind`，没写就得与 `shell` 相同——差异只许出现在明处。
+ * 页面只看得到路径串、不能 stat、不能解析符号链接，所以量的是 golden 的 `page` 一栏；与壳
+ * 不同的条目 golden 里必须写明 `page_blind`，没写就得与 `shell` 相同——差异只许出现在明处。
  */
 import { describe, expect, it } from 'vitest'
 
@@ -37,7 +37,8 @@ function verdict(name: string): string {
 describe('拖放的脚本判据 ↔ 壳的 drop_paths::classify', () => {
   it('golden 自洽：页面与壳不同的条目、且只有这些条目写了 page_blind', () => {
     expect(cases.length).toBeGreaterThan(10)
-    for (const c of cases) expect(!!c.page_blind, c.name).toBe(c.page !== c.shell)
+    // 「不同」= 结论不同，或者是符号链接（结论相同时两侧打开的目录也不同：壳按目标、页面按链接）
+    for (const c of cases) expect(!!c.page_blind, c.name).toBe(c.page !== c.shell || c.on_disk === 'symlink')
     // 三档都真的出现过，否则某一档判错了也量不出来
     expect(new Set(cases.map((c) => c.page))).toEqual(new Set(['script', 'folder', 'unsupported']))
   })
