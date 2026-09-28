@@ -380,6 +380,40 @@ function followRedirects(gen: string, id: string | null): string | null {
   for (let i = 0; cur && redirects.has(`${gen}|${cur}`) && i < 8; i++) cur = redirects.get(`${gen}|${cur}`)!
   return cur
 }
+/** `followRedirects` 的反方向：同一个代次里、我们自己把哪一条改绑成了 `id`，一路倒回最初那一条 */
+function redirectRoot(gen: string, id: string): string {
+  let cur = id
+  for (let i = 0; i < 8; i++) {
+    let from: string | null = null
+    for (const [k, v] of redirects) if (v === cur && k.startsWith(`${gen}|`)) from = k.slice(gen.length + 1)
+    if (from === null) break
+    cur = from
+  }
+  return cur
+}
+
+/**
+ * 「这一格排进去的样式改动属于谁」：样式面板按它给图的那组行重挂（`StylePanel`），它变了，挂着的
+ * 还没落定的值（`usePendingWrites`）就不属于眼前这张图了（#688）。维度逐条说清：
+ *
+ * * **代次**（`documentGeneration`：项目 · 文档 · 载入代次 · 画布）——与 `editBoundStyle` 作废排队
+ *   写入的判据同一份；
+ * * **图**：`figKey` = 面板 id + 素材。换素材（`replacePanelAsset`）保留 id、换文件，是另一张图；
+ * * **绑定**：绑的是哪一条（解绑 / 脱离 = 没有）。改绑到别的样式、解绑之后，挂着的值说的是另一条
+ *   样式；但**我们自己**在这一代次里做的改绑（改内置样式时复制成副本并改绑，`redirects`）倒回最初
+ *   那一条——那是同一串编辑，排在后面的那一笔照样顺着落到副本上，不能因此丢掉它的挂起值。
+ *
+ * 不在里面的：渲染变体、同一素材的重跑 / 新一版 manifest。挂起值是「排进这条样式的值」，与画成
+ * 哪一版无关；把它们算进来，引擎每画回一版就清一次，连点两下的 #662 又回来了。
+ */
+export function styleEditScope(
+  s: Pick<ReturnType<typeof useDocumentStore.getState>, 'documentId' | 'loadSeq' | 'activeCanvasId' | 'doc'>,
+  panel: Pick<PanelObject, 'id' | 'fileId'>,
+): string {
+  const gen = documentGeneration(s)
+  const binding = canvasStyle(s.doc)
+  return JSON.stringify([gen, figKey(panel), binding ? redirectRoot(gen, binding.id) : null])
+}
 
 /** 测试用：清掉会话记账与队列状态 */
 export function resetStyleBindingSession(): void {
