@@ -244,7 +244,7 @@ describe('六个状态', () => {
       ['Mystery.pdf', '需试运行'],
       ['Dup.pdf', '有冲突'],
       ['Gone.pdf', '源脚本丢失'],
-      ['Photo.png', '仅排版'],
+      ['Photo.png', '仅版面'],
     ]
     for (const [id, label] of expected) {
       const row = rowOf(id)
@@ -269,7 +269,7 @@ describe('六个状态', () => {
     expect(strip).toContain('总计')
     expect(strip).toContain('可编辑')
     expect(strip).toContain('待连接')
-    expect(strip).toContain('仅排版')
+    expect(strip).toContain('仅版面')
     // 待连接 = auto_linkable + needs_probe + conflict + source_missing = 4
     expect(strip.replace(/\s/g, '')).toContain('待连接4')
   })
@@ -279,8 +279,11 @@ describe('六个状态', () => {
     const row = rowOf('Photo.png')!
     expect(row.querySelector('[role="alert"]')).toBeNull()
     expect(row.textContent).not.toMatch(/失败|错误|损坏/)
-    // 说清它还能干什么，而不是只说它不能干什么
-    expect(row.textContent).toMatch(/排版|裁剪|导出/)
+    // 「说清它还能干什么」原先也断言在这一行上，但 2026-09-11 设计包之后行里不再列原因句，
+    // 那条断言只是被状态名「仅排版」里的「排版」二字碰巧满足（2026-09-26 改名「仅版面」后现形）。
+    // 那句话现在由素材卡与图内能力说明负责，看护在 AssetBrowser.readiness.test.tsx /
+    // panelCapabilityNote.test.tsx；这里只守「不画成错误」。
+    expect(row.textContent).toContain('仅版面')
   })
 })
 
@@ -538,14 +541,14 @@ describe('正常状态', () => {
     const text = dialog().textContent ?? ''
     expect(text).toContain('2 张图已就绪')
     expect(text).not.toContain('待连接')
-    expect(text).not.toContain('仅排版')
+    expect(text).not.toContain('仅版面')
   })
 
   it('有待连接项时照旧摆四个格子（那时零和非零都要看得见）', async () => {
     await open(reportOf(SIX))
     const text = dialog().textContent ?? ''
     expect(text).toContain('待连接')
-    expect(text).toContain('仅排版')
+    expect(text).toContain('仅版面')
     expect(text).not.toContain('已就绪')
   })
 

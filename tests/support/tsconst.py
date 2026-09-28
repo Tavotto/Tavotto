@@ -42,6 +42,8 @@ __all__ = [
     "exported_number",
     "exported_string",
     "exported_string_array",
+    "exported_string_union",
+    "function_string_switch",
 ]
 
 
@@ -371,3 +373,133 @@ def exported_interface_members(src: str, name: str) -> dict[str, str]:
     if not members:
         raise AssertionError(f"{name} 解析成空的——判据本身坏了")
     return members
+
+
+def exported_string_union(src: str, name: str) -> list[str]:
+    """`export type <name> = '…' | '…'` 的各个字符串字面量成员，按源码顺序。
+
+    同一条纪律：先抹注释与字符串，只认恰好一处 `export type <name> =`。右边只许「可选的前导
+    `|`、字符串字面量、`|`、空白」，其后这条声明必须结束（`_expect_statement_end`）——行尾注释里
+    的引号词已经被抹掉，不会被数进来；`string`、别的类型名、`& …` 一律红，不猜。
+    """
+    code, spans = blank_comments_and_strings(src)
+    decl = re.compile(r"\bexport\s+type\s+" + re.escape(name) + r"\b\s*=(?!=)")
+    hits = list(decl.finditer(code))
+    if len(hits) != 1:
+        raise AssertionError(
+            f"源码里找到 {len(hits)} 处 `export type {name} =`——判据只认恰好一处活声明"
+        )
+    starts = {a - 1: (a, b) for a, b in spans}  # 开引号的偏移 → 内容区间
+    pos = _skip_blank(code, hits[0].end(), starts)
+    if code[pos : pos + 1] == "|":
+        pos = _skip_blank(code, pos + 1, starts)
+    values: list[str] = []
+    while True:
+        if pos not in starts:
+            raise AssertionError(
+                f"{name} 的联合里有字符串字面量以外的成员：{src[pos : pos + 30]!r}——判据读不出确切闭集"
+            )
+        a, b = starts[pos]
+        values.append(src[a:b])
+        nxt = _skip_blank(code, b + 1, starts)
+        if code[nxt : nxt + 1] != "|":
+            _expect_statement_end(src, code, spans, name, b + 1, "联合类型")
+            break
+        pos = _skip_blank(code, nxt + 1, starts)
+    if len(values) != len(set(values)):
+        raise AssertionError(f"{name} 的联合里有重复成员：{values}")
+    return values
+
+
+def _skip_blank(code: str, pos: int, starts: dict[int, tuple[int, int]]) -> int:
+    """跳过空白（含被抹掉的注释），但停在字符串字面量的开引号上——抹干净的代码里引号也是空格。"""
+    while pos < len(code) and code[pos].isspace() and pos not in starts:
+        pos += 1
+    return pos
+
+
+def _matching(code: str, open_at: int) -> int:
+    """`code[open_at]` 是 `{` / `(` / `[`：返回与它配对的收尾括号的偏移（在抹干净的代码上配）。"""
+    depth = 0
+    for k in range(open_at, len(code)):
+        if code[k] in "{[(":
+            depth += 1
+        elif code[k] in "}])":
+            depth -= 1
+            if depth == 0:
+                return k
+    raise AssertionError(f"偏移 {open_at} 处的括号没有收尾")
+
+
+def function_string_switch(src: str, name: str) -> tuple[str, list[tuple[str, str, list[str]]]]:
+    """`function <name>(…) { switch (<判别式>) { case '…': … default: … } }` 的结构。
+
+    返回 `(判别式源码, [(case 标签, 该分支抹掉字面量后的代码, 该分支里的字符串字面量), …])`，
+    `default` 分支的标签记成 `""`。纪律：
+    - 只认恰好一处 `function <name>(`（注释 / 字符串里的不算）；
+    - 函数体**只有这一条** `switch` 语句（前后不许有别的语句——`return` 之后的 switch、
+      if 里的 switch 都算不可达 / 有条件，一律红）；
+    - `case` 只认 switch 体顶层、标签是单个字符串字面量；重复标签（第二个不可达）红。
+    """
+    code, spans = blank_comments_and_strings(src)
+    hits = list(re.finditer(r"\bfunction\s+" + re.escape(name) + r"\s*\(", code))
+    if len(hits) != 1:
+        raise AssertionError(f"源码里找到 {len(hits)} 处 `function {name}(`——判据只认恰好一处")
+    params_close = _matching(code, hits[0].end() - 1)
+    body_open = code.find("{", params_close)
+    if not re.fullmatch(r"\s*(?::[^{]*)?", code[params_close + 1 : body_open]):
+        raise AssertionError(f"{name} 的参数表与函数体之间读不出形状")
+    body_close = _matching(code, body_open)
+    sw = re.compile(r"\s*switch\s*\(").match(code, body_open + 1)
+    if sw is None:
+        raise AssertionError(f"{name} 的函数体第一条语句不是 switch")
+    disc_close = _matching(code, sw.end() - 1)
+    sw_open = code.find("{", disc_close)
+    if code[disc_close + 1 : sw_open].strip():
+        raise AssertionError(f"{name} 的 switch 判别式之后读不出形状")
+    sw_close = _matching(code, sw_open)
+    if code[sw_close + 1 : body_close].strip():
+        raise AssertionError(f"{name} 的 switch 之后还有语句——函数体只许这一条 switch")
+    discriminant = " ".join(code[sw.end() : disc_close].split())
+
+    starts = {a - 1: (a, b) for a, b in spans}
+    labels: list[tuple[str, int, int]] = []  # (标签, 分支代码起点, 标签起点)
+    depth, k = 0, sw_open + 1
+    while k < sw_close:
+        c = code[k]
+        if c in "{[(":
+            depth += 1
+        elif c in "}])":
+            depth -= 1
+        elif depth == 0 and (m := re.compile(r"\b(case|default)\b").match(code, k)):
+            if m.group(1) == "default":
+                colon = re.compile(r"\s*:").match(code, m.end())
+                if colon is None:
+                    raise AssertionError(f"{name} 的 default 后面不是冒号")
+                labels.append(("", colon.end(), k))
+                k = colon.end()
+                continue
+            lit = _skip_blank(code, m.end(), starts)
+            if lit not in starts:
+                raise AssertionError(
+                    f"{name} 的 case 标签不是单个字符串字面量：{src[k : k + 30]!r}"
+                )
+            a, b = starts[lit]
+            colon = re.compile(r"\s*:").match(code, b + 1)
+            if colon is None:
+                raise AssertionError(f"{name} 的 case 标签之后不是冒号：{src[k : k + 30]!r}")
+            labels.append((src[a:b], colon.end(), k))
+            k = colon.end()
+            continue
+        k += 1
+    if not labels:
+        raise AssertionError(f"{name} 的 switch 里一个 case 都没有——判据本身坏了")
+    names = [lab for lab, _, _ in labels]
+    if len(names) != len(set(names)):
+        raise AssertionError(f"{name} 的 switch 有重复标签（后一个不可达）：{names}")
+    clauses = []
+    for i, (lab, body_at, _) in enumerate(labels):
+        end = labels[i + 1][2] if i + 1 < len(labels) else sw_close
+        lits = [src[a:b] for a, b in spans if body_at < a and b < end]
+        clauses.append((lab, code[body_at:end], lits))
+    return discriminant, clauses

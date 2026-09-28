@@ -16,6 +16,8 @@ from tests.support.tsconst import (
     exported_number,
     exported_string,
     exported_string_array,
+    exported_string_union,
+    function_string_switch,
 )
 
 LIVE = "export const E = ['a', 'b', 'c'] as const\n"
@@ -320,3 +322,77 @@ def test_an_initializer_that_ends_there_still_reads(src, name, value):
 def test_a_continued_string_initializer_is_a_red(src):
     with pytest.raises(AssertionError):
         exported_string(src, "D")
+
+
+# ---- 字符串字面量联合 `export type X = 'a' | 'b'`（常用起点 ShortcutId，#668） ----
+
+
+@pytest.mark.parametrize(
+    "src",
+    [
+        "export type K = 'a' | 'b'\n",
+        "export type K = 'a' | 'b' // 以后加 'c'\n",
+        "export type K =\n  | 'a'\n  | 'b'\n\nexport const X = 1\n",
+        "// export type K = 'z'\nexport type K = 'a' | /* 'q' */ 'b';\n",
+    ],
+)
+def test_a_string_union_reads_only_its_live_members(src):
+    assert exported_string_union(src, "K") == ["a", "b"]
+
+
+@pytest.mark.parametrize(
+    "src",
+    [
+        "export type K = 'a' | string\n",
+        "export type K = 'a' | OTHER\n",
+        "export type K = ('a' | 'b') & X\n",
+        "export type K = 'a' | 'a'\n",
+        "type K = 'a'\n",
+        "export type K = 'a'\nexport type K = 'b'\n",
+    ],
+)
+def test_a_union_it_cannot_read_exactly_is_a_red(src):
+    with pytest.raises(AssertionError):
+        exported_string_union(src, "K")
+
+
+# ---- 函数体里唯一那条字符串 switch（shortcutLabel，#668） ----
+
+SWITCH = """function f(e: E): string {
+  switch (e.id) {
+    case 'a':
+      return t('k.a') // 'z'
+    case 'b':
+      return t('k.b')
+    default:
+      return e.name
+  }
+}
+"""
+
+
+def test_a_switch_reads_its_top_level_string_cases():
+    disc, clauses = function_string_switch(SWITCH, "f")
+    assert disc == "e.id"
+    assert [(lab, lits) for lab, _, lits in clauses] == [("a", ["k.a"]), ("b", ["k.b"]), ("", [])]
+
+
+@pytest.mark.parametrize(
+    "src",
+    [
+        SWITCH.replace("case 'b':", "case 'a':"),  # 重复标签：后一个不可达
+        SWITCH.replace("  switch", "  return ''\n  switch"),  # switch 在 return 之后
+        SWITCH.replace("  switch (e.id) {", "  if (x) switch (e.id) {"),  # 有条件
+        SWITCH.replace("case 'b':", "case B:"),  # 标签不是字符串字面量
+        SWITCH.replace("function f(", "// function f(\nfunction g("),  # 只在注释里
+    ],
+)
+def test_a_switch_it_cannot_read_exactly_is_a_red(src):
+    with pytest.raises(AssertionError):
+        function_string_switch(src, "f")
+
+
+def test_a_commented_out_case_is_not_counted():
+    src = SWITCH.replace("    default:", "    // case 'c':\n    default:")
+    _, clauses = function_string_switch(src, "f")
+    assert [lab for lab, _, _ in clauses] == ["a", "b", ""]

@@ -97,7 +97,7 @@ describe('显示条件', () => {
     expect(text).toContain('4')
     expect(text).toContain('2 张可编辑')
     expect(text).toContain('1 张待连接')
-    expect(text).toContain('1 张仅排版')
+    expect(text).toContain('1 张仅版面')
   })
 
   it('文案里不出现实现术语', async () => {

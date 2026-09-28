@@ -19,6 +19,12 @@
     "pathLabel": "Current path",
     "pathPlaceholder": "Type or paste a path, then press Enter",
     "projectName": "Project name",
+    "shortcut": {
+      "desktop": "Desktop",
+      "documents": "Documents",
+      "downloads": "Downloads",
+      "home": "Home"
+    },
     "subdirsLabel": "Subfolders",
     "titleCreate": "New project",
     "titleOpen": "Open project folder"
@@ -138,6 +144,7 @@
     "emptyRecent": "Projects you open will show up here",
     "filter": "Filter by name or path",
     "filterLabel": "Filter projects",
+    "hint": "A project is your script folder; one project can hold several layouts.",
     "listLabel": "{{section}} projects",
     "moveDown": "Move down",
     "moveUp": "Move up",

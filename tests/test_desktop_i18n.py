@@ -129,7 +129,7 @@ def test_menu_uses_the_four_ui_nouns():
     old_en = {
         k: v
         for k, v in _table("EN").items()
-        if k != "help_docs" and re.search(r"\bdocument\b|canvas file", v, re.I)
+        if k != "help_docs" and re.search(r"\bdocuments?\b|canvas files?", v, re.I)
     }
     assert not old_en, f"英文菜单里还有旧名词：{old_en}"
 

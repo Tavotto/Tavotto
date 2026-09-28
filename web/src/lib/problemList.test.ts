@@ -41,7 +41,7 @@ const PAGE = issue('pg', 'page-width', 'warn', null)
 const SUGG = issue('s1', 'palette-line-markers', 'suggestion', 'p1', 'g9')
 
 describe('范围', () => {
-  it('没选过 + 有当前图 = 看当前图；没有当前图 = 整个文档，选过也一样', () => {
+  it('没选过 + 有当前图 = 看当前图；没有当前图 = 整份排版，选过也一样', () => {
     expect(effectiveScope(null, 'p1')).toBe('figure')
     expect(effectiveScope(null, null)).toBe('document')
     expect(effectiveScope('figure', null)).toBe('document')

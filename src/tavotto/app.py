@@ -1595,7 +1595,7 @@ def api_package():
     body = request.get_json(force=True)
     doc = body.get("doc")
     if not isinstance(doc, dict) or doc.get("schema") not in (2, 3):
-        return jsonify({"error": "无效的布局文档", "code": "invalid_document"}), 400
+        return jsonify({"error": "无效的排版", "code": "invalid_document"}), 400
     default_stem = (
         (doc.get("project") or {}).get("name") if doc.get("schema") == 3 else doc.get("name")
     )
@@ -2915,14 +2915,25 @@ def _drive_roots() -> list[dict]:
     return roots
 
 
+#: 常用起点：(稳定 id, 老前端回退用的显示名, 主目录下的文件夹名)。界面按 `id` 翻译
+#: （`web/src/components/DirBrowser.tsx` 的 `shortcutLabel`，闭集 `ShortcutId` 严格同源，
+#: `tests/test_ui_terminology.py` 对拍）；`name` 只给还不认识 `id` 的老前端。
+#: 「文稿」是 macOS 访达里 Documents 的中文名——界面名词里没有「文档」（ADR 0001 2026-09-26 修订）。
+BROWSE_SHORTCUTS = (
+    ("desktop", "桌面", "Desktop"),
+    ("documents", "文稿", "Documents"),
+    ("downloads", "下载", "Downloads"),
+)
+
+
 def _browse_shortcuts() -> list[dict]:
-    """常用起点。桌面/文档只在真实存在时给出（非英文系统上未必叫这个名字）。"""
+    """常用起点。桌面/文稿/下载只在真实存在时给出（非英文系统上未必叫这个名字）。"""
     home = Path.home()
-    out = [{"name": "主目录", "path": str(home)}]
-    for label, name in (("桌面", "Desktop"), ("文档", "Documents"), ("下载", "Downloads")):
-        p = home / name
+    out = [{"id": "home", "name": "主目录", "path": str(home)}]
+    for sid, label, folder in BROWSE_SHORTCUTS:
+        p = home / folder
         if p.is_dir():
-            out.append({"name": label, "path": str(p)})
+            out.append({"id": sid, "name": label, "path": str(p)})
     return out
 
 
@@ -6986,7 +6997,7 @@ def _external_change(current: str | None, path: Path):
     """
     return jsonify(
         {
-            "error": "磁盘上的这份文档已被 Tavotto 之外的改动覆盖过",
+            "error": "磁盘上的这份排版已被 Tavotto 之外的改动覆盖过",
             "code": "external_change",
             "revision": current,
             "summary": document_summary(path),
@@ -7042,7 +7053,7 @@ def api_autosave_put(doc_id):
             if theirs is not None:
                 return jsonify(
                     {
-                        "error": "该文档已在其他窗口保存了更新的版本",
+                        "error": "这份排版已在其他窗口保存了更新的版本",
                         "code": "stale_write",
                         "theirs": theirs,
                     }
@@ -7280,7 +7291,7 @@ def _refuse_blind_full_overwrite(doc_id: str):
     LOG.warning("版本时间线读不出来，已拒绝整份写回（原文件未动）: %s", src)
     return jsonify(
         {
-            "error": "这份文档的版本历史读不出来，这次的检查点没有写入——"
+            "error": "这份排版的版本历史读不出来，这次的检查点没有写入——"
             "磁盘上那份历史一个字节都没动，仍在原处。",
             "code": "versions_unreadable",
         }

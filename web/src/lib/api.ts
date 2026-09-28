@@ -512,9 +512,15 @@ export const resetTutorialApi = (opts: { default?: boolean } = {}) =>
   })
 
 export interface DirEntry {
+  /** 后端给的显示名。常用起点（`shortcuts`）里它只是老前端的回退——界面按 `id` 翻译 */
   name: string
   path: string
+  /** 常用起点的稳定身份（`_browse_shortcuts` 的闭集）；盘符与子目录没有。老后端不给 */
+  id?: ShortcutId
 }
+
+/** 与 `app._browse_shortcuts` 严格同源的闭集（`tests/test_ui_terminology.py` 两侧对拍） */
+export type ShortcutId = 'home' | 'desktop' | 'documents' | 'downloads'
 
 export interface BrowseResult {
   path: string
@@ -522,7 +528,7 @@ export interface BrowseResult {
   dirs: DirEntry[]
   /** Windows 的盘符（此电脑那一层）；POSIX 上只有 `/` */
   roots: DirEntry[]
-  /** 主目录 / 桌面 / 文档 等常用起点 */
+  /** 主目录 / 桌面 / 文稿 / 下载 等常用起点 */
   shortcuts: DirEntry[]
   /** 当前列的是「驱动器」那一层虚拟根 */
   is_roots: boolean

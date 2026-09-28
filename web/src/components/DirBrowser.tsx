@@ -166,7 +166,7 @@ export function DirBrowser({
         {/* 常用起点 + 驱动器：Windows 上跨盘全靠这一行 */}
         <div className="flex flex-wrap gap-1">
           {(state?.shortcuts ?? []).map((s) => (
-            <Chip key={s.path} entry={s} onGo={() => void nav(s.path)} />
+            <Chip key={s.path} entry={s} label={shortcutLabel(s)} onGo={() => void nav(s.path)} />
           ))}
           {(state?.roots ?? []).map((r) => (
             <Chip key={r.path} entry={r} icon onGo={() => void nav(r.path)} />
@@ -319,7 +319,37 @@ export function NewProjectNameDialog({
   )
 }
 
-function Chip({ entry, icon, onGo }: { entry: DirEntry; icon?: boolean; onGo: () => void }) {
+/**
+ * 常用起点的显示名按界面语言走（审计 #668）：后端的 `name` 是中文写死的，英文界面上
+ * 会冒出「主目录 / 桌面」，而且「文档」违反界面名词约定。按 `id` 查自己的语言包，
+ * 认不出的 id / 老后端（没有 id）回退 `name`。key 逐条写成字面量，i18n 检查才看得见。
+ */
+function shortcutLabel(entry: DirEntry): string {
+  switch (entry.id) {
+    case 'home':
+      return translate('browser.shortcut.home', { ns: 'project' })
+    case 'desktop':
+      return translate('browser.shortcut.desktop', { ns: 'project' })
+    case 'documents':
+      return translate('browser.shortcut.documents', { ns: 'project' })
+    case 'downloads':
+      return translate('browser.shortcut.downloads', { ns: 'project' })
+    default:
+      return entry.name
+  }
+}
+
+function Chip({
+  entry,
+  label,
+  icon,
+  onGo,
+}: {
+  entry: DirEntry
+  label?: string
+  icon?: boolean
+  onGo: () => void
+}) {
   return (
     <button
       onClick={onGo}
@@ -330,7 +360,7 @@ function Chip({ entry, icon, onGo }: { entry: DirEntry; icon?: boolean; onGo: ()
       )}
     >
       {icon && <HardDrive size={ICON_SIZE.xs} className="text-ink-3" />}
-      {entry.name}
+      {label ?? entry.name}
     </button>
   )
 }
