@@ -200,11 +200,18 @@ export const renderFailureOwner = (pj: string | null | undefined, id: string) =>
  * 同一文件的「无法渲染」toast 只在**这个文件没有一个变体还坏着 / 还在渲染**时撤（Codex #710 P2）：
  * 两个面板引用同一文件、覆盖不同，各自的请求独立成败——一个变体画成了不说明另一个好了。
  * SSE 的 `render.done` 与这个变体自己的响应谁先到不定，所以两处各来问一次：先到的那次看见
- * 本变体还在 `rendering` 就不撤，后到的那次再撤。
+ * 本变体还在 `rendering` 就不撤，后到的那次再撤。「坏着」只认画布上还有面板指着的变体（`liveKeys`），
+ * `recent` 里为撤销留着的旧变体不算。
  */
 export function settleRenderFailureToast(pj: string | null | undefined, fileId: string) {
-  const unsettled = Object.values(useRenderStore.getState().byKey).some(
-    (r) => r.fileId === fileId && (r.status === 'error' || r.status === 'rendering'),
+  const unsettled = Object.entries(useRenderStore.getState().byKey).some(
+    ([key, r]) =>
+      r.fileId === fileId &&
+      (r.status === 'rendering' ||
+        inflight.get(key)?.busy === true ||
+        // 坏着的只算**画布上还有面板指着的**变体：`recent` 缓存为撤销留着的旧变体没人再看，
+        // 它的 error 不该一直挡着（Codex #710 第三轮）。`liveKeys` 还没被同步填过时按「都算」保守处理
+        (r.status === 'error' && (liveKeys.size === 0 || liveKeys.has(key)))),
   )
   if (!unsettled) useUiStore.getState().clearStatusOwnedBy(renderFailureOwner(pj, fileId))
 }

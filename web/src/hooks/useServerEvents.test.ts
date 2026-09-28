@@ -441,8 +441,12 @@ describe('渲染失败的 toast 在同一张图渲染成功后撤掉', () => {
   // Codex #710 P2：两个面板引用同一文件、覆盖不同，各自成败独立——一个变体画成了不说明另一个好了
   const variant = (patches: unknown[], status: 'error' | 'rendering' | 'ready') =>
     useRenderStore.getState().patch(renderKey('Fig1.pdf', patches), { fileId: 'Fig1.pdf', status })
+  // 画布上现存面板的键（同步器每轮 `prune(live)` 刷新的那一份）
+  const live = (...variants: unknown[][]) =>
+    useRenderStore.getState().prune(new Set(variants.map((v) => renderKey('Fig1.pdf', v))))
 
   it('同一文件另一个变体还坏着：这个变体成功不撤它', () => {
+    live([{ a: 1 }], [])
     variant([{ a: 1 }], 'error')
     variant([], 'ready')
     failed('Fig1.pdf')
@@ -459,6 +463,16 @@ describe('渲染失败的 toast 在同一张图渲染成功后撤掉', () => {
     variant([], 'ready')
     settleRenderFailureToast('p1', 'Fig1.pdf') // renderStore 成功路径上的同一次询问
     expect(useUiStore.getState().status).toBeNull()
+  })
+
+  it('recent 缓存里没有面板再指着的旧变体坏着：不挡（Codex #710 第三轮）', () => {
+    live([]) // 面板已经改成不带覆盖的那一版
+    variant([{ a: 1 }], 'error') // 撤销缓存里留着的旧变体，后来一次重渲染失败了
+    variant([], 'ready')
+    failed('Fig1.pdf')
+    done('Fig1.pdf')
+    expect(statusKey()).toBe('status.renderDone')
+    expect(useUiStore.getState().statusTone).toBe('info')
   })
 
   it('用户已经关掉的不会被重新挂回来', () => {
