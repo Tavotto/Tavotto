@@ -23,7 +23,7 @@ import { useKeyboard } from '@/hooks/useKeyboard'
 import { useDocumentStore } from '@/store/documentStore'
 import { resetGestureCoordinator } from '@/store/gestureCoordinator'
 import { useInteractionStore } from '@/store/interactionStore'
-import { useRenderStore } from '@/store/renderStore'
+import { renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { resetPreview } from '@/store/svgPreviewStore'
 import { useUiStore } from '@/store/uiStore'
@@ -145,13 +145,17 @@ function tap(key: string) {
   })
 }
 
-/** 在命中层上按下、拖 DRAG_PX、松手 */
-function pressAndDrag(layer: HTMLElement, [fx, fy]: [number, number]) {
+/**
+ * 在命中层上按下、拖 DRAG_PX、松手。`beforeDown` 与按下在同一个 act 里跑：两者之间
+ * React 不重渲染，模拟「处理器闭包还是上一帧」
+ */
+function pressAndDrag(layer: HTMLElement, [fx, fy]: [number, number], beforeDown?: () => void) {
   const x = fx * LAYOUT.width
   const y = fy * LAYOUT.height
   const down = new MouseEvent('pointerdown', { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y })
   Object.assign(down, { pointerType: 'mouse', pointerId: 1 })
   act(() => {
+    beforeDown?.()
     layer.dispatchEvent(down)
   })
   act(() => {
@@ -238,6 +242,34 @@ describe('微调这一段还开着时按下指针', () => {
     expect(titlePos()![0]).toBeCloseTo(0.3 + 0.5 / PAGE_W + DRAG_PX / LAYOUT.width, 9)
     expect(titlePos()![1]).toBeCloseTo(0.08, 9)
     expect(past()).toHaveLength(2)
+  })
+
+  it('提交后的那一版恰好已经渲染过（权威在）：闭包里的 overrides 过期同样吞掉', () => {
+    // 先走一遍同样的一段，让「→ 0.5 mm」那一版有现成的权威渲染，再撤回原位
+    tap('ArrowRight')
+    pressAndDrag(hitLayer()!, ON_TITLE)
+    act(() => {
+      seedExactRender(livePanel(), manifest)
+      useDocumentStore.getState().undo()
+    })
+    expect(titlePos()).toBeUndefined()
+
+    const layer = hitLayer()!
+    tap('ArrowRight')
+    pressAndDrag(layer, ON_TITLE)
+    expect(titlePos()![0]).toBeCloseTo(0.3 + 0.5 / PAGE_W, 9)
+    expect(useInteractionStore.getState().kind).toBe('none')
+  })
+
+  it('没有微调、overrides 没变，但权威在按下前一刻离开了画面（同一变体换了图）：同样不起手', () => {
+    const layer = hitLayer()!
+    useUiStore.setState({ selectedGids: [] })
+    pressAndDrag(layer, ON_TITLE, () => {
+      useRenderStore.getState().patch(renderKeyOf(livePanel()), { svg: '<svg data-next="1"/>' })
+    })
+    expect(titlePos()).toBeUndefined()
+    expect(useUiStore.getState().selectedGids).toEqual([])
+    expect(past()).toHaveLength(0)
   })
 
   it('对照：净位移为零的一段（一去一回）不写文档，按下照常起拖', () => {
