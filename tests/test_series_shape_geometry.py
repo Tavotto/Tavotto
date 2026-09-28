@@ -374,3 +374,56 @@ def test_boxed_text_box_includes_its_background(manifests):
     # pad = 0.8 × 10pt = 8pt ≈ 2.8mm，左右各一份
     assert (boxed[2] - plain[2]) * sw > 4.0
     assert (boxed[3] - plain[3]) * sh > 4.0
+
+
+# ---------------------------------------------------------------------------
+# 预算用尽要记账（#670 评审）
+# ---------------------------------------------------------------------------
+#: 在 worker 解释器里直接调 pathgeom：给一份只够一点点的预算，看三处「收手」是否都记进
+#: `Budget.skipped`——manifest 的「点数预算用尽，N 个元素退回 bbox」只读这一个数，
+#: 漏记一处就是一次静默降级。
+_BUDGET_PROBE = """\
+import sys
+sys.path.insert(0, sys.argv[1])
+import json
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
+import pathgeom
+
+fig, ax = plt.subplots(figsize=(4.0, 3.0))
+x = np.linspace(1.0, 9.0, 12)
+eb = ax.errorbar(x, np.sin(x), yerr=0.2, fmt="o", capsize=3)
+sc = ax.scatter(x, np.cos(x), s=40)
+lc = ax.vlines(x, 0.0, 1.0)
+fig.canvas.draw()
+W, H = fig.bbox.width, fig.bbox.height
+out = {}
+for name, fn in (
+    ("errorbar", lambda b: pathgeom.series_group_geometry(
+        [eb.lines[0], *eb.lines[1], *eb.lines[2]], W, H, b)),
+    ("scatter", lambda b: pathgeom.element_geometry(sc, W, H, b)),
+    ("linecoll", lambda b: pathgeom.element_geometry(lc, W, H, b)),
+):
+    b = pathgeom.Budget(5)
+    g = fn(b)
+    out[name] = [g is None, b.skipped]
+print(json.dumps(out))
+"""
+
+
+def test_budget_exhaustion_is_always_counted(tmp_path):
+    import json
+    import subprocess
+
+    probe = tmp_path / "probe.py"
+    probe.write_text(_BUDGET_PROBE, encoding="utf-8")
+    engine = Path(__file__).resolve().parents[1] / "src/tavotto/engine"
+    res = subprocess.run(
+        [WORKER_PY, str(probe), str(engine)], capture_output=True, text=True, timeout=120
+    )
+    assert res.returncode == 0, res.stderr
+    got = json.loads(res.stdout.strip().splitlines()[-1])
+    # 误差棒成员在临时账上用尽 / 散点盖章前收手 / 线组逐条累加时收手：都退回 bbox、都记一笔
+    assert got == {"errorbar": [True, 1], "scatter": [True, 1], "linecoll": [True, 1]}, got

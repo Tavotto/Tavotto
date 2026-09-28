@@ -404,6 +404,7 @@ def _collection_subpaths(
         # 但那是在把几千个副本都算完之后——hexbin 那种一条基路径配上万个
         # offset 的集合会在这里空转半天，而结果注定是要丢的。
         if budget is not None and total > budget.left:
+            budget.skipped += 1  # 收手也是一次退回 bbox：记账，manifest 才会说出来
             return []
     return out
 
@@ -663,6 +664,7 @@ def _stamp_markers(
             total += len(mine) * sum(len(pts) for pts, _ in subs)
     # 注定超预算的整组直接收手，不把几百个副本都算完再被 `_pack` 拒掉
     if total > budget.left:
+        budget.skipped += 1  # 收手也是一次退回 bbox：记账，manifest 才会说出来
         return []
 
     # 按 marker 原序输出（第 i 颗的子路径挨在一起），不按分档的计算顺序：
@@ -990,9 +992,13 @@ def series_group_geometry(members, W: float, H: float, budget: Budget) -> dict |
         if m is None or not m.get_visible():
             continue
         # 每个成员先记在一份临时账上，合成之后按总点数一次过真账
-        g = element_geometry(m, W, H, Budget(budget.left))
+        scratch = Budget(budget.left)
+        g = element_geometry(m, W, H, scratch)
         if g is None:
             if _member_draws(m):
+                # 临时账上记下的「预算不够」要过到真账上：临时账随即丢掉，不转过去的话
+                # 整组静默退回 bbox，manifest 那行「点数预算用尽」不会说到它（#670 评审）
+                budget.skipped += scratch.skipped
                 return None
             continue
         parts.append(g)
