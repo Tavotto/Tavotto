@@ -68,6 +68,9 @@ _CODE_REGISTRIES = (
     "tavotto.pdfbackend",
     # ADR 0106：数据改指的端点——`RemapError(code)` 由 app 的 400 漏斗转出
     "tavotto.engine.inputremap",
+    # ADR 0108：改写脚本里的数据路径与共享的备份底座——`ScriptEditError(code)` 由 app 的 409 漏斗转出
+    "tavotto.engine.scriptbackup",
+    "tavotto.engine.scriptedit",
     # issue #534：TIFF 素材的支持范围（`UnsupportedTiff(code)` 由 app 的 422 漏斗 / 导出作业转出）
     "tavotto.tiffprobe",
 )
@@ -188,6 +191,24 @@ USER_VISIBLE_CODES = {
     "input_remap_not_found_in_dir": {"name", "path"},
     "input_remap_requested_invalid": set(),
     "input_remap_rule_unknown": {"source"},
+    # ADR 0108：经确认改写脚本里的数据路径（`scriptbackup` / `scriptedit` 的 `ScriptEditError(code)`
+    # 由 app 的 409 漏斗转出）。`script_edit_nothing_to_change` 另带结构化的 `skipped`（对话框逐条列），
+    # 不作占位符
+    "script_is_symlink": {"script"},
+    "script_hardlinked": {"script"},
+    "script_readonly": {"script"},
+    "script_changed_since_preview": {"script"},
+    "script_backup_failed": {"script"},
+    "script_replace_failed": {"script"},
+    "script_backup_unknown": {"id"},
+    "script_busy": {"script"},
+    "script_edit_nothing_to_change": set(),
+    "script_edit_unreadable": set(),
+    "script_edit_self_check_failed": set(),
+    "script_edit_token_invalid": set(),
+    "script_edit_preview_stale": set(),
+    "script_edit_needs_ui": set(),
+    "script_restore_conflict": set(),
     # --- U03（ADR 0057）：首开的「需要输入」与失效的显式选择。params 空：细节在结构化字段
     # （confirmation / explicit）里，文案不插值 ---
     "workdir_confirmation_required": set(),

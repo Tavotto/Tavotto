@@ -86,8 +86,14 @@
     开销），只读、目标是文件才改；判据 `figcapture.remap_target` 父进程与 worker 共用一份。改指表进
     `ExecutionSpec.input_remap`（本机路径，**不进** `stable_payload`），`worker_argv` 只在非空时多
     `--input-remap <json>`，三条 spawn 路径都从 `inputremap.rules_for` 取。**探路调用（exists / glob /
-    listdir）与 C++ 读取器救不回**——载荷里 `via` 标 `probe` / `glob`，对话框如实说、不给按钮。
-    native 不改指。看护 `tests/test_missing_input.py`（真 worker 相对 / 绝对 / 脚本目录模式 / 原件回来 /
+    listdir）与 C++ 读取器救不回**——载荷里 `via` 标 `probe` / `glob` / `native`，对话框不给选择器；
+    绝对路径常量的 `via` 同样按它所在的调用判（被 `exists()` 问的给了选择器就是「指认 → 重跑 → 又弹」
+    的死循环）。先判空再 `sys.exit` 的（`script_exited`）与「没出图」一样挂静态载荷。**C++ 读取器**
+    （ADR 0108 §一）：`missing_input_of` 说不出时 worker 给 `script_error` 多带 `extra.enoent`
+    （`figcapture.enoent_fact`：`filename`，或 h5py 那种只在消息里的 `named`，加 cwd），父进程
+    `inputremap.native_miss` 拿静态证据对——整串相等或按路径段是前缀、只认对上的那条，对不上就不判、
+    码一字不变；对上了码仍是 `script_error`，只挂 `via = native` 的载荷。这几档的出口是经确认改写脚本
+    （`script-edits.md`）。native 不改指。看护 `tests/test_missing_input.py`（真 worker 相对 / 绝对 / 脚本目录模式 / 原件回来 /
     同名诱饵 / 试运行 / 三条 spawn 路径）、`web/src/components/MissingInputDialog.test.tsx`、
     `web/e2e/missing-input.spec.ts`。
   * 浏览器侧**刻意没有**这条回退：playground 是单文件的，相对读报

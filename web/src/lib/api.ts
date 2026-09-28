@@ -3087,8 +3087,14 @@ export const setProjectUserEnvironment = (id: string, script: string) =>
 /** worker 报「脚本要读的文件不存在，且说得出是哪个」（ADR 0106）的稳定码 */
 export const MISSING_INPUT_CODE = 'missing_input'
 
-/** 缺的东西是怎么被脚本用到的：`open` 改指救得回来；`probe`（exists / listdir）与 `glob` 救不回来 */
-export type MissingInputVia = 'open' | 'probe' | 'glob'
+/**
+ * 缺的东西是怎么被脚本用到的：`open` 改指救得回来；`probe`（exists / listdir）、`glob` 与 `native`
+ * （h5py / netCDF 这类 C++ 读取器，ADR 0108）救不回来——它们的出口是经确认改写脚本里那串路径
+ */
+export type MissingInputVia = 'open' | 'probe' | 'glob' | 'native'
+
+/** 改指表救不回、只能改写脚本的几档（与后端 `inputremap.VIAS_NEED_REWRITE` 同一份） */
+export const VIAS_NEED_REWRITE: readonly string[] = ['probe', 'glob', 'native']
 
 export interface MissingInputItem {
   /** 脚本里写的原串（用户自己的路径，不翻译） */
@@ -3139,6 +3145,100 @@ export const removeInputRemap = (kind: InputRemapRule['kind'], from: string) =>
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ kind, from }),
+  })
+
+// ---------------------------------------------------------------------------
+// 经确认改写脚本里的数据路径（ADR 0108）与脚本备份（共享底座，ADR 0094 之后复用）
+
+/** 改动的一行：后端生成、前端只渲染（不在前端拼 diff） */
+export interface ScriptEditRow {
+  line: number
+  before: string
+  after: string
+}
+
+/** 某个对得上的常量为什么没改（后端 `scriptedit.SKIP_REASONS` 闭集） */
+export type ScriptEditSkipReason =
+  | 'fstring'
+  | 'concatenated'
+  | 'multiline'
+  | 'context'
+  | 'rule_mismatch'
+  | 'target_missing'
+  | 'unrepresentable'
+  | 'encoding'
+
+export interface ScriptEditSkipped {
+  line: number
+  /** 脚本里写的原串（用户自己的路径，不翻译） */
+  value: string
+  reason: ScriptEditSkipReason | string
+}
+
+export interface ScriptEditPreview {
+  ok: boolean
+  /** 一次性确认令牌：绑定这个浏览器会话，单次、十分钟 */
+  token: string
+  script: string
+  /** 要改的那个文件的完整路径（含卷名）：确认界面上醒目地写出来 */
+  script_abs: string
+  rows: ScriptEditRow[]
+  edits: { line: number; before: string; after: string; value_before: string; value_after: string }[]
+  skipped: ScriptEditSkipped[]
+  encoding: string
+  backups: { project: string; mirror: string }
+  /** 脚本受不受 git 管；没有 git / 不在仓库里是 null */
+  git: { tracked: boolean; dirty: boolean } | null
+  /** 同目录里列着这个脚本的校验清单（改完校验值会变） */
+  checksums: string[]
+}
+
+export type ScriptBackupState = 'current' | 'before' | 'changed'
+
+export interface ScriptBackup {
+  id: string
+  kind: 'input_path' | 'restore' | string
+  script: string
+  created: number
+  pristine: boolean
+  /** 磁盘此刻：就是改后那份 / 改前那份（从未生效或已复原）/ 之后又被改过 */
+  state: ScriptBackupState
+  edits?: ScriptEditPreview['edits']
+}
+
+/** 生成改写预览：脚本一个字节都不改（ADR 0108 §六） */
+export const previewInputPathEdit = (
+  script: string,
+  entry: string,
+  chosen: string,
+  chosenKind: 'file' | 'dir' | 'auto',
+) =>
+  jsonFetch<ScriptEditPreview>('/api/script-edit/input-path/preview', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ script, entry, chosen, chosen_kind: chosenKind }),
+  })
+
+/** 用户勾选确认之后：两处备份 → 原子替换（令牌只在这个窗口的会话里有效） */
+export const commitScriptEdit = (token: string) =>
+  jsonFetch<{ ok: boolean; script: string; backup: ScriptBackup }>('/api/script-edit/commit', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token }),
+  })
+
+/** 本项目（或某个脚本）改写前留下的备份，新的在前 */
+export const listScriptBackups = (script?: string) =>
+  jsonFetch<{ ok: boolean; backups: ScriptBackup[] }>(
+    script ? `/api/script-backups?script=${encodeURIComponent(script)}` : '/api/script-backups',
+  )
+
+/** 复原：`full` 整份换回；`undo_edits` 只撤销那几处路径（之后的其它修改保留）。两种都先备份此刻的版本 */
+export const restoreScriptBackup = (backupId: string, mode: 'full' | 'undo_edits') =>
+  jsonFetch<{ ok: boolean; script: string; unchanged?: boolean }>('/api/script-backups/restore', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ backup_id: backupId, mode }),
   })
 
 /** 只为**当前项目**切 safe worker 的工作目录模式（ADR 0047）。改了后端会关掉该项目的会话。 */

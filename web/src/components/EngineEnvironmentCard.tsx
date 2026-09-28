@@ -5,7 +5,7 @@ import { t as translate } from '@/i18n'
 import type { EngineSource, ProjectEnvFailure } from '@/lib/api'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { ManagedEnvironmentRow } from './DependencyRepairCard'
-import { InputRemapRows, WorkdirRow } from './WorkdirRow'
+import { InputRemapRows, ScriptBackupRows, WorkdirRow } from './WorkdirRow'
 import { Button } from './ui/Button'
 import { TextInput } from './ui/Input'
 
@@ -114,6 +114,7 @@ export function EngineEnvironmentCard({ compact }: { compact?: boolean }) {
           {/* safe worker 在哪个目录里跑（ADR 0047）：项目级开关，设置页才显示 */}
           {!compact && <WorkdirRow />}
           {!compact && <InputRemapRows />}
+          {!compact && <ScriptBackupRows />}
         </div>
         {/* 内置包版本清单在设置 → 包管理（ADR 0038）；这张卡只说环境本身 */}
         {!compact && advancedBlock}
