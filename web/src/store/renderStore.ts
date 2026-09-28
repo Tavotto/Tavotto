@@ -700,8 +700,6 @@ export const useRenderStore = create<RenderState>((set, get) => ({
           // （外层 finally）才是让它收敛的那一次。
           perfRenderApplied(perfHandle)
           get().evictSvgBudget()
-          // 这个变体画成了：若这个文件已没有变体还坏着，撤掉它先前那条「无法渲染」
-          settleRenderFailureToast(projectAtStart, fileId)
           recordDiagnosticEvent({
             type: 'render.success',
             file: fileHash(fileId),
@@ -797,6 +795,10 @@ export const useRenderStore = create<RenderState>((set, get) => ({
       // 在整条链上一直是 true，那是对的（该键确实还在渲染），所以收敛点只能
       // 放在链走完之后。没超预算时它一个 set 都不发，代价是一次纯读。
       get().evictSvgBudget()
+      // 这个变体落定了（busy 已松开）：若这个文件已没有变体还坏着 / 还在渲染，撤掉它先前那条
+      // 「无法渲染」。**必须在松手之后**问：busy 还是 true 时本变体自己就被算成「在途」，而 SSE 的
+      // render.done 可能早于响应到达、那一次也撤不掉——这里就是最后一次机会（Codex #710 第四轮）
+      if (epochAtStart === projectEpoch) settleRenderFailureToast(projectAtStart, fileId)
     }
   },
 
