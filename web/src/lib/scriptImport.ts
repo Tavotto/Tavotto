@@ -26,10 +26,16 @@ export type DropTarget =
   /** 什么文件都没有（拖进来的是文字 / 链接） */
   | { kind: 'none' }
 
-const isScriptName = (name: string) => /\.py$/i.test(name.trim())
-
 /** 路径的最后一段（去掉结尾的分隔符）；分隔符两种都认 */
 const baseName = (path: string) => path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? path
+
+/**
+ * 什么算脚本：最后一段以 `.py` 结尾（不分大小写）、`.py` 前面至少还有一个字符、不以分隔符结尾。
+ * 与壳的 `drop_paths::classify`（Rust `Path::extension` 不分大小写等于 `py`）严格同源，两侧各自与
+ * `tests/golden/drop_script_rule.json` 比（`dropScriptRule.golden.test.ts`）。**不 trim**：文件名
+ * 真可以以空格结尾，`plot.py ` 的扩展名是 `py `，不是脚本；`.py` 这样的隐藏文件没有扩展名。
+ */
+const isScriptName = (path: string) => !/[\\/]$/.test(path) && /.\.py$/i.test(baseName(path))
 
 /**
  * 页面只拿到一串路径、不能 stat：以分隔符结尾，或最后一段没有扩展名，才当目录。

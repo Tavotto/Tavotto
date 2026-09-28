@@ -212,6 +212,60 @@ mod tests {
         }
     }
 
+    /// 「什么算脚本、打开哪个目录」与页面严格同源：两侧各自与
+    /// `tests/golden/drop_script_rule.json` 比，不读对方源码（页面那一侧是
+    /// `web/src/lib/dropScriptRule.golden.test.ts`）。壳能 stat，量的是 `shell` 一栏。
+    #[test]
+    fn the_script_rule_matches_the_golden_pair() {
+        let golden: serde_json::Value =
+            serde_json::from_str(include_str!("../../tests/golden/drop_script_rule.json")).unwrap();
+        let cases = golden["cases"].as_array().unwrap();
+        assert!(cases.len() > 10);
+        let d = scratch("golden");
+        let mut seen = std::collections::BTreeSet::new();
+        for (i, c) in cases.iter().enumerate() {
+            let name = c["name"].as_str().unwrap();
+            let shell = c["shell"].as_str().unwrap();
+            // 差异只许出现在明处：与页面不同 ⇔ 写了 page_blind
+            assert_eq!(
+                c.get("page_blind").is_some(),
+                c["page"].as_str().unwrap() != shell,
+                "{name:?}"
+            );
+            if cfg!(windows) && c.get("posix_only").is_some() {
+                continue;
+            }
+            // 每条一个独立目录：同名的文件 / 目录互不干扰
+            let parent = d.join(i.to_string());
+            fs::create_dir(&parent).unwrap();
+            let p = parent.join(name);
+            match c["on_disk"].as_str().unwrap() {
+                "file" => touch(&p),
+                "dir" => fs::create_dir(&p).unwrap(),
+                other => panic!("on_disk 只有 file / dir：{other}"),
+            }
+            let got = match classify(std::slice::from_ref(&p)) {
+                Some(DropTarget::Script {
+                    folder, name: n, ..
+                }) => {
+                    assert_eq!(folder, display_path(&parent).unwrap(), "{name:?}");
+                    assert_eq!(n, name);
+                    "script"
+                }
+                Some(DropTarget::Folder { folder, .. }) => {
+                    assert_eq!(folder, display_path(&p).unwrap(), "{name:?}");
+                    "folder"
+                }
+                Some(DropTarget::Unsupported { .. }) => "unsupported",
+                None => "none",
+            };
+            assert_eq!(got, shell, "{name:?}");
+            seen.insert(got);
+        }
+        // 三档都真的出现过，否则某一档判错了也量不出来
+        assert_eq!(seen.len(), 3, "{seen:?}");
+    }
+
     #[test]
     fn verbatim_windows_prefixes_are_stripped() {
         assert_eq!(

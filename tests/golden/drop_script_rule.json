@@ -1,0 +1,43 @@
+{
+  "_comment": "主页拖放「什么算脚本、打开哪个目录」的共享向量（严格同源对，docs/rules/repo/same-origin-pairs.md）。壳 src-tauri/src/drop_paths.rs::classify 与页面 web/src/lib/scriptImport.ts::dropTargetOf 各自与它比，不读对方源码。结论三档：script = 打开它的上级目录；folder = 打开它自己；unsupported = 不收。name 是拖进来的那一项的最后一段，on_disk 是它在磁盘上的真实类型（壳能 stat，页面只看得到路径串）。page 与 shell 不同的条目必须写 page_blind（页面为什么判不出），反过来也一样；posix_only 的条目 Windows 上建不出来（Win32 会削掉结尾的空格），壳那侧在 Windows 上跳过。",
+  "cases": [
+    { "name": "plot.py", "on_disk": "file", "shell": "script", "page": "script" },
+    { "name": "Plot.PY", "on_disk": "file", "shell": "script", "page": "script" },
+    { "name": "a..py", "on_disk": "file", "shell": "script", "page": "script" },
+    { "name": "图 1.py", "on_disk": "file", "shell": "script", "page": "script" },
+    {
+      "name": "plot.py ",
+      "on_disk": "file",
+      "shell": "unsupported",
+      "page": "unsupported",
+      "posix_only": "Win32 建文件时削掉结尾的空格，建出来的是 plot.py"
+    },
+    { "name": ".py", "on_disk": "file", "shell": "unsupported", "page": "unsupported" },
+    { "name": "plot.py.txt", "on_disk": "file", "shell": "unsupported", "page": "unsupported" },
+    { "name": "fig.pdf", "on_disk": "file", "shell": "unsupported", "page": "unsupported" },
+    { "name": "data.CSV", "on_disk": "file", "shell": "unsupported", "page": "unsupported" },
+    { "name": "paper figs", "on_disk": "dir", "shell": "folder", "page": "folder" },
+    { "name": "论文 图", "on_disk": "dir", "shell": "folder", "page": "folder" },
+    {
+      "name": "report.py",
+      "on_disk": "dir",
+      "shell": "folder",
+      "page": "script",
+      "page_blind": "页面不能 stat：名字以 .py 结尾的目录只看得出是脚本的形状"
+    },
+    {
+      "name": "v1.2",
+      "on_disk": "dir",
+      "shell": "folder",
+      "page": "unsupported",
+      "page_blind": "页面不能 stat：带扩展名形状的目录名只看得出是文件"
+    },
+    {
+      "name": "Makefile",
+      "on_disk": "file",
+      "shell": "unsupported",
+      "page": "folder",
+      "page_blind": "页面不能 stat：没有扩展名的文件只看得出是目录的形状（打开时由后端的目录校验拒绝）"
+    }
+  ]
+}
