@@ -2239,9 +2239,18 @@ def api_diagnostics():
 
     try:
         py = engine_pool.find_worker_python()
+        src = engine_pool.source_of(py)
+        bundled = src == engine_pool.SOURCE_BUNDLED
         try:
+            # 只读探测：`-B` 不往解释器的安装目录写 .pyc，env 与 worker 起它时同一份判据
+            # （`runtime.probe_args` / `probe_env`）
             out = sp.run(
-                [py, "-c", "import matplotlib; print(matplotlib.__version__)"],
+                [
+                    py,
+                    *engine_runtime.probe_args(bundled=bundled),
+                    "-c",
+                    "import matplotlib; print(matplotlib.__version__)",
+                ],
                 capture_output=True,
                 text=True,
                 # 显式 UTF-8：text=True 默认跟随系统区域编码（cp936），
@@ -2251,12 +2260,12 @@ def api_diagnostics():
                 errors="replace",
                 timeout=DIAG_MATPLOTLIB_TIMEOUT_S,
                 stdin=sp.DEVNULL,
+                env=engine_runtime.probe_env(py, bundled=bundled),
                 creationflags=engine_runtime.CREATE_NO_WINDOW,
             )
             mpl = out.stdout.strip() or None
         except (OSError, sp.TimeoutExpired):
             mpl = None
-        src = engine_pool.source_of(py)
         checks.append(
             {
                 "id": "worker_python",
@@ -5609,7 +5618,9 @@ def api_engine_environment():
             else None
         )
         py = st.get("python")
-        st["imports"] = engine_runtime.probe_packages(py, names) if py else {}
+        st["imports"] = (
+            engine_runtime.probe_packages(py, names, bundled=bool(st.get("bundled"))) if py else {}
+        )
     st["project"] = _project_environment_state()
     resp = jsonify(st)
     resp.headers["Cache-Control"] = "no-store"

@@ -43,7 +43,7 @@ import sys
 from pathlib import Path
 
 from . import ai_agents, atomicio, brand, pluginmanifest
-from .runtime import CREATE_NO_WINDOW
+from .runtime import CREATE_NO_WINDOW, probe_args
 
 #: 每一步的稳定 code。message 随时可改，code 不许改（调用方按它分诊）。
 ERR_CODEX_MISSING = "codex_cli_missing"
@@ -218,7 +218,8 @@ def _runs_python(candidate: str) -> bool:
     Python——它打开商店并回 9009（issue #172 的现场报告）。
     退出码才是真话，所以这里跑一遍并要回显记号。
     """
-    rc, out = _run([candidate, "-c", f"print('{_PY_PROBE}')"], timeout=60)
+    # `-B`：只读探测，不往这个（多半是用户的）解释器的安装目录写 .pyc（`runtime.probe_args`）
+    rc, out = _run([candidate, *probe_args(), "-c", f"print('{_PY_PROBE}')"], timeout=60)
     return rc == 0 and _PY_PROBE in out
 
 
@@ -628,7 +629,7 @@ def _verified_interpreter(server: Path, py: str | None) -> str | None:
     """
     candidates: list[str] = []
     if py:
-        rc, out = _run([py, str(server), "--health"], timeout=120)
+        rc, out = _run([py, *probe_args(), str(server), "--health"], timeout=120)
         report = _last_json(out) or {}
         chosen = report.get("python")
         if isinstance(chosen, str) and chosen.strip():
@@ -844,7 +845,7 @@ def _engine_step(plugin_dir: Path | None, py: str | None, *, apply: bool) -> dic
     server = plugin_dir / "mcp" / "server.py"
     if not server.is_file():
         return _step("engine", ok=False, detail=f"插件里没有 {server}", code=ERR_PROVISION)
-    rc, _out = _run([py, str(server), "--health"], timeout=90)
+    rc, _out = _run([py, *probe_args(), str(server), "--health"], timeout=90)
     if rc == 0:
         return _step("engine", ok=True, skipped=True, detail="插件已能解析到引擎")
     if not apply:
@@ -938,7 +939,7 @@ def _health_step(plugin_dir: Path | None, py: str | None, summary: dict) -> dict
             detail="PATH 上找不到真的 python3/python，跑不了插件的体检",
         )
     server = plugin_dir / "mcp" / "server.py"
-    rc, out = _run([py, str(server), "--health"], timeout=90)
+    rc, out = _run([py, *probe_args(), str(server), "--health"], timeout=90)
     report = _last_json(out) or {}
     engine_version = report.get("engine_version")
     required = (summary.get("canvas") or {}).get("min_tavotto_version")

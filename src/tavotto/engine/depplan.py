@@ -179,12 +179,12 @@ def target_facts(python: str, *, use_cache: bool = True) -> TargetFacts | None:
             return hit
     # **启动条件与 worker 对齐**（`projectenv.probe_environment` 同一条纪律）：不带 `-I`、
     # env 原样继承——`pip install --user` 装的包 worker 看得见，事实表就得看得见；cwd 换成
-    # 空目录挡住父进程 cwd 进 `sys.path[0]`。
+    # 空目录挡住父进程 cwd 进 `sys.path[0]`；`-B`（`runtime.probe_args`）不往目标解释器写 .pyc。
     scratch = ""
     try:
         scratch = projectenv._probe_scratch_dir()
         proc = subprocess.run(
-            [str(python), "-c", _FACTS_SRC],
+            [str(python), *runtime.probe_args(), "-c", _FACTS_SRC],
             capture_output=True,
             text=True,
             encoding="utf-8",

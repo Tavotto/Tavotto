@@ -1421,7 +1421,7 @@ def _runtime_section() -> dict:
         "imports": {},
     }
     if st["valid"] and st["python"]:
-        section["imports"] = runtime.probe_packages(st["python"])
+        section["imports"] = runtime.probe_packages(st["python"], bundled=True)
     return section
 
 

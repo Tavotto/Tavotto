@@ -565,7 +565,9 @@ def test_environment_probe_reports_each_package(client, tmp_path, monkeypatch):
     monkeypatch.setattr(pool, "find_worker_python", lambda: py)
     monkeypatch.setattr(bootstrap, "matplotlib_version", lambda p: "3.11.1")
     monkeypatch.setattr(
-        runtime, "probe_packages", lambda p, names=None: {n: "1.0" for n in (names or ["numpy"])}
+        runtime,
+        "probe_packages",
+        lambda p, names=None, **kw: {n: "1.0" for n in (names or ["numpy"])},
     )
     body = client.get("/api/engine/environment?probe=numpy,PIL").get_json()
     assert body["imports"] == {"numpy": "1.0", "PIL": "1.0"}

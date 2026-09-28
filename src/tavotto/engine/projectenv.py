@@ -417,7 +417,10 @@ def probe_environment(
     # import 得到：体检量的是另一个对象。`-I` 真正想挡的只是 cwd 被塞进
     # `sys.path[0]`（Flask 进程的 cwd 是任意的，里面一个 `matplotlib.py`
     # 就能把体检骗过去），这件事改由把 cwd 换成一个**空的临时目录**来做。
-    argv = [python, *(runtime.child_args() if bundled else []), "-c", _PROBE_SRC, engine_dir]
+    # `-B`（`runtime.probe_args`）：体检是我们单方面去看一眼，不许把缺的 .pyc 写回用户解释器的
+    # 安装目录（2026-09-28 Windows 实测：体检一次 Python 3.7.6，它的 `Lib\__pycache__` 多了两个）。
+    # `-B` 不碰 sys.path / site / env，上面说的「与 worker 对齐」的几个维度一个都不变。
+    argv = [python, *runtime.probe_args(bundled=bundled), "-c", _PROBE_SRC, engine_dir]
     argv.append(module or "")
     if modules:
         argv.append(",".join(modules))
@@ -436,7 +439,7 @@ def probe_environment(
             timeout=PROBE_TIMEOUT_S,
             stdin=subprocess.DEVNULL,
             cwd=scratch,
-            env=runtime.child_env() if bundled else None,
+            env=runtime.probe_env(python, bundled=bundled),
             creationflags=runtime.CREATE_NO_WINDOW,
         )
     except (OSError, subprocess.SubprocessError) as exc:

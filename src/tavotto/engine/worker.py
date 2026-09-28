@@ -295,6 +295,50 @@ def _exit_status(code) -> int:
     return 1
 
 
+def _inside(path: str, roots: tuple[str, ...]) -> bool:
+    return any(path == r or path.startswith(r.rstrip(os.sep) + os.sep) for r in roots)
+
+
+def _suppress_project_bytecode(roots) -> None:
+    """用户**项目目录里**的源码不写字节码：脚本自己（entry 不是 `__main__` 时按模块 import）与
+    它 import 的项目内模块，都不在项目里留 `__pycache__/*.pyc`。
+
+    2026-09-28 Windows 实测：系统 Python 3.12 渲染 `fig_data.py`（entry=main）之后，项目目录里多了
+    `__pycache__/fig_data.cpython-312.pyc`——`python fig_data.py` 跑主脚本从不写它。Tavotto 只是
+    替用户看图，项目目录里不该因此多出任何东西。
+
+    **只挡项目目录，不是整个进程**（所以不是 `-B`，也不是全程 `sys.dont_write_bytecode`）：
+    worker 起在用户的解释器上时，脚本运行期间才 import 的 numpy / scipy 子模块照常缓存——
+    没预编译的环境（uv 建的 venv 默认不编）关掉它，每次冷启动都要从源码重编
+    （`test_only_the_bundled_runtime_gets_b_flag`）。判据落在 `SourceFileLoader.set_data`
+    （它在 `SourceFileLoader` 里只被写字节码的那一步调用）：要写的 `.pyc` 落在项目根之下就不写；
+    但落在**当前解释器自己的前缀**之下的照写——项目根里放着 `.venv` 是常态，那是用户的环境，
+    不是项目源码。内置 runtime 本来就带 `-B`（`runtime.child_args`），这一段对它是 no-op。
+    """
+    from importlib.machinery import SourceFileLoader  # noqa: PLC0415
+
+    def _norm(p) -> str:
+        return os.path.normcase(os.path.realpath(os.fspath(p)))
+
+    project = tuple(_norm(r) for r in roots if r)
+    envs = tuple(
+        _norm(p) for p in {sys.prefix, sys.exec_prefix, sys.base_prefix, sys.base_exec_prefix} if p
+    )
+    real_set_data = getattr(SourceFileLoader.set_data, "_tavotto_real", SourceFileLoader.set_data)
+
+    def set_data(self, path, data, *args, **kwargs):
+        try:
+            target = _norm(path)
+        except (OSError, TypeError, ValueError):
+            target = ""
+        if target and _inside(target, project) and not _inside(target, envs):
+            return None
+        return real_set_data(self, path, data, *args, **kwargs)
+
+    set_data._tavotto_real = real_set_data
+    SourceFileLoader.set_data = set_data
+
+
 @contextlib.contextmanager
 def _real_output():
     global _intercept
@@ -363,6 +407,9 @@ class Worker(wireproto.V1Handler):
         sys.path.insert(0, str(self.figures_dir))
         if self.script.parent != self.figures_dir:
             sys.path.insert(0, str(self.script.parent))
+        # 项目目录里的源码（脚本本身按模块 import 时、它 import 的本地模块）不写 .pyc——
+        # 必须在第一次 import 用户代码（paper_style / 脚本）之前装好。
+        _suppress_project_bytecode((self.figures_dir, self.script.parent))
 
         # 删除守卫：fig6 用绝对路径删“过期输出”（ROOT/figures/...），沙盒 cwd
         # 挡不住，这里直接拒绝任何指向真实图库目录的删除（渲染用不到删除）

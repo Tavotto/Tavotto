@@ -1200,6 +1200,9 @@ def _run_pip(argv: list[str], cancel_ev: threading.Event, on_log) -> tuple[str, 
             text=True,
             encoding="utf-8",
             errors="replace",
+            # 受管环境里跑的 pip 把缓存放进数据目录（不是 `%LOCALAPPDATA%\pip`）；用户 venv 上的
+            # 安装原样继承——那是用户自己的 pip（`runtime.owned_env`）。
+            env=runtime.owned_env(argv[0]),
             creationflags=runtime.CREATE_NO_WINDOW,
         )
     except OSError as exc:
@@ -1246,6 +1249,10 @@ def _kill(proc: subprocess.Popen) -> None:
 
 
 def _run(argv: list[str], timeout: int) -> tuple[int, str]:
+    """跑一条**只读探测**（`pip --version` / `pip check` / `pip freeze` / `pip config list` /
+    问版本 / 盘点）：解释器后面一律插 `-B`（`runtime.probe_args`）——目标可能是用户的 venv，
+    问一句不许把 .pyc 写回它的安装目录。装 / 卸走 `_run_pip`，不走这里。"""
+    argv = [argv[0], *runtime.probe_args(), *argv[1:]]
     try:
         proc = subprocess.run(
             argv,
@@ -1255,6 +1262,7 @@ def _run(argv: list[str], timeout: int) -> tuple[int, str]:
             errors="replace",
             timeout=timeout,
             stdin=subprocess.DEVNULL,
+            env=runtime.owned_env(argv[0]),
             creationflags=runtime.CREATE_NO_WINDOW,
         )
     except subprocess.TimeoutExpired:
@@ -1325,6 +1333,8 @@ def worker_self_test(python: str) -> dict:
             text=True,
             encoding="utf-8",
             errors="replace",
+            # 与池里起 worker 同一份 env 判据（受管环境的 matplotlib 缓存落回数据目录）
+            env=runtime.owned_env(python),
             creationflags=runtime.CREATE_NO_WINDOW,
         )
         try:
@@ -2004,7 +2014,11 @@ def _run_lookup(argv: list[str]) -> tuple[int, str, bool]:
 
     测试的**唯一注入点**也是它：包查找的用例一律 monkeypatch 这个函数，
     CI 里一次网络请求都不发。
+
+    解释器后面插 `-B`（只读查询，与 `_run` 同一条）；argv 的形状仍由 `pip_index_argv` 独家产出。
     """
+    if argv:
+        argv = [argv[0], *runtime.probe_args(), *argv[1:]]
     try:
         proc = subprocess.run(
             argv,
@@ -2014,6 +2028,8 @@ def _run_lookup(argv: list[str]) -> tuple[int, str, bool]:
             errors="replace",
             timeout=LOOKUP_TIMEOUT_S,
             stdin=subprocess.DEVNULL,
+            # 查找只在受管环境上跑：pip 的 HTTP 缓存落回数据目录（`runtime.owned_env`）
+            env=runtime.owned_env(argv[0]) if argv else None,
             creationflags=runtime.CREATE_NO_WINDOW,
         )
     except subprocess.TimeoutExpired:
@@ -3454,7 +3470,8 @@ sys.stdout.write(json.dumps(out))
 def probe_imports(python: str, names: tuple[str, ...] | list[str]) -> dict[str, str]:
     """一个子进程里逐个 import；回 `{名字: 错误串（空 = 成功）}`。起不来时每个名字都带错误。
 
-    启动条件与 worker 对齐（不带 `-I`、env 继承、cwd 空目录）。名字先过形状关。
+    启动条件与 worker 对齐（不带 `-I`、env 继承、cwd 空目录）；多一个 `-B`（只读探测不写 .pyc，
+    `runtime.probe_args`）。名字先过形状关。
     """
     names = tuple(n for n in names if projectenv.valid_module_name(n))
     if not names:
@@ -3463,7 +3480,7 @@ def probe_imports(python: str, names: tuple[str, ...] | list[str]) -> dict[str, 
     try:
         scratch = projectenv._probe_scratch_dir()
         proc = subprocess.run(
-            [str(python), "-c", _IMPORTS_PROBE_SRC, *names],
+            [str(python), *runtime.probe_args(), "-c", _IMPORTS_PROBE_SRC, *names],
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -3471,6 +3488,7 @@ def probe_imports(python: str, names: tuple[str, ...] | list[str]) -> dict[str, 
             timeout=projectenv.PROBE_TIMEOUT_S,
             stdin=subprocess.DEVNULL,
             cwd=scratch,
+            env=runtime.owned_env(python),
             creationflags=runtime.CREATE_NO_WINDOW,
         )
     except (OSError, subprocess.SubprocessError) as exc:

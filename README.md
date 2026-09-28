@@ -535,7 +535,9 @@ explicitly always wins**, and Tavotto only *launches* the environment you point 
 it never installs anything into it and never modifies an existing Python or Conda. The
 bundled runtime is likewise never written to — bytecode and the matplotlib font cache
 go to Tavotto's own data folder, so the installed app stays byte-identical (on macOS,
-writing into it would break the code signature).
+writing into it would break the code signature). Checking whether one of your
+environments can render writes no bytecode into it, and the environments Tavotto builds
+for you keep their pip and matplotlib caches in that data folder too.
 
 The bundled runtime covers the common scientific stack. It is **not** a promise to
 cover whatever your scripts import. If a script needs something it does not have

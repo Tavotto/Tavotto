@@ -46,16 +46,21 @@ def venv_python(root: Path | None = None) -> Path:
 
 
 def _probe(python: str, expr: str) -> str | None:
-    """在指定解释器里求值，失败回 None。"""
+    """在指定解释器里求值，失败回 None。
+
+    候选多半是**用户的**系统 Python（`find_base_python` 逐个问 `import venv`）：`-B`
+    （`runtime.probe_args`）不许把 .pyc 写回它的安装目录；Tavotto 自己的环境按
+    `runtime.owned_env` 把 matplotlib 缓存放回数据目录。"""
     try:
         out = subprocess.run(
-            [python, "-c", expr],
+            [python, *runtime.probe_args(), "-c", expr],
             capture_output=True,
             text=True,
             encoding="utf-8",
             errors="replace",
             timeout=PROBE_TIMEOUT_S,
             stdin=subprocess.DEVNULL,
+            env=runtime.owned_env(python),
             creationflags=runtime.CREATE_NO_WINDOW,
         )
     except (OSError, subprocess.SubprocessError):
@@ -258,6 +263,9 @@ def _run(cmd: list[str]) -> tuple[int, str]:
             errors="replace",
             timeout=INSTALL_TIMEOUT_S,
             stdin=subprocess.DEVNULL,
+            # 往自建的 worker-env 里 pip install 时，pip 缓存放进数据目录（`runtime.owned_env`）；
+            # 用基础解释器 `-m venv` 那一步不是我们的环境，原样继承。
+            env=runtime.owned_env(cmd[0]) if cmd else None,
             creationflags=runtime.CREATE_NO_WINDOW,
         )
     except subprocess.TimeoutExpired:

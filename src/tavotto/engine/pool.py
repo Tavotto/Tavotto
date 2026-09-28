@@ -905,6 +905,16 @@ def _glob(pattern: str) -> list[str]:
         return []
 
 
+def worker_env(python: str, source: str, *, base: dict | None = None) -> dict | None:
+    """worker 子进程的环境变量——三条 spawn 路径（Python 池 / workerd 规格 / workerd 会话的
+    spec）的**唯一出处**：内置 runtime → `runtime.child_env()`；Tavotto 自己数据目录里的环境
+    （受管环境、worker-env）→ `runtime.owned_env()`（缓存落回数据目录）；用户的环境 → None
+    （原样继承）。`base={}` 回增量（workerd 只收增量）。"""
+    if source == SOURCE_BUNDLED:
+        return runtime.child_env(base=base)
+    return runtime.owned_env(python, base)
+
+
 def _has_matplotlib(python: str, *, bundled: bool = False) -> bool:
     """真去 import 一次。manifest 说装了不算数——DLL 缺失、被杀毒软件隔离了
     某个 .pyd，都是「文件在但 import 不了」。
@@ -917,9 +927,12 @@ def _has_matplotlib(python: str, *, bundled: bool = False) -> bool:
     内置 runtime 被判成「不可用」，退回别的 Python 甚至报「没有渲染环境」，
     而同一个解释器在 worker 那条路上是好的。只在「从终端启动」时复现，
     从 Finder 双击一切正常。
+
+    非内置解释器多一个 `-B`（`runtime.probe_args`）：只读探测不往用户解释器的安装目录写
+    `.pyc`；它不改 import 的结果，「同一套」要对齐的那几个维度不变。
     """
-    args = runtime.child_args() if bundled else []
-    env = runtime.child_env() if bundled else None
+    args = runtime.probe_args(bundled=bundled)
+    env = runtime.probe_env(python, bundled=bundled)
     try:
         # stdin 必须显式断开：桌面 sidecar 的 stdin 是「父进程死亡信号」管道，
         # 绝不能被子进程继承（Windows 上实测继承它会让子解释器启动挂死 30s，
@@ -1407,10 +1420,11 @@ class EngineWorker:
         python, self.python_source = resolve_worker_python(figures_dir, script=script_name)
         self.python = python
         # 内置 runtime 装在安装目录里（可能是 Program Files），一个字节都不往
-        # 那儿写：.pyc 与 matplotlib 字体缓存改道到数据目录。用户自己的环境
-        # 不动——那是他的地盘，我们没资格替他改 MPLCONFIGDIR。
+        # 那儿写：.pyc 与 matplotlib 字体缓存改道到数据目录。Tavotto 自己的环境
+        # （受管环境 / worker-env）的缓存同样落回数据目录（`runtime.owned_env`）。
+        # 用户自己的环境不动——那是他的地盘，我们没资格替他改 MPLCONFIGDIR。
         bundled = self.python_source == SOURCE_BUNDLED
-        env = runtime.child_env() if bundled else None
+        env = worker_env(python, self.python_source)
         # `-B`：内置 runtime 装在安装目录里（可能是 Program Files），
         # 一个 .pyc 都不往那儿写。.pyc 已在构建期编好随包发出，`-B` 只禁写不禁读。
         args = runtime.child_args() if bundled else []
@@ -1425,7 +1439,7 @@ class EngineWorker:
             entry,
             interpreter=python,
             sandbox=str(self.sandbox),
-            env=runtime.child_env(base={}) if bundled else None,
+            env=worker_env(python, self.python_source, base={}),
             # 项目级「在脚本目录里运行」（ADR 0047）：两条控制面与 one_shot 都从
             # 这一个出处取——写回的重放必须和热态用同一个 cwd。
             cwd_mode=workdir.mode_for(figures_dir),
@@ -2009,7 +2023,7 @@ def _spawn_spec(
         entry,
         interpreter=python,
         sandbox=str(sandbox),
-        env=runtime.child_env(base={}) if bundled else None,
+        env=worker_env(python, source, base={}),
         cwd_mode=workdir.mode_for(figures_dir),
     )
     # 只给**增量**：workerd 继承的本来就是 Flask 自己的环境，整份传过去没有意义
@@ -2126,7 +2140,7 @@ class WorkerdWorker:
             entry,
             interpreter=python,
             sandbox=str(self.sandbox),
-            env=(runtime.child_env(base={}) if self.python_source == SOURCE_BUNDLED else None),
+            env=worker_env(python, self.python_source, base={}),
             # 与 `_spawn_spec()` 同一个出处：这份属性是 ExecutionReceipt 的
             # LaunchContext 来源（ADR 0053），漏了 cwd_mode 就会在 project 模式下
             # 把「脚本目录」报成「沙盒」——而真正 spawn 的 argv 早就带着 `--cwd`。
