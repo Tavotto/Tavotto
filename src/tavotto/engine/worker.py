@@ -45,6 +45,7 @@ import json
 import os
 import shutil
 import sys
+import sysconfig  # 模块层：项目目录进 sys.path 之前就拿住标准库这一份（项目里的 sysconfig.py 遮不住它）
 import time
 import traceback
 from pathlib import Path
@@ -323,8 +324,6 @@ def _suppress_project_bytecode(roots) -> None:
         return os.path.normcase(os.path.realpath(os.fspath(p)))
 
     project = tuple(_norm(r) for r in roots if r)
-    import sysconfig  # noqa: PLC0415
-
     # 只豁免解释器的**包目录**（项目里的 `.venv/lib/.../site-packages`）；前缀本身不算——它可能包住项目，
     # 也可能就是项目根
     paths = sysconfig.get_paths()

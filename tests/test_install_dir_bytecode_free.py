@@ -34,6 +34,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -268,6 +269,23 @@ def test_a_venv_created_at_the_project_root_does_not_exempt_the_project(install,
     pycs = _pycs(proj)
     assert [p for p in pycs if "venvmod" in p], pycs
     assert [p for p in pycs if "fig_data" in p or "helper" in p] == [], pycs
+
+
+def test_a_project_sysconfig_module_does_not_shadow_the_workers(tmp_path, monkeypatch):
+    """项目里有自己的 `sysconfig.py`（Codex #717）：`_suppress_project_bytecode` 装在项目目录进 `sys.path`
+    之后，此时再 `import sysconfig` 会拿到用户的模块（标准库那份没被缓存时），build 当场失败、还会在守卫装好
+    之前执行用户代码。worker 用的必须是模块层先拿住的标准库那一份。"""
+    from importlib.machinery import SourceFileLoader
+
+    from tavotto.engine import worker
+
+    (tmp_path / "sysconfig.py").write_text(
+        "raise RuntimeError('用户的 sysconfig')\n", encoding="utf-8"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.delitem(sys.modules, "sysconfig")  # 标准库那份没被缓存的情形
+    monkeypatch.setattr(SourceFileLoader, "set_data", SourceFileLoader.set_data)  # 用完还原
+    worker._suppress_project_bytecode((str(tmp_path),))
 
 
 def test_the_environment_probe_writes_no_bytecode_into_the_install_dir(install, monkeypatch):
