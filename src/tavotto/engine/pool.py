@@ -27,6 +27,7 @@ from . import (
     envlease,
     execspec,
     inputbroker,
+    inputremap,
     logsafe,
     patchspec,
     projectenv,
@@ -568,6 +569,8 @@ class WorkerError(RuntimeError):
         #: worker 错误信封里多带的字段（`known` / `exit_code` / 退出状态 `exit`…），
         #: 两条控制面都往这里放——上层按键取，不必知道是哪条控制面给的。
         self.extra: dict = {}
+        #: 数据找不到（ADR 0106）时弹窗的结构化载荷（`inputremap.payload_for`）；没有就是 None。
+        self.missing_input: dict | None = None
 
 
 #: 脚本跑完了、一张图都没捕获到，而调用方要的 stem 在注册表里登记过。worker
@@ -702,6 +705,33 @@ def _explain_empty_capture(err: "WorkerError", script_name: str, known, log_tail
     return out
 
 
+#: worker 侧 `worker.MISSING_INPUT` 的镜像（Flask 进程不 import worker.py）。
+MISSING_INPUT_CODE = "missing_input"
+
+
+def _offer_missing_input(err: "WorkerError", script_name: str, figures_dir) -> "WorkerError":
+    """数据找不到（ADR 0106）：给错误挂上弹窗载荷 `missing_input`。
+
+    `missing_input`（worker 说得出缺的是哪一串）与「脚本跑完没出图」（`no_figures_captured*`，
+    多半是先 `exists()` 判空再自己退出）两条路都挂：后者只剩脚本里写着、此刻哪儿都找不到的
+    路径（`inputremap.static_missing`）。两样都没有就不挂——没什么可问的，错误块照旧。
+    两条控制面与准备接口各调一处，载荷只在 `inputremap.payload_for` 里拼。
+    """
+    if err.code not in (MISSING_INPUT_CODE, NO_FIGURES_CODE, NO_FIGURES_SILENT_CODE):
+        return err
+    if not script_name or not figures_dir:
+        return err
+    fact = (err.extra or {}).get("missing_input") if err.code == MISSING_INPUT_CODE else None
+    try:
+        payload = inputremap.payload_for(script_name, figures_dir, fact)
+    except (OSError, ValueError) as exc:  # 静态证据读不了：错误本身照报，只是不弹窗
+        LOG.info("数据找不到的弹窗载荷拼不出来（%s）: %s", type(exc).__name__, script_name)
+        payload = None
+    if payload is not None:
+        err.missing_input = payload
+    return err
+
+
 def missing_stem_error(worker, stem: str, known) -> "WorkerError | None":
     """build 完了、请求的 `stem` 不在捕获表里：给出**渲染入口会给的那个错误**（同一个 code、同一段脚本输出）。
 
@@ -722,7 +752,11 @@ def missing_stem_error(worker, stem: str, known) -> "WorkerError | None":
         tail = worker._log_tail()
     except Exception:  # noqa: BLE001 —— 读不到日志就按「一个字没打印」
         tail = ""
-    return _explain_empty_capture(err, script_name, known, tail or "")
+    return _offer_missing_input(
+        _explain_empty_capture(err, script_name, known, tail or ""),
+        script_name,
+        getattr(worker, "figures_dir", None),
+    )
 
 
 #: worker 侧 `worker.SCRIPT_NEEDS_ARGUMENTS` 的镜像（Flask 进程不 import worker.py）。
@@ -1444,6 +1478,8 @@ class EngineWorker:
             # 项目级「在脚本目录里运行」（ADR 0047）：两条控制面与 one_shot 都从
             # 这一个出处取——写回的重放必须和热态用同一个 cwd。
             cwd_mode=workdir.mode_for(figures_dir),
+            # ADR 0106：用户指认过的只读改指表，三条 spawn 路径同一个出处
+            input_remap=inputremap.rules_for(figures_dir),
         )
         LOG.info(
             "worker 启动: %s（entry=%s，解释器来源=%s）",
@@ -1707,8 +1743,10 @@ class EngineWorker:
             }
         known = err.get("known") if isinstance(err, dict) else resp.get("known")
         tail = self._log_tail()
-        return _explain_empty_capture(
-            _attach_script_output(out, tail), self.script_name, known, tail
+        return _offer_missing_input(
+            _explain_empty_capture(_attach_script_output(out, tail), self.script_name, known, tail),
+            self.script_name,
+            self.figures_dir,
         )
 
     def request(self, obj: dict, timeout: float | None = None) -> dict:
@@ -2026,6 +2064,7 @@ def _spawn_spec(
         sandbox=str(sandbox),
         env=worker_env(python, source, base={}),
         cwd_mode=workdir.mode_for(figures_dir),
+        input_remap=inputremap.rules_for(figures_dir),
     )
     # 只给**增量**：workerd 继承的本来就是 Flask 自己的环境，整份传过去没有意义
     env = dict(spec.env or {})
@@ -2146,6 +2185,8 @@ class WorkerdWorker:
             # LaunchContext 来源（ADR 0053），漏了 cwd_mode 就会在 project 模式下
             # 把「脚本目录」报成「沙盒」——而真正 spawn 的 argv 早就带着 `--cwd`。
             cwd_mode=workdir.mode_for(figures_dir),
+            # ADR 0106：用户指认过的只读改指表，三条 spawn 路径同一个出处
+            input_remap=inputremap.rules_for(figures_dir),
         )
         self._session_id = ""
         self._open()
@@ -2238,8 +2279,15 @@ class WorkerdWorker:
         # ……「脚本跑完没出图」「脚本要命令行参数」也是同一条纪律：workerd 把
         # `known` 透传在 extra 里，argparse 的 usage 在 worker.log 里
         tail = self._log_tail()
-        return _explain_empty_capture(
-            _attach_script_output(err, tail), self.script_name, (exc.extra or {}).get("known"), tail
+        return _offer_missing_input(
+            _explain_empty_capture(
+                _attach_script_output(err, tail),
+                self.script_name,
+                (exc.extra or {}).get("known"),
+                tail,
+            ),
+            self.script_name,
+            self.figures_dir,
         )
 
     def _call(

@@ -75,6 +75,7 @@ from .engine import (
     figcapture as engine_figcapture,
     handoff as engine_handoff,
     inputbroker as engine_inputbroker,
+    inputremap as engine_inputremap,
     layoutsession as engine_layoutsession,
     locate as engine_locate,
     logsafe as engine_logsafe,
@@ -637,6 +638,11 @@ def _worker_error_payload(exc, stage: str = "") -> dict:
     confirmation = getattr(exc, "confirmation", None)
     if isinstance(confirmation, dict):
         body["confirmation"] = confirmation
+    # 数据找不到（ADR 0106）：缺的是哪一串、脚本里还有哪些此刻也找不到——前端据此弹「指认数据
+    # 位置」的对话框。路径是脚本写的原串（本来就在用户的脚本里），不是机器上别处的路径。
+    missing_input = getattr(exc, "missing_input", None)
+    if isinstance(missing_input, dict):
+        body["missing_input"] = missing_input
     # 跑前的依赖门（U04，ADR 0061 §六）：整份联合计划 + 可选目标原样带出去——前端据此弹一次
     # 授权框（装什么、装到哪、会不会改用户环境），MCP 据此说怎么答。载荷里没有机器路径
     # （`JointPlan` 的身份不含路径，目标里的解释器是项目相对）。
@@ -5728,6 +5734,8 @@ def _project_environment_state() -> dict:
         "managed": engine_managedenv.state(root),
         # safe worker 的工作目录模式（ADR 0047）：沙盒（默认）/ 脚本目录
         "workdir": engine_workdir.state(root),
+        # 数据找不到时用户指认过的只读改指表（ADR 0106）：设置里列出、可删
+        "input_remap": engine_inputremap.state(root),
     }
     return out
 
@@ -5764,6 +5772,65 @@ def api_engine_workdir_set():
             root,
         )
     return jsonify({"ok": True, "workdir": state, "project": _project_environment_state()})
+
+
+def _input_remap_error(exc):
+    return jsonify({"error": str(exc), "code": exc.code, "params": dict(exc.params)}), 400
+
+
+@app.get("/api/engine/input-remap")
+def api_engine_input_remap_get():
+    """当前项目的只读改指表（ADR 0106）。"""
+    root = str(require_project())
+    return jsonify({"ok": True, "input_remap": engine_inputremap.state(root)})
+
+
+@app.post("/api/engine/input-remap")
+def api_engine_input_remap_add():
+    """用户指认了数据位置（ADR 0106）：推一条规则、按项目记住、关掉这个项目的会话。
+
+    `{requested, chosen, chosen_kind: "file" | "dir"}`：`requested` 是脚本写的那一串（弹窗载荷
+    原样带回），`chosen` 是用户在选择器里指认的本机绝对路径。规则只影响**只读**打开，且只在原路径
+    打不开时才查——数据回到原处，规则自动不起作用。会话要重起：改指表是 spawn 时交给 worker 的。
+    """
+    root = str(require_project())
+    body = request.get_json(force=True) or {}
+    requested = body.get("requested")
+    chosen = body.get("chosen")
+    kind = str(body.get("chosen_kind") or "")
+    if not isinstance(requested, str) or not isinstance(chosen, str) or kind not in ("file", "dir"):
+        return jsonify(
+            {
+                "error": "需要 requested、chosen 与 chosen_kind（file / dir）",
+                "code": engine_inputremap.ERROR_REQUESTED_INVALID,
+                "params": {},
+            }
+        ), 400
+    try:
+        rule = engine_inputremap.derive(requested, chosen, chosen_is_dir=kind == "dir")
+        state = engine_inputremap.add_rule(root, rule)
+    except engine_inputremap.RemapError as exc:
+        return _input_remap_error(exc)
+    engine_pool.shutdown_all(root)
+    LOG.info("数据改指: 新增一条 %s 规则（%s）", rule["kind"], root)
+    return jsonify({"ok": True, "rule": rule, "input_remap": state})
+
+
+@app.delete("/api/engine/input-remap")
+def api_engine_input_remap_delete():
+    """删一条改指规则（ADR 0106）：删了就回到「找不到就报错」。"""
+    root = str(require_project())
+    body = request.get_json(force=True) or {}
+    kind = str(body.get("kind") or "")
+    src = body.get("from")
+    if not isinstance(src, str):
+        src = ""
+    try:
+        state = engine_inputremap.remove_rule(root, kind, src)
+    except engine_inputremap.RemapError as exc:
+        return _input_remap_error(exc)
+    engine_pool.shutdown_all(root)
+    return jsonify({"ok": True, "input_remap": state})
 
 
 # --------------------- 异步准备（统一实施包 U01，ADR 0053）---------------------
