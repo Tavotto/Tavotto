@@ -46,6 +46,16 @@ describe('拖放的脚本判据 ↔ 壳的 drop_paths::classify', () => {
     expect(verdict(c.name)).toBe(c.page)
   })
 
+  // 路径以分隔符结尾时页面也看得出是目录：这时不许再有 page_blind 那种差异（壳那侧同一条）
+  it.each(cases.filter((c) => c.on_disk === 'dir').map((c) => [JSON.stringify(c.name), c] as const))(
+    '目录带结尾分隔符放下 %s：与壳同一个结论',
+    (_, c) => {
+      const t = dropTargetOf(data({ uris: `file://${DIR}/${encodeURIComponent(c.name)}/`, name: c.name }))
+      expect(c.shell).toBe('folder')
+      expect(t).toEqual({ kind: 'path', folder: `${DIR}/${c.name}/` })
+    },
+  )
+
   it.each(cases.map((c) => [JSON.stringify(c.name), c] as const))('只有文件名放下 %s：只有脚本退回选择器', (_, c) => {
     const t = dropTargetOf(data({ name: c.name }))
     expect(t).toEqual({ kind: c.page === 'script' ? 'no-path' : 'not-script', name: c.name })

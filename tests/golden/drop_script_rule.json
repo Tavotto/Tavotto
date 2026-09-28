@@ -1,5 +1,5 @@
 {
-  "_comment": "主页拖放「什么算脚本、打开哪个目录」的共享向量（严格同源对，docs/rules/repo/same-origin-pairs.md）。壳 src-tauri/src/drop_paths.rs::classify 与页面 web/src/lib/scriptImport.ts::dropTargetOf 各自与它比，不读对方源码。结论三档：script = 打开它的上级目录；folder = 打开它自己；unsupported = 不收。name 是拖进来的那一项的最后一段，on_disk 是它在磁盘上的真实类型（壳能 stat，页面只看得到路径串）。page 与 shell 不同的条目必须写 page_blind（页面为什么判不出），反过来也一样；posix_only 的条目 Windows 上建不出来（Win32 会削掉结尾的空格），壳那侧在 Windows 上跳过。",
+  "_comment": "主页拖放「什么算脚本、打开哪个目录」的共享向量（严格同源对，docs/rules/repo/same-origin-pairs.md）。壳 src-tauri/src/drop_paths.rs::classify 与页面 web/src/lib/scriptImport.ts::dropTargetOf 各自与它比，不读对方源码。结论三档：script = 打开它的上级目录；folder = 打开它自己；unsupported = 不收。name 是拖进来的那一项的最后一段，on_disk 是它在磁盘上的真实类型（壳能 stat，页面只看得到路径串）。page 与 shell 不同的条目必须写 page_blind（页面为什么判不出），反过来也一样；posix_only 的条目 Windows 上建不出来（Win32 会削掉结尾的空格），壳那侧在 Windows 上跳过。on_disk = dir 的条目两侧另外各量一次带结尾分隔符的路径：页面看得见分隔符时必须与壳同为 folder。",
   "cases": [
     { "name": "plot.py", "on_disk": "file", "shell": "script", "page": "script" },
     { "name": "Plot.PY", "on_disk": "file", "shell": "script", "page": "script" },

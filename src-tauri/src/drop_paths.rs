@@ -261,6 +261,18 @@ mod tests {
             };
             assert_eq!(got, shell, "{name:?}");
             seen.insert(got);
+            // 目录带结尾分隔符交来也一样（页面那侧同一条：看得见分隔符就与壳同一个结论）
+            if c["on_disk"] == "dir" {
+                let mut slashed = p.clone().into_os_string();
+                slashed.push(std::path::MAIN_SEPARATOR_STR);
+                assert!(
+                    matches!(
+                        classify(&[PathBuf::from(slashed)]),
+                        Some(DropTarget::Folder { .. })
+                    ),
+                    "{name:?}/"
+                );
+            }
         }
         // 三档都真的出现过，否则某一档判错了也量不出来
         assert_eq!(seen.len(), 3, "{seen:?}");
