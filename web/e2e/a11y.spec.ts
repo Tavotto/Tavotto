@@ -207,7 +207,8 @@ test('项目选择器：axe 无违规、无未定性的「查不了」、自算�
   await page.goto(a.baseURL)
   // 主页新手版（第一次来的人看到的那一屏）
   await expect(page.locator('main[data-home-variant="newcomer"]')).toBeVisible()
-  await expect(page.getByText('已随安装包内置示例脚本')).toBeVisible()
+  // 等教程资源的状态回来、那句说明出现再扫（按属性认，不按文案——chromium-en 也跑这条）
+  await expect(page.locator('[data-home-sample-note="bundled"]')).toBeVisible()
   // 三步卡片的序号只有一个字符，axe 判「太短、说不准是不是正文」进 incomplete——自算尺子逐节点量它
   await expectAccessible(page, { allow: [contrastCoveredByOurOwnRuler] })
   // 「全部项目」（新建 / 路径 / 完整最近列表）

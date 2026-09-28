@@ -417,7 +417,10 @@ function Newcomer({ importer }: { importer: Importer }) {
         </Button>
       </div>
       {!sample.hidden && (sample.available || sample.unavailable) && (
-        <p className="mt-3 text-center text-sm text-ink-3">
+        <p
+          className="mt-3 text-center text-sm text-ink-3"
+          data-home-sample-note={sample.unavailable ? 'unavailable' : 'bundled'}
+        >
           {sample.unavailable ? t('picker.tutorialUnavailable') : t('home.newcomer.bundled')}
         </p>
       )}

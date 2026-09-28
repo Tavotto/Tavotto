@@ -3,6 +3,8 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+// 分派只有 macOS 的 native_drop 在用；别的平台上它只剩单测（分派规则各平台一样，照样跑）
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 mod drop_paths;
 mod i18n;
 #[cfg(target_os = "macos")]
