@@ -520,7 +520,10 @@ function RepairProgress({
   const key = STATE_KEY[progress.state] ?? 'repairPreparing'
   const failed = progress.state === 'failed'
   const cancelled = progress.state === 'cancelled'
-  const canRetry = !!onRetry && (cancelled || (failed && RETRYABLE_REPAIR_CODES.has(progress.code)))
+  const canRetry =
+    !!onRetry &&
+    progress.retryable !== false &&
+    (cancelled || (failed && RETRYABLE_REPAIR_CODES.has(progress.code)))
   return (
     <div className="flex flex-col gap-2.5 rounded-md bg-surface p-3 shadow-card">
       <div>

@@ -3197,6 +3197,11 @@ export interface DependencyProgress {
   } | null
   /** state = failed 且 code = dependency_interpreter_pinned 时：租约里复查到的那条固定 */
   pinned?: InterpreterPin
+  /**
+   * 单包修复的终态（failed / cancelled）：同一个需求这一轮还能不能再装。pip 跑成之后才取消 / 失败的为
+   * false（再形成计划必然 `dependency_already_attempted`），界面不给「重试」。老服务端没有这个字段。
+   */
+  retryable?: boolean
 }
 
 export const createDependencyPlan = (body: {

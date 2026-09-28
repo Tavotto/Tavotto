@@ -1443,6 +1443,14 @@ def _emit(
                 target_kind=plan.target_kind,
                 script=plan.script,
             )
+            if state in (STATE_FAILED, STATE_CANCELLED):
+                # 终态上说清「同一个需求这一轮还能不能再装」：pip 跑成之后（验证 / 自检期间取消、验证没过）
+                # `_attempted` 已登记，再形成计划必然 `dependency_already_attempted`——界面据此不给「重试」
+                # （Codex #709）。只看项目与需求、不看环境 key：宁可少给一次重试，也不给一颗必败的按钮
+                req = plan.requirement.requirement()
+                rec["retryable"] = not any(
+                    k[0] == plan.project_id and k[2] == req for k in _attempted
+                )
         if joint is not None:
             rec.update(
                 target_kind=joint.target_kind,

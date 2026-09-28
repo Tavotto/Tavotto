@@ -676,10 +676,11 @@ describe('失败 / 取消之后就地重试', () => {
     await click(en('repairInstallToManaged', { module: 'lmfit', product: PRODUCT_NAME }))
     expect(installMock).toHaveBeenCalledTimes(1)
   }
-  const finish = (state: string, code: string) =>
+  const finish = (state: string, code: string, extra: Record<string, unknown> = {}) =>
     act(() => {
       useDepRepairStore.getState().onProgress({
         plan_id: 'plan-managed', state, log: '', error: '后端原文', code, target_kind: 'tavotto_managed',
+        ...extra,
       } as never)
     })
 
@@ -700,6 +701,13 @@ describe('失败 / 取消之后就地重试', () => {
     await startManaged()
     await finish('cancelled', 'dependency_install_cancelled')
     expect(retryButton()).toBeTruthy()
+  })
+
+  it('pip 已经装成之后才取消（验证 / 自检期间）：后端说 retryable=false，不给必败的「重试」', async () => {
+    await startManaged()
+    await finish('cancelled', 'dependency_install_cancelled', { retryable: false })
+    expect(retryButton()).toBeNull()
+    expect(byName(en('repairClose'))).toBeTruthy()
   })
 
   it('哈希不符之类重试不会变的失败不给「重试」', async () => {

@@ -98,7 +98,9 @@
   只能重启（2026-09-28 Windows Server 2025 冻结包实测；看护
   `test_a_failed_private_python_download_leaves_the_managed_requirement_retryable` /
   `test_a_failed_managed_pip_run_leaves_the_requirement_retryable` /
-  `test_a_successful_managed_pip_run_still_blocks_the_same_requirement`）。
+  `test_a_successful_managed_pip_run_still_blocks_the_same_requirement`）。单包修复的终态进度（failed / cancelled）
+  带 `retryable`：pip 跑成之后才取消 / 失败的为 false，界面不给必败的「重试」
+  （`test_the_terminal_progress_says_whether_the_same_requirement_can_be_retried`）。
 - **界面上受管环境是一次授权**（2026-09-28 用户裁决）：后端仍是 plan → install 两步（§四的机制面不变），
   `DependencyRepairCard` 在受管目标下把确认页的全部要素先说出口（装什么 / 联网 / 隔离环境、不改源码与现有
   环境 / 私有 Python 版本与体积或已缓存），点一次 `depRepairStore.installNow` 连发两步；后端算出的计划超出

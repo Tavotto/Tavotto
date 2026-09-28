@@ -1446,6 +1446,34 @@ def test_a_failed_managed_pip_run_leaves_the_requirement_retryable(
     assert again.plan_id
 
 
+@pytest.mark.parametrize(
+    "pip_code, retryable",
+    [("", False), (deprepair.ERROR_CANCELLED, True)],
+    ids=["cancelled-after-pip", "cancelled-during-pip"],
+)
+def test_the_terminal_progress_says_whether_the_same_requirement_can_be_retried(
+    project, monkeypatch, tmp_path, pip_code, retryable
+):
+    """Codex #709：受管单包修复取消在 pip 跑成**之后**（验证 / 自检期间）时 `_attempted` 已登记，再形成计划必然
+    `dependency_already_attempted`——终态进度带 `retryable=False`，界面据此不给「重试」；pip 期间取消的仍是 True。"""
+    plan = _managed_plan(project, monkeypatch, tmp_path, private=False)
+    _stub_generation_until_pip(monkeypatch, pip_code=pip_code)
+    if not pip_code:
+        # pip 跑成了，验证期间用户点了取消
+        monkeypatch.setattr(
+            deprepair, "_verify_imports", lambda python, modules: deprepair.cancel(plan.plan_id)
+        )
+    rec = deprepair.install(plan.plan_id)
+    assert rec["state"] == deprepair.STATE_CANCELLED
+    assert deprepair.progress(plan.plan_id)["retryable"] is retryable
+    if not retryable:
+        with pytest.raises(deprepair.RepairError) as err:
+            deprepair.create_plan(
+                str(project), "figure.py", FIXTURE_IMPORT, target_kind=deprepair.TARGET_MANAGED
+            )
+        assert err.value.code == deprepair.ERROR_ALREADY_ATTEMPTED
+
+
 def test_a_successful_managed_pip_run_still_blocks_the_same_requirement(
     project, monkeypatch, tmp_path
 ):
