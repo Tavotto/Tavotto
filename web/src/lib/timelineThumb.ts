@@ -191,19 +191,36 @@ function encode(canvas: HTMLCanvasElement): Promise<TimelineThumb | null> {
   })
 }
 
+/** 一份文档此刻的各面板图源（`panelSource` 的结果）；取不出来 = `null`（没有缩略图） */
+export type ThumbSources = ReadonlyMap<string, PanelSource> | null
+
 /**
- * 合成一张画布缩略图；任何失败都是 `null`。
- *
- * 调用方要在**拍节点的同一个同步段里**调它（见 `panelSource`）：这个函数在第一个
- * await 之前就把各面板的图源取完了。
+ * 取各面板**此刻**的图源——只读 renderStore，同步、便宜。关键时刻在操作**发起**那一刻取
+ * （`captureMoment`），完成时再合成：那时用户可能已经改了面板，现取的话缩略图画的是
+ * 之后的样子，与节点里那份文档对不上（Codex #679）。
  */
-export async function composeTimelineThumb(doc: FigureDocument): Promise<TimelineThumb | null> {
+export function captureThumbSources(doc: FigureDocument): ThumbSources {
   const sources = new Map<string, PanelSource>()
   try {
     for (const o of doc.objects) if (o.type === 'panel' && !o.hidden) sources.set(o.id, panelSource(o))
   } catch {
     return null
   }
+  return sources
+}
+
+/**
+ * 合成一张画布缩略图；任何失败都是 `null`。
+ *
+ * 图源：给了 `sources` 就用它（发起那一刻取好的）；没给就在**同一个同步段里**现取
+ * （见 `panelSource`）——这个函数在第一个 await 之前就把各面板的图源取完了。
+ */
+export async function composeTimelineThumb(
+  doc: FigureDocument,
+  given?: ThumbSources,
+): Promise<TimelineThumb | null> {
+  const sources = given === undefined ? captureThumbSources(doc) : given
+  if (!sources) return null
   await Promise.resolve()
   try {
     const { w: pw, h: ph } = doc.page

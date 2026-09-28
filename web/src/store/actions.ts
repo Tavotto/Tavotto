@@ -558,7 +558,7 @@ export async function runManualSave(): Promise<void> {
   if (state === 'saved' || state === 'clean') {
     ui.setStatus(msg('save.doneLocal', undefined, 'workspace'))
     // 「排版写成了」由保存侧发，时间线订阅它打「保存」点（ADR 0101 §7）；点属于按下 ⌘S 那一份
-    emitLayoutSaved('local', { ctx: ctx.timeline })
+    emitLayoutSaved('local', { moment: ctx.moment })
   } else if (state === 'conflict') {
     ui.setStatus(msg('save.conflict', undefined, 'workspace'), 'error')
   } else if (state === 'save_error') {

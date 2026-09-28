@@ -175,7 +175,7 @@ describe('写成了就发「排版写成了」（时间线的「保存」点，A
   let off: () => void = () => {}
   beforeEach(() => {
     seen = []
-    off = onLayoutSaved((via, { ctx }) => seen.push([via, ctx]))
+    off = onLayoutSaved((via, { moment }) => seen.push([via, moment.ctx]))
   })
   afterEach(() => off())
 
@@ -204,6 +204,25 @@ describe('写成了就发「排版写成了」（时间线的「保存」点，A
     }
     expect(written).toHaveLength(1)
     expect(seen.map(([via]) => via)).toEqual(['project_file'])
+  })
+
+  it('写的途中接着改：事件带的快照就是写出去的那一份（不是之后的样子）', async () => {
+    bind()
+    edit('t1')
+    const docs: string[][] = []
+    const offDocs = onLayoutSaved((_via, { moment }) => docs.push(moment.identity.doc.objects.map((o) => o.id)))
+    let open!: () => void
+    layoutGate = new Promise<void>((r) => (open = r))
+    const saving = runManualSave()
+    await new Promise((r) => setTimeout(r, 20))
+    edit('t2') // 请求已经发出去了：写出去的是 t1 那一份
+    layoutGate = null
+    open()
+    await saving
+    offDocs()
+    const sent = JSON.parse(written[0]).canvases[0].objects.map((o: TextObject) => o.id)
+    expect(sent).toEqual(['t1'])
+    expect(docs).toEqual([sent])
   })
 
   it('没写成（409）不发', async () => {

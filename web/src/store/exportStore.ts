@@ -36,8 +36,7 @@ import { useDocumentStore } from '@/store/documentStore'
 import { findFigurePanel } from '@/store/workspace'
 import type { FilenameReason } from '@/lib/exportName'
 import { filenameProblem } from '@/lib/exportRequest'
-import { markMoment } from '@/lib/timelineCheckpoint'
-import { currentTimelineCtx } from '@/lib/timelineContext'
+import { captureMoment, markMoment, type MomentSnapshot } from '@/lib/timelineCheckpoint'
 
 /** 轮询间隔。SSE 通的时候它几乎不出场；不通的时候它是唯一的通道 */
 const POLL_MS = 600
@@ -88,11 +87,12 @@ interface ExportState {
    */
   ownedJobId: string | null
   /**
-   * 起这次导出那一刻的时间线上下文（项目代际 + 排版 id）。导出要跑很久，完成时用户
-   * 可能已经在同项目里换了排版（换排版不调 `resetExportState`）：「导出」点只打给
-   * 被导出的那一份，换走了就不打（Codex #679，`markMoment` 的 ctx）。
+   * 起这次导出那一刻的快照（`captureMoment`，文档取导出请求里的那一份）。导出要跑很久：
+   * 完成时用户可能已经在同项目里换了排版（换排版不调 `resetExportState`）——「导出」点只
+   * 打给被导出的那一份；也可能在同一份里接着改——节点拍的是被导出的内容，不是之后的样子
+   * （Codex #679）。
    */
-  momentCtx: string | null
+  momentSnapshot: MomentSnapshot | null
 }
 
 export const useExportStore = create<ExportState>(() => ({
@@ -103,7 +103,7 @@ export const useExportStore = create<ExportState>(() => ({
   startedRevision: null,
   editedDuringExport: false,
   ownedJobId: null,
-  momentCtx: null,
+  momentSnapshot: null,
 }))
 
 /** 请求成形 + 就地校验。**不发网络**，输入框每敲一个字都可以调。 */
@@ -164,7 +164,7 @@ export function applyExportJob(job: ExportJob): void {
   if (terminal) stopPolling()
   // 排版时间线的关键时刻（ADR 0101）：导出**交付了文件**的那一刻打一个点。
   // 上面那道闸保证同一个作业只会进一次终局，所以这里不会重复打
-  if (job.status === 'done' || job.status === 'partial') void markMoment('export', s.momentCtx)
+  if (job.status === 'done' || job.status === 'partial') void markMoment('export', s.momentSnapshot)
   useExportStore.setState({
     job,
     running: !terminal,
@@ -223,7 +223,7 @@ export async function runExport(input: ExportRequestInput): Promise<ExportJob | 
     editedDuringExport: false,
     // 起之前先清空归属：这一刻起，旧作业的迟到快照一律不收
     ownedJobId: null,
-    momentCtx: currentTimelineCtx(),
+    momentSnapshot: captureMoment(input.doc),
   })
   const mine = ++generation
   let job: ExportJob

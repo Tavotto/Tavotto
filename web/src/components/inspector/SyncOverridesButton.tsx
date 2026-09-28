@@ -22,8 +22,7 @@ import { Button } from '../ui/Button'
 import { Dialog } from '../ui/Dialog'
 import { Popover } from '../ui/Popover'
 import { effectiveOverrideIndex } from '@/lib/effectiveOverride'
-import { markMoment } from '@/lib/timelineCheckpoint'
-import { currentTimelineCtx } from '@/lib/timelineContext'
+import { captureMoment, markMoment } from '@/lib/timelineCheckpoint'
 
 /** 本组文案在 inspector:sync.* 下 */
 const sy = (key: string, values?: Record<string, unknown>) =>
@@ -187,7 +186,8 @@ function ResultDialog({
 
   const applyToFile = async () => {
     if (!target) return
-    const ctx = currentTimelineCtx() // 写回完成时可能已经换了排版：「写回」点只打给这一份
+    // 写回完成时可能已经换了排版、或接着改了：「写回」点只打给这一份、拍的是发起时的内容
+    const moment = captureMoment()
     setApplying(true)
     setApplyError(null)
     try {
@@ -202,7 +202,7 @@ function ResultDialog({
       }
       // target 就是素材面板里的那条记录，mtime 直接可用（409 source_changed 的依据）
       const res = await updateSourceFiles(target.id, merged, undefined, target.mtime)
-      void markMoment('writeback', ctx) // 排版时间线的关键时刻（ADR 0101）
+      void markMoment('writeback', moment) // 排版时间线的关键时刻（ADR 0101）
       await useAssetStore.getState().load()
       useRenderStore.getState().markStale([target.id])
       setDone(sy('updatedFiles', { files: listJoin(res.updated), dir: res.backup_dir }))

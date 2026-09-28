@@ -19,7 +19,7 @@ import { useDocumentStore } from './documentStore'
 import { emptyProject, type PanelObject } from '@/types/document'
 import { literal } from '@/i18n'
 import type { ExportRequestInput } from '@/lib/exportRequest'
-import { setMomentSink } from '@/lib/timelineCheckpoint'
+import { setMomentSink, type MomentSnapshot } from '@/lib/timelineCheckpoint'
 import { useTimelineStore } from './timelineStore'
 
 const panel: PanelObject = {
@@ -329,10 +329,13 @@ describe('「导出」时刻属于被导出的那份排版（ADR 0101；Codex #6
       })) as typeof fetch
   }
   let moments: string[] = []
+  let snaps: (MomentSnapshot | undefined)[] = []
   beforeEach(() => {
     moments = []
-    setMomentSink(async (m) => {
+    snaps = []
+    setMomentSink(async (m, snap) => {
       moments.push(`${m}@${useDocumentStore.getState().documentId}`)
+      snaps.push(snap)
       return null
     })
   })
@@ -343,6 +346,19 @@ describe('「导出」时刻属于被导出的那份排版（ADR 0101；Codex #6
     await runExport(inputOf())
     applyExportJob(job({ status: 'done', outputs: [doneOutput] }))
     expect(moments).toEqual(['export@d_store'])
+  })
+
+  it('导出途中接着改同一份排版：节点里放的是**被导出的那一份**（导出请求里的文档）', async () => {
+    startRunning()
+    const exported = useDocumentStore.getState().doc
+    await runExport(inputOf())
+    useDocumentStore.getState().commit(literal('导出途中加字'), (d) => {
+      d.objects.push({ ...panel, id: 'p2' })
+    })
+    applyExportJob(job({ status: 'done', outputs: [doneOutput] }))
+    expect(moments).toEqual(['export@d_store'])
+    expect(snaps[0]?.identity.doc).toBe(exported)
+    expect(snaps[0]?.identity.doc.objects.map((o) => o.id)).toEqual(['p1'])
   })
 
   it.each([
