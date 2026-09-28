@@ -23,6 +23,8 @@ worker 能让症状消失，但两份代码迟早分叉，而分叉的表现正�
 * `collect_pyplot_figures()` —— 脚本跑完之后还活着的 pyplot Figure 怎么补进
   捕获表（去重、命名、保序）；
 * `install_relative_read_fallback()` —— 相对路径**只读**回退（见下）；
+* `remap_target()` / `install_input_remap()` / `missing_input_of()` —— 数据找不到时用户指认的
+  只读改指表与「缺的是哪个」的判据（ADR 0106；父进程推规则也用 `remap_target`）；
 * `unused_imports()` / `install_unused_import_placeholders()` —— 脚本 import 了却从未用到、
   又没装的包不挡图（ADR 0061 §二 2026-09-24 修订；判据父进程与 worker 各调一次）。
 
@@ -1239,6 +1241,333 @@ def install_relative_read_fallback(
             datasource.open = real_ds_open
 
     return uninstall
+
+
+# ---------------------------------------------------------------- 数据改指（ADR 0106）
+#
+# 脚本要读的数据不在它写的那个位置（脚本被单独复制出来、数据被挪走、换了电脑）时，界面请用户
+# 指认一次，按项目记一张**只读**改指表。两件事都在这里：
+#
+# * 规则怎么匹配（`remap_target`）——父进程推规则（`inputremap.derive`）、给弹窗筛「这次指认
+#   会顺带修好哪些」与 worker 真正改道用的是同一份判据；
+# * worker 里的装载（`install_input_remap`）——包四个打开入口，**原路径打开失败**（真的
+#   `FileNotFoundError`）之后才查表，命中且目标是文件就改读目标；没命中就把脚本写的那串记进
+#   `InputMisses`、原样抛出。原路径存在时一次都不查表：数据回来了，规则自动不起作用。
+#
+# 与相对路径只读回退的分工：回退装在外层（先找脚本目录），改指装在内层（回退也找不到时才轮到
+# 它），两者都只碰只读打开。`exists` / `glob` / `listdir` 与 C++ 读取器照样不经过这里
+# （ADR 0047 / 0106 §四）。
+
+#: 改指规则的两种形状。`prefix`：`from` 是路径前缀（按路径段比，`""` = 任意相对路径）；
+#: `file`：`from` 整串对上才改（用户指认的文件改了名时，只能说这一个）。
+REMAP_PREFIX = "prefix"
+REMAP_FILE = "file"
+REMAP_KINDS = (REMAP_PREFIX, REMAP_FILE)
+#: 一张表最多几条（设置文件被手改大了也只认这么多）。
+MAX_REMAP_RULES = 64
+#: 一次 build 里最多记几条落空的读（去重后）。
+MAX_INPUT_MISSES = 32
+
+_DRIVE_RE = re.compile(r"^[A-Za-z]:$")
+
+
+def remap_parts(text: str) -> tuple[bool, tuple[str, ...]] | None:
+    """路径串 → `(是否绝对, 路径段)`；说不清的（空串、`~`、URL）回 None。
+
+    主语是**脚本作者写的那串**，它可能写于另一个 OS：反斜杠一律当分隔符，POSIX 根
+    `/` 与盘符 `C:` 都算绝对；盘符按小写比（Windows 上 `C:` 与 `c:` 是同一个盘）。
+    相对路径里的 `.` 与空段丢掉，`..` 保留（`../data/x.csv` 的 `..` 是前缀的一部分）。
+    """
+    if not isinstance(text, str) or not text or "\x00" in text:
+        return None
+    if text.startswith("~") or "://" in text:
+        return None
+    norm = text.replace("\\", "/")
+    raw = norm.split("/")
+    if norm.startswith("/"):
+        head: tuple[str, ...] = ("/",)
+        rest = raw[1:]
+        absolute = True
+    elif _DRIVE_RE.match(raw[0]) and len(raw) > 1:
+        head = (raw[0].lower(),)
+        rest = raw[1:]
+        absolute = True
+    else:
+        head = ()
+        rest = raw
+        absolute = False
+    parts = head + tuple(p for p in rest if p not in ("", "."))
+    return absolute, parts
+
+
+def _join_parts(parts: tuple[str, ...]) -> str:
+    if not parts:
+        return ""
+    if parts[0] == "/":
+        return "/" + "/".join(parts[1:])
+    if _DRIVE_RE.match(parts[0]):
+        return parts[0] + "/" + "/".join(parts[1:])
+    return "/".join(parts)
+
+
+def clean_remap_rules(rules) -> list[dict]:
+    """设置 / argv 里的改指表 → 校验过的规则列表（坏条目丢掉，不抛）。
+
+    每条 `{"kind", "from", "to"}`：`to` 必须是绝对路径（它是用户在本机指认的位置）；
+    `from` 是脚本写法的那一侧，相对或绝对都行（`prefix` 的相对 `from` 可以是 `""`）。
+    """
+    out: list[dict] = []
+    if not isinstance(rules, (list, tuple)):
+        return out
+    for r in rules:
+        if not isinstance(r, dict):
+            continue
+        kind, src, dst = r.get("kind"), r.get("from"), r.get("to")
+        if kind not in REMAP_KINDS or not isinstance(src, str) or not isinstance(dst, str):
+            continue
+        dst_parts = remap_parts(dst)
+        if dst_parts is None or not dst_parts[0]:
+            continue
+        if src == "" and kind == REMAP_PREFIX:
+            pass
+        elif remap_parts(src) is None:
+            continue
+        rule = {"kind": kind, "from": src, "to": dst}
+        if rule not in out:
+            out.append(rule)
+        if len(out) >= MAX_REMAP_RULES:
+            break
+    return out
+
+
+def remap_target(rules, name: str) -> str | None:
+    """脚本写的路径串 `name` → 改指后的路径（本机真实路径串）；没有规则命中回 None。
+
+    **只做字符串换算，不看磁盘**——「目标在不在」由调用方判（worker 在改道前判是文件，
+    父进程筛弹窗列表时判存在）。命中顺序：`file` 规则整串相等优先；其次 `prefix` 规则里
+    `from` 路径段最长的那条（更具体的赢）。相对路径只配相对的 `from`，绝对只配绝对的。
+    """
+    parsed = remap_parts(name)
+    if parsed is None:
+        return None
+    absolute, parts = parsed
+    best: tuple[int, str] | None = None
+    for r in clean_remap_rules(rules):
+        src = remap_parts(r["from"]) if r["from"] else (False, ())
+        if src is None or src[0] != absolute:
+            continue
+        if r["kind"] == REMAP_FILE:
+            if src[1] == parts:
+                return r["to"]
+            continue
+        n = len(src[1])
+        if parts[:n] != src[1] or n == len(parts):
+            continue  # 前缀要严格短于路径本身：`from` 本身是目录，不是这个文件
+        if best is None or n > best[0]:
+            rest = parts[n:]
+            to = r["to"].replace("\\", "/").rstrip("/")
+            best = (n, to + "/" + "/".join(rest))
+    return best[1] if best else None
+
+
+class InputMisses:
+    """一次 build 里**原路径打开失败、改指也没救回来**的只读打开：脚本写的那串 + 当时的 cwd。
+
+    只记不改；`missing_input` 的分类（`missing_input_of`）靠它说出「缺的是哪个」——
+    numpy 的 `"d.txt not found."`、h5py 的 C 层消息里没有 `exc.filename`。
+    """
+
+    def __init__(self) -> None:
+        self.items: list[dict] = []
+
+    def note(self, name) -> None:
+        if not isinstance(name, str) or not name:
+            return
+        try:
+            cwd = os.getcwd()
+        except OSError:
+            cwd = ""
+        entry = {"requested": name, "cwd": cwd}
+        if entry in self.items:
+            # 同一条又落空一次：挪到最后（「最近一次落空的」是 exc 没带文件名时的答案）
+            self.items.remove(entry)
+        elif len(self.items) >= MAX_INPUT_MISSES:
+            return
+        self.items.append(entry)
+
+    def names(self) -> list[str]:
+        return [m["requested"] for m in self.items]
+
+
+def install_input_remap(rules, misses: InputMisses, base_dir: str | None = None):
+    """装上改指（ADR 0106）与落空记账；返回卸载函数。
+
+    `base_dir` 是装的那一刻脚本的 cwd（沙盒或脚本目录 / 项目根）：`Image.open` 这类先
+    realpath 的库递进来的是 `<cwd>/x.png`——在 cwd 之内的绝对路径按相对路径那一段查表，
+    与只读回退同一个理由（语义上就是那条相对路径）。
+
+    只在**原路径打开抛 `FileNotFoundError`** 之后查表：成功的打开零额外开销，原路径存在时
+    永远读原路径。只读模式才改（写 / 追加 / 读写一个字节都不改道）；改指目标必须是文件，
+    否则原样抛出原来那个异常。
+    """
+    rules = clean_remap_rules(rules)
+    real_open = builtins.open
+    real_io_open = io.open
+    real_path_open = pathlib.Path.open
+    base = os.path.abspath(base_dir if base_dir is not None else os.getcwd())
+
+    def _script_name(name: str) -> str:
+        """落在 base 里的绝对路径 → 相对那一段（脚本当初写的多半就是它）；否则原样。"""
+        if not os.path.isabs(name):
+            return name
+        try:
+            real = os.path.realpath(name)
+            real_base = os.path.realpath(base)
+            if os.path.commonpath([real, real_base]) != real_base:
+                return name
+        except (OSError, ValueError):
+            return name
+        rel = os.path.relpath(real, real_base)
+        return name if rel.startswith("..") or rel == "." else rel
+
+    def _alt(file) -> tuple[str | None, str | None]:
+        """回 `(改指目标, 记账用的名字)`；不是路径（fd / 文件对象）两个都是 None。"""
+        if not isinstance(file, (str, os.PathLike)):
+            return None, None
+        name = os.fspath(file)
+        if not isinstance(name, str) or not name:
+            return None, None
+        shown = _script_name(name)
+        if not rules:
+            return None, shown
+        target = remap_target(rules, shown)
+        if target is None and shown != name:
+            target = remap_target(rules, name)
+        if target is not None and os.path.isfile(target):
+            return target, shown
+        return None, shown
+
+    def _readonly(mode) -> bool:
+        return isinstance(mode, str) and "r" in mode and not any(c in mode for c in "+wxa")
+
+    def _wrap(original):
+        def remapped_open(file, mode="r", *args, **kwargs):
+            try:
+                return original(file, mode, *args, **kwargs)
+            except FileNotFoundError:
+                if not _readonly(mode):
+                    raise
+                alt, shown = _alt(file)
+                if alt is not None:
+                    return original(alt, mode, *args, **kwargs)
+                misses.note(shown)
+                raise
+
+        return remapped_open
+
+    def remapped_path_open(self, mode="r", *args, **kwargs):
+        try:
+            return real_path_open(self, mode, *args, **kwargs)
+        except FileNotFoundError:
+            if not _readonly(mode):
+                raise
+            alt, shown = _alt(self)
+            if alt is not None:
+                return real_path_open(pathlib.Path(alt), mode, *args, **kwargs)
+            misses.note(shown)
+            raise
+
+    builtins.open = _wrap(real_open)
+    io.open = _wrap(real_io_open)
+    pathlib.Path.open = remapped_path_open
+
+    # numpy 的 `DataSource.open`：它先自己 exists 再 open，找不到当场 FileNotFoundError（"x not
+    # found."，没有 filename），三个 open 入口够不着——同一条纪律再包一次。
+    datasource = getattr(sys.modules.get("numpy.lib._datasource"), "DataSource", None)
+    real_ds_open = getattr(datasource, "open", None)
+
+    def remapped_datasource_open(self_ds, path, mode="r", *args, **kwargs):
+        try:
+            return real_ds_open(self_ds, path, mode, *args, **kwargs)
+        except FileNotFoundError:
+            if not _readonly(mode):
+                raise
+            alt, shown = _alt(path)
+            if alt is not None:
+                return real_ds_open(self_ds, alt, mode, *args, **kwargs)
+            misses.note(shown)
+            raise
+
+    if real_ds_open is not None:
+        datasource.open = remapped_datasource_open
+
+    def uninstall() -> None:
+        builtins.open = real_open
+        io.open = real_io_open
+        pathlib.Path.open = real_path_open
+        if real_ds_open is not None:
+            datasource.open = real_ds_open
+
+    return uninstall
+
+
+def _file_not_found_in(exc: BaseException | None) -> BaseException | None:
+    """异常链（`__cause__` / `__context__`）里第一个「文件不存在」：`FileNotFoundError`，
+    或 errno 是 ENOENT 的 `OSError`（h5py 之类包过一层的）。"""
+    import errno as _errno  # noqa: PLC0415
+
+    seen: set[int] = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        if isinstance(exc, FileNotFoundError):
+            return exc
+        if isinstance(exc, OSError) and getattr(exc, "errno", None) == _errno.ENOENT:
+            return exc
+        exc = exc.__cause__ or exc.__context__
+    return None
+
+
+def missing_input_of(exc: BaseException, misses: InputMisses) -> dict | None:
+    """build 失败的异常 → `missing_input` 的事实（缺的是哪个），说不出回 None。
+
+    **只在异常与记账对得上时才说**（ADR 0106 §一.2）：异常链里要有「文件不存在」，而且缺的
+    那一串要么就是 `exc.filename` 且它确实作为只读打开落空过（写模式的「目录不存在」不算——
+    那不是输入），要么异常没带文件名、用最近一次落空的读。两样都没有就不判，调用方照旧报
+    `script_error`。
+    """
+    fnf = _file_not_found_in(exc)
+    if fnf is None or not misses.items:
+        return None
+    names = misses.names()
+    filename = getattr(fnf, "filename", None)
+    requested: str | None = None
+    if isinstance(filename, (str, os.PathLike)):
+        filename = os.fspath(filename)
+        if isinstance(filename, str):
+            if filename in names:
+                requested = filename
+            else:
+                # 记账记的是「脚本写的那串」（cwd 内的绝对路径已换回相对）：按真身再比一次
+                for m in misses.items:
+                    try:
+                        joined = os.path.join(m["cwd"], m["requested"])
+                        if os.path.realpath(joined) == os.path.realpath(filename):
+                            requested = m["requested"]
+                            break
+                    except (OSError, ValueError):
+                        continue
+            if requested is None:
+                return None  # 带了文件名却不是一次只读打开落空的：不判
+    else:
+        requested = names[-1]
+    entry = next(m for m in reversed(misses.items) if m["requested"] == requested)
+    parsed = remap_parts(requested)
+    return {
+        "requested": requested,
+        "absolute": bool(parsed and parsed[0]),
+        "cwd": entry["cwd"],
+        "misses": names,
+    }
 
 
 # ---------------------------------------------------------------- 未使用的缺失 import
