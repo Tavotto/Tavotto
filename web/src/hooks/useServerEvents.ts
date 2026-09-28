@@ -16,7 +16,11 @@ import { recoverAfterReconnect, refreshAssetsAndSync } from '@/store/liveSync'
 import { useNativeSessionStore } from '@/store/nativeSessionStore'
 import { useProjectStore } from '@/store/projectStore'
 import { currentProjectId, onCurrentProjectChange } from '@/lib/session'
-import { useRenderStore } from '@/store/renderStore'
+import {
+  renderFailureOwner,
+  settleRenderFailureToast,
+  useRenderStore,
+} from '@/store/renderStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useScriptLibraryStore } from '@/store/scriptLibraryStore'
 import { useScriptInputStore } from '@/store/scriptInputStore'
@@ -33,6 +37,8 @@ const costHint = (cost: string): string =>
   cost === 'heavy' || cost === 'medium'
     ? t(`status.coldHint.${cost}`, { ns: 'workspace' })
     : ''
+
+export { renderFailureOwner }
 
 /**
  * 单条事件的处理。**导出是为了让用例驱动同一份判断**——与 `useEngineSync`
@@ -106,6 +112,9 @@ export function handleServerEvent(ev: ServerEvent) {
     }
     case 'render.done':
       render.noteBuilding(ev.id, null)
+      // 同一张图先前那条「无法渲染」可能已经不成立了（修好依赖后自动重渲染成功）：这个文件没有
+      // 一个变体还坏着 / 还在渲染时撤掉它。只认同一个主人——挂着的是别的图 / 别的类别的提示就不动
+      settleRenderFailureToast(ev.pj, ev.id)
       // 被动通知：不顶掉用户刚触发的那句结果（「已修复 N 项」之类，见 uiStore.statusPassive）
       setStatus(msg('status.renderDone', { name: short(ev.id) }, 'workspace'), 'info', {
         passive: true,
@@ -120,6 +129,7 @@ export function handleServerEvent(ev: ServerEvent) {
           'workspace',
         ),
         'error',
+        { owner: renderFailureOwner(ev.pj, ev.id) },
       )
       break
 

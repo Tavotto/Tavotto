@@ -12,9 +12,14 @@ import {
   panelDisplayView,
   panelRender,
   renderKey,
+  renderFailureOwner,
   renderKeyOf,
+  settleRenderFailureToast,
   useRenderStore,
 } from './renderStore'
+import { msg } from '@/i18n'
+import { currentProjectId } from '@/lib/session'
+import { useUiStore } from '@/store/uiStore'
 import { EDITOR_SVG_HARD_LIMIT_BYTES } from '@/lib/previewBudget'
 import type { PanelObject } from '@/types/document'
 
@@ -114,6 +119,22 @@ describe('二道闸：超大 SVG 不进 store（ADR 0022）', () => {
     const entry = useRenderStore.getState().get(renderKey('Fig1.pdf', []))
     expect(entry.svg).toContain('id="back"')
     expect(entry.preview.mode).toBe('vector')
+  })
+})
+
+describe('失败 toast：本变体落定之后再问一次（Codex #710 第四轮）', () => {
+  it('SSE 的 render.done 先于响应到：那一刻撤不掉，响应回来、busy 松开后撤掉', async () => {
+    useUiStore.getState().setStatus(msg('status.renderFailed', { name: 'Fig1' }, 'workspace'), 'error', {
+      owner: renderFailureOwner(currentProjectId(), 'Fig1.pdf'),
+    })
+    let resolve: (v: unknown) => void = () => {}
+    engineRender.mockReturnValue(new Promise((r) => (resolve = r)))
+    const pending = useRenderStore.getState().render('Fig1.pdf', [])
+    settleRenderFailureToast(currentProjectId(), 'Fig1.pdf') // SSE 的 done 先到
+    expect(useUiStore.getState().statusTone).toBe('error')
+    resolve({ rev: 1, manifest: manifest('Fig1'), warnings: [] })
+    await pending
+    expect(useUiStore.getState().status).toBeNull()
   })
 })
 

@@ -43,7 +43,7 @@ import {
 } from '@/store/liveSync'
 import { useProjectStore } from '@/store/projectStore'
 import { useAiStore } from '@/store/aiStore'
-import { useRenderStore } from '@/store/renderStore'
+import { renderKey, settleRenderFailureToast, useRenderStore } from '@/store/renderStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
@@ -117,7 +117,14 @@ beforeEach(() => {
   })
   useRenderStore.getState().clear()
   useSelectionStore.getState().set([])
-  useUiStore.setState({ status: null, statusTone: 'info', elementPanelId: null, selectedGids: [] })
+  useUiStore.setState({
+    status: null,
+    statusTone: 'info',
+    statusPassive: false,
+    statusOwner: null,
+    elementPanelId: null,
+    selectedGids: [],
+  })
   seed([])
 })
 
@@ -383,6 +390,97 @@ describe('project.error', () => {
   it('本构建还不认识的 code 退回一句通用的可恢复说明', () => {
     handleServerEvent(ev({ kind: 'project.error', pj: 'p1', code: 'from_the_future' }))
     expect(statusKey()).toBe('status.projectBackgroundError')
+  })
+})
+
+describe('渲染失败的 toast 在同一张图渲染成功后撤掉', () => {
+  // 2026-09-28 Windows 实测：缺依赖时弹「无法渲染 Fig_labels。脚本用到的 adjustText……」，在修复卡片里
+  // 装好依赖、同一张图自动重渲染成功之后，这条红色 toast 还挂着，直到手动点 ×。
+  const failed = (id: string, pj = 'p1') =>
+    handleServerEvent(ev({ kind: 'render.failed', pj, id, error: '脚本用到的 adjustText 在当前渲染环境里没有。' }))
+  const done = (id: string, pj = 'p1') => handleServerEvent(ev({ kind: 'render.done', pj, id }))
+
+  it('同一张图随后渲染成功：错误 toast 撤掉，换成被动的「渲染完成」', () => {
+    failed('Fig_labels.pdf')
+    expect(statusKey()).toBe('status.renderFailedWithError')
+    expect(useUiStore.getState().statusTone).toBe('error')
+
+    done('Fig_labels.pdf')
+    expect(statusKey()).toBe('status.renderDone')
+    expect(useUiStore.getState().statusTone).toBe('info')
+  })
+
+  it('另一张图渲染成功不撤它（短名相同、路径不同也算另一张）', () => {
+    failed('a/Fig1.pdf')
+    done('Fig2.pdf')
+    done('b/Fig1.pdf')
+    expect(statusKey()).toBe('status.renderFailedWithError')
+    expect(useUiStore.getState().statusTone).toBe('error')
+  })
+
+  it('错误 toast 已经换成别的提示（后一张图失败 / 别的类别）：前一张图成功不碰它', () => {
+    failed('Fig1.pdf')
+    failed('Fig2.pdf')
+    done('Fig1.pdf')
+    expect(useUiStore.getState().status?.values).toMatchObject({ name: 'Fig2' })
+    expect(useUiStore.getState().statusTone).toBe('error')
+
+    handleServerEvent(ev({ kind: 'project.error', pj: 'p1', code: 'scan_failed', params: { reason: '坏了' } }))
+    done('Fig2.pdf')
+    expect(statusKey()).toBe('backend.scan_failed')
+  })
+
+  it('另一个项目里同名文件的渲染成功不撤它（主人带项目）', () => {
+    failed('Fig1.pdf', 'p1')
+    project = 'p2' // 切到另一个图库：之后只收 p2 的事件
+    done('Fig1.pdf', 'p2')
+    expect(statusKey()).toBe('status.renderFailedWithError')
+    expect(useUiStore.getState().statusTone).toBe('error')
+  })
+
+  // Codex #710 P2：两个面板引用同一文件、覆盖不同，各自成败独立——一个变体画成了不说明另一个好了
+  const variant = (patches: unknown[], status: 'error' | 'rendering' | 'ready') =>
+    useRenderStore.getState().patch(renderKey('Fig1.pdf', patches), { fileId: 'Fig1.pdf', status })
+  // 画布上现存面板的键（同步器每轮 `prune(live)` 刷新的那一份）
+  const live = (...variants: unknown[][]) =>
+    useRenderStore.getState().prune(new Set(variants.map((v) => renderKey('Fig1.pdf', v))))
+
+  it('同一文件另一个变体还坏着：这个变体成功不撤它', () => {
+    live([{ a: 1 }], [])
+    variant([{ a: 1 }], 'error')
+    variant([], 'ready')
+    failed('Fig1.pdf')
+    done('Fig1.pdf')
+    expect(statusKey()).toBe('status.renderFailedWithError')
+    expect(useUiStore.getState().statusTone).toBe('error')
+  })
+
+  it('SSE 的 done 先于本变体的响应到：那一刻不撤，响应落定后再问一次才撤', () => {
+    variant([], 'rendering')
+    failed('Fig1.pdf')
+    done('Fig1.pdf')
+    expect(useUiStore.getState().statusTone).toBe('error')
+    variant([], 'ready')
+    settleRenderFailureToast('p1', 'Fig1.pdf') // renderStore 成功路径上的同一次询问
+    expect(useUiStore.getState().status).toBeNull()
+  })
+
+  it('recent 缓存里没有面板再指着的旧变体坏着：不挡（Codex #710 第三轮）', () => {
+    live([]) // 面板已经改成不带覆盖的那一版
+    variant([{ a: 1 }], 'error') // 撤销缓存里留着的旧变体，后来一次重渲染失败了
+    variant([], 'ready')
+    failed('Fig1.pdf')
+    done('Fig1.pdf')
+    expect(statusKey()).toBe('status.renderDone')
+    expect(useUiStore.getState().statusTone).toBe('info')
+  })
+
+  it('用户已经关掉的不会被重新挂回来', () => {
+    failed('Fig1.pdf')
+    useUiStore.getState().setStatus(null)
+    done('Fig1.pdf')
+    expect(statusKey()).toBe('status.renderDone')
+    expect(useUiStore.getState().statusTone).toBe('info')
   })
 })
 
