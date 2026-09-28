@@ -342,6 +342,18 @@ def test_the_undecided_default_follows_the_users_own_interpreter(
         projectenv.forget(root)
 
 
+def test_the_user_interpreter_probe_is_the_pools_and_absent_means_sandbox(monkeypatch, tmp_path):
+    """workdir 不 import pool（否则进 bootstrap / managedenv / pool 那个环）：判据由 pool 加载时登记。
+    登记的必须就是 pool 那一份；没登记时默认回沙盒（更窄那一档），不因缺判据放宽。"""
+    assert workdir._user_interpreter_probe is engine_pool.user_interpreter_in_effect
+    monkeypatch.setattr(workdir, "_user_interpreter_probe", None)
+    assert workdir.implied_by(tmp_path) is None
+    assert workdir.default_mode(tmp_path) == workdir.MODE_SANDBOX
+    monkeypatch.setattr(workdir, "_user_interpreter_probe", lambda root: True)
+    assert workdir.implied_by(tmp_path) == workdir.IMPLIED_BY_USER_INTERPRETER
+    assert workdir.default_mode(tmp_path) == workdir.MODE_PROJECT
+
+
 def test_a_users_choice_beats_the_implied_default_and_reverting_the_interpreter_reverts_it(
     tmp_path, monkeypatch
 ):

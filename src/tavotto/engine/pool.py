@@ -3007,6 +3007,10 @@ def user_interpreter_in_effect(figures_dir: str | Path) -> bool:
     return remembered_source(figures_dir, record["path"]) == SOURCE_SYSTEM
 
 
+# workdir 的「未决定时默认用脚本目录」要问这一条；它不反向 import pool（会成环），由这里登记过去。
+workdir.register_user_interpreter_probe(user_interpreter_in_effect)
+
+
 def build(script_name: str, figures_dir: str, entry: str, *, allow_project_env: bool = True):
     """取会话并确保脚本已 build——**带一次项目环境自动 fallback**。
 

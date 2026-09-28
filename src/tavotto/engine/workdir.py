@@ -45,6 +45,7 @@ Tavotto 自己起的 safe worker（ADR 0021 §1 的所有权约束一个字没�
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 from . import config, databinding, execspec, figcapture
@@ -100,6 +101,18 @@ def _stored(figures_dir: str | Path) -> dict | None:
 #: 「没决定过时默认用脚本目录」的理由（闭集；ADR 0107 §二）：这个项目此刻用的是用户自己的 Python。
 IMPLIED_BY_USER_INTERPRETER = "user_interpreter"
 
+#: 「这个项目此刻生效的是不是用户自己的 Python」的判据（`pool.user_interpreter_in_effect`），由 pool 在
+#: 加载时登记。pool 在模块层 import 本模块；这里若回头 import pool，workdir 就进了 bootstrap / managedenv /
+#: pool 那个环（tests/import_architecture_baseline.json「环只减不增」）。没登记（pool 从未加载）时判「不是」
+#: ——默认回到沙盒，是更窄的那一档，不因缺判据放宽写入边界。
+_user_interpreter_probe: Callable[[str | Path], bool] | None = None
+
+
+def register_user_interpreter_probe(probe: Callable[[str | Path], bool]) -> None:
+    """pool 加载时调一次，把 `user_interpreter_in_effect` 交给本模块（依赖倒置，见上）。"""
+    global _user_interpreter_probe
+    _user_interpreter_probe = probe
+
 
 def implied_by(figures_dir: str | Path) -> str | None:
     """没决定过时，默认档**为什么不是沙盒**；是沙盒回 None。决定过的项目一律 None（用户的决定压过默认）。
@@ -111,10 +124,8 @@ def implied_by(figures_dir: str | Path) -> str | None:
     """
     if decided(figures_dir):
         return None
-    # pool import 本模块：这里在调用时取（届时 pool 早已完整加载），不在模块顶层
-    from . import pool
-
-    return IMPLIED_BY_USER_INTERPRETER if pool.user_interpreter_in_effect(figures_dir) else None
+    probe = _user_interpreter_probe
+    return IMPLIED_BY_USER_INTERPRETER if probe is not None and probe(figures_dir) else None
 
 
 def default_mode(figures_dir: str | Path) -> str:
