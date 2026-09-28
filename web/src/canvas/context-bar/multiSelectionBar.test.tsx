@@ -526,6 +526,45 @@ describe('窄屏压缩', () => {
     expect(objs().map((o) => o.x)).toEqual([10, 10, 10])
   })
 
+  it('压缩档量出来仍放不下（窄窗口 + 全是文字）：再降到最窄档，排列一个弹层、文字一个弹层', async () => {
+    // 按档位给栏宽：完整 882 / 压缩 471（真浏览器里两个画布文字量到的数）/ 最窄 280
+    const originalW = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetWidth')
+    const widths: Record<string, number> = { full: 882, compact: 471, minimal: 280 }
+    Object.defineProperty(HTMLElement.prototype, 'offsetWidth', {
+      configurable: true,
+      get() {
+        const el = this as HTMLElement
+        return el.hasAttribute('data-context-bar') ? (widths[el.dataset.variant ?? ''] ?? 0) : 0
+      },
+    })
+    try {
+      setWindow(480, 800)
+      await act(async () => window.dispatchEvent(new Event('resize')))
+      await select(['t1', 't2', 't3'])
+      const el = multiBar()!
+      expect(el.getAttribute('data-variant')).toBe('minimal')
+      for (const m of ['align', 'distribute', 'size']) {
+        expect(el.querySelector(`[data-multi-menu="${m}"]`)).toBeNull()
+      }
+      expect(el.querySelector('[data-text-quick]')).toBeNull()
+      expect(el.querySelector('[data-multi-menu="text"]')).toBeTruthy()
+      expect(el.querySelector('[data-group-action="group"]')).toBeTruthy()
+      expect(el.querySelector('[data-multi-more]')).toBeTruthy()
+      // 排列弹层里是完整的同一批按钮：参照、六向对齐、分布、等宽等高
+      await click(btn('[data-multi-menu="arrange"]'))
+      const pop = document.querySelector('[data-radix-popper-content-wrapper]')!
+      expect(pop.querySelector('[data-align-ref-picker]')).toBeTruthy()
+      await click(pop.querySelector<HTMLElement>('[data-align-mode="left"]')!)
+      expect(objs().map((o) => o.x)).toEqual([10, 10, 10])
+      // 可用宽度回来了就重新从完整档量起
+      setWindow(1200, 800)
+      await act(async () => window.dispatchEvent(new Event('resize')))
+      expect(multiBar()!.getAttribute('data-variant')).toBe('full')
+    } finally {
+      if (originalW) Object.defineProperty(HTMLElement.prototype, 'offsetWidth', originalW)
+    }
+  })
+
   it('停靠的侧栏把可用宽度吃掉时也压缩', async () => {
     await select(['t1', 't2'])
     await act(async () => useUiStore.setState({ leftOpen: true, rightOpen: true, rightWidth: 480 }))

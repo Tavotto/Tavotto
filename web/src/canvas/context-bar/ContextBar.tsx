@@ -7,7 +7,7 @@ import { boundsOf } from '@/lib/geometry'
 import { cn } from '@/lib/utils'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
-import { usePanelDisplayManifest } from '@/store/renderStore'
+import { useExactPanelManifest, usePanelDisplayManifest } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { useViewportStore, type ViewTransform } from '@/store/viewportStore'
@@ -15,6 +15,7 @@ import type { CanvasObject, PanelObject } from '@/types/document'
 import { useQuickEdit } from '../quickEditStore'
 import { CropBar } from './CropBar'
 import { ElementQuickActions } from './ElementBar'
+import { ElementMultiBar, annotationsIn, elementMultiPlan, selectedElements } from './ElementMultiBar'
 import { elementHasQuick } from './elementQuick'
 import { MultiSelectionBar } from './MultiSelectionBar'
 import { ObjectQuickActions } from './SingleObjectBar'
@@ -23,10 +24,13 @@ import {
   barVariant,
   elementObstacles,
   freeWidthOf,
+  narrowerVariant,
+  nextNarrowerVariant,
   placeToolbar,
   placeToolbarAvoiding,
   selectionScreenRect,
   sidebarInsets,
+  type BarVariant,
   type Placement,
   type ScreenRect,
 } from './position'
@@ -44,6 +48,7 @@ import { qb } from './text'
  *
  *   单个画布对象   → SingleObjectBar（文字 / 面板 / 标注的快捷属性）
  *   单个图内元素   → ElementBar（字号 / 线型 / 图例位置…）
+ *   两个以上图内元素 → ElementMultiBar（对齐；同一文字家族再加字号 / 颜色，ADR 0089）
  *   两个以上画布对象 → MultiSelectionBar（对齐 / 分布 / 等宽等高 / 成组 / 更多）
  *   正在裁剪的面板 → CropBar（完成 / 取消，审计 T26）
  *
@@ -53,7 +58,7 @@ import { qb } from './text'
  * ⌘A、图层树、程序化选择，只看选区此刻是什么。
  */
 
-type Mode = 'element' | 'object' | 'multi' | 'crop'
+type Mode = 'element' | 'elements' | 'object' | 'multi' | 'crop'
 
 const rectOf = (r: DOMRect): ScreenRect => ({
   left: r.left,
@@ -106,9 +111,10 @@ export function ContextBar() {
   const [pos, setPos] = useState<Placement | null>(null)
   // 窗口尺寸一变就重算落位与宽窄档（断点没变时 layout 不会动，得自己听）
   const [resizeTick, setResizeTick] = useState(0)
-  // 完整栏量出来比两侧之间还宽（英文文案、大字号）：降成压缩档。可用宽度一变就
-  // 清掉重量——这是「量了才知道」的第二道判据，静态阈值是第一道
-  const [overflow, setOverflow] = useState(false)
+  // 量出来比两侧之间还宽（英文文案、大字号、窄窗口里的压缩档）：再降一档，最窄到
+  // `minimal`。可用宽度或选区一变就清掉重量——这是「量了才知道」的第二道判据，静态
+  // 阈值是第一道
+  const [overflow, setOverflow] = useState<BarVariant | null>(null)
   const ref = useRef<HTMLDivElement>(null)
 
   // 目标解析：裁剪态最优先（那时选区不该再出别的条），其次图内编辑态看 gid，
@@ -122,6 +128,9 @@ export function ContextBar() {
     ? undefined
     : objects.find((o): o is PanelObject => o.id === elementPanelId && o.type === 'panel')
   const gid = panel && gids.length === 1 ? gids[0] : null
+  // 图内多选（ADR 0089）：两个及以上图内元素。以前这里什么都不出——右栏的批量
+  // 属性与对齐区都在，但浮动栏只认单选，用户在画布上找不到快速排版的入口
+  const multiGids = panel && gids.length >= 2 ? gids : null
   const selected: CanvasObject[] = panel
     ? []
     : ids
@@ -137,24 +146,42 @@ export function ContextBar() {
     ? 'crop'
     : panel && gid
       ? 'element'
-      : obj
+      : multiGids
+        ? 'elements'
+        : obj
         ? 'object'
         : multi
           ? 'multi'
           : null
   // 只有真给得出高频动作才出现——一个孤零零的「全部属性」按钮不值得盖住画布
   const manifest = usePanelDisplayManifest(panel)
+  const exactManifest = useExactPanelManifest(panel)
   const element = gid ? (manifest?.elements.find((e) => e.gid === gid) ?? null) : null
   const hasActions =
     mode === 'element'
       ? !!element && !!element.editable.length && elementHasQuick(element)
-      : mode != null
+      : mode === 'elements'
+        ? // 与 ElementMultiBar 画什么读同一份计划：对齐与样式都给不出就不出现
+          (() => {
+            const plan = elementMultiPlan(
+              panel!,
+              selectedElements(manifest, multiGids!),
+              exactManifest,
+              multiGids!,
+              annotationsIn(objects, ids),
+            )
+            return plan.align || plan.style
+          })()
+        : mode != null
   const idsKey = ids.join(',')
+  const gidsKey = gids.join(',')
   const targetKey =
     mode === 'crop'
       ? `crop:${cropping!.id}`
       : mode === 'element'
         ? `el:${panel!.id}:${gid ?? ''}`
+        : mode === 'elements'
+          ? `els:${panel!.id}:${gids.join(',')}`
         : mode === 'object'
           ? `obj:${obj!.id}`
           : mode === 'multi'
@@ -174,7 +201,11 @@ export function ContextBar() {
   const inspectorDocked = rightOpen && rightTab === 'properties' && layout !== 'narrow'
   /** 缩减只作用在「右栏此刻真的在铺同一批控件」的两种目标上 */
   const textBarCompact =
-    inspectorDocked && (mode === 'element' || (mode === 'object' && obj?.type === 'text'))
+    inspectorDocked &&
+    (mode === 'element' ||
+      mode === 'elements' ||
+      (mode === 'object' && obj?.type === 'text') ||
+      (mode === 'multi' && !!multi?.every((o) => o.type === 'text')))
   /**
    * 多选浮动栏同理（审计 T29）：右栏停靠着时，参照 / 分布 / 等宽等高整套就在
    * 「排列」组里，浮动栏只留高频的六向对齐 + 成组 + 更多。**参照只设一处**
@@ -197,11 +228,13 @@ export function ContextBar() {
 
   const insets = sidebarInsets({ layout, leftOpen, leftWidth, rightOpen, rightWidth })
   const freeWidth = freeWidthOf(window.innerWidth, insets)
-  const variant = overflow ? 'compact' : barVariant(freeWidth)
+  const staticVariant = barVariant(freeWidth)
+  const variant = overflow ? narrowerVariant(staticVariant, overflow) : staticVariant
 
+  // 换了一组对象或一组图内元素都重新从完整档量起（图内多选的选区在 gids 里，不在 ids 里）
   useLayoutEffect(() => {
-    setOverflow(false)
-  }, [freeWidth, idsKey])
+    setOverflow(null)
+  }, [freeWidth, idsKey, gidsKey])
 
   // Esc 关闭只作用于**这一次选择**；选择一变就重新出现
   useEffect(() => {
@@ -217,11 +250,16 @@ export function ContextBar() {
       setDragging(true)
     }
     const up = () => setDragging(false)
+    // pointercancel 同样结束这一次按下：系统接管了指针（触控板手势、窗口失焦、
+    // WebView 抢走指针）时不会再有 pointerup，只听 pointerup 的话工具条会一直藏着，
+    // 直到下一次在任意位置松手（ADR 0089 顺带的加固，是推测性的，没有用户现场复现）
     window.addEventListener('pointerdown', down, true)
     window.addEventListener('pointerup', up, true)
+    window.addEventListener('pointercancel', up, true)
     return () => {
       window.removeEventListener('pointerdown', down, true)
       window.removeEventListener('pointerup', up, true)
+      window.removeEventListener('pointercancel', up, true)
     }
   }, [])
 
@@ -259,6 +297,22 @@ export function ContextBar() {
       const b = boundsOf(multi)
       const t: ViewTransform = { zoom, panX, panY, originX, originY }
       anchor = b ? selectionScreenRect(b, t) : null
+    } else if (mode === 'elements' && panel && multiGids) {
+      // 图内多选：选中各元素在 SVG 里的屏幕框取并集（与单选同一种量法）
+      const host = document.querySelector(`[data-element-svg="${CSS.escape(panel.id)}"]`)
+      const rects = multiGids
+        .map((g) => host?.querySelector(`[id="${CSS.escape(g)}"]`)?.getBoundingClientRect())
+        .filter((r): r is DOMRect => !!r && (r.width > 0 || r.height > 0))
+      if (rects.length) {
+        const left = Math.min(...rects.map((r) => r.left))
+        const top = Math.min(...rects.map((r) => r.top))
+        const right = Math.max(...rects.map((r) => r.left + r.width))
+        const bottom = Math.max(...rects.map((r) => r.top + r.height))
+        anchor = { left, top, width: right - left, height: bottom - top }
+      } else {
+        const node = document.querySelector(`[data-object-id="${CSS.escape(panel.id)}"]`)
+        if (node) anchor = rectOf(node.getBoundingClientRect())
+      }
     } else {
       const node =
         mode === 'crop' && cropping
@@ -283,8 +337,14 @@ export function ContextBar() {
     }
     const w = ref.current?.offsetWidth ?? 220
     const h = ref.current?.offsetHeight ?? 36
-    if (mode === 'multi' && variant === 'full' && w > freeWidth - 2 * MARGIN) {
-      setOverflow(true)
+    // 两种多选栏都按内容量宽（`w-max`）：量出来比两侧之间还宽就再降一档（完整 → 压缩 →
+    // 最窄）。`w-max` 的栏不会自己收缩，`placeToolbar` 只能夹位置，不降档右半截就出屏
+    if (
+      (mode === 'multi' || mode === 'elements') &&
+      variant !== 'minimal' &&
+      w > freeWidth - 2 * MARGIN
+    ) {
+      setOverflow(nextNarrowerVariant(variant))
       return
     }
     const viewport = { width: window.innerWidth, height: window.innerHeight }
@@ -292,14 +352,20 @@ export function ContextBar() {
     // 贴着锚点的上下两档都盖到东西时退到图的外侧。障碍物按 manifest 的 bbox
     // 映到 SVG 容器上算——与 OverlaySvg 画选择框是同一份几何
     const host =
-      mode === 'element' && panel && manifest
+      (mode === 'element' || mode === 'elements') && panel && manifest
         ? document.querySelector(`[data-element-svg="${CSS.escape(panel.id)}"]`)
         : null
     const zone = host ? rectOf(host.getBoundingClientRect()) : null
     const next =
       zone && manifest
         ? placeToolbarAvoiding(anchor, { w, h }, viewport, insets, {
-            obstacles: elementObstacles(manifest.elements, zone, gid, isElementHidden),
+            // 选中的元素自己不算障碍：单选排掉那一个 gid，多选排掉整组
+            obstacles: elementObstacles(
+              multiGids ? manifest.elements.filter((e) => !multiGids.includes(e.gid)) : manifest.elements,
+              zone,
+              gid,
+              isElementHidden,
+            ),
             zone,
           })
         : placeToolbar(anchor, { w, h }, viewport, insets)
@@ -316,6 +382,7 @@ export function ContextBar() {
     cropping,
     panel,
     gid,
+    gidsKey,
     obj,
     idsKey,
     objects,
@@ -347,13 +414,17 @@ export function ContextBar() {
       data-context-bar
       data-context-bar-mode={mode ?? undefined}
       data-multi-selection-context-bar={mode === 'multi' ? '' : undefined}
-      data-variant={mode === 'multi' ? variant : undefined}
+      data-variant={mode === 'multi' || mode === 'elements' ? variant : undefined}
       data-multi-docked={multiBarDocked ? '' : undefined}
       data-placement={pos?.placement}
       data-context-bar-compact={textBarCompact ? '' : undefined}
       role="toolbar"
       aria-label={
-        mode === 'multi' ? qb('multiAria') : mode === 'crop' ? qb('cropAria') : qb('aria')
+        mode === 'multi' || mode === 'elements'
+          ? qb('multiAria')
+          : mode === 'crop'
+            ? qb('cropAria')
+            : qb('aria')
       }
       style={pos ? { left: pos.x, top: pos.y } : { left: -9999, top: -9999 }}
       className={cn(
@@ -373,6 +444,13 @@ export function ContextBar() {
           <ElementQuickActions panel={panel} gid={gid} compact={textBarCompact} />
           <OpenInspectorButton />
         </>
+      ) : mode === 'elements' && panel && multiGids ? (
+        <ElementMultiBar
+          panel={panel}
+          gids={multiGids}
+          compact={textBarCompact}
+          variant={variant}
+        />
       ) : mode === 'object' && obj ? (
         <>
           <ObjectQuickActions obj={obj} compact={textBarCompact} />

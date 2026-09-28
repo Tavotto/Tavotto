@@ -1,7 +1,5 @@
 import { useMemo } from 'react'
-import { Bold, Italic } from '@/components/ui/icons'
 import { PT_DECIMALS } from '@/lib/stylePresets'
-import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import type { ManifestElement } from '@/lib/api'
 import { LineStylePicker } from '@/components/inspector/controls/LineStylePicker'
@@ -11,18 +9,15 @@ import { useElementWriter } from '@/components/inspector/elementWrite'
 import { LEGEND_ANCHOR_PROP, legendAnchorRange, outsidePresetOf, toLegendAnchor } from '@/lib/legendModel'
 import { setLegendPlacement } from '@/store/actions'
 import { hasTextStyleBar } from '@/components/inspector/TextStyleBar'
-import { fontStackOf } from '@/components/inspector/controls/fontStack'
 import { FIGURE_TEXT_SINGLE_PROPS, useFigureTypography } from '@/components/inspector/typographyAdapter'
-import { FALLBACK_MIN_FONT_SIZE_PT } from '@/lib/profile'
-import { displayValueOf, nextToggle, toggleStateOf } from '@/lib/typography'
-import { StyleToggle } from '@/components/inspector/controls/textRows'
+import type { TypographyProp } from '@/lib/typography'
 import { optionLabel, propLabel } from '@/components/inspector/roles/registry'
 import { ColorField, NumberField } from '@/components/ui/Input'
 import { Popover } from '@/components/ui/Popover'
-import { Select } from '@/components/ui/Select'
 import { usePanelDisplayManifest } from '@/store/renderStore'
 import type { PanelObject } from '@/types/document'
 import { Sep } from './shared'
+import { TextQuickControls } from './textQuick'
 
 /* ------------------------------- 图内元素 --------------------------------- */
 
@@ -201,72 +196,35 @@ function TextElementActions({
   compact: boolean
 }) {
   const elements = useMemo(() => [element], [element])
-  const a = useFigureTypography(panel, elements, FIGURE_TEXT_SINGLE_PROPS)
-  const family = a.fieldOf('fontFamily')
-  const size = a.fieldOf('sizePt')
-  const boldState = toggleStateOf(a.valueOf('weight'), 'bold')
-  const italicState = toggleStateOf(a.valueOf('style'), 'italic')
   return (
-    <span className="flex items-center gap-1" data-text-quick={compact ? 'compact' : 'full'}>
-      {!compact && family && (family.options?.length ?? 0) > 0 && (
-        <Select
-          className="w-[112px] shrink-0"
-          ariaLabel={translate('textControls.font', { ns: 'inspector' })}
-          value={String(displayValueOf(a.valueOf('fontFamily')) ?? '')}
-          onChange={(v) => a.writeOnce('fontFamily', v)}
-          options={(family.options ?? []).map((o) => ({
-            value: o,
-            label: <span style={{ fontFamily: fontStackOf(o) }}>{optionLabel('fontfamily', o)}</span>,
-          }))}
-        />
-      )}
-      {size && (
-        <NumberField
-          fill
-          className="w-[68px] shrink-0"
-          value={Number(displayValueOf(a.valueOf('sizePt')) ?? FALLBACK_MIN_FONT_SIZE_PT)}
-          min={size.min}
-          max={size.max}
-          step={size.step ?? 0.5}
-          precision={PT_DECIMALS}
-          unit={size.unit}
-          title={translate('textControls.size', { ns: 'inspector' })}
-          onChange={(v) => a.write('sizePt', v)}
-          onScrubStart={a.beginGesture}
-          onScrubEnd={a.endGesture}
-        />
-      )}
-      {(a.fieldOf('weight') || a.fieldOf('style')) && (
-        <span className="flex items-center gap-0.5">
-          {a.fieldOf('weight') && (
-            <StyleToggle
-              state={boldState}
-              label={translate('textBar.bold', { ns: 'inspector' })}
-              onClick={() => a.writeOnce('weight', nextToggle(a.valueOf('weight'), 'bold', 'normal'))}
-            >
-              <Bold size={ICON_SIZE.sm} />
-            </StyleToggle>
-          )}
-          {a.fieldOf('style') && (
-            <StyleToggle
-              state={italicState}
-              label={translate('textBar.italic', { ns: 'inspector' })}
-              onClick={() => a.writeOnce('style', nextToggle(a.valueOf('style'), 'italic', 'normal'))}
-            >
-              <Italic size={ICON_SIZE.sm} />
-            </StyleToggle>
-          )}
-        </span>
-      )}
-      {!compact && a.fieldOf('color') && (
-        <ColorField
-          ariaLabel={translate('textBar.color', { ns: 'inspector' })}
-          value={String(displayValueOf(a.valueOf('color')) ?? '#000000')}
-          onChange={(v) => a.write('color', v, true)}
-          onGestureEnd={a.endGesture}
-        />
-      )}
-      <Sep />
-    </span>
+    <FigureTextQuick
+      panel={panel}
+      elements={elements}
+      props={FIGURE_TEXT_SINGLE_PROPS}
+      compact={compact}
+    />
   )
+}
+
+/**
+ * 图内文字的快捷排版行：单选（`ElementBar`）与同类多选（`ElementMultiBar`，ADR 0089）
+ * 画的是**同一份**控件——适配器吃的就是一个数组，批量只是 `props` 换成
+ * `FIGURE_TEXT_BATCH_PROPS`（不含水平对齐）。多个值不一致时字号留空、写「多个值」，
+ * 色块取第一个目标的真实颜色，不冒充一个谁都不是的默认值。
+ *
+ * `elements` 必须是稳定引用（调用方 memo），否则适配器每次渲染都重算字段交集。
+ */
+export function FigureTextQuick({
+  panel,
+  elements,
+  props,
+  compact,
+}: {
+  panel: PanelObject
+  elements: ManifestElement[]
+  props: readonly TypographyProp[]
+  compact: boolean
+}) {
+  const a = useFigureTypography(panel, elements, props)
+  return <TextQuickControls a={a} compact={compact} familyWidth="w-[112px]" />
 }

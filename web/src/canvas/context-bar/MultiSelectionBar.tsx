@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ChevronDown, Group, SlidersHorizontal, Ungroup } from '@/components/ui/icons'
+import { Group, SlidersHorizontal, Ungroup } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import { captureContextBarMore, fromContextBar } from '@/lib/activityTelemetry'
@@ -13,7 +13,6 @@ import {
   type ArrangeButton,
 } from '@/components/inspector/arrangeButtons'
 import { Button } from '@/components/ui/Button'
-import { Popover } from '@/components/ui/Popover'
 import { Segmented } from '@/components/ui/Segmented'
 import { Tip } from '@/components/ui/Tooltip'
 import {
@@ -26,10 +25,11 @@ import {
   type AlignRef,
 } from '@/store/actions'
 import { useArrangeStore } from '@/store/arrangeStore'
-import type { CanvasObject } from '@/types/document'
+import type { CanvasObject, TextObject } from '@/types/document'
 import type { BarVariant } from './position'
 import { openArrangeInInspector } from './openArrange'
-import { Sep } from './shared'
+import { MenuPopover, Sep } from './shared'
+import { CanvasTextQuick } from './SingleObjectBar'
 import { qb } from './text'
 
 /**
@@ -41,7 +41,9 @@ import { qb } from './text'
  * 两个入口切的是同一个值。按钮表（图标 / 顺序 / 最少对象数）也从 `ArrangeSection`
  * 取，不再抄一份。
  *
- * 宽度不够（`variant === 'compact'`）时压成三个弹层入口 + 成组 + 更多。
+ * 宽度不够（`variant === 'compact'`）时压成三个弹层入口 + 成组 + 更多；压缩档量出来
+ * 仍放不下（`minimal`，窄窗口里全是文字时最常见）再收成「排列」一个弹层，文字的
+ * 字号 / 加粗 / 斜体也进「文字」弹层——`w-max` 的栏不会自己收缩，不降档右半截就出屏。
  *
  * `docked`：右栏属性页正停靠着——参照三选一、分布、等宽等高整套就在那边的
  * 「排列」组里，这条再铺一遍是同一批控件的第二份摆放（审计 T29）。此时只留
@@ -66,6 +68,16 @@ export function MultiSelectionBar({
   const count = objs.length
   const ref = useArrangeStore((s) => s.alignRef)
   const grouped = selectionHasGroupIn(objs)
+  /**
+   * 选区全是画布文字（ADR 0089）：计数后面接一行快捷排版——与单选文字栏同一份控件、
+   * 同一个适配器（`useCanvasTypography` 吃的就是数组，一次改动 = 一次 `updateObjects`
+   * = 一条历史）。右栏停靠或栏宽不够时按单选那条判据缩成字号 / 加粗 / 斜体。
+   * 混着面板 / 标注时不给：那时没有一组「公共的文字属性」可言，右栏照旧可达。
+   */
+  const texts = objs.every((o) => o.type === 'text') ? (objs as TextObject[]) : null
+  const textRow = texts ? (
+    <CanvasTextQuick objs={texts} compact={docked || variant === 'compact'} />
+  ) : null
 
   const countEl = (
     <span
@@ -79,11 +91,39 @@ export function MultiSelectionBar({
     </span>
   )
 
+  if (variant === 'minimal') {
+    return (
+      <Bar>
+        {countEl}
+        <Sep />
+        <div className="flex items-center gap-0.5">
+          <MenuPopover label={qb('arrangeMenu')} width={232} testId="arrange">
+            <RefPicker />
+            <AlignRow modes={ALIGN_BUTTONS} refName={ref} count={count} />
+            <AlignRow modes={DISTRIBUTE_BUTTONS} refName={ref} count={count} />
+            <AlignRow modes={SIZE_BUTTONS} refName={ref} count={count} />
+          </MenuPopover>
+          {texts && (
+            <MenuPopover label={qb('textMenu')} width={176} testId="text">
+              <CanvasTextQuick objs={texts} compact />
+            </MenuPopover>
+          )}
+        </div>
+        <Sep />
+        <div className="flex items-center gap-0.5">
+          <GroupButtons grouped={grouped} />
+          <MoreButton count={count} />
+        </div>
+      </Bar>
+    )
+  }
+
   if (docked) {
     return (
       <Bar>
         {countEl}
         <Sep />
+        {textRow}
         <AlignRow modes={ALIGN_BUTTONS} refName={ref} count={count} />
         <Sep />
         <div className="flex items-center gap-0.5">
@@ -99,6 +139,7 @@ export function MultiSelectionBar({
       <Bar>
         {countEl}
         <Sep />
+        {textRow}
         {/* 三个弹层入口是同一档控件，彼此按组内 2px 排 */}
         <div className="flex items-center gap-0.5">
           <MenuPopover label={qb('alignMenu')} width={232} testId="align">
@@ -125,6 +166,7 @@ export function MultiSelectionBar({
     <Bar>
       {countEl}
       <Sep />
+      {textRow}
       <RefPicker />
       <Sep />
       <AlignRow modes={ALIGN_BUTTONS} refName={ref} count={count} />
@@ -267,33 +309,5 @@ function MoreButton({ count }: { count: number }) {
         <SlidersHorizontal size={ICON_SIZE.sm} />
       </Button>
     </Tip>
-  )
-}
-
-/** 窄屏下的弹层入口：文字按钮 + 下拉角，内容还是同一批按钮 */
-function MenuPopover({
-  label,
-  width,
-  testId,
-  children,
-}: {
-  label: string
-  width: number
-  testId: string
-  children: ReactNode
-}) {
-  return (
-    <Popover
-      width={width}
-      align="start"
-      trigger={
-        <Button size="md" data-multi-menu={testId} aria-label={label}>
-          {label}
-          <ChevronDown size={ICON_SIZE.xs} aria-hidden />
-        </Button>
-      }
-    >
-      <div className="flex flex-col gap-1.5">{children}</div>
-    </Popover>
   )
 }

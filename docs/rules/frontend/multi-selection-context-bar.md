@@ -5,8 +5,8 @@
 
 完整版在 `docs/adr/0036-multi-selection-context-bar.md`，改动前先读。
 
-* **一个外壳四种目标**：`canvas/context-bar/ContextBar.tsx` 解析目标（正在裁剪的
-  面板 / 单个图内元素 / 单个画布对象 / 两个以上画布对象），出现与让位、落位
+* **一个外壳五种目标**：`canvas/context-bar/ContextBar.tsx` 解析目标（正在裁剪的
+  面板 / 单个图内元素 / 两个以上图内元素（ADR 0089）/ 单个画布对象 / 两个以上画布对象），出现与让位、落位
   （`position.ts` 纯函数）、Esc、拖动隐藏、portal 都在外壳；四种内容各一个文件。
   对外仍是 `ContextBar()`。裁剪的两条判据**不是同一个**：让位看
   `cropTargetId` 有没有值，出裁剪条看它指不指得到一个真面板。
@@ -29,7 +29,9 @@
   后续 coachmark 都锚在这两个节点上，别改名。
 * **落位不查 DOM**：联合选区经 `position.selectionScreenRect`（与 OverlaySvg 的
   `toScreen` 同一份换算 + 视口原点）算窗口坐标。宽窄档两道判据：静态阈值
-  `FULL_BAR_MIN_WIDTH` + 量出来放不下就降级；工具条盒子必须 `w-max`，否则
+  `FULL_BAR_MIN_WIDTH` + 量出来放不下就再降一档（完整 → 压缩 → 最窄 `minimal`，
+  最窄档只由量出来的溢出降到：画布多选收成「排列」一个弹层，全是文字时字号 / 加粗 /
+  斜体进「文字」弹层；图内多选的最窄档与压缩档同一种摆法）；工具条盒子必须 `w-max`，否则
   `fixed` 盒子被可用宽度压扁、量到的不是自然宽度。
 * **锁定对象不动但算进参照框**：`alignSelectedTo` 与拖动同用 `movableTargets`；
   对齐 / 成组 / 取消成组执行前 `finishActiveGesture()`。
@@ -41,7 +43,15 @@
   `qb()`）。画布上方那条工作区上下文栏（审计 T01）用的是 `workspace:stage.*`，
   别把两组混进同一段——`pnpm i18n:check` 把 `qb()` 这种短助手当成动态前缀，
   **删掉它的 key 是绿的**，界面上才会显出原始 key（2026-09-06 实际发生过）。
+* **多选时的快速排版（ADR 0089）**：图内多选（两个及以上图内元素）出 `ElementMultiBar`——
+  对齐落地是 `alignSelectedPanelElements`（与 ElementInspector 对齐区同一个函数），排版只在
+  同一文字家族时给、走 `useFigureTypography` 的批量适配器（与属性页 `styleBatch` 同一条判据）；
+  「给什么」只由 `elementMultiPlan()` 判，`ContextBar` 与组件读同一份。画布多选全是文字时多选栏
+  接一行排版（`useCanvasTypography`）。浮动栏上的文字控件只有 `context-bar/textQuick.tsx` 一份，
+  图内 / 画布、单选 / 多选都画它；取色一轮一条历史；停靠时按 `textBarCompact` 缩减。
+  「按下即藏」同时听 `pointerup` 与 `pointercancel`。
 * 看护：`canvas/context-bar/position.test.ts` / `multiSelectionBar.test.tsx` /
+  `canvas/context-bar/elementMultiBar.test.tsx` / `e2e/multi-selection-bar.spec.ts` /
   `canvas/primarySelection.test.tsx` / `store/alignSelectedTo.test.ts` /
   `store/arrangeStore.test.ts` / `canvas/contextBar.test.tsx`。
 

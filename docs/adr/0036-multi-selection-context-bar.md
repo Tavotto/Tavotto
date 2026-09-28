@@ -7,6 +7,7 @@ adapter / action 的先例）、[0016 前端诊断](0016-diagnostics-v2-frontend
 **不是**诊断事件，也不是遥测），[0035 坐标轴刻度直接操作](0035-axis-tick-direct-manipulation.md)
 （「多处入口同源 = 只有一份」的同一条纪律），
 本轨道文档 [`docs/implementation/product-ux-reliability/`](../implementation/product-ux-reliability/STATUS.md)。
+图内多选出浮动栏、画布多选文字加字号 / 颜色由 [0089](0089-multi-selection-quick-style.md) 修订（「什么时候不出现」里的图内编辑态一条不再适用于两个以上图内元素）。
 
 ## 裁决摘要
 

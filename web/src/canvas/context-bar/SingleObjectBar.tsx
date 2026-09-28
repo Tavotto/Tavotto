@@ -1,17 +1,11 @@
 import { useMemo } from 'react'
-import { Bold, CircleQuestionMark, Crop, Italic, Minimize2, Pencil } from '@/components/ui/icons'
-import { PT_DECIMALS } from '@/lib/stylePresets'
+import { CircleQuestionMark, Crop, Minimize2, Pencil } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import type { UiMessage } from '@/i18n'
-import { fontStackOf } from '@/components/inspector/controls/fontStack'
-import { StyleToggle } from '@/components/inspector/controls/textRows'
 import { useCanvasTypography } from '@/components/inspector/typographyAdapter'
-import { displayValueOf, nextToggle, toggleStateOf } from '@/lib/typography'
-import { optionLabel } from '@/components/inspector/roles/registry'
 import { Button } from '@/components/ui/Button'
 import { ColorField, NumberField } from '@/components/ui/Input'
-import { Select } from '@/components/ui/Select'
 import { Tip } from '@/components/ui/Tooltip'
 import { beginCrop, enterElementEdit, fitPanels, updateObjects } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
@@ -23,6 +17,7 @@ import type {
   ShapeObject,
   TextObject,
 } from '@/types/document'
+import { TextQuickControls } from './textQuick'
 import { Sep } from './shared'
 import { hist } from './text'
 
@@ -65,69 +60,16 @@ export function ObjectQuickActions({
  */
 function TextObjectActions({ obj, compact }: { obj: TextObject; compact: boolean }) {
   const objs = useMemo(() => [obj], [obj])
+  return <CanvasTextQuick objs={objs} compact={compact} />
+}
+
+/**
+ * 画布文字的快捷排版行：单选与多选（`MultiSelectionBar` 在选区全是文字时，ADR 0089）
+ * 同一份。`objs` 必须是稳定引用（调用方 memo）。
+ */
+export function CanvasTextQuick({ objs, compact }: { objs: TextObject[]; compact: boolean }) {
   const a = useCanvasTypography(objs)
-  const family = a.fieldOf('fontFamily')
-  const size = a.fieldOf('sizePt')
-  const boldState = toggleStateOf(a.valueOf('weight'), 'bold')
-  const italicState = toggleStateOf(a.valueOf('style'), 'italic')
-  return (
-    <span
-      className="flex items-center gap-1"
-      data-text-quick={compact ? 'compact' : 'full'}
-    >
-      {!compact && family && (
-        <Select
-          className="w-[92px] shrink-0"
-          ariaLabel={translate('textControls.font', { ns: 'inspector' })}
-          value={String(displayValueOf(a.valueOf('fontFamily')) ?? '')}
-          onChange={(v) => a.writeOnce('fontFamily', v)}
-          options={(family.options ?? []).map((o) => ({
-            value: o,
-            label: <span style={{ fontFamily: fontStackOf(o) }}>{optionLabel('fontfamily', o)}</span>,
-          }))}
-        />
-      )}
-      {size && (
-        <NumberField
-          fill
-          className="w-[68px] shrink-0"
-          value={Number(displayValueOf(a.valueOf('sizePt')) ?? 10)}
-          min={size.min}
-          max={size.max}
-          step={size.step ?? 0.5}
-          precision={PT_DECIMALS}
-          unit={size.unit}
-          title={translate('textControls.size', { ns: 'inspector' })}
-          onChange={(v) => a.write('sizePt', v)}
-          onScrubStart={a.beginGesture}
-          onScrubEnd={a.endGesture}
-        />
-      )}
-      <StyleToggle
-        state={boldState}
-        label={translate('textBar.bold', { ns: 'inspector' })}
-        onClick={() => a.writeOnce('weight', nextToggle(a.valueOf('weight'), 'bold', 'normal'))}
-      >
-        <Bold size={ICON_SIZE.sm} />
-      </StyleToggle>
-      <StyleToggle
-        state={italicState}
-        label={translate('textBar.italic', { ns: 'inspector' })}
-        onClick={() => a.writeOnce('style', nextToggle(a.valueOf('style'), 'italic', 'normal'))}
-      >
-        <Italic size={ICON_SIZE.sm} />
-      </StyleToggle>
-      {!compact && (
-        <ColorField
-          ariaLabel={translate('textBar.color', { ns: 'inspector' })}
-          value={String(displayValueOf(a.valueOf('color')) ?? '#000000')}
-          onChange={(v) => a.write('color', v, true)}
-          onGestureEnd={a.endGesture}
-        />
-      )}
-      <Sep />
-    </span>
-  )
+  return <TextQuickControls a={a} compact={compact} familyWidth="w-[92px]" sizeFallback={10} />
 }
 
 function PanelObjectActions({ obj }: { obj: PanelObject }) {
