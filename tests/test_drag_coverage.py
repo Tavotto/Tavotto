@@ -87,8 +87,8 @@ def _locators(stem):
     plt.close(fig)
 
 
-def _constrained(stem):
-    fig, axs = plt.subplots(1, 2, figsize=(6, 3), layout="constrained")
+def _constrained(stem, layout="constrained"):
+    fig, axs = plt.subplots(1, 2, figsize=(6, 3), layout=layout)
     axs[0].plot(X, np.sin(X), label="sin")
     axs[0].legend(loc="upper right")
     axs[0].add_patch(Rectangle((0.5, 0.3), 1, 0.4, alpha=0.5))
@@ -106,6 +106,7 @@ def main():
     _anchored("AnchC", layout="constrained")
     _locators("Loc")
     _constrained("Cons")
+    _constrained("ConsT", layout="tight")
 """
 
 #: 写死的位移（figure 分数，x 右、y 下）：不是任何网格的整数倍
@@ -284,6 +285,56 @@ def test_constrained_drag_lands_and_leaves_the_axes_alone(hot, gid, prop):
     _man(hot, "Cons")
 
 
+#: 图例的「图外」预设：左图的图例挂到它右边外侧（界面的外侧预设写的就是这两条）
+_OUTSIDE_PRESET = [
+    {"gid": "axes_0.legend", "prop": "loc", "value": "upper left"},
+    {"gid": "axes_0.legend", "prop": "loc_anchor", "value": [1.02, 1.0]},
+]
+
+
+@pytest.mark.parametrize("stem", ["Cons", "ConsT"])
+def test_dragged_legend_over_an_outside_preset_leaves_the_layout_alone(hot, stem):
+    """先选「图外」预设、再拖图例（Codex #681 第四条 P2）：排版前放回的是**脚本原样**的整份
+    位置模型（loc / 锚点 / 拖动三个槽），不是只撤拖动、露出预设——那样排版引擎按图外的边距
+    预留，别的子图被挤开（修前 constrained / tight 左图宽度差 0.055 / 0.066 figure 分数）。
+    排完恢复**完整**的模型：拖动撤掉之后回到预设那一版。
+
+    这张夹具图从一种排版换到另一种排版时，**头一帧**落后半步、再画一次才到位（与拖动无关：
+    只选预设再撤掉也一样，0.0013–0.0015 figure 分数，色条摆放读上一帧，ADR 0100「不做」）。
+    所以 ① 从基线一步写到「预设 + 拖动」，头一帧就逐位比——那里没有换排版，量的只是 pin
+    这一层；② 按用户的顺序（预设先画出来、再拖）比再画一次之后的那一帧。"""
+    gid = "axes_0.legend"
+    base = _man(hot, stem)
+    target = _moved_anchor(base[gid])
+    both = [*_OUTSIDE_PRESET, {"gid": gid, "prop": "loc_frac", "value": target}]
+    # ① 头一帧：排版的输入与基线逐位相同
+    got = _man(hot, stem, both)
+    assert got[gid]["anchor"] == pytest.approx(target, abs=TOL), stem
+    _same_boxes(_axes_boxes(got), _axes_boxes(base), CONSTRAINED_TOL, f"{stem} 拖过的图例")
+    _man(hot, stem)
+    _man(hot, stem)
+    # ② 用户的顺序：先画出图外预设
+    outside = _man(hot, stem, _OUTSIDE_PRESET)
+    outside = _man(hot, stem, _OUTSIDE_PRESET)
+    # 前提：预设本身确实挤动排版（不挤的话「子图不动」恒真）
+    assert any(
+        abs(a - b) > 1e-3
+        for g in _axes_boxes(base)
+        for a, b in zip(_axes_boxes(outside)[g], _axes_boxes(base)[g])
+    ), "图外预设没挤动排版：夹具量不出这条缺陷"
+    _man(hot, stem, both)
+    got = _man(hot, stem, both)
+    assert got[gid]["anchor"] == pytest.approx(target, abs=TOL), stem
+    _same_boxes(_axes_boxes(got), _axes_boxes(base), CONSTRAINED_TOL, f"{stem} 预设之后再拖")
+    # 拖动撤掉、预设还在：模型完整恢复（loc / 锚点没被排版那一层弄丢）
+    _man(hot, stem, _OUTSIDE_PRESET)
+    back = _man(hot, stem, _OUTSIDE_PRESET)
+    assert back[gid]["bbox"] == pytest.approx(outside[gid]["bbox"], abs=CONSTRAINED_TOL), stem
+    _same_boxes(_axes_boxes(back), _axes_boxes(outside), CONSTRAINED_TOL, f"{stem} 回到预设")
+    _man(hot, stem)
+    _man(hot, stem)
+
+
 def test_constrained_standalone_arrow_lands(hot):
     gid = "axes_0.arrows_1"
     base = _man(hot, "Cons")
@@ -328,13 +379,24 @@ def test_fresh_replay_matches_the_hot_session(hot, figs):
             ("axes_0.patches_0", "pos_frac"),
             ("axes_0", "position"),
         ],
+        # 拖过的图例之上再选图外预设（tight）：排版那一层放回整份位置模型，预设一步步写进来
+        # 也不换排版（换排版的头一帧落后半步，见上一条用例），热态与重放逐位相同
+        "ConsT": [
+            ("axes_0.legend", "loc_frac"),
+            *((p["gid"], p["prop"], p["value"]) for p in _OUTSIDE_PRESET),
+        ],
     }
     hot_state = {}
     for stem, moves in plan.items():
         base = _man(hot, stem)
         patches = []
-        for gid, prop in moves:
-            value = _moved_pos(base, gid) if prop == "position" else _moved_anchor(base[gid])
+        for gid, prop, *given in moves:
+            if given:
+                value = given[0]
+            elif prop == "position":
+                value = _moved_pos(base, gid)
+            else:
+                value = _moved_anchor(base[gid])
             patches.append({"gid": gid, "prop": prop, "value": value})
             got = _man(hot, stem, patches)
         hot_state[stem] = (patches, got)

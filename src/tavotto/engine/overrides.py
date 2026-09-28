@@ -410,9 +410,11 @@ def _ensure_text_pin_hook(fig) -> None:
         # 子图先落位：文字 / 锚定框按「此刻」的子图框把 figure 分数换算进自己的坐标系，
         # 子图在它们之后才挪的话它们就被带走了
         pins.sort(key=lambda p: not isinstance(p[0], _AxesBase))
-        for t, _v, native in pins:
-            _pin_put_native(t, native)
         try:
+            # 放回在 try 里：半路抛的话已放回的也一定落回去（落回对没放回的也是幂等的），
+            # 不留下停在「脚本原样」的对象，图例暂存的整份位置模型也不会滞留（`put_legend_frac`）
+            for t, _v, native in pins:
+                _pin_put_native(t, native)
             native_execute(f)
         finally:
             settled: set[int] = set()
