@@ -81,6 +81,7 @@
     "tutorialUnavailable": "The tutorial resources are incomplete. Reinstall Tavotto."
   },
   "switcher": {
+    "home": "Back to projects",
     "newTabLabel": "Open in a new tab",
     "newTabTip": "Open in a new tab. Switch to another project there.",
     "trigger": "Current project {{name}} — click to switch"

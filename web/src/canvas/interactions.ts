@@ -56,6 +56,7 @@ import {
 } from '@/lib/pathGeom'
 import { clamp } from '@/lib/units'
 import { setTxnAnchor, useDocumentStore } from '@/store/documentStore'
+import { registerPointerCancel } from '@/store/gestureCoordinator'
 import { useInteractionStore } from '@/store/interactionStore'
 import { exactPanelManifest, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
@@ -144,27 +145,14 @@ interface TrackOptions {
 }
 
 /**
- * 此刻开着的那一次指针追踪的「取消」出口；null = 没有。
- *
  * 指针追踪的监听挂在 window 上，只有 pointerup / pointercancel / lostpointercapture
  * 收得了它。键盘上的取消（Esc）够不着那几个闭包——于是拖动中按 Esc 退出图内编辑态，
- * 手势照样活着，松手在已经离开的画面里写文档（QA STATE-02-B1）。这里把「取消」登记成
- * 一个出口，走的是与 pointercancel **同一条** `finish(true)`：还原 DOM、不写 override、
- * 不进历史、不渲染，各个 onEnd 早就按 `TrackEnd.cancelled` 分好了路。
+ * 手势照样活着，松手在已经离开的画面里写文档（QA STATE-02-B1）。所以每次追踪都把「取消」
+ * 登记成一个出口（`registerPointerCancel`），走的是与 pointercancel **同一条** `finish(true)`：
+ * 还原 DOM、不写 override、不进历史、不渲染，各个 onEnd 早就按 `TrackEnd.cancelled` 分好了路。
+ * 登记处与取消入口 `cancelActivePointerGesture` 在 `store/gestureCoordinator`：离开文档
+ * （去 Picker / 换项目）的 store 层也要够得着它。
  */
-let activeTrackCancel: (() => void) | null = null
-
-/**
- * 取消此刻进行中的指针手势（拖动 / 缩放 / 框选 / 绘制……）。回 true = 真的取消了一次；
- * 没有进行中的手势时什么都不做、回 false，调用方照常走它自己的逻辑。
- */
-export function cancelActivePointerGesture(): boolean {
-  const cancel = activeTrackCancel
-  if (!cancel) return false
-  cancel()
-  return true
-}
-
 export function trackPointer(e: ReactPointerEvent, { onMove, onEnd, threshold = 2 }: TrackOptions) {
   const startX = e.clientX
   const startY = e.clientY
@@ -188,7 +176,7 @@ export function trackPointer(e: ReactPointerEvent, { onMove, onEnd, threshold = 
     window.removeEventListener('pointerup', up)
     window.removeEventListener('pointercancel', cancel)
     window.removeEventListener('lostpointercapture', cancel)
-    if (activeTrackCancel === cancelByKey) activeTrackCancel = null
+    unregisterCancel()
     // 性能探针（ADR 0075）：松手那一下的同步提交与随后的 React 重渲染
     perfRelease(() => onEnd(moved, ev as PointerEvent, { cancelled }))
   }
@@ -197,7 +185,7 @@ export function trackPointer(e: ReactPointerEvent, { onMove, onEnd, threshold = 
   // 键盘取消没有自己的指针事件：交给 onEnd 的是最后一次 move（没有就是按下那一下），
   // 取消分支本来就不读它，给一个真实的指针事件只是免得有人读到 undefined
   const cancelByKey = () => cancel(lastEv ?? (e.nativeEvent as PointerEvent))
-  activeTrackCancel = cancelByKey
+  const unregisterCancel = registerPointerCancel(cancelByKey)
   window.addEventListener('pointermove', move)
   window.addEventListener('pointerup', up)
   window.addEventListener('pointercancel', cancel)

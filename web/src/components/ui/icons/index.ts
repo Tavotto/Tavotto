@@ -1,5 +1,5 @@
 /**
- * 图标集的公开面：141 个图标组件，名字与 lucide 时代一一相同（同一语义只用一个名字，
+ * 图标集的公开面：142 个图标组件，名字与 lucide 时代一一相同（同一语义只用一个名字，
  * 表在 `docs/ux/ICONOGRAPHY.md` 第四节）。几何在 `defs.ts`，组件工厂在 `createIcon.tsx`。
  * 写法 `<X size={ICON_SIZE.md} />`，选中态 `<X filled />`。
  */
@@ -98,6 +98,7 @@ export const HardDrive = createIcon('HardDrive', ICON_DEFS.HardDrive)
 export const BookOpen = createIcon('BookOpen', ICON_DEFS.BookOpen)
 export const Folder = createIcon('Folder', ICON_DEFS.Folder)
 export const FolderOpen = createIcon('FolderOpen', ICON_DEFS.FolderOpen)
+export const House = createIcon('House', ICON_DEFS.House)
 export const FolderPlus = createIcon('FolderPlus', ICON_DEFS.FolderPlus)
 export const FileUp = createIcon('FileUp', ICON_DEFS.FileUp)
 export const FileCodeCorner = createIcon('FileCodeCorner', ICON_DEFS.FileCodeCorner)

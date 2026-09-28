@@ -80,6 +80,7 @@
     "tutorialUnavailable": "教程资源不完整。请重新安装 Tavotto。"
   },
   "switcher": {
+    "home": "回到项目列表",
     "newTabLabel": "在新标签页打开",
     "newTabTip": "在新标签页打开，可切到另一个项目",
     "trigger": "当前项目 {{name}}，点击切换"

@@ -36,6 +36,7 @@ import { useBuildVersion } from '@/hooks/useBuildVersion'
 import { runUndoRedo, useKeyboard } from '@/hooks/useKeyboard'
 import { useWorkspaceLayout } from '@/hooks/useWorkspaceLayout'
 import { useServerEvents } from '@/hooks/useServerEvents'
+import { usePickerHistory } from '@/hooks/usePickerHistory'
 import { subscribePruneSelection } from '@/hooks/usePruneSelection'
 import { ProjectPicker } from '@/components/ProjectPicker'
 import { OnboardingLayer } from '@/components/onboarding/OnboardingLayer'
@@ -83,6 +84,7 @@ export function App() {
   }, [])
   useDesktopMenu()
   useHandoff()
+  usePickerHistory()
 
   // 启动探测中不闪 Picker；探测完没有项目 → Picker 接管整个界面
   if (phase === 'loading') return <div className="h-full bg-bg" />

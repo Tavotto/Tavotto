@@ -1,10 +1,10 @@
 import { useTranslation } from 'react-i18next'
-import { ExternalLink, Folder } from '@/components/ui/icons'
+import { ExternalLink, Folder, House } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { cn } from '@/lib/utils'
 import { useProjectStore } from '@/store/projectStore'
 import { useUiStore } from '@/store/uiStore'
-import { Button } from './ui/Button'
+import { Button, IconButton } from './ui/Button'
 import { Tip } from './ui/Tooltip'
 
 /**
@@ -36,6 +36,29 @@ export function ProjectSwitcher() {
       <Folder size={ICON_SIZE.sm} className="shrink-0 text-ink-3" />
       <span className="truncate">{project.name}</span>
     </Button>
+  )
+}
+
+/**
+ * 顶栏最左端的「回到项目列表」：离开编辑器、回 Project Picker。
+ *
+ * 走的是设置「切换项目」/ 桌面菜单「打开项目」同一个 `showPicker`——离开前的收尾
+ * （连续编辑、自动保存冲刷）与浏览器历史那一格都在那里，这里不另写一份。项目本身
+ * 不关：Picker 上「返回当前项目」或再点一次同一个项目，文档原样还在。
+ */
+export function HomeButton() {
+  const { t } = useTranslation('project')
+  const switching = useProjectStore((s) => s.switching)
+  return (
+    <IconButton
+      label={t('switcher.home')}
+      data-home-button
+      // 切换进行中 showPicker 本来就什么都不做（见它的注释）；灰掉，别让这一下像是没点上
+      disabled={switching}
+      onClick={() => useProjectStore.getState().showPicker()}
+    >
+      <House size={ICON_SIZE.md} />
+    </IconButton>
   )
 }
 
