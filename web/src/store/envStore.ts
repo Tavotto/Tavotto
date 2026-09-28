@@ -163,6 +163,10 @@ export const useEnvStore = create<EnvState>((set, get) => ({
       const { useRenderStore } = await import('@/store/renderStore')
       if (epoch !== projectEpoch) return null
       useRenderStore.getState().retryEnvironmentFailures()
+      // 素材库「运行并发现图」那条入口失败的脚本同样重跑
+      const { useScriptRunStore } = await import('@/store/scriptRunStore')
+      if (epoch !== projectEpoch) return null
+      useScriptRunStore.getState().rerunMissingInput()
       useUiStore.getState().setStatus(msg('engine.missingInputRemembered', undefined, 'errors'))
       return null
     } catch (e) {
