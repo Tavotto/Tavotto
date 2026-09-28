@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Bookmark, Ellipsis, Minus, Plus, RotateCcw, RotateCcwClock, X } from '@/components/ui/icons'
+import { Bookmark, Ellipsis, Eye, Minus, Pencil, Plus, RotateCcw, RotateCcwClock, X } from '@/components/ui/icons'
 import { FIELD_BOX, FIELD_FOCUS } from '@/components/ui/fieldBox'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { RetryImg } from '@/components/ui/RetryImg'
@@ -114,11 +114,21 @@ export function VersionDrawer() {
    */
   const [loadFailure, setLoadFailure] = useState<{ ctx: string; text: string } | null>(null)
   const [actionFailure, setActionFailure] = useState<{ ctx: string; text: string } | null>(null)
+  // 第三槽：**取预览正文**的错误（Codex #679）。记进操作槽的话，A 取失败、B 预览成功之后
+  // 关掉 B，抽屉里还挂着 A 的旧错；它只由下一次预览请求改写（发起即清）
+  const [previewFailure, setPreviewFailure] = useState<{ ctx: string; text: string } | null>(null)
   const loaded = list?.ctx === ctx
   const versions = useMemo(() => (loaded ? list.versions : []), [loaded, list])
   const budget = loaded ? list.budget : null
   const loadError = loadFailure?.ctx === ctx ? loadFailure.text : null
   const actionError = actionFailure?.ctx === ctx ? actionFailure.text : null
+  const previewError = previewFailure?.ctx === ctx ? previewFailure.text : null
+  const setPreviewError = useCallback(
+    (text: string | null) => {
+      afterAwait(ctx)(() => setPreviewFailure(text == null ? null : { ctx, text }))
+    },
+    [ctx],
+  )
   const setLoadError = useCallback(
     (text: string | null) => {
       afterAwait(ctx)(() => setLoadFailure(text == null ? null : { ctx, text }))
@@ -151,7 +161,12 @@ export function VersionDrawer() {
   const asideRef = useRef<HTMLElement>(null)
   const nameRef = useRef<HTMLInputElement>(null)
   const restoreFocus = useRef<HTMLElement | null>(null)
-  const selected = preview?.docId === docId ? preview.meta.id : null
+  const previewing = preview?.docId === docId ? preview.meta.id : null
+  // 单击行 = 选中（露出这一行的「预览」「改名」钮），**不开模态**：真实的双击先发一次 click，
+  // 单击就开模态的话遮罩盖住这一行，第二下落不到行上，「双击改名」永远用不了（Codex #679）。
+  // 选中按上下文记账（换了排版 / 项目就不认）
+  const [picked, setPicked] = useState<{ ctx: string; id: string } | null>(null)
+  const selected = previewing ?? (picked?.ctx === ctx ? picked.id : null)
 
   /**
    * 列表的请求序号（Codex #679 P2）：拍一个节点会 bump 两次（节点建好、缩略图挂上），
@@ -214,13 +229,11 @@ export function VersionDrawer() {
     if (tl.preview && tl.preview.docId !== docId) tl.setPreview(null)
   }, [ctx, docId])
 
-  const select = useCallback(
-    (meta: LayoutVersionMeta | null) => {
+  const openPreview = useCallback(
+    (meta: LayoutVersionMeta) => {
       const tl = useTimelineStore.getState()
-      if (!meta || meta.id === selected) {
-        tl.setPreview(null)
-        return
-      }
+      setPicked({ ctx, id: meta.id })
+      setPreviewError(null) // 新的一次预览：上一次取正文的失败作废
       tl.setPreview({ docId, meta, doc: null })
       // 期间换了节点 / 退出了预览：这份正文作废，它的失败也一样。换上下文不必另判：
       // 换项目 `clear()`、换排版那个 effect 都会清掉预览，`current()` 已经是假
@@ -233,10 +246,10 @@ export function VersionDrawer() {
           if (current()) useTimelineStore.getState().setPreview({ docId, meta, doc: v.doc })
         })
         .catch((e) => {
-          if (current()) setError(backendErrorText(e))
+          if (current()) setPreviewError(backendErrorText(e))
         })
     },
-    [docId, selected, setError],
+    [ctx, docId, setPreviewError],
   )
 
   const saveNamed = async () => {
@@ -379,7 +392,8 @@ export function VersionDrawer() {
                     selected={v.id === selected}
                     renaming={renaming === v.id}
                     showCanvas={canvases.length > 1 || v.canvasId !== activeCanvasId}
-                    onSelect={() => select(v)}
+                    onSelect={() => setPicked({ ctx, id: v.id })}
+                    onPreview={() => openPreview(v)}
                     onRename={(on) => setRenaming(on ? v.id : null)}
                     onChanged={async () => {
                       await reload()
@@ -392,9 +406,10 @@ export function VersionDrawer() {
             ))}
           </div>
         )}
-        {(actionError || loadError) && (
+        {(actionError || previewError || loadError) && (
           <div data-timeline-error className="px-3 py-2 text-xs text-danger">
             {actionError && <p data-timeline-error-kind="action">{actionError}</p>}
+            {previewError && <p data-timeline-error-kind="preview">{previewError}</p>}
             {loadError && <p data-timeline-error-kind="load">{loadError}</p>}
           </div>
         )}
@@ -474,6 +489,7 @@ function TimelineRow({
   renaming,
   showCanvas,
   onSelect,
+  onPreview,
   onRename,
   onChanged,
   onError,
@@ -486,7 +502,10 @@ function TimelineRow({
   selected: boolean
   renaming: boolean
   showCanvas: boolean
+  /** 单击行：选中（不开模态） */
   onSelect: () => void
+  /** 行上的「预览」钮：打开模态预览 */
+  onPreview: () => void
   onRename: (on: boolean) => void
   onChanged: () => Promise<void>
   onError: (e: string | null) => void
@@ -551,6 +570,7 @@ function TimelineRow({
         <button
           type="button"
           onClick={onSelect}
+          // 双击改名：单击只选中、不开模态，所以双击的第二下仍落在这一行上
           onDoubleClick={(e) => {
             e.preventDefault()
             onRename(true)
@@ -598,6 +618,25 @@ function TimelineRow({
             )}
           </span>
         </button>
+        {/* 显式入口：预览 / 改名。选中、悬停或键盘焦点在这一行时露出（Tab 照样走得到） */}
+        <span
+          className={cn(
+            'mt-1.5 flex shrink-0 items-center transition-opacity duration-fast',
+            selected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100',
+          )}
+        >
+          <IconButton iconSize="sm" label={vd('preview')} data-timeline-preview-button onClick={onPreview}>
+            <Eye size={ICON_SIZE.sm} className="text-ink-3" />
+          </IconButton>
+          <IconButton
+            iconSize="sm"
+            label={vd(named ? 'rename' : 'name')}
+            data-timeline-rename-button
+            onClick={() => onRename(true)}
+          >
+            <Pencil size={ICON_SIZE.sm} className="text-ink-3" />
+          </IconButton>
+        </span>
         <Menu
           align="end"
           trigger={
