@@ -276,6 +276,93 @@ test(
 )
 
 test(
+  '功能：同一窗口里复制对象，切到另一张画布粘贴，对象出现在原坐标；原画布不受影响',
+  { tag: ['@feature:canvas.copy-paste-across-canvases'] },
+  async ({ app, page }) => {
+    const a = await app()
+    // 对象剪贴板走系统剪贴板（`lib/clipboard.ts`）：Chromium 里读写都要授权
+    await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin: a.baseURL })
+    await page.setViewportSize(VIEWPORT)
+    await page.goto(a.baseURL)
+    const stage = page.locator('[data-canvas-stage]')
+    await expect(stage).toBeVisible({ timeout: 30_000 })
+
+    // 第一张画布：一段文字（文字工具的快捷键是 T），选中它 ⌘C
+    await page.keyboard.press('t')
+    await stage.click({ position: { x: 360, y: 260 } })
+    await page.keyboard.type('alpha')
+    await page.keyboard.press('Escape')
+    // 开着的其它画布标签也挂在舞台里（`CanvasLayers`：整层 display:none），数对象只数看得见的
+    const objs = page.locator('[data-canvas-stage] [data-object-id]').filter({ visible: true })
+    // 两张画布的缩放 / 平移各自记着，屏幕坐标不可比：换算成「相对纸面左上角、以纸宽为单位」
+    // ——两张纸同尺寸（都是默认页面）时，这就是文档坐标。纸与对象在**同一帧**里量，并等两次
+    // 读数一致：刚进页面时视图还在做适配缩放，分两次量会把缩放过程算进位移里
+    const read = () =>
+      objs.evaluateAll((els) => {
+        const sh = [...document.querySelectorAll('[data-page-sheet]')]
+          .map((e) => e.getBoundingClientRect())
+          .find((r) => r.width > 0)!
+        return els.map((e) => {
+          const r = e.getBoundingClientRect()
+          return {
+            id: e.getAttribute('data-object-id'),
+            x: (r.x - sh.x) / sh.width,
+            y: (r.y - sh.y) / sh.width,
+            aspect: sh.height / sh.width,
+          }
+        })
+      })
+    const boxes = async () => {
+      let prev = JSON.stringify(await read())
+      await expect
+        .poll(async () => {
+          const cur = JSON.stringify(await read())
+          const same = cur === prev
+          prev = cur
+          return same
+        }, { message: '画布视图一直没停下来' })
+        .toBe(true)
+      return JSON.parse(prev) as Awaited<ReturnType<typeof read>>
+    }
+    await expect(objs).toHaveCount(1)
+    await objs.first().click()
+    await page.keyboard.press('ControlOrMeta+c')
+    // 播报区认 `data-status-live`（同 cross-tab-paste.spec.ts）
+    await expect(page.locator('[data-status-live]')).toHaveText(/已复制/)
+    const [src] = await boxes()
+
+    // 新建第二张画布：它被激活、上面什么都没有。产品没给「+」data 锚点，按可达名认
+    const tabs = page.locator('[data-canvas-tab]')
+    await expect(tabs).toHaveCount(1)
+    const first = await tabs.first().getAttribute('data-canvas-tab')
+    await page.getByRole('button', { name: '新建画布', exact: true }).first().click()
+    await expect(tabs).toHaveCount(2)
+    const active = page.locator('[data-canvas-tab][data-active]')
+    await expect(active).not.toHaveAttribute('data-canvas-tab', first!)
+    await expect(objs).toHaveCount(0)
+
+    await stage.click({ position: { x: 700, y: 500 } })
+    await page.keyboard.press('ControlOrMeta+v')
+    await expect(page.locator('[data-status-live]')).toHaveText(/已粘贴 1 个对象/, { timeout: 10_000 })
+    await expect(objs).toHaveCount(1)
+    await expectInViewport(page, objs.first(), '粘贴出来的对象')
+    await expect(objs.first()).toContainText('alpha')
+    // 跨画布粘贴保持原坐标（同一张画布才错开 4 mm）。0.005 纸宽 ≈ 0.75 mm（默认纸宽 150 mm），
+    // 远小于同画布那 4 mm 的错开
+    const [dst] = await boxes()
+    expect(dst.aspect, '两张画布的纸面尺寸应当相同').toBeCloseTo(src.aspect, 3)
+    expect(Math.hypot(dst.x - src.x, dst.y - src.y), JSON.stringify({ src, dst })).toBeLessThan(0.005)
+    expect(dst.id).not.toBe(src.id)
+
+    // 回到第一张画布：原对象还在、只有它一个
+    await page.locator(`[data-canvas-tab="${first}"]`).click()
+    await expect(objs).toHaveCount(1)
+    const [back] = await boxes()
+    expect(back.id).toBe(src.id)
+  },
+)
+
+test(
   '功能：图内点选标题改字号，引擎重画后标题真的变大；撤销回到原字号',
   { tag: ['@feature:figure.select-and-edit'] },
   async ({ app, page }) => {

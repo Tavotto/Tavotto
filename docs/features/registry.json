@@ -174,10 +174,10 @@
     {
       "id": "canvas.copy-paste",
       "status": "active",
-      "platform": "both",
+      "platform": "browser",
       "summary": {
-        "zh-CN": "复制 / 粘贴对象（跨画布；浏览器里也跨标签页）",
-        "en-US": "Copy / paste objects across canvases (and across tabs in the browser)"
+        "zh-CN": "复制 / 粘贴对象（跨标签页）",
+        "en-US": "Copy / paste objects, across tabs"
       },
       "entry": "画布 → ⌘C / ⌘V",
       "e2e": [
@@ -185,9 +185,25 @@
           "spec": "cross-tab-paste.spec.ts",
           "title": "同一项目开两个标签页：标签 A 复制面板，标签 B 粘贴"
         }
+      ]
+    },
+    {
+      "id": "canvas.copy-paste-across-canvases",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "复制 / 粘贴对象（同一窗口里跨画布，保持原坐标）",
+        "en-US": "Copy / paste objects across canvases in one window, keeping their position"
+      },
+      "entry": "画布 → ⌘C → 切到另一张画布 → ⌘V",
+      "e2e": [
+        {
+          "spec": "features.spec.ts",
+          "title": "功能：同一窗口里复制对象，切到另一张画布粘贴，对象出现在原坐标；原画布不受影响"
+        }
       ],
       "desktop_manual": [
-        "画布上选中一张图 ⌘C，切到另一张画布 ⌘V：图出现且相对位置不变；再用菜单「编辑 → 粘贴」一次，结果相同"
+        "画布上选中一张图 ⌘C，切到另一张画布 ⌘V：图出现且位置与原画布上相同；再用菜单「编辑 → 粘贴」一次，结果相同"
       ]
     },
     {
