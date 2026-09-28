@@ -421,7 +421,11 @@ def test_budget_exhaustion_is_always_counted(tmp_path):
     probe.write_text(_BUDGET_PROBE, encoding="utf-8")
     engine = Path(__file__).resolve().parents[1] / "src/tavotto/engine"
     res = subprocess.run(
-        [WORKER_PY, str(probe), str(engine)], capture_output=True, text=True, timeout=120
+        [WORKER_PY, str(probe), str(engine)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=120,
     )
     assert res.returncode == 0, res.stderr
     got = json.loads(res.stdout.strip().splitlines()[-1])
