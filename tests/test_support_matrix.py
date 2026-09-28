@@ -62,6 +62,15 @@ def test_project_env_mirrors_the_matrix():
     assert projectenv.MPL_MAX_EXCLUSIVE == (int(mm.group(3)), int(mm.group(4)))
 
 
+def test_dependency_repair_copy_range_comes_from_the_matrix():
+    """缺依赖卡片「请安装 Python X–Y」的范围来自 offer，而 offer 取的是矩阵的
+    tested 两端——文案里不手写版本号，矩阵一改这里跟着变。"""
+    from tavotto.engine import deprepair
+
+    tested = _matrix()["python"]["tested"]
+    assert deprepair.supported_python_range() == {"min": tested[0], "max": tested[-1]}
+
+
 def test_python_range_matches_pyproject():
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     m = re.search(r'requires-python\s*=\s*"([^"]+)"', pyproject)

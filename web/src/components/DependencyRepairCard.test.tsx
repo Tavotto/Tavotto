@@ -91,6 +91,7 @@ const OFFER: DependencyRepairOffer = {
     },
   ],
   rounds_remaining: 3,
+  python_supported: { min: '3.10', max: '3.14' },
 }
 
 const PLAN: DependencyRepairPlan = {
@@ -276,13 +277,16 @@ describe('缺依赖的修复卡片', () => {
   it('只有旧 Python 且私有 Python 未开放时，说清缺的是建环境的基础解释器', async () => {
     await render({
       ...OFFER,
+      // 范围取自 offer（支持矩阵的运行时镜像），故意与当前口径不同：文案不许手写版本号
+      python_supported: { min: '3.11', max: '3.15' },
       targets: [{ ...OFFER.targets[1], available: false, reason: 'managed_env_unavailable' }],
       system_rejected: [{
         python: 'C:\\Python37\\python.exe', code: 'project_env_unsupported_python', python_version: '3.7.6',
       }],
     })
     expect(text()).toContain(en('repairTitle', { module: 'lmfit' }))
-    expect(text()).toContain(en('repairManagedUnavailable', { product: PRODUCT_NAME }))
+    expect(text()).toContain(en('repairManagedUnavailable', { product: PRODUCT_NAME, min: '3.11', max: '3.15' }))
+    expect(text()).toContain('3.11–3.15')
     expect(text()).toContain(en('repairSystemRejectedUnsupported', {
       python: 'C:\\Python37\\python.exe', module: 'lmfit', version: '3.7.6', product: PRODUCT_NAME,
     }))

@@ -336,7 +336,7 @@
     "repairInstalling": "Installing {{module}}…",
     "repairInstallToManaged": "Install {{module}} into the {{product}} environment",
     "repairInstallToProject": "Install into project environment",
-    "repairManagedUnavailable": "{{product}}'s bundled rendering Python cannot create an isolated environment for extra packages, and no suitable full Python was found to create one. Install Python 3.10–3.14, or choose an existing supported environment.",
+    "repairManagedUnavailable": "{{product}}'s bundled rendering Python cannot create an isolated environment for extra packages, and no suitable full Python was found to create one. Install Python {{min}}–{{max}}, or choose an existing supported environment.",
     "repairModifiesEnv": "This modifies the project’s Python environment.",
     "repairNeedsNetwork": "needs an internet connection",
     "repairPackageAria": "Package to install",

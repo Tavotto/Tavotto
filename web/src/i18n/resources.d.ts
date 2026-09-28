@@ -2064,7 +2064,7 @@ export default interface Resources {
       "repairInstallToManaged": "将 {{module}} 安装到 {{product}} 环境",
       "repairInstallToProject": "安装到项目环境",
       "repairInstalling": "正在安装 {{module}}…",
-      "repairManagedUnavailable": "{{product}} 自带的渲染 Python 不能用于创建安装额外依赖的隔离环境；当前也找不到适合建环境的完整 Python。请安装 Python 3.10–3.14，或选择已有的受支持环境。",
+      "repairManagedUnavailable": "{{product}} 自带的渲染 Python 不能用于创建安装额外依赖的隔离环境；当前也找不到适合建环境的完整 Python。请安装 Python {{min}}–{{max}}，或选择已有的受支持环境。",
       "repairModifiesEnv": "会修改项目的 Python 环境。",
       "repairNeedsNetwork": "需要联网下载",
       "repairPackageAria": "要安装的包名",

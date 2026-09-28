@@ -244,6 +244,7 @@ class TestPrivateBase:
         before = deprepair.offer(project, "figure.py", ALPHA[1], project_env=detail)
         target = next(t for t in before["targets"] if t["kind"] == deprepair.TARGET_MANAGED)
         assert target["available"] is False and target["private_python"] is None
+        assert before["python_supported"] == deprepair.supported_python_range()
         assert before["system_rejected"] == [
             {
                 "python": legacy,

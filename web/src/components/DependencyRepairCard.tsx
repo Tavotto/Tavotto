@@ -155,7 +155,11 @@ export function DependencyRepairCard({
         )}
         {managedUnavailable && (
           <p className="mt-1 text-xs leading-relaxed text-ink-2" data-managed-env-unavailable>
-            {en('repairManagedUnavailable', { product: PRODUCT_NAME })}
+            {en('repairManagedUnavailable', {
+              product: PRODUCT_NAME,
+              min: offer.python_supported.min,
+              max: offer.python_supported.max,
+            })}
           </p>
         )}
       </div>
