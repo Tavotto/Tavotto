@@ -65,9 +65,9 @@ test('T50：快捷键说明一条都没有被切掉，且搜索能收窄', async
   expect(total).toBeGreaterThan(15)
 
   // 说明那一列：整句都在盒子里（换行是允许的，切掉不行）
-  expect(await clipped(page, '[data-shortcut-row] > span:last-child')).toEqual([])
+  expect(await clipped(page, '[data-shortcut-row] [data-shortcut-desc]')).toEqual([])
   // 键位那一列同理——它是定宽的，最长的组合键也得放得下
-  expect(await clipped(page, '[data-shortcut-row] > span:first-child')).toEqual([])
+  expect(await clipped(page, '[data-shortcut-row] [data-shortcut-keys]')).toEqual([])
   // 对话框自己不横向溢出
   const overflow = await page.evaluate(() => {
     const d = document.querySelector('[role="dialog"]') as HTMLElement
@@ -75,9 +75,26 @@ test('T50：快捷键说明一条都没有被切掉，且搜索能收窄', async
   })
   expect(overflow).toBe(false)
 
-  await dialog.getByRole('textbox').fill('撤销')
-  await expect(rows).toHaveCount(1)
-  await expect(page.locator('[data-shortcut-group]')).toHaveCount(1)
+  // 搜索能收窄：判据不押「某个词恰好只有一条」——新增一条说明里带这个词的快捷键就会误红
+  // （#671 的方向键微调说明「连按算一步撤销」撞过一次）。改成：收窄了（≥1 且 < 总数），且
+  // 留下的**每一行**说明都含这个词；分组同理。词按界面语言取，所选的词不出现在任何键位里，
+  // 所以命中只可能来自说明。
+  const groups = page.locator('[data-shortcut-group]')
+  const totalGroups = await groups.count()
+  const lang = await page.evaluate(() => document.documentElement.lang)
+  const word = lang.startsWith('zh') ? '撤销' : 'undo'
+  const search = page.locator('[data-shortcut-search]')
+  await expect(search).toHaveCount(1)
+  await search.fill(word)
+  await expect.poll(() => rows.count()).toBeLessThan(total)
+  const shown = await rows.count()
+  expect(shown).toBeGreaterThanOrEqual(1)
+  const descs = await rows.locator('[data-shortcut-desc]').allInnerTexts()
+  expect(descs).toHaveLength(shown)
+  for (const d of descs) expect(d.toLowerCase(), `这一行不含「${word}」却留在了结果里`).toContain(word)
+  const shownGroups = await groups.count()
+  expect(shownGroups).toBeGreaterThanOrEqual(1)
+  expect(shownGroups).toBeLessThan(totalGroups)
 })
 
 test('T05：长画布名不挤走行尾的菜单按钮', async ({ app, page }) => {

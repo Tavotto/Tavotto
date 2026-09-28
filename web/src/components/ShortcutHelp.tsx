@@ -133,6 +133,7 @@ export function ShortcutHelp() {
             有内容才出清除钮。此前这里自己定了高 36 / 圆角 10 / surface-2 底 / 13 号字，
             四处都在原语之外（2026-09-15 打磨 K4） */}
         <SearchInput
+          data-shortcut-search
           value={query}
           onValueChange={setQuery}
           placeholder={sc('search')}
@@ -155,15 +156,18 @@ export function ShortcutHelp() {
                 {g.rows.map((r) => (
                   <li
                     key={r.desc}
-                    data-shortcut-row
+                    data-shortcut-row={r.desc}
                     className="flex min-h-8 items-center justify-between gap-5 py-1.5"
                   >
                     {/* DOM 里键位在前（测试与读屏按「键 → 说明」读），视觉上靠右 */}
-                    <span className="order-last shrink-0">
+                    <span data-shortcut-keys className="order-last shrink-0">
                       <Kbd size="md">{keyText(r)}</Kbd>
                     </span>
                     {/* 整句显示、可换行：说明是要读的字，截断掉的那半正是它的意思 */}
-                    <span className="type-body min-w-0 flex-1 whitespace-normal break-words text-ink-2">
+                    <span
+                      data-shortcut-desc
+                      className="type-body min-w-0 flex-1 whitespace-normal break-words text-ink-2"
+                    >
                       {sc(`key.${r.desc}`)}
                     </span>
                   </li>
