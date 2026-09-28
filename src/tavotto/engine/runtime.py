@@ -599,7 +599,8 @@ def probe_args(*, bundled: bool = False) -> list[str]:
       的 docstring 是同一条理由）；
     * 体检刻意 `env` 原样继承（与 worker 的启动条件对齐，`projectenv.probe_environment`
       的 docstring），而 `-B` 不碰 `sys.path` / site / env，对齐的那几个维度一个都不变；
-    * 这些探测不起孙进程，环境变量「会传给孙进程」的那一点好处在这里用不上。
+    * 这些探测不起孙进程，环境变量「会传给孙进程」的那一点好处在这里用不上。唯一的例外是插件的
+      `server.py --health`（它还要探候选解释器）：`codexinstall._health_env()` 另带环境变量。
 
     代价：没预编译过的环境（uv 建的 venv 默认不编）每次体检都在内存里现编一遍
     matplotlib——只是读得慢，一个字节都不写。**worker 不在此列**：那是替用户跑他的

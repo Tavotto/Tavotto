@@ -125,7 +125,8 @@ def _importable(python: str, timeout: float = 30.0) -> bool:
     """
     try:
         proc = subprocess.run(
-            [python, "-c", _BRIDGE_IMPORT],
+            # `-B`：只读探测，不往候选解释器的安装目录写 .pyc（与引擎侧 `runtime.probe_args` 同一条）
+            [python, "-B", "-c", _BRIDGE_IMPORT],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             timeout=timeout,
@@ -356,7 +357,7 @@ def _probe_python(argv: "list[str]", timeout: float = 15.0) -> "dict | None":
     """
     try:
         proc = subprocess.run(
-            [*argv, "-c", _PROBE_VERSION], capture_output=True, text=True, timeout=timeout
+            [*argv, "-B", "-c", _PROBE_VERSION], capture_output=True, text=True, timeout=timeout
         )
     except (OSError, subprocess.TimeoutExpired):
         return None
@@ -1145,7 +1146,12 @@ def health() -> "tuple[dict, int]":
             )
             try:
                 proc = subprocess.run(
-                    [resolution["python"], "-c", "import tavotto; print(tavotto.__version__)"],
+                    [
+                        resolution["python"],
+                        "-B",
+                        "-c",
+                        "import tavotto; print(tavotto.__version__)",
+                    ],
                     capture_output=True,
                     text=True,
                     timeout=30,

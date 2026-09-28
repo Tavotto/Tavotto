@@ -85,6 +85,8 @@ def sensor(tmp_path, monkeypatch) -> Path:
     return d
 
 
+_PLUGIN_SERVER = Path(__file__).resolve().parent.parent / "codex-plugin" / "mcp" / "server.py"
+
 #: 每一个「起一个不属于 Tavotto 的解释器做只读探测」的入口（src/tavotto 里全部）。新增一个就加一行。
 _PROBES = {
     "projectenv.probe_environment": lambda py: projectenv.probe_environment(py, "json"),
@@ -100,6 +102,11 @@ _PROBES = {
     "deprepair._run_lookup": lambda py: deprepair._run_lookup(deprepair.pip_index_argv(py, "zzz")),
     "runspec.probe_interpreter": lambda py: runspec.probe_interpreter(py),
     "codexinstall._runs_python": lambda py: codexinstall._runs_python(py),
+    # 插件 `server.py --health` 连同它起的孙进程（resolver 探候选 / 问引擎版本）与之后
+    # `launcher_starts` 的复核（Codex #717 P2）
+    "codexinstall._verified_interpreter (server.py --health + launcher_starts)": (
+        lambda py: codexinstall._verified_interpreter(_PLUGIN_SERVER, py)
+    ),
 }
 
 
