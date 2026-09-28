@@ -64,6 +64,7 @@ def test_no_auto_discovered_mcp_config_in_the_plugin():
         ["git", "-C", str(ROOT), "ls-files", "--", brand.CODEX_PLUGIN_SUBDIR],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=True,
     ).stdout.splitlines()
     rels = [t.removeprefix(brand.CODEX_PLUGIN_SUBDIR + "/") for t in tracked]
