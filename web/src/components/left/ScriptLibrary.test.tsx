@@ -319,6 +319,7 @@ describe('运行 / 取消 / 结果', () => {
         creates_environment: true, available: true, reason: '', private_python: privatePython,
       }],
       rounds_remaining: 3,
+      python_supported: { min: '3.10', max: '3.14' },
     }
     useDepRepairStore.getState().reset()
     mockRegistry.mockResolvedValue(view([entry({ script: 'fig_labels.py' })]))
