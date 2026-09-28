@@ -40,70 +40,79 @@
 
 主语：**safe worker 进程**里、**这一次 build** 期间、**脚本（含它调用的库）发起的只读打开**。
 
-1. **记下落空的读**：四个打开入口（`builtins.open` / `io.open` / 3.10 的 `Path.open` / numpy
-   `DataSource.open`）在「只读 + 按真正会用的路径判确实不存在」时——不论回退救没救回来——
-   把**原始实参**（脚本写的那一串，不是 realpath 后的）与**当时的 cwd** 记进这次 build 的
-   `missed_reads`（有上限，去重）。这是记账，不改变任何读的结果。
-2. **build 失败时分类**：`ensure_built` 捕获到的异常若是 `FileNotFoundError`（或 `OSError` 且
-   `errno == ENOENT`），按下列顺序定「缺的是哪个」：`exc.filename` → `missed_reads` 的最后一条 →
-   说不出。说得出就报 **`missing_input`**（`retryable=False`，traceback 原样带着），`extra` 带
-   `requested`（脚本写的串）、`kind ∈ {relative, absolute}`、`cwd`、`script_dir`、`static_missing`
-   （见 3）；说不出仍是今天的 `script_error`，一字不变。
-   * **只在异常与记账能对上时才说「缺的是 X」**：`exc.filename` 为空（numpy 的 `"d.txt not found."`、
-     h5py 的 C 层消息）时，用 `missed_reads` 最后一条；两者都没有就不判（判不出就别判）。
-3. **静态补全**：`databinding` 已经认得的相对字面量 / 探路目标里，在脚本目录与项目根都 `missing` 的
-   那些，连同脚本里**以常量出现的绝对路径**中不存在的那些，一并作为 `static_missing` 带上——让一个弹窗
-   尽量一次问完，而不是「跑错 → 指认 → 再跑 → 下一个文件又错」。`no_figures_captured` 在
-   `static_missing` 非空时同样挂上它（覆盖「先 `exists()` 再自己 exit」的形状）。
-   绝对路径常量**只 stat、不读、不列目录**；项目外的相对目标仍按 ADR 0057 记 `outside` 不看。
+1. **记下落空的读**：`figcapture.install_input_remap` 在四个打开入口（`builtins.open` / `io.open` /
+   3.10 的 `Path.open` / numpy `DataSource.open`）外面再包一层——装在输入观察器**外**、只读回退**内**
+   （回退先找脚本目录，找不到才轮到它）。**原路径打开抛 `FileNotFoundError` 之后**，只读模式的那次把
+   **脚本写的那一串**（cwd 之内的绝对路径换回相对那段——`Image.open` 这类先 realpath 的库）与当时的 cwd
+   记进 `InputMisses`（去重、有上限）。成功的打开零额外开销；写 / 追加 / 读写模式不记。
+2. **build 失败时分类**（`figcapture.missing_input_of`）：异常链（`__cause__` / `__context__`）里有
+   `FileNotFoundError` 或 errno 为 ENOENT 的 `OSError`，**并且**对得上一次落空的只读打开——`exc.filename`
+   就是（或按 realpath 等于）某条记账；异常没带文件名（numpy 的 `"d.txt not found."`、h5py 的 C 层消息）
+   时用最近一条。对得上就报 **`missing_input`**（`retryable=False`，traceback 原样，`extra.missing_input =
+   {requested, absolute, cwd, misses}`）；带了文件名却不是一次只读打开落空的（写进不存在的目录）或根本
+   没有记账，一律仍是 `script_error`，一字不变——判不出就别判。
+3. **弹窗载荷**（`inputremap.payload_for`，pool 两条控制面与试运行各接一处，`pool._offer_missing_input`）：
+   `{script, requested, absolute, via, others}`。`others` 是脚本里写着、此刻哪儿都找不到的路径
+   （`inputremap.static_missing`）：`databinding` 认得的相对字面量 / 探路目标里在脚本目录与项目根**都**
+   `missing` 的（项目外的 `outside` 不看），加上**以常量出现的绝对路径**里不存在的（只 `os.path.exists`，
+   不读、不列目录）；已经被改指表救回来的不列。「脚本跑完没出图」（`no_figures_captured*`、试运行的
+   `script_no_figure`）只挂静态那部分，`requested` 为 null——覆盖「先 `exists()` 判空再自己 exit」的形状。
+   每一条带 `via`：`open`（改指救得回来）/ `probe`（exists / listdir / stat / import_file，同一串也被探路
+   问过的也算这一档）/ `glob`。
 
 ### 二、弹窗：说清缺什么，请用户指认
 
-前端对 `missing_input`（以及带 `static_missing` 的 `no_figures_captured`）弹一个对话框（与首开的
-工作目录确认框同一族样式，三类入口同一个结构化载荷：桌面对话框 / MCP `recovery` / HTTP）：
+画布渲染（`renderStore`）与素材库「运行并发现图」（`scriptRunStore`，用户拖进脚本后走的第一条路）拿到载荷
+都交给同一个 `MissingInputDialog`（与首开的运行目录确认框同一个家：`envStore`，同一时刻只开一份，换了项目
+的旧载荷不弹）；MCP 把载荷原样放进 `structuredContent`，`recovery` 请用户回 Tavotto 窗口里指认。
 
-> 脚本要读取 **`data/x.csv`**，在 ○○ 里没有找到。数据可能被移动了，或脚本是单独复制出来的。
-> 【找到这个文件…】【选择数据所在的文件夹…】 ‹查看报错详情›
+> 找不到脚本要读的数据 ——「fig.py」要读取下面这个文件，但在脚本写的位置没有找到：`data/values.txt`
+> 这是相对路径，从脚本所在的文件夹算起……请告诉 Tavotto 数据现在在哪。
+> 【稍后】【选择所在文件夹…】【找到这个文件…】
 
-- 文件选择器由用户操作，Tavotto **不按同名搜索、不预选候选**（ADR 0057 / FO08：旁边可能有同名不同值的文件）。
-- 列出 `static_missing` 里的其余路径，让用户知道这次指认会顺带修好哪些。
-- 选完先显示改指规则（见 §三）让用户确认，再重跑；重跑后若仍缺（别的文件），弹窗只针对新的那一个，
-  同一个 `requested` 在一次重跑链里只问一次——不打转。
+- 以 worker 说出来的那串为主；「没出图」时先挑 `via = open` 的那条。其余列在下面（「按同样规律能找到的会
+  一并修好」）。
+- 桌面用系统选择器（`pickAnyFile` / `pickDirectory`，同一条 `dialog:allow-open` 权限）；浏览器模式拿不到
+  本机路径，让用户粘贴，按 `chosen_kind: "auto"` 发（后端按是不是文件夹分派）。
+- 文件选择器由用户操作，Tavotto **不按同名搜索、不预选候选**（ADR 0057 / FO08）。
+- 成功后关框、画布上 `missing_input` 的面板与素材库里带载荷失败的脚本各自重跑一次；失败（`input_remap_*`）
+  留在框里说原因。「稍后」只关框，错误块 / 脚本行里的「指认数据位置…」能再打开。
 
 ### 三、改指表：从一次指认推出规则，只读，按项目记住
 
-用户指认后，按**最长公共后缀**推出一条规则：
+`POST /api/engine/input-remap {requested, chosen, chosen_kind}` → `inputremap.derive` 按**路径段**求最长
+公共后缀推出一条规则，推完自检（`remap_target([规则], requested)` 必须落到存在的文件）：
 
 | 脚本要的 | 用户指认 | 推出的规则 |
 | --- | --- | --- |
-| `data/run1/x.csv`（相对） | `/Volumes/B/proj/data/run1/x.csv` | 相对读的额外根目录 `/Volumes/B/proj` |
-| `/Users/a/proj/data/x.csv` | `/Volumes/B/proj/data/x.csv` | 前缀 `/Users/a/proj` → `/Volumes/B/proj` |
-| `/Users/a/proj/x.csv` | `/Volumes/B/y.csv`（改了名） | 只改指这一个文件 |
-| 指认一个文件夹 | — | 相对：该文件夹当额外根；绝对：以 `requested` 的父目录 → 该文件夹 |
+| `data/run1/x.csv`（相对） | 文件 `/Volumes/B/proj/data/run1/x.csv` | `prefix` `""` → `/Volumes/B/proj`（所有相对路径到这里找） |
+| `/Users/a/proj/data/x.csv` | 文件 `/Volumes/B/proj/data/x.csv` | `prefix` `/Users/a/proj` → `/Volumes/B/proj` |
+| `/Users/a/proj/x.csv` | 文件 `/Volumes/B/y.csv`（改了名） | `file`：只改指这一个文件 |
+| `data/x.csv` | 文件夹 D | 从最长后缀试起，第一个 `D/<后缀>` 存在的定规则；都没有 → `input_remap_not_found_in_dir` |
 
-规则生效的条件与今天的只读回退逐条对齐：**只读模式** + **按真正的 open 会用的那条路径判确实不存在** +
-**命中规则的前缀** → 改指到规则的目标；目标也不存在就放行给原来的 open 报它本来的错。写 / 改 / 删 /
-重命名一个字节都不经过这里；原路径存在时永远读原路径（数据回来了，规则自动失效）。
-
-- **生效入口**：与只读回退相同的四个打开入口（同一个 `_fallback_path` 判据之后多查一步改指表）。
-- **身份**：改指来的读照样经 `InputObserver` 按实际打开的文件记，数据身份与绑定比对（ADR 0070）自然跟着
-  真文件走。改指表本身进 `ExecutionSpec` 的 `STABLE_FIELDS`（新字段 `input_remap`，与 `cwd_mode` 同一条
-  理由：它改变脚本看到的世界），三条 spawn 路径（Python 池 / `_spawn_spec` / `one_shot`）从同一个出处取——
-  写回的重放必须和热态读同一份数据。空表时 argv / stable payload 逐字节不变（golden 钉着）。
-- **native（`tavotto run`）不改指**：那是用户自己的 `python fig.py`（ADR 0020）。浏览器 playground 不适用
-  （单文件，`missing_file` 维持现状）。
-- **设置界面**：设置 → 渲染环境多一节「数据位置」，列出本项目的每条规则，可删；删了就是回到报错。
+- **只在原路径打不开之后查表**：原路径存在永远读原件（数据回来了，规则自动不起作用）；只读模式、目标是文件
+  才改道，否则原样抛出原来那个异常。写 / 改 / 删 / 重命名一个字节都不经过这里。命中顺序：`file` 整串相等
+  优先，其次 `prefix` 里路径段最长的；相对只配相对、绝对只配绝对；盘符按小写比，反斜杠当分隔符。
+- **判据只有一份**：`figcapture.remap_target`——worker 改道、父进程推规则后自检、筛 `others` 用的是同一个函数。
+- **存在哪**：本机项目设置 `config.project_settings(<项目>)["input_remap"]`（§用户拍板 C），唯一出处
+  `inputremap.rules_for`；同 kind 同 `from` 重新指认是替换；`DELETE` 删一条；`GET /api/engine/environment`
+  的 `project.input_remap` 列出来（设置 →「环境诊断」里可删，目标不存在的标出来）。改了就 `shutdown_all(root)`。
+- **进执行描述，但不进稳定那一档**：`ExecutionSpec.input_remap`（规则是本机路径——与 `cwd` / `interpreter`
+  同类，**不进** `stable_payload()`）。三条 spawn 路径（Python 池 / `_spawn_spec` / `one_shot`）都从
+  `rules_for` 取——写回的重放与热态读同一份数据。`worker_argv` 只在非空时多 `--input-remap <json>`，
+  没有规则的 argv 逐字节不变。改道来的读照样经 `InputObserver` 记（项目内的进数据身份，ADR 0070）。
+- **native（`tavotto run`）不改指**（构造时拒绝）：那是用户自己的 `python fig.py`（ADR 0020）。浏览器
+  playground 不适用（单文件，`missing_file` 维持现状）。
 
 ### 四、C++ 读取器与探路调用：诚实说做不到的部分
 
 ovito `import_file`、h5py / netCDF 的原生打开、`exists` / `glob` / `listdir` 不经四个打开入口，
-**改指表救不回它们**（与 ADR 0047「不扩回退到 `exists` / `glob`」同一个理由：扩了只会让脚本「以为」数据在，
-C++ 读取器照样读不到）。对这些形状（`requested` 来自探路证据或 `import_file`，或重跑后同一路径仍缺）：
+**改指表救不回它们**（与 ADR 0047「不扩回退到 `exists` / `glob`」同一个理由）。主条目 `via` 不是 `open`
+时，对话框不给选择器按钮，如实写「脚本先用 exists / glob / listdir 检查数据在不在，Tavotto 没法替这类检查换
+位置，请把数据放回脚本写的位置」。画布错误块里「在脚本目录里运行」的既有出口（ADR 0047）照旧在。
 
-- 相对路径 + 用户指认的文件夹在项目内：提议既有的「在脚本目录 / 项目根运行」（ADR 0047 / 0057），若指认的
-  文件夹正是那一档的 cwd；
-- 其余：弹窗如实写「这个脚本用 ○○ 读取数据，Tavotto 无法替它改路径」，给两条出路——手动把数据放回原处，
-  或（§用户拍板 B）经用户确认改写脚本里那一处路径常量。
+**§用户拍板 B（经确认改写脚本里那一处路径常量）不在本次实现里**：ADR 0094 的写回脚本仍是 Proposed，
+仓库里没有可复用的备份 / 复原事务。它另开一个 PR，届时在这个对话框里给 `via ≠ open` 的条目加次级按钮。
 
 ## 用户拍板（2026-09-28）
 
@@ -112,8 +121,8 @@ C++ 读取器照样读不到）。对这些形状（`requested` 来自探路证�
 
 **A. 绝对路径改指：放行。** 现行规则：「沙盒之外的绝对路径一个都不碰——那是用户指名的位置，就近找一个能用的
 在那里是越权」。本 ADR 的改指不是「就近找」，是用户在弹窗里亲手指认、确认过规则、按项目记住、可删的。
-**建议放行**，并把 `figcapture` 模块头与 `docs/rules/backend/figure-capture-and-execution.md` 那句改成
-「沙盒之外的绝对路径只按用户指认的改指表改道，不猜」。不放行则第二种形状（绝对路径失联）仍只能报错。
+落地：`figcapture` 模块头与 `docs/rules/backend/figure-capture-and-execution.md` 那句收窄为「沙盒之外的绝对
+路径**回退**一个都不碰」，并指向本 ADR——回退仍然不猜；改道只来自用户亲手指认的改指表。
 
 **B. C++ 读取器 / 探路调用的出路包含「改写脚本」。** ADR 0094 已有写回脚本的事务通道。**建议**：
 只作为弹窗里的次级按钮，展示逐行 diff、用户确认后才写，且只替换那一个字符串常量（拼出来的路径不改）；
@@ -142,12 +151,18 @@ C++ 读取器照样读不到）。对这些形状（`requested` 来自探路证�
 - `ExecutionSpec` 多一个 stable 字段：改指表一变，会话重建、准备计划作废——这是对的（数据变了）。
 - 一个新错误码与一个对话框；三类入口（桌面 / MCP / HTTP）各接一处结构化载荷，同源对表加一行。
 
-## 看护（落地时）
+## 看护
 
-- `tests/test_missing_input.py`：真 worker——相对 / 绝对 / 改名 / 文件夹四种指认各跑通且输出等于真值；
-  `exc.filename` 为空（numpy `loadtxt`）时靠 `missed_reads` 认出；认不出时仍是 `script_error`；原路径存在时
-  不改指；写模式不改指；改指目标不存在时报原错；one_shot 重放读同一份数据；旁边放一个同名不同值的文件，
-  结论不受影响（FO08 的反例）。每条用例落地时做一次变异反证。
-- `tests/test_execspec.py`：空表时 argv / stable payload golden 不变；非空时进 payload。
-- `web/src/components/MissingInputDialog.test.tsx`：文案、`static_missing` 列表、同一路径不重复问、英文无中文泄漏。
-- FO08 从 `planned` 升 `enrolled`，证据是上面那条真 worker 用例。
+- `tests/test_missing_input.py`：匹配规则（相对根 / 前缀按路径段 / 最长前缀 / `file` 优先 / Windows 写法 /
+  坏规则丢弃）；推规则（同尾 / 改名 / 文件夹 / 拒绝）；项目级存取；进程内改道（原件优先、写不改道、落空记账、
+  numpy 无文件名、写模式的 FileNotFoundError 不认领）；argv 与 stable payload；真 worker——相对 / 绝对缺失 →
+  `missing_input` → 指认后输出等于那份数据的真值、项目里放同名诱饵不影响（FO08 的反例）、原件回来读原件、
+  脚本目录模式同样生效、「先 exists 再退出」只给静态列表、普通 `ValueError` 仍是 `script_error`、试运行两条路、
+  三条 spawn 路径同源；HTTP 增 / 查 / 删与稳定码。每条落地时做过变异反证。
+- `tests/test_mcp_server.py`：载荷进 `structuredContent`、`recovery` 说得出下一步。
+- `tests/test_error_codes.py` / `tests/test_script_probe.py`：新码两种语言都有文案、占位符对得上。
+- `web/src/components/MissingInputDialog.test.tsx`：主条目与其余列表、文件 / 文件夹各发一次且重排、取消不发、
+  失败留框、探路不给按钮、浏览器粘贴按 `auto`、「稍后」后能再开、换项目清掉、英文无中文。
+- `web/e2e/missing-input.spec.ts`（功能登记 `assets.missing-input-relink`）：真后端真 worker，运行并发现图 →
+  弹框 → 粘贴数据文件夹 → 自动重跑出图（图名由数据决定）。
+- FO08 的机制由上面的真 worker 用例覆盖；登记表的升级随 HTTP 场景另做。
