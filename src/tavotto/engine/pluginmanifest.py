@@ -65,6 +65,10 @@ STAGE_REQUIRED = REQUIRED + (
     "integrations/configure.py",
     # Claude Code 插件清单：同一份包经 `.claude-plugin/marketplace.json` 装进 Claude Code（ADR 0103）
     ".claude-plugin/plugin.json",
+    # DeepSeek Harness bundle：同一份目录兼作 npm 包（ADR 0104）
+    "package.json",
+    "dsh/index.js",
+    "dsh/cordis.patch.yml",
 )
 #: 已装副本里允许被 `tavotto codex install` 改动 command 的两份清单（严格同源对）
 PINNABLE_MCP = ".mcp.json"

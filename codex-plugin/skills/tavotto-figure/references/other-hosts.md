@@ -23,7 +23,16 @@ claude plugin install tavotto@tavotto
 `/reload-plugins`），用 `/mcp` 确认 `plugin:tavotto:tavotto` 已连接。插件版的授权目录就是
 Claude Code 启动时所在的目录（`/add-dir` 加的也算）。
 
-其余宿主（以及不想装插件的 Claude Code 用户）：
+**DeepSeek Harness 优先走 bundle**：在终端里运行（`web` 换成所用的 profile）
+
+```text
+dsh plugin --profile web add "git+https://github.com/Tavotto/Tavotto.git#plugin-stable&path:/codex-plugin"
+```
+
+引擎没装过的再加 `pipx install "tavotto[worker]"`。装完新开 DSH 会话，等 `mcp__tavotto__*` 工具出现；
+授权目录就是启动 `dsh` 的目录，请在项目目录里启动，不要在 HOME 里。
+
+其余宿主（以及不想装插件 / bundle 的 Claude Code、DSH 用户）：
 
 1. 下载 GitHub Releases 里的 `codex-plugin-<版本>.zip`，解压到一个会长期保留的目录
    （名字带 codex 是历史原因，内容对所有宿主都一样）。
@@ -59,7 +68,8 @@ Claude Code 启动时所在的目录（`/add-dir` 加的也算）。
 | Claude Desktop（聊天） | **完全退出**再打开 | 没有原生入口：`--emit instructions` 放进项目说明 |
 | VS Code（Copilot Agent） | MCP: List Servers → 启动 tavotto；在 Configure Tools 里勾选 | 复制到 `.github/skills/` |
 | Trae | MCP 列表确认已连接，**并把 tavotto 加进所用智能体** | `--emit instructions` 放进规则或智能体提示词 |
-| DSH | 新开会话，等 `mcp__tavotto__*` 工具出现 | 复制到 `.dsh/skills/` 或 `.agents/skills/` |
+| DSH（bundle） | 新开会话，等 `mcp__tavotto__*` 工具出现 | bundle 自带，不用复制 |
+| DSH（YAML patch） | 新开会话，等 `mcp__tavotto__*` 工具出现 | 复制到 `.dsh/skills/` 或 `.agents/skills/` |
 | WorkBuddy / ZCode | 在 MCP 设置里确认已连接，重开对话 | `--emit instructions` |
 
 ## 引擎不可用（只有 `tavotto_health`，或它回 `ok: false`）

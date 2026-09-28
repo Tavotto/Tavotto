@@ -42,6 +42,7 @@ JSON 的 profile **各自**生成的配置原样起 server、握手、列工具�
 | id | 宿主 / surface | 配置 | 工具完整流程 | Skill | 内嵌画布 | 桌面交接 | 备注 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `claude-code` · 插件 | Claude Code CLI 2.1.283，macOS，`.claude-plugin/`（ADR 0103） | config_tested | local_smoke | plugin_skill: not_run | not_applicable | not_run | 工作副本 `--plugin-dir` + 隔离 `CLAUDE_CONFIG_DIR` 下的本地 git-subdir 安装；**不是发行件**，不算 host_verified。证据在 ADR 0103 |
+| `dsh` · bundle | DSH 0.1.7-rc.2（npm），macOS，`tavotto-dsh`（ADR 0104） | config_tested | local_smoke | native_skill: local_smoke | not_run | not_run | 隔离 `DSH_HOME` / `DSH_AGENTS_HOME` + 假 Messages 模型：headless 真调 `tavotto_health`、目录里有 `tavotto-figure`；git+path 规格从本地仓库装、`update` 取到新提交；`dsh web` 带 bundle 启动。**不是发行件**，证据在 ADR 0104 |
 
 每条变成 `host_verified` 时，在下面补一段证据：宿主品牌、surface / harness、CN / 国际版（适用时）、
 客户端版本、OS、是否本地会话、完整包版本与 `content_digest`、安装方式、配置来源（生成命令）、
