@@ -225,12 +225,12 @@ export { expect }
  * 元素树——盲点击会在时序上把刚自动打开的面板关掉：树在收起动画
  * （~150ms）里仍可被 resolve，click 一开始元素就 detach，随后面板永久
  * 关闭（CI #453 的 900s 挂死，两轮同形状）。按 `aria-expanded` 判态，
- * 不在才点，点完等状态坐实。
+ * 不在才点，点完等状态坐实。按稳定钩子 `data-rail` 找按钮（无障碍名是本地化文案，
+ * en-US 腿里对不上），并断言恰有一个。
  */
 export async function openElementsTab(page: Page): Promise<void> {
-  const nav = page
-    .getByRole('navigation')
-    .getByRole('button', { name: '图内元素' })
+  const nav = page.locator('[data-rail="elements"]')
+  await expect(nav).toHaveCount(1)
   if ((await nav.getAttribute('aria-expanded')) !== 'true') await nav.click()
   await expect(nav).toHaveAttribute('aria-expanded', 'true')
 }

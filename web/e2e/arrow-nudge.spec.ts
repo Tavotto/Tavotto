@@ -275,10 +275,15 @@ const TARGETS: { gid: string; name: string; at: [number, number] | null; edge: '
 /** 子图里的曲线：只有子图挪了它才动——量「这一下挪的真是选中的那个，不是整个子图」 */
 const REFERENCE = 'axes_0.lines_0'
 
-/** 从元素树选中，再把焦点从树上挪开（焦点留在树里时方向键归树） */
-async function selectInTree(page: Page, name: RegExp) {
+/**
+ * 从元素树选中，再把焦点从树上挪开（焦点留在树里时方向键归树）。行按稳定锚点 `data-el`
+ * （= gid）找、断言恰有一个——无障碍名是本地化文案，同名行也不止一个
+ */
+async function selectInTree(page: Page, gid: string) {
   await openElementsTab(page)
-  await page.getByRole('treeitem', { name }).first().click()
+  const row = page.locator(`[data-el="${gid}"]`)
+  await expect(row).toHaveCount(1, { timeout: 30_000 })
+  await row.click()
   await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
   await page.waitForTimeout(300)
 }
@@ -339,7 +344,7 @@ test('图内各类可拖对象都能用方向键微调：挪 N 步 = N × 页面
 
   for (const t of TARGETS) {
     if (t.at) await clickIn(page, t.gid, t.at)
-    else await selectInTree(page, /^子图 1/)
+    else await selectInTree(page, t.gid)
     // 热身（不计入）：从 matplotlib 自动摆放换成显式位置那一下可能有平台相关的跳动（#576）
     await nudgeAndSettle(page, 'ArrowUp', 1)
     const b0 = (await boxOf(page, t.gid))!
@@ -367,12 +372,19 @@ test('图内各类可拖对象都能用方向键微调：挪 N 步 = N × 页面
   await page.keyboard.press('Escape')
   await page.keyboard.press('Escape')
   const mtime0 = statSync(pdf).mtimeMs
-  await page.locator('[data-write-back="open"]').first().click()
-  const dialog = page.getByRole('dialog').first()
-  await dialog.locator('[data-write-back="confirm"]').click()
-  await expect(dialog.locator('[data-write-back="confirm"]')).toHaveCount(0, { timeout: 180_000 })
-  // 写回事务的 verify 段：全量干净重放 + 几何比对 + 像素门都过了才会 commit
-  await expect(dialog.getByText(/已通过干净重放校验/)).toBeVisible()
+  // 顶栏那一颗（属性页里也有一颗 data-write-back="open"，按入口钩子分开，各断言恰有一个）
+  const open = page.locator('[data-write-back="open"][data-write-back-entry="topbar"]')
+  await expect(open).toHaveCount(1)
+  await open.click()
+  const confirm = page.locator('[data-write-back="confirm"]')
+  await expect(confirm).toHaveCount(1)
+  await confirm.click()
+  await expect(confirm).toHaveCount(0, { timeout: 180_000 })
+  // 写回事务的 verify 段：全量干净重放 + 几何比对 + 像素门都过了才会 commit；
+  // 「已通过干净重放校验」那一行只在 verified 非空时出现（钩子 data-write-back="verified"）
+  const verified = page.locator('[data-write-back="verified"]')
+  await expect(verified).toHaveCount(1)
+  await expect(verified).toBeVisible()
   await expect.poll(() => statSync(pdf).mtimeMs, { message: '写回应当改写原始 PDF' }).toBeGreaterThan(mtime0)
   await page.keyboard.press('Escape')
 
