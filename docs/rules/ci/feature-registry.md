@@ -34,6 +34,8 @@
      "approved_by"（拍板的人）}`——**不许删条目**（删了 = 门禁红）；
   2. 摘掉用例上的 `@feature:<id>` 标签（或删用例）；
   3. 给 PR 打 **`feature:removal`** 标签。降级 = 旧 id 改 removed + 新 id 登记变弱后的那个能力。
+  门禁认得的「变弱」（条目还是 active 也要标签）：平台收窄（`both` → `browser` / `desktop`）、
+  e2e 引用条数变少、`desktop_manual` 步数变少。改用例标题（一删一增、条数不变）不算。
   标签由仓库维护者建一次（`gh label create feature:removal --color B60205 --description "PR 让登记表里的功能下线或降级（ADR 0097）"`）。
 - **新功能**：合入它的 PR 同时加一条 active 登记 + 至少一条带标签的 e2e。PR 模板里有这一行。
 
@@ -42,7 +44,7 @@
 | 步骤 | 在哪 | 主语 | 判什么 |
 | --- | --- | --- | --- |
 | `feature_registry.py check` | `frontend`（PR + merge_group，快线） | Playwright 自己算出来的用例集合（`playwright test --list --reporter=json`，全部 project）× 源码 AST 里每条用例声明的跳过修饰（按 file:line:col 对上） | 登记表形状；登记的用例存在、不是声明期跳过、没有运行期修饰能落到它；带标签的都登记了 |
-| `feature_registry.py transitions` | `frontend` | base 提交与本次提交的两份登记表；PR 的标签 | 条目不许消失；active → removed 要 `feature:removal`（merge_group 没有 PR 标签：只判前一条） |
+| `feature_registry.py transitions` | `frontend` | base 提交与本次提交的两份登记表；PR 的标签 | 条目不许消失；active → removed 与降级（平台收窄 / e2e 或手动步骤变少）要 `feature:removal`（merge_group 没有 PR 标签：只判前一条） |
 | `feature_registry.py verify-run` | `posix-e2e`（merge_group / full-ci，合并态） | 这次 `pnpm e2e` 的 JSON 报告（`TAVOTTO_E2E_JSON`） | 每条登记的用例都在报告里、每次出现都是 expected / flaky；skipped 判红（skip 不是绿），不在报告里判红（没跑不是绿） |
 
 - 两个步骤都在**已有**的 Gate 闭集里（`frontend` → CI fast gate；`posix-e2e` → CI integration gate），

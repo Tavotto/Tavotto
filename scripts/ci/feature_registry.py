@@ -23,8 +23,9 @@
   组合提交）。登记的每条用例在报告里至少出现一次，且每次出现的结论都是 expected / flaky。
   skipped 判红——skip 不是绿；「报告里根本没有它」也判红——没跑不是绿。
 * ``transitions``：**base 与本次提交的两份登记表**。条目不许消失（要改成 removed）；
-  active → removed 必须带「移除功能」标签（`feature:removal`）。拿不到标签（merge_group
-  事件没有 PR 标签）时只判前一条。
+  active → removed、以及 active 条目**变弱**（平台收窄、e2e 引用条数变少、桌面手动步骤变少）
+  必须带「移除功能」标签（`feature:removal`）。拿不到标签（merge_group 事件没有 PR 标签）时
+  只判前一条。
 * ``beta-checklist``：`platform` 含桌面壳、e2e 覆盖不到的那部分，按登记表原文生成清单。
 
 退出码：0 通过；1 判据不成立；2 输入 / 用法错误（判定器自己拿不到可信输入，不能算通过）。
@@ -366,6 +367,29 @@ def verify_run(feats: list[Feature], report: dict[Ref, Listed]) -> tuple[list[st
     return problems, counted
 
 
+#: 平台 → 覆盖的面。`both` 缩成 `browser` / `desktop` = 丢掉了一个面（Codex #676 P2）
+PLATFORM_SIDES = {"browser": {"browser"}, "desktop": {"desktop"}, "both": {"browser", "desktop"}}
+
+
+def weakenings(b: Feature, h: Feature) -> list[str]:
+    """同一个 active 功能从 base 到 head 变弱了的地方（都要走「移除功能」手续）。
+
+    「变弱」的枚举，每一种都是「功能还登记着、却少守了一块」而不需要改 status 的形状：
+    * 平台收窄：少了一个面（`both` → `browser` 等）；
+    * e2e 覆盖变少：引用条数减少（改标题是一删一增、条数不变，不算）；
+    * 桌面手动步骤变少：`desktop_manual` 条数减少。
+    """
+    out: list[str] = []
+    lost = PLATFORM_SIDES.get(b.platform, set()) - PLATFORM_SIDES.get(h.platform, set())
+    if lost:
+        out.append(f"平台 {b.platform} → {h.platform}（不再支持 {sorted(lost)}）")
+    if len(h.e2e) < len(b.e2e):
+        out.append(f"e2e 覆盖 {len(b.e2e)} → {len(h.e2e)} 条")
+    if len(h.desktop_manual) < len(b.desktop_manual):
+        out.append(f"桌面手动步骤 {len(b.desktop_manual)} → {len(h.desktop_manual)} 步")
+    return out
+
+
 def transitions(
     base: list[Feature] | None, head: list[Feature], labels: list[str] | None
 ) -> list[str]:
@@ -373,6 +397,7 @@ def transitions(
         return []
     problems: list[str] = []
     head_by = {f.id: f for f in head}
+    labelled = labels is None or REMOVAL_LABEL in labels
     for b in base:
         h = head_by.get(b.id)
         if h is None:
@@ -380,13 +405,13 @@ def transitions(
                 f"{b.id}：条目从登记表里消失了——功能下线要把它改成 status: removed（写原因 / 日期 / 批准人），不许删条目"
             )
             continue
-        if (
-            b.status == "active"
-            and h.status == "removed"
-            and labels is not None
-            and REMOVAL_LABEL not in labels
-        ):
+        if labelled or b.status != "active":
+            continue
+        if h.status == "removed":
             problems.append(f"{b.id}：active → removed，PR 必须打「{REMOVAL_LABEL}」标签")
+        elif h.status == "active":
+            for w in weakenings(b, h):
+                problems.append(f"{b.id}：{w}——功能降级，PR 必须打「{REMOVAL_LABEL}」标签")
     return problems
 
 
@@ -467,7 +492,7 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--scan-json", type=Path, help="离线：已存好的 e2e-skip-scan 输出")
     v = sub.add_parser("verify-run", help="合并态真跑的报告：登记的用例都真的执行且通过")
     v.add_argument("report", type=Path)
-    t = sub.add_parser("transitions", help="与 base 比：条目不许消失，active → removed 要标签")
+    t = sub.add_parser("transitions", help="与 base 比：条目不许消失，下线 / 降级要标签")
     t.add_argument("--base", required=True, help="base 提交 SHA")
     t.add_argument(
         "--labels", default="null", help="PR 标签名的 JSON 数组；null = 拿不到标签（merge_group）"

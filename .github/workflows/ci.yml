@@ -754,8 +754,8 @@ jobs:
       # 功能登记表（ADR 0097，docs/rules/ci/feature-registry.md）：用户可见的功能不能被后面的修改
       # 悄悄关掉。静态这一半在快线上判——登记的每条 e2e 在 Playwright 自己的 `--list` 里存在、
       # 没有声明期或运行期的 skip / fixme / fail（AST 扫描，扫描器先用内置样例自测）、带
-      # `@feature:` 标签的用例都登记了；以及与 base 比条目不许消失、active → removed 要打
-      # `feature:removal` 标签（merge_group 没有 PR 标签，只判前一条）。「真的执行并通过」那一半
+      # `@feature:` 标签的用例都登记了；以及与 base 比条目不许消失、active → removed 或降级（平台收窄、
+      # e2e / 手动步骤变少）要打 `feature:removal` 标签（merge_group 没有 PR 标签，只判前一条）。「真的执行并通过」那一半
       # 在 posix-e2e（合并态那次真跑的报告）。
       - name: 功能登记表：登记的 e2e 在、没被跳过、无孤儿标签
         working-directory: ${{ github.workspace }}

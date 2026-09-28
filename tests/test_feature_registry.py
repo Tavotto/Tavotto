@@ -413,6 +413,60 @@ def test_transition_without_labels_only_checks_deletion():
     assert FR.transitions(_feats(BASE_REG), _feats(_removed_head()), None) == []
 
 
+def _weakened_head(kind: str) -> dict:
+    head = copy.deepcopy(BASE_REG)
+    drag, desk = head["features"][0], head["features"][2]
+    assert drag["id"] == "canvas.drag" and desk["id"] == "desktop.close"  # 落点
+    if kind == "platform":
+        assert drag["platform"] == "both"
+        drag["platform"] = "browser"
+    elif kind == "platform-desktop":
+        drag["platform"] = "desktop"
+        drag["desktop_manual"] = ["手动"]
+    elif kind == "e2e":
+        drag["e2e"].append({"spec": "a.spec.ts", "title": "无关"})
+    return head
+
+
+@pytest.mark.parametrize(
+    "kind,needle",
+    [("platform", "平台 both → browser"), ("platform-desktop", "平台 both → desktop")],
+)
+def test_transition_platform_narrowing_needs_the_label(kind, needle):
+    """Codex #676 P2：active 功能从 both 缩到单一平台 = 悄悄丢掉一个面，要走移除手续。"""
+    head = _weakened_head(kind)
+    problems = FR.transitions(_feats(BASE_REG), _feats(head), ["full-ci"])
+    assert any("canvas.drag" in p and needle in p for p in problems), problems
+    assert FR.transitions(_feats(BASE_REG), _feats(head), [FR.REMOVAL_LABEL]) == []
+    assert FR.transitions(_feats(BASE_REG), _feats(head), None) == []  # merge_group 不判
+
+
+def test_transition_fewer_e2e_refs_needs_the_label():
+    base = _weakened_head("e2e")  # base 有两条引用，head 回到一条
+    problems = FR.transitions(_feats(base), _feats(BASE_REG), [])
+    assert any("canvas.drag" in p and "e2e 覆盖 2 → 1" in p for p in problems), problems
+
+
+def test_transition_renaming_a_referenced_test_is_not_a_downgrade():
+    """改标题 = 一删一增，条数不变：不要求标签（否则每次改名都要走移除手续）。"""
+    head = copy.deepcopy(BASE_REG)
+    head["features"][0]["e2e"] = [{"spec": "a.spec.ts", "title": "拖动（改名）"}]
+    assert FR.transitions(_feats(BASE_REG), _feats(head), []) == []
+
+
+def test_transition_fewer_manual_steps_needs_the_label():
+    base = copy.deepcopy(BASE_REG)
+    base["features"][2]["desktop_manual"] = ["一", "二"]
+    problems = FR.transitions(_feats(base), _feats(BASE_REG), [])
+    assert any("desktop.close" in p and "桌面手动步骤 2 → 1" in p for p in problems), problems
+
+
+def test_transition_widening_is_green():
+    base = copy.deepcopy(BASE_REG)
+    base["features"][0]["platform"] = "browser"
+    assert FR.transitions(_feats(base), _feats(BASE_REG), []) == []
+
+
 def test_transition_first_introduction_is_green():
     assert FR.transitions(None, _feats(BASE_REG), []) == []
 

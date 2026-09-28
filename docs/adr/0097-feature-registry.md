@@ -49,7 +49,8 @@ frontend / posix-e2e 看步骤——可接受，Gate 的红绿是同一个。
 ### 四、功能下线是一个显式动作，不是一次删除
 
 条目不许从登记表里消失（`transitions` 与 base 比）；下线 = 改 `removed` + 原因 / 日期 / 批准人
-+ PR 打 `feature:removal` 标签。「降级」按下线处理：旧 id 改 removed，变弱后的能力另起一个 id。
++ PR 打 `feature:removal` 标签。「降级」按下线处理：旧 id 改 removed，变弱后的能力另起一个 id；条目仍 active 却变弱（平台收窄、
+e2e 引用或桌面手动步骤变少）同样要这个标签（Codex #676 P2）。
 merge_group 事件没有 PR 标签，只判「不许消失」，标签在 PR 上判过。
 
 ### 五、标签：新用例必须带，旧用例不强制
