@@ -32,6 +32,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
 vi.mock('@/lib/timelineThumb', () => ({ composeTimelineThumb: vi.fn(async () => null) }))
 
 import {
+  ApiError,
   createVersion,
   deleteVersion,
   duplicateVersion,
@@ -1129,6 +1130,113 @@ describe('换项目 / 换排版：用户正在编辑的草稿与确认框当场�
     await switches[how]()
     await flush()
     await check()
+  })
+})
+
+/* ------------- 操作失败的话不被紧跟着的刷新清掉（Codex #679：错误分两槽） ------------- */
+
+describe('行操作失败：错误留在抽屉里，紧跟着的列表刷新不清掉它', () => {
+  const setValue = async (input: HTMLInputElement, value: string) => {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+    await act(async () => {
+      setter.call(input, value)
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+  }
+  const menu = async (id: string, label: string) => {
+    await act(async () => {
+      node(id)
+        .querySelector('[data-timeline-more]')!
+        .dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }))
+    })
+    await flush()
+    const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+      (m) => m.textContent === label,
+    )!
+    await act(async () => item.click())
+    await flush()
+  }
+  const budgetFull = () =>
+    new ApiError('x', 409, { code: 'named_budget_exceeded', params: { used: '25.0', limit: '24' } })
+
+  const ops: { name: string; fail: () => void; run: () => Promise<void> }[] = [
+    {
+      name: '复制命名节点（命名节点已满）',
+      fail: () => vi.mocked(duplicateVersion).mockRejectedValueOnce(budgetFull()),
+      run: () => menu('n1', '复制节点'),
+    },
+    {
+      name: '改名',
+      fail: () => mockUpdate.mockRejectedValueOnce(budgetFull()),
+      run: async () => {
+        await act(async () => {
+          node('n1').querySelector('[data-timeline-row]')!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
+        })
+        const input = $<HTMLInputElement>('[data-timeline-rename]')!
+        await setValue(input, '新名字')
+        await act(async () => input.blur())
+        await flush()
+      },
+    },
+    {
+      name: '删除名字',
+      fail: () => mockUpdate.mockRejectedValueOnce(new Error('删不掉名字')),
+      run: () => menu('n1', '删除名字'),
+    },
+    {
+      name: '删除节点',
+      fail: () => vi.mocked(deleteVersion).mockRejectedValueOnce(new Error('删不掉节点')),
+      run: async () => {
+        await menu('n1', '删除节点')
+        await act(async () => useUiStore.getState().confirm!.resolve(true))
+        await flush()
+      },
+    },
+  ]
+
+  it.each(ops)('$name', async ({ fail, run }) => {
+    await mount([meta({ id: 'n1', named: true, kind: 'named', name: '投稿前', auto: false })])
+    const listCalls = mockList.mock.calls.length
+    fail()
+    await run()
+    // 失败之后照常刷新了一次列表（服务器那边可能已经变了）……
+    expect(mockList.mock.calls.length).toBeGreaterThan(listCalls)
+    // ……而刷新成功没有把操作的错误清掉
+    const err = $('[data-timeline-error] [data-timeline-error-kind="action"]')
+    expect(err).not.toBeNull()
+    expect(err!.textContent!.length).toBeGreaterThan(0)
+  })
+
+  it('命名节点已满说的是那句话本身；再刷新一次也还在', async () => {
+    await mount([meta({ id: 'n1', named: true, kind: 'named', name: '投稿前', auto: false })])
+    vi.mocked(duplicateVersion).mockRejectedValueOnce(budgetFull())
+    await menu('n1', '复制节点')
+    const text = () => $('[data-timeline-error-kind="action"]')?.textContent ?? ''
+    expect(text()).toContain('24')
+    await act(async () => useTimelineStore.getState().bump())
+    await flush()
+    expect(text()).toContain('24')
+  })
+
+  it('对照：下一次操作成功就清掉操作的错误', async () => {
+    await mount([meta({ id: 'n1', named: true, kind: 'named', name: '投稿前', auto: false })])
+    vi.mocked(duplicateVersion).mockRejectedValueOnce(budgetFull())
+    await menu('n1', '复制节点')
+    expect($('[data-timeline-error-kind="action"]')).not.toBeNull()
+    vi.mocked(duplicateVersion).mockResolvedValueOnce({ version: meta({ id: 'n2' }) })
+    await menu('n1', '复制节点')
+    expect($('[data-timeline-error-kind="action"]')).toBeNull()
+  })
+
+  it('对照：列表读失败后下一次读成功，读列表的错误照常清掉', async () => {
+    await mount([meta({ id: 'n1' })])
+    mockList.mockRejectedValueOnce(new Error('列表读不出来'))
+    await act(async () => useTimelineStore.getState().bump())
+    await flush()
+    expect($('[data-timeline-error-kind="load"]')?.textContent).toContain('列表读不出来')
+    await act(async () => useTimelineStore.getState().bump())
+    await flush()
+    expect($('[data-timeline-error-kind="load"]')).toBeNull()
   })
 })
 
