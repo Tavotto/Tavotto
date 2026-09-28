@@ -77,8 +77,9 @@
   表里的原样，其余 `mod:<哈希>`；脚本走 `_shorten_path_text`（与出门版日志同一个 `file:<哈希>.py`）；解释器来源
   认 `pool.SOURCE_LABELS`、体检 code 认 `projectenv` 的 `ERROR_*`、support 认 `SUPPORT_*`、版本认
   `logsafe.version`，不在集合里的 `str:<哈希>`；候选解释器路径走 `_path_fact`（`_KNOWN_SEGMENTS` 为此加了
-  解释器的常见安装布局名，另认 `python3.EXE` / `Python37` 这类固定词加数字的段；纯版本号 `3.7.6` **只在 `versions/` /
-  `Versions/` 之下**原样——别处叫 `12.34` 的 Conda 环境 / 导出目录可能是课题编号，照样哈希）。offer 的
+  解释器的常见安装布局名；`python3.EXE` / `Python37` 这类固定词加数字的段**只在 `bin/` / `Scripts/` / `WindowsApps/` /
+  盘符根 / `Programs/Python/` / 已原样的解释器目录之下**原样，纯版本号 `3.7.6` **只在 `versions/` / `Versions/` 之下**原样
+  ——别处叫 `Python37` / `12.34` 的 Conda 环境 / 导出目录可能是课题编号，照样哈希）。offer 的
   code / 目标 kind / 不可用原因 / 解析来源的闭集在 `deprepair`，而本模块不能 import 它（`deprepair` 的安装日志
   反过来用 `redact_text`，互相 import 会把它拉进登记过的环）——所以这几个值由**产出方**在记录那一刻按自家常量
   放行（`deprepair._evidence_value`），这里只再验一道形状（小写标识符或 `str:<十六进制>`）。看护：

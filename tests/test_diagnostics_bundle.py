@@ -1240,6 +1240,28 @@ def test_version_shaped_segments_stay_only_on_interpreter_version_positions():
         assert any(s.startswith("seg:") for s in segs), fact
 
 
+def test_interpreter_shaped_segments_stay_only_on_interpreter_layout_positions():
+    """`Python37` / `python3.11` 这类段只在解释器布局的位置上原样（`bin/` 之下、`WindowsApps/` 之下、盘符
+    根下、`Programs/Python/` 之下）；用户起名的 Conda 环境、导出目录叫 `Python37` / `python911` 时照样
+    哈希（Codex #708 P1，第二处放行口）。"""
+    d = engine_diagnostics
+    home = str(Path.home())
+    roots = [(home, "~")]
+    for layout in (
+        "/usr/local/bin/python3.11",
+        "C:/Python37/python.exe",
+        "C:/Users/<user>/AppData/Local/Programs/Python/Python37/pythonw.exe",
+        "C:/Users/<user>/AppData/Local/Microsoft/WindowsApps/python3.EXE",
+    ):
+        assert d._path_fact(layout, roots) == layout
+    for private in (
+        f"{home}/miniconda3/envs/python911/bin/python",
+        f"{home}/Desktop/Python37/fig.pdf",
+    ):
+        segs = d._path_fact(private, roots).split("/")
+        assert "python911" not in segs and "Python37" not in segs, segs
+
+
 def test_missing_dependency_export_is_a_whitelist_of_closed_values():
     """原值里多出来的键不出门；来源 / code / 版本不在闭集里就哈希（放行口不许变成后门）。"""
     record = {

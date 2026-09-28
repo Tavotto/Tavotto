@@ -393,9 +393,13 @@ _KNOWN_SEGMENTS = frozenset(
         "envs",
     }
 )
-#: 解释器文件名 / 目录：`python3.EXE`、`pythonw.exe`、`Python37`、`python3.11`——固定词加至多三位数字，
-#: 放不下用户的字
+#: 解释器文件名 / 目录：`python3.EXE`、`pythonw.exe`、`Python37`、`python3.11`——固定词加至多三位数字。
+#: **只在解释器布局的位置上**原样（上一段是 `_INTERPRETER_PARENTS` 之一、盘符或已原样的解释器目录：`bin/python3.11`、
+#: `WindowsApps/python3.EXE`、`C:/Python37`、`Programs/Python/Python37`）；别处叫 `Python37` / `python911`
+#: 的 Conda 环境、导出目录、课题文件夹照样哈希（Codex #708 P1）。不带数字的 `python` / `python3` 在
+#: `_KNOWN_SEGMENTS` 里，哪里都原样——那几个词不带任何用户的信息。
 _INTERPRETER_SEGMENT = re.compile(r"(?i)^python[w]?(?:\d{1,3}|\d\.\d{1,2})?(?:\.exe)?$")
+_INTERPRETER_PARENTS = frozenset({"bin", "Scripts", "WindowsApps", "Programs", "Python"})
 #: 纯版本号目录（`3.7.6`）：**只在解释器布局的版本位上**原样（`.pyenv/versions/3.7.6`、
 #: `Python.framework/Versions/3.11`）。别处的 `12.34` / `3.7.6` 可能是用户起的名字（Conda 环境、导出目录、
 #: 课题编号），照样哈希。
@@ -417,7 +421,16 @@ def _path_fact(value: str, roots: list[tuple[str, str]]) -> str:
         keep = (
             seg in ("", "~", "<user>")
             or seg in _KNOWN_SEGMENTS
-            or _INTERPRETER_SEGMENT.match(seg) is not None
+            or (
+                bool(out)
+                and (
+                    out[-1] in _INTERPRETER_PARENTS
+                    or re.fullmatch(r"[A-Za-z]:", out[-1]) is not None
+                    # 已原样的解释器目录之下（`Python37/pythonw.exe`）；被哈希的上一段是 `seg:…`，不匹配
+                    or _INTERPRETER_SEGMENT.match(out[-1]) is not None
+                )
+                and _INTERPRETER_SEGMENT.match(seg) is not None
+            )
             or (
                 bool(out)
                 and out[-1] in _VERSION_PARENTS
