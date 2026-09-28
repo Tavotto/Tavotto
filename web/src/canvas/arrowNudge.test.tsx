@@ -299,7 +299,7 @@ describe('画布对象：步长与撤销', () => {
     useSelectionStore.getState().set(['r'])
     // 属性页改了个值、安静计时器还没到就 Tab 到工具栏按方向键（Codex #671）
     const doc = useDocumentStore.getState()
-    doc.beginTxn('field')
+    doc.beginTxn(literal('field'))
     let finished = 0
     registerGesture(() => {
       finished++
