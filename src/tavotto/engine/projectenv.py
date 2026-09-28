@@ -48,7 +48,7 @@
 （`probe_system_candidates`）。与 venv 那一层的两点不同，都来自「它在用户交给
 我们的边界之外」：
 
-* ~~不无感切换~~（2026-09-28 起由 ADR 0106 修订：用户拍板「全自动、无提示」）。项目里没有 venv、
+* ~~不无感切换~~（2026-09-28 起由 ADR 0107 修订：用户拍板「全自动、无提示」）。项目里没有 venv、
   第一个健康的系统解释器支持档在 `AUTO_ADOPT_SUPPORT` 里、缺的那个包确实 import 得到、此刻的解释器
   又是机器替用户挑的，`pool.try_project_env` 就直接采用它（`automatic=True, trigger=missing_dependency`）
   并重跑。不满足时体检结果仍只是**候选**，挂在接手失败的结构上交给依赖修复面板，用户点一次才记进
@@ -560,7 +560,7 @@ def probe_system_candidates(
       `matplotlib_version` / `requested_module_ok`，**不带** `executable` /
       `prefix`（那是体检脚本的原始输出，界面用不上，诊断也不该多带路径）。
 
-    这里**只体检不决策**：采不采用由 `pool.try_project_env`（自动，ADR 0106）或用户在界面上点，
+    这里**只体检不决策**：采不采用由 `pool.try_project_env`（自动，ADR 0107）或用户在界面上点，
     记录由 `remember()` 完成——与 venv 那一层「本模块只做发现与体检」的分工一致。
     """
     if not module or not valid_module_name(module):
@@ -612,7 +612,7 @@ def healthy_system_candidate(system: list[dict] | None) -> dict | None:
     return None
 
 
-#: 缺包之后可以**无提示自动采用**的系统解释器支持档（ADR 0106 §一）。`unsupported`（Python 在支持区间外）
+#: 缺包之后可以**无提示自动采用**的系统解释器支持档（ADR 0107 §一）。`unsupported`（Python 在支持区间外）
 #: 永远不在其中——体检本来就把它判成 `ok=False`，这里再按档位明写一遍，判据不靠「ok 恰好蕴含」。
 #: `unverified_but_compatible`（Python 在区间内、matplotlib 在钉版区间外但 import 得到）在其中：与跑前的门
 #: （ADR 0079 §三：同档 verified 优先，未验证的照样可以被自动挑中）同一个口径——拒绝它等于把一个能出图的
@@ -621,7 +621,7 @@ AUTO_ADOPT_SUPPORT = (SUPPORT_VERIFIED, SUPPORT_UNVERIFIED)
 
 
 def auto_adoptable_system_candidate(system: list[dict] | None) -> dict | None:
-    """体检表里可以无提示直接采用的那一条（ADR 0106 §一）；没有回 None。
+    """体检表里可以无提示直接采用的那一条（ADR 0107 §一）；没有回 None。
 
     就是 `healthy_system_candidate()` 那一条（按候选优先级的第一个健康者——体检本来就在它那里停），
     再加两道明写的判据：支持档在 `AUTO_ADOPT_SUPPORT` 里、缺的那个包**确实** import 得到
@@ -640,7 +640,7 @@ def auto_adoptable_system_candidate(system: list[dict] | None) -> dict | None:
 
 def auto_adoption_off() -> bool:
     """「找用户自己的 Python 并自动改用」整个关掉（`TAVOTTO_USER_ENV_DISCOVERY=0`，ADR 0079 §六）——
-    跑前的门（`deprepair`）与运行后缺包的接手（`pool.try_project_env`，ADR 0106）同一个开关、同一个判据。
+    跑前的门（`deprepair`）与运行后缺包的接手（`pool.try_project_env`，ADR 0107）同一个开关、同一个判据。
     关着时运行后那一层照旧体检、列成修复卡片上的候选（ADR 0044 的行为），只是不自动采用。
     **测试进程默认关**（`tests/conftest.py`）：否则用例结果随 CI 机器上碰巧装了什么而变。"""
     return os.environ.get("TAVOTTO_USER_ENV_DISCOVERY", "").strip() == "0"
@@ -953,7 +953,7 @@ def resolve_for_missing_dependency(
     venv 那一层没成（找不到 / 也缺包 / 不合格）时，`system_candidates` 给了
     就再把这台机器上已有的解释器体检一遍，结果挂在失败结构的 `system` 键上
     （ADR 0044）。**`ok` 仍是 False**：本函数只判断；自动采用其中一条是 `pool.try_project_env` 的决定
-    （ADR 0106，判据 `auto_adoptable_system_candidate`），否则它只是修复面板上的候选。
+    （ADR 0107，判据 `auto_adoptable_system_candidate`），否则它只是修复面板上的候选。
     `exclude_python` 是刚报缺包的那个解释器，不再体检。
     """
     outcome = _resolve_project_venv(figures_dir, script, module)
@@ -1034,7 +1034,7 @@ def cached_first_open(figures_dir: str | Path) -> dict | None:
     return outcome
 
 
-#: 运行后缺包、自动接手时记进项目设置的 trigger（项目 venv 那一层与 ADR 0106 的系统解释器那一层同一个：
+#: 运行后缺包、自动接手时记进项目设置的 trigger（项目 venv 那一层与 ADR 0107 的系统解释器那一层同一个：
 #: 触发的事件是同一件——「此刻的解释器跑脚本时报了缺包」；接手的是哪一种由 `pool.remembered_source` 分）
 TRIGGER_MISSING_DEPENDENCY = "missing_dependency"
 

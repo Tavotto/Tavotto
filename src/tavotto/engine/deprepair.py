@@ -3545,7 +3545,7 @@ def _plan_imports(plan: dict) -> tuple[list[dict], list[str]]:
 
 
 def _user_env_discovery_off() -> bool:
-    # 判据唯一出处在 projectenv：运行后缺包的接手（`pool.try_project_env`，ADR 0106）读同一个开关
+    # 判据唯一出处在 projectenv：运行后缺包的接手（`pool.try_project_env`，ADR 0107）读同一个开关
     return projectenv.auto_adoption_off()
 
 
@@ -3589,7 +3589,7 @@ def _auto_adopt_allowed(project: str, offer: dict) -> bool:
     明确选回默认链条）一个都不碰；项目自己的 venv 也不碰——那本来就是用户的环境，缺包该装进它。"""
     if offer.get("target_kind") == TARGET_PROJECT_VENV or offer.get("clean_machine"):
         return False
-    # 「机器替用户挑的」判据唯一出处 `pool.machine_chosen_interpreter`（运行后缺包的接手同用，ADR 0106）
+    # 「机器替用户挑的」判据唯一出处 `pool.machine_chosen_interpreter`（运行后缺包的接手同用，ADR 0107）
     return pool.machine_chosen_interpreter(project)
 
 

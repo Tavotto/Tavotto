@@ -932,7 +932,7 @@ def test_system_interpreters_are_probed_when_no_venv_is_found(project, tmp_path,
     assert found["source"] == engine_pool.SOURCE_SYSTEM
     assert found["requested_module_ok"] is True
     # 自动采用的开关关着（测试进程默认，`tests/conftest.py`）：只列候选、采用要他点一次。开关开着时
-    # 同一个形状无提示直接采用（ADR 0106），见文末「无提示自动采用」一组
+    # 同一个形状无提示直接采用（ADR 0107），见文末「无提示自动采用」一组
     assert projectenv.remembered(project) is None
 
     # build 那条主路上同一份结论挂在异常上，前端的修复面板据此列出「采用」
@@ -1205,7 +1205,7 @@ def test_a_discovered_venv_outside_the_project_never_reaches_the_probe(
     assert bool(probed) is inside, probed
 
 
-# ------------------------- 第二层的无提示自动采用（ADR 0106，用户 2026-09-28 拍板）
+# ------------------------- 第二层的无提示自动采用（ADR 0107，用户 2026-09-28 拍板）
 # 内置环境缺包、项目里没有 venv、这台机器上第一个健康的解释器受支持且 import 得到那个包、此刻的解释器
 # 又是机器替用户挑的 → 直接采用并重跑，不弹卡片。任何一条不满足 → 回到 ADR 0044 的候选（修复卡片）。
 def _auto_on(monkeypatch):
@@ -1270,7 +1270,7 @@ def test_a_supported_system_interpreter_with_the_module_is_adopted_silently_and_
 
     以前：修复卡片第一项「改用这台机器上已有的环境」，要用户点。现在：`build()` 直接出图，项目记成
     自动决策（`automatic=True, trigger=missing_dependency`，诊断包据此答得出为什么），而且脚本像在
-    终端里那样在自己的目录里跑——相对路径写的文件落进项目目录（ADR 0106 §二）。
+    终端里那样在自己的目录里跑——相对路径写的文件落进项目目录（ADR 0107 §二）。
     """
     from tavotto.engine import workdir
 

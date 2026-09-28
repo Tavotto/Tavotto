@@ -2845,7 +2845,7 @@ export interface WorkdirGrant {
   cwd_write: { granted: boolean; granted_at: number | null; mode: WorkdirMode | null }
   /** 这个项目决定过没有（选沙盒也算决定过，只是没有授权） */
   decided: boolean
-  /** 没决定过而默认不是沙盒时的理由（ADR 0106 §二）：用户自己的 Python → 默认脚本目录 */
+  /** 没决定过而默认不是沙盒时的理由（ADR 0107 §二）：用户自己的 Python → 默认脚本目录 */
   implied_by?: 'user_interpreter' | null
 }
 export interface WorkdirState {

@@ -45,7 +45,7 @@ pyenv / pixi 的推迟原封不动。
 
 ### 二、不无感切换：系统解释器只是候选，采用要用户点一次
 
-> 2026-09-28 修订（[ADR 0106](0106-silent-system-interpreter-adoption-and-native-workdir.md) §一，用户拍板「全自动、无提示」）：
+> 2026-09-28 修订（[ADR 0107](0107-silent-system-interpreter-adoption-and-native-workdir.md) §一，用户拍板「全自动、无提示」）：
 > 运行后缺包这一层也不再要用户点——项目里没有 venv、第一个健康的系统解释器支持档是 verified / unverified_but_compatible、
 > 缺的那个包确实 import 得到、此刻的解释器又是机器替用户挑的，`pool.try_project_env` 直接采用它（`automatic=True,
 > trigger=missing_dependency`）并重跑。任何一条不满足时本节原样成立：体检结果只是修复卡片上的候选。
@@ -101,7 +101,7 @@ venv 的用例形态不变（venv 自己关了用户 site）；系统解释器�
 ## 不做的事
 
 * Conda / pyenv / pixi 的环境发现（ADR 0018 §三原话仍成立）。
-* ~~自动采用系统解释器（哪怕只探到一个健康的）。~~ 2026-09-28 由 [ADR 0106](0106-silent-system-interpreter-adoption-and-native-workdir.md) §一 推翻。
+* ~~自动采用系统解释器（哪怕只探到一个健康的）。~~ 2026-09-28 由 [ADR 0107](0107-silent-system-interpreter-adoption-and-native-workdir.md) §一 推翻。
 * 把系统解释器当安装目标。往 `/usr/bin/python3` 里 pip install 是另一个安全模型。
 
 ## 顺便记录：这一层救不了那个目录

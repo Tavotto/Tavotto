@@ -11,7 +11,7 @@ C++ 读取器都在盲区，这类脚本在 Tavotto 里一张图都画不出来�
 （`execspec.CWD_MODES`）：
 
 * `sandbox`（默认）——现状；项目用的是**用户自己的 Python**（项目外、不归 Tavotto 管的解释器）时，
-  没决定过的默认改为 `project`（ADR 0106 §二，与原生 `cd 脚本目录 && python fig.py` 一致；派生的默认，
+  没决定过的默认改为 `project`（ADR 0107 §二，与原生 `cd 脚本目录 && python fig.py` 一致；派生的默认，
   不写设置，用户选过任何一档都按他选的）；
 * `project`——脚本自己所在的目录。解释器链、savefig 捕获（不落盘）、
   unlink / write_text 守卫、写回全部照旧；**只有脚本用相对路径写的中间文件会
@@ -97,7 +97,7 @@ def _stored(figures_dir: str | Path) -> dict | None:
     return stored if isinstance(stored, dict) else None
 
 
-#: 「没决定过时默认用脚本目录」的理由（闭集；ADR 0106 §二）：这个项目此刻用的是用户自己的 Python。
+#: 「没决定过时默认用脚本目录」的理由（闭集；ADR 0107 §二）：这个项目此刻用的是用户自己的 Python。
 IMPLIED_BY_USER_INTERPRETER = "user_interpreter"
 
 
@@ -105,7 +105,7 @@ def implied_by(figures_dir: str | Path) -> str | None:
     """没决定过时，默认档**为什么不是沙盒**；是沙盒回 None。决定过的项目一律 None（用户的决定压过默认）。
 
     今天只有一个理由：项目用的是用户自己的 Python（`pool.user_interpreter_in_effect`：项目级决策指向项目外、
-    不归 Tavotto 管的解释器）——与原生 `cd 脚本目录 && python fig.py` 一致，默认就在脚本目录里跑（ADR 0106 §二，
+    不归 Tavotto 管的解释器）——与原生 `cd 脚本目录 && python fig.py` 一致，默认就在脚本目录里跑（ADR 0107 §二，
     用户 2026-09-28 拍板）。这是**派生的默认，不是写下来的设置**：解释器改回内置 / 受管，默认随之回到沙盒；
     用户在渲染环境里选过任何一档（含沙盒），就按他选的。只读设置与 `stat`，不起子进程。
     """
@@ -118,7 +118,7 @@ def implied_by(figures_dir: str | Path) -> str | None:
 
 
 def default_mode(figures_dir: str | Path) -> str:
-    """没决定过时的默认档：用户自己的 Python → 脚本目录（ADR 0106 §二）；其余 → 沙盒（ADR 0047）。"""
+    """没决定过时的默认档：用户自己的 Python → 脚本目录（ADR 0107 §二）；其余 → 沙盒（ADR 0047）。"""
     return MODE_PROJECT if implied_by(figures_dir) else MODE_SANDBOX
 
 
@@ -189,7 +189,7 @@ def grant_for(figures_dir: str | Path) -> dict:
     mode = stored.get("mode") if stored else None
     implied = None if mode in MODES else implied_by(figures_dir)
     if implied:
-        # 派生的默认（ADR 0106 §二）：用户用自己的 Python，这件事本身就是「像终端里那样跑」的意思表示——
+        # 派生的默认（ADR 0107 §二）：用户用自己的 Python，这件事本身就是「像终端里那样跑」的意思表示——
         # 写入许可成立，但**没有那一次点头的时刻**（`granted_at=None`），`implied_by` 说它从哪来
         mode = default_mode(figures_dir)
     granted = mode in GRANTING_MODES
@@ -211,7 +211,7 @@ def state(figures_dir: str | Path) -> dict:
         "mode": mode_for(figures_dir),
         "modes": list(MODES),
         "decided": decided(figures_dir),
-        # 没决定过而默认不是沙盒时的理由（ADR 0106 §二）；界面据此说「跟随你自己的 Python」
+        # 没决定过而默认不是沙盒时的理由（ADR 0107 §二）；界面据此说「跟随你自己的 Python」
         "implied_by": implied_by(figures_dir),
         "grant": grant_for(figures_dir),
     }
@@ -298,7 +298,7 @@ def decision_for(figures_dir: str | Path, script: str) -> dict:
     决定过 → `mode` 是记住的那一档、`needs_confirmation=False`；没决定过 → 按证据：
     要问的 `needs_confirmation=True` 且 `confirmation` 是载荷（`mode` 仍是 `default_mode()`——
     那只是「没问到之前的默认」，**不是**决定）。准备计划与 `resolve_mode()` 读同一份。
-    用户自己的 Python（默认脚本目录，ADR 0106 §二）：证据只指向脚本目录时不问（答案就是默认）；数据只在
+    用户自己的 Python（默认脚本目录，ADR 0107 §二）：证据只指向脚本目录时不问（答案就是默认）；数据只在
     项目根 / 两处同名不同值时照样先问——脚本目录一样不够用 / 机器不替用户裁决。
     """
     root = str(Path(figures_dir))
@@ -315,11 +315,11 @@ def decision_for(figures_dir: str | Path, script: str) -> dict:
     default = default_mode(root)
     needs = ev["verdict"] in _REASON_OF_VERDICT
     if default == MODE_PROJECT and ev["verdict"] == databinding.VERDICT_SCRIPT_PARENT:
-        # 证据指向的正是默认档（用户自己的 Python 默认就在脚本目录里跑，ADR 0106 §二）：问了也只有一个
+        # 证据指向的正是默认档（用户自己的 Python 默认就在脚本目录里跑，ADR 0107 §二）：问了也只有一个
         # 推荐答案，而那个答案已经生效——不问。项目根 / 歧义两种照问：脚本目录一样不够用 / 机器不裁决
         needs = False
     return {
-        # 没问到之前的默认（用户自己的 Python → 脚本目录，否则沙盒；ADR 0106 §二）——**不是**决定
+        # 没问到之前的默认（用户自己的 Python → 脚本目录，否则沙盒；ADR 0107 §二）——**不是**决定
         "mode": default,
         "decided": False,
         "needs_confirmation": needs,

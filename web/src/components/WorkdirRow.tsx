@@ -39,7 +39,7 @@ export function WorkdirRow() {
   const project = env?.project
   if (!project?.open || !project.workdir) return null
   const mode = project.workdir.mode
-  // 没决定过、因为用的是用户自己的 Python 而默认在脚本目录（ADR 0106 §二）：现状那句说出这个来由
+  // 没决定过、因为用的是用户自己的 Python 而默认在脚本目录（ADR 0107 §二）：现状那句说出这个来由
   const status =
     project.workdir.implied_by === 'user_interpreter' && mode === 'project'
       ? 'engine.workdirHintProjectNative'

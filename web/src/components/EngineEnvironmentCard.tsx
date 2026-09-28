@@ -212,7 +212,7 @@ function ProjectEnvironmentLine({ compact }: { compact?: boolean }) {
       </span>
       {project.module && (project.automatic || system) && (
         <span className="text-xs text-ink-3">
-          {/* 缺包时无提示自动采用的（ADR 0106）不是「你选的」：措辞按 automatic 分 */}
+          {/* 缺包时无提示自动采用的（ADR 0107）不是「你选的」：措辞按 automatic 分 */}
           {system
             ? project.automatic
               ? en('projectEnvWhySystemAuto', { module: project.module })

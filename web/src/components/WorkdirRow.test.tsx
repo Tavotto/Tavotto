@@ -152,7 +152,7 @@ describe('脚本的运行目录', () => {
     expect(setMock).toHaveBeenCalledWith('sandbox')
   })
 
-  it('用户自己的 Python 默认在脚本目录（ADR 0106）：现状句说出来由，改回沙盒一步、不用确认', async () => {
+  it('用户自己的 Python 默认在脚本目录（ADR 0107）：现状句说出来由，改回沙盒一步、不用确认', async () => {
     const env = envWith('project')
     env.project!.workdir = { ...env.project!.workdir!, decided: false, implied_by: 'user_interpreter' }
     useEnvStore.setState({ env })
