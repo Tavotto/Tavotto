@@ -1360,6 +1360,7 @@
     "loadingSnapshot": "Loading the layout at this moment…",
     "namePlaceholder": "Name this moment, e.g. “Before submission”",
     "noDiff": "No differences from the current canvas",
+    "preview": "Preview",
     "previewApproximate": "Figure-edit preview unavailable. Panels show the original files on disk.",
     "rename": "Rename…",
     "restore": "Restore to here",

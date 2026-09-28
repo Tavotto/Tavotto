@@ -1729,6 +1729,7 @@ export default interface Resources {
       "noDiff": "与当前画布没有差异",
       "noNamed": "还没有命名节点。给任意节点起个名字，它就不会被自动清理。",
       "overlayHint": "底图 = 那一刻；描边 = 当前画布",
+      "preview": "预览",
       "previewApproximate": "图内修改预览不可用，面板显示的是磁盘上的原图。",
       "previewTitle": "预览：{{time}} {{name}}",
       "quickSave": "保存",

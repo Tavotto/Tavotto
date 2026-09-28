@@ -1351,6 +1351,7 @@
     "loadingSnapshot": "正在载入这一刻的排版…",
     "namePlaceholder": "给现在起个名字，如「投稿前」",
     "noDiff": "与当前画布没有差异",
+    "preview": "预览",
     "previewApproximate": "图内修改预览不可用，面板显示的是磁盘上的原图。",
     "rename": "改名…",
     "restore": "恢复到这里",
