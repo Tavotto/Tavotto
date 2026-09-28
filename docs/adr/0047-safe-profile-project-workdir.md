@@ -2,6 +2,11 @@
 
 日期：2026-09-06 · 状态：**Accepted**
 
+> 2026-09-28 修订（[ADR 0106](0106-silent-system-interpreter-adoption-and-native-workdir.md) §二，用户拍板）：项目用的是**用户自己的
+> Python**（项目外、不归 Tavotto 管的解释器，`pool.user_interpreter_in_effect`）且没决定过工作目录时，默认档是脚本目录
+> （`project`），不单独确认——与原生 `cd 脚本目录 && python fig.py` 一致。派生的默认、不写设置；用户选过任何一档按他选的；
+> 内置 / 受管 / 项目 venv / 全局显式选择仍默认沙盒；守卫、savefig 捕获、写回一字不动。§三与「不做的事」第一条对其余情形原样成立。
+
 > 编号更正（2026-09-07）：本文最初以 0045 落地（PR #301），与先落地的
 > `0045-cjk-font-fallback-chain.md`（PR #295）撞号。内容一字未改，只换号。
 

@@ -2867,7 +2867,8 @@ def should_try_project_env(exc) -> bool:
 
 
 def try_project_env(figures_dir: str, script_name: str, module: str) -> dict:
-    """内置环境缺 `module` 时，改用这个项目自己的 `.venv`（成功则作废旧会话）。
+    """内置环境缺 `module` 时，改用这个项目自己的 `.venv`（成功则作废旧会话）；项目里没有 venv 时，
+    改用这台机器上已有、装着它的健康解释器（ADR 0106：无提示自动采用，判据见 `_adopt_system_interpreter`）。
 
     回 `projectenv.resolve_for_missing_dependency` 的结构，成功时已经：
     记住决策（项目级，不写全局设置）→ 作废该脚本的旧 worker。调用方只需
@@ -2897,6 +2898,9 @@ def try_project_env(figures_dir: str, script_name: str, module: str) -> dict:
         exclude_python=failing,
     )
     if not outcome.get("ok"):
+        adopted = _adopt_system_interpreter(figures_dir, script_name, module, outcome)
+        if adopted is not None:
+            return adopted
         system = outcome.get("system") or []
         found = projectenv.healthy_system_candidate(system)
         LOG.info(
@@ -2912,7 +2916,7 @@ def try_project_env(figures_dir: str, script_name: str, module: str) -> dict:
         figures_dir,
         python,
         automatic=True,
-        trigger="missing_dependency",
+        trigger=projectenv.TRIGGER_MISSING_DEPENDENCY,
         module=module,
         health=outcome.get("health"),
     )
@@ -2921,6 +2925,86 @@ def try_project_env(figures_dir: str, script_name: str, module: str) -> dict:
     invalidate(script_name, figures_dir)
     LOG.info("项目环境自动接手: %s → %s（缺 %s）", script_name, python, module)
     return outcome
+
+
+def _adopt_system_interpreter(
+    figures_dir: str, script_name: str, module: str, outcome: dict
+) -> dict | None:
+    """项目 venv 那一层没接手成之后：体检表里第一个健康的系统解释器合格，就**无提示**采用它（ADR 0106 §一）。
+
+    回成功形状（`ok=True`，`adopted="system"`）或 None（不采用——`outcome` 原样交给修复面板，ADR 0044）。
+    与项目 venv 那一层同一套机制：`remember(automatic=True, trigger=missing_dependency)` → 登记体检结论 →
+    作废旧会话，调用方重取一次会话就是新解释器；防循环的是调用方已经登记过的 `mark_attempted`。
+
+    五道判据，缺一不采用：
+
+    1. 开关没关（`projectenv.auto_adoption_off()`，与跑前的门同一个）；
+    2. 项目里**没有** venv（`project_env_not_found`）：有 venv 而它缺包 / 不合格时，那是用户为这个项目备的环境，
+       缺包该装进它（ADR 0079 §四），不绕过它去换一个项目外的解释器；
+    3. 候选合格（`projectenv.auto_adoptable_system_candidate`：第一个健康者、支持档、那个包确实 import 得到）；
+    4. 此刻的解释器是机器替用户挑的（`machine_chosen_interpreter`；项目记录那一半在写入锁里再判一次）；
+    5. 那个环境此刻没有正在被改动（`is_mutating`：体检读的可能是装了一半的 site-packages）。
+    """
+    if projectenv.auto_adoption_off():
+        return None
+    if outcome.get("code") != projectenv.ERROR_NOT_FOUND:
+        return None
+    found = projectenv.auto_adoptable_system_candidate(outcome.get("system"))
+    if found is None or not machine_chosen_interpreter(figures_dir):
+        return None
+    python = found["python"]
+    if is_mutating(python):
+        return None
+    if not projectenv.remember(
+        figures_dir,
+        python,
+        automatic=True,
+        trigger=projectenv.TRIGGER_MISSING_DEPENDENCY,
+        module=module,
+        health=found,
+        only_if=projectenv.record_allows_auto_adopt,
+    ):
+        return None
+    note_project_python_ok(python)
+    invalidate(script_name, figures_dir)
+    LOG.info("缺包：自动采用这台机器上已有的解释器 %s（%s，缺 %s）", python, script_name, module)
+    return {**outcome, "ok": True, "python": python, "health": found, "adopted": SOURCE_SYSTEM}
+
+
+def machine_chosen_interpreter(figures_dir: str | Path) -> bool:
+    """此刻这个项目的解释器是不是**机器替用户挑的**——自动换解释器的前提（ADR 0079 §四 / ADR 0106）。
+
+    反面（一个都不碰）：环境变量 / 设置里的全局显式选择（它们压过项目级决策，换了也不生效）、用户为本项目
+    挑过的（`automatic=False`）、明确选回默认链条的（`mode=default`）。只读设置与 `stat`，不起子进程。
+    跑前的门（`deprepair._auto_adopt_allowed`）与运行后缺包的接手共用这一份。
+    """
+    if explicit_worker_python():
+        return False
+    configured = config.worker_python()
+    if configured and _configured_source(configured) != SOURCE_MANAGED:
+        return False
+    return projectenv.record_allows_auto_adopt(projectenv.remembered_record(figures_dir))
+
+
+def user_interpreter_in_effect(figures_dir: str | Path) -> bool:
+    """这个项目此刻生效的是不是**用户自己的 Python**：项目级决策指向一个项目之外、又不归 Tavotto 管的
+    解释器（`remembered_source() == system`——缺包时自动采用的、用户在渲染环境里为项目挑的、跑前的门
+    改用的 Conda / pyenv 环境），且没有全局显式选择压过它。
+
+    这是「未决定时工作目录默认用脚本目录」的判据（ADR 0106 §二，`workdir.mode_for` 的消费者）。内置 runtime、
+    受管环境、项目自带的 venv、全局显式选择都不算。只读设置与 `stat`，不起子进程（环境状态 API 也读它）。
+    """
+    if explicit_worker_python():
+        return False
+    configured = config.worker_python()
+    if configured and _configured_source(configured) != SOURCE_MANAGED:
+        return False
+    record = projectenv.remembered_record(figures_dir)
+    if not record or record.get("mode") == projectenv.MODE_DEFAULT_CHAIN:
+        return False
+    if not record.get("exists"):
+        return False
+    return remembered_source(figures_dir, record["path"]) == SOURCE_SYSTEM
 
 
 def build(script_name: str, figures_dir: str, entry: str, *, allow_project_env: bool = True):

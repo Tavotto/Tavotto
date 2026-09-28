@@ -931,7 +931,8 @@ def test_system_interpreters_are_probed_when_no_venv_is_found(project, tmp_path,
     assert found and engine_pool.same_python(found["python"], python)
     assert found["source"] == engine_pool.SOURCE_SYSTEM
     assert found["requested_module_ok"] is True
-    # **不无感切换**：系统环境在用户交给我们的边界之外，采用要他点一次
+    # 自动采用的开关关着（测试进程默认，`tests/conftest.py`）：只列候选、采用要他点一次。开关开着时
+    # 同一个形状无提示直接采用（ADR 0106），见文末「无提示自动采用」一组
     assert projectenv.remembered(project) is None
 
     # build 那条主路上同一份结论挂在异常上，前端的修复面板据此列出「采用」
@@ -1202,3 +1203,245 @@ def test_a_discovered_venv_outside_the_project_never_reaches_the_probe(
     else:
         projectenv.first_open_candidate(project, "fig.py")
     assert bool(probed) is inside, probed
+
+
+# ------------------------- 第二层的无提示自动采用（ADR 0106，用户 2026-09-28 拍板）
+# 内置环境缺包、项目里没有 venv、这台机器上第一个健康的解释器受支持且 import 得到那个包、此刻的解释器
+# 又是机器替用户挑的 → 直接采用并重跑，不弹卡片。任何一条不满足 → 回到 ADR 0044 的候选（修复卡片）。
+def _auto_on(monkeypatch):
+    """打开自动采用（测试进程默认关，`tests/conftest.py`），并把「全局显式选择」钉成没有——
+    开发机 / CI 上外面带进来的 `TAVOTTO_WORKER_PYTHON` 或设置不许让用例结果随机器变。"""
+    monkeypatch.setenv("TAVOTTO_USER_ENV_DISCOVERY", "1")
+    monkeypatch.setattr(engine_pool, "explicit_worker_python", lambda: None)
+    monkeypatch.setattr(engine_pool.config, "worker_python", lambda: None)
+
+
+_PROBED: list[str] = []
+
+
+def _fake_system(tmp_path, monkeypatch, table: dict[str, dict]) -> list[str]:
+    """`table` 的键是名字、值是体检结果模板；回按优先级排好的解释器路径（都真实存在、项目之外）。"""
+    paths = [_touch(tmp_path / "machine" / name / "python") for name in table]
+    by_path = {p: dict(table[n], python=p) for p, n in zip(paths, table)}
+    _PROBED.clear()
+
+    def fake_probe(python, module=None, **kw):
+        _PROBED.append(python)
+        return dict(by_path[python])
+
+    monkeypatch.setattr(projectenv, "probe_environment", fake_probe)
+    monkeypatch.setattr(
+        engine_pool,
+        "system_python_candidates",
+        lambda: [(p, engine_pool.SOURCE_SYSTEM) for p in paths],
+    )
+    monkeypatch.setattr(
+        engine_pool, "resolve_worker_python", lambda *a, **k: ("/builtin/py", "bundled")
+    )
+    return paths
+
+
+def _health(
+    *, ok=True, code="", support=projectenv.SUPPORT_VERIFIED, module_ok=True, version="3.12.10"
+):
+    return {
+        "ok": ok,
+        "code": code,
+        "support": support,
+        "python_version": version,
+        "matplotlib_version": "3.11.2",
+        "requested_module_ok": module_ok,
+    }
+
+
+_UNSUPPORTED_37 = _health(
+    ok=False,
+    code=projectenv.ERROR_UNSUPPORTED_PYTHON,
+    support=projectenv.SUPPORT_UNSUPPORTED,
+    version="3.7.6",
+)
+
+
+@needs_worker
+def test_a_supported_system_interpreter_with_the_module_is_adopted_silently_and_renders(
+    project, tmp_path, monkeypatch
+):
+    """Windows 实测（2026-09-28）的形状：项目里没有 venv，机器上有一个装着那个包的受支持 Python。
+
+    以前：修复卡片第一项「改用这台机器上已有的环境」，要用户点。现在：`build()` 直接出图，项目记成
+    自动决策（`automatic=True, trigger=missing_dependency`，诊断包据此答得出为什么），而且脚本像在
+    终端里那样在自己的目录里跑——相对路径写的文件落进项目目录（ADR 0106 §二）。
+    """
+    from tavotto.engine import workdir
+
+    _auto_on(monkeypatch)
+    (project / "figure.py").write_text(
+        SCRIPT.replace(
+            "fig, ax = plt.subplots()",
+            'open("written_by_script.txt", "w").write("x")\nfig, ax = plt.subplots()',
+        ),
+        encoding="utf-8",
+    )
+    elsewhere = real_venv(tmp_path / "elsewhere")  # 项目**之外**，扮演系统解释器
+    python = projectenv.interpreter_of(elsewhere)
+    monkeypatch.setattr(
+        engine_pool, "system_python_candidates", lambda: [(python, engine_pool.SOURCE_SYSTEM)]
+    )
+    # 跑前的门（ADR 0079）不在场：用户在门上选过「直接跑」——量的是运行后缺包那一层。门开着时同一个
+    # 候选会在跑前就被改用（trigger=user_environment），那条归 tests/test_user_environments.py
+    from tavotto.engine import deprepair
+
+    deprepair.skip_preparation(project, "figure.py")
+    worker, resp = engine_pool.build("figure.py", str(project), "__main__")
+    assert sorted(resp.get("stems") or {}) == ["Fig1"], "用户看到的就是图出来了"
+    assert engine_pool.same_python(worker.python, python)
+    assert worker.python_source == engine_pool.SOURCE_SYSTEM
+    record = projectenv.remembered_record(project)
+    assert record["automatic"] is True
+    assert record["trigger"] == projectenv.TRIGGER_MISSING_DEPENDENCY
+    assert record["module"] == FIXTURE_MODULE
+    # 运行目录：没决定过 + 用户自己的 Python → 脚本目录（与 `cd 脚本目录 && python fig.py` 一致）
+    assert workdir.decided(project) is False
+    assert workdir.mode_for(project) == workdir.MODE_PROJECT
+    assert (project / "written_by_script.txt").is_file(), "相对路径写的文件落进项目目录"
+
+
+def test_the_adopted_record_is_what_the_diagnostics_read(tmp_path, monkeypatch):
+    """自动采用的那条：`projectenv.state()`（诊断包 `environment_resolution` 与环境状态 API 读它）
+    答得出 automatic / trigger / module 与体检当时的版本——无提示不等于无痕。"""
+    _auto_on(monkeypatch)
+    project = tmp_path / "p"
+    project.mkdir()
+    [py] = _fake_system(tmp_path, monkeypatch, {"py312": _health()})
+    outcome = engine_pool.try_project_env(str(project), "fig.py", "adjustText")
+    assert outcome["ok"] is True and outcome["adopted"] == engine_pool.SOURCE_SYSTEM
+    assert outcome["python"] == py
+    st = projectenv.state(project)
+    assert st["python"] == py
+    assert (st["automatic"], st["trigger"], st["module"]) == (
+        True,
+        "missing_dependency",
+        "adjustText",
+    )
+    assert (st["python_version"], st["support"]) == ("3.12.10", projectenv.SUPPORT_VERIFIED)
+    assert engine_pool.remembered_source(project, py) == engine_pool.SOURCE_SYSTEM
+
+
+def test_only_an_unsupported_interpreter_with_the_module_is_not_adopted(tmp_path, monkeypatch):
+    """Windows 实测里的 Python 3.7.6 装着 adjustText：不采用，照旧列在 `system_rejected` 里走修复卡片。"""
+    _auto_on(monkeypatch)
+    project = tmp_path / "p"
+    project.mkdir()
+    _fake_system(tmp_path, monkeypatch, {"py37": _UNSUPPORTED_37})
+    outcome = engine_pool.try_project_env(str(project), "fig.py", "adjustText")
+    assert outcome["ok"] is False and "adopted" not in outcome
+    assert projectenv.remembered_record(project) is None
+    rejected = projectenv.rejected_system_candidates(outcome["system"])
+    assert [e["python_version"] for e in rejected] == ["3.7.6"]
+
+
+def test_a_healthy_interpreter_without_the_module_is_not_adopted(tmp_path, monkeypatch):
+    """环境健康但没有那个包：体检本来就判 `project_env_module_missing`（ok=False）——换过去只是换一个报错。"""
+    _auto_on(monkeypatch)
+    project = tmp_path / "p"
+    project.mkdir()
+    _fake_system(
+        tmp_path,
+        monkeypatch,
+        {"py312": _health(ok=False, code=projectenv.ERROR_MODULE_MISSING, module_ok=False)},
+    )
+    outcome = engine_pool.try_project_env(str(project), "fig.py", "adjustText")
+    assert outcome["ok"] is False
+    assert projectenv.remembered_record(project) is None
+
+
+@pytest.mark.parametrize(
+    "entry, adoptable",
+    [
+        (_health(), True),
+        (_health(support=projectenv.SUPPORT_UNVERIFIED), True),
+        (_health(support=projectenv.SUPPORT_UNSUPPORTED), False),
+        (_health(support=""), False),
+        (_health(module_ok=None), False),  # 没量到 ≠ 有
+        (_health(module_ok=False), False),
+        (_health(ok=False, code=projectenv.ERROR_UNUSABLE), False),
+    ],
+)
+def test_the_auto_adopt_predicate_names_its_tiers(entry, adoptable):
+    """判据明写：支持档在 `AUTO_ADOPT_SUPPORT`（verified / unverified_but_compatible）里、包**确实** import
+    得到。不靠「ok 恰好蕴含」——体检的 `ok` 语义哪天放宽，这里不跟着放宽。"""
+    got = projectenv.auto_adoptable_system_candidate([dict(entry, python="/x/python")])
+    assert (got is not None) is adoptable
+
+
+def test_with_several_healthy_candidates_the_first_by_priority_wins(tmp_path, monkeypatch):
+    """多个候选：按 `system_python_candidates()` 的优先级，第一个健康的就是被采用的那个；它之后的不再体检。"""
+    _auto_on(monkeypatch)
+    project = tmp_path / "p"
+    project.mkdir()
+    paths = _fake_system(
+        tmp_path,
+        monkeypatch,
+        {
+            "a37": _UNSUPPORTED_37,
+            "b312": _health(version="3.12.10"),
+            "c313": _health(version="3.13.1"),
+        },
+    )
+    outcome = engine_pool.try_project_env(str(project), "fig.py", "adjustText")
+    assert outcome["ok"] is True and outcome["python"] == paths[1]
+    assert _PROBED == paths[:2], "第一个健康的（b）之后不该再探 c"
+    assert projectenv.remembered_record(project)["path"] == paths[1]
+
+
+@pytest.mark.parametrize(
+    "case",
+    ["switch_off", "explicit", "configured", "user_picked", "default_chain", "venv", "mutating"],
+)
+def test_auto_adoption_never_overrides_a_user_decision(tmp_path, monkeypatch, case):
+    """同一个健康候选，下面每一种情形都**不**自动采用，结果回到 ADR 0044 的候选（修复卡片列出它）：
+
+    开关关着 / 全局显式选择 / 设置里指定的 / 用户为本项目挑过的 / 明确选回默认链条 / 项目自己有 venv
+    （缺包该装进它）/ 那个环境正在被改动。"""
+    _auto_on(monkeypatch)
+    project = tmp_path / "p"
+    project.mkdir()
+    [py] = _fake_system(tmp_path, monkeypatch, {"py312": _health()})
+    picked = _touch(tmp_path / "picked" / "python")
+    if case == "switch_off":
+        monkeypatch.setenv("TAVOTTO_USER_ENV_DISCOVERY", "0")
+    elif case == "explicit":
+        monkeypatch.setattr(
+            engine_pool, "explicit_worker_python", lambda: (picked, engine_pool.SOURCE_ENV)
+        )
+    elif case == "configured":
+        monkeypatch.setattr(engine_pool.config, "worker_python", lambda: picked)
+    elif case == "user_picked":
+        projectenv.remember(project, picked, automatic=False, trigger="user_selected")
+    elif case == "default_chain":
+        projectenv.remember_default(project)
+    elif case == "venv":
+        monkeypatch.setattr(
+            projectenv,
+            "_resolve_project_venv",
+            lambda *a: {"ok": False, "code": projectenv.ERROR_MODULE_MISSING, "venv": ".venv"},
+        )
+    else:
+        monkeypatch.setattr(engine_pool, "is_mutating", lambda p: p == py)
+    before = projectenv.remembered_record(project)
+    outcome = engine_pool.try_project_env(str(project), "fig.py", "adjustText")
+    assert outcome["ok"] is False, case
+    assert projectenv.remembered_record(project) == before, case
+    # 候选照样在：修复卡片上「改用这台机器上已有的环境」仍是兜底
+    assert projectenv.healthy_system_candidate(outcome["system"])["python"] == py, case
+
+
+def test_auto_adoption_happens_once_per_build(tmp_path, monkeypatch):
+    """防循环沿用 venv 那一层的 `mark_attempted`：同一 (项目, 脚本) 一次 build 最多自动切一次。"""
+    _auto_on(monkeypatch)
+    project = tmp_path / "p"
+    project.mkdir()
+    _fake_system(tmp_path, monkeypatch, {"py312": _health()})
+    assert engine_pool.try_project_env(str(project), "fig.py", "adjustText")["ok"] is True
+    again = engine_pool.try_project_env(str(project), "fig.py", "adjustText")
+    assert again["code"] == engine_pool.PROJECT_ENV_ALREADY_ATTEMPTED

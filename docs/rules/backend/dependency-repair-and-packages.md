@@ -20,7 +20,13 @@
   失败结构的 `system` 键上；`deprepair.offer()` 把健康的列成 `system_interpreter`
   目标排在最前，**采用一个字节都不装**，走项目环境 PATCH（`scope=project` +
   `module`，采用时连缺的那个包再验一次）。它刻意不进 `TARGETS`，`create_plan`
-  对它一律拒绝。**不无感切换**：系统环境在用户交给我们的边界之外。探到了但
+  对它一律拒绝。**缺包时无提示自动采用（ADR 0106，2026-09-28 推翻原「不无感切换」）**：项目里没有 venv、
+  第一个健康者 `projectenv.auto_adoptable_system_candidate`（支持档 `AUTO_ADOPT_SUPPORT` = verified /
+  unverified_but_compatible、`requested_module_ok is True`）、此刻的解释器是机器替用户挑的
+  （`pool.machine_chosen_interpreter`，与跑前的门共用；项目记录那一半 `projectenv.record_allows_auto_adopt` 在
+  `remember(only_if=…)` 写入锁里再判）、环境没在被改动、开关 `projectenv.auto_adoption_off()` 没关——五条全过，
+  `pool._adopt_system_interpreter` 就 `remember(automatic=True, trigger=missing_dependency)` 并重跑，不发 SSE；
+  任何一条不满足，照旧只是卡片上的候选（兜底）。探到了但
   不合格的（包有、Python 版本不支持 / 没 matplotlib / 起不来）单列
   `system_rejected`，界面要说出原因。offer 在渲染失败的响应路径上**不起任何
   解释器**——结论只读接手那一步的体检表。

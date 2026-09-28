@@ -1022,7 +1022,7 @@ def test_auto_adopting_a_user_environment_does_not_stale_the_first_preparation(
     monkeypatch.setattr(engine_pool, "resolve_worker_python", resolve)
     monkeypatch.setattr(engine_pool, "same_python", lambda a, b: a == b)
     monkeypatch.setattr(engine_pool, "explicit_worker_python", lambda: "")
-    monkeypatch.setattr(deprepair, "_config_worker_python", lambda: "")
+    monkeypatch.setattr(engine_pool.config, "worker_python", lambda: "")
     adopted = []
     monkeypatch.setattr(deprepair, "_adoption_listeners", [lambda p, e: adopted.append(e["id"])])
     entry = {

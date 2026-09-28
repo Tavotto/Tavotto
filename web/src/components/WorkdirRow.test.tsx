@@ -152,6 +152,25 @@ describe('脚本的运行目录', () => {
     expect(setMock).toHaveBeenCalledWith('sandbox')
   })
 
+  it('用户自己的 Python 默认在脚本目录（ADR 0106）：现状句说出来由，改回沙盒一步、不用确认', async () => {
+    const env = envWith('project')
+    env.project!.workdir = { ...env.project!.workdir!, decided: false, implied_by: 'user_interpreter' }
+    useEnvStore.setState({ env })
+    setMock.mockResolvedValue({
+      ok: true,
+      workdir: { mode: 'sandbox', modes: [] },
+      project: { open: true, workdir: { mode: 'sandbox', modes: ['sandbox', 'project', 'project_root'] } },
+    } as never)
+    await render(<WorkdirRow />)
+    expect(checked()).toBe('project')
+    expect(text()).toContain(en('workdirHintProjectNative'))
+    await act(async () => radio('sandbox')!.click())
+    await act(async () => {})
+    expect(useUiStore.getState().confirm).toBeNull()
+    expect(setMock).toHaveBeenCalledWith('sandbox')
+    expect(text()).toContain(en('workdirHintSandbox'))
+  })
+
   it('错误块里的建议只在沙盒模式下出现', async () => {
     await render(<WorkdirSuggestion />)
     expect(text()).toContain(en('workdirSuggest'))

@@ -81,7 +81,10 @@
     `engine/workdir.py`（项目设置 `workdir.mode`，不写全局），三条 spawn 路径（Python 池 /
     `_spawn_spec` / `one_shot`）都从它取——写回的重放必须和热态用同一个 cwd。
     默认模式 argv 逐字节不变，两个真实 cwd 模式只多 `--cwd`。切换走
-    `PATCH /api/engine/workdir`，改了就 `shutdown_all(root)`。
+    `PATCH /api/engine/workdir`，改了就 `shutdown_all(root)`。**没决定过时的默认档**是 `workdir.default_mode()`：
+    项目用的是用户自己的 Python（`pool.user_interpreter_in_effect`：项目级决策指向项目外、不归 Tavotto 管的解释器，
+    且无全局显式选择）→ `project`（脚本目录，ADR 0106 §二），其余 → `sandbox`。派生、不写设置；`grant_for` 此时回
+    `granted=True, granted_at=None, implied_by=user_interpreter`；首开证据只指向脚本目录时不再问。
   * **首开的一次确认（U03，ADR 0057 §三）**：`workdir` 键不存在 = 没决定过。起第一个 worker
     之前 `pool._new_worker()` 调 `workdir.resolve_mode(root, script)`：决定过就用记住的；没决定过
     按 `engine/databinding.py` 的静态证据——脚本里的相对数据路径字面量只在项目根找得到
