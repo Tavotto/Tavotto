@@ -182,6 +182,9 @@ jobs:
 
       - name: 建一次性验证环境
         id: venv
+        env:
+          PIP_DEFAULT_TIMEOUT: "30"
+          PIP_RETRIES: "5"
         run: |
           set -euo pipefail
           # 这个 venv 是本次 run 专用的，跑完即弃；它落在持久化根的 tmp/ 下，
@@ -314,6 +317,9 @@ jobs:
         # pytest.ini 的 addopts 是 `-m "not slow"`，所以必须显式反选。
         # **不接受「一个都没选中」**：那说明标记被误删或改名，而门禁会
         # 安静地报绿——正是这套 CI 要消灭的那种失效。
+        env:
+          PIP_DEFAULT_TIMEOUT: "30"
+          PIP_RETRIES: "5"
         run: |
           set -euo pipefail
           # 判据是 pytest 的**退出码**，不是它打给人看的那段文字。
@@ -414,6 +420,9 @@ jobs:
       - name: 造一个包用于验收（非发行档）
         if: ${{ !inputs.use_prebuilt_dist }}
         id: pkg
+        env:
+          PIP_DEFAULT_TIMEOUT: "30"
+          PIP_RETRIES: "5"
         run: |
           set -euo pipefail
           rm -rf dist
@@ -429,6 +438,9 @@ jobs:
           echo "wheel=${WHEELS[0]}" >> "$GITHUB_OUTPUT"
 
       - name: 包验收
+        env:
+          PIP_DEFAULT_TIMEOUT: "30"
+          PIP_RETRIES: "5"
         run: "${{ steps.venv.outputs.python }} scripts/ci/lab_acceptance.py --dist dist"
 
       # ── 升级 ─────────────────────────────────────────────────
@@ -437,6 +449,8 @@ jobs:
       - name: 升级验收 N-1 → 当前
         if: env.LAB_MODE != 'main'
         env:
+          PIP_DEFAULT_TIMEOUT: "30"
+          PIP_RETRIES: "5"
           # 候选 wheel 的来源只有两条，取决于上面走了哪一支。**不许在这里
           # 再 glob 一次 dist/**：那会变成第三个「自己猜文件名」的地方。
           CANDIDATE: ${{ inputs.use_prebuilt_dist
@@ -539,6 +553,9 @@ jobs:
       - name: Mutation testing
         if: env.LAB_MODE == 'weekly'
         continue-on-error: ${{ vars.LAB_MUTATION_GATE != 'true' }}
+        env:
+          PIP_DEFAULT_TIMEOUT: "30"
+          PIP_RETRIES: "5"
         run: |
           ${{ steps.venv.outputs.python }} -m pip install -q "mutmut==3.3.1"
           ${{ steps.venv.outputs.python }} scripts/ci/mutation.py \
