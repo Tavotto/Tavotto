@@ -59,7 +59,7 @@ import { checkUpdateOnStartup } from '@/store/updateStore'
 import { restoreSession, startAutosave, useDocumentStore } from '@/store/documentStore'
 import { useViewportStore } from '@/store/viewportStore'
 import { startLayoutAutoReflow } from '@/store/actions'
-import { startVersionCheckpoints } from '@/hooks/useVersionCheckpoints'
+import { markWorkspaceOpened, startVersionCheckpoints } from '@/hooks/useVersionCheckpoints'
 import { installDiagnosticsWiring } from '@/diagnostics/wiring'
 import { installDiagnosticsDevHook } from '@/diagnostics'
 import { useSelectionStore } from '@/store/selectionStore'
@@ -151,6 +151,8 @@ function Workspace() {
       // 素材清单与文档**都到齐**之后再对账：两个请求谁先回来是不定的，
       // 只挂在其中一个上就会有一半的时候拿着空清单去同步（= 什么都没做）
       syncLoadedDocument()
+      // 排版时间线的「打开项目」时刻：文档此刻才就位，时间线也已经在跑（ADR 0101 §3）
+      void markWorkspaceOpened()
     })
     const stopAutosave = startAutosave()
     // 挂载之后再换进来的文档（教程重开 / 载入画布文件 / 最近文档 …）同样要对账

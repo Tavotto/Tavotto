@@ -793,10 +793,11 @@
     "undo": "Undo",
     "undoWith": "Undo {{label}}",
     "updateAvailable": "Update available: {{version}}",
-    "versionTimeline": "Layout versions…",
+    "versionTimeline": "Layout timeline…",
     "zoomIn": "Zoom in",
     "zoomOut": "Zoom out",
-    "zoomValue": "Zoom {{percent}}%"
+    "zoomValue": "Zoom {{percent}}%",
+    "timelineButton": "Layout timeline"
   },
   "update": {
     "banner": "Tavotto has been updated. Reload to use the new version.",

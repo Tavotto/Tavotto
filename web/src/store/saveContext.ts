@@ -37,6 +37,7 @@
  */
 import { msg } from '@/i18n'
 import { currentProjectId } from '@/lib/session'
+import { currentTimelineCtx } from '@/lib/timelineContext'
 import { activeProjectFile, useDocumentStore } from './documentStore'
 import { useUiStore } from './uiStore'
 
@@ -46,6 +47,17 @@ export interface SaveContext {
   readonly pj: string | null
   /** 入口那一刻绑定的项目文件（相对项目根）；没绑定 = `null` */
   readonly file: string | null
+  /**
+   * 同一刻的**排版时间线上下文**（项目代际 + 排版 id，`lib/timelineContext`）：写成之后发
+   * 「排版写成了」事件时带它，时间线的「保存」点只打给被存的那一份（ADR 0101 §7）。
+   *
+   * 与上面三维**不是同一个判据**，所以单独带而不是从它们推：时间线节点归档在排版 id 名下，
+   * 同一份排版被重新载入（`loadSeq` 变）或改绑了文件（`file` 变）之后，节点仍属于它——
+   * 那两维管的是「还要不要继续写 / 弹框」，不管「这一刻属于谁的时间线」；而项目那一维
+   * 时间线用的是项目代际（`timelineStore.gen`，换项目时 `clear()` +1），与 pj 同一时刻变。
+   * 两份在入口**同一次**捕获里取，不各算各的。
+   */
+  readonly timeline: string
 }
 
 export function captureSaveContext(): SaveContext {
@@ -55,6 +67,7 @@ export function captureSaveContext(): SaveContext {
     loadSeq: s.loadSeq,
     pj: currentProjectId(),
     file: activeProjectFile()?.file ?? null,
+    timeline: currentTimelineCtx(),
   }
 }
 
