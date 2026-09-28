@@ -172,7 +172,9 @@ def derive(requested: str, chosen: str, *, chosen_is_dir: bool) -> dict:
             }
     target = figcapture.remap_target([rule], requested)
     if target is None or not os.path.isfile(target):  # pragma: no cover — 上面已逐支保证
-        raise RemapError(ERROR_NOT_FOUND_IN_DIR, "推出的规则落不到这个文件上", name=body[-1])
+        raise RemapError(
+            ERROR_NOT_FOUND_IN_DIR, "推出的规则落不到这个文件上", name=body[-1], path=chosen
+        )
     return rule
 
 

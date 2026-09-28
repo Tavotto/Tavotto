@@ -1,7 +1,13 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
-import type { DependencyPreparationOffer, WorkdirConfirmation, WorkdirMode } from '@/lib/api'
+import type {
+  DependencyPreparationOffer,
+  InputRemapRule,
+  MissingInputOffer,
+  WorkdirConfirmation,
+  WorkdirMode,
+} from '@/lib/api'
 import { useEnvStore } from '@/store/envStore'
 import { SettingRow } from './settings/SettingRow'
 import { Button } from './ui/Button'
@@ -134,6 +140,65 @@ export function WorkdirChooseButton({ confirmation }: { confirmation: WorkdirCon
       <Button className="self-start" onClick={() => request(confirmation)}>
         {en('workdirChooseButton')}
       </Button>
+    </div>
+  )
+}
+
+/**
+ * 「找不到数据」错误块里的出口（ADR 0106）：对话框被「稍后」关掉之后，从这里再打开——
+ * 载荷留在渲染条目上（`PanelRender.missingInput`），这里只把它交回 envStore。
+ */
+export function MissingInputButton({ offer }: { offer: MissingInputOffer | null }) {
+  useTranslation('errors')
+  const request = useEnvStore((s) => s.requestMissingInput)
+  if (!offer) return null
+  return (
+    <div className="mt-1.5 flex flex-col gap-1">
+      <Button className="self-start" data-testid="missing-input-open" onClick={() => request(offer)}>
+        {en('missingInputOpen')}
+      </Button>
+    </div>
+  )
+}
+
+/**
+ * 设置 › 渲染环境：本项目记住的数据位置（ADR 0106）。每条一行「脚本写的 → 现在去哪找」，可删；
+ * 删了就回到「找不到就报错」。没有规则时不占地方。
+ */
+export function InputRemapRows() {
+  const { t } = useTranslation('errors')
+  const { env, forgetInputRemap } = useEnvStore()
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const rules = env?.project?.open ? (env.project.input_remap?.rules ?? []) : []
+  if (!rules.length) return null
+  const forget = async (rule: InputRemapRule) => {
+    setBusy(true)
+    setError(await forgetInputRemap(rule))
+    setBusy(false)
+  }
+  return (
+    <div className="mt-1.5 border-t border-border pt-1.5" data-testid="input-remap-rows">
+      <p className="text-xs text-ink-2">{en('inputRemapLabel')}</p>
+      <ul className="mt-1 flex flex-col gap-1">
+        {rules.map((r) => (
+          <li key={`${r.kind}:${r.from}`} className="flex items-start gap-2">
+            {/* 两侧都是用户自己的路径，不翻译 */}
+            <span className="min-w-0 flex-1 break-all font-mono text-xs text-ink-2">
+              {r.from === '' ? t('engine.inputRemapAnyRelative') : r.from}
+              {' → '}
+              {r.to}
+              {r.target_exists === false && (
+                <span className="ml-1 font-sans text-danger">{en('inputRemapTargetGone')}</span>
+              )}
+            </span>
+            <Button size="sm" variant="secondary" disabled={busy} onClick={() => void forget(r)}>
+              {en('inputRemapForget')}
+            </Button>
+          </li>
+        ))}
+      </ul>
+      {error && <p className="text-xs text-danger">{error}</p>}
     </div>
   )
 }

@@ -1,8 +1,12 @@
 import { create } from 'zustand'
 import { t } from '@/i18n'
 import {
+  addInputRemap,
   backendErrorText,
   type DependencyPreparationOffer,
+  type InputRemapRule,
+  type MissingInputOffer,
+  removeInputRemap,
   fetchEngineEnvironment,
   installEngineEnvironment,
   setEngineEnvironment,
@@ -69,6 +73,21 @@ interface EnvState {
   requestDependencyPreparation: (offer: DependencyPreparationOffer, projectId?: string | null) => void
   dismissDependencyPreparation: () => void
   /**
+   * 数据找不到（ADR 0106）：渲染以 `missing_input`（或带 `missing_input` 载荷的「没出图」）回来时，
+   * 请用户指认那个文件或它所在的文件夹。载荷放这里（与运行目录的确认同一个家），
+   * `MissingInputDialog` 渲染它；同一时刻只开一份，换了项目的旧载荷不弹。
+   */
+  missingInput: MissingInputOffer | null
+  requestMissingInput: (offer: MissingInputOffer, projectId?: string | null) => void
+  dismissMissingInput: () => void
+  /**
+   * 用户指认了数据位置：后端推规则、按项目记住、关掉会话；这里更新设置里的规则表、关框、把因
+   * 「找不到数据」失败的面板重新排上。回 null 或一句失败原文（本地化过的）。
+   */
+  pointAtData: (requested: string, chosen: string, kind: 'file' | 'dir' | 'auto') => Promise<string | null>
+  /** 设置里删一条改指规则；回 null 或一句失败原文 */
+  forgetInputRemap: (rule: InputRemapRule) => Promise<string | null>
+  /**
    * 跑前的门刚刚**自动改用**了用户自己的环境（ADR 0079，SSE `engine.environment_adopted`）：
    * 通知轨上说一句「改用了哪个」并给「改回」。只是说出口，不是一次授权——改用已经发生了。
    */
@@ -117,6 +136,7 @@ export const useEnvStore = create<EnvState>((set, get) => ({
   installing: false,
   workdirConfirmation: null,
   dependencyPreparation: null,
+  missingInput: null,
 
   requestWorkdirConfirmation: (payload, projectId) => {
     if (projectId !== undefined && projectId !== currentProjectId()) return
@@ -124,6 +144,45 @@ export const useEnvStore = create<EnvState>((set, get) => ({
     set({ workdirConfirmation: payload })
   },
   dismissWorkdirConfirmation: () => set({ workdirConfirmation: null }),
+  requestMissingInput: (offer, projectId) => {
+    if (projectId !== undefined && projectId !== currentProjectId()) return
+    if (get().missingInput) return
+    set({ missingInput: offer })
+  },
+  dismissMissingInput: () => set({ missingInput: null }),
+  pointAtData: async (requested, chosen, kind) => {
+    const epoch = projectEpoch
+    try {
+      const res = await addInputRemap(requested, chosen, kind)
+      // 规则记在 A 上；B 的设置、确认框、渲染重排一个都不动
+      if (epoch !== projectEpoch) return null
+      const env = get().env
+      if (env?.project) set({ env: { ...env, project: { ...env.project, input_remap: res.input_remap } } })
+      set({ missingInput: null })
+      // 后端已经关掉了这个项目的会话；把因「找不到数据」失败的面板重新排上
+      const { useRenderStore } = await import('@/store/renderStore')
+      if (epoch !== projectEpoch) return null
+      useRenderStore.getState().retryEnvironmentFailures()
+      useUiStore.getState().setStatus(msg('engine.missingInputRemembered', undefined, 'errors'))
+      return null
+    } catch (e) {
+      if (epoch !== projectEpoch) return null
+      return backendErrorText(e)
+    }
+  },
+  forgetInputRemap: async (rule) => {
+    const epoch = projectEpoch
+    try {
+      const res = await removeInputRemap(rule.kind, rule.from)
+      if (epoch !== projectEpoch) return null
+      const env = get().env
+      if (env?.project) set({ env: { ...env, project: { ...env.project, input_remap: res.input_remap } } })
+      return null
+    } catch (e) {
+      if (epoch !== projectEpoch) return null
+      return backendErrorText(e)
+    }
+  },
   requestDependencyPreparation: (offer, projectId) => {
     if (projectId !== undefined && projectId !== currentProjectId()) return
     if (get().dependencyPreparation) return
@@ -279,9 +338,16 @@ export const useEnvStore = create<EnvState>((set, get) => ({
         env: { ...env, project: { open: false } },
         workdirConfirmation: null,
         dependencyPreparation: null,
+        missingInput: null,
         adoptedEnvironment: null,
       })
-    else set({ workdirConfirmation: null, dependencyPreparation: null, adoptedEnvironment: null })
+    else
+      set({
+        workdirConfirmation: null,
+        dependencyPreparation: null,
+        missingInput: null,
+        adoptedEnvironment: null,
+      })
     void get().refresh()
   },
 

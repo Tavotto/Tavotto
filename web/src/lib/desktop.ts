@@ -263,6 +263,17 @@ export async function pickScriptFile(title?: string): Promise<string | null> {
 }
 
 /**
+ * 原生文件选择器，不限类型（ADR 0106「找到这个文件…」：脚本要读的数据可以是任何格式）。
+ * 取消返回 null；浏览器模式返回 null，调用方改让用户粘贴路径。同一条 `dialog:allow-open` 权限。
+ */
+export async function pickAnyFile(title?: string): Promise<string | null> {
+  if (!isDesktop()) return null
+  const { open } = await import('@tauri-apps/plugin-dialog')
+  const picked = await open({ directory: false, multiple: false, title })
+  return typeof picked === 'string' ? picked : null
+}
+
+/**
  * 在系统文件管理器里显示导出的文件（桌面里不该出现浏览器式下载页 / PDF 标签页）。
  * 成功返回 true；浏览器模式或失败返回 false，调用方保留原有 <a> 行为。
  */
