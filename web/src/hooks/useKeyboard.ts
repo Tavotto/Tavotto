@@ -15,9 +15,8 @@ import {
   nudgeSelected,
   selectAll,
 } from '@/store/actions'
-import { cancelActivePointerGesture } from '@/canvas/interactions'
 import { useDocumentStore } from '@/store/documentStore'
-import { finishActiveGesture } from '@/store/gestureCoordinator'
+import { cancelActivePointerGesture, finishActiveGesture } from '@/store/gestureCoordinator'
 import { useInteractionStore } from '@/store/interactionStore'
 import { panelRender, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'

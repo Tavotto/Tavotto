@@ -55,6 +55,32 @@ export function finishActiveGesture(): void {
   }
 }
 
+/**
+ * 此刻开着的那一次指针追踪（拖动 / 缩放 / 框选 / 绘制……）的「取消」出口；null = 没有。
+ * 由 `canvas/interactions.trackPointer` 登记（为什么要有这个出口见那里）；住在 store 层是因为
+ * 离开文档的 `projectStore` 也要调它，而 store 不许 import canvas（`importArchitecture` 门禁）。
+ */
+let pointerCancel: (() => void) | null = null
+
+/** 登记这一次指针追踪的取消出口，返回注销函数（只注销自己那一份）。 */
+export function registerPointerCancel(cancel: () => void): () => void {
+  pointerCancel = cancel
+  return () => {
+    if (pointerCancel === cancel) pointerCancel = null
+  }
+}
+
+/**
+ * 取消此刻进行中的指针手势。回 true = 真的取消了一次；没有进行中的手势时什么都不做、
+ * 回 false，调用方照常走它自己的逻辑。
+ */
+export function cancelActivePointerGesture(): boolean {
+  const cancel = pointerCancel
+  if (!cancel) return false
+  cancel()
+  return true
+}
+
 /** 现在有没有开着的一轮（开发态不变式与测试用） */
 export const hasActiveGesture = (): boolean => active != null
 
