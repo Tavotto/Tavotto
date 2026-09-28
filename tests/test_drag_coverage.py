@@ -500,6 +500,114 @@ def test_malformed_drag_value_leaves_no_half_applied_state():
         assert r["same"], f"{gid}：坏值之后撤销没回到原样"
 
 
+_VALIDATE_FIRST_DRIVER = """\
+import json
+import math
+import sys
+sys.path.insert(0, sys.argv[1])
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib.offsetbox import AnchoredText, AnnotationBbox, TextArea
+from matplotlib.patches import FancyArrowPatch, Rectangle
+
+import legendmodel
+import manifest
+import overrides
+
+def build():
+    fig, ax = plt.subplots(figsize=(4, 3), layout="constrained")
+    ax.plot([0, 1], [0, 1], label="l")
+    # 带锚框：坏值若先把模型改了（清锚框），这里量得出来
+    ax.legend(loc="upper left", bbox_to_anchor=(0.02, 0.98))
+    ax.add_artist(AnchoredText("(a)", loc="upper right"))
+    ax.add_artist(AnnotationBbox(TextArea("note"), (0.5, 0.5)))
+    ax.add_patch(Rectangle((0.1, 0.1), 0.2, 0.2))
+    ax.add_patch(FancyArrowPatch((0.2, 0.7), (0.4, 0.8), arrowstyle="->", mutation_scale=10))
+    ax.text(0.6, 0.2, "note text")
+    st = overrides.FigState(fig)
+    manifest.instrument(st)
+    return st
+
+
+def snap(st):
+    leg = st.index["axes_0.legend"]
+    try:
+        m = manifest.build_manifest(st, "V")["elements"]
+    except Exception as exc:  # 修前 NaN 落进 artist 之后整张图画不出来：记成一个值，逐行报
+        return {"draw_error": repr(exc)}
+    cfg = legendmodel.legend_pos_cfg(leg)
+    return {
+        "boxes": {e["gid"]: e["bbox"] for e in m},
+        "slots": {k: repr(cfg[k]) for k in legendmodel._LEGEND_POS_SLOTS},
+        "bbox_to_anchor": None if leg._bbox_to_anchor is None else list(leg._bbox_to_anchor.bounds),
+    }
+
+
+BAD = ([0.3], [0.3, math.nan], [0.3, math.inf], ["x", 0.3])
+CASES = (
+    ("axes_0.legend", "loc_frac", [0.4, 0.4]),
+    ("axes_0.artists_0", "pos_frac", [0.4, 0.4]),
+    ("axes_0.artists_1", "pos_frac", [0.4, 0.4]),
+    ("axes_0.patches_0", "pos_frac", [0.4, 0.4]),
+    ("axes_0.arrows_1", "endpoints_frac", [0.3, 0.3, 0.5, 0.4]),
+    ("axes_0", "position", [0.2, 0.2, 0.6, 0.6]),
+    ("axes_0.texts_0", "pos_frac", [0.4, 0.4]),
+)
+out = []
+for gid, prop, good in CASES:
+    for bad in BAD:
+        # 长度对、内容坏的那几种补齐到这条 prop 的长度（[0.3] 本身就是长度不对）
+        badv = list(bad) + [0.5] * (len(good) - len(bad)) if len(bad) > 1 else list(bad)
+        row = {"case": f"{gid}.{prop} <- {badv!r}"}
+        st = build()  # 每行一张新图：一行的污染不许拖累下一行的判据
+        base = snap(st)
+        # ① 第一次写就是坏值（Codex #681：外部改坏的项目）：热模型**当场**零改动
+        row["warned"] = bool(overrides.apply(st, [{"gid": gid, "prop": prop, "value": badv}]))
+        row["untouched"] = snap(st) == base
+        overrides.apply(st, [])
+        row["undo"] = snap(st) == base
+        # 随后合法的操作照常：图例的 loc（修前从被污染的 loc_frac 槽里重抛）与同一条 prop
+        if prop == "loc_frac":
+            row["loc_ok"] = not overrides.apply(
+                st, [{"gid": gid, "prop": "loc", "value": "lower right"}]
+            )
+            overrides.apply(st, [])
+        row["good_ok"] = not overrides.apply(st, [{"gid": gid, "prop": prop, "value": good}])
+        moved = snap(st)
+        # ② 拖过之后被改坏：热态仍是拖过的那一版（applied 里还是它）
+        overrides.apply(st, [{"gid": gid, "prop": prop, "value": badv}])
+        row["kept"] = snap(st) == moved
+        overrides.apply(st, [])
+        row["back"] = snap(st) == base
+        out.append(row)
+        plt.close(st.fig)
+print(json.dumps(out))
+"""
+
+
+def test_malformed_drag_value_is_rejected_before_any_state_changes():
+    """拖动类 setter 先把值校验完（个数、有限数）再动任何状态（Codex #681 第二条 P2）：坏值
+    给 warning，热模型**当场**零改动——图例的位置模型槽位、锚框，锚定框 / 插框 / 形状 / 独立
+    箭头 / 子图 / 文字的落位都不变；之后的空列表、图例的 loc、同一条 prop 的合法值都照常。
+
+    上一条用例在坏值之后先写了一次合法拖动，正好把被污染的 loc_frac 槽冲掉，所以没量到
+    「第一次写就是坏值、紧接着改 loc」这条路；这里按 Codex 给的顺序直接走。"""
+    proc = subprocess.run(
+        [WORKER_PY, "-c", _VALIDATE_FIRST_DRIVER, str(ENGINE_DIR)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=300,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    rows = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert len(rows) == 28, rows
+    bad = [r for r in rows if not all(v for k, v in r.items() if k != "case")]
+    assert not bad, json.dumps(bad, ensure_ascii=False, indent=1)
+
+
 _ARROW_DRIVER = """\
 import json
 import sys

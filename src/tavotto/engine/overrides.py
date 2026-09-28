@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import math
 import os
 import sys
 import weakref
@@ -439,6 +440,23 @@ def _frame_mode(value) -> str:
     return value
 
 
+def _drag_value(value, n: int) -> list[float]:
+    """拖动类 prop 的值：恰好 `n` 个有限数（figure / 图幅分数）。
+
+    拖动 setter **第一步**调它，校验完才动任何状态（Codex #681）：抛在半路的话 `apply` 把它收成
+    warning、不记进 applied，之后的空列表还不回来——图例的位置模型槽位留着坏值、之后改任何一条
+    位置 prop 都重抛；NaN / inf 则一声不响落进 artist，下一次排版整张图画不出来。pin 表里的值
+    只在 setter 成功之后登记，`_pin_put_native` / `_pin_place` 拿到的都已过这一关。
+    """
+    try:
+        vals = [float(x) for x in value]
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"拖动位置要 {n} 个数: {value!r}") from exc
+    if len(vals) != n or not all(math.isfinite(x) for x in vals):
+        raise ValueError(f"拖动位置要 {n} 个有限数: {value!r}")
+    return vals
+
+
 def _pin_put_native(a, native) -> None:
     """布局引擎排版之前把拖过的东西放回脚本原样：文字、锚定框、constrained 图上的子图
     （ADR 0100）各有各的原样。"""
@@ -485,11 +503,12 @@ def _set_text_pos_frac(t: Text, value) -> None:
 
     **可能失败的那一步（`_place_text`）排在登记之前**：坏值 / 不支持的坐标系抛出去时
     表里不留半条，布局那一层不会在之后每一次 draw 里拿它重抛。"""
+    value = _drag_value(value, 2)
     pins = _text_pins(t.get_figure())
     prev = pins.get(t)
     native = prev[1] if prev is not None else _text_native_state(t)
     _place_text(t, value)
-    pins[t] = ((float(value[0]), float(value[1])), native)
+    pins[t] = (tuple(value), native)
     _ensure_text_pin_hook(t.get_figure())
 
 
@@ -1000,8 +1019,9 @@ def _set_arrow_endpoints(a, value, state=None) -> None:
             return
         a._mm_endpoints_live = True  # noqa: SLF001
     fig = a.get_figure() if ann is None else ann.get_figure()
-    da = pathgeom.frac_to_display(fig, float(value[0]), float(value[1]))
-    db = pathgeom.frac_to_display(fig, float(value[2]), float(value[3]))
+    value = _drag_value(value, 4)  # 校验在记原样 / 落位之前（NaN 会一声不响落进 artist）
+    da = pathgeom.frac_to_display(fig, value[0], value[1])
+    db = pathgeom.frac_to_display(fig, value[2], value[3])
     if ann is not None:
         _set_annotation_arrow(ann, da, db)
         return
@@ -1009,7 +1029,7 @@ def _set_arrow_endpoints(a, value, state=None) -> None:
     # 排完按排好的子图再落一次
     a.__dict__.setdefault("_mm_arrow_native", _get_arrow_endpoints(a))
     _place_arrow(a, value)
-    _text_pins(fig)[a] = (tuple(float(v) for v in value), a._mm_arrow_native)  # noqa: SLF001
+    _text_pins(fig)[a] = (tuple(value), a._mm_arrow_native)  # noqa: SLF001
     _ensure_text_pin_hook(fig)
 
 
@@ -1078,11 +1098,14 @@ def _set_patch_pos_frac(p, value) -> None:
     平移量以**英寸**记在 `dpi_scale_trans` 上，不是像素：导出时 dpi 会变
     （`savefig(dpi=600)`），钉像素的话预览里挪了 3 mm、导出里只挪 1 mm。
     """
+    # 先校验：`_place_patch` 第一步就把形状放回基准 transform，坏值抛在那之后的话，拖过的
+    # 形状当场弹回原处，而 applied 里还是拖过的那一版
+    value = _drag_value(value, 2)
     _place_patch(p, value)
     # 布局引擎下挂进 pin 表（ADR 0100）：基准 transform 多半是 transData，而子图框随排版
     # 按 dpi 微调（字形度量取整），只在 apply 那一刻换算一次的话，预览（72 dpi）与
     # manifest（图的 dpi）两次排版之间形状差 0.1 mm；每次排完按排好的子图再落一次
-    _text_pins(p.get_figure())[p] = ((float(value[0]), float(value[1])), None)
+    _text_pins(p.get_figure())[p] = (tuple(value), None)
     _ensure_text_pin_hook(p.get_figure())
 
 
@@ -1091,7 +1114,7 @@ def _place_patch(p, value) -> None:
     base = _patch_base_transform(p)
     p.set_transform(base)  # 先回到基准再量：这一段要幂等（重放 / 二次拖动）
     bb = p.get_window_extent()
-    # 坏值在这里抛时形状停在基准 transform 上 = 脚本原样，与干净重放同一个结果，不必挪前面
+    # 值已由调用方校验过（`_set_patch_pos_frac` 第一步、pin 表只收校验过的值）
     tx, ty = pathgeom.frac_to_display(fig, float(value[0]), float(value[1]))
     dpi = float(fig.dpi)
     shift = ScaledTranslation((tx - bb.x0) / dpi, (ty - bb.y0) / dpi, fig.dpi_scale_trans)
@@ -1205,10 +1228,11 @@ def _place_offsetbox(a, value) -> None:
     if not offsetbox_draggable(a):
         raise ValueError(f"{type(a).__name__} 的坐标系不支持拖动定位")
     fig = pathgeom.root_figure(a.get_figure())
-    # 可能失败的都在前面（坏值：长度不对、不是数、逆算不出来），**先算完再动 artist**：
-    # 抛在半路的话 apply 把它收成 warning、不记进 applied，之后的空列表也还不回来，
+    # 可能失败的都在前面（坏值：长度不对、不是数、不是有限数、逆算不出来），**先算完再动
+    # artist**：抛在半路的话 apply 把它收成 warning、不记进 applied，之后的空列表也还不回来，
     # 热态留着半截改动而干净重放没有（与 `_set_axes_position` 的顺序不变式同一条）
-    disp = pathgeom.frac_to_display(fig, float(value[0]), float(value[1]))
+    x, y = _drag_value(value, 2)
+    disp = pathgeom.frac_to_display(fig, x, y)
     if isinstance(a, AnchoredOffsetbox):
         fx, fy = (float(v) for v in fig.transFigure.inverted().transform(disp))
     else:
@@ -1227,9 +1251,10 @@ def _place_offsetbox(a, value) -> None:
 
 def _set_offsetbox_pos_frac(a, value) -> None:
     """拖动锚定框 / 插框；布局引擎下登记进 pin 表（见 `_ensure_text_pin_hook`）。"""
-    _place_offsetbox(a, value)
+    x, y = _drag_value(value, 2)
+    _place_offsetbox(a, [x, y])
     fig = a.get_figure()
-    _text_pins(fig)[a] = ((float(value[0]), float(value[1])), a._mm_offsetbox_native)  # noqa: SLF001
+    _text_pins(fig)[a] = ((x, y), a._mm_offsetbox_native)  # noqa: SLF001
     _ensure_text_pin_hook(fig)
 
 
@@ -2440,7 +2465,7 @@ def _set_axes_position(a, v) -> None:
     # 值是图幅（frame，ADR 0098）里的分数——manifest 报的、前端写的都是它；落到 matplotlib
     # 之前换成 figsize 的分数（没有 frame 时原样）。还原走 `_restore_axes_position`，那边
     # 拿的是 getter 记下的 figsize 原值，不经这道换算。
-    bounds = pathgeom.axes_rect_to_figsize(a.get_figure(), [float(x) for x in v])
+    bounds = pathgeom.axes_rect_to_figsize(a.get_figure(), _drag_value(v, 4))
     # **顺序是这条函数的不变式**：可能失败的那一步（`set_position` 会对长度不是 4 的
     # bounds 抛 TypeError）必须排在**不可逆**的几步（换引擎、落 pin、解开色条轴的
     # 长宽比）之前。
@@ -3598,10 +3623,12 @@ _legend_frac_restore = _RESTORE[("legend", "loc_frac")]
 
 
 def _set_legend_loc_frac(leg, v) -> None:
-    _legend_frac_set(leg, v)
+    # 先校验再进位置模型：`_legend_frac_set` 先把值写进槽位、清掉锚框，才在取第二个坐标时抛
+    x, y = _drag_value(v, 2)
+    _legend_frac_set(leg, [x, y])
     fig = leg.get_figure()
     if fig is not None:
-        _text_pins(fig)[leg] = ((float(v[0]), float(v[1])), None)
+        _text_pins(fig)[leg] = ((x, y), None)
         _ensure_text_pin_hook(fig)
 
 
