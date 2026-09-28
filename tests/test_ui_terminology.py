@@ -45,7 +45,7 @@ ROOT = Path(__file__).resolve().parent.parent
 LOCALES = ROOT / "web" / "src" / "i18n" / "locales"
 I18N_RS = ROOT / "src-tauri" / "src" / "i18n.rs"
 API_TS = ROOT / "web" / "src" / "lib" / "api.ts"
-PROJECT_PICKER_TSX = ROOT / "web" / "src" / "components" / "ProjectPicker.tsx"
+DIR_BROWSER_TSX = ROOT / "web" / "src" / "components" / "DirBrowser.tsx"
 
 #: 被禁的词。英文按整词（document / documents，大小写不论）：`docs`、`Documentation`
 #: 都不是这个概念，也不会被它咬到。
@@ -158,7 +158,7 @@ def test_shortcut_ids_match_the_frontend_closed_set():
     frontend = exported_string_union(API_TS.read_text(encoding="utf-8"), "ShortcutId")
     assert set(frontend) == backend, f"后端 {sorted(backend)} ≠ 前端 {frontend}"
     discriminant, clauses = function_string_switch(
-        PROJECT_PICKER_TSX.read_text(encoding="utf-8"), "shortcutLabel"
+        DIR_BROWSER_TSX.read_text(encoding="utf-8"), "shortcutLabel"
     )
     assert discriminant == "entry.id", discriminant
     cases = {}

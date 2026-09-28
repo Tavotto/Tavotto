@@ -2916,7 +2916,7 @@ def _drive_roots() -> list[dict]:
 
 
 #: 常用起点：(稳定 id, 老前端回退用的显示名, 主目录下的文件夹名)。界面按 `id` 翻译
-#: （`web/src/components/ProjectPicker.tsx` 的 `shortcutLabel`，闭集 `ShortcutId` 严格同源，
+#: （`web/src/components/DirBrowser.tsx` 的 `shortcutLabel`，闭集 `ShortcutId` 严格同源，
 #: `tests/test_ui_terminology.py` 对拍）；`name` 只给还不认识 `id` 的老前端。
 #: 「文稿」是 macOS 访达里 Documents 的中文名——界面名词里没有「文档」（ADR 0001 2026-09-26 修订）。
 BROWSE_SHORTCUTS = (
