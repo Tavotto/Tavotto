@@ -7,7 +7,8 @@
  * ——与 dsh-web-app 的 `webStartup` 同一个做法。
  *
  * 启动器与超时都不另写一份：启动器是包里那一对 `mcp/launch`（sh）/ `mcp/launch.cmd`
- * （批处理，#266），超时读 `.mcp.json` 的 `tool_timeout_sec`（插件里唯一的出处）。
+ * （批处理，#266），超时读 Codex MCP 配置的 `tool_timeout_sec`（插件里唯一的出处；文件由
+ * Codex 清单的 `mcpServers` 指定，现名 `codex.mcp.json`，ADR 0109）。
  */
 
 import { readFileSync } from 'node:fs'
@@ -31,7 +32,8 @@ export const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)))
  */
 export function launchSpec(root, platform = process.platform) {
   const server = join(root, 'mcp', 'server.py')
-  const entry = JSON.parse(readFileSync(join(root, '.mcp.json'), 'utf8')).mcpServers.tavotto
+  const codexManifest = JSON.parse(readFileSync(join(root, '.codex-plugin', 'plugin.json'), 'utf8'))
+  const entry = JSON.parse(readFileSync(join(root, codexManifest.mcpServers), 'utf8')).mcpServers.tavotto
   // POSIX 上交给 sh 解释，不靠 pnpm 保不保留执行位。Windows 上 command 直接是 launch.cmd：
   // dsh-mcp-client 经 MCP SDK 的 StdioClientTransport 用 cross-spawn 起进程，它看到非 .exe
   // 的文件会自己拼 `cmd.exe /d /s /c "<整条>"`、^ 转义全部元字符并逐字传给 CreateProcess。

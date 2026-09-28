@@ -85,7 +85,7 @@ def test_the_candidate_does_not_depend_on_the_source_tree(plugin):
     """脱离源码仓库后仍然自足：相对引用都在包内，没有指向外部的链接或绝对路径。"""
     for p in _stage()._walk(plugin):
         assert not p.is_symlink()
-    mcp = json.loads((plugin / ".mcp.json").read_text(encoding="utf-8"))
+    mcp = json.loads((plugin / "codex.mcp.json").read_text(encoding="utf-8"))
     for entry in mcp["mcpServers"].values():
         assert not os.path.isabs(entry["command"]), "发行件里 command 只许裸名字或自带启动器"
         if entry["command"].startswith("./"):
@@ -98,7 +98,7 @@ def test_the_candidate_does_not_depend_on_the_source_tree(plugin):
 
 def test_dotfiles_and_modes_survived_the_archive_hop(plugin):
     stage = _stage()
-    for rel in (".codex-plugin/plugin.json", ".mcp.json"):
+    for rel in (".codex-plugin/plugin.json", "codex.mcp.json"):
         assert (plugin / rel).is_file(), f"{rel} 在归档传输中丢了"
     manifest = stage.read_manifest(plugin)
     for entry in manifest["files"]:

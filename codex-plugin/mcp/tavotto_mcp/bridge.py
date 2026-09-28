@@ -70,7 +70,7 @@ from .roots import (
     canonical_path,
 )
 
-#: 工作区提示：装好的插件里 `.mcp.json` 的 `cwd` 指向**插件自己的目录**
+#: 工作区提示：装好的插件里 Codex MCP 配置（`codex.mcp.json`）的 `cwd` 指向**插件自己的目录**
 #: （`./mcp/server.py` 要靠它解析），于是「不给就用进程 cwd」在真实安装下
 #: 等于把用户工作区里的每一张图都判成 `path_out_of_scope`——默认流程根本
 #: 跑不起来。所以 cwd 只在它**不是插件目录**时才算数（源码树里直接跑

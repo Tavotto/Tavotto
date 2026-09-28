@@ -1,9 +1,11 @@
 """Claude Code 插件（`codex-plugin/.claude-plugin/`）的形状看护（ADR 0103）。
 
-同一份插件目录同时是 Codex 插件与 Claude Code 插件：根 `.mcp.json` 是 Codex 形状，
-Claude Code **也会读它**，然后再把 `.claude-plugin/plugin.json` 的 `mcpServers` 按名字
-合并进来——同名的后者整条替换前者。这里的断言盯的是「坏了不报错、只是另一家悄悄
-起不来」的那几处：名字对不上、字段抄成 Codex 的、超时漏换算、版本漂开、文档与常量漂开。
+同一份插件目录同时是 Codex 插件与 Claude Code 插件（也被 ZCode / WorkBuddy 当 Claude 插件装，
+ADR 0106）。Codex 的 MCP 配置叫 `codex.mcp.json`、由 Codex 清单指向——**插件根不许有
+`.mcp.json`**：Claude Code / ZCode / WorkBuddy / MiniMax Code 都会自动读那个名字，WorkBuddy 还让它
+覆盖清单里的同名条目，Codex 形状的相对启动器在那边起不来。这里的断言盯的是「坏了不报错、
+只是另一家悄悄起不来」的那几处：多出一份自动读取的配置、名字对不上、字段抄成 Codex 的、
+超时漏换算、版本漂开、文档与常量漂开。
 """
 
 import json
@@ -21,7 +23,7 @@ ROOT = Path(__file__).resolve().parent.parent
 PLUGIN = ROOT / brand.CODEX_PLUGIN_SUBDIR
 CLAUDE_MANIFEST = PLUGIN / ".claude-plugin" / "plugin.json"
 CODEX_MANIFEST = PLUGIN / ".codex-plugin" / "plugin.json"
-MCP_JSON = PLUGIN / ".mcp.json"
+MCP_JSON = PLUGIN / pluginmanifest.mcp_config_rel(PLUGIN)
 MARKETPLACE = ROOT / ".claude-plugin" / "marketplace.json"
 ROOT_VAR = "${CLAUDE_PLUGIN_ROOT}"
 
@@ -49,14 +51,30 @@ def test_manifest_identity_tracks_the_codex_plugin(manifest):
         assert manifest[key] == codex[key], f"{key} 与 Codex 清单漂开了"
 
 
-def test_server_names_cover_the_codex_mcp_json(manifest):
-    """**每个** Codex `.mcp.json` 里的 server 名都要在 Claude 清单里有同名一条。
+def test_no_auto_discovered_mcp_config_in_the_plugin():
+    """插件目录里**没有**别的宿主会自动读的 MCP 配置（ADR 0106）。
 
-    Claude Code 先读插件根的 `.mcp.json`，再合并 plugin.json 的 `mcpServers`，同名才替换。
-    名字一旦对不上，Codex 那条（相对路径 `./mcp/launch`、没有 Claude 认的 cwd）会
-    作为第二个 server 被 Claude Code 起一遍并失败——2.1.283 实测：
-    `plugin:tavotto:tavotto: ./mcp/launch.cmd ./mcp/server.py - ✘ Failed to connect`。
+    Codex 的配置曾叫插件根 `.mcp.json`。Claude Code / ZCode 先读它、再让清单同名条目替换；
+    WorkBuddy 反过来——清单在前、`.mcp.json` 与 `mcp/*.json` 在后覆盖，于是按 Codex 的
+    `./mcp/launch` 在会话目录里起进程、ENOENT（5.6.2 隔离实测）。所以 Codex 的配置换了
+    名字、由 Codex 清单的 `mcpServers` 指向，这里钉住两件事：会被自动读的名字一个都没有，
+    Codex 清单指向的正是那份改了名的配置。
     """
+    tracked = subprocess.run(
+        ["git", "-C", str(ROOT), "ls-files", "--", brand.CODEX_PLUGIN_SUBDIR],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.splitlines()
+    rels = [t.removeprefix(brand.CODEX_PLUGIN_SUBDIR + "/") for t in tracked]
+    assert rels, "git ls-files 没列出插件目录（判据没在量东西）"
+    assert [r for r in rels if pluginmanifest.STAGE_FORBIDDEN.match(r)] == []
+    assert _load(CODEX_MANIFEST)["mcpServers"] == f"./{pluginmanifest.CODEX_MCP}"
+    assert MCP_JSON == PLUGIN / pluginmanifest.CODEX_MCP and MCP_JSON.is_file()
+
+
+def test_server_names_cover_the_codex_config(manifest):
+    """Claude 清单的 server 名与 Codex 配置同名：技能与 `tavotto_health` 的恢复话术按这个名字找工具。"""
     codex_names = set(_load(MCP_JSON)["mcpServers"])
     assert set(manifest["mcpServers"]) == codex_names
 
@@ -66,7 +84,8 @@ def test_server_entry_is_the_codex_launcher_in_claude_form(manifest, codex_entry
 
     * 路径从 `./` 相对插件根改成 `${CLAUDE_PLUGIN_ROOT}/` 绝对：Claude Code 起 stdio
       server 时只在 command / args / env 里展开这个变量，`cwd` 这个 Codex 字段它不认；
-    * 超时唯一出处是 `.mcp.json` 的 `tool_timeout_sec`，Claude Code 的 `timeout` 是毫秒；
+    * 超时唯一出处是 Codex 配置的 `tool_timeout_sec`。Claude Code 的 `timeout` 是毫秒；
+      ZCode 读同一份清单却只认 `timeoutMs`（毫秒，默认 30 s，导出大图不够），两个都写、同值；
     * 不带任何 Codex 专有字段——它们在 Claude Code 里不是报错而是被静默丢掉，读起来
       像是生效了。
     """
@@ -80,7 +99,8 @@ def test_server_entry_is_the_codex_launcher_in_claude_form(manifest, codex_entry
     assert entry["command"] == claude_form(codex_entry["command"])
     assert entry["args"] == [claude_form(a) for a in codex_entry["args"]]
     assert entry["timeout"] == codex_entry["tool_timeout_sec"] * 1000
-    assert set(entry) == {"type", "command", "args", "timeout"}
+    assert entry["timeoutMs"] == entry["timeout"]
+    assert set(entry) == {"type", "command", "args", "timeout", "timeoutMs"}
     for value in (entry["command"], *entry["args"]):
         assert (PLUGIN / value.removeprefix(f"{ROOT_VAR}/")).is_file(), value
     # Windows 上 cross-spawn 按 PATHEXT 把 command 解析成同目录的 `.cmd` 半边（#720）

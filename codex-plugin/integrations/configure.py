@@ -80,7 +80,7 @@ RUNTIME_FILES = tuple(
     )
 )
 
-#: 配置里的 MCP server 名。与 Codex 的 `.mcp.json` 同一个 key。
+#: 配置里的 MCP server 名。与 Codex 的 `codex.mcp.json` 同一个 key。
 SERVER_NAME = "tavotto"
 #: `RootAuthority` 的显式根变量（`tavotto_mcp/roots.py` 的 `ROOTS_ENV`，同名）
 ROOTS_ENV = "TAVOTTO_MCP_ROOTS"
@@ -539,13 +539,19 @@ def launch_descriptor(python: str, project_root: str, engine_python: "str | None
 
 
 def tool_timeout_sec() -> "int | None":
-    """工具超时的唯一出处：包里 Codex `.mcp.json` 的 `tool_timeout_sec`（秒）。
+    """工具超时的唯一出处：包里 Codex MCP 配置的 `tool_timeout_sec`（秒）。
 
-    其他宿主有自己的字段与单位（DSH `toolCallTimeoutMs`、Claude Code `timeout`
-    都是毫秒），序列化时按单位换算，**不把 Codex 的字段名原样抄过去**。
+    配置文件是 Codex 清单 `mcpServers` 指向的那一份（`codex.mcp.json`，ADR 0106——
+    不叫 `.mcp.json`，别的宿主会自动读那个名字）。其他宿主有自己的字段与单位
+    （DSH `toolCallTimeoutMs`、Claude Code `timeout` 都是毫秒），序列化时按单位换算，
+    **不把 Codex 的字段名原样抄过去**。
     """
     try:
-        with open(os.path.join(PACKAGE_DIR, ".mcp.json"), "r", encoding="utf-8") as fh:
+        with open(
+            os.path.join(PACKAGE_DIR, ".codex-plugin", "plugin.json"), "r", encoding="utf-8"
+        ) as fh:
+            target = json.load(fh)["mcpServers"]
+        with open(os.path.join(PACKAGE_DIR, target), "r", encoding="utf-8") as fh:
             data = json.load(fh)
         value = data["mcpServers"][SERVER_NAME]["tool_timeout_sec"]
     except (OSError, ValueError, KeyError, TypeError):

@@ -249,8 +249,8 @@ def test_dsh_is_the_documented_cordis_patch(mod, project):
 
 
 def test_timeouts_are_converted_from_the_single_source(mod, project):
-    """唯一出处是包里 Codex `.mcp.json` 的 tool_timeout_sec（秒）；ms 字段 = 秒 × 1000。"""
-    seconds = json.loads((PLUGIN / ".mcp.json").read_text(encoding="utf-8"))["mcpServers"][
+    """唯一出处是包里 Codex 配置 `codex.mcp.json` 的 tool_timeout_sec（秒）；ms 字段 = 秒 × 1000。"""
+    seconds = json.loads((PLUGIN / "codex.mcp.json").read_text(encoding="utf-8"))["mcpServers"][
         "tavotto"
     ]["tool_timeout_sec"]
     desc = _descriptor(mod, project)

@@ -14,7 +14,8 @@ doctor` 体检已装副本）都消费它。前两者按路径 import（scripts/
   ——`content_digest` 只覆盖清单之外的文件。
 
 「原始发行件的完整性」与「已装副本的合法本地修改」是两件事：`tavotto codex install`
-会把已装副本 `.mcp.json` 与 `openai.yaml` 的启动 `command` 一起钉成本机解释器的
+会把已装副本的 Codex MCP 配置（`codex.mcp.json`，旧版叫 `.mcp.json`，见 `mcp_config_rel`）
+与 `openai.yaml` 的启动 `command` 一起钉成本机解释器的
 绝对路径。`installed=True` 按**具体字段**验：两份 command 相等，且要么等于发行原值、
 要么是本机一个真实存在的绝对路径；这两份文件其余内容（换行归一后）与发行时一致；
 其它任何文件都不许改。发行件本身不许含机器相关的路径形态 command——唯一例外是
@@ -47,9 +48,19 @@ CANVAS = GENERATED[0]
 #: （tests/test_plugin_stage.py 对拍）：那边是写的一侧，这边是验的一侧。
 WIDGET_STAMP = "<!-- tavotto-mcp-widget "
 #: 一份完整插件**必须**有的文件（缺一个都不是「完整插件」）
+#: Codex 的 MCP 配置文件（相对插件根）。**不叫 `.mcp.json`**（ADR 0106）：WorkBuddy / ZCode /
+#: Claude Code 都会读插件根的 `.mcp.json`，WorkBuddy 还让它覆盖清单里的同名条目，Codex 形状的
+#: `./mcp/launch.cmd` 在那边按会话目录解析、起不来。Codex 按清单 `mcpServers` 的路径读，名字随意。
+CODEX_MCP = "codex.mcp.json"
+#: 0.17.0 及以前的发行件里它叫这个。已装的旧版副本仍要体检得过，所以两个名字都认；
+#: 哪一个是这份插件的，由 Codex 清单的 `mcpServers` 说了算（`mcp_config_rel`）。
+LEGACY_MCP = ".mcp.json"
+MCP_CONFIGS = (CODEX_MCP, LEGACY_MCP)
+#: 新组装的 staging 里**不许**出现的文件：别的宿主会自动读它们（插件根 `.mcp.json`；
+#: WorkBuddy 还扫 `mcp/*.json`），出现就是把 Codex 形状的条目喂给了它们（ADR 0106）。
+STAGE_FORBIDDEN = re.compile(r"^(\.mcp\.json|mcp/[^/]+\.json)$")
 REQUIRED = (
     ".codex-plugin/plugin.json",
-    ".mcp.json",
     "mcp/server.py",
     "mcp/tavotto_mcp/server.py",
     "mcp/tavotto_mcp/widget.py",
@@ -65,6 +76,8 @@ REQUIRED = (
 #: 把它们算进去会把一份完好的旧 Codex 插件报成损坏并让人重装（Codex 在 #559 上指出）。
 #: 新包里它们照样被核对：清单逐文件记着，缺了就是「与清单不符」。
 STAGE_REQUIRED = REQUIRED + (
+    # Codex MCP 配置的新名字（ADR 0106）；已装旧版里它叫 `.mcp.json`，体检按清单指向判
+    CODEX_MCP,
     # 非 Codex 宿主的接入入口：同一份包、同一个启动器（docs/implementation/multi-host-mcp/）
     "integrations/configure.py",
     # Claude Code 插件清单：同一份包经 `.claude-plugin/marketplace.json` 装进 Claude Code（ADR 0103）
@@ -74,8 +87,8 @@ STAGE_REQUIRED = REQUIRED + (
     "dsh/index.js",
     "dsh/cordis.patch.yml",
 )
-#: 已装副本里允许被 `tavotto codex install` 改动 command 的两份清单（严格同源对）
-PINNABLE_MCP = ".mcp.json"
+#: 已装副本里允许被 `tavotto codex install` 改动 command 的清单（严格同源对）：
+#: Codex MCP 配置（新旧两个名字，见 `MCP_CONFIGS`）+ 每个技能的 `openai.yaml`
 PINNABLE_YAML_GLOB = re.compile(r"^skills/[^/]+/agents/openai\.yaml$")
 #: 画布产物的最小体量：它内联了大半个前端，真产物 1 MiB 上下；小于这个数就是截断
 WIDGET_MIN_BYTES = 100_000
@@ -205,15 +218,15 @@ def widget_problems(path: Path, *, expect_fingerprint: str | None) -> list[str]:
 
 
 def canonical_mcp(data: bytes) -> tuple[bytes, list[str]]:
-    """`.mcp.json` 去掉 command 之后的规范形 + 各 server 的 command。"""
+    """Codex MCP 配置去掉 command 之后的规范形 + 各 server 的 command。"""
     obj = json.loads(data.decode("utf-8"))
     commands: list[str] = []
     servers = obj.get("mcpServers")
     if not isinstance(servers, dict) or not servers:
-        raise PluginManifestError(".mcp.json 里没有 mcpServers")
+        raise PluginManifestError("MCP 配置里没有 mcpServers")
     for entry in servers.values():
         if not isinstance(entry, dict) or not isinstance(entry.get("command"), str):
-            raise PluginManifestError(".mcp.json 的 server 条目缺 command")
+            raise PluginManifestError("MCP 配置的 server 条目缺 command")
         commands.append(entry["command"])
         entry["command"] = "<command>"
     canon = json.dumps(obj, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
@@ -252,11 +265,37 @@ def _yaml_unquote(value: str) -> str:
 
 
 def is_pinnable(path: str) -> bool:
-    return path == PINNABLE_MCP or bool(PINNABLE_YAML_GLOB.match(path))
+    return path in MCP_CONFIGS or bool(PINNABLE_YAML_GLOB.match(path))
 
 
 def canonical(path: str, data: bytes) -> tuple[bytes, list[str]]:
-    return canonical_mcp(data) if path == PINNABLE_MCP else canonical_yaml(data)
+    return canonical_mcp(data) if path in MCP_CONFIGS else canonical_yaml(data)
+
+
+def mcp_config_rel(plugin_dir: Path) -> str:
+    """这份插件的 Codex MCP 配置（相对插件根）：**由 Codex 清单的 `mcpServers` 决定**。
+
+    Codex 自己就是按这个字段找配置的（0.157.1 实测：指向不存在的文件 → 没有 server），
+    所以这里不猜名字。只认 `MCP_CONFIGS` 里的两个——指向别处的清单不是我们发的。
+    清单缺失 / 读不出来时（那本身是 REQUIRED 缺项，另报）按哪个在就用哪个，都不在回新名字。
+    """
+    try:
+        target = json.loads(
+            (plugin_dir / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8")
+        ).get("mcpServers")
+    except (OSError, ValueError, AttributeError):
+        target = None
+    if isinstance(target, str):
+        name = target[2:] if target.startswith("./") else target
+        if name not in MCP_CONFIGS:
+            raise PluginManifestError(
+                f"Codex 清单的 mcpServers 指向 {target!r}，不是 {' / '.join(MCP_CONFIGS)} 之一"
+            )
+        return name
+    for name in MCP_CONFIGS:
+        if (plugin_dir / name).is_file():
+            return name
+    return CODEX_MCP
 
 
 # ------------------------------------------------------------------ 内容摘要与清单
@@ -412,7 +451,7 @@ def verify_dir(
 
     * 默认（发行件）：清单必须在，每个文件的 sha256 与清单一致，不多不少，REQUIRED
       齐全，画布本身合格，command 是裸名字，content_digest 重算一致。
-    * `installed=True`：允许 `.mcp.json` / `openai.yaml` 的 command 被一起钉成本机
+    * `installed=True`：允许 Codex MCP 配置 / `openai.yaml` 的 command 被一起钉成本机
       绝对路径（规范形与清单一致），其余文件仍然逐字节核对。
     * `legacy=True`：没有清单的旧发行件（bootstrap 用）——只验 REQUIRED（不含清单与
       LICENSE）、画布合格、command 裸名字。
@@ -438,6 +477,11 @@ def verify_dir(
         return [str(exc)]
 
     required = [r for r in REQUIRED if not (legacy and r == "LICENSE")]
+    try:
+        # 必需的 MCP 配置是清单指向的那一份：新包 codex.mcp.json、已装旧版 .mcp.json（ADR 0106）
+        required.append(mcp_config_rel(plugin_dir))
+    except PluginManifestError as exc:
+        problems.append(str(exc))
     for path in required:
         if path not in have:
             problems.append(f"缺少必需文件 {path}")
@@ -477,11 +521,11 @@ def verify_dir(
                         problems.append(f"{path} 的 command 指向不存在的解释器 {cmd}")
     if installed:
         # 严格同源对：不管有没有清单，两份的 command 都必须一致
-        mcp_now = set(seen_commands.get(PINNABLE_MCP, []))
-        yaml_now = {c for k, cmds in seen_commands.items() if k != PINNABLE_MCP for c in cmds}
+        mcp_now = {c for k in MCP_CONFIGS for c in seen_commands.get(k, [])}
+        yaml_now = {c for k, cmds in seen_commands.items() if k not in MCP_CONFIGS for c in cmds}
         if mcp_now and yaml_now and mcp_now != yaml_now:
             problems.append(
-                f".mcp.json 的 command {sorted(mcp_now)} 与 openai.yaml 的 {sorted(yaml_now)} "
+                f"MCP 配置的 command {sorted(mcp_now)} 与 openai.yaml 的 {sorted(yaml_now)} "
                 f"不一致——严格同源对只钉了一侧"
             )
 

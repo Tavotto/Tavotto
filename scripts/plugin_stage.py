@@ -71,6 +71,7 @@ PLUGIN_SUBDIR = pm.PLUGIN_SUBDIR
 GENERATED = pm.GENERATED
 REQUIRED = pm.REQUIRED
 STAGE_REQUIRED = pm.STAGE_REQUIRED
+STAGE_FORBIDDEN = pm.STAGE_FORBIDDEN
 WIDGET_MIN_BYTES = pm.WIDGET_MIN_BYTES
 StageError = pm.PluginManifestError
 sha256_bytes = pm.sha256_bytes
@@ -293,6 +294,10 @@ def stage(
         for rel in STAGE_REQUIRED:
             if not (tmp / rel).is_file():
                 raise StageError(f"组装结果缺 {rel}")
+        for rel in sorted(modes):
+            if STAGE_FORBIDDEN.match(rel):
+                # 别的宿主会自动读它（插件根 .mcp.json / WorkBuddy 的 mcp/*.json），ADR 0106
+                raise StageError(f"组装结果里有 {rel}：其它宿主会把它当自己的 MCP 配置读")
 
         lock = root / "web" / "pnpm-lock.yaml"
         manifest = write_build_manifest(
