@@ -59,6 +59,7 @@ import { clamp } from '@/lib/units'
 import { setTxnAnchor, useDocumentStore } from '@/store/documentStore'
 import { registerPointerCancel } from '@/store/gestureCoordinator'
 import { useInteractionStore } from '@/store/interactionStore'
+import { displayedExactManifest } from '@/store/mountedSvgStore'
 import { exactPanelManifest, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore, type Tool } from '@/store/uiStore'
@@ -1339,6 +1340,21 @@ export function inFigureMoveOf(
   if (el.arrow_endpoints) return arrowMove(panel, el)
   if (el.draggable && el.anchor) return elementMove(panel, el)
   return null
+}
+
+/**
+ * 按下这一刻，图内指针手势的依据（处理器闭包里的 panel 与它那一帧的 manifest）是否已经过期。
+ *
+ * 命中层与选中框手柄的处理器拿的是上一次 React 渲染时的 obj / manifest；同一个 pointerdown
+ * 先经过 window 捕获阶段的监听——方向键微调在那里收尾（`finishNudge`），可能刚提交了一条
+ * override、让几何权威失效，而 React 还没来得及重渲染。照闭包里的旧基线起拖，松手会把刚提交
+ * 的位移盖掉，随行元素也在没有权威的时候算（Codex #671）。判据：文档里这份面板的 overrides
+ * 已经不是闭包那一份，或它此刻没有挂上画面的几何权威（ADR 0017）。过期时调用方吞掉这一下：
+ * React 随即把命中层重渲染成「等权威」的停摆层、手柄收掉，与权威缺席时同一个表现。
+ */
+export function inFigureBasisStale(panel: PanelObject): boolean {
+  const live = useDocumentStore.getState().doc.objects.find((o) => o.id === panel.id)
+  return live?.type !== 'panel' || live.overrides !== panel.overrides || !displayedExactManifest(live)
 }
 
 /** 按下图内元素开始拖动（PanelView 的单选分派）。回 false = 这个元素不能移动 */

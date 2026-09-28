@@ -57,6 +57,7 @@ import {
 } from '@/types/document'
 import {
   cycleOverlapAt,
+  inFigureBasisStale,
   isElementHidden,
   pickElement,
   startElementGroupMove,
@@ -710,6 +711,9 @@ function ElementHitLayer({
       onPointerDown={(e) => {
         if (e.button !== 0) return
         e.stopPropagation()
+        // 这一下按下之前，捕获阶段刚把方向键微调那一段提交掉：闭包里的 obj / manifest 已经
+        // 过期，选中、切刻度、起拖都不许拿它算——吞掉，等这一版的权威（见 inFigureBasisStale）
+        if (inFigureBasisStale(obj)) return
         const { fx, fy } = frac(e)
         const hit = pickElement(manifest, fx, fy, obj.lockedGids)
         const ui = useUiStore.getState()

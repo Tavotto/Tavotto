@@ -68,9 +68,16 @@
 
 按下第一下开一段，点按与按住连发都并进这一段；方向键**全部松开**且停顿 `NUDGE_QUIET_MS`（400 ms）
 之后收尾。按住时系统连发的首延迟可能长于 400 ms，所以「停了」按「没有方向键按着」判，不按计时器判。
-收尾的其它出口：离散动作（`registerGesture` → `finishActiveGesture`，撤销重做按钮 / 菜单也走它）、
+收尾的其它出口：离散动作（`registerGesture` → `finishActiveGesture`，撤销重做按钮 / 菜单也走它；
+系统菜单的加速键可能先于 keydown 到达，所以 `runMenuAction` 入口对每一项先收）、
 按了别的键（`useKeyboard` 顶部 `finishNudge`，免得删除 / 复制并进移动那条撤销）、按下指针、选区变了、
 窗口失焦。
+
+按下指针收尾是在 window 捕获阶段；同一个事件随后进命中层 / 选中框手柄时，处理器闭包里的面板与
+manifest 还是提交前那一帧的。图内这一段若刚写了 override，这一下**吞掉**（`inFigureBasisStale`：
+overrides 换了或几何权威不在画面上），等这一版的权威挂上再起手——与第五节同一条：不拿旧几何起手，
+否则新拖动的基线来自旧 override，松手会把刚提交的键盘位移盖掉（Codex #671）。画布对象的拖动起手时
+从 store 现取，不受影响。
 
 - 画布对象：一段 = 一个 documentStore 事务（`beginTxn` / `txnUpdate` / `endTxn`），与鼠标拖动同一种
   历史；净位移为零时丢弃事务。
@@ -107,6 +114,9 @@ Figma / Illustrator 的方向键同样不吸。这是与拖动**唯一刻意不�
   新一段、⌘Z / 撤销按钮先收再撤、别的键先落定、净位移为零不留历史、锁定 / 隐藏、快速编辑、焦点分派
   （复合控件 / defaultPrevented / 输入框 / 工具条对照）、图内这一段零渲染且收尾一条 override 一次渲染、
   ↓ 方向与子图 bottom-origin、多选整组、锁定与不可移动元素、权威缺席时不写与放弃。每条都跑过变异。
+- `web/src/canvas/nudgeThenPointer.test.tsx`：按 → 后立刻在元素上按下拖动 / 按子图缩放手柄——吞掉、微调保留
+  一条撤销；权威挂上后再拖 = 微调 + 拖动；净位移为零的一段不挡起拖（对照）。菜单 ⌘D 先于 keydown 到达时
+  先落定这一段的用例在 `arrowNudge.test.tsx`。
 - `web/e2e/arrow-nudge.spec.ts`（真浏览器 + 真 matplotlib）：画布里进图内编辑、选中图例按 → 6 次，
   图例位移 = 6 × 画布对象一步的像素数（误差 0.01 px，预算 0.5 px）、面板不动、按键期间 0 次渲染、
   收尾 1 次；撤销一次回原位；重做、保存、重开后位置与热态逐像素一致；快速编辑里图例能动。

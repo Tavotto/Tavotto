@@ -136,12 +136,17 @@
   * 一段连续按键 = 一条撤销：方向键全部松开且停顿 `NUDGE_QUIET_MS` 才收尾（「停了」按有没有键按着判，
     连发首延迟会长于阈值）；图内这一段只动预览平面、零渲染，收尾一次 `commit`。微调不占
     `interactionStore.kind`（占了 ⌘Z 会被 `undoRedoBlocked` 挡掉），靠 `registerGesture` 与
-    `useKeyboard` 顶部的 `finishNudge` 在离散动作 / 别的键之前落定。
+    `useKeyboard` 顶部的 `finishNudge` 在离散动作 / 别的键之前落定；系统菜单（加速键可能先于
+    keydown 到达）由 `runMenuAction` 入口统一 `finishActiveGesture()`。
+  * 按下指针时这一段在 window 捕获阶段收尾，**同一个事件**随后进命中层 / 选中框手柄时它们闭包里的
+    obj / manifest 已经过期：`inFigureBasisStale` 为真（overrides 换了或权威不在画面上）就吞掉这一下，
+    等这一版的权威挂上再起手——绝不拿旧基线起拖，否则松手会把刚提交的键盘位移盖掉（Codex #671）。
+    画布对象的拖动在起手时从 store 现取（`draggableSelection` / `startMoveDrag(objectId)`），不受影响。
   * 几何权威缺席（上一段的渲染还没回来）时不建 `InFigureMove`、不写文档，只记位移，权威挂上画面
     （`displayedExactManifest`）再动；被要求立刻收尾就放弃。
   * 焦点：输入框 / 对话框、控件已 `preventDefault` 的键、ARIA 复合控件（listbox / tree / radiogroup /
     menu / slider …，`useKeyboard.arrowOwnedByWidget`）归它们；`toolbar` 不在此列。
-  看护：`canvas/arrowNudge.test.tsx`、`e2e/arrow-nudge.spec.ts`、`canvas/groupLockDrag.test.ts`。
+  看护：`canvas/arrowNudge.test.tsx`、`canvas/nudgeThenPointer.test.tsx`、`e2e/arrow-nudge.spec.ts`、`canvas/groupLockDrag.test.ts`。
 
 ## 速查表原要点（2026-09-25 迁入，#608）
 

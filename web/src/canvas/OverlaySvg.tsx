@@ -29,6 +29,7 @@ import { useDisplayedExactManifest } from '@/store/mountedSvgStore'
 import type { CanvasObject, LinearObject, PanelObject } from '@/types/document'
 import { isLinear, lineEndpoints, objectRotation, panelRotation } from '@/types/document'
 import {
+  inFigureBasisStale,
   startArrowDrag,
   startAxesDrag,
   startCropDrag,
@@ -785,6 +786,15 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
   const spin = rot
     ? `rotate(${rot} ${panelBox.x + panelBox.w / 2} ${panelBox.y + panelBox.h / 2})`
     : undefined
+  // 手柄与命中层同一道闸：这一下按下之前捕获阶段刚提交了方向键微调，闭包里的 panel /
+  // 包围框已经过期——吞掉，不拿旧基线起手（见 inFigureBasisStale）
+  const guarded = (start: (e: React.PointerEvent) => void) => (e: React.PointerEvent) => {
+    if (inFigureBasisStale(panel)) {
+      e.stopPropagation()
+      return
+    }
+    start(e)
+  }
   // 多选且全是子图 → 组包围框接管手柄，成组缩放
   const group = resolveGroup(panel, manifest, selectedGids)
   const groupBox = group ? toBox(preview?.group ?? group.box) : null
@@ -897,7 +907,7 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
               key={dir}
               box={groupBox}
               dir={dir}
-              onPointerDown={(e) => startGroupResize(e, panel, group, layout, dir)}
+              onPointerDown={guarded((e) => startGroupResize(e, panel, group, layout, dir))}
             />
           ))}
 
@@ -908,7 +918,7 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
               key={dir}
               box={axesBox}
               dir={dir}
-              onPointerDown={(e) => startAxesDrag(e, panel, primary.target, layout, dir)}
+              onPointerDown={guarded((e) => startAxesDrag(e, panel, primary.target, layout, dir))}
             />
           ))}
 
@@ -920,7 +930,7 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
               box={legendBox}
               dir={dir}
               data-legend-scale={dir}
-              onPointerDown={(e) => startLegendScale(e, panel, primary.target, layout, dir)}
+              onPointerDown={guarded((e) => startLegendScale(e, panel, primary.target, layout, dir))}
             />
           ))}
 
@@ -963,7 +973,7 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
                     cursor: 'crosshair',
                     shapeRendering: 'geometricPrecision',
                   }}
-                  onPointerDown={(e) => startArrowDrag(e, panel, arrowEl, layout, key)}
+                  onPointerDown={guarded((e) => startArrowDrag(e, panel, arrowEl, layout, key))}
                 />
               )
             })}
