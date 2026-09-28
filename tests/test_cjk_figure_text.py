@@ -436,3 +436,155 @@ def test_font_collections_open_the_face_matplotlib_named_not_the_first_one():
             for r in wrong[:8]
         )
     )
+
+
+#: 脚本用 `FontProperties(fname=…)` 锁了一个**西文**字体文件（用户反馈：改图助手把
+#: 全局字体改成 `fname="times.ttf"`，汉字全变方框）。DejaVu Serif 随 matplotlib 分发，
+#: 三个平台都有，而且没有汉字字形——与 Times New Roman 同一个处境。
+FNAME_LIBRARY = """\
+import os
+
+import matplotlib
+import matplotlib.pyplot as plt
+from matplotlib.font_manager import FontProperties
+
+TTF = os.path.join(matplotlib.get_data_path(), "fonts", "ttf")
+REGULAR = FontProperties(fname=os.path.join(TTF, "DejaVuSerif.ttf"))
+BOLD = FontProperties(fname=os.path.join(TTF, "DejaVuSerif-Bold.ttf"))
+
+
+def main():
+    fig, ax = plt.subplots(figsize=(4.0, 3.0), layout="constrained")
+    ax.plot([0, 1], [0, 1])
+    ax.set_title("中文标题", fontproperties=BOLD)
+    ax.set_xlabel("时间 (s)", fontproperties=REGULAR)
+    fig.savefig("FnameFig.pdf")
+"""
+
+
+def test_fname_locked_latin_font_still_gets_the_cjk_tail(tmp_path, installed_cjk):
+    """fname 锁住的西文字体：正文仍是那个文件（族名、字重都对），汉字由尾巴画出。
+
+    改造前 manifest 按族列表量（`['sans-serif', …尾巴]`），报「中文由回退链画出、
+    没有缺字」，而图上画的是那一个文件的方框——问题面板一盏灯都不亮。
+    """
+    (tmp_path / "fig_fname.py").write_text(FNAME_LIBRARY, encoding="utf-8")
+    w = pool.one_shot("fig_fname.py", str(tmp_path), ENTRY)
+    try:
+        w.ensure_built()
+        resp = w.override("FnameFig", [])
+        assert not resp.get("warnings"), resp["warnings"]
+        man = resp["manifest"]
+        pixels = []
+        for ch in ("中", "文"):
+            png = tmp_path / f"fname-{ch}.png"
+            w.export(
+                "FnameFig",
+                [{"gid": "axes_0.title", "prop": "text", "value": ch}],
+                str(png),
+                "png",
+                dpi=150,
+            )
+            with pymupdf.open(png) as doc:
+                pixels.append(bytes(doc[0].get_pixmap().samples))
+    finally:
+        pool.discard(w)
+    title = _el(man, "axes_0.title")
+    xlabel = _el(man, "axes_0.xlabel")
+    for e in (title, xlabel):
+        assert e.get("face") == "DejaVu Serif", e  # 正文那张脸没换
+        fam = next(f["value"] for f in e["editable"] if f["prop"] == "fontfamily")
+        assert fam == "DejaVu Serif", fam  # 下拉里显示的是脚本锁的那个字体
+    # 字重跟着文件走，而且是「粗细」下拉里选得中的那个名字
+    weight = next(f for f in title["editable"] if f["prop"] == "weight")
+    assert weight["value"] == "bold" and weight["value"] in weight["options"], weight
+    if not installed_cjk:
+        assert title.get("glyphs_missing") == list("中文标题"), title
+        pytest.skip("worker 的解释器找不到任何中日韩候选字体：回退链为空，退回逐字报方框")
+    for e in (title, xlabel):
+        assert "glyphs_missing" not in e, e
+        assert e.get("cjk_family") in installed_cjk, e
+    assert pixels[0] != pixels[1]  # 「中」与「文」不是同一个方框
+
+
+_FNAME_DRIVER = """\
+import io, os, sys
+sys.path.insert(0, sys.argv[1])
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib.font_manager import FontProperties
+import manifest
+import overrides
+
+TTF = os.path.join(matplotlib.get_data_path(), "fonts", "ttf")
+cjk = bool(overrides.cjk_fallback_tail())
+
+
+def png(fig):
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=100)
+    return buf.getvalue()
+
+
+def figure(text, path):
+    fig = plt.figure(figsize=(2, 1))
+    t = fig.text(0.1, 0.4, text, fontproperties=FontProperties(fname=path), fontsize=14)
+    return fig, t
+
+
+# a) 只有拉丁字的 fname 文字：换成族名前后**一个像素都不许变**（正文脸没换）
+for name in ("DejaVuSerif.ttf", "DejaVuSerif-Bold.ttf", "DejaVuSerif-Italic.ttf"):
+    fig, t = figure("Voltage 72.5 MPa", os.path.join(TTF, name))
+    before = png(fig)
+    assert overrides.ensure_figure_fallback(fig) >= 1
+    assert t.get_fontproperties().get_file() is None, name
+    assert png(fig) == before, name
+    plt.close(fig)
+
+# b) 同一份字节的拷贝（项目自带一份字体文件）也放得开
+import shutil, tempfile
+tmp = tempfile.mkdtemp()
+copy = os.path.join(tmp, "my-serif.ttf")
+shutil.copyfile(os.path.join(TTF, "DejaVuSerif.ttf"), copy)
+fig, t = figure("电压 MPa", copy)
+before = png(fig)
+overrides.ensure_figure_fallback(fig)
+assert t.get_fontproperties().get_file() is None
+assert list(t.get_fontfamily())[0] == "DejaVu Serif", t.get_fontfamily()
+if cjk:
+    assert png(fig) != before  # 方框换成了真的汉字
+plt.close(fig)
+
+# c) 放不开的（按名字找不回同一个文件）：原样不动，manifest 照实按那个文件报缺字，
+#    不许再说「回退链画出来了」
+overrides._FILE_FACE[os.path.join(TTF, "DejaVuSans-Oblique.ttf")] = None
+fig, t = figure("电压 MPa", os.path.join(TTF, "DejaVuSans-Oblique.ttf"))
+overrides.ensure_figure_fallback(fig)
+f = t.get_fontproperties().get_file()
+assert f is not None
+gone, _subst, faces = manifest._glyph_scan(t.get_text(), t.get_fontfamily(), f)
+assert gone == ["电", "压"] and faces == [], (gone, faces)
+assert manifest.font_faces(t.get_text(), t.get_fontfamily(), "dejavusans", f) == {
+    "face": "DejaVu Sans"
+}
+print("OK")
+"""
+
+
+def test_fname_release_keeps_latin_pixels_and_reports_unreleasable_honestly():
+    """`overrides._release_font_file` 的三条边：
+
+    * 拉丁字：换成族名前后 PNG 逐字节相同（正文那张脸、字重、字形都没换）；
+    * 字节相同的拷贝（项目里自带的字体文件）也换得开；
+    * 换不开的留着 fname，manifest 按那一个文件报缺字——不按族列表说「画出来了」。
+    """
+    out = subprocess.run(
+        [WORKER_PY, "-c", _FNAME_DRIVER, str(ENGINE_DIR)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip().endswith("OK")

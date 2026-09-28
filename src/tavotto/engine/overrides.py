@@ -11,6 +11,7 @@ worker 在此转换为各 artist 自己的坐标系。
 from __future__ import annotations
 
 import contextlib
+import filecmp
 import hashlib
 import math
 import numbers
@@ -696,12 +697,98 @@ def _family_chain(fam) -> list[str]:
     return head + [f for f in fallback_tail() if f not in head]
 
 
+#: 字体文件 → 能把它原样找回来的 (族名, style, variant, weight, stretch)；
+#: `None` 表示按名字找不回同一个文件，只能留着 fname。按进程缓存。
+_FILE_FACE: dict[str, tuple | None] = {}
+
+
+def _same_file(a, b) -> bool:
+    try:
+        return os.path.samefile(os.fspath(a), os.fspath(b))
+    except (OSError, TypeError):
+        return False
+
+
+def _face_of_font_file(path: str) -> tuple | None:
+    """`FontProperties(fname=…)` 指向的那个文件，按名字怎么点才能**找回它本身**。
+
+    只认 ttf / otf / ttc：fname 渲染时读的是文件的第 0 张脸，这里读的也是第 0 张。
+    没注册过的（脚本自带的字体文件）先 `addfont` 注册。按族名 + 字重 / 字形反查
+    必须解析回**同一个文件（或字节相同的拷贝）的第 0 张脸**才算数——同名但版本
+    不同的另一份、字重对不上的兄弟文件都会让正文那张脸变样，那种宁可不接回退，
+    也不换掉拉丁字的脸（manifest 仍按那个文件照实报缺字）。
+    """
+    if path in _FILE_FACE:
+        return _FILE_FACE[path]
+    hit = None
+    if os.path.splitext(path)[1].lower() in (".ttf", ".otf", ".ttc"):
+        from matplotlib import font_manager, ft2font
+
+        try:
+            entry = font_manager.ttfFontProperty(ft2font.FT2Font(path))
+            fm = font_manager.fontManager
+            if not any(_same_file(e.fname, path) for e in fm.ttflist):
+                fm.addfont(path)
+            # 字重回成名字：界面的「粗细」下拉只认 normal / bold（manifest 报的是
+            # `str(get_fontweight())`），700 会让下拉一项都选不中；反查按数值也一样
+            weight = {400: "normal", 700: "bold"}.get(entry.weight, entry.weight)
+            face = (entry.name, entry.style, entry.variant, weight, entry.stretch)
+            probe = font_manager.FontProperties(
+                family=[face[0]], style=face[1], variant=face[2], weight=face[3], stretch=face[4]
+            )
+            found = font_manager.findfont(probe, fallback_to_default=False)
+            # 同一份字节算同一张脸：项目里自带一份 times.ttf、系统里也装着 Times 时，
+            # 按名字找到的是系统那份——画出来一个像素都不差
+            same = _same_file(found, path) or filecmp.cmp(found, path, shallow=False)
+            if same and not int(getattr(found, "face_index", 0) or 0):
+                hit = face
+        except (OSError, RuntimeError, ValueError):  # 坏字体文件：留着 fname，照旧渲染
+            hit = None
+    _FILE_FACE[path] = hit
+    return hit
+
+
+def _release_font_file(t: Text) -> bool:
+    """脚本用 `FontProperties(fname=…)` 锁了单个字体文件的文字：换成等价的族名。
+
+    matplotlib 里 fname 一旦有值，族列表**整个被忽略**，所有字形只从那一个文件
+    里找——回退尾巴接上了也不起作用。实测（用户反馈，Windows）：改图助手把全局
+    字体改成 `fname="times.ttf"` 之后，数字与拉丁字母正常、汉字全是方框；
+    manifest 按族列表算 face / 缺字，于是还报「中文由回退链画出、没有缺字」，
+    问题面板对方框一盏灯都不亮，下拉里改字体也改不动它（fname 照样压着）。
+
+    换成「那个文件的族名 + 同样的字重 / 字形」之后，正文仍然是那一个文件（反查
+    验证过），缺的字形才轮到尾巴。找不回同一个文件时原样不动。返回是否动过。
+    """
+    fp = t.get_fontproperties()
+    path = fp.get_file()
+    if path is None:
+        return False
+    face = _face_of_font_file(os.fspath(path))
+    if face is None:
+        return False
+    name, style, variant, weight, stretch = face
+    fp = fp.copy()
+    fp.set_file(None)
+    fp.set_family([name])
+    fp.set_style(style)
+    fp.set_variant(variant)
+    fp.set_weight(weight)
+    fp.set_stretch(stretch)
+    t.set_fontproperties(fp)
+    return True
+
+
 def ensure_text_fallback(t: Text) -> bool:
-    """给一个 Text 的族列表补上回退尾巴；已经齐了就什么都不动。返回是否动过。"""
+    """给一个 Text 的族列表补上回退尾巴；已经齐了就什么都不动。返回是否动过。
+
+    脚本用 fname 锁了字体文件的，先换成族名（`_release_font_file`）——否则尾巴不起作用。
+    """
+    released = _release_font_file(t)
     fams = [str(f) for f in (t.get_fontfamily() or [])]
     chain = _family_chain(fams) if fams else _family_chain(list(mpl.rcParams["font.family"]))
     if chain == fams:
-        return False
+        return released
     t.set_fontfamily(chain)
     return True
 

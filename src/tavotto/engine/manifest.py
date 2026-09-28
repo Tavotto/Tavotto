@@ -1178,7 +1178,7 @@ def _ft_font(path: str, face_index: int = 0):
     return hit or None
 
 
-def _resolved_font_paths(families) -> list[tuple[str, int]]:
+def _resolved_font_paths(families, file=None) -> list[tuple[str, int]]:
     """这段文字**真正会用到**的 (字体文件, 面索引)，按 matplotlib 自己的回退顺序。
 
     走 matplotlib 的解析链（3.6 起 family 是一条回退链，逐字形回退），所以
@@ -1194,7 +1194,14 @@ def _resolved_font_paths(families) -> list[tuple[str, int]]:
     的脸自称 JP。索引丢在这里，`cjk_family` 就会报出一张用户没选、规范也不
     认的脸，`cjk-fallback-missing` 于是对着画得好好的中文亮红灯。
     3.10 及以前返回的是普通 `str`，没有这个属性，索引恒为 0。
+
+    `file` 是文字的 `FontProperties.get_file()`：脚本用 `fname=` 锁了字体文件、
+    引擎又没能把它换成族名（`overrides._release_font_file` 找不回同一个文件）时，
+    matplotlib 画字**只用那一个文件的第 0 张脸**、族列表整个不看——这里照实只报它。
+    按族列表算的话，中文会被说成「回退链画出来了」，而图上是方框。
     """
+    if file is not None:
+        return [(str(file), 0)]
     prop = font_manager.FontProperties(family=list(families) or ["sans-serif"])
     try:
         found = font_manager.fontManager._find_fonts_by_props(prop)
@@ -1213,7 +1220,7 @@ def _resolved_font_paths(families) -> list[tuple[str, int]]:
 _CJK_CHAR = re.compile("[⺀-⻿぀-ヿ㐀-䶿一-鿿豈-﫿＀-￯]")
 
 
-def _glyph_scan(text: str, families) -> tuple[list[str], list[str], list[str]]:
+def _glyph_scan(text: str, families, file=None) -> tuple[list[str], list[str], list[str]]:
     """(画不出来的, 换了脸的非中日韩字符, 画了中日韩字符的那几张脸) —— 一次扫出来。
 
     `$…$` 里的片段跳过（那是 mathtext 字体集画的，见 `_MATH_SPAN`）。
@@ -1229,7 +1236,9 @@ def _glyph_scan(text: str, families) -> tuple[list[str], list[str], list[str]]:
     if not isinstance(text, str) or not text.strip():
         return [], [], []
     fonts = [
-        f for f in (_ft_font(p, i) for p, i in _resolved_font_paths(families)) if f is not None
+        f
+        for f in (_ft_font(p, i) for p, i in _resolved_font_paths(families, file))
+        if f is not None
     ]
     if not fonts:
         return [], [], []
@@ -1264,7 +1273,7 @@ _MATHTEXT_SET_FACES = {
 }
 
 
-def font_faces(text: str, families, math_family) -> dict:
+def font_faces(text: str, families, math_family, file=None) -> dict:
     """这段文字**真正会由哪张脸画出来**（渲染派生数据，不进文档、不是 override）。
 
     `face` 是正文族链解析到的第一张脸的族名——用户请求的族名（`fontfamily`
@@ -1280,7 +1289,9 @@ def font_faces(text: str, families, math_family) -> dict:
     """
     out: dict = {}
     fonts = [
-        f for f in (_ft_font(p, i) for p, i in _resolved_font_paths(families)) if f is not None
+        f
+        for f in (_ft_font(p, i) for p, i in _resolved_font_paths(families, file))
+        if f is not None
     ]
     if fonts:
         out["face"] = str(fonts[0].family_name)
@@ -4853,15 +4864,18 @@ def _measure_manifest(state: FigState, stem: str, arm, fig, renderer) -> dict:
             live_text = artist._first(lambda t: t, None)
         if isinstance(live_text, Text):
             # 「真正由哪张脸画」：字体缺失时的静默替代只有这一格量得出。
+            # fname 锁住的文字只由那个文件画（族列表不起作用），两格都按它量。
+            font_file = live_text.get_fontproperties().get_file()
             entry.update(
                 font_faces(
                     live_text.get_text(),
                     live_text.get_fontfamily() or [],
                     live_text.get_math_fontfamily(),
+                    font_file,
                 )
             )
             gone, subst, cjk_faces = _glyph_scan(
-                live_text.get_text(), live_text.get_fontfamily() or []
+                live_text.get_text(), live_text.get_fontfamily() or [], font_file
             )
             if gone:
                 entry["glyphs_missing"] = gone
