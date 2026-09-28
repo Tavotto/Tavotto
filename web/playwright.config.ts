@@ -19,9 +19,16 @@ export default defineConfig({
   fullyParallel: false, // 端口与临时目录都是真实资源，串行更好排查
   workers: 1,
   retries: process.env.CI ? 1 : 0,
-  reporter: process.env.CI
-    ? [['list'], ['html', { open: 'never', outputFolder: 'playwright-report' }]]
-    : [['list']],
+  reporter: [
+    ...(process.env.CI
+      ? ([['list'], ['html', { open: 'never', outputFolder: 'playwright-report' }]] as const)
+      : ([['list']] as const)),
+    // 功能登记表（ADR 0097）：posix-e2e 设了它就多写一份 JSON 报告，下一步
+    // `scripts/ci/feature_registry.py verify-run` 据此判「登记的用例真的执行并通过」
+    ...(process.env.TAVOTTO_E2E_JSON
+      ? ([['json', { outputFile: process.env.TAVOTTO_E2E_JSON }]] as const)
+      : []),
+  ],
   use: {
     // 失败时留下完整操作轨迹：这类问题往往看一遍 trace 就明白了
     trace: 'retain-on-failure',

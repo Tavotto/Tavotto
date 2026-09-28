@@ -1,0 +1,695 @@
+{
+  "$comment": "功能登记表（ADR 0097）：用户可见功能的唯一清单。门禁 scripts/ci/feature_registry.py；规则 docs/rules/ci/feature-registry.md。功能下线把 status 改成 removed 并写 removed.{reason,date,approved_by}，PR 打 feature:removal 标签；不许删条目。",
+  "version": 1,
+  "features": [
+    {
+      "id": "project.first-launch",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "首次启动进项目选择器，而不是白屏",
+        "en-US": "First launch lands on the project picker, not a blank page"
+      },
+      "entry": "启动应用（用户目录为空）",
+      "e2e": [
+        {
+          "spec": "golden-paths.spec.ts",
+          "title": "首次启动：用户目录为空时进项目选择器，而不是白屏"
+        }
+      ],
+      "desktop_manual": [
+        "从 DMG 安装后第一次打开：出现项目选择器 / 主页，没有白屏、没有报错弹窗"
+      ]
+    },
+    {
+      "id": "project.open-by-path",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "粘贴路径打开项目（含中文与空格路径）",
+        "en-US": "Open a project by pasting its path (CJK and spaces included)"
+      },
+      "entry": "项目选择器 → 项目路径输入框 → 打开",
+      "e2e": [
+        {
+          "spec": "golden-paths.spec.ts",
+          "title": "直接粘贴路径打开项目（含中文与空格）"
+        }
+      ]
+    },
+    {
+      "id": "project.readiness",
+      "status": "active",
+      "platform": "browser",
+      "summary": {
+        "zh-CN": "项目接入状态：没连上源脚本时给出「试运行并连接」",
+        "en-US": "Project readiness offers “probe and connect” when a figure has no linked script"
+      },
+      "entry": "工作区抽屉 → 当前项目「…」→ 项目接入状态…",
+      "e2e": [
+        {
+          "spec": "golden-paths.spec.ts",
+          "title": "还没连上源脚本时，界面给得出「重新扫描 / 试运行」而不是让用户对着空列表猜"
+        }
+      ]
+    },
+    {
+      "id": "assets.run-script-figure",
+      "status": "active",
+      "platform": "browser",
+      "summary": {
+        "zh-CN": "素材库运行脚本发现图，放上画布并进入图内编辑",
+        "en-US": "Run a script from the asset library, place its figure and edit inside it"
+      },
+      "entry": "左栏「素材」→ 脚本行「运行并发现图」",
+      "e2e": [
+        {
+          "spec": "asset-library.spec.ts",
+          "title": "show-only 项目：素材库普通入口 → Runtime Figure → 画布 → 图内编辑 → undo/redo"
+        }
+      ]
+    },
+    {
+      "id": "canvas.place-and-render",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "素材放上画布并渲染出真图",
+        "en-US": "Place a figure on the canvas and render it for real"
+      },
+      "entry": "左栏「素材」→ 双击素材卡 → 返回画布",
+      "e2e": [
+        {
+          "spec": "features.spec.ts",
+          "title": "功能：素材放上画布渲染出真图；点选出单选浮动栏；拖动真的移动；撤销 / 重做回到对应位置"
+        }
+      ]
+    },
+    {
+      "id": "canvas.select-and-drag",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "画布上点选对象并拖动",
+        "en-US": "Select and drag an object on the canvas"
+      },
+      "entry": "画布 → 点选对象 → 拖动",
+      "e2e": [
+        {
+          "spec": "features.spec.ts",
+          "title": "功能：素材放上画布渲染出真图；点选出单选浮动栏；拖动真的移动；撤销 / 重做回到对应位置"
+        }
+      ]
+    },
+    {
+      "id": "canvas.single-context-bar",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "单选浮动栏：选中一个对象时出现，按钮点得到",
+        "en-US": "Single-selection context bar appears in view with reachable actions"
+      },
+      "entry": "画布 → 选中一个对象 → 浮动栏",
+      "e2e": [
+        {
+          "spec": "features.spec.ts",
+          "title": "功能：素材放上画布渲染出真图；点选出单选浮动栏；拖动真的移动；撤销 / 重做回到对应位置"
+        }
+      ]
+    },
+    {
+      "id": "canvas.multi-context-bar-align",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "多选浮动栏与对齐",
+        "en-US": "Multi-selection context bar and alignment"
+      },
+      "entry": "画布 → ⌘A / ⇧点击多选 → 浮动栏「左对齐」等",
+      "e2e": [
+        {
+          "spec": "features.spec.ts",
+          "title": "功能：多选浮动栏在视口内，点「左对齐」后各对象左边真的对齐；撤销还原"
+        }
+      ]
+    },
+    {
+      "id": "canvas.quick-menu",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "画布对象的右键菜单（层级 / 重新构建 / 多选对齐）",
+        "en-US": "Right-click menu on canvas objects (z-order / rebuild / multi-align)"
+      },
+      "entry": "画布 → 右键对象",
+      "e2e": [
+        {
+          "spec": "quick-menu.spec.ts",
+          "title": "右键菜单：Esc 不清空选区 / 越界翻转 / 重新构建真跑脚本 / 多选对齐"
+        }
+      ]
+    },
+    {
+      "id": "canvas.text-annotation",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "文字工具加标注（行内上标）",
+        "en-US": "Add a text annotation with the text tool (inline superscript)"
+      },
+      "entry": "顶栏「文字」/ 快捷键 T → 点画布",
+      "e2e": [
+        {
+          "spec": "golden-paths.spec.ts",
+          "title": "打开项目 → 发现图片 → 渲染 → 修改 → 撤销 → 重启恢复"
+        }
+      ]
+    },
+    {
+      "id": "canvas.copy-paste",
+      "status": "active",
+      "platform": "browser",
+      "summary": {
+        "zh-CN": "复制 / 粘贴对象（跨标签页）",
+        "en-US": "Copy / paste objects, across tabs"
+      },
+      "entry": "画布 → ⌘C / ⌘V",
+      "e2e": [
+        {
+          "spec": "cross-tab-paste.spec.ts",
+          "title": "同一项目开两个标签页：标签 A 复制面板，标签 B 粘贴"
+        }
+      ]
+    },
+    {
+      "id": "figure.select-and-edit",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "图内元素选中与属性修改",
+        "en-US": "Select an element inside a figure and edit its properties"
+      },
+      "entry": "图内编辑 → 点选元素 → 右栏属性",
+      "e2e": [
+        {
+          "spec": "features.spec.ts",
+          "title": "功能：图内点选标题改字号，引擎重画后标题真的变大；撤销回到原字号"
+        },
+        {
+          "spec": "inspector-redesign.spec.ts",
+          "title": "流程 A+E：标题的字体/字号可见标签、改字号、undo/redo、来源计数与单项恢复"
+        }
+      ]
+    },
+    {
+      "id": "figure.element-drag",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "拖动图内元素（预览跟手、松手一次定稿）",
+        "en-US": "Drag an element inside a figure (live preview, one commit on release)"
+      },
+      "entry": "图内编辑 → 拖动标题 / 轴标签",
+      "e2e": [
+        {
+          "spec": "fake-realtime.spec.ts",
+          "title": "拖图内元素：预览跟手、拖动期间零后端、松手一次定稿"
+        }
+      ]
+    },
+    {
+      "id": "figure.multi-select-drag",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "图内多选整组拖动",
+        "en-US": "Drag a multi-selection of figure elements together"
+      },
+      "entry": "图内编辑 → ⇧点击多选 → 拖动",
+      "e2e": [
+        {
+          "spec": "multi-select-geometry.spec.ts",
+          "title": "图内混合多选整组拖动：锚点 = 独立模型，撤销 / 重做回到对应位置"
+        }
+      ]
+    },
+    {
+      "id": "figure.overlap-cycle",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "重叠元素 ⌥ 点击轮换选中",
+        "en-US": "⌥-click cycles through overlapping elements"
+      },
+      "entry": "图内编辑 → ⌥ 点击重叠处",
+      "e2e": [
+        {
+          "spec": "twin-axes-pick.spec.ts",
+          "title": "twinx：⌥ 点击在宿主与孪生轴之间轮换，并说出换到了谁"
+        }
+      ]
+    },
+    {
+      "id": "figure.patch-drag-carries",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "拖框时框里的字与连着的箭头跟着走",
+        "en-US": "Dragging a box carries its text and attached arrow end"
+      },
+      "entry": "图内编辑 → 拖动注释框",
+      "e2e": [
+        {
+          "spec": "patch-drag-carries.spec.ts",
+          "title": "拖框：框里的字与连着框的箭头那一端跟着走（真渲染落位、不弹回）"
+        }
+      ]
+    },
+    {
+      "id": "figure.ticks",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "选中子图设四边刻度、方向与次刻度",
+        "en-US": "Set ticks on all four sides, direction and minor ticks for a subplot"
+      },
+      "entry": "图内编辑 → 选中子图 → 右栏刻度",
+      "e2e": [
+        {
+          "spec": "ux-consistency.spec.ts",
+          "title": "流程 B：选中子图即可设四边刻度、方向与次刻度，示意图跟着真实状态变"
+        }
+      ]
+    },
+    {
+      "id": "figure.large-figure-edit",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "大图降档预览后照常可编辑",
+        "en-US": "Large figures stay editable after the preview downgrades"
+      },
+      "entry": "打开大图 → 图内编辑",
+      "e2e": [
+        {
+          "spec": "large-figure.spec.ts",
+          "title": "降档之后：选中图内元素、属性面板打得开、撤销回得去"
+        }
+      ]
+    },
+    {
+      "id": "legend.properties",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "图例属性：位置网格、外侧锚点",
+        "en-US": "Legend properties: position grid and outside anchors"
+      },
+      "entry": "图内编辑 → 选中图例 → 右栏图例卡",
+      "e2e": [
+        {
+          "spec": "features.spec.ts",
+          "title": "功能：图例位置网格点「左上」，引擎重画后图例真的挪到坐标区左上角"
+        },
+        {
+          "spec": "inspector-redesign.spec.ts",
+          "title": "流程 C2：图例放到子图外面（外侧锚点），检查随即报「超出图幅」"
+        }
+      ]
+    },
+    {
+      "id": "style.panel",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "左栏「样式」：看与改当前图的样式，恢复原样",
+        "en-US": "Left “Style” panel: view and edit the current figure's style, restore"
+      },
+      "entry": "左栏「样式」",
+      "e2e": [
+        {
+          "spec": "features.spec.ts",
+          "title": "功能：左栏「样式」改标题字号，图跟着重画；「恢复原样」回到原来"
+        }
+      ]
+    },
+    {
+      "id": "problems.panel",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "问题面板：预检报出的问题随编辑出现与消失",
+        "en-US": "Problems panel: preflight issues appear and clear as you edit"
+      },
+      "entry": "左栏「问题」",
+      "e2e": [
+        {
+          "spec": "inspector-redesign.spec.ts",
+          "title": "流程 C2：图例放到子图外面（外侧锚点），检查随即报「超出图幅」"
+        }
+      ]
+    },
+    {
+      "id": "edit.undo-redo",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "撤销 / 重做",
+        "en-US": "Undo / redo"
+      },
+      "entry": "⌘Z / ⇧⌘Z，顶栏撤销 / 重做",
+      "e2e": [
+        {
+          "spec": "features.spec.ts",
+          "title": "功能：素材放上画布渲染出真图；点选出单选浮动栏；拖动真的移动；撤销 / 重做回到对应位置"
+        },
+        {
+          "spec": "fake-realtime.spec.ts",
+          "title": "STATE-08 保存重开：提交→撤销→重做→自动保存→整个后端（含 worker）退出→同端口同数据目录重开，文档与画面都是最后提交那一版"
+        }
+      ]
+    },
+    {
+      "id": "file.autosave-restore",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "自动保存：刷新 / 重启后回到最后一次编辑",
+        "en-US": "Autosave: reload / restart returns to the last edit"
+      },
+      "entry": "自动（无入口）",
+      "e2e": [
+        {
+          "spec": "fake-realtime.spec.ts",
+          "title": "STATE-08 保存重开：提交→撤销→重做→自动保存→整个后端（含 worker）退出→同端口同数据目录重开，文档与画面都是最后提交那一版"
+        },
+        {
+          "spec": "asset-library.spec.ts",
+          "title": "完整链：保存 → 关闭 → 重开 → 重放 → 预检 → 导出 PDF/PNG"
+        }
+      ],
+      "desktop_manual": [
+        "改一处之后 ⌘Q 退出桌面应用再打开：回到同一个项目，改动还在"
+      ]
+    },
+    {
+      "id": "export.pdf",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "导出 PDF",
+        "en-US": "Export PDF"
+      },
+      "entry": "顶栏「导出」/ ⌘E → 勾 PDF → 开始导出",
+      "e2e": [
+        {
+          "spec": "features.spec.ts",
+          "title": "功能：导出对话框一次导出 PDF / PNG / TIFF，三个文件真的落盘、文件头对得上"
+        },
+        {
+          "spec": "keyboard-golden-path.spec.ts",
+          "title": "纯键盘走完核心闭环：开项目 → 编辑元素 → undo/redo → 导出"
+        }
+      ]
+    },
+    {
+      "id": "export.png",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "导出 PNG",
+        "en-US": "Export PNG"
+      },
+      "entry": "顶栏「导出」/ ⌘E → 勾 PNG → 开始导出",
+      "e2e": [
+        {
+          "spec": "features.spec.ts",
+          "title": "功能：导出对话框一次导出 PDF / PNG / TIFF，三个文件真的落盘、文件头对得上"
+        }
+      ]
+    },
+    {
+      "id": "export.tiff",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "导出 TIFF",
+        "en-US": "Export TIFF"
+      },
+      "entry": "顶栏「导出」/ ⌘E → 勾 TIFF → 开始导出",
+      "e2e": [
+        {
+          "spec": "features.spec.ts",
+          "title": "功能：导出对话框一次导出 PDF / PNG / TIFF，三个文件真的落盘、文件头对得上"
+        }
+      ]
+    },
+    {
+      "id": "keyboard.core-loop",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "纯键盘走完核心闭环（开项目 → 编辑 → 撤销 → 导出）",
+        "en-US": "Keyboard-only core loop (open → edit → undo → export)"
+      },
+      "entry": "键盘",
+      "e2e": [
+        {
+          "spec": "keyboard-golden-path.spec.ts",
+          "title": "纯键盘走完核心闭环：开项目 → 编辑元素 → undo/redo → 导出"
+        }
+      ]
+    },
+    {
+      "id": "help.shortcuts",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "快捷键帮助（完整、可搜索）",
+        "en-US": "Keyboard shortcut help (complete, searchable)"
+      },
+      "entry": "? 键 / 命令面板「快捷键帮助」",
+      "e2e": [
+        {
+          "spec": "nav-audit.spec.ts",
+          "title": "T50：快捷键说明一条都没有被切掉，且搜索能收窄"
+        },
+        {
+          "spec": "features.spec.ts",
+          "title": "功能：命令面板 ⌘K 搜索并执行命令——加一段文字、打开快捷键帮助"
+        }
+      ]
+    },
+    {
+      "id": "command.palette",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "命令面板 ⌘K：搜索并执行命令",
+        "en-US": "Command palette ⌘K: search and run commands"
+      },
+      "entry": "⌘K",
+      "e2e": [
+        {
+          "spec": "features.spec.ts",
+          "title": "功能：命令面板 ⌘K 搜索并执行命令——加一段文字、打开快捷键帮助"
+        }
+      ]
+    },
+    {
+      "id": "tutorial.entry",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "交互式教程：从入口进入并完整走完",
+        "en-US": "Interactive tutorial: start from its entry and finish it"
+      },
+      "entry": "项目选择器 / 更多菜单「教程」",
+      "e2e": [
+        {
+          "spec": "tutorial.spec.ts",
+          "title": "完整走完教程：每一步都由真实动作完成"
+        }
+      ]
+    },
+    {
+      "id": "settings.dialog",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "设置窗口：切遍各分区",
+        "en-US": "Settings window: every section reachable"
+      },
+      "entry": "左栏底部「设置」",
+      "e2e": [
+        {
+          "spec": "settings-shell.spec.ts",
+          "title": "设置：切遍每个分区，外框不跳、内容区自己滚"
+        }
+      ]
+    },
+    {
+      "id": "settings.coding-agents",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "设置里的编码 Agent 列表与详情",
+        "en-US": "Coding agents list and detail in Settings"
+      },
+      "entry": "设置 → 编码 Agent",
+      "e2e": [
+        {
+          "spec": "coding-agents.spec.ts",
+          "title": "编码 Agent：列表 → 详情 → 返回，状态与滚动都还在"
+        }
+      ]
+    },
+    {
+      "id": "i18n.language",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "界面语言切换（中文 / 英文）：当场生效、刷新后保持",
+        "en-US": "Switch the UI language (Chinese / English): applies at once and survives a reload"
+      },
+      "entry": "设置 →「常规」→ 语言",
+      "e2e": [
+        {
+          "spec": "features.spec.ts",
+          "title": "功能：设置里把界面语言切成英文，整页当场换语言，刷新后仍是英文"
+        },
+        {
+          "spec": "i18n.spec.ts",
+          "title": "界面语言 zh-CN › 刷新之后仍是这门语言（手动选择压过系统语言）"
+        },
+        {
+          "spec": "i18n.spec.ts",
+          "title": "界面语言 en-US › 刷新之后仍是这门语言（手动选择压过系统语言）"
+        }
+      ],
+      "desktop_manual": [
+        "切到英文后，桌面壳的原生菜单栏也换成英文"
+      ]
+    },
+    {
+      "id": "diagnostics.bundle",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "导出诊断包（已脱敏）",
+        "en-US": "Export a redacted diagnostics bundle"
+      },
+      "entry": "设置 → 诊断 → 导出诊断包",
+      "e2e": [
+        {
+          "spec": "golden-paths.spec.ts",
+          "title": "导出诊断包：能下载，且不含主目录、用户脚本的报错文字与文件名、请求参数"
+        }
+      ]
+    },
+    {
+      "id": "embedded.codex-canvas",
+      "status": "active",
+      "platform": "browser",
+      "summary": {
+        "zh-CN": "Codex 内嵌画布：拖图内标题并回写",
+        "en-US": "Codex embedded canvas: drag a figure title and apply"
+      },
+      "entry": "Codex 插件画布",
+      "e2e": [
+        {
+          "spec": "mcp-canvas.spec.ts",
+          "title": "用鼠标拖图内标题 → tools/call 发全量 patches → 用响应更新画布"
+        }
+      ]
+    },
+    {
+      "id": "desktop.native-open-folder",
+      "status": "active",
+      "platform": "desktop",
+      "summary": {
+        "zh-CN": "桌面壳：用系统文件夹选择框打开项目",
+        "en-US": "Desktop: open a project with the native folder picker"
+      },
+      "entry": "项目选择器 →「浏览目录…」",
+      "e2e": [],
+      "desktop_manual": [
+        "项目选择器里点「浏览目录…」：弹出系统的文件夹选择框（标题「选择论文图所在目录」），不是网页里的目录浏览器",
+        "选一个含图的文件夹：项目打开，素材库列出里面的图"
+      ]
+    },
+    {
+      "id": "desktop.close-guard",
+      "status": "active",
+      "platform": "desktop",
+      "summary": {
+        "zh-CN": "桌面壳：有未保存修改时关窗先问（保存并关闭 / 不保存 / 取消）",
+        "en-US": "Desktop: closing with unsaved changes asks first (save and close / discard / cancel)"
+      },
+      "entry": "有未保存修改时关闭窗口（⌘W / 红灯）",
+      "e2e": [],
+      "desktop_manual": [
+        "改一处后立刻点窗口红灯：弹出「有未保存的修改」，Esc 与点框外都不关框",
+        "选「取消」：窗口留着、改动还在；再关一次选「保存并关闭」：窗口关闭，重开后改动还在"
+      ]
+    },
+    {
+      "id": "desktop.reveal-export",
+      "status": "active",
+      "platform": "desktop",
+      "summary": {
+        "zh-CN": "桌面壳：在 Finder 中显示导出的文件",
+        "en-US": "Desktop: reveal the exported file in Finder"
+      },
+      "entry": "导出完成 → 结果里的文件名",
+      "e2e": [],
+      "desktop_manual": [
+        "导出一次 PDF，点结果里的文件名：Finder 打开并选中那个文件；定位失败时界面说出完整路径"
+      ]
+    },
+    {
+      "id": "desktop.update",
+      "status": "active",
+      "platform": "desktop",
+      "summary": {
+        "zh-CN": "桌面壳：检查更新 / 安装 / 重启",
+        "en-US": "Desktop: check for updates / install / relaunch"
+      },
+      "entry": "设置 →「更新」→「立即检查」",
+      "e2e": [],
+      "desktop_manual": [
+        "设置 →「更新」点「立即检查」：说清已是最新或有新版本；断网时给出可读的报错，界面可继续",
+        "（有新版本时）安装并重启：设置里的版本号变成新版"
+      ]
+    },
+    {
+      "id": "desktop.bundled-runtime",
+      "status": "active",
+      "platform": "desktop",
+      "summary": {
+        "zh-CN": "桌面壳：不装 Python 也能渲染样例图（内置渲染环境）",
+        "en-US": "Desktop: renders the sample figure without a system Python (bundled runtime)"
+      },
+      "entry": "首次启动 → 打开样例图",
+      "e2e": [],
+      "desktop_manual": [
+        "在没有装 Python / matplotlib 的机器（或临时改名系统 Python）上打开样例项目：图照常渲染，图内编辑可用"
+      ]
+    },
+    {
+      "id": "desktop.codex-integration",
+      "status": "active",
+      "platform": "desktop",
+      "summary": {
+        "zh-CN": "桌面壳：一键安装 / 检查 Codex 集成",
+        "en-US": "Desktop: install / check the Codex integration in one click"
+      },
+      "entry": "设置 → 编码 Agent →「安装 Codex 集成」/「重新诊断」",
+      "e2e": [],
+      "desktop_manual": [
+        "设置 → 编码 Agent 点「安装 Codex 集成」：成功时说「完成」，失败时指出卡在哪一步",
+        "再点「重新诊断」：结论与实际一致（装好了就说各项都没问题）"
+      ]
+    }
+  ]
+}
