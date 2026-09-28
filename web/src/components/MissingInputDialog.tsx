@@ -145,7 +145,7 @@ export function MissingInputDialog() {
  * 以哪一条为主：worker 说出来的那串优先；否则（「没出图」路径）先挑改指救得回来的，
  * 都救不回来才挑第一条如实说明。
  */
-export function primaryOf(offer: MissingInputOffer): MissingInputItem | null {
+function primaryOf(offer: MissingInputOffer): MissingInputItem | null {
   if (offer.requested) return { path: offer.requested, absolute: offer.absolute, via: offer.via }
   return offer.others.find((o) => o.via === 'open') ?? offer.others[0] ?? null
 }

@@ -233,3 +233,10 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
 
   clear: () => set((s) => ({ byScript: {}, epoch: s.epoch + 1 })),
 }))
+
+// 用户在「找不到脚本要读的数据」里指认了位置（ADR 0106）：envStore 的代际一变，重跑这次因此失败的脚本
+useEnvStore.subscribe((state, prev) => {
+  if (state.inputRemapGeneration !== prev.inputRemapGeneration) {
+    useScriptRunStore.getState().rerunMissingInput()
+  }
+})

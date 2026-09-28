@@ -78,6 +78,8 @@ interface EnvState {
    * `MissingInputDialog` 渲染它；同一时刻只开一份，换了项目的旧载荷不弹。
    */
   missingInput: MissingInputOffer | null
+  /** 每记住一条数据位置加一：素材库的试运行状态机订阅它，重跑因「找不到数据」失败的脚本 */
+  inputRemapGeneration: number
   requestMissingInput: (offer: MissingInputOffer, projectId?: string | null) => void
   dismissMissingInput: () => void
   /**
@@ -137,6 +139,7 @@ export const useEnvStore = create<EnvState>((set, get) => ({
   workdirConfirmation: null,
   dependencyPreparation: null,
   missingInput: null,
+  inputRemapGeneration: 0,
 
   requestWorkdirConfirmation: (payload, projectId) => {
     if (projectId !== undefined && projectId !== currentProjectId()) return
@@ -163,10 +166,9 @@ export const useEnvStore = create<EnvState>((set, get) => ({
       const { useRenderStore } = await import('@/store/renderStore')
       if (epoch !== projectEpoch) return null
       useRenderStore.getState().retryEnvironmentFailures()
-      // 素材库「运行并发现图」那条入口失败的脚本同样重跑
-      const { useScriptRunStore } = await import('@/store/scriptRunStore')
-      if (epoch !== projectEpoch) return null
-      useScriptRunStore.getState().rerunMissingInput()
+      // 素材库「运行并发现图」那条入口失败的脚本同样重跑：scriptRunStore 订阅这个代际
+      // （它依赖本 store；反过来 import 会成环）
+      set((s) => ({ inputRemapGeneration: s.inputRemapGeneration + 1 }))
       useUiStore.getState().setStatus(msg('engine.missingInputRemembered', undefined, 'errors'))
       return null
     } catch (e) {
