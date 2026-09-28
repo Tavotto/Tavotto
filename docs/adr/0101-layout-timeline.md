@@ -76,7 +76,7 @@ B 拒绝再命名。选 **B**：A 的文件越大，**每一次**自动节点的
 |---|---|
 | 导出 | `exportStore.applyExportJob` 进终局且 `done` / `partial`（同一作业只进一次终局） |
 | 写回 | `UpdateSourceButton` 的 `runWriteBack` 成功、`SyncOverridesButton` 写回成功 |
-| 保存 | 「排版写进了文件」事件（`lib/layoutSaved.ts`）：保存侧 `emitLayoutSaved()`，时间线在 `startVersionCheckpoints` 里订阅。今天的两个发出点：`runManualSave` 得到 `saved` / `clean`（`local`）、另存为画布文件成功（`LayoutDialog`，`layout_file`）；#674 合入后见 §7 |
+| 保存 | 「排版写进了文件」事件（`lib/layoutSaved.ts`）：保存侧 `emitLayoutSaved()`，时间线在 `startVersionCheckpoints` 里订阅。今天的两个发出点：`runManualSave` 得到 `saved` / `clean`（`local`）、另存为画布文件成功（`LayoutDialog`，`layout_file`）；#674 的「写回项目文件 / 存进项目」见 §7 |
 | 打开项目 | `projectStore.adoptNow` 进 `phase: 'open'` 之后 |
 | 离开项目 | `showPicker`（回主页，#661）；`adoptNow` 从一个开着的项目**直接**切到另一个 |
 | 恢复前 | `restoreNode()`，**直接 await**，不经 markMoment（它必须成功，见 §5） |
@@ -165,20 +165,18 @@ e2e 把间隔**注入**调小（`window.__TAVOTTO_TIMELINE_TIMING__ = { debounce
   `menu-timeline`「排版时间线」加速键 `CmdOrCtrl+Shift+H` → `toggleTimeline()`；「文件」菜单
   `menu-save-named`「把现在存为命名节点…」加速键 `CmdOrCtrl+Alt+S` → `startNamedNode()`；
   两份 i18n（`src-tauri/src/i18n.rs`）与 `menuActions.ts` 的分派表各加一行。
-- **#674 ⌘S 保存到项目**（未合入）：「存进项目」有两处成功点，**两处都要打「保存」点**，
-  各在成功分支里加一行 `emitLayoutSaved(...)`（`import { emitLayoutSaved } from '@/lib/layoutSaved'`），
-  不 import 时间线：
-  1. `web/src/store/projectSave.ts` 的 `writeBoundProjectFile()`：`setProjectFile(...)` 与
-     `ui.setStatus(msg('save.doneProject', …))` 之后、`return true` 之前 → `emitLayoutSaved('project_file', { ctx })`，`ctx = currentTimelineCtx()` 在这个函数第一个 await 之前取（见下「上下文」）。
-     这是「已经绑定了项目文件」的 ⌘S。
-  2. `web/src/components/LayoutDialog.tsx` 的保存成功分支（`await saveLayout(...)` 之后、`setOpen(false)`
-     之前）：本 PR 已经在那里加了 `emitLayoutSaved('layout_file', { ctx })`；#674 把这一段改成按 intent 分
-     `save` / `saveToProject`（带 `target: 'project'`）——合并时**两种 intent 都要保留这一行**，
-     `saveToProject` 那一种发 `'project_file'`。这是「第一次存进项目」走的命名框。
-  3. `web/src/store/actions.ts` 的 `runManualSave()`：本 PR 的 `emitLayoutSaved('local', { ctx })` 留在
-     `saved` / `clean` 那一支（#674 的项目分支在它前面 return，两者不会同时发）。
-  beta 侧在 `writeBoundProjectFile` 里直接加的 `markMoment('save')` 在本 PR 合入后要换成第 1 条的
-  `emitLayoutSaved('project_file', { ctx })`，否则同一次保存打两个点。
+- **#674 ⌘S 保存到项目**（已合入 d85792de8，本 PR rebase 时落实）：三处写入成功点各发一次
+  「排版写成了」，**写成之后立刻发、在任何后续步骤（记账、关对话框、状态条）之前**——后续步骤
+  出错也不能吞掉这个点（Codex #679）：
+  1. `store/projectSave.ts` 的 `writeOnce()`（⌘S 写回已绑定的项目文件）：`await saveLayout(...)`
+     一返回 → `emitLayoutSaved('project_file', { ctx: ctx.timeline })`；
+  2. `components/LayoutDialog.tsx` 的 `doSave`（另存为 / 第一次存进项目）：同样紧跟 `saveLayout` →
+     `emitLayoutSaved(toProject ? 'project_file' : 'layout_file', { ctx: ctx.timeline })`；
+  3. `store/actions.ts` 的 `runManualSave()` 本机那一支（没开项目）：`emitLayoutSaved('local', { ctx: ctx.timeline })`。
+  `ctx.timeline` 是 #674 入口 `captureSaveContext()` **同一次捕获**里取的时间线上下文，不另算一份。
+  两者维度不同、各管各的：保存上下文（载入代次 / pj / 绑定文件）判「还要不要继续写、弹框」；时间线上下文
+  （项目代际 + 排版 id）判「这一刻属于谁的时间线」——同一份排版被重新载入或改绑文件之后，节点仍属于它。
+  beta 侧在 `writeBoundProjectFile` 里直接加的 `markMoment('save')` 要删掉，否则同一次保存打两个点。
 - **#661 回主页按钮**（未合入）：它复用 `showPicker`，离开时刻自动就有。
 - **#668 术语检查**：本 PR 新增与改写的时间线文案只用「项目 / 排版 / 画布 / 项目包」。
 
