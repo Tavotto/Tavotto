@@ -295,8 +295,100 @@ def test_unanswered_input_times_out_as_eof(plane, figs, tmp_path, frontend, monk
     worker, resp = pool.build("eof.py", str(figs), "__main__")
     assert json.loads((tmp_path / "result.json").read_text(encoding="utf-8")) == "eof"
     assert resp["script_inputs"][0]["answer"] is None
-    # 那一问的对话框被收回
-    assert [c["reason"] for c in fe.of("script.input_closed")] == ["finished"]
+    # 那一问的对话框被收回，且只收一次：脚本接住 EOF 后马上跑完，是「超时收起」还是「build 结束」
+    # 先到取决于轮询时机（到点就收起的判据见 test_a_timed_out_question_is_retired_while_the_script_runs_on）
+    assert [c["reason"] for c in fe.of("script.input_closed")] in (["timed_out"], ["finished"])
+
+
+#: 接住 EOF 之后还要算一阵（`SI_LINGER` 秒）才画图：「超时之后、build 结束之前」那段窗口。
+EOF_THEN_WORKS = """\
+import json, os, time
+import matplotlib.pyplot as plt
+
+try:
+    choice = input("which: ")
+except EOFError:
+    choice = "eof"
+time.sleep(float(os.environ["SI_LINGER"]))
+with open(os.environ["SI_RESULT"], "w", encoding="utf-8") as fh:
+    json.dump(choice, fh)
+fig, ax = plt.subplots(figsize=(2, 1.5))
+fig.savefig("Late.pdf")
+"""
+
+
+@needs_worker
+def test_a_timed_out_question_is_retired_while_the_script_runs_on(
+    plane, figs, tmp_path, frontend, monkeypatch
+):
+    """等到超时、脚本接住 EOF 接着跑：那一问**当场**收起，迟到的答案被拒、不记住（Codex #680 P2）。
+    不收起的话界面一直摆着过期的框，迟到的答案被记住——本次输出没用它，下次运行却用它。"""
+    monkeypatch.setenv(scriptinput.TIMEOUT_ENV, "1")
+    monkeypatch.setenv("SI_LINGER", "8")
+    (figs / "late.py").write_text(EOF_THEN_WORKS, encoding="utf-8")
+    fe = frontend({})  # 界面在，但没人答
+    out: dict = {}
+    th = threading.Thread(
+        target=lambda: out.setdefault("r", pool.build("late.py", str(figs), "__main__"))
+    )
+    th.start()
+    try:
+        deadline = time.monotonic() + 60
+        while not fe.of("script.input_requested") and time.monotonic() < deadline:
+            time.sleep(0.05)
+        asked = fe.of("script.input_requested")[0]
+        # 脚本还在算（build 没结束），这一问已经以「超时」收起
+        while not fe.of("script.input_closed") and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert th.is_alive(), "build 已经结束：量的不是「超时之后、结束之前」那段窗口"
+        assert [c["reason"] for c in fe.of("script.input_closed")] == ["timed_out"]
+        # 迟到的答案：不在等、不记住
+        assert inputbroker.answer(asked["id"], "2") is None
+        assert scriptanswers.entries(figs, "late.py") == []
+    finally:
+        th.join(120)
+    assert json.loads((tmp_path / "result.json").read_text(encoding="utf-8")) == "eof"
+    assert [c["reason"] for c in fe.of("script.input_closed")] == ["timed_out"]
+
+
+def test_a_late_answer_loses_to_the_timeout_claim(tmp_path, monkeypatch):
+    """worker 已经定了「超时」的案、父进程还没轮询到：迟到的答案照样被拒——不回复、不记住、收起那一问。"""
+    saved: list[str] = []
+    monkeypatch.setattr(scriptanswers, "remember", lambda *a, **k: saved.append(a[4]))
+    monkeypatch.setattr(inputbroker, "_publish", None)
+    p = inputbroker.Pending(
+        id="q1",
+        project_root=str(tmp_path),
+        script="s.py",
+        index=1,
+        prompt="which: ",
+        kind="input",
+        directory=tmp_path,
+    )
+    monkeypatch.setattr(inputbroker, "_pending", {"q1": p})
+    assert scriptinput.claim(tmp_path, 1, scriptinput.CLAIM_TIMEOUT)
+    assert inputbroker.answer("q1", "2") is None
+    assert saved == []
+    assert not (tmp_path / scriptinput.reply_name(1)).exists()
+    assert inputbroker.get_pending("q1") is None
+
+
+def test_the_worker_waits_for_an_answer_that_claimed_first(tmp_path, monkeypatch):
+    """到点时界面已经定了案（正在落盘）：worker 不按超时跑掉，等它把回复写出来再用——记住的 == 用到的。"""
+    monkeypatch.setenv(scriptinput.TIMEOUT_ENV, "0.3")
+    ch = scriptinput.Channel(tmp_path, "s.py")
+    assert scriptinput.claim(tmp_path, 1, scriptinput.CLAIM_ANSWER)
+    timer = threading.Timer(
+        1.2,
+        lambda: (tmp_path / scriptinput.reply_name(1)).write_text(
+            json.dumps({"answer": "2"}), "utf-8"
+        ),
+    )
+    timer.start()
+    try:
+        assert ch.ask("which: ", "input") == "2"
+    finally:
+        timer.cancel()
 
 
 @needs_worker

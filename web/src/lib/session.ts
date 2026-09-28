@@ -44,13 +44,39 @@ export function currentProjectId(): string | null {
   return current
 }
 
+type ProjectIdListener = (id: string | null) => void
+const listeners = new Set<ProjectIdListener>()
+
+/**
+ * 认领的项目一变就同步通知（在 `setCurrentProjectId` 里、在调用方任何 await 之前）。
+ *
+ * 给「后端要知道本标签页在看哪个项目」的人用：事件按 `currentProjectId()` 过滤，从这一刻起
+ * 旧项目的事件就被丢掉了；后端那份映射若要等换代做完、`project` 赋值后才更新，中间这段窗口里
+ * 两边对不上——旧项目的问被丢掉白等、新项目的问被当成没人答（ADR 0099 §五，Codex #680 P1）。
+ */
+export function onCurrentProjectChange(fn: ProjectIdListener): () => void {
+  listeners.add(fn)
+  return () => {
+    listeners.delete(fn)
+  }
+}
+
 export function setCurrentProjectId(id: string | null): void {
+  const prev = current
   current = id || null
   try {
     if (current) window.sessionStorage.setItem(KEY, current)
     else window.sessionStorage.removeItem(KEY)
   } catch {
     /* 存不下也不影响本次会话：current 在内存里 */
+  }
+  if (current === prev) return
+  for (const fn of listeners) {
+    try {
+      fn(current)
+    } catch {
+      /* 一个监听者出错不能挡住认领本身 */
+    }
   }
 }
 

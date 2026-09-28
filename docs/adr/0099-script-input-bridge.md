@@ -62,6 +62,9 @@ safe worker 的 `sys.stdin` **就是协议管道**（`worker.main()` 从它逐�
   到点后 `input()` 抛 `EOFError`、`readline()` 回 `""`：和在终端里按 Ctrl-D 一样，脚本自己 `try` 了就照常往下跑。
 - 脚本没接住、build 因此失败 → 错误码 **`script_input_timeout`**（不是笼统的 `script_error`），文案说「等了 10 分钟没有回答」。
   判据：本次 build 里确实有一问超时了，且 build 以异常结束。
+- **超时与作答只能一方算数**：谁先用 `O_EXCL` 建成会合目录里的 `claim-<n>.json` 谁赢。超时赢了，父进程当场收起那一问
+  （`script.input_closed`，reason `timed_out`），迟到的答案被拒——不回给脚本、**不记住**；否则本次输出没用它、下次运行却用它
+  （Codex #680 P2）。作答先定了案，worker 到点也不跑，等回复写出来再用（落盘失败则放掉定案，照旧能超时）。
 - **等人的时间不算脚本的静默预算**：worker 发问时把提示写进 worker.log（input 的提示本来就进 stdout），收到答案时
   再写一行「提示 → 答案」的转录（`getpass` 只写固定标记、不写答案——worker.log 会进诊断包与错误里的日志尾巴，
   Codex #680 P1）。静默看门狗在这两个点各清零一次，所以等人的那段最多占一个 10 分钟的窗口，
@@ -97,7 +100,8 @@ safe worker 的 `sys.stdin` **就是协议管道**（`worker.main()` 从它逐�
 2. **问界面**（池会话，没记住）：此刻至少有一个**声明能答题、且正在看这个项目**的界面连着，就发
    `script.input_requested`（提示、序号、stdout 最近片段），等回填。声明 = `/api/events?answers=1`（主界面那条事件流带
    这个标记，MCP 画布等其它消费者不带）；这条流连上时收到 `stream.hello`（流 id），界面据此经
-   `POST /api/script_input/listen` 报「我此刻在看哪个项目」，每次换项目再报一次。**按项目认**是因为事件流是全进程一条、
+   `POST /api/script_input/listen` 报「我此刻在看哪个项目」，每次换项目再报一次——在**认领新项目的同一时刻**报
+   （`setCurrentProjectId` 的监听），不等换代做完：事件过滤从认领那一刻就换了，晚报会留一段两边对不上的窗口。**按项目认**是因为事件流是全进程一条、
    跨项目存活的，而界面按 `pj` 丢掉别的项目的事件：开着 A 的界面算作 B 的答题方的话，B 的后台 / MCP 渲染会白等
    10 分钟（Codex #680 P1）。
    能力标记只是同一条 `/api/events` 的查询参数，**认证与普通事件流完全相同**（ADR 0008 的全局 guard），不是新通道。

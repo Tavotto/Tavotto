@@ -136,11 +136,29 @@ def answer(pending_id: str, text: str | None, *, eof: bool = False) -> Pending |
         with _lock:
             if _pending.get(pending_id) is not p:
                 return None  # 同一问已被答掉 / 被停止了
+        # 与 worker 的「等到超时」抢定案：worker 已经按 EOF 往下跑了的话，这个答案既不回给脚本也不记住——
+        # 本次输出没用它，下次运行却用它，就是「显示的结果」与「记住的答案」对不上（Codex #680 P2）
+        try:
+            won = scriptinput.claim(p.directory, p.index, scriptinput.CLAIM_ANSWER)
+        except OSError:
+            won = False  # 会合目录已经删了：build 结束了
+        if not won:
+            with _lock:
+                _pending.pop(pending_id, None)
+            p.done.set()
+            _emit("script.input_closed", p.project_root, {"id": p.id, "reason": "timed_out"})
+            return None
         if not (eof or text is None) and p.kind != "getpass":
             # 先校验、先落盘，**成功之后才出队**：答案不合法（太长）或写盘失败时这一问仍在等，界面改好再交一次
             # 照样答得上（Codex #680 P2）。先出队的话改好的那次拿到 404，而 worker 白等到超时。
             # 口令不落盘：getpass 的答案每次都问（ADR 0099 §四）
-            scriptanswers.remember(p.project_root, p.script, p.index, p.prompt, text, p.kind)
+            try:
+                scriptanswers.remember(p.project_root, p.script, p.index, p.prompt, text, p.kind)
+            except BaseException:
+                scriptinput.release(
+                    p.directory, p.index
+                )  # 定案放掉：worker 照旧等，也照旧能到点超时
+                raise
         with _lock:
             del _pending[pending_id]
     if eof or text is None:
@@ -233,7 +251,17 @@ def _serve(worker, directory: Path, stop: threading.Event) -> None:
                     _decide(worker, directory, request)
                 except Exception:  # noqa: BLE001 — 一问答坏了也不能让轮询线程死掉
                     LOG.exception("脚本输入第 %d 问处理失败", index)
+        _retire_timed_out(directory)
         stop.wait(BROKER_POLL)
+
+
+def _retire_timed_out(directory: Path) -> None:
+    """worker 已经等到超时、按 EOF 往下跑了的问：当场收起（界面关掉那个框），不留到 build 结束（Codex #680 P2）。"""
+    with _lock:
+        mine = [p for p in _pending.values() if p.directory == directory]
+    for p in mine:
+        if scriptinput.claimed_by(directory, p.index) == scriptinput.CLAIM_TIMEOUT:
+            discard(p.id, "timed_out")
 
 
 @contextlib.contextmanager
