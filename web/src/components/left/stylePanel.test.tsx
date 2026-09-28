@@ -536,6 +536,120 @@ describe('粗体 / 斜体（2026-09-26 用户反馈：样式栏能改的太少�
   })
 })
 
+describe('Codex #662 P2：绑定样式时连点，按最后一次排进去的值算，不按存库前的旧读数', () => {
+  /** 存库每一笔都卡住，由用例放行：模拟慢的样式库请求 */
+  function slowLibrary() {
+    const saves: { data: StyleData; release: () => void }[] = []
+    useProfileStore.setState({
+      save: (_k, _id, data) =>
+        new Promise((resolve) => {
+          const rec = { ...styleRecord, data } as never
+          saves.push({
+            data: data as StyleData,
+            release: () => {
+              useProfileStore.setState({ styles: [rec] })
+              resolve(rec)
+            },
+          })
+        }),
+    })
+    return saves
+  }
+  type StyleData = { element: Record<string, Record<string, unknown>>; annotation?: Record<string, unknown> }
+  const faceManifest = () => ({
+    ...manifest(),
+    elements: [
+      ...manifest().elements.filter((e) => e.role !== 'title'),
+      el('axes_0.title', 'title', [
+        num('fontsize', 15),
+        fam('serif'),
+        { prop: 'weight', type: 'enum', value: 'normal', options: ['normal', 'bold'] },
+        { prop: 'style', type: 'enum', value: 'normal', options: ['normal', 'italic'] },
+      ]),
+    ],
+  })
+  const button = (label: string) =>
+    container.querySelector<HTMLButtonElement>(`button[aria-label^="${label}"]`)!
+
+  /** 让队列往前走一步：库写入是串行队列，前一笔落定之后下一笔才发出去 */
+  const drain = () => act(async () => {
+    for (let i = 0; i < 5; i++) await Promise.resolve()
+  })
+
+  it('正体上连点两下「标题加粗」（第一笔还没存完）：排进去的是 bold 再 normal，最后回到正体；按钮当场显示按下', async () => {
+    await seed(panel, faceManifest())
+    const saves = slowLibrary()
+    bindCanvasStyle('s1')
+    await new Promise((r) => setTimeout(r, 50))
+    seedExactRender(current(), faceManifest() as never)
+    await mount()
+    await click(button('标题加粗'))
+    expect(button('标题加粗').getAttribute('aria-pressed'), '排进去了就显示按下，不等存库').toBe('true')
+    await click(button('标题加粗'))
+    expect(button('标题加粗').getAttribute('aria-pressed')).toBe('false')
+    await drain()
+    saves[0].release()
+    await drain()
+    // 第一笔落到画布上（weight = bold），引擎按它画回来——样式只认精确 manifest（ADR 0081）
+    const bolded = faceManifest()
+    bolded.elements = bolded.elements.map((e) =>
+      e.gid === 'axes_0.title'
+        ? {
+            ...e,
+            editable: (e.editable as { prop: string }[]).map((f) =>
+              f.prop === 'weight' ? { ...f, value: 'bold' } : f,
+            ),
+          }
+        : e,
+    )
+    await act(async () => seedExactRender(current(), bolded as never))
+    saves[1].release()
+    await drain()
+    expect(saves.map((x) => x.data.element.title.weight)).toEqual(['bold', 'normal'])
+    const w = current().overrides.filter((o) => o.gid === 'axes_0.title' && o.prop === 'weight').at(-1)?.value
+    expect(w ?? 'normal').toBe('normal')
+  })
+
+  it('数字框按两下 ↑（第一笔还没存完）：第二下在第一下的值上再加一格，不是两次都从旧值算', async () => {
+    await seed(panel, faceManifest())
+    const saves = slowLibrary()
+    bindCanvasStyle('s1')
+    await new Promise((r) => setTimeout(r, 50))
+    seedExactRender(current(), faceManifest() as never)
+    await mount()
+    const box = input('标题字号')
+    const start = Number(box.value)
+    for (let i = 0; i < 2; i++) {
+      await act(async () => {
+        box.focus()
+        box.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true, cancelable: true }))
+      })
+    }
+    await drain()
+    saves[0].release()
+    await drain()
+    saves[1]?.release()
+    await drain()
+    expect(saves.map((x) => x.data.element.title.fontsize)).toEqual([start + 0.5, start + 1])
+  })
+
+  it('那一笔存失败（库写不进去）：放掉挂着的值，按钮回到真实读数', async () => {
+    await seed(panel, faceManifest())
+    bindCanvasStyle('s1')
+    await new Promise((r) => setTimeout(r, 50))
+    seedExactRender(current(), faceManifest() as never)
+    let fail: () => void = () => {}
+    useProfileStore.setState({ save: () => new Promise((resolve) => (fail = () => resolve(null))) })
+    await mount()
+    await click(button('标题加粗'))
+    expect(button('标题加粗').getAttribute('aria-pressed')).toBe('true')
+    await drain()
+    await act(async () => fail())
+    await drain()
+    expect(button('标题加粗').getAttribute('aria-pressed')).toBe('false')
+  })
+})
+
 describe('排版：两列网格、「多个值」放得下且有说明', () => {
   it('「多个值」的数字框：输入框铺满定宽的值格，悬停说明「输入一个值会把它们统一」', async () => {
     await seed()

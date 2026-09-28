@@ -122,7 +122,9 @@
   图例的在 `legend_text` 上；刻度文字的引擎字段没有 `weight` / `style`，不摆开关；画布标注写 `bold` / `italic`，
   绑定时存成样式里的 boolean），线条 = 数据线宽 / 边框线宽 / 刻度方向 / 刻度长度 / 刻度线宽。行是两列固定网格：
   标签列 `4rem`、控件列（字号 / 线宽 / 方向这类「值」格同一个宽 `VALUE_W`，从左缘起排）；没有状态列，控件行里只有
-  控件（`data-style-cell` / `data-style-face`），框只有 `fieldBox` 一副。文字颜色、线条 / 边框颜色没进面板：取色是连续手势，绑定时每一下都要存一次库，得先有「一轮取色 = 一次
+  控件（`data-style-cell` / `data-style-face`），框只有 `fieldBox` 一副。绑定时的写入排队存库（`editBoundStyle` 返回 Promise），每一格记住最后一次排进去、
+  还没落定的值（`usePendingWrites`），显示与「在当前值上做」的动作（粗 / 斜体开关、↑↓ 步进）都按它算，落定后放掉
+  （Codex #662 P2：否则连点两下加粗会排进两次 `bold`）。文字颜色、线条 / 边框颜色没进面板：取色是连续手势，绑定时每一下都要存一次库，得先有「一轮取色 = 一次
   存库」的收口。
   看护：`components/left/stylePanel.test.tsx`、`lib/stylePresets.test.ts`、`store/styleBinding.test.ts`、`lib/migrate.style.test.ts`。
 - 看护：`store/projectReadinessStore.test.ts`、`components/RegistryDialog.test.tsx`、

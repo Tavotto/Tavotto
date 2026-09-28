@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, type ReactNode } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Bold, Italic, Paintbrush, RotateCcw } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
@@ -369,6 +369,40 @@ function FaceToggles({
 /** 图内写入器的读数 → 开关用的三态读数；`unavailable`（有元素不暴露这条）= 不摆开关 */
 const faceValue = (v: ControlValue): TypographyValue | null => (v.kind === 'unavailable' ? null : v)
 
+/**
+ * 绑定样式时的写入是**排队存库**的（`editBoundStyle` 返回 Promise，存完才改画布），这段时间里
+ * 控件读到的还是改之前的值。「在当前值上做」的动作（粗体 / 斜体开关、数字框的 ↑↓ 步进）要是
+ * 按那个旧值算，连点两下会算出同一个值：正体上连点两下加粗，排进去的是两次 `bold`，停在粗体上
+ * （Codex #662 P2）。所以每一格记住**最后一次排进去、还没落定的值**，显示与下一次计算都按它；
+ * 那一笔落定（存成功改了画布，或失败什么都没改）就放掉，回到控件真实读到的值。没绑样式时写入
+ * 是同步的一次 commit，不经这里。
+ */
+function usePendingWrites() {
+  const [pending, setPending] = useState<Record<string, { value: unknown; token: number }>>({})
+  const seq = useRef(0)
+  /** 这一格此刻该显示的读数：有没落定的写入就是它 */
+  const shown = useCallback(
+    <V extends CellValue>(key: string, v: V): V | { kind: 'uniform'; value: unknown } =>
+      key in pending ? { kind: 'uniform', value: pending[key].value } : v,
+    [pending],
+  )
+  /** 写一格；`run` 返回 Promise（排队存库）时记下它，落定后放掉 */
+  const write = useCallback((key: string, value: unknown, run: () => unknown) => {
+    const done = run()
+    if (!(done instanceof Promise)) return
+    const token = ++seq.current
+    setPending((p) => ({ ...p, [key]: { value, token } }))
+    void done.finally(() =>
+      setPending((p) => {
+        if (p[key]?.token !== token) return p
+        const { [key]: _settled, ...rest } = p
+        return rest
+      }),
+    )
+  }, [])
+  return { shown, write }
+}
+
 interface FigureRowProps {
   /** 当前画布绑了样式：改一格 = 改这套样式本身（`editBoundStyle`），画布上所有图跟着对齐 */
   bound: boolean
@@ -417,17 +451,24 @@ const FigureTextRow = memo(function FigureTextRow({
   const family = useTextStyleAdapter(panel, familyEls, FAMILY_PROPS)
   const weight = useTextStyleAdapter(panel, weightEls, WEIGHT_PROPS)
   const style = useTextStyleAdapter(panel, styleEls, STYLE_PROPS)
+  const pw = usePendingWrites()
   if (!sizeEls.length && !familyEls.length) return null
 
   const label = ROW_LABEL[id]()
   const familyField = family.fieldOf('fontfamily')
   const sizeField = size.fieldOf('fontsize')
-  const weightVal = faceRole && weight.fieldOf('weight') ? faceValue(weight.valueOf('weight')) : null
-  const styleVal = faceRole && style.fieldOf('style') ? faceValue(style.valueOf('style')) : null
+  const faceOf = (prop: 'weight' | 'style', a: typeof weight) => {
+    const v = faceRole && a.fieldOf(prop) ? faceValue(a.valueOf(prop)) : null
+    return v && pw.shown(prop, v)
+  }
+  const weightVal = faceOf('weight', weight)
+  const styleVal = faceOf('style', style)
   const writeFace = (prop: 'weight' | 'style', v: string) =>
-    bound && faceRole
-      ? void editBoundStyle({ kind: 'element', role: faceRole, prop, value: v })
-      : (prop === 'weight' ? weight : style).writeOnce(prop, v)
+    pw.write(prop, v, () =>
+      bound && faceRole
+        ? editBoundStyle({ kind: 'element', role: faceRole, prop, value: v })
+        : (prop === 'weight' ? weight : style).writeOnce(prop, v),
+    )
 
   return (
     <StyleRow id={id}>
@@ -436,13 +477,15 @@ const FigureTextRow = memo(function FigureTextRow({
           <div data-style-cell={`${id}.family`} className="flex min-w-0 flex-1">
             <FamilySelect
               label={sp('familyOf', { row: label })}
-              value={family.valueOf('fontfamily')}
+              value={pw.shown('fontfamily', family.valueOf('fontfamily'))}
               options={familyField.options ?? []}
               locked={locked}
               onChange={(v) =>
-                bound
-                  ? void editBoundStyle({ kind: 'element', role: familyRole, prop: 'fontfamily', value: v })
-                  : family.writeOnce('fontfamily', v)
+                pw.write('fontfamily', v, () =>
+                  bound
+                    ? editBoundStyle({ kind: 'element', role: familyRole, prop: 'fontfamily', value: v })
+                    : family.writeOnce('fontfamily', v),
+                )
               }
             />
           </div>
@@ -454,14 +497,16 @@ const FigureTextRow = memo(function FigureTextRow({
             <div data-style-cell={`${id}.size`} className="contents">
               <PtField
                 label={sp('sizeOf', { row: label })}
-                value={size.valueOf('fontsize')}
+                value={pw.shown('fontsize', size.valueOf('fontsize'))}
                 field={sizeField}
                 step={0.5}
                 locked={locked}
                 onChange={(v) =>
-                  bound
-                    ? void editBoundStyle({ kind: 'element', role: sizeRole, prop: 'fontsize', value: v })
-                    : size.writeOnce('fontsize', v)
+                  pw.write('fontsize', v, () =>
+                    bound
+                      ? editBoundStyle({ kind: 'element', role: sizeRole, prop: 'fontsize', value: v })
+                      : size.writeOnce('fontsize', v),
+                  )
                 }
               />
             </div>
@@ -500,13 +545,16 @@ const FigureLineRow = memo(function FigureLineRow({
   const els = useMemo(() => elementsWith(manifest, role, prop), [manifest, role, prop])
   const props = useMemo(() => [prop], [prop])
   const adapter = useTextStyleAdapter(panel, els, props)
+  const pw = usePendingWrites()
   const field = adapter.fieldOf(prop)
   if (!els.length || !field) return null
 
   const label = ROW_LABEL[id]()
-  const value = adapter.valueOf(prop)
+  const value = pw.shown(prop, adapter.valueOf(prop))
   const write = (v: unknown) =>
-    bound ? void editBoundStyle({ kind: 'element', role, prop, value: v }) : adapter.writeOnce(prop, v)
+    pw.write(prop, v, () =>
+      bound ? editBoundStyle({ kind: 'element', role, prop, value: v }) : adapter.writeOnce(prop, v),
+    )
 
   return (
     <StyleRow id={id}>
@@ -543,19 +591,24 @@ function AnnotationRow({
   texts: TextObject[]
 }) {
   const adapter = useCanvasTypography(texts)
+  const pw = usePendingWrites()
   const label = ROW_LABEL.annotation()
   const face = (prop: 'weight' | 'style'): TypographyValue | null =>
-    adapter.fieldOf(prop) ? adapter.valueOf(prop) : null
+    adapter.fieldOf(prop) ? pw.shown(prop, adapter.valueOf(prop)) : null
   return (
     <StyleRow id="annotation">
       <ControlLine line="annotation.family">
         <div data-style-cell="annotation.family" className="flex min-w-0 flex-1">
           <FamilySelect
             label={sp('familyOf', { row: label })}
-            value={adapter.valueOf('fontFamily')}
+            value={pw.shown('fontFamily', adapter.valueOf('fontFamily'))}
             options={CANVAS_TEXT_FAMILIES}
             onChange={(v) =>
-              bound ? void editBoundStyle({ kind: 'annotation', prop: 'fontFamily', value: v }) : adapter.writeOnce('fontFamily', v)
+              pw.write('fontFamily', v, () =>
+                bound
+                  ? editBoundStyle({ kind: 'annotation', prop: 'fontFamily', value: v })
+                  : adapter.writeOnce('fontFamily', v),
+              )
             }
           />
         </div>
@@ -564,10 +617,14 @@ function AnnotationRow({
         <div data-style-cell="annotation.size" className="contents">
           <PtField
             label={sp('sizeOf', { row: label })}
-            value={adapter.valueOf('sizePt')}
+            value={pw.shown('sizePt', adapter.valueOf('sizePt'))}
             step={0.5}
             onChange={(v) =>
-              bound ? void editBoundStyle({ kind: 'annotation', prop: 'sizePt', value: v }) : adapter.writeOnce('sizePt', v)
+              pw.write('sizePt', v, () =>
+                bound
+                  ? editBoundStyle({ kind: 'annotation', prop: 'sizePt', value: v })
+                  : adapter.writeOnce('sizePt', v),
+              )
             }
           />
         </div>
@@ -576,10 +633,18 @@ function AnnotationRow({
           weight={face('weight')}
           style={face('style')}
           onWeight={(v) =>
-            bound ? void editBoundStyle({ kind: 'annotation', prop: 'bold', value: v === 'bold' }) : adapter.writeOnce('weight', v)
+            pw.write('weight', v, () =>
+              bound
+                ? editBoundStyle({ kind: 'annotation', prop: 'bold', value: v === 'bold' })
+                : adapter.writeOnce('weight', v),
+            )
           }
           onStyle={(v) =>
-            bound ? void editBoundStyle({ kind: 'annotation', prop: 'italic', value: v === 'italic' }) : adapter.writeOnce('style', v)
+            pw.write('style', v, () =>
+              bound
+                ? editBoundStyle({ kind: 'annotation', prop: 'italic', value: v === 'italic' })
+                : adapter.writeOnce('style', v),
+            )
           }
         />
       </ControlLine>
