@@ -25,7 +25,7 @@ def _clean(monkeypatch, tmp_path):
 # ---------------- 状态 --------------------------------------------------------
 def test_status_ok_when_interpreter_found(monkeypatch):
     monkeypatch.setattr(pool, "find_worker_python", lambda: "/usr/bin/python3")
-    monkeypatch.setattr(bootstrap, "matplotlib_version", lambda p: "3.11.1")
+    monkeypatch.setattr(bootstrap, "matplotlib_version", lambda p, **_kw: "3.11.1")
     st = bootstrap.status()
     assert st["ok"] is True and st["matplotlib"] == "3.11.1"
     assert st["managed"] is False  # 用的是用户自己的环境
@@ -62,7 +62,7 @@ def test_install_never_touches_the_users_own_environment(monkeypatch, tmp_path):
     """
     users_python = "/opt/homebrew/bin/python3"
     monkeypatch.setattr(bootstrap, "find_base_python", lambda: users_python)
-    monkeypatch.setattr(bootstrap, "matplotlib_version", lambda p: "3.11.1")
+    monkeypatch.setattr(bootstrap, "matplotlib_version", lambda p, **_kw: "3.11.1")
 
     calls: list[list[str]] = []
 
@@ -89,7 +89,7 @@ def test_install_never_touches_the_users_own_environment(monkeypatch, tmp_path):
 
 def test_install_records_choice_so_next_launch_uses_it(monkeypatch):
     monkeypatch.setattr(bootstrap, "find_base_python", lambda: "/usr/bin/python3")
-    monkeypatch.setattr(bootstrap, "matplotlib_version", lambda p: "3.11.1")
+    monkeypatch.setattr(bootstrap, "matplotlib_version", lambda p, **_kw: "3.11.1")
 
     def fake_run(cmd):
         if "venv" in cmd:
@@ -162,7 +162,7 @@ def client():
 
 def test_environment_endpoint_reports_status(client, monkeypatch):
     monkeypatch.setattr(pool, "find_worker_python", lambda: "/usr/bin/python3")
-    monkeypatch.setattr(bootstrap, "matplotlib_version", lambda p: "3.11.1")
+    monkeypatch.setattr(bootstrap, "matplotlib_version", lambda p, **_kw: "3.11.1")
     body = client.get("/api/engine/environment").get_json()
     assert body["ok"] is True and body["matplotlib"] == "3.11.1"
 
@@ -197,7 +197,7 @@ def test_set_python_accepts_and_persists(client, monkeypatch, tmp_path):
     fake = tmp_path / "python3"
     fake.write_text("#!/bin/sh\n")
     monkeypatch.setattr(projectenv, "probe_environment", lambda p, module=None: {"ok": True})
-    monkeypatch.setattr(bootstrap, "matplotlib_version", lambda p: "3.11.1")
+    monkeypatch.setattr(bootstrap, "matplotlib_version", lambda p, **_kw: "3.11.1")
     monkeypatch.setattr(pool, "find_worker_python", lambda: str(fake))
     resp = client.patch("/api/engine/environment", json={"python": str(fake)})
     assert resp.status_code == 200
@@ -207,7 +207,7 @@ def test_set_python_accepts_and_persists(client, monkeypatch, tmp_path):
 def test_set_python_empty_clears_back_to_autodetect(client, monkeypatch, tmp_path):
     config.set_worker_python(str(tmp_path / "old"))
     monkeypatch.setattr(pool, "find_worker_python", lambda: "/usr/bin/python3")
-    monkeypatch.setattr(bootstrap, "matplotlib_version", lambda p: "3.11.1")
+    monkeypatch.setattr(bootstrap, "matplotlib_version", lambda p, **_kw: "3.11.1")
     client.patch("/api/engine/environment", json={"python": ""})
     assert config.worker_python() is None
 

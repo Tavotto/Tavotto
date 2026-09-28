@@ -314,6 +314,39 @@ def test_every_worker_spawn_path_gets_the_owned_env(fake_home, tmp_path, monkeyp
     assert spec["env"] == delta
 
 
+@pytest.mark.parametrize("entry", ["bootstrap.status", "diagnostics.build_report"])
+def test_matplotlib_probe_of_the_bundled_runtime_uses_the_workers_env(
+    entry, fake_home, tmp_path, monkeypatch
+):
+    """状态页 / 诊断包问**内置 runtime** 的 matplotlib 版本（Codex #717 P2 第四轮）：与 worker 同一套启动
+    条件——`child_env()`（摘掉外来的 PYTHONPATH、matplotlib 缓存进数据目录），不是原样继承。"""
+    from tavotto.engine import diagnostics
+
+    bundled_py = str(tmp_path / "app" / "runtime" / "bin" / "python3")
+    monkeypatch.setenv("PYTHONPATH", str(tmp_path / "hostile"))
+    monkeypatch.setattr(pool, "find_worker_python", lambda: bundled_py)
+    monkeypatch.setattr(pool, "source_of", lambda py: pool.SOURCE_BUNDLED)
+    seen: list = []
+    real_run = subprocess.run
+
+    def fake(argv, *a, **kw):
+        if argv and argv[0] == bundled_py:
+            seen.append((list(argv), kw.get("env")))
+            raise OSError("fake")
+        return real_run(argv, *a, **kw)
+
+    monkeypatch.setattr(subprocess, "run", fake)
+    if entry == "bootstrap.status":
+        bootstrap.status()
+    else:
+        diagnostics.build_report()
+    probes = [(a, env) for a, env in seen if any("import matplotlib" in x for x in a)]
+    assert probes, "没问到内置 runtime 的 matplotlib"
+    for argv, env in probes:
+        assert env is not None and "PYTHONPATH" not in env, entry
+        assert env["MPLCONFIGDIR"] == str(tmp_path / "data" / "cache" / "mpl"), entry
+
+
 def test_the_install_dir_test_python_is_not_owned():
     """前提：宿主测试解释器不在数据目录里——不然上面「用户的环境」那几条量的是另一个对象。"""
     assert not runtime.is_owned_python(USER_PYTHON)
