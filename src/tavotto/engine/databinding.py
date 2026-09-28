@@ -29,7 +29,7 @@ safe worker 默认把 cwd 切到会话沙盒，只读的 `open` 回退到**脚�
 from __future__ import annotations
 
 import ast
-import glob
+import fnmatch
 import hashlib
 import itertools
 import json
@@ -245,9 +245,11 @@ PATH_METHOD_GLOBS = frozenset({"glob", "rglob"})
 _PATH_CTORS = frozenset({"Path", "PurePath", "PosixPath", "WindowsPath"})
 _GLOB_CHARS = "*?["
 
-#: 在一个候选目录下展开一个 glob 模式最多看这么多个匹配：够回答「有没有」（找到一个在项目内的
-#: 就停），又不至于让一串全在项目外的匹配拖住首开的同步判断。
-MAX_GLOB_MATCHES = 2000
+#: 一次 `evidence()` 展开全部 glob 模式（两个候选、所有探路目标合计）最多**看**这么多个目录条目
+#: （不是匹配数）：够回答「有没有」（找到一个项目内的匹配就停），又不至于让没有匹配的 `**` 在大目录
+#: 树里把首开的同步判断（Flask 父进程里）拖上几秒——按单个模式计的话 64 个模式 × 2 个候选就又是
+#: 几十万条。用完还没答案就是「判不出」（`unjudged`），不说话。
+MAX_GLOB_SCAN = 5000
 
 
 def _relative_probe_target(text: str) -> bool:
@@ -311,6 +313,16 @@ def _is_glob_module_call(func: ast.expr) -> bool:
     )
 
 
+#: glob 模块认得的关键字（3.10–3.13）：`root_dir` 拼进目标、两个开关进匹配语义；`dir_fd` 等不认。
+_GLOB_KWARGS = frozenset({"pathname", "root_dir", "recursive", "include_hidden"})
+#: 列目录调用认得的关键字：只有「列哪」的那一个；`topdown` / `onerror` / `followlinks` 不改「列哪」。
+_DIR_KWARGS = {
+    "listdir": frozenset({"path"}),
+    "scandir": frozenset({"path"}),
+    "walk": frozenset({"top", "topdown", "onerror", "followlinks"}),
+}
+
+
 def _join_probe(base: str, tail: str) -> str:
     base = base.replace("\\", "/").rstrip("/")
     return tail if base in ("", ".") else f"{base}/{tail}"
@@ -328,10 +340,18 @@ def probe_literals(source: str) -> list[dict]:
         return []
     out: list[dict] = []
 
-    def add(kind: str, target: str) -> None:
-        item = {"kind": kind, "target": target}
+    def add(kind: str, target: str, **flags: bool) -> None:
+        item = {"kind": kind, "target": target, **flags}
         if item not in out and len(out) < MAX_LITERALS:
             out.append(item)
+
+    def kw(node: ast.Call, *names: str) -> ast.expr | None:
+        return next((k.value for k in node.keywords if k.arg in names), None)
+
+    def only_kw(node: ast.Call, allowed: frozenset[str]) -> bool:
+        # 认不出的关键字实参（`dir_fd=`、`case_sensitive=`、`**opts`）会改变真正看的是哪条路径 /
+        # 怎么匹配：说不出话就不判，而不是拿另一条路径去判（Codex 评 #673 P2）
+        return all(k.arg in allowed for k in node.keywords)
 
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
@@ -340,26 +360,68 @@ def probe_literals(source: str) -> list[dict]:
         first = node.args[0] if node.args else None
         receiver = _path_receiver(node.func.value) if isinstance(node.func, ast.Attribute) else None
         if receiver is not None and name in PATH_METHOD_PROBES and not node.args:
-            add("dir" if name == "iterdir" else "path", receiver)
+            if not node.keywords:
+                add("dir" if name == "iterdir" else "path", receiver)
         elif receiver is not None and name in PATH_METHOD_GLOBS:
-            pattern = _const_str(first)
-            if pattern is not None and _relative_probe_target(pattern):
-                add("glob", _join_probe(receiver, f"**/{pattern}" if name == "rglob" else pattern))
+            pattern = _const_str(first if first is not None else kw(node, "pattern"))
+            if (
+                pattern is not None
+                and _relative_probe_target(pattern)
+                and only_kw(node, frozenset({"pattern"}))
+            ):
+                tail = f"**/{pattern}" if name == "rglob" else pattern
+                # pathlib 的 `**` 总是递归；隐藏文件照样匹配（与 glob 模块不同）
+                add("glob", _join_probe(receiver, tail), recursive=True, hidden=True)
         elif name in GLOB_FUNCS and _is_glob_module_call(node.func):
-            if first is None:
-                first = next((k.value for k in node.keywords if k.arg == "pathname"), None)
-            pattern = _const_str(first)
-            if pattern is not None and _relative_probe_target(pattern):
-                add("glob", pattern)
+            if not only_kw(node, _GLOB_KWARGS):
+                continue
+            pattern = _const_str(first if first is not None else kw(node, "pathname"))
+            if pattern is None or not _relative_probe_target(pattern):
+                continue
+            # `root_dir=` 换了起算点：常量相对的拼进目标；动态的 / 绝对的说不出话，不判
+            root_dir = kw(node, "root_dir")
+            if root_dir is not None:
+                base = _const_str(root_dir)
+                if (
+                    base is None
+                    or not _relative_probe_target(base)
+                    or any(ch in base for ch in _GLOB_CHARS)
+                ):
+                    continue
+                pattern = _join_probe(base, pattern)
+            flags = {}
+            for key in ("recursive", "include_hidden"):
+                value = kw(node, key)
+                if value is None:
+                    flags[key] = False
+                elif isinstance(value, ast.Constant) and isinstance(value.value, bool):
+                    flags[key] = value.value
+                else:
+                    flags = None  # 动态的开关：匹配语义说不出，不判
+                    break
+            if flags is not None:
+                add(
+                    "glob",
+                    pattern,
+                    recursive=flags["recursive"],
+                    hidden=flags["include_hidden"],
+                )
         elif name in DIR_PROBE_FUNCS:
-            if first is None and not node.keywords:
+            if not only_kw(node, _DIR_KWARGS[name]):
+                continue
+            arg = first if first is not None else kw(node, "path", "top")
+            if arg is None:
                 add("dir", ".")
             else:
-                target = _const_str(first)
+                target = _const_str(arg)
                 if target is not None and _relative_probe_target(target):
                     add("dir", target)
         elif name in PATH_PROBE_FUNCS:
-            target = _const_str(first)
+            if name != "import_file" and not only_kw(node, frozenset({"path"})):
+                continue
+            target = _const_str(
+                first if first is not None or name == "import_file" else kw(node, "path")
+            )
             if (
                 target is not None
                 and _relative_probe_target(target)
@@ -373,12 +435,13 @@ def probe_literals(source: str) -> list[dict]:
 _LIST_CWD = {"kind": "dir", "target": "."}
 
 
-def _probe_hit(base: Path, probe: dict, root: Path) -> str:
-    """一个探路目标在 `base` 下：`found` / `missing` / `outside`。
+def _probe_hit(base: Path, probe: dict, root: Path, budget: list[int]) -> str:
+    """一个探路目标在 `base` 下：`found` / `missing` / `outside` / `unjudged`。
 
     `outside` = 目标（glob 的话是第一个通配段之前的那段目录）落到项目根之外：**不列、不 stat**——
-    准备阶段只看用户交给 Tavotto 的那棵树（与 `_lookup` 同一条纪律）。glob 的匹配逐个再判一次
-    在不在项目里（`**` 顺着软链接走出去的那些不算找到）。
+    准备阶段只看用户交给 Tavotto 的那棵树（与 `_lookup` 同一条纪律）。glob 由 `_glob_hit` 自己走：
+    进任何目录之前先判它在不在项目里（通配段匹配到一条指向项目外的软链接时不进去列），看过的
+    条目数有上限，用完了是 `unjudged`（判不出就不说话）。
     """
     target = probe["target"].replace("\\", "/")
     if probe["kind"] != "glob":
@@ -390,20 +453,137 @@ def _probe_hit(base: Path, probe: dict, root: Path) -> str:
         except OSError:
             ok = False
         return "found" if ok else "missing"
-    parts = target.split("/")
-    fixed = [
-        p for p in itertools.takewhile(lambda p: not any(ch in p for ch in _GLOB_CHARS), parts)
-    ]
-    if not projectenv.within(root, base.joinpath(*fixed) if fixed else base):
+    return _glob_hit(
+        base,
+        target,
+        root,
+        recursive=bool(probe.get("recursive", True)),
+        hidden=bool(probe.get("hidden", False)),
+        budget=budget,
+    )
+
+
+class _ScanBudgetExhausted(Exception):
+    pass
+
+
+def _is_magic(segment: str) -> bool:
+    return any(ch in segment for ch in _GLOB_CHARS)
+
+
+def _glob_hit(
+    base: Path, target: str, root: Path, *, recursive: bool, hidden: bool, budget: list[int]
+) -> str:
+    """有没有至少一个**项目内**的条目匹配 `target`（相对 `base`）——按 glob 模块的匹配语义
+    （`fnmatch`；非递归时 `**` 等同 `*`；不以 `.` 开头的段不匹配隐藏名，除非 `hidden`），
+    但遍历是自己的：
+
+    * 每进一个目录之前按 realpath 判它在不在项目里（`projectenv.within`）——stdlib `glob` 会先把
+      软链接指向的项目外目录列完才吐出匹配，事后过滤已经晚了（Codex 评 #673 P1）；
+    * 按**看过的目录条目**扣预算（`budget`，调用方整次 `evidence()` 共用一份），不按匹配数：
+      没有匹配的 `**` 也走不远；
+    * 同一个真实目录只进一次（`**` 碰到软链接环不会打转）。
+    """
+    parts = [p for p in target.split("/") if p not in ("", ".")]
+    if not parts:
+        return "found" if projectenv.within(root, base) and base.is_dir() else "missing"
+    fixed = list(itertools.takewhile(lambda p: not _is_magic(p), parts))
+    start = base.joinpath(*fixed) if fixed else base
+    if not projectenv.within(root, start):
         return "outside"
+    rest = parts[len(fixed) :]
+    if not rest:
+        try:
+            return "found" if start.exists() else "missing"
+        except OSError:
+            return "missing"
+    listings: dict[str, list[os.DirEntry]] = {}
+    expanded: set[tuple[str, int]] = set()
+
+    def entries(directory: Path) -> list[os.DirEntry]:
+        # 每个真实目录只列一次（预算只扣一次），不同的段可以反复看同一份列表
+        try:
+            real = os.path.realpath(directory)
+        except (OSError, ValueError):
+            return []
+        if real in listings:
+            return listings[real]
+        listings[real] = []
+        if not projectenv.within(root, directory):
+            return []
+        # 先判再取：预算是整次 `evidence()` 合用的，用完之后别的模式连一个目录都不再打开
+        if budget[0] <= 0:
+            raise _ScanBudgetExhausted
+        out: list[os.DirEntry] = []
+        try:
+            with os.scandir(directory) as it:
+                for entry in it:
+                    if budget[0] <= 0:
+                        raise _ScanBudgetExhausted
+                    budget[0] -= 1
+                    out.append(entry)
+        except OSError:
+            return []
+        listings[real] = out
+        return out
+
+    def is_dir(entry: os.DirEntry) -> bool:
+        try:
+            return entry.is_dir()
+        except OSError:
+            return False
+
+    def visible(name: str, segment: str) -> bool:
+        return hidden or not name.startswith(".") or segment.startswith(".")
+
+    def walk(directory: Path, i: int) -> bool:
+        segment = rest[i]
+        last = i == len(rest) - 1
+        if not _is_magic(segment):
+            nxt = directory / segment
+            if not projectenv.within(root, nxt):
+                return False
+            try:
+                if last:
+                    return nxt.exists()
+                return nxt.is_dir() and walk(nxt, i + 1)
+            except OSError:
+                return False
+        if segment == "**" and recursive:
+            # 零层：`**` 什么都不吃，直接看下一段（`**` 在末尾时匹配这个目录下的任何东西）
+            if last:
+                return any(
+                    visible(e.name, "") and projectenv.within(root, Path(e.path))
+                    for e in entries(directory)
+                )
+            # 同一个真实目录在同一段上只展开一次：软链接环不会打转
+            key = (os.path.realpath(directory), i)
+            if key in expanded:
+                return False
+            expanded.add(key)
+            if walk(directory, i + 1):
+                return True
+            for entry in entries(directory):
+                if is_dir(entry) and visible(entry.name, "") and walk(Path(entry.path), i):
+                    return True
+            return False
+        pattern = "*" if segment == "**" else segment
+        for entry in entries(directory):
+            if not visible(entry.name, pattern) or not fnmatch.fnmatch(entry.name, pattern):
+                continue
+            path = Path(entry.path)
+            if not projectenv.within(root, path):
+                continue  # 匹配到的软链接指向项目外：不算，也不进去列
+            if last:
+                return True
+            if is_dir(entry) and walk(path, i + 1):
+                return True
+        return False
+
     try:
-        matches = glob.iglob(target, root_dir=str(base), recursive=True)
-        for match in itertools.islice(matches, MAX_GLOB_MATCHES):
-            if projectenv.within(root, base / match):
-                return "found"
-    except (OSError, ValueError):
-        pass
-    return "missing"
+        return "found" if walk(start, 0) else "missing"
+    except _ScanBudgetExhausted:
+        return "unjudged"
 
 
 def _sha1_of(path: Path) -> str:
@@ -481,6 +661,7 @@ def evidence(script_path: str | os.PathLike, project_root: str | os.PathLike) ->
     except OSError:
         same_dir = str(parent) == str(root)
     candidates: dict[str, dict] = {}
+    scan_budget = [MAX_GLOB_SCAN]
     for name, base in ((CANDIDATE_SCRIPT_PARENT, parent), (CANDIDATE_PROJECT_ROOT, root)):
         found: dict[str, dict] = {}
         missing: list[str] = []
@@ -493,7 +674,7 @@ def evidence(script_path: str | os.PathLike, project_root: str | os.PathLike) ->
                 outside.append(lit)
             else:
                 found[lit] = {"sha1": hit["sha1"], "size": hit["size"]}
-        hits: dict[str, list[str]] = {"found": [], "missing": [], "outside": []}
+        hits: dict[str, list[str]] = {"found": [], "missing": [], "outside": [], "unjudged": []}
         for probe in probes:
             if probe == _LIST_CWD:
                 # 列 cwd 本身不指名任何东西：它只说明「cwd 里有什么要紧」，在哪个候选下都「存在」。
@@ -502,7 +683,7 @@ def evidence(script_path: str | os.PathLike, project_root: str | os.PathLike) ->
                 if name == CANDIDATE_SCRIPT_PARENT:
                     hits["found"].append(probe["target"])
                 continue
-            hits[_probe_hit(base, probe, root)].append(probe["target"])
+            hits[_probe_hit(base, probe, root, scan_budget)].append(probe["target"])
         candidates[name] = {
             "found": found,
             "missing": missing,

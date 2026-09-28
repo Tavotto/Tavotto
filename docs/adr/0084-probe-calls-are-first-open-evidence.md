@@ -42,12 +42,24 @@ ADR 0047 背景里那九个 ovito 脚本（`exists` + `glob` + `import_file`）�
 * `glob`：`glob.glob` / `glob.iglob` / `from glob import glob`（不认别的对象的 `.glob()`）；`Path(<常量>).glob` / `rglob`
   （拼成 `d/*.x` / `d/**/*.x`）；`Path.cwd()` / `Path()` 起算的等价于 `.`。
 
+**改变「看哪」的实参要么照做、要么不判**（Codex 评 #673 P2）：`glob(…, root_dir='data')` 的常量相对 `root_dir`
+拼进目标（`data/*.csv`），`recursive` / `include_hidden` 的常量开关进匹配语义；`listdir(path=…)` /
+`walk(top=…)` / `exists(path=…)` 的关键字形式照认。动态或绝对的 `root_dir`、动态开关、认不出的关键字
+（`dir_fd=`、`case_sensitive=`）一律不判——拿另一条路径去判比不判更坏。
+
 `listdir()` / `listdir(".")` / `Path().iterdir()` 列的是 cwd 本身、不指名任何东西，在哪个候选下都「存在」：
 它只记在脚本目录那档（产品的默认假设，与只读回退、终端里 `python fig.py` 同一个），否则任何不在项目根上的
-脚本 `listdir()` 一下就成了歧义（QA PATH-06 的形状）。其余每个目标在「脚本目录」与「项目根」下各判一次 `found` / `missing` / `outside`：路径是否存在、目录是否存在、
-glob 是否至少匹配一个**项目内**的条目（`iglob(root_dir=…)`，最多看 `MAX_GLOB_MATCHES` 个匹配）。
+脚本 `listdir()` 一下就成了歧义（QA PATH-06 的形状）。其余每个目标在「脚本目录」与「项目根」下各判一次
+`found` / `missing` / `outside` / `unjudged`：路径是否存在、目录是否存在、glob 是否至少匹配一个**项目内**的条目。
 **项目外不看**：目标（glob 取第一个通配段之前的固定前缀）按 realpath 落到项目根之外时直接记 `outside`，
 不列目录、不 stat——与 `_lookup` 同一条纪律（Codex 评 #459 P1）。
+
+glob **不用 stdlib 展开再事后过滤**（Codex 评 #673 P1）：`*/*.dat` 的通配段匹配到一条指向项目外的软链接时，
+`glob.iglob` 会先把项目外那个目录列完才吐出匹配，`within` 过滤已经晚了；它的匹配数上限也管不住一个没有匹配的
+`**` 走完整棵树。`_glob_hit` 自己走：按 `fnmatch`（与 glob 模块同一套匹配语义），每进一个目录之前按 realpath
+判在不在项目里，同一个真实目录只列一次、同一段上只展开一次（软链接环不打转），预算按**看过的目录条目**
+计（`MAX_GLOB_SCAN`），一次 `evidence()` 的全部模式、两个候选**合用一份**（按模式各给一份的话，64 个模式 × 2 个
+候选又是几十万条）——用完还没答案记 `unjudged`，不说话。
 
 ### 二、结论多一档 `script_parent`，首开多一种理由 `script_dir_evidence`
 
