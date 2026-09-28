@@ -128,9 +128,11 @@ env:
 # **联网装包的步骤各自带 `PIP_DEFAULT_TIMEOUT` / `PIP_RETRIES`，不提到顶层**（2026-09-28）：pypi.org 读超时
 # 时 pip 默认 15 s × 5 次就放弃、把那个依赖当成「没有候选」，然后回溯 matplotlib 一路退到 3.0.3 的 sdist，
 # 在新 Python 上编译报 `linux_distribution` 之类与网络毫无关系的错。提到顶层会被 pytest 继承：产品与用例里
-# 故意连不上索引的 pip 调用会被 10 次指数退避白白拖长。不锁版本的 `pip install matplotlib` 另加
-# `--only-binary=matplotlib`：索引再抖也只会明确报错，不会退去编译老 sdist（`--prefer-binary` 在没有可用
-# wheel 时仍会回落 sdist，挡不住这条路）。锁版本的安装（runtime_pins / 兼容矩阵）不加——`==` 本来就不会回溯。
+# 故意连不上索引的 pip 调用会被白白拖长。取值 30 s × 5 次重试：单个请求最坏 6 × 30 s + 退避 ≈ 3 分钟，
+# 要装得进每个 job 的 timeout-minutes（最紧的是 python-lint 10 分钟、只装 ruff 一个包；backend-platforms
+# Windows 腿常态 40–53 分钟 / 60）——调大之前先按 job 时限重算，别拿抬必需检查的时限来换。
+# 不锁版本的 `pip install matplotlib` 另加 `--only-binary=matplotlib`：索引再抖也只会明确报错，不会退去编译
+# 老 sdist（`--prefer-binary` 在没有可用 wheel 时仍会回落 sdist，挡不住这条路）。锁版本的安装（runtime_pins / 兼容矩阵）不加——`==` 本来就不会回溯。
 
 jobs:
   # ────────────────────────────────────────────────────────────────
@@ -173,8 +175,8 @@ jobs:
       # ruff 是纯静态分析，一个 import 都不需要执行。
       - name: 安装 Ruff（版本取自 pyproject 的 dev extra，单一出处）
         env:
-          PIP_DEFAULT_TIMEOUT: "60"
-          PIP_RETRIES: "10"
+          PIP_DEFAULT_TIMEOUT: "30"
+          PIP_RETRIES: "5"
         run: |
           set -euo pipefail
           SPEC=$(python -c "
@@ -438,8 +440,8 @@ jobs:
       # 而那正是我们想被告知的事——用的必须是用户拿到的那一套。
       - name: 安装依赖（科学栈按锁文件钉版本）
         env:
-          PIP_DEFAULT_TIMEOUT: "60"
-          PIP_RETRIES: "10"
+          PIP_DEFAULT_TIMEOUT: "30"
+          PIP_RETRIES: "5"
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
@@ -572,8 +574,8 @@ jobs:
       # 依赖边界），CI 里装上让 worker round-trip 用例真正执行而非跳过
       - name: 安装依赖
         env:
-          PIP_DEFAULT_TIMEOUT: "60"
-          PIP_RETRIES: "10"
+          PIP_DEFAULT_TIMEOUT: "30"
+          PIP_RETRIES: "5"
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
@@ -651,8 +653,8 @@ jobs:
           python-version: "3.13"
       - name: 安装依赖
         env:
-          PIP_DEFAULT_TIMEOUT: "60"
-          PIP_RETRIES: "10"
+          PIP_DEFAULT_TIMEOUT: "30"
+          PIP_RETRIES: "5"
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
@@ -717,8 +719,8 @@ jobs:
       # 保证「CI 上验的」与「用户拿到的内置 runtime」是同一套。
       - name: 安装依赖（科学栈按锁文件钉版本）
         env:
-          PIP_DEFAULT_TIMEOUT: "60"
-          PIP_RETRIES: "10"
+          PIP_DEFAULT_TIMEOUT: "30"
+          PIP_RETRIES: "5"
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
@@ -873,8 +875,8 @@ jobs:
           python-version: "3.13"
       - name: 安装引擎（server 要在 engine 模式下才声明画布资源）
         env:
-          PIP_DEFAULT_TIMEOUT: "60"
-          PIP_RETRIES: "10"
+          PIP_DEFAULT_TIMEOUT: "30"
+          PIP_RETRIES: "5"
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
@@ -1004,8 +1006,8 @@ jobs:
         working-directory: ${{ github.workspace }}
         timeout-minutes: 10
         env:
-          PIP_DEFAULT_TIMEOUT: "60"
-          PIP_RETRIES: "10"
+          PIP_DEFAULT_TIMEOUT: "30"
+          PIP_RETRIES: "5"
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
@@ -1173,8 +1175,8 @@ jobs:
           python scripts/fetch_fonts.py --check
       - name: 打 wheel
         env:
-          PIP_DEFAULT_TIMEOUT: "60"
-          PIP_RETRIES: "10"
+          PIP_DEFAULT_TIMEOUT: "30"
+          PIP_RETRIES: "5"
         run: |
           python -m pip install --upgrade pip build
           python -m build
@@ -1206,8 +1208,8 @@ jobs:
       - name: 装进干净环境并冒烟
         shell: bash
         env:
-          PIP_DEFAULT_TIMEOUT: "60"
-          PIP_RETRIES: "10"
+          PIP_DEFAULT_TIMEOUT: "30"
+          PIP_RETRIES: "5"
         run: |
           VENV="${{ runner.temp }}/smoke-venv"
           python -m venv "$VENV"
@@ -1261,8 +1263,8 @@ jobs:
         shell: bash
         timeout-minutes: 5
         env:
-          PIP_DEFAULT_TIMEOUT: "60"
-          PIP_RETRIES: "10"
+          PIP_DEFAULT_TIMEOUT: "30"
+          PIP_RETRIES: "5"
           TAVOTTO_DIST_DIR: dist
         run: |
           VENV="${{ runner.temp }}/smoke-venv"
@@ -1392,8 +1394,8 @@ jobs:
         # 脚本自己会做 SHA-256 校验、版本核对，并**逐个 import + 画一张真图**；
         # 任何一步不过就直接失败在这里，而不是留到用户机器上。
         env:
-          PIP_DEFAULT_TIMEOUT: "60"
-          PIP_RETRIES: "10"
+          PIP_DEFAULT_TIMEOUT: "30"
+          PIP_RETRIES: "5"
         run: python scripts/build_worker_runtime.py --clean
 
       - name: 装打包依赖
@@ -1401,8 +1403,8 @@ jobs:
         # 内置 runtime 里，这条边界一破，包大小和依赖关系立刻失控。装的是 requirements.txt
         # 那份钉死的运行时闭包（U10 起含 RenderCore 的五个包，ADR 0072）。
         env:
-          PIP_DEFAULT_TIMEOUT: "60"
-          PIP_RETRIES: "10"
+          PIP_DEFAULT_TIMEOUT: "30"
+          PIP_RETRIES: "5"
         run: |
           python -m pip install --upgrade pip pyinstaller
           python -m pip install -r requirements.txt
@@ -1575,8 +1577,8 @@ jobs:
 
       - name: 准备渲染环境（模拟用户自己的 Python）
         env:
-          PIP_DEFAULT_TIMEOUT: "60"
-          PIP_RETRIES: "10"
+          PIP_DEFAULT_TIMEOUT: "30"
+          PIP_RETRIES: "5"
         run: python -m pip install --only-binary=matplotlib matplotlib
 
       - name: 冒烟③：用户指定的解释器仍然优先于内置
@@ -1779,16 +1781,16 @@ jobs:
         # 上游发布的 SHA256SUMS）、按 .dist-info 核对版本，并用刚装好的解释器
         # **逐个 import + 画一张真图**；任何一步不过就直接失败在这里。
         env:
-          PIP_DEFAULT_TIMEOUT: "60"
-          PIP_RETRIES: "10"
+          PIP_DEFAULT_TIMEOUT: "30"
+          PIP_RETRIES: "5"
         run: python scripts/build_worker_runtime.py --clean
 
       - name: 装打包依赖
         # 主进程**不装科学栈**，免得 PyInstaller 顺手打进去；装 requirements.txt 那份钉死的运行时闭包
         # （U10 起含 RenderCore 的五个包，ADR 0072）
         env:
-          PIP_DEFAULT_TIMEOUT: "60"
-          PIP_RETRIES: "10"
+          PIP_DEFAULT_TIMEOUT: "30"
+          PIP_RETRIES: "5"
         run: |
           python -m pip install --upgrade pip pyinstaller
           python -m pip install -r requirements.txt
@@ -1872,8 +1874,8 @@ jobs:
 
       - name: 准备渲染环境（模拟用户自己的 Python）
         env:
-          PIP_DEFAULT_TIMEOUT: "60"
-          PIP_RETRIES: "10"
+          PIP_DEFAULT_TIMEOUT: "30"
+          PIP_RETRIES: "5"
         run: python -m pip install --only-binary=matplotlib matplotlib
 
       - name: 冒烟③：用户指定的解释器仍然优先于内置
@@ -1943,8 +1945,8 @@ jobs:
         # matplotlib 不是运行期依赖（用户自己的解释器才是渲染环境），
         # 这条腿要真渲染出图，所以显式装一份。
         env:
-          PIP_DEFAULT_TIMEOUT: "60"
-          PIP_RETRIES: "10"
+          PIP_DEFAULT_TIMEOUT: "30"
+          PIP_RETRIES: "5"
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e . matplotlib --only-binary=matplotlib
@@ -2158,8 +2160,8 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
       - name: workflow YAML 可解析
         env:
-          PIP_DEFAULT_TIMEOUT: "60"
-          PIP_RETRIES: "10"
+          PIP_DEFAULT_TIMEOUT: "30"
+          PIP_RETRIES: "5"
         run: |
           python -m pip install --quiet pyyaml
           python - <<'PY'
@@ -2180,8 +2182,8 @@ jobs:
         # 这些测试只读文件与脚本、纯标准库：Gate 闭集、merge_group 触发、
         # 并发不取消队列、发布编排契约、Ruleset 迁移工具、冲突域检查。
         env:
-          PIP_DEFAULT_TIMEOUT: "60"
-          PIP_RETRIES: "10"
+          PIP_DEFAULT_TIMEOUT: "30"
+          PIP_RETRIES: "5"
         run: |
           python -m pip install --quiet pytest
           python -m pytest -q \
@@ -2335,6 +2337,6 @@ jobs:
       - name: 种 CPython 归档（构建内置渲染 runtime 真跑一次）
         if: matrix.cpython == true
         env:
-          PIP_DEFAULT_TIMEOUT: "60"
-          PIP_RETRIES: "10"
+          PIP_DEFAULT_TIMEOUT: "30"
+          PIP_RETRIES: "5"
         run: python scripts/build_worker_runtime.py --clean

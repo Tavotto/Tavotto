@@ -109,8 +109,8 @@ jobs:
       - name: 装应用依赖 + 科学栈按锁文件钉版本（这是 worker 解释器：项目缺的是 fixture 包，不是 matplotlib）
         shell: bash
         env:
-          PIP_DEFAULT_TIMEOUT: "60"
-          PIP_RETRIES: "10"
+          PIP_DEFAULT_TIMEOUT: "30"
+          PIP_RETRIES: "5"
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
@@ -122,8 +122,8 @@ jobs:
       - name: wheelhouse（宿主平台 cp313 的真 matplotlib / numpy wheel；私有 Python 与 runner 同平台同 minor）
         shell: bash
         env:
-          PIP_DEFAULT_TIMEOUT: "60"
-          PIP_RETRIES: "10"
+          PIP_DEFAULT_TIMEOUT: "30"
+          PIP_RETRIES: "5"
         run: |
           set -euo pipefail
           mkdir -p "$PP_WHEELHOUSE"
