@@ -196,7 +196,7 @@ def make_venv(where: Path, wheel: Path) -> Path:
         / ("Scripts" if os.name == "nt" else "bin")
         / ("python.exe" if os.name == "nt" else "python")
     )
-    for args in ([str(wheel)], ["matplotlib"]):
+    for args in ([str(wheel)], ["--only-binary=matplotlib", "matplotlib"]):
         out = subprocess.run(
             [str(py), "-m", "pip", "install", "-q", "--disable-pip-version-check", *args],
             capture_output=True,

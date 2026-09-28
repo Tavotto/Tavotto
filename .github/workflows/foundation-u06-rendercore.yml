@@ -100,8 +100,11 @@ jobs:
           update-environment: false
       - name: 用户的项目环境（3.12 + matplotlib / numpy / h5py）
         shell: bash
+        env:
+          PIP_DEFAULT_TIMEOUT: "30"
+          PIP_RETRIES: "5"
         run: |
-          "${{ steps.project_python.outputs.python-path }}" -m pip install --disable-pip-version-check "matplotlib>=3.8,<3.12" numpy h5py
+          "${{ steps.project_python.outputs.python-path }}" -m pip install --disable-pip-version-check --only-binary=matplotlib "matplotlib>=3.8,<3.12" numpy h5py
           # 两个解释器都打进日志：应用 = 矩阵那一档（PATH 上的 python），项目 = 上一步的 3.12；同 minor 就是 workflow 错了
           echo "app python:     $(python -c 'import sys; print(sys.executable, sys.version.split()[0])')"
           echo "project python: $("${{ steps.project_python.outputs.python-path }}" -c 'import sys, matplotlib, h5py; print(sys.executable, sys.version.split()[0], "matplotlib", matplotlib.__version__, "h5py", h5py.__version__)')"
@@ -124,6 +127,9 @@ jobs:
           EOF
       - name: 建 venv、装 Tavotto（RenderCore 依赖自 U10 起在 dependencies 里）、worker extra 与只读尺子
         shell: bash
+        env:
+          PIP_DEFAULT_TIMEOUT: "30"
+          PIP_RETRIES: "5"
         run: |
           python -m venv "$RC_VENV"
           "$RC_PY" -m pip install --upgrade pip

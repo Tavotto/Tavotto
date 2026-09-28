@@ -299,7 +299,16 @@ def test_end_to_end_in_a_freshly_created_venv(tmp_path, bridge_session, monkeypa
     py = venv / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
     assert py.is_file()
     subprocess.run(
-        [str(py), "-m", "pip", "install", "--quiet", "--disable-pip-version-check", "matplotlib"],
+        [
+            str(py),
+            "-m",
+            "pip",
+            "install",
+            "--quiet",
+            "--disable-pip-version-check",
+            "--only-binary=matplotlib",
+            "matplotlib",
+        ],
         check=True,
         timeout=1800,
         env=child_env(),

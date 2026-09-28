@@ -289,7 +289,7 @@ def main(argv: list[str] | None = None) -> int:
         pip_install(py, [str(wheel)])
         # 科学栈单独装：产品主依赖刻意不含它（Flask 父进程的依赖边界），
         # 但渲染路径要真跑起来就必须有。
-        pip_install(py, ["matplotlib"])
+        pip_install(py, ["--only-binary=matplotlib", "matplotlib"])
 
         checks += structural_checks(py)
         checks += cli_checks(py)
