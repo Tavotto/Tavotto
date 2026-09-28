@@ -1411,6 +1411,9 @@ def test_launcher_is_stdlib_only_and_parses():
         # 重装锁用内核文件锁（进程退出即释放）：POSIX / Windows 各一个标准库
         "fcntl",
         "msvcrt",
+        # 只读探测 pip 的 index-url（配置文件 + 抹掉地址里的口令），#721
+        "configparser",
+        "urllib",
         "__future__",
         "tavotto",
         "tavotto_mcp",

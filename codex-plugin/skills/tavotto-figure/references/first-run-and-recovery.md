@@ -60,6 +60,21 @@ tavotto codex install     # 修：把已装副本的启动命令钉到一个验�
   区间的 Python——把它 `error` 里逐个列出的版本和 `recovery` 转达给用户（装一个再重跑，
   或 `--python <路径>` 指定），**不要**把它读成「这一版 tavotto 还没发」，也不要在
   老 Python 上手动 `pip install`。
+* `engine_too_old` / `engine_incompatible` —— 机器上**装着** pip / pipx 形态的引擎，只是
+  插件驱动不了它：`engine_too_old` 是版本低于插件要求的下限（`engine_version` 与
+  `min_tavotto_version` 两个版本号都在结果里）；`engine_incompatible` 是说不出下限（插件没带
+  构建清单）或版本够了却 import 不全（装残了）。**不要说「只装了桌面版」，也不要给
+  `--provision`**（那只会在旁边再建一个环境，原来那个照样旧）。把 `error` / `recovery` 里的
+  升级命令原样转达，形如：
+
+  ```sh
+  pipx upgrade tavotto
+  pipx install --force "tavotto[worker]==<要求的版本>"
+  ```
+
+  结果里的 `pip_index.mirror` 为真时，pip 指向镜像，镜像可能还没同步到新版，照常升级只会
+  再装回旧版——这时 `recovery` 里的命令都带着 `--index-url https://pypi.org/simple`，照抄它，
+  别自己换回不带它的写法。装完**新开会话**。
 * `tavotto_missing` —— 机器上确实没有 Tavotto。按用户的需求引导：只要桌面收尾
   就装桌面版（<https://github.com/Tavotto/Tavotto/releases>），要 Codex 内嵌
   工具就 `pipx install "tavotto[worker]"`。

@@ -1137,6 +1137,37 @@ def test_an_engine_older_than_the_plugin_requires_is_named(fake_codex):
     }
 
 
+@pytest.mark.parametrize("code", ["engine_too_old", "engine_incompatible"])
+def test_doctor_relays_the_plugins_engine_version_verdict(fake_codex, code):
+    """插件的降级体检已经判出「引擎在、版本对不上」（#721）：doctor 原样沿用那个 code 与
+    那段话术（版本号、升级命令、镜像提示只在插件那一份里写），不再笼统报 health_failed。"""
+    error = (
+        "这台机器上装着 Tavotto 引擎 0.15.0；恢复：`pipx install --force "
+        '"tavotto[worker]==0.17.0" --index-url https://pypi.org/simple`'
+    )
+    report = {
+        "ok": False,
+        "mode": "degraded",
+        "code": code,
+        "error": error,
+        "recovery": ["升级引擎：…", "自检：…"],
+        "engine_version": "0.15.0",
+        "pip_index": {"url": "https://mirrors.aliyun.com/pypi/simple/", "mirror": True},
+    }
+    (fake_codex["plugin"] / "mcp" / "server.py").write_text(
+        f"import json, sys\nprint(json.dumps({report!r}, ensure_ascii=True))\nsys.exit(3)\n",
+        encoding="utf-8",
+    )
+    assert _run(["codex", "install", "--json"])[0] == 1
+    rc, data, err = _doctor_json()
+    assert rc == 1, err
+    assert data["error_code"] == code, data
+    health = next(s for s in data["steps"] if s["step"] == "health")
+    assert health["error_code"] == code
+    assert error in health["detail"] and "恢复步骤" in health["detail"]
+    assert data["summary"]["engine"]["version"] == "0.15.0"
+
+
 def test_json_output_parser_handles_pretty_printed_and_last_line_shapes():
     from tavotto.engine import codexinstall
 

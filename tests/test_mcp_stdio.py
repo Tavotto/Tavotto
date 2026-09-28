@@ -338,6 +338,9 @@ def test_degraded_mode_over_real_stdio(degraded_client):
         # 少一个取值的清单会在它第一次出现时把用例判成「没见过的 code」。
         # 权威是 server.diagnose() 的 docstring（四态互斥）。
         "engine_too_old",
+        # 第五态（#721）：pip 形态的引擎在、桥 import 不全，而说不出是不是太旧（插件没带
+        # 构建清单）。这条用例的发现环境是空的，同样不会触发——枚举得全，理由同上。
+        "engine_incompatible",
         # 自管 venv 在、却 import 不过这一版插件要的引擎（#487）：插件升级后最常见。
         "managed_runtime_stale",
     )

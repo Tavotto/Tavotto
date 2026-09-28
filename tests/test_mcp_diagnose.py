@@ -15,6 +15,7 @@ Tavotto 桌面版」——一句假话。原来的三态枚举的是**安装形�
 import ast
 import importlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -357,3 +358,256 @@ def test_the_version_comparison_import_resolves_in_a_fresh_interpreter(tmp_path)
     proc = _fresh_probe(plugin, cli, tail)
     assert proc.returncode == 0, f"版本比较 import 不到就崩了：{proc.stderr}"
     assert json.loads(proc.stdout.strip()) is None, proc.stdout
+
+
+# ------------------- 引擎在、只是对不上：#721 的那一半 ------------------------
+#: #721 的现场：pip 配了阿里云镜像，镜像上只有 0.15.0，`pipx install "tavotto[worker]"` 装到
+#: 0.15.0；插件是本地市场装的（**没有** plugin-build.json，说不出下限），于是「太旧」判不出来，
+#: 落回最宽的那一格 `desktop_only`——对着 pipx 用户说「装的是桌面版」。
+OLD = "0.15.0"
+ALIYUN = "https://mirrors.aliyun.com/pypi/simple/"
+
+
+def _bin(venv_dir: Path) -> Path:
+    return venv_dir / ("Scripts" if sys.platform == "win32" else "bin")
+
+
+def _py(venv_dir: Path) -> Path:
+    return _bin(venv_dir) / ("python.exe" if sys.platform == "win32" else "python3")
+
+
+@pytest.fixture()
+def old_engine(tmp_path):
+    """一个**真的**装着 tavotto 0.15.0 分发元数据、却 import 不到桥那组模块的 venv，外加
+    它的 console script（shebang 指回这个 venv）——pipx 装旧版之后磁盘上就是这个形状。
+
+    CLI 本身是哑的（`doctor --json` 什么都不说、退出 1）：版本必须从它背后的解释器问出来。
+    """
+    import venv
+
+    env_dir = tmp_path / "pipx-venv"
+    venv.EnvBuilder(with_pip=False).create(str(env_dir))
+    py = _py(env_dir)
+    purelib = subprocess.run(
+        [str(py), "-c", "import sysconfig; print(sysconfig.get_paths()['purelib'])"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
+    ).stdout.strip()
+    dist = Path(purelib) / f"tavotto-{OLD}.dist-info"
+    dist.mkdir(parents=True)
+    (dist / "METADATA").write_text(
+        f"Metadata-Version: 2.1\nName: tavotto\nVersion: {OLD}\n", encoding="utf-8"
+    )
+    cli = _bin(env_dir) / "tavotto"
+    cli.write_text(f"#!{py}\nimport sys\nsys.exit(1)\n", encoding="utf-8")
+    cli.chmod(0o755)
+    # 前提：这个 venv 过不了桥的 import（不带 PYTHONPATH——测试进程的 src 不是它的）
+    bare_env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+    probe = subprocess.run(
+        [str(py), "-c", launcher._BRIDGE_IMPORT], env=bare_env, capture_output=True
+    )
+    assert probe.returncode != 0, "前提：这个 venv 过不了桥的 import"
+    return {"python": str(py), "cli": str(cli), "found": {"cmd": [str(cli)], "desktop": None}}
+
+
+def _no_mirror(monkeypatch):
+    monkeypatch.setattr(launcher, "pip_index", lambda environ=None: None)
+
+
+def _mirror(monkeypatch):
+    monkeypatch.setattr(
+        launcher,
+        "pip_index",
+        lambda environ=None: {"url": ALIYUN, "source": "/etc/pip.conf", "mirror": True},
+    )
+
+
+def test_an_old_pipx_engine_without_a_manifest_is_not_a_desktop_install(old_engine, monkeypatch):
+    """没有清单（说不出下限）→ `engine_incompatible`：「不知道是不是太旧」是独立一档，
+    既不折进 `engine_too_old`，更不落回 `desktop_only`。版本号照样说出口。"""
+    monkeypatch.setattr(launcher, "required_tavotto_version", lambda: None)
+    _no_mirror(monkeypatch)
+
+    def never(*a, **kw):
+        raise AssertionError("清单里没有下限就不该去问 CLI 的版本")
+
+    monkeypatch.setattr(launcher, "_tavotto_cli_version", never)
+    code, hint = launcher.diagnose_resolved(old_engine["found"], NOTHING_IMPORTABLE)
+
+    assert code == "engine_incompatible", hint
+    assert OLD in hint and old_engine["python"] in hint
+    assert "装的是 Tavotto 桌面版" not in hint
+    assert "--provision" not in hint, "引擎已经在了，恢复方向是升级，不是旁边再建一个"
+    steps = launcher._recovery_steps("engine_incompatible")
+    assert any(s.startswith("升级引擎") for s in steps), steps
+    assert not any("--provision" in s for s in steps), steps
+
+
+def test_an_old_pipx_engine_is_too_old_even_when_its_cli_cannot_answer(old_engine, monkeypatch):
+    """有清单（下限 0.17.0）、CLI 问不出版本：版本从 CLI 背后的解释器问出来 →
+    `engine_too_old`，两个版本号 + 钉在下限上的 pipx 命令都说出口。"""
+    monkeypatch.setattr(launcher, "required_tavotto_version", lambda: "0.17.0")
+    _no_mirror(monkeypatch)
+    code, hint = launcher.diagnose_resolved(old_engine["found"], NOTHING_IMPORTABLE)
+
+    assert code == "engine_too_old", hint
+    assert OLD in hint and "0.17.0" in hint
+    assert 'pipx install --force "tavotto[worker]==0.17.0"' in hint
+    assert "pipx upgrade tavotto" in hint
+    assert "--index-url" not in hint, "没配镜像时不该出现绕开镜像的写法"
+
+
+def test_a_mirror_turns_the_upgrade_into_a_pypi_pinned_command(old_engine, monkeypatch):
+    """pip 指向镜像：说出镜像地址与它可能滞后，每条命令都绕开镜像；**不给**裸的
+    `pipx upgrade tavotto`（它照样去问那个镜像，升不上去）。"""
+    monkeypatch.setattr(launcher, "required_tavotto_version", lambda: "0.17.0")
+    _mirror(monkeypatch)
+    code, hint = launcher.diagnose_resolved(old_engine["found"], NOTHING_IMPORTABLE)
+
+    assert code == "engine_too_old"
+    assert ALIYUN in hint and "同步" in hint
+    assert (
+        'pipx install --force "tavotto[worker]==0.17.0" --index-url https://pypi.org/simple' in hint
+    )
+    assert "pipx upgrade tavotto" not in hint
+    steps = launcher._recovery_steps("engine_too_old")
+    assert any("--index-url https://pypi.org/simple" in s for s in steps), steps
+    assert not any("pipx upgrade tavotto" in s for s in steps), steps
+
+
+def test_a_frozen_desktop_cli_is_still_desktop_only(tmp_path, monkeypatch):
+    """对照：桌面版的 frozen `tavotto-cli` 背后没有解释器——仍是 `desktop_only`，而且
+    一个版本探测进程都不起（降级判定有时间预算）。"""
+    frozen_dir = tmp_path / "Tavotto" / "bin"
+    frozen_dir.mkdir(parents=True)
+    frozen = frozen_dir / "tavotto-cli"
+    frozen.write_bytes(b"\x7fELF" + b"\0" * 4096)
+    monkeypatch.setattr(launcher, "required_tavotto_version", lambda: "0.17.0")
+    monkeypatch.setattr(launcher, "_tavotto_cli_version", lambda cmd, **kw: None)
+
+    def never(*a, **kw):
+        raise AssertionError("frozen CLI 背后没有解释器，不该起版本探测")
+
+    monkeypatch.setattr(launcher, "_dist_version", never)
+    code, hint = launcher.diagnose_resolved(
+        {"cmd": [str(frozen)], "desktop": str(frozen_dir)}, NOTHING_IMPORTABLE
+    )
+    assert code == "desktop_only"
+    assert hint == launcher.DESKTOP_ONLY_HINT
+
+
+def test_health_names_the_old_engine_end_to_end(old_engine, tmp_path):
+    """真跑一次 `--health`（用那个 import 不到桥的旧 venv 当启动器解释器，发现环境清空），
+    插件带清单（下限 0.17.0）+ pip 配了镜像：体检回 `engine_too_old`，带引擎版本、下限与
+    镜像，且话术里是绕开镜像的命令。换成「没清单」则是 `engine_incompatible`。"""
+    from tavotto.engine import pluginmanifest
+
+    plugin = tmp_path / "codex-plugin"
+    shutil.copytree(PLUGIN, plugin, ignore=shutil.ignore_patterns("__pycache__"))
+    pip_conf = tmp_path / "pip.conf"
+    pip_conf.write_text(f"[global]\nindex-url = {ALIYUN}\n", encoding="utf-8")
+    empty = tmp_path / "empty-bin"
+    empty.mkdir()
+    env = {
+        **os.environ,
+        "PATH": str(empty),
+        "HOME": str(tmp_path),
+        "TAVOTTO_CONFIG_DIR": str(tmp_path / "config"),
+        "LOCALAPPDATA": str(tmp_path / "lapp"),
+        "PROGRAMFILES": str(tmp_path / "pf"),
+        "TAVOTTO_CLI": old_engine["cli"],
+        "PIP_CONFIG_FILE": str(pip_conf),
+        "PYTHONDONTWRITEBYTECODE": "1",
+    }
+    for name in (
+        "TAVOTTO_MCP_PYTHON",
+        "TAVOTTO_WORKER_PYTHON",
+        "MM_WORKER_PYTHON",
+        "TAVOTTO_MCP_EXECED",
+        "PYTHONPATH",
+        "PIP_INDEX_URL",
+    ):
+        env.pop(name, None)
+
+    def health():
+        proc = subprocess.run(
+            [old_engine["python"], str(plugin / "mcp" / "server.py"), "--health"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            env=env,
+            timeout=120,
+        )
+        assert proc.returncode == 3, proc.stderr
+        return json.loads(proc.stdout.strip().splitlines()[-1])
+
+    (plugin / launcher.BUILD_MANIFEST).unlink(missing_ok=True)
+    report = health()  # 没有清单：说不出下限
+    assert report["code"] == "engine_incompatible", report
+    assert report["engine_version"] == OLD
+    assert report["min_tavotto_version"] is None
+
+    pluginmanifest.write_build_manifest(
+        plugin,
+        modes={},
+        source_sha="0" * 40,
+        fingerprint="f" * 16,
+        lockfile_sha256=None,
+        toolchain={},
+        min_tavotto_version="0.17.0",
+    )
+    report = health()
+    assert report["code"] == "engine_too_old", report
+    assert report["engine_version"] == OLD and report["min_tavotto_version"] == "0.17.0"
+    assert report["pip_index"] == {"url": ALIYUN, "source": str(pip_conf), "mirror": True}
+    assert "--index-url https://pypi.org/simple" in report["error"]
+    assert "--index-url https://pypi.org/simple" in " ".join(report["recovery"])
+
+
+# ------------------------------ pip 的索引探测 --------------------------------
+def test_pip_index_reads_the_env_var_and_config_files(tmp_path):
+    """只读：`PIP_INDEX_URL` 压过配置文件；配置文件里 `[install]` 压过 `[global]`；
+    `PIP_CONFIG_FILE=os.devnull` 是 pip 约定的「一个配置文件都不读」。"""
+    conf = tmp_path / "pip.conf"
+    conf.write_text(
+        "[global]\nindex-url = https://pypi.org/simple\n[install]\nindex-url = " + ALIYUN + "\n",
+        encoding="utf-8",
+    )
+    base = {"HOME": str(tmp_path), "USERPROFILE": str(tmp_path), "XDG_CONFIG_DIRS": str(tmp_path)}
+
+    got = launcher.pip_index({**base, "PIP_CONFIG_FILE": str(conf)})
+    assert got == {"url": ALIYUN, "source": str(conf), "mirror": True}
+
+    got = launcher.pip_index(
+        {**base, "PIP_CONFIG_FILE": str(conf), "PIP_INDEX_URL": "https://pypi.org/simple"}
+    )
+    assert got == {"url": "https://pypi.org/simple", "source": "PIP_INDEX_URL", "mirror": False}
+
+    assert launcher.pip_index({**base, "PIP_CONFIG_FILE": os.devnull}) is None
+
+
+def test_pip_index_never_repeats_credentials(tmp_path):
+    got = launcher.pip_index(
+        {
+            "HOME": str(tmp_path),
+            "PIP_CONFIG_FILE": os.devnull,
+            "PIP_INDEX_URL": "https://alice:s3cret@pypi.corp.example/simple",
+        }
+    )
+    assert got["mirror"] is True
+    assert "s3cret" not in got["url"] and "alice" not in got["url"]
+    assert got["url"] == "https://***@pypi.corp.example/simple"
+
+
+def test_upgrade_commands_follow_the_mirror_verdict():
+    plain = launcher.upgrade_commands("0.17.0", None)
+    assert plain[0] == "pipx upgrade tavotto"
+    assert 'pipx install --force "tavotto[worker]==0.17.0"' in plain
+    assert not any("--index-url" in c for c in plain)
+    pypi = launcher.upgrade_commands("0.17.0", {"url": "https://pypi.org/simple", "mirror": False})
+    assert pypi == plain
+    mirrored = launcher.upgrade_commands("0.17.0", {"url": ALIYUN, "mirror": True})
+    assert all(c.endswith("--index-url https://pypi.org/simple") for c in mirrored)
+    assert not any(c.startswith("pipx upgrade") for c in mirrored)
