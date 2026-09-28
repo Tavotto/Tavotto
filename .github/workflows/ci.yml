@@ -128,9 +128,10 @@ env:
 # **联网装包的步骤各自带 `PIP_DEFAULT_TIMEOUT` / `PIP_RETRIES`，不提到顶层**（2026-09-28）：pypi.org 读超时
 # 时 pip 默认 15 s × 5 次就放弃、把那个依赖当成「没有候选」，然后回溯 matplotlib 一路退到 3.0.3 的 sdist，
 # 在新 Python 上编译报 `linux_distribution` 之类与网络毫无关系的错。提到顶层会被 pytest 继承：产品与用例里
-# 故意连不上索引的 pip 调用会被白白拖长。取值 30 s × 5 次重试：单个请求最坏 6 × 30 s + 退避 ≈ 3 分钟，
+# 故意连不上索引的 pip 调用会被白白拖长。取值 30 s × 5 次重试：单个请求最坏 6 × 30 s + 退避 7.5 s ≈ 3 分钟，
 # 要装得进每个 job 的 timeout-minutes（最紧的是 python-lint 10 分钟、只装 ruff 一个包；backend-platforms
-# Windows 腿常态 40–53 分钟 / 60）——调大之前先按 job 时限重算，别拿抬必需检查的时限来换。
+# Windows 腿常态 40–53 分钟 / 60）——调大之前先按 job 时限重算，别拿抬必需检查的时限来换。自带 step 级
+# timeout-minutes 的步骤另按那一步的时限算，放不下就在该步取小一档（20 s × 3 次，算式写在该步）。
 # 不锁版本的 `pip install matplotlib` 另加 `--only-binary=matplotlib`：索引再抖也只会明确报错，不会退去编译
 # 老 sdist（`--prefer-binary` 在没有可用 wheel 时仍会回落 sdist，挡不住这条路）。锁版本的安装（runtime_pins / 兼容矩阵）不加——`==` 本来就不会回溯。
 
@@ -1005,9 +1006,11 @@ jobs:
       - name: 校验 workerd 三路等价（对着刚建的二进制跑 12 条）
         working-directory: ${{ github.workspace }}
         timeout-minutes: 10
+        # 这一步自带 10 分钟时限，pip 参数取小一档：单请求最坏 (3+1) × 20 s + 退避 0.5+1 s = 81.5 s
+        # （还不到默认 15 s × 5 次的 97.5 s）；常态整步 ~75 s，余下 ~525 s 容得下 6 个请求同时卡满。
         env:
-          PIP_DEFAULT_TIMEOUT: "30"
-          PIP_RETRIES: "5"
+          PIP_DEFAULT_TIMEOUT: "20"
+          PIP_RETRIES: "3"
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
@@ -1262,9 +1265,11 @@ jobs:
       - name: 校验产物里的教程资源（test_tutorial 的 wheel / sdist / 装开的 wheel 三条）
         shell: bash
         timeout-minutes: 5
+        # 这一步自带 5 分钟时限，pip 参数取小一档：单请求最坏 (3+1) × 20 s + 退避 0.5+1 s = 81.5 s
+        # （还不到默认 15 s × 5 次的 97.5 s）；常态整步 ~6 s，余下 ~294 s 容得下 3 个请求同时卡满。
         env:
-          PIP_DEFAULT_TIMEOUT: "30"
-          PIP_RETRIES: "5"
+          PIP_DEFAULT_TIMEOUT: "20"
+          PIP_RETRIES: "3"
           TAVOTTO_DIST_DIR: dist
         run: |
           VENV="${{ runner.temp }}/smoke-venv"
