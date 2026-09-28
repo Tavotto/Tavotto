@@ -65,7 +65,7 @@ was started in is the authorized project. If you had set Tavotto up in Claude Co
 generator, remove that `.mcp.json` entry after installing the plugin, or you will have two servers.
 The install path only works once this version has been promoted to the `plugin-stable` branch.
 
-## DeepSeek Harness bundle (experimental)
+## DeepSeek Harness bundle (Beta)
 
 Tavotto now installs into DeepSeek Harness as a profile bundle:
 `dsh plugin --profile web add "git+https://github.com/Tavotto/Tavotto.git#plugin-stable&path:/codex-plugin"`.
