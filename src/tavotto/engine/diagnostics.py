@@ -411,10 +411,15 @@ _CLOUD_HINT = re.compile(
 )
 
 
-def _path_fact(value: str, roots: list[tuple[str, str]]) -> str:
+def _path_fact(value: str, roots: list[tuple[str, str]], *, interpreter: bool = False) -> str:
     """一条路径出门的样子：项目根 → `<project:…>`、主目录 → `~`，之后的每一段只有 `_KNOWN_SEGMENTS`
     里的名字原样，其余 `seg:<sha1 前 10 位>`——导出目录可以被用户改到 `~/Desktop/<论文题目>/`，只换主目录
-    挡不住题目。"""
+    挡不住题目。
+
+    `interpreter=True` 只给**体检过的候选解释器路径**（缺依赖现场的 `system_candidates`）：那时才认解释器
+    布局上的 `Python37` / `python3.11` / `3.7.6`。导出 / 备份 / 文档目录、项目设置、日志里的路径一律不认——
+    那些路径的每一段都可能是用户起的名字，`bin/`、`Python/` 这些父目录名同样可以是用户起的（Codex #708 P1
+    第三轮：`~/Desktop/bin/Python911/out.pdf`），按位置判也挡不住。"""
     text = _redact_text(value, roots)
     out: list[str] = []
     for seg in re.split(r"[/\\]", text):
@@ -422,7 +427,8 @@ def _path_fact(value: str, roots: list[tuple[str, str]]) -> str:
             seg in ("", "~", "<user>")
             or seg in _KNOWN_SEGMENTS
             or (
-                bool(out)
+                interpreter
+                and bool(out)
                 and (
                     out[-1] in _INTERPRETER_PARENTS
                     or re.fullmatch(r"[A-Za-z]:", out[-1]) is not None
@@ -432,7 +438,8 @@ def _path_fact(value: str, roots: list[tuple[str, str]]) -> str:
                 and _INTERPRETER_SEGMENT.match(seg) is not None
             )
             or (
-                bool(out)
+                interpreter
+                and bool(out)
                 and out[-1] in _VERSION_PARENTS
                 and _VERSION_SEGMENT.match(seg) is not None
             )
@@ -558,7 +565,9 @@ def _missing_dependency_for_export(record: dict, roots: list[tuple[str, str]]) -
         "project_env_code": _closed(record.get("project_env_code"), _DEP_CODES),
         "system_candidates": [
             {
-                "python": _path_fact(str(e.get("python") or ""), roots) if e.get("python") else "",
+                "python": _path_fact(str(e.get("python") or ""), roots, interpreter=True)
+                if e.get("python")
+                else "",
                 "source": _closed(e.get("source"), _DEP_SOURCES),
                 "ok": bool(e.get("ok")),
                 "code": _closed(e.get("code"), _DEP_CODES),

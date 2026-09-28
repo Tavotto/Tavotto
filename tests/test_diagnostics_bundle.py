@@ -1226,15 +1226,23 @@ def test_version_shaped_segments_stay_only_on_interpreter_version_positions():
     d = engine_diagnostics
     home = str(Path.home())
     roots = [(home, "~")]
-    assert d._path_fact(f"{home}/.pyenv/versions/3.7.6/bin/python3.7", roots) == (
+    assert d._path_fact(f"{home}/.pyenv/versions/3.7.6/bin/python3.7", roots, interpreter=True) == (
         "~/.pyenv/versions/3.7.6/bin/python3.7"
     )
     assert (
-        d._path_fact("/Library/Frameworks/Python.framework/Versions/3.11/bin/python3", roots)
+        d._path_fact(
+            "/Library/Frameworks/Python.framework/Versions/3.11/bin/python3",
+            roots,
+            interpreter=True,
+        )
         == "/Library/Frameworks/Python.framework/Versions/3.11/bin/python3"
     )
-    for private in (f"{home}/miniconda3/envs/12.34/bin/python", f"{home}/Desktop/3.7.6/out.pdf"):
-        fact = d._path_fact(private, roots)
+    for private, interp in (
+        (f"{home}/miniconda3/envs/12.34/bin/python", True),
+        (f"{home}/Desktop/3.7.6/out.pdf", False),
+        (f"{home}/Desktop/versions/3.7.6/out.pdf", False),  # 父目录名也可以是用户起的
+    ):
+        fact = d._path_fact(private, roots, interpreter=interp)
         segs = fact.split("/")
         assert "12.34" not in segs and "3.7.6" not in segs, fact
         assert any(s.startswith("seg:") for s in segs), fact
@@ -1253,13 +1261,16 @@ def test_interpreter_shaped_segments_stay_only_on_interpreter_layout_positions()
         "C:/Users/<user>/AppData/Local/Programs/Python/Python37/pythonw.exe",
         "C:/Users/<user>/AppData/Local/Microsoft/WindowsApps/python3.EXE",
     ):
-        assert d._path_fact(layout, roots) == layout
-    for private in (
-        f"{home}/miniconda3/envs/python911/bin/python",
-        f"{home}/Desktop/Python37/fig.pdf",
+        assert d._path_fact(layout, roots, interpreter=True) == layout
+    for private, interp in (
+        (f"{home}/miniconda3/envs/python911/bin/python", True),
+        (f"{home}/Desktop/Python37/fig.pdf", False),
+        # 导出 / 设置里的路径不认解释器布局：`bin/` 这个父目录名同样可以是用户起的（第三轮）
+        (f"{home}/Desktop/bin/Python911/out.pdf", False),
+        ("C:/Python37/out.pdf", False),
     ):
-        segs = d._path_fact(private, roots).split("/")
-        assert "python911" not in segs and "Python37" not in segs, segs
+        segs = d._path_fact(private, roots, interpreter=interp).split("/")
+        assert not {"python911", "Python37", "Python911"} & set(segs), segs
 
 
 def test_missing_dependency_export_is_a_whitelist_of_closed_values():
