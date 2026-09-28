@@ -155,7 +155,9 @@ def test_every_connect_error_code_has_text_in_both_languages():
 @needs_shell
 def test_capabilities_only_name_the_two_windows():
     for name, cap in _caps().items():
-        assert set(cap["windows"]) <= {"main", "remote"}, f"{name} 给了陌生窗口权限：{cap['windows']}"
+        assert set(cap["windows"]) <= {"main", "remote"}, (
+            f"{name} 给了陌生窗口权限：{cap['windows']}"
+        )
 
 
 @needs_shell

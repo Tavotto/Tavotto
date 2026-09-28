@@ -97,7 +97,9 @@ def test_the_tauri_drag_drop_handler_stays_disabled():
     assert set(sites) == {"MAIN_WINDOW", "REMOTE_WINDOW"}, sorted(sites)
     for label, outer in (("MAIN_WINDOW", "main"), ("REMOTE_WINDOW", "open_remote_window")):
         methods = chain_methods(code, sites[label])
-        assert "disable_drag_drop_handler" in methods, f"{label} 的建造链没关 Tauri 拖放处理器：{methods}"
+        assert "disable_drag_drop_handler" in methods, (
+            f"{label} 的建造链没关 Tauri 拖放处理器：{methods}"
+        )
         assert "build" in methods, f"建造链没有 build()：{methods}"
         assert methods.index("disable_drag_drop_handler") < methods.index("build"), methods
         assert_unconditionally_in(code, sites[label], outer)

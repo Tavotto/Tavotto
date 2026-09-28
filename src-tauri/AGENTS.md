@@ -20,8 +20,9 @@
   `@tauri-apps/*`；每个能力都有浏览器回退（vitest 看护）。菜单事件 id 与
   `src-tauri/src/main.rs` 严格同源（`tavotto:menu`）。
 - **Tauri 2 的 ACL 对应用自定义命令同样生效**：新增 `#[tauri::command]` 必须
-  三处同步——`build.rs` 的 `AppManifest::commands`、`capabilities/main.json`
-  加 `allow-<命令名连字符化>`、`main.rs` 的 `generate_handler`。漏掉前两处
+  三处同步——`build.rs` 的 `AppManifest::commands`、`capabilities/` 里**该拿它的
+  那个窗口**加 `allow-<命令名连字符化>`（主窗口 `main.json`，远程实例窗口
+  `remote-*.json`）、`main.rs` 的 `generate_handler`。漏掉前两处
   invoke 会被**静默拒绝**（reveal_export「点了没反应」就是这么坏的）；
   失败路径不许吞——回退时把完整文件路径告诉用户。三处齐全的看护读结构不读子串
   （`tests/support/rustsrc.py`，枚举在 `tests/test_desktop_codex_button.py`）。
@@ -39,6 +40,12 @@
   `tavotto:file-drop`、再调原实现。路径分派只在 `drop_paths::classify`（绝对 + canonicalize，Rust 单测），
   视图分派在前端（只有主页订阅）；两侧同源由 `tests/test_desktop_file_drop.py` 看护，「什么算脚本」与页面
   `scriptImport.ts` 同源由 `tests/golden/drop_script_rule.json`（两侧各读）看护。
+- **远程实例窗口**（ADR 0105）：label `remote`，加载 `ssh -L` 转发过来的服务器引擎。
+  `incognito(true)`（cookie 不按端口隔离，共用存储会顶掉本机会话）+ 注入
+  `REMOTE_WINDOW_MARKER`（前端 `isDesktop()` 据它为假，本机文件类能力走浏览器回退）+
+  不装 native_drop。权限是闭集（`capabilities/remote-*.json`：只听事件不发、关窗询问、
+  壳自带页面的 `connect_remote`），**不许往里加本机文件类权限**；关窗闸按窗口各一道，
+  菜单发给聚焦窗口。看护 `tests/test_desktop_remote.py`。
 - 桌面交接契约 argv `--open <目录> [--stem <stem>]`：生产者唯一
   `handoff.desktop_argv()`，消费者唯一 `src-tauri/src/main.rs::parse_open_args()`，
   两侧各有单测，改一边必须同步另一边（完整交接语义见
