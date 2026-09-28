@@ -18,6 +18,7 @@
  */
 import { beforeEach } from 'vitest'
 import { DEFAULT_LOCALE, i18n, initI18n } from '@/i18n'
+import { forgetProjectFilesInSession } from '@/lib/projectFile'
 
 const pinNavigator = () => {
   Object.defineProperty(navigator, 'language', {
@@ -34,6 +35,9 @@ pinNavigator()
 initI18n(DEFAULT_LOCALE)
 
 beforeEach(async () => {
+  // 项目文件绑定的会话层（`lib/projectFile.ts`）是模块级的：不清的话上一条用例的绑定会
+  // 盖住这一条用例自己往 localStorage 里摆的（或清掉的）那一份
+  forgetProjectFilesInSession()
   pinNavigator()
   if (i18n.language !== DEFAULT_LOCALE) await i18n.changeLanguage(DEFAULT_LOCALE)
 })

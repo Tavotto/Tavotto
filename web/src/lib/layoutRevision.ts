@@ -25,15 +25,48 @@ import { currentProjectId } from '@/lib/session'
  */
 const revisions = new Map<string, string>()
 
-/** `pj::name`。`null` 项目（未打开项目时退回数据目录 layouts/）也是一档。 */
-const keyOf = (name: string) => `${currentProjectId() ?? ''}::${name}`
+/**
+ * 提交名 → 后端净化后的文件名（`app.layout_path()`：`Untitled layout` → `Untitled_layout`）。
+ * 修订号只按**规范名**记；另存为提交的却是用户输入的名字，文档名也留着它——不经这张表的话，
+ * 下一次另存为按输入名查不到刚写成的那一份，带着 `absent` 过去换来一次假冲突（#674 评审 P2）。
+ * 前端**不复刻**那条净化规则（Python 的 `\w` 认 Unicode 字母，JS 正则的不认，跨语言内建函数
+ * 不同源）：只记后端亲口回过的对应。净化是确定性的，这张表不会过期，也不分项目。
+ */
+const aliases = new Map<string, string>()
 
-export const knownLayoutRevision = (name: string): string | undefined => revisions.get(keyOf(name))
+/** 这个名字落盘时叫什么（没见过就按原样） */
+export const canonicalLayoutName = (name: string): string => aliases.get(name) ?? name
 
-export function rememberLayoutRevision(name: string, revision: string | null): void {
-  if (revision) revisions.set(keyOf(name), revision)
-  else revisions.delete(keyOf(name))
+/** 记下后端回的规范名；`canonical` 缺席（老后端）就什么都不记 */
+export function rememberLayoutName(submitted: string, canonical: string | undefined): void {
+  if (canonical && canonical !== submitted) aliases.set(submitted, canonical)
+}
+
+/** `pj::规范名`。`null` 项目（未打开项目时退回数据目录 layouts/）也是一档。 */
+const keyOf = (name: string, pj: string | null) => `${pj ?? ''}::${canonicalLayoutName(name)}`
+
+export const knownLayoutRevision = (
+  name: string,
+  pj: string | null = currentProjectId(),
+): string | undefined => revisions.get(keyOf(name, pj))
+
+/**
+ * 记下一份读到 / 写成的修订号。**请求之后才记的调用方必须传 `pj`**——发请求那一刻的
+ * 项目（ADR 0096 评审 P2）：读写都在 await 之后落账，中途切了项目的话，此刻的
+ * `currentProjectId()` 已经是 B，A 的修订号会被记到 B 的同名排版头上，B 里下一次另存为
+ * 带着一个毫不相干的基线过去，换来一次没有道理的冲突提示。
+ */
+export function rememberLayoutRevision(
+  name: string,
+  revision: string | null,
+  pj: string | null = currentProjectId(),
+): void {
+  if (revision) revisions.set(keyOf(name, pj), revision)
+  else revisions.delete(keyOf(name, pj))
 }
 
 /** 仅供用例：模块级 Map 会跨用例活下来 */
-export const forgetLayoutRevisions = (): void => revisions.clear()
+export const forgetLayoutRevisions = (): void => {
+  revisions.clear()
+  aliases.clear()
+}
