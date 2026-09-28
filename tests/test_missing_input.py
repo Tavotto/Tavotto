@@ -366,6 +366,23 @@ def test_a_script_that_checks_first_gets_the_static_list(figs):
     ]
 
 
+@needs_worker
+def test_a_script_that_checks_then_exits_gets_the_static_list(figs):
+    """最常见的写法是判空后自己 `sys.exit("找不到数据")`——码是 `script_exited`，同样挂静态载荷。"""
+    (figs / "fig.py").write_text(
+        'import os, sys\nif not os.path.exists("data/values.txt"):\n    sys.exit("找不到数据")\n',
+        encoding="utf-8",
+    )
+    workdir.set_mode(figs, workdir.MODE_SANDBOX)
+    with pytest.raises(engine_pool.WorkerError) as err:
+        engine_pool.build("fig.py", str(figs), "__main__")
+    assert err.value.code == engine_pool.SCRIPT_EXITED_CODE
+    assert err.value.missing_input is not None
+    assert err.value.missing_input["others"] == [
+        {"path": "data/values.txt", "absolute": False, "via": inputremap.VIA_PROBE}
+    ]
+
+
 def test_absolute_paths_that_are_only_probed_get_no_picker(tmp_path):
     """绝对路径被 `exists()` / `listdir()` / `glob()` / `Path(...).exists()` 问的是探路，不是读：改指表救不回，
     给了选择器就是死循环（指认 → 重跑 → `exists()` 照样 False → 同一个框再弹）。同一串还被读过也算探路。"""
