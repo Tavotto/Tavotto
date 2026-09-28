@@ -131,22 +131,6 @@ def _is_windows() -> bool:
     return os.name == "nt"
 
 
-def desktop_codex_candidates(localappdata: str | None) -> list[Path]:
-    """Codex 桌面版（Windows）自带的 CLI：`<LOCALAPPDATA>\\OpenAI\\Codex\\bin\\<哈希>\\codex.exe`。
-
-    桌面版每次更新换一个哈希目录，旧目录可能还留着——按修改时间**新到旧**排，调用方逐个
-    跑 `--version`，第一个起得来的才用（与 AI 桥「能不能用只看启动验证」同一条判据）。
-    """
-    if not localappdata:
-        return []
-    base = Path(localappdata) / "OpenAI" / "Codex" / "bin"
-    try:
-        hits = [p for p in base.glob("*/codex.exe") if p.is_file()]
-        return sorted(hits, key=lambda p: p.stat().st_mtime, reverse=True)
-    except OSError:
-        return []
-
-
 def find_codex() -> tuple[str | None, list[str]]:
     """找 `codex` 可执行文件。返回 (路径 or None, 找过哪些位置)。
 
@@ -164,14 +148,14 @@ def find_codex() -> tuple[str | None, list[str]]:
             return str(exe), searched
     if _is_windows():
         # 只装了 Codex 桌面版的机器上，这是唯一一份 codex（#722）
+        # 候选与排序只有 `ai_agents.desktop_codex_candidates` 一份（AI 桥的 Codex 适配器
+        # 用的也是它，#726）：两边对「这台机器上有没有 codex」的回答不许分叉。
         local = os.environ.get("LOCALAPPDATA")
-        searched.append(
-            str(Path(local or "%LOCALAPPDATA%") / "OpenAI" / "Codex" / "bin" / "*" / "codex.exe")
-        )
-        for exe in desktop_codex_candidates(local):
-            rc, _out = _run([str(exe), "--version"], timeout=60)
+        searched.append(ai_agents.desktop_codex_glob(local))
+        for exe in ai_agents.desktop_codex_candidates(local):
+            rc, _out = _run([exe, "--version"], timeout=60)
             if rc == 0:
-                return str(exe), searched
+                return exe, searched
     return None, searched
 
 
