@@ -95,10 +95,10 @@ def write_handshake(
 def parse_preferred_port(value: object) -> int | None:
     """stdin 里的建议端口 → 端口；不是 `[PREFERRED_PORT_MIN, PREFERRED_PORT_MAX]` 里的整数一律 None。
 
-    bool 是 int 的子类，要先排除（`true` 不是端口 1）。非法值只是被忽略、退回系统分配：
-    建议端口是「尽量稳定」的优化，不是启动的前提。
+    非法值只是被忽略、退回系统分配：建议端口是「尽量稳定」的优化，不是启动的前提。
+    （JSON 的 `true` / `false` 在 Python 里是 int 1 / 0，落在范围下限之外，同样被忽略。）
     """
-    if isinstance(value, bool) or not isinstance(value, int):
+    if not isinstance(value, int):
         return None
     return value if PREFERRED_PORT_MIN <= value <= PREFERRED_PORT_MAX else None
 
@@ -291,15 +291,12 @@ class SidecarServer:
         return self._stopped.wait(timeout)
 
     def _cleanup(self) -> None:
-        """serve 循环退出后：关监听 socket → 停 watcher → 同步关 worker → 中断 AI → 清握手。
+        """serve 循环退出后：停 watcher → 同步关 worker → 中断 AI → 清握手。
 
-        监听 socket 第一个关：同步关 worker 最多要等好几秒，这段时间端口要是还占着，
-        紧接着启动的下一个 sidecar（应用内更新后的重启）就拿不到建议端口，origin 跟着变。
+        监听 socket 此时已经关了（werkzeug 的 `serve_forever` 在 finally 里 `server_close()`）：
+        同步关 worker 最多要等好几秒，端口不必陪着等——紧接着启动的下一个 sidecar（应用内更新
+        后的重启）才拿得到建议端口（`test_a_stopped_sidecar_releases_its_port_at_once` 看护）。
         """
-        try:
-            self._srv.server_close()
-        except OSError:
-            pass
         try:
             engine_watch.stop()  # None = 停掉全部项目的 watcher
             engine_pool.shutdown_all(wait=True)  # 同步等 worker 真的退了再走

@@ -206,8 +206,8 @@ def test_preferred_port_freed_within_the_retry_window_is_still_taken(tmp_path):
 
 
 def test_a_stopped_sidecar_releases_its_port_at_once(tmp_path):
-    """停下来的 sidecar 第一件事就是放监听端口：关 worker 要等好几秒，这期间紧接着起来的下一个
-    sidecar（应用内更新后的重启）不必等重试窗口，也不会因此换端口。"""
+    """停下来的 sidecar 在关 worker 之前就放掉监听端口（关 worker 要等好几秒）：紧接着起来的
+    下一个 sidecar（应用内更新后的重启）不必等重试窗口，也不会因此换端口。"""
     port = _free_port()
     a = Sidecar(tmp_path / "a", preferred_port=port)
     assert a.port == port
