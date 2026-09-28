@@ -48,6 +48,11 @@
   脚本还在跑」；每次 run 换代，迟到响应丢弃；`clear()` 升 epoch，在途
   响应绝不落进新项目。错误存**原始 code + params**，显示那一刻才翻
   （i18n 纪律）。SSE `probe.started` 驱动 starting_runtime → running。
+- **脚本缺包时就地给修复卡片**（2026-09-28）：试运行以 `missing_dependency` 收场且带
+  `dependency_repair`（后端 `probe._error_from_worker` 挂的同一份 `deprepair.offer()`）时，脚本行上渲染
+  **同一张** `DependencyRepairCard`（同一个 `depRepairStore`、同一次授权）——新脚本的图还没上画布时右栏
+  不会有卡片，这是走到安装的唯一入口。修复状态全局一份，属于别的脚本时这一行不显示；装好后
+  `depRepairStore.onProgress` 按进度里的 `script` 重跑那一行（只在它仍停在 `missing_dependency` 时）。
 - **运行/取消是同一个按钮**（busy 态翻转）：取消后焦点天然留在原脚本行，
   不做焦点搬运。状态行 aria-live=polite，只随相位变化播报。
 - **多 Figure 结果进 Dialog**（自带 focus trap），每张各有「添加到画布」，

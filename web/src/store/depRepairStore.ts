@@ -15,10 +15,12 @@ import {
   type InterpreterPin,
   type JointDependencyPlan,
   type JointDependencyRepairPlan,
+  type PrivatePythonOffer,
 } from '@/lib/api'
 import { currentProjectId } from '@/lib/session'
 import { useEnvStore } from '@/store/envStore'
 import { useRenderStore } from '@/store/renderStore'
+import { useScriptRunStore } from '@/store/scriptRunStore'
 
 /**
  * 项目代际（issue #590，与 `packageStore` / `scriptRunStore` 同一条纪律，名单见
@@ -34,16 +36,62 @@ let projectEpoch = 0
  * 所属项目那格，终态副作用只在所属项目此刻开着时派发，切回 A 接得上（与 `packageStore` 的作业同一形状）。
  */
 const startedPlans = new Map<string, string | null>()
+/**
+ * 与 `parked` 同一格收着的「就地重试」上下文（最近一次请求 + 受管环境那次授权）：切走时随作业收起、切回来随作业
+ * 放回——不然切回来看到失败 / 取消的结局，卡片却没有「重试」（`onRetry` 要 `request`，Codex #709）。
+ * 模块级而不进 store：界面不读它，只有 `clear()` 收放。
+ */
+const parkedRetry = new Map<string, { request: RepairRequest | null; authorized: RepairDisclosure | null }>()
 const projectKey = (project: string | null): string => project ?? ''
+
+/** 单包修复的一次请求（重试时原样再发一次） */
+export interface RepairRequest {
+  module: string
+  script: string
+  target: 'project_venv' | 'tavotto_managed'
+  distribution?: string
+}
+
+/**
+ * 用户点下去之前**已经看到**的那几样（一次授权的凭据）：装什么、装到哪、要不要先下载私有 Python
+ * （版本 / 体积 / 已缓存）。卡片从 offer 上把它们说出口，点一次就形成计划并执行——前提是后端算出来的
+ * 计划与这里**逐项相符**（`planMatchesDisclosure`）；不符就停在确认页，让用户按计划本身再看一遍。
+ */
+export interface RepairDisclosure {
+  requirement: string
+  target_kind: 'tavotto_managed'
+  private_python: PrivatePythonOffer | null
+}
+
+/**
+ * 计划有没有超出用户看到的：目标、需求串逐字相同，不改用户环境；私有 Python 这一段只许「更少」——
+ * 看到的是「要下载 N MB」，计划变成「已缓存 / 不用下载」可以；看到的是「不用下载」或更小的体积，
+ * 计划却要下载（或换了一份 Python），就不算同一次授权。
+ */
+export function planMatchesDisclosure(plan: DependencyRepairPlan, seen: RepairDisclosure): boolean {
+  if (plan.target_kind !== seen.target_kind || plan.modifies_user_environment) return false
+  if (plan.requirement !== seen.requirement) return false
+  const now = plan.private_python ?? null
+  if (!now) return true
+  const was = seen.private_python
+  if (!was || now.id !== was.id || now.version !== was.version) return false
+  if (now.cached) return true
+  return !was.cached && now.download_bytes <= was.download_bytes
+}
 
 /**
  * 受控依赖修复的界面状态（ADR 0019）。
  *
- * 两步是**故意的**，不是流程繁琐：
+ * 后端的两步是**故意的**（ADR 0019 §四，计划绑定，不是 `confirmed=true`）：
  *
  *   1. `plan(target)` —— 问后端「装什么、装到哪、会不会改你的环境」。
  *      这一步什么都不装，用户看到的确认文案就来自它。
  *   2. `install()` —— 执行**那个计划**（只发 plan_id）。
+ *
+ * 界面上受管环境那一条是**一次授权**（`installNow`）：卡片已经把计划里的全部要素说出口
+ * （装什么、联网、私有 Python 版本与体积、建隔离环境、不改源码与现有环境），点一次就连着发这两步；
+ * 计划超出了卡片说过的（`planMatchesDisclosure` 不成立）才停在确认页。项目 `.venv` 那一条仍然先到
+ * 确认页——改用户自己的环境不可逆，要明确确认（ADR 0019 §八）。
  *
  * 进度经 SSE `engine.dependency` 推过来（useServerEvents 转发到这里）。
  * 界面**按 state 换文案，绝不解析日志**——日志只在「安装详情」里原样显示。
@@ -68,6 +116,16 @@ interface DepRepairState {
     args: { module: string; script: string; target: 'project_venv' | 'tavotto_managed'; distribution?: string },
   ) => Promise<void>
   install: () => Promise<void>
+  /**
+   * 一次授权（受管环境）：形成计划，与用户看到的 `seen` 逐项相符就直接执行；不符停在确认页（`plan`）。
+   */
+  installNow: (args: RepairRequest, seen: RepairDisclosure) => Promise<void>
+  /** 失败 / 取消之后在同一张卡上再来一次：受管环境按上次授权的要素走一次授权，项目环境回到确认页 */
+  retry: () => Promise<void>
+  /** 最近一次请求（`retry` 用它；脚本行据 `script` 判断这张卡是不是自己的） */
+  request: RepairRequest | null
+  /** 最近一次真正执行过的受管环境授权（`retry` 按它判计划有没有超出用户看到的） */
+  authorized: RepairDisclosure | null
   /**
    * 采用这台机器上已有的、已经装着那个包的解释器（ADR 0044）。**不是安装**：
    * 走项目环境 PATCH（带 `module` 让后端连那个包一起验），成功后把失败的
@@ -129,6 +187,8 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
   pinned: null,
   jointPlan: null,
   jointBlocked: null,
+  request: null,
+  authorized: null,
   parked: {},
   rebuilding: {},
   rebuildRunningFor: (project) => !!get().rebuilding[projectKey(project)],
@@ -203,7 +263,7 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
   makePlan: async (args) => {
     if (get().busy) return
     const epoch = projectEpoch
-    set({ busy: true, errorCode: '', errorText: '', plan: null })
+    set({ busy: true, errorCode: '', errorText: '', plan: null, request: args })
     try {
       const { plan } = await createDependencyPlan(args)
       if (epoch !== projectEpoch) return // A 的计划不落进 B 的确认卡片
@@ -215,12 +275,53 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
     }
   },
 
+  installNow: async (args, seen) => {
+    if (get().busy) return
+    const epoch = projectEpoch
+    set({ busy: true, errorCode: '', errorText: '', plan: null, progress: null, request: args })
+    let plan: DependencyRepairPlan
+    try {
+      plan = (await createDependencyPlan(args)).plan
+    } catch (e) {
+      if (epoch !== projectEpoch) return
+      const { code, text, pinned } = failure(e)
+      set({ busy: false, errorCode: code, errorText: text, pinned })
+      return
+    }
+    if (epoch !== projectEpoch) return // A 的计划不落进 B，更不在 B 上执行
+    set({ plan, busy: false })
+    // 计划超出了卡片说过的：不执行，停在确认页（它把计划本身的要素说出口）
+    if (!planMatchesDisclosure(plan, seen)) return
+    await get().install()
+  },
+
+  retry: async () => {
+    const { request, authorized } = get()
+    if (!request || get().busy) return
+    if (authorized && request.target === 'tavotto_managed') {
+      await get().installNow(request, authorized)
+      return
+    }
+    set({ progress: null })
+    await get().makePlan(request)
+  },
+
   install: async () => {
     const plan = get().plan
     if (!plan || get().busy) return
     const epoch = projectEpoch
     startedPlans.set(plan.plan_id, currentProjectId())
     set({ busy: true, errorCode: '', errorText: '' })
+    if (plan.target_kind === 'tavotto_managed') {
+      // 执行的就是这一份：之后的重试按它判「计划有没有超出用户看到的」
+      set({
+        authorized: {
+          requirement: plan.requirement,
+          target_kind: 'tavotto_managed',
+          private_python: plan.private_python ?? null,
+        },
+      })
+    }
     try {
       // 乐观地先进 preparing：SSE 的第一条要等后端线程起来，中间那一下
       // 空窗期里按钮已经禁用了，界面却还什么都没说。
@@ -351,12 +452,17 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
     if (p.state === 'done' || p.state === 'failed' || p.state === 'cancelled') {
       // 环境那半边变了（换了解释器 / 建了受管环境），刷一次环境状态
       void useEnvStore.getState().refresh()
+      let rerun = false
       if (p.state === 'done') {
         // **装完必须把那次失败的渲染重新排上**，否则这条主路走不完：
         // 失败那次的 wantPatches 仍等于当前 overrides，同步器会跳过它，
         // 卡片就一直停在「缺 X」上，图要等到用户改点别的或刷新才出来
         // （Codex 评审 P1）。后端那半边已经作废了 worker，这里补前端这半边。
         useRenderStore.getState().retryEnvironmentFailures()
+        // 素材库「脚本」行上因缺包停下的那次运行同样重跑（图还没上画布时，修复入口在脚本行上）：
+        // 只重跑这份计划所属的脚本，且只在它此刻仍停在 missing_dependency 时——用户已经重跑 /
+        // 收起过的不动
+        rerun = rerunScriptAfterRepair(p.script)
         // 联合准备装完：授权框收掉（渲染会重排；缺的那一次错误也随之清）
         if (p.flow === 'joint') useEnvStore.getState().dismissDependencyPreparation()
       }
@@ -366,6 +472,9 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
       // 计划是一次性的：成功也好失败也好，都不该留着一个已经被消费掉的
       // plan_id 让用户再点一次「安装」。
       set({ plan: null, jointPlan: null })
+      // 从脚本行起的修复：那一行已经重跑、卡片随之收起，「已安装」这条进度没有地方再「知道了」——
+      // 留着它，别的脚本行会因为「修复属于别人」一直不给卡片
+      if (rerun) get().reset()
     }
   },
 
@@ -379,27 +488,36 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
       pinned: null,
       jointPlan: null,
       jointBlocked: null,
+      request: null,
+      authorized: null,
     }),
 
   clear: () => {
     // 换代**排在清空之前**：清空只处置已经落地的那份，换代处置还在飞的那些
     projectEpoch += 1
-    const { progress, parked } = get()
+    const { progress, parked, request, authorized } = get()
     const next = { ...parked }
     // 此刻显示的作业收进它**所属**项目那格（`resetForNewProject` 跑的时候 currentProjectId 已经是新项目，
     // 所属项目只能问作业自己）。认不出所属的（不是本标签页起的）不收——本来也不该显示
-    if (progress && startedPlans.has(progress.plan_id))
-      next[projectKey(startedPlans.get(progress.plan_id) ?? null)] = progress
+    if (progress && startedPlans.has(progress.plan_id)) {
+      const owner = projectKey(startedPlans.get(progress.plan_id) ?? null)
+      next[owner] = progress
+      parkedRetry.set(owner, { request, authorized })
+    }
     // 新项目上次切走时收着的作业放回来：还在跑就接着显示，切走期间结束了就把结局交出来（不静默丢）
     const here = projectKey(currentProjectId())
     const back = next[here] ?? null
     delete next[here]
+    const retryCtx = back ? parkedRetry.get(here) : undefined
+    parkedRetry.delete(here)
     const ended = !!back && (back.state === 'failed' || back.state === 'cancelled')
     set({
       plan: null,
       jointPlan: null,
       jointBlocked: null,
       pinned: null,
+      request: retryCtx?.request ?? null,
+      authorized: retryCtx?.authorized ?? null,
       busy: false,
       errorCode: ended ? back.code || '' : '',
       errorText: ended ? back.error || '' : '',
@@ -469,6 +587,15 @@ function lateFailure(planId: string, e: unknown): void {
   const p = store.parked[key]
   if (!p || p.plan_id !== planId) return
   useDepRepairStore.setState({ parked: { ...store.parked, [key]: { ...p, state: 'failed', code, error: text } } })
+}
+
+/** 修好之后把素材库里因缺这个包停下的那次脚本运行重跑一遍（见 `onProgress` 的 done 分支） */
+function rerunScriptAfterRepair(script: string | undefined): boolean {
+  if (!script) return false
+  const runs = useScriptRunStore.getState()
+  if (runs.byScript[script]?.phase !== 'missing_dependency') return false
+  void runs.run(script)
+  return true
 }
 
 /** 安装是不是正在进行（界面据此禁用按钮、显示进度而不是选项） */

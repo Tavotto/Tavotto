@@ -244,6 +244,18 @@ describe('换项目时的依赖修复状态（issue #590）', () => {
     expect(s.errorCode).toBe('dependency_install_failed')
   })
 
+  it('切走期间 A 的作业失败了：切回 A 时「就地重试」的上下文一起回来（B 上没有它）', async () => {
+    // Codex #709：`clear()` 只收进度、丢了 request / authorized，切回来看得到失败却没有「重试」
+    await startInstallOnA()
+    await switchTo('p2')
+    expect(useDepRepairStore.getState().request).toBeNull()
+    useDepRepairStore.getState().onProgress(progress('failed', { code: 'private_python_offline', error: '断网' }))
+    await switchTo('p1')
+    const s = useDepRepairStore.getState()
+    expect(s.progress?.state).toBe('failed')
+    expect(s.request).toMatchObject({ module: 'lmfit', script: 'fig.py', target: 'tavotto_managed' })
+  })
+
   it('A 的安装请求在切项目之后才被拒：A 那格记成失败，B 不动', async () => {
     await useDepRepairStore.getState().makePlan({ module: 'lmfit', script: 'fig.py', target: 'tavotto_managed' })
     holding.add('/api/engine/dependency/install')

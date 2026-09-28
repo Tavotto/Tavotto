@@ -1354,6 +1354,166 @@ def test_a_second_plan_formed_before_the_first_install_finished_does_not_repeat_
     assert len(runs) == 1, "第二个计划不该再跑 pip"
 
 
+def _managed_plan(project, monkeypatch, tmp_path, *, private: bool) -> "deprepair.RepairPlan":
+    """受管目标的单包计划。`private=True` = 干净机器（没有基础解释器、计划里明示要下载私有 Python，
+    2026-09-28 Windows Server 2025 实测的形状）；否则 base 是一条假路径（建代各步由用例打桩）。"""
+    monkeypatch.setenv("TAVOTTO_DATA_DIR", str(tmp_path / "data"))
+    (project / "requirements.txt").write_text(f"{FIXTURE_DIST}\n", encoding="utf-8")
+    if private:
+        monkeypatch.setattr(deprepair, "base_python", lambda: None)
+        monkeypatch.setattr(
+            deprepair.privatepython,
+            "offer_payload",
+            lambda *a, **k: {"id": "pbs-test", "version": "3.12.0", "download_bytes": 1},
+        )
+        monkeypatch.setattr(deprepair.privatepython, "require_free_disk", lambda *a, **k: None)
+    else:
+        monkeypatch.setattr(deprepair, "base_python", lambda: "/fake/base/python3")
+    plan = deprepair.create_plan(
+        str(project), "figure.py", FIXTURE_IMPORT, target_kind=deprepair.TARGET_MANAGED
+    )
+    assert (plan.private_python is not None) is private
+    return plan
+
+
+def _stub_generation_until_pip(monkeypatch, *, pip_code: str) -> list[str]:
+    """代事务里建 venv / pip 探测 / pip 打桩（不真建环境）；回 pip 被调用的记录。"""
+    runs: list[str] = []
+    monkeypatch.setattr(deprepair, "_private_runtime_of", lambda base: "")
+    monkeypatch.setattr(
+        deprepair.managedenv, "create_generation_venv", lambda project, gen, base: (True, "")
+    )
+    monkeypatch.setattr(deprepair, "_run", lambda argv, timeout: (0, "pip 24.0"))
+    monkeypatch.setattr(
+        deprepair, "_run_pip", lambda argv, ev, log: (runs.append("pip"), (pip_code, "out"))[1]
+    )
+    return runs
+
+
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        pytest.param("offline", id="private-python-offline"),
+        pytest.param("cancelled", id="private-python-cancelled"),
+    ],
+)
+def test_a_failed_private_python_download_leaves_the_managed_requirement_retryable(
+    project, monkeypatch, tmp_path, outcome
+):
+    """实测（Windows Server 2025，#682 冻结包）：私有 Python 下载失败 / 取消后再点「将 X 安装到
+    Tavotto 环境」，撞到的是「已经往这个环境装过它了」——受管那条路把 `_attempted` 登记在建代
+    之前，什么都没装上也算「装过」。下载失败 / 取消都在 pip 之前，同一个需求必须还能再形成计划。"""
+    plan = _managed_plan(project, monkeypatch, tmp_path, private=True)
+
+    def _provision(job, cancel_ev):
+        if outcome == "cancelled":
+            return {"cancelled": True}
+        raise deprepair.RepairError(deprepair.privatepython.ERROR_OFFLINE, "offline")
+
+    monkeypatch.setattr(deprepair, "_provision_private_base", _provision)
+    if outcome == "cancelled":
+        rec = deprepair.install(plan.plan_id)
+        assert rec["state"] == deprepair.STATE_CANCELLED
+    else:
+        with pytest.raises(deprepair.RepairError) as err:
+            deprepair.install(plan.plan_id)
+        assert err.value.code == deprepair.privatepython.ERROR_OFFLINE
+    again = deprepair.create_plan(
+        str(project), "figure.py", FIXTURE_IMPORT, target_kind=deprepair.TARGET_MANAGED
+    )
+    assert again.plan_id, "下载没成功 / 被取消的那次不该进「已经装过」的黑名单"
+
+
+@pytest.mark.parametrize(
+    "pip_code", [deprepair.ERROR_NETWORK, deprepair.ERROR_CANCELLED], ids=["offline", "cancelled"]
+)
+def test_a_failed_managed_pip_run_leaves_the_requirement_retryable(
+    project, monkeypatch, tmp_path, pip_code
+):
+    """受管环境这条路上 pip 没跑成（断网 / 取消）：与项目 venv 那条路同一语义，可以重试。"""
+    plan = _managed_plan(project, monkeypatch, tmp_path, private=False)
+    runs = _stub_generation_until_pip(monkeypatch, pip_code=pip_code)
+    if pip_code == deprepair.ERROR_CANCELLED:
+        assert deprepair.install(plan.plan_id)["state"] == deprepair.STATE_CANCELLED
+    else:
+        with pytest.raises(deprepair.RepairError) as err:
+            deprepair.install(plan.plan_id)
+        assert err.value.code == pip_code
+    assert runs == ["pip"]
+    again = deprepair.create_plan(
+        str(project), "figure.py", FIXTURE_IMPORT, target_kind=deprepair.TARGET_MANAGED
+    )
+    assert again.plan_id
+
+
+@pytest.mark.parametrize(
+    "pip_code, retryable",
+    [("", False), (deprepair.ERROR_CANCELLED, True)],
+    ids=["cancelled-after-pip", "cancelled-during-pip"],
+)
+def test_the_terminal_progress_says_whether_the_same_requirement_can_be_retried(
+    project, monkeypatch, tmp_path, pip_code, retryable
+):
+    """Codex #709：受管单包修复取消在 pip 跑成**之后**（验证 / 自检期间）时 `_attempted` 已登记，再形成计划必然
+    `dependency_already_attempted`——终态进度带 `retryable=False`，界面据此不给「重试」；pip 期间取消的仍是 True。"""
+    plan = _managed_plan(project, monkeypatch, tmp_path, private=False)
+    _stub_generation_until_pip(monkeypatch, pip_code=pip_code)
+    if not pip_code:
+        # pip 跑成了，验证期间用户点了取消
+        monkeypatch.setattr(
+            deprepair, "_verify_imports", lambda python, modules: deprepair.cancel(plan.plan_id)
+        )
+    rec = deprepair.install(plan.plan_id)
+    assert rec["state"] == deprepair.STATE_CANCELLED
+    assert deprepair.progress(plan.plan_id)["retryable"] is retryable
+    if not retryable:
+        with pytest.raises(deprepair.RepairError) as err:
+            deprepair.create_plan(
+                str(project), "figure.py", FIXTURE_IMPORT, target_kind=deprepair.TARGET_MANAGED
+            )
+        assert err.value.code == deprepair.ERROR_ALREADY_ATTEMPTED
+
+
+def test_an_async_failure_after_pip_ran_is_not_offered_as_retryable(project, monkeypatch, tmp_path):
+    """Codex #709 第二轮：后台安装（`install_async` → `_install_guarded`）的失败终态也要带 `retryable`。计划在
+    `install()` 的 finally 里就被摘掉了，失败出口要事先拿住它——pip 跑成之后再失败（验证没过 / 写激活失败）的，
+    再形成计划必然 `dependency_already_attempted`，终态说 `retryable=False`。"""
+    plan = _managed_plan(project, monkeypatch, tmp_path, private=False)
+    _stub_generation_until_pip(monkeypatch, pip_code="")
+
+    def _write_failed(python, modules):
+        raise deprepair.RepairError(deprepair.ERROR_MANAGED_WRITE_FAILED, "磁盘满")
+
+    monkeypatch.setattr(deprepair, "_verify_imports", _write_failed)
+    rec = deprepair._install_guarded(plan.plan_id, None)
+    assert rec["state"] == deprepair.STATE_FAILED
+    assert rec["code"] == deprepair.ERROR_MANAGED_WRITE_FAILED
+    assert rec["retryable"] is False
+
+
+def test_a_successful_managed_pip_run_still_blocks_the_same_requirement(
+    project, monkeypatch, tmp_path
+):
+    """防循环语义不变：受管那条路 pip 退出码 0、验证却没过（装完还缺）——再装同一个需求
+    改变不了任何东西，第二次形成计划仍以 `dependency_already_attempted` 拒绝。"""
+    plan = _managed_plan(project, monkeypatch, tmp_path, private=False)
+    runs = _stub_generation_until_pip(monkeypatch, pip_code="")
+
+    def _still_missing(python, modules):
+        raise deprepair.RepairError(deprepair.ERROR_IMPORT_STILL_FAILED, "still missing")
+
+    monkeypatch.setattr(deprepair, "_verify_imports", _still_missing)
+    with pytest.raises(deprepair.RepairError) as err:
+        deprepair.install(plan.plan_id)
+    assert err.value.code == deprepair.ERROR_IMPORT_STILL_FAILED
+    assert runs == ["pip"]
+    with pytest.raises(deprepair.RepairError) as err:
+        deprepair.create_plan(
+            str(project), "figure.py", FIXTURE_IMPORT, target_kind=deprepair.TARGET_MANAGED
+        )
+    assert err.value.code == deprepair.ERROR_ALREADY_ATTEMPTED
+
+
 def test_an_environment_that_already_has_the_module_gets_its_own_code(project, monkeypatch):
     """渲染报缺、目标环境里却 import 得到：说明渲染用的不是这个环境。这句话与
     「安装未获确认」毫无关系，code 必须分开。"""

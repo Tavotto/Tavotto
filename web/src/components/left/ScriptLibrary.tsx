@@ -21,6 +21,8 @@ import { useUiStore } from '@/store/uiStore'
 import { Button, IconButton } from '../ui/Button'
 import { Dialog } from '../ui/Dialog'
 import { EmptyState } from '../ui/EmptyState'
+import { DependencyRepairCard } from '../DependencyRepairCard'
+import { useDepRepairStore } from '@/store/depRepairStore'
 
 /**
  * 素材库「脚本」区（Session 5，普通入口）：项目里每个合理 .py 一行，
@@ -198,6 +200,7 @@ function ScriptRow({ entry, stems }: { entry: ScriptInventoryEntry; stems: strin
         </IconButton>
       </div>
 
+      <ScriptDependencyRepair script={entry.script} run={run} />
       <FailureRecovery script={entry.script} run={run} />
 
       {run && run.descriptors.length > 0 && (
@@ -210,6 +213,29 @@ function ScriptRow({ entry, stems }: { entry: ScriptInventoryEntry; stems: strin
         />
       )}
     </li>
+  )
+}
+
+/**
+ * 脚本缺包时的「一键装上」（ADR 0019）：与画布上那张修复卡片是**同一张**（同一个 store、同一次授权、
+ * 同一个后端 offer——`probe._error_from_worker` 挂的就是 `deprepair.offer()`）。新脚本的图还没上画布时，
+ * 右栏的卡片不会出现，这里是新用户走到安装的唯一入口（2026-09-28 实测：只有「选择渲染环境」「复制诊断」）。
+ * 装好后 `depRepairStore` 把这一行的运行重跑一遍（`rerunScriptAfterRepair`）。
+ *
+ * 修复状态是全局一份：别的脚本（或画布上那张卡）正在装 / 刚装完时，这一行不显示卡片，免得同一份进度
+ * 出现在好几行上。
+ */
+function ScriptDependencyRepair({ script, run }: { script: string; run: ScriptRunState | undefined }) {
+  const owner = useDepRepairStore((s) => s.request?.script ?? s.progress?.script ?? '')
+  const offer = run?.phase === 'missing_dependency' ? run.error?.dependency_repair : undefined
+  const module = String(run?.error?.params?.module ?? offer?.import_name ?? '')
+  if (!offer || !module) return null
+  if (owner && owner !== script) return null
+  return (
+    // 与下面的恢复说明同一列缩进：它是这一行的延续，不是另一块区域
+    <div className="mb-1.5 mt-0.5 pl-8 pr-2" data-script-dependency-repair>
+      <DependencyRepairCard offer={offer} module={module} script={offer.script || script} />
+    </div>
   )
 }
 

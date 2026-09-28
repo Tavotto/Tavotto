@@ -693,6 +693,9 @@ def install_async(plan_id: str, on_event=None) -> None:
 
 
 def _install_guarded(plan_id: str, on_event) -> dict:
+    # 计划是一次性的：`install()` 的 finally 会把它从表里摘掉，失败的终态要在这之前拿住它——
+    # 终态上的 `retryable`（pip 跑成之后再失败的不给重试）按计划里的项目与需求算（Codex #709）
+    plan = get_plan(plan_id)
     try:
         return install(plan_id, on_event)
     except RepairError as exc:
@@ -701,13 +704,14 @@ def _install_guarded(plan_id: str, on_event) -> dict:
             plan_id,
             STATE_FAILED,
             on_event,
+            plan=plan,
             code=exc.code,
             error=str(exc),
             pinned=pinned if isinstance(pinned, dict) else None,
         )
     except Exception as exc:  # noqa: BLE001
         LOG.exception("依赖安装线程异常")
-        return _emit(plan_id, STATE_FAILED, on_event, code=ERROR_FAILED, error=str(exc))
+        return _emit(plan_id, STATE_FAILED, on_event, plan=plan, code=ERROR_FAILED, error=str(exc))
 
 
 def install(plan_id: str, on_event=None) -> dict:
@@ -800,9 +804,12 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
             on_log=lambda text: _append_log(plan.plan_id, text, on_event),
             label=f"repair-{req.distribution}",
             provision_private=plan.private_python is not None,
+            # 「这一轮装成功过」与项目 venv 那条路同一条纪律（#466）：代事务在 **pip 退出码 0 之后**
+            # 才登记。以前写在建代之前，私有 Python 下载失败 / 取消 / 断网的那一次也被记成「装过了」，
+            # 界面说「检查网络后重试」，重试撞到的却是 `dependency_already_attempted`，只能重启应用
+            # （2026-09-28 Windows Server 2025 冻结包实测）。
+            attempted=(plan.project_id, env_key, req.requirement()),
         )
-        with _lock:
-            _attempted.add((plan.project_id, env_key, req.requirement()))
         outcome = _run_generation_locked(job, cancel_ev, env_key)
         if not outcome.get("ok"):
             return outcome
@@ -1442,6 +1449,14 @@ def _emit(
                 target_kind=plan.target_kind,
                 script=plan.script,
             )
+            if state in (STATE_FAILED, STATE_CANCELLED):
+                # 终态上说清「同一个需求这一轮还能不能再装」：pip 跑成之后（验证 / 自检期间取消、验证没过）
+                # `_attempted` 已登记，再形成计划必然 `dependency_already_attempted`——界面据此不给「重试」
+                # （Codex #709）。只看项目与需求、不看环境 key：宁可少给一次重试，也不给一颗必败的按钮
+                req = plan.requirement.requirement()
+                rec["retryable"] = not any(
+                    k[0] == plan.project_id and k[2] == req for k in _attempted
+                )
         if joint is not None:
             rec.update(
                 target_kind=joint.target_kind,
@@ -3000,6 +3015,9 @@ class _GenerationJob:
     provision_private: bool = False
     #: 计划的事实来自替身：供应之后按真解释器重算 delta / 关键 import / 记账（`_replan_on_base`）。
     replan: bool = False
+    #: 单包修复才有：`_attempted` 的键 (项目指纹, 环境 key, 需求串)。**只在 pip 退出码 0 之后**登记
+    #: （#466 的纪律；下载私有 Python 失败 / 取消 / pip 没跑成都不算「装过」）；其余三条路为空。
+    attempted: tuple = ()
     groups: tuple[str, ...] = ()
     #: 用户确认的那份计划是按哪些输入算的（`JointRepairPlan.inputs_digest`）：重算时输入变了就停。
     inputs_digest: str = ""
@@ -3150,6 +3168,11 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
             project, generation, managedenv.GEN_STATE_INCOMPLETE, f"安装失败: {code}"
         )
         raise RepairError(code, _sanitize(out)[-800:])
+    if job.attempted:
+        # pip 跑成了：从这里起「再装一遍同一个需求」改变不了任何东西（验证没过也一样），
+        # 防循环的黑名单这时才登记——与项目 venv 那条路 `_run_install` 的登记点同一语义
+        with _lock:
+            _attempted.add(job.attempted)
     # ---- 验：三层，任一步不过就是 incomplete，active 不动 ----
     job.emit(STATE_VERIFYING)
     rc, out = _run(pip_check_argv(python), PIP_PROBE_TIMEOUT_S)

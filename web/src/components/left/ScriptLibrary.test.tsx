@@ -10,6 +10,8 @@
  */
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+// 修复卡片的状态（缺包时脚本行上的那张卡，与画布上的是同一个 store）
+import { useDepRepairStore } from '@/store/depRepairStore'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/lib/api', async (importOriginal) => ({
@@ -19,13 +21,19 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   cancelProbe: vi.fn().mockResolvedValue({ cancelling: true }),
   fetchPanels: vi.fn().mockResolvedValue({ figures_dir: '', panels: [] }),
   fetchRuntimeAssets: vi.fn().mockResolvedValue({ assets: [] }),
+  createDependencyPlan: vi.fn(),
+  installDependencyPlan: vi.fn(),
+  fetchEngineEnvironment: vi.fn().mockResolvedValue({}),
 }))
 
 import {
   cancelProbe,
+  createDependencyPlan,
   fetchRegistry,
+  installDependencyPlan,
   probeScript,
   type CapturedFigureDescriptor,
+  type DependencyRepairOffer,
   type ProbeResult,
   type RegistryView,
   type ScriptInventoryEntry,
@@ -332,5 +340,77 @@ describe('运行 / 取消 / 结果', () => {
     await flush()
     expect(host.textContent).not.toContain('可能需要原环境')
     expect(host.textContent).toContain('没有捕获到任何 Figure')
+  })
+
+  it('缺包且后端给了修复 offer：脚本行上就有「安装到 Tavotto 环境」，点一次安装，装好后自动重跑', async () => {
+    // 2026-09-28 实测：新脚本的图还没上画布，右栏修复卡片不出现，脚本行上只有「选择渲染环境」
+    // 「复制诊断」——新用户走不到安装。offer 是后端试运行失败时挂上的同一份 `deprepair.offer()`
+    const privatePython = {
+      id: 'pbs', version: '3.13.15', target: 'windows-x86_64', source_host: 'github.com',
+      download_bytes: 47131996, required: true, cached: false, network_required: true,
+    }
+    const offer: DependencyRepairOffer = {
+      import_name: 'adjustText',
+      script: 'fig_labels.py',
+      requirement: {
+        import_name: 'adjustText', distribution: 'adjustText', specifier: '', requirement: 'adjustText',
+        resolution_source: 'curated', confidence: 'high', installable: true,
+      },
+      targets: [{
+        kind: 'tavotto_managed', venv: '', python: '', modifies_user_environment: false,
+        creates_environment: true, available: true, reason: '', private_python: privatePython,
+      }],
+      rounds_remaining: 3,
+      python_supported: { min: '3.10', max: '3.14' },
+    }
+    useDepRepairStore.getState().reset()
+    mockRegistry.mockResolvedValue(view([entry({ script: 'fig_labels.py' })]))
+    mockProbe.mockResolvedValue({
+      ...ok([]),
+      script: 'fig_labels.py',
+      registered: false,
+      error: {
+        code: 'missing_dependency',
+        message: '缺少依赖包：adjustText（当前渲染环境里没有它）',
+        params: { module: 'adjustText' },
+        dependency_repair: offer,
+      },
+    })
+    vi.mocked(createDependencyPlan).mockResolvedValue({
+      plan: {
+        plan_id: 'plan-row', target_kind: 'tavotto_managed', python: '', creates_environment: true,
+        modifies_user_environment: false, network_required: true, expires_at: 0,
+        private_python: privatePython, ...offer.requirement!,
+      },
+    })
+    vi.mocked(installDependencyPlan).mockResolvedValue({ started: true } as never)
+    await mount()
+    await act(async () => runButton().click())
+    await flush()
+    expect(host.querySelector('[data-script-dependency-repair]'), '脚本行上没有修复卡片').toBeTruthy()
+    expect(host.querySelector('[data-dependency-disclosure]')).toBeTruthy()
+    // 原有两条出口仍在（与 #705 改的那颗按钮互不相干）
+    expect(buttonByText('选择渲染环境')).toBeTruthy()
+    expect(buttonByText('复制诊断')).toBeTruthy()
+    await act(async () => buttonByText('将 adjustText 安装到').click())
+    await flush()
+    expect(createDependencyPlan).toHaveBeenCalledWith({
+      module: 'adjustText', script: 'fig_labels.py', target: 'tavotto_managed',
+    })
+    expect(installDependencyPlan).toHaveBeenCalledWith('plan-row')
+    // 装好：后端的进度带着计划所属的脚本 → 这一行自动重跑
+    mockProbe.mockClear()
+    mockProbe.mockResolvedValue({ ...ok([desc('Fig1')]), script: 'fig_labels.py' })
+    await act(async () => {
+      useDepRepairStore.getState().onProgress({
+        plan_id: 'plan-row', state: 'done', log: '', error: null, code: '',
+        script: 'fig_labels.py', distribution: 'adjustText',
+      } as never)
+    })
+    await flush()
+    expect(mockProbe).toHaveBeenCalledTimes(1)
+    expect(mockProbe.mock.calls[0][0]).toBe('fig_labels.py')
+    expect(host.querySelector('[data-script-dependency-repair]')).toBeNull()
+    useDepRepairStore.getState().reset()
   })
 })

@@ -3228,6 +3228,11 @@ export interface DependencyProgress {
   } | null
   /** state = failed 且 code = dependency_interpreter_pinned 时：租约里复查到的那条固定 */
   pinned?: InterpreterPin
+  /**
+   * 单包修复的终态（failed / cancelled）：同一个需求这一轮还能不能再装。pip 跑成之后才取消 / 失败的为
+   * false（再形成计划必然 `dependency_already_attempted`），界面不给「重试」。老服务端没有这个字段。
+   */
+  retryable?: boolean
 }
 
 export const createDependencyPlan = (body: {
@@ -3667,6 +3672,12 @@ export interface ProbeError {
   message: string
   params?: Record<string, unknown>
   traceback?: string
+  /**
+   * `missing_dependency` 时「能不能一键装上」（ADR 0019）：与渲染端点同一份
+   * `deprepair.offer()`（`probe._error_from_worker` 挂上）。素材库「脚本」行据此给同一张修复卡片——
+   * 图还没上画布时，那是新用户走到安装的唯一入口。
+   */
+  dependency_repair?: DependencyRepairOffer
 }
 
 export interface ProbeResult {

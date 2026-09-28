@@ -94,6 +94,11 @@ const OFFER: DependencyRepairOffer = {
   python_supported: { min: '3.10', max: '3.14' },
 }
 
+const PRIVATE_PYTHON = {
+  id: 'pinned', version: '3.13.15', target: 'windows-x86_64', source_host: 'github.com',
+  download_bytes: 47131996, required: true, cached: false, network_required: true,
+}
+
 const PLAN: DependencyRepairPlan = {
   plan_id: 'plan-abc',
   target_kind: 'project_venv',
@@ -109,6 +114,17 @@ const PLAN: DependencyRepairPlan = {
   resolution_source: 'project_declared',
   confidence: 'high',
   installable: true,
+}
+
+/** 与 OFFER 的受管目标逐项相符的计划（一次授权直接执行的那种） */
+const MANAGED_PLAN: DependencyRepairPlan = {
+  ...PLAN,
+  plan_id: 'plan-managed',
+  target_kind: 'tavotto_managed',
+  python: '',
+  creates_environment: true,
+  modifies_user_environment: false,
+  private_python: PRIVATE_PYTHON,
 }
 
 let host: HTMLDivElement
@@ -186,16 +202,10 @@ describe('缺依赖的修复卡片', () => {
     expect(byName('确定')).toBeUndefined()
   })
 
-  it('Tavotto 隔离环境的文案说明不会动用户已有的环境', async () => {
-    planMock.mockResolvedValue({
-      plan: { ...PLAN, target_kind: 'tavotto_managed', python: '',
-              creates_environment: true, modifies_user_environment: false },
-    })
-    await render()
-    await click(en('repairInstallToManaged', { module: 'lmfit', product: PRODUCT_NAME }))
+  it('Tavotto 隔离环境的文案说明不会动用户已有的环境 —— 点之前就在卡片上', async () => {
+    await render({ ...OFFER, targets: [OFFER.targets[1]] })
     expect(text()).toContain(en('repairConfirmManaged'))
     expect(text()).not.toContain(en('repairModifiesEnv'))
-    expect(byName(en('repairPrepareAndContinue'))).toBeTruthy()
   })
 
   it('确认之后只发 plan_id —— 前端不自己拼包名', async () => {
@@ -294,22 +304,22 @@ describe('缺依赖的修复卡片', () => {
     expect(text()).toContain(en('repairUseOtherPythonShort'))
   })
 
-  it('私有 Python 可用时，选目标及最终确认都明示下载大小', async () => {
-    const privatePython = {
-      id: 'pinned', version: '3.13.15', target: 'windows-x86_64', source_host: 'github.com',
-      download_bytes: 47131996, required: true, cached: false, network_required: true,
-    }
-    planMock.mockResolvedValue({
-      plan: { ...PLAN, target_kind: 'tavotto_managed', private_python: privatePython },
-    })
+  it('私有 Python 可用时，点之前就明示下载大小；计划超出卡片说过的就停在确认页再说一遍', async () => {
     await render({
       ...OFFER,
-      targets: [{ ...OFFER.targets[1], private_python: privatePython }],
+      targets: [{ ...OFFER.targets[1], private_python: PRIVATE_PYTHON }],
     })
     const disclosure = en('dependencyPreparePrivatePython', { version: '3.13.15', mb: 45, product: PRODUCT_NAME })
     expect(text()).toContain(disclosure)
+    // 后端算出来的计划要下载的比卡片说的多：不执行，确认页把计划本身的数字说出口
+    planMock.mockResolvedValue({
+      plan: { ...MANAGED_PLAN, private_python: { ...PRIVATE_PYTHON, download_bytes: 90_000_000 } },
+    })
     await click(en('repairInstallToManaged', { module: 'lmfit', product: PRODUCT_NAME }))
-    expect(text()).toContain(disclosure)
+    expect(installMock).not.toHaveBeenCalled()
+    expect(text()).toContain(
+      en('dependencyPreparePrivatePython', { version: '3.13.15', mb: 86, product: PRODUCT_NAME }),
+    )
     expect(byName(en('repairPrepareAndContinue'))).toBeTruthy()
   })
 
@@ -591,6 +601,151 @@ describe('渲染解释器被全局固定（#465）', () => {
     await click(en('repairPinnedClear'))
     expect(useDepRepairStore.getState().pinned).toBeNull()
     expect(document.querySelector('[data-dependency-repair-pinned]')).toBeNull()
+  })
+})
+
+describe('受管环境一次授权（2026-09-28）', () => {
+  const MANAGED_OFFER: DependencyRepairOffer = {
+    ...OFFER,
+    targets: [{ ...OFFER.targets[1], private_python: PRIVATE_PYTHON }],
+  }
+  const managedButton = () => en('repairInstallToManaged', { module: 'lmfit', product: PRODUCT_NAME })
+
+  it('确认页里的要素点之前全在卡片上：装什么 / 联网 / 隔离且不改源码与现有环境 / 私有 Python 版本与体积', async () => {
+    await render(MANAGED_OFFER)
+    const block = document.querySelector('[data-dependency-disclosure]')
+    expect(block, '受管目标下面没有披露块').toBeTruthy()
+    const said = block!.textContent ?? ''
+    expect(said).toContain(en('repairWillInstall', { requirement: 'lmfit>=1.3' }))
+    expect(said).toContain(en('repairNeedsNetwork'))
+    expect(said).toContain(en('repairConfirmManaged'))
+    expect(said).toContain(
+      en('dependencyPreparePrivatePython', { version: '3.13.15', mb: 45, product: PRODUCT_NAME }),
+    )
+  })
+
+  it('点一次就形成计划并开始安装（只发 plan_id），不再有第二步「准备环境并继续」', async () => {
+    planMock.mockResolvedValue({ plan: MANAGED_PLAN })
+    installMock.mockResolvedValue({ started: true } as never)
+    await render(MANAGED_OFFER)
+    await click(managedButton())
+    expect(planMock).toHaveBeenCalledWith({ module: 'lmfit', script: 'figure.py', target: 'tavotto_managed' })
+    expect(installMock).toHaveBeenCalledTimes(1)
+    expect(installMock).toHaveBeenCalledWith('plan-managed')
+    expect(byName(en('repairPrepareAndContinue'))).toBeUndefined()
+    expect(text()).toContain(en('repairPreparing'))
+  })
+
+  it('已缓存的私有 Python：计划比卡片说的少（不用下载），照样一次开始', async () => {
+    planMock.mockResolvedValue({
+      plan: { ...MANAGED_PLAN, private_python: { ...PRIVATE_PYTHON, cached: true, download_bytes: 0 } },
+    })
+    installMock.mockResolvedValue({ started: true } as never)
+    await render(MANAGED_OFFER)
+    await click(managedButton())
+    expect(installMock).toHaveBeenCalledWith('plan-managed')
+  })
+
+  it('卡片没说要下载、计划却要下载：停在确认页，不执行', async () => {
+    planMock.mockResolvedValue({ plan: MANAGED_PLAN })
+    await render({ ...OFFER, targets: [OFFER.targets[1]] })
+    await click(managedButton())
+    expect(installMock).not.toHaveBeenCalled()
+    expect(byName(en('repairPrepareAndContinue'))).toBeTruthy()
+  })
+
+  it('项目环境那条仍然先到确认页（改用户环境要明确确认，ADR 0019 §八）', async () => {
+    planMock.mockResolvedValue({ plan: PLAN })
+    await render()
+    await click(en('repairUseProjectEnv'))
+    expect(installMock).not.toHaveBeenCalled()
+    expect(byName(en('repairInstallToProject'))).toBeTruthy()
+  })
+})
+
+describe('失败 / 取消之后就地重试', () => {
+  const MANAGED_OFFER: DependencyRepairOffer = {
+    ...OFFER,
+    targets: [{ ...OFFER.targets[1], private_python: PRIVATE_PYTHON }],
+  }
+  const retryButton = () => document.querySelector('[data-dependency-repair-retry]') as HTMLButtonElement | null
+  const startManaged = async () => {
+    planMock.mockResolvedValue({ plan: MANAGED_PLAN })
+    installMock.mockResolvedValue({ started: true } as never)
+    await render(MANAGED_OFFER)
+    await click(en('repairInstallToManaged', { module: 'lmfit', product: PRODUCT_NAME }))
+    expect(installMock).toHaveBeenCalledTimes(1)
+  }
+  const finish = (state: string, code: string, extra: Record<string, unknown> = {}) =>
+    act(() => {
+      useDepRepairStore.getState().onProgress({
+        plan_id: 'plan-managed', state, log: '', error: '后端原文', code, target_kind: 'tavotto_managed',
+        ...extra,
+      } as never)
+    })
+
+  it('私有 Python 下载失败（实测那一条）：有「重试」，点了再走一次授权并重新安装', async () => {
+    await startManaged()
+    await finish('failed', 'private_python_offline')
+    expect(text()).toContain(en('repairError.private_python_offline'))
+    expect(retryButton(), '失败态只有「知道了」').toBeTruthy()
+    expect(byName(en('repairClose'))).toBeTruthy()
+    planMock.mockResolvedValue({ plan: { ...MANAGED_PLAN, plan_id: 'plan-again' } })
+    await act(async () => retryButton()!.click())
+    await act(async () => {})
+    expect(planMock).toHaveBeenCalledTimes(2)
+    expect(installMock).toHaveBeenLastCalledWith('plan-again')
+  })
+
+  it('取消之后同样可以重试', async () => {
+    await startManaged()
+    await finish('cancelled', 'dependency_install_cancelled')
+    expect(retryButton()).toBeTruthy()
+  })
+
+  it('pip 已经装成之后才取消（验证 / 自检期间）：后端说 retryable=false，不给必败的「重试」', async () => {
+    await startManaged()
+    await finish('cancelled', 'dependency_install_cancelled', { retryable: false })
+    expect(retryButton()).toBeNull()
+    expect(byName(en('repairClose'))).toBeTruthy()
+  })
+
+  it('哈希不符之类重试不会变的失败不给「重试」', async () => {
+    await startManaged()
+    await finish('failed', 'dependency_hash_mismatch')
+    expect(retryButton()).toBeNull()
+    expect(byName(en('repairClose'))).toBeTruthy()
+  })
+
+  it('重试时计划超出了上次授权（换了一份更大的 Python）：停在确认页', async () => {
+    await startManaged()
+    await finish('failed', 'private_python_offline')
+    planMock.mockResolvedValue({
+      plan: { ...MANAGED_PLAN, plan_id: 'plan-bigger', private_python: { ...PRIVATE_PYTHON, id: 'other' } },
+    })
+    await act(async () => retryButton()!.click())
+    await act(async () => {})
+    expect(installMock).toHaveBeenCalledTimes(1)
+    expect(byName(en('repairPrepareAndContinue'))).toBeTruthy()
+  })
+
+  it('项目环境的重试回到确认页，不直接改用户环境', async () => {
+    planMock.mockResolvedValue({ plan: PLAN })
+    installMock.mockResolvedValue({ started: true } as never)
+    await render()
+    await click(en('repairUseProjectEnv'))
+    await click(en('repairInstallToProject'))
+    await act(() => {
+      useDepRepairStore.getState().onProgress({
+        plan_id: 'plan-abc', state: 'failed', log: '', error: '', code: 'dependency_network_unavailable',
+        target_kind: 'project_venv',
+      } as never)
+    })
+    await act(async () => retryButton()!.click())
+    await act(async () => {})
+    expect(planMock).toHaveBeenCalledTimes(2)
+    expect(installMock).toHaveBeenCalledTimes(1)
+    expect(byName(en('repairInstallToProject'))).toBeTruthy()
   })
 })
 
