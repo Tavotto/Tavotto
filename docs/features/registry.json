@@ -291,6 +291,22 @@
       ]
     },
     {
+      "id": "figure.shared-colorbar-group",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "共享色条的几个子图成组：元素树里选中组，整组平移 / 缩放",
+        "en-US": "Subplots sharing a colorbar form a group: select it in the element tree to move / scale them together"
+      },
+      "entry": "图内编辑 → 左栏「图内元素」→ 共享色条组",
+      "e2e": [
+        {
+          "spec": "shared-colorbar-group.spec.ts",
+          "title": "共享色条成组：树、整组平移、撤销重做、钻进成员、单拖不带色条、重开还在"
+        }
+      ]
+    },
+    {
       "id": "figure.patch-drag-carries",
       "status": "active",
       "platform": "both",

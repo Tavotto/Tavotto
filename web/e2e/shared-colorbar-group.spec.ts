@@ -128,7 +128,10 @@ async function dragBy(page: Page, from: { x: number; y: number }, dx: number) {
 
 const center = (b: { x: number; y: number; w: number; h: number }) => ({ x: b.x + b.w / 2, y: b.y + b.h / 2 })
 
-test('共享色条成组：树、整组平移、撤销重做、钻进成员、单拖不带色条、重开还在', async ({ app, page }) => {
+test(
+  '共享色条成组：树、整组平移、撤销重做、钻进成员、单拖不带色条、重开还在',
+  { tag: '@feature:figure.shared-colorbar-group' },
+  async ({ app, page }) => {
   // 关吸附：位移要是一个确定的数
   await page.addInitScript(() => {
     for (const key of Object.keys(localStorage)) {
@@ -237,4 +240,5 @@ test('共享色条成组：树、整组平移、撤销重做、钻进成员、�
   expect(Math.abs(b5.unit.axes_1 - b4.unit.axes_1), '重开后 B 仍在单拖之后的位置').toBeLessThan(0.01)
   // 反证这把尺子量得到位移：重开后的落点与最初（没挪过）明显不同
   expect(Math.abs(b5.unit.axes_3 - b0.unit.axes_3), '重开后的色条应当不在最初的位置').toBeGreaterThan(0.1)
-})
+  },
+)
