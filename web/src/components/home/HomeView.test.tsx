@@ -384,6 +384,71 @@ describe('系统拖放（桌面壳交来真实路径，ADR 0092）', () => {
     expect(desktop.pickScriptFile).toHaveBeenCalledTimes(1)
   })
 
+  it('能力探测与订阅先后不定：订阅先好、探测还没回，壳的事件与页面 drop 同时到也不弹选择器', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    let answer: (ok: boolean) => void = () => {}
+    desktop.nativeFileDropAvailable.mockReturnValue(new Promise<boolean>((r) => (answer = r)))
+    await mount()
+    expect(desktop.state.handler).not.toBeNull()
+    const ev = new Event('drop', { bubbles: true, cancelable: true })
+    Object.defineProperty(ev, 'dataTransfer', {
+      value: { types: ['Files'], getData: () => '', files: [{ name: 'figure.py' }], dropEffect: 'none' },
+    })
+    await act(async () => {
+      main().dispatchEvent(ev)
+    })
+    await fire({ kind: 'script', folder: '/Users/me/fig', script: '/Users/me/fig/figure.py', name: 'figure.py', ignored: 0 })
+    await act(async () => {
+      vi.advanceTimersByTime(3000)
+    })
+    expect(desktop.pickScriptFile).not.toHaveBeenCalled()
+    expect(open).toHaveBeenCalledTimes(1)
+    await act(async () => answer(true))
+  })
+
+  it('探测先回 true、订阅还没装好：还不算「能」，页面 drop 等满才降级（事件丢了也有退路）', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    let listen: (off: () => void) => void = () => {}
+    desktop.onNativeFileDrop.mockImplementationOnce(
+      (h: (d: unknown) => void) =>
+        new Promise<() => void>((r) => {
+          desktop.state.handler = h
+          listen = r
+        }),
+    )
+    await mount()
+    // 订阅没装好：说明仍是「还要再选一次」，不提前宣称拖进来就开
+    expect(host.querySelector('[data-home-dropzone]')!.textContent).toContain('还要在弹出的窗口里选一次')
+    const ev = new Event('drop', { bubbles: true, cancelable: true })
+    Object.defineProperty(ev, 'dataTransfer', {
+      value: { types: ['Files'], getData: () => '', files: [{ name: 'figure.py' }], dropEffect: 'none' },
+    })
+    await act(async () => {
+      main().dispatchEvent(ev)
+    })
+    expect(desktop.pickScriptFile).not.toHaveBeenCalled()
+    await act(async () => {
+      vi.advanceTimersByTime(1500)
+    })
+    expect(desktop.pickScriptFile).toHaveBeenCalledTimes(1)
+    await act(async () => listen(() => {}))
+    expect(host.querySelector('[data-home-dropzone]')!.textContent).toContain('拖入 .py 文件或项目文件夹')
+  })
+
+  it('探测回 true 但订阅失败：算「不能」，页面 drop 立即降级、不白等', async () => {
+    desktop.onNativeFileDrop.mockImplementationOnce(() => Promise.reject(new Error('event not allowed')))
+    await mount()
+    expect(host.querySelector('[data-home-dropzone]')!.textContent).toContain('还要在弹出的窗口里选一次')
+    const ev = new Event('drop', { bubbles: true, cancelable: true })
+    Object.defineProperty(ev, 'dataTransfer', {
+      value: { types: ['Files'], getData: () => '', files: [{ name: 'figure.py' }], dropEffect: 'none' },
+    })
+    await act(async () => {
+      main().dispatchEvent(ev)
+    })
+    expect(desktop.pickScriptFile).toHaveBeenCalledTimes(1)
+  })
+
   it('拖放区的说明跟着能力走：拿得到路径说「拖进来」，拿不到如实说还要选一次', async () => {
     await mount()
     expect(host.querySelector('[data-home-dropzone]')!.textContent).toContain('拖入 .py 文件或项目文件夹')

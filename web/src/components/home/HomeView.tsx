@@ -163,7 +163,12 @@ function useScriptImport(openPath: (path: string) => Promise<boolean>) {
   const { t } = useTranslation('project')
   const [browsing, setBrowsing] = useState(false)
   const [notice, setNotice] = useState<{ tone: 'info' | 'error'; text: string } | null>(null)
-  const [native, setNative] = useState(false)
+  /**
+   * 壳能不能交来真实路径：`pending` = 能力探测与事件订阅还没都完成。两件事都是异步、先后不定，
+   * 所以「能」只在**订阅已经装好且探测回 true** 之后才成立；`pending` 期间页面的 drop 也先等壳
+   * （等不到才降级），免得壳的事件已经在路上、这边又弹一次选择器（Codex #665）。
+   */
+  const [native, setNative] = useState<'pending' | boolean>('pending')
   const arbiter = useRef<ReturnType<typeof createDropArbiter> | null>(null)
   if (!arbiter.current) arbiter.current = createDropArbiter({ graceMs: NATIVE_DROP_GRACE_MS })
 
@@ -186,12 +191,17 @@ function useScriptImport(openPath: (path: string) => Promise<boolean>) {
   useEffect(() => {
     let off: (() => void) | undefined
     let disposed = false
-    void nativeFileDropAvailable().then((ok) => {
-      if (!disposed) setNative(ok)
-    })
-    void onNativeFileDrop((drop) => arbiter.current!.native(() => openDropped(drop))).then((u) => {
-      if (disposed) u()
-      else off = u
+    // 订阅失败（事件 ACL 漏登记等）同样算「不能」，否则永远停在 pending、每次拖放都白等
+    const listening = onNativeFileDrop((drop) => arbiter.current!.native(() => openDropped(drop))).then(
+      (u) => {
+        if (disposed) u()
+        else off = u
+        return true
+      },
+      () => false,
+    )
+    void Promise.all([nativeFileDropAvailable(), listening]).then(([ok, listens]) => {
+      if (!disposed) setNative(ok && listens)
     })
     return () => {
       disposed = true
@@ -240,7 +250,7 @@ function useScriptImport(openPath: (path: string) => Promise<boolean>) {
     const target = dropTargetOf(dt)
     if (target.kind === 'none') return
     // 宿主自己给了 file:// 路径就直接用；能拿真实路径的壳里先等它的事件
-    if (!native || target.kind === 'path') degrade(target)
+    if (native === false || target.kind === 'path') degrade(target)
     else arbiter.current!.dom(() => degrade(target))
   }
 
@@ -269,7 +279,7 @@ function useScriptImport(openPath: (path: string) => Promise<boolean>) {
       }}
     />
   )
-  return { start, drop, native, noticeView, dialogs }
+  return { start, drop, native: native === true, noticeView, dialogs }
 }
 
 /** 页面的 drop 到了、壳的系统拖放事件还没到：最多等这么久再降级（IPC 通常几毫秒） */
