@@ -4,6 +4,7 @@ import type { AlignMode } from '@/lib/geometry'
 import { alignSelectedTo, duplicateSelected, runManualSave } from '@/store/actions'
 import { alignSelectedPanelElements, type AlignBlocked } from '@/store/alignAction'
 import { alignRefFor } from '@/store/arrangeStore'
+import { finishActiveGesture } from '@/store/gestureCoordinator'
 import { useProjectStore } from '@/store/projectStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
@@ -69,6 +70,13 @@ export function runMenuAction(action: MenuAction) {
     return
   }
   if (useProjectStore.getState().phase !== 'open') return
+
+  // 菜单项都是离散动作，先把还开着的那一轮连续编辑收掉（gestureCoordinator 的约定）。
+  // 键盘那边由 `useKeyboard` 顶部的 `finishNudge` 与各动作自己收，指针那边由按下时的
+  // 捕获监听收；菜单加速键两条都不经过——⌘D 在 webview 收到 keydown 之前就到了这里，
+  // 方向键微调那一段的事务还开着，`duplicateSelected()` 的 commit 会并进移动那条撤销
+  // （Codex #671）。撤销 / 重做在上面走 `runUndoRedo`，它自己收。
+  finishActiveGesture()
 
   if (action.startsWith(ALIGN_PREFIX)) {
     const mode = action.slice(ALIGN_PREFIX.length) as AlignMode

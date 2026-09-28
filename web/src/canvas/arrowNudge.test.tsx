@@ -18,10 +18,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { MATPLOTLIB_SVG } from '@/lib/__fixtures__/matplotlibSvg'
 import type { EngineRenderOptions, Manifest, ManifestElement } from '@/lib/api'
+import { runMenuAction } from '@/hooks/menuActions'
 import { runUndoRedo, useKeyboard } from '@/hooks/useKeyboard'
 import { useDocumentStore } from '@/store/documentStore'
 import { registerGesture, resetGestureCoordinator } from '@/store/gestureCoordinator'
 import { useInteractionStore } from '@/store/interactionStore'
+import { useProjectStore } from '@/store/projectStore'
 import { renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { flushPreviewFrame, resetPreview } from '@/store/svgPreviewStore'
@@ -350,6 +352,28 @@ describe('画布对象：步长与撤销', () => {
     tap('ArrowRight')
     keydown('d', { metaKey: true })
     expect(past().length).toBe(2)
+  })
+
+  it('这一段里菜单加速键 ⌘D 先于 keydown 到达（直接走 runMenuAction）：同样先落定，两条撤销', async () => {
+    await setup({ extra: [rect('r', 0)] })
+    const phase = useProjectStore.getState().phase
+    useProjectStore.setState({ phase: 'open' })
+    try {
+      useSelectionStore.getState().set(['r'])
+      tap('ArrowRight')
+      act(() => runMenuAction('menu-duplicate'))
+      expect(nudgeActive()).toBe(false)
+      expect(past().length).toBe(2)
+      expect(useDocumentStore.getState().doc.objects).toHaveLength(3)
+      // 撤销一次只撤掉副本，移动还在；再撤一次才回到原位
+      act(() => runUndoRedo(false))
+      expect(useDocumentStore.getState().doc.objects).toHaveLength(2)
+      expect(obj('r').x).toBe(NUDGE_STEP_MM.base)
+      act(() => runUndoRedo(false))
+      expect(obj('r').x).toBe(0)
+    } finally {
+      useProjectStore.setState({ phase })
+    }
   })
 
   it('一去一回净位移为零：不留历史', async () => {
