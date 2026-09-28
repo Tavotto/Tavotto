@@ -27,7 +27,7 @@ async function verticalOverflow(strip: Locator) {
 /** 激活的页签整颗落在条的可视范围里 */
 async function activeTabInView(strip: Locator) {
   return strip.evaluate((el) => {
-    const tab = el.querySelector('[role="tab"][aria-selected="true"]') as HTMLElement
+    const tab = el.querySelector('[data-canvas-tab][data-active]') as HTMLElement
     const s = el.getBoundingClientRect()
     const r = tab.getBoundingClientRect()
     return {
@@ -46,7 +46,7 @@ async function activeTabInView(strip: Locator) {
  */
 async function tabGeometry(strip: Locator) {
   return strip.evaluate((el) =>
-    [...el.querySelectorAll('[role="tab"]')].map((t) => {
+    [...el.querySelectorAll('[data-canvas-tab]')].map((t) => {
       const r = t.getBoundingClientRect()
       const close = t.querySelector('button')?.getBoundingClientRect()
       return { x: r.left, w: r.width, closeX: close ? close.left : null }
@@ -102,7 +102,7 @@ test('画布页签条没有纵向溢出、不画滚动条，页签多了仍能�
     clientHeight: el.clientHeight,
     tabHeights: [
       ...new Set(
-        [...el.querySelectorAll('[role="tab"]')].map(
+        [...el.querySelectorAll('[data-canvas-tab]')].map(
           (t) => (t as HTMLElement).getBoundingClientRect().height,
         ),
       ),
@@ -199,5 +199,11 @@ test('页签少但放不下时也给「全部画布」菜单，能切到条外�
   await menu.click()
   await page.getByRole('menuitem', { name: lastName, exact: true }).click()
   await expect(tabs.last()).toHaveAttribute('aria-selected', 'true')
+  await expect.poll(async () => JSON.stringify(await activeTabInView(strip))).toContain('"inView":true')
+
+  // 当前页签没换、窗口变窄：它贴着条的右端，条一窄右半截就出界。activeId / openTabs 都没变，
+  // 只有 ResizeObserver 知道——横滚条不画，这里不滚回来用户就看不到当前是哪一页
+  await page.setViewportSize({ width: 480, height: 700 })
+  await expect.poll(() => strip.evaluate((el) => el.clientWidth)).toBeLessThan(sizes.cw)
   await expect.poll(async () => JSON.stringify(await activeTabInView(strip))).toContain('"inView":true')
 })

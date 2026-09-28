@@ -136,4 +136,80 @@ describe('画布标签条', () => {
       proto.getBoundingClientRect = real
     }
   })
+
+  it('当前页签认稳定的 data 钩子：每个页签带自己的 id，只有当前那一个带 data-active', () => {
+    mount()
+    const hooked = () =>
+      tabs().map((t) => [t.getAttribute('data-canvas-tab'), t.hasAttribute('data-active')])
+    expect(hooked()).toEqual([
+      ['c1', true],
+      ['c2', false],
+    ])
+    act(() => useDocumentStore.setState({ activeCanvasId: 'c2' }))
+    expect(hooked()).toEqual([
+      ['c1', false],
+      ['c2', true],
+    ])
+  })
+
+  it('当前页签的位置或宽度、条宽变了就再滚进视野；无关的重渲染不把用户横滑走的条拽回来', () => {
+    // jsdom 没有布局：按 data-canvas-tab 桩出页签的 offsetLeft / offsetWidth，条宽 120，
+    // 条的 scrollLeft 用一个普通字段顶上（jsdom 的 setter 什么都不做）。挂载前就桩好：
+    // 首次渲染量到的就是这套几何
+    const geo: Record<string, [number, number]> = { c1: [0, 80], c2: [100, 80] }
+    let scrollLeft = 0
+    let stripWidth = 120
+    const isStrip = (el: Element) => el.hasAttribute('data-canvas-tabs')
+    const of = (el: Element, i: 0 | 1) => geo[el.getAttribute('data-canvas-tab') ?? '']?.[i] ?? 0
+    const stubs: [object, string, PropertyDescriptor][] = [
+      [HTMLElement.prototype, 'offsetLeft', { get(this: Element) { return of(this, 0) } }],
+      [HTMLElement.prototype, 'offsetWidth', { get(this: Element) { return of(this, 1) } }],
+      [Element.prototype, 'clientWidth', { get(this: Element) { return isStrip(this) ? stripWidth : 0 } }],
+      [
+        Element.prototype,
+        'scrollLeft',
+        {
+          get(this: Element) { return isStrip(this) ? scrollLeft : 0 },
+          set(this: Element, v: number) { if (isStrip(this)) scrollLeft = v },
+        },
+      ],
+    ]
+    const real = stubs.map(([o, k]) => Object.getOwnPropertyDescriptor(o, k)!)
+    for (const [o, k, d] of stubs) Object.defineProperty(o, k, { configurable: true, ...d })
+    // 窗口 / 抽屉改宽度不经过 React：只有 ResizeObserver 知道。jsdom 没有它，桩一个手动触发的
+    const resized: (() => void)[] = []
+    const realRO = globalThis.ResizeObserver
+    globalThis.ResizeObserver = class {
+      constructor(cb: () => void) {
+        resized.push(cb)
+      }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    } as unknown as typeof ResizeObserver
+    try {
+      mount()
+      expect(scrollLeft).toBe(0)
+
+      // 用户横滑到第二个页签那里；随后一次与页签几何无关的重渲染（改了图 → dirty）
+      scrollLeft = 100
+      act(() => useDocumentStore.setState({ dirty: true }))
+      expect(scrollLeft, '当前页签没动：不许把条拽回来').toBe(100)
+
+      // 当前页签改了名、变宽了（activeId 与 openTabs 都没变）：它在条外，要滚回来
+      geo.c1 = [0, 96]
+      act(() =>
+        useDocumentStore.setState({ doc: { ...useDocumentStore.getState().doc, name: '更长的名字' } }),
+      )
+      expect(scrollLeft, '当前页签变了几何：滚进视野').toBe(0)
+
+      // 条变窄（没有重渲染）：当前页签右半截出界，ResizeObserver 里要滚到它的右缘
+      stripWidth = 60
+      act(() => resized.forEach((cb) => cb()))
+      expect(scrollLeft, '条变窄：滚到当前页签右缘').toBe(96 - 60)
+    } finally {
+      stubs.forEach(([o, k], i) => Object.defineProperty(o, k, real[i]))
+      globalThis.ResizeObserver = realRO
+    }
+  })
 })

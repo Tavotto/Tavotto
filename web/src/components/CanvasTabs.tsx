@@ -36,16 +36,24 @@ export function CanvasTabs() {
   // 激活的页签在可视范围外时滚进来（新建的画布排在最后、从「全部画布」菜单切过去的可能在
   // 条外）：条没有滚动条可看，不滚的话用户不知道当前是哪一页。只动这条自己的 scrollLeft，
   // 不用 scrollIntoView——它会连带滚动外层；用 offsetLeft 而不是 getBoundingClientRect，
-  // 重排时 useFlip 的 transform 动画不影响量值
-  useEffect(() => {
+  // 重排时 useFlip 的 transform 动画不影响量值。
+  // 不只在切页签时判：窗口 / 抽屉变窄、当前页签改成长名、前面的页签改名把它挤出去，当前页签都会
+  // 出界而 activeId 没变——每次渲染后与 ResizeObserver 里都再判一次。只在「当前页签的位置 / 宽度、
+  // 条宽」变了时才动：用户自己横滑到别处之后，一次无关的重渲染（改一下图、dirty 变了）不许把条拽回来。
+  // 认 data-canvas-tab / data-active，不认 role / aria-selected（web/AGENTS.md：选择器认稳定 data-*）
+  const lastPlaced = useRef('')
+  const keepActiveInView = useCallback(() => {
     const el = strip.current
-    const tab = el?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')
+    const tab = el?.querySelector<HTMLElement>('[data-canvas-tab][data-active]')
     if (!el || !tab) return
     const left = tab.offsetLeft
     const right = left + tab.offsetWidth
+    const placed = `${tab.dataset.canvasTab}|${left}|${right}|${el.clientWidth}`
+    if (placed === lastPlaced.current) return
+    lastPlaced.current = placed
     if (left < el.scrollLeft) el.scrollLeft = left
     else if (right > el.scrollLeft + el.clientWidth) el.scrollLeft = right - el.clientWidth
-  }, [activeId, openTabs])
+  }, [])
 
   // 条放不下时也给「全部画布」菜单：横滚条不画之后，只有鼠标、又不在 macOS 上按 Shift 的人
   // 没有别的办法够到条外的页签。每次渲染量一次（页签增删、改名都会重渲染），窗口 / 抽屉
@@ -55,14 +63,20 @@ export function CanvasTabs() {
     const el = strip.current
     if (el) setOverflowing(el.scrollWidth > el.clientWidth + 1)
   }, [])
-  useLayoutEffect(measureOverflow)
+  useLayoutEffect(() => {
+    measureOverflow()
+    keepActiveInView()
+  })
   useEffect(() => {
     const el = strip.current
     if (!el || typeof ResizeObserver === 'undefined') return
-    const ro = new ResizeObserver(measureOverflow)
+    const ro = new ResizeObserver(() => {
+      measureOverflow()
+      keepActiveInView()
+    })
     ro.observe(el)
     return () => ro.disconnect()
-  }, [measureOverflow])
+  }, [measureOverflow, keepActiveInView])
 
   const nameOf = (id: string) =>
     id === activeId ? activeName : (canvases.find((c) => c.id === id)?.name ?? '')
@@ -190,6 +204,8 @@ function TabItem({
     <div
       role="tab"
       data-flip-id={id}
+      data-canvas-tab={id}
+      data-active={active || undefined}
       aria-selected={active}
       tabIndex={0}
       draggable
