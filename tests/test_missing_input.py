@@ -413,3 +413,44 @@ def test_http_add_list_and_remove(client, figs, tmp_path):
     finally:
         for pid in [p for p, ctx in list(m.PROJECTS.items()) if str(ctx.path) == str(figs)]:
             m.close_project(pid, wait=True)
+
+
+def test_all_three_spawn_paths_take_the_rules_from_one_place(monkeypatch, tmp_path):
+    box = {}
+
+    class _Rec:
+        def __init__(self, argv, **kw):
+            box.setdefault("argv", []).append(argv)
+            self.pid = 1
+
+        def poll(self):
+            return None
+
+    monkeypatch.setattr(engine_pool.subprocess, "Popen", _Rec)
+    monkeypatch.setattr(
+        engine_pool, "select_worker_python", lambda: ("/usr/bin/python3", engine_pool.SOURCE_SYSTEM)
+    )
+    rule = {"kind": P, "from": "", "to": str(tmp_path / "data")}
+    inputremap.add_rule(tmp_path, rule)
+    try:
+        w = engine_pool.EngineWorker("fig.py", str(tmp_path), "draw")
+        assert w.spec.input_remap == (rule,)
+        assert "--input-remap" in box["argv"][-1]
+        spec = engine_pool._spawn_spec(
+            "fig.py",
+            str(tmp_path),
+            "draw",
+            w.out_dir,
+            w.sandbox,
+            w.log_path,
+            "/usr/bin/python3",
+            engine_pool.SOURCE_SYSTEM,
+        )
+        assert spec["argv"] == box["argv"][-1]
+        shot = engine_pool.one_shot("fig.py", str(tmp_path), "draw")
+        try:
+            assert shot.spec.input_remap == (rule,)
+        finally:
+            engine_pool.discard(shot)
+    finally:
+        inputremap.remove_rule(tmp_path, P, "")

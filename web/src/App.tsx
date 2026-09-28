@@ -34,6 +34,7 @@ import { UpdateNoticeDialog } from '@/components/UpdateNoticeDialog'
 import { DependencyPrepareDialog } from '@/components/DependencyPrepareDialog'
 import { EngineEnvironmentDialog } from '@/components/EngineEnvironmentDialog'
 import { WorkdirConfirmDialog } from '@/components/WorkdirConfirmDialog'
+import { MissingInputDialog } from '@/components/MissingInputDialog'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { EngineRenderSync, useEngineDocumentSync } from '@/hooks/useEngineSync'
 import { startStyleBindingSync } from '@/store/styleBinding'
@@ -312,6 +313,7 @@ function Workspace() {
         <ConfirmDialog />
         {/* 首开要先选运行目录（U03）：渲染 store 把后端的「需要输入」交到 envStore，这里渲染 */}
         <WorkdirConfirmDialog />
+        <MissingInputDialog />
         {/* 跑前的依赖门（U04）：同一种「需要输入」，载荷在依赖修复 store 里，这里渲染 */}
         <DependencyPrepareDialog />
         <CloseGuardDialog />

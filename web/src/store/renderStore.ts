@@ -12,6 +12,8 @@ import {
   type DependencyPreparationOffer,
   type DependencyRepairOffer,
   type Manifest,
+  MISSING_INPUT_CODE,
+  type MissingInputOffer,
   type ProjectEnvFailure,
   type WorkdirConfirmation,
 } from '@/lib/api'
@@ -111,6 +113,8 @@ export interface PanelRender {
   confirmation: WorkdirConfirmation | null
   /** `dependency_preparation_required`（U04）时后端给的联合计划载荷（同上：留着能再开） */
   dependencyPreparation: DependencyPreparationOffer | null
+  /** 数据找不到（ADR 0106）时「指认数据位置」的载荷（同上：留着，关了对话框还能从错误块再开） */
+  missingInput: MissingInputOffer | null
   traceback: string
   warnings: string[]
   /** 最近一次成功渲染的阶段计时（毫秒，键见 api.ts）；暂不做 UI */
@@ -146,6 +150,7 @@ const EMPTY: PanelRender = {
   dependencyRepair: null,
   confirmation: null,
   dependencyPreparation: null,
+  missingInput: null,
   traceback: '',
   warnings: [],
   timings: {},
@@ -642,6 +647,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
             dependencyRepair: null,
             confirmation: null,
             dependencyPreparation: null,
+            missingInput: null,
             traceback: '',
             warnings: res.warnings ?? [],
             timings: res.timings ?? {},
@@ -754,6 +760,13 @@ export const useRenderStore = create<RenderState>((set, get) => ({
               .getState()
               .requestDependencyPreparation(dependencyPreparation, projectAtStart)
           }
+          // 数据找不到（ADR 0106）：同样不是错误块，是请用户指认一次——载荷交给 envStore，
+          // `MissingInputDialog` 渲染它；条目上也留一份，关掉之后错误块里还能再开
+          const missingInput =
+            err instanceof EngineError ? (err.missingInput ?? null) : null
+          if (missingInput) {
+            useEnvStore.getState().requestMissingInput(missingInput, projectAtStart)
+          }
           if (err instanceof EngineError && err.code === NATIVE_FIGURE_INCONSISTENT) {
             set((s) => ({ inconsistent: { ...s.inconsistent, [fileId]: true } }))
           }
@@ -768,6 +781,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
               err instanceof EngineError ? (err.dependencyRepair ?? null) : null,
             confirmation,
             dependencyPreparation,
+            missingInput,
             error: timedOut
               ? msg('render.timeout',
                     { minutes: Math.round(timeoutMs / 60_000) }, 'errors')
@@ -813,7 +827,9 @@ export const useRenderStore = create<RenderState>((set, get) => ({
           // 「脚本跑完没出图」在换了工作目录模式之后同样值得重跑（ADR 0047）
           (WORKDIR_CODES as readonly string[]).includes(v.code) ||
           // 跑前的依赖门（U04）：准备完成之后那次「需要先准备」也要重排
-          v.code === DEPENDENCY_PREPARATION_CODE)
+          v.code === DEPENDENCY_PREPARATION_CODE ||
+          // 指认了数据位置之后（ADR 0106）：「找不到数据」那些面板重排
+          v.code === MISSING_INPUT_CODE)
       ) {
         ids.add(v.fileId)
       }

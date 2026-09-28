@@ -66,6 +66,8 @@ _CODE_REGISTRIES = (
     "tavotto.engine.deprepair",
     # U10（ADR 0072）：`TAVOTTO_RENDER_BACKEND` 指着退役 / 不认识的后端——`BackendSelectionError.code`
     "tavotto.pdfbackend",
+    # ADR 0106：数据改指的端点——`RemapError(code)` 由 app 的 400 漏斗转出
+    "tavotto.engine.inputremap",
     # issue #534：TIFF 素材的支持范围（`UnsupportedTiff(code)` 由 app 的 422 漏斗 / 导出作业转出）
     "tavotto.tiffprobe",
 )
@@ -181,6 +183,11 @@ USER_VISIBLE_CODES = {
     "interpreter_not_found": {"path"},
     # safe 档工作目录模式（ADR 0047）
     "workdir_mode_invalid": {"mode"},
+    # ADR 0106：数据改指的端点（`inputremap.RemapError`）
+    "input_remap_chosen_invalid": {"path"},
+    "input_remap_not_found_in_dir": {"name", "path"},
+    "input_remap_requested_invalid": set(),
+    "input_remap_rule_unknown": {"source"},
     # --- U03（ADR 0057）：首开的「需要输入」与失效的显式选择。params 空：细节在结构化字段
     # （confirmation / explicit）里，文案不插值 ---
     "workdir_confirmation_required": set(),

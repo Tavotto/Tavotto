@@ -5789,7 +5789,7 @@ def api_engine_input_remap_get():
 def api_engine_input_remap_add():
     """用户指认了数据位置（ADR 0106）：推一条规则、按项目记住、关掉这个项目的会话。
 
-    `{requested, chosen, chosen_kind: "file" | "dir"}`：`requested` 是脚本写的那一串（弹窗载荷
+    `{requested, chosen, chosen_kind: "file" | "dir" | "auto"}`：`requested` 是脚本写的那一串（弹窗载荷
     原样带回），`chosen` 是用户在选择器里指认的本机绝对路径。规则只影响**只读**打开，且只在原路径
     打不开时才查——数据回到原处，规则自动不起作用。会话要重起：改指表是 spawn 时交给 worker 的。
     """
@@ -5798,6 +5798,9 @@ def api_engine_input_remap_add():
     requested = body.get("requested")
     chosen = body.get("chosen")
     kind = str(body.get("chosen_kind") or "")
+    if kind == "auto" and isinstance(chosen, str):
+        # 浏览器模式里用户粘贴的路径：是文件夹就按文件夹推，其余按文件（不存在由 derive 报）
+        kind = "dir" if os.path.isdir(chosen) else "file"
     if not isinstance(requested, str) or not isinstance(chosen, str) or kind not in ("file", "dir"):
         return jsonify(
             {
