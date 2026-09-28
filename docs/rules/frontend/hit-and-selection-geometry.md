@@ -122,6 +122,12 @@
   补上同一批随行改动（已在选区里的 (gid, prop) 不重复写），预览期色条这类平级 `<g>`
   单独跟手。缩放（单个 / 成组）仍然不带随行元素——该缩到哪里没有可信答案（原有取舍，
   `axesCompanionDrag.test` 钉着）。看护：`canvas/axesCompanionDrag.test.tsx`。
+- **真实的组展开成成员（ADR 0102）**：选区里的组（共享色条，`Manifest.groups`）经
+  `elementGeom.expandGroups` 展开成成员（子图 + 色条轴），整组平移 / 成组缩放 / 缩放控件全部
+  复用多选子图那一套，不另造变换；`resizable: false` 的组不展开。组在画布上点不中，选中组后
+  拖任一成员 = 整组平移、只点不拖 = 选中那个成员（`startElementGroupMove` 的 `onTap`）。多宿主
+  色条不在任何宿主的 `follow_gids` 里：单拖 B 时 C 与色条都不动。看护：
+  `canvas/sharedColorbarGroup.test.tsx`。
 
 - **方向键微调与拖动同一套移动规则**（ADR 0093，2026-09-26，用户：「按上下左右键可以微调位置」——
   实测图内编辑态里选中图例按方向键挪的是整张图，快速编辑里什么都不动）。图内平移的规则只有

@@ -121,6 +121,14 @@
   的 `mappable_gid` 在反查不到时回退到绑定的位图。看护 `tests/test_figure_recognition.py`
   （含热会话 == 全量重放逐字节、噪声 / BoundaryNorm / 贴端点的平图三个反例、嵌照片的图、
   900 万像素的图、内存随像素的斜率 < 6 B、极宽图的块内峰值）。
+- **结构归属（ADR 0102，2026-09-28）**：色条挂在谁下面只认它**声明的**宿主
+  `colorbarmodel.declared_parents`（`_colorbar_info["parents"]`，`fig.colorbar(..., ax=...)` 那一刻
+  记下的 ax 列表），出处 `manifest._colorbar_structure`：1 个宿主 → 色条轴 `parent_gid` = 宿主；
+  ≥2 个 → manifest `groups` 里一个 `group:<色条轴 gid>`（成员 = 宿主 + 色条轴，成员 `parent_gid`
+  = 组），色条元素报 `owner_gids`。`cax=`（没有声明）、宿主不在元素表、跨 SubFigure、两组重叠
+  → 不成组、不改归属，**不按位置 / 颜色 / norm 猜**。组是派生结构、不进文档，颜色来源仍只是
+  `mappable_gid`。多宿主色条不进任何宿主的 `axes_follow`（`follow_map`）：拖 B 不带走共享色条。
+  看护 `tests/test_colorbar_groups.py`。
 
 ## 速查表原要点（2026-09-25 迁入，#608）
 
