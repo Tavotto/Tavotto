@@ -92,7 +92,20 @@
   的那次允许重试——写在 pip 之前的话，失败文案说「检查网络后重试」，重试撞到的
   是「已经试过了」。`create_plan` 查一次之外，**租约在手、解释器已知之后 pip 之前
   再查一次**：两个页签各自形成的计划都有效（指纹看不见 site-packages），A 装成功后
-  B 不该再跑一遍。
+  B 不该再跑一遍。**受管环境那条路同一条纪律**：单包修复经代事务走，键随
+  `_GenerationJob.attempted` 交进去、在代事务里 pip 退出码 0 之后才登记——以前登记在建代之前，
+  私有 Python 下载失败 / 取消 / 断网的那一次也算「装过」，重试撞 `dependency_already_attempted`
+  只能重启（2026-09-28 Windows Server 2025 冻结包实测；看护
+  `test_a_failed_private_python_download_leaves_the_managed_requirement_retryable` /
+  `test_a_failed_managed_pip_run_leaves_the_requirement_retryable` /
+  `test_a_successful_managed_pip_run_still_blocks_the_same_requirement`）。
+- **界面上受管环境是一次授权**（2026-09-28 用户裁决）：后端仍是 plan → install 两步（§四的机制面不变），
+  `DependencyRepairCard` 在受管目标下把确认页的全部要素先说出口（装什么 / 联网 / 隔离环境、不改源码与现有
+  环境 / 私有 Python 版本与体积或已缓存），点一次 `depRepairStore.installNow` 连发两步；后端算出的计划超出
+  卡片说过的（`planMatchesDisclosure`：目标 / 需求串 / 私有 Python 只许更少）就停在确认页。项目 `.venv` 与
+  「指定安装包」仍先到确认页（ADR 0019 §八）。失败 / 取消后卡片就地给「重试」，只对
+  `RETRYABLE_REPAIR_CODES` 里的 code（理由写在表旁）。素材库「脚本」行缺包时给**同一张**卡片（offer 是
+  `probe._error_from_worker` 挂的同一份 `deprepair.offer()`），装好后 `depRepairStore` 重跑那一行。
 - **全局显式解释器生效时不提供任何目标（#465）**：`TAVOTTO_WORKER_PYTHON` /
   设置里指定的解释器只要**存在**就压过 `pool.resolve_worker_python()` 第 3 档
   （ADR 0018 §四），而自动接手、采用系统解释器、装进项目 `.venv` / 受管环境最后

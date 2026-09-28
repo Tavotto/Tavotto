@@ -370,6 +370,42 @@ class TestPrivateBase:
         rec2, _ = _prepare(plan2.plan_id)
         assert rec2["state"] == deprepair.STATE_DONE, rec2
 
+    @needs_real_base
+    def test_offline_single_package_repair_can_be_retried_in_the_same_run(
+        self, tmp_path, house, no_base, fake, monkeypatch
+    ):
+        """实测（Windows Server 2025，#682 冻结包）：运行后缺包那条路（`offer` → `create_plan` →
+        `install`）下载私有 Python 时断网 → `private_python_offline`；网络回来后**同一次运行里**
+        再点安装必须能形成计划并装成——以前第二次 `create_plan` 撞 `dependency_already_attempted`，
+        只能重启应用。"""
+        server, src, _ = fake
+        offline = source_from(
+            Path(tmp_path / "serve" / src.archive_name),
+            src.sha256,
+            src.python_rel,
+            url=closed_port_url(src.archive_name),
+            version=src.version,
+        )
+        monkeypatch.setattr(privatepython, "source_for", lambda target=None, lock=None: offline)
+        project = _project(tmp_path)
+        plan = deprepair.create_plan(
+            project, "figure.py", ALPHA[1], target_kind=deprepair.TARGET_MANAGED
+        )
+        assert plan.private_python is not None
+        deprepair.install_async(plan.plan_id)
+        rec = wait_for(plan.plan_id)
+        assert rec["state"] == deprepair.STATE_FAILED
+        assert rec["code"] == privatepython.ERROR_OFFLINE
+        assert managedenv.python_of(project) is None
+        # 网络回来：同一个进程、同一个需求
+        monkeypatch.setattr(privatepython, "source_for", lambda target=None, lock=None: src)
+        again = deprepair.create_plan(
+            project, "figure.py", ALPHA[1], target_kind=deprepair.TARGET_MANAGED
+        )
+        deprepair.install_async(again.plan_id)
+        rec2 = wait_for(again.plan_id)
+        assert rec2["state"] == deprepair.STATE_DONE, json.dumps(rec2, ensure_ascii=False)
+
     def test_corrupt_download_keeps_the_previous_generation_active(
         self, tmp_path, house, offline_managed_env, fake, monkeypatch
     ):

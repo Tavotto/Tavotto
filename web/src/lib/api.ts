@@ -3636,6 +3636,12 @@ export interface ProbeError {
   message: string
   params?: Record<string, unknown>
   traceback?: string
+  /**
+   * `missing_dependency` 时「能不能一键装上」（ADR 0019）：与渲染端点同一份
+   * `deprepair.offer()`（`probe._error_from_worker` 挂上）。素材库「脚本」行据此给同一张修复卡片——
+   * 图还没上画布时，那是新用户走到安装的唯一入口。
+   */
+  dependency_repair?: DependencyRepairOffer
 }
 
 export interface ProbeResult {

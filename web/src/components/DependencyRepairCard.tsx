@@ -30,6 +30,11 @@ import { Details, Summary } from '@/components/ui/Details'
  *   折叠区里。
  * * **解析不出包名就不给一键安装**。那时给「指定安装包…」和「选择其他
  *   Python」——绝不拿 import 名当包名装。
+ * * **受管环境是一次授权**（2026-09-28 用户裁决）：按钮下面把确认页里的全部要素说出口
+ *   （装什么、需要联网、建隔离环境且不改源码与现有环境、要不要先下载私有 Python 与多大），
+ *   点一次就形成计划并执行；后端算出来的计划超出了这里说过的，才停在确认页
+ *   （`planMatchesDisclosure`）。项目 `.venv` 那条仍然先到确认页（ADR 0019 §八）。
+ * * **失败 / 取消之后可以就地重试**（`RETRYABLE_REPAIR_CODES`），不用关掉卡片重来，更不用重启。
  */
 const en = (key: string, values?: Record<string, unknown>) =>
   translate(`engine.${key}`, { ns: 'errors', ...(values ?? {}) })
@@ -63,8 +68,11 @@ export function DependencyRepairCard({
     errorCode,
     errorText,
     pinned: pinnedSince,
+    request,
     makePlan,
     install,
+    installNow,
+    retry,
     adoptSystemPython,
     cancel,
     reset,
@@ -87,7 +95,15 @@ export function DependencyRepairCard({
 
   // ---- 安装进行中 / 刚结束：只显示进度，不再显示一堆选项 ------------------
   if (progress && (running || progress.state !== 'idle')) {
-    return <RepairProgress module={module} onCancel={() => void cancel()} onDone={reset} />
+    return (
+      <RepairProgress
+        module={module}
+        onCancel={() => void cancel()}
+        onDone={reset}
+        // 重试要知道上一次请求的是什么：本标签页里起的才有（切项目换回来的收着的作业没有）
+        onRetry={request ? () => void retry() : undefined}
+      />
+    )
   }
 
   // ---- 已经形成计划，等用户确认 ------------------------------------------
@@ -183,7 +199,17 @@ export function DependencyRepairCard({
                     tg.kind === 'system_interpreter'
                       ? // 采用已有的解释器不经 plan：没有要安装的东西可以「计划」
                         void adoptSystemPython(tg.python, module)
-                      : makePlan({ module, script, target: tg.kind })
+                      : tg.kind === 'tavotto_managed' && offer.requirement
+                        ? // 一次授权：下面那几行已经把计划的要素说出口，点一次就开始
+                          void installNow(
+                            { module, script, target: 'tavotto_managed' },
+                            {
+                              requirement: offer.requirement.requirement,
+                              target_kind: 'tavotto_managed',
+                              private_python: tg.private_python ?? null,
+                            },
+                          )
+                        : makePlan({ module, script, target: tg.kind })
                   }
                 >
                   {label(tg, pkg)}
@@ -193,8 +219,19 @@ export function DependencyRepairCard({
                     {detail}
                   </span>
                 )}
-                {tg.kind === 'tavotto_managed' && tg.private_python && (
-                  <PrivatePythonDisclosure offer={tg.private_python} />
+                {tg.kind === 'tavotto_managed' && offer.requirement && (
+                  // 一次授权的披露：确认页里的要素全部在点之前说出口（装什么 / 联网 / 隔离环境、
+                  // 不改源码与现有环境 / 私有 Python 的版本与体积）
+                  <div data-dependency-disclosure>
+                    <p className="mt-1 text-xs leading-relaxed text-ink-3">
+                      {en('repairWillInstall', { requirement: offer.requirement.requirement })}
+                      {` · ${en('repairNeedsNetwork')}`}
+                    </p>
+                    <p className="mt-1 text-xs leading-relaxed text-ink-3">
+                      {en('repairConfirmManaged')}
+                    </p>
+                    {tg.private_python && <PrivatePythonDisclosure offer={tg.private_python} />}
+                  </div>
                 )}
               </div>
             )
@@ -407,9 +444,9 @@ function hint(target: DependencyTarget): string {
       ? `${base} · ${en('repairSystemUnverified')}`
       : base
   }
-  // 受管环境不需要副标题：装到哪按钮自己已经说清楚了（「将 X 安装到 Tavotto
-  // 环境」——那本来就不是用户的环境），再补一句「不动你已有的环境」只是把同一
-  // 件事说第二遍。真会动用户环境的是项目 .venv 那条，那句警告在确认页里。
+  // 受管环境不需要这一行副标题：装到哪按钮自己已经说清楚了（「将 X 安装到 Tavotto
+  // 环境」）。一次授权要说出口的那几样（装什么 / 联网 / 隔离环境 / 私有 Python）
+  // 在按钮下面的披露块里（`data-dependency-disclosure`），不在这一行。
   return ''
 }
 
@@ -431,6 +468,35 @@ function rejectionText(r: SystemInterpreterRejection, pkg: string): string {
 }
 
 /**
+ * 失败后可以就地「重试」的 code：都是**这一次**没做成、换个时刻再来一次就可能成的——
+ * 断网 / 超时 / 环境正忙 / 被取消 / 磁盘满（腾出空间后）/ 下载的私有 Python 损坏（重新下载会重新校验）/
+ * 确认期间环境变了（重试会重新形成计划，超出卡片说过的就停在确认页）。
+ *
+ * **不在表里的不给重试**，各有理由：`dependency_hash_mismatch`（声明里的哈希与包不符——重下一遍还是那个包，
+ * 要用户核对锁文件）、`dependency_not_found` / `dependency_requires_build` / `dependency_conflict`
+ * （软件源与声明的事实，重试不变）、`dependency_import_still_failed` / `dependency_worker_selftest_failed` /
+ * `dependency_consistency_failed`（pip 已经跑成，后端记为「这一轮已经装过」，再来一次同样的结果）、
+ * `private_python_source_unavailable` / `private_python_not_offered`（要升级 Tavotto）、
+ * `private_python_invalid_archive` / `private_python_launch_failed`（下载的 Python 本身不能用）、
+ * 通用的 `dependency_install_failed`（原因不明，出口是「安装详情」与换环境）。
+ */
+export const RETRYABLE_REPAIR_CODES: ReadonlySet<string> = new Set([
+  'dependency_network_unavailable',
+  'dependency_install_timeout',
+  'dependency_install_busy',
+  'dependency_install_cancelled',
+  'environment_mutating',
+  'package_disk_low',
+  'managed_env_write_failed',
+  'repair_plan_stale',
+  'private_python_offline',
+  'private_python_cancelled',
+  'private_python_hash_mismatch',
+  'private_python_disk_low',
+  'private_python_write_failed',
+])
+
+/**
  * 安装进度。四个阶段各一句话，pip 日志折叠在「安装详情」里。
  *
  * 取消之后**不假装完整回滚**：改的是用户自己的环境时如实说「可能已发生
@@ -440,10 +506,12 @@ function RepairProgress({
   module,
   onCancel,
   onDone,
+  onRetry,
 }: {
   module: string
   onCancel: () => void
   onDone: () => void
+  onRetry?: () => void
 }) {
   useTranslation('errors')
   const { progress } = useDepRepairStore()
@@ -452,6 +520,7 @@ function RepairProgress({
   const key = STATE_KEY[progress.state] ?? 'repairPreparing'
   const failed = progress.state === 'failed'
   const cancelled = progress.state === 'cancelled'
+  const canRetry = !!onRetry && (cancelled || (failed && RETRYABLE_REPAIR_CODES.has(progress.code)))
   return (
     <div className="flex flex-col gap-2.5 rounded-md bg-surface p-3 shadow-card">
       <div>
@@ -473,7 +542,14 @@ function RepairProgress({
         {running ? (
           <Button onClick={onCancel}>{en('repairCancel')}</Button>
         ) : (
-          <Button onClick={onDone}>{en('repairClose')}</Button>
+          <>
+            {canRetry && (
+              <Button variant="primary" onClick={onRetry} data-dependency-repair-retry>
+                {en('dependencyPrepareRetry')}
+              </Button>
+            )}
+            <Button onClick={onDone}>{en('repairClose')}</Button>
+          </>
         )}
       </div>
       {progress.log && (
