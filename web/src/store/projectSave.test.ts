@@ -20,6 +20,8 @@ import {
   useDocumentStore,
 } from './documentStore'
 import { useUiStore } from './uiStore'
+import { onLayoutSaved, type LayoutSavedVia } from '@/lib/layoutSaved'
+import { currentTimelineCtx } from '@/lib/timelineContext'
 
 const text = (id: string): TextObject => ({
   id, type: 'text', text: id, sizePt: 9, bold: false,
@@ -165,6 +167,69 @@ describe('绑定了项目文件：⌘S 写回它', () => {
     beforeLayoutWrite = () => edit('t2')
     await runManualSave()
     expect(s().projectFile?.dirty).toBe(true)
+  })
+})
+
+describe('写成了就发「排版写成了」（时间线的「保存」点，ADR 0101 §7；Codex #679）', () => {
+  let seen: [LayoutSavedVia, string][] = []
+  let off: () => void = () => {}
+  beforeEach(() => {
+    seen = []
+    off = onLayoutSaved((via, { ctx }) => seen.push([via, ctx]))
+  })
+  afterEach(() => off())
+
+  it('⌘S 写回项目文件：写成后发 project_file，带按下 ⌘S 那一刻的上下文', async () => {
+    bind()
+    edit('t1')
+    const at = currentTimelineCtx()
+    await runManualSave()
+    expect(seen).toEqual([['project_file', at]])
+  })
+
+  it('写成之后的记账 / 状态条出错：事件照发（它在写成之后、任何后续步骤之前）', async () => {
+    bind()
+    edit('t1')
+    const real = useUiStore.getState().setStatus
+    useUiStore.setState({
+      setStatus: (m, tone, o) => {
+        if (tone !== 'error') throw new Error('状态条坏了')
+        real(m, tone, o)
+      },
+    })
+    try {
+      await runManualSave().catch(() => {})
+    } finally {
+      useUiStore.setState({ setStatus: real })
+    }
+    expect(written).toHaveLength(1)
+    expect(seen.map(([via]) => via)).toEqual(['project_file'])
+  })
+
+  it('没写成（409）不发', async () => {
+    projectFiles.set('排版一', '{"theirs":1}')
+    bind({ revision: 'stale' })
+    edit('t1')
+    await runManualSave()
+    expect(written).toHaveLength(0)
+    expect(seen).toEqual([])
+  })
+
+  it('写的途中切了项目：事件带的仍是发起时的上下文（点属于被写的那一份）', async () => {
+    bind()
+    edit('t1')
+    const at = currentTimelineCtx()
+    let open!: () => void
+    layoutGate = new Promise<void>((r) => (open = r))
+    const saving = runManualSave()
+    await new Promise((r) => setTimeout(r, 20))
+    const { useTimelineStore } = await import('./timelineStore')
+    useTimelineStore.getState().clear()
+    layoutGate = null
+    open()
+    await saving
+    expect(seen).toEqual([['project_file', at]])
+    expect(currentTimelineCtx()).not.toBe(at)
   })
 })
 
