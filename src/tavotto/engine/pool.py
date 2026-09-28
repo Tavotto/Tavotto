@@ -732,6 +732,12 @@ def _offer_missing_input(err: "WorkerError", script_name: str, figures_dir) -> "
     return err
 
 
+def missing_input_offer(script_name: str, figures_dir) -> dict | None:
+    """「跑通了但没出图」时的静态载荷（ADR 0106）：试运行那条入口没有 WorkerError 可挂，直接要这一份。"""
+    err = WorkerError("", code=NO_FIGURES_CODE)
+    return _offer_missing_input(err, script_name, figures_dir).missing_input
+
+
 def missing_stem_error(worker, stem: str, known) -> "WorkerError | None":
     """build 完了、请求的 `stem` 不在捕获表里：给出**渲染入口会给的那个错误**（同一个 code、同一段脚本输出）。
 

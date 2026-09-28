@@ -64,6 +64,9 @@ ERROR_SCRIPT_EXITED = "script_exited"
 #: 脚本 `input()`（ADR 0099）：没人能答 / 等到超时脚本没接住 EOF。worker 原样透传。
 ERROR_NEEDS_INPUT = "script_needs_input"
 ERROR_INPUT_TIMEOUT = "script_input_timeout"
+#: 脚本要读的数据找不到（ADR 0106）：worker 说得出缺的是哪一串。载荷 `missing_input` 原样带出，
+#: 素材库这条入口弹的是与画布同一个「指认数据位置」对话框。
+ERROR_MISSING_INPUT = pool.MISSING_INPUT_CODE
 
 #: traceback 进诊断详情的截断上限（完整日志仍在 worker.log）。
 _TRACEBACK_LIMIT = 4000
@@ -130,6 +133,19 @@ def _error_from_worker(
             params={"error": (lines[-1].strip() if lines else str(exc))[:200]},
             traceback_text=exc.traceback_text,
         )
+    if exc.code == ERROR_MISSING_INPUT:
+        offer = getattr(exc, "missing_input", None)
+        # 占位符与渲染入口同一个：`{{error}}` 是 traceback 的最后一行（`FileNotFoundError: …`）
+        lines = [ln for ln in (exc.traceback_text or "").splitlines() if ln.strip()]
+        out = _err(
+            ERROR_MISSING_INPUT,
+            str(exc),
+            params={"error": (lines[-1].strip() if lines else str(exc))[:200]},
+            traceback_text=exc.traceback_text,
+        )
+        if isinstance(offer, dict):
+            out["missing_input"] = offer
+        return out
     # 起会话之前的两道门（U03 的运行目录 / U04 的依赖准备）：它们是「需要输入」，不是失败——
     # code 原样带出、载荷原样带出（与渲染端点 `_worker_error_payload` 同一形状），素材库这条
     # 入口才能弹同一个确认框，而不是一句「试运行失败」。
@@ -311,6 +327,11 @@ def probe(
                 f"脚本跑通了，但没有捕获到任何 Figure（入口 {entry} 可能不出图）",
                 params={"entry": entry},
             )
+            # 多半是先 `exists()` 判空再自己退出（ADR 0106）：脚本里写着、此刻哪儿都找不到的路径
+            # 一并带上，界面据此弹「指认数据位置」——与渲染入口的「没出图」同一份载荷
+            offer = pool.missing_input_offer(script, figures_dir)
+            if offer is not None:
+                first_error["missing_input"] = offer
         pool.invalidate(script, figures_dir)
 
     return {

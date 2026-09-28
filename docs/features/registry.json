@@ -100,6 +100,27 @@
       ]
     },
     {
+      "id": "assets.missing-input-relink",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "脚本要读的数据找不到时弹框请用户指认一次，按项目记住后重跑出图",
+        "en-US": "When a script's data can't be found, ask the user to point at it once, remember it for the project and rerun"
+      },
+      "entry": "运行脚本（素材库「运行并发现图」或画布渲染）因数据找不到而失败时自动弹出；错误行 / 错误块里「指认数据位置…」",
+      "e2e": [
+        {
+          "spec": "missing-input.spec.ts",
+          "title": "数据找不到：弹框指认数据所在文件夹 → 记住 → 重跑按那份数据出图"
+        }
+      ],
+      "desktop_manual": [
+        "把一个读 data/values.txt 的脚本单独复制到新文件夹、数据留在别处，拖进 Tavotto：弹出「找不到脚本要读的数据」",
+        "点「找到这个文件…」在系统选择器里选中那份数据：框关闭、自动重跑、图画出来",
+        "设置 →「环境诊断」里看到这条数据位置，点「删除」后重跑又弹框"
+      ]
+    },
+    {
       "id": "canvas.place-and-render",
       "status": "active",
       "platform": "both",

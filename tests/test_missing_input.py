@@ -454,3 +454,38 @@ def test_all_three_spawn_paths_take_the_rules_from_one_place(monkeypatch, tmp_pa
             engine_pool.discard(shot)
     finally:
         inputremap.remove_rule(tmp_path, P, "")
+
+
+# --------------------------------------------------------------- 试运行（素材库「运行并发现图」）
+@needs_worker
+def test_the_probe_entry_carries_the_same_offer(figs, tmp_path):
+    from tavotto.engine import probe as engine_probe
+
+    (figs / "fig.py").write_text(SCRIPT_REL, encoding="utf-8")
+    workdir.set_mode(figs, workdir.MODE_SANDBOX)
+    result = engine_probe.probe(figs, "fig.py")
+    err = result["error"]
+    assert err["code"] == engine_probe.ERROR_MISSING_INPUT
+    assert err["missing_input"]["requested"] == "data/values.txt"
+    assert "FileNotFoundError" in err["params"]["error"]
+
+    chosen = _touch(tmp_path / "moved" / "data" / "values.txt", "truth-9")
+    inputremap.add_rule(figs, inputremap.derive("data/values.txt", str(chosen), chosen_is_dir=False))
+    engine_pool.shutdown_all(str(figs), wait=True)
+    result = engine_probe.probe(figs, "fig.py")
+    assert result["error"] is None and result["stems"] == ["values"]
+
+
+@needs_worker
+def test_the_probe_no_figure_path_carries_the_static_list(figs):
+    from tavotto.engine import probe as engine_probe
+
+    (figs / "fig.py").write_text(
+        'import os\nif os.path.exists("data/values.txt"):\n'
+        '    import matplotlib.pyplot as plt\n    plt.plot([1])\n',
+        encoding="utf-8",
+    )
+    workdir.set_mode(figs, workdir.MODE_SANDBOX)
+    err = engine_probe.probe(figs, "fig.py")["error"]
+    assert err["code"] == engine_probe.ERROR_NO_FIGURE
+    assert [o["path"] for o in err["missing_input"]["others"]] == ["data/values.txt"]

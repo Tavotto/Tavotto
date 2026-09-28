@@ -3955,6 +3955,8 @@ export interface ProbeError {
   dependency_preparation?: DependencyPreparationOffer
   /** `workdir_confirmation_required`（U03）时运行目录那道门的载荷（同上，`WorkdirConfirmDialog`） */
   confirmation?: WorkdirConfirmation
+  /** 数据找不到（ADR 0106）：与渲染入口同一份「指认数据位置」载荷（`missing_input` / 没出图时可能有） */
+  missing_input?: MissingInputOffer
 }
 
 export interface ProbeResult {

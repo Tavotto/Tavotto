@@ -51,6 +51,7 @@ export type ScriptRunPhase =
   | 'missing_dependency'
   | 'needs_workdir' // 起会话之前要先选运行目录（U03）：载荷在 error.confirmation
   | 'needs_preparation' // 起会话之前要先准备依赖（U04）：载荷在 error.dependency_preparation
+  | 'missing_input'
   | 'timeout'
   | 'cancelled'
   | 'failed'
@@ -94,6 +95,8 @@ export const needsNative = (state: ScriptRunState | undefined): boolean =>
 
 const PHASE_BY_CODE: Record<string, ScriptRunPhase> = {
   missing_dependency: 'missing_dependency',
+  // 数据找不到（ADR 0106）：不是环境问题，不进「可能需要原环境」那一组——出路是指认数据位置
+  missing_input: 'missing_input',
   execution_timeout: 'timeout',
   execution_cancelled: 'cancelled',
   script_no_figure: 'no_figure',
@@ -220,6 +223,11 @@ interface ScriptRunStore {
    * 用户已经重跑 / 收起过的（相位不再是这道门）不动。
    */
   rerunGated: (phase: 'needs_workdir' | 'needs_preparation', script?: string) => void
+  /**
+   * 用户指认了数据位置之后（ADR 0106）：把这次因「找不到数据」失败的脚本重新试运行一遍——
+   * 带 `missing_input` 载荷的错误（`missing_input` 与「跑通了但没出图」两种）都算。
+   */
+  rerunMissingInput: () => void
   clear: () => void
 }
 
@@ -257,6 +265,10 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
     try {
       const res = await probeScript(script)
       if (stale()) return
+      if (res.error?.missing_input) {
+        // 与画布同一个对话框：请用户指认数据位置（换了项目的旧载荷由 envStore 丢掉）
+        useEnvStore.getState().requestMissingInput(res.error.missing_input, projectAtStart)
+      }
       if (res.error) {
         settle({
           phase: phaseOf(res.error),
@@ -313,6 +325,12 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
     // 取消请求本身失败也不回滚 cancelRequested——原请求总会以某种结果
     // 落地（成功 / 失败 / 超时），状态机不会卡死在「取消中」。
     void cancelProbe(script).catch(() => {})
+  },
+
+  rerunMissingInput: () => {
+    for (const [script, st] of Object.entries(get().byScript)) {
+      if (!isBusyPhase(st.phase) && st.error?.missing_input) void get().run(script)
+    }
   },
 
   markRunning: (script) => {
