@@ -283,11 +283,12 @@ plt.close(fig)
 # **不记进 `state.applied`**，于是还原那条路永远不会跑、永远不会 unpin。
 #
 # 判据的主语是**引擎上有没有残留的 pin**，不是「抛没抛」：抛异常本来就该抛，
-# 那一半在下面只是前置条件。
+# 那一半在下面只是前置条件。抛的是哪一种不是判据：setter 第一步的
+# `_drag_value` 校验（Codex #681）抛 ValueError，走不到它时 `set_position` 抛 TypeError。
 fig, ax = make(layout="tight")
 try:
     set_pos(ax, [0.1, 0.1, 0.5])
-except TypeError:
+except (TypeError, ValueError):
     pass
 else:
     raise AssertionError("长度 3 的 bounds 被放行了——前置条件都不成立，下面那条判据没意义")
