@@ -1,6 +1,6 @@
 # ADR 0094 spike：把 override 写回原脚本（savefig 钩子块）
 
-本目录是 [ADR 0094](../../adr/0094-script-writeback.md) 的可行性证据：一个**原型**生成器与四份测量脚本，外加跑出来的结果。
+本目录是 [ADR 0094](../../adr/0094-script-writeback.md) 的可行性证据：一个**原型**生成器、四份测量脚本、两份评审看护，外加跑出来的结果。
 它不在任何产品代码路径上，也不被产品 import。
 
 ## 文件
@@ -10,7 +10,9 @@
 | `emit.py` | 原型生成器：一组 override → 「Tavotto 调整」代码块（只用 matplotlib 公开 API）；按文件编码 / 换行 / 缩进插入、删除 |
 | `run_spike.py` | 主测量：热态（一次性 worker 应用 override）vs 写回后的新脚本（另一个一次性 worker、只带留作 override 的条目），用写回事务 verify 的同一把尺（`app._compare_manifests` + `pdfbackend.compare_png` + `app.REPLAY_PIXEL_TOL`）比 |
 | `analyze_literals.py` | 方案 B（就地改字面量）对同一批 override 能表达多少：真跑脚本、记下每个 artist 的创建调用与执行次数，按 A/B/C/D 四类分 |
-| `legend_ast.py` | 覆盖率路线 2(b)：就地改 / 新增脚本里唯一那处 `legend(...)` 的 `fontsize=`，按同一把尺比 |
+| `legend_ast.py` | 覆盖率路线 2(b)：就地改 / 新增脚本里唯一那处 `legend(...)` 的 `fontsize=`，按同一把尺比；改之前真跑一遍脚本，这处调用执行次数不是 1 就不改 |
+| `journal_sim.py` | ADR §五.7 跨文件写回事务（脚本 + 项目文件）的可执行模型：每一步之间注入崩溃再恢复，查一致性、渲染闸、自动保存、幂等；`--mutate` 五种反证 |
+| `review_checks.py` | Codex #667 两条 P2 的看护：同一进程两份写回过的脚本（钩子注册表）、`legend()` 在被调用两次的函数里（必须拒改）；`--impl` 指向旧实现做反证 |
 | `bytes_checks.py` | 编码 / 换行 / BOM / 缩进矩阵；在不 import Tavotto 的纯 matplotlib 进程里跑写回后的脚本；目标身份守卫（重排 / 删除 / 无 label 插入） |
 | `evidence/results_round1.json` | 第一轮主结果（8 份脚本、82 条单条 + 8 组组合；两条覆盖率路线都没开，`--no-routes`） |
 | `evidence/results_routes.json` | 第二轮：开了路线 1（标题拖动）与 2(a)（公开 API 重建图例） |
@@ -70,6 +72,14 @@
 开路线 1 + 2(a) 后单条 **81/82**；2(a) 与 2(b) 的失败互不重叠，先 (a) 后 (b) 为 82/82。组合 7/8（用户脚本甲那组因为那条图例整组 409）。
 2(a) 第一版用 `Text.update_from` 搬文字样子，连 transform 一起抄了，5 条全被几何门拒；改成只搬字体 / 颜色 / 透明度后通过。
 
+### 评审修正（Codex #667）
+
+| 意见 | 修正 | 看护与反证 |
+| --- | --- | --- |
+| P1 脚本与项目文件的更新要崩溃一致 | ADR §五.7：前滚日志 + 打开项目 / 渲染前恢复 + 渲染闸 | `journal_sim.py` 56 种崩溃组合全过；五个 `--mutate` 各自退出码 1 |
+| P2 同一进程重复安装钩子时第二份脚本的表丢失 | `_install` 改为按脚本路径登记的注册表，同名 stem 只认调用栈上的脚本 | `review_checks.py` 退出码 0；`--impl` 指向修正前的 `emit.py` 退出码 1（第二份脚本的共用 / 自有 stem 全错） |
+| P2 唯一那处 `legend()` 在被调用多次的函数里 | 真跑一遍数这处调用的执行次数，不是 1 就不改 | 同上：修正前「执行 2 次时改了」，修正后拒改；执行 1 次时仍改（防恒拒）。6 条真用例重跑结论不变（5/6） |
+
 ## 复现
 
 ```sh
@@ -88,6 +98,8 @@ PYTHONPATH=$S/src_fix $W/.venv/bin/python legend_ast.py                   # 路�
 PYTHONPATH=$W/src     $W/.venv/bin/python run_spike.py --no-routes fig1_kinetics fig2_correlation fig2_yield   # 反证：未修正
 PYTHONPATH=$S/src_fix $W/.venv/bin/python run_spike.py --no-routes --naive pg_kinetics                        # 反证：逐条翻译
 $W/.venv/bin/python bytes_checks.py
+$W/.venv/bin/python journal_sim.py; for m in no_roll_forward doc_first no_render_gate keep_autosave_slot no_journal_fsync; do $W/.venv/bin/python journal_sim.py --mutate $m; echo "$m exit=$?"; done
+$W/.venv/bin/python review_checks.py                                     # 纯 matplotlib，不 import Tavotto
 ```
 
 `user_a` / `user_b` 两个用例需要用户脚本的副本，仓库里没有：把副本放进 `$S` 下的目录，再写一个不入库的本地 JSON（`{"user_a": [目录, 脚本, entry, stem], "user_b": [...]}`），用环境变量 `TAVOTTO_SPIKE_USER_CASES` 指向它。解释器是装了 matplotlib 3.11 的 `.venv`；

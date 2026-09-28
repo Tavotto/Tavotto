@@ -384,21 +384,43 @@ def _run(fig, stem, steps):
             _warnings.warn(f"Tavotto 调整未应用（{stem} · {what}）：{exc}", stacklevel=3)
 
 
+def _scripts_on_stack():
+    import inspect
+
+    # 跳过自己与钩子那两帧：钩子函数是第一份脚本的块里定义的，它的帧会把那份脚本也算成「在栈上」
+    out, f = set(), inspect.currentframe().f_back.f_back
+    while f is not None:
+        out.add(_os.path.abspath(f.f_code.co_filename))
+        f = f.f_back
+    return out
+
+
 def _install(table):
-    real = _mfig.Figure.savefig
-    if getattr(real, "_tavotto_adjust", False):
-        return
+    # 同一个 Python 进程里可能跑好几份写回过的脚本（notebook、一个脚本 import 另一个）：钩子只装一次，
+    # 各脚本的表按脚本路径登记进同一张注册表；重跑同一个脚本就是覆盖它自己那一项。
+    script = _os.path.abspath(globals().get("__file__") or "<no-file>")
+    registry = _mfig.Figure.__dict__.get("_tavotto_adjust_registry")
+    if registry is None:
+        registry = {}
+        real = _mfig.Figure.savefig
 
-    def savefig(self, fname, *args, **kwargs):
-        stem = _stem(fname)
-        steps = table.get(stem)
-        if steps is not None and getattr(self, "_tavotto_adjusted", None) != stem:
-            self._tavotto_adjusted = stem
-            _run(self, stem, steps)
-        return real(self, fname, *args, **kwargs)
+        def savefig(self, fname, *args, **kwargs):
+            stem = _stem(fname)
+            hits = [(s, t[stem]) for s, t in registry.items() if stem in t]
+            if len(hits) > 1:
+                # 两份脚本都调这个 stem：只认调用栈上的那一份，认不出就不调（绝不猜）
+                live = _scripts_on_stack()
+                hits = [h for h in hits if h[0] in live]
+            if len(hits) > 1:
+                _warnings.warn(f"Tavotto 调整未应用（{stem}）：有多份脚本登记了这个 stem", stacklevel=2)
+            elif hits and getattr(self, "_tavotto_adjusted", None) != stem:
+                self._tavotto_adjusted = stem
+                _run(self, stem, hits[0][1])
+            return real(self, fname, *args, **kwargs)
 
-    savefig._tavotto_adjust = True
-    _mfig.Figure.savefig = savefig
+        _mfig.Figure._tavotto_adjust_registry = registry
+        _mfig.Figure.savefig = savefig
+    registry[script] = table
 """
 
 
