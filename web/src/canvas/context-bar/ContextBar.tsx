@@ -331,7 +331,8 @@ export function ContextBar() {
     }
     const w = ref.current?.offsetWidth ?? 220
     const h = ref.current?.offsetHeight ?? 36
-    if (mode === 'multi' && variant === 'full' && w > freeWidth - 2 * MARGIN) {
+    // 两种多选栏都按内容量宽（`w-max`）：完整档量出来比两侧之间还宽就降成压缩档
+    if ((mode === 'multi' || mode === 'elements') && variant === 'full' && w > freeWidth - 2 * MARGIN) {
       setOverflow(true)
       return
     }
@@ -402,7 +403,7 @@ export function ContextBar() {
       data-context-bar
       data-context-bar-mode={mode ?? undefined}
       data-multi-selection-context-bar={mode === 'multi' ? '' : undefined}
-      data-variant={mode === 'multi' ? variant : undefined}
+      data-variant={mode === 'multi' || mode === 'elements' ? variant : undefined}
       data-multi-docked={multiBarDocked ? '' : undefined}
       data-placement={pos?.placement}
       data-context-bar-compact={textBarCompact ? '' : undefined}
@@ -433,7 +434,12 @@ export function ContextBar() {
           <OpenInspectorButton />
         </>
       ) : mode === 'elements' && panel && multiGids ? (
-        <ElementMultiBar panel={panel} gids={multiGids} compact={textBarCompact} />
+        <ElementMultiBar
+          panel={panel}
+          gids={multiGids}
+          compact={textBarCompact}
+          variant={variant}
+        />
       ) : mode === 'object' && obj ? (
         <>
           <ObjectQuickActions obj={obj} compact={textBarCompact} />

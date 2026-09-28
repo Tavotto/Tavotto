@@ -63,6 +63,7 @@ export function TextQuickControls({
           precision={PT_DECIMALS}
           unit={size.unit}
           title={translate('textControls.size', { ns: 'inspector' })}
+          dataProp="sizePt"
           onChange={(v) => a.write('sizePt', v)}
           onScrubStart={a.beginGesture}
           onScrubEnd={a.endGesture}

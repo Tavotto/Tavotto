@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ChevronDown, Group, SlidersHorizontal, Ungroup } from '@/components/ui/icons'
+import { Group, SlidersHorizontal, Ungroup } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import { captureContextBarMore, fromContextBar } from '@/lib/activityTelemetry'
@@ -13,7 +13,6 @@ import {
   type ArrangeButton,
 } from '@/components/inspector/arrangeButtons'
 import { Button } from '@/components/ui/Button'
-import { Popover } from '@/components/ui/Popover'
 import { Segmented } from '@/components/ui/Segmented'
 import { Tip } from '@/components/ui/Tooltip'
 import {
@@ -29,7 +28,7 @@ import { useArrangeStore } from '@/store/arrangeStore'
 import type { CanvasObject, TextObject } from '@/types/document'
 import type { BarVariant } from './position'
 import { openArrangeInInspector } from './openArrange'
-import { Sep } from './shared'
+import { MenuPopover, Sep } from './shared'
 import { CanvasTextQuick } from './SingleObjectBar'
 import { qb } from './text'
 
@@ -281,33 +280,5 @@ function MoreButton({ count }: { count: number }) {
         <SlidersHorizontal size={ICON_SIZE.sm} />
       </Button>
     </Tip>
-  )
-}
-
-/** 窄屏下的弹层入口：文字按钮 + 下拉角，内容还是同一批按钮 */
-function MenuPopover({
-  label,
-  width,
-  testId,
-  children,
-}: {
-  label: string
-  width: number
-  testId: string
-  children: ReactNode
-}) {
-  return (
-    <Popover
-      width={width}
-      align="start"
-      trigger={
-        <Button size="md" data-multi-menu={testId} aria-label={label}>
-          {label}
-          <ChevronDown size={ICON_SIZE.xs} aria-hidden />
-        </Button>
-      }
-    >
-      <div className="flex flex-col gap-1.5">{children}</div>
-    </Popover>
   )
 }

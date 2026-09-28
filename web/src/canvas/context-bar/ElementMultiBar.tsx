@@ -14,6 +14,7 @@ import { alignSelectedPanelElements } from '@/store/alignAction'
 import { useDocumentStore } from '@/store/documentStore'
 import { useExactPanelManifest, usePanelDisplayManifest } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
+import { cn } from '@/lib/utils'
 import { useUiStore } from '@/store/uiStore'
 import type {
   ArrowObject,
@@ -23,7 +24,8 @@ import type {
   TextObject,
 } from '@/types/document'
 import { FigureTextQuick } from './ElementBar'
-import { OpenInspectorButton, Sep } from './shared'
+import type { BarVariant } from './position'
+import { MenuPopover, OpenInspectorButton, Sep } from './shared'
 import { qb } from './text'
 
 const el = (key: string, values?: Record<string, unknown>) =>
@@ -49,11 +51,18 @@ export function ElementMultiBar({
   panel,
   gids,
   compact,
+  variant,
 }: {
   panel: PanelObject
   gids: string[]
   /** 停靠的属性页正铺着同一批文字控件：字体下拉与取色器让给右栏（与单选同一条判据） */
   compact: boolean
+  /**
+   * 两侧之间放不下完整栏（静态阈值或量出来溢出，判据在 `ContextBar` 一处）：六向对齐收进
+   * 「对齐」弹层，文字排版同样缩成字号 / 加粗 / 斜体——`w-max` 的栏不会自己收缩，
+   * 夹到窗口左沿之后右半截只会伸出屏幕外、够不着（Codex #666 P1）
+   */
+  variant: BarVariant
 }) {
   useTranslation('workspace')
   useTranslation('inspector')
@@ -84,6 +93,42 @@ export function ElementMultiBar({
   }
 
   const count = gids.length + annotations.length
+  const narrow = variant === 'compact'
+  /**
+   * 权威没就位时按钮**仍可聚焦、提示仍说得出原因**（`aria-disabled`，点了只报一句
+   * 「正在同步」）：原生 `disabled` 不发指针事件、也进不了 Tab 序，气泡与状态句会一起
+   * 消失，用户只看见一排说不出原因的灰按钮（Codex #666 P2；画布多选栏 `AlignRow` 同一种写法）
+   */
+  const alignRow = (
+    <span className="flex items-center gap-0.5">
+      {ALIGN_BUTTONS.map(({ mode, icon: Icon }) => {
+        const base = translate(`alignMode.${mode}`, { ns: 'inspector' })
+        const tip = plan.syncing
+          ? el('alignSyncingTip', { tip: base })
+          : el('alignRefBoundsTip', { tip: base })
+        return (
+          <Tip key={mode} label={tip} side="bottom">
+            <Button
+              size="icon-sm"
+              data-align-mode={mode}
+              aria-label={base}
+              aria-disabled={plan.syncing || undefined}
+              className={cn(plan.syncing && 'cursor-not-allowed opacity-40')}
+              onClick={() => {
+                if (plan.syncing) {
+                  setStatus(msg('element.alignSyncing', undefined, 'inspector'))
+                  return
+                }
+                apply(mode)
+              }}
+            >
+              <Icon size={ICON_SIZE.sm} />
+            </Button>
+          </Tip>
+        )
+      })}
+    </span>
+  )
   return (
     <span className="flex items-center gap-1" data-element-multi-bar>
       <span data-selection-count={count} className="whitespace-nowrap px-1 text-ink-2">
@@ -92,27 +137,13 @@ export function ElementMultiBar({
       <Sep />
       {plan.align && (
         <>
-          <span className="flex items-center gap-0.5">
-            {ALIGN_BUTTONS.map(({ mode, icon: Icon }) => {
-              const base = translate(`alignMode.${mode}`, { ns: 'inspector' })
-              const tip = plan.syncing
-                ? el('alignSyncingTip', { tip: base })
-                : el('alignRefBoundsTip', { tip: base })
-              return (
-                <Tip key={mode} label={tip} side="bottom">
-                  <Button
-                    size="icon-sm"
-                    data-align-mode={mode}
-                    aria-label={base}
-                    disabled={plan.syncing}
-                    onClick={() => apply(mode)}
-                  >
-                    <Icon size={ICON_SIZE.sm} />
-                  </Button>
-                </Tip>
-              )
-            })}
-          </span>
+          {narrow ? (
+            <MenuPopover label={qb('alignMenu')} width={200} testId="align">
+              {alignRow}
+            </MenuPopover>
+          ) : (
+            alignRow
+          )}
           <Sep />
         </>
       )}
@@ -121,7 +152,7 @@ export function ElementMultiBar({
           panel={panel}
           elements={selected}
           props={FIGURE_TEXT_BATCH_PROPS}
-          compact={compact}
+          compact={compact || narrow}
         />
       )}
       <OpenInspectorButton />

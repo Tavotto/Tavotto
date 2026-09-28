@@ -456,6 +456,8 @@ function MarkTools() {
         <Button
           size="icon"
           active={tool === 'text'}
+          // 稳定定位（e2e / 引导）：不认 aria-label 文案
+          data-tool="text"
           onClick={() => setTool(tool === 'text' ? 'select' : 'text')}
           aria-label={t('common:objectType.text')}
         >

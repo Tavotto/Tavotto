@@ -360,6 +360,42 @@ describe('图内多选出浮动栏', () => {
     expect(bar()!.querySelector('[data-align-mode="left"]')).not.toBeNull()
   })
 
+  it('几何权威没就位：对齐按钮仍可聚焦（aria-disabled，不是原生 disabled），点了说得出「正在同步」', async () => {
+    useRenderStore.getState().patch(renderKeyOf(livePanel()), { stale: true })
+    await mount()
+    await selectGids('axes_0.title', 'axes_0.ylabel')
+    const left = bar()!.querySelector<HTMLButtonElement>('[data-align-mode="left"]')!
+    expect(left.getAttribute('aria-disabled')).toBe('true')
+    expect(left.disabled).toBe(false)
+    await act(async () => {
+      left.click()
+    })
+    expect(alignSpy).not.toHaveBeenCalled()
+    expect(useUiStore.getState().status).toEqual(
+      expect.objectContaining({ key: 'element.alignSyncing' }),
+    )
+    expect(useDocumentStore.getState().past.length).toBe(0)
+  })
+
+  it('两侧之间放不下完整栏（压缩档）：对齐收进弹层、排版只留字号 / 加粗 / 斜体——右栏没停靠也一样', async () => {
+    const saved = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 480 })
+    try {
+      await mount({ rightOpen: false })
+      await selectGids('axes_0.title', 'axes_0.ylabel')
+      expect(bar()!.getAttribute('data-variant')).toBe('compact')
+      expect(bar()!.hasAttribute('data-context-bar-compact')).toBe(false)
+      expect(bar()!.querySelector('[data-multi-menu="align"]')).not.toBeNull()
+      expect(bar()!.querySelector('[data-align-mode]')).toBeNull()
+      expect(byLabel('字号')).not.toBeNull()
+      expect(byLabel('加粗')).not.toBeNull()
+      expect(byLabel('字体')).toBeNull()
+      expect(bar()!.querySelector('input[type="color"]')).toBeNull()
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: saved })
+    }
+  })
+
   it('单选照旧是单元素栏，不是多选栏', async () => {
     await mount()
     await selectGids('axes_0.title')

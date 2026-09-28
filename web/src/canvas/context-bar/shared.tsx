@@ -1,6 +1,8 @@
-import { SlidersHorizontal } from '@/components/ui/icons'
+import type { ReactNode } from 'react'
+import { ChevronDown, SlidersHorizontal } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { Button } from '@/components/ui/Button'
+import { Popover } from '@/components/ui/Popover'
 import { Tip } from '@/components/ui/Tooltip'
 import { useUiStore } from '@/store/uiStore'
 import { qb } from './text'
@@ -29,5 +31,36 @@ export function OpenInspectorButton() {
         <SlidersHorizontal size={ICON_SIZE.sm} />
       </Button>
     </Tip>
+  )
+}
+
+/**
+ * 窄屏下的弹层入口：文字按钮 + 下拉角，内容还是同一批按钮。画布多选栏与图内多选栏
+ * （ADR 0089）的压缩档共用这一份。
+ */
+export function MenuPopover({
+  label,
+  width,
+  testId,
+  children,
+}: {
+  label: string
+  width: number
+  testId: string
+  children: ReactNode
+}) {
+  return (
+    <Popover
+      width={width}
+      align="start"
+      trigger={
+        <Button size="md" data-multi-menu={testId} aria-label={label}>
+          {label}
+          <ChevronDown size={ICON_SIZE.xs} aria-hidden />
+        </Button>
+      }
+    >
+      <div className="flex flex-col gap-1.5">{children}</div>
+    </Popover>
   )
 }

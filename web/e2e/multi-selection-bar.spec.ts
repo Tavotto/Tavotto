@@ -1,4 +1,5 @@
 import { expect, test } from './fixtures'
+import { horizontalOffenders } from './overflow'
 import type { Page, Request } from '@playwright/test'
 
 /**
@@ -8,6 +9,11 @@ import type { Page, Request } from '@playwright/test'
  *   * 画布多选：点栏上的「左对齐」，两个对象在屏幕上的左沿真的对齐了；
  *   * 图内多选（两个图例项）：栏上改字号，**真 matplotlib 重画回来的 manifest** 里两个元素都是
  *     新字号；撤销一次两个都回原样；重做后刷新页面，重新渲染出来的仍是新字号（写进了文档）。
+ *
+ *   * 两侧之间放不下完整栏时（压缩档）：整条栏都在窗口里，右半截的控件够得着（Codex #666 P1）。
+ *
+ * 定位一律认稳定的 `data-*`（素材卡 `data-card`、返回 `data-context-back`、文字工具
+ * `data-tool`、字号 `data-inspector-prop`），不认界面文案 / 可达名。
  *
  * 判据的主语：图内那条量的是后端渲染响应里的 manifest（引擎按 override 重画的结果），
  * 不是前端 store，也不是控件显示的数。
@@ -71,16 +77,16 @@ test('画布多选：浮动栏出现，左对齐真的对齐了', async ({ app, 
   const a = await app()
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.goto(a.baseURL)
-  await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
-  await expect(page.getByText('画布是空的')).toHaveCount(0)
-  await page.getByRole('button', { name: /返回画布/ }).first().click()
+  await page.locator('[data-card="Fig1_kinetics.pdf"]').dblclick({ timeout: 30_000 })
+  await expect(page.locator('[data-exit-element-edit]')).toBeVisible({ timeout: 60_000 })
+  await page.locator('[data-context-back]').click()
   await expect(page.locator('[data-object-id]').first()).toBeVisible()
 
   for (const [x, y, s] of [
     [160, 140, 'alpha'],
     [360, 560, 'beta'],
   ] as const) {
-    await page.getByRole('button', { name: '文字' }).click()
+    await page.locator('[data-tool="text"]').click()
     await page.locator('[data-canvas-stage]').click({ position: { x, y } })
     await page.keyboard.type(s)
     await page.keyboard.press('Escape')
@@ -113,7 +119,7 @@ test('图内多选两个图例项：浮动栏改字号两个都变，撤销一�
   await page.setViewportSize({ width: 1440, height: 900 })
   const renders = watchRenders(page)
   await page.goto(a.baseURL)
-  await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
+  await page.locator('[data-card="Fig1_kinetics.pdf"]').dblclick({ timeout: 30_000 })
   await expect(page.locator('[data-element-svg] svg').first()).toBeVisible({ timeout: 60_000 })
   await expect(page.locator('[data-authority="ready"]').first()).toBeVisible({ timeout: 60_000 })
   await expect.poll(renders.count, { timeout: 60_000 }).toBeGreaterThan(0)
@@ -134,7 +140,7 @@ test('图内多选两个图例项：浮动栏改字号两个都变，撤销一�
   await expect(bar).toBeInViewport()
   await expect(bar.locator('[data-selection-count="2"]')).toBeVisible()
 
-  const size = bar.getByLabel('字号')
+  const size = bar.locator('[data-inspector-prop="sizePt"]')
   await size.fill(String(target))
   await size.press('Enter')
   await expect.poll(renders.latestSizes, { timeout: 60_000 }).toEqual([target, target])
@@ -178,4 +184,41 @@ test('图内多选两个图例项：浮动栏改字号两个都变，撤销一�
   await page.reload()
   await expect.poll(renders.count, { timeout: 60_000 }).toBeGreaterThan(n)
   await expect.poll(renders.latestSizes, { timeout: 60_000 }).toEqual([target, target])
+})
+
+test('图内多选在两侧之间放不下完整栏时：压缩档，整条栏在窗口里、对齐与字号都够得着', async ({
+  app,
+  page,
+}) => {
+  const a = await app()
+  // medium 断点、左右两栏都停靠：两侧之间不到 600 px。右栏切到「画布」页——属性页不在眼前，
+  // 停靠缩减（textBarCompact）不成立，只剩「放不下」这一条判据在起作用
+  await page.setViewportSize({ width: 1100, height: 860 })
+  await page.goto(a.baseURL)
+  await page.locator('[data-card="Fig1_kinetics.pdf"]').dblclick({ timeout: 30_000 })
+  await expect(page.locator('[data-element-svg] svg').first()).toBeVisible({ timeout: 60_000 })
+  await expect(page.locator('[data-authority="ready"]').first()).toBeVisible({ timeout: 60_000 })
+  await page.locator('[data-inspector-tab="canvas"]').click()
+
+  const c0 = (await center(page, 'axes_0.title'))!
+  const c1 = (await center(page, 'axes_0.ylabel'))!
+  await page.mouse.click(c0.x, c0.y)
+  await page.keyboard.down('Shift')
+  await page.mouse.click(c1.x, c1.y)
+  await page.keyboard.up('Shift')
+
+  const bar = page.locator('[data-context-bar][data-context-bar-mode="elements"]')
+  await expect(bar).toBeVisible()
+  // 场景自检：确实走到了「放不下」那一档，而不是停靠缩减
+  await expect(bar).toHaveAttribute('data-variant', 'compact')
+  await expect(bar).not.toHaveAttribute('data-context-bar-compact', '')
+  // 整条栏都在窗口里（不是左沿夹住、右半截伸出屏幕外），自身也没有被撑破
+  await expect(bar).toBeInViewport({ ratio: 1 })
+  expect(await horizontalOffenders(page, '[data-context-bar]')).toEqual([])
+  await expect(bar.locator('[data-inspector-prop="sizePt"]')).toBeInViewport({ ratio: 1 })
+  // 六向对齐收进「对齐」弹层，打开后按钮在窗口里、点得到
+  await bar.locator('[data-multi-menu="align"]').click()
+  const left = page.locator('[data-radix-popper-content-wrapper] [data-align-mode="left"]')
+  await expect(left).toBeInViewport({ ratio: 1 })
+  await left.click()
 })
