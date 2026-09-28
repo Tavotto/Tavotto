@@ -28,7 +28,7 @@ import { runValidation, useValidationStore } from '@/store/validationStore'
 import { useWorkspaceStore } from '@/store/workspace'
 import { seedExactRender } from '@/test/renderFixtures'
 import { emptyProject, type PanelObject } from '@/types/document'
-import { bindCanvasStyle, resetStyleBindingSession } from '@/store/styleBinding'
+import { bindCanvasStyle, followLibrary, resetStyleBindingSession } from '@/store/styleBinding'
 import { StylePanel } from './StylePanel'
 
 declare global {
@@ -631,6 +631,43 @@ describe('Codex #662 P2：绑定样式时连点，按最后一次排进去的值
     saves[1]?.release()
     await drain()
     expect(saves.map((x) => x.data.element.title.fontsize)).toEqual([start + 0.5, start + 1])
+  })
+
+  it('#688 挂着一笔没落定时切画布：新画布的图从真实读数起算，不显示上一张的挂起值；那一笔照旧存进样式库', async () => {
+    await seed(panel, faceManifest())
+    const saves = slowLibrary()
+    bindCanvasStyle('s1')
+    await new Promise((r) => setTimeout(r, 50))
+    seedExactRender(current(), faceManifest() as never)
+    await mount()
+    await click(button('标题加粗'))
+    expect(button('标题加粗').getAttribute('aria-pressed')).toBe('true')
+    // 另一张画布上一张正体标题的图（id 在项目内唯一，引擎读数与 A 上那张一样）
+    const other: PanelObject = { ...panel, id: 'p2' }
+    await act(async () => {
+      const b = s().addCanvas('B')
+      s().switchCanvas(b)
+      s().commit(literal('B 上放图'), (d) => {
+        d.page = { w: 80, h: 60 }
+        d.objects = [{ ...other }]
+      })
+      seedExactRender(other, faceManifest() as never)
+      useSelectionStore.getState().set(['p2'])
+    })
+    expect(container.querySelector('[data-style-panel]')).toBeTruthy()
+    expect(button('标题加粗').getAttribute('aria-pressed'), 'A 上那一笔的挂起值串到了 B').toBe('false')
+    await drain()
+    saves[0].release()
+    await drain()
+    expect(saves.map((x) => x.data.element.title.weight)).toEqual(['bold'])
+    // 回到 A：库里那条变过，A 按库跟上（同步器在切画布时调的就是 followLibrary）——那一笔没被重挂丢掉
+    await act(async () => {
+      s().switchCanvas(s().canvases[0].id)
+      useSelectionStore.getState().set(['p1'])
+      followLibrary()
+    })
+    const w = current().overrides.filter((o) => o.gid === 'axes_0.title' && o.prop === 'weight').at(-1)?.value
+    expect(w).toBe('bold')
   })
 
   it('那一笔存失败（库写不进去）：放掉挂着的值，按钮回到真实读数', async () => {

@@ -49,7 +49,8 @@ import { qb } from './text'
  * 「排列」组里，这条再铺一遍是同一批控件的第二份摆放（审计 T29）。此时只留
  * 计数 + 六向对齐 + 成组 + 更多：**参照只留一处控件**（状态仍是
  * `arrangeStore` 那一个字段，ADR 0036 不变），当前参照由每颗对齐按钮的提示
- * 报出来。栏也因此短了一截，3 个与 10 个对象下更不容易盖住选区。
+ * 报出来。栏也因此短了一截，3 个与 10 个对象下更不容易盖住选区。停靠又降到最窄档时，
+ * 「排列」弹层里同样只有对齐那一行——弹层不是绕开这条契约的第二处摆放。
  */
 const ar = (key: string, values?: Record<string, unknown>) =>
   translate(`arrange.${key}`, { ns: 'inspector', ...(values ?? {}) })
@@ -97,11 +98,13 @@ export function MultiSelectionBar({
         {countEl}
         <Sep />
         <div className="flex items-center gap-0.5">
+          {/* 最窄档先于停靠判：停靠时弹层里也只放对齐那一行，参照 / 分布 / 等宽等高
+              留在右栏一处（与下面 `docked` 那档同一份契约，#688） */}
           <MenuPopover label={qb('arrangeMenu')} width={232} testId="arrange">
-            <RefPicker />
+            {!docked && <RefPicker />}
             <AlignRow modes={ALIGN_BUTTONS} refName={ref} count={count} />
-            <AlignRow modes={DISTRIBUTE_BUTTONS} refName={ref} count={count} />
-            <AlignRow modes={SIZE_BUTTONS} refName={ref} count={count} />
+            {!docked && <AlignRow modes={DISTRIBUTE_BUTTONS} refName={ref} count={count} />}
+            {!docked && <AlignRow modes={SIZE_BUTTONS} refName={ref} count={count} />}
           </MenuPopover>
           {texts && (
             <MenuPopover label={qb('textMenu')} width={176} testId="text">

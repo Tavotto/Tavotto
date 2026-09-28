@@ -23,7 +23,8 @@
   **控件也只留一处**（审计 T29）：右栏属性页停靠着时（`ContextBar` 的
   `multiBarDocked`，与文字栏的 `textBarCompact` 同一条 `inspectorDocked` 判据）
   浮动栏收成「计数 + 六向对齐 + 成组 + 更多」，参照 / 分布 / 等宽等高的控件让给
-  `ArrangeSection`；当前参照仍由计数上的 title 与每颗对齐按钮的提示报出来。
+  `ArrangeSection`；当前参照仍由计数上的 title 与每颗对齐按钮的提示报出来。停靠 +
+  最窄档时「排列」弹层里同样只放六向对齐（#688：最窄档分支排在停靠前面，弹层里曾整套再出一份）。
 * **主选 = `selection.ids` 末位**。OverlaySvg 里主选轮廓 2 px 并挂
   `data-primary-selection`，联合框挂 `data-multi-selection-bounds`——浮动栏、e2e 与
   后续 coachmark 都锚在这两个节点上，别改名。

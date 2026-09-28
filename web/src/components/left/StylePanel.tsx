@@ -92,6 +92,10 @@ export function StylePanel() {
   const manifest = usePanelDisplayManifest(panel)
   const exact = useExactPanelManifest(panel)
   const rendering = usePanelRender(panel)?.status === 'rendering'
+  // 各行挂着的「还没落定的写入」（`usePendingWrites`）只属于这张画布上的这张图：换画布 / 换图时
+  // 整组行重挂、从真实读数起算，不把上一张的挂起值显示到这一张上（#688）。写入本身排在
+  // `styleBinding` 的队列里、不随组件卸载，那一笔照旧存库并按发起时的代次落定
+  const figureKey = useDocumentStore((s) => `${s.documentId}|${s.activeCanvasId}|${panel?.id ?? ''}`)
 
   if (!panel) {
     // 跟随样式是**画布**一级的事：没选中图时底部的绑定照样在（上面只说怎么看一张图的样式）
@@ -113,7 +117,7 @@ export function StylePanel() {
       </p>
       <div className="min-h-0 flex-1 overflow-y-auto">
         {manifest ? (
-          <FigureStyle panel={panel} manifest={exact ?? manifest} exact={!!exact} />
+          <FigureStyle key={figureKey} panel={panel} manifest={exact ?? manifest} exact={!!exact} />
         ) : panel.script ? (
           /* 可编辑、但这一会话还没渲染过：值要引擎读出来。**不自动跑脚本**（「只带基线、
              还没动过」的面板不渲染，heavy 脚本要几分钟——`useEngineSync.renderTargets`），
