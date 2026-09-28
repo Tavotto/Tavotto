@@ -32,7 +32,8 @@
   被中间设备换证书）→ `private_python_tls`，文案说「证书校验失败」而不是「检查网络」；别的 `SSLError`（协议层）仍归
   offline。每次传输失败一条 WARNING：根异常类型与信任来源按闭集明文（`logsafe.known`），消息本机原样、诊断包里哈希。
 - **联网只有一条路**：每次现建的 `urllib.request.build_opener(tlstrust.https_handler(ctx))`——代理只从
-  `HTTP(S)_PROXY` / `NO_PROXY` 环境变量来、在下载那一刻读（与 `updater` / pip 同一张脸）、`User-Agent: Tavotto/<版本>`、
+  `HTTP(S)_PROXY` / `NO_PROXY` 环境变量来、在下载那一刻读（与 `updater` / `telemetry` / pip 同一张脸；
+  三处出站 HTTPS 都经 `tlstrust`，`tests/test_outbound_https_trust.py` 按 AST 钉）、`User-Agent: Tavotto/<版本>`、
   不带身份；**不读** pip.conf / uv 配置 / 用户配置 / 项目设置（对 `config` 只调 `data_path` / `data_dir`，AST 钉）。
   **证书按平台原生校验**（2026-09-28 起）：上下文唯一出处 `engine/tlstrust.client_context()` = `truststore.SSLContext
   (PROTOCOL_TLS_CLIENT)`（Windows CryptoAPI 建链、缺根按需补装；macOS SecTrust；Linux OpenSSL + 系统 CA——与 pip 一致）。

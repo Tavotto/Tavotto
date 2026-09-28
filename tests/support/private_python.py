@@ -193,6 +193,8 @@ class LoopbackServer:
         #: 到达服务的 TCP 连接数（握手之前数）：TLS 失败时 `requests` 为空，这个数证明客户端确实来过
         self.connections = 0
         self.requests: list[str] = []
+        #: POST 收到的 (路径, 请求体)：遥测投递的回环终点（`tests/test_outbound_https_trust.py`）
+        self.posts: list[tuple[str, bytes]] = []
         self.mode = "ok"
         self.throttle_bps = 0
         self.truncate_bytes = 4096
@@ -216,6 +218,16 @@ class LoopbackServer:
         class Handler(http.server.BaseHTTPRequestHandler):
             def log_message(self, *args):  # 静音
                 pass
+
+            def do_POST(self):  # noqa: N802
+                length = int(self.headers.get("Content-Length") or 0)
+                outer.posts.append((self.path, self.rfile.read(length)))
+                body = b"{}"
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
 
             def do_GET(self):  # noqa: N802
                 outer.requests.append(self.path)

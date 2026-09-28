@@ -20,6 +20,11 @@ pip 不受影响：新版 pip 经 truststore 走平台校验。
 并记一条 WARNING（进程内一次）——**不静默**：那时 Windows 上缺根的机器会以 `private_python_tls` 失败，
 日志里写着为什么。
 
+**产品里的出站 HTTPS 只有三处，全经这里**（`tests/test_outbound_https_trust.py` 按 AST 钉）：私有 Python
+下载（`privatepython._fetch`）、匿名遥测投递（`telemetry._post`）、检查更新（`updater._fetch_latest_release`）。
+三处都是 `urllib.request.build_opener(tlstrust.https_handler(tlstrust.client_context()))`；别的 `urlopen`
+全是 `http://127.0.0.1` 上的本机回环（会话凭据 / 交接 / 已在运行的实例），不经 TLS。
+
 纯标准库 + 延后 import 的 truststore（`pyproject.toml` 的运行时依赖；冻结产物由 `packaging/tavotto.spec`
 的 hiddenimports 收进——延后 import 静态分析看不见）。
 """
@@ -37,6 +42,33 @@ LOG = logging.getLogger("tavotto.tlstrust")
 SOURCE_PLATFORM = "platform"
 SOURCE_OPENSSL = "openssl"
 SOURCES = frozenset({SOURCE_PLATFORM, SOURCE_OPENSSL})
+
+#: 传输层失败的根异常类型名（`root_cause` 的类型名；日志里明文出门的闭集，`logsafe.known`——不在表里的
+#: 照样哈希）。私有 Python 下载、遥测投递、检查更新三处记的都是这一张表。
+TRANSPORT_ERROR_NAMES = frozenset(
+    {
+        "SSLCertVerificationError",
+        "SSLError",
+        "SSLEOFError",
+        "SSLZeroReturnError",
+        "SSLSyscallError",
+        "URLError",
+        "HTTPError",
+        "HTTPException",
+        "RemoteDisconnected",
+        "IncompleteRead",
+        "BadStatusLine",
+        "TimeoutError",
+        "timeout",
+        "gaierror",
+        "ConnectionError",
+        "ConnectionRefusedError",
+        "ConnectionResetError",
+        "ConnectionAbortedError",
+        "BrokenPipeError",
+        "OSError",
+    }
+)
 
 _warn_lock = threading.Lock()
 _fallback_warned = False

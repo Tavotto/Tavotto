@@ -33,8 +33,9 @@ def _ensure_ca_bundle(environ=os.environ, *, platform=sys.platform, exists=os.pa
     版是零。OpenSSL 在**建上下文时**读 `SSL_CERT_FILE`，所以必须在任何 HTTPS
     之前设好；用户自己设了 `SSL_CERT_FILE` / `SSL_CERT_DIR` 的一律不碰。
     Windows 由 CPython 从系统证书库补 CA——但只枚举**已装**的根，缺的根不会按需补装（干净 Windows
-    缺 ISRG Root X1，2026-09-28 实测）；私有 Python 下载因此改走 `engine/tlstrust.py` 的平台原生校验
-    （truststore），这里的 `SSL_CERT_FILE` 与它无关。Linux 没有桌面版。
+    缺 ISRG Root X1，2026-09-28 实测）；私有 Python 下载、遥测投递与检查更新因此都改走
+    `engine/tlstrust.py` 的平台原生校验（truststore，macOS 上是 SecTrust），这里的 `SSL_CERT_FILE`
+    对这三处不再起作用，留着兜底 truststore 退回 OpenSSL 的情形。Linux 没有桌面版。
     修在打包入口而不是 `engine/telemetry.py`：引擎保持纯标准库、不为冻结态引依赖。
     返回设上的路径（没动就是 None），供测试与日志用。
     """

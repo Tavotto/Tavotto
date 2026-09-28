@@ -24,15 +24,15 @@ ROOT = Path(__file__).resolve().parent.parent
 # 没同意 = 零网络
 # ---------------------------------------------------------------------------
 def test_no_consent_means_zero_network(monkeypatch):
-    """同意之前，`urlopen` 一次都不该被调到。"""
+    """同意之前，`OpenerDirector.open` 一次都不该被调到（`urlopen` 与投递现建的 opener 都经过它）。"""
     import urllib.request
 
     monkeypatch.delenv("TAVOTTO_NO_TELEMETRY", raising=False)
     telemetry.reset_for_tests()
     calls: list = []
     monkeypatch.setattr(
-        urllib.request,
-        "urlopen",
+        urllib.request.OpenerDirector,
+        "open",
         lambda *a, **kw: (
             calls.append(a) or (_ for _ in ()).throw(AssertionError("没同意却发起了网络请求"))
         ),
@@ -56,8 +56,8 @@ def test_import_time_makes_no_network_request(monkeypatch):
     import urllib.request
 
     monkeypatch.setattr(
-        urllib.request,
-        "urlopen",
+        urllib.request.OpenerDirector,
+        "open",
         lambda *a, **kw: (_ for _ in ()).throw(AssertionError("import 期间发起了网络请求")),
     )
     importlib.reload(telemetry)

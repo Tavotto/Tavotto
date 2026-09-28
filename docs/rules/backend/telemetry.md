@@ -37,6 +37,17 @@
   线程 + 2–4 秒超时。**没有落盘队列**——能把用户几周前的行为攒起来择机上传的
   队列，与「本地优先」是冲突的，还必然在磁盘上留一份行为记录。断网 = 丢事件，
   这是自觉的取舍。
+- **证书按平台原生校验、证书失败是唯一一条日志**（2026-09-28）：`_post` 用每次现建的
+  `build_opener(tlstrust.https_handler(tlstrust.client_context()))`（truststore；代理仍按投递那一刻的
+  环境变量现读），不是模块级 `urlopen`——后者走 OpenSSL 读到的已装根证书，干净 Windows 起初没有
+  `telemetry.tavotto.com` 链上的 ISRG Root X1（阿里云 Windows Server 2025 实测剔除侧 6/6
+  `CERTIFICATE_VERIFY_FAILED`），遥测静默全丢，与 #439（macOS 冻结 sidecar 缺 CA）同一个形状。
+  断网照旧一个字不写；**证书校验失败**（判据 `tlstrust.cert_verification_error`，与
+  `private_python_tls` 同一口径）每进程记**一条** WARNING：根异常类型与信任来源按闭集明文
+  （`logsafe.known`），消息 app.log 原样、诊断包里哈希。不弹界面、不改任何产品行为。conftest 的
+  零网络探针因此截 `urllib.request.OpenerDirector.open`（`urlopen` 与现建 opener 都经过它），
+  用例替换传输层也换这一个。看护：`tests/test_outbound_https_trust.py`（缺根 / 主机名不符 / 注入
+  测试根投递成功 / 断网与协议层 SSLError 不记日志 / AST 钉「出站 HTTPS 只经 tlstrust」）。
 - **成功边界埋点，不是点击埋点**：`export_completed` 在 `/api/export` 文件
   全部写完之后、正常响应之前（服务端）；`ai_assistant_invoked` 在
   `engine_ai.run()` 真的回了 session 之后（服务端）；pip/pipx 的
