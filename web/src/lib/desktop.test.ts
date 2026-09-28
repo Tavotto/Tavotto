@@ -6,7 +6,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   __resetDesktopUpdate,
   bootstrapDesktopSession,
+  canRevealInFileManager,
   checkDesktopUpdate,
+  fileManagerKind,
   installDesktopUpdate,
   isDesktop,
   onDesktopMenu,
@@ -16,6 +18,7 @@ import {
   pickScriptFile,
   relaunchDesktop,
   revealExportedFile,
+  revealProjectFolder,
   runCodexIntegration,
 } from './desktop'
 
@@ -113,6 +116,23 @@ describe('浏览器回退', () => {
 
   it('revealExportedFile 返回 false（调用方保留 <a> 行为）', async () => {
     expect(await revealExportedFile('/tmp', 'a.pdf')).toBe(false)
+  })
+
+  it('项目文件夹 reveal：入口不摆、调用返回 false', async () => {
+    expect(canRevealInFileManager()).toBe(false)
+    expect(await revealProjectFolder('/tmp')).toBe(false)
+  })
+})
+
+describe('fileManagerKind', () => {
+  it('按 UA 认三种文件管理器', () => {
+    expect(
+      fileManagerKind('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15'),
+    ).toBe('finder')
+    expect(
+      fileManagerKind('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Edg/129.0'),
+    ).toBe('explorer')
+    expect(fileManagerKind('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15')).toBe('files')
   })
 })
 
