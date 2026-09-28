@@ -101,6 +101,14 @@ def _patched_savefig(self, fname, *args, **kwargs):
         # 来源记账与 worker.CAPTURE_SOURCE 同语义：savefig 认领的 stem
         # **可能**有原始产物（在桌面上；这里的虚拟 FS 里永远没有）。
         _session_sources().setdefault(stem, figcapture.SOURCE_SAVEFIG)
+        if _ACTIVE is not None:
+            figcapture.record_savefig_call(
+                _ACTIVE.savefig_calls,
+                _ACTIVE.capture,
+                stem,
+                self,
+                figcapture.savefig_call(fname, kwargs),
+            )
     return None
 
 
@@ -181,6 +189,8 @@ class BrowserSession:
         self.workspace = workspace
         self.capture: dict[str, object] = {}  # stem → Figure（脚本产出顺序）
         self.capture_source: dict[str, str] = {}  # stem → figcapture.SOURCE_*
+        #: stem → 认领它的 savefig 调用（与 worker 同一条记账：`figcapture.record_savefig_call`）
+        self.savefig_calls: dict[str, list | None] = {}
         self.states: dict[str, overrides_mod.FigState] = {}
         self.revision = 0
         self.script_name = ""
@@ -329,6 +339,11 @@ class BrowserSession:
                 size_mm=figcapture.size_mm_of(fig),
                 source_fingerprint=fingerprint,
                 original_artifact=None,
+                savefig_calls=figcapture.savefig_calls_of(
+                    self.savefig_calls,
+                    stem,
+                    self.capture_source.get(stem, figcapture.SOURCE_SAVEFIG),
+                ),
             ).to_payload()
             for stem, fig in self.capture.items()
         ]

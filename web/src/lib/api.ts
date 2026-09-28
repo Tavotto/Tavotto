@@ -3563,6 +3563,24 @@ export interface CapturedFigureDescriptor {
   source_fingerprint: string
   can_writeback_artifact: boolean
   can_writeback_source: boolean
+  /**
+   * 认领这个 stem 的 savefig 调用（按调用顺序）。`null` / 缺席 = 没观察到（旧后端、
+   * `paper_style.save` 捷径）；`[]` = pyplot 捕获、从没存过盘。只记不用（tight 图幅的决定之前）。
+   */
+  savefig_calls?: SavefigCall[] | null
+}
+
+/** 一次 savefig 调用的实效参数（`figcapture.savefig_call` 的形态） */
+export interface SavefigCall {
+  format: string | null
+  /** `"tight"` / null（按 figsize）/ 显式 Bbox 的 [x0, y0, x1, y1]（英寸） */
+  bbox_inches: 'tight' | [number, number, number, number] | string | null
+  pad_inches: number | 'layout' | string | null
+  dpi: number | 'figure' | string | null
+  transparent: boolean
+  facecolor: string | null
+  edgecolor: string | null
+  bbox_extra_artists: number | null
 }
 
 /** 试运行失败的结构化错误：稳定 code + params；traceback 只是诊断详情 */
