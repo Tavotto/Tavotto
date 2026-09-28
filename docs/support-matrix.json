@@ -73,7 +73,11 @@
         "id": "zcode",
         "status": "experimental"
       },
-      {"id": "dsh", "status": "beta", "channel": "dsh-bundle"},
+      {
+        "id": "dsh",
+        "status": "beta",
+        "channel": "dsh-bundle"
+      },
       {
         "id": "workbuddy",
         "status": "experimental"
