@@ -80,7 +80,7 @@ const plan = (preset: StylePreset, panel: PanelObject, m = manifest()) =>
 describe('字体落到刻度与图例上（ticks / legend_text 的 fontfamily）', () => {
   it('白名单按 manifest 真实暴露的位置登记：刻度组与图例项有，图例容器没有', () => {
     expect(STYLE_ROLE_PROPS.ticks).toContain('fontfamily')
-    expect(STYLE_ROLE_PROPS.legend_text).toEqual(['fontfamily'])
+    expect(STYLE_ROLE_PROPS.legend_text).toEqual(['fontfamily', 'weight', 'style'])
     expect(STYLE_ROLE_PROPS.legend).not.toContain('fontfamily')
   })
 

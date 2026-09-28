@@ -558,11 +558,15 @@
       "annotation": "画布标注",
       "dataLine": "数据线宽",
       "frame": "边框线宽",
-      "tickDirection": "刻度方向"
+      "tickDirection": "刻度方向",
+      "tickLength": "刻度长度",
+      "tickWidth": "刻度线宽"
     },
     "familyOf": "{{row}}字体",
     "sizeOf": "{{row}}字号",
-    "issueJump": "在问题中查看：{{title}}",
+    "boldOf": "{{row}}加粗",
+    "italicOf": "{{row}}倾斜",
+    "mixedHint": "这张图里这几处的值不一样；输入一个值会把它们统一",
     "manage": "管理样式…",
     "restore_other": "恢复原样 · {{count}} 项",
     "bindLabel": "跟随样式",

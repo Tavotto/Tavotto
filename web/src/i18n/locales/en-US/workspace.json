@@ -583,11 +583,15 @@
       "annotation": "Annotations",
       "dataLine": "Data lines",
       "frame": "Frame",
-      "tickDirection": "Tick dir."
+      "tickDirection": "Tick dir.",
+      "tickLength": "Tick length",
+      "tickWidth": "Tick width"
     },
     "familyOf": "{{row}} font",
     "sizeOf": "{{row}} size",
-    "issueJump": "View in Problems: {{title}}",
+    "boldOf": "{{row}} bold",
+    "italicOf": "{{row}} italic",
+    "mixedHint": "These differ within the figure; enter a value to make them all the same",
     "manage": "Manage styles…",
     "restore_one": "Restore original · {{count}}",
     "restore_other": "Restore original · {{count}}",

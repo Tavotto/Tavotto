@@ -71,6 +71,7 @@ export function StyleToggle({
   label,
   hint,
   onClick,
+  disabled,
   children,
 }: {
   state: 'on' | 'off' | 'mixed'
@@ -79,6 +80,8 @@ export function StyleToggle({
   /** 悬停时补一句当前值——图标按下与否在小尺寸下不总是一眼可辨 */
   hint?: string
   onClick: () => void
+  /** 此刻不许写（左栏样式面板在这一版渲染回来之前）：置灰，气泡照样说原因 */
+  disabled?: boolean
   children: ReactNode
 }) {
   const mixedText = translate('element.mixedValues', { ns: 'inspector' })
@@ -90,6 +93,7 @@ export function StyleToggle({
         active={state === 'on'}
         aria-pressed={state === 'mixed' ? 'mixed' : state === 'on'}
         aria-label={name}
+        disabled={disabled}
         onClick={onClick}
         className={cn(
           // 宽度不随状态变：mixed 的提示画在按钮内部，不挤走后面的控件
