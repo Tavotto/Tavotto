@@ -228,6 +228,17 @@ describe('浏览器历史', () => {
     back.mockRestore()
   })
 
+  it('编辑器停在 Picker 格上（切换中按了前进、没进去）：换代落定时不退格', () => {
+    useProjectStore.setState({ switching: true })
+    window.history.pushState({ tavottoPicker: true }, '')
+    pop({ tavottoPicker: true })
+    expect(useProjectStore.getState().phase).toBe('open') // 切换中 showPicker 被拦下
+    const back = vi.spyOn(window.history, 'back').mockImplementation(() => {})
+    act(() => useProjectStore.setState({ phase: 'open', switching: false })) // adoptNow 收尾
+    expect(back).not.toHaveBeenCalled()
+    back.mockRestore()
+  })
+
   it('不在 Picker 格上刷新：照常进编辑器', () => {
     useProjectStore.setState({ phase: 'loading' })
     act(() => useProjectStore.setState({ phase: 'open', project: PROJECT }))
