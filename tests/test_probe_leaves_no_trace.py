@@ -169,7 +169,7 @@ def fake_home(tmp_path, monkeypatch) -> Path:
 
 def _owned_python(tmp_path: Path) -> str:
     """数据目录里的一个 venv（受管环境的形态）；科学栈与 pip 经 .pth 借宿主的，不联网。"""
-    root = tmp_path / "data" / "envs" / "p" / "g1"
+    root = tmp_path / "data" / "environments" / "p" / "envs" / "g1"
     subprocess.run(
         [USER_PYTHON, "-m", "venv", "--without-pip", str(root)],
         check=True,
@@ -354,6 +354,26 @@ def test_matplotlib_probe_of_the_bundled_runtime_uses_the_workers_env(
         assert env["MPLCONFIGDIR"] == str(tmp_path / "data" / "cache" / "mpl"), entry
 
 
+def test_owned_means_the_managed_directories_not_everything_under_the_data_dir(
+    tmp_path, monkeypatch
+):
+    """Codex #717：`TAVOTTO_DATA_DIR` 可以是个不专用的祖先目录（`$HOME`、`/opt`）——那下面的 `~/.pyenv`、
+    `/opt/conda` 是用户的环境，不算 Tavotto 自己的。只有那几个受管目录下的才算；目录名与各自的出处对拍。"""
+    from tavotto.engine import managedenv, privatepython
+
+    assert runtime.OWNED_ENV_DIRNAMES == (
+        managedenv.ENVIRONMENTS_DIRNAME,
+        bootstrap.VENV_DIR_NAME,
+        privatepython.DIRNAME,
+    )
+    monkeypatch.setenv("TAVOTTO_DATA_DIR", str(tmp_path))
+    user = tmp_path / ".pyenv" / "versions" / "3.12.4" / "bin" / "python3"
+    assert runtime.is_owned_python(str(user)) is False
+    assert runtime.owned_env(str(user)) is None
+    for name in runtime.OWNED_ENV_DIRNAMES:
+        assert runtime.is_owned_python(str(tmp_path / name / "x" / "bin" / "python")), name
+
+
 def test_the_install_dir_test_python_is_not_owned():
     """前提：宿主测试解释器不在数据目录里——不然上面「用户的环境」那几条量的是另一个对象。"""
     assert not runtime.is_owned_python(USER_PYTHON)
@@ -380,7 +400,7 @@ def test_every_spawn_on_a_tavotto_environment_carries_the_cache_dirs(
     name, fake_home, tmp_path, monkeypatch
 ):
     """判据的主语是真正交给子进程的 env：解释器是假的，起到那一步就回 OSError。"""
-    py = str(tmp_path / "data" / "envs" / "p" / "g1" / "bin" / "python")
+    py = str(tmp_path / "data" / "environments" / "p" / "envs" / "g1" / "bin" / "python")
     seen: list = []
 
     def fake(argv, *a, **kw):

@@ -610,13 +610,21 @@ def probe_args(*, bundled: bool = False) -> list[str]:
     return child_args() if bundled else ["-B"]
 
 
-def is_owned_python(python: str | os.PathLike | None) -> bool:
-    """这个解释器是不是 **Tavotto 自己数据目录里的**：受管环境的各代（`envs/`、`venv/`）、
-    源码模式自建的 `worker-env/`、私有 Python（`private-python/`）。
+#: 数据目录下 Tavotto **自己建解释器**的那几个顶层目录：受管环境（`managedenv.ENVIRONMENTS_DIRNAME`，
+#: 其下各代 `envs/` 与旧布局 `venv/`）、源码模式自建的 worker 环境（`bootstrap.VENV_DIR_NAME`）、私有 Python
+#: （`privatepython.DIRNAME`）。本模块不 import 它们（会成环），三者由 `tests/test_probe_leaves_no_trace.py`
+#: 逐个对拍。
+OWNED_ENV_DIRNAMES = ("environments", "worker-env", "private-python")
 
-    判据是路径：Tavotto 只往 `config.data_dir()` 写（根 AGENTS.md 的不变量），它建出来的
-    解释器因此都在那下面；用户的环境一个都不在。按路径字符串判、**不 realpath**——
-    venv 的 python 是指向基础解释器的软链接，落到真身就把受管环境判成了它的 base。
+
+def is_owned_python(python: str | os.PathLike | None) -> bool:
+    """这个解释器是不是 **Tavotto 自己建的**：数据目录下 `OWNED_ENV_DIRNAMES` 那几个目录里的
+    （受管环境各代、源码模式自建的 `worker-env/`、私有 Python）。
+
+    判据是路径：Tavotto 只往 `config.data_dir()` 写（根 AGENTS.md 的不变量），它建出来的解释器都在
+    那几个目录下。**不是「数据目录下的都算」**：`TAVOTTO_DATA_DIR` 可以被设成一个不专用的祖先目录
+    （`$HOME`、`/opt`），那下面的 `~/.pyenv`、`/opt/conda` 是用户的环境（Codex #717）。按路径字符串判、
+    **不 realpath**——venv 的 python 是指向基础解释器的软链接，落到真身就把受管环境判成了它的 base。
     """
     if not python:
         return False
@@ -627,7 +635,10 @@ def is_owned_python(python: str | os.PathLike | None) -> bool:
         path = os.path.normcase(os.path.abspath(os.fspath(python)))
     except (OSError, TypeError, ValueError):
         return False
-    return path.startswith(root.rstrip(os.sep) + os.sep)
+    return any(
+        path.startswith(os.path.join(root, os.path.normcase(name)) + os.sep)
+        for name in OWNED_ENV_DIRNAMES
+    )
 
 
 def _user_matplotlib_dirs() -> list[str]:

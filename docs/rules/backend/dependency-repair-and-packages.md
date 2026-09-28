@@ -65,7 +65,8 @@
   环境变量不算数，且 `-B` 不改 sys.path / site / env，上一条的对齐不变），`deprepair._run` / `_run_lookup`
   这两个只读执行器在解释器后面统一插；插件的 `server.py --health` 还会起孙进程（resolver 探候选、问引擎版本），
   `codexinstall` 跑它与 `launcher_starts` 时另带 `PYTHONDONTWRITEBYTECODE=1`（`_health_env()`：`-B` 不传给孙进程），
-  插件里那几个探测自己也带 `-B`。数据目录里的解释器（`runtime.is_owned_python`：受管环境各代、
+  插件里那几个探测自己也带 `-B`。Tavotto 自己建的解释器（`runtime.is_owned_python`：只认数据目录下 `OWNED_ENV_DIRNAMES` 那几个目录——
+  数据目录可以是 `$HOME` 这种不专用的祖先，那下面的 `~/.pyenv` 不算；受管环境各代、
   worker-env、私有 Python）起子进程一律 `runtime.owned_env()`：`PIP_CACHE_DIR` → `<data_dir>/cache/pip`（只改
   位置，用户 pip 配置照常生效、`no-cache-dir` 照常压过它），用户一个 matplotlib 目录都没有时
   `MPLCONFIGDIR` → `<data_dir>/cache/mpl`（有就沿用：里面可能有他的 matplotlibrc / stylelib）；worker 的
