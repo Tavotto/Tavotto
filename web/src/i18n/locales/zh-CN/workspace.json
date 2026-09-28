@@ -323,6 +323,7 @@
   },
   "hud": {
     "cursor": "光标",
+    "offset": "位移",
     "size": "尺寸"
   },
   "layerTree": {
@@ -632,6 +633,7 @@
     "notInAnyGroup": "选中的对象不在任何组里",
     "nothingToRedo": "没有可重做的操作",
     "nothingToUndo": "没有可撤销的操作",
+    "nudgeNotMovable": "选中的图内元素不能移动",
     "objectCopied": "已复制 {{name}}",
     "objectsCopied": "已复制 {{count}} 个对象，可粘贴到其他排版",
     "overridesCleared": "已清空这张图的图内修改",

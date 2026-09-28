@@ -323,7 +323,7 @@ test('图内编辑的属性栏（属性页签，选中标题）：正文框有�
     .toBeVisible({ timeout: 60_000 })
 
   // 元素树 → 展开「文字」组 → 点标题。按 role 与双语正则走（本 spec 三条腿里有
-  // 一条是 en-US，fixtures 的 `openElementsTab` 写死了「图内元素」，这里不能用它）。
+  // 一条是 en-US；这里量的正是无障碍名本身，所以不走 fixtures 的 `openElementsTab`）。
   // 按 aria-expanded 判态、不在才点：盲点击会在收起动画里把刚打开的面板关掉。
   const nav = page.getByRole('navigation').getByRole('button', { name: /图内元素|Figure elements/ })
   if ((await nav.getAttribute('aria-expanded')) !== 'true') await nav.click()

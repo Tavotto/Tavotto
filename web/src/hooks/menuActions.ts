@@ -4,17 +4,12 @@ import type { AlignMode } from '@/lib/geometry'
 import { alignSelectedTo, duplicateSelected, runManualSave } from '@/store/actions'
 import { alignSelectedPanelElements, type AlignBlocked } from '@/store/alignAction'
 import { alignRefFor } from '@/store/arrangeStore'
+import { runDiscreteAction, type DiscreteScope } from '@/store/gestureCoordinator'
 import { useProjectStore } from '@/store/projectStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { useUpdateStore } from '@/store/updateStore'
-import {
-  deleteSelection,
-  inFastEdit,
-  runUndoRedo,
-  runZoomCommand,
-  yieldsCanvasShortcuts,
-} from './useKeyboard'
+import { deleteSelection, inFastEdit, runUndoRedo, runZoomCommand } from './useKeyboard'
 
 const ALIGN_PREFIX = 'menu-align-'
 
@@ -35,40 +30,89 @@ function reportElementAlignBlocked(reason: AlignBlocked, mode: AlignMode) {
 }
 
 /**
+ * 每个菜单项的作用域（`runDiscreteAction` 的让位规则）。`Record` 逼每个 action id 都有一格：
+ * 新加的菜单项不填这里编译不过，也就绕不开闸门。
+ *
+ * `canvas` 与 keydown 在输入框 / 对话框里 return 的那几条一一对应：挂了加速键的 ⌘D、⌘0、⌘±、
+ * ⌘Z / ⇧⌘Z，以及「删除」（没挂加速键，但文本框里它的意思是删选中的字）。其余是应用级动作，
+ * 焦点在哪都照做（⌘S 在输入框里也存——keydown 在那里也拦 ⌘S）。
+ */
+const MENU_SCOPE: Record<MenuAction, DiscreteScope> = {
+  'menu-settings': 'app',
+  'menu-check-updates': 'app',
+  'menu-open-project': 'app',
+  'menu-save': 'app',
+  'menu-save-layout': 'app',
+  'menu-export': 'app',
+  'menu-undo': 'canvas',
+  'menu-redo': 'canvas',
+  'menu-duplicate': 'canvas',
+  'menu-delete': 'canvas',
+  'menu-align-left': 'app',
+  'menu-align-hcenter': 'app',
+  'menu-align-right': 'app',
+  'menu-align-top': 'app',
+  'menu-align-vcenter': 'app',
+  'menu-align-bottom': 'app',
+  'menu-align-hdist': 'app',
+  'menu-align-vdist': 'app',
+  'menu-zoom-in': 'canvas',
+  'menu-zoom-out': 'canvas',
+  'menu-zoom-actual': 'canvas',
+  'menu-zoom-fit': 'canvas',
+  'menu-toggle-left': 'app',
+  'menu-toggle-right': 'app',
+  'menu-shortcut-help': 'app',
+  'menu-diagnostics': 'app',
+}
+
+/** Project Picker 上也认的几条（那里的输入框也要能 ⌘Z） */
+const PICKER_ACTIONS: ReadonlySet<MenuAction> = new Set(['menu-open-project', 'menu-undo', 'menu-redo'])
+
+/**
  * 系统菜单（Tauri 壳，`tavotto:menu`）→ 现有 action 的转发。**这里没有第二套行为**：
  * 每一条都落到键盘、顶栏、命令面板、属性页已经在调的那个函数上。
  *
- * 菜单加速键可能先于 webview 的 keydown 截获按键（Windows 上一定如此），所以
- * 挂了加速键的几条要做与 `useKeyboard` **同一个**让位判断——焦点在输入框 /
- * 对话框里时 ⌘D、⌘0、⌘± 什么都不做（与 keydown 在那里 return 一致），⌘S 照存
- * （keydown 在输入框里也拦 ⌘S）。菜单是用鼠标点的还是按键触发的分不出来，
- * 只能按同一条判据走。
+ * 菜单加速键可能先于 webview 的 keydown 截获按键（Windows 上一定如此），keydown 顶部的
+ * 「先落定方向键微调」与输入框让位这里都收不到。所以**每一条**都经 `runDiscreteAction`
+ * 闸门（作用域见 `MENU_SCOPE`）：让位时不收手势、不执行（文本框里的撤销 / 删除交给原生），
+ * 不让位才先收掉开着的连续编辑再执行（Codex #671）。菜单是用鼠标点的还是按键触发的分不
+ * 出来，只能按同一条判据走。
  *
  * 画布动作只在项目打开着时有意义（`useKeyboard` 与这些对话框都挂在 Workspace 里）；
- * Project Picker 上只认「打开项目」与撤销/重做（那里的输入框也要能 ⌘Z）。
+ * Project Picker 上只认 `PICKER_ACTIONS`。
  */
 export function runMenuAction(action: MenuAction) {
+  if (!PICKER_ACTIONS.has(action) && useProjectStore.getState().phase !== 'open') return
+  runDiscreteAction(
+    MENU_SCOPE[action],
+    document.activeElement,
+    () => performMenuAction(action),
+    () => yieldMenuAction(action),
+  )
+}
+
+/** 让位时交给原生的那一份：文本框里撤销 / 重做 / 删掉选中的字；其余什么都不做 */
+function yieldMenuAction(action: MenuAction) {
+  if (action === 'menu-undo') document.execCommand('undo')
+  else if (action === 'menu-redo') document.execCommand('redo')
+  else if (action === 'menu-delete') document.execCommand('delete')
+}
+
+/** 闸门放行之后的动作本身（手势已经收掉） */
+function performMenuAction(action: MenuAction) {
   const ui = useUiStore.getState()
-  const focused = document.activeElement
 
   if (action === 'menu-open-project') {
     useProjectStore.getState().showPicker()
     return
   }
-  // 撤销/重做不看项目开没开：Picker 上的输入框一样要能 ⌘Z。按焦点分派——文本框里
-  // 交还原生文本撤销，画布上走文档 undo 栈；必须走带 undoRedoBlocked 守卫的入口，
-  // 菜单加速键在拖动进行中也会触发，直接 undo 会把进行中的事务当场结算掉，
-  // 后续位移绕过历史（数据损坏）
+  // 撤销/重做必须走带 undoRedoBlocked 守卫的入口：菜单加速键在拖动进行中也会触发，
+  // 直接 undo 会把进行中的事务当场结算掉，后续位移绕过历史（数据损坏）
   if (action === 'menu-undo' || action === 'menu-redo') {
-    const redo = action === 'menu-redo'
-    const inText =
-      focused instanceof HTMLElement &&
-      (focused.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(focused.tagName))
-    if (inText) document.execCommand(redo ? 'redo' : 'undo')
-    else runUndoRedo(redo)
+    runUndoRedo(action === 'menu-redo')
     return
   }
-  if (useProjectStore.getState().phase !== 'open') return
 
   if (action.startsWith(ALIGN_PREFIX)) {
     const mode = action.slice(ALIGN_PREFIX.length) as AlignMode
@@ -116,19 +160,17 @@ export function runMenuAction(action: MenuAction) {
       ui.setExportOpen(true)
       break
     case 'menu-duplicate':
-      // 与 keydown 的 ⌘D 同一组判据：输入框 / 对话框里让位，快速编辑里不往看不见的版面上加副本
-      if (!yieldsCanvasShortcuts(focused) && !inFastEdit()) duplicateSelected()
+      // 快速编辑里不往看不见的版面上加副本（与 keydown 的 ⌘D 同一条判据）
+      if (!inFastEdit()) duplicateSelected()
       break
     case 'menu-delete':
-      // 没挂加速键，只会是点出来的：文本框里就删选中的字（与 macOS「编辑 → 删除」一致）
-      if (yieldsCanvasShortcuts(focused)) document.execCommand('delete')
-      else deleteSelection()
+      deleteSelection()
       break
     case 'menu-zoom-in':
     case 'menu-zoom-out':
     case 'menu-zoom-actual':
     case 'menu-zoom-fit':
-      if (!yieldsCanvasShortcuts(focused)) runZoomCommand(ZOOM[action])
+      runZoomCommand(ZOOM[action])
       break
     case 'menu-toggle-left':
       ui.toggleLeft()

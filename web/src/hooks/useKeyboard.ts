@@ -12,11 +12,15 @@ import {
   deleteSelected,
   duplicateSelected,
   hideElements,
-  nudgeSelected,
   selectAll,
 } from '@/store/actions'
+import { finishNudge, nudgeKeyDown, nudgeKeyUp } from '@/canvas/nudge'
 import { useDocumentStore } from '@/store/documentStore'
-import { cancelActivePointerGesture, finishActiveGesture } from '@/store/gestureCoordinator'
+import {
+  cancelActivePointerGesture,
+  finishActiveGesture,
+  yieldsCanvasShortcuts,
+} from '@/store/gestureCoordinator'
 import { useInteractionStore } from '@/store/interactionStore'
 import { panelRender, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
@@ -62,20 +66,8 @@ function hideSelectedElements(panelId: string, gids: string[]) {
   useUiStore.getState().setSelectedGid(null)
 }
 
-/**
- * 焦点在这里时画布快捷键让位（输入框里的原生编辑、对话框自己的键）。
- * keydown 按 `e.target` 问它，系统菜单的转发（`hooks/menuActions.ts`）按
- * `document.activeElement` 问它——菜单加速键可能先于 keydown 截获按键，
- * 两条路必须是同一条判据，否则 ⌘D 在输入框里会被菜单变成「创建副本」。
- */
-export function yieldsCanvasShortcuts(el: EventTarget | null) {
-  if (!(el instanceof HTMLElement)) return false
-  return (
-    el.isContentEditable ||
-    /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) ||
-    el.closest('[role="dialog"]') != null
-  )
-}
+/** 画布快捷键的让位判据：唯一一份在 gestureCoordinator（菜单、剪贴板事件同一条） */
+export { yieldsCanvasShortcuts }
 
 const inEditableTarget = (e: KeyboardEvent) => yieldsCanvasShortcuts(e.target)
 
@@ -105,6 +97,39 @@ export function runZoomCommand(cmd: ZoomCommand) {
     vp.fitAnimated(page.w, page.h)
   }
 }
+
+/**
+ * 自己用方向键的控件（ARIA 复合控件：列表、树、标签页、单选组、菜单、滑块……）。
+ * 焦点在它们里面时方向键归它们，不推画布上的选中对象。工具条（`toolbar`）不在此列：
+ * 本应用的工具条不做方向键漫游，点完对齐按钮接着按方向键微调是常见动作。
+ */
+const ARROW_WIDGETS = [
+  'listbox',
+  'tree',
+  'treegrid',
+  'grid',
+  'tablist',
+  'radiogroup',
+  'menu',
+  'menubar',
+  'slider',
+  'spinbutton',
+  'combobox',
+]
+  .map((r) => `[role="${r}"]`)
+  .join(',')
+
+/**
+ * 方向键这一下是不是已经归了别人：控件自己处理过（`preventDefault`，如素材卡、元素树），
+ * 或焦点在自己用方向键的控件里。输入框 / 可编辑文本 / 对话框已由 `inEditableTarget` 挡掉。
+ */
+export function arrowOwnedByWidget(e: KeyboardEvent): boolean {
+  if (e.defaultPrevented) return true
+  const el = e.target
+  return el instanceof Element && el.closest(ARROW_WIDGETS) != null
+}
+
+const MODIFIER_KEYS = new Set(['Shift', 'Alt', 'Meta', 'Control', 'CapsLock'])
 
 /**
  * 拖动 / 缩放 / 框选 / 画线 / 调端点进行中要忽略撤销重做：`documentStore.undo()`
@@ -145,6 +170,10 @@ export function useKeyboard() {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const ui = useUiStore.getState()
+
+      // 方向键微调的一段只由方向键续上：按了别的键（删除、⌘D、Esc、打字……）先把这一段
+      // 落定，免得后面的动作并进同一个事务 / 同一条撤销
+      if (!e.key.startsWith('Arrow') && !MODIFIER_KEYS.has(e.key)) finishNudge()
 
       if (e.code === 'Space' && !inEditableTarget(e)) {
         if (!e.repeat) useViewportStore.getState().setSpaceDown(true)
@@ -298,18 +327,10 @@ export function useKeyboard() {
         return
       }
       if (e.key.startsWith('Arrow')) {
-        if (!useSelectionStore.getState().ids.length) return
-        e.preventDefault()
-        // 快速编辑这一屏上**没有版面**：方向键推的是面板在版上的 x/y，而这里
-        // 除了这张图什么都不显示。用户既看不见它动，也不知道自己动了它——
-        // 退出快速编辑之后才发现图挪了位置。吃掉这个键（不让它冒出去滚界面），
-        // 但什么都不改。
-        if (inFastEdit()) return
-        const d = e.shiftKey ? 5 : 0.5
-        nudgeSelected(
-          e.key === 'ArrowLeft' ? -d : e.key === 'ArrowRight' ? d : 0,
-          e.key === 'ArrowUp' ? -d : e.key === 'ArrowDown' ? d : 0,
-        )
+        // 方向键微调（ADR 0093）：图内编辑态推图内选中的元素，否则推画布选区；
+        // 快速编辑里画布对象不动（`canvas/nudge.ts`）。归了微调就不让它冒出去滚界面
+        if (arrowOwnedByWidget(e)) return
+        if (nudgeKeyDown(e)) e.preventDefault()
         return
       }
 
@@ -334,6 +355,7 @@ export function useKeyboard() {
 
     const onKeyUp = (e: KeyboardEvent) => {
       if (e.code === 'Space') useViewportStore.getState().setSpaceDown(false)
+      nudgeKeyUp(e)
     }
     const onBlur = () => useViewportStore.getState().setSpaceDown(false)
     const onCopy = (e: ClipboardEvent) => void handleCopyEvent(e)

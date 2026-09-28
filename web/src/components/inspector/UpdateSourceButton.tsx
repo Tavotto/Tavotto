@@ -345,7 +345,9 @@ export function WriteBackDialog({
             summary={wb('backupDone', { dir: dirTail(result.backup_dir) })}
           />
           {result.verified !== null && (
-            <p className="text-xs text-ink-3">{wb('verified', { count: result.verified })}</p>
+            <p data-write-back="verified" className="text-xs text-ink-3">
+              {wb('verified', { count: result.verified })}
+            </p>
           )}
           {result.sizeMismatch && (
             <p className="text-xs leading-relaxed text-danger">{wb('sizeMismatch')}</p>
@@ -417,6 +419,7 @@ export function UpdateSourceButton({ panel }: { panel: PanelObject }) {
               : 'noOverridesTitle',
         )}
         data-write-back="open"
+        data-write-back-entry="inspector"
         onClick={() => setOpen(true)}
       >
         <FileUp size={ICON_SIZE.sm} />
@@ -483,6 +486,7 @@ export function WriteBackTopBarButton() {
       <Tip label={tip}>
         <Button
           data-write-back="open"
+          data-write-back-entry="topbar"
           // ghost（2026-09-15 打磨批次 F）：顶栏右侧只剩一颗填色的「导出」，其余不带壳
           variant="ghost"
           size="md"
