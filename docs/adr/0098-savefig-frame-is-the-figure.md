@@ -33,7 +33,7 @@
 | 图幅是什么 | **frame（F）**：定义这张图的那次 savefig 调用，matplotlib 自己的 `print_figure` 会裁到的那个框（英寸，figure 左下为原点，可以伸到 figsize 外）。`bbox_inches` 为 None（绝大多数脚本）→ 没有 frame，一切与今天逐字节相同 |
 | 怎么算 | 不复刻算法：用那次调用记下的参数（`savefig_calls` + 会话里留着的 `bbox_extra_artists` 对象）真跑一遍 matplotlib 的 savefig 到内存，读它交给 `_tight_bbox.adjust_bbox` 的那个框。显式 Bbox 直接用 |
 | 哪次调用定义它 | 与写回目标同格式的第一次调用（原件是 `Fig1.pdf` 就取第一次存 pdf 的那次），没有原件取第一次调用；pyplot 捕获、调用没观察到 → 没有 frame |
-| 什么时候算 | 每次 build：脚本跑完、instrument 之前（一切 override 之前）。热会话、写回的一次性重放、native 屏障、浏览器 playground 都走这一处 |
+| 什么时候算 | 每次 build：脚本跑完、instrument 之前（一切 override 之前）。热会话、写回的一次性重放、native 屏障、浏览器 playground 都走这一处。native 里先在 `show()` 屏障按 pyplot 兜底捕获、之后才被存盘的图，在下一个屏障重放之前补上（那一刻 Figure 是脚本原样） |
 | 编辑会不会移动它 | **不会**。frame 只由脚本决定；拖动、改字号都不改它（拖出去的照常被裁、预检照常报，与非 tight 的图一致）。只有改图幅（`size_mm`）改它 |
 | 对外的坐标系 | **frame 就是这张图**：manifest 的 `size_mm`、一切几何分数、预览 SVG / PNG、导出、描述符尺寸都以 F 为准；前端一行不用知道 figsize |
 | 对内 | matplotlib 的 Figure 仍是 figsize（G）。frame 以 matplotlib 自己 savefig 时的同一个函数（`adjust_bbox`）落在三处：输出（`bbox_inches=F`）、manifest 测量、输入（`frac_to_display` 与 `axes.position` 的写入换算） |
@@ -57,7 +57,10 @@ tight 布局在算框之前先跑一遍。复刻一份就是第二份实现，�
    观察，拿它收到的 `bbox_inches`（已经加过 pad）。这就是原件被裁成的那个框——用的是那个
    格式自己的 renderer（PDF 的文字度量与 Agg 不同，差零点几毫米）；
 4. 观察不到（这一版 matplotlib 换了内部函数名、脚本的 savefig 自己抛了）→ 没有 frame，
-   响应里报一条 `frame_unavailable` 诊断，不猜。
+   不猜：原因挂在 Figure 上，manifest 报 `frame_unavailable`（三条入口同一处，渲染响应都带着）。
+
+记账上限（`MAX_SAVEFIG_CALLS`）之外，一种还没记过的格式的第一次调用照记——否则先在循环里
+存了一串 png、最后才存 tight 原件 pdf 的脚本，定义图幅的那次调用被丢掉。
 
 原型实测（3.11.2 与 3.8.4，九种 tight 形状 + Fig1）：F 与脚本用同一版 matplotlib 存出的
 磁盘原件尺寸逐位相同（0.01 mm）；跨版本（3.11 存的原件、3.8 算 F）差 ≤ 0.24 mm，那是
@@ -160,7 +163,8 @@ F、缩放比不变、左上角不动——结果是：内容大小不变，但�
   热态与全量重放分岔（`test_switching_the_frame_mid_session_equals_a_fresh_replay`）。
 - **迁移标记是面板上的**（`PanelObject.figureFrame = 1`），不是项目上的：面板会经检查点恢复、
   跨标签页粘贴、项目包在项目之间流动，项目级的位保不住它们。读档唯一入口
-  `migrateToProject` 与布局版本恢复 `restoreLayoutVersion` 都调同一个
+  `migrateToProject`、布局版本恢复 `restoreLayoutVersion` 与剪贴板粘贴 `materializePaste`
+  （负载可能出自升级前的标签页）都调同一个
   `lib/figureFrameMigration.migrateFigureFrames`；新建面板的三个入口（`addPanel` /
   `addRuntimePanel` / 内嵌画布）生来带记号。磁盘格式不升版（加字段）。
 - **只给「此刻样子来自引擎」的老面板补 override**：runtime 面板，与带着图内修改的 PDF 面板。

@@ -144,6 +144,41 @@ describe('pasteObjects 正常路径不受影响', () => {
     expect(status(l)).toContain('已粘贴')
   })
 
+  it('升级前的面板（没有图幅记号）粘进来：与读档同一道迁移，重开时不再变样（ADR 0098 §三）', async () => {
+    const legacyPanel = (id: string, overrides: unknown[]) => ({
+      id, type: 'panel', fileId: 'Fig1.pdf', fileKind: 'pdf', nativeW: 80, nativeH: 57.6,
+      x: 10, y: 10, w: 60, h: 43.2, script: 'fig1.py', overrides,
+    })
+    setClipboard({
+      readText: vi.fn().mockResolvedValue(
+        JSON.stringify({
+          magic: CLIPBOARD_FORMAT,
+          sourceDocId: 'd_elsewhere',
+          objects: [
+            legacyPanel('edited', [{ gid: 'axes_0', prop: 'facecolor', value: '#eeeeee' }]),
+            legacyPanel('pristine', []),
+          ],
+          layoutGroups: [],
+        }),
+      ),
+    })
+    const l = await load()
+    const { useAssetStore } = await import('@/store/assetStore')
+    useAssetStore.setState({
+      byId: { 'Fig1.pdf': { id: 'Fig1.pdf', kind: 'pdf', native_w_mm: 80, native_h_mm: 57.6 } },
+    } as never)
+
+    expect(await l.clipboard.pasteObjects()).toBe(true)
+    const [edited, pristine] = l.useDocumentStore.getState().doc.objects
+    const frameOf = (o: unknown) => {
+      const p = o as { figureFrame?: number; overrides: { gid: string; prop: string; value: unknown }[] }
+      return [p.figureFrame, p.overrides.filter((x) => x.prop === 'frame').map((x) => x.value)]
+    }
+    // 带图内修改的（此刻样子来自引擎）补 figsize；没有修改的画的是原件本身，只打记号
+    expect(frameOf(edited)).toEqual([1, ['figsize']])
+    expect(frameOf(pristine)).toEqual([1, []])
+  })
+
   it('读到普通文本：不消费这次粘贴，也不弹任何提示', async () => {
     setClipboard({ readText: vi.fn().mockResolvedValue('随便一段文字') })
     const l = await load()

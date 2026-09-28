@@ -678,6 +678,11 @@ class BridgeRun:
                 # 这一轮**新出现**的图：`instrument_all()` 刚给它建过状态、
                 # 出过预览，baseline 就是此刻。再来一遍纯属重复渲染。
                 continue
+            # 图幅（ADR 0098）在重放之前定：此刻 Figure 是脚本原样（离开上一个屏障时已还原）。
+            # 上一个屏障按 pyplot 兜底捕获、之后才被按同一个 stem 存盘的图，第一次有了调用——
+            # `instrument_all()` 只管新图，不在这里补的话它在 native 里永远按 figsize、切边。
+            # 已有图幅 / 没有调用的图 `establish_frame` 当场返回
+            self.session.establish_frame(stem, state.fig)
             manifest.instrument(state)
             patches = self.saved_patches.get(stem) or []
             warnings = overrides.apply(state, patches) if patches else []

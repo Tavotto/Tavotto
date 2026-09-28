@@ -4775,6 +4775,11 @@ def _measure_manifest(state: FigState, stem: str, arm, fig, renderer) -> dict:
     if frame is not None:
         # 加字段协议：老前端原样忽略；没有 frame 的图不出现这个键（ADR 0098）
         out["frame"] = frame
+    unavailable = pathgeom.frame_unavailable(fig)
+    if unavailable is not None:
+        # 脚本按 `bbox_inches` 存过盘、图幅却算不出来：这一版按 figsize 出图（可能切边），说出来
+        # ——不说的话它与「脚本本来就不裁」分不开（ADR 0098 §一第 4 条）。加字段协议，同上
+        out["frame_unavailable"] = unavailable
     # 诊断字段：画在图上、却没进元素表的 artist（`census` 在 instrument 里采）。
     # 可选、只在非空时出现——旧前端不认识它会原样忽略，写回自检只比 gid 集合
     # 与几何，不看这里。有它才谈得上「知道自己漏了什么」（§35）。

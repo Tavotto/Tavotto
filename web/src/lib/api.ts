@@ -1636,6 +1636,11 @@ export interface Manifest {
    * 生不生效。前端只拿它给升级前的面板提示与「内容不动」的换算；几何照旧只认 `size_mm` 与分数。
    */
   frame?: ManifestFrame
+  /**
+   * 脚本按 `bbox_inches` 存过盘、引擎却算不出那个图幅时的原因（ADR 0098 §一第 4 条）：这一版按
+   * figsize 出图、可能切边。有它才分得清「算不出」与「脚本本来就不裁」；缺席 = 两者之外。
+   */
+  frame_unavailable?: string
 }
 
 export interface EngineRenderResponse {

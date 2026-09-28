@@ -161,6 +161,26 @@ class TestRecordingRule:
             figcapture.record_savefig_call(calls, capture, "Fig1", fig, {"i": i})
         assert [c["i"] for c in calls["Fig1"]] == list(range(figcapture.MAX_SAVEFIG_CALLS))
 
+    def test_a_format_first_seen_past_the_cap_is_still_recorded(self):
+        """上限之后第一次出现的格式照记（图幅按「与原件同格式的第一次」挑）；已记过的格式、
+        以及总数到了 `MAX_SAVEFIG_CALLS_HARD` 之后，照旧丢。只追加：下标对齐不变。"""
+        calls, fig = {}, object()
+        capture = {"Fig1": fig}
+        kept = [
+            figcapture.record_savefig_call(calls, capture, "Fig1", fig, {"format": "png", "i": i})
+            for i in range(figcapture.MAX_SAVEFIG_CALLS + 2)
+        ]
+        assert kept == [True] * figcapture.MAX_SAVEFIG_CALLS + [False, False]
+        assert figcapture.record_savefig_call(calls, capture, "Fig1", fig, {"format": "PDF"})
+        assert not figcapture.record_savefig_call(calls, capture, "Fig1", fig, {"format": "pdf"})
+        assert figcapture.record_savefig_call(calls, capture, "Fig1", fig, {"format": "tiff"})
+        assert not figcapture.record_savefig_call(calls, capture, "Fig1", fig, {"format": "tif"})
+        assert [c["format"] for c in calls["Fig1"]][-2:] == ["PDF", "tiff"]
+        assert figcapture.frame_call(calls["Fig1"], "Fig1.pdf")["format"] == "PDF"
+        for i in range(figcapture.MAX_SAVEFIG_CALLS_HARD):
+            figcapture.record_savefig_call(calls, capture, "Fig1", fig, {"format": f"x{i}"})
+        assert len(calls["Fig1"]) == figcapture.MAX_SAVEFIG_CALLS_HARD
+
     def test_the_descriptor_value_keeps_unknown_apart_from_none(self):
         calls = {"a": [{"format": "pdf"}], "b": None}
         assert figcapture.savefig_calls_of(calls, "a", figcapture.SOURCE_SAVEFIG) == [

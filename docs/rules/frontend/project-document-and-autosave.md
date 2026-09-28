@@ -14,7 +14,8 @@
   undo 栈（canvasSessions）与 UI 会话（`store/canvasSession.ts`）。
   标签页 openTabs 按 documentId 存本机。后端 versions/package 接受 schema 2/3。
 - **图幅记号 `PanelObject.figureFrame`（ADR 0098 §三）**：缺席 = 升级前放上排版的面板。读档
-  （`migrateToProject`）与布局版本恢复（`restoreLayoutVersion`）都经
+  （`migrateToProject`）、布局版本恢复（`restoreLayoutVersion`）与剪贴板粘贴（`materializePaste`，
+  负载可能出自升级前的标签页）都经
   `lib/figureFrameMigration.migrateFigureFrames` 迁移：此刻样子来自引擎的（runtime、带图内修改的
   PDF）补一条 `figure.frame = "figsize"`、其余只打记号；新建面板的入口生来带记号。标记放在
   面板上不放在项目上：面板会经检查点、粘贴、项目包在项目之间流动。切换到脚本的图幅只经

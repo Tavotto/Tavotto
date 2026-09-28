@@ -156,6 +156,7 @@ __all__ = [
     "frame_extra_artists",
     "FRAME_ATTR",
     "MAX_SAVEFIG_CALLS",
+    "MAX_SAVEFIG_CALLS_HARD",
     "collect_pyplot_figures",
     "fallback_stems",
     "install_relative_read_fallback",
@@ -213,8 +214,12 @@ _SOURCES = (SOURCE_SAVEFIG, SOURCE_PYPLOT)
 
 #: 一个 stem 最多记几次 savefig 调用。同一张图存 pdf + png（+ svg）是常态，循环里
 #: 反复存同一个名字也见过；再多的调用对「产物长什么样」不再有新信息，记下来只是
-#: 让 build 响应变胖。超出的丢掉、不报错（前 8 次已足够说明脚本的意图）。
+#: 让 build 响应变胖。超出的丢掉、不报错（前 8 次已足够说明脚本的意图）——**例外**：
+#: 超出之后第一次出现的格式仍记下（图幅按「与原件同格式的第一次」挑，`frame_call`；丢了它，
+#: 循环里先存了 8 张 png 的脚本，末尾那份 tight 的 pdf 原件就按 png 那次的框出图）。
+#: 这类例外本身也有上限：总数最多 `MAX_SAVEFIG_CALLS_HARD`。
 MAX_SAVEFIG_CALLS = 8
+MAX_SAVEFIG_CALLS_HARD = 2 * MAX_SAVEFIG_CALLS
 
 #: 根 Figure 上挂图幅（frame，ADR 0098）四边外伸的属性名。唯一的写入方是
 #: `pathgeom.set_frame`（它那边的 `FRAME_ATTR` 与这里是同一个字面量，用例钉住）。
@@ -361,7 +366,7 @@ class CapturedFigureDescriptor:
     can_writeback_artifact: bool  # 只能由工厂派生（见 build_descriptor）
     can_writeback_source: bool  # v1 恒 False（不改写用户脚本，ADR 0013 §7）
     #: 认领这个 stem 的 savefig 调用（`savefig_call()` 的形态，按调用顺序，最多
-    #: `MAX_SAVEFIG_CALLS` 次）。三档，「不知道」是独立一档：
+    #: `MAX_SAVEFIG_CALLS` 次，另加超出后新出现的格式各一次）。三档，「不知道」是独立一档：
     #: `None` = 没观察到（`paper_style.save` 捷径整个被替换、看不见参数；旧 payload
     #: 没有这个键也是这一档）；`()` = 确实没有 savefig（pyplot 捕获）；非空 = 记下的调用。
     savefig_calls: tuple | None = None
@@ -708,7 +713,9 @@ def record_savefig_call(calls: dict, capture: dict, stem: str, fig, call: dict |
       调用的产物在磁盘上会覆盖前者，但捕获表里那张不是它，参数也就不是它的；
     * `call is None` = 这次存盘发生了、参数没观察到（`paper_style.save` 捷径）：整份
       变成「不知道」并保持下去——只记到一部分的列表会被当成全貌；
-    * 最多 `MAX_SAVEFIG_CALLS` 次，多的丢掉。
+    * 最多 `MAX_SAVEFIG_CALLS` 次，多的丢掉；但一种还没记过的格式的第一次照记（总数
+      不超过 `MAX_SAVEFIG_CALLS_HARD`）——只追加不替换，调用方按下标对齐的
+      `bbox_extra_artists` 才不会错位。
 
     返回这次调用是否被记下（调用方据此把同一次调用里进不了 JSON 的
     `bbox_extra_artists` 对象按同一个下标另存）。
@@ -719,10 +726,22 @@ def record_savefig_call(calls: dict, capture: dict, stem: str, fig, call: dict |
         calls[stem] = None
         return False
     seq = calls.setdefault(stem, [])
-    if seq is not None and len(seq) < MAX_SAVEFIG_CALLS:
-        seq.append(call)
-        return True
-    return False
+    if seq is None:
+        return False
+    if len(seq) >= MAX_SAVEFIG_CALLS:
+        fmt = _norm_format(call.get("format"))
+        if len(seq) >= MAX_SAVEFIG_CALLS_HARD or any(
+            _norm_format(c.get("format")) == fmt for c in seq
+        ):
+            return False
+    seq.append(call)
+    return True
+
+
+def _norm_format(fmt) -> str:
+    """格式名的同一性：大小写与 jpeg/jpg、tif/tiff 两对别名不算不同的格式。"""
+    fmt = str(fmt or "").lower()
+    return {"jpeg": "jpg", "tif": "tiff"}.get(fmt, fmt)
 
 
 def frame_call(calls, original_artifact: str | None):
@@ -731,11 +750,9 @@ def frame_call(calls, original_artifact: str | None):
     if not calls:
         return None
     if original_artifact:
-        ext = os.path.splitext(original_artifact)[1].lstrip(".").lower()
-        ext = {"jpeg": "jpg", "tif": "tiff"}.get(ext, ext)
+        ext = _norm_format(os.path.splitext(original_artifact)[1].lstrip("."))
         for call in calls:
-            fmt = str(call.get("format") or "").lower()
-            if {"jpeg": "jpg", "tif": "tiff"}.get(fmt, fmt) == ext:
+            if _norm_format(call.get("format")) == ext:
                 return call
     return calls[0]
 

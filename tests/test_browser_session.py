@@ -328,6 +328,36 @@ fig.savefig("Real.pdf")
     assert not (tmp_path / "ws" / "Real.pdf").exists(), "build 期不许写用户输出文件"
 
 
+def test_an_unmeasurable_savefig_frame_is_reported_in_the_manifest(tmp_path):
+    """图幅算不出（ADR 0098 §一第 4 条）：playground 与桌面同一个 `frame_unavailable`——以前这条
+    入口把原因丢了，图按 figsize 出、响应里一个字都没有。"""
+    src = """
+import matplotlib.pyplot as plt
+from matplotlib.artist import Artist
+
+
+class Unmeasurable(Artist):
+    def draw(self, renderer):
+        pass
+
+    def get_tightbbox(self, renderer=None):
+        raise ValueError("no extent")
+
+
+fig, ax = plt.subplots(figsize=(2, 2))
+ax.plot([0, 1], [0, 1])
+fig.add_artist(Unmeasurable())
+fig.savefig("U.pdf", bbox_inches="tight")
+"""
+    load, opened = drive(
+        [{"cmd": "load", "filename": "u.py", "source": src}, {"cmd": "open", "stem": "U"}],
+        tmp_path,
+    )
+    assert load["ok"] and opened["ok"], opened
+    assert opened["manifest"]["size_mm"] == [50.8, 50.8]
+    assert opened["manifest"].get("frame_unavailable", "").startswith("ValueError")
+
+
 def test_pyplot_fallback_names_do_not_collide(tmp_path):
     src = """
 import matplotlib.pyplot as plt

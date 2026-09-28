@@ -103,7 +103,8 @@
     三条入口（safe worker 的 `_patched_savefig`、native bridge 的透传钩子、浏览器 playground）
     都经 `figcapture.savefig_call()` 记下每次调用的**实效值**（显式参数 > 调用那一刻的
     `rcParams["savefig.*"]`），记账规则唯一出处 `figcapture.record_savefig_call()`：只记认领
-    这个 stem 的那张图的调用、最多 `MAX_SAVEFIG_CALLS` 次。字段三档，「不知道」独立一档：
+    这个 stem 的那张图的调用、最多 `MAX_SAVEFIG_CALLS` 次（之后新出现的格式各记第一次，总数
+    不超过 `MAX_SAVEFIG_CALLS_HARD`：图幅按「与原件同格式的第一次」挑）。字段三档，「不知道」独立一档：
     `None` = 没观察到、`[]` = pyplot 捕获从没存过盘、非空 = 调用列表。它不进 fingerprint。
     实效值跟着 matplotlib 自己的 `setdefault` 走：`transparent` 时没给的底色是 `"none"`。native
     里先在 `show()` 屏障按 pyplot 兜底捕获、之后又被按同一个 stem 存盘的图，来源升级为 savefig
@@ -118,7 +119,9 @@
     `bbox_inches=F`（`pathgeom.output_kwargs`）、manifest 在 `pathgeom.in_frame`
     （同一个 `adjust_bbox`）里量、输入 `frac_to_display` 与 `axes.position` 的 setter 换算。
     `figure.frame = "figsize"` 关掉它（升级前的排版，ADR 0098 §三）。没有 `bbox_inches` 的
-    脚本这几处都回到原来那一行，逐字节不变。看护 `tests/test_savefig_frame.py`。
+    脚本这几处都回到原来那一行，逐字节不变。算不出来的原因挂在 Figure 上、manifest 报
+    `frame_unavailable`（与「本来就不裁」分得开）。native 里屏障之后才第一次存盘的图，在下一个
+    屏障 `rebase()` 重放之前补上图幅。看护 `tests/test_savefig_frame.py`。
   * **`paper_style.save` 捷径执行用户那份 `save`（ADR 0098 §四；也是 #667「写回原脚本」设计里点名的前置修正）**：
     以前整个换成只登记 stem 的 lambda，里面的 savefig 从没执行。现在先按 `stem` 认领，再调用
     原来的 `save`，其间每一次 savefig 被拦截、不落盘、记到这个 `stem` 名下（worker 的

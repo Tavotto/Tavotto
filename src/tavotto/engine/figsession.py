@@ -214,8 +214,6 @@ class LiveFigureSession:
         #: 项目根：定义图幅的那次调用按「与原件同格式」挑（`figcapture.frame_call`）；
         #: None = 这条入口不谈原件（native bridge），取第一次调用
         self.frame_project_root: str | None = None
-        #: stem -> 算不出图幅的原因（如实报告，不猜；ADR 0098 §一第 4 条）
-        self.frame_errors: dict[str, str] = {}
         #: stem -> FigState（`instrument()` 之后才有）
         self.states: dict[str, overrides_mod.FigState] = {}
         self._manifest_cache: dict[str, dict] = {}
@@ -257,7 +255,8 @@ class LiveFigureSession:
 
         在脚本跑完之后、instrument 之前（一切 override 之前）调；热会话、写回的一次性
         重放、native 屏障都走这一处，所以两边算出同一个框。没有调用 / 没观察到 /
-        `bbox_inches` 为 None → 不挂，一切与以前逐字节相同。算不出 → 不挂并记下原因。
+        `bbox_inches` 为 None → 不挂，一切与以前逐字节相同。算不出 → 不挂，原因挂在图上
+        （`pathgeom.frame_unavailable`），manifest 报 `frame_unavailable`。
         """
         if self.capture_source.get(stem, figcapture.SOURCE_SAVEFIG) != figcapture.SOURCE_SAVEFIG:
             return
@@ -272,7 +271,6 @@ class LiveFigureSession:
                 fig, call, extra, lambda f, *a, **k: f.savefig(*a, **k)
             )
         if error is not None:
-            self.frame_errors[stem] = error
             print(
                 f"[frame] {stem}: 算不出 savefig 的裁切框，按 figsize 显示（{error}）",
                 file=sys.stderr,

@@ -189,6 +189,7 @@ def test_export_page_matches_the_scripts_own_original(tmp_path, session, name):
     s.w.export(name, [], str(out), fmt="pdf", dpi=600)
     assert _mediabox_mm(out) == pytest.approx(original, abs=0.02)
     assert _outside(man) == [], "原件里完整的元素在图幅里也必须完整"
+    assert "frame_unavailable" not in man, "算得出图幅的图不报「算不出」"
 
 
 def test_a_png_original_defines_the_frame_at_its_own_resolution(tmp_path, session):
@@ -237,12 +238,69 @@ def test_previews_and_probes_are_cropped_to_the_frame(tmp_path, session):
     )
 
 
+MANY_CALLS = """\
+fig, ax = plt.subplots(figsize=(2.6, 1.9))
+fig.subplots_adjust(left=0.08, right=0.99, bottom=0.08, top=0.97)
+ax.plot([0, 1, 2, 3], [1, 3, 2, 4])
+ax.set_xlabel("Elapsed time since injection (s)", fontsize=11)
+for i in range(12):
+    fig.savefig("many_calls.png", dpi=40)
+fig.savefig("many_calls.pdf", bbox_inches="tight", pad_inches=0.02)
+"""
+
+
+def test_a_late_call_in_the_originals_format_still_defines_the_frame(tmp_path, session):
+    """记账上限（`MAX_SAVEFIG_CALLS`）之后才第一次出现的格式照记：先在循环里存了十几张
+    不裁的 png、最后才存 tight 的 pdf 原件，图幅仍按 pdf 那次（以前它被丢掉，退回第一次
+    png 调用，按 figsize 出图、切边）。"""
+    figs = _project(tmp_path, "many_calls", MANY_CALLS)
+    original = _mediabox_mm(figs / "many_calls.pdf")
+    s = session(figs, "many_calls.py")
+    (desc,) = s.build["descriptors"]
+    assert [c["format"] for c in desc["savefig_calls"]][-2:] == ["png", "pdf"]
+    assert s.manifest("many_calls")["size_mm"] == pytest.approx(original, abs=0.02)
+
+
+UNMEASURABLE = """\
+from matplotlib.artist import Artist
+
+
+class Unmeasurable(Artist):
+    def draw(self, renderer):
+        pass
+
+    def get_tightbbox(self, renderer=None):
+        raise ValueError("no extent")
+
+
+fig, ax = plt.subplots(figsize=(2.6, 1.9))
+ax.plot([0, 1, 2], [1, 3, 2])
+fig.add_artist(Unmeasurable())
+fig.savefig("unmeasurable.pdf", bbox_inches="tight")
+"""
+
+
+def test_a_frame_that_cannot_be_measured_is_reported(tmp_path, session):
+    """脚本按 tight 存盘、图幅却算不出来（这里：用户的 artist 在 tight 量包围盒时抛）：按 figsize
+    出图，manifest 如实报 `frame_unavailable`——不报的话与「脚本本来就不裁」分不开。
+    （脚本不真跑：它自己的 savefig 也会抛；worker 拦截 savefig、不执行它。）"""
+    figs = tmp_path / "figs"
+    figs.mkdir()
+    (figs / "unmeasurable.py").write_text(HEAD + UNMEASURABLE, encoding="utf-8")
+    s = session(figs, "unmeasurable.py")
+    man = s.manifest("unmeasurable")
+    assert man["size_mm"] == [66.04, 48.26]
+    assert "frame" not in man
+    assert man.get("frame_unavailable", "").startswith("ValueError"), man.get("frame_unavailable")
+
+
 def test_a_script_without_bbox_inches_keeps_the_figsize(tmp_path, session):
     """绝大多数脚本：没有 frame，图幅就是 figsize，伸出去的照旧被切（并由预检说出来）。"""
     figs = _project(tmp_path, "plain", NOT_TIGHT)
     s = session(figs, "plain.py")
     man = s.manifest("plain")
     assert man["size_mm"] == [76.2, 50.8]
+    assert "frame_unavailable" not in man, "本来就不裁的图不报「算不出」"
     assert _mediabox_mm(figs / "plain.pdf") == (76.2, 50.8)
     assert "axes_0.xlabel" in _outside(man), "前提：这张图的轴标题确实伸出了 figsize"
 

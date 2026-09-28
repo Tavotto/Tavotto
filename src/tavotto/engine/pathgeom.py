@@ -317,6 +317,9 @@ def _figsize(fig) -> tuple[float, float]:
 #: `figure.frame = "figsize"`：图幅按 figsize（升级前的版面，ADR 0098 §三）。外伸照旧挂着，
 #: manifest 据它告诉前端「脚本存盘的图幅是什么」，只是不生效
 _SUPPRESSED_ATTR = "_mm_frame_suppressed"
+#: 脚本按 `bbox_inches` 存过盘、图幅却算不出来的原因（ADR 0098 §一第 4 条）。挂在 Figure 上而不是
+#: 某个会话的表里：三条入口都经 `establish_frame`、manifest 都经 `manifest.build`，一处写一处读
+_UNAVAILABLE_ATTR = "_mm_frame_unavailable"
 
 
 def savefig_outsets(fig):
@@ -349,6 +352,11 @@ def frame_outsets(fig):
     if frame_suppressed(fig):
         return None
     return savefig_outsets(fig)
+
+
+def frame_unavailable(fig) -> str | None:
+    """算不出图幅的原因（manifest 的 `frame_unavailable`）；算出来了或本来就没有图幅回 None。"""
+    return root_figure(fig).__dict__.get(_UNAVAILABLE_ATTR)
 
 
 def frame_report(fig) -> dict | None:
@@ -504,10 +512,15 @@ def establish_frame(fig, call, extra_artists, real_savefig) -> str | None:
     """
     if savefig_outsets(fig) is not None or call is None or call.get("bbox_inches") is None:
         return None
+    root = root_figure(fig)
     try:
         bbox = savefig_frame(fig, call, extra_artists, real_savefig)
     except Exception as exc:  # noqa: BLE001 - 用户的图、用户的 artist：什么都可能抛
-        return f"{type(exc).__name__}: {exc}"
+        # 如实挂在图上：manifest 据它报 `frame_unavailable`，调用方不必各自转达（浏览器入口
+        # 以前把返回值丢了，图按 figsize 出、响应里一个字都没有）
+        root.__dict__[_UNAVAILABLE_ATTR] = reason = f"{type(exc).__name__}: {exc}"
+        return reason
+    root.__dict__.pop(_UNAVAILABLE_ATTR, None)
     if bbox is None or not (bbox.width > 0 and bbox.height > 0):
         return None
     set_frame(fig, bbox)

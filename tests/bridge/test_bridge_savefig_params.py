@@ -76,9 +76,20 @@ plt.show()
 """
 
 
+def _page_mm(path) -> list[float]:
+    m = re.search(
+        rb"/MediaBox\s*\[\s*([\d.\-]+)\s+([\d.\-]+)\s+([\d.\-]+)\s+([\d.\-]+)",
+        path.read_bytes(),
+    )
+    return [round((float(m.group(i + 2)) - float(m.group(i))) / 72 * 25.4, 2) for i in (1, 2)]
+
+
 def test_a_figure_shown_first_and_saved_later_is_a_savefig_capture(tmp_path, bridge_session):
     """第一个屏障按 pyplot 兜底捕获（stem = 脚本名），继续之后脚本把同一张图按同一个 stem
-    存了盘：第二个屏障里它是 savefig 捕获、调用照记——不许还报「从没存过盘」（`[]`）。"""
+    存了盘：第二个屏障里它是 savefig 捕获、调用照记——不许还报「从没存过盘」（`[]`）。
+
+    图幅（ADR 0098）也跟上：它在第一个屏障就有了 FigState，`instrument_all()` 不再管它；
+    第二个屏障重放之前按那次 tight 调用挂上图幅，页面 = 脚本写出的原件，不再按 figsize 切边。"""
     proj = tmp_path / "proj"
     write(proj / "paper.py", LATE_SAVE)
     with bridge_session(proj / "paper.py", cwd=str(proj)) as sess:
@@ -97,6 +108,10 @@ def test_a_figure_shown_first_and_saved_later_is_a_savefig_capture(tmp_path, bri
         assert [(c["format"], c["bbox_inches"]) for c in desc["savefig_calls"]] == [
             ("pdf", "tight")
         ]
+        page = _page_mm(proj / "paper.pdf")
+        assert page != pytest.approx([76.2, 50.8], abs=0.5), "前提：tight 原件确实不是 figsize"
+        assert desc["size_mm"] == pytest.approx(page, abs=0.02)
+        assert first["size_mm"] == [76.2, 50.8]
         sess.resume()
         sess.wait_event("barrier")  # 脚本跑完那次
         sess.resume()
