@@ -408,6 +408,25 @@ describe('系统拖放（桌面壳交来真实路径，ADR 0092）', () => {
     expect(desktop.pickScriptFile).toHaveBeenCalledTimes(1)
   })
 
+  it('等壳期间开始切换项目：到点的降级不再弹选择器、不说话（放下时没在切，到点时在切）', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    await mount()
+    const ev = new Event('drop', { bubbles: true, cancelable: true })
+    Object.defineProperty(ev, 'dataTransfer', {
+      value: { types: ['Files'], getData: () => '', files: [{ name: 'figure.py' }], dropEffect: 'none' },
+    })
+    await act(async () => {
+      main().dispatchEvent(ev)
+    })
+    act(() => useProjectStore.setState({ switching: true }))
+    await act(async () => {
+      vi.advanceTimersByTime(3000)
+    })
+    expect(desktop.pickScriptFile).not.toHaveBeenCalled()
+    expect(host.textContent).not.toContain('「figure.py」')
+    expect(open).not.toHaveBeenCalled()
+  })
+
   it('能力探测与订阅先后不定：订阅先好、探测还没回，壳的事件与页面 drop 同时到也不弹选择器', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
     let answer: (ok: boolean) => void = () => {}

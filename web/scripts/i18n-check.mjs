@@ -33,6 +33,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { topLevelKeys } from './i18n-args.mjs'
 
 const WEB = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const LOCALES_DIR = path.join(WEB, 'src/i18n/locales')
@@ -471,8 +472,8 @@ function main() {
    *
    * 第 3 组只比两种语言彼此一致；两边都写了 `{{product}}`、调用点却只传 `name` 时它是绿的，
    * 用户看到的是原样的 `{{product}}`（#688）。这里只判**看得全**的实参：没传、或是一个不含
-   * 展开（`...`）的对象字面量；变量、展开、函数调用给出的值看不见内容，不猜。
-   * 省略写法 `{ name }` 与 `name: x` 都算传了。 */
+   * 展开 / 计算键的对象字面量；变量、展开、函数调用给出的值看不见内容，不猜。只认**顶层**键
+   * （`{ name }` 与 `name: x` 都算传了，嵌套对象里的同名键不算），解析见 `i18n-args.mjs`。 */
   const varsOfKey = (nsKey) => {
     const [ns, key] = nsKey.split(/:(.+)/)
     const out = new Set()
@@ -488,11 +489,9 @@ function main() {
   for (const { nsKey, values, where } of calls) {
     const want = varsOfKey(nsKey)
     if (!want.size) continue
-    const text = (values ?? '').trim()
-    if (text && (!text.startsWith('{') || text.includes('...'))) continue
-    // 认的是**键**的位置（`{`/`,` 之后、`:`/`,`/`}` 之前），值里碰巧同名的标识符不算
-    const passed = (v) => new RegExp(String.raw`(?:^|[{,])\s*['"]?${v}['"]?\s*(?:[:,}]|$)`).test(text)
-    const missing = [...want].filter((v) => !passed(v))
+    const passed = topLevelKeys(values)
+    if (!passed) continue
+    const missing = [...want].filter((v) => !passed.has(v))
     if (missing.length) add('interpolation-args', `${where} 调 ${nsKey} 没传 [${missing}]`)
   }
 
