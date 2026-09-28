@@ -23,7 +23,8 @@
   三处同步——`build.rs` 的 `AppManifest::commands`、`capabilities/main.json`
   加 `allow-<命令名连字符化>`、`main.rs` 的 `generate_handler`。漏掉前两处
   invoke 会被**静默拒绝**（reveal_export「点了没反应」就是这么坏的）；
-  失败路径不许吞——回退时把完整文件路径告诉用户。
+  失败路径不许吞——回退时把完整文件路径告诉用户。三处齐全的看护读结构不读子串
+  （`tests/support/rustsrc.py`，枚举在 `tests/test_desktop_codex_button.py`）。
 - **关窗询问闸**（issue #223，ADR 0002 的「关窗询问闸」一节）：
   `WindowEvent::CloseRequested` → `CloseGate` → 事件 `tavotto:close-requested`
   → 前端答 `hold`/`close`/`cancel`。三条别改坏：**默认不拦**（前端 arm 之后才拦，
@@ -32,11 +33,12 @@
   **说取消**」（压成一个 bool 会让点了取消的窗口两秒后自己关掉）、
   **必须留看门狗**（没有它 = 一个关不掉的窗口；拦的唯一入口是 `hold_window()`，
   行为有 Rust 单测钉住，别退回「在源码里搜 token」那种空门禁）。
-  ⌘Q 与系统注销不走这条路。
+  ⌘Q 与系统注销不走这条路。两侧同源由 `tests/test_desktop_close_guard.py` 看护。
 - **主页拖放拿真实路径**（ADR 0092）：`disable_drag_drop_handler()` 必须留着（装上 Tauri 的处理器
   页面 HTML5 拖放整片失效）；macOS 上 `native_drop.rs` 只旁听 `performDragOperation:` 读路径、发
   `tavotto:file-drop`、再调原实现。路径分派只在 `drop_paths::classify`（绝对 + canonicalize，Rust 单测），
-  视图分派在前端（只有主页订阅）；两侧同源由 `tests/test_desktop_file_drop.py` 看护。
+  视图分派在前端（只有主页订阅）；两侧同源由 `tests/test_desktop_file_drop.py` 看护，「什么算脚本」与页面
+  `scriptImport.ts` 同源由 `tests/golden/drop_script_rule.json`（两侧各读）看护。
 - 桌面交接契约 argv `--open <目录> [--stem <stem>]`：生产者唯一
   `handoff.desktop_argv()`，消费者唯一 `src-tauri/src/main.rs::parse_open_args()`，
   两侧各有单测，改一边必须同步另一边（完整交接语义见

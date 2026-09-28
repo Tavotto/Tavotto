@@ -24,6 +24,14 @@ from pathlib import Path
 
 import pytest
 
+from tests.support.rustsrc import (
+    allow_permission,
+    capability_permissions,
+    handler_commands,
+    manifest_commands,
+    tauri_commands,
+)
+
 ROOT = Path(__file__).resolve().parent.parent
 TAURI = ROOT / "src-tauri"
 LOCALES = ROOT / "web" / "src" / "i18n" / "locales"
@@ -51,31 +59,25 @@ def _texts(locale: str) -> dict:
 # --------------------------------------------------------------------------- #
 # ACL 三处同步（枚举，不是白名单）
 # --------------------------------------------------------------------------- #
-def _declared_commands() -> list[str]:
-    """main.rs 里所有 `#[tauri::command]` 的函数名。"""
-    src = _read("src", "main.rs")
-    names = re.findall(r"#\[tauri::command\]\s*(?:pub\s+)?(?:async\s+)?fn\s+(\w+)", src)
-    assert names, "一个 #[tauri::command] 都没找到——正则或文件结构变了，这道门禁已经空了"
-    return names
-
-
 def test_every_tauri_command_is_declared_in_all_three_places():
-    """三处缺一，invoke 就被静默拒绝。**枚举所有命令**，不给某一个写白名单。"""
-    build_rs = _read("build.rs")
-    main_rs = _read("src", "main.rs")
-    cap = json.loads(_read("capabilities", "main.json"))
-    handler = main_rs.split("generate_handler![")[1].split("]")[0]
+    """三处缺一，invoke 就被静默拒绝。**枚举所有命令**，不给某一个写白名单。
 
-    for name in _declared_commands():
-        assert f'"{name}"' in build_rs, f"build.rs 的 AppManifest::commands 里没有 {name}"
-        allow = "allow-" + name.replace("_", "-")
-        assert allow in cap["permissions"], f"capabilities/main.json 没放行 {name}（{allow}）"
-        assert re.search(rf"\b{name}\b", handler), f"generate_handler 里没有 {name}"
+    三处都读结构（`tests/support/rustsrc.py`）：`build.rs` 读 `commands(&[...])` 数组的条目、
+    `generate_handler![...]` 读宏的条目，注释里、无关字符串里写着命令名都不算登记（Codex #696）。
+    反过来也比：清单里有、却没有对应 `#[tauri::command]` 的名字，是删命令时漏删的残留。"""
+    commands = tauri_commands()
+    manifest, handler, cap = manifest_commands(), handler_commands(), capability_permissions()
+    for name in commands:
+        assert name in manifest, f"build.rs 的 AppManifest::commands 里没有 {name}"
+        assert allow_permission(name) in cap, f"capabilities/main.json 没放行 {name}"
+        assert name in handler, f"generate_handler 里没有 {name}"
+    assert sorted(manifest) == sorted(set(manifest)) == sorted(commands), (manifest, commands)
+    assert sorted(handler) == sorted(set(handler)) == sorted(commands), (handler, commands)
 
 
 def test_the_codex_button_has_a_command_at_all():
     """上一条是「所有命令都齐」，这条钉的是**这个命令存在**——否则删掉它也全绿。"""
-    assert "codex_integration" in _declared_commands()
+    assert "codex_integration" in tauri_commands()
 
 
 # --------------------------------------------------------------------------- #

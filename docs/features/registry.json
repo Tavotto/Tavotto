@@ -40,7 +40,7 @@
     {
       "id": "project.readiness",
       "status": "active",
-      "platform": "browser",
+      "platform": "both",
       "summary": {
         "zh-CN": "项目接入状态：没连上源脚本时给出「试运行并连接」",
         "en-US": "Project readiness offers “probe and connect” when a figure has no linked script"
@@ -51,12 +51,15 @@
           "spec": "golden-paths.spec.ts",
           "title": "还没连上源脚本时，界面给得出「重新扫描 / 试运行」而不是让用户对着空列表猜"
         }
+      ],
+      "desktop_manual": [
+        "打开一个图还没连上源脚本的项目：工作区抽屉 → 当前项目「…」→「项目接入状态…」，弹出对话框并给出「重新扫描 / 试运行」，点试运行后状态真的更新"
       ]
     },
     {
       "id": "assets.run-script-figure",
       "status": "active",
-      "platform": "browser",
+      "platform": "both",
       "summary": {
         "zh-CN": "素材库运行脚本发现图，放上画布并进入图内编辑",
         "en-US": "Run a script from the asset library, place its figure and edit inside it"
@@ -67,6 +70,9 @@
           "spec": "asset-library.spec.ts",
           "title": "show-only 项目：素材库普通入口 → Runtime Figure → 画布 → 图内编辑 → undo/redo"
         }
+      ],
+      "desktop_manual": [
+        "左栏「素材」→ 脚本行点「运行并发现图」：跑完素材里出现那张图，双击放上画布后进图内编辑改一处，撤销 / 重做都生效"
       ]
     },
     {
@@ -179,6 +185,25 @@
           "spec": "cross-tab-paste.spec.ts",
           "title": "同一项目开两个标签页：标签 A 复制面板，标签 B 粘贴"
         }
+      ]
+    },
+    {
+      "id": "canvas.copy-paste-across-canvases",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "复制 / 粘贴对象（同一窗口里跨画布，保持原坐标）",
+        "en-US": "Copy / paste objects across canvases in one window, keeping their position"
+      },
+      "entry": "画布 → ⌘C → 切到另一张画布 → ⌘V",
+      "e2e": [
+        {
+          "spec": "features.spec.ts",
+          "title": "功能：同一窗口里复制对象，切到另一张画布粘贴，对象出现在原坐标；原画布不受影响"
+        }
+      ],
+      "desktop_manual": [
+        "画布上选中一张图 ⌘C，切到另一张画布 ⌘V：图出现且位置与原画布上相同；再用菜单「编辑 → 粘贴」一次，结果相同"
       ]
     },
     {
