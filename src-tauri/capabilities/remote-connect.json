@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "remote-connect-page",
+  "description": "远程实例窗口里壳自带的 connect.html（tauri:// 源，ADR 0105）：只能调 connect_remote——验登录地址、探测远程引擎、放行端口并导航。引擎页面（remote-engine.json）拿不到这条。",
+  "windows": [
+    "remote"
+  ],
+  "local": true,
+  "permissions": [
+    "allow-connect-remote"
+  ]
+}

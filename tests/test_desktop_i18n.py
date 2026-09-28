@@ -164,7 +164,7 @@ def test_menu_and_ui_agree_on_shared_actions(locale: str, table: str):
 # 启动画面 / 失败页
 # --------------------------------------------------------------------------- #
 
-SHELL_PAGES = ["splash.html", "error.html"]
+SHELL_PAGES = ["splash.html", "error.html", "connect.html"]
 
 
 @pytest.mark.parametrize("page", SHELL_PAGES)

@@ -835,16 +835,32 @@ def web_assets(name):
     return resp
 
 
+#: 这一版前端认得出桌面壳的「远程实例窗口」、会把本机文件类能力让给浏览器回退
+#: （ADR 0105）。桌面壳连远程引擎之前问 `/api/version` 要这个标记，没有就拒绝连接。
+#: **与 `src-tauri/src/remote.rs` 的 `REMOTE_WINDOW_FEATURE` 严格同源**
+#: （`tests/test_desktop_remote.py`）。
+DESKTOP_REMOTE_WINDOW_FEATURE = "desktop-remote-window"
+
+
 @app.get("/api/version")
 def api_version():
-    """当前前端构建 id：旧标签页据此发现自己过期并提示刷新。"""
+    """当前前端构建 id：旧标签页据此发现自己过期并提示刷新。
+
+    `features` 是给别的程序问的能力标记（目前只有桌面壳连远程实例用）：公开端点，
+    只说「这一版会什么」，不带任何项目或机器信息。"""
     try:
         html = (WEB_DIST / "index.html").read_text(encoding="utf-8")
         m = re.search(r"assets/(index-[\w-]+)\.js", html)
         build = m.group(1) if m else "unknown"
     except OSError:
         build = "dev"
-    resp = jsonify({"build": build, "version": engine_updater.current_version()})
+    resp = jsonify(
+        {
+            "build": build,
+            "version": engine_updater.current_version(),
+            "features": [DESKTOP_REMOTE_WINDOW_FEATURE],
+        }
+    )
     resp.headers["Cache-Control"] = "no-store"
     return resp
 

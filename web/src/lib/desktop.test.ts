@@ -8,9 +8,12 @@ import {
   bootstrapDesktopSession,
   canRevealInFileManager,
   checkDesktopUpdate,
+  armDesktopCloseGuard,
   fileManagerKind,
+  hasDesktopShell,
   installDesktopUpdate,
   isDesktop,
+  isRemoteEngineWindow,
   onDesktopMenu,
   pickDirectory,
   nativeFileDropAvailable,
@@ -22,6 +25,16 @@ import {
   runCodexIntegration,
 } from './desktop'
 
+// 远程实例窗口那一组用：壳在，但本机文件类能力一条都不许碰
+const tauri = vi.hoisted(() => ({
+  listen: vi.fn(async () => () => {}),
+  invoke: vi.fn(async () => undefined),
+  open: vi.fn(async () => '/local/path'),
+}))
+vi.mock('@tauri-apps/api/event', () => ({ listen: tauri.listen }))
+vi.mock('@tauri-apps/api/core', () => ({ invoke: tauri.invoke }))
+vi.mock('@tauri-apps/plugin-dialog', () => ({ open: tauri.open }))
+
 afterEach(() => {
   vi.unstubAllGlobals()
   history.replaceState(null, '', '/')
@@ -30,6 +43,61 @@ afterEach(() => {
 describe('isDesktop', () => {
   it('jsdom（浏览器）里为 false', () => {
     expect(isDesktop()).toBe(false)
+    expect(hasDesktopShell()).toBe(false)
+    expect(isRemoteEngineWindow()).toBe(false)
+  })
+})
+
+describe('远程实例窗口（ADR 0105）', () => {
+  const w = window as unknown as Record<string, unknown>
+  afterEach(() => {
+    delete w.__TAURI_INTERNALS__
+    delete w.__TAVOTTO_REMOTE_ENGINE__
+    vi.clearAllMocks()
+  })
+
+  it('本机主窗口：壳在、引擎在本机', () => {
+    w.__TAURI_INTERNALS__ = {}
+    expect(hasDesktopShell()).toBe(true)
+    expect(isRemoteEngineWindow()).toBe(false)
+    expect(isDesktop()).toBe(true)
+  })
+
+  it('远程窗口：壳在，但不算「本机桌面」', () => {
+    w.__TAURI_INTERNALS__ = {}
+    w.__TAVOTTO_REMOTE_ENGINE__ = true
+    expect(hasDesktopShell()).toBe(true)
+    expect(isRemoteEngineWindow()).toBe(true)
+    expect(isDesktop()).toBe(false)
+  })
+
+  it('只有标记没有壳（普通浏览器里有人设了这个全局）不算远程窗口', () => {
+    w.__TAVOTTO_REMOTE_ENGINE__ = true
+    expect(isRemoteEngineWindow()).toBe(false)
+  })
+
+  it('远程窗口里本机文件类能力全部走浏览器回退，一次 IPC 都不发', async () => {
+    w.__TAURI_INTERNALS__ = {}
+    w.__TAVOTTO_REMOTE_ENGINE__ = true
+    expect(await pickDirectory()).toBeNull()
+    expect(await pickScriptFile()).toBeNull()
+    expect(await revealExportedFile('/srv/figs/exports', 'a.pdf')).toBe(false)
+    expect(canRevealInFileManager()).toBe(false)
+    expect(await revealProjectFolder('/srv/figs')).toBe(false)
+    expect(await nativeFileDropAvailable()).toBe(false)
+    expect(await checkDesktopUpdate()).toBeNull()
+    await expect(runCodexIntegration('doctor')).rejects.toMatchObject({ code: 'not_desktop' })
+    expect(tauri.open).not.toHaveBeenCalled()
+    expect(tauri.invoke).not.toHaveBeenCalled()
+  })
+
+  it('远程窗口照样收菜单、照样问关窗', async () => {
+    w.__TAURI_INTERNALS__ = {}
+    w.__TAVOTTO_REMOTE_ENGINE__ = true
+    await onDesktopMenu(() => {})
+    expect(tauri.listen).toHaveBeenCalledWith('tavotto:menu', expect.any(Function))
+    expect(await armDesktopCloseGuard()).toBe(true)
+    expect(tauri.invoke).toHaveBeenCalledWith('arm_close_guard')
   })
 })
 

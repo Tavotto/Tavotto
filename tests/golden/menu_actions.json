@@ -1,5 +1,5 @@
 {
-  "_comment": "原生菜单的动作 id（严格同源对）：壳侧 src-tauri/src/main.rs::menu_spec 真正挂上去的项与它比，前端 web/src/lib/desktop.ts 的 MENU_ACTIONS 与它比，两侧都不读对方源码。forwarded 经 tavotto:menu 转发给前端；shell 由壳自己开链接，不进前端。",
+  "_comment": "原生菜单的动作 id（严格同源对）：壳侧 src-tauri/src/main.rs::menu_spec 真正挂上去的项与它比，前端 web/src/lib/desktop.ts 的 MENU_ACTIONS 与它比，两侧都不读对方源码。forwarded 经 tavotto:menu 转发给前端；shell 由壳自己处理（开帮助链接 / 开远程实例窗口，ADR 0105），不进前端。",
   "forwarded": [
     "menu-settings",
     "menu-check-updates",
@@ -30,6 +30,7 @@
   ],
   "shell": [
     "help-docs",
-    "help-report-issue"
+    "help-report-issue",
+    "shell-connect-remote"
   ]
 }

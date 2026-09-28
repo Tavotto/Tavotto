@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>Tavotto</title>
+<style>
+  html, body { height: 100%; margin: 0; }
+  body {
+    display: flex; align-items: center; justify-content: center;
+    background: #F2F2EF; color: #1A1A18;
+    font: 13px/1.6 -apple-system, "SF Pro Text", "Segoe UI", "Microsoft YaHei", sans-serif;
+  }
+  main { width: 560px; max-width: calc(100vw - 48px); }
+  h1 { font-size: 15px; font-weight: 600; margin: 0 0 8px; }
+  p  { margin: 0 0 10px; font-size: 12.5px; color: #3D3D39; }
+  ol { margin: 0 0 14px; padding-left: 20px; font-size: 12.5px; color: #3D3D39; }
+  li { margin: 0 0 6px; }
+  code, input {
+    font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11.5px;
+  }
+  code {
+    background: #FFFFFF; border: 1px solid #E3E3DE; border-radius: 4px;
+    padding: 1px 5px; user-select: all; -webkit-user-select: all; word-break: break-all;
+  }
+  form { display: flex; gap: 8px; margin: 0 0 8px; }
+  input {
+    flex: 1; min-width: 0; height: 30px; box-sizing: border-box; padding: 0 10px;
+    background: #FFFFFF; color: #1A1A18; border: 1px solid #D6D6D0; border-radius: 6px;
+  }
+  input:focus { outline: 2px solid #1A1A18; outline-offset: -1px; }
+  button {
+    height: 30px; padding: 0 14px; border: 0; border-radius: 6px;
+    background: #1A1A18; color: #FFFFFF; font: inherit; font-size: 12.5px; cursor: pointer;
+  }
+  button:disabled { opacity: 0.5; cursor: default; }
+  button:focus-visible { outline: 2px solid #1A1A18; outline-offset: 2px; }
+  .status { min-height: 20px; font-size: 12px; color: #6E6E68; white-space: pre-wrap; }
+  .status.error { color: #A3321F; }
+  .hint { margin-top: 14px; font-size: 11.5px; color: #6E6E68; }
+</style>
+</head>
+<body>
+  <main>
+    <h1 id="title">连接远程实例</h1>
+    <p id="intro">在服务器上运行 Tavotto，经 SSH 端口转发在这个窗口里使用它。脚本在服务器上运行、文件就地写回。</p>
+    <ol>
+      <li><span id="step1">在服务器上运行：</span><br /><code>tavotto --no-browser</code></li>
+      <li><span id="step2">在本机另开一个终端，保持它连着（两边端口必须相同）：</span><br /><code>ssh -L 5089:127.0.0.1:5089 you@server</code></li>
+      <li><span id="step3">把服务器打印的登录地址粘到下面（形如 http://127.0.0.1:5089/#dnonce=…）。每个地址只能用一次；需要新的，在服务器上再运行一次同样的命令。</span></li>
+    </ol>
+    <form id="form">
+      <input id="url" type="text" autocomplete="off" spellcheck="false"
+             placeholder="http://127.0.0.1:5089/#dnonce=…" aria-labelledby="step3" />
+      <button id="go" type="submit">连接</button>
+    </form>
+    <p class="status" id="status" role="status" aria-live="polite"></p>
+    <p class="hint" id="hint">这个窗口拿不到本机的文件：打开项目、导出等路径都在服务器上。</p>
+  </main>
+  <script>
+    // 内联两份文案的理由见 splash.html：tauri:// 源下没有 i18next。
+    // `errors` 的键与 src-tauri/src/remote.rs 的 `ConnectError::code()` 严格同源
+    // （tests/test_desktop_remote.py 比两侧集合）：壳只回稳定 code，人话在这里。
+    const STRINGS = {
+      'zh-CN': {
+        title: '连接远程实例',
+        intro: '在服务器上运行 Tavotto，经 SSH 端口转发在这个窗口里使用它。脚本在服务器上运行、文件就地写回。',
+        step1: '在服务器上运行：',
+        step2: '在本机另开一个终端，保持它连着（两边端口必须相同）：',
+        step3: '把服务器打印的登录地址粘到下面（形如 http://127.0.0.1:5089/#dnonce=…）。每个地址只能用一次；需要新的，在服务器上再运行一次同样的命令。',
+        go: '连接',
+        connecting: '正在连接 127.0.0.1:{port}…',
+        hint: '这个窗口拿不到本机的文件：打开项目、导出等路径都在服务器上。',
+        errors: {
+          bad_url: '这不是一个登录地址。请粘贴服务器上 tavotto --no-browser 打印的那一行（以 http://127.0.0.1: 开头）。',
+          not_loopback: '地址必须是 127.0.0.1（不是 localhost 或服务器的地址）：Tavotto 只在本机回环上接受连接，远程访问请用 ssh -L 转发。',
+          no_nonce: '地址里缺少 #dnonce=… 登录口令。请复制完整的一行。',
+          is_local_engine: '这是本机 Tavotto 自己的地址，直接用主窗口就好。',
+          unreachable: '连不上 127.0.0.1:{port}。请确认 ssh -L 还连着，且两边端口相同；再确认服务器上的 Tavotto 在运行。',
+          not_tavotto: '127.0.0.1:{port} 上有程序在监听，但不是 Tavotto。请检查 ssh -L 转发的端口。',
+          too_old: '服务器上的 Tavotto 版本太旧，不支持在桌面版里连接。请在服务器上升级：pip install -U tavotto',
+          bad_window: '连接失败，请关掉这个窗口后从「文件 → 连接远程实例…」重试。',
+          unknown: '连接失败：{code}',
+        },
+      },
+      'en-US': {
+        title: 'Connect to Remote Instance',
+        intro: 'Run Tavotto on a server and use it in this window over an SSH port forward. Scripts run on the server and files are written back there.',
+        step1: 'On the server, run:',
+        step2: 'In another terminal on this computer, keep this open (the two ports must match):',
+        step3: 'Paste the login address the server printed below (it looks like http://127.0.0.1:5089/#dnonce=…). Each address works once; for a new one, run the same command on the server again.',
+        go: 'Connect',
+        connecting: 'Connecting to 127.0.0.1:{port}…',
+        hint: 'This window can’t reach files on this computer: paths for opening projects, exports and so on are on the server.',
+        errors: {
+          bad_url: 'That isn’t a login address. Paste the line tavotto --no-browser printed on the server (it starts with http://127.0.0.1:).',
+          not_loopback: 'The address must be 127.0.0.1 (not localhost or the server’s address): Tavotto only accepts loopback connections, so reach it through ssh -L.',
+          no_nonce: 'The address has no #dnonce=… login token. Copy the whole line.',
+          is_local_engine: 'That’s this computer’s own Tavotto; just use the main window.',
+          unreachable: 'Couldn’t reach 127.0.0.1:{port}. Check that ssh -L is still connected with the same port on both sides, and that Tavotto is running on the server.',
+          not_tavotto: 'Something is listening on 127.0.0.1:{port}, but it isn’t Tavotto. Check the port ssh -L forwards.',
+          too_old: 'The Tavotto on the server is too old to connect from the desktop app. Upgrade it on the server: pip install -U tavotto',
+          bad_window: 'Couldn’t connect. Close this window and try again from File → Connect to Remote Instance….',
+          unknown: 'Couldn’t connect: {code}',
+        },
+      },
+    }
+    // 与 web/src/i18n/locale.ts 的 normalizeLocale 同一条规则：只看主子标签
+    const pick = (tag) => {
+      const primary = String(tag || '').trim().toLowerCase().replace(/_/g, '-').split('-')[0]
+      if (primary === 'zh') return 'zh-CN'
+      if (primary === 'en') return 'en-US'
+      return null
+    }
+    const q = new URLSearchParams(location.search)
+    const locale = pick(q.get('lang')) || pick(navigator.language) || 'zh-CN'
+    const s = STRINGS[locale]
+    document.documentElement.lang = locale
+    for (const id of ['title', 'intro', 'step1', 'step2', 'step3', 'go', 'hint']) {
+      document.getElementById(id).textContent = s[id]
+    }
+
+    const form = document.getElementById('form')
+    const input = document.getElementById('url')
+    const go = document.getElementById('go')
+    const status = document.getElementById('status')
+    const portOf = (raw) => {
+      const m = /^\s*http:\/\/127\.0\.0\.1:(\d+)/.exec(raw)
+      return m ? m[1] : '?'
+    }
+    const say = (text, isError) => {
+      status.textContent = text
+      status.className = isError ? 'status error' : 'status'
+    }
+    input.focus()
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault()
+      const raw = input.value
+      const port = portOf(raw)
+      go.disabled = true
+      say(s.connecting.replace('{port}', port), false)
+      try {
+        // 成功时壳已经把这个窗口导航到远程引擎，这一页随之卸载
+        await window.__TAURI_INTERNALS__.invoke('connect_remote', { url: raw })
+      } catch (err) {
+        const code = typeof err === 'string' ? err : ''
+        const text = s.errors[code] || s.errors.unknown.replace('{code}', code || '—')
+        say(text.replace('{port}', port), true)
+        go.disabled = false
+        input.focus()
+      }
+    })
+  </script>
+</body>
+</html>

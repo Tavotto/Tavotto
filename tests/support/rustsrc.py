@@ -8,6 +8,10 @@
 认得的词法：`//`、可嵌套的 `/* */`、`"…"` / `b"…"`（含转义）、`r#"…"#` 一类原始串、`'x'` / `'\\n'`
 字符字面量；生命周期 `'a` 不是字面量，原样保留。**已知边界**：不是完整的 Rust 解析器——宏展开、`#[cfg]`
 分支、从别的模块 `use` 进来的命令都不认；读不出确切结构时一律当场报错，不猜。
+
+另一半是**建造链**：按括号层数读 `WebviewWindowBuilder::new(…)` 那条链调了哪些方法、按花括号判它是否
+必然执行。使用者：`test_desktop_file_drop.py`（每个窗口都关掉 Tauri 的拖放处理器）、
+`test_desktop_remote.py`（远程实例窗口的建造链，ADR 0105）。
 """
 
 from __future__ import annotations
@@ -146,7 +150,18 @@ def handler_commands(main_rs: str | None = None) -> list[str]:
 
 
 def capability_permissions() -> list[str]:
+    """主窗口（`capabilities/main.json`）放行的权限。"""
     return json.loads(_read("capabilities", "main.json"))["permissions"]
+
+
+def granted_permissions() -> set[str]:
+    """`capabilities/` 里**任一个**窗口放行的权限之并（主窗口 + 远程实例窗口，ADR 0105）。
+
+    只回答「有没有一处放行」；哪个窗口该拿哪条由 `test_desktop_remote.py` 按窗口钉成闭集。"""
+    allowed: set[str] = set()
+    for cap in sorted((TAURI / "capabilities").glob("*.json")):
+        allowed |= set(json.loads(cap.read_text(encoding="utf-8"))["permissions"])
+    return allowed
 
 
 def allow_permission(command: str) -> str:
@@ -155,3 +170,74 @@ def allow_permission(command: str) -> str:
 
 def _read(*parts: str) -> str:
     return TAURI.joinpath(*parts).read_text(encoding="utf-8")
+
+
+_OPEN, _CLOSE = "([{", ")]}"
+_METHOD = re.compile(r"\.\s*(\w+)\s*[(<]")
+
+
+def chain_methods(code: str, start: int) -> list[str]:
+    """从 `start` 起的那条表达式在第 0 层依次调用的方法名，到第 0 层的 `;` 为止。"""
+    depth, i, methods = 0, start, []
+    while i < len(code):
+        c = code[i]
+        if c in _OPEN:
+            depth += 1
+        elif c in _CLOSE:
+            depth -= 1
+        elif c == ";" and depth == 0:
+            return methods
+        elif c == "." and depth == 0 and (m := _METHOD.match(code, i)):
+            methods.append(m.group(1))
+        i += 1
+    raise AssertionError("建造链没有以 `;` 结束")
+
+
+def enclosing_headers(code: str, pos: int) -> list[str]:
+    """包住 `pos` 的每一层 `{` 的「头」（上一个 `;` / `{` / `}` 到这个 `{` 之间的代码），由外到内。"""
+    stack: list[int] = []
+    for i, c in enumerate(code[:pos]):
+        if c == "{":
+            stack.append(i)
+        elif c == "}":
+            stack.pop()
+    heads = []
+    for b in stack:
+        k = max(code.rfind(ch, 0, b) for ch in ";{}")
+        heads.append(" ".join(code[k + 1 : b].split()))
+    return heads
+
+
+_BUILDER = re.compile(r"\bWebviewWindowBuilder\s*::\s*new\s*\(\s*\w+\s*,\s*(\w+)\s*,")
+
+
+def window_builders(code: str) -> dict[str, int]:
+    """壳里每一处 `WebviewWindowBuilder::new(app, <LABEL 常量>, …)`：常量名 → 位置。
+
+    label 必须写成常量（`MAIN_WINDOW` / `REMOTE_WINDOW`）：字面量在 `rust_code` 里已被
+    换成空白，写成字面量的建窗口点在这里对不上号——那正是要它红的时候。同一个常量
+    出现两次也红（两处建同一个窗口，谁生效取决于调用顺序）。"""
+    sites: dict[str, int] = {}
+    total = 0
+    for m in re.finditer(r"\bWebviewWindowBuilder\s*::\s*new\s*\(", code):
+        total += 1
+        named = _BUILDER.match(code, m.start())
+        assert named, f"建窗口的 label 不是常量：{code[m.start() : m.start() + 80]!r}"
+        assert named.group(1) not in sites, f"{named.group(1)} 被建了不止一处"
+        sites[named.group(1)] = m.start()
+    assert total == len(sites)
+    return sites
+
+
+def assert_unconditionally_in(code: str, pos: int, outer_fn: str) -> None:
+    """`pos` 处的语句在 `outer_fn` 这个函数里**必然执行**：它所在的每一层块都不是条件 /
+    循环 / `#[cfg]` 块，最外层就是那个函数。"""
+    heads = enclosing_headers(code, pos)
+    assert heads and re.match(rf"fn {outer_fn}\s*[(<]", heads[0]), heads[:1]
+    stmt = code[max(code.rfind(ch, 0, pos) for ch in ";{}") + 1 : pos]
+    for h in [*heads[1:], stmt]:
+        assert not re.search(r"\b(if|else|while|for|loop)\b|=>|#\s*\[\s*cfg", h), (
+            f"那条语句落在条件 / 循环 / cfg 块里，未必执行：{h!r}"
+        )
+    # 最外层的函数头只查 cfg：签名里的 `->` 不是分支
+    assert not re.search(r"#\s*\[\s*cfg", heads[0]), heads[0]
