@@ -103,6 +103,12 @@ interface ScriptRunStore {
    * 带 `missing_input` 载荷的错误（`missing_input` 与「跑通了但没出图」两种）都算。
    */
   rerunMissingInput: () => void
+  /**
+   * 改指表变了（ADR 0106）：按旧映射跑出来的结果作废——已捕获的描述符（尺寸、指纹、「添加到画布」
+   * 用的就是它们）与「跑通了但没出图」回 idle；在飞的那次按迟到响应丢掉（它读的是旧位置）。
+   * 失败态不动：因「找不到数据」失败的由 `rerunMissingInput` 重跑，其余与数据位置无关。
+   */
+  invalidateCaptured: () => void
   clear: () => void
 }
 
@@ -212,6 +218,21 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
       if (!isBusyPhase(st.phase) && st.error?.missing_input) void get().run(script)
     }
   },
+
+  invalidateCaptured: () =>
+    set((s) => {
+      const byScript: Record<string, ScriptRunState> = {}
+      for (const [script, st] of Object.entries(s.byScript)) {
+        const derived =
+          isBusyPhase(st.phase) ||
+          st.phase === 'captured_one' ||
+          st.phase === 'captured_many' ||
+          st.phase === 'no_figure'
+        // 删掉这一行 = 回 idle；在飞的那次落地时 `gen` 对不上，按迟到响应丢弃
+        if (!derived) byScript[script] = st
+      }
+      return { byScript }
+    }),
 
   markRunning: (script) => {
     const st = get().byScript[script]

@@ -134,16 +134,22 @@ let projectEpoch = 0
 /**
  * 后端刚关掉本项目的会话、且变的东西说不清影响哪些面板（换环境、改指表增 / 换 / 删）：
  * 每个在用的面板都标 stale 重建——不只是失败的那些，成功画过的可能是按旧条件画的。
- * 素材库里试运行过、还没上画布的 runtime 素材同一处作废：已查过的判定重查、清单重取
- * （后端的 stale 阶梯把改指表指纹算在判据里，ADR 0106）。
+ * 由试运行 / 渲染派生、会随之变的前端缓存全在这一处作废（ADR 0106 的清单）：
+ *   - renderStore：每个面板标 stale（SVG / manifest / 近期档随之换代，预览与挂载层跟着渲染键走）；
+ *   - runtimeAssetStore：已查过的判定重查、素材清单重取（后端 stale 阶梯把改指表指纹算在判据里）；
+ *   - scriptRunStore：「运行并发现图」已捕获的结果与在飞的那次作废。
  * 回 false = 等 store 加载期间换了项目（B 的面板与素材一个都不动）。
  */
 async function restaleProjectRenders(epoch: number): Promise<boolean> {
-  const [{ useRenderStore }, { useRuntimeAssetStore }] = await Promise.all([
+  const [{ useRenderStore }, { useRuntimeAssetStore }, { useScriptRunStore }] = await Promise.all([
     import('@/store/renderStore'),
     import('@/store/runtimeAssetStore'),
+    // 它依赖本 store（订阅代际），静态 import 会成环
+    import('@/store/scriptRunStore'),
   ])
   if (epoch !== projectEpoch) return false
+  // 素材库「运行并发现图」的结果：按旧条件捕获的描述符不能再拿去「添加到画布」
+  useScriptRunStore.getState().invalidateCaptured()
   const render = useRenderStore.getState()
   const ids = [...new Set(Object.values(render.byKey).map((v) => v.fileId))]
   if (ids.length) render.markStale(ids)
