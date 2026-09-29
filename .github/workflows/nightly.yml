@@ -964,6 +964,114 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      # ---------------- 真 Tauri 窗口用例（issue #542，tests/desktop_windows） ----------------
+      # 前面几步验的是「装得上、起得来、卸得掉」；这一步在**刚装好的同一份产物**里驱动真
+      # WebView2 窗口：系统文件选择器、跨应用剪贴板、拖动与撤销、关掉再开 / 强杀再开、菜单
+      # 与快捷键与焦点。只有这一条腿真跑它们（带 TAVOTTO_DESKTOP_WINDOW_REQUIRED=1：缺前提
+      # 即红），别处整目录 skip 并点名这里（tests/test_e2e_leg_topology.py 钉住）。
+      #
+      # 通道（2026-09-29 在 Windows Server 2025 + 正式版 0.17.0 上实测）：
+      #   * WebView2 调试端口只能由 **HKLM** 策略 AdditionalBrowserArguments（值名 = 壳的
+      #     文件名）打开——WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS 会被 Tauri 自带参数覆盖，
+      #     HKCU 策略不生效。用完就删（finally），别让调试端口在这台机器上多活一秒；
+      #   * msedgedriver 必须与本机 WebView2 Runtime **同版本**，从微软的下载点按版本号取，
+      #     验 Authenticode（签名者是 Microsoft）再用；以 debuggerAddress 附着，不由驱动起应用
+      #     ——起、关（WM_CLOSE）、强杀都是用例自己要量的动作。
+      # 全程不注入全局输入（SendInput 之类）：键鼠经 CDP 进渲染进程，窗口级动作按句柄投消息。
+      - name: 真窗口用例（WebView2 + msedgedriver 附着，issue #542）
+        if: matrix.python == 'none'
+        # 12 条实测约 4 分钟；每条另有 300 s 的看门狗（conftest.CASE_BUDGET_S）。这里的上限
+        # 只为让卡死时后面的取证步骤还有机会跑，别把整条 job 拖到 timeout-minutes
+        timeout-minutes: 25
+        shell: pwsh
+        env:
+          TAVOTTO_DESKTOP_WINDOW_REQUIRED: "1"
+          TAVOTTO_WEBVIEW2_DEBUG_PORT: "9222"
+          TAVOTTO_DW_ARTIFACTS: ${{ runner.temp }}\desktop-window
+          # 失败信息与 xfail 理由是中文：别让控制台代码页把它们转成 \uXXXX
+          PYTHONUTF8: "1"
+          PYTHONIOENCODING: utf-8
+          # 安装器装完会让 tavotto-cli 写安装清单；落到临时目录，别碰用户目录
+          TAVOTTO_DATA_DIR: ${{ runner.temp }}\dw-install-data
+          TAVOTTO_CONFIG_DIR: ${{ runner.temp }}\dw-install-config
+        run: |
+          $ErrorActionPreference = "Stop"
+          $setup = @(Get-ChildItem src-tauri\target\release\bundle\nsis\*.exe)[0].FullName
+          Start-Process -Wait $setup -ArgumentList "/S"
+          $key = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Tavotto"
+          if (-not (Test-Path $key)) { throw "静默安装没写卸载注册表项" }
+          $inst = (Get-ItemProperty $key).InstallLocation -replace '^"|"$', ''
+          $exe = Join-Path $inst "Tavotto.exe"
+          if (-not (Test-Path $exe)) { throw "装完找不到壳: $exe" }
+          Write-Host "被测产物: $exe"
+
+          # msedgedriver：版本号取本机 WebView2 Runtime 的（Evergreen 的 pv）
+          $rtKey = 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+          $rt = (Get-ItemProperty $rtKey -ErrorAction SilentlyContinue).pv
+          if (-not $rt) { throw "读不到 WebView2 Runtime 的版本（$rtKey）" }
+          $drvDir = Join-Path $env:RUNNER_TEMP "msedgedriver-$rt"
+          $zip = "$drvDir.zip"
+          Invoke-WebRequest "https://msedgedriver.microsoft.com/$rt/edgedriver_win64.zip" -OutFile $zip -TimeoutSec 120
+          Expand-Archive $zip -DestinationPath $drvDir -Force
+          $drv = Join-Path $drvDir "msedgedriver.exe"
+          $sig = Get-AuthenticodeSignature $drv
+          if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation') {
+            throw "msedgedriver 的签名不对：$($sig.Status) / $($sig.SignerCertificate.Subject)"
+          }
+          $drvVer = (& $drv --version) -join ' '
+          if ($drvVer -notmatch [regex]::Escape($rt)) { throw "msedgedriver 版本（$drvVer）与 WebView2 Runtime（$rt）不一致" }
+          Write-Host "WebView2 Runtime $rt；$drvVer"
+
+          $pol = 'HKLM:\SOFTWARE\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments'
+          $junit = Join-Path $env:RUNNER_TEMP "desktop-window.xml"
+          python -m pip install --quiet --disable-pip-version-check pytest
+          $rc = 1
+          try {
+            New-Item $pol -Force | Out-Null
+            New-ItemProperty $pol -Name (Split-Path $exe -Leaf) -PropertyType String -Force `
+              -Value "--remote-debugging-port=$env:TAVOTTO_WEBVIEW2_DEBUG_PORT --remote-allow-origins=*" | Out-Null
+            $env:TAVOTTO_DESKTOP_EXE = $exe
+            $env:TAVOTTO_MSEDGEDRIVER = $drv
+            python -m pytest tests/desktop_windows -p no:cacheprovider -v -rA --junitxml $junit
+            $rc = $LASTEXITCODE
+          } finally {
+            Remove-ItemProperty $pol -Name (Split-Path $exe -Leaf) -ErrorAction SilentlyContinue
+            Get-Process Tavotto -ErrorAction SilentlyContinue |
+              ForEach-Object { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }
+            Start-Process -Wait "$inst\uninstall.exe" -ArgumentList "/S"
+          }
+          if ($rc -ne 0) { throw "真窗口用例失败（pytest 退出码 $rc）" }
+
+          # skip 不是绿：除了指向 #715 的 xfail，一条 skip 都不许有；执行条数钉在实测值
+          # ——少收集一个文件、某条用例被 skip 掉，pytest 照样退 0。
+          $x = [xml](Get-Content $junit -Raw -Encoding utf8)
+          $cases = @($x.SelectNodes('//testcase'))
+          $skipped = @($cases | Where-Object { $_.skipped -and $_.skipped.type -ne 'pytest.xfail' })
+          if ($skipped.Count) { throw "真窗口用例里有 $($skipped.Count) 条被 skip：$(($skipped | ForEach-Object name) -join ', ')" }
+          $xfail = @($cases | Where-Object { $_.skipped -and $_.skipped.type -eq 'pytest.xfail' })
+          Write-Host "执行 $($cases.Count) 条，其中 xfail（#715）$($xfail.Count) 条"
+          if ($cases.Count -ne 12) { throw "真窗口用例执行了 $($cases.Count) 条，预期 12 条（加减用例时同步这里）" }
+
+      - name: 真窗口用例的取证（失败时）
+        if: failure() && matrix.python == 'none'
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-desktop-window-${{ github.run_id }}
+          path: ${{ runner.temp }}/desktop-window
+          if-no-files-found: ignore
+          retention-days: 14
+
+      # 上一步被 timeout-minutes 掐掉时它的 finally 不会执行：调试端口策略在这里无条件再删一次
+      - name: 真窗口用例的收尾（删调试端口策略）
+        if: always() && matrix.python == 'none'
+        shell: pwsh
+        run: |
+          $pol = 'HKLM:\SOFTWARE\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments'
+          Remove-ItemProperty $pol -Name Tavotto.exe -ErrorAction SilentlyContinue
+          Get-Process Tavotto, msedgedriver -ErrorAction SilentlyContinue |
+            ForEach-Object { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }
+          exit 0
+
       - name: 失败时收集日志
         if: failure()
         uses: actions/upload-artifact@v4
