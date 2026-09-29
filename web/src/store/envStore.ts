@@ -21,6 +21,7 @@ import {
   type UserEnvironmentSource,
   type WorkdirConfirmation,
   type WorkdirMode,
+  restoreScriptBackup as restoreScriptBackupRequest,
 } from '@/lib/api'
 import { createDismissTimer } from '@/lib/dismissTimer'
 import { currentProjectId } from '@/lib/session'
@@ -112,6 +113,11 @@ interface EnvState {
   /** 设置里的备份列表要重读：每次改写 / 复原加一 */
   scriptBackupGeneration: number
   bumpScriptBackups: () => void
+  /**
+   * 设置里的「恢复原脚本 / 只撤销那几处路径 / 整份恢复」。回 null 或一句失败原文（本地化过的）；
+   * 请求在飞时换了项目：A 的状态、报错、重排与备份列表刷新一个都不落到 B 上（同样回 null）。
+   */
+  restoreScriptBackup: (backup: { id: string; script: string }, mode: 'full' | 'undo_edits') => Promise<string | null>
   /**
    * 跑前的门刚刚**自动改用**了用户自己的环境（ADR 0079，SSE `engine.environment_adopted`）：
    * 通知轨上说一句「改用了哪个」并给「改回」。只是说出口，不是一次授权——改用已经发生了。
@@ -246,6 +252,23 @@ export const useEnvStore = create<EnvState>((set, get) => ({
     }
   },
   bumpScriptBackups: () => set((s) => ({ scriptBackupGeneration: s.scriptBackupGeneration + 1 })),
+  restoreScriptBackup: async (backup, mode) => {
+    const epoch = projectEpoch
+    let error: string | null = null
+    try {
+      await restoreScriptBackupRequest(backup.id, mode)
+      if (epoch !== projectEpoch) return null
+      useUiStore.getState().setStatus(msg('engine.scriptBackupRestored', { script: backup.script }, 'errors'))
+      const { useRenderStore } = await import('@/store/renderStore')
+      if (epoch !== projectEpoch) return null
+      useRenderStore.getState().retryEnvironmentFailures()
+    } catch (e) {
+      if (epoch !== projectEpoch) return null
+      error = backendErrorText(e)
+    }
+    get().bumpScriptBackups()
+    return error
+  },
   pointAtData: async (requested, chosen, kind) => {
     const epoch = projectEpoch
     try {

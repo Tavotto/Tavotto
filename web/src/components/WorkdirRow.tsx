@@ -1,18 +1,15 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { msg, t as translate } from '@/i18n'
+import { t as translate } from '@/i18n'
 import {
-  backendErrorText,
   type DependencyPreparationOffer,
   type InputRemapRule,
   listScriptBackups,
   type MissingInputOffer,
-  restoreScriptBackup,
   type ScriptBackup,
   type WorkdirConfirmation,
   type WorkdirMode,
 } from '@/lib/api'
-import { useUiStore } from '@/store/uiStore'
 import { useEnvStore } from '@/store/envStore'
 import { SettingRow } from './settings/SettingRow'
 import { Button } from './ui/Button'
@@ -224,7 +221,7 @@ export function ScriptBackupRows() {
   const { t } = useTranslation('errors')
   const open = useEnvStore((s) => Boolean(s.env?.project?.open))
   const generation = useEnvStore((s) => s.scriptBackupGeneration)
-  const bump = useEnvStore((s) => s.bumpScriptBackups)
+  const restoreBackup = useEnvStore((s) => s.restoreScriptBackup)
   const [items, setItems] = useState<ScriptBackup[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -246,16 +243,10 @@ export function ScriptBackupRows() {
   const restore = async (b: ScriptBackup, mode: 'full' | 'undo_edits') => {
     setBusy(true)
     setError(null)
-    try {
-      await restoreScriptBackup(b.id, mode)
-      useUiStore.getState().setStatus(msg('engine.scriptBackupRestored', { script: b.script }, 'errors'))
-      const { useRenderStore } = await import('@/store/renderStore')
-      useRenderStore.getState().retryEnvironmentFailures()
-    } catch (e) {
-      setError(backendErrorText(e))
-    }
+    // 换了项目时 store 那侧把 A 的副作用全丢掉（回 null）；这里只剩本行自己的忙 / 错
+    const failure = await restoreBackup(b, mode)
     setBusy(false)
-    bump()
+    setError(failure)
   }
   return (
     <div className="mt-1.5 border-t border-border pt-1.5" data-testid="script-backup-rows">
