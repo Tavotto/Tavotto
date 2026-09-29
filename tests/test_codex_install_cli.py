@@ -1353,7 +1353,9 @@ _FAKE_HEALTH_SERVER = (
 _BRANCH_SHA = "51fe6b1f552bba69d6db69f6fd2b31b823c7e89b"
 
 
-def _stable_branch_zip(tmp_path: Path, version: str, *, tamper=None) -> tuple[bytes, dict]:
+def _stable_branch_zip(
+    tmp_path: Path, version: str, *, tamper=None, zip_modes: dict[str, str] | None = None
+) -> tuple[bytes, dict]:
     """照 GitHub 源码压缩包的形状造一份发行分支：顶层 `Tavotto-plugin-stable/`、zip 注释是
     提交 SHA、每个条目带 git 模式。插件是形状真实、清单自洽的合成 staging。"""
     import zipfile
@@ -1403,6 +1405,7 @@ def _stable_branch_zip(tmp_path: Path, version: str, *, tamper=None) -> tuple[by
     if tamper is not None:
         tamper(tree)
     modes = {f"codex-plugin/{e['path']}": e["mode"] for e in manifest["files"]}
+    modes.update(zip_modes or {})
     buf = io.BytesIO()
     prefix = brand.CODEX_PLUGIN_STABLE_ARCHIVE_DIR + "/"
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -1657,6 +1660,7 @@ def test_git_that_runs_but_fails_is_not_rerouted_to_a_download(no_git_machine, c
         "receipt_from_other_branch",
         "corrupt_member",
         "corrupt_lzma_member",
+        "mode_drift",
     ],
 )
 def test_an_archive_that_does_not_verify_is_never_registered(no_git_machine, capsys, case):
@@ -1689,6 +1693,15 @@ def test_an_archive_that_does_not_verify_is_never_registered(no_git_machine, cap
         zip_bytes, manifest = _stable_branch_zip(m["tmp"], "0.18.0", tamper=other_branch)
         m["github"].publish(zip_bytes, manifest)
         expect = "收据"
+    elif case == "mode_drift":
+        # 只有模式变了：启动器在压缩包里是 100644、清单仍写 100755。逐字节与 content_digest
+        # 都按清单声明的模式算，照样一致——要单独比模式（Codex #725）
+        zip_bytes, manifest = _stable_branch_zip(
+            m["tmp"], "0.18.0", zip_modes={"codex-plugin/mcp/launch": "100644"}
+        )
+        assert {e["path"]: e["mode"] for e in manifest["files"]}["mcp/launch"] == "100755"
+        m["github"].publish(zip_bytes, manifest)
+        expect = "模式与随包清单对不上"
     elif case == "corrupt_lzma_member":
         # ZIP_LZMA 的条目数据坏了：zf.read 抛 lzma.LZMAError（Codex #725）
         buf = io.BytesIO()
@@ -1857,6 +1870,42 @@ def test_one_shot_dirs_that_cannot_be_removed_are_reported_and_swept_next_time(
     rc, data = _cli_json(m, capsys, "upgrade")
     assert rc == 0, data
     assert not [p for p in base.iterdir() if p.name.startswith((".staging-", ".old-"))]
+
+
+def test_a_stuck_backup_dir_from_an_earlier_run_does_not_block_the_swap(
+    no_git_machine, capsys, monkeypatch
+):
+    """上一次留下的 `.old-*` 删不掉（杀软占着、PID 被复用成同一个号）：换目录不能撞上它失败，
+    也不能把它吞掉不说——这次照样换进新版，结果里说出删不掉的那个（Codex #725）。"""
+    from tavotto.engine import codexinstall
+
+    m = no_git_machine
+    z1, man1 = _stable_branch_zip(m["tmp"], "0.18.0")
+    m["github"].publish(z1, man1)
+    assert _cli_json(m, capsys, "install")[0] == 0
+    base = codexinstall.archive_marketplace_dir().parent
+    stuck = base / f".old-{os.getpid()}"
+    (stuck / "held").mkdir(parents=True)
+    real = codexinstall.shutil.rmtree
+
+    def held(path, *a, **kw):
+        if Path(path) == stuck:
+            if kw.get("ignore_errors"):
+                return None
+            raise PermissionError("held by antivirus")
+        return real(path, *a, **kw)
+
+    monkeypatch.setattr(codexinstall.shutil, "rmtree", held)
+    z2, man2 = _stable_branch_zip(m["tmp"], "0.18.1")
+    m["github"].publish(z2, man2)
+    rc, data = _cli_json(m, capsys, "upgrade")
+    assert rc == 0 and data["ok"], data
+    steps = {st["step"]: st for st in data["steps"]}
+    assert "已更新" in steps["marketplace"]["detail"], steps["marketplace"]
+    assert (
+        "没删掉" in steps["marketplace"]["detail"] and stuck.name in steps["marketplace"]["detail"]
+    ), steps["marketplace"]
+    assert _cached_versions(m) == ["0.18.1"]
 
 
 def test_upgrade_leaves_a_local_marketplace_it_did_not_create_alone(no_git_machine, capsys):

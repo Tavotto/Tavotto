@@ -92,7 +92,14 @@ function Invoke-Probe([string]$CodexHome, [string]$Name) {
     Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
     try {
         & $probe -Codex (Get-DesktopCodex) -CodexHome $CodexHome -Out (Join-Path $Root "run-$Name")
-        Get-Content (Join-Path $Root "run-$Name\summary.txt")
+        $summary = @(Get-Content (Join-Path $Root "run-$Name\summary.txt"))
+        $summary
+        # probe-tools.ps1 writes NO_TAVOTTO_TOOLS / NO_REQUEST without exiting nonzero: the pass
+        # criterion (header) is TOOLS_PRESENT or HEALTH_ONLY, so anything else fails the step
+        $verdict = ($summary | Where-Object { $_ -match '^VERDICT: ' } | Select-Object -Last 1) -replace '^VERDICT: ', ''
+        if ($verdict -notin @('TOOLS_PRESENT', 'HEALTH_ONLY')) {
+            throw "probe '$Name' verdict: $(if ($verdict) { $verdict } else { '(none)' })"
+        }
     }
     finally { $env:PYTHONPATH = $savedPy }
 }
