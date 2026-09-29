@@ -6,7 +6,12 @@
 腿以外整目录 skip，放进去就只在一台机器上执行（skip 不是绿）。
 
 AST 判名字，不判子串：注释与文档字符串里写着「这里没有 SendInput」不该让它红，
-而 `getattr(user32, "Send" + "Input")` 这种拼接也要抓——所以字符串常量同样扫。
+而 `getattr(user32, "Send" + "Input")` 这种拼接也要抓——所以字符串常量同样扫，
+并且把**只由字面量组成**的 `+` 拼接与 `"".join([...])` 先折叠成一个串再扫。
+
+盲点（写在明处，不假装覆盖）：运行时才拼出来的名字——经变量、f-string 插值、`chr()`、
+读文件 / 环境变量得到的串——AST 判不出。这条判据防的是「顺手写了一句全局输入」，
+不是防有人故意绕过；夹具的评审仍要看输入走的是窗口句柄 / CDP。
 """
 
 from __future__ import annotations
@@ -45,19 +50,46 @@ def _identifiers(tree: ast.AST) -> set[str]:
     return out
 
 
+def _fold(node: ast.AST) -> str | None:
+    """只由字符串字面量组成的表达式折叠成一个串：`"Send" + "Input"`、`"".join(["Send", "Input"])`
+    （相邻字面量 `"Send" "Input"` 解析时就已合并）。折叠不了回 None。"""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        left, right = _fold(node.left), _fold(node.right)
+        return None if left is None or right is None else left + right
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "join"
+        and len(node.args) == 1
+        and not node.keywords
+        and isinstance(node.args[0], (ast.List, ast.Tuple))
+    ):
+        sep = _fold(node.func.value)
+        parts = [_fold(e) for e in node.args[0].elts]
+        if sep is None or any(p is None for p in parts):
+            return None
+        return sep.join(parts)  # type: ignore[arg-type]
+    return None
+
+
 def _string_constants(tree: ast.AST) -> set[str]:
-    """非文档字符串的字符串常量（`getattr(user32, "SendInput")` 这种绕法）。"""
+    """非文档字符串的字符串常量，外加字面量拼接折叠出来的串（`getattr(user32, "SendInput")`、
+    `getattr(user32, "Send" + "Input")` 这类绕法）。"""
     docs = set()
     for node in ast.walk(tree):
         if isinstance(node, (ast.Module, ast.FunctionDef, ast.ClassDef, ast.AsyncFunctionDef)):
             d = ast.get_docstring(node, clean=False)
             if d is not None:
                 docs.add(d)
-    return {
-        n.value
-        for n in ast.walk(tree)
-        if isinstance(n, ast.Constant) and isinstance(n.value, str) and n.value not in docs
-    }
+    out = set()
+    for n in ast.walk(tree):
+        if isinstance(n, (ast.Constant, ast.BinOp, ast.Call)):
+            folded = _fold(n)
+            if folded is not None and folded not in docs:
+                out.add(folded)
+    return out
 
 
 def _files() -> list[Path]:
@@ -86,6 +118,13 @@ def test_the_scan_sees_a_planted_call():
     )
     assert "SendInput" in _identifiers(tree)
     tree = ast.parse("getattr(user32, 'Send' 'Input')(1)\n")
+    assert "SendInput" in _string_constants(tree)
+    # 运行时的 `+` 拼接与 join：AST 里是两个分开的常量，要折叠后才看得见
+    tree = ast.parse("getattr(user32, 'Send' + 'Input')(1)\n")
+    assert "SendInput" in _string_constants(tree)
+    tree = ast.parse("getattr(user32, 'Se' + ('nd' + 'In') + 'put')(1)\n")
+    assert "SendInput" in _string_constants(tree)
+    tree = ast.parse("getattr(user32, ''.join(['Send', 'Input']))(1)\n")
     assert "SendInput" in _string_constants(tree)
     # 文档字符串里提到它不算
     tree = ast.parse('"""这里没有 SendInput。"""\n')
