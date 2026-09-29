@@ -55,7 +55,10 @@ function marks(svg: SVGSVGElement): Box[] {
     const s = num(el, 'stroke-width') / 2
     const xs = [num(el, 'x1'), num(el, 'x2')]
     const ys = [num(el, 'y1'), num(el, 'y2')]
-    out.push({ what: 'line', x0: Math.min(...xs) - s, y0: Math.min(...ys) - s, x1: Math.max(...xs) + s, y1: Math.max(...ys) + s })
+    // 示例里只有横 / 竖线，默认 butt 端帽：线宽只朝垂直于线的方向扩
+    const sx = xs[0] === xs[1] ? s : 0
+    const sy = ys[0] === ys[1] ? s : 0
+    out.push({ what: 'line', x0: Math.min(...xs) - sx, y0: Math.min(...ys) - sy, x1: Math.max(...xs) + sx, y1: Math.max(...ys) + sy })
   }
   for (const el of svg.querySelectorAll('polyline')) {
     const s = num(el, 'stroke-width') / 2
@@ -102,6 +105,8 @@ const EXTREMES: Array<[string, Record<string, unknown>]> = [
     { element: { ticks: { direction, length: 20, width: 10 } } },
   ]),
   ['边框 / 数据线宽 10', { element: { axes: { spine_linewidth: 10 }, line: { linewidth: 10 } } }],
+  // 刻度朝里时轴外只剩边框的外半边：刻度文字得让开它（朝外的默认刻度会把这一项遮住）
+  ['刻度朝里 + 边框 10', { element: { ticks: { direction: 'in' }, axes: { spine_linewidth: 10 } } }],
   [
     '全部字号 72 且粗斜体 + 刻度朝外 20',
     {
@@ -118,11 +123,40 @@ const EXTREMES: Array<[string, Record<string, unknown>]> = [
   ['只有刻度字号大 + 刻度朝外 20', { element: { ticks: { fontsize: 14, direction: 'out', length: 20 } } }],
 ]
 
+/** 刻度文字压在刻度线 / 边框上的（刻度线 = 黑色的 line，图例那条是系列色；边框 = rect 的描边带） */
+function tickLabelsOnTicks(svg: SVGSVGElement): string[] {
+  const all = marks(svg)
+  const lines = [...svg.querySelectorAll('line')]
+  const rect = svg.querySelector('rect')!
+  const s = num(rect, 'stroke-width') / 2
+  const [rx, ry, rw, rh] = ['x', 'y', 'width', 'height'].map((a) => num(rect, a))
+  // 边框的四条描边带（只算描边，框里面的空白不算）
+  const frame: Box[] = [
+    { what: 'frame', x0: rx - s, y0: ry - s, x1: rx + rw + s, y1: ry + s },
+    { what: 'frame', x0: rx - s, y0: ry + rh - s, x1: rx + rw + s, y1: ry + rh + s },
+    { what: 'frame', x0: rx - s, y0: ry - s, x1: rx + s, y1: ry + rh + s },
+    { what: 'frame', x0: rx + rw - s, y0: ry - s, x1: rx + rw + s, y1: ry + rh + s },
+  ]
+  const ticks = [
+    ...all.filter((b) => b.what === 'line').filter((_, i) => lines[i].getAttribute('stroke') === '#111'),
+    ...frame,
+  ]
+  const labels = all.filter((b) => /^text「[\d.]+」$/.test(b.what))
+  expect(labels.length).toBe(6)
+  return labels.flatMap((l) =>
+    ticks
+      .filter((t) => l.x0 < t.x1 && t.x0 < l.x1 && l.y0 < t.y1 && t.y0 < l.y1)
+      .map((t) => `${l.what} 压在${t.what === 'frame' ? '边框' : '刻度线'}上`),
+  )
+}
+
 describe('样式示例图：每一笔都在画框里（Codex #703：长的朝外刻度把横轴标题裁掉）', () => {
   it.each(EXTREMES)('%s', (_name, data) => {
     const svg = render(data)
     expect(marks(svg).length).toBeGreaterThan(10)
     expect(outside(svg)).toEqual([])
+    // 在框里还不够：朝外的刻度伸多长，刻度文字就得让多远
+    expect(tickLabelsOnTicks(svg)).toEqual([])
   })
 
   it('外框比例固定：换一套刻度，设置页里示例图的外框不跳', () => {

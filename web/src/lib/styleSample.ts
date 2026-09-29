@@ -215,9 +215,11 @@ export function sampleLayout(g: StyleSampleGeometry): SampleLayout {
   const box = { x: 0, y: 0, w: 150, h: 72 }
   const bottom = box.y + box.h
   const titleY = box.y - g.spinePt / 2 - 4 - DESCENT * g.titlePt
-  const xTickLabelY = bottom + tickOut + 1.5 + g.tickPt
+  // 刻度文字让开轴线外侧伸出的一切：朝外的刻度、粗刻度线（朝里时也有半个线宽伸出轴外）、粗边框的外半边
+  const clear = Math.max(tickOut, g.tickWidthPt / 2, g.spinePt / 2)
+  const xTickLabelY = bottom + clear + 1.5 + g.tickPt
   const xLabelY = xTickLabelY + DESCENT * g.tickPt + 2.5 + g.axisPt
-  const yTickLabelX = box.x - tickOut - 2.5
+  const yTickLabelX = box.x - clear - 2.5
   const yTickW = Math.max(...SAMPLE_TEXT.yTicks.map((s) => textWidth(s, g.tickPt, g.faces.tick)))
   const yLabelX = yTickLabelX - yTickW - 2.5 - DESCENT * g.axisPt
   const legendLineY = box.y + 10 + g.legendPt * 0.35
