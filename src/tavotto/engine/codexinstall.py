@@ -64,9 +64,10 @@ import tempfile
 import urllib.error
 import urllib.request
 import zipfile
+import zlib
 from pathlib import Path, PurePosixPath
 
-from . import ai_agents, atomicio, brand, config, pluginmanifest
+from . import ai_agents, atomicio, brand, config, pluginmanifest, tlstrust
 from .runtime import CREATE_NO_WINDOW, probe_args
 
 #: 每一步的稳定 code。message 随时可改，code 不许改（调用方按它分诊）。
@@ -601,8 +602,11 @@ def _fetch(url: str, *, limit: int) -> bytes:
     req = urllib.request.Request(
         url, headers={"User-Agent": f"tavotto/{__version__} codex-install"}
     )
+    # 出站 HTTPS 一律经 `tlstrust`（平台原生校验；#711 / #714 的规矩）：干净 Windows 缺根证书时 OpenSSL
+    # 的默认信任库会把 GitHub 的压缩包下载报成网络失败
+    opener = urllib.request.build_opener(tlstrust.https_handler(tlstrust.client_context()))
     try:
-        with urllib.request.urlopen(req, timeout=_NETWORK_TIMEOUT) as resp:
+        with opener.open(req, timeout=_NETWORK_TIMEOUT) as resp:
             data = resp.read(limit + 1)
     except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
         raise ArchiveError(f"下载 {url} 失败：{exc}") from exc
@@ -649,7 +653,13 @@ def _unpack(data: bytes, into: Path) -> tuple[Path, str | None]:
             target.mkdir(parents=True, exist_ok=True)
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(zf.read(info))
+        try:
+            payload = zf.read(info)
+        except (zipfile.BadZipFile, zlib.error, EOFError, NotImplementedError, RuntimeError) as exc:
+            # 目录表完好、条目本身坏了（CRC 不符 / 截断 / 加密 / 不认识的压缩法）：同样是「这份压缩包
+            # 不能用」，走 ArchiveError 的一行 JSON 失败，不让 traceback 逃出安装流程（Codex #725）
+            raise ArchiveError(f"压缩包里的 {info.filename!r} 读不出来：{exc}") from exc
+        target.write_bytes(payload)
         if os.name != "nt" and (info.external_attr >> 16) & 0o111:
             target.chmod(0o755)
     comment = zf.comment.decode("ascii", "replace").strip()

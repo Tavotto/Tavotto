@@ -1657,7 +1657,13 @@ def test_git_that_runs_but_fails_is_not_rerouted_to_a_download(no_git_machine, c
 
 @pytest.mark.parametrize(
     "case",
-    ["tampered_file", "asset_digest_mismatch", "path_traversal", "receipt_from_other_branch"],
+    [
+        "tampered_file",
+        "asset_digest_mismatch",
+        "path_traversal",
+        "receipt_from_other_branch",
+        "corrupt_member",
+    ],
 )
 def test_an_archive_that_does_not_verify_is_never_registered(no_git_machine, capsys, case):
     """核对不过的压缩包：不登记、不装、目标目录不出现，失败说清是哪一条，并给人话步骤。"""
@@ -1689,6 +1695,18 @@ def test_an_archive_that_does_not_verify_is_never_registered(no_git_machine, cap
         zip_bytes, manifest = _stable_branch_zip(m["tmp"], "0.18.0", tamper=other_branch)
         m["github"].publish(zip_bytes, manifest)
         expect = "收据"
+    elif case == "corrupt_member":
+        # 目录表完好、某个条目的数据坏了（CRC 不符）：zf.read 抛 BadZipFile——也要是一行 JSON 失败
+        # （Codex #725），不是 traceback
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_STORED) as zf:
+            zf.writestr(brand.CODEX_PLUGIN_STABLE_ARCHIVE_DIR + "/ok.txt", b"payload-bytes")
+        raw = bytearray(buf.getvalue())
+        at = raw.index(b"payload-bytes")
+        raw[at] ^= 0xFF
+        _zip, manifest = _stable_branch_zip(m["tmp"], "0.18.0")
+        m["github"].publish(bytes(raw), manifest)
+        expect = "读不出来"
     else:
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w") as zf:
