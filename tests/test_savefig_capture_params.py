@@ -334,3 +334,59 @@ class TestRecordedOnEveryEntry:
             ("pdf", "tight", "figure"),
             ("png", None, 300.0),
         ]
+
+
+# ===========================================================================
+# 写进文件对象的 savefig 透传（2026-09-29 用户实报）
+# ===========================================================================
+# `savefig(buf, format="png"); Image.open(buf)` 是转 TIFF 的常见写法。拦截以前连这一次也吞掉，
+# buf 是空的，脚本在 PIL 那一行崩：`cannot identify image file <_io.BytesIO ...>`。
+BUFFER_TO_TIFF = """\
+import io
+import matplotlib.pyplot as plt
+from PIL import Image
+
+fig, ax = plt.subplots(figsize=(2, 1))
+ax.plot([1, 2])
+fig.savefig("Fig4.pdf", bbox_inches="tight")
+buf = io.BytesIO()
+fig.savefig(buf, format="png", dpi=50)
+buf.seek(0)
+with Image.open(buf) as raster:
+    assert raster.size == (100, 50), raster.size
+
+with open("handle.png", "wb") as fh:  # 脚本自己打开的句柄：吞掉只会留下 0 字节的文件
+    fig.savefig(fh, format="png", dpi=50)
+with open("handle.png", "rb") as fh:
+    assert fh.read(8) == b"\\x89PNG\\r\\n\\x1a\\n"
+"""
+
+
+@needs_worker
+class TestFileObjectTargetsPassThrough:
+    def test_desktop_script_can_read_back_what_it_saved(self, tmp_path):
+        figs = tmp_path / "figs"
+        write(figs, "fig4.py", BUFFER_TO_TIFF)
+        resp = desktop_build(figs, "fig4.py")
+        (d,) = resp["descriptors"]
+        assert d["stem"] == "Fig4"
+        # 写到路径的那次照旧被拦（记账、不落盘）；写进文件对象的两次不是产物、不记账
+        assert [c["format"] for c in d["savefig_calls"]] == ["pdf"]
+        assert not (figs / "Fig4.pdf").exists()
+
+    def test_browser_behaves_the_same(self, tmp_path):
+        resp = browser_load(BUFFER_TO_TIFF, "fig4.py", tmp_path / "ws")
+        assert resp.get("ok"), resp
+        (d,) = resp["descriptors"]
+        assert d["stem"] == "Fig4"
+        assert [c["format"] for c in d["savefig_calls"]] == ["pdf"]
+
+
+def test_only_paths_are_intercepted():
+    import io
+    from pathlib import Path
+
+    assert figcapture.savefig_targets_path("out/Fig1.pdf")
+    assert figcapture.savefig_targets_path(Path("out") / "Fig1.pdf")
+    assert not figcapture.savefig_targets_path(io.BytesIO())
+    assert figcapture.savefig_stem(io.BytesIO()) == ""

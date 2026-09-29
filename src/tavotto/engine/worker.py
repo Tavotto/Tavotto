@@ -163,8 +163,12 @@ class SafeSession(figsession.LiveFigureSession):
 
 
 def _patched_savefig(self, fname, *args, **kwargs):
-    """通用兜底：raw fig.savefig 的脚本也被捕获；同 stem 的 pdf/png 只记一次。"""
-    if not _intercept:
+    """通用兜底：raw fig.savefig 的脚本也被捕获；同 stem 的 pdf/png 只记一次。
+
+    写进文件对象（BytesIO 等）的不拦：那不是一份图产物，脚本接着要读它
+    （`figcapture.savefig_targets_path`）。
+    """
+    if not _intercept or not figcapture.savefig_targets_path(fname):
         return _REAL_SAVEFIG(self, fname, *args, **kwargs)
     stem = _SAVE_AS or figcapture.savefig_stem(fname)
     if stem and SESSION is not None:
