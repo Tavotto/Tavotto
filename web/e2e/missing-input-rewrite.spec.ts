@@ -55,8 +55,8 @@ test(
     const a = await app({ figures: dir })
     await page.goto(a.baseURL)
 
-    await expect(page.getByText('fig.py').first()).toBeVisible({ timeout: 30_000 })
-    await page.getByRole('button', { name: '运行 fig.py 并发现图' }).click()
+    await expect(page.locator('[data-script-row="fig.py"]')).toBeVisible({ timeout: 30_000 })
+    await page.locator('[data-script-run="fig.py"]').click()
 
     // 1) 弹框：说出脚本要的那一串；是探路，给的是改写的出口
     const dialog = page.locator('[data-dialog="missing-input"]')
@@ -65,7 +65,7 @@ test(
     await expect(dialog.locator('[data-missing-input-rewrite-hint]')).toBeVisible()
 
     // 2) 浏览器模式：粘贴数据所在的文件夹 → 预览（脚本一个字节都不改）
-    await dialog.getByRole('textbox').fill(dataRoot)
+    await dialog.locator('[data-testid="missing-input-path-input"]').fill(dataRoot)
     await dialog.locator('[data-testid="missing-input-use-path"]').click()
     const confirm = page.locator('[data-dialog="missing-input-rewrite"]')
     await expect(confirm).toBeVisible({ timeout: 30_000 })
@@ -89,7 +89,11 @@ test(
     const edited = readFileSync(path.join(dir, 'fig.py'), 'utf-8')
     const target = path.join(dataRoot, 'data', 'values.txt').split(path.sep).join('/')
     expect(edited).toBe(original.split(OLD).join(target))
-    const backups = path.join(dir, 'tavottofile', 'script-backups', 'fig.py')
+    // 备份目录名是「可读前半 + 路径哈希」（`fig.py-<12 位>`）：按前缀找唯一那一个，不写死布局
+    const backupRoot = path.join(dir, 'tavottofile', 'script-backups')
+    const slugs = readdirSync(backupRoot).filter((name) => name.startsWith('fig.py-'))
+    expect(slugs).toHaveLength(1)
+    const backups = path.join(backupRoot, slugs[0])
     const [stampDir] = readdirSync(backups)
     expect(readFileSync(path.join(backups, stampDir, 'original.py'), 'utf-8')).toBe(original)
 

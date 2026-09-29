@@ -191,7 +191,7 @@ function ScriptRow({
   }
 
   return (
-    <li className="flex flex-col">
+    <li className="flex flex-col" data-script-row={entry.script}>
       <div className={cn(listRowClass(), 'gap-1.5 pl-1.5 pr-0.5')}>
         <StatusDot entry={entry} run={run} />
         {/* 脚本名是这一行的主文字：等宽（路径 / 脚本名那一档）但字号跟正文走 12，
@@ -225,6 +225,7 @@ function ScriptRow({
           }
           tip={busy ? sc(run?.cancelRequested ? 'cancelling' : 'cancel') : sc(entry.registered ? 'rerun' : 'run')}
           disabled={!!run?.cancelRequested}
+          data-script-run={entry.script}
           onClick={onRunOrCancel}
           className={cn(!busy && 'text-ink-3 group-hover:text-ink focus-visible:text-ink')}
         >

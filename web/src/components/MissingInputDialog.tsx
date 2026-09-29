@@ -149,6 +149,7 @@ export function MissingInputDialog() {
           disabled={busy}
           placeholder={t('engine.missingInputPathPlaceholder')}
           aria-label={t('engine.missingInputPathPlaceholder')}
+          data-testid="missing-input-path-input"
           onChange={(e) => setTyped(e.target.value)}
         />
       )}
