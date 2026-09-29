@@ -77,8 +77,8 @@ export const STYLE_TEXT_ROWS: readonly TextRowSpec[] = [
     weight: r.faceRole ? `element.${r.faceRole}.weight` : null,
     style: r.faceRole ? `element.${r.faceRole}.style` : null,
   })),
-  // 其余图内文字（`text` 角色；示例图里也是各角色字号缺席时的回落）：面板上没有这一行——
-  // 它是样式的基准，不是一张图上的某一类字——但样式页一直管着它的字号
+  // 其余图内文字（`text` 角色；应用时只落在 `text` 角色上，示例图里没有它的一笔）：面板上没有这一行——
+  // 它不是一张图上的某一类字——但样式页一直管着它的字号
   {
     id: 'text',
     kind: 'element',

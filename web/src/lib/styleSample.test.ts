@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { cssFamilyOf, sampleFitScale, SAMPLE_DEFAULTS, styleSampleGeometry } from './styleSample'
 
 describe('styleSampleGeometry（审计 T42：样式页的示例图从样式内容现算）', () => {
-  it('每个角色的字号落到示例里自己那一笔；没设的角色回落到正文字号', () => {
+  it('每个角色的字号落到示例里自己那一笔；没设的角色是示例默认，不跟「其余文字」（应用时不会跟着变）', () => {
     const g = styleSampleGeometry({
       element: {
         text: { fontsize: 8 },
@@ -14,24 +14,24 @@ describe('styleSampleGeometry（审计 T42：样式页的示例图从样式内�
     })
     expect(g.titlePt).toBe(11)
     expect(g.tickPt).toBe(7)
-    expect(g.axisPt).toBe(8) // 轴标题没单独设 → 正文
-    expect(g.legendPt).toBe(8)
+    expect(g.axisPt).toBe(SAMPLE_DEFAULTS.axisPt) // 轴标题没单独设：`text` 的 8 只落在 `text` 角色上
+    expect(g.legendPt).toBe(SAMPLE_DEFAULTS.legendPt)
     expect(g.lineWidthPt).toBe(1.25)
     expect(g.spinePt).toBe(0.4)
   })
 
   it('什么都没设的样式画出示例默认值，而不是 0 或 NaN', () => {
     const g = styleSampleGeometry({})
-    expect(g.titlePt).toBe(SAMPLE_DEFAULTS.basePt)
+    expect(g.titlePt).toBe(SAMPLE_DEFAULTS.titlePt)
     expect(g.lineWidthPt).toBe(SAMPLE_DEFAULTS.lineWidthPt)
     expect(g.spinePt).toBe(SAMPLE_DEFAULTS.spinePt)
-    expect(g.fontFamily).toBe('sans-serif')
-    expect(styleSampleGeometry(null).titlePt).toBe(SAMPLE_DEFAULTS.basePt)
+    expect(g.faces.title.fontFamily).toBe('sans-serif')
+    expect(styleSampleGeometry(null)).toEqual(g)
   })
 
   it('非法的数（0、负数、字符串）当作没设', () => {
-    const g = styleSampleGeometry({ element: { text: { fontsize: 0 }, line: { linewidth: '2' } } })
-    expect(g.titlePt).toBe(SAMPLE_DEFAULTS.basePt)
+    const g = styleSampleGeometry({ element: { title: { fontsize: 0 }, line: { linewidth: '2' } } })
+    expect(g.titlePt).toBe(SAMPLE_DEFAULTS.titlePt)
     expect(g.lineWidthPt).toBe(SAMPLE_DEFAULTS.lineWidthPt)
   })
 
@@ -72,7 +72,7 @@ describe('sampleFitScale（示例图画得下这套字号吗）', () => {
     expect(sampleFitScale(styleSampleGeometry({ element: { line: { linewidth: 9.5 } } }))).toBe(1)
   })
 
-  it('每类文字各自的字面：图例的在 legend_text 上；粗斜体不从「其余文字」回落（应用时不会跟着变）', () => {
+  it('每类文字各自的字面：图例的在 legend_text 上；字体与粗斜体都不从「其余文字」回落（应用时不会跟着变）', () => {
     const g = styleSampleGeometry({
       element: {
         text: { fontfamily: 'serif', weight: 'bold' },
@@ -81,19 +81,78 @@ describe('sampleFitScale（示例图画得下这套字号吗）', () => {
       },
     })
     expect(g.faces.title).toEqual({ fontFamily: '"Arial", sans-serif', bold: true, italic: false })
-    expect(g.faces.legend).toEqual({ fontFamily: 'serif', bold: false, italic: true })
+    expect(g.faces.legend).toEqual({ fontFamily: 'sans-serif', bold: false, italic: true })
+    expect(g.faces.axis.fontFamily).toBe('sans-serif')
     expect(g.faces.axis.bold).toBe(false)
     expect(g.faces.tick.bold).toBe(false)
   })
 
-  it('刻度：方向 / 长度 / 线宽按样式；长度 0 是真值，线宽没设跟边框', () => {
+  it('刻度：方向 / 长度 / 线宽按样式；长度 0 是真值，线宽没设是示例默认（不跟边框）', () => {
     const g = styleSampleGeometry({ element: { ticks: { direction: 'in', length: 0 }, axes: { spine_linewidth: 0.4 } } })
     expect(g.tickDirection).toBe('in')
     expect(g.tickLengthPt).toBe(0)
-    expect(g.tickWidthPt).toBe(0.4)
+    expect(g.tickWidthPt).toBe(SAMPLE_DEFAULTS.tickWidthPt)
     const d = styleSampleGeometry({ element: { ticks: { direction: 'sideways', width: 1.2 } } })
     expect(d.tickDirection).toBe('out')
     expect(d.tickLengthPt).toBe(SAMPLE_DEFAULTS.tickLengthPt)
     expect(d.tickWidthPt).toBe(1.2)
+  })
+})
+
+describe('styleSampleGeometry：每一维单独改，示例里只有对应的那一笔变（Codex #703）', () => {
+  // 每条 = 样式里的一个点分路径、一个非默认值、示例几何里应当变的那一个字段。
+  // 行 × 角色取自面板的行表：字号在 `legend`、图例字体 / 字面在 `legend_text`
+  const CASES: Array<[string, unknown, string]> = [
+    ['element.title.fontsize', 12, 'titlePt'],
+    ['element.axis_label.fontsize', 12, 'axisPt'],
+    ['element.ticks.fontsize', 12, 'tickPt'],
+    ['element.legend.fontsize', 12, 'legendPt'],
+    ['element.title.fontfamily', 'serif', 'faces.title'],
+    ['element.axis_label.fontfamily', 'serif', 'faces.axis'],
+    ['element.ticks.fontfamily', 'serif', 'faces.tick'],
+    ['element.legend_text.fontfamily', 'serif', 'faces.legend'],
+    ['element.title.weight', 'bold', 'faces.title'],
+    ['element.axis_label.style', 'italic', 'faces.axis'],
+    ['element.legend_text.weight', 'bold', 'faces.legend'],
+    ['element.line.linewidth', 2, 'lineWidthPt'],
+    ['element.axes.spine_linewidth', 2, 'spinePt'],
+    ['element.ticks.direction', 'in', 'tickDirection'],
+    ['element.ticks.length', 7, 'tickLengthPt'],
+    ['element.ticks.width', 2, 'tickWidthPt'],
+    ['palette', ['#000000', '#ffffff'], 'colors'],
+  ]
+  const build = (path: string, value: unknown) => {
+    const root: Record<string, unknown> = {}
+    const keys = path.split('.')
+    let cur = root
+    for (const k of keys.slice(0, -1)) cur = (cur[k] = {}) as Record<string, unknown>
+    cur[keys[keys.length - 1]] = value
+    return root
+  }
+  const flat = (g: object, prefix = ''): Record<string, string> =>
+    Object.fromEntries(
+      Object.entries(g).flatMap(([k, v]) =>
+        k === 'faces'
+          ? Object.entries(v as object).map(([fk, fv]) => [`faces.${fk}`, JSON.stringify(fv)])
+          : [[prefix + k, JSON.stringify(v)]],
+      ),
+    )
+  const base = flat(styleSampleGeometry({}))
+
+  it.each(CASES)('%s', (path, value, field) => {
+    const got = flat(styleSampleGeometry(build(path, value)))
+    const changed = Object.keys(base).filter((k) => got[k] !== base[k])
+    expect(changed).toEqual([field])
+  })
+
+  it('「其余文字」（element.text）的字号 / 字体 / 字面不动示例里的任何一笔', () => {
+    for (const [prop, value] of [
+      ['fontsize', 14],
+      ['fontfamily', 'serif'],
+      ['weight', 'bold'],
+      ['style', 'italic'],
+    ] as const) {
+      expect(flat(styleSampleGeometry(build(`element.text.${prop}`, value)))).toEqual(base)
+    }
   })
 })

@@ -7,12 +7,13 @@
  *
  * 纯函数、不跑引擎、不读文档：输入是 `StyleProfileData` 形状的对象（磁盘里的
  * `data`，或编辑中的草稿），输出是一组数字，`StyleSamplePreview` 只负责画。
- * 缺席的字段回落到示例的默认值——**回落只影响示例**，不会写回样式。
+ * 缺席的字段是示例的默认值——**默认值只影响示例**，不会写回样式。
  */
+
+import { FIGURE_LINE_ROWS, FIGURE_TEXT_ROWS, type FigureLineRowId, type FigureTextRowId } from './stylePanelModel'
 
 /** 示例图默认值（一张 9 pt / 0.5 pt 的典型论文图） */
 export const SAMPLE_DEFAULTS = {
-  basePt: 9,
   titlePt: 9,
   axisPt: 9,
   tickPt: 9,
@@ -38,14 +39,12 @@ export interface StyleSampleGeometry {
   legendPt: number
   lineWidthPt: number
   spinePt: number
-  /** 示例文字用的 CSS 字体族（serif / sans-serif / monospace；未知的原样透出） */
-  fontFamily: string
   /**
-   * 每一类文字各自的字面（设置 › 样式页 2026-09-28 起每行能改字体 / 粗体 / 斜体）：
-   * 没设的回落到 `fontFamily` 与常规字面
+   * 每一类文字各自的字面（CSS 字体族 + 粗 / 斜体；设置 › 样式页 2026-09-28 起每行能改）：
+   * 没设的是示例默认字体与常规字面
    */
   faces: { title: SampleFace; axis: SampleFace; tick: SampleFace; legend: SampleFace }
-  /** 刻度：方向（`in` / `out` / `inout`）、长度与线宽（pt；线宽没设时跟边框） */
+  /** 刻度：方向（`in` / `out` / `inout`）、长度与线宽（pt） */
   tickDirection: 'in' | 'out' | 'inout'
   tickLengthPt: number
   tickWidthPt: number
@@ -53,22 +52,23 @@ export interface StyleSampleGeometry {
   colors: [string, string]
 }
 
-const readNumber = (obj: unknown, path: string[]): number | null => {
+const readValue = (obj: unknown, path: string[]): unknown => {
   let cur: unknown = obj
   for (const key of path) {
     if (!cur || typeof cur !== 'object') return null
     cur = (cur as Record<string, unknown>)[key]
   }
-  return typeof cur === 'number' && Number.isFinite(cur) && cur > 0 ? cur : null
+  return cur
+}
+
+const readNumber = (obj: unknown, path: string[]): number | null => {
+  const v = readValue(obj, path)
+  return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : null
 }
 
 const readString = (obj: unknown, path: string[]): string | null => {
-  let cur: unknown = obj
-  for (const key of path) {
-    if (!cur || typeof cur !== 'object') return null
-    cur = (cur as Record<string, unknown>)[key]
-  }
-  return typeof cur === 'string' && cur.trim() ? cur.trim() : null
+  const v = readValue(obj, path)
+  return typeof v === 'string' && v.trim() ? v.trim() : null
 }
 
 /** matplotlib 的通用族名 → CSS 通用族；具体字体名（Times New Roman）原样交给浏览器 */
@@ -81,55 +81,53 @@ export function cssFamilyOf(family: string | null): string {
   return `"${family}", sans-serif`
 }
 
+const textRow = (id: FigureTextRowId) => FIGURE_TEXT_ROWS.find((r) => r.id === id)!
+const lineRow = (id: FigureLineRowId) => FIGURE_LINE_ROWS.find((r) => r.id === id)!
+
 /**
- * 把一份样式翻成示例图的几何。角色字号缺席时回落到正文字号（样式里
- * `element.text.fontsize` 就是「其余文字」的基准），正文也没设就是示例默认。
+ * 把一份样式翻成示例图的几何。
+ *
+ * 示例里每一笔只读**它自己那一维**（角色 × 属性与样式面板同一张行表 `FIGURE_TEXT_ROWS` /
+ * `FIGURE_LINE_ROWS`），没设就是示例默认值，**不从别的角色回落**：应用样式（`planStyle`）时
+ * 每个角色的值只落在那个角色的元素上——`element.text` 只改「其余文字」、边框线宽不改刻度线宽，
+ * 示例若让标题跟着 `text` 变、刻度跟着边框变，就是在预告一件应用时不会发生的事（Codex #703）。
+ * 「其余文字」（`text`）在示例图里没有对应的一笔。
  */
 export function styleSampleGeometry(data: Record<string, unknown> | null | undefined): StyleSampleGeometry {
   const d = data ?? {}
-  const base = readNumber(d, ['element', 'text', 'fontsize']) ?? SAMPLE_DEFAULTS.basePt
-  const role = (r: string, fallback: number) => readNumber(d, ['element', r, 'fontsize']) ?? fallback
   const palette = (d as { palette?: unknown }).palette
   const colors: [string, string] =
     Array.isArray(palette) && palette.length >= 2 && palette.every((c) => typeof c === 'string')
       ? [palette[0] as string, palette[1] as string]
       : ['#1B3A6B', '#C0504D']
-  const baseFamily = readString(d, ['element', 'text', 'fontfamily'])
-  const fontFamily = cssFamilyOf(baseFamily ?? readString(d, ['element', 'title', 'fontfamily']))
-  const face = (familyRole: string, faceRole: string | null): SampleFace => {
-    const family = readString(d, ['element', familyRole, 'fontfamily'])
-    // 粗斜体**不**回落到其余文字：应用时 `text` 上的 `weight` 只落在 `text` 角色上，标题不会跟着
-    // 变粗——示例画成粗的就是在预告一件不会发生的事（字号的回落是示例自古以来的约定，另说）
+  const size = (id: FigureTextRowId, fallback: number) =>
+    readNumber(d, ['element', textRow(id).sizeRole, 'fontsize']) ?? fallback
+  const face = (id: FigureTextRowId): SampleFace => {
+    const { familyRole, faceRole } = textRow(id)
     const faceOf = (prop: string) => (faceRole ? readString(d, ['element', faceRole, prop]) : null)
     return {
-      fontFamily: family ? cssFamilyOf(family) : fontFamily,
+      fontFamily: cssFamilyOf(readString(d, ['element', familyRole, 'fontfamily'])),
       bold: faceOf('weight') === 'bold',
       italic: faceOf('style') === 'italic',
     }
   }
-  const spinePt = readNumber(d, ['element', 'axes', 'spine_linewidth']) ?? SAMPLE_DEFAULTS.spinePt
-  const dir = readString(d, ['element', 'ticks', 'direction'])
-  const rawLength = (d as { element?: { ticks?: { length?: unknown } } }).element?.ticks?.length
+  const linePath = (id: FigureLineRowId) => ['element', lineRow(id).role, lineRow(id).prop]
+  const width = (id: FigureLineRowId, fallback: number) => readNumber(d, linePath(id)) ?? fallback
+  const dir = readString(d, linePath('tickDirection'))
+  // 长度 0 是「不画刻度线」，是个真值；`readNumber` 只认正数，这里单独读
+  const rawLength = readValue(d, linePath('tickLength'))
   const tickLength = typeof rawLength === 'number' && Number.isFinite(rawLength) && rawLength >= 0 ? rawLength : null
   return {
-    titlePt: role('title', base),
-    axisPt: role('axis_label', base),
-    tickPt: role('ticks', base),
-    legendPt: role('legend', base),
-    lineWidthPt: readNumber(d, ['element', 'line', 'linewidth']) ?? SAMPLE_DEFAULTS.lineWidthPt,
-    spinePt,
-    fontFamily,
-    faces: {
-      // 字体 / 粗斜体在哪个角色上与样式面板同一张行表（图例的在 `legend_text` 上；刻度文字没有粗斜体）
-      title: face('title', 'title'),
-      axis: face('axis_label', 'axis_label'),
-      tick: face('ticks', null),
-      legend: face('legend_text', 'legend_text'),
-    },
+    titlePt: size('title', SAMPLE_DEFAULTS.titlePt),
+    axisPt: size('axis_label', SAMPLE_DEFAULTS.axisPt),
+    tickPt: size('ticks', SAMPLE_DEFAULTS.tickPt),
+    legendPt: size('legend', SAMPLE_DEFAULTS.legendPt),
+    lineWidthPt: width('dataLine', SAMPLE_DEFAULTS.lineWidthPt),
+    spinePt: width('frame', SAMPLE_DEFAULTS.spinePt),
+    faces: { title: face('title'), axis: face('axis_label'), tick: face('ticks'), legend: face('legend') },
     tickDirection: dir === 'in' || dir === 'inout' ? dir : 'out',
-    // 长度 0 是「不画刻度线」，是个真值；`readNumber` 只认正数，这里单独读
     tickLengthPt: tickLength ?? SAMPLE_DEFAULTS.tickLengthPt,
-    tickWidthPt: readNumber(d, ['element', 'ticks', 'width']) ?? spinePt,
+    tickWidthPt: width('tickWidth', SAMPLE_DEFAULTS.tickWidthPt),
     colors,
   }
 }

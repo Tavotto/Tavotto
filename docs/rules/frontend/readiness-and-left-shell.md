@@ -133,6 +133,8 @@
   编辑的是样式本身，所以每格多一档「未设置」（占位写「未设置」不写「多个值」，行尾 × 整行清回这一档）；粗体再按一次
   写 `normal` 不是清掉；字体选项 = 通用三族 + 已渲染的图里引擎报过的首选项与本机族 + 样式里已写着的名字；
   改动以函数交出（字体下拉按数据 memo，回调不许捏着旧草稿）。只读那份每行一句摘要（字体 · 字号 · 粗斜体）。
+  示例图（`lib/styleSample.ts`）每一笔只读它自己那一维（同一张行表），没设是示例默认、不从别的角色回落——应用时
+  `element.text` 只落在 `text` 角色上、边框线宽不改刻度线宽，示例跟着变就是预告不会发生的事。
   看护：`components/left/stylePanel.test.tsx`、`lib/stylePresets.test.ts`、`store/styleBinding.test.ts`、`lib/migrate.style.test.ts`、
   `components/settings/profilesSettings.test.tsx`、`lib/styleSample.test.ts`。
 - 看护：`store/projectReadinessStore.test.ts`、`components/RegistryDialog.test.tsx`、
