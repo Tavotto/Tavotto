@@ -150,6 +150,18 @@
     menu / slider …，`useKeyboard.arrowOwnedByWidget`）归它们；`toolbar` 不在此列。
   看护：`canvas/arrowNudge.test.tsx`、`canvas/nudgeThenPointer.test.tsx`、`e2e/arrow-nudge.spec.ts`、`canvas/groupLockDrag.test.ts`。
 
+- **拖不动要说出来（ADR 0100，2026-09-27 拖动全族排查）**：`inFigureMoveOf` 回 null 的元素，
+  按下只是选中；**真的拖起来**（过了 `trackPointer` 阈值）才 toast 一句为什么，一次手势只说一次、
+  不写项目、不占 `interactionStore.kind`。理由只有 `inFigureImmovableReason` 一处（紧挨着
+  `inFigureMoveOf`，只读 manifest 的 role）：数据系列 / 标注箭头 / 图例项 / 刻度 / 3D 轴标题 /
+  像素坐标 / 宿主决定落位 / 暂不支持八档，文案 `status.dragNotMovable.*`。方向键微调单选一个
+  这样的元素时说同一句（`immovableMessage`），多选或锁定 / 隐藏的仍是「选中的图内元素不能移动」。
+  箭头只有 manifest 带 `arrow_of`（属于一段有字的标注）时才说「拖文字」，别的归「暂不支持」。
+  **挪过的插图**（manifest `inset_of` + 有 position override）钉在图幅上，拖宿主时由 `axesCompanions`
+  带着写同样的位移（SVG 里嵌在宿主 `<g>` 里，不单独预览）；没挪过的由定位器带着走，不多写一条。
+  沿 `inset_of` 走完嵌套的插图，连同插图里挪过的后代与插图的随行色条轴。
+  看护 `canvas/dragCoverage.test.tsx`、`e2e/drag-coverage.spec.ts`。
+
 ## 速查表原要点（2026-09-25 迁入，#608）
 
 `web/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。

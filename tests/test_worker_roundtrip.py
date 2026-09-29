@@ -3788,26 +3788,43 @@ def test_secondary_axis_label_is_editable(tmp_path):
         pool.discard(w)
 
 
-def test_child_axes_never_expose_position(tmp_path):
-    """**反向断言**：子 axes 的落位由父级 `_axes_locator` 每帧重算。
+def test_secondary_axis_never_exposes_position(tmp_path):
+    """**反向断言**：次坐标轴的落位由父级 `_axes_locator` 按 `set_location` 每帧重算
+    ——「贴在父轴哪一边」是它的语义，不是排版位置，不给这个字段。
 
-    实测：`set_position([...])` 之后立刻读回是新值，`draw()` 一次就被顶回
-    原值。开放这个字段等于给用户一个「按了、界面也变了、下一帧弹回去」的
-    旋钮——按 CompatBench 自己的判据那是最不能接受的一档（看起来成功、
-    实际没生效）。将来谁想放开它，会先撞到这条用例。
+    插图（`ax.inset_axes`）从前也在这里：`set_position` 一 draw 就被定位器顶回去。
+    ADR 0100 起 `overrides._set_axes_position` 落位时把定位器摘下来，插图的
+    position 钉得住，于是放开——见下一条用例。
     """
     w = _child_axes_worker(tmp_path)
     try:
-        for stem in ("ChildInset", "ChildSecondary"):
-            man = w.override(stem, [])["manifest"]
-            assert "position" not in _props_of(man, "axes_1"), f"{stem}: 子 axes 出了 position 字段"
-            assert _el_of(man, "axes_1")["resizable"] is False, (
-                f"{stem}: resizable 与 position 字段不一致，"
-                f"前端会拿着一个后端不认的 prop 发 override"
-            )
-            # 宿主照常可拖
-            assert "position" in _props_of(man, "axes_0")
-            assert _el_of(man, "axes_0")["resizable"] is True
+        man = w.override("ChildSecondary", [])["manifest"]
+        assert "position" not in _props_of(man, "axes_1"), "次坐标轴出了 position 字段"
+        assert _el_of(man, "axes_1")["resizable"] is False, (
+            "resizable 与 position 字段不一致，前端会拿着一个后端不认的 prop 发 override"
+        )
+        assert "position" in _props_of(man, "axes_0")
+        assert _el_of(man, "axes_0")["resizable"] is True
+    finally:
+        pool.discard(w)
+
+
+def test_inset_axes_position_holds_and_undoes(tmp_path):
+    """插图宣称 position，写下的位置就是画出来的位置（不被定位器顶回去）；撤销逐位回原样，
+    插图重新跟着定位器走。manifest 点名宿主（`inset_of`）：前端拖宿主时带着挪过的插图。"""
+    w = _child_axes_worker(tmp_path)
+    try:
+        man = w.override("ChildInset", [])["manifest"]
+        el = _el_of(man, "axes_1")
+        assert el["resizable"] is True and el.get("inset_of") == "axes_0", el
+        x0, y0, pw, ph = _field_of(man, "axes_1", "position")
+        want = [round(x0 - 0.1, 4), round(y0 + 0.05, 4), pw, ph]
+        resp = w.override("ChildInset", [{"gid": "axes_1", "prop": "position", "value": want}])
+        assert not (resp.get("warnings") or []), resp["warnings"]
+        got = _field_of(resp["manifest"], "axes_1", "position")
+        assert got == pytest.approx(want, abs=1e-4), f"插图被定位器顶回去了：{got}"
+        back = w.override("ChildInset", [])["manifest"]
+        assert _field_of(back, "axes_1", "position") == pytest.approx([x0, y0, pw, ph], abs=1e-9)
     finally:
         pool.discard(w)
 

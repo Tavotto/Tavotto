@@ -1621,6 +1621,16 @@ export interface ManifestElement {
    */
   follow_gids?: string[]
   /**
+   * 插图（`ax.inset_axes`）的宿主子图 gid。没挪过的插图由定位器带着宿主走；**挪过**的
+   * （写了 position）钉在图幅上，拖宿主时要作为随行元素一起写（`axesCompanions`，ADR 0100）。
+   */
+  inset_of?: string
+  /**
+   * 带文字的标注的箭头：它所属的那段标注文字的 gid。箭头的位置归文字（尾巴跟着文字、尖钉在
+   * 数据点上），拖它时提示「拖文字」；没有这个字段的箭头（独立箭头、纯箭头注释）不是这回事（ADR 0100）。
+   */
+  arrow_of?: string
+  /**
    * 可拖元素的锚点（figure 分数、y 向下）与拖动写哪条 override：文字 / 独立形状
    * 是 `pos_frac`（形状的锚点是包围盒左下角），图例是 `loc_frac`。前端只按
    * `anchor + 位移` 写绝对值，不关心锚点在元素上的哪一处。

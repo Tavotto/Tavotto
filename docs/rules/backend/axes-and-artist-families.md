@@ -160,10 +160,21 @@
   子图，子图拖不动）**：`manifest._is_area_field`——QuadMesh / TriMesh / PolyCollection（含
   pcolor、hexbin、tripcolor）/ 填充的 ContourSet，且 `color_mapping_is_live`——与 imshow 一样
   发 `resizable` + `geom_gid = 宿主 axes`；不填充的等值线、散点、线组不算（子图里有空白可点）。
-  宿主 `position_locked`（插图 / 寄生轴）时**位图与网格都不宣称**，与色条代理同一判据。
+  宿主 `position_locked`（次坐标轴 / 寄生轴）时**位图与网格都不宣称**，与色条代理同一判据
+  （插图 ADR 0100 起不再锁：落 position 时摘下定位器）。
   代理元素的 bbox 与 `clip_bbox` 求交（前端拿它出吸附参考线、当键盘轮换探针），别的角色
   仍是数据范围口径。看护 `tests/test_figure_recognition.py`、
   `test_manifest_geometry.py::test_quadmesh_outline_is_clipped_to_what_is_drawn`。
+- **`ax.artists` 里的锚定框与插框可拖（ADR 0100）**：`AnchoredOffsetbox` 一族（`AnchoredText`、
+  `AnchoredSizeBar`、`AnchoredDrawingArea` …）与 `AnnotationBbox` 仍按 role `artist` 登记，但
+  `draggable = overrides.offsetbox_draggable(art)`（manifest 与 setter 同一判据；AnnotationBbox
+  按 `boxcoords` 查注释那张可逆表，'offset pixels' 不宣称），`anchor` 与 setter 量同一个框
+  （`offsetbox_frame`：AnnotationBbox 不含箭头）。拖过之后框**以左下角挂在写下的点上**（锚定框
+  改 lower left + borderpad 0 + figure 分数锚点；AnnotationBbox 改 box_alignment (0, 0)），原样
+  记在 `_mm_offsetbox_native`、撤销放回——保留原挂点再平移的话框的像素宽高随 dpi 不成比例，
+  预览与 manifest 两次成图差 0.1–0.3 mm。`AnchoredOffsetbox.draw` 不开 SVG 组，`manifest._svg_group`
+  给它包一层（只多一个 `<g id=gid>`，别的后端 `open_group` 是空操作），前端的乐观预览才找得到它。
+  插图 manifest 带 `inset_of`（宿主 gid），前端拖宿主时带着挪过的插图。看护 `tests/test_drag_coverage.py`。
 - 面板翻转（flip_h/flip_v，先翻转后旋转）：导出按 dpi 位图嵌入
   （show_pdf_page 无镜像；flipH = 行倒序 + 旋转 180°），与 opacity<1 同一取舍。
 

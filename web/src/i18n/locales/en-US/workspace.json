@@ -652,6 +652,16 @@
     "documentLoaded_one": "Loaded {{name}} ({{count}} canvas)",
     "documentLoaded_other": "Loaded {{name}} ({{count}} canvases)",
     "documentReopened_one": "Switched back to {{name}} ({{count}} canvas)",
+    "dragNotMovable": {
+      "annotationArrow": "An annotation’s arrow points at the data and follows its text — drag the text to move the annotation",
+      "axisLabel3d": "A 3D axis title is placed by the view angle and can’t be dragged; adjust its distance from the axis in the inspector",
+      "hostPlaced": "“{{label}}” is placed by its host axes and moves with it — drag the host axes instead",
+      "legendEntry": "Legend entries move with the legend — drag the legend itself",
+      "pixelCoords": "“{{label}}” is positioned in pixels, font units or relative to another object, so a dragged position would drift at another export resolution or when that object changes; it can’t be dragged yet",
+      "series": "“{{label}}” is placed by its data and can’t be dragged; to move the whole axes, drag an empty spot in it or select it in the element tree",
+      "ticks": "Tick labels follow their ticks and can’t be dragged on their own; change ticks in the inspector",
+      "unsupported": "Dragging “{{label}}” isn’t supported yet"
+    },
     "documentReopened_other": "Switched back to {{name}} ({{count}} canvases)",
     "elementCycled": "Selected “{{label}}” — {{index}} of {{total}} overlapping here",
     "elementHidden": "Hid “{{label}}” — restore it from “Hidden elements”",

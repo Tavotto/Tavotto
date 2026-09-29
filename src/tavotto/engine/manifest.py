@@ -32,6 +32,7 @@ from matplotlib.container import BarContainer, ErrorbarContainer, StemContainer
 from matplotlib.contour import ContourSet
 from matplotlib.lines import Line2D
 from matplotlib.markers import MarkerStyle
+from matplotlib.offsetbox import AnchoredOffsetbox, AnnotationBbox
 from matplotlib.patches import FancyArrowPatch, Patch
 from matplotlib.path import Path
 from matplotlib.text import Text
@@ -99,6 +100,8 @@ from overrides import (
     image_pixels_skipped,
     is_linecoll_family,
     legend_handle_props,
+    offsetbox_draggable,
+    offsetbox_frame,
     remember_axis_directions,
     scale_options,
     set_original_reader,
@@ -162,6 +165,32 @@ def _relabel(registered: str, text: str) -> str:
     """把登记名里引号中的那段换成当前文字（前缀是角色名，原样保留）。"""
     head = registered.split("“", 1)[0]
     return f"{head}“{_snippet(text)}”"
+
+
+def _svg_group(art) -> None:
+    """让一个自己不开 SVG 组的 artist 按 gid 开一个（幂等）。
+
+    `AnchoredOffsetbox.draw` 直接画外框与孩子、不 `open_group`，于是预览 SVG 里没有
+    `id=<gid>` 的节点：拖动时前端的乐观预览（平移那个 `<g>`）找不到它，框不跟手、松手才跳
+    过去（ADR 0100）。包一层实例级 draw：只在 SVG 里多一个 `<g>`，别的后端的
+    `open_group` 是空操作，像素一个不变。
+    """
+    if art.__dict__.get("_mm_svg_group"):
+        return
+    native = art.draw
+
+    def draw(renderer, *args, **kwargs):
+        gid = art.get_gid()
+        if gid is None:
+            return native(renderer, *args, **kwargs)
+        renderer.open_group(type(art).__name__, gid=gid)
+        try:
+            return native(renderer, *args, **kwargs)
+        finally:
+            renderer.close_group(type(art).__name__)
+
+    art.draw = draw
+    art._mm_svg_group = True  # noqa: SLF001
 
 
 def _register(
@@ -494,17 +523,22 @@ def instrument(state: FigState) -> None:
     child_ordinal: dict[str, int] = {"inset": 0, "secondary": 0}
     # twinx/twiny 的 twin 轴 → 「子图 N（右轴）」这类可区分标签，整轮算一次
     twin_labels = _twin_axes_labels(all_axes, child_ids, cbar_of_ax)
+    # 插图 → 它的宿主轴：宿主被拖时，**被挪过**的插图要一起走（前端 `axesCompanions`；
+    # 没挪过的由定位器带着走，本来就跟着）
+    parent_of = {id(c): p for p in all_axes for c in getattr(p, "child_axes", ()) or ()}
     for i, ax in enumerate(all_axes):
         is3d = getattr(ax, "name", "") == "3d"
         is_child = id(ax) in child_ids
         is_parasite = id(ax) in parasite_ids
         secondary = is_child and _is_secondary_axis(ax)
-        # **落位不给编辑**：子 axes 的位置由父级的 `_axes_locator` 每帧重算，
-        # `set_position` 之后立刻读回是新值、`draw()` 一次就被顶回原值（实测）。
-        # 开放它就是「设了、界面也变了、下一帧弹回去」——比不支持严重得多。
-        # 判据是「子 axes **且** 有 locator」而不是光看 locator：色条轴也带
-        # `_ColorbarAxesLocator`，而色条的 position override 是**支持**的
-        # （用户自己摆过色条时就靠它），光判 locator 会把那条功能一起砍掉。
+        # **次坐标轴的落位不给编辑**：它的位置由父级的 `_axes_locator` 每帧按
+        # `set_location` 重算，那是一条「贴在父轴哪一边」的语义，不是排版位置。
+        # 插图（`ax.inset_axes`）从前也锁在这里——`set_position` 一 draw 就被
+        # 定位器顶回去；ADR 0100 起 `overrides._set_axes_position` 把定位器摘下来
+        # （`_release_axes_locator`，撤销时放回去），插图的落位钉得住，于是放开。
+        # 同一个摘法也修好了不是子 axes、却同样靠定位器落位的轴（mpl_toolkits 的
+        # `inset_axes`、`make_axes_locatable` / `ImageGrid`）：它们从前宣称可拖、
+        # 松手弹回原处。
         #
         # 寄生轴是**同一个形状、另一个机制**：它没有 locator，顶回落位的是宿主
         # 的 `HostAxesBase.draw`——`for ax in self.parasites: ax.apply_aspect(rect)`
@@ -522,7 +556,7 @@ def instrument(state: FigState) -> None:
         # 所以「拖 tight 图上的 host_subplot」= 宿主到位、它的右轴跟着，而寄生轴
         # 自己的 position 照旧是死开关。看护见
         # `tests/test_layout_engine_pinning.py` 第 11 节。
-        position_locked = (is_child and ax.get_axes_locator() is not None) or is_parasite
+        position_locked = secondary or is_parasite
         if is_child:
             kind = "secondary" if secondary else "inset"
             child_ordinal[kind] += 1
@@ -545,6 +579,7 @@ def instrument(state: FigState) -> None:
             label,
             position_locked=position_locked,
             limits_slaved=secondary,
+            inset_of=(gid_of_ax.get(parent_of.get(id(ax))) if is_child and not secondary else None),
             # 寄生轴的 `set_visible(False)` 同样是个死开关：宿主的 draw 无条件
             # 把 `ax.get_children()` 接过去画，**从不看寄生轴自己的 visible**
             # （实测像素一个都不变）。宁可不给这个控件，也不给一个按了没反应的。
@@ -809,8 +844,17 @@ def instrument(state: FigState) -> None:
         for j, art in enumerate(getattr(ax, "artists", []) or []):
             if id(art) in state.index_ids():
                 continue
+            if isinstance(art, AnchoredOffsetbox):
+                _svg_group(art)
             _register(
-                state, f"axes_{i}.artists_{j}", art, "artist", f"{type(art).__name__} {j + 1}"
+                state,
+                f"axes_{i}.artists_{j}",
+                art,
+                "artist",
+                f"{type(art).__name__} {j + 1}",
+                # 锚定框（AnchoredText / 比例尺 …）与 AnnotationBbox 的位置是排版，可拖
+                # （ADR 0100，`overrides._set_offsetbox_pos_frac`）；其余仍只开 visible / zorder
+                draggable=offsetbox_draggable(art),
             )
         for j, tbl in enumerate(getattr(ax, "tables", []) or []):
             _register(state, f"axes_{i}.tables_{j}", tbl, "artist", f"表格 {j + 1}")
@@ -4473,6 +4517,8 @@ def _measure_manifest(state: FigState, stem: str, arm, fig, renderer) -> dict:
             follow = state.axes_follow.get(el["gid"])
             if follow:
                 entry["follow_gids"] = follow
+            if el.get("inset_of"):
+                entry["inset_of"] = el["inset_of"]
         elif el["role"] == "image" or _is_area_field(artist):
             # imshow 位图铺满宿主 axes，会在命中测试里盖住它——把几何编辑
             # 代理回宿主 axes（前端对 geom_gid 发 position override）。
@@ -4694,6 +4740,11 @@ def _measure_manifest(state: FigState, stem: str, arm, fig, renderer) -> dict:
         # xyann / xy，patch 每次 draw 按它们重定位——所以从注释算，不读 patch 上一帧
         # 的缓存）。有字的注释、坐标系逆算不回去的注释不出（`annotation_arrow_owner`）
         if el["role"] == "arrow_patch":
+            # 带文字的标注的箭头：位置归文字（尾巴从文字框算、尖钉在 xy），前端拖它时说
+            # 「拖文字」——得先知道它**属于**一段有字的标注，别按 gid 形状猜（ADR 0100）
+            owner = getattr(artist, "_mm_annotation", None)
+            if owner is not None and owner.get_text():
+                entry["arrow_of"] = el["gid"].rsplit(".", 1)[0]
             disp = None
             ann = annotation_arrow_owner(artist)
             try:
@@ -4764,6 +4815,12 @@ def _measure_manifest(state: FigState, stem: str, arm, fig, renderer) -> dict:
             try:
                 if isinstance(artist, Text):
                     dx, dy = artist.get_transform().transform(artist.get_position())
+                    drag_prop = "pos_frac"
+                elif isinstance(artist, (AnchoredOffsetbox, AnnotationBbox)):
+                    # 锚定框 / 插框：锚点 = 框的左下角，与 setter 同一把尺（`offsetbox_frame`：
+                    # AnnotationBbox 不含箭头）
+                    bb = offsetbox_frame(artist, renderer)
+                    dx, dy = bb.x0, bb.y0
                     drag_prop = "pos_frac"
                 elif isinstance(artist, Patch):
                     # 独立形状：锚点用包围盒左下角。**与 setter 同一把尺**

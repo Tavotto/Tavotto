@@ -207,6 +207,28 @@ def apply_legend_pos_model(leg: Legend) -> None:
     leg.stale = True
 
 
+def put_legend_frac(leg: Legend, v) -> None:
+    """布局引擎的 pin 层用（`overrides._pin_put_native` / `_pin_place`）：排版之前放回脚本
+    原样（`v is None`）、排完再落回写下的点，各整体重建一次。图例的包围盒参与 constrained /
+    tight 排版，拖出去之后按「拖过的」排，子图被挤开、跟着子图走的图例又被带走（ADR 0100
+    排查实测 1.2–4.5 mm）。
+
+    放回的是**整份位置模型**（loc / 锚点 / 拖动三个槽），不只是拖动那一槽：拖动在优先级上
+    盖过另外两槽，只撤拖动就露出它们——先选「图外」预设再拖，排版按图外的边距预留，别的
+    子图被挤开（Codex #681）。三槽原样暂存在模型上，落回时整份放回再写拖动的点；暂存只在
+    头一次放回时取，放回之后没落回（排版半路抛）的话再放一次也不会拿「全空」盖掉它。
+    """
+    cfg = legend_pos_cfg(leg)
+    if v is None:
+        cfg.setdefault("pinned", {k: cfg[k] for k in _LEGEND_POS_SLOTS})
+        for k in _LEGEND_POS_SLOTS:
+            cfg[k] = _POS_UNSET
+    else:
+        cfg.update(cfg.pop("pinned", {}))
+        cfg["loc_frac"] = v
+    apply_legend_pos_model(leg)
+
+
 def _mk_legend_pos_setter(slot: str):
     def setter(leg: Legend, v) -> None:
         legend_pos_cfg(leg)[slot] = v

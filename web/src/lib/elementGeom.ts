@@ -384,8 +384,44 @@ export function axesCompanions(
     })
   }
 
-  // 宿主与随行 axes 底下、被用户挪过位置的后代
-  for (const d of movedDescendants(panel, [axesGid, ...followGids])) {
+  // 宿主（与随行 axes）的插图里被用户挪过的那些：它们从此钉在图幅上（ADR 0100），不再由
+  // 定位器带着宿主走，所以要写同样的位移。**插图里还能再套插图**：没挪过的外层跟着定位器走，
+  // 挪过的内层照样钉在图幅上——所以沿 `inset_of` 一路往下走完，不只看直接挂在宿主上的那一层。
+  // 走到的插图自己的随行 axes（`fig.colorbar(im, ax=插图)` 的色条轴，平级、有固定落位）同样要写。
+  const inSet = (gid: string) => out.some((c) => c.gid === gid) || gid === axesGid
+  const shiftPos = (e: ManifestElement, previewsSeparately: boolean) => {
+    const pos = positionOf(panel, e)
+    if (!pos || inSet(e.gid)) return
+    out.push({
+      gid: e.gid,
+      previewsSeparately,
+      shift: (dfx, dfy) => ({
+        gid: e.gid,
+        prop: 'position',
+        value: [pos[0] + dfx, pos[1] - dfy, pos[2], pos[3]].map(round4),
+      }),
+    })
+  }
+  const hosts = new Set([axesGid, ...followGids])
+  for (let grew = true; grew; ) {
+    grew = false
+    for (const e of manifest.elements) {
+      if (!e.inset_of || !hosts.has(e.inset_of) || hosts.has(e.gid)) continue
+      hosts.add(e.gid)
+      grew = true
+      // SVG 里插图嵌在宿主的 <g> 里（任意深度都是），不单独预览
+      if (effectiveOverride(panel.overrides, e.gid, 'position')) shiftPos(e, false)
+      for (const f of e.follow_gids ?? []) {
+        const other = manifest.elements.find((x) => x.gid === f)
+        if (other) shiftPos(other, true)
+      }
+    }
+  }
+
+  // 宿主、随行 axes 与走到的插图（含它们的随行 axes）底下、被用户挪过位置的后代——
+  // 插图里挪过的标题同样钉在图幅上
+  const roots = [...new Set([...hosts, ...out.map((c) => c.gid)])]
+  for (const d of movedDescendants(panel, roots)) {
     out.push({
       gid: d.gid,
       // 后代嵌在所属 axes 的 <g> 里，那个组一平移它们已经跟着动了
