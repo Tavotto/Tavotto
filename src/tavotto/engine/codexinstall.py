@@ -602,7 +602,7 @@ def _fetch(url: str, *, limit: int) -> bytes:
     from .. import __version__
 
     req = urllib.request.Request(
-        url, headers={"User-Agent": f"tavotto/{__version__} codex-install"}
+        url, headers={"User-Agent": f"{brand.PRODUCT_NAME}/{__version__} codex-install"}
     )
     # 出站 HTTPS 一律经 `tlstrust`（平台原生校验；#711 / #714 的规矩）：干净 Windows 缺根证书时 OpenSSL
     # 的默认信任库会把 GitHub 的压缩包下载报成网络失败
@@ -752,8 +752,11 @@ def fetch_stable_snapshot() -> dict:
     """
     dest = archive_marketplace_dir()
     base = dest.parent
+    leftovers: list[str] = []
     try:
         base.mkdir(parents=True, exist_ok=True)
+        # 上一次删不掉的一次性目录（杀软占着文件等）先收掉：泄漏不跨次累积（Codex #725）
+        leftovers += _remove_one_shot_dirs(base)
         staging = Path(tempfile.mkdtemp(prefix=".staging-", dir=base))
     except OSError as exc:
         raise ArchiveError(f"建不了本地市场目录 {base}：{exc}") from exc
@@ -790,9 +793,9 @@ def fetch_stable_snapshot() -> dict:
                 raise
         except OSError as exc:
             raise ArchiveError(f"换不进 {dest}：{exc}") from exc
-        shutil.rmtree(old, ignore_errors=True)
     finally:
-        shutil.rmtree(staging, ignore_errors=True)
+        # 一次性目录用完就删，删不掉**说出来**（回在 `leftovers` 里、marketplace 一步照报），下一次开头再收
+        leftovers += _remove_one_shot_dirs(base)
     return {
         "root": str(dest),
         "commit": commit,
@@ -800,7 +803,25 @@ def fetch_stable_snapshot() -> dict:
         "content_digest": receipt["content_digest"],
         "release_tag": tag,
         "changed": (before or {}).get("content_digest") != receipt["content_digest"],
+        "leftovers": sorted(set(leftovers)),
     }
+
+
+def _remove_one_shot_dirs(base: Path) -> list[str]:
+    """删掉 `base` 下的一次性目录（`.staging-*` / `.old-*`）；回删不掉的那些（路径）。"""
+    stuck: list[str] = []
+    try:
+        entries = [p for p in base.iterdir() if p.name.startswith((".staging-", ".old-"))]
+    except OSError:
+        return stuck
+    for p in entries:
+        try:
+            shutil.rmtree(p)
+        except FileNotFoundError:
+            continue
+        except OSError:
+            stuck.append(str(p))
+    return stuck
 
 
 def _installed_lags_archive(st: dict, archive: dict | None) -> bool:
@@ -821,6 +842,12 @@ def _describe_snapshot(info: dict) -> str:
         f"发行分支 {brand.CODEX_PLUGIN_STABLE_BRANCH} 的压缩包（提交 {commit}，插件 {info['version']}，"
         f"已按随包清单逐文件核对，content_digest 与 {info['release_tag']} 附带的构建清单一致），"
         f"本地市场目录 {info['root']}"
+        + (
+            # 一次性目录删不掉（多半被杀毒软件占着）时说出来，下次运行开头再收（Codex #725）
+            "；这些一次性目录没删掉，下次运行会再清：" + "、".join(info["leftovers"])
+            if info.get("leftovers")
+            else ""
+        )
     )
 
 
