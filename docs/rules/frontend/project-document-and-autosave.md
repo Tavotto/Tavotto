@@ -190,15 +190,17 @@
     回过 404 就在本模块实例里不再推。没认领项目（pj 为空）时不记。**切项目期间停记**：`adoptNow` 从认领新 pj
     到 `resetForNewProject()` 完成之间要 await 一次后端，内存里还是上一个项目的文档，这段时间订阅不记（否则会把
     旧项目的文档记到新项目名下）。
-  - **推失败的写入不丢**：记录时本机缓存先带 `pendingAt`（写入时刻，毫秒），后端确认后才摘掉；推失败（非 404）
-    就留着。下次读时本机这条比后端 `last.at` 新（或后端没记过）→ 本机为准并重推，否则后端为准。导出默认值同理
-    （`tavotto.export.defaults.pending`，有它就本机为准重推）。换了 origin 时本机缓存本来就是空的，这条只护同一个 origin。
+  - **推失败的写入不丢**：记录时本机缓存先带 `pendingAt`（写入时刻，毫秒，只用来与后端 `last.at` 比新旧）与
+    `pendingGen`（这次写入的唯一标识，只用来认「后端确认的是不是这一次」——同一毫秒记两次时时刻会撞），后端确认后
+    才摘掉；推失败（非 404）就留着。下次读时本机这条比后端 `last.at` 新（或后端没记过）→ 本机为准并重推，否则后端为准。
+    导出默认值同理（`tavotto.export.defaults.pending` 存唯一标识，有它就本机为准重推）。换了 origin 时本机缓存本来
+    就是空的，这条只护同一个 origin。
   - **磁盘槽位的清理只由后端做**：`flushAutosave` 不再按本机 12 条 `docIndex` 发 DELETE——那只是本机「最近文档」
     放不下了，不是用户不要了；换了 origin 的索引是空的，按它删会删错。`docIndex` 仍只管本机列表与本机兜底副本。
   - **导出默认值**同理：`GET/PUT /api/preferences/export-defaults`（按用户一份），字段语义只在
     `lib/exportDefaults.ts`；`readExportDefaults()` 仍同步读本机缓存，`App` 挂载时 `hydrateExportDefaults()` 用后端那份
     覆盖它，写入两边都写。导出对话框在 `App` 里常驻挂载、初值只在挂载时读一次缓存：取回之后经
-    `onExportDefaultsHydrated` 通知它（开着时不动）与设置页重读。
+    `onExportDefaultsHydrated` 通知它与设置页重读；对话框开着时不当面换掉，记下、关上时再重读。
   - 看护：`store/layoutSession.restart.test.ts`（有状态的假后端跨两次「启动」存活，中间 `localStorage.clear()` +
     `vi.resetModules()`；外加 404 退回旧逻辑、不再发 DELETE）、`e2e/layout-session.spec.ts`（同一服务新开空存储的
     浏览器 context → 恢复上次的排版），两者在改造前的 main 上都红。

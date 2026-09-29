@@ -42,25 +42,41 @@ export function readProjectDocument(projectId: string): ProjectDocumentRef | nul
 }
 
 /**
- * 本机缓存里这条记录**还没被后端确认**的时刻（`Date.now()` 毫秒）；已确认 / 没有记录回 null。
- * 推送失败（非 404：sidecar 正在退出、网络瞬断）时它留着，下一次读「上次开着哪份」时与后端
- * 记录的 `at`（同一台机器的毫秒时钟）比：本机这条更新就以它为准并重推——否则后端那份更旧的
- * 非空记录会赢过它，最新的排版从界面上找不回来（#719 Codex P1）。
+ * 本机缓存里这条记录**还没被后端确认**：`at` 是写入时刻（`Date.now()` 毫秒，只用来与后端
+ * `last.at` 比新旧），`gen` 是这一次写入的唯一标识（只用来认「后端确认的是不是这一次」——
+ * 同一毫秒里记两次时 `at` 会撞，拿它认确认会把新的那次当成旧的摘掉，#719 Codex P2）。
+ * 推送失败（非 404：sidecar 正在退出、网络瞬断）时它留着，下一次读「上次开着哪份」时本机这条
+ * 比后端的新就以它为准并重推——否则后端那份更旧的非空记录会赢过它（#719 Codex P1）。
  */
-function readPendingAt(projectId: string): number | null {
+interface Pending {
+  at: number
+  gen: string
+}
+
+let genSeq = 0
+function newGen(): string {
+  genSeq += 1
+  return `${Date.now().toString(36)}-${genSeq.toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+}
+
+function readPending(projectId: string): Pending | null {
   try {
     const raw = localStorage.getItem(PREFIX + projectId)
     if (!raw) return null
-    const v = JSON.parse(raw) as { pendingAt?: unknown }
-    return typeof v.pendingAt === 'number' && Number.isFinite(v.pendingAt) ? v.pendingAt : null
+    const v = JSON.parse(raw) as { pendingAt?: unknown; pendingGen?: unknown }
+    return typeof v.pendingAt === 'number' && Number.isFinite(v.pendingAt) && typeof v.pendingGen === 'string'
+      ? { at: v.pendingAt, gen: v.pendingGen }
+      : null
   } catch {
     return null
   }
 }
 
-function writeCache(projectId: string, ref: ProjectDocumentRef, pendingAt?: number): void {
+function writeCache(projectId: string, ref: ProjectDocumentRef, pending?: Pending): void {
   try {
-    const v = pendingAt === undefined ? { id: ref.id, name: ref.name } : { id: ref.id, name: ref.name, pendingAt }
+    const v = pending
+      ? { id: ref.id, name: ref.name, pendingAt: pending.at, pendingGen: pending.gen }
+      : { id: ref.id, name: ref.name }
     localStorage.setItem(PREFIX + projectId, JSON.stringify(v))
   } catch {
     /* 存不下只影响「下次切回这个项目落在哪份文档上」 */
@@ -79,13 +95,13 @@ let remoteMissing = false
  */
 let remoteTail: Promise<void> = Promise.resolve()
 
-function pushRemote(projectId: string, ref: ProjectDocumentRef, pendingAt: number): void {
+function pushRemote(projectId: string, ref: ProjectDocumentRef, gen: string | null): void {
   if (remoteMissing) return
   remoteTail = remoteTail.then(() =>
     putLayoutSessionLast({ doc_id: ref.id, name: ref.name }, projectId).then(
       () => {
         // 后端确认了：本机这条还是这次推的那条，就摘掉「待确认」（期间又记了新的就不动它）
-        if (readPendingAt(projectId) === pendingAt) writeCache(projectId, ref)
+        if (gen !== null && readPending(projectId)?.gen === gen) writeCache(projectId, ref)
       },
       (e: unknown) => {
         if (e instanceof ApiError && e.status === 404) remoteMissing = true
@@ -97,9 +113,9 @@ function pushRemote(projectId: string, ref: ProjectDocumentRef, pendingAt: numbe
 
 /** 记「这个项目现在开着这份排版」：本机缓存（先标「待确认」）+ 后端（权威）。 */
 export function rememberProjectDocument(projectId: string, ref: ProjectDocumentRef): void {
-  const at = Date.now()
-  writeCache(projectId, ref, at)
-  pushRemote(projectId, ref, at)
+  const pending = { at: Date.now(), gen: newGen() }
+  writeCache(projectId, ref, pending)
+  pushRemote(projectId, ref, pending.gen)
 }
 
 /**
@@ -114,10 +130,10 @@ export async function fetchRemoteProjectDocument(
   const remote = await fetchLayoutSession(projectId)
   if (remote === undefined) return undefined
   // 本机有一条后端还没确认的记录，而且比后端那条新（或后端还没记过）：本机为准，重推一次
-  const pendingAt = readPendingAt(projectId)
-  const local = pendingAt === null ? null : readProjectDocument(projectId)
-  if (pendingAt !== null && local && (!remote.last || pendingAt > remote.last.at)) {
-    pushRemote(projectId, local, pendingAt)
+  const pending = readPending(projectId)
+  const local = pending === null ? null : readProjectDocument(projectId)
+  if (pending !== null && local && (!remote.last || pending.at > remote.last.at)) {
+    pushRemote(projectId, local, pending.gen)
     return local
   }
   if (!remote.last) return null
@@ -134,7 +150,7 @@ export async function loadProjectDocument(projectId: string): Promise<ProjectDoc
   const remote = await fetchRemoteProjectDocument(projectId)
   if (remote) return remote
   const local = readProjectDocument(projectId)
-  if (remote === null && local) pushRemote(projectId, local, readPendingAt(projectId) ?? 0)
+  if (remote === null && local) pushRemote(projectId, local, readPending(projectId)?.gen ?? null)
   return local
 }
 
