@@ -114,6 +114,36 @@ ovito `import_file`、h5py / netCDF 的原生打开、`exists` / `glob` / `listd
 **§用户拍板 B（经确认改写脚本里那一处路径常量）不在本次实现里**：ADR 0094 的写回脚本仍是 Proposed，
 仓库里没有可复用的备份 / 复原事务。它另开一个 PR，届时在这个对话框里给 `via ≠ open` 的条目加次级按钮。
 
+### 五、改指表的代次：依赖映射的在飞工作一律按代次落地
+
+改指表是会话之外的一份输入：它一变，所有**按旧表跑、还没落地**的工作都成了旧数据的产物。逐条补
+（shutdown 会话、前端标 stale、runtime 指纹……）挡不住在飞的那一次，Codex 在 #716 上连着报了四轮同族
+问题（在飞渲染、在飞试运行被物化成新鲜、两个窗口并发改表吞规则）。收口成一个机制：
+
+- **唯一的代次**：`inputremap` 按项目在本进程里维护一个整数（`generation()`），每次**成功的**增 / 换 / 删
+  +1。读表、合并 / 删除、写回、换代整段在同一把锁里（`_LOCK`），并发改表不丢规则。
+- **开始时记下**：起 worker 的三条路径用 `snapshot()` 同一刻取「代次 + 规则」，会话带着 `remap_generation`；
+  workerd 重开会话沿用会话自己那份规则（不现取另一代）。池复用会话前核对代次（`pool._remap_current`），
+  旧代次的会话按「改指表已变」重建——`shutdown_all` 摘掉之后仍在起、改动之后才登记进池的那条也挡得住。
+- **落地前在锁里核对**（`landing()`）：代次对不上就丢弃，报 `input_remap_changed`（409，**可重试**）。
+- **能停的顺手停**：改表之后收掉项目的会话，并对在跑的试运行置取消 + 硬杀。停只是尽早——正确性只靠代次。
+- **前端**：后端代次是唯一权威（也覆盖别的窗口改的表）。`input_remap_changed` 的渲染当 stale 重排、
+  试运行重跑一次，不报失败；本窗口自己改表时 `renderStore.invalidateInflight()`（与换项目同一个代际）
+  只是提前 abort 在途请求、不等回包，不是第二套判据。
+
+以映射为输入的工作点（全仓枚举；新增一处先接到这个机制上）：
+
+| 工作点 | 开始时的代次 | 落地点（锁内核对） | 对不上 |
+|---|---|---|---|
+| 画布渲染 `/api/engine/render` | 会话 `remap_generation` | 回包之前 | 409，前端标 stale 重排 |
+| runtime 物化 `_materialize_runtime`（渲染 / 试运行两处） | 产出那次 build 的代次 | 写 cache（preview + metadata）整段在锁里 | 丢弃，不写 |
+| 试运行登记 `probe.probe_and_register` | `probe()` 用的会话 | `discover.register` + 重载注册表整段在锁里 | `registered: false` + 码，前端重跑 |
+| 写回原图 `_write_source_files` | 热态会话与全量重放会话各一 | 两者都等于此刻才进 commit | 409，staging 清掉，原件不动 |
+| 导出 `_serialize_figure_with_worker` | 会话 | 导出文件交出去之前 | 409 |
+| 准备接口 / 预热（U01） | 会话 | 复用前（池） | 重建会话 |
+| `tavotto open` 的本地试运行（`handoff._local_probe`） | —— | —— | 不适用：只在没有在跑的实例时于 CLI 进程里跑，改表只发生在服务进程 |
+| 弹窗载荷 / `static_missing` / `native_miss` | —— | 只读、当场算 | 不适用 |
+
 ## 用户拍板（2026-09-28）
 
 四项均按建议裁决：**A 放行**、**B 提供改写脚本（次级、经确认）**、**C 存本机项目设置**、**D 运行失败后才问**。
@@ -158,7 +188,8 @@ ovito `import_file`、h5py / netCDF 的原生打开、`exists` / `glob` / `listd
   numpy 无文件名、写模式的 FileNotFoundError 不认领）；argv 与 stable payload；真 worker——相对 / 绝对缺失 →
   `missing_input` → 指认后输出等于那份数据的真值、项目里放同名诱饵不影响（FO08 的反例）、原件回来读原件、
   脚本目录模式同样生效、「先 exists 再退出」只给静态列表、普通 `ValueError` 仍是 `script_error`、试运行两条路、
-  三条 spawn 路径同源；HTTP 增 / 查 / 删与稳定码。每条落地时做过变异反证。
+  三条 spawn 路径同源；HTTP 增 / 查 / 删与稳定码；§五 的代次——并发改表两条都保留且各换一代、`landing()`
+  拒旧代次、试运行途中改表不登记、旧代次的物化被丢弃、池不复用旧代次的会话。每条落地时做过变异反证。
 - `tests/test_mcp_server.py`：载荷进 `structuredContent`、`recovery` 说得出下一步。
 - `tests/test_error_codes.py` / `tests/test_script_probe.py`：新码两种语言都有文案、占位符对得上。
 - `web/src/components/MissingInputDialog.test.tsx`：主条目与其余列表、文件 / 文件夹各发一次且重排、取消不发、

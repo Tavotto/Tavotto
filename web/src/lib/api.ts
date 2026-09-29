@@ -3268,6 +3268,11 @@ export const setProjectUserEnvironment = (id: string, script: string) =>
 
 /** worker 报「脚本要读的文件不存在，且说得出是哪个」（ADR 0106）的稳定码 */
 export const MISSING_INPUT_CODE = 'missing_input'
+/**
+ * 在途的工作按旧改指表跑、落地前表已经变了（后端 `inputremap.ERROR_CHANGED`，ADR 0106 §五）：
+ * **可重试**，不是失败——渲染当 stale 重排，试运行重跑一次。后端代次是唯一权威（也覆盖别的窗口改的表）。
+ */
+export const INPUT_REMAP_CHANGED_CODE = 'input_remap_changed'
 
 /** 缺的东西是怎么被脚本用到的：`open` 改指救得回来；`probe`（exists / listdir）与 `glob` 救不回来 */
 export type MissingInputVia = 'open' | 'probe' | 'glob'

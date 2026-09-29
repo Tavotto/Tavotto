@@ -3,6 +3,7 @@ import {
   ApiError,
   cancelProbe,
   DEPENDENCY_PREPARATION_CODE,
+  INPUT_REMAP_CHANGED_CODE,
   probeScript,
   WORKDIR_CONFIRMATION_CODE,
   type CapturedFigureDescriptor,
@@ -271,6 +272,16 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
     try {
       const res = await probeScript(script)
       if (stale()) return
+      if (res.error?.code === INPUT_REMAP_CHANGED_CODE) {
+        // 试运行途中改了指认，后端按代次丢弃了这次结果（ADR 0106 §五）：按新表重跑一次，不报失败
+        set((s) => {
+          const byScript = { ...s.byScript }
+          delete byScript[script]
+          return { byScript }
+        })
+        void get().run(script)
+        return
+      }
       if (res.error?.missing_input) {
         // 与画布同一个对话框：请用户指认数据位置（换了项目的旧载荷由 envStore 丢掉）
         useEnvStore.getState().requestMissingInput(res.error.missing_input, projectAtStart)

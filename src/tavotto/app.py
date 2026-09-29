@@ -534,6 +534,13 @@ def scan_panels(unsupported: list[dict] | None = None) -> list[dict]:
 # P1-02）：tests/test_error_codes.py 逐行扫本文件，没有 code 的 error 响应
 # 直接红——诊断材料（traceback / 日志原文）照旧原样附带，不翻译。
 # ---------------------------------------------------------------------------
+@app.errorhandler(engine_inputremap.RemapChanged)
+def _input_remap_changed(exc):
+    """在途的工作按旧改指表跑、落地前表已经变了（ADR 0106 §五）：409 + 可重试的 code——不是失败，
+    界面重排 / 重跑即可。渲染、导出、写回共用这一处。"""
+    return jsonify({"error": str(exc), "code": exc.code, "params": {}, "retryable": True}), 409
+
+
 @app.errorhandler(NoProjectError)
 def _no_project(_exc):
     return jsonify({"error": "尚未打开项目", "code": "no_project"}), 409
@@ -1054,6 +1061,13 @@ def _serialize_figure_with_worker(
         worker = _safe_worker(info["script"], info["entry"], stem)
     tmp = _panel_render_target(worker, stem, out_dir, fmt)
     resp = worker.export(stem, overrides, str(tmp), fmt, dpi)
+    # 导出途中改了指认（ADR 0106 §五）：这份文件是按旧位置的数据画的——不交出去（409 可重试）
+    # （后台导出作业里没有请求上下文：项目根取会话自己的 `figures_dir`）
+    if getattr(worker, "figures_dir", None):
+        with engine_inputremap.landing(
+            worker.figures_dir, getattr(worker, "remap_generation", None)
+        ):
+            pass
     if sink is not None:
         for w in resp.get("warnings") or []:
             msg = f"{rel_id}: {w}"
@@ -3257,7 +3271,12 @@ def api_registry_probe():
         # SVG + 描述符——不触发第二次执行）。重开文档时的首帧占位靠它。
         # **在刷新之前**：刷新会发 `registry.changed`，前端收到就去取 runtime
         # 清单与预览，那时 cache 里得已经有东西。
-        _materialize_runtime(script, result.get("entry") or "", result.get("descriptors") or [])
+        _materialize_runtime(
+            script,
+            result.get("entry") or "",
+            result.get("descriptors") or [],
+            remap_generation=result.get("remap_generation"),
+        )
         # probe 已经把结果写进注册表了（`probe.probe_and_register` → `discover.register`），
         # 这里只要重装 + 发事件：再跑一遍静态扫描既慢，又会把刚刚按**真实产出**
         # 裁决好的归属重新掀一遍。
@@ -3843,26 +3862,35 @@ def _materialize_native(session) -> None:
         engine_runtimeasset.materialize(root, desc, session.svg_path(stem))
 
 
-def _materialize_runtime(script: str, entry: str, descriptors: list) -> None:
+def _materialize_runtime(
+    script: str, entry: str, descriptors: list, *, remap_generation: int | None
+) -> None:
     """把一次成功 build 捕获的每张图物化进 runtime cache（失败只记日志）。
 
     SVG 从热 worker 的 out 目录拿——build 阶段本来就写好了，这里只是复制，
     **绝不触发第二次执行**（probe 的 execution-count 纪律，Session 3 约束）。
+
+    `remap_generation` 是产出这批图的那次 build 按哪一代改指表跑的（ADR 0106 §五）：物化在改指表的锁里、
+    代次对得上才落地——否则 metadata 会把**新**表的指纹记在按旧数据画的预览上，被当成新鲜。
     """
     if not script or not entry:
         return
-    try:
-        worker = _safe_worker(script, entry)
-    except engine_pool.WorkerError:
-        return
     root = require_project()
-    for desc in descriptors or []:
-        if not isinstance(desc, dict):
-            continue
-        stem = desc.get("stem")
-        if not stem:
-            continue
-        engine_runtimeasset.materialize(root, desc, worker.svg_path(stem))
+    try:
+        with engine_inputremap.landing(root, remap_generation):
+            try:
+                worker = _safe_worker(script, entry)
+            except engine_pool.WorkerError:
+                return
+            for desc in descriptors or []:
+                if not isinstance(desc, dict):
+                    continue
+                stem = desc.get("stem")
+                if not stem:
+                    continue
+                engine_runtimeasset.materialize(root, desc, worker.svg_path(stem))
+    except engine_inputremap.RemapChanged as exc:
+        LOG.info("runtime 物化作废（%s）: %s", exc, script)
 
 
 def _switched_to_project_env(worker, exc) -> bool:
@@ -4098,12 +4126,25 @@ def api_engine_render():
         engine_logsafe.known("（冷启动）" if cold else "", ("（冷启动）", "")),
         json.dumps(timings, sort_keys=True),
     )
+    # 渲染途中改了指认（ADR 0106 §五）：这张图是按旧位置的数据画的——不交给界面（409 可重试，
+    # 前端当 stale 重排）。核对与物化同在改指表的锁里
+    try:
+        with engine_inputremap.landing(
+            require_project(), getattr(worker, "remap_generation", None)
+        ):
+            pass
+    except engine_inputremap.RemapChanged as exc:
+        sse_publish("render.failed", {"pj": pj, "id": rel_id, "error": str(exc)})
+        raise
     sse_publish("render.done", {"pj": pj, "id": rel_id, "rev": worker.rev})
     if engine_runtimeasset.is_runtime_id(rel_id):
         # 重开文档时的首帧占位从这里来：刷新 materialized cache 的预览与
         # metadata（描述符取自本会话 build 响应，只复制文件、不二次执行）。
         _materialize_runtime(
-            info.get("script", ""), info.get("entry", ""), worker.last_build_descriptors
+            info.get("script", ""),
+            info.get("entry", ""),
+            worker.last_build_descriptors,
+            remap_generation=getattr(worker, "remap_generation", None),
         )
     out = {
         "rev": worker.rev,
@@ -5182,6 +5223,18 @@ def _write_source_files(
     # 第二个目标备份时磁盘满，PDF 已经换成新的、PNG 还是旧的，异常从 try 外面
     # 冒出去成了 500，`.updating` 留在图库里。备份与 staging 在任何一个原件被动之前
     # 全部拷完并 fsync（ADR 0023 §3.1，issue #252），失败时原件一个都还没碰过。
+    # 热态与重放必须是同一代改指表画的、且落地前表没变（ADR 0106 §五）：否则两边读的不是同一份数据，
+    # 像素门过了也不说明什么——不写（409 可重试），staging 清掉
+    try:
+        with engine_inputremap.landing(
+            worker.figures_dir,
+            getattr(worker, "remap_generation", None),
+            getattr(fresh, "remap_generation", None),
+        ):
+            pass
+    except engine_inputremap.RemapChanged:
+        _discard_updating(tmps)
+        raise
     backup_dir = _backup_targets(tmps, project_backup_dir(), stem)
     updated: list[str] = []
     done: list[Path] = []
@@ -5785,6 +5838,18 @@ def api_engine_input_remap_get():
     return jsonify({"ok": True, "input_remap": engine_inputremap.state(root)})
 
 
+def _stop_remap_dependent_work(root: str) -> None:
+    """改指表刚换代：收掉这个项目的会话，并**取消**在跑的试运行（置标志 + 硬杀）。取消只是尽早停——
+    正确性由代次保证：没停下来的那次落地前核对代次，对不上就丢弃（ADR 0106 §五）。"""
+    engine_pool.shutdown_all(root)
+    pid = current_ctx().id
+    with _PROBES_LOCK:
+        running = [(script, ev) for (p, script), ev in _PROBES.items() if p == pid]
+    for script, ev in running:
+        ev.set()
+        engine_pool.force_cancel(script, root)
+
+
 @app.post("/api/engine/input-remap")
 def api_engine_input_remap_add():
     """用户指认了数据位置（ADR 0106）：推一条规则、按项目记住、关掉这个项目的会话。
@@ -5814,7 +5879,7 @@ def api_engine_input_remap_add():
         state = engine_inputremap.add_rule(root, rule)
     except engine_inputremap.RemapError as exc:
         return _input_remap_error(exc)
-    engine_pool.shutdown_all(root)
+    _stop_remap_dependent_work(root)
     LOG.info("数据改指: 新增一条 %s 规则（%s）", rule["kind"], root)
     return jsonify({"ok": True, "rule": rule, "input_remap": state})
 
@@ -5832,7 +5897,7 @@ def api_engine_input_remap_delete():
         state = engine_inputremap.remove_rule(root, kind, src)
     except engine_inputremap.RemapError as exc:
         return _input_remap_error(exc)
-    engine_pool.shutdown_all(root)
+    _stop_remap_dependent_work(root)
     return jsonify({"ok": True, "input_remap": state})
 
 

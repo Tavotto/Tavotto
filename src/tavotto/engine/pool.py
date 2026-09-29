@@ -1304,7 +1304,7 @@ def _project_python_unusable(python: str, reason: str, record: dict) -> "WorkerE
 
 
 #: 会话重建的原因（闭集，诊断日志按它放行明文）。
-_REBUILD_REASONS = ("已死", "入口已变", "渲染解释器已变")
+_REBUILD_REASONS = ("已死", "入口已变", "渲染解释器已变", "改指表已变")
 
 
 def _invalidate_remembered(figures_dir: str | Path, python: str, reason: str, record: dict) -> None:
@@ -1477,6 +1477,8 @@ class EngineWorker:
         # 一个 .pyc 都不往那儿写。.pyc 已在构建期编好随包发出，`-B` 只禁写不禁读。
         # 别的解释器只在启动期 `-B`，worker 装好项目字节码守卫后放开（`runtime.worker_args`，#736）。
         args = runtime.worker_args(bundled=bundled)
+        # 改指表的代次与规则同一刻取（ADR 0106 §五）：代次跟着会话走，落地前核对、复用前核对
+        self.remap_generation, remap_rules = inputremap.snapshot(figures_dir)
         # 执行语义收进唯一模型（ADR 0014 §0）：argv 由 `execspec.worker_argv`
         # 独家产出，workerd 的 spawn 规格吃的是同一份（同源看护在
         # `test_workerd_pool.py`）。`spec.env` 只存**增量**（序列化形态）；
@@ -1492,8 +1494,8 @@ class EngineWorker:
             # 项目级「在脚本目录里运行」（ADR 0047）：两条控制面与 one_shot 都从
             # 这一个出处取——写回的重放必须和热态用同一个 cwd。
             cwd_mode=workdir.mode_for(figures_dir),
-            # ADR 0106：用户指认过的只读改指表，三条 spawn 路径同一个出处
-            input_remap=inputremap.rules_for(figures_dir),
+            # ADR 0106：用户指认过的只读改指表，三条 spawn 路径同一个出处（与代次同一刻取）
+            input_remap=remap_rules,
         )
         LOG.info(
             "worker 启动: %s（entry=%s，解释器来源=%s）",
@@ -2060,6 +2062,7 @@ def _spawn_spec(
     python: str,
     source: str,
     extra_env: dict | None = None,
+    input_remap=None,
 ) -> dict:
     """交给 workerd 的**完整** spawn 规格。
 
@@ -2078,7 +2081,8 @@ def _spawn_spec(
         sandbox=str(sandbox),
         env=worker_env(python, source, base={}),
         cwd_mode=workdir.mode_for(figures_dir),
-        input_remap=inputremap.rules_for(figures_dir),
+        # 会话自己那份（与它的代次同一刻取）；不给才现取——重开会话不许换成另一代的表
+        input_remap=inputremap.rules_for(figures_dir) if input_remap is None else list(input_remap),
     )
     # 只给**增量**：workerd 继承的本来就是 Flask 自己的环境，整份传过去没有意义
     env = dict(spec.env or {})
@@ -2185,6 +2189,8 @@ class WorkerdWorker:
         # `resolve_worker_python`，换控制面不换答案。
         python, self.python_source = resolve_worker_python(figures_dir, script=script_name)
         self.python = python
+        # 与 EngineWorker 同源：改指表的代次与规则同一刻取（ADR 0106 §五）
+        self.remap_generation, remap_rules = inputremap.snapshot(figures_dir)
         # 与 EngineWorker 同形：两条控制面都持一份 ExecutionSpec（唯一权威
         # 构造函数 `execspec.safe_spec`；argv 由 `_spec()` → `_spawn_spec`
         # 按同一份 spec 语义产出）。
@@ -2199,8 +2205,8 @@ class WorkerdWorker:
             # LaunchContext 来源（ADR 0053），漏了 cwd_mode 就会在 project 模式下
             # 把「脚本目录」报成「沙盒」——而真正 spawn 的 argv 早就带着 `--cwd`。
             cwd_mode=workdir.mode_for(figures_dir),
-            # ADR 0106：用户指认过的只读改指表，三条 spawn 路径同一个出处
-            input_remap=inputremap.rules_for(figures_dir),
+            # ADR 0106：用户指认过的只读改指表，三条 spawn 路径同一个出处（与代次同一刻取）
+            input_remap=remap_rules,
         )
         self._session_id = ""
         self._open()
@@ -2217,6 +2223,7 @@ class WorkerdWorker:
             self.python,
             self.python_source,
             self._extra_env,
+            input_remap=self.spec.input_remap,
         )
 
     def _open(self) -> None:
@@ -2872,6 +2879,10 @@ def acquire(script_name: str, figures_dir: str, entry: str) -> tuple[EngineWorke
                     # 还复用那条内置 runtime 起的会话，用户看到的就是「明明切了环境，
                     # 还是报缺包」。判据与 `entry` 那条同形，不另起一套 key。
                     why = "渲染解释器已变"
+                elif not _remap_current(w, figures_dir):
+                    # 会话是按旧改指表起的（ADR 0106 §五）：`shutdown_all` 摘掉之后仍在起的那条，
+                    # 可能在改动之后才登记进池——复用它就是拿旧映射画图
+                    why = "改指表已变"
             if (w is None or why) and not decided:
                 force_decide = True
                 continue  # 出锁：决定要体检子进程，不能占着池锁
@@ -2927,8 +2938,18 @@ def _reusable(key: tuple[str, str], entry: str, want_python: str) -> bool:
     with _lock:
         w = _workers.get(key)
         return (
-            w is not None and w.alive() and w.entry == entry and same_python(w.python, want_python)
+            w is not None
+            and w.alive()
+            and w.entry == entry
+            and same_python(w.python, want_python)
+            and _remap_current(w, key[0])
         )
+
+
+def _remap_current(worker, figures_dir) -> bool:
+    """会话起的时候取的改指表代次还是不是此刻的（没带代次的替身不拦）。"""
+    gen = getattr(worker, "remap_generation", None)
+    return gen is None or gen == inputremap.generation(figures_dir)
 
 
 #: 自动切换被重试上限挡下时的 code（不是失败，是「这一轮已经切过了」）。

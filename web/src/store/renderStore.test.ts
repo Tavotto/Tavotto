@@ -401,6 +401,20 @@ describe('渲染条件在途中变了（改指表，ADR 0106）：invalidateInfl
   })
 })
 
+describe('后端说这一版按旧改指表画的（input_remap_changed，ADR 0106 §五）', () => {
+  it('不留错误块：标 stale，同步器按新表重排', async () => {
+    const { EngineError } = await import('@/lib/api')
+    const p = panel('a', 'fig1.pdf')
+    engineRender.mockRejectedValueOnce(new EngineError('改指表已变', '', 'input_remap_changed'))
+    await useRenderStore.getState().render('fig1.pdf', [])
+    const entry = useRenderStore.getState().get(renderKeyOf(p))
+    expect(entry.status).not.toBe('error')
+    expect(entry.error).toBeNull()
+    expect(entry.stale).toBe(true)
+    expect(entry.lastPatches).toBeNull()
+  })
+})
+
 describe('项目代际（STATE-06）：clear() 之前发出的渲染，回包不落进换过之后的项目', () => {
   /** 挂起下一次 engineRender，返回它的 resolve / reject 两个把手 */
   const holdNextRender = () => {

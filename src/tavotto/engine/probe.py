@@ -31,7 +31,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from . import discover, pool, projectenv, registry
+from . import discover, inputremap, pool, projectenv, registry
 
 LOG = logging.getLogger("tavotto.probe")
 
@@ -324,6 +324,8 @@ def probe(
                 "error": None,
                 "timings": dict(resp.get("timings") or {}),
                 "dropped_figures": int(resp.get("dropped_figures") or 0),
+                # 这次试运行按哪一代改指表跑的（ADR 0106 §五）：登记 / 物化落地前核对
+                "remap_generation": getattr(_worker, "remap_generation", None),
             }
         # 跑通了但一张图都没产出：这个 entry 大概率不是出图入口，换下一个
         if first_error is None:
@@ -409,8 +411,21 @@ def probe_and_register(
                 params={"detail": detail},
             ),
         }
-    discover.register(figures_dir, script, result["stems"], entry=result["entry"], cost=cost)
-    registry.load(figures_dir)
+    # 登记在改指表的锁里、核对过代次才落地（ADR 0106 §五）：试运行途中改了指认，产出的图名 / 描述
+    # 是按旧位置的数据来的——丢弃、可重试，注册表零改动
+    try:
+        with inputremap.landing(figures_dir, result.get("remap_generation")):
+            discover.register(
+                figures_dir, script, result["stems"], entry=result["entry"], cost=cost
+            )
+            registry.load(figures_dir)
+    except inputremap.RemapChanged as exc:
+        LOG.info("试运行结果作废（%s）: %s", exc, script)
+        return {
+            **result,
+            "registered": False,
+            "error": _err(inputremap.ERROR_CHANGED, str(exc)),
+        }
     return {**result, "registered": True}
 
 
