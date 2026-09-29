@@ -87,7 +87,9 @@
   分开（「標楷體-港澳（BiauKaiHK Regular）」，重名带括号 2026-09-29 用户定）。撞名要数**这个下拉的
   全部选项**显示成什么——两个族中文名相同，或者有中文名的族撞上一个本身就叫这个名字、没有显示名
   的族（只有中文名的「宋体」与 `Songti SC` →「宋体」），所以 `options` 必传。**只管显示**：写入值、
-  校验、文档里存的都是族名。显示名表每次渲染响应都是新对象，`FontFamilyRowMemo` 按内容比
+  校验、文档里存的都是族名。撞名只数键在 `options` 里的显示名（显示名表是整份 manifest 的，一行的选项只是子集）。
+  显示名表每次渲染响应都是新对象，`FontFamilyRowMemo` 按内容比；显示函数 `optionLabelOf`
+  在渲染里调用，原样传给视图、不经 ref 转发（ref 在 layout effect 才更新，只许事件回调读）
   （看护 `fontFamilyRow.test.tsx`）。
   只有中文名的字体（FreeType 读成 `??????SC`）由引擎按真名补登记
   （`overrides.register_font_name_aliases`），真名本身就是族名、没有显示名。

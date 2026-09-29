@@ -258,6 +258,9 @@ describe('字体的中文显示名（manifest 顶层 font_family_names）', () =
       '標楷體-港澳（BiauKaiHK Regular）',
     )
     expect(fontFamilyOptionLabel('Songti SC', shared, opts)).toBe('宋体-简')
+    // 显示名表是整份 manifest 的；只数这个下拉里的项——选项之外的同名族不让唯一看得见
+    // 的那一项补族名（StylePanel 一行的选项只是表的子集）
+    expect(fontFamilyOptionLabel('BiauKaiHK', shared, ['BiauKaiHK', 'Arial'])).toBe('標楷體-港澳')
   })
 
   it('有中文名的族撞上一个本身就叫这个名字的族：没有显示名的那个也算进撞名', () => {

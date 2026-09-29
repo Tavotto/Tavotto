@@ -75,7 +75,7 @@ export const roleName = (role: string): string =>
 export const optionLabel = (prop: string, value: string): string => baseOptionLabel(prop, value)
 
 /**
- * 下拉里**不止一项**会显示成它的名字。两种撞法都要数：两个族的中文名相同
+ * 这个下拉（`options`）里**不止一项**会显示成它的名字。两种撞法都要数：两个族的中文名相同
  * （`BiauKaiHK` 与 `BiauKaiHK Regular` 都叫「標楷體-港澳」），以及有中文名的族撞上
  * 一个**本身就叫这个名字**、表里没有显示名的族（只有中文名的「宋体」与 `Songti SC`
  * →「宋体」）——只数表里的值会漏掉后一种，两项显示得一模一样。
@@ -99,10 +99,11 @@ function sharedNames(
     if (seen.has(name)) names.add(name)
     seen.add(name)
   }
-  for (const zh of Object.values(labels)) shown(zh)
+  // 只数**这个下拉里**的项：显示名表是整份 manifest 的，StylePanel 那一行的选项只是它的子集，
+  // 选项之外的同名族不该给唯一看得见的那一项补上族名
   for (const o of new Set(options)) {
     const zh = labels[o]
-    if (!zh || zh === o) shown(optionLabel('fontfamily', o))
+    shown(zh && zh !== o ? zh : optionLabel('fontfamily', o))
   }
   byLabels.set(labels, { lang, names })
   return names

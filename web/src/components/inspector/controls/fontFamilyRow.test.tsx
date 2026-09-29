@@ -8,7 +8,8 @@
  *
  * 反证（提交前手工跑过）：去掉 memo → 第一条红；把转发器换回直接传 props.onChange →
  * 「换元素」那条红（字体写到了上一个元素上）；比较器漏掉 options → 「选项变了」那条红；
- * 显示名表按引用比 → 「显示名表」那条红。
+ * 显示名表按引用比 → 「显示名表每次是新对象」那条红；显示函数经 ref 转发 → 「显示名表变了而重画」
+ * 那条红。
  */
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -92,6 +93,18 @@ describe('字体下拉只在数据变了时重画', () => {
     await render({ optionLabels: { 'Font 3': '字体叁', 'Font 4': '字体四' } })
     await render({})
     expect(calls).toHaveLength(4)
+  })
+
+  it('显示名表变了而重画：画出来的是新名字，不是上一次渲染的', async () => {
+    // 换到另一个字体集的项目：显示名跟着变。显示函数经 ref 转发的话，ref 要到 layout
+    // effect 才更新，重画时读到的还是上一次的函数——旧名字留在下拉里，之后又被 memo 跳过
+    const labelOf = (labels: Record<string, string>) => (o: string) => labels[o] ?? o
+    const a = { 'Font 0': '甲' }
+    const b = { 'Font 0': '乙' }
+    await render({ optionLabels: a, optionLabelOf: labelOf(a) })
+    await render({ optionLabels: b, optionLabelOf: labelOf(b) })
+    expect(calls).toHaveLength(2)
+    expect(calls[1].labels[0]).toBe('乙')
   })
 
   it('换选中另一个字体相同的元素：不重画，但点下去写的是新元素', async () => {

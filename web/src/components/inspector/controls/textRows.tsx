@@ -156,6 +156,10 @@ function FontFamilyRowView({
   labelWidth?: number
   overridden?: boolean
   onReset?: () => void
+  /**
+   * 选项的显示名。**在渲染里调用**，所以它必须是当次渲染的那一份（不经 ref 转发），
+   * 而且只能依赖 memo 比较的数据（`options` / `optionLabels` / `lang`）——比较器不比它
+   */
   optionLabelOf: (v: string) => string
   /**
    * 选项显示名表（`option_labels`，字体的中文名）。组件体不读它——显示走
@@ -243,23 +247,24 @@ const FontFamilyRowMemo = memo(
 
 export function FontFamilyRow(props: FontFamilyRowProps) {
   const { i18n } = useTranslation()
-  // **回调始终指向最新一次渲染的那一份**：memo 跳过重画时，里面挂的还是上一次的回调。
-  // 换选中另一个字体相同的元素，数据全等、组件不重画——这时要是用旧的 onChange，字体会
-  // 写到**上一个**元素上。所以传进去的是稳定的转发器，转发给 ref 里最新的那个
+  // **事件回调始终指向最新一次渲染的那一份**：memo 跳过重画时，里面挂的还是上一次的
+  // 回调。换选中另一个字体相同的元素，数据全等、组件不重画——这时要是用旧的 onChange，
+  // 字体会写到**上一个**元素上。所以传进去的是稳定的转发器，转发给 ref 里最新的那个。
+  // ref 在 layout effect 里才更新，所以**只许事件里读**（点击总在提交之后）；渲染里要
+  // 调的 `optionLabelOf` 不走这里，原样传下去——走 ref 的话 memo 因显示名变了而重画时
+  // 读到的是上一次渲染的它，画出来的仍是旧名字，之后内容相同的渲染又都被跳过
   const latest = useRef(props)
   useLayoutEffect(() => {
     latest.current = props
   })
   const onChange = useCallback((v: string) => latest.current.onChange(v), [])
   const onReset = useCallback(() => latest.current.onReset?.(), [])
-  const optionLabelOf = useCallback((v: string) => latest.current.optionLabelOf(v), [])
   return (
     <FontFamilyRowMemo
       {...props}
       lang={i18n.language}
       onChange={onChange}
       onReset={props.onReset ? onReset : undefined}
-      optionLabelOf={optionLabelOf}
     />
   )
 }
