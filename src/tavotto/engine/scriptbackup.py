@@ -88,9 +88,14 @@ def sha256(data: bytes) -> str:
 
 
 def slug_of(script: str) -> str:
-    """项目相对路径 → 备份目录名（一层、可读、不含分隔符）。"""
+    """项目相对路径 → 备份目录名（一层、不含分隔符）：可读的前半 + 规范化相对路径的哈希。
+
+    只有前半会撞名（`a/b.py` 与 `a__b.py` 都是 `a__b.py`）：两份脚本的备份混进一个目录，第二份的第一次
+    备份不被当成 pristine、还会被共用的 20 条上限裁掉（Codex 评 #730 P2）。哈希那段让不同路径永不同名。
+    """
     norm = script.replace("\\", "/").strip("/")
-    return re.sub(r"[^\w.\-一-鿿]+", "_", norm.replace("/", "__")) or "_"
+    readable = re.sub(r"[^\w.\-一-鿿]+", "_", norm.replace("/", "__")) or "_"
+    return f"{readable}-{sha256(norm.encode('utf-8'))[:12]}"
 
 
 def resolve(root: str | os.PathLike, script: str) -> Path:

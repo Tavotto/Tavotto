@@ -264,6 +264,18 @@ def test_undo_keeps_later_edits_and_refuses_when_the_path_itself_was_changed(tmp
     assert err.value.code == scriptedit.ERROR_RESTORE_CONFLICT
 
 
+def test_undo_finds_two_rewrites_on_one_line_after_the_first_changed_length(tmp_path, moved):
+    """同一行改了两处、前一处换了长度：后一处记的是改写前的列，要按前面的长度差挪过去；两处改成同一串时
+    全文回退会撞上两处匹配——不挪的话，Tavotto 自己改出来的脚本「只撤销这几处」反倒复原不了（Codex 评 #730 P2）。"""
+    _new, rule = moved
+    src = f'import os\nF, G = "{OLD}/data/x.h5", "{OLD}/data/x.h5"\nH = 1\n'
+    plan = _plan(tmp_path, src, rule=rule, missing=[f"{OLD}/data/x.h5"])
+    assert len(plan.edits) == 2 and len({e["after"] for e in plan.edits}) == 1
+    assert len(plan.edits[0]["after"]) != len(plan.edits[0]["before"])
+    later = plan.new_bytes.replace(b"H = 1", b"H = 2")
+    assert scriptedit.undo(later, plan.edits) == src.encode().replace(b"H = 1", b"H = 2")
+
+
 # --------------------------------------------------------------- 推规则：文件夹与 glob
 
 
@@ -430,7 +442,7 @@ def test_a_failed_backup_leaves_the_script_and_the_backup_dirs_untouched(store, 
         )
     assert err.value.code == scriptbackup.ERROR_BACKUP_FAILED
     assert script.read_bytes() == b"A = 1\n"
-    assert not any((store.project_dir / "fig.py").glob("*"))
+    assert not any((store.project_dir / scriptbackup.slug_of("fig.py")).glob("*"))
     assert [p.name for p in store.root.iterdir()] != [] and not any(
         p.name.endswith(".tmp") for p in store.root.iterdir()
     )
@@ -488,6 +500,20 @@ def test_pristine_is_kept_forever_and_only_recent_ones_are_pruned(store, monkeyp
     left = [h["id"] for h in scriptbackup.history(store, "fig.py")]
     assert left == [ids[4], ids[3], ids[0]]
     assert scriptbackup.load(store, ids[0])[1] == b"0\n"
+
+
+def test_scripts_whose_readable_slugs_collide_keep_separate_backups(store):
+    """`a/b.py` 与 `a__b.py` 的可读前半相同：混进一个目录的话，第二份的第一次备份不是 pristine、
+    还会被共用的上限裁掉（Codex 评 #730 P2）。"""
+    _touch(store.root / "a" / "b.py", "A = 1\n")
+    _touch(store.root / "a__b.py", "A = 1\n")
+    assert scriptbackup.slug_of("a/b.py") != scriptbackup.slug_of("a__b.py")
+    before = scriptbackup.sha256(b"A = 1\n")
+    first = scriptbackup.replace(store, "a/b.py", b"A = 2\n", kind="t", expect_before=before)
+    second = scriptbackup.replace(store, "a__b.py", b"A = 2\n", kind="t", expect_before=before)
+    assert first["pristine"] is True and second["pristine"] is True
+    assert [h["id"] for h in scriptbackup.history(store, "a/b.py")] == [first["id"]]
+    assert [h["id"] for h in scriptbackup.history(store, "a__b.py")] == [second["id"]]
 
 
 def test_load_only_accepts_backup_ids_it_issued(store):

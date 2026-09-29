@@ -450,6 +450,18 @@ def undo(current: bytes, edits: list[dict]) -> bytes:
         if isinstance(line, int) and 0 < line <= len(src.lines):
             text = src.lines[line - 1]
             col = e.get("col")
+            if isinstance(col, int):
+                # `col` 是改写**前**那一行里的列：同一行更靠前的几处换了长度，这一处在改后的行里跟着挪
+                col += sum(
+                    len(o["after"]) - len(o["before"])
+                    for o in edits
+                    if o is not e
+                    and o.get("line") == line
+                    and isinstance(o.get("col"), int)
+                    and o["col"] < e["col"]
+                    and isinstance(o.get("after"), str)
+                    and isinstance(o.get("before"), str)
+                )
             if isinstance(col, int) and text[col : col + len(after)] == after:
                 start = src.line_start[line - 1] + len(text[:col].encode(src.encoding))
                 hit = start
