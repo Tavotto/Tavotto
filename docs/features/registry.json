@@ -303,6 +303,10 @@
         {
           "spec": "shared-colorbar-group.spec.ts",
           "title": "共享色条成组：树、整组平移、撤销重做、钻进成员、单拖不带色条、重开还在"
+        },
+        {
+          "spec": "shared-colorbar-group.spec.ts",
+          "title": "选中组后从成员子图里的标题起手拖 = 整组平移（不是只挪标题）"
         }
       ]
     },
