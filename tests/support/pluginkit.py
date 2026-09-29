@@ -57,8 +57,13 @@ def synthetic_staging(
     widget_salt: str = "",
     fingerprint: str = "feedfacecafebeef",
     audit: dict | None = None,
+    overrides: dict[str, bytes] | None = None,
 ) -> dict:
-    """在 `dest` 摆一份形状真实的插件目录并写清单；返回清单。"""
+    """在 `dest` 摆一份形状真实的插件目录并写清单；返回清单。
+
+    `overrides`：写清单**之前**替换掉的文件（插件内相对路径 → 内容），例如把 `mcp/server.py`
+    换成一个秒回体检 JSON 的假 server——清单照替换后的内容写，这份插件仍是自洽的发行件。
+    """
     stage = load_script("plugin_stage")
     dest.mkdir(parents=True, exist_ok=True)
     modes: dict[str, str] = {}
@@ -76,6 +81,11 @@ def synthetic_staging(
     modes["mcp/widget/canvas.html"] = "100644"
     (dest / "LICENSE").write_bytes((ROOT / "LICENSE").read_bytes())
     modes["LICENSE"] = "100644"
+    for rel, data in (overrides or {}).items():
+        out = dest / rel
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(data)
+        modes.setdefault(rel, "100644")
     if version is not None:
         pj = dest / ".codex-plugin" / "plugin.json"
         import json
