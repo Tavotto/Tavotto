@@ -636,6 +636,8 @@ def test_upgrade_commands_follow_the_mirror_verdict():
     plain = launcher.upgrade_commands("0.17.0", None)
     assert plain[0] == "pipx upgrade tavotto"
     assert 'pipx install --force "tavotto[worker]==0.17.0"' in plain
+    # 同版本装残的引擎（engine_incompatible）也要真的重装：pip 那条带 --force-reinstall
+    assert 'pip install -U --force-reinstall "tavotto[worker]==0.17.0"' in plain
     assert not any("--index-url" in c for c in plain)
     pypi = launcher.upgrade_commands("0.17.0", {"url": "https://pypi.org/simple", "mirror": False})
     assert pypi == plain
