@@ -62,6 +62,9 @@ test(
     const dialog = page.locator('[data-dialog="missing-input"]')
     await expect(dialog).toBeVisible({ timeout: 120_000 })
     await expect(dialog.locator('[data-missing-input-path]')).toHaveText(OLD)
+    // 默认只有一句话 + 主按钮；「会改写脚本」的说明在折叠的「详情」里，展开才看得见
+    await expect(dialog.locator('[data-missing-input-rewrite-hint]')).toBeHidden()
+    await dialog.locator('[data-missing-input-details] summary').click()
     await expect(dialog.locator('[data-missing-input-rewrite-hint]')).toBeVisible()
 
     // 2) 浏览器模式：粘贴数据所在的文件夹 → 预览（脚本一个字节都不改）
