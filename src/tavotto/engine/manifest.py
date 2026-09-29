@@ -1385,13 +1385,13 @@ def installed_font_display_names() -> dict[str, str]:
     `installed_font_families` 同一个失效点 `overrides.sync_font_caches`）：脚本或 fname
     放开 `addfont` 了新字体，下一份 manifest 就有它的显示名；注册表没变就不再读 name 表。
     """
-    families = installed_font_families()
-    return _installed_font_display_names(sync_font_caches(), families)
+    register_font_name_aliases()  # 与 `installed_font_families` 同理：先补登记，再取代次
+    return _installed_font_display_names(sync_font_caches())
 
 
 @lru_cache(maxsize=1)
-def _installed_font_display_names(_generation: tuple, families: tuple[str, ...]) -> dict[str, str]:
-    return font_display_names(families)
+def _installed_font_display_names(_generation: tuple) -> dict[str, str]:
+    return font_display_names(installed_font_families())
 
 
 def _text_fields(t) -> list[dict]:
