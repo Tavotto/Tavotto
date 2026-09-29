@@ -15,7 +15,7 @@ import {
   type NativeSessionInfo,
   type NativeSessionState,
 } from '@/lib/api'
-import { addRuntimePanel } from '@/store/actions'
+import { addRuntimePanelToCanvas } from '@/store/workspace'
 import { useDocumentStore } from '@/store/documentStore'
 import { useFigurePickerStore } from '@/store/figurePickerStore'
 import { nativePanelState, sortSessions, useNativeSessionStore } from './nativeSessionStore'
@@ -39,7 +39,7 @@ vi.mock('@/lib/api', async (orig) => {
   }
 })
 
-vi.mock('@/store/actions', () => ({ addRuntimePanel: vi.fn() }))
+vi.mock('@/store/workspace', () => ({ addRuntimePanelToCanvas: vi.fn() }))
 
 const mockPending = vi.mocked(fetchNativePending)
 const mockApprove = vi.mocked(approveNativePending)
@@ -48,7 +48,7 @@ const mockBuild = vi.mocked(buildNativeSession)
 const mockContinue = vi.mocked(continueNativeSession)
 const mockTerminate = vi.mocked(terminateNativeSession)
 const mockList = vi.mocked(fetchNativeSessions)
-const mockAddPanel = vi.mocked(addRuntimePanel)
+const mockAddPanel = vi.mocked(addRuntimePanelToCanvas)
 
 const ID = '0123456789abcdef0123456789abcdef'
 

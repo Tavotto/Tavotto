@@ -8,7 +8,7 @@ import { ICON_SIZE } from '@/components/ui/Icon'
 import { backendCodeMsg, type CapturedFigureDescriptor, type ScriptInventoryEntry } from '@/lib/api'
 import { formatCm } from '@/lib/units'
 import { formatMessage, msg, t as translate } from '@/i18n'
-import { addRuntimePanel } from '@/store/actions'
+import { addRuntimePanelToCanvas } from '@/store/workspace'
 import { useScriptInputStore } from '@/store/scriptInputStore'
 import { useScriptLibraryStore } from '@/store/scriptLibraryStore'
 import {
@@ -435,7 +435,7 @@ export function ProbeResultsDialog({
               variant="secondary"
               size="sm"
               onClick={() => {
-                addRuntimePanel(d)
+                addRuntimePanelToCanvas(d)
                 setStatus(msg('registry.addedToCanvas', { stem: d.stem }, 'dialogs'))
               }}
             >

@@ -7,7 +7,7 @@ import { stemOf } from '@/lib/openRequest'
 import { formatCm } from '@/lib/units'
 import { cn } from '@/lib/utils'
 import { msg, t as translate } from '@/i18n'
-import { addPanel, addRuntimePanel } from '@/store/actions'
+import { addPanelToCanvas, addRuntimePanelToCanvas } from '@/store/workspace'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useFigurePickerStore } from '@/store/figurePickerStore'
@@ -30,8 +30,8 @@ type Entry =
  *
  * `tavotto open script.py` 产出不止一张图时打开：**每一张都可见、各自可
  * 添加**，绝不静默选第一张（负向反证 #3 的看护对象）。条目从素材数据源
- * 现算：磁盘原件是 FileAsset（addPanel），没有原件的是 RuntimeFigureAsset
- * （addRuntimePanel，只走描述符）；没跑出预览的条目不给假按钮，指去素材库。
+ * 现算：磁盘原件是 FileAsset（addPanelToCanvas），没有原件的是 RuntimeFigureAsset
+ * （addRuntimePanelToCanvas，只走描述符）；没跑出预览的条目不给假按钮，指去素材库。
  */
 export function FigurePickerDialog() {
   useTranslation('project')
@@ -61,10 +61,10 @@ export function FigurePickerDialog() {
     if (existing) {
       useSelectionStore.getState().set([existing.id])
     } else if (e.kind === 'panel') {
-      addPanel(e.info)
+      addPanelToCanvas(e.info)
     } else {
       // runtime 条目没有描述符时按钮根本不渲染（见下），这里必然有
-      addRuntimePanel(e.asset.descriptor!)
+      addRuntimePanelToCanvas(e.asset.descriptor!)
     }
     setStatus(msg('handoff.added', { name: e.stem }, 'project'))
     close()

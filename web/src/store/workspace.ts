@@ -30,6 +30,8 @@ import { create } from 'zustand'
 import { msg } from '@/i18n'
 import { emitActivity } from '@/lib/activity'
 import { rescueFocus } from '@/lib/focusRescue'
+import type { CapturedFigureDescriptor, PanelInfo } from '@/lib/api'
+import { pageUnion } from '@/lib/panelPlacement'
 import { addPanel, addRuntimePanel, enterElementEdit } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
 import { activateCanvas } from '@/store/canvasSession'
@@ -37,7 +39,7 @@ import { useDocumentStore } from '@/store/documentStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
-import { useViewportStore } from '@/store/viewportStore'
+import { mmToWorld, useViewportStore } from '@/store/viewportStore'
 import type { CanvasObject, PanelObject } from '@/types/document'
 
 export type WorkspaceMode = 'fast_edit' | 'layout'
@@ -139,8 +141,17 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
  * **带上画布 id**：`openFastEdit` 会为了找到那张图切画布（`ensurePanel`），
  * 换了画布之后记下的那一片属于**上一张画布**，还回去就是把用户送到别处。
  * 这里的主语是「哪一张画布的、哪一刻的视口」，两者缺一不可。
+ *
+ * 另记两件回来时要比对的事（#706 评审 P2）：停放时的**页面尺寸**（快速编辑里从画布属性
+ * 改了 W / H 再改回原值，比的是最终尺寸，改回来就原样还原）；快速编辑期间**新加进这张
+ * 画布的图**（`added`，由 `frameAddedPanel` 记，回排版时再决定要不要取景它们）。
  */
-let parkedLayoutView: { canvasId: string; view: ViewTarget } | null = null
+let parkedLayoutView: {
+  canvasId: string
+  view: ViewTarget
+  page: { w: number; h: number }
+  added: string[]
+} | null = null
 
 interface ViewTarget {
   zoom: number
@@ -153,18 +164,106 @@ function parkLayoutView(): void {
   if (useWorkspaceStore.getState().mode === 'fast_edit') return
   const { zoom, panX, panY, viewW, viewH } = useViewportStore.getState()
   if (!viewW || !viewH) return
+  const { doc, activeCanvasId } = useDocumentStore.getState()
   parkedLayoutView = {
-    canvasId: useDocumentStore.getState().activeCanvasId,
+    canvasId: activeCanvasId,
     view: { zoom, panX, panY },
+    page: { w: doc.page.w, h: doc.page.h },
+    added: [],
   }
 }
 
 /** 取出并清空；画布对不上就当没记过 */
-function takeParkedLayoutView(): ViewTarget | null {
+function takeParkedLayoutView(): NonNullable<typeof parkedLayoutView> | null {
   const parked = parkedLayoutView
   parkedLayoutView = null
   if (!parked) return null
-  return parked.canvasId === useDocumentStore.getState().activeCanvasId ? parked.view : null
+  return parked.canvasId === useDocumentStore.getState().activeCanvasId ? parked : null
+}
+
+type Box = { x: number; y: number; w: number; h: number }
+
+/** 按落点 `view` 看，这块矩形（mm）是否整张落在此刻的舞台里 */
+function boxInView(b: Box, view: ViewTarget): boolean {
+  const { viewW, viewH } = useViewportStore.getState()
+  if (!viewW || !viewH) return false
+  const left = mmToWorld(b.x) * view.zoom + view.panX
+  const top = mmToWorld(b.y) * view.zoom + view.panY
+  return (
+    left >= 0 &&
+    top >= 0 &&
+    left + mmToWorld(b.w) * view.zoom <= viewW &&
+    top + mmToWorld(b.h) * view.zoom <= viewH
+  )
+}
+
+/**
+ * 新加进画布的图怎么进视野——**只有这一处**判（#706 评审 P2：入口一多，逐个补必然
+ * 漏，还会各自踩到工作区模式与停放视口）。输入是工作区模式与停放的排版视口：
+ *
+ * - **排版上**：取景「页面 ∪ 这张图」并留在适应模式（`fitRectAnimated`）——软上限放置
+ *   下稍大的图会伸出页面，那截也要看得见；之后抽屉收起 / 窗口缩放 / 切标签再切回仍按
+ *   这块取景（2026-09-28 用户反馈）。拖放到一点是用户在屏幕上挑的位置：图整张已在视口
+ *   里就不动视口。
+ * - **快速编辑里**（选图对话框、脚本库、接入状态对话框在快编时加图，或 `openFastEdit`
+ *   打开一张还不在画布上的图）：那一屏框的是正在编辑的那张图，**不动视口**；只把这张
+ *   图记到停放的排版视口上，回排版时由 `layoutViewOnReturn` 一起判。于是 `openFastEdit`
+ *   停放的永远是加图之前那一片，与有没有补间动画无关。
+ */
+function frameAddedPanel(panel: PanelObject, dropped: boolean): void {
+  if (useWorkspaceStore.getState().mode === 'fast_edit') {
+    if (parkedLayoutView?.canvasId === useDocumentStore.getState().activeCanvasId) {
+      parkedLayoutView.added.push(panel.id)
+    }
+    return
+  }
+  const vp = useViewportStore.getState()
+  if (dropped && boxInView(panel, vp)) return
+  vp.fitRectAnimated(pageUnion(useDocumentStore.getState().doc.page, panel))
+}
+
+/**
+ * 回排版时视口落在哪（有停放记录时）。页面尺寸与停放时一样、快编期间也没加进伸出那一片
+ * 的图 → 原样还原（审计 T01）；页面尺寸变了（比最终尺寸：改了又改回来算没变）或新加的
+ * 图有一张不整张在那一片里 → 取景「页面 ∪ 新加的图」（没有新图就是按页面，与排版上直接
+ * 换尺寸的 `startPageSizeFit` 同一个落点）。
+ */
+function layoutViewOnReturn(parked: NonNullable<typeof parkedLayoutView>): void {
+  const { doc } = useDocumentStore.getState()
+  const vp = useViewportStore.getState()
+  const added = parked.added
+    .map((id) => doc.objects.find((o) => o.id === id))
+    .filter((o): o is CanvasObject => o != null)
+  const resized = doc.page.w !== parked.page.w || doc.page.h !== parked.page.h
+  if (!resized && added.every((o) => boxInView(o, parked.view))) {
+    vp.restoreView(parked.view)
+  } else if (added.length > 0) {
+    vp.fitRectAnimated(pageUnion(doc.page, ...added))
+  } else {
+    vp.fitAnimated(doc.page.w, doc.page.h)
+  }
+}
+
+/**
+ * 界面上「把一张图加到画布」的入口（选图对话框、脚本库、接入状态对话框、`tavotto run`
+ * 交接、舞台拖放）**一律走这两个**，不直接调 `actions.addPanel` / `addRuntimePanel`
+ * （那两个只管文档）——视口怎么动由 `frameAddedPanel` 一处判。`addPanelEntry.test.ts`
+ * 钉住没有别的模块直接调那两个 action。
+ */
+export function addPanelToCanvas(info: PanelInfo, atX?: number, atY?: number): PanelObject {
+  const panel = addPanel(info, atX, atY)
+  frameAddedPanel(panel, atX != null && atY != null)
+  return panel
+}
+
+export function addRuntimePanelToCanvas(
+  desc: CapturedFigureDescriptor,
+  atX?: number,
+  atY?: number,
+): PanelObject {
+  const panel = addRuntimePanel(desc, atX, atY)
+  frameAddedPanel(panel, atX != null && atY != null)
+  return panel
 }
 
 /** 当前快速编辑的那个面板对象；不在激活画布里就回 null */
@@ -207,11 +306,36 @@ export function findFigurePanel(
   return null
 }
 
+/** 素材 id → 能加进画布的来源：磁盘图的 `PanelInfo`，或带描述符的 runtime 图 */
+type FigureSource = { kind: 'file'; info: PanelInfo } | { kind: 'runtime'; desc: CapturedFigureDescriptor }
+
+function figureSource(figureId: string): FigureSource | null {
+  const info = useAssetStore.getState().byId[figureId]
+  if (info) return { kind: 'file', info }
+  const runtime = (useRuntimeAssetStore.getState().assets ?? []).find((a) => a.id === figureId)
+  return runtime?.descriptor ? { kind: 'runtime', desc: runtime.descriptor } : null
+}
+
+/**
+ * 新建面板用哪一层：`toCanvas` = `addPanelToCanvas` / `addRuntimePanelToCanvas`（连取景，
+ * 「添加到画布」走它）；`docOnly` = 裸 action，只给 `openFastEdit`——它要先停放排版视口、
+ * 再判新加的图，取景的时机由它自己掌握。
+ */
+function createPanel(src: FigureSource, layer: 'toCanvas' | 'docOnly'): PanelObject {
+  if (layer === 'toCanvas') {
+    return src.kind === 'file' ? addPanelToCanvas(src.info) : addRuntimePanelToCanvas(src.desc)
+  }
+  return src.kind === 'file' ? addPanel(src.info) : addRuntimePanel(src.desc)
+}
+
 /**
  * 素材 → 文档里的面板对象：有就用那一个（**绝不重复创建**），
- * 没有就通过既有的统一 action 添加。runtime 素材走它自己那条添加路径。
+ * 没有就按 `layer` 新建（见 `createPanel`）。runtime 素材走它自己那条添加路径。
  */
-function ensurePanel(figureId: string): { panel: PanelObject; created: boolean } | null {
+function ensurePanel(
+  figureId: string,
+  layer: 'toCanvas' | 'docOnly',
+): { panel: PanelObject; created: boolean } | null {
   const found = findFigurePanel(figureId)
   if (found) {
     if (found.canvasId !== useDocumentStore.getState().activeCanvasId) {
@@ -221,11 +345,8 @@ function ensurePanel(figureId: string): { panel: PanelObject; created: boolean }
     const fresh = useDocumentStore.getState().doc.objects.find((o) => o.id === found.panel.id)
     return fresh?.type === 'panel' ? { panel: fresh, created: false } : null
   }
-  const info = useAssetStore.getState().byId[figureId]
-  if (info) return { panel: addPanel(info), created: true }
-  const runtime = (useRuntimeAssetStore.getState().assets ?? []).find((a) => a.id === figureId)
-  if (runtime?.descriptor) return { panel: addRuntimePanel(runtime.descriptor), created: true }
-  return null
+  const src = figureSource(figureId)
+  return src ? { panel: createPanel(src, layer), created: true } : null
 }
 
 export type OpenFastEditOutcome = 'editing' | 'layout_only' | 'missing'
@@ -243,7 +364,7 @@ export type OpenFastEditOutcome = 'editing' | 'layout_only' | 'missing'
  * ——状态与措辞归 `lib/readinessText.ts`，两者不是一件事。
  */
 export function openFastEdit(figureId: string): OpenFastEditOutcome {
-  const got = ensurePanel(figureId)
+  const got = ensurePanel(figureId, 'docOnly')
   if (!got) {
     useUiStore
       .getState()
@@ -251,7 +372,9 @@ export function openFastEdit(figureId: string): OpenFastEditOutcome {
     return 'missing'
   }
   const { panel, created } = got
+  // 先停放排版视口（`enterFastEdit`）、再判新加的图：停放的是加图之前那一片
   useWorkspaceStore.getState().enterFastEdit(panel.id)
+  if (created) frameAddedPanel(panel, false)
   // 「编辑原图」把还不在文档里的图加了进来——这一步必须说出口（结构上躲不掉：
   // 快速编辑的对象只能是文档里的面板对象，见文件头；但用户点的是"编辑"，看到
   // 的却是版本预览多了一个对象、问题面板多了一批问题，UI 审计 T06）。它是一条
@@ -289,14 +412,24 @@ export type AddToLayoutOutcome = 'added' | 'focused' | 'missing'
  * 也不会把 overrides 复制到一个新对象上（那份复制品之后就与原件失联了）。
  */
 export function addFigureToLayout(figureId: string): AddToLayoutOutcome {
-  const got = ensurePanel(figureId)
-  if (!got) {
+  const willCreate = !findFigurePanel(figureId)
+  if (willCreate && !figureSource(figureId)) {
     useUiStore
       .getState()
       .setStatus(msg('fastEdit.figureMissing', { name: figureId }, 'workspace'), 'error')
     return 'missing'
   }
-  focusLayoutPanel(got.panel.id)
+  // 要新建：**先回到排版**再经 `addPanelToCanvas` 加——取景「页面 ∪ 这张图」要在排版上判
+  // （在快编里加会被当成「快编时加图」只记不取景）。之后的 `focusLayoutPanel` 不再
+  // `revealRect`：那会退出适应模式，抽屉一收页面就偏在一边（2026-09-28 用户反馈）。
+  // 已在文档里的只是聚焦、滚进视野
+  if (willCreate) {
+    useWorkspaceStore.getState().exitToLayout()
+    useUiStore.getState().setElementPanel(null)
+  }
+  const got = ensurePanel(figureId, 'toCanvas')
+  if (!got) return 'missing' // 上面已判过来源；这里只防同步期间素材被清掉
+  focusLayoutPanel(got.panel.id, { reveal: !got.created })
   const name = got.panel.name ?? got.panel.fileId
   useUiStore
     .getState()
@@ -320,7 +453,7 @@ export function returnToLayout(): void {
   if (!wasFastEdit) {
     // 一次什么都没切的「切换」：视口一个字不动
   } else if (parked) {
-    useViewportStore.getState().restoreView(parked)
+    layoutViewOnReturn(parked)
   } else if (panel) {
     revealPanel(panel)
   } else {
@@ -339,7 +472,7 @@ export function returnToLayout(): void {
  * 定位到画布上的某个面板：切到它所在的画布、选中、滚进视野。
  * Prompt 11 的问题面板与 Prompt 12 的导出报告直接调它。
  */
-export function focusLayoutPanel(panelId: string): boolean {
+export function focusLayoutPanel(panelId: string, opts?: { reveal?: boolean }): boolean {
   const s = useDocumentStore.getState()
   const inActive = s.doc.objects.find((o) => o.id === panelId)
   if (!inActive) {
@@ -354,7 +487,7 @@ export function focusLayoutPanel(panelId: string): boolean {
   useWorkspaceStore.getState().exitToLayout()
   useUiStore.getState().setElementPanel(null)
   useSelectionStore.getState().set([panelId])
-  revealPanel(obj)
+  if (opts?.reveal !== false) revealPanel(obj)
   return true
 }
 

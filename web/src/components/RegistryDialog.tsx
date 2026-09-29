@@ -38,7 +38,7 @@ import {
 import { cn } from '@/lib/utils'
 import { formatMessage, msg, t as translate } from '@/i18n'
 import { listJoin } from '@/i18n/format'
-import { addPanel, addRuntimePanel } from '@/store/actions'
+import { addPanelToCanvas, addRuntimePanelToCanvas } from '@/store/workspace'
 import { useAssetStore } from '@/store/assetStore'
 import { refreshAssetsAndSync } from '@/store/liveSync'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
@@ -555,7 +555,7 @@ function PanelRow({
             hasAsset={!!asset}
             onAdd={() => {
               if (!asset) return
-              addPanel(asset)
+              addPanelToCanvas(asset)
               useProjectReadinessStore.getState().closeCenter()
             }}
             onProbe={onProbe}
@@ -999,7 +999,7 @@ function ProbeNoteView({ note }: { note?: ProbeNote }) {
               variant="secondary"
               size="sm"
               onClick={() => {
-                addRuntimePanel(d)
+                addRuntimePanelToCanvas(d)
                 setStatus(msg('registry.addedToCanvas', { stem: d.stem }, 'dialogs'))
                 useProjectReadinessStore.getState().closeCenter()
               }}

@@ -59,6 +59,7 @@ import { checkUpdateOnStartup } from '@/store/updateStore'
 import { restoreSession, startAutosave, useDocumentStore } from '@/store/documentStore'
 import { useViewportStore } from '@/store/viewportStore'
 import { startLayoutAutoReflow } from '@/store/actions'
+import { startPageSizeFit } from '@/store/pageFit'
 import { startVersionCheckpoints } from '@/hooks/useVersionCheckpoints'
 import { installDiagnosticsWiring } from '@/diagnostics/wiring'
 import { installDiagnosticsDevHook } from '@/diagnostics'
@@ -158,6 +159,8 @@ function Workspace() {
     const stopPrune = subscribePruneSelection()
     const stopCheckpoints = startVersionCheckpoints()
     const stopReflow = startLayoutAutoReflow()
+    // 换了画布尺寸 / 类型：视口按新页面重新取景（切标签、换文档各有自己的适配点）
+    const stopPageFit = startPageSizeFit()
     // 工作区模式（快速编辑 / 画布排版）按 documentId 存本机一档：一个订阅
     // 负责恢复与写入，恢复前先验那个对象还在不在
     const stopWorkspace = startWorkspacePersistence()
@@ -209,6 +212,7 @@ function Workspace() {
       stopPrune()
       stopCheckpoints()
       stopReflow()
+      stopPageFit()
       stopWorkspace()
       stopValidation()
       stopDiagnostics()

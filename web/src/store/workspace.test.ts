@@ -248,6 +248,16 @@ describe('快速编辑 ↔ 画布排版共享同一个对象', () => {
     expect(s().doc.objects.filter((o) => o.type === 'panel')).toHaveLength(1)
   })
 
+  it('「添加到画布」真的添加时取景整张页面并留在适应模式；只是聚焦时退出', () => {
+    useViewportStore.getState().setViewRect({ left: 0, top: 0, width: 800, height: 600 })
+    useViewportStore.getState().setView({ zoom: 3, panX: -500, panY: -400 })
+    addFigureToLayout('b.pdf')
+    // 适应模式：之后素材抽屉收起 / 窗口缩放时按页面重算，页面保持居中
+    expect(useViewportStore.getState().fitted).toBe(true)
+    addFigureToLayout('b.pdf')
+    expect(useViewportStore.getState().fitted).toBe(false)
+  })
+
   it('从画布进图内编辑再返回：位置、尺寸、edits 全都不动', () => {
     addFigureToLayout('a.pdf')
     const id = panelOf('a.pdf').id
@@ -561,6 +571,28 @@ describe('切模式不动用户的视口', () => {
 
     returnToLayout()
     expect(view()).toEqual(before)
+  })
+
+  // #706 评审 P2：加图 action 已取景「页面 ∪ 这张图」并留在适应模式；这里再聚焦（revealRect）
+  // 会退出适应模式，之后抽屉收起 / 窗口缩放 / 切标签再切回都不再按这块取景
+  it('「添加到画布」新加的图：留在适应模式，取景「页面 ∪ 这张图」', () => {
+    const page = s().doc.page
+    useAssetStore.setState({
+      byId: {
+        ...useAssetStore.getState().byId,
+        'big.pdf': info('big.pdf', { native_w_mm: page.w * 3, native_h_mm: page.h * 3 }),
+      },
+    })
+    vp().setPan(-321, 77)
+    expect(addFigureToLayout('big.pdf')).toBe('added')
+    const o = panelOf('big.pdf')
+    expect(vp().fitted).toBe(true)
+    expect(vp().fitFrame()).toMatchObject({
+      x: Math.min(0, o.x),
+      y: Math.min(0, o.y),
+      w: Math.max(page.w, o.x + o.w) - Math.min(0, o.x),
+      h: Math.max(page.h, o.y + o.h) - Math.min(0, o.y),
+    })
   })
 
   it('没记过就现算一个落点，不是什么都不做', () => {

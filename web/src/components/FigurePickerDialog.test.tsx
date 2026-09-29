@@ -7,14 +7,14 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/store/actions', () => ({
-  addPanel: vi.fn(),
-  addRuntimePanel: vi.fn(),
+vi.mock('@/store/workspace', () => ({
+  addPanelToCanvas: vi.fn(),
+  addRuntimePanelToCanvas: vi.fn(),
 }))
 
 import type { CapturedFigureDescriptor, RuntimeAssetInfo } from '@/lib/api'
 import { FigurePickerDialog } from '@/components/FigurePickerDialog'
-import { addPanel, addRuntimePanel } from '@/store/actions'
+import { addPanelToCanvas, addRuntimePanelToCanvas } from '@/store/workspace'
 import { useAssetStore } from '@/store/assetStore'
 import { useFigurePickerStore } from '@/store/figurePickerStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
@@ -25,8 +25,8 @@ declare global {
 }
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
-const mockAddRuntime = vi.mocked(addRuntimePanel)
-const mockAddPanel = vi.mocked(addPanel)
+const mockAddRuntime = vi.mocked(addRuntimePanelToCanvas)
+const mockAddPanel = vi.mocked(addPanelToCanvas)
 
 function desc(stem: string): CapturedFigureDescriptor {
   return {
@@ -108,7 +108,7 @@ describe('FigurePickerDialog', () => {
     expect(useFigurePickerStore.getState().script).toBeNull()
   })
 
-  it('磁盘原件条目走 addPanel；runtime 条目走描述符', () => {
+  it('磁盘原件条目走 addPanelToCanvas；runtime 条目走描述符', () => {
     useAssetStore.setState({
       panels: [
         {

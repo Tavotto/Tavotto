@@ -6,13 +6,12 @@ import { Images } from '@/components/ui/icons'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { runTutorialEntry } from '@/lib/onboarding/tutorial'
 import { useAssetStore } from '@/store/assetStore'
-import { addPanel } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
-import { openFastEdit, useWorkspaceStore } from '@/store/workspace'
+import { addPanelToCanvas, openFastEdit, useWorkspaceStore } from '@/store/workspace'
 import { clientToMm, mmToWorld, useViewportStore } from '@/store/viewportStore'
 import { emptyStateAnchor } from '@/lib/emptyStateAnchor'
 import { shouldFitOnDoubleClick } from '@/lib/fitGuard'
@@ -23,6 +22,7 @@ import { OverlaySvg } from './OverlaySvg'
 import { PageSheet } from './PageSheet'
 import { ContextBar } from './context-bar/ContextBar'
 import { QuickEdit } from './QuickEdit'
+import { PageOutsideMask } from './PageOutsideMask'
 import { Rulers, RULER_SIZE } from './Rulers'
 import { startDraw, startMarquee, startPan } from './interactions'
 
@@ -210,7 +210,7 @@ export function CanvasStage() {
           const info = useAssetStore.getState().byId[pid]
           if (!info) return
           const p = clientToMm(e.clientX, e.clientY)
-          addPanel(info, p.x, p.y)
+          addPanelToCanvas(info, p.x, p.y)
         }}
       >
         {/* 唯一的世界变换。`data-world-transform` 是稳定选择器：e2e 靠它量
@@ -240,6 +240,9 @@ export function CanvasStage() {
           )}
           <CanvasLayers only={fastEdit ? activePanelId : null} />
         </div>
+
+        {/* 页面外画淡、页面轮廓压在内容之上：在世界层之后、选框覆盖层之前 */}
+        {!fastEdit && <PageOutsideMask />}
 
         <OverlaySvg />
 
