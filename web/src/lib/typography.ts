@@ -309,15 +309,25 @@ const HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i
  * 首选项在前、本机的按引擎排好的序接在后面、去重；别的字段与没有本机表的
  * 老引擎原样返回（同一个对象，memo 不白白失效）。
  */
-export function withMachineFamilies<F extends Pick<EditableField, 'prop' | 'options'>>(
+export function withMachineFamilies<
+  F extends Pick<EditableField, 'prop' | 'options' | 'option_labels'>,
+>(
   field: F | undefined,
   families: readonly string[] | undefined,
+  /** manifest 顶层 `font_family_names`：并表时一起挂上，下拉显示中文名（值不变） */
+  names?: Readonly<Record<string, string>>,
 ): F | undefined {
-  if (!field || field.prop !== 'fontfamily' || !families?.length) return field
+  if (!field || field.prop !== 'fontfamily') return field
   const own = field.options ?? []
   const seen = new Set(own)
-  const extra = families.filter((f) => !seen.has(f))
-  return extra.length ? { ...field, options: [...own, ...extra] } : field
+  const extra = (families ?? []).filter((f) => !seen.has(f))
+  const labeled = names && Object.keys(names).length > 0 && field.option_labels !== names
+  if (!extra.length && !labeled) return field
+  return {
+    ...field,
+    ...(extra.length ? { options: [...own, ...extra] } : {}),
+    ...(labeled ? { option_labels: names as Record<string, string> } : {}),
+  }
 }
 
 export function coerceTypography(

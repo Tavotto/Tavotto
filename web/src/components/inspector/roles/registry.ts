@@ -1,6 +1,6 @@
 import { optionLabel as baseOptionLabel, propLabel as basePropLabel } from '@/store/actions'
 import { displayLabel } from './mathtext'
-import { t } from '@/i18n'
+import { currentLocale, t } from '@/i18n'
 
 /**
  * 图内元素属性的显示注册表。
@@ -73,6 +73,45 @@ export const roleName = (role: string): string =>
  * （`propLabel`）不一样，它**真有**角色专属的第一跳，所以留着。
  */
 export const optionLabel = (prop: string, value: string): string => baseOptionLabel(prop, value)
+
+/** 显示名表里被**不止一个**族用到的中文名（`BiauKaiHK` 与 `BiauKaiHK Regular` 都叫
+ *  「標楷體-港澳」）。按表对象缓存：一张表几百项，下拉每一项都要问一次 */
+const SHARED_NAMES = new WeakMap<object, Set<string>>()
+
+function sharedNames(labels: Readonly<Record<string, string>>): Set<string> {
+  let hit = SHARED_NAMES.get(labels)
+  if (!hit) {
+    const seen = new Set<string>()
+    hit = new Set<string>()
+    for (const zh of Object.values(labels)) {
+      if (seen.has(zh)) hit.add(zh)
+      seen.add(zh)
+    }
+    SHARED_NAMES.set(labels, hit)
+  }
+  return hit
+}
+
+/**
+ * 字体下拉一项的显示名：中文界面显示中文名（`Songti SC` → 宋体-简），英文界面显示
+ * 族名——一种语言只显示一个名字。没有中文名的、通用族（serif 等）照旧走 `optionLabel`。
+ *
+ * 唯一的例外是**重名**：两个族的中文名相同时，只显示中文名的话下拉里是两个一模一样
+ * 的项，这时补上族名「標楷體-港澳（BiauKaiHK Regular）」分得开。
+ *
+ * `labels` 是字段上的 `option_labels`（`withMachineFamilies` 从 manifest 挂上来的）。
+ * 只管显示，写入值永远是 `value`。
+ */
+export function fontFamilyOptionLabel(
+  value: string,
+  labels?: Readonly<Record<string, string>>,
+): string {
+  const zh = labels?.[value]
+  if (!zh || zh === value || !currentLocale().startsWith('zh')) {
+    return optionLabel('fontfamily', value)
+  }
+  return sharedNames(labels).has(zh) ? `${zh}（${value}）` : zh
+}
 
 /* ---------------------- 引擎发过来的分组名 → 显示名 ------------------------ */
 

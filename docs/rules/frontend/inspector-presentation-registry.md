@@ -79,6 +79,15 @@
   与写入前的 `coerceTypography` 拿的必须是同一份表，否则下拉里选得到、写下去却被判成
   「不是选项」；`ElementInspector` 兜底用的两个通用字体 `Select` 也过它。老引擎不发
   这张表时行为一字不变。看护 `figureFontFamilies.test.tsx`。
+* **字体的中文显示名（2026-09-28）**：matplotlib 按 FreeType 的族名登记字体（`Songti SC`），
+  中文名在 name 表里。引擎读出来发在 manifest 顶层 `font_family_names`（{族名: 中文名}，
+  `overrides.font_display_names`），`withMachineFamilies` 并表时挂成字段的 `option_labels`；
+  下拉一项的文字**只经 `roles/registry.fontFamilyOptionLabel`**——中文界面只显示中文名
+  「宋体-简」，英文界面只显示族名（一种语言一个名字，2026-09-28 用户定）；只有两个族中文名
+  相同时才补族名分开（「標楷體-港澳（BiauKaiHK Regular）」）。**只管显示**：写入值、校验、文档里存的都是族名。
+  只有中文名的字体（FreeType 读成 `??????SC`）由引擎按真名补登记
+  （`overrides.register_font_name_aliases`），真名本身就是族名、没有显示名。
+  看护 `figureFontFamilies.test.tsx` 的「字体的中文显示名」一组与 `tests/test_font_chinese_names.py`。
 * 看护：`presentation/registry.test.ts`、`legendCard.test.tsx`、
   `legendSpacingCard.test.tsx`、`colorScalePanels.test.tsx`、
   `axes3dPanel.test.tsx`、`tickTaskCard.test.tsx`、`lib/viewAngle.test.ts`
@@ -95,5 +104,5 @@
 - 控件形态按 prop + 角色认
 - 「脚本原始」格画 `marker_original`
 - 色阶共用关系只认 `mappable_gid` / `scale_gids`（谓词 `colorbarCovers` 一处）
-- 本机字体并表只在 `withMachineFamilies` 一处
+- 本机字体并表只在 `withMachineFamilies` 一处；字体选项文字只经 `fontFamilyOptionLabel`
 - 多选事实全体一致才给

@@ -139,11 +139,13 @@ export function useFigureTypography(
   const allowed = useMemo(() => new Set(props), [props])
   // 本机字体族是 manifest 顶层的一张表（机器的事实，不是几何）：显示那一份就够，
   // 老引擎不发它时字体下拉照旧只有首选项
-  const families = usePanelDisplayManifest(panel)?.font_families
+  const displayManifest = usePanelDisplayManifest(panel)
+  const families = displayManifest?.font_families
+  const familyNames = displayManifest?.font_family_names
   const familyField = inner.fieldOf('fontfamily')
   const mergedFamily = useMemo(
-    () => withMachineFamilies(familyField, families),
-    [familyField, families],
+    () => withMachineFamilies(familyField, families, familyNames),
+    [familyField, families, familyNames],
   )
 
   const mp = (prop: TypographyProp): string | null =>

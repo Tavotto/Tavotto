@@ -10,7 +10,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { literal } from '@/i18n'
+import { applyLocale, literal } from '@/i18n'
 import type { EditableField, EngineRenderOptions, Manifest, ManifestElement } from '@/lib/api'
 import { withMachineFamilies } from '@/lib/typography'
 import { useDocumentStore } from '@/store/documentStore'
@@ -18,6 +18,7 @@ import { resetGestureCoordinator } from '@/store/gestureCoordinator'
 import { useRenderStore } from '@/store/renderStore'
 import { seedExactRender } from '@/test/renderFixtures'
 import { emptyProject, type PanelObject } from '@/types/document'
+import { fontFamilyOptionLabel } from './roles/registry'
 import { FIGURE_TEXT_SINGLE_PROPS, useFigureTypography, type TypographyAdapter } from './typographyAdapter'
 
 /** 写入会触发一次渲染：像真引擎那样把同一份 manifest（含本机表）再发回来 */
@@ -58,12 +59,16 @@ const titleEl: ManifestElement = {
   ],
 } as unknown as ManifestElement
 
-const manifestOf = (families?: string[]): Manifest =>
+/** 引擎读 name 表给出的中文名（`font_family_names`）：只有有中文名的才在表里 */
+const NAMES = { 'Songti SC': '宋体-简', Avenir: 'Avenir' }
+
+const manifestOf = (families?: string[], names?: Record<string, string>): Manifest =>
   ({
     stem: 'Fig1',
     size_mm: [101.6, 76.2],
     elements: [titleEl],
     ...(families ? { font_families: families } : {}),
+    ...(names ? { font_family_names: names } : {}),
   }) as unknown as Manifest
 
 const panelOf = (): PanelObject =>
@@ -172,3 +177,62 @@ describe('useFigureTypography：字体下拉与写入校验拿同一份表', () 
     expect(overrideOf('axes_0.title', 'fontfamily')).toBe('Arial')
   })
 })
+
+describe('字体的中文显示名（manifest 顶层 font_family_names）', () => {
+  afterEach(async () => {
+    await applyLocale('zh-CN')
+  })
+
+  it('并表时把显示名挂到字段上；没给显示名就不挂，也不白白换对象', () => {
+    const field = f('fontfamily', 'enum', 'serif', { options: PREFERRED })
+    const merged = withMachineFamilies(field, [...MACHINE, 'Songti SC'], NAMES)
+    expect(merged?.option_labels).toBe(NAMES)
+    expect(merged?.options).toContain('Songti SC')
+    // 只有显示名、没有新族：照样挂（首选项里的族也可能有中文名）
+    expect(withMachineFamilies(field, ['Arial'], NAMES)?.option_labels).toBe(NAMES)
+    expect(withMachineFamilies(field, ['Arial'], {})).toBe(field)
+    // 已经挂的是同一张表：原样返回
+    const again = withMachineFamilies(merged, [...MACHINE, 'Songti SC'], NAMES)
+    expect(again).toBe(merged)
+  })
+
+  it('中文界面只显示中文名，英文界面只显示族名；没有中文名的、通用族照旧', async () => {
+    expect(fontFamilyOptionLabel('Songti SC', NAMES)).toBe('宋体-简')
+    expect(fontFamilyOptionLabel('Songti SC', undefined)).toBe('Songti SC')
+    expect(fontFamilyOptionLabel('Zapfino', NAMES)).toBe('Zapfino')
+    // 显示名与族名相同就不重复一遍
+    expect(fontFamilyOptionLabel('Avenir', NAMES)).toBe('Avenir')
+    // 通用族仍走翻译表（serif → 衬线之类），不因为有显示名表就原样漏出
+    expect(fontFamilyOptionLabel('serif', NAMES)).toBe(optionLabelOfSerif())
+    await applyLocale('en-US')
+    expect(fontFamilyOptionLabel('Songti SC', NAMES)).toBe('Songti SC')
+  })
+
+  it('两个族中文名相同：只有它们补上族名，分得开', () => {
+    const shared = {
+      BiauKaiHK: '標楷體-港澳',
+      'BiauKaiHK Regular': '標楷體-港澳',
+      'Songti SC': '宋体-简',
+    }
+    expect(fontFamilyOptionLabel('BiauKaiHK', shared)).toBe('標楷體-港澳（BiauKaiHK）')
+    expect(fontFamilyOptionLabel('BiauKaiHK Regular', shared)).toBe(
+      '標楷體-港澳（BiauKaiHK Regular）',
+    )
+    expect(fontFamilyOptionLabel('Songti SC', shared)).toBe('宋体-简')
+  })
+
+  it('下拉显示中文名，写进 override 的仍是族名', async () => {
+    await mount(manifestOf([...MACHINE, 'Songti SC'], NAMES))
+    const field = adapter.fieldOf('fontFamily')!
+    expect(field.option_labels).toEqual(NAMES)
+    await act(async () => adapter.writeOnce('fontFamily', 'Songti SC'))
+    expect(overrideOf('axes_0.title', 'fontfamily')).toBe('Songti SC')
+    // 显示名不是选项：写不进去
+    await act(async () => adapter.writeOnce('fontFamily', '宋体-简'))
+    expect(overrideOf('axes_0.title', 'fontfamily')).toBe('Songti SC')
+  })
+})
+
+function optionLabelOfSerif(): string {
+  return fontFamilyOptionLabel('serif')
+}
