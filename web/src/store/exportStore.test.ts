@@ -348,6 +348,36 @@ describe('「导出」时刻属于被导出的那份排版（ADR 0101；Codex #6
     expect(moments).toEqual(['export@d_store'])
   })
 
+  it.each(['done', 'failed'] as const)(
+    '快照用完即放：作业进终局（%s）之后 store 里不再留着那份文档与图源',
+    async (status) => {
+      startRunning()
+      await runExport(inputOf())
+      expect(useExportStore.getState().momentSnapshot).not.toBeNull()
+      applyExportJob(job({ status, outputs: status === 'done' ? [doneOutput] : [] }))
+      expect(useExportStore.getState().momentSnapshot).toBeNull()
+      // 打点拿到的是清掉之前那一份
+      if (status === 'done') expect(snaps[0]?.identity.doc).toBeTruthy()
+    },
+  )
+
+  it('快照用完即放：导出途中换项目（resetExportState）当场清掉', async () => {
+    startRunning()
+    await runExport(inputOf())
+    expect(useExportStore.getState().momentSnapshot).not.toBeNull()
+    resetExportState()
+    expect(useExportStore.getState().momentSnapshot).toBeNull()
+  })
+
+  it('快照用完即放：起作业本身失败，不留着', async () => {
+    globalThis.fetch = (async () => {
+      throw new Error('后端没回应')
+    }) as typeof fetch
+    await runExport(inputOf())
+    expect(useExportStore.getState().startError?.code).toBe('start_failed')
+    expect(useExportStore.getState().momentSnapshot).toBeNull()
+  })
+
   it('导出途中接着改同一份排版：节点里放的是**被导出的那一份**（导出请求里的文档）', async () => {
     startRunning()
     const exported = useDocumentStore.getState().doc
