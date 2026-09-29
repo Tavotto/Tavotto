@@ -33,6 +33,21 @@ export function softCap(r: number, cap = OVERSIZE_CAP): number {
  * 位置：给了落点（拖放）就以落点为中心，否则页面居中。每一维分开处理：装得下的
  * 整条钳进页面；比页面大的那一维在页面上居中，两边均匀伸出，不贴着左上角。
  */
+/** 页面 ∪ 一块矩形（mm）：新加的图伸出页面时视口要取景的那一块 */
+export function pageUnion(
+  page: Pick<PageSetup, 'w' | 'h'>,
+  box: { x: number; y: number; w: number; h: number },
+): { x: number; y: number; w: number; h: number } {
+  const x0 = Math.min(0, box.x)
+  const y0 = Math.min(0, box.y)
+  return {
+    x: x0,
+    y: y0,
+    w: Math.max(page.w, box.x + box.w) - x0,
+    h: Math.max(page.h, box.y + box.h) - y0,
+  }
+}
+
 export function placePanelInPage(
   nativeW: number,
   nativeH: number,

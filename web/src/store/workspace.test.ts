@@ -573,6 +573,28 @@ describe('切模式不动用户的视口', () => {
     expect(view()).toEqual(before)
   })
 
+  // #706 评审 P2：加图 action 已取景「页面 ∪ 这张图」并留在适应模式；这里再聚焦（revealRect）
+  // 会退出适应模式，之后抽屉收起 / 窗口缩放 / 切标签再切回都不再按这块取景
+  it('「添加到画布」新加的图：留在适应模式，取景「页面 ∪ 这张图」', () => {
+    const page = s().doc.page
+    useAssetStore.setState({
+      byId: {
+        ...useAssetStore.getState().byId,
+        'big.pdf': info('big.pdf', { native_w_mm: page.w * 3, native_h_mm: page.h * 3 }),
+      },
+    })
+    vp().setPan(-321, 77)
+    expect(addFigureToLayout('big.pdf')).toBe('added')
+    const o = panelOf('big.pdf')
+    expect(vp().fitted).toBe(true)
+    expect(vp().fitFrame()).toMatchObject({
+      x: Math.min(0, o.x),
+      y: Math.min(0, o.y),
+      w: Math.max(page.w, o.x + o.w) - Math.min(0, o.x),
+      h: Math.max(page.h, o.y + o.h) - Math.min(0, o.y),
+    })
+  })
+
   it('没记过就现算一个落点，不是什么都不做', () => {
     openFastEdit('a.pdf')
     // 会话恢复：本来就在快速编辑里，没有「进来之前」那一片

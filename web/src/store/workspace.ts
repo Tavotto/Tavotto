@@ -310,20 +310,10 @@ export function addFigureToLayout(figureId: string): AddToLayoutOutcome {
       .setStatus(msg('fastEdit.figureMissing', { name: figureId }, 'workspace'), 'error')
     return 'missing'
   }
-  focusLayoutPanel(got.panel.id)
-  // 新加的图：取景「页面 ∪ 这张图」并**留在适应模式**——容差内保持原尺寸的图会稍微
-  // 伸出页面（`lib/panelPlacement`），伸出去的那截也要看得见；随后素材抽屉收起 / 窗口
-  // 缩放时仍按这块取景居中。只滚到那张图的话会退出适应模式，抽屉一收页面就偏在一边
-  // （2026-09-28 用户反馈）。已在文档里的只是聚焦，视口照旧
-  if (got.created) {
-    const { page } = useDocumentStore.getState().doc
-    const p = got.panel
-    const x0 = Math.min(0, p.x)
-    const y0 = Math.min(0, p.y)
-    const x1 = Math.max(page.w, p.x + p.w)
-    const y1 = Math.max(page.h, p.y + p.h)
-    useViewportStore.getState().fitRectAnimated({ x: x0, y: y0, w: x1 - x0, h: y1 - y0 })
-  }
+  // 新加的图已由加图 action 取景「页面 ∪ 这张图」并留在适应模式（`actions.frameAddedPanel`）；
+  // 这里再 `revealRect` 会退出适应模式，抽屉一收页面就偏在一边（2026-09-28 用户反馈）。
+  // 已在文档里的只是聚焦、滚进视野
+  focusLayoutPanel(got.panel.id, { reveal: !got.created })
   const name = got.panel.name ?? got.panel.fileId
   useUiStore
     .getState()
@@ -371,7 +361,7 @@ export function returnToLayout(): void {
  * 定位到画布上的某个面板：切到它所在的画布、选中、滚进视野。
  * Prompt 11 的问题面板与 Prompt 12 的导出报告直接调它。
  */
-export function focusLayoutPanel(panelId: string): boolean {
+export function focusLayoutPanel(panelId: string, opts?: { reveal?: boolean }): boolean {
   const s = useDocumentStore.getState()
   const inActive = s.doc.objects.find((o) => o.id === panelId)
   if (!inActive) {
@@ -386,7 +376,7 @@ export function focusLayoutPanel(panelId: string): boolean {
   useWorkspaceStore.getState().exitToLayout()
   useUiStore.getState().setElementPanel(null)
   useSelectionStore.getState().set([panelId])
-  revealPanel(obj)
+  if (opts?.reveal !== false) revealPanel(obj)
   return true
 }
 
