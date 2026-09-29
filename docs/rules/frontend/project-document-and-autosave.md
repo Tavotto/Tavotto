@@ -174,7 +174,7 @@
   （教程）不走这条。记录的键取 `currentProjectId()` 而不是 `project` 字段：换代期间
   后者还是旧项目。Project Picker 的同名区分 / 失效分组 / 筛选判据只在
   `lib/recentProjects.ts` 一份，顶栏项目切换器共用。
-- **会话状态以后端为准（2026-09-29，#715 PR-B，PR-A #718 新 ADR 的 §二—§三）**：桌面版每次启动 sidecar 可能换端口，
+- **会话状态以后端为准（2026-09-29，#715 PR-B，ADR 0108（`docs/adr/0108-desktop-stable-origin-and-backend-session-state.md`）§二—§三）**：桌面版每次启动 sidecar 可能换端口，
   localStorage 按 origin 隔离——换了端口就是一份空存储，「上次打开的排版」与导出默认值随之丢失（#715）。
   - **「这个项目上次开着哪份排版」的权威在后端**：`GET /api/layout-session`（按 pj 认项目，回 `{last}`）、
     `PUT /api/layout-session/last`（`{doc_id, name}`），数据目录 `state/layout-sessions.json`

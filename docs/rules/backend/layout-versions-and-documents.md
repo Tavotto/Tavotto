@@ -88,7 +88,7 @@
   跑 `_prune_autosave_slots()`，按 mtime 从旧到新删，永不动刚写的那一份，
   删之前在该文件自己的锁里重新 stat 一次。~~这是兜底不是主路径：主清理在
   前端（被 `tavotto.docIndex` 的 12 条挤出去的槽位会被 DELETE 掉）~~——**2026-09-29 起（#715 PR-B，
-  PR-A #718 新 ADR 的 §三）这是唯一的清理路径**，前端不再按本机索引删磁盘；参与清理的只有**记着归属**的槽位
+  ADR 0108（`docs/adr/0108-desktop-stable-origin-and-backend-session-state.md`）§三）这是唯一的清理路径**，前端不再按本机索引删磁盘；参与清理的只有**记着归属**的槽位
   （见下条），各项目「上次开着的」那一份永不删，**没有归属的旧槽位在找回入口（PR-C）上线前一个都不删**
   （它们多半正是换了 origin 之后界面上找不回来的排版）。
   同一次清理顺带跑 `atomicio.reap_orphan_tmps()`（QA 2026-09-24 SCI-05-B2）：
@@ -96,7 +96,7 @@
   结尾，上限永远数不到。判据是**年龄 + pid 已死**——一小时内一律不碰、pid
   还活着的留到一天后（pid 复用 / Windows 量不了存活）；只认 `_next_tmp` 起的
   名字，命名与判据同在 `atomicio`。
-- **会话状态以后端为准（2026-09-29，#715 PR-B，PR-A #718 新 ADR 的 §三）**：`engine/layoutsession.py`（纯标准库）
+- **会话状态以后端为准（2026-09-29，#715 PR-B，ADR 0108（`docs/adr/0108-desktop-stable-origin-and-backend-session-state.md`）§三）**：`engine/layoutsession.py`（纯标准库）
   是 `data_dir()/state/layout-sessions.json` 的唯一读写方（`state_path()` 是位置的唯一出处）。内容：
   `projects{<normalize_path_identity(项目路径)>: {last{doc_id, name, at}}}`、`no_project{last}`（没开项目那一组）、
   `owners{槽位 doc_id → 项目键 | null}`（`null` = 确认过写它时没开项目；没有这条 = 不知道，两档）。
