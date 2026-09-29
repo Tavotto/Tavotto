@@ -1,4 +1,4 @@
-import { memo, useMemo, type ReactNode } from 'react'
+import { memo, useMemo, useRef, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Bold, Italic, X } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
@@ -153,12 +153,24 @@ export function figureFamilyOptions(manifests: Record<string, Manifest | null | 
   return [...out]
 }
 
-function useFigureFamilies(): string[] {
+const sameList = (a: readonly string[], b: readonly string[]) =>
+  a.length === b.length && a.every((v, i) => v === b[i])
+
+/**
+ * 图内字体选项，**内容没变就交回同一个数组**：渲染态每次更新（进度、状态、别的图换了 SVG）都换一个
+ * 新的 `byKey`，manifest 与本机表却没变——按 `byKey` 的引用 memo 会每次交出新数组，`FamilySelect`
+ * 按引用比较选项，于是五个字体下拉各把几百个 Radix 项重建一遍（Codex #703）。并表照算（逐张并
+ * 几百个名字，比重建下拉便宜得多），交出去之前按内容与上一份比，一样就沿用上一份。
+ */
+export function useFigureFamilies(): string[] {
   const byKey = useRenderStore((s) => s.byKey)
-  return useMemo(
-    () => figureFamilyOptions(Object.fromEntries(Object.entries(byKey).map(([k, r]) => [k, r.manifest]))),
-    [byKey],
-  )
+  const last = useRef<string[] | null>(null)
+  return useMemo(() => {
+    const next = figureFamilyOptions(Object.fromEntries(Object.entries(byKey).map(([k, r]) => [k, r.manifest])))
+    if (last.current && sameList(last.current, next)) return last.current
+    last.current = next
+    return next
+  }, [byKey])
 }
 
 export function StyleProfileFields({

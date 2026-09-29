@@ -13,7 +13,8 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { i18n } from '@/i18n'
 import { ProfilesSettings } from './ProfilesSettings'
-import { figureFamilyOptions } from './StyleProfileFields'
+import { figureFamilyOptions, useFigureFamilies } from './StyleProfileFields'
+import { useRenderStore, type PanelRender } from '@/store/renderStore'
 import type { Manifest } from '@/lib/api'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { DEFAULT_PROFILE_ID } from '@/lib/profile'
@@ -775,5 +776,50 @@ describe('样式页字体下拉：逐张并已渲染的图（Codex #703）', () 
 
   it('还没渲染出 manifest 的图不挡别的图', () => {
     expect(figureFamilyOptions({ a: null, b: m(['Arial']) })).toContain('Arial')
+  })
+})
+
+describe('样式页字体选项的引用：渲染态换了新对象、内容没变时不变（Codex #703）', () => {
+  const manifest = (machine: string[]) =>
+    ({
+      elements: [{ role: 'title', editable: [{ prop: 'fontfamily', options: ['serif', 'Arial'] }] }],
+      font_families: machine,
+    }) as unknown as Manifest
+  const render = (m: Manifest, status: PanelRender['status']) =>
+    ({ fileId: 'f', rev: 1, manifest: m, svg: null, svgBytes: 0, status }) as unknown as PanelRender
+
+  it('byKey 换新（进度 / 状态 / manifest 换了个同内容的对象）时交回同一个数组；内容变了才换', async () => {
+    const seen: string[][] = []
+    function Probe() {
+      seen.push(useFigureFamilies())
+      return null
+    }
+    const prev = useRenderStore.getState().byKey
+    act(() => useRenderStore.setState({ byKey: { a: render(manifest(['Fira Sans']), 'ready') } }))
+    const host = document.createElement('div')
+    const probeRoot = createRoot(host)
+    await act(async () => probeRoot.render(<Probe />))
+    const first = seen.at(-1)!
+    expect(first).toContain('Fira Sans')
+
+    // 同内容：新的 byKey、新的 PanelRender、新的 manifest 对象，只是状态从 ready 变 rendering
+    await act(async () => useRenderStore.setState({ byKey: { a: render(manifest(['Fira Sans']), 'rendering') } }))
+    expect(seen.length).toBeGreaterThan(1) // 确实重画过（不是没收到更新）
+    expect(seen.at(-1)).toBe(first)
+
+    // 内容变了、长度没变（换了一个族）：也得换新数组——只比长度会把新族吞掉
+    await act(async () => useRenderStore.setState({ byKey: { a: render(manifest(['Inter']), 'ready') } }))
+    expect(seen.at(-1)).not.toBe(first)
+    expect(seen.at(-1)).toContain('Inter')
+    expect(seen.at(-1)).not.toContain('Fira Sans')
+
+    // 多了一个族：换新数组
+    const second = seen.at(-1)
+    await act(async () => useRenderStore.setState({ byKey: { a: render(manifest(['Inter', 'Lato']), 'ready') } }))
+    expect(seen.at(-1)).not.toBe(second)
+    expect(seen.at(-1)).toContain('Lato')
+
+    await act(async () => probeRoot.unmount())
+    act(() => useRenderStore.setState({ byKey: prev }))
   })
 })
