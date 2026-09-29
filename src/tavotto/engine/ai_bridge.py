@@ -360,6 +360,20 @@ def install_status(agent_id: str) -> dict:
     return {k: st[k] for k in ("status", "code", "log") if k in st}
 
 
+def script_busy(script_path: str | Path) -> bool:
+    """这份脚本此刻有没有进行中的编码 Agent 会话（改写脚本要让路，ADR 0110 §五）。"""
+    target = os.path.normcase(os.path.realpath(script_path))
+    for sess in list(SESSIONS.values()):
+        if sess.get("status") != "running":
+            continue
+        try:
+            if os.path.normcase(os.path.realpath(sess.get("script_path") or "")) == target:
+                return True
+        except (OSError, ValueError):
+            continue
+    return False
+
+
 def start_install(agent_id: str) -> dict:
     """后台 `npm install -g <包>`；结束后**重新真探测**才定成败。
 

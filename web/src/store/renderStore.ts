@@ -826,8 +826,10 @@ export const useRenderStore = create<RenderState>((set, get) => ({
           (WORKDIR_CODES as readonly string[]).includes(v.code) ||
           // 跑前的依赖门（U04）：准备完成之后那次「需要先准备」也要重排
           v.code === DEPENDENCY_PREPARATION_CODE ||
-          // 指认了数据位置之后（ADR 0106）：「找不到数据」那些面板重排
-          v.code === MISSING_INPUT_CODE)
+          // 指认了数据位置 / 改写了脚本里的路径之后（ADR 0106 / 0110）：「找不到数据」那些面板重排——
+          // 带载荷的都算（C++ 读取器是 script_error、先判空再 exit 是 script_exited）
+          v.code === MISSING_INPUT_CODE ||
+          v.missingInput != null)
       ) {
         ids.add(v.fileId)
       }

@@ -100,6 +100,8 @@ from .engine import (
     runtime as engine_runtime,
     runtimeasset as engine_runtimeasset,
     scriptanswers as engine_scriptanswers,
+    scriptbackup as engine_scriptbackup,
+    scriptedit as engine_scriptedit,
     session_client as engine_session_client,
     specfix as engine_specfix,
     telemetry as engine_telemetry,
@@ -5793,6 +5795,235 @@ def api_engine_input_remap_delete():
         return _input_remap_error(exc)
     engine_pool.shutdown_all(root)
     return jsonify({"ok": True, "input_remap": state})
+
+
+# --------------------- 经确认改写脚本里的数据路径（ADR 0110）---------------------
+# 改指表救不回的那几档（exists / glob / C++ 读取器）：用户指认数据位置 → 预览逐行 diff → 勾选确认 →
+# 两处备份后原子替换。**只有浏览器 / 桌面界面能提交**：令牌绑定会话 cookie，只凭本机进程凭据
+# （MCP / CLI 走的那条）的请求拿不到、也用不了（ADR 0094 §七.4 同一条）。
+
+
+def _script_edit_error(exc):
+    status = 403 if exc.code == engine_scriptedit.ERROR_NEEDS_UI else 409
+    return jsonify({"error": str(exc), "code": exc.code, "params": dict(exc.params)}), status
+
+
+def _script_edit_binding() -> str:
+    """确认令牌绑定的会话：浏览器 / 桌面的会话 cookie。没开会话认证（test_client / 显式关掉）时为空串。"""
+    state = app.config.get(security.STATE_KEY)
+    if state is None:
+        return ""
+    cookie = request.cookies.get(security.COOKIE_NAME) or ""
+    if not state.valid_cookie(cookie):
+        raise engine_scriptbackup.ScriptEditError(
+            engine_scriptedit.ERROR_NEEDS_UI, "改写脚本只能在 Tavotto 窗口里确认"
+        )
+    return cookie
+
+
+def _script_store(ctx: "ProjectCtx") -> engine_scriptbackup.Store:
+    return engine_scriptbackup.Store(
+        root=ctx.path,
+        project_dir=project_layout_dir(ctx) / engine_scriptbackup.PROJECT_DIRNAME,
+        mirror_dir=engine_config.data_dir() / "script_backups" / ctx.id,
+    )
+
+
+def _script_edit_target(root: Path, script) -> Path:
+    if not isinstance(script, str) or not script or engine_runtimeasset.is_runtime_id(script):
+        raise engine_scriptbackup.ScriptEditError(
+            engine_scriptbackup.ERROR_SCRIPT_NOT_FOUND, "项目里没有这个脚本", script=str(script)
+        )
+    path = engine_scriptbackup.resolve(root, script)
+    if engine_ai.script_busy(path):
+        raise engine_scriptbackup.ScriptEditError(
+            engine_scriptbackup.ERROR_SCRIPT_BUSY, "编码 Agent 正在改这份脚本", script=script
+        )
+    return path
+
+
+def _input_path_plan(root: Path, script: str, path: Path, entry, chosen, chosen_kind):
+    """预览与提交共用：推规则 → 挑常量 → 新字节（两次调用输入相同，结果逐字节相同）。"""
+    if not isinstance(entry, str) or not isinstance(chosen, str):
+        raise engine_inputremap.RemapError(
+            engine_inputremap.ERROR_REQUESTED_INVALID, "需要 entry 与 chosen"
+        )
+    if chosen_kind == "auto":
+        chosen_kind = "dir" if os.path.isdir(chosen) else "file"
+    if chosen_kind not in ("file", "dir"):
+        raise engine_inputremap.RemapError(
+            engine_inputremap.ERROR_REQUESTED_INVALID, "chosen_kind 只能是 file / dir / auto"
+        )
+    rule = engine_inputremap.derive_location(entry, chosen, chosen_is_dir=chosen_kind == "dir")
+    missing = [entry] + [o["path"] for o in engine_inputremap.static_missing(script, root)]
+    plan = engine_scriptedit.plan(
+        path.read_bytes(), rule=rule, missing=missing, script_dir=path.parent, root=root
+    )
+    return rule, plan, chosen_kind
+
+
+@app.post("/api/script-edit/input-path/preview")
+def api_script_edit_input_path_preview():
+    """ADR 0110 §六：生成改写预览（逐行 diff、改了 / 没改哪些、备份位置、git 状态）与一次性令牌。
+
+    `{script, entry, chosen, chosen_kind: "file" | "dir" | "auto"}`：`entry` 是对话框里那条缺失路径（脚本
+    写的原串），`chosen` 是用户指认的本机位置。脚本一个字节都不改。
+    """
+    ctx = current_ctx()
+    root = ctx.path
+    body = request.get_json(force=True) or {}
+    script = body.get("script")
+    try:
+        binding = _script_edit_binding()
+        path = _script_edit_target(root, script)
+        rule, plan, kind = _input_path_plan(
+            root, script, path, body.get("entry"), body.get("chosen"), body.get("chosen_kind")
+        )
+    except engine_inputremap.RemapError as exc:
+        return _input_remap_error(exc)
+    except engine_scriptbackup.ScriptEditError as exc:
+        return _script_edit_error(exc)
+    token = engine_scriptedit.TOKENS.issue(
+        binding=binding,
+        project=ctx.id,
+        script=script,
+        entry=body.get("entry"),
+        chosen=body.get("chosen"),
+        chosen_kind=kind,
+        before=plan.before_sha,
+        after=plan.after_sha,
+    )
+    store = _script_store(ctx)
+    slug = engine_scriptbackup.slug_of(script)
+    return jsonify(
+        {
+            "ok": True,
+            "token": token,
+            "script": script,
+            "script_abs": str(path),
+            "rule": rule,
+            **plan.public(),
+            "backups": {
+                "project": str(store.project_dir / slug),
+                "mirror": str(store.mirror_dir / slug),
+            },
+            "git": engine_scriptbackup.git_state(path),
+            "checksums": engine_scriptbackup.checksum_manifests(path),
+        }
+    )
+
+
+def _after_script_edit(ctx: "ProjectCtx", script: str) -> None:
+    """改写 / 复原之后：会话作废（脚本变了）、统一刷新、`panel.file_changed`——与 AI 改完同一顺序。"""
+    fresh = engine_watch.absorb(ctx.path, [script])
+    first = fresh is None or script in fresh
+    engine_pool.shutdown_all(str(ctx.path))
+    refresh_project(ctx, reason="external", changed_paths=[script])
+    if first and (ctx.path / script).exists():
+        _script_change_handler(ctx)([script])
+
+
+@app.post("/api/script-edit/commit")
+def api_script_edit_commit():
+    """ADR 0110 §六：核销令牌 → 重算一遍（与预览逐字节相同才写）→ 两处备份 → 原子替换。"""
+    ctx = current_ctx()
+    root = ctx.path
+    body = request.get_json(force=True) or {}
+    try:
+        item = engine_scriptedit.TOKENS.redeem(body.get("token"), binding=_script_edit_binding())
+        if item.get("project") != ctx.id:
+            raise engine_scriptbackup.ScriptEditError(
+                engine_scriptedit.ERROR_TOKEN_INVALID, "确认已失效，请重新预览"
+            )
+        script = item["script"]
+        path = _script_edit_target(root, script)
+        if engine_scriptbackup.sha256(path.read_bytes()) != item["before"]:
+            raise engine_scriptbackup.ScriptEditError(
+                engine_scriptbackup.ERROR_SCRIPT_CHANGED,
+                "预览之后脚本被改过了，请重新预览",
+                script=script,
+            )
+        _rule, plan, _kind = _input_path_plan(
+            root, script, path, item["entry"], item["chosen"], item["chosen_kind"]
+        )
+        if plan.after_sha != item["after"]:
+            raise engine_scriptbackup.ScriptEditError(
+                engine_scriptedit.ERROR_PREVIEW_STALE, "预览之后数据的位置变了，请重新预览"
+            )
+        record = engine_scriptbackup.replace(
+            _script_store(ctx),
+            script,
+            plan.new_bytes,
+            kind=engine_scriptedit.KIND,
+            expect_before=item["before"],
+            meta={
+                "edits": plan.edits,
+                "encoding": plan.encoding,
+                "entry": item["entry"],
+                "git": engine_scriptbackup.git_state(path),
+            },
+        )
+    except engine_inputremap.RemapError as exc:
+        return _input_remap_error(exc)
+    except engine_scriptbackup.ScriptEditError as exc:
+        return _script_edit_error(exc)
+    LOG.info("改写脚本里的数据路径: %s 处（%s）", len(plan.edits), script)
+    _after_script_edit(ctx, script)
+    return jsonify({"ok": True, "script": script, "backup": record})
+
+
+@app.get("/api/script-backups")
+def api_script_backups():
+    """某脚本改写前留下的备份（新的在前），每条带 `state`：磁盘此刻是改后 / 改前 / 之后又被改过。"""
+    ctx = current_ctx()
+    script = request.args.get("script") or None  # 不带就列整个项目的（设置里那一栏）
+    entries = engine_scriptbackup.history(_script_store(ctx), script)
+    # `script_abs` 是本机路径：给本机界面看的（与预览里的完整路径同一类），不出本机
+    return jsonify({"ok": True, "script": script, "backups": entries})
+
+
+@app.post("/api/script-backups/restore")
+def api_script_backups_restore():
+    """ADR 0110 §七：复原。`{backup_id, mode: "full" | "undo_edits"}`。
+
+    磁盘此刻就是改后那份 → 整份换回原字节；之后又被改过 → `undo_edits` 逐处换回那几串（其余修改保留），
+    `full` 整份恢复。两种都先把此刻的版本备份一份，绝不静默覆盖。
+    """
+    ctx = current_ctx()
+    root = ctx.path
+    body = request.get_json(force=True) or {}
+    mode = str(body.get("mode") or "full")
+    try:
+        _script_edit_binding()
+        store = _script_store(ctx)
+        meta, original = engine_scriptbackup.load(store, body.get("backup_id"))
+        script = meta.get("script") or ""
+        path = _script_edit_target(root, script)
+        current = path.read_bytes()
+        now = engine_scriptbackup.sha256(current)
+        if now == (meta.get("before") or {}).get("sha256"):
+            return jsonify({"ok": True, "script": script, "unchanged": True})
+        if now == (meta.get("after") or {}).get("sha256") or mode == "full":
+            new = original
+        elif mode == "undo_edits":
+            new = engine_scriptedit.undo(current, meta.get("edits") or [])
+        else:
+            raise engine_scriptbackup.ScriptEditError(
+                engine_scriptedit.ERROR_RESTORE_CONFLICT, "mode 只能是 full / undo_edits"
+            )
+        record = engine_scriptbackup.replace(
+            store,
+            script,
+            new,
+            kind="restore",
+            expect_before=now,
+            meta={"restores": meta.get("id"), "mode": mode},
+        )
+    except engine_scriptbackup.ScriptEditError as exc:
+        return _script_edit_error(exc)
+    LOG.info("复原脚本: %s（%s）", script, mode)
+    _after_script_edit(ctx, script)
+    return jsonify({"ok": True, "script": script, "backup": record})
 
 
 # --------------------- 异步准备（统一实施包 U01，ADR 0053）---------------------
