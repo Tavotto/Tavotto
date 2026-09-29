@@ -1090,9 +1090,19 @@ def test_a_text_only_client_still_gets_a_correct_diagnosis(fake_codex):
     assert data["summary"]["marketplace"]["registered"] is True
 
 
-def test_an_engine_older_than_the_plugin_requires_is_named(fake_codex):
-    """随包清单说最低 0.13.0，体检报引擎 0.5.0 → engine_too_old，不是笼统的 health_failed。"""
+@pytest.mark.parametrize("mirror", [False, True])
+def test_an_engine_older_than_the_plugin_requires_is_named(fake_codex, mirror):
+    """随包清单说最低 0.13.0，体检报引擎 0.5.0 → engine_too_old，不是笼统的 health_failed。
+    pip 指向镜像时升级建议里不出现裸的 `pipx upgrade tavotto`（它会装回镜像上的旧版，Codex #724）。"""
     from tavotto.engine import pluginmanifest
+
+    report = {"ok": True, "engine_version": "0.5.0"}
+    if mirror:
+        report["pip_index"] = {
+            "url": "https://mirrors.example.cn/pypi/simple",
+            "source": "user",
+            "mirror": True,
+        }
 
     plugin = fake_codex["plugin"]
     (plugin / "LICENSE").write_text("AGPL\n", encoding="utf-8")
@@ -1106,8 +1116,7 @@ def test_an_engine_older_than_the_plugin_requires_is_named(fake_codex):
         min_tavotto_version="0.13.0",
     )
     (plugin / "mcp" / "server.py").write_text(
-        'import sys\nprint(\'{"ok": true, "engine_version": "0.5.0"}\')\nsys.exit(0)\n',
-        encoding="utf-8",
+        f"import sys\nprint({json.dumps(report)!r})\nsys.exit(0)\n", encoding="utf-8"
     )
     # 清单之后又改了 server.py：先把清单重写一遍，否则画布步会先报「发行文件被改过」
     pluginmanifest.write_build_manifest(
@@ -1128,6 +1137,76 @@ def test_an_engine_older_than_the_plugin_requires_is_named(fake_codex):
         "min_required": "0.13.0",
         "satisfied": False,
     }
+    health = next(st for st in data["steps"] if st["step"] == "health")
+    if mirror:
+        assert "pipx upgrade tavotto" not in health["detail"], health["detail"]
+        assert "--index-url https://pypi.org/simple" in health["detail"], health["detail"]
+    else:
+        assert "pipx upgrade tavotto" in health["detail"], health["detail"]
+
+
+@pytest.mark.parametrize("code", ["engine_too_old", "engine_incompatible"])
+def test_doctor_relays_the_plugins_engine_version_verdict(fake_codex, code):
+    """插件的降级体检已经判出「引擎在、版本对不上」（#721）：doctor 原样沿用那个 code 与
+    那段话术（版本号、升级命令、镜像提示只在插件那一份里写），不再笼统报 health_failed。"""
+    error = (
+        "这台机器上装着 Tavotto 引擎 0.15.0；恢复：`pipx install --force "
+        '"tavotto[worker]==0.17.0" --index-url https://pypi.org/simple`'
+    )
+    report = {
+        "ok": False,
+        "mode": "degraded",
+        "code": code,
+        "error": error,
+        "recovery": ["升级引擎：…", "自检：…"],
+        "engine_version": "0.15.0",
+        "pip_index": {"url": "https://mirrors.aliyun.com/pypi/simple/", "mirror": True},
+    }
+    (fake_codex["plugin"] / "mcp" / "server.py").write_text(
+        f"import json, sys\nprint(json.dumps({report!r}, ensure_ascii=True))\nsys.exit(3)\n",
+        encoding="utf-8",
+    )
+    assert _run(["codex", "install", "--json"])[0] == 1
+    rc, data, err = _doctor_json()
+    assert rc == 1, err
+    assert data["error_code"] == code, data
+    health = next(s for s in data["steps"] if s["step"] == "health")
+    assert health["error_code"] == code
+    assert error in health["detail"] and "恢复步骤" in health["detail"]
+    assert data["summary"]["engine"]["version"] == "0.15.0"
+
+
+@pytest.mark.parametrize("apply", [True, False], ids=["install", "doctor"])
+def test_the_engine_step_relays_the_version_verdict_instead_of_provisioning(
+    tmp_path, monkeypatch, apply
+):
+    """Codex #724 P1：冻结的桌面 CLI（或当前解释器 import 不到引擎）时，engine 那一步先跑插件的
+    `--health`——插件判出 engine_too_old / engine_incompatible 时就在这一步原样转述，不当成「需要
+    provision」：否则 doctor 以 provision_failed 收场、走不到 health 那一步，install 还会另建环境。"""
+    sys.path.insert(0, str(SRC))
+    from tavotto.engine import codexinstall
+
+    plugin = tmp_path / "plugin"
+    (plugin / "mcp").mkdir(parents=True)
+    marker = tmp_path / "provisioned"
+    report = {
+        "ok": False,
+        "mode": "degraded",
+        "code": "engine_too_old",
+        "error": "引擎 0.15.0 太旧",
+        "recovery": ["升级引擎：pipx upgrade tavotto"],
+    }
+    (plugin / "mcp" / "server.py").write_text(
+        "import json, sys\n"
+        f"if '--provision' in sys.argv: open({str(marker)!r}, 'w').write('x'); sys.exit(0)\n"
+        f"print(json.dumps({report!r}, ensure_ascii=True))\nsys.exit(3)\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(codexinstall, "engine_importable", lambda: False)
+    step = codexinstall._engine_step(plugin, sys.executable, apply=apply)
+    assert step["ok"] is False and step["error_code"] == "engine_too_old", step
+    assert "引擎 0.15.0 太旧" in step["detail"] and "恢复步骤" in step["detail"]
+    assert not marker.exists(), "版本对不上时不该另建环境"
 
 
 def test_json_output_parser_handles_pretty_printed_and_last_line_shapes():
