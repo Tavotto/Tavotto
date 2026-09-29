@@ -16,7 +16,8 @@ import type { Page } from '@playwright/test'
  * transform），所以量到的是 matplotlib 真画出来的落点。
  */
 
-function writeSharedProject(): string {
+/** `titleB`：给 B 加个标题（成员子图里的东西，拖它起手的用例用；别的用例不带，几何不变） */
+function writeSharedProject({ titleB = false } = {}): string {
   const dir = path.join(mkdtempSync(path.join(os.tmpdir(), 'tavotto-cbar-group-')), 'figures')
   mkdirSync(dir, { recursive: true })
   const script = [
@@ -33,6 +34,7 @@ function writeSharedProject(): string {
     '    a.plot([0, 1], [0, 1], label="A")',
     '    a.legend()',
     '    im = b.imshow(z, cmap="viridis")',
+    ...(titleB ? ['    b.set_title("B")'] : []),
     '    c.imshow(z.T, cmap="viridis", norm=im.norm)',
     '    fig.colorbar(im, ax=[b, c])',
     '    fig.savefig(Path(__file__).with_name("Fig_shared.pdf"))',
@@ -240,5 +242,49 @@ test(
   expect(Math.abs(b5.unit.axes_1 - b4.unit.axes_1), '重开后 B 仍在单拖之后的位置').toBeLessThan(0.01)
   // 反证这把尺子量得到位移：重开后的落点与最初（没挪过）明显不同
   expect(Math.abs(b5.unit.axes_3 - b0.unit.axes_3), '重开后的色条应当不在最初的位置').toBeGreaterThan(0.1)
+  },
+)
+
+test(
+  '选中组后从成员子图里的标题起手拖 = 整组平移（不是只挪标题）',
+  { tag: '@feature:figure.shared-colorbar-group' },
+  async ({ app, page }) => {
+    await page.addInitScript(() => {
+      for (const key of Object.keys(localStorage)) {
+        if (!key.includes('ui')) continue
+        try {
+          const saved = JSON.parse(localStorage.getItem(key) || '{}')
+          localStorage.setItem(key, JSON.stringify({ ...saved, snapEnabled: false }))
+        } catch {
+          /* 不是 JSON 的键不管 */
+        }
+      }
+    })
+    const a = await app({ figures: writeSharedProject({ titleB: true }) })
+    await page.goto(a.baseURL)
+    await page.getByText('Fig_shared.pdf').dblclick({ timeout: 30_000 })
+    await expect(page.locator('[data-display="exact"]').first()).toBeVisible({ timeout: 60_000 })
+    await page.locator('[data-rail="elements"]').click()
+    await expect(page.locator(`[role="tree"] [data-el="${GROUP}"]`)).toBeVisible({ timeout: 30_000 })
+
+    await pickRow(page, GROUP)
+    await expect(page.locator('[data-group-page]')).toBeVisible()
+    await page.waitForTimeout(500)
+    const b0 = await boxes(page)
+    const title = await page
+      .locator('[data-element-svg] svg [id="axes_1.title"]')
+      .first()
+      .evaluate((n) => {
+        const r = (n as SVGGElement).getBoundingClientRect()
+        return { x: r.x, y: r.y, w: r.width, h: r.height }
+      })
+    expect(title.w, 'B 的标题画出来了').toBeGreaterThan(0)
+    await settleAfter(page, () => dragBy(page, center(title), -60))
+    const b1 = await boxes(page)
+    for (const g of ['axes_1', 'axes_2', 'axes_3']) {
+      expect(b0.rel[g] - b1.rel[g], `${g} 应当跟着整组左移`).toBeGreaterThan(40)
+    }
+    // 选区仍是组（没被换成标题）
+    await expect(page.locator('[data-group-page]')).toBeVisible()
   },
 )
