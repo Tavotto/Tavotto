@@ -208,7 +208,10 @@ def desktop_codex_candidates(localappdata: str | None) -> list[str]:
     import glob as _glob
 
     hits: list[tuple[float, str]] = []
-    for p in _glob.glob(desktop_codex_glob(localappdata)):
+    # 只让哈希那一段当通配：LOCALAPPDATA 本身可能含 `[` 之类的字面字符（改道过的用户目录），
+    # 当成模式就一个都找不到（Codex #727）。`searched` 里写的仍是 `desktop_codex_glob` 那一行
+    base = _glob.escape(os.path.join(localappdata, "OpenAI", "Codex", "bin"))
+    for p in _glob.glob(os.path.join(base, "*", "codex.exe")):
         try:
             if os.path.isfile(p):
                 hits.append((os.path.getmtime(p), p))

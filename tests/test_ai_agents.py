@@ -282,6 +282,13 @@ def test_desktop_bundled_codex_agrees_with_codex_install(tmp_path, monkeypatch):
     assert found == res.path == made["mid"]
 
 
+def test_desktop_candidates_survive_glob_metacharacters_in_localappdata(tmp_path):
+    """LOCALAPPDATA 里有 `[` 这类字面字符（改道过的 Windows 用户目录）时照样找得到（Codex #727）。"""
+    weird = tmp_path / "Users [lab]"
+    local, made = _desktop_bin(weird, (("a", "exit 0"),))
+    assert ai_agents.desktop_codex_candidates(str(local)) == [made["a"]]
+
+
 def test_desktop_bundled_codex_ranks_after_directory_locations(tmp_path, monkeypatch):
     """排序：PATH → 目录落点（含 WindowsApps 执行别名）→ 桌面版自带 → npm 包内二进制。
 
