@@ -40,9 +40,9 @@ struct AppState {
     /// 关窗询问闸（issue #223），**每个窗口一道**（键是窗口 label）：主窗口与远程实例
     /// 窗口各自的前端各自 arm、各自答复。窗口关闭按钮 / Alt+F4 / 任务栏关闭都先经过它。
     close_gates: Mutex<HashMap<String, CloseGate>>,
-    /// 远程实例窗口此刻停在哪个本机端口上（ADR 0105）。没连上 / 窗口不在时是 None，
-    /// 那时远程窗口的导航守卫只放行壳自带页面。
-    remote_port: Arc<Mutex<Option<u16>>>,
+    /// 远程实例窗口的代次与此刻放行的本机端口（ADR 0105）。没连上 / 窗口不在时不放
+    /// 端口，远程窗口的导航守卫只放行壳自带页面；探测结果按代次认领（`remote::RemoteSlot`）。
+    remote: Arc<Mutex<remote::RemoteSlot>>,
 }
 
 /// 主窗口：内容来自壳自己拉起的本机 sidecar。
@@ -471,6 +471,13 @@ impl CloseGate {
         }
     }
 
+    /// 这个 label 的窗口没了（远程实例窗口可以关了再开）。回到「没 arm」，但**代号
+    /// 不归零**：同名新窗口的询问拿的是新代号，上一个窗口的看门狗对不上。
+    fn window_gone(&mut self) {
+        self.armed = false;
+        self.ask = CloseAsk::Idle;
+    }
+
     /// 看门狗到点。返回 true = 这一代确实没人接手，强关。
     fn watchdog_fires(&mut self, generation: u64) -> bool {
         if self.ask != CloseAsk::Waiting(generation) {
@@ -734,9 +741,10 @@ fn open_remote_window(app: &tauri::AppHandle) -> tauri::Result<()> {
         return win.set_focus();
     }
     let state = app.state::<AppState>();
-    *state.remote_port.lock().unwrap() = None;
+    // 同一个 label 的**又一个**窗口：新的一代，上一代途中的探测回来一律作废
+    let generation = state.remote.lock().unwrap().open_window();
     let locale = *state.menu_locale.lock().unwrap();
-    let port_cell = state.remote_port.clone();
+    let slot = state.remote.clone();
     let nav_handle = app.clone();
     let win = tauri::WebviewWindowBuilder::new(
         app,
@@ -751,7 +759,7 @@ fn open_remote_window(app: &tauri::AppHandle) -> tauri::Result<()> {
     // 与主窗口同理：把 HTML5 拖放还给页面（素材拖进画布）
     .disable_drag_drop_handler()
     .on_navigation(move |url| {
-        let port = *port_cell.lock().unwrap();
+        let port = slot.lock().unwrap().allowed_port(generation);
         match navigation_allowed(url, port) {
             NavDecision::Allow => true,
             NavDecision::Deny => false,
@@ -769,10 +777,13 @@ fn open_remote_window(app: &tauri::AppHandle) -> tauri::Result<()> {
 ///
 /// 只收远程实例窗口的调用（ACL 也只给那个窗口的壳自带页面开了这条命令）。
 /// 成功回远程引擎的版本号；失败回 `remote::ConnectError::code()` 的稳定 code。
+///
+/// **结果绑在发起调用的那一代窗口上**：探测前记下代次，回来时经 `remote::finish_connect`
+/// 核对——途中关窗重开的话结果整个丢掉；导航用的是参数里的这个窗口实例，不按 label 重新找。
 #[tauri::command]
 async fn connect_remote(
     app: tauri::AppHandle,
-    window: tauri::Window,
+    window: tauri::WebviewWindow,
     url: String,
 ) -> Result<String, String> {
     if window.label() != REMOTE_WINDOW {
@@ -784,6 +795,7 @@ async fn connect_remote(
     if state.port.get() == Some(&login.port) {
         return Err(remote::ConnectError::IsLocalEngine.code().into());
     }
+    let generation = state.remote.lock().unwrap().generation();
     let port = login.port;
     let version = tauri::async_runtime::spawn_blocking(move || remote::probe(port))
         .await
@@ -793,21 +805,37 @@ async fn connect_remote(
     let chosen = i18n::read_stored(i18n::locale_file(app.path().app_config_dir().ok()))
         .filter(|s| s.explicit)
         .map(|s| s.locale.tag());
-    let landing = login.landing(chosen);
-    // 先放行端口，再导航——反过来的话导航守卫会把这一跳拦掉
-    *state.remote_port.lock().unwrap() = Some(port);
-    let win = app
-        .get_webview_window(REMOTE_WINDOW)
-        .ok_or_else(|| remote::ConnectError::BadWindow.code().to_string())?;
     let locale = *state.menu_locale.lock().unwrap();
-    let _ = win.set_title(
-        &i18n::text(locale)
+    let nav = ConnectNavigation {
+        window: &window,
+        title: i18n::text(locale)
             .remote_window_connected_title
             .replace("{port}", &port.to_string()),
-    );
-    win.eval(format!("window.location.replace({})", js_string(&landing)))
-        .map_err(|_| remote::ConnectError::BadWindow.code().to_string())?;
+        landing: login.landing(chosen),
+    };
+    remote::finish_connect(&state.remote, generation, port, &nav)
+        .map_err(|e| e.code().to_string())?;
     Ok(version)
+}
+
+/// `remote::Navigate` 的生产实现：握着发起调用的那个窗口实例。没有分支——
+/// 「作废的结果不碰窗口」在 `remote::finish_connect` 里，有单测。
+struct ConnectNavigation<'a> {
+    window: &'a tauri::WebviewWindow,
+    title: String,
+    landing: String,
+}
+
+impl remote::Navigate for ConnectNavigation<'_> {
+    fn navigate(&self) -> Result<(), remote::ConnectError> {
+        let _ = self.window.set_title(&self.title);
+        self.window
+            .eval(format!(
+                "window.location.replace({})",
+                js_string(&self.landing)
+            ))
+            .map_err(|_| remote::ConnectError::BadWindow)
+    }
 }
 
 /// 系统预定义角色（行为归操作系统：剪贴板、隐藏、关窗……）。
@@ -1280,7 +1308,7 @@ fn main() {
         menu_locale: Mutex::new(i18n::DEFAULT_LOCALE),
         // 默认**不拦**：前端注册好监听器后自己来 arm（那时才为那个窗口建闸）。
         close_gates: Mutex::new(HashMap::new()),
-        remote_port: Arc::new(Mutex::new(None)),
+        remote: Arc::new(Mutex::new(remote::RemoteSlot::default())),
     };
 
     let app = tauri::Builder::default()
@@ -1323,11 +1351,16 @@ fn main() {
             }
             match event {
                 tauri::WindowEvent::CloseRequested { api, .. } => on_close_requested(window, api),
-                // 远程实例窗口没了：它的闸与放行的端口一起收掉，下次再开是新的一轮
+                // 远程实例窗口没了：它的闸与放行的端口一起收掉，下次再开是新的一代。
+                // 闸**不删**只复位：代号接着往上数，上一代还在睡的看门狗醒来对不上号，
+                // 不会把同名的新窗口关掉。
                 tauri::WindowEvent::Destroyed if window.label() == REMOTE_WINDOW => {
                     if let Some(state) = window.app_handle().try_state::<AppState>() {
-                        state.close_gates.lock().unwrap().remove(REMOTE_WINDOW);
-                        *state.remote_port.lock().unwrap() = None;
+                        if let Some(gate) = state.close_gates.lock().unwrap().get_mut(REMOTE_WINDOW)
+                        {
+                            gate.window_gone();
+                        }
+                        state.remote.lock().unwrap().window_gone();
                     }
                 }
                 _ => {}
@@ -1992,6 +2025,22 @@ mod tests {
         assert_ne!(first, second);
         assert!(!gate.watchdog_fires(first));
         assert_eq!(gate.ask, CloseAsk::Waiting(second));
+    }
+
+    #[test]
+    fn a_reopened_window_is_not_closed_by_the_previous_windows_watchdog() {
+        // 远程实例窗口的 label 可复用：上一个窗口的看门狗还在睡，同名的新窗口已经
+        // arm 过、正在问用户——醒来的旧看门狗不能把它关掉（代号不许随窗口归零）。
+        let mut gate = armed_gate();
+        let old = ask(&mut gate);
+        gate.window_gone();
+        // 新窗口还停在连接页（没 arm）：点关闭当场就关
+        assert_eq!(gate.on_close_requested(), CloseVerdict::Close);
+        gate.armed = true; // 新窗口的前端 arm（`arm_close_guard` 就是这一行）
+        let new = ask(&mut gate);
+        assert_ne!(old, new);
+        assert!(!gate.watchdog_fires(old));
+        assert_eq!(gate.ask, CloseAsk::Waiting(new));
     }
 
     #[test]

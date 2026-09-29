@@ -184,6 +184,76 @@ pub fn probe(port: u16) -> Result<String, ConnectError> {
     judge_version_response(&raw)
 }
 
+/// 远程实例窗口的「这一轮」：窗口代次 + 此刻放行的本机端口。
+///
+/// label `remote` 是可复用的：关掉再开是同名的**另一个**窗口。探测要等网络，途中用户
+/// 可能关窗重开——等回来的结果若按 label 去找「当前」窗口，放弃了的那次连接就会把新开的
+/// 连接页换成旧的远程会话（Codex #702）。所以每次开窗、每次窗口没了都换一代；探测发起时
+/// 记下代次，回来时代次不符就整个丢掉：不放行端口、不导航。
+#[derive(Debug, Default)]
+pub struct RemoteSlot {
+    generation: u64,
+    port: Option<u16>,
+}
+
+impl RemoteSlot {
+    /// 新开一个远程实例窗口：新的一代，什么端口都不放。
+    pub fn open_window(&mut self) -> u64 {
+        self.generation += 1;
+        self.port = None;
+        self.generation
+    }
+
+    /// 远程实例窗口没了：这一代作废，途中的探测回来一律丢弃。
+    pub fn window_gone(&mut self) {
+        self.generation += 1;
+        self.port = None;
+    }
+
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    /// 某一代窗口的导航守卫此刻放行的端口。别的代（已经关掉的窗口）一个都不放。
+    pub fn allowed_port(&self, generation: u64) -> Option<u16> {
+        if generation == self.generation {
+            self.port
+        } else {
+            None
+        }
+    }
+
+    /// 探测结果回来：还是发起它的那一代才放行端口。返回 false = 结果作废。
+    fn admit(&mut self, generation: u64, port: u16) -> bool {
+        if generation != self.generation {
+            return false;
+        }
+        self.port = Some(port);
+        true
+    }
+}
+
+/// 连接成功后对窗口做的事（改标题、导航）。收成 trait 是为了让「作废的结果不碰窗口」
+/// 成为能跑的断言；生产实现握的是**发起调用的那个窗口实例**，不按 label 重新找。
+pub trait Navigate {
+    fn navigate(&self) -> Result<(), ConnectError>;
+}
+
+/// 探测回来之后的唯一出口：先在锁里核代次并放行端口（导航守卫要先认得这个端口，
+/// 否则这一跳会被自己拦掉），再放开锁去导航——握着锁调窗口 API 可能与主线程上的
+/// 窗口事件（`window_gone`）互等。代次不符 = 窗口已关 / 已重开，回 `BadWindow`。
+pub fn finish_connect<N: Navigate + ?Sized>(
+    slot: &std::sync::Mutex<RemoteSlot>,
+    generation: u64,
+    port: u16,
+    nav: &N,
+) -> Result<(), ConnectError> {
+    if !slot.lock().unwrap().admit(generation, port) {
+        return Err(ConnectError::BadWindow);
+    }
+    nav.navigate()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -324,5 +394,63 @@ mod tests {
         codes.sort_unstable();
         codes.dedup();
         assert_eq!(codes.len(), ConnectError::ALL.len());
+    }
+
+    struct Recorder(std::cell::Cell<u32>);
+
+    impl Navigate for Recorder {
+        fn navigate(&self) -> Result<(), ConnectError> {
+            self.0.set(self.0.get() + 1);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_probe_that_outlives_its_window_is_discarded() {
+        let slot = std::sync::Mutex::new(RemoteSlot::default());
+        // 第一代窗口发起探测……
+        let first = slot.lock().unwrap().open_window();
+        // ……探测途中用户关窗、重开
+        slot.lock().unwrap().window_gone();
+        let second = slot.lock().unwrap().open_window();
+        assert_ne!(first, second);
+
+        let nav = Recorder(std::cell::Cell::new(0));
+        assert_eq!(
+            finish_connect(&slot, first, 5091, &nav),
+            Err(ConnectError::BadWindow)
+        );
+        assert_eq!(nav.0.get(), 0, "作废的结果导航了窗口");
+        assert_eq!(
+            slot.lock().unwrap().allowed_port(second),
+            None,
+            "作废的结果放行了端口"
+        );
+
+        // 新窗口自己的连接照常
+        assert_eq!(finish_connect(&slot, second, 5092, &nav), Ok(()));
+        assert_eq!(nav.0.get(), 1);
+        assert_eq!(slot.lock().unwrap().allowed_port(second), Some(5092));
+        // 旧窗口的导航守卫（若还没销毁）不借新窗口的端口
+        assert_eq!(slot.lock().unwrap().allowed_port(first), None);
+    }
+
+    #[test]
+    fn closing_the_window_revokes_its_port() {
+        let slot = std::sync::Mutex::new(RemoteSlot::default());
+        let g = slot.lock().unwrap().open_window();
+        let nav = Recorder(std::cell::Cell::new(0));
+        assert_eq!(finish_connect(&slot, g, 5091, &nav), Ok(()));
+        slot.lock().unwrap().window_gone();
+        assert_eq!(slot.lock().unwrap().allowed_port(g), None);
+        // 关窗之后、重开之前回来的探测：也作废
+        assert_eq!(
+            finish_connect(&slot, g, 5093, &nav),
+            Err(ConnectError::BadWindow)
+        );
+        assert_eq!(nav.0.get(), 1);
+        assert_eq!(slot.lock().unwrap().port, None);
+        let next = slot.lock().unwrap().open_window();
+        assert_eq!(slot.lock().unwrap().allowed_port(next), None);
     }
 }
