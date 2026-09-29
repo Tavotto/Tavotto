@@ -1236,6 +1236,35 @@ describe('卡片层：一张组图拆成子图（2026-09-28）', () => {
     }
   })
 
+  it('native 图（tavotto run）的问题不进任何批量修：卡片、图头、详情头、组头、「全部处理」口径一致（#690 评审）', async () => {
+    await seedTriptych(true)
+    useUiStore.setState({ problemScope: 'document' })
+    await mount(<ProblemPanel />)
+    const fixOn = (el: Element | null | undefined, prefix: string) =>
+      [...(el?.querySelectorAll('button') ?? [])].find((b) => b.textContent?.startsWith(prefix))
+    expect(fixOn(partCard('(c)'), '修复'), '对照：普通图的卡片有「修复 N」').toBeTruthy()
+    const autofix = () => container.querySelector('[data-problem-autofix]')?.textContent ?? ''
+    const before = autofix()
+    try {
+      // 素材档案晚到：p1（Fig1.pdf）原来是 tavotto run 打开的 live 图
+      await act(async () => {
+        useRuntimeAssetStore.setState({
+          byId: { 'Fig1.pdf': { status: 'fresh', cached: true, registered: true, profile: 'native', checked: true } },
+        } as never)
+      })
+      expect(fixOn(partCard('(c)'), '修复'), '子图卡片不给「修复 N」').toBeUndefined()
+      expect(fixOn(container.querySelector('li[data-problem-figure]'), '修复本图')).toBeUndefined()
+      expect(autofix(), '「全部处理」的计数不含 native 图上的').not.toBe(before)
+      await click(partCard('(c)')!.querySelector('button')!)
+      expect(text()).not.toContain('修复此子图')
+      expect(byText('全部修复')).toBeFalsy()
+      // 逐行按钮仍是禁用的那颗（口径与批量一致）
+      expect(container.querySelectorAll('[data-fix-native-unsupported]').length).toBeGreaterThan(0)
+    } finally {
+      useRuntimeAssetStore.setState({ byId: {} })
+    }
+  })
+
   it('外部直达仍会先换范围再钻进卡片：从「整份排版」的总览出发也落到 (c) 的那一行', async () => {
     await seedTriptych(true)
     useUiStore.setState({ elementPanelId: 'p1', problemScope: 'document' })

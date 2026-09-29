@@ -33,12 +33,11 @@ import type { ProblemCategory, ValidationIssue } from '@/lib/validation'
 import { issueTitle } from '@/lib/validationText'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
-import { batchable } from '@/store/issueFixActions'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useUiStore } from '@/store/uiStore'
 import type { PanelObject } from '@/types/document'
 import { Button } from '../ui/Button'
-import { runBatchFix } from './IssueFixButton'
+import { runBatchFix, useBatchable } from './IssueFixButton'
 
 /** 本组文案在 errors:problems.* 下 */
 const pr = (key: string, values?: Record<string, unknown>) =>
@@ -50,7 +49,7 @@ const pr = (key: string, values?: Record<string, unknown>) =>
  * 先分类、再批量：一张卡片是一个子图（按图）或一类问题（按类别），只说
  * 「多少项、有没有阻断、最主要的是什么」+ 这张卡的「修复 N」；点卡片才进
  * `ProblemPanel` 原来那份逐组清单。卡片只是**同一份清单的另一种切法**：分桶
- * 判据全在 `lib/problemList.ts`，修复集合全走 `batchable()`，这里不做任何判断。
+ * 判据全在 `lib/problemList.ts`，修复集合全走 `batchable()`（组件里 `useBatchable`），这里不做任何判断。
  */
 
 /* --------------------------------- 名字 ----------------------------------- */
@@ -263,7 +262,7 @@ function ProblemCard({
 }) {
   const fixing = useUiStore((s) => s.fixing)
   // 点名一张卡片 = 点名这一堆：建议档一起修（与组头「全部修复」同一个口径）
-  const fixable = batchable(issues, activeCanvasId, { includeSuggestions: true })
+  const fixable = useBatchable(issues, activeCanvasId, { includeSuggestions: true })
   const manual = issues.every((i) => i.fixKind === 'none')
   const rules = [...new Set(issues.map((i) => i.ruleCode))]
   const objects = [...new Set(issues.map((i) => i.objectRef.objectId).filter(Boolean))]
@@ -417,7 +416,7 @@ function FigureHeader({
   withFix: boolean
 }) {
   const fixing = useUiStore((s) => s.fixing)
-  const fixable = batchable(figure.issues, activeCanvasId, { includeSuggestions: true })
+  const fixable = useBatchable(figure.issues, activeCanvasId, { includeSuggestions: true })
   const parts = figure.parts.filter((p) => p.part).length
   return (
     <div className="flex items-center gap-1 pr-1">
@@ -523,8 +522,8 @@ export function DrillHeader({
 }) {
   const fixing = useUiStore((s) => s.fixing)
   const view = useUiStore((s) => s.problemView)
-  const fixable =
-    drill.kind === 'unverifiable' ? [] : batchable(issues, activeCanvasId, { includeSuggestions: true })
+  const batch = useBatchable(issues, activeCanvasId, { includeSuggestions: true })
+  const fixable = drill.kind === 'unverifiable' ? [] : batch
   const figure = drill.kind === 'part' || drill.kind === 'figure'
     ? figures.find((f) => f.key === (drill.kind === 'part' ? drill.figure : drill.key)) ?? null
     : null

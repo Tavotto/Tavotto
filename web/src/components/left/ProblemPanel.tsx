@@ -45,13 +45,12 @@ import {
 } from '@/lib/validationText'
 import type { ValidationIssue } from '@/lib/validation'
 import { useDocumentStore } from '@/store/documentStore'
-import { batchable } from '@/store/issueFixActions'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { useUiStore } from '@/store/uiStore'
 import { schedule, useValidationStore } from '@/store/validationStore'
 import { Button, IconButton } from '../ui/Button'
 import { EmptyState } from '../ui/EmptyState'
-import { FixButton, runBatchFix } from './IssueFixButton'
+import { FixButton, runBatchFix, useBatchable } from './IssueFixButton'
 import { CategoryCards, DrillHeader, FigureCards, UnverifiableEntry } from './ProblemCards'
 import { Segmented } from '../ui/Segmented'
 import { Tab, TabList, TabPanel } from '../ui/Tabs'
@@ -157,7 +156,7 @@ export function ProblemPanel() {
 
   // 与「全部处理」真正执行的是**同一个集合**（`batchable`：本画布、能自动修、
   // 不含建议档）——计数说 5 项、点下去修了 7 项，是这颗按钮最不该有的样子
-  const fixableHere = useMemo(() => batchable(shown, activeCanvasId), [shown, activeCanvasId])
+  const fixableHere = useBatchable(shown, activeCanvasId)
   const fixing = useUiStore((s) => s.fixing)
 
   // 清单空了，「正在处理第几条」就没有主语了（全修好 / 换了文档）
@@ -614,7 +613,7 @@ function GroupBlock({
   const Icon = SEVERITY_ICON[group.severity]
   const title = issueTitle(group.issues[0])
   // 组头的「全部修复」是用户点名这一组：建议档的组也照修（「全部处理」才不带建议档）
-  const fixable = batchable(group.issues, activeCanvasId, { includeSuggestions: true })
+  const fixable = useBatchable(group.issues, activeCanvasId, { includeSuggestions: true })
   const fixing = useUiStore((s) => s.fixing)
   const currentAt = currentId ? group.issues.findIndex((i) => i.issueId === currentId) : -1
   const folded =

@@ -140,17 +140,36 @@ export interface BatchOptions {
   includeSuggestions?: boolean
 }
 
-/** 批量会处理哪些——面板上的计数与真正执行的必须是同一个集合。 */
+/** `batchable` 判「这一条能不能批量修」要看的现场：文档与素材档案（native 图认档案） */
+export interface FixEnv {
+  doc: FigureDocument
+  assets: ReturnType<typeof useRuntimeAssetStore.getState>['byId']
+}
+
+const fixEnvNow = (): FixEnv => ({
+  doc: useDocumentStore.getState().doc,
+  assets: useRuntimeAssetStore.getState().byId,
+})
+
+/**
+ * 批量会处理哪些——**「能不能自动修」的唯一判据**：面板上每一颗批量按钮（「全部处理」、
+ * 组头「全部修复」、卡片 / 图头 / 详情头的「修复 N」）的计数与可用性，和真正执行的
+ * 必须是同一个集合。native 图（`isNativePanelIssue`）的问题不进来：逐行按钮早就禁用了
+ * 它们，批量入口再算上它们，按钮亮着、点下去才报「暂不支持」（#690 评审）。
+ * 组件里用 `useBatchable`（订阅文档与素材档案，档案晚到时计数跟着变）。
+ */
 export function batchable(
   issues: ValidationIssue[],
   activeCanvasId: string,
   opts: BatchOptions = {},
+  env: FixEnv = fixEnvNow(),
 ): ValidationIssue[] {
   return issues.filter(
     (i) =>
       i.objectRef.canvasId === activeCanvasId &&
       i.fixKind === 'safe_auto' &&
-      (opts.includeSuggestions || i.severity !== 'suggestion'),
+      (opts.includeSuggestions || i.severity !== 'suggestion') &&
+      !isNativePanelIssue(i, env.doc, env.assets),
   )
 }
 
