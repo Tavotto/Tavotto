@@ -1447,6 +1447,32 @@ def test_a_failed_managed_pip_run_leaves_the_requirement_retryable(
     assert again.plan_id
 
 
+def test_the_managed_generation_records_the_mirror_on_its_progress(project, monkeypatch, tmp_path):
+    """ADR 0111：受管环境换代那条（联合 argv 出处）断网且没自配源时改用镜像重试一次；进度记录带 `pypi_mirror`，
+    日志里写明——之后成败照常（这里验证那步打桩失败也无妨，看的是镜像有没有被说出口）。"""
+    plan = _managed_plan(project, monkeypatch, tmp_path, private=False)
+    _stub_generation_until_pip(monkeypatch, pip_code="")
+    seen: list[list[str]] = []
+
+    def _fake_run_pip(argv, ev, log):
+        seen.append(argv)
+        return (
+            (deprepair.ERROR_NETWORK, "Retrying (Retry(total=4))") if len(seen) == 1 else ("", "")
+        )
+
+    monkeypatch.setattr(deprepair, "_run_pip", _fake_run_pip)
+    try:
+        deprepair.install(plan.plan_id)
+    except deprepair.RepairError:
+        pass
+    assert len(seen) == 2
+    assert "--index-url" not in seen[0]
+    assert seen[1][seen[1].index("--index-url") + 1] == deprepair.PYPI_MIRROR_URL
+    rec = deprepair.progress(plan.plan_id)
+    assert rec.get("pypi_mirror") == deprepair.PYPI_MIRROR_URL
+    assert deprepair.PYPI_MIRROR_URL in rec.get("log", "")
+
+
 @pytest.mark.parametrize(
     "pip_code, retryable",
     [("", False), (deprepair.ERROR_CANCELLED, True)],

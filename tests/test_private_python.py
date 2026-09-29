@@ -41,6 +41,7 @@ def _isolated(tmp_path, monkeypatch):
     data.mkdir()
     monkeypatch.setenv("TAVOTTO_DATA_DIR", str(data))
     monkeypatch.setenv("TAVOTTO_PRIVATE_PYTHON", "1")
+    monkeypatch.delenv(runtime.PRIVATE_PYTHON_BUNDLE_ENV, raising=False)
     # 死代理：任何走代理的联网当场被拒。本地回环服务由 NO_PROXY 放行——与真实机器上的
     # 代理配置同一张脸（urllib 只认环境变量），不是给产品代码开的口子。
     # urllib 对 `*_proxy` 小写优先于大写：四个变量两种拼法都设，别让宿主 / runner 里的小写那份决定判据
@@ -439,6 +440,110 @@ class TestProvision:
         assert err.value.code == privatepython.ERROR_OFFLINE
         assert not privatepython.archive_path(src).exists()  # 坏缓存被清掉，不留着骗下一次
         assert _launch_count(launches) in (0, None) and _runtime_dirs() == set()
+
+
+# ================================================================ 安装包附带的归档（ADR 0111）
+def _count_fetches(monkeypatch) -> list[str]:
+    """`privatepython._fetch`（唯一的联网函数）被调用的记录：判「有没有去下载」的主语。"""
+    calls: list[str] = []
+    real = privatepython._fetch
+
+    def _counting(source, part, job):
+        calls.append(source.url)
+        return real(source, part, job)
+
+    monkeypatch.setattr(privatepython, "_fetch", _counting)
+    return calls
+
+
+def _bundle(tmp_path, monkeypatch, archive: Path, data: bytes | None = None) -> Path:
+    """把归档摆进一个「安装包目录」并经排他覆盖指过去（冻结产物里是 `_internal/private-python/`）。"""
+    folder = tmp_path / "bundle"
+    folder.mkdir(exist_ok=True)
+    dest = folder / archive.name
+    dest.write_bytes(archive.read_bytes() if data is None else data)
+    monkeypatch.setenv(runtime.PRIVATE_PYTHON_BUNDLE_ENV, str(folder))
+    return dest
+
+
+class TestBundledArchive:
+    def test_a_verified_bundled_archive_is_used_without_calling_the_downloader(
+        self, tmp_path, launches, monkeypatch
+    ):
+        """包内归档 sha256 与锁一致：offer 说 `origin=bundled`、零字节；供应时下载函数调用 0 次、本地服务零请求，
+        仍走校验 → 解包 → 真起 → 原子改名那一条链；归档不复制进 `downloads/`，账记来源。"""
+        archive, sha, rel = _make(tmp_path, launches)
+        bundled = _bundle(tmp_path, monkeypatch, archive)
+        fetches = _count_fetches(monkeypatch)
+        with LoopbackServer(tmp_path / "serve") as server:
+            src = _source(server, archive, sha, rel)
+            offer = privatepython.offer_payload(src)
+            assert offer["origin"] == privatepython.ORIGIN_BUNDLED
+            assert offer["download_bytes"] == 0 and offer["network_required"] is False
+            assert offer["cached"] is True
+            python = privatepython.provision(src)
+            assert fetches == [] and server.requests == []
+        assert Path(python) == privatepython.runtime_dir(src) / rel and Path(python).is_file()
+        assert _launch_count(launches) in (1, None)
+        assert _runtime_dirs() == {src.id} and _parts() == []
+        assert not privatepython.archive_path(src).exists()  # 没有复制第二份
+        assert bundled.is_file()  # 安装目录里的那份原样（只读的安装目录不该被动）
+        assert privatepython.read_ledger()["runtimes"][src.id]["origin"] == "bundled"
+
+    @pytest.mark.parametrize("damage", ["truncated", "tampered"])
+    def test_a_bundled_archive_with_wrong_bytes_is_refused_and_the_lock_url_is_used(
+        self, tmp_path, launches, monkeypatch, damage
+    ):
+        """包内那份对不上锁（截断 / 被改）：不是可用来源——不解、不起；offer 如实说要下载，供应按锁 URL 下一次。"""
+        archive, sha, rel = _make(tmp_path, launches)
+        raw = archive.read_bytes()
+        bad = raw[:-100] if damage == "truncated" else raw[:-1] + bytes([raw[-1] ^ 0xFF])
+        bundled = _bundle(tmp_path, monkeypatch, archive, bad)
+        fetches = _count_fetches(monkeypatch)
+        with LoopbackServer(tmp_path / "serve") as server:
+            src = _source(server, archive, sha, rel)
+            assert privatepython.bundled_archive(src) is None
+            offer = privatepython.offer_payload(src)
+            assert offer["origin"] == privatepython.ORIGIN_DOWNLOAD
+            assert offer["download_bytes"] == archive.stat().st_size and offer["cached"] is False
+            python = privatepython.provision(src)
+            assert len(fetches) == 1 and server.requests == [f"/{archive.name}"]
+        assert Path(python).is_file() and _launch_count(launches) in (1, None)
+        assert privatepython.read_ledger()["runtimes"][src.id]["origin"] == "download"
+        assert bundled.read_bytes() == bad  # 不去改安装目录
+
+    def test_origin_is_cached_when_only_the_data_dir_holds_a_verified_archive(
+        self, tmp_path, launches, monkeypatch
+    ):
+        archive, sha, rel = _make(tmp_path, launches)
+        src = _source(None, archive, sha, rel)
+        assert privatepython.offer_payload(src)["origin"] == privatepython.ORIGIN_DOWNLOAD
+        privatepython.downloads_dir().mkdir(parents=True)
+        shutil.copy2(archive, privatepython.archive_path(src))
+        assert privatepython.offer_payload(src)["origin"] == privatepython.ORIGIN_CACHED
+        fetches = _count_fetches(monkeypatch)
+        privatepython.provision(src)
+        assert fetches == []
+        assert privatepython.read_ledger()["runtimes"][src.id]["origin"] == "cached"
+
+    def test_bundle_dirs_follow_the_frozen_layout_and_the_override_is_exclusive(
+        self, tmp_path, monkeypatch
+    ):
+        """定位与内置 runtime 同一套（`_MEIPASS` → exe 同级 → `exe/_internal`）；源码树 / wheel 不带：空表。"""
+        assert runtime.private_python_bundle_dirs() == []  # 非冻结
+        meipass = str(tmp_path / "meipass")
+        exe = str(tmp_path / "Tavotto")
+        monkeypatch.setattr(runtime.sys, "frozen", True, raising=False)
+        monkeypatch.setattr(runtime.sys, "_MEIPASS", meipass, raising=False)
+        monkeypatch.setattr(runtime.sys, "executable", exe)
+        name = runtime.PRIVATE_PYTHON_BUNDLE_DIR_NAME
+        assert runtime.private_python_bundle_dirs() == [
+            os.path.join(meipass, name),
+            os.path.join(str(tmp_path), name),
+            os.path.join(str(tmp_path), "_internal", name),
+        ]
+        monkeypatch.setenv(runtime.PRIVATE_PYTHON_BUNDLE_ENV, str(tmp_path / "only"))
+        assert runtime.private_python_bundle_dirs() == [str(tmp_path / "only")]
 
 
 # ================================================================ 负例：坏 hash / 截断 / 离线 / 越界 / 起不来
