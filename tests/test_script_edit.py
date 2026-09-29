@@ -1,4 +1,4 @@
-"""经确认改写脚本里的数据路径（ADR 0108）。
+"""经确认改写脚本里的数据路径（ADR 0110）。
 
 七层：挑哪些常量（`scriptedit.plan` 的候选判据与逐条原因）；字节矩阵（编码 / 换行 / BOM：块外一个
 字节不动、撤销逐字节回到原样）；推规则扩到文件夹与 glob（`inputremap.derive_location`）；C++ 读取器的
@@ -761,7 +761,7 @@ _AGENT_SIDE = [
 
 
 def test_agent_side_code_never_names_the_commit_or_restore_endpoints():
-    """「Agent 不能替用户改脚本」写成判据（ADR 0094 §七.4 / 0108 §六）：Codex 插件 / MCP、编码 Agent 桥、
+    """「Agent 不能替用户改脚本」写成判据（ADR 0094 §七.4 / 0110 §六）：Codex 插件 / MCP、编码 Agent 桥、
     规范修图、刷新代码里，任何字符串常量都不许含提交 / 复原端点，也不许调 `TOKENS.redeem`。"""
     assert len(_AGENT_SIDE) > 5  # 目标文件真的在（空门禁比没有门禁更坏）
     offenders = []

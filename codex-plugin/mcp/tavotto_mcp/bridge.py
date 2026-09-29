@@ -351,7 +351,7 @@ def _answer_prepare_dependencies(project: str, script: str, target: str) -> dict
     }
 
 
-#: 改指表救不回、只能经确认改写脚本的几档（ADR 0108）。`engine.inputremap.VIAS_NEED_REWRITE` 的镜像：
+#: 改指表救不回、只能经确认改写脚本的几档（ADR 0110）。`engine.inputremap.VIAS_NEED_REWRITE` 的镜像：
 #: 插件要能配更早的 Tavotto，不为一个常量多 import 一个新模块（那会抬高 MIN_TAVOTTO_VERSION）；
 #: `tests/test_mcp_server.py` 钉住两侧相等。
 VIAS_NEED_REWRITE = ("probe", "glob", "native")
@@ -396,7 +396,7 @@ def _bridge_error_from_worker(exc: engine_pool.WorkerError) -> BridgeError:
         )
         first = primary.get("path") or ""
         if primary.get("via") in VIAS_NEED_REWRITE:
-            # exists / glob / C++ 读取器（ADR 0108）：只读改指救不回，出路是改写脚本里那串——
+            # exists / glob / C++ 读取器（ADR 0110）：只读改指救不回，出路是改写脚本里那串——
             # 那必须由用户在 Tavotto 窗口里看过逐行改动、勾选确认；插件与 Agent 都不替用户改
             extra["recovery"] = (
                 f"脚本要的数据找不到：{first}。脚本是用 exists / glob / C++ 读取器去找它的，只读改指救不回。"

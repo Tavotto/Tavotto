@@ -90,7 +90,7 @@
     listdir）与 C++ 读取器救不回**——载荷里 `via` 标 `probe` / `glob` / `native`，对话框不给选择器；
     绝对路径常量的 `via` 同样按它所在的调用判（被 `exists()` 问的给了选择器就是「指认 → 重跑 → 又弹」
     的死循环）。先判空再 `sys.exit` 的（`script_exited`）与「没出图」一样挂静态载荷。**C++ 读取器**
-    （ADR 0108 §一）：`missing_input_of` 说不出时 worker 给 `script_error` 多带 `extra.enoent`
+    （ADR 0110 §一）：`missing_input_of` 说不出时 worker 给 `script_error` 多带 `extra.enoent`
     （`figcapture.enoent_fact`：`filename`，或 h5py 那种只在消息里的 `named`，加 cwd），父进程
     `inputremap.native_miss` 拿静态证据对——整串相等或按路径段是前缀、只认对上的那条，对不上就不判、
     码一字不变；对上了码仍是 `script_error`，只挂 `via = native` 的载荷。这几档的出口是经确认改写脚本

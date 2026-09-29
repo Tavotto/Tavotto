@@ -710,7 +710,7 @@ MISSING_INPUT_CODE = "missing_input"
 #: worker 侧 `worker.SCRIPT_EXITED` 的镜像：脚本自己 `sys.exit(...)`——最常见的是先 `exists()` 判空
 #: 再退出（「找不到数据」），与「跑完没出图」一样只挂静态那部分（ADR 0106 §一.3）。
 SCRIPT_EXITED_CODE = "script_exited"
-#: worker 的通用失败码；带着 `extra.enoent` 时可能是 C++ 读取器找不到数据（ADR 0108 §一）。
+#: worker 的通用失败码；带着 `extra.enoent` 时可能是 C++ 读取器找不到数据（ADR 0110 §一）。
 SCRIPT_ERROR_CODE = "script_error"
 
 
@@ -736,7 +736,7 @@ def _offer_missing_input(err: "WorkerError", script_name: str, figures_dir) -> "
     fact = (err.extra or {}).get("missing_input") if err.code == MISSING_INPUT_CODE else None
     try:
         if err.code == SCRIPT_ERROR_CODE:
-            # C++ 读取器的「文件不存在」（ADR 0108 §一）：对得上脚本里的一串常量才弹，码不变
+            # C++ 读取器的「文件不存在」（ADR 0110 §一）：对得上脚本里的一串常量才弹，码不变
             fact = inputremap.native_miss(script_name, figures_dir, (err.extra or {}).get("enoent"))
             if fact is None:
                 return err

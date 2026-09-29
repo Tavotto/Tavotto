@@ -786,7 +786,7 @@ class Worker(wireproto.V1Handler):
                     extra={"missing_input": missing},
                 ) from exc
             # 不是一次落空的只读打开、但异常链里确实有「文件不存在」（C++ 读取器）：码仍是
-            # script_error，只多带一份事实；对不对得上脚本里哪串常量由父进程判（ADR 0108 §一）
+            # script_error，只多带一份事实；对不对得上脚本里哪串常量由父进程判（ADR 0110 §一）
             enoent = figcapture.enoent_fact(exc)
             raise ProtocolError(
                 "script_error",

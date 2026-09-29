@@ -23,7 +23,7 @@ import { TextInput } from './ui/Input'
  *
  * 缺的东西若是脚本用 `exists` / `glob` / `listdir` 探的、或 h5py / netCDF 这类 C++ 读取器直接打开的
  * （`via` 是 `probe` / `glob` / `native`），改指救不回——如实说，出口换成**经确认改写脚本里那串路径**
- * （ADR 0108）：用户指认数据现在的位置 → 后端生成逐行 diff（前端只渲染）→ 勾选「我已查看」→「修改脚本」。
+ * （ADR 0110）：用户指认数据现在的位置 → 后端生成逐行 diff（前端只渲染）→ 勾选「我已查看」→「修改脚本」。
  * 那颗按钮不是默认焦点、回车不触发（`Dialog` 打开时焦点落在内容区本身）。
  * 桌面用系统选择器；浏览器模式拿不到本机路径，让用户粘贴。
  */
@@ -48,7 +48,7 @@ export function MissingInputDialog() {
   if (!primary) return null
   if (preview) return <RewriteConfirm preview={preview} />
   const remappable = primary.via === 'open'
-  // 改指救不回的几档：出口是经确认改写脚本（ADR 0108）
+  // 改指救不回的几档：出口是经确认改写脚本（ADR 0110）
   const rewritable = VIAS_NEED_REWRITE.includes(primary.via)
   const pickable = remappable || rewritable
   // glob 模式没有「那个文件」可找：只给「选择所在文件夹」（`via` 是后端给的事实，前端不再按路径长相判）
@@ -174,7 +174,7 @@ export function MissingInputDialog() {
 }
 
 /**
- * 确认页（ADR 0108 §八）：醒目地说「这会修改你的脚本文件」+ 完整路径；逐行 diff 只渲染后端给的行；
+ * 确认页（ADR 0110 §八）：醒目地说「这会修改你的脚本文件」+ 完整路径；逐行 diff 只渲染后端给的行；
  * 没改的逐条原因；两处备份位置；git 状态与校验清单提示。必须勾选「我已查看」才能点「修改脚本」。
  */
 function RewriteConfirm({ preview }: { preview: ScriptEditPreview }) {

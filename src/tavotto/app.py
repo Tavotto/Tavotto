@@ -5961,7 +5961,7 @@ def api_engine_input_remap_delete():
     return jsonify({"ok": True, "input_remap": state})
 
 
-# --------------------- 经确认改写脚本里的数据路径（ADR 0108）---------------------
+# --------------------- 经确认改写脚本里的数据路径（ADR 0110）---------------------
 # 改指表救不回的那几档（exists / glob / C++ 读取器）：用户指认数据位置 → 预览逐行 diff → 勾选确认 →
 # 两处备份后原子替换。**只有浏览器 / 桌面界面能提交**：令牌绑定会话 cookie，只凭本机进程凭据
 # （MCP / CLI 走的那条）的请求拿不到、也用不了（ADR 0094 §七.4 同一条）。
@@ -6028,7 +6028,7 @@ def _input_path_plan(root: Path, script: str, path: Path, entry, chosen, chosen_
 
 @app.post("/api/script-edit/input-path/preview")
 def api_script_edit_input_path_preview():
-    """ADR 0108 §六：生成改写预览（逐行 diff、改了 / 没改哪些、备份位置、git 状态）与一次性令牌。
+    """ADR 0110 §六：生成改写预览（逐行 diff、改了 / 没改哪些、备份位置、git 状态）与一次性令牌。
 
     `{script, entry, chosen, chosen_kind: "file" | "dir" | "auto"}`：`entry` 是对话框里那条缺失路径（脚本
     写的原串），`chosen` 是用户指认的本机位置。脚本一个字节都不改。
@@ -6089,7 +6089,7 @@ def _after_script_edit(ctx: "ProjectCtx", script: str) -> None:
 
 @app.post("/api/script-edit/commit")
 def api_script_edit_commit():
-    """ADR 0108 §六：核销令牌 → 重算一遍（与预览逐字节相同才写）→ 两处备份 → 原子替换。"""
+    """ADR 0110 §六：核销令牌 → 重算一遍（与预览逐字节相同才写）→ 两处备份 → 原子替换。"""
     ctx = current_ctx()
     root = ctx.path
     body = request.get_json(force=True) or {}
@@ -6148,7 +6148,7 @@ def api_script_backups():
 
 @app.post("/api/script-backups/restore")
 def api_script_backups_restore():
-    """ADR 0108 §七：复原。`{backup_id, mode: "full" | "undo_edits"}`。
+    """ADR 0110 §七：复原。`{backup_id, mode: "full" | "undo_edits"}`。
 
     磁盘此刻就是改后那份 → 整份换回原字节；之后又被改过 → `undo_edits` 逐处换回那几串（其余修改保留），
     `full` 整份恢复。两种都先把此刻的版本备份一份，绝不静默覆盖。

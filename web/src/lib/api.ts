@@ -3118,7 +3118,7 @@ export const INPUT_REMAP_CHANGED_CODE = 'input_remap_changed'
 
 /**
  * 缺的东西是怎么被脚本用到的：`open` 改指救得回来；`probe`（exists / listdir）、`glob` 与 `native`
- * （h5py / netCDF 这类 C++ 读取器，ADR 0108）救不回来——它们的出口是经确认改写脚本里那串路径
+ * （h5py / netCDF 这类 C++ 读取器，ADR 0110）救不回来——它们的出口是经确认改写脚本里那串路径
  */
 export type MissingInputVia = 'open' | 'probe' | 'glob' | 'native'
 
@@ -3179,7 +3179,7 @@ export const removeInputRemap = (kind: InputRemapRule['kind'], from: string) =>
   })
 
 // ---------------------------------------------------------------------------
-// 经确认改写脚本里的数据路径（ADR 0108）与脚本备份（共享底座，ADR 0094 之后复用）
+// 经确认改写脚本里的数据路径（ADR 0110）与脚本备份（共享底座，ADR 0094 之后复用）
 
 /** 改动的一行：后端生成、前端只渲染（不在前端拼 diff） */
 export interface ScriptEditRow {
@@ -3237,7 +3237,7 @@ export interface ScriptBackup {
   edits?: ScriptEditPreview['edits']
 }
 
-/** 生成改写预览：脚本一个字节都不改（ADR 0108 §六） */
+/** 生成改写预览：脚本一个字节都不改（ADR 0110 §六） */
 export const previewInputPathEdit = (
   script: string,
   entry: string,
