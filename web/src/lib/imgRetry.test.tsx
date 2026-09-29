@@ -4,8 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { RENDER_RETRY_DELAYS_MS, isRenderUrl, retrySrc, useRetryingSrc } from './imgRetry'
 
+const gaveUp = vi.fn()
+
 function Probe({ src }: { src: string }) {
-  const r = useRetryingSrc(src)
+  const r = useRetryingSrc(src, gaveUp)
   return <img data-testid="img" alt="" src={r.src} onError={r.onError} />
 }
 
@@ -13,6 +15,7 @@ let container: HTMLDivElement
 let root: Root
 
 beforeEach(() => {
+  gaveUp.mockClear()
   vi.useFakeTimers()
   container = document.createElement('div')
   document.body.appendChild(container)
@@ -63,5 +66,20 @@ describe('useRetryingSrc', () => {
     show('/api/render?id=b.pdf&w=400')
     wait(60_000)
     expect(img().getAttribute('src')).toBe('/api/render?id=b.pdf&w=400')
+  })
+
+  it('onGiveUp 只在真取不到时叫：/api/render 重试期间不叫、退避表用完才叫；别的地址第一次失败就叫', () => {
+    const base = '/api/render?id=a.pdf&w=160&m=1'
+    show(base)
+    for (let i = 0; i < RENDER_RETRY_DELAYS_MS.length; i++) {
+      fail()
+      wait(RENDER_RETRY_DELAYS_MS[i])
+    }
+    expect(gaveUp, '背压重试期间不许放弃').not.toHaveBeenCalled()
+    fail()
+    expect(gaveUp).toHaveBeenCalledTimes(1)
+    show('/api/file?id=a.png&m=1')
+    fail()
+    expect(gaveUp).toHaveBeenCalledTimes(2)
   })
 })

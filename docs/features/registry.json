@@ -391,6 +391,22 @@
       ]
     },
     {
+      "id": "problems.subplot-cards",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "问题面板按子图分卡片：一张组图拆成 (a)(b)…，可以只修其中一个子图",
+        "en-US": "Problems panel groups a multi-panel figure into subplot cards; fix one subplot at a time"
+      },
+      "entry": "左栏「问题」→「按图」",
+      "e2e": [
+        {
+          "spec": "features.spec.ts",
+          "title": "功能：问题面板把组图拆成子图卡片，卡片上的「修复」只改那一个子图"
+        }
+      ]
+    },
+    {
       "id": "edit.undo-redo",
       "status": "active",
       "platform": "both",

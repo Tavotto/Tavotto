@@ -57,10 +57,6 @@ const RULES: Rule[] = [
     catches: '<p className="text-[11px]" />',
     spares: '<p className="text-xs type-meta" />',
     exempt: {
-      '/src/components/left/LeftRail.tsx': {
-        count: 1,
-        why: '轨道图标角上的问题计数：9px 是 28px 图标钮上唯一放得下两位数的字号',
-      },
       '/src/components/home/HomeView.tsx': {
         count: 3,
         why: '主页（没有打开项目时的落地页）的展示级字号：产品名 26px、新手版大标题 24px、老手版拖放区标题 20px——与 /try 首屏同一类，不是工作台界面',

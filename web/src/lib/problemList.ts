@@ -15,10 +15,15 @@
  *    这时「下一项」要指向**顶上来的那一条**（同组同位置），而不是跳回开头
  *    ——连续处理五条同类问题不该五次重新找位置。
  *
+ * 4. **卡片**（2026-09-28 问题面板卡片化）：先分类、再批量。「按图」一张组图拆成
+ *    子图卡片（`subject.part`，判据在 `lib/subplotParts.ts`），「按类别」一类一张
+ *    （规则目录的 `category`）；点进一张卡片才是上面第 2 条的逐组清单。
+ *
  * 全部是纯函数：不读 store、不碰 DOM，`problemList.test.ts` 直接量。
  */
 import { SEVERITIES, type Severity } from './profile'
-import type { ValidationIssue } from './validation'
+import { ruleEntry, type ProblemCategory, type ValidationIssue } from './validation'
+import type { SubplotPart } from './subplotParts'
 
 /* --------------------------------- 范围 ----------------------------------- */
 
@@ -161,4 +166,220 @@ export function cursorView(groups: readonly IssueGroup[], cursor: ProblemCursor 
   const next = replacement ?? flat[clamp(cursor.flatIndex)]
   const before = group?.issues[cursor.index - 1] ?? (cursor.flatIndex > 0 ? flat[clamp(cursor.flatIndex - 1)] : null)
   return { ...empty, next, prev: before && before !== next ? before : null }
+}
+
+/* --------------------------------- 卡片 ----------------------------------- */
+
+/** 卡片怎么分：按图（组图 → 子图）/ 按类别。UI 会话状态（`uiStore.problemView`） */
+export type ProblemView = 'figure' | 'category'
+
+/**
+ * 点进了哪一张卡片（`uiStore.problemDrill`）。键全是呈现层的分组键——
+ * 对象 id、axes gid **绝不进文案**，界面上说的是图名、「(a)」「子图 1」。
+ */
+export type ProblemDrill =
+  | { kind: 'category'; key: ProblemCategory }
+  /** 一整张图（面板对象 id），或页面级问题（`page:<canvasId>`） */
+  | { kind: 'figure'; key: string }
+  /** 一张组图里的一个子图簇；`key` 是 `SubplotPart.key`，图里的整图级问题是 {@link WHOLE} */
+  | { kind: 'part'; figure: string; key: string }
+  /** 「无法自动检查」那一段 */
+  | { kind: 'unverifiable' }
+
+/** 子图分组里「不属于任何一个子图」的那份（渲染失败、位图分辨率、suptitle…） */
+export const WHOLE = ''
+
+interface Bucket {
+  issues: ValidationIssue[]
+  /** 组内最高等级 */
+  severity: Severity
+}
+
+export interface PartBucket extends Bucket {
+  key: string
+  /** null = 整张图那一份 */
+  part: SubplotPart | null
+}
+
+export interface FigureBucket extends Bucket {
+  key: string
+  /** 面板对象 id；页面级问题为 null */
+  objectId: string | null
+  canvasId: string
+  /** 子图簇；图里拆不出子图时只有一份整张图（{@link WHOLE}） */
+  parts: PartBucket[]
+}
+
+export interface CategoryBucket extends Bucket {
+  key: ProblemCategory
+}
+
+/** 「无法核验」不是要处理的问题：卡片只装需要处理的，它们另起一段（审计 B06 同一个理由） */
+export const isUnverifiable = (i: ValidationIssue) => i.severity === 'not_verifiable'
+
+export const figureKeyOf = (i: ValidationIssue): string =>
+  i.objectRef.objectId ?? `page:${i.objectRef.canvasId}`
+
+export const partKeyOf = (i: ValidationIssue): string => i.subject.part?.key ?? WHOLE
+
+export const categoryOf = (i: ValidationIssue): ProblemCategory => ruleEntry(i.ruleCode).category
+
+const worst = (issues: readonly ValidationIssue[]): Severity =>
+  issues.reduce<Severity>((w, i) => (rank(i.severity) < rank(w) ? i.severity : w), SEVERITIES[SEVERITIES.length - 1])
+
+/** 保持首次出现的顺序分桶（求值器的遍历序 = 画布 → 对象，图上相邻的在清单里也相邻） */
+function bucket<K>(issues: readonly ValidationIssue[], keyOf: (i: ValidationIssue) => K): Map<K, ValidationIssue[]> {
+  const out = new Map<K, ValidationIssue[]>()
+  for (const i of issues) {
+    const k = keyOf(i)
+    const list = out.get(k)
+    if (list) list.push(i)
+    else out.set(k, [i])
+  }
+  return out
+}
+
+/**
+ * 按图：一张图一桶（文档顺序），桶里按子图簇再分——整图级那份在前（它往往是
+ * 「图还没重建」这种一改全变的事），子图按 `part.order`。
+ */
+export function bucketsByFigure(issues: readonly ValidationIssue[]): FigureBucket[] {
+  const actionable = issues.filter((i) => !isUnverifiable(i))
+  return [...bucket(actionable, figureKeyOf).entries()].map(([key, list]) => {
+    const parts = [...bucket(list, partKeyOf).entries()]
+      .map(([pk, pl]): PartBucket => ({
+        key: pk,
+        part: pl[0].subject.part ?? null,
+        issues: pl,
+        severity: worst(pl),
+      }))
+      .sort((a, b) => (a.part?.order ?? -1) - (b.part?.order ?? -1))
+    return {
+      key,
+      objectId: list[0].objectRef.objectId,
+      canvasId: list[0].objectRef.canvasId,
+      parts,
+      issues: list,
+      severity: worst(list),
+    }
+  })
+}
+
+const CATEGORY_ORDER: ProblemCategory[] = ['text', 'lines', 'layout', 'color', 'file', 'other']
+
+/** 按类别：阻断在前；同级项数多的在前；再同就按固定次序（排序稳定，卡片不跳） */
+export function bucketsByCategory(issues: readonly ValidationIssue[]): CategoryBucket[] {
+  const actionable = issues.filter((i) => !isUnverifiable(i))
+  return [...bucket(actionable, categoryOf).entries()]
+    .map(([key, list]) => ({ key, issues: list, severity: worst(list) }))
+    .sort(
+      (a, b) =>
+        rank(a.severity) - rank(b.severity) ||
+        b.issues.length - a.issues.length ||
+        CATEGORY_ORDER.indexOf(a.key) - CATEGORY_ORDER.indexOf(b.key),
+    )
+}
+
+/** 一张卡片里装的那些问题（点进去之后的清单、卡片上「修复 N」的集合，同一份） */
+export function drillIssues(issues: readonly ValidationIssue[], drill: ProblemDrill): ValidationIssue[] {
+  switch (drill.kind) {
+    case 'unverifiable':
+      return issues.filter(isUnverifiable)
+    case 'category':
+      return issues.filter((i) => !isUnverifiable(i) && categoryOf(i) === drill.key)
+    case 'figure':
+      return issues.filter((i) => !isUnverifiable(i) && figureKeyOf(i) === drill.key)
+    case 'part':
+      return issues.filter(
+        (i) => !isUnverifiable(i) && figureKeyOf(i) === drill.figure && partKeyOf(i) === drill.key,
+      )
+  }
+}
+
+/**
+ * 这条问题在这种看法下落在哪张卡片里。定位 / 游标走到一条卡片外的问题时，
+ * 面板跟着换进它那张卡片——「下一项」不能把用户带到一行看不见的地方。
+ * 图拆不出子图时卡片就是整张图（与 `bucketsByFigure` 的呈现同一个判据）。
+ */
+export function drillOf(
+  issue: ValidationIssue,
+  view: ProblemView,
+  figures: readonly FigureBucket[],
+): ProblemDrill {
+  if (isUnverifiable(issue)) return { kind: 'unverifiable' }
+  if (view === 'category') return { kind: 'category', key: categoryOf(issue) }
+  const figure = figureKeyOf(issue)
+  const bucket = figures.find((f) => f.key === figure)
+  return bucket && isSplit(bucket)
+    ? { kind: 'part', figure, key: partKeyOf(issue) }
+    : { kind: 'figure', key: figure }
+}
+
+/**
+ * 这张图按子图拆开显示吗：只要有一条问题认得出落在哪个子图里就拆（哪怕只有
+ * (c) 有问题——一张「子图 (c)」卡比一张笼统的整图卡说得多）。卡片的呈现与
+ * {@link drillOf} 共用这一个判据。
+ */
+export const isSplit = (f: Pick<FigureBucket, 'parts'>): boolean => f.parts.some((p) => p.part)
+
+/**
+ * 卡片的稳定机器标识（`data-problem-card-key`）：新手教程与 e2e 要指向「这条问题
+ * 所在的那张卡片」，靠它而不是文案。
+ */
+export function drillKey(drill: ProblemDrill): string {
+  switch (drill.kind) {
+    case 'unverifiable':
+      return 'unverifiable'
+    case 'part':
+      return `part:${drill.figure}:${drill.key}`
+    default:
+      return `${drill.kind}:${drill.key}`
+  }
+}
+
+/**
+ * 一条问题可能落在哪几张卡片上（两种切法、拆没拆子图都算上）。此刻页面上只会有
+ * 其中一张——调用方把它们拼成一个选择器列表就能找到它，不必知道现在是哪种切法。
+ */
+export function drillKeysOf(issue: ValidationIssue): string[] {
+  if (isUnverifiable(issue)) return [drillKey({ kind: 'unverifiable' })]
+  const figure = figureKeyOf(issue)
+  return [
+    drillKey({ kind: 'part', figure, key: partKeyOf(issue) }),
+    drillKey({ kind: 'figure', key: figure }),
+    drillKey({ kind: 'category', key: categoryOf(issue) }),
+  ]
+}
+
+/**
+ * 按图看、清单里只有一张拆不出子图的图、又没有「无法核验」：卡片层只会有一张卡片，
+ * 多点一下什么也没多看到——直接列它的清单（面板把它当作点开了这张卡，但不给返回）。
+ * 面板与 `openProblemAt` 共用这一个判据。
+ */
+export function singleDrill(
+  view: ProblemView,
+  figures: readonly FigureBucket[],
+  unverifiableCount: number,
+): ProblemDrill | null {
+  return view === 'figure' && figures.length === 1 && !isSplit(figures[0]) && unverifiableCount === 0
+    ? { kind: 'figure', key: figures[0].key }
+    : null
+}
+
+/**
+ * 点进的卡片与「正在处理」的游标**属于哪个现场**：哪份排版（`loadSeq`）、哪个范围与
+ * 哪张当前图、哪种切法。`uiStore` 把 `problemDrill` / `problemCursor` 与写下它们那一刻的
+ * 现场一起存；读的时候现场对不上就是回到总览、没有游标（2026-09-29 #690 评审：换项目时
+ * 面板没挂着、抽屉开着换了当前图——都是「有人忘了清」，换成派生之后没有人需要记得去清）。
+ *
+ * **等级筛选不在里面**：点进卡片之后筛选条还在，在卡片里筛是正常用法，不该把人踢回总览；
+ * 筛空了是「当前筛选下没有」，与「修完了」分开说（面板里判）。
+ */
+export function problemContextKey(c: {
+  loadSeq: number
+  scope: ProblemScope
+  figureId: string | null
+  view: ProblemView
+}): string {
+  return [c.loadSeq, c.scope, c.scope === 'figure' ? (c.figureId ?? '') : '', c.view].join('|')
 }

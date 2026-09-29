@@ -24,7 +24,11 @@ export function retrySrc(src: string, attempt: number): string {
   return `${src}${src.includes('?') ? '&' : '?'}r=${attempt}`
 }
 
-export function useRetryingSrc(src: string): { src: string; onError: () => void } {
+/**
+ * `onGiveUp`：这张图**真的**取不到了（不是 `/api/render`，或退避表用完了）——调用方
+ * 要换成占位图标时挂这里，别挂在 `<img onError>` 上：那样一次背压就永久换掉了缩略图。
+ */
+export function useRetryingSrc(src: string, onGiveUp?: () => void): { src: string; onError: () => void } {
   const [attempt, setAttempt] = useState(0)
   const timer = useRef<number | null>(null)
   const lastSrc = useRef(src)
@@ -39,12 +43,15 @@ export function useRetryingSrc(src: string): { src: string; onError: () => void 
     }
   }, [src])
   const onError = useCallback(() => {
-    if (!isRenderUrl(src) || attempt >= RENDER_RETRY_DELAYS_MS.length) return
+    if (!isRenderUrl(src) || attempt >= RENDER_RETRY_DELAYS_MS.length) {
+      onGiveUp?.()
+      return
+    }
     if (timer.current != null) window.clearTimeout(timer.current)
     timer.current = window.setTimeout(() => {
       timer.current = null
       setAttempt((a) => a + 1)
     }, RENDER_RETRY_DELAYS_MS[attempt])
-  }, [src, attempt])
+  }, [src, attempt, onGiveUp])
   return { src: retrySrc(src, attempt), onError }
 }

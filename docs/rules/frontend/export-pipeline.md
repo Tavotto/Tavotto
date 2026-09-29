@@ -59,7 +59,8 @@ cancelCurrentExport()  取消（清临时文件；最终目录一个字节没动
 - **`/api/render` 的一次失败可能只是背压**（候选后端下 child 队列满 → 503 + `Retry-After`）：`<img>`
   看不见状态码，`lib/imgRetry.useRetryingSrc` 对 `/api/render` 地址按 1 / 2 / 4 s 有界重试（cache-bust
   `r=n`，`src` 变了归零）；blob / data / `/api/file` 失败**不**重试。画布面板（`PanelView`）、缩略图
-  （`CanvasThumb`）、版本 / 图库 / 导出对话框的缩略图（`ui/RetryImg`）共用这一份。
+  （`CanvasThumb`）、版本 / 图库 / 导出对话框的缩略图（`ui/RetryImg`）、问题面板卡片的缩略图
+  （`ProblemThumb`，`onGiveUp` 之后才换图标）共用这一份。
 - **manifest 的 `identity` / `provenance` 与作业的 `trace` 只在类型上接住**（2026-09-21，统一实施包 U09，
   ADR 0070 / 0071）：`ArtifactManifestSummary.identity`（semantic / render / artifact / run 四身份并列）、
   `provenance`（源产物公开身份、回执公开事实 `ArtifactReceiptFacts`、节点表）、`ExportJob.trace`（有界阶段轨迹，

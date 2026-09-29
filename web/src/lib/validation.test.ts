@@ -94,8 +94,10 @@ describe('规则目录与求值器不许分叉', () => {
     expect(missing, `这些 code 求值器会发但目录里没有：${missing.join(', ')}`).toEqual([])
   })
 
-  it('目录里没登记的 code 按 document / 不可修复处理，绝不猜', () => {
-    expect(ruleEntry('zzz-brand-new-rule')).toEqual({ context: 'document', fix: 'none' })
+  it('目录里没登记的 code 按 document / 不可修复 / 「其他」类处理，绝不猜', () => {
+    expect(ruleEntry('zzz-brand-new-rule')).toEqual({ category: 'other', context: 'document', fix: 'none' })
+    // 名字里带 font 也不许被猜进「文字」类
+    expect(ruleEntry('font-zzz-new').category).toBe('other')
   })
 
   it('聚合投影原样留着——proof report 与 MCP 认的是它', () => {

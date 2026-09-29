@@ -32,6 +32,7 @@
  * 侧栏临时露出来」这一件事，且不经过 uiStore 的 persist。
  */
 import type { ManifestElement, TutorialMetadata, TutorialPanelMeta } from '@/lib/api'
+import { drillKeysOf } from '@/lib/problemList'
 import { propertyPathOf } from '@/lib/typography'
 import type { ValidationIssue } from '@/lib/validation'
 import { useOnboardingStore } from '@/store/onboardingStore'
@@ -466,8 +467,14 @@ export const STEPS: readonly StepDef[] = [
       const target = mine.find((i) => i.ruleCode === code) ?? mine[0]
       if (!target) return sel('[data-rail="problems"]')
       const obj = target.objectRef.objectId ?? ''
-      return sel(`[data-issue-row][data-issue-rule="${esc(target.ruleCode)}"][data-issue-object="${esc(obj)}"]`)
+      // 问题面板先是卡片层（2026-09-28）：那一行只在点进它所在的卡片之后才在页面上。
+      // 选择器列表里行在前、卡片在后，此刻页面上只会有其中一种
+      const row = `[data-issue-row][data-issue-rule="${esc(target.ruleCode)}"][data-issue-object="${esc(obj)}"]`
+      const cards = drillKeysOf(target).map((k) => `[data-problem-card-key="${esc(k)}"] > button:first-child`)
+      return sel([row, ...cards].join(', '))
     },
+    // 面板开着时只有一句话：那一行可能直接在（单子图的图没有卡片层），也可能在一张
+    // 卡片里——「在不在卡片里」是面板现算的呈现，这里不复制那条判据，文案两种都说
     variant: (ctx) => (ctx.problemsOpen ? 'locate_problem.row' : 'locate_problem'),
     reveal: (ctx) => {
       if (!ctx.problemsOpen) peekLeft('problems')

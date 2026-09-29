@@ -29,7 +29,17 @@ import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { useViewportStore } from '@/store/viewportStore'
 import { useWorkspaceStore } from '@/store/workspace'
-import { cursorFor, groupIssues, issuesInScope } from './problemList'
+import { problemContextNow } from './problemContext'
+import {
+  bucketsByFigure,
+  cursorFor,
+  drillIssues,
+  drillOf,
+  groupIssues,
+  issuesInScope,
+  isUnverifiable,
+  singleDrill,
+} from './problemList'
 import type { Severity } from './profile'
 import type { ObjectRef, ValidationIssue } from './validation'
 import type { CanvasObject } from '@/types/document'
@@ -198,6 +208,8 @@ const cssEscape = (v: string): string => v.replace(/[^A-Za-z0-9_-]/g, (c) => `\\
  */
 export function openProblems(filter?: { severities?: Severity[] }): void {
   useUiStore.getState().setProblemFilter(filter?.severities ?? null)
+  // 交回的是**总览**：带着筛选点进去的那张卡片不一定还装着这些等级
+  useUiStore.getState().setProblemDrill(null)
   useUiStore.getState().setLeftTab('problems')
 }
 
@@ -206,7 +218,7 @@ export function openProblems(filter?: { severities?: Severity[] }): void {
  *
  * 定位本身仍是 `focusIssue` → `focusObject` 这一个动作（与在问题面板里点一行相同）；
  * 之后把问题面板切到这条所在的范围（图内元素 = 当前图，画布标注 = 整份排版）、
- * 清掉等级筛选（筛掉了就找不到它），再把「正在处理」的游标落到它上面——
+ * 清掉等级筛选（筛掉了就找不到它），点开它所在的卡片，再把「正在处理」的游标落到它上面——
  * 游标怎么认一条问题只有 `problemList.cursorFor` 一份。
  *
  * `all` 是此刻的完整问题清单（`validationStore.issues`），由调用方传进来：
@@ -223,8 +235,22 @@ export function openProblemAt(
   const scope = figureId && issue.objectRef.objectId === figureId ? 'figure' : 'document'
   ui.setProblemFilter(null)
   ui.setProblemScope(scope)
+  // 问题面板是卡片层（2026-09-28）：直达的这一条所在的那张卡片**由这里点开**，卡片与
+  // 游标盖同一个现场章（定位之后现取，`problemContextNow`）——面板被卸载着也成立，
+  // 面板里不再有「看到游标在卡片外就钻进去」的第二套机制。只有一张卡片的单图没有
+  // 卡片层（`singleDrill`），那时不点开，面板直接列它的清单。游标按那张卡片的清单算——
+  // 与面板里点一行时 `cursorFor(groups)` 的 groups 是同一份，修好之后「顶上来的那条」才找得对
+  const scoped = issuesInScope(all, scope, figureId)
+  const figures = bucketsByFigure(scoped)
+  const single = singleDrill(ui.problemView, figures, scoped.filter(isUnverifiable).length)
+  const drill = single && drillIssues(scoped, single).some((i) => i.issueId === issue.issueId)
+    ? null
+    : drillOf(issue, ui.problemView, figures)
+  const context = problemContextNow()
   ui.setLeftTab('problems')
-  ui.setProblemCursor(cursorFor(groupIssues(issuesInScope(all, scope, figureId)), issue.issueId))
+  if (drill) ui.setProblemDrill(drill, context)
+  const cursor = cursorFor(groupIssues(drillIssues(scoped, drill ?? single!)), issue.issueId)
+  if (cursor) ui.setProblemCursor(cursor, context)
   return outcome
 }
 

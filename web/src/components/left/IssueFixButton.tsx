@@ -10,6 +10,7 @@ import {
   applyIssueFix,
   applyIssueFixes,
   isNativePanelIssue,
+  batchable,
   type BatchOptions,
   type FixFailure,
   type FixOutcome,
@@ -92,6 +93,24 @@ export function FixButton({ issue, className }: { issue: ValidationIssue; classN
 /** 修一条；结果用问题面板同一套措辞报出来。 */
 export function runFix(issue: ValidationIssue, choice?: string): Promise<void> {
   return withBusy(() => applyIssueFix(issue, choice))
+}
+
+/**
+ * 组件里拿批量集合用这个：订阅文档与素材档案（native 图的档案晚到时按钮跟着变），
+ * 判据仍只有 `batchable` 一份。
+ */
+export function useBatchable(
+  issues: ValidationIssue[],
+  activeCanvasId: string,
+  opts: BatchOptions = {},
+): ValidationIssue[] {
+  const doc = useDocumentStore((s) => s.doc)
+  const assets = useRuntimeAssetStore((s) => s.byId)
+  const withSuggestions = !!opts.includeSuggestions
+  return useMemo(
+    () => batchable(issues, activeCanvasId, { includeSuggestions: withSuggestions }, { doc, assets }),
+    [issues, activeCanvasId, withSuggestions, doc, assets],
+  )
 }
 
 /**
