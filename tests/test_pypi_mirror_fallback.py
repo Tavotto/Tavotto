@@ -78,7 +78,9 @@ def _runs(path: Path) -> list[list[str]]:
         (deprepair.ERROR_NETWORK, None, False),  # 问不出来：宁可不换
         ("", False, False),  # 成功
         (deprepair.ERROR_CANCELLED, False, False),
-        (deprepair.ERROR_TIMEOUT, False, False),
+        # ADR 0112 §二：没自配源时第一次尝试带测速，太慢 / 用完第一次的预算以 ERROR_TIMEOUT 收场——换源能解决
+        (deprepair.ERROR_TIMEOUT, False, True),
+        (deprepair.ERROR_TIMEOUT, True, False),  # 配过源：不测速、用满预算，超时就是终局
         (deprepair.ERROR_CONFLICT, False, False),
         (deprepair.ERROR_NOT_FOUND, False, False),
         (deprepair.ERROR_REQUIRES_BUILD, False, False),
@@ -176,11 +178,11 @@ def test_a_user_configured_source_is_never_bypassed(tmp_path, monkeypatch, env):
     assert len(_runs(runs)) == 1 and mirrors == []
 
 
-def test_a_non_network_failure_is_not_retried_and_does_not_probe_the_config(tmp_path, monkeypatch):
+def test_a_non_network_failure_is_not_retried(tmp_path, monkeypatch):
+    """非网络类失败不换源。（ADR 0112 §二 起配置在开始之前就问一次——要说出这次用的是哪个源、决定第一次
+    带不带测速——所以这里不再断言「没去问配置」。）"""
     runs = tmp_path / "runs.jsonl"
-    monkeypatch.setattr(
-        deprepair, "user_package_source", lambda python: pytest.fail("非网络失败不该去问配置")
-    )
+    monkeypatch.setattr(deprepair, "user_package_source", lambda python: False)
     code, _out = deprepair._run_pip_install(
         _script_argv(runs, default=(1, "ERROR: ResolutionImpossible\n"), mirror=(0, "")),
         sys.executable,
@@ -197,6 +199,15 @@ def test_a_non_network_failure_is_not_retried_and_does_not_probe_the_config(tmp_
         (0, "global.find-links='/wheels'\n", True),
         (0, "global.no-index='true'\n", True),
         (0, "global.timeout='60'\n", False),
+        # 按节筛（ADR 0112 §二 / #737）：`download` / `index` 节不作用于 `pip install`
+        (0, "download.index-url='https://pypi.corp/simple'\n", False),
+        (0, "index.index-url='https://pypi.corp/simple'\n", False),
+        (0, "install.index-url='https://pypi.corp/simple'\n", True),
+        (0, ":env:.index-url='https://pypi.corp/simple'\n", True),
+        # pip 的规范化：`_` 与开头的 `--` 都是同一个键（#724 第 8 轮 Codex P2）
+        (0, "global.index_url='https://pypi.corp/simple'\n", True),
+        (0, "global.--index-url='https://pypi.corp/simple'\n", True),
+        (0, "global.no_index='true'\n", True),
         (0, "", False),
         (1, "pip: error", None),
     ],
@@ -223,7 +234,7 @@ def test_the_single_package_install_goes_through_the_mirror_fallback(monkeypatch
     """`_pip_install`（单包修复 / 包管理）走 `_run_pip_install`：第二次的 argv 出自 `pip_install_argv(index_url=镜像)`。"""
     seen: list[list[str]] = []
 
-    def _fake_run_pip(argv, ev, log, on_started=None):
+    def _fake_run_pip(argv, ev, log, on_started=None, **_kw):
         seen.append(argv)
         if on_started is not None:
             on_started()  # 桩代表 pip 进程已起来（真 `_run_pip` 在 Popen 之后调它）
