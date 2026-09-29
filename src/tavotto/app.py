@@ -5185,12 +5185,13 @@ def _write_source_files(
     # 热态与重放必须是同一代改指表画的、且落地前表没变（ADR 0106 §五）：否则两边读的不是同一份数据，
     # 像素门过了也不说明什么——不写（409 可重试），staging 清掉
     try:
-        with engine_inputremap.landing(
-            worker.figures_dir,
-            getattr(worker, "remap_generation", None),
-            getattr(fresh, "remap_generation", None),
-        ):
-            pass
+        if getattr(worker, "figures_dir", None):
+            with engine_inputremap.landing(
+                worker.figures_dir,
+                getattr(worker, "remap_generation", None),
+                getattr(fresh, "remap_generation", None),
+            ):
+                pass
     except engine_inputremap.RemapChanged:
         _discard_updating(tmps)
         raise
