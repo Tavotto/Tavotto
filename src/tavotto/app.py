@@ -4127,12 +4127,14 @@ def api_engine_render():
         json.dumps(timings, sort_keys=True),
     )
     # 渲染途中改了指认（ADR 0106 §五）：这张图是按旧位置的数据画的——不交给界面（409 可重试，
-    # 前端当 stale 重排）。核对与物化同在改指表的锁里
+    # 前端当 stale 重排）。核对与物化同在改指表的锁里。按**会话自己**的项目根与代次核对（与写回 /
+    # 导出同一写法）：native 会话不改指、没有代次，不拦；不去读请求上下文里的项目
     try:
-        with engine_inputremap.landing(
-            require_project(), getattr(worker, "remap_generation", None)
-        ):
-            pass
+        if getattr(worker, "figures_dir", None):
+            with engine_inputremap.landing(
+                worker.figures_dir, getattr(worker, "remap_generation", None)
+            ):
+                pass
     except engine_inputremap.RemapChanged as exc:
         sse_publish("render.failed", {"pj": pj, "id": rel_id, "error": str(exc)})
         raise
