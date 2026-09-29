@@ -79,7 +79,8 @@
     又对得上一次落空的只读打开时报 **`missing_input`**（`figcapture.missing_input_of`，写模式的「目录
     不存在」与对不上的一律仍是 `script_error`）；pool 两条控制面与试运行给错误挂上弹窗载荷
     （`inputremap.payload_for`：缺的那串 + 脚本里其余此刻哪儿都找不到的路径，含常量绝对路径——只
-    `exists`，不读不列）；「没出图」（`no_figures_captured*` / 试运行的 `script_no_figure`）只挂静态那部分。
+    `exists`，不读不列；「其余」只收**真进了读取调用**的常量——`READ_FUNCS` / `read_*` 的路径实参整条是
+    常量或只赋值一次的名字、读模式的打开，外加探路调用问的；标签、写出目标、输出目录、`.py` 不算）；「没出图」（`no_figures_captured*` / 试运行的 `script_no_figure`）只挂静态那部分。
     ② **推规则**：`inputremap.derive` 按路径段求最长公共后缀，推出 `prefix`（相对 `""` = 所有相对路径）
     或 `file`（改了名只改这一个）；推完自检落到存在的文件上。**不搜同名、不预选**（FO08）。
     ③ **改道**：只在**原路径打开抛 `FileNotFoundError` 之后**查表（原路径存在永远读原件、成功的打开零
