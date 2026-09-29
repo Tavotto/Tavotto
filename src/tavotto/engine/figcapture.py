@@ -1293,7 +1293,8 @@ def remap_parts(text: str) -> tuple[bool, tuple[str, ...]] | None:
     """路径串 → `(是否绝对, 路径段)`；说不清的（空串、`~`、URL）回 None。
 
     主语是**脚本作者写的那串**，它可能写于另一个 OS：反斜杠一律当分隔符，POSIX 根
-    `/` 与盘符 `C:` 都算绝对；盘符按小写比（Windows 上 `C:` 与 `c:` 是同一个盘）。
+    `/`、盘符 `C:` 与 UNC 的 `\\\\server\\share` 都算绝对（后者整个是一个根段 `//server/share`）；
+    盘符与 UNC 根按小写比（Windows 上 `C:` 与 `c:` 是同一个盘）。
     相对路径里的 `.` 与空段丢掉，`..` 保留（`../data/x.csv` 的 `..` 是前缀的一部分）。
     """
     if not isinstance(text, str) or not text or "\x00" in text:
@@ -1302,8 +1303,15 @@ def remap_parts(text: str) -> tuple[bool, tuple[str, ...]] | None:
         return None
     norm = text.replace("\\", "/")
     raw = norm.split("/")
-    if norm.startswith("/"):
-        head: tuple[str, ...] = ("/",)
+    unc = norm.startswith("//") and len(raw) > 3 and raw[2] not in ("", ".", "..") and raw[3] != ""
+    if unc:
+        # UNC `\\server\share\…`：server/share 是一个独立的根（不是 `/` 下的两段），
+        # 否则拼回去成了本机的 `/server/share`（Codex 评 #716 P2）；与盘符一样按小写比
+        head: tuple[str, ...] = (f"//{raw[2]}/{raw[3]}".lower(),)
+        rest = raw[4:]
+        absolute = True
+    elif norm.startswith("/"):
+        head = ("/",)
         rest = raw[1:]
         absolute = True
     elif _DRIVE_RE.match(raw[0]) and len(raw) > 1:
@@ -1325,7 +1333,7 @@ def _join_parts(parts: tuple[str, ...]) -> str:
         return "/" + "/".join(parts[1:])
     if _DRIVE_RE.match(parts[0]):
         return parts[0] + "/" + "/".join(parts[1:])
-    return "/".join(parts)
+    return "/".join(parts)  # 相对路径；UNC 根 `//server/share` 本身带着前导 `//`，同样直接拼
 
 
 def clean_remap_rules(rules) -> list[dict]:

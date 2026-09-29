@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import builtins
 import io
+import os
 import pathlib
 from pathlib import Path
 
@@ -76,6 +77,43 @@ def test_windows_written_paths_and_parent_prefixes():
     ]
     assert figcapture.remap_target(rules, r"c:\Users\a\d\x.csv") == "/Volumes/B/d/x.csv"
     assert figcapture.remap_target(rules, "../data/x.csv") == "/Volumes/up/data/x.csv"
+
+
+def test_unc_server_share_is_its_own_root():
+    """UNC `\\\\server\\share\\…`：server/share 是一个根段，不是 `/` 下的两段——否则拼回去成了本机的
+    `/server/share/…`，自检去查当前盘上的路径（Codex 评 #716 P2）。纯字符串，POSIX 上照样跑。"""
+    unc = r"\\Server\Share\proj\data\x.csv"
+    assert figcapture.remap_parts(unc) == (True, ("//server/share", "proj", "data", "x.csv"))
+    assert (
+        figcapture._join_parts(figcapture.remap_parts(unc)[1]) == "//server/share/proj/data/x.csv"
+    )
+    # `derive` 从指认那一侧截掉公共后缀再拼回去：根段必须原样留着
+    assert inputremap._join(figcapture.remap_parts(unc)[1][:2]) == "//server/share/proj"
+    # 只有 server 没有 share、或 `///`：不是 UNC
+    assert figcapture.remap_parts("//server") == (True, ("/", "server"))
+    assert figcapture.remap_parts("///a/b") == (True, ("/", "a", "b"))
+    rules = [{"kind": P, "from": "C:/Users/a/proj", "to": r"\\nas\lab\proj"}]
+    assert (
+        figcapture.remap_target(rules, r"c:\Users\a\proj\data\x.csv") == "//nas/lab/proj/data/x.csv"
+    )
+    # 脚本里写的是 UNC、数据挪到了本机盘
+    rules = [{"kind": P, "from": r"\\Server\Share\proj", "to": "D:/moved"}]
+    assert figcapture.remap_target(rules, unc) == "D:/moved/data/x.csv"
+    # 另一个 share 不配
+    assert figcapture.remap_target(rules, r"\\Server\Other\proj\data\x.csv") is None
+
+
+@pytest.mark.skipif(os.name != "nt", reason="UNC 管理共享只在 Windows 上有")
+def test_derive_accepts_a_file_chosen_through_a_unc_share(tmp_path):
+    chosen = _touch(tmp_path / "moved" / "data" / "x.csv")
+    drive, rest = os.path.splitdrive(str(chosen))
+    unc = rf"\\localhost\{drive[0]}${rest}"
+    if not os.path.isfile(unc):
+        pytest.skip("本机管理共享不可用")
+    rule = inputremap.derive("C:/Users/a/proj/data/x.csv", unc, chosen_is_dir=False)
+    assert rule["from"] == "c:/Users/a/proj"
+    assert rule["to"].lower().startswith("//localhost/")
+    assert os.path.isfile(figcapture.remap_target([rule], "C:/Users/a/proj/data/x.csv"))
 
 
 def test_bad_rules_are_dropped_not_raised():
