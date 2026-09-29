@@ -69,6 +69,13 @@ export default defineConfig({
         // 画布页签条的纵向溢出：只有 WebKit 把那 1px 画成一根常驻的竖滚动条（用户截图），
         // chromium 量得到数、画不出条——用户那台引擎必须亲自量一遍
         'canvas-tabs-scroll.spec.ts',
+        // 排版时间线（ADR 0101）：节点缩略图在浏览器里用 canvas 合成——WKWebView 编不出
+        // webp（退回 png）、画 SVG 会不会 taint 画布，只有这个引擎答得了
+        'layout-timeline.spec.ts',
+        // 时间线行的真实双击（前导 click 序列）与显式钮：WebKit 的事件序列要亲自量
+        'timeline-row-actions.spec.ts',
+        // 顶栏窄宽度下两两不重叠：量的是字宽，WebKit 的字体度量与 chromium 不同
+        'topbar-narrow.spec.ts',
       ],
     },
     // 英文 locale（审计 P1-02/P1-03）：a11y spec 是语言无关写法；

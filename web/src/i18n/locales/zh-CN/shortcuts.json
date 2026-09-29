@@ -46,7 +46,9 @@
     "multiSelect": "加选 / 减选对象或图内元素",
     "quickEdit": "按对象打开快捷编辑菜单",
     "tutorialPause": "暂停教程（教程卡片有焦点时）",
-    "cycleOverlap": "在重叠的图内元素之间轮换选中"
+    "cycleOverlap": "在重叠的图内元素之间轮换选中",
+    "timeline": "打开 / 关闭排版时间线",
+    "saveNamed": "把现在存为命名节点"
   },
   "title": "快捷键",
   "search": "搜索快捷键…",

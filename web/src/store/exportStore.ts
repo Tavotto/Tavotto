@@ -36,6 +36,7 @@ import { useDocumentStore } from '@/store/documentStore'
 import { findFigurePanel } from '@/store/workspace'
 import type { FilenameReason } from '@/lib/exportName'
 import { filenameProblem } from '@/lib/exportRequest'
+import { captureMoment, markMoment, type MomentSnapshot } from '@/lib/timelineCheckpoint'
 
 /** 轮询间隔。SSE 通的时候它几乎不出场；不通的时候它是唯一的通道 */
 const POLL_MS = 600
@@ -85,6 +86,17 @@ interface ExportState {
    * `null` = 这个标签页此刻没有自己的作业，**任何快照都不收**。
    */
   ownedJobId: string | null
+  /**
+   * 起这次导出那一刻的快照（`captureMoment`，文档取导出请求里的那一份）。导出要跑很久：
+   * 完成时用户可能已经在同项目里换了排版（换排版不调 `resetExportState`）——「导出」点只
+   * 打给被导出的那一份；也可能在同一份里接着改——节点拍的是被导出的内容，不是之后的样子
+   * （Codex #679）。
+   *
+   * **用完即放**：快照里是整份文档与各面板的 SVG 图源，大排版能到几 MB。作业一进终局
+   * （打完点或不打）、换项目 / 换文档（`resetExportState`）、起作业本身失败，都立刻清掉——
+   * 全局 store 不该替上一个项目留着这些。
+   */
+  momentSnapshot: MomentSnapshot | null
 }
 
 export const useExportStore = create<ExportState>(() => ({
@@ -95,6 +107,7 @@ export const useExportStore = create<ExportState>(() => ({
   startedRevision: null,
   editedDuringExport: false,
   ownedJobId: null,
+  momentSnapshot: null,
 }))
 
 /** 请求成形 + 就地校验。**不发网络**，输入框每敲一个字都可以调。 */
@@ -153,9 +166,14 @@ export function applyExportJob(job: ExportJob): void {
   if (s.job && s.job.job_id === job.job_id && TERMINAL.has(s.job.status)) return
   const terminal = TERMINAL.has(job.status)
   if (terminal) stopPolling()
+  // 排版时间线的关键时刻（ADR 0101）：导出**交付了文件**的那一刻打一个点。
+  // 上面那道闸保证同一个作业只会进一次终局，所以这里不会重复打
+  if (job.status === 'done' || job.status === 'partial') void markMoment('export', s.momentSnapshot)
   useExportStore.setState({
     job,
     running: !terminal,
+    // 终局之后快照再没有用处（同一作业只进一次终局）：立刻放掉
+    momentSnapshot: terminal ? null : s.momentSnapshot,
     editedDuringExport:
       terminal && s.startedRevision != null
         ? liveRevision(s.lastInput) !== s.startedRevision
@@ -211,6 +229,7 @@ export async function runExport(input: ExportRequestInput): Promise<ExportJob | 
     editedDuringExport: false,
     // 起之前先清空归属：这一刻起，旧作业的迟到快照一律不收
     ownedJobId: null,
+    momentSnapshot: captureMoment(input.doc),
   })
   const mine = ++generation
   let job: ExportJob
@@ -221,6 +240,7 @@ export async function runExport(input: ExportRequestInput): Promise<ExportJob | 
     useExportStore.setState({
       running: false,
       startError: { code: 'start_failed', message: String(err) },
+      momentSnapshot: null, // 作业没起来：这一刻不会有终局，快照放掉
     })
     return null
   }
@@ -300,5 +320,7 @@ export function resetExportState(): void {
     startedRevision: null,
     editedDuringExport: false,
     ownedJobId: null,
+    // 上个项目 / 上一份文档的快照（整份文档 + 面板图源）不留到这里之后
+    momentSnapshot: null,
   })
 }

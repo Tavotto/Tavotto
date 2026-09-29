@@ -108,6 +108,10 @@ export function versionSummaryText(s: VersionSummary): UiMessage[] {
 const GENERATED_NAME = /^\d{2}-\d{2} \d{2}:\d{2}$/
 
 export function versionDisplayName(v: LayoutVersionMeta): string | null {
+  // 后端给了类型（ADR 0101）：只有**命名节点**的名字是用户起的；关键时刻 /
+  // 自动节点的名字（「恢复前（10:32）」、时间串）是程序起的，行上已经有时间与
+  // 类型标记，再显示一遍就是同一件事说两次
+  if (v.kind && v.kind !== 'named') return null
   const name = v.name.trim()
   if (!name || GENERATED_NAME.test(name)) return null
   return name

@@ -25,6 +25,8 @@ import {
 import { currentProjectId, setCurrentProjectId } from '@/lib/session'
 import { pushPickerEntry } from '@/lib/pickerHistory'
 import { cancelActivePointerGesture, finishActiveGesture } from '@/store/gestureCoordinator'
+import { markMoment } from '@/lib/timelineCheckpoint'
+import { useTimelineStore } from '@/store/timelineStore'
 import { openRecentDocument } from '@/store/actions'
 import { useAssetBrowseStore } from '@/store/assetBrowseStore'
 import { flushAutosave, loadAutosavedDocument, useDocumentStore } from '@/store/documentStore'
@@ -184,6 +186,8 @@ async function resetForNewProject() {
   ui.setCropTarget(null)
   useRenderStore.getState().clear()
   useRuntimeAssetStore.getState().clear()
+  // 时间线的预览属于旧项目的排版（ADR 0101）
+  useTimelineStore.getState().clear()
   // 素材库的搜索词与筛选说的是旧项目的目录与素材，跟着清
   useAssetBrowseStore.getState().clear()
   // 素材清单本身也属于旧项目：面板、「无法使用」清单与由它们派生的来源目录。不清的话，
@@ -320,6 +324,12 @@ export const useProjectStore = create<ProjectState>((set, get) => {
     opts: Parameters<ProjectState['adoptOpenedProject']>[1],
     resume: () => void,
   ): Promise<ProjectStatus> => {
+    // 排版时间线（ADR 0101）：从一个开着的项目**直接**切到另一个，是在关掉前一个。
+    // 必须在认领新项目之前打：节点的项目、文档、缩略图图源都在这一刻同步取走
+    if (get().phase === 'open' && get().project?.id && get().project?.id !== status.id) {
+      void markMoment('close')
+    }
+    // 先认领项目，再做任何会发请求的事：素材/渲染都必须落到新项目上
     if (status.id) setCurrentProjectId(status.id)
     // 「最近文档」要在条目上标出所属项目（审计 T04）；名字的权威在这里，
     // documentStore 只读那份投影（否则两个 store 互相 import 成环）
@@ -347,6 +357,10 @@ export const useProjectStore = create<ProjectState>((set, get) => {
       useViewportStore.getState().fit(page.w, page.h)
     }
     set({ project: status, phase: 'open', lastDocumentIssue: issue })
+    // 排版时间线的关键时刻（ADR 0101 §3）：只管「编辑器开着时直接切到另一个项目」
+    // ——Workspace 不重挂、时间线一直在跑。从 Picker 打开 / 启动恢复时 Workspace 还没
+    // 挂上，这一下是空的，那两条路由 Workspace 在文档恢复完之后调 `markWorkspaceOpened()`
+    void markMoment('open')
     void get().refreshRecent()
     emitActivity({ kind: 'project.opened', tutorial: status.tutorial === true })
     return status
@@ -500,6 +514,8 @@ export const useProjectStore = create<ProjectState>((set, get) => {
     // 与切项目（`resetForNewProject`）、`dropProject` 是同一句 `flushAutosave()`。
     settleGesturesBeforeLeaving()
     flushAutosave()
+    // 排版时间线的关键时刻（ADR 0101）：回主页 = 离开这份排版
+    if (get().phase === 'open') void markMoment('close')
     set({ phase: 'none' })
     pushPickerEntry()
   },
