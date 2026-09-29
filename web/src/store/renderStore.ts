@@ -316,6 +316,13 @@ interface RenderState {
    */
   evictSvgBudget: () => void
   /** 换项目：渲染态、跟踪表、在途账本一起归零 */
+  /**
+   * 在途的渲染整批作废（不清缓存）：渲染条件在请求飞行途中变了（改指表增 / 换 / 删，ADR 0106）——
+   * 按旧条件画出来的回包晚到时会把刚标上的 stale 清掉、把旧图当权威。与换项目共用同一个代际：
+   * 换代 + abort 在途请求 + 丢掉在途槽位，回包（成功 / 失败两支）对不上代际就整个丢弃。
+   * 调用方随后 `markStale`，同步器按新条件重排。
+   */
+  invalidateInflight: () => void
   clear: () => void
 }
 
@@ -325,7 +332,12 @@ export const NATIVE_FIGURE_INCONSISTENT = 'native_figure_inconsistent'
 /** 每个变体一份在途状态：busy 时只记最后一次待办，避免连发把 worker 淹没 */
 const inflight = new Map<
   string,
-  { busy: boolean; queued: { patches: unknown[]; previewDpi?: number; seq: number } | null }
+  {
+    busy: boolean
+    queued: { patches: unknown[]; previewDpi?: number; seq: number } | null
+    /** 此刻那次尝试的 abort（`invalidateInflight` 用；看门狗用的是同一个） */
+    abort?: () => void
+  }
 >()
 
 /**
@@ -484,7 +496,8 @@ function dropSvgPayload(v: PanelRender): PanelRender {
 let requestSeq = 0
 
 /**
- * 项目代际（web/AGENTS.md「会在项目之间存活的 store 都有项目代际」）：`clear()` 换代，
+ * 项目代际（web/AGENTS.md「会在项目之间存活的 store 都有项目代际」）：`clear()` 换代（渲染条件在途中变了的
+ * `invalidateInflight()` 也换这一代），
  * `render()` 在请求进来那一刻记下它，回包（成功与失败两支）先对代际——换过就整个丢弃：
  * 不写 byKey、不挪 latest、不弹 toast / 确认框。只对 pj 不够：同名文件在两个项目里键完全
  * 相同，而 A → B → A 来回切时 pj 又对上了，旧回包照样会落进「新的」A。
@@ -602,6 +615,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
         })
         let perfHandle = -1
         const ctrl = new AbortController()
+        slot.abort = () => ctrl.abort()
         const timeoutMs = watchdogMs(fileId)
         let timedOut = false
         const watchdog = window.setTimeout(() => {
@@ -953,6 +967,12 @@ export const useRenderStore = create<RenderState>((set, get) => ({
     // **没驱逐就一个 set 都不发**：这个动作跟在每一次渲染成功后面，
     // 每次都写一遍 store 等于给同步 effect 造一轮空转
     if (byKey !== s.byKey) set({ byKey })
+  },
+
+  invalidateInflight: () => {
+    projectEpoch += 1
+    for (const slot of inflight.values()) slot.abort?.()
+    inflight.clear()
   },
 
   clear: () => {
