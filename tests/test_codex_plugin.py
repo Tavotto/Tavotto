@@ -1476,6 +1476,31 @@ def test_launcher_reuses_the_plugin_locator_instead_of_a_third_copy():
         )
 
 
+def test_every_read_only_interpreter_probe_in_the_launcher_passes_b():
+    """启动器里每一个「起解释器跑一句 `-c`」的只读探测都带 `-B`（Codex #717 / #724 连着几轮各抓到一处：
+    逐处补不如一把尺子）。判据按 AST：`subprocess.*` 的第一个参数是列表字面量、里面有 `"-c"` 的，必须
+    也有 `"-B"`。provision / 交棒那几处跑的不是 `-c`，不在此列。"""
+    src = (PLUGIN / "mcp" / "server.py").read_text(encoding="utf-8")
+    probes, missing = 0, []
+    for node in ast.walk(ast.parse(src)):
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "subprocess"
+            and node.args
+            and isinstance(node.args[0], ast.List)
+        ):
+            continue
+        consts = [e.value for e in node.args[0].elts if isinstance(e, ast.Constant)]
+        if "-c" in consts:
+            probes += 1
+            if "-B" not in consts:
+                missing.append(node.lineno)
+    assert probes >= 4, f"前提：尺子数得到那几处探测（{probes}）"
+    assert not missing, f"server.py 第 {missing} 行的只读探测没带 -B"
+
+
 def test_launcher_tells_desktop_only_users_the_truth():
     """**只装桌面版**要单独报，不能笼统说「没装 Tavotto」——他明明装了。
 
