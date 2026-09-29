@@ -1668,6 +1668,7 @@ def test_git_that_runs_but_fails_is_not_rerouted_to_a_download(no_git_machine, c
         "corrupt_member",
         "corrupt_lzma_member",
         "mode_drift",
+        "plugins_null",
     ],
 )
 def test_an_archive_that_does_not_verify_is_never_registered(no_git_machine, capsys, case):
@@ -1700,6 +1701,17 @@ def test_an_archive_that_does_not_verify_is_never_registered(no_git_machine, cap
         zip_bytes, manifest = _stable_branch_zip(m["tmp"], "0.18.0", tamper=other_branch)
         m["github"].publish(zip_bytes, manifest)
         expect = "收据"
+    elif case == "plugins_null":
+        # 市场清单是合法 JSON、`plugins` 却是 null：TypeError 也要是一行 JSON 失败（Codex #725）
+        def null_plugins(tree: Path):
+            mk = tree / ".agents" / "plugins" / "marketplace.json"
+            data = json.loads(mk.read_text(encoding="utf-8"))
+            data["plugins"] = None
+            mk.write_text(json.dumps(data), encoding="utf-8")
+
+        zip_bytes, manifest = _stable_branch_zip(m["tmp"], "0.18.0", tamper=null_plugins)
+        m["github"].publish(zip_bytes, manifest)
+        expect = "市场清单"
     elif case == "mode_drift":
         # 只有模式变了：启动器在压缩包里是 100644、清单仍写 100755。逐字节与 content_digest
         # 都按清单声明的模式算，照样一致——要单独比模式（Codex #725）
@@ -1961,6 +1973,17 @@ def test_a_failed_archive_attempt_still_reports_dirs_it_could_not_remove(
     assert rc == 1 and data["error_code"] == "marketplace_add_failed", data
     assert "sha256 对不上" in data["error"], data["error"]
     assert "删不掉的一次性目录" in data["error"] and ".staging-" in data["error"], data["error"]
+
+
+def test_a_cleanup_that_cannot_even_list_the_directory_reports_it(tmp_path):
+    """列不出数据目录（拒绝访问等）时不能回「没有残留」——一个都没看过，要把目录本身报成没收干净（Codex #725）。"""
+    sys.path.insert(0, str(SRC))
+    from tavotto.engine import codexinstall
+
+    not_a_dir = tmp_path / "base"
+    not_a_dir.write_text("x", encoding="utf-8")  # iterdir 抛 NotADirectoryError（OSError）
+    assert codexinstall._remove_one_shot_dirs(not_a_dir, not_a_dir / "dest") == [str(not_a_dir)]
+    assert codexinstall._remove_one_shot_dirs(tmp_path / "missing", tmp_path / "d") == []
 
 
 def test_a_read_failure_during_verification_is_a_one_line_failure(
