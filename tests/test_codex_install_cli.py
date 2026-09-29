@@ -1075,16 +1075,23 @@ def test_the_install_dir_is_the_version_codex_says_it_enabled(fake_codex, tmp_pa
     assert data["summary"]["plugin"]["install_dir"] == str(fake_codex["plugin"]), "恰好一份就认它"
 
 
-def test_a_local_source_plugin_is_located_by_the_reported_path(fake_codex, tmp_path):
-    """本地来源（指向工作副本的 marketplace）：PATH 列就是 Codex 加载的目录。"""
+def test_a_local_source_plugin_is_located_in_the_cache_codex_runs_from(fake_codex, tmp_path):
+    """本地来源（指向工作副本的 marketplace）：codex 0.157 的 `plugin add` 把插件复制进缓存、从缓存
+    起 server，`plugin list` 的路径仍报来源目录。安装目录（钉 command、体检的对象）是缓存里那个版本；
+    缓存里没有那个版本（老客户端从来源直接加载）时才认报的路径（Codex #725 P1）。"""
     local = tmp_path / "workcopy" / "codex-plugin"
     import shutil
 
     shutil.copytree(fake_codex["plugin"], local)
-    assert _run(["codex", "install", "--json"], {"FAKE_CODEX_PLUGIN_PATH": str(local)})[0] == 0
-    rc, data, err = _doctor_json({"FAKE_CODEX_PLUGIN_PATH": str(local)})
+    env = {"FAKE_CODEX_PLUGIN_PATH": str(local)}
+    assert _run(["codex", "install", "--json"], env)[0] == 0
+    rc, data, err = _doctor_json(env)
     assert rc == 0, err
-    assert data["summary"]["plugin"]["install_dir"] == str(local)
+    assert data["summary"]["plugin"]["install_dir"] == str(fake_codex["plugin"]), "该是缓存那份"
+    shutil.rmtree(fake_codex["plugin"])
+    rc, data, err = _doctor_json(env)
+    assert rc == 0, err
+    assert data["summary"]["plugin"]["install_dir"] == str(local), "缓存里没有才认来源"
 
 
 def test_a_text_only_client_still_gets_a_correct_diagnosis(fake_codex):
@@ -1559,6 +1566,9 @@ def test_without_git_install_falls_back_to_the_verified_branch_archive(no_git_ma
     assert s["channel"]["channel"] == "stable-archive", s
     assert s["archive"]["commit"] == _BRANCH_SHA and s["archive"]["version"] == "0.18.0"
     assert s["plugin"]["state"] == "installed" and s["plugin"]["version"] == "0.18.0"
+    # 钉 / 体检的对象是 Codex 起 server 的缓存那份，不是本地市场里的来源（Codex #725 P1）
+    cache = m["codex_home"] / "plugins" / "cache" / "tavotto" / "tavotto" / "0.18.0"
+    assert s["plugin"]["install_dir"] == str(cache), s["plugin"]
     assert s["canvas"]["complete"] is True and s["canvas"]["verified_against_manifest"] is True
     steps = {st["step"]: st for st in data["steps"]}
     assert "压缩包" in steps["marketplace"]["detail"], steps["marketplace"]
@@ -1945,6 +1955,25 @@ def test_a_backup_left_between_the_two_replaces_is_restored_not_deleted(no_git_m
     assert not backup.exists()
     receipt = json.loads((dest / "plugin-release.json").read_text(encoding="utf-8"))
     assert receipt["version"] == "0.18.0" and dest.name == brand.CODEX_PLUGIN_STABLE_ARCHIVE_DIR
+
+
+def test_upgrade_recovers_a_stranded_backup_before_classifying_the_channel(no_git_machine, capsys):
+    """上一次换目录时被杀在两次 replace 之间：Codex 登记的本地市场目录不在、已核对的那份在 `.old-*`。
+    upgrade 要先挪回再判通道——不然收据读不到、通道判成自定义，永远「不替你升级」（Codex #725）。"""
+    from tavotto.engine import codexinstall
+
+    m = no_git_machine
+    z1, man1 = _stable_branch_zip(m["tmp"], "0.18.0")
+    m["github"].publish(z1, man1)
+    assert _cli_json(m, capsys, "install")[0] == 0
+    dest = codexinstall.archive_marketplace_dir()
+    backup = dest.parent / ".old-4242"
+    os.replace(dest, backup)
+    rc, data = _cli_json(m, capsys, "upgrade")
+    assert rc == 0 and data["ok"], data
+    assert data["summary"]["marketplace"]["recovered_from_backup"] is True, data["summary"]
+    assert data["summary"]["channel"]["channel"] == "stable-archive", data["summary"]["channel"]
+    assert dest.is_dir() and not backup.exists()
 
 
 def test_a_failed_archive_attempt_still_reports_dirs_it_could_not_remove(

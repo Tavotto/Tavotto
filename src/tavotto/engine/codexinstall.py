@@ -495,26 +495,27 @@ def _plugin_state(codex: str) -> dict:
 def locate_installed_plugin(state: dict) -> tuple[Path | None, str, str]:
     """已装副本在哪：(目录, 说明, 错误码)。
 
-    先信客户端自己报的路径（`plugin list` 的 PATH 列）；报不出来时才看缓存——而且
-    只看我们 marketplace 名下那一层，**恰好一个**才认。多个版本并存（升级后旧缓存
-    还在）时不按最高版本号猜：Codex 用哪个由它说了算，这里报歧义并把候选列出来。
+    先认缓存里 Codex 报的那个版本（`cache/<marketplace>/<plugin>/<版本>`）——**本地来源也一样**：
+    codex 0.157 的 `plugin add` 把本地市场里的插件复制进缓存、从缓存起 server（"Installed plugin
+    root: …/plugins/cache/tavotto/tavotto/0.17.0"），`plugin list` 的 `source.path` 仍报来源目录。
+    钉、体检都得落在缓存那份上，否则 command 钉在来源、Codex 照旧起缓存里没改过的启动器（Codex #725 P1）。
+    缓存里没有那个版本（老客户端直接从来源加载）才信报的路径；再报不出来时缓存里**恰好一个**才认。
+    多个版本并存（升级后旧缓存还在）时不按最高版本号猜：Codex 用哪个由它说了算，报歧义并把候选列出来。
     """
-    # 1. 本地来源（local marketplace 里的插件目录）：PATH 列就是它加载的那个目录。
-    #    **git 来源时 PATH 列是来源描述**（`file://…, path \`codex-plugin\`, ref …`，
-    #    codex 0.151 实测），不是路径——所以只在它确实是一份插件目录时才信。
+    cached = cached_plugin_dirs()
+    version = state.get("version")
+    # 1. 缓存里 Codex 报的那个版本（git / npm / 本地来源都装进这里；目录名 == 版本号，codex 0.151/0.157 实测）
+    if version:
+        by_version = [p for p in cached if p.name == version]
+        if len(by_version) == 1:
+            return by_version[0], f"Codex 启用的版本 {version}：{by_version[0]}", ""
+    # 2. 缓存里没有：报的路径确实是一份插件目录时才信（**git 来源时它是来源描述**，
+    #    `file://…, path \`codex-plugin\`, ref …`，codex 0.151 实测，不是路径）
     reported = state.get("path")
     if reported:
         p = Path(reported)
         if p.is_dir() and _is_our_plugin_dir(p):
             return p, f"Codex 报的安装路径：{p}", ""
-    # 2. git / npm 来源：Codex 装进 cache/<marketplace>/<plugin>/<版本>，`plugin list`
-    #    报的 version 就是它此刻启用的那一份（目录名 == 版本号，codex 0.151 实测）。
-    cached = cached_plugin_dirs()
-    version = state.get("version")
-    if version:
-        by_version = [p for p in cached if p.name == version]
-        if len(by_version) == 1:
-            return by_version[0], f"Codex 启用的版本 {version}：{by_version[0]}", ""
     # 3. 版本也报不出来：缓存里恰好一份才认；零份或多份都是歧义，不猜
     if len(cached) == 1:
         return cached[0], f"缓存里唯一一份：{cached[0]}", ""
@@ -1251,14 +1252,36 @@ def _upgrade_marketplace_step(codex: str, mk: dict, summary: dict) -> dict:
     return _step("marketplace", ok=True, detail=out[-200:] or "已刷新 git 市场快照")
 
 
+def _recover_managed_marketplace(root: str | None) -> bool:
+    """Codex 登记的是 `tavotto codex install` 建的那个本地市场、目录却不在：上一次换目录时在两次
+    replace 之间被杀，已核对的那份还在 `.old-*` 里。先挪回去，再判通道——不然目录不在、收据读不到，
+    通道判成 unknown / custom，`upgrade` 永远「不替你升级」，恢复那一步也走不到（Codex #725）。
+    回是否挪回了。"""
+    if not root:
+        return False
+    dest = archive_marketplace_dir()
+    same = os.path.normcase(os.path.realpath(root)) == os.path.normcase(os.path.realpath(dest))
+    if not same or dest.exists():
+        return False
+    _remove_one_shot_dirs(dest.parent, dest)
+    return dest.exists()
+
+
 def _marketplace_step(codex: str, *, apply: bool, summary: dict, upgrade: bool = False) -> dict:
     mk = _marketplace_state(codex)
+    # 只读的 doctor 不挪目录；install / upgrade 才恢复
+    recovered = (
+        (apply or upgrade)
+        and mk["state"] == "registered"
+        and _recover_managed_marketplace(mk.get("root"))
+    )
     summary["marketplace"] = {
         "registered": mk["state"] == "registered",
         "state": mk["state"],
         "source_type": mk.get("source_type"),
         "source": mk.get("source"),
         "root": mk.get("root"),
+        "recovered_from_backup": bool(recovered),
     }
     if mk["state"] == "unknown":
         # 「不知道」不是「没有」：这时候跑 add 是盲改
