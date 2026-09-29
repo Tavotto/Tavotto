@@ -261,9 +261,12 @@ def test_an_existing_user_matplotlib_dir_is_kept(fake_home, tmp_path):
     渲染他的脚本时认得他的配置；我们不在数据目录外**新建**任何东西。"""
     # 平台上 matplotlib 真正读配置的那个位置（Linux / FreeBSD 是 XDG 的 `~/.config/matplotlib`，别处
     # `~/.matplotlib`）：写死 `~/.matplotlib` 在 Linux 上量的是 matplotlib 根本不读的目录
-    mine = Path(runtime._user_matplotlib_dirs()[0])
-    assert str(mine).startswith(str(fake_home)), "前提：假家目录生效"
-    mine.mkdir(parents=True)
+    # Linux 上配置与缓存两个目录都在才算「他的目录都在」（只在其一的两种情形见下面 #723 那两条）
+    dirs = [Path(d) for d in runtime._user_matplotlib_dirs()]
+    mine = dirs[0]
+    assert all(str(d).startswith(str(fake_home)) for d in dirs), "前提：假家目录生效"
+    for d in dirs:
+        d.mkdir(parents=True)
     (mine / "matplotlibrc").write_text("lines.linewidth: 7\n", encoding="utf-8")
     py = _owned_python(tmp_path)
     env = runtime.owned_env(py)
@@ -277,6 +280,127 @@ def test_an_existing_user_matplotlib_dir_is_kept(fake_home, tmp_path):
         check=True,
     ).stdout.strip()
     assert out == "7.0"
+
+
+_XDG = pytest.mark.skipif(
+    not sys.platform.startswith(("linux", "freebsd")),
+    reason="只有 Linux / FreeBSD 上 matplotlib 的配置与缓存是两个 XDG 目录（#723）",
+)
+
+
+def _xdg_home(fake_home: Path, monkeypatch) -> tuple[Path, Path]:
+    """注入的 XDG 位置（在假家目录里，`_home_entries` 看得见它们下面多出的东西）：
+    返回用户的 matplotlib 配置目录、缓存目录（都还不存在）。"""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(fake_home / "xdg-config"))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(fake_home / "xdg-cache"))
+    config, cache = (Path(d) for d in runtime._user_matplotlib_dirs())
+    assert config == fake_home / "xdg-config" / "matplotlib", "前提：注入的 XDG_CONFIG_HOME 生效"
+    assert cache == fake_home / "xdg-cache" / "matplotlib", "前提：注入的 XDG_CACHE_HOME 生效"
+    return config, cache
+
+
+_STYLE_PROBE = (
+    "import matplotlib, matplotlib.pyplot as plt;"
+    " print(matplotlib.rcParams['lines.linewidth']);"
+    " plt.style.use('mine'); print(matplotlib.rcParams['lines.color'])"
+)
+
+
+@_XDG
+def test_linux_config_dir_only_keeps_the_config_and_caches_inside_the_data_dir(
+    fake_home, tmp_path, monkeypatch
+):
+    """#723：用户只有 `~/.config/matplotlib`（matplotlibrc + stylelib）、没有 `~/.cache/matplotlib`。
+    受管环境上真跑体检（worker.py → matplotlib 建字体缓存）与一段用他样式的脚本：他的 matplotlibrc /
+    stylelib 照样生效，字体缓存在数据目录里，他的 XDG 缓存位置没有被新建。"""
+    config, cache = _xdg_home(fake_home, monkeypatch)
+    (config / "stylelib").mkdir(parents=True)
+    (config / "matplotlibrc").write_text("lines.linewidth: 7\n", encoding="utf-8")
+    (config / "stylelib" / "mine.mplstyle").write_text("lines.color: 00ff00\n", encoding="utf-8")
+    before = _home_entries(fake_home)
+    py = _owned_python(tmp_path)
+
+    info = projectenv.probe_environment(py)
+    assert info.get("tavotto_worker_ok") is True, info
+    env = runtime.owned_env(py)
+    assert env is not None
+    out = subprocess.run(
+        [py, "-B", "-c", _STYLE_PROBE],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        env=env,
+        check=True,
+    ).stdout.split()
+    assert out == ["7.0", "#00ff00"], "用户的 matplotlibrc / stylelib 在受管环境里失效了"
+    assert list(Path(env["MPLCONFIGDIR"]).glob("fontlist-*.json")), "字体缓存不在 MPLCONFIGDIR"
+    assert Path(env["MPLCONFIGDIR"]).parent == tmp_path / "data" / "cache"
+    assert not cache.exists(), "在数据目录之外新建了 matplotlib 缓存目录"
+    assert _home_entries(fake_home) == before
+
+
+@_XDG
+def test_linux_cache_dir_only_creates_no_config_dir_outside_the_data_dir(
+    fake_home, tmp_path, monkeypatch
+):
+    """#723 的反方向：用户只有 `~/.cache/matplotlib`、没有配置目录——没有要保留的配置，缓存进
+    `<data_dir>/cache/mpl`；matplotlib import 时不在他的 XDG 配置位置新建目录。"""
+    config, cache = _xdg_home(fake_home, monkeypatch)
+    cache.mkdir(parents=True)
+    (cache / "keep").write_text("", encoding="utf-8")
+    before = _home_entries(fake_home)
+    py = _owned_python(tmp_path)
+
+    info = projectenv.probe_environment(py)
+    assert info.get("tavotto_worker_ok") is True, info
+    assert list((tmp_path / "data" / "cache" / "mpl").glob("fontlist-*.json"))
+    assert not config.exists(), "在数据目录之外新建了 matplotlib 配置目录"
+    assert _home_entries(fake_home) == before
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="符号链接在 Windows 上要特权；这一支只有 Linux 走"
+)
+@pytest.mark.parametrize(
+    ("has_config", "has_cache", "expected"),
+    [
+        (False, False, "mpl"),
+        (False, True, "mpl"),
+        (True, False, runtime.MPL_LINKED_CONFIG_DIRNAME),
+        (True, True, None),
+    ],
+)
+def test_xdg_config_and_cache_are_judged_separately(
+    has_config, has_cache, expected, fake_home, tmp_path, monkeypatch
+):
+    """`_owned_mplconfigdir` 的四格（在任何 POSIX 上都跑：XDG 两个位置是注入的，不靠宿主平台）；
+    只有配置目录那一格，链接指回用户的 matplotlibrc / stylelib，`XDG_CONFIG_HOME` 换了就跟着换。"""
+    config, cache = fake_home / "cfg" / "matplotlib", fake_home / "cch" / "matplotlib"
+    monkeypatch.setattr(runtime, "_xdg_matplotlib_dirs", lambda: (str(config), str(cache)))
+    if has_config:
+        config.mkdir(parents=True)
+    if has_cache:
+        cache.mkdir(parents=True)
+    data_cache = tmp_path / "data" / "cache"
+    py = str(tmp_path / "data" / "environments" / "p" / "envs" / "g1" / "bin" / "python")
+
+    env = runtime.owned_env(py)
+    assert env is not None
+    if expected is None:
+        assert "MPLCONFIGDIR" not in env
+        return
+    assert env["MPLCONFIGDIR"] == str(data_cache / expected)
+    if expected == runtime.MPL_LINKED_CONFIG_DIRNAME:
+        linked = data_cache / expected
+        for name in ("matplotlibrc", "stylelib"):
+            assert os.readlink(linked / name) == str(config / name), name
+        moved = fake_home / "cfg2" / "matplotlib"
+        moved.mkdir(parents=True)
+        monkeypatch.setattr(runtime, "_xdg_matplotlib_dirs", lambda: (str(moved), str(cache)))
+        runtime.owned_env(py)
+        assert os.readlink(linked / "matplotlibrc") == str(moved / "matplotlibrc")
+    monkeypatch.setenv("MPLCONFIGDIR", str(tmp_path / "theirs"))
+    assert "MPLCONFIGDIR" not in (runtime.owned_env(py, base={}) or {}), "用户自己设的要让"
 
 
 def test_every_worker_spawn_path_gets_the_owned_env(fake_home, tmp_path, monkeypatch):

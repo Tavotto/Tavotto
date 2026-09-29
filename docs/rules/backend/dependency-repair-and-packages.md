@@ -68,8 +68,11 @@
   插件里那几个探测自己也带 `-B`。Tavotto 自己建的解释器（`runtime.is_owned_python`：只认数据目录下 `OWNED_ENV_DIRNAMES` 那几个目录——
   数据目录可以是 `$HOME` 这种不专用的祖先，那下面的 `~/.pyenv` 不算；受管环境各代、
   worker-env、私有 Python）起子进程一律 `runtime.owned_env()`：`PIP_CACHE_DIR` → `<data_dir>/cache/pip`（只改
-  位置，用户 pip 配置照常生效、`no-cache-dir` 照常压过它），用户一个 matplotlib 目录都没有时
-  `MPLCONFIGDIR` → `<data_dir>/cache/mpl`（有就沿用：里面可能有他的 matplotlibrc / stylelib）；worker 的
+  位置，用户 pip 配置照常生效、`no-cache-dir` 照常压过它）；`MPLCONFIGDIR`（`runtime._owned_mplconfigdir`）
+  保留用户已有的配置、缓存不在数据目录外新建：他的 matplotlib 目录在就沿用（里面可能有 matplotlibrc / stylelib），
+  没有就 `<data_dir>/cache/mpl`；Linux / FreeBSD 上配置与缓存是两个 XDG 目录、分别判断（#723）——只有配置目录时
+  改到 `<data_dir>/cache/mpl-userconfig`（符号链接指回他的 matplotlibrc / stylelib），只有缓存目录时 `cache/mpl`；
+  不改 `XDG_CACHE_HOME`（会搬走用户脚本里其它库的缓存）；worker 的
   三条 spawn 路径只从 `pool.worker_env()` 取。用户的环境原样继承。看护 `tests/test_probe_leaves_no_trace.py`
   （PYTHONPATH 上的 `sitecustomize` 当传感器、先证明它是活的；新增入口就在 `_PROBES` / `_OWNED_SPAWNS` 加一行）。
 - **体检的主语是 worker 的启动导入链**（#435）：`_PROBE_SRC` 执行的是 `worker.py`

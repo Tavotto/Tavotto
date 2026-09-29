@@ -27,6 +27,7 @@ import os
 import platform
 import subprocess
 import sys
+import threading
 
 RUNTIME_DIR_NAME = "runtime"
 MANIFEST_NAME = "runtime-manifest.json"
@@ -641,19 +642,108 @@ def is_owned_python(python: str | os.PathLike | None) -> bool:
     )
 
 
+def _xdg_matplotlib_dirs() -> tuple[str, str] | None:
+    """Linux / FreeBSD 上用户自己的 matplotlib **配置目录、缓存目录**（两个分开的 XDG 位置，
+    matplotlib `_get_xdg_config_dir` / `_get_xdg_cache_dir`）；别的平台回 None（配置与缓存是同一个目录）。"""
+    if not sys.platform.startswith(("linux", "freebsd")):
+        return None
+    home = os.path.expanduser("~")
+    config_home = os.environ.get("XDG_CONFIG_HOME") or os.path.join(home, ".config")
+    cache_home = os.environ.get("XDG_CACHE_HOME") or os.path.join(home, ".cache")
+    return os.path.join(config_home, "matplotlib"), os.path.join(cache_home, "matplotlib")
+
+
 def _user_matplotlib_dirs() -> list[str]:
     """这台机器上用户自己的 matplotlib 配置 / 缓存目录**可能在哪**（matplotlib
     `_get_config_or_cache_dir` 的平台分支；Windows 上 3.11 起默认 `%LOCALAPPDATA%\\matplotlib`，
-    老目录 `~/.matplotlib` 在就沿用它）。"""
+    老目录 `~/.matplotlib` 在就沿用它）。Linux / FreeBSD 上第一个是配置目录、第二个是缓存目录。"""
+    xdg = _xdg_matplotlib_dirs()
+    if xdg is not None:
+        return list(xdg)
     home = os.path.expanduser("~")
-    if sys.platform.startswith(("linux", "freebsd")):
-        config_home = os.environ.get("XDG_CONFIG_HOME") or os.path.join(home, ".config")
-        cache_home = os.environ.get("XDG_CACHE_HOME") or os.path.join(home, ".cache")
-        return [os.path.join(config_home, "matplotlib"), os.path.join(cache_home, "matplotlib")]
     out = [os.path.join(home, ".matplotlib")]
     if sys.platform == "win32" and os.environ.get("LOCALAPPDATA"):
         out.append(os.path.join(os.environ["LOCALAPPDATA"], "matplotlib"))
     return out
+
+
+#: matplotlib 从配置目录读的全部东西（`matplotlib_fname` 的 `<configdir>/matplotlibrc`、
+#: `matplotlib.style` 的 `USER_LIBRARY_PATHS = [<configdir>/stylelib]`；3.11 源码里 `get_configdir()`
+#: 只有这两处消费者，其余读写都走 `get_cachedir()`）。
+_MPL_CONFIG_ENTRIES = ("matplotlibrc", "stylelib")
+
+#: 用户只有 matplotlib 配置目录、没有缓存目录时（Linux / FreeBSD）给受管环境用的 `MPLCONFIGDIR`：
+#: `<data_dir>/cache/` 下的这个目录，里面是指回用户配置的符号链接（`_linked_mpl_config_dir`）。
+#: 不与 `cache/mpl` 共用——那一个也是内置 runtime 的（`child_env()`），内置 runtime 不吃用户的 matplotlibrc。
+MPL_LINKED_CONFIG_DIRNAME = "mpl-userconfig"
+
+
+def _linked_mpl_config_dir(cache: str, user_config: str) -> str | None:
+    """`<cache>/mpl-userconfig`，里面 `matplotlibrc` / `stylelib` 是指向 `user_config` 下同名项的符号链接。
+
+    **链接不是拷贝**：用户之后改了 matplotlibrc、往 stylelib 里加了样式，下一次起进程就认得（拷贝会
+    悄悄过期）；matplotlib 只读这两项、从不往里写（字体缓存 / tex 缓存写在 `get_cachedir()` 也就是这个
+    目录本身，是真文件，不穿过链接）。用户没有的那一项也照样链上（悬空链接：`matplotlib_fname` 用
+    `os.path.exists` 判、`stylelib` 用 `Path.glob`，两者对悬空链接都等于「没有」），他以后建了就生效。
+    `XDG_CONFIG_HOME` 变了就原子地换成新目标（临时名建链接再 `os.replace`，并发起进程互不踩）。
+
+    建不出来（文件系统不支持符号链接、没有权限）回 None：宁可让缓存落在用户自己的 XDG 位置，
+    也不让他的配置在 Tavotto 里悄悄失效——渲染错了比多一个缓存目录更坏。"""
+    root = os.path.join(cache, MPL_LINKED_CONFIG_DIRNAME)
+    try:
+        os.makedirs(root, exist_ok=True)
+        for name in _MPL_CONFIG_ENTRIES:
+            link = os.path.join(root, name)
+            target = os.path.join(user_config, name)
+            try:
+                if os.readlink(link) == target:
+                    continue
+            except OSError:
+                pass  # 不存在，或不是链接：下面整个换掉
+            tmp = f"{link}.{os.getpid()}.{threading.get_ident()}.tmp"
+            try:
+                os.unlink(tmp)
+            except FileNotFoundError:
+                pass
+            os.symlink(target, tmp)
+            os.replace(tmp, link)
+    except OSError:
+        return None
+    return root
+
+
+def _owned_mplconfigdir(cache: str) -> str | None:
+    """Tavotto 自己的环境该用的 `MPLCONFIGDIR`；None = 不改道（用 matplotlib 自己的默认位置）。
+
+    matplotlib 只有 `MPLCONFIGDIR` 一个开关，它**同时**决定配置目录与缓存目录。原则：用户已有的配置
+    照样生效，缓存不在数据目录之外**新建**。
+
+    * 用户自己设了 `MPLCONFIGDIR`：一律不动。
+    * macOS / Windows：配置与缓存是同一个目录——在就沿用（里面可能有他的 matplotlibrc / stylelib，
+      而那个目录本来就是他的 matplotlib 在用的），不在就 `cache/mpl`。
+    * Linux / FreeBSD（#723）：配置（`~/.config/matplotlib`）与缓存（`~/.cache/matplotlib`）是两个
+      XDG 位置，分别判断——
+        - 两个都在：沿用，一个都不新建；
+        - 没有配置目录（不论缓存在不在）：没有要保留的配置，`cache/mpl`。沿用的话 matplotlib
+          import 时（`matplotlib_fname` → `get_configdir()` 会 mkdir）就在数据目录外新建配置目录；
+          代价是他已有的字体缓存用不上、在数据目录里重建一次；
+        - 只有配置目录：`cache/mpl-userconfig`，链接回他的 matplotlibrc / stylelib
+          （`_linked_mpl_config_dir`）。**不改 `XDG_CACHE_HOME`**：那会把用户脚本里其它库
+          （pip、fontconfig、huggingface……）的缓存一起搬走。
+    """
+    if os.environ.get("MPLCONFIGDIR"):
+        return None
+    default = os.path.join(cache, "mpl")
+    xdg = _xdg_matplotlib_dirs()
+    if xdg is None:
+        return None if any(os.path.isdir(d) for d in _user_matplotlib_dirs()) else default
+    config, user_cache = xdg
+    has_config, has_cache = os.path.isdir(config), os.path.isdir(user_cache)
+    if has_config and has_cache:
+        return None
+    if not has_config:
+        return default
+    return _linked_mpl_config_dir(cache, config)
 
 
 def owned_env(
@@ -670,13 +760,11 @@ def owned_env(
       关掉缓存（`no-cache-dir`，配置文件或 `PIP_NO_CACHE_DIR`）时 pip 仍然不缓存——
       实测 `no-cache-dir` 压过 `PIP_CACHE_DIR`。缓存照样跨次复用，重复安装的速度与原来
       一样；只是升级到这一版后第一次安装用不上旧位置那份。
-    * `MPLCONFIGDIR` → `cache/mpl`：matplotlib 3.11 在 Windows 上默认建 `%LOCALAPPDATA%\\matplotlib`
-      写字体缓存。**只在用户自己一个 matplotlib 目录都没有时改道**：有的话那里可能放着
-      他的 `matplotlibrc` / `stylelib`（受管环境跑的是他的脚本，`plt.style.use("我的样式")`
-      得认得），而那个目录本来就是他的 matplotlib 在用的，不是我们新建的。用户自己设了
-      `MPLCONFIGDIR` 的一律不动。
+    * `MPLCONFIGDIR`：matplotlib 3.11 在 Windows 上默认建 `%LOCALAPPDATA%\\matplotlib`
+      写字体缓存。改不改道、改到哪见 `_owned_mplconfigdir`：用户已有的配置照样生效
+      （受管环境跑的是他的脚本，`plt.style.use("我的样式")` 得认得），缓存不在数据目录外新建。
 
-    清理：两者都在数据目录里，删 Tavotto 的数据目录就一并删掉（与受管环境 `envs/`、
+    清理：都在数据目录里，删 Tavotto 的数据目录就一并删掉（与受管环境 `envs/`、
     私有 Python 同一个归宿），不在数据目录之外留任何东西。
     """
     if not is_owned_python(python):
@@ -686,12 +774,11 @@ def owned_env(
     env = dict(base if base is not None else os.environ)
     cache = os.path.join(str(config.data_dir()), "cache")
     env["PIP_CACHE_DIR"] = os.path.join(cache, "pip")
-    if not os.environ.get("MPLCONFIGDIR") and not any(
-        os.path.isdir(d) for d in _user_matplotlib_dirs()
-    ):
-        env["MPLCONFIGDIR"] = os.path.join(cache, "mpl")
+    mpl = _owned_mplconfigdir(cache)
+    if mpl is not None:
+        env["MPLCONFIGDIR"] = mpl
         try:
-            os.makedirs(env["MPLCONFIGDIR"], exist_ok=True)
+            os.makedirs(mpl, exist_ok=True)
         except OSError:
             pass
     return env
