@@ -65,6 +65,9 @@
   （`alignEntries` 把组展开成成员 → `startElementGroupMove` / `startGroupResize` /
   `ScaleField`）：参照框是成员 position（figure 分数、bottom-origin 存储）的并集，
   平移是同一个分数位移，缩放按手柄方向钉住对边、成员线性重映射进新框。
+- 选中组按方向键微调（ADR 0093）= 整组平移：`nudge.moverFor` 先 `expandGroups` 再走
+  `groupMove`，与拖组里任一成员同一套；不能整体挪的组展开为空，照旧「不能移动」。
+- constrained 图上每个成员（含色条轴）各自被 ADR 0100 的排版钉位钉住，组外子图不被挤动。
 - 有成员落位不归 Tavotto 管（插图、寄生轴：`resizable: false`）的组不展开、不给手柄。
 - 多宿主色条不再进任何一个宿主的 `follow_gids`：单独拖 B，C 与色条都不动；重新布局后
   归属仍按声明推出，不会被重新挂到 B。
