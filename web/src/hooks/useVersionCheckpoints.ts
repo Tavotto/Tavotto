@@ -50,6 +50,8 @@ export function startVersionCheckpoints(): () => void {
   // 「这份排版的时间线上别挤得太密」。共用一个时间戳的话，在 A 里保存完切到 B，B 第一次
   // 停顿满 15 s 也要等 A 的 2 分钟走完，B 的时间线平白缺一段
   const lastSaved = new Map<string, number>()
+  /** 自动节点在路上的上下文：回来之前不发第二个（间隔只在写成之后才记） */
+  const inFlight = new Set<string>()
 
   const fire = () => {
     const ctx = currentTimelineCtx()
@@ -59,10 +61,19 @@ export function startVersionCheckpoints(): () => void {
       return
     }
     if (!useDocumentStore.getState().doc.objects.length) return
-    lastSaved.set(ctx, Date.now())
-    void takeCheckpoint({ auto: true }).catch(() => {
-      /* 自动节点失败不打扰编辑；下一轮改动会再试 */
-    })
+    if (inFlight.has(ctx)) return // 这份排版上一个自动节点还在路上：它回来之前不再发第二个
+    inFlight.add(ctx)
+    void takeCheckpoint({ auto: true })
+      .then((res) => {
+        // **写成了才重新计间隔**（Codex #679）：请求没成（网络 / 磁盘的一时错误）就不动，
+        // 下一次停顿满 15 s 照常重试——先记上的话，一次失败换来 2 分钟的空白。
+        // 服务端判重（内容与上一个节点相同、`skipped`）也算：这一刻的内容已经在时间线上了
+        if (res?.version || res?.skipped) lastSaved.set(ctx, Date.now())
+      })
+      .catch(() => {
+        /* 自动节点失败不打扰编辑；下一轮改动会再试 */
+      })
+      .finally(() => inFlight.delete(ctx))
   }
 
   // 关键时刻：导出 / 写回 / 保存 / 打开 / 关闭 / 恢复前。**不去重**（服务器端也不），

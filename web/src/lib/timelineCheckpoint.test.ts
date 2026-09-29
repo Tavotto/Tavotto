@@ -29,12 +29,26 @@ interface Post {
 }
 const posts: Post[] = []
 let seq = 0
+/** 下一次创建节点的请求怎么回：`fail` = 500，`skip` = 服务端判重 */
+let nextCreate: 'fail' | 'skip' | null = null
+let createAttempts = 0
 
 beforeEach(async () => {
   posts.length = 0
+  nextCreate = null
+  createAttempts = 0
   localStorage.clear()
   globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
+    if (String(url).includes('/api/versions/') && init?.method === 'POST' && nextCreate) {
+      createAttempts += 1
+      const how = nextCreate
+      nextCreate = null
+      return how === 'fail'
+        ? new Response(JSON.stringify({ error: '磁盘一时写不进' }), { status: 500 })
+        : new Response(JSON.stringify({ skipped: true, version: { id: 'v_prev' } }), { status: 200 })
+    }
     if (String(url).includes('/api/versions/') && init?.method === 'POST') {
+      createAttempts += 1
       posts.push({
         url: String(url),
         headers: (init.headers ?? {}) as Record<string, string>,
@@ -267,6 +281,34 @@ describe('自动节点的间隔（2 分钟）', () => {
     stop()
     expect(posts).toHaveLength(2)
     expect(posts[1].url).toContain('d_cp_b')
+  })
+
+  it('自动节点没写成（请求失败）不记间隔：下一次停顿满 15 s 就重试（Codex #679）', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    const stop = startVersionCheckpoints()
+    nextCreate = 'fail'
+    edit('t1')
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS + 10)
+    expect(createAttempts).toBe(1)
+    expect(posts).toHaveLength(0)
+    edit('t2')
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS + 10)
+    stop()
+    expect(createAttempts).toBe(2)
+    expect(posts).toHaveLength(1)
+  })
+
+  it('服务端判重（内容已经在时间线上）算写成：照常重新计间隔', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    const stop = startVersionCheckpoints()
+    nextCreate = 'skip'
+    edit('t1')
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS + 10)
+    expect(createAttempts).toBe(1)
+    edit('t2')
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS + 10)
+    stop()
+    expect(createAttempts).toBe(1) // 还没满 2 分钟
   })
 
   it('对照：同一份排版里 2 分钟的间隔照旧', async () => {
