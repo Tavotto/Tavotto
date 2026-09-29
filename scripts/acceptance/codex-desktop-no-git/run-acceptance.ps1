@@ -165,8 +165,12 @@ switch ($Step) {
             Invoke-WebRequest https://github.com/Tavotto/Tavotto/archive/refs/heads/plugin-stable.zip -OutFile "$env:TEMP\tavotto-plugin-stable.zip"
             Expand-Archive "$env:TEMP\tavotto-plugin-stable.zip" $dir -Force
             $ErrorActionPreference = 'Continue'
-            & $codex plugin marketplace add "$dir\Tavotto-plugin-stable" 2>&1 | ForEach-Object { "$_" }; "exit=$LASTEXITCODE"
-            & $codex plugin add tavotto@tavotto 2>&1 | ForEach-Object { "$_" }; "exit=$LASTEXITCODE"
+            & $codex plugin marketplace add "$dir\Tavotto-plugin-stable" 2>&1 | ForEach-Object { "$_" }
+            $rcMarket = $LASTEXITCODE; "exit=$rcMarket"
+            & $codex plugin add tavotto@tavotto 2>&1 | ForEach-Object { "$_" }
+            $rcAdd = $LASTEXITCODE; "exit=$rcAdd"
+            # pass criteria: both codex commands exit 0 -- a failure fails the step, not just prints
+            if ($rcMarket -ne 0 -or $rcAdd -ne 0) { throw "manual: codex exited $rcMarket / $rcAdd" }
         }
         finally { $env:CODEX_HOME = $savedHome }
         Invoke-Probe $h 'manual'
@@ -174,7 +178,12 @@ switch ($Step) {
     'userhome' {
         $before = Get-Content -Raw (Join-Path $Root 'user-codex.before')
         $now = Get-UserCodexFingerprint
-        if ($before.Trim() -eq $now.Trim()) { 'PASS: user .codex unchanged' } else { 'FAIL: user .codex changed'; Compare-Object ($before -split "`n") ($now -split "`n") }
+        if ($before.Trim() -eq $now.Trim()) { 'PASS: user .codex unchanged' }
+        else {
+            'FAIL: user .codex changed'
+            Compare-Object ($before -split "`n") ($now -split "`n") | Out-String
+            throw 'userhome: user .codex fingerprint changed'
+        }
     }
     'cleanup' {
         Set-Location $env:USERPROFILE

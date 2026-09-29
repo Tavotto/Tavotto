@@ -1829,6 +1829,36 @@ def test_a_truncated_download_is_an_archive_error_not_a_traceback(monkeypatch):
         codexinstall._fetch("https://example.invalid/x.zip", limit=10)
 
 
+def test_one_shot_dirs_that_cannot_be_removed_are_reported_and_swept_next_time(
+    no_git_machine, capsys, monkeypatch
+):
+    """解包用的一次性目录删不掉（Windows 上杀软占着文件）：不静默留在数据目录里——这次的结果里说出来，
+    下一次运行开头再收掉，泄漏不跨次累积（Codex #725）。"""
+    from tavotto.engine import codexinstall
+
+    m = no_git_machine
+    z1, man1 = _stable_branch_zip(m["tmp"], "0.18.0")
+    m["github"].publish(z1, man1)
+    real = codexinstall.shutil.rmtree
+
+    def held(path, *a, **kw):
+        if Path(path).name.startswith(".staging-") and not kw.get("ignore_errors"):
+            raise PermissionError("held by antivirus")
+        return real(path, *a, **kw)
+
+    monkeypatch.setattr(codexinstall.shutil, "rmtree", held)
+    rc, data = _cli_json(m, capsys, "install")
+    assert rc == 0, data
+    steps = {st["step"]: st for st in data["steps"]}
+    assert "没删掉" in steps["marketplace"]["detail"], steps["marketplace"]
+    base = codexinstall.archive_marketplace_dir().parent
+    assert [p for p in base.iterdir() if p.name.startswith(".staging-")], "前提：留下了一个"
+    monkeypatch.setattr(codexinstall.shutil, "rmtree", real)
+    rc, data = _cli_json(m, capsys, "upgrade")
+    assert rc == 0, data
+    assert not [p for p in base.iterdir() if p.name.startswith((".staging-", ".old-"))]
+
+
 def test_upgrade_leaves_a_local_marketplace_it_did_not_create_alone(no_git_machine, capsys):
     """用户手动解压到别处再登记的本地市场：认得出是发行分支，但不替他覆盖那个目录。"""
     import zipfile
