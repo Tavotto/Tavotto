@@ -346,10 +346,10 @@ const HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i
  * `fieldOf` 与写入前的校验（`coerceTypography` 认的是 `field.options`）拿到的
  * 必须是同一份表，否则下拉里选得到、写下去却被判成「不是选项」。
  *
- * 首选项在前、本机的按引擎排好的序接在后面、去重；别的字段与没有本机表的
- * 老引擎原样返回（同一个对象，memo 不白白失效）。
+ * 首选项在前、本机的按引擎排好的序接在后面、去重；本机表里有的名字不再算不可用；别的字段、
+ * 没有本机表的老引擎、并完什么都没变的，原样返回（同一个对象，memo 不白白失效）。
  */
-export function withMachineFamilies<F extends Pick<EditableField, 'prop' | 'options'>>(
+export function withMachineFamilies<F extends Pick<EditableField, 'prop' | 'options' | 'options_unavailable'>>(
   field: F | undefined,
   families: readonly string[] | undefined,
 ): F | undefined {
@@ -357,7 +357,19 @@ export function withMachineFamilies<F extends Pick<EditableField, 'prop' | 'opti
   const own = field.options ?? []
   const seen = new Set(own)
   const extra = families.filter((f) => !seen.has(f))
-  return extra.length ? { ...field, options: [...own, ...extra] } : field
+  // 本机表里有的就**画得出**（引擎列本机表的判据就是「matplotlib 解析得到」）：字段级的
+  // `options_unavailable` 若还标着它，是字段那边判错了（刻度字体族曾按「不在首选项里」标，
+  // Codex #703），以本机表为准撤掉——属性页与设置 › 样式页都经这里，口径只有一份
+  const machine = new Set(families)
+  const missing = field.options_unavailable
+  const kept = missing?.filter((f) => !machine.has(f))
+  const missingChanged = !!missing && kept!.length !== missing.length
+  if (!extra.length && !missingChanged) return field
+  return {
+    ...field,
+    options: extra.length ? [...own, ...extra] : own,
+    ...(missingChanged ? { options_unavailable: kept } : {}),
+  }
 }
 
 export function coerceTypography(

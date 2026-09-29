@@ -53,7 +53,7 @@ import {
 } from './SettingRow'
 import { StyleSamplePreview } from './StyleSamplePreview'
 import { StyleProfileFields } from './StyleProfileFields'
-import { clearPath, readPath, writePath } from './profilePath'
+import { clearPath, rawValueText, readPath, writePath } from './profilePath'
 
 const st = (key: string, values?: Record<string, unknown>) =>
   translate(`profiles.${key}`, { ns: 'dialogs', ...(values ?? {}) })
@@ -112,7 +112,9 @@ function groupFields(fields: NumField[]): { group: string; fields: NumField[] }[
 
 /** 一个数值字段在**只读摘要**里长什么样。没设过时说「未设置」，不谎报一个数。 */
 function formatValue(raw: unknown, unit?: string): string {
-  if (typeof raw !== 'number' || !Number.isFinite(raw)) return st('unset')
+  if (raw === undefined) return st('unset')
+  // 认不出的值照原值说，不说成「未设置」（与样式页同一条，`rawValueText`）
+  if (typeof raw !== 'number' || !Number.isFinite(raw)) return rawValueText(raw)
   return unit ? `${raw} ${unit}` : String(raw)
 }
 
@@ -693,6 +695,8 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
                     {groupFields.map((f) => {
                       const raw = readPath(draft ?? {}, f.path)
                       const set = typeof raw === 'number' && Number.isFinite(raw)
+                      // 写着但控件认不出（导入的 `"12pt"`）：照原值显示、能清，不说成「未设置」
+                      const present = raw !== undefined
                       if (!editable) {
                         return (
                           <SummaryRow
@@ -710,6 +714,8 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
                           <NumberField
                             value={set ? (raw as number) : f.min}
                             mixed={!set}
+                            mixedPlaceholder={present && !set ? rawValueText(raw) : st('unset')}
+                            onClear={present ? () => setDraft((d) => (d ? clearPath(d, f.path) : d)) : undefined}
                             min={f.min}
                             max={f.max}
                             step={f.step}
@@ -720,7 +726,7 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
                             className="w-28"
                             onChange={(v) => setDraft((d) => (d ? writePath(d, f.path, v) : d))}
                           />
-                          {set && (
+                          {present && (
                             <IconButton
                               iconSize="sm"
                               label={st('clearField', { field: st(`field.${f.labelKey}`) })}

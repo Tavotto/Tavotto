@@ -13,7 +13,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { i18n } from '@/i18n'
 import { ProfilesSettings } from './ProfilesSettings'
-import { figureFamilyOptions, STYLE_TEXT_ROWS, type FigureFamilies, textSummary, useFigureFamilies } from './StyleProfileFields'
+import { figureFamilyOptions, lineSummary, STYLE_LINE_ROWS, STYLE_TEXT_ROWS, type FigureFamilies, textSummary, useFigureFamilies } from './StyleProfileFields'
 import { useRenderStore, type PanelRender } from '@/store/renderStore'
 import type { Manifest } from '@/lib/api'
 import { TooltipProvider } from '@/components/ui/Tooltip'
@@ -729,6 +729,10 @@ describe('样式页与左栏样式面板同一张行表：字体 / 字号 / 粗�
     expect(textSummary(row('title'), d)).toBe('字重 半粗')
     expect(textSummary(row('axis_label'), d)).toBe('字形 倾斜')
     expect(textSummary(row('legend'), d)).toBe('字重 600')
+    const line = (id: string) => STYLE_LINE_ROWS.find((r) => r.id === id)!
+    expect(lineSummary(line('dataLine'), { element: { line: { linewidth: 'thin' } } })).toBe('"thin"')
+    expect(lineSummary(line('tickDirection'), { element: { ticks: { direction: 3 } } })).toBe('3')
+    expect(lineSummary(line('tickDirection'), {})).toBe('未设置')
     expect(textSummary(row('text'), { element: { text: { fontsize: 'large', fontfamily: ['Arial', 'Helvetica'] } } })).toBe(
       'Arial, Helvetica · "large"',
     )
@@ -830,6 +834,34 @@ describe('样式页与左栏样式面板同一张行表：字体 / 字号 / 粗�
     await save()
     expect(saves.at(-1)).toEqual({ element: { line: { linewidth: 1.25 } }, pt_basis: 'page' })
     expect(document.body.querySelector('[data-style-row="dataLine"] button[aria-label="清除数据线宽"]')).toBeTruthy()
+  })
+
+  it('线条行认不出的值照原值显示、原样保存、能逐格清（线宽 "thin"、方向写成数字）', async () => {
+    const saves = await editStyleWith({
+      element: { line: { linewidth: 'thin' }, axes: { spine_linewidth: 0.8 }, ticks: { direction: 3, width: 'hairline' } },
+    })
+    expect(input('数据线宽')!.placeholder).toBe('"thin"')
+    expect(input('刻度线宽')!.placeholder).toBe('"hairline"')
+    expect(document.body.querySelector('[data-style-cell="tickDirection"]')!.textContent).toContain('3')
+    // 不点：原样保存
+    await typeInto(input('刻度字号')!, '7')
+    await save()
+    expect(saves.at(-1)!.element).toEqual({
+      line: { linewidth: 'thin' },
+      axes: { spine_linewidth: 0.8 },
+      ticks: { direction: 3, width: 'hairline', fontsize: 7 },
+    })
+    // 逐格清：空框里 Backspace 清线宽；方向用 ×；别的不动
+    const lw = input('数据线宽')!
+    await act(async () => lw.focus())
+    await act(async () => {
+      lw.dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true, cancelable: true }))
+    })
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[data-style-row="tickDirection"] button[aria-label="清除刻度方向"]')!.click(),
+    )
+    await save()
+    expect(saves.at(-1)!.element).toEqual({ axes: { spine_linewidth: 0.8 }, ticks: { width: 'hairline', fontsize: 7 } })
   })
 
   it('粗 / 斜体的悬停说明三态各一句，并说清应用时会怎样', async () => {
@@ -1020,6 +1052,16 @@ describe('样式页字体选项的引用：渲染态换了新对象、内容没�
 })
 
 describe('样式页字体下拉的「未安装」标记（Codex #703）', () => {
+  it('本机表里有就算画得出：字段级把它标成不可用（刻度字体族的旧判据）也不标', () => {
+    const tickOnly = {
+      elements: [
+        { role: 'ticks', editable: [{ prop: 'fontfamily', options: ['Avenir', 'serif'], options_unavailable: ['Avenir'] }] },
+      ],
+      font_families: ['Avenir', 'Arial'],
+    } as unknown as Manifest
+    expect(figureFamilyOptions({ a: tickOnly }).unavailable).toEqual([])
+  })
+
   // 一个运行时：脚本写死的 Comic Neue 没装——引擎仍放进 options（显示当前值），同时列进 options_unavailable
   const runtime = (unavailable: string[], machine: string[]) =>
     ({
@@ -1097,5 +1139,44 @@ describe('样式页字体下拉的「未安装」标记（Codex #703）', () => 
     expect(cell('title').textContent).toContain('Comic Neue')
     expect(cell('title').textContent).not.toContain(hint)
     act(() => useRenderStore.setState({ byKey: prev }))
+  })
+})
+
+describe('规范页：认不出的值照原值显示、能清，没设的写「未设置」（与样式页同一条，Codex #703）', () => {
+  it('最小字号写成 "6pt"：占位说原值、× 在、清掉删键；没设的格占位「未设置」', async () => {
+    const spec = envelope({
+      id: 'u1',
+      kind: 'spec',
+      display_name: '我的规范',
+      data: { min_effective_font_size_pt: '6pt', widths_mm: { single: 85 } },
+    })
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) =>
+      new Response(
+        JSON.stringify({ profiles: String(input).includes('/style') ? [BUILTIN_STYLE, USER_STYLE] : [...BUILTIN_SPECS, spec] }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    ) as typeof fetch
+    await mount('spec')
+    await act(async () => {
+      buttons().find((b) => b.textContent?.includes('我的规范'))!.click()
+    })
+    const field = (label: string) => document.body.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)!
+    expect(field('最小字号').placeholder).toBe('"6pt"')
+    expect(field('最大字号').placeholder).toBe('未设置')
+    const clear = document.body.querySelector<HTMLButtonElement>('button[aria-label="清除最小字号"]')
+    expect(clear).toBeTruthy()
+    const saves: Record<string, unknown>[] = []
+    const real = useProfileStore.getState().save
+    useProfileStore.setState({
+      save: async (kind, id, data) => {
+        saves.push(data)
+        return real(kind, id, data)
+      },
+    })
+    await act(async () => clear!.click())
+    await act(async () => {
+      byText('保存')!.click()
+    })
+    expect(saves.at(-1)).toEqual({ widths_mm: { single: 85 } })
   })
 })

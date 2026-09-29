@@ -53,3 +53,14 @@ export function clearPath(obj: Record<string, unknown>, path: string): Record<st
   else delete next[head]
   return next
 }
+
+/**
+ * 配置里写着控件认不出的值（导入的、前向版本的：字号 `"large"`、字体是一串候选、线宽是字符串）时
+ * 照原值说出来。设置里**有值就不许显示成「未设置」**——不点就原样保存、应用时也可能被读到，
+ * 说它不在是一句假话；它要能看见、也要能单独清掉。
+ */
+export function rawValueText(v: unknown): string {
+  if (typeof v === 'string') return JSON.stringify(v)
+  if (Array.isArray(v)) return v.map(String).join(', ')
+  return JSON.stringify(v) ?? String(v)
+}

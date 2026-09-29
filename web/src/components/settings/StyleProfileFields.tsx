@@ -13,7 +13,7 @@ import { FontMissingHint, FontMissingTag, StyleToggle } from '../inspector/contr
 import { IconButton } from '../ui/Button'
 import { NumberField } from '../ui/Input'
 import { Select } from '../ui/Select'
-import { clearPath, readPath, writePath } from './profilePath'
+import { clearPath, rawValueText, readPath, writePath } from './profilePath'
 import { SettingRow, settingControlStyle, settingRowGrid } from './SettingRow'
 
 /**
@@ -182,13 +182,15 @@ export function figureFamilyOptions(manifests: Record<string, Manifest | null | 
         for (const o of f.options_unavailable ?? []) unavailable.add(o)
       }
     }
+    // 本机表里有的名字算画得出：由 `withMachineFamilies` 从不可用里撤掉（与属性页同一口径）
     const field = withMachineFamilies(
       { prop: 'fontfamily', options: [...preferred], options_unavailable: [...unavailable] },
       manifest.font_families,
     )
+    const stillMissing = new Set(field?.options_unavailable ?? [])
     for (const o of field?.options ?? []) {
       out.add(o)
-      if (unavailable.has(o)) missing.add(o)
+      if (stillMissing.has(o)) missing.add(o)
       else renderable.add(o)
     }
   }
@@ -342,7 +344,7 @@ function TextRowEditor({
             value={familyRaw !== null ? RAW_FAMILY : typeof family === 'string' ? family : ''}
             rawLabel={familyRaw}
             families={families}
-            onChange={(v) => (v === UNSET_FAMILY ? onClear([row.family]) : onSet(row.family, v))}
+            onChange={(v) => (v === UNSET_FAMILY ? onClear([row.family]) : v !== RAW_FAMILY && onSet(row.family, v))}
           />
         </div>
         <div className="flex h-7 min-w-0 items-center gap-1">
@@ -388,6 +390,9 @@ function LineRowEditor({
   const label = ROW_LABEL[row.id]()
   const raw = readPath(draft, row.path)
   const isSet = raw !== undefined
+  // 控件认不出的值（线宽写成 `"thin"`、方向写成数字…）照原值显示、不说成「未设置」，与文字行同一条
+  const num = typeof raw === 'number' && Number.isFinite(raw)
+  const dirKnown = typeof raw === 'string' && raw !== ''
   return (
     <SettingRow label={label} density="compact" data-style-row={row.id}>
       {/* 与文字行同一副格子：控件从控件列左缘起排（与上面的字号框同一条竖线），× 在右缘；
@@ -398,19 +403,22 @@ function LineRowEditor({
             <Select
               className="w-28"
               ariaLabel={label}
-              value={typeof raw === 'string' ? raw : ''}
+              value={dirKnown ? (raw as string) : isSet ? RAW_VALUE : ''}
               placeholder={st('unset')}
-              onChange={(v) => onSet(row.path, v)}
-              options={withCurrent(TICK_DIRECTIONS, typeof raw === 'string' ? raw : '').map((o) => ({
-                value: o,
-                label: optionLabel('direction', o),
-              }))}
+              onChange={(v) => v !== RAW_VALUE && onSet(row.path, v)}
+              options={[
+                ...(isSet && !dirKnown ? [{ value: RAW_VALUE, label: rawText(raw) }] : []),
+                ...withCurrent(TICK_DIRECTIONS, dirKnown ? (raw as string) : '').map((o) => ({
+                  value: o,
+                  label: optionLabel('direction', o),
+                })),
+              ]}
             />
           ) : (
             <NumberField
-              value={typeof raw === 'number' ? raw : NUMBER_SPEC[row.prop].min}
-              mixed={typeof raw !== 'number'}
-              mixedPlaceholder={st('unset')}
+              value={num ? (raw as number) : NUMBER_SPEC[row.prop].min}
+              mixed={!num}
+              mixedPlaceholder={isSet && !num ? rawText(raw) : st('unset')}
               min={NUMBER_SPEC[row.prop].min}
               max={NUMBER_SPEC[row.prop].max}
               step={NUMBER_SPEC[row.prop].step}
@@ -438,13 +446,13 @@ function ClearButton({ label, onClick }: { label: string; onClick: () => void })
   )
 }
 
-/** 样式里写着控件认不出的值时，照原值说出来（`large`、`["Arial", "Helvetica"]`） */
-const rawText = (v: unknown): string =>
-  typeof v === 'string' ? JSON.stringify(v) : Array.isArray(v) ? v.map(String).join(', ') : JSON.stringify(v) ?? String(v)
+const rawText = rawValueText
 
 /** 字体下拉里的两个非字体项：「未设置」（选了删掉这个键）与「样式里原来写着的那个认不出的值」 */
 const UNSET_FAMILY = '\u0000unset'
 const RAW_FAMILY = '\u0000raw'
+/** 下拉里「样式里原来写着的那个认不出的值」（线条行的方向同一个办法） */
+const RAW_VALUE = RAW_FAMILY
 
 /** 当前值不在选项里（样式里写着一个本机没有的族）时照样列出来：替用户换掉是最坏的处置 */
 const withCurrent = (options: readonly string[], current: string): string[] =>
@@ -530,10 +538,11 @@ export function textSummary(row: TextRowSpec, draft: Record<string, unknown>): s
   return shown.length ? shown.join(' · ') : st('unset')
 }
 
-function lineSummary(row: (typeof STYLE_LINE_ROWS)[number], draft: Record<string, unknown>): string {
+export function lineSummary(row: (typeof STYLE_LINE_ROWS)[number], draft: Record<string, unknown>): string {
   const raw = readPath(draft, row.path)
-  if (row.prop === 'direction') return typeof raw === 'string' ? optionLabel('direction', raw) : st('unset')
-  return ptText(raw) ?? st('unset')
+  if (raw === undefined) return st('unset')
+  if (row.prop === 'direction') return typeof raw === 'string' && raw ? optionLabel('direction', raw) : rawText(raw)
+  return ptText(raw) ?? rawText(raw)
 }
 
 /**
