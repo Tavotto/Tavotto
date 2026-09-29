@@ -103,30 +103,9 @@ export function DependencyPrepareDialog() {
   const oneClick = simple && !envChosen && target === 'tavotto_managed'
   const privatePython = managed?.private_python ?? offer.private_python ?? null
   const packages = listJoin(plan.requirements.map(requirementName))
-  const details = (
+  const targetChoice = (
     <>
-      {/* 要装的：项目声明的完整形态（extras / 版本），用户自己的名字，不翻译 */}
-      <ul className="flex flex-col gap-0.5 font-mono text-xs text-ink-2" data-dependency-requirements>
-        {plan.requirements.map((req) => (
-          <li key={req}>{req}</li>
-        ))}
-      </ul>
-      {plan.constraints.length > 0 && (
-        <p className="mt-1.5 text-xs leading-relaxed text-ink-3">
-          {en('engine.dependencyPrepareConstraints', { count: plan.constraints.length })}
-        </p>
-      )}
-      {plan.unknown.length > 0 && (
-        <p className="mt-1.5 text-xs leading-relaxed text-ink-2" data-dependency-unknown>
-          {en('engine.dependencyPrepareUnknown', { modules: plan.unknown.join(', ') })}
-        </p>
-      )}
-      {offer.user_environments && complete.length === 0 && (
-        <p className="mt-2 text-xs leading-relaxed text-ink-3" data-user-env-none>
-          {en('engine.userEnvNone')}
-        </p>
-      )}
-      <fieldset className="mt-2 flex flex-col gap-1" data-dependency-target>
+      <fieldset className="flex flex-col gap-1" data-dependency-target>
         <legend className="sr-only">
           {en(complete.length ? 'engine.userEnvLegend' : 'engine.dependencyPrepareTargetLegend')}
         </legend>
@@ -188,13 +167,6 @@ export function DependencyPrepareDialog() {
                     ? en(TARGET_HINT[kind], { venv: opt.venv || opt.python })
                     : en(TARGET_HINT[kind])}
                 </span>
-                {opt.private_python && (
-                  // 这台机器没有可用的 Python：这次授权包含先下载 Tavotto 自己的一份（U05）。
-                  // 体积必须说出口；已有校验过的缓存时不联网。
-                  <span className="mt-0.5 block text-xs leading-relaxed text-ink-2" data-dependency-private-python>
-                    {privatePythonText(opt.private_python)}
-                  </span>
-                )}
                 {opt.available === false && (
                   <span className="mt-0.5 block text-xs text-danger">
                     {t(`engine.repairError.${opt.reason}`, { defaultValue: opt.reason })}
@@ -205,6 +177,37 @@ export function DependencyPrepareDialog() {
           )
         })}
       </fieldset>
+    </>
+  )
+  const details = (
+    <>
+      {/* 要装的：项目声明的完整形态（extras / 版本），用户自己的名字，不翻译 */}
+      <ul className="flex flex-col gap-0.5 font-mono text-xs text-ink-2" data-dependency-requirements>
+        {plan.requirements.map((req) => (
+          <li key={req}>{req}</li>
+        ))}
+      </ul>
+      {plan.constraints.length > 0 && (
+        <p className="mt-1.5 text-xs leading-relaxed text-ink-3">
+          {en('engine.dependencyPrepareConstraints', { count: plan.constraints.length })}
+        </p>
+      )}
+      {plan.unknown.length > 0 && (
+        <p className="mt-1.5 text-xs leading-relaxed text-ink-2" data-dependency-unknown>
+          {en('engine.dependencyPrepareUnknown', { modules: plan.unknown.join(', ') })}
+        </p>
+      )}
+      {offer.user_environments && complete.length === 0 && (
+        <p className="mt-2 text-xs leading-relaxed text-ink-3" data-user-env-none>
+          {en('engine.userEnvNone')}
+        </p>
+      )}
+      {privatePython && (
+        // 这台机器没有可用的 Python：这次授权包含先准备 Tavotto 自己的一份（U05）；要下载时说体积
+        <p className="mt-2 text-xs leading-relaxed text-ink-2" data-dependency-private-python>
+          {privatePythonText(privatePython)}
+        </p>
+      )}
       {partial.length > 0 && (
         <Details className="mt-2 text-xs text-ink-3" data-user-env-partial>
           <Summary className="cursor-pointer">{en('engine.userEnvPartial')}</Summary>
@@ -235,13 +238,7 @@ export function DependencyPrepareDialog() {
           ? en('engine.oneClickSentence', { packages })
           : en('engine.dependencyPrepareTitle', { count: plan.requirements.length })
       }
-      description={
-        simple
-          ? undefined
-          : complete.length
-            ? en('engine.userEnvBody', { script: offer.script })
-            : en('engine.dependencyPrepareBody', { script: offer.script })
-      }
+      description={!simple && complete.length ? en('engine.userEnvBody', { script: offer.script }) : undefined}
       size="sm"
       busy={busy || running}
       anchor="dependency-prepare"
@@ -257,11 +254,6 @@ export function DependencyPrepareDialog() {
             <Button variant="secondary" size="md" disabled={busy} onClick={dismiss}>
               {en('engine.dependencyPrepareLater')}
             </Button>
-            {!simple && (
-              <Button variant="secondary" size="md" disabled={busy} onClick={() => void skip()}>
-                {en('engine.dependencyPrepareSkip')}
-              </Button>
-            )}
             {envChosen ? (
               <Button
                 variant="primary"
@@ -289,35 +281,35 @@ export function DependencyPrepareDialog() {
         )
       }
     >
-      {simple ? (
-        // 一键修复：默认可见的只有标题那一句 + 底部「稍后」「一键修复」；下载大小、要装的完整需求串、目标、
-        // 「不准备，直接运行」都在「详情」里。进行中只剩一行进度
-        !running && (
-          <Details className="text-xs" data-repair-advanced>
-            <Summary className="type-meta cursor-pointer">{en('engine.repairAdvanced')}</Summary>
-            <div className="mt-2">
+      {/* 默认可见的只有标题那一句（+ 非一键修复时的目标单选，每个选项一句短语）与底部「稍后」+ 一个主按钮；
+          下载大小、要装的完整需求串、「不准备，直接运行」都在「详情」里。进行中只剩一行进度 */}
+      {!simple && !running && targetChoice}
+      {!running && (
+        <Details className={cn('text-xs', !simple && 'mt-2')} data-repair-advanced>
+          <Summary className="type-meta cursor-pointer">{en('engine.repairAdvanced')}</Summary>
+          <div className="mt-2">
+            {simple && (
               <p className="text-xs leading-relaxed text-ink-2" data-one-click-cost>
                 {oneClickCost(privatePython, en)}
               </p>
-              <div className="mt-2">{details}</div>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="mt-2"
-                disabled={busy}
-                data-dependency-skip
-                onClick={() => void skip()}
-              >
-                {en('engine.dependencyPrepareSkip')}
-              </Button>
-            </div>
-          </Details>
-        )
-      ) : (
-        details
+            )}
+            <div className="mt-2">{details}</div>
+            {simple && <div className="mt-2">{targetChoice}</div>}
+            <Button
+              variant="ghost"
+              size="sm"
+              className="mt-2"
+              disabled={busy}
+              data-dependency-skip
+              onClick={() => void skip()}
+            >
+              {en('engine.dependencyPrepareSkip')}
+            </Button>
+          </div>
+        </Details>
       )}
       {running && progress && (
-        <div className={simple ? '' : 'mt-2'} data-dependency-state={progress.state}>
+        <div data-dependency-state={progress.state}>
           <RepairProgressLine
             progress={progress}
             text={en(STATE_TEXT[progress.state] ?? 'engine.dependencyPrepareState_preparing')}

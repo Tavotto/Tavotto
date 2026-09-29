@@ -41,7 +41,7 @@ import { PRODUCT_NAME } from '@/lib/brand'
 import { i18n, t } from '@/i18n'
 import { useDepRepairStore } from '@/store/depRepairStore'
 import { useRenderStore } from '@/store/renderStore'
-import { visibleBlocks } from '@/test/visibleBlocks'
+import { visibleBlocks, visiblePrimaryButtons, visibleSentenceCount } from '@/test/visibleBlocks'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -307,8 +307,15 @@ describe('缺依赖的修复卡片', () => {
         python: 'C:\\Python37\\python.exe', code: 'project_env_unsupported_python', python_version: '3.7.6',
       }],
     })
-    expect(text()).toContain(en('repairManagedUnavailable', { packages: 'lmfit', min: '3.11', max: '3.15' }))
-    expect(text()).toContain('3.11–3.15')
+    const sentence = document.querySelector('[data-managed-env-unavailable]')!
+    expect(sentence.textContent).toBe(en('repairManagedUnavailable'))
+    // 无路可走也只有一句、没有主按钮；要装哪段版本（取自 offer）在「详情」里
+    const card = sentence.closest('.shadow-card')!
+    expect(visibleSentenceCount(card)).toBe(1)
+    expect(visiblePrimaryButtons(card)).toBe(0)
+    const hint = document.querySelector('[data-managed-env-unavailable-hint]')!
+    expect(hint.closest('[data-repair-advanced]')).toBeTruthy()
+    expect(hint.textContent).toContain('3.11–3.15')
     expect(text()).toContain(en('repairSystemRejectedUnsupported', {
       python: 'C:\\Python37\\python.exe', module: 'lmfit', version: '3.7.6', product: PRODUCT_NAME,
     }))
@@ -382,6 +389,32 @@ describe('一键修复（2026-09-29：面向不懂 Python 的用户）', () => {
     ])
   })
 
+  it('主区域（「详情」之外）只有一句话、一个主按钮：起点 / 系统解释器 / 进行中 / 无路可走各量一遍', async () => {
+    const shapes: [string, () => Promise<void>][] = [
+      ['受管环境', () => render(managedOnly(PRIVATE_PYTHON))],
+      ['受管环境 + 项目环境', () => render(OFFER)],
+      ['系统解释器', () => render({ ...OFFER, targets: [{ ...OFFER.targets[1], kind: 'system_interpreter', python: '/usr/bin/python3' }] })],
+    ]
+    for (const [name, mount] of shapes) {
+      await act(async () => root?.unmount())
+      host?.remove()
+      await mount()
+      const card = document.querySelector('.shadow-card')!
+      expect(visibleSentenceCount(card), name).toBe(1)
+      expect(visiblePrimaryButtons(card), name).toBe(1)
+    }
+    // 进行中：一行（不以「。」结尾也行），没有主按钮
+    await act(async () => root.unmount())
+    host.remove()
+    await render()
+    await act(() => {
+      useDepRepairStore.setState({ progress: { plan_id: 'plan-abc', state: 'installing', log: 'x', error: null, code: '' } })
+    })
+    const card = document.querySelector('.shadow-card')!
+    expect(visibleSentenceCount(card)).toBeLessThanOrEqual(1)
+    expect(visibleBlocks(card).filter((b) => b.tag === 'p')).toHaveLength(1)
+  })
+
   it('一句话里不出现版本号、路径、下载大小与「隔离环境」；这些都在「详情」里', async () => {
     await render(managedOnly(PRIVATE_PYTHON))
     for (const jargon of ['3.13.15', '隔离', '/', 'Python 3', 'MB']) expect(mainText()).not.toContain(jargon)
@@ -453,7 +486,7 @@ describe('一键修复（2026-09-29：面向不懂 Python 的用户）', () => {
     await act(async () => {})
     expect(byName(en('oneClickRepair'))).toBeUndefined()
     expect(document.querySelector('[data-managed-env-unavailable]')?.textContent).toBe(
-      en('repairManagedUnavailable', { packages: 'lmfit', min: '3.10', max: '3.14' }),
+      en('repairManagedUnavailable'),
     )
     expect(document.querySelector('[data-repair-advanced] [data-repair-open-environment]')).toBeTruthy()
   })
@@ -531,7 +564,7 @@ describe('这台机器上已有的解释器（ADR 0044）', () => {
     await render(WITH_SYSTEM)
     const card = document.querySelector('[data-one-click-repair]')!
     expect(card.getAttribute('data-one-click-repair')).toBe('system_interpreter')
-    expect(text()).toContain(en('oneClickSentenceSystem', { packages: 'lmfit' }))
+    expect(text()).toContain(en('oneClickSentenceSystem', { module: 'lmfit' }))
     // 它是首选：不装、不联网、不改任何环境，比两种安装都便宜
     expect(byName(en('oneClickRepair'))!.className).toContain('text-white') // primary
     expect(byName(en('repairUseProjectEnv'))!.className).not.toContain('text-white')
@@ -610,7 +643,7 @@ describe('这台机器上已有的解释器（ADR 0044）', () => {
       host?.remove()
       await render(offer)
       expect(byName(en('oneClickRepair')), offer.code).toBeTruthy()
-      expect(text()).toContain(en('oneClickSentenceSystem', { packages: 'lmfit' }))
+      expect(text()).toContain(en('oneClickSentenceSystem', { module: 'lmfit' }))
       // 安装目标仍然不给：一键安装的前提是「知道要装什么」且还有轮次
       expect(byName(en('repairUseProjectEnv'))).toBeUndefined()
       expect(byName(en('repairInstallToManaged', { module: 'lmfit', product: PRODUCT_NAME }))).toBeUndefined()
@@ -916,7 +949,15 @@ describe('安装进度', () => {
     )
     expect(document.querySelector('[data-repair-download]')!.getAttribute('aria-valuenow')).toBe('25')
     // 进行中默认可见：一行进度 + 「取消」，没有别的说明
-    expect(visibleBlocks(card()).map((b) => b.tag)).toEqual(['p', 'button'])
+    // 进行中默认可见：一行进度 + 「取消」+ 折叠的「详情」（四个阶段与日志在里面）
+    expect(visibleBlocks(card()).map((b) => b.tag)).toEqual(['p', 'button', 'summary'])
+    const stages = document.querySelector('[data-repair-stages]')!
+    expect(stages.closest('details')!.open).toBe(false)
+    expect(
+      [...stages.querySelectorAll('[data-repair-stage]')].map(
+        (li) => `${li.getAttribute('data-repair-stage')}:${li.getAttribute('data-stage-state')}`,
+      ),
+    ).toEqual(['python:active', 'env:pending', 'packages:pending', 'rerun:pending'])
     // 下载完、在解压：不再是字节数
     await progress('downloading_python', {
       target_kind: 'tavotto_managed',
@@ -928,7 +969,12 @@ describe('安装进度', () => {
       target_kind: 'tavotto_managed',
       result: { download: { stage: 'committed', done_bytes: 48 * 1048576, total_bytes: 48 * 1048576 } },
     })
-    expect(line()).toBe(en('repairCreatingEnv'))
+    expect(line()).toBe(`${en('repairCreatingEnv')}${en('repairStep', { n: 2, total: 4 })}`)
+    await progress('installing', { target_kind: 'tavotto_managed' })
+    expect(line()).toBe(`${en('repairInstalling', { module: 'lmfit' })}${en('repairStep', { n: 3, total: 4 })}`)
+    // 装进项目自己的环境只有两步
+    await progress('installing', { target_kind: 'project_venv' })
+    expect(line()).toBe(`${en('repairInstalling', { module: 'lmfit' })}${en('repairStep', { n: 1, total: 2 })}`)
     expect(document.querySelector('[data-repair-download]')).toBeNull()
   })
 

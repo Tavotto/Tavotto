@@ -64,16 +64,18 @@
   没有标题、解释段落、列表、第二个并列按钮。这台电脑上已有装好那个包的环境时改用它（不装、不下载），否则装进为项目准备的受管
   环境。下载大小（`data-one-click-cost`，来源只按 `privatePythonOrigin()` 判：`bundled` / `cached` 不提下载，字段缺失按
   `cached` 推、再缺按下载）、环境说明、需求串、其余目标、被跳过的系统解释器、「换一个 Python」（`OtherPython`，兜底出口必须
-  **始终在**）与「选择渲染环境」全在「详情」里。两样都没有时才把各条路摊开；真的无路可走时同样一句话（`repairManagedUnavailable`）。
+  **始终在**）与「选择渲染环境」全在「详情」里。两样都没有时才把各条路摊开；真的无路可走时同样一句话（`repairManagedUnavailable`，版本范围与「指定已有 Python」在「详情」里）。
   受管目标 `available: null`（后端还在探基础解释器、offer 上没挂私有 Python）时卡片先 `previewManaged()` 形成一份计划**只读它的
   要素**（计划不装东西），按它授权——否则计划多出一段下载，`planMatchesDisclosure` 不符，要多点一次确认页。进行中同样**一行**
-  （`RepairProgressLine`：「正在下载 Python… 12 / 25 MB」+ 细进度条 +「取消」），字节数读 `result.download`、**只在 state 仍是
+  （`RepairProgressLine`：「正在安装 openpyxl…（3/4）」，下载那一段「正在下载 Python… 12 / 25 MB」+ 细进度条 +「取消」；
+  四个阶段的完整列表 `RepairStageList` 与 pip 日志在折叠的「详情」里），字节数读 `result.download`、**只在 state 仍是
   `downloading_python` 时读**（后端的 result 沿用上一条）；换用 PyPI 镜像（`pypi_mirror`）只在「安装详情」里说。跑前授权框
   （`DependencyPrepareDialog`）同一套：没有装齐的用户环境、默认目标是受管环境时，标题就是那一句，底部只有「稍后」「一键修复」，
-  其余（含「不准备，直接运行」）进「详情」；默认目标是项目 venv（会改用户环境）时不折叠。同一个包缺在几个脚本上**只挂一张卡**
+  其余（含「不准备，直接运行」）进「详情」；默认目标是项目 venv（会改用户环境）时目标单选留在外面，每个选项的说明压成一句
+  短语，其余照样进「详情」。同一个包缺在几个脚本上**只挂一张卡**
   （修复进行中的那一行优先），装好后同样缺它的几行一起重跑（`rerunSameModule`）；有修复 offer 的行不叠 `FailureRecovery`。
-  看护：「默认可见」按**可见元素**判（`test/visibleBlocks.ts`，收起的 details 里只有 summary 可见；e2e 用 `checkVisibility`），
-  不按子串——`DependencyRepairCard.test.tsx`「一键修复」、`DependencyPrepareDialog.test.tsx`、`ScriptLibrary.test.tsx`、
+  看护：「默认可见」按**可见元素**判（`test/visibleBlocks.ts`：收起的 details 里只有 summary 可见；主区域按「。」数句子 ≤ 1、
+  数看得见的主按钮 = 1；e2e 用 `checkVisibility`），不按子串——`DependencyRepairCard.test.tsx`「一键修复」、`DependencyPrepareDialog.test.tsx`、`ScriptLibrary.test.tsx`、
   `e2e/dependency-one-click.spec.ts`（`@feature:assets.dependency-one-click-repair`）。
 - **运行/取消是同一个按钮**（busy 态翻转）：取消后焦点天然留在原脚本行，
   不做焦点搬运。状态行 aria-live=polite，只随相位变化播报。

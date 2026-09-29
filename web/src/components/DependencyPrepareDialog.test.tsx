@@ -35,7 +35,7 @@ import { DependencyPrepareDialog } from '@/components/DependencyPrepareDialog'
 import { DependencyPrepareButton } from '@/components/WorkdirRow'
 import { i18n, t } from '@/i18n'
 import { listJoin } from '@/i18n/format'
-import { visibleBlocks } from '@/test/visibleBlocks'
+import { visibleBlocks, visiblePrimaryButtons, visibleSentenceCount } from '@/test/visibleBlocks'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { setCurrentProjectId } from '@/lib/session'
 import { useDepRepairStore } from '@/store/depRepairStore'
@@ -163,8 +163,13 @@ describe('DependencyPrepareDialog', () => {
     expect(radio('project_venv')!.checked).toBe(true)
     expect(radio('tavotto_managed')!.checked).toBe(false)
     expect(text()).toContain(en('dependencyTargetHint_project_venv', { venv: '.venv' }))
-    // 会改用户环境的那一档不折叠、不叫「一键修复」：要用户看清再点
-    expect(document.querySelector('[data-repair-advanced]')).toBeNull()
+    // 会改用户环境的那一档：目标单选摆在外面、不叫「一键修复」，要用户看清再点；每个选项的说明压成一句短语，
+    // 需求串 / 下载 / 「不准备，直接运行」照样在「详情」里
+    const d = dialog()!
+    expect(d.querySelector('[data-dependency-target]')!.closest('details')).toBeNull()
+    expect(d.querySelector('[data-dependency-requirements]')!.closest('[data-repair-advanced]')).toBeTruthy()
+    expect(visibleSentenceCount(d)).toBeLessThanOrEqual(1)
+    expect(visiblePrimaryButtons(d)).toBe(1)
     expect(button(en('oneClickRepair'))).toBeUndefined()
     expect(button(en('dependencyPrepareRun'))).toBeDefined()
   })
@@ -179,6 +184,8 @@ describe('DependencyPrepareDialog', () => {
       { tag: 'button', text: en('oneClickRepair') },
     ])
     expect(button(en('oneClickRepair'))!.className).toContain('text-white')
+    expect(visibleSentenceCount(dialog()!)).toBe(1)
+    expect(visiblePrimaryButtons(dialog()!)).toBe(1)
     const advanced = document.querySelector('[data-repair-advanced]') as HTMLDetailsElement
     expect(advanced.querySelector('[data-one-click-cost]')!.textContent).toBe(en('oneClickCostNetwork'))
     expect(advanced.querySelector('[data-dependency-requirements]')).toBeTruthy()
@@ -201,7 +208,9 @@ describe('DependencyPrepareDialog', () => {
     )
     const tags = visibleBlocks(dialog()!).map((b) => b.tag)
     expect(tags).toEqual(['h2', 'p', 'button'])
-    expect(document.querySelector('[data-repair-line]')!.textContent).toBe(en('dependencyPrepareState_installing'))
+    expect(document.querySelector('[data-repair-line]')!.textContent).toBe(
+      `${en('dependencyPrepareState_installing')}${en('repairStep', { n: 3, total: 4 })}`,
+    )
   })
 
   it('一键修复要下载私有 Python 时说大小；安装包自带时不提下载', async () => {
@@ -493,7 +502,6 @@ describe('DependencyPrepareDialog：用户自己的环境', () => {
     )
     expect(envRadio('login_shell')!.checked, '后端排第一的预选').toBe(true)
     expect(text(), '说明换成「这台电脑上已有装好的环境」').toContain(en('userEnvBody', { script: 'figure.py' }))
-    expect(text()).not.toContain(en('dependencyPrepareBody', { script: 'figure.py' }))
     expect(envRadio('conda')!.checked).toBe(false)
     expect(radio('tavotto_managed')!.checked).toBe(false)
     expect(text()).toContain(en('userEnvSource_login_shell'))

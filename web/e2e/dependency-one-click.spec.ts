@@ -148,7 +148,7 @@ const renderedBlocks = (card: Locator) =>
   })
 
 test(
-  '一键修复：缺包的脚本行只有一句话 + 一个主按钮，点一次、进度一行（下载有 MB），装好后自动重跑出图',
+  '一键修复：缺包的脚本行只有一句话 + 一个主按钮，点一次、进度一行（第几步 / 下载 MB），装好后自动重跑出图',
   { tag: ['@feature:assets.dependency-one-click-repair'] },
   async ({ app, page }) => {
     const dir = path.join(os.tmpdir(), `tavotto-e2e-oneclick-${Date.now()}`)
@@ -249,14 +249,15 @@ test(
     )
     await expectReachable(page, line, '进度')
     const progressCard = page.locator('[data-script-dependency-repair] .shadow-card')
-    expect(await renderedBlocks(progressCard)).toEqual(['p:正在下载 Python… 10 / 25 MB', 'button:取消'])
+    // 进行中画出来的只有一行进度、「取消」与折叠的「详情」（四个阶段与日志在里面）
+    expect(await renderedBlocks(progressCard)).toEqual(['p:正在下载 Python… 10 / 25 MB', 'button:取消', 'summary:详情'])
 
     // ④ 创建环境 → 安装：那一行跟着换；下载条随下载那一段结束消失
     events.push(progress('creating_env'))
-    await expect(line).toHaveText('正在准备 Python 环境…', { timeout: 15_000 })
+    await expect(line).toHaveText('正在准备 Python 环境…（2/4）', { timeout: 15_000 })
     await expect(page.locator('[data-script-dependency-repair] [data-repair-download]')).toHaveCount(0)
     events.push(progress('installing'))
-    await expect(line).toHaveText('正在安装 openpyxl…', { timeout: 15_000 })
+    await expect(line).toHaveText('正在安装 openpyxl…（3/4）', { timeout: 15_000 })
 
     // ⑤ 装好：那一行自动重跑（真后端、真 worker），图出来，修复卡收起
     events.push(progress('done', { result: { version: '3.1.5' } }))

@@ -80,18 +80,18 @@
       "status": "active",
       "platform": "both",
       "summary": {
-        "zh-CN": "脚本缺包时一键修复：一句话 + 一个主按钮准备运行环境并装好缺的包，进度一行（下载带 MB），装好后自动重跑",
+        "zh-CN": "脚本缺包时一键修复：一句话 + 一个主按钮准备运行环境并装好缺的包，进度一行（第几步 / 下载 MB），装好后自动重跑",
         "en-US": "One-click fix when a script is missing a package: one sentence and one button set up the environment and install it, progress is one line (with download MB), then the script reruns"
       },
       "entry": "左栏「素材」→ 脚本行运行后缺包 →「一键修复」（画布右栏的缺包卡片、跑前的依赖授权框同一套）",
       "e2e": [
         {
           "spec": "dependency-one-click.spec.ts",
-          "title": "一键修复：缺包的脚本行只有一句话 + 一个主按钮，点一次、进度一行（下载有 MB），装好后自动重跑出图"
+          "title": "一键修复：缺包的脚本行只有一句话 + 一个主按钮，点一次、进度一行（第几步 / 下载 MB），装好后自动重跑出图"
         }
       ],
       "desktop_manual": [
-        "在一台没有装 Python 的 macOS / Windows 上打开一个 import 了 openpyxl 的脚本项目，脚本行点「运行并发现图」：卡片只有一句「这个脚本还缺 openpyxl，点一下自动装好。」和「一键修复」按钮（下载大小、路径输入框都在折叠的「详情」里）；点一次，进度只有一行（下载时显示「12 / 25 MB」），装好后那一行自动重跑出图"
+        "在一台没有装 Python 的 macOS / Windows 上打开一个 import 了 openpyxl 的脚本项目，脚本行点「运行并发现图」：卡片只有一句「这个脚本还缺 openpyxl，点一下自动装好。」和「一键修复」按钮（下载大小、路径输入框都在折叠的「详情」里）；点一次，进度只有一行（下载时显示「12 / 25 MB」，之后是「（3/4）」这样的第几步），装好后那一行自动重跑出图"
       ]
     },
     {

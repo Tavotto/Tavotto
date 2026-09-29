@@ -15,7 +15,7 @@ import { useEnvStore } from '@/store/envStore'
 import { useUiStore } from '@/store/uiStore'
 import { Settings } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
-import { RepairProgressLine } from './RepairProgressLine'
+import { RepairProgressLine, RepairStageList } from './RepairProgressLine'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { Button } from './ui/Button'
 import { TextInput } from './ui/Input'
@@ -281,6 +281,15 @@ export function DependencyRepairCard({
       )}
       {primary && rest.length > 0 && <TargetList targets={rest} first={null} pkg={pkg} act={act} />}
       {primary && specify}
+      {!primary && managedUnavailable && (
+        // 无路可走时那一句只说「先装 Python」；要装哪一段版本、装过了怎么指定，给展开的人
+        <p className="text-xs leading-relaxed text-ink-3" data-managed-env-unavailable-hint>
+          {en('repairManagedUnavailableHint', {
+            min: offer.python_supported.min,
+            max: offer.python_supported.max,
+          })}
+        </p>
+      )}
       {rejected.length > 0 && <Rejections rejected={rejected} pkg={pkg} />}
       <OtherPython />
       <OpenEnvironment />
@@ -294,7 +303,7 @@ export function DependencyRepairCard({
         <p className="text-sm leading-relaxed text-ink" data-one-click-sentence>
           {managed
             ? en('oneClickSentence', { packages: pkg })
-            : en('oneClickSentenceSystem', { packages: pkg })}
+            : en('oneClickSentenceSystem', { module: pkg })}
         </p>
         <Button
           className="self-start"
@@ -317,11 +326,7 @@ export function DependencyRepairCard({
     return (
       <div className="flex flex-col gap-2 rounded-md bg-surface p-3 shadow-card">
         <p className="text-sm leading-relaxed text-ink" data-managed-env-unavailable>
-          {en('repairManagedUnavailable', {
-            packages: pkg,
-            min: offer.python_supported.min,
-            max: offer.python_supported.max,
-          })}
+          {en('repairManagedUnavailable')}
         </p>
         <Failure code={errorCode} text={errorText} />
         {advanced}
@@ -724,9 +729,15 @@ function RepairProgress({
           </>
         )}
       </div>
-      {(progress.log || progress.pypi_mirror) && (
-        <Details className="text-xs text-ink-3">
+      {(progress.log || progress.pypi_mirror || (!failed && !cancelled)) && (
+        // 默认折叠：完整的阶段列表、换用镜像的说明、pip 日志（主区域只有那一行进度）
+        <Details className="text-xs text-ink-3" data-repair-progress-details>
           <Summary className="text-ink-2">{en('repairDetails')}</Summary>
+          {!failed && !cancelled && (
+            <div className="mt-1">
+              <RepairStageList progress={progress} />
+            </div>
+          )}
           {progress.pypi_mirror && (
             // 连不上默认包源、后端改用了镜像（与日志里那一行同一件事），只在详情里说
             <p className="mt-1 leading-relaxed" data-repair-pypi-mirror>
