@@ -306,6 +306,10 @@ def probe_version_detailed(argv: list[str]) -> tuple[str | None, str | None]:
         return None, "timeout"
     except OSError:
         return None, "launch_failed"
+    # 退出码非零不算起得来——哪怕它打了一行字（坏掉的桌面版 codex.exe 会打错误信息再退出）。与
+    # `codexinstall.find_codex` 的「rc == 0 才算」同一条判据，两条路对「哪一份能用」回答相同（Codex #727）
+    if out.returncode != 0:
+        return None, "launch_failed"
     line = (out.stdout or out.stderr).strip().splitlines()
     if not line:
         return None, "launch_failed"
