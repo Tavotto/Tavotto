@@ -326,25 +326,57 @@ def _plain_bind_is_blocked(port: int) -> bool:
         return False
 
 
-def test_two_launches_land_on_the_same_port_even_with_a_server_side_time_wait(tmp_path):
-    """两次启动落在同一端口；第一次关闭时带着一条开着的 SSE 长连接（窗口里的 `/api/events`）。
+def _server_side_time_wait(port: int) -> list[str]:
+    """本地端口 = `port`（即服务端那一侧）处于 TIME_WAIT 的 TCP 连接，回证据行（空 = 没有）。
 
-    第一次退出时服务端先关连接（进程退出 → FIN），客户端读到 EOF 再关 → **服务端**那一侧
-    留下 TIME_WAIT。POSIX 上不带 `SO_REUSEADDR` 的 bind 会被它挡住——下面先证明这个前提成立，
-    否则用例量的就不是 TIME_WAIT。Windows 上 `SO_EXCLUSIVEADDRUSE` 碰上 TIME_WAIT 能不能
-    立刻重绑，看 CI Windows 腿（backend-platforms）上这条的结论。
+    主语是服务端：客户端先关时 TIME_WAIT 落在客户端的临时端口上（本地地址不是 `port`），
+    不算。Linux 用 `ss`，Windows 用 `netstat -ano`（列：`TCP 本地 远端 TIME_WAIT PID`）。
+    macOS 的 `netstat` 实测列不出本进程造出来的回环 TIME_WAIT（2026-09-29 本机：普通 bind 被挡、
+    netstat 一行都没有），改用「监听者已经退出、不带 `SO_REUSEADDR` 的普通 bind 仍被挡」作证据
+    ——端口上没有任何监听者时只有残留连接态会挡它。命令跑不起来就让用例失败：「量不到」
+    不能被读成「没有」。
+    """
+    if sys.platform.startswith("linux"):
+        out = subprocess.run(
+            ["ss", "-tanH", "state", "time-wait"], capture_output=True, text=True, check=True
+        ).stdout
+        rows = [line.split() for line in out.splitlines() if line.strip()]
+        # 指定了 state 时没有 State 列：Recv-Q Send-Q Local Peer
+        return [" ".join(r) for r in rows if len(r) >= 4 and r[2] == f"127.0.0.1:{port}"]
+    if os.name == "nt":
+        out = subprocess.run(
+            ["netstat", "-ano", "-p", "TCP"], capture_output=True, text=True, check=True
+        ).stdout
+        hits = []
+        for line in out.splitlines():
+            cols = line.split()
+            if len(cols) >= 4 and cols[3] == "TIME_WAIT" and cols[1] == f"127.0.0.1:{port}":
+                hits.append(line.strip())
+        return hits
+    return [f"plain bind 127.0.0.1:{port} blocked"] if _plain_bind_is_blocked(port) else []
+
+
+def _bootstrap(port: int) -> str:
+    status, headers, _ = http_post_json(
+        f"http://127.0.0.1:{port}{desktop.BOOTSTRAP_PATH}", {"nonce": NONCE}
+    )
+    assert status == 200
+    return headers["Set-Cookie"].split(";", 1)[0]
+
+
+def test_two_launches_land_on_the_same_port_after_the_real_exit_path(tmp_path):
+    """产品真实的退出路径：窗口开着 SSE 长连接（`/api/events`）时壳关 stdin（关窗 / 更新重启），
+    第二次启动拿到同一个端口——origin 不变，localStorage 不丢。
+
+    这条路上服务端那一侧**留不留** TIME_WAIT 由平台决定（Windows 上 sidecar 退出时开着的连接
+    常被 RST 掉，WinError 10054），这条不管；「确有服务端 TIME_WAIT 时能不能重绑」是下一条的主语。
     """
     port = _free_port()
-
     first, hs_path = _spawn_sidecar(tmp_path / "first", port)
     try:
         hs = _await_handshake(first, hs_path)
         assert hs["ready"] is True and hs["port"] == port
-        status, headers, _ = http_post_json(
-            f"http://127.0.0.1:{port}{desktop.BOOTSTRAP_PATH}", {"nonce": NONCE}
-        )
-        assert status == 200
-        cookie = headers["Set-Cookie"].split(";", 1)[0]
+        cookie = _bootstrap(port)
         sse = socket.create_connection(("127.0.0.1", port), timeout=15)
         try:
             sse.sendall(
@@ -355,9 +387,11 @@ def test_two_launches_land_on_the_same_port_even_with_a_server_side_time_wait(tm
             )
             assert b": connected" in _recv_until(sse, b": connected")
             _stop_via_stdin_eof(first)
-            # 服务端已经关了：读到 EOF（缓冲读空，关的时候发的才是 FIN 而不是 RST），再关客户端
-            while sse.recv(65536):
-                pass
+            try:
+                while sse.recv(65536):
+                    pass
+            except ConnectionResetError:
+                pass  # Windows：退出时开着的连接被 RST，同样是「服务端走了」
         finally:
             sse.close()
     finally:
@@ -365,14 +399,63 @@ def test_two_launches_land_on_the_same_port_even_with_a_server_side_time_wait(tm
             first.kill()
             first.wait()
 
-    if os.name != "nt":
-        assert _plain_bind_is_blocked(port), "前提不成立：端口上没有服务端 TIME_WAIT"
-
     second, hs_path = _spawn_sidecar(tmp_path / "second", port)
     try:
         hs = _await_handshake(second, hs_path)
         assert hs["ready"] is True
         assert hs["port"] == port, "第二次启动没拿到同一个端口：origin 变了，localStorage 全丢"
+    finally:
+        _stop_via_stdin_eof(second)
+
+
+def test_second_launch_rebinds_the_port_while_a_server_side_time_wait_is_there(tmp_path):
+    """**显式造出**服务端 TIME_WAIT，再启动第二个 sidecar，断言重绑到同一端口。
+
+    造法：对一条普通请求带 `Connection: close`，服务端回完就关（服务端是主动关闭方）；客户端
+    读到 EOF 再关。先用 `ss` / `netstat` 断言这个端口上**确有**本地端口 = 它的 TIME_WAIT——
+    前提没造出来（例如被 RST）就显式失败，不当绿、不 skip。POSIX 上再加一道：不带
+    `SO_REUSEADDR` 的普通 bind 被挡（证明 TIME_WAIT 真的会挡 bind，这条量的正是它）。
+    Windows 上 `SO_EXCLUSIVEADDRUSE` 碰上 TIME_WAIT 能不能立刻重绑，由 CI Windows 腿上这条回答。
+    """
+    port = _free_port()
+    first, hs_path = _spawn_sidecar(tmp_path / "first", port)
+    try:
+        hs = _await_handshake(first, hs_path)
+        assert hs["ready"] is True and hs["port"] == port
+        for _ in range(3):  # 多造几条，别让一条的偶然（被 RST）决定前提
+            c = socket.create_connection(("127.0.0.1", port), timeout=15)
+            try:
+                c.sendall(
+                    (
+                        f"GET {desktop.BOOTSTRAP_PATH} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n"
+                        "Connection: close\r\n\r\n"
+                    ).encode()
+                )
+                while c.recv(65536):  # 读到 EOF：服务端先关
+                    pass
+            finally:
+                c.close()
+        _stop_via_stdin_eof(first)
+    finally:
+        if first.poll() is None:
+            first.kill()
+            first.wait()
+
+    tw = _server_side_time_wait(port)
+    assert tw, (
+        f"前提未成立：端口 {port} 上没有服务端一侧的 TIME_WAIT（服务端没有主动关闭，或连接被 RST），"
+        "这条用例量不到它要量的东西"
+    )
+    if os.name != "nt":
+        assert _plain_bind_is_blocked(port), "前提未成立：TIME_WAIT 在，但普通 bind 没被挡"
+
+    second, hs_path = _spawn_sidecar(tmp_path / "second", port)
+    try:
+        hs = _await_handshake(second, hs_path)
+        assert hs["ready"] is True
+        assert hs["port"] == port, (
+            f"服务端 TIME_WAIT 在时第二次启动没拿到同一个端口（拿到 {hs['port']}）：{tw}"
+        )
     finally:
         _stop_via_stdin_eof(second)
 
