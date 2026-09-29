@@ -262,3 +262,13 @@ Tauri bundler）。
   必须等三条都跑完才拼得出来（`--require` 三个平台，缺一个即失败）。拼接逻辑在 `scripts/make_updater_manifest.py`
   （有包没签名、一个包都没有，都是硬错误——宁可不发清单，也不发一份装到
   一半才发现对不上的），看护 `tests/test_updater_manifest.py`。
+
+## 修订（2026-09-29，[ADR 0108](0108-desktop-stable-origin-and-backend-session-state.md)，issue #715）
+
+- **端口不再每次都变。** 上文「启动」一条与「桌面/浏览器模式边界」表里的 `127.0.0.1:0` 改为：壳把记在
+  `app_config_dir()/desktop-port` 的端口作为 stdin 首行的 `preferred_port` 交给 sidecar（首次在 20000–29999 里随机），
+  sidecar 以 `apply_bind_options(exclusive=True)` 直接 bind，占不到约 2.5 s 内重试、再退回端口 0；连续 3 次落空
+  才改记。stdin 首行因此是 `{nonce, parent_pid, preferred_port}`；握手文件格式不变，壳按握手里的实际端口导航。
+- **「本机崩溃恢复副本下次启动恢复」的前提是 origin 稳定。** 副本（`tavotto.autosave.<id>` / `tavotto.recovery.<id>`）
+  在 localStorage 里，按 origin 隔离；改造前每次启动换端口，这句在桌面版上并不成立。现在它在「端口拿到了」的
+  那些启动上成立；端口被占的那一次仍读不到——「上次打开的排版」等关键状态因此另由后端记（ADR 0108 §三，PR-B）。

@@ -1122,9 +1122,9 @@ fn set_menu_locale(
     app: tauri::AppHandle,
     locale: String,
     // 用户亲手选的（设置里换语言），还是只是「当前生效」的汇报（i18n 就绪）。
-    // 桌面模式下这是**唯一**能把「手动选择 > 系统语言」还给用户的信息：
-    // sidecar 绑 `127.0.0.1:0`，端口每次都变，前端 localStorage 的偏好活不
-    // 过一次重启（端口是 Web Storage origin 的一部分）。
+    // 桌面模式下这是**最可靠**的那份「手动选择 > 系统语言」：sidecar 优先绑上次
+    // 记住的端口（ADR 0108），但端口被占时本次仍会换一个，前端 localStorage 的
+    // 偏好就活不过那一次重启（端口是 Web Storage origin 的一部分）。
     explicit: Option<bool>,
 ) -> Result<(), String> {
     let Some(next) = i18n::normalize(&locale) else {
@@ -1175,7 +1175,15 @@ fn spawn_sidecar_and_navigate(app: tauri::AppHandle) {
             .unwrap_or_else(|_| std::env::temp_dir().join("tavotto-logs"));
 
         let project = open.as_ref().map(|o| o.project.as_str());
-        let result = sidecar::Sidecar::start(resource_dir, &log_dir, &nonce, project, menu_locale);
+        let config_dir = app.path().app_config_dir().ok();
+        let result = sidecar::Sidecar::start(
+            resource_dir,
+            &log_dir,
+            &nonce,
+            project,
+            config_dir.as_deref(),
+            menu_locale,
+        );
         let Some(win) = app.get_webview_window("main") else {
             if let Ok((sc, _)) = result {
                 sc.shutdown();
@@ -1191,11 +1199,11 @@ fn spawn_sidecar_and_navigate(app: tauri::AppHandle) {
                 // `?open=<stem>` 是首启交接的落点（前端 lib/openRequest.ts 消费），
                 // 与浏览器模式共用同一份语义——桌面首启不必再多发一次事件。
                 // `lang=` 只在用户**亲手选过**语言时带（见 `set_menu_locale`
-                // 的 explicit 参数）。桌面模式下 sidecar 绑 `127.0.0.1:0`，
-                // 端口每次都变，而端口是 Web Storage origin 的一部分——前端
-                // 存在 localStorage 的语言偏好活不过一次重启，`detectLocale()`
+                // 的 explicit 参数）。桌面模式下 sidecar 优先绑上次记住的端口
+                // （ADR 0108），但被占时本次会换一个，而端口是 Web Storage origin
+                // 的一部分——那一次前端存在 localStorage 的语言偏好就读不到，`detectLocale()`
                 // 会退回系统语言，再把那个退回值报给壳，把用户真正的选择
-                // **覆盖掉**。壳记的这份是唯一活得下来的存储，所以由它带过去。
+                // **覆盖掉**。壳记的这份不随 origin 走，所以由它带过去。
                 let query = landing_query(
                     open.as_ref(),
                     chosen_locale.is_some().then(|| menu_locale.tag()),

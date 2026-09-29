@@ -2,7 +2,11 @@
 
 与浏览器模式（`localserver.serve_browser` + `webbrowser.open`）的差异全部收在这个模块里：
 
-- 只绑 127.0.0.1、端口 0（操作系统分配——先绑定后读端口，没有「先查再绑」竞态）。
+- 只绑 127.0.0.1。端口优先用壳经 stdin 首行建议的 `preferred_port`（壳记在
+  `app_config_dir()/desktop-port`，ADR 0108）：窗口的 origin 跨重启不变，前端
+  localStorage 里的崩溃兜底副本与偏好才活得下来（issue #715）。直接 bind，占不到就在
+  `PREFERRED_PORT_RETRY_SECONDS` 内重试（应用内更新重启时旧 sidecar 要等 stdin EOF 才退），
+  再占不到退回端口 0（操作系统分配）——都是先占后读，没有「先查再绑」竞态。
 - 用 werkzeug 的线程 server（经 `localserver.LocalWSGIServer`：bind 与 listen
   之间不反查主机名）：拿得到真实端口，支持从别的线程优雅 `shutdown()`。
 - 一次性启动 nonce → 短生命周期 HttpOnly 会话 cookie 的桌面认证：
@@ -34,6 +38,7 @@ import json
 import logging
 import os
 import signal
+import socket
 import sys
 import threading
 import time
@@ -48,6 +53,17 @@ LOG = logging.getLogger("tavotto.desktop")
 COOKIE_NAME = security.COOKIE_NAME
 BOOTSTRAP_PATH = security.LEGACY_BOOTSTRAP_PATH
 DesktopState = security.SessionState
+
+#: stdin 首行 JSON 里壳建议的端口字段与合法范围——与生产方 `src-tauri/src/sidecar/port_memory.rs`
+#: 严格同源：两侧各读 `tests/golden/desktop_preferred_port.json`，不读对方源码。
+PREFERRED_PORT_FIELD = "preferred_port"
+PREFERRED_PORT_MIN = 1024
+PREFERRED_PORT_MAX = 65535
+#: 建议端口占不到时重试多久。应用内更新装完走 `process::exit` 重启：旧壳没走 `RunEvent::Exit`，
+#: 旧 sidecar 要等 stdin EOF 才开始关，端口可能还没放出来。等太久用户看到的是 splash 多停几秒，
+#: 所以只给两三秒，再占不到就本次换端口（壳那边记一次落空，ADR 0108）。
+PREFERRED_PORT_RETRY_SECONDS = 2.5
+PREFERRED_PORT_RETRY_INTERVAL = 0.1
 
 
 # ---------------------------------------------------------------------------
@@ -76,11 +92,25 @@ def write_handshake(
 # ---------------------------------------------------------------------------
 # 启动凭据（nonce）与父进程监视
 # ---------------------------------------------------------------------------
-def read_launch_credentials(stdin=None, environ=None) -> tuple[str | None, int | None, object]:
-    """取启动 nonce 与父 PID。
+def parse_preferred_port(value: object) -> int | None:
+    """stdin 里的建议端口 → 端口；不是 `[PREFERRED_PORT_MIN, PREFERRED_PORT_MAX]` 里的整数一律 None。
 
-    返回 (nonce, parent_pid, stdin_stream)：stdin_stream 是已经读掉首行、
-    留给父进程监视继续 read 的流（可能为 None）。
+    非法值只是被忽略、退回系统分配：建议端口是「尽量稳定」的优化，不是启动的前提。
+    （JSON 的 `true` / `false` 在 Python 里是 int 1 / 0，落在范围下限之外，同样被忽略。）
+    """
+    if not isinstance(value, int):
+        return None
+    return value if PREFERRED_PORT_MIN <= value <= PREFERRED_PORT_MAX else None
+
+
+def read_launch_credentials(
+    stdin=None, environ=None
+) -> tuple[str | None, int | None, int | None, object]:
+    """取启动 nonce、父 PID 与建议端口。
+
+    返回 (nonce, parent_pid, preferred_port, stdin_stream)：stdin_stream 是已经读掉首行、
+    留给父进程监视继续 read 的流（可能为 None）。建议端口只从 stdin 首行来
+    （`PREFERRED_PORT_FIELD`），缺席或非法都是 None。
 
     优先级：环境变量（读到即从 environ 摘除，调试用）→ stdin 首行 JSON。
     stdin 是 tty（用户在终端里手敲 --desktop-sidecar）时不读——那会无限等
@@ -91,6 +121,7 @@ def read_launch_credentials(stdin=None, environ=None) -> tuple[str | None, int |
     nonce = env.pop("TAVOTTO_DESKTOP_NONCE", None)
     parent_raw = env.pop("TAVOTTO_DESKTOP_PARENT_PID", None)
     parent_pid = int(parent_raw) if parent_raw and parent_raw.isdigit() else None
+    preferred_port = None
 
     if nonce is None and stream is not None:
         try:
@@ -104,9 +135,10 @@ def read_launch_credentials(stdin=None, environ=None) -> tuple[str | None, int |
                     pp = msg.get("parent_pid")
                     if parent_pid is None and isinstance(pp, int):
                         parent_pid = pp
+                    preferred_port = parse_preferred_port(msg.get(PREFERRED_PORT_FIELD))
         except (OSError, ValueError):
             pass
-    return nonce, parent_pid, stream
+    return nonce, parent_pid, preferred_port, stream
 
 
 def watch_stdin_eof(stream, on_gone) -> None:
@@ -161,16 +193,68 @@ def watch_parent_pid(parent_pid: int, on_gone, interval: float = 1.0) -> None:
 # ---------------------------------------------------------------------------
 # 受控 WSGI server
 # ---------------------------------------------------------------------------
-class SidecarServer:
-    """绑定 127.0.0.1:0 的受控 server；shutdown 幂等且线程安全。"""
+def claim_listener(
+    preferred_port: int | None,
+    *,
+    retry_seconds: float = PREFERRED_PORT_RETRY_SECONDS,
+    interval: float = PREFERRED_PORT_RETRY_INTERVAL,
+) -> socket.socket:
+    """占下 sidecar 的监听 socket：先建议端口（限时重试），再退回端口 0。
 
-    def __init__(self, flask_app, state: DesktopState, handshake: Path | None = None) -> None:
+    占法与浏览器模式同一份（`localserver.claim`：bind + listen，选项走
+    `apply_bind_options(exclusive=True)`——POSIX 上 `SO_REUSEADDR` 让上一个进程留下的 TIME_WAIT
+    挡不住同端口重启；Windows 上 `SO_EXCLUSIVEADDRUSE`，别的程序即使带 `SO_REUSEADDR` 也抢不走）。
+    不用「先探后绑」：探到空闲与真 bind 之间谁都可能插进来。
+    """
+    host = "127.0.0.1"
+    if preferred_port is not None:
+        deadline = time.monotonic() + retry_seconds
+        while True:
+            try:
+                return localserver.claim(host, preferred_port)
+            except OSError as exc:
+                if time.monotonic() >= deadline:
+                    LOG.warning(
+                        "建议端口 %d 在 %.1f s 内都占不到（%s），本次改用系统分配的端口",
+                        preferred_port,
+                        retry_seconds,
+                        exc,
+                    )
+                    break
+            time.sleep(interval)
+    return localserver.claim(host, 0)
+
+
+class SidecarServer:
+    """绑定 127.0.0.1（建议端口，退回端口 0）的受控 server；shutdown 幂等且线程安全。"""
+
+    def __init__(
+        self,
+        flask_app,
+        state: DesktopState,
+        handshake: Path | None = None,
+        *,
+        preferred_port: int | None = None,
+        retry_seconds: float = PREFERRED_PORT_RETRY_SECONDS,
+    ) -> None:
         self._app = flask_app
         self._handshake = handshake
         # 线程 server（SSE 长连接 + 渲染请求并存；daemon_threads=True，shutdown
         # 后残余长连接不阻塞进程退出），且 bind → listen 之间不反查主机名——
-        # 否则反向 DNS 无回音的机器上握手文件要等 30–60 s 才写得出来（localserver.py）
-        self._srv = localserver.LocalWSGIServer("127.0.0.1", 0, flask_app)
+        # 否则反向 DNS 无回音的机器上握手文件要等 30–60 s 才写得出来（localserver.py）。
+        # 监听 socket 由 `claim_listener` 先占好，werkzeug 经 `fd=` 接管（与浏览器模式
+        # `serve_browser` 同一条路）：werkzeug 自己 bind 失败是 `sys.exit(1)`，接不住，也就没法重试 / 回退。
+        listener = claim_listener(preferred_port, retry_seconds=retry_seconds)
+        try:
+            self._srv = localserver.LocalWSGIServer(
+                "127.0.0.1", listener.getsockname()[1], flask_app, fd=listener.fileno()
+            )
+        finally:
+            listener.close()  # werkzeug 从 fd dup 了一份，原件关掉
+        # fd 路径不走 server_bind：把 HTTPServer 会填的两个属性照 `server_bind` 那样填上
+        self._srv.server_name = "127.0.0.1"
+        self._srv.server_port = self._srv.port
+        # Host / Origin 校验钉的是这里——**实际**拿到的端口，不是建议的那个
         state.port = self._srv.server_port
         flask_app.config["TAVOTTO_DESKTOP_MODE"] = True
         flask_app.config[security.STATE_KEY] = state
@@ -207,7 +291,12 @@ class SidecarServer:
         return self._stopped.wait(timeout)
 
     def _cleanup(self) -> None:
-        """serve 循环退出后：停 watcher → 同步关 worker → 中断 AI → 清握手。"""
+        """serve 循环退出后：停 watcher → 同步关 worker → 中断 AI → 清握手。
+
+        监听 socket 此时已经关了（werkzeug 的 `serve_forever` 在 finally 里 `server_close()`）：
+        同步关 worker 最多要等好几秒，端口不必陪着等——紧接着启动的下一个 sidecar（应用内更新
+        后的重启）才拿得到建议端口（`test_a_stopped_sidecar_releases_its_port_at_once` 看护）。
+        """
         try:
             engine_watch.stop()  # None = 停掉全部项目的 watcher
             engine_pool.shutdown_all(wait=True)  # 同步等 worker 真的退了再走
@@ -229,7 +318,7 @@ class SidecarServer:
 def run(flask_app) -> int:
     """`tavotto --desktop-sidecar` 的主体。项目打开逻辑仍在 app.main（与浏览器
     模式同一套），这里只负责认证、server 生命周期与父进程跟随。"""
-    nonce, parent_pid, stdin_stream = read_launch_credentials()
+    nonce, parent_pid, preferred_port, stdin_stream = read_launch_credentials()
     handshake_raw = os.environ.pop("TAVOTTO_DESKTOP_HANDSHAKE", None)
     handshake = Path(handshake_raw) if handshake_raw else None
 
@@ -246,7 +335,7 @@ def run(flask_app) -> int:
 
     state = DesktopState(nonce)
     try:
-        srv = SidecarServer(flask_app, state, handshake)
+        srv = SidecarServer(flask_app, state, handshake, preferred_port=preferred_port)
     except OSError as exc:
         write_handshake(handshake, ready=False, error=f"无法绑定 127.0.0.1 端口: {exc}")
         LOG.error("sidecar 绑定失败: %s", exc)
@@ -264,7 +353,12 @@ def run(flask_app) -> int:
             pass
 
     srv.announce_ready()
-    LOG.info("desktop sidecar 就绪: 127.0.0.1:%d (pid %d)", srv.port, os.getpid())
+    LOG.info(
+        "desktop sidecar 就绪: 127.0.0.1:%d (pid %d，建议端口 %s)",
+        srv.port,
+        os.getpid(),
+        preferred_port,
+    )
     srv.serve_forever()
     LOG.info("desktop sidecar 已退出")
     return 0
