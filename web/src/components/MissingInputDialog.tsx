@@ -4,6 +4,7 @@ import type { MissingInputItem, MissingInputOffer } from '@/lib/api'
 import { isDesktop, pickAnyFile, pickDirectory } from '@/lib/desktop'
 import { useEnvStore } from '@/store/envStore'
 import { Button } from './ui/Button'
+import { Details, Summary } from './ui/Details'
 import { Dialog } from './ui/Dialog'
 import { TextInput } from './ui/Input'
 
@@ -35,6 +36,7 @@ export function MissingInputDialog() {
   const remappable = primary.via === 'open'
   const others = offer.others.filter((o) => o.path !== primary.path)
   const desktop = isDesktop()
+  const name = baseName(primary.path)
 
   const submit = async (chosen: string | null, kind: 'file' | 'dir' | 'auto') => {
     if (!chosen) return // 取消选择器不是错误
@@ -43,7 +45,12 @@ export function MissingInputDialog() {
     setBusy(false)
     setError(err)
   }
+  const pickFile = () =>
+    void pickAnyFile(t('engine.missingInputPickFileTitle', { name })).then((f) => submit(f, 'file'))
+  const pickDir = () => void pickDirectory(t('engine.missingInputPickDirTitle')).then((d) => submit(d, 'dir'))
 
+  // 默认只有一句话 + 一个主按钮（用户 09-29：「一定要让用户一句话就能够读懂」）：完整路径、为什么找不到、
+  // 一并修好的其它路径、只影响读取的说明、改选文件夹，全部收进默认折叠的「详情」
   return (
     <Dialog
       open
@@ -51,7 +58,7 @@ export function MissingInputDialog() {
         if (!v && !busy) dismiss()
       }}
       title={t('engine.missingInputTitle')}
-      description={t('engine.missingInputBody', { script: offer.script })}
+      description={t(remappable ? 'engine.missingInputSentence' : 'engine.missingInputSentenceProbe', { name })}
       size="sm"
       busy={busy}
       anchor="missing-input"
@@ -61,32 +68,9 @@ export function MissingInputDialog() {
             {t('engine.missingInputLater')}
           </Button>
           {remappable && desktop && (
-            <>
-              <Button
-                variant="secondary"
-                size="md"
-                disabled={busy}
-                data-testid="missing-input-pick-dir"
-                onClick={() =>
-                  void pickDirectory(t('engine.missingInputPickDirTitle')).then((d) => submit(d, 'dir'))
-                }
-              >
-                {t('engine.missingInputPickDir')}
-              </Button>
-              <Button
-                variant="primary"
-                size="md"
-                disabled={busy}
-                data-testid="missing-input-pick-file"
-                onClick={() =>
-                  void pickAnyFile(t('engine.missingInputPickFileTitle', { name: baseName(primary.path) })).then(
-                    (f) => submit(f, 'file'),
-                  )
-                }
-              >
-                {t('engine.missingInputPickFile')}
-              </Button>
-            </>
+            <Button variant="primary" size="md" disabled={busy} data-testid="missing-input-pick-file" onClick={pickFile}>
+              {t('engine.missingInputPickFile')}
+            </Button>
           )}
           {remappable && !desktop && (
             <Button
@@ -102,41 +86,53 @@ export function MissingInputDialog() {
         </>
       }
     >
-      {/* 路径是用户自己写的，不翻译 */}
-      <p className="break-all font-mono text-sm text-ink" data-missing-input-path>
-        {primary.path}
-      </p>
-      <p className="mt-2 text-xs leading-relaxed text-ink-2">
-        {remappable
-          ? t(primary.absolute ? 'engine.missingInputWhyAbsolute' : 'engine.missingInputWhyRelative')
-          : t('engine.missingInputProbe')}
-      </p>
       {remappable && !desktop && (
         <TextInput
-          className="mt-2 w-full"
+          className="w-full"
           value={typed}
           disabled={busy}
           placeholder={t('engine.missingInputPathPlaceholder')}
           aria-label={t('engine.missingInputPathPlaceholder')}
+          data-testid="missing-input-path-input"
           onChange={(e) => setTyped(e.target.value)}
         />
       )}
-      {others.length > 0 && (
-        <div className="mt-2">
-          <p className="text-xs text-ink-3">{t('engine.missingInputOthers')}</p>
-          <ul className="mt-0.5 flex flex-col gap-0.5" data-missing-input-others>
-            {others.map((o) => (
-              <li key={o.path} className="break-all font-mono text-xs text-ink-2">
-                {o.path}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-      {remappable && (
-        <p className="mt-2 text-xs leading-relaxed text-ink-3">{t('engine.missingInputReadOnly')}</p>
-      )}
       {error && <p className="mt-1 text-xs text-danger">{error}</p>}
+      <Details className="mt-2 text-xs text-ink-3" data-missing-input-details>
+        <Summary className="cursor-pointer py-0.5 text-ink-2">{t('engine.missingInputDetails')}</Summary>
+        <div className="mt-1 flex flex-col gap-2 pl-4">
+          {/* 路径是用户自己写的，不翻译 */}
+          <p className="break-all font-mono text-ink" data-missing-input-path>
+            {primary.path}
+          </p>
+          <p className="leading-relaxed text-ink-2">
+            {remappable
+              ? t(primary.absolute ? 'engine.missingInputWhyAbsolute' : 'engine.missingInputWhyRelative')
+              : t('engine.missingInputProbe')}
+          </p>
+          {others.length > 0 && (
+            <div>
+              <p>{t('engine.missingInputOthers')}</p>
+              <ul className="mt-0.5 flex flex-col gap-0.5" data-missing-input-others>
+                {others.map((o) => (
+                  <li key={o.path} className="break-all font-mono text-ink-2">
+                    {o.path}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {remappable && <p className="leading-relaxed">{t('engine.missingInputReadOnly')}</p>}
+          {/* 选中那个文件就推得出规则；数据整批换了文件夹、只想指一次时才用得上这个 */}
+          {remappable && desktop && (
+            <div>
+              <Button variant="secondary" size="sm" disabled={busy} data-testid="missing-input-pick-dir" onClick={pickDir}>
+                {t('engine.missingInputPickDir')}
+              </Button>
+            </div>
+          )}
+        </div>
+      </Details>
     </Dialog>
   )
 }

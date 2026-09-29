@@ -329,6 +329,126 @@ def _probe_via_of_constants(tree: ast.AST) -> dict[int, str]:
     return out
 
 
+#: 读数据的调用（取末段名）：它们实参里的字符串常量才算「脚本要读的数据」（`static_missing` 的来源）。
+#: 坐标轴标签、存图 / 写出的目标、`.py`、当输出目录用的路径都不在任何读取调用里——不靠事后按字符串长相猜
+#: （用户 09-29 截图：`Distance $z$ ($\mu$m)`、`绘图缓存` 目录、`color.txt` 写出目标都进了「一并修好」）。
+#: `read_*`（pandas / geopandas / ase / mdtraj……）按前缀认。
+READ_FUNCS = frozenset(
+    {
+        "open",  # 内建 / io / codecs / gzip / bz2 / lzma；Path(...).open 另判（接收者是路径）
+        "load",  # np.load / torch.load / joblib.load（json / pickle 的实参是文件对象，没有常量）
+        "loadtxt",
+        "genfromtxt",
+        "fromfile",
+        "loadmat",
+        "imread",
+        "File",  # h5py.File
+        "Dataset",  # netCDF4.Dataset
+        "open_dataset",
+        "open_mfdataset",
+        "open_dataarray",
+        "load_workbook",
+        "import_file",  # ovito
+    }
+)
+#: `open` / `File` / `Dataset` 这几个带「模式」：写 / 追加 / 新建 / 读写的打开不是输入
+_MODAL_READS = {"open": 1, "File": 1, "Dataset": 1}
+_WRITE_MODE_CHARS = "wax+"
+
+
+def _is_read_call(node: ast.Call) -> bool:
+    name = databinding._func_name(node.func)
+    if name.startswith("read_"):
+        return True
+    if name not in READ_FUNCS:
+        return False
+    pos = _MODAL_READS.get(name)
+    if pos is None:
+        return True
+    mode = node.args[pos] if len(node.args) > pos else None
+    if mode is None:
+        mode = next((k.value for k in node.keywords if k.arg == "mode"), None)
+    if isinstance(mode, ast.Constant) and isinstance(mode.value, str):
+        return not any(c in mode.value for c in _WRITE_MODE_CHARS)
+    return mode is None  # 没写模式 = 读；模式是变量：说不清，不算
+
+
+def _input_constant_ids(tree: ast.AST) -> set[int]:
+    """`id(Constant)`：读数据调用的**路径实参**整条就是一个字符串常量时，那个常量（只赋值过一次的名字
+    跟过去：`DATA = "..."` 再 `read_csv(DATA)`；`Path(<常量>)` 同样）。`Path(<常量>).read_text()` /
+    `.read_bytes()` / 读模式的 `.open()` 也算。`.py` 读的是代码不是数据，由调用方另外排除。"""
+    stores: dict[str, int] = {}
+    consts: dict[str, ast.AST] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+            stores[node.id] = stores.get(node.id, 0) + 1
+        if (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+        ):
+            consts[node.targets[0].id] = node.value
+
+    out: set[int] = set()
+
+    def _take(expr: ast.AST | None, depth: int = 0) -> None:
+        # 只认**整条路径**就是一个常量的写法：常量本身、只赋值一次的名字、`Path(<那样的东西>)`。
+        # 拼出来的（`os.path.join(d, "x.csv")`、f-string）各段本身不是那条路径——静态说不出拼完是什么，
+        # 不列（运行时 worker 会说出真正缺的那一串）
+        if expr is None or depth > 3:
+            return
+        if isinstance(expr, ast.Constant) and isinstance(expr.value, str):
+            out.add(id(expr))
+        elif isinstance(expr, ast.Name) and stores.get(expr.id) == 1 and expr.id in consts:
+            _take(consts[expr.id], depth + 1)
+        elif (
+            isinstance(expr, ast.Call)
+            and databinding._func_name(expr.func) in databinding._PATH_CTORS
+            and len(expr.args) == 1
+        ):
+            _take(expr.args[0], depth + 1)
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        # Path(<路径>).read_text() / .read_bytes() / .open("r")：路径是接收者
+        if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Call):
+            ctor = databinding._func_name(func.value.func)
+            if ctor in databinding._PATH_CTORS and func.attr in ("read_text", "read_bytes", "open"):
+                mode = (
+                    node.args[0]
+                    if node.args
+                    else next((k.value for k in node.keywords if k.arg == "mode"), None)
+                )
+                writes = (
+                    isinstance(mode, ast.Constant)
+                    and isinstance(mode.value, str)
+                    and any(c in mode.value for c in _WRITE_MODE_CHARS)
+                )
+                if func.attr != "open" or not writes:
+                    for arg in func.value.args:
+                        _take(arg)
+                continue
+        if not _is_read_call(node):
+            continue
+        # 路径是第一个位置实参（或 file / fname / filename / path 这几个关键字）；模式等其余实参不算
+        first = (
+            node.args[0]
+            if node.args
+            else next(
+                (
+                    k.value
+                    for k in node.keywords
+                    if k.arg in ("file", "fname", "filename", "filepath_or_buffer", "path", "io")
+                ),
+                None,
+            )
+        )
+        _take(first)
+    return out
+
+
 def _absolute_literals(source: str) -> list[tuple[str, str]]:
     """脚本里**以字符串常量出现**的绝对数据路径（存图调用的实参除外）→ `[(路径, via)]`。只认常量，不求值。
 
@@ -349,12 +469,16 @@ def _absolute_literals(source: str) -> list[tuple[str, str]]:
                 if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
                     outputs.add(arg.value)
     probed = _probe_via_of_constants(tree)
+    inputs = _input_constant_ids(tree)
     out: dict[str, str] = {}
     for node in ast.walk(tree):
         if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
             continue
         text = node.value
         if text in outputs:
+            continue
+        # 只有进了读取调用（或被探路调用问）的常量才是「脚本要读的数据」；代码文件不是
+        if (id(node) not in inputs and id(node) not in probed) or _is_code(text):
             continue
         via = probed.get(id(node), VIA_OPEN)
         if text in out:
@@ -372,6 +496,28 @@ def _absolute_literals(source: str) -> list[tuple[str, str]]:
                 break
             out[text] = via
     return list(out.items())
+
+
+def _input_texts(source: str) -> set[str]:
+    """进了读取调用的字符串常量的值（`_input_constant_ids`）。解析不了回空集。"""
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError):
+        return set()
+    ids = _input_constant_ids(tree)
+    return {
+        n.value
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Constant)
+        and isinstance(n.value, str)
+        and id(n) in ids
+        and not _is_code(n.value)
+    }
+
+
+def _is_code(text: str) -> bool:
+    """`.py` / `.pyc`：`exec(open("helpers/util.py").read())` 读的是代码，不是要找的数据。"""
+    return text.lower().endswith((".py", ".pyc", ".pyw"))
 
 
 def _script_source(root: Path, script_path: Path) -> str:
@@ -415,7 +561,13 @@ def static_missing(
         out.append({"path": path, "absolute": absolute, "via": via})
 
     probe_targets = set(ev.get("probes") or [])
+    source = _script_source(root_path, script_path)
+    read_texts = _input_texts(source)
     for lit in ev.get("reads") or []:
+        # `evidence` 的 reads 是「像数据路径的常量」（首开判运行目录用，宁多勿漏）；这里要的是**真进了
+        # 读取调用**的那些——标签、写出目标、输出目录、`.py` 都不是缺的数据
+        if lit not in read_texts and lit not in probe_targets:
+            continue
         if lit in (parent.get("missing") or []) and lit in (top.get("missing") or []):
             # 同一串也被 exists / listdir 问过：脚本多半先判再读，改指救不回那一问——按探路算
             _add(lit, False, VIA_PROBE if lit in probe_targets else VIA_OPEN)
@@ -425,7 +577,7 @@ def static_missing(
         if target in p_probes and target in t_probes:
             via = VIA_GLOB if any(c in target for c in "*?[") else VIA_PROBE
             _add(target, False, via)
-    for text, via in _absolute_literals(_script_source(root_path, script_path)):
+    for text, via in _absolute_literals(source):
         try:
             if via == VIA_GLOB:
                 # 父进程里同步判：`**` 递归可能扫整棵树，判不出就不列；其余非递归、见到一个就停

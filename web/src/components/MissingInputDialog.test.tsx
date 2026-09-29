@@ -117,15 +117,30 @@ describe('MissingInputDialog', () => {
     expect(dialog()).toBeNull()
   })
 
-  it('以脚本要的那串为主，说清是相对路径，列出其余也找不到的', async () => {
+  it('默认只有一句话 + 一个主按钮 +「稍后」；完整路径、原因、其余路径、说明与改选文件夹都在折叠的「详情」里', async () => {
+    // 用户 09-29：「像这样一个卡片太冗杂了……一定要让用户一句话就能够读懂」
     await render(<MissingInputDialog />)
     await act(async () => useEnvStore.getState().requestMissingInput(relative()))
     expect(dialog()).not.toBeNull()
-    expect(document.querySelector('[data-missing-input-path]')!.textContent).toBe('data/values.txt')
-    expect(text()).toContain(en('missingInputBody', { script: 'fig.py' }))
-    expect(text()).toContain(en('missingInputWhyRelative'))
-    expect(document.querySelector('[data-missing-input-others]')!.textContent).toContain('/Users/a/raw/extra.csv')
-    expect(text()).toContain(en('missingInputReadOnly'))
+    const details = dialog()!.querySelector('details[data-missing-input-details]') as HTMLDetailsElement
+    expect(details.open, '详情默认折叠').toBe(false)
+    expect(details.querySelector('summary')!.textContent).toBe(en('missingInputDetails'))
+    // 折叠区之外看得见的：标题、那一句话（只有文件名）、两个按钮
+    const outside = (el: Element) => !el.closest('details')
+    const visibleText = [...dialog()!.querySelectorAll('h2, p')].filter(outside).map((e) => e.textContent)
+    expect(visibleText).toEqual([en('missingInputTitle'), en('missingInputSentence', { name: 'values.txt' })])
+    expect(visibleText.join('')).not.toContain('data/values.txt')
+    const buttons = [...dialog()!.parentElement!.querySelectorAll('button')]
+      .filter(outside)
+      .map((b) => b.textContent?.trim())
+      .filter(Boolean)
+    expect(buttons).toEqual([en('missingInputLater'), en('missingInputPickFile')])
+    // 折叠区里：完整路径、为什么、其余路径、只影响读取、改选文件夹
+    expect(details.querySelector('[data-missing-input-path]')!.textContent).toBe('data/values.txt')
+    expect(details.textContent).toContain(en('missingInputWhyRelative'))
+    expect(details.querySelector('[data-missing-input-others]')!.textContent).toContain('/Users/a/raw/extra.csv')
+    expect(details.textContent).toContain(en('missingInputReadOnly'))
+    expect(details.querySelector('[data-testid="missing-input-pick-dir"]')).not.toBeNull()
   })
 
   it('指认文件：发一次（原串 + 选中的位置 + file），关框、把「找不到数据」的面板重新排上', async () => {
@@ -153,7 +168,8 @@ describe('MissingInputDialog', () => {
     expect(addMock).toHaveBeenCalledWith('data/values.txt', '/Volumes/B/proj/data/values.txt', 'file')
     expect(useEnvStore.getState().missingInput).toBeNull()
     expect(dialog()).toBeNull()
-    expect(useRenderStore.getState().byKey.k.stale, '没重新排上').toBe(true)
+    // 重排在 renderStore / runtimeAssetStore 两个动态 import 之后：首次加载模块是真异步，不止一个微任务
+    await vi.waitFor(() => expect(useRenderStore.getState().byKey.k.stale, '没重新排上').toBe(true))
     expect(useEnvStore.getState().env?.project?.input_remap?.rules).toHaveLength(1)
   })
 
