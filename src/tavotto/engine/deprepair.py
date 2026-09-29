@@ -857,7 +857,11 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
         raise RepairError(ERROR_ALREADY_ATTEMPTED, "同一个环境上的同一个需求这一轮已经装过了")
     _emit(plan.plan_id, STATE_INSTALLING, on_event, plan=plan)
     code, out = _pip_install(
-        python, req.requirement(), cancel_ev, lambda text: _append_log(plan.plan_id, text, on_event)
+        python,
+        req.requirement(),
+        cancel_ev,
+        lambda text: _append_log(plan.plan_id, text, on_event),
+        on_mirror=lambda url: _note_mirror(plan.plan_id, url, on_event),
     )
     if code == ERROR_CANCELLED:
         return _finish_cancelled(plan, on_event, python)
@@ -1119,7 +1123,9 @@ def classify_pip_failure(text: str) -> str:
     return ERROR_FAILED
 
 
-def pip_install_argv(python: str, requirement: str, *, upgrade: bool = False) -> list[str]:
+def pip_install_argv(
+    python: str, requirement: str, *, upgrade: bool = False, index_url: str | None = None
+) -> list[str]:
     """安装命令——**唯一出处**，测试逐字节钉住。
 
     每一个参数都有理由：
@@ -1133,6 +1139,9 @@ def pip_install_argv(python: str, requirement: str, *, upgrade: bool = False) ->
       包管理里**明确点「升级」**（`upgrade=True`，目标只会是受管环境）才带上，
       而且升级策略仍是 pip 默认的 only-if-needed——升级它，不顺手升级它的依赖。
 
+    * `index_url` 只有一个合法值：`PYPI_MIRROR_URL`（网络类失败、且用户没有自配源时的那一次重试，
+      ADR 0111；`_run_pip_install` 是唯一传它的地方）。默认不带——先用官方 / 用户自己的配置。
+
     argv 是 list、`shell=False`；包名与版本已在 `depresolve.parse_requirement`
     过了严格语法，`-r` / `--index-url` / URL / 本地路径在那里就死了。
     """
@@ -1145,6 +1154,8 @@ def pip_install_argv(python: str, requirement: str, *, upgrade: bool = False) ->
         "--no-input",
         "--only-binary=:all:",
     ]
+    if index_url:
+        argv += ["--index-url", index_url]
     if upgrade:
         argv.append("--upgrade")
     argv.append(requirement)
@@ -1168,15 +1179,89 @@ def pip_uninstall_argv(python: str, distribution: str) -> list[str]:
 
 
 def _pip_install(
-    python: str, requirement: str, cancel_ev: threading.Event, on_log, *, upgrade: bool = False
+    python: str,
+    requirement: str,
+    cancel_ev: threading.Event,
+    on_log,
+    *,
+    upgrade: bool = False,
+    on_mirror=None,
 ) -> tuple[str, str]:
-    """跑一次 pip install。回 `("", 输出)` 表示成功，否则 `(错误码, 输出)`。"""
+    """跑一次 pip install（网络类失败时按 `_run_pip_install` 的规则至多再走一次镜像）。
+    回 `("", 输出)` 表示成功，否则 `(错误码, 输出)`。"""
     if depresolve.parse_requirement(requirement) is None:
         # 第二道门：真正拼进 argv 之前再验一次形状。第一道在解析处，
         # 这一道挡的是「以后有人从别的路径构造出需求串」。
         return ERROR_REQUIREMENT_INVALID, f"需求串不合形状: {requirement!r}"
     LOG.info("pip install: %s%s", requirement, " (upgrade)" if upgrade else "")
-    return _run_pip(pip_install_argv(python, requirement, upgrade=upgrade), cancel_ev, on_log)
+    return _run_pip_install(
+        lambda index_url: pip_install_argv(
+            python, requirement, upgrade=upgrade, index_url=index_url
+        ),
+        python,
+        cancel_ev,
+        on_log,
+        on_mirror=on_mirror,
+    )
+
+
+# ---------------------------------------------------------------------------
+# PyPI 镜像回退（ADR 0111）
+#
+# 国内网络直连 PyPI 常常连不上 / 读超时。先用官方 / 用户自己的配置装；**仅当**失败是网络类的、
+# 且用户没有自配任何包源时，改用一个固定的镜像重试**一次**。用户配过源（index / extra-index /
+# 离线 wheelhouse）一律不动——那是他明确说过「从哪装」。
+# ---------------------------------------------------------------------------
+#: 固定的一个镜像（清华 TUNA，PyPI 全量镜像，HTTPS）。不做镜像列表、不测速、不轮换。
+PYPI_MIRROR_URL = "https://pypi.tuna.tsinghua.edu.cn/simple"
+#: 「用户自配了包源」的 pip 环境变量与配置键：index 两个 + 离线 wheelhouse 两个。后两个不算
+#: `custom_package_index`（诊断只问 index），但同样是「用户说过从哪装」：绕开它去联网是违背意思表示。
+_PIP_SOURCE_ENV = ("PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL", "PIP_NO_INDEX", "PIP_FIND_LINKS")
+_PIP_SOURCE_KEYS = ("index-url", "extra-index-url", "no-index", "find-links")
+
+
+def user_package_source(python: str) -> bool | None:
+    """这个环境的 pip 是不是配了**用户自己的包源**（`_PIP_SOURCE_ENV` / `_PIP_SOURCE_KEYS`）。
+
+    `custom_package_index` 的超集（多认 no-index / find-links）；只回真假、不回地址。问不出来回 None
+    ——镜像回退把 None 当「配过」处理（宁可不换源）。"""
+    if any(os.environ.get(name) for name in _PIP_SOURCE_ENV):
+        return True
+    rc, out = _run([str(python), "-m", "pip", "config", "list"], 30)
+    if rc != 0:
+        return None
+    return any(k in out for k in _PIP_SOURCE_KEYS)
+
+
+def mirror_retry_warranted(code: str, user_source: bool | None) -> bool:
+    """这次失败要不要改用镜像重试一次——纯函数。
+
+    判据的主语：**这一次** pip 进程的结局（`_run_pip` 给的 code）与**这个环境**的 pip 配置。
+    `ERROR_NETWORK` 只在 pip **退出码非零**且输出带网络特征（`_NETWORK_MARKERS`：DNS 失败 / 连不上 /
+    读超时 / 代理错误 / pip 自己的 Retrying）时才会出现（`_run_pip` → `classify_pip_failure`）；退出码 0
+    哪怕输出里有过 Retrying 也是成功，不重试。取消 / 超时 / 冲突 / 找不到 / hash 不符都不是换源能解决的。
+    用户配过源（True）或问不出来（None）都不换。"""
+    return code == ERROR_NETWORK and user_source is False
+
+
+def _run_pip_install(
+    build_argv, python: str, cancel_ev: threading.Event, on_log, *, on_mirror=None
+) -> tuple[str, str]:
+    """装包的执行器：先按 `build_argv(None)`（官方 / 用户配置）跑；网络类失败且用户没自配源时，
+    按 `build_argv(PYPI_MIRROR_URL)` **再跑一次**，日志里写明用了镜像、`on_mirror(url)` 通知调用方记进
+    进度 / 结果。两条 argv 出处（`pip_install_argv` / `pip_install_joint_argv`）都经这里。"""
+    code, out = _run_pip(build_argv(None), cancel_ev, on_log)
+    user_source = user_package_source(python) if code == ERROR_NETWORK else None
+    if not mirror_retry_warranted(code, user_source):
+        return code, out
+    note = f"\n连不上默认的 Python 包源，改用 PyPI 镜像 {PYPI_MIRROR_URL} 重试一次\n"
+    LOG.warning("pip 网络类失败且未自配包源：改用 PyPI 镜像 %s 重试一次", PYPI_MIRROR_URL)
+    if on_log is not None:
+        on_log(note)
+    if on_mirror is not None:
+        on_mirror(PYPI_MIRROR_URL)
+    code, retry_out = _run_pip(build_argv(PYPI_MIRROR_URL), cancel_ev, on_log)
+    return code, out + note + retry_out
 
 
 def _pip_uninstall(
@@ -1426,6 +1511,19 @@ def _append_log(plan_id: str, line: str, on_event) -> None:
         if rec is None:
             return
         rec["log"] = (rec["log"] + _sanitize(line))[-_LOG_MAX:]
+        snapshot = dict(rec)
+    if on_event is not None:
+        on_event(snapshot)
+
+
+def _note_mirror(progress_id: str, url: str, on_event) -> None:
+    """这次安装改用了 PyPI 镜像（ADR 0111）：记在进度记录的 `pypi_mirror` 上——之后每一个快照（含终态）
+    都带着它，界面与结果据此把「用了镜像」说出口。"""
+    with _lock:
+        rec = _progress.get(progress_id)
+        if rec is None:
+            return
+        rec["pypi_mirror"] = url
         snapshot = dict(rec)
     if on_event is not None:
         on_event(snapshot)
@@ -2361,7 +2459,12 @@ def _run_package_job(job: PackageJob, env_key: str, on_event, cancel_ev: threadi
         code, out = _pip_uninstall(python, job.distribution, cancel_ev, log)
     else:
         code, out = _pip_install(
-            python, job.requirement, cancel_ev, log, upgrade=job.op == OP_UPDATE
+            python,
+            job.requirement,
+            cancel_ev,
+            log,
+            upgrade=job.op == OP_UPDATE,
+            on_mirror=lambda url: _note_mirror(job.job_id, url, on_event),
         )
     if code == ERROR_CANCELLED:
         # 装 / 卸到一半：这个环境不再假装是干净的（我们自己的东西，重建即可）
@@ -2957,10 +3060,18 @@ def _run_joint_in_place(plan: JointRepairPlan, on_event, cancel_ev: threading.Ev
         req_file, con_file = write_plan_files(
             Path(tmp), plan.requirements, plan.constraints, hashes=plan.hashes
         )
-        code, out = _run_pip(
-            pip_install_joint_argv(python, req_file, con_file, require_hashes=plan.require_hashes),
+        code, out = _run_pip_install(
+            lambda index_url: pip_install_joint_argv(
+                python,
+                req_file,
+                con_file,
+                require_hashes=plan.require_hashes,
+                index_url=index_url,
+            ),
+            python,
             cancel_ev,
             lambda text: _append_log(plan.plan_id, text, on_event),
+            on_mirror=lambda url: _note_mirror(plan.plan_id, url, on_event),
         )
     if code == ERROR_CANCELLED:
         health = projectenv.probe_environment(python)
@@ -3165,10 +3276,14 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
     req_file, con_file = write_plan_files(
         plans_dir, requirements, job.constraints, hashes=job.hashes
     )
-    code, out = _run_pip(
-        pip_install_joint_argv(python, req_file, con_file, require_hashes=job.require_hashes),
+    code, out = _run_pip_install(
+        lambda index_url: pip_install_joint_argv(
+            python, req_file, con_file, require_hashes=job.require_hashes, index_url=index_url
+        ),
+        python,
         cancel_ev,
         job.on_log,
+        on_mirror=lambda url: _note_mirror(job.progress_id, url, None),
     )
     if code == ERROR_CANCELLED:
         managedenv.mark_generation(
@@ -3379,13 +3494,16 @@ def _provision_private_base(job: _GenerationJob, cancel_ev: threading.Event) -> 
     source = privatepython.source_for()
     if source is None:
         raise RepairError(privatepython.ERROR_NOT_OFFERED, "这个目标上不提供私有 Python")
+    # 字节从哪来（安装包附带 / 缓存 / 下载，ADR 0111）：进度里与计划载荷同一个字段名，界面据此说
+    # 「正在准备」还是「正在下载」
+    payload = {**source.to_payload(), "origin": privatepython.archive_origin(source)}
 
     def _progress(stage: str, done: int, total: int) -> None:
         job.emit(
             STATE_DOWNLOADING_PYTHON,
             result={
                 "download": {"stage": stage, "done_bytes": int(done), "total_bytes": int(total)},
-                "private_python": source.to_payload(),
+                "private_python": payload,
             },
         )
 
@@ -3450,10 +3568,16 @@ def write_plan_files(
 
 
 def pip_install_joint_argv(
-    python: str, requirements_file: Path, constraints_file: Path, *, require_hashes: bool = False
+    python: str,
+    requirements_file: Path,
+    constraints_file: Path,
+    *,
+    require_hashes: bool = False,
+    index_url: str | None = None,
 ) -> list[str]:
     """联合安装命令——**唯一出处**，测试逐字节钉住。与 `pip_install_argv` 只差在需求从文件
-    来（`-r` / `-c` 指向我们自己生成的两份文件），其余参数逐字相同、同样没有 `--upgrade`。"""
+    来（`-r` / `-c` 指向我们自己生成的两份文件），其余参数逐字相同、同样没有 `--upgrade`；
+    `index_url` 同样只在镜像重试那一次带（ADR 0111）。"""
     argv = [
         str(python),
         "-m",
@@ -3462,6 +3586,10 @@ def pip_install_joint_argv(
         "--disable-pip-version-check",
         "--no-input",
         "--only-binary=:all:",
+    ]
+    if index_url:
+        argv += ["--index-url", index_url]
+    argv += [
         "-r",
         str(requirements_file),
         "-c",

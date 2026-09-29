@@ -570,7 +570,7 @@ class TestJointTransaction:
         real_argv = deprepair.pip_install_joint_argv
         started = threading.Event()
 
-        def _slow(python, r, c, *, require_hashes=False):
+        def _slow(python, r, c, *, require_hashes=False, index_url=None):
             started.set()
             return [python, "-c", "import time; time.sleep(30)"]
 

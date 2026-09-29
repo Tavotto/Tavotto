@@ -184,12 +184,8 @@ def _candidate_roots() -> list[str]:
         return [override]
 
     if is_frozen():
-        meipass = getattr(sys, "_MEIPASS", None)
-        if meipass:
-            add(os.path.join(meipass, RUNTIME_DIR_NAME))
-        exe_dir = os.path.dirname(os.path.abspath(sys.executable))
-        add(os.path.join(exe_dir, RUNTIME_DIR_NAME))
-        add(os.path.join(exe_dir, "_internal", RUNTIME_DIR_NAME))
+        for p in _frozen_data_dirs(RUNTIME_DIR_NAME):
+            add(p)
     else:
         # 源码树：scripts/build_worker_runtime.py 默认产出到仓库根的 runtime/
         # __file__ = <root>/src/tavotto/engine/runtime.py
@@ -200,6 +196,40 @@ def _candidate_roots() -> list[str]:
         # 包同级（少见的手工布局；wheel 里**不会**有，见 pyproject 的 exclude）
         add(os.path.join(src, RUNTIME_DIR_NAME))
     return roots
+
+
+def _frozen_data_dirs(name: str) -> list[str]:
+    """冻结产物里经 spec 的 datas 落在 `_internal/<name>` 的目录的候选（`_MEIPASS` → exe 同级 →
+    `exe/_internal`），与内置 runtime 同一套布局判断。非冻结回空表。"""
+    if not is_frozen():
+        return []
+    out: list[str] = []
+    meipass = getattr(sys, "_MEIPASS", None)
+    exe_dir = os.path.dirname(os.path.abspath(sys.executable))
+    for p in (
+        os.path.join(meipass, name) if meipass else None,
+        os.path.join(exe_dir, name),
+        os.path.join(exe_dir, "_internal", name),
+    ):
+        if p and p not in out:
+            out.append(p)
+    return out
+
+
+#: 桌面安装包附带的私有 Python 归档（ADR 0111）：`packaging/tavotto.spec` 把本目标的 pbs install_only
+#: 归档作为 datas 放进 `_internal/private-python/`。它**不是**解开的 runtime，只是一份字节与锁一致才用的
+#: 归档——解包 / 真起 / 原子改名仍走 `privatepython` 的那一条链，落点仍在数据目录。
+PRIVATE_PYTHON_BUNDLE_DIR_NAME = "private-python"
+#: 工程 / 冒烟的覆盖（与 `TAVOTTO_RUNTIME_DIR` 同一种**排他**语义：指了就只认这一个，指到空处即「包里没有」）。
+PRIVATE_PYTHON_BUNDLE_ENV = "TAVOTTO_PRIVATE_PYTHON_BUNDLE"
+
+
+def private_python_bundle_dirs() -> list[str]:
+    """包内私有 Python 归档可能在的目录（只回候选，不碰磁盘）。pip / 源码树不带它：回空表。"""
+    override = os.environ.get(PRIVATE_PYTHON_BUNDLE_ENV)
+    if override:
+        return [override]
+    return _frozen_data_dirs(PRIVATE_PYTHON_BUNDLE_DIR_NAME)
 
 
 def runtime_python(root: str) -> str:
