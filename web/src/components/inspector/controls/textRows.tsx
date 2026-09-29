@@ -72,9 +72,15 @@ export function StyleToggle({
   hint,
   onClick,
   disabled,
+  mixedText,
   children,
 }: {
   state: 'on' | 'off' | 'mixed'
+  /**
+   * 第三态叫什么（默认「多个值」）。设置 › 样式页编辑的是样式本身，第三态是「未设置」——
+   * 同一副视觉（按钮下一道短横、`aria-pressed="mixed"`），读屏说的是它自己的意思
+   */
+  mixedText?: string
   /** 按钮说的是它干什么（加粗），不是属性叫什么（字重） */
   label: string
   /** 悬停时补一句当前值——图标按下与否在小尺寸下不总是一眼可辨 */
@@ -84,8 +90,8 @@ export function StyleToggle({
   disabled?: boolean
   children: ReactNode
 }) {
-  const mixedText = translate('element.mixedValues', { ns: 'inspector' })
-  const name = state === 'mixed' ? `${label} · ${mixedText}` : label
+  const third = mixedText ?? translate('element.mixedValues', { ns: 'inspector' })
+  const name = state === 'mixed' ? `${label} · ${third}` : label
   return (
     <Tip label={hint ?? name}>
       <Button

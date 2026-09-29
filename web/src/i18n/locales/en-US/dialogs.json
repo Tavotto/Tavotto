@@ -551,22 +551,14 @@
     "empty": "Nothing here yet",
     "export": "Export to a file",
     "field": {
-      "annotationFont": "Annotation size",
-      "axisFont": "Axis title size",
-      "baseFont": "Body font size",
       "defaultFont": "Body font size",
       "doubleWidth": "Double column",
       "exportDpi": "Suggested export resolution",
       "floorFont": "Absolute floor",
-      "legendFont": "Legend size",
-      "lineWidth": "Line width",
       "maxFont": "Maximum font size",
       "minDpi": "Minimum resolution",
       "minFont": "Minimum font size",
       "singleWidth": "Single column",
-      "spineWidth": "Frame width",
-      "tickFont": "Tick label size",
-      "titleFont": "Title size",
       "widthTolerance": "Width tolerance"
     },
     "follow": "Follow updates",
@@ -575,8 +567,7 @@
       "lines": "Lines",
       "page": "Page and columns",
       "raster": "Bitmaps",
-      "text": "Text",
-      "ticks": "Ticks"
+      "text": "Text"
     },
     "import": "Import from a file",
     "inUse": "In use here",
@@ -614,7 +605,28 @@
     },
     "keyRules": "Key requirements",
     "more": "More",
-    "pinAsProject": "Pin as this project’s spec"
+    "pinAsProject": "Pin as this project’s spec",
+    "row": {
+      "text": "Other text"
+    },
+    "face": {
+      "bold": "Bold",
+      "notBold": "Not bold",
+      "italic": "Italic",
+      "notItalic": "Not italic"
+    },
+    "faceHint": {
+      "weight": {
+        "unset": "Bold: not set — applying keeps each figure’s own weight (click to make bold)",
+        "on": "Bold: on (click to make it never bold)",
+        "off": "Bold: never bold — applying removes bold from figures (click to go back to not set)"
+      },
+      "style": {
+        "unset": "Italic: not set — applying keeps each figure’s own slant (click to make italic)",
+        "on": "Italic: on (click to make it never italic)",
+        "off": "Italic: never italic — applying removes italics from figures (click to go back to not set)"
+      }
+    }
   },
   "readiness": {
     "addToCanvas": "Add to canvas",

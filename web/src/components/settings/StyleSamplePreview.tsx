@@ -1,6 +1,13 @@
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
-import { sampleFitScale, styleSampleGeometry } from '@/lib/styleSample'
+import {
+  SAMPLE_TEXT,
+  SAMPLE_VIEW,
+  sampleFitScale,
+  sampleLayout,
+  styleSampleGeometry,
+  type SampleFace,
+} from '@/lib/styleSample'
 
 const st = (key: string, values?: Record<string, unknown>) =>
   translate(`profiles.${key}`, { ns: 'dialogs', ...(values ?? {}) })
@@ -38,41 +45,41 @@ export function StyleSamplePreview({ data }: { data: Record<string, unknown> | n
     spine: raw.spinePt,
   })
   const [c1, c2] = g.colors
-  // 坐标轴框：留出标题、轴标题与刻度文字的位置
-  const box = { x: 34, y: 6 + g.titlePt * 1.6, w: 150, h: 78 - g.titlePt * 0.6 }
-  const bottom = box.y + box.h
+  // 版面与画框都按这套样式现算（`sampleLayout`）：刻度朝外伸多长、字多大，文字就往外让多少
+  const lay = sampleLayout(g)
+  const { box, bottom, tickIn, tickOut, legend } = lay
   return (
     <figure data-style-preview className="m-0 flex flex-col gap-1">
       <svg
         role="img"
         aria-label={label}
-        viewBox="0 0 200 128"
+        viewBox={lay.viewBox.join(' ')}
         className="h-auto w-full max-w-[360px] rounded-sm border border-border bg-white"
-        style={{ fontFamily: g.fontFamily }}
+        style={{ aspectRatio: `${SAMPLE_VIEW.w} / ${SAMPLE_VIEW.h}` }}
       >
-        <text x={box.x + box.w / 2} y={6 + g.titlePt} fontSize={g.titlePt} textAnchor="middle" fill="#111">
-          Reaction kinetics
+        <text x={box.x + box.w / 2} y={lay.titleY} fontSize={g.titlePt} textAnchor="middle" fill="#111" {...faceAttrs(g.faces.title)}>
+          {SAMPLE_TEXT.title}
         </text>
         <rect x={box.x} y={box.y} width={box.w} height={box.h} fill="none" stroke="#111" strokeWidth={g.spinePt} />
         {/* 刻度线 + 刻度文字 */}
-        {[0, 0.5, 1].map((f) => {
-          const x = box.x + f * box.w
+        {SAMPLE_TEXT.xTicks.map((s, i) => {
+          const x = box.x + (i / 2) * box.w
           return (
-            <g key={f}>
-              <line x1={x} y1={bottom} x2={x} y2={bottom - 3} stroke="#111" strokeWidth={g.spinePt} />
-              <text x={x} y={bottom + g.tickPt + 1.5} fontSize={g.tickPt} textAnchor="middle" fill="#111">
-                {f * 60}
+            <g key={s}>
+              <line x1={x} y1={bottom + tickOut} x2={x} y2={bottom - tickIn} stroke="#111" strokeWidth={g.tickWidthPt} />
+              <text x={x} y={lay.xTickLabelY} fontSize={g.tickPt} textAnchor="middle" fill="#111" {...faceAttrs(g.faces.tick)}>
+                {s}
               </text>
             </g>
           )
         })}
-        {[0, 0.5, 1].map((f) => {
-          const y = bottom - f * box.h
+        {SAMPLE_TEXT.yTicks.map((s, i) => {
+          const y = bottom - (i / 2) * box.h
           return (
-            <g key={f}>
-              <line x1={box.x} y1={y} x2={box.x + 3} y2={y} stroke="#111" strokeWidth={g.spinePt} />
-              <text x={box.x - 2.5} y={y + g.tickPt * 0.35} fontSize={g.tickPt} textAnchor="end" fill="#111">
-                {f.toFixed(1)}
+            <g key={s}>
+              <line x1={box.x - tickOut} y1={y} x2={box.x + tickIn} y2={y} stroke="#111" strokeWidth={g.tickWidthPt} />
+              <text x={lay.yTickLabelX} y={y + g.tickPt * 0.35} fontSize={g.tickPt} textAnchor="end" fill="#111" {...faceAttrs(g.faces.tick)}>
+                {s}
               </text>
             </g>
           )
@@ -92,38 +99,35 @@ export function StyleSamplePreview({ data }: { data: Record<string, unknown> | n
           points={series(box, bottom, (t) => 1 - Math.exp(-1.5 * t))}
         />
         {/* 图例 */}
-        <line
-          x1={box.x + box.w - 62}
-          y1={box.y + 10 + g.legendPt * 0.35}
-          x2={box.x + box.w - 50}
-          y2={box.y + 10 + g.legendPt * 0.35}
-          stroke={c1}
-          strokeWidth={g.lineWidthPt}
-        />
-        <text x={box.x + box.w - 46} y={box.y + 10 + g.legendPt * 0.7} fontSize={g.legendPt} fill="#111">
-          Catalyst
+        <line x1={legend.lineX1} y1={legend.lineY} x2={legend.lineX2} y2={legend.lineY} stroke={c1} strokeWidth={g.lineWidthPt} />
+        <text x={legend.textX} y={legend.textY} fontSize={g.legendPt} fill="#111" {...faceAttrs(g.faces.legend)}>
+          {SAMPLE_TEXT.legend}
         </text>
         {/* 轴标题 */}
-        <text
-          x={box.x + box.w / 2}
-          y={bottom + g.tickPt + 4 + g.axisPt}
-          fontSize={g.axisPt}
-          textAnchor="middle"
-          fill="#111"
-        >
-          Time (min)
+        <text x={box.x + box.w / 2} y={lay.xLabelY} fontSize={g.axisPt} textAnchor="middle" fill="#111" {...faceAttrs(g.faces.axis)}>
+          {SAMPLE_TEXT.xLabel}
         </text>
         <text
-          transform={`translate(${8 + g.axisPt * 0.35} ${box.y + box.h / 2}) rotate(-90)`}
+          transform={`translate(${lay.yLabelX} ${box.y + box.h / 2}) rotate(-90)`}
           fontSize={g.axisPt}
           textAnchor="middle"
           fill="#111"
+          {...faceAttrs(g.faces.axis)}
         >
-          Conversion
+          {SAMPLE_TEXT.yLabel}
         </text>
       </svg>
     </figure>
   )
+}
+
+/** 一类文字的字面 → SVG 属性（常规字面不写属性，示例 SVG 保持干净） */
+function faceAttrs(f: SampleFace) {
+  return {
+    fontFamily: f.fontFamily,
+    ...(f.bold ? { fontWeight: 'bold' } : {}),
+    ...(f.italic ? { fontStyle: 'italic' } : {}),
+  }
 }
 
 /** 一条曲线的折线点：横向 0…1 采样，纵向按 fn 归一化 */

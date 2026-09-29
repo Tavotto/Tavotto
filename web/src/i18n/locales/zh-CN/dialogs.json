@@ -547,22 +547,14 @@
     "empty": "还没有配置",
     "export": "导出为文件",
     "field": {
-      "annotationFont": "标注字号",
-      "axisFont": "轴标题字号",
-      "baseFont": "正文字号",
       "defaultFont": "正文字号",
       "doubleWidth": "双栏宽",
       "exportDpi": "推荐导出分辨率",
       "floorFont": "绝对下限",
-      "legendFont": "图例字号",
-      "lineWidth": "线宽",
       "maxFont": "最大字号",
       "minDpi": "最低分辨率",
       "minFont": "最小字号",
       "singleWidth": "单栏宽",
-      "spineWidth": "边框线宽",
-      "tickFont": "刻度字号",
-      "titleFont": "标题字号",
       "widthTolerance": "宽度容差"
     },
     "follow": "跟随更新",
@@ -571,8 +563,7 @@
       "lines": "线条",
       "page": "页面与栏宽",
       "raster": "位图",
-      "text": "文字",
-      "ticks": "刻度"
+      "text": "文字"
     },
     "import": "从文件导入",
     "inUse": "本项目在用",
@@ -610,7 +601,28 @@
     },
     "keyRules": "关键要求",
     "more": "更多操作",
-    "pinAsProject": "固定为本项目规范"
+    "pinAsProject": "固定为本项目规范",
+    "row": {
+      "text": "其余文字"
+    },
+    "face": {
+      "bold": "粗体",
+      "notBold": "不加粗",
+      "italic": "斜体",
+      "notItalic": "不倾斜"
+    },
+    "faceHint": {
+      "weight": {
+        "unset": "粗体：未设置——应用时保留图里原来的粗细（点一下改为加粗）",
+        "on": "粗体：加粗（点一下改为一律不加粗）",
+        "off": "粗体：一律不加粗——应用时去掉图里的加粗（点一下回到未设置）"
+      },
+      "style": {
+        "unset": "斜体：未设置——应用时保留图里原来的字形（点一下改为斜体）",
+        "on": "斜体：倾斜（点一下改为一律不倾斜）",
+        "off": "斜体：一律不倾斜——应用时去掉图里的斜体（点一下回到未设置）"
+      }
+    }
   },
   "readiness": {
     "addToCanvas": "添加到画布",

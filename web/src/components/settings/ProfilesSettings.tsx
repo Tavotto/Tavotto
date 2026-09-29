@@ -52,6 +52,8 @@ import {
   settingRowGrid,
 } from './SettingRow'
 import { StyleSamplePreview } from './StyleSamplePreview'
+import { StyleProfileFields } from './StyleProfileFields'
+import { clearPath, readPath, writePath } from './profilePath'
 
 const st = (key: string, values?: Record<string, unknown>) =>
   translate(`profiles.${key}`, { ns: 'dialogs', ...(values ?? {}) })
@@ -96,36 +98,8 @@ const SPEC_FIELDS: NumField[] = [
   },
 ]
 
-/** 样式里最常改的那几项。角色 → prop 的含义见 `lib/stylePresets.STYLE_ROLE_PROPS`。 */
-const STYLE_FIELDS: NumField[] = [
-  { path: 'element.text.fontsize', labelKey: 'baseFont', min: 3, max: 72, step: 0.5, unit: 'pt', group: 'text' },
-  { path: 'element.title.fontsize', labelKey: 'titleFont', min: 3, max: 72, step: 0.5, unit: 'pt', group: 'text' },
-  {
-    path: 'element.axis_label.fontsize',
-    labelKey: 'axisFont',
-    min: 3,
-    max: 72,
-    step: 0.5,
-    unit: 'pt',
-    group: 'text',
-  },
-  { path: 'element.legend.fontsize', labelKey: 'legendFont', min: 3, max: 72, step: 0.5, unit: 'pt', group: 'text' },
-  { path: 'annotation.sizePt', labelKey: 'annotationFont', min: 3, max: 72, step: 0.5, unit: 'pt', group: 'text' },
-  { path: 'element.ticks.fontsize', labelKey: 'tickFont', min: 3, max: 72, step: 0.5, unit: 'pt', group: 'ticks' },
-  { path: 'element.line.linewidth', labelKey: 'lineWidth', min: 0.1, max: 10, step: 0.05, unit: 'pt', group: 'lines' },
-  {
-    path: 'element.axes.spine_linewidth',
-    labelKey: 'spineWidth',
-    min: 0.1,
-    max: 10,
-    step: 0.05,
-    unit: 'pt',
-    group: 'lines',
-  },
-]
-
 /** 分组的显示顺序（表里出现的顺序不算数：加一条字段不该悄悄换掉版面）。 */
-const GROUP_ORDER = ['fonts', 'page', 'raster', 'text', 'ticks', 'lines']
+const GROUP_ORDER = ['fonts', 'page', 'raster']
 
 /** 库里不超过这个数时是分段选择器，再多换 Select（宪法第五节：互斥取值超过四五档用 Select） */
 const LIBRARY_AS_SEGMENTED = 4
@@ -135,56 +109,6 @@ function groupFields(fields: NumField[]): { group: string; fields: NumField[] }[
   return GROUP_ORDER.map((group) => ({ group, fields: fields.filter((f) => f.group === group) }))
     .filter((g) => g.fields.length > 0)
 }
-
-function readPath(obj: Record<string, unknown>, path: string): unknown {
-  return path.split('.').reduce<unknown>(
-    (acc, key) => (acc && typeof acc === 'object' ? (acc as Record<string, unknown>)[key] : undefined),
-    obj,
-  )
-}
-
-/**
- * 写一个点分路径，**返回新对象**（不改入参）。路径上缺的层补成空对象；
- * 撞上非对象（用户导入的怪东西）就整段替换，不静默丢掉这次修改。
- */
-function writePath(
-  obj: Record<string, unknown>,
-  path: string,
-  value: unknown,
-): Record<string, unknown> {
-  const [head, ...rest] = path.split('.')
-  const next = { ...obj }
-  if (!rest.length) {
-    next[head] = value
-    return next
-  }
-  const child = next[head]
-  next[head] = writePath(
-    child && typeof child === 'object' && !Array.isArray(child)
-      ? (child as Record<string, unknown>)
-      : {},
-    rest.join('.'),
-    value,
-  )
-  return next
-}
-
-/** 把一个点分路径整段删掉（回到「这份配置没管这一项」那一档）。 */
-function clearPath(obj: Record<string, unknown>, path: string): Record<string, unknown> {
-  const [head, ...rest] = path.split('.')
-  const next = { ...obj }
-  if (!rest.length) {
-    delete next[head]
-    return next
-  }
-  const child = next[head]
-  if (!child || typeof child !== 'object' || Array.isArray(child)) return next
-  const pruned = clearPath(child as Record<string, unknown>, rest.join('.'))
-  if (Object.keys(pruned).length) next[head] = pruned
-  else delete next[head]
-  return next
-}
-
 
 /** 一个数值字段在**只读摘要**里长什么样。没设过时说「未设置」，不谎报一个数。 */
 function formatValue(raw: unknown, unit?: string): string {
@@ -295,8 +219,8 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
     (JSON.stringify(draft) !== JSON.stringify(selected.data) ||
       name.trim() !== profileName(selected))
 
-  const fields = kind === 'spec' ? SPEC_FIELDS : STYLE_FIELDS
-  const grouped = useMemo(() => groupFields(fields), [fields])
+  // 样式页的字段不在这张表里：它们与左栏样式面板同一张行表（`StyleProfileFields`）
+  const grouped = useMemo(() => (kind === 'spec' ? groupFields(SPEC_FIELDS) : []), [kind])
 
 
   /** 一次会写盘的操作：期间禁用按钮，无论成败都恢复。 */
@@ -756,6 +680,13 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
                 </span>
               </div>
 
+              {kind === 'style' && draft && (
+                <StyleProfileFields
+                  draft={draft}
+                  editable={editable}
+                  onChange={(update) => setDraft((d) => (d ? update(d) : d))}
+                />
+              )}
               <div className="flex flex-col gap-4">
                 {grouped.map(({ group, fields: groupFields }) => (
                   <FieldGroup key={group} group={group}>
