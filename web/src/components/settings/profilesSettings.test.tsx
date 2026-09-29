@@ -1180,3 +1180,84 @@ describe('规范页：认不出的值照原值显示、能清，没设的写「�
     expect(saves.at(-1)).toEqual({ widths_mm: { single: 85 } })
   })
 })
+
+describe('样式里写着、却没有哪张图请求过的未安装字体（Codex #703）', () => {
+  const modern = (machine: string[] | undefined) =>
+    ({
+      elements: [{ role: 'title', editable: [{ prop: 'fontfamily', options: ['serif', 'Arial'] }] }],
+      ...(machine ? { font_families: machine } : {}),
+    }) as unknown as Manifest
+  const renderOf = (m: Manifest) =>
+    ({ fileId: 'f', rev: 1, manifest: m, svg: null, svgBytes: 0, status: 'ready' }) as unknown as PanelRender
+  const hint = '这台电脑没装这个字体，图上用的是别的字体。换一个可用的字体，或装上它。'
+
+  it('figureFamilyOptions 报本机表是否已知：有一张图带完整本机表就算已知，老引擎都不带就不算', () => {
+    expect(figureFamilyOptions({ a: modern(['Arial']) }).machineKnown).toBe(true)
+    expect(figureFamilyOptions({ a: modern(undefined), b: modern(['Arial']) }).machineKnown).toBe(true)
+    expect(figureFamilyOptions({ a: modern(undefined) }).machineKnown).toBe(false)
+    expect(figureFamilyOptions({}).machineKnown).toBe(false)
+  })
+
+  async function mountWith(machine: string[] | undefined) {
+    const prev = useRenderStore.getState().byKey
+    act(() => useRenderStore.setState({ byKey: { a: renderOf(modern(machine)) } }))
+    const data = { element: { line: { linewidth: 1.25 }, title: { fontfamily: 'Ghost Font' } } }
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) =>
+      new Response(
+        JSON.stringify({
+          profiles: String(input).includes('/style') ? [BUILTIN_STYLE, { ...USER_STYLE, data }] : BUILTIN_SPECS,
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    ) as typeof fetch
+    await mount()
+    await act(async () => {
+      buttons().find((b) => b.textContent?.includes('投稿用'))!.click()
+    })
+    return () => act(() => useRenderStore.setState({ byKey: prev }))
+  }
+  const cell = () => document.body.querySelector('[data-style-cell="title.family"]')!
+
+  it('本机表已知：不在任何一份里的当前值带「（未安装）」与 warning，名字照留', async () => {
+    const restore = await mountWith(['Arial', 'Inter'])
+    expect(cell().textContent).toContain('Ghost Font')
+    expect(cell().textContent).toContain(hint)
+    if (!Element.prototype.scrollIntoView) {
+      Object.defineProperty(Element.prototype, 'scrollIntoView', { value: () => {}, configurable: true })
+    }
+    await act(async () => cell().querySelector<HTMLElement>('[role="combobox"]')!.click())
+    const opts = [...document.body.querySelectorAll<HTMLElement>('[role="option"]')].map((o) => o.textContent)
+    expect(opts).toContain('Ghost Font（未安装）')
+    expect(opts).toContain('Inter')
+    await act(async () => document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
+    restore()
+  })
+
+  it('老引擎不报本机表（可用性未知）：不标，免得把装了的字体误报成没装', async () => {
+    const restore = await mountWith(undefined)
+    expect(cell().textContent).toContain('Ghost Font')
+    expect(cell().textContent).not.toContain(hint)
+    restore()
+  })
+
+  it('只有「本机表是否已知」变了（选项一样）：字体选项对象也换新，标记跟着出来', async () => {
+    const seen: FigureFamilies[] = []
+    function Probe() {
+      seen.push(useFigureFamilies())
+      return null
+    }
+    const prev = useRenderStore.getState().byKey
+    act(() => useRenderStore.setState({ byKey: { a: renderOf(modern(undefined)) } }))
+    const host = document.createElement('div')
+    const probeRoot = createRoot(host)
+    await act(async () => probeRoot.render(<Probe />))
+    const first = seen.at(-1)!
+    // 本机表只有 Arial（已在首选项里）：选项不变，已知与否变了
+    await act(async () => useRenderStore.setState({ byKey: { a: renderOf(modern(['Arial'])) } }))
+    expect(seen.at(-1)!.options).toEqual(first.options)
+    expect(seen.at(-1)).not.toBe(first)
+    expect(seen.at(-1)!.machineKnown).toBe(true)
+    await act(async () => probeRoot.unmount())
+    act(() => useRenderStore.setState({ byKey: prev }))
+  })
+})

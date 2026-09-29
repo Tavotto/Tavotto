@@ -151,6 +151,12 @@ const faceValue = (kind: TextRowSpec['kind'], which: 'weight' | 'style', on: boo
 export interface FigureFamilies {
   options: string[]
   unavailable: string[]
+  /**
+   * 至少一张图的运行时报了完整的本机表（`font_families`）：这时**不在选项里**的名字就是哪个
+   * 看得到的运行时都没有的字体，样式里写着它（没有哪张图正在用）也标「未安装」。老引擎不报本机表时
+   * 不知道，不标——免得把装了的字体误报成没装（Codex #703）
+   */
+  machineKnown: boolean
 }
 
 /**
@@ -169,10 +175,12 @@ export interface FigureFamilies {
 export function figureFamilyOptions(manifests: Record<string, Manifest | null | undefined>): FigureFamilies {
   const out = new Set<string>(GENERIC_FAMILIES)
   const missing = new Set<string>()
+  let machineKnown = false
   const renderable = new Set<string>(GENERIC_FAMILIES)
   for (const key of Object.keys(manifests).sort()) {
     const manifest = manifests[key]
     if (!manifest) continue
+    if (manifest.font_families?.length) machineKnown = true
     const preferred = new Set<string>()
     const unavailable = new Set<string>()
     for (const e of manifest.elements) {
@@ -194,7 +202,7 @@ export function figureFamilyOptions(manifests: Record<string, Manifest | null | 
       else renderable.add(o)
     }
   }
-  return { options: [...out], unavailable: [...missing].filter((o) => !renderable.has(o)).sort() }
+  return { options: [...out], unavailable: [...missing].filter((o) => !renderable.has(o)).sort(), machineKnown }
 }
 
 const sameList = (a: readonly string[], b: readonly string[]) =>
@@ -213,13 +221,19 @@ export function useFigureFamilies(): FigureFamilies {
   return useMemo(() => {
     const next = figureFamilyOptions(Object.fromEntries(Object.entries(byKey).map(([k, r]) => [k, r.manifest])))
     const prev = last.current
-    if (prev && sameList(prev.options, next.options) && sameList(prev.unavailable, next.unavailable)) return prev
+    if (
+      prev &&
+      prev.machineKnown === next.machineKnown &&
+      sameList(prev.options, next.options) &&
+      sameList(prev.unavailable, next.unavailable)
+    )
+      return prev
     last.current = next
     return next
   }, [byKey])
 }
 
-const CANVAS_FAMILIES: FigureFamilies = { options: [...CANVAS_TEXT_FAMILIES], unavailable: [] }
+const CANVAS_FAMILIES: FigureFamilies = { options: [...CANVAS_TEXT_FAMILIES], unavailable: [], machineKnown: false }
 
 export function StyleProfileFields({
   draft,
@@ -482,7 +496,11 @@ const FamilySelect = memo(
     onChange: (v: string) => void
   }) {
     const missing = new Set(families.unavailable)
-    const fonts = withCurrent(families.options, value === RAW_FAMILY ? '' : value)
+    const current = value === RAW_FAMILY ? '' : value
+    // 样式里写着、却没有哪张图请求过的名字（`withCurrent` 补进来的那个）：运行时的本机表已知时，
+    // 它不在任何一份里 = 哪儿都画不出，与图报的不可用同样标
+    if (current && families.machineKnown && !families.options.includes(current)) missing.add(current)
+    const fonts = withCurrent(families.options, current)
     return (
       <div className="flex min-w-0 flex-1 flex-col">
         <Select
