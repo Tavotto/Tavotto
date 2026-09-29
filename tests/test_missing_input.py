@@ -398,7 +398,12 @@ def test_absolute_paths_that_are_only_probed_get_no_picker(tmp_path):
         'DATA = "/nonexistent/tavotto/f/w.csv"\n'  # 最常见的写法：常量先进名字，再被探
         "if not os.path.exists(DATA):\n    raise SystemExit(1)\n"
         'TWICE = "/nonexistent/tavotto/g/v.csv"\nTWICE = "/nonexistent/tavotto/g/u.csv"\n'
-        "os.path.exists(TWICE)\n",  # 赋值两次：说不清探的是哪个，不跟
+        "os.path.exists(TWICE)\n"  # 赋值两次：说不清探的是哪个，不跟
+        # 别名与首开探路同一份（`databinding._Aliases`）：换个名字 import 照样是探路
+        "import glob as g\nfrom glob import iglob as gg\nfrom pathlib import Path as P\n"
+        'g.glob("/nonexistent/tavotto/h/*.csv")\n'
+        'gg("/nonexistent/tavotto/i/*.csv")\n'
+        'P("/nonexistent/tavotto/j/t.csv").exists()\n',
         encoding="utf-8",
     )
     got = {o["path"]: o["via"] for o in inputremap.static_missing("fig.py", tmp_path, [])}
@@ -411,6 +416,9 @@ def test_absolute_paths_that_are_only_probed_get_no_picker(tmp_path):
         "/nonexistent/tavotto/f/w.csv": inputremap.VIA_PROBE,
         "/nonexistent/tavotto/g/v.csv": inputremap.VIA_OPEN,
         "/nonexistent/tavotto/g/u.csv": inputremap.VIA_OPEN,
+        "/nonexistent/tavotto/h/*.csv": inputremap.VIA_GLOB,
+        "/nonexistent/tavotto/i/*.csv": inputremap.VIA_GLOB,
+        "/nonexistent/tavotto/j/t.csv": inputremap.VIA_PROBE,
     }
 
 
