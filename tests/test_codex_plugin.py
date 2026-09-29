@@ -1155,13 +1155,16 @@ def test_mcp_json_shape_matches_what_codex_reads():
     # Codex 的 `.mcp.json` 里没有按平台分支的字段、没有候选链，`command` 也不过 shell
     # （形状取自 codex-rs 的 RawMcpServerConfig 与官方插件装出来的清单），一个裸名字
     # 覆盖不了 POSIX 与 Windows——`python3` 在 Windows 上往往是微软商店的 App Execution
-    # Alias（#172 / #266）。所以 command 是插件**自带**的 sh/cmd 双语启动器
-    # `./mcp/launch.cmd`，按 `cwd`（插件根）解析：POSIX 上它就是 `exec python3 "$@"`，
-    # Windows 上它按候选逐个真跑、跳过商店别名。args 不变——启动器只负责「找一个真能跑
-    # 的 Python 并把参数原样交给它」，`tavotto codex install` 把 command 钉成绝对路径
-    # 之后 `<python> ./mcp/server.py` 仍然成立。别把某台机器上的绝对路径提交回来。
-    assert entry["command"] == "./mcp/launch.cmd"
-    assert (PLUGIN / "mcp" / "launch.cmd").is_file()
+    # Alias（#172 / #266）。所以 command 是插件**自带**的启动器对 `./mcp/launch`，按 `cwd`
+    # （插件根）解析：POSIX 上 Codex 直接执行 `mcp/launch`（就是 `exec python3 "$@"`）；
+    # Windows 上 Codex 的 program resolver 按 PATHEXT 把它落到同目录的 `mcp/launch.cmd`
+    # （真 Windows 11 + Codex Desktop 实测），它按候选逐个真跑、跳过商店别名。args 不变——
+    # 启动器只负责「找一个真能跑的 Python 并把参数原样交给它」，`tavotto codex install` 把
+    # command 钉成绝对路径之后 `<python> ./mcp/server.py` 仍然成立。别把某台机器上的绝对
+    # 路径提交回来。
+    assert entry["command"] == "./mcp/launch"
+    assert (PLUGIN / "mcp" / "launch").is_file()
+    assert (PLUGIN / "mcp" / "launch.cmd").is_file(), "Windows 半边缺了：Windows 上零工具"
     assert entry["args"] == ["./mcp/server.py"]
     # 钉命令只换 command：启动器仍按 cwd 解析，两者一起变才叫改配置
     assert entry["cwd"] == "."
@@ -1173,40 +1176,47 @@ def test_mcp_json_shape_matches_what_codex_reads():
     assert (PLUGIN / "mcp" / "server.py").is_file()
 
 
+LAUNCH_SH = PLUGIN / "mcp" / "launch"
 LAUNCH_CMD = PLUGIN / "mcp" / "launch.cmd"
 
 
-def test_the_dual_launcher_keeps_its_platform_contract():
-    """`mcp/launch.cmd` 一份文件两个平台（#266）：每一条都是某个平台上「起不来」的原因。
+def test_the_launcher_pair_keeps_its_platform_contract():
+    """`mcp/launch`（POSIX）+ `mcp/launch.cmd`（Windows）一对启动器（#266）：每一条都是某个
+    平台上「起不来」的原因。
 
-    * 第一行 shebang——Rust 起子进程不认无 shebang 的脚本（实测 Exec format error）；
-    * git 里是 100755——POSIX 上 Codex 直接执行它，没有执行位就是 EACCES；
-    * 全文 LF、没有 CR——sh 读到 `\r` 会把 `python3\r` 当命令名；
-    * 批处理段纯 ASCII——cmd 按本机代码页读批处理，UTF-8 多字节会被拆成别的字符；
-    * 批处理段不用 goto / call :label——LF 文件里 cmd 找标签有已知缺陷；
-    * sh 那半边就是改动前的 `python3`——POSIX 用户的行为一个字节都不许变。
+    * `launch` 第一行 shebang——Rust 起子进程不认无 shebang 的脚本（实测 Exec format error）；
+    * `launch` 在 git 里是 100755——POSIX 上 Codex 直接执行它，没有执行位就是 EACCES；
+    * `launch` 全文 LF——sh 读到 `\r` 会把 `python3\r` 当命令名；它就是改动前的 `python3`，
+      POSIX 用户的行为一个字节都不许变；
+    * `launch.cmd` **第一行就是 `@echo off`**——cmd 回显的任何一行都落在 stdout、排在第一个
+      JSON-RPC 帧前面，真 Windows 11 + Codex Desktop（codex-cli 0.158）上 rmcp 因此断连：
+      「expected value at line 1 column 1 … connection closed: initialize response」，零工具。
+      #548 的 sh/cmd 同文件双语启动器正是这样：第一行 shebang 必然被 cmd 回显；
+    * `launch.cmd` 纯 ASCII——cmd 按本机代码页读批处理，UTF-8 多字节会被拆成别的字符；
+    * `launch.cmd` 不用 goto / call :label——LF 文件里 cmd 找标签有已知缺陷。
     """
+    sh = LAUNCH_SH.read_bytes()
+    assert sh.startswith(b"#!/bin/sh\n")
+    assert b"\r" not in sh
+    sh_code = [ln for ln in sh.splitlines()[1:] if ln.strip() and not ln.startswith(b"#")]
+    assert sh_code == [b'exec python3 "$@"'], sh_code
+
     raw = LAUNCH_CMD.read_bytes()
-    assert raw.startswith(b"#!/bin/sh\n")
-    assert b"\r" not in raw
-    head, sep, posix = raw.partition(b"\n::TAVOTTO_WINDOWS\n")
-    assert sep, "heredoc 终止行没找到：sh 会把整段批处理当成 heredoc 吞到文件尾"
-    assert head.splitlines()[1] == b":<<'::TAVOTTO_WINDOWS'"
-    assert all(b < 128 for b in head), "批处理段混进了非 ASCII 字节"
+    assert raw.startswith(b"@echo off\n") or raw.startswith(b"@echo off\r\n"), raw[:40]
+    assert all(b < 128 for b in raw), "批处理混进了非 ASCII 字节"
     # 只看会执行的行：`rem` 注释里说「别用 goto」本身不该让判据红（否定断言被解释它
     # 的那句话咬到——docs/rules/repo/predicate-subject.md）
     code_lines = [
         ln.strip().lower()
-        for ln in head.decode("ascii").splitlines()
+        for ln in raw.decode("ascii").splitlines()
         if not ln.strip().lower().startswith("rem ")
     ]
     assert not any(re.search(r"\bgoto\b|\bcall\s+:", ln) for ln in code_lines), (
-        "批处理段出现了 goto / call :label"
+        "批处理出现了 goto / call :label"
     )
-    assert b'exec python3 "$@"' in posix.splitlines()
     # 候选要按**版本**判，不只是「跑得起来」：Python 2 也能 `import sys`，却解析不了
     # server.py——选中它等于又回到零工具（#548 Codex 评审 P2）
-    probe = re.search(r'set "TAVOTTO_LAUNCH_PROBE=([^"]+)"', head.decode("ascii"))
+    probe = re.search(r'set "TAVOTTO_LAUNCH_PROBE=([^"]+)"', raw.decode("ascii"))
     assert probe and "sys.version_info" in probe.group(1), "探测没有判版本"
     executed = [ln for ln in code_lines if " -c " in ln]
     assert executed and all(
@@ -1222,7 +1232,7 @@ def test_the_dual_launcher_keeps_its_platform_contract():
     spec = _util.spec_from_file_location("_launcher_range", PLUGIN / "mcp" / "server.py")
     srv = _util.module_from_spec(spec)
     spec.loader.exec_module(srv)
-    managed = re.search(r'set "TAVOTTO_LAUNCH_PROBE_MANAGED=([^"]+)"', head.decode("ascii"))
+    managed = re.search(r'set "TAVOTTO_LAUNCH_PROBE_MANAGED=([^"]+)"', raw.decode("ascii"))
     assert managed, "自管 venv 没有按引擎区间单独探测"
     assert str(srv.PYTHON_MIN) in managed.group(1), (srv.PYTHON_MIN, managed.group(1))
     assert str(srv.PYTHON_MAX_EXCLUSIVE) in managed.group(1), managed.group(1)
@@ -1234,7 +1244,7 @@ def test_the_dual_launcher_keeps_its_platform_contract():
     assert "%tavotto_launch_probe_managed%" in executed[first], executed
     assert last == len(executed) - 1 and "%tavotto_launch_probe%" in executed[last], executed
     mode = subprocess.run(
-        ["git", "-C", str(ROOT), "ls-files", "-s", "codex-plugin/mcp/launch.cmd"],
+        ["git", "-C", str(ROOT), "ls-files", "-s", "codex-plugin/mcp/launch"],
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -1245,9 +1255,12 @@ def test_the_dual_launcher_keeps_its_platform_contract():
 
 
 def _spawn_launcher_like_codex(*requests) -> "list[str]":
-    """按 Codex 起 MCP server 的那一跳起它：`command` 是 `./mcp/launch.cmd`、`args` 原样、
-    `cwd` 是插件根，没有 shell。Windows 上 CreateProcess 对 .cmd 走 cmd.exe——与 Rust 的
-    `Command` 起批处理是同一条路。回 stdout 的每一行。"""
+    """按 Codex 起 MCP server 的那一跳起它：`command` 按插件根解析、args 原样、`cwd` 是插件根，
+    没有 shell。Windows 上照 Codex 的 program resolver 按 PATHEXT 落到 `launch.cmd`
+    （`codexinstall.plugin_relative_command`，与 Codex 实测同一个结论），CreateProcess 对 .cmd
+    走 cmd.exe——与 Rust 的 `Command` 起批处理是同一条路。回 stdout 的每一行。"""
+    from tavotto.engine.codexinstall import plugin_relative_command
+
     entry = json.loads(MCP_JSON.read_text(encoding="utf-8"))["mcpServers"]["tavotto"]
     env = {k: v for k, v in os.environ.items() if not k.startswith("TAVOTTO_MCP")}
     env["TAVOTTO_NO_TELEMETRY"] = "1"
@@ -1255,9 +1268,7 @@ def _spawn_launcher_like_codex(*requests) -> "list[str]":
         env["TAVOTTO_CONFIG_DIR"] = os.path.join(tmp, "config")
         env["TAVOTTO_DATA_DIR"] = os.path.join(tmp, "data")
         env["TAVOTTO_MCP_ROOTS"] = tmp
-        command = entry["command"]
-        if os.name == "nt":  # 本进程 cwd 不是插件根；Codex 按 cwd 解析，这里同样
-            command = str(PLUGIN / command[2:])
+        command = plugin_relative_command(PLUGIN, entry["command"])
         proc = subprocess.run(
             [command, *entry["args"]],
             cwd=PLUGIN,
@@ -1275,8 +1286,10 @@ def _spawn_launcher_like_codex(*requests) -> "list[str]":
 def test_codex_style_spawn_of_the_launcher_completes_the_mcp_handshake():
     """真起 `.mcp.json` 里那条命令、走一次 initialize：拿到 serverInfo 才算「起得来」。
 
-    stdout 里除了 JSON-RPC 只允许 cmd 回显的那一行 shebang（仅 Windows）：rmcp 3.2+
-    跳过非 JSON 行、2.x 回一条 parse error，都不断连；再多一行就是新的噪声源。
+    stdout 里**只许有 JSON-RPC**，两个平台一样：#548 曾在 Windows 上放行「cmd 回显的那一行
+    shebang」（推理依据是 rmcp 3.2+ 跳过非 JSON 行），真 Windows 11 + Codex Desktop 上 rmcp
+    记下「Ignoring unparsable incoming message」后握手即以 connection closed 失败——零工具，
+    #266 的原样（2026-09-29 实测）。
     """
     lines = _spawn_launcher_like_codex(
         {
@@ -1293,17 +1306,14 @@ def test_codex_style_spawn_of_the_launcher_completes_the_mcp_handshake():
     replies, noise = [], []
     for line in lines:
         if not line.strip():
+            noise.append(line)
             continue
         try:
             replies.append(json.loads(line))
         except ValueError:
             noise.append(line)
     assert any(r.get("id") == 1 and "serverInfo" in r.get("result", {}) for r in replies), lines
-    if os.name == "nt":
-        assert all(n.rstrip().endswith("#!/bin/sh") for n in noise), noise
-        assert len(noise) <= 1, noise
-    else:
-        assert noise == [], noise
+    assert noise == [], noise
 
 
 @pytest.mark.skipif(os.name != "nt", reason="cmd.exe 那半边只在 Windows 上存在")

@@ -12,3 +12,7 @@ release.yml 的「拼 release body」当场红（scripts/check_pending_release_n
 英文写，与 release notes 一致：**按症状和触发条件写，不要按提交写**。
 -->
 
+
+## Codex plugin on Windows: MCP tools now appear
+
+On Windows, plugin 0.17.0 loaded as enabled, with its skill, but with no Tavotto tools at all, even with the engine installed. Codex gave no error. The bundled launcher was one file serving as both a shell script and a batch file, and `cmd.exe` echoed its first line (`#!/bin/sh`) to stdout ahead of the MCP handshake, so Codex dropped the server. The launcher is now two files: `mcp/launch` for macOS and Linux, and `mcp/launch.cmd` for Windows, whose first line is `@echo off`. `.mcp.json` points at `./mcp/launch`, and on Windows Codex resolves that to `launch.cmd`. macOS and Linux behave exactly as before. After upgrading the plugin, start a new Codex session. Diagnostic lines the server writes to stderr are now UTF-8, so on Windows systems whose code page is not UTF-8 they show up in the Codex logs instead of being dropped. If you are still on plugin 0.17.0 on Windows, run `codex plugin marketplace upgrade tavotto`. With this engine, `tavotto codex install` also treats any stdout output besides the health JSON as a launcher that does not start, and pins a verified interpreter into the installed copy.

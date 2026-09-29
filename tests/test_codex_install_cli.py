@@ -653,6 +653,35 @@ def test_a_launcher_that_only_degrades_still_counts_as_startable(tmp_path):
     assert not ok and "没有体检 JSON" in detail, detail
 
 
+def test_a_launcher_that_prints_before_the_json_does_not_count_as_startable(tmp_path):
+    """#266 真机：0.17.0 的双语启动器在 Windows 上让 cmd 把 shebang 回显进 stdout，后面照样
+    跟着体检 JSON。Codex 把 stdout 当协议流，那一行就让握手失败、零工具——所以「最后一行是
+    JSON」不够，stdout 里 JSON 之外一行都不许有；否则 `tavotto codex install` 会把那种
+    启动器判成起得来、不去钉解释器，用户手里唯一的绕行办法也跟着失效。stderr 不算杂音。"""
+    sys.path.insert(0, str(SRC))
+    from tavotto.engine import codexinstall
+
+    echoing = tmp_path / "echoing.py"
+    echoing.write_text(
+        "import sys\n"
+        "print(r'C:\\Users\\me\\plugin>#!/bin/sh')\n"
+        'print(\'{"ok": true, "mode": "engine"}\')\n',
+        encoding="utf-8",
+    )
+    ok, detail = codexinstall.launcher_starts(sys.executable, str(echoing))
+    assert not ok and "#!/bin/sh" in detail, detail
+
+    chatty_stderr = tmp_path / "stderr.py"
+    chatty_stderr.write_text(
+        "import sys\n"
+        "print('tavotto-mcp: diagnostics go here', file=sys.stderr)\n"
+        'print(\'{"ok": true, "mode": "engine"}\')\n',
+        encoding="utf-8",
+    )
+    ok, detail = codexinstall.launcher_starts(sys.executable, str(chatty_stderr))
+    assert ok, detail
+
+
 def _plugin_with_two_manifests(tmp_path):
     plugin = tmp_path / "plug"
     (plugin / "skills" / "s" / "agents").mkdir(parents=True)
@@ -1183,26 +1212,98 @@ def test_unknown_state_names_the_missing_node_and_says_it_is_not_absent():
 def test_the_bundled_relative_launcher_is_run_from_the_plugin_root_not_replaced(
     fake_codex, tmp_path
 ):
-    """发行件的 command 是插件自带的 `./mcp/launch.cmd`（#266）。interpreter 步必须按
-    **插件根**解析它（Codex 就是按 `.mcp.json` 的 cwd 解析的）：按本进程 cwd 解析会把一个
-    好好的启动器判成「起不来」，再把它换成绝对路径——等于亲手把 #266 的修复撤掉。"""
+    """发行件的 command 是插件自带的 `./mcp/launch`（#266）。interpreter 步必须照 Codex 的
+    解析法起它：按**插件根**解析（Codex 按 `.mcp.json` 的 cwd），Windows 上再按 PATHEXT 落到
+    `launch.cmd`（Codex 的 program resolver 实测如此）。按本进程 cwd 解析、或在 Windows 上拿
+    sh 脚本去 CreateProcess，都会把一个好好的启动器判成「起不来」，再把它换成绝对路径——
+    等于亲手把 #266 的修复撤掉。"""
     plugin = fake_codex["plugin"]
-    launch = plugin / "mcp" / "launch.cmd"
-    launch.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(ROOT / "codex-plugin" / "mcp" / "launch.cmd", launch)
-    launch.chmod(0o755)
+    for name in ("launch", "launch.cmd"):
+        launch = plugin / "mcp" / name
+        launch.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT / "codex-plugin" / "mcp" / name, launch)
+    (plugin / "mcp" / "launch").chmod(0o755)
     for name in (".mcp.json", "skills/tavotto-figure/agents/openai.yaml"):
         path = plugin / name
         path.write_text(
-            path.read_text(encoding="utf-8").replace("python3", "./mcp/launch.cmd"),
+            path.read_text(encoding="utf-8").replace("python3", "./mcp/launch"),
             encoding="utf-8",
         )
     (plugin / "mcp" / "server.py").write_text(
         "import json,sys\nprint(json.dumps({'ok': True, 'mode': 'engine'}))\n", encoding="utf-8"
     )
-    assert _mcp_command(plugin) == "./mcp/launch.cmd"
+    assert _mcp_command(plugin) == "./mcp/launch"
 
     rc, out, _err = _run(["codex", "install", "--json"])
     assert rc == 0, out
-    assert _mcp_command(plugin) == "./mcp/launch.cmd", "一个起得来的自带启动器被换掉了"
-    assert _yaml_command(plugin) == "./mcp/launch.cmd"
+    assert _mcp_command(plugin) == "./mcp/launch", "一个起得来的自带启动器被换掉了"
+    assert _yaml_command(plugin) == "./mcp/launch"
+
+
+def test_plugin_relative_command_resolves_like_codex_on_each_platform(tmp_path):
+    """与 Codex 的 program resolver 同一个结论（真 Windows 11 + Codex Desktop，codex-cli 0.158
+    日志：`Resolved "./mcp/launch" to "...\\mcp\\launch.cmd"`，彼时 `launch` 与 `launch.cmd`
+    同在）：Windows 上无扩展名的路径先按 PATHEXT 补扩展名；POSIX 上原样。"""
+    from tavotto.engine.codexinstall import plugin_relative_command
+
+    (tmp_path / "mcp").mkdir()
+    (tmp_path / "mcp" / "launch").write_text("#!/bin/sh\n", encoding="utf-8")
+    (tmp_path / "mcp" / "launch.cmd").write_text("@echo off\n", encoding="ascii")
+    win = plugin_relative_command(
+        tmp_path, "./mcp/launch", windows=True, pathext=".COM;.EXE;.BAT;.CMD"
+    )
+    assert Path(win) == tmp_path / "mcp" / "launch.cmd"
+    posix = plugin_relative_command(tmp_path, "./mcp/launch", windows=False)
+    assert Path(posix) == tmp_path / "mcp" / "launch"
+    # 有扩展名的、裸名字的、绝对路径的：原样（裸名字交给 PATH，与 Codex 一致）
+    assert plugin_relative_command(tmp_path, "python3", windows=True) == "python3"
+    assert Path(
+        plugin_relative_command(tmp_path, "./mcp/launch.cmd", windows=True, pathext=".CMD")
+    ) == (tmp_path / "mcp" / "launch.cmd")
+    # 没有任何 PATHEXT 候选时退回原名（让执行去报错，而不是这里猜）
+    (tmp_path / "mcp" / "launch.cmd").unlink()
+    assert Path(
+        plugin_relative_command(tmp_path, "./mcp/launch", windows=True, pathext=".CMD")
+    ) == (tmp_path / "mcp" / "launch")
+
+
+def _old_launcher_shape(plugin: Path) -> str:
+    """把一份合成发行件改成 0.17.0 的形态（command 是 `./mcp/launch.cmd`），清单照改后的字节
+    重写——发布器当年就是这么写的；本分支的 `describe()` 会拒绝这种形态，所以这里手工重算。
+    回新的 content_digest。"""
+    from tavotto.engine import pluginmanifest
+
+    manifest = json.loads((plugin / pluginmanifest.BUILD_MANIFEST).read_text(encoding="utf-8"))
+    for rel in (".mcp.json", "skills/tavotto-figure/agents/openai.yaml"):
+        f = plugin / rel
+        f.write_text(
+            f.read_text(encoding="utf-8").replace("./mcp/launch", "./mcp/launch.cmd"), "utf-8"
+        )
+        entry = next(e for e in manifest["files"] if e["path"] == rel)
+        entry["sha256"] = pluginmanifest.sha256_file(f)
+        entry["size"] = f.stat().st_size
+    manifest["content_digest"] = pluginmanifest.content_digest(
+        [(e["path"], e["mode"], e["sha256"]) for e in manifest["files"]]
+    )
+    (plugin / pluginmanifest.BUILD_MANIFEST).write_text(json.dumps(manifest), encoding="utf-8")
+    return manifest["content_digest"]
+
+
+def test_an_installed_relative_launcher_resolves_against_the_plugin_root(tmp_path, monkeypatch):
+    """已装副本体检（`installed=True`）里 `./` 开头的 command 按插件根解析，不按本进程 cwd。
+    真 codex 0.157 + 已发行的 0.17.0（command `./mcp/launch.cmd`）：新引擎的 doctor 画布步以前报
+    「指向不存在的解释器」——文件明明就在插件里（挪自 #725，#722 真机撞到）。"""
+    sys.path.insert(0, str(SRC))
+    from tavotto.engine import pluginmanifest
+    from tests.support import pluginkit
+
+    plugin = tmp_path / "p"
+    pluginkit.synthetic_staging(plugin, version="0.17.0")
+    _old_launcher_shape(plugin)
+    elsewhere = tmp_path / "cwd"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)  # 本进程 cwd 里当然没有 mcp/launch.cmd
+    assert pluginmanifest.verify_dir(plugin, installed=True) == []
+    (plugin / "mcp" / "launch.cmd").unlink()
+    problems = pluginmanifest.verify_dir(plugin, installed=True)
+    assert any("./mcp/launch.cmd" in p and "不存在" in p for p in problems), problems
