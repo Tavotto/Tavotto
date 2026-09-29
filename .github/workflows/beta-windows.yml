@@ -1,0 +1,124 @@
+name: Beta Windows installer
+
+# beta 分支专用（不合进 main）：推 beta/** 就打一个 Windows NSIS 安装包给测试者。
+# 构建步骤照抄 nightly.yml「Windows · 无 Python」那条腿（前端 → workerd → 内置 runtime →
+# PyInstaller sidecar → Tauri NSIS），只多叠一层 beta 覆盖：独立应用名 / identifier
+# （与正式版并排安装、互不覆盖），不出更新包（没有 minisign 私钥，beta 也不查更新）。
+on:
+  push:
+    branches: ["beta/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  TAVOTTO_NO_TELEMETRY: "1"
+
+jobs:
+  windows-beta:
+    timeout-minutes: 90
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.13" }
+      - uses: pnpm/action-setup@v4
+        with: { version: 11.27.1 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+
+      - name: 构建前端进包
+        run: python scripts/build_frontend.py
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            workerd
+            src-tauri
+      - name: 构建 Rust supervisor（tavotto-workerd）
+        run: cargo build --release --manifest-path workerd/Cargo.toml
+
+      - name: 缓存 CPython embeddable 下载
+        uses: actions/cache@v4
+        with:
+          path: build/runtime-cache
+          key: cpython-embed-${{ hashFiles('packaging/runtime-lock.json') }}
+
+      - name: 构建内置渲染 runtime
+        run: python scripts/build_worker_runtime.py --clean
+
+      - name: 打包 sidecar（内置 runtime 必须进包）
+        env:
+          TAVOTTO_REQUIRE_RUNTIME: "1"
+        run: |
+          python -m pip install --upgrade pip pyinstaller
+          python -m pip install -r requirements.txt
+          python scripts/fetch_fonts.py
+          python scripts/fetch_fonts.py --check
+          pyinstaller packaging/tavotto.spec --noconfirm
+
+      - name: 冒烟：内置科学栈 + workerd 控制面 + 中文路径
+        shell: pwsh
+        env:
+          PYTHONUTF8: "0"
+        run: |
+          $dst = "$env:RUNNER_TEMP\张三 的论文\figures"
+          New-Item -ItemType Directory -Force -Path $dst | Out-Null
+          Copy-Item "examples\runtime_check\*" $dst -Recurse -Force
+          $env:TAVOTTO_WORKER_PYTHON = $null
+          python scripts/smoke_app.py --exe dist\Tavotto\Tavotto.exe `
+            --figures "$dst" --expect-source bundled `
+            --expect-control-plane workerd `
+            --expect-packages numpy,pandas,scipy,seaborn,PIL,matplotlib
+
+      - name: Tauri 打包（NSIS，beta 覆盖）
+        run: |
+          [System.IO.File]::WriteAllText("$PWD\beta-overlay.json",
+            '{"productName":"Tavotto Beta","identifier":"com.tavotto.tavotto.beta","bundle":{"createUpdaterArtifacts":false}}')
+          pnpm dlx @tauri-apps/cli@2.11.4 build --bundles nsis --config "$PWD\beta-overlay.json"
+          if ($LASTEXITCODE -ne 0) { throw "tauri build 失败（$LASTEXITCODE）" }
+
+      - name: 静默安装 → 起壳 sidecar 冒烟 → 卸载
+        shell: pwsh
+        env:
+          TAVOTTO_DATA_DIR: ${{ runner.temp }}\beta-data
+          TAVOTTO_CONFIG_DIR: ${{ runner.temp }}\beta-config
+          TAVOTTO_NO_UPDATE_CHECK: "1"
+        run: |
+          $ErrorActionPreference = "Stop"
+          $setup = @(Get-ChildItem src-tauri\target\release\bundle\nsis\*.exe)
+          if ($setup.Count -ne 1) { throw "NSIS 产物数量异常（$($setup.Count) 个）" }
+          $inst = "$env:RUNNER_TEMP\装 这里\Tavotto Beta"
+          $p = Start-Process -PassThru -Wait $setup[0].FullName -ArgumentList "/S", "/D=$inst"
+          if ($p.ExitCode -ne 0) { throw "安装器退出码 $($p.ExitCode)" }
+          $side = Get-ChildItem $inst -Recurse -Filter Tavotto.exe | Where-Object { $_.DirectoryName -like "*sidecar*" } | Select-Object -First 1
+          if (-not $side) { throw "装完找不到 sidecar\Tavotto\Tavotto.exe" }
+          if (-not (Test-Path "$inst\Tavotto.exe")) { throw "装完找不到壳 Tavotto.exe" }
+          python scripts/smoke_app.py --exe $side.FullName `
+            --figures examples\runtime_check --expect-source bundled `
+            --expect-control-plane workerd
+          $un = Join-Path $inst "uninstall.exe"
+          if (Test-Path $un) { Start-Process -Wait $un -ArgumentList "/S" }
+          Write-Host "✓ 装得上、sidecar 起得来、卸得掉"
+
+      - name: 整理产物
+        shell: pwsh
+        run: |
+          $out = "$env:RUNNER_TEMP\beta-out"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          $setup = @(Get-ChildItem src-tauri\target\release\bundle\nsis\*.exe)[0]
+          Copy-Item $setup.FullName $out
+          $sha = (Get-FileHash -Algorithm SHA256 $setup.FullName).Hash.ToLower()
+          "$sha  $($setup.Name)" | Set-Content -Path "$out\SHA256SUMS.txt" -Encoding ascii
+          "source_sha=$env:GITHUB_SHA" | Set-Content -Path "$out\BUILD.txt" -Encoding ascii
+          Write-Host "$($setup.Name)  $sha"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tavotto-beta-windows-${{ github.run_id }}
+          path: ${{ runner.temp }}\beta-out\
+          if-no-files-found: error
+          retention-days: 30
