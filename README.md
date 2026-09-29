@@ -436,6 +436,23 @@ app. Update with `claude plugin update tavotto@tavotto`.
 Claude Desktop's chat and claude.ai don't start local MCP servers from plugins. For Claude Desktop, use the
 config generator below.
 
+### Using Tavotto with DeepSeek Harness (Beta)
+
+The same plugin is also a DeepSeek Harness bundle. Add it to the profile you use (`web` here, the one
+`dsh web` starts):
+
+```sh
+dsh plugin --profile web add "git+https://github.com/Tavotto/Tavotto.git#plugin-stable&path:/codex-plugin"
+pipx install "tavotto[worker]"
+```
+
+Start a new session (`dsh web`). The tools show up as `mcp__tavotto__*` once discovery finishes, and the
+`tavotto-figure` skill is in the skill catalog. Tavotto may only open and write inside the folder you started
+`dsh` in, so start it in your project, not in your home folder. DSH shows no embedded canvas; you work through the
+tools. To update, run `dsh plugin --profile web update tavotto-dsh`. The bundle replaces the hand-merged
+`cordis.patch.yml` from the config generator below: use one or the other, not both (two rows would claim the
+same `tavotto` server name).
+
 ### Using Tavotto from other AI editors and clients (experimental)
 
 Cursor, Claude Code, Claude Desktop (local chat), VS Code (GitHub Copilot agent), Trae, DeepSeek Harness,

@@ -72,6 +72,17 @@ CLAUDE_SPARSE_PATHS = (".claude-plugin",)
 #: `.claude-plugin/marketplace.json` 的 `plugins[0].name` 与 `name`
 CLAUDE_PLUGIN_REF = "tavotto@tavotto"
 
+#: DeepSeek Harness 的 bundle（ADR 0104）。同一份插件目录兼作 npm 包：`package.json`
+#: 声明 `dsh.bundle.patch`，由 `dsh plugin --profile <名> add <规格>` 经 pnpm 装进 profile。
+#: 规格是 pnpm 的 git 子目录写法，与两个市场指向同一条发行分支、同一个目录。
+#: 看护：`tests/test_dsh_bundle.py`
+DSH_BUNDLE_NAME = "tavotto-dsh"
+DSH_PLUGIN_SPEC = (
+    f"git+{CODEX_PLUGIN_SOURCE_URL}#{CODEX_PLUGIN_STABLE_BRANCH}&path:/{CODEX_PLUGIN_SUBDIR}"
+)
+#: README 里示范的 profile（`dsh web` 用的那个）；换 profile 只换这个名字
+DSH_DEFAULT_PROFILE = "web"
+
 # 桌面壳的 bundle 标识，与 src-tauri/tauri.conf.json 的 identifier 严格同源。
 # 桌面日志目录（tauri 的 app_log_dir）按它推导：macOS 是
 # ~/Library/Logs/<id>/，Windows 是 %LOCALAPPDATA%\<id>\logs\。

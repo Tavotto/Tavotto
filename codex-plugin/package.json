@@ -1,0 +1,37 @@
+{
+  "name": "tavotto-dsh",
+  "version": "0.17.0",
+  "private": true,
+  "description": "Tavotto for DeepSeek Harness: the Tavotto MCP server and figure skill as a dsh profile bundle",
+  "license": "AGPL-3.0-only",
+  "homepage": "https://github.com/Tavotto/Tavotto",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Tavotto/Tavotto.git",
+    "directory": "codex-plugin"
+  },
+  "type": "module",
+  "main": "dsh/index.js",
+  "exports": {
+    ".": "./dsh/index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dsh/",
+    "mcp/",
+    "skills/",
+    "assets/",
+    "integrations/",
+    ".codex-plugin/",
+    ".claude-plugin/",
+    ".mcp.json",
+    "plugin-build.json",
+    "LICENSE",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./dsh/cordis.patch.yml"
+    }
+  }
+}
