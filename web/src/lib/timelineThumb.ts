@@ -30,13 +30,29 @@ export interface TimelineThumb {
   type: 'image/webp' | 'image/png'
 }
 
-/** 把一份 SVG 串变成能 `drawImage` 的图：根元素补上像素宽高（去掉宽高的那份没有固有尺寸）。 */
-function svgImageSource(svg: string, w: number, h: number): string {
-  const sized = svg.replace(
-    /<svg\b/,
-    `<svg width="${Math.max(1, Math.round(w))}" height="${Math.max(1, Math.round(h))}" preserveAspectRatio="none"`,
-  )
-  return URL.createObjectURL(new Blob([sized], { type: 'image/svg+xml' }))
+/**
+ * 把一份 SVG 串变成能当图片画的那份：根元素的 width / height 给成像素（去掉宽高的那份没有
+ * 固有尺寸）、`preserveAspectRatio="none"`，拿掉按容器铺满的 style。
+ *
+ * **解析后在根元素上 setAttribute，不拼字符串**（Codex #679）：renderStore 里的 SVG 经
+ * `prepareSvg` 已经带着 `preserveAspectRatio`，再往 `<svg` 后面拼一份，根元素上就有两个同名
+ * 属性——XML 里这是错误，浏览器整份拒收，面板于是一律退回素材图，带 overrides 的样子全丢了。
+ * 解析不了（不是合法 XML）就返回 `null`，由调用方换素材图那一路。
+ */
+export function sizedSvgMarkup(svg: string, w: number, h: number): string | null {
+  const doc = new DOMParser().parseFromString(svg, 'image/svg+xml')
+  const root = doc.documentElement
+  if (!root || root.nodeName !== 'svg' || doc.getElementsByTagName('parsererror').length) return null
+  root.setAttribute('width', String(Math.max(1, Math.round(w))))
+  root.setAttribute('height', String(Math.max(1, Math.round(h))))
+  root.setAttribute('preserveAspectRatio', 'none')
+  root.removeAttribute('style')
+  return new XMLSerializer().serializeToString(doc)
+}
+
+function svgImageSource(svg: string, w: number, h: number): string | null {
+  const sized = sizedSvgMarkup(svg, w, h)
+  return sized == null ? null : URL.createObjectURL(new Blob([sized], { type: 'image/svg+xml' }))
 }
 
 /**
@@ -102,6 +118,7 @@ async function loadFrom(
   if (kind === 'svg') {
     if (!source.svg) return null
     const url = svgImageSource(source.svg, wPx, hPx)
+    if (!url) return null
     const img = await loadImage(url)
     if (img) return { img, revoke: url }
     URL.revokeObjectURL(url)

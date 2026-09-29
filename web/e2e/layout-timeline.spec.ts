@@ -281,3 +281,54 @@ test('两张不透明、内容相同的面板完全重叠：上层不被误判�
     expect(e.steps!.at(-1), JSON.stringify(trace)).toMatch(/:ok$/)
   }
 })
+
+test('带 overrides 的面板：缩略图走 SVG 那一路画上（不因重复属性被拒、退回素材图，Codex #679）', async ({
+  app,
+  page,
+}) => {
+  test.setTimeout(240_000)
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.addInitScript(() => {
+    ;(window as unknown as Record<string, unknown>).__TAVOTTO_THUMB_TRACE__ = []
+  })
+  const a = await app()
+  await page.goto(a.baseURL)
+  // 进图内编辑，给图例第一项改个字号：面板从此带着 overrides，renderStore 里是带改动的 SVG
+  await (await only(page.locator('[data-card="Fig1_kinetics.pdf"]'), 30_000)).dblclick()
+  await expect(page.locator('[data-element-svg] svg').first()).toBeVisible({ timeout: 60_000 })
+  await expect(page.locator('[data-authority="ready"]').first()).toBeVisible({ timeout: 60_000 })
+  const gid = 'axes_0.legend.texts_0'
+  const c = await page.evaluate((id) => {
+    const n = document.querySelector(`[data-element-svg] svg [id="${id}"]`)
+    if (!n) return null
+    const r = (n as SVGGraphicsElement).getBoundingClientRect()
+    return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
+  }, gid)
+  expect(c).not.toBeNull()
+  await page.mouse.click(c!.x, c!.y)
+  // 右栏属性页的字号（`data-inspector-prop="fontsize"`；浮动栏里那份是 sizePt）
+  const size = await only(page.locator('[data-inspector-prop="fontsize"]'))
+  const was = Number(await size.inputValue())
+  await size.fill(String(was + 3))
+  await size.press('Enter')
+  await expect(page.locator('[data-authority="ready"]').first()).toBeVisible({ timeout: 60_000 })
+  await (await only(page.locator('[data-context-back]'))).click()
+  // 存一个命名节点：它的缩略图要画带改动的那份 SVG
+  await (await only(page.locator('[data-timeline-name-button]'))).click()
+  const quick = await only(page.locator('[data-timeline-quick-name-input]'))
+  await quick.fill('改过字号')
+  await quick.press('Enter')
+  await expect(quick).toHaveCount(0)
+  const trace = async () =>
+    (await page.evaluate(() => (window as unknown as Record<string, unknown>).__TAVOTTO_THUMB_TRACE__)) as {
+      steps?: string[]
+    }[]
+  // 带 SVG 的那几次合成：SVG 那一路本身就画上了（`svg:ok`），不是载入失败后退回素材图
+  await expect
+    .poll(async () => (await trace()).filter((e) => e.steps?.some((st) => st.startsWith('svg'))).length, {
+      timeout: 30_000,
+    })
+    .toBeGreaterThan(0)
+  const withSvg = (await trace()).filter((e) => e.steps?.some((st) => st.startsWith('svg')))
+  for (const e of withSvg) expect(e.steps, JSON.stringify(withSvg)).toEqual(['svg:ok'])
+})
