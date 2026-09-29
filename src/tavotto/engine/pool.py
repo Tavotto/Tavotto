@@ -1760,7 +1760,7 @@ class EngineWorker:
         return _offer_missing_input(
             _explain_empty_capture(_attach_script_output(out, tail), self.script_name, known, tail),
             self.script_name,
-            self.figures_dir,
+            getattr(self, "figures_dir", None),
         )
 
     def request(self, obj: dict, timeout: float | None = None) -> dict:
@@ -2209,7 +2209,7 @@ class WorkerdWorker:
     def _spec(self) -> dict:
         return _spawn_spec(
             self.script_name,
-            self.figures_dir,
+            getattr(self, "figures_dir", None),
             self.entry,
             self.out_dir,
             self.sandbox,
@@ -2301,7 +2301,7 @@ class WorkerdWorker:
                 tail,
             ),
             self.script_name,
-            self.figures_dir,
+            getattr(self, "figures_dir", None),
         )
 
     def _call(
