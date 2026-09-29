@@ -395,7 +395,11 @@ def payload_for(
     if isinstance(missing, dict) and isinstance(missing.get("requested"), str):
         requested = missing["requested"]
         absolute = bool(missing.get("absolute"))
+        same = [o for o in others if o["path"] == requested]
         others = [o for o in others if o["path"] != requested]
+        # 同一串在脚本里也被 exists / glob 问过：分类跟着静态那一条走（口径同 `static_missing`）——
+        # 改指只救得回 open，探路照样落空，给选择器就是「指认 → 重跑 → 照样退出」（Codex 评 #716 P2）
+        via = next((o["via"] for o in same if o["via"] != VIA_OPEN), VIA_OPEN)
     if requested is None and not others:
         return None
     return {
