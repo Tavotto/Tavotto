@@ -81,7 +81,8 @@
   「带着内容整个插入」的活动区各家 AT 行为不一致、很可能一声不吭，等于用一个
   role 承诺了一件它并没有做的事。区先在、内容后变，由
   `fastEditStage.test.tsx`「播报区常驻」那条钉着。「添加到画布」（Shift+Enter / 就近入口 / 看大图弹窗）一律走
-  `addFigureToLayout`（文件与 runtime 同一条路，已在文档里只聚焦）。列表下方
+  `addFigureToLayout`（文件与 runtime 同一条路，已在文档里只聚焦）——加图分层链的第 1 层；
+  哪个入口走哪一层以 `canvas-objects-and-workspace.md` 的「加图是一条分层链」为准。列表下方
   `SelectedAssetActions` 给一对 listbox 之外的真按钮——option 里不许嵌可 Tab
   控件。**不许再用一个中性的「打开」承载加入文档。**
   搜索词与筛选在 `store/assetBrowseStore`（组件会被卸载；换项目 `clear()`，
@@ -89,17 +90,17 @@
   「同源：X.pdf」（`runtimeSiblingOf`）；`assets.changed` 时 runtime 清单也
   重取（只重取已取过的）——「哪张图有原件」正是那一刻变的。
 - **runtime 卡片没有假值**：没跑过的没有尺寸、没有描述符，主动作是
-  「运行并发现图」；「添加到画布」只走描述符（`addRuntimePanel`），
+  「运行并发现图」；「添加到画布」只走描述符（`addRuntimePanelToCanvas`，分层链第 2 层），
   绝不解析 id、绝不指望磁盘路径。运行时图的写回区
   （`PanelSection.RuntimeSourceArea`）**显示原因**（没有原始图文件，
   导出会创建新文件）而不是无声隐藏；按钮缺席只是礼貌，硬拒绝在后端。
 - **交接定位认 runtime 素材（Session 6）**：`applyOpenRequest` 找不到磁盘
   面板时按 stem 查 `GET /api/runtime/assets`（只读），有描述符就
-  `addRuntimePanel`；没有描述符**不造假面板**，引导去脚本区运行。多
+  经 `openFastEdit` 打开（它在 workspace 里新建，见加图分层链）；没有描述符**不造假面板**，引导去脚本区运行。多
   Figure 交接（`?pick=<脚本>` / `tavotto:open` 事件的 `pick`）打开
   `FigurePickerDialog`——每张可见、各自可加、**绝不静默选第一张**；条目
-  从 assetStore + runtimeAssetStore 现算（磁盘图走 addPanel、runtime 走
-  描述符），没跑出预览的条目不渲染假按钮。看护
+  从 assetStore + runtimeAssetStore 现算（磁盘图走 `addPanelToCanvas`、runtime 走
+  描述符 `addRuntimePanelToCanvas`，已有就只选中），没跑出预览的条目不渲染假按钮。看护
   `openRequest.test.ts` / `FigurePickerDialog.test.tsx`。
 - **TIFF 素材（issue #534）**：`/api/file` 回原字节，Chromium / WebView2 画不出 TIFF——`panelSrc`
   的位图分支按**浏览器能力的允许清单**（`BROWSER_RASTER_EXTS` = png / jpg / jpeg）判，清单之外一律走

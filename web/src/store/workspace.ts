@@ -306,13 +306,36 @@ export function findFigurePanel(
   return null
 }
 
+/** 素材 id → 能加进画布的来源：磁盘图的 `PanelInfo`，或带描述符的 runtime 图 */
+type FigureSource = { kind: 'file'; info: PanelInfo } | { kind: 'runtime'; desc: CapturedFigureDescriptor }
+
+function figureSource(figureId: string): FigureSource | null {
+  const info = useAssetStore.getState().byId[figureId]
+  if (info) return { kind: 'file', info }
+  const runtime = (useRuntimeAssetStore.getState().assets ?? []).find((a) => a.id === figureId)
+  return runtime?.descriptor ? { kind: 'runtime', desc: runtime.descriptor } : null
+}
+
+/**
+ * 新建面板用哪一层：`toCanvas` = `addPanelToCanvas` / `addRuntimePanelToCanvas`（连取景，
+ * 「添加到画布」走它）；`docOnly` = 裸 action，只给 `openFastEdit`——它要先停放排版视口、
+ * 再判新加的图，取景的时机由它自己掌握。
+ */
+function createPanel(src: FigureSource, layer: 'toCanvas' | 'docOnly'): PanelObject {
+  if (layer === 'toCanvas') {
+    return src.kind === 'file' ? addPanelToCanvas(src.info) : addRuntimePanelToCanvas(src.desc)
+  }
+  return src.kind === 'file' ? addPanel(src.info) : addRuntimePanel(src.desc)
+}
+
 /**
  * 素材 → 文档里的面板对象：有就用那一个（**绝不重复创建**），
- * 没有就通过既有的统一 action 添加。runtime 素材走它自己那条添加路径。
- * **只管文档、不动视口**：新加的图怎么进视野由调用方在自己的时机调 `frameAddedPanel`
- * （`openFastEdit` 要先停放排版视口，`addFigureToLayout` 要先回到排版）。
+ * 没有就按 `layer` 新建（见 `createPanel`）。runtime 素材走它自己那条添加路径。
  */
-function ensurePanel(figureId: string): { panel: PanelObject; created: boolean } | null {
+function ensurePanel(
+  figureId: string,
+  layer: 'toCanvas' | 'docOnly',
+): { panel: PanelObject; created: boolean } | null {
   const found = findFigurePanel(figureId)
   if (found) {
     if (found.canvasId !== useDocumentStore.getState().activeCanvasId) {
@@ -322,11 +345,8 @@ function ensurePanel(figureId: string): { panel: PanelObject; created: boolean }
     const fresh = useDocumentStore.getState().doc.objects.find((o) => o.id === found.panel.id)
     return fresh?.type === 'panel' ? { panel: fresh, created: false } : null
   }
-  const info = useAssetStore.getState().byId[figureId]
-  if (info) return { panel: addPanel(info), created: true }
-  const runtime = (useRuntimeAssetStore.getState().assets ?? []).find((a) => a.id === figureId)
-  if (runtime?.descriptor) return { panel: addRuntimePanel(runtime.descriptor), created: true }
-  return null
+  const src = figureSource(figureId)
+  return src ? { panel: createPanel(src, layer), created: true } : null
 }
 
 export type OpenFastEditOutcome = 'editing' | 'layout_only' | 'missing'
@@ -344,7 +364,7 @@ export type OpenFastEditOutcome = 'editing' | 'layout_only' | 'missing'
  * ——状态与措辞归 `lib/readinessText.ts`，两者不是一件事。
  */
 export function openFastEdit(figureId: string): OpenFastEditOutcome {
-  const got = ensurePanel(figureId)
+  const got = ensurePanel(figureId, 'docOnly')
   if (!got) {
     useUiStore
       .getState()
@@ -392,18 +412,24 @@ export type AddToLayoutOutcome = 'added' | 'focused' | 'missing'
  * 也不会把 overrides 复制到一个新对象上（那份复制品之后就与原件失联了）。
  */
 export function addFigureToLayout(figureId: string): AddToLayoutOutcome {
-  const got = ensurePanel(figureId)
-  if (!got) {
+  const willCreate = !findFigurePanel(figureId)
+  if (willCreate && !figureSource(figureId)) {
     useUiStore
       .getState()
       .setStatus(msg('fastEdit.figureMissing', { name: figureId }, 'workspace'), 'error')
     return 'missing'
   }
-  // 新加的图：先回到排版（`focusLayoutPanel` 里 `exitToLayout`），再由 `frameAddedPanel`
-  // 取景「页面 ∪ 这张图」并留在适应模式——`revealRect` 会退出适应模式，抽屉一收页面就
-  // 偏在一边（2026-09-28 用户反馈）。已在文档里的只是聚焦、滚进视野
+  // 要新建：**先回到排版**再经 `addPanelToCanvas` 加——取景「页面 ∪ 这张图」要在排版上判
+  // （在快编里加会被当成「快编时加图」只记不取景）。之后的 `focusLayoutPanel` 不再
+  // `revealRect`：那会退出适应模式，抽屉一收页面就偏在一边（2026-09-28 用户反馈）。
+  // 已在文档里的只是聚焦、滚进视野
+  if (willCreate) {
+    useWorkspaceStore.getState().exitToLayout()
+    useUiStore.getState().setElementPanel(null)
+  }
+  const got = ensurePanel(figureId, 'toCanvas')
+  if (!got) return 'missing' // 上面已判过来源；这里只防同步期间素材被清掉
   focusLayoutPanel(got.panel.id, { reveal: !got.created })
-  if (got.created) frameAddedPanel(got.panel, false)
   const name = got.panel.name ?? got.panel.fileId
   useUiStore
     .getState()

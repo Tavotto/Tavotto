@@ -103,11 +103,22 @@
   另判。伸出去的那截由 `canvas/PageOutsideMask` 画淡（导出时 PDF 页框本来就裁掉它），
   页面轮廓压在内容之上——参考可画「页面即蒙版」，但只画淡不隐藏、不吃指针事件。遮罩是
   屏幕空间的四条 div 色带，**不用 svg**（e2e 有「舞台里第一个 svg / img」的等渲染定位）。
+  - **加图是一条分层链，本条是它的唯一权威**（`asset-library.md`、`web/AGENTS.md` 引用这里，
+    #706 评审 P1）：
+    1. `workspace.addFigureToLayout(figureId)`——按素材 id 加，**去重 / 聚焦**：已在文档里就
+       只聚焦（`focused`），否则先回排版、再经第 2 层新建。素材库的「添加到画布」
+       （Shift+Enter / 就近入口 / 看大图弹窗）、快编上下文栏、onboarding 走这一层；
+    2. `workspace.addPanelToCanvas` / `addRuntimePanelToCanvas`——拿着 `PanelInfo` / 描述符
+       直接新建一张并**取景**（`frameAddedPanel`）。自己判过「文档里有没有」或本来就是「再摆
+       一张」的入口走这一层：选图对话框（已有就选中）、脚本库与接入状态对话框的 runtime
+       卡、接入状态对话框的磁盘图、`tavotto run` 交接（已有就选中）、舞台拖放；
+    3. `actions.addPanel` / `addRuntimePanel`——**只改文档**、不碰视口。只许 `store/workspace.ts`
+       调（第 2 层，以及 `openFastEdit` 需要先停放排版视口、再自己判取景的那一处），
+       `store/addPanelEntry.test.ts` 按 TypeScript AST 钉住（追踪改名 / namespace 导入与
+       转手再导出，只数真实调用；注释、字符串不算）。
+    各入口走哪一层按它**原有**的去重语义定，别为了统一改行为。
   **新加的图怎么进视野只有一处判：`workspace.frameAddedPanel`**，输入是工作区模式与停放的
-  排版视口（#706 评审 P2 四条都出在入口分散上）。`actions.addPanel` / `addRuntimePanel`
-  只管文档、不碰视口；界面入口（选图对话框、脚本库、接入状态对话框、`tavotto run` 交接、
-  舞台拖放）一律走 `workspace.addPanelToCanvas` / `addRuntimePanelToCanvas`，
-  `store/addPanelEntry.test.ts` 扫源码钉住没有别的生产模块直接调那两个 action。
+  排版视口（#706 评审 P2 四条都出在入口分散上）。
   排版上：取景「页面 ∪ 这张图」（`fitRectAnimated`）并**留在适应模式**（之后抽屉收起、
   窗口缩放页面仍居中）；拖放到一点、图整张已在视口里就不动视口。快速编辑里（对话框在快编
   时加图，或 `openFastEdit` 打开一张还不在画布上的图）：**不动**正在编辑的那一屏，只把新图

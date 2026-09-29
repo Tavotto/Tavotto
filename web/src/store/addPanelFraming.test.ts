@@ -16,6 +16,7 @@ import { useDocumentStore } from './documentStore'
 import { startPageSizeFit } from './pageFit'
 import { useViewportStore } from './viewportStore'
 import {
+  addFigureToLayout,
   addPanelToCanvas,
   addRuntimePanelToCanvas,
   openFastEdit,
@@ -152,6 +153,27 @@ describe('快速编辑里加图（r4129948725）', () => {
     addRuntimePanelToCanvas(descriptor(10, 10))
     returnToLayout()
     expect(view()).toEqual(before)
+  })
+})
+
+describe('addFigureToLayout 是分层链第 1 层（r4130522228）', () => {
+  it('快编里点「添加到画布」一张新图：先回排版、再经第 2 层取景「页面 ∪ 图」', () => {
+    customLayoutView()
+    openFastEdit('edit.pdf')
+    expect(addFigureToLayout('big.pdf')).toBe('added')
+    expect(useWorkspaceStore.getState().mode).toBe('layout')
+    const obj = useDocumentStore
+      .getState()
+      .doc.objects.find((o) => o.type === 'panel' && o.fileId === 'big.pdf')!
+    expect(vp().fitted).toBe(true)
+    expect(vp().fitFrame()).toMatchObject(unionOf(obj))
+  })
+
+  it('已在文档里：只聚焦，不新建第二张', () => {
+    addFigureToLayout('small.pdf')
+    const n = useDocumentStore.getState().doc.objects.length
+    expect(addFigureToLayout('small.pdf')).toBe('focused')
+    expect(useDocumentStore.getState().doc.objects).toHaveLength(n)
   })
 })
 
