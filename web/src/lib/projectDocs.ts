@@ -59,6 +59,14 @@ function newGen(): string {
   return `${Date.now().toString(36)}-${genSeq.toString(36)}-${Math.random().toString(36).slice(2, 10)}`
 }
 
+function rawCache(projectId: string): string | null {
+  try {
+    return localStorage.getItem(PREFIX + projectId)
+  } catch {
+    return null
+  }
+}
+
 function readPending(projectId: string): Pending | null {
   try {
     const raw = localStorage.getItem(PREFIX + projectId)
@@ -127,12 +135,18 @@ export async function fetchRemoteProjectDocument(
   projectId: string,
 ): Promise<ProjectDocumentRef | null | undefined> {
   await remoteTail
+  // GET 在路上时本机缓存被改过（这个或同 origin 的别的标签页又记了一次，它的 PUT 甚至可能
+  // 已经确认、摘掉了待确认标记）：那次写比这份回包新，回包作废、不许覆盖（#719 Codex P2）。
+  // 判据是缓存原文本身——localStorage 同 origin 共享，别的标签页写的也看得见
+  const before = rawCache(projectId)
   const remote = await fetchLayoutSession(projectId)
   if (remote === undefined) return undefined
-  // 本机有一条后端还没确认的记录，而且比后端那条新（或后端还没记过）：本机为准，重推一次
+  if (rawCache(projectId) !== before) return readProjectDocument(projectId)
+  // 本机有一条后端还没确认的记录，而且不比后端那条旧（或后端还没记过）：本机为准，重推一次。
+  // 同一毫秒算本机赢：平局时丢掉的是一次**确知没推上去**的写入，重推一次的代价只是多一个 PUT
   const pending = readPending(projectId)
   const local = pending === null ? null : readProjectDocument(projectId)
-  if (pending !== null && local && (!remote.last || pending.at > remote.last.at)) {
+  if (pending !== null && local && (!remote.last || pending.at >= remote.last.at)) {
     pushRemote(projectId, local, pending.gen)
     return local
   }

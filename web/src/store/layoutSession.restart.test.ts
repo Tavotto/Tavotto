@@ -35,6 +35,8 @@ let failSessionPuts = false
 const putPlan: { hold: Promise<void>; outcome: 'ok' | 'fail' }[] = []
 /** 非空 = 「上次开着哪份」的 GET 挂在这里，等它 resolve 才答（切项目途中的那段 await） */
 let holdSessionGet: Promise<void> | null = null
+/** 同上，导出默认值的 GET */
+let holdPrefsGet: Promise<void> | null = null
 const deletes: string[] = []
 let inFlight = 0
 
@@ -70,8 +72,10 @@ globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
     if (!sessionEndpoints) return json({ error: 'not found' }, 404)
     if (failSessionPuts && method === 'PUT') return json({ error: 'boom' }, 500)
     if (u.pathname === '/api/layout-session' && method === 'GET') {
+      // 先取值再挂起：挂起期间别处的写入不影响这份回包（模拟「在路上的旧回包」）
+      const snap = lastByProject.get(pjOf(u, init)) ?? null
       if (holdSessionGet) await holdSessionGet
-      return json({ last: lastByProject.get(pjOf(u, init)) ?? null })
+      return json({ last: snap })
     }
     if (u.pathname === '/api/layout-session/last' && method === 'PUT') {
       const plan = putPlan.shift()
@@ -89,7 +93,9 @@ globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
         exportDefaults = JSON.parse(String(init?.body))
         return json({ ok: true, defaults: exportDefaults })
       }
-      return json({ defaults: exportDefaults })
+      const snap = exportDefaults
+      if (holdPrefsGet) await holdPrefsGet
+      return json({ defaults: snap })
     }
     return json({}, 404)
   }
@@ -143,6 +149,7 @@ beforeEach(() => {
   sessionEndpoints = true
   failSessionPuts = false
   holdSessionGet = null
+  holdPrefsGet = null
   putPlan.length = 0
   deletes.length = 0
 })
@@ -300,6 +307,57 @@ describe('推给后端失败的写入不丢（#719 Codex P1 / P2）', () => {
     expect(await docs.loadProjectDocument('p_a')).toEqual({ id: 'd_second', name: 'second' })
     await settle()
     expect(lastByProject.get('p_a')?.doc_id).toBe('d_second')
+  })
+
+  it('待确认写入与后端记录同一毫秒：本机赢（确知没推上去的那次不丢）', async () => {
+    vi.resetModules()
+    const docs = await import('@/lib/projectDocs')
+    const T = 1_700_000_000_000
+    const now = vi.spyOn(Date, 'now').mockReturnValue(T)
+    try {
+      failSessionPuts = true
+      docs.rememberProjectDocument('p_a', { id: 'd_new', name: 'new' })
+      await settle()
+      failSessionPuts = false
+    } finally {
+      now.mockRestore()
+    }
+    lastByProject.set('p_a', { doc_id: 'd_old', name: 'old', at: T })
+    expect(await docs.loadProjectDocument('p_a')).toEqual({ id: 'd_new', name: 'new' })
+    await settle()
+    expect(lastByProject.get('p_a')?.doc_id).toBe('d_new')
+  })
+
+  it('读在路上时本机又记了一次（且已确认）：旧回包作废，不回滚', async () => {
+    vi.resetModules()
+    const docs = await import('@/lib/projectDocs')
+    lastByProject.set('p_a', { doc_id: 'd_old', name: 'old', at: 1 })
+    let release!: () => void
+    holdSessionGet = new Promise<void>((r) => (release = r))
+    const reading = docs.loadProjectDocument('p_a')
+    await new Promise((r) => setTimeout(r, 10))
+    docs.rememberProjectDocument('p_a', { id: 'd_newer', name: 'newer' })
+    await settle() // 这次 PUT 已确认、待确认标记已摘
+    expect(lastByProject.get('p_a')?.doc_id).toBe('d_newer')
+    release()
+    expect(await reading).toEqual({ id: 'd_newer', name: 'newer' })
+    expect(docs.readProjectDocument('p_a')).toEqual({ id: 'd_newer', name: 'newer' })
+  })
+
+  it('导出默认值：取回在路上时用户改了设置（已确认）：旧回包不盖掉', async () => {
+    exportDefaults = { dpi: '600', formats: ['pdf', 'png'], withProof: false, strictInspection: false }
+    vi.resetModules()
+    const mod = await import('@/lib/exportDefaults')
+    let release!: () => void
+    holdPrefsGet = new Promise<void>((r) => (release = r))
+    const hydrating = mod.hydrateExportDefaults()
+    await new Promise((r) => setTimeout(r, 10))
+    mod.writeExportDefaults({ dpi: '1200' })
+    release()
+    await hydrating
+    await settle()
+    expect(mod.readExportDefaults().dpi).toBe('1200')
+    expect((exportDefaults as { dpi: string }).dpi).toBe('1200')
   })
 
   it('导出默认值推失败：下次启动不被后端的旧值盖掉，并补推', async () => {

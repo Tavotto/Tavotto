@@ -54,6 +54,14 @@ export function readExportDefaults(): ExportDefaults {
   return DEFAULTS
 }
 
+function readCacheRaw(): string | null {
+  try {
+    return localStorage.getItem(KEY)
+  } catch {
+    return null // 读不了就没有可迁移的
+  }
+}
+
 function writeCache(value: unknown): void {
   try {
     localStorage.setItem(KEY, JSON.stringify(value))
@@ -142,8 +150,13 @@ export function onExportDefaultsHydrated(cb: () => void): () => void {
 
 export async function hydrateExportDefaults(): Promise<void> {
   await remoteTail
+  // GET 在路上时用户改了导出设置（它的 PUT 可能已经确认、摘掉了待确认标记）：本机那次更新，
+  // 这份回包作废（#719 Codex P2）。判据是缓存原文 + 待确认标记，同 origin 的别的标签页写的也算
+  const snapshot = () => `${readCacheRaw()}\u0000${readPending()}`
+  const before = snapshot()
   const remote = await fetchExportDefaultsRemote()
   if (remote === undefined) return
+  if (snapshot() !== before) return
   // 本机有一次后端没确认的改动：本机为准，重推（它是这个 origin 上用户最后一次的意图）
   const pending = readPending()
   if (pending !== null) {
@@ -155,12 +168,7 @@ export async function hydrateExportDefaults(): Promise<void> {
     for (const cb of [...hydratedListeners]) cb()
     return
   }
-  let local: string | null = null
-  try {
-    local = localStorage.getItem(KEY)
-  } catch {
-    /* 读不了就没有可迁移的 */
-  }
+  const local = readCacheRaw()
   if (local) {
     const token = newToken()
     setPending(token)
