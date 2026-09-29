@@ -5,7 +5,7 @@ import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import type { Manifest } from '@/lib/api'
 import { FIGURE_LINE_ROWS, FIGURE_TEXT_ROWS } from '@/lib/stylePanelModel'
-import { CANVAS_TEXT_FAMILIES } from '@/lib/typography'
+import { CANVAS_TEXT_FAMILIES, withMachineFamilies } from '@/lib/typography'
 import { cn } from '@/lib/utils'
 import { useRenderStore } from '@/store/renderStore'
 import { optionLabel } from '../inspector/roles/registry'
@@ -27,10 +27,10 @@ import { SettingRow, settingControlStyle, settingRowGrid } from './SettingRow'
  * 与面板的不同只有一处：这里编辑的是**样式本身**，不是一张图——
  *
  * * 每一格多一档「这份样式没管这一项」（未设置）：字体下拉留空、数字框留空，行尾的 × 把
- *   整行清回这一档。粗体开关按下 = 写 `bold`，再按 = 写 `normal`（「一律不加粗」也是一种
- *   规定，与「不管」不是一回事），回到「不管」走 ×。
- * * 字体的选项没有 manifest 可问：通用三族 + 已渲染的图里引擎报过的首选项与本机字体
- *   （`font_families`，整台机器同一份）+ 样式里已经写着的那个名字（不认识也照样显示，
+ *   整行清回这一档。粗 / 斜体是三态：未设置 → 开（`bold`）→ 显式关（`normal`：「一律不加粗」
+ *   也是一种规定，与「不管」不是一回事）→ 回到未设置。
+ * * 字体的选项没有 manifest 可问：通用三族 + 每一张已渲染的图里引擎报过的首选项与本机字体
+ *   （`font_families`，逐张并，`figureFamilyOptions`）+ 样式里已经写着的那个名字（不认识也照样显示，
  *   不替用户换掉）。画布标注是画布文字的闭集 `CANVAS_TEXT_FAMILIES`。
  * * 形状跟着数据走：图内那几行写 `element.<role>.<prop>`（`weight` / `style` 是 `bold` /
  *   `italic` / `normal`），画布标注写 `annotation.{fontFamily,sizePt,bold,italic}`（boolean），
@@ -131,30 +131,34 @@ const faceValue = (kind: TextRowSpec['kind'], which: 'weight' | 'style', on: boo
   kind === 'annotation' ? on : on ? (which === 'weight' ? 'bold' : 'italic') : 'normal'
 
 /**
- * 图内字体下拉的选项：通用三族 + 已渲染的图里引擎报过的（首选项 + 本机全部族）。
- * 本机字体表整台机器同一份，找到一份带它的 manifest 就够了。
+ * 图内字体下拉的选项：通用三族 + **每一张**已渲染的图里引擎报过的首选项与本机族。
+ *
+ * 逐张并、不挑「第一张带本机表的」：连着不报 `font_families` 的老引擎时，后面几张图的首选项
+ * 不能被第一张挡掉；几个 runtime 各报各的本机表时，选项也不能随渲染先后变（Codex #703）。
+ * 每张图的首选项与本机表怎么并，走唯一的并表出处 `withMachineFamilies`；图按键排序再并，
+ * 先后次序与渲染顺序无关。
  */
+export function figureFamilyOptions(manifests: Record<string, Manifest | null | undefined>): string[] {
+  const out = new Set<string>(GENERIC_FAMILIES)
+  for (const key of Object.keys(manifests).sort()) {
+    const manifest = manifests[key]
+    if (!manifest) continue
+    const preferred = new Set<string>()
+    for (const e of manifest.elements) {
+      for (const f of e.editable) if (f.prop === 'fontfamily') for (const o of f.options ?? []) preferred.add(o)
+    }
+    const field = withMachineFamilies({ prop: 'fontfamily', options: [...preferred] }, manifest.font_families)
+    for (const o of field?.options ?? []) out.add(o)
+  }
+  return [...out]
+}
+
 function useFigureFamilies(): string[] {
   const byKey = useRenderStore((s) => s.byKey)
-  return useMemo(() => {
-    const out = new Set<string>(GENERIC_FAMILIES)
-    let manifest: Manifest | undefined
-    for (const r of Object.values(byKey)) {
-      if (r.manifest?.font_families?.length) {
-        manifest = r.manifest
-        break
-      }
-      manifest ??= r.manifest ?? undefined
-    }
-    if (manifest) {
-      const field = manifest.elements
-        .flatMap((e) => e.editable)
-        .find((f) => f.prop === 'fontfamily' && f.options?.length)
-      for (const o of field?.options ?? []) out.add(o)
-      for (const o of manifest.font_families ?? []) out.add(o)
-    }
-    return [...out]
-  }, [byKey])
+  return useMemo(
+    () => figureFamilyOptions(Object.fromEntries(Object.entries(byKey).map(([k, r]) => [k, r.manifest]))),
+    [byKey],
+  )
 }
 
 export function StyleProfileFields({

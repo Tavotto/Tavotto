@@ -13,6 +13,8 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { i18n } from '@/i18n'
 import { ProfilesSettings } from './ProfilesSettings'
+import { figureFamilyOptions } from './StyleProfileFields'
+import type { Manifest } from '@/lib/api'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { DEFAULT_PROFILE_ID } from '@/lib/profile'
 import { builtinCatalog } from '@/lib/specBinding'
@@ -741,5 +743,37 @@ describe('样式页与左栏样式面板同一张行表：字体 / 字号 / 粗�
     expect(summary('axis_label')).toContain('未设置')
     expect(summary('tickDirection')).not.toContain('未设置')
     expect(document.body.querySelectorAll('input:not([type="file"])')).toHaveLength(0)
+  })
+})
+
+describe('样式页字体下拉：逐张并已渲染的图（Codex #703）', () => {
+  const m = (preferred: string[], machine?: string[]) =>
+    ({
+      elements: [
+        { role: 'title', editable: [{ prop: 'fontsize' }, { prop: 'fontfamily', options: preferred }] },
+        { role: 'legend_text', editable: [{ prop: 'fontfamily', options: ['serif', 'STIXGeneral'] }] },
+      ],
+      ...(machine ? { font_families: machine } : {}),
+    }) as unknown as Manifest
+
+  it('老引擎不报本机表：每一张图的首选项都进下拉，不只第一张', () => {
+    const opts = figureFamilyOptions({ a: m(['serif', 'Arial']), b: m(['sans-serif', 'Helvetica']) })
+    expect(opts).toEqual(expect.arrayContaining(['Arial', 'Helvetica', 'STIXGeneral']))
+  })
+
+  it('几个 runtime 各报各的本机表：并起来，且与渲染先后无关', () => {
+    const a = m(['serif'], ['Fira Sans', 'Arial'])
+    const b = m(['serif'], ['Noto Serif CJK SC'])
+    const ab = figureFamilyOptions({ a, b })
+    const ba = figureFamilyOptions({ b, a })
+    expect(ab).toEqual(expect.arrayContaining(['Fira Sans', 'Arial', 'Noto Serif CJK SC']))
+    expect(ba).toEqual(ab)
+    // 通用三族在前、不重复
+    expect(ab.slice(0, 3)).toEqual(['serif', 'sans-serif', 'monospace'])
+    expect(new Set(ab).size).toBe(ab.length)
+  })
+
+  it('还没渲染出 manifest 的图不挡别的图', () => {
+    expect(figureFamilyOptions({ a: null, b: m(['Arial']) })).toContain('Arial')
   })
 })
