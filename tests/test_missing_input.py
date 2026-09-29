@@ -487,6 +487,23 @@ def test_absolute_paths_that_are_only_probed_get_no_picker(tmp_path):
     }
 
 
+def test_the_requested_path_keeps_the_probe_classification_of_the_same_literal(tmp_path):
+    """运行时缺的那一串在脚本里也被 `exists()` 问过（`present = exists("x.csv"); open("x.csv")`）：顶层
+    `via` 跟着静态那一条走，不给选择器——改指只救得回 open，探路照样落空、脚本照样退出（Codex 评 #716 P2）。"""
+    (tmp_path / "fig.py").write_text(
+        'import os, sys\npresent = os.path.exists("x.csv")\ndata = open("x.csv").read()\n'
+        "if not present:\n    sys.exit(1)\n"
+        'open("y.csv")\n',
+        encoding="utf-8",
+    )
+    got = inputremap.payload_for("fig.py", tmp_path, {"requested": "x.csv", "absolute": False})
+    assert got is not None and got["via"] == inputremap.VIA_PROBE
+    assert [o["path"] for o in got["others"]] == ["y.csv"]
+    # 只被 open 读的那一串：照旧给选择器
+    got = inputremap.payload_for("fig.py", tmp_path, {"requested": "y.csv", "absolute": False})
+    assert got is not None and got["via"] == inputremap.VIA_OPEN
+
+
 @needs_worker
 def test_a_plain_script_error_stays_a_script_error(figs):
     (figs / "fig.py").write_text("raise ValueError('boom')\n", encoding="utf-8")
