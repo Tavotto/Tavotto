@@ -403,7 +403,10 @@ def test_absolute_paths_that_are_only_probed_get_no_picker(tmp_path):
         "import glob as g\nfrom glob import iglob as gg\nfrom pathlib import Path as P\n"
         'g.glob("/nonexistent/tavotto/h/*.csv")\n'
         'gg("/nonexistent/tavotto/i/*.csv")\n'
-        'P("/nonexistent/tavotto/j/t.csv").exists()\n',
+        'P("/nonexistent/tavotto/j/t.csv").exists()\n'
+        # glob 的起算目录 `root_dir=` 同样是 glob 在问（模式是变量也一样）
+        'glob.glob("*.csv", root_dir="/nonexistent/tavotto/k")\n'
+        'ROOT = "/nonexistent/tavotto/l"\npat = "*.csv"\ng.glob(pat, root_dir=ROOT)\n',
         encoding="utf-8",
     )
     got = {o["path"]: o["via"] for o in inputremap.static_missing("fig.py", tmp_path, [])}
@@ -419,6 +422,8 @@ def test_absolute_paths_that_are_only_probed_get_no_picker(tmp_path):
         "/nonexistent/tavotto/h/*.csv": inputremap.VIA_GLOB,
         "/nonexistent/tavotto/i/*.csv": inputremap.VIA_GLOB,
         "/nonexistent/tavotto/j/t.csv": inputremap.VIA_PROBE,
+        "/nonexistent/tavotto/k": inputremap.VIA_GLOB,
+        "/nonexistent/tavotto/l": inputremap.VIA_GLOB,
     }
 
 

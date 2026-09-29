@@ -233,6 +233,13 @@ def _probe_via_of_constants(tree: ast.AST) -> dict[int, str]:
                     out[id(inner)] = VIA_PROBE
                 elif name in databinding.PATH_METHOD_GLOBS:
                     out[id(inner)] = VIA_GLOB
+        if aliases.glob_call(node.func) is not None:
+            # `glob("*.csv", root_dir="/moved/data")`：起算目录同样是 glob 在问，改指表救不回它
+            root_dir = _const_of(
+                next((k.value for k in node.keywords if k.arg == "root_dir"), None)
+            )
+            if root_dir is not None:
+                out[id(root_dir)] = VIA_GLOB
         target = first
         if target is None:
             target = next(
