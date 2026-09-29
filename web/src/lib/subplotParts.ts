@@ -42,31 +42,37 @@ const textOf = (el: ManifestElement): string | null => {
 }
 
 /**
- * 宿主判据：谁的 `follow_gids` 里有它（引擎裁决的共享关系，色条轴与孪生轴都在
- * 里面），否则色条轴认它那根色条的 `host_gid`。两条都是引擎发的事实，前端不
+ * 成簇判据：`follow_gids`（引擎裁决的共享关系，色条轴与孪生轴都在里面）连起来的
+ * axes 是一簇，色条轴另认它那根色条的 `host_gid`。两条都是引擎发的事实，前端不
  * 按几何远近猜——猜错一次，用户点「修复 (b)」就改到了 (c)。
  */
 function buildLookup(manifest: Manifest): SubplotLookup {
   const elements = manifest.elements ?? []
   const byGid = new Map(elements.map((e) => [e.gid, e]))
   const axes = elements.filter((e) => AXES_GID.test(e.gid))
-  const parent = new Map<string, string>()
-  for (const a of axes) {
-    for (const f of a.follow_gids ?? []) if (f !== a.gid && byGid.has(f)) parent.set(f, a.gid)
-  }
-  for (const a of axes) {
-    if (parent.has(a.gid) || !a.is_colorbar || !a.colorbar_gid) continue
-    const host = byGid.get(a.colorbar_gid)?.host_gid
-    if (host && host !== a.gid && AXES_GID.test(host)) parent.set(a.gid, host)
-  }
+  // 按连通分量建簇（union-find），不按「谁指向谁」走链：孪生轴在 follow_gids 里
+  // **互相**点名，走链会成环、从两端出发各得一个根，一个子图就拆成两张卡。簇的
+  // 规范根 = 簇里 manifest 顺序最早的 axes（孪生轴、色条轴都是后建的，宿主在前）。
+  // 共用色条不会把两张图并成一簇：引擎给每根色条轴只记一个宿主（`host_of_cbax`）
+  const rank = new Map(axes.map((a, i) => [a.gid, i]))
+  const up = new Map(axes.map((a) => [a.gid, a.gid]))
   const rootOf = (gid: string): string => {
     let at = gid
-    const seen = new Set<string>()
-    while (parent.has(at) && !seen.has(at)) {
-      seen.add(at)
-      at = parent.get(at)!
-    }
+    while (up.has(at) && up.get(at) !== at) at = up.get(at)!
     return at
+  }
+  const join = (a: string, b: string) => {
+    if (!rank.has(a) || !rank.has(b)) return
+    const [ra, rb] = [rootOf(a), rootOf(b)]
+    if (ra === rb) return
+    if (rank.get(ra)! < rank.get(rb)!) up.set(rb, ra)
+    else up.set(ra, rb)
+  }
+  for (const a of axes) for (const f of a.follow_gids ?? []) join(a.gid, f)
+  for (const a of axes) {
+    if (!a.is_colorbar || !a.colorbar_gid) continue
+    const host = byGid.get(a.colorbar_gid)?.host_gid
+    if (host && AXES_GID.test(host)) join(a.gid, host)
   }
 
   const members = new Map<string, ManifestElement[]>()

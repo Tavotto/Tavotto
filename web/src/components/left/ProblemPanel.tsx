@@ -170,7 +170,7 @@ export function ProblemPanel() {
     if (cursor && groups.length === 0) useUiStore.getState().setProblemCursor(null)
   }, [cursor, groups.length])
 
-  // 游标指着一条卡片外的问题（样式面板直达、换了分组方式）：换进它那张卡片——
+  // 游标指着一条卡片外的问题（样式面板直达 `openProblemAt`）：换进它那张卡片——
   // 「当前」那一行必须看得见
   useEffect(() => {
     if (!cursor) return

@@ -93,4 +93,46 @@ describe('子图簇', () => {
     const m = figure2()
     expect(subplotLookup(m)).toBe(subplotLookup(m))
   })
+
+  describe('孪生轴互相点名（follow_gids 成环）', () => {
+    /** 左：子图 1 + twinx；右：子图 3。twinx 两轴在 follow_gids 里互相列出（引擎真样本见 test_worker_roundtrip） */
+    const twin = (follows: Record<string, string[]>): Manifest => ({
+      stem: 'Twin',
+      size_mm: [86, 50],
+      elements: [
+        el('axes_0', [0.1, 0.1, 0.35, 0.8], { label: '子图 1', follow_gids: follows.axes_0 }),
+        el('axes_1', [0.1, 0.1, 0.35, 0.8], { label: '子图 1（右轴）', follow_gids: follows.axes_1 }),
+        el('axes_2', [0.1, 0.1, 0.35, 0.8], { label: '子图 1（第三轴）', follow_gids: follows.axes_2 }),
+        el('axes_3', [0.55, 0.1, 0.35, 0.8], { label: '子图 3' }),
+      ],
+    })
+    const keys = (m: Manifest) => {
+      const at = subplotLookup(m)
+      return ['axes_0', 'axes_1', 'axes_2', 'axes_3'].map((g) => at(g)?.key)
+    }
+
+    it('两轴互指：一张卡，从哪一端出发都是同一个根（manifest 顺序最早的那个）', () => {
+      expect(keys(twin({ axes_0: ['axes_1'], axes_1: ['axes_0'] }))).toEqual([
+        'axes_0',
+        'axes_0',
+        'axes_2',
+        'axes_3',
+      ])
+      // 只有后面那根点名前面那根：根仍是前面那根，不跟着边的方向走
+      expect(keys(twin({ axes_1: ['axes_0'] })).slice(0, 2)).toEqual(['axes_0', 'axes_0'])
+      expect(subplotLookup(twin({ axes_0: ['axes_1'], axes_1: ['axes_0'] }))('axes_1.yticklabels_0')).toMatchObject({
+        label: '子图 1',
+        order: 0,
+      })
+    })
+
+    it('三轴成环 / 互指、自指：还是一张卡', () => {
+      const ring = twin({ axes_0: ['axes_1'], axes_1: ['axes_2'], axes_2: ['axes_0'] })
+      expect(keys(ring)).toEqual(['axes_0', 'axes_0', 'axes_0', 'axes_3'])
+      const all = twin({ axes_0: ['axes_1', 'axes_2'], axes_1: ['axes_0', 'axes_2'], axes_2: ['axes_0', 'axes_1'] })
+      expect(keys(all)).toEqual(['axes_0', 'axes_0', 'axes_0', 'axes_3'])
+      const self = twin({ axes_0: ['axes_0', 'axes_1'], axes_1: ['axes_1', 'axes_0'], axes_2: ['axes_2', 'axes_1'] })
+      expect(keys(self)).toEqual(['axes_0', 'axes_0', 'axes_0', 'axes_3'])
+    })
+  })
 })

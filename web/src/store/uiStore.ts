@@ -654,7 +654,10 @@ export const useUiStore = create<UiState>((set, get) => ({
         : null,
     })),
   setProblemFilter: (problemFilter) => set({ problemFilter }),
-  setProblemScope: (problemScope) => set({ problemScope, problemDrill: null }),
+  // 退回卡片总览（换范围 / 换切法 / 点返回）一律连「正在处理」的游标一起放下：
+  // 面板见游标指着卡片外的一条会自己钻进它那张卡片，留着它，用户刚选的总览
+  // 下一帧就被钻回去。外部直达（`openProblemAt`）先换范围、**再**落游标，不受影响
+  setProblemScope: (problemScope) => set({ problemScope, problemDrill: null, problemCursor: null }),
   openStylePanel: () => {
     get().setSettingsOpen(false)
     get().setLeftTab('style')
@@ -664,8 +667,9 @@ export const useUiStore = create<UiState>((set, get) => ({
     persist(get())
   },
   setProblemCursor: (problemCursor) => set({ problemCursor }),
-  setProblemView: (problemView) => set({ problemView, problemDrill: null }),
-  setProblemDrill: (problemDrill) => set({ problemDrill }),
+  setProblemView: (problemView) => set({ problemView, problemDrill: null, problemCursor: null }),
+  setProblemDrill: (problemDrill) =>
+    set(problemDrill ? { problemDrill } : { problemDrill: null, problemCursor: null }),
   setFixing: (fixing) => set({ fixing }),
   setEditingText: (editingTextId) => set({ editingTextId }),
   setCropTarget: (cropTargetId, cropBaseline = null) => set({ cropTargetId, cropBaseline }),

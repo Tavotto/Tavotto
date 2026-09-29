@@ -1019,4 +1019,74 @@ describe('卡片层：一张组图拆成子图（2026-09-28）', () => {
     expect(current, '「当前」那一行不在页面上').toBeTruthy()
     expect(cursorBar()?.textContent).toContain('第 2 / 2 项')
   })
+
+  /** 从别处直达 (c) 里的一条：面板钻进 (c)、游标落在那一行 */
+  const reachC = async (figureId = 'p1') => {
+    const { openProblemAt } = await import('@/lib/issueFocus')
+    await act(async () => {
+      openProblemAt(floorIssues('axes_3')[1], useValidationStore.getState().issues, figureId)
+    })
+    expect(useUiStore.getState().problemDrill).toEqual({ kind: 'part', figure: 'p1', key: 'axes_3' })
+  }
+  /** 范围页签（tab）与分组开关（radio）都算：用户显式换视图 */
+  const pick = (label: string) =>
+    click(
+      [...container.querySelectorAll<HTMLElement>('[role="radio"], [role="tab"]')].find((r) =>
+        r.textContent?.includes(label),
+      )!,
+    )
+
+  it('直达过一条之后，用户切范围：留在新范围的总览，不被游标钻回那张卡片', async () => {
+    await seedTriptych(true)
+    useUiStore.setState({ elementPanelId: 'p1' })
+    await mount(<ProblemPanel />)
+    await reachC()
+    await pick('整份排版')
+    expect(useUiStore.getState().problemScope).toBe('document')
+    expect(useUiStore.getState().problemDrill).toBeNull()
+    expect(rows(), '总览不列逐条清单').toHaveLength(0)
+    expect(cardTotal()).toBe(useValidationStore.getState().issues.length)
+    await pick('当前图')
+    expect(useUiStore.getState().problemDrill).toBeNull()
+    expect(partCard('(c)')).toBeTruthy()
+  })
+
+  it('单图详情里直达过一条之后，用户换分组方式：留在「按类别」的总览', async () => {
+    // 单子图的普通图没有卡片层，详情头上就是分组开关——游标还指着那一条
+    await seedThree()
+    useUiStore.setState({ elementPanelId: 'p1' })
+    await mount(<ProblemPanel />)
+    const { openProblemAt } = await import('@/lib/issueFocus')
+    const target = useValidationStore.getState().issues.find((i) => i.objectRef.objectId === 'p1')!
+    await act(async () => {
+      openProblemAt(target, useValidationStore.getState().issues, 'p1')
+    })
+    expect(rows().find((r) => r.getAttribute('aria-current') === 'true')).toBeTruthy()
+    await pick('按类别')
+    expect(useUiStore.getState().problemView).toBe('category')
+    expect(useUiStore.getState().problemDrill).toBeNull()
+    expect(rows(), '总览不列逐条清单').toHaveLength(0)
+    expect(container.querySelectorAll('li[data-problem-card="category"]').length).toBeGreaterThan(0)
+  })
+
+  it('面板里点过一行（游标来自面板自己）再切范围：同样回到总览', async () => {
+    await seedTriptych(true)
+    useUiStore.setState({ elementPanelId: 'p1' })
+    await mount(<ProblemPanel />)
+    await click(partCard('(c)')!.querySelector('button')!)
+    await click(rows()[0])
+    expect(useUiStore.getState().problemCursor).not.toBeNull()
+    await pick('整份排版')
+    expect(useUiStore.getState().problemDrill).toBeNull()
+    expect(rows()).toHaveLength(0)
+  })
+
+  it('外部直达仍会先换范围再钻进卡片：从「整份排版」的总览出发也落到 (c) 的那一行', async () => {
+    await seedTriptych(true)
+    useUiStore.setState({ elementPanelId: 'p1', problemScope: 'document' })
+    await mount(<ProblemPanel />)
+    await reachC()
+    expect(useUiStore.getState().problemScope).toBe('figure')
+    expect(rows().find((r) => r.getAttribute('aria-current') === 'true')).toBeTruthy()
+  })
 })
