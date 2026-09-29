@@ -134,6 +134,7 @@ def _launch_spec(node: str, platform: str) -> dict:
         [node, "--input-type=module", "-e", script],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=60,
         env={"PATH": "/usr/bin:/bin", "ComSpec": "C:\\Windows\\system32\\cmd.exe"},
     )
