@@ -24,6 +24,7 @@ from tavotto.engine import (
     pool as engine_pool,
     scriptbackup,
     scriptedit,
+    scriptlock,
     workdir,
 )
 
@@ -774,10 +775,7 @@ def test_http_commit_rechecks_the_agent_under_the_script_lock_and_replaces_insid
     calls: list[bool] = []
 
     def busy_after_the_snapshot(path):
-        calls.append(
-            ai_bridge._SCRIPT_LOCKS.get(ai_bridge._script_key(path), None) is not None
-            and ai_bridge._SCRIPT_LOCKS[ai_bridge._script_key(path)].locked()
-        )
+        calls.append(scriptlock.held(path))
         return len(calls) > 1  # 第一次（锁外快照）没人；锁里再判时 Agent 已经登记了
 
     monkeypatch.setattr(ai_bridge, "script_busy", busy_after_the_snapshot)
@@ -791,7 +789,7 @@ def test_http_commit_rechecks_the_agent_under_the_script_lock_and_replaces_insid
     held: list[bool] = []
 
     def replace_under_lock(store, script, *a, **k):
-        held.append(ai_bridge._SCRIPT_LOCKS[ai_bridge._script_key(root / script)].locked())
+        held.append(scriptlock.held(root / script))
         return real_replace(store, script, *a, **k)
 
     monkeypatch.setattr(scriptbackup, "replace", replace_under_lock)

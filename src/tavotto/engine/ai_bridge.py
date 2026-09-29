@@ -15,7 +15,6 @@
 
 from __future__ import annotations
 
-import contextlib
 import difflib
 import hashlib
 import json
@@ -29,7 +28,7 @@ import time
 import uuid
 from pathlib import Path
 
-from . import ai_agents, ai_history, ai_providers, atomicio, config, projectenv
+from . import ai_agents, ai_history, ai_providers, config, projectenv, scriptlock
 from .ai_agents import spawn_env as _spawn_env  # noqa: F401 — run() 与旧调用方仍认这个名字
 from .runtime import CREATE_NO_WINDOW  # noqa: F401 — 重导出，历史调用方仍认这个名字
 
@@ -361,25 +360,8 @@ def install_status(agent_id: str) -> dict:
     return {k: st[k] for k in ("status", "code", "log") if k in st}
 
 
-#: 按脚本真实路径的锁（ADR 0110 §五）：Agent 会话从「脚本在不在」到登记进 `SESSIONS`、与改写 / 复原
-#: 从「有没有 Agent 在改」到「校验和 + 替换」落地，两段各自整段持锁——`script_busy` 单独调只是一次快照，
-#: 本机服务并发处理请求，快照之后起的 Agent 会读到旧脚本、再把确认过的改写覆盖掉（Codex 评 #730 P1）。
-_SCRIPT_LOCKS: dict[str, threading.Lock] = {}
-_SCRIPT_LOCKS_GUARD = threading.Lock()
-
-
-def _script_key(script_path: str | Path) -> str:
-    return os.path.normcase(os.path.realpath(script_path))
-
-
-@contextlib.contextmanager
-def script_guard(script_path: str | Path):
-    """持有这份脚本的锁（同一真实路径同一把）。`run()` 的登记段与改写 / 复原的事务段都在它里面。"""
-    key = _script_key(script_path)
-    with _SCRIPT_LOCKS_GUARD:
-        lock = _SCRIPT_LOCKS.setdefault(key, threading.Lock())
-    with lock:
-        yield
+#: 按脚本的锁（ADR 0110 §五）：持有者清单与唯一写入口在 `scriptlock`
+script_guard = scriptlock.script_guard
 
 
 def script_busy(script_path: str | Path) -> bool:
@@ -387,7 +369,7 @@ def script_busy(script_path: str | Path) -> bool:
 
     要当作「之后一直成立」来用，必须在 `script_guard` 里判、并在同一段锁里把事做完。
     """
-    target = _script_key(script_path)
+    target = scriptlock.script_key(script_path)
     for sess in list(SESSIONS.values()):
         if sess.get("status") != "running":
             continue
@@ -924,12 +906,15 @@ def revert(sid: str) -> dict:
     if target is None:
         raise AgentError("script_path_outside_project", {"script": sess["script"]})
     script_path = Path(target)  # 已 realpath：脚本是符号链接时写的是它指向的真文件
-    _refuse_stale_revert(sess, script_path, data)
-    atomicio.write_bytes(script_path, data)  # 失败抛 AtomicWriteError（app.py 已有映射）
-    try:
-        os.chmod(script_path, mode)
-    except OSError as exc:  # 权限没跟上，不该让一次成功的回滚显示为失败
-        LOG.warning("回滚后未能还原权限位（%s）: %s", sess["script"], exc)
+    # 「是不是 AI 那一版」判到写回整段持脚本锁：中间插进一次确认过的改写 / 复原的话，判过的结论
+    # 在写的那一刻已经不成立，快照会盖掉用户较新的版本（Codex 评 #730 P1）
+    with script_guard(script_path):
+        _refuse_stale_revert(sess, script_path, data)
+        scriptlock.write_script(script_path, data)  # 失败抛 AtomicWriteError（app.py 已有映射）
+        try:
+            os.chmod(script_path, mode)
+        except OSError as exc:  # 权限没跟上，不该让一次成功的回滚显示为失败
+            LOG.warning("回滚后未能还原权限位（%s）: %s", sess["script"], exc)
     LOG.info("AI 修改已回滚: %s（session %s）", sess["script"], sid)
     if sid in SESSIONS:
         SESSIONS[sid]["status"] = "reverted"
@@ -952,7 +937,8 @@ def _refuse_stale_revert(sess: dict, script_path: Path, snapshot: bytes) -> None
       sidecar）——判不出之后有没有别的改动。「不知道」是独立一档，不并进「冲突」：
       那是用户撤掉一次中断的 AI 改动的唯一出口，保持原来的行为。
 
-    判与写之间仍有一个毫秒级窗口（与 watcher 同一类竞态），这里不加锁去消它。
+    判与写在调用方持有的 `script_guard` 里（`revert`）：Tavotto 自己的写（改写 / 复原 / 另一次回滚）插不进来；
+    Tavotto 之外的编辑器写入仍有毫秒级窗口（与 watcher 同一类竞态）。
     """
     expected = sess.get("after_sha256")
     if not expected:

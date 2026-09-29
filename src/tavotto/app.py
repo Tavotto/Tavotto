@@ -103,6 +103,7 @@ from .engine import (
     scriptanswers as engine_scriptanswers,
     scriptbackup as engine_scriptbackup,
     scriptedit as engine_scriptedit,
+    scriptlock as engine_scriptlock,
     session_client as engine_session_client,
     specfix as engine_specfix,
     telemetry as engine_telemetry,
@@ -6005,7 +6006,7 @@ def _script_edit_target(root: Path, script) -> Path:
 
 def _require_script_idle(path: Path, script: str) -> None:
     """有进行中的编码 Agent 会话就不改（ADR 0110 §五）。锁外判一次只是快照（预览用它早点说）；
-    提交 / 复原要在 `engine_ai.script_guard(path)` 里再判，并在同一段锁里做完「校验和 + 替换」。"""
+    提交 / 复原要在 `engine_scriptlock.script_guard(path)` 里再判，并在同一段锁里做完「校验和 + 替换」。"""
     if engine_ai.script_busy(path):
         raise engine_scriptbackup.ScriptEditError(
             engine_scriptbackup.ERROR_SCRIPT_BUSY, "编码 Agent 正在改这份脚本", script=script
@@ -6108,7 +6109,7 @@ def api_script_edit_commit():
         script = item["script"]
         path = _script_edit_target(root, script)
         # 「没有 Agent 在改」到「校验和 + 替换」落地整段持脚本锁：Agent 的登记段也拿同一把
-        with engine_ai.script_guard(path):
+        with engine_scriptlock.script_guard(path):
             _require_script_idle(path, script)
             if engine_scriptbackup.sha256(path.read_bytes()) != item["before"]:
                 raise engine_scriptbackup.ScriptEditError(
@@ -6172,7 +6173,7 @@ def api_script_backups_restore():
         meta, original = engine_scriptbackup.load(store, body.get("backup_id"))
         script = meta.get("script") or ""
         path = _script_edit_target(root, script)
-        with engine_ai.script_guard(path):  # 与提交同一段事务纪律
+        with engine_scriptlock.script_guard(path):  # 与提交同一段事务纪律
             _require_script_idle(path, script)
             current = path.read_bytes()
             now = engine_scriptbackup.sha256(current)

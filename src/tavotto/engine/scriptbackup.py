@@ -29,7 +29,7 @@ import time
 from pathlib import Path
 
 from .. import __version__
-from . import atomicio, projectenv
+from . import atomicio, projectenv, scriptlock
 from .runtime import CREATE_NO_WINDOW
 
 #: 稳定错误码（协议契约；`tests/test_error_codes.py` 读这张表）。
@@ -247,8 +247,27 @@ def replace(
     `expect_before` 是调用方预览时看到的磁盘 sha256：替换前再核一次，对不上 `script_changed_since_preview`
     （确认界面停留期间脚本被改过）。两处备份全部写完并 fsync 才碰原件；任何一步失败原件逐字节不变、
     这次建出来的备份目录删掉。
+
+    整段（校验和 → 备份 → 替换）持这份脚本的 `scriptlock.script_guard`（可重入：提交 / 复原端点在外层
+    已经拿着它做完 busy 复判）；替换只经 `scriptlock.write_script`。
     """
     path = resolve(store.root, script)
+    with scriptlock.script_guard(path):
+        return _replace_locked(
+            store, script, path, new_bytes, kind=kind, expect_before=expect_before, meta=meta
+        )
+
+
+def _replace_locked(
+    store: Store,
+    script: str,
+    path: Path,
+    new_bytes: bytes,
+    *,
+    kind: str,
+    expect_before: str,
+    meta: dict | None,
+) -> dict:
     old = path.read_bytes()
     if sha256(old) != expect_before:
         raise ScriptEditError(
@@ -307,7 +326,7 @@ def replace(
             ERROR_SCRIPT_CHANGED, "预览之后脚本被改过了，请重新预览", script=script
         )
     try:
-        atomicio.write_bytes(path, new_bytes, mode=stat.S_IMODE(st.st_mode))
+        scriptlock.write_script(path, new_bytes, mode=stat.S_IMODE(st.st_mode))
     except atomicio.AtomicWriteError as exc:
         raise ScriptEditError(
             ERROR_REPLACE_FAILED, f"替换失败，脚本没有被修改：{exc.message}", script=script
