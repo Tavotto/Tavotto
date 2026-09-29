@@ -248,7 +248,12 @@ def test_desktop_bundled_codex_is_found_newest_runnable_first(tmp_path, monkeypa
     `codex_desktop_bundled`，找过的位置写进 searched。"""
     local, made = _desktop_bin(
         tmp_path,
-        (("old", "echo codex-cli 0.150"), ("mid", "echo codex-cli 0.157"), ("new", "exit 1")),
+        (
+            ("old", "echo codex-cli 0.150"),
+            ("mid", "echo codex-cli 0.157"),
+            # 起不来但打了一行字（Codex #727：非零退出不许被当成版本串）
+            ("new", "echo 'error: failed to load runtime' >&2; exit 1"),
+        ),
     )
     _only_desktop(monkeypatch, local)
     res = ai_agents.resolve(ai_agents.get_agent("codex"), probe_readiness=False)
