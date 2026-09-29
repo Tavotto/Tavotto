@@ -16,6 +16,7 @@ import {
   type MissingInputOffer,
   type ProjectEnvFailure,
   type WorkdirConfirmation,
+  INPUT_REMAP_CHANGED_CODE,
 } from '@/lib/api'
 import { engineTransport } from '@/lib/engineTransport'
 import { currentProjectId } from '@/lib/session'
@@ -747,6 +748,12 @@ export const useRenderStore = create<RenderState>((set, get) => ({
           })
           // 换过项目：旧项目的失败同样不落进当前项目（条目、确认框、排队的重试都不要）
           if (epochAtStart !== projectEpoch) return
+          // 后端说这一版是按旧改指表画的、表已经变了（ADR 0106 §五；别的窗口改的也算）：不是失败，
+          // 不留错误块——标 stale，同步器按新表重排（本窗口自己改的表，`invalidateInflight` 通常已先丢掉它）
+          if (err instanceof EngineError && err.code === INPUT_REMAP_CHANGED_CODE && slot.queued == null) {
+            get().markStale([fileId])
+            return
+          }
           // 在途期间又排了新请求：直接跑最新那次，别停在旧请求的错误上
           // （否则 wantPatches 已等于新改动，同步器会永远跳过它）
           if (slot.queued != null) {

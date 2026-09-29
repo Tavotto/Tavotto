@@ -21,10 +21,12 @@
 from __future__ import annotations
 
 import ast
+import contextlib
 import glob
 import hashlib
 import json
 import os
+import threading
 import time
 from pathlib import Path
 
@@ -37,11 +39,14 @@ ERROR_CHOSEN_INVALID = "input_remap_chosen_invalid"
 ERROR_NOT_FOUND_IN_DIR = "input_remap_not_found_in_dir"
 ERROR_REQUESTED_INVALID = "input_remap_requested_invalid"
 ERROR_RULE_UNKNOWN = "input_remap_rule_unknown"
+#: 在途的工作是按旧改指表跑的、落地之前表已经变了：结果丢弃，**可重试**（界面重排 / 重跑，不是失败）
+ERROR_CHANGED = "input_remap_changed"
 ERROR_CODES = (
     ERROR_CHOSEN_INVALID,
     ERROR_NOT_FOUND_IN_DIR,
     ERROR_REQUESTED_INVALID,
     ERROR_RULE_UNKNOWN,
+    ERROR_CHANGED,
 )
 
 #: 载荷里 `others` 最多列几条（弹窗里一眼看得完）。
@@ -84,6 +89,56 @@ def fingerprint(root: str | os.PathLike) -> str:
     return hashlib.sha256(canon).hexdigest()
 
 
+# ---------------------------------------------------------------- 代次（ADR 0106 §五）
+#
+# 改指表每次成功改动（增 / 换 / 删）代次 +1；读、改、写与代次递增在同一把锁里。依赖映射的后端
+# 工作（起 worker 时取规则、试运行登记、runtime 物化、写回）在**开始时**记下代次（`snapshot()`
+# 与规则一起取，二者同一刻），在**落地之前**于同一把锁里核对（`landing()`）：对不上就丢弃、
+# 报 `input_remap_changed`（可重试）。清单在 ADR 0106 §五。
+_LOCK = threading.RLock()
+_GENERATIONS: dict[str, int] = {}
+
+
+class RemapChanged(RuntimeError):
+    """落地之前改指表已经变了：这份结果是按旧表跑出来的。"""
+
+    code = ERROR_CHANGED
+
+
+def _gen_key(root: str | os.PathLike) -> str:
+    return os.path.normcase(os.path.realpath(os.fspath(root)))
+
+
+def generation(root: str | os.PathLike) -> int:
+    """这个项目改指表此刻的代次（本进程内；起始 0）。"""
+    with _LOCK:
+        return _GENERATIONS.get(_gen_key(root), 0)
+
+
+def snapshot(root: str | os.PathLike) -> tuple[int, list[dict]]:
+    """`(代次, 规则)`——同一刻取的一对。起 worker 的三条路径都从这里取，worker 记下代次。"""
+    with _LOCK:
+        return generation(root), rules_for(root)
+
+
+@contextlib.contextmanager
+def landing(root: str | os.PathLike, *generations: int | None):
+    """持锁核对：给的每个代次都还是此刻的代次，才让块里的落地（写缓存 / 登记 / 物化 / 写回）发生；
+    对不上抛 `RemapChanged`。`None` = 这份工作不带代次（测试替身 / 与映射无关），不拦。
+    块在锁里执行：落地期间改指表改不了，落地完成之后的改动由下一代工作接手。"""
+    with _LOCK:
+        now = generation(root)
+        stale = [g for g in generations if g is not None and g != now]
+        if stale:
+            raise RemapChanged(f"改指表已变（{stale[0]} → {now}）：这份结果按旧表产出，丢弃")
+        yield
+
+
+def _bump(root: str | os.PathLike) -> None:
+    key = _gen_key(root)
+    _GENERATIONS[key] = _GENERATIONS.get(key, 0) + 1
+
+
 def _entries(root: str | os.PathLike) -> list[dict]:
     raw = config.project_settings(str(root)).get(SETTINGS_KEY)
     rules = raw.get("rules") if isinstance(raw, dict) else None
@@ -109,22 +164,27 @@ def add_rule(root: str | os.PathLike, rule: dict) -> dict:
     if not clean:
         raise RemapError(ERROR_REQUESTED_INVALID, "改指规则不合法")
     new = {**clean[0], "added_at": time.time()}
-    kept = [
-        r for r in _entries(root) if not (r["kind"] == new["kind"] and r["from"] == new["from"])
-    ]
-    rules = [*kept, new][-figcapture.MAX_REMAP_RULES :]
-    config.set_project_settings(str(root), {SETTINGS_KEY: {"rules": rules}})
-    return state(root)
+    # 读、改、写、换代整段一把锁：两个窗口同时指认，后写的不许吞掉先写的那条（Codex 评 #716 P2）
+    with _LOCK:
+        kept = [
+            r for r in _entries(root) if not (r["kind"] == new["kind"] and r["from"] == new["from"])
+        ]
+        rules = [*kept, new][-figcapture.MAX_REMAP_RULES :]
+        config.set_project_settings(str(root), {SETTINGS_KEY: {"rules": rules}})
+        _bump(root)
+        return state(root)
 
 
 def remove_rule(root: str | os.PathLike, kind: str, src: str) -> dict:
     """删一条规则；删了就是回到报错。没有这一条 → `input_remap_rule_unknown`。"""
-    entries = _entries(root)
-    kept = [r for r in entries if not (r["kind"] == kind and r["from"] == src)]
-    if len(kept) == len(entries):
-        raise RemapError(ERROR_RULE_UNKNOWN, "没有这条改指规则", source=src)
-    config.set_project_settings(str(root), {SETTINGS_KEY: {"rules": kept} if kept else None})
-    return state(root)
+    with _LOCK:
+        entries = _entries(root)
+        kept = [r for r in entries if not (r["kind"] == kind and r["from"] == src)]
+        if len(kept) == len(entries):
+            raise RemapError(ERROR_RULE_UNKNOWN, "没有这条改指规则", source=src)
+        config.set_project_settings(str(root), {SETTINGS_KEY: {"rules": kept} if kept else None})
+        _bump(root)
+        return state(root)
 
 
 # ---------------------------------------------------------------- 推规则

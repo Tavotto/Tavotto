@@ -206,6 +206,7 @@
     "input_remap_chosen_invalid": "That location can't be used: {{path}}. Pick an existing file or folder.",
     "input_remap_not_found_in_dir": "There is no {{name}} in {{path}}. Pick the folder that contains it, or pick the file itself.",
     "input_remap_requested_invalid": "Couldn't tell which path the script wants, so this location can't be remembered.",
+    "input_remap_changed": "The data location just changed, so this result (made with the old location) was discarded. Please try again.",
     "input_remap_rule_unknown": "That data location is no longer on record: {{source}}"
   },
   "engine": {

@@ -1804,6 +1804,7 @@ export default interface Resources {
       "external_change": "排版在磁盘上被 Tavotto 之外的改动覆盖，本次保存未写入。",
       "file_locked": "文件被其他程序占用，请关闭正在打开它的程序后重试。",
       "format_failed": "无法导出该格式：{{error}}。",
+      "input_remap_changed": "数据位置刚刚改过，这次结果按旧位置产出，已丢弃。请重试。",
       "input_remap_chosen_invalid": "这个位置用不了：{{path}}。请选一个存在的文件或文件夹。",
       "input_remap_not_found_in_dir": "文件夹 {{path}} 里没有 {{name}}。请选它所在的那个文件夹，或直接选这个文件。",
       "input_remap_requested_invalid": "说不清脚本要的是哪个路径，无法记住这个位置。",

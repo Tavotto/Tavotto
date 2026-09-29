@@ -193,6 +193,102 @@ def test_rules_are_project_scoped_and_removable(tmp_path):
     assert err.value.code == inputremap.ERROR_RULE_UNKNOWN
 
 
+# --------------------------------------------------------------- 代次（ADR 0106 §五）
+def test_concurrent_mutations_keep_both_rules_and_advance_the_generation(tmp_path, monkeypatch):
+    """两个窗口同时指认（Codex 评 #716 P2）：读、改、写与换代同一把锁，后写的不吞掉先写的。
+    读到旧表之后停一下，让另一个线程也读到同一张旧表——没有锁时后写的一方会整值覆盖。"""
+    import threading
+
+    root = tmp_path / "proj"
+    root.mkdir()
+    real = inputremap.config.project_settings
+    both_read = threading.Barrier(2, timeout=0.5)
+
+    def slow_read(r):
+        out = real(r)
+        try:
+            both_read.wait()  # 有锁时第二个线程进不来，等不到：超时后照常往下走
+        except threading.BrokenBarrierError:
+            pass
+        return out
+
+    monkeypatch.setattr(inputremap.config, "project_settings", slow_read)
+    before = inputremap.generation(root)
+    rules = [
+        {"kind": P, "from": "a", "to": str(tmp_path)},
+        {"kind": P, "from": "b", "to": str(tmp_path)},
+    ]
+    threads = [threading.Thread(target=inputremap.add_rule, args=(root, r)) for r in rules]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(10)
+    got = sorted(r["from"] for r in inputremap.rules_for(root))
+    assert got == ["a", "b"]
+    assert inputremap.generation(root) == before + 2
+    inputremap.remove_rule(root, P, "a")
+    assert inputremap.generation(root) == before + 3
+    with pytest.raises(inputremap.RemapError):
+        inputremap.remove_rule(root, P, "a")  # 没改成：不换代
+    assert inputremap.generation(root) == before + 3
+
+
+def test_landing_refuses_work_started_under_an_older_generation(tmp_path):
+    root = tmp_path / "proj"
+    root.mkdir()
+    gen, rules = inputremap.snapshot(root)
+    assert rules == []
+    with inputremap.landing(root, gen, None):  # None：不带代次的工作不拦
+        pass
+    inputremap.add_rule(root, {"kind": P, "from": "", "to": str(tmp_path)})
+    with pytest.raises(inputremap.RemapChanged) as err:
+        with inputremap.landing(root, gen):
+            raise AssertionError("旧代次的工作不许落地")
+    assert err.value.code == inputremap.ERROR_CHANGED
+
+
+def test_a_probe_that_ran_under_the_old_table_is_not_registered(tmp_path, monkeypatch):
+    """试运行途中改了指认（Codex 评 #716 P1）：结果按旧位置的数据来，登记在锁里核对代次——
+    丢弃、可重试，注册表零改动。"""
+    from tavotto.engine import discover, probe as engine_probe
+
+    root = tmp_path / "proj"
+    root.mkdir()
+    registered: list = []
+
+    def run_while_the_table_changes(figures_dir, script, should_cancel=None):
+        gen = inputremap.generation(figures_dir)  # 起 worker 的那一刻
+        inputremap.add_rule(figures_dir, {"kind": P, "from": "", "to": str(tmp_path)})
+        return {
+            "script": script,
+            "entry": "__main__",
+            "stems": ["fig"],
+            "descriptors": [],
+            "tried": ["__main__"],
+            "error": None,
+            "remap_generation": gen,
+        }
+
+    monkeypatch.setattr(engine_probe, "probe", run_while_the_table_changes)
+    monkeypatch.setattr(discover, "register", lambda *a, **k: registered.append(a))
+    got = engine_probe.probe_and_register(root, "fig.py")
+    assert got["registered"] is False
+    assert got["error"]["code"] == inputremap.ERROR_CHANGED
+    assert registered == []
+
+
+def test_a_pooled_session_from_an_older_table_is_not_reused(tmp_path):
+    root = tmp_path / "proj"
+    root.mkdir()
+
+    class _W:
+        remap_generation = inputremap.generation(root)
+
+    assert engine_pool._remap_current(_W(), str(root))
+    inputremap.add_rule(root, {"kind": P, "from": "", "to": str(tmp_path)})
+    assert not engine_pool._remap_current(_W(), str(root))
+
+
 # --------------------------------------------------------------- worker 里的改道（进程内）
 @pytest.fixture
 def remapped(tmp_path, monkeypatch):
@@ -521,6 +617,42 @@ def client():
 
     m.app.config["TESTING"] = True
     return m.app.test_client()
+
+
+def test_runtime_materialization_from_an_older_generation_is_dropped(
+    client, figs, tmp_path, monkeypatch
+):
+    """试运行 / 渲染途中改了指认：物化在改指表的锁里核对代次——旧代次的预览不写进 cache，也就不会带着
+    **新**表的指纹被当成新鲜（Codex 评 #716 P1）。代次对得上照常物化。"""
+    import types
+
+    from tavotto import app as m
+
+    m.open_project(str(figs))
+    try:
+        materialized: list = []
+        monkeypatch.setattr(
+            m.engine_runtimeasset, "materialize", lambda *a, **k: materialized.append(a)
+        )
+        monkeypatch.setattr(
+            m, "_safe_worker", lambda *a, **k: types.SimpleNamespace(svg_path=lambda st: figs / st)
+        )
+        old = inputremap.generation(figs)
+        inputremap.add_rule(figs, {"kind": P, "from": "", "to": str(tmp_path)})
+        with m.app.test_request_context():
+            m._materialize_runtime("fig.py", "__main__", [{"stem": "fig"}], remap_generation=old)
+            assert materialized == []
+            m._materialize_runtime(
+                "fig.py",
+                "__main__",
+                [{"stem": "fig"}],
+                remap_generation=inputremap.generation(figs),
+            )
+        assert len(materialized) == 1
+    finally:
+        m.close_project(
+            next(p for p, c in m.PROJECTS.items() if str(c.path) == str(figs)), wait=True
+        )
 
 
 def test_http_add_list_and_remove(client, figs, tmp_path):
