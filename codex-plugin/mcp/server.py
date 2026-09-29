@@ -696,7 +696,8 @@ _PYPI_HOSTS = ("pypi.org", "www.pypi.org", "pypi.python.org")
 
 def _pip_config_files(environ) -> "list[str]":
     """pip 读配置文件的位置，**按 pip 的加载顺序**（后读的覆盖先读的）：全局 → 旧式用户
-    → 用户 → `PIP_CONFIG_FILE`。只列路径，存不存在由调用方查。"""
+    → 用户 → site（本解释器 `sys.prefix` 下的 `pip.conf` / `pip.ini`，`pip config --site` 写的那份）
+    → `PIP_CONFIG_FILE`。只列路径，存不存在由调用方查。"""
     files: "list[str]" = []
     home = environ.get("USERPROFILE" if os.name == "nt" else "HOME") or os.path.expanduser("~")
     if os.name == "nt":
@@ -719,6 +720,9 @@ def _pip_config_files(environ) -> "list[str]":
             files.append(os.path.join(home, "Library", "Application Support", "pip", "pip.conf"))
         xdg = environ.get("XDG_CONFIG_HOME") or os.path.join(home, ".config")
         files.append(os.path.join(xdg, "pip", "pip.conf"))
+    # site 配置：pip 按**跑它的那个解释器**的 sys.prefix 找（venv 里 `pip config --site` 配的镜像就在
+    # 这里）。`pip_index_of` 在目标解释器里跑本函数，sys.prefix 正是那个环境（Codex #724 P2）
+    files.append(os.path.join(sys.prefix, "pip.ini" if os.name == "nt" else "pip.conf"))
     extra = (environ.get("PIP_CONFIG_FILE") or "").strip()
     if extra:
         files.append(extra)
@@ -726,17 +730,21 @@ def _pip_config_files(environ) -> "list[str]":
 
 
 def _redact_url(url: str) -> str:
-    """索引地址里可能带账号口令（`https://user:token@host/simple`）：说出口之前抹掉。"""
+    """索引地址里可能带凭据：账号口令（`https://user:token@host/simple`）或签名查询串
+    （`https://mirror/simple?token=…`，Codex #724 P1）。说出口之前抹掉——口令换成 `***@`，
+    查询串整段换成 `?***`，片段去掉。解析不了的地址不原样交出，只报 `***`。"""
     from urllib.parse import urlsplit, urlunsplit  # noqa: PLC0415
 
     try:
         parts = urlsplit(url)
     except ValueError:
-        return url
-    if "@" not in parts.netloc:
-        return url
-    host = parts.netloc.rsplit("@", 1)[1]
-    return urlunsplit(parts._replace(netloc="***@" + host))
+        return "***"
+    netloc = parts.netloc
+    if "@" in netloc:
+        netloc = "***@" + netloc.rsplit("@", 1)[1]
+    return urlunsplit(
+        parts._replace(netloc=netloc, query="***" if parts.query else "", fragment="")
+    )
 
 
 #: Windows 商店版 Python 的包名前缀（`PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0`）。
