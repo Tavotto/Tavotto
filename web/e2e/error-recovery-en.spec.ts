@@ -118,6 +118,8 @@ test('脚本缺包（missing_dependency）：英文缺包卡片，指名包与�
   // 文案会改（ADR 0019 的修复卡把旧的「换渲染环境」那段整个换掉了，
   // 这条断言当时红在措辞上，而真问题是新卡片一度**没有**换环境的出口）。
   // 无障碍名是契约的一部分，比措辞稳。
+  // 换 Python 的出口收在默认折叠的「Advanced」里（一键修复，2026-09-29）：展开之后必须在、可操作
+  await panel.locator('[data-repair-advanced] > summary').first().click()
   await expect(panel.getByLabel(/rendering interpreter path/i).first()).toBeVisible()
   // 未知包（curated 与项目声明都解析不出）时**不给一键安装**，只给手动指名
   await expect(panel.getByLabel(/package to install/i).first()).toBeVisible()

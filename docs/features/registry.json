@@ -76,6 +76,25 @@
       ]
     },
     {
+      "id": "assets.dependency-one-click-repair",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "脚本缺包时一键修复：一个主按钮准备运行环境并装好缺的包，按阶段显示进度（下载有百分比），装好后自动重跑",
+        "en-US": "One-click fix when a script is missing a package: a single button sets up the environment and installs it, shows staged progress (with download percentage), then reruns the script"
+      },
+      "entry": "左栏「素材」→ 脚本行运行后缺包 →「一键修复」（画布右栏的缺包卡片、跑前的依赖授权框同一套）",
+      "e2e": [
+        {
+          "spec": "dependency-one-click.spec.ts",
+          "title": "一键修复：缺包的脚本行只有一个主按钮，点一次按阶段走完（下载有百分比），装好后自动重跑出图"
+        }
+      ],
+      "desktop_manual": [
+        "在一台没有装 Python 的 macOS / Windows 上打开一个 import 了 openpyxl 的脚本项目，脚本行点「运行并发现图」：出现一张卡片，只有「一键修复」一个主按钮和一句说明（要下载时写明约多少 MB），没有路径输入框；点一次，阶段条依次走过「准备 Python → 创建运行环境 → 安装所需的包 → 重新运行」，下载时有百分比，装好后那一行自动重跑出图"
+      ]
+    },
+    {
       "id": "canvas.place-and-render",
       "status": "active",
       "platform": "both",
