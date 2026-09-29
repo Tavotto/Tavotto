@@ -119,6 +119,20 @@ export function writeExportDefaults(patch: Partial<ExportDefaults>): ExportDefau
  * 启动时从后端取回导出默认值，覆盖本机缓存。后端还没存过、而本机有（同一个 origin 升级
  * 上来的旧偏好）：推一份上去。后端没有这组端点 / 不可达：什么都不动，本机那份照旧生效。
  */
+/**
+ * 「后端那份已经取回来、覆盖了本机缓存」的监听者。导出对话框在 `App` 里**常驻挂载**，它的
+ * 初值只在挂载那一刻读一次缓存——换了 origin 的首启，那一刻缓存还是空的（600 ppi）；取回之后
+ * 要通知它重读，否则这一整次会话里对话框都显示并按 600 导出（#719 Codex P1）。设置页同理。
+ */
+const hydratedListeners = new Set<() => void>()
+
+export function onExportDefaultsHydrated(cb: () => void): () => void {
+  hydratedListeners.add(cb)
+  return () => {
+    hydratedListeners.delete(cb)
+  }
+}
+
 export async function hydrateExportDefaults(): Promise<void> {
   await remoteTail
   const remote = await fetchExportDefaultsRemote()
@@ -131,6 +145,7 @@ export async function hydrateExportDefaults(): Promise<void> {
   }
   if (remote.defaults && typeof remote.defaults === 'object') {
     writeCache(remote.defaults)
+    for (const cb of [...hydratedListeners]) cb()
     return
   }
   let local: string | null = null

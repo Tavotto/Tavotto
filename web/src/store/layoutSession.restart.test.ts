@@ -31,6 +31,8 @@ let exportDefaults: unknown = null
 let sessionEndpoints = true
 /** true = 后端在，但写入回 500（sidecar 正在退出、瞬断） */
 let failSessionPuts = false
+/** 非空 = 「上次开着哪份」的 GET 挂在这里，等它 resolve 才答（切项目途中的那段 await） */
+let holdSessionGet: Promise<void> | null = null
 const deletes: string[] = []
 let inFlight = 0
 
@@ -66,6 +68,7 @@ globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
     if (!sessionEndpoints) return json({ error: 'not found' }, 404)
     if (failSessionPuts && method === 'PUT') return json({ error: 'boom' }, 500)
     if (u.pathname === '/api/layout-session' && method === 'GET') {
+      if (holdSessionGet) await holdSessionGet
       return json({ last: lastByProject.get(pjOf(u, init)) ?? null })
     }
     if (u.pathname === '/api/layout-session/last' && method === 'PUT') {
@@ -132,6 +135,7 @@ beforeEach(() => {
   exportDefaults = null
   sessionEndpoints = true
   failSessionPuts = false
+  holdSessionGet = null
   deletes.length = 0
 })
 
@@ -284,6 +288,32 @@ describe('推给后端失败的写入不丢（#719 Codex P1 / P2）', () => {
     await settle()
     expect(after.readExportDefaults().dpi).toBe('1200')
     expect((exportDefaults as { dpi: string }).dpi).toBe('1200')
+  })
+})
+
+describe('切项目途中不串项目（#719 Codex P1）', () => {
+  it('问后端「B 上次开着哪份」的路上改了 A 的文档：不记到 B 名下', async () => {
+    const app = await boot()
+    await makeContentDoc(app, 'd_a', 'Fig A')
+    expect(lastByProject.get('p_a')?.doc_id).toBe('d_a')
+    let release!: () => void
+    holdSessionGet = new Promise<void>((r) => (release = r))
+    const adopting = app.proj.useProjectStore
+      .getState()
+      .adoptOpenedProject({ open: true, id: 'p_b', figures_dir: '/figs/b' })
+    await new Promise((r) => setTimeout(r, 10))
+    // 此刻 pj 已是 p_b，内存里仍是 A 的 d_a：用户又改了一笔
+    expect(app.doc.useDocumentStore.getState().documentId).toBe('d_a')
+    app.doc.useDocumentStore.getState().commit(literal('再加一段'), (d) => {
+      d.objects.push(text('t2', 'more'))
+    })
+    await settle()
+    release()
+    holdSessionGet = null
+    await adopting
+    await settle()
+    expect(lastByProject.get('p_b')?.doc_id).not.toBe('d_a')
+    expect(app.doc.useDocumentStore.getState().documentId).not.toBe('d_a')
   })
 })
 

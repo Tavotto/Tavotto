@@ -296,7 +296,30 @@ let listSeq = 0
 export const useProjectStore = create<ProjectState>((set, get) => {
   /** 切项目的前端换代本体；对外的两个入口都经 `switchQueue` 串行地调它 */
   const adoptNow: ProjectState['adoptOpenedProject'] = async (status, opts) => {
-    // 先认领项目，再做任何会发请求的事：素材/渲染都必须落到新项目上
+    // 先认领项目，再做任何会发请求的事：素材/渲染都必须落到新项目上。
+    // 从认领到换代完成这段时间里内存里还是**上一个项目**的文档，而下面要 await 一次后端
+    // （`loadProjectDocument`）：这期间用户改一笔 / 派生更新落地，「记上次开着哪份」的订阅会
+    // 按新 pj 把旧项目的文档记到新项目名下（#719 Codex P1）。这段时间让它停记
+    // 停到换代完成为止（`resume`），之后恢复出来的那份照常记
+    let held = true
+    rememberSuspended += 1
+    const resume = () => {
+      if (!held) return
+      held = false
+      rememberSuspended -= 1
+    }
+    try {
+      return await adoptSteps(status, opts, resume)
+    } finally {
+      resume()
+    }
+  }
+
+  const adoptSteps = async (
+    status: ProjectStatus,
+    opts: Parameters<ProjectState['adoptOpenedProject']>[1],
+    resume: () => void,
+  ): Promise<ProjectStatus> => {
     if (status.id) setCurrentProjectId(status.id)
     // 「最近文档」要在条目上标出所属项目（审计 T04）；名字的权威在这里，
     // documentStore 只读那份投影（否则两个 store 互相 import 成环）
@@ -310,6 +333,7 @@ export const useProjectStore = create<ProjectState>((set, get) => {
     // 后端没有这组端点（404）时 `loadProjectDocument` 退回本机缓存，即改造前的行为。
     const last = status.id ? await loadProjectDocument(status.id) : null
     await resetForNewProject()
+    resume()
     // 空白文档已经就位、`currentDoc` 已经指向它；要换成别的文档就在这里换，
     // 必须赶在 `phase: 'open'` 之前（见接口注释）
     let issue: ProjectDocumentRef | null = null
@@ -523,7 +547,11 @@ setNoProjectHandler(() => useProjectStore.getState().dropProject())
  * `rememberProjectDocument` 同时推给后端（#715 PR-B，后端为准），所以「同值不写」也挡住了
  * 每帧一个 PUT。
  */
+/** 大于 0 = 正在切项目、内存里还是上一个项目的文档：下面的订阅不记（见 `adoptNow`） */
+let rememberSuspended = 0
+
 useDocumentStore.subscribe((s, prev) => {
+  if (rememberSuspended > 0) return
   if (
     s.documentId === prev.documentId &&
     s.doc === prev.doc &&
