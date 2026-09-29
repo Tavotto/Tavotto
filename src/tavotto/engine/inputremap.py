@@ -722,7 +722,7 @@ def _input_constant_ids(tree: ast.AST) -> set[int]:
     return out
 
 
-def _absolute_literals(source: str) -> list[tuple[str, str]]:
+def _absolute_literals(source: str, *, reads_only: bool = True) -> list[tuple[str, str]]:
     """脚本里**以字符串常量出现**的绝对数据路径（存图调用的实参除外）→ `[(路径, via)]`。只认常量，不求值。
 
     `via` 按常量所在的调用判：被探路调用问的是 `probe` / `glob`，其余是 `open`；同一串在几处出现、
@@ -751,7 +751,7 @@ def _absolute_literals(source: str) -> list[tuple[str, str]]:
         if text in outputs:
             continue
         # 只有进了读取调用（或被探路调用问）的常量才是「脚本要读的数据」；代码文件不是
-        if (id(node) not in inputs and id(node) not in probed) or _is_code(text):
+        if (reads_only and id(node) not in inputs and id(node) not in probed) or _is_code(text):
             continue
         via = probed.get(id(node), VIA_OPEN)
         if text in out:
@@ -809,10 +809,14 @@ def _resolved(rules: list[dict], text: str) -> bool:
 
 
 def static_missing(
-    script: str, root: str | os.PathLike, rules: list[dict] | None = None
+    script: str,
+    root: str | os.PathLike,
+    rules: list[dict] | None = None,
+    *,
+    reads_only: bool = True,
 ) -> list[dict]:
     """脚本里写着、此刻哪里都找不到的路径：`[{path, absolute, via, probe_kind}]`（按出现顺序，最多
-    `MAX_OTHERS`）。
+    `MAX_OTHERS`）。`reads_only=False` 只给 C++ 读取器的归因（`native_miss`）用：候选不要求进了已知的读取调用。
 
     相对的看 `databinding.evidence`：脚本目录与项目根**两处都** `missing`（项目外的 `outside` 不算，
     那里不看）；探路目标同理，`via` 标成 `probe` / `glob`。绝对的只 `os.path.exists`（不读、不列目录）。
@@ -851,7 +855,7 @@ def static_missing(
     for lit in ev.get("reads") or []:
         # `evidence` 的 reads 是「像数据路径的常量」（首开判运行目录用，宁多勿漏）；这里要的是**真进了
         # 读取调用**的那些——标签、写出目标、输出目录、`.py` 都不是缺的数据
-        if lit not in read_texts and lit not in probe_targets:
+        if reads_only and lit not in read_texts and lit not in probe_targets:
             continue
         if lit in (parent.get("missing") or []) and lit in (top.get("missing") or []):
             # 同一串也被 exists / listdir 问过：脚本多半先判再读，改指救不回那一问——按探路算
@@ -862,7 +866,7 @@ def static_missing(
         if target in p_probes and target in t_probes:
             via = VIA_GLOB if any(c in target for c in "*?[") else VIA_PROBE
             _add(target, False, via)
-    for text, via in _absolute_literals(source):
+    for text, via in _absolute_literals(source, reads_only=reads_only):
         try:
             if via == VIA_GLOB:
                 # 父进程里同步判：`**` 递归可能扫整棵树，判不出就不列；其余非递归、见到一个就停
@@ -953,7 +957,9 @@ def native_miss(
         return None
     rules = rules if rules is not None else rules_for(root)
     best: tuple[int, str] | None = None
-    for cand in static_missing(script, root, rules):
+    # 归因的候选放宽到「像数据路径的常量」（不要求进了已知的读取调用）：C++ 读取器常包在用户自己的函数里，
+    # 而 ENOENT 与常量逐段对上本身就是强证据；弹窗的「一并修好」仍只列读取调用的实参
+    for cand in static_missing(script, root, rules, reads_only=False):
         cparsed = figcapture.remap_parts(cand["path"])
         if cparsed is None or cparsed[0] != parsed[0] or not cparsed[1]:
             continue
