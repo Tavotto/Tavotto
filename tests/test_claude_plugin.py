@@ -144,6 +144,7 @@ def test_claude_validates_the_manifests(target):
         ["claude", "plugin", "validate", "--strict", str(target)],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         stdin=subprocess.DEVNULL,
         timeout=120,
     )
