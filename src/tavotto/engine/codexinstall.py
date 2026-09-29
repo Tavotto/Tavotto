@@ -732,9 +732,10 @@ def verify_stable_snapshot(root: Path) -> dict:
             (root / ".agents" / "plugins" / "marketplace.json").read_text(encoding="utf-8")
         )
         entry = next(e for e in mk.get("plugins", []) if e.get("name") == brand.CODEX_PLUGIN_NAME)
-    except (OSError, ValueError, StopIteration, AttributeError) as exc:
+    except (OSError, ValueError, StopIteration, AttributeError, TypeError) as exc:
+        # TypeError：`plugins` 是 null 之类不可迭代的值（Codex #725）
         raise ArchiveError(f"压缩包里没有可用的市场清单：{exc!r}") from exc
-    src = entry.get("source")
+    src = entry.get("source") if isinstance(entry, dict) else None
     if (
         mk.get("name") != brand.CODEX_MARKETPLACE_NAME
         or not isinstance(src, dict)
@@ -817,11 +818,18 @@ def fetch_stable_snapshot() -> dict:
                 raise
         except OSError as exc:
             raise ArchiveError(f"换不进 {dest}：{exc}") from exc
-    except (ArchiveError, OSError) as exc:
+    except (ArchiveError, OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
         # 失败这一路也要把删不掉的一次性目录说出来——不然只有成功时才报，失败反复发生时会静默堆积；
-        # 核对阶段的读写失败（杀软临时拒读解出来的文件）同样是一行 JSON 失败，不是 traceback（Codex #725）
+        # 核对阶段的读写失败（杀软临时拒读解出来的文件）同样是一行 JSON 失败，不是 traceback；
+        # 压缩包是外来输入，里面 JSON 的形状不对（该是列表 / 对象的地方是 null）引出的 TypeError 等
+        # 也归到这里——逐个字段补校验补不完（Codex #725）
         stuck = _remove_one_shot_dirs(base, dest)
-        msg = str(exc) if isinstance(exc, ArchiveError) else f"核对或换进 {dest} 时读写失败：{exc}"
+        if isinstance(exc, ArchiveError):
+            msg = str(exc)
+        elif isinstance(exc, OSError):
+            msg = f"核对或换进 {dest} 时读写失败：{exc}"
+        else:
+            msg = f"压缩包内容的形状不对，核对不下去：{exc!r}"
         if stuck:
             msg += "；另有删不掉的一次性目录（下次运行开头再收）：" + "、".join(stuck)
         raise ArchiveError(msg) from exc
@@ -850,8 +858,11 @@ def _remove_one_shot_dirs(base: Path, dest: Path) -> list[str]:
     stuck: list[str] = []
     try:
         entries = [p for p in base.iterdir() if p.name.startswith((".staging-", ".old-"))]
-    except OSError:
+    except FileNotFoundError:
         return stuck
+    except OSError:
+        # 列不出来 ≠ 收干净了：一个都没看就报「没有残留」会让调用方说成功（Codex #725）
+        return [str(base)]
 
     def mtime(p: Path) -> float:
         try:
