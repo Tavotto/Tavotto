@@ -1,0 +1,20 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "remote-engine-window",
+  "description": "远程实例窗口里的引擎页面（经 ssh -L 转发到 127.0.0.1 的服务器上的引擎，ADR 0105）能用的权限：只有收菜单事件与关窗前询问。**没有任何本机文件类能力**（目录选择、在文件管理器中显示、拖放路径、Codex 集成、应用内更新都不给）——页面来自另一台机器，它说的路径是服务器上的。事件只许监听不许发：发得出去就能给主窗口伪造 tavotto:open / tavotto:menu。",
+  "windows": [
+    "remote"
+  ],
+  "local": false,
+  "remote": {
+    "urls": [
+      "http://127.0.0.1:*"
+    ]
+  },
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "allow-arm-close-guard",
+    "allow-resolve-close-request"
+  ]
+}

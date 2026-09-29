@@ -9,8 +9,10 @@ mod drop_paths;
 mod i18n;
 #[cfg(target_os = "macos")]
 mod native_drop;
+mod remote;
 mod sidecar;
 
+use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -35,8 +37,27 @@ struct AppState {
     /// `?open=`。**第二次启动不走这里**——单实例插件会把 argv 转发给已经在
     /// 跑的窗口，那条路发 `tavotto:open` 事件。
     open: Option<OpenRequest>,
-    /// 关窗询问闸（issue #223）。窗口关闭按钮 / Alt+F4 / 任务栏关闭都先经过它。
-    close_gate: Mutex<CloseGate>,
+    /// 关窗询问闸（issue #223），**每个窗口一道**（键是窗口 label）：主窗口与远程实例
+    /// 窗口各自的前端各自 arm、各自答复。窗口关闭按钮 / Alt+F4 / 任务栏关闭都先经过它。
+    close_gates: Mutex<HashMap<String, CloseGate>>,
+    /// 远程实例窗口的代次与此刻放行的本机端口（ADR 0105）。没连上 / 窗口不在时不放
+    /// 端口，远程窗口的导航守卫只放行壳自带页面；探测结果按代次认领（`remote::RemoteSlot`）。
+    remote: Arc<Mutex<remote::RemoteSlot>>,
+}
+
+/// 主窗口：内容来自壳自己拉起的本机 sidecar。
+const MAIN_WINDOW: &str = "main";
+/// 远程实例窗口（ADR 0105）：内容来自经 `ssh -L` 转发过来的服务器上的引擎。
+/// **ACL 按这个 label 给权限**（`capabilities/remote.json`）——它拿不到任何本机文件类命令。
+const REMOTE_WINDOW: &str = "remote";
+/// 注进远程实例窗口的标记。**与 `web/src/lib/desktop.ts` 的 `isRemoteEngineWindow`
+/// 读的全局名严格同源**（`tests/test_desktop_remote.py` 比两侧）：前端据它把本机文件类
+/// 能力全部让给浏览器模式的回退。
+const REMOTE_WINDOW_MARKER: &str = "window.__TAVOTTO_REMOTE_ENGINE__ = true;";
+
+/// 有关窗询问闸的窗口。别的 label（将来可能有的对话框窗口）一律不拦。
+fn guarded_window(label: &str) -> bool {
+    label == MAIN_WINDOW || label == REMOTE_WINDOW
 }
 
 /// 交接契约：`Tavotto --open <项目目录> [--stem <stem> | --pick-script <脚本>]`。
@@ -167,18 +188,20 @@ fn random_nonce() -> String {
     })
 }
 
-/// 导航守卫：
-/// - 壳自带页面（splash/error，tauri://localhost 或 http://tauri.localhost）放行；
-/// - sidecar 源上只放行 SPA 根路径（应用是单页的，任何其它整页导航都不对——
+/// 导航守卫（每个窗口一份，`port` 是**这个窗口**的引擎端口）：
+/// - 壳自带页面（splash/error/connect，tauri://localhost 或 http://tauri.localhost）放行；
+/// - 引擎源上只放行 SPA 根路径（应用是单页的，任何其它整页导航都不对——
 ///   /exports 等由前端走原生「在文件夹中显示」，不允许把主窗口导航成 PDF 视图）；
+///   主窗口的引擎是本机 sidecar，远程实例窗口的是转发端口（ADR 0105）——
+///   两者都只可能在 127.0.0.1 上，别的回环端口一律不许停；
 /// - 其余 http(s)/mailto 一律交给系统默认程序打开，绝不在 WebView 里加载外部网页。
-fn navigation_allowed(url: &url::Url, port: &OnceLock<u16>) -> NavDecision {
+fn navigation_allowed(url: &url::Url, port: Option<u16>) -> NavDecision {
     if url.scheme() == "tauri" || url.host_str() == Some("tauri.localhost") {
         return NavDecision::Allow;
     }
     if url.scheme() == "http" && url.host_str() == Some("127.0.0.1") {
-        if let Some(p) = port.get() {
-            if url.port() == Some(*p) {
+        if let Some(p) = port {
+            if url.port() == Some(p) {
                 if url.path() == "/" {
                     return NavDecision::Allow;
                 }
@@ -448,6 +471,13 @@ impl CloseGate {
         }
     }
 
+    /// 这个 label 的窗口没了（远程实例窗口可以关了再开）。回到「没 arm」，但**代号
+    /// 不归零**：同名新窗口的询问拿的是新代号，上一个窗口的看门狗对不上。
+    fn window_gone(&mut self) {
+        self.armed = false;
+        self.ask = CloseAsk::Idle;
+    }
+
     /// 看门狗到点。返回 true = 这一代确实没人接手，强关。
     fn watchdog_fires(&mut self, generation: u64) -> bool {
         if self.ask != CloseAsk::Waiting(generation) {
@@ -462,27 +492,45 @@ impl CloseGate {
 ///
 /// **必须在监听器注册之后才调**——反过来的话，两者之间的那次关闭会拦下一个
 /// 没人听的问题，白等一个看门狗。
+///
+/// 闸按**发起调用的那个窗口**算：主窗口与远程实例窗口各一道（ADR 0105）。
 #[tauri::command]
-fn arm_close_guard(app: tauri::AppHandle) {
-    app.state::<AppState>().close_gate.lock().unwrap().armed = true;
+fn arm_close_guard(app: tauri::AppHandle, window: tauri::Window) {
+    let label = window.label();
+    if !guarded_window(label) {
+        return;
+    }
+    app.state::<AppState>()
+        .close_gates
+        .lock()
+        .unwrap()
+        .entry(label.to_string())
+        .or_default()
+        .armed = true;
 }
 
-/// 前端对 `tavotto:close-requested` 的答复。
+/// 前端对 `tavotto:close-requested` 的答复。只作用于发起调用的那个窗口。
 #[tauri::command]
-fn resolve_close_request(app: tauri::AppHandle, decision: String) -> Result<(), String> {
+fn resolve_close_request(
+    app: tauri::AppHandle,
+    window: tauri::Window,
+    decision: String,
+) -> Result<(), String> {
     let Some(decision) = CloseDecision::parse(&decision) else {
         return Err(format!("未知的关窗答复：{decision}"));
     };
+    let label = window.label().to_string();
     // 锁在这条语句结束就还回去：`close()` 会同步走一遍窗口事件，握着锁进去
     // 等于自己和自己抢。
     let close_now = app
         .state::<AppState>()
-        .close_gate
+        .close_gates
         .lock()
         .unwrap()
-        .resolve(decision);
+        .get_mut(&label)
+        .is_some_and(|gate| gate.resolve(decision));
     if close_now {
-        if let Some(win) = app.get_webview_window("main") {
+        if let Some(win) = app.get_webview_window(&label) {
             win.close().map_err(|e| e.to_string())?;
         }
     }
@@ -519,6 +567,8 @@ fn hold_window<H: CloseHold + ?Sized>(hold: &H, generation: u64) {
 struct TauriCloseHold<'a> {
     api: &'a tauri::CloseRequestApi,
     app: tauri::AppHandle,
+    /// 被拦的是哪个窗口：询问只发给它，看门狗也只关它。
+    label: String,
 }
 
 impl CloseHold for TauriCloseHold<'_> {
@@ -528,11 +578,13 @@ impl CloseHold for TauriCloseHold<'_> {
 
     fn ask_frontend(&self) {
         // 发不出去也不特殊处理：看门狗是这条路上唯一的兜底，让它只有一条。
-        let _ = self.app.emit_to("main", "tavotto:close-requested", ());
+        let _ = self
+            .app
+            .emit_to(self.label.as_str(), "tavotto:close-requested", ());
     }
 
     fn arm_watchdog(&self, generation: u64) {
-        spawn_close_watchdog(self.app.clone(), generation);
+        spawn_close_watchdog(self.app.clone(), self.label.clone(), generation);
     }
 }
 
@@ -540,15 +592,19 @@ impl CloseHold for TauriCloseHold<'_> {
 ///
 /// 没有它，一个卡死的 webview 就是一个**关不掉的窗口**——那比「关窗不提示」
 /// 坏得多，用户只能去杀进程，而杀进程连自动保存的防抖窗口都保不住。
-fn spawn_close_watchdog(app: tauri::AppHandle, generation: u64) {
+fn spawn_close_watchdog(app: tauri::AppHandle, label: String, generation: u64) {
     std::thread::spawn(move || {
         std::thread::sleep(CLOSE_ACK_TIMEOUT);
-        let force = app
-            .try_state::<AppState>()
-            .is_some_and(|s| s.close_gate.lock().unwrap().watchdog_fires(generation));
+        let force = app.try_state::<AppState>().is_some_and(|s| {
+            s.close_gates
+                .lock()
+                .unwrap()
+                .get_mut(&label)
+                .is_some_and(|gate| gate.watchdog_fires(generation))
+        });
         if force {
-            eprintln!("[close-guard] 前端未在 {CLOSE_ACK_TIMEOUT:?} 内应答，放行关闭");
-            if let Some(win) = app.get_webview_window("main") {
+            eprintln!("[close-guard] {label} 的前端未在 {CLOSE_ACK_TIMEOUT:?} 内应答，放行关闭");
+            if let Some(win) = app.get_webview_window(&label) {
                 let _ = win.close();
             }
         }
@@ -561,14 +617,21 @@ fn spawn_close_watchdog(app: tauri::AppHandle, generation: u64) {
 /// 自动保存 + 崩溃恢复副本兜底——见 ADR 0002 的「关窗询问闸」一节。
 fn on_close_requested(window: &tauri::Window, api: &tauri::CloseRequestApi) {
     let app = window.app_handle().clone();
+    let label = window.label().to_string();
     let verdict = match app.try_state::<AppState>() {
-        Some(state) => state.close_gate.lock().unwrap().on_close_requested(),
+        // 这个窗口的前端还没 arm 过（splash / connect 页、老前端）就没有闸：放行
+        Some(state) => state
+            .close_gates
+            .lock()
+            .unwrap()
+            .get_mut(&label)
+            .map_or(CloseVerdict::Close, CloseGate::on_close_requested),
         None => CloseVerdict::Close,
     };
     let CloseVerdict::Ask(generation) = verdict else {
         return;
     };
-    hold_window(&TauriCloseHold { api, app }, generation);
+    hold_window(&TauriCloseHold { api, app, label }, generation);
 }
 
 /// 仓库地址：帮助菜单的两条链接与「关于」里的网站都从它派生。
@@ -589,15 +652,189 @@ fn help_link(id: &str) -> Option<String> {
     }
 }
 
-fn on_menu_event<R: tauri::Runtime>(app: &tauri::AppHandle<R>, id: &str) {
-    if let Some(url) = help_link(id) {
-        if let Err(e) = app.opener().open_url(url, None::<&str>) {
-            eprintln!("open help link {id}: {e}");
+/// 「连接远程实例…」：壳自己开远程实例窗口（ADR 0105），不转发给前端——主窗口的前端
+/// 起不来时它照样要能用，而且开窗口本来就是壳的事。
+const CONNECT_REMOTE_ID: &str = "shell-connect-remote";
+
+/// 壳自己处理的菜单项。**`menu_spec` 里每个非 `menu-*` 的 id 都必须在这里有着落**
+/// （单测 `menu_ids_match_the_golden_pair_on_both_platforms` 逐个查），否则就是一个
+/// 点了没反应的菜单项。
+#[derive(Debug, PartialEq, Eq)]
+enum ShellAction {
+    OpenUrl(String),
+    ConnectRemote,
+}
+
+fn shell_action(id: &str) -> Option<ShellAction> {
+    if id == CONNECT_REMOTE_ID {
+        return Some(ShellAction::ConnectRemote);
+    }
+    help_link(id).map(ShellAction::OpenUrl)
+}
+
+/// 菜单动作发给哪个窗口：**当前聚焦的那个**（远程实例窗口在前台时 ⌘S 存的是远程
+/// 的排版）。谁都没聚焦（菜单栏在 macOS 上可以脱离窗口被点）就给主窗口。
+fn menu_target(focused: &[&str]) -> &'static str {
+    if focused.contains(&REMOTE_WINDOW) {
+        REMOTE_WINDOW
+    } else {
+        MAIN_WINDOW
+    }
+}
+
+fn on_menu_event(app: &tauri::AppHandle, id: &str) {
+    match shell_action(id) {
+        Some(ShellAction::OpenUrl(url)) => {
+            if let Err(e) = app.opener().open_url(url, None::<&str>) {
+                eprintln!("open help link {id}: {e}");
+            }
+            return;
         }
-        return;
+        Some(ShellAction::ConnectRemote) => {
+            if let Err(e) = open_remote_window(app) {
+                eprintln!("open remote window: {e}");
+            }
+            return;
+        }
+        None => {}
     }
     if id.starts_with("menu-") {
-        let _ = app.emit_to("main", "tavotto:menu", id.to_string());
+        let windows = app.webview_windows();
+        let focused: Vec<&str> = windows
+            .iter()
+            .filter(|(_, w)| w.is_focused().unwrap_or(false))
+            .map(|(label, _)| label.as_str())
+            .collect();
+        let _ = app.emit_to(menu_target(&focused), "tavotto:menu", id.to_string());
+    }
+}
+
+/* -------------------------------------------------------------------------- */
+/*  远程实例窗口（ADR 0105）                                                    */
+/* -------------------------------------------------------------------------- */
+
+/// 远程实例窗口的起始页。`connect.html` 在 `tauri://` 源下，读不到品牌常量：产品名与
+/// 命令名（PyPI 包名）由这里带过去，值是 build.rs 从 `brand.ts` / `engine/brand.py`
+/// 注入的——页面里不手写产品名（`tests/test_desktop_i18n.py` 看护）。
+fn connect_page_url(locale: i18n::Locale) -> String {
+    format!(
+        "connect.html?lang={}&product={}&dist={}",
+        locale.tag(),
+        utf8_percent_encode(env!("TAVOTTO_PRODUCT_NAME"), NON_ALPHANUMERIC),
+        utf8_percent_encode(env!("TAVOTTO_DIST_NAME"), NON_ALPHANUMERIC),
+    )
+}
+
+/// 开（或聚焦已有的）远程实例窗口。先停在壳自带的 `connect.html` 上，用户粘进
+/// 服务器打印的登录地址，`connect_remote` 验过之后再导航过去。
+///
+/// 三处与主窗口不同，都是刻意的：
+/// - **`incognito`**：cookie 按主机不按端口隔离，两个引擎都往 `127.0.0.1` 写同名的
+///   `tavotto_session`——共用一个存储，连上远程就把本机 sidecar 的会话顶掉，而且
+///   本机的会话 token 会随每个请求发到远程引擎去。无痕存储各窗口各一份、关窗即清。
+/// - **注入 `REMOTE_WINDOW_MARKER`**：前端据它把本机文件类能力让给浏览器回退。
+/// - **不装 native_drop**：拖进来的是本机路径，远程引擎用不了。
+fn open_remote_window(app: &tauri::AppHandle) -> tauri::Result<()> {
+    if let Some(win) = app.get_webview_window(REMOTE_WINDOW) {
+        let _ = win.unminimize();
+        let _ = win.show();
+        return win.set_focus();
+    }
+    let state = app.state::<AppState>();
+    // 同一个 label 的**又一个**窗口：新的一代，上一代途中的探测回来一律作废
+    let generation = state.remote.lock().unwrap().open_window();
+    let locale = *state.menu_locale.lock().unwrap();
+    let slot = state.remote.clone();
+    let nav_handle = app.clone();
+    let win = tauri::WebviewWindowBuilder::new(
+        app,
+        REMOTE_WINDOW,
+        tauri::WebviewUrl::App(connect_page_url(locale).into()),
+    )
+    .title(i18n::text(locale).remote_window_title)
+    .inner_size(1280.0, 860.0)
+    .min_inner_size(1024.0, 680.0)
+    .incognito(true)
+    .initialization_script(REMOTE_WINDOW_MARKER)
+    // 与主窗口同理：把 HTML5 拖放还给页面（素材拖进画布）
+    .disable_drag_drop_handler()
+    .on_navigation(move |url| {
+        let port = slot.lock().unwrap().allowed_port(generation);
+        match navigation_allowed(url, port) {
+            NavDecision::Allow => true,
+            NavDecision::Deny => false,
+            NavDecision::OpenExternal => {
+                let _ = nav_handle.opener().open_url(url.as_str(), None::<&str>);
+                false
+            }
+        }
+    })
+    .build()?;
+    win.set_focus()
+}
+
+/// `connect.html` 的「连接」：验登录地址 → 问远程引擎够不够新 → 放行这个端口 → 导航。
+///
+/// 只收远程实例窗口的调用（ACL 也只给那个窗口的壳自带页面开了这条命令）。
+/// 成功回远程引擎的版本号；失败回 `remote::ConnectError::code()` 的稳定 code。
+///
+/// **结果绑在发起调用的那一代窗口上**：探测前记下代次，回来时经 `remote::finish_connect`
+/// 核对——途中关窗重开的话结果整个丢掉；导航用的是参数里的这个窗口实例，不按 label 重新找。
+#[tauri::command]
+async fn connect_remote(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    url: String,
+) -> Result<String, String> {
+    if window.label() != REMOTE_WINDOW {
+        return Err(remote::ConnectError::BadWindow.code().into());
+    }
+    let login = remote::parse_login_url(&url).map_err(|e| e.code().to_string())?;
+    let state = app.state::<AppState>();
+    // 粘成了壳自己那个 sidecar 的地址：那是本机引擎，用主窗口就好
+    if state.port.get() == Some(&login.port) {
+        return Err(remote::ConnectError::IsLocalEngine.code().into());
+    }
+    let generation = state.remote.lock().unwrap().generation();
+    let port = login.port;
+    let version = tauri::async_runtime::spawn_blocking(move || remote::probe(port))
+        .await
+        .map_err(|_| remote::ConnectError::Unreachable.code().to_string())?
+        .map_err(|e| e.code().to_string())?;
+    // 语言与主窗口的落地 URL 同一条规则：只有用户亲手选过才带
+    let chosen = i18n::read_stored(i18n::locale_file(app.path().app_config_dir().ok()))
+        .filter(|s| s.explicit)
+        .map(|s| s.locale.tag());
+    let locale = *state.menu_locale.lock().unwrap();
+    let nav = ConnectNavigation {
+        window: &window,
+        title: i18n::text(locale)
+            .remote_window_connected_title
+            .replace("{port}", &port.to_string()),
+        landing: login.landing(chosen),
+    };
+    remote::finish_connect(&state.remote, generation, port, &nav)
+        .map_err(|e| e.code().to_string())?;
+    Ok(version)
+}
+
+/// `remote::Navigate` 的生产实现：握着发起调用的那个窗口实例。没有分支——
+/// 「作废的结果不碰窗口」在 `remote::finish_connect` 里，有单测。
+struct ConnectNavigation<'a> {
+    window: &'a tauri::WebviewWindow,
+    title: String,
+    landing: String,
+}
+
+impl remote::Navigate for ConnectNavigation<'_> {
+    fn navigate(&self) -> Result<(), remote::ConnectError> {
+        let _ = self.window.set_title(&self.title);
+        self.window
+            .eval(format!(
+                "window.location.replace({})",
+                js_string(&self.landing)
+            ))
+            .map_err(|_| remote::ConnectError::BadWindow)
     }
 }
 
@@ -683,6 +920,7 @@ fn menu_spec(m: &'static i18n::ShellText, macos: bool) -> Vec<Entry> {
             m.file_open_project,
             Some("CmdOrCtrl+O"),
         ),
+        item(CONNECT_REMOTE_ID, m.file_connect_remote, None),
         Sep,
         item("menu-save", m.file_save, Some("CmdOrCtrl+S")),
         item(
@@ -1068,8 +1306,9 @@ fn main() {
         // 真正的初值在 build_menu 里按配置目录读；这里先摆默认档，
         // 免得 set_menu_locale 把「和现在一样」误判成需要重建。
         menu_locale: Mutex::new(i18n::DEFAULT_LOCALE),
-        // 默认**不拦**：前端注册好监听器后自己来 arm。
-        close_gate: Mutex::new(CloseGate::default()),
+        // 默认**不拦**：前端注册好监听器后自己来 arm（那时才为那个窗口建闸）。
+        close_gates: Mutex::new(HashMap::new()),
+        remote: Arc::new(Mutex::new(remote::RemoteSlot::default())),
     };
 
     let app = tauri::Builder::default()
@@ -1102,15 +1341,29 @@ fn main() {
             codex_integration,
             arm_close_guard,
             resolve_close_request,
-            native_file_drop
+            native_file_drop,
+            connect_remote
         ])
         .on_window_event(|window, event| {
-            // 只看主窗口：壳只有这一个，但事件回调是全局的。
-            if window.label() != "main" {
+            // 事件回调是全局的：只看有关窗询问闸的那两个窗口。
+            if !guarded_window(window.label()) {
                 return;
             }
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                on_close_requested(window, api);
+            match event {
+                tauri::WindowEvent::CloseRequested { api, .. } => on_close_requested(window, api),
+                // 远程实例窗口没了：它的闸与放行的端口一起收掉，下次再开是新的一代。
+                // 闸**不删**只复位：代号接着往上数，上一代还在睡的看门狗醒来对不上号，
+                // 不会把同名的新窗口关掉。
+                tauri::WindowEvent::Destroyed if window.label() == REMOTE_WINDOW => {
+                    if let Some(state) = window.app_handle().try_state::<AppState>() {
+                        if let Some(gate) = state.close_gates.lock().unwrap().get_mut(REMOTE_WINDOW)
+                        {
+                            gate.window_gone();
+                        }
+                        state.remote.lock().unwrap().window_gone();
+                    }
+                }
+                _ => {}
             }
         })
         .menu(build_menu)
@@ -1137,7 +1390,7 @@ fn main() {
             }
             let win = tauri::WebviewWindowBuilder::new(
                 app,
-                "main",
+                MAIN_WINDOW,
                 // 启动画面同样带上语言：它比前端先出现，读不到 i18next
                 tauri::WebviewUrl::App(format!("splash.html?lang={}", boot_locale.tag()).into()),
             )
@@ -1150,14 +1403,16 @@ fn main() {
             // 关掉它把 DnD 还给页面。主页要的 OS 文件路径不靠它：macOS 上由 native_drop
             // 只旁听 performDragOperation 拿（ADR 0092），页面的 HTML5 拖放一个字节不变。
             .disable_drag_drop_handler()
-            .on_navigation(move |url| match navigation_allowed(url, &port_cell) {
-                NavDecision::Allow => true,
-                NavDecision::Deny => false,
-                NavDecision::OpenExternal => {
-                    let _ = nav_handle.opener().open_url(url.as_str(), None::<&str>);
-                    false
-                }
-            })
+            .on_navigation(
+                move |url| match navigation_allowed(url, port_cell.get().copied()) {
+                    NavDecision::Allow => true,
+                    NavDecision::Deny => false,
+                    NavDecision::OpenExternal => {
+                        let _ = nav_handle.opener().open_url(url.as_str(), None::<&str>);
+                        false
+                    }
+                },
+            )
             .build()?;
             // 主页拖放拿真实路径：只旁听 performDragOperation，不装 Tauri 的拖放处理器
             // （上面那条注释说的 HTML5 拖放照旧归页面）。见 native_drop.rs 与 ADR 0092。
@@ -1282,7 +1537,7 @@ mod tests {
                     "壳自己处理的 id 与 golden 不同（macos={macos}）"
                 );
                 for id in &shell {
-                    assert!(help_link(id).is_some(), "{id} 挂在菜单上却没有链接");
+                    assert!(shell_action(id).is_some(), "{id} 挂在菜单上壳却不处理");
                 }
             }
         }
@@ -1353,6 +1608,58 @@ mod tests {
         for id in ["menu-export", "menu-settings", "help", "", "help-docs-x"] {
             assert_eq!(help_link(id), None, "{id} 不该被当成帮助链接");
         }
+    }
+
+    /// 「连接远程实例…」由壳自己开窗口，不当链接、也不转发给前端。
+    #[test]
+    fn connect_remote_is_a_shell_action_not_a_link() {
+        assert_eq!(
+            shell_action(CONNECT_REMOTE_ID),
+            Some(ShellAction::ConnectRemote)
+        );
+        assert_eq!(help_link(CONNECT_REMOTE_ID), None);
+        assert!(!CONNECT_REMOTE_ID.starts_with("menu-"));
+        assert_eq!(shell_action("menu-open-project"), None);
+    }
+
+    /// 菜单动作跟着焦点走：远程实例窗口在前台时 ⌘S 存的是远程的排版，
+    /// 不是躲在后面的主窗口。
+    #[test]
+    fn menu_actions_go_to_the_focused_window() {
+        assert_eq!(menu_target(&[REMOTE_WINDOW]), REMOTE_WINDOW);
+        assert_eq!(menu_target(&[MAIN_WINDOW]), MAIN_WINDOW);
+        // 菜单栏脱离窗口被点（macOS）或焦点在别处：给主窗口
+        assert_eq!(menu_target(&[]), MAIN_WINDOW);
+        assert_eq!(menu_target(&["something-else"]), MAIN_WINDOW);
+    }
+
+    /// 每个窗口只许停在**自己的**引擎端口的根路径上；别的回环端口、非根路径一律拒。
+    #[test]
+    fn navigation_is_pinned_to_the_windows_own_engine_port() {
+        let u = |s: &str| url::Url::parse(s).unwrap();
+        let allow =
+            |s: &str, p: Option<u16>| matches!(navigation_allowed(&u(s), p), NavDecision::Allow);
+        assert!(allow("http://127.0.0.1:5089/", Some(5089)));
+        assert!(allow("http://127.0.0.1:5089/?lang=en-US", Some(5089)));
+        assert!(allow("tauri://localhost/connect.html", None));
+        // 远程窗口还没连上：引擎源一个都不放
+        assert!(!allow("http://127.0.0.1:5089/", None));
+        // 别人的端口（例如主窗口的 sidecar）不放
+        assert!(!allow("http://127.0.0.1:5089/", Some(5189)));
+        assert!(!allow("http://127.0.0.1:5089/exports/a.pdf", Some(5089)));
+        assert!(matches!(
+            navigation_allowed(&u("https://example.com/"), Some(5089)),
+            NavDecision::OpenExternal
+        ));
+    }
+
+    /// 远程实例窗口的标记与前端读的全局名是同一个（Python 侧再比一次两侧源码）。
+    #[test]
+    fn the_remote_marker_sets_the_global_the_frontend_reads() {
+        assert!(REMOTE_WINDOW_MARKER.contains("__TAVOTTO_REMOTE_ENGINE__"));
+        assert!(REMOTE_WINDOW_MARKER.contains("= true"));
+        assert!(guarded_window(MAIN_WINDOW) && guarded_window(REMOTE_WINDOW));
+        assert!(!guarded_window("splash"));
     }
 
     /// 工作区右键 reveal 只收「此刻存在的绝对目录」：文件、相对路径、不存在的路径一律拒。
@@ -1514,6 +1821,33 @@ mod tests {
         .unwrap();
         let q = landing_query(Some(&req), Some("zh-CN"));
         assert_eq!(q, format!("?open=Fig1&native={id}&lang=zh-CN"));
+    }
+
+    #[test]
+    fn the_connect_page_carries_the_brand_from_the_injected_constants() {
+        // 页面里没有手写的产品名，全靠这两个参数：丢了就是满屏空白的「在服务器上运行 ，…」
+        for locale in LOCALES {
+            let url = connect_page_url(locale);
+            let q = url.strip_prefix("connect.html?").expect(&url);
+            let pairs: Vec<(String, String)> = q
+                .split('&')
+                .map(|kv| {
+                    let (k, v) = kv.split_once('=').expect(kv);
+                    let v = percent_encoding::percent_decode_str(v)
+                        .decode_utf8()
+                        .unwrap();
+                    (k.to_string(), v.into_owned())
+                })
+                .collect();
+            let want = [
+                ("lang", locale.tag()),
+                ("product", env!("TAVOTTO_PRODUCT_NAME")),
+                ("dist", env!("TAVOTTO_DIST_NAME")),
+            ]
+            .map(|(k, v)| (k.to_string(), v.to_string()));
+            assert_eq!(pairs, want);
+        }
+        assert!(!env!("TAVOTTO_PRODUCT_NAME").is_empty() && !env!("TAVOTTO_DIST_NAME").is_empty());
     }
 
     #[test]
@@ -1691,6 +2025,22 @@ mod tests {
         assert_ne!(first, second);
         assert!(!gate.watchdog_fires(first));
         assert_eq!(gate.ask, CloseAsk::Waiting(second));
+    }
+
+    #[test]
+    fn a_reopened_window_is_not_closed_by_the_previous_windows_watchdog() {
+        // 远程实例窗口的 label 可复用：上一个窗口的看门狗还在睡，同名的新窗口已经
+        // arm 过、正在问用户——醒来的旧看门狗不能把它关掉（代号不许随窗口归零）。
+        let mut gate = armed_gate();
+        let old = ask(&mut gate);
+        gate.window_gone();
+        // 新窗口还停在连接页（没 arm）：点关闭当场就关
+        assert_eq!(gate.on_close_requested(), CloseVerdict::Close);
+        gate.armed = true; // 新窗口的前端 arm（`arm_close_guard` 就是这一行）
+        let new = ask(&mut gate);
+        assert_ne!(old, new);
+        assert!(!gate.watchdog_fires(old));
+        assert_eq!(gate.ask, CloseAsk::Waiting(new));
     }
 
     #[test]

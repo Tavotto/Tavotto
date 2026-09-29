@@ -44,15 +44,42 @@ def _rs() -> str:
     return I18N_RS.read_text(encoding="utf-8")
 
 
-def _table(name: str) -> dict[str, str]:
-    """从 `const ZH: ShellText = ShellText { ... };` 里抠出字段 → 文案。"""
+# 字段值只有两种写法：字符串字面量，或 `concat!(…)`——里面只许有字符串字面量与 build.rs 从
+# 品牌常量注入的 `env!("TAVOTTO_PRODUCT_NAME")`。别的写法读不出确切文案，当场报错，不猜。
+_LIT = r'"((?:[^"\\]|\\.)*)"'
+_BRAND_ENV = 'env!("TAVOTTO_PRODUCT_NAME")'
+_FIELD = re.compile(r"^\s{4}(\w+):\s*(concat!\((?:[^()]|\([^()]*\))*\)|" + _LIT + r")\s*,", re.M)
+BRAND = object()  # 占位：此处是注入的产品名
+
+
+def _table_parts(name: str) -> dict[str, list]:
+    """从 `const ZH: ShellText = ShellText { ... };` 里抠出字段 → 片段（字符串 / `BRAND`）。"""
     src = _rs()
     start = src.index(f"const {name}: ShellText = ShellText {{")
     body = src[start : src.index("\n};", start)]
-    # 字段值都是字符串字面量（可能跨行），取 `名字: "……"` 这一对
+    out: dict[str, list] = {}
+    for m in _FIELD.finditer(body):
+        if m.group(3) is not None:
+            out[m.group(1)] = [m.group(3)]
+            continue
+        inner = m.group(2)[len("concat!(") : -1]
+        parts: list = []
+        for tok in re.finditer(_LIT + r"|(" + re.escape(_BRAND_ENV) + r")|([^\s,])", inner):
+            assert tok.group(3) is None, (
+                f"{name}.{m.group(1)} 的 concat! 里有读不懂的东西：{inner!r}"
+            )
+            parts.append(BRAND if tok.group(2) else tok.group(1))
+        out[m.group(1)] = parts
+    return out
+
+
+def _table(name: str) -> dict[str, str]:
+    """字段 → 用户最终看到的文案（注入的产品名按品牌常量展开）。"""
+    from tavotto.engine import brand
+
     return {
-        m.group(1): m.group(2)
-        for m in re.finditer(r"^\s{4}(\w+):\s*\n?\s*\"((?:[^\"\\]|\\.)*)\"", body, re.M)
+        k: "".join(brand.PRODUCT_NAME if p is BRAND else p for p in parts)
+        for k, parts in _table_parts(name).items()
     }
 
 
@@ -164,7 +191,7 @@ def test_menu_and_ui_agree_on_shared_actions(locale: str, table: str):
 # 启动画面 / 失败页
 # --------------------------------------------------------------------------- #
 
-SHELL_PAGES = ["splash.html", "error.html"]
+SHELL_PAGES = ["splash.html", "error.html", "connect.html"]
 
 
 @pytest.mark.parametrize("page", SHELL_PAGES)
@@ -264,3 +291,70 @@ def test_ui_sources_never_handwrite_the_repo_url():
                 if "github.com/Tavotto" in line:
                     hits.append(f"{f.relative_to(ROOT)}:{i}")
     assert not hits, f"手写了仓库地址：{hits}"
+
+
+# --------------------------------------------------------------------------- #
+# 壳里的产品名 / 命令名取品牌常量（Codex #702 P1）
+# --------------------------------------------------------------------------- #
+# 主语：**用户看得见的文案**——`ShellText` 两张表的每个字段值、远程实例窗口的起始页
+# `shell/connect.html`。产品名由 build.rs 从 `brand.ts` 的 `PRODUCT_NAME` 注入
+# （`env!("TAVOTTO_PRODUCT_NAME")`），命令名 / PyPI 包名从 `engine/brand.py` 的
+# `DIST_NAME` 注入、经 `connect_page_url` 带给页面（Rust 单测钉 URL）。
+# **已知盲区**：`splash.html` / `error.html`、`main.rs` 的窗口标题与关于面板、
+# `sidecar.rs` 的打包目录名仍是手写的，这两条不扫它们。
+
+
+def test_shell_text_never_handwrites_the_product_name():
+    from tavotto.engine import brand
+
+    for name in ("ZH", "EN"):
+        parts = _table_parts(name)
+        handwritten = {
+            k: p
+            for k, ps in parts.items()
+            for p in ps
+            if p is not BRAND and brand.PRODUCT_NAME in p
+        }
+        assert not handwritten, (
+            f"{name} 表里手写了产品名，改成 concat!({_BRAND_ENV}, …)：{handwritten}"
+        )
+        # 反向：注入的那一处真的在——否则整张表不提产品名也是绿的
+        assert BRAND in parts["remote_window_title"], parts["remote_window_title"]
+        assert BRAND in parts["app_quit"], parts["app_quit"]
+
+
+def test_the_injected_brand_is_the_brand_constant():
+    """build.rs 读的那两行就是品牌常量；`DIST_NAME` 当命令名用，它得真是 `[project.scripts]` 的入口名。"""
+    from tavotto.engine import brand
+
+    build_rs = (TAURI / "build.rs").read_text(encoding="utf-8")
+    for needle in (
+        '"../web/src/lib/brand.ts"',
+        '"../src/tavotto/engine/brand.py"',
+        '"export const PRODUCT_NAME = \'"',
+        '"DIST_NAME = \\""',
+        "rustc-env=TAVOTTO_PRODUCT_NAME=",
+        "rustc-env=TAVOTTO_DIST_NAME=",
+    ):
+        assert needle in build_rs, f"build.rs 里没有 {needle}"
+    brand_ts = (ROOT / "web" / "src" / "lib" / "brand.ts").read_text(encoding="utf-8")
+    (ts,) = re.findall(r"^export const PRODUCT_NAME = '([^']+)'$", brand_ts, re.M)
+    assert ts == brand.PRODUCT_NAME
+    # 3.10 没有 tomllib：只读 `[project.scripts]` 这一节的键（到下一个 `[` 节为止）
+    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    (section,) = re.findall(r"^\[project\.scripts\]\n(.*?)(?=^\[)", pyproject, re.M | re.S)
+    scripts = re.findall(r"^([\w-]+)\s*=", section, re.M)
+    assert brand.DIST_NAME in scripts, scripts
+
+
+def test_connect_page_never_handwrites_the_brand():
+    from tavotto.engine import brand
+
+    html = (TAURI / "shell" / "connect.html").read_text(encoding="utf-8")
+    assert brand.PRODUCT_NAME not in html, "connect.html 手写了产品名，文案里写 {product}"
+    # 命令名按整词找：错误 code `not_tavotto`（与 remote.rs 同源）里的那段不是文案
+    hits = re.findall(rf"(?<![\w-]){re.escape(brand.DIST_NAME)}(?![\w-])", html)
+    assert not hits, "connect.html 手写了命令名 / 包名，文案里写 {dist}"
+    # 反向：页面真的从壳带来的参数取名字，且文案真的用到了占位符
+    assert "q.get('product')" in html and "q.get('dist')" in html
+    assert "{product}" in html and "{dist}" in html
