@@ -16,6 +16,7 @@ runtime 不 GC）、FO-024（HOME / PATH 前后无差）。经 HTTP 入口的同
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -1395,6 +1396,186 @@ class TestIsolation:
             and isinstance(n.func.value, ast.Attribute)
         }
         assert "request.build_opener" in calls and "request.urlopen" not in calls, calls
+
+
+# ================================================================ 自动测速选源：主地址 → 镜像（2026-09-29）
+class TestMirrorFallback:
+    """ADR 0063 修订（2026-09-29，阿里云华东 Windows 实测：GitHub 20–40 KB/s 硬等 21 分钟、npmmirror
+    11 MB/s）。主地址失败 / 太慢 → 同一份文件的镜像；**信任只看锁里的 sha256**——镜像篡改照样拒绝。
+
+    两个本地服务：主地址写 `127.0.0.1`、镜像写 `localhost`（`LoopbackServer(host=)`；两者都在 NO_PROXY 里），
+    所以「用的是哪个来源」既能从各自的请求日志量，也能从账里的 `downloaded_from` 主机名量。
+    测速阈值按用例缩短（`SLOW_GRACE_S` / `SLOW_ETA_S`）：判据的形状不变，只是秒数。"""
+
+    @pytest.fixture(autouse=True)
+    def _fast_judgement(self, monkeypatch):
+        monkeypatch.setattr(privatepython, "SLOW_GRACE_S", 0.3)
+        monkeypatch.setattr(privatepython, "SLOW_ETA_S", 0.5)
+
+    @staticmethod
+    def _with_mirror(src, mirror: LoopbackServer, archive: Path):
+        import dataclasses
+
+        return dataclasses.replace(src, mirrors=(mirror.url(archive.name),))
+
+    # ---- 锁里的推导规则（唯一出处 `mirror_urls`）
+    def test_every_target_derives_its_mirror_from_the_lock_url(self):
+        lock = privatepython.load_lock()
+        bases = [m["base"] for m in lock["python"]["mirrors"]]
+        assert bases == ["https://registry.npmmirror.com/-/binary/python-build-standalone/"]
+        for name, t in lock["targets"].items():
+            src = privatepython.source_for(name)
+            filename = t["url"].rsplit("/", 1)[-1]
+            assert src.mirrors == (f"{bases[0]}{lock['python']['release']}/{filename}",), name
+            assert src.urls == (t["url"], *src.mirrors), name  # 主地址永远在前
+
+    @pytest.mark.parametrize(
+        "mutate",
+        [
+            lambda lock: lock["python"]["mirrors"][0].update(base="http://mirror.example/"),
+            lambda lock: lock["python"]["mirrors"][0].update(base="https://mirror.example"),
+            lambda lock: lock["python"]["mirrors"][0].pop("name"),
+            lambda lock: lock["python"].update(mirrors={"npmmirror": "https://x/"}),
+            # 推导规则的前提：主地址是 pbs 这个 release 的发行地址；别的 release / 别的仓库都不行
+            lambda lock: lock["targets"]["windows-x86_64"].update(
+                url=lock["targets"]["windows-x86_64"]["url"].replace("/20260814/", "/20260101/")
+            ),
+            lambda lock: lock["targets"]["windows-x86_64"].update(
+                url="https://example.com/cpython-install_only.tar.gz"
+            ),
+        ],
+    )
+    def test_the_lock_refuses_mirrors_whose_derivation_would_not_hold(self, mutate):
+        lock = privatepython.load_lock()
+        mutate(lock)
+        with pytest.raises(ValueError):
+            privatepython.validate_lock(lock)
+
+    # ---- 行为：换源的三种理由
+    def _provision_via(self, tmp_path, launches, *, primary_mode="ok", primary_bps=0):
+        archive, sha, rel = _make(tmp_path, launches)
+        hosts: list[str] = []
+        with (
+            LoopbackServer(tmp_path / "serve") as primary,
+            LoopbackServer(tmp_path / "serve", host="localhost") as mirror,
+        ):
+            primary.mode = primary_mode
+            primary.throttle_bps = primary_bps
+            src = self._with_mirror(_source(primary, archive, sha, rel), mirror, archive)
+            python = privatepython.provision(
+                src,
+                on_progress=lambda *a: hosts.append(privatepython.downloading_from(src)),
+            )
+            return src, python, list(primary.requests), list(mirror.requests), hosts
+
+    def test_a_slow_primary_is_abandoned_for_the_mirror(self, tmp_path, launches, caplog):
+        caplog.set_level(logging.INFO, logger="tavotto.privatepython")
+        # 64 KiB/s：第一段立刻到，之后每段隔 1 s——量程过了之后按平均速度估的剩余时间 > 阈值
+        src, python, primary, mirror, hosts = self._provision_via(
+            tmp_path, launches, primary_bps=64 * 1024
+        )
+        name = f"/{privatepython.archive_path(src).name}"
+        assert primary == [name] and mirror == [name]
+        assert Path(python).is_file() and privatepython.python_of(src) == python
+        assert privatepython.read_ledger()["runtimes"][src.id]["downloaded_from"] == "localhost"
+        assert "localhost" in hosts  # 进度说出了此刻真在下的那个主机
+        text = "\n".join(r.getMessage() for r in caplog.records)
+        assert "下载源 127.0.0.1 放弃：too_slow" in text and "改用 localhost" in text, text
+        assert "下载完成：来源 localhost" in text, text
+
+    def test_a_missing_primary_falls_back_to_the_mirror(self, tmp_path, launches, caplog):
+        caplog.set_level(logging.WARNING, logger="tavotto.privatepython")
+        src, python, primary, mirror, _ = self._provision_via(
+            tmp_path, launches, primary_mode="missing"
+        )
+        assert primary and mirror, (primary, mirror)
+        assert privatepython.python_of(src) == python
+        assert privatepython.read_ledger()["runtimes"][src.id]["downloaded_from"] == "localhost"
+        assert any("放弃：HTTP 404" in r.getMessage() for r in caplog.records)
+
+    def test_an_unreachable_primary_falls_back_to_the_mirror(self, tmp_path, launches):
+        archive, sha, rel = _make(tmp_path, launches)
+        with LoopbackServer(tmp_path / "serve", host="localhost") as mirror:
+            src = self._with_mirror(_source(None, archive, sha, rel), mirror, archive)
+            python = privatepython.provision(src)
+            assert mirror.requests == [f"/{archive.name}"]
+        assert privatepython.python_of(src) == python
+        assert privatepython.read_ledger()["runtimes"][src.id]["downloaded_from"] == "localhost"
+
+    def test_a_primary_abandoned_as_slow_is_retried_when_the_mirror_fails(self, tmp_path, launches):
+        """慢总比没有好：镜像也不行（404）时回到因慢被放弃的主地址，**不再测速**地下完。"""
+        archive, sha, rel = _make(tmp_path, launches)
+        with (
+            LoopbackServer(tmp_path / "serve") as primary,
+            LoopbackServer(tmp_path / "serve", host="localhost") as mirror,
+        ):
+            primary.throttle_bps = 64 * 1024
+            mirror.mode = "missing"
+            src = self._with_mirror(_source(primary, archive, sha, rel), mirror, archive)
+            python = privatepython.provision(src)
+            assert len(primary.requests) == 2 and len(mirror.requests) == 1
+        assert privatepython.python_of(src) == python
+        assert privatepython.read_ledger()["runtimes"][src.id]["downloaded_from"] == "127.0.0.1"
+
+    def test_without_a_next_source_a_slow_download_is_not_abandoned(self, tmp_path, launches):
+        """只有一个来源时不测速：放弃了也没处可去（旧行为，慢但能下完）。"""
+        archive, sha, rel = _make(tmp_path, launches)
+        with LoopbackServer(tmp_path / "serve") as primary:
+            primary.throttle_bps = 64 * 1024
+            src = _source(primary, archive, sha, rel)
+            assert src.mirrors == ()
+            python = privatepython.provision(src)
+            assert primary.requests == [f"/{archive.name}"]
+        assert privatepython.python_of(src) == python
+
+    # ---- 信任：镜像的字节照样只认锁里的 sha256
+    @pytest.mark.parametrize("primary_mode", ["missing", "slow"])
+    def test_a_mirror_serving_tampered_bytes_is_refused_before_any_execution(
+        self, tmp_path, launches, caplog, primary_mode
+    ):
+        caplog.set_level(logging.WARNING, logger="tavotto.privatepython")
+        archive, sha, rel = _make(tmp_path, launches)
+        with (
+            LoopbackServer(tmp_path / "serve") as primary,
+            LoopbackServer(tmp_path / "serve", host="localhost") as mirror,
+        ):
+            if primary_mode == "slow":
+                primary.throttle_bps = 64 * 1024
+            else:
+                primary.mode = "missing"
+            mirror.mode = "corrupt"
+            src = self._with_mirror(_source(primary, archive, sha, rel), mirror, archive)
+            with pytest.raises(privatepython.ProvisionError) as err:
+                privatepython.provision(src)
+            assert mirror.requests == [f"/{archive.name}"], "判据的前提：确实从镜像拿了字节"
+            # hash 不符不换源、不重试：主地址不会因此再被请求一次
+            assert len(primary.requests) == 1
+        assert err.value.code == privatepython.ERROR_HASH_MISMATCH
+        assert err.value.detail["expected"] == sha and err.value.detail["got"] != sha
+        assert _launch_count(launches) in (0, None), "篡改的归档：解释器一次都不许起"
+        assert _runtime_dirs() == set() and _parts() == []
+        assert not privatepython.archive_path(src).exists()
+        assert privatepython.python_of(src) is None
+        assert privatepython.read_ledger()["runtimes"] == {}
+        text = "\n".join(r.getMessage() for r in caplog.records)
+        assert "SHA-256 与锁不符（来源 localhost）" in text, text
+        assert "供应失败：private_python_hash_mismatch" in text, text
+
+    def test_every_source_offline_is_still_offline_and_logged(self, tmp_path, launches, caplog):
+        caplog.set_level(logging.WARNING, logger="tavotto.privatepython")
+        archive, sha, rel = _make(tmp_path, launches)
+        import dataclasses
+
+        src = dataclasses.replace(
+            _source(None, archive, sha, rel), mirrors=(closed_port_url(archive.name),)
+        )
+        with pytest.raises(privatepython.ProvisionError) as err:
+            privatepython.provision(src)
+        assert err.value.code == privatepython.ERROR_OFFLINE
+        assert _runtime_dirs() == set() and _parts() == []
+        msgs = [r.getMessage() for r in caplog.records]
+        assert sum("下载第" in m for m in msgs) == 2 * privatepython.DOWNLOAD_ATTEMPTS, msgs
+        assert any("供应失败：private_python_offline" in m for m in msgs), msgs
 
 
 # ================================================================ 真归档（工程验证；nightly 腿）

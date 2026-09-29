@@ -3544,7 +3544,12 @@ def _provision_private_base(job: _GenerationJob, cancel_ev: threading.Event) -> 
             STATE_DOWNLOADING_PYTHON,
             result={
                 "download": {"stage": stage, "done_bytes": int(done), "total_bytes": int(total)},
-                "private_python": payload,
+                # 换了镜像（ADR 0063 修订 2026-09-29 / ADR 0112）时进度说出此刻真在下的那个主机
+                "private_python": {
+                    **payload,
+                    "source_host": privatepython.downloading_from(source)
+                    or payload["source_host"],
+                },
             },
         )
 
