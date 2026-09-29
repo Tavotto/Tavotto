@@ -338,14 +338,24 @@ def _server_side_time_wait(port: int) -> list[str]:
     """
     if sys.platform.startswith("linux"):
         out = subprocess.run(
-            ["ss", "-tanH", "state", "time-wait"], capture_output=True, text=True, check=True
+            ["ss", "-tanH", "state", "time-wait"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=True,
         ).stdout
         rows = [line.split() for line in out.splitlines() if line.strip()]
         # 指定了 state 时没有 State 列：Recv-Q Send-Q Local Peer
         return [" ".join(r) for r in rows if len(r) >= 4 and r[2] == f"127.0.0.1:{port}"]
     if os.name == "nt":
         out = subprocess.run(
-            ["netstat", "-ano", "-p", "TCP"], capture_output=True, text=True, check=True
+            ["netstat", "-ano", "-p", "TCP"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",  # 只比 ASCII 的地址与状态列；本地化的代码页字节不影响它们
+            check=True,
         ).stdout
         hits = []
         for line in out.splitlines():
