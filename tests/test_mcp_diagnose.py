@@ -653,6 +653,23 @@ def test_an_existing_pip_config_file_suppresses_user_level_configs(tmp_path):
     assert got and got["mirror"] is True and got["source"] == str(user_conf)
 
 
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS 的用户配置二选一")
+def test_macos_reads_only_the_user_config_pip_selects(tmp_path):
+    """macOS：`~/Library/Application Support/pip` 在就只读它，XDG 那份不读（Codex #724）。"""
+    home = tmp_path / "home"
+    lib = home / "Library" / "Application Support" / "pip"
+    lib.mkdir(parents=True)
+    (lib / "pip.conf").write_text("[global]\nindex-url = " + ALIYUN + "\n", encoding="utf-8")
+    xdg = home / ".config" / "pip"
+    xdg.mkdir(parents=True)
+    (xdg / "pip.conf").write_text(
+        "[global]\nindex-url = https://pypi.org/simple\n", encoding="utf-8"
+    )
+    base = {"HOME": str(home), "XDG_CONFIG_DIRS": str(tmp_path / "none")}
+    got = launcher.pip_index(base)
+    assert got and got["mirror"] is True and got["source"] == str(lib / "pip.conf"), got
+
+
 def test_upgrade_commands_follow_the_mirror_verdict():
     plain = launcher.upgrade_commands("0.17.0", None)
     assert plain[0] == "pipx upgrade tavotto"
