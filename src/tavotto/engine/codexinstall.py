@@ -623,12 +623,13 @@ def _fetch(url: str, *, limit: int) -> bytes:
     return data
 
 
-def _unpack(data: bytes, into: Path) -> tuple[Path, str | None]:
-    """把 GitHub 源码压缩包解进 `into`，回 (唯一顶层目录, zip 注释里的提交 SHA)。
+def _unpack(data: bytes, into: Path) -> tuple[Path, str | None, dict[str, str]]:
+    """把 GitHub 源码压缩包解进 `into`，回 (唯一顶层目录, zip 注释里的提交 SHA, 各文件的 git 模式)。
 
     先整份检查、再写盘：绝对路径、`..`、盘符、符号链接、多个顶层目录、解开后过大，任何一条
     不成立就一个字节都不写。可执行位按 zip 里记的 git 模式恢复（POSIX 上 `mcp/launch` 要 755，
-    随包清单会核对它）。
+    随包清单会核对它）。模式按顶层目录下的相对路径回（`100755` / `100644`），交给
+    `_modes_match_manifest` 与随包清单逐条比。
     """
     try:
         zf = zipfile.ZipFile(io.BytesIO(data))
@@ -655,8 +656,10 @@ def _unpack(data: bytes, into: Path) -> tuple[Path, str | None]:
         raise ArchiveError(f"压缩包解开后超过 {_ARCHIVE_MAX_UNPACKED} 字节")
     if len(tops) != 1:
         raise ArchiveError(f"压缩包顶层应当恰好一个目录，实际是：{sorted(tops)}")
+    modes: dict[str, str] = {}
     for info in infos:
-        target = into.joinpath(*PurePosixPath(info.filename).parts)
+        parts = PurePosixPath(info.filename).parts
+        target = into.joinpath(*parts)
         if info.is_dir():
             target.mkdir(parents=True, exist_ok=True)
             continue
@@ -676,11 +679,31 @@ def _unpack(data: bytes, into: Path) -> tuple[Path, str | None]:
             # 不能用」，走 ArchiveError 的一行 JSON 失败，不让 traceback 逃出安装流程（Codex #725）
             raise ArchiveError(f"压缩包里的 {info.filename!r} 读不出来：{exc}") from exc
         target.write_bytes(payload)
-        if os.name != "nt" and (info.external_attr >> 16) & 0o111:
+        executable = bool((info.external_attr >> 16) & 0o111)
+        modes["/".join(parts[1:])] = "100755" if executable else "100644"
+        if os.name != "nt" and executable:
             target.chmod(0o755)
     comment = zf.comment.decode("ascii", "replace").strip()
     commit = comment if re.fullmatch(r"[0-9a-f]{40}", comment) else None
-    return into / tops.pop(), commit
+    return into / tops.pop(), commit, modes
+
+
+def _modes_match_manifest(top: Path, modes: dict[str, str]) -> None:
+    """压缩包里记的 git 模式要等于随包清单逐文件声明的模式；不等抛 ArchiveError。
+
+    `verify_dir` 按清单自己声明的模式重算 content_digest，不看解出来的文件是什么模式——
+    只动模式（例如 `mcp/launch` 在压缩包里是 100644、清单仍写 100755）的一份会整份通过，
+    装上的启动器却不可执行（Codex #725）。比的是压缩包里的记录而不是磁盘上的权限位：
+    Windows 没有可执行位，按磁盘比就只在 POSIX 上管用。"""
+    manifest = pluginmanifest.read_manifest(top / brand.CODEX_PLUGIN_SUBDIR)
+    prefix = f"{brand.CODEX_PLUGIN_SUBDIR}/"
+    drift = [
+        f"{e['path']}（清单 {e['mode']}，压缩包 {modes.get(prefix + e['path'])}）"
+        for e in (manifest or {}).get("files", [])
+        if modes.get(prefix + e["path"]) != e["mode"]
+    ]
+    if drift:
+        raise ArchiveError("插件文件的模式与随包清单对不上：" + "；".join(drift)[:600])
 
 
 def _stable_receipt(root: Path) -> dict | None:
@@ -763,10 +786,11 @@ def fetch_stable_snapshot() -> dict:
     try:
         data = _fetch(brand.CODEX_PLUGIN_STABLE_ARCHIVE_URL, limit=_ARCHIVE_MAX_BYTES)
         try:
-            top, commit = _unpack(data, staging)
+            top, commit, modes = _unpack(data, staging)
         except OSError as exc:
             raise ArchiveError(f"解包写不进 {staging}：{exc}") from exc
         receipt = verify_stable_snapshot(top)
+        _modes_match_manifest(top, modes)
         tag = receipt["release_tag"]
         asset_url = f"{brand.RELEASES_URL}/download/{tag}/{brand.CODEX_PLUGIN_BUILD_ASSET}"
         try:
@@ -780,9 +804,12 @@ def fetch_stable_snapshot() -> dict:
                 f"构建清单（{str(asset_digest)[:12]}…）对不上——不装一份来历对不上的插件"
             )
         before = _stable_receipt(dest)
-        old = base / f".old-{os.getpid()}"
+        # 挪开旧目录用一个**新建即独占**的名字：不预先删同名目录（删不掉会被吞掉、随后的
+        # os.replace 撞上它失败——PID 复用、杀软占着文件；Codex #725）。mkdtemp 建的是空目录，
+        # Windows 上 os.replace 不能盖目录，先把它删掉再用这个名字
         try:
-            shutil.rmtree(old, ignore_errors=True)
+            old = Path(tempfile.mkdtemp(prefix=".old-", dir=base))
+            old.rmdir()
             if dest.exists():
                 os.replace(dest, old)
             try:
