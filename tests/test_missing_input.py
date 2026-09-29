@@ -605,7 +605,10 @@ def test_only_arguments_of_read_calls_count_as_missing_data(tmp_path):
         'SRC = "/nonexistent/tavotto/raw/b.csv"\n'
         "b = pd.read_csv(SRC)\n"
         'c = Path("inputs/c.json").read_text()\n'
-        'd = open(os.path.join("inputs", "d.txt")).read()\n',
+        'd = open(os.path.join("inputs", "d.txt")).read()\n'
+        # 目录常量拼出来的：打头的那一段算（它是那条路径的前缀）
+        'RAW = "/nonexistent/tavotto/raw2"\n'
+        'e = np.load(os.path.join(RAW, "e.npy"))\n',
         encoding="utf-8",
     )
     got = sorted(o["path"] for o in inputremap.static_missing("fig.py", tmp_path))
@@ -615,10 +618,11 @@ def test_only_arguments_of_read_calls_count_as_missing_data(tmp_path):
             "/nonexistent/tavotto/raw/a.dat",
             "/nonexistent/tavotto/raw/b.csv",
             "inputs/c.json",
+            "/nonexistent/tavotto/raw2",
         ]
     ), got
-    # `open(os.path.join("inputs", "d.txt"))`：各段本身不是那条路径，静态说不出拼完是什么——不列，运行时
-    # worker 会说出真正缺的那一串；`helpers/util.py` 是在读，但读的是代码不是数据
+    # `open(os.path.join("inputs", "d.txt"))`：打头的 `inputs` 不像数据路径、后面的 `d.txt` 只是片段——不列，
+    # 运行时 worker 会说出真正缺的那一串；`helpers/util.py` 是在读，但读的是代码不是数据
 
 
 def test_the_requested_path_keeps_the_probe_classification_of_the_same_literal(tmp_path):
