@@ -52,6 +52,7 @@ shim（`#!/usr/bin/env node`），子进程里解析不到 `node`——退出码
 from __future__ import annotations
 
 import argparse
+import http.client
 import io
 import json
 import os
@@ -604,7 +605,13 @@ def _fetch(url: str, *, limit: int) -> bytes:
     try:
         with opener.open(req, timeout=_NETWORK_TIMEOUT) as resp:
             data = resp.read(limit + 1)
-    except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
+    except (
+        urllib.error.URLError,
+        http.client.HTTPException,  # 分块响应被截断 / 畸形：IncompleteRead 不是 OSError（Codex #725）
+        TimeoutError,
+        OSError,
+        ValueError,
+    ) as exc:
         raise ArchiveError(f"下载 {url} 失败：{exc}") from exc
     if len(data) > limit:
         raise ArchiveError(f"{url} 超过 {limit} 字节，不像是发行分支的压缩包")
@@ -781,6 +788,18 @@ def fetch_stable_snapshot() -> dict:
         "release_tag": tag,
         "changed": (before or {}).get("content_digest") != receipt["content_digest"],
     }
+
+
+def _installed_lags_archive(st: dict, archive: dict | None) -> bool:
+    """压缩包渠道：Codex 里装着的版本与本地市场收据的版本对不上。
+
+    按**版本**判，不按已装副本的 content_digest：`codex plugin list` 报的路径是来源（本地市场里那份，
+    已经换成新的），不一定是 Codex 缓存里真装着的那份；而插件版本与引擎版本同号、同一版本号不重发，
+    版本不同就是没装上。任一侧读不到版本时不判（回 False），不在每次命令里无条件重装。"""
+    if not archive:
+        return False
+    have, want = st.get("version"), archive.get("version")
+    return bool(have) and bool(want) and have != want
 
 
 def _describe_snapshot(info: dict) -> str:
@@ -1194,6 +1213,14 @@ def _plugin_step(codex: str, *, apply: bool, summary: dict) -> dict:
             + (st.get("detail") or "（零输出）")
             + _unknown_hint(st.get("detail") or "", "装"),
         )
+    if (
+        st["state"] == "installed"
+        and not summary.get("reinstall")
+        and _installed_lags_archive(st, summary.get("archive"))
+    ):
+        # 压缩包上次已换成新的、那次 `plugin add` 却没成：本地市场「已是最新」（changed=False），
+        # Codex 里装着的仍是旧的。按装着的版本与收据的版本判，不靠上一次的 changed（Codex #725）
+        summary["reinstall"] = True
     if st["state"] == "installed" and not summary.get("reinstall"):
         # **健康状态下不重装。** 升级归 `codex plugin marketplace upgrade`（压缩包本地市场是
         # `tavotto codex upgrade`，它把 summary["reinstall"] 置真），由用户自己决定什么时候做；
