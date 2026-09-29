@@ -20,6 +20,7 @@ import {
   type PanelOverride,
 } from '@/types/document'
 import { effectiveOverride, isEffectiveOverrideAt } from '@/lib/effectiveOverride'
+import { structuralParent } from '@/components/inspector/roles/hierarchy'
 
 /**
  * 图内元素的几何代理层。
@@ -260,6 +261,33 @@ export function expandGroups(manifest: Manifest, gids: readonly string[]): strin
     for (const g of parts) if (!out.includes(g)) out.push(g)
   }
   return out
+}
+
+/**
+ * 命中的元素落在哪一个条目（成员）的子树里：自己或某个真实祖先（`structuralParent`，
+ * 先认显式 `parent_gid` 再按 gid 路径）的几何落点就是某个条目的 key，回那个 key；都不是回 null。
+ *
+ * 选中组之后拖动可以从成员子图里的任何东西起手（线、标题、图例、注释）——只比
+ * `geomGid(hit)` 的话只有点在子图空白处 / 位图上才整组走，点到一条线就把选区换成那条线
+ * （Codex #691）。走到组或整张图就停：组外的元素不会被当成成员。
+ */
+export function entryUnder(
+  manifest: Manifest,
+  entries: readonly AlignEntry[],
+  hit: ManifestElement,
+): string | null {
+  const keys = new Set(entries.map((en) => en.key))
+  const els = new Map(manifest.elements.map((e) => [e.gid, e]))
+  const parentOf = structuralParent(manifest)
+  const seen = new Set<string>()
+  for (let g: string | null = hit.gid; g && g !== 'figure' && !seen.has(g); g = parentOf(g)) {
+    seen.add(g)
+    const el = els.get(g)
+    if (!el) return null // 组节点（或不在表里的）：再往上只有整张图
+    const key = geomGid(el)
+    if (keys.has(key)) return key
+  }
+  return null
 }
 
 /** 选区里有组 */

@@ -73,7 +73,37 @@ const manifest = (group: Partial<ManifestGroup> = {}): Manifest => ({
       resizable: true,
       geom_gid: 'axes_1',
     },
+    // 成员里的东西：B 的标题（落在 B 的框外——归属靠父级链，不靠几何包含）、C 的一条线；
+    // 组外 A 的标题。都只按 bbox 命中（没有 geometry）
+    {
+      gid: 'axes_1.title',
+      role: 'title',
+      label: '标题',
+      bbox: [0.44, 0.06, 0.08, 0.04],
+      editable: [],
+      draggable: true,
+      anchor: [0.44, 0.1],
+      drag_prop: 'pos_frac',
+    },
     axes('axes_2', '子图 3', { parent_gid: GROUP }),
+    {
+      gid: 'axes_2.lines_0',
+      role: 'line',
+      label: '曲线 1',
+      bbox: [0.64, 0.25, 0.06, 0.06],
+      editable: [],
+      draggable: false,
+    },
+    {
+      gid: 'axes_0.title',
+      role: 'title',
+      label: '标题',
+      bbox: [0.12, 0.06, 0.08, 0.04],
+      editable: [],
+      draggable: true,
+      anchor: [0.12, 0.1],
+      drag_prop: 'pos_frac',
+    },
     axes('axes_3', '色条轴', {
       parent_gid: GROUP,
       is_colorbar: true,
@@ -192,6 +222,12 @@ const positionOf = (gid: string) =>
 /** B 的图像上、C 上：离色条与组框边都远的点 */
 const ON_B: [number, number] = [0.48, 0.5]
 const ON_C: [number, number] = [0.72, 0.5]
+/** 成员里的东西（C 的线、B 的标题）与组外 A 的标题 */
+const ON_C_LINE: [number, number] = [0.67, 0.28]
+const ON_B_TITLE: [number, number] = [0.48, 0.08]
+const ON_A_TITLE: [number, number] = [0.16, 0.08]
+const overrideOf = (gid: string, prop: string) =>
+  livePanel().overrides.find((o) => o.gid === gid && o.prop === prop)?.value
 
 async function setup(m: Manifest = manifest()) {
   localStorage.clear()
@@ -283,6 +319,38 @@ describe('选中组之后在画布上拖', () => {
     expect(useUiStore.getState().selectedGids).toEqual(['axes_2'])
     expect(livePanel().overrides).toEqual([])
     expect(useDocumentStore.getState().past).toHaveLength(0)
+  })
+
+  it.each([
+    ['C 里的一条线', ON_C_LINE, 'axes_2.lines_0'],
+    ['B 的标题（在 B 的框外，按父级链归到 B）', ON_B_TITLE, 'axes_1.title'],
+  ] as const)('从成员里的东西起手拖（%s）= 整组平移，选区仍是组', async (_name, at0, gid) => {
+    await mount()
+    act(() => useUiStore.getState().setSelectedGid(GROUP))
+    await drag(at0, 40)
+    const dfx = 40 / LAYOUT.width
+    for (const g of ['axes_1', 'axes_2', 'axes_3']) {
+      expect(positionOf(g)![0]).toBeCloseTo(POS[g][0] + dfx, 4)
+    }
+    expect(positionOf('axes_0')).toBeUndefined()
+    // 点到的那个东西没有自己单独走一份
+    expect(overrideOf(gid, 'pos_frac')).toBeUndefined()
+    expect(useUiStore.getState().selectedGids).toEqual([GROUP])
+    expect(useDocumentStore.getState().past).toHaveLength(1)
+  })
+
+  it('点成员里的东西不拖 = 钻进去选中它；组外的东西不算成员（拖 A 的标题只动标题）', async () => {
+    await mount()
+    act(() => useUiStore.getState().setSelectedGid(GROUP))
+    await drag(ON_C_LINE, 0)
+    expect(useUiStore.getState().selectedGids).toEqual(['axes_2.lines_0'])
+    expect(livePanel().overrides).toEqual([])
+
+    act(() => useUiStore.getState().setSelectedGid(GROUP))
+    await drag(ON_A_TITLE, 40)
+    expect(useUiStore.getState().selectedGids).toEqual(['axes_0.title'])
+    expect(overrideOf('axes_0.title', 'pos_frac')).toBeDefined()
+    for (const g of ['axes_0', 'axes_1', 'axes_2', 'axes_3']) expect(positionOf(g)).toBeUndefined()
   })
 
   it('单独选中 B 拖动：只有 B 走，C 与共享色条都不跟', async () => {
