@@ -563,7 +563,7 @@ def test_health_names_the_old_engine_end_to_end(old_engine, tmp_path):
     report = health()
     assert report["code"] == "engine_too_old", report
     assert report["engine_version"] == OLD and report["min_tavotto_version"] == "0.17.0"
-    assert report["pip_index"] == {"url": ALIYUN, "source": str(pip_conf), "mirror": True}
+    assert report["pip_index"] == {"url": ALIYUN, "source": "PIP_CONFIG_FILE", "mirror": True}
     assert "--index-url https://pypi.org/simple" in report["error"]
     assert "--index-url https://pypi.org/simple" in " ".join(report["recovery"])
 
@@ -580,7 +580,7 @@ def test_pip_index_reads_the_env_var_and_config_files(tmp_path):
     base = {"HOME": str(tmp_path), "USERPROFILE": str(tmp_path), "XDG_CONFIG_DIRS": str(tmp_path)}
 
     got = launcher.pip_index({**base, "PIP_CONFIG_FILE": str(conf)})
-    assert got == {"url": ALIYUN, "source": str(conf), "mirror": True}
+    assert got == {"url": ALIYUN, "source": "PIP_CONFIG_FILE", "mirror": True}
 
     got = launcher.pip_index(
         {**base, "PIP_CONFIG_FILE": str(conf), "PIP_INDEX_URL": "https://pypi.org/simple"}
@@ -629,7 +629,7 @@ def test_pip_index_reads_the_interpreters_site_config(tmp_path, monkeypatch):
     home.mkdir()
     base = {"HOME": str(home), "USERPROFILE": str(home), "XDG_CONFIG_DIRS": str(home)}
     got = launcher.pip_index(base)
-    assert got == {"url": ALIYUN, "source": str(site), "mirror": True}
+    assert got == {"url": ALIYUN, "source": "site", "mirror": True}
 
 
 def test_an_existing_pip_config_file_suppresses_user_level_configs(tmp_path):
@@ -650,7 +650,7 @@ def test_an_existing_pip_config_file_suppresses_user_level_configs(tmp_path):
     assert launcher.pip_index({**base, "PIP_CONFIG_FILE": str(explicit)}) is None
     missing = tmp_path / "missing.conf"
     got = launcher.pip_index({**base, "PIP_CONFIG_FILE": str(missing)})
-    assert got and got["mirror"] is True and got["source"] == str(user_conf)
+    assert got and got["mirror"] is True and got["source"] == "user"
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="macOS 的用户配置二选一")
@@ -667,7 +667,48 @@ def test_macos_reads_only_the_user_config_pip_selects(tmp_path):
     )
     base = {"HOME": str(home), "XDG_CONFIG_DIRS": str(tmp_path / "none")}
     got = launcher.pip_index(base)
-    assert got and got["mirror"] is True and got["source"] == str(lib / "pip.conf"), got
+    assert got and got["mirror"] is True and got["source"] == "user", got
+
+
+def test_pip_index_never_reports_local_paths(tmp_path):
+    """体检结果进模型看得见的 `tavotto_health`：`source` 只报类别，`file://` 索引的路径也抹掉（Codex #724 P1）。"""
+    home = tmp_path / "alice"
+    conf = home / ("pip/pip.ini" if os.name == "nt" else ".config/pip/pip.conf")
+    conf.parent.mkdir(parents=True)
+    conf.write_text("[global]\nindex-url = file:///home/alice/wheels\n", encoding="utf-8")
+    base = {
+        "HOME": str(home),
+        "USERPROFILE": str(home),
+        "XDG_CONFIG_DIRS": str(tmp_path / "none"),
+        "XDG_CONFIG_HOME": str(home / ".config"),
+    }
+    got = launcher.pip_index(base)
+    assert got["source"] == "user"
+    assert "alice" not in json.dumps(got) and got["url"] == "file://***", got
+
+
+def test_pip_sections_are_ordered_after_merging_files(tmp_path):
+    """照 pip：先合并所有文件、再按节排——全局配置里的 `[install]` 压过用户配置里的 `[global]`（Codex #724）。"""
+    global_dir = tmp_path / "xdg-global"
+    (global_dir / "pip").mkdir(parents=True)
+    (global_dir / "pip" / "pip.conf").write_text(
+        "[install]\nindex-url = " + ALIYUN + "\n", encoding="utf-8"
+    )
+    home = tmp_path / "home"
+    user = home / ".config" / "pip"
+    user.mkdir(parents=True)
+    (user / "pip.conf").write_text(
+        "[global]\nindex-url = https://pypi.org/simple\n", encoding="utf-8"
+    )
+    base = {
+        "HOME": str(home),
+        "XDG_CONFIG_DIRS": str(global_dir),
+        "XDG_CONFIG_HOME": str(home / ".config"),
+    }
+    if os.name == "nt":
+        pytest.skip("POSIX 的全局配置位置")
+    got = launcher.pip_index(base)
+    assert got == {"url": ALIYUN, "source": "global", "mirror": True}
 
 
 def test_upgrade_commands_follow_the_mirror_verdict():
@@ -709,9 +750,9 @@ def test_pip_index_reads_the_store_pythons_virtualized_config(tmp_path):
     assert launcher.pip_index(base) is None, "不是商店版 Python 的包不算"
 
     _store_pip_ini(local, "PythonSoftwareFoundation.Python.3.11_x", "https://pypi.org/simple")
-    ini = _store_pip_ini(local, "PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0", ALIYUN)
+    _store_pip_ini(local, "PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0", ALIYUN)
     got = launcher.pip_index(base)
-    assert got == {"url": ALIYUN, "source": str(ini), "mirror": True}
+    assert got == {"url": ALIYUN, "source": "store_python", "mirror": True}
 
     # 普通（用户级）配置说 PyPI、商店版那份说镜像 → 仍报镜像（宁可多给一个 --index-url）
     conf = tmp_path / ("pip/pip.ini" if os.name == "nt" else ".config/pip/pip.conf")
