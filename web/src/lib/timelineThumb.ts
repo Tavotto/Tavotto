@@ -62,31 +62,68 @@ function loadImage(src: string): Promise<HTMLImageElement | null> {
  * 合成还没画完 renderStore 就被清空、`apiUrl` 就换成了下一个项目——晚一步取，
  * 画进去的是另一个项目的同名素材，或者什么都没有。
  */
-type PanelSource = { svg: string } | { url: string } | null
+/**
+ * 两路图源**都取**：SVG 在前（带 overrides，用户看到的就是它），素材图兜底。只取一路的话，
+ * SVG 解码失败或画成空白（Windows 的 WebKit 上量到过：同一份排版前一个节点有面板、下一个
+ * 节点只剩文字，CI run 36510136403）时这一格就空着——而素材图明明就在。
+ */
+type PanelSource = { svg?: string; url?: string } | null
 
 function panelSource(o: PanelObject): PanelSource {
   const render = panelRender(useRenderStore.getState(), o)
-  if (render?.svg) return { svg: render.svg }
   const mtime = useAssetStore.getState().byId[o.fileId]?.mtime
-  const url = panelSrc(o.fileId, o.fileKind, 400, mtime)
-  return url ? { url } : null
+  const url = panelSrc(o.fileId, o.fileKind, 400, mtime) || undefined
+  if (!render?.svg && !url) return null
+  return { svg: render?.svg ?? undefined, url }
 }
 
-async function panelImage(
-  source: PanelSource,
+/**
+ * e2e 的诊断（只在 e2e 注入了 `__TAVOTTO_THUMB_TRACE__` 数组时记）：每个面板走了哪条路、
+ * 结果如何。缩略图画不出面板时，用例把它带进失败信息——量不到的维度先让它说出口。
+ */
+function trace(entry: Record<string, unknown>): void {
+  const sink = (window as unknown as { __TAVOTTO_THUMB_TRACE__?: unknown[] }).__TAVOTTO_THUMB_TRACE__
+  if (Array.isArray(sink)) sink.push(entry)
+}
+
+async function loadFrom(
+  kind: 'svg' | 'url',
+  source: NonNullable<PanelSource>,
   wPx: number,
   hPx: number,
 ): Promise<{ img: HTMLImageElement; revoke?: string } | null> {
-  if (!source) return null
-  if ('svg' in source) {
+  if (kind === 'svg') {
+    if (!source.svg) return null
     const url = svgImageSource(source.svg, wPx, hPx)
     const img = await loadImage(url)
     if (img) return { img, revoke: url }
     URL.revokeObjectURL(url)
     return null
   }
+  if (!source.url) return null
   const img = await loadImage(source.url)
   return img ? { img } : null
+}
+
+/** 这块区域是不是**什么都没画上**（与画之前一模一样）；量不了（canvas 被 taint）就当画上了 */
+function unchanged(ctx: CanvasRenderingContext2D, box: DOMRect, before: Uint8ClampedArray | null): boolean {
+  if (!before) return false
+  try {
+    const after = ctx.getImageData(box.x, box.y, box.width, box.height).data
+    for (let i = 0; i < after.length; i++) if (after[i] !== before[i]) return false
+    return true
+  } catch {
+    return false
+  }
+}
+
+function snapshotBox(ctx: CanvasRenderingContext2D, box: DOMRect): Uint8ClampedArray | null {
+  if (box.width < 1 || box.height < 1) return null
+  try {
+    return ctx.getImageData(box.x, box.y, box.width, box.height).data.slice()
+  } catch {
+    return null
+  }
 }
 
 async function drawObject(
@@ -106,28 +143,56 @@ async function drawObject(
     const crop = o.crop
     const fullW = cw / (crop?.w ?? 1)
     const fullH = ch / (crop?.h ?? 1)
-    const got = await panelImage(source, fullW * 2, fullH * 2)
-    if (!got) return
-    const { img, revoke } = got
-    const nw = img.naturalWidth || fullW
-    const nh = img.naturalHeight || fullH
-    ctx.save()
-    ctx.globalAlpha = o.opacity ?? 1
-    ctx.translate(x + w / 2, y + h / 2)
-    if (rot) ctx.rotate((rot * Math.PI) / 180)
-    ctx.drawImage(
-      img,
-      (crop?.x ?? 0) * nw,
-      (crop?.y ?? 0) * nh,
-      (crop?.w ?? 1) * nw,
-      (crop?.h ?? 1) * nh,
-      -cw / 2,
-      -ch / 2,
-      cw,
-      ch,
+    if (!source) {
+      trace({ panel: o.id, result: 'no-source' })
+      return
+    }
+    // 落位包围盒（整数像素、夹在画布里）：画之前记一份，画完一比就知道这一路是不是白画了
+    const bx = Math.max(0, Math.floor(x))
+    const by = Math.max(0, Math.floor(y))
+    const box = new DOMRect(
+      bx,
+      by,
+      Math.min(ctx.canvas.width - bx, Math.ceil(x + w) - bx),
+      Math.min(ctx.canvas.height - by, Math.ceil(y + h) - by),
     )
-    ctx.restore()
-    if (revoke) URL.revokeObjectURL(revoke)
+    const before = snapshotBox(ctx, box)
+    const steps: string[] = []
+    for (const kind of ['svg', 'url'] as const) {
+      const got = await loadFrom(kind, source, fullW * 2, fullH * 2)
+      if (!got) {
+        if (source[kind]) steps.push(`${kind}:load-failed`)
+        continue
+      }
+      const { img, revoke } = got
+      const nw = img.naturalWidth || fullW
+      const nh = img.naturalHeight || fullH
+      ctx.save()
+      ctx.globalAlpha = o.opacity ?? 1
+      ctx.translate(x + w / 2, y + h / 2)
+      if (rot) ctx.rotate((rot * Math.PI) / 180)
+      ctx.drawImage(
+        img,
+        (crop?.x ?? 0) * nw,
+        (crop?.y ?? 0) * nh,
+        (crop?.w ?? 1) * nw,
+        (crop?.h ?? 1) * nh,
+        -cw / 2,
+        -ch / 2,
+        cw,
+        ch,
+      )
+      ctx.restore()
+      if (revoke) URL.revokeObjectURL(revoke)
+      // 画完一个像素都没变 = 这一路白画了（解码出了一张空图）：换下一路
+      if (unchanged(ctx, box, before)) {
+        steps.push(`${kind}:blank`)
+        continue
+      }
+      steps.push(`${kind}:ok`)
+      break
+    }
+    trace({ panel: o.id, steps })
     return
   }
   if (o.type === 'text') {

@@ -93,6 +93,8 @@ test('排版时间线：自动节点 → 命名 → 预览不改排版 → 恢�
       debounceMs: 300,
       minGapMs: 800,
     }
+    // 缩略图合成的诊断：每个面板走了哪条图源、画没画上（`lib/timelineThumb` 的 trace）
+    ;(window as unknown as Record<string, unknown>).__TAVOTTO_THUMB_TRACE__ = []
   })
   const a = await app()
   await page.goto(a.baseURL)
@@ -147,7 +149,11 @@ test('排版时间线：自动节点 → 命名 → 预览不改排版 → 恢�
     for (let i = 0; i < px.length; i += 4) if (px[i] + px[i + 1] + px[i + 2] < 600) dark++
     return dark
   })
-  expect(inked).toBeGreaterThan(200)
+  // 没画上面板时，把每次合成走了哪条图源带进失败信息（Windows 的 WebKit 上量到过只剩文字）
+  const thumbTrace = await page.evaluate(
+    () => (window as unknown as Record<string, unknown>).__TAVOTTO_THUMB_TRACE__,
+  )
+  expect(inked, JSON.stringify(thumbTrace)).toBeGreaterThan(200)
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'timeline-named-view.png') })
 
   // ── 继续改：再加一段文字 ───────────────────────────────────────────
