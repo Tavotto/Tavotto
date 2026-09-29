@@ -147,6 +147,30 @@ else:
     print(f"[tavotto.spec] 未附带内置 runtime（{RUNTIME} 不存在）——"
           "渲染将回退到用户自己的 Python")
 
+# 私有 Python 归档（ADR 0111）：没有合格 Python 的机器上一键修复缺包时，受管环境的基础解释器从这份
+# pbs install_only 归档解出来（engine/privatepython.py；sha256 与锁一致才用，否则退回按锁 URL 下载）。
+# 由 scripts/stage_private_python.py 备进 build/private-python-bundle/（build_desktop.py 在 PyInstaller
+# 之前调它），这里按同一把尺（check_bundle：只有本目标那一份、sha256 / 大小与锁一致）收进
+# `_internal/private-python/`，engine/runtime.private_python_bundle_dirs() 在那里找。它是一份**归档**，
+# 不是解开的解释器：不进 .app 的签名范围之外的任何地方，解包落在用户数据目录。
+# TAVOTTO_REQUIRE_PRIVATE_PYTHON=1（发行流水线打开）时缺了就直接失败。
+from stage_private_python import BuildError as _PPBuildError, check_bundle  # noqa: E402
+
+_require_pp = os.environ.get("TAVOTTO_REQUIRE_PRIVATE_PYTHON") in ("1", "true", "yes")
+try:
+    _pp_archive = check_bundle()
+except _PPBuildError as exc:
+    raise SystemExit(f"[tavotto.spec] {exc}")
+if _pp_archive is not None:
+    datas.append((str(_pp_archive), "private-python"))
+    print(f"[tavotto.spec] 私有 Python 归档: {_pp_archive.name}（{_pp_archive.stat().st_size} 字节）")
+elif _require_pp:
+    raise SystemExit(
+        "TAVOTTO_REQUIRE_PRIVATE_PYTHON=1 但没有备好的私有 Python 归档——"
+        "先跑 python scripts/stage_private_python.py")
+else:
+    print("[tavotto.spec] 未附带私有 Python 归档——无 Python 的机器上一键修复会按锁 URL 下载")
+
 # Rust supervisor（见文件头说明 5）。约定位置就是 cargo 自己的产出目录——
 # `workerd_client._dev_tree_candidates()` 认的也是它，别再造第二个落点。
 # 走 binaries 而不是 datas：PyInstaller 只对 binaries 保留可执行位。
