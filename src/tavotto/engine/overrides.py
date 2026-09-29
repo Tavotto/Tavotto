@@ -632,10 +632,44 @@ def cjk_fallback_candidates() -> tuple[str, ...]:
     return tuple(seen)
 
 
-#: 探测结果按进程缓存：字体装没装在一个 worker 的生命周期里不会变。
+#: 探测结果按进程缓存，随字体注册表的代次失效（`sync_font_caches`）。
 #: （`manifest._font_installed` 读的也是这一张表——「这个名字画不画得出」
 #: 全 worker 只有一个判据。）
 _FONT_PRESENT: dict[str, bool] = {}
+
+#: 下面这些派生缓存上次对齐时的字体注册表代次（`font_generation`）。
+_FONT_GEN: tuple | None = None
+
+
+def font_generation() -> tuple:
+    """matplotlib 字体注册表此刻的「代次」：注册表对象本身 + 登记了多少张脸。
+
+    字体装没装**不是**一个 worker 生命周期里的常量：脚本自己 `addfont`、fname 放开时
+    我们替它 `addfont`（`_face_of_font_file`）、native 会话两次 `plt.show()` 之间引入
+    项目字体，都会让注册表变长；`_load_fontmanager` 重建则换掉整个对象。matplotlib
+    自己的 `findfont` 缓存在 `addfont` 里清掉了，我们从它派生的缓存只认这一个代次。
+    """
+    from matplotlib import font_manager
+
+    fm = font_manager.fontManager
+    return (id(fm), len(fm.ttflist), len(fm.afmlist))
+
+
+def sync_font_caches() -> tuple:
+    """以 `fontManager` 为数据源的派生缓存的**唯一**失效点：代次变了就全部作废。
+
+    名单：本模块的 `_FONT_PRESENT`（画不画得出）、`_CJK_TAIL`（回退尾巴）、
+    `_FILE_FACE`（fname 反查，结论取决于同族还登记了哪些脸）；`manifest` 的
+    `installed_font_families` 按代次作缓存键。每个读缓存的入口先调这里。
+    """
+    global _FONT_GEN, _CJK_TAIL
+    gen = font_generation()
+    if gen != _FONT_GEN:
+        _FONT_GEN = gen
+        _FONT_PRESENT.clear()
+        _CJK_TAIL = None
+        _FILE_FACE.clear()
+    return gen
 
 
 def font_installed(name: str) -> bool:
@@ -646,6 +680,7 @@ def font_installed(name: str) -> bool:
     正是它让 playground 里选 Times New Roman 静默变成 DejaVuSans——链路全通、
     override 记下了、图重绘了，只有字形没变，界面还报告成功。
     """
+    sync_font_caches()
     hit = _FONT_PRESENT.get(name)
     if hit is None:
         from matplotlib import font_manager
@@ -671,9 +706,11 @@ _CJK_TAIL: tuple[str, ...] | None = None
 def cjk_fallback_tail() -> tuple[str, ...]:
     """这台机器上**装了的**中日韩候选，按偏好顺序。没装一个就是空元组。
 
-    进程内缓存一次：它跟在每一段文字的族列表后面，一次 build 要问几百遍。
+    进程内缓存，随字体注册表的代次失效：它跟在每一段文字的族列表后面，一次 build
+    要问几百遍。
     """
     global _CJK_TAIL
+    sync_font_caches()
     if _CJK_TAIL is None:
         if os.environ.get(CJK_FALLBACK_ENV, "").strip() == "0":
             _CJK_TAIL = ()
@@ -696,6 +733,12 @@ def _family_chain(fam) -> list[str]:
     head = [str(f) for f in fam] if isinstance(fam, (list, tuple)) else [str(fam)]
     return head + [f for f in fallback_tail() if f not in head]
 
+
+#: worker 这一侧认的字体文件扩展名：TrueType / OpenType 及它们的字体集。fname 放开
+#: （`_face_of_font_file`）只认这一份；字体集 `.ttc` / `.otc` 与 `manifest._ft_font`
+#: 按面索引读字体集是同一套认法（父进程 `rendercore/fonts.py` 的批准字体扫描是另一个
+#: 进程，名单与这里相同）。
+FONT_FILE_SUFFIXES = (".ttf", ".otf", ".ttc", ".otc")
 
 #: 字体文件身份（`font_file_key`）→ 能把它原样找回来的 (族名, style, variant, weight,
 #: stretch)；`None` 表示按名字找不回同一个文件，只能留着 fname。按进程缓存。
@@ -726,7 +769,7 @@ def font_file_key(path: str) -> tuple:
 def _face_of_font_file(path: str) -> tuple | None:
     """`FontProperties(fname=…)` 指向的那个文件，按名字怎么点才能**找回它本身**。
 
-    只认 ttf / otf / ttc：fname 渲染时读的是文件的第 0 张脸，这里读的也是第 0 张。
+    只认 `FONT_FILE_SUFFIXES`：fname 渲染时读的是文件的第 0 张脸，这里读的也是第 0 张。
     没注册过的（脚本自带的字体文件）先 `addfont` 注册。按族名 + 字重 / 字形反查
     必须解析回**同一个文件（或字节相同的拷贝）的第 0 张脸**才算数——同名但版本
     不同的另一份、字重对不上的兄弟文件都会让正文那张脸变样，那种宁可不接回退，
@@ -738,12 +781,13 @@ def _face_of_font_file(path: str) -> tuple | None:
     归一之后仍然解析回同一个文件才放——同族里另有 Regular 的 Light 文件，按
     normal 找到的是 Regular，于是留着 fname。
     """
+    sync_font_caches()
     key = font_file_key(path)
     if key in _FILE_FACE:
         return _FILE_FACE[key]
     path = key[0]
     hit = None
-    if os.path.splitext(path)[1].lower() in (".ttf", ".otf", ".ttc"):
+    if os.path.splitext(path)[1].lower() in FONT_FILE_SUFFIXES:
         from matplotlib import font_manager, ft2font
 
         try:

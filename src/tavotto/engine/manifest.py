@@ -106,6 +106,7 @@ from overrides import (
     remember_axis_directions,
     scale_options,
     set_original_reader,
+    sync_font_caches,
     text_linespacing,
     to_hex,
 )
@@ -1341,8 +1342,14 @@ def _family_options() -> list[str]:
     return [*_GENERIC_FAMILIES, *(n for n in _NAMED_FAMILIES if _font_installed(n))]
 
 
-@lru_cache(maxsize=1)
 def installed_font_families() -> tuple[str, ...]:
+    """本机字体族（见 `_installed_font_families`），按字体注册表的代次缓存：脚本或
+    fname 放开 `addfont` 了新字体，下一份 manifest 就列得出它（`overrides.sync_font_caches`）。"""
+    return _installed_font_families(sync_font_caches())
+
+
+@lru_cache(maxsize=1)
+def _installed_font_families(_generation: tuple) -> tuple[str, ...]:
     """这台机器上 matplotlib 找得到的全部字体族（TrueType / OpenType），排好序。
 
     从前字体下拉只有三个通用族加几个具名候选（`_NAMED_FAMILIES`），用户装了
@@ -1351,7 +1358,7 @@ def installed_font_families() -> tuple[str, ...]:
     画得出来；AFM（Type 1）那批不列，PDF/PS 后端之外用不上。
 
     macOS 上以 `.` 开头的是系统内部字体（`.SF NS` / `.Aqua Kana`），用户在任何
-    选字体的界面上都看不到它们，这里同样不列。整个进程只算一次：`fontManager`
+    选字体的界面上都看不到它们，这里同样不列。注册表没变就只算一次：`fontManager`
     的扫描结果本来就是磁盘缓存来的，但去重排序几百个名字也不值得每份 manifest
     重做。
     """

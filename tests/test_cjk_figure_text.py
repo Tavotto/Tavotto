@@ -624,6 +624,43 @@ for sub, name, face in (("a", "DejaVuSerif.ttf", "DejaVu Serif"), ("b", "DejaVuS
     rel = os.path.join("fonts", "locked.ttf")
     assert manifest.font_faces("Voltage", [], "dejavusans", rel) == {"face": face}, sub
 
+# f) 字体集 `.otc` 与 `.ttc` 一样放得开（manifest 早就按面索引读 `.otc`）
+from fontTools.ttLib import TTCollection
+
+coll = TTCollection()
+coll.fonts = [
+    TTFont(probe_face("Tavotto Collection", "Regular", 400)),
+    TTFont(os.path.join(TTF, "DejaVuSans.ttf")),
+]
+otc = os.path.join(tmp, "collection.otc")
+coll.save(otc)
+fig, t = figure("Voltage 72.5 MPa", otc)
+before = png(fig)
+overrides.ensure_figure_fallback(fig)
+assert t.get_fontproperties().get_file() is None, "otc 没放开"
+assert list(t.get_fontfamily())[0] == "Tavotto Collection", t.get_fontfamily()
+assert png(fig) == before
+plt.close(fig)
+
+# g) fname 放开替脚本 `addfont` 了一个新字体（或脚本自己 addfont）：从字体注册表派生的
+#    缓存全部跟着失效——此前记下的「没装」、本机字体族列表都不许停在旧的注册表上
+late = probe_face("Tavotto Late", "Regular", 400)
+assert not overrides.font_installed("Tavotto Late")
+assert "Tavotto Late" not in manifest.installed_font_families()
+fig, t = figure("Voltage", late)
+overrides.ensure_figure_fallback(fig)
+assert t.get_fontproperties().get_file() is None
+assert overrides.font_installed("Tavotto Late")
+assert "Tavotto Late" in manifest.installed_font_families()
+plt.close(fig)
+from matplotlib import font_manager as _fm
+
+own = probe_face("Tavotto Own", "Regular", 400)
+assert not overrides.font_installed("Tavotto Own")
+_fm.fontManager.addfont(own)
+assert overrides.font_installed("Tavotto Own")
+assert "Tavotto Own" in manifest.installed_font_families()
+
 # e) 放不开的（按名字找不回同一个文件）：原样不动，manifest 照实按那个文件报缺字，
 #    不许再说「回退链画出来了」
 overrides._FILE_FACE[overrides.font_file_key(os.path.join(TTF, "DejaVuSans-Oblique.ttf"))] = None
@@ -648,6 +685,8 @@ def test_fname_release_keeps_latin_pixels_and_reports_unreleasable_honestly():
     * Oblique / Light / Black 换成界面词表里的 italic / normal / bold，仍是同一个文件；
       归一之后会换到别的文件的（同族有 Regular 的 Light）留着 fname；
     * 相对 fname 换了 cwd 就是另一个文件，缓存按文件本身认；
+    * 字体集 `.otc` 与 `.ttc` 一样放得开；
+    * 放开时 `addfont` 了新字体（或脚本自己 addfont）：派生的字体缓存跟着失效；
     * 换不开的留着 fname，manifest 按那一个文件报缺字——不按族列表说「画出来了」。
     """
     out = subprocess.run(
