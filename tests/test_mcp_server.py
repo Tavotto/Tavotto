@@ -2978,6 +2978,31 @@ def test_session_state_for_an_unknown_session_is_a_structured_error(project, fak
     assert _body(res)["code"] == "unknown_session"
 
 
+def test_open_carries_the_missing_input_offer_and_points_back_to_tavotto(project, monkeypatch):
+    """数据找不到（ADR 0106）：载荷原样进 structuredContent，recovery 请用户回 Tavotto 里指认。"""
+    offer = {
+        "script": "fig1.py",
+        "requested": "data/values.txt",
+        "absolute": False,
+        "via": "open",
+        "others": [],
+    }
+
+    def fail(*a, **k):
+        err = bridge.engine_pool.WorkerError("脚本要读取的文件不存在", code="missing_input")
+        err.missing_input = offer
+        raise err
+
+    monkeypatch.setattr(bridge.engine_pool, "get", fail)
+    result = _call("tavotto_open_figure", {"project_path": str(project)})
+    assert result["isError"] is True
+    body = _body(result)
+    assert body["code"] == "missing_input"
+    assert body["missing_input"] == offer
+    human = result["content"][0]["text"]
+    assert "data/values.txt" in human and "Tavotto" in human
+
+
 # --------------------- U03：首开的「需要输入」与它的回答 -----------------------
 #
 # 桌面确认框、HTTP 的 `PATCH /api/engine/workdir`、MCP 的 `workdir=` 参数是**同一份**决定

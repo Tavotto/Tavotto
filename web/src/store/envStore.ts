@@ -1,8 +1,12 @@
 import { create } from 'zustand'
 import { t } from '@/i18n'
 import {
+  addInputRemap,
   backendErrorText,
   type DependencyPreparationOffer,
+  type InputRemapRule,
+  type MissingInputOffer,
+  removeInputRemap,
   fetchEngineEnvironment,
   installEngineEnvironment,
   setEngineEnvironment,
@@ -69,6 +73,23 @@ interface EnvState {
   requestDependencyPreparation: (offer: DependencyPreparationOffer, projectId?: string | null) => void
   dismissDependencyPreparation: () => void
   /**
+   * 数据找不到（ADR 0106）：渲染以 `missing_input`（或带 `missing_input` 载荷的「没出图」）回来时，
+   * 请用户指认那个文件或它所在的文件夹。载荷放这里（与运行目录的确认同一个家），
+   * `MissingInputDialog` 渲染它；同一时刻只开一份，换了项目的旧载荷不弹。
+   */
+  missingInput: MissingInputOffer | null
+  /** 每记住一条数据位置加一：素材库的试运行状态机订阅它，重跑因「找不到数据」失败的脚本 */
+  inputRemapGeneration: number
+  requestMissingInput: (offer: MissingInputOffer, projectId?: string | null) => void
+  dismissMissingInput: () => void
+  /**
+   * 用户指认了数据位置：后端推规则、按项目记住、关掉会话；这里更新设置里的规则表、关框、把因
+   * 「找不到数据」失败的面板重新排上。回 null 或一句失败原文（本地化过的）。
+   */
+  pointAtData: (requested: string, chosen: string, kind: 'file' | 'dir' | 'auto') => Promise<string | null>
+  /** 设置里删一条改指规则；回 null 或一句失败原文 */
+  forgetInputRemap: (rule: InputRemapRule) => Promise<string | null>
+  /**
    * 跑前的门刚刚**自动改用**了用户自己的环境（ADR 0079，SSE `engine.environment_adopted`）：
    * 通知轨上说一句「改用了哪个」并给「改回」。只是说出口，不是一次授权——改用已经发生了。
    */
@@ -110,6 +131,20 @@ export interface AdoptedEnvironment {
  */
 let projectEpoch = 0
 
+/**
+ * 后端刚关掉本项目的会话、且变的东西说不清影响哪些面板（换环境、改指表增 / 换 / 删）：
+ * 每个在用的面板都标 stale 重建——不只是失败的那些，成功画过的可能是按旧条件画的。
+ * 回 false = 等 renderStore 期间换了项目（B 的面板一个都不动）。
+ */
+async function restaleProjectRenders(epoch: number): Promise<boolean> {
+  const { useRenderStore } = await import('@/store/renderStore')
+  if (epoch !== projectEpoch) return false
+  const render = useRenderStore.getState()
+  const ids = [...new Set(Object.values(render.byKey).map((v) => v.fileId))]
+  if (ids.length) render.markStale(ids)
+  return true
+}
+
 export const useEnvStore = create<EnvState>((set, get) => ({
   env: null,
   adoptedEnvironment: null,
@@ -117,6 +152,8 @@ export const useEnvStore = create<EnvState>((set, get) => ({
   installing: false,
   workdirConfirmation: null,
   dependencyPreparation: null,
+  missingInput: null,
+  inputRemapGeneration: 0,
 
   requestWorkdirConfirmation: (payload, projectId) => {
     if (projectId !== undefined && projectId !== currentProjectId()) return
@@ -124,6 +161,49 @@ export const useEnvStore = create<EnvState>((set, get) => ({
     set({ workdirConfirmation: payload })
   },
   dismissWorkdirConfirmation: () => set({ workdirConfirmation: null }),
+  requestMissingInput: (offer, projectId) => {
+    if (projectId !== undefined && projectId !== currentProjectId()) return
+    if (get().missingInput) return
+    set({ missingInput: offer })
+  },
+  dismissMissingInput: () => set({ missingInput: null }),
+  pointAtData: async (requested, chosen, kind) => {
+    const epoch = projectEpoch
+    try {
+      const res = await addInputRemap(requested, chosen, kind)
+      // 规则记在 A 上；B 的设置、确认框、渲染重排一个都不动
+      if (epoch !== projectEpoch) return null
+      const env = get().env
+      if (env?.project) set({ env: { ...env, project: { ...env.project, input_remap: res.input_remap } } })
+      set({ missingInput: null })
+      // 后端已经关掉了这个项目的会话；失败的面板重排，经旧规则画成功的也要重画
+      // （同 kind / from 的规则被这次替换时，它们读的是旧位置的数据）
+      if (!(await restaleProjectRenders(epoch))) return null
+      // 素材库「运行并发现图」那条入口失败的脚本同样重跑：scriptRunStore 订阅这个代际
+      // （它依赖本 store；反过来 import 会成环）
+      set((s) => ({ inputRemapGeneration: s.inputRemapGeneration + 1 }))
+      useUiStore.getState().setStatus(msg('engine.missingInputRemembered', undefined, 'errors'))
+      return null
+    } catch (e) {
+      if (epoch !== projectEpoch) return null
+      return backendErrorText(e)
+    }
+  },
+  forgetInputRemap: async (rule) => {
+    const epoch = projectEpoch
+    try {
+      const res = await removeInputRemap(rule.kind, rule.from)
+      if (epoch !== projectEpoch) return null
+      const env = get().env
+      if (env?.project) set({ env: { ...env, project: { ...env.project, input_remap: res.input_remap } } })
+      // 删了规则：经它画成功的面板还挂着旧数据的样子，按「找不到就报错」重画
+      await restaleProjectRenders(epoch)
+      return null
+    } catch (e) {
+      if (epoch !== projectEpoch) return null
+      return backendErrorText(e)
+    }
+  },
   requestDependencyPreparation: (offer, projectId) => {
     if (projectId !== undefined && projectId !== currentProjectId()) return
     if (get().dependencyPreparation) return
@@ -146,11 +226,7 @@ export const useEnvStore = create<EnvState>((set, get) => ({
     if (error) return error
     get().dismissAdoptedEnvironment()
     // 后端已关掉本项目的会话；每个在用的面板都要按原来的环境重建（不只是失败的那些）
-    const { useRenderStore } = await import('@/store/renderStore')
-    if (epoch !== projectEpoch) return null
-    const render = useRenderStore.getState()
-    const ids = [...new Set(Object.values(render.byKey).map((v) => v.fileId))]
-    if (ids.length) render.markStale(ids)
+    await restaleProjectRenders(epoch)
     return null
   },
 
@@ -279,9 +355,16 @@ export const useEnvStore = create<EnvState>((set, get) => ({
         env: { ...env, project: { open: false } },
         workdirConfirmation: null,
         dependencyPreparation: null,
+        missingInput: null,
         adoptedEnvironment: null,
       })
-    else set({ workdirConfirmation: null, dependencyPreparation: null, adoptedEnvironment: null })
+    else
+      set({
+        workdirConfirmation: null,
+        dependencyPreparation: null,
+        missingInput: null,
+        adoptedEnvironment: null,
+      })
     void get().refresh()
   },
 
