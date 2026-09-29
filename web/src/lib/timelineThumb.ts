@@ -39,13 +39,19 @@ function svgImageSource(svg: string, w: number, h: number): string {
   return URL.createObjectURL(new Blob([sized], { type: 'image/svg+xml' }))
 }
 
+/**
+ * 载入并**解码完**再交出去：`onload` 只说字节到了，不保证解码好了——内存缓存里的图
+ * `onload` 立刻就来，WebKit 上紧接着 `drawImage` 可能什么都画不上（Windows 的 WebKit
+ * 在 CI 上量到过：同一个素材图，前一个节点画上了、下一个节点只剩文字）。`decode()` 等到
+ * 真的能画；不支持或解码失败就照旧交出去，由画完之后的「白画了」判据兜底。
+ */
 function loadImage(src: string): Promise<HTMLImageElement | null> {
   return new Promise((resolve) => {
     const img = new Image()
     const timer = window.setTimeout(() => resolve(null), IMAGE_TIMEOUT_MS)
     img.onload = () => {
       window.clearTimeout(timer)
-      resolve(img)
+      void (img.decode ? img.decode() : Promise.resolve()).catch(() => undefined).then(() => resolve(img))
     }
     img.onerror = () => {
       window.clearTimeout(timer)
@@ -91,6 +97,7 @@ async function loadFrom(
   source: NonNullable<PanelSource>,
   wPx: number,
   hPx: number,
+  retry = false,
 ): Promise<{ img: HTMLImageElement; revoke?: string } | null> {
   if (kind === 'svg') {
     if (!source.svg) return null
@@ -101,7 +108,7 @@ async function loadFrom(
     return null
   }
   if (!source.url) return null
-  const img = await loadImage(source.url)
+  const img = await loadImage(retry ? `${source.url}${source.url.includes('?') ? '&' : '?'}thumbRetry=1` : source.url)
   return img ? { img } : null
 }
 
@@ -158,10 +165,14 @@ async function drawObject(
     )
     const before = snapshotBox(ctx, box)
     const steps: string[] = []
-    for (const kind of ['svg', 'url'] as const) {
-      const got = await loadFrom(kind, source, fullW * 2, fullH * 2)
+    // SVG → 素材图 → 素材图再取一次（绕开内存缓存里那张画不上的，新发一个请求）
+    const attempts = [['svg', false], ['url', false], ['url', true]] as const
+    for (const [kind, retry] of attempts) {
+      // 再取一次只在素材图那一路没画上（白画了 / 载入失败）时
+      if (retry && !steps.some((st) => st === 'url:blank' || st === 'url:load-failed')) break
+      const got = await loadFrom(kind, source, fullW * 2, fullH * 2, retry)
       if (!got) {
-        if (source[kind]) steps.push(`${kind}:load-failed`)
+        if (source[kind]) steps.push(`${kind}${retry ? '-retry' : ''}:load-failed`)
         continue
       }
       const { img, revoke } = got
@@ -186,10 +197,10 @@ async function drawObject(
       if (revoke) URL.revokeObjectURL(revoke)
       // 画完一个像素都没变 = 这一路白画了（解码出了一张空图）：换下一路
       if (unchanged(ctx, box, before)) {
-        steps.push(`${kind}:blank`)
+        steps.push(`${kind}${retry ? '-retry' : ''}:blank`)
         continue
       }
-      steps.push(`${kind}:ok`)
+      steps.push(`${kind}${retry ? '-retry' : ''}:ok`)
       break
     }
     trace({ panel: o.id, steps })
