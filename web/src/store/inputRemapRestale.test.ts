@@ -11,6 +11,8 @@ import { useScriptRunStore } from './scriptRunStore'
  */
 
 let assetListCalls = 0
+let inflightInvalidations = 0
+const probed: string[] = []
 
 const STATE = { path: '/p/.tavotto/input-remap.json', rules: [], errors: [] }
 
@@ -18,6 +20,10 @@ globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
   if (String(url).includes('/api/runtime/assets')) {
     assetListCalls += 1
     return new Response(JSON.stringify({ assets: [] }), { status: 200 })
+  }
+  if (String(url).includes('/api/registry/probe')) {
+    probed.push(JSON.parse(String(init?.body ?? '{}')).script)
+    return new Response('{}', { status: 404 })
   }
   if (String(url).includes('/api/engine/input-remap')) {
     const rule = { kind: 'prefix', from: '/old/data', to: '/new/data' }
@@ -43,6 +49,9 @@ function seed() {
     assets: [],
   })
   assetListCalls = 0
+  inflightInvalidations = 0
+  probed.length = 0
+  useRenderStore.setState({ invalidateInflight: () => void (inflightInvalidations += 1) })
   // 「运行并发现图」的结果（Codex 评 #716 P2）：按旧映射捕获的描述符、在飞的那次都要作废；失败态不动
   const run = (phase: string, extra = {}) =>
     ({ phase, descriptors: [], droppedFigures: 0, error: null, cancelRequested: false, gen: 1, ...extra })
@@ -54,6 +63,10 @@ function seed() {
       'busy.py': run('running'),
       'lost.py': run('missing_input', { error: { code: 'missing_input', message: '', params: {} } }),
       'broken.py': run('failed', { error: { code: 'script_error', message: '', params: {} } }),
+      // 捕获了缺失的 open() 之后没出图、带「找不到数据」载荷（Codex 评 #716 P2 第三轮）：指认之后要重跑
+      'nofig.py': run('no_figure', {
+        error: { code: 'script_no_figure', message: '', params: {}, missing_input: { requested: 'x.csv' } },
+      }),
     } as never,
   })
 }
@@ -77,8 +90,10 @@ describe('改指表变了：成功画过的面板同样重画', () => {
     expect(useRenderStore.getState().tracked['ok.py']).toBe(true)
     expect(runtimeChecked()).toBe(false)
     expect(assetListCalls).toBe(1)
-    // 「找不到数据」失败的那条由代际订阅重跑（它会进 starting_runtime），其余失败态原样
-    expect(probeScripts()).toEqual(['broken.py', 'lost.py'])
+    expect(inflightInvalidations).toBe(1) // 在途的旧条件渲染作废（Codex 评 #716 P1）
+    // 「没出图 + 找不到数据」那条：先收集、再作废、再重跑——真的发出了一次试运行；其余失败态原样
+    expect(probed).toEqual(['nofig.py'])
+    expect(probeScripts()).toEqual(['broken.py', 'lost.py', 'nofig.py'])
   })
 
   it('删一条规则：经它画成功的面板标 stale（回到「找不到就报错」）', async () => {
@@ -88,6 +103,8 @@ describe('改指表变了：成功画过的面板同样重画', () => {
     expect(staleOf('missing.py')).toBe(true)
     expect(runtimeChecked()).toBe(false)
     expect(assetListCalls).toBe(1)
+    expect(inflightInvalidations).toBe(1) // 在途的旧条件渲染作废（Codex 评 #716 P1）
     expect(probeScripts()).toEqual(['broken.py', 'lost.py'])
+    expect(probed).toEqual([]) // 删规则不重跑：只作废
   })
 })

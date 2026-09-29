@@ -137,21 +137,29 @@ let projectEpoch = 0
  * 后端刚关掉本项目的会话、且变的东西说不清影响哪些面板（换环境、改指表增 / 换 / 删）：
  * 每个在用的面板都标 stale 重建——不只是失败的那些，成功画过的可能是按旧条件画的。
  * 由试运行 / 渲染派生、会随之变的前端缓存全在这一处作废（ADR 0106 的清单）：
- *   - renderStore：每个面板标 stale（SVG / manifest / 近期档随之换代，预览与挂载层跟着渲染键走）；
+ *   - renderStore：在途的渲染作废（换代 + abort，晚到的旧回包丢弃），每个面板标 stale（SVG / manifest /
+ *     近期档随之换代，预览与挂载层跟着渲染键走）；
  *   - runtimeAssetStore：已查过的判定重查、素材清单重取（后端 stale 阶梯把改指表指纹算在判据里）；
  *   - scriptRunStore：「运行并发现图」已捕获的结果与在飞的那次作废。
  * 回 false = 等 store 加载期间换了项目（B 的面板与素材一个都不动）。
  */
-async function restaleProjectRenders(epoch: number): Promise<boolean> {
+async function restaleProjectRenders(epoch: number, retryMissingInput = false): Promise<boolean> {
   const [{ useRenderStore }, { useRuntimeAssetStore }] = await Promise.all([
     import('@/store/renderStore'),
     import('@/store/runtimeAssetStore'),
   ])
   if (epoch !== projectEpoch) return false
   // 素材库「运行并发现图」的结果：按旧条件捕获的描述符不能再拿去「添加到画布」。scriptRunStore
-  // 依赖本 store，这里 import 它会让 import 环变大——它订阅这个代际，自己作废
-  useEnvStore.setState((s) => ({ probeResultsGeneration: s.probeResultsGeneration + 1 }))
+  // 依赖本 store，这里 import 它会让 import 环变大——它订阅这两个代际，自己作废 / 重跑。
+  // **同一次更新里一起推进**：订阅方先记下要重跑的（带「找不到数据」载荷的），再作废，再重跑——
+  // 分两次推进的话，作废先删掉「没出图 + 找不到数据」那一行，重跑那一代就找不到它（Codex 评 #716 P2）
+  useEnvStore.setState((s) => ({
+    probeResultsGeneration: s.probeResultsGeneration + 1,
+    ...(retryMissingInput ? { inputRemapGeneration: s.inputRemapGeneration + 1 } : {}),
+  }))
   const render = useRenderStore.getState()
+  // 在途的那几次是按旧条件画的：先作废（换代 + abort），晚到的回包不会把 stale 清掉、把旧图当权威
+  render.invalidateInflight()
   const ids = [...new Set(Object.values(render.byKey).map((v) => v.fileId))]
   if (ids.length) render.markStale(ids)
   const runtime = useRuntimeAssetStore.getState()
@@ -194,10 +202,8 @@ export const useEnvStore = create<EnvState>((set, get) => ({
       set({ missingInput: null })
       // 后端已经关掉了这个项目的会话；失败的面板重排，经旧规则画成功的也要重画
       // （同 kind / from 的规则被这次替换时，它们读的是旧位置的数据）
-      if (!(await restaleProjectRenders(epoch))) return null
-      // 素材库「运行并发现图」那条入口失败的脚本同样重跑：scriptRunStore 订阅这个代际
-      // （它依赖本 store；反过来 import 会成环）
-      set((s) => ({ inputRemapGeneration: s.inputRemapGeneration + 1 }))
+      // 素材库「运行并发现图」那条入口因「找不到数据」失败的脚本同样重跑（第二个参数）
+      if (!(await restaleProjectRenders(epoch, true))) return null
       useUiStore.getState().setStatus(msg('engine.missingInputRemembered', undefined, 'errors'))
       return null
     } catch (e) {

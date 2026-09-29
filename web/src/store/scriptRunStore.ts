@@ -224,14 +224,14 @@ interface ScriptRunStore {
    */
   rerunGated: (phase: 'needs_workdir' | 'needs_preparation', script?: string) => void
   /**
-   * 用户指认了数据位置之后（ADR 0106）：把这次因「找不到数据」失败的脚本重新试运行一遍——
-   * 带 `missing_input` 载荷的错误（`missing_input` 与「跑通了但没出图」两种）都算。
+   * 此刻因「找不到数据」失败、指认了数据位置之后要重跑的脚本（ADR 0106）——带 `missing_input` 载荷的
+   * 错误（`missing_input` 与「跑通了但没出图」两种）都算。只读；重跑由 envStore 代际订阅发起。
    */
-  rerunMissingInput: () => void
+  missingInputScripts: () => string[]
   /**
    * 改指表变了（ADR 0106）：按旧映射跑出来的结果作废——已捕获的描述符（尺寸、指纹、「添加到画布」
    * 用的就是它们）与「跑通了但没出图」回 idle；在飞的那次按迟到响应丢掉（它读的是旧位置）。
-   * 失败态不动：因「找不到数据」失败的由 `rerunMissingInput` 重跑，其余与数据位置无关。
+   * 失败态不动：因「找不到数据」失败的由代际订阅重跑（先收集、再作废、再重跑），其余与数据位置无关。
    */
   invalidateCaptured: () => void
   clear: () => void
@@ -333,11 +333,10 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
     void cancelProbe(script).catch(() => {})
   },
 
-  rerunMissingInput: () => {
-    for (const [script, st] of Object.entries(get().byScript)) {
-      if (!isBusyPhase(st.phase) && st.error?.missing_input) void get().run(script)
-    }
-  },
+  missingInputScripts: () =>
+    Object.entries(get().byScript)
+      .filter(([, st]) => !isBusyPhase(st.phase) && st.error?.missing_input)
+      .map(([script]) => script),
 
   invalidateCaptured: () =>
     set((s) => {
@@ -385,11 +384,10 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
 
 // 改指表 / 环境变了（ADR 0106）：envStore 的两个代际——作废按旧条件捕获的结果、重跑因「找不到数据」失败的脚本
 useEnvStore.subscribe((state, prev) => {
-  // 先作废按旧条件捕获的结果，再重跑「找不到数据」的（同一次指认里两个代际都会变）
-  if (state.probeResultsGeneration !== prev.probeResultsGeneration) {
-    useScriptRunStore.getState().invalidateCaptured()
-  }
-  if (state.inputRemapGeneration !== prev.inputRemapGeneration) {
-    useScriptRunStore.getState().rerunMissingInput()
-  }
+  const store = useScriptRunStore.getState()
+  // 顺序是判据：**先收集**要重跑的（带「找不到数据」载荷的，含「没出图」那种），**再作废**旧条件下的
+  // 结果（它会删掉「没出图」那一行），**最后重跑**收集到的——不依赖作废时留哪些行（Codex 评 #716 P2）
+  const retry = state.inputRemapGeneration !== prev.inputRemapGeneration ? store.missingInputScripts() : []
+  if (state.probeResultsGeneration !== prev.probeResultsGeneration) store.invalidateCaptured()
+  for (const script of retry) void useScriptRunStore.getState().run(script)
 })
