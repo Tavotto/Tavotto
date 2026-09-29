@@ -39,6 +39,8 @@ ERROR_TOKEN_INVALID = "script_edit_token_invalid"
 ERROR_PREVIEW_STALE = "script_edit_preview_stale"
 ERROR_NEEDS_UI = "script_edit_needs_ui"
 ERROR_RESTORE_CONFLICT = "script_restore_conflict"
+#: 复原时界面看到的那一版（`expected_sha256`）已经不是磁盘上的了：状态是旧的，按它选的复原方式不再成立
+ERROR_RESTORE_STALE = "script_restore_stale"
 ERROR_CODES = (
     ERROR_NOTHING_TO_CHANGE,
     ERROR_UNREADABLE,
@@ -47,6 +49,7 @@ ERROR_CODES = (
     ERROR_PREVIEW_STALE,
     ERROR_NEEDS_UI,
     ERROR_RESTORE_CONFLICT,
+    ERROR_RESTORE_STALE,
 )
 
 #: 某个对得上的常量为什么没改（闭集；前端逐条翻译）。

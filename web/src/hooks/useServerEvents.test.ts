@@ -206,6 +206,13 @@ describe('panel.file_changed', () => {
     expect(mockPanels).toHaveBeenCalledTimes(1)
   })
 
+  it('设置里的改写备份跟着重读：状态是按磁盘现算的，挂着旧的「恢复原脚本」点下去是整份覆盖', () => {
+    mockPanels.mockResolvedValue(panels([]))
+    const before = useEnvStore.getState().scriptBackupGeneration
+    handleServerEvent(ev({ kind: 'panel.file_changed', pj: 'p1', scripts: ['fig1.py'], stems: [] }))
+    expect(useEnvStore.getState().scriptBackupGeneration).toBe(before + 1)
+  })
+
   it('当前文档里没有对应面板时照样刷新，不报错', async () => {
     mockPanels.mockResolvedValue(panels([]))
     handleServerEvent(ev({ kind: 'panel.file_changed', pj: 'p1', stems: ['Nobody'] }))

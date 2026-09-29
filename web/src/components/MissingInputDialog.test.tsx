@@ -451,7 +451,7 @@ describe('MissingInputDialog', () => {
   it('设置里的改写备份：此刻的状态决定给哪个复原按钮', async () => {
     const backups: ScriptBackup[] = [
       { id: 'fig.py/0929_1', kind: 'input_path', script: 'fig.py', created: 1, pristine: true, state: 'current' },
-      { id: 'b.py/0929_2', kind: 'input_path', script: 'b.py', created: 2, pristine: true, state: 'changed' },
+      { id: 'b.py/0929_2', kind: 'input_path', script: 'b.py', created: 2, pristine: true, state: 'changed', current_sha256: 'b-now' },
       { id: 'c.py/0929_3', kind: 'input_path', script: 'c.py', created: 3, pristine: true, state: 'before' },
       { id: 'c.py/0929_4', kind: 'restore', script: 'c.py', created: 4, pristine: false, state: 'current' },
     ]
@@ -467,7 +467,8 @@ describe('MissingInputDialog', () => {
     expect(document.querySelector('[data-script-backup="c.py/0929_4"]'), '复原前的快照不列').toBeNull()
     await act(async () => (row('b.py/0929_2').querySelector('button') as HTMLButtonElement).click())
     await act(async () => {})
-    expect(restoreMock).toHaveBeenCalledWith('b.py/0929_2', 'undo_edits')
+    // 界面按哪一版给的按钮原样带回，后端锁里核对（Codex 评 #730 P1）
+    expect(restoreMock).toHaveBeenCalledWith('b.py/0929_2', 'undo_edits', 'b-now')
     expect(listMock, '复原之后重读列表').toHaveBeenCalledTimes(2)
   })
 

@@ -1944,6 +1944,7 @@ export default interface Resources {
       "script_readonly": "没有权限修改这个脚本：{{script}}。",
       "script_replace_failed": "替换失败，脚本没有被修改：{{script}}。关闭正在占用它的程序后重试。",
       "script_restore_conflict": "那几处路径之后又被改过，没法只撤销它们。可以选择整份恢复（当前版本会先另存一份）。",
+      "script_restore_stale": "{{script}} 在列出这份备份之后又被改过，列表已刷新。请按现在的状态重新选择复原方式（可以只撤销那几处路径）。",
       "session_auth_required": "没有活动会话。请重新启动 Tavotto，从它打开的链接进入。",
       "settings_dir_unusable": "{{key}} 不可用：{{reason}}",
       "source_changed": "写回被阻止：原始文件在此期间被修改过，请刷新素材后再试",

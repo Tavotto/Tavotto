@@ -686,20 +686,70 @@ def test_http_preview_commit_history_and_restore(app_project, tmp_path):
     assert (root / "tavottofile" / "script-backups" / backup_id / "original.py").read_bytes() == (
         original
     )
+
+    def seen() -> str:
+        """界面此刻列表里的那一版（复原请求原样带回）。"""
+        got = client.get("/api/script-backups", query_string={"script": "fig.py"}).get_json()
+        return next(b for b in got["backups"] if b["id"] == backup_id)["current_sha256"]
+
     # 之后用户又改了别处：只撤销那几处路径，别的修改保留
     (root / "fig.py").write_bytes(edited.replace(b"subplots()", b"subplots(dpi=90)"))
     resp = client.post(
-        "/api/script-backups/restore", json={"backup_id": backup_id, "mode": "undo_edits"}
+        "/api/script-backups/restore",
+        json={"backup_id": backup_id, "mode": "undo_edits", "expected_sha256": seen()},
     )
     assert resp.status_code == 200, resp.get_json()
     assert (root / "fig.py").read_bytes() == original.replace(b"subplots()", b"subplots(dpi=90)")
     # 整份复原：先把此刻的版本另存了一份
-    resp = client.post("/api/script-backups/restore", json={"backup_id": backup_id, "mode": "full"})
+    resp = client.post(
+        "/api/script-backups/restore",
+        json={"backup_id": backup_id, "mode": "full", "expected_sha256": seen()},
+    )
     assert resp.status_code == 200
     assert (root / "fig.py").read_bytes() == original
     assert len(client.get("/api/script-backups?script=fig.py").get_json()["backups"]) == 3
     everything = client.get("/api/script-backups").get_json()["backups"]
     assert [b["script"] for b in everything] == ["fig.py"] * 3
+
+
+def test_http_restore_refuses_a_stale_view_of_the_script(app_project, tmp_path):
+    """设置页一直开着、脚本之后被编辑器 / AI 改了：界面还挂着「恢复原脚本」（state=current），点下去是
+    整份覆盖——后端在锁里核对界面看到的那一版，对不上 `script_restore_stale`、原件不动（Codex 评 #730 P1）。"""
+    m, root = app_project
+    client = m.app.test_client()
+    original = EXISTS_SCRIPT.format(old=OLD).encode("utf-8")
+    (root / "fig.py").write_bytes(original)
+    chosen = _touch(tmp_path / "moved" / "data" / "values.txt", "3\n")
+    body = {"entry": f"{OLD}/data/values.txt", "chosen": str(chosen), "chosen_kind": "file"}
+    token = _preview(client, script="fig.py", **body).get_json()["token"]
+    assert client.post("/api/script-edit/commit", json={"token": token}).status_code == 200
+    listed = client.get("/api/script-backups", query_string={"script": "fig.py"}).get_json()[
+        "backups"
+    ][0]
+    assert listed["state"] == scriptbackup.STATE_CURRENT
+    later = (root / "fig.py").read_bytes() + b"# edited in another editor\n"
+    (root / "fig.py").write_bytes(later)
+    for extra in ({"expected_sha256": listed["current_sha256"]}, {}):  # 过期的那一版 / 没带
+        resp = client.post(
+            "/api/script-backups/restore", json={"backup_id": listed["id"], "mode": "full", **extra}
+        )
+        assert resp.status_code == 409, resp.get_json()
+        assert resp.get_json()["code"] == scriptedit.ERROR_RESTORE_STALE
+        assert (root / "fig.py").read_bytes() == later
+    fresh = client.get("/api/script-backups", query_string={"script": "fig.py"}).get_json()[
+        "backups"
+    ]
+    now = next(b for b in fresh if b["id"] == listed["id"])
+    assert now["state"] == scriptbackup.STATE_CHANGED  # 刷新之后界面给的是「只撤销那几处」
+    resp = client.post(
+        "/api/script-backups/restore",
+        json={
+            "backup_id": listed["id"],
+            "mode": "undo_edits",
+            "expected_sha256": now["current_sha256"],
+        },
+    )
+    assert resp.status_code == 200, resp.get_json()
 
 
 def test_http_commit_refuses_when_the_script_changed_after_the_preview(app_project, tmp_path):
@@ -883,7 +933,14 @@ def test_http_commit_rechecks_the_agent_under_the_script_lock_and_replaces_insid
     resp = client.post("/api/script-edit/commit", json={"token": token})
     assert resp.status_code == 200, resp.get_json()
     backup_id = resp.get_json()["backup"]["id"]
-    resp = client.post("/api/script-backups/restore", json={"backup_id": backup_id, "mode": "full"})
+    resp = client.post(
+        "/api/script-backups/restore",
+        json={
+            "backup_id": backup_id,
+            "mode": "full",
+            "expected_sha256": scriptbackup.sha256((root / "fig.py").read_bytes()),
+        },
+    )
     assert resp.status_code == 200, resp.get_json()
     assert held == [True, True]  # 提交与复原各一次
 

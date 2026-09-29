@@ -222,6 +222,7 @@
     "script_edit_token_invalid": "This confirmation has expired. The script was not modified. Preview again.",
     "script_edit_preview_stale": "The data location changed after the preview. The script was not modified. Preview again.",
     "script_edit_needs_ui": "Rewriting a script can only be confirmed in the Tavotto window.",
+    "script_restore_stale": "{{script}} changed after this backup was listed, so the list has been refreshed. Choose how to restore again based on its current state (you can undo just those paths).",
     "script_restore_conflict": "Those paths were changed again afterwards, so they can't be undone on their own. You can restore the whole file instead (the current version is saved first)."
   },
   "engine": {

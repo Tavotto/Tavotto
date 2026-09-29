@@ -3241,6 +3241,8 @@ export interface ScriptBackup {
   pristine: boolean
   /** 磁盘此刻：就是改后那份 / 改前那份（从未生效或已复原）/ 之后又被改过 */
   state: ScriptBackupState
+  /** 列表算 `state` 那一刻磁盘上脚本的 sha256（读不到为 null）；复原时原样带回，后端锁里核对 */
+  current_sha256?: string | null
   edits?: ScriptEditPreview['edits']
 }
 
@@ -3272,11 +3274,16 @@ export const listScriptBackups = (script?: string) =>
   )
 
 /** 复原：`full` 整份换回；`undo_edits` 只撤销那几处路径（之后的其它修改保留）。两种都先备份此刻的版本 */
-export const restoreScriptBackup = (backupId: string, mode: 'full' | 'undo_edits') =>
+/** `expectedSha256`：界面按哪一版给的按钮（列表里的 `current_sha256`）——磁盘之后又变了，后端拒（`script_restore_stale`） */
+export const restoreScriptBackup = (
+  backupId: string,
+  mode: 'full' | 'undo_edits',
+  expectedSha256: string | null | undefined,
+) =>
   jsonFetch<{ ok: boolean; script: string; unchanged?: boolean }>('/api/script-backups/restore', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ backup_id: backupId, mode }),
+    body: JSON.stringify({ backup_id: backupId, mode, expected_sha256: expectedSha256 ?? null }),
   })
 
 /** 只为**当前项目**切 safe worker 的工作目录模式（ADR 0047）。改了后端会关掉该项目的会话。 */

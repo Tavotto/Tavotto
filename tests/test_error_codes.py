@@ -210,6 +210,7 @@ USER_VISIBLE_CODES = {
     "script_edit_preview_stale": set(),
     "script_edit_needs_ui": set(),
     "script_restore_conflict": set(),
+    "script_restore_stale": {"script"},
     # --- U03（ADR 0057）：首开的「需要输入」与失效的显式选择。params 空：细节在结构化字段
     # （confirmation / explicit）里，文案不插值 ---
     "workdir_confirmation_required": set(),

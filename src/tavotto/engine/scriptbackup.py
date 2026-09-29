@@ -382,7 +382,9 @@ def history(store: Store, script: str | None = None) -> list[dict]:
                 current[name] = sha256(resolve(store.root, name).read_bytes())
             except (ScriptEditError, OSError):
                 current[name] = None
-        out.append(dict(meta, state=_state_of(meta, current[name])))
+        # `current_sha256`：列表算 state 那一刻磁盘上的脚本。复原时原样带回（`expected_sha256`），后端
+        # 在锁里核对——界面挂着的是旧状态时不许按它做整份覆盖（Codex 评 #730 P1）
+        out.append(dict(meta, state=_state_of(meta, current[name]), current_sha256=current[name]))
     out.sort(key=lambda m: m.get("created", 0), reverse=True)
     return out
 

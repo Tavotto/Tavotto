@@ -6166,7 +6166,10 @@ def api_script_backups():
 
 @app.post("/api/script-backups/restore")
 def api_script_backups_restore():
-    """ADR 0110 §七：复原。`{backup_id, mode: "full" | "undo_edits"}`。
+    """ADR 0110 §七：复原。`{backup_id, mode: "full" | "undo_edits", expected_sha256}`。
+
+    `expected_sha256` 是界面列出这份备份时磁盘上脚本的哈希（`history` 的 `current_sha256`）——锁里再核一次，
+    对不上 `script_restore_stale`（409）：界面按过期的状态给的按钮不许落地。
 
     磁盘此刻就是改后那份 → 整份换回原字节；之后又被改过 → `undo_edits` 逐处换回那几串（其余修改保留），
     `full` 整份恢复。两种都先把此刻的版本备份一份，绝不静默覆盖。
@@ -6185,6 +6188,15 @@ def api_script_backups_restore():
             _require_script_idle(path, script)
             current = path.read_bytes()
             now = engine_scriptbackup.sha256(current)
+            # 界面按哪一版给的按钮（列表里的 `current_sha256`）：磁盘之后又被编辑器 / AI 改过的话，
+            # 「恢复原脚本」这种整份覆盖会冲掉那些改动——锁里核对，对不上就拒，界面刷新后重选
+            # （Codex 评 #730 P1）。不带就是没看过：同样拒
+            if body.get("expected_sha256") != now:
+                raise engine_scriptbackup.ScriptEditError(
+                    engine_scriptedit.ERROR_RESTORE_STALE,
+                    "脚本在这之后又被改过，请刷新后重新选择复原方式",
+                    script=script,
+                )
             if now == (meta.get("before") or {}).get("sha256"):
                 return jsonify({"ok": True, "script": script, "unchanged": True})
             if now == (meta.get("after") or {}).get("sha256") or mode == "full":
