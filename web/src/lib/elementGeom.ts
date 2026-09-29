@@ -269,7 +269,7 @@ export function expandGroups(manifest: Manifest, gids: readonly string[]): strin
  *
  * 选中组之后拖动可以从成员子图里的任何东西起手（线、标题、图例、注释）——只比
  * `geomGid(hit)` 的话只有点在子图空白处 / 位图上才整组走，点到一条线就把选区换成那条线
- * （Codex #691）。走到组或整张图就停：组外的元素不会被当成成员。
+ * （Codex #691）。组外的元素一路走到整张图也碰不到任何条目，回 null。
  */
 export function entryUnder(
   manifest: Manifest,
@@ -280,12 +280,10 @@ export function entryUnder(
   const els = new Map(manifest.elements.map((e) => [e.gid, e]))
   const parentOf = structuralParent(manifest)
   const seen = new Set<string>()
-  for (let g: string | null = hit.gid; g && g !== 'figure' && !seen.has(g); g = parentOf(g)) {
+  for (let g: string | null = hit.gid; g && !seen.has(g); g = parentOf(g)) {
     seen.add(g)
-    const el = els.get(g)
-    if (!el) return null // 组节点（或不在表里的）：再往上只有整张图
-    const key = geomGid(el)
-    if (keys.has(key)) return key
+    const el = els.get(g) // 组节点不在元素表里：跳过、接着往上
+    if (el && keys.has(geomGid(el))) return geomGid(el)
   }
   return null
 }
