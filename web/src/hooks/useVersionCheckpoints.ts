@@ -1,6 +1,7 @@
 import { useDocumentStore } from '@/store/documentStore'
 import { setMomentSink, takeCheckpoint, markMoment } from '@/lib/timelineCheckpoint'
 import { onLayoutSaved } from '@/lib/layoutSaved'
+import { currentTimelineCtx } from '@/lib/timelineContext'
 
 /**
  * 排版时间线的自动节点：编辑停顿后落一个服务器快照；关键时刻另打点（ADR 0101）。
@@ -45,16 +46,20 @@ export function markWorkspaceOpened(): Promise<unknown> {
 export function startVersionCheckpoints(): () => void {
   const { debounceMs, minGapMs } = timing()
   let timer: number | undefined
-  let lastSaved = 0
+  // 上一个节点的时刻**按时间线上下文记**（项目代际 + 排版 id，Codex #679）：间隔说的是
+  // 「这份排版的时间线上别挤得太密」。共用一个时间戳的话，在 A 里保存完切到 B，B 第一次
+  // 停顿满 15 s 也要等 A 的 2 分钟走完，B 的时间线平白缺一段
+  const lastSaved = new Map<string, number>()
 
   const fire = () => {
-    const wait = lastSaved + minGapMs - Date.now()
+    const ctx = currentTimelineCtx()
+    const wait = (lastSaved.get(ctx) ?? 0) + minGapMs - Date.now()
     if (wait > 0) {
       timer = window.setTimeout(fire, wait)
       return
     }
     if (!useDocumentStore.getState().doc.objects.length) return
-    lastSaved = Date.now()
+    lastSaved.set(ctx, Date.now())
     void takeCheckpoint({ auto: true }).catch(() => {
       /* 自动节点失败不打扰编辑；下一轮改动会再试 */
     })
@@ -66,8 +71,10 @@ export function startVersionCheckpoints(): () => void {
   // 事，与命名节点、恢复前一样不因为画布空着就静默缺席；只有普通自动节点在空画布上不拍。
   // 「空」按节点实际拍的那份判——带快照时是快照里那份（`takeCheckpoint` 里同一个 `id.doc`）
   setMomentSink(async (moment, snapshot) => {
+    // 点打在哪份排版的时间线上，就重新计哪份的间隔（发起那一刻取，await 回来可能已经换了）
+    const ctx = snapshot?.ctx ?? currentTimelineCtx()
     const res = await takeCheckpoint({ auto: true, moment, allowEmpty: true }, snapshot)
-    if (res?.version) lastSaved = Date.now()
+    if (res?.version) lastSaved.set(ctx, Date.now())
     return res
   })
 

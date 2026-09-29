@@ -255,6 +255,31 @@ describe('自动节点的间隔（2 分钟）', () => {
     expect(MIN_GAP_MS).toBe(120_000)
   })
 
+  it('间隔按排版分别计：A 刚拍过，切到 B 停顿满 15 s 就拍 B 的，不等 A 的 2 分钟（Codex #679）', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    const stop = startVersionCheckpoints()
+    edit('t1')
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS + 10)
+    expect(posts.map((p) => p.url)).toEqual([expect.stringContaining('d_cp')])
+    await useDocumentStore.getState().switchDocument(emptyProject(), 'd_cp_b')
+    edit('b1')
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS + 10)
+    stop()
+    expect(posts).toHaveLength(2)
+    expect(posts[1].url).toContain('d_cp_b')
+  })
+
+  it('对照：同一份排版里 2 分钟的间隔照旧', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    const stop = startVersionCheckpoints()
+    edit('t1')
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS + 10)
+    edit('t2')
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS + 10)
+    stop()
+    expect(posts).toHaveLength(1)
+  })
+
   it('e2e 的时序注入只改这一次启动的间隔，不改产品默认值', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
     ;(window as unknown as Record<string, unknown>).__TAVOTTO_TIMELINE_TIMING__ = {

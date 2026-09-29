@@ -233,3 +233,51 @@ test('排版时间线：自动节点 → 命名 → 预览不改排版 → 恢�
   // 与这次重开
   await expect(drawer.locator('[data-timeline-moment="open"]')).toHaveCount(2, { timeout: 15_000 })
 })
+
+test('两张不透明、内容相同的面板完全重叠：上层不被误判成「白画了」（缩略图合成，Codex #679）', async ({
+  app,
+  page,
+}) => {
+  await page.addInitScript(() => {
+    ;(window as unknown as Record<string, unknown>).__TAVOTTO_THUMB_TRACE__ = []
+  })
+  const a = await app()
+  await page.goto(a.baseURL)
+  // 放一张图，⌘D 复制一张（副本偏移 4 mm），再用方向键推回原位（每下 0.5 mm）：两张完全重叠
+  await placeFigureAndBack(page)
+  await page.keyboard.press('ControlOrMeta+d')
+  for (let i = 0; i < 8; i++) await page.keyboard.press('ArrowLeft')
+  for (let i = 0; i < 8; i++) await page.keyboard.press('ArrowUp')
+  const panels = page.locator('[data-canvas-stage] [data-object-id^="p_"]')
+  await expect(panels).toHaveCount(2)
+  await expect
+    .poll(async () => {
+      const [b0, b1] = await Promise.all((await panels.all()).map((p) => p.boundingBox()))
+      return JSON.stringify(b0) === JSON.stringify(b1)
+    })
+    .toBe(true) // 前提：真的完全重叠（判据的主语）
+  // 存一个命名节点：合成它的缩略图
+  await (await only(page.locator('[data-timeline-name-button]'))).click()
+  const quick = await only(page.locator('[data-timeline-quick-name-input]'))
+  await quick.fill('重叠')
+  await quick.press('Enter')
+  await expect(quick).toHaveCount(0)
+  // 每一次面板合成都画上了（没有一步是 blank——上层画上去主画布不变，旧判据会判成白画）
+  await expect
+    .poll(async () => {
+      const t = (await page.evaluate(
+        () => (window as unknown as Record<string, unknown>).__TAVOTTO_THUMB_TRACE__,
+      )) as { steps?: string[] }[]
+      return t.filter((e) => e.steps).length >= 2 ? JSON.stringify(t) : 'pending'
+    })
+    .not.toBe('pending')
+  const trace = (await page.evaluate(
+    () => (window as unknown as Record<string, unknown>).__TAVOTTO_THUMB_TRACE__,
+  )) as { panel: string; steps?: string[] }[]
+  const composed = trace.filter((e) => e.steps)
+  expect(composed.length, JSON.stringify(trace)).toBeGreaterThanOrEqual(2)
+  for (const e of composed) {
+    expect(e.steps!.some((st) => st.endsWith(':blank')), JSON.stringify(trace)).toBe(false)
+    expect(e.steps!.at(-1), JSON.stringify(trace)).toMatch(/:ok$/)
+  }
+})

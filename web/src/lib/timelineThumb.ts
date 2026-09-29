@@ -112,24 +112,19 @@ async function loadFrom(
   return img ? { img } : null
 }
 
-/** 这块区域是不是**什么都没画上**（与画之前一模一样）；量不了（canvas 被 taint）就当画上了 */
-function unchanged(ctx: CanvasRenderingContext2D, box: DOMRect, before: Uint8ClampedArray | null): boolean {
-  if (!before) return false
+/**
+ * 这一路是不是**白画了**：在一张单独的透明图层上画，量这一层有没有任何一个像素不透明。
+ * 不能拿「画完之后主画布变没变」来判：两张不透明、内容相同的面板完全重叠时，上层画上去
+ * 主画布一个像素都不变，会被误判成白画、退回素材图（Codex #679）。量不了（图层被 taint）
+ * 就当画上了。
+ */
+function layerIsBlank(layer: HTMLCanvasElement): boolean {
   try {
-    const after = ctx.getImageData(box.x, box.y, box.width, box.height).data
-    for (let i = 0; i < after.length; i++) if (after[i] !== before[i]) return false
+    const px = layer.getContext('2d')!.getImageData(0, 0, layer.width, layer.height).data
+    for (let i = 3; i < px.length; i += 4) if (px[i] !== 0) return false
     return true
   } catch {
     return false
-  }
-}
-
-function snapshotBox(ctx: CanvasRenderingContext2D, box: DOMRect): Uint8ClampedArray | null {
-  if (box.width < 1 || box.height < 1) return null
-  try {
-    return ctx.getImageData(box.x, box.y, box.width, box.height).data.slice()
-  } catch {
-    return null
   }
 }
 
@@ -154,16 +149,6 @@ async function drawObject(
       trace({ panel: o.id, result: 'no-source' })
       return
     }
-    // 落位包围盒（整数像素、夹在画布里）：画之前记一份，画完一比就知道这一路是不是白画了
-    const bx = Math.max(0, Math.floor(x))
-    const by = Math.max(0, Math.floor(y))
-    const box = new DOMRect(
-      bx,
-      by,
-      Math.min(ctx.canvas.width - bx, Math.ceil(x + w) - bx),
-      Math.min(ctx.canvas.height - by, Math.ceil(y + h) - by),
-    )
-    const before = snapshotBox(ctx, box)
     const steps: string[] = []
     // SVG → 素材图 → 素材图再取一次（绕开内存缓存里那张画不上的，新发一个请求）
     const attempts = [['svg', false], ['url', false], ['url', true]] as const
@@ -178,11 +163,18 @@ async function drawObject(
       const { img, revoke } = got
       const nw = img.naturalWidth || fullW
       const nh = img.naturalHeight || fullH
-      ctx.save()
-      ctx.globalAlpha = o.opacity ?? 1
-      ctx.translate(x + w / 2, y + h / 2)
-      if (rot) ctx.rotate((rot * Math.PI) / 180)
-      ctx.drawImage(
+      // 先画在一张与缩略图同尺寸的透明图层上（不透明度留到合成时再乘），量过有东西才合成上去
+      const layer = document.createElement('canvas')
+      layer.width = ctx.canvas.width
+      layer.height = ctx.canvas.height
+      const lctx = layer.getContext('2d')
+      if (!lctx) {
+        if (revoke) URL.revokeObjectURL(revoke)
+        break
+      }
+      lctx.translate(x + w / 2, y + h / 2)
+      if (rot) lctx.rotate((rot * Math.PI) / 180)
+      lctx.drawImage(
         img,
         (crop?.x ?? 0) * nw,
         (crop?.y ?? 0) * nh,
@@ -193,13 +185,16 @@ async function drawObject(
         cw,
         ch,
       )
-      ctx.restore()
       if (revoke) URL.revokeObjectURL(revoke)
-      // 画完一个像素都没变 = 这一路白画了（解码出了一张空图）：换下一路
-      if (unchanged(ctx, box, before)) {
+      // 这一层一个不透明像素都没有 = 这一路白画了（解码出了一张空图）：换下一路
+      if (layerIsBlank(layer)) {
         steps.push(`${kind}${retry ? '-retry' : ''}:blank`)
         continue
       }
+      ctx.save()
+      ctx.globalAlpha = o.opacity ?? 1
+      ctx.drawImage(layer, 0, 0)
+      ctx.restore()
       steps.push(`${kind}${retry ? '-retry' : ''}:ok`)
       break
     }
