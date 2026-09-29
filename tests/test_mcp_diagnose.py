@@ -439,7 +439,8 @@ def test_an_old_pipx_engine_without_a_manifest_is_not_a_desktop_install(old_engi
     code, hint = launcher.diagnose_resolved(old_engine["found"], NOTHING_IMPORTABLE)
 
     assert code == "engine_incompatible", hint
-    assert OLD in hint and old_engine["python"] in hint
+    assert OLD in hint and "虚拟环境" in hint
+    assert old_engine["python"] not in hint, "路径不出门：只报环境类别（Codex #724 P1）"
     assert "装的是 Tavotto 桌面版" not in hint
     assert "--provision" not in hint, "引擎已经在了，恢复方向是升级，不是旁边再建一个"
     steps = launcher._recovery_steps("engine_incompatible")
@@ -550,6 +551,10 @@ def test_health_names_the_old_engine_end_to_end(old_engine, tmp_path):
     assert report["code"] == "engine_incompatible", report
     assert report["engine_version"] == OLD
     assert report["min_tavotto_version"] is None
+    # 找到的引擎只报环境类别、不报路径：话术与字段都进模型看得见的 tavotto_health（Codex #724 P1）
+    assert old_engine["python"] not in report["error"], report["error"]
+    assert "engine_python" not in report
+    assert report["engine_where"] == "一个虚拟环境（venv）", report
 
     pluginmanifest.write_build_manifest(
         plugin,
@@ -819,6 +824,40 @@ def test_diagnosis_takes_the_index_from_the_engines_interpreter(old_engine, monk
     code, hint = launcher.diagnose_resolved(old_engine["found"], NOTHING_IMPORTABLE)
     assert code == "engine_too_old"
     assert "--index-url https://pypi.org/simple" in hint and ALIYUN in hint
+
+
+def test_the_degraded_payload_names_the_found_engine_without_its_path():
+    """降级 server 的 `tavotto_health`：找到的引擎只报版本 + 环境类别，用户目录下的路径不出门（Codex #724 P1）。"""
+    py = "/home/alice/.local/pipx/venvs/tavotto/bin/python"
+    payload = launcher._degraded_payload(
+        "engine_too_old",
+        "hint",
+        {"found_engine": {"python": py, "version": "0.15.0"}, "pip_index": None},
+    )
+    assert payload["engine"]["found"] == {"version": "0.15.0", "where": "pipx 的 tavotto 环境"}
+    assert "alice" not in json.dumps(payload, ensure_ascii=False)
+
+
+def test_a_healthy_resolution_asks_the_resolved_engines_pip(monkeypatch, tmp_path):
+    """启动器解释器 import 不到、解析到另一个能用的引擎解释器（健康一路）：pip 索引也要问**那个**
+    解释器（它 venv 里 `pip config --site` 配的镜像），与降级一路同一个 `effective_pip_index`（Codex #724）。"""
+    other = str(tmp_path / "engine-venv" / "bin" / "python")
+    asked: list = []
+    monkeypatch.setattr(launcher, "_current_engine_ok", lambda: False)
+    monkeypatch.setattr(
+        launcher, "resolve", lambda found: {"python": other, "source": "env", "tried": []}
+    )
+    monkeypatch.setattr(launcher, "pip_index", lambda environ=None: None)
+
+    def pip_index_of(python, **kw):
+        asked.append(python)
+        return {"url": ALIYUN, "source": "site", "mirror": True}
+
+    monkeypatch.setattr(launcher, "pip_index_of", pip_index_of)
+    report, _rc = launcher.health()
+    assert report["mode"] == "engine" and report["python"] == other, report
+    assert asked == [other], asked
+    assert report["pip_index"]["mirror"] is True, report["pip_index"]
 
 
 def test_version_numbers_never_touch_chinese_characters(old_engine, monkeypatch):

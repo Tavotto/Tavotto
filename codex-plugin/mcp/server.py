@@ -990,6 +990,25 @@ def engine_too_old_hint(
     )
 
 
+def python_location(python: "str | None") -> str:
+    """引擎装在**哪一类**环境里（pipx / venv / 解释器本身）——不报路径：体检与降级诊断进模型看得见的
+    `tavotto_health`，用户目录下的绝对路径不出门（Codex #724 P1，同 `pip_index` 的 `source`）。"""
+    if not python:
+        return "一个说不出位置的环境"
+    parts = {p.lower() for p in python.replace("\\", "/").split("/") if p}
+    if "pipx" in parts:
+        return "pipx 的 tavotto 环境"
+    root = os.path.dirname(os.path.dirname(python))
+    if os.path.isfile(os.path.join(root, "pyvenv.cfg")):
+        return "一个虚拟环境（venv）"
+    return "一个 Python 解释器（装在它自己的 site-packages 里）"
+
+
+def _found_engine_public(engine: dict) -> dict:
+    """说出口的「找到的那个引擎」：版本 + 环境类别，没有路径。"""
+    return {"version": engine.get("version"), "where": python_location(engine.get("python"))}
+
+
 def engine_incompatible_hint(
     engine: dict, plugin: "str | None" = None, index: "dict | None" = None
 ) -> str:
@@ -1003,7 +1022,7 @@ def engine_incompatible_hint(
     who = f"插件 {plugin} " if plugin else "这个插件"
     cmds = upgrade_commands(plugin, index)
     return (
-        f"这台机器上装着 Tavotto 引擎 {engine['version']}（在 {engine['python']} 里），"
+        f"这台机器上装着 Tavotto 引擎 {engine['version']}（在{python_location(engine.get('python'))}里），"
         f"但{who}的桥要 import 的那组引擎模块它 import 不全，所以宿主里的内嵌画布与整组"
         "工具都起不来。多半是这个引擎比插件旧，也可能是装残了（这份插件说不出它要求的"
         "最低引擎版本）。这不是「只装了桌面版」，交接照常能用。恢复：把引擎装成与插件"
@@ -1370,7 +1389,7 @@ def _degraded_payload(code: str, hint: str, resolution: "dict | None") -> dict:
             # 引擎**在**、只是版本对不上时（engine_too_old / engine_incompatible），
             # 把找到的那个说出口：{"python", "version"}
             **(
-                {"found": resolution["found_engine"]}
+                {"found": _found_engine_public(resolution["found_engine"])}
                 if resolution and resolution.get("found_engine")
                 else {}
             ),
@@ -1609,7 +1628,7 @@ def health() -> "tuple[dict, int]":
             if diag.get("engine"):
                 # 引擎在、只是版本对不上：版本与下限都说出口（`tavotto codex doctor` 读这两个字段）
                 report["engine_version"] = diag["engine"].get("version")
-                report["engine_python"] = diag["engine"].get("python")
+                report["engine_where"] = python_location(diag["engine"].get("python"))
                 report["min_tavotto_version"] = required_tavotto_version()
             # 恢复步骤第一条是 --provision：先替它把「拿什么建 venv」探一遍，让读体检
             # 的人（多半是模型）看得到「启动器是 3.9、但机器上有 3.13 可用」这一行，
@@ -1630,7 +1649,12 @@ def health() -> "tuple[dict, int]":
     # pip 从哪个索引装包（只读：环境变量 + pip 配置文件）。引擎要升级时，镜像滞后会让
     # 照常的升级命令装回旧版——读体检的一侧（`tavotto codex doctor`）据此给绕开写法（#721）
     if "pip_index" not in report:
-        report["pip_index"] = pip_index()
+        # 解析到的引擎解释器不是启动器自己时，那边的 pip 配置（`pip config --site` 配在引擎 venv 里的
+        # 镜像）也要问——与降级那一路同一个 `effective_pip_index`（Codex #724）
+        engine_py = report.get("python")
+        report["pip_index"] = effective_pip_index(
+            engine_py if engine_py and engine_py != sys.executable else None
+        )
     report["timings"] = {"health_ms": int((time.monotonic() - t0) * 1000)}
     return report, (0 if report["ok"] else 3)
 
