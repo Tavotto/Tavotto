@@ -200,23 +200,36 @@ def test_overlapping_shared_colorbars_stay_ungrouped(library):
     assert all("parent_gid" not in _el(man, cb["geom_gid"]) for cb in cbs)
 
 
-def test_moving_one_member_leaves_the_colorbar_in_place_and_in_the_group(library):
-    base = _render(library, "Shared")
+#: 组外 / 没被拖的成员「不动」的容差（figure 分数，manifest 取 4 位小数）。constrained 图上
+#: 拖共享色条的一个宿主，别的轴有 ≤ 7e-4（≈ 0.16 mm）的残差，连画三帧逐位相同、与 origin/main
+#: （没有本 PR）逐位相同——是 ADR 0100 钉位下共享色条的摆放读宿主包围盒，不是组带来的；
+#: 本 PR 要拦的缺陷（色条跟着 B 走）量级是拖动位移本身 5e-2
+_STAY_TOL = {"Shared": 1e-6, "SharedCL": 1e-3}
+
+
+@pytest.mark.parametrize("stem", ["Shared", "SharedCL"])
+def test_moving_one_member_leaves_the_colorbar_in_place_and_in_the_group(library, stem):
+    """constrained 图上同样：拖 B 被 ADR 0100 钉在写下的位置、C 与共享色条不跟也不被挤动。"""
+    base = _render(library, stem)
     cax = base["groups"][0]["members"][-1]
+    tol = _STAY_TOL[stem]
     b0 = _position(base, "axes_1")
     moved = [round(b0[0] - 0.05, 4), round(b0[1] + 0.05, 4), b0[2], b0[3]]
-    man = _render(library, "Shared", [{"gid": "axes_1", "prop": "position", "value": moved}])
+    man = _render(library, stem, [{"gid": "axes_1", "prop": "position", "value": moved}])
     assert _position(man, "axes_1") == pytest.approx(moved, abs=1e-4)
-    assert _position(man, "axes_2") == pytest.approx(_position(base, "axes_2"), abs=1e-6)
-    assert _position(man, cax) == pytest.approx(_position(base, cax), abs=1e-6)
+    assert _position(man, "axes_2") == pytest.approx(_position(base, "axes_2"), abs=tol)
+    assert _position(man, cax) == pytest.approx(_position(base, cax), abs=tol)
+    assert _position(man, "axes_0") == pytest.approx(_position(base, "axes_0"), abs=tol)
     # 重新布局之后仍是同一个组，色条没有被重新挂到 B 名下
     assert man["groups"] == [dict(base["groups"][0], bbox=man["groups"][0]["bbox"])]
     assert _el(man, cax)["parent_gid"] == base["groups"][0]["gid"]
 
 
-def test_group_move_keeps_relative_layout(library):
-    """整组平移 = 每个成员写同一个位移的 position；落下来的相对布局不变。"""
-    base = _render(library, "Shared")
+@pytest.mark.parametrize("stem", ["Shared", "SharedCL"])
+def test_group_move_keeps_relative_layout(library, stem):
+    """整组平移 = 每个成员写同一个位移的 position；落下来的相对布局不变。constrained 图上
+    每个成员（含色条轴）各自被 ADR 0100 钉住，组外的 A 不被挤动。"""
+    base = _render(library, stem)
     members = base["groups"][0]["members"]
     patches = []
     for g in members:
@@ -224,11 +237,11 @@ def test_group_move_keeps_relative_layout(library):
         patches.append(
             {"gid": g, "prop": "position", "value": [round(x - 0.1, 4), round(y + 0.02, 4), w, h]}
         )
-    man = _render(library, "Shared", patches)
+    man = _render(library, stem, patches)
     for p in patches:
         assert _position(man, p["gid"]) == pytest.approx(p["value"], abs=1e-4)
     assert man["groups"][0]["members"] == members
-    assert _position(man, "axes_0") == pytest.approx(_position(base, "axes_0"), abs=1e-6)
+    assert _position(man, "axes_0") == pytest.approx(_position(base, "axes_0"), abs=_STAY_TOL[stem])
 
 
 def test_mappable_colormap_reaches_the_group_colorbar(library):
