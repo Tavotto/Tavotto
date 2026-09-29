@@ -11,7 +11,7 @@ import { userEnvironmentName } from '@/lib/userEnvironmentText'
 import { listJoin } from '@/i18n/format'
 import { privatePythonOrigin, type PrivatePythonOffer } from '@/lib/api'
 import { RepairProgressLine } from './RepairProgressLine'
-import { privatePythonText } from './DependencyRepairCard'
+import { oneClickSentence, privatePythonText } from './DependencyRepairCard'
 
 /**
  * 跑前的那一次授权（U04，ADR 0061 §六）：后端起第一个 worker 之前看一眼脚本开跑要的第三方包
@@ -235,7 +235,7 @@ export function DependencyPrepareDialog() {
       }}
       title={
         simple
-          ? en('engine.oneClickSentence', { packages })
+          ? oneClickSentence(packages, privatePython)
           : en('engine.dependencyPrepareTitle', { count: plan.requirements.length })
       }
       description={!simple && complete.length ? en('engine.userEnvBody', { script: offer.script }) : undefined}

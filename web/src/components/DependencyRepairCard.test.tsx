@@ -366,14 +366,17 @@ describe('一键修复（2026-09-29：面向不懂 Python 的用户）', () => {
 
   it('默认可见的只有一句话 + 一个主按钮 +「详情」折叠标题（按可见元素数）', async () => {
     // 2026-09-29 用户：「太冗杂，坚决不能出现，一定要让用户一句话就能读懂」
-    for (const offer of [managedOnly(PRIVATE_PYTHON), OFFER]) {
+    for (const [offer, sentence] of [
+      [managedOnly(PRIVATE_PYTHON), en('oneClickSentenceDownload', { packages: 'lmfit', mb: 45 })],
+      [OFFER, en('oneClickSentence', { packages: 'lmfit' })],
+    ] as const) {
       await act(async () => root?.unmount())
       host?.remove()
       await render(offer)
       const card = document.querySelector('[data-one-click-repair]')!
       expect(card.getAttribute('data-one-click-repair')).toBe('tavotto_managed')
       expect(visibleBlocks(card)).toEqual([
-        { tag: 'p', text: en('oneClickSentence', { packages: 'lmfit' }) },
+        { tag: 'p', text: sentence },
         { tag: 'button', text: en('oneClickRepair') },
         { tag: 'summary', text: en('repairAdvanced') },
       ])
@@ -415,9 +418,9 @@ describe('一键修复（2026-09-29：面向不懂 Python 的用户）', () => {
     expect(visibleBlocks(card).filter((b) => b.tag === 'p')).toHaveLength(1)
   })
 
-  it('一句话里不出现版本号、路径、下载大小与「隔离环境」；这些都在「详情」里', async () => {
+  it('一句话里不出现版本号、路径与「隔离环境」；说明与明细都在「详情」里', async () => {
     await render(managedOnly(PRIVATE_PYTHON))
-    for (const jargon of ['3.13.15', '隔离', '/', 'Python 3', 'MB']) expect(mainText()).not.toContain(jargon)
+    for (const jargon of ['3.13.15', '隔离', '/', 'Python 3']) expect(mainText()).not.toContain(jargon)
     const details = document.querySelector('[data-repair-advanced]')!
     expect(details.textContent).toContain(en('oneClickCostDownload', { mb: 45 }))
     expect(details.textContent).toContain(en('oneClickBodyManaged', { product: PRODUCT_NAME, packages: 'lmfit' }))
@@ -438,6 +441,34 @@ describe('一键修复（2026-09-29：面向不懂 Python 的用户）', () => {
       await render(managedOnly(pp))
       expect(cost(), JSON.stringify(pp)).toBe(said)
       if (said === en('oneClickCostNetwork')) expect(mainText()).not.toContain('MB')
+    }
+  })
+
+  it('要下载私有 Python：下载大小用括号放进那一句里（点之前说出多大，仍是一句、一个句号）', async () => {
+    // 缺 origin 的老后端按 cached 推，cached=false 即下载
+    for (const pp of [PRIVATE_PYTHON, { ...PRIVATE_PYTHON, origin: 'download' as const }]) {
+      await act(async () => root?.unmount())
+      host?.remove()
+      await render(managedOnly(pp))
+      const sentence = document.querySelector('[data-one-click-sentence]')!.textContent ?? ''
+      expect(sentence).toContain('45 MB')
+      expect(visibleSentenceCount(document.querySelector('[data-one-click-repair]')!)).toBe(1)
+    }
+  })
+
+  it('安装包自带 / 已缓存 / 已就位的 Python：那一句里不提下载', async () => {
+    for (const pp of [
+      { ...PRIVATE_PYTHON, origin: 'bundled' as const, download_bytes: 0, cached: true, network_required: false },
+      { ...PRIVATE_PYTHON, origin: 'cached' as const, download_bytes: 0, cached: true, network_required: false },
+      // present_payload：已就位、没有 origin
+      { ...PRIVATE_PYTHON, required: false, download_bytes: 0, cached: true, network_required: false },
+    ]) {
+      await act(async () => root?.unmount())
+      host?.remove()
+      await render(managedOnly(pp))
+      const sentence = document.querySelector('[data-one-click-sentence]')!.textContent ?? ''
+      expect(sentence, JSON.stringify(pp)).not.toContain('MB')
+      expect(sentence).toBe(en('oneClickSentence', { packages: 'lmfit' }))
     }
   })
 

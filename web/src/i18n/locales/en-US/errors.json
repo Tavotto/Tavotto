@@ -457,7 +457,8 @@
     "repairStage_python": "Get Python ready",
     "repairStage_env": "Create the environment",
     "repairStage_packages": "Install packages",
-    "repairStage_rerun": "Run again"
+    "repairStage_rerun": "Run again",
+    "oneClickSentenceDownload": "This script is missing {{packages}}. One click installs it (about {{mb}} MB to download)."
   },
   "preflight": {
     "axisLabelFormat": "The axis title “{{label}}” isn't in the profile's “{{want}}” form.",

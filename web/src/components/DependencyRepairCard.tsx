@@ -6,6 +6,7 @@ import {
   type DependencyRepairOffer,
   type DependencyTarget,
   type InterpreterPin,
+  type PrivatePythonOffer,
   type SystemInterpreterRejection,
 } from '@/lib/api'
 import { useRenderStore } from '@/store/renderStore'
@@ -302,7 +303,7 @@ export function DependencyRepairCard({
       <div className="flex flex-col gap-2 rounded-md bg-surface p-3 shadow-card" data-one-click-repair={primary.kind}>
         <p className="text-sm leading-relaxed text-ink" data-one-click-sentence>
           {managed
-            ? en('oneClickSentence', { packages: pkg })
+            ? oneClickSentence(pkg, checking ? null : disclosed)
             : en('oneClickSentenceSystem', { module: pkg })}
         </p>
         <Button
@@ -449,6 +450,20 @@ function OpenEnvironment() {
       {translate('scripts.openEnvSettings', { ns: 'workspace' })}
     </Button>
   )
+}
+
+/**
+ * 一键修复的那一句。要下载私有 Python 时（`origin` 为 download，或缺字段时推断为下载）把大小用括号放进**同一句**
+ * ——既守住「点之前说出下载多大」（2026-09-28），又守住「一句话就能读懂」（2026-09-29）；安装包自带 / 已缓存 /
+ * 已就位时句子里不提下载。修复卡与跑前授权框共用
+ */
+export function oneClickSentence(packages: string, privatePython: PrivatePythonOffer | null): string {
+  return privatePython && privatePythonOrigin(privatePython) === 'download'
+    ? en('oneClickSentenceDownload', {
+        packages,
+        mb: Math.max(1, Math.round(privatePython.download_bytes / 1048576)),
+      })
+    : en('oneClickSentence', { packages })
 }
 
 /** Both the offer and the final plan must disclose the Python download before authorization. */

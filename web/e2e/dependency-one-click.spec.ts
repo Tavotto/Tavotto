@@ -216,7 +216,8 @@ test(
     const button = card.locator('[data-one-click-repair-button]')
     await expectReachable(page, button, '一键修复按钮')
     expect(await renderedBlocks(card)).toEqual([
-      'p:这个脚本还缺 openpyxl，点一下自动装好。',
+      // 要下载私有 Python：大小用括号放进同一句（点之前说出多大，仍是一句）
+      'p:这个脚本还缺 openpyxl，点一下自动装好（需下载约 25 MB）。',
       'button:一键修复',
       'summary:详情',
     ])

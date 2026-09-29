@@ -236,6 +236,11 @@ describe('DependencyPrepareDialog', () => {
       ),
     )
     expect(document.querySelector('[data-one-click-cost]')!.textContent).toBe(en('oneClickCostDownload', { mb: 25 }))
+    // 大小放进标题那一句里（括号），仍是一句
+    expect(dialog()!.querySelector('h2')!.textContent).toBe(
+      en('oneClickSentenceDownload', { packages: listJoin(['six', 'tabulate']), mb: 25 }),
+    )
+    expect(visibleSentenceCount(dialog()!)).toBe(1)
     // 同一时刻只开一份：先收掉这一份
     await act(async () => useEnvStore.getState().dismissDependencyPreparation())
     await act(async () =>
@@ -244,6 +249,7 @@ describe('DependencyPrepareDialog', () => {
       ),
     )
     expect(document.querySelector('[data-one-click-cost]')!.textContent).toBe(en('oneClickCostNetwork'))
+    expect(dialog()!.querySelector('h2')!.textContent).not.toContain('MB')
     expect(document.querySelector('[data-dependency-private-python]')!.textContent).toBe(
       en('dependencyPreparePrivatePythonBundled', { version: '3.13.15', product: PRODUCT_NAME }),
     )
