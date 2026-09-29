@@ -1445,6 +1445,25 @@ export function immovableMessage(el: ManifestElement): UiMessage {
   )
 }
 
+/**
+ * 选中的组因为有锁定成员整组不动（`elementGeom.groupHasLocked`），又在组里按下：点一下
+ * 照常钻进去选中点到的那个（`onTap`）；**真的拖起来**才说一句为什么，一次手势只说一次。
+ * 不写文档、不进历史——与 `explainImmovableDrag` 同一个形状，方向键微调说的是同一句。
+ */
+export function explainLockedGroupDrag(e: ReactPointerEvent, onTap: () => void) {
+  let told = false
+  trackPointer(e, {
+    onMove: () => {
+      if (told) return
+      told = true
+      useUiStore.getState().setStatus(msg('status.figureGroupLocked', undefined, 'workspace'))
+    },
+    onEnd: (moved, _ev, end) => {
+      if (!moved && !end.cancelled) onTap()
+    },
+  })
+}
+
 /** 按下图内元素开始拖动（PanelView 的单选分派）。回 false = 这个元素不能移动 */
 export function startInFigureDrag(
   e: ReactPointerEvent,

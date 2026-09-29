@@ -729,7 +729,8 @@
     "undone": "Undone: {{label}}",
     "panelRebuilt": "Rebuilt from the source script",
     "panelRerenderedNoRerun": "Re-rendered with the current edits; the source script was not re-run",
-    "rebuildFailed": "Couldn’t rebuild. {{error}}"
+    "rebuildFailed": "Couldn’t rebuild. {{error}}",
+    "figureGroupLocked": "This group has a locked member; unlock it to move or scale the group"
   },
   "tabs": {
     "allCanvases": "All canvases",

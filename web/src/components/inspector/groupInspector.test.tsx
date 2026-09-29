@@ -195,6 +195,20 @@ describe('选中组 → 组页', () => {
     await mount(GROUP)
     expect(document.querySelector('[data-group-page] [data-scale-apply]')).not.toBeNull()
   })
+
+  it.each([['axes_2'], ['axes_3.colorbar']])(
+    '组里锁住了 %s：整组缩放不摆，说清楚先解锁（与拖动 / 组框手柄 / 方向键同一条规则）',
+    async (locked) => {
+      useDocumentStore.getState().commit(literal('锁定'), (d) => {
+        ;(d.objects[0] as PanelObject).lockedGids = [locked]
+      })
+      await mount(GROUP)
+      expect(document.querySelector('[data-group-page] [data-scale-apply]')).toBeNull()
+      expect(document.querySelector('[data-group-member-locked]')?.textContent).toBe(
+        t('modelGroup.layoutMemberLocked', { ns: 'inspector' }),
+      )
+    },
+  )
 })
 
 describe('面包屑走真实父级', () => {

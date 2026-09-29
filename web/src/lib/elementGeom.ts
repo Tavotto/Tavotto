@@ -1,4 +1,4 @@
-import type { Manifest, ManifestElement } from './api'
+import type { Manifest, ManifestElement, ManifestGroup } from './api'
 import { segIntersectsSeg } from './pathGeom'
 import { t } from '@/i18n'
 import type { AlignMode } from './geometry'
@@ -248,23 +248,52 @@ export interface AlignEntry extends AlignItem {
 }
 
 /**
+ * 组里有被锁定的成员（成员本身，或共享的那条色条元素——锁的是它、几何在色条轴上）。
+ * 这样的组**整组不变换**：共享色条组的意义就是成员一起动，只挪没锁的那几个会把色条与
+ * 子图拆开；与画布对象的组「组内有锁定成员整组不动」（`store/actions.movableTargets`）同一条规则。
+ */
+export const groupHasLocked = (group: ManifestGroup, locked: readonly string[] = []): boolean =>
+  locked.length > 0 && [...group.members, group.colorbar_gid].some((g) => locked.includes(g))
+
+/** 选区里因为有锁定成员而整组不动的组（调用方据此说出来） */
+export const lockedGroupsIn = (
+  manifest: Manifest | null | undefined,
+  gids: readonly string[],
+  locked: readonly string[] = [],
+): ManifestGroup[] =>
+  (manifest?.groups ?? []).filter((g) => gids.includes(g.gid) && groupHasLocked(g, locked))
+
+/**
  * 选区里的组展开成它的成员（`Manifest.groups`）。组自己没有几何属性：整组平移 / 缩放
  * 就是成员（子图 + 共享的色条轴）按同一个参照框一起变换，每个成员写自己那条 position。
- * 有成员落位不归 Tavotto 管（`resizable: false`）的组不展开——只挪一部分会拆散它。
+ * 两种组不展开（展开为空 = 整组不动）：有成员落位不归 Tavotto 管（`resizable: false`）——
+ * 只挪一部分会拆散它；有成员被锁定（`groupHasLocked`）。
+ *
+ * **锁定只在这里判一次**：拖动（PanelView → `alignEntries`）、组框手柄（OverlaySvg →
+ * `resolveGroup`）、属性页的整组缩放（GroupPage / ElementInspector → `resolveGroup` /
+ * `alignEntries`）、方向键微调（`nudge.moverFor`）都经这一个出口，输入方式不同、锁定语义相同。
  */
-export function expandGroups(manifest: Manifest, gids: readonly string[]): string[] {
+export function expandGroups(
+  manifest: Manifest,
+  gids: readonly string[],
+  locked: readonly string[] = [],
+): string[] {
   if (!manifest.groups?.length) return [...gids]
   const out: string[] = []
   for (const gid of gids) {
     const group = manifest.groups.find((g) => g.gid === gid)
-    const parts = group ? (group.resizable ? group.members : []) : [gid]
+    const parts = group
+      ? group.resizable && !groupHasLocked(group, locked)
+        ? group.members
+        : []
+      : [gid]
     for (const g of parts) if (!out.includes(g)) out.push(g)
   }
   return out
 }
 
 /**
- * 命中的元素落在哪一个条目（成员）的子树里：自己或某个真实祖先（`structuralParent`，
+ * 命中的元素落在哪一个条目（成员，按 key = 几何落点 gid）的子树里：自己或某个真实祖先（`structuralParent`，
  * 先认显式 `parent_gid` 再按 gid 路径）的几何落点就是某个条目的 key，回那个 key；都不是回 null。
  *
  * 选中组之后拖动可以从成员子图里的任何东西起手（线、标题、图例、注释）——只比
@@ -273,10 +302,10 @@ export function expandGroups(manifest: Manifest, gids: readonly string[]): strin
  */
 export function entryUnder(
   manifest: Manifest,
-  entries: readonly AlignEntry[],
+  entryKeys: readonly string[],
   hit: ManifestElement,
 ): string | null {
-  const keys = new Set(entries.map((en) => en.key))
+  const keys = new Set(entryKeys)
   const els = new Map(manifest.elements.map((e) => [e.gid, e]))
   const parentOf = structuralParent(manifest)
   const seen = new Set<string>()
@@ -306,7 +335,7 @@ export function alignEntries(
   const out: AlignEntry[] = []
   const seen = new Set<string>()
 
-  for (const gid of expandGroups(manifest, gids)) {
+  for (const gid of expandGroups(manifest, gids, panel.lockedGids ?? [])) {
     const el = manifest.elements.find((e) => e.gid === gid)
     if (!el || !isAlignable(el)) continue
     const key = geomGid(el)

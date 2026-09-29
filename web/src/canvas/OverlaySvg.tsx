@@ -1020,6 +1020,7 @@ function Handle({
   const p = handlePos(box, dir)
   return (
     <rect
+      data-element-handle={dir}
       data-legend-scale={legendScale}
       x={p.x - HANDLE / 2}
       y={p.y - HANDLE / 2}

@@ -589,6 +589,16 @@ describe('图内元素：与拖动同一套移动规则', () => {
     expect(past()).toHaveLength(1)
   })
 
+  it('选中的组里有锁定成员：整组不动（不是只挪没锁的那几个），说出是锁定挡住的', async () => {
+    await setup({ manifest: groupManifest, panel: { lockedGids: ['axes_1'] } as Partial<PanelObject> })
+    editFigure([GROUP])
+    tap('ArrowRight', { shiftKey: true })
+    settle()
+    expect(livePanel().overrides).toHaveLength(0)
+    expect(past()).toHaveLength(0)
+    expect(status()).toContain('figureGroupLocked')
+  })
+
   it('锁定的图内元素、不能拖的元素：不动，并说出来', async () => {
     await setup({ panel: { lockedGids: [title.gid] } as Partial<PanelObject> })
     editFigure([title.gid])

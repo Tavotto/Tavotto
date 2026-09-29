@@ -615,7 +615,8 @@
     "memberSeparator": "、",
     "membersTitle_other": "成员（{{count}}）",
     "selectColorSource": "选中「{{label}}」",
-    "sharedColorbar": "共享色条组（{{members}}）"
+    "sharedColorbar": "共享色条组（{{members}}）",
+    "layoutMemberLocked": "组里有锁定的成员，整组不能移动或缩放。先在元素树里解锁它。"
   },
   "objectActions": "对象操作",
   "overlay": "覆盖层",

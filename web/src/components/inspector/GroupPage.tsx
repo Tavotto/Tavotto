@@ -3,7 +3,7 @@ import { ChevronRight } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import type { Manifest, ManifestGroup } from '@/lib/api'
-import { resolveGroup } from '@/lib/elementGeom'
+import { groupHasLocked, resolveGroup } from '@/lib/elementGeom'
 import { useExactPanelManifest, usePanelRender } from '@/store/renderStore'
 import { useUiStore } from '@/store/uiStore'
 import type { PanelObject } from '@/types/document'
@@ -127,6 +127,11 @@ export function GroupPage({
       <Section plainTitle title={translate('group.layout', { ns: 'inspector' })}>
         {!group.resizable ? (
           <p className="text-xs leading-relaxed text-ink-3">{gt('layoutLocked')}</p>
+        ) : groupHasLocked(group, panel.lockedGids) ? (
+          // 有锁定成员整组不动（`elementGeom.groupHasLocked`）：缩放控件不摆，说清楚要先解锁
+          <p className="text-xs leading-relaxed text-ink-3" data-group-member-locked>
+            {gt('layoutMemberLocked')}
+          </p>
         ) : !layout ? (
           <p className="text-xs leading-relaxed text-ink-3">{gt('layoutSyncing')}</p>
         ) : (

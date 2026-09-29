@@ -19,7 +19,13 @@
  *
  * 不吸附：步长固定的移动一吸就被拽回参考线上，离不开、也走不到想要的那一格。
  */
-import { alignEntries, expandGroups, isElementHidden, panelFullRect } from '@/lib/elementGeom'
+import {
+  alignEntries,
+  expandGroups,
+  isElementHidden,
+  lockedGroupsIn,
+  panelFullRect,
+} from '@/lib/elementGeom'
 import { msg } from '@/i18n'
 import type { Manifest } from '@/lib/api'
 import { useDocumentStore } from '@/store/documentStore'
@@ -120,6 +126,11 @@ const status = (key: string) =>
 function announceUnmovable(b: FigureBurst): void {
   const panel = findPanel(b.panelId)
   const manifest = panel ? displayedExactManifest(panel) : null
+  // 选中的组因为有锁定成员整组不动：与拖它时同一句（`explainLockedGroupDrag`）
+  if (lockedGroupsIn(manifest, b.gids, panel?.lockedGids).length) {
+    status('figureGroupLocked')
+    return
+  }
   const el = b.gids.length === 1 ? manifest?.elements.find((e) => e.gid === b.gids[0]) : undefined
   // 锁定 / 隐藏的不动是另一回事（用户自己锁的），不按「按设计」解释
   const own =
@@ -278,11 +289,12 @@ function startMover(b: FigureBurst): InFigureMove | null | 'unmovable' {
  * 与鼠标拖动同一套分派：两个以上可对齐的成员 = 整组平移（`groupMove`），否则按主选
  * （选区末位）那一个走 `inFigureMoveOf`。锁定的（命中层本来就点不中它们，元素树里
  * 仍选得到）与隐藏的不动。选中的组（ADR 0102，不在元素表里）先展开成成员——与拖组里
- * 任一成员时 `alignEntries` 的展开同一处；不能整体挪的组展开为空，照旧「不能移动」。
+ * 任一成员时 `alignEntries` 的展开同一处；不能整体挪的组（含有锁定成员的，整组不动）展开为空，
+ * 照旧「不能移动」，并说出是锁定挡住的（`announceUnmovable`）。
  */
 function moverFor(panel: PanelObject, manifest: Manifest, gids: string[]): InFigureMove | null {
   const locked = new Set(panel.lockedGids ?? [])
-  const els = expandGroups(manifest, gids)
+  const els = expandGroups(manifest, gids, panel.lockedGids ?? [])
     .filter((g) => !locked.has(g))
     .map((g) => manifest.elements.find((el) => el.gid === g))
     .filter((el): el is NonNullable<typeof el> => !!el && el.gid !== 'figure' && !isElementHidden(el))

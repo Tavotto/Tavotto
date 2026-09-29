@@ -30,6 +30,7 @@ import { mmToWorld, useViewportStore } from '@/store/viewportStore'
 import { seedExactRender } from '@/test/renderFixtures'
 import { emptyProject, type PanelObject } from '@/types/document'
 import { startGroupResize } from './interactions'
+import { OverlaySvg } from './OverlaySvg'
 import { PanelView } from './PanelView'
 import { useQuickEdit } from './quickEditStore'
 
@@ -267,6 +268,18 @@ afterEach(async () => {
   useInteractionStore.getState().end()
 })
 
+/** 在文档里锁住几个图内元素（元素树的锁：`PanelObject.lockedGids`） */
+function lock(gids: string[]) {
+  act(() => {
+    useDocumentStore.getState().commit(literal('锁定'), (d) => {
+      const p = d.objects.find((o) => o.id === 'p1') as PanelObject
+      p.lockedGids = gids
+    })
+    useDocumentStore.setState({ past: [], future: [] })
+  })
+}
+const statusText = () => JSON.stringify(useUiStore.getState().status ?? '')
+
 /* ------------------------------ 组 = 成员 ------------------------------ */
 
 describe('组展开成成员：几何只写成员自己的 position', () => {
@@ -393,5 +406,53 @@ describe('组框手柄 = 整组缩放', () => {
     expect(cb[0] + cb[2]).toBeCloseTo(x0 + w1, 3)
     expect(positionOf('axes_0')).toBeUndefined()
     expect(useDocumentStore.getState().past).toHaveLength(1)
+  })
+})
+
+describe('组里有锁定成员 = 整组不动（拖动 / 组框手柄 / 属性页缩放 / 方向键同一条规则）', () => {
+  // 锁子图（C）或锁共享的色条元素（几何在色条轴上）都算
+  it.each([['axes_2'], ['axes_3.colorbar']])(
+    '锁住 %s：拖组里没锁的成员不写任何 position，说出是锁定挡住的；选区仍是组',
+    async (locked) => {
+      lock([locked])
+      await mount()
+      act(() => useUiStore.getState().setSelectedGid(GROUP))
+      await drag(ON_B, 40)
+      expect(livePanel().overrides).toEqual([])
+      expect(useDocumentStore.getState().past).toHaveLength(0)
+      expect(statusText()).toContain('figureGroupLocked')
+      expect(useUiStore.getState().selectedGids).toEqual([GROUP])
+    },
+  )
+
+  it('锁住一个成员时点组里的东西不拖：照常钻进去选中它，不提示', async () => {
+    lock(['axes_2'])
+    await mount()
+    act(() => useUiStore.getState().setSelectedGid(GROUP))
+    useUiStore.setState({ status: null })
+    await drag(ON_C_LINE, 0)
+    expect(useUiStore.getState().selectedGids).toEqual(['axes_2.lines_0'])
+    expect(statusText()).not.toContain('figureGroupLocked')
+  })
+
+  it('组框手柄：没锁时 8 个，锁住一个成员后一个都不给；组的参照框也不再解析', async () => {
+    const handles = async () => {
+      const box = document.createElement('div')
+      document.body.appendChild(box)
+      const r = createRoot(box)
+      await act(async () => r.render(<OverlaySvg />))
+      const n = box.querySelectorAll('[data-element-handle]').length
+      await act(async () => r.unmount())
+      box.remove()
+      return n
+    }
+    // 手柄只画在已经挂上画面的那一版上（`useDisplayedExactManifest`）：先把面板挂上
+    await mount()
+    act(() => useUiStore.getState().setSelectedGid(GROUP))
+    expect(await handles()).toBe(8)
+    lock(['axes_1'])
+    expect(await handles()).toBe(0)
+    expect(resolveGroup(livePanel(), manifest(), [GROUP])).toBeNull()
+    expect(alignEntries(livePanel(), manifest(), [GROUP])).toEqual([])
   })
 })

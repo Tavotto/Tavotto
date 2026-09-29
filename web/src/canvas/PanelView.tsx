@@ -11,6 +11,7 @@ import {
   alignEntries,
   entryUnder,
   geomGid,
+  lockedGroupsIn,
   segIntersectsRect,
   selectionHasGroup,
 } from '@/lib/elementGeom'
@@ -66,6 +67,7 @@ import {
   guardStale,
   isElementHidden,
   pickElement,
+  explainLockedGroupDrag,
   startElementGroupMove,
   startInFigureDrag,
   trackPointer,
@@ -729,10 +731,21 @@ function ElementHitLayer({
     // 组的「任一成员」含成员子图里的东西（线、标题、图例…，`entryUnder` 沿真实父级找）；
     // 普通多选仍只认点到的正是选中的那一个
     const groupSelected = selectionHasGroup(manifest, ui.selectedGids)
+    // 选中的组有锁定成员（整组不动，`groupHasLocked`）而按在组里：点一下照常钻进去，
+    // 拖起来只说为什么——不落到下面的单选分派、把没锁的那个成员单独拖走
+    const locked = groupSelected ? lockedGroupsIn(manifest, ui.selectedGids, obj.lockedGids) : []
+    if (hit && manifest && locked.length && entryUnder(manifest, locked.flatMap((g) => g.members), hit)) {
+      explainLockedGroupDrag(e, () => useUiStore.getState().setSelectedGid(hit.gid))
+      return
+    }
     if (hit && manifest && (ui.selectedGids.length > 1 || groupSelected)) {
       const entries = alignEntries(obj, manifest, ui.selectedGids)
       const inSelection = groupSelected
-        ? entryUnder(manifest, entries, hit) !== null
+        ? entryUnder(
+            manifest,
+            entries.map((en) => en.key),
+            hit,
+          ) !== null
         : entries.some((en) => en.key === geomGid(hit))
       if (entries.length > 1 && inSelection) {
         startElementGroupMove(
