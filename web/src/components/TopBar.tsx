@@ -723,7 +723,13 @@ function ZoomControls() {
         width={168}
         align="end"
         trigger={
-          <Button size="md" aria-label={t('topbar.zoomValue', { percent: Math.round(zoom * 100) })} className="type-number">
+          <Button
+            size="md"
+            aria-label={t('topbar.zoomValue', { percent: Math.round(zoom * 100) })}
+            className="type-number"
+            // e2e 的稳定锚点：窄宽度下「适应画布」图标钮收起，要从这个菜单里点
+            data-zoom-menu
+          >
             {/* 会滚的数字（@sfinterface/numbers，2026-09-15 调研后只上这一处）：一步到位的缩放
                 （± / 预设 / 适应）只有变了的位滚过去，说的是「变了多少、往哪变」；滚轮 / 捏合是
                 连续输入，读数即时换（duration 0），柱子不会永远在半路。静止时与普通文字像素一致。
@@ -763,6 +769,7 @@ function ZoomControls() {
         <MenuItem
           shortcut={`${MOD}1`}
           onSelect={() => useViewportStore.getState().fitAnimated(page.w, page.h)}
+          data-fit-canvas-item
         >
           {t('topbar.fitCanvas')}
         </MenuItem>
