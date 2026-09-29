@@ -31,9 +31,14 @@ NETWORK_OUT = (
 )
 
 
+#: 用户自配源的四个环境变量——**在这里写死**，不从产品常量取：从产品取的话，产品那张表少一项，
+#: 参数化也跟着少一项，用例照样全绿（2026-09-29 变异实测）。
+SOURCE_ENV = ("PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL", "PIP_NO_INDEX", "PIP_FIND_LINKS")
+
+
 @pytest.fixture(autouse=True)
 def _no_user_source_env(monkeypatch):
-    for name in deprepair._PIP_SOURCE_ENV:
+    for name in SOURCE_ENV:
         monkeypatch.delenv(name, raising=False)
 
 
@@ -125,7 +130,7 @@ def test_the_mirror_is_tried_at_most_once(tmp_path, monkeypatch):
     assert len(_runs(runs)) == 2
 
 
-@pytest.mark.parametrize("env", deprepair._PIP_SOURCE_ENV)
+@pytest.mark.parametrize("env", SOURCE_ENV)
 def test_a_user_configured_source_is_never_bypassed(tmp_path, monkeypatch, env):
     """用户配过源（index / extra-index / 离线 wheelhouse）：网络失败也如实报失败，不去镜像。"""
     runs = tmp_path / "runs.jsonl"
