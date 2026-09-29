@@ -68,6 +68,12 @@ def test_package_identity_tracks_the_product():
     assert pkg["private"] is True
     assert pkg["type"] == "module"
     assert pkg["license"] == "AGPL-3.0-only"
+    assert pkg["homepage"] == brand.REPO_URL
+    assert pkg["repository"] == {
+        "type": "git",
+        "url": f"git+{brand.CODEX_PLUGIN_SOURCE_URL}",
+        "directory": brand.CODEX_PLUGIN_SUBDIR,
+    }
 
 
 def test_package_points_at_the_bundle_and_the_glue():

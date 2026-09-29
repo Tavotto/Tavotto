@@ -26,5 +26,7 @@
   `process.cwd()`**。启动器经 sh / cmd 起（不靠执行位）；serverName 与 `.mcp.json` 同名；超时按毫秒换算；
   技能提供者 `includeDefaultRoots: false` 且不与 base 的 `filesystem` 同名。`package.json` 的 `files` 覆盖
   胶水读的全部路径；三份文件进 `STAGE_REQUIRED`。安装规格唯一出处 `brand.DSH_*`。看护 `tests/test_dsh_bundle.py`。
+- 两种安装命令（`claude plugin …` 与 `dsh plugin …` 的规格 / 包名）凡在进版本库的 Markdown 里出现（ADR 与已发行的发行说明除外），
+  都要与 `brand.CLAUDE_*` / `brand.DSH_*` 拼出的整段相等：看护 `tests/test_install_commands_from_brand.py`，不按文件点名。
 - 看护：`tests/test_mcp_configure.py`（解包到树外按生成配置真起 server）、`tests/test_mcp_host_profiles.py`
   （八个 profile 的独立期望）、`tests/test_plugin_candidate.py` 末条（真实候选）。
