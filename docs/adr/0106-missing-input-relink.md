@@ -113,7 +113,7 @@ ovito `import_file`、h5py / netCDF 的原生打开、`exists` / `glob` / `listd
 
 **§用户拍板 B（经确认改写脚本里那一处路径常量）不在本次实现里**：ADR 0094 的写回脚本仍是 Proposed，
 仓库里没有可复用的备份 / 复原事务。它另开一个 PR，届时在这个对话框里给 `via ≠ open` 的条目加次级按钮。
-→ 设计与实现见 [ADR 0108](0108-rewrite-missing-input-path-in-script.md)（含 C++ 读取器的 `via = native` 归因）。
+→ 设计与实现见 [ADR 0110](0110-rewrite-missing-input-path-in-script.md)（含 C++ 读取器的 `via = native` 归因）。
 
 ## 用户拍板（2026-09-28）
 

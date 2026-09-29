@@ -95,7 +95,7 @@ interface EnvState {
   /** 设置里删一条改指规则；回 null 或一句失败原文 */
   forgetInputRemap: (rule: InputRemapRule) => Promise<string | null>
   /**
-   * 经确认改写脚本里的数据路径（ADR 0108）：改指救不回的条目（exists / glob / C++ 读取器）。
+   * 经确认改写脚本里的数据路径（ADR 0110）：改指救不回的条目（exists / glob / C++ 读取器）。
    * `rewritePreview` 非空时对话框显示确认页（逐行 diff、备份位置、勾选）；`rewriteSkipped` 是
    * 「一处都改不了」时后端逐条说的原因（对话框列出来，回到「请把数据放回原处」）。
    */

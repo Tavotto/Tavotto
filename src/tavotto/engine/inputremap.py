@@ -49,9 +49,9 @@ MAX_OTHERS = 20
 VIA_OPEN = "open"  # 经四个打开入口读：改指救得回来
 VIA_PROBE = "probe"  # exists / listdir / stat / import_file：改指救不回来（ADR 0106 §四）
 VIA_GLOB = "glob"  # glob 模式：同上，而且不是一个文件
-#: C++ 读取器（h5py / netCDF4 / xarray）的 ENOENT 对上了脚本里的一串常量（ADR 0108 §一）：同样救不回
+#: C++ 读取器（h5py / netCDF4 / xarray）的 ENOENT 对上了脚本里的一串常量（ADR 0110 §一）：同样救不回
 VIA_NATIVE = "native"
-#: 改指表救不回、只能改写脚本里那串常量的几档（ADR 0108 §八：对话框只给它们「改写脚本」）
+#: 改指表救不回、只能改写脚本里那串常量的几档（ADR 0110 §八：对话框只给它们「改写脚本」）
 VIAS_NEED_REWRITE = (VIA_PROBE, VIA_GLOB, VIA_NATIVE)
 
 
@@ -238,7 +238,7 @@ def _derive_dir(requested: str, chosen: str) -> dict:
 
 
 def derive_location(requested: str, chosen: str, *, chosen_is_dir: bool) -> dict:
-    """`derive` 的扩展（ADR 0108 §三）：条目还可能是文件夹或 glob 模式——改写脚本要用。
+    """`derive` 的扩展（ADR 0110 §三）：条目还可能是文件夹或 glob 模式——改写脚本要用。
 
     * glob（`data/*.csv`）：取不含通配符的目录前缀当「文件夹条目」推（指认的是其中一个文件时取
       它所在的文件夹），推完要求新模式**至少匹配一个**；
@@ -524,7 +524,7 @@ def native_miss(
 ) -> dict | None:
     """`script_error` 里的 ENOENT 事实（`figcapture.enoent_fact`）→ `missing_input` 事实，对不上回 None。
 
-    ADR 0108 §一：C++ 读取器不经四个打开入口，worker 说不出是哪串常量；这里拿脚本的静态证据对。
+    ADR 0110 §一：C++ 读取器不经四个打开入口，worker 说不出是哪串常量；这里拿脚本的静态证据对。
     候选只来自 `static_missing`（脚本里以常量出现、此刻哪儿都找不到的）。异常里的路径（`filename`，
     没有就是消息里引号括着的 `named`）按脚本写法那一侧（cwd 之内换回相对）与候选按路径段比：
     整串相等优先，其次候选是它的前缀（目录常量拼出来的）、路径段最长的那条。对不上任何一条——

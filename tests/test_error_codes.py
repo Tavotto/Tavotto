@@ -68,7 +68,7 @@ _CODE_REGISTRIES = (
     "tavotto.pdfbackend",
     # ADR 0106：数据改指的端点——`RemapError(code)` 由 app 的 400 漏斗转出
     "tavotto.engine.inputremap",
-    # ADR 0108：改写脚本里的数据路径与共享的备份底座——`ScriptEditError(code)` 由 app 的 409 漏斗转出
+    # ADR 0110：改写脚本里的数据路径与共享的备份底座——`ScriptEditError(code)` 由 app 的 409 漏斗转出
     "tavotto.engine.scriptbackup",
     "tavotto.engine.scriptedit",
     # issue #534：TIFF 素材的支持范围（`UnsupportedTiff(code)` 由 app 的 422 漏斗 / 导出作业转出）
@@ -191,7 +191,7 @@ USER_VISIBLE_CODES = {
     "input_remap_not_found_in_dir": {"name", "path"},
     "input_remap_requested_invalid": set(),
     "input_remap_rule_unknown": {"source"},
-    # ADR 0108：经确认改写脚本里的数据路径（`scriptbackup` / `scriptedit` 的 `ScriptEditError(code)`
+    # ADR 0110：经确认改写脚本里的数据路径（`scriptbackup` / `scriptedit` 的 `ScriptEditError(code)`
     # 由 app 的 409 漏斗转出）。`script_edit_nothing_to_change` 另带结构化的 `skipped`（对话框逐条列），
     # 不作占位符
     "script_is_symlink": {"script"},

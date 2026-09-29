@@ -1351,7 +1351,7 @@ def remap_target(rules, name: str, *, whole: bool = False) -> str | None:
     `from` 路径段最长的那条（更具体的赢）。相对路径只配相对的 `from`，绝对只配绝对的。
 
     `whole=True`：`name` 可以**就是** `prefix` 的 `from` 本身（换算成 `to`）——改写脚本里的
-    目录常量（`DATA = "/Users/a/proj"`，ADR 0108 §二）要这一档；worker 改道永远不用它（打开的
+    目录常量（`DATA = "/Users/a/proj"`，ADR 0110 §二）要这一档；worker 改道永远不用它（打开的
     是文件，`from` 是目录）。
     """
     parsed = remap_parts(name)
@@ -1551,7 +1551,7 @@ def quoted_name_in(exc: BaseException) -> str | None:
 
 def enoent_fact(exc: BaseException) -> dict | None:
     """build 失败、**不是**一次落空的只读打开（`missing_input_of` 说不出）时，异常链里的「文件不存在」
-    → `{filename, named, cwd}`，没有回 None（ADR 0108 §一）。
+    → `{filename, named, cwd}`，没有回 None（ADR 0110 §一）。
 
     只报事实、不归因：C++ 读取器（h5py / netCDF4 / xarray / ovito）不经四个打开入口，worker 不知道
     脚本里哪串常量对应它；归因在父进程（`inputremap.native_miss`，拿脚本的静态证据对）。
@@ -1593,7 +1593,7 @@ def missing_input_of(exc: BaseException, misses: InputMisses) -> dict | None:
     filename = getattr(fnf, "filename", None)
     if not isinstance(filename, (str, os.PathLike)):
         # h5py 这类 C 层读取器不带 `filename`、只把路径写进消息：说得出就按它对账——否则一次被
-        # `try` 吞掉的可选读（`open("local.cfg")`）会被当成「最近一次落空」指错文件（ADR 0108 §一）
+        # `try` 吞掉的可选读（`open("local.cfg")`）会被当成「最近一次落空」指错文件（ADR 0110 §一）
         filename = quoted_name_in(fnf)
     requested: str | None = None
     if isinstance(filename, (str, os.PathLike)):

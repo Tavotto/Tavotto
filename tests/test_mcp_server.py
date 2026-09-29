@@ -3004,7 +3004,7 @@ def test_open_carries_the_missing_input_offer_and_points_back_to_tavotto(project
 
 
 def test_a_probe_or_native_miss_points_to_the_confirmed_rewrite_in_tavotto(project, monkeypatch):
-    """exists / glob / C++ 读取器（ADR 0108）：recovery 指向 Tavotto 窗口里经确认的改写，不叫 Agent 改脚本。"""
+    """exists / glob / C++ 读取器（ADR 0110）：recovery 指向 Tavotto 窗口里经确认的改写，不叫 Agent 改脚本。"""
     offer = {
         "script": "fig1.py",
         "requested": "/Users/a/proj/run/x.h5",
