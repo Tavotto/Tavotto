@@ -171,3 +171,29 @@ describe('样式示例图：每一笔都在画框里（Codex #703：长的朝外
     expect(b).toBeCloseTo(a, 6)
   })
 })
+
+describe('样式示例图：字号超预算时画出来的比例与样式一致（Codex #703）', () => {
+  it('72 pt 刻度字 + 20 pt 朝外刻度 + 10 pt 刻度线宽 + 4 pt 边框：图上的比例 = 样式里的比例', () => {
+    const svg = render({
+      element: {
+        ticks: { fontsize: 72, direction: 'out', length: 20, width: 10 },
+        axes: { spine_linewidth: 4 },
+        line: { linewidth: 3 },
+      },
+    })
+    // 横轴刻度线（竖线、黑色）与刻度文字「30」
+    const tick = [...svg.querySelectorAll('line')].find(
+      (l) => l.getAttribute('stroke') === '#111' && l.getAttribute('x1') === l.getAttribute('x2'),
+    )!
+    const label = [...svg.querySelectorAll('text')].find((t) => t.textContent === '30')!
+    const fontPt = num(label, 'font-size')
+    expect(fontPt).toBeLessThan(72) // 确实缩过
+    const length = Math.abs(num(tick, 'y1') - num(tick, 'y2'))
+    expect(length / fontPt).toBeCloseTo(20 / 72, 6)
+    expect(num(tick, 'stroke-width') / fontPt).toBeCloseTo(10 / 72, 6)
+    expect(num(svg.querySelector('rect')!, 'stroke-width') / fontPt).toBeCloseTo(4 / 72, 6)
+    expect(num(svg.querySelector('polyline')!, 'stroke-width') / fontPt).toBeCloseTo(3 / 72, 6)
+    // 读屏说的仍是样式里的真实数字
+    expect(svg.getAttribute('aria-label')).toContain('72')
+  })
+})

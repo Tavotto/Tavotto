@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { cssFamilyOf, sampleFitScale, SAMPLE_DEFAULTS, styleSampleGeometry } from './styleSample'
+import { cssFamilyOf, fitSampleGeometry, sampleFitScale, SAMPLE_DEFAULTS, styleSampleGeometry } from './styleSample'
 
 describe('styleSampleGeometry（审计 T42：样式页的示例图从样式内容现算）', () => {
   it('每个角色的字号落到示例里自己那一笔；没设的角色是示例默认，不跟「其余文字」（应用时不会跟着变）', () => {
@@ -68,7 +68,7 @@ describe('sampleFitScale（示例图画得下这套字号吗）', () => {
     expect((g.titlePt * k) / (g.tickPt * k)).toBeCloseTo(g.titlePt / g.tickPt, 6)
   })
 
-  it('线宽不参与：线粗不会把版面撑开', () => {
+  it('线宽不决定系数：线粗不会把版面撑开（但字号缩时线宽跟着缩，见下）', () => {
     expect(sampleFitScale(styleSampleGeometry({ element: { line: { linewidth: 9.5 } } }))).toBe(1)
   })
 
@@ -154,5 +154,43 @@ describe('styleSampleGeometry：每一维单独改，示例里只有对应的那
     ] as const) {
       expect(flat(styleSampleGeometry(build(`element.text.${prop}`, value)))).toEqual(base)
     }
+  })
+})
+
+describe('fitSampleGeometry：字号超预算时，所有由样式决定的长度同一个系数缩（Codex #703）', () => {
+  const big = styleSampleGeometry({
+    element: {
+      title: { fontsize: 72 },
+      ticks: { fontsize: 72, direction: 'out', length: 20, width: 10 },
+      axes: { spine_linewidth: 4 },
+      line: { linewidth: 3 },
+    },
+  })
+
+  it('几何里每一个数都乘同一个系数，别的字段原样', () => {
+    const k = sampleFitScale(big)
+    expect(k).toBeLessThan(1)
+    const fit = fitSampleGeometry(big)
+    const numeric = Object.entries(big).filter(([, v]) => typeof v === 'number')
+    // 几何里的长度一个不落（期望的键写死：几何多了长度，这里要跟着认）
+    expect(numeric.map(([key]) => key).sort()).toEqual(
+      ['axisPt', 'legendPt', 'lineWidthPt', 'spinePt', 'tickLengthPt', 'tickPt', 'tickWidthPt', 'titlePt'].sort(),
+    )
+    for (const [key, v] of numeric) expect((fit as unknown as Record<string, number>)[key], key).toBeCloseTo((v as number) * k, 9)
+    for (const [key, v] of Object.entries(big)) if (typeof v !== 'number') expect((fit as unknown as Record<string, unknown>)[key]).toEqual(v)
+  })
+
+  it('比例与样式一致：刻度长 : 刻度字号 = 20 : 72，刻度线宽 : 刻度字号 = 10 : 72', () => {
+    const fit = fitSampleGeometry(big)
+    expect(fit.tickPt).toBeCloseTo(14, 9)
+    expect(fit.tickLengthPt / fit.tickPt).toBeCloseTo(20 / 72, 9)
+    expect(fit.tickWidthPt / fit.tickPt).toBeCloseTo(10 / 72, 9)
+    expect(fit.spinePt / fit.tickPt).toBeCloseTo(4 / 72, 9)
+    expect(fit.lineWidthPt / fit.tickPt).toBeCloseTo(3 / 72, 9)
+  })
+
+  it('字号在预算内时原样返回（同一个对象）', () => {
+    const g = styleSampleGeometry({ element: { ticks: { length: 20 } } })
+    expect(fitSampleGeometry(g)).toBe(g)
   })
 })

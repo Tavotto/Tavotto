@@ -143,13 +143,27 @@ export function styleSampleGeometry(data: Record<string, unknown> | null | undef
 const SAMPLE_FONT_BUDGET_PT = 14
 
 /**
- * 让这套字号画得进示例图的等比系数（1 = 原样画）。字号最大的那一笔决定它。
- * 线宽不参与——线宽再粗也只是粗，不会把版面撑开。
+ * 让这套字号画得进示例图的等比系数（1 = 原样画）。字号最大的那一笔决定系数；
+ * 系数乘到**每一个**由样式决定的长度上（`fitSampleGeometry`），不只字号。
  */
 export function sampleFitScale(g: StyleSampleGeometry): number {
   const biggest = Math.max(g.titlePt, g.axisPt, g.tickPt, g.legendPt)
   if (!(biggest > SAMPLE_FONT_BUDGET_PT)) return 1
   return SAMPLE_FONT_BUDGET_PT / biggest
+}
+
+/**
+ * 示例图实际画的几何：按 `sampleFitScale` 把**几何里所有的数**（字号、数据线宽、边框线宽、
+ * 刻度长度、刻度线宽——`StyleSampleGeometry` 里的数全是 pt 长度）乘同一个系数。只缩字号的话，
+ * 72 pt 刻度字配 20 pt 刻度画成 14:20，应用后却是 72:20，示例把比例画反了（Codex #703）。
+ * 按字段类型枚举而不是点名：几何里以后多一个长度，自动跟着缩。
+ */
+export function fitSampleGeometry(raw: StyleSampleGeometry): StyleSampleGeometry {
+  const k = sampleFitScale(raw)
+  if (k === 1) return raw
+  const out: Record<string, unknown> = { ...raw }
+  for (const [key, v] of Object.entries(raw)) if (typeof v === 'number') out[key] = v * k
+  return out as unknown as StyleSampleGeometry
 }
 
 /* ------------------------------- 版面 ------------------------------------- */
@@ -206,7 +220,7 @@ const textWidth = (s: string, pt: number, face: SampleFace) => s.length * pt * (
  * 示例图的版面：刻度朝外伸多长、线多粗、字多大，刻度文字与轴标题就往外让多少，
  * `viewBox` 再按所有笔画的外框框住——**不按固定画框裁**（Codex #703：刻度长 20 pt 朝外时，
  * 固定 `0 0 200 128` 会把横轴标题裁掉）。外框比例固定、至少 `SAMPLE_VIEW` 大：内容撑大时
- * 整张图等比缩小，设置页里示例图的外框不跳。`g` 是已按 `sampleFitScale` 缩过字号的几何。
+ * 整张图等比缩小，设置页里示例图的外框不跳。`g` 是 `fitSampleGeometry` 缩过的几何。
  */
 export function sampleLayout(g: StyleSampleGeometry): SampleLayout {
   const L = g.tickLengthPt

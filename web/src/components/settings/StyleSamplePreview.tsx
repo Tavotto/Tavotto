@@ -3,7 +3,7 @@ import { t as translate } from '@/i18n'
 import {
   SAMPLE_TEXT,
   SAMPLE_VIEW,
-  sampleFitScale,
+  fitSampleGeometry,
   sampleLayout,
   styleSampleGeometry,
   type SampleFace,
@@ -25,17 +25,8 @@ export function StyleSamplePreview({ data }: { data: Record<string, unknown> | n
   const raw = styleSampleGeometry(data)
   // 读屏那句话说的是**样式里的真实数字**，示例图画的是缩过的——缩放是示例自己
   // 的排版手段，不该被读成"这套样式的字号是 14pt"。
-  const k = sampleFitScale(raw)
-  const g =
-    k === 1
-      ? raw
-      : {
-          ...raw,
-          titlePt: raw.titlePt * k,
-          axisPt: raw.axisPt * k,
-          tickPt: raw.tickPt * k,
-          legendPt: raw.legendPt * k,
-        }
+  // 字号超出示例预算时，字号与线宽、刻度长度等**所有**长度一起等比缩（`fitSampleGeometry`）
+  const g = fitSampleGeometry(raw)
   const label = st('previewAria', {
     title: raw.titlePt,
     axis: raw.axisPt,

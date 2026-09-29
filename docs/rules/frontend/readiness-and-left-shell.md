@@ -136,6 +136,8 @@
   改动以函数交出（字体下拉按数据 memo，回调不许捏着旧草稿）。只读那份每行一句摘要（字体 · 字号 · 粗斜体）。
   示例图（`lib/styleSample.ts`）每一笔只读它自己那一维（同一张行表），没设是示例默认、不从别的角色回落——应用时
   `element.text` 只落在 `text` 角色上、边框线宽不改刻度线宽，示例跟着变就是预告不会发生的事。
+  字号超出示例预算时几何里**所有**长度（字号、线宽、边框、刻度长度 / 线宽）乘同一个系数（`fitSampleGeometry`），
+  版面与画框再按缩后的几何现算（`sampleLayout`），比例与应用后一致。
   看护：`components/left/stylePanel.test.tsx`、`lib/stylePresets.test.ts`、`store/styleBinding.test.ts`、`lib/migrate.style.test.ts`、
   `components/settings/profilesSettings.test.tsx`、`lib/styleSample.test.ts`。
 - 看护：`store/projectReadinessStore.test.ts`、`components/RegistryDialog.test.tsx`、
