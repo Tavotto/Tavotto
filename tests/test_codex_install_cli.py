@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import shutil
@@ -1267,6 +1268,516 @@ def test_plugin_relative_command_resolves_like_codex_on_each_platform(tmp_path):
     ) == (tmp_path / "mcp" / "launch")
 
 
+# ------------- 只装了 Codex 桌面版：codex 不在 PATH、没有 git（#722） -------------
+#: 另一个假 codex：照真 CLI（macOS 0.157.1 与 Win11 桌面版自带 0.158 两台真机）在**没有 git**
+#: 的机器上的行为写——git 市场 `add` 报 `failed to run git clone …: program not found`；
+#: 本地目录可以 `add`；本地市场 `upgrade` 报「not configured as a Git marketplace」；
+#: `plugin add` 把 `<市场>/codex-plugin` 拷进 `plugins/cache/tavotto/tavotto/<版本>` 并删掉旧版本；
+#: 还没装的插件 `plugin list --json` 里两个数组都是空的，只有文本表列出 `not installed`。
+FAKE_CODEX_NO_GIT = r"""
+import json, os, shutil, sys
+state_p = os.environ["FAKE_CODEX_STATE"]
+home = os.environ["CODEX_HOME"]
+def load():
+    try:
+        return json.load(open(state_p))
+    except Exception:
+        return {"mk": None, "installed": None}
+def save(d):
+    json.dump(d, open(state_p, "w"))
+argv = sys.argv[1:]
+with open(os.environ["FAKE_CODEX_LOG"], "a") as f:
+    f.write(json.dumps(argv) + "\n")
+want_json = "--json" in argv
+argv = [a for a in argv if a != "--json"]
+d = load()
+def mk_version():
+    pj = os.path.join(d["mk"], "codex-plugin", ".codex-plugin", "plugin.json")
+    return json.load(open(pj))["version"]
+if argv == ["--version"]:
+    print("codex-cli 0.158.0-alpha.2.1"); sys.exit(0)
+if argv[:3] == ["plugin", "marketplace", "add"]:
+    src = argv[3]
+    if not os.path.isdir(src):
+        print("Error: failed to run git clone --filter=blob:none --no-checkout "
+              "https://github.com/" + src + ".git " + home + "/.tmp/marketplaces/.staging/x: "
+              "program not found", file=sys.stderr)
+        sys.exit(1)
+    d["mk"] = os.path.abspath(src); save(d); print("Added marketplace `tavotto`"); sys.exit(0)
+if argv[:3] == ["plugin", "marketplace", "list"]:
+    mks = []
+    if d["mk"]:
+        mks.append({"name": "tavotto", "root": d["mk"],
+                    "marketplaceSource": {"sourceType": "local", "source": d["mk"]}})
+    print(json.dumps({"marketplaces": mks}, indent=2)); sys.exit(0)
+if argv[:3] == ["plugin", "marketplace", "upgrade"]:
+    print("Error: marketplace `tavotto` is not configured as a Git marketplace", file=sys.stderr)
+    sys.exit(1)
+if argv[:3] == ["plugin", "marketplace", "remove"]:
+    d["mk"] = None; save(d); print("Removed marketplace `tavotto`."); sys.exit(0)
+if argv[:2] == ["plugin", "list"]:
+    out = {"installed": [], "available": []}
+    if d["mk"]:
+        entry = {"pluginId": "tavotto@tavotto", "name": "tavotto", "marketplaceName": "tavotto",
+                 "version": d["installed"] or mk_version(), "installed": bool(d["installed"]),
+                 "enabled": bool(d["installed"]),
+                 "source": {"source": "local", "path": os.path.join(d["mk"], "codex-plugin")}}
+    if want_json:
+        # codex 0.157 的真形状：还没装的插件在 --json 里**哪个数组都不在**（文本表里却列着）
+        if d["mk"] and d["installed"]:
+            out["installed"].append(entry)
+        print(json.dumps(out, indent=2))
+    else:
+        print("PLUGIN           STATUS              VERSION  SOURCE")
+        if d["mk"]:
+            st = "installed, enabled" if d["installed"] else "not installed"
+            ver = d["installed"] or ""
+            print("tavotto@tavotto  " + st + "  " + ver + "  " + entry["source"]["path"])
+    sys.exit(0)
+if argv[:2] == ["plugin", "add"]:
+    ver = mk_version()
+    base = os.path.join(home, "plugins", "cache", "tavotto", "tavotto")
+    shutil.rmtree(base, ignore_errors=True)
+    shutil.copytree(os.path.join(d["mk"], "codex-plugin"), os.path.join(base, ver))
+    d["installed"] = ver; save(d)
+    print("Added plugin `tavotto` from marketplace `tavotto`."); sys.exit(0)
+print("unknown: " + " ".join(argv), file=sys.stderr); sys.exit(2)
+"""
+
+#: 秒回体检 JSON 的假 server：被测的是安装流程，不是 MCP server 本身
+_FAKE_HEALTH_SERVER = (
+    b"import json, sys\n"
+    b"print(json.dumps({'ok': True, 'mode': 'engine', 'engine_version': '0.17.0',"
+    b" 'python': sys.executable}))\n"
+)
+_BRANCH_SHA = "51fe6b1f552bba69d6db69f6fd2b31b823c7e89b"
+
+
+def _stable_branch_zip(tmp_path: Path, version: str, *, tamper=None) -> tuple[bytes, dict]:
+    """照 GitHub 源码压缩包的形状造一份发行分支：顶层 `Tavotto-plugin-stable/`、zip 注释是
+    提交 SHA、每个条目带 git 模式。插件是形状真实、清单自洽的合成 staging。"""
+    import zipfile
+
+    from tavotto.engine import brand
+    from tests.support import pluginkit
+
+    tree = tmp_path / f"branch-{version}"
+    manifest = pluginkit.synthetic_staging(
+        tree / "codex-plugin", version=version, overrides={"mcp/server.py": _FAKE_HEALTH_SERVER}
+    )
+    mk = tree / ".agents" / "plugins" / "marketplace.json"
+    mk.parent.mkdir(parents=True)
+    mk.write_text(
+        json.dumps(
+            {
+                "name": "tavotto",
+                "interface": {"displayName": "Tavotto"},
+                "plugins": [
+                    {
+                        "name": "tavotto",
+                        "source": {"source": "local", "path": "./codex-plugin"},
+                        "policy": {"installation": "AVAILABLE", "authentication": "ON_INSTALL"},
+                        "category": "Productivity",
+                    }
+                ],
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    (tree / "plugin-release.json").write_text(
+        json.dumps(
+            {
+                "schema": 1,
+                "channel": "stable",
+                "branch": "plugin-stable",
+                "plugin": "tavotto",
+                "kind": "promote",
+                "version": version,
+                "content_digest": manifest["content_digest"],
+                "release_tag": f"v{version}",
+            }
+        ),
+        encoding="utf-8",
+    )
+    if tamper is not None:
+        tamper(tree)
+    modes = {f"codex-plugin/{e['path']}": e["mode"] for e in manifest["files"]}
+    buf = io.BytesIO()
+    prefix = brand.CODEX_PLUGIN_STABLE_ARCHIVE_DIR + "/"
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for p in sorted(tree.rglob("*")):
+            rel = p.relative_to(tree).as_posix()
+            if p.is_dir():
+                info = zipfile.ZipInfo(prefix + rel + "/")
+                info.external_attr = (0o40755 << 16) | 0x10
+                zf.writestr(info, b"")
+                continue
+            info = zipfile.ZipInfo(prefix + rel)
+            info.external_attr = int(modes.get(rel, "100644"), 8) << 16
+            info.create_system = 3
+            zf.writestr(info, p.read_bytes())
+        zf.comment = _BRANCH_SHA.encode()
+    return buf.getvalue(), manifest
+
+
+class _FakeGitHub:
+    """`codexinstall._fetch` 的替身：只认两类地址（发行分支压缩包、release 附件），其余一律 404。"""
+
+    def __init__(self):
+        self.files: dict[str, bytes] = {}
+        self.calls: list[str] = []
+
+    def publish(self, zip_bytes: bytes, manifest: dict, *, asset_digest: str | None = None):
+        from tavotto.engine import brand
+
+        self.files[brand.CODEX_PLUGIN_STABLE_ARCHIVE_URL] = zip_bytes
+        asset = dict(manifest)
+        if asset_digest is not None:
+            asset["content_digest"] = asset_digest
+        url = (
+            f"{brand.RELEASES_URL}/download/v{manifest['plugin_version']}/"
+            f"{brand.CODEX_PLUGIN_BUILD_ASSET}"
+        )
+        self.files[url] = json.dumps(asset).encode()
+
+    def __call__(self, url: str, *, limit: int) -> bytes:
+        from tavotto.engine import codexinstall
+
+        self.calls.append(url)
+        if url not in self.files:
+            raise codexinstall.ArchiveError(f"下载 {url} 失败：HTTP Error 404")
+        return self.files[url]
+
+
+@pytest.fixture
+def no_git_machine(tmp_path, monkeypatch):
+    """一台「只装了 Codex 桌面版、没有 git」的机器：假 codex 照真 CLI 在无 git 时的行为答话，
+    `CODEX_HOME` / 数据目录 / HOME 全在 tmp，GitHub 由 `_FakeGitHub` 扮演。
+
+    codex 默认放在 PATH 上（跨平台都能跑）；「不在 PATH、只在桌面版目录」的那条由
+    `test_desktop_only_…` 自己挪。"""
+    sys.path.insert(0, str(SRC))
+    from tavotto.engine import codexinstall
+
+    script = tmp_path / "fake_codex_nogit.py"
+    script.write_text(FAKE_CODEX_NO_GIT, encoding="utf-8")
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    if os.name == "nt":
+        (bindir / "codex.cmd").write_text(
+            f'@"{sys.executable}" "{script}" %*\r\n', encoding="utf-8"
+        )
+    else:
+        exe = bindir / "codex"
+        exe.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{script}" "$@"\n', encoding="utf-8")
+        exe.chmod(0o755)
+    _real_python_shim(bindir, "python3")
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(codexinstall.Path, "home", staticmethod(lambda: home))
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("PATH", str(bindir) + os.pathsep + os.environ.get("PATH", ""))
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codexhome"))
+    monkeypatch.setenv("TAVOTTO_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("FAKE_CODEX_STATE", str(tmp_path / "state.json"))
+    monkeypatch.setenv("FAKE_CODEX_LOG", str(tmp_path / "calls.log"))
+    monkeypatch.delenv("TAVOTTO_MCP_PYTHON", raising=False)
+    github = _FakeGitHub()
+    monkeypatch.setattr(codexinstall, "_fetch", github)
+    return {
+        "tmp": tmp_path,
+        "bin": bindir,
+        "script": script,
+        "home": home,
+        "codex_home": tmp_path / "codexhome",
+        "data": tmp_path / "data",
+        "log": tmp_path / "calls.log",
+        "github": github,
+        "mod": codexinstall,
+    }
+
+
+def _codex_calls(machine) -> list[list[str]]:
+    try:
+        lines = machine["log"].read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        return []
+    return [json.loads(ln) for ln in lines if ln.strip()]
+
+
+def _cli_json(machine, capsys, *argv: str) -> tuple[int, dict]:
+    rc = machine["mod"].cli([*argv, "--json"])
+    out = capsys.readouterr().out
+    return rc, json.loads(out.strip().splitlines()[-1])
+
+
+def _cached_versions(machine) -> list[str]:
+    base = machine["codex_home"] / "plugins" / "cache" / "tavotto" / "tavotto"
+    return sorted(p.name for p in base.iterdir()) if base.is_dir() else []
+
+
+def _local_adds(machine) -> list[str]:
+    from tavotto.engine import brand
+
+    return [
+        c[3]
+        for c in _codex_calls(machine)
+        if c[:3] == ["plugin", "marketplace", "add"] and c[3] != brand.CODEX_MARKETPLACE
+    ]
+
+
+def test_without_git_install_falls_back_to_the_verified_branch_archive(no_git_machine, capsys):
+    """README 主路在没有 git 的机器上第一步就死（`failed to run git clone … program not found`，
+    真 Win11 原话）。`tavotto codex install` 要自己换成不需要 git 的来源：下载发行分支压缩包、
+    核对、登记成本地市场，然后照常装插件、钉启动命令、体检——最后是一份能用的安装。"""
+    from tavotto.engine import brand
+
+    m = no_git_machine
+    zip_bytes, manifest = _stable_branch_zip(m["tmp"], "0.18.0")
+    m["github"].publish(zip_bytes, manifest)
+
+    rc, data = _cli_json(m, capsys, "install")
+    assert rc == 0 and data["ok"], data
+    adds = [c for c in _codex_calls(m) if c[:3] == ["plugin", "marketplace", "add"]]
+    # 先按 README 主路试 git 市场，Codex 说起不来 git 之后才改道；改道后登记的是本地目录
+    assert adds[0][3] == brand.CODEX_MARKETPLACE, adds
+    dest = m["data"] / "codex-marketplace" / brand.CODEX_PLUGIN_STABLE_ARCHIVE_DIR
+    assert [Path(c[3]) for c in adds[1:]] == [dest], adds
+    assert m["github"].calls[0] == brand.CODEX_PLUGIN_STABLE_ARCHIVE_URL
+    s = data["summary"]
+    assert s["channel"]["channel"] == "stable-archive", s
+    assert s["archive"]["commit"] == _BRANCH_SHA and s["archive"]["version"] == "0.18.0"
+    assert s["plugin"]["state"] == "installed" and s["plugin"]["version"] == "0.18.0"
+    assert s["canvas"]["complete"] is True and s["canvas"]["verified_against_manifest"] is True
+    steps = {st["step"]: st for st in data["steps"]}
+    assert "压缩包" in steps["marketplace"]["detail"], steps["marketplace"]
+    assert _cached_versions(m) == ["0.18.0"]
+    # Tavotto 自己只写数据目录；`~/.codex` 一个字节都没碰（CODEX_HOME 里的东西是假 codex 写的）
+    assert not (m["home"] / ".codex").exists()
+
+    # 幂等：再跑一次什么都不做——不下载、不 add
+    before = len(m["github"].calls)
+    rc, data = _cli_json(m, capsys, "install")
+    assert rc == 0 and data["ok"], data
+    assert len(m["github"].calls) == before, "健康状态下又下载了一次"
+    steps = {st["step"]: st for st in data["steps"]}
+    assert steps["marketplace"]["skipped"] and steps["plugin"]["skipped"], steps
+    assert "tavotto codex upgrade" in steps["marketplace"]["detail"]
+
+
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="假 codex.exe 在 POSIX 上是个脚本；Windows 上要真 PE，真机验收见 scripts/acceptance/codex-desktop-no-git/",
+)
+def test_desktop_only_codex_off_path_and_no_git_still_installs(no_git_machine, capsys, monkeypatch):
+    """#722 的原场景两件事一起：codex 只在桌面版目录（`%LOCALAPPDATA%\\OpenAI\\Codex\\bin\\<哈希>\\
+    codex.exe`，不在 PATH），机器上没有 git。"""
+    m = no_git_machine
+    (m["bin"] / "codex").unlink()  # PATH 上不再有 codex
+    monkeypatch.setenv("PATH", os.pathsep.join([str(m["bin"]), "/usr/bin", "/bin"]))
+    assert shutil.which("codex") is None, "前提：PATH 上没有 codex"
+    local = m["tmp"] / "LocalAppData"
+    exe = local / "OpenAI" / "Codex" / "bin" / "a1b2c3" / "codex.exe"
+    exe.parent.mkdir(parents=True)
+    exe.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{m["script"]}" "$@"\n', encoding="utf-8")
+    exe.chmod(0o755)
+    monkeypatch.setenv("LOCALAPPDATA", str(local))
+    monkeypatch.setattr(m["mod"], "_is_windows", lambda: True)
+    # 本机 /opt/homebrew/bin 里的真 codex 不算：主语是桌面版目录那一份
+    monkeypatch.setattr(m["mod"], "_search_dirs", lambda: [])
+    zip_bytes, manifest = _stable_branch_zip(m["tmp"], "0.18.0")
+    m["github"].publish(zip_bytes, manifest)
+
+    rc, data = _cli_json(m, capsys, "install")
+    assert rc == 0 and data["ok"], data
+    steps = {st["step"]: st for st in data["steps"]}
+    assert steps["codex_cli"]["detail"] == str(exe)
+    assert data["summary"]["channel"]["channel"] == "stable-archive"
+    assert _cached_versions(m) == ["0.18.0"]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="假 codex.exe 在 POSIX 上是个脚本（同上）")
+def test_desktop_cli_search_takes_the_newest_that_actually_runs(tmp_path, monkeypatch):
+    """桌面版更新后旧哈希目录可能还在：新到旧逐个跑 `--version`，第一个起得来的才用；
+    找过的位置写进 searched。"""
+    sys.path.insert(0, str(SRC))
+    from tavotto.engine import codexinstall
+
+    local = tmp_path / "LocalAppData"
+    base = local / "OpenAI" / "Codex" / "bin"
+    made = {}
+    for i, (name, body) in enumerate(
+        (("old", "echo codex-cli 0.150"), ("mid", "echo codex-cli 0.157"), ("new", "exit 1"))
+    ):
+        exe = base / name / "codex.exe"
+        exe.parent.mkdir(parents=True)
+        exe.write_text("#!/bin/sh\n" + body + "\n", encoding="utf-8")
+        exe.chmod(0o755)
+        os.utime(exe, (1_000_000 + i * 1000, 1_000_000 + i * 1000))
+        made[name] = exe
+    monkeypatch.setenv("LOCALAPPDATA", str(local))
+    monkeypatch.setattr(codexinstall.shutil, "which", lambda _n: None)
+    monkeypatch.setattr(codexinstall, "_search_dirs", lambda: [])
+    monkeypatch.setattr(codexinstall, "_is_windows", lambda: True)
+    found, searched = codexinstall.find_codex()
+    assert found == str(made["mid"]), "最新那份起不来，应落到次新的那份"
+    assert any("OpenAI" in s and "codex.exe" in s for s in searched), searched
+    # 候选的排序本身（与平台无关）
+    assert codexinstall.desktop_codex_candidates(str(local))[0] == made["new"]
+    assert codexinstall.desktop_codex_candidates(None) == []
+
+
+def test_git_that_runs_but_fails_is_not_rerouted_to_a_download(no_git_machine, capsys):
+    """改道的判据是「Codex 起不来 git」，不是「marketplace add 失败了」。git 起来了但克隆
+    失败（没网、被墙）时，下载压缩包多半一样失败，而且会把真正的原因盖住——原样报。"""
+    m = no_git_machine
+    zip_bytes, manifest = _stable_branch_zip(m["tmp"], "0.18.0")
+    m["github"].publish(zip_bytes, manifest)
+    script = m["script"]
+    text = script.read_text(encoding="utf-8")
+    needle = '"Error: failed to run git clone --filter=blob:none --no-checkout "'
+    assert needle in text  # 先证明替换落点在
+    script.write_text(
+        text.replace(needle, '"Error: git clone marketplace source failed: exit status 128 "'),
+        encoding="utf-8",
+    )
+    rc, data = _cli_json(m, capsys, "install")
+    assert rc == 1 and data["error_code"] == "marketplace_add_failed", data
+    assert "exit status 128" in data["error"]
+    assert m["github"].calls == [], "git 能跑时不该去下载压缩包"
+
+
+@pytest.mark.parametrize(
+    "case",
+    ["tampered_file", "asset_digest_mismatch", "path_traversal", "receipt_from_other_branch"],
+)
+def test_an_archive_that_does_not_verify_is_never_registered(no_git_machine, capsys, case):
+    """核对不过的压缩包：不登记、不装、目标目录不出现，失败说清是哪一条，并给人话步骤。"""
+    import zipfile
+
+    from tavotto.engine import brand
+
+    m = no_git_machine
+
+    def tamper_file(tree: Path):
+        p = tree / "codex-plugin" / "skills" / "tavotto-figure" / "SKILL.md"
+        p.write_bytes(p.read_bytes() + b"\n<!-- injected -->\n")
+
+    def other_branch(tree: Path):
+        p = tree / "plugin-release.json"
+        data = json.loads(p.read_text(encoding="utf-8"))
+        data["branch"] = "plugin-canary"
+        p.write_text(json.dumps(data), encoding="utf-8")
+
+    if case == "tampered_file":
+        zip_bytes, manifest = _stable_branch_zip(m["tmp"], "0.18.0", tamper=tamper_file)
+        m["github"].publish(zip_bytes, manifest)
+        expect = "sha256 对不上"
+    elif case == "asset_digest_mismatch":
+        zip_bytes, manifest = _stable_branch_zip(m["tmp"], "0.18.0")
+        m["github"].publish(zip_bytes, manifest, asset_digest="0" * 64)
+        expect = "构建清单"
+    elif case == "receipt_from_other_branch":
+        zip_bytes, manifest = _stable_branch_zip(m["tmp"], "0.18.0", tamper=other_branch)
+        m["github"].publish(zip_bytes, manifest)
+        expect = "收据"
+    else:
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr(brand.CODEX_PLUGIN_STABLE_ARCHIVE_DIR + "/ok.txt", b"x")
+            zf.writestr(brand.CODEX_PLUGIN_STABLE_ARCHIVE_DIR + "/../../evil.txt", b"x")
+        _zip, manifest = _stable_branch_zip(m["tmp"], "0.18.0")
+        m["github"].publish(buf.getvalue(), manifest)
+        expect = "不该有的条目"
+
+    rc, data = _cli_json(m, capsys, "install")
+    assert rc == 1 and data["error_code"] == "marketplace_add_failed", data
+    assert expect in data["error"], data["error"]
+    assert "手动装" in data["error"], "失败时要给人话步骤"
+    assert _local_adds(m) == [], "核对不过的压缩包被登记了"
+    dest = m["data"] / "codex-marketplace" / brand.CODEX_PLUGIN_STABLE_ARCHIVE_DIR
+    assert not dest.exists()
+    assert not list(m["tmp"].rglob("evil.txt")), "解包写到了压缩包目录之外"
+    assert _cached_versions(m) == []
+
+
+def test_upgrade_replaces_the_archive_and_reinstalls_only_when_it_changed(no_git_machine, capsys):
+    """本地市场没有 `marketplace upgrade`（真 CLI：not configured as a Git marketplace）。
+    `tavotto codex upgrade`：内容变了就换目录 + 让 Codex 重装；没变就什么都不做。"""
+    m = no_git_machine
+    z1, man1 = _stable_branch_zip(m["tmp"], "0.18.0")
+    m["github"].publish(z1, man1)
+    assert _cli_json(m, capsys, "install")[0] == 0
+    assert _cached_versions(m) == ["0.18.0"]
+
+    # 同一份：已是最新，不重装
+    n_before = len(_codex_calls(m))
+    rc, data = _cli_json(m, capsys, "upgrade")
+    assert rc == 0 and data["ok"], data
+    steps = {st["step"]: st for st in data["steps"]}
+    assert steps["marketplace"]["skipped"] and "已是最新" in steps["marketplace"]["detail"]
+    assert steps["plugin"]["skipped"], steps["plugin"]
+    new_calls = _codex_calls(m)[n_before:]
+    assert ["plugin", "add", "tavotto@tavotto"] not in new_calls
+    assert not any(c[:3] == ["plugin", "marketplace", "upgrade"] for c in new_calls)
+
+    # 发行分支前进到 0.18.1
+    z2, man2 = _stable_branch_zip(m["tmp"], "0.18.1")
+    m["github"].publish(z2, man2)
+    rc, data = _cli_json(m, capsys, "upgrade")
+    assert rc == 0 and data["ok"], data
+    steps = {st["step"]: st for st in data["steps"]}
+    assert "已更新" in steps["marketplace"]["detail"], steps["marketplace"]
+    assert "0.18.0 → 0.18.1" in steps["plugin"]["detail"], steps["plugin"]
+    assert _cached_versions(m) == ["0.18.1"]
+    assert data["summary"]["canvas"]["complete"] is True
+
+
+def test_upgrade_leaves_a_local_marketplace_it_did_not_create_alone(no_git_machine, capsys):
+    """用户手动解压到别处再登记的本地市场：认得出是发行分支，但不替他覆盖那个目录。"""
+    import zipfile
+
+    from tavotto.engine import brand
+
+    m = no_git_machine
+    z1, man1 = _stable_branch_zip(m["tmp"], "0.18.0")
+    manual = m["tmp"] / "Downloads"
+    zipfile.ZipFile(io.BytesIO(z1)).extractall(manual)
+    root = manual / brand.CODEX_PLUGIN_STABLE_ARCHIVE_DIR
+    Path(os.environ["FAKE_CODEX_STATE"]).write_text(
+        json.dumps({"mk": str(root), "installed": None}), encoding="utf-8"
+    )
+    rc, data = _cli_json(m, capsys, "doctor")
+    assert data["summary"]["channel"]["channel"] == "stable-archive", data
+    m["github"].publish(z1, man1)
+    rc, data = _cli_json(m, capsys, "upgrade")
+    assert rc == 1 and data["error_code"] == "marketplace_add_failed", data
+    assert "不替你覆盖" in data["error"]
+    assert m["github"].calls == []
+
+
+def test_the_archive_channel_needs_the_release_receipt(tmp_path):
+    """`local ./codex-plugin` 有两种来历：发行分支的压缩包（根上有收据）与把仓库本体当插件装
+    的老快照（没有）。前者升级走 `tavotto codex upgrade`，后者走 `marketplace upgrade`——
+    认错了处方就是错的。"""
+    sys.path.insert(0, str(SRC))
+    from tavotto.engine import codexinstall
+
+    root = tmp_path / "mk"
+    (root / ".agents" / "plugins").mkdir(parents=True)
+    entry = {"name": "tavotto", "source": {"source": "local", "path": "./codex-plugin"}}
+    (root / ".agents" / "plugins" / "marketplace.json").write_text(
+        json.dumps({"name": "tavotto", "plugins": [entry]}), encoding="utf-8"
+    )
+    assert codexinstall.plugin_channel(str(root))["channel"] == "legacy-local"
+    receipt = root / "plugin-release.json"
+    receipt.write_text(json.dumps({"branch": "plugin-stable", "plugin": "tavotto"}), "utf-8")
+    assert codexinstall.plugin_channel(str(root))["channel"] == "stable-archive"
+    receipt.write_text(json.dumps({"branch": "plugin-canary", "plugin": "tavotto"}), "utf-8")
+    assert codexinstall.plugin_channel(str(root))["channel"] == "legacy-local"
+
+
 def _old_launcher_shape(plugin: Path) -> str:
     """把一份合成发行件改成 0.17.0 的形态（command 是 `./mcp/launch.cmd`），清单照改后的字节
     重写——发布器当年就是这么写的；本分支的 `describe()` 会拒绝这种形态，所以这里手工重算。
@@ -1289,10 +1800,29 @@ def _old_launcher_shape(plugin: Path) -> str:
     return manifest["content_digest"]
 
 
+def test_integrity_only_verification_still_checks_every_byte(tmp_path):
+    """`command_policy=False` 只放过「发行件 command 的形态」（旧发行件的 `./mcp/launch.cmd`
+    按新规矩不合格，但它是完好的已发行件）；逐字节核对一条都不能少。"""
+    sys.path.insert(0, str(SRC))
+    from tavotto.engine import pluginmanifest
+    from tests.support import pluginkit
+
+    plugin = tmp_path / "p"
+    pluginkit.synthetic_staging(plugin, version="0.17.0")
+    _old_launcher_shape(plugin)
+    strict = pluginmanifest.verify_dir(plugin)
+    assert strict and all("command" in p for p in strict), f"前提：只有形态规矩不过：{strict}"
+    assert pluginmanifest.verify_dir(plugin, command_policy=False) == []
+    skill = plugin / "skills" / "tavotto-figure" / "SKILL.md"
+    skill.write_bytes(skill.read_bytes() + b"x")
+    problems = pluginmanifest.verify_dir(plugin, command_policy=False)
+    assert any("SKILL.md" in p and "sha256" in p for p in problems), problems
+
+
 def test_an_installed_relative_launcher_resolves_against_the_plugin_root(tmp_path, monkeypatch):
     """已装副本体检（`installed=True`）里 `./` 开头的 command 按插件根解析，不按本进程 cwd。
-    真 codex 0.157 + 已发行的 0.17.0（command `./mcp/launch.cmd`）：新引擎的 doctor 画布步以前报
-    「指向不存在的解释器」——文件明明就在插件里（挪自 #725，#722 真机撞到）。"""
+    真 codex 0.157 + 已发行的 0.17.0（command `./mcp/launch.cmd`）：以前 doctor 的画布步报
+    「指向不存在的解释器」，install 以失败收尾——文件明明就在插件里。"""
     sys.path.insert(0, str(SRC))
     from tavotto.engine import pluginmanifest
     from tests.support import pluginkit
@@ -1307,3 +1837,49 @@ def test_an_installed_relative_launcher_resolves_against_the_plugin_root(tmp_pat
     (plugin / "mcp" / "launch.cmd").unlink()
     problems = pluginmanifest.verify_dir(plugin, installed=True)
     assert any("./mcp/launch.cmd" in p and "不存在" in p for p in problems), problems
+
+
+def test_the_published_0_17_0_launcher_shape_still_verifies_as_an_archive(tmp_path):
+    """plugin-stable 此刻发的是 0.17.0：command 是 `./mcp/launch.cmd`，按本分支（#266 之后）的
+    发行规矩不合格。压缩包核对问的是「与发出去的那份逐字节一致吗」，不能因此把唯一能装的
+    那份判成坏的——否则 #722 的用户在下一次发版之前什么都装不上。"""
+    import zipfile
+
+    sys.path.insert(0, str(SRC))
+    from tavotto.engine import brand, codexinstall
+
+    def old_shape(tree: Path):
+        digest = _old_launcher_shape(tree / "codex-plugin")
+        receipt = tree / "plugin-release.json"
+        data = json.loads(receipt.read_text(encoding="utf-8"))
+        data["content_digest"] = digest
+        receipt.write_text(json.dumps(data), encoding="utf-8")
+
+    zip_bytes, _manifest = _stable_branch_zip(tmp_path, "0.17.0", tamper=old_shape)
+    out = tmp_path / "unzipped"
+    zipfile.ZipFile(io.BytesIO(zip_bytes)).extractall(out)
+    receipt = codexinstall.verify_stable_snapshot(out / brand.CODEX_PLUGIN_STABLE_ARCHIVE_DIR)
+    assert receipt["version"] == "0.17.0"
+
+
+def test_archive_constants_match_their_writers_and_the_readme():
+    """压缩包这条路的每个名字都有一个写的一侧：收据名归发布器，构建清单附件名归 release 工作流，
+    顶层目录名是 GitHub 的固定形状（README 的手动步骤 `Expand-Archive` 出来就是它）。"""
+    sys.path.insert(0, str(SRC))
+    from tavotto.engine import brand, pluginmanifest
+    from tests.support import pluginkit
+
+    publish = pluginkit.load_script("plugin_publish")
+    assert pluginmanifest.RELEASE_RECEIPT == publish.RECEIPT
+    assert brand.CODEX_PLUGIN_STABLE_BRANCH == publish.BRANCH
+    release = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    assert f"dist/{brand.CODEX_PLUGIN_BUILD_ASSET}" in release
+    assert brand.CODEX_PLUGIN_STABLE_ARCHIVE_DIR == (
+        f"{brand.REPO_NAME}-{brand.CODEX_PLUGIN_STABLE_BRANCH}"
+    )
+    for name in ("README.md", "README.zh-CN.md"):
+        text = (ROOT / name).read_text(encoding="utf-8")
+        assert brand.CODEX_PLUGIN_STABLE_ARCHIVE_URL in text, name
+        assert brand.CODEX_PLUGIN_STABLE_ARCHIVE_DIR in text, name
+        assert "tavotto codex upgrade" in text, name
+        assert r"OpenAI\Codex\bin" in text, name

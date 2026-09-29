@@ -309,14 +309,47 @@ The plugin starts its MCP server through a bundled launcher that looks for a Pyt
 that really runs and skips the Microsoft Store `python3` alias; when it finds none,
 this command pins a verified interpreter into the installed copy. Plugin 0.17.0 had a
 launcher bug on Windows that left every user with no tools. Run
-`codex plugin marketplace upgrade tavotto`, then start a new session. The mechanism and
+`codex plugin marketplace upgrade tavotto` (or `tavotto codex upgrade` if you installed
+without Git, see below), then start a new session. The mechanism and
 the symptoms are in
 [`codex-plugin/README.md`](codex-plugin/README.md).
 
-On Windows the two `codex plugin` commands need the Codex CLI and Git for Windows on
-your `PATH`: `codex plugin marketplace add` clones the marketplace with `git`, and fails
-with `program not found` without it. The CLI that ships inside Codex Desktop is not on
-`PATH`.
+**Windows with only Codex Desktop (no `codex` on `PATH`, no Git).** The two
+`codex plugin` commands need the Codex CLI on your `PATH` and Git for Windows:
+`codex plugin marketplace add` clones the marketplace with `git` and fails with
+`program not found` without it, and the CLI that ships inside Codex Desktop
+(`%LOCALAPPDATA%\OpenAI\Codex\bin\<hash>\codex.exe`) is not on `PATH`. Skip those two
+lines and let Tavotto do them:
+
+```powershell
+pipx install "tavotto[worker]"
+tavotto codex install
+```
+
+`tavotto codex install` finds the CLI bundled with Codex Desktop by itself. When Codex
+reports that it cannot run `git`, it downloads the plugin's release branch as a zip
+(<https://github.com/Tavotto/Tavotto/archive/refs/heads/plugin-stable.zip>), checks every
+file against the plugin's build manifest and against the build manifest attached to the
+same GitHub release, and registers it as a local marketplace under
+`%LOCALAPPDATA%\Tavotto\codex-marketplace`. A local marketplace has no
+`codex plugin marketplace upgrade`; upgrade with `tavotto codex upgrade`. Then start a
+new Codex session.
+
+Without the Python engine (the desktop-app handoff route below), do the same by hand in
+PowerShell:
+
+```powershell
+$codex = (Get-ChildItem "$env:LOCALAPPDATA\OpenAI\Codex\bin\*\codex.exe" | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
+$dir = "$env:LOCALAPPDATA\Tavotto\codex-marketplace"
+Invoke-WebRequest https://github.com/Tavotto/Tavotto/archive/refs/heads/plugin-stable.zip -OutFile "$env:TEMP\tavotto-plugin-stable.zip"
+Expand-Archive "$env:TEMP\tavotto-plugin-stable.zip" $dir -Force
+& $codex plugin marketplace add "$dir\Tavotto-plugin-stable"
+& $codex plugin add tavotto@tavotto
+```
+
+To upgrade by hand, delete `$dir\Tavotto-plugin-stable`, repeat the download and
+`Expand-Archive` lines, then run the last line again. The manual route does not check
+the files; `tavotto codex doctor` does, once the engine is installed.
 
 Desktop-app-only users: the desktop installer deliberately does not touch your `PATH`,
 so a bare `tavotto` is not available — run the two `codex plugin` commands above
