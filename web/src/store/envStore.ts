@@ -131,6 +131,20 @@ export interface AdoptedEnvironment {
  */
 let projectEpoch = 0
 
+/**
+ * 后端刚关掉本项目的会话、且变的东西说不清影响哪些面板（换环境、改指表增 / 换 / 删）：
+ * 每个在用的面板都标 stale 重建——不只是失败的那些，成功画过的可能是按旧条件画的。
+ * 回 false = 等 renderStore 期间换了项目（B 的面板一个都不动）。
+ */
+async function restaleProjectRenders(epoch: number): Promise<boolean> {
+  const { useRenderStore } = await import('@/store/renderStore')
+  if (epoch !== projectEpoch) return false
+  const render = useRenderStore.getState()
+  const ids = [...new Set(Object.values(render.byKey).map((v) => v.fileId))]
+  if (ids.length) render.markStale(ids)
+  return true
+}
+
 export const useEnvStore = create<EnvState>((set, get) => ({
   env: null,
   adoptedEnvironment: null,
@@ -162,10 +176,9 @@ export const useEnvStore = create<EnvState>((set, get) => ({
       const env = get().env
       if (env?.project) set({ env: { ...env, project: { ...env.project, input_remap: res.input_remap } } })
       set({ missingInput: null })
-      // 后端已经关掉了这个项目的会话；把因「找不到数据」失败的面板重新排上
-      const { useRenderStore } = await import('@/store/renderStore')
-      if (epoch !== projectEpoch) return null
-      useRenderStore.getState().retryEnvironmentFailures()
+      // 后端已经关掉了这个项目的会话；失败的面板重排，经旧规则画成功的也要重画
+      // （同 kind / from 的规则被这次替换时，它们读的是旧位置的数据）
+      if (!(await restaleProjectRenders(epoch))) return null
       // 素材库「运行并发现图」那条入口失败的脚本同样重跑：scriptRunStore 订阅这个代际
       // （它依赖本 store；反过来 import 会成环）
       set((s) => ({ inputRemapGeneration: s.inputRemapGeneration + 1 }))
@@ -183,6 +196,8 @@ export const useEnvStore = create<EnvState>((set, get) => ({
       if (epoch !== projectEpoch) return null
       const env = get().env
       if (env?.project) set({ env: { ...env, project: { ...env.project, input_remap: res.input_remap } } })
+      // 删了规则：经它画成功的面板还挂着旧数据的样子，按「找不到就报错」重画
+      await restaleProjectRenders(epoch)
       return null
     } catch (e) {
       if (epoch !== projectEpoch) return null
@@ -211,11 +226,7 @@ export const useEnvStore = create<EnvState>((set, get) => ({
     if (error) return error
     get().dismissAdoptedEnvironment()
     // 后端已关掉本项目的会话；每个在用的面板都要按原来的环境重建（不只是失败的那些）
-    const { useRenderStore } = await import('@/store/renderStore')
-    if (epoch !== projectEpoch) return null
-    const render = useRenderStore.getState()
-    const ids = [...new Set(Object.values(render.byKey).map((v) => v.fileId))]
-    if (ids.length) render.markStale(ids)
+    await restaleProjectRenders(epoch)
     return null
   },
 
