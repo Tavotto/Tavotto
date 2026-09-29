@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import type { WorkdirMode } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { useEnvStore } from '@/store/envStore'
+import { useScriptRunStore } from '@/store/scriptRunStore'
 import { Button } from './ui/Button'
 import { Dialog } from './ui/Dialog'
 import { Radio } from './ui/Radio'
@@ -51,7 +52,13 @@ export function WorkdirConfirmDialog() {
     setBusy(true)
     const err = await setWorkdirMode(choice, { confirmed: true })
     setBusy(false)
-    if (err) setError(err)
+    if (err) {
+      setError(err)
+      return
+    }
+    // 素材库脚本行上停在这道门上的试运行重跑（面板的渲染由 `setWorkdirMode` 重排）。运行目录是项目级的：
+    // 停在这一相位上的全部重跑。放在这里而不是 envStore：envStore → scriptRunStore 会让既有的 import 环扩大
+    useScriptRunStore.getState().rerunGated('needs_workdir')
   }
   return (
     <Dialog

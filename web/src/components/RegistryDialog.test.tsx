@@ -46,6 +46,8 @@ import {
   useProjectReadinessStore,
 } from '@/store/projectReadinessStore'
 import { useUiStore } from '@/store/uiStore'
+import { useEnvStore } from '@/store/envStore'
+import { setCurrentProjectId } from '@/lib/session'
 import { reasonText, statusLabel } from '@/lib/readinessText'
 
 declare global {
@@ -300,6 +302,26 @@ describe('绝不替用户决定', () => {
     expect(mockProbe).not.toHaveBeenCalled()
     await clickIn(row, '试运行并连接')
     expect(mockProbe).toHaveBeenCalledWith('dyn.py')
+  })
+
+  it('试运行撞上起会话之前的依赖门：弹同一个授权框（载荷交给 envStore），不报「试运行失败」', async () => {
+    // Windows 真机验收（main 493a1310）：门的载荷在试运行这条路上被当成失败吞掉，授权框从不弹出
+    setCurrentProjectId('p1')
+    useEnvStore.setState({ dependencyPreparation: null })
+    const offer = { code: 'dependency_preparation_required', script: 'dyn.py', plan: {}, target_kind: 'tavotto_managed', targets: [], rounds_remaining: 3, skipped: false }
+    mockProbe.mockResolvedValue({
+      script: 'dyn.py', entry: null, stems: [], descriptors: [], tried: [],
+      error: { code: 'dependency_preparation_required', message: '要先准备依赖', dependency_preparation: offer as never },
+    })
+    await open(reportOf(SIX))
+    await clickIn(rowOf('Mystery.pdf')!, '试运行并连接')
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0))
+    })
+    expect(useEnvStore.getState().dependencyPreparation, '载荷没交给 envStore').toEqual(offer)
+    expect(dialog().textContent).not.toContain('试运行失败')
+    useEnvStore.setState({ dependencyPreparation: null })
+    setCurrentProjectId(null)
   })
 
   it('冲突：两个候选都列出来，一个都不预选、也不自动写', async () => {

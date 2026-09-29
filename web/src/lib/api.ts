@@ -3718,6 +3718,13 @@ export interface ProbeError {
    * 图还没上画布时，那是新用户走到安装的唯一入口。
    */
   dependency_repair?: DependencyRepairOffer
+  /**
+   * `dependency_preparation_required`（U04）时起会话之前那道依赖门的载荷——与渲染端点同一份投影
+   * （`probe._error_from_worker`）。素材库据此弹同一个 `DependencyPrepareDialog`，不是一句「试运行失败」。
+   */
+  dependency_preparation?: DependencyPreparationOffer
+  /** `workdir_confirmation_required`（U03）时运行目录那道门的载荷（同上，`WorkdirConfirmDialog`） */
+  confirmation?: WorkdirConfirmation
 }
 
 export interface ProbeResult {

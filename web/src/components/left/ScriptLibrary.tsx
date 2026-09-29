@@ -13,6 +13,7 @@ import { useScriptInputStore } from '@/store/scriptInputStore'
 import { useScriptLibraryStore } from '@/store/scriptLibraryStore'
 import {
   isBusyPhase,
+  isGatePhase,
   needsNative,
   useScriptRunStore,
   type ScriptRunState,
@@ -22,6 +23,7 @@ import { Button, IconButton } from '../ui/Button'
 import { Dialog } from '../ui/Dialog'
 import { EmptyState } from '../ui/EmptyState'
 import { DependencyRepairCard } from '../DependencyRepairCard'
+import { DependencyPrepareButton, WorkdirChooseButton } from '../WorkdirRow'
 import { useDepRepairStore, type ScriptRepairOffer } from '@/store/depRepairStore'
 
 /**
@@ -232,6 +234,7 @@ function ScriptRow({
       </div>
 
       {repairCard && <ScriptDependencyRepair script={entry.script} run={run} />}
+      <GateReopen run={run} />
       <FailureRecovery script={entry.script} run={run} />
 
       {run && run.descriptors.length > 0 && (
@@ -307,13 +310,38 @@ function rowRepairOffer(
 }
 
 /**
+ * 起会话之前那两道门（U03 运行目录 / U04 依赖准备）的「再打开」：试运行撞上门时 `scriptRunStore` 已经把
+ * 载荷交给 `envStore` 弹了框；用户点了「稍后」，这一行不能停在一句话上无路可走——与画布错误块同一颗按钮
+ * （`DependencyPrepareButton` / `WorkdirChooseButton`），载荷就是这一行那次运行留下的。作答之后由作答的
+ * 那一方重跑这一行（`scriptRunStore.rerunGated`）。
+ */
+function GateReopen({ run }: { run: ScriptRunState | undefined }) {
+  if (run?.phase === 'needs_preparation' && run.error?.dependency_preparation) {
+    return (
+      <div className="mb-1.5 pl-8 pr-2" data-script-dependency-prepare>
+        <DependencyPrepareButton offer={run.error.dependency_preparation} />
+      </div>
+    )
+  }
+  if (run?.phase === 'needs_workdir' && run.error?.confirmation) {
+    return (
+      <div className="mb-1.5 pl-8 pr-2" data-script-workdir-choose>
+        <WorkdirChooseButton confirmation={run.error.confirmation} />
+      </div>
+    )
+  }
+  return null
+}
+
+/**
  * 行首的状态点（6px，坐在 16px 列里）：实心 = 已关联；空心 = 还没跑过；
  * 呼吸 = 正在跑；红 = 这次失败。纯装饰——状态本身由旁边那句话与可达名说出。
  */
 function StatusDot({ entry, run }: { entry: ScriptInventoryEntry; run: ScriptRunState | undefined }) {
   const phase = run?.phase ?? 'idle'
   const running = phase === 'starting_runtime' || phase === 'running'
-  const failed = !running && !!run?.error
+  // 停在门上不是失败（缺的是一个决定），不标红
+  const failed = !running && !!run?.error && !isGatePhase(phase)
   return (
     <span className="flex h-4 w-4 shrink-0 items-center justify-center" aria-hidden>
       <span
@@ -371,7 +399,8 @@ function StatusLine({
   } else if (run?.error) {
     const text = formatMessage(backendCodeMsg(run.error.code, run.error.params, run.error.message))
     title = text
-    body = <span className="text-danger">{text}</span>
+    // 门上的那句是「还差一个决定」，不是错误：不用危险色
+    body = <span className={isGatePhase(phase) ? 'text-ink-2' : 'text-danger'}>{text}</span>
   } else if (entry.registered) {
     body = sc('linkedCount', { count: stems.length })
   } else if (entry.reason === 'dynamic_stems' || entry.reason === 'unparseable') {

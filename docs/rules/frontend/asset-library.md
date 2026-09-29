@@ -107,6 +107,17 @@
   `repairErrorShort` 与 `repairError` 的码集合相等）、
   数看得见的主按钮 = 1；e2e 用 `checkVisibility`），不按子串——`DependencyRepairCard.test.tsx`「一键修复」、`DependencyPrepareDialog.test.tsx`、`ScriptLibrary.test.tsx`、
   `e2e/dependency-one-click.spec.ts`（`@feature:assets.dependency-one-click-repair`）。
+- **试运行撞上起会话之前的门不是失败**（Windows 真机验收 main 493a1310）：`/api/registry/probe` 以
+  `dependency_preparation_required` / `workdir_confirmation_required` 回来时（200 或带 code 的非 200 都认），
+  `scriptRunStore` 的相位是 `needs_preparation` / `needs_workdir`，**不进「可能需要原环境」**（那组只有换环境 /
+  复制诊断，只有脚本、画布上还没图的新用户就再也走不到安装），载荷经 `handOffProbeGate` 交给 `envStore`——与渲染那条路
+  同一个 `DependencyPrepareDialog` / `WorkdirConfirmDialog`、同一次作答（发请求那一刻的项目挡串项目）。「稍后」之后脚本行上
+  是与画布错误块同一颗再打开的按钮（`GateReopen`）。有了答案由作答的一方调 `rerunGated` 重跑停在门上的那一行：准备成功
+  （`depRepairStore.onProgress` 的 joint done，按进度里的 `script`）、明确跳过、改用用户环境按脚本；运行目录由
+  `WorkdirConfirmDialog` 选定后重跑停在这一相位上的全部（项目级；放在组件里是因为 envStore → scriptRunStore 会扩大既有 import 环）。
+  接入中心的试运行走同一个 `handOffProbeGate`，不报「试运行失败」。**新写一个调试运行端点的入口，先认这两个 code。**
+  看护 `scriptRunStore.test.ts`「试运行撞上起会话之前的门」、`ScriptLibrary.test.tsx` 同名 describe、
+  `RegistryDialog.test.tsx`、`e2e/asset-library.spec.ts`「试运行撞上依赖门」。
 - **运行/取消是同一个按钮**（busy 态翻转）：取消后焦点天然留在原脚本行，
   不做焦点搬运。状态行 aria-live=polite，只随相位变化播报。
 - **多 Figure 结果进 Dialog**（自带 focus trap），每张各有「添加到画布」，

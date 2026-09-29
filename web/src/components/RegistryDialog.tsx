@@ -42,6 +42,8 @@ import { addPanelToCanvas, addRuntimePanelToCanvas } from '@/store/workspace'
 import { useAssetStore } from '@/store/assetStore'
 import { refreshAssetsAndSync } from '@/store/liveSync'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
+import { handOffProbeGate } from '@/store/scriptRunStore'
+import { currentProjectId } from '@/lib/session'
 import { useUiStore } from '@/store/uiStore'
 import { Button, IconButton } from './ui/Button'
 import { Dialog } from './ui/Dialog'
@@ -178,7 +180,16 @@ function ReadinessBody() {
 
   const probe = (script: string) =>
     run(script, async () => {
+      const project = currentProjectId()
       const res = await probeScript(script)
+      // 起会话之前的门（运行目录 / 依赖准备）不是试运行失败：弹与渲染、素材库同一个框，这一行只说还差什么
+      if (handOffProbeGate(res.error, project)) {
+        const text = formatMessage(
+          backendCodeMsg(res.error!.code, res.error!.params, res.error!.message),
+        )
+        setProbed((p) => ({ ...p, [script]: { text } }))
+        return
+      }
       if (res.error) {
         // 主文案先按稳定 code 翻成当前语言（后端中文原文只是回退）；
         // traceback 不进主文案，收在「诊断详情」里。

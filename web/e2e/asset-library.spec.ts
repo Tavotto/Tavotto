@@ -344,6 +344,82 @@ test('多 Figure：?pick= 打开选择器，选第二张加的就是第二张', 
   expect(panels[0].fileId).toContain(secondStem)
 })
 
+/**
+ * 起会话之前的依赖门（Windows 真机验收，main 493a1310）：项目里只有脚本、还没有图，试运行 200 回来、
+ * `error.code == dependency_preparation_required` 带整份载荷。以前这一行掉进「可能需要原环境」，出口只有
+ * 「选择渲染环境 / 复制诊断」，新用户走不到安装。
+ *
+ * 门的那一次响应用 `page.route` 造（真后端要触发它得先让受管环境缺一个可装的包、授权后还要联网装），其余全走
+ * 真后端：「稍后」→ 行上再打开 →「不准备，直接运行」（真 `POST /api/engine/dependencies/skip`）→ 自动再试运行
+ * （真 worker）→ 发现图、运行时图卡片出现。授权准备成功后的重跑由 `ScriptLibrary.test.tsx` 看护（SSE 在这里造不了）。
+ */
+test('试运行撞上依赖门：弹授权框、不进「可能需要原环境」；稍后可再开，直接运行后自动重跑出图', async ({
+  app,
+  page,
+}) => {
+  const dir = path.join(os.tmpdir(), `tavotto-e2e-depgate-${Date.now()}`)
+  writeShowOnlyProject(dir)
+  const a = await app({ figures: dir })
+  let gated = 0
+  // 请求带 `?pj=` 查询串：用正则认路径（不认 `/probe/cancel`）
+  await page.route(/\/api\/registry\/probe(\?|$)/, async (route) => {
+    if (gated > 0) return route.continue()
+    gated += 1
+    const plan = {
+      plan_version: 1, status: 'ready', target_kind: 'tavotto_managed', script: 'show_only.py', needed: [],
+      missing: [{ import_name: 'adjustText', distribution: 'adjusttext', resolution_source: 'curated', declared: false, specifiers: [], via: [] }],
+      satisfied: [], unknown: [], possible: [], requirements: ['adjusttext'], constraints: [], require_hashes: false,
+      adapter: [], blocked: [],
+      selection: { selected_groups: [], available_groups: [], unselected_groups: [], skipped_marker: [] },
+      identity: 'e2e',
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        script: 'show_only.py', entry: null, stems: [], descriptors: [], tried: [], registered: false,
+        error: {
+          code: 'dependency_preparation_required',
+          message: '脚本开跑就需要的包渲染环境里没有，要先准备依赖',
+          dependency_preparation: {
+            code: 'dependency_preparation_required', script: 'show_only.py', plan, target_kind: 'tavotto_managed',
+            targets: [{ kind: 'tavotto_managed', venv: '', python: '', modifies_user_environment: false, creates_environment: true, available: true, reason: '' }],
+            rounds_remaining: 3, skipped: false,
+          },
+        },
+      }),
+    })
+  })
+
+  await page.goto(a.baseURL)
+  await expect(page.getByRole('heading', { name: '脚本' })).toBeVisible({ timeout: 30_000 })
+  await page.getByRole('button', { name: '运行 show_only.py 并发现图' }).click()
+
+  // 同一个授权框弹出，列出要装的包
+  const dialog = page.locator('[data-dialog="dependency-prepare"]')
+  await expect(dialog).toBeVisible()
+  await expect(dialog.locator('[data-dependency-requirements]')).toContainText('adjusttext')
+  // 不是失败：没有「可能需要原环境」那一组
+  await expect(page.getByText('可能需要原环境')).toHaveCount(0)
+
+  // 「稍后」：框关掉，行上留着再打开的入口
+  await dialog.getByRole('button', { name: '稍后' }).click()
+  await expect(dialog).toHaveCount(0)
+  const reopen = page.locator('[data-script-dependency-prepare]').getByRole('button')
+  await expect(reopen).toBeVisible()
+  await expect(page.getByText('可能需要原环境')).toHaveCount(0)
+  await reopen.click()
+  await expect(dialog).toBeVisible()
+
+  // 「不准备，直接运行」：真后端记下跳过，这一行自动再试运行（真 worker）→ 发现图
+  await dialog.getByRole('button', { name: '不准备，直接运行' }).click()
+  await expect(dialog).toHaveCount(0)
+  await expect(page.getByText('已发现 1 张图')).toBeVisible({ timeout: 120_000 })
+  await expect(page.locator('[data-card="runtime:show_only.py#show_only"]')).toBeVisible({ timeout: 30_000 })
+  await expect(page.locator('[data-script-dependency-prepare]')).toHaveCount(0)
+  expect(gated).toBe(1)
+})
+
 test('窄视口：脚本行的「运行并发现图」仍可见可点', async ({ app, page }) => {
   const dir = path.join(os.tmpdir(), `tavotto-e2e-narrow-${Date.now()}`)
   writeShowOnlyProject(dir)
