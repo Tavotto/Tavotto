@@ -105,7 +105,7 @@ preflight.runSpec()      规则求值（两份求值器，golden vectors 对齐�
   没登记的 code 落 `other`，不按名字猜）。卡片里装的、点进去列的、卡片「修复 N」修的
   是同一个集合（`drillIssues()` → `batchable(…, { includeSuggestions: true })`，点名
   一张卡片与组头「全部修复」同口径）。「无法核验」不进卡片，只占一行入口。点进哪张
-  卡片是 `uiStore.problemDrill`（换范围 / 换切法 / 换文档退回总览）；游标指着卡片外
+  卡片是 `uiStore.problemDrill`（换范围 / 换「当前图」/ 换切法 / 换文档退回总览，游标一起放下）；游标指着卡片外
   的一条时面板自己换进 `drillOf()` 给的那张——**只有面板里那一处**，`openProblemAt`
   只负责把游标按那张卡片的清单算好。卡片的机器标识 `data-problem-card-key`
   （`drillKey()`），新手教程按 `drillKeysOf(issue)` 找「那条问题所在的卡片」。

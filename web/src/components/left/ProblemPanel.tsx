@@ -180,6 +180,20 @@ export function ProblemPanel() {
     if (!sameDrill(next, drill)) useUiStore.getState().setProblemDrill(next)
   }, [cursor, shown, listed, open, drill, view, figures])
 
+  // 「当前图」换了主语（抽屉开着时选中 / 快编了另一张图，或没了图退回整份排版）：
+  // 点进去的那张卡片属于上一张图，留着它清单是空的、还冒充「都处理完了」。与显式
+  // 换范围同口径退回总览、放下游标——除非游标指着的那条就在新范围里（`openProblemAt`
+  // 直达另一张图上的一条：它已换过范围、落好游标，交给上面那处钻进卡片）
+  const scopeKey = scope === 'figure' ? `figure:${figureId}` : scope
+  const seenScope = useRef(scopeKey)
+  useEffect(() => {
+    if (seenScope.current === scopeKey) return
+    seenScope.current = scopeKey
+    if (cursor && shown.some((i) => i.issueId === cursor.issueId)) return
+    const ui = useUiStore.getState()
+    if (ui.problemDrill || ui.problemCursor) ui.setProblemDrill(null)
+  }, [scopeKey, cursor, shown])
+
   // 换了文档：点进去的那张卡片属于上一份文档（首帧不算——那时的卡片可能是
   // 别处刚刚替用户选好的，`openProblemAt`）
   const seenLoad = useRef(loadSeq)

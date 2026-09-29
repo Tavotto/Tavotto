@@ -1094,6 +1094,47 @@ describe('卡片层：一张组图拆成子图（2026-09-28）', () => {
     expect(rows(), '总览不列逐条清单').toHaveLength(0)
   })
 
+  it('抽屉开着换了「当前图」（快编另一张）：退回那张图的总览，不留着上一张图的卡片冒充「都处理完了」', async () => {
+    await seedTriptych(true)
+    useUiStore.setState({ elementPanelId: 'p1' })
+    await mount(<ProblemPanel />)
+    await click(partCard('(a)')!.querySelector('button')!)
+    await click(rows()[0])
+    expect(useUiStore.getState().problemCursor).not.toBeNull()
+    // 点过一行，定位已把 p1 设成快编中的图（它压过 elementPanelId）：换图就换这一个
+    await act(async () => {
+      useWorkspaceStore.getState().enterFastEdit('p2')
+    })
+    expect(useUiStore.getState().problemDrill).toBeNull()
+    expect(useUiStore.getState().problemCursor).toBeNull()
+    expect(text()).not.toContain('这里的问题都处理完了')
+    const onP2 = useValidationStore.getState().issues.filter((i) => i.objectRef.objectId === 'p2').length
+    expect(onP2, '夹具里 p2 得有问题').toBeGreaterThan(0)
+    // p2 是拆不出子图的普通图：它的总览就是它自己的清单
+    expect(rows()).toHaveLength(onP2)
+    // 换回组图：回到它的子图卡片层，不是刚才那张 (a)
+    await act(async () => {
+      useWorkspaceStore.getState().enterFastEdit('p1')
+    })
+    expect(useUiStore.getState().problemDrill).toBeNull()
+    expect(partCard('(a)')).toBeTruthy()
+  })
+
+  it('直达另一张图上的一条（游标先落、图后换）：照样进那张图、那一行是「当前」', async () => {
+    await seedTriptych(true)
+    useUiStore.setState({ elementPanelId: 'p1' })
+    await mount(<ProblemPanel />)
+    await click(partCard('(a)')!.querySelector('button')!)
+    const target = useValidationStore.getState().issues.find((i) => i.objectRef.objectId === 'p2')!
+    const { openProblemAt } = await import('@/lib/issueFocus')
+    await act(async () => {
+      openProblemAt(target, useValidationStore.getState().issues, 'p2')
+      useWorkspaceStore.getState().enterFastEdit('p2')
+    })
+    expect(useUiStore.getState().problemCursor?.issueId).toBe(target.issueId)
+    expect(rows().find((r) => r.getAttribute('aria-current') === 'true')).toBeTruthy()
+  })
+
   it('外部直达仍会先换范围再钻进卡片：从「整份排版」的总览出发也落到 (c) 的那一行', async () => {
     await seedTriptych(true)
     useUiStore.setState({ elementPanelId: 'p1', problemScope: 'document' })
