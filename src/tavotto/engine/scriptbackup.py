@@ -57,6 +57,8 @@ ERROR_CODES = (
 #: 每份脚本保留多少条非 pristine 备份（与 AI 快照同一个数，ADR 0094 §六）。
 KEEP_RECENT = 20
 PROJECT_DIRNAME = "script-backups"
+#: 备份目录名里可读前半的上限（UTF-8 字节）；加上 `-` 与 12 位哈希仍远低于常见的 255 字节单段上限
+SLUG_READABLE_MAX_BYTES = 96
 ORIGINAL_NAME = "original.py"
 META_NAME = "meta.json"
 
@@ -95,6 +97,11 @@ def slug_of(script: str) -> str:
     """
     norm = script.replace("\\", "/").strip("/")
     readable = re.sub(r"[^\w.\-一-鿿]+", "_", norm.replace("/", "__")) or "_"
+    # 可读前半按**编码后的字节**截（不截哈希）：深层路径或多字节字符能让一个目录名超过文件系统的
+    # 单段上限（常见 255 字节），预览成功、提交却 `script_backup_failed`（Codex 评 #730 P2）
+    encoded = readable.encode("utf-8")
+    if len(encoded) > SLUG_READABLE_MAX_BYTES:
+        readable = encoded[:SLUG_READABLE_MAX_BYTES].decode("utf-8", errors="ignore")
     return f"{readable}-{sha256(norm.encode('utf-8'))[:12]}"
 
 
@@ -187,6 +194,23 @@ def _new_dir(parent: Path, base: str) -> Path:
             n += 1
 
 
+def _existing_ancestor(path: Path) -> Path:
+    """`path` 自己或最近一级已经存在的上级（新建目录链从它下面开始）。"""
+    while not path.exists() and path.parent != path:
+        path = path.parent
+    return path
+
+
+def _fsync_parents(directory: Path, anchor: Path) -> None:
+    """`directory` 的每一级上级直到 `anchor`（含）目录项落盘：新建的目录链整条挂进已存在的树。"""
+    parent = directory.parent
+    while True:
+        atomicio.fsync_dir(parent)
+        if parent == anchor or parent.parent == parent or anchor not in parent.parents:
+            return
+        parent = parent.parent
+
+
 def _metas(parent: Path) -> list[tuple[Path, dict]]:
     out: list[tuple[Path, dict]] = []
     if not parent.is_dir():
@@ -250,6 +274,11 @@ def replace(
         **(meta or {}),
     }
     created: list[Path] = []
+    # 这次可能新建的目录链（`script-backups/`、`<slug>/`、时间戳目录）从哪一级开始是新的
+    anchors = {
+        "project": _existing_ancestor(store.project_dir / slug),
+        "mirror": _existing_ancestor(store.mirror_dir / slug),
+    }
     try:
         pdir = _new_dir(store.project_dir / slug, time.strftime("%m%d_%H%M%S"))
         created.append(pdir)
@@ -260,6 +289,10 @@ def replace(
         for d in (pdir, mdir):
             atomicio.write_bytes(d / ORIGINAL_NAME, old)
             atomicio.write_json(d / META_NAME, record, indent=2)
+        # 文件与时间戳目录自己落了盘不够：把它挂进备份树的那些目录项也要落盘，否则掉电后
+        # 改后的脚本在、两份备份目录却可能都不在（Codex 评 #730 P2）
+        for d, anchor in ((pdir, anchors["project"]), (mdir, anchors["mirror"])):
+            _fsync_parents(d, anchor)
     except (OSError, atomicio.AtomicWriteError) as exc:
         for d in created:
             shutil.rmtree(d, ignore_errors=True)

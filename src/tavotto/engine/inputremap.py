@@ -358,20 +358,19 @@ def location_exists(path: str) -> bool:
 def _derive_dir(requested: str, chosen: str) -> dict:
     """条目是个**文件夹**（`listdir("data")` / `exists("data/runs")`），用户指认了文件夹 `chosen`。
 
-    从最长的后缀试起：`chosen/<后缀>` 是文件夹就定规则；都不是 → `chosen` 本身就是那个文件夹
-    （改了名）。条目最后一段像文件名（带扩展名）时不走这里——文件夹顶替不了文件。
+    从最长的后缀试起：`chosen/<后缀>` 是文件夹就定规则；都不是 → `chosen` 本身就是那个文件夹。
+    带点的名字（`runs.v1`）照样是文件夹：磁盘上**真有**同名文件夹（某个后缀、或 `chosen` 自己就叫这个
+    名字）就不看扩展名（Codex 评 #730 P2）。只有要拿一个**改了名**的文件夹去顶替一个像文件名的条目时
+    才拒——那多半是文件，文件夹顶替不了文件。
     """
     parsed = figcapture.remap_parts(requested)
     if parsed is None or not parsed[1] or parsed[1][-1] == "..":
         raise RemapError(ERROR_REQUESTED_INVALID, f"说不清脚本要的路径: {requested!r}")
     absolute, rparts = parsed
     body = rparts[1:] if absolute else rparts
-    if not body or _looks_like_file(body[-1]):
+    if not body:
         raise RemapError(
-            ERROR_NOT_FOUND_IN_DIR,
-            f"这个文件夹里没有 {body[-1] if body else requested}",
-            name=body[-1] if body else requested,
-            path=chosen,
+            ERROR_NOT_FOUND_IN_DIR, f"这个文件夹里没有 {requested}", name=requested, path=chosen
         )
     for k in range(len(body), 0, -1):
         if os.path.isdir(os.path.join(chosen, *body[-k:])):
@@ -380,6 +379,11 @@ def _derive_dir(requested: str, chosen: str) -> dict:
                 "from": _join(rparts[: len(rparts) - k]),
                 "to": chosen,
             }
+    same_name = os.path.normcase(os.path.basename(chosen)) == os.path.normcase(body[-1])
+    if _looks_like_file(body[-1]) and not same_name:
+        raise RemapError(
+            ERROR_NOT_FOUND_IN_DIR, f"这个文件夹里没有 {body[-1]}", name=body[-1], path=chosen
+        )
     return {"kind": figcapture.REMAP_PREFIX, "from": _join(rparts), "to": chosen}
 
 

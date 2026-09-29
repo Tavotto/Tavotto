@@ -5999,11 +5999,17 @@ def _script_edit_target(root: Path, script) -> Path:
             engine_scriptbackup.ERROR_SCRIPT_NOT_FOUND, "项目里没有这个脚本", script=str(script)
         )
     path = engine_scriptbackup.resolve(root, script)
+    _require_script_idle(path, script)
+    return path
+
+
+def _require_script_idle(path: Path, script: str) -> None:
+    """有进行中的编码 Agent 会话就不改（ADR 0110 §五）。锁外判一次只是快照（预览用它早点说）；
+    提交 / 复原要在 `engine_ai.script_guard(path)` 里再判，并在同一段锁里做完「校验和 + 替换」。"""
     if engine_ai.script_busy(path):
         raise engine_scriptbackup.ScriptEditError(
             engine_scriptbackup.ERROR_SCRIPT_BUSY, "编码 Agent 正在改这份脚本", script=script
         )
-    return path
 
 
 def _input_path_plan(root: Path, script: str, path: Path, entry, chosen, chosen_kind):
@@ -6101,32 +6107,35 @@ def api_script_edit_commit():
             )
         script = item["script"]
         path = _script_edit_target(root, script)
-        if engine_scriptbackup.sha256(path.read_bytes()) != item["before"]:
-            raise engine_scriptbackup.ScriptEditError(
-                engine_scriptbackup.ERROR_SCRIPT_CHANGED,
-                "预览之后脚本被改过了，请重新预览",
-                script=script,
+        # 「没有 Agent 在改」到「校验和 + 替换」落地整段持脚本锁：Agent 的登记段也拿同一把
+        with engine_ai.script_guard(path):
+            _require_script_idle(path, script)
+            if engine_scriptbackup.sha256(path.read_bytes()) != item["before"]:
+                raise engine_scriptbackup.ScriptEditError(
+                    engine_scriptbackup.ERROR_SCRIPT_CHANGED,
+                    "预览之后脚本被改过了，请重新预览",
+                    script=script,
+                )
+            _rule, plan, _kind = _input_path_plan(
+                root, script, path, item["entry"], item["chosen"], item["chosen_kind"]
             )
-        _rule, plan, _kind = _input_path_plan(
-            root, script, path, item["entry"], item["chosen"], item["chosen_kind"]
-        )
-        if plan.after_sha != item["after"]:
-            raise engine_scriptbackup.ScriptEditError(
-                engine_scriptedit.ERROR_PREVIEW_STALE, "预览之后数据的位置变了，请重新预览"
+            if plan.after_sha != item["after"]:
+                raise engine_scriptbackup.ScriptEditError(
+                    engine_scriptedit.ERROR_PREVIEW_STALE, "预览之后数据的位置变了，请重新预览"
+                )
+            record = engine_scriptbackup.replace(
+                _script_store(ctx),
+                script,
+                plan.new_bytes,
+                kind=engine_scriptedit.KIND,
+                expect_before=item["before"],
+                meta={
+                    "edits": plan.edits,
+                    "encoding": plan.encoding,
+                    "entry": item["entry"],
+                    "git": engine_scriptbackup.git_state(path),
+                },
             )
-        record = engine_scriptbackup.replace(
-            _script_store(ctx),
-            script,
-            plan.new_bytes,
-            kind=engine_scriptedit.KIND,
-            expect_before=item["before"],
-            meta={
-                "edits": plan.edits,
-                "encoding": plan.encoding,
-                "entry": item["entry"],
-                "git": engine_scriptbackup.git_state(path),
-            },
-        )
     except engine_inputremap.RemapError as exc:
         return _input_remap_error(exc)
     except engine_scriptbackup.ScriptEditError as exc:
@@ -6163,26 +6172,28 @@ def api_script_backups_restore():
         meta, original = engine_scriptbackup.load(store, body.get("backup_id"))
         script = meta.get("script") or ""
         path = _script_edit_target(root, script)
-        current = path.read_bytes()
-        now = engine_scriptbackup.sha256(current)
-        if now == (meta.get("before") or {}).get("sha256"):
-            return jsonify({"ok": True, "script": script, "unchanged": True})
-        if now == (meta.get("after") or {}).get("sha256") or mode == "full":
-            new = original
-        elif mode == "undo_edits":
-            new = engine_scriptedit.undo(current, meta.get("edits") or [])
-        else:
-            raise engine_scriptbackup.ScriptEditError(
-                engine_scriptedit.ERROR_RESTORE_CONFLICT, "mode 只能是 full / undo_edits"
+        with engine_ai.script_guard(path):  # 与提交同一段事务纪律
+            _require_script_idle(path, script)
+            current = path.read_bytes()
+            now = engine_scriptbackup.sha256(current)
+            if now == (meta.get("before") or {}).get("sha256"):
+                return jsonify({"ok": True, "script": script, "unchanged": True})
+            if now == (meta.get("after") or {}).get("sha256") or mode == "full":
+                new = original
+            elif mode == "undo_edits":
+                new = engine_scriptedit.undo(current, meta.get("edits") or [])
+            else:
+                raise engine_scriptbackup.ScriptEditError(
+                    engine_scriptedit.ERROR_RESTORE_CONFLICT, "mode 只能是 full / undo_edits"
+                )
+            record = engine_scriptbackup.replace(
+                store,
+                script,
+                new,
+                kind="restore",
+                expect_before=now,
+                meta={"restores": meta.get("id"), "mode": mode},
             )
-        record = engine_scriptbackup.replace(
-            store,
-            script,
-            new,
-            kind="restore",
-            expect_before=now,
-            meta={"restores": meta.get("id"), "mode": mode},
-        )
     except engine_scriptbackup.ScriptEditError as exc:
         return _script_edit_error(exc)
     LOG.info("复原脚本: %s（%s）", script, mode)

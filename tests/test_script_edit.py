@@ -291,6 +291,23 @@ def test_folder_entries_derive_from_the_parent_or_a_renamed_folder(tmp_path):
     assert figcapture.remap_target([rule], "data/runs") is None  # worker 改道从不用 whole
 
 
+def test_dotted_folder_entries_are_folders_when_the_disk_says_so(tmp_path):
+    """`listdir("runs.v1")`：名字带点也是文件夹——指认搬走的那个文件夹本身、或它的上级都要推得出
+    （Codex 评 #730 P2）；拿一个改了名的文件夹顶替像文件名的条目仍然拒。"""
+    moved = tmp_path / "new" / "runs.v1"
+    moved.mkdir(parents=True)
+    rule = inputremap.derive_location(f"{OLD}/runs.v1", str(moved), chosen_is_dir=True)
+    assert rule == {"kind": P, "from": f"{OLD}/runs.v1", "to": str(moved)}
+    assert figcapture.remap_target([rule], f"{OLD}/runs.v1", whole=True) == str(moved)
+    rule = inputremap.derive_location(f"{OLD}/runs.v1", str(moved.parent), chosen_is_dir=True)
+    assert rule == {"kind": P, "from": OLD, "to": str(moved.parent)}
+    renamed = tmp_path / "runs-2026"
+    renamed.mkdir()
+    with pytest.raises(inputremap.RemapError) as err:
+        inputremap.derive_location(f"{OLD}/runs.v1", str(renamed), chosen_is_dir=True)
+    assert err.value.code == inputremap.ERROR_NOT_FOUND_IN_DIR
+
+
 def test_a_file_entry_is_not_satisfied_by_a_folder_without_it(tmp_path):
     (tmp_path / "empty").mkdir()
     with pytest.raises(inputremap.RemapError) as err:
@@ -516,6 +533,61 @@ def test_scripts_whose_readable_slugs_collide_keep_separate_backups(store):
     assert [h["id"] for h in scriptbackup.history(store, "a__b.py")] == [second["id"]]
 
 
+def test_long_or_multibyte_script_paths_keep_the_slug_under_the_name_limit(store):
+    """可读前半按 UTF-8 字节截、哈希后缀原样保留（Codex 评 #730 P2）：深层路径 / 多字节字符的备份
+    目录名不超过文件系统的单段上限，截完仍然互不相同。"""
+    deep = "/".join(["很长的一层目录名称"] * 12) + "/fig.py"
+    other = "/".join(["很长的一层目录名称"] * 12) + "/fig2.py"
+    for script in (deep, other, "a" * 300 + ".py"):
+        slug = scriptbackup.slug_of(script)
+        assert len(slug.encode("utf-8")) <= scriptbackup.SLUG_READABLE_MAX_BYTES + 13
+        assert slug.endswith("-" + scriptbackup.sha256(script.encode("utf-8"))[:12])
+    assert scriptbackup.slug_of(deep) != scriptbackup.slug_of(other)
+    _touch(store.root / deep, "A = 1\n")
+    rec = scriptbackup.replace(
+        store, deep, b"A = 2\n", kind="t", expect_before=scriptbackup.sha256(b"A = 1\n")
+    )
+    assert (store.project_dir / rec["id"] / "original.py").read_bytes() == b"A = 1\n"
+
+
+def test_new_backup_directories_are_linked_durably_before_the_script_is_replaced(
+    store, monkeypatch
+):
+    """文件与时间戳目录自己 fsync 了还不够：把它们挂进备份树的上级目录项也要落盘，且都在替换原件
+    之前（Codex 评 #730 P2）。上级落盘失败 → 备份失败、原件不动。"""
+    from tavotto.engine import atomicio
+
+    script = store.root / "fig.py"
+    script.write_bytes(b"A = 1\n")
+    synced: list[Path] = []
+    real_fsync_dir = atomicio.fsync_dir
+
+    def record(directory):
+        synced.append(Path(directory))
+        assert script.read_bytes() == b"A = 1\n"  # 原件还没被替换
+        return real_fsync_dir(directory)
+
+    monkeypatch.setattr(atomicio, "fsync_dir", record)
+    before = scriptbackup.sha256(b"A = 1\n")
+    rec = scriptbackup.replace(store, "fig.py", b"A = 2\n", kind="t", expect_before=before)
+    slug = rec["id"].split("/")[0]
+    for base in (store.project_dir, store.mirror_dir):
+        # 这次新建的整条链：<slug>/ 与它的上级（script-backups/ 或镜像根）直到原本就在的那一级
+        assert base / slug in synced and base in synced
+    assert script.read_bytes() == b"A = 2\n"
+
+    def fail(directory):
+        raise atomicio.AtomicWriteError("dir_fsync_failed", "boom", directory)
+
+    monkeypatch.setattr(atomicio, "fsync_dir", fail)
+    with pytest.raises(scriptbackup.ScriptEditError) as err:
+        scriptbackup.replace(
+            store, "fig.py", b"A = 3\n", kind="t", expect_before=scriptbackup.sha256(b"A = 2\n")
+        )
+    assert err.value.code == scriptbackup.ERROR_BACKUP_FAILED
+    assert script.read_bytes() == b"A = 2\n"
+
+
 def test_load_only_accepts_backup_ids_it_issued(store):
     for bad in ("../x/y", "fig.py", "a/../b", "a/b/c", "", None):
         with pytest.raises(scriptbackup.ScriptEditError) as err:
@@ -683,6 +755,53 @@ def test_http_refuses_runtime_assets_and_scripts_an_agent_is_editing(
     )
     resp = _preview(client, script="fig.py", **body)
     assert resp.status_code == 409 and resp.get_json()["code"] == scriptbackup.ERROR_SCRIPT_BUSY
+
+
+def test_http_commit_rechecks_the_agent_under_the_script_lock_and_replaces_inside_it(
+    app_project, tmp_path, monkeypatch
+):
+    """锁外那次 `script_busy` 只是快照（Codex 评 #730 P1）：Agent 在快照之后、替换之前登记——提交在
+    脚本锁里再判一次、让路；替换本身也在同一把锁里（Agent 的登记段拿的是同一把）。"""
+    from tavotto.engine import ai_bridge
+
+    m, root = app_project
+    client = m.app.test_client()
+    original = EXISTS_SCRIPT.format(old=OLD).encode("utf-8")
+    (root / "fig.py").write_bytes(original)
+    chosen = _touch(tmp_path / "moved" / "data" / "values.txt", "3\n")
+    body = {"entry": f"{OLD}/data/values.txt", "chosen": str(chosen), "chosen_kind": "file"}
+    token = _preview(client, script="fig.py", **body).get_json()["token"]
+    calls: list[bool] = []
+
+    def busy_after_the_snapshot(path):
+        calls.append(
+            ai_bridge._SCRIPT_LOCKS.get(ai_bridge._script_key(path), None) is not None
+            and ai_bridge._SCRIPT_LOCKS[ai_bridge._script_key(path)].locked()
+        )
+        return len(calls) > 1  # 第一次（锁外快照）没人；锁里再判时 Agent 已经登记了
+
+    monkeypatch.setattr(ai_bridge, "script_busy", busy_after_the_snapshot)
+    resp = client.post("/api/script-edit/commit", json={"token": token})
+    assert resp.status_code == 409 and resp.get_json()["code"] == scriptbackup.ERROR_SCRIPT_BUSY
+    assert calls == [False, True]  # 第二次是在脚本锁里判的
+    assert (root / "fig.py").read_bytes() == original
+    # 没有 Agent：替换发生在脚本锁里
+    monkeypatch.setattr(ai_bridge, "script_busy", lambda path: False)
+    real_replace = scriptbackup.replace
+    held: list[bool] = []
+
+    def replace_under_lock(store, script, *a, **k):
+        held.append(ai_bridge._SCRIPT_LOCKS[ai_bridge._script_key(root / script)].locked())
+        return real_replace(store, script, *a, **k)
+
+    monkeypatch.setattr(scriptbackup, "replace", replace_under_lock)
+    token = _preview(client, script="fig.py", **body).get_json()["token"]
+    resp = client.post("/api/script-edit/commit", json={"token": token})
+    assert resp.status_code == 200, resp.get_json()
+    backup_id = resp.get_json()["backup"]["id"]
+    resp = client.post("/api/script-backups/restore", json={"backup_id": backup_id, "mode": "full"})
+    assert resp.status_code == 200, resp.get_json()
+    assert held == [True, True]  # 提交与复原各一次
 
 
 # --------------------------------------------------------------- 真 worker
