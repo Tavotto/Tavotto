@@ -125,6 +125,26 @@ assert installed["options"][0] == "DejaVu Sans", installed["options"][:4]
 assert "options_unavailable" not in installed, installed
 missing = _fam_field(Text(0, 0, "hi", fontfamily="No Such Font Zzz"))
 assert missing["options_unavailable"] == ["No Such Font Zzz"], missing
+
+# ── d) 刻度的字体族字段同一条判据（`_tick_family_field`）：装了的非首选字体不标 ──
+import matplotlib.pyplot as plt
+from tickmodel import TickSet
+fig, ax = plt.subplots()
+ax.plot([0, 1], [0, 1])
+fig.canvas.draw()
+# 直接设在标签上（`tick_params(labelfontfamily=)` 要 matplotlib ≥ 3.8，CI 也跑更老的版本）
+def _tick_font(name):
+    for lbl in ax.xaxis.get_ticklabels():
+        lbl.set_fontfamily(name)
+_tick_font("DejaVu Sans")
+tick_installed = manifest._tick_family_field(TickSet(ax, "x"))
+assert tick_installed["value"] == "DejaVu Sans", tick_installed
+assert "DejaVu Sans" not in manifest._family_options()
+assert "options_unavailable" not in tick_installed, tick_installed
+_tick_font("No Such Font Zzz")
+tick_missing = manifest._tick_family_field(TickSet(ax, "x"))
+assert tick_missing["options_unavailable"] == ["No Such Font Zzz"], tick_missing
+plt.close(fig)
 overrides._FONT_PRESENT.clear()
 print("OK")
 """

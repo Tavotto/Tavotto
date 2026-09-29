@@ -3045,8 +3045,12 @@ def _tick_family_field(ts: TickSet) -> dict:
     fam_opts = _family_options()
     fam_missing: list[str] = []
     if fam not in fam_opts:
+        # 与 `_text_fields` 同一条判据：不可用 = **这个运行时画不出**（`font_installed`），不是
+        # 「不在首选项里」。刻度设了一个装了的非首选字体时，从前这里把它标成「未安装」，属性页与
+        # 设置 › 样式页都对着画得好好的刻度亮 warning（Codex #703）
         fam_opts = [fam] + fam_opts
-        fam_missing = [fam]
+        if not _font_installed(fam):
+            fam_missing = [fam]
     return {
         "prop": "fontfamily",
         "type": "enum",
