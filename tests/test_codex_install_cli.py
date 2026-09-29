@@ -1759,6 +1759,69 @@ def test_upgrade_replaces_the_archive_and_reinstalls_only_when_it_changed(no_git
     assert data["summary"]["canvas"]["complete"] is True
 
 
+def test_upgrade_retries_the_plugin_add_that_failed_last_time(no_git_machine, capsys):
+    """压缩包换成了新的、那次 `codex plugin add` 却失败了：下一次 upgrade 时本地市场「已是最新」
+    （changed=False），Codex 里装着的仍是旧版——按已装副本与收据的 content_digest 判出来，照样重装
+    （Codex #725），而不是报「已安装」就收工。"""
+    m = no_git_machine
+    z1, man1 = _stable_branch_zip(m["tmp"], "0.18.0")
+    m["github"].publish(z1, man1)
+    assert _cli_json(m, capsys, "install")[0] == 0
+    fail = m["tmp"] / "fail-plugin-add"
+    script = m["script"]
+    text = script.read_text(encoding="utf-8")
+    needle = 'if argv[:2] == ["plugin", "add"]:\n'
+    assert needle in text, "前提：假 codex 的 plugin add 分支还在"
+    script.write_text(
+        text.replace(
+            needle,
+            needle
+            + f"    if os.path.exists({str(fail)!r}):\n"
+            + "        print('Error: failed to add plugin', file=sys.stderr); sys.exit(1)\n",
+        ),
+        encoding="utf-8",
+    )
+    z2, man2 = _stable_branch_zip(m["tmp"], "0.18.1")
+    m["github"].publish(z2, man2)
+    fail.write_text("x", encoding="utf-8")
+    rc, data = _cli_json(m, capsys, "upgrade")
+    assert rc != 0, data
+    assert _cached_versions(m) == ["0.18.0"], "那次 plugin add 失败，Codex 里仍是旧版"
+    fail.unlink()
+    rc, data = _cli_json(m, capsys, "upgrade")
+    assert rc == 0 and data["ok"], data
+    steps = {st["step"]: st for st in data["steps"]}
+    assert "已是最新" in steps["marketplace"]["detail"], steps["marketplace"]
+    assert _cached_versions(m) == ["0.18.1"], steps["plugin"]
+
+
+def test_a_truncated_download_is_an_archive_error_not_a_traceback(monkeypatch):
+    """分块响应被截断：`resp.read()` 抛 `http.client.IncompleteRead`（HTTPException，不是 OSError）——
+    也要是 ArchiveError 的一行 JSON 失败（Codex #725）。"""
+    import http.client
+
+    sys.path.insert(0, str(SRC))
+    from tavotto.engine import codexinstall
+
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self, n=-1):
+            raise http.client.IncompleteRead(b"partial")
+
+    class _Opener:
+        def open(self, req, timeout=None):
+            return _Resp()
+
+    monkeypatch.setattr(codexinstall.urllib.request, "build_opener", lambda *a, **k: _Opener())
+    with pytest.raises(codexinstall.ArchiveError):
+        codexinstall._fetch("https://example.invalid/x.zip", limit=10)
+
+
 def test_upgrade_leaves_a_local_marketplace_it_did_not_create_alone(no_git_machine, capsys):
     """用户手动解压到别处再登记的本地市场：认得出是发行分支，但不替他覆盖那个目录。"""
     import zipfile
