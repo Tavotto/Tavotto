@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
+import { createPortal, flushSync } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
 import { DURATION, EASE_STANDARD, prefersReducedMotion } from '@/lib/motion'
@@ -206,7 +206,17 @@ function ActiveStep({ stepId }: { stepId: StepId }) {
     window.addEventListener('resize', refresh)
     window.addEventListener('scroll', refresh, true)
     const tick = window.setInterval(refresh, TICK_MS)
+    // 锚点被 DOM 变动**挤动**：素材库重取时网格上方冒出一行「正在检查新文件…」、整排卡片下移
+    // 24 px，比卡片与锚点之间的间距大。那一行是组件自己的 state，不经过上面订阅的任何 store；
+    // 只靠 300 ms 的兜底重测，停着的卡片要压着锚点底部（文件名那一行）最长 300 ms、接得住点击，
+    // 滑行中的卡片则撞上被挤进路径的锚点（windows-exe-smoke，PR #711 / #717 的 run）。所以在
+    // 插删节点的那个微任务里当场重测并**同步提交**（`flushSync`）：不把重排交给 React 的调度任务，
+    // 慢机器上那个任务可能落在下一帧之后——浏览器画下一帧之前卡片就已让开。
+    // 自己的节点也会触发（落位挂上高亮环），重测结果不变时 React 不碰 DOM，不会自激
+    const mo = new MutationObserver(() => flushSync(refresh))
+    mo.observe(document.body, { childList: true, subtree: true })
     return () => {
+      mo.disconnect()
       for (const u of unsubs) u()
       window.removeEventListener('resize', refresh)
       window.removeEventListener('scroll', refresh, true)

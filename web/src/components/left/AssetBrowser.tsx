@@ -332,6 +332,7 @@ export function AssetBrowser() {
             label={ab('refresh')}
             tip={ab('refreshTip')}
             disabled={refreshing}
+            data-asset-refresh
             onClick={() => {
               // 走**统一刷新**（后端一次完整的一轮），不是自己再扫一遍：
               // 「哪些文件是素材」「脚本怎么合进注册表」只有一份判据，
@@ -373,7 +374,7 @@ export function AssetBrowser() {
       </div>
 
       {busy && loaded && (
-        <p className="px-3 py-1 text-xs text-ink-3" aria-live="polite">
+        <p className="px-3 py-1 text-xs text-ink-3" aria-live="polite" data-asset-refreshing>
           {ab('refreshing')}
         </p>
       )}

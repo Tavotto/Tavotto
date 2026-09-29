@@ -18,6 +18,8 @@ import type { Page } from '@playwright/test'
  * 全程不联网（后端本地、教程资源在包内）。
  */
 
+/** coachmark 与锚点之间的间距（`lib/onboarding/position.ts` 的 COACHMARK_GAP）：挤动小于它时本来就压不上 */
+const COACHMARK_GAP_PX = 10
 const coachmark = (page: Page) => page.locator('[data-onboarding-coachmark]')
 
 async function openTutorialFromPicker(page: Page, baseURL: string) {
@@ -348,6 +350,107 @@ test('coachmark 落位时不从锚点上扫过：双击素材卡的第二下不�
   await cdp.send('Animation.setPlaybackRate', { playbackRate: 1 })
   await page.locator('[data-card="Fig2_correlation.pdf"]').dblclick()
   await expect(page.locator('[data-exit-element-edit]')).toBeVisible({ timeout: 30_000 })
+})
+
+test('coachmark 落位途中锚点被挤动也不压上去：素材区顶上冒出「正在检查新文件…」那一行', async ({ app, page }) => {
+  // windows-exe-smoke 上连红（PR #711 三个 run、#717 一次，2026-09-28）：第 1 步的 coachmark 正从居中
+  // 滑向素材卡下方，恰在这时素材库重取（渲染完成后的刷新）在网格上方插进一行「正在检查新文件…」，
+  // 整排卡片下移约 24 px——比卡片与 coachmark 之间的 10 px 间距大。滑不滑是按**起滑那一刻**的锚点
+  // 判的，之后锚点自己挪进了路径；停着的 coachmark 也一样，要等 300 ms 的兜底重测才让开，这段时间
+  // 它压着卡片底部的文件名、还接得住点击。慢机器上那次重取落在哪一刻是运气，这里用「刷新项目」
+  // 按钮在滑行途中**亲手**把那一行派出来，并把刷新扣住 1.5 秒，让它在任何机器上都发生
+  test.setTimeout(120_000)
+  const a = await app({ noProject: true })
+  await page.setViewportSize({ width: 1400, height: 900 })
+  await openTutorialFromPicker(page, a.baseURL)
+  let release!: () => void
+  const held = new Promise<void>((r) => (release = r))
+  await page.route('**/api/project/refresh', async (route) => {
+    await held
+    await route.continue()
+  })
+  const cdp = await page.context().newCDPSession(page)
+  await cdp.send('Animation.enable')
+  await cdp.send('Animation.setPlaybackRate', { playbackRate: 0.05 })
+  await page.evaluate(() => {
+    const w = window as unknown as { __covered: string[]; __frames: number; __cardTops: number[] }
+    w.__covered = []
+    w.__frames = 0
+    w.__cardTops = []
+    const until = performance.now() + 8000
+    const tick = () => {
+      const card = document.querySelector('[data-card="Fig2_correlation.pdf"]')
+      const cm = document.querySelector('[data-onboarding-coachmark]')
+      if (card && cm) {
+        w.__frames++
+        const a = card.getBoundingClientRect()
+        const b = cm.getBoundingClientRect()
+        w.__cardTops.push(a.top)
+        if (b.left < a.right && a.left < b.right && b.top < a.bottom && a.top < b.bottom) {
+          w.__covered.push(`${Math.round(b.left)},${Math.round(b.top)} card ${Math.round(a.top)}-${Math.round(a.bottom)}`)
+        }
+      }
+      if (performance.now() < until) requestAnimationFrame(tick)
+    }
+    requestAnimationFrame(tick)
+  })
+  await coachmark(page).getByRole('button', { name: '开始' }).click()
+  await expect(coachmark(page)).toContainText('打开一张图')
+  // 滑行放慢后约 2.4 秒；等它停稳再把刷新行派出来——停着的那种最稳：挤动之后到下一次兜底重测之间
+  // （最长 300 ms）它一直压着卡片。滑行途中的那种只在最后四分之一段才压得上，时机太窄
+  await page.waitForTimeout(3000)
+  // 「下一帧画出来之前就让开」要一把**不看帧率**的尺子：在插进刷新行的那次 DOM 变动的同一个微任务
+  // 检查点里量（这个观察者注册得比 OnboardingLayer 的晚，回调排在它后面）。重测同步提交（flushSync）
+  // 时，量到的已是让开之后的位置；交给 React 调度的话，调度任务一定晚于这个微任务——量到的就是压着的
+  // 旧位置，与机器快慢无关（Codex #731 P1：只看 rAF 帧的尺子在快机器上抓不到这条变异）
+  await page.evaluate(() => {
+    const w = window as unknown as { __syncCovered: string[]; __syncSeen: number }
+    w.__syncCovered = []
+    w.__syncSeen = 0
+    const mo = new MutationObserver(() => {
+      if (!document.querySelector('[data-asset-refreshing]')) return
+      const card = document.querySelector('[data-card="Fig2_correlation.pdf"]')
+      const cm = document.querySelector('[data-onboarding-coachmark]')
+      if (!card || !cm) return
+      w.__syncSeen++
+      const a = card.getBoundingClientRect()
+      const b = cm.getBoundingClientRect()
+      if (b.left < a.right && a.left < b.right && b.top < a.bottom && a.top < b.bottom) {
+        w.__syncCovered.push(`${Math.round(b.left)},${Math.round(b.top)} card ${Math.round(a.top)}-${Math.round(a.bottom)}`)
+      }
+      mo.disconnect() // 只量插进刷新行的那一次
+    })
+    mo.observe(document.body, { childList: true, subtree: true })
+  })
+  await page.locator('[data-asset-refresh]').click()
+  await expect(page.locator('[data-asset-refreshing]')).toBeVisible()
+  await page.waitForTimeout(1500)
+  release()
+  await expect(page.locator('[data-asset-refreshing]')).toHaveCount(0, { timeout: 30_000 })
+  await page.waitForTimeout(3000)
+  const { covered, frames, cardTops, syncCovered, syncSeen } = await page.evaluate(() => {
+    const w = window as unknown as {
+      __covered: string[]
+      __frames: number
+      __cardTops: number[]
+      __syncCovered: string[]
+      __syncSeen: number
+    }
+    return {
+      covered: w.__covered,
+      frames: w.__frames,
+      cardTops: w.__cardTops,
+      syncCovered: w.__syncCovered,
+      syncSeen: w.__syncSeen,
+    }
+  })
+  // 尺子是活的：采样跑过，而且锚点真的被挤动过（没挪的话「没压上」恒真）
+  expect(frames).toBeGreaterThan(30)
+  expect(Math.max(...cardTops) - Math.min(...cardTops)).toBeGreaterThan(COACHMARK_GAP_PX)
+  expect(syncSeen, '插进刷新行的那次变动没被量到').toBe(1)
+  expect(syncCovered, 'coachmark 没在插进刷新行的同一个微任务里让开（重测没有同步提交）').toEqual([])
+  expect(covered, 'coachmark 在锚点被挤动时压住了它指着的那张卡片').toEqual([])
+  await cdp.send('Animation.setPlaybackRate', { playbackRate: 1 })
 })
 
 test('切到别的项目自动暂停，切回来自动继续', async ({ app, page }) => {
