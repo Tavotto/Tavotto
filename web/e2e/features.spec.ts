@@ -370,6 +370,120 @@ test(
 )
 
 test(
+  '功能：换画布尺寸后页面重新取景居中；比页面大的图加进来等比缩到约 1.15 倍页面，伸出部分画淡',
+  { tag: ['@feature:canvas.page-fit-and-placement'] },
+  async ({ app, page }) => {
+    const a = await app()
+    await page.setViewportSize(VIEWPORT)
+    await page.goto(a.baseURL)
+    const stage = page.locator('[data-canvas-stage]')
+    const sheet = page.locator('[data-page-sheet]')
+    await expect(sheet).toBeVisible({ timeout: 30_000 })
+
+    // 页面改成 40 × 30 mm（示例图 Fig1_kinetics 是 73 × 58 mm，约 1.9 倍）。
+    // 尺寸行没有逐框的 data 锚点：行上有 `data-page-size-row`，里面依次是 W、H 两个输入框
+    const size = page.locator('[data-page-size-row] input')
+    await expect(size).toHaveCount(2)
+    await size.nth(0).fill('40')
+    await size.nth(0).press('Enter')
+    await size.nth(1).fill('30')
+    await size.nth(1).press('Enter')
+
+    // 重新取景：页面整张在视口内、在舞台中间，并且撑开到舞台的大半——视口不动的话
+    // 40 × 30 mm 的页面只剩舞台里的一小块
+    await expect
+      .poll(async () => {
+        const s = (await sheet.boundingBox())!
+        const g = (await stage.boundingBox())!
+        return Math.max(s.width / g.width, s.height / g.height)
+      }, { message: '换尺寸后页面应当重新撑满舞台' })
+      .toBeGreaterThan(0.6)
+    await expectInViewport(page, sheet, '页面')
+    const s0 = (await sheet.boundingBox())!
+    const g0 = (await stage.boundingBox())!
+    expect(Math.abs(s0.x + s0.width / 2 - (g0.x + g0.width / 2)), '页面应当水平居中').toBeLessThan(2)
+    expect(Math.abs(s0.y + s0.height / 2 - (g0.y + g0.height / 2)), '页面应当垂直居中').toBeLessThan(2)
+    expect(s0.width / s0.height).toBeCloseTo(40 / 30, 2)
+
+    // 素材卡选中后 Shift+Enter = 「添加到画布」（与卡上那颗就近入口同一个动作）
+    await page.locator(CARD).click()
+    await page.keyboard.press('Shift+Enter')
+    const obj = page.locator('[data-canvas-stage] [data-object-id]')
+    await expect(obj).toHaveCount(1, { timeout: 30_000 })
+
+    const outline = page.locator('[data-page-outline]')
+    await expect
+      .poll(async () => {
+        const o = (await obj.boundingBox())!
+        const p = (await outline.boundingBox())!
+        return Math.max(o.width / p.width, o.height / p.height)
+      }, { message: '图应当缩到约 1.15 倍页面（稍大于页面，但远小于原图的 1.9 倍）' })
+      .toBeGreaterThan(1.1)
+    // 取景是一段补间：等页面轮廓连续两次读数一样再量，否则图与色带是在不同帧量的
+    let last = ''
+    await expect
+      .poll(async () => {
+        const now = JSON.stringify(await outline.boundingBox())
+        const same = now === last
+        last = now
+        return same
+      }, { message: '加图后的取景补间应当停下来', intervals: [100] })
+      .toBe(true)
+    const o = (await obj.boundingBox())!
+    const p = (await outline.boundingBox())!
+    expect(Math.max(o.width / p.width, o.height / p.height)).toBeLessThanOrEqual(1.151)
+    expect(o.width / o.height, '等比缩放').toBeCloseTo(73.33 / 57.77, 1)
+    // 取景「页面 ∪ 这张图」：图和页面轮廓都整张在视口里
+    await expectInViewport(page, obj, '新加的图')
+    await expectInViewport(page, outline, '页面轮廓')
+
+    // 伸出页面的那截被画淡：那一点上有一条不透明度 > 0 的遮罩色带
+    const overflowPt =
+      o.y < p.y - 1
+        ? { x: o.x + o.width / 2, y: (o.y + p.y) / 2 }
+        : { x: (o.x + p.x) / 2, y: o.y + o.height / 2 }
+    const dimmed = await page.evaluate(({ x, y }) => {
+      const mask = document.querySelector('[data-page-outside-mask]')
+      if (!mask) return false
+      return [...mask.children].some((el) => {
+        if (el.hasAttribute('data-page-outline')) return false
+        const r = el.getBoundingClientRect()
+        const inside = x >= r.left && x <= r.right && y >= r.top && y <= r.bottom
+        const bg = getComputedStyle(el).backgroundColor
+        const alpha = /rgba?\(([^)]+)\)/.exec(bg)?.[1].split(/[ ,/]+/).filter(Boolean)[3]
+        return inside && bg !== 'transparent' && (alpha == null || Number(alpha) > 0)
+      })
+    }, overflowPt)
+    expect(dimmed, '伸出页面的部分应当被遮罩画淡').toBe(true)
+
+    // 取景矩形跟着画布会话走（#706 评审 P2）：切到新画布再切回，图仍整张在舞台里；
+    // 之后窗口缩放按同一块矩形重算，图也仍整张在舞台里。只记「在适应模式」的话切回来
+    // 按页面取景，伸出页面的那截会跑到舞台外
+    const inStage = async () => {
+      const b = (await obj.boundingBox())!
+      const g = (await stage.boundingBox())!
+      return (
+        b.x >= g.x - 0.5 &&
+        b.y >= g.y - 0.5 &&
+        b.x + b.width <= g.x + g.width + 0.5 &&
+        b.y + b.height <= g.y + g.height + 0.5
+      )
+    }
+    const tabs = page.locator('[data-canvas-tab]')
+    const first = await tabs.first().getAttribute('data-canvas-tab')
+    await page.locator('[data-new-canvas-tab]').click()
+    await expect(tabs).toHaveCount(2)
+    // 别的画布标签整层 display:none 但还挂在舞台里：数对象只数看得见的
+    await expect(obj.filter({ visible: true })).toHaveCount(0)
+    await page.locator(`[data-canvas-tab="${first}"]`).click()
+    await expect(obj.filter({ visible: true })).toHaveCount(1)
+    await expect.poll(inStage, { message: '切回画布后新加的图应当整张在舞台里' }).toBe(true)
+    await page.setViewportSize({ width: VIEWPORT.width - 200, height: VIEWPORT.height - 120 })
+    await expect.poll(inStage, { message: '窗口缩放后新加的图应当仍整张在舞台里' }).toBe(true)
+  },
+)
+
+test(
   '功能：图内点选标题改字号，引擎重画后标题真的变大；撤销回到原字号',
   { tag: ['@feature:figure.select-and-edit'] },
   async ({ app, page }) => {

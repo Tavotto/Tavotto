@@ -140,7 +140,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
  * 换了画布之后记下的那一片属于**上一张画布**，还回去就是把用户送到别处。
  * 这里的主语是「哪一张画布的、哪一刻的视口」，两者缺一不可。
  */
-let parkedLayoutView: { canvasId: string; view: ViewTarget } | null = null
+let parkedLayoutView: { canvasId: string; view: ViewTarget; pageResized?: boolean } | null = null
 
 interface ViewTarget {
   zoom: number
@@ -159,12 +159,26 @@ function parkLayoutView(): void {
   }
 }
 
+/**
+ * 快速编辑期间这张画布的页面尺寸变了（画布属性里改 W / H、撤销重做）：记下的那一片
+ * 是按旧页面取的景，还回去新页面可能被裁掉或缩成一小块（#706 评审 P2）。判「页面
+ * 尺寸变了」只有 `startPageSizeFit` 一处，它在快速编辑里不动视口、改调这里留个记号，
+ * 回排版时由 `returnToLayout` 按当前页面取景。记的那一片属于别的画布时不沾。
+ */
+export function markParkedPageResized(): void {
+  if (parkedLayoutView?.canvasId === useDocumentStore.getState().activeCanvasId) {
+    parkedLayoutView.pageResized = true
+  }
+}
+
 /** 取出并清空；画布对不上就当没记过 */
-function takeParkedLayoutView(): ViewTarget | null {
+function takeParkedLayoutView(): { view: ViewTarget; pageResized: boolean } | null {
   const parked = parkedLayoutView
   parkedLayoutView = null
   if (!parked) return null
-  return parked.canvasId === useDocumentStore.getState().activeCanvasId ? parked.view : null
+  return parked.canvasId === useDocumentStore.getState().activeCanvasId
+    ? { view: parked.view, pageResized: parked.pageResized === true }
+    : null
 }
 
 /** 当前快速编辑的那个面板对象；不在激活画布里就回 null */
@@ -296,7 +310,10 @@ export function addFigureToLayout(figureId: string): AddToLayoutOutcome {
       .setStatus(msg('fastEdit.figureMissing', { name: figureId }, 'workspace'), 'error')
     return 'missing'
   }
-  focusLayoutPanel(got.panel.id)
+  // 新加的图已由加图 action 取景「页面 ∪ 这张图」并留在适应模式（`actions.frameAddedPanel`）；
+  // 这里再 `revealRect` 会退出适应模式，抽屉一收页面就偏在一边（2026-09-28 用户反馈）。
+  // 已在文档里的只是聚焦、滚进视野
+  focusLayoutPanel(got.panel.id, { reveal: !got.created })
   const name = got.panel.name ?? got.panel.fileId
   useUiStore
     .getState()
@@ -319,8 +336,13 @@ export function returnToLayout(): void {
   const parked = takeParkedLayoutView()
   if (!wasFastEdit) {
     // 一次什么都没切的「切换」：视口一个字不动
+  } else if (parked?.pageResized) {
+    // 进来之后换过页面尺寸：记下的那一片已经对不上新页面，按当前页面重新取景——
+    // 与排版上直接换尺寸（`startPageSizeFit`）同一个落点
+    const page = useDocumentStore.getState().doc.page
+    useViewportStore.getState().fitAnimated(page.w, page.h)
   } else if (parked) {
-    useViewportStore.getState().restoreView(parked)
+    useViewportStore.getState().restoreView(parked.view)
   } else if (panel) {
     revealPanel(panel)
   } else {
@@ -339,7 +361,7 @@ export function returnToLayout(): void {
  * 定位到画布上的某个面板：切到它所在的画布、选中、滚进视野。
  * Prompt 11 的问题面板与 Prompt 12 的导出报告直接调它。
  */
-export function focusLayoutPanel(panelId: string): boolean {
+export function focusLayoutPanel(panelId: string, opts?: { reveal?: boolean }): boolean {
   const s = useDocumentStore.getState()
   const inActive = s.doc.objects.find((o) => o.id === panelId)
   if (!inActive) {
@@ -354,7 +376,7 @@ export function focusLayoutPanel(panelId: string): boolean {
   useWorkspaceStore.getState().exitToLayout()
   useUiStore.getState().setElementPanel(null)
   useSelectionStore.getState().set([panelId])
-  revealPanel(obj)
+  if (opts?.reveal !== false) revealPanel(obj)
   return true
 }
 

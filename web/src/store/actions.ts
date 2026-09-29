@@ -9,6 +9,7 @@ import { emitActivity } from '@/lib/activity'
 import { effectiveOverride, effectiveOverrideIndex } from '@/lib/effectiveOverride'
 import { applyAlign, boundsOf, readingOrder, type AlignMode } from '@/lib/geometry'
 import { clamp } from '@/lib/units'
+import { pageUnion, placePanelInPage } from '@/lib/panelPlacement'
 import {
   FIGURE_FRAME_VERSION,
   frameSwitchAvailable,
@@ -64,7 +65,7 @@ import { useInteractionStore } from './interactionStore'
 import { exactPanelManifest, renderKeyOf, useRenderStore } from './renderStore'
 import { useSelectionStore } from './selectionStore'
 import { askConfirm, useUiStore } from './uiStore'
-import { useViewportStore } from './viewportStore'
+import { mmToWorld, useViewportStore } from './viewportStore'
 import { rectOf, type Rect } from '@/lib/geometry'
 import type { CropRect, PanelRotation } from '@/types/document'
 import {
@@ -107,12 +108,33 @@ export const selectedObjects = (): CanvasObject[] => {
 
 /* ------------------------------- 新增对象 --------------------------------- */
 
+/**
+ * 新加的图进视野：取景「页面 ∪ 这张图」并**留在适应模式**（`fitRectAnimated`）——软上限
+ * 放置（`lib/panelPlacement`）下稍大的图会伸出页面，伸出去的那截也要看得见；之后素材
+ * 抽屉收起 / 窗口缩放 / 切标签再切回仍按这块取景（2026-09-28 用户反馈、#706 评审 P2）。
+ *
+ * **放在加图 action 这一层**，不放在某个入口：素材库、选图对话框、脚本库、接入状态
+ * 对话框、`tavotto run` 交接……入口一多，逐个补必然漏一个（#706 评审 P2 正是漏了三个）。
+ *
+ * 拖放到某一点（给了落点）是用户自己在屏幕上挑的位置：图整张已在视口里就不动视口，
+ * 伸出视口才同样取景。
+ */
+function frameAddedPanel(box: { x: number; y: number; w: number; h: number }, dropped: boolean): void {
+  const vp = useViewportStore.getState()
+  if (dropped && vp.viewW && vp.viewH) {
+    const left = mmToWorld(box.x) * vp.zoom + vp.panX
+    const top = mmToWorld(box.y) * vp.zoom + vp.panY
+    const right = left + mmToWorld(box.w) * vp.zoom
+    const bottom = top + mmToWorld(box.h) * vp.zoom
+    if (left >= 0 && top >= 0 && right <= vp.viewW && bottom <= vp.viewH) return
+  }
+  vp.fitRectAnimated(pageUnion(doc().page, box))
+}
+
 export function addPanel(info: PanelInfo, atX?: number, atY?: number) {
-  const page = doc().page
-  // 按原始尺寸放入（100% 缩放）：等效字号即原字号，所见即出版效果；
-  // 比页面宽也不自动缩小，要多大用户自己定
-  const w = info.native_w_mm
-  const h = info.native_h_mm
+  // 装得下按原始尺寸（100%，等效字号即原字号），比页面大就等比缩进页面（`lib/panelPlacement`）
+  const at = atX != null && atY != null ? { x: atX, y: atY } : undefined
+  const box = placePanelInPage(info.native_w_mm, info.native_h_mm, doc().page, at)
   const obj: PanelObject = {
     id: newId('p'),
     type: 'panel',
@@ -128,16 +150,14 @@ export function addPanel(info: PanelInfo, atX?: number, atY?: number) {
     overrides: info.baked_overrides ? structuredClone(info.baked_overrides) : [],
     name: info.name,
     figureFrame: FIGURE_FRAME_VERSION,
-    x: clamp(atX != null ? atX - w / 2 : (page.w - w) / 2, -w * 0.9, page.w - w * 0.1),
-    y: clamp(atY != null ? atY - h / 2 : (page.h - h) / 2, -h * 0.9, page.h - h * 0.1),
-    w,
-    h,
+    ...box,
   }
   commit(hist('addPanel', { name: info.name }), (d) => {
     d.objects.push(obj)
   })
   select([obj.id])
   useAssetStore.getState().markUsed(info.id)
+  frameAddedPanel(box, at != null)
   return obj
 }
 
@@ -148,8 +168,9 @@ export function addPanel(info: PanelInfo, atX?: number, atY?: number) {
  * 「写回基线」可继承（没有原件就没有写回）。
  */
 export function addRuntimePanel(desc: CapturedFigureDescriptor, atX?: number, atY?: number) {
-  const page = doc().page
   const [w, h] = desc.size_mm
+  const at = atX != null && atY != null ? { x: atX, y: atY } : undefined
+  const box = placePanelInPage(w, h, doc().page, at)
   const obj: PanelObject = {
     id: newId('p'),
     type: 'panel',
@@ -169,15 +190,13 @@ export function addRuntimePanel(desc: CapturedFigureDescriptor, atX?: number, at
     overrides: [],
     name: desc.stem,
     figureFrame: FIGURE_FRAME_VERSION,
-    x: clamp(atX != null ? atX - w / 2 : (page.w - w) / 2, -w * 0.9, page.w - w * 0.1),
-    y: clamp(atY != null ? atY - h / 2 : (page.h - h) / 2, -h * 0.9, page.h - h * 0.1),
-    w,
-    h,
+    ...box,
   }
   commit(hist('addPanel', { name: desc.stem }), (d) => {
     d.objects.push(obj)
   })
   select([obj.id])
+  frameAddedPanel(box, at != null)
   return obj
 }
 

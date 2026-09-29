@@ -140,6 +140,22 @@
       ]
     },
     {
+      "id": "canvas.page-fit-and-placement",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "换画布尺寸自动重新取景；大图加进来等比缩到页面附近，页面外画淡",
+        "en-US": "Changing the canvas size re-frames the view; oversized figures are scaled near the page and the area outside the page is dimmed"
+      },
+      "entry": "右栏「画布」→ 页面尺寸预设 / W H；素材库 → 「添加到画布」",
+      "e2e": [
+        {
+          "spec": "features.spec.ts",
+          "title": "功能：换画布尺寸后页面重新取景居中；比页面大的图加进来等比缩到约 1.15 倍页面，伸出部分画淡"
+        }
+      ]
+    },
+    {
       "id": "canvas.quick-menu",
       "status": "active",
       "platform": "both",
