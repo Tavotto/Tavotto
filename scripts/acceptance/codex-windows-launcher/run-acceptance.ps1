@@ -110,7 +110,12 @@ switch ($Step) {
         Copy-Item -Recurse $src $h
         $mcp = Join-Path (Get-CachedPlugin $h).FullName '.mcp.json'
         # .NET file APIs: Windows PowerShell 5.1's Get-Content reads BOM-less UTF-8 as ANSI
-        [System.IO.File]::WriteAllText($mcp, ([System.IO.File]::ReadAllText($mcp) -replace '"\./mcp/launch\.cmd"', '"python3"'))
+        # the command is ./mcp/launch.cmd up to 0.17.0 and ./mcp/launch after #266: match both, and
+        # refuse to probe an unchanged copy (it would report the working install, not the python3 shape)
+        $before = [System.IO.File]::ReadAllText($mcp)
+        $after = $before -replace '"\./mcp/launch(\.cmd)?"', '"python3"'
+        if ($after -eq $before) { throw "counterfactual: no ./mcp/launch command to replace in $mcp" }
+        [System.IO.File]::WriteAllText($mcp, $after)
         Show-Launcher $h
         Invoke-Probe $h 'python3'
     }
