@@ -399,19 +399,56 @@ test('coachmark 落位途中锚点被挤动也不压上去：素材区顶上冒�
   // 滑行放慢后约 2.4 秒；等它停稳再把刷新行派出来——停着的那种最稳：挤动之后到下一次兜底重测之间
   // （最长 300 ms）它一直压着卡片。滑行途中的那种只在最后四分之一段才压得上，时机太窄
   await page.waitForTimeout(3000)
-  await page.getByRole('button', { name: '刷新项目' }).click()
-  await expect(page.getByText('正在检查新文件…')).toBeVisible()
+  // 「下一帧画出来之前就让开」要一把**不看帧率**的尺子：在插进刷新行的那次 DOM 变动的同一个微任务
+  // 检查点里量（这个观察者注册得比 OnboardingLayer 的晚，回调排在它后面）。重测同步提交（flushSync）
+  // 时，量到的已是让开之后的位置；交给 React 调度的话，调度任务一定晚于这个微任务——量到的就是压着的
+  // 旧位置，与机器快慢无关（Codex #731 P1：只看 rAF 帧的尺子在快机器上抓不到这条变异）
+  await page.evaluate(() => {
+    const w = window as unknown as { __syncCovered: string[]; __syncSeen: number }
+    w.__syncCovered = []
+    w.__syncSeen = 0
+    const mo = new MutationObserver(() => {
+      if (!document.querySelector('[data-asset-refreshing]')) return
+      const card = document.querySelector('[data-card="Fig2_correlation.pdf"]')
+      const cm = document.querySelector('[data-onboarding-coachmark]')
+      if (!card || !cm) return
+      w.__syncSeen++
+      const a = card.getBoundingClientRect()
+      const b = cm.getBoundingClientRect()
+      if (b.left < a.right && a.left < b.right && b.top < a.bottom && a.top < b.bottom) {
+        w.__syncCovered.push(`${Math.round(b.left)},${Math.round(b.top)} card ${Math.round(a.top)}-${Math.round(a.bottom)}`)
+      }
+      mo.disconnect() // 只量插进刷新行的那一次
+    })
+    mo.observe(document.body, { childList: true, subtree: true })
+  })
+  await page.locator('[data-asset-refresh]').click()
+  await expect(page.locator('[data-asset-refreshing]')).toBeVisible()
   await page.waitForTimeout(1500)
   release()
-  await expect(page.getByText('正在检查新文件…')).toHaveCount(0, { timeout: 30_000 })
+  await expect(page.locator('[data-asset-refreshing]')).toHaveCount(0, { timeout: 30_000 })
   await page.waitForTimeout(3000)
-  const { covered, frames, cardTops } = await page.evaluate(() => {
-    const w = window as unknown as { __covered: string[]; __frames: number; __cardTops: number[] }
-    return { covered: w.__covered, frames: w.__frames, cardTops: w.__cardTops }
+  const { covered, frames, cardTops, syncCovered, syncSeen } = await page.evaluate(() => {
+    const w = window as unknown as {
+      __covered: string[]
+      __frames: number
+      __cardTops: number[]
+      __syncCovered: string[]
+      __syncSeen: number
+    }
+    return {
+      covered: w.__covered,
+      frames: w.__frames,
+      cardTops: w.__cardTops,
+      syncCovered: w.__syncCovered,
+      syncSeen: w.__syncSeen,
+    }
   })
   // 尺子是活的：采样跑过，而且锚点真的被挤动过（没挪的话「没压上」恒真）
   expect(frames).toBeGreaterThan(30)
   expect(Math.max(...cardTops) - Math.min(...cardTops)).toBeGreaterThan(COACHMARK_GAP_PX)
+  expect(syncSeen, '插进刷新行的那次变动没被量到').toBe(1)
+  expect(syncCovered, 'coachmark 没在插进刷新行的同一个微任务里让开（重测没有同步提交）').toEqual([])
   expect(covered, 'coachmark 在锚点被挤动时压住了它指着的那张卡片').toEqual([])
   await cdp.send('Animation.setPlaybackRate', { playbackRate: 1 })
 })
