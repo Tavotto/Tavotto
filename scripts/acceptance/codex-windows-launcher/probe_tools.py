@@ -55,7 +55,8 @@ def main() -> int:
         def do_POST(self):  # noqa: N802
             body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
             count[0] += 1
-            name = re.sub(r"[^A-Za-z0-9]", "_", self.path)
+            # 文件名只取闭集里的词，不拼请求路径（CodeQL py/path-injection；读的一侧只 glob *.json）
+            name = "responses" if self.path.rstrip("/").endswith("/responses") else "other"
             (req / f"{count[0]:03d}-{name}.json").write_bytes(body)
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
