@@ -17,7 +17,9 @@ test('新开一个空存储的浏览器 context：恢复上次的排版', async 
   const first = await browser.newContext()
   const tabA = await first.newPage()
   await tabA.goto(a.baseURL)
-  await expect(tabA.getByRole('button', { name: /当前项目/ })).toBeVisible({ timeout: 30_000 })
+  // 定位一律认稳定的 `data-*`（素材卡 `data-card`、返回 `data-context-back`）：不认文案 / 角色名
+  const card = (p: typeof tabA) => p.locator('[data-card="Fig1_kinetics.pdf"]')
+  await expect(card(tabA)).toBeVisible({ timeout: 30_000 })
   // 等待器在触发改动**之前**挂上（防抖只有几百毫秒，事后再等可能已经错过）。
   // 判据落在后端真的收下了：自动保存 PUT 回 2xx；「上次开着的」那条 PUT 同样要落地——
   // 它在改造前根本不存在，所以只等一小会儿、等不到也往下走，让下面那条断言说话（在 main 上红）
@@ -32,9 +34,9 @@ test('新开一个空存储的浏览器 context：恢复上次的排版', async 
       { timeout: 15_000 },
     )
     .catch(() => null)
-  await tabA.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
+  await card(tabA).dblclick({ timeout: 30_000 })
   // 双击进快速编辑；回到画布排版再量（工作区模式按 documentId 存本机，见 cross-tab-paste）
-  await tabA.getByRole('button', { name: /返回画布/ }).click()
+  await tabA.locator('[data-context-back]').click()
   await expect(tabA.locator('[data-object-id]')).toHaveCount(1)
   await autosaved
   await remembered
@@ -49,7 +51,7 @@ test('新开一个空存储的浏览器 context：恢复上次的排版', async 
   expect((await second.storageState()).origins, '新 context 的本机存储必须是空的').toEqual([])
   const tabB = await second.newPage()
   await tabB.goto(a.baseURL)
-  await expect(tabB.getByRole('button', { name: /当前项目/ })).toBeVisible({ timeout: 30_000 })
+  await expect(card(tabB)).toBeVisible({ timeout: 30_000 })
   await expect(tabB.locator('[data-object-id]')).toHaveCount(1, { timeout: 30_000 })
   await second.close()
 })
