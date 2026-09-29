@@ -780,6 +780,65 @@ export const deleteAutosave = (docId: string) =>
     method: 'DELETE',
   })
 
+/* --------------------- 会话状态以后端为准（#715 PR-B） --------------------- */
+/**
+ * 「这个项目上次开着哪份排版」存在数据目录（后端 `engine/layoutsession.py`），不再只存
+ * localStorage：桌面版换了端口 = 换了 origin = 一份空的 localStorage。项目按 pj 认，
+ * 没开项目是单独一组。
+ */
+export interface LayoutSessionLast {
+  doc_id: string
+  name: string
+  at: number
+}
+
+/**
+ * 读后端记着的「上次开着的排版」。三种结局要分开：
+ * - `{ last }`：后端有这组端点（`last` 为 null = 这个项目还没记过）；
+ * - `undefined`：后端**没有**这组端点（404：playground、嵌入画布、旧后端）或此刻不可达——
+ *   调用方退回 localStorage 的旧逻辑。「不知道」不能折成「没记过」：后者会让调用方不再看本机缓存。
+ */
+export async function fetchLayoutSession(
+  pj?: string | null,
+): Promise<{ last: LayoutSessionLast | null } | undefined> {
+  try {
+    const body = await jsonFetch<{ last?: unknown }>('/api/layout-session', undefined, pj)
+    const last = body?.last as Partial<LayoutSessionLast> | null | undefined
+    return {
+      last:
+        last && typeof last.doc_id === 'string' && last.doc_id
+          ? { doc_id: last.doc_id, name: typeof last.name === 'string' ? last.name : '', at: Number(last.at) || 0 }
+          : null,
+    }
+  } catch {
+    return undefined
+  }
+}
+
+export const putLayoutSessionLast = (ref: { doc_id: string; name: string }, pj?: string | null) =>
+  jsonFetch<{ ok: boolean; last: LayoutSessionLast }>(
+    '/api/layout-session/last',
+    { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(ref) },
+    pj,
+  )
+
+/** 导出默认值（按用户一份，数据目录）。`undefined` = 后端没有这组端点 / 不可达。 */
+export async function fetchExportDefaultsRemote(): Promise<{ defaults: unknown } | undefined> {
+  try {
+    const body = await jsonFetch<{ defaults?: unknown }>('/api/preferences/export-defaults')
+    return { defaults: body?.defaults ?? null }
+  } catch {
+    return undefined
+  }
+}
+
+export const putExportDefaultsRemote = (value: unknown) =>
+  jsonFetch<{ ok: boolean }>('/api/preferences/export-defaults', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(value),
+  })
+
 /* --------------------------- 布局版本时间线 -------------------------------- */
 /**
  * 整份布局文档的版本历史，按 documentId 存在服务器 layouts/_versions/ 下，

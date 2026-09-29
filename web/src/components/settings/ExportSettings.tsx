@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
-import { readExportDefaults, writeExportDefaults } from '@/lib/exportDefaults'
+import { onExportDefaultsHydrated, readExportDefaults, writeExportDefaults } from '@/lib/exportDefaults'
 import { FORMATS, hasRaster } from '@/lib/exportRequest'
 import { Select } from '../ui/Select'
 import { Checkbox } from '../ui/Checkbox'
@@ -35,6 +35,8 @@ const ex = (key: string, values?: Record<string, unknown>) =>
 export function ExportSettings() {
   useTranslation('dialogs')
   const [defaults, setDefaults] = useState(readExportDefaults)
+  // 后端那份（#715 PR-B）在设置页开着时才取回来：跟着重读，别让页面显示本机的旧缓存
+  useEffect(() => onExportDefaultsHydrated(() => setDefaults(readExportDefaults())), [])
   const update = (patch: Partial<typeof defaults>) => setDefaults(writeExportDefaults(patch))
   const toggleFormat = (f: string) => {
     const next = defaults.formats.includes(f)

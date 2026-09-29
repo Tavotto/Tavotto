@@ -86,14 +86,36 @@
 - **自动保存槽位有磁盘兜底上限**（2026-09-03，issue #221）：
   `AUTOSAVE_KEEP_SLOTS=64` / `AUTOSAVE_KEEP_BYTES=64 MB`，写完之后在锁**外**
   跑 `_prune_autosave_slots()`，按 mtime 从旧到新删，永不动刚写的那一份，
-  删之前在该文件自己的锁里重新 stat 一次。这是**兜底不是主路径**：主清理在
-  前端（被 `tavotto.docIndex` 的 12 条挤出去的槽位会被 DELETE 掉），上限刻意
-  远高于 12，只够到清过站点数据 / 换浏览器 / 换机器共用数据目录留下的孤儿。
+  删之前在该文件自己的锁里重新 stat 一次。~~这是兜底不是主路径：主清理在
+  前端（被 `tavotto.docIndex` 的 12 条挤出去的槽位会被 DELETE 掉）~~——**2026-09-29 起（#715 PR-B，
+  PR-A #718 新 ADR 的 §三）这是唯一的清理路径**，前端不再按本机索引删磁盘；参与清理的只有**记着归属**的槽位
+  （见下条），各项目「上次开着的」那一份永不删，**没有归属的旧槽位在找回入口（PR-C）上线前一个都不删**
+  （它们多半正是换了 origin 之后界面上找不回来的排版）。
   同一次清理顺带跑 `atomicio.reap_orphan_tmps()`（QA 2026-09-24 SCI-05-B2）：
   进程被杀在 `os.replace` 之前留下的 `<doc>.json.<pid>.<n>.tmp` 不以 `.json`
   结尾，上限永远数不到。判据是**年龄 + pid 已死**——一小时内一律不碰、pid
   还活着的留到一天后（pid 复用 / Windows 量不了存活）；只认 `_next_tmp` 起的
   名字，命名与判据同在 `atomicio`。
+- **会话状态以后端为准（2026-09-29，#715 PR-B，PR-A #718 新 ADR 的 §三）**：`engine/layoutsession.py`（纯标准库）
+  是 `data_dir()/state/layout-sessions.json` 的唯一读写方（`state_path()` 是位置的唯一出处）。内容：
+  `projects{<normalize_path_identity(项目路径)>: {last{doc_id, name, at}}}`、`no_project{last}`（没开项目那一组）、
+  `owners{槽位 doc_id → 项目键 | null}`（`null` = 确认过写它时没开项目；没有这条 = 不知道，两档）。
+  #674 的 `bindings` 未进 main，本文件暂不带。**不能放**在 `_autosave/`（清理按文件名扫）、`layouts/`、
+  项目 `tavottofile/`（会随项目拷到别人机器上）。
+  - 写一律 `atomicio`，模块锁管本进程读改写；**同值不写**（`record_owner` 在每次自动保存都会被调）。
+    读坏了（不是 JSON / 形状不对 / 非有限数）当成空的，下一次写整份替换——这是「上次停在哪」的提示，
+    不值得让任何一次保存失败。
+  - 端点：`GET /api/layout-session`、`PUT /api/layout-session/last` 按 `_request_ctx()` 认项目（指名不存在的
+    项目 409、没有项目 = `no_project` 组），回给前端的只有 `{doc_id, name, at}`、不带路径；导出默认值
+    `GET/PUT /api/preferences/export-defaults`（`state/export-defaults.json`，只守「不大的 JSON 对象」，
+    语义在前端 `lib/exportDefaults.ts`）。都在 ADR 0008 认证之下，错误码复用 `bad_request`。
+  - `PUT /api/autosave/<id>` 写成功后按 pj 记归属（`_record_autosave_owner`）：pj 指名的项目已经不在时**照写不拒**
+    （那是用户的工作），归属记成「不知道」即不记；记不下只打日志。`DELETE` 与槽位清理删掉的槽位，
+    归属与指向它的 last 一并清；清理顺带丢掉磁盘上已不在的槽位的归属。清理删每个槽位走
+    `remove_slot_unless_protected`：**在会话状态锁里**重判「此刻是不是某组的 last」→ 删 → 忘掉记录，
+    `protected_doc_ids()` 只是快照，并发的 `set_last` 能在快照与删除之间把旧槽位记成新 last。
+  - 教程重置 / 资源升级换副本（`_clear_tutorial_local_state`）一并清教程项目的 last 与教程画布槽位的归属（ADR 0039 §5）。
+  - 看护 `tests/test_layout_session.py`。
 - 前端文档模型的对应字段（lockedGids / layoutGroups 等）见 `web/AGENTS.md`。
 
 ## 速查表原要点（2026-09-25 迁入，#608）
