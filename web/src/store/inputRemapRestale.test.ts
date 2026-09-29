@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { useEnvStore } from './envStore'
 import { useRenderStore } from './renderStore'
+import { useRuntimeAssetStore } from './runtimeAssetStore'
 
 /**
  * 改指表一变（ADR 0106）：增 / 换 / 删一条规则之后，**成功画过**的面板也要重画——
@@ -8,9 +9,15 @@ import { useRenderStore } from './renderStore'
  * 的话，画布一直挂着旧数据集的样子，而下一次渲染 / 导出用的已是新规则（Codex 评 #716 P1）。
  */
 
+let assetListCalls = 0
+
 const STATE = { path: '/p/.tavotto/input-remap.json', rules: [], errors: [] }
 
 globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
+  if (String(url).includes('/api/runtime/assets')) {
+    assetListCalls += 1
+    return new Response(JSON.stringify({ assets: [] }), { status: 200 })
+  }
   if (String(url).includes('/api/engine/input-remap')) {
     const rule = { kind: 'prefix', from: '/old/data', to: '/new/data' }
     const body = init?.method === 'POST' ? { ok: true, rule, input_remap: STATE } : { ok: true, input_remap: STATE }
@@ -29,7 +36,15 @@ function seed() {
     } as never,
     tracked: {},
   })
+  // 素材库里试运行成功、还没上画布的 runtime 素材（Codex 评 #716 P1 第二轮）
+  useRuntimeAssetStore.setState({
+    byId: { 'runtime:lib.py#fig': { status: 'fresh', cached: true, registered: true, profile: 'safe', checked: true } },
+    assets: [],
+  })
+  assetListCalls = 0
 }
+
+const runtimeChecked = () => useRuntimeAssetStore.getState().byId['runtime:lib.py#fig']?.checked
 
 const staleOf = (fileId: string) => useRenderStore.getState().byKey[fileId]?.stale
 
@@ -44,6 +59,8 @@ describe('改指表变了：成功画过的面板同样重画', () => {
     expect(staleOf('missing.py')).toBe(true)
     expect(staleOf('ok.py')).toBe(true)
     expect(useRenderStore.getState().tracked['ok.py']).toBe(true)
+    expect(runtimeChecked()).toBe(false)
+    expect(assetListCalls).toBe(1)
   })
 
   it('删一条规则：经它画成功的面板标 stale（回到「找不到就报错」）', async () => {
@@ -51,5 +68,7 @@ describe('改指表变了：成功画过的面板同样重画', () => {
     expect(await useEnvStore.getState().forgetInputRemap(rule as never)).toBeNull()
     expect(staleOf('ok.py')).toBe(true)
     expect(staleOf('missing.py')).toBe(true)
+    expect(runtimeChecked()).toBe(false)
+    expect(assetListCalls).toBe(1)
   })
 })
