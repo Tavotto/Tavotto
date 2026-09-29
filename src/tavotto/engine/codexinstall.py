@@ -1036,8 +1036,7 @@ def _health_step(plugin_dir: Path | None, py: str | None, summary: dict) -> dict
             ok=False,
             code=ERR_ENGINE_OLD,
             detail=f"引擎 {engine_version} 低于已装插件要求的最低版本 {required}——插件的桥 import "
-            f"不动这么老的引擎。升级引擎（pipx upgrade tavotto / 升级桌面版），"
-            f"或把插件退回与引擎匹配的版本。" + _mirror_detail(report.get("pip_index"), required),
+            f"不动这么老的引擎。" + _upgrade_hint(report.get("pip_index"), required),
         )
     return _step("health", ok=True, detail=out[-400:])
 
@@ -1059,15 +1058,18 @@ def _engine_version_verdict(step: str, report: dict) -> dict | None:
     )
 
 
-def _mirror_detail(index: object, required: str | None) -> str:
-    """插件体检报出 pip 指向镜像时补的那句（探测只在插件那侧做：`server.pip_index`）。"""
+def _upgrade_hint(index: object, required: str | None) -> str:
+    """引擎太老时「怎么升」的那句。pip 指向镜像时（探测只在插件那侧做：`server.pip_index`）整句换成
+    绕开镜像的命令，**不给**裸的 `pipx upgrade tavotto`——它照样去问那个镜像、装回旧版（Codex #724；
+    与插件 `upgrade_commands` 同一口径）。"""
+    tail = "或把插件退回与引擎匹配的版本。"
     if not isinstance(index, dict) or not index.get("mirror"):
-        return ""
+        return f"升级引擎（pipx upgrade tavotto / 升级桌面版），{tail}"
     pin = f'"tavotto[worker]=={required}"' if required else '"tavotto[worker]"'
     return (
         f"pip 的 index-url 指向镜像 {index.get('url')}（来自 {index.get('source')}），"
-        f"镜像可能还没同步到新版；绕开镜像：pipx install --force {pin} "
-        "--index-url https://pypi.org/simple"
+        f"镜像可能还没同步到新版，照常升级会装回旧版。绕开镜像升级引擎：pipx install --force {pin} "
+        f"--index-url https://pypi.org/simple（或升级桌面版），{tail}"
     )
 
 

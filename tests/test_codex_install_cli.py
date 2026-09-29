@@ -1090,9 +1090,19 @@ def test_a_text_only_client_still_gets_a_correct_diagnosis(fake_codex):
     assert data["summary"]["marketplace"]["registered"] is True
 
 
-def test_an_engine_older_than_the_plugin_requires_is_named(fake_codex):
-    """随包清单说最低 0.13.0，体检报引擎 0.5.0 → engine_too_old，不是笼统的 health_failed。"""
+@pytest.mark.parametrize("mirror", [False, True])
+def test_an_engine_older_than_the_plugin_requires_is_named(fake_codex, mirror):
+    """随包清单说最低 0.13.0，体检报引擎 0.5.0 → engine_too_old，不是笼统的 health_failed。
+    pip 指向镜像时升级建议里不出现裸的 `pipx upgrade tavotto`（它会装回镜像上的旧版，Codex #724）。"""
     from tavotto.engine import pluginmanifest
+
+    report = {"ok": True, "engine_version": "0.5.0"}
+    if mirror:
+        report["pip_index"] = {
+            "url": "https://mirrors.example.cn/pypi/simple",
+            "source": "user",
+            "mirror": True,
+        }
 
     plugin = fake_codex["plugin"]
     (plugin / "LICENSE").write_text("AGPL\n", encoding="utf-8")
@@ -1106,8 +1116,7 @@ def test_an_engine_older_than_the_plugin_requires_is_named(fake_codex):
         min_tavotto_version="0.13.0",
     )
     (plugin / "mcp" / "server.py").write_text(
-        'import sys\nprint(\'{"ok": true, "engine_version": "0.5.0"}\')\nsys.exit(0)\n',
-        encoding="utf-8",
+        f"import sys\nprint({json.dumps(report)!r})\nsys.exit(0)\n", encoding="utf-8"
     )
     # 清单之后又改了 server.py：先把清单重写一遍，否则画布步会先报「发行文件被改过」
     pluginmanifest.write_build_manifest(
@@ -1128,6 +1137,12 @@ def test_an_engine_older_than_the_plugin_requires_is_named(fake_codex):
         "min_required": "0.13.0",
         "satisfied": False,
     }
+    health = next(st for st in data["steps"] if st["step"] == "health")
+    if mirror:
+        assert "pipx upgrade tavotto" not in health["detail"], health["detail"]
+        assert "--index-url https://pypi.org/simple" in health["detail"], health["detail"]
+    else:
+        assert "pipx upgrade tavotto" in health["detail"], health["detail"]
 
 
 @pytest.mark.parametrize("code", ["engine_too_old", "engine_incompatible"])

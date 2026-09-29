@@ -715,13 +715,16 @@ def _pip_config_files(environ) -> "list[tuple[str, str]]":
         appdata = environ.get("APPDATA")
         if appdata:
             user.append(os.path.join(appdata, "pip", "pip.ini"))
+    elif sys.platform == "darwin":
+        # pip `site_config_dirs` 的 darwin 分支只回 `site_data_dir`：不看 XDG_CONFIG_DIRS、也不加 /etc
+        # ——那里一份不相干的旧 pip.conf 不能翻转结论（Codex #724）
+        files.append(("/Library/Application Support/pip/pip.conf", "global"))
     else:
         for d in (environ.get("XDG_CONFIG_DIRS") or "/etc/xdg").split(":"):
             if d:
                 files.append((os.path.join(d, "pip", "pip.conf"), "global"))
-        if sys.platform == "darwin":
-            files.append(("/Library/Application Support/pip/pip.conf", "global"))
         files.append(("/etc/pip.conf", "global"))
+    if os.name != "nt":
         user.append(os.path.join(home, ".pip", "pip.conf"))
         xdg = environ.get("XDG_CONFIG_HOME") or os.path.join(home, ".config")
         library = os.path.join(home, "Library", "Application Support", "pip")
@@ -795,12 +798,15 @@ def _index_urls_in(path: str) -> "dict[str, str]":
     _get_ordered_configuration_items`），所以全局配置里的 `[install]` 压过用户配置里的 `[global]`
     （Codex #724）。合并在 `_merged_index_url` 里做。"""
     import configparser  # noqa: PLC0415 — 只有降级 / 体检路径用得到
+    import locale  # noqa: PLC0415
 
     if not os.path.isfile(path):
         return {}
     parser = configparser.RawConfigParser()
     try:
-        parser.read(path, encoding="utf-8")
+        # 照 pip（`Configuration._construct_parser`）按本地编码读：中文 Windows 上 `pip config` 写的、
+        # 带中文注释的 pip.ini 是 GBK，按 UTF-8 读会整份当空、漏掉镜像（Codex #724）
+        parser.read(path, encoding=locale.getpreferredencoding(False))
     except (configparser.Error, OSError, UnicodeDecodeError):
         return {}
     out: "dict[str, str]" = {}
