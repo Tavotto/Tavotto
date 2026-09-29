@@ -915,9 +915,15 @@ def _engine_step(plugin_dir: Path | None, py: str | None, *, apply: bool) -> dic
     server = plugin_dir / "mcp" / "server.py"
     if not server.is_file():
         return _step("engine", ok=False, detail=f"插件里没有 {server}", code=ERR_PROVISION)
-    rc, _out = _run([py, *probe_args(), str(server), "--health"], timeout=90, env=_health_env())
+    rc, out = _run([py, *probe_args(), str(server), "--health"], timeout=90, env=_health_env())
     if rc == 0:
         return _step("engine", ok=True, skipped=True, detail="插件已能解析到引擎")
+    # 插件已经判出「引擎在、版本对不上」（engine_too_old / engine_incompatible）：在这里就原样转述，
+    # 不当成「需要 provision」——否则冻结的桌面 CLI 上 doctor 在这一步就以 provision_failed 收场、
+    # 走不到 health 那一步的转述，install 还会另建一个环境盖住真正的原因（Codex #724 P1）
+    verdict = _engine_version_verdict("engine", _last_json(out) or {})
+    if verdict is not None:
+        return verdict
     if not apply:
         return _step("engine", ok=False, detail="需要 provision", code=ERR_PROVISION)
     # **复用插件自己的 --provision**，不抄第二份：那份实现知道该建在哪、装什么版本
@@ -1023,18 +1029,9 @@ def _health_step(plugin_dir: Path | None, py: str | None, summary: dict) -> dict
         "python": report.get("python"),
         "mode": report.get("mode"),
     }
-    code = report.get("code")
-    if rc != 0 and code in _ENGINE_VERSION_CODES and isinstance(report.get("error"), str):
-        # 插件的降级诊断已经判出「引擎在、版本对不上」：话术（两个版本号、升级命令、镜像
-        # 提示）**只在插件那一份里写**，这里原样转述，不写第二份（#721：两边口径一致）
-        recovery = [r for r in report.get("recovery") or [] if isinstance(r, str)]
-        return _step(
-            "health",
-            ok=False,
-            code=code,
-            detail=report["error"]
-            + ("\n恢复步骤：\n- " + "\n- ".join(recovery) if recovery else ""),
-        )
+    verdict = _engine_version_verdict("health", report) if rc != 0 else None
+    if verdict is not None:
+        return verdict
     if rc != 0:
         return _step("health", ok=False, detail=out[-400:], code=ERR_HEALTH)
     if satisfied is False:
@@ -1047,6 +1044,23 @@ def _health_step(plugin_dir: Path | None, py: str | None, summary: dict) -> dict
             f"或把插件退回与引擎匹配的版本。" + _mirror_detail(report.get("pip_index"), required),
         )
     return _step("health", ok=True, detail=out[-400:])
+
+
+def _engine_version_verdict(step: str, report: dict) -> dict | None:
+    """插件体检（`server.py --health` 的 JSON）判出的引擎版本类结论 → 一步失败；不是这类回 None。
+
+    插件的降级诊断已经判出「引擎在、版本对不上」：话术（两个版本号、升级命令、镜像提示）**只在插件
+    那一份里写**，这里原样转述，不写第二份（#721：两边口径一致）。engine / health 两步共用这一份。"""
+    code = report.get("code")
+    if code not in _ENGINE_VERSION_CODES or not isinstance(report.get("error"), str):
+        return None
+    recovery = [r for r in report.get("recovery") or [] if isinstance(r, str)]
+    return _step(
+        step,
+        ok=False,
+        code=code,
+        detail=report["error"] + ("\n恢复步骤：\n- " + "\n- ".join(recovery) if recovery else ""),
+    )
 
 
 def _mirror_detail(index: object, required: str | None) -> str:

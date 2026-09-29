@@ -603,6 +603,35 @@ def test_pip_index_never_repeats_credentials(tmp_path):
     assert got["url"] == "https://***@pypi.corp.example/simple"
 
 
+def test_pip_index_never_repeats_query_credentials(tmp_path):
+    """签名查询串也是凭据（Codex #724 P1）：`?token=…` 整段抹掉，片段去掉，地址本身照报。"""
+    got = launcher.pip_index(
+        {
+            "HOME": str(tmp_path),
+            "PIP_CONFIG_FILE": os.devnull,
+            "PIP_INDEX_URL": "https://mirror.example/simple?token=s3cret&sig=abc#frag",
+        }
+    )
+    assert got["mirror"] is True
+    assert "s3cret" not in got["url"] and "abc" not in got["url"] and "frag" not in got["url"]
+    assert got["url"] == "https://mirror.example/simple?***"
+    assert launcher._redact_url("https://pypi.org/simple") == "https://pypi.org/simple"
+
+
+def test_pip_index_reads_the_interpreters_site_config(tmp_path, monkeypatch):
+    """`pip config --site` 写在本解释器 `sys.prefix` 下（venv 里配的镜像，Codex #724 P2）。"""
+    prefix = tmp_path / "venv"
+    prefix.mkdir()
+    site = prefix / ("pip.ini" if os.name == "nt" else "pip.conf")
+    site.write_text("[global]\nindex-url = " + ALIYUN + "\n", encoding="utf-8")
+    monkeypatch.setattr(launcher.sys, "prefix", str(prefix))
+    home = tmp_path / "home"
+    home.mkdir()
+    base = {"HOME": str(home), "USERPROFILE": str(home), "XDG_CONFIG_DIRS": str(home)}
+    got = launcher.pip_index(base)
+    assert got == {"url": ALIYUN, "source": str(site), "mirror": True}
+
+
 def test_upgrade_commands_follow_the_mirror_verdict():
     plain = launcher.upgrade_commands("0.17.0", None)
     assert plain[0] == "pipx upgrade tavotto"

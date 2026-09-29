@@ -1438,14 +1438,32 @@ def test_launcher_reuses_the_plugin_locator_instead_of_a_third_copy():
     """
     src = (PLUGIN / "mcp" / "server.py").read_text(encoding="utf-8")
     assert "find_tavotto" in src, "启动器没有复用插件自带的定位器"
-    # 判据的主语是「Tavotto 装在哪」这条路径规则，不是某个环境变量名：pip 的配置位置
-    # （#721：商店版 Python 的虚拟化 pip.ini 在 %LOCALAPPDATA%\Packages\… 下）不归定位器管。
-    # 所以 LOCALAPPDATA 只在「与 Tavotto 安装目录连用」时算越界；定位器那组键里 pip 用不到的
-    # PROGRAMFILES 照旧整词禁止。
-    for line in src.splitlines():
-        assert not ("LOCALAPPDATA" in line and "Tavotto" in line), (
-            f"启动器里出现了 Tavotto 安装位置的规则（{line.strip()}）——路径规则该由定位器说了算"
-        )
+    # 判据的主语是「Tavotto 装在哪」这条路径规则。LOCALAPPDATA 是它的输入之一，但 pip 的配置位置
+    # （#721：商店版 Python 的虚拟化 pip.ini 在 %LOCALAPPDATA%\Packages\… 下）也要读它，而那
+    # 不归定位器管。按 AST 判（不按行里的字样——拆成两行就能绕过）：代码里出现 "LOCALAPPDATA"
+    # 这个字符串常量的地方，只许在下面登记过用途的函数里；新用处要来这里登记并写出理由。
+    allowed = {
+        "_store_python_pip_configs": "商店版 Python 的虚拟化 pip 配置（#721），与 Tavotto 安装位置无关",
+    }
+    tree = ast.parse(src)
+    uses: list[str] = []
+
+    def walk(node, owner):
+        for child in ast.iter_child_nodes(node):
+            inner = (
+                child.name if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) else owner
+            )
+            if isinstance(child, ast.Constant) and child.value == "LOCALAPPDATA":
+                uses.append(owner)
+            walk(child, inner)
+
+    walk(tree, "<module>")
+    assert uses, "前提：尺子看得见 LOCALAPPDATA（#721 的商店版 pip 配置要用它）"
+    stray = sorted({u for u in uses if u not in allowed})
+    assert not stray, (
+        f"启动器在 {stray} 里用了 LOCALAPPDATA——Tavotto 装在哪由定位器说了算；"
+        "别的用途请在 allowed 里登记理由"
+    )
     for owned_by_the_locator in (
         "PROGRAMFILES",
         "install.json",

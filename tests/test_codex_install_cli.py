@@ -1168,6 +1168,39 @@ def test_doctor_relays_the_plugins_engine_version_verdict(fake_codex, code):
     assert data["summary"]["engine"]["version"] == "0.15.0"
 
 
+@pytest.mark.parametrize("apply", [True, False], ids=["install", "doctor"])
+def test_the_engine_step_relays_the_version_verdict_instead_of_provisioning(
+    tmp_path, monkeypatch, apply
+):
+    """Codex #724 P1：冻结的桌面 CLI（或当前解释器 import 不到引擎）时，engine 那一步先跑插件的
+    `--health`——插件判出 engine_too_old / engine_incompatible 时就在这一步原样转述，不当成「需要
+    provision」：否则 doctor 以 provision_failed 收场、走不到 health 那一步，install 还会另建环境。"""
+    sys.path.insert(0, str(SRC))
+    from tavotto.engine import codexinstall
+
+    plugin = tmp_path / "plugin"
+    (plugin / "mcp").mkdir(parents=True)
+    marker = tmp_path / "provisioned"
+    report = {
+        "ok": False,
+        "mode": "degraded",
+        "code": "engine_too_old",
+        "error": "引擎 0.15.0 太旧",
+        "recovery": ["升级引擎：pipx upgrade tavotto"],
+    }
+    (plugin / "mcp" / "server.py").write_text(
+        "import json, sys\n"
+        f"if '--provision' in sys.argv: open({str(marker)!r}, 'w').write('x'); sys.exit(0)\n"
+        f"print(json.dumps({report!r}, ensure_ascii=True))\nsys.exit(3)\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(codexinstall, "engine_importable", lambda: False)
+    step = codexinstall._engine_step(plugin, sys.executable, apply=apply)
+    assert step["ok"] is False and step["error_code"] == "engine_too_old", step
+    assert "引擎 0.15.0 太旧" in step["detail"] and "恢复步骤" in step["detail"]
+    assert not marker.exists(), "版本对不上时不该另建环境"
+
+
 def test_json_output_parser_handles_pretty_printed_and_last_line_shapes():
     from tavotto.engine import codexinstall
 
