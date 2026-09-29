@@ -80,6 +80,8 @@ interface EnvState {
   missingInput: MissingInputOffer | null
   /** 每记住一条数据位置加一：素材库的试运行状态机订阅它，重跑因「找不到数据」失败的脚本 */
   inputRemapGeneration: number
+  /** 由试运行派生的结果作废一次加一（改指表增 / 换 / 删、换环境）：scriptRunStore 订阅它丢掉已捕获的结果 */
+  probeResultsGeneration: number
   requestMissingInput: (offer: MissingInputOffer, projectId?: string | null) => void
   dismissMissingInput: () => void
   /**
@@ -141,15 +143,14 @@ let projectEpoch = 0
  * 回 false = 等 store 加载期间换了项目（B 的面板与素材一个都不动）。
  */
 async function restaleProjectRenders(epoch: number): Promise<boolean> {
-  const [{ useRenderStore }, { useRuntimeAssetStore }, { useScriptRunStore }] = await Promise.all([
+  const [{ useRenderStore }, { useRuntimeAssetStore }] = await Promise.all([
     import('@/store/renderStore'),
     import('@/store/runtimeAssetStore'),
-    // 它依赖本 store（订阅代际），静态 import 会成环
-    import('@/store/scriptRunStore'),
   ])
   if (epoch !== projectEpoch) return false
-  // 素材库「运行并发现图」的结果：按旧条件捕获的描述符不能再拿去「添加到画布」
-  useScriptRunStore.getState().invalidateCaptured()
+  // 素材库「运行并发现图」的结果：按旧条件捕获的描述符不能再拿去「添加到画布」。scriptRunStore
+  // 依赖本 store，这里 import 它会让 import 环变大——它订阅这个代际，自己作废
+  useEnvStore.setState((s) => ({ probeResultsGeneration: s.probeResultsGeneration + 1 }))
   const render = useRenderStore.getState()
   const ids = [...new Set(Object.values(render.byKey).map((v) => v.fileId))]
   if (ids.length) render.markStale(ids)
@@ -168,6 +169,7 @@ export const useEnvStore = create<EnvState>((set, get) => ({
   dependencyPreparation: null,
   missingInput: null,
   inputRemapGeneration: 0,
+  probeResultsGeneration: 0,
 
   requestWorkdirConfirmation: (payload, projectId) => {
     if (projectId !== undefined && projectId !== currentProjectId()) return
