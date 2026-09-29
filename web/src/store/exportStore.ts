@@ -91,6 +91,10 @@ interface ExportState {
    * 完成时用户可能已经在同项目里换了排版（换排版不调 `resetExportState`）——「导出」点只
    * 打给被导出的那一份；也可能在同一份里接着改——节点拍的是被导出的内容，不是之后的样子
    * （Codex #679）。
+   *
+   * **用完即放**：快照里是整份文档与各面板的 SVG 图源，大排版能到几 MB。作业一进终局
+   * （打完点或不打）、换项目 / 换文档（`resetExportState`）、起作业本身失败，都立刻清掉——
+   * 全局 store 不该替上一个项目留着这些。
    */
   momentSnapshot: MomentSnapshot | null
 }
@@ -168,6 +172,8 @@ export function applyExportJob(job: ExportJob): void {
   useExportStore.setState({
     job,
     running: !terminal,
+    // 终局之后快照再没有用处（同一作业只进一次终局）：立刻放掉
+    momentSnapshot: terminal ? null : s.momentSnapshot,
     editedDuringExport:
       terminal && s.startedRevision != null
         ? liveRevision(s.lastInput) !== s.startedRevision
@@ -234,6 +240,7 @@ export async function runExport(input: ExportRequestInput): Promise<ExportJob | 
     useExportStore.setState({
       running: false,
       startError: { code: 'start_failed', message: String(err) },
+      momentSnapshot: null, // 作业没起来：这一刻不会有终局，快照放掉
     })
     return null
   }
@@ -313,5 +320,7 @@ export function resetExportState(): void {
     startedRevision: null,
     editedDuringExport: false,
     ownedJobId: null,
+    // 上个项目 / 上一份文档的快照（整份文档 + 面板图源）不留到这里之后
+    momentSnapshot: null,
   })
 }
