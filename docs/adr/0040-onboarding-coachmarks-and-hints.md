@@ -175,3 +175,9 @@ resetHints()
   `set` 多了一次「真的变了才发」的比较。都是同步、本地、吞异常的。
 * `onboardingStore` 是第三份持久化的本机偏好（`tavotto.ui` / `tavotto.locale` 之外）。
 * 教程画布的对象 id 不被记录：重置 / 重建之后按 `file` 现找，连不错。
+
+## 修订（2026-09-29，[ADR 0108](0108-desktop-stable-origin-and-backend-session-state.md)，issue #715）
+
+`tavotto.onboarding` 留在前端（它是这台机器上这个人的进度，不进项目数据）。它能不能活过重启取决于 origin 稳定：
+桌面版此前每次启动换端口，进度与「提示看过没有」其实每次都被重置；PR-A 起桌面端口尽量稳定，端口被占的那一次
+仍会读不到（已知残余，不迁后端）。

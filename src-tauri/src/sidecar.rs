@@ -6,6 +6,10 @@
 //! - sidecar 把 ready/port/pid（或失败原因）原子写进握手文件；文件里没有任何密钥。
 //! - 退出：先关 stdin（触发 sidecar 优雅关停，连带 worker/AI 子进程），
 //!   限时等不到再 kill —— 任何路径都不留孤儿进程。
+//! - 端口：stdin 首行同时带上次记住的 `preferred_port`，sidecar 优先绑它，让窗口的
+//!   origin（进而 localStorage）跨重启稳定；记忆策略在 [`port_memory`]（ADR 0108）。
+
+mod port_memory;
 
 use std::fs::OpenOptions;
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -172,6 +176,8 @@ impl Sidecar {
         log_dir: &Path,
         nonce: &str,
         project: Option<&str>,
+        // `app_config_dir()`：端口记忆文件放这里（与 `menu-locale` 同一处）；拿不到就不记
+        config_dir: Option<&Path>,
         // 起不来时这些话会显示在 error.html 上，得说用户选的那门语言
         locale: crate::i18n::Locale,
     ) -> Result<(Sidecar, u16), String> {
@@ -233,12 +239,17 @@ impl Sidecar {
             )
         })?;
 
-        // 凭据走 stdin 首行；这条管道随后保持打开作为「父进程还活着」的信号
+        // 凭据走 stdin 首行；这条管道随后保持打开作为「父进程还活着」的信号。
+        // 同一行带上建议端口：sidecar 占得到就用它，占不到自己退回系统分配（desktop.py）
+        let memory_path = port_memory::path(config_dir);
+        let stored = port_memory::load(memory_path.as_deref());
+        let preferred = port_memory::preferred(stored, rand::random::<u16>());
         let mut stdin = child.stdin.take().ok_or(m.sidecar_stdin_missing)?;
-        let hello = serde_json::json!({
+        let mut hello = serde_json::json!({
             "nonce": nonce,
             "parent_pid": std::process::id(),
         });
+        hello[port_memory::HELLO_FIELD] = serde_json::json!(preferred);
         stdin
             .write_all(format!("{hello}\n").as_bytes())
             .and_then(|()| stdin.flush())
@@ -279,6 +290,11 @@ impl Sidecar {
             }
             std::thread::sleep(Duration::from_millis(100));
         };
+
+        let next = port_memory::after_launch(stored, preferred, port);
+        if let Some(mem) = next.filter(|n| Some(*n) != stored) {
+            port_memory::store(memory_path.as_deref(), &mem);
+        }
 
         Ok((
             Sidecar {
