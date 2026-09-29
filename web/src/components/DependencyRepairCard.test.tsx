@@ -181,10 +181,16 @@ describe('缺依赖的修复卡片', () => {
     }
   })
 
-  it('两个目标都列出来：装进项目环境 / 建一个 Tavotto 环境', async () => {
+  it('两个目标都在：一键修复（受管环境）是唯一的主按钮，装进项目环境收在「高级」里', async () => {
     await render()
-    expect(byName(en('repairUseProjectEnv'))).toBeTruthy()
-    expect(byName(en('repairInstallToManaged', { module: 'lmfit', product: PRODUCT_NAME }))).toBeTruthy()
+    const primary = byName(en('oneClickRepair'))!
+    expect(primary).toBeTruthy()
+    expect(primary.hasAttribute('data-one-click-repair-button')).toBe(true)
+    const advanced = document.querySelector('[data-repair-advanced]') as HTMLDetailsElement
+    expect(advanced.open, '「高级」默认折叠').toBe(false)
+    expect(advanced.contains(byName(en('repairUseProjectEnv'))!)).toBe(true)
+    // 主按钮只有一颗（UI 纪律：一个上下文最多一个填色主动作）
+    expect(buttons().filter((b) => b.className.includes('text-white'))).toHaveLength(1)
   })
 
   it('装进项目环境之前先说清楚「这会修改你的环境」，按钮不是「确定」', async () => {
@@ -221,6 +227,7 @@ describe('缺依赖的修复卡片', () => {
   it('解析不出包名时不给一键安装，只给「指定安装包」', async () => {
     await render({ ...OFFER, requirement: null, targets: [], code: 'dependency_unresolved' })
     expect(text()).toContain(en('repairUnresolved', { module: 'lmfit' }))
+    expect(byName(en('oneClickRepair'))).toBeUndefined()
     expect(byName(en('repairUseProjectEnv'))).toBeUndefined()
     expect(byName(en('repairInstallToManaged', { module: 'lmfit', product: PRODUCT_NAME }))).toBeUndefined()
     expect(text()).toContain(en('repairSpecifyPackage'))
@@ -231,6 +238,7 @@ describe('缺依赖的修复卡片', () => {
     // 目标，但**前端不靠这条约定**——一键安装的前提是「知道要装什么」，
     // 而不是「有地方可以装」。这一条守的正是那个前提。
     await render({ ...OFFER, requirement: null, code: 'dependency_unresolved' })
+    expect(byName(en('oneClickRepair'))).toBeUndefined()
     expect(byName(en('repairUseProjectEnv'))).toBeUndefined()
     expect(byName(en('repairInstallToManaged', { module: 'lmfit', product: PRODUCT_NAME }))).toBeUndefined()
     expect(text()).toContain(en('repairSpecifyPackage'))
@@ -280,8 +288,11 @@ describe('缺依赖的修复卡片', () => {
         { ...OFFER.targets[1], available: false, reason: 'managed_env_unavailable' },
       ],
     })
+    expect(byName(en('oneClickRepair'))).toBeUndefined()
     expect(byName(en('repairInstallToManaged', { module: 'lmfit', product: PRODUCT_NAME }))).toBeUndefined()
     expect(byName(en('repairUseProjectEnv'))).toBeTruthy()
+    // 还有项目环境这条路：不说「这台电脑无路可走」
+    expect(document.querySelector('[data-managed-env-unavailable]')).toBeNull()
   })
 
   it('只有旧 Python 且私有 Python 未开放时，说清缺的是建环境的基础解释器', async () => {
@@ -315,7 +326,7 @@ describe('缺依赖的修复卡片', () => {
     planMock.mockResolvedValue({
       plan: { ...MANAGED_PLAN, private_python: { ...PRIVATE_PYTHON, download_bytes: 90_000_000 } },
     })
-    await click(en('repairInstallToManaged', { module: 'lmfit', product: PRODUCT_NAME }))
+    await click(en('oneClickRepair'))
     expect(installMock).not.toHaveBeenCalled()
     expect(text()).toContain(
       en('dependencyPreparePrivatePython', { version: '3.13.15', mb: 86, product: PRODUCT_NAME }),
@@ -331,6 +342,101 @@ describe('缺依赖的修复卡片', () => {
     expect(text()).toContain(en('dependencyPrepareState_downloading_python'))
     expect(byName(en('repairCancel'))).toBeTruthy()
     expect(byName(en('repairClose'))).toBeUndefined()
+  })
+})
+
+describe('一键修复（2026-09-29：面向不懂 Python 的用户）', () => {
+  const managedOnly = (private_python: DependencyRepairOffer['targets'][number]['private_python']) => ({
+    ...OFFER,
+    targets: [{ ...OFFER.targets[1], private_python }],
+  })
+  const cost = () => document.querySelector('[data-one-click-cost]')?.textContent ?? ''
+  const mainText = () => {
+    // 主区域 = 卡片里「高级」之外的部分
+    const card = document.querySelector('[data-one-click-repair]')!.cloneNode(true) as HTMLElement
+    card.querySelector('[data-repair-advanced]')?.remove()
+    return card.textContent ?? ''
+  }
+
+  it('只有一个主按钮、一句话说清做什么；主区域不出现版本号、路径与「隔离环境」', async () => {
+    await render(managedOnly(PRIVATE_PYTHON))
+    expect(document.querySelector('[data-one-click-repair]')?.getAttribute('data-one-click-repair')).toBe('tavotto_managed')
+    expect(mainText()).toContain(en('oneClickBodyManaged', { product: PRODUCT_NAME, packages: 'lmfit' }))
+    for (const jargon of ['3.13.15', '隔离', '/', 'Python 3']) expect(mainText()).not.toContain(jargon)
+    expect(buttons().filter((b) => b.className.includes('text-white'))).toHaveLength(1)
+  })
+
+  it('要下载时说大小；安装包自带 / 已缓存时不提下载；老后端没有 origin 时按 cached 推（缺省 = 下载）', async () => {
+    await render(managedOnly(PRIVATE_PYTHON))
+    expect(cost()).toBe(en('oneClickCostDownload', { mb: 45 }))
+    for (const [pp, said] of [
+      [{ ...PRIVATE_PYTHON, origin: 'download' as const }, en('oneClickCostDownload', { mb: 45 })],
+      [{ ...PRIVATE_PYTHON, origin: 'bundled' as const, download_bytes: 0, cached: false }, en('oneClickCostNetwork')],
+      [{ ...PRIVATE_PYTHON, origin: 'cached' as const, download_bytes: 0, cached: true }, en('oneClickCostNetwork')],
+      [{ ...PRIVATE_PYTHON, cached: true, download_bytes: 0 }, en('oneClickCostNetwork')],
+      [null, en('oneClickCostNetwork')],
+    ] as const) {
+      await act(async () => root.unmount())
+      host.remove()
+      await render(managedOnly(pp))
+      expect(cost(), JSON.stringify(pp)).toBe(said)
+      if (said === en('oneClickCostNetwork')) expect(mainText()).not.toContain('MB')
+    }
+  })
+
+  it('安装包自带的 Python：「高级」里的明细说自带，不说「已下载」', async () => {
+    await render(managedOnly({ ...PRIVATE_PYTHON, origin: 'bundled', download_bytes: 0 }))
+    const line = document.querySelector('[data-dependency-private-python]')!.textContent
+    expect(line).toBe(en('dependencyPreparePrivatePythonBundled', { version: '3.13.15', product: PRODUCT_NAME }))
+  })
+
+  it('「换一个 Python」与「选择渲染环境」收在默认折叠的「高级」里；后者就地打开渲染环境对话框', async () => {
+    const { useUiStore } = await import('@/store/uiStore')
+    useUiStore.setState({ engineEnvOpen: false })
+    await render(managedOnly(PRIVATE_PYTHON))
+    const advanced = document.querySelector('[data-repair-advanced]') as HTMLDetailsElement
+    expect(advanced.open).toBe(false)
+    expect(advanced.querySelector(`input[aria-label="${en('pathAria')}"]`)).toBeTruthy()
+    const open = advanced.querySelector('[data-repair-open-environment]') as HTMLButtonElement
+    await act(async () => open.click())
+    expect(useUiStore.getState().engineEnvOpen).toBe(true)
+  })
+
+  it('受管目标「能不能用」还不知道（available=null）：先预读计划，按计划的真实下载说出口，点一次就开始（不多一步确认）', async () => {
+    let resolvePreview!: (v: { plan: DependencyRepairPlan }) => void
+    planMock.mockImplementationOnce(() => new Promise((r) => (resolvePreview = r)))
+    installMock.mockResolvedValue({ started: true } as never)
+    await render({ ...OFFER, targets: [{ ...OFFER.targets[1], available: null }] })
+    // 预读的是受管目标的计划（计划这一步什么都不装）
+    expect(planMock).toHaveBeenCalledWith({ module: 'lmfit', script: 'figure.py', target: 'tavotto_managed' })
+    expect(installMock).not.toHaveBeenCalled()
+    // 预读回来之前：主按钮等它，说正在检查
+    expect(cost()).toBe(en('oneClickChecking'))
+    expect(byName(en('oneClickRepair'))!.disabled).toBe(true)
+    await act(async () => resolvePreview({ plan: { ...MANAGED_PLAN, plan_id: 'plan-preview' } }))
+    expect(cost()).toBe(en('oneClickCostDownload', { mb: 45 }))
+    expect(byName(en('oneClickRepair'))!.disabled).toBe(false)
+    planMock.mockResolvedValue({ plan: MANAGED_PLAN })
+    await click(en('oneClickRepair'))
+    expect(installMock).toHaveBeenCalledTimes(1)
+    expect(installMock).toHaveBeenCalledWith('plan-managed')
+    expect(byName(en('repairPrepareAndContinue'))).toBeUndefined()
+  })
+
+  it('预读说这台电脑建不了环境（managed_env_unavailable）：没有一键修复，说清下一步，出口在「高级」里', async () => {
+    planMock.mockRejectedValue(new ApiError('没有 Python', 400, { code: 'managed_env_unavailable' }))
+    await render({ ...OFFER, targets: [{ ...OFFER.targets[1], available: null }] })
+    await act(async () => {})
+    expect(byName(en('oneClickRepair'))).toBeUndefined()
+    expect(document.querySelector('[data-managed-env-unavailable]')?.textContent).toBe(
+      en('repairManagedUnavailable', { product: PRODUCT_NAME, min: '3.10', max: '3.14' }),
+    )
+    expect(document.querySelector('[data-repair-advanced] [data-repair-open-environment]')).toBeTruthy()
+  })
+
+  it('offer 已经说得出（available=true / 挂着私有 Python）时不预读', async () => {
+    await render(managedOnly(PRIVATE_PYTHON))
+    expect(planMock).not.toHaveBeenCalled()
   })
 })
 
@@ -397,16 +503,18 @@ describe('这台机器上已有的解释器（ADR 0044）', () => {
     targets: [SYSTEM, ...OFFER.targets],
   }
 
-  it('列成「改用已有环境」：显示路径与版本，一个字都不提安装', async () => {
+  it('它是一键修复的首选：主文案说不下载不安装，路径与版本只在「高级」里', async () => {
     await render(WITH_SYSTEM)
-    const button = byName(en('repairUseSystemPython'))
-    expect(button).toBeTruthy()
-    const row = button!.parentElement!
-    expect(row.textContent).toContain('/usr/local/bin/python3')
-    expect(row.textContent).toContain('Python 3.12.4')
+    const card = document.querySelector('[data-one-click-repair]')!
+    expect(card.getAttribute('data-one-click-repair')).toBe('system_interpreter')
+    expect(text()).toContain(en('oneClickBodySystem', { module: 'lmfit' }))
     // 它是首选：不装、不联网、不改任何环境，比两种安装都便宜
-    expect(button!.className).toContain('text-white') // primary
+    expect(byName(en('oneClickRepair'))!.className).toContain('text-white') // primary
     expect(byName(en('repairUseProjectEnv'))!.className).not.toContain('text-white')
+    const detail = document.querySelector('[data-one-click-system]')!
+    expect(detail.closest('[data-repair-advanced]')).toBeTruthy()
+    expect(detail.textContent).toContain('/usr/local/bin/python3')
+    expect(detail.textContent).toContain('Python 3.12.4')
   })
 
   it('点下去走项目环境 PATCH（带 module），不经安装计划，并把失败的渲染重新排上', async () => {
@@ -422,7 +530,7 @@ describe('这台机器上已有的解释器（ADR 0044）', () => {
       tracked: {},
     })
     await render(WITH_SYSTEM)
-    await click(en('repairUseSystemPython'))
+    await click(en('oneClickRepair'))
     expect(adoptMock).toHaveBeenCalledWith('/usr/local/bin/python3', 'lmfit')
     expect(planMock).not.toHaveBeenCalled()
     const after = useRenderStore.getState()
@@ -433,7 +541,7 @@ describe('这台机器上已有的解释器（ADR 0044）', () => {
   it('采用失败时把后端那句话显示出来，不静默', async () => {
     adoptMock.mockRejectedValue(new Error('这个环境里也没有 lmfit'))
     await render(WITH_SYSTEM)
-    await click(en('repairUseSystemPython'))
+    await click(en('oneClickRepair'))
     expect(text()).toContain('这个环境里也没有 lmfit')
   })
 
@@ -477,7 +585,8 @@ describe('这台机器上已有的解释器（ADR 0044）', () => {
       await act(async () => root?.unmount())
       host?.remove()
       await render(offer)
-      expect(byName(en('repairUseSystemPython')), offer.code).toBeTruthy()
+      expect(byName(en('oneClickRepair')), offer.code).toBeTruthy()
+      expect(text()).toContain(en('oneClickBodySystem', { module: 'lmfit' }))
       // 安装目标仍然不给：一键安装的前提是「知道要装什么」且还有轮次
       expect(byName(en('repairUseProjectEnv'))).toBeUndefined()
       expect(byName(en('repairInstallToManaged', { module: 'lmfit', product: PRODUCT_NAME }))).toBeUndefined()
@@ -573,7 +682,7 @@ describe('渲染解释器被全局固定（#465）', () => {
       }),
     )
     await render()
-    await click(en('repairInstallToManaged', { module: 'lmfit', product: PRODUCT_NAME }))
+    await click(en('oneClickRepair'))
     expect(document.querySelector('[data-dependency-repair-pinned]')).toBeTruthy()
     expect(text()).toContain('/opt/late/bin/python')
     expect(byName(en('repairInstallToManaged', { module: 'lmfit', product: PRODUCT_NAME }))).toBeUndefined()
@@ -609,7 +718,7 @@ describe('受管环境一次授权（2026-09-28）', () => {
     ...OFFER,
     targets: [{ ...OFFER.targets[1], private_python: PRIVATE_PYTHON }],
   }
-  const managedButton = () => en('repairInstallToManaged', { module: 'lmfit', product: PRODUCT_NAME })
+  const managedButton = () => en('oneClickRepair')
 
   it('确认页里的要素点之前全在卡片上：装什么 / 联网 / 隔离且不改源码与现有环境 / 私有 Python 版本与体积', async () => {
     await render(MANAGED_OFFER)
@@ -673,7 +782,7 @@ describe('失败 / 取消之后就地重试', () => {
     planMock.mockResolvedValue({ plan: MANAGED_PLAN })
     installMock.mockResolvedValue({ started: true } as never)
     await render(MANAGED_OFFER)
-    await click(en('repairInstallToManaged', { module: 'lmfit', product: PRODUCT_NAME }))
+    await click(en('oneClickRepair'))
     expect(installMock).toHaveBeenCalledTimes(1)
   }
   const finish = (state: string, code: string, extra: Record<string, unknown> = {}) =>
@@ -768,6 +877,47 @@ describe('安装进度', () => {
       } as never)
     })
     expect(useDepRepairStore.getState().progress).toBeNull()
+  })
+
+  it('阶段条：准备 Python → 创建环境 → 安装包 → 重新运行，走到哪一步就标到哪一步', async () => {
+    const stages = () =>
+      [...document.querySelectorAll('[data-repair-stage]')].map(
+        (li) => `${li.getAttribute('data-repair-stage')}:${li.getAttribute('data-stage-state')}`,
+      )
+    await render()
+    await progress('downloading_python', {
+      target_kind: 'tavotto_managed',
+      result: { download: { stage: 'downloading', done_bytes: 12 * 1048576, total_bytes: 48 * 1048576 } },
+    })
+    expect(stages()).toEqual(['python:active', 'env:pending', 'packages:pending', 'rerun:pending'])
+    // 下载的百分比与 MB（读 `result.download`）
+    const bar = document.querySelector('[data-repair-download] [role="progressbar"]')!
+    expect(bar.getAttribute('aria-valuenow')).toBe('25')
+    expect(document.querySelector('[data-repair-download-text]')!.textContent).toBe(
+      en('repairDownloadProgress', { done: '12.0', total: '48.0', pct: 25 }),
+    )
+    // 下载完、在解压：不再是百分比
+    await progress('downloading_python', {
+      target_kind: 'tavotto_managed',
+      result: { download: { stage: 'extracting', done_bytes: 48 * 1048576, total_bytes: 48 * 1048576 } },
+    })
+    expect(document.querySelector('[data-repair-download-text]')!.textContent).toBe(en('repairDownloadUnpacking'))
+    // 进了创建环境：后端沿用上一条 result，下载那段还挂在进度上——不许再画下载条
+    await progress('creating_env', {
+      target_kind: 'tavotto_managed',
+      result: { download: { stage: 'committed', done_bytes: 48 * 1048576, total_bytes: 48 * 1048576 } },
+    })
+    expect(stages()).toEqual(['python:done', 'env:active', 'packages:pending', 'rerun:pending'])
+    expect(document.querySelector('[data-repair-download]')).toBeNull()
+    await progress('installing', { target_kind: 'tavotto_managed' })
+    expect(stages()).toEqual(['python:done', 'env:done', 'packages:active', 'rerun:pending'])
+  })
+
+  it('装进项目自己的环境：没有「准备 Python」「创建环境」两段', async () => {
+    await render()
+    await progress('installing', { target_kind: 'project_venv' })
+    expect([...document.querySelectorAll('[data-repair-stage]')].map((li) => li.getAttribute('data-repair-stage')))
+      .toEqual(['packages', 'rerun'])
   })
 
   it('四个阶段各一句话，pip 日志折叠在「安装详情」里', async () => {

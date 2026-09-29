@@ -34,6 +34,7 @@ import {
 import { DependencyPrepareDialog } from '@/components/DependencyPrepareDialog'
 import { DependencyPrepareButton } from '@/components/WorkdirRow'
 import { i18n, t } from '@/i18n'
+import { listJoin } from '@/i18n/format'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { setCurrentProjectId } from '@/lib/session'
 import { useDepRepairStore } from '@/store/depRepairStore'
@@ -161,6 +162,47 @@ describe('DependencyPrepareDialog', () => {
     expect(radio('project_venv')!.checked).toBe(true)
     expect(radio('tavotto_managed')!.checked).toBe(false)
     expect(text()).toContain(en('dependencyTargetHint_project_venv', { venv: '.venv' }))
+    // 会改用户环境的那一档不折叠、不叫「一键修复」：要用户看清再点
+    expect(document.querySelector('[data-repair-advanced]')).toBeNull()
+    expect(button(en('oneClickRepair'))).toBeUndefined()
+    expect(button(en('dependencyPrepareRun'))).toBeDefined()
+  })
+
+  it('一键修复：一句人话 + 一个主按钮，完整需求串 / 约束 / 目标单选收进默认折叠的「高级」', async () => {
+    await render(<DependencyPrepareDialog />)
+    await act(async () => useEnvStore.getState().requestDependencyPreparation(offer()))
+    expect(text()).toContain(en('oneClickBodyManaged', { product: PRODUCT_NAME, packages: listJoin(['six', 'tabulate']) }))
+    expect(document.querySelector('[data-one-click-cost]')!.textContent).toBe(en('oneClickCostNetwork'))
+    const advanced = document.querySelector('[data-repair-advanced]') as HTMLDetailsElement
+    expect(advanced.open).toBe(false)
+    expect(advanced.querySelector('[data-dependency-requirements]')).toBeTruthy()
+    expect(advanced.querySelector('[data-dependency-target]')).toBeTruthy()
+    expect(button(en('oneClickRepair'))!.className).toContain('text-white')
+  })
+
+  it('一键修复要下载私有 Python 时说大小；安装包自带时不提下载', async () => {
+    const pp = {
+      id: 'pbs', version: '3.13.15', target: 'darwin-arm64', source_host: 'github.com',
+      download_bytes: 25 * 1048576, required: true, cached: false, network_required: true,
+    }
+    await render(<DependencyPrepareDialog />)
+    await act(async () =>
+      useEnvStore.getState().requestDependencyPreparation(
+        offer({ targets: [{ ...offer().targets[0], private_python: { ...pp, origin: 'download' } }] }),
+      ),
+    )
+    expect(document.querySelector('[data-one-click-cost]')!.textContent).toBe(en('oneClickCostDownload', { mb: 25 }))
+    // 同一时刻只开一份：先收掉这一份
+    await act(async () => useEnvStore.getState().dismissDependencyPreparation())
+    await act(async () =>
+      useEnvStore.getState().requestDependencyPreparation(
+        offer({ targets: [{ ...offer().targets[0], private_python: { ...pp, origin: 'bundled', download_bytes: 0 } }] }),
+      ),
+    )
+    expect(document.querySelector('[data-one-click-cost]')!.textContent).toBe(en('oneClickCostNetwork'))
+    expect(document.querySelector('[data-dependency-private-python]')!.textContent).toBe(
+      en('dependencyPreparePrivatePythonBundled', { version: '3.13.15', product: PRODUCT_NAME }),
+    )
   })
 
   it('「准备并继续」= 先绑定计划再只发 plan_id；进度到 done 关框并把「先准备」的面板重新排上', async () => {
@@ -184,7 +226,7 @@ describe('DependencyPrepareDialog', () => {
     })
     await render(<DependencyPrepareDialog />)
     await act(async () => useEnvStore.getState().requestDependencyPreparation(offer()))
-    await act(async () => button(en('dependencyPrepareRun'))!.click())
+    await act(async () => button(en('oneClickRepair'))!.click())
     await act(async () => {})
     expect(planMock).toHaveBeenCalledTimes(1)
     expect(planMock).toHaveBeenCalledWith({ script: 'figure.py', target: 'tavotto_managed' })
@@ -224,7 +266,7 @@ describe('DependencyPrepareDialog', () => {
     })
     await render(<DependencyPrepareDialog />)
     await act(async () => useEnvStore.getState().requestDependencyPreparation(offer()))
-    await act(async () => button(en('dependencyPrepareRun'))!.click())
+    await act(async () => button(en('oneClickRepair'))!.click())
     await act(async () => {})
     // 同一条广播上来了别人的计划：installing 不换进度、done 不关框、不重排
     await act(async () =>
@@ -254,7 +296,7 @@ describe('DependencyPrepareDialog', () => {
     prepareMock.mockResolvedValue({ started: true, plan_id: 'jp2', state: 'preparing', log: '', error: null, code: '' })
     await render(<DependencyPrepareDialog />)
     await act(async () => useEnvStore.getState().requestDependencyPreparation(offer()))
-    await act(async () => button(en('dependencyPrepareRun'))!.click())
+    await act(async () => button(en('oneClickRepair'))!.click())
     await act(async () =>
       useDepRepairStore.getState().onProgress({ plan_id: 'jp2', state: 'failed', log: '', error: '', code: 'dependency_hash_mismatch', flow: 'joint' }),
     )
@@ -271,7 +313,7 @@ describe('DependencyPrepareDialog', () => {
     )
     await render(<DependencyPrepareDialog />)
     await act(async () => useEnvStore.getState().requestDependencyPreparation(offer()))
-    await act(async () => button(en('dependencyPrepareRun'))!.click())
+    await act(async () => button(en('oneClickRepair'))!.click())
     await act(async () => {})
     expect(prepareMock).not.toHaveBeenCalled()
     expect(text()).toContain(en('dependencyBlocked_dependency_conflict'))
@@ -453,12 +495,12 @@ describe('DependencyPrepareDialog：用户自己的环境', () => {
       ),
     )
     expect(text()).toContain(en('userEnvNone'))
-    expect(text()).toContain(en('dependencyPrepareBody', { script: 'figure.py' }))
+    expect(text()).toContain(en('oneClickBodyManaged', { product: PRODUCT_NAME, packages: listJoin(['six', 'tabulate']) }))
     expect(radio('tavotto_managed')!.checked).toBe(true)
     expect(envRadio('conda')).toBeNull()
     const partial = document.querySelector('[data-user-env-partial]')!
     expect(partial.textContent).toContain(en('userEnvMissing', { packages: 'tabulate, six' }))
-    expect(button(en('dependencyPrepareRun'))).toBeDefined()
+    expect(button(en('oneClickRepair'))).toBeDefined()
   })
 
   it('老后端（载荷里没有 user_environments）：不多说一句「没找到」', async () => {

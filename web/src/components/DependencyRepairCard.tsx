@@ -1,16 +1,21 @@
-import { useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { i18n, t as translate } from '@/i18n'
-import type {
-  DependencyRepairOffer,
-  DependencyTarget,
-  InterpreterPin,
-  SystemInterpreterRejection,
+import {
+  privatePythonOrigin,
+  type DependencyRepairOffer,
+  type DependencyTarget,
+  type InterpreterPin,
+  type SystemInterpreterRejection,
 } from '@/lib/api'
 import { useRenderStore } from '@/store/renderStore'
 import { currentProjectId } from '@/lib/session'
-import { isRepairRunning, useDepRepairStore } from '@/store/depRepairStore'
+import { isRepairRunning, managedPreviewKey, useDepRepairStore } from '@/store/depRepairStore'
 import { useEnvStore } from '@/store/envStore'
+import { useUiStore } from '@/store/uiStore'
+import { Settings } from '@/components/ui/icons'
+import { ICON_SIZE } from '@/components/ui/Icon'
+import { RepairStages } from './RepairStages'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { Button } from './ui/Button'
 import { TextInput } from './ui/Input'
@@ -82,11 +87,67 @@ export function DependencyRepairCard({
     adoptSystemPython,
     cancel,
     reset,
+    managedPreview,
+    previewManaged,
   } = useDepRepairStore()
   const [manual, setManual] = useState('')
   const origin = fromScriptRow ? { offer, module } : null
   const running = isRepairRunning(progress)
   const pkg = offer.requirement?.distribution || module
+
+  const exhausted = offer.code === 'dependency_repair_rounds_exhausted'
+  // 采用这台机器上已有的解释器**不需要**解析出包名，也不消耗修复轮次
+  //（它什么都不装）：解析不出 / 轮次用完时它照样列出——那正是用户仅剩的路。
+  // 安装目标则两个前提都要。
+  const canInstall = !!offer.requirement && !exhausted
+  // 「指定安装包」要装到哪：第一个**安装**目标。系统解释器不是安装目标
+  //（采用它一个字节都不装），排在最前时也不能被当成装包的地方。
+  const installTarget = offer.targets.find((tg) => tg.kind !== 'system_interpreter')
+  const managedTarget = offer.targets.find((tg) => tg.kind === 'tavotto_managed') ?? null
+  // 受管目标能不能用 offer 形成时还不知道（后端在后台探基础解释器，于是也没挂私有 Python）：先形成一份计划
+  // 读出真实要素（计划这一步什么都不装）。不预读的话，一键修复点下去计划多出一段下载，只能停在确认页再点一次
+  const previewArgs = { module, script, target: 'tavotto_managed' as const }
+  const needPreview =
+    canInstall && !pinnedSince && !offer.pinned && managedTarget?.available === null && !managedTarget.private_python
+  const preview = managedPreview?.key === managedPreviewKey(previewArgs) ? managedPreview : null
+  useEffect(() => {
+    if (needPreview) void previewManaged(previewArgs)
+    // previewArgs 由这三样决定；同一份只问一次（store 按 key 去重）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [needPreview, module, script, !!preview])
+  const checking = needPreview && (!preview || preview.pending)
+  const previewUnavailable = preview?.code === 'managed_env_unavailable'
+  // 预读说这台电脑没法建环境的，受管目标与 offer 上的 `available: false` 同样对待
+  const targets = offer.targets.filter(
+    (tg) =>
+      tg.available !== false &&
+      !(tg.kind === 'tavotto_managed' && previewUnavailable) &&
+      (tg.kind === 'system_interpreter' || canInstall),
+  )
+  const managedReady = canInstall && !!managedTarget && managedTarget.available !== false && !previewUnavailable
+  const managedUnavailable =
+    previewUnavailable ||
+    offer.targets.some(
+      (tg) => tg.kind === 'tavotto_managed' && tg.available === false && tg.reason === 'managed_env_unavailable',
+    )
+  // 点之前说出口的私有 Python（offer 上挂着的，或预读的计划里的）：一次授权按它比对计划
+  const disclosed = managedTarget?.private_python ?? preview?.plan?.private_python ?? null
+  const act = (tg: DependencyTarget) =>
+    tg.kind === 'system_interpreter'
+      ? // 采用已有的解释器不经 plan：没有要安装的东西可以「计划」
+        void adoptSystemPython(tg.python, module)
+      : tg.kind === 'tavotto_managed' && offer.requirement
+        ? // 一次授权：卡片已经把计划的要素说出口，点一次就开始
+          void installNow(
+            { module, script, target: 'tavotto_managed' },
+            {
+              requirement: offer.requirement.requirement,
+              target_kind: 'tavotto_managed',
+              private_python: disclosed,
+            },
+            origin,
+          )
+        : void makePlan({ module, script, target: tg.kind }, origin)
 
   // ---- 全局显式解释器压住了项目级决策（#465）：只有一条出口 ---------------
   // offer 形成时就有的（`offer.pinned`）与之后才钉上的（plan 的 400 / 安装失败
@@ -147,23 +208,105 @@ export function DependencyRepairCard({
     )
   }
 
-  // ---- 起点：给出口 -------------------------------------------------------
-  const exhausted = offer.code === 'dependency_repair_rounds_exhausted'
-  // 采用这台机器上已有的解释器**不需要**解析出包名，也不消耗修复轮次
-  //（它什么都不装）：解析不出 / 轮次用完时它照样列出——那正是用户仅剩的路。
-  // 安装目标则两个前提都要。
-  const targets = offer.targets.filter(
-    (tg) =>
-      tg.available !== false &&
-      (tg.kind === 'system_interpreter' || (offer.requirement && !exhausted)),
-  )
-  // 「指定安装包」要装到哪：第一个**安装**目标。系统解释器不是安装目标
-  //（采用它一个字节都不装），排在最前时也不能被当成装包的地方。
-  const installTarget = offer.targets.find((tg) => tg.kind !== 'system_interpreter')
+  // ---- 起点 ---------------------------------------------------------------
   const rejected = offer.system_rejected ?? []
-  const managedUnavailable = offer.targets.some(
-    (tg) => tg.kind === 'tavotto_managed' && tg.available === false && tg.reason === 'managed_env_unavailable',
+  const system = targets.find((tg) => tg.kind === 'system_interpreter') ?? null
+  // 一键修复只有一个主动作（2026-09-29，面向不懂 Python 的用户）：这台电脑上已经装好这个包的环境最便宜
+  // （不装、不下载，后端也把它排在最前），其次是为项目准备的受管环境。两样都没有时才把各条路摊开
+  const primary: DependencyTarget | null = system ?? (managedReady ? managedTarget : null)
+  const rest = targets.filter((tg) => tg !== primary)
+  // 解析不出包名：用户可以自己指定，但那串东西同样要过后端的语法关
+  const specify = !offer.requirement && !exhausted && (
+    <div className="flex flex-col gap-1.5">
+      <span className="text-xs text-ink-2">{en('repairSpecifyPackage')}</span>
+      <div className="flex items-center gap-1.5">
+        <TextInput
+          value={manual}
+          onChange={(e) => setManual(e.target.value)}
+          placeholder={en('repairPackagePlaceholder')}
+          aria-label={en('repairPackageAria')}
+        />
+        <Button
+          disabled={busy || !manual.trim()}
+          onClick={() =>
+            makePlan({
+              module,
+              script,
+              target:
+                installTarget?.kind === 'project_venv' ? 'project_venv' : 'tavotto_managed',
+              distribution: manual.trim(),
+            }, origin)
+          }
+        >
+          {en('repairContinue')}
+        </Button>
+      </div>
+    </div>
   )
+  const advanced = (
+    <Advanced>
+      {managedReady && offer.requirement && (
+        // 一次授权的技术明细（装的需求串 / 私有 Python 的版本）：受管环境是主按钮时，主文案已经用人话说过
+        // 装什么、要不要下载、多大，这里给想核对的人；它排在「已有环境」之后、收在这里时，这就是点之前的披露
+        <div data-dependency-disclosure>
+          <p className="text-xs leading-relaxed text-ink-3">
+            {en('repairWillInstall', { requirement: offer.requirement.requirement })}
+            {` · ${en('repairNeedsNetwork')}`}
+          </p>
+          <p className="mt-1 text-xs leading-relaxed text-ink-3">{en('repairConfirmManaged')}</p>
+          {disclosed && <PrivatePythonDisclosure offer={disclosed} />}
+        </div>
+      )}
+      {primary?.kind === 'system_interpreter' && (
+        // 一键修复要改用的是哪一个：路径与版本给想核对的人（主文案里不出现路径）
+        <p className="text-xs leading-relaxed text-ink-3" data-one-click-system>
+          {hint(primary)}
+        </p>
+      )}
+      {primary && rest.length > 0 && <TargetList targets={rest} first={null} pkg={pkg} act={act} />}
+      {primary && specify}
+      {rejected.length > 0 && <Rejections rejected={rejected} pkg={pkg} />}
+      <OtherPython />
+      <OpenEnvironment />
+    </Advanced>
+  )
+
+  if (primary) {
+    const managed = primary.kind === 'tavotto_managed'
+    return (
+      <div className="flex flex-col gap-2.5 rounded-md bg-surface p-3 shadow-card" data-one-click-repair={primary.kind}>
+        <div>
+          <h3 className="type-section">{en('repairTitle', { module: pkg })}</h3>
+          <p className="mt-1 text-xs leading-relaxed text-ink-2">
+            {managed
+              ? en('oneClickBodyManaged', { product: PRODUCT_NAME, packages: pkg })
+              : en('oneClickBodySystem', { module: pkg })}
+          </p>
+          {managed && (
+            <p className="mt-1 text-xs leading-relaxed text-ink-3" data-one-click-cost>
+              {checking
+                ? en('oneClickChecking')
+                : disclosed && privatePythonOrigin(disclosed) === 'download'
+                  ? en('oneClickCostDownload', { mb: Math.max(1, Math.round(disclosed.download_bytes / 1048576)) })
+                  : en('oneClickCostNetwork')}
+            </p>
+          )}
+        </div>
+        <Button
+          className="self-start"
+          variant="primary"
+          disabled={busy || checking}
+          data-one-click-repair-button
+          onClick={() => act(primary)}
+        >
+          {en('oneClickRepair')}
+        </Button>
+        <Failure code={errorCode} text={errorText} />
+        {advanced}
+      </div>
+    )
+  }
+
   return (
     <div className="flex flex-col gap-2.5 rounded-md bg-surface p-3 shadow-card">
       <div>
@@ -176,7 +319,8 @@ export function DependencyRepairCard({
         {exhausted && (
           <p className="mt-1 text-xs leading-relaxed text-ink-3">{en('repairExhausted')}</p>
         )}
-        {managedUnavailable && (
+        {managedUnavailable && targets.length === 0 && (
+          // 真的无路可走（没有可建环境的 Python，也没有可下载的那份）：说清下一步能做什么
           <p className="mt-1 text-xs leading-relaxed text-ink-2" data-managed-env-unavailable>
             {en('repairManagedUnavailable', {
               product: PRODUCT_NAME,
@@ -187,117 +331,106 @@ export function DependencyRepairCard({
         )}
       </div>
 
-      {targets.length > 0 && (
-        <div className="flex flex-col gap-1.5">
-          {targets.map((tg) => {
-            // 受管环境那条已经没有副标题（hint 返回空串）：空的 <span> 会白留
-            // 一行 gap，所以判空后整块不渲染，而不是渲染一个空元素。
-            const detail = hint(tg)
-            return (
-              // 一个目标一块：按钮在上、说明在下。**不并排**——Button 是
-              // whitespace-nowrap + shrink-0 的，右栏只有 296px，英文按钮
-              // 一旦并排就会把旁边那句挤没或把整栏撑破。
-              <div key={tg.kind} className="flex flex-col gap-0.5">
-                <Button
-                  className="self-start"
-                  variant={tg.kind === targets[0].kind ? 'primary' : 'ghost'}
-                  disabled={busy}
-                  onClick={() =>
-                    tg.kind === 'system_interpreter'
-                      ? // 采用已有的解释器不经 plan：没有要安装的东西可以「计划」
-                        void adoptSystemPython(tg.python, module)
-                      : tg.kind === 'tavotto_managed' && offer.requirement
-                        ? // 一次授权：下面那几行已经把计划的要素说出口，点一次就开始
-                          void installNow(
-                            { module, script, target: 'tavotto_managed' },
-                            {
-                              requirement: offer.requirement.requirement,
-                              target_kind: 'tavotto_managed',
-                              private_python: tg.private_python ?? null,
-                            },
-                            origin,
-                          )
-                        : makePlan({ module, script, target: tg.kind }, origin)
-                  }
-                >
-                  {label(tg, pkg)}
-                </Button>
-                {detail && (
-                  <span className="truncate text-xs text-ink-3" title={tg.python || undefined}>
-                    {detail}
-                  </span>
-                )}
-                {tg.kind === 'tavotto_managed' && offer.requirement && (
-                  // 一次授权的披露：确认页里的要素全部在点之前说出口（装什么 / 联网 / 隔离环境、
-                  // 不改源码与现有环境 / 私有 Python 的版本与体积）
-                  <div data-dependency-disclosure>
-                    <p className="mt-1 text-xs leading-relaxed text-ink-3">
-                      {en('repairWillInstall', { requirement: offer.requirement.requirement })}
-                      {` · ${en('repairNeedsNetwork')}`}
-                    </p>
-                    <p className="mt-1 text-xs leading-relaxed text-ink-3">
-                      {en('repairConfirmManaged')}
-                    </p>
-                    {tg.private_python && <PrivatePythonDisclosure offer={tg.private_python} />}
-                  </div>
-                )}
-              </div>
-            )
-          })}
-        </div>
-      )}
+      {targets.length > 0 && <TargetList targets={targets} first={targets[0].kind} pkg={pkg} act={act} />}
 
-      {/* 探到了但没采用的系统解释器（ADR 0044）：用户手边明明有一套装了那个包
-          的 Python，Tavotto 为什么没用它——不说出来，他看到的就是「缺包，
-          要不要建一个新环境」，而自己的环境像是被无视了。 */}
-      {rejected.length > 0 && (
-        <div className="flex flex-col gap-0.5">
-          {rejected.map((r) => (
-            <p key={r.python} className="text-xs leading-relaxed text-ink-3">
-              {rejectionText(r, pkg)}
-            </p>
-          ))}
-        </div>
-      )}
-
-      {/* 解析不出包名：用户可以自己指定，但那串东西同样要过后端的语法关 */}
-      {!offer.requirement && !exhausted && (
-        <div className="flex flex-col gap-1.5">
-          <span className="text-xs text-ink-2">{en('repairSpecifyPackage')}</span>
-          <div className="flex items-center gap-1.5">
-            <TextInput
-              value={manual}
-              onChange={(e) => setManual(e.target.value)}
-              placeholder={en('repairPackagePlaceholder')}
-              aria-label={en('repairPackageAria')}
-            />
-            <Button
-              disabled={busy || !manual.trim()}
-              onClick={() =>
-                makePlan({
-                  module,
-                  script,
-                  target:
-                    installTarget?.kind === 'project_venv' ? 'project_venv' : 'tavotto_managed',
-                  distribution: manual.trim(),
-                }, origin)
-              }
-            >
-              {en('repairContinue')}
-            </Button>
-          </div>
-        </div>
-      )}
-
-      {/* **任何一条修复路径走不通时的兜底出口**（ADR 0019 §五 与兼容层
-          Layer 4）：换一个已经装好那个包的 Python。它必须**始终在**——
-          解析不出包名、没有可用目标、装完还是失败，用户都还有这条路。
-          少了它，文案里那句「或者换一个已经装好它的 Python 环境」就指不出
-          任何控件（e2e 抓到过一次：卡片只剩「指定安装包」）。 */}
-      <OtherPython />
+      {specify}
 
       <Failure code={errorCode} text={errorText} />
+      {advanced}
     </div>
+  )
+}
+
+/**
+ * 「高级」：默认折叠。**任何一条修复路径走不通时的兜底出口**（ADR 0019 §五 与兼容层 Layer 4）——换一个
+ * 已经装好那个包的 Python——必须**始终在**这里：解析不出包名、没有可用目标、装完还是失败，用户都还有这条路
+ * （e2e 抓到过一次：卡片只剩「指定安装包」）。它与「选择渲染环境」都是给懂 Python 的人的，所以收起来，
+ * 不与一键修复的主按钮抢眼。
+ */
+function Advanced({ children }: { children: ReactNode }) {
+  return (
+    <Details className="border-t border-border pt-2.5" data-repair-advanced>
+      <Summary className="type-meta cursor-pointer">{en('repairAdvanced')}</Summary>
+      <div className="mt-2 flex flex-col gap-2.5">{children}</div>
+    </Details>
+  )
+}
+
+/** 每个目标一块：按钮在上、说明在下 */
+function TargetList({
+  targets,
+  first,
+  pkg,
+  act,
+}: {
+  targets: DependencyTarget[]
+  pkg: string
+  /** 摊开各条路时第一条是主按钮；收在「高级」里时一个主按钮都没有（卡片的主动作只有一键修复） */
+  first: DependencyTarget['kind'] | null
+  act: (tg: DependencyTarget) => void
+}) {
+  const busy = useDepRepairStore((s) => s.busy)
+  return (
+    <div className="flex flex-col gap-1.5">
+      {targets.map((tg) => {
+        // 受管环境那条已经没有副标题（hint 返回空串）：空的 <span> 会白留
+        // 一行 gap，所以判空后整块不渲染，而不是渲染一个空元素。
+        const detail = hint(tg)
+        return (
+          // 一个目标一块：按钮在上、说明在下。**不并排**——Button 是
+          // whitespace-nowrap + shrink-0 的，右栏只有 296px，英文按钮
+          // 一旦并排就会把旁边那句挤没或把整栏撑破。
+          <div key={tg.kind} className="flex flex-col gap-0.5">
+            <Button
+              className="self-start"
+              variant={tg.kind === first ? 'primary' : 'ghost'}
+              disabled={busy}
+              onClick={() => act(tg)}
+            >
+              {label(tg, pkg)}
+            </Button>
+            {detail && (
+              <span className="truncate text-xs text-ink-3" title={tg.python || undefined}>
+                {detail}
+              </span>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+/**
+ * 探到了但没采用的系统解释器（ADR 0044）：用户手边明明有一套装了那个包的 Python，Tavotto 为什么没用它——
+ * 不说出来，他看到的就是「缺包，要不要建一个新环境」，而自己的环境像是被无视了。带路径，收在「高级」里
+ */
+function Rejections({ rejected, pkg }: { rejected: SystemInterpreterRejection[]; pkg: string }) {
+  return (
+    <div className="flex flex-col gap-0.5">
+      {rejected.map((r) => (
+        <p key={r.python} className="text-xs leading-relaxed text-ink-3">
+          {rejectionText(r, pkg)}
+        </p>
+      ))}
+    </div>
+  )
+}
+
+/** 就地打开渲染环境对话框（`EngineEnvironmentDialog`，与脚本行恢复说明同一个入口，不深链设置页） */
+function OpenEnvironment() {
+  useTranslation('workspace')
+  return (
+    <Button
+      variant="secondary"
+      size="sm"
+      className="self-start"
+      data-repair-open-environment
+      onClick={() => useUiStore.getState().setEngineEnvOpen(true)}
+    >
+      <Settings size={ICON_SIZE.sm} />
+      {translate('scripts.openEnvSettings', { ns: 'workspace' })}
+    </Button>
   )
 }
 
@@ -305,15 +438,26 @@ export function DependencyRepairCard({
 function PrivatePythonDisclosure({ offer }: { offer: NonNullable<DependencyTarget['private_python']> }) {
   return (
     <p className="mt-1 text-xs leading-relaxed text-ink-2" data-dependency-private-python>
-      {offer.cached
-        ? en('dependencyPreparePrivatePythonCached', { version: offer.version, product: PRODUCT_NAME })
-        : en('dependencyPreparePrivatePython', {
-            version: offer.version,
-            mb: Math.max(1, Math.round(offer.download_bytes / 1048576)),
-            product: PRODUCT_NAME,
-          })}
+      {privatePythonText(offer)}
     </p>
   )
+}
+
+/**
+ * 私有 Python 那一句（修复卡与跑前授权框共用）：按来源三句——要下载的说版本与体积、数据目录里已有的说
+ * 不用再下、安装包自带的说不用下载。来源的判据只有 `privatePythonOrigin` 一处
+ */
+export function privatePythonText(offer: NonNullable<DependencyTarget['private_python']>): string {
+  const origin = privatePythonOrigin(offer)
+  if (origin === 'bundled')
+    return en('dependencyPreparePrivatePythonBundled', { version: offer.version, product: PRODUCT_NAME })
+  if (origin === 'cached')
+    return en('dependencyPreparePrivatePythonCached', { version: offer.version, product: PRODUCT_NAME })
+  return en('dependencyPreparePrivatePython', {
+    version: offer.version,
+    mb: Math.max(1, Math.round(offer.download_bytes / 1048576)),
+    product: PRODUCT_NAME,
+  })
 }
 
 /**
@@ -394,7 +538,7 @@ function OtherPython() {
   const [path, setPath] = useState('')
   const [error, setError] = useState<string | null>(null)
   return (
-    <div className="flex flex-col gap-1.5 border-t border-border pt-2.5">
+    <div className="flex flex-col gap-1.5">
       {/* 只留主句：括号里的附加条件是「填错了再说」的事，这里先把出口指清楚 */}
       <span className="text-xs text-ink-2">{en('repairUseOtherPythonShort')}</span>
       {/* 占位符是「这里还没填」的提示，不是要读的正文，压到 faint 一档。写在行
@@ -505,7 +649,7 @@ export const RETRYABLE_REPAIR_CODES: ReadonlySet<string> = new Set([
 ])
 
 /**
- * 安装进度。四个阶段各一句话，pip 日志折叠在「安装详情」里。
+ * 安装进度。四个阶段各一句话 + 阶段条（`RepairStages`：下载私有 Python 时带百分比），pip 日志折叠在「安装详情」里。
  *
  * 取消之后**不假装完整回滚**：改的是用户自己的环境时如实说「可能已发生
  * 部分修改」——那正是「改用户环境必须明确确认」的另一面。
@@ -549,6 +693,7 @@ function RepairProgress({
           </p>
         )}
       </div>
+      <RepairStages progress={progress} />
       <div className="flex flex-wrap items-center gap-1.5">
         {running ? (
           <Button onClick={onCancel}>{en('repairCancel')}</Button>

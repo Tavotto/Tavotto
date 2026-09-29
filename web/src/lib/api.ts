@@ -3153,6 +3153,19 @@ export interface PrivatePythonOffer {
   required: boolean
   cached: boolean
   network_required: boolean
+  /**
+   * 这份 Python 从哪来：`bundled` = 安装包里自带、`cached` = 数据目录里已有校验过的一份（两者都不下载）、
+   * `download` = 这次要下载 `download_bytes`。老后端没有这个字段：按 `cached` 推（`privatePythonOrigin`）
+   */
+  origin?: 'bundled' | 'cached' | 'download'
+}
+
+/**
+ * 私有 Python 的来源（一键修复的披露只看它）。字段缺失（老后端）时按下载处理——只有 `cached` 明说已在
+ * 才不说下载（那时 `download_bytes` 是 0，说「下载约 1 MB」就是替后端撒谎）
+ */
+export function privatePythonOrigin(p: PrivatePythonOffer): 'bundled' | 'cached' | 'download' {
+  return p.origin ?? (p.cached ? 'cached' : 'download')
 }
 
 /**
@@ -3229,6 +3242,8 @@ export interface DependencyProgress {
   requirements?: string[]
   committed?: boolean
   result?: {
+    /** 私有 Python 供应中（`downloading_python`）：阶段与字节数（U05）；之后的状态沿用上一条 result，不能单看它 */
+    download?: { stage: string; done_bytes: number; total_bytes: number }
     python?: string
     version?: string
     distribution?: string

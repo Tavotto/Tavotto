@@ -331,6 +331,26 @@ describe('运行 / 取消 / 结果', () => {
     expect(dialog!.textContent).toContain('/usr/bin/python3')
   })
 
+  it('多个脚本同样缺包失败：那段解释在组上只说一次，不在每一行重复', async () => {
+    mockRegistry.mockResolvedValue(view([entry({ script: 'a.py' }), entry({ script: 'b.py' }), entry({ script: 'c.py' })]))
+    mockProbe.mockImplementation(async (script: string) => ({
+      ...ok([]),
+      script,
+      registered: false,
+      error: { code: 'missing_dependency', message: '缺少依赖包：pandas', params: { module: 'pandas' } },
+    }))
+    await mount()
+    for (const btn of [...host.querySelectorAll<HTMLButtonElement>('button[aria-label$="并发现图"]')]) {
+      await act(async () => btn.click())
+      await flush()
+    }
+    expect(host.querySelectorAll('[data-script-recovery-explain]')).toHaveLength(1)
+    const said = host.textContent!.split('可能依赖原来的 Python 环境').length - 1
+    expect(said, '解释说了不止一次').toBe(1)
+    // 每一行仍有自己的出口（复制的是那一行自己的诊断）
+    expect([...host.querySelectorAll('button')].filter((b) => b.textContent?.includes('复制诊断'))).toHaveLength(3)
+  })
+
   it('没出图（script_no_figure）不进「可能需要原环境」组', async () => {
     mockRegistry.mockResolvedValue(view([entry({ script: 'show.py' })]))
     mockProbe.mockResolvedValue({
@@ -392,10 +412,11 @@ describe('运行 / 取消 / 结果', () => {
     await flush()
     expect(host.querySelector('[data-script-dependency-repair]'), '脚本行上没有修复卡片').toBeTruthy()
     expect(host.querySelector('[data-dependency-disclosure]')).toBeTruthy()
-    // 原有两条出口仍在（与 #705 改的那颗按钮互不相干）
-    expect(buttonByText('选择渲染环境')).toBeTruthy()
-    expect(buttonByText('复制诊断')).toBeTruthy()
-    await act(async () => buttonByText('将 adjustText 安装到').click())
+    // 卡片就是这一行的下一步：「选择渲染环境」收进卡片的「高级」，恢复说明那一段不再叠在卡片下面（2026-09-29）
+    expect(buttonByText('选择渲染环境').closest('[data-repair-advanced]')).toBeTruthy()
+    expect([...host.querySelectorAll('button')].some((b) => b.textContent?.includes('复制诊断'))).toBe(false)
+    expect(host.querySelector('[data-script-recovery-explain]')).toBeNull()
+    await act(async () => buttonByText('一键修复').click())
     await flush()
     expect(createDependencyPlan).toHaveBeenCalledWith({
       module: 'adjustText', script: 'fig_labels.py', target: 'tavotto_managed',
@@ -501,7 +522,7 @@ describe('脚本行发起的修复切项目再切回（#729）', () => {
     await mount()
     await act(async () => runButton().click())
     await flush()
-    await act(async () => buttonByText('将 adjustText 安装到').click())
+    await act(async () => buttonByText('一键修复').click())
     await flush()
     expect(installDependencyPlan).toHaveBeenCalledWith('plan-row')
     await act(async () => useDepRepairStore.getState().onProgress(progress('installing')))

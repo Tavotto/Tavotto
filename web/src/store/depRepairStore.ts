@@ -146,6 +146,14 @@ interface DepRepairState {
   /** 最近一次真正执行过的受管环境授权（`retry` 按它判计划有没有超出用户看到的） */
   authorized: RepairDisclosure | null
   /**
+   * 受管目标「能不能用」offer 形成时还不知道（`available: null`：后端正在后台探基础解释器，于是 offer 上也没挂
+   * 私有 Python）时，卡片先形成一份计划**只为读出它的真实要素**（要不要下载、多大；计划这一步什么都不装，
+   * ADR 0019 §四）。卡片按它披露、按它授权——不然用户点一次「一键修复」，计划却多出一段下载，
+   * `planMatchesDisclosure` 不符，只能停在确认页再点一次。
+   */
+  managedPreview: ManagedPreview | null
+  previewManaged: (args: RepairRequest) => Promise<void>
+  /**
    * 采用这台机器上已有的、已经装着那个包的解释器（ADR 0044）。**不是安装**：
    * 走项目环境 PATCH（带 `module` 让后端连那个包一起验），成功后把失败的
    * 渲染重新排上——与装完包之后那半边同一件事。
@@ -190,6 +198,18 @@ interface DepRepairState {
   skipPreparation: () => Promise<void>
 }
 
+/** 预读的那份计划：`key` 认是哪个脚本的哪个包；`pending` 期间卡片的主按钮等它 */
+export interface ManagedPreview {
+  key: string
+  pending: boolean
+  plan: DependencyRepairPlan | null
+  /** 形成不了计划时后端的 code（`managed_env_unavailable` = 这台电脑真的无路可走） */
+  code: string
+}
+
+export const managedPreviewKey = (args: { script: string; module: string }): string =>
+  `${args.script}\n${args.module}`
+
 /** 后端错误 → (code, 原文, 固定)。没有 code 的一律归到通用安装失败。 */
 const failure = (e: unknown): { code: string; text: string; pinned: InterpreterPin | null } => {
   const body = (e as { body?: { code?: string; error?: string; pinned?: InterpreterPin } })?.body
@@ -209,6 +229,7 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
   request: null,
   authorized: null,
   scriptOffer: null,
+  managedPreview: null,
   parked: {},
   rebuilding: {},
   rebuildRunningFor: (project) => !!get().rebuilding[projectKey(project)],
@@ -313,6 +334,24 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
     // 计划超出了卡片说过的：不执行，停在确认页（它把计划本身的要素说出口）
     if (!planMatchesDisclosure(plan, seen)) return
     await get().install()
+  },
+
+  previewManaged: async (args) => {
+    const key = managedPreviewKey(args)
+    const now = get().managedPreview
+    if (now?.key === key) return // 同一份只问一次（在途或已有结论）
+    const epoch = projectEpoch
+    set({ managedPreview: { key, pending: true, plan: null, code: '' } })
+    try {
+      const { plan } = await createDependencyPlan({ ...args, target: 'tavotto_managed' })
+      if (epoch !== projectEpoch || get().managedPreview?.key !== key) return
+      set({ managedPreview: { key, pending: false, plan, code: '' } })
+    } catch (e) {
+      if (epoch !== projectEpoch || get().managedPreview?.key !== key) return
+      const { code, pinned } = failure(e)
+      // 预读时才发现被全局固定：与形成计划被拒同一支（卡片切到「恢复自动检测」）
+      set({ managedPreview: { key, pending: false, plan: null, code }, ...(pinned ? { pinned } : {}) })
+    }
   },
 
   retry: async () => {
@@ -513,6 +552,7 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
       request: null,
       authorized: null,
       scriptOffer: null,
+      managedPreview: null,
     }),
 
   clear: () => {
@@ -539,6 +579,7 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
       jointPlan: null,
       jointBlocked: null,
       pinned: null,
+      managedPreview: null,
       request: retryCtx?.request ?? null,
       authorized: retryCtx?.authorized ?? null,
       scriptOffer: retryCtx?.scriptOffer ?? null,
