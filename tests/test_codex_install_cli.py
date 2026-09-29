@@ -1986,6 +1986,45 @@ def test_a_cleanup_that_cannot_even_list_the_directory_reports_it(tmp_path):
     assert codexinstall._remove_one_shot_dirs(tmp_path / "missing", tmp_path / "d") == []
 
 
+def test_a_backup_that_cannot_be_moved_back_is_kept_not_deleted(tmp_path, monkeypatch):
+    """只剩备份、挪回 dest 又失败（杀软临时占着）：那份备份仍是唯一能恢复的安装——不能接着被当垃圾删掉，
+    要报成没收干净、留给下一次（Codex #725）。"""
+    sys.path.insert(0, str(SRC))
+    from tavotto.engine import codexinstall
+
+    base = tmp_path / "market"
+    backup = base / ".old-1"
+    (backup / "codex-plugin").mkdir(parents=True)
+    dest = base / "Tavotto-plugin-stable"
+    real = codexinstall.os.replace
+
+    def refuse(src, dst):
+        if Path(src) == backup:
+            raise PermissionError("held by antivirus")
+        return real(src, dst)
+
+    monkeypatch.setattr(codexinstall.os, "replace", refuse)
+    assert codexinstall._remove_one_shot_dirs(base, dest) == [str(backup)]
+    assert (backup / "codex-plugin").is_dir(), "唯一的那份备份被删了"
+    monkeypatch.setattr(codexinstall.os, "replace", real)
+    assert codexinstall._remove_one_shot_dirs(base, dest) == []
+    assert (dest / "codex-plugin").is_dir() and not backup.exists()
+
+
+def test_an_archive_with_too_many_entries_is_refused_before_writing(tmp_path, monkeypatch):
+    """字节上限挡不住几十万个空文件：条目数超上限时写盘之前就拒（Codex #725）。"""
+    sys.path.insert(0, str(SRC))
+    from tavotto.engine import codexinstall
+
+    zip_bytes, _manifest = _stable_branch_zip(tmp_path, "0.18.0")
+    monkeypatch.setattr(codexinstall, "_ARCHIVE_MAX_ENTRIES", 5)
+    out = tmp_path / "out"
+    out.mkdir()
+    with pytest.raises(codexinstall.ArchiveError, match="条目数"):
+        codexinstall._unpack(zip_bytes, out)
+    assert list(out.iterdir()) == []
+
+
 def test_a_read_failure_during_verification_is_a_one_line_failure(
     no_git_machine, capsys, monkeypatch
 ):

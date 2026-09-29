@@ -585,6 +585,8 @@ _GIT_NOT_RUNNABLE = re.compile(r"failed to run git\b", re.I)
 #: 压缩包上限。0.17.0 的分支压缩包约 0.7 MB；上限只防「下来的不是那个东西」把磁盘写满。
 _ARCHIVE_MAX_BYTES = 64 << 20
 _ARCHIVE_MAX_UNPACKED = 256 << 20
+#: 条目数上限：发行分支只有几十个文件（0.17.0 是 36 个），上限只防空文件铺满磁盘
+_ARCHIVE_MAX_ENTRIES = 5_000
 _NETWORK_TIMEOUT = 60
 
 
@@ -636,6 +638,9 @@ def _unpack(data: bytes, into: Path) -> tuple[Path, str | None, dict[str, str]]:
         infos = zf.infolist()
     except (zipfile.BadZipFile, ValueError) as exc:
         raise ArchiveError(f"下载下来的不是 zip：{exc}") from exc
+    if len(infos) > _ARCHIVE_MAX_ENTRIES:
+        # 只按字节算的上限挡不住几十万个空文件（Codex #725）：条目数也设上限，写盘之前就拒
+        raise ArchiveError(f"压缩包条目数 {len(infos)} 超过 {_ARCHIVE_MAX_ENTRIES}，不像是发行分支")
     tops: set[str] = set()
     total = 0
     for info in infos:
@@ -876,11 +881,13 @@ def _remove_one_shot_dirs(base: Path, dest: Path) -> list[str]:
 
     backups = sorted((p for p in entries if p.name.startswith(".old-")), key=mtime)
     if backups and not dest.exists():
+        # 挪回失败时这份备份仍是唯一能恢复的那份：不进下面的删除，报成没收干净（Codex #725）
+        keep = backups[-1]
+        entries.remove(keep)
         try:
-            os.replace(backups[-1], dest)
-            entries.remove(backups[-1])
+            os.replace(keep, dest)
         except OSError:
-            pass
+            stuck.append(str(keep))
     for p in entries:
         try:
             shutil.rmtree(p)
