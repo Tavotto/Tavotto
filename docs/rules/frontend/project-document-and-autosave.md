@@ -188,6 +188,9 @@
   - **记录时机不变**：`projectStore` 的那个订阅（documentId 或名字变、且排版有内容才记，与缓存同值不写），
     `rememberProjectDocument` 同时写缓存与后端；推给后端的写入串行（后发的必须后到），读之前先等它排空；
     回过 404 就在本模块实例里不再推。没认领项目（pj 为空）时不记。
+  - **推失败的写入不丢**：记录时本机缓存先带 `pendingAt`（写入时刻，毫秒），后端确认后才摘掉；推失败（非 404）
+    就留着。下次读时本机这条比后端 `last.at` 新（或后端没记过）→ 本机为准并重推，否则后端为准。导出默认值同理
+    （`tavotto.export.defaults.pending`，有它就本机为准重推）。换了 origin 时本机缓存本来就是空的，这条只护同一个 origin。
   - **磁盘槽位的清理只由后端做**：`flushAutosave` 不再按本机 12 条 `docIndex` 发 DELETE——那只是本机「最近文档」
     放不下了，不是用户不要了；换了 origin 的索引是空的，按它删会删错。`docIndex` 仍只管本机列表与本机兜底副本。
   - **导出默认值**同理：`GET/PUT /api/preferences/export-defaults`（按用户一份），字段语义只在

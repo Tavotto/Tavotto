@@ -39,7 +39,7 @@ import logging
 import re
 import threading
 import time
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 
 from . import atomicio, config, documents
@@ -224,14 +224,35 @@ def owners() -> dict[str, str | None]:
         return dict(_read()["owners"])
 
 
-def protected_doc_ids() -> set[str]:
-    """各组「上次开着的」排版：槽位清理永不删它们（删了就是下次启动的「找不到上次排版」）。"""
-    with _LOCK:
-        state = _read()
+def _protected(state: dict) -> set[str]:
     ids = {g["last"]["doc_id"] for g in state["projects"].values() if g.get("last")}
     if state["no_project"].get("last"):
         ids.add(state["no_project"]["last"]["doc_id"])
     return ids
+
+
+def protected_doc_ids() -> set[str]:
+    """各组「上次开着的」排版：槽位清理永不删它们（删了就是下次启动的「找不到上次排版」）。
+
+    这只是**一张快照**：拿到之后别的请求随时可能把某个旧槽位记成新的 last。真正删槽位的
+    那一下要走 `remove_slot_unless_protected`，在同一把锁里重判。"""
+    with _LOCK:
+        return _protected(_read())
+
+
+def _forget_locked(state: dict, gone: set[str]) -> tuple[list[str], bool]:
+    """在 `_LOCK` 里改 `state`：删掉这些槽位的归属与指向它们的 last。回（删掉的归属，改没改）。"""
+    removed = sorted(d for d in gone if d in state["owners"])
+    for d in removed:
+        del state["owners"][d]
+    changed = bool(removed)
+    for group in [*state["projects"].values(), state["no_project"]]:
+        last = group.get("last")
+        if last and last["doc_id"] in gone:
+            del group["last"]
+            changed = True
+    state["projects"] = {k: g for k, g in state["projects"].items() if g}
+    return removed, changed
 
 
 def forget_documents(doc_ids: Iterable[str]) -> list[str]:
@@ -241,19 +262,37 @@ def forget_documents(doc_ids: Iterable[str]) -> list[str]:
         return []
     with _LOCK:
         state = _read()
-        removed = sorted(d for d in gone if d in state["owners"])
-        for d in removed:
-            del state["owners"][d]
-        changed = bool(removed)
-        for group in [*state["projects"].values(), state["no_project"]]:
-            last = group.get("last")
-            if last and last["doc_id"] in gone:
-                del group["last"]
-                changed = True
-        state["projects"] = {k: g for k, g in state["projects"].items() if g}
+        removed, changed = _forget_locked(state, gone)
         if changed:
             _write(state)
         return removed
+
+
+def remove_slot_unless_protected(doc_id: str, remove: Callable[[], bool]) -> bool:
+    """清理删一个槽位：**同一把锁里**重判「它此刻是不是某组的 last」、删文件、忘掉它的记录。
+
+    `protected_doc_ids()` 的快照拿到之后，并发的 `set_last` 可能正把这个旧槽位记成某个项目
+    的新 last；快照判、事后删，就会删掉那份并在 `forget_documents` 里把刚写的 last 一起抹掉
+    （#719 Codex P1）。在这里判与删之间 `set_last` 插不进来：要么它先写（这里看到、不删），
+    要么它后写（槽位已删、记录已忘，它记下的 last 由那个标签页下一次自动保存重新落盘）。
+
+    `remove()` 真删文件，回是否删了（调用方在文件自己的锁里、带 mtime 重判）。回是否删了。
+    会话状态写不进去不影响「文件已删」这个事实：只记日志，孤儿记录由下一次清理的
+    `drop_owners_not_in` 收拾。
+    """
+    with _LOCK:
+        state = _read()
+        if doc_id in _protected(state):
+            return False
+        if not remove():
+            return False
+        _removed, changed = _forget_locked(state, {doc_id})
+        if changed:
+            try:
+                _write(state)
+            except OSError as exc:
+                LOG.warning("清理后会话状态没跟上（%s）", exc)
+        return True
 
 
 def drop_owners_not_in(existing: set[str]) -> int:

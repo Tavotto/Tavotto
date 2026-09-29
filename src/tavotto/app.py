@@ -7341,20 +7341,24 @@ def _prune_autosave_slots(keep: Path) -> list[str]:
             victims.append((mtime_ns, path))
     removed: list[str] = []
     for mtime_ns, path in victims:
-        with _document_lock(path):
+
+        def _unlink(path: Path = path, mtime_ns: int = mtime_ns) -> bool:
             try:
                 if path.stat().st_mtime_ns != mtime_ns:
-                    continue
+                    return False
                 path.unlink()
             except OSError:
-                continue
-        removed.append(path.name)
+                return False
+            return True
+
+        # 上面的 `protected` 只是快照：删之前在会话状态锁里重判一次（并发的「记成上次开着的」
+        # 插不进判与删之间），删了当场忘掉它的归属——见 `remove_slot_unless_protected`
+        with _document_lock(path):
+            gone = engine_layoutsession.remove_slot_unless_protected(path.stem, _unlink)
+        if gone:
+            removed.append(path.name)
     if removed:
         LOG.info("自动保存槽位清理：删掉 %d 份无人认领的旧槽位", len(removed))
-        try:
-            engine_layoutsession.forget_documents(Path(n).stem for n in removed)
-        except OSError as exc:
-            LOG.warning("清理后会话状态没跟上（%s）", exc)
     return removed
 
 
