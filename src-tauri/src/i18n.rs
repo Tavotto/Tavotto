@@ -150,18 +150,21 @@ pub struct ShellText {
 }
 
 const ZH: ShellText = ShellText {
-    app_about: "关于 Tavotto",
-    app_hide: "隐藏 Tavotto",
+    app_about: concat!("关于 ", env!("TAVOTTO_PRODUCT_NAME")),
+    app_hide: concat!("隐藏 ", env!("TAVOTTO_PRODUCT_NAME")),
     app_hide_others: "隐藏其他",
     app_show_all: "全部显示",
-    app_quit: "退出 Tavotto",
+    app_quit: concat!("退出 ", env!("TAVOTTO_PRODUCT_NAME")),
     app_settings: "设置…",
     app_check_updates: "检查更新…",
     file: "文件",
     file_open_project: "打开项目…",
     file_connect_remote: "连接远程实例…",
-    remote_window_title: "Tavotto — 连接远程实例",
-    remote_window_connected_title: "Tavotto — 远程实例（127.0.0.1:{port}）",
+    remote_window_title: concat!(env!("TAVOTTO_PRODUCT_NAME"), " — 连接远程实例"),
+    remote_window_connected_title: concat!(
+        env!("TAVOTTO_PRODUCT_NAME"),
+        " — 远程实例（127.0.0.1:{port}）"
+    ),
     file_save: "保存排版",
     file_save_layout: "另存为新排版…",
     file_export: "导出…",
@@ -211,7 +214,11 @@ const ZH: ShellText = ShellText {
     sidecar_stdin_missing: "无法获取 sidecar stdin",
     sidecar_stdin_write_failed: "无法写入启动凭据：{err}",
     sidecar_exe_missing: "TAVOTTO_SIDECAR_EXE 指向的文件不存在：{path}",
-    sidecar_not_found: "找不到 Tavotto 渲染服务，请重新安装。",
+    sidecar_not_found: concat!(
+        "找不到 ",
+        env!("TAVOTTO_PRODUCT_NAME"),
+        " 渲染服务，请重新安装。"
+    ),
     sidecar_handshake_no_port: "握手数据缺少端口",
     sidecar_start_failed: "无法启动渲染服务",
     sidecar_exited: "渲染服务提前退出（{status}）。日志末尾：\n{tail}",
@@ -219,18 +226,24 @@ const ZH: ShellText = ShellText {
 };
 
 const EN: ShellText = ShellText {
-    app_about: "About Tavotto",
-    app_hide: "Hide Tavotto",
+    app_about: concat!("About ", env!("TAVOTTO_PRODUCT_NAME")),
+    app_hide: concat!("Hide ", env!("TAVOTTO_PRODUCT_NAME")),
     app_hide_others: "Hide Others",
     app_show_all: "Show All",
-    app_quit: "Quit Tavotto",
+    app_quit: concat!("Quit ", env!("TAVOTTO_PRODUCT_NAME")),
     app_settings: "Settings…",
     app_check_updates: "Check for Updates…",
     file: "File",
     file_open_project: "Open Project…",
     file_connect_remote: "Connect to Remote Instance…",
-    remote_window_title: "Tavotto — Connect to Remote Instance",
-    remote_window_connected_title: "Tavotto — Remote Instance (127.0.0.1:{port})",
+    remote_window_title: concat!(
+        env!("TAVOTTO_PRODUCT_NAME"),
+        " — Connect to Remote Instance"
+    ),
+    remote_window_connected_title: concat!(
+        env!("TAVOTTO_PRODUCT_NAME"),
+        " — Remote Instance (127.0.0.1:{port})"
+    ),
     file_save: "Save Layout",
     file_save_layout: "Save Layout As…",
     file_export: "Export…",
@@ -280,7 +293,13 @@ const EN: ShellText = ShellText {
     sidecar_stdin_missing: "Couldn't get the sidecar's stdin.",
     sidecar_stdin_write_failed: "Couldn't write the startup credentials: {err}",
     sidecar_exe_missing: "TAVOTTO_SIDECAR_EXE points at a file that doesn't exist: {path}",
-    sidecar_not_found: "Can't find the Tavotto render service—try reinstalling Tavotto.",
+    sidecar_not_found: concat!(
+        "Can't find the ",
+        env!("TAVOTTO_PRODUCT_NAME"),
+        " render service—try reinstalling ",
+        env!("TAVOTTO_PRODUCT_NAME"),
+        "."
+    ),
     sidecar_handshake_no_port: "The handshake data has no port",
     sidecar_start_failed: "Couldn't start the render service.",
     sidecar_exited: "The render service exited early ({status}). End of the log:\n{tail}",

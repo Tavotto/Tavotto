@@ -706,6 +706,18 @@ fn on_menu_event(app: &tauri::AppHandle, id: &str) {
 /*  远程实例窗口（ADR 0105）                                                    */
 /* -------------------------------------------------------------------------- */
 
+/// 远程实例窗口的起始页。`connect.html` 在 `tauri://` 源下，读不到品牌常量：产品名与
+/// 命令名（PyPI 包名）由这里带过去，值是 build.rs 从 `brand.ts` / `engine/brand.py`
+/// 注入的——页面里不手写产品名（`tests/test_desktop_i18n.py` 看护）。
+fn connect_page_url(locale: i18n::Locale) -> String {
+    format!(
+        "connect.html?lang={}&product={}&dist={}",
+        locale.tag(),
+        utf8_percent_encode(env!("TAVOTTO_PRODUCT_NAME"), NON_ALPHANUMERIC),
+        utf8_percent_encode(env!("TAVOTTO_DIST_NAME"), NON_ALPHANUMERIC),
+    )
+}
+
 /// 开（或聚焦已有的）远程实例窗口。先停在壳自带的 `connect.html` 上，用户粘进
 /// 服务器打印的登录地址，`connect_remote` 验过之后再导航过去。
 ///
@@ -729,7 +741,7 @@ fn open_remote_window(app: &tauri::AppHandle) -> tauri::Result<()> {
     let win = tauri::WebviewWindowBuilder::new(
         app,
         REMOTE_WINDOW,
-        tauri::WebviewUrl::App(format!("connect.html?lang={}", locale.tag()).into()),
+        tauri::WebviewUrl::App(connect_page_url(locale).into()),
     )
     .title(i18n::text(locale).remote_window_title)
     .inner_size(1280.0, 860.0)
@@ -1776,6 +1788,33 @@ mod tests {
         .unwrap();
         let q = landing_query(Some(&req), Some("zh-CN"));
         assert_eq!(q, format!("?open=Fig1&native={id}&lang=zh-CN"));
+    }
+
+    #[test]
+    fn the_connect_page_carries_the_brand_from_the_injected_constants() {
+        // 页面里没有手写的产品名，全靠这两个参数：丢了就是满屏空白的「在服务器上运行 ，…」
+        for locale in LOCALES {
+            let url = connect_page_url(locale);
+            let q = url.strip_prefix("connect.html?").expect(&url);
+            let pairs: Vec<(String, String)> = q
+                .split('&')
+                .map(|kv| {
+                    let (k, v) = kv.split_once('=').expect(kv);
+                    let v = percent_encoding::percent_decode_str(v)
+                        .decode_utf8()
+                        .unwrap();
+                    (k.to_string(), v.into_owned())
+                })
+                .collect();
+            let want = [
+                ("lang", locale.tag()),
+                ("product", env!("TAVOTTO_PRODUCT_NAME")),
+                ("dist", env!("TAVOTTO_DIST_NAME")),
+            ]
+            .map(|(k, v)| (k.to_string(), v.to_string()));
+            assert_eq!(pairs, want);
+        }
+        assert!(!env!("TAVOTTO_PRODUCT_NAME").is_empty() && !env!("TAVOTTO_DIST_NAME").is_empty());
     }
 
     #[test]

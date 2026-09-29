@@ -98,3 +98,7 @@
 加速键一个字节不动。splash/error 页在 `tauri://` 源下，两份文案内联、
 语言由壳经 `?lang=` 带过去。首启（还没有 `menu-locale` 文件）菜单是默认档，
 前端起来后重建——已知限制，见 docs/i18n.md。
+**壳内文案不手写产品名**：`build.rs` 从 `brand.ts` / `engine/brand.py` 编译期注入
+`TAVOTTO_PRODUCT_NAME` / `TAVOTTO_DIST_NAME`，`ShellText` 里写 `concat!(env!(…), …)`，
+`connect.html` 由壳经 `?product=` / `?dist=` 带名字（`tests/test_desktop_i18n.py` 看护；
+splash / error 页与窗口标题是尚未收口的旧写法）。

@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8" />
-<title>Tavotto</title>
+<title></title>
 <style>
   html, body { height: 100%; margin: 0; }
   body {
@@ -42,9 +42,9 @@
 <body>
   <main>
     <h1 id="title">连接远程实例</h1>
-    <p id="intro">在服务器上运行 Tavotto，经 SSH 端口转发在这个窗口里使用它。脚本在服务器上运行、文件就地写回。</p>
+    <p id="intro"></p>
     <ol>
-      <li><span id="step1">在服务器上运行：</span><br /><code>tavotto --no-browser</code></li>
+      <li><span id="step1">在服务器上运行：</span><br /><code id="cmd"></code></li>
       <li><span id="step2">在本机另开一个终端，保持它连着（两边端口必须相同）：</span><br /><code>ssh -L 5089:127.0.0.1:5089 you@server</code></li>
       <li><span id="step3">把服务器打印的登录地址粘到下面（形如 http://127.0.0.1:5089/#dnonce=…）。每个地址只能用一次；需要新的，在服务器上再运行一次同样的命令。</span></li>
     </ol>
@@ -58,12 +58,15 @@
   </main>
   <script>
     // 内联两份文案的理由见 splash.html：tauri:// 源下没有 i18next。
+    // 产品名与命令名不手写（品牌常量唯一出处 web/src/lib/brand.ts / engine/brand.py）：
+    // 壳经 `?product=` / `?dist=` 带过来，值是 build.rs 从品牌常量注入的
+    // （main.rs::connect_page_url，Rust 单测）。文案里写 `{product}` / `{dist}`。
     // `errors` 的键与 src-tauri/src/remote.rs 的 `ConnectError::code()` 严格同源
     // （tests/test_desktop_remote.py 比两侧集合）：壳只回稳定 code，人话在这里。
     const STRINGS = {
       'zh-CN': {
         title: '连接远程实例',
-        intro: '在服务器上运行 Tavotto，经 SSH 端口转发在这个窗口里使用它。脚本在服务器上运行、文件就地写回。',
+        intro: '在服务器上运行 {product}，经 SSH 端口转发在这个窗口里使用它。脚本在服务器上运行、文件就地写回。',
         step1: '在服务器上运行：',
         step2: '在本机另开一个终端，保持它连着（两边端口必须相同）：',
         step3: '把服务器打印的登录地址粘到下面（形如 http://127.0.0.1:5089/#dnonce=…）。每个地址只能用一次；需要新的，在服务器上再运行一次同样的命令。',
@@ -71,20 +74,20 @@
         connecting: '正在连接 127.0.0.1:{port}…',
         hint: '这个窗口拿不到本机的文件：打开项目、导出等路径都在服务器上。',
         errors: {
-          bad_url: '这不是一个登录地址。请粘贴服务器上 tavotto --no-browser 打印的那一行（以 http://127.0.0.1: 开头）。',
-          not_loopback: '地址必须是 127.0.0.1（不是 localhost 或服务器的地址）：Tavotto 只在本机回环上接受连接，远程访问请用 ssh -L 转发。',
+          bad_url: '这不是一个登录地址。请粘贴服务器上 {dist} --no-browser 打印的那一行（以 http://127.0.0.1: 开头）。',
+          not_loopback: '地址必须是 127.0.0.1（不是 localhost 或服务器的地址）：{product} 只在本机回环上接受连接，远程访问请用 ssh -L 转发。',
           no_nonce: '地址里缺少 #dnonce=… 登录口令。请复制完整的一行。',
-          is_local_engine: '这是本机 Tavotto 自己的地址，直接用主窗口就好。',
-          unreachable: '连不上 127.0.0.1:{port}。请确认 ssh -L 还连着，且两边端口相同；再确认服务器上的 Tavotto 在运行。',
-          not_tavotto: '127.0.0.1:{port} 上有程序在监听，但不是 Tavotto。请检查 ssh -L 转发的端口。',
-          too_old: '服务器上的 Tavotto 版本太旧，不支持在桌面版里连接。请在服务器上升级：pip install -U tavotto',
+          is_local_engine: '这是本机 {product} 自己的地址，直接用主窗口就好。',
+          unreachable: '连不上 127.0.0.1:{port}。请确认 ssh -L 还连着，且两边端口相同；再确认服务器上的 {product} 在运行。',
+          not_tavotto: '127.0.0.1:{port} 上有程序在监听，但不是 {product}。请检查 ssh -L 转发的端口。',
+          too_old: '服务器上的 {product} 版本太旧，不支持在桌面版里连接。请在服务器上升级：pip install -U {dist}',
           bad_window: '连接失败，请关掉这个窗口后从「文件 → 连接远程实例…」重试。',
           unknown: '连接失败：{code}',
         },
       },
       'en-US': {
         title: 'Connect to Remote Instance',
-        intro: 'Run Tavotto on a server and use it in this window over an SSH port forward. Scripts run on the server and files are written back there.',
+        intro: 'Run {product} on a server and use it in this window over an SSH port forward. Scripts run on the server and files are written back there.',
         step1: 'On the server, run:',
         step2: 'In another terminal on this computer, keep this open (the two ports must match):',
         step3: 'Paste the login address the server printed below (it looks like http://127.0.0.1:5089/#dnonce=…). Each address works once; for a new one, run the same command on the server again.',
@@ -92,13 +95,13 @@
         connecting: 'Connecting to 127.0.0.1:{port}…',
         hint: 'This window can’t reach files on this computer: paths for opening projects, exports and so on are on the server.',
         errors: {
-          bad_url: 'That isn’t a login address. Paste the line tavotto --no-browser printed on the server (it starts with http://127.0.0.1:).',
-          not_loopback: 'The address must be 127.0.0.1 (not localhost or the server’s address): Tavotto only accepts loopback connections, so reach it through ssh -L.',
+          bad_url: 'That isn’t a login address. Paste the line {dist} --no-browser printed on the server (it starts with http://127.0.0.1:).',
+          not_loopback: 'The address must be 127.0.0.1 (not localhost or the server’s address): {product} only accepts loopback connections, so reach it through ssh -L.',
           no_nonce: 'The address has no #dnonce=… login token. Copy the whole line.',
-          is_local_engine: 'That’s this computer’s own Tavotto; just use the main window.',
-          unreachable: 'Couldn’t reach 127.0.0.1:{port}. Check that ssh -L is still connected with the same port on both sides, and that Tavotto is running on the server.',
-          not_tavotto: 'Something is listening on 127.0.0.1:{port}, but it isn’t Tavotto. Check the port ssh -L forwards.',
-          too_old: 'The Tavotto on the server is too old to connect from the desktop app. Upgrade it on the server: pip install -U tavotto',
+          is_local_engine: 'That’s this computer’s own {product}; just use the main window.',
+          unreachable: 'Couldn’t reach 127.0.0.1:{port}. Check that ssh -L is still connected with the same port on both sides, and that {product} is running on the server.',
+          not_tavotto: 'Something is listening on 127.0.0.1:{port}, but it isn’t {product}. Check the port ssh -L forwards.',
+          too_old: 'The {product} on the server is too old to connect from the desktop app. Upgrade it on the server: pip install -U {dist}',
           bad_window: 'Couldn’t connect. Close this window and try again from File → Connect to Remote Instance….',
           unknown: 'Couldn’t connect: {code}',
         },
@@ -113,11 +116,15 @@
     }
     const q = new URLSearchParams(location.search)
     const locale = pick(q.get('lang')) || pick(navigator.language) || 'zh-CN'
+    const brand = { product: q.get('product') || '', dist: q.get('dist') || '' }
+    const fill = (text) => text.replace(/\{(product|dist)\}/g, (_, k) => brand[k])
     const s = STRINGS[locale]
     document.documentElement.lang = locale
+    document.title = brand.product
     for (const id of ['title', 'intro', 'step1', 'step2', 'step3', 'go', 'hint']) {
-      document.getElementById(id).textContent = s[id]
+      document.getElementById(id).textContent = fill(s[id])
     }
+    document.getElementById('cmd').textContent = `${brand.dist} --no-browser`
 
     const form = document.getElementById('form')
     const input = document.getElementById('url')
@@ -145,7 +152,7 @@
       } catch (err) {
         const code = typeof err === 'string' ? err : ''
         const text = s.errors[code] || s.errors.unknown.replace('{code}', code || '—')
-        say(text.replace('{port}', port), true)
+        say(fill(text).replace('{port}', port), true)
         go.disabled = false
         input.focus()
       }
