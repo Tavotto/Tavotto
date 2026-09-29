@@ -608,7 +608,8 @@ def test_only_arguments_of_read_calls_count_as_missing_data(tmp_path):
         'd = open(os.path.join("inputs", "d.txt")).read()\n'
         # 目录常量拼出来的：打头的那一段算（它是那条路径的前缀）
         'RAW = "/nonexistent/tavotto/raw2"\n'
-        'e = np.load(os.path.join(RAW, "e.npy"))\n',
+        'e = np.load(os.path.join(RAW, "e.npy"))\n'
+        'f = pd.read_csv(Path("inputs") / "f.csv")\n',
         encoding="utf-8",
     )
     got = sorted(o["path"] for o in inputremap.static_missing("fig.py", tmp_path))
