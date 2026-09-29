@@ -26,6 +26,13 @@
   在 `data_dir` 之下 → 常规文件 + 可执行位 → **真起一次**（`-I -c`，自报版本必须等于锁的版本）→ 才改名。
   坏 hash / 截断 / 错期望值的路上解释器执行计数为 0、无新目录、`.part` 当场删；hash 不符**绝不重试**，
   传输层失败才有界重试；缓存里对不上的归档不是复用对象。
+- **归档来源按序三处（ADR 0111，2026-09-29）**：安装包附带的归档（`runtime.private_python_bundle_dirs()`：冻结产物的
+  `_internal/private-python/`，`TAVOTTO_PRIVATE_PYTHON_BUNDLE` 排他覆盖）→ `downloads/` 里校验过的缓存 → 锁 URL。每一处都
+  **整份 sha256 等于锁**才用；包内那份对不上就当它不在（WARNING、不删、往下走），**不复制**进 `downloads/`，之后仍是
+  成员校验 → staging → 真起 → `os.replace` 那一条链。`offer_payload()` 带 `origin`（`ORIGINS`：`bundled` / `cached` /
+  `download`；前两种 `download_bytes=0`、`cached=true`），供应进度的 `private_python` 段同名字段，账记 `origin`。
+  打包侧（`scripts/stage_private_python.py` → `tavotto.spec`）见 `packaging/AGENTS.md`。看护
+  `tests/test_private_python.py::TestBundledArchive`、`tests/test_private_python_bundle.py`。
 - **离线三档**：有校验过的缓存 → 零请求（FO24）；无缓存连不上 → `private_python_offline`，有界、不建目录（FO25，
   safe_stop 不计自动成功）；来源回 4xx / 5xx → `private_python_source_unavailable`（要升级 Tavotto，不是重试）。
   **证书校验失败不是离线**：有界重试后最后一次失败的根是 `ssl.SSLCertVerificationError`（缺根 / 过期 / 主机名不符 /
