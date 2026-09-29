@@ -67,8 +67,9 @@ export function startVersionCheckpoints(): () => void {
       .then((res) => {
         // **写成了才重新计间隔**（Codex #679）：请求没成（网络 / 磁盘的一时错误）就不动，
         // 下一次停顿满 15 s 照常重试——先记上的话，一次失败换来 2 分钟的空白。
-        // 服务端判重（内容与上一个节点相同、`skipped`）也算：这一刻的内容已经在时间线上了
-        if (res?.version || res?.skipped) lastSaved.set(ctx, Date.now())
+        // 服务端判重（内容与上一个节点相同，回 `skipped` 并带回那个节点）也算：这一刻的内容
+        // 已经在时间线上了
+        if (res?.version) lastSaved.set(ctx, Date.now())
       })
       .catch(() => {
         /* 自动节点失败不打扰编辑；下一轮改动会再试 */
