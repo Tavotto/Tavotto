@@ -23,6 +23,10 @@
 - **改写数据路径 `engine/scriptedit.py`**（ADR 0110 §二–§四）：
   * 规则来自 `inputremap.derive_location`（`derive` 扩到文件夹与 glob）；缺失路径集合 = 对话框那一条 +
     `inputremap.static_missing` 全部（**含 `via = open` 的**：半新半旧的脚本在终端里仍读旧位置）。
+  * 每条缺失路径带 `probe_kind`（`inputremap.PROBE_KIND_OF`：键恰好是 databinding 三张探路表的并集，
+    `test_every_probe_function_is_labelled_file_or_dir` 对账）：`dir`（`listdir` / `scandir` / `walk` /
+    `iterdir` / `isdir`、glob）只许指认文件夹——界面只给「选择文件夹」，`_input_path_plan` 再拒文件
+    （`input_remap_chosen_invalid`）；指认成文件的话改写后重跑就是 `NotADirectoryError`。
   * 候选常量：值与某条缺失路径**按路径段**相等或是其前缀、自己此刻也不存在、与规则 `from` 同一侧
     （相对 / 绝对）；写法是单个单行普通字符串 token；语境是调用实参（存图调用除外）、赋值 / return 的整个右值、
     参数默认值、`/` 或 `+` 的操作数、容器元素、字典的值。f-string / 隐式拼接 / 三引号 / 下标 / 字典键 / 比较
