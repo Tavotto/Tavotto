@@ -562,8 +562,8 @@ plt.close(fig)
 from fontTools.ttLib import TTFont
 
 
-def probe_face(family, sub, weight):
-    font = TTFont(os.path.join(TTF, "DejaVuSerif.ttf"))
+def probe_face(family, sub, weight, base="DejaVuSerif.ttf"):
+    font = TTFont(os.path.join(TTF, base))
     font["OS/2"].usWeightClass = weight
     names = {
         1: family,
@@ -642,6 +642,41 @@ assert list(t.get_fontfamily())[0] == "Tavotto Collection", t.get_fontfamily()
 assert png(fig) == before
 plt.close(fig)
 
+# h) 字体集里**第 N 张脸**：3.11+ 的 `findfont` 给 `FontPath`（带 face_index），fname 原样
+#    存着、渲染也读那一张。放开 / 缓存 / manifest 都得认这个索引——转成普通字符串就丢了，
+#    会读第 0 张、把文字改写成第 0 张的族名。真实覆盖只在 matplotlib ≥ 3.11 的腿上；
+#    更早的版本没有 FontPath（fname 只读第 0 张），只用带 face_index 的 str 子类核键与路径
+ttc_coll = TTCollection()
+ttc_coll.fonts = [
+    TTFont(probe_face("Tavotto Face Zero", "Regular", 400)),
+    TTFont(probe_face("Tavotto Face One", "Regular", 400, base="DejaVuSans.ttf")),
+]
+ttc = os.path.join(tmp, "two-faces.ttc")
+ttc_coll.save(ttc)
+from matplotlib import font_manager as _fm
+
+FontPath = getattr(_fm, "FontPath", None)
+if FontPath is not None:
+    one = FontPath(ttc, 1)
+    fig, t = figure("Voltage 72.5 MPa", one)
+    before = png(fig)
+    overrides.ensure_figure_fallback(fig)
+    assert t.get_fontproperties().get_file() is None, "第 1 张脸没放开"
+    assert list(t.get_fontfamily())[0] == "Tavotto Face One", t.get_fontfamily()
+    assert png(fig) == before  # 仍是第 1 张脸画的
+    plt.close(fig)
+    # 放不开时 manifest 报的也是第 1 张
+    overrides._FILE_FACE[overrides.font_file_key(one)] = None
+    assert manifest.font_faces("Voltage", [], "dejavusans", one) == {"face": "Tavotto Face One"}
+else:
+    class FontPath(str):  # 旧版 matplotlib：只核索引不在键与路径解析里丢掉
+        face_index = 1
+
+    one = FontPath(ttc)
+assert overrides.font_file_key(one) != overrides.font_file_key(ttc)
+assert overrides.font_file_key(one)[-1] == 1
+assert manifest._resolved_font_paths([], one) == [(ttc, 1)]
+
 # g) fname 放开替脚本 `addfont` 了一个新字体（或脚本自己 addfont）：从字体注册表派生的
 #    缓存全部跟着失效——此前记下的「没装」、本机字体族列表都不许停在旧的注册表上
 late = probe_face("Tavotto Late", "Regular", 400)
@@ -653,7 +688,6 @@ assert t.get_fontproperties().get_file() is None
 assert overrides.font_installed("Tavotto Late")
 assert "Tavotto Late" in manifest.installed_font_families()
 plt.close(fig)
-from matplotlib import font_manager as _fm
 
 own = probe_face("Tavotto Own", "Regular", 400)
 assert not overrides.font_installed("Tavotto Own")

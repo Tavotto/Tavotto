@@ -95,6 +95,7 @@ from overrides import (
     collection_caps,
     color_mapping_is_live,
     colorbar_mapping_is_live,
+    font_face_index,
     font_file_key,
     font_installed,
     gradient_base_hex,
@@ -103,6 +104,7 @@ from overrides import (
     legend_handle_props,
     offsetbox_draggable,
     offsetbox_frame,
+    open_font_face,
     remember_axis_directions,
     scale_options,
     set_original_reader,
@@ -1141,13 +1143,13 @@ _font_installed = font_installed
 #: 「缺 200 个字符」既没法读也没法修；超出的部分由数量说话。
 MAX_MISSING_GLYPHS = 12
 
-#: (字体文件身份 `overrides.font_file_key`, 面索引) → FT2Font 的进程内缓存。一次
+#: 字体（文件, 面）身份 `overrides.font_file_key` → FT2Font 的进程内缓存。一次
 #: manifest 要过很多个 Text，而打开字体文件是几毫秒级的。
 #:
 #: **键必须带面索引**：字体集（`.ttc` / `.otc`）一个文件里装着好几张脸，
 #: 只按路径缓存会让先问到的那张脸顶掉后面全部——Noto CJK 的七张脸共用一个
 #: `NotoSansCJK-Regular.ttc`。
-_FT_FONTS: dict[tuple[tuple, int], object] = {}
+_FT_FONTS: dict[tuple, object] = {}
 
 #: `$…$` 之间的片段。matplotlib 用 **mathtext 字体集**画它们（不是正文那张
 #: 脸），拿正文字体去判它们的覆盖会报出一批不存在的缺字。**判不了就不判**，
@@ -1166,18 +1168,11 @@ def _ft_font(path: str, face_index: int = 0):
     """
     # 键与打开的都是解析后的文件（`overrides.font_file_key`）：脚本的相对 fname 换了
     # cwd 就是另一个文件，按原串缓存会把上一个目录那张脸的字形事实报给这一个
-    fkey = font_file_key(str(path))
-    path = fkey[0]
-    key = (fkey, face_index)
+    key = font_file_key(path, face_index)
     hit = _FT_FONTS.get(key)
     if hit is None:
-        from matplotlib.ft2font import FT2Font
-
         try:
-            # 索引非 0 只可能来自 3.11+ 的 `FontPath`，那些版本一定有这个关键字；
-            # 旧版走上面那支，签名与从前逐字相同。**不吞 TypeError**：真出现了
-            # 「有索引却传不进去」，宁可当场炸，也不要退回去读错的那张脸。
-            hit = FT2Font(path, face_index=face_index) if face_index else FT2Font(path)
+            hit = open_font_face(key[0], face_index)  # 不吞 TypeError，见 `open_font_face`
         except (OSError, RuntimeError):  # 坏字体文件不该带着整次渲染一起死
             hit = False
         _FT_FONTS[key] = hit
@@ -1203,11 +1198,12 @@ def _resolved_font_paths(families, file=None) -> list[tuple[str, int]]:
 
     `file` 是文字的 `FontProperties.get_file()`：脚本用 `fname=` 锁了字体文件、
     引擎又没能把它换成族名（`overrides._release_font_file` 找不回同一个文件）时，
-    matplotlib 画字**只用那一个文件的第 0 张脸**、族列表整个不看——这里照实只报它。
+    matplotlib 画字**只用那一个文件的那一张脸**（路径带的面索引，`overrides.font_face_index`；
+    3.10 及以前恒为第 0 张）、族列表整个不看——这里照实只报它。
     按族列表算的话，中文会被说成「回退链画出来了」，而图上是方框。
     """
     if file is not None:
-        return [(str(file), 0)]
+        return [(str(file), font_face_index(file))]
     prop = font_manager.FontProperties(family=list(families) or ["sans-serif"])
     try:
         found = font_manager.fontManager._find_fonts_by_props(prop)
@@ -1216,7 +1212,7 @@ def _resolved_font_paths(families, file=None) -> list[tuple[str, int]]:
             found = [font_manager.findfont(prop)]
         except (ValueError, RuntimeError):
             return []
-    return [(str(f), int(getattr(f, "face_index", 0) or 0)) for f in found]
+    return [(str(f), font_face_index(f)) for f in found]
 
 
 #: 「这个字符是不是中日韩」——码位判据，**与 `engine/preflight.py` 的 `_CJK`

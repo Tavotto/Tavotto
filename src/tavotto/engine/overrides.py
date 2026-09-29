@@ -752,26 +752,47 @@ def _same_file(a, b) -> bool:
         return False
 
 
-def font_file_key(path: str) -> tuple:
-    """按字体文件缓存的**唯一**键：文件本身，不是脚本写的那串路径。native 会话里两次
-    `plt.show()` 之间脚本可以换 cwd，同一个相对 fname（`fonts/main.ttf`）指的就是另一个
-    文件；同一个文件被原地换掉（字节变了）也要重新读。第 0 项是绝对路径，打开文件用它。
+def font_face_index(path) -> int:
+    """字体路径带的面索引：matplotlib 3.11 起 `findfont` 给的是 `FontPath`（`str` 子类，
+    带 `.face_index`），`fname=` 接过去原样存着、渲染也按它读字体集里那一张脸。3.10 及以前
+    是普通 `str`，恒为 0。**任何把字体路径变成普通字符串的地方都会丢掉它**
+    （`os.path.abspath`、`str()`），所以先取出来再转。"""
+    return int(getattr(path, "face_index", 0) or 0)
 
-    以字体路径作键的缓存都走这里：本模块的 `_FILE_FACE`、`manifest._FT_FONTS`。"""
-    path = os.path.abspath(path)
+
+def font_file_key(path, face_index: int | None = None) -> tuple:
+    """按字体（文件, 面）缓存的**唯一**键：文件本身，不是脚本写的那串路径。native 会话里
+    两次 `plt.show()` 之间脚本可以换 cwd，同一个相对 fname（`fonts/main.ttf`）指的就是另一个
+    文件；同一个文件被原地换掉（字节变了）也要重新读。字体集（`.ttc` / `.otc`）里不同的脸
+    是不同的键——`face_index` 不给就取路径自带的（`font_face_index`）。
+
+    第 0 项是绝对路径、最后一项是面索引，打开字体用这两项。以字体路径作键的缓存都走这里：
+    本模块的 `_FILE_FACE`、`manifest._FT_FONTS`。"""
+    index = font_face_index(path) if face_index is None else int(face_index)
+    path = os.path.abspath(os.fspath(path))
     try:
         st = os.stat(path)
     except OSError:
-        return (path,)
-    return (path, st.st_dev, st.st_ino, st.st_mtime_ns, st.st_size)
+        return (path, index)
+    return (path, st.st_dev, st.st_ino, st.st_mtime_ns, st.st_size, index)
+
+
+def open_font_face(path: str, index: int):
+    """打开字体文件里的**这一张脸**。索引非 0 只可能来自 3.11+ 的 `FontPath`，那些版本一定
+    有 `face_index` 关键字；旧版走无关键字那支，签名与从前逐字相同。**不吞 TypeError**：
+    真出现了「有索引却传不进去」，宁可当场炸，也不要退回去读错的那张脸。"""
+    from matplotlib.ft2font import FT2Font
+
+    return FT2Font(path, face_index=index) if index else FT2Font(path)
 
 
 def _face_of_font_file(path: str) -> tuple | None:
     """`FontProperties(fname=…)` 指向的那个文件，按名字怎么点才能**找回它本身**。
 
-    只认 `FONT_FILE_SUFFIXES`：fname 渲染时读的是文件的第 0 张脸，这里读的也是第 0 张。
+    只认 `FONT_FILE_SUFFIXES`。fname 渲染时读的是路径带的那张脸（`font_face_index`：
+    3.11+ 的 `FontPath` 可以指向字体集里第 N 张，更早恒为第 0 张），这里读、验证的也是它。
     没注册过的（脚本自带的字体文件）先 `addfont` 注册。按族名 + 字重 / 字形反查
-    必须解析回**同一个文件（或字节相同的拷贝）的第 0 张脸**才算数——同名但版本
+    必须解析回**同一个文件（或字节相同的拷贝）的同一张脸**才算数——同名但版本
     不同的另一份、字重对不上的兄弟文件都会让正文那张脸变样，那种宁可不接回退，
     也不换掉拉丁字的脸（manifest 仍按那个文件照实报缺字）。
 
@@ -785,13 +806,13 @@ def _face_of_font_file(path: str) -> tuple | None:
     key = font_file_key(path)
     if key in _FILE_FACE:
         return _FILE_FACE[key]
-    path = key[0]
+    path, index = key[0], key[-1]
     hit = None
     if os.path.splitext(path)[1].lower() in FONT_FILE_SUFFIXES:
-        from matplotlib import font_manager, ft2font
+        from matplotlib import font_manager
 
         try:
-            entry = font_manager.ttfFontProperty(ft2font.FT2Font(path))
+            entry = font_manager.ttfFontProperty(open_font_face(path, index))
             fm = font_manager.fontManager
             if not any(_same_file(e.fname, path) for e in fm.ttflist):
                 fm.addfont(path)
@@ -807,7 +828,7 @@ def _face_of_font_file(path: str) -> tuple | None:
             # 同一份字节算同一张脸：项目里自带一份 times.ttf、系统里也装着 Times 时，
             # 按名字找到的是系统那份——画出来一个像素都不差
             same = _same_file(found, path) or filecmp.cmp(found, path, shallow=False)
-            if same and not int(getattr(found, "face_index", 0) or 0):
+            if same and font_face_index(found) == index:
                 hit = face
         except (OSError, RuntimeError, ValueError):  # 坏字体文件：留着 fname，照旧渲染
             hit = None
@@ -831,7 +852,7 @@ def _release_font_file(t: Text) -> bool:
     path = fp.get_file()
     if path is None:
         return False
-    face = _face_of_font_file(os.fspath(path))
+    face = _face_of_font_file(path)  # 原样传：`FontPath` 的面索引不许在这里丢掉
     if face is None:
         return False
     name, style, variant, weight, stretch = face
