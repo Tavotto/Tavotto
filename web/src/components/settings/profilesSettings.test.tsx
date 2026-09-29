@@ -13,7 +13,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { i18n } from '@/i18n'
 import { ProfilesSettings } from './ProfilesSettings'
-import { figureFamilyOptions, STYLE_TEXT_ROWS, textSummary, useFigureFamilies } from './StyleProfileFields'
+import { figureFamilyOptions, STYLE_TEXT_ROWS, type FigureFamilies, textSummary, useFigureFamilies } from './StyleProfileFields'
 import { useRenderStore, type PanelRender } from '@/store/renderStore'
 import type { Manifest } from '@/lib/api'
 import { TooltipProvider } from '@/components/ui/Tooltip'
@@ -839,15 +839,15 @@ describe('样式页字体下拉：逐张并已渲染的图（Codex #703）', () 
     }) as unknown as Manifest
 
   it('老引擎不报本机表：每一张图的首选项都进下拉，不只第一张', () => {
-    const opts = figureFamilyOptions({ a: m(['serif', 'Arial']), b: m(['sans-serif', 'Helvetica']) })
+    const opts = figureFamilyOptions({ a: m(['serif', 'Arial']), b: m(['sans-serif', 'Helvetica']) }).options
     expect(opts).toEqual(expect.arrayContaining(['Arial', 'Helvetica', 'STIXGeneral']))
   })
 
   it('几个 runtime 各报各的本机表：并起来，且与渲染先后无关', () => {
     const a = m(['serif'], ['Fira Sans', 'Arial'])
     const b = m(['serif'], ['Noto Serif CJK SC'])
-    const ab = figureFamilyOptions({ a, b })
-    const ba = figureFamilyOptions({ b, a })
+    const ab = figureFamilyOptions({ a, b }).options
+    const ba = figureFamilyOptions({ b, a }).options
     expect(ab).toEqual(expect.arrayContaining(['Fira Sans', 'Arial', 'Noto Serif CJK SC']))
     expect(ba).toEqual(ab)
     // 通用三族在前、不重复
@@ -856,7 +856,7 @@ describe('样式页字体下拉：逐张并已渲染的图（Codex #703）', () 
   })
 
   it('还没渲染出 manifest 的图不挡别的图', () => {
-    expect(figureFamilyOptions({ a: null, b: m(['Arial']) })).toContain('Arial')
+    expect(figureFamilyOptions({ a: null, b: m(['Arial']) }).options).toContain('Arial')
   })
 })
 
@@ -870,7 +870,7 @@ describe('样式页字体选项的引用：渲染态换了新对象、内容没�
     ({ fileId: 'f', rev: 1, manifest: m, svg: null, svgBytes: 0, status }) as unknown as PanelRender
 
   it('byKey 换新（进度 / 状态 / manifest 换了个同内容的对象）时交回同一个数组；内容变了才换', async () => {
-    const seen: string[][] = []
+    const seen: FigureFamilies[] = []
     function Probe() {
       seen.push(useFigureFamilies())
       return null
@@ -881,7 +881,7 @@ describe('样式页字体选项的引用：渲染态换了新对象、内容没�
     const probeRoot = createRoot(host)
     await act(async () => probeRoot.render(<Probe />))
     const first = seen.at(-1)!
-    expect(first).toContain('Fira Sans')
+    expect(first.options).toContain('Fira Sans')
 
     // 同内容：新的 byKey、新的 PanelRender、新的 manifest 对象，只是状态从 ready 变 rendering
     await act(async () => useRenderStore.setState({ byKey: { a: render(manifest(['Fira Sans']), 'rendering') } }))
@@ -891,16 +891,110 @@ describe('样式页字体选项的引用：渲染态换了新对象、内容没�
     // 内容变了、长度没变（换了一个族）：也得换新数组——只比长度会把新族吞掉
     await act(async () => useRenderStore.setState({ byKey: { a: render(manifest(['Inter']), 'ready') } }))
     expect(seen.at(-1)).not.toBe(first)
-    expect(seen.at(-1)).toContain('Inter')
-    expect(seen.at(-1)).not.toContain('Fira Sans')
+    expect(seen.at(-1)!.options).toContain('Inter')
+    expect(seen.at(-1)!.options).not.toContain('Fira Sans')
 
     // 多了一个族：换新数组
     const second = seen.at(-1)
     await act(async () => useRenderStore.setState({ byKey: { a: render(manifest(['Inter', 'Lato']), 'ready') } }))
     expect(seen.at(-1)).not.toBe(second)
-    expect(seen.at(-1)).toContain('Lato')
+    expect(seen.at(-1)!.options).toContain('Lato')
+
+    // 只有不可用标记变了（选项一样）：也得换新对象，否则下拉里的「未安装」不跟着变
+    const third = seen.at(-1)!
+    const withMissing = {
+      elements: [
+        { role: 'title', editable: [{ prop: 'fontfamily', options: ['serif', 'Arial'], options_unavailable: ['Arial'] }] },
+      ],
+      font_families: ['Inter', 'Lato'],
+    } as unknown as Manifest
+    await act(async () => useRenderStore.setState({ byKey: { a: render(withMissing, 'ready') } }))
+    expect(seen.at(-1)!.options).toEqual(third.options)
+    expect(seen.at(-1)).not.toBe(third)
+    expect(seen.at(-1)!.unavailable).toEqual(['Arial'])
 
     await act(async () => probeRoot.unmount())
+    act(() => useRenderStore.setState({ byKey: prev }))
+  })
+})
+
+describe('样式页字体下拉的「未安装」标记（Codex #703）', () => {
+  // 一个运行时：脚本写死的 Comic Neue 没装——引擎仍放进 options（显示当前值），同时列进 options_unavailable
+  const runtime = (unavailable: string[], machine: string[]) =>
+    ({
+      elements: [
+        {
+          role: 'title',
+          editable: [{ prop: 'fontfamily', options: ['serif', 'Comic Neue', 'Arial'], options_unavailable: unavailable }],
+        },
+      ],
+      font_families: machine,
+    }) as unknown as Manifest
+
+  it('一张图报某字体画不出来：并表里标出它，名字照样在选项里', () => {
+    const f = figureFamilyOptions({ a: runtime(['Comic Neue'], ['Arial', 'Inter']) })
+    expect(f.options).toContain('Comic Neue')
+    expect(f.unavailable).toEqual(['Comic Neue'])
+  })
+
+  it('任一运行时画得出就不算不可用：另一个运行时本机表里有它、或它的选项里有且没标', () => {
+    const a = runtime(['Comic Neue'], ['Arial'])
+    expect(figureFamilyOptions({ a, b: runtime([], ['Comic Neue']) }).unavailable).toEqual([])
+    expect(figureFamilyOptions({ b: runtime([], []), a }).unavailable).toEqual([])
+    // 两个运行时都画不出：标
+    expect(figureFamilyOptions({ a, b: runtime(['Comic Neue'], ['Inter']) }).unavailable).toEqual(['Comic Neue'])
+  })
+
+  it('设置页下拉里带属性页同一副「（未安装）」标记；当前值是它时下面给 warning，值不换', async () => {
+    const prev = useRenderStore.getState().byKey
+    act(() =>
+      useRenderStore.setState({
+        byKey: {
+          a: { fileId: 'f', rev: 1, manifest: runtime(['Comic Neue'], ['Arial']), svg: null, svgBytes: 0, status: 'ready' } as unknown as PanelRender,
+        },
+      }),
+    )
+    const data = { element: { line: { linewidth: 1.25 }, title: { fontfamily: 'Comic Neue' } } }
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) =>
+      new Response(
+        JSON.stringify({
+          profiles: String(input).includes('/style') ? [BUILTIN_STYLE, { ...USER_STYLE, data }] : BUILTIN_SPECS,
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    ) as typeof fetch
+    await mount()
+    await act(async () => {
+      buttons().find((b) => b.textContent?.includes('投稿用'))!.click()
+    })
+    const cell = (row: string) => document.body.querySelector(`[data-style-cell="${row}.family"]`)!
+    const hint = '这台电脑没装这个字体，图上用的是别的字体。换一个可用的字体，或装上它。'
+    // 当前值留着，下面一句 warning；别的行（没设字体）没有
+    expect(cell('title').textContent).toContain('Comic Neue')
+    expect(cell('title').textContent).toContain(hint)
+    expect(cell('axis_label').textContent).not.toContain(hint)
+    // 打开下拉：Comic Neue 那一项带「（未安装）」，Arial 不带
+    if (!Element.prototype.scrollIntoView) {
+      Object.defineProperty(Element.prototype, 'scrollIntoView', { value: () => {}, configurable: true })
+    }
+    await act(async () => cell('axis_label').querySelector<HTMLElement>('[role="combobox"]')!.click())
+    const option = (name: string) =>
+      [...document.body.querySelectorAll<HTMLElement>('[role="option"]')].find((o) => o.textContent?.startsWith(name))!
+    expect(option('Comic Neue').textContent).toBe('Comic Neue（未安装）')
+    expect(option('Arial').textContent).toBe('Arial')
+    await act(async () => document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
+
+    // 设置页开着时，只有标记变了（另一张图的运行时装了它）：下拉跟着撤掉 warning
+    await act(async () =>
+      useRenderStore.setState({
+        byKey: {
+          a: { fileId: 'f', rev: 1, manifest: runtime(['Comic Neue'], ['Arial']), svg: null, svgBytes: 0, status: 'ready' } as unknown as PanelRender,
+          b: { fileId: 'g', rev: 1, manifest: runtime([], ['Comic Neue']), svg: null, svgBytes: 0, status: 'ready' } as unknown as PanelRender,
+        },
+      }),
+    )
+    expect(cell('title').textContent).toContain('Comic Neue')
+    expect(cell('title').textContent).not.toContain(hint)
     act(() => useRenderStore.setState({ byKey: prev }))
   })
 })

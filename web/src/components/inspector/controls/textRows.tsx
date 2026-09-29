@@ -125,6 +125,18 @@ export function StyleToggle({
   )
 }
 
+/**
+ * 「这个运行时画不出来」的字体：选项后的小标记与当前值下面的 warning。属性页与设置 › 样式页
+ * 共用这一副（`options_unavailable`；名字保留、不换掉）。
+ */
+export function FontMissingTag() {
+  return <span className="ml-1 font-sans text-ink-3">{tc('fontMissingTag')}</span>
+}
+
+export function FontMissingHint() {
+  return <p className="pl-1 text-xs leading-relaxed text-warn">{tc('fontMissingHint')}</p>
+}
+
 function FontFamilyRowView({
   value,
   options,
@@ -174,18 +186,14 @@ function FontFamilyRowView({
             label: (
               <span style={{ fontFamily: fontStackOf(o) }}>
                 {optionLabelOf(o)}
-                {missing.has(o) && (
-                  <span className="ml-1 font-sans text-ink-3">{tc('fontMissingTag')}</span>
-                )}
+                {missing.has(o) && <FontMissingTag />}
               </span>
             ),
           }))}
         />
         {overridden && onReset && <ResetChip label={label} onReset={onReset} />}
       </Row>
-      {!mixed && missing.has(value) && (
-        <p className="pl-1 text-xs leading-relaxed text-warn">{tc('fontMissingHint')}</p>
-      )}
+      {!mixed && missing.has(value) && <FontMissingHint />}
     </>
   )
 }

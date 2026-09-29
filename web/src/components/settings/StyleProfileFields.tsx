@@ -9,7 +9,7 @@ import { CANVAS_TEXT_FAMILIES, styleIsItalic, weightIsBold, withMachineFamilies 
 import { cn } from '@/lib/utils'
 import { useRenderStore } from '@/store/renderStore'
 import { optionLabel } from '../inspector/roles/registry'
-import { StyleToggle } from '../inspector/controls/textRows'
+import { FontMissingHint, FontMissingTag, StyleToggle } from '../inspector/controls/textRows'
 import { IconButton } from '../ui/Button'
 import { NumberField } from '../ui/Input'
 import { Select } from '../ui/Select'
@@ -31,7 +31,8 @@ import { SettingRow, settingControlStyle, settingRowGrid } from './SettingRow'
  *   也是一种规定，与「不管」不是一回事）→ 回到未设置。
  * * 字体的选项没有 manifest 可问：通用三族 + 每一张已渲染的图里引擎报过的首选项与本机字体
  *   （`font_families`，逐张并，`figureFamilyOptions`）+ 样式里已经写着的那个名字（不认识也照样显示，
- *   不替用户换掉）。画布标注是画布文字的闭集 `CANVAS_TEXT_FAMILIES`。
+ *   不替用户换掉）；哪个运行时都画不出来的（`options_unavailable`）标「未安装」。画布标注是画布文字的
+ *   闭集 `CANVAS_TEXT_FAMILIES`。
  * * 形状跟着数据走：图内那几行写 `element.<role>.<prop>`（`weight` / `style` 是 `bold` /
  *   `italic` / `normal`），画布标注写 `annotation.{fontFamily,sizePt,bold,italic}`（boolean），
  *   与 `StyleProfileData` / `styleBinding.editBoundStyle` 写出来的同一种形状。
@@ -142,6 +143,12 @@ function readFace(kind: TextRowSpec['kind'], which: 'weight' | 'style', value: u
 const faceValue = (kind: TextRowSpec['kind'], which: 'weight' | 'style', on: boolean): unknown =>
   kind === 'annotation' ? on : on ? (which === 'weight' ? 'bold' : 'italic') : 'normal'
 
+/** 图内字体下拉的选项，与其中**哪一个运行时都画不出来**的那几个（`options_unavailable`） */
+export interface FigureFamilies {
+  options: string[]
+  unavailable: string[]
+}
+
 /**
  * 图内字体下拉的选项：通用三族 + **每一张**已渲染的图里引擎报过的首选项与本机族。
  *
@@ -149,41 +156,64 @@ const faceValue = (kind: TextRowSpec['kind'], which: 'weight' | 'style', on: boo
  * 不能被第一张挡掉；几个 runtime 各报各的本机表时，选项也不能随渲染先后变（Codex #703）。
  * 每张图的首选项与本机表怎么并，走唯一的并表出处 `withMachineFamilies`；图按键排序再并，
  * 先后次序与渲染顺序无关。
+ *
+ * 不可用标记跟着并（Codex #703）：引擎把脚本写死、本机没装的字体也放进 `options`（下拉得显示
+ * 当前值），同时列进 `options_unavailable`——属性页据此标「未安装」。样式是给**所有**图用的，
+ * 所以口径是「**任一**运行时画得出就不算不可用」：一张图的运行时画得出（本机表里有、或在它的
+ * 选项里且没被标不可用），这个名字就是一个真实可选的字体；只有报过它的运行时全都画不出，才标。
  */
-export function figureFamilyOptions(manifests: Record<string, Manifest | null | undefined>): string[] {
+export function figureFamilyOptions(manifests: Record<string, Manifest | null | undefined>): FigureFamilies {
   const out = new Set<string>(GENERIC_FAMILIES)
+  const missing = new Set<string>()
+  const renderable = new Set<string>(GENERIC_FAMILIES)
   for (const key of Object.keys(manifests).sort()) {
     const manifest = manifests[key]
     if (!manifest) continue
     const preferred = new Set<string>()
+    const unavailable = new Set<string>()
     for (const e of manifest.elements) {
-      for (const f of e.editable) if (f.prop === 'fontfamily') for (const o of f.options ?? []) preferred.add(o)
+      for (const f of e.editable) {
+        if (f.prop !== 'fontfamily') continue
+        for (const o of f.options ?? []) preferred.add(o)
+        for (const o of f.options_unavailable ?? []) unavailable.add(o)
+      }
     }
-    const field = withMachineFamilies({ prop: 'fontfamily', options: [...preferred] }, manifest.font_families)
-    for (const o of field?.options ?? []) out.add(o)
+    const field = withMachineFamilies(
+      { prop: 'fontfamily', options: [...preferred], options_unavailable: [...unavailable] },
+      manifest.font_families,
+    )
+    for (const o of field?.options ?? []) {
+      out.add(o)
+      if (unavailable.has(o)) missing.add(o)
+      else renderable.add(o)
+    }
   }
-  return [...out]
+  return { options: [...out], unavailable: [...missing].filter((o) => !renderable.has(o)).sort() }
 }
 
 const sameList = (a: readonly string[], b: readonly string[]) =>
   a.length === b.length && a.every((v, i) => v === b[i])
 
 /**
- * 图内字体选项，**内容没变就交回同一个数组**：渲染态每次更新（进度、状态、别的图换了 SVG）都换一个
+ * 图内字体选项，**内容没变就交回同一个对象**：渲染态每次更新（进度、状态、别的图换了 SVG）都换一个
  * 新的 `byKey`，manifest 与本机表却没变——按 `byKey` 的引用 memo 会每次交出新数组，`FamilySelect`
  * 按引用比较选项，于是五个字体下拉各把几百个 Radix 项重建一遍（Codex #703）。并表照算（逐张并
- * 几百个名字，比重建下拉便宜得多），交出去之前按内容与上一份比，一样就沿用上一份。
+ * 几百个名字，比重建下拉便宜得多），交出去之前按内容与上一份比——**选项与不可用标记两样都比**，
+ * 只改了标记也得换新的——一样就沿用上一份。
  */
-export function useFigureFamilies(): string[] {
+export function useFigureFamilies(): FigureFamilies {
   const byKey = useRenderStore((s) => s.byKey)
-  const last = useRef<string[] | null>(null)
+  const last = useRef<FigureFamilies | null>(null)
   return useMemo(() => {
     const next = figureFamilyOptions(Object.fromEntries(Object.entries(byKey).map(([k, r]) => [k, r.manifest])))
-    if (last.current && sameList(last.current, next)) return last.current
+    const prev = last.current
+    if (prev && sameList(prev.options, next.options) && sameList(prev.unavailable, next.unavailable)) return prev
     last.current = next
     return next
   }, [byKey])
 }
+
+const CANVAS_FAMILIES: FigureFamilies = { options: [...CANVAS_TEXT_FAMILIES], unavailable: [] }
 
 export function StyleProfileFields({
   draft,
@@ -213,7 +243,7 @@ export function StyleProfileFields({
               key={row.id}
               row={row}
               draft={draft}
-              families={row.kind === 'annotation' ? CANVAS_TEXT_FAMILIES : figureFamilies}
+              families={row.kind === 'annotation' ? CANVAS_FAMILIES : figureFamilies}
               onSet={set}
               onClear={clear}
             />
@@ -254,7 +284,7 @@ function TextRowEditor({
 }: {
   row: TextRowSpec
   draft: Record<string, unknown>
-  families: readonly string[]
+  families: FigureFamilies
   onSet: (path: string, value: unknown) => void
   onClear: (paths: (string | null)[]) => void
 }) {
@@ -301,7 +331,7 @@ function TextRowEditor({
           <FamilySelect
             label={sp('familyOf', { row: label })}
             value={typeof family === 'string' ? family : ''}
-            options={families}
+            families={families}
             onChange={(v) => onSet(row.family, v)}
           />
         </div>
@@ -401,31 +431,47 @@ const withCurrent = (options: readonly string[], current: string): string[] =>
 /**
  * 字体下拉。选项常有几百项（本机字体），Radix Select 收起时也把全部 item 渲一遍——按数据
  * 比较，值与选项没变就不重画（与属性页 `FontFamilyRow` 同一个理由），改字号时不拖着字体下拉重建。
+ * 哪一个运行时都画不出来的字体（`unavailable`）照样列出、名字不换，标记与当前值下的 warning
+ * 用属性页同一副（`FontMissingTag` / `FontMissingHint`）。
  */
 const FamilySelect = memo(
   function FamilySelect({
     label,
     value,
-    options,
+    families,
     onChange,
   }: {
     label: string
     value: string
-    options: readonly string[]
+    /** 选项与不可用标记是一个对象（`useFigureFamilies` 内容没变时引用不变）：按它一次比完 */
+    families: FigureFamilies
     onChange: (v: string) => void
   }) {
+    const missing = new Set(families.unavailable)
     return (
-      <Select
-        className="min-w-0 flex-1"
-        ariaLabel={label}
-        value={value}
-        placeholder={st('unset')}
-        onChange={onChange}
-        options={withCurrent(options, value).map((o) => ({ value: o, label: optionLabel('fontfamily', o) }))}
-      />
+      <div className="flex min-w-0 flex-1 flex-col">
+        <Select
+          className="min-w-0 flex-1"
+          ariaLabel={label}
+          value={value}
+          placeholder={st('unset')}
+          onChange={onChange}
+          options={withCurrent(families.options, value).map((o) => ({
+            value: o,
+            label: (
+              <span>
+                {optionLabel('fontfamily', o)}
+                {missing.has(o) && <FontMissingTag />}
+              </span>
+            ),
+          }))}
+        />
+        {missing.has(value) && <FontMissingHint />}
+      </div>
     )
   },
-  (a, b) => a.value === b.value && a.label === b.label && a.options === b.options,
+  (a, b) =>
+    a.value === b.value && a.label === b.label && a.families === b.families,
 )
 
 /* --------------------------------- 只读摘要 -------------------------------- */
