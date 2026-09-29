@@ -61,6 +61,45 @@ VIA_NATIVE = "native"
 #: 改指表救不回、只能改写脚本里那串常量的几档（ADR 0110 §八：对话框只给它们「改写脚本」）
 VIAS_NEED_REWRITE = (VIA_PROBE, VIA_GLOB, VIA_NATIVE)
 
+#: 那条路径**要的是什么**（载荷的 `probe_kind`，ADR 0110 §三）：`dir` 只能指认文件夹（`listdir` 问的
+#: 换成一个文件，改写后重跑就是 `NotADirectoryError`）；`file` 是文件；`any` 两者都行。
+PROBE_DIR = "dir"
+PROBE_FILE = "file"
+PROBE_ANY = "any"
+#: 探路调用 → 它问的那条路径要是什么。键**恰好**是 databinding 三张探路表的并集
+#: （`PATH_PROBE_FUNCS` / `DIR_PROBE_FUNCS` / `PATH_METHOD_PROBES`，同名的语义相同），用例对账——
+#: 那边加一个探路函数、这里忘了标，就红。
+PROBE_KIND_OF = {
+    # os.path.* / os.*：问的路径本身
+    "exists": PROBE_ANY,
+    "lexists": PROBE_ANY,
+    "stat": PROBE_ANY,
+    "lstat": PROBE_ANY,
+    "getsize": PROBE_ANY,
+    "getmtime": PROBE_ANY,
+    "isfile": PROBE_FILE,
+    "isdir": PROBE_DIR,
+    "import_file": PROBE_FILE,  # ovito：读一个数据文件
+    # 列目录
+    "listdir": PROBE_DIR,
+    "scandir": PROBE_DIR,
+    "walk": PROBE_DIR,
+    # Path(<常量>) 上的方法
+    "is_file": PROBE_FILE,
+    "is_dir": PROBE_DIR,
+    "iterdir": PROBE_DIR,
+}
+
+
+def _merged_kind(kinds) -> str:
+    """同一串被几处问过：只要文件夹 / 只要文件的那一边说了算；两边都有或都没说就是 `any`。"""
+    kinds = set(kinds or ())
+    if PROBE_DIR in kinds and PROBE_FILE not in kinds:
+        return PROBE_DIR
+    if PROBE_FILE in kinds and PROBE_DIR not in kinds:
+        return PROBE_FILE
+    return PROBE_ANY
+
 
 class RemapError(ValueError):
     """推规则失败：带稳定 code 与界面参数（文案归前端）。"""
@@ -459,14 +498,21 @@ def _ancestor(path: str, levels: int, *, dirname=os.path.dirname) -> str:
 # ---------------------------------------------------------------- 弹窗载荷
 
 
-def _probe_via_of_constants(tree: ast.AST) -> dict[int, str]:
+def _probe_via_of_constants(tree: ast.AST, kinds: dict[int, set] | None = None) -> dict[int, str]:
     """`id(Constant)` → `probe` / `glob`：这个常量是探路调用问的那条路径（绝对的也算）。
 
     与 `databinding.probe_literals` 同一张表（`PATH_PROBE_FUNCS` / `DIR_PROBE_FUNCS` /
     `GLOB_FUNCS` / `Path(<常量>)` 上的 `PATH_METHOD_PROBES` / `PATH_METHOD_GLOBS`）。那边只收相对
     目标；这里要的是**反过来**的事实——一个绝对常量若是被 `exists()` 问的，改指表救不回它，
     对话框不能给它选择器（否则指认 → 重跑 → `exists()` 照样 False → 同一个框再弹）。
+
+    给了 `kinds` 就顺带记下每个常量被问成什么（`PROBE_KIND_OF`；glob 的目标与 `root_dir` 是文件夹）。
     """
+    kinds = kinds if kinds is not None else {}
+
+    def _kind(node_id: int, kind: str) -> None:
+        kinds.setdefault(node_id, set()).add(kind)
+
     # 只赋值过一次的名字 → 它的常量（`DATA = "/abs/x.csv"` 再 `exists(DATA)` 是最常见的写法）。
     # 赋值不止一次的不跟：说不清探的是哪一个值
     stores: dict[str, int] = {}
@@ -504,8 +550,10 @@ def _probe_via_of_constants(tree: ast.AST) -> dict[int, str]:
             if databinding._func_name(ctor.func) in aliases.path_ctors and inner is not None:
                 if name in databinding.PATH_METHOD_PROBES:
                     out[id(inner)] = VIA_PROBE
+                    _kind(id(inner), PROBE_KIND_OF.get(name, PROBE_ANY))
                 elif name in databinding.PATH_METHOD_GLOBS:
                     out[id(inner)] = VIA_GLOB
+                    _kind(id(inner), PROBE_DIR)
         if aliases.glob_call(node.func) is not None:
             # `glob("*.csv", root_dir="/moved/data")`：起算目录同样是 glob 在问，改指表救不回它
             root_dir = _const_of(
@@ -513,6 +561,7 @@ def _probe_via_of_constants(tree: ast.AST) -> dict[int, str]:
             )
             if root_dir is not None:
                 out[id(root_dir)] = VIA_GLOB
+                _kind(id(root_dir), PROBE_DIR)
         target = first
         if target is None:
             target = next(
@@ -523,9 +572,25 @@ def _probe_via_of_constants(tree: ast.AST) -> dict[int, str]:
             continue
         if name in databinding.PATH_PROBE_FUNCS or name in databinding.DIR_PROBE_FUNCS:
             out[id(target)] = VIA_PROBE
+            _kind(id(target), PROBE_KIND_OF.get(name, PROBE_ANY))
         elif aliases.glob_call(node.func) is not None:
             out[id(target)] = VIA_GLOB
     return out
+
+
+def _probe_kinds_by_text(source: str) -> dict[str, str]:
+    """脚本里被探路调用问到的字符串常量 → 它要的是什么（`PROBE_KIND_OF`；同一串几处合并）。"""
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError):
+        return {}
+    kinds: dict[int, set] = {}
+    _probe_via_of_constants(tree, kinds)
+    by_text: dict[str, set] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) in kinds:
+            by_text.setdefault(node.value, set()).update(kinds[id(node)])
+    return {text: _merged_kind(k) for text, k in by_text.items()}
 
 
 #: 读数据的调用（取末段名）：它们实参里的字符串常量才算「脚本要读的数据」（`static_missing` 的来源）。
@@ -746,7 +811,8 @@ def _resolved(rules: list[dict], text: str) -> bool:
 def static_missing(
     script: str, root: str | os.PathLike, rules: list[dict] | None = None
 ) -> list[dict]:
-    """脚本里写着、此刻哪里都找不到的路径：`[{path, absolute, via}]`（按出现顺序，最多 `MAX_OTHERS`）。
+    """脚本里写着、此刻哪里都找不到的路径：`[{path, absolute, via, probe_kind}]`（按出现顺序，最多
+    `MAX_OTHERS`）。
 
     相对的看 `databinding.evidence`：脚本目录与项目根**两处都** `missing`（项目外的 `outside` 不算，
     那里不看）；探路目标同理，`via` 标成 `probe` / `glob`。绝对的只 `os.path.exists`（不读、不列目录）。
@@ -761,6 +827,9 @@ def static_missing(
     top = cands.get(databinding.CANDIDATE_PROJECT_ROOT) or {}
     out: list[dict] = []
 
+    source = _script_source(root_path, script_path)
+    kinds = _probe_kinds_by_text(source)
+
     def _add(path: str, absolute: bool, via: str) -> None:
         if len(out) >= MAX_OTHERS or any(o["path"] == path for o in out):
             return
@@ -768,10 +837,16 @@ def static_missing(
         # 那一串，脚本照样走「不存在」那一支，这一条要留着按「改指救不回」说（Codex 评 #716 P2）
         if via == VIA_OPEN and _resolved(rules, path):
             return
-        out.append({"path": path, "absolute": absolute, "via": via})
+        if via == VIA_GLOB:
+            probe_kind = PROBE_DIR  # 指认的是模式所在的文件夹
+        elif via == VIA_PROBE:
+            # `listdir()` 不带实参列的是 cwd（目标记成 `.`）
+            probe_kind = PROBE_DIR if path == "." else kinds.get(path, PROBE_ANY)
+        else:
+            probe_kind = PROBE_ANY  # open：文件，或它所在的文件夹（derive 在里面找）
+        out.append({"path": path, "absolute": absolute, "via": via, "probe_kind": probe_kind})
 
     probe_targets = set(ev.get("probes") or [])
-    source = _script_source(root_path, script_path)
     read_texts = _input_texts(source)
     for lit in ev.get("reads") or []:
         # `evidence` 的 reads 是「像数据路径的常量」（首开判运行目录用，宁多勿漏）；这里要的是**真进了
@@ -811,7 +886,8 @@ def payload_for(
 ) -> dict | None:
     """弹窗载荷。`missing` 是 worker 报的 `missing_input` 事实（没有就是「没出图」路径，只剩静态的）。
 
-    `{script, requested, absolute, via, others: [{path, absolute, via}]}`——`requested` 为 None 时
+    `{script, requested, absolute, via, probe_kind, others: [{path, absolute, via, probe_kind}]}`——
+    `probe_kind` 是那条路径要的是什么（`dir` 只能指认文件夹）；`requested` 为 None 时
     界面以 `others` 的第一条为主。两样都没有回 None（没什么可问的）。`via` 是主条目的：worker 报的
     `missing_input` 是 `open`；C++ 读取器对上的（`native_miss`）是 `native`。
     """
@@ -819,11 +895,13 @@ def payload_for(
     others = static_missing(script, root, rules)
     requested = None
     absolute = False
+    probe_kind = PROBE_ANY
     if isinstance(missing, dict) and isinstance(missing.get("requested"), str):
         requested = missing["requested"]
         absolute = bool(missing.get("absolute"))
         same = [o for o in others if o["path"] == requested]
         others = [o for o in others if o["path"] != requested]
+        probe_kind = _merged_kind(o.get("probe_kind") for o in same if o["via"] != VIA_OPEN)
         # 同一串在脚本里也被 exists / glob 问过：分类跟着静态那一条走（口径同 `static_missing`）——
         # 改指只救得回 open，探路照样落空，给选择器就是「指认 → 重跑 → 照样退出」（Codex 评 #716 P2）
         # （调用方给的 `native` 等主条目分类不被 open 覆盖：只在静态那一条是探路时才换）
@@ -835,6 +913,7 @@ def payload_for(
         "requested": requested,
         "absolute": absolute,
         "via": via,
+        "probe_kind": probe_kind,
         "others": others,
     }
 

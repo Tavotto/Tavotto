@@ -51,8 +51,10 @@ export function MissingInputDialog() {
   // 改指救不回的几档：出口是经确认改写脚本（ADR 0110）
   const rewritable = VIAS_NEED_REWRITE.includes(primary.via)
   const pickable = remappable || rewritable
-  // glob 模式没有「那个文件」可找：只给「选择所在文件夹」（`via` 是后端给的事实，前端不再按路径长相判）
-  const folderOnly = primary.via === 'glob'
+  // 只给「选择所在文件夹」：glob 模式没有「那个文件」可找；`listdir` / `iterdir` 这类只接受文件夹的探路
+  // 换成一个文件，改写后重跑就是 NotADirectoryError（Codex 评 #730 P2）。两样都是后端给的事实，
+  // 前端不按路径长相判；后端提交时再判一次
+  const folderOnly = primary.via === 'glob' || primary.probe_kind === 'dir'
   const others = offer.others.filter((o) => o.path !== primary.path)
   const desktop = isDesktop()
 
@@ -305,7 +307,8 @@ function SkippedList({ items }: { items: ScriptEditSkipped[] }) {
  * 都救不回来才挑第一条如实说明。
  */
 function primaryOf(offer: MissingInputOffer): MissingInputItem | null {
-  if (offer.requested) return { path: offer.requested, absolute: offer.absolute, via: offer.via }
+  if (offer.requested)
+    return { path: offer.requested, absolute: offer.absolute, via: offer.via, probe_kind: offer.probe_kind }
   return offer.others.find((o) => o.via === 'open') ?? offer.others[0] ?? null
 }
 

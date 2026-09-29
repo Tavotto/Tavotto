@@ -698,7 +698,12 @@ def test_a_script_that_checks_first_gets_the_static_list(figs):
     assert err is not None and err.code == engine_pool.NO_FIGURES_CODE
     assert err.missing_input is not None and err.missing_input["requested"] is None
     assert err.missing_input["others"] == [
-        {"path": "data/values.txt", "absolute": False, "via": inputremap.VIA_PROBE}
+        {
+            "path": "data/values.txt",
+            "absolute": False,
+            "via": inputremap.VIA_PROBE,
+            "probe_kind": inputremap.PROBE_ANY,
+        }
     ]
 
 
@@ -715,7 +720,12 @@ def test_a_script_that_checks_then_exits_gets_the_static_list(figs):
     assert err.value.code == engine_pool.SCRIPT_EXITED_CODE
     assert err.value.missing_input is not None
     assert err.value.missing_input["others"] == [
-        {"path": "data/values.txt", "absolute": False, "via": inputremap.VIA_PROBE}
+        {
+            "path": "data/values.txt",
+            "absolute": False,
+            "via": inputremap.VIA_PROBE,
+            "probe_kind": inputremap.PROBE_ANY,
+        }
     ]
 
 

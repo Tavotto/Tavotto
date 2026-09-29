@@ -763,6 +763,68 @@ def test_http_needs_the_ui_session_when_session_auth_is_on(app_project, tmp_path
         m.app.config.pop(security.STATE_KEY, None)
 
 
+def test_every_probe_function_is_labelled_file_or_dir():
+    """`PROBE_KIND_OF` 的键**恰好**是 databinding 三张探路表的并集：那边加一个探路函数、这里忘了标，
+    就红（Codex 评 #730 P2：`listdir` 被压成 probe、前端让人选了文件）。"""
+    from tavotto.engine import databinding
+
+    tables = (
+        databinding.PATH_PROBE_FUNCS | databinding.DIR_PROBE_FUNCS | databinding.PATH_METHOD_PROBES
+    )
+    assert set(inputremap.PROBE_KIND_OF) == set(tables)
+    assert {inputremap.PROBE_KIND_OF[n] for n in databinding.DIR_PROBE_FUNCS} == {
+        inputremap.PROBE_DIR
+    }
+    assert inputremap.PROBE_KIND_OF["iterdir"] == inputremap.PROBE_DIR
+    assert inputremap.PROBE_KIND_OF["isdir"] == inputremap.PROBE_DIR
+    assert inputremap.PROBE_KIND_OF["isfile"] == inputremap.PROBE_FILE
+
+
+def test_static_entries_carry_what_the_probe_wants(tmp_path):
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / "fig.py").write_text(
+        "import os\nfrom pathlib import Path\n"
+        f'os.listdir("{OLD}/runs.v1")\n'
+        f'Path("{OLD}/frames").iterdir()\n'
+        f'os.path.isfile("{OLD}/a.csv")\n'
+        f'os.path.exists("{OLD}/b.csv")\n'
+        'os.listdir("rel_runs")\n'
+        f'open("{OLD}/c.csv")\n',
+        encoding="utf-8",
+    )
+    got = {
+        o["path"]: (o["via"], o["probe_kind"]) for o in inputremap.static_missing("fig.py", root)
+    }
+    assert got[f"{OLD}/runs.v1"] == (inputremap.VIA_PROBE, inputremap.PROBE_DIR)
+    assert got[f"{OLD}/frames"] == (inputremap.VIA_PROBE, inputremap.PROBE_DIR)
+    assert got[f"{OLD}/a.csv"] == (inputremap.VIA_PROBE, inputremap.PROBE_FILE)
+    assert got[f"{OLD}/b.csv"] == (inputremap.VIA_PROBE, inputremap.PROBE_ANY)
+    assert got["rel_runs"] == (inputremap.VIA_PROBE, inputremap.PROBE_DIR)
+    assert got[f"{OLD}/c.csv"] == (inputremap.VIA_OPEN, inputremap.PROBE_ANY)
+
+
+def test_http_refuses_a_file_for_a_directory_probe(app_project, tmp_path):
+    """前端只给「选择文件夹」；从 API 直接交一个文件（file / auto 都算）也拒——第二道判在后端。"""
+    m, root = app_project
+    client = m.app.test_client()
+    (root / "fig.py").write_text(
+        f'import os\nnames = os.listdir("{OLD}/runs.v1")\n', encoding="utf-8"
+    )
+    moved = tmp_path / "new" / "runs.v1"
+    a_file = _touch(moved / "x.csv")
+    for kind in ("file", "auto"):
+        resp = _preview(
+            client, script="fig.py", entry=f"{OLD}/runs.v1", chosen=str(a_file), chosen_kind=kind
+        )
+        assert resp.status_code == 400, (kind, resp.get_json())
+        assert resp.get_json()["code"] == inputremap.ERROR_CHOSEN_INVALID
+    resp = _preview(
+        client, script="fig.py", entry=f"{OLD}/runs.v1", chosen=str(moved), chosen_kind="dir"
+    )
+    assert resp.status_code == 200, resp.get_json()
+
+
 def test_http_refuses_runtime_assets_and_scripts_an_agent_is_editing(
     app_project, tmp_path, monkeypatch
 ):

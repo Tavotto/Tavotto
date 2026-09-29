@@ -6025,8 +6025,16 @@ def _input_path_plan(root: Path, script: str, path: Path, entry, chosen, chosen_
         raise engine_inputremap.RemapError(
             engine_inputremap.ERROR_REQUESTED_INVALID, "chosen_kind 只能是 file / dir / auto"
         )
+    statics = engine_inputremap.static_missing(script, root)
+    # 只接受文件夹的探路（`listdir` / `iterdir` / `is_dir`……）指认成了文件：改写之后重跑就是
+    # NotADirectoryError。界面只给「选择文件夹」，这里是第二道——不信请求体（Codex 评 #730 P2）
+    wanted = next((o.get("probe_kind") for o in statics if o["path"] == entry), None)
+    if wanted == engine_inputremap.PROBE_DIR and chosen_kind != "dir":
+        raise engine_inputremap.RemapError(
+            engine_inputremap.ERROR_CHOSEN_INVALID, f"这里要的是文件夹：{chosen}", path=chosen
+        )
     rule = engine_inputremap.derive_location(entry, chosen, chosen_is_dir=chosen_kind == "dir")
-    missing = [entry] + [o["path"] for o in engine_inputremap.static_missing(script, root)]
+    missing = [entry] + [o["path"] for o in statics]
     plan = engine_scriptedit.plan(
         path.read_bytes(), rule=rule, missing=missing, script_dir=path.parent, root=root
     )

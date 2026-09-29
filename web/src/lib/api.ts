@@ -3125,11 +3125,16 @@ export type MissingInputVia = 'open' | 'probe' | 'glob' | 'native'
 /** 改指表救不回、只能改写脚本的几档（与后端 `inputremap.VIAS_NEED_REWRITE` 同一份） */
 export const VIAS_NEED_REWRITE: readonly string[] = ['probe', 'glob', 'native']
 
+/** 那条路径要的是什么（后端 `inputremap.PROBE_KIND_OF`）：`dir` 只能指认文件夹（`listdir` / `iterdir` 问的） */
+export type MissingInputProbeKind = 'dir' | 'file' | 'any'
+
 export interface MissingInputItem {
   /** 脚本里写的原串（用户自己的路径，不翻译） */
   path: string
   absolute: boolean
   via: MissingInputVia | string
+  /** 老后端不给 → 按 `any` */
+  probe_kind?: MissingInputProbeKind | string
 }
 
 /** 「指认数据位置」对话框的载荷（ADR 0106，后端 `inputremap.payload_for`） */
@@ -3139,6 +3144,8 @@ export interface MissingInputOffer {
   requested: string | null
   absolute: boolean
   via: MissingInputVia | string
+  /** 主条目要的是什么（`requested` 那一串；没有时看 `others[0]` 自己的） */
+  probe_kind?: MissingInputProbeKind | string
   /** 脚本里写着、此刻哪儿都找不到的其它路径（这次指认可能顺带修好） */
   others: MissingInputItem[]
 }

@@ -284,6 +284,33 @@ describe('MissingInputDialog', () => {
     expect(document.querySelector('[data-dialog="missing-input-rewrite"]')).not.toBeNull()
   })
 
+  it('只接受文件夹的探路（listdir / iterdir）：只给「选择所在文件夹」；问文件的探路照旧能选文件', async () => {
+    // Codex 评 #730 P2：`via` 都是 probe，要不要文件夹看后端给的 `probe_kind`
+    const listdir = (): MissingInputOffer => ({
+      script: 'fig.py',
+      requested: null,
+      absolute: true,
+      via: 'open',
+      others: [{ path: '/Users/a/proj/runs.v1', absolute: true, via: 'probe', probe_kind: 'dir' }],
+    })
+    await render(<MissingInputDialog />)
+    await act(async () => useEnvStore.getState().requestMissingInput(listdir()))
+    expect(byTestId('missing-input-pick-dir')).not.toBeNull()
+    expect(byTestId('missing-input-pick-file'), 'listdir 要的是文件夹').toBeNull()
+    await act(async () => useEnvStore.getState().dismissMissingInput())
+    const isfile: MissingInputOffer = {
+      ...listdir(),
+      others: [{ path: '/Users/a/proj/a.csv', absolute: true, via: 'probe', probe_kind: 'file' }],
+    }
+    await act(async () => useEnvStore.getState().requestMissingInput(isfile))
+    expect(byTestId('missing-input-pick-file'), 'isfile 问的是文件').not.toBeNull()
+    await act(async () => useEnvStore.getState().dismissMissingInput())
+    // worker 说出来的那一串（顶层）也一样
+    const requestedDir: MissingInputOffer = { ...listdir(), requested: '/Users/a/proj/runs.v1', via: 'probe', probe_kind: 'dir', others: [] }
+    await act(async () => useEnvStore.getState().requestMissingInput(requestedDir))
+    expect(byTestId('missing-input-pick-file')).toBeNull()
+  })
+
   it('C++ 读取器：说清是读取器直接打开的；确认页只渲染后端给的行，勾选之后才能「修改脚本」', async () => {
     fileMock.mockResolvedValue('/Volumes/B/run/x.h5')
     previewMock.mockResolvedValue(preview())
