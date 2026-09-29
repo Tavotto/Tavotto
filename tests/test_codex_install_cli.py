@@ -1908,6 +1908,75 @@ def test_a_stuck_backup_dir_from_an_earlier_run_does_not_block_the_swap(
     assert _cached_versions(m) == ["0.18.1"]
 
 
+def test_a_backup_left_between_the_two_replaces_is_restored_not_deleted(no_git_machine, capsys):
+    """上一次在「旧目录挪开」与「新目录换进」之间被杀：`.old-*` 是仅剩的那份已核对的市场。下一次
+    （哪怕离线、下载失败）要先把它挪回去，不能当垃圾删掉、让 Codex 登记的目录从此不在（Codex #725）。"""
+    from tavotto.engine import brand, codexinstall
+
+    m = no_git_machine
+    z1, man1 = _stable_branch_zip(m["tmp"], "0.18.0")
+    m["github"].publish(z1, man1)
+    assert _cli_json(m, capsys, "install")[0] == 0
+    dest = codexinstall.archive_marketplace_dir()
+    backup = dest.parent / ".old-424242"
+    os.replace(dest, backup)  # 被杀在两次 replace 之间
+    m["github"].files.clear()  # 离线：下载一律失败
+    with pytest.raises(codexinstall.ArchiveError, match="404"):
+        codexinstall.fetch_stable_snapshot()
+    assert not backup.exists()
+    receipt = json.loads((dest / "plugin-release.json").read_text(encoding="utf-8"))
+    assert receipt["version"] == "0.18.0" and dest.name == brand.CODEX_PLUGIN_STABLE_ARCHIVE_DIR
+
+
+def test_a_failed_archive_attempt_still_reports_dirs_it_could_not_remove(
+    no_git_machine, capsys, monkeypatch
+):
+    """失败这一路也要说出删不掉的一次性目录：不然只在成功时报，反复失败时静默堆积（Codex #725）。"""
+    from tavotto.engine import codexinstall
+
+    m = no_git_machine
+
+    def tamper_file(tree: Path):
+        p = tree / "codex-plugin" / "skills" / "tavotto-figure" / "SKILL.md"
+        p.write_bytes(p.read_bytes() + b"x")
+
+    z1, man1 = _stable_branch_zip(m["tmp"], "0.18.0", tamper=tamper_file)
+    m["github"].publish(z1, man1)
+    real = codexinstall.shutil.rmtree
+
+    def held(path, *a, **kw):
+        if Path(path).name.startswith(".staging-"):
+            raise PermissionError("held by antivirus")
+        return real(path, *a, **kw)
+
+    monkeypatch.setattr(codexinstall.shutil, "rmtree", held)
+    rc, data = _cli_json(m, capsys, "install")
+    assert rc == 1 and data["error_code"] == "marketplace_add_failed", data
+    assert "sha256 对不上" in data["error"], data["error"]
+    assert "删不掉的一次性目录" in data["error"] and ".staging-" in data["error"], data["error"]
+
+
+def test_a_read_failure_during_verification_is_a_one_line_failure(
+    no_git_machine, capsys, monkeypatch
+):
+    """核对解出来的文件时读不了（杀软临时拒读）：`verify_dir` 抛 OSError——也要是 ArchiveError 的
+    一行 JSON 失败，不是 traceback（Codex #725）。"""
+    from tavotto.engine import codexinstall
+
+    m = no_git_machine
+    z1, man1 = _stable_branch_zip(m["tmp"], "0.18.0")
+    m["github"].publish(z1, man1)
+
+    def denied(*_a, **_kw):
+        raise PermissionError("access denied by antivirus")
+
+    monkeypatch.setattr(codexinstall.pluginmanifest, "verify_dir", denied)
+    rc, data = _cli_json(m, capsys, "install")
+    assert rc == 1 and data["error_code"] == "marketplace_add_failed", data
+    assert "access denied" in data["error"], data["error"]
+    assert _local_adds(m) == []
+
+
 def test_upgrade_leaves_a_local_marketplace_it_did_not_create_alone(no_git_machine, capsys):
     """用户手动解压到别处再登记的本地市场：认得出是发行分支，但不替他覆盖那个目录。"""
     import zipfile

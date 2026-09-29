@@ -774,8 +774,9 @@ def fetch_stable_snapshot() -> dict:
     leftovers: list[str] = []
     try:
         base.mkdir(parents=True, exist_ok=True)
-        # 上一次删不掉的一次性目录（杀软占着文件等）先收掉：泄漏不跨次累积（Codex #725）
-        leftovers += _remove_one_shot_dirs(base)
+        # 上一次删不掉的一次性目录（杀软占着文件等）先收掉：泄漏不跨次累积（Codex #725）；
+        # 上一次在两次 replace 之间被杀、只剩备份时先挪回去，不当垃圾删
+        leftovers += _remove_one_shot_dirs(base, dest)
         staging = Path(tempfile.mkdtemp(prefix=".staging-", dir=base))
     except OSError as exc:
         raise ArchiveError(f"建不了本地市场目录 {base}：{exc}") from exc
@@ -816,9 +817,19 @@ def fetch_stable_snapshot() -> dict:
                 raise
         except OSError as exc:
             raise ArchiveError(f"换不进 {dest}：{exc}") from exc
-    finally:
-        # 一次性目录用完就删，删不掉**说出来**（回在 `leftovers` 里、marketplace 一步照报），下一次开头再收
-        leftovers += _remove_one_shot_dirs(base)
+    except (ArchiveError, OSError) as exc:
+        # 失败这一路也要把删不掉的一次性目录说出来——不然只有成功时才报，失败反复发生时会静默堆积；
+        # 核对阶段的读写失败（杀软临时拒读解出来的文件）同样是一行 JSON 失败，不是 traceback（Codex #725）
+        stuck = _remove_one_shot_dirs(base, dest)
+        msg = str(exc) if isinstance(exc, ArchiveError) else f"核对或换进 {dest} 时读写失败：{exc}"
+        if stuck:
+            msg += "；另有删不掉的一次性目录（下次运行开头再收）：" + "、".join(stuck)
+        raise ArchiveError(msg) from exc
+    except BaseException:
+        _remove_one_shot_dirs(base, dest)
+        raise
+    # 一次性目录用完就删，删不掉**说出来**（回在 `leftovers` 里、marketplace 一步照报），下一次开头再收
+    leftovers += _remove_one_shot_dirs(base, dest)
     return {
         "root": str(dest),
         "commit": commit,
@@ -830,13 +841,31 @@ def fetch_stable_snapshot() -> dict:
     }
 
 
-def _remove_one_shot_dirs(base: Path) -> list[str]:
-    """删掉 `base` 下的一次性目录（`.staging-*` / `.old-*`）；回删不掉的那些（路径）。"""
+def _remove_one_shot_dirs(base: Path, dest: Path) -> list[str]:
+    """删掉 `base` 下的一次性目录（`.staging-*` / `.old-*`）；回删不掉的那些（路径）。
+
+    `dest` 不在而有 `.old-*` 时，那是上一次在「旧目录挪开」与「新目录换进」之间被杀（或换进失败、
+    挪回也失败）留下的**唯一一份**已核对的市场：先把最新的那份挪回 `dest`，再删其余的——不然离线
+    重试会把能恢复的安装删掉，Codex 登记的目录从此不在（Codex #725）。"""
     stuck: list[str] = []
     try:
         entries = [p for p in base.iterdir() if p.name.startswith((".staging-", ".old-"))]
     except OSError:
         return stuck
+
+    def mtime(p: Path) -> float:
+        try:
+            return p.stat().st_mtime
+        except OSError:
+            return 0.0
+
+    backups = sorted((p for p in entries if p.name.startswith(".old-")), key=mtime)
+    if backups and not dest.exists():
+        try:
+            os.replace(backups[-1], dest)
+            entries.remove(backups[-1])
+        except OSError:
+            pass
     for p in entries:
         try:
             shutil.rmtree(p)
