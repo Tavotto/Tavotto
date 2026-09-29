@@ -79,10 +79,10 @@
 
 | 问题 | 裁决 |
 |---|---|
-| fname 文字怎么接尾巴 | `overrides._release_font_file`（在 `ensure_text_fallback` 里，同一时刻、写回重放同一段代码）：读那个文件第 0 张脸的族名 / 字形 / 字重，字重归一成 normal / bold（≥600 为 bold）、字形归一成 normal / italic（Oblique 算 italic）——manifest 报的值必须落在「粗细」「字形」下拉的词表里；没注册的先 `addfont`，再按归一后的属性反查。以字体路径作键的缓存（`_FILE_FACE`、`manifest._FT_FONTS`）一律按 `overrides.font_file_key` 的文件身份（绝对路径 + dev/ino/mtime/size）认，相对 fname 换了 cwd 就是另一个文件。扩展名只认 `overrides.FONT_FILE_SUFFIXES`（含字体集 `.ttc` / `.otc`） |
+| fname 文字怎么接尾巴 | `overrides._release_font_file`（在 `ensure_text_fallback` 里，同一时刻、写回重放同一段代码）：读那个文件第 0 张脸的族名 / 字形 / 字重，字重归一成 normal / bold（≥600 为 bold）、字形归一成 normal / italic（Oblique 算 italic）——manifest 报的值必须落在「粗细」「字形」下拉的词表里；没注册的先 `addfont`，再按归一后的属性反查。以字体路径作键的缓存（`_FILE_FACE`、`manifest._FT_FONTS`）一律按 `overrides.font_file_key` 的（文件, 面）身份（绝对路径 + dev/ino/mtime/size + 面索引）认——matplotlib 3.11+ 的 `FontPath` 可以指向字体集里第 N 张脸，`fname=` 原样存着、渲染读那一张，转成普通字符串前先取 `font_face_index`，打开与反查验证都用这张脸（反查回同一个文件的另一张脸不算），相对 fname 换了 cwd 就是另一个文件。扩展名只认 `overrides.FONT_FILE_SUFFIXES`（含字体集 `.ttc` / `.otc`） |
 | 放开时 `addfont` 了新字体 | 以 `fontManager` 为数据源的派生缓存（`_FONT_PRESENT`、`_CJK_TAIL`、`_FILE_FACE`、`manifest.installed_font_families`）只有一个失效点 `overrides.sync_font_caches`：注册表代次（对象 + 登记的脸数）变了就全部作废——脚本自己 `addfont`、native 会话两次 `plt.show()` 之间引入项目字体同样覆盖 |
 | 什么时候不换 | 反查解析不回**同一个文件（或字节相同的拷贝）的第 0 张脸**时原样不动：同名不同版本、字重对不上的兄弟文件（同族有 Regular 的 Light 归一成 normal 后找回的是 Regular）都会换掉拉丁字的脸，宁可留着方框也不改正文 |
 | 换不开时 manifest 怎么报 | `_resolved_font_paths(families, file)`：有 fname 就只报那一个文件——`face` 是它、缺的汉字进 `glyphs_missing`，不再按族列表说「画出来了」 |
 | 提示词 | `ai_bridge._build_prompt` 第 4 条：字体用族名设，不用 fname |
 
-看护：`tests/test_cjk_figure_text.py` 的 `test_fname_*` 两条（worker 端到端 + 拉丁字换前换后 PNG 逐字节相同 / 字节相同拷贝 / Oblique·Light·Black 归一后仍同一文件 / 同族有 Regular 的 Light 不换 / 相对 fname 换 cwd / `.otc` 字体集 / addfont 后派生缓存失效 / 换不开时照实报缺字）。
+看护：`tests/test_cjk_figure_text.py` 的 `test_fname_*` 两条（worker 端到端 + 拉丁字换前换后 PNG 逐字节相同 / 字节相同拷贝 / Oblique·Light·Black 归一后仍同一文件 / 同族有 Regular 的 Light 不换 / 相对 fname 换 cwd / `.otc` 字体集 / FontPath 第 N 张脸（mpl ≥ 3.11 真实覆盖）/ addfont 后派生缓存失效 / 换不开时照实报缺字）。
