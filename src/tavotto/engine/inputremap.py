@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import ast
 import glob
+import hashlib
+import json
 import os
 import time
 from pathlib import Path
@@ -68,6 +70,18 @@ def rules_for(root: str | os.PathLike) -> list[dict]:
     raw = config.project_settings(str(root)).get(SETTINGS_KEY)
     rules = raw.get("rules") if isinstance(raw, dict) else None
     return figcapture.clean_remap_rules(rules or [])
+
+
+def fingerprint(root: str | os.PathLike) -> str:
+    """这个项目改指表的指纹（空表 = `""`）：runtime 素材的 cache 记下物化时的这一份，
+    表一变（增 / 换 / 删）就对不上 → `possibly_stale`（经旧规则读到的是旧位置的数据）。"""
+    rules = rules_for(root)
+    if not rules:
+        return ""
+    canon = json.dumps(
+        sorted([r["kind"], r["from"], r["to"]] for r in rules), ensure_ascii=False
+    ).encode("utf-8")
+    return hashlib.sha256(canon).hexdigest()
 
 
 def _entries(root: str | os.PathLike) -> list[dict]:

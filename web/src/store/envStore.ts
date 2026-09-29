@@ -134,14 +134,22 @@ let projectEpoch = 0
 /**
  * 后端刚关掉本项目的会话、且变的东西说不清影响哪些面板（换环境、改指表增 / 换 / 删）：
  * 每个在用的面板都标 stale 重建——不只是失败的那些，成功画过的可能是按旧条件画的。
- * 回 false = 等 renderStore 期间换了项目（B 的面板一个都不动）。
+ * 素材库里试运行过、还没上画布的 runtime 素材同一处作废：已查过的判定重查、清单重取
+ * （后端的 stale 阶梯把改指表指纹算在判据里，ADR 0106）。
+ * 回 false = 等 store 加载期间换了项目（B 的面板与素材一个都不动）。
  */
 async function restaleProjectRenders(epoch: number): Promise<boolean> {
-  const { useRenderStore } = await import('@/store/renderStore')
+  const [{ useRenderStore }, { useRuntimeAssetStore }] = await Promise.all([
+    import('@/store/renderStore'),
+    import('@/store/runtimeAssetStore'),
+  ])
   if (epoch !== projectEpoch) return false
   const render = useRenderStore.getState()
   const ids = [...new Set(Object.values(render.byKey).map((v) => v.fileId))]
   if (ids.length) render.markStale(ids)
+  const runtime = useRuntimeAssetStore.getState()
+  runtime.invalidate(Object.keys(runtime.byId))
+  if (runtime.assets !== null) void runtime.loadAssets()
   return true
 }
 

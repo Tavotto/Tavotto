@@ -12,7 +12,7 @@ ADR 0013 的引擎侧落地（Compatibility Bridge Session 4）。三件事的�
   「显示与占位用的派生物，不是用户原件」：可删除、可重建，删掉只影响
   重开时的首帧占位，文档与 override 一个字节不丢。
 * `stale_status()` —— stale 判定。**只是提示，不是完备性证明**：判据是
-  脚本内容 sha256 + 注册表 entry，脚本读的 CSV / 本地 import / 环境变量
+  脚本内容 sha256 + 注册表 entry + 改指表指纹（ADR 0106），脚本读的 CSV / 本地 import / 环境变量
   都不在里面，文案不得声称"数据未变化"。
 
 ## cache 布局与原子性
@@ -50,7 +50,7 @@ import os
 import shutil
 from pathlib import Path
 
-from . import config, figcapture
+from . import config, figcapture, inputremap
 
 LOG = logging.getLogger("tavotto.runtimeasset")
 
@@ -173,6 +173,8 @@ def materialize(project_root: str | Path, descriptor: dict, svg_source: Path) ->
             "project": _norm_project(project_root),
             "descriptor": dict(descriptor),
             "script_sha256": script_sha256(project_root, script),
+            # 物化那一刻的改指表（ADR 0106）：之后增 / 换 / 删规则，这张图读的可能是旧位置的数据
+            "input_remap": inputremap.fingerprint(project_root),
             "preview": "preview.svg",
         }
         _atomic_write(
@@ -294,6 +296,8 @@ def _status_ladder(
         current is None
         or current != meta.get("script_sha256")
         or cached_desc.get("entry") != info["entry"]
+        # 改指表变过（ADR 0106）：没有规则时两侧都是 ""，旧 cache 不受影响
+        or (meta.get("input_remap") or "") != inputremap.fingerprint(project_root)
     ):
         return STALE_POSSIBLY
     return STALE_FRESH
