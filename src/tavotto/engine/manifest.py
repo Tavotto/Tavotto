@@ -1342,7 +1342,11 @@ def _family_options() -> list[str]:
 
 def installed_font_families() -> tuple[str, ...]:
     """本机字体族（见 `_installed_font_families`），按字体注册表的代次缓存：脚本或
-    fname 放开 `addfont` 了新字体，下一份 manifest 就列得出它（`overrides.sync_font_caches`）。"""
+    fname 放开 `addfont` 了新字体，下一份 manifest 就列得出它（`overrides.sync_font_caches`）。
+
+    只有中文名的字体先按真名补登记（`overrides.register_font_name_aliases`）：补登记本身会
+    让注册表变长，所以**先补、再取代次**，否则刚算好的表下一次就被当成过期的重算一遍。"""
+    register_font_name_aliases()
     return _installed_font_families(sync_font_caches())
 
 
@@ -1360,9 +1364,8 @@ def _installed_font_families(_generation: tuple) -> tuple[str, ...]:
     的扫描结果本来就是磁盘缓存来的，但去重排序几百个名字也不值得每份 manifest
     重做。
     """
-    # 只有中文名的字体先按真名补登记（`overrides.register_font_name_aliases`）：
-    # 下面按 `?` 滤掉的是 FreeType 读坏的那条，补上的真名照常列出
-    register_font_name_aliases()
+    # 只有中文名的字体已经按真名补登记过（`installed_font_families`）：下面按 `?`
+    # 滤掉的是 FreeType 读坏的那条，补上的真名照常列出
     names = {
         str(entry.name)
         for entry in font_manager.fontManager.ttflist
@@ -1375,13 +1378,20 @@ def _installed_font_families(_generation: tuple) -> tuple[str, ...]:
     return tuple(sorted(names, key=lambda n: (n.casefold(), n)))
 
 
-@lru_cache(maxsize=1)
 def installed_font_display_names() -> dict[str, str]:
     """本机字体族里有中文名的那些：{族名: 中文名}（`overrides.font_display_names`）。
 
-    只用于下拉的显示，写进 override 的仍是族名。整个进程读一次 name 表。
+    只用于下拉的显示，写进 override 的仍是族名。按字体注册表的代次缓存（与
+    `installed_font_families` 同一个失效点 `overrides.sync_font_caches`）：脚本或 fname
+    放开 `addfont` 了新字体，下一份 manifest 就有它的显示名；注册表没变就不再读 name 表。
     """
-    return font_display_names(installed_font_families())
+    families = installed_font_families()
+    return _installed_font_display_names(sync_font_caches(), families)
+
+
+@lru_cache(maxsize=1)
+def _installed_font_display_names(_generation: tuple, families: tuple[str, ...]) -> dict[str, str]:
+    return font_display_names(families)
 
 
 def _text_fields(t) -> list[dict]:

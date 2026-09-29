@@ -709,10 +709,8 @@ def _zh_rank(plat: int, lang: int) -> int | None:
 
 
 def _font_face(entry):
-    from matplotlib import ft2font
-
-    idx = int(getattr(entry, "index", 0) or 0)
-    return ft2font.FT2Font(entry.fname, face_index=idx) if idx else ft2font.FT2Font(entry.fname)
+    """注册表里这一条登记对应的那张脸（打开字体只经 `open_font_face` 一处）。"""
+    return open_font_face(entry.fname, int(getattr(entry, "index", 0) or 0))
 
 
 def _true_name(registered: str, records) -> str | None:
@@ -861,7 +859,8 @@ def sync_font_caches() -> tuple:
 
     名单：本模块的 `_FONT_PRESENT`（画不画得出）、`_CJK_TAIL`（回退尾巴）、
     `_FILE_FACE`（fname 反查，结论取决于同族还登记了哪些脸）；`manifest` 的
-    `installed_font_families` 按代次作缓存键。每个读缓存的入口先调这里。
+    `installed_font_families` / `installed_font_display_names` 按代次作缓存键。每个读缓存
+    的入口先调这里。
     """
     global _FONT_GEN, _CJK_TAIL
     gen = font_generation()

@@ -122,6 +122,24 @@ assert os.path.samefile(
 shown = overrides.font_display_names([EN, "DejaVu Sans", ONLY_ZH])
 assert shown.get(EN) == "塔沃名测试", shown
 assert "DejaVu Sans" not in shown and ONLY_ZH not in shown, shown
+
+# 4) manifest 顶层的显示名表随字体注册表的代次失效：先发过一份 manifest，之后脚本
+#    （或 fname 放开）才 addfont 的字体，下一份就要有它的中文显示名
+import manifest
+
+LATER = "Tavotto Later Name"
+before = manifest.installed_font_display_names()
+assert LATER not in before
+later = make_font(os.path.join(tmp, "later-name.ttf"), [
+    (1, 3, 1, 0x0409, LATER), (1, 3, 1, 0x0804, "塔沃后加名"),
+    (2, 3, 1, 0x0409, "Regular"), (6, 3, 1, 0x0409, "TavottoLaterName"),
+])
+fm.fontManager.addfont(later)
+after = manifest.installed_font_display_names()
+assert after.get(LATER) == "塔沃后加名", after.get(LATER)
+assert LATER in manifest.installed_font_families()
+# 注册表没变：不重读（同一个对象）
+assert manifest.installed_font_display_names() is after
 print("OK")
 """
 )
