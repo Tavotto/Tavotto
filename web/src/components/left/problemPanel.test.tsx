@@ -1081,6 +1081,19 @@ describe('卡片层：一张组图拆成子图（2026-09-28）', () => {
     expect(rows()).toHaveLength(0)
   })
 
+  it('直达过一条之后，导出对话框把用户交回问题面板（openProblems）：交回的是总览', async () => {
+    await seedTriptych()
+    useUiStore.setState({ elementPanelId: 'p1' })
+    await mount(<ProblemPanel />)
+    await reachC()
+    const { openProblems } = await import('@/lib/issueFocus')
+    await act(async () => {
+      openProblems({ severities: ['error'] })
+    })
+    expect(useUiStore.getState().problemDrill).toBeNull()
+    expect(rows(), '总览不列逐条清单').toHaveLength(0)
+  })
+
   it('外部直达仍会先换范围再钻进卡片：从「整份排版」的总览出发也落到 (c) 的那一行', async () => {
     await seedTriptych(true)
     useUiStore.setState({ elementPanelId: 'p1', problemScope: 'document' })
