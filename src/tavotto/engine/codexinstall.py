@@ -55,6 +55,7 @@ import argparse
 import http.client
 import io
 import json
+import lzma
 import os
 import re
 import shutil
@@ -658,7 +659,15 @@ def _unpack(data: bytes, into: Path) -> tuple[Path, str | None]:
         target.parent.mkdir(parents=True, exist_ok=True)
         try:
             payload = zf.read(info)
-        except (zipfile.BadZipFile, zlib.error, EOFError, NotImplementedError, RuntimeError) as exc:
+        except (
+            zipfile.BadZipFile,
+            zlib.error,
+            lzma.LZMAError,  # ZIP_LZMA 的条目坏了（Codex #725）
+            OSError,  # bz2 的坏数据报 OSError
+            EOFError,
+            NotImplementedError,
+            RuntimeError,
+        ) as exc:
             # 目录表完好、条目本身坏了（CRC 不符 / 截断 / 加密 / 不认识的压缩法）：同样是「这份压缩包
             # 不能用」，走 ArchiveError 的一行 JSON 失败，不让 traceback 逃出安装流程（Codex #725）
             raise ArchiveError(f"压缩包里的 {info.filename!r} 读不出来：{exc}") from exc

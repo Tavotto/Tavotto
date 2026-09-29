@@ -61,8 +61,12 @@ function Set-NoGitNoCodexPath {
     $env:PATH = (@($keep) | Select-Object -Unique) -join ';'
 }
 
-function Invoke-Tavotto([string]$CodexHome, [string[]]$CliArgs) {
+# A failing `tavotto codex <step>` must fail the step (non-zero script exit), not just print its code:
+# the env restore and later probes would otherwise leave $LASTEXITCODE at 0. `doctor` may legitimately
+# exit non-zero (it reports), so it passes -AllowFailure.
+function Invoke-Tavotto([string]$CodexHome, [string[]]$CliArgs, [switch]$AllowFailure) {
     $saved = @{ PYTHONPATH = $env:PYTHONPATH; CODEX_HOME = $env:CODEX_HOME; TAVOTTO_DATA_DIR = $env:TAVOTTO_DATA_DIR; PATH = $env:PATH }
+    $rc = $null
     try {
         New-Item -ItemType Directory -Force -Path $CodexHome | Out-Null
         $env:PYTHONPATH = Join-Path $Root 'src'
@@ -73,9 +77,13 @@ function Invoke-Tavotto([string]$CodexHome, [string[]]$CliArgs) {
         "codex on PATH: " + [bool](Get-Command codex -ErrorAction SilentlyContinue)
         $ErrorActionPreference = 'Continue'
         & $Python -m tavotto.cli_entry codex @CliArgs 2>&1 | ForEach-Object { "$_" }
-        "exit=$LASTEXITCODE"
+        $rc = $LASTEXITCODE
+        "exit=$rc"
     }
     finally { foreach ($k in $saved.Keys) { Set-Item "env:$k" $saved[$k] } }
+    if ($rc -ne 0 -and -not $AllowFailure) {
+        throw "tavotto codex $($CliArgs -join ' ') exited $rc"
+    }
 }
 
 function Invoke-Probe([string]$CodexHome, [string]$Name) {
@@ -137,7 +145,7 @@ switch ($Step) {
         'cached plugin: ' + ((Get-ChildItem -Directory (Join-Path $h 'plugins\cache\tavotto\tavotto') -ErrorAction SilentlyContinue | ForEach-Object Name) -join ', ')
         Invoke-Probe $h 'install'
     }
-    'doctor' { Invoke-Tavotto (Join-Path $Root 'home-install') @('doctor', '--json') }
+    'doctor' { Invoke-Tavotto (Join-Path $Root 'home-install') @('doctor', '--json') -AllowFailure }
     'upgrade' {
         $h = Join-Path $Root 'home-install'
         Invoke-Tavotto $h @('upgrade')
