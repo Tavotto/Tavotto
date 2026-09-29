@@ -556,9 +556,69 @@ if cjk:
     assert png(fig) != before  # 方框换成了真的汉字
 plt.close(fig)
 
-# c) 放不开的（按名字找不回同一个文件）：原样不动，manifest 照实按那个文件报缺字，
+# c) 字重 / 字形归一到界面词表（「粗细」normal / bold、「字形」normal / italic）：
+#    Oblique 的文件写成 italic、只有一张 Light / Black 脸的族写成 normal / bold，
+#    仍然是同一个文件（像素逐字节相同）
+from fontTools.ttLib import TTFont
+
+
+def probe_face(family, sub, weight):
+    font = TTFont(os.path.join(TTF, "DejaVuSerif.ttf"))
+    font["OS/2"].usWeightClass = weight
+    names = {
+        1: family,
+        16: family,
+        2: sub,
+        17: sub,
+        4: family + " " + sub,
+        6: family.replace(" ", "") + "-" + sub,
+    }
+    for rec in font["name"].names:
+        if rec.nameID in names:
+            rec.string = names[rec.nameID]
+    out = os.path.join(tmp, (family + "-" + sub + ".ttf").replace(" ", ""))
+    font.save(out)
+    return out
+
+
+for path, style, weight in (
+    (os.path.join(TTF, "DejaVuSans-Oblique.ttf"), "italic", "normal"),
+    (probe_face("Tavotto Lone", "Light", 300), "normal", "normal"),
+    (probe_face("Tavotto Lone Black", "Black", 900), "normal", "bold"),
+):
+    fig, t = figure("Voltage 72.5 MPa", path)
+    before = png(fig)
+    overrides.ensure_figure_fallback(fig)
+    assert t.get_fontproperties().get_file() is None, path
+    assert (t.get_fontstyle(), str(t.get_fontweight())) == (style, weight), path
+    assert png(fig) == before, path
+    plt.close(fig)
+
+# 同族另有（装在系统里的）Regular：Light 按 normal 找回的是 Regular，换了就是另一张脸
+# ——留着 fname
+from matplotlib import font_manager
+
+font_manager.fontManager.addfont(probe_face("Tavotto Pair", "Regular", 400))
+fig, t = figure("Voltage", probe_face("Tavotto Pair", "Light", 300))
+overrides.ensure_figure_fallback(fig)
+assert t.get_fontproperties().get_file() is not None
+plt.close(fig)
+
+# d) 同一个相对 fname 在两个目录里是两个文件（native 会话两次 show 之间换了 cwd）：
+#    缓存不许把前一个目录的那张脸交给后一个
+for sub, name, weight in (("a", "DejaVuSerif.ttf", "normal"), ("b", "DejaVuSerif-Bold.ttf", "bold")):
+    os.makedirs(os.path.join(tmp, sub, "fonts"))
+    shutil.copyfile(os.path.join(TTF, name), os.path.join(tmp, sub, "fonts", "main.ttf"))
+    os.chdir(os.path.join(tmp, sub))
+    fig, t = figure("Voltage", os.path.join("fonts", "main.ttf"))
+    overrides.ensure_figure_fallback(fig)
+    assert t.get_fontproperties().get_file() is None, sub
+    assert str(t.get_fontweight()) == weight, (sub, t.get_fontweight())
+    plt.close(fig)
+
+# e) 放不开的（按名字找不回同一个文件）：原样不动，manifest 照实按那个文件报缺字，
 #    不许再说「回退链画出来了」
-overrides._FILE_FACE[os.path.join(TTF, "DejaVuSans-Oblique.ttf")] = None
+overrides._FILE_FACE[overrides._file_key(os.path.join(TTF, "DejaVuSans-Oblique.ttf"))] = None
 fig, t = figure("电压 MPa", os.path.join(TTF, "DejaVuSans-Oblique.ttf"))
 overrides.ensure_figure_fallback(fig)
 f = t.get_fontproperties().get_file()
@@ -573,10 +633,13 @@ print("OK")
 
 
 def test_fname_release_keeps_latin_pixels_and_reports_unreleasable_honestly():
-    """`overrides._release_font_file` 的三条边：
+    """`overrides._release_font_file` 的几条边：
 
     * 拉丁字：换成族名前后 PNG 逐字节相同（正文那张脸、字重、字形都没换）；
     * 字节相同的拷贝（项目里自带的字体文件）也换得开；
+    * Oblique / Light / Black 换成界面词表里的 italic / normal / bold，仍是同一个文件；
+      归一之后会换到别的文件的（同族有 Regular 的 Light）留着 fname；
+    * 相对 fname 换了 cwd 就是另一个文件，缓存按文件本身认；
     * 换不开的留着 fname，manifest 按那一个文件报缺字——不按族列表说「画出来了」。
     """
     out = subprocess.run(

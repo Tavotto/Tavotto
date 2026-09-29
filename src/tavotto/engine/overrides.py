@@ -697,9 +697,9 @@ def _family_chain(fam) -> list[str]:
     return head + [f for f in fallback_tail() if f not in head]
 
 
-#: 字体文件 → 能把它原样找回来的 (族名, style, variant, weight, stretch)；
-#: `None` 表示按名字找不回同一个文件，只能留着 fname。按进程缓存。
-_FILE_FACE: dict[str, tuple | None] = {}
+#: 字体文件身份（`_file_key`）→ 能把它原样找回来的 (族名, style, variant, weight,
+#: stretch)；`None` 表示按名字找不回同一个文件，只能留着 fname。按进程缓存。
+_FILE_FACE: dict[tuple, tuple | None] = {}
 
 
 def _same_file(a, b) -> bool:
@@ -707,6 +707,18 @@ def _same_file(a, b) -> bool:
         return os.path.samefile(os.fspath(a), os.fspath(b))
     except (OSError, TypeError):
         return False
+
+
+def _file_key(path: str) -> tuple:
+    """缓存键是**文件本身**，不是脚本写的那串路径：native 会话里两次 `plt.show()`
+    之间脚本可以换 cwd，同一个相对 fname（`fonts/main.ttf`）指的就是另一个文件；
+    同一个文件被原地换掉（字节变了）也要重新反查。"""
+    path = os.path.abspath(path)
+    try:
+        st = os.stat(path)
+    except OSError:
+        return (path,)
+    return (path, st.st_dev, st.st_ino, st.st_mtime_ns, st.st_size)
 
 
 def _face_of_font_file(path: str) -> tuple | None:
@@ -717,9 +729,17 @@ def _face_of_font_file(path: str) -> tuple | None:
     必须解析回**同一个文件（或字节相同的拷贝）的第 0 张脸**才算数——同名但版本
     不同的另一份、字重对不上的兄弟文件都会让正文那张脸变样，那种宁可不接回退，
     也不换掉拉丁字的脸（manifest 仍按那个文件照实报缺字）。
+
+    字重 / 字形**先归一到界面的词表**再反查：「粗细」只认 normal / bold、「字形」
+    只认 normal / italic（manifest 报的是 `str(get_fontweight())` /
+    `str(get_fontstyle())`），Light 的 300、Oblique 写进 Text 会让下拉一项都选不中。
+    归一之后仍然解析回同一个文件才放——同族里另有 Regular 的 Light 文件，按
+    normal 找到的是 Regular，于是留着 fname。
     """
-    if path in _FILE_FACE:
-        return _FILE_FACE[path]
+    key = _file_key(path)
+    if key in _FILE_FACE:
+        return _FILE_FACE[key]
+    path = key[0]
     hit = None
     if os.path.splitext(path)[1].lower() in (".ttf", ".otf", ".ttc"):
         from matplotlib import font_manager, ft2font
@@ -729,10 +749,11 @@ def _face_of_font_file(path: str) -> tuple | None:
             fm = font_manager.fontManager
             if not any(_same_file(e.fname, path) for e in fm.ttflist):
                 fm.addfont(path)
-            # 字重回成名字：界面的「粗细」下拉只认 normal / bold（manifest 报的是
-            # `str(get_fontweight())`），700 会让下拉一项都选不中；反查按数值也一样
-            weight = {400: "normal", 700: "bold"}.get(entry.weight, entry.weight)
-            face = (entry.name, entry.style, entry.variant, weight, entry.stretch)
+            w = entry.weight  # 新版是数值，老版可能是 'light' 这样的名字
+            w = font_manager.weight_dict.get(w, 400) if isinstance(w, str) else int(w)
+            weight = "bold" if w >= 600 else "normal"
+            style = "normal" if entry.style == "normal" else "italic"
+            face = (entry.name, style, entry.variant, weight, entry.stretch)
             probe = font_manager.FontProperties(
                 family=[face[0]], style=face[1], variant=face[2], weight=face[3], stretch=face[4]
             )
@@ -744,7 +765,7 @@ def _face_of_font_file(path: str) -> tuple | None:
                 hit = face
         except (OSError, RuntimeError, ValueError):  # 坏字体文件：留着 fname，照旧渲染
             hit = None
-    _FILE_FACE[path] = hit
+    _FILE_FACE[key] = hit
     return hit
 
 
