@@ -9,7 +9,8 @@
  *   2. 切进项目（`adoptOpenedProject`）回到这个项目上次那份排版；
  *   3. 导出默认值（1200 ppi）不因换 origin 退回 600；
  *   4. 后端没有这组端点（404：playground、嵌入画布、旧后端）时退回旧逻辑（localStorage）；
- *   5. 前端不再按本机 12 条 `docIndex` 发 DELETE 删磁盘槽位（换了 origin 的索引是空的）。
+ *   5. 前端不再按本机 12 条 `docIndex` 发 DELETE 删磁盘槽位（换了 origin 的索引是空的）；
+ *   6. 推给后端失败（非 404）的写入不丢：同一个 origin 下次启动时本机那条更新就以它为准并重推。
  */
 import { literal } from '@/i18n'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -28,6 +29,8 @@ const lastByProject = new Map<string, { doc_id: string; name: string; at: number
 let exportDefaults: unknown = null
 /** false = 这个后端没有 #715 的端点（旧后端 / playground），一律 404 */
 let sessionEndpoints = true
+/** true = 后端在，但写入回 500（sidecar 正在退出、瞬断） */
+let failSessionPuts = false
 const deletes: string[] = []
 let inFlight = 0
 
@@ -61,6 +64,7 @@ globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
   }
   if (u.pathname.startsWith('/api/layout-session') || u.pathname.startsWith('/api/preferences/')) {
     if (!sessionEndpoints) return json({ error: 'not found' }, 404)
+    if (failSessionPuts && method === 'PUT') return json({ error: 'boom' }, 500)
     if (u.pathname === '/api/layout-session' && method === 'GET') {
       return json({ last: lastByProject.get(pjOf(u, init)) ?? null })
     }
@@ -127,6 +131,7 @@ beforeEach(() => {
   lastByProject.clear()
   exportDefaults = null
   sessionEndpoints = true
+  failSessionPuts = false
   deletes.length = 0
 })
 
@@ -225,6 +230,60 @@ describe('后端没有这组端点（404）：退回旧逻辑', () => {
     mod.writeExportDefaults({ dpi: '900' })
     await mod.hydrateExportDefaults?.()
     expect(mod.readExportDefaults().dpi).toBe('900')
+  })
+})
+
+describe('推给后端失败的写入不丢（#719 Codex P1 / P2）', () => {
+  it('「上次开着的」推失败：同一个 origin 下次启动回到新的那份，并补推给后端', async () => {
+    const first = await boot()
+    await makeContentDoc(first, 'd_old', 'Fig old')
+    expect(lastByProject.get('p_a')?.doc_id).toBe('d_old')
+    failSessionPuts = true
+    await makeContentDoc(first, 'd_new', 'Fig new')
+    expect(lastByProject.get('p_a')?.doc_id).toBe('d_old') // 前提：后端那份还是旧的
+    failSessionPuts = false
+
+    const second = await boot() // 同一个 origin：本机缓存还在
+    await second.proj.useProjectStore
+      .getState()
+      .adoptOpenedProject({ open: true, id: 'p_a', figures_dir: '/figs/a' })
+    expect(second.doc.useDocumentStore.getState().documentId).toBe('d_new')
+    await settle()
+    expect(lastByProject.get('p_a')?.doc_id).toBe('d_new')
+  })
+
+  it('推失败之后后端又记了更新的（别处写的）：后端为准', async () => {
+    const first = await boot()
+    await makeContentDoc(first, 'd_old', 'Fig old')
+    failSessionPuts = true
+    await makeContentDoc(first, 'd_mine', 'Fig mine')
+    failSessionPuts = false
+    lastByProject.set('p_a', { doc_id: 'd_old', name: 'Fig old', at: Date.now() + 60_000 })
+
+    const second = await boot()
+    await second.proj.useProjectStore
+      .getState()
+      .adoptOpenedProject({ open: true, id: 'p_a', figures_dir: '/figs/a' })
+    expect(second.doc.useDocumentStore.getState().documentId).toBe('d_old')
+  })
+
+  it('导出默认值推失败：下次启动不被后端的旧值盖掉，并补推', async () => {
+    vi.resetModules()
+    const before = await import('@/lib/exportDefaults')
+    before.writeExportDefaults({ dpi: '600' })
+    await settle()
+    expect((exportDefaults as { dpi: string }).dpi).toBe('600')
+    failSessionPuts = true
+    before.writeExportDefaults({ dpi: '1200' })
+    await settle()
+    failSessionPuts = false
+
+    vi.resetModules()
+    const after = await import('@/lib/exportDefaults')
+    await after.hydrateExportDefaults()
+    await settle()
+    expect(after.readExportDefaults().dpi).toBe('1200')
+    expect((exportDefaults as { dpi: string }).dpi).toBe('1200')
   })
 })
 

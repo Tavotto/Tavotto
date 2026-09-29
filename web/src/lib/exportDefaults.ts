@@ -67,13 +67,40 @@ let remoteMissing = false
 /** 推给后端的写入串行：连着改两次，后发的必须后到。 */
 let remoteTail: Promise<void> = Promise.resolve()
 
-function pushRemote(value: ExportDefaults): void {
+/**
+ * 本机这份**还没被后端确认**：推送失败（非 404）时留着这个标记。下次 `hydrateExportDefaults()`
+ * 见到它就以本机为准并重推，不拿后端那份更旧的值盖掉用户刚改的 DPI / 格式（#719 Codex P2）。
+ * 值是写入时刻，只用来认「确认的是不是这一次」。
+ */
+const PENDING_KEY = 'tavotto.export.defaults.pending'
+
+function readPending(): string | null {
+  try {
+    return localStorage.getItem(PENDING_KEY)
+  } catch {
+    return null
+  }
+}
+
+function setPending(token: string | null): void {
+  try {
+    if (token === null) localStorage.removeItem(PENDING_KEY)
+    else localStorage.setItem(PENDING_KEY, token)
+  } catch {
+    /* 存不下：退化成改造前「失败即丢」 */
+  }
+}
+
+function pushRemote(value: ExportDefaults, token: string): void {
   if (remoteMissing) return
   remoteTail = remoteTail.then(() =>
     putExportDefaultsRemote(value).then(
-      () => undefined,
+      () => {
+        if (readPending() === token) setPending(null)
+      },
       (e: unknown) => {
         if (e instanceof ApiError && e.status === 404) remoteMissing = true
+        /* 其余失败：待确认标记留着，下次启动 hydrate 时重推 */
       },
     ),
   )
@@ -81,8 +108,10 @@ function pushRemote(value: ExportDefaults): void {
 
 export function writeExportDefaults(patch: Partial<ExportDefaults>): ExportDefaults {
   const next = { ...readExportDefaults(), ...patch }
+  const token = String(Date.now())
   writeCache(next)
-  pushRemote(next)
+  setPending(token)
+  pushRemote(next, token)
   return next
 }
 
@@ -94,6 +123,12 @@ export async function hydrateExportDefaults(): Promise<void> {
   await remoteTail
   const remote = await fetchExportDefaultsRemote()
   if (remote === undefined) return
+  // 本机有一次后端没确认的改动：本机为准，重推（它是这个 origin 上用户最后一次的意图）
+  const pending = readPending()
+  if (pending !== null) {
+    pushRemote(readExportDefaults(), pending)
+    return
+  }
   if (remote.defaults && typeof remote.defaults === 'object') {
     writeCache(remote.defaults)
     return
@@ -104,5 +139,9 @@ export async function hydrateExportDefaults(): Promise<void> {
   } catch {
     /* 读不了就没有可迁移的 */
   }
-  if (local) pushRemote(readExportDefaults())
+  if (local) {
+    const token = String(Date.now())
+    setPending(token)
+    pushRemote(readExportDefaults(), token)
+  }
 }

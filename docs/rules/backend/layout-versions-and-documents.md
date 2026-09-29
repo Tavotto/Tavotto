@@ -111,7 +111,9 @@
     语义在前端 `lib/exportDefaults.ts`）。都在 ADR 0008 认证之下，错误码复用 `bad_request`。
   - `PUT /api/autosave/<id>` 写成功后按 pj 记归属（`_record_autosave_owner`）：pj 指名的项目已经不在时**照写不拒**
     （那是用户的工作），归属记成「不知道」即不记；记不下只打日志。`DELETE` 与槽位清理删掉的槽位，
-    归属与指向它的 last 一并清；清理顺带丢掉磁盘上已不在的槽位的归属。
+    归属与指向它的 last 一并清；清理顺带丢掉磁盘上已不在的槽位的归属。清理删每个槽位走
+    `remove_slot_unless_protected`：**在会话状态锁里**重判「此刻是不是某组的 last」→ 删 → 忘掉记录，
+    `protected_doc_ids()` 只是快照，并发的 `set_last` 能在快照与删除之间把旧槽位记成新 last。
   - 教程重置 / 资源升级换副本（`_clear_tutorial_local_state`）一并清教程项目的 last 与教程画布槽位的归属（ADR 0039 §5）。
   - 看护 `tests/test_layout_session.py`。
 - 前端文档模型的对应字段（lockedGids / layoutGroups 等）见 `web/AGENTS.md`。

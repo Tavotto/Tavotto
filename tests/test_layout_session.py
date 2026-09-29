@@ -301,6 +301,37 @@ def test_pruning_never_deletes_a_projects_last_document(client, monkeypatch):
     assert (m.AUTOSAVE_DIR / "keep_last.json").is_file()
 
 
+def test_pruning_rechecks_protection_when_a_slot_becomes_last_after_the_snapshot(
+    client, monkeypatch
+):
+    """清理拿到「受保护」快照之后，另一个请求把最旧的那个槽位记成了某组的 last（并发标签页
+    切回旧排版）。删之前必须重判：槽位与刚写的 last 都要留着（#719 Codex P1）。"""
+    client.put("/api/autosave/old_one", json=PD)
+    os.utime(m.AUTOSAVE_DIR / "old_one.json", ns=(0, 10**9))
+    client.put("/api/autosave/mid", json=PD)
+    os.utime(m.AUTOSAVE_DIR / "mid.json", ns=(0, 2 * 10**9))
+    monkeypatch.setattr(m, "AUTOSAVE_KEEP_SLOTS", 1)  # 两份都在之后才收紧上限
+
+    real = layoutsession.protected_doc_ids
+    fired = []
+
+    def snapshot_then_race():
+        ids = real()
+        if not fired:
+            fired.append(1)
+            layoutsession.set_last(None, "old_one", "刚切回来的")  # 快照之后才落地
+        return ids
+
+    monkeypatch.setattr(layoutsession, "protected_doc_ids", snapshot_then_race)
+    client.put("/api/autosave/newest", json=PD)
+    assert fired, "前提：清理确实走到了拿快照那一步"
+    assert (m.AUTOSAVE_DIR / "old_one.json").is_file(), "快照之后成了 last 的槽位被删了"
+    assert (layoutsession.last_for(None) or {}).get("doc_id") == "old_one", "刚写的 last 被抹掉了"
+    # 没受保护的照常裁：mid 被删，归属跟着清
+    assert not (m.AUTOSAVE_DIR / "mid.json").exists()
+    assert "mid" not in layoutsession.owners()
+
+
 # ------------------------------- 教程重置 ------------------------------------
 
 
