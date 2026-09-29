@@ -14,7 +14,7 @@ import {
   type NativePending,
   type NativeSessionInfo,
 } from '@/lib/api'
-import { addRuntimePanel } from '@/store/actions'
+import { addRuntimePanelToCanvas } from '@/store/workspace'
 import { useDocumentStore } from '@/store/documentStore'
 import { useFigurePickerStore } from '@/store/figurePickerStore'
 import { useRenderStore } from '@/store/renderStore'
@@ -455,5 +455,5 @@ function placeNativeFigures(descriptors: CapturedFigureDescriptor[]): void {
     useSelectionStore.getState().set([already.id])
     return
   }
-  addRuntimePanel(only)
+  addRuntimePanelToCanvas(only)
 }

@@ -30,6 +30,8 @@ import { create } from 'zustand'
 import { msg } from '@/i18n'
 import { emitActivity } from '@/lib/activity'
 import { rescueFocus } from '@/lib/focusRescue'
+import type { CapturedFigureDescriptor, PanelInfo } from '@/lib/api'
+import { pageUnion } from '@/lib/panelPlacement'
 import { addPanel, addRuntimePanel, enterElementEdit } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
 import { activateCanvas } from '@/store/canvasSession'
@@ -37,7 +39,7 @@ import { useDocumentStore } from '@/store/documentStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
-import { useViewportStore } from '@/store/viewportStore'
+import { mmToWorld, useViewportStore } from '@/store/viewportStore'
 import type { CanvasObject, PanelObject } from '@/types/document'
 
 export type WorkspaceMode = 'fast_edit' | 'layout'
@@ -139,8 +141,17 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
  * **带上画布 id**：`openFastEdit` 会为了找到那张图切画布（`ensurePanel`），
  * 换了画布之后记下的那一片属于**上一张画布**，还回去就是把用户送到别处。
  * 这里的主语是「哪一张画布的、哪一刻的视口」，两者缺一不可。
+ *
+ * 另记两件回来时要比对的事（#706 评审 P2）：停放时的**页面尺寸**（快速编辑里从画布属性
+ * 改了 W / H 再改回原值，比的是最终尺寸，改回来就原样还原）；快速编辑期间**新加进这张
+ * 画布的图**（`added`，由 `frameAddedPanel` 记，回排版时再决定要不要取景它们）。
  */
-let parkedLayoutView: { canvasId: string; view: ViewTarget; pageResized?: boolean } | null = null
+let parkedLayoutView: {
+  canvasId: string
+  view: ViewTarget
+  page: { w: number; h: number }
+  added: string[]
+} | null = null
 
 interface ViewTarget {
   zoom: number
@@ -153,32 +164,106 @@ function parkLayoutView(): void {
   if (useWorkspaceStore.getState().mode === 'fast_edit') return
   const { zoom, panX, panY, viewW, viewH } = useViewportStore.getState()
   if (!viewW || !viewH) return
+  const { doc, activeCanvasId } = useDocumentStore.getState()
   parkedLayoutView = {
-    canvasId: useDocumentStore.getState().activeCanvasId,
+    canvasId: activeCanvasId,
     view: { zoom, panX, panY },
-  }
-}
-
-/**
- * 快速编辑期间这张画布的页面尺寸变了（画布属性里改 W / H、撤销重做）：记下的那一片
- * 是按旧页面取的景，还回去新页面可能被裁掉或缩成一小块（#706 评审 P2）。判「页面
- * 尺寸变了」只有 `startPageSizeFit` 一处，它在快速编辑里不动视口、改调这里留个记号，
- * 回排版时由 `returnToLayout` 按当前页面取景。记的那一片属于别的画布时不沾。
- */
-export function markParkedPageResized(): void {
-  if (parkedLayoutView?.canvasId === useDocumentStore.getState().activeCanvasId) {
-    parkedLayoutView.pageResized = true
+    page: { w: doc.page.w, h: doc.page.h },
+    added: [],
   }
 }
 
 /** 取出并清空；画布对不上就当没记过 */
-function takeParkedLayoutView(): { view: ViewTarget; pageResized: boolean } | null {
+function takeParkedLayoutView(): NonNullable<typeof parkedLayoutView> | null {
   const parked = parkedLayoutView
   parkedLayoutView = null
   if (!parked) return null
-  return parked.canvasId === useDocumentStore.getState().activeCanvasId
-    ? { view: parked.view, pageResized: parked.pageResized === true }
-    : null
+  return parked.canvasId === useDocumentStore.getState().activeCanvasId ? parked : null
+}
+
+type Box = { x: number; y: number; w: number; h: number }
+
+/** 按落点 `view` 看，这块矩形（mm）是否整张落在此刻的舞台里 */
+function boxInView(b: Box, view: ViewTarget): boolean {
+  const { viewW, viewH } = useViewportStore.getState()
+  if (!viewW || !viewH) return false
+  const left = mmToWorld(b.x) * view.zoom + view.panX
+  const top = mmToWorld(b.y) * view.zoom + view.panY
+  return (
+    left >= 0 &&
+    top >= 0 &&
+    left + mmToWorld(b.w) * view.zoom <= viewW &&
+    top + mmToWorld(b.h) * view.zoom <= viewH
+  )
+}
+
+/**
+ * 新加进画布的图怎么进视野——**只有这一处**判（#706 评审 P2：入口一多，逐个补必然
+ * 漏，还会各自踩到工作区模式与停放视口）。输入是工作区模式与停放的排版视口：
+ *
+ * - **排版上**：取景「页面 ∪ 这张图」并留在适应模式（`fitRectAnimated`）——软上限放置
+ *   下稍大的图会伸出页面，那截也要看得见；之后抽屉收起 / 窗口缩放 / 切标签再切回仍按
+ *   这块取景（2026-09-28 用户反馈）。拖放到一点是用户在屏幕上挑的位置：图整张已在视口
+ *   里就不动视口。
+ * - **快速编辑里**（选图对话框、脚本库、接入状态对话框在快编时加图，或 `openFastEdit`
+ *   打开一张还不在画布上的图）：那一屏框的是正在编辑的那张图，**不动视口**；只把这张
+ *   图记到停放的排版视口上，回排版时由 `layoutViewOnReturn` 一起判。于是 `openFastEdit`
+ *   停放的永远是加图之前那一片，与有没有补间动画无关。
+ */
+function frameAddedPanel(panel: PanelObject, dropped: boolean): void {
+  if (useWorkspaceStore.getState().mode === 'fast_edit') {
+    if (parkedLayoutView?.canvasId === useDocumentStore.getState().activeCanvasId) {
+      parkedLayoutView.added.push(panel.id)
+    }
+    return
+  }
+  const vp = useViewportStore.getState()
+  if (dropped && boxInView(panel, vp)) return
+  vp.fitRectAnimated(pageUnion(useDocumentStore.getState().doc.page, panel))
+}
+
+/**
+ * 回排版时视口落在哪（有停放记录时）。页面尺寸与停放时一样、快编期间也没加进伸出那一片
+ * 的图 → 原样还原（审计 T01）；页面尺寸变了（比最终尺寸：改了又改回来算没变）或新加的
+ * 图有一张不整张在那一片里 → 取景「页面 ∪ 新加的图」（没有新图就是按页面，与排版上直接
+ * 换尺寸的 `startPageSizeFit` 同一个落点）。
+ */
+function layoutViewOnReturn(parked: NonNullable<typeof parkedLayoutView>): void {
+  const { doc } = useDocumentStore.getState()
+  const vp = useViewportStore.getState()
+  const added = parked.added
+    .map((id) => doc.objects.find((o) => o.id === id))
+    .filter((o): o is CanvasObject => o != null)
+  const resized = doc.page.w !== parked.page.w || doc.page.h !== parked.page.h
+  if (!resized && added.every((o) => boxInView(o, parked.view))) {
+    vp.restoreView(parked.view)
+  } else if (added.length > 0) {
+    vp.fitRectAnimated(pageUnion(doc.page, ...added))
+  } else {
+    vp.fitAnimated(doc.page.w, doc.page.h)
+  }
+}
+
+/**
+ * 界面上「把一张图加到画布」的入口（选图对话框、脚本库、接入状态对话框、`tavotto run`
+ * 交接、舞台拖放）**一律走这两个**，不直接调 `actions.addPanel` / `addRuntimePanel`
+ * （那两个只管文档）——视口怎么动由 `frameAddedPanel` 一处判。`addPanelEntry.test.ts`
+ * 钉住没有别的模块直接调那两个 action。
+ */
+export function addPanelToCanvas(info: PanelInfo, atX?: number, atY?: number): PanelObject {
+  const panel = addPanel(info, atX, atY)
+  frameAddedPanel(panel, atX != null && atY != null)
+  return panel
+}
+
+export function addRuntimePanelToCanvas(
+  desc: CapturedFigureDescriptor,
+  atX?: number,
+  atY?: number,
+): PanelObject {
+  const panel = addRuntimePanel(desc, atX, atY)
+  frameAddedPanel(panel, atX != null && atY != null)
+  return panel
 }
 
 /** 当前快速编辑的那个面板对象；不在激活画布里就回 null */
@@ -224,6 +309,8 @@ export function findFigurePanel(
 /**
  * 素材 → 文档里的面板对象：有就用那一个（**绝不重复创建**），
  * 没有就通过既有的统一 action 添加。runtime 素材走它自己那条添加路径。
+ * **只管文档、不动视口**：新加的图怎么进视野由调用方在自己的时机调 `frameAddedPanel`
+ * （`openFastEdit` 要先停放排版视口，`addFigureToLayout` 要先回到排版）。
  */
 function ensurePanel(figureId: string): { panel: PanelObject; created: boolean } | null {
   const found = findFigurePanel(figureId)
@@ -265,7 +352,9 @@ export function openFastEdit(figureId: string): OpenFastEditOutcome {
     return 'missing'
   }
   const { panel, created } = got
+  // 先停放排版视口（`enterFastEdit`）、再判新加的图：停放的是加图之前那一片
   useWorkspaceStore.getState().enterFastEdit(panel.id)
+  if (created) frameAddedPanel(panel, false)
   // 「编辑原图」把还不在文档里的图加了进来——这一步必须说出口（结构上躲不掉：
   // 快速编辑的对象只能是文档里的面板对象，见文件头；但用户点的是"编辑"，看到
   // 的却是版本预览多了一个对象、问题面板多了一批问题，UI 审计 T06）。它是一条
@@ -310,10 +399,11 @@ export function addFigureToLayout(figureId: string): AddToLayoutOutcome {
       .setStatus(msg('fastEdit.figureMissing', { name: figureId }, 'workspace'), 'error')
     return 'missing'
   }
-  // 新加的图已由加图 action 取景「页面 ∪ 这张图」并留在适应模式（`actions.frameAddedPanel`）；
-  // 这里再 `revealRect` 会退出适应模式，抽屉一收页面就偏在一边（2026-09-28 用户反馈）。
-  // 已在文档里的只是聚焦、滚进视野
+  // 新加的图：先回到排版（`focusLayoutPanel` 里 `exitToLayout`），再由 `frameAddedPanel`
+  // 取景「页面 ∪ 这张图」并留在适应模式——`revealRect` 会退出适应模式，抽屉一收页面就
+  // 偏在一边（2026-09-28 用户反馈）。已在文档里的只是聚焦、滚进视野
   focusLayoutPanel(got.panel.id, { reveal: !got.created })
+  if (got.created) frameAddedPanel(got.panel, false)
   const name = got.panel.name ?? got.panel.fileId
   useUiStore
     .getState()
@@ -336,13 +426,8 @@ export function returnToLayout(): void {
   const parked = takeParkedLayoutView()
   if (!wasFastEdit) {
     // 一次什么都没切的「切换」：视口一个字不动
-  } else if (parked?.pageResized) {
-    // 进来之后换过页面尺寸：记下的那一片已经对不上新页面，按当前页面重新取景——
-    // 与排版上直接换尺寸（`startPageSizeFit`）同一个落点
-    const page = useDocumentStore.getState().doc.page
-    useViewportStore.getState().fitAnimated(page.w, page.h)
   } else if (parked) {
-    useViewportStore.getState().restoreView(parked.view)
+    layoutViewOnReturn(parked)
   } else if (panel) {
     revealPanel(panel)
   } else {

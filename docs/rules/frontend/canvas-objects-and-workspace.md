@@ -103,15 +103,20 @@
   另判。伸出去的那截由 `canvas/PageOutsideMask` 画淡（导出时 PDF 页框本来就裁掉它），
   页面轮廓压在内容之上——参考可画「页面即蒙版」，但只画淡不隐藏、不吃指针事件。遮罩是
   屏幕空间的四条 div 色带，**不用 svg**（e2e 有「舞台里第一个 svg / img」的等渲染定位）。
-  新建面板时取景「页面 ∪ 这张图」（`viewportStore.fitRectAnimated`）并**留在适应模式**
-  （之后素材抽屉收起、窗口缩放页面仍居中）。这一步在加图 action 里做
-  （`actions.frameAddedPanel`，`addPanel` / `addRuntimePanel` 共用），**不在入口里做**：
-  素材库、选图对话框、脚本库、接入状态对话框、`tavotto run` 交接各自调加图 action，
-  逐个入口补必然漏（#706 评审 P2 漏了三个）。拖放到一点时图整张已在视口里就不动视口。
-  `addFigureToLayout` 新建时不再 `revealRect`（那会退出适应模式）；只是聚焦已有面板时
-  照旧 `revealRect`。这块非页面的取景框随画布会话走（`viewportStore.fitFrame()` →
-  `canvasSession` 的 `fitFrame`，切回来 `fitRect` 瞬时还原）：会话只记 `fitted` 的话，
+  **新加的图怎么进视野只有一处判：`workspace.frameAddedPanel`**，输入是工作区模式与停放的
+  排版视口（#706 评审 P2 四条都出在入口分散上）。`actions.addPanel` / `addRuntimePanel`
+  只管文档、不碰视口；界面入口（选图对话框、脚本库、接入状态对话框、`tavotto run` 交接、
+  舞台拖放）一律走 `workspace.addPanelToCanvas` / `addRuntimePanelToCanvas`，
+  `store/addPanelEntry.test.ts` 扫源码钉住没有别的生产模块直接调那两个 action。
+  排版上：取景「页面 ∪ 这张图」（`fitRectAnimated`）并**留在适应模式**（之后抽屉收起、
+  窗口缩放页面仍居中）；拖放到一点、图整张已在视口里就不动视口。快速编辑里（对话框在快编
+  时加图，或 `openFastEdit` 打开一张还不在画布上的图）：**不动**正在编辑的那一屏，只把新图
+  记到停放的排版视口上（`openFastEdit` 先停放、再记，停放的永远是加图之前那一片，与有没有
+  补间无关）。停放记录同时记停放时的页面尺寸；回排版时（`layoutViewOnReturn`）页面尺寸比
+  **最终值**（快编里改了 W / H 又改回 / 撤销算没变）且新图都整张在停放那一片里 → 原样还原
+  （审计 T01），否则取景「页面 ∪ 新图」（没有新图就按新页面，与 `startPageSizeFit` 同一
+  落点）。`addFigureToLayout` 新建时先回排版再判，不 `revealRect`（那会退出适应模式）；只是
+  聚焦已有面板时照旧 `revealRect`。这块非页面的取景框随画布会话走（`viewportStore.fitFrame()`
+  → `canvasSession` 的 `fitFrame`，切回来 `fitRect` 瞬时还原）：会话只记 `fitted` 的话，
   切走再切回按页面重新适配，伸出页面那截被裁掉、之后窗口缩放也只按页面算；取景的就是
-  页面时存 null，回来按那时的页面算。快速编辑里改了页面尺寸，`startPageSizeFit` 不动
-  视口、只给停放的排版视口记一笔（`markParkedPageResized`），回排版时 `returnToLayout`
-  按新页面取景而不是还原旧页面下停放的那一片。
+  页面时存 null，回来按那时的页面算。
