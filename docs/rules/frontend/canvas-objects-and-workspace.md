@@ -105,4 +105,9 @@
   屏幕空间的四条 div 色带，**不用 svg**（e2e 有「舞台里第一个 svg / img」的等渲染定位）。
   「添加到画布」真的新建了面板时取景「页面 ∪ 这张图」（`viewportStore.fitRectAnimated`）
   并**留在适应模式**（之后素材抽屉收起、窗口缩放页面仍居中）；只是聚焦已有面板时照旧
-  `revealRect`。
+  `revealRect`。这块非页面的取景框随画布会话走（`viewportStore.fitFrame()` →
+  `canvasSession` 的 `fitFrame`，切回来 `fitRect` 瞬时还原）：会话只记 `fitted` 的话，
+  切走再切回按页面重新适配，伸出页面那截被裁掉、之后窗口缩放也只按页面算；取景的就是
+  页面时存 null，回来按那时的页面算。快速编辑里改了页面尺寸，`startPageSizeFit` 不动
+  视口、只给停放的排版视口记一笔（`markParkedPageResized`），回排版时 `returnToLayout`
+  按新页面取景而不是还原旧页面下停放的那一片。

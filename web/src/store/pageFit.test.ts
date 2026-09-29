@@ -61,6 +61,8 @@ describe('startPageSizeFit', () => {
     expect(vp().panX).toBeCloseTo(want.panX)
     expect(vp().panY).toBeCloseTo(want.panY)
     expect(vp().fitted).toBe(true)
+    // 取景的是页面本身：画布会话不存矩形，切回来按那时的页面算（#706 评审 P2）
+    expect(vp().fitFrame()).toBeNull()
   })
 
   it('撤销页面尺寸同样重新取景', () => {

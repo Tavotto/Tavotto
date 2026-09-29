@@ -454,6 +454,31 @@ test(
       })
     }, overflowPt)
     expect(dimmed, '伸出页面的部分应当被遮罩画淡').toBe(true)
+
+    // 取景矩形跟着画布会话走（#706 评审 P2）：切到新画布再切回，图仍整张在舞台里；
+    // 之后窗口缩放按同一块矩形重算，图也仍整张在舞台里。只记「在适应模式」的话切回来
+    // 按页面取景，伸出页面的那截会跑到舞台外
+    const inStage = async () => {
+      const b = (await obj.boundingBox())!
+      const g = (await stage.boundingBox())!
+      return (
+        b.x >= g.x - 0.5 &&
+        b.y >= g.y - 0.5 &&
+        b.x + b.width <= g.x + g.width + 0.5 &&
+        b.y + b.height <= g.y + g.height + 0.5
+      )
+    }
+    const tabs = page.locator('[data-canvas-tab]')
+    const first = await tabs.first().getAttribute('data-canvas-tab')
+    await page.locator('[data-new-canvas-tab]').click()
+    await expect(tabs).toHaveCount(2)
+    // 别的画布标签整层 display:none 但还挂在舞台里：数对象只数看得见的
+    await expect(obj.filter({ visible: true })).toHaveCount(0)
+    await page.locator(`[data-canvas-tab="${first}"]`).click()
+    await expect(obj.filter({ visible: true })).toHaveCount(1)
+    await expect.poll(inStage, { message: '切回画布后新加的图应当整张在舞台里' }).toBe(true)
+    await page.setViewportSize({ width: VIEWPORT.width - 200, height: VIEWPORT.height - 120 })
+    await expect.poll(inStage, { message: '窗口缩放后新加的图应当仍整张在舞台里' }).toBe(true)
   },
 )
 

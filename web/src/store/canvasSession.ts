@@ -1,7 +1,7 @@
 import { useDocumentStore } from './documentStore'
 import { useSelectionStore } from './selectionStore'
 import { useUiStore } from './uiStore'
-import { useViewportStore } from './viewportStore'
+import { type FitFrame, useViewportStore } from './viewportStore'
 
 /**
  * 每画布的 UI 会话：selection / 视口 / 图内编辑上下文 / 左右栏。
@@ -19,6 +19,12 @@ interface UiSession {
    * 否 → 原样落回 zoom / pan，视口是用户的。
    */
   fitted: boolean
+  /**
+   * 适应模式取景的是一块非页面矩形（加了伸出页面的图之后取景「页面 ∪ 图」）时记下它，
+   * 回来按它重新适配、之后舞台尺寸变化也按它算；取景页面时为 null，回来按此刻的页面算
+   * （#706 评审 P2）。
+   */
+  fitFrame: FitFrame | null
   elementPanelId: string | null
   selectedGids: string[]
   leftOpen: boolean
@@ -36,6 +42,7 @@ function capture(canvasId: string): void {
     panX: vp.panX,
     panY: vp.panY,
     fitted: vp.fitted,
+    fitFrame: vp.fitFrame(),
     elementPanelId: ui.elementPanelId,
     selectedGids: ui.selectedGids,
     leftOpen: ui.leftOpen,
@@ -67,7 +74,8 @@ function restore(canvasId: string): void {
   // 适应模式是每张画布各自的：直写 zoom / pan 会把上一张画布的 `fitted` / `lastFit`
   // 原样留下，下一次侧栏开合就按别的画布的取景框把还原出来的视口重算掉
   const vp = useViewportStore.getState()
-  if (saved.fitted) vp.fit(doc.page.w, doc.page.h)
+  if (saved.fitted && saved.fitFrame) vp.fitRect(saved.fitFrame, saved.fitFrame.padding)
+  else if (saved.fitted) vp.fit(doc.page.w, doc.page.h)
   else vp.setView({ zoom: saved.zoom, panX: saved.panX, panY: saved.panY })
   useUiStore.setState({ leftOpen: saved.leftOpen, rightOpen: saved.rightOpen })
 }

@@ -361,4 +361,39 @@ describe('fitRectAnimated', () => {
     expect(s.panX).toBeCloseTo(want.panX)
     expect(s.panY).toBeCloseTo(want.panY)
   })
+
+  // #706 评审 P2：会话只记 `fitted` 时，切走再切回按页面重新适配，伸出页面的那截图被裁掉，
+  // 之后窗口缩放也只按页面算
+  it('切画布标签再切回：仍按那块矩形取景；之后舞台变尺寸也按它重算', async () => {
+    setReducedMotion(true)
+    await useDocumentStore.getState().switchDocument(emptyProject(), 'd_fitrect')
+    useViewportStore.getState().setViewRect(VIEW)
+    const c1 = useDocumentStore.getState().activeCanvasId
+    const { w, h } = useDocumentStore.getState().doc.page
+    const rect = { x: -10, y: -5, w: w + 20, h: h + 10 } // 页面 ∪ 伸出左上的一张图
+    useViewportStore.getState().fitRectAnimated(rect)
+
+    const c2 = createCanvasAndActivate()
+    expect(useViewportStore.getState().fitFrame(), '新画布取景的是页面').toBeNull()
+    activateCanvas(c1)
+    let want = expected(VIEW.width, VIEW.height, rect)
+    let s = useViewportStore.getState()
+    expect(s.fitted).toBe(true)
+    expect(s.zoom).toBeCloseTo(want.zoom)
+    expect(s.panX).toBeCloseTo(want.panX)
+    expect(s.panY).toBeCloseTo(want.panY)
+
+    useViewportStore.getState().setViewRect({ ...VIEW, width: 1100 })
+    want = expected(1100, VIEW.height, rect)
+    s = useViewportStore.getState()
+    expect(s.zoom).toBeCloseTo(want.zoom)
+    expect(s.panX).toBeCloseTo(want.panX)
+    expect(s.panY).toBeCloseTo(want.panY)
+
+    // 取景页面的那张画布回来仍按页面算，不沾 c1 的矩形
+    activateCanvas(c2)
+    want = expected(1100, VIEW.height, { x: 0, y: 0, w, h })
+    expect(useViewportStore.getState().zoom).toBeCloseTo(want.zoom)
+    expect(useViewportStore.getState().panX).toBeCloseTo(want.panX)
+  })
 })
