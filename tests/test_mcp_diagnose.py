@@ -632,6 +632,27 @@ def test_pip_index_reads_the_interpreters_site_config(tmp_path, monkeypatch):
     assert got == {"url": ALIYUN, "source": str(site), "mirror": True}
 
 
+def test_an_existing_pip_config_file_suppresses_user_level_configs(tmp_path):
+    """照 pip：`PIP_CONFIG_FILE` 指向存在的文件时不读用户级配置（Codex #724）——用户目录里旧的镜像
+    配置不许让我们报「镜像」、把 `pipx upgrade` 从恢复步骤里拿掉。文件不存在时用户级照读。"""
+    home = tmp_path / "home"
+    user_conf = home / ("pip/pip.ini" if os.name == "nt" else ".config/pip/pip.conf")
+    user_conf.parent.mkdir(parents=True)
+    user_conf.write_text("[global]\nindex-url = " + ALIYUN + "\n", encoding="utf-8")
+    explicit = tmp_path / "explicit.conf"
+    explicit.write_text("[global]\ntimeout = 30\n", encoding="utf-8")
+    base = {
+        "HOME": str(home),
+        "USERPROFILE": str(home),
+        "XDG_CONFIG_DIRS": str(tmp_path / "nowhere"),
+        "XDG_CONFIG_HOME": str(home / ".config"),
+    }
+    assert launcher.pip_index({**base, "PIP_CONFIG_FILE": str(explicit)}) is None
+    missing = tmp_path / "missing.conf"
+    got = launcher.pip_index({**base, "PIP_CONFIG_FILE": str(missing)})
+    assert got and got["mirror"] is True and got["source"] == str(user_conf)
+
+
 def test_upgrade_commands_follow_the_mirror_verdict():
     plain = launcher.upgrade_commands("0.17.0", None)
     assert plain[0] == "pipx upgrade tavotto"
@@ -675,10 +696,15 @@ def test_pip_index_reads_the_store_pythons_virtualized_config(tmp_path):
     got = launcher.pip_index(base)
     assert got == {"url": ALIYUN, "source": str(ini), "mirror": True}
 
-    # 普通配置说 PyPI、商店版那份说镜像 → 仍报镜像（宁可多给一个 --index-url）
-    conf = tmp_path / "pip.conf"
+    # 普通（用户级）配置说 PyPI、商店版那份说镜像 → 仍报镜像（宁可多给一个 --index-url）
+    conf = tmp_path / ("pip/pip.ini" if os.name == "nt" else ".config/pip/pip.conf")
+    conf.parent.mkdir(parents=True, exist_ok=True)
     conf.write_text("[global]\nindex-url = https://pypi.org/simple\n", encoding="utf-8")
-    assert launcher.pip_index({**base, "PIP_CONFIG_FILE": str(conf)})["mirror"] is True
+    assert launcher.pip_index(base)["mirror"] is True
+    # PIP_CONFIG_FILE 指着存在的文件时 pip 不读用户级配置——商店版那份也是用户级的，同样不算
+    explicit = tmp_path / "explicit.conf"
+    explicit.write_text("[global]\nindex-url = https://pypi.org/simple\n", encoding="utf-8")
+    assert launcher.pip_index({**base, "PIP_CONFIG_FILE": str(explicit)})["mirror"] is False
 
     got = launcher.pip_index({**base, "PIP_INDEX_URL": "https://pypi.org/simple"})
     assert got == {"url": "https://pypi.org/simple", "source": "PIP_INDEX_URL", "mirror": False}

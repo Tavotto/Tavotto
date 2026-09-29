@@ -653,7 +653,7 @@ def _dist_version(python: str, timeout: float = 15.0) -> "str | None":
     """这个解释器里装的 tavotto 分发版本；没装 / 起不来 / 超时回 None（= 不知道）。"""
     try:
         proc = subprocess.run(
-            [python, "-c", _DIST_VERSION],
+            [python, "-B", "-c", _DIST_VERSION],
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             timeout=timeout,
@@ -697,17 +697,23 @@ _PYPI_HOSTS = ("pypi.org", "www.pypi.org", "pypi.python.org")
 def _pip_config_files(environ) -> "list[str]":
     """pip 读配置文件的位置，**按 pip 的加载顺序**（后读的覆盖先读的）：全局 → 旧式用户
     → 用户 → site（本解释器 `sys.prefix` 下的 `pip.conf` / `pip.ini`，`pip config --site` 写的那份）
-    → `PIP_CONFIG_FILE`。只列路径，存不存在由调用方查。"""
+    → `PIP_CONFIG_FILE`。只列路径，存不存在由调用方查。
+
+    照 pip 的 `Configuration.iter_config_files`：`PIP_CONFIG_FILE` 指向一个**存在的**文件时，用户级
+    配置（旧式与当前）整个不读——全局、site 与那份文件照读（Codex #724）。"""
     files: "list[str]" = []
+    extra = (environ.get("PIP_CONFIG_FILE") or "").strip()
+    load_user = not (extra and os.path.isfile(extra))
     home = environ.get("USERPROFILE" if os.name == "nt" else "HOME") or os.path.expanduser("~")
+    user: "list[str]" = []
     if os.name == "nt":
         programdata = environ.get("PROGRAMDATA") or environ.get("ALLUSERSPROFILE")
         if programdata:
             files.append(os.path.join(programdata, "pip", "pip.ini"))
-        files.append(os.path.join(home, "pip", "pip.ini"))
+        user.append(os.path.join(home, "pip", "pip.ini"))
         appdata = environ.get("APPDATA")
         if appdata:
-            files.append(os.path.join(appdata, "pip", "pip.ini"))
+            user.append(os.path.join(appdata, "pip", "pip.ini"))
     else:
         for d in (environ.get("XDG_CONFIG_DIRS") or "/etc/xdg").split(":"):
             if d:
@@ -715,15 +721,16 @@ def _pip_config_files(environ) -> "list[str]":
         if sys.platform == "darwin":
             files.append("/Library/Application Support/pip/pip.conf")
         files.append("/etc/pip.conf")
-        files.append(os.path.join(home, ".pip", "pip.conf"))
+        user.append(os.path.join(home, ".pip", "pip.conf"))
         if sys.platform == "darwin":
-            files.append(os.path.join(home, "Library", "Application Support", "pip", "pip.conf"))
+            user.append(os.path.join(home, "Library", "Application Support", "pip", "pip.conf"))
         xdg = environ.get("XDG_CONFIG_HOME") or os.path.join(home, ".config")
-        files.append(os.path.join(xdg, "pip", "pip.conf"))
+        user.append(os.path.join(xdg, "pip", "pip.conf"))
+    if load_user:
+        files.extend(user)
     # site 配置：pip 按**跑它的那个解释器**的 sys.prefix 找（venv 里 `pip config --site` 配的镜像就在
     # 这里）。`pip_index_of` 在目标解释器里跑本函数，sys.prefix 正是那个环境（Codex #724 P2）
     files.append(os.path.join(sys.prefix, "pip.ini" if os.name == "nt" else "pip.conf"))
-    extra = (environ.get("PIP_CONFIG_FILE") or "").strip()
     if extra:
         files.append(extra)
     return files
@@ -828,7 +835,12 @@ def pip_index(environ=None) -> "dict | None":
     from_env = (env.get("PIP_INDEX_URL") or "").strip()
     if from_env:
         url, source = from_env, "PIP_INDEX_URL"
-    elif read_files and not (url and _is_mirror(url)):
+    elif (
+        read_files
+        and not (url and _is_mirror(url))
+        # 商店版的虚拟化配置是用户级的：PIP_CONFIG_FILE 指着存在的文件时 pip 不读用户级配置
+        and not os.path.isfile((env.get("PIP_CONFIG_FILE") or "").strip())
+    ):
         for path in _store_python_pip_configs(env):
             found = _index_url_in(path)
             if found and _is_mirror(found):
