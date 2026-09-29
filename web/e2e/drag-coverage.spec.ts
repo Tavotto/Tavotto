@@ -140,14 +140,19 @@ async function enterFigure(page: Page) {
 
 /**
  * 被测对象：按下的那个元素（`gid`，在它**此刻**的框里按 `at` 比例处按下）与该量的 SVG 组
- * （`measure`；色条的几何代理到色条轴）。`at` 选在只落在它身上的地方。
+ * （`measure`；色条的几何代理到色条轴）。`at` 选在只落在它身上的地方。`dir` 是拖动方向
+ * （各分量 1 / 0 / -1，默认右下）：贴着图边的对象往里拖或不在那一维上拖——子图 / 色条贴到
+ * 图边会被钳住（`axesMove`，按设计），往外拖量到的是钳位，不是落点。
  */
-const TARGETS: { name: string; gid: string; measure: string; at: [number, number] }[] = [
+const TARGETS: { name: string; gid: string; measure: string; at: [number, number]; dir?: [number, number] }[] = [
   { name: 'AnchoredText 角标', gid: 'axes_0.artists_0', measure: 'axes_0.artists_0', at: [0.5, 0.5] },
   { name: 'AnnotationBbox 文字框', gid: 'axes_1.artists_0', measure: 'axes_1.artists_0', at: [0.5, 0.5] },
   { name: '插图（ax.inset_axes）', gid: 'axes_3', measure: 'axes_3', at: [0.2, 0.25] },
-  // 色条轴那个 <g> 连着右边的刻度文字：按在左边那一截（色带本身）上
-  { name: 'constrained 色条', gid: 'axes_2', measure: 'axes_2', at: [0.12, 0.5] },
+  // 色条轴那个 <g> 连着右边的刻度文字：按在左边那一截（色带本身）上。它贴着图的右边、上下
+  // 几乎顶满，只往左拖（合并队列 posix-e2e / windows-exe-smoke：往右拖 24 px 时右边只剩
+  // 23.5 px 的余量，钳住 0.54 px，落点误差 0.753 > 0.75；本机同一视口右边余量 0.8 px，往下
+  // 拖的余量也只多 0.8 px）。y 照量：不拖的那一维也不许动
+  { name: 'constrained 色条', gid: 'axes_2', measure: 'axes_2', at: [0.12, 0.5], dir: [-1, 0] },
   { name: '圆角框 FancyBboxPatch', gid: 'axes_0.patches_0', measure: 'axes_0.patches_0', at: [0.5, 0.5] },
   { name: '图例', gid: 'axes_0.legend', measure: 'axes_0.legend', at: [0.3, 0.5] },
 ]
@@ -181,10 +186,22 @@ test('图里的框与图：锚定框 / 插框 / 插图 / 色条 / 圆角框 / �
     const o0 = (await boxOf(page, by))!
     const sx = press.x + t.at[0] * press.w
     const sy = press.y + t.at[1] * press.h
+    const [ux, uy] = t.dir ?? [1, 1]
+    const dx = ux * DX
+    const dy = uy * DY
+    // 前提：拖动方向上离图边的余量够（组框 ⊇ 子图框，按组框量偏保守）。不够的话图边会把它
+    // 钳住，下面量到的是钳位而不是落点——换拖动方向，别放宽预算
+    const fig = (await page.locator('[data-element-svg] > svg').boundingBox())!
+    const room = [
+      ux > 0 ? fig.x + fig.width - (b0.x + b0.w) : b0.x - fig.x,
+      uy > 0 ? fig.y + fig.height - (b0.y + b0.h) : b0.y - fig.y,
+    ]
+    if (ux) expect(room[0], `${t.name}：x 方向离图边的余量（px）不够拖 ${DX} px`).toBeGreaterThan(DX + 2)
+    if (uy) expect(room[1], `${t.name}：y 方向离图边的余量（px）不够拖 ${DY} px`).toBeGreaterThan(DY + 2)
 
     await page.mouse.move(sx, sy)
     await page.mouse.down()
-    for (let i = 1; i <= 8; i++) await page.mouse.move(sx + (DX * i) / 8, sy + (DY * i) / 8)
+    for (let i = 1; i <= 8; i++) await page.mouse.move(sx + (dx * i) / 8, sy + (dy * i) / 8)
     await page.waitForTimeout(150)
     // ① 拖动途中：SVG 组已经跟着手走了（预览平面），还没有任何渲染回来
     const mid = (await boxOf(page, t.measure))!
@@ -192,8 +209,8 @@ test('图里的框与图：锚定框 / 插框 / 插图 / 色条 / 圆角框 / �
     // ② 松手、权威成图之后：落点
     const b1 = (await boxOf(page, t.measure))!
     const o1 = (await boxOf(page, by))!
-    const err = [b1.x - b0.x - DX, b1.y - b0.y - DY]
-    const pre = [mid.x - b0.x - DX, mid.y - b0.y - DY]
+    const err = [b1.x - b0.x - dx, b1.y - b0.y - dy]
+    const pre = [mid.x - b0.x - dx, mid.y - b0.y - dy]
     const drift = Math.max(Math.abs(o1.x - o0.x), Math.abs(o1.y - o0.y), Math.abs(o1.w - o0.w), Math.abs(o1.h - o0.h))
     // ③ 撤销一次回原处
     // 撤销回到的那一版可能直接取自渲染缓存（不发请求）：按画面等，等不到就是没回去
@@ -208,7 +225,7 @@ test('图里的框与图：锚定框 / 插框 / 插图 / 色条 / 圆角框 / �
     await page.waitForTimeout(400)
     const undoErr = await away(b0)
     const row =
-      `${t.name}（${t.gid}）预览误差=(${pre.map((v) => v.toFixed(2))}) 落点误差=(${err.map((v) => v.toFixed(2))}) px ` +
+      `${t.name}（${t.gid}）余量=(${room.map((v) => v.toFixed(1))}) px 预览误差=(${pre.map((v) => v.toFixed(2))}) 落点误差=(${err.map((v) => v.toFixed(2))}) px ` +
       `别的子图漂移=${drift.toFixed(2)} px 撤销误差=${undoErr.toFixed(2)} px`
     rows.push(row)
     console.log(`[drag-coverage e2e] ${row}`)
