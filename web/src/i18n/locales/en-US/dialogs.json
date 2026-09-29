@@ -614,6 +614,18 @@
       "notBold": "Not bold",
       "italic": "Italic",
       "notItalic": "Not italic"
+    },
+    "faceHint": {
+      "weight": {
+        "unset": "Bold: not set — applying keeps each figure’s own weight (click to make bold)",
+        "on": "Bold: on (click to make it never bold)",
+        "off": "Bold: never bold — applying removes bold from figures (click to go back to not set)"
+      },
+      "style": {
+        "unset": "Italic: not set — applying keeps each figure’s own slant (click to make italic)",
+        "on": "Italic: on (click to make it never italic)",
+        "off": "Italic: never italic — applying removes italics from figures (click to go back to not set)"
+      }
     }
   },
   "readiness": {

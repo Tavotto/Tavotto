@@ -239,14 +239,18 @@ function TextRowEditor({
   const anySet = paths.some((p) => p && readPath(draft, p) !== undefined)
   const range = NUMBER_SPEC[leaf(row.size)]
   const sizeSet = typeof size === 'number' && Number.isFinite(size)
+  // 粗 / 斜体三态：未设置（应用时保留图里原样）→ 开 → 显式关（应用时一律去掉：图内写 `normal`、
+  // 画布标注写 false）→ 回到未设置。「关」与「未设置」应用起来不是一回事，所以看得出来：未设置用
+  // 与面板「多个值」同一副第三态视觉（按钮下一道短横、`aria-pressed="mixed"`），名字换成「未设置」
   const face = (which: 'weight' | 'style', path: string | null, on: boolean | null) =>
     path && (
       <span className="contents" data-style-face={`${row.id}.${which}`}>
         <StyleToggle
-          state={on ? 'on' : 'off'}
+          state={on === null ? 'mixed' : on ? 'on' : 'off'}
+          mixedText={st('unset')}
           label={sp(which === 'weight' ? 'boldOf' : 'italicOf', { row: label })}
-          hint={faceHint(which, on)}
-          onClick={() => onSet(path, faceValue(row.kind, which, !on))}
+          hint={st(`faceHint.${which}.${on === null ? 'unset' : on ? 'on' : 'off'}`)}
+          onClick={() => (on === false ? onClear([path]) : onSet(path, faceValue(row.kind, which, on === null)))}
         >
           {which === 'weight' ? <Bold size={ICON_SIZE.sm} /> : <Italic size={ICON_SIZE.sm} />}
         </StyleToggle>
@@ -289,19 +293,6 @@ function TextRowEditor({
       </div>
     </SettingRow>
   )
-}
-
-/** 粗 / 斜体开关悬停时补一句当前值（与面板同一套 `textBar.*` 字） */
-function faceHint(which: 'weight' | 'style', on: boolean | null): string {
-  const tb = (key: string, values?: Record<string, unknown>) =>
-    translate(`textBar.${key}`, { ns: 'inspector', ...(values ?? {}) })
-  const value =
-    on === null
-      ? st('unset')
-      : which === 'weight'
-        ? tb(on ? 'weightBold' : 'weightNormal')
-        : tb(on ? 'styleItalic' : 'styleNormal')
-  return tb(which === 'weight' ? 'boldWeight' : 'italicStyle', { value })
 }
 
 function LineRowEditor({

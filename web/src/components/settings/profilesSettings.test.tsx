@@ -604,6 +604,78 @@ describe('样式页与左栏样式面板同一张行表：字体 / 字号 / 粗�
     })
   })
 
+  it('粗 / 斜体三态看得出来：未设置（第三态）/ 开 / 显式关；点击 未设置 → 开 → 关 → 未设置，未设置不写键', async () => {
+    const saves = await editUserStyle()
+    const state = (row: string, which: 'weight' | 'style') => ({
+      pressed: toggle(row, which)!.getAttribute('aria-pressed'),
+      name: toggle(row, which)!.getAttribute('aria-label'),
+      // 第三态的短横（与面板「多个值」同一副视觉）
+      bar: !!toggle(row, which)!.querySelector('span[aria-hidden]'),
+    })
+    // 未设置：aria-pressed=mixed、有短横、读屏说「未设置」而不是「多个值」
+    expect(state('title', 'weight')).toEqual({ pressed: 'mixed', name: '标题加粗 · 未设置', bar: true })
+    await act(async () => toggle('title', 'weight')!.click())
+    expect(state('title', 'weight')).toEqual({ pressed: 'true', name: '标题加粗', bar: false })
+    await act(async () => toggle('title', 'weight')!.click())
+    // 显式关：与未设置看得出不同（没有短横、aria-pressed=false）
+    expect(state('title', 'weight')).toEqual({ pressed: 'false', name: '标题加粗', bar: false })
+    await act(async () => toggle('title', 'weight')!.click())
+    expect(state('title', 'weight')).toEqual({ pressed: 'mixed', name: '标题加粗 · 未设置', bar: true })
+    // 草稿回到原样：未设置不写键（也不留 `title: {}` 空壳）
+    expect(byText('保存')!.disabled).toBe(true)
+
+    // 各态写进样式的值：图内 开 = bold / italic、关 = normal；画布标注 开 = true、关 = false
+    await act(async () => toggle('axis_label', 'weight')!.click())
+    await act(async () => toggle('legend', 'style')!.click())
+    await act(async () => toggle('legend', 'style')!.click())
+    await act(async () => toggle('annotation', 'weight')!.click())
+    await act(async () => toggle('annotation', 'style')!.click())
+    await act(async () => toggle('annotation', 'style')!.click())
+    expect(state('legend', 'style').pressed).toBe('false')
+    expect(state('annotation', 'style').pressed).toBe('false')
+    await act(async () => {
+      byText('保存')!.click()
+    })
+    expect(saves[0]).toEqual({
+      element: {
+        line: { linewidth: 1.25 },
+        axis_label: { weight: 'bold' },
+        legend_text: { style: 'normal' },
+      },
+      annotation: { bold: true, italic: false },
+      pt_basis: 'page',
+    })
+  })
+
+  it('粗 / 斜体的悬停说明三态各一句，并说清应用时会怎样', async () => {
+    await editUserStyle()
+    const tipOf = async () => {
+      const btn = toggle('title', 'weight')!
+      await act(async () => {
+        btn.focus()
+        btn.dispatchEvent(new FocusEvent('focus', { bubbles: false }))
+        btn.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
+      })
+      const text = document.querySelector('[role="tooltip"]')?.textContent ?? ''
+      await act(async () => {
+        btn.blur()
+        btn.dispatchEvent(new FocusEvent('blur', { bubbles: false }))
+        btn.dispatchEvent(new FocusEvent('focusout', { bubbles: true }))
+      })
+      return text
+    }
+    const tips: string[] = []
+    for (let i = 0; i < 3; i++) {
+      tips.push(await tipOf())
+      await act(async () => toggle('title', 'weight')!.click())
+    }
+    expect(tips).toEqual([
+      '粗体：未设置——应用时保留图里原来的粗细（点一下改为加粗）',
+      '粗体：加粗（点一下改为一律不加粗）',
+      '粗体：一律不加粗——应用时去掉图里的加粗（点一下回到未设置）',
+    ])
+  })
+
   it('先改字号再选字体：两样都留着（字体下拉按数据 memo，回调里不能捏着旧草稿）', async () => {
     const saves = await editUserStyle()
     await typeInto(input('标题字号')!, '10')
