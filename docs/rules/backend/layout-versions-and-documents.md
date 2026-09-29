@@ -114,6 +114,8 @@
     归属与指向它的 last 一并清；清理顺带丢掉磁盘上已不在的槽位的归属。清理删每个槽位走
     `remove_slot_unless_protected`：**在会话状态锁里**重判「此刻是不是某组的 last」→ 删 → 忘掉记录，
     `protected_doc_ids()` 只是快照，并发的 `set_last` 能在快照与删除之间把旧槽位记成新 last。
+    丢「磁盘上已不在的槽位」的归属同理：扫描快照只挑候选，`drop_owners_not_in` 在锁里当场再看文件
+    （快照之后并发保存刚建出的槽位不丢归属，否则它永远不进配额）。
   - 教程重置 / 资源升级换副本（`_clear_tutorial_local_state`）一并清教程项目的 last 与教程画布槽位的归属（ADR 0039 §5）。
   - 看护 `tests/test_layout_session.py`。
 - 前端文档模型的对应字段（lockedGids / layoutGroups 等）见 `web/AGENTS.md`。

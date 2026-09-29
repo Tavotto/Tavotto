@@ -360,6 +360,23 @@ describe('推给后端失败的写入不丢（#719 Codex P1 / P2）', () => {
     expect((exportDefaults as { dpi: string }).dpi).toBe('1200')
   })
 
+  it('升级迁移（后端没记过、本机有旧记录）推失败：留待确认，下次读补推', async () => {
+    localStorage.setItem('tavotto.projectDoc.p_a', JSON.stringify({ id: 'd_legacy', name: 'legacy' }))
+    vi.resetModules()
+    const docs = await import('@/lib/projectDocs')
+    failSessionPuts = true
+    expect(await docs.loadProjectDocument('p_a')).toEqual({ id: 'd_legacy', name: 'legacy' })
+    await settle()
+    failSessionPuts = false
+    expect(lastByProject.get('p_a')).toBeUndefined() // 前提：迁移那次没推上去
+    expect(JSON.parse(localStorage.getItem('tavotto.projectDoc.p_a')!).pendingGen).toBeTruthy()
+    vi.resetModules()
+    const again = await import('@/lib/projectDocs')
+    expect(await again.loadProjectDocument('p_a')).toEqual({ id: 'd_legacy', name: 'legacy' })
+    await settle()
+    expect(lastByProject.get('p_a')?.doc_id).toBe('d_legacy')
+  })
+
   it('导出默认值推失败：下次启动不被后端的旧值盖掉，并补推', async () => {
     vi.resetModules()
     const before = await import('@/lib/exportDefaults')

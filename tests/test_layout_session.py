@@ -332,6 +332,24 @@ def test_pruning_rechecks_protection_when_a_slot_becomes_last_after_the_snapshot
     assert "mid" not in layoutsession.owners()
 
 
+def test_pruning_does_not_drop_the_owner_of_a_slot_created_after_its_scan(client, monkeypatch):
+    """清理扫目录之后、丢「磁盘上已不在的槽位的归属」之前，并发的自动保存刚建出槽位并记了归属：
+    按扫描快照丢会让它永远没有归属、从此不进配额。丢之前要当场再看文件（#719 Codex P2）。"""
+    client.put("/api/autosave/older", json=PD)
+    real_scandir = m.os.scandir
+
+    def scandir_missing_fresh(path):
+        # 模拟「扫描发生在 fresh 落盘之前」：这次扫描看不到它
+        return [e for e in real_scandir(path) if e.name != "fresh.json"]
+
+    client.put("/api/autosave/fresh", json=PD)
+    assert "fresh" in layoutsession.owners()
+    monkeypatch.setattr(m.os, "scandir", scandir_missing_fresh)
+    client.put("/api/autosave/older", json=PD)  # 触发一次清理，扫描快照里没有 fresh
+    assert (m.AUTOSAVE_DIR / "fresh.json").is_file()
+    assert "fresh" in layoutsession.owners(), "扫描之后才出现的槽位被丢了归属"
+
+
 # ------------------------------- 教程重置 ------------------------------------
 
 

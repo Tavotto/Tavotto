@@ -7327,7 +7327,10 @@ def _prune_autosave_slots(keep: Path) -> list[str]:
     try:
         owned = engine_layoutsession.owners()
         protected = engine_layoutsession.protected_doc_ids()
-        engine_layoutsession.drop_owners_not_in({path.stem for _m, _s, path in rows})
+        engine_layoutsession.drop_owners_not_in(
+            {path.stem for _m, _s, path in rows},
+            lambda doc_id: (AUTOSAVE_DIR / f"{doc_id}.json").is_file(),
+        )
     except OSError:
         return []
     rows = [r for r in rows if r[2].stem in owned and r[2].stem not in protected]

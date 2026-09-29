@@ -164,7 +164,13 @@ export async function loadProjectDocument(projectId: string): Promise<ProjectDoc
   const remote = await fetchRemoteProjectDocument(projectId)
   if (remote) return remote
   const local = readProjectDocument(projectId)
-  if (remote === null && local) pushRemote(projectId, local, readPending(projectId)?.gen ?? null)
+  if (remote === null && local) {
+    // 迁移也是一次写：先标待确认再推。推失败时这条仍带着待确认，下次读（同一个 origin）会重推；
+    // 不标的话失败即丢，后端一直是 null（#719 Codex P2）
+    const pending = readPending(projectId) ?? { at: Date.now(), gen: newGen() }
+    writeCache(projectId, local, pending)
+    pushRemote(projectId, local, pending.gen)
+  }
   return local
 }
 

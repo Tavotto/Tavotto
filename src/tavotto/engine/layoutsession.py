@@ -295,11 +295,17 @@ def remove_slot_unless_protected(doc_id: str, remove: Callable[[], bool]) -> boo
         return True
 
 
-def drop_owners_not_in(existing: set[str]) -> int:
-    """把磁盘上已经不在的槽位从 owners 里拿掉（槽位被外部删掉时 owners 不会自己缩）。"""
+def drop_owners_not_in(existing: set[str], still_exists: Callable[[str], bool]) -> int:
+    """把磁盘上已经不在的槽位从 owners 里拿掉（槽位被外部删掉时 owners 不会自己缩）。
+
+    `existing` 是调用方扫描目录时的快照，只用来挑**候选**；真正删之前在会话状态锁里用
+    `still_exists(doc_id)` 当场再看一眼文件：快照之后并发的自动保存可能刚建出那个槽位并记下
+    归属，按快照删会让它永远没有归属、从此不进配额（#719 Codex P2）。`record_owner` 持同一把锁，
+    所以「重看 → 删」之间插不进新的归属。
+    """
     with _LOCK:
         state = _read()
-        stale = [d for d in state["owners"] if d not in existing]
+        stale = [d for d in state["owners"] if d not in existing and not still_exists(d)]
         if not stale:
             return 0
         for d in stale:
