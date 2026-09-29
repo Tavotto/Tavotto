@@ -102,7 +102,9 @@ codex plugin marketplace upgrade tavotto
 升级后同样要新开会话。升级会把插件目录整个换掉，之前 `tavotto codex install` 钉进
 已装副本的解释器绝对路径会被换回自带的 `./mcp/launch`——它自己找 Python，多数
 机器上不用再做什么；**Windows 上升级后若又一个工具都没有，再跑一次
-`tavotto codex install`**。
+`tavotto codex install`**。若这条命令报 `not configured as a Git marketplace`：这台机器
+没有 git，插件是 `tavotto codex install` 从发行分支压缩包装成本地市场的，改为提醒
+`tavotto codex upgrade`（它重新下载、核对、让 Codex 重装）。
 不自动升级、不反复提醒、不为此打断手里的活。`update`
 里若还有 `tavotto` 字段，那是说本机 Tavotto 版本低于新插件的要求——让用户去
 Releases 更新 Tavotto（**跟插件是两码事，别混着说**）。

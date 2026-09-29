@@ -260,13 +260,41 @@ tavotto codex install
 插件用自带的启动器起 MCP server：它会找一个真能跑的 Python，并跳过微软商店的
 `python3` 别名；一个都找不到时，这条命令把已装副本的启动命令钉到一个验证过的
 解释器（`tavotto codex doctor` 只诊断不改）。插件 0.17.0 在 Windows 上有一个启动器
-缺陷，会让所有人都一个工具都没有：跑 `codex plugin marketplace upgrade tavotto`，
-再新开会话。成因与症状见
+缺陷，会让所有人都一个工具都没有：跑 `codex plugin marketplace upgrade tavotto`
+（没有 Git、按下面的办法装的，跑 `tavotto codex upgrade`），再新开会话。成因与症状见
 [`codex-plugin/README.md`](codex-plugin/README.md)。
 
-Windows 上那两条 `codex plugin` 命令需要 `PATH` 上有 Codex CLI 和 Git for Windows：
-`codex plugin marketplace add` 用 `git` 克隆市场，没有 Git 时报 `program not found`。
-Codex 桌面版自带的 CLI 不在 `PATH` 上。
+**Windows 上只装了 Codex 桌面版（`PATH` 上没有 `codex`，也没有 Git）。** 那两条
+`codex plugin` 命令需要 `PATH` 上有 Codex CLI 和 Git for Windows：
+`codex plugin marketplace add` 用 `git` 克隆市场，没有 Git 时报 `program not found`；
+Codex 桌面版自带的 CLI（`%LOCALAPPDATA%\OpenAI\Codex\bin\<一串哈希>\codex.exe`）
+不在 `PATH` 上。跳过那两行，交给 Tavotto：
+
+```powershell
+pipx install "tavotto[worker]"
+tavotto codex install
+```
+
+`tavotto codex install` 会自己找到桌面版自带的 CLI。Codex 报「起不来 `git`」时，它改从
+GitHub 下载插件发行分支的压缩包
+（<https://github.com/Tavotto/Tavotto/archive/refs/heads/plugin-stable.zip>），逐个文件
+对照插件的构建清单、并与同一次 GitHub release 附带的构建清单核对，再登记成本地市场
+（放在 `%LOCALAPPDATA%\Tavotto\codex-marketplace`）。本地市场没有
+`codex plugin marketplace upgrade`，升级用 `tavotto codex upgrade`。装好后新开 Codex 会话。
+
+没有 Python 引擎（下面「只交给桌面版收尾」那条路）时，在 PowerShell 里手动做同样的事：
+
+```powershell
+$codex = (Get-ChildItem "$env:LOCALAPPDATA\OpenAI\Codex\bin\*\codex.exe" | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
+$dir = "$env:LOCALAPPDATA\Tavotto\codex-marketplace"
+Invoke-WebRequest https://github.com/Tavotto/Tavotto/archive/refs/heads/plugin-stable.zip -OutFile "$env:TEMP\tavotto-plugin-stable.zip"
+Expand-Archive "$env:TEMP\tavotto-plugin-stable.zip" $dir -Force
+& $codex plugin marketplace add "$dir\Tavotto-plugin-stable"
+& $codex plugin add tavotto@tavotto
+```
+
+手动升级：删掉 `$dir\Tavotto-plugin-stable`，重跑下载与 `Expand-Archive` 两行，再跑最后
+一行。手动这条路不核对文件；装了引擎之后 `tavotto codex doctor` 会核对。
 
 新会话里可以直接说：
 

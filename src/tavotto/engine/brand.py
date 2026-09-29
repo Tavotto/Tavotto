@@ -48,6 +48,18 @@ CODEX_PLUGIN_SUBDIR = "codex-plugin"
 CODEX_PLUGIN_STABLE_BRANCH = "plugin-stable"
 #: `git-subdir` 来源里的仓库地址（Codex 对 https://github.com/… 会自动补 .git，这里直接写全）
 CODEX_PLUGIN_SOURCE_URL = f"{REPO_URL}.git"
+#: 没有 git 的机器（只装了 Codex 桌面版的 Windows 最常见，#722）装插件的来源：发行分支的
+#: GitHub 源码压缩包。分支本身就是一个本地市场（根上 `.agents/plugins/marketplace.json` →
+#: `local ./codex-plugin`），解压后 `codex plugin marketplace add <目录>` 不需要 git。
+#: GitHub 把这个地址 302 到 codeload，zip 注释里是那个提交的 SHA。
+CODEX_PLUGIN_STABLE_ARCHIVE_URL = f"{REPO_URL}/archive/refs/heads/{CODEX_PLUGIN_STABLE_BRANCH}.zip"
+#: 解压后顶层目录名（GitHub 源码压缩包的固定形状 `<仓库名>-<分支名>`）。`tavotto codex install`
+#: 与 README 手动步骤（`Expand-Archive`）落到同一个名字，两条路装出来的是同一份本地市场。
+CODEX_PLUGIN_STABLE_ARCHIVE_DIR = f"{REPO_NAME}-{CODEX_PLUGIN_STABLE_BRANCH}"
+#: 每个 release 附带的插件构建清单（`.github/workflows/release.yml` 把 staging 的
+#: `plugin-build.json` 拷成这个名字）。压缩包的 content_digest 要与它对上——发行分支与
+#: release 附件由两道不同的工序写出，两边一致才算这份压缩包是那次发行的产物。
+CODEX_PLUGIN_BUILD_ASSET = "codex-plugin-build.json"
 
 # 桌面壳的 bundle 标识，与 src-tauri/tauri.conf.json 的 identifier 严格同源。
 # 桌面日志目录（tauri 的 app_log_dir）按它推导：macOS 是

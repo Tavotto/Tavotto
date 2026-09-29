@@ -29,20 +29,47 @@ shim（`#!/usr/bin/env node`），子进程里解析不到 `node`——退出码
 失败」，而用户的 Codex 里明明装着、启用着。所以起 codex 一律用
 `ai_agents.spawn_env()` 补过常见安装目录的 PATH（与 AI 桥同一份，不抄第二份）。
 **只补 codex 那几跳**：插件启动命令那一步量的是「Codex 会怎么起它」，不能替它补环境。
+
+## 只装了 Codex 桌面版、没有 git 的机器（2026-09-29，#722）
+
+真 Windows 11 + Codex Desktop 26.924 上两件事同时成立：桌面版自带的 CLI 在
+`%LOCALAPPDATA%\\OpenAI\\Codex\\bin\\<构建哈希>\\codex.exe`、不在 PATH 上；机器上没有 git，
+`codex plugin marketplace add Tavotto/Tavotto` 报 `failed to run git clone … program not found`。
+所以：
+
+* `find_codex()` 在 PATH 与常见目录之后，Windows 上再找桌面版自带的那一份（要 `--version`
+  跑得起来才算，新到旧）；
+* marketplace 那一步仍先走 README 主路（git 市场）。**只有** Codex 说它起不来 git
+  （`failed to run git …`——codex-rs 起子进程失败时的原文；git 起来了但克隆失败不是这一句）时，
+  才改从 GitHub 下载发行分支的源码压缩包：解压、按随包清单逐文件核对、收据的 content_digest
+  与同一次 release 附带的构建清单对上，再作为**本地市场**登记（`codex plugin marketplace add
+  <目录>`，本地市场不需要 git）。目录在 `config.data_dir()` 下，Tavotto 自己的数据，不碰 `~/.codex`。
+* 本地市场没有 `marketplace upgrade`（Codex 回「not configured as a Git marketplace」）：升级是
+  `tavotto codex upgrade`——重新下载、核对、换掉目录，再 `codex plugin add` 一次（真 CLI 实测，
+  同名插件再 add 会把缓存换成新版本）。
 """
 
 from __future__ import annotations
 
 import argparse
+import http.client
+import io
 import json
+import lzma
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
-from pathlib import Path
+import tempfile
+import urllib.error
+import urllib.request
+import zipfile
+import zlib
+from pathlib import Path, PurePosixPath
 
-from . import ai_agents, atomicio, brand, pluginmanifest
+from . import ai_agents, atomicio, brand, config, pluginmanifest, tlstrust
 from .runtime import CREATE_NO_WINDOW, probe_args
 
 #: 每一步的稳定 code。message 随时可改，code 不许改（调用方按它分诊）。
@@ -97,6 +124,27 @@ def _search_dirs() -> list[Path]:
     return out
 
 
+def _is_windows() -> bool:
+    """单独一个函数：桌面版自带 CLI 的落点只在 Windows 上找，用例要能在 POSIX 上走这条分支。"""
+    return os.name == "nt"
+
+
+def desktop_codex_candidates(localappdata: str | None) -> list[Path]:
+    """Codex 桌面版（Windows）自带的 CLI：`<LOCALAPPDATA>\\OpenAI\\Codex\\bin\\<哈希>\\codex.exe`。
+
+    桌面版每次更新换一个哈希目录，旧目录可能还留着——按修改时间**新到旧**排，调用方逐个
+    跑 `--version`，第一个起得来的才用（与 AI 桥「能不能用只看启动验证」同一条判据）。
+    """
+    if not localappdata:
+        return []
+    base = Path(localappdata) / "OpenAI" / "Codex" / "bin"
+    try:
+        hits = [p for p in base.glob("*/codex.exe") if p.is_file()]
+        return sorted(hits, key=lambda p: p.stat().st_mtime, reverse=True)
+    except OSError:
+        return []
+
+
 def find_codex() -> tuple[str | None, list[str]]:
     """找 `codex` 可执行文件。返回 (路径 or None, 找过哪些位置)。
 
@@ -112,6 +160,16 @@ def find_codex() -> tuple[str | None, list[str]]:
         searched.append(str(d))
         if exe.is_file() and os.access(exe, os.X_OK):
             return str(exe), searched
+    if _is_windows():
+        # 只装了 Codex 桌面版的机器上，这是唯一一份 codex（#722）
+        local = os.environ.get("LOCALAPPDATA")
+        searched.append(
+            str(Path(local or "%LOCALAPPDATA%") / "OpenAI" / "Codex" / "bin" / "*" / "codex.exe")
+        )
+        for exe in desktop_codex_candidates(local):
+            rc, _out = _run([str(exe), "--version"], timeout=60)
+            if rc == 0:
+                return str(exe), searched
     return None, searched
 
 
@@ -414,7 +472,11 @@ def _plugin_state(codex: str) -> dict:
         if not parts or parts[0] != brand.CODEX_PLUGIN_REF:
             continue
         status = line[len(parts[0]) :].strip().lower()
-        if state["state"] == "unknown":
+        # JSON 说「没有」不作数，文本表列出来了就以它为准：codex 0.157 的 `plugin list --json`
+        # 对**还没装**的插件 installed / available 两个数组都是空的，文本表却列着
+        # `tavotto@tavotto  not installed`（git 市场与本地市场都这样，真 CLI 实测，#722）。
+        # 以前 JSON 的「absent」一锤定音，全新机器上 install 停在 plugin_source_unsupported。
+        if state["state"] in ("unknown", "absent"):
             state["state"] = "installed" if status.startswith("installed") else "available"
         if path_col is not None and len(line) > path_col:
             state["path"] = line[path_col:].strip() or None
@@ -482,6 +544,8 @@ def plugin_channel(marketplace_root: str | None) -> dict:
     """marketplace 快照里 tavotto 条目的来源形状 → 这份安装走的是哪条通道。
 
     * `stable`：`git-subdir` 指向官方仓库的发行分支（ADR 0043 的目标形态）；
+    * `stable-archive`：发行分支的压缩包解出来的本地市场（没有 git 时的装法，#722）——
+      `local ./codex-plugin`，且根上有发行分支的收据；升级走 `tavotto codex upgrade`；
     * `legacy-local`：`local ./codex-plugin`（把仓库本体当插件装，画布靠版本库里那份）；
     * `custom`：别的仓库 / 别的 ref / 本地工作副本——用户自己的选择，不改；
     * `unknown`：读不到快照。
@@ -502,6 +566,8 @@ def plugin_channel(marketplace_root: str | None) -> dict:
     kind = src.get("source")
     if kind == "local":
         legacy = src.get("path") in (f"./{brand.CODEX_PLUGIN_SUBDIR}", brand.CODEX_PLUGIN_SUBDIR)
+        if legacy and _stable_receipt(Path(marketplace_root)) is not None:
+            return {"channel": "stable-archive", "source": src}
         return {"channel": "legacy-local" if legacy else "custom", "source": src}
     if (
         kind == "git-subdir"
@@ -510,6 +576,397 @@ def plugin_channel(marketplace_root: str | None) -> dict:
     ):
         return {"channel": "stable", "source": src}
     return {"channel": "custom", "source": src}
+
+
+# ------------------- 没有 git：发行分支压缩包 → 本地市场（#722） -------------------
+#: Codex 没能**起** git 时的原文（codex-rs：`failed to run git <参数>: <系统错误>`；Windows 上
+#: 系统错误是 `program not found`，macOS 是 `No such file or directory (os error 2)`，两台真机
+#: 实测）。git 起来了但克隆失败（没网、仓库不对）不是这一句，那种失败原样报，不改道下载。
+_GIT_NOT_RUNNABLE = re.compile(r"failed to run git\b", re.I)
+#: 压缩包上限。0.17.0 的分支压缩包约 0.7 MB；上限只防「下来的不是那个东西」把磁盘写满。
+_ARCHIVE_MAX_BYTES = 64 << 20
+_ARCHIVE_MAX_UNPACKED = 256 << 20
+_NETWORK_TIMEOUT = 60
+
+
+class ArchiveError(Exception):
+    """压缩包这条路上任何一步不成立：下载、解包、核对、换目录。消息是给人看的整句。"""
+
+
+def archive_marketplace_dir() -> Path:
+    """`tavotto codex install` 管理的本地市场目录（Tavotto 自己的数据目录下，不在 `~/.codex`）。"""
+    return config.data_path("codex-marketplace", brand.CODEX_PLUGIN_STABLE_ARCHIVE_DIR)
+
+
+def _fetch(url: str, *, limit: int) -> bytes:
+    """GET 一个 https 地址，最多 `limit` 字节。失败抛 ArchiveError（带地址与原因）。"""
+    from .. import __version__
+
+    req = urllib.request.Request(
+        url, headers={"User-Agent": f"{brand.PRODUCT_NAME}/{__version__} codex-install"}
+    )
+    # 出站 HTTPS 一律经 `tlstrust`（平台原生校验；#711 / #714 的规矩）：干净 Windows 缺根证书时 OpenSSL
+    # 的默认信任库会把 GitHub 的压缩包下载报成网络失败
+    opener = urllib.request.build_opener(tlstrust.https_handler(tlstrust.client_context()))
+    try:
+        with opener.open(req, timeout=_NETWORK_TIMEOUT) as resp:
+            data = resp.read(limit + 1)
+    except (
+        urllib.error.URLError,
+        http.client.HTTPException,  # 分块响应被截断 / 畸形：IncompleteRead 不是 OSError（Codex #725）
+        TimeoutError,
+        OSError,
+        ValueError,
+    ) as exc:
+        raise ArchiveError(f"下载 {url} 失败：{exc}") from exc
+    if len(data) > limit:
+        raise ArchiveError(f"{url} 超过 {limit} 字节，不像是发行分支的压缩包")
+    return data
+
+
+def _unpack(data: bytes, into: Path) -> tuple[Path, str | None, dict[str, str]]:
+    """把 GitHub 源码压缩包解进 `into`，回 (唯一顶层目录, zip 注释里的提交 SHA, 各文件的 git 模式)。
+
+    先整份检查、再写盘：绝对路径、`..`、盘符、符号链接、多个顶层目录、解开后过大，任何一条
+    不成立就一个字节都不写。可执行位按 zip 里记的 git 模式恢复（POSIX 上 `mcp/launch` 要 755，
+    随包清单会核对它）。模式按顶层目录下的相对路径回（`100755` / `100644`），交给
+    `_modes_match_manifest` 与随包清单逐条比。
+    """
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(data))
+        infos = zf.infolist()
+    except (zipfile.BadZipFile, ValueError) as exc:
+        raise ArchiveError(f"下载下来的不是 zip：{exc}") from exc
+    tops: set[str] = set()
+    total = 0
+    for info in infos:
+        name = info.filename
+        parts = PurePosixPath(name).parts
+        if (
+            not parts
+            or name.startswith("/")
+            or "\\" in name
+            or ".." in parts
+            or ":" in name
+            or stat.S_ISLNK(info.external_attr >> 16)
+        ):
+            raise ArchiveError(f"压缩包里有不该有的条目：{name!r}")
+        total += info.file_size
+        tops.add(parts[0])
+    if total > _ARCHIVE_MAX_UNPACKED:
+        raise ArchiveError(f"压缩包解开后超过 {_ARCHIVE_MAX_UNPACKED} 字节")
+    if len(tops) != 1:
+        raise ArchiveError(f"压缩包顶层应当恰好一个目录，实际是：{sorted(tops)}")
+    modes: dict[str, str] = {}
+    for info in infos:
+        parts = PurePosixPath(info.filename).parts
+        target = into.joinpath(*parts)
+        if info.is_dir():
+            target.mkdir(parents=True, exist_ok=True)
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            payload = zf.read(info)
+        except (
+            zipfile.BadZipFile,
+            zlib.error,
+            lzma.LZMAError,  # ZIP_LZMA 的条目坏了（Codex #725）
+            OSError,  # bz2 的坏数据报 OSError
+            EOFError,
+            NotImplementedError,
+            RuntimeError,
+        ) as exc:
+            # 目录表完好、条目本身坏了（CRC 不符 / 截断 / 加密 / 不认识的压缩法）：同样是「这份压缩包
+            # 不能用」，走 ArchiveError 的一行 JSON 失败，不让 traceback 逃出安装流程（Codex #725）
+            raise ArchiveError(f"压缩包里的 {info.filename!r} 读不出来：{exc}") from exc
+        target.write_bytes(payload)
+        executable = bool((info.external_attr >> 16) & 0o111)
+        modes["/".join(parts[1:])] = "100755" if executable else "100644"
+        if os.name != "nt" and executable:
+            target.chmod(0o755)
+    comment = zf.comment.decode("ascii", "replace").strip()
+    commit = comment if re.fullmatch(r"[0-9a-f]{40}", comment) else None
+    return into / tops.pop(), commit, modes
+
+
+def _modes_match_manifest(top: Path, modes: dict[str, str]) -> None:
+    """压缩包里记的 git 模式要等于随包清单逐文件声明的模式；不等抛 ArchiveError。
+
+    `verify_dir` 按清单自己声明的模式重算 content_digest，不看解出来的文件是什么模式——
+    只动模式（例如 `mcp/launch` 在压缩包里是 100644、清单仍写 100755）的一份会整份通过，
+    装上的启动器却不可执行（Codex #725）。比的是压缩包里的记录而不是磁盘上的权限位：
+    Windows 没有可执行位，按磁盘比就只在 POSIX 上管用。"""
+    manifest = pluginmanifest.read_manifest(top / brand.CODEX_PLUGIN_SUBDIR)
+    prefix = f"{brand.CODEX_PLUGIN_SUBDIR}/"
+    drift = [
+        f"{e['path']}（清单 {e['mode']}，压缩包 {modes.get(prefix + e['path'])}）"
+        for e in (manifest or {}).get("files", [])
+        if modes.get(prefix + e["path"]) != e["mode"]
+    ]
+    if drift:
+        raise ArchiveError("插件文件的模式与随包清单对不上：" + "；".join(drift)[:600])
+
+
+def _stable_receipt(root: Path) -> dict | None:
+    """`root` 上发行分支的收据（`plugin-release.json`）——是本渠道的那份才回，否则 None。"""
+    try:
+        data = json.loads((root / pluginmanifest.RELEASE_RECEIPT).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if (
+        not isinstance(data, dict)
+        or data.get("branch") != brand.CODEX_PLUGIN_STABLE_BRANCH
+        or data.get("plugin") != brand.CODEX_PLUGIN_NAME
+    ):
+        return None
+    return data
+
+
+def verify_stable_snapshot(root: Path) -> dict:
+    """一份解开的发行分支是不是**完整、自洽的那次发行**。回收据；不成立抛 ArchiveError。
+
+    三层，各答各的问题：
+    1. 市场清单：名字是 `tavotto`、插件条目是 `local ./codex-plugin`——Codex 会照它装；
+    2. 收据：是 `plugin-stable` 上 `tavotto` 的收据，带版本、content_digest、release tag；
+    3. 插件目录：按随包清单逐文件核对 sha256 / 模式 / 不多不少（`pluginmanifest.verify_dir`，
+       与 `tavotto codex doctor` 体检已装副本是同一份实现），版本与 content_digest 都要等于收据。
+    与 release 附件的交叉核对要联网，在 `fetch_stable_snapshot` 里做。
+    """
+    try:
+        mk = json.loads(
+            (root / ".agents" / "plugins" / "marketplace.json").read_text(encoding="utf-8")
+        )
+        entry = next(e for e in mk.get("plugins", []) if e.get("name") == brand.CODEX_PLUGIN_NAME)
+    except (OSError, ValueError, StopIteration, AttributeError, TypeError) as exc:
+        # TypeError：`plugins` 是 null 之类不可迭代的值（Codex #725）
+        raise ArchiveError(f"压缩包里没有可用的市场清单：{exc!r}") from exc
+    src = entry.get("source") if isinstance(entry, dict) else None
+    if (
+        mk.get("name") != brand.CODEX_MARKETPLACE_NAME
+        or not isinstance(src, dict)
+        or src.get("source") != "local"
+        or src.get("path") != f"./{brand.CODEX_PLUGIN_SUBDIR}"
+    ):
+        raise ArchiveError(f"压缩包里的市场清单不是发行分支的形状：{mk.get('name')!r} / {src!r}")
+    receipt = _stable_receipt(root)
+    if receipt is None:
+        raise ArchiveError(
+            f"压缩包根上没有 {brand.CODEX_PLUGIN_STABLE_BRANCH} 的收据 {pluginmanifest.RELEASE_RECEIPT}"
+        )
+    for key in ("version", "content_digest", "release_tag"):
+        if not isinstance(receipt.get(key), str) or not receipt[key]:
+            raise ArchiveError(f"收据 {pluginmanifest.RELEASE_RECEIPT} 缺 {key}")
+    problems = pluginmanifest.verify_dir(
+        root / brand.CODEX_PLUGIN_SUBDIR,
+        version=receipt["version"],
+        expect_content_digest=receipt["content_digest"],
+        # 要的是「与发出去的那份逐字节一致」；发行件 command 的形态规矩归发布那一刻
+        command_policy=False,
+    )
+    if problems:
+        raise ArchiveError("插件与随包清单对不上：" + "；".join(problems)[:600])
+    return receipt
+
+
+def fetch_stable_snapshot() -> dict:
+    """下载发行分支压缩包 → 核对 → 换进 `archive_marketplace_dir()`。回这次装的是什么。
+
+    核对全过之前，目标目录一个字节都不动：解在同级的 staging 里，最后一步才 `os.replace`
+    换进去（旧目录先挪开，换失败就挪回来）。回的 `changed` 说内容与原来那份是否不同——
+    `tavotto codex upgrade` 据此决定要不要让 Codex 重装。
+    """
+    dest = archive_marketplace_dir()
+    base = dest.parent
+    leftovers: list[str] = []
+    try:
+        base.mkdir(parents=True, exist_ok=True)
+        # 上一次删不掉的一次性目录（杀软占着文件等）先收掉：泄漏不跨次累积（Codex #725）；
+        # 上一次在两次 replace 之间被杀、只剩备份时先挪回去，不当垃圾删
+        leftovers += _remove_one_shot_dirs(base, dest)
+        staging = Path(tempfile.mkdtemp(prefix=".staging-", dir=base))
+    except OSError as exc:
+        raise ArchiveError(f"建不了本地市场目录 {base}：{exc}") from exc
+    try:
+        data = _fetch(brand.CODEX_PLUGIN_STABLE_ARCHIVE_URL, limit=_ARCHIVE_MAX_BYTES)
+        try:
+            top, commit, modes = _unpack(data, staging)
+        except OSError as exc:
+            raise ArchiveError(f"解包写不进 {staging}：{exc}") from exc
+        receipt = verify_stable_snapshot(top)
+        _modes_match_manifest(top, modes)
+        tag = receipt["release_tag"]
+        asset_url = f"{brand.RELEASES_URL}/download/{tag}/{brand.CODEX_PLUGIN_BUILD_ASSET}"
+        try:
+            asset = json.loads(_fetch(asset_url, limit=8 << 20).decode("utf-8"))
+            asset_digest = asset.get("content_digest") if isinstance(asset, dict) else None
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise ArchiveError(f"{asset_url} 不是合法 JSON：{exc}") from exc
+        if asset_digest != receipt["content_digest"]:
+            raise ArchiveError(
+                f"发行分支的 content_digest（{receipt['content_digest'][:12]}…）与 {tag} 附带的"
+                f"构建清单（{str(asset_digest)[:12]}…）对不上——不装一份来历对不上的插件"
+            )
+        before = _stable_receipt(dest)
+        # 挪开旧目录用一个**新建即独占**的名字：不预先删同名目录（删不掉会被吞掉、随后的
+        # os.replace 撞上它失败——PID 复用、杀软占着文件；Codex #725）。mkdtemp 建的是空目录，
+        # Windows 上 os.replace 不能盖目录，先把它删掉再用这个名字
+        try:
+            old = Path(tempfile.mkdtemp(prefix=".old-", dir=base))
+            old.rmdir()
+            if dest.exists():
+                os.replace(dest, old)
+            try:
+                os.replace(top, dest)
+            except OSError:
+                if old.exists() and not dest.exists():
+                    os.replace(old, dest)
+                raise
+        except OSError as exc:
+            raise ArchiveError(f"换不进 {dest}：{exc}") from exc
+    except (ArchiveError, OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
+        # 失败这一路也要把删不掉的一次性目录说出来——不然只有成功时才报，失败反复发生时会静默堆积；
+        # 核对阶段的读写失败（杀软临时拒读解出来的文件）同样是一行 JSON 失败，不是 traceback；
+        # 压缩包是外来输入，里面 JSON 的形状不对（该是列表 / 对象的地方是 null）引出的 TypeError 等
+        # 也归到这里——逐个字段补校验补不完（Codex #725）
+        stuck = _remove_one_shot_dirs(base, dest)
+        if isinstance(exc, ArchiveError):
+            msg = str(exc)
+        elif isinstance(exc, OSError):
+            msg = f"核对或换进 {dest} 时读写失败：{exc}"
+        else:
+            msg = f"压缩包内容的形状不对，核对不下去：{exc!r}"
+        if stuck:
+            msg += "；另有删不掉的一次性目录（下次运行开头再收）：" + "、".join(stuck)
+        raise ArchiveError(msg) from exc
+    except BaseException:
+        _remove_one_shot_dirs(base, dest)
+        raise
+    # 一次性目录用完就删，删不掉**说出来**（回在 `leftovers` 里、marketplace 一步照报），下一次开头再收
+    leftovers += _remove_one_shot_dirs(base, dest)
+    return {
+        "root": str(dest),
+        "commit": commit,
+        "version": receipt["version"],
+        "content_digest": receipt["content_digest"],
+        "release_tag": tag,
+        "changed": (before or {}).get("content_digest") != receipt["content_digest"],
+        "leftovers": sorted(set(leftovers)),
+    }
+
+
+def _remove_one_shot_dirs(base: Path, dest: Path) -> list[str]:
+    """删掉 `base` 下的一次性目录（`.staging-*` / `.old-*`）；回删不掉的那些（路径）。
+
+    `dest` 不在而有 `.old-*` 时，那是上一次在「旧目录挪开」与「新目录换进」之间被杀（或换进失败、
+    挪回也失败）留下的**唯一一份**已核对的市场：先把最新的那份挪回 `dest`，再删其余的——不然离线
+    重试会把能恢复的安装删掉，Codex 登记的目录从此不在（Codex #725）。"""
+    stuck: list[str] = []
+    try:
+        entries = [p for p in base.iterdir() if p.name.startswith((".staging-", ".old-"))]
+    except FileNotFoundError:
+        return stuck
+    except OSError:
+        # 列不出来 ≠ 收干净了：一个都没看就报「没有残留」会让调用方说成功（Codex #725）
+        return [str(base)]
+
+    def mtime(p: Path) -> float:
+        try:
+            return p.stat().st_mtime
+        except OSError:
+            return 0.0
+
+    backups = sorted((p for p in entries if p.name.startswith(".old-")), key=mtime)
+    if backups and not dest.exists():
+        try:
+            os.replace(backups[-1], dest)
+            entries.remove(backups[-1])
+        except OSError:
+            pass
+    for p in entries:
+        try:
+            shutil.rmtree(p)
+        except FileNotFoundError:
+            continue
+        except OSError:
+            stuck.append(str(p))
+    return stuck
+
+
+def _installed_lags_archive(st: dict, archive: dict | None) -> bool:
+    """压缩包渠道：Codex 里装着的版本与本地市场收据的版本对不上。
+
+    按**版本**判，不按已装副本的 content_digest：`codex plugin list` 报的路径是来源（本地市场里那份，
+    已经换成新的），不一定是 Codex 缓存里真装着的那份；而插件版本与引擎版本同号、同一版本号不重发，
+    版本不同就是没装上。任一侧读不到版本时不判（回 False），不在每次命令里无条件重装。"""
+    if not archive:
+        return False
+    have, want = st.get("version"), archive.get("version")
+    return bool(have) and bool(want) and have != want
+
+
+def _describe_snapshot(info: dict) -> str:
+    commit = (info.get("commit") or "?")[:12]
+    return (
+        f"发行分支 {brand.CODEX_PLUGIN_STABLE_BRANCH} 的压缩包（提交 {commit}，插件 {info['version']}，"
+        f"已按随包清单逐文件核对，content_digest 与 {info['release_tag']} 附带的构建清单一致），"
+        f"本地市场目录 {info['root']}"
+        + (
+            # 一次性目录删不掉（多半被杀毒软件占着）时说出来，下次运行开头再收（Codex #725）
+            "；这些一次性目录没删掉，下次运行会再清：" + "、".join(info["leftovers"])
+            if info.get("leftovers")
+            else ""
+        )
+    )
+
+
+_ARCHIVE_MANUAL = (
+    "。也可以手动装：从 "
+    + brand.CODEX_PLUGIN_STABLE_ARCHIVE_URL
+    + " 下载压缩包、解压，然后 `codex plugin marketplace add <解压出的 "
+    + brand.CODEX_PLUGIN_STABLE_ARCHIVE_DIR
+    + " 目录>` 与 `codex plugin add "
+    + brand.CODEX_PLUGIN_REF
+    + "`（README「在 Codex 中第一次使用 Tavotto」有 Windows 上的逐行步骤）"
+)
+
+
+def _archive_marketplace_step(codex: str, *, why: str, summary: dict) -> dict:
+    """git 起不来时的 marketplace 步：下载 → 核对 → 登记本地市场。"""
+    try:
+        info = fetch_stable_snapshot()
+    except ArchiveError as exc:
+        return _step(
+            "marketplace",
+            ok=False,
+            code=ERR_MARKETPLACE,
+            detail=f"Codex 起不来 git（{why}），改从 GitHub 下载发行分支压缩包也没成：{exc}"
+            + _ARCHIVE_MANUAL,
+        )
+    summary["archive"] = info
+    rc, out = _codex_run(codex, ["plugin", "marketplace", "add", info["root"]])
+    if rc != 0:
+        return _step(
+            "marketplace",
+            ok=False,
+            code=ERR_MARKETPLACE,
+            detail=f"压缩包已下载并核对，但 Codex 没能把它登记成本地市场：{out[-400:]}",
+        )
+    mk = _marketplace_state(codex)
+    summary["marketplace"].update(
+        {
+            "registered": mk["state"] == "registered",
+            "state": mk["state"],
+            "source_type": mk.get("source_type"),
+            "source": mk.get("source"),
+            "root": mk.get("root"),
+        }
+    )
+    summary["channel"] = plugin_channel(mk.get("root"))
+    return _step(
+        "marketplace",
+        ok=True,
+        detail="本机没有能用的 git，已改用" + _describe_snapshot(info),
+    )
 
 
 def plugin_python() -> str | None:
@@ -728,16 +1185,67 @@ def _plugin_installed(codex: str) -> bool:
     return _plugin_state(codex)["state"] == "installed"
 
 
-def _describe_source(mk: dict) -> str:
+def _describe_source(mk: dict, channel: str | None = None) -> str:
     st, src = mk.get("source_type"), mk.get("source")
     if not src:
         return "已登记"
     official = src in (brand.CODEX_PLUGIN_SOURCE_URL, brand.REPO_URL, brand.CODEX_MARKETPLACE)
-    tag = "官方源" if official else "自定义来源（不改）"
+    if channel == "stable-archive":
+        tag = "官方发行分支的压缩包"
+    else:
+        tag = "官方源" if official else "自定义来源（不改）"
     return f"已登记：{st or '?'} {src}（{tag}）"
 
 
-def _marketplace_step(codex: str, *, apply: bool, summary: dict) -> dict:
+def _upgrade_marketplace_step(codex: str, mk: dict, summary: dict) -> dict:
+    """`tavotto codex upgrade` 的 marketplace 步：按这份安装走的通道各自刷新。
+
+    * 压缩包本地市场（没有 git 时的装法）：重新下载、核对、换目录；内容变了就要求插件步重装；
+    * git 市场：`codex plugin marketplace upgrade tavotto`（Codex 自己换插件缓存）；
+    * 别的本地市场 / 自定义来源：用户自己的选择，不替他升级。
+    """
+    channel = plugin_channel(mk.get("root"))
+    summary["channel"] = channel
+    if channel["channel"] == "stable-archive":
+        root = mk.get("root") or ""
+        if os.path.normcase(os.path.realpath(root)) != os.path.normcase(
+            os.path.realpath(archive_marketplace_dir())
+        ):
+            return _step(
+                "marketplace",
+                ok=False,
+                code=ERR_MARKETPLACE,
+                detail=f"这份本地市场（{root}）不是 `tavotto codex install` 建的，不替你覆盖。"
+                "重新下载解压到同一个目录，再 `codex plugin add "
+                + brand.CODEX_PLUGIN_REF
+                + "`"
+                + _ARCHIVE_MANUAL,
+            )
+        try:
+            info = fetch_stable_snapshot()
+        except ArchiveError as exc:
+            return _step("marketplace", ok=False, code=ERR_MARKETPLACE, detail=str(exc))
+        summary["archive"] = info
+        summary["reinstall"] = info["changed"]
+        if not info["changed"]:
+            return _step(
+                "marketplace", ok=True, skipped=True, detail="已是最新：" + _describe_snapshot(info)
+            )
+        return _step("marketplace", ok=True, detail="已更新为" + _describe_snapshot(info))
+    if mk.get("source_type") == "local" or channel["channel"] == "custom":
+        return _step(
+            "marketplace",
+            ok=True,
+            skipped=True,
+            detail=_describe_source(mk) + "；不是官方发行通道，不替你升级",
+        )
+    rc, out = _codex_run(codex, ["plugin", "marketplace", "upgrade", brand.CODEX_MARKETPLACE_NAME])
+    if rc != 0:
+        return _step("marketplace", ok=False, code=ERR_MARKETPLACE, detail=out[-400:])
+    return _step("marketplace", ok=True, detail=out[-200:] or "已刷新 git 市场快照")
+
+
+def _marketplace_step(codex: str, *, apply: bool, summary: dict, upgrade: bool = False) -> dict:
     mk = _marketplace_state(codex)
     summary["marketplace"] = {
         "registered": mk["state"] == "registered",
@@ -757,9 +1265,11 @@ def _marketplace_step(codex: str, *, apply: bool, summary: dict) -> dict:
             + _unknown_hint(mk.get("detail") or "", "登记"),
         )
     if mk["state"] == "registered":
+        if upgrade:
+            return _upgrade_marketplace_step(codex, mk, summary)
         channel = plugin_channel(mk.get("root"))
         summary["channel"] = channel
-        detail = _describe_source(mk)
+        detail = _describe_source(mk, channel["channel"])
         if channel["channel"] == "legacy-local":
             detail += (
                 "；快照里的插件条目仍是旧的本地来源（把仓库本体当插件装）。"
@@ -767,6 +1277,12 @@ def _marketplace_step(codex: str, *, apply: bool, summary: dict) -> dict:
             )
         elif channel["channel"] == "stable":
             detail += f"；插件来源 = 发行分支 {brand.CODEX_PLUGIN_STABLE_BRANCH}"
+        elif channel["channel"] == "stable-archive":
+            detail += (
+                f"；插件来源 = 发行分支 {brand.CODEX_PLUGIN_STABLE_BRANCH} 的压缩包（本地市场，"
+                "没有 git 时的装法）。升级用 `tavotto codex upgrade`——本地市场没有 "
+                "`codex plugin marketplace upgrade`"
+            )
         return _step("marketplace", ok=True, skipped=True, detail=detail)
     if not apply:
         return _step("marketplace", ok=False, detail="未登记", code=ERR_MARKETPLACE)
@@ -775,6 +1291,9 @@ def _marketplace_step(codex: str, *, apply: bool, summary: dict) -> dict:
         argv += ["--sparse", sparse]
     rc, out = _codex_run(codex, argv)
     if rc != 0:
+        if _GIT_NOT_RUNNABLE.search(out):
+            # 只装了 Codex 桌面版、没有 git 的机器（#722）：改走不需要 git 的来源
+            return _archive_marketplace_step(codex, why=out[-200:], summary=summary)
         return _step("marketplace", ok=False, detail=out[-400:], code=ERR_MARKETPLACE)
     mk = _marketplace_state(codex)
     summary["marketplace"].update(
@@ -802,9 +1321,18 @@ def _plugin_step(codex: str, *, apply: bool, summary: dict) -> dict:
             + (st.get("detail") or "（零输出）")
             + _unknown_hint(st.get("detail") or "", "装"),
         )
-    if st["state"] == "installed":
-        # **健康状态下不重装。** 升级归 `codex plugin marketplace upgrade`，
-        # 由用户自己决定什么时候做；这条命令的职责是「缺什么补什么」。
+    if (
+        st["state"] == "installed"
+        and not summary.get("reinstall")
+        and _installed_lags_archive(st, summary.get("archive"))
+    ):
+        # 压缩包上次已换成新的、那次 `plugin add` 却没成：本地市场「已是最新」（changed=False），
+        # Codex 里装着的仍是旧的。按装着的版本与收据的版本判，不靠上一次的 changed（Codex #725）
+        summary["reinstall"] = True
+    if st["state"] == "installed" and not summary.get("reinstall"):
+        # **健康状态下不重装。** 升级归 `codex plugin marketplace upgrade`（压缩包本地市场是
+        # `tavotto codex upgrade`，它把 summary["reinstall"] 置真），由用户自己决定什么时候做；
+        # 这条命令的职责是「缺什么补什么」。
         return _step(
             "plugin",
             ok=True,
@@ -823,9 +1351,12 @@ def _plugin_step(codex: str, *, apply: bool, summary: dict) -> dict:
         )
     if not apply:
         return _step("plugin", ok=False, detail="未安装", code=ERR_PLUGIN)
+    # 本地市场的目录内容换了之后，同名插件再 add 一次 Codex 就把缓存换成新版本（codex 0.157 实测：
+    # 旧版本目录被删、新版本目录建出来）
     rc, out = _codex_run(codex, ["plugin", "add", brand.CODEX_PLUGIN_REF])
     if rc != 0:
         return _step("plugin", ok=False, detail=out[-400:], code=ERR_PLUGIN)
+    before = st.get("version") if st["state"] == "installed" else None
     st = _plugin_state(codex)
     summary["plugin"].update(
         {
@@ -835,6 +1366,8 @@ def _plugin_step(codex: str, *, apply: bool, summary: dict) -> dict:
             "path": st.get("path"),
         }
     )
+    if before is not None:
+        return _step("plugin", ok=True, detail=f"已重装：{before} → {st.get('version') or '?'}")
     return _step("plugin", ok=True, detail="已安装")
 
 
@@ -1092,7 +1625,7 @@ def _codex_or_fail(steps: list[dict]) -> str | None:
     return codex
 
 
-def _run_pipeline(*, apply: bool) -> tuple[bool, list[dict], dict]:
+def _run_pipeline(*, apply: bool, upgrade: bool = False) -> tuple[bool, list[dict], dict]:
     """安装 / 诊断流水线。回 (ok, steps, summary)。
 
     `summary` 回答四个问题：装的是哪份插件（版本、路径）、来自哪里（marketplace
@@ -1110,7 +1643,7 @@ def _run_pipeline(*, apply: bool) -> tuple[bool, list[dict], dict]:
     codex = _codex_or_fail(steps)
     if codex is None:
         return False, steps, summary
-    steps.append(_marketplace_step(codex, apply=apply, summary=summary))
+    steps.append(_marketplace_step(codex, apply=apply, summary=summary, upgrade=upgrade))
     if not steps[-1]["ok"]:
         return False, steps, summary
     steps.append(_plugin_step(codex, apply=apply, summary=summary))
@@ -1192,17 +1725,20 @@ def _emit(
         if s.get("detail"):
             line += f"：{s['detail']}"
         print(line, file=sys.stdout if s["ok"] else sys.stderr)
-    if ok and action == "install":
+    if ok and action in ("install", "upgrade"):
         # 刻意**只说这一句**：旧会话里验不出工具来，试图验证只会给出误导性的结论
-        print("\n装好了。请新开一个 Codex 会话。")
+        print(
+            "\n" + ("装好了" if action == "install" else "升级完成") + "。请新开一个 Codex 会话。"
+        )
     return 0 if ok else 1
 
 
 def cli(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(
-        prog="tavotto codex", description="安装 / 诊断 / 移除 Tavotto 的 Codex 集成（ADR 0012）"
+        prog="tavotto codex",
+        description="安装 / 诊断 / 升级 / 移除 Tavotto 的 Codex 集成（ADR 0012）",
     )
-    ap.add_argument("action", choices=("install", "doctor", "uninstall"))
+    ap.add_argument("action", choices=("install", "doctor", "upgrade", "uninstall"))
     ap.add_argument("--json", action="store_true", help="输出机器可读结果")
     args = ap.parse_args(argv)
 
@@ -1210,5 +1746,7 @@ def cli(argv: list[str]) -> int:
         ok, steps = uninstall_steps()
         summary = None
     else:
-        ok, steps, summary = _run_pipeline(apply=args.action == "install")
+        ok, steps, summary = _run_pipeline(
+            apply=args.action in ("install", "upgrade"), upgrade=args.action == "upgrade"
+        )
     return _emit(ok, args.action, steps, as_json=args.json, summary=summary)
