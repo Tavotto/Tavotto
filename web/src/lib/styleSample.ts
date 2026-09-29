@@ -72,6 +72,12 @@ const readString = (obj: unknown, path: string[]): string | null => {
   return typeof v === 'string' && v.trim() ? v.trim() : null
 }
 
+/** 样式里的字体：一个名字，或 matplotlib 的候选列表（取第一个——matplotlib 也是先试它） */
+const familyOf = (v: unknown): string | null => {
+  const first = Array.isArray(v) ? v[0] : v
+  return typeof first === 'string' && first.trim() ? first.trim() : null
+}
+
 /** matplotlib 的通用族名 → CSS 通用族；具体字体名（Times New Roman）原样交给浏览器 */
 export function cssFamilyOf(family: string | null): string {
   if (!family) return SAMPLE_DEFAULTS.fontFamily
@@ -108,7 +114,7 @@ export function styleSampleGeometry(data: Record<string, unknown> | null | undef
     // 非规范字重 / 字形（`600`、`semibold`、`oblique`）按与引擎同一口径归一：≥ 600 算粗、非 normal 算斜
     const faceOf = (prop: string) => (faceRole ? readValue(d, ['element', faceRole, prop]) : null)
     return {
-      fontFamily: cssFamilyOf(readString(d, ['element', familyRole, 'fontfamily'])),
+      fontFamily: cssFamilyOf(familyOf(readValue(d, ['element', familyRole, 'fontfamily']))),
       bold: weightIsBold(faceOf('weight')),
       italic: styleIsItalic(faceOf('style')),
     }

@@ -632,7 +632,8 @@
         "otherOn": "Italic: the style says “{{value}}”, which counts as italic — applying writes it as is (click to make it never italic)",
         "otherOff": "Italic: the style says “{{value}}”, which doesn’t count as italic — applying writes it as is (click to make italic)"
       }
-    }
+    },
+    "clearRow": "Clear the whole {{row}} row: every cell goes back to not set"
   },
   "readiness": {
     "addToCanvas": "Add to canvas",

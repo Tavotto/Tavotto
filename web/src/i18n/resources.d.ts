@@ -851,6 +851,7 @@ export default interface Resources {
       "builtin.spec.lab-publication-v1": "默认规范",
       "builtin.style.default": "默认样式",
       "clearField": "清除{{field}}",
+      "clearRow": "清除整行（{{row}}）：这一行的每一格都回到未设置",
       "conflict": "「{{name}}」已在别处被修改。请重新打开后再编辑。",
       "copyOf": "{{name}} 副本",
       "delete": "删除",

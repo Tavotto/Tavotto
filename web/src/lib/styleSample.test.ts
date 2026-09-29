@@ -209,3 +209,10 @@ describe('示例图的粗 / 斜体认非规范值（与引擎同一口径，#704
     expect(g.faces.legend.bold).toBe(false)
   })
 })
+
+describe('示例图认字体候选列表', () => {
+  it('fontfamily 是一串候选时按第一个画（matplotlib 也先试它）', () => {
+    const g = styleSampleGeometry({ element: { title: { fontfamily: ['Times New Roman', 'serif'] } } })
+    expect(g.faces.title.fontFamily).toBe('"Times New Roman", serif')
+  })
+})

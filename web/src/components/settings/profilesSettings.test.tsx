@@ -729,6 +729,107 @@ describe('样式页与左栏样式面板同一张行表：字体 / 字号 / 粗�
     expect(textSummary(row('title'), d)).toBe('字重 半粗')
     expect(textSummary(row('axis_label'), d)).toBe('字形 倾斜')
     expect(textSummary(row('legend'), d)).toBe('字重 600')
+    expect(textSummary(row('text'), { element: { text: { fontsize: 'large', fontfamily: ['Arial', 'Helvetica'] } } })).toBe(
+      'Arial, Helvetica · "large"',
+    )
+  })
+
+  /** 用这份内容起「投稿用」再进编辑 */
+  async function editStyleWith(data: Record<string, unknown>) {
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) =>
+      new Response(
+        JSON.stringify({
+          profiles: String(input).includes('/style') ? [BUILTIN_STYLE, { ...USER_STYLE, data }] : BUILTIN_SPECS,
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    ) as typeof fetch
+    return editUserStyle()
+  }
+  const save = () =>
+    act(async () => {
+      byText('保存')!.click()
+    })
+  async function pickFamily(row: string, name: string) {
+    if (!Element.prototype.scrollIntoView) {
+      Object.defineProperty(Element.prototype, 'scrollIntoView', { value: () => {}, configurable: true })
+    }
+    await act(async () =>
+      document.body.querySelector<HTMLElement>(`[data-style-cell="${row}.family"] [role="combobox"]`)!.click(),
+    )
+    const opt = [...document.body.querySelectorAll<HTMLElement>('[role="option"]')].find(
+      (o) => o.textContent === name,
+    )!
+    expect(opt, name).toBeTruthy()
+    await act(async () => opt.click())
+  }
+
+  it('逐格回到未设置：只清字号（清空回车），非规范的 semibold 留着', async () => {
+    const saves = await editStyleWith({ element: { line: { linewidth: 1.25 }, title: { weight: 'semibold', fontsize: 11 } } })
+    await typeInto(input('标题字号')!, '')
+    expect(input('标题字号')!.placeholder).toBe('未设置')
+    await save()
+    expect(saves.at(-1)).toEqual({ element: { line: { linewidth: 1.25 }, title: { weight: 'semibold' } }, pt_basis: 'page' })
+  })
+
+  it('逐格回到未设置：字体下拉顶上的「未设置」只删字体；最后一格也清掉时整个角色删掉', async () => {
+    const saves = await editStyleWith({
+      element: { line: { linewidth: 1.25 }, title: { weight: 'semibold', fontfamily: 'serif' }, axis_label: { fontfamily: 'serif' } },
+    })
+    await pickFamily('title', '未设置')
+    expect(document.body.querySelector('[data-style-cell="title.family"]')!.textContent).toContain('未设置')
+    // 这一行只剩字体一格：清掉它，axis_label 整个没了，不留 `axis_label: {}`
+    await pickFamily('axis_label', '未设置')
+    await save()
+    expect(saves.at(-1)).toEqual({ element: { line: { linewidth: 1.25 }, title: { weight: 'semibold' } }, pt_basis: 'page' })
+  })
+
+  it('控件认不出的值照原值显示、不当成没设，也能单独清：字号 "large"、字体是一串候选', async () => {
+    const saves = await editStyleWith({
+      element: {
+        line: { linewidth: 1.25 },
+        title: { weight: 'semibold', fontsize: 'large', fontfamily: ['Arial', 'Helvetica'] },
+      },
+    })
+    expect(input('标题字号')!.placeholder).toBe('"large"')
+    expect(document.body.querySelector('[data-style-cell="title.family"]')!.textContent).toContain('Arial, Helvetica')
+    // 不点：原样保存
+    await typeInto(input('刻度字号')!, '7')
+    await save()
+    expect((saves.at(-1)!.element as Record<string, unknown>).title).toEqual({
+      weight: 'semibold',
+      fontsize: 'large',
+      fontfamily: ['Arial', 'Helvetica'],
+    })
+    // 空框里 Backspace 清字号；字体选「未设置」清字体；semibold 一直在
+    const size = input('标题字号')!
+    await act(async () => size.focus())
+    await act(async () => {
+      size.dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true, cancelable: true }))
+    })
+    await pickFamily('title', '未设置')
+    await save()
+    expect((saves.at(-1)!.element as Record<string, unknown>).title).toEqual({ weight: 'semibold' })
+  })
+
+  it('画布标注写着非 boolean 的粗体（导入的 "bold"）：按非规范值显示成开、说原值，不塌成关', async () => {
+    const saves = await editStyleWith({ element: { line: { linewidth: 1.25 } }, annotation: { bold: 'bold', sizePt: 8 } })
+    expect(toggle('annotation', 'weight')!.getAttribute('aria-pressed')).toBe('true')
+    await typeInto(input('刻度字号')!, '7')
+    await save()
+    expect(saves.at(-1)!.annotation).toEqual({ bold: 'bold', sizePt: 8 })
+    // 点一下：显示为开 → 显式关（画布标注写 false）
+    await act(async () => toggle('annotation', 'weight')!.click())
+    await save()
+    expect(saves.at(-1)!.annotation).toEqual({ bold: false, sizePt: 8 })
+  })
+
+  it('线条行的数字框清空也是回到未设置；行尾 × 的名字说清是整行还是这一格', async () => {
+    const saves = await editStyleWith({ element: { line: { linewidth: 1.25 }, ticks: { length: 4 } } })
+    await typeInto(input('刻度长度')!, '')
+    await save()
+    expect(saves.at(-1)).toEqual({ element: { line: { linewidth: 1.25 } }, pt_basis: 'page' })
+    expect(document.body.querySelector('[data-style-row="dataLine"] button[aria-label="清除数据线宽"]')).toBeTruthy()
   })
 
   it('粗 / 斜体的悬停说明三态各一句，并说清应用时会怎样', async () => {
@@ -785,7 +886,7 @@ describe('样式页与左栏样式面板同一张行表：字体 / 字号 / 粗�
     await typeInto(input('标题字号')!, '10')
     await act(async () => toggle('title', 'style')!.click())
     const clear = () =>
-      document.body.querySelector<HTMLButtonElement>('[data-style-row="title"] button[aria-label="清除标题"]')
+      document.body.querySelector<HTMLButtonElement>('[data-style-row="title"] button[aria-label="清除整行（标题）：这一行的每一格都回到未设置"]')
     expect(clear()).toBeTruthy()
     await act(async () => clear()!.click())
     expect(clear()).toBeNull()

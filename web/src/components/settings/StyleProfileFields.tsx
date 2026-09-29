@@ -26,8 +26,8 @@ import { SettingRow, settingControlStyle, settingRowGrid } from './SettingRow'
  *
  * 与面板的不同只有一处：这里编辑的是**样式本身**，不是一张图——
  *
- * * 每一格多一档「这份样式没管这一项」（未设置）：字体下拉留空、数字框留空，行尾的 × 把
- *   整行清回这一档。粗 / 斜体是三态：未设置 → 开（`bold`）→ 显式关（`normal`：「一律不加粗」
+ * * 每一格多一档「这份样式没管这一项」（未设置），且每一格都能单独回到它：数字框清空、字体下拉
+ *   顶上的「未设置」、粗 / 斜体的三态循环；行尾的 × 把整行清回这一档。粗 / 斜体是三态：未设置 → 开（`bold`）→ 显式关（`normal`：「一律不加粗」
  *   也是一种规定，与「不管」不是一回事）→ 回到未设置。
  * * 字体的选项没有 manifest 可问：通用三族 + 每一张已渲染的图里引擎报过的首选项与本机字体
  *   （`font_families`，逐张并，`figureFamilyOptions`）+ 样式里已经写着的那个名字（不认识也照样显示，
@@ -133,7 +133,11 @@ interface FaceRead {
 
 function readFace(kind: TextRowSpec['kind'], which: 'weight' | 'style', value: unknown): FaceRead {
   if (value === undefined || value === null) return { on: null, raw: null }
-  if (kind === 'annotation') return { on: value === true, raw: null }
+  if (kind === 'annotation') {
+    if (typeof value === 'boolean') return { on: value, raw: null }
+    // 画布标注存 boolean；导入的样式里写着别的（`"bold"`、`1`）时同样按非规范值对待，不塌成「关」
+    return { on: which === 'weight' ? weightIsBold(value) : styleIsItalic(value), raw: String(value) }
+  }
   const canonOn = which === 'weight' ? 'bold' : 'italic'
   if (value === canonOn) return { on: true, raw: null }
   if (value === 'normal') return { on: false, raw: null }
@@ -297,6 +301,11 @@ function TextRowEditor({
   const anySet = paths.some((p) => p && readPath(draft, p) !== undefined)
   const range = NUMBER_SPEC[leaf(row.size)]
   const sizeSet = typeof size === 'number' && Number.isFinite(size)
+  // 每一格都能单独回到「未设置」（Codex #703）：行尾 × 清整行会连带删掉别的格——删掉的若是
+  // 控件造不回来的值（`semibold`、认不出的字体名），就丢了。样式里写着控件认不出的值（字号是
+  // `large`、字体是一串候选）时照原值显示、不当成没设
+  const sizeRaw = size !== undefined && !sizeSet ? rawText(size) : null
+  const familyRaw = family !== undefined && !(typeof family === 'string' && family) ? rawText(family) : null
   // 粗 / 斜体三态：未设置（应用时保留图里原样）→ 开 → 显式关（应用时一律去掉：图内写 `normal`、
   // 画布标注写 false）→ 回到未设置。「关」与「未设置」应用起来不是一回事，所以看得出来：未设置用
   // 与面板「多个值」同一副第三态视觉（按钮下一道短横、`aria-pressed="mixed"`），名字换成「未设置」。
@@ -330,9 +339,10 @@ function TextRowEditor({
         <div data-style-cell={`${row.id}.family`} className="flex min-w-0">
           <FamilySelect
             label={sp('familyOf', { row: label })}
-            value={typeof family === 'string' ? family : ''}
+            value={familyRaw !== null ? RAW_FAMILY : typeof family === 'string' ? family : ''}
+            rawLabel={familyRaw}
             families={families}
-            onChange={(v) => onSet(row.family, v)}
+            onChange={(v) => (v === UNSET_FAMILY ? onClear([row.family]) : onSet(row.family, v))}
           />
         </div>
         <div className="flex h-7 min-w-0 items-center gap-1">
@@ -340,7 +350,7 @@ function TextRowEditor({
             <NumberField
               value={sizeSet ? (size as number) : range.min}
               mixed={!sizeSet}
-              mixedPlaceholder={st('unset')}
+              mixedPlaceholder={sizeRaw ?? st('unset')}
               min={range.min}
               max={range.max}
               step={range.step}
@@ -350,11 +360,14 @@ function TextRowEditor({
               ariaLabel={sp('sizeOf', { row: label })}
               className="w-28"
               onChange={(v) => onSet(row.size, v)}
+              onClear={size !== undefined ? () => onClear([row.size]) : undefined}
             />
           </div>
           {face('weight', row.weight, weight)}
           {face('style', row.style, style)}
-          {anySet && <ClearButton label={label} onClick={() => onClear(paths)} />}
+          {anySet && (
+            <ClearButton label={st('clearRow', { row: label })} onClick={() => onClear(paths)} />
+          )}
         </div>
       </div>
     </SettingRow>
@@ -407,10 +420,11 @@ function LineRowEditor({
               ariaLabel={label}
               className="w-28"
               onChange={(v) => onSet(row.path, v)}
+              onClear={isSet ? () => onClear([row.path]) : undefined}
             />
           )}
         </div>
-        {isSet && <ClearButton label={label} onClick={() => onClear([row.path])} />}
+        {isSet && <ClearButton label={st('clearField', { field: label })} onClick={() => onClear([row.path])} />}
       </div>
     </SettingRow>
   )
@@ -418,11 +432,19 @@ function LineRowEditor({
 
 function ClearButton({ label, onClick }: { label: string; onClick: () => void }) {
   return (
-    <IconButton iconSize="sm" className="ml-auto shrink-0" label={st('clearField', { field: label })} onClick={onClick}>
+    <IconButton iconSize="sm" className="ml-auto shrink-0" label={label} onClick={onClick}>
       <X size={ICON_SIZE.sm} aria-hidden className="text-ink-3" />
     </IconButton>
   )
 }
+
+/** 样式里写着控件认不出的值时，照原值说出来（`large`、`["Arial", "Helvetica"]`） */
+const rawText = (v: unknown): string =>
+  typeof v === 'string' ? JSON.stringify(v) : Array.isArray(v) ? v.map(String).join(', ') : JSON.stringify(v) ?? String(v)
+
+/** 字体下拉里的两个非字体项：「未设置」（选了删掉这个键）与「样式里原来写着的那个认不出的值」 */
+const UNSET_FAMILY = '\u0000unset'
+const RAW_FAMILY = '\u0000raw'
 
 /** 当前值不在选项里（样式里写着一个本机没有的族）时照样列出来：替用户换掉是最坏的处置 */
 const withCurrent = (options: readonly string[], current: string): string[] =>
@@ -438,16 +460,21 @@ const FamilySelect = memo(
   function FamilySelect({
     label,
     value,
+    rawLabel,
     families,
     onChange,
   }: {
     label: string
+    /** 字体名；`''` = 未设置；`RAW_FAMILY` = 样式里写着认不出的值（`rawLabel` 说它是什么） */
     value: string
+    rawLabel: string | null
     /** 选项与不可用标记是一个对象（`useFigureFamilies` 内容没变时引用不变）：按它一次比完 */
     families: FigureFamilies
+    /** 选到「未设置」时交出 `UNSET_FAMILY` */
     onChange: (v: string) => void
   }) {
     const missing = new Set(families.unavailable)
+    const fonts = withCurrent(families.options, value === RAW_FAMILY ? '' : value)
     return (
       <div className="flex min-w-0 flex-1 flex-col">
         <Select
@@ -456,22 +483,26 @@ const FamilySelect = memo(
           value={value}
           placeholder={st('unset')}
           onChange={onChange}
-          options={withCurrent(families.options, value).map((o) => ({
-            value: o,
-            label: (
-              <span>
-                {optionLabel('fontfamily', o)}
-                {missing.has(o) && <FontMissingTag />}
-              </span>
-            ),
-          }))}
+          options={[
+            // 顶上一项「未设置」：这一格单独回到没设置（没设置时它就是占位，不再列一遍）
+            ...(value ? [{ value: UNSET_FAMILY, label: <span className="text-ink-3">{st('unset')}</span> }] : []),
+            ...(value === RAW_FAMILY && rawLabel !== null ? [{ value: RAW_FAMILY, label: rawLabel }] : []),
+            ...fonts.map((o) => ({
+              value: o,
+              label: (
+                <span>
+                  {optionLabel('fontfamily', o)}
+                  {missing.has(o) && <FontMissingTag />}
+                </span>
+              ),
+            })),
+          ]}
         />
         {missing.has(value) && <FontMissingHint />}
       </div>
     )
   },
-  (a, b) =>
-    a.value === b.value && a.label === b.label && a.families === b.families,
+  (a, b) => a.value === b.value && a.rawLabel === b.rawLabel && a.label === b.label && a.families === b.families,
 )
 
 /* --------------------------------- 只读摘要 -------------------------------- */
@@ -482,9 +513,11 @@ const ptText = (v: unknown): string | null =>
 /** 一行文字在只读摘要里的读法：「Arial · 9 pt · 粗体」；一项都没管就是「未设置」 */
 export function textSummary(row: TextRowSpec, draft: Record<string, unknown>): string {
   const family = readPath(draft, row.family)
+  const size = readPath(draft, row.size)
+  // 认不出的值照原值说（与编辑态同一条：不当成没设）
   const parts = [
-    typeof family === 'string' && family ? optionLabel('fontfamily', family) : null,
-    ptText(readPath(draft, row.size)),
+    typeof family === 'string' && family ? optionLabel('fontfamily', family) : family !== undefined ? rawText(family) : null,
+    ptText(size) ?? (size !== undefined ? rawText(size) : null),
   ]
   const weight = row.weight ? readFace(row.kind, 'weight', readPath(draft, row.weight)) : null
   const style = row.style ? readFace(row.kind, 'style', readPath(draft, row.style)) : null
