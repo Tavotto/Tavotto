@@ -11,7 +11,7 @@ import { activateCanvas, createCanvasAndActivate } from './canvasSession'
 import { useDocumentStore } from './documentStore'
 import { startPageSizeFit } from './pageFit'
 import { useViewportStore } from './viewportStore'
-import { useWorkspaceStore } from './workspace'
+import { returnToLayout, useWorkspaceStore } from './workspace'
 
 globalThis.fetch = (async () => new Response('{}', { status: 200 })) as typeof fetch
 
@@ -85,6 +85,31 @@ describe('startPageSizeFit', () => {
     useWorkspaceStore.setState({ mode: 'fast_edit' })
     vp().setView({ zoom: 3, panX: -500, panY: -400 })
     setPageSize(300, 200)
+    expect(vp()).toMatchObject({ zoom: 3, panX: -500, panY: -400 })
+  })
+
+  it('快速编辑里改了页面尺寸：回排版按新页面取景，不还原按旧页面停放的那一片（#706 评审 P2）', () => {
+    vp().setView({ zoom: 3, panX: -500, panY: -400 })
+    useWorkspaceStore.getState().enterFastEdit('p_none')
+    vp().setView({ zoom: 2, panX: 10, panY: 20 }) // 快速编辑那一屏自己的取景
+    setPageSize(300, 200)
+    expect(vp()).toMatchObject({ zoom: 2, panX: 10, panY: 20 })
+    returnToLayout()
+    const want = expectedFit(300, 200)
+    expect(vp().zoom).toBeCloseTo(want.zoom)
+    expect(vp().panX).toBeCloseTo(want.panX)
+    expect(vp().panY).toBeCloseTo(want.panY)
+    expect(vp().fitted).toBe(true)
+  })
+
+  it('快速编辑里没改页面尺寸：回排版原样还原进来之前那一片', () => {
+    vp().setView({ zoom: 3, panX: -500, panY: -400 })
+    useWorkspaceStore.getState().enterFastEdit('p_none')
+    vp().setView({ zoom: 2, panX: 10, panY: 20 })
+    useDocumentStore.getState().commit(literal('bg'), (d) => {
+      d.page.bg = '#eeeeee'
+    })
+    returnToLayout()
     expect(vp()).toMatchObject({ zoom: 3, panX: -500, panY: -400 })
   })
 

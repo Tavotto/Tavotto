@@ -1,6 +1,6 @@
 import { useDocumentStore } from './documentStore'
 import { useViewportStore } from './viewportStore'
-import { useWorkspaceStore } from './workspace'
+import { markParkedPageResized, useWorkspaceStore } from './workspace'
 
 /**
  * 同一张画布的**页面尺寸**变了（换预设「单栏 / 双栏 / …」、手填宽高、横竖对调、
@@ -16,7 +16,8 @@ import { useWorkspaceStore } from './workspace'
  * - 切画布标签：`canvasSession.restore`（适应模式按画布各自记，不在这里覆盖）；
  * - 整体换文档 / 载入 / 切项目：`loadSeq` 或 `documentId` 变了，`afterSwitch` /
  *   `adoptOpenedProject` / 会话恢复各自 `fit`；
- * - 快速编辑：那一屏取景的是那张图的包围盒，不是页面。
+ * - 快速编辑：那一屏取景的是那张图的包围盒，不是页面——此刻不动视口，只给停放的
+ *   排版视口记一笔，回排版时按新页面取景（`returnToLayout`）。
  */
 export function startPageSizeFit(): () => void {
   return useDocumentStore.subscribe((state, prev) => {
@@ -25,7 +26,10 @@ export function startPageSizeFit(): () => void {
     if (a.w === b.w && a.h === b.h) return
     if (state.activeCanvasId !== prev.activeCanvasId) return
     if (state.documentId !== prev.documentId || state.loadSeq !== prev.loadSeq) return
-    if (useWorkspaceStore.getState().mode === 'fast_edit') return
+    if (useWorkspaceStore.getState().mode === 'fast_edit') {
+      markParkedPageResized()
+      return
+    }
     useViewportStore.getState().fitAnimated(a.w, a.h)
   })
 }
