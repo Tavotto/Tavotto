@@ -722,10 +722,14 @@ def _pip_config_files(environ) -> "list[str]":
             files.append("/Library/Application Support/pip/pip.conf")
         files.append("/etc/pip.conf")
         user.append(os.path.join(home, ".pip", "pip.conf"))
-        if sys.platform == "darwin":
-            user.append(os.path.join(home, "Library", "Application Support", "pip", "pip.conf"))
         xdg = environ.get("XDG_CONFIG_HOME") or os.path.join(home, ".config")
-        user.append(os.path.join(xdg, "pip", "pip.conf"))
+        library = os.path.join(home, "Library", "Application Support", "pip")
+        # macOS 上 pip 只认**一个**当前用户配置：`~/Library/Application Support/pip` 在就用它，不在才用
+        # XDG 那个（pip `appdirs._macos_user_config_dir`，Codex #724）；两个都读会让另一份旧配置翻转结论
+        if sys.platform == "darwin" and os.path.isdir(library):
+            user.append(os.path.join(library, "pip.conf"))
+        else:
+            user.append(os.path.join(xdg, "pip", "pip.conf"))
     if load_user:
         files.extend(user)
     # site 配置：pip 按**跑它的那个解释器**的 sys.prefix 找（venv 里 `pip config --site` 配的镜像就在
