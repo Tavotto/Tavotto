@@ -14,5 +14,11 @@
 - 启动器 / roots 的恢复话术不再只说「新开 Codex 会话」（`RELOAD_HINT` / `RESTART_HOST`），恢复命令写
   真实绝对路径。`tavotto_health` 多了 `server`（实际包目录 / 版本）与分层 `checks`——
   `host_ui_rendered` 永远是 `unknown_to_server`，不从资源在推断画布已显示。
+- **Claude Code 插件形态（ADR 0103）**：同一份插件目录多一份 `.claude-plugin/plugin.json`，仓库根
+  `.claude-plugin/marketplace.json` 走 `git-subdir → plugin-stable`，发行链不改。plugin.json 的
+  `mcpServers` 与 `.mcp.json` **同名**（Claude Code 先读 `.mcp.json` 再按名替换，名字不同 = Codex 那条也被
+  起一遍并失败），条目是同一个启动器的 `${CLAUDE_PLUGIN_ROOT}/` 写法、`timeout` 由 `tool_timeout_sec`
+  换算成毫秒、不带 Codex 字段；不写 `skills` 键（会替换默认位置）；授权走 `roots/list`。进
+  `STAGE_REQUIRED`、不进 `REQUIRED`。安装命令唯一出处 `brand.CLAUDE_*`。看护 `tests/test_claude_plugin.py`。
 - 看护：`tests/test_mcp_configure.py`（解包到树外按生成配置真起 server）、`tests/test_mcp_host_profiles.py`
   （八个 profile 的独立期望）、`tests/test_plugin_candidate.py` 末条（真实候选）。

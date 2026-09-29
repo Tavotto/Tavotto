@@ -20,3 +20,14 @@ On Windows, plugin 0.17.0 loaded as enabled, with its skill, but with no Tavotto
 ## Codex plugin: an old pip/pipx engine is no longer reported as "desktop app only"
 
 If the `tavotto` engine installed with pip or pipx was too old for the plugin, the plugin's health check could report `desktop_only` ("only the desktop app is installed") and suggest steps that did not fix it. This happened when the plugin could not state a minimum engine version (a plugin installed from a local marketplace or source checkout) or when the engine's CLI could not report its version. A common trigger is a pip mirror that has not synced the new release yet, so `pipx install "tavotto[worker]"` installs an older version. The health check now asks the engine's own Python environment for its version. It reports `engine_too_old` with both versions when it knows the minimum, and a new code, `engine_incompatible`, when it doesn't. Both give upgrade commands such as `pipx install --force "tavotto[worker]==<version>"`. If pip's `index-url` points to a mirror (from `PIP_INDEX_URL` or a pip config file, read only), the message says the mirror may lag and adds `--index-url https://pypi.org/simple` to each command. `tavotto codex doctor` reports the same code and text.
+
+## Claude Code plugin (Beta)
+
+Tavotto now installs into Claude Code as a plugin:
+`claude plugin marketplace add Tavotto/Tavotto --sparse .claude-plugin`, then
+`claude plugin install tavotto@tavotto`. It is the same plugin as for Codex (same MCP server and
+skill); Claude Code has no embedded canvas, so you edit through the tools. The folder Claude Code
+was started in is the authorized project. If you had set Tavotto up in Claude Code with the config
+generator, remove that `.mcp.json` entry after installing the plugin, or you will have two servers.
+The install path only works once this version has been promoted to the `plugin-stable` branch.
+

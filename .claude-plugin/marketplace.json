@@ -1,0 +1,22 @@
+{
+  "name": "tavotto",
+  "description": "Tavotto：论文级 matplotlib 出图与出版规范预检（Claude Code 插件）",
+  "owner": {
+    "name": "erwanjun",
+    "url": "https://github.com/Tavotto/Tavotto"
+  },
+  "plugins": [
+    {
+      "name": "tavotto",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/Tavotto/Tavotto.git",
+        "path": "codex-plugin",
+        "ref": "plugin-stable"
+      },
+      "description": "画论文级 matplotlib 图，用 MCP 工具微调并按出版规范预检，导出真矢量 PDF",
+      "category": "productivity",
+      "homepage": "https://github.com/Tavotto/Tavotto"
+    }
+  ]
+}

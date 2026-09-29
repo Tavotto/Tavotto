@@ -67,6 +67,8 @@ REQUIRED = (
 STAGE_REQUIRED = REQUIRED + (
     # 非 Codex 宿主的接入入口：同一份包、同一个启动器（docs/implementation/multi-host-mcp/）
     "integrations/configure.py",
+    # Claude Code 插件清单：同一份包经 `.claude-plugin/marketplace.json` 装进 Claude Code（ADR 0103）
+    ".claude-plugin/plugin.json",
 )
 #: 已装副本里允许被 `tavotto codex install` 改动 command 的两份清单（严格同源对）
 PINNABLE_MCP = ".mcp.json"

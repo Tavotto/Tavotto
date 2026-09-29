@@ -62,7 +62,7 @@
     }
   ],
   "mcp_hosts": {
-    "note": "非 Codex 本地 MCP 宿主的支持口径（2026-09-24）。这里是**口径**的唯一出处，证据在 docs/implementation/multi-host-mcp/acceptance.md；tests/test_mcp_host_profiles.py 对拍三处：本表 id == configure.py 的 HOST_IDS == 验收矩阵的行。status 只有两档：experimental = 配置生成已通过独立期望测试、真实客户端未验收（协议级覆盖逐行见验收矩阵，DSH 目前没有）；verified = 验收矩阵里该行至少一项 host_verified 且附证据。没有 verified 之前，README / 网站不得写「支持」某宿主，只能写「可接入（实验）」。",
+    "note": "非 Codex 本地 MCP 宿主的支持口径（2026-09-24）。这里是**口径**的唯一出处，证据在 docs/implementation/multi-host-mcp/acceptance.md；tests/test_mcp_host_profiles.py 对拍三处：本表 id == configure.py 的 HOST_IDS == 验收矩阵的行。status 三档：experimental = 配置生成已通过独立期望测试、真实客户端未验收（协议级覆盖逐行见验收矩阵，DSH 目前没有）；beta = 有一键安装渠道（`channel` 字段：Claude Code 插件 / DSH bundle），且验收矩阵里有该渠道的子行、至少 local_smoke（本机真宿主冒烟，非发行件）——README 只给这条渠道的章节标「(Beta)」，配置生成器那条路仍是实验（2026-09-28 用户决定）；verified = 验收矩阵里该行至少一项 host_verified 且附证据。没有 verified 之前，README / 网站不得写「支持」某宿主。",
     "channel": "GitHub Release 的完整包 codex-plugin-<版本>.zip + integrations/configure.py 生成配置",
     "hosts": [
       {
@@ -83,7 +83,8 @@
       },
       {
         "id": "claude-code",
-        "status": "experimental"
+        "status": "beta",
+        "channel": "claude-plugin"
       },
       {
         "id": "claude-desktop",
