@@ -606,6 +606,26 @@ describe('导出默认值以后端为准（#715 PR-B）', () => {
   })
 })
 
+describe('导出默认值：对话框开着时取回的后端值', () => {
+  it('开着时不当面换掉；关上之后重读，再打开用取回的值', async () => {
+    await setup(9) // 开着，缓存空：600
+    vi.mocked(fetchExportDefaultsRemote).mockResolvedValueOnce({
+      defaults: { dpi: '1200', formats: ['pdf', 'png'], withProof: false, strictInspection: false },
+    })
+    await act(async () => {
+      await hydrateExportDefaults()
+    })
+    await act(async () => {
+      useUiStore.getState().setExportOpen(false)
+    })
+    await act(async () => {
+      useUiStore.getState().setExportOpen(true)
+    })
+    await click(button('开始导出')!)
+    expect(exportBodies.at(-1)!.ppi).toBe(1200)
+  })
+})
+
 describe('文件名的跨平台校验', () => {
   it('非法字符就地报错并挡住导出，不等一次网络往返', async () => {
     await setup(9)

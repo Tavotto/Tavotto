@@ -70,9 +70,16 @@ let remoteTail: Promise<void> = Promise.resolve()
 /**
  * 本机这份**还没被后端确认**：推送失败（非 404）时留着这个标记。下次 `hydrateExportDefaults()`
  * 见到它就以本机为准并重推，不拿后端那份更旧的值盖掉用户刚改的 DPI / 格式（#719 Codex P2）。
- * 值是写入时刻，只用来认「确认的是不是这一次」。
+ * 值是这次写入的唯一标识，只用来认「确认的是不是这一次」。
  */
 const PENDING_KEY = 'tavotto.export.defaults.pending'
+
+let tokenSeq = 0
+/** 每次写入唯一：同一毫秒里写两次时时刻会撞，认确认只能认这个（#719 Codex P2） */
+function newToken(): string {
+  tokenSeq += 1
+  return `${Date.now().toString(36)}-${tokenSeq.toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+}
 
 function readPending(): string | null {
   try {
@@ -108,7 +115,7 @@ function pushRemote(value: ExportDefaults, token: string): void {
 
 export function writeExportDefaults(patch: Partial<ExportDefaults>): ExportDefaults {
   const next = { ...readExportDefaults(), ...patch }
-  const token = String(Date.now())
+  const token = newToken()
   writeCache(next)
   setPending(token)
   pushRemote(next, token)
@@ -155,7 +162,7 @@ export async function hydrateExportDefaults(): Promise<void> {
     /* 读不了就没有可迁移的 */
   }
   if (local) {
-    const token = String(Date.now())
+    const token = newToken()
     setPending(token)
     pushRemote(readExportDefaults(), token)
   }

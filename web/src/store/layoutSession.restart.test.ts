@@ -31,6 +31,8 @@ let exportDefaults: unknown = null
 let sessionEndpoints = true
 /** true = 后端在，但写入回 500（sidecar 正在退出、瞬断） */
 let failSessionPuts = false
+/** 按顺序给「上次开着的」PUT 排好结局（先挂在 hold 上，再按 'ok' / 'fail' 答）；空了按常规 */
+const putPlan: { hold: Promise<void>; outcome: 'ok' | 'fail' }[] = []
 /** 非空 = 「上次开着哪份」的 GET 挂在这里，等它 resolve 才答（切项目途中的那段 await） */
 let holdSessionGet: Promise<void> | null = null
 const deletes: string[] = []
@@ -72,6 +74,11 @@ globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
       return json({ last: lastByProject.get(pjOf(u, init)) ?? null })
     }
     if (u.pathname === '/api/layout-session/last' && method === 'PUT') {
+      const plan = putPlan.shift()
+      if (plan) {
+        await plan.hold
+        if (plan.outcome === 'fail') return json({ error: 'boom' }, 500)
+      }
       const body = JSON.parse(String(init?.body)) as { doc_id: string; name: string }
       const last = { doc_id: body.doc_id, name: body.name, at: 1 }
       lastByProject.set(pjOf(u, init), last)
@@ -136,6 +143,7 @@ beforeEach(() => {
   sessionEndpoints = true
   failSessionPuts = false
   holdSessionGet = null
+  putPlan.length = 0
   deletes.length = 0
 })
 
@@ -269,6 +277,29 @@ describe('推给后端失败的写入不丢（#719 Codex P1 / P2）', () => {
       .getState()
       .adoptOpenedProject({ open: true, id: 'p_a', figures_dir: '/figs/a' })
     expect(second.doc.useDocumentStore.getState().documentId).toBe('d_old')
+  })
+
+  it('同一毫秒记两次：先到的确认不会把后一次当成自己摘掉（后一次推失败仍留待确认）', async () => {
+    vi.resetModules()
+    const docs = await import('@/lib/projectDocs')
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000)
+    let release!: () => void
+    putPlan.push({ hold: new Promise<void>((r) => (release = r)), outcome: 'ok' })
+    putPlan.push({ hold: Promise.resolve(), outcome: 'fail' })
+    try {
+      docs.rememberProjectDocument('p_a', { id: 'd_first', name: 'first' })
+      docs.rememberProjectDocument('p_a', { id: 'd_second', name: 'second' })
+      release()
+      await settle()
+    } finally {
+      now.mockRestore()
+    }
+    expect(docs.readProjectDocument('p_a')).toEqual({ id: 'd_second', name: 'second' })
+    expect(lastByProject.get('p_a')?.doc_id).toBe('d_first') // 前提：后一次确实没推上去
+    // 下次读时本机这条待确认、比后端新：以它为准并补推
+    expect(await docs.loadProjectDocument('p_a')).toEqual({ id: 'd_second', name: 'second' })
+    await settle()
+    expect(lastByProject.get('p_a')?.doc_id).toBe('d_second')
   })
 
   it('导出默认值推失败：下次启动不被后端的旧值盖掉，并补推', async () => {
