@@ -374,9 +374,9 @@ def _is_read_call(node: ast.Call) -> bool:
 
 
 def _input_constant_ids(tree: ast.AST) -> set[int]:
-    """`id(Constant)`：读数据调用的**路径实参**整条就是一个字符串常量时，那个常量（只赋值过一次的名字
-    跟过去：`DATA = "..."` 再 `read_csv(DATA)`；`Path(<常量>)` 同样）。`Path(<常量>).read_text()` /
-    `.read_bytes()` / 读模式的 `.open()` 也算。`.py` 读的是代码不是数据，由调用方另外排除。"""
+    """`id(Constant)`：读数据调用的**路径实参**里，代表那条路径（或它打头的目录）的字符串常量——整条就是
+    常量、只赋值过一次的名字（`DATA = "..."` 再 `read_csv(DATA)`）、`Path(<常量>)`、拼路径的打头一段。
+    `Path(<常量>).read_text()` / `.read_bytes()` / 读模式的 `.open()` 也算。`.py` 由调用方另外排除。"""
     stores: dict[str, int] = {}
     consts: dict[str, ast.AST] = {}
     for node in ast.walk(tree):
@@ -392,10 +392,11 @@ def _input_constant_ids(tree: ast.AST) -> set[int]:
     out: set[int] = set()
 
     def _take(expr: ast.AST | None, depth: int = 0) -> None:
-        # 只认**整条路径**就是一个常量的写法：常量本身、只赋值一次的名字、`Path(<那样的东西>)`。
-        # 拼出来的（`os.path.join(d, "x.csv")`、f-string）各段本身不是那条路径——静态说不出拼完是什么，
-        # 不列（运行时 worker 会说出真正缺的那一串）
-        if expr is None or depth > 3:
+        # 整条路径是一个常量（常量本身、只赋值一次的名字、`Path(<那样的东西>)`）就是它；拼出来的只认
+        # **打头的那一段**（`os.path.join(DATA, "y.h5")` / `Path(DATA) / "y.h5"` / `DATA + "/y.h5"` /
+        # `f"{DATA}/y.h5"` 的 DATA）——它是那条路径的前缀（目录常量，改写 / 归因要它）；后面的片段
+        # 本身不是一条路径（`"y.h5"` 单拿出来会被当成缺了一个相对文件），不认
+        if expr is None or depth > 4:
             return
         if isinstance(expr, ast.Constant) and isinstance(expr.value, str):
             out.add(id(expr))
@@ -403,10 +404,18 @@ def _input_constant_ids(tree: ast.AST) -> set[int]:
             _take(consts[expr.id], depth + 1)
         elif (
             isinstance(expr, ast.Call)
-            and databinding._func_name(expr.func) in databinding._PATH_CTORS
-            and len(expr.args) == 1
+            and expr.args
+            and (
+                databinding._func_name(expr.func) in databinding._PATH_CTORS
+                or databinding._func_name(expr.func) == "join"
+            )
         ):
             _take(expr.args[0], depth + 1)
+        elif isinstance(expr, ast.BinOp) and isinstance(expr.op, (ast.Div, ast.Add)):
+            _take(expr.left, depth + 1)
+        elif isinstance(expr, ast.JoinedStr) and expr.values:
+            head = expr.values[0]
+            _take(head.value if isinstance(head, ast.FormattedValue) else head, depth + 1)
 
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
