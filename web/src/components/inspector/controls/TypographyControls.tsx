@@ -90,7 +90,9 @@ export function TypographyControls({
             unavailable={adapter.unavailableOptions('fontFamily')}
             onChange={(v) => adapter.writeOnce('fontFamily', v)}
             optionLabels={family.option_labels}
-            optionLabelOf={(o) => fontFamilyOptionLabel(o, family.option_labels)}
+            optionLabelOf={(o) =>
+              fontFamilyOptionLabel(o, family.option_labels, family.options ?? [])
+            }
             overridden={dirty('fontFamily')}
             onReset={reset('fontFamily')}
           />

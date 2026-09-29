@@ -74,43 +74,61 @@ export const roleName = (role: string): string =>
  */
 export const optionLabel = (prop: string, value: string): string => baseOptionLabel(prop, value)
 
-/** 显示名表里被**不止一个**族用到的中文名（`BiauKaiHK` 与 `BiauKaiHK Regular` 都叫
- *  「標楷體-港澳」）。按表对象缓存：一张表几百项，下拉每一项都要问一次 */
-const SHARED_NAMES = new WeakMap<object, Set<string>>()
+/**
+ * 下拉里**不止一项**会显示成它的名字。两种撞法都要数：两个族的中文名相同
+ * （`BiauKaiHK` 与 `BiauKaiHK Regular` 都叫「標楷體-港澳」），以及有中文名的族撞上
+ * 一个**本身就叫这个名字**、表里没有显示名的族（只有中文名的「宋体」与 `Songti SC`
+ * →「宋体」）——只数表里的值会漏掉后一种，两项显示得一模一样。
+ *
+ * 按 (选项数组, 表对象, 语言) 缓存：下拉每一项都要问一次，同一次渲染里的调用共用一份
+ */
+const SHARED_NAMES = new WeakMap<object, WeakMap<object, { lang: string; names: Set<string> }>>()
 
-function sharedNames(labels: Readonly<Record<string, string>>): Set<string> {
-  let hit = SHARED_NAMES.get(labels)
-  if (!hit) {
-    const seen = new Set<string>()
-    hit = new Set<string>()
-    for (const zh of Object.values(labels)) {
-      if (seen.has(zh)) hit.add(zh)
-      seen.add(zh)
-    }
-    SHARED_NAMES.set(labels, hit)
+function sharedNames(
+  labels: Readonly<Record<string, string>>,
+  options: readonly string[],
+): Set<string> {
+  const lang = currentLocale()
+  let byLabels = SHARED_NAMES.get(options)
+  if (!byLabels) SHARED_NAMES.set(options, (byLabels = new WeakMap()))
+  const hit = byLabels.get(labels)
+  if (hit && hit.lang === lang) return hit.names
+  const seen = new Set<string>()
+  const names = new Set<string>()
+  const shown = (name: string) => {
+    if (seen.has(name)) names.add(name)
+    seen.add(name)
   }
-  return hit
+  for (const zh of Object.values(labels)) shown(zh)
+  for (const o of new Set(options)) {
+    const zh = labels[o]
+    if (!zh || zh === o) shown(optionLabel('fontfamily', o))
+  }
+  byLabels.set(labels, { lang, names })
+  return names
 }
 
 /**
  * 字体下拉一项的显示名：中文界面显示中文名（`Songti SC` → 宋体-简），英文界面显示
  * 族名——一种语言只显示一个名字。没有中文名的、通用族（serif 等）照旧走 `optionLabel`。
  *
- * 唯一的例外是**重名**：两个族的中文名相同时，只显示中文名的话下拉里是两个一模一样
- * 的项，这时补上族名「標楷體-港澳（BiauKaiHK Regular）」分得开。
+ * 唯一的例外是**重名**（见 `sharedNames`）：下拉里另有一项也显示成这个中文名时，只显示
+ * 中文名就是两个一模一样的项，这时补上族名「標楷體-港澳（BiauKaiHK Regular）」分得开。
  *
- * `labels` 是字段上的 `option_labels`（`withMachineFamilies` 从 manifest 挂上来的）。
+ * `labels` 是字段上的 `option_labels`（`withMachineFamilies` 从 manifest 挂上来的），
+ * `options` 是**这个下拉的全部选项**（撞名要连没有显示名的族一起数，所以必传）。
  * 只管显示，写入值永远是 `value`。
  */
 export function fontFamilyOptionLabel(
   value: string,
-  labels?: Readonly<Record<string, string>>,
+  labels: Readonly<Record<string, string>> | undefined,
+  options: readonly string[],
 ): string {
   const zh = labels?.[value]
-  if (!zh || zh === value || !currentLocale().startsWith('zh')) {
+  if (!labels || !zh || zh === value || !currentLocale().startsWith('zh')) {
     return optionLabel('fontfamily', value)
   }
-  return sharedNames(labels).has(zh) ? `${zh}（${value}）` : zh
+  return sharedNames(labels, options).has(zh) ? `${zh}（${value}）` : zh
 }
 
 /* ---------------------- 引擎发过来的分组名 → 显示名 ------------------------ */

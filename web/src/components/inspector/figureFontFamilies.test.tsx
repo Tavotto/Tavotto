@@ -234,15 +234,16 @@ describe('字体的中文显示名（manifest 顶层 font_family_names）', () =
   })
 
   it('中文界面只显示中文名，英文界面只显示族名；没有中文名的、通用族照旧', async () => {
-    expect(fontFamilyOptionLabel('Songti SC', NAMES)).toBe('宋体-简')
-    expect(fontFamilyOptionLabel('Songti SC', undefined)).toBe('Songti SC')
-    expect(fontFamilyOptionLabel('Zapfino', NAMES)).toBe('Zapfino')
+    const opts = ['Songti SC', 'Zapfino', 'Avenir', 'serif']
+    expect(fontFamilyOptionLabel('Songti SC', NAMES, opts)).toBe('宋体-简')
+    expect(fontFamilyOptionLabel('Songti SC', undefined, opts)).toBe('Songti SC')
+    expect(fontFamilyOptionLabel('Zapfino', NAMES, opts)).toBe('Zapfino')
     // 显示名与族名相同就不重复一遍
-    expect(fontFamilyOptionLabel('Avenir', NAMES)).toBe('Avenir')
+    expect(fontFamilyOptionLabel('Avenir', NAMES, opts)).toBe('Avenir')
     // 通用族仍走翻译表（serif → 衬线之类），不因为有显示名表就原样漏出
-    expect(fontFamilyOptionLabel('serif', NAMES)).toBe(optionLabelOfSerif())
+    expect(fontFamilyOptionLabel('serif', NAMES, opts)).toBe(optionLabelOfSerif())
     await applyLocale('en-US')
-    expect(fontFamilyOptionLabel('Songti SC', NAMES)).toBe('Songti SC')
+    expect(fontFamilyOptionLabel('Songti SC', NAMES, opts)).toBe('Songti SC')
   })
 
   it('两个族中文名相同：只有它们补上族名，分得开', () => {
@@ -251,11 +252,23 @@ describe('字体的中文显示名（manifest 顶层 font_family_names）', () =
       'BiauKaiHK Regular': '標楷體-港澳',
       'Songti SC': '宋体-简',
     }
-    expect(fontFamilyOptionLabel('BiauKaiHK', shared)).toBe('標楷體-港澳（BiauKaiHK）')
-    expect(fontFamilyOptionLabel('BiauKaiHK Regular', shared)).toBe(
+    const opts = Object.keys(shared)
+    expect(fontFamilyOptionLabel('BiauKaiHK', shared, opts)).toBe('標楷體-港澳（BiauKaiHK）')
+    expect(fontFamilyOptionLabel('BiauKaiHK Regular', shared, opts)).toBe(
       '標楷體-港澳（BiauKaiHK Regular）',
     )
-    expect(fontFamilyOptionLabel('Songti SC', shared)).toBe('宋体-简')
+    expect(fontFamilyOptionLabel('Songti SC', shared, opts)).toBe('宋体-简')
+  })
+
+  it('有中文名的族撞上一个本身就叫这个名字的族：没有显示名的那个也算进撞名', () => {
+    // 只有中文名的「宋体」按真名登记、表里没有它；Songti SC 的中文名也是「宋体」
+    const labels = { 'Songti SC': '宋体', 'Kaiti SC': '楷体-简' }
+    const opts = ['宋体', 'Songti SC', 'Kaiti SC', 'Arial']
+    const shown = opts.map((o) => fontFamilyOptionLabel(o, labels, opts))
+    expect(shown).toEqual(['宋体', '宋体（Songti SC）', '楷体-简', 'Arial'])
+    expect(new Set(shown).size).toBe(opts.length)
+    // 下拉里没有那个「宋体」族：不补
+    expect(fontFamilyOptionLabel('Songti SC', labels, ['Songti SC', 'Arial'])).toBe('宋体')
   })
 
   it('下拉显示中文名，写进 override 的仍是族名', async () => {
@@ -271,5 +284,5 @@ describe('字体的中文显示名（manifest 顶层 font_family_names）', () =
 })
 
 function optionLabelOfSerif(): string {
-  return fontFamilyOptionLabel('serif')
+  return fontFamilyOptionLabel('serif', undefined, [])
 }

@@ -1786,17 +1786,18 @@ function BatchFieldRow({
                   batchManifest?.font_families,
                   batchManifest?.font_family_names,
                 )
+                const fontOpts = merged?.options ?? opts
                 return (
                   <Select
                     className="min-w-0 flex-1"
                     value={mixed ? '' : String(first ?? '')}
                     placeholder={el('mixedValues')}
                     onChange={(x) => writeOnce(x)}
-                    options={(merged?.options ?? opts).map((o) => ({
+                    options={fontOpts.map((o) => ({
                       value: o,
                       label: (
                         <span style={{ fontFamily: fontStackOf(o) }}>
-                          {fontFamilyOptionLabel(o, merged?.option_labels)}
+                          {fontFamilyOptionLabel(o, merged?.option_labels, fontOpts)}
                         </span>
                       ),
                     }))}
@@ -2167,15 +2168,16 @@ function FieldRow({
           rowManifest?.font_families,
           rowManifest?.font_family_names,
         )
+        const fontOpts = merged?.options ?? enumOptions
         return wrap(
           <Select
             value={enumValue}
             onChange={(v) => writeOnce(v)}
-            options={(merged?.options ?? enumOptions).map((o) => ({
+            options={fontOpts.map((o) => ({
               value: o,
               label: (
                 <span style={{ fontFamily: fontStackOf(o) }}>
-                  {fontFamilyOptionLabel(o, merged?.option_labels)}
+                  {fontFamilyOptionLabel(o, merged?.option_labels, fontOpts)}
                 </span>
               ),
             }))}

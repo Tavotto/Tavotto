@@ -83,8 +83,12 @@
   中文名在 name 表里。引擎读出来发在 manifest 顶层 `font_family_names`（{族名: 中文名}，
   `overrides.font_display_names`），`withMachineFamilies` 并表时挂成字段的 `option_labels`；
   下拉一项的文字**只经 `roles/registry.fontFamilyOptionLabel`**——中文界面只显示中文名
-  「宋体-简」，英文界面只显示族名（一种语言一个名字，2026-09-28 用户定）；只有两个族中文名
-  相同时才补族名分开（「標楷體-港澳（BiauKaiHK Regular）」）。**只管显示**：写入值、校验、文档里存的都是族名。
+  「宋体-简」，英文界面只显示族名（一种语言一个名字，2026-09-28 用户定）；只有撞名时才补族名
+  分开（「標楷體-港澳（BiauKaiHK Regular）」，重名带括号 2026-09-29 用户定）。撞名要数**这个下拉的
+  全部选项**显示成什么——两个族中文名相同，或者有中文名的族撞上一个本身就叫这个名字、没有显示名
+  的族（只有中文名的「宋体」与 `Songti SC` →「宋体」），所以 `options` 必传。**只管显示**：写入值、
+  校验、文档里存的都是族名。显示名表每次渲染响应都是新对象，`FontFamilyRowMemo` 按内容比
+  （看护 `fontFamilyRow.test.tsx`）。
   只有中文名的字体（FreeType 读成 `??????SC`）由引擎按真名补登记
   （`overrides.register_font_name_aliases`），真名本身就是族名、没有显示名。
   看护 `figureFontFamilies.test.tsx` 的「字体的中文显示名」一组与 `tests/test_font_chinese_names.py`。

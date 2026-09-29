@@ -7,7 +7,8 @@
  * 与「点下去调的是谁的 onChange」。
  *
  * 反证（提交前手工跑过）：去掉 memo → 第一条红；把转发器换回直接传 props.onChange →
- * 「换元素」那条红（字体写到了上一个元素上）；比较器漏掉 options → 「选项变了」那条红。
+ * 「换元素」那条红（字体写到了上一个元素上）；比较器漏掉 options → 「选项变了」那条红；
+ * 显示名表按引用比 → 「显示名表」那条红。
  */
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -79,6 +80,17 @@ describe('字体下拉只在数据变了时重画', () => {
     await render({ value: 'Font 4' })
     await render({ value: 'Font 4', options: [...FONTS, 'Font new'] })
     await render({ value: 'Font 4', options: [...FONTS, 'Font new'], overridden: true, onReset: () => {} })
+    expect(calls).toHaveLength(4)
+  })
+
+  it('显示名表每次是新对象、内容相同：不重画；内容变了才重画', async () => {
+    // 每次渲染响应里的 `font_family_names` 都是新对象；按引用比会让几百项的下拉次次重建
+    await render({ optionLabels: { 'Font 3': '字体三' } })
+    await render({ optionLabels: { 'Font 3': '字体三' } })
+    expect(calls).toHaveLength(1)
+    await render({ optionLabels: { 'Font 3': '字体叁' } })
+    await render({ optionLabels: { 'Font 3': '字体叁', 'Font 4': '字体四' } })
+    await render({})
     expect(calls).toHaveLength(4)
   })
 

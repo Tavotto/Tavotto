@@ -289,7 +289,7 @@ function FamilySelect({
       onChange={onChange}
       disabled={locked}
       title={locked ? sp('waitingRender') : undefined}
-      options={opts.map((o) => ({ value: o, label: fontFamilyOptionLabel(o, labels) }))}
+      options={opts.map((o) => ({ value: o, label: fontFamilyOptionLabel(o, labels, opts) }))}
     />
   )
 }
