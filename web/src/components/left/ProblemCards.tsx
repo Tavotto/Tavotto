@@ -16,6 +16,8 @@ import { ICON_SIZE } from '@/components/ui/Icon'
 import { engineLabel } from '@/components/inspector/roles/registry'
 import { t as translate } from '@/i18n'
 import { figureOfPanel, figureThumbSrc } from '@/lib/exportFigures'
+import { useRetryingSrc } from '@/lib/imgRetry'
+import { problemContextNow } from '@/lib/problemContext'
 import {
   drillKey,
   isSplit,
@@ -114,6 +116,9 @@ export function ProblemThumb({
   const [failed, setFailed] = useState<string | null>(null)
   const figure = panel ? figureOfPanel(panel) : null
   const src = figure ? figureThumbSrc(figure, 160) : null
+  // PDF / 浏览器画不了的位图走 `/api/render`：一次 503 可能只是背压，先按共享的退避表
+  // 重取（`lib/imgRetry`），真取不到了才退回图标
+  const retry = useRetryingSrc(src ?? '', () => setFailed(src))
   const frame = 'relative flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-xs'
   if (!src || failed === src) {
     return (
@@ -126,11 +131,11 @@ export function ProblemThumb({
   return (
     <span aria-hidden data-problem-thumb className={cn(frame, 'border border-border bg-white')}>
       <img
-        src={src}
+        src={retry.src}
         alt=""
         draggable={false}
         loading="lazy"
-        onError={() => setFailed(src)}
+        onError={retry.onError}
         className={crop ? 'absolute max-w-none' : 'h-full w-full object-contain'}
         style={crop ?? undefined}
       />
@@ -273,7 +278,7 @@ function ProblemCard({
     >
       <button
         type="button"
-        onClick={() => useUiStore.getState().setProblemDrill(drill)}
+        onClick={() => useUiStore.getState().setProblemDrill(drill, problemContextNow())}
         aria-label={pr('cardOpen', { name: title, count: issues.length })}
         className={cn(
           'flex w-full items-center gap-2.5 rounded-md py-2 pl-2 text-left outline-none',
@@ -418,7 +423,7 @@ function FigureHeader({
     <div className="flex items-center gap-1 pr-1">
       <button
         type="button"
-        onClick={() => useUiStore.getState().setProblemDrill({ kind: 'figure', key: figure.key })}
+        onClick={() => useUiStore.getState().setProblemDrill({ kind: 'figure', key: figure.key }, problemContextNow())}
         aria-label={pr('cardOpen', { name, count: figure.issues.length })}
         className={cn(
           'flex min-w-0 flex-1 items-center gap-2.5 rounded-sm py-1 pl-1 pr-1.5 text-left outline-none',
@@ -485,7 +490,7 @@ export function UnverifiableEntry({ count }: { count: number }) {
         type="button"
         data-problem-card="unverifiable"
         data-problem-card-key={drillKey({ kind: 'unverifiable' })}
-        onClick={() => useUiStore.getState().setProblemDrill({ kind: 'unverifiable' })}
+        onClick={() => useUiStore.getState().setProblemDrill({ kind: 'unverifiable' }, problemContextNow())}
         className={cn(
           'flex h-8 w-full items-center gap-2 rounded-sm px-2 text-left text-xs text-ink-2 outline-none',
           'transition-colors duration-fast hover:bg-surface-hover hover:text-ink focus-visible:focus-ring',

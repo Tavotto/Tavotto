@@ -322,14 +322,6 @@ export function drillOf(
  */
 export const isSplit = (f: Pick<FigureBucket, 'parts'>): boolean => f.parts.some((p) => p.part)
 
-export function sameDrill(a: ProblemDrill | null, b: ProblemDrill | null): boolean {
-  if (!a || !b) return a === b
-  if (a.kind !== b.kind) return false
-  if (a.kind === 'unverifiable') return true
-  if (a.kind === 'part') return b.kind === 'part' && a.figure === b.figure && a.key === b.key
-  return 'key' in b && a.key === b.key
-}
-
 /**
  * 卡片的稳定机器标识（`data-problem-card-key`）：新手教程与 e2e 要指向「这条问题
  * 所在的那张卡片」，靠它而不是文案。
@@ -357,4 +349,37 @@ export function drillKeysOf(issue: ValidationIssue): string[] {
     drillKey({ kind: 'figure', key: figure }),
     drillKey({ kind: 'category', key: categoryOf(issue) }),
   ]
+}
+
+/**
+ * 按图看、清单里只有一张拆不出子图的图、又没有「无法核验」：卡片层只会有一张卡片，
+ * 多点一下什么也没多看到——直接列它的清单（面板把它当作点开了这张卡，但不给返回）。
+ * 面板与 `openProblemAt` 共用这一个判据。
+ */
+export function singleDrill(
+  view: ProblemView,
+  figures: readonly FigureBucket[],
+  unverifiableCount: number,
+): ProblemDrill | null {
+  return view === 'figure' && figures.length === 1 && !isSplit(figures[0]) && unverifiableCount === 0
+    ? { kind: 'figure', key: figures[0].key }
+    : null
+}
+
+/**
+ * 点进的卡片与「正在处理」的游标**属于哪个现场**：哪份排版（`loadSeq`）、哪个范围与
+ * 哪张当前图、哪种切法。`uiStore` 把 `problemDrill` / `problemCursor` 与写下它们那一刻的
+ * 现场一起存；读的时候现场对不上就是回到总览、没有游标（2026-09-29 #690 评审：换项目时
+ * 面板没挂着、抽屉开着换了当前图——都是「有人忘了清」，换成派生之后没有人需要记得去清）。
+ *
+ * **等级筛选不在里面**：点进卡片之后筛选条还在，在卡片里筛是正常用法，不该把人踢回总览；
+ * 筛空了是「当前筛选下没有」，与「修完了」分开说（面板里判）。
+ */
+export function problemContextKey(c: {
+  loadSeq: number
+  scope: ProblemScope
+  figureId: string | null
+  view: ProblemView
+}): string {
+  return [c.loadSeq, c.scope, c.scope === 'figure' ? (c.figureId ?? '') : '', c.view].join('|')
 }

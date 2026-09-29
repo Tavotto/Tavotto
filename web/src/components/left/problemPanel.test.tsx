@@ -8,6 +8,10 @@ import { act } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createRoot, type Root } from 'react-dom/client'
 import { literal, setLocale } from '@/i18n'
+import { RENDER_RETRY_DELAYS_MS } from '@/lib/imgRetry'
+import { problemContextNow } from '@/lib/problemContext'
+import { drillKey } from '@/lib/problemList'
+import { useScopedProblems } from './useProblemScope'
 import { PREVIEW_ROWS, ProblemPanel } from './ProblemPanel'
 import { LeftPanel } from './LeftPanel'
 import { LeftRail } from './LeftRail'
@@ -140,6 +144,11 @@ async function openCard(objectId?: string) {
   expect(card, '卡片层上没有这张卡片').toBeTruthy()
   await click(card!.querySelector('button')!)
 }
+/** 此刻真正生效的那张卡片：store 里记着的、且盖的是此刻的现场章（与面板读的是同一个派生） */
+const liveDrill = () => {
+  const s = useUiStore.getState()
+  return s.problemContext === problemContextNow() ? s.problemDrill : null
+}
 /** 卡片层上各卡片的项数之和（整份排版范围里它应当等于全部问题数） */
 const cardTotal = () =>
   [...container.querySelectorAll<HTMLElement>('li[data-problem-card]')].reduce(
@@ -154,6 +163,7 @@ beforeEach(() => {
     problemCursor: null,
     problemView: 'figure',
     problemDrill: null,
+    problemContext: null,
     elementPanelId: null,
     leftTab: 'problems',
     leftOpen: true,
@@ -593,7 +603,7 @@ describe('范围：当前图 / 整份排版（审计 T09）', () => {
     await click(radioNamed('整份排版'))
     expect(useUiStore.getState().problemScope).toBe('document')
     // 换范围退回卡片总览：别的图各有一张卡片，项数加起来就是全部
-    expect(useUiStore.getState().problemDrill).toBeNull()
+    expect(liveDrill()).toBeNull()
     expect(container.querySelector('li[data-problem-card][data-problem-card-objects~="p2"]')).toBeTruthy()
     expect(cardTotal()).toBe(total())
     // 页面级那条（主语是整张画布）也只在「整份排版」里出现
@@ -966,19 +976,20 @@ describe('卡片层：一张组图拆成子图（2026-09-28）', () => {
     useUiStore.setState({ elementPanelId: 'p1' })
     await mount(<ProblemPanel />)
     await click(partCard('(a)')!.querySelector('button')!)
-    expect(useUiStore.getState().problemDrill).toEqual({ kind: 'part', figure: 'p1', key: 'axes_0' })
+    expect(liveDrill()).toEqual({ kind: 'part', figure: 'p1', key: 'axes_0' })
     const gids = rows().map((r) => r.closest('li')?.querySelector('details')?.textContent ?? '')
     expect(rows()).toHaveLength(2)
     expect(gids.every((g) => g.includes('axes_0') || g.includes('axes_1'))).toBe(true)
     expect(text()).toContain('修复此子图')
     await click(container.querySelector('[data-problem-back]')!)
-    expect(useUiStore.getState().problemDrill).toBeNull()
+    expect(liveDrill()).toBeNull()
     expect(partCard('(a)')).toBeTruthy()
   })
 
   it('按类别：一类一张卡，项数加起来是全部；换分组方式退回总览', async () => {
     await seedTriptych()
-    useUiStore.setState({ elementPanelId: 'p1', problemDrill: { kind: 'part', figure: 'p1', key: 'axes_0' } })
+    useUiStore.setState({ elementPanelId: 'p1' })
+    useUiStore.getState().setProblemDrill({ kind: 'part', figure: 'p1', key: 'axes_0' }, problemContextNow())
     await mount(<ProblemPanel />)
     await click(container.querySelector('[data-problem-back]')!)
     const radio = [...container.querySelectorAll<HTMLElement>('[role="radio"]')].find((r) =>
@@ -1014,7 +1025,7 @@ describe('卡片层：一张组图拆成子图（2026-09-28）', () => {
     await act(async () => {
       openProblemAt(target, useValidationStore.getState().issues, 'p1')
     })
-    expect(useUiStore.getState().problemDrill).toEqual({ kind: 'part', figure: 'p1', key: 'axes_3' })
+    expect(liveDrill()).toEqual({ kind: 'part', figure: 'p1', key: 'axes_3' })
     const current = rows().find((r) => r.getAttribute('aria-current') === 'true')
     expect(current, '「当前」那一行不在页面上').toBeTruthy()
     expect(cursorBar()?.textContent).toContain('第 2 / 2 项')
@@ -1026,7 +1037,7 @@ describe('卡片层：一张组图拆成子图（2026-09-28）', () => {
     await act(async () => {
       openProblemAt(floorIssues('axes_3')[1], useValidationStore.getState().issues, figureId)
     })
-    expect(useUiStore.getState().problemDrill).toEqual({ kind: 'part', figure: 'p1', key: 'axes_3' })
+    expect(liveDrill()).toEqual({ kind: 'part', figure: 'p1', key: 'axes_3' })
   }
   /** 范围页签（tab）与分组开关（radio）都算：用户显式换视图 */
   const pick = (label: string) =>
@@ -1043,11 +1054,11 @@ describe('卡片层：一张组图拆成子图（2026-09-28）', () => {
     await reachC()
     await pick('整份排版')
     expect(useUiStore.getState().problemScope).toBe('document')
-    expect(useUiStore.getState().problemDrill).toBeNull()
+    expect(liveDrill()).toBeNull()
     expect(rows(), '总览不列逐条清单').toHaveLength(0)
     expect(cardTotal()).toBe(useValidationStore.getState().issues.length)
     await pick('当前图')
-    expect(useUiStore.getState().problemDrill).toBeNull()
+    expect(liveDrill()).toBeNull()
     expect(partCard('(c)')).toBeTruthy()
   })
 
@@ -1064,7 +1075,7 @@ describe('卡片层：一张组图拆成子图（2026-09-28）', () => {
     expect(rows().find((r) => r.getAttribute('aria-current') === 'true')).toBeTruthy()
     await pick('按类别')
     expect(useUiStore.getState().problemView).toBe('category')
-    expect(useUiStore.getState().problemDrill).toBeNull()
+    expect(liveDrill()).toBeNull()
     expect(rows(), '总览不列逐条清单').toHaveLength(0)
     expect(container.querySelectorAll('li[data-problem-card="category"]').length).toBeGreaterThan(0)
   })
@@ -1077,7 +1088,7 @@ describe('卡片层：一张组图拆成子图（2026-09-28）', () => {
     await click(rows()[0])
     expect(useUiStore.getState().problemCursor).not.toBeNull()
     await pick('整份排版')
-    expect(useUiStore.getState().problemDrill).toBeNull()
+    expect(liveDrill()).toBeNull()
     expect(rows()).toHaveLength(0)
   })
 
@@ -1090,7 +1101,7 @@ describe('卡片层：一张组图拆成子图（2026-09-28）', () => {
     await act(async () => {
       openProblems({ severities: ['error'] })
     })
-    expect(useUiStore.getState().problemDrill).toBeNull()
+    expect(liveDrill()).toBeNull()
     expect(rows(), '总览不列逐条清单').toHaveLength(0)
   })
 
@@ -1105,8 +1116,8 @@ describe('卡片层：一张组图拆成子图（2026-09-28）', () => {
     await act(async () => {
       useWorkspaceStore.getState().enterFastEdit('p2')
     })
-    expect(useUiStore.getState().problemDrill).toBeNull()
-    expect(useUiStore.getState().problemCursor).toBeNull()
+    expect(liveDrill()).toBeNull()
+    expect(cursorBar(), '上一张图的游标不该跟过来').toBeNull()
     expect(text()).not.toContain('这里的问题都处理完了')
     const onP2 = useValidationStore.getState().issues.filter((i) => i.objectRef.objectId === 'p2').length
     expect(onP2, '夹具里 p2 得有问题').toBeGreaterThan(0)
@@ -1116,11 +1127,11 @@ describe('卡片层：一张组图拆成子图（2026-09-28）', () => {
     await act(async () => {
       useWorkspaceStore.getState().enterFastEdit('p1')
     })
-    expect(useUiStore.getState().problemDrill).toBeNull()
+    expect(liveDrill()).toBeNull()
     expect(partCard('(a)')).toBeTruthy()
   })
 
-  it('直达另一张图上的一条（游标先落、图后换）：照样进那张图、那一行是「当前」', async () => {
+  it('直达另一张图上的一条（定位进了那张图的快编）：进那张图，那一行是「当前」', async () => {
     await seedTriptych(true)
     useUiStore.setState({ elementPanelId: 'p1' })
     await mount(<ProblemPanel />)
@@ -1133,6 +1144,96 @@ describe('卡片层：一张组图拆成子图（2026-09-28）', () => {
     })
     expect(useUiStore.getState().problemCursor?.issueId).toBe(target.issueId)
     expect(rows().find((r) => r.getAttribute('aria-current') === 'true')).toBeTruthy()
+  })
+
+  it('离开「问题」页签期间换了项目，回来是新项目的总览，不带着上一个项目点进的卡片', async () => {
+    await seedTriptych(true)
+    useUiStore.setState({ elementPanelId: 'p1' })
+    await mount(<ProblemPanel />)
+    await click(partCard('(c)')!.querySelector('button')!)
+    expect(liveDrill()).toEqual({ kind: 'part', figure: 'p1', key: 'axes_3' })
+    // 切到别的页签：面板被卸载，它的 effect 看不见接下来的换项目
+    await act(async () => {
+      root.render(<TooltipProvider><div /></TooltipProvider>)
+    })
+    await seedTriptych(true)
+    useUiStore.setState({ elementPanelId: 'p1' })
+    await act(async () => {
+      root.render(<TooltipProvider><ProblemPanel /></TooltipProvider>)
+    })
+    expect(container.querySelector('[data-problem-back]'), '不该还在上一个项目的 (c) 里').toBeNull()
+    expect(partCard('(a)')).toBeTruthy()
+    expect(text()).not.toContain('这里的问题都处理完了')
+  })
+
+  it('卡片里的问题被等级筛选筛光：说「当前筛选下没有问题」、给「显示全部」，不冒充「都处理完了」', async () => {
+    await seedTriptych(true)
+    useUiStore.setState({ problemScope: 'document' })
+    await mount(<ProblemPanel />)
+    await click(partCard('(c)')!.querySelector('button')!)
+    const inCard = new Set(
+      useValidationStore
+        .getState()
+        .issues.filter((i) => i.objectRef.objectId === 'p1' && i.objectRef.gid?.startsWith('axes_3'))
+        .map((i) => i.severity),
+    )
+    const other = useValidationStore.getState().issues.find((i) => !inCard.has(i.severity))
+    expect(other, '夹具里得有一个 (c) 没有的等级').toBeTruthy()
+    await act(async () => {
+      useUiStore.getState().setProblemFilter([other!.severity])
+    })
+    expect(liveDrill(), '在卡片里筛选不把人踢回总览').toEqual({ kind: 'part', figure: 'p1', key: 'axes_3' })
+    expect(text()).toContain('当前筛选下没有问题')
+    expect(text()).not.toContain('这里的问题都处理完了')
+    await click(byText('显示全部')!)
+    expect(rows().length).toBeGreaterThan(0)
+  })
+
+  it('卡片与游标是派生的：现场换了，读出来就是 null（不靠面板里的 effect，别处读也一样）', async () => {
+    await seedTriptych(true)
+    useUiStore.setState({ elementPanelId: 'p1' })
+    function Probe() {
+      const nav = useScopedProblems()
+      return <i data-drill={nav.drill ? drillKey(nav.drill) : ''} />
+    }
+    await mount(<Probe />)
+    const probe = () => container.querySelector('i')!.getAttribute('data-drill')
+    await act(async () => {
+      useUiStore.getState().setProblemDrill({ kind: 'part', figure: 'p1', key: 'axes_3' }, problemContextNow())
+    })
+    expect(probe()).toBe('part:p1:axes_3')
+    await act(async () => {
+      useWorkspaceStore.getState().enterFastEdit('p2')
+    })
+    expect(probe(), '换了当前图').toBe('')
+  })
+
+  it('缩略图走 /api/render 时一次失败先按退避表重取，不立刻换成图标；真取不到才换', async () => {
+    await seedTriptych()
+    useUiStore.setState({ elementPanelId: 'p1' })
+    await mount(<ProblemPanel />)
+    const thumb = () => partCard('(c)')!.querySelector<HTMLImageElement>('[data-problem-thumb] img')
+    const base = thumb()?.getAttribute('src') ?? ''
+    expect(base, 'PDF 的缩略图走 /api/render').toContain('/api/render?')
+    vi.useFakeTimers()
+    try {
+      for (let i = 0; i < RENDER_RETRY_DELAYS_MS.length; i++) {
+        await act(async () => {
+          thumb()!.dispatchEvent(new Event('error'))
+        })
+        expect(thumb(), `第 ${i + 1} 次失败就换成了图标`).toBeTruthy()
+        await act(async () => {
+          vi.advanceTimersByTime(RENDER_RETRY_DELAYS_MS[i])
+        })
+        expect(thumb()!.getAttribute('src')).toContain(`r=${i + 1}`)
+      }
+      await act(async () => {
+        thumb()!.dispatchEvent(new Event('error'))
+      })
+      expect(thumb(), '退避表用完仍失败：退回图标').toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('外部直达仍会先换范围再钻进卡片：从「整份排版」的总览出发也落到 (c) 的那一行', async () => {

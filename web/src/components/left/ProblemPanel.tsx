@@ -15,18 +15,17 @@ import { ICON_SIZE } from '@/components/ui/Icon'
 import { TruncateMiddle } from '@/components/ui/TruncateMiddle'
 import { t as translate } from '@/i18n'
 import { focusFailureMessage, focusIssue } from '@/lib/issueFocus'
+import { problemContextNow } from '@/lib/problemContext'
 import {
   bucketsByCategory,
   bucketsByFigure,
   cursorFor,
   cursorView,
   drillIssues,
-  drillOf,
   groupIssues,
-  isSplit,
   isUnverifiable,
   issuesInScope,
-  sameDrill,
+  singleDrill,
   type IssueGroup,
   type ProblemDrill,
   type ProblemScope,
@@ -100,7 +99,7 @@ export const MIN_HIDDEN_ROWS = 3
  * * **定位后清单留在原地**：`issueFocus` 不再让元素树顶掉左栏；正在处理的那一条
  *   带浅灰底 + 「当前」字样（不只靠颜色），底部给「上一项 / 下一项」（在这张卡片里走）。
  *   修好一条它会消失，「下一项」指向顶上来的那一条；「下一项」走进被折起的那部分时，
- *   那一组自动展开。游标指着卡片外的一条时（样式面板直达），面板换进它那张卡片。
+ *   那一组自动展开。样式面板直达（`openProblemAt`）由它自己点开那条所在的卡片。
  *
  * 接入状态（哪张图连没连上脚本）刻意**不混进来**：那是另一类事实，有自己的
  * 中心与自己的下一步；底部只放一条链接把用户送过去。
@@ -111,12 +110,11 @@ export function ProblemPanel() {
   const ready = useValidationStore((s) => s.ready)
   const failed = useValidationStore((s) => s.failed)
   const filter = useUiStore((s) => s.problemFilter)
-  const cursor = useUiStore((s) => s.problemCursor)
   const view = useUiStore((s) => s.problemView)
-  const drill = useUiStore((s) => s.problemDrill)
   const activeCanvasId = useDocumentStore((s) => s.activeCanvasId)
-  const loadSeq = useDocumentStore((s) => s.loadSeq)
-  const { figureId, figureName, scope, issues } = useScopedProblems()
+  // 卡片与游标是**派生**的：写下它们的现场（排版 / 范围与当前图 / 切法）不是此刻就是
+  // null——换项目、换当前图时没有人需要记得来清（2026-09-29 #690 评审）
+  const { figureId, figureName, scope, issues, context, drill, cursor } = useScopedProblems()
   const listRef = useRef<HTMLUListElement>(null)
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set())
   /** 用户点过「显示其余 N 项」的组 */
@@ -148,10 +146,7 @@ export function ProblemPanel() {
   // 按图看、清单里只有一张拆不出子图的图（单子图的普通图）：卡片层只会有一张卡片，
   // 多点一下什么也没多看到——直接列它的清单，不给返回
   const single = useMemo<ProblemDrill | null>(
-    () =>
-      !drill && view === 'figure' && figures.length === 1 && !isSplit(figures[0]) && unverifiableCount === 0
-        ? { kind: 'figure', key: figures[0].key }
-        : null,
+    () => (drill ? null : singleDrill(view, figures, unverifiableCount)),
     [drill, view, figures, unverifiableCount],
   )
   const open = drill ?? single
@@ -170,38 +165,12 @@ export function ProblemPanel() {
     if (cursor && groups.length === 0) useUiStore.getState().setProblemCursor(null)
   }, [cursor, groups.length])
 
-  // 游标指着一条卡片外的问题（样式面板直达 `openProblemAt`）：换进它那张卡片——
-  // 「当前」那一行必须看得见
+  // 派生已经保证过期的卡片不显示；面板挂着时看到现场换了，再把记着的那份也丢掉——
+  // 否则换回原来那张图（A → B → A）时，用户已经离开的那张卡片会复活
   useEffect(() => {
-    if (!cursor) return
-    const hit = shown.find((i) => i.issueId === cursor.issueId)
-    if (!hit || (open && listed.some((i) => i.issueId === hit.issueId))) return
-    const next = drillOf(hit, view, figures)
-    if (!sameDrill(next, drill)) useUiStore.getState().setProblemDrill(next)
-  }, [cursor, shown, listed, open, drill, view, figures])
-
-  // 「当前图」换了主语（抽屉开着时选中 / 快编了另一张图，或没了图退回整份排版）：
-  // 点进去的那张卡片属于上一张图，留着它清单是空的、还冒充「都处理完了」。与显式
-  // 换范围同口径退回总览、放下游标——除非游标指着的那条就在新范围里（`openProblemAt`
-  // 直达另一张图上的一条：它已换过范围、落好游标，交给上面那处钻进卡片）
-  const scopeKey = scope === 'figure' ? `figure:${figureId}` : scope
-  const seenScope = useRef(scopeKey)
-  useEffect(() => {
-    if (seenScope.current === scopeKey) return
-    seenScope.current = scopeKey
-    if (cursor && shown.some((i) => i.issueId === cursor.issueId)) return
     const ui = useUiStore.getState()
-    if (ui.problemDrill || ui.problemCursor) ui.setProblemDrill(null)
-  }, [scopeKey, cursor, shown])
-
-  // 换了文档：点进去的那张卡片属于上一份文档（首帧不算——那时的卡片可能是
-  // 别处刚刚替用户选好的，`openProblemAt`）
-  const seenLoad = useRef(loadSeq)
-  useEffect(() => {
-    if (seenLoad.current === loadSeq) return
-    seenLoad.current = loadSeq
-    useUiStore.getState().setProblemDrill(null)
-  }, [loadSeq])
+    if (ui.problemContext !== context && (ui.problemDrill || ui.problemCursor)) ui.setProblemDrill(null)
+  }, [context])
 
   /** 定位 + 记下「正在处理这一条」。失败照旧说原因，游标不动。 */
   const locate = (issue: ValidationIssue) => {
@@ -210,7 +179,14 @@ export function ProblemPanel() {
       useUiStore.getState().setStatus(focusFailureMessage(outcome.reason), 'error')
       return
     }
-    useUiStore.getState().setProblemCursor(cursorFor(groups, issue.issueId))
+    // 现场在定位**之后**现取：定位可能把当前图换成了这一行所在的那张（整份排版下点一行
+    // 会进它的快速编辑）。点进的卡片一起盖到新现场上——人还在这张卡片里
+    const ui = useUiStore.getState()
+    const now = problemContextNow()
+    if (drill) ui.setProblemDrill(drill, now)
+    const next = cursorFor(groups, issue.issueId)
+    if (next) ui.setProblemCursor(next, now)
+    else ui.setProblemCursor(null)
   }
 
   /** 方向键在行（或卡片）间漫游：清单可能很长，只有 Tab 的话走到底要按几十次 */
@@ -395,7 +371,14 @@ export function ProblemPanel() {
           ) : (
             <ViewSwitch view={view} />
           )}
-          {listed.length === 0 ? (
+          {listed.length === 0 && filter?.length && drillIssues(issues, open).length > 0 ? (
+            /* 卡片里还有，只是被等级筛选筛掉了：不是「修完了」（#690 评审） */
+            <EmptyState
+              icon={CircleCheck}
+              title={pr('noneInFilter')}
+              action={{ label: pr('clearFilter'), onClick: () => useUiStore.getState().setProblemFilter(null) }}
+            />
+          ) : listed.length === 0 ? (
             /* 这张卡片被修空了：说一声，给回总览的路，不留一块空白 */
             <EmptyState
               icon={CircleCheck}

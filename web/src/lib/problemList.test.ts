@@ -17,7 +17,6 @@ import {
   groupIssues,
   issuesInScope,
   isSplit,
-  sameDrill,
   WHOLE,
 } from './problemList'
 import type { SubplotPart } from './subplotParts'
@@ -231,13 +230,5 @@ describe('卡片的机器标识', () => {
         expect(drillKeysOf(i)).toContain(drillKey(drillOf(i, view, figs)))
       }
     }
-  })
-
-  it('sameDrill 按内容比，不按引用', () => {
-    expect(sameDrill({ kind: 'part', figure: 'p1', key: 'a' }, { kind: 'part', figure: 'p1', key: 'a' })).toBe(true)
-    expect(sameDrill({ kind: 'part', figure: 'p1', key: 'a' }, { kind: 'part', figure: 'p2', key: 'a' })).toBe(false)
-    expect(sameDrill({ kind: 'figure', key: 'p1' }, { kind: 'category', key: 'text' } as never)).toBe(false)
-    expect(sameDrill(null, null)).toBe(true)
-    expect(sameDrill({ kind: 'unverifiable' }, null)).toBe(false)
   })
 })

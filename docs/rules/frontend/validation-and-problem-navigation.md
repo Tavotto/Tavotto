@@ -105,11 +105,19 @@ preflight.runSpec()      规则求值（两份求值器，golden vectors 对齐�
   没登记的 code 落 `other`，不按名字猜）。卡片里装的、点进去列的、卡片「修复 N」修的
   是同一个集合（`drillIssues()` → `batchable(…, { includeSuggestions: true })`，点名
   一张卡片与组头「全部修复」同口径）。「无法核验」不进卡片，只占一行入口。点进哪张
-  卡片是 `uiStore.problemDrill`（换范围 / 换「当前图」/ 换切法 / 换文档退回总览，游标一起放下）；游标指着卡片外
-  的一条时面板自己换进 `drillOf()` 给的那张——**只有面板里那一处**，`openProblemAt`
-  只负责把游标按那张卡片的清单算好。卡片的机器标识 `data-problem-card-key`
+  卡片是 `uiStore.problemDrill`，「正在处理」的游标是 `problemCursor`，两者**与写下它们时的
+  现场一起存**（`problemContext` = `problemContextKey()`：排版 `loadSeq` / 生效范围与当前图 /
+  切法）。读的一方（`useScopedProblems`）现场对不上就当作回到总览、没有游标——换项目、换
+  当前图不需要谁记得来清，面板被卸载时也成立；写的一方一律带上**定位之后**现取的现场
+  （`lib/problemContext.problemContextNow()`）。面板挂着时看到现场换了会再把记着的那份丢掉，
+  免得换回原来那张图时已经离开的卡片复活。用户显式换范围 / 换切法 / 点返回也退回总览。
+  **等级筛选不在现场里**：在卡片里筛是正常用法；卡片被筛空说「当前筛选下没有问题」，与
+  「修完了」分开。直达（`openProblemAt`）自己点开那条问题所在的卡片、落游标，面板里没有
+  「看到游标在卡片外就钻进去」的第二套机制。卡片的机器标识 `data-problem-card-key`
   （`drillKey()`），新手教程按 `drillKeysOf(issue)` 找「那条问题所在的卡片」。
-  按图看、清单里只有一张拆不出子图的图时跳过卡片层（只有一张卡，多点一下什么也没多看到）。
+  按图看、清单里只有一张拆不出子图的图时跳过卡片层（只有一张卡，多点一下什么也没多看到；
+  判据 `singleDrill()`，面板与直达共用）。卡片缩略图走 `/api/render` 时按共享退避表重取
+  （`lib/imgRetry`），真取不到才退回图标。
 * 看护：`lib/validation.test.ts` / `lib/validationText.test.ts` /
   `lib/issueFocus.test.ts` / `lib/issueFix.test.ts` / `lib/problemList.test.ts` / `lib/subplotParts.test.ts` /
   `store/validationStore.test.ts` / `components/left/problemPanel.test.tsx`；

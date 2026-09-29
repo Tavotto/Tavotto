@@ -292,6 +292,12 @@ interface UiState extends Persisted {
   problemView: ProblemView
   problemDrill: ProblemDrill | null
   /**
+   * `problemDrill` / `problemCursor` 写下时的现场（`problemList.problemContextKey`）。
+   * **读的一方**拿此刻的现场比：对不上 = 回到总览、没有游标——换项目、换当前图不需要
+   * 谁记得来清（面板被卸载时也照样成立）。写的一方必须带上现场。
+   */
+  problemContext: string | null
+  /**
    * 修复正在跑（后端事务要真实渲染，几秒钟）。问题面板据此把「全部处理」与每行的
    * 「修复」都置灰，免得第二轮拿着第一轮还没提交的旧文档当基准。会话状态。
    */
@@ -386,9 +392,11 @@ interface UiState extends Persisted {
   setProblemScope: (v: ProblemScope | null) => void
   /** 命令面板跑完一条命令就记一笔（去重、最近在前、封顶） */
   pushRecentCommand: (id: string) => void
-  setProblemCursor: (v: ProblemCursor | null) => void
+  /** 落游标要说明现场；现场换了，旧现场里点进的卡片一并作废 */
+  setProblemCursor: { (v: null): void; (v: ProblemCursor, context: string): void }
   setProblemView: (v: ProblemView) => void
-  setProblemDrill: (v: ProblemDrill | null) => void
+  /** 点进卡片要说明现场；现场换了，旧现场里的游标一并作废。null = 回总览（连游标） */
+  setProblemDrill: { (v: null): void; (v: ProblemDrill, context: string): void }
   /** 关掉设置、打开左栏「样式」面板（设置 › 样式页「用于当前画布」绑完之后去看结果） */
   openStylePanel: () => void
   setFixing: (v: boolean) => void
@@ -488,6 +496,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   problemCursor: null,
   problemView: 'figure',
   problemDrill: null,
+  problemContext: null,
   fixing: false,
   tool: 'select',
   exportOpen: false,
@@ -654,9 +663,8 @@ export const useUiStore = create<UiState>((set, get) => ({
         : null,
     })),
   setProblemFilter: (problemFilter) => set({ problemFilter }),
-  // 退回卡片总览（换范围 / 换切法 / 点返回）一律连「正在处理」的游标一起放下：
-  // 面板见游标指着卡片外的一条会自己钻进它那张卡片，留着它，用户刚选的总览
-  // 下一帧就被钻回去。外部直达（`openProblemAt`）先换范围、**再**落游标，不受影响
+  // 用户显式换范围 / 换切法：退回总览、放下游标。现场键里本来就有这两项，这里再清一次
+  // 是为了**换回来时**不复活上一次点进的那张卡片（那是用户已经离开的地方）
   setProblemScope: (problemScope) => set({ problemScope, problemDrill: null, problemCursor: null }),
   openStylePanel: () => {
     get().setSettingsOpen(false)
@@ -666,10 +674,23 @@ export const useUiStore = create<UiState>((set, get) => ({
     set({ recentCommands: pushRecent(get().recentCommands, id) })
     persist(get())
   },
-  setProblemCursor: (problemCursor) => set({ problemCursor }),
+  setProblemCursor: (problemCursor: ProblemCursor | null, context?: string) =>
+    set((s) =>
+      !problemCursor
+        ? { problemCursor: null }
+        : context === s.problemContext
+          ? { problemCursor }
+          : { problemCursor, problemContext: context ?? null, problemDrill: null },
+    ),
   setProblemView: (problemView) => set({ problemView, problemDrill: null, problemCursor: null }),
-  setProblemDrill: (problemDrill) =>
-    set(problemDrill ? { problemDrill } : { problemDrill: null, problemCursor: null }),
+  setProblemDrill: (problemDrill: ProblemDrill | null, context?: string) =>
+    set((s) =>
+      !problemDrill
+        ? { problemDrill: null, problemCursor: null }
+        : context === s.problemContext
+          ? { problemDrill }
+          : { problemDrill, problemContext: context ?? null, problemCursor: null },
+    ),
   setFixing: (fixing) => set({ fixing }),
   setEditingText: (editingTextId) => set({ editingTextId }),
   setCropTarget: (cropTargetId, cropBaseline = null) => set({ cropTargetId, cropBaseline }),
