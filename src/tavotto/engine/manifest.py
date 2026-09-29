@@ -95,6 +95,7 @@ from overrides import (
     collection_caps,
     color_mapping_is_live,
     colorbar_mapping_is_live,
+    font_file_key,
     font_installed,
     gradient_base_hex,
     image_pixels_skipped,
@@ -1139,13 +1140,13 @@ _font_installed = font_installed
 #: 「缺 200 个字符」既没法读也没法修；超出的部分由数量说话。
 MAX_MISSING_GLYPHS = 12
 
-#: (字体文件, 面索引) → FT2Font 的进程内缓存。一次 manifest 要过很多个 Text，而
-#: 打开字体文件是几毫秒级的。
+#: (字体文件身份 `overrides.font_file_key`, 面索引) → FT2Font 的进程内缓存。一次
+#: manifest 要过很多个 Text，而打开字体文件是几毫秒级的。
 #:
 #: **键必须带面索引**：字体集（`.ttc` / `.otc`）一个文件里装着好几张脸，
 #: 只按路径缓存会让先问到的那张脸顶掉后面全部——Noto CJK 的七张脸共用一个
 #: `NotoSansCJK-Regular.ttc`。
-_FT_FONTS: dict[tuple[str, int], object] = {}
+_FT_FONTS: dict[tuple[tuple, int], object] = {}
 
 #: `$…$` 之间的片段。matplotlib 用 **mathtext 字体集**画它们（不是正文那张
 #: 脸），拿正文字体去判它们的覆盖会报出一批不存在的缺字。**判不了就不判**，
@@ -1162,7 +1163,11 @@ def _ft_font(path: str, face_index: int = 0):
     `FT2Font(path)` 一律给第 0 张（JP）。3.10 及以前只认第 0 张，所以那时
     索引恒为 0——这个参数在旧版上不改变任何行为。
     """
-    key = (path, face_index)
+    # 键与打开的都是解析后的文件（`overrides.font_file_key`）：脚本的相对 fname 换了
+    # cwd 就是另一个文件，按原串缓存会把上一个目录那张脸的字形事实报给这一个
+    fkey = font_file_key(str(path))
+    path = fkey[0]
+    key = (fkey, face_index)
     hit = _FT_FONTS.get(key)
     if hit is None:
         from matplotlib.ft2font import FT2Font

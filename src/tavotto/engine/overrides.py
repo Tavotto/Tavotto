@@ -697,7 +697,7 @@ def _family_chain(fam) -> list[str]:
     return head + [f for f in fallback_tail() if f not in head]
 
 
-#: 字体文件身份（`_file_key`）→ 能把它原样找回来的 (族名, style, variant, weight,
+#: 字体文件身份（`font_file_key`）→ 能把它原样找回来的 (族名, style, variant, weight,
 #: stretch)；`None` 表示按名字找不回同一个文件，只能留着 fname。按进程缓存。
 _FILE_FACE: dict[tuple, tuple | None] = {}
 
@@ -709,10 +709,12 @@ def _same_file(a, b) -> bool:
         return False
 
 
-def _file_key(path: str) -> tuple:
-    """缓存键是**文件本身**，不是脚本写的那串路径：native 会话里两次 `plt.show()`
-    之间脚本可以换 cwd，同一个相对 fname（`fonts/main.ttf`）指的就是另一个文件；
-    同一个文件被原地换掉（字节变了）也要重新反查。"""
+def font_file_key(path: str) -> tuple:
+    """按字体文件缓存的**唯一**键：文件本身，不是脚本写的那串路径。native 会话里两次
+    `plt.show()` 之间脚本可以换 cwd，同一个相对 fname（`fonts/main.ttf`）指的就是另一个
+    文件；同一个文件被原地换掉（字节变了）也要重新读。第 0 项是绝对路径，打开文件用它。
+
+    以字体路径作键的缓存都走这里：本模块的 `_FILE_FACE`、`manifest._FT_FONTS`。"""
     path = os.path.abspath(path)
     try:
         st = os.stat(path)
@@ -736,7 +738,7 @@ def _face_of_font_file(path: str) -> tuple | None:
     归一之后仍然解析回同一个文件才放——同族里另有 Regular 的 Light 文件，按
     normal 找到的是 Regular，于是留着 fname。
     """
-    key = _file_key(path)
+    key = font_file_key(path)
     if key in _FILE_FACE:
         return _FILE_FACE[key]
     path = key[0]

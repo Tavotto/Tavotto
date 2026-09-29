@@ -79,7 +79,7 @@
 
 | 问题 | 裁决 |
 |---|---|
-| fname 文字怎么接尾巴 | `overrides._release_font_file`（在 `ensure_text_fallback` 里，同一时刻、写回重放同一段代码）：读那个文件第 0 张脸的族名 / 字形 / 字重，字重归一成 normal / bold（≥600 为 bold）、字形归一成 normal / italic（Oblique 算 italic）——manifest 报的值必须落在「粗细」「字形」下拉的词表里；没注册的先 `addfont`，再按归一后的属性反查。缓存按文件身份（绝对路径 + dev/ino/mtime/size）认，相对 fname 换了 cwd 就是另一个文件 |
+| fname 文字怎么接尾巴 | `overrides._release_font_file`（在 `ensure_text_fallback` 里，同一时刻、写回重放同一段代码）：读那个文件第 0 张脸的族名 / 字形 / 字重，字重归一成 normal / bold（≥600 为 bold）、字形归一成 normal / italic（Oblique 算 italic）——manifest 报的值必须落在「粗细」「字形」下拉的词表里；没注册的先 `addfont`，再按归一后的属性反查。以字体路径作键的缓存（`_FILE_FACE`、`manifest._FT_FONTS`）一律按 `overrides.font_file_key` 的文件身份（绝对路径 + dev/ino/mtime/size）认，相对 fname 换了 cwd 就是另一个文件 |
 | 什么时候不换 | 反查解析不回**同一个文件（或字节相同的拷贝）的第 0 张脸**时原样不动：同名不同版本、字重对不上的兄弟文件（同族有 Regular 的 Light 归一成 normal 后找回的是 Regular）都会换掉拉丁字的脸，宁可留着方框也不改正文 |
 | 换不开时 manifest 怎么报 | `_resolved_font_paths(families, file)`：有 fname 就只报那一个文件——`face` 是它、缺的汉字进 `glyphs_missing`，不再按族列表说「画出来了」 |
 | 提示词 | `ai_bridge._build_prompt` 第 4 条：字体用族名设，不用 fname |

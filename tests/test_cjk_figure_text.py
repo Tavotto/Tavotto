@@ -616,9 +616,17 @@ for sub, name, weight in (("a", "DejaVuSerif.ttf", "normal"), ("b", "DejaVuSerif
     assert str(t.get_fontweight()) == weight, (sub, t.get_fontweight())
     plt.close(fig)
 
+# manifest 的字形事实（face / 缺字 / cjk_family）也按文件本身缓存：放不开的相对 fname
+# 在两个目录里是两张脸，报的必须是这一个目录里的那张
+for sub, name, face in (("a", "DejaVuSerif.ttf", "DejaVu Serif"), ("b", "DejaVuSans.ttf", "DejaVu Sans")):
+    shutil.copyfile(os.path.join(TTF, name), os.path.join(tmp, sub, "fonts", "locked.ttf"))
+    os.chdir(os.path.join(tmp, sub))
+    rel = os.path.join("fonts", "locked.ttf")
+    assert manifest.font_faces("Voltage", [], "dejavusans", rel) == {"face": face}, sub
+
 # e) 放不开的（按名字找不回同一个文件）：原样不动，manifest 照实按那个文件报缺字，
 #    不许再说「回退链画出来了」
-overrides._FILE_FACE[overrides._file_key(os.path.join(TTF, "DejaVuSans-Oblique.ttf"))] = None
+overrides._FILE_FACE[overrides.font_file_key(os.path.join(TTF, "DejaVuSans-Oblique.ttf"))] = None
 fig, t = figure("电压 MPa", os.path.join(TTF, "DejaVuSans-Oblique.ttf"))
 overrides.ensure_figure_fallback(fig)
 f = t.get_fontproperties().get_file()
