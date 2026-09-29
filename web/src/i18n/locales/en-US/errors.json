@@ -554,6 +554,7 @@
     "missingInputWhyAbsolute": "This is a fixed full path. The data may have been moved, or this is a different computer. Show Tavotto where the data is now.",
     "missingInputProbe": "The script checks for the data with exists / glob / listdir first, and Tavotto can't redirect those checks. Put the data back where the script expects it (relative paths count from the script's folder).",
     "missingInputPickFile": "Locate this file…",
+    "missingInputPickFolder": "Locate this folder…",
     "missingInputPickDir": "Choose its folder…",
     "missingInputPickFileTitle": "Locate {{name}}",
     "missingInputPickDirTitle": "Choose the folder that holds the data",

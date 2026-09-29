@@ -554,6 +554,7 @@
     "missingInputWhyAbsolute": "这是写死的完整路径。数据可能被移动了，或者换了一台电脑。请告诉 Tavotto 数据现在在哪。",
     "missingInputProbe": "脚本先用 exists / glob / listdir 检查数据在不在，Tavotto 没法替这类检查换位置。请把数据放回脚本写的位置（相对路径从脚本所在的文件夹算起）。",
     "missingInputPickFile": "找到这个文件…",
+    "missingInputPickFolder": "找到这个文件夹…",
     "missingInputPickDir": "选择所在文件夹…",
     "missingInputPickFileTitle": "找到 {{name}}",
     "missingInputPickDirTitle": "选择数据所在的文件夹",

@@ -11,6 +11,7 @@ import { isDesktop, pickAnyFile, pickDirectory } from '@/lib/desktop'
 import { useEnvStore } from '@/store/envStore'
 import { Button } from './ui/Button'
 import { Checkbox } from './ui/Checkbox'
+import { Details, Summary } from './ui/Details'
 import { Dialog } from './ui/Dialog'
 import { TextInput } from './ui/Input'
 
@@ -57,6 +58,7 @@ export function MissingInputDialog() {
   const folderOnly = primary.via === 'glob' || primary.probe_kind === 'dir'
   const others = offer.others.filter((o) => o.path !== primary.path)
   const desktop = isDesktop()
+  const name = baseName(primary.path)
 
   const submit = async (chosen: string | null, kind: 'file' | 'dir' | 'auto') => {
     if (!chosen) return // 取消选择器不是错误
@@ -67,7 +69,13 @@ export function MissingInputDialog() {
     setBusy(false)
     setError(err)
   }
+  const pickFile = () =>
+    void pickAnyFile(t('engine.missingInputPickFileTitle', { name })).then((f) => submit(f, 'file'))
+  const pickDir = () => void pickDirectory(t('engine.missingInputPickDirTitle')).then((d) => submit(d, 'dir'))
 
+  // 默认只有一句话 + 一个主按钮（用户 09-29：「一定要让用户一句话就能够读懂」）。只接受文件夹的那几档，
+  // 主按钮本身换成「找到这个文件夹…」——仍然是唯一的主按钮；完整路径、为什么、改写脚本的说明、
+  // 一并修好的其它路径、只影响读取、改选文件夹，全收进默认折叠的「详情」
   return (
     <Dialog
       open
@@ -75,7 +83,7 @@ export function MissingInputDialog() {
         if (!v && !busy) dismiss()
       }}
       title={t('engine.missingInputTitle')}
-      description={t('engine.missingInputBody', { script: offer.script })}
+      description={t(pickable ? 'engine.missingInputSentence' : 'engine.missingInputSentenceProbe', { name })}
       size="sm"
       busy={busy}
       anchor="missing-input"
@@ -84,35 +92,15 @@ export function MissingInputDialog() {
           <Button variant="secondary" size="md" disabled={busy} onClick={dismiss}>
             {t('engine.missingInputLater')}
           </Button>
-          {pickable && desktop && (
-            <>
-              <Button
-                variant="secondary"
-                size="md"
-                disabled={busy}
-                data-testid="missing-input-pick-dir"
-                onClick={() =>
-                  void pickDirectory(t('engine.missingInputPickDirTitle')).then((d) => submit(d, 'dir'))
-                }
-              >
-                {t('engine.missingInputPickDir')}
-              </Button>
-              {!folderOnly && (
-                <Button
-                  variant="primary"
-                  size="md"
-                  disabled={busy}
-                  data-testid="missing-input-pick-file"
-                  onClick={() =>
-                    void pickAnyFile(t('engine.missingInputPickFileTitle', { name: baseName(primary.path) })).then(
-                      (f) => submit(f, 'file'),
-                    )
-                  }
-                >
-                  {t('engine.missingInputPickFile')}
-                </Button>
-              )}
-            </>
+          {pickable && desktop && folderOnly && (
+            <Button variant="primary" size="md" disabled={busy} data-testid="missing-input-pick-dir" onClick={pickDir}>
+              {t('engine.missingInputPickFolder')}
+            </Button>
+          )}
+          {pickable && desktop && !folderOnly && (
+            <Button variant="primary" size="md" disabled={busy} data-testid="missing-input-pick-file" onClick={pickFile}>
+              {t('engine.missingInputPickFile')}
+            </Button>
           )}
           {pickable && !desktop && (
             <Button
@@ -128,25 +116,9 @@ export function MissingInputDialog() {
         </>
       }
     >
-      {/* 路径是用户自己写的，不翻译 */}
-      <p className="break-all font-mono text-sm text-ink" data-missing-input-path>
-        {primary.path}
-      </p>
-      <p className="mt-2 text-xs leading-relaxed text-ink-2">
-        {remappable
-          ? t(primary.absolute ? 'engine.missingInputWhyAbsolute' : 'engine.missingInputWhyRelative')
-          : primary.via === 'native'
-            ? t('engine.missingInputNative')
-            : t('engine.missingInputProbe')}
-      </p>
-      {rewritable && (
-        <p className="mt-2 text-xs leading-relaxed text-ink-2" data-missing-input-rewrite-hint>
-          {t('engine.missingInputRewriteHint')}
-        </p>
-      )}
       {pickable && !desktop && (
         <TextInput
-          className="mt-2 w-full"
+          className="w-full"
           value={typed}
           disabled={busy}
           placeholder={t('engine.missingInputPathPlaceholder')}
@@ -155,23 +127,50 @@ export function MissingInputDialog() {
           onChange={(e) => setTyped(e.target.value)}
         />
       )}
-      {others.length > 0 && (
-        <div className="mt-2">
-          <p className="text-xs text-ink-3">{t('engine.missingInputOthers')}</p>
-          <ul className="mt-0.5 flex flex-col gap-0.5" data-missing-input-others>
-            {others.map((o) => (
-              <li key={o.path} className="break-all font-mono text-xs text-ink-2">
-                {o.path}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-      {remappable && (
-        <p className="mt-2 text-xs leading-relaxed text-ink-3">{t('engine.missingInputReadOnly')}</p>
-      )}
       {(error ?? rewriteError) && <p className="mt-1 text-xs text-danger">{error ?? rewriteError}</p>}
       {skipped.length > 0 && <SkippedList items={skipped} />}
+      <Details className="mt-2 text-xs text-ink-3" data-missing-input-details>
+        <Summary className="cursor-pointer py-0.5 text-ink-2">{t('engine.missingInputDetails')}</Summary>
+        <div className="mt-1 flex flex-col gap-2 pl-4">
+          {/* 路径是用户自己写的，不翻译 */}
+          <p className="break-all font-mono text-ink" data-missing-input-path>
+            {primary.path}
+          </p>
+          <p className="leading-relaxed text-ink-2">
+            {remappable
+              ? t(primary.absolute ? 'engine.missingInputWhyAbsolute' : 'engine.missingInputWhyRelative')
+              : primary.via === 'native'
+                ? t('engine.missingInputNative')
+                : t('engine.missingInputProbe')}
+          </p>
+          {rewritable && (
+            <p className="leading-relaxed text-ink-2" data-missing-input-rewrite-hint>
+              {t('engine.missingInputRewriteHint')}
+            </p>
+          )}
+          {others.length > 0 && (
+            <div>
+              <p>{t('engine.missingInputOthers')}</p>
+              <ul className="mt-0.5 flex flex-col gap-0.5" data-missing-input-others>
+                {others.map((o) => (
+                  <li key={o.path} className="break-all font-mono text-ink-2">
+                    {o.path}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {remappable && <p className="leading-relaxed">{t('engine.missingInputReadOnly')}</p>}
+          {/* 选中那个文件就推得出规则；数据整批换了文件夹、只想指一次时才用得上这个 */}
+          {pickable && desktop && !folderOnly && (
+            <div>
+              <Button variant="secondary" size="sm" disabled={busy} data-testid="missing-input-pick-dir" onClick={pickDir}>
+                {t('engine.missingInputPickDir')}
+              </Button>
+            </div>
+          )}
+        </div>
+      </Details>
     </Dialog>
   )
 }

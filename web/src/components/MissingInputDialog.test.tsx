@@ -295,7 +295,11 @@ describe('MissingInputDialog', () => {
     })
     await render(<MissingInputDialog />)
     await act(async () => useEnvStore.getState().requestMissingInput(listdir()))
-    expect(byTestId('missing-input-pick-dir')).not.toBeNull()
+    // 主按钮本身换成「找到这个文件夹…」，仍是唯一的主按钮（在折叠区外）；没有「找到这个文件…」
+    const primaryBtn = byTestId('missing-input-pick-dir')!
+    expect(primaryBtn.closest('details'), '主按钮不在折叠区里').toBeNull()
+    expect(primaryBtn.textContent?.trim()).toBe(en('missingInputPickFolder'))
+    expect(document.querySelectorAll('[data-testid="missing-input-pick-dir"]')).toHaveLength(1)
     expect(byTestId('missing-input-pick-file'), 'listdir 要的是文件夹').toBeNull()
     await act(async () => useEnvStore.getState().dismissMissingInput())
     const isfile: MissingInputOffer = {
