@@ -613,18 +613,24 @@
       "bold": "Bold",
       "notBold": "Not bold",
       "italic": "Italic",
-      "notItalic": "Not italic"
+      "notItalic": "Not italic",
+      "weightValue": "Weight {{value}}",
+      "styleValue": "Style {{value}}"
     },
     "faceHint": {
       "weight": {
         "unset": "Bold: not set — applying keeps each figure’s own weight (click to make bold)",
         "on": "Bold: on (click to make it never bold)",
-        "off": "Bold: never bold — applying removes bold from figures (click to go back to not set)"
+        "off": "Bold: never bold — applying removes bold from figures (click to go back to not set)",
+        "otherOn": "Bold: the style says “{{value}}”, which counts as bold — applying writes it as is (click to make it never bold)",
+        "otherOff": "Bold: the style says “{{value}}”, which doesn’t count as bold — applying writes it as is (click to make bold)"
       },
       "style": {
         "unset": "Italic: not set — applying keeps each figure’s own slant (click to make italic)",
         "on": "Italic: on (click to make it never italic)",
-        "off": "Italic: never italic — applying removes italics from figures (click to go back to not set)"
+        "off": "Italic: never italic — applying removes italics from figures (click to go back to not set)",
+        "otherOn": "Italic: the style says “{{value}}”, which counts as italic — applying writes it as is (click to make it never italic)",
+        "otherOff": "Italic: the style says “{{value}}”, which doesn’t count as italic — applying writes it as is (click to make italic)"
       }
     }
   },

@@ -5,7 +5,7 @@ import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import type { Manifest } from '@/lib/api'
 import { FIGURE_LINE_ROWS, FIGURE_TEXT_ROWS } from '@/lib/stylePanelModel'
-import { CANVAS_TEXT_FAMILIES, withMachineFamilies } from '@/lib/typography'
+import { CANVAS_TEXT_FAMILIES, styleIsItalic, weightIsBold, withMachineFamilies } from '@/lib/typography'
 import { cn } from '@/lib/utils'
 import { useRenderStore } from '@/store/renderStore'
 import { optionLabel } from '../inspector/roles/registry'
@@ -120,11 +120,23 @@ const GENERIC_FAMILIES = ['serif', 'sans-serif', 'monospace']
 
 const leaf = (path: string) => path.slice(path.lastIndexOf('.') + 1)
 
-/** 粗 / 斜体格读出来的状态：`null` = 这份样式没管 */
-function faceOn(kind: TextRowSpec['kind'], which: 'weight' | 'style', raw: unknown): boolean | null {
-  if (raw === undefined || raw === null) return null
-  if (kind === 'annotation') return raw === true
-  return raw === (which === 'weight' ? 'bold' : 'italic')
+/**
+ * 粗 / 斜体格读出来的状态。`on`：`null` = 这份样式没管；`raw`：样式里写着的是**非规范值**时的原值
+ * （从图里提取的样式可能是 `oblique`、`semibold`、`600`——引擎与后端都原样保留），规范值时为 null。
+ * 非规范值按与引擎同一口径归一来显示（`weightIsBold` ≥ 600、`styleIsItalic` 非 normal），但不改写它。
+ */
+interface FaceRead {
+  on: boolean | null
+  raw: string | null
+}
+
+function readFace(kind: TextRowSpec['kind'], which: 'weight' | 'style', value: unknown): FaceRead {
+  if (value === undefined || value === null) return { on: null, raw: null }
+  if (kind === 'annotation') return { on: value === true, raw: null }
+  const canonOn = which === 'weight' ? 'bold' : 'italic'
+  if (value === canonOn) return { on: true, raw: null }
+  if (value === 'normal') return { on: false, raw: null }
+  return { on: which === 'weight' ? weightIsBold(value) : styleIsItalic(value), raw: String(value) }
 }
 
 const faceValue = (kind: TextRowSpec['kind'], which: 'weight' | 'style', on: boolean): unknown =>
@@ -249,29 +261,37 @@ function TextRowEditor({
   const label = ROW_LABEL[row.id]()
   const family = readPath(draft, row.family)
   const size = readPath(draft, row.size)
-  const weight = row.weight ? faceOn(row.kind, 'weight', readPath(draft, row.weight)) : null
-  const style = row.style ? faceOn(row.kind, 'style', readPath(draft, row.style)) : null
+  const weight = row.weight ? readFace(row.kind, 'weight', readPath(draft, row.weight)) : null
+  const style = row.style ? readFace(row.kind, 'style', readPath(draft, row.style)) : null
   const paths = [row.family, row.size, row.weight, row.style]
   const anySet = paths.some((p) => p && readPath(draft, p) !== undefined)
   const range = NUMBER_SPEC[leaf(row.size)]
   const sizeSet = typeof size === 'number' && Number.isFinite(size)
   // 粗 / 斜体三态：未设置（应用时保留图里原样）→ 开 → 显式关（应用时一律去掉：图内写 `normal`、
   // 画布标注写 false）→ 回到未设置。「关」与「未设置」应用起来不是一回事，所以看得出来：未设置用
-  // 与面板「多个值」同一副第三态视觉（按钮下一道短横、`aria-pressed="mixed"`），名字换成「未设置」
-  const face = (which: 'weight' | 'style', path: string | null, on: boolean | null) =>
-    path && (
+  // 与面板「多个值」同一副第三态视觉（按钮下一道短横、`aria-pressed="mixed"`），名字换成「未设置」。
+  // 非规范值（`oblique` / `semibold` / `600`…）按归一后的开 / 关显示，悬停说出原值；不点就原样留着，
+  // 点一下按它**显示的**那一态往下走（显示为开 → 显式关；显示为关 → 开），按下去看得见变化
+  const face = (which: 'weight' | 'style', path: string | null, f: FaceRead | null) => {
+    if (!path || !f) return null
+    const { on, raw } = f
+    const hintKey = raw !== null ? (on ? 'otherOn' : 'otherOff') : on === null ? 'unset' : on ? 'on' : 'off'
+    return (
       <span className="contents" data-style-face={`${row.id}.${which}`}>
         <StyleToggle
           state={on === null ? 'mixed' : on ? 'on' : 'off'}
           mixedText={st('unset')}
           label={sp(which === 'weight' ? 'boldOf' : 'italicOf', { row: label })}
-          hint={st(`faceHint.${which}.${on === null ? 'unset' : on ? 'on' : 'off'}`)}
-          onClick={() => (on === false ? onClear([path]) : onSet(path, faceValue(row.kind, which, on === null)))}
+          hint={st(`faceHint.${which}.${hintKey}`, { value: raw ?? '' })}
+          onClick={() =>
+            on === false && raw === null ? onClear([path]) : onSet(path, faceValue(row.kind, which, !on))
+          }
         >
           {which === 'weight' ? <Bold size={ICON_SIZE.sm} /> : <Italic size={ICON_SIZE.sm} />}
         </StyleToggle>
       </span>
     )
+  }
   return (
     <SettingRow label={label} density="compact" data-style-row={row.id}>
       {/* 两行控件（字体一行、「字号 · 粗体 · 斜体 · ×」一行）铺满控件列：列是贴右缩到内容宽的，
@@ -420,10 +440,13 @@ export function textSummary(row: TextRowSpec, draft: Record<string, unknown>): s
     typeof family === 'string' && family ? optionLabel('fontfamily', family) : null,
     ptText(readPath(draft, row.size)),
   ]
-  const weight = row.weight ? faceOn(row.kind, 'weight', readPath(draft, row.weight)) : null
-  const style = row.style ? faceOn(row.kind, 'style', readPath(draft, row.style)) : null
-  if (weight !== null) parts.push(st(weight ? 'face.bold' : 'face.notBold'))
-  if (style !== null) parts.push(st(style ? 'face.italic' : 'face.notItalic'))
+  const weight = row.weight ? readFace(row.kind, 'weight', readPath(draft, row.weight)) : null
+  const style = row.style ? readFace(row.kind, 'style', readPath(draft, row.style)) : null
+  // 非规范值照原值说（「字重 半粗」「字形 倾斜」「字重 600」），不归一成「粗体」/「不加粗」
+  if (weight?.raw != null) parts.push(st('face.weightValue', { value: optionLabel('weight', weight.raw) }))
+  else if (weight && weight.on !== null) parts.push(st(weight.on ? 'face.bold' : 'face.notBold'))
+  if (style?.raw != null) parts.push(st('face.styleValue', { value: optionLabel('style', style.raw) }))
+  else if (style && style.on !== null) parts.push(st(style.on ? 'face.italic' : 'face.notItalic'))
   const shown = parts.filter((p): p is string => !!p)
   return shown.length ? shown.join(' · ') : st('unset')
 }

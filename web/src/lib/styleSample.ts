@@ -11,6 +11,7 @@
  */
 
 import { FIGURE_LINE_ROWS, FIGURE_TEXT_ROWS, type FigureLineRowId, type FigureTextRowId } from './stylePanelModel'
+import { styleIsItalic, weightIsBold } from './typography'
 
 /** 示例图默认值（一张 9 pt / 0.5 pt 的典型论文图） */
 export const SAMPLE_DEFAULTS = {
@@ -104,11 +105,12 @@ export function styleSampleGeometry(data: Record<string, unknown> | null | undef
     readNumber(d, ['element', textRow(id).sizeRole, 'fontsize']) ?? fallback
   const face = (id: FigureTextRowId): SampleFace => {
     const { familyRole, faceRole } = textRow(id)
-    const faceOf = (prop: string) => (faceRole ? readString(d, ['element', faceRole, prop]) : null)
+    // 非规范字重 / 字形（`600`、`semibold`、`oblique`）按与引擎同一口径归一：≥ 600 算粗、非 normal 算斜
+    const faceOf = (prop: string) => (faceRole ? readValue(d, ['element', faceRole, prop]) : null)
     return {
       fontFamily: cssFamilyOf(readString(d, ['element', familyRole, 'fontfamily'])),
-      bold: faceOf('weight') === 'bold',
-      italic: faceOf('style') === 'italic',
+      bold: weightIsBold(faceOf('weight')),
+      italic: styleIsItalic(faceOf('style')),
     }
   }
   const linePath = (id: FigureLineRowId) => ['element', lineRow(id).role, lineRow(id).prop]

@@ -194,3 +194,18 @@ describe('fitSampleGeometry：字号超预算时，所有由样式决定的长�
     expect(fitSampleGeometry(g)).toBe(g)
   })
 })
+
+describe('示例图的粗 / 斜体认非规范值（与引擎同一口径，#704）', () => {
+  it('semibold / 600 / "700" 画粗，light / 500 不画粗；oblique 画斜', () => {
+    const g = styleSampleGeometry({
+      element: {
+        title: { weight: 'semibold' },
+        axis_label: { weight: 600, style: 'oblique' },
+        legend_text: { weight: 'light' },
+      },
+    })
+    expect(g.faces.title.bold).toBe(true)
+    expect(g.faces.axis).toMatchObject({ bold: true, italic: true })
+    expect(g.faces.legend.bold).toBe(false)
+  })
+})

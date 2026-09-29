@@ -74,6 +74,46 @@ export const WEIGHTS = ['normal', 'bold'] as const
 export const STYLES = ['normal', 'italic'] as const
 export const HALIGNS = ['left', 'center', 'right'] as const
 
+/**
+ * matplotlib 字重名 → 数值（`font_manager.weight_dict`）。从图里提取的样式可能写着
+ * `semibold` / `600` 这类非规范字重，引擎与后端都原样保留。
+ */
+const WEIGHT_NUMBER: Record<string, number> = {
+  ultralight: 100,
+  light: 200,
+  normal: 400,
+  regular: 400,
+  book: 400,
+  medium: 500,
+  roman: 500,
+  semibold: 600,
+  demibold: 600,
+  demi: 600,
+  bold: 700,
+  heavy: 800,
+  'extra bold': 800,
+  black: 900,
+}
+
+/**
+ * 一个字重算不算「加粗」：≥ 600 算（与引擎归一 fname 字体字重的口径同一条，#704）。
+ * 认不出的名字不算。
+ */
+export function weightIsBold(raw: unknown): boolean {
+  const n =
+    typeof raw === 'number'
+      ? raw
+      : typeof raw === 'string'
+        ? (WEIGHT_NUMBER[raw.trim().toLowerCase()] ?? (raw.trim() === '' ? NaN : Number(raw)))
+        : NaN
+  return Number.isFinite(n) && n >= 600
+}
+
+/** 一个字形算不算「斜体」：不是 `normal` 就算（`oblique` 算斜体，与引擎同一口径，#704） */
+export function styleIsItalic(raw: unknown): boolean {
+  return typeof raw === 'string' && raw.trim() !== '' && raw.trim().toLowerCase() !== 'normal'
+}
+
 export type FontWeight = (typeof WEIGHTS)[number]
 export type FontStyle = (typeof STYLES)[number]
 export type HAlign = (typeof HALIGNS)[number]

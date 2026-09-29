@@ -13,7 +13,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { i18n } from '@/i18n'
 import { ProfilesSettings } from './ProfilesSettings'
-import { figureFamilyOptions, useFigureFamilies } from './StyleProfileFields'
+import { figureFamilyOptions, STYLE_TEXT_ROWS, textSummary, useFigureFamilies } from './StyleProfileFields'
 import { useRenderStore, type PanelRender } from '@/store/renderStore'
 import type { Manifest } from '@/lib/api'
 import { TooltipProvider } from '@/components/ui/Tooltip'
@@ -648,6 +648,87 @@ describe('样式页与左栏样式面板同一张行表：字体 / 字号 / 粗�
       annotation: { bold: true, italic: false },
       pt_basis: 'page',
     })
+  })
+
+  it('非规范字重 / 字形（从图里提取的 semibold / 600 / light / oblique）：按归一显示、悬停说原值、不点就原样保存；点击按显示的那一态往下走', async () => {
+    const data = {
+      element: {
+        line: { linewidth: 1.25 },
+        title: { weight: 'semibold' },
+        axis_label: { weight: 'light', style: 'oblique' },
+        legend_text: { weight: 600 },
+      },
+    }
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) =>
+      new Response(
+        JSON.stringify({
+          profiles: String(input).includes('/style') ? [BUILTIN_STYLE, { ...USER_STYLE, data }] : BUILTIN_SPECS,
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    ) as typeof fetch
+    const saves = await editUserStyle()
+    const pressed = (row: string, which: 'weight' | 'style') => toggle(row, which)!.getAttribute('aria-pressed')
+    const tipOf = async (row: string, which: 'weight' | 'style') => {
+      const btn = toggle(row, which)!
+      await act(async () => {
+        btn.focus()
+        btn.dispatchEvent(new FocusEvent('focus', { bubbles: false }))
+        btn.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
+      })
+      const tipText = document.querySelector('[role="tooltip"]')?.textContent ?? ''
+      await act(async () => {
+        btn.blur()
+        btn.dispatchEvent(new FocusEvent('blur', { bubbles: false }))
+        btn.dispatchEvent(new FocusEvent('focusout', { bubbles: true }))
+      })
+      return tipText
+    }
+    // 显示：≥ 600 与 semibold 算加粗、light 不算、oblique 算斜体（与引擎同一口径，#704）
+    expect(pressed('title', 'weight')).toBe('true')
+    expect(pressed('legend', 'weight')).toBe('true')
+    expect(pressed('axis_label', 'weight')).toBe('false')
+    expect(pressed('axis_label', 'style')).toBe('true')
+    // 悬停说出原值，并说清按原值写
+    expect(await tipOf('title', 'weight')).toBe(
+      '粗体：样式里写的是「semibold」，算加粗——应用时照原值写（点一下改为一律不加粗）',
+    )
+    expect(await tipOf('legend', 'weight')).toContain('「600」')
+    expect(await tipOf('axis_label', 'weight')).toBe(
+      '粗体：样式里写的是「light」，不算加粗——应用时照原值写（点一下改为加粗）',
+    )
+    expect(await tipOf('axis_label', 'style')).toContain('「oblique」')
+
+    // 不点：只改字号就保存，非规范值原样出去（不归一成 bold / normal / italic）
+    await typeInto(input('刻度字号')!, '7')
+    await act(async () => {
+      byText('保存')!.click()
+    })
+    expect(saves.at(-1)).toEqual({ ...data, element: { ...data.element, ticks: { fontsize: 7 } }, pt_basis: 'page' })
+
+    // 点：显示为开的（semibold / oblique）→ 显式关；显示为关的（light）→ 开
+    await act(async () => toggle('title', 'weight')!.click())
+    await act(async () => toggle('axis_label', 'style')!.click())
+    await act(async () => toggle('axis_label', 'weight')!.click())
+    expect(pressed('title', 'weight')).toBe('false')
+    expect(pressed('axis_label', 'style')).toBe('false')
+    expect(pressed('axis_label', 'weight')).toBe('true')
+    await act(async () => {
+      byText('保存')!.click()
+    })
+    expect((saves.at(-1)!.element as Record<string, unknown>)).toMatchObject({
+      title: { weight: 'normal' },
+      axis_label: { weight: 'bold', style: 'normal' },
+      legend_text: { weight: 600 },
+    })
+  })
+
+  it('只读摘要：非规范字重 / 字形照原值说，不说成「粗体」/「不加粗」', () => {
+    const row = (id: string) => STYLE_TEXT_ROWS.find((r) => r.id === id)!
+    const d = { element: { title: { weight: 'semibold' }, axis_label: { style: 'oblique' }, legend_text: { weight: 600 } } }
+    expect(textSummary(row('title'), d)).toBe('字重 半粗')
+    expect(textSummary(row('axis_label'), d)).toBe('字形 倾斜')
+    expect(textSummary(row('legend'), d)).toBe('字重 600')
   })
 
   it('粗 / 斜体的悬停说明三态各一句，并说清应用时会怎样', async () => {
