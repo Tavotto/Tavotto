@@ -19,7 +19,7 @@
  *
  * 不吸附：步长固定的移动一吸就被拽回参考线上，离不开、也走不到想要的那一格。
  */
-import { alignEntries, isElementHidden, panelFullRect } from '@/lib/elementGeom'
+import { alignEntries, expandGroups, isElementHidden, panelFullRect } from '@/lib/elementGeom'
 import { msg } from '@/i18n'
 import type { Manifest } from '@/lib/api'
 import { useDocumentStore } from '@/store/documentStore'
@@ -277,11 +277,12 @@ function startMover(b: FigureBurst): InFigureMove | null | 'unmovable' {
 /**
  * 与鼠标拖动同一套分派：两个以上可对齐的成员 = 整组平移（`groupMove`），否则按主选
  * （选区末位）那一个走 `inFigureMoveOf`。锁定的（命中层本来就点不中它们，元素树里
- * 仍选得到）与隐藏的不动。
+ * 仍选得到）与隐藏的不动。选中的组（ADR 0102，不在元素表里）先展开成成员——与拖组里
+ * 任一成员时 `alignEntries` 的展开同一处；不能整体挪的组展开为空，照旧「不能移动」。
  */
 function moverFor(panel: PanelObject, manifest: Manifest, gids: string[]): InFigureMove | null {
   const locked = new Set(panel.lockedGids ?? [])
-  const els = gids
+  const els = expandGroups(manifest, gids)
     .filter((g) => !locked.has(g))
     .map((g) => manifest.elements.find((el) => el.gid === g))
     .filter((el): el is NonNullable<typeof el> => !!el && el.gid !== 'figure' && !isElementHidden(el))
