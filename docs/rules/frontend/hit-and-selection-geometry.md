@@ -125,7 +125,10 @@
 - **真实的组展开成成员（ADR 0102）**：选区里的组（共享色条，`Manifest.groups`）经
   `elementGeom.expandGroups` 展开成成员（子图 + 色条轴），整组平移 / 成组缩放 / 缩放控件全部
   复用多选子图那一套，不另造变换；`resizable: false` 的组不展开。组在画布上点不中，选中组后
-  拖任一成员 = 整组平移、只点不拖 = 选中那个成员（`startElementGroupMove` 的 `onTap`）。多宿主
+  拖任一成员 = 整组平移、只点不拖 = 选中那个成员（`startElementGroupMove` 的 `onTap`）。「任一成员」
+  含成员子图里的东西（线、标题、图例、注释）：`elementGeom.entryUnder` 沿真实父级
+  （`structuralParent`）找所属成员，不只比 `geomGid(hit)`——否则点到一条线就把选区换成那条线
+  （Codex #691）。普通多选仍只认点到的正是选中的那一个。多宿主
   色条不在任何宿主的 `follow_gids` 里：单拖 B 时 C 与色条都不动。看护：
   `canvas/sharedColorbarGroup.test.tsx`。
 
