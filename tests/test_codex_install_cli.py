@@ -1663,6 +1663,7 @@ def test_git_that_runs_but_fails_is_not_rerouted_to_a_download(no_git_machine, c
         "path_traversal",
         "receipt_from_other_branch",
         "corrupt_member",
+        "corrupt_lzma_member",
     ],
 )
 def test_an_archive_that_does_not_verify_is_never_registered(no_git_machine, capsys, case):
@@ -1695,6 +1696,19 @@ def test_an_archive_that_does_not_verify_is_never_registered(no_git_machine, cap
         zip_bytes, manifest = _stable_branch_zip(m["tmp"], "0.18.0", tamper=other_branch)
         m["github"].publish(zip_bytes, manifest)
         expect = "收据"
+    elif case == "corrupt_lzma_member":
+        # ZIP_LZMA 的条目数据坏了：zf.read 抛 lzma.LZMAError（Codex #725）
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_LZMA) as zf:
+            zf.writestr(brand.CODEX_PLUGIN_STABLE_ARCHIVE_DIR + "/ok.txt", b"payload-bytes" * 64)
+        raw = bytearray(buf.getvalue())
+        info = zipfile.ZipFile(io.BytesIO(bytes(raw))).infolist()[0]
+        start = info.header_offset + 30 + len(info.filename.encode()) + len(info.extra)
+        for k in range(start + 4, start + 20):  # 压缩数据流开头（跳过 4 字节的 LZMA 属性头）
+            raw[k] ^= 0xFF
+        _zip, manifest = _stable_branch_zip(m["tmp"], "0.18.0")
+        m["github"].publish(bytes(raw), manifest)
+        expect = "读不出来"
     elif case == "corrupt_member":
         # 目录表完好、某个条目的数据坏了（CRC 不符）：zf.read 抛 BadZipFile——也要是一行 JSON 失败
         # （Codex #725），不是 traceback
