@@ -670,6 +670,30 @@ def test_macos_reads_only_the_user_config_pip_selects(tmp_path):
     assert got and got["mirror"] is True and got["source"] == "user", got
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX 的全局配置位置")
+def test_macos_global_pip_configs_are_the_ones_pip_reads(monkeypatch):
+    """pip `site_config_dirs` 的 darwin 分支只有 `/Library/Application Support/pip`：XDG_CONFIG_DIRS
+    与 `/etc` 只属于其它 Unix（Codex #724）——那里的旧 pip.conf 在 macOS 上不许翻转结论。"""
+    env = {"HOME": "/h", "XDG_CONFIG_DIRS": "/xdg-dirs"}
+    monkeypatch.setattr(launcher.sys, "platform", "darwin")
+    darwin = [p for p, kind in launcher._pip_config_files(env) if kind == "global"]
+    assert darwin == ["/Library/Application Support/pip/pip.conf"], darwin
+    monkeypatch.setattr(launcher.sys, "platform", "linux")
+    linux = [p for p, kind in launcher._pip_config_files(env) if kind == "global"]
+    assert linux == ["/xdg-dirs/pip/pip.conf", "/etc/pip.conf"], linux
+
+
+def test_pip_configs_are_decoded_with_the_locale_encoding_like_pip(tmp_path, monkeypatch):
+    """pip 按 `locale.getpreferredencoding(False)` 读配置：中文 Windows 上 GBK 写的 pip.ini（带中文注释）
+    pip 读得出镜像，这里也要读得出，不能因为不是 UTF-8 就当成空文件（Codex #724）。"""
+    import locale
+
+    conf = tmp_path / "gbk.conf"
+    conf.write_bytes(("[global]\n# 阿里云镜像\nindex-url = " + ALIYUN + "\n").encode("gbk"))
+    monkeypatch.setattr(locale, "getpreferredencoding", lambda do_setlocale=True: "gbk")
+    assert launcher._index_urls_in(str(conf)) == {"global": ALIYUN}
+
+
 def test_pip_index_never_reports_local_paths(tmp_path):
     """体检结果进模型看得见的 `tavotto_health`：`source` 只报类别，`file://` 索引的路径也抹掉（Codex #724 P1）。"""
     home = tmp_path / "alice"
@@ -687,7 +711,7 @@ def test_pip_index_never_reports_local_paths(tmp_path):
     assert "alice" not in json.dumps(got) and got["url"] == "file://***", got
 
 
-def test_pip_sections_are_ordered_after_merging_files(tmp_path):
+def test_pip_sections_are_ordered_after_merging_files(tmp_path, monkeypatch):
     """照 pip：先合并所有文件、再按节排——全局配置里的 `[install]` 压过用户配置里的 `[global]`（Codex #724）。"""
     global_dir = tmp_path / "xdg-global"
     (global_dir / "pip").mkdir(parents=True)
@@ -707,6 +731,7 @@ def test_pip_sections_are_ordered_after_merging_files(tmp_path):
     }
     if os.name == "nt":
         pytest.skip("POSIX 的全局配置位置")
+    monkeypatch.setattr(launcher.sys, "platform", "linux")  # XDG_CONFIG_DIRS 只属于非 macOS 的 Unix
     got = launcher.pip_index(base)
     assert got == {"url": ALIYUN, "source": "global", "mirror": True}
 
