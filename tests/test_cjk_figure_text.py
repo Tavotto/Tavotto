@@ -665,6 +665,18 @@ if FontPath is not None:
     assert list(t.get_fontfamily())[0] == "Tavotto Face One", t.get_fontfamily()
     assert png(fig) == before  # 仍是第 1 张脸画的
     plt.close(fig)
+    # 两张脸同名同字重（按名字只找得回第 0 张）：第 1 张换成族名就是换了脸——留着 fname
+    twin_coll = TTCollection()
+    twin_coll.fonts = [
+        TTFont(probe_face("Tavotto Twin", "Regular", 400)),
+        TTFont(probe_face("Tavotto Twin", "Regular", 400, base="DejaVuSans.ttf")),
+    ]
+    twin = os.path.join(tmp, "twin.ttc")
+    twin_coll.save(twin)
+    fig, t = figure("Voltage", FontPath(twin, 1))
+    overrides.ensure_figure_fallback(fig)
+    assert t.get_fontproperties().get_file() is not None, "按名字找回的是第 0 张，不许放开"
+    plt.close(fig)
     # 放不开时 manifest 报的也是第 1 张
     overrides._FILE_FACE[overrides.font_file_key(one)] = None
     assert manifest.font_faces("Voltage", [], "dejavusans", one) == {"face": "Tavotto Face One"}
