@@ -855,7 +855,8 @@ def pip_index_of(python: "str | None", timeout: float = 15.0) -> "dict | None":
     )
     try:
         proc = subprocess.run(
-            [python, "-c", code, HERE],
+            # `-B`：只读体检，不往插件目录（已装副本 / 本地市场检出）里写 server 的 .pyc
+            [python, "-B", "-c", code, HERE],
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             timeout=timeout,
@@ -894,7 +895,9 @@ def upgrade_commands(target: "str | None", index: "dict | None") -> "list[str]":
     pin = f'"tavotto[worker]=={target}"' if target else '"tavotto[worker]"'
     cmds = [] if mirror else ["pipx upgrade tavotto"]
     cmds.append(f"pipx install --force {pin}{idx}")
-    cmds.append(f"pip install -U {pin}{idx}")
+    # `--force-reinstall`：engine_incompatible 常见的是「版本号已经对、模块文件装残了」——只有 `-U` 时 pip
+    # 认为已满足、一个文件都不动（Codex #724）
+    cmds.append(f"pip install -U --force-reinstall {pin}{idx}")
     return cmds
 
 
