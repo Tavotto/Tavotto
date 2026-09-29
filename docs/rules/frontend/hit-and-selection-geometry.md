@@ -128,7 +128,12 @@
   拖任一成员 = 整组平移、只点不拖 = 选中那个成员（`startElementGroupMove` 的 `onTap`）。「任一成员」
   含成员子图里的东西（线、标题、图例、注释）：`elementGeom.entryUnder` 沿真实父级
   （`structuralParent`）找所属成员，不只比 `geomGid(hit)`——否则点到一条线就把选区换成那条线
-  （Codex #691）。普通多选仍只认点到的正是选中的那一个。多宿主
+  （Codex #691）。普通多选仍只认点到的正是选中的那一个。
+  **组里有锁定成员 = 整组不动**（成员或共享的色条元素被元素树锁住；`elementGeom.groupHasLocked`）：
+  判据只在 `expandGroups` 一处，锁定的组展开为空——拖动、组框手柄（`resolveGroup` 为空就不给）、
+  属性页整组缩放（组页改说「先解锁」）、方向键微调（`nudge.moverFor`）同一个出口；拖起来与按方向键
+  都说 `status.figureGroupLocked`，只点不拖照常钻进去。不做「跳过锁住的、挪其余的」：共享色条组的
+  意义就是一起动，与画布对象组的 `movableTargets` 同一条规则（Codex #691）。多宿主
   色条不在任何宿主的 `follow_gids` 里：单拖 B 时 C 与色条都不动。看护：
   `canvas/sharedColorbarGroup.test.tsx`。
 
