@@ -217,6 +217,8 @@ def _probe_via_of_constants(tree: ast.AST) -> dict[int, str]:
             return consts.get(expr.id)
         return None
 
+    # 别名与 `probe_literals` 同一份（`import glob as g` / `from pathlib import Path as P`）
+    aliases = databinding._Aliases(tree)
     out: dict[int, str] = {}
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
@@ -226,7 +228,7 @@ def _probe_via_of_constants(tree: ast.AST) -> dict[int, str]:
         if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Call):
             ctor = node.func.value
             inner = _const_of(ctor.args[0]) if len(ctor.args) == 1 else None
-            if databinding._func_name(ctor.func) in databinding._PATH_CTORS and inner is not None:
+            if databinding._func_name(ctor.func) in aliases.path_ctors and inner is not None:
                 if name in databinding.PATH_METHOD_PROBES:
                     out[id(inner)] = VIA_PROBE
                 elif name in databinding.PATH_METHOD_GLOBS:
@@ -241,7 +243,7 @@ def _probe_via_of_constants(tree: ast.AST) -> dict[int, str]:
             continue
         if name in databinding.PATH_PROBE_FUNCS or name in databinding.DIR_PROBE_FUNCS:
             out[id(target)] = VIA_PROBE
-        elif name in databinding.GLOB_FUNCS and databinding._is_glob_module_call(node.func):
+        elif aliases.glob_call(node.func) is not None:
             out[id(target)] = VIA_GLOB
     return out
 
