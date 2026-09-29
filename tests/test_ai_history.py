@@ -304,12 +304,16 @@ def test_build_prompt_normalized(tmp_path):
 
     1. 「必须用 matplotlib + savefig 出图」是硬性要求——助手改用 PIL/plotly/
        手写 SVG 出的图，live-figure 链路完全无法参数化编辑；
-    2. paper_style.py 是图库方言：图库里有才提，没有绝不提——更不允许把某个
+    2. 字体用族名、不用 FontProperties(fname=...)——fname 关掉了逐字形回退，
+       改成西文字体后中文全是方框（用户反馈）；
+    3. paper_style.py 是图库方言：图库里有才提，没有绝不提——更不允许把某个
        具体图库的私有规范（字体/配色号）硬编码进产品提示词。
     """
     p = ai_bridge._build_prompt("fig1.py", "把线加粗", None, str(tmp_path))
     assert "matplotlib" in p and "savefig" in p
     assert "stem" in p and "出图数量" in p
+    # 字体按族名设、不用 fname：fname 锁死单个文件，西文字体里的中文画成方框
+    assert "fname" in p and "font.family" in p
     assert "paper_style" not in p  # 图库里没有这个文件，不该无中生有
 
     (tmp_path / "paper_style.py").write_text("save = None\n", encoding="utf-8")

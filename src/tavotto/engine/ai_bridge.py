@@ -489,10 +489,17 @@ def _build_prompt(
         "matplotlib 的 savefig 实现参数化编辑，其他方式生成的图完全无法再编辑。",
         "2. 保持既有输出文件名（stem）与出图数量不变。",
         "3. 只修改目标脚本；不要运行脚本（渲染由外部系统负责）；不要修改其他脚本或数据文件。",
+        # fname 锁死单个字体文件时 matplotlib 不做逐字形回退：换成 Times 之类的
+        # 西文字体后图里的中文全变方框（用户反馈）。引擎会尽量把 fname 换回族名
+        # （`overrides._release_font_file`），但提示词这一侧先别把它写出来。
+        "4. 设置字体用字体族名（rcParams['font.family'] 或 fontfamily= / "
+        "FontProperties(family=...)），不要用 FontProperties(fname=...) 指定字体文件路径："
+        "fname 会让 matplotlib 只从那一个文件取字形，西文字体里没有的中文会画成方框；"
+        "用族名时外部系统会自动给中文接上中文字体。",
     ]
     if figures_dir and (Path(figures_dir) / "paper_style.py").is_file():
         lines.append(
-            "4. 图库有共享样式 paper_style.py：沿用它既有的字体/字号/配色/"
+            "5. 图库有共享样式 paper_style.py：沿用它既有的字体/字号/配色/"
             "版面规范，不要修改 paper_style.py 本身。"
         )
     ctx = context or {}
