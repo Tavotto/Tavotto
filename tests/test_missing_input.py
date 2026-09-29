@@ -251,6 +251,28 @@ def test_unresolved_reads_are_noted_and_raise_the_original_error(remapped, tmp_p
     assert fact["requested"] == "data/x.csv" and fact["absolute"] is False
 
 
+def test_a_miss_normalized_against_the_base_is_matched_after_a_chdir(
+    remapped, tmp_path, monkeypatch
+):
+    """脚本 chdir 进子目录后打开 base 下缺失的**绝对**路径：记账记的是相对 base 的那一段，它相对的
+    就是 base，不是此刻的 cwd——按 cwd 拼回去是 base/sub/sub/x.csv，分类对不上（Codex 评 #716 P2）。
+    脚本自己写的相对路径仍相对当时的 cwd。"""
+    misses = remapped([{"kind": P, "from": "", "to": str(tmp_path / "nowhere")}])
+    box = pathlib.Path.cwd()
+    (box / "sub").mkdir()
+    monkeypatch.chdir(box / "sub")
+    with pytest.raises(FileNotFoundError) as err:
+        open(pathlib.Path("x.csv").resolve())
+    fact = figcapture.missing_input_of(err.value, misses)
+    assert fact is not None and fact["requested"] == "sub/x.csv"
+    assert os.path.realpath(fact["cwd"]) == os.path.realpath(box)
+    with pytest.raises(FileNotFoundError) as err:
+        open("y.csv")
+    fact = figcapture.missing_input_of(err.value, misses)
+    assert fact is not None and fact["requested"] == "y.csv"
+    assert os.path.realpath(fact["cwd"]) == os.path.realpath(box / "sub")
+
+
 def test_numpy_loadtxt_is_remapped_and_named_without_a_filename(remapped, tmp_path):
     np = pytest.importorskip("numpy")
     _touch(tmp_path / "moved" / "d.txt", "1 2 3")
