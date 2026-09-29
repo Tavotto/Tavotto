@@ -255,8 +255,12 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
   clear: () => set((s) => ({ byScript: {}, epoch: s.epoch + 1 })),
 }))
 
-// 用户在「找不到脚本要读的数据」里指认了位置（ADR 0106）：envStore 的代际一变，重跑这次因此失败的脚本
+// 改指表 / 环境变了（ADR 0106）：envStore 的两个代际——作废按旧条件捕获的结果、重跑因「找不到数据」失败的脚本
 useEnvStore.subscribe((state, prev) => {
+  // 先作废按旧条件捕获的结果，再重跑「找不到数据」的（同一次指认里两个代际都会变）
+  if (state.probeResultsGeneration !== prev.probeResultsGeneration) {
+    useScriptRunStore.getState().invalidateCaptured()
+  }
   if (state.inputRemapGeneration !== prev.inputRemapGeneration) {
     useScriptRunStore.getState().rerunMissingInput()
   }
