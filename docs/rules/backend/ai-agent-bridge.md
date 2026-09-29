@@ -49,7 +49,19 @@
   `%LOCALAPPDATA%\Microsoft\WindowsApps`（**商店版 codex 的执行别名——真身在
   受 ACL 保护的 WindowsApps 包体里，只能走这个入口**）、WinGet/scoop/choco/
   bun/volta 全翻一遍；macOS 上 ChatGPT 应用内置的 codex 由 **codex 适配器自己的**
-  `extra_search_locations()` 追加（排在常规位置之后）。每个候选带一个 `source`
+  `extra_search_locations()` 追加（排在常规位置之后）。Windows 上 **Codex 桌面版自带的
+  CLI**（`%LOCALAPPDATA%\OpenAI\Codex\bin\<哈希>\codex.exe`，不在 PATH，#726）由 codex
+  适配器的 `extra_candidates()` 给出，来源 `codex_desktop_bundled`；列文件与新到旧排序
+  **只有 `ai_agents.desktop_codex_candidates()` 一份**，`codexinstall.find_codex()`
+  （`tavotto codex install`）调的也是它——两边对「这台机器上的 codex 是哪一份」不许
+  各写一份探测（`test_desktop_bundled_codex_agrees_with_codex_install`）。排序：
+  设置 → PATH → 目录落点（npm 全局、WindowsApps 执行别名、常见目录）→ 桌面版自带
+  （新到旧）→ npm 包内二进制 → MSIX 包体。理由：用户自己装的 CLI 是他选的那份、通常
+  也更新，排在前面（与 macOS 上 `chatgpt_bundle` 排在常规位置之后同一个道理，也与
+  `find_codex()` 的 PATH → 兜底目录 → 桌面版顺序一致）；桌面版那份是完整可用的安装，
+  排在后两手「残缺安装的补救」之前。新增来源要同步前端
+  `settings.agents.source.<来源>` 的中英文案（`test_every_detection_source_has_a_label_in_both_locales`
+  逐字对齐 `SOURCES`，少一档界面就露出原始 id）。每个候选带一个 `source`
   标签，**只是诊断信息、不参与「能不能用」的判断**——判据只有「`--version`
   真的起得来」这一条。找不到时 capabilities 的 `diagnostics.searched` 告诉用户
   找过哪儿，第一个坏候选记在 `diagnostics.broken_path`（界面据此把「安装不可用」

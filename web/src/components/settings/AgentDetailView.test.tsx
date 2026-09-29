@@ -140,6 +140,21 @@ describe('Agent 详情', () => {
     expect(text()).toContain(ag('detail.checkedAt'))
   })
 
+  it('Codex 桌面版自带的 CLI 显示成人话来源，不露原始 id（#726）', async () => {
+    const exe = 'C:\\Users\\x\\AppData\\Local\\OpenAI\\Codex\\bin\\a1b2c3\\codex.exe'
+    await openDetail(
+      capsOf([agentCaps({ executable_path: exe, detection_source: 'codex_desktop_bundled' }), claudeCaps()]),
+    )
+    await openFold('overview')
+    const label = ag('source.codex_desktop_bundled')
+    // 先证明文案真的登记了：没登记时 t() 回落成键路径 / defaultValue 回落成原始 id
+    expect(label).not.toBe('codex_desktop_bundled')
+    expect(label).not.toContain('source.')
+    const field = document.querySelector('[data-agent-field="source"]')!
+    expect(field.textContent).toContain(label)
+    expect(field.textContent).not.toContain('codex_desktop_bundled')
+  })
+
   it('诊断折叠区里有搜索路径与就绪结论，一级列表上没有', async () => {
     await openDetail()
     expect(text()).toContain(ag('detail.diagnostics'))

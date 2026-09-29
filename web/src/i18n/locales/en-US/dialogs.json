@@ -947,6 +947,7 @@
       "setDefaultAria": "Make {{name}} the default coding agent",
       "source": {
         "chatgpt_bundle": "Bundled with the ChatGPT app",
+        "codex_desktop_bundled": "Bundled with the Codex desktop app",
         "common_location": "Common install location",
         "custom": "Custom path",
         "homebrew": "Homebrew",

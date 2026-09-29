@@ -1684,7 +1684,7 @@ def test_desktop_cli_search_takes_the_newest_that_actually_runs(tmp_path, monkey
     """桌面版更新后旧哈希目录可能还在：新到旧逐个跑 `--version`，第一个起得来的才用；
     找过的位置写进 searched。"""
     sys.path.insert(0, str(SRC))
-    from tavotto.engine import codexinstall
+    from tavotto.engine import ai_agents, codexinstall
 
     local = tmp_path / "LocalAppData"
     base = local / "OpenAI" / "Codex" / "bin"
@@ -1705,9 +1705,9 @@ def test_desktop_cli_search_takes_the_newest_that_actually_runs(tmp_path, monkey
     found, searched = codexinstall.find_codex()
     assert found == str(made["mid"]), "最新那份起不来，应落到次新的那份"
     assert any("OpenAI" in s and "codex.exe" in s for s in searched), searched
-    # 候选的排序本身（与平台无关）
-    assert codexinstall.desktop_codex_candidates(str(local))[0] == made["new"]
-    assert codexinstall.desktop_codex_candidates(None) == []
+    # 候选的排序本身（与平台无关）；唯一实现在 ai_agents（#726：AI 桥用同一份）
+    assert ai_agents.desktop_codex_candidates(str(local))[0] == str(made["new"])
+    assert ai_agents.desktop_codex_candidates(None) == []
 
 
 def test_git_that_runs_but_fails_is_not_rerouted_to_a_download(no_git_machine, capsys):

@@ -205,6 +205,157 @@ def test_only_a_real_version_launch_counts(monkeypatch):
     assert res.argv is None and res.broken_path == "/x/codex"
 
 
+# ---------------- Windows Codex 桌面版自带的 CLI（#726）----------------------------
+#
+# 假 `codex.exe` 在 POSIX 上是个 sh 脚本（Windows 上要真 PE，那里 skip，与 #722 的用例同一
+# 做法；真机验收见 scripts/acceptance/codex-desktop-no-git/）。平台闸经 `_is_windows`
+# 注入，`LOCALAPPDATA` 指到 tmp——开发机上真装着的 codex 一律被 which / 常见目录桩挡在外面。
+
+_POSIX_ONLY = pytest.mark.skipif(
+    os.name == "nt", reason="假 codex.exe 在 POSIX 上是个脚本；Windows 上要真 PE"
+)
+
+
+def _desktop_bin(tmp_path, specs):
+    """在 `<tmp>/LocalAppData/OpenAI/Codex/bin/<名>/codex.exe` 下造替身；specs 按旧到新。"""
+    local = tmp_path / "LocalAppData"
+    made = {}
+    for i, (name, body) in enumerate(specs):
+        exe = local / "OpenAI" / "Codex" / "bin" / name / "codex.exe"
+        exe.parent.mkdir(parents=True)
+        exe.write_text("#!/bin/sh\n" + body + "\n", encoding="utf-8")
+        exe.chmod(0o755)
+        os.utime(exe, (1_000_000 + i * 1000, 1_000_000 + i * 1000))
+        made[name] = str(exe)
+    return local, made
+
+
+def _only_desktop(monkeypatch, local, windows=True):
+    """PATH / 常见目录都没有 codex，只剩桌面版目录那一份。"""
+    monkeypatch.setenv("LOCALAPPDATA", str(local))
+    monkeypatch.setattr(ai_agents, "_is_windows", lambda: windows)
+    monkeypatch.setattr(ai_agents.shutil, "which", lambda name, path=None: None)
+    # 连 macOS 上 codex 适配器自己的 ChatGPT.app 落点一起挡掉（本机可能真装着）
+    monkeypatch.setattr(ai_agents, "agent_search_locations", lambda agent: [])
+    monkeypatch.setattr(ai_agents, "path_override", lambda agent_id: None)
+    ai_agents.clear_cache()
+
+
+@_POSIX_ONLY
+def test_desktop_bundled_codex_is_found_newest_runnable_first(tmp_path, monkeypatch):
+    """只装了 Codex 桌面版的 Windows：唯一一份 codex 在 `%LOCALAPPDATA%\\OpenAI\\Codex\\bin\\
+    <哈希>\\codex.exe`。新到旧逐个过 `--version`，最新那份起不来就落到次新的；来源标
+    `codex_desktop_bundled`，找过的位置写进 searched。"""
+    local, made = _desktop_bin(
+        tmp_path,
+        (
+            ("old", "echo codex-cli 0.150"),
+            ("mid", "echo codex-cli 0.157"),
+            # 起不来但打了一行字（Codex #727：非零退出不许被当成版本串）
+            ("new", "echo 'error: failed to load runtime' >&2; exit 1"),
+        ),
+    )
+    _only_desktop(monkeypatch, local)
+    res = ai_agents.resolve(ai_agents.get_agent("codex"), probe_readiness=False)
+    assert res.path == made["mid"], "最新那份起不来，应落到次新的那份"
+    assert res.source == "codex_desktop_bundled"
+    assert res.version == "codex-cli 0.157"
+    assert ai_agents.desktop_codex_glob(str(local)) in res.searched, res.searched
+
+
+@_POSIX_ONLY
+def test_desktop_bundled_codex_agrees_with_codex_install(tmp_path, monkeypatch):
+    """AI 桥与 `tavotto codex install` 对「这台机器上的 codex 是哪一份」回答相同（#726：
+    同一份 `desktop_codex_candidates`，同一条「起得来才算」）。"""
+    from tavotto.engine import codexinstall
+
+    local, made = _desktop_bin(
+        tmp_path,
+        (("old", "echo codex-cli 0.150"), ("mid", "echo codex-cli 0.157"), ("new", "exit 1")),
+    )
+    _only_desktop(monkeypatch, local)
+    monkeypatch.setattr(codexinstall.shutil, "which", lambda _n: None)
+    monkeypatch.setattr(codexinstall, "_search_dirs", lambda: [])
+    monkeypatch.setattr(codexinstall, "_is_windows", lambda: True)
+    found, _searched = codexinstall.find_codex()
+    res = ai_agents.resolve(ai_agents.get_agent("codex"), probe_readiness=False)
+    assert found == res.path == made["mid"]
+
+
+def test_desktop_candidates_survive_glob_metacharacters_in_localappdata(tmp_path):
+    """LOCALAPPDATA 里有 `[` 这类字面字符（改道过的 Windows 用户目录）时照样找得到（Codex #727）。"""
+    weird = tmp_path / "Users [lab]"
+    local, made = _desktop_bin(weird, (("a", "exit 0"),))
+    assert ai_agents.desktop_codex_candidates(str(local)) == [made["a"]]
+
+
+def test_desktop_bundled_codex_ranks_after_directory_locations(tmp_path, monkeypatch):
+    """排序：PATH → 目录落点（含 WindowsApps 执行别名）→ 桌面版自带 → npm 包内二进制。
+
+    用户自己装的 CLI 是他选的那份（通常也更新），排前面；桌面版那份是完整安装，排在
+    两手「残缺安装的补救」之前。"""
+    local, made = _desktop_bin(tmp_path, (("a", "exit 0"), ("b", "exit 0")))
+    alias = tmp_path / "WindowsApps"
+    (alias / "node_modules" / "@openai" / "codex" / "bin").mkdir(parents=True)
+    (alias / "node_modules" / "@openai" / "codex" / "bin" / "codex").write_text("")
+    (alias / "codex").write_text("")
+    monkeypatch.setenv("LOCALAPPDATA", str(local))
+    monkeypatch.setattr(ai_agents, "_is_windows", lambda: True)
+    monkeypatch.setattr(
+        ai_agents,
+        "agent_search_locations",
+        lambda agent: [ai_agents.SearchLocation(str(alias), "windows_alias")],
+    )
+    monkeypatch.setattr(
+        ai_agents.shutil,
+        "which",
+        lambda name, path=None: (
+            "/usr/bin/codex"
+            if path is None
+            else (str(alias / name) if path == str(alias) else None)
+        ),
+    )
+    cands = ai_agents.candidates(ai_agents.get_agent("codex"), override="")
+    assert [c.source for c in cands] == [
+        "path",
+        "windows_alias",
+        "codex_desktop_bundled",
+        "codex_desktop_bundled",
+        "package_binary",
+    ], cands
+    # 桌面版内部仍按新到旧
+    assert [c.path for c in cands if c.source == "codex_desktop_bundled"] == [made["b"], made["a"]]
+
+
+def test_desktop_bundled_codex_is_windows_and_codex_only(tmp_path, monkeypatch):
+    """非 Windows 上不翻这个目录（哪怕 LOCALAPPDATA 碰巧设了）；Claude 适配器不认它。"""
+    local, _made = _desktop_bin(tmp_path, (("a", "echo codex-cli 0.157"),))
+    _only_desktop(monkeypatch, local, windows=False)
+    assert ai_agents.candidates(ai_agents.get_agent("codex"), override="") == []
+    assert ai_agents.get_agent("codex").extra_searched() == []
+    monkeypatch.setattr(ai_agents, "_is_windows", lambda: True)
+    assert ai_agents.candidates(ai_agents.get_agent("claude"), override="") == []
+    assert [c.source for c in ai_agents.candidates(ai_agents.get_agent("codex"), override="")] == [
+        "codex_desktop_bundled"
+    ]
+
+
+def test_every_detection_source_has_a_label_in_both_locales():
+    """`SOURCES` 是来源标签的闭集出处；设置页按 `settings.agents.source.<来源>` 显示。新增
+    一档不补文案，界面上就露出原始 id（`codex_desktop_bundled`）——两侧逐字相等，多一个少
+    一个都红。"""
+    from pathlib import Path
+
+    locales = Path(__file__).resolve().parent.parent / "web" / "src" / "i18n" / "locales"
+    if not (locales / "zh-CN" / "dialogs.json").is_file():
+        pytest.skip("没有 web/（wheel/sdist 里不含前端源码）")
+    for lang in ("zh-CN", "en-US"):
+        table = json.loads((locales / lang / "dialogs.json").read_text(encoding="utf-8"))
+        labels = table["settings"]["agents"]["source"]
+        assert set(labels) == set(ai_agents.SOURCES), lang
+        assert all(str(v).strip() for v in labels.values()), lang
+
+
 # ---------------- 就绪检查 ----------------------------------------------------
 
 
