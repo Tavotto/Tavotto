@@ -826,7 +826,8 @@ def payload_for(
         others = [o for o in others if o["path"] != requested]
         # 同一串在脚本里也被 exists / glob 问过：分类跟着静态那一条走（口径同 `static_missing`）——
         # 改指只救得回 open，探路照样落空，给选择器就是「指认 → 重跑 → 照样退出」（Codex 评 #716 P2）
-        via = next((o["via"] for o in same if o["via"] != VIA_OPEN), VIA_OPEN)
+        # （调用方给的 `native` 等主条目分类不被 open 覆盖：只在静态那一条是探路时才换）
+        via = next((o["via"] for o in same if o["via"] != VIA_OPEN), via)
     if requested is None and not others:
         return None
     return {
