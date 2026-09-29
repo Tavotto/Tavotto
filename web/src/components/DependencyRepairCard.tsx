@@ -15,7 +15,7 @@ import { useEnvStore } from '@/store/envStore'
 import { useUiStore } from '@/store/uiStore'
 import { Settings } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
-import { RepairStages } from './RepairStages'
+import { RepairProgressLine } from './RepairProgressLine'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { Button } from './ui/Button'
 import { TextInput } from './ui/Input'
@@ -243,11 +243,27 @@ export function DependencyRepairCard({
       </div>
     </div>
   )
+  const managed = primary?.kind === 'tavotto_managed'
   const advanced = (
     <Advanced>
+      {managed && (
+        // 一键修复要花什么、会做什么：默认不露（2026-09-29 用户：卡片只许一句话 + 一个主按钮），想核对的人展开看
+        <div data-one-click-explain>
+          <p className="text-xs leading-relaxed text-ink-2" data-one-click-cost>
+            {checking
+              ? en('oneClickChecking')
+              : disclosed && privatePythonOrigin(disclosed) === 'download'
+                ? en('oneClickCostDownload', { mb: Math.max(1, Math.round(disclosed.download_bytes / 1048576)) })
+                : en('oneClickCostNetwork')}
+          </p>
+          <p className="mt-1 text-xs leading-relaxed text-ink-3">
+            {en('oneClickBodyManaged', { product: PRODUCT_NAME, packages: pkg })}
+          </p>
+        </div>
+      )}
       {managedReady && offer.requirement && (
-        // 一次授权的技术明细（装的需求串 / 私有 Python 的版本）：受管环境是主按钮时，主文案已经用人话说过
-        // 装什么、要不要下载、多大，这里给想核对的人；它排在「已有环境」之后、收在这里时，这就是点之前的披露
+        // 一次授权的技术明细（装的需求串 / 私有 Python 的版本与体积）；受管环境排在「已有环境」之后、收在这里时，
+        // 这就是点它之前的披露
         <div data-dependency-disclosure>
           <p className="text-xs leading-relaxed text-ink-3">
             {en('repairWillInstall', { requirement: offer.requirement.requirement })}
@@ -258,7 +274,7 @@ export function DependencyRepairCard({
         </div>
       )}
       {primary?.kind === 'system_interpreter' && (
-        // 一键修复要改用的是哪一个：路径与版本给想核对的人（主文案里不出现路径）
+        // 一键修复要改用的是哪一个：路径与版本给想核对的人（默认可见的那句话里不出现路径）
         <p className="text-xs leading-relaxed text-ink-3" data-one-click-system>
           {hint(primary)}
         </p>
@@ -272,35 +288,41 @@ export function DependencyRepairCard({
   )
 
   if (primary) {
-    const managed = primary.kind === 'tavotto_managed'
+    // 默认可见的只有：一句话 + 一个主按钮 +「详情」（折叠）。标题、解释、下载大小都不摆出来
     return (
-      <div className="flex flex-col gap-2.5 rounded-md bg-surface p-3 shadow-card" data-one-click-repair={primary.kind}>
-        <div>
-          <h3 className="type-section">{en('repairTitle', { module: pkg })}</h3>
-          <p className="mt-1 text-xs leading-relaxed text-ink-2">
-            {managed
-              ? en('oneClickBodyManaged', { product: PRODUCT_NAME, packages: pkg })
-              : en('oneClickBodySystem', { module: pkg })}
-          </p>
-          {managed && (
-            <p className="mt-1 text-xs leading-relaxed text-ink-3" data-one-click-cost>
-              {checking
-                ? en('oneClickChecking')
-                : disclosed && privatePythonOrigin(disclosed) === 'download'
-                  ? en('oneClickCostDownload', { mb: Math.max(1, Math.round(disclosed.download_bytes / 1048576)) })
-                  : en('oneClickCostNetwork')}
-            </p>
-          )}
-        </div>
+      <div className="flex flex-col gap-2 rounded-md bg-surface p-3 shadow-card" data-one-click-repair={primary.kind}>
+        <p className="text-sm leading-relaxed text-ink" data-one-click-sentence>
+          {managed
+            ? en('oneClickSentence', { packages: pkg })
+            : en('oneClickSentenceSystem', { packages: pkg })}
+        </p>
         <Button
           className="self-start"
           variant="primary"
           disabled={busy || checking}
+          aria-busy={checking || undefined}
           data-one-click-repair-button
           onClick={() => act(primary)}
         >
           {en('oneClickRepair')}
         </Button>
+        <Failure code={errorCode} text={errorText} />
+        {advanced}
+      </div>
+    )
+  }
+
+  if (managedUnavailable && targets.length === 0 && canInstall) {
+    // 真的无路可走（没有可建环境的 Python，也没有可下载的那份）：同样一句话说清下一步，其余收进「详情」
+    return (
+      <div className="flex flex-col gap-2 rounded-md bg-surface p-3 shadow-card">
+        <p className="text-sm leading-relaxed text-ink" data-managed-env-unavailable>
+          {en('repairManagedUnavailable', {
+            packages: pkg,
+            min: offer.python_supported.min,
+            max: offer.python_supported.max,
+          })}
+        </p>
         <Failure code={errorCode} text={errorText} />
         {advanced}
       </div>
@@ -318,16 +340,6 @@ export function DependencyRepairCard({
         </p>
         {exhausted && (
           <p className="mt-1 text-xs leading-relaxed text-ink-3">{en('repairExhausted')}</p>
-        )}
-        {managedUnavailable && targets.length === 0 && (
-          // 真的无路可走（没有可建环境的 Python，也没有可下载的那份）：说清下一步能做什么
-          <p className="mt-1 text-xs leading-relaxed text-ink-2" data-managed-env-unavailable>
-            {en('repairManagedUnavailable', {
-              product: PRODUCT_NAME,
-              min: offer.python_supported.min,
-              max: offer.python_supported.max,
-            })}
-          </p>
         )}
       </div>
 
@@ -649,7 +661,8 @@ export const RETRYABLE_REPAIR_CODES: ReadonlySet<string> = new Set([
 ])
 
 /**
- * 安装进度。四个阶段各一句话 + 阶段条（`RepairStages`：下载私有 Python 时带百分比），pip 日志折叠在「安装详情」里。
+ * 安装进度。进行中只有**一行**（`RepairProgressLine`：「正在下载 Python… 12 / 25 MB」），pip 日志与换用镜像
+ * 的说明折叠在「安装详情」里。
  *
  * 取消之后**不假装完整回滚**：改的是用户自己的环境时如实说「可能已发生
  * 部分修改」——那正是「改用户环境必须明确确认」的另一面。
@@ -678,6 +691,9 @@ function RepairProgress({
     (cancelled || (failed && RETRYABLE_REPAIR_CODES.has(progress.code)))
   return (
     <div className="flex flex-col gap-2.5 rounded-md bg-surface p-3 shadow-card">
+      {!failed && !cancelled ? (
+        <RepairProgressLine progress={progress} text={en(key, { module: progress.distribution || module })} />
+      ) : (
       <div>
         <h3 className="type-section">{en(key, { module: progress.distribution || module })}</h3>
         {failed && (
@@ -693,7 +709,7 @@ function RepairProgress({
           </p>
         )}
       </div>
-      <RepairStages progress={progress} />
+      )}
       <div className="flex flex-wrap items-center gap-1.5">
         {running ? (
           <Button onClick={onCancel}>{en('repairCancel')}</Button>
@@ -708,12 +724,20 @@ function RepairProgress({
           </>
         )}
       </div>
-      {progress.log && (
+      {(progress.log || progress.pypi_mirror) && (
         <Details className="text-xs text-ink-3">
           <Summary className="text-ink-2">{en('repairDetails')}</Summary>
+          {progress.pypi_mirror && (
+            // 连不上默认包源、后端改用了镜像（与日志里那一行同一件事），只在详情里说
+            <p className="mt-1 leading-relaxed" data-repair-pypi-mirror>
+              {en('repairPypiMirror', { mirror: progress.pypi_mirror })}
+            </p>
+          )}
+          {progress.log && (
           <pre className="mt-1 max-h-40 overflow-y-auto whitespace-pre-wrap break-words rounded-sm bg-surface-2 p-1.5 font-mono text-xs">
             {progress.log}
           </pre>
+          )}
         </Details>
       )}
     </div>

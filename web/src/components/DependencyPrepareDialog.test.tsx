@@ -35,6 +35,7 @@ import { DependencyPrepareDialog } from '@/components/DependencyPrepareDialog'
 import { DependencyPrepareButton } from '@/components/WorkdirRow'
 import { i18n, t } from '@/i18n'
 import { listJoin } from '@/i18n/format'
+import { visibleBlocks } from '@/test/visibleBlocks'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { setCurrentProjectId } from '@/lib/session'
 import { useDepRepairStore } from '@/store/depRepairStore'
@@ -147,7 +148,7 @@ describe('DependencyPrepareDialog', () => {
     await render(<DependencyPrepareDialog />)
     await act(async () => useEnvStore.getState().requestDependencyPreparation(offer()))
     expect(dialog()).not.toBeNull()
-    expect(text()).toContain(en('dependencyPrepareTitle', { count: 2 }))
+    expect(text()).toContain(en('oneClickSentence', { packages: listJoin(['six', 'tabulate']) }))
     expect(text()).toContain('tabulate[widechars]==0.9.0')
     expect(text()).toContain('six==1.17.0')
     expect(text()).toContain(en('dependencyPrepareUnknown', { modules: 'zzz_private' }))
@@ -168,16 +169,39 @@ describe('DependencyPrepareDialog', () => {
     expect(button(en('dependencyPrepareRun'))).toBeDefined()
   })
 
-  it('一键修复：一句人话 + 一个主按钮，完整需求串 / 约束 / 目标单选收进默认折叠的「高级」', async () => {
+  it('一键修复：默认可见的只有一句话 +「详情」+「稍后」「一键修复」（按可见元素数）；其余都在「详情」里', async () => {
     await render(<DependencyPrepareDialog />)
     await act(async () => useEnvStore.getState().requestDependencyPreparation(offer()))
-    expect(text()).toContain(en('oneClickBodyManaged', { product: PRODUCT_NAME, packages: listJoin(['six', 'tabulate']) }))
-    expect(document.querySelector('[data-one-click-cost]')!.textContent).toBe(en('oneClickCostNetwork'))
+    expect(visibleBlocks(dialog()!)).toEqual([
+      { tag: 'h2', text: en('oneClickSentence', { packages: listJoin(['six', 'tabulate']) }) },
+      { tag: 'summary', text: en('repairAdvanced') },
+      { tag: 'button', text: en('dependencyPrepareLater') },
+      { tag: 'button', text: en('oneClickRepair') },
+    ])
+    expect(button(en('oneClickRepair'))!.className).toContain('text-white')
     const advanced = document.querySelector('[data-repair-advanced]') as HTMLDetailsElement
-    expect(advanced.open).toBe(false)
+    expect(advanced.querySelector('[data-one-click-cost]')!.textContent).toBe(en('oneClickCostNetwork'))
     expect(advanced.querySelector('[data-dependency-requirements]')).toBeTruthy()
     expect(advanced.querySelector('[data-dependency-target]')).toBeTruthy()
-    expect(button(en('oneClickRepair'))!.className).toContain('text-white')
+    // 「不准备，直接运行」不再是并列的次按钮，收在详情里
+    expect(advanced.querySelector('[data-dependency-skip]')).toBeTruthy()
+  })
+
+  it('一键修复进行中：只剩一行进度', async () => {
+    planMock.mockResolvedValue({ plan: { plan_id: 'jp9', requirements: [] } as never })
+    prepareMock.mockResolvedValue({ started: true } as never)
+    await render(<DependencyPrepareDialog />)
+    await act(async () => useEnvStore.getState().requestDependencyPreparation(offer()))
+    await act(async () => button(en('oneClickRepair'))!.click())
+    await act(async () => {})
+    await act(async () =>
+      useDepRepairStore.getState().onProgress({
+        plan_id: 'jp9', state: 'installing', log: '', error: null, code: '', flow: 'joint',
+      } as never),
+    )
+    const tags = visibleBlocks(dialog()!).map((b) => b.tag)
+    expect(tags).toEqual(['h2', 'p', 'button'])
+    expect(document.querySelector('[data-repair-line]')!.textContent).toBe(en('dependencyPrepareState_installing'))
   })
 
   it('一键修复要下载私有 Python 时说大小；安装包自带时不提下载', async () => {
@@ -495,7 +519,7 @@ describe('DependencyPrepareDialog：用户自己的环境', () => {
       ),
     )
     expect(text()).toContain(en('userEnvNone'))
-    expect(text()).toContain(en('oneClickBodyManaged', { product: PRODUCT_NAME, packages: listJoin(['six', 'tabulate']) }))
+    expect(text()).toContain(en('oneClickSentence', { packages: listJoin(['six', 'tabulate']) }))
     expect(radio('tavotto_managed')!.checked).toBe(true)
     expect(envRadio('conda')).toBeNull()
     const partial = document.querySelector('[data-user-env-partial]')!

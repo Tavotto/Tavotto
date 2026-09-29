@@ -49,6 +49,7 @@ import { useEnvStore } from '@/store/envStore'
 import { useScriptLibraryStore } from '@/store/scriptLibraryStore'
 import { useScriptRunStore } from '@/store/scriptRunStore'
 import { useUiStore } from '@/store/uiStore'
+import { visibleBlocks } from '@/test/visibleBlocks'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -331,7 +332,7 @@ describe('运行 / 取消 / 结果', () => {
     expect(dialog!.textContent).toContain('/usr/bin/python3')
   })
 
-  it('多个脚本同样缺包失败：那段解释在组上只说一次，不在每一行重复', async () => {
+  it('多个脚本同样失败：每一行默认只多一个「详情」折叠标题，解释与出口都收在里面', async () => {
     mockRegistry.mockResolvedValue(view([entry({ script: 'a.py' }), entry({ script: 'b.py' }), entry({ script: 'c.py' })]))
     mockProbe.mockImplementation(async (script: string) => ({
       ...ok([]),
@@ -344,11 +345,70 @@ describe('运行 / 取消 / 结果', () => {
       await act(async () => btn.click())
       await flush()
     }
-    expect(host.querySelectorAll('[data-script-recovery-explain]')).toHaveLength(1)
-    const said = host.textContent!.split('可能依赖原来的 Python 环境').length - 1
-    expect(said, '解释说了不止一次').toBe(1)
-    // 每一行仍有自己的出口（复制的是那一行自己的诊断）
-    expect([...host.querySelectorAll('button')].filter((b) => b.textContent?.includes('复制诊断'))).toHaveLength(3)
+    const recoveries = [...host.querySelectorAll('[data-script-recovery]')]
+    expect(recoveries).toHaveLength(3)
+    for (const r of recoveries) {
+      expect(visibleBlocks(r)).toEqual([{ tag: 'summary', text: '详情' }])
+    }
+    // 整个列表里默认看得到的文字没有那段解释
+    expect(visibleBlocks(host).some((b) => b.text.includes('可能依赖原来的 Python 环境'))).toBe(false)
+  })
+
+  it('同一个包缺在几个脚本上：只挂一张修复卡；装好后同样缺它的几行一起重跑', async () => {
+    const offerFor = (script: string): DependencyRepairOffer => ({
+      import_name: 'openpyxl',
+      script,
+      requirement: {
+        import_name: 'openpyxl', distribution: 'openpyxl', specifier: '', requirement: 'openpyxl',
+        resolution_source: 'curated', confidence: 'high', installable: true,
+      },
+      targets: [{
+        kind: 'tavotto_managed', venv: '', python: '', modifies_user_environment: false,
+        creates_environment: true, available: true, reason: '',
+      }],
+      rounds_remaining: 3,
+      python_supported: { min: '3.10', max: '3.14' },
+    })
+    useDepRepairStore.getState().reset()
+    mockRegistry.mockResolvedValue(view([entry({ script: 'a.py' }), entry({ script: 'b.py' })]))
+    mockProbe.mockImplementation(async (script: string) => ({
+      ...ok([]),
+      script,
+      registered: false,
+      error: {
+        code: 'missing_dependency', message: '缺少依赖包：openpyxl', params: { module: 'openpyxl' },
+        dependency_repair: offerFor(script),
+      },
+    }))
+    vi.mocked(createDependencyPlan).mockResolvedValue({
+      plan: {
+        plan_id: 'plan-2', target_kind: 'tavotto_managed', python: '', creates_environment: true,
+        modifies_user_environment: false, network_required: true, expires_at: 0,
+        ...offerFor('a.py').requirement!,
+      },
+    })
+    vi.mocked(installDependencyPlan).mockResolvedValue({ started: true } as never)
+    await mount()
+    for (const btn of [...host.querySelectorAll<HTMLButtonElement>('button[aria-label$="并发现图"]')]) {
+      await act(async () => btn.click())
+      await flush()
+    }
+    expect(host.querySelectorAll('[data-script-dependency-repair]')).toHaveLength(1)
+    // 另一行也不再叠恢复入口：修复卡（在第一行上）就是它的下一步
+    expect(host.querySelectorAll('[data-script-recovery]')).toHaveLength(0)
+    await act(async () => buttonByText('一键修复').click())
+    await flush()
+    mockProbe.mockClear()
+    mockProbe.mockImplementation(async (script: string) => ({ ...ok([desc('F')]), script }))
+    await act(async () => {
+      useDepRepairStore.getState().onProgress({
+        plan_id: 'plan-2', state: 'done', log: '', error: null, code: '',
+        script: 'a.py', import_name: 'openpyxl', distribution: 'openpyxl',
+      } as never)
+    })
+    await flush()
+    expect(mockProbe.mock.calls.map((c) => c[0]).sort()).toEqual(['a.py', 'b.py'])
+    useDepRepairStore.getState().reset()
   })
 
   it('没出图（script_no_figure）不进「可能需要原环境」组', async () => {
@@ -415,7 +475,6 @@ describe('运行 / 取消 / 结果', () => {
     // 卡片就是这一行的下一步：「选择渲染环境」收进卡片的「高级」，恢复说明那一段不再叠在卡片下面（2026-09-29）
     expect(buttonByText('选择渲染环境').closest('[data-repair-advanced]')).toBeTruthy()
     expect([...host.querySelectorAll('button')].some((b) => b.textContent?.includes('复制诊断'))).toBe(false)
-    expect(host.querySelector('[data-script-recovery-explain]')).toBeNull()
     await act(async () => buttonByText('一键修复').click())
     await flush()
     expect(createDependencyPlan).toHaveBeenCalledWith({

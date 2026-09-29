@@ -59,28 +59,28 @@
   装好（切走期间，或切回之后）同样重跑那一行、收起卡片，走同一条 `rerunScriptAfterRepair`：这类修复里那一行
   **没有运行记录**也算仍停在缺包上；收起后作业不再收放，再切走切回不重复触发，B 上不触发。
   看护 `ScriptLibrary.test.tsx`「脚本行发起的修复切项目再切回」、`projectSwitchDepRepair.test.ts`。
-- **一键修复**（2026-09-29，面向不懂 Python 的用户）：修复卡的起点只有**一个主按钮**「一键修复」+ 一句人话——
-  这台电脑上已有装好那个包的环境时改用它（不装、不下载），否则装进为项目准备的受管环境（`data-one-click-cost`
-  说要不要联网、要下载时说约多少 MB；来源只按 `privatePythonOrigin()` 判：`bundled` / `cached` 不提下载，字段缺失
-  按 `cached` 推、再缺按下载）。主区域不出现版本号、路径、「隔离环境」；其余目标、被跳过的系统解释器、「换一个
-  Python」（`OtherPython`，兜底出口必须**始终在**）与「选择渲染环境」收进默认折叠的「高级」（`data-repair-advanced`）。
-  两样都没有时才把各条路摊开；`repairManagedUnavailable` 只在**一条路都没有**时说。受管目标 `available: null`
-  （后端还在探基础解释器、offer 上没挂私有 Python）时卡片先 `previewManaged()` 形成一份计划**只读它的要素**
-  （计划不装东西），按它披露与授权——否则计划多出一段下载，`planMatchesDisclosure` 不符，要多点一次确认页。
-  进度走 `RepairStages`（准备 Python → 创建运行环境 → 安装所需的包 → 重新运行；项目 `.venv` 只有后两段），
-  下载那一段读 `result.download` 的字节数，**只在 state 仍是 `downloading_python` 时读**（后端的 result 沿用上一条）。
-  跑前授权框（`DependencyPrepareDialog`）同一套说法：没有装齐的用户环境、默认目标是受管环境时一句人话 + 一个主按钮，
-  需求串 / 约束 / 目标单选收进「高级」；默认目标是项目 venv（会改用户环境）时不折叠。脚本行挂着修复卡时不再叠
-  `FailureRecovery`；「可能需要原环境」那段解释挂在组上只说一次（`data-script-recovery-explain`），组里每一行都挂着
-  修复卡时不说——卡片与那段解释共用 `rowRepairOffer()` 一处判据。看护 `DependencyRepairCard.test.tsx`「一键修复」、
-  `DependencyPrepareDialog.test.tsx`、`ScriptLibrary.test.tsx`、`e2e/dependency-one-click.spec.ts`
-  （`@feature:assets.dependency-one-click-repair`）。
+- **一键修复**（2026-09-29，用户：「太冗杂，坚决不能出现，一定要让用户一句话就能读懂」）：修复卡起点**默认可见的只有**
+  一句话（「这个脚本还缺 openpyxl，点一下自动装好。」）+ 一个主按钮「一键修复」+ 折叠标题「详情」（`data-repair-advanced`）——
+  没有标题、解释段落、列表、第二个并列按钮。这台电脑上已有装好那个包的环境时改用它（不装、不下载），否则装进为项目准备的受管
+  环境。下载大小（`data-one-click-cost`，来源只按 `privatePythonOrigin()` 判：`bundled` / `cached` 不提下载，字段缺失按
+  `cached` 推、再缺按下载）、环境说明、需求串、其余目标、被跳过的系统解释器、「换一个 Python」（`OtherPython`，兜底出口必须
+  **始终在**）与「选择渲染环境」全在「详情」里。两样都没有时才把各条路摊开；真的无路可走时同样一句话（`repairManagedUnavailable`）。
+  受管目标 `available: null`（后端还在探基础解释器、offer 上没挂私有 Python）时卡片先 `previewManaged()` 形成一份计划**只读它的
+  要素**（计划不装东西），按它授权——否则计划多出一段下载，`planMatchesDisclosure` 不符，要多点一次确认页。进行中同样**一行**
+  （`RepairProgressLine`：「正在下载 Python… 12 / 25 MB」+ 细进度条 +「取消」），字节数读 `result.download`、**只在 state 仍是
+  `downloading_python` 时读**（后端的 result 沿用上一条）；换用 PyPI 镜像（`pypi_mirror`）只在「安装详情」里说。跑前授权框
+  （`DependencyPrepareDialog`）同一套：没有装齐的用户环境、默认目标是受管环境时，标题就是那一句，底部只有「稍后」「一键修复」，
+  其余（含「不准备，直接运行」）进「详情」；默认目标是项目 venv（会改用户环境）时不折叠。同一个包缺在几个脚本上**只挂一张卡**
+  （修复进行中的那一行优先），装好后同样缺它的几行一起重跑（`rerunSameModule`）；有修复 offer 的行不叠 `FailureRecovery`。
+  看护：「默认可见」按**可见元素**判（`test/visibleBlocks.ts`，收起的 details 里只有 summary 可见；e2e 用 `checkVisibility`），
+  不按子串——`DependencyRepairCard.test.tsx`「一键修复」、`DependencyPrepareDialog.test.tsx`、`ScriptLibrary.test.tsx`、
+  `e2e/dependency-one-click.spec.ts`（`@feature:assets.dependency-one-click-repair`）。
 - **运行/取消是同一个按钮**（busy 态翻转）：取消后焦点天然留在原脚本行，
   不做焦点搬运。状态行 aria-live=polite，只随相位变化播报。
 - **多 Figure 结果进 Dialog**（自带 focus trap），每张各有「添加到画布」，
   `dropped_figures` 如实显示——绝不只显示第一张。
 - **safe 失败的恢复路径**：文案解释「可能依赖原来的 Python 环境 / cwd /
-  参数」（挂在「可能需要原环境」组上说一次，不逐行重复），真实入口只有「选择渲染环境」（就地打开 `EngineEnvironmentDialog`，
+  参数」（与下面两个入口、诊断一起收在每一行默认折叠的「详情」里，2026-09-29），真实入口只有「选择渲染环境」（就地打开 `EngineEnvironmentDialog`，
   开关 `uiStore.engineEnvOpen`，正文就是那一份 `EngineEnvironmentCard`——**不深链设置页**：
   卡片在设置里住在「诊断」页、环境正常时还折叠在技术详情里，此前深链的「关于」段早已
   没有它，用户被扔进一页毫不相干的内容）与「复制诊断」；**native 未落地前不渲染任何

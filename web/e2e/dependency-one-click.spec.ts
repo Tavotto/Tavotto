@@ -5,8 +5,8 @@ import type { Locator, Page, Route } from '@playwright/test'
 import { expect, test } from './fixtures'
 
 /**
- * 缺包的一键修复（2026-09-29）：不懂 Python 的用户在素材库脚本行上只看到一个主按钮，点一次，看着它按阶段
- * 走完（下载私有 Python 时有百分比），装好后那一行自动重跑、图出来。
+ * 缺包的一键修复（2026-09-29）：不懂 Python 的用户在素材库脚本行上只看到一句话和一个主按钮，点一次，进度
+ * 只有一行（下载私有 Python 时带 MB），装好后那一行自动重跑、图出来。
  *
  * 后端这一半在别处有真跑的用例（`tests/test_deprepair*.py`）；这里要的是界面在「这台电脑没有 Python、要先下载
  * 一份」这个形状下的表现，而 CI 机器上总有 Python——所以**缺包那次试运行、计划、安装、进度事件**由用例伺服
@@ -132,13 +132,23 @@ async function expectReachable(page: Page, loc: Locator, what: string) {
   expect(hit, `${what} 中心被别的元素挡住了`).toBe(true)
 }
 
-const stageStates = (page: Page) =>
-  page
-    .locator('[data-script-dependency-repair] [data-repair-stage]')
-    .evaluateAll((els) => els.map((e) => `${e.getAttribute('data-repair-stage')}:${e.getAttribute('data-stage-state')}`))
+/** 卡片里此刻真正画出来的文字块：一句话、一个按钮、折叠标题——按元素数，不按子串 */
+const renderedBlocks = (card: Locator) =>
+  card.evaluate((root) => {
+    const out: string[] = []
+    const walk = (el: Element) => {
+      // 收起的 <details> 里的内容仍有布局框（content-visibility），只能问浏览器「画没画出来」
+      if (!el.checkVisibility({ contentVisibilityAuto: true, opacityProperty: true, visibilityProperty: true })) return
+      const own = [...el.childNodes].some((n) => n.nodeType === Node.TEXT_NODE && (n.textContent ?? '').trim())
+      if (own) out.push(`${el.tagName.toLowerCase()}:${(el.textContent ?? '').trim()}`)
+      ;[...el.children].forEach(walk)
+    }
+    walk(root)
+    return out
+  })
 
 test(
-  '一键修复：缺包的脚本行只有一个主按钮，点一次按阶段走完（下载有百分比），装好后自动重跑出图',
+  '一键修复：缺包的脚本行只有一句话 + 一个主按钮，点一次、进度一行（下载有 MB），装好后自动重跑出图',
   { tag: ['@feature:assets.dependency-one-click-repair'] },
   async ({ app, page }) => {
     const dir = path.join(os.tmpdir(), `tavotto-e2e-oneclick-${Date.now()}`)
@@ -200,21 +210,23 @@ test(
     await expect(page.getByText(SCRIPT).first()).toBeVisible({ timeout: 30_000 })
     await page.getByRole('button', { name: `运行 ${SCRIPT} 并发现图` }).click()
 
-    // ① 脚本行上一张卡、一个主按钮；主文案说清做什么与要下载多少，没有版本号 / 路径
+    // ① 脚本行上一张卡：画出来的只有一句话、一个主按钮、「详情」折叠标题
     const card = page.locator('[data-script-dependency-repair] [data-one-click-repair="tavotto_managed"]')
     await expect(card).toBeVisible({ timeout: 30_000 })
     const button = card.locator('[data-one-click-repair-button]')
     await expectReachable(page, button, '一键修复按钮')
-    await expect(button).toHaveText('一键修复')
-    await expect(card.locator('[data-one-click-cost]')).toHaveText('需要联网，约下载 25 MB。')
-    await expect(card).toContainText('openpyxl')
-    // 「高级」默认折叠：路径输入框看不见；卡片下面不再叠「可能依赖原来的 Python 环境」那一段
-    await expect(card.locator('[data-repair-advanced]')).not.toHaveAttribute('open', '')
+    expect(await renderedBlocks(card)).toEqual([
+      'p:这个脚本还缺 openpyxl，点一下自动装好。',
+      'button:一键修复',
+      'summary:详情',
+    ])
+    // 下载大小、路径输入框都在折叠的「详情」里；卡片下面不再叠「可能依赖原来的 Python 环境」
     await expect(card.getByLabel('渲染解释器路径')).toBeHidden()
-    await expect(page.getByText('可能依赖原来的 Python 环境')).toHaveCount(0)
-    const visibleText = await card.evaluate((el) => (el as HTMLElement).innerText)
-    expect(visibleText).not.toContain('3.13')
-    expect(visibleText).not.toContain('隔离')
+    await expect(card.locator('[data-one-click-cost]')).toBeHidden()
+    await expect(page.getByText('可能依赖原来的 Python 环境')).toBeHidden()
+    await card.locator('[data-repair-advanced] > summary').click()
+    await expect(card.locator('[data-one-click-cost]')).toHaveText('需要联网，约下载 25 MB。')
+    await card.locator('[data-repair-advanced] > summary').click()
 
     // ② 点一次：形成计划并直接开始（安装请求只带 plan_id），没有第二步确认
     await button.click()
@@ -223,36 +235,28 @@ test(
     expect(planBodies).toEqual([{ module: 'openpyxl', script: SCRIPT, target: 'tavotto_managed' }])
     await expect(page.getByText('准备环境并继续')).toHaveCount(0)
 
-    // ③ 下载私有 Python：阶段条停在第一段，百分比与 MB 来自进度里的字节数
+    // ③ 下载私有 Python：进度只有一行，MB 来自进度里的字节数
     events.push(
       progress('downloading_python', {
         result: { download: { stage: 'downloading', done_bytes: 10 * MB, total_bytes: 25 * MB } },
       }),
     )
-    const download = page.locator('[data-script-dependency-repair] [data-repair-download]')
-    await expect(download.locator('[data-repair-download-text]')).toHaveText('已下载 10.0 / 25.0 MB（40%）', {
-      timeout: 15_000,
-    })
-    await expect(download.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '40')
-    await expectReachable(page, download, '下载进度')
-    expect(await stageStates(page)).toEqual(['python:active', 'env:pending', 'packages:pending', 'rerun:pending'])
+    const line = page.locator('[data-script-dependency-repair] [data-repair-line]')
+    await expect(line).toHaveText('正在下载 Python… 10 / 25 MB', { timeout: 15_000 })
+    await expect(page.locator('[data-script-dependency-repair] [data-repair-download]')).toHaveAttribute(
+      'aria-valuenow',
+      '40',
+    )
+    await expectReachable(page, line, '进度')
+    const progressCard = page.locator('[data-script-dependency-repair] .shadow-card')
+    expect(await renderedBlocks(progressCard)).toEqual(['p:正在下载 Python… 10 / 25 MB', 'button:取消'])
 
-    // ④ 创建环境 → 安装：阶段往前走；下载条随下载那一段结束消失
+    // ④ 创建环境 → 安装：那一行跟着换；下载条随下载那一段结束消失
     events.push(progress('creating_env'))
-    await expect.poll(() => stageStates(page), { timeout: 15_000 }).toEqual([
-      'python:done',
-      'env:active',
-      'packages:pending',
-      'rerun:pending',
-    ])
-    await expect(download).toHaveCount(0)
+    await expect(line).toHaveText('正在准备 Python 环境…', { timeout: 15_000 })
+    await expect(page.locator('[data-script-dependency-repair] [data-repair-download]')).toHaveCount(0)
     events.push(progress('installing'))
-    await expect.poll(() => stageStates(page), { timeout: 15_000 }).toEqual([
-      'python:done',
-      'env:done',
-      'packages:active',
-      'rerun:pending',
-    ])
+    await expect(line).toHaveText('正在安装 openpyxl…', { timeout: 15_000 })
 
     // ⑤ 装好：那一行自动重跑（真后端、真 worker），图出来，修复卡收起
     events.push(progress('done', { result: { version: '3.1.5' } }))

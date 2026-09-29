@@ -524,6 +524,8 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
         // 从脚本行发起、中途切过项目的（#729）：那次停在缺包上的运行已随切项目清空，按收放回来的 offer 认
         const { request, scriptOffer } = get()
         rerun = rerunScriptAfterRepair(p.script, !!scriptOffer && request?.script === p.script)
+        // 同一个包缺在别的脚本上（素材库只给它们挂了一张卡）：装进的是同一个项目环境，一起重跑
+        rerunSameModule(p.import_name, p.script)
         // 联合准备装完：授权框收掉（渲染会重排；缺的那一次错误也随之清）
         if (p.flow === 'joint') useEnvStore.getState().dismissDependencyPreparation()
       }
@@ -673,6 +675,20 @@ function rerunScriptAfterRepair(script: string | undefined, fromScriptRow = fals
   if (phase !== 'missing_dependency' && !(fromScriptRow && phase === undefined)) return false
   void runs.run(script)
   return true
+}
+
+/**
+ * 装好一个包之后，素材库里**因缺同一个包**停下的其它脚本也重跑一遍（2026-09-29：同一原因失败的几行只挂一张卡，
+ * 修好一次就该全好）。只认此刻仍停在 `missing_dependency`、且缺的正是这个 import 的那几行
+ */
+function rerunSameModule(importName: string | undefined, except: string | undefined): void {
+  if (!importName) return
+  const runs = useScriptRunStore.getState()
+  for (const [script, state] of Object.entries(runs.byScript)) {
+    if (script === except || state.phase !== 'missing_dependency') continue
+    const missing = state.error?.dependency_repair?.import_name ?? state.error?.params?.module
+    if (missing === importName) void runs.run(script)
+  }
 }
 
 /** 安装是不是正在进行（界面据此禁用按钮、显示进度而不是选项） */

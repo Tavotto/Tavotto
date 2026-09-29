@@ -41,6 +41,7 @@ import { PRODUCT_NAME } from '@/lib/brand'
 import { i18n, t } from '@/i18n'
 import { useDepRepairStore } from '@/store/depRepairStore'
 import { useRenderStore } from '@/store/renderStore'
+import { visibleBlocks } from '@/test/visibleBlocks'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -141,6 +142,7 @@ async function render(offer: DependencyRepairOffer = OFFER) {
 }
 
 const text = () => document.body.textContent ?? ''
+
 const buttons = () => [...document.querySelectorAll('button')] as HTMLButtonElement[]
 const byName = (name: string) =>
   buttons().find((b) => (b.getAttribute('aria-label') ?? b.textContent ?? '').includes(name))
@@ -175,7 +177,7 @@ afterEach(async () => {
 describe('缺依赖的修复卡片', () => {
   it('主界面不出现 pip / site-packages / virtualenv 这些词', async () => {
     await render()
-    expect(text()).toContain(en('repairTitle', { module: 'lmfit' }))
+    expect(text()).toContain(en('oneClickSentence', { packages: 'lmfit' }))
     for (const jargon of ['pip', 'site-packages', 'virtualenv', 'venv activate']) {
       expect(text().toLowerCase()).not.toContain(jargon)
     }
@@ -305,8 +307,7 @@ describe('缺依赖的修复卡片', () => {
         python: 'C:\\Python37\\python.exe', code: 'project_env_unsupported_python', python_version: '3.7.6',
       }],
     })
-    expect(text()).toContain(en('repairTitle', { module: 'lmfit' }))
-    expect(text()).toContain(en('repairManagedUnavailable', { product: PRODUCT_NAME, min: '3.11', max: '3.15' }))
+    expect(text()).toContain(en('repairManagedUnavailable', { packages: 'lmfit', min: '3.11', max: '3.15' }))
     expect(text()).toContain('3.11–3.15')
     expect(text()).toContain(en('repairSystemRejectedUnsupported', {
       python: 'C:\\Python37\\python.exe', module: 'lmfit', version: '3.7.6', product: PRODUCT_NAME,
@@ -351,19 +352,42 @@ describe('一键修复（2026-09-29：面向不懂 Python 的用户）', () => {
     targets: [{ ...OFFER.targets[1], private_python }],
   })
   const cost = () => document.querySelector('[data-one-click-cost]')?.textContent ?? ''
-  const mainText = () => {
-    // 主区域 = 卡片里「高级」之外的部分
-    const card = document.querySelector('[data-one-click-repair]')!.cloneNode(true) as HTMLElement
-    card.querySelector('[data-repair-advanced]')?.remove()
-    return card.textContent ?? ''
-  }
+  const mainText = () =>
+    visibleBlocks(document.querySelector('[data-one-click-repair]')!)
+      .map((b) => b.text)
+      .join('\n')
 
-  it('只有一个主按钮、一句话说清做什么；主区域不出现版本号、路径与「隔离环境」', async () => {
+  it('默认可见的只有一句话 + 一个主按钮 +「详情」折叠标题（按可见元素数）', async () => {
+    // 2026-09-29 用户：「太冗杂，坚决不能出现，一定要让用户一句话就能读懂」
+    for (const offer of [managedOnly(PRIVATE_PYTHON), OFFER]) {
+      await act(async () => root?.unmount())
+      host?.remove()
+      await render(offer)
+      const card = document.querySelector('[data-one-click-repair]')!
+      expect(card.getAttribute('data-one-click-repair')).toBe('tavotto_managed')
+      expect(visibleBlocks(card)).toEqual([
+        { tag: 'p', text: en('oneClickSentence', { packages: 'lmfit' }) },
+        { tag: 'button', text: en('oneClickRepair') },
+        { tag: 'summary', text: en('repairAdvanced') },
+      ])
+    }
+    // 系统解释器那一档同样只有一句
+    await act(async () => root.unmount())
+    host.remove()
+    await render({ ...OFFER, targets: [{ ...OFFER.targets[1], kind: 'system_interpreter', python: '/usr/bin/python3' }] })
+    expect(visibleBlocks(document.querySelector('[data-one-click-repair]')!).map((b) => b.tag)).toEqual([
+      'p',
+      'button',
+      'summary',
+    ])
+  })
+
+  it('一句话里不出现版本号、路径、下载大小与「隔离环境」；这些都在「详情」里', async () => {
     await render(managedOnly(PRIVATE_PYTHON))
-    expect(document.querySelector('[data-one-click-repair]')?.getAttribute('data-one-click-repair')).toBe('tavotto_managed')
-    expect(mainText()).toContain(en('oneClickBodyManaged', { product: PRODUCT_NAME, packages: 'lmfit' }))
-    for (const jargon of ['3.13.15', '隔离', '/', 'Python 3']) expect(mainText()).not.toContain(jargon)
-    expect(buttons().filter((b) => b.className.includes('text-white'))).toHaveLength(1)
+    for (const jargon of ['3.13.15', '隔离', '/', 'Python 3', 'MB']) expect(mainText()).not.toContain(jargon)
+    const details = document.querySelector('[data-repair-advanced]')!
+    expect(details.textContent).toContain(en('oneClickCostDownload', { mb: 45 }))
+    expect(details.textContent).toContain(en('oneClickBodyManaged', { product: PRODUCT_NAME, packages: 'lmfit' }))
   })
 
   it('要下载时说大小；安装包自带 / 已缓存时不提下载；老后端没有 origin 时按 cached 推（缺省 = 下载）', async () => {
@@ -429,7 +453,7 @@ describe('一键修复（2026-09-29：面向不懂 Python 的用户）', () => {
     await act(async () => {})
     expect(byName(en('oneClickRepair'))).toBeUndefined()
     expect(document.querySelector('[data-managed-env-unavailable]')?.textContent).toBe(
-      en('repairManagedUnavailable', { product: PRODUCT_NAME, min: '3.10', max: '3.14' }),
+      en('repairManagedUnavailable', { packages: 'lmfit', min: '3.10', max: '3.14' }),
     )
     expect(document.querySelector('[data-repair-advanced] [data-repair-open-environment]')).toBeTruthy()
   })
@@ -507,7 +531,7 @@ describe('这台机器上已有的解释器（ADR 0044）', () => {
     await render(WITH_SYSTEM)
     const card = document.querySelector('[data-one-click-repair]')!
     expect(card.getAttribute('data-one-click-repair')).toBe('system_interpreter')
-    expect(text()).toContain(en('oneClickBodySystem', { module: 'lmfit' }))
+    expect(text()).toContain(en('oneClickSentenceSystem', { packages: 'lmfit' }))
     // 它是首选：不装、不联网、不改任何环境，比两种安装都便宜
     expect(byName(en('oneClickRepair'))!.className).toContain('text-white') // primary
     expect(byName(en('repairUseProjectEnv'))!.className).not.toContain('text-white')
@@ -586,7 +610,7 @@ describe('这台机器上已有的解释器（ADR 0044）', () => {
       host?.remove()
       await render(offer)
       expect(byName(en('oneClickRepair')), offer.code).toBeTruthy()
-      expect(text()).toContain(en('oneClickBodySystem', { module: 'lmfit' }))
+      expect(text()).toContain(en('oneClickSentenceSystem', { packages: 'lmfit' }))
       // 安装目标仍然不给：一键安装的前提是「知道要装什么」且还有轮次
       expect(byName(en('repairUseProjectEnv'))).toBeUndefined()
       expect(byName(en('repairInstallToManaged', { module: 'lmfit', product: PRODUCT_NAME }))).toBeUndefined()
@@ -879,45 +903,41 @@ describe('安装进度', () => {
     expect(useDepRepairStore.getState().progress).toBeNull()
   })
 
-  it('阶段条：准备 Python → 创建环境 → 安装包 → 重新运行，走到哪一步就标到哪一步', async () => {
-    const stages = () =>
-      [...document.querySelectorAll('[data-repair-stage]')].map(
-        (li) => `${li.getAttribute('data-repair-stage')}:${li.getAttribute('data-stage-state')}`,
-      )
+  it('进度只有一行：「正在下载 Python… 12 / 48 MB」，下载完换一句，进了下一步字节数就不再出现', async () => {
+    const card = () => document.querySelector('[data-repair-line]')!.closest('.shadow-card')!
+    const line = () => document.querySelector('[data-repair-line]')!.textContent
     await render()
     await progress('downloading_python', {
       target_kind: 'tavotto_managed',
       result: { download: { stage: 'downloading', done_bytes: 12 * 1048576, total_bytes: 48 * 1048576 } },
     })
-    expect(stages()).toEqual(['python:active', 'env:pending', 'packages:pending', 'rerun:pending'])
-    // 下载的百分比与 MB（读 `result.download`）
-    const bar = document.querySelector('[data-repair-download] [role="progressbar"]')!
-    expect(bar.getAttribute('aria-valuenow')).toBe('25')
-    expect(document.querySelector('[data-repair-download-text]')!.textContent).toBe(
-      en('repairDownloadProgress', { done: '12.0', total: '48.0', pct: 25 }),
+    expect(line()).toBe(
+      `${en('dependencyPrepareState_downloading_python')} ${en('repairDownloadBytes', { done: 12, total: 48 })}`,
     )
-    // 下载完、在解压：不再是百分比
+    expect(document.querySelector('[data-repair-download]')!.getAttribute('aria-valuenow')).toBe('25')
+    // 进行中默认可见：一行进度 + 「取消」，没有别的说明
+    expect(visibleBlocks(card()).map((b) => b.tag)).toEqual(['p', 'button'])
+    // 下载完、在解压：不再是字节数
     await progress('downloading_python', {
       target_kind: 'tavotto_managed',
       result: { download: { stage: 'extracting', done_bytes: 48 * 1048576, total_bytes: 48 * 1048576 } },
     })
-    expect(document.querySelector('[data-repair-download-text]')!.textContent).toBe(en('repairDownloadUnpacking'))
-    // 进了创建环境：后端沿用上一条 result，下载那段还挂在进度上——不许再画下载条
+    expect(line()).toBe(en('repairDownloadUnpacking'))
+    // 进了创建环境：后端沿用上一条 result，下载那段还挂在进度上——不许再说字节数、画进度条
     await progress('creating_env', {
       target_kind: 'tavotto_managed',
       result: { download: { stage: 'committed', done_bytes: 48 * 1048576, total_bytes: 48 * 1048576 } },
     })
-    expect(stages()).toEqual(['python:done', 'env:active', 'packages:pending', 'rerun:pending'])
+    expect(line()).toBe(en('repairCreatingEnv'))
     expect(document.querySelector('[data-repair-download]')).toBeNull()
-    await progress('installing', { target_kind: 'tavotto_managed' })
-    expect(stages()).toEqual(['python:done', 'env:done', 'packages:active', 'rerun:pending'])
   })
 
-  it('装进项目自己的环境：没有「准备 Python」「创建环境」两段', async () => {
+  it('换用了 PyPI 镜像：只在「安装详情」里说一句', async () => {
     await render()
-    await progress('installing', { target_kind: 'project_venv' })
-    expect([...document.querySelectorAll('[data-repair-stage]')].map((li) => li.getAttribute('data-repair-stage')))
-      .toEqual(['packages', 'rerun'])
+    await progress('installing', { pypi_mirror: 'https://pypi.tuna.tsinghua.edu.cn/simple' })
+    const note = document.querySelector('[data-repair-pypi-mirror]')!
+    expect(note.closest('details')).toBeTruthy()
+    expect(note.textContent).toBe(en('repairPypiMirror', { mirror: 'https://pypi.tuna.tsinghua.edu.cn/simple' }))
   })
 
   it('四个阶段各一句话，pip 日志折叠在「安装详情」里', async () => {
@@ -1002,7 +1022,7 @@ describe('英文界面', () => {
   it('关键路径没有中文泄漏', async () => {
     planMock.mockResolvedValue({ plan: PLAN })
     await render()
-    expect(text()).toContain('This project is missing lmfit')
+    expect(text()).toContain('This script is missing lmfit')
     await click('Install into project environment')
     expect(text()).toContain('This modifies the project’s Python environment.')
     // 整张卡片里一个 CJK 字符都不该有

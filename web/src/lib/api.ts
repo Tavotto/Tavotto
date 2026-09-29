@@ -3258,6 +3258,8 @@ export interface DependencyProgress {
    * false（再形成计划必然 `dependency_already_attempted`），界面不给「重试」。老服务端没有这个字段。
    */
   retryable?: boolean
+  /** 连不上默认包源、这次改用了 PyPI 镜像：镜像地址（此后每个快照都带；没用镜像时没有这个键） */
+  pypi_mirror?: string
 }
 
 export const createDependencyPlan = (body: {

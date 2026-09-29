@@ -8,10 +8,9 @@ import { Details, Summary } from './ui/Details'
 import { Dialog } from './ui/Dialog'
 import { Radio } from './ui/Radio'
 import { userEnvironmentName } from '@/lib/userEnvironmentText'
-import { PRODUCT_NAME } from '@/lib/brand'
 import { listJoin } from '@/i18n/format'
 import { privatePythonOrigin, type PrivatePythonOffer } from '@/lib/api'
-import { RepairStages } from './RepairStages'
+import { RepairProgressLine } from './RepairProgressLine'
 import { privatePythonText } from './DependencyRepairCard'
 
 /**
@@ -231,10 +230,14 @@ export function DependencyPrepareDialog() {
       onOpenChange={(v) => {
         if (!v && !busy && !running) dismiss()
       }}
-      title={en('engine.dependencyPrepareTitle', { count: plan.requirements.length })}
+      title={
+        simple
+          ? en('engine.oneClickSentence', { packages })
+          : en('engine.dependencyPrepareTitle', { count: plan.requirements.length })
+      }
       description={
         simple
-          ? en('engine.oneClickBodyManaged', { product: PRODUCT_NAME, packages })
+          ? undefined
           : complete.length
             ? en('engine.userEnvBody', { script: offer.script })
             : en('engine.dependencyPrepareBody', { script: offer.script })
@@ -254,9 +257,11 @@ export function DependencyPrepareDialog() {
             <Button variant="secondary" size="md" disabled={busy} onClick={dismiss}>
               {en('engine.dependencyPrepareLater')}
             </Button>
-            <Button variant="secondary" size="md" disabled={busy} onClick={() => void skip()}>
-              {en('engine.dependencyPrepareSkip')}
-            </Button>
+            {!simple && (
+              <Button variant="secondary" size="md" disabled={busy} onClick={() => void skip()}>
+                {en('engine.dependencyPrepareSkip')}
+              </Button>
+            )}
             {envChosen ? (
               <Button
                 variant="primary"
@@ -284,25 +289,39 @@ export function DependencyPrepareDialog() {
         )
       }
     >
-      {simple && (
-        <p className="text-xs leading-relaxed text-ink-3" data-one-click-cost>
-          {oneClickCost(privatePython, en)}
-        </p>
-      )}
       {simple ? (
-        <Details className="mt-2 text-xs" data-repair-advanced>
-          <Summary className="type-meta cursor-pointer">{en('engine.repairAdvanced')}</Summary>
-          <div className="mt-2">{details}</div>
-        </Details>
+        // 一键修复：默认可见的只有标题那一句 + 底部「稍后」「一键修复」；下载大小、要装的完整需求串、目标、
+        // 「不准备，直接运行」都在「详情」里。进行中只剩一行进度
+        !running && (
+          <Details className="text-xs" data-repair-advanced>
+            <Summary className="type-meta cursor-pointer">{en('engine.repairAdvanced')}</Summary>
+            <div className="mt-2">
+              <p className="text-xs leading-relaxed text-ink-2" data-one-click-cost>
+                {oneClickCost(privatePython, en)}
+              </p>
+              <div className="mt-2">{details}</div>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="mt-2"
+                disabled={busy}
+                data-dependency-skip
+                onClick={() => void skip()}
+              >
+                {en('engine.dependencyPrepareSkip')}
+              </Button>
+            </div>
+          </Details>
+        )
       ) : (
         details
       )}
       {running && progress && (
-        <div className="mt-2 flex flex-col gap-1.5">
-          <p className="text-xs text-ink-2" data-dependency-state={progress.state}>
-            {en(STATE_TEXT[progress.state] ?? 'engine.dependencyPrepareState_preparing')}
-          </p>
-          <RepairStages progress={progress} />
+        <div className={simple ? '' : 'mt-2'} data-dependency-state={progress.state}>
+          <RepairProgressLine
+            progress={progress}
+            text={en(STATE_TEXT[progress.state] ?? 'engine.dependencyPrepareState_preparing')}
+          />
         </div>
       )}
       {blocked && blocked.blocked.length > 0 && (
