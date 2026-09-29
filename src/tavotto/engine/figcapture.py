@@ -1406,13 +1406,15 @@ class InputMisses:
     def __init__(self) -> None:
         self.items: list[dict] = []
 
-    def note(self, name) -> None:
+    def note(self, name, cwd: str | None = None) -> None:
+        """`cwd` 是 `name` 相对的那个目录；不给就是此刻的 cwd（脚本写的相对路径就是相对它）。"""
         if not isinstance(name, str) or not name:
             return
-        try:
-            cwd = os.getcwd()
-        except OSError:
-            cwd = ""
+        if cwd is None:
+            try:
+                cwd = os.getcwd()
+            except OSError:
+                cwd = ""
         entry = {"requested": name, "cwd": cwd}
         if entry in self.items:
             # 同一条又落空一次：挪到最后（「最近一次落空的」是 exc 没带文件名时的答案）
@@ -1473,6 +1475,12 @@ def install_input_remap(rules, misses: InputMisses, base_dir: str | None = None)
             return target, shown
         return None, shown
 
+    def _note_miss(file, shown) -> None:
+        # 绝对路径换成了相对 base 的那一段：它相对的是 base，不是此刻的 cwd——脚本 chdir 过之后
+        # 两者不同，按 cwd 拼回去是 base/sub/sub/x.csv，分类对不上（Codex 评 #716 P2）
+        raw = os.fspath(file) if isinstance(file, (str, os.PathLike)) else None
+        misses.note(shown, cwd=base if isinstance(raw, str) and shown != raw else None)
+
     def _readonly(mode) -> bool:
         return isinstance(mode, str) and "r" in mode and not any(c in mode for c in "+wxa")
 
@@ -1486,7 +1494,7 @@ def install_input_remap(rules, misses: InputMisses, base_dir: str | None = None)
                 alt, shown = _alt(file)
                 if alt is not None:
                     return original(alt, mode, *args, **kwargs)
-                misses.note(shown)
+                _note_miss(file, shown)
                 raise
 
         return remapped_open
@@ -1500,7 +1508,7 @@ def install_input_remap(rules, misses: InputMisses, base_dir: str | None = None)
             alt, shown = _alt(self)
             if alt is not None:
                 return real_path_open(pathlib.Path(alt), mode, *args, **kwargs)
-            misses.note(shown)
+            _note_miss(self, shown)
             raise
 
     builtins.open = _wrap(real_open)
@@ -1521,7 +1529,7 @@ def install_input_remap(rules, misses: InputMisses, base_dir: str | None = None)
             alt, shown = _alt(path)
             if alt is not None:
                 return real_ds_open(self_ds, alt, mode, *args, **kwargs)
-            misses.note(shown)
+            _note_miss(path, shown)
             raise
 
     if real_ds_open is not None:
