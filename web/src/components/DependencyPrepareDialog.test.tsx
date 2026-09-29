@@ -170,6 +170,17 @@ describe('DependencyPrepareDialog', () => {
     expect(d.querySelector('[data-dependency-requirements]')!.closest('[data-repair-advanced]')).toBeTruthy()
     expect(visibleSentenceCount(d)).toBeLessThanOrEqual(1)
     expect(visiblePrimaryButtons(d)).toBe(1)
+    // 看得见的逐块钉死：标题、两个选项各「名字 + 一句短语」、折叠标题、底部两颗按钮——多一块说明就红
+    expect(visibleBlocks(d).map((b) => b.text)).toEqual([
+      en('dependencyPrepareTitle', { count: 2 }),
+      en('dependencyTarget_project_venv'),
+      en('dependencyTargetHint_project_venv', { venv: '.venv' }),
+      en('dependencyTarget_tavotto_managed'),
+      en('dependencyTargetHint_tavotto_managed'),
+      en('repairAdvanced'),
+      en('dependencyPrepareLater'),
+      en('dependencyPrepareRun'),
+    ])
     expect(button(en('oneClickRepair'))).toBeUndefined()
     expect(button(en('dependencyPrepareRun'))).toBeDefined()
   })
