@@ -67,7 +67,6 @@ import {
 import { msg, t as translate } from "@/i18n";
 import { emitActivity } from "@/lib/activity";
 import { useHtmlMarkup } from "@/lib/useHtmlMarkup";
-import { engineTransport } from "@/lib/engineTransport";
 import {
   onExportDefaultsHydrated,
   readExportDefaults,
