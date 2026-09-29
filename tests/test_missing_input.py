@@ -573,14 +573,52 @@ def test_absolute_paths_that_are_only_probed_get_no_picker(tmp_path):
         "/nonexistent/tavotto/d/y.csv": inputremap.VIA_PROBE,
         "/nonexistent/tavotto/e/z.csv": inputremap.VIA_OPEN,
         "/nonexistent/tavotto/f/w.csv": inputremap.VIA_PROBE,
-        "/nonexistent/tavotto/g/v.csv": inputremap.VIA_OPEN,
-        "/nonexistent/tavotto/g/u.csv": inputremap.VIA_OPEN,
+        # 赋值两次的 TWICE：说不清被探的是哪一个，两个值又都不在任何读取调用里——不是能证明的输入，不列
         "/nonexistent/tavotto/h/*.csv": inputremap.VIA_GLOB,
         "/nonexistent/tavotto/i/*.csv": inputremap.VIA_GLOB,
         "/nonexistent/tavotto/j/t.csv": inputremap.VIA_PROBE,
         "/nonexistent/tavotto/k": inputremap.VIA_GLOB,
         "/nonexistent/tavotto/l": inputremap.VIA_GLOB,
     }
+
+
+def test_only_arguments_of_read_calls_count_as_missing_data(tmp_path):
+    """「一并修好」里只列脚本**真要读**的（用户 09-29 截图）：坐标轴标签、存图 / 写出的目标、写模式打开、
+    `.py`、当输出目录用的路径都不是缺的数据；`color.txt` 这类名字按用法——只出现在写出调用里的不算。
+    从来源判（进没进读取调用），不按字符串长相事后去猜。"""
+    (tmp_path / "fig.py").write_text(
+        "import os, numpy as np, pandas as pd, matplotlib.pyplot as plt\n"
+        "from pathlib import Path\n"
+        'OUT = "数据汇总/part2/绘图缓存"\n'
+        "os.makedirs(OUT, exist_ok=True)\n"
+        'ax = plt.gca(); ax.set_xlabel("Distance $z$ ($\\mu$m)")\n'
+        'ax.set_ylabel("rate/day (a.u.)")\n'
+        'plt.savefig(os.path.join(OUT, "fig2.png"))\n'
+        'plt.savefig("results/fig1.pdf")\n'
+        'with open("color.txt", "w") as f:\n    f.write("red")\n'
+        'open("logs/stream.txt", mode="a").write("x")\n'
+        'exec(open("helpers/util.py").read()) if False else None\n'
+        'np.savetxt("out/table.csv", [1])\n'
+        # 真要读的：相对 / 绝对 / 拼出来的 / 先赋给名字的 / Path 的读
+        'df = pd.read_csv("data/points.csv")\n'
+        'arr = np.loadtxt("/nonexistent/tavotto/raw/a.dat")\n'
+        'SRC = "/nonexistent/tavotto/raw/b.csv"\n'
+        "b = pd.read_csv(SRC)\n"
+        'c = Path("inputs/c.json").read_text()\n'
+        'd = open(os.path.join("inputs", "d.txt")).read()\n',
+        encoding="utf-8",
+    )
+    got = sorted(o["path"] for o in inputremap.static_missing("fig.py", tmp_path))
+    assert got == sorted(
+        [
+            "data/points.csv",
+            "/nonexistent/tavotto/raw/a.dat",
+            "/nonexistent/tavotto/raw/b.csv",
+            "inputs/c.json",
+        ]
+    ), got
+    # `open(os.path.join("inputs", "d.txt"))`：各段本身不是那条路径，静态说不出拼完是什么——不列，运行时
+    # worker 会说出真正缺的那一串；`helpers/util.py` 是在读，但读的是代码不是数据
 
 
 def test_the_requested_path_keeps_the_probe_classification_of_the_same_literal(tmp_path):
