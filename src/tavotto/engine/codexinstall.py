@@ -262,17 +262,21 @@ def launcher_starts(command: str, server: Path) -> tuple[bool, str]:
     except OSError as exc:
         return False, f"退出码 126，{type(exc).__name__}: {exc}"
     rc, out = p.returncode, (p.stdout or "")
-    # stdout 里除了 JSON 一行杂音都不许有：Codex 把 server 的 stdout 当协议流，第一帧前多出
-    # 来的一行（0.17.0 的双语启动器让 cmd 回显 shebang）在真 Windows + Codex Desktop 上就是
-    # 握手失败、零工具（#266）。只看「最后一行是 JSON」会把那种启动器判成起得来、不去钉。
-    noise = [ln for ln in out.splitlines() if ln.strip() and _last_json(ln) is None]
-    if noise:
+    # stdout 必须**恰好**是一行体检 JSON：Codex 把 server 的 stdout 当协议流，第一帧前多出来的
+    # 任何一行（0.17.0 的双语启动器让 cmd 回显 shebang；空行；别的 JSON 形状的调试输出）在真
+    # Windows + Codex Desktop 上就是握手失败、零工具（#266）。只看「最后一行是 JSON」或「每行都是
+    # JSON」都会把那种启动器判成起得来、不去钉（Codex #720）。
+    lines = out.splitlines()
+    healthy = [ln for ln in lines if "ok" in (_last_json(ln) or {})]
+    if len(lines) == 1 and healthy:
+        return True, f"退出码 {rc}，启动器回了体检 JSON"
+    if healthy:
+        others = [ln for ln in lines if ln not in healthy] or healthy[1:]
         return (
             False,
-            f"退出码 {rc}，stdout 在 JSON 之外还有输出（Codex 会因此断连）：{noise[0][:160]}",
+            f"退出码 {rc}，stdout 在体检 JSON 之外还有输出（Codex 会因此断连）："
+            f"{(others[0][:160] or '（空行）')}",
         )
-    if _last_json(out) is not None:
-        return True, f"退出码 {rc}，启动器回了体检 JSON"
     tail = (out + (p.stderr or "")).strip()
     return False, f"退出码 {rc}，没有体检 JSON：{(tail[-160:] or '（零输出）')}"
 

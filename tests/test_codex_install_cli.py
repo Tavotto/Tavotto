@@ -671,6 +671,13 @@ def test_a_launcher_that_prints_before_the_json_does_not_count_as_startable(tmp_
     ok, detail = codexinstall.launcher_starts(sys.executable, str(echoing))
     assert not ok and "#!/bin/sh" in detail, detail
 
+    # 空行、JSON 形状的调试输出同样在握手前多出一帧：stdout 必须恰好一行体检 JSON（Codex #720）
+    for name, before in (("blank", "print()"), ("jsonlog", 'print(\'{"level": "debug"}\')')):
+        noisy = tmp_path / f"{name}.py"
+        noisy.write_text(f"{before}\nprint('{{\"ok\": true}}')\n", encoding="utf-8")
+        ok, detail = codexinstall.launcher_starts(sys.executable, str(noisy))
+        assert not ok and "之外还有输出" in detail, (name, detail)
+
     chatty_stderr = tmp_path / "stderr.py"
     chatty_stderr.write_text(
         "import sys\n"
