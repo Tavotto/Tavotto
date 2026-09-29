@@ -210,3 +210,13 @@ def test_the_single_package_install_goes_through_the_mirror_fallback(monkeypatch
         deprepair.pip_install_argv("/env/bin/python", "lmfit>=1.3", index_url=MIRROR),
     ]
     assert mirrors == [MIRROR]
+
+
+@pytest.mark.parametrize("env", SOURCE_ENV)
+def test_the_environment_variables_alone_count_as_a_user_source(monkeypatch, env):
+    """环境变量一层不依赖 `pip config list` 会不会把 `PIP_*` 列出来（各版本 pip 不一）：配置那一问什么都没说，
+    环境变量设了照样算「用户配过源」。"""
+    monkeypatch.setattr(deprepair, "_run", lambda argv, timeout: (0, ""))
+    assert deprepair.user_package_source("/env/bin/python") is False
+    monkeypatch.setenv(env, "1" if env == "PIP_NO_INDEX" else "https://pypi.corp/simple")
+    assert deprepair.user_package_source("/env/bin/python") is True
