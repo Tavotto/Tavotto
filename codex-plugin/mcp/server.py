@@ -694,14 +694,15 @@ PYPI_SIMPLE = "https://pypi.org/simple"
 _PYPI_HOSTS = ("pypi.org", "www.pypi.org", "pypi.python.org")
 
 
-def _pip_config_files(environ) -> "list[str]":
-    """pip 读配置文件的位置，**按 pip 的加载顺序**（后读的覆盖先读的）：全局 → 旧式用户
-    → 用户 → site（本解释器 `sys.prefix` 下的 `pip.conf` / `pip.ini`，`pip config --site` 写的那份）
-    → `PIP_CONFIG_FILE`。只列路径，存不存在由调用方查。
+def _pip_config_files(environ) -> "list[tuple[str, str]]":
+    """pip 读配置文件的位置与类别（`global` / `user` / `site` / `PIP_CONFIG_FILE`），**按 pip 的加载顺序**
+    （后读的覆盖先读的）：全局 → 旧式用户 → 用户 → site（本解释器 `sys.prefix` 下的 `pip.conf` /
+    `pip.ini`，`pip config --site` 写的那份）→ `PIP_CONFIG_FILE`。只列路径，存不存在由调用方查。
+    类别是给人看的「来自哪」——**路径本身不出门**（体检结果会进模型看得见的 `tavotto_health`）。
 
     照 pip 的 `Configuration.iter_config_files`：`PIP_CONFIG_FILE` 指向一个**存在的**文件时，用户级
     配置（旧式与当前）整个不读——全局、site 与那份文件照读（Codex #724）。"""
-    files: "list[str]" = []
+    files: "list[tuple[str, str]]" = []
     extra = (environ.get("PIP_CONFIG_FILE") or "").strip()
     load_user = not (extra and os.path.isfile(extra))
     home = environ.get("USERPROFILE" if os.name == "nt" else "HOME") or os.path.expanduser("~")
@@ -709,7 +710,7 @@ def _pip_config_files(environ) -> "list[str]":
     if os.name == "nt":
         programdata = environ.get("PROGRAMDATA") or environ.get("ALLUSERSPROFILE")
         if programdata:
-            files.append(os.path.join(programdata, "pip", "pip.ini"))
+            files.append((os.path.join(programdata, "pip", "pip.ini"), "global"))
         user.append(os.path.join(home, "pip", "pip.ini"))
         appdata = environ.get("APPDATA")
         if appdata:
@@ -717,10 +718,10 @@ def _pip_config_files(environ) -> "list[str]":
     else:
         for d in (environ.get("XDG_CONFIG_DIRS") or "/etc/xdg").split(":"):
             if d:
-                files.append(os.path.join(d, "pip", "pip.conf"))
+                files.append((os.path.join(d, "pip", "pip.conf"), "global"))
         if sys.platform == "darwin":
-            files.append("/Library/Application Support/pip/pip.conf")
-        files.append("/etc/pip.conf")
+            files.append(("/Library/Application Support/pip/pip.conf", "global"))
+        files.append(("/etc/pip.conf", "global"))
         user.append(os.path.join(home, ".pip", "pip.conf"))
         xdg = environ.get("XDG_CONFIG_HOME") or os.path.join(home, ".config")
         library = os.path.join(home, "Library", "Application Support", "pip")
@@ -731,12 +732,12 @@ def _pip_config_files(environ) -> "list[str]":
         else:
             user.append(os.path.join(xdg, "pip", "pip.conf"))
     if load_user:
-        files.extend(user)
+        files.extend((u, "user") for u in user)
     # site 配置：pip 按**跑它的那个解释器**的 sys.prefix 找（venv 里 `pip config --site` 配的镜像就在
     # 这里）。`pip_index_of` 在目标解释器里跑本函数，sys.prefix 正是那个环境（Codex #724 P2）
-    files.append(os.path.join(sys.prefix, "pip.ini" if os.name == "nt" else "pip.conf"))
+    files.append((os.path.join(sys.prefix, "pip.ini" if os.name == "nt" else "pip.conf"), "site"))
     if extra:
-        files.append(extra)
+        files.append((extra, "PIP_CONFIG_FILE"))
     return files
 
 
@@ -750,6 +751,9 @@ def _redact_url(url: str) -> str:
         parts = urlsplit(url)
     except ValueError:
         return "***"
+    if parts.scheme.lower() == "file" or not parts.netloc:
+        # 本机目录当索引（`file:///home/alice/wheels`）：路径就是用户的，不出门（Codex #724）
+        return f"{parts.scheme}://***" if parts.scheme else "***"
     netloc = parts.netloc
     if "@" in netloc:
         netloc = "***@" + netloc.rsplit("@", 1)[1]
@@ -784,25 +788,42 @@ def _store_python_pip_configs(environ) -> "list[str]":
     ]
 
 
-def _index_url_in(path: str) -> "str | None":
-    """一个 pip 配置文件里的 index-url（同一文件里 `[install]` 覆盖 `[global]`）；读不到回 None。"""
+def _index_urls_in(path: str) -> "dict[str, str]":
+    """一个 pip 配置文件里各节的 index-url（`{"global": …, "install": …}`，只含写了的那几节）；读不到回空。
+
+    节不在这里压平：pip 先把所有文件合并、**再**按 `global` → `install` 排节（`ConfigOptionParser.
+    _get_ordered_configuration_items`），所以全局配置里的 `[install]` 压过用户配置里的 `[global]`
+    （Codex #724）。合并在 `_merged_index_url` 里做。"""
     import configparser  # noqa: PLC0415 — 只有降级 / 体检路径用得到
 
     if not os.path.isfile(path):
-        return None
+        return {}
     parser = configparser.RawConfigParser()
     try:
         parser.read(path, encoding="utf-8")
     except (configparser.Error, OSError, UnicodeDecodeError):
-        return None
-    url = None
+        return {}
+    out: "dict[str, str]" = {}
     for section in ("global", "install"):
         for key in ("index-url", "index_url"):
             if parser.has_option(section, key):
                 value = parser.get(section, key).strip()
                 if value:
-                    url = value
-    return url
+                    out[section] = value
+    return out
+
+
+def _merged_index_url(files: "list[tuple[str, str]]") -> "tuple[str | None, str | None]":
+    """按 pip 的顺序合并多份配置：每一节里后读的文件覆盖先读的，节与节之间 `install` 压过 `global`。
+    回 (地址, 来自哪一类文件)；都没写回 (None, None)。"""
+    merged: "dict[str, tuple[str, str]]" = {}
+    for path, kind in files:
+        for section, url in _index_urls_in(path).items():
+            merged[section] = (url, kind)
+    for section in ("install", "global"):
+        if section in merged:
+            return merged[section]
+    return None, None
 
 
 def _is_mirror(url: str) -> bool:
@@ -832,10 +853,7 @@ def pip_index(environ=None) -> "dict | None":
     # PIP_CONFIG_FILE=os.devnull 是 pip 约定的「一个配置文件都不读」
     read_files = (env.get("PIP_CONFIG_FILE") or "").strip() != os.devnull
     if read_files:
-        for path in _pip_config_files(env):
-            found = _index_url_in(path)
-            if found:
-                url, source = found, path
+        url, source = _merged_index_url(_pip_config_files(env))
     from_env = (env.get("PIP_INDEX_URL") or "").strip()
     if from_env:
         url, source = from_env, "PIP_INDEX_URL"
@@ -846,9 +864,9 @@ def pip_index(environ=None) -> "dict | None":
         and not os.path.isfile((env.get("PIP_CONFIG_FILE") or "").strip())
     ):
         for path in _store_python_pip_configs(env):
-            found = _index_url_in(path)
+            found, _kind = _merged_index_url([(path, "store_python")])
             if found and _is_mirror(found):
-                url, source = found, path
+                url, source = found, "store_python"
                 break
     if not url:
         return None
@@ -917,6 +935,17 @@ def upgrade_commands(target: "str | None", index: "dict | None") -> "list[str]":
     return cmds
 
 
+#: `pip_index()` 的 `source` 是类别，不是路径（路径会进模型看得见的体检结果）；这里是给人看的说法。
+_SOURCE_LABELS = {
+    "global": "全局 pip 配置",
+    "user": "用户的 pip 配置",
+    "site": "当前环境的 pip 配置（site）",
+    "PIP_CONFIG_FILE": "PIP_CONFIG_FILE 指向的配置",
+    "store_python": "商店版 Python 的 pip 配置",
+    "PIP_INDEX_URL": "环境变量 PIP_INDEX_URL",
+}
+
+
 def mirror_note(target: "str | None", index: "dict | None") -> str:
     """pip 指向镜像时补的那句；不是镜像（或没配置）回空串。"""
     if not index or not index.get("mirror"):
@@ -924,7 +953,7 @@ def mirror_note(target: "str | None", index: "dict | None") -> str:
     # 版本号两侧留空格（中文里数字紧贴汉字会读成一个词）；没有版本号时说「新版」
     want = f"到 {target}" if target else "到新版"
     return (
-        f"注意：pip 的 index-url 指向镜像 {index['url']}（来自 {index['source']}），"
+        f"注意：pip 的 index-url 指向镜像 {index['url']}（来自 {_SOURCE_LABELS.get(index['source'], index['source'])}），"
         f"镜像可能还没同步{want}，照常升级只会再装回镜像上那一版——命令里的 "
         f"`--index-url {PYPI_SIMPLE}` 就是为此绕开镜像直连 PyPI。"
     )
