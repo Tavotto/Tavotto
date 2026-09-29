@@ -25,8 +25,8 @@ import { Tip } from '../ui/Tooltip'
  * 两者互相跳转（样式里不合规的那一格直达问题清单里的那一条）。
  *
  * 「问题」（Prompt 11）**常驻**：它在没有问题时也要在——「一个问题都没有」
- * 本身就是用户要的答案，而按需出现的入口会让人以为功能坏了。角标只在真的
- * 有问题时出现，抽屉收起时它是唯一的提示。
+ * 本身就是用户要的答案，而按需出现的入口会让人以为功能坏了。图标上的中性小点
+ * 只在有**阻断项**时出现（2026-09-28 起不再挂红底数字）；问题数在可达名里。
  */
 const ITEMS: { id: LeftTab; icon: typeof Images }[] = [
   // 工作区（项目一级）排最上：范围从外到内——项目 → 画布 → 素材 → 图层 → 图内
@@ -85,21 +85,17 @@ export function LeftRail() {
             )}
           >
             <Icon size={ICON_SIZE.md} filled={active} />
-            {id === 'problems' && problems > 0 && (
-              /* 折叠时唯一的提示。**不挡画布**：它就在轨道自己的格子里，
-                 而且用形状（实心点）+ 数字两重表达，不只靠颜色。
-                 钮缩到 28 之后横向多探出去一点，免得压住 16px 的图标；轨两侧各
-                 留 8px，探出去的 4px 不会被裁 */
+            {id === 'problems' && blocking && (
+              /* 折叠时唯一的提示，而且**只为阻断项亮**（2026-09-28 用户反馈：红底数字
+                 角标一直在余光里报警，数字随每次编辑跳，却不说该做什么）。现在是一颗
+                 6px 的中性墨点：警告与建议不打扰，有会拦住导出的问题时才出现。
+                 问题数没有丢——在可达名与悬停提示里（`rail.problemsCount`）。
+                 点在 28px 钮自己的格子里，不挡画布；`ring-surface` 把它从图标上切开 */
               <span
                 aria-hidden
-                className={cn(
-                  'absolute -right-1 -top-0.5 flex h-3 min-w-3 items-center justify-center',
-                  'rounded-full px-0.5 text-[9px] leading-none tabular-nums',
-                  blocking ? 'bg-danger text-white' : 'bg-ink-3 text-white',
-                )}
-              >
-                {problems > 99 ? '99+' : problems}
-              </span>
+                data-rail-blocking
+                className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-ink-2 ring-2 ring-surface"
+              />
             )}
           </button>
         )

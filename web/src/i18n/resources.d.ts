@@ -485,7 +485,7 @@ export default interface Resources {
         "locate_problem": {
           "body": "打开左侧「问题」，里面列着图里不合规范的地方。",
           "row": {
-            "body": "点击问题，Tavotto 会选中对象并把焦点落到对应的属性字段。",
+            "body": "点击问题，Tavotto 会选中对象并把焦点落到对应的属性字段。问题在卡片里时，先点开那张卡片。",
             "title": "从「问题」定位"
           },
           "title": "从「问题」定位"
@@ -2232,6 +2232,26 @@ export default interface Resources {
     "problems": {
       "ariaLocate": "定位到这个对象",
       "ariaValues": "当前 {{current}}，要求 {{expected}}",
+      "backCategories": "全部类别",
+      "backFigures": "全部图",
+      "cardBlocking_other": "阻断 {{count}}",
+      "cardFixTip_other": "修复这里能自动修的 {{count}} 项（含建议），可撤销",
+      "cardFix_other": "修复 {{count}}",
+      "cardKinds_other": "{{title}} 等 {{count}} 种",
+      "cardManual": "需手动",
+      "cardManualTip": "这里的问题没有安全的自动修法，请逐条处理",
+      "cardOpen_other": "{{name}}：{{count}} 项问题，查看详情",
+      "cardParts_other": "{{count}} 个子图",
+      "cardSuggestion_other": "建议 {{count}}",
+      "cardWarn_other": "警告 {{count}}",
+      "category": {
+        "color": "配色与数据",
+        "file": "文件与渲染",
+        "layout": "版面",
+        "lines": "线条与坐标",
+        "other": "其他",
+        "text": "文字"
+      },
       "clearFilter": "显示全部",
       "cmp": {
         "above": "大于 {{value}}",
@@ -2246,12 +2266,17 @@ export default interface Resources {
       "cursorClose": "结束逐项处理",
       "cursorDone_other": "已处理，还剩 {{count}} 项",
       "cursorLabel": "逐项处理",
+      "drillDone": "这里的问题都处理完了",
+      "drillDoneHint": "其余问题在上一层",
+      "drillMeta_other": "{{count}} 项 · {{kinds}} 种检查项",
       "failedHint": "这次没能查完。排版可能还在载入，稍后再试。",
       "failedKeptHint": "这次没能查完，下面是上次的结果，可能已经过时。",
       "failedTitle": "检查未完成",
+      "figureMeta_other": "{{count}} 项 · {{parts}} 个子图",
       "filterAria": "只看{{label}}（{{count}} 项）",
       "fix": "修复",
       "fixAuto": "全部处理",
+      "fixCategory": "修复此类",
       "fixChoose": "修复…",
       "fixFailed": {
         "busy": "上一次修复还在进行，稍后再试。",
@@ -2268,12 +2293,15 @@ export default interface Resources {
         "unavailable": "这里不能自动修复图内元素，请在 Tavotto 桌面端处理。",
         "would_worsen": "这样修会让别处变差（例如文字被挤出图幅），已放弃，图没有改动。"
       },
+      "fixFigure": "修复本图",
       "fixNativeUnsupported": "用 {{product}} Run 打开的图暂不支持自动修复",
       "fixOption": {
         "double": "改成双栏宽 {{mm}} mm",
         "single": "改成单栏宽 {{mm}} mm"
       },
+      "fixPart": "修复此子图",
       "fixableHere_other": "{{count}} 项可自动处理",
+      "fixableHint": "不含建议，修完可撤销",
       "fixedPartial_other": "已修复 {{count}} 项，可撤销。另有 {{failed}} 项没改：{{why}}",
       "fixed_other": "已修复 {{count}} 项，可撤销。",
       "fixing": "正在修复…",
@@ -2292,6 +2320,8 @@ export default interface Resources {
       "noneInScope": "这张图上没有问题",
       "noneInScopeHint_other": "整份排版里还有 {{count}} 项问题。",
       "onCanvas": " · 画布「{{name}}」",
+      "partTag": "子图 {{tag}}",
+      "partWhole": "整张图",
       "prev": "上一项",
       "readinessTip": "查看项目接入状态",
       "readiness_other": "还有 {{count}} 张图未连接脚本",
@@ -2361,12 +2391,19 @@ export default interface Resources {
         "tick-label-count": "刻度标签过多",
         "unapplied-override": "修改还没应用"
       },
+      "totalUnit_other": "项问题",
       "unit": {
         "mm": "mm",
         "ppi": "ppi",
         "pt": "pt"
       },
-      "valueArrow": "{{current}} → {{expected}}"
+      "unverifiableEntry_other": "{{count}} 项无法自动检查",
+      "valueArrow": "{{current}} → {{expected}}",
+      "view": {
+        "category": "按类别",
+        "figure": "按图",
+        "label": "分组方式"
+      }
     },
     "render": {
       "failed": "渲染失败（HTTP {{status}}）",

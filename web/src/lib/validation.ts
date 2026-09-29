@@ -29,7 +29,7 @@
  * 两件不同的事，混进同一个清单之后用户既分不清轻重，也找不到各自的下一步。
  */
 import { formatMessage, msg, type UiMessage } from '@/i18n'
-import type { PanelInfo } from './api'
+import type { Manifest, PanelInfo } from './api'
 import type { PanelRender } from '@/store/renderStore'
 import { fixOptions, fixRoute, planFix } from './issueFix'
 import { severityOf, type PublicationProfile, type Severity } from './profile'
@@ -40,6 +40,7 @@ import {
   type PreflightOccurrence,
 } from './preflight'
 import type { CanvasData, CanvasObject, FigureDocument } from '@/types/document'
+import { subplotLookup, type SubplotPart } from './subplotParts'
 
 /* ------------------------------ Issue 模型 -------------------------------- */
 
@@ -66,6 +67,11 @@ export interface IssueSubject {
   /** 引擎给的元素标签（中文散文），渲染时过 `engineLabel()` 换成界面语言 */
   elementLabel?: string
   elementRole?: string
+  /**
+   * 元素所在的子图簇（`lib/subplotParts.ts`）：问题面板「按图」看时据此把一张组图
+   * 拆成 (a)(b)(c)。图里只有一个子图、或元素不在任何 axes 里（suptitle）时缺席
+   */
+  part?: SubplotPart
 }
 
 export type FixKind = 'none' | 'safe_auto' | 'user_choice'
@@ -106,50 +112,60 @@ export function fingerprintOf(
 /* ------------------------------ 规则目录 ---------------------------------- */
 
 /**
- * 每条规则的**导航属性**：属于哪类上下文、有没有确定安全的修复。
+ * 问题面板「按类别」看时这条规则归哪一类（2026-09-28 问题面板卡片化）。
+ * 类别是**导航属性**，与 `fix` 一样写在目录里：每条登记的规则都必须带一个，
+ * 漏写是编译错误；目录里没有的 code 落 `other`，绝不按名字猜。
+ */
+export type ProblemCategory = 'text' | 'lines' | 'layout' | 'color' | 'file' | 'other'
+
+/**
+ * 每条规则的**导航属性**：属于哪类上下文、有没有确定安全的修复、在问题面板里归哪一类。
  *
  * `fix` 是**规则的意图**，不是这一条命中的结论——真正能不能修由
  * `issueFix.planFix()` 用当前值与当前规范算，算不出来就降回 `none`。
  * 两层都要有：只有目录的话会给出一颗按了没反应的「修复」按钮，只有
  * planFix 的话每次渲染都要为每条问题算一遍计划。
  */
-const RULES: Record<string, { context: IssueContext; fix: FixKind; placement?: true }> = {
-  'page-width': { context: 'document', fix: 'user_choice' },
-  'page-aspect': { context: 'document', fix: 'none' },
-  'missing-asset': { context: 'document', fix: 'none' },
-  'render-error': { context: 'document', fix: 'none' },
-  'stale-render': { context: 'document', fix: 'none' },
-  'unapplied-override': { context: 'document', fix: 'none' },
-  'raster-dpi': { context: 'document', fix: 'none' },
-  'raster-text-not-verifiable': { context: 'document', fix: 'none' },
-  'panel-text-not-verifiable': { context: 'document', fix: 'none' },
-  'font-below-absolute-floor': { context: 'document', fix: 'safe_auto' },
-  'font-too-small': { context: 'document', fix: 'safe_auto' },
-  'font-too-large': { context: 'document', fix: 'safe_auto' },
+const RULES: Record<
+  string,
+  { category: ProblemCategory; context: IssueContext; fix: FixKind; placement?: true }
+> = {
+  'page-width': { category: 'layout', context: 'document', fix: 'user_choice' },
+  'page-aspect': { category: 'layout', context: 'document', fix: 'none' },
+  'missing-asset': { category: 'file', context: 'document', fix: 'none' },
+  'render-error': { category: 'file', context: 'document', fix: 'none' },
+  'stale-render': { category: 'file', context: 'document', fix: 'none' },
+  'unapplied-override': { category: 'file', context: 'document', fix: 'none' },
+  'raster-dpi': { category: 'file', context: 'document', fix: 'none' },
+  'raster-text-not-verifiable': { category: 'file', context: 'document', fix: 'none' },
+  'panel-text-not-verifiable': { category: 'file', context: 'document', fix: 'none' },
+  'font-below-absolute-floor': { category: 'text', context: 'document', fix: 'safe_auto' },
+  'font-too-small': { category: 'text', context: 'document', fix: 'safe_auto' },
+  'font-too-large': { category: 'text', context: 'document', fix: 'safe_auto' },
   // 改成规范的拉丁字体是确定的；「装没装」由后端对真实渲染里画字的那张脸核验
   // （没装就如实退出，ADR 0080），所以它进了 safe_auto
-  'font-family-substituted': { context: 'document', fix: 'safe_auto' },
-  'cjk-fallback-missing': { context: 'document', fix: 'none' },
+  'font-family-substituted': { category: 'text', context: 'document', fix: 'safe_auto' },
+  'cjk-fallback-missing': { category: 'text', context: 'document', fix: 'none' },
   // 两条都 `fix: 'none'`：能修的动作是「换一个画得出这些字的字体」，
   // 而换哪一个只有用户说得出（自动挑一个会让同一份文档在两台机器上不一样）。
-  'glyph-missing': { context: 'document', fix: 'none' },
-  'glyph-substituted': { context: 'document', fix: 'none' },
+  'glyph-missing': { category: 'text', context: 'document', fix: 'none' },
+  'glyph-substituted': { category: 'text', context: 'document', fix: 'none' },
   // 修法是外边距重排（ADR 0051 的 `adapt_margins`）：挪子图、不挪那条文字，有位移预算，
   // 改完真实渲染裁决；放不下就如实说「放不下」、一个字不改（ADR 0080）
-  'element-outside-figure': { context: 'document', fix: 'safe_auto' },
-  'text-weight-policy': { context: 'document', fix: 'safe_auto' },
-  'legend-frame': { context: 'document', fix: 'safe_auto' },
-  'legend-font-size': { context: 'document', fix: 'safe_auto' },
-  'tick-direction': { context: 'document', fix: 'safe_auto' },
-  'spines-not-enclosed': { context: 'document', fix: 'safe_auto' },
-  'line-width-off-preset': { context: 'document', fix: 'safe_auto' },
-  'axis-label-format': { context: 'document', fix: 'none' },
-  'discouraged-colormap': { context: 'document', fix: 'none' },
-  'palette-semantic': { context: 'document', fix: 'none' },
-  'tick-label-count': { context: 'document', fix: 'none' },
-  'bar-without-errorbar': { context: 'document', fix: 'none' },
-  'fit-without-ci': { context: 'document', fix: 'none' },
-  'palette-line-markers': { context: 'document', fix: 'none' },
+  'element-outside-figure': { category: 'layout', context: 'document', fix: 'safe_auto' },
+  'text-weight-policy': { category: 'text', context: 'document', fix: 'safe_auto' },
+  'legend-frame': { category: 'layout', context: 'document', fix: 'safe_auto' },
+  'legend-font-size': { category: 'text', context: 'document', fix: 'safe_auto' },
+  'tick-direction': { category: 'lines', context: 'document', fix: 'safe_auto' },
+  'spines-not-enclosed': { category: 'lines', context: 'document', fix: 'safe_auto' },
+  'line-width-off-preset': { category: 'lines', context: 'document', fix: 'safe_auto' },
+  'axis-label-format': { category: 'text', context: 'document', fix: 'none' },
+  'discouraged-colormap': { category: 'color', context: 'document', fix: 'none' },
+  'palette-semantic': { category: 'color', context: 'document', fix: 'none' },
+  'tick-label-count': { category: 'lines', context: 'document', fix: 'none' },
+  'bar-without-errorbar': { category: 'color', context: 'document', fix: 'none' },
+  'fit-without-ci': { category: 'color', context: 'document', fix: 'none' },
+  'palette-line-markers': { category: 'color', context: 'document', fix: 'none' },
   /*
    * `placement`：判的是**这个对象在画布页面上怎么摆**（`preflight._check_geometry`
    * 只读画布 rect_mm 与页面）。按原图导出时产物的页面盒 = 图幅、画布的 x/y/w/h
@@ -158,14 +174,18 @@ const RULES: Record<string, { context: IssueContext; fix: FixKind; placement?: t
    * 177.8 mm 的图摆在 150 mm 画布上，「仅此图」的原图导出被「超出页面范围」阻断）。
    * `hidden` 刻意不在里面：隐藏的图不做图内检查，那条 warn 是原图范围下唯一提示。
    */
-  'out-of-page': { context: 'document', fix: 'none', placement: true },
-  'outside-margin': { context: 'document', fix: 'none', placement: true },
-  'overlap': { context: 'document', fix: 'none', placement: true },
-  'hidden': { context: 'document', fix: 'none' },
+  'out-of-page': { category: 'layout', context: 'document', fix: 'none', placement: true },
+  'outside-margin': { category: 'layout', context: 'document', fix: 'none', placement: true },
+  'overlap': { category: 'layout', context: 'document', fix: 'none', placement: true },
+  'hidden': { category: 'layout', context: 'document', fix: 'none' },
 }
 
 /** 规则目录里没登记的 code：按 document / 不可自动修复处理，绝不猜。 */
-const UNKNOWN_RULE = { context: 'document' as IssueContext, fix: 'none' as FixKind }
+const UNKNOWN_RULE = {
+  category: 'other' as ProblemCategory,
+  context: 'document' as IssueContext,
+  fix: 'none' as FixKind,
+}
 
 export const ruleEntry = (code: string) => RULES[code] ?? UNKNOWN_RULE
 
@@ -218,7 +238,7 @@ export interface CanvasResult {
 function subjectOf(
   doc: FigureDocument,
   occ: PreflightOccurrence,
-  manifestOf: (objectId: string) => { elements?: { gid: string; role: string; label: string }[] } | null,
+  manifestOf: (objectId: string) => Manifest | null,
 ): IssueSubject {
   if (!occ.objectId) return { kind: 'page' }
   const obj = doc.objects.find((o) => o.id === occ.objectId)
@@ -231,13 +251,16 @@ function subjectOf(
   if (!occ.gid) {
     return { kind: 'object', objectType: obj?.type, objectName }
   }
-  const el = manifestOf(occ.objectId)?.elements?.find((e) => e.gid === occ.gid)
+  const manifest = manifestOf(occ.objectId)
+  const el = manifest?.elements?.find((e) => e.gid === occ.gid)
+  const part = manifest ? subplotLookup(manifest)(occ.gid) : null
   return {
     kind: 'element',
     objectType: obj?.type,
     objectName,
     elementLabel: el?.label,
     elementRole: el?.role,
+    ...(part ? { part } : {}),
   }
 }
 

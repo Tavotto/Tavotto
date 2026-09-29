@@ -67,12 +67,12 @@ import {
 import { msg, t as translate } from "@/i18n";
 import { emitActivity } from "@/lib/activity";
 import { useHtmlMarkup } from "@/lib/useHtmlMarkup";
-import { engineTransport } from "@/lib/engineTransport";
 import { readExportDefaults, writeExportDefaults } from "@/lib/exportDefaults";
 import { inspectionState } from "@/lib/artifactInspection";
 import { RetryImg } from "@/components/ui/RetryImg";
 import {
   contextFigureId,
+  figureThumbSrc,
   listExportableFigures,
   type ExportableFigure,
 } from "@/lib/exportFigures";
@@ -1406,13 +1406,7 @@ function FigureThumb({ figure }: { figure: ExportableFigure }) {
   const svg = needsEngine ? (render?.svg ?? null) : null;
   // 同一份字符串复用同一个 `{__html}`：缩略格随对话框重渲时不必把整张 SVG 重新解析一遍
   const svgMarkup = useHtmlMarkup(svg);
-  const transport = engineTransport();
-  const src =
-    figure.kind === "unknown" || (figure.kind === "runtime" && !figure.cached)
-      ? null
-      : transport
-        ? transport.panelSrc(figure.figureId, figure.kind, 160, figure.stamp)
-        : panelSrc(figure.figureId, figure.kind, 160, figure.stamp);
+  const src = figureThumbSrc(figure, 160);
   const sizeMm = render?.manifest?.size_mm ?? figure.sizeMm;
   const ratio =
     sizeMm && sizeMm[0] > 0 && sizeMm[1] > 0 ? sizeMm[0] / sizeMm[1] : 4 / 3;

@@ -4,13 +4,23 @@
 import { describe, expect, it } from 'vitest'
 import { msg } from '@/i18n'
 import {
+  bucketsByCategory,
+  bucketsByFigure,
   cursorFor,
   cursorView,
+  drillIssues,
+  drillKey,
+  drillKeysOf,
+  drillOf,
   effectiveScope,
   flattenGroups,
   groupIssues,
   issuesInScope,
+  isSplit,
+  sameDrill,
+  WHOLE,
 } from './problemList'
+import type { SubplotPart } from './subplotParts'
 import type { Severity } from './profile'
 import type { ValidationIssue } from './validation'
 
@@ -138,5 +148,96 @@ describe('游标', () => {
   it('没有游标 / 清单空了：什么都不指', () => {
     expect(cursorView(groups, null)).toMatchObject({ current: null, next: null, prev: null, total: 4 })
     expect(cursorView([], cursorFor(groups, 'a1'))).toMatchObject({ current: null, next: null, total: 0 })
+  })
+})
+
+/* --------------------------- 卡片（2026-09-28） --------------------------- */
+
+const part = (key: string, order: number, tag: string | null): SubplotPart => ({
+  key,
+  order,
+  tag,
+  label: `子图 ${order + 1}`,
+  bbox: [0, 0, 1, 1],
+})
+const inPart = (i: ValidationIssue, p: SubplotPart): ValidationIssue => ({
+  ...i,
+  subject: { ...i.subject, part: p },
+})
+const PA = part('axes_0', 0, '(a)')
+const PB = part('axes_2', 1, '(b)')
+// p1 是一张组图：两条在 (b)、一条在 (a)、一条整图级（位图分辨率这类，不落在任何子图里）
+const G1 = inPart(issue('g1', 'font-too-small', 'warn', 'p1', 'axes_2.t0'), PB)
+const G2 = inPart(issue('g2', 'font-below-absolute-floor', 'error', 'p1', 'axes_2.t1'), PB)
+const G3 = inPart(issue('g3', 'line-width-off-preset', 'warn', 'p1', 'axes_0'), PA)
+const G4 = issue('g4', 'raster-dpi', 'warn', 'p1')
+const NV = issue('nv', 'panel-text-not-verifiable', 'not_verifiable', 'p3')
+
+describe('卡片：按图', () => {
+  it('一张图一桶（文档顺序），组图按子图再分：整图级在前、子图按阅读顺序；无法核验不进卡片', () => {
+    const figs = bucketsByFigure([G1, G3, A3, G2, G4, PAGE, NV])
+    expect(figs.map((f) => f.key)).toEqual(['p1', 'p2', 'page:c1'])
+    const [p1, p2, page] = figs
+    expect(isSplit(p1)).toBe(true)
+    expect(p1.parts.map((p) => p.key)).toEqual([WHOLE, 'axes_0', 'axes_2'])
+    expect(p1.parts.map((p) => p.issues.map((i) => i.issueId))).toEqual([['g4'], ['g3'], ['g1', 'g2']])
+    expect(p1.parts[2].severity).toBe('error')
+    expect(isSplit(p2)).toBe(false)
+    expect(page.objectId).toBeNull()
+  })
+
+  it('只有一个子图有问题也拆：「子图 (c)」比笼统的整图卡说得多', () => {
+    const [f] = bucketsByFigure([G1])
+    expect(isSplit(f)).toBe(true)
+    expect(drillOf(G1, 'figure', [f])).toEqual({ kind: 'part', figure: 'p1', key: 'axes_2' })
+  })
+
+  it('卡片里装的 = 点进去列出来的：同一个 drillIssues', () => {
+    const all = [G1, G2, G3, G4, A3, NV]
+    expect(drillIssues(all, { kind: 'part', figure: 'p1', key: 'axes_2' }).map((i) => i.issueId)).toEqual([
+      'g1',
+      'g2',
+    ])
+    expect(drillIssues(all, { kind: 'part', figure: 'p1', key: WHOLE }).map((i) => i.issueId)).toEqual(['g4'])
+    expect(drillIssues(all, { kind: 'figure', key: 'p1' })).toHaveLength(4)
+    expect(drillIssues(all, { kind: 'unverifiable' }).map((i) => i.issueId)).toEqual(['nv'])
+  })
+})
+
+describe('卡片：按类别', () => {
+  it('类别来自规则目录；阻断在前，同级项数多的在前', () => {
+    const cats = bucketsByCategory([G1, G3, G4, A1, A2, NV])
+    // 文字：g1 a1 a2（warn ×3）；线条：g3；文件：g4（raster-dpi）
+    expect(cats.map((c) => [c.key, c.issues.length])).toEqual([
+      ['text', 3],
+      ['lines', 1],
+      ['file', 1],
+    ])
+    expect(bucketsByCategory([G1, G2])[0].severity).toBe('error')
+    expect(drillOf(G3, 'category', [])).toEqual({ kind: 'category', key: 'lines' })
+  })
+
+  it('目录里没有的规则落「其他」，不按名字猜', () => {
+    const odd = issue('z', 'font-something-new', 'warn', 'p1')
+    expect(bucketsByCategory([odd]).map((c) => c.key)).toEqual(['other'])
+  })
+})
+
+describe('卡片的机器标识', () => {
+  it('drillKeysOf 覆盖这条问题可能在的每一张卡片，其中就有 drillOf 给的那张', () => {
+    const figs = bucketsByFigure([G1, A3])
+    for (const i of [G1, A3, NV]) {
+      for (const view of ['figure', 'category'] as const) {
+        expect(drillKeysOf(i)).toContain(drillKey(drillOf(i, view, figs)))
+      }
+    }
+  })
+
+  it('sameDrill 按内容比，不按引用', () => {
+    expect(sameDrill({ kind: 'part', figure: 'p1', key: 'a' }, { kind: 'part', figure: 'p1', key: 'a' })).toBe(true)
+    expect(sameDrill({ kind: 'part', figure: 'p1', key: 'a' }, { kind: 'part', figure: 'p2', key: 'a' })).toBe(false)
+    expect(sameDrill({ kind: 'figure', key: 'p1' }, { kind: 'category', key: 'text' } as never)).toBe(false)
+    expect(sameDrill(null, null)).toBe(true)
+    expect(sameDrill({ kind: 'unverifiable' }, null)).toBe(false)
   })
 })

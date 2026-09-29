@@ -1,4 +1,5 @@
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import type { Locator, Page } from '@playwright/test'
 import { expect, openElementsTab, test } from './fixtures'
@@ -626,5 +627,101 @@ test(
     expect(await page.evaluate(() => localStorage.getItem('tavotto.locale'))).toBe('en-US')
     await page.locator('[data-rail="settings"]').click()
     await expect(page.locator('[data-settings-shell] [data-section="general"]')).toContainText('General')
+  },
+)
+
+/**
+ * 一张两联图：(a)(b) 左右并排，面板标签写在各自坐标系里（`ax.text(0, 1.03, "(a)")`），
+ * 每个子图里各有一段 6 pt 的注释——低于绝对下限 8 pt，两个子图各一条阻断。
+ */
+function writeTwoPanelProject(): string {
+  const dir = path.join(mkdtempSync(path.join(os.tmpdir(), 'tavotto-twopanel-')), 'figures')
+  mkdirSync(dir, { recursive: true })
+  const script = [
+    'import matplotlib',
+    'matplotlib.use("Agg")',
+    'import matplotlib.pyplot as plt',
+    'from pathlib import Path',
+    '',
+    '',
+    'def main():',
+    '    fig, (ax_a, ax_b) = plt.subplots(1, 2, figsize=(6, 2.6))',
+    '    for ax, tag in ((ax_a, "(a)"), (ax_b, "(b)")):',
+    '        ax.plot([0, 1, 2, 3], [1, 3, 2, 4])',
+    '        ax.text(0, 1.03, tag, transform=ax.transAxes, fontsize=9, fontweight="bold")',
+    '        ax.text(0.5, 0.5, "tiny " + tag, transform=ax.transAxes, fontsize=6)',
+    '    fig.tight_layout()',
+    '    fig.savefig(Path(__file__).with_name("Fig_two.pdf"))',
+    '    plt.close(fig)',
+    '',
+    '',
+    'if __name__ == "__main__":',
+    '    main()',
+    '',
+  ].join('\n')
+  writeFileSync(path.join(dir, 'fig_two.py'), script, 'utf-8')
+  writeFileSync(
+    path.join(dir, 'tavotto_registry.json'),
+    JSON.stringify({ version: 1, scripts: { 'fig_two.py': { entry: 'main', cost: 'light', stems: ['Fig_two'] } } }),
+    'utf-8',
+  )
+  // 占位 PDF：打开时引擎按脚本重画，不需要跑测试的机器另装 matplotlib 去烤它（同 twin-axes-pick）
+  copyFileSync(
+    path.join(import.meta.dirname, '..', '..', 'examples', 'figures', 'Fig1_kinetics.pdf'),
+    path.join(dir, 'Fig_two.pdf'),
+  )
+  return dir
+}
+
+test(
+  '功能：问题面板把组图拆成子图卡片，卡片上的「修复」只改那一个子图',
+  { tag: ['@feature:problems.subplot-cards'] },
+  async ({ app, page }) => {
+    const a = await app({ figures: writeTwoPanelProject() })
+    await page.setViewportSize(VIEWPORT)
+    await page.goto(a.baseURL)
+    await page.locator('[data-card="Fig_two.pdf"]').dblclick({ timeout: 30_000 })
+    await expect(page.locator('[data-element-svg] > svg')).toBeVisible({ timeout: 120_000 })
+    const key0 = await waitExact(page)
+    const tinyA0 = (await gidBox(page, 'axes_0.texts_1'))!
+    const tinyB0 = (await gidBox(page, 'axes_1.texts_1'))!
+    expect(tinyA0, '(a) 里应当有那段 6 pt 注释').not.toBeNull()
+    expect(tinyB0, '(b) 里应当有那段 6 pt 注释').not.toBeNull()
+
+    const rail = page.locator('[data-rail="problems"]')
+    if ((await rail.getAttribute('aria-expanded')) !== 'true') await rail.click()
+    // 卡片的主语是图里写着的面板标签（lib/subplotParts.ts），不是「子图 1」
+    const card = (tag: string) =>
+      page.locator('li[data-problem-card="part"]').filter({ hasText: `子图 ${tag}` })
+    for (const tag of ['(a)', '(b)']) {
+      await expect(card(tag), `应当有「子图 ${tag}」这张卡片`).toHaveCount(1, { timeout: 60_000 })
+      await expect(card(tag)).toHaveAttribute('data-problem-card-rules', /font-below-absolute-floor/)
+      await expectInViewport(page, card(tag), `「子图 ${tag}」卡片`)
+    }
+    // 卡片层不铺逐条清单
+    await expect(page.locator('[data-issue-row]')).toHaveCount(0)
+
+    const fixB = card('(b)').getByRole('button', { name: /^修复 \d+$/ })
+    await expectInViewport(page, fixB, '「子图 (b)」的修复按钮')
+    await expectHittable(fixB, '「子图 (b)」的修复按钮')
+    await fixB.click()
+    await waitExact(page, key0)
+
+    // 画面真的变了：(b) 那段字被提到下限以上、变高；(a) 那段一个像素没动
+    await expect
+      .poll(async () => (await gidBox(page, 'axes_1.texts_1'))!.h, {
+        message: '修复 (b) 之后，(b) 里那段小字应当变高',
+        timeout: 60_000,
+      })
+      .toBeGreaterThan(tinyB0.h * 1.2)
+    const tinyA1 = (await gidBox(page, 'axes_0.texts_1'))!
+    expect(Math.abs(tinyA1.h - tinyA0.h), '(a) 不在这次修复的范围里，它的字不该变').toBeLessThan(0.5)
+    // 清单跟着变：(b) 不再有字号阻断，(a) 的还在
+    await expect(card('(a)')).toHaveAttribute('data-problem-card-rules', /font-below-absolute-floor/)
+    await expect
+      .poll(async () => ((await card('(b)').count()) ? await card('(b)').getAttribute('data-problem-card-rules') : ''), {
+        timeout: 60_000,
+      })
+      .not.toMatch(/font-below-absolute-floor/)
   },
 )

@@ -253,6 +253,8 @@ beforeEach(() => {
     problemFilter: null,
     problemScope: 'document',
     problemCursor: null,
+    problemView: 'figure',
+    problemDrill: null,
     leftTab: 'style',
     leftOpen: true,
     layout: 'wide',
