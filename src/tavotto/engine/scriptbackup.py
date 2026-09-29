@@ -105,6 +105,10 @@ def slug_of(script: str) -> str:
     return f"{readable}-{sha256(norm.encode('utf-8'))[:12]}"
 
 
+#: 属主 / 属组 / 其他任一写位
+_ANY_WRITE = stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH
+
+
 def resolve(root: str | os.PathLike, script: str) -> Path:
     """项目相对路径 → 要改的那个文件（真实路径）；不能安全地改就抛 `ScriptEditError`。"""
     root_real = Path(os.path.realpath(root))
@@ -127,6 +131,10 @@ def resolve(root: str | os.PathLike, script: str) -> Path:
         )
     if not (os.access(real, os.W_OK) and os.access(real.parent, os.W_OK | os.X_OK)):
         raise ScriptEditError(ERROR_SCRIPT_READONLY, f"没有写权限：{script}", script=script)
+    # 权限位本身也要看：以 root（或其它越过权限位的账号）运行时 `os.access` 一律说可写，用户明确
+    # 设成只读的脚本（0444）/ 文件夹（0555）照样会被改（Codex 评 #730 P2）。任一 w 位都没有 = 只读
+    if not (st.st_mode & _ANY_WRITE and real.parent.stat().st_mode & _ANY_WRITE):
+        raise ScriptEditError(ERROR_SCRIPT_READONLY, f"设成了只读：{script}", script=script)
     try:
         if os.statvfs(real.parent).f_flag & getattr(os, "ST_RDONLY", 1):
             raise ScriptEditError(ERROR_SCRIPT_READONLY, f"只读卷：{script}", script=script)

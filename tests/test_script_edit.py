@@ -504,6 +504,30 @@ def test_symlinks_hardlinks_and_readonly_dirs_are_refused(store, tmp_path):
         os.chmod(ro, 0o755)
 
 
+@pytest.mark.skipif(os.name == "nt", reason="权限位")
+def test_mode_read_only_scripts_and_folders_are_refused_even_when_access_says_writable(
+    store, monkeypatch
+):
+    """以 root 运行时 `os.access` 无视权限位、一律说可写（Codex 评 #730 P2）：用 `os.access` 恒真模拟，
+    用户设成只读的脚本（0444）与文件夹（0555）仍然拒；普通的照样放行。"""
+    monkeypatch.setattr(scriptbackup.os, "access", lambda *a, **k: True)
+    ro_file = _touch(store.root / "locked.py", "A = 1\n")
+    os.chmod(ro_file, 0o444)
+    ro_dir = store.root / "ro"
+    _touch(ro_dir / "fig.py", "A = 1\n")
+    os.chmod(ro_dir, 0o555)
+    try:
+        for script in ("locked.py", "ro/fig.py"):
+            with pytest.raises(scriptbackup.ScriptEditError) as err:
+                scriptbackup.resolve(store.root, script)
+            assert err.value.code == scriptbackup.ERROR_SCRIPT_READONLY, script
+        _touch(store.root / "open.py", "A = 1\n")
+        assert scriptbackup.resolve(store.root, "open.py").name == "open.py"
+    finally:
+        os.chmod(ro_dir, 0o755)
+        os.chmod(ro_file, 0o644)
+
+
 def test_pristine_is_kept_forever_and_only_recent_ones_are_pruned(store, monkeypatch):
     monkeypatch.setattr(scriptbackup, "KEEP_RECENT", 2)
     script = store.root / "fig.py"
