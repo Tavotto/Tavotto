@@ -4,7 +4,7 @@
 证明的都是「两处说的是同一件事」——那种事在任何一侧的单测里都各自绿：
 
 * **`#[tauri::command]` 的 ACL 漏配是静默失败。** 三处（`build.rs` 的
-  `AppManifest::commands`、`capabilities/main.json` 的 `allow-<命令名>`、
+  `AppManifest::commands`、`capabilities/` 里某个窗口的 `allow-<命令名>`、
   `main.rs` 的 `generate_handler`）少一处，invoke 会被**直接拒**，界面上是
   「点了没反应」——reveal_export 那次就是这么坏的。这里**枚举** main.rs 里所有
   `#[tauri::command]`，不是给某个命令写一条白名单：白名单挡不住下一个新命令。
@@ -26,7 +26,7 @@ import pytest
 
 from tests.support.rustsrc import (
     allow_permission,
-    capability_permissions,
+    granted_permissions,
     handler_commands,
     manifest_commands,
     tauri_commands,
@@ -64,12 +64,17 @@ def test_every_tauri_command_is_declared_in_all_three_places():
 
     三处都读结构（`tests/support/rustsrc.py`）：`build.rs` 读 `commands(&[...])` 数组的条目、
     `generate_handler![...]` 读宏的条目，注释里、无关字符串里写着命令名都不算登记（Codex #696）。
-    反过来也比：清单里有、却没有对应 `#[tauri::command]` 的名字，是删命令时漏删的残留。"""
+    反过来也比：清单里有、却没有对应 `#[tauri::command]` 的名字，是删命令时漏删的残留。
+
+    第二处是「capabilities/ 里**某个**窗口放行了它」：主窗口的在 main.json，远程实例
+    窗口的在 remote-*.json（ADR 0105）。哪个窗口该拿哪条，由 `test_desktop_remote.py`
+    按窗口逐条钉住——这里只回答「有没有一处放行」。"""
     commands = tauri_commands()
-    manifest, handler, cap = manifest_commands(), handler_commands(), capability_permissions()
+    manifest, handler, allowed = manifest_commands(), handler_commands(), granted_permissions()
     for name in commands:
         assert name in manifest, f"build.rs 的 AppManifest::commands 里没有 {name}"
-        assert allow_permission(name) in cap, f"capabilities/main.json 没放行 {name}"
+        allow = allow_permission(name)
+        assert allow in allowed, f"capabilities/ 里没有哪个窗口放行 {name}（{allow}）"
         assert name in handler, f"generate_handler 里没有 {name}"
     assert sorted(manifest) == sorted(set(manifest)) == sorted(commands), (manifest, commands)
     assert sorted(handler) == sorted(set(handler)) == sorted(commands), (handler, commands)

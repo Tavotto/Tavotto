@@ -9,12 +9,37 @@
  * 换成 HttpOnly 会话 cookie，再进界面。
  */
 
-/** Tauri 2 注入的 IPC 标记；存在即运行在 Tavotto 桌面壳里 */
 import { t } from '@/i18n'
 import { CodexShellError } from '@/lib/codexInstall'
 
-export function isDesktop(): boolean {
+/**
+ * 运行在 Tavotto 桌面壳里（Tauri 2 注入的 IPC 标记在）——不管引擎在哪台机器上。
+ * 只有「壳本身」的能力按它判：系统菜单转发、关窗询问。
+ */
+export function hasDesktopShell(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
+}
+
+/**
+ * 这个窗口是壳的「远程实例」窗口（ADR 0105）：页面来自经 `ssh -L` 转发过来的
+ * 服务器上的引擎，**引擎看到的是服务器的文件系统**。标记由壳在建窗口时注入
+ * （`src-tauri/src/main.rs` 的 `REMOTE_WINDOW_MARKER`，两侧严格同源）。
+ */
+export function isRemoteEngineWindow(): boolean {
+  return (
+    hasDesktopShell() &&
+    (window as unknown as Record<string, unknown>).__TAVOTTO_REMOTE_ENGINE__ === true
+  )
+}
+
+/**
+ * 桌面壳、**且引擎就是壳自己拉起的本机 sidecar**。本机文件类能力（原生选择器、
+ * 在文件管理器中显示、拖放真实路径、Codex 集成、应用内更新）一律按它判：
+ * 远程实例窗口里这些路径指的是服务器上的文件，交给本机的对话框或 Finder
+ * 只会错位——那里走浏览器模式的回退，壳的 ACL 也不给那个窗口这些命令。
+ */
+export function isDesktop(): boolean {
+  return hasDesktopShell() && !isRemoteEngineWindow()
 }
 
 export type BootstrapResult = 'ok' | 'failed' | 'skipped' | 'unauthenticated'
@@ -104,7 +129,8 @@ const isMenuAction = (id: string): id is MenuAction =>
 export async function onDesktopMenu(
   handler: (action: MenuAction) => void,
 ): Promise<() => void> {
-  if (!isDesktop()) return () => {}
+  // 远程实例窗口也收菜单：壳把菜单动作发给**当前聚焦**的那个窗口
+  if (!hasDesktopShell()) return () => {}
   const { listen } = await import('@tauri-apps/api/event')
   return listen<string>('tavotto:menu', (e) => {
     if (isMenuAction(e.payload)) handler(e.payload)
@@ -202,7 +228,8 @@ export type CloseDecision = 'hold' | 'close' | 'cancel'
  * ACL 会直接拒 —— 同样返回 false，退回改造前的行为，绝不抛。
  */
 export async function armDesktopCloseGuard(): Promise<boolean> {
-  if (!isDesktop()) return false
+  // 关窗询问按窗口各算各的（壳里每个窗口一道闸），远程实例窗口同样要问
+  if (!hasDesktopShell()) return false
   try {
     const { invoke } = await import('@tauri-apps/api/core')
     await invoke('arm_close_guard')
@@ -217,14 +244,14 @@ export async function armDesktopCloseGuard(): Promise<boolean> {
  * 用 `resolveDesktopCloseRequest()` 答一句，否则壳会当 webview 死了并放行关闭。
  */
 export async function onDesktopCloseRequested(handler: () => void): Promise<() => void> {
-  if (!isDesktop()) return () => {}
+  if (!hasDesktopShell()) return () => {}
   const { listen } = await import('@tauri-apps/api/event')
   return listen('tavotto:close-requested', () => handler())
 }
 
 /** 答复壳的关窗询问。浏览器模式 / 老壳返回 false（不抛）。 */
 export async function resolveDesktopCloseRequest(decision: CloseDecision): Promise<boolean> {
-  if (!isDesktop()) return false
+  if (!hasDesktopShell()) return false
   try {
     const { invoke } = await import('@tauri-apps/api/core')
     await invoke('resolve_close_request', { decision })

@@ -62,7 +62,12 @@ def test_the_close_event_name_is_one_string_on_both_sides():
     ts = DESKTOP_TS.read_text(encoding="utf-8")
     assert rs.count(f'"{CLOSE_EVENT}"') == 1, "壳里这个事件名不是恰好一处"
     assert ts.count(f"'{CLOSE_EVENT}'") == 1, "前端里这个事件名不是恰好一处"
-    assert f'emit_to("main", "{CLOSE_EVENT}"' in rs, "壳没有把它发给主窗口"
+    # 询问只发给**被拦的那个窗口**（主窗口 / 远程实例窗口各一道闸，ADR 0105）
+    hold = rs[rs.index("impl CloseHold for TauriCloseHold") :]
+    hold = hold[: hold.index("\n}\n")]
+    assert re.search(
+        rf'emit_to\(\s*self\s*\.\s*label\s*\.\s*as_str\(\)\s*,\s*"{CLOSE_EVENT}"', hold
+    ), "壳没有把询问发给被拦的那个窗口"
     assert f"listen('{CLOSE_EVENT}'" in ts, "前端没有订阅它"
 
 

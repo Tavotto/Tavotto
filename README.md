@@ -479,7 +479,14 @@ ssh -L 5089:127.0.0.1:5089 you@server
   days or until the server process restarts. For a new address while Tavotto is still
   running, run the same `tavotto --no-browser` (same `--port`) again on the server: it
   reuses the running instance and prints a fresh one, valid for five minutes.
-- Browser mode only: the desktop app cannot connect to a Tavotto on another machine.
+- **In the desktop app**, use **File → Connect to Remote Instance…** instead of a
+  browser: it opens a separate window, you paste the login address, and the server's
+  Tavotto runs there. That window has its own private cookie store, and it cannot use
+  this computer's files: the folder picker, Reveal in Finder, and dragging files in
+  all fall back to browser behaviour, because every path belongs to the server. If the
+  server's Tavotto is too old for this, the window says so; upgrade it on the server
+  with `pip install -U tavotto`. Closing the window ends the session, so reconnecting
+  needs a fresh login address.
 
 ### Try it in 30 seconds
 
