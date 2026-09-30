@@ -66,7 +66,7 @@ import { exactPanelManifest, renderKeyOf, useRenderStore } from './renderStore'
 import { useSelectionStore } from './selectionStore'
 import { askConfirm, useUiStore } from './uiStore'
 import { useViewportStore } from './viewportStore'
-import { rectOf, type Rect } from '@/lib/geometry'
+import { rectOf, visualBounds, type Rect } from '@/lib/geometry'
 import type { CropRect, PanelRotation } from '@/types/document'
 import {
   panelAspectLocked,
@@ -115,10 +115,13 @@ export const selectedObjects = (): CanvasObject[] => {
  * 模块直接调这两个 action）。
  */
 
+/** 新图要避开的东西：当前画布上所有没隐藏的对象（旋转后的包围盒） */
+const occupiedBoxes = (): Rect[] => doc().objects.filter((o) => !o.hidden).map(visualBounds)
+
 export function addPanel(info: PanelInfo, atX?: number, atY?: number) {
   // 装得下按原始尺寸（100%，等效字号即原字号），比页面大就等比缩进页面（`lib/panelPlacement`）
   const at = atX != null && atY != null ? { x: atX, y: atY } : undefined
-  const box = placePanelInPage(info.native_w_mm, info.native_h_mm, doc().page, at)
+  const box = placePanelInPage(info.native_w_mm, info.native_h_mm, doc().page, at, occupiedBoxes())
   const obj: PanelObject = {
     id: newId('p'),
     type: 'panel',
@@ -153,7 +156,7 @@ export function addPanel(info: PanelInfo, atX?: number, atY?: number) {
 export function addRuntimePanel(desc: CapturedFigureDescriptor, atX?: number, atY?: number) {
   const [w, h] = desc.size_mm
   const at = atX != null && atY != null ? { x: atX, y: atY } : undefined
-  const box = placePanelInPage(w, h, doc().page, at)
+  const box = placePanelInPage(w, h, doc().page, at, occupiedBoxes())
   const obj: PanelObject = {
     id: newId('p'),
     type: 'panel',
