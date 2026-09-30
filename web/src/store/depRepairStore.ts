@@ -13,6 +13,7 @@ import {
   setProjectUserEnvironment,
   skipDependencyPreparation,
   backendErrorText,
+  type DependencyPreparationOffer,
   type DependencyProgress,
   type DependencyRepairOffer,
   type DependencyRepairPlan,
@@ -49,7 +50,14 @@ const startedPlans = new Map<string, string | null>()
  */
 const parkedRetry = new Map<
   string,
-  { request: RepairRequest | null; authorized: RepairDisclosure | null; scriptOffer: ScriptRepairOffer | null }
+  {
+    request: RepairRequest | null
+    authorized: RepairDisclosure | null
+    scriptOffer: ScriptRepairOffer | null
+    /** 素材库脚本行发起的联合准备属于哪个脚本（进度认领 / 取消 / 装好重跑） */
+    jointScript: string
+    jointOffer: DependencyPreparationOffer | null
+  }
 >()
 const projectKey = (project: string | null): string => project ?? ''
 
@@ -74,6 +82,8 @@ interface EnvChange {
   peers: string[]
   /** 从脚本行发起的：那一行的 offer（失败留在卡片上时，切项目清空了运行记录，卡片靠它挂回来） */
   scriptOffer: ScriptRepairOffer | null
+  /** 改用成功后要重跑的门（#740 的 `rerunGated`）：授权框里改用装齐的用户环境走它 */
+  gate?: 'needs_preparation'
   outcome:
     | { ok: false; error: string }
     | {
@@ -151,6 +161,8 @@ export interface ScriptRepairOffer {
  */
 export interface RepairDisclosure {
   requirement: string
+  /** 卡片说过要装的全部包（规范串）；计划里的每一个都得在其中——没有就只认 `requirement` */
+  requirements?: string[]
   target_kind: 'tavotto_managed'
   private_python: PrivatePythonOffer | null
 }
@@ -160,9 +172,17 @@ export interface RepairDisclosure {
  * 看到的是「要下载 N MB」，计划变成「已缓存 / 不用下载」可以；看到的是「不用下载」或更小的体积，
  * 计划却要下载（或换了一份 Python），就不算同一次授权。
  */
+/** 需求串 → 包名的比较键（PEP 503：大小写与 `-_.` 不分；不含 extras / 版本） */
+export const requirementKey = (requirement: string): string =>
+  (/^[A-Za-z0-9._-]+/.exec(requirement.trim())?.[0] ?? requirement).toLowerCase().replace(/[-_.]+/g, '-')
+
 export function planMatchesDisclosure(plan: DependencyRepairPlan, seen: RepairDisclosure): boolean {
   if (plan.target_kind !== seen.target_kind || plan.modifies_user_environment) return false
   if (plan.requirement !== seen.requirement) return false
+  // 没说过全部清单 = 只披露了 `requirement` 这一个：计划里多出的任何包（脚本 / 声明在点击前多了一个、或 offer
+  // 时算不出而计划时算得出）都不在授权之内，停在确认页。按包名比（extras / 版本写法不算另一个包）
+  const allowed = new Set((seen.requirements ?? [seen.requirement]).map(requirementKey))
+  if ((plan.requirements ?? [plan.requirement]).some((r) => !allowed.has(requirementKey(r)))) return false
   const now = plan.private_python ?? null
   if (!now) return true
   const was = seen.private_python
@@ -292,11 +312,18 @@ interface DepRepairState {
   jointPlan: JointDependencyRepairPlan | null
   /** 计划绑定不了（blocked / 什么都不缺）时后端交回的计划——界面按 blocked 的理由说下一步 */
   jointBlocked: JointDependencyPlan | null
-  /** 一步：绑定计划 → 执行（只发 plan_id）。目标由用户在框里选；脚本来自 envStore 里的载荷。 */
-  prepare: (target: 'project_venv' | 'tavotto_managed') => Promise<void>
+  /** 最近一次 `prepare` 是为哪个脚本发起的（素材库脚本行据此认领进度 / 失败；`reset` / 切项目清空） */
+  jointScript: string
+  /** 最近一次 `prepare` 用的那份联合计划载荷（脚本行渲染进度 / 失败 / 重试要它；切项目随作业停放、切回放回） */
+  jointOffer: DependencyPreparationOffer | null
+  /**
+   * 一步：绑定计划 → 执行（只发 plan_id）。目标由用户在框里选；脚本来自 envStore 里的载荷——素材库脚本行
+   * （那里没有框、载荷住在那次运行的错误里）把载荷作为 `offerArg` 直接交进来。
+   */
+  prepare: (target: 'project_venv' | 'tavotto_managed', offerArg?: DependencyPreparationOffer) => Promise<void>
   cancelPreparation: () => Promise<void>
   /** 「不准备，直接运行」：明确的 skip（这道门一直问到有答案），然后关框并重排那次失败的渲染 */
-  skipPreparation: () => Promise<void>
+  skipPreparation: (offerArg?: DependencyPreparationOffer) => Promise<void>
 }
 
 /** 预读的那份计划：`key` 认是哪个脚本的哪个包；`pending` 期间卡片的主按钮等它 */
@@ -327,6 +354,8 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
   pinned: null,
   jointPlan: null,
   jointBlocked: null,
+  jointScript: '',
+  jointOffer: null,
   request: null,
   authorized: null,
   scriptOffer: null,
@@ -335,16 +364,29 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
   rebuilding: {},
   rebuildRunningFor: (project) => !!get().rebuilding[projectKey(project)],
 
-  prepare: async (target) => {
-    const offer = useEnvStore.getState().dependencyPreparation
+  prepare: async (target, offerArg) => {
+    const offer = offerArg ?? useEnvStore.getState().dependencyPreparation
     if (!offer || get().busy) return
     const epoch = projectEpoch
     let planId = ''
-    set({ busy: true, errorCode: '', errorText: '', jointBlocked: null })
+    // 素材库脚本行发起的才记归属（切项目停放 / 认领进度 / 装好重跑）；授权框发起的归框，不往脚本行上重跑
+    set({ busy: true, errorCode: '', errorText: '', jointBlocked: null, jointScript: offerArg ? offer.script : '', jointOffer: offer })
     try {
       const { plan } = await createJointDependencyPlan({ script: offer.script, target })
       // 绑定回来时已经切了项目：这是 A 的计划，不在 B 上执行（绑定不装，丢掉即可）
       if (epoch !== projectEpoch) return
+      // 绑定回来的计划超出了用户看到的（offer 里那份）：不执行，按此刻的输入重新披露——脚本行重跑一次拿新的 offer，
+      // 授权框关掉后重排那次失败的渲染（新的框带新的清单）。计划只是记录、不装，丢掉即可
+      const seen = new Set(offer.plan.requirements.map(requirementKey))
+      if (plan.requirements.some((r) => !seen.has(requirementKey(r)))) {
+        set({ busy: false, jointPlan: null, jointScript: '', jointOffer: null })
+        if (offerArg) void useScriptRunStore.getState().run(offer.script)
+        else {
+          useEnvStore.getState().dismissDependencyPreparation()
+          useRenderStore.getState().retryEnvironmentFailures()
+        }
+        return
+      }
       planId = plan.plan_id
       startedPlans.set(planId, currentProjectId())
       // 乐观地先进 preparing：SSE 的第一条要等后端线程起来
@@ -384,8 +426,8 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
     }
   },
 
-  skipPreparation: async () => {
-    const offer = useEnvStore.getState().dependencyPreparation
+  skipPreparation: async (offerArg) => {
+    const offer = offerArg ?? useEnvStore.getState().dependencyPreparation
     if (!offer || get().busy) return
     const epoch = projectEpoch
     set({ busy: true })
@@ -491,6 +533,8 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
       set({
         authorized: {
           requirement: plan.requirement,
+          // 用户在确认页看到的整份清单（重试沿用它：之后计划再多出的包同样要回到确认页）
+          ...(plan.requirements && plan.requirements.length > 1 ? { requirements: plan.requirements } : {}),
           target_kind: 'tavotto_managed',
           private_python: plan.private_python ?? null,
         },
@@ -525,21 +569,37 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
 
   adoptUserEnvironment: async (id, script) => {
     if (get().busy) return
+    const owner = currentProjectId()
     const epoch = projectEpoch
     set({ busy: true, errorCode: '', errorText: '' })
     try {
       const res = await setProjectUserEnvironment(id, script)
-      // 采用记在 A 上（后端按请求那一刻的 pj）；`res.project` 是 A 的环境状态，不许写进 B 的 env，
-      // 也不许关 B 的框、重排 B 的渲染
-      if (epoch !== projectEpoch) return
-      const envStore = useEnvStore.getState()
-      const env = envStore.env
-      if (env) useEnvStore.setState({ env: { ...env, project: res.project } })
-      else await envStore.refresh()
-      set({ busy: false })
-      envStore.dismissDependencyPreparation()
-      useRenderStore.getState().retryEnvironmentFailures()
-      useScriptRunStore.getState().rerunGated('needs_preparation', script)
+      // 采用记在 A 上（后端按请求那一刻的 pj）；`res.project` 是 A 的环境状态，不许写进 B 的 env，也不许关 B 的框、
+      // 重排 B 的渲染——结局交给所属项目（与改用已有解释器同一条 `settleEnvChange`）：开着就当场落地，切走了就停放，
+      // 回来时按此刻重新读环境、核实生效了才重跑（Codex #760：改用成功后，发起的脚本行也要重跑）
+      const switched = epoch !== projectEpoch
+      if (!switched) useEnvStore.getState().dismissDependencyPreparation()
+      await settleEnvChange(
+        owner,
+        {
+          kind: 'adopt',
+          module: '',
+          script,
+          peers: [],
+          scriptOffer: null,
+          gate: 'needs_preparation',
+          outcome: {
+            ok: true,
+            expectPython: res.project?.python ?? '',
+            apply: () => {
+              const env = useEnvStore.getState().env
+              if (env) useEnvStore.setState({ env: { ...env, project: res.project } })
+              else void useEnvStore.getState().refresh()
+            },
+          },
+        },
+        switched,
+      )
     } catch (e) {
       if (epoch !== projectEpoch) return
       const { code, text } = failure(e)
@@ -750,6 +810,8 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
       pinned: null,
       jointPlan: null,
       jointBlocked: null,
+      jointScript: '',
+      jointOffer: null,
       request: null,
       authorized: null,
       scriptOffer: null,
@@ -758,14 +820,14 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
   clear: () => {
     // 换代**排在清空之前**：清空只处置已经落地的那份，换代处置还在飞的那些
     projectEpoch += 1
-    const { progress, parked, request, authorized, scriptOffer } = get()
+    const { progress, parked, request, authorized, scriptOffer, jointScript, jointOffer } = get()
     const next = { ...parked }
     // 此刻显示的作业收进它**所属**项目那格（`resetForNewProject` 跑的时候 currentProjectId 已经是新项目，
     // 所属项目只能问作业自己）。认不出所属的（不是本标签页起的）不收——本来也不该显示
     if (progress && startedPlans.has(progress.plan_id)) {
       const owner = projectKey(startedPlans.get(progress.plan_id) ?? null)
       next[owner] = progress
-      parkedRetry.set(owner, { request, authorized, scriptOffer })
+      parkedRetry.set(owner, { request, authorized, scriptOffer, jointScript, jointOffer })
     }
     // 新项目上次切走时收着的作业放回来：还在跑就接着显示，切走期间结束了就把结局交出来（不静默丢）
     const here = projectKey(currentProjectId())
@@ -778,6 +840,8 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
       plan: null,
       jointPlan: null,
       jointBlocked: null,
+      jointScript: retryCtx?.jointScript ?? '',
+      jointOffer: retryCtx?.jointOffer ?? null,
       pinned: null,
       managedPreviews: {},
       request: retryCtx?.request ?? null,
@@ -799,10 +863,14 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
       // 回到所属项目：失败的只说那一句、不重跑；成功的按此刻重新读一次环境、核实生效了才重跑
       void applyEnvChange(here === '' ? null : here, pend, true)
     }
-    if (back?.state === 'done' && retryCtx?.scriptOffer) {
-      const script = back.script ?? retryCtx.request?.script
+    // 授权框发起的联合准备（不是脚本行）切走再切回：`envStore` 已随切项目清空，框里的进度 / 取消 / 失败结局没有载荷可挂，
+    // 用停放的那份载荷把框重新打开（同一个框、同一份进度）；脚本行发起的由行按 `jointOffer` 自己渲染
+    if (back && back.flow === 'joint' && back.state !== 'done' && retryCtx?.jointOffer && !retryCtx.jointScript)
+      useEnvStore.getState().requestDependencyPreparation(retryCtx.jointOffer, currentProjectId())
+    if (back?.state === 'done' && (retryCtx?.scriptOffer || retryCtx?.jointScript)) {
+      const script = back.script ?? retryCtx.request?.script ?? retryCtx.jointScript
       // 同样缺这个包的其它行一起补跑（与没切走时 `rerunSameModule` 同一件事；那几行的运行记录也随切项目清掉了）
-      rerunSameModule(undefined, script, retryCtx.scriptOffer.peers)
+      rerunSameModule(undefined, script, retryCtx.scriptOffer?.peers)
       if (rerunScriptAfterRepair(script, true)) get().reset()
     }
   },
@@ -965,6 +1033,7 @@ async function applyEnvChange(owner: string | null, change: EnvChange, verify: b
   else store.setState({ busy: false })
   useRenderStore.getState().retryEnvironmentFailures()
   rerunAfterEnvironmentChange(change.script, change.module, change.peers, verify)
+  if (change.gate) useScriptRunStore.getState().rerunGated(change.gate, change.script)
 }
 
 /** 脚本行发起时记下同样缺这个包的其它脚本（重试时沿用第一次记下的：那时运行记录可能已随切项目清掉） */

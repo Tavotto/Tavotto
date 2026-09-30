@@ -288,6 +288,27 @@ describe('DependencyPrepareDialog', () => {
     )
   })
 
+  it('安装阶段的进度行说真正在装的整组包；「详情」第一段是「将安装：…」', async () => {
+    planMock.mockResolvedValue({ plan: { plan_id: 'jp10', requirements: ['six', 'tabulate'] } as never })
+    prepareMock.mockResolvedValue({ started: true } as never)
+    await render(<DependencyPrepareDialog />)
+    await act(async () => useEnvStore.getState().requestDependencyPreparation(offer()))
+    expect(document.querySelector('[data-dependency-will-install]')!.textContent).toBe(
+      en('repairWillInstall', { requirement: listJoin(['six==1.17.0', 'tabulate[widechars]==0.9.0']) }),
+    )
+    await act(async () => button(en('oneClickRepair'))!.click())
+    await act(async () => {})
+    await act(async () =>
+      useDepRepairStore.getState().onProgress({
+        plan_id: 'jp10', state: 'installing', log: '', error: null, code: '', flow: 'joint',
+        requirements: ['six', 'tabulate'],
+      } as never),
+    )
+    expect(document.querySelector('[data-repair-line]')!.textContent).toBe(
+      `${en('repairInstalling', { module: listJoin(['six', 'tabulate']) })}${en('repairStep', { n: 3, total: 4 })}`,
+    )
+  })
+
   it('干净机器、什么包都不缺（requirements 为空）：那一句说准备环境本身，不写「还缺 」（Codex #742）', async () => {
     const pp = {
       id: 'pbs', version: '3.13.15', target: 'darwin-arm64', source_host: 'github.com',

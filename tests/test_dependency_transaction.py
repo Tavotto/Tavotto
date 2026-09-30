@@ -792,6 +792,101 @@ class TestJointTransaction:
         assert _importable(managedenv.python_of(project), ALPHA[1])
         assert deprepair.cancel_status(plan.plan_id)["reason"] == "committed"
 
+    def test_single_package_repair_on_a_fresh_generation_installs_everything_the_script_needs(
+        self, tmp_path, house, offline_managed_env
+    ):
+        """干净机器实测的缺陷（2026-09-29）：脚本同时 import pandas 与 openpyxl，内置 runtime 有前者、没有后者。
+        点「一键修复」只装 openpyxl，新一代是空 venv，装完自动重跑撞跑前门「缺 pandas」。这里 beta 扮 pandas
+        （选中的解释器里已有）、alpha 扮 openpyxl（缺的那个）：计划与安装都得包含两者，装完跑前门判 nothing_needed。"""
+        project = _project(
+            tmp_path,
+            requirements=f"{ALPHA[0]}\n{BETA[0]}\n",
+            script=f"import {ALPHA[1]}\nimport {BETA[1]}\n",
+        )
+        venv = real_venv(project)
+        vpy = str(venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python"))
+        subprocess.run(
+            [vpy, "-m", "pip", "install", "-q", BETA[0]],
+            check=True,
+            capture_output=True,
+            timeout=300,
+        )
+        selected, source = engine_pool.resolve_worker_python(str(project), script="figure.py")
+        assert source == engine_pool.SOURCE_PROJECT_VENV and _importable(selected, BETA[1])
+        plan = deprepair.create_plan(
+            project, "figure.py", ALPHA[1], target_kind=deprepair.TARGET_MANAGED
+        )
+        assert plan.creates_environment
+        assert set(plan.requirements) == {ALPHA[0], BETA[0]}
+        payload = plan.to_payload()
+        assert set(payload["requirements"]) == {ALPHA[0], BETA[0]}
+        assert payload["joint"] is True and payload["network_required"] is True
+        deprepair.install_async(plan.plan_id)
+        rec = wait_for(plan.plan_id)
+        assert rec["state"] == deprepair.STATE_DONE, rec
+        # 进度记录带着真正装的全部包：进度行按它说
+        assert set(rec["requirements"]) == {ALPHA[0], BETA[0]}
+        mpy = managedenv.python_of(project)
+        assert _importable(mpy, ALPHA[1]) and _importable(mpy, BETA[1])
+        # 装完之后跑前门：此刻选中的就是新一代，什么都不缺
+        with pytest.raises(deprepair.RepairError) as err:
+            deprepair.create_joint_plan(project, "figure.py")
+        assert err.value.code == deprepair.ERROR_PLAN_BLOCKED
+        assert err.value.extra["joint"]["status"] == "nothing_needed"
+
+    def test_offer_on_the_failure_path_starts_no_interpreter(
+        self, tmp_path, house, offline_managed_env, monkeypatch
+    ):
+        """渲染失败的响应路径上构造 offer 不起任何解释器（细则「offer 不起任何解释器」）：联合求解只在形成计划时做。
+        计数的主语是这次 `offer()` 调用期间的子进程启动与事实探测。"""
+        project = _project(
+            tmp_path,
+            requirements=f"{ALPHA[0]}\n{BETA[0]}\n",
+            script=f"import {ALPHA[1]}\nimport {BETA[1]}\n",
+        )
+        depplan.reset_cache()
+        spawned = []
+        real_init = subprocess.Popen.__init__
+
+        def counting(self, *a, **kw):
+            spawned.append(a[0] if a else kw.get("args"))
+            return real_init(self, *a, **kw)
+
+        monkeypatch.setattr(subprocess.Popen, "__init__", counting)
+        facts_calls = []
+        real_facts = depplan.target_facts
+        monkeypatch.setattr(
+            depplan, "target_facts", lambda *a, **kw: facts_calls.append(a) or real_facts(*a, **kw)
+        )
+        offer = deprepair.offer(project, "figure.py", ALPHA[1])
+        assert any(t["kind"] == deprepair.TARGET_MANAGED for t in offer["targets"])
+        assert spawned == [] and facts_calls == []
+
+    def test_single_package_repair_on_an_existing_generation_adds_only_the_missing_one(
+        self, tmp_path, house, offline_managed_env
+    ):
+        """已有一代时行为不变：账上的包随 ledger 带进新一代，计划只列缺的那一个。"""
+        project = _project(
+            tmp_path,
+            requirements=f"{ALPHA[0]}\n{GAMMA[0]}\n",
+            script=f"import {ALPHA[1]}\n",
+        )
+        assert _prepare(project)["state"] == deprepair.STATE_DONE
+        (project / "figure.py").write_text(
+            f"import {ALPHA[1]}\nimport {GAMMA[1]}\n", encoding="utf-8"
+        )
+        plan = deprepair.create_plan(
+            project, "figure.py", GAMMA[1], target_kind=deprepair.TARGET_MANAGED
+        )
+        assert not plan.creates_environment and plan.widened is None
+        assert [deprepair._name_of(r) for r in plan.requirements] == [GAMMA[1]]
+        assert plan.to_payload()["joint"] is False
+        deprepair.install_async(plan.plan_id)
+        rec = wait_for(plan.plan_id)
+        assert rec["state"] == deprepair.STATE_DONE, rec
+        mpy = managedenv.python_of(project)
+        assert _importable(mpy, ALPHA[1]) and _importable(mpy, GAMMA[1])
+
     def test_rebuild_twice_never_touches_the_active_directory(
         self, tmp_path, house, offline_managed_env, monkeypatch
     ):

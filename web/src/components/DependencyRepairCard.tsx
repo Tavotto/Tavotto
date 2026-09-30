@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { i18n, t as translate } from '@/i18n'
 import {
   privatePythonOrigin,
+  type DependencyProgress,
   type DependencyRepairOffer,
   type DependencyTarget,
   type InterpreterPin,
@@ -10,6 +11,7 @@ import {
   type SystemInterpreterRejection,
 } from '@/lib/api'
 import { currentProjectId } from '@/lib/session'
+import { listJoin } from '@/i18n/format'
 import { isRepairRunning, managedPreviewKey, useDepRepairStore } from '@/store/depRepairStore'
 import { useEnvStore } from '@/store/envStore'
 import { useUiStore } from '@/store/uiStore'
@@ -43,6 +45,42 @@ import { Details, Summary } from '@/components/ui/Details'
  */
 const en = (key: string, values?: Record<string, unknown>) =>
   translate(`engine.${key}`, { ns: 'errors', ...(values ?? {}) })
+
+/** 需求串 → 包名（`tabulate[widechars]==0.9.0` → `tabulate`）：句子里只说装哪些包，完整形态在「详情」里 */
+export function requirementName(requirement: string): string {
+  const m = /^[A-Za-z0-9._-]+/.exec(requirement.trim())
+  return m ? m[0] : requirement
+}
+
+/**
+ * 「要装哪些包」的一句话写法（卡片那一句、进度行、授权框三处共用）：一个 = 名字；两个 = 「a 和 b」；更多 =
+ * 「a 等 N 个包」。**说的必须是计划里真正要装的全部**，不是用户点的那一个
+ */
+export function packagesPhrase(requirements: string[]): string {
+  const names = requirements.map(requirementName)
+  if (names.length <= 2) return listJoin(names)
+  return en('packagesMany', { first: names[0], count: names.length })
+}
+
+/** 进度行里「正在安装 X…」的 X：进度记录带着全部要装的包（多于一个）就说全部，否则是用户点的那一个 */
+export function progressPackages(progress: DependencyProgress, module: string): string {
+  return progress.requirements && progress.requirements.length > 1
+    ? packagesPhrase(progress.requirements)
+    : progress.distribution || module
+}
+
+/**
+ * 联合准备 / 跑前授权框 / 脚本行「要先准备」的进度那一句：安装阶段说出真正在装的包（与单包修复的进度行同一句
+ * `repairInstalling`），其余阶段按 `stateText`。`en` 是调用方的 `engine.*` 翻译函数
+ */
+export function jointProgressText(
+  progress: DependencyProgress,
+  stateText: (state: string) => string,
+): string {
+  if (progress.state === 'installing' && progress.requirements?.length)
+    return en('repairInstalling', { module: packagesPhrase(progress.requirements) })
+  return stateText(progress.state)
+}
 
 /** 安装状态 → 一句话（前端**只按 state 换文案**，不解析日志） */
 const STATE_KEY: Record<string, string> = {
@@ -116,8 +154,9 @@ export function DependencyRepairCard({
     !systemReady &&
     !pinnedSince &&
     !offer.pinned &&
-    managedTarget?.available === null &&
-    !managedTarget.private_python
+    // 受管目标要新建第一代：要装的全部包（不止缺的这一个）只有形成计划时才算得出，先预读它再写那一句话；
+    // 基础解释器还在后台探时同样要读（要不要下载、多大）。只披露私有 Python 而没有这份清单时也要读
+    (managedTarget?.available === null || (!!managedTarget?.creates_environment && managedTarget.available !== false))
   // 这张卡自己那一格（按脚本 + 模块）：同时挂着的另一张卡预读别的包不会盖掉它
   const preview = managedPreviews[managedPreviewKey(previewArgs)] ?? null
   useEffect(() => {
@@ -142,6 +181,12 @@ export function DependencyRepairCard({
     )
   // 点之前说出口的私有 Python（offer 上挂着的，或预读的计划里的）：一次授权按它比对计划
   const disclosed = managedTarget?.private_python ?? preview?.plan?.private_python ?? null
+  // 这次授权要装的全部包：预读的计划里说的（offer 在失败响应路径上不起解释器、算不出）> 只有缺的这一个
+  const allRequirements = [
+    ...(preview?.plan?.requirements ?? []),
+  ]
+  const requirementList =
+    allRequirements.length > 0 ? allRequirements : offer.requirement ? [offer.requirement.requirement] : []
   const act = (tg: DependencyTarget) =>
     tg.kind === 'system_interpreter'
       ? // 采用已有的解释器不经 plan：没有要安装的东西可以「计划」
@@ -152,6 +197,7 @@ export function DependencyRepairCard({
             { module, script, target: 'tavotto_managed' },
             {
               requirement: offer.requirement.requirement,
+              ...(requirementList.length > 1 ? { requirements: requirementList } : {}),
               target_kind: 'tavotto_managed',
               private_python: disclosed,
             },
@@ -210,7 +256,9 @@ export function DependencyRepairCard({
             <p className="mt-1 text-xs leading-relaxed text-warn">{en('repairModifiesEnv')}</p>
           )}
           <p className="mt-1 text-xs leading-relaxed text-ink-3">
-            {en('repairWillInstall', { requirement: plan.requirement })}
+            {en('repairWillInstall', {
+              requirement: plan.requirements?.length ? listJoin(plan.requirements) : plan.requirement,
+            })}
             {plan.network_required ? ` · ${en('repairNeedsNetwork')}` : ''}
           </p>
           {plan.private_python && <PrivatePythonDisclosure offer={plan.private_python} />}
@@ -268,7 +316,11 @@ export function DependencyRepairCard({
   const lead = primary ?? (targets[0]?.kind === 'project_venv' ? targets[0] : null)
   const managedFacts = (
     <>
-      <p>{en('repairWillInstall', { requirement: offer.requirement?.requirement ?? pkg })}</p>
+      <p>
+        {en('repairWillInstall', {
+          requirement: requirementList.length ? listJoin(requirementList) : (offer.requirement?.requirement ?? pkg),
+        })}
+      </p>
       <p data-one-click-cost {...(disclosed ? { 'data-dependency-private-python': '' } : {})}>
         {checking ? en('oneClickChecking') : downloadFact(disclosed)}
       </p>
@@ -339,7 +391,7 @@ export function DependencyRepairCard({
         ) : (
           <p className="text-sm leading-relaxed text-ink" data-one-click-sentence>
             {managed
-              ? oneClickSentence(pkg, checking ? null : disclosed)
+              ? oneClickSentence(requirementList.length > 1 ? packagesPhrase(requirementList) : pkg, checking ? null : disclosed)
               : en('oneClickSentenceSystem', { module: pkg })}
           </p>
         )}
@@ -786,7 +838,7 @@ function RepairProgress({
   return (
     <div className="flex flex-col gap-2.5 rounded-md bg-surface p-3 shadow-card">
       {!failed && !cancelled ? (
-        <RepairProgressLine progress={progress} text={en(key, { module: progress.distribution || module })} />
+        <RepairProgressLine progress={progress} text={en(key, { module: progressPackages(progress, module) })} />
       ) : (
       <div>
         {failed ? (
@@ -795,7 +847,7 @@ function RepairProgress({
             {repairShortMessage(progress.code)}
           </p>
         ) : (
-          <h3 className="type-section">{en(key, { module: progress.distribution || module })}</h3>
+          <h3 className="type-section">{en(key, { module: progressPackages(progress, module) })}</h3>
         )}
         {cancelled && (
           <p className="mt-1 text-xs leading-relaxed text-ink-2">

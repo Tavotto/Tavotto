@@ -8,10 +8,18 @@ import { Details, Summary } from './ui/Details'
 import { Dialog } from './ui/Dialog'
 import { Radio } from './ui/Radio'
 import { userEnvironmentName } from '@/lib/userEnvironmentText'
+import type { DependencyPreparationOffer, PrivatePythonOffer } from '@/lib/api'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { listJoin } from '@/i18n/format'
 import { RepairProgressLine, RepairStageList } from './RepairProgressLine'
-import { downloadFact, oneClickEnvironmentSentence, oneClickSentence, repairShortMessage } from './DependencyRepairCard'
+import {
+  downloadFact,
+  jointProgressText,
+  oneClickEnvironmentSentence,
+  oneClickSentence,
+  packagesPhrase,
+  repairShortMessage,
+} from './DependencyRepairCard'
 
 /**
  * 跑前的那一次授权（U04，ADR 0061 §六）：后端起第一个 worker 之前看一眼脚本开跑要的第三方包
@@ -48,7 +56,7 @@ const TARGET_HINT: Record<Target, string> = {
   tavotto_managed: 'engine.dependencyTargetHint_tavotto_managed',
   project_venv: 'engine.dependencyTargetHint_project_venv',
 }
-const STATE_TEXT: Record<string, string> = {
+export const STATE_TEXT: Record<string, string> = {
   preparing: 'engine.dependencyPrepareState_preparing',
   downloading_python: 'engine.dependencyPrepareState_downloading_python',
   creating_env: 'engine.dependencyPrepareState_creating_env',
@@ -60,6 +68,23 @@ const BLOCKED_TEXT: Record<string, string> = {
   dependency_conflict: 'engine.dependencyBlocked_dependency_conflict',
   dependency_hashes_incomplete: 'engine.dependencyBlocked_dependency_hashes_incomplete',
   dependency_target_unavailable: 'engine.dependencyBlocked_dependency_target_unavailable',
+}
+
+/**
+ * 一键修复的形态按**载荷**定（授权框与素材库脚本行共用这一份判据）：没有装齐的用户环境、后端默认装进 Tavotto
+ * 自己的环境、这个环境又能建——授权只有一句人话和一个主按钮。`privatePython` 是默认目标（受管环境）上要不要先准备
+ * 私有 Python 的披露。不满足时脚本行退回打开授权框（那里有目标 / 用户环境的选择）
+ */
+export function oneClickShape(offer: DependencyPreparationOffer): {
+  simple: boolean
+  privatePython: PrivatePythonOffer | null
+} {
+  const complete = (offer.user_environments ?? []).filter((e) => e.satisfies)
+  const managed = offer.targets.find((o) => o.kind === 'tavotto_managed')
+  return {
+    simple: complete.length === 0 && offer.target_kind === 'tavotto_managed' && managed?.available !== false,
+    privatePython: managed?.private_python ?? offer.private_python ?? null,
+  }
 }
 
 export function DependencyPrepareDialog() {
@@ -100,15 +125,14 @@ export function DependencyPrepareDialog() {
   const failing = !running && !!errorLine
   const targets = offer.targets.filter((o) => o.kind !== 'system_interpreter')
   const chosen = targets.find((o) => o.kind === target)
-  const managed = targets.find((o) => o.kind === 'tavotto_managed')
   // 一键修复的形态按**载荷**定（不按此刻的单选）：在「高级」里换了目标，版面不跳
-  const simple = complete.length === 0 && offer.target_kind === 'tavotto_managed' && managed?.available !== false
+  const { simple } = oneClickShape(offer)
   const oneClick = simple && !envChosen && target === 'tavotto_managed'
   // 私有 Python 的披露跟**此刻选中的目标**走（Codex #742）：装进项目 venv / 改用用户环境都不下载、不供应 Python，
   // 标题与「详情」都不许替那条路说「要下载」。载荷顶层那份（干净机器）同样只属于受管目标
   const privatePython =
     !envChosen && chosen?.kind === 'tavotto_managed' ? (chosen.private_python ?? offer.private_python ?? null) : null
-  const packages = listJoin(plan.requirements.map(requirementName))
+  const packages = packagesPhrase(plan.requirements)
   // 「详情」里「要下载什么」那一条：只准备环境（没有要装的包）时不说「装包需要联网」
   const cost = downloadFact(privatePython, { packages: plan.requirements.length > 0 })
   const targetChoice = (
@@ -189,7 +213,12 @@ export function DependencyPrepareDialog() {
   )
   const details = (
     <>
-      {/* 要装的：项目声明的完整形态（extras / 版本），用户自己的名字，不翻译 */}
+      {/* 「详情」第一段：将安装的全部包；下面是项目声明的完整形态（extras / 版本），用户自己的名字，不翻译 */}
+      {plan.requirements.length > 0 && (
+        <p className="mb-1 text-xs leading-relaxed text-ink-2" data-dependency-will-install>
+          {t('engine.repairWillInstall', { requirement: listJoin(plan.requirements) })}
+        </p>
+      )}
       <ul className="flex flex-col gap-0.5 font-mono text-xs text-ink-2" data-dependency-requirements>
         {plan.requirements.map((req) => (
           <li key={req}>{req}</li>
@@ -347,7 +376,7 @@ export function DependencyPrepareDialog() {
         <div data-dependency-state={progress.state}>
           <RepairProgressLine
             progress={progress}
-            text={en(STATE_TEXT[progress.state] ?? 'engine.dependencyPrepareState_preparing')}
+            text={jointProgressText(progress, (state) => en(STATE_TEXT[state] ?? 'engine.dependencyPrepareState_preparing'))}
           />
           {/* 与修复卡同一套：默认只有那一行，完整的阶段列表、换用 PyPI 镜像的说明（进度记录顶层的 `pypi_mirror`，
               #743 的联合准备两条路与单包修复同一个字段；没有这个键时一个字都不说）、日志都折叠在「详情」里 */}
@@ -376,10 +405,4 @@ export function DependencyPrepareDialog() {
       )}
     </Dialog>
   )
-}
-
-/** 需求串 → 包名（`tabulate[widechars]==0.9.0` → `tabulate`）：一键修复那句人话只说装哪些包，完整形态在「高级」里 */
-function requirementName(requirement: string): string {
-  const m = /^[A-Za-z0-9._-]+/.exec(requirement.trim())
-  return m ? m[0] : requirement
 }

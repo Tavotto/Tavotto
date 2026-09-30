@@ -3266,6 +3266,8 @@ export interface InterpreterPin {
 /** 后端发出来的安装计划。`plan_id` 是这次授权的凭据，不可猜、有有效期。 */
 export interface DependencyRepairPlan extends DependencyRequirementInfo {
   plan_id: string
+  /** 这次授权真正要装的全部包（规范串）：新建第一代时多于用户点的那一个；老后端没有这个字段 */
+  requirements?: string[]
   target_kind: 'project_venv' | 'tavotto_managed'
   python: string
   creates_environment: boolean

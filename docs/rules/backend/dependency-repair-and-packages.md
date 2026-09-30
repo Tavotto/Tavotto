@@ -279,7 +279,7 @@
   `legacy` 一代，第一次按代时登记进 `generations`。**目录名永远不撞在册的代**（`managedenv.fresh_generation`：同一份
   身份再来一次——重建两次同一份账——而那一代还 active / 旧代还有人用，就 `g<身份>-2`、`-3`……；`register_generation`
   拒绝重新登记 active 或 `ready` 的代），身份字段照记（Codex #461 P1：否则 active 目录会被当成「上次建到一半的」删掉）。
-- **四条路一个事务**（`deprepair._run_generation`）：联合准备 `prepare()`、单包修复到受管环境 `install()`（delta 一条）、
+- **四条路一个事务**（`deprepair._run_generation`）：联合准备 `prepare()`、单包修复到受管环境 `install()`（delta 一条；**新建第一代（没有 active 代）时是脚本开跑所需的全部第三方依赖**：`create_plan` 复用联合求解存进 `RepairPlan.widened`，ADR 0061 §五 2026-09-30 修订，看护 `test_single_package_repair_on_a_fresh_generation_installs_everything_the_script_needs`）、
   重建 `rebuild_managed()`（delta 为空 = 按账重建）、包管理里环境还不在时的首装。没有第二套建 / 装 / 验代码；包管理对
   **已有** active 那一代的原地 install / update / uninstall 不变。
 - **锁仍是 `envlease` 那一张表**：换代拿合成 key `tavotto_managed:<项目指纹>` + active 那一代的解释器，

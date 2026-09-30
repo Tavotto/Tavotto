@@ -201,6 +201,19 @@ class RepairError(RuntimeError):
 # 计划
 # ---------------------------------------------------------------------------
 @dataclasses.dataclass(frozen=True)
+class _Widened:
+    """单包修复要新建一代时的联合求解结果（字段与 `JointRepairPlan` 里同名字段同义）。"""
+
+    requirements: tuple[str, ...]
+    constraints: tuple[str, ...]
+    hashes: dict
+    needed_imports: tuple[str, ...]
+    record: tuple[dict, ...]
+    groups: tuple[str, ...]
+    inputs_digest: str
+
+
+@dataclasses.dataclass(frozen=True)
 class RepairPlan:
     """一次修复的完整描述——**执行端只认它，不读请求体里的任何别的字段**。
 
@@ -226,10 +239,22 @@ class RepairPlan:
     #: 的载荷（版本 / 目标 / `download_bytes`），没有基础解释器又提供这条路时才有值。
     #: 界面必须把 `download_bytes` 说出口；执行端据它决定要不要在建 venv 之前先供应。
     private_python: dict | None = None
+    #: 受管目标要**新建一代**时，这一代装的是脚本开跑所需的全部第三方依赖（ADR 0061 §五 2026-09-30 修订）：
+    #: 联合计划的求解结果，而不只是缺的那一个包。原地往已有一代加包 / 项目 venv 目标为 None（行为不变）。
+    widened: "_Widened | None" = None
+
+    @property
+    def requirements(self) -> tuple[str, ...]:
+        """这份授权要装的全部需求（规范串）：单包 = 只有那一条；联合 = 整个 delta（不含 adapter）。"""
+        if self.widened is not None:
+            return self.widened.requirements
+        return (self.requirement.requirement(),)
 
     def to_payload(self) -> dict:
         """交给前端的形态。**不出绝对路径**（项目内的出项目相对）。"""
         return {
+            "requirements": list(self.requirements),
+            "joint": self.widened is not None and len(self.widened.requirements) > 1,
             "plan_id": self.plan_id,
             "target_kind": self.target_kind,
             "python": projectenv.project_relative(self.project, self.python)
@@ -500,6 +525,8 @@ def offer(project: str | Path, script: str, module: str, project_env: dict | Non
     private = privatepython.offer_payload() if available is False else None
     if private is not None:
         available = True
+    # 这一代要装的全部包**不在 offer 里算**：联合求解要量解释器事实（起子进程），而 offer 在渲染失败的响应路径上
+    # 不起任何解释器。要装什么由形成计划（`create_plan`）时算、随计划载荷说出口，卡片按预读的计划写那一句话
     out["targets"].append(
         {
             "kind": TARGET_MANAGED,
@@ -583,6 +610,7 @@ def create_plan(
     python = ""
     creates = False
     private: dict | None = None
+    widened: _Widened | None = None
     if target_kind == TARGET_PROJECT_VENV:
         python = _pick_project_venv(root, script, module)
         health = projectenv.probe_environment(python, module)
@@ -600,6 +628,11 @@ def create_plan(
         # 受管目标**每一次**都建新的一代（U04 §五），有没有 active 代都要基础解释器：已有环境的机器上
         # 系统 Python 被删掉之后，单包修复同样要走私有 Python（Codex #464 第二轮 P2）
         private = _private_python_offer()
+        if creates:
+            # 从空 venv 起的第一代：脚本开跑要的**全部**第三方依赖一次装齐，不只是缺的这一个——
+            # 新一代没有内置 runtime 里的 pandas 等，只装一个包，自动重跑必然又撞跑前门
+            # （2026-09-29 干净 macOS 虚拟机实测：装完 openpyxl 后卡在「缺 pandas」）
+            widened = _widen_for_fresh_generation(root, script, requirement)
 
     key = _env_key(target_kind, python, root)
     with _lock:
@@ -621,17 +654,95 @@ def create_plan(
         created_at=now,
         expires_at=now + PLAN_TTL_S,
         private_python=private,
+        widened=widened,
     )
     _prune_plans()
     with _lock:
         _plans[plan.plan_id] = plan
     LOG.info(
         "依赖修复计划: %s → %s（%s）",
-        plan.requirement.requirement(),
+        ", ".join(plan.requirements),
         logsafe.known(target_kind, TARGETS),
         script,
     )
     return plan
+
+
+def _fresh_generation_joint(project: str, script: str) -> depplan.JointPlan | None:
+    """受管目标要新建一代时，这个脚本的联合计划——与 `create_joint_plan` 同一条取事实的路（`_facts_for` /
+    `private_python_target`）：缺什么按此刻会跑脚本的解释器量，装什么按将要新建的那一代量。
+    量不出来（没有解释器 / 事实取不到）回 None，由调用方退回单包。"""
+    standin = private_python_target(project, script)
+    install = None
+    if standin is not None:
+        facts = standin[2]
+    else:
+        try:
+            python = pool.resolve_worker_python(project, script=script)[0]
+        except pool.WorkerError:
+            python = ""
+        run, install, _measured = _facts_for(TARGET_MANAGED, python, project)
+        facts = run if run is not None else install
+        install = install if run is not None else None
+    if facts is None:
+        return None
+    return depplan.plan(
+        project,
+        script,
+        facts=facts,
+        target_kind=TARGET_MANAGED,
+        groups=depplan.selected_groups_setting(project),
+        install_facts=install,
+    )
+
+
+def _fold_requested(
+    requirement: depresolve.DependencyRequirement, joint: depplan.JointPlan
+) -> _Widened | None:
+    """把用户点的那一个包并进联合计划：联合集合里已有同名的用它（带声明的 extras / 版本），没有就补上。
+    联合计划 blocked / hash 模式（锁就是闭包，多补一条没有 hash 的会被 pip 拒）回 None——退回单包。"""
+    if joint.status == depplan.STATUS_BLOCKED or joint.require_hashes:
+        return None
+    wanted = depresolve.normalize_distribution(requirement.distribution)
+    delta = list(joint.requirements)
+    if all(depresolve.normalize_distribution(_name_of(r)) != wanted for r in delta):
+        delta.append(requirement.requirement())
+    imports = [m["import_name"] for m in joint.missing]
+    if requirement.import_name and requirement.import_name not in imports:
+        imports.append(requirement.import_name)
+    # 账目里用户点的那个包沿用单包修复原来的写法（distribution / specifier 取自它自己的 requirement），其余取自联合计划
+    record = [
+        {
+            "import_name": requirement.import_name,
+            "distribution": requirement.distribution,
+            "specifier": requirement.specifier,
+        }
+    ]
+    record += [
+        {
+            "import_name": m["import_name"],
+            "distribution": m["distribution"],
+            "specifier": ",".join(m["specifiers"]),
+        }
+        for m in joint.missing
+        if depresolve.normalize_distribution(m["distribution"]) != wanted
+    ]
+    return _Widened(
+        requirements=tuple(delta),
+        constraints=tuple(joint.constraints),
+        hashes={},
+        needed_imports=tuple(imports),
+        record=tuple(record),
+        groups=tuple(joint.selection.get("selected_groups") or ()),
+        inputs_digest=joint.inputs_digest,
+    )
+
+
+def _widen_for_fresh_generation(
+    project: str, script: str, requirement: depresolve.DependencyRequirement
+) -> _Widened | None:
+    joint = _fresh_generation_joint(project, script)
+    return _fold_requested(requirement, joint) if joint is not None else None
 
 
 def _private_python_offer() -> dict | None:
@@ -778,18 +889,24 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
 
     python = plan.python
     if plan.target_kind == TARGET_MANAGED:
-        # 受管环境按代（U04，ADR 0061 §五）：单包修复是 delta 只有一条的联合准备——建新的
-        # 一代、装完整集合、验完再切 active。这里不再往 active 那一代原地 pip。
+        # 受管环境按代（U04，ADR 0061 §五）：单包修复是联合准备的特例——建新的一代、装完整集合、
+        # 验完再切 active。这里不再往 active 那一代原地 pip。从空 venv 新建第一代时集合是脚本开跑
+        # 要的全部（`plan.widened`）；往已有账上加一个包时 delta 只有那一条。
+        wide = plan.widened
         job = _GenerationJob(
             progress_id=plan.plan_id,
             project=project,
             script=script,
-            delta=(req.requirement(),),
-            constraints=(),
+            delta=plan.requirements,
+            constraints=wide.constraints if wide else (),
             hashes={},
             require_hashes=False,
-            needed_imports=(req.import_name,) if req.import_name else (),
-            record=(
+            needed_imports=wide.needed_imports
+            if wide
+            else ((req.import_name,) if req.import_name else ()),
+            record=wide.record
+            if wide
+            else (
                 {
                     "import_name": req.import_name,
                     "distribution": req.distribution,
@@ -810,6 +927,11 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
             # 界面说「检查网络后重试」，重试撞到的却是 `dependency_already_attempted`，只能重启应用
             # （2026-09-28 Windows Server 2025 冻结包实测）。
             attempted=(plan.project_id, env_key, req.requirement()),
+            # 计划里带着下载 = 事实来自替身：供应之后按真解释器重算，那时仍要把用户点的这一个并进去
+            groups=wide.groups if wide else (),
+            replan=bool(wide and plan.private_python is not None),
+            inputs_digest=wide.inputs_digest if wide else "",
+            requested=req if wide else None,
         )
         outcome = _run_generation_locked(job, cancel_ev, env_key)
         if not outcome.get("ok"):
@@ -1587,6 +1709,8 @@ def _emit(
                 distribution=plan.requirement.distribution,
                 target_kind=plan.target_kind,
                 script=plan.script,
+                # 这一代真正要装的全部包（单包修复新建第一代时多于一个）：进度行按它说，不只说用户点的那个
+                requirements=list(plan.requirements),
             )
             if state in (STATE_FAILED, STATE_CANCELLED):
                 # 终态上说清「同一个需求这一轮还能不能再装」：pip 跑成之后（验证 / 自检期间取消、验证没过）
@@ -3181,6 +3305,8 @@ class _GenerationJob:
     #: （#466 的纪律；下载私有 Python 失败 / 取消 / pip 没跑成都不算「装过」）；其余三条路为空。
     attempted: tuple = ()
     groups: tuple[str, ...] = ()
+    #: 单包修复并入联合集合的那一个包（`DependencyRequirement`）：替身重算（`_replan_on_base`）时要把它并回去。
+    requested: object = None
     #: 用户确认的那份计划是按哪些输入算的（`JointRepairPlan.inputs_digest`）：重算时输入变了就停。
     inputs_digest: str = ""
 
@@ -3500,6 +3626,22 @@ def _replan_on_base(job: _GenerationJob, base: str) -> _GenerationJob:
         raise RepairError(ERROR_PLAN_STALE, "下载期间脚本或依赖声明发生了变化")
     if plan.status == depplan.STATUS_BLOCKED:
         raise RepairError(ERROR_PLAN_BLOCKED, "联合计划不可执行", joint=plan.to_payload())
+    if job.requested is not None:
+        # 单包修复：用户点的那个包始终在集合里（联合计划量不出它时也不丢）
+        wide = _fold_requested(job.requested, plan)
+        if wide is None:
+            raise RepairError(ERROR_PLAN_BLOCKED, "联合计划不可执行", joint=plan.to_payload())
+        return dataclasses.replace(
+            job,
+            delta=wide.requirements,
+            constraints=wide.constraints,
+            hashes={},
+            require_hashes=False,
+            needed_imports=wide.needed_imports,
+            record=wide.record,
+            identity="",
+            replan=False,
+        )
     return dataclasses.replace(
         job,
         delta=tuple(plan.requirements),

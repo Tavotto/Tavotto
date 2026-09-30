@@ -466,6 +466,34 @@ describe('一键修复（2026-09-29：面向不懂 Python 的用户）', () => {
     }
   })
 
+  it('计划要装的不止缺的这一个（新一代要补齐）：那一句话与「详情」首段列出全部，单个时不变', async () => {
+    // 要装的全部包只有形成计划时才算得出（offer 在失败响应路径上不起解释器）：卡片预读计划，按它写那一句话
+    const wide = (requirements: string[] | null) => {
+      planMock.mockResolvedValue({
+        plan: { ...MANAGED_PLAN, private_python: null, ...(requirements ? { requirements } : {}) },
+      })
+      return { ...OFFER, targets: [{ ...OFFER.targets[1] }] }
+    }
+    for (const [requirements, sentence, details] of [
+      [['pandas', 'lmfit>=1.3'], '这个脚本还缺 pandas 和 lmfit，点一下自动装好。', '将安装：pandas 和 lmfit>=1.3'],
+      [
+        ['numpy', 'pandas', 'lmfit>=1.3'],
+        '这个脚本还缺 numpy 等 3 个包，点一下自动装好。',
+        '将安装：numpy、pandas 和 lmfit>=1.3',
+      ],
+      [null, '这个脚本还缺 lmfit，点一下自动装好。', '将安装：lmfit>=1.3'],
+    ] as const) {
+      await act(async () => root?.unmount())
+      host?.remove()
+      useDepRepairStore.setState({ managedPreviews: {} }) // 预读按脚本 + 模块只问一次
+      await render(wide(requirements ? [...requirements] : null))
+      expect(document.querySelector('[data-one-click-sentence]')!.textContent).toBe(sentence)
+      expect(visibleSentenceCount(document.querySelector('[data-one-click-repair]')!)).toBe(1)
+      // 「详情」第一段：将安装：全部
+      expect(document.querySelector('[data-repair-primary-facts] p')!.textContent).toBe(details)
+    }
+  })
+
   it('安装包自带 / 已缓存 / 已就位的 Python：那一句里不提下载', async () => {
     for (const pp of [
       { ...PRIVATE_PYTHON, origin: 'bundled' as const, download_bytes: 0, cached: true, network_required: false },
@@ -589,8 +617,17 @@ describe('一键修复（2026-09-29：面向不懂 Python 的用户）', () => {
     expect(document.querySelector('[data-repair-advanced] [data-repair-open-environment]')).toBeTruthy()
   })
 
-  it('offer 已经说得出（available=true / 挂着私有 Python）时不预读', async () => {
+  it('新建第一代时预读（要装的全部包只有计划里才有）；不新建环境（已有一代）时不预读', async () => {
+    planMock.mockResolvedValue({ plan: MANAGED_PLAN })
     await render(managedOnly(PRIVATE_PYTHON))
+    expect(planMock).toHaveBeenCalledTimes(1)
+    await act(async () => root?.unmount())
+    host?.remove()
+    planMock.mockClear()
+    await render({
+      ...OFFER,
+      targets: [{ ...OFFER.targets[1], creates_environment: false, private_python: PRIVATE_PYTHON }],
+    })
     expect(planMock).not.toHaveBeenCalled()
   })
 })
@@ -934,7 +971,8 @@ describe('渲染解释器被全局固定（#465）', () => {
       }),
     )
     await render()
-    await click(en('oneClickRepair'))
+    // 预读那一步（新建第一代时卡片一出现就读计划）就撞上了固定：与点击后形成计划被拒同一支
+    await act(async () => {})
     expect(document.querySelector('[data-dependency-repair-pinned]')).toBeTruthy()
     expect(text()).toContain('/opt/late/bin/python')
     expect(byName(en('repairInstallToManaged', { module: 'lmfit', product: PRODUCT_NAME }))).toBeUndefined()
@@ -1040,7 +1078,55 @@ describe('受管环境一次授权（2026-09-28）', () => {
     }
   })
 
+  it('卡片只披露了一个包、点击时形成的计划多出别的包：停在确认页列出全部，不执行（Codex #760 P1）', async () => {
+    // 预读时只有 lmfit（脚本 / 声明在点击前又多了 pandas，或预读那一步没算出来）
+    planMock.mockResolvedValueOnce({ plan: MANAGED_PLAN })
+    planMock.mockResolvedValue({ plan: { ...MANAGED_PLAN, requirements: ['lmfit>=1.3', 'pandas'] } })
+    await render({ ...OFFER, targets: [OFFER.targets[1]] })
+    await click(managedButton())
+    expect(installMock).not.toHaveBeenCalled()
+    expect(byName(en('repairPrepareAndContinue'))).toBeTruthy()
+    expect(text()).toContain('将安装：lmfit>=1.3 和 pandas')
+  })
+
+  it('预读没读到（失败）时授权按 offer 那一个包算：计划一多就回到确认页', async () => {
+    planMock.mockRejectedValueOnce(new ApiError('慢', 500, { code: 'internal_error' }))
+    planMock.mockResolvedValue({ plan: { ...MANAGED_PLAN, requirements: ['lmfit>=1.3', 'pandas'] } })
+    await render({ ...OFFER, targets: [OFFER.targets[1]] })
+    await act(async () => {})
+    await click(managedButton())
+    expect(installMock).not.toHaveBeenCalled()
+    expect(byName(en('repairPrepareAndContinue'))).toBeTruthy()
+  })
+
+  it('确认页点过之后重试：沿用用户看到的整份清单，再多出的包同样回到确认页', async () => {
+    planMock.mockResolvedValueOnce({ plan: MANAGED_PLAN })
+    planMock.mockResolvedValueOnce({ plan: { ...MANAGED_PLAN, requirements: ['lmfit>=1.3', 'pandas'] } })
+    installMock.mockResolvedValue({ started: true } as never)
+    await render({ ...OFFER, targets: [OFFER.targets[1]] })
+    await click(managedButton())
+    await click(en('repairPrepareAndContinue')) // 用户在确认页看过 lmfit + pandas 并同意
+    expect(installMock).toHaveBeenCalledTimes(1)
+    expect(useDepRepairStore.getState().authorized?.requirements).toEqual(['lmfit>=1.3', 'pandas'])
+    await act(() => {
+      useDepRepairStore.getState().onProgress({
+        plan_id: 'plan-managed', state: 'failed', log: '', error: '', code: 'private_python_offline',
+        target_kind: 'tavotto_managed',
+      } as never)
+    })
+    // 重试：清单与授权相同 → 直接装；多出 numpy → 回到确认页
+    planMock.mockResolvedValueOnce({
+      plan: { ...MANAGED_PLAN, plan_id: 'again', requirements: ['lmfit>=1.3', 'pandas', 'numpy'] },
+    })
+    await act(async () => (document.querySelector('[data-dependency-repair-retry]') as HTMLButtonElement).click())
+    await act(async () => {})
+    expect(installMock).toHaveBeenCalledTimes(1)
+    expect(byName(en('repairPrepareAndContinue'))).toBeTruthy()
+  })
+
   it('卡片没说要下载、计划却要下载：停在确认页，不执行', async () => {
+    // 预读时计划不用下载（卡片据此写那一句、授权），点下去形成的计划却要下载：不执行
+    planMock.mockResolvedValueOnce({ plan: { ...MANAGED_PLAN, private_python: null } })
     planMock.mockResolvedValue({ plan: MANAGED_PLAN })
     await render({ ...OFFER, targets: [OFFER.targets[1]] })
     await click(managedButton())
@@ -1087,7 +1173,7 @@ describe('失败 / 取消之后就地重试', () => {
     planMock.mockResolvedValue({ plan: { ...MANAGED_PLAN, plan_id: 'plan-again' } })
     await act(async () => retryButton()!.click())
     await act(async () => {})
-    expect(planMock).toHaveBeenCalledTimes(2)
+    expect(planMock).toHaveBeenCalledTimes(3) // 预读 + 第一次授权 + 重试
     expect(installMock).toHaveBeenLastCalledWith('plan-again')
   })
 
@@ -1146,7 +1232,7 @@ describe('失败 / 取消之后就地重试', () => {
     })
     await act(async () => retryButton()!.click())
     await act(async () => {})
-    expect(planMock).toHaveBeenCalledTimes(2)
+    expect(planMock).toHaveBeenCalledTimes(3) // 预读 + 形成计划 + 重试
     expect(installMock).toHaveBeenCalledTimes(1)
     expect(byName(en('repairInstallToProject'))).toBeTruthy()
   })
@@ -1209,6 +1295,11 @@ describe('安装进度', () => {
     expect(line()).toBe(`${en('repairCreatingEnv')}${en('repairStep', { n: 2, total: 4 })}`)
     await progress('installing', { target_kind: 'tavotto_managed' })
     expect(line()).toBe(`${en('repairInstalling', { module: 'lmfit' })}${en('repairStep', { n: 3, total: 4 })}`)
+    // 计划里装的不止一个包：进度行说整组（真正在装的），不只是用户点的那一个
+    await progress('installing', { target_kind: 'tavotto_managed', requirements: ['pandas', 'lmfit>=1.3'] })
+    expect(line()).toBe(`${en('repairInstalling', { module: 'pandas 和 lmfit' })}${en('repairStep', { n: 3, total: 4 })}`)
+    await progress('installing', { target_kind: 'tavotto_managed', requirements: ['numpy', 'pandas', 'lmfit'] })
+    expect(line()).toBe(`${en('repairInstalling', { module: 'numpy 等 3 个包' })}${en('repairStep', { n: 3, total: 4 })}`)
     // 装进项目自己的环境只有两步
     await progress('installing', { target_kind: 'project_venv' })
     expect(line()).toBe(`${en('repairInstalling', { module: 'lmfit' })}${en('repairStep', { n: 1, total: 2 })}`)

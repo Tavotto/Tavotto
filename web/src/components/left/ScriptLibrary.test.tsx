@@ -888,7 +888,6 @@ describe('试运行撞上起会话之前的门', () => {
   const prepDialog = () => document.querySelector('[data-dialog="dependency-prepare"]')
   const docButton = (label: string) =>
     [...document.querySelectorAll('button')].find((b) => b.textContent?.trim() === label) as HTMLButtonElement | undefined
-  const reopen = () => host.querySelector('[data-script-dependency-prepare] button') as HTMLButtonElement | null
 
   beforeEach(() => {
     setCurrentProjectId('p1')
@@ -907,7 +906,7 @@ describe('试运行撞上起会话之前的门', () => {
     setCurrentProjectId(null)
   })
 
-  it('依赖门：弹授权框、不进「可能需要原环境」；授权准备成功后自动再试运行、出图', async () => {
+  it('依赖门（脚本行 ▶）：行内一句话 + 一键修复，不弹授权框、不进「可能需要原环境」；点一次走联合准备，装好后自动再试运行、出图（用户 2026-09-30 的决定）', async () => {
     mockProbe.mockResolvedValueOnce(gateProbe())
     vi.mocked(createJointDependencyPlan).mockResolvedValue({
       plan: {
@@ -920,20 +919,19 @@ describe('试运行撞上起会话之前的门', () => {
     await mount()
     await act(async () => runButton().click())
     await flush()
-    // ① 同一个授权框，载荷就是试运行带回来的那一份
-    expect(useEnvStore.getState().dependencyPreparation, '载荷没交给 envStore').toEqual(prepOffer)
-    expect(prepDialog(), '授权框没弹').toBeTruthy()
+    // ① 行内直接给：不弹框，载荷不交给 envStore
+    expect(prepDialog(), '行内呈现时不该弹授权框').toBeNull()
+    expect(useEnvStore.getState().dependencyPreparation).toBeNull()
+    expect(host.querySelector('[data-script-preparation-sentence]')!.textContent).toBe('这个脚本还缺 adjusttext，点一下自动装好。')
     // ② 不是失败：不进「可能需要原环境」，没有那两颗无关的出口
     expect(host.textContent).not.toContain('可能需要原环境')
-    expect(host.textContent).not.toContain('选择渲染环境')
-    // 授权框就是 #742 改过的那一个：默认只有一个主按钮「一键修复」（不另起一套界面）
-    expect(docButton('准备并继续'), '跑前授权框不该再出现旧的主按钮').toBeUndefined()
-    // 授权：先绑定计划再只发 plan_id
-    await act(async () => docButton('一键修复')!.click())
+    expect([...host.querySelectorAll('[data-script-preparation] button')].filter((b) => !b.closest('details')).map((b) => b.textContent)).toEqual(['一键修复'])
+    // ③ 点一次：先绑定计划再只发 plan_id
+    await act(async () => buttonByText('一键修复').click())
     await flush()
     expect(createJointDependencyPlan).toHaveBeenCalledWith({ script: 'fig_labels.py', target: 'tavotto_managed' })
     expect(prepareJointDependencies).toHaveBeenCalledWith('jp-row')
-    // ③ 准备成功（SSE 带着计划所属的脚本）→ 这一行自动再试运行一次、出图
+    // ④ 准备成功（SSE 带着计划所属的脚本）→ #740 的 `rerunGated`：这一行自动再试运行一次、出图
     mockProbe.mockClear()
     mockProbe.mockResolvedValue({ ...ok([desc('Fig1')]), script: 'fig_labels.py' })
     await act(async () =>
@@ -945,30 +943,22 @@ describe('试运行撞上起会话之前的门', () => {
     expect(mockProbe, '准备成功后没有自动重跑试运行').toHaveBeenCalledTimes(1)
     expect(mockProbe.mock.calls[0][0]).toBe('fig_labels.py')
     expect(useScriptRunStore.getState().byScript['fig_labels.py']?.phase).toBe('captured_one')
-    expect(prepDialog()).toBeNull()
   })
 
-  it('「稍后」：行上留着「准备依赖…」能再打开；「不准备，直接运行」之后同样重跑', async () => {
+  it('其他入口（图卡 / 修复后重跑不带行内标记）撞上依赖门仍弹授权框；「稍后」「不准备，直接运行」的 #740 行为不变', async () => {
     mockProbe.mockResolvedValueOnce(gateProbe())
     vi.mocked(skipDependencyPreparation).mockResolvedValue({ skipped: true } as never)
     await mount()
-    await act(async () => runButton().click())
+    await act(async () => void useScriptRunStore.getState().run('fig_labels.py')) // 不是脚本行 ▶
     await flush()
-    await act(async () => docButton('稍后')!.click())
-    await flush()
-    expect(prepDialog()).toBeNull()
-    expect(host.textContent).not.toContain('可能需要原环境')
-    expect(reopen(), '「稍后」之后脚本行上没有再打开的入口').toBeTruthy()
-    await act(async () => reopen()!.click())
-    await flush()
-    expect(prepDialog(), '再打开没有弹出授权框').toBeTruthy()
+    expect(useEnvStore.getState().dependencyPreparation, '载荷没交给 envStore').toEqual(prepOffer)
+    expect(prepDialog(), '授权框没弹').toBeTruthy()
     mockProbe.mockClear()
     mockProbe.mockResolvedValue({ ...ok([desc('Fig1')]), script: 'fig_labels.py' })
     await act(async () => docButton('不准备，直接运行')!.click())
     await flush()
     expect(skipDependencyPreparation).toHaveBeenCalledWith('fig_labels.py')
     expect(mockProbe, '明确跳过之后没有重跑试运行').toHaveBeenCalledTimes(1)
-    expect(reopen()).toBeNull()
   })
 
   it('运行目录门同形：载荷交给 envStore、行上有「选择运行目录…」、选定后重跑', async () => {
