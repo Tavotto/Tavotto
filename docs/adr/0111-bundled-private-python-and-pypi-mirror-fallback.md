@@ -60,7 +60,7 @@ bundled 时它也是 true（旧界面不会把它说成要下载）。供应进�
 
 链路：`scripts/stage_private_python.py` 按**产品运行时读的同一份锁**（`privatepython.source_for()`）取本目标归档，经
 `build_worker_runtime.download`（同一个下载函数、同一个缓存目录，sha256 不符当场失败）放进 `build/private-python-bundle/`
-（目录里只许有这一份）；`build_desktop.py` 在 PyInstaller 之前调它（`--skip-private-python` 是开发态省时开关）；
+（目录里只许有这一份）；`build_desktop.py` 在 PyInstaller 之前调它（`--skip-private-python` 是开发态省时开关，且会**删掉**上次备好的那份——spec 只看目录在不在）；
 `packaging/tavotto.spec` 用同一把尺 `check_bundle()`（恰好一个文件、名字是本目标的、sha256 与大小等于锁）把它作为 datas
 放进 `private-python/`；`TAVOTTO_REQUIRE_PRIVATE_PYTHON=1`（发行工作流 `desktop-tauri.yml` 打开）时缺了就拒绝打包。
 合并队列里那几条 exe / app 冒烟腿直接跑 PyInstaller、不备料——它们量的是渲染链路，归档缺席时 spec 只打一行提示。
