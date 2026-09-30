@@ -440,6 +440,7 @@
     "userEnvReverted": "Switched back to the previous render environment",
     "userEnvBody": "{{script}} needs packages the render environment doesn’t have; a Python environment on this computer already has them.",
     "oneClickRepair": "Fix it",
+    "packagesMany": "{{first}} and others ({{count}} packages)",
     "oneClickChecking": "Checking this computer…",
     "repairAdvanced": "Details",
     "repairDownloadAria": "Download progress",

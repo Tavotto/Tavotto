@@ -440,6 +440,7 @@
     "userEnvReverted": "已改回原来的渲染环境",
     "userEnvBody": "{{script}} 一开始就要用到的包，渲染环境里没有；这台电脑上已有装好它们的 Python 环境。",
     "oneClickRepair": "一键修复",
+    "packagesMany": "{{first}} 等 {{count}} 个包",
     "oneClickChecking": "正在检查这台电脑…",
     "repairAdvanced": "详情",
     "repairDownloadAria": "下载进度",

@@ -190,6 +190,10 @@ describe('脚本行：开跑前要先准备依赖', () => {
       '一键修复',
     ])
     expect(card!.querySelector('details')!.hasAttribute('open')).toBe(false)
+    // 「详情」第一段：将安装：全部
+    expect(card!.querySelector('[data-script-preparation-will-install]')!.textContent).toBe(
+      '将安装：pandas 和 openpyxl',
+    )
     expect(host.querySelector('[data-script-recovery]')).toBeNull()
     const groups = [...host.querySelectorAll('section ul[aria-label]')].map((ul) => ul.getAttribute('aria-label'))
     expect(groups).toEqual(['需要修复'])
@@ -210,6 +214,14 @@ describe('脚本行：开跑前要先准备依赖', () => {
     // 只剩一行进度 + 取消（不再有主按钮）
     const card = host.querySelector('[data-script-preparation]')!
     expect([...card.querySelectorAll('button')].map((x) => x.textContent)).toEqual(['取消'])
+    // 安装阶段的进度行说真正在装的整组包（单包修复的同一句），不是泛泛的「正在安装…」
+    await act(async () => {
+      useDepRepairStore.getState().onProgress({
+        plan_id: 'joint-row', state: 'installing', log: '', error: null, code: '', flow: 'joint',
+        script: SCRIPT, requirements: ['pandas', 'openpyxl'], target_kind: 'tavotto_managed',
+      } as never)
+    })
+    expect(card.querySelector('[data-repair-line]')!.textContent).toBe('正在安装 pandas 和 openpyxl…（3/4）')
     // 装好：进度带着计划所属的脚本 → 这一行重跑
     mockProbe.mockClear()
     mockProbe.mockResolvedValue({ ...preparationResult(offerOf()), error: null, descriptors: [] })

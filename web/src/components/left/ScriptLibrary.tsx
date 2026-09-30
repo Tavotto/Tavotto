@@ -21,8 +21,16 @@ import { useUiStore } from '@/store/uiStore'
 import { Button, IconButton } from '../ui/Button'
 import { Dialog } from '../ui/Dialog'
 import { EmptyState } from '../ui/EmptyState'
-import { DependencyRepairCard, downloadFact, oneClickEnvironmentSentence, oneClickSentence, repairShortMessage } from '../DependencyRepairCard'
-import { oneClickShape, requirementName, STATE_TEXT } from '../DependencyPrepareDialog'
+import {
+  DependencyRepairCard,
+  downloadFact,
+  jointProgressText,
+  oneClickEnvironmentSentence,
+  oneClickSentence,
+  packagesPhrase,
+  repairShortMessage,
+} from '../DependencyRepairCard'
+import { oneClickShape, STATE_TEXT } from '../DependencyPrepareDialog'
 import { RepairProgressLine } from '../RepairProgressLine'
 import { isRepairRunning, useDepRepairStore, type ScriptRepairOffer } from '@/store/depRepairStore'
 import { useEnvStore } from '@/store/envStore'
@@ -301,7 +309,7 @@ function ScriptPreparation({ script, run }: { script: string; run: ScriptRunStat
   const code = mine ? errorCode || (joint && (joint.state === 'failed' || joint.state === 'cancelled') ? joint.code : '') : ''
   const { simple, privatePython } = oneClickShape(offer)
   const requirements = offer.plan.requirements
-  const packages = listJoin(requirements.map(requirementName))
+  const packages = packagesPhrase(requirements)
   const sentence = code
     ? repairShortMessage(code)
     : requirements.length
@@ -317,7 +325,7 @@ function ScriptPreparation({ script, run }: { script: string; run: ScriptRunStat
     <div className="mb-1.5 mt-0.5 flex flex-col gap-1.5 pl-8 pr-2" data-script-preparation>
       {running && joint ? (
         <>
-          <RepairProgressLine progress={joint} text={en(STATE_TEXT[joint.state] ?? 'engine.dependencyPrepareState_preparing')} />
+          <RepairProgressLine progress={joint} text={jointProgressText(joint, (state) => en(STATE_TEXT[state] ?? 'engine.dependencyPrepareState_preparing'))} />
           <Button
             variant="secondary"
             size="sm"
@@ -348,6 +356,11 @@ function ScriptPreparation({ script, run }: { script: string; run: ScriptRunStat
         <Details data-script-preparation-details>
           <Summary className="type-meta cursor-pointer">{sc('recoveryDetails')}</Summary>
           <div className="mt-1.5 flex flex-col gap-1.5">
+            {requirements.length > 0 && (
+              <p className="type-caption" data-script-preparation-will-install>
+                {en('engine.repairWillInstall', { requirement: listJoin(requirements) })}
+              </p>
+            )}
             {requirements.length > 0 && (
               <ul className="flex flex-col gap-0.5 font-mono text-xs text-ink-2">
                 {requirements.map((req) => (

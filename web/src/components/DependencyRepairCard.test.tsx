@@ -466,6 +466,30 @@ describe('一键修复（2026-09-29：面向不懂 Python 的用户）', () => {
     }
   })
 
+  it('计划要装的不止缺的这一个（新一代要补齐）：那一句话与「详情」首段列出全部，单个时不变', async () => {
+    const wide = (requirements: string[] | null) => ({
+      ...OFFER,
+      targets: [{ ...OFFER.targets[1], requirements }],
+    })
+    for (const [requirements, sentence, details] of [
+      [['pandas', 'lmfit>=1.3'], '这个脚本还缺 pandas 和 lmfit，点一下自动装好。', '将安装：pandas 和 lmfit>=1.3'],
+      [
+        ['numpy', 'pandas', 'lmfit>=1.3'],
+        '这个脚本还缺 numpy 等 3 个包，点一下自动装好。',
+        '将安装：numpy、pandas 和 lmfit>=1.3',
+      ],
+      [null, '这个脚本还缺 lmfit，点一下自动装好。', '将安装：lmfit>=1.3'],
+    ] as const) {
+      await act(async () => root?.unmount())
+      host?.remove()
+      await render(wide(requirements ? [...requirements] : null))
+      expect(document.querySelector('[data-one-click-sentence]')!.textContent).toBe(sentence)
+      expect(visibleSentenceCount(document.querySelector('[data-one-click-repair]')!)).toBe(1)
+      // 「详情」第一段：将安装：全部
+      expect(document.querySelector('[data-repair-primary-facts] p')!.textContent).toBe(details)
+    }
+  })
+
   it('安装包自带 / 已缓存 / 已就位的 Python：那一句里不提下载', async () => {
     for (const pp of [
       { ...PRIVATE_PYTHON, origin: 'bundled' as const, download_bytes: 0, cached: true, network_required: false },
@@ -1209,6 +1233,11 @@ describe('安装进度', () => {
     expect(line()).toBe(`${en('repairCreatingEnv')}${en('repairStep', { n: 2, total: 4 })}`)
     await progress('installing', { target_kind: 'tavotto_managed' })
     expect(line()).toBe(`${en('repairInstalling', { module: 'lmfit' })}${en('repairStep', { n: 3, total: 4 })}`)
+    // 计划里装的不止一个包：进度行说整组（真正在装的），不只是用户点的那一个
+    await progress('installing', { target_kind: 'tavotto_managed', requirements: ['pandas', 'lmfit>=1.3'] })
+    expect(line()).toBe(`${en('repairInstalling', { module: 'pandas 和 lmfit' })}${en('repairStep', { n: 3, total: 4 })}`)
+    await progress('installing', { target_kind: 'tavotto_managed', requirements: ['numpy', 'pandas', 'lmfit'] })
+    expect(line()).toBe(`${en('repairInstalling', { module: 'numpy 等 3 个包' })}${en('repairStep', { n: 3, total: 4 })}`)
     // 装进项目自己的环境只有两步
     await progress('installing', { target_kind: 'project_venv' })
     expect(line()).toBe(`${en('repairInstalling', { module: 'lmfit' })}${en('repairStep', { n: 1, total: 2 })}`)

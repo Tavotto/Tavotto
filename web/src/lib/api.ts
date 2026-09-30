@@ -3127,6 +3127,8 @@ export interface DependencyRequirementInfo {
 
 /** 一个可选的安装目标 */
 export interface DependencyTarget {
+  /** 受管目标新建第一代时这一代要装的全部包（规范串）；量不出 / 已有一代 / 老后端为空 */
+  requirements?: string[] | null
   /**
    * `system_interpreter`（ADR 0044）不是安装目标：这台机器上已有的解释器里
    * 已经装着那个包，采用它一个字节都不装——走项目环境 PATCH，不走 plan。
@@ -3227,6 +3229,8 @@ export interface InterpreterPin {
 /** 后端发出来的安装计划。`plan_id` 是这次授权的凭据，不可猜、有有效期。 */
 export interface DependencyRepairPlan extends DependencyRequirementInfo {
   plan_id: string
+  /** 这次授权真正要装的全部包（规范串）：新建第一代时多于用户点的那一个；老后端没有这个字段 */
+  requirements?: string[]
   target_kind: 'project_venv' | 'tavotto_managed'
   python: string
   creates_environment: boolean

@@ -152,6 +152,8 @@ export interface ScriptRepairOffer {
  */
 export interface RepairDisclosure {
   requirement: string
+  /** 卡片说过要装的全部包（规范串）；计划里的每一个都得在其中——没有就只认 `requirement` */
+  requirements?: string[]
   target_kind: 'tavotto_managed'
   private_python: PrivatePythonOffer | null
 }
@@ -164,6 +166,7 @@ export interface RepairDisclosure {
 export function planMatchesDisclosure(plan: DependencyRepairPlan, seen: RepairDisclosure): boolean {
   if (plan.target_kind !== seen.target_kind || plan.modifies_user_environment) return false
   if (plan.requirement !== seen.requirement) return false
+  if (seen.requirements && (plan.requirements ?? []).some((r) => !seen.requirements!.includes(r))) return false
   const now = plan.private_python ?? null
   if (!now) return true
   const was = seen.private_python

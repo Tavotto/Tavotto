@@ -2019,6 +2019,7 @@ export default interface Resources {
       "oneClickSentenceEnv": "这个脚本需要先准备运行环境，点一下自动准备好。",
       "oneClickSentenceEnvDownload": "这个脚本需要先准备运行环境，点一下自动准备好（需下载约 {{mb}} MB）。",
       "oneClickSentenceSystem": "电脑上已有装好 {{module}} 的环境，点一下直接改用它。",
+      "packagesMany": "{{first}} 等 {{count}} 个包",
       "pathAria": "渲染解释器路径",
       "pathPlaceholder": "/path/to/python",
       "projectEnvAlsoMissing": "项目环境 {{venv}} 里也没有 {{module}}。",

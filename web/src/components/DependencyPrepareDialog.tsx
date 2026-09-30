@@ -12,7 +12,14 @@ import type { DependencyPreparationOffer, PrivatePythonOffer } from '@/lib/api'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { listJoin } from '@/i18n/format'
 import { RepairProgressLine, RepairStageList } from './RepairProgressLine'
-import { downloadFact, oneClickEnvironmentSentence, oneClickSentence, repairShortMessage } from './DependencyRepairCard'
+import {
+  downloadFact,
+  jointProgressText,
+  oneClickEnvironmentSentence,
+  oneClickSentence,
+  packagesPhrase,
+  repairShortMessage,
+} from './DependencyRepairCard'
 
 /**
  * 跑前的那一次授权（U04，ADR 0061 §六）：后端起第一个 worker 之前看一眼脚本开跑要的第三方包
@@ -80,12 +87,6 @@ export function oneClickShape(offer: DependencyPreparationOffer): {
   }
 }
 
-/** 需求串 → 包名（`tabulate[widechars]==0.9.0` → `tabulate`）：一键修复那句人话只说装哪些包，完整形态在「高级」里 */
-export function requirementName(requirement: string): string {
-  const m = /^[A-Za-z0-9._-]+/.exec(requirement.trim())
-  return m ? m[0] : requirement
-}
-
 export function DependencyPrepareDialog() {
   const { t } = useTranslation('errors')
   const offer = useEnvStore((s) => s.dependencyPreparation)
@@ -131,7 +132,7 @@ export function DependencyPrepareDialog() {
   // 标题与「详情」都不许替那条路说「要下载」。载荷顶层那份（干净机器）同样只属于受管目标
   const privatePython =
     !envChosen && chosen?.kind === 'tavotto_managed' ? (chosen.private_python ?? offer.private_python ?? null) : null
-  const packages = listJoin(plan.requirements.map(requirementName))
+  const packages = packagesPhrase(plan.requirements)
   // 「详情」里「要下载什么」那一条：只准备环境（没有要装的包）时不说「装包需要联网」
   const cost = downloadFact(privatePython, { packages: plan.requirements.length > 0 })
   const targetChoice = (
@@ -212,7 +213,12 @@ export function DependencyPrepareDialog() {
   )
   const details = (
     <>
-      {/* 要装的：项目声明的完整形态（extras / 版本），用户自己的名字，不翻译 */}
+      {/* 「详情」第一段：将安装的全部包；下面是项目声明的完整形态（extras / 版本），用户自己的名字，不翻译 */}
+      {plan.requirements.length > 0 && (
+        <p className="mb-1 text-xs leading-relaxed text-ink-2" data-dependency-will-install>
+          {t('engine.repairWillInstall', { requirement: listJoin(plan.requirements) })}
+        </p>
+      )}
       <ul className="flex flex-col gap-0.5 font-mono text-xs text-ink-2" data-dependency-requirements>
         {plan.requirements.map((req) => (
           <li key={req}>{req}</li>
@@ -370,7 +376,7 @@ export function DependencyPrepareDialog() {
         <div data-dependency-state={progress.state}>
           <RepairProgressLine
             progress={progress}
-            text={en(STATE_TEXT[progress.state] ?? 'engine.dependencyPrepareState_preparing')}
+            text={jointProgressText(progress, (state) => en(STATE_TEXT[state] ?? 'engine.dependencyPrepareState_preparing'))}
           />
           {/* 与修复卡同一套：默认只有那一行，完整的阶段列表、换用 PyPI 镜像的说明（进度记录顶层的 `pypi_mirror`，
               #743 的联合准备两条路与单包修复同一个字段；没有这个键时一个字都不说）、日志都折叠在「详情」里 */}

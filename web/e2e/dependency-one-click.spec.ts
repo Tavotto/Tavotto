@@ -426,7 +426,7 @@ test(
     await expect(line).toHaveText('正在创建 Python 环境…（2/4）', { timeout: 15_000 })
     await expectReachable(page, line, '进度')
     events.push(jointProgress('installing'))
-    await expect(line).toHaveText('正在安装…（3/4）', { timeout: 15_000 })
+    await expect(line).toHaveText('正在安装 pandas 和 openpyxl…（3/4）', { timeout: 15_000 })
 
     // ④ 装好：这一行自动重跑（真后端、真 worker），图出来，卡片收起
     events.push(jointProgress('done', { result: { ok: true } }))
