@@ -202,7 +202,9 @@ class _InputOnly:
     不会动输出。有它之前是逐一补「会流到写出」的形状（直接的、拼出来的、赋值转手的，Codex 评 #730 三次），
     换成只认正面证据。"""
 
-    def __init__(self, tree: ast.AST, parents: dict[int, ast.AST], observed: str | None = None) -> None:
+    def __init__(
+        self, tree: ast.AST, parents: dict[int, ast.AST], observed: str | None = None
+    ) -> None:
         self.parents = parents
         self.observed = observed
         self.aliases = databinding._Aliases(tree)
@@ -213,14 +215,6 @@ class _InputOnly:
             n.name
             for n in ast.walk(tree)
             if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
-        }
-        #: 脚本里任何 class 定义的方法名：方法调用撞上读取表时，同名的自定义方法一律当证据不足
-        self.class_method_names = {
-            m.name
-            for n in ast.walk(tree)
-            if isinstance(n, ast.ClassDef)
-            for m in n.body
-            if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef))
         }
         #: `import numpy as np` 这类顶层 import 名——方法调用的接收者只有落在这张表里才信读取表；
         #: 之后在 stores 里再被重新绑定过的排除（`np = something_else` 之后就说不清了）
@@ -241,10 +235,10 @@ class _InputOnly:
         self.module_names -= set(self.stores)
 
     def _known_reader_receiver(self, attr: ast.Attribute) -> bool:
-        """`attr`（如 `np.load`）的接收者是不是明确的已知库模块——只有这样才信读取表；拿不准（脚本自己的
-        方法、实例、变量……）一概不信，哪怕方法名同读取表里的 `load`（ADR 0110 §二.3，Codex 评 #730 P2）。"""
-        if attr.attr in self.class_method_names:
-            return False
+        """`attr`（如 `np.load`）的接收者是不是明确的已知库模块——只有这样才信读取表；接收者证不出来
+        （脚本自己的方法、实例、变量……）一概不信，哪怕方法名同读取表里的 `load`（ADR 0110 §二.3，Codex 评
+        #730 P2）。接收者一旦是顶层 import 的、没被重新绑定过的名字，就不可能是脚本自己定义的类——不用
+        另外查脚本里有没有同名方法。"""
         return isinstance(attr.value, ast.Name) and attr.value.id in self.module_names
 
     def _probe(self, call: ast.Call, *, method: bool) -> bool:
@@ -307,7 +301,11 @@ class _InputOnly:
                 return self._default_proven(child, up, seen)
             elif isinstance(up, (ast.Assign, ast.AnnAssign)):
                 targets = up.targets if isinstance(up, ast.Assign) else [up.target]
-                if up.value is not child or len(targets) != 1 or not isinstance(targets[0], ast.Name):
+                if (
+                    up.value is not child
+                    or len(targets) != 1
+                    or not isinstance(targets[0], ast.Name)
+                ):
                     return False
                 return self._name_proven(targets[0].id, self.loads.get(targets[0].id, []), seen)
             elif not isinstance(up, (ast.keyword, ast.JoinedStr, ast.FormattedValue)):

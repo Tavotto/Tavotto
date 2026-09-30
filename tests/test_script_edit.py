@@ -207,23 +207,28 @@ def test_method_calls_require_a_known_library_receiver(tmp_path, moved):
     """方法调用（`obj.method(...)`）同名于读取表也不够——接收者要证得出是已知库模块（顶层 import 名）
     才信读取表；脚本自己定义的方法、脚本内的实例或变量一概去向未知（Codex 评 #730 P2：此前「用户自
     定义」的检查只查了直接的 `ast.Name` 调用，属性调用漏判，`Sink().load(...)` 会被当 `np.load` 一样
-    改写）。`np.load(...)` 本身继续照改，见 `test_only_values_proven_to_feed_reads_are_rewritten`。"""
+    改写）。判据只看接收者：接收者证得出是顶层 import 名就不可能是脚本自己的类，不用另外查脚本里有
+    没有同名方法——`np.load(...)` 与 `Sink().load(...)` 就算方法名撞了也各判各的（lead 2026-09-30
+    裁决：先前「脚本里有同名方法就整条去向未知」是多余的保守，会让 `np.load` 平白少改）。"""
     _new, rule = moved
     src = (
+        "import numpy as np\n"
+        "from pathlib import Path\n"
         "class Sink:\n"
         "    def load(self, p):\n"
         "        return p\n"
-        f'IN1 = "{OLD}/data"\n'  # 4 脚本里有个同名方法 → 去向未知，不改
+        f'IN1 = "{OLD}/data"\n'  # 6 脚本里有个同名方法、接收者是它的实例 → 去向未知，不改
         "Sink().load(IN1)\n"
-        f'IN2 = "{OLD}/data"\n'  # 6 接收者是脚本内的变量 → 去向未知，不改
+        f'IN2 = "{OLD}/data"\n'  # 8 接收者是脚本内的变量 → 去向未知，不改
         "sink = Sink()\n"
         "sink.load(IN2)\n"
+        f'DATA = "{OLD}/data"\n'  # 11 接收者是已知库模块（np），哪怕方法名与 Sink.load 撞名 → 照改
+        "x = np.load(Path(DATA) / 'x.h5')\n"
     )
-    with pytest.raises(scriptbackup.ScriptEditError) as err:
-        _plan(tmp_path, src, rule=rule, missing=[f"{OLD}/data/x.h5"])
-    assert err.value.code == scriptedit.ERROR_NOTHING_TO_CHANGE
-    reasons = {s["line"]: s["reason"] for s in err.value.params["skipped"]}
-    assert reasons == {4: scriptedit.SKIP_CONTEXT, 6: scriptedit.SKIP_CONTEXT}
+    plan = _plan(tmp_path, src, rule=rule, missing=[f"{OLD}/data/x.h5"])
+    assert [e["line"] for e in plan.edits] == [11]
+    reasons = {s["line"]: s["reason"] for s in plan.skipped}
+    assert reasons == {6: scriptedit.SKIP_CONTEXT, 8: scriptedit.SKIP_CONTEXT}
 
 
 def test_the_entry_being_fixed_may_go_straight_into_an_unknown_reader(tmp_path, moved):
@@ -235,9 +240,7 @@ def test_the_entry_being_fixed_may_go_straight_into_an_unknown_reader(tmp_path, 
         f'u = h5py_file("{OLD}/data/runs/a.csv")\n'  # 2 不是那一条 → 不改
         f'fig.savefig("{OLD}/data/x.h5")\n'  # 3 写出 → 不改
     )
-    plan = _plan(
-        tmp_path, src, rule=rule, missing=[f"{OLD}/data/x.h5", f"{OLD}/data/runs/a.csv"]
-    )
+    plan = _plan(tmp_path, src, rule=rule, missing=[f"{OLD}/data/x.h5", f"{OLD}/data/runs/a.csv"])
     assert [e["line"] for e in plan.edits] == [1]
     assert {s["line"] for s in plan.skipped} == {2, 3}
 
@@ -954,9 +957,7 @@ def test_http_restore_refuses_a_record_that_points_at_another_script(app_project
     )
     assert resp.get_json()["code"] == scriptbackup.ERROR_BACKUP_UNKNOWN
     assert other.read_bytes() == b"print('other')\n"
-    assert [
-        b["id"] for b in client.get("/api/script-backups").get_json()["backups"]
-    ] == []
+    assert [b["id"] for b in client.get("/api/script-backups").get_json()["backups"]] == []
     # `id` 被改成别的目录名：同样当不存在
     for base in (store.project_dir, store.mirror_dir):
         meta_path = base / listed["id"] / scriptbackup.META_NAME
@@ -989,7 +990,11 @@ def test_http_history_offers_undo_edits_only_when_restore_could_do_it(app_projec
     assert now["state"] == scriptbackup.STATE_CHANGED and now["undoable"] is False
     resp = client.post(
         "/api/script-backups/restore",
-        json={"backup_id": listed["id"], "mode": "undo_edits", "expected_sha256": now["current_sha256"]},
+        json={
+            "backup_id": listed["id"],
+            "mode": "undo_edits",
+            "expected_sha256": now["current_sha256"],
+        },
     )
     assert resp.get_json()["code"] == scriptedit.ERROR_RESTORE_CONFLICT
     # 只改了别处：字面量还在 → 给按钮，点下去成功
@@ -998,7 +1003,11 @@ def test_http_history_offers_undo_edits_only_when_restore_could_do_it(app_projec
     assert now["state"] == scriptbackup.STATE_CHANGED and now["undoable"] is True
     resp = client.post(
         "/api/script-backups/restore",
-        json={"backup_id": listed["id"], "mode": "undo_edits", "expected_sha256": now["current_sha256"]},
+        json={
+            "backup_id": listed["id"],
+            "mode": "undo_edits",
+            "expected_sha256": now["current_sha256"],
+        },
     )
     assert resp.status_code == 200, resp.get_json()
     assert (root / "fig.py").read_bytes() == original.replace(b"subplots()", b"subplots(dpi=90)")
@@ -1200,7 +1209,9 @@ def test_http_refuses_a_folder_that_leaves_a_file_probe_pointing_at_a_folder(app
         assert resp.get_json()["code"] == inputremap.ERROR_CHOSEN_INVALID
     real = _touch(tmp_path / "new" / "INPUT")
     for chosen, kind in ((real, "file"), (real.parent, "dir")):
-        resp = _preview(client, script="fig.py", entry=f"{OLD}/INPUT", chosen=str(chosen), chosen_kind=kind)
+        resp = _preview(
+            client, script="fig.py", entry=f"{OLD}/INPUT", chosen=str(chosen), chosen_kind=kind
+        )
         assert resp.status_code == 200, (kind, resp.get_json())
 
 
@@ -1274,7 +1285,9 @@ def test_http_commit_rechecks_the_agent_under_the_script_lock_and_replaces_insid
     assert held == [True, True]  # 提交与复原各一次
 
 
-@pytest.mark.skipif(os.name == "nt", reason="进程组确认走 POSIX killpg；Windows 由 taskkill /T 在组长活着时收")
+@pytest.mark.skipif(
+    os.name == "nt", reason="进程组确认走 POSIX killpg；Windows 由 taskkill /T 在组长活着时收"
+)
 def test_a_cancelled_agent_stays_busy_until_its_process_group_has_exited(app_project, tmp_path):
     """取消 / 超时的会话，状态在 `kill()` 那一刻就变了，但进程（和它起的子进程）可能还没退、还在写（Codex 评 #730 P1）：
     观察到整个进程组退出之前，脚本一律算忙，确认过的改写被拒；组里的子进程随组一起被收掉，迟到的写入不会落到原件上。
@@ -1300,7 +1313,9 @@ def test_a_cancelled_agent_stays_busy_until_its_process_group_has_exited(app_pro
         f"\"import time; time.sleep(0.8); open({str(script)!r}, 'a').write('# agent was here\\\\n')\"])\n"
         "time.sleep(60)\n"
     )
-    proc = subprocess.Popen([sys.executable, "-c", late], start_new_session=True)  # 与真会话同样自成一组
+    proc = subprocess.Popen(
+        [sys.executable, "-c", late], start_new_session=True
+    )  # 与真会话同样自成一组
     sess = {
         "id": "slow",
         "status": "running",
