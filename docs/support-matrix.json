@@ -75,8 +75,7 @@
       },
       {
         "id": "dsh",
-        "status": "beta",
-        "channel": "dsh-bundle"
+        "status": "experimental"
       },
       {
         "id": "workbuddy",

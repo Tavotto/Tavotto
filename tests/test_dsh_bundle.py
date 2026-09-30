@@ -283,10 +283,20 @@ def test_new_staging_must_carry_the_bundle():
         assert rel not in pluginmanifest.REQUIRED, rel
 
 
-def test_readme_install_line_comes_from_brand():
-    lines = [ln.strip() for ln in (ROOT / "README.md").read_text(encoding="utf-8").splitlines()]
+def test_install_line_is_published_where_the_matrix_says():
+    """安装那行整行由 `brand.DSH_*` 拼出，放在哪由支持矩阵 `dsh` 这一档决定（2026-09-30 用户决定）：
+    `beta` 时 README 给出；此前 plugin-stable 还没带 bundle，README 一行都不许有，规格只在待发说明里。"""
     expected = f'dsh plugin --profile {brand.DSH_DEFAULT_PROFILE} add "{brand.DSH_PLUGIN_SPEC}"'
-    assert [ln for ln in lines if ln.startswith("dsh plugin ")] == [expected]
+    matrix = json.loads((ROOT / "docs" / "support-matrix.json").read_text(encoding="utf-8"))
+    (host,) = [h for h in matrix["mcp_hosts"]["hosts"] if h["id"] == "dsh"]
+    lines = [ln.strip() for ln in (ROOT / "README.md").read_text(encoding="utf-8").splitlines()]
+    found = [ln for ln in lines if ln.startswith("dsh plugin ")]
+    if host["status"] == "beta":
+        assert found == [expected]
+    else:
+        assert found == []
+        pending = (ROOT / "docs" / "release-notes" / "UNRELEASED.md").read_text(encoding="utf-8")
+        assert f"`{expected}`" in pending, "待发说明里没有安装那行：发版时 README 拿什么加回去"
     # pnpm 的 git 子目录规格：分支与目录都与两个市场同源
     assert brand.DSH_PLUGIN_SPEC == (
         f"git+{brand.CODEX_PLUGIN_SOURCE_URL}"

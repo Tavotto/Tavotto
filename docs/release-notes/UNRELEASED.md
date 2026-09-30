@@ -67,6 +67,31 @@ The install path only works once this version has been promoted to the `plugin-s
 
 ## DeepSeek Harness bundle (Beta)
 
+<!-- 发版时（2026-09-30 用户决定）：README 在 plugin-stable 带上 `package.json` / `dsh/` 之前不给安装方式。
+搬这一段的同时把「### Using Tavotto with DeepSeek Harness (Beta)」一节加回 README（放在 Claude Code 那节之后、
+「### Using Tavotto from other AI editors and clients (experimental)」之前；命令整行由 `brand.DSH_*` 拼出），
+并把 docs/support-matrix.json 的 dsh 改回 `status: beta` + `channel: dsh-bundle`；tests/test_dsh_bundle.py、
+test_install_commands_from_brand.py 与 test_mcp_host_profiles.py 按矩阵这一档判命令该在 README 还是在这里。
+ADR 0104「对外口径」。README 一节的原文：
+
+### Using Tavotto with DeepSeek Harness (Beta)
+
+The same plugin is also a DeepSeek Harness bundle. Add it to the profile you use (`web` here, the one
+`dsh web` starts):
+
+```sh
+dsh plugin --profile web add "git+https://github.com/Tavotto/Tavotto.git#plugin-stable&path:/codex-plugin"
+pipx install "tavotto[worker]"
+```
+
+Start a new session (`dsh web`). The tools show up as `mcp__tavotto__*` once discovery finishes, and the
+`tavotto-figure` skill is in the skill catalog. Tavotto may only open and write inside the folder you started
+`dsh` in, so start it in your project, not in your home folder. DSH shows no embedded canvas; you work through the
+tools. To update, run `dsh plugin --profile web update tavotto-dsh`. The bundle replaces the hand-merged
+`cordis.patch.yml` from the config generator below: use one or the other, not both (two rows would claim the
+same `tavotto` server name).
+-->
+
 Tavotto now installs into DeepSeek Harness as a profile bundle:
 `dsh plugin --profile web add "git+https://github.com/Tavotto/Tavotto.git#plugin-stable&path:/codex-plugin"`.
 The MCP tools (`mcp__tavotto__*`) and the `tavotto-figure` skill come with it; no YAML to merge. The folder

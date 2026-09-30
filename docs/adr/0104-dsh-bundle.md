@@ -37,7 +37,7 @@ DSH 以前只能靠配置生成器打印一段 Cordis YAML，用户手工合并�
    `skills/`、`watch: false`。
 5. **授权 = dsh 启动目录。** DSH 的 MCP 客户端 `capabilities: {}`（不回 roots、不支持 elicitation），server
    退回自己的 cwd；补丁照 DSH 官方 MCP 指南写 `cwd: !!js process.cwd()`。在 HOME 里启动 dsh 会把 HOME 授权
-   出去——README 与技能都明说「在项目目录里启动」。
+   出去——技能与（发版后的）README 都明说「在项目目录里启动」。
 6. **不做**：内嵌画布（DSH 只投影文本与图片）、npm 发布、`dsh plugin` 以外的安装入口。YAML patch 路线保留，
    与 bundle 二选一（同名 serverName 的第二行加载失败）。
 
@@ -46,11 +46,17 @@ DSH 以前只能靠配置生成器打印一段 Cordis YAML，用户手工合并�
 README 的 DeepSeek Harness 章节标「(Beta)」：支持矩阵里 `dsh` 为 `status: beta`、`channel: dsh-bundle`，验收矩阵
 `dsh · bundle` 子行的工具流程是 `local_smoke`（同一条三向对拍，见 ADR 0103）。YAML patch 那条路仍是实验。
 
+**2026-09-30 用户改为先合代码、README 暂不给安装方式**（与 ADR 0103 同一决定）：plugin-stable 在下一次 promote
+之前没有 `package.json` / `dsh/`，照 README 装会坏。合入时 README 不含这一节、矩阵里 `dsh` 仍是 `experimental`；
+安装规格完整留在 `docs/release-notes/UNRELEASED.md` 那一段，发版时把 README 一节加回、矩阵改回 `beta` +
+`channel: dsh-bundle`。`test_install_line_is_published_where_the_matrix_says` 按矩阵这一档判规格该在 README
+还是在待发说明，两边都钉。
+
 ## 看护
 
 `tests/test_dsh_bundle.py`：包身份与版本；`dsh.bundle.patch` / `main` 指到真文件；`files` 覆盖胶水读的路径；
 补丁三行的 name / inject / serverName / 字段；用真 `node` 跑胶水的 `launchSpec`（darwin / linux / win32 三种）核对
-启动器、server、毫秒超时与技能目录；技能名与描述长度合 dsh 目录的规矩；`STAGE_REQUIRED`；README 那行由
+启动器、server、毫秒超时与技能目录；技能名与描述长度合 dsh 目录的规矩；`STAGE_REQUIRED`；安装那行（矩阵 beta 时在 README，此前只在待发说明）由
 `brand.DSH_*` 拼出；`launch.cmd` 首行不是 `#!`；Windows 上按照抄的 cross-spawn 7.0.6 算法（另有一条与真
 cross-spawn 输出逐字节对拍）拼出命令行，在含空格 / 括号 / `&` / `%` / `^` / `!` / 中文的目录里真起
 cmd → `launch.cmd` → Python，参数原样到达（只证明 cmd 与启动器，证明不了 cross-spawn 本身）。十一条变异（包名、胶水行名、serverName、秒当毫秒、直接执行启动器、`files` 漏 `mcp/`、
