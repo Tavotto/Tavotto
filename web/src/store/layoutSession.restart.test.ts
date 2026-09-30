@@ -31,6 +31,8 @@ let exportDefaults: unknown = null
 let sessionEndpoints = true
 /** true = 后端在，但写入回 500（sidecar 正在退出、瞬断） */
 let failSessionPuts = false
+/** 假后端的钟（毫秒）；个别用例把它拨到远超浏览器时钟，模拟连着远程实例、服务器钟快 */
+let serverClock = 1
 /** 按顺序给「上次开着的」PUT 排好结局（先挂在 hold 上，再按 'ok' / 'fail' 答）；空了按常规 */
 const putPlan: { hold: Promise<void>; outcome: 'ok' | 'fail' }[] = []
 /** 非空 = 「上次开着哪份」的 GET 挂在这里，等它 resolve 才答（切项目途中的那段 await） */
@@ -84,7 +86,8 @@ globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
         if (plan.outcome === 'fail') return json({ error: 'boom' }, 500)
       }
       const body = JSON.parse(String(init?.body)) as { doc_id: string; name: string }
-      const last = { doc_id: body.doc_id, name: body.name, at: 1 }
+      serverClock += 1 // 后端自己的钟：与浏览器那台机器的 Date.now() 无关
+      const last = { doc_id: body.doc_id, name: body.name, at: serverClock }
       lastByProject.set(pjOf(u, init), last)
       return json({ ok: true, last })
     }
@@ -148,6 +151,7 @@ beforeEach(() => {
   exportDefaults = null
   sessionEndpoints = true
   failSessionPuts = false
+  serverClock = 1
   holdSessionGet = null
   holdPrefsGet = null
   putPlan.length = 0
@@ -309,20 +313,31 @@ describe('推给后端失败的写入不丢（#719 Codex P1 / P2）', () => {
     expect(lastByProject.get('p_a')?.doc_id).toBe('d_second')
   })
 
-  it('待确认写入与后端记录同一毫秒：本机赢（确知没推上去的那次不丢）', async () => {
+  it('待确认写入之后后端没收过别的写（后端那条就是写下时见过的那条）：本机赢并补推', async () => {
     vi.resetModules()
     const docs = await import('@/lib/projectDocs')
-    const T = 1_700_000_000_000
-    const now = vi.spyOn(Date, 'now').mockReturnValue(T)
-    try {
-      failSessionPuts = true
-      docs.rememberProjectDocument('p_a', { id: 'd_new', name: 'new' })
-      await settle()
-      failSessionPuts = false
-    } finally {
-      now.mockRestore()
-    }
-    lastByProject.set('p_a', { doc_id: 'd_old', name: 'old', at: T })
+    docs.rememberProjectDocument('p_a', { id: 'd_old', name: 'old' })
+    await settle()
+    expect(lastByProject.get('p_a')?.doc_id).toBe('d_old')
+    failSessionPuts = true
+    docs.rememberProjectDocument('p_a', { id: 'd_new', name: 'new' })
+    await settle()
+    failSessionPuts = false
+    expect(await docs.loadProjectDocument('p_a')).toEqual({ id: 'd_new', name: 'new' })
+    await settle()
+    expect(lastByProject.get('p_a')?.doc_id).toBe('d_new')
+  })
+
+  it('连着远程实例、服务器钟比浏览器快得多：确知没推上去的那次照样不丢（只比后端的钟）', async () => {
+    serverClock = Date.now() + 10_000_000_000
+    vi.resetModules()
+    const docs = await import('@/lib/projectDocs')
+    docs.rememberProjectDocument('p_a', { id: 'd_old', name: 'old' })
+    await settle()
+    failSessionPuts = true
+    docs.rememberProjectDocument('p_a', { id: 'd_new', name: 'new' })
+    await settle()
+    failSessionPuts = false
     expect(await docs.loadProjectDocument('p_a')).toEqual({ id: 'd_new', name: 'new' })
     await settle()
     expect(lastByProject.get('p_a')?.doc_id).toBe('d_new')

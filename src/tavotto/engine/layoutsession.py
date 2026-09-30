@@ -36,6 +36,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import re
 import threading
 import time
@@ -92,7 +93,11 @@ def _clean_last(raw: object) -> dict | None:
     return {
         "doc_id": raw["doc_id"],
         "name": name[:MAX_NAME_CHARS] if isinstance(name, str) else "",
-        "at": int(at) if isinstance(at, (int, float)) and not isinstance(at, bool) else 0,
+        # 非有限数（`1e400` 解析成 inf）按坏值处理：int(inf) 会抛 OverflowError，让每一次读写都失败，
+        # 违背「读坏了当成空的、下次写整份替换」（#719 Codex P2）
+        "at": int(at)
+        if isinstance(at, (int, float)) and not isinstance(at, bool) and math.isfinite(at)
+        else 0,
     }
 
 

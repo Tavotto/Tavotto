@@ -159,6 +159,20 @@ def test_bad_entries_are_dropped_good_ones_kept(data_dir):
     assert layoutsession.owners() == {"d_a": "/a", "d_n": None}
 
 
+def test_an_overflowing_timestamp_reads_as_a_bad_value_not_an_error(data_dir):
+    """`1e400` 是合法 JSON，Python 解析成 inf；`int(inf)` 会抛 OverflowError——不能让它把每一次
+    读写都打挂，按坏值（0）处理，下一次写整份替换（#719 Codex P2）。"""
+    path = layoutsession.state_path()
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        '{"projects": {"/a": {"last": {"doc_id": "d_a", "name": "A", "at": 1e400}}}}',
+        encoding="utf-8",
+    )
+    assert layoutsession.last_for("/a") == {"doc_id": "d_a", "name": "A", "at": 0}
+    assert layoutsession.set_last("/a", "d_b", "B")["doc_id"] == "d_b"
+    assert json.loads(path.read_text(encoding="utf-8"))["projects"]["/a"]["last"]["doc_id"] == "d_b"
+
+
 def test_export_defaults_roundtrip_and_limits(data_dir):
     assert layoutsession.read_export_defaults() is None
     layoutsession.write_export_defaults({"dpi": "1200", "formats": ["pdf"]})

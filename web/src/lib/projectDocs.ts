@@ -42,14 +42,16 @@ export function readProjectDocument(projectId: string): ProjectDocumentRef | nul
 }
 
 /**
- * 本机缓存里这条记录**还没被后端确认**：`at` 是写入时刻（`Date.now()` 毫秒，只用来与后端
- * `last.at` 比新旧），`gen` 是这一次写入的唯一标识（只用来认「后端确认的是不是这一次」——
- * 同一毫秒里记两次时 `at` 会撞，拿它认确认会把新的那次当成旧的摘掉，#719 Codex P2）。
- * 推送失败（非 404：sidecar 正在退出、网络瞬断）时它留着，下一次读「上次开着哪份」时本机这条
- * 比后端的新就以它为准并重推——否则后端那份更旧的非空记录会赢过它（#719 Codex P1）。
+ * 本机缓存里这条记录**还没被后端确认**：`base` 是写下它那一刻本机见过的**后端**最新记录时刻
+ * （`seenAt`，后端给的 `last.at`），`gen` 是这一次写入的唯一标识（只用来认「后端确认的是不是这一次」，
+ * 同一毫秒记两次也不撞，#719 Codex P2）。推送失败（非 404）时它留着；下一次读「上次开着哪份」时，
+ * 后端那条的 `at` 不晚于 `base`（=写下之后后端没收过别的写）就以本机为准并重推，否则后端为准。
+ *
+ * **只比后端自己的时钟**：连着远程实例时浏览器与服务器是两台机器，拿本机 `Date.now()` 去比服务器的
+ * `at`，服务器钟快就会把一次确知没推上去的写入判成旧的丢掉（#719 Codex P2）。
  */
 interface Pending {
-  at: number
+  base: number
   gen: string
 }
 
@@ -67,24 +69,45 @@ function rawCache(projectId: string): string | null {
   }
 }
 
-function readPending(projectId: string): Pending | null {
+function readRaw(projectId: string): Record<string, unknown> | null {
   try {
     const raw = localStorage.getItem(PREFIX + projectId)
-    if (!raw) return null
-    const v = JSON.parse(raw) as { pendingAt?: unknown; pendingGen?: unknown }
-    return typeof v.pendingAt === 'number' && Number.isFinite(v.pendingAt) && typeof v.pendingGen === 'string'
-      ? { at: v.pendingAt, gen: v.pendingGen }
-      : null
+    const v = raw ? (JSON.parse(raw) as unknown) : null
+    return v && typeof v === 'object' ? (v as Record<string, unknown>) : null
   } catch {
     return null
   }
 }
 
-function writeCache(projectId: string, ref: ProjectDocumentRef, pending?: Pending): void {
+const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
+
+/** 本机见过的后端最新记录时刻（后端的钟）；没见过是 0 */
+function readSeen(projectId: string): number {
+  const v = readRaw(projectId)?.seenAt
+  return finite(v) ? v : 0
+}
+
+function readPending(projectId: string): Pending | null {
+  const v = readRaw(projectId)
+  if (!v) return null
+  return finite(v.pendingBase) && typeof v.pendingGen === 'string'
+    ? { base: v.pendingBase, gen: v.pendingGen }
+    : null
+}
+
+function writeCache(
+  projectId: string,
+  ref: ProjectDocumentRef,
+  pending?: Pending,
+  seenAt: number = readSeen(projectId),
+): void {
   try {
-    const v = pending
-      ? { id: ref.id, name: ref.name, pendingAt: pending.at, pendingGen: pending.gen }
-      : { id: ref.id, name: ref.name }
+    const v: Record<string, unknown> = { id: ref.id, name: ref.name }
+    if (seenAt) v.seenAt = seenAt
+    if (pending) {
+      v.pendingBase = pending.base
+      v.pendingGen = pending.gen
+    }
     localStorage.setItem(PREFIX + projectId, JSON.stringify(v))
   } catch {
     /* 存不下只影响「下次切回这个项目落在哪份文档上」 */
@@ -107,9 +130,16 @@ function pushRemote(projectId: string, ref: ProjectDocumentRef, gen: string | nu
   if (remoteMissing) return
   remoteTail = remoteTail.then(() =>
     putLayoutSessionLast({ doc_id: ref.id, name: ref.name }, projectId).then(
-      () => {
-        // 后端确认了：本机这条还是这次推的那条，就摘掉「待确认」（期间又记了新的就不动它）
-        if (gen !== null && readPending(projectId)?.gen === gen) writeCache(projectId, ref)
+      (res) => {
+        // 后端确认了：记下它给的时刻（后端的钟）；本机这条还是这次推的那条就摘掉「待确认」
+        // （期间又记了新的就只更新时刻、不动它的待确认）
+        const at = finite(res?.last?.at) ? Math.max(res.last.at, readSeen(projectId)) : readSeen(projectId)
+        const cur = readProjectDocument(projectId)
+        const pending = readPending(projectId)
+        if (gen !== null && pending?.gen === gen) writeCache(projectId, ref, undefined, at)
+        // 确认的是更早的一次（本标签页的写入串行，后记的那条还在排队 / 失败）：后端此刻那条就是
+        // 我们自己更早的写，不比待确认的新——把待确认的基准抬到它，免得下次读时被自己的旧写盖掉
+        else if (cur) writeCache(projectId, cur, pending ? { base: Math.max(pending.base, at), gen: pending.gen } : undefined, at)
       },
       (e: unknown) => {
         if (e instanceof ApiError && e.status === 404) remoteMissing = true
@@ -121,7 +151,7 @@ function pushRemote(projectId: string, ref: ProjectDocumentRef, gen: string | nu
 
 /** 记「这个项目现在开着这份排版」：本机缓存（先标「待确认」）+ 后端（权威）。 */
 export function rememberProjectDocument(projectId: string, ref: ProjectDocumentRef): void {
-  const pending = { at: Date.now(), gen: newGen() }
+  const pending = { base: readSeen(projectId), gen: newGen() }
   writeCache(projectId, ref, pending)
   pushRemote(projectId, ref, pending.gen)
 }
@@ -142,17 +172,17 @@ export async function fetchRemoteProjectDocument(
   const remote = await fetchLayoutSession(projectId)
   if (remote === undefined) return undefined
   if (rawCache(projectId) !== before) return readProjectDocument(projectId)
-  // 本机有一条后端还没确认的记录，而且不比后端那条旧（或后端还没记过）：本机为准，重推一次。
-  // 同一毫秒算本机赢：平局时丢掉的是一次**确知没推上去**的写入，重推一次的代价只是多一个 PUT
+  // 本机有一条后端还没确认的记录，而且写下它之后后端没收过别的写（后端那条的 `at` 不晚于写下时
+  // 见过的 `base`；或后端还没记过）：本机为准，重推一次。两边比的都是后端的钟
   const pending = readPending(projectId)
   const local = pending === null ? null : readProjectDocument(projectId)
-  if (pending !== null && local && (!remote.last || pending.at >= remote.last.at)) {
+  if (pending !== null && local && (!remote.last || remote.last.at <= pending.base)) {
     pushRemote(projectId, local, pending.gen)
     return local
   }
   if (!remote.last) return null
   const ref = { id: remote.last.doc_id, name: remote.last.name }
-  writeCache(projectId, ref)
+  writeCache(projectId, ref, undefined, Math.max(remote.last.at, readSeen(projectId)))
   return ref
 }
 
@@ -167,7 +197,7 @@ export async function loadProjectDocument(projectId: string): Promise<ProjectDoc
   if (remote === null && local) {
     // 迁移也是一次写：先标待确认再推。推失败时这条仍带着待确认，下次读（同一个 origin）会重推；
     // 不标的话失败即丢，后端一直是 null（#719 Codex P2）
-    const pending = readPending(projectId) ?? { at: Date.now(), gen: newGen() }
+    const pending = readPending(projectId) ?? { base: readSeen(projectId), gen: newGen() }
     writeCache(projectId, local, pending)
     pushRemote(projectId, local, pending.gen)
   }
