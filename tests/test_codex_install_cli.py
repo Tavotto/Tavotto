@@ -1976,6 +1976,36 @@ def test_upgrade_recovers_a_stranded_backup_before_classifying_the_channel(no_gi
     assert dest.is_dir() and not backup.exists()
 
 
+def test_a_stranded_backup_that_cannot_be_moved_back_fails_the_marketplace_step(
+    no_git_machine, capsys, monkeypatch
+):
+    """登记的托管市场不在、备份又挪不回（杀软占着）：marketplace 一步报失败并指名那份备份，不能把缺
+    目录判成自定义来源跳过、靠缓存里的旧插件报成功（Codex #725）。"""
+    from tavotto.engine import codexinstall
+
+    m = no_git_machine
+    z1, man1 = _stable_branch_zip(m["tmp"], "0.18.0")
+    m["github"].publish(z1, man1)
+    assert _cli_json(m, capsys, "install")[0] == 0
+    dest = codexinstall.archive_marketplace_dir()
+    backup = dest.parent / ".old-4242"
+    os.replace(dest, backup)
+    real = codexinstall.os.replace
+
+    def refuse(src, dst):
+        if Path(src) == backup:
+            raise PermissionError("held by antivirus")
+        return real(src, dst)
+
+    monkeypatch.setattr(codexinstall.os, "replace", refuse)
+    rc, data = _cli_json(m, capsys, "upgrade")
+    assert rc != 0, data
+    steps = {st["step"]: st for st in data["steps"]}
+    assert steps["marketplace"]["ok"] is False, steps["marketplace"]
+    assert backup.name in steps["marketplace"]["detail"], steps["marketplace"]
+    assert backup.is_dir(), "挪不回的备份仍是唯一的那份，不能删"
+
+
 def test_a_failed_archive_attempt_still_reports_dirs_it_could_not_remove(
     no_git_machine, capsys, monkeypatch
 ):

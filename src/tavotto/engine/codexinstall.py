@@ -1252,28 +1252,28 @@ def _upgrade_marketplace_step(codex: str, mk: dict, summary: dict) -> dict:
     return _step("marketplace", ok=True, detail=out[-200:] or "已刷新 git 市场快照")
 
 
-def _recover_managed_marketplace(root: str | None) -> bool:
+def _recover_managed_marketplace(root: str | None) -> tuple[bool, list[str]]:
     """Codex 登记的是 `tavotto codex install` 建的那个本地市场、目录却不在：上一次换目录时在两次
     replace 之间被杀，已核对的那份还在 `.old-*` 里。先挪回去，再判通道——不然目录不在、收据读不到，
     通道判成 unknown / custom，`upgrade` 永远「不替你升级」，恢复那一步也走不到（Codex #725）。
-    回是否挪回了。"""
+    回 (是否挪回了, 挪不回 / 删不掉的目录)——后者非空时调用方要报失败，不能当成「没什么可恢复」。"""
     if not root:
-        return False
+        return False, []
     dest = archive_marketplace_dir()
     same = os.path.normcase(os.path.realpath(root)) == os.path.normcase(os.path.realpath(dest))
     if not same or dest.exists():
-        return False
-    _remove_one_shot_dirs(dest.parent, dest)
-    return dest.exists()
+        return False, []
+    stuck = _remove_one_shot_dirs(dest.parent, dest)
+    return dest.exists(), stuck
 
 
 def _marketplace_step(codex: str, *, apply: bool, summary: dict, upgrade: bool = False) -> dict:
     mk = _marketplace_state(codex)
     # 只读的 doctor 不挪目录；install / upgrade 才恢复
-    recovered = (
-        (apply or upgrade)
-        and mk["state"] == "registered"
-        and _recover_managed_marketplace(mk.get("root"))
+    recovered, stuck = (
+        _recover_managed_marketplace(mk.get("root"))
+        if (apply or upgrade) and mk["state"] == "registered"
+        else (False, [])
     )
     summary["marketplace"] = {
         "registered": mk["state"] == "registered",
@@ -1283,6 +1283,17 @@ def _marketplace_step(codex: str, *, apply: bool, summary: dict, upgrade: bool =
         "root": mk.get("root"),
         "recovered_from_backup": bool(recovered),
     }
+    if stuck and not recovered:
+        # 登记的托管市场不在、备份又挪不回：照常往下走会把缺目录判成自定义来源跳过，缓存里的旧插件
+        # 让后面几步照样过，命令报成功而市场仍然缺着（Codex #725）——这里就报失败
+        return _step(
+            "marketplace",
+            ok=False,
+            code=ERR_MARKETPLACE,
+            detail=f"Codex 登记的本地市场 {archive_marketplace_dir()} 不在，上一次留下的备份挪不回去："
+            + "、".join(stuck)
+            + "。多半是杀毒软件或别的程序占着它：关掉占用后重跑本命令。",
+        )
     if mk["state"] == "unknown":
         # 「不知道」不是「没有」：这时候跑 add 是盲改
         return _step(
