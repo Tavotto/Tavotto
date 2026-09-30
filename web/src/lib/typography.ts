@@ -100,13 +100,19 @@ const WEIGHT_NUMBER: Record<string, number> = {
  * 认不出的名字不算。
  */
 export function weightIsBold(raw: unknown): boolean {
+  const n = weightNumber(raw)
+  return n !== null && n >= 600
+}
+
+/** 字重 → 数值（数字、数字串、matplotlib 字重名）；认不出的是 null */
+export function weightNumber(raw: unknown): number | null {
   const n =
     typeof raw === 'number'
       ? raw
       : typeof raw === 'string'
         ? (WEIGHT_NUMBER[raw.trim().toLowerCase()] ?? (raw.trim() === '' ? NaN : Number(raw)))
         : NaN
-  return Number.isFinite(n) && n >= 600
+  return Number.isFinite(n) ? n : null
 }
 
 /** 一个字形算不算「斜体」：不是 `normal` 就算（`oblique` 算斜体，与引擎同一口径，#704） */

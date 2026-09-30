@@ -140,11 +140,12 @@
   按 `lib/typography.weightIsBold`（≥ 600）/ `styleIsItalic`（非 normal，与引擎 #704 同一口径）显示成开 / 关、悬停说原值，
   不点就原样保存，点了按显示的那一态往下走；字体选项 = 通用三族 + **每一张**已渲染的图里引擎报过的首选项与本机族（逐张走 `withMachineFamilies`，按键排序）
   + 样式里已写着的名字；`options_unavailable` 跟着并，口径「任一运行时画得出就不算不可用」（样式里写着、没有哪张图
-  请求过的名字：有图报了完整本机表时不在任何一份里就标，老引擎可用性未知时不标），标记与 warning 用属性页
+  请求过的名字：**每一张**图的运行时都报了完整本机表时不在任何一份里就标，混着老引擎、可用性未知时不标），标记与 warning 用属性页
   同一副（`FontMissingTag` / `FontMissingHint`），名字不换；内容没变时选项对象引用不变（选项与标记都比）；
   改动以函数交出（字体下拉按数据 memo，回调不许捏着旧草稿）。只读那份每行一句摘要（字体 · 字号 · 粗斜体）。
   示例图（`lib/styleSample.ts`）每一笔只读它自己那一维（同一张行表），没设是示例默认、不从别的角色回落——应用时
   `element.text` 只落在 `text` 角色上、边框线宽不改刻度线宽，示例跟着变就是预告不会发生的事。
+  字重 / 字形照原值画（`light` → 200、`600`、`oblique`，与 `planStyle` 交给引擎的同一个值），归一只给开关与字宽估算。
   字号超出示例预算时几何里**所有**长度（字号、线宽、边框、刻度长度 / 线宽）乘同一个系数（`fitSampleGeometry`），
   版面与画框再按缩后的几何现算（`sampleLayout`），比例与应用后一致。
   看护：`components/left/stylePanel.test.tsx`、`lib/stylePresets.test.ts`、`store/styleBinding.test.ts`、`lib/migrate.style.test.ts`、

@@ -1191,16 +1191,21 @@ describe('样式里写着、却没有哪张图请求过的未安装字体（Code
     ({ fileId: 'f', rev: 1, manifest: m, svg: null, svgBytes: 0, status: 'ready' }) as unknown as PanelRender
   const hint = '这台电脑没装这个字体，图上用的是别的字体。换一个可用的字体，或装上它。'
 
-  it('figureFamilyOptions 报本机表是否已知：有一张图带完整本机表就算已知，老引擎都不带就不算', () => {
+  it('figureFamilyOptions 报本机表是否已知：每一张图都带完整本机表才算，混着一个老引擎就不算', () => {
     expect(figureFamilyOptions({ a: modern(['Arial']) }).machineKnown).toBe(true)
-    expect(figureFamilyOptions({ a: modern(undefined), b: modern(['Arial']) }).machineKnown).toBe(true)
+    expect(figureFamilyOptions({ a: modern(['Arial']), b: modern(['Inter']) }).machineKnown).toBe(true)
+    expect(figureFamilyOptions({ a: modern(undefined), b: modern(['Arial']) }).machineKnown).toBe(false)
     expect(figureFamilyOptions({ a: modern(undefined) }).machineKnown).toBe(false)
     expect(figureFamilyOptions({}).machineKnown).toBe(false)
   })
 
-  async function mountWith(machine: string[] | undefined) {
+  async function mountWith(machine: string[] | undefined, legacyToo = false) {
     const prev = useRenderStore.getState().byKey
-    act(() => useRenderStore.setState({ byKey: { a: renderOf(modern(machine)) } }))
+    act(() =>
+      useRenderStore.setState({
+        byKey: { a: renderOf(modern(machine)), ...(legacyToo ? { b: renderOf(modern(undefined)) } : {}) },
+      }),
+    )
     const data = { element: { line: { linewidth: 1.25 }, title: { fontfamily: 'Ghost Font' } } }
     globalThis.fetch = vi.fn(async (input: RequestInfo | URL) =>
       new Response(
@@ -1235,6 +1240,13 @@ describe('样式里写着、却没有哪张图请求过的未安装字体（Code
 
   it('老引擎不报本机表（可用性未知）：不标，免得把装了的字体误报成没装', async () => {
     const restore = await mountWith(undefined)
+    expect(cell().textContent).toContain('Ghost Font')
+    expect(cell().textContent).not.toContain(hint)
+    restore()
+  })
+
+  it('一个现代运行时混着一个老运行时：老的装了什么不知道，不标', async () => {
+    const restore = await mountWith(['Arial', 'Inter'], true)
     expect(cell().textContent).toContain('Ghost Font')
     expect(cell().textContent).not.toContain(hint)
     restore()

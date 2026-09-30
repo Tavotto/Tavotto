@@ -69,7 +69,7 @@ function marks(svg: SVGSVGElement): Box[] {
   }
   for (const el of svg.querySelectorAll('text')) {
     const pt = num(el, 'font-size')
-    const w = (el.textContent ?? '').length * pt * (el.getAttribute('font-weight') === 'bold' ? GLYPH_W_BOLD : GLYPH_W)
+    const w = (el.textContent ?? '').length * pt * (Number(el.getAttribute('font-weight') ?? 400) >= 600 ? GLYPH_W_BOLD : GLYPH_W)
     const anchor = el.getAttribute('text-anchor') ?? 'start'
     const along0 = anchor === 'middle' ? -w / 2 : anchor === 'end' ? -w : 0
     const tr = el.getAttribute('transform')
@@ -195,5 +195,24 @@ describe('样式示例图：字号超预算时画出来的比例与样式一致�
     expect(num(svg.querySelector('polyline')!, 'stroke-width') / fontPt).toBeCloseTo(3 / 72, 6)
     // 读屏说的仍是样式里的真实数字
     expect(svg.getAttribute('aria-label')).toContain('72')
+  })
+})
+
+describe('样式示例图的字重 / 字形照原值画（Codex #703）', () => {
+  it('light 画成 font-weight 200、600 画成 600、oblique 画成 oblique；bold 仍是 700', () => {
+    const svg = render({
+      element: {
+        title: { weight: 'light' },
+        axis_label: { weight: 600, style: 'oblique' },
+        legend_text: { weight: 'bold' },
+      },
+    })
+    const text = (s: string) => [...svg.querySelectorAll('text')].find((t) => t.textContent === s)!
+    expect(text('Reaction kinetics').getAttribute('font-weight')).toBe('200')
+    expect(text('Time (min)').getAttribute('font-weight')).toBe('600')
+    expect(text('Time (min)').getAttribute('font-style')).toBe('oblique')
+    expect(text('Catalyst').getAttribute('font-weight')).toBe('700')
+    // 刻度文字没设字面：不写属性
+    expect(text('30').getAttribute('font-weight')).toBeNull()
   })
 })

@@ -11,7 +11,7 @@
  */
 
 import { FIGURE_LINE_ROWS, FIGURE_TEXT_ROWS, type FigureLineRowId, type FigureTextRowId } from './stylePanelModel'
-import { styleIsItalic, weightIsBold } from './typography'
+import { styleIsItalic, weightIsBold, weightNumber } from './typography'
 
 /** 示例图默认值（一张 9 pt / 0.5 pt 的典型论文图） */
 export const SAMPLE_DEFAULTS = {
@@ -26,11 +26,25 @@ export const SAMPLE_DEFAULTS = {
   tickWidthPt: 0.75,
 } as const
 
-/** 示例里一类文字的字面：字体族（CSS）+ 粗体 / 斜体 */
+/**
+ * 示例里一类文字的字面：字体族（CSS）+ 画出来的字重 / 字形（CSS 值）+ 归一后的粗 / 斜（估字宽用）。
+ *
+ * **画用原值**（Codex #703）：`planStyle` 把样式里的 `light` / `600` / `oblique` 原样交给引擎，
+ * 示例归一成 normal / bold 再画就与应用后的样子对不上。归一只给开关按钮与字宽估算用。
+ */
 export interface SampleFace {
   fontFamily: string
+  /** CSS `font-weight`（`light` → 200、`semibold` → 600，按 matplotlib 的字重表）；没设或认不出 = null */
+  weight: number | null
+  /** CSS `font-style`：`italic` / `oblique`；没设、`normal` 或认不出 = null */
+  style: 'italic' | 'oblique' | null
   bold: boolean
   italic: boolean
+}
+
+const cssStyleOf = (raw: unknown): SampleFace['style'] => {
+  const v = typeof raw === 'string' ? raw.trim().toLowerCase() : ''
+  return v === 'italic' || v === 'oblique' ? v : null
 }
 
 export interface StyleSampleGeometry {
@@ -111,10 +125,14 @@ export function styleSampleGeometry(data: Record<string, unknown> | null | undef
     readNumber(d, ['element', textRow(id).sizeRole, 'fontsize']) ?? fallback
   const face = (id: FigureTextRowId): SampleFace => {
     const { familyRole, faceRole } = textRow(id)
-    // 非规范字重 / 字形（`600`、`semibold`、`oblique`）按与引擎同一口径归一：≥ 600 算粗、非 normal 算斜
+    // 画用原值（`light` 画细、`600` 画 600、`oblique` 画 oblique）；粗 / 斜的布尔按与引擎同一口径归一
+    // （≥ 600 算粗、非 normal 算斜），只给字宽估算用
     const faceOf = (prop: string) => (faceRole ? readValue(d, ['element', faceRole, prop]) : null)
+    const w = weightNumber(faceOf('weight'))
     return {
       fontFamily: cssFamilyOf(familyOf(readValue(d, ['element', familyRole, 'fontfamily']))),
+      weight: w !== null && w >= 1 && w <= 1000 && w !== 400 ? w : null,
+      style: cssStyleOf(faceOf('style')),
       bold: weightIsBold(faceOf('weight')),
       italic: styleIsItalic(faceOf('style')),
     }

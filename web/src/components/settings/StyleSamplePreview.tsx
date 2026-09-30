@@ -116,8 +116,9 @@ export function StyleSamplePreview({ data }: { data: Record<string, unknown> | n
 function faceAttrs(f: SampleFace) {
   return {
     fontFamily: f.fontFamily,
-    ...(f.bold ? { fontWeight: 'bold' } : {}),
-    ...(f.italic ? { fontStyle: 'italic' } : {}),
+    // 原值（数字字重、oblique）照画，不归一成 bold / italic——与引擎拿到的是同一个值
+    ...(f.weight !== null ? { fontWeight: f.weight } : {}),
+    ...(f.style !== null ? { fontStyle: f.style } : {}),
   }
 }
 

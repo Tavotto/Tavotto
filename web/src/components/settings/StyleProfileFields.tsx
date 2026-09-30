@@ -152,9 +152,9 @@ export interface FigureFamilies {
   options: string[]
   unavailable: string[]
   /**
-   * 至少一张图的运行时报了完整的本机表（`font_families`）：这时**不在选项里**的名字就是哪个
-   * 看得到的运行时都没有的字体，样式里写着它（没有哪张图正在用）也标「未安装」。老引擎不报本机表时
-   * 不知道，不标——免得把装了的字体误报成没装（Codex #703）
+   * **每一张**图的运行时都报了完整的本机表（`font_families`）：这时**不在选项里**的名字就是哪个
+   * 看得到的运行时都没有的字体，样式里写着它（没有哪张图正在用）也标「未安装」。只要有一个老引擎
+   * 不报本机表，它装了什么就不知道，不标——免得把装了的字体误报成没装（Codex #703）
    */
   machineKnown: boolean
 }
@@ -175,12 +175,15 @@ export interface FigureFamilies {
 export function figureFamilyOptions(manifests: Record<string, Manifest | null | undefined>): FigureFamilies {
   const out = new Set<string>(GENERIC_FAMILIES)
   const missing = new Set<string>()
-  let machineKnown = false
+  let allKnown = true
+  let seen = false
   const renderable = new Set<string>(GENERIC_FAMILIES)
   for (const key of Object.keys(manifests).sort()) {
     const manifest = manifests[key]
     if (!manifest) continue
-    if (manifest.font_families?.length) machineKnown = true
+    // 每一个看得到的运行时都报了完整本机表才算已知：混着一个老运行时，它装了什么不知道（Codex #703）
+    if (!manifest.font_families?.length) allKnown = false
+    seen = true
     const preferred = new Set<string>()
     const unavailable = new Set<string>()
     for (const e of manifest.elements) {
@@ -202,7 +205,7 @@ export function figureFamilyOptions(manifests: Record<string, Manifest | null | 
       else renderable.add(o)
     }
   }
-  return { options: [...out], unavailable: [...missing].filter((o) => !renderable.has(o)).sort(), machineKnown }
+  return { options: [...out], unavailable: [...missing].filter((o) => !renderable.has(o)).sort(), machineKnown: seen && allKnown }
 }
 
 const sameList = (a: readonly string[], b: readonly string[]) =>

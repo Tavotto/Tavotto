@@ -80,8 +80,8 @@ describe('sampleFitScale（示例图画得下这套字号吗）', () => {
         legend_text: { style: 'italic' },
       },
     })
-    expect(g.faces.title).toEqual({ fontFamily: '"Arial", sans-serif', bold: true, italic: false })
-    expect(g.faces.legend).toEqual({ fontFamily: 'sans-serif', bold: false, italic: true })
+    expect(g.faces.title).toEqual({ fontFamily: '"Arial", sans-serif', weight: 700, style: null, bold: true, italic: false })
+    expect(g.faces.legend).toEqual({ fontFamily: 'sans-serif', weight: null, style: 'italic', bold: false, italic: true })
     expect(g.faces.axis.fontFamily).toBe('sans-serif')
     expect(g.faces.axis.bold).toBe(false)
     expect(g.faces.tick.bold).toBe(false)
@@ -214,5 +214,23 @@ describe('示例图认字体候选列表', () => {
   it('fontfamily 是一串候选时按第一个画（matplotlib 也先试它）', () => {
     const g = styleSampleGeometry({ element: { title: { fontfamily: ['Times New Roman', 'serif'] } } })
     expect(g.faces.title.fontFamily).toBe('"Times New Roman", serif')
+  })
+})
+
+describe('示例图用原值画字重 / 字形（与引擎拿到的同一个值，Codex #703）', () => {
+  it('light 画 200、600 与 semibold 画 600、bold 画 700、normal / 400 不写；oblique 画 oblique', () => {
+    const g = styleSampleGeometry({
+      element: {
+        title: { weight: 'light' },
+        axis_label: { weight: 600, style: 'oblique' },
+        legend_text: { weight: 'semibold', style: 'normal' },
+      },
+    })
+    expect(g.faces.title).toMatchObject({ weight: 200, style: null, bold: false })
+    expect(g.faces.axis).toMatchObject({ weight: 600, style: 'oblique', bold: true, italic: true })
+    expect(g.faces.legend).toMatchObject({ weight: 600, style: null, bold: true, italic: false })
+    expect(styleSampleGeometry({ element: { title: { weight: 400 } } }).faces.title.weight).toBeNull()
+    expect(styleSampleGeometry({ element: { title: { weight: 'normal' } } }).faces.title.weight).toBeNull()
+    expect(styleSampleGeometry({ element: { title: { weight: 'wide' } } }).faces.title.weight).toBeNull()
   })
 })
