@@ -3127,8 +3127,6 @@ export interface DependencyRequirementInfo {
 
 /** 一个可选的安装目标 */
 export interface DependencyTarget {
-  /** 受管目标新建第一代时这一代要装的全部包（规范串）；量不出 / 已有一代 / 老后端为空 */
-  requirements?: string[] | null
   /**
    * `system_interpreter`（ADR 0044）不是安装目标：这台机器上已有的解释器里
    * 已经装着那个包，采用它一个字节都不装——走项目环境 PATCH，不走 plan。
