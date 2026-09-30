@@ -1551,6 +1551,14 @@ def _note_mirror(progress_id: str, url: str, on_event) -> None:
         on_event(snapshot)
 
 
+def _note_generation_mirror(job: "_GenerationJob", url: str) -> None:
+    """代事务（联合准备 / 单包修复 / 重建 / 包管理首装）里改用了镜像：记进同一条进度记录的顶层 `pypi_mirror`
+    （与单包修复原地安装、包管理同一个字段、同一层），并**立即**经这一路自己的通道推一次快照——`installing`
+    状态不变，界面当场就能说出口，不等到下一个状态（Codex #743：跑前准备那条路原来要等到验证才看得见）。"""
+    _note_mirror(job.progress_id, url, None)
+    job.emit(STATE_INSTALLING)
+
+
 def _emit(
     plan_id: str,
     state: str,
@@ -3309,7 +3317,7 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
         python,
         cancel_ev,
         job.on_log,
-        on_mirror=lambda url: _note_mirror(job.progress_id, url, None),
+        on_mirror=lambda url: _note_generation_mirror(job, url),
     )
     if code == ERROR_CANCELLED:
         managedenv.mark_generation(
