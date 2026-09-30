@@ -53,6 +53,12 @@ export interface MomentSnapshot {
   readonly ctx: string
   readonly identity: ReturnType<typeof activeCanvasIdentity>
   readonly thumb: ThumbSources
+  /**
+   * `thumb` 是从哪份文档取的：缩略图按它合成。图源与取图源的那份文档**成对**，不跟着
+   * `momentWithDoc` 换——只换文档不换图源，缩略图就是新文档配旧图（Codex #679）。
+   * 不给 = `identity.doc`。
+   */
+  readonly thumbDoc?: FigureDocument
 }
 
 /**
@@ -66,12 +72,21 @@ export function captureMoment(doc?: FigureDocument): MomentSnapshot {
 }
 
 /**
- * 同一个时刻、换一份**操作完成后**的文档：上下文、画布身份、面板图源仍是发起那一刻的。
+ * 同一个时刻、换一份**操作完成后**的文档：上下文、画布身份仍是发起那一刻的。
  * 给「操作本身会改文档」的时刻用——写回带标注时，写成之后画布上的标注原件会被删掉，
  * 节点要记删掉之后的样子，否则从它恢复标注会出现两份（Codex #679）。
+ *
+ * **缩略图不跟着换**：面板图源是发起那一刻的（写回前的图，里面还没有标注），它只和
+ * 发起那一刻的文档配得上——旧图叠上标注原件，正是这次写回烙进原图的样子。拿新文档配
+ * 旧图，标注在缩略图里就凭空没了；拿新文档重取图源也一样（写回后的图要等重渲染，
+ * 此刻 renderStore 里还是旧的）。
  */
 export function momentWithDoc(snapshot: MomentSnapshot, doc: FigureDocument): MomentSnapshot {
-  return { ...snapshot, identity: { ...snapshot.identity, doc } }
+  return {
+    ...snapshot,
+    thumbDoc: snapshot.thumbDoc ?? snapshot.identity.doc,
+    identity: { ...snapshot.identity, doc },
+  }
 }
 
 export interface CheckpointOptions {
@@ -98,7 +113,9 @@ export async function takeCheckpoint(
   if (!opts.allowEmpty && !id.doc.objects.length) return null
   const name = opts.name?.trim() || undefined
   // 缩略图的图源在这里、在任何 await 之前取（见 `composeTimelineThumb`）；快照带着的用快照的
-  const thumbP = composeTimelineThumb(id.doc, snapshot ? snapshot.thumb : undefined)
+  const thumbP = snapshot
+    ? composeTimelineThumb(snapshot.thumbDoc ?? id.doc, snapshot.thumb)
+    : composeTimelineThumb(id.doc)
   const res = await createVersion(
     id.documentId,
     {

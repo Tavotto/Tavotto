@@ -276,6 +276,9 @@ describe('写回的时间线节点（ADR 0101；Codex #679）', () => {
     expect(snaps).toHaveLength(1)
     expect(ids(snaps[0])).toEqual(['p1'])
     expect(snaps[0].ctx).toBe(at)
+    // 缩略图：写回前的面板图配发起那一刻的文档（标注原件还在）——旧图叠上标注，就是烙进
+    // 原图的样子；拿删掉标注的文档配旧图，缩略图里标注凭空没了（Codex #679 P1）
+    expect(snaps[0].thumbDoc?.objects.map((o) => o.id)).toEqual(['p1', 't_note'])
   })
 
   it('对照：不带标注写回，文档没变，节点就是发起时那份（标注还在）', async () => {
@@ -284,6 +287,7 @@ describe('写回的时间线节点（ADR 0101；Codex #679）', () => {
     await confirm()
     expect(snaps).toHaveLength(1)
     expect(ids(snaps[0])).toEqual(['p1', 't_note'])
+    expect(snaps[0].thumbDoc ?? snaps[0].identity.doc).toBe(snaps[0].identity.doc)
   })
 })
 

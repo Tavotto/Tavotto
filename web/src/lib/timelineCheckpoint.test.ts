@@ -19,7 +19,7 @@ import {
   startVersionCheckpoints,
 } from '@/hooks/useVersionCheckpoints'
 import { useTimelineStore } from '@/store/timelineStore'
-import { captureMoment, markMoment, takeCheckpoint } from './timelineCheckpoint'
+import { captureMoment, markMoment, momentWithDoc, takeCheckpoint } from './timelineCheckpoint'
 import { composeTimelineThumb } from './timelineThumb'
 import { groupTimeline } from './timelineGroups'
 
@@ -218,6 +218,34 @@ describe('关键时刻拍发起那一刻的内容（快照；Codex #679）', () 
     const node = posts.find((p) => p.body.moment)!
     expect(ids(node)).toEqual(['t1'])
     expect(vi.mocked(composeTimelineThumb)).toHaveBeenLastCalledWith(snap.identity.doc, snap.thumb)
+  })
+
+  it('写回换了文档（momentWithDoc）：节点记新文档，缩略图仍按图源取自的那份合成（Codex #679 P1）', async () => {
+    const stop = startVersionCheckpoints()
+    edit('t1')
+    edit('t_note')
+    const snap = captureMoment()
+    const before = snap.identity.doc
+    const after = { ...before, objects: before.objects.filter((o) => o.id !== 't_note') }
+    await markMoment('writeback', momentWithDoc(snap, after))
+    await vi.waitFor(() => expect(posts.filter((p) => p.body.moment)).toHaveLength(1))
+    stop()
+    const node = posts.find((p) => p.body.moment)!
+    expect(ids(node)).toEqual(['t1'])
+    // 图源（写回前的面板图）与取它的那份文档（标注原件还在）成对：缩略图里标注没丢
+    const [thumbDoc, sources] = vi.mocked(composeTimelineThumb).mock.lastCall!
+    expect(thumbDoc).toBe(before)
+    expect(thumbDoc.objects.map((o) => o.id)).toEqual(['t1', 't_note'])
+    expect(sources).toBe(snap.thumb)
+  })
+
+  it('momentWithDoc 连换两次：缩略图仍配最初取图源的那份', () => {
+    edit('t1')
+    const snap = captureMoment()
+    const a = momentWithDoc(snap, { ...snap.identity.doc, objects: [] })
+    const b = momentWithDoc(a, { ...snap.identity.doc, objects: [] })
+    expect(b.thumbDoc).toBe(snap.identity.doc)
+    expect(b.thumb).toBe(snap.thumb)
   })
 
   it('对照：不带快照（打开 / 离开这类同步时刻）拍的是此刻', async () => {
