@@ -339,7 +339,7 @@ export type BakedAnnotations = ReadonlyMap<string, string>
  * （见 `panelSource`）——这个函数在第一个 await 之前就把各面板的图源取完了。
  *
  * `bakedInto` 给的话，登记在里面的标注对象按各自面板的结局决定画不画（只有冻结 SVG 才画），
- * 但**始终留在文档原来的叠放位置**（先预渲染全部面板、再按原顺序叠，见函数体）。
+ * 画的位置跟着**所属面板**在文档里的叠放位置走（先预渲染全部面板、再按原顺序叠，见函数体）。
  */
 export async function composeTimelineThumb(
   doc: FigureDocument,
@@ -367,8 +367,8 @@ export async function composeTimelineThumb(
     //
     // `bakedInto` 里的标注画不画，要等**它所属面板这一刻实际选中的图源**才能判定（面板手里的
     // SVG 可能解析 / 解码失败、退到合成时才现取的 render——那张图已经烙进标注了），而结局只有
-    // 预渲染完才知道。预渲染与叠放分开之后，标注留在自己原来的叠放位置上：只决定画不画，
-    // 不挪位置——挪到最上面会盖住写回后画布里本来盖住它的重叠面板（Codex #679 P1 第三轮）。
+    // 预渲染完才知道。预渲染与叠放分开之后：只决定画不画，且画的位置跟着所属面板走（见下），
+    // 不整体挪到最上面——那会盖住写回后画布里本来盖住它的重叠面板（Codex #679 P1 第三轮）。
     const layers = new Map<string, HTMLCanvasElement | null>()
     const panelOutcome = new Map<string, PanelDrawOutcome>()
     for (const o of doc.objects) {
@@ -377,8 +377,22 @@ export async function composeTimelineThumb(
       layers.set(o.id, layer)
       panelOutcome.set(o.id, outcome)
     }
+    // 写回标注属于所属面板（Codex #679 P1 第四轮）：所属面板走冻结 SVG 时，标注并入该面板——
+    // 紧贴在面板层之上、整体按**面板**在 `doc.objects` 里的位置参与叠放（后面的对象仍能盖住
+    // 这个合成层）；标注自己的位置不参与排序。别的结局（'live' / 'none'）标注已烙在图里，不画；
+    // 查不到结局（面板隐藏 / 不在文档里）照旧按自己的位置画，不悄悄丢。
+    const ownedBy = new Map<string, Exclude<CanvasObject, PanelObject>[]>()
+    const ownedIds = new Set<string>()
     for (const o of doc.objects) {
-      if (o.hidden) continue
+      if (o.hidden || o.type === 'panel' || !bakedInto?.has(o.id)) continue
+      const owner = bakedInto.get(o.id) ?? ''
+      const outcome = panelOutcome.get(owner)
+      if (!outcome) continue
+      ownedIds.add(o.id)
+      if (outcome === 'svg') ownedBy.set(owner, [...(ownedBy.get(owner) ?? []), o])
+    }
+    for (const o of doc.objects) {
+      if (o.hidden || ownedIds.has(o.id)) continue
       if (o.type === 'panel') {
         const layer = layers.get(o.id)
         if (!layer) continue
@@ -386,13 +400,8 @@ export async function composeTimelineThumb(
         ctx.globalAlpha = o.opacity ?? 1
         ctx.drawImage(layer, 0, 0)
         ctx.restore()
+        for (const note of ownedBy.get(o.id) ?? []) drawObject(ctx, note, scale)
         continue
-      }
-      if (bakedInto?.has(o.id)) {
-        const outcome = panelOutcome.get(bakedInto.get(o.id) ?? '')
-        // 面板结局明确、且不是冻结的 SVG：这张图已经烙进了这条标注，不再叠一遍；
-        // 查不到结局（面板被隐藏、或不在这份文档里）按「照画」兜底，不能因为查不到就悄悄丢一条
-        if (outcome && outcome !== 'svg') continue
       }
       drawObject(ctx, o, scale)
     }

@@ -248,7 +248,7 @@ describe('composeTimelineThumb：写回烙进面板的标注按面板实际选�
 const svgOf = (id: string) =>
   `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><title>${id}</title><rect width="10" height="10"/></svg>`
 
-describe('composeTimelineThumb：写回标注保持原叠放次序（Codex #679 P1 第三轮，r4145733192）', () => {
+describe('composeTimelineThumb：写回标注跟着所属面板叠放（Codex #679 P1 第三、四轮，r4145733192 / r4145837912）', () => {
   it('标注在 doc.objects 里排在重叠面板 B 之前、A 的冻结 SVG 成功：标注被 B 盖住（画在 B 之前）', async () => {
     const objects = [panel('pA', 0), text('tA', 'A-note', 0), panel('pB', 0)]
     const sources: ThumbSources = new Map([
@@ -259,27 +259,38 @@ describe('composeTimelineThumb：写回标注保持原叠放次序（Codex #679 
     expect(events).toEqual(['draw:pA', 'text:A-note', 'draw:pB'])
   })
 
-  it('标注排在 B 之后：仍画在 B 之上', async () => {
+  it('标注排在 B 之后（第四轮改判）：标注属于 A，跟着 A 的位置走，仍被 B 盖住', async () => {
     const objects = [panel('pA', 0), panel('pB', 0), text('tA', 'A-note', 0)]
     const sources: ThumbSources = new Map([
       ['pA', { svg: svgOf('pA') }],
       ['pB', { svg: svgOf('pB') }],
     ])
     await compose(objects, sources, new Map([['tA', 'pA']]))
-    expect(events).toEqual(['draw:pA', 'draw:pB', 'text:A-note'])
+    expect(events).toEqual(['draw:pA', 'text:A-note', 'draw:pB'])
   })
 
-  it('A 的标注排在 A 之前（A 在它上面）时也按文档顺序：先标注后面板', async () => {
+  it('标注排在自己面板 A 之前、A 冻结 SVG 成功（第四轮，r4145837912）：标注并入 A，画在 A 之上', async () => {
     const objects = [text('tA', 'A-note', 0), panel('pA', 0)]
     const sources: ThumbSources = new Map([['pA', { svg: svgOf('pA') }]])
     await compose(objects, sources, new Map([['tA', 'pA']]))
-    expect(events).toEqual(['text:A-note', 'draw:pA'])
+    expect(events).toEqual(['draw:pA', 'text:A-note'])
+  })
+
+  it('标注排在 A 之前、B 在 A 之后：A+标注整体仍被 B 盖住（后面的对象盖合成层）', async () => {
+    const objects = [text('tA', 'A-note', 0), panel('pA', 0), panel('pB', 0)]
+    const sources: ThumbSources = new Map([
+      ['pA', { svg: svgOf('pA') }],
+      ['pB', { svg: svgOf('pB') }],
+    ])
+    await compose(objects, sources, new Map([['tA', 'pA']]))
+    expect(events).toEqual(['draw:pA', 'text:A-note', 'draw:pB'])
   })
 
   it('fallback 已烙标注：A 退到 render 时，无论标注在 B 之前还是之后都不重复画', async () => {
     for (const objects of [
       [panel('pA', 0), text('tA', 'A-note', 0), panel('pB', 0)],
       [panel('pA', 0), panel('pB', 0), text('tA', 'A-note', 0)],
+      [text('tA', 'A-note', 0), panel('pA', 0), panel('pB', 0)],
     ]) {
       events = []
       const sources: ThumbSources = new Map([
