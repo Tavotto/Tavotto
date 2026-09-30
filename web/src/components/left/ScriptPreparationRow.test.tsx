@@ -183,7 +183,7 @@ describe('脚本行：开跑前要先准备依赖', () => {
     const card = host.querySelector('[data-script-preparation]')
     expect(card, '脚本行上没有准备依赖的卡片').toBeTruthy()
     expect(card!.querySelector('[data-script-preparation-sentence]')!.textContent).toBe(
-      '这个脚本还缺 pandas和openpyxl，点一下自动装好。',
+      '这个脚本还缺 pandas 和 openpyxl，点一下自动装好。',
     )
     // 可见的主按钮只有一个；完整需求串收在默认折叠的「详情」里
     expect([...card!.querySelectorAll('button')].filter((b) => !b.closest('details')).map((b) => b.textContent)).toEqual([

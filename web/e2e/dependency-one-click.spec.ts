@@ -408,7 +408,7 @@ test(
     const button = card.locator('[data-script-preparation-fix]')
     await expectReachable(page, button, '一键修复按钮')
     expect(await renderedBlocks(card)).toEqual([
-      'p:这个脚本还缺 pandas和openpyxl，点一下自动装好。',
+      'p:这个脚本还缺 pandas 和 openpyxl，点一下自动装好。',
       'button:一键修复',
       'summary:详情',
     ])
