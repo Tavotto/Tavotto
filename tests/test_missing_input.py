@@ -854,6 +854,79 @@ def test_probe_registered_stems_follow_the_table_after_a_rebuild(
             m.close_project(pid, wait=True)
 
 
+def test_a_remap_that_yields_no_figures_removes_the_old_registration(client, figs, tmp_path):
+    """改指之后按新数据一张图都没出（`no_figures_captured`）：这也是按新表跑出的权威结果——旧 stems 整条摘掉，
+    素材库不再挂着必然失败的条目（Codex 评 #716 P2）。没跑完的 build 说明不了什么，不动；没改指的项目不受影响。"""
+    import types
+
+    from tavotto import app as m
+    from tavotto.engine import discover, registry
+
+    m.open_project(str(figs))
+    try:
+        (figs / "fig.py").write_text("print(1)\n", encoding="utf-8")
+        discover.register(figs, "fig.py", ["group_A"], entry="__main__")
+        ctx = m.current_ctx()
+        m.refresh_project(ctx, reason="probe", allow_static_merge=False)
+        inputremap.record_registration(figs, "fig.py")
+
+        def scripts_on_disk():
+            path = registry.existing_registry_path(figs)
+            return json.loads(path.read_text(encoding="utf-8"))["scripts"]
+
+        def worker(**kw):
+            return types.SimpleNamespace(
+                script_name="fig.py",
+                figures_dir=str(figs),
+                entry="__main__",
+                remap_generation=inputremap.generation(figs),
+                last_build_descriptors=[],
+                built=True,
+                build_failed=False,
+                **kw,
+            )
+
+        # 表没变：一张没出也不动登记（不是改指引起的）
+        assert m._resync_registration(ctx, worker()) is False
+        assert "fig.py" in scripts_on_disk()
+        inputremap.add_rule(figs, {"kind": P, "from": "", "to": str(tmp_path)})
+        failed = worker()
+        failed.build_failed = True
+        assert m._resync_registration(ctx, failed) is False  # build 没跑完
+        assert "fig.py" in scripts_on_disk()
+        assert m._resync_registration(ctx, worker()) is True
+        assert "fig.py" not in scripts_on_disk()
+        assert "fig.py" not in m.current_ctx().registry.all_scripts()
+        # 渲染入口看到的是换过的码：`no_figures_captured*` 同样触发重新登记
+        assert m.engine_pool.NO_FIGURES_CODE in m._RESYNC_RENDER_CODES
+        assert m.engine_pool.NO_FIGURES_SILENT_CODE in m._RESYNC_RENDER_CODES
+    finally:
+        for pid in [p for p, c in list(m.PROJECTS.items()) if str(c.path) == str(figs)]:
+            m.close_project(pid, wait=True)
+
+
+def test_a_probe_only_miss_stays_offered_when_a_broad_rule_resolves_it(tmp_path):
+    """一条宽泛的改指规则碰巧让某条只被 exists / glob 问过的路径「解析得了」：探路不查改指表，脚本照样走
+    「不存在」那一支——这一条仍要在载荷里，按「改指救不回」说（Codex 评 #716 P2）。真读取（open）的照旧被压掉。"""
+    root = tmp_path / "proj"
+    root.mkdir()
+    moved = tmp_path / "moved"
+    _touch(moved / "data" / "values.txt")
+    _touch(moved / "data" / "flag.txt")
+    (root / "fig.py").write_text(
+        "import os\n"
+        'if not os.path.exists("data/flag.txt"):\n'
+        "    raise SystemExit(1)\n"
+        'open("data/values.txt").read()\n',
+        encoding="utf-8",
+    )
+    rules = [{"kind": P, "from": "", "to": str(moved)}]
+    got = {o["path"]: o["via"] for o in inputremap.static_missing("fig.py", root, rules)}
+    assert got == {"data/flag.txt": inputremap.VIA_PROBE}
+    before = {o["path"] for o in inputremap.static_missing("fig.py", root, [])}
+    assert before == {"data/flag.txt", "data/values.txt"}
+
+
 def test_a_legacy_registration_without_a_mark_reconciles_conservatively(
     client, figs, tmp_path, monkeypatch
 ):

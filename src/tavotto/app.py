@@ -4081,7 +4081,9 @@ def api_engine_render():
         LOG.error("引擎渲染失败: %s: %s", stem, exc)
         # 按新改指表 build 过、只是图名变了（stems 由数据决定，`unknown_stem`）：注册表按这次 build 的真实
         # 产出重新登记，新图在素材库里出现（ADR 0106 §五）
-        if exc.code == "unknown_stem":
+        # 一张都没出（`unknown_stem` 被换成 `no_figures_captured*`）同样是按新表跑出的权威结果：旧 stems 要摘掉
+        # ——这个判据在换码**之后**：这里看到的已是换过的码（Codex 评 #716 P2）
+        if exc.code in _RESYNC_RENDER_CODES:
             _resync_registration(current_ctx(), worker)
         sse_publish("render.failed", {"pj": pj, "id": rel_id, "error": str(exc)})
         return jsonify(_worker_error_payload(exc)), 500
@@ -5828,12 +5830,22 @@ def api_engine_input_remap_get():
     return jsonify({"ok": True, "input_remap": engine_inputremap.state(root)})
 
 
+#: 渲染失败里「会话按此刻的表 build 完了、只是图名对不上 / 一张没有」的码：据此重新登记
+_RESYNC_RENDER_CODES = (
+    "unknown_stem",
+    engine_pool.NO_FIGURES_CODE,
+    engine_pool.NO_FIGURES_SILENT_CODE,
+)
+
+
 def _resync_registration(ctx, worker) -> bool:
     """试运行登记的 stems 是在另一张改指表下得出的（ADR 0106 §五，`inputremap.registration_stale`）：按这个
     会话**刚刚按新表 build 出来**的真实产出重新登记——不多跑一次脚本。改之前图名是 `group_A`、按新数据只有
     `group_B` 的话，旧名留在注册表里，自动重渲染就一直 `unknown_stem`（Codex 评 #716 P1）。
 
-    落地在改指表的锁里核对这个会话的代次；没 build 出任何图、不是按此刻的表 build 的，都不动。回有没有改。"""
+    一张没出也是权威结果（build 跑完、描述符是空表）：摘掉这个脚本的全部旧 stems，素材库不再挂着必然
+    `no_figures_captured` 的条目（Codex 评 #716 P2）；没 build / build 失败的不算。落地在改指表的锁里核对
+    这个会话的代次；不是按此刻的表 build 的不动。回有没有改。"""
     script = getattr(worker, "script_name", "") or ""
     root = getattr(worker, "figures_dir", None)
     registry = getattr(ctx, "registry", None)
@@ -5849,7 +5861,12 @@ def _resync_registration(ctx, worker) -> bool:
             if isinstance(d, dict) and d.get("stem")
         }
     )
-    if not stems:
+    if not stems and not (
+        getattr(worker, "built", False)
+        and not getattr(worker, "build_failed", False)
+        and isinstance(getattr(worker, "last_build_descriptors", None), list)
+    ):
+        # 一张没有、但也不是一次跑完的 build（没 build / build 失败）：说明不了什么，不动
         return False
     try:
         with engine_inputremap.landing(root, getattr(worker, "remap_generation", None)):

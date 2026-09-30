@@ -157,6 +157,9 @@ ovito `import_file`、h5py / netCDF 的原生打开、`exists` / `glob` / `listd
   （已见代次为空）拉到的只记作起点。
 - **前端**：后端代次是唯一权威。渲染回包 `input_remap_changed` 当 stale 重排、试运行重跑一次，不报失败；
   `renderStore.invalidateInflight()`（与换项目同一个代际）只是收到事件时提前 abort 在途请求，不是第二套判据。
+- **静态载荷里的「已被规则救回」只算真读取**：`static_missing` 只压掉 `via=open` 且规则解析得了的条目；
+  exists / glob / listdir 不查改指表，一条宽泛规则碰巧解析得了也照列，按「改指救不回」说（否则脚本照样退出、
+  用户只剩一句「没出图」）。
 - **持久化的派生物**：进程内的代次只在本进程有意义，能跨重启对账的是**改指表指纹**（`inputremap.fingerprint`）。
   runtime 物化 cache 与试运行登记各记一份：cache 在 metadata 里（`possibly_stale` 判据）；试运行登记记在
   **本机项目设置**（`input_remap_registered: {脚本: 指纹}`）——注册表 `tavotto_registry.json` 随项目走、
@@ -174,7 +177,7 @@ ovito `import_file`、h5py / netCDF 的原生打开、`exists` / `glob` / `listd
 | 画布渲染 `/api/engine/render` | 会话 `remap_generation` | 回包之前 | 只核对（回包不写盘；晚到的由前端按代次作废） | 409，前端标 stale 重排 | `input_remap_changed` → 面板 stale |
 | runtime 物化 cache `_materialize_runtime`（渲染 / 试运行两处） | 产出那次 build 的代次 + 取到的会话的代次；metadata 记指纹 | 写 cache 之前 | 核对 → 每个描述符的物化写完（取会话在锁外） | 丢弃，不写；指纹不符判 `possibly_stale` | 事件 → runtime 判定重查、清单重取 |
 | 试运行登记 `probe.probe_and_register` | `probe()` 用的会话 | 登记之前 | 核对 → 注册表写完、重载、记指纹 | `registered: false` + 码，前端重跑 | 事件 → 试运行结果作废；登记变了发 `registry.changed` |
-| 注册表里试运行登记的 stems（持久化）`_resync_registration` | 本机项目设置里的指纹（无标记 + 有规则 = 过期） | 下一次按新表 build 后 | 核对 → 重新登记、记指纹 | 按真实产出重新登记 | `registry.changed` |
+| 注册表里试运行登记的 stems（持久化）`_resync_registration` | 本机项目设置里的指纹（无标记 + 有规则 = 过期） | 下一次按新表 build 后 | 核对 → 重新登记、记指纹 | 按真实产出重新登记；build 跑完一张没出（`no_figures_captured*`）也是权威结果，整条摘掉 | `registry.changed` |
 | 写回原图 `_write_source_files` | 热态会话与全量重放会话各一 | 两者都等于此刻才进 commit | 核对 → `_backup_targets` → 整个 replace 循环（含失败回滚） | 409，staging 清掉，原件不动 | 事件 → 面板 stale（写回前先重画） |
 | 导出面板 `_serialize_figure_with_worker` | 会话 | 导出文件交出去之前 | 只核对（交给作业的是临时文件） | 409 / 作业失败 | 事件 → 面板 stale |
 | 导出作业的发布 `exportjob.run(commit_guard=)`（同步 / 后台两条） | 作业开始时 `generation(项目)` | 提交点之前 | 核对 → 提交点 → 最后一个文件发布完 | 作业 `input_remap_changed`（可重试），一个文件都不发布 | 事件 → 面板 stale |
