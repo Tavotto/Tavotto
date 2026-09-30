@@ -525,16 +525,8 @@ def offer(project: str | Path, script: str, module: str, project_env: dict | Non
     private = privatepython.offer_payload() if available is False else None
     if private is not None:
         available = True
-    # 新建第一代时这一代要装的全部包（联合求解，与 `create_plan` 同一份）：卡片那一句话如实说出来，而不是只说缺的这个。
-    # 基础解释器还在后台探（`available` 为 None）时不算（量事实要起子进程）——卡片那时按预读的计划说
-    requirements: list[str] | None = None
-    if requirement is not None and available is not False and not managed["exists"]:
-        try:
-            wide = _widen_for_fresh_generation(root, script, requirement)
-        except Exception:  # noqa: BLE001 — 披露是尽力而为：量不出就退回只说缺的那一个
-            LOG.debug("offer: 联合求解失败", exc_info=True)
-            wide = None
-        requirements = list(wide.requirements) if wide else None
+    # 这一代要装的全部包**不在 offer 里算**：联合求解要量解释器事实（起子进程），而 offer 在渲染失败的响应路径上
+    # 不起任何解释器。要装什么由形成计划（`create_plan`）时算、随计划载荷说出口，卡片按预读的计划写那一句话
     out["targets"].append(
         {
             "kind": TARGET_MANAGED,
@@ -542,7 +534,6 @@ def offer(project: str | Path, script: str, module: str, project_env: dict | Non
             "python": "",
             "modifies_user_environment": False,
             "creates_environment": not managed["exists"],
-            "requirements": requirements,
             # None = 还不知道（基础解释器正在后台探）。界面照样把这条列出来，
             # 真正的答案在创建计划那一步——那时用户已经点过，等几秒是合理的。
             "available": available,

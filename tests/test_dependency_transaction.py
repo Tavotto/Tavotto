@@ -813,10 +813,6 @@ class TestJointTransaction:
         )
         selected, source = engine_pool.resolve_worker_python(str(project), script="figure.py")
         assert source == engine_pool.SOURCE_PROJECT_VENV and _importable(selected, BETA[1])
-        # offer 上受管目标如实说出这一代要装的全部包（卡片那一句话据此写，不只说缺的那个）
-        offer = deprepair.offer(project, "figure.py", ALPHA[1])
-        managed = next(t for t in offer["targets"] if t["kind"] == deprepair.TARGET_MANAGED)
-        assert set(managed["requirements"]) == {ALPHA[0], BETA[0]}
         plan = deprepair.create_plan(
             project, "figure.py", ALPHA[1], target_kind=deprepair.TARGET_MANAGED
         )
@@ -837,6 +833,34 @@ class TestJointTransaction:
             deprepair.create_joint_plan(project, "figure.py")
         assert err.value.code == deprepair.ERROR_PLAN_BLOCKED
         assert err.value.extra["joint"]["status"] == "nothing_needed"
+
+    def test_offer_on_the_failure_path_starts_no_interpreter(
+        self, tmp_path, house, offline_managed_env, monkeypatch
+    ):
+        """渲染失败的响应路径上构造 offer 不起任何解释器（细则「offer 不起任何解释器」）：联合求解只在形成计划时做。
+        计数的主语是这次 `offer()` 调用期间的子进程启动与事实探测。"""
+        project = _project(
+            tmp_path,
+            requirements=f"{ALPHA[0]}\n{BETA[0]}\n",
+            script=f"import {ALPHA[1]}\nimport {BETA[1]}\n",
+        )
+        depplan.reset_cache()
+        spawned = []
+        real_init = subprocess.Popen.__init__
+
+        def counting(self, *a, **kw):
+            spawned.append(a[0] if a else kw.get("args"))
+            return real_init(self, *a, **kw)
+
+        monkeypatch.setattr(subprocess.Popen, "__init__", counting)
+        facts_calls = []
+        real_facts = depplan.target_facts
+        monkeypatch.setattr(
+            depplan, "target_facts", lambda *a, **kw: facts_calls.append(a) or real_facts(*a, **kw)
+        )
+        offer = deprepair.offer(project, "figure.py", ALPHA[1])
+        assert any(t["kind"] == deprepair.TARGET_MANAGED for t in offer["targets"])
+        assert spawned == [] and facts_calls == []
 
     def test_single_package_repair_on_an_existing_generation_adds_only_the_missing_one(
         self, tmp_path, house, offline_managed_env
