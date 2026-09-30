@@ -280,7 +280,7 @@ _EXPR = re.compile(r"\$\{\{.*?\}\}")
 def display_to_job_id(name: str, workflow_jobs: dict[str, dict]) -> str:
     """把 API 的 job 显示名映射回 workflow 的 job id。
 
-    matrix job 显示成 `backend-fast (ubuntu-latest, 3.10)`；整格被 skip 时 matrix
+    matrix job 显示成 `backend-fast (ubuntu-24.04, 3.10)`；整格被 skip 时 matrix
     没展开，显示名就是裸 id `package`；自定义 `name:` 的显示名逐字相同。`name:` 里带
     表达式的（CI03c 起 `windows-exe-smoke (${{ matrix.shard }})`，为的是 include 形状的
     matrix 不把四个字段全排进显示名）按模式配：表达式处配任意串（整格 skip 时表达式
