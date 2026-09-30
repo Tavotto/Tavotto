@@ -584,6 +584,23 @@ def test_a_released_slot_goes_to_the_oldest_waiting_figure():
     assert saves.lost() == 0
 
 
+def test_with_several_waiting_the_oldest_gets_the_slot():
+    """让位时有两张在等（b 早、c 晚）：名额给 b。b、c 都没人引用后，留下的是 b、丢的是 c。"""
+    import weakref
+
+    saves = figcapture.BufferSaves(limit=1)
+    a, b, c = _Fig(), _Fig(), _Fig()
+    for f in (a, b, c):
+        saves.note(f)
+    del f
+    saves.claim(a)
+    b_ref, c_ref = weakref.ref(b), weakref.ref(c)
+    del b, c
+    assert saves.figures() == [b_ref()]
+    assert b_ref() is not None and c_ref() is None
+    assert saves.lost() == 1
+
+
 def test_claimed_figures_give_back_their_slot():
     """被路径 savefig 认领了（有了 stem）的图让出名额，也不算作可能丢失（#739 Codex P2）。"""
     saves = figcapture.BufferSaves(limit=2)
