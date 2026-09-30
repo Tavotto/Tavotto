@@ -22,7 +22,7 @@ import { Button, IconButton } from '../ui/Button'
 import { Dialog } from '../ui/Dialog'
 import { EmptyState } from '../ui/EmptyState'
 import { DependencyRepairCard } from '../DependencyRepairCard'
-import { useDepRepairStore } from '@/store/depRepairStore'
+import { useDepRepairStore, type ScriptRepairOffer } from '@/store/depRepairStore'
 
 /**
  * 素材库「脚本」区（Session 5，普通入口）：项目里每个合理 .py 一行，
@@ -38,10 +38,13 @@ const sc = (key: string, values?: Record<string, unknown>) =>
   translate(`scripts.${key}`, { ns: 'workspace', ...(values ?? {}) })
 
 
-type Group = 'linked' | 'notRun' | 'runtimeNames' | 'needsEnv' | 'infra'
-const GROUP_ORDER: Group[] = ['linked', 'notRun', 'runtimeNames', 'needsEnv', 'infra']
+type Group = 'needsFix' | 'linked' | 'notRun' | 'runtimeNames' | 'needsEnv' | 'infra'
+const GROUP_ORDER: Group[] = ['needsFix', 'linked', 'notRun', 'runtimeNames', 'needsEnv', 'infra']
 
 function groupOf(entry: ScriptInventoryEntry, run: ScriptRunState | undefined): Group {
+  // 缺包是能一键修好的那一类：单独一组「需要修复」、排在最前（2026-09-29：「可能需要原环境」对不懂 Python 的
+  // 用户是术语）。超时与一般失败仍在下面那组——它们真的可能与原来的环境 / 运行方式有关
+  if (run?.phase === 'missing_dependency') return 'needsFix'
   // 本会话 safe 运行失败且形状像环境问题的，收进「可能需要原环境」——
   // 恢复路径文案（总纲 §四）挂在组上，一眼看全
   if (needsNative(run)) return 'needsEnv'
@@ -60,6 +63,7 @@ export function ScriptLibrary({ query }: { query: string }) {
   const runStates = useScriptRunStore((s) => s.byScript)
 
   const answersLoaded = useScriptInputStore((s) => s.answers !== null)
+  const repairOwner = useRepairOwner()
 
   useEffect(() => {
     if (!loaded) void useScriptLibraryStore.getState().load()
@@ -73,6 +77,19 @@ export function ScriptLibrary({ query }: { query: string }) {
   const scripts = (view?.all_scripts ?? []).filter(
     (s) => !q || s.script.toLowerCase().includes(q),
   )
+  // 同一个包缺在好几个脚本上：只挂**一张**修复卡（装进项目的环境，一次就修好全部；装好后
+  // `depRepairStore` 把同样缺它的那几行都重跑）。修复进行中的那一行优先，其余按列表顺序取第一行
+  const repairCards = new Set<string>()
+  const seenModules = new Set<string>()
+  const ordered = [...scripts].sort(
+    (a, b) => Number(b.script === repairOwner.owner) - Number(a.script === repairOwner.owner),
+  )
+  for (const entry of ordered) {
+    const found = rowRepairOffer(entry.script, runStates[entry.script], repairOwner)
+    if (!found || seenModules.has(found.module)) continue
+    seenModules.add(found.module)
+    repairCards.add(entry.script)
+  }
 
   const groups = new Map<Group, ScriptInventoryEntry[]>()
   for (const entry of scripts) {
@@ -118,7 +135,12 @@ export function ScriptLibrary({ query }: { query: string }) {
             </h4>
             <ul aria-label={label}>
               {groups.get(g)!.map((entry) => (
-                <ScriptRow key={entry.script} entry={entry} stems={view.scripts[entry.script]?.stems ?? []} />
+                <ScriptRow
+                  key={entry.script}
+                  entry={entry}
+                  stems={view.scripts[entry.script]?.stems ?? []}
+                  repairCard={repairCards.has(entry.script)}
+                />
               ))}
             </ul>
           </section>
@@ -145,7 +167,16 @@ export function ScriptLibrary({ query }: { query: string }) {
  * 的操作，不该比文件名更响。状态那一段 aria-live=polite——只在相位变化时更新
  * 一次，不高频播报。
  */
-function ScriptRow({ entry, stems }: { entry: ScriptInventoryEntry; stems: string[] }) {
+function ScriptRow({
+  entry,
+  stems,
+  repairCard,
+}: {
+  entry: ScriptInventoryEntry
+  stems: string[]
+  /** 这一行挂修复卡（同一个包缺在几行上时只有一行挂，见 `ScriptLibrary`） */
+  repairCard: boolean
+}) {
   useTranslation('workspace')
   const run = useScriptRunStore((s) => s.byScript[entry.script])
   const busy = !!run && isBusyPhase(run.phase)
@@ -200,7 +231,7 @@ function ScriptRow({ entry, stems }: { entry: ScriptInventoryEntry; stems: strin
         </IconButton>
       </div>
 
-      <ScriptDependencyRepair script={entry.script} run={run} />
+      {repairCard && <ScriptDependencyRepair script={entry.script} run={run} />}
       <FailureRecovery script={entry.script} run={run} />
 
       {run && run.descriptors.length > 0 && (
@@ -226,21 +257,53 @@ function ScriptRow({ entry, stems }: { entry: ScriptInventoryEntry; stems: strin
  * 出现在好几行上。
  */
 function ScriptDependencyRepair({ script, run }: { script: string; run: ScriptRunState | undefined }) {
-  const owner = useDepRepairStore((s) => s.request?.script ?? s.progress?.script ?? '')
-  // 从这一行发起、随作业收放的那份 offer（#729）：A → B → A 之后 `scriptRunStore` 已被清空，这一行自己的
-  // 运行里没有 offer 了，靠它把进度 / 取消 / 重试挂回这一行。属于别的脚本的不认
-  const held = useDepRepairStore((s) => (s.request?.script === script ? s.scriptOffer : null))
-  const fresh = run?.phase === 'missing_dependency' ? run.error?.dependency_repair : undefined
-  const offer = fresh ?? held?.offer
-  const module = fresh ? String(run?.error?.params?.module ?? fresh.import_name ?? '') : (held?.module ?? '')
-  if (!offer || !module) return null
-  if (owner && owner !== script) return null
+  const found = rowRepairOffer(script, run, useRepairOwner())
+  if (!found) return null
   return (
     // 与下面的恢复说明同一列缩进：它是这一行的延续，不是另一块区域
     <div className="mb-1.5 mt-0.5 pl-8 pr-2" data-script-dependency-repair>
-      <DependencyRepairCard offer={offer} module={module} script={offer.script || script} fromScriptRow />
+      <DependencyRepairCard
+        offer={found.offer}
+        module={found.module}
+        script={found.offer.script || script}
+        fromScriptRow
+      />
     </div>
   )
+}
+
+/** 修复状态里「这张卡属于谁」的那几样（全局一份）；列表与每一行用同一份判据 `rowRepairOffer` */
+interface RepairOwner {
+  owner: string
+  heldFor: string
+  held: ScriptRepairOffer | null
+}
+
+function useRepairOwner(): RepairOwner {
+  const owner = useDepRepairStore((s) => s.request?.script ?? s.progress?.script ?? '')
+  const heldFor = useDepRepairStore((s) => s.request?.script ?? s.scriptOffer?.script ?? '')
+  const held = useDepRepairStore((s) => s.scriptOffer)
+  return { owner, heldFor, held }
+}
+
+/**
+ * 这一行此刻挂不挂修复卡、挂哪份 offer。列表（组上那段解释说不说）与行（卡片、恢复说明）共用这一处判据——
+ * 两处各判一遍的话，总有一种状态下卡片与那段解释同时出现或同时消失。
+ */
+function rowRepairOffer(
+  script: string,
+  run: ScriptRunState | undefined,
+  { owner, heldFor, held }: RepairOwner,
+): ScriptRepairOffer | null {
+  // 从这一行发起、随作业收放的那份 offer（#729）：A → B → A 之后 `scriptRunStore` 已被清空，这一行自己的
+  // 运行里没有 offer 了，靠它把进度 / 取消 / 重试挂回这一行。属于别的脚本的不认
+  const fresh = run?.phase === 'missing_dependency' ? run.error?.dependency_repair : undefined
+  const mine = heldFor === script ? held : null
+  const offer = fresh ?? mine?.offer
+  const module = fresh ? String(run?.error?.params?.module ?? fresh.import_name ?? '') : (mine?.module ?? '')
+  if (!offer || !module) return null
+  if (owner && owner !== script) return null
+  return { offer, module }
 }
 
 /**
@@ -331,14 +394,16 @@ function StatusLine({
 }
 
 /**
- * safe 失败的恢复路径（总纲 §四）：解释可能的原因、给「选择渲染环境」的
- * 真实入口（就地打开渲染环境对话框）与「复制诊断」。**不渲染任何 native 按钮**——PR 2 未落地，
+ * safe 失败的恢复路径（总纲 §四）：原因解释、「选择渲染环境」的真实入口（就地打开渲染环境对话框）与「复制诊断」，
+ * 全部收在默认折叠的「详情」里（2026-09-29），行上默认只多一个折叠标题。**不渲染任何 native 按钮**——PR 2 未落地，
  * 只有文案里的一句「后续版本还将支持」（不许出现可点但无功能的入口）。
  */
 function FailureRecovery({ script, run }: { script: string; run: ScriptRunState | undefined }) {
   useTranslation('workspace')
   const [copied, setCopied] = useState(false)
-  if (!needsNative(run)) return null
+  // 缺包且有修复 offer：修复卡就是下一步（这一行，或同一个包的另一行上那一张），不再叠恢复入口
+  const covered = run?.phase === 'missing_dependency' && !!run.error?.dependency_repair
+  if (!needsNative(run) || covered) return null
   const error = run!.error
 
   const copyDiagnostics = async () => {
@@ -360,34 +425,35 @@ function FailureRecovery({ script, run }: { script: string; run: ScriptRunState 
   }
 
   return (
-    // 缩进到文件名那一列（状态点列 + 间距），不套框：它是这一行的第二行，不是另一张卡
-    <div className="mb-1.5 mt-0.5 flex flex-col gap-1.5 pl-8 pr-2">
-      <p className="type-caption">{sc('recoveryBody')}</p>
-      <div className="flex flex-wrap items-center gap-1.5">
-        <Button
-          variant="secondary"
-          size="sm"
-          // 就地打开渲染环境对话框（EngineEnvironmentDialog），不深链设置页：
-          // 卡片在设置里住在「诊断」页、环境正常时还折叠着，跳过去用户找不到
-          onClick={() => useUiStore.getState().setEngineEnvOpen(true)}
-        >
-          <Settings size={ICON_SIZE.sm} />
-          {sc('openEnvSettings')}
-        </Button>
-        <Button variant="secondary" size="sm" onClick={() => void copyDiagnostics()}>
-          <Copy size={ICON_SIZE.sm} />
-          {sc(copied ? 'copied' : 'copyDiagnostics')}
-        </Button>
-      </div>
-      {error?.traceback && (
-        <Details>
-          <Summary className="type-meta">{sc('diagnostics')}</Summary>
+    // 缩进到文件名那一列（状态点列 + 间距），不套框：它是这一行的第二行，不是另一张卡。默认只露一个
+    // 「详情」（2026-09-29 用户：不许堆说明）：原因解释、两个出口、诊断都在里面
+    <Details className="mb-1.5 mt-0.5 pl-8 pr-2" data-script-recovery>
+      <Summary className="type-meta cursor-pointer">{sc('recoveryDetails')}</Summary>
+      <div className="mt-1.5 flex flex-col gap-1.5">
+        <p className="type-caption">{sc('recoveryBody')}</p>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Button
+            variant="secondary"
+            size="sm"
+            // 就地打开渲染环境对话框（EngineEnvironmentDialog），不深链设置页：
+            // 卡片在设置里住在「诊断」页、环境正常时还折叠着，跳过去用户找不到
+            onClick={() => useUiStore.getState().setEngineEnvOpen(true)}
+          >
+            <Settings size={ICON_SIZE.sm} />
+            {sc('openEnvSettings')}
+          </Button>
+          <Button variant="secondary" size="sm" onClick={() => void copyDiagnostics()}>
+            <Copy size={ICON_SIZE.sm} />
+            {sc(copied ? 'copied' : 'copyDiagnostics')}
+          </Button>
+        </div>
+        {error?.traceback && (
           <pre className="max-h-32 overflow-auto whitespace-pre-wrap font-mono text-xs leading-snug text-ink-2">
             {error.traceback}
           </pre>
-        </Details>
-      )}
-    </div>
+        )}
+      </div>
+    </Details>
   )
 }
 

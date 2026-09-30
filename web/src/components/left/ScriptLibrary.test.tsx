@@ -11,7 +11,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 // 修复卡片的状态（缺包时脚本行上的那张卡，与画布上的是同一个 store）
-import { useDepRepairStore } from '@/store/depRepairStore'
+import { __resetDepRepairParkingForTests, useDepRepairStore } from '@/store/depRepairStore'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/lib/api', async (importOriginal) => ({
@@ -25,6 +25,8 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   installDependencyPlan: vi.fn(),
   cancelDependencyPlan: vi.fn().mockResolvedValue({}),
   fetchEngineEnvironment: vi.fn().mockResolvedValue({}),
+  setProjectEnvironment: vi.fn(),
+  setEngineEnvironment: vi.fn(),
 }))
 
 import {
@@ -34,6 +36,8 @@ import {
   fetchRegistry,
   installDependencyPlan,
   probeScript,
+  setEngineEnvironment,
+  setProjectEnvironment,
   type CapturedFigureDescriptor,
   type DependencyRepairOffer,
   type ProbeResult,
@@ -49,6 +53,7 @@ import { useEnvStore } from '@/store/envStore'
 import { useScriptLibraryStore } from '@/store/scriptLibraryStore'
 import { useScriptRunStore } from '@/store/scriptRunStore'
 import { useUiStore } from '@/store/uiStore'
+import { visibleBlocks } from '@/test/visibleBlocks'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -146,6 +151,8 @@ const runButton = (): HTMLButtonElement => {
 }
 
 beforeEach(() => {
+  // 模块级的停放槽活得比 zustand reset 长：每条用例从空的开始（互不串）
+  __resetDepRepairParkingForTests()
   localStorage.clear()
   useScriptLibraryStore.getState().clear()
   useScriptRunStore.getState().clear()
@@ -331,6 +338,185 @@ describe('运行 / 取消 / 结果', () => {
     expect(dialog!.textContent).toContain('/usr/bin/python3')
   })
 
+  it('多个脚本同样失败：每一行默认只多一个「详情」折叠标题，解释与出口都收在里面', async () => {
+    mockRegistry.mockResolvedValue(view([entry({ script: 'a.py' }), entry({ script: 'b.py' }), entry({ script: 'c.py' })]))
+    mockProbe.mockImplementation(async (script: string) => ({
+      ...ok([]),
+      script,
+      registered: false,
+      error: { code: 'missing_dependency', message: '缺少依赖包：pandas', params: { module: 'pandas' } },
+    }))
+    await mount()
+    for (const btn of [...host.querySelectorAll<HTMLButtonElement>('button[aria-label$="并发现图"]')]) {
+      await act(async () => btn.click())
+      await flush()
+    }
+    const recoveries = [...host.querySelectorAll('[data-script-recovery]')]
+    expect(recoveries).toHaveLength(3)
+    for (const r of recoveries) {
+      expect(visibleBlocks(r)).toEqual([{ tag: 'summary', text: '详情' }])
+    }
+    // 整个列表里默认看得到的文字没有那段解释
+    expect(visibleBlocks(host).some((b) => b.text.includes('可能依赖原来的 Python 环境'))).toBe(false)
+  })
+
+  it('同一个包缺在几个脚本上：只挂一张修复卡；装好后同样缺它的几行一起重跑', async () => {
+    const offerFor = (script: string): DependencyRepairOffer => ({
+      import_name: 'openpyxl',
+      script,
+      requirement: {
+        import_name: 'openpyxl', distribution: 'openpyxl', specifier: '', requirement: 'openpyxl',
+        resolution_source: 'curated', confidence: 'high', installable: true,
+      },
+      targets: [{
+        kind: 'tavotto_managed', venv: '', python: '', modifies_user_environment: false,
+        creates_environment: true, available: true, reason: '',
+      }],
+      rounds_remaining: 3,
+      python_supported: { min: '3.10', max: '3.14' },
+    })
+    useDepRepairStore.getState().reset()
+    mockRegistry.mockResolvedValue(view([entry({ script: 'a.py' }), entry({ script: 'b.py' })]))
+    mockProbe.mockImplementation(async (script: string) => ({
+      ...ok([]),
+      script,
+      registered: false,
+      error: {
+        code: 'missing_dependency', message: '缺少依赖包：openpyxl', params: { module: 'openpyxl' },
+        dependency_repair: offerFor(script),
+      },
+    }))
+    vi.mocked(createDependencyPlan).mockResolvedValue({
+      plan: {
+        plan_id: 'plan-2', target_kind: 'tavotto_managed', python: '', creates_environment: true,
+        modifies_user_environment: false, network_required: true, expires_at: 0,
+        ...offerFor('a.py').requirement!,
+      },
+    })
+    vi.mocked(installDependencyPlan).mockResolvedValue({ started: true } as never)
+    await mount()
+    for (const btn of [...host.querySelectorAll<HTMLButtonElement>('button[aria-label$="并发现图"]')]) {
+      await act(async () => btn.click())
+      await flush()
+    }
+    expect(host.querySelectorAll('[data-script-dependency-repair]')).toHaveLength(1)
+    // 另一行也不再叠恢复入口：修复卡（在第一行上）就是它的下一步
+    expect(host.querySelectorAll('[data-script-recovery]')).toHaveLength(0)
+    await act(async () => buttonByText('一键修复').click())
+    await flush()
+    mockProbe.mockClear()
+    mockProbe.mockImplementation(async (script: string) => ({ ...ok([desc('F')]), script }))
+    await act(async () => {
+      useDepRepairStore.getState().onProgress({
+        plan_id: 'plan-2', state: 'done', log: '', error: null, code: '',
+        script: 'a.py', import_name: 'openpyxl', distribution: 'openpyxl',
+      } as never)
+    })
+    await flush()
+    expect(mockProbe.mock.calls.map((c) => c[0]).sort()).toEqual(['a.py', 'b.py'])
+    useDepRepairStore.getState().reset()
+  })
+
+  it('缺包的脚本单独归「需要修复」组（排最前）；超时与一般失败仍在「可能需要原环境」', async () => {
+    mockRegistry.mockResolvedValue(view([entry({ script: 'a.py' }), entry({ script: 'b.py' }), entry({ script: 'c.py' })]))
+    mockProbe.mockImplementation(async (script: string) => ({
+      ...ok([]),
+      script,
+      registered: false,
+      error:
+        script === 'a.py'
+          ? { code: 'missing_dependency', message: '缺少依赖包：pandas', params: { module: 'pandas' } }
+          : script === 'b.py'
+            ? { code: 'execution_timeout', message: '超时' }
+            : { code: 'script_failed', message: '脚本出错' },
+    }))
+    await mount()
+    for (const btn of [...host.querySelectorAll<HTMLButtonElement>('button[aria-label$="并发现图"]')]) {
+      await act(async () => btn.click())
+      await flush()
+    }
+    const groups = [...host.querySelectorAll('section ul[aria-label]')].map((ul) => ({
+      name: ul.getAttribute('aria-label'),
+      scripts: [...ul.querySelectorAll('li > div span.font-mono')].map((s) => s.getAttribute('title')),
+    }))
+    expect(groups[0]).toEqual({ name: '需要修复', scripts: ['a.py'] })
+    expect(groups.find((g) => g.name === '可能需要原环境')?.scripts).toEqual(['b.py', 'c.py'])
+  })
+
+  /** 两行脚本都缺 openpyxl，后端给同一种 offer（`over` 改它）：跑一遍，返回卡片 */
+  async function twoRowsMissing(over: Partial<DependencyRepairOffer>) {
+    const base: DependencyRepairOffer = {
+      import_name: 'openpyxl',
+      script: 'a.py',
+      requirement: {
+        import_name: 'openpyxl', distribution: 'openpyxl', specifier: '', requirement: 'openpyxl',
+        resolution_source: 'curated', confidence: 'high', installable: true,
+      },
+      targets: [],
+      rounds_remaining: 3,
+      python_supported: { min: '3.10', max: '3.14' },
+      ...over,
+    }
+    useDepRepairStore.getState().reset()
+    mockRegistry.mockResolvedValue(view([entry({ script: 'a.py' }), entry({ script: 'b.py' })]))
+    mockProbe.mockImplementation(async (script: string) => ({
+      ...ok([]),
+      script,
+      registered: false,
+      error: {
+        code: 'missing_dependency', message: '缺少依赖包：openpyxl', params: { module: 'openpyxl' },
+        dependency_repair: { ...base, script },
+      },
+    }))
+    await mount()
+    for (const btn of [...host.querySelectorAll<HTMLButtonElement>('button[aria-label$="并发现图"]')]) {
+      await act(async () => btn.click())
+      await flush()
+    }
+    expect(host.querySelectorAll('[data-script-dependency-repair]')).toHaveLength(1)
+    mockProbe.mockReset()
+    mockProbe.mockImplementation(async (script: string) => ({ ...ok([desc('F')]), script }))
+  }
+
+  it('一键修复改用了电脑上已有的环境：那一行与同样缺这个包的行立刻重跑、卡片收起（Codex #742）', async () => {
+    await twoRowsMissing({
+      targets: [{
+        kind: 'system_interpreter', venv: '', python: '/usr/local/bin/python3', modifies_user_environment: false,
+        creates_environment: false, available: true, reason: '', python_version: '3.12.4', support: 'verified',
+      }],
+    })
+    vi.mocked(setProjectEnvironment).mockResolvedValue({ ok: true, project: { open: true } } as never)
+    await act(async () => buttonByText('一键修复').click())
+    await flush()
+    expect(setProjectEnvironment).toHaveBeenCalledWith('/usr/local/bin/python3', 'openpyxl')
+    expect(mockProbe.mock.calls.map((c) => c[0]).sort()).toEqual(['a.py', 'b.py'])
+    expect(host.querySelector('[data-script-dependency-repair]')).toBeNull()
+  })
+
+  it('改用失败：不重跑，卡片留着并说出原因', async () => {
+    await twoRowsMissing({
+      targets: [{
+        kind: 'system_interpreter', venv: '', python: '/usr/local/bin/python3', modifies_user_environment: false,
+        creates_environment: false, available: true, reason: '', python_version: '3.12.4', support: 'verified',
+      }],
+    })
+    vi.mocked(setProjectEnvironment).mockRejectedValue(new Error('这个环境里也没有 openpyxl'))
+    await act(async () => buttonByText('一键修复').click())
+    await flush()
+    expect(mockProbe).not.toHaveBeenCalled()
+    expect(host.querySelector('[data-script-dependency-repair]')!.textContent).toContain('这个环境里也没有 openpyxl')
+  })
+
+  it('全局固定清掉之后：停在缺包上的行重跑，不再停在「恢复自动检测」（Codex #742 同一类）', async () => {
+    await twoRowsMissing({ code: 'dependency_interpreter_pinned', pinned: { python: '/opt/venv/bin/python', source: 'configured' } })
+    vi.mocked(setEngineEnvironment).mockResolvedValue({ ok: true } as never)
+    await act(async () => buttonByText('恢复自动检测').click())
+    await flush()
+    expect(setEngineEnvironment).toHaveBeenCalledWith(null)
+    expect(mockProbe.mock.calls.map((c) => c[0]).sort()).toEqual(['a.py', 'b.py'])
+    expect(host.querySelector('[data-dependency-repair-pinned]')).toBeNull()
+  })
+
   it('没出图（script_no_figure）不进「可能需要原环境」组', async () => {
     mockRegistry.mockResolvedValue(view([entry({ script: 'show.py' })]))
     mockProbe.mockResolvedValue({
@@ -392,10 +578,10 @@ describe('运行 / 取消 / 结果', () => {
     await flush()
     expect(host.querySelector('[data-script-dependency-repair]'), '脚本行上没有修复卡片').toBeTruthy()
     expect(host.querySelector('[data-dependency-disclosure]')).toBeTruthy()
-    // 原有两条出口仍在（与 #705 改的那颗按钮互不相干）
-    expect(buttonByText('选择渲染环境')).toBeTruthy()
-    expect(buttonByText('复制诊断')).toBeTruthy()
-    await act(async () => buttonByText('将 adjustText 安装到').click())
+    // 卡片就是这一行的下一步：「选择渲染环境」收进卡片的「高级」，恢复说明那一段不再叠在卡片下面（2026-09-29）
+    expect(buttonByText('选择渲染环境').closest('[data-repair-advanced]')).toBeTruthy()
+    expect([...host.querySelectorAll('button')].some((b) => b.textContent?.includes('复制诊断'))).toBe(false)
+    await act(async () => buttonByText('一键修复').click())
     await flush()
     expect(createDependencyPlan).toHaveBeenCalledWith({
       module: 'adjustText', script: 'fig_labels.py', target: 'tavotto_managed',
@@ -501,7 +687,7 @@ describe('脚本行发起的修复切项目再切回（#729）', () => {
     await mount()
     await act(async () => runButton().click())
     await flush()
-    await act(async () => buttonByText('将 adjustText 安装到').click())
+    await act(async () => buttonByText('一键修复').click())
     await flush()
     expect(installDependencyPlan).toHaveBeenCalledWith('plan-row')
     await act(async () => useDepRepairStore.getState().onProgress(progress('installing')))
@@ -532,7 +718,7 @@ describe('脚本行发起的修复切项目再切回（#729）', () => {
     expect(card(), '失败的结局不该落到 B 的脚本行上').toBeNull()
     await switchTo('pA')
     expect(card(), '切回 A 后脚本行上看不到失败结局').toBeTruthy()
-    expect(card()!.textContent).toContain('安装未完成')
+    expect(card()!.querySelector('[data-repair-failure]')!.textContent).toBe('下载没成功，检查网络后点重试。')
     const retry = card()!.querySelector<HTMLButtonElement>('[data-dependency-repair-retry]')
     expect(retry, '失败结局上没有「重试」').toBeTruthy()
     vi.mocked(createDependencyPlan).mockClear()
@@ -563,6 +749,55 @@ describe('脚本行发起的修复切项目再切回（#729）', () => {
     await switchTo('pB')
     await switchTo('pA')
     expect(mockProbe).toHaveBeenCalledTimes(1)
+  })
+
+  /** A 上两个脚本缺同一个包：只挂一张卡（fig_labels.py 那行），在它上面装、然后切到 B */
+  async function installForTwoThenLeave() {
+    mockRegistry.mockResolvedValue(view([entry({ script: 'fig_labels.py' }), entry({ script: 'other.py' })]))
+    mockProbe.mockImplementation(async (script: string) => ({
+      ...ok([]),
+      script,
+      registered: false,
+      error: {
+        code: 'missing_dependency',
+        message: '缺少依赖包：adjustText',
+        params: { module: 'adjustText' },
+        dependency_repair: { ...offer, script },
+      },
+    }))
+    await mount()
+    for (const btn of [...host.querySelectorAll<HTMLButtonElement>('button[aria-label$="并发现图"]')]) {
+      await act(async () => btn.click())
+      await flush()
+    }
+    expect(host.querySelectorAll('[data-script-dependency-repair]')).toHaveLength(1)
+    await act(async () => buttonByText('一键修复').click())
+    await flush()
+    await act(async () => useDepRepairStore.getState().onProgress(progress('installing')))
+    await switchTo('pB')
+    mockProbe.mockReset()
+    mockProbe.mockImplementation(async (script: string) => ({ ...ok([desc('Fig1')]), script }))
+  }
+
+  it('同一个包缺在两行上：切走期间装好，切回 A 两行都重跑（Codex #742：运行记录已随切项目清空）', async () => {
+    await installForTwoThenLeave()
+    await act(async () => useDepRepairStore.getState().onProgress(progress('done', { import_name: 'adjustText' })))
+    await flush()
+    expect(mockProbe, 'B 上不该重跑 A 的脚本').not.toHaveBeenCalled()
+    await switchTo('pA')
+    expect(mockProbe.mock.calls.map((c) => c[0]).sort()).toEqual(['fig_labels.py', 'other.py'])
+    // 再切走切回不重复
+    await switchTo('pB')
+    await switchTo('pA')
+    expect(mockProbe).toHaveBeenCalledTimes(2)
+  })
+
+  it('同一个包缺在两行上：切回 A 时还在装，之后在 A 上装好——两行都重跑', async () => {
+    await installForTwoThenLeave()
+    await switchTo('pA')
+    await act(async () => useDepRepairStore.getState().onProgress(progress('done', { import_name: 'adjustText' })))
+    await flush()
+    expect(mockProbe.mock.calls.map((c) => c[0]).sort()).toEqual(['fig_labels.py', 'other.py'])
   })
 
   it('成功：切回 A 时还在装，之后在 A 上装好——同样自动重跑那一行一次', async () => {

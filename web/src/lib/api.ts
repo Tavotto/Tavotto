@@ -3164,6 +3164,19 @@ export interface PrivatePythonOffer {
   required: boolean
   cached: boolean
   network_required: boolean
+  /**
+   * 这份 Python 从哪来：`bundled` = 安装包里自带、`cached` = 数据目录里已有校验过的一份（两者都不下载）、
+   * `download` = 这次要下载 `download_bytes`。老后端没有这个字段：按 `cached` 推（`privatePythonOrigin`）
+   */
+  origin?: 'bundled' | 'cached' | 'download'
+}
+
+/**
+ * 私有 Python 的来源（一键修复的披露只看它）。字段缺失（老后端）时按下载处理——只有 `cached` 明说已在
+ * 才不说下载（那时 `download_bytes` 是 0，说「下载约 1 MB」就是替后端撒谎）
+ */
+export function privatePythonOrigin(p: PrivatePythonOffer): 'bundled' | 'cached' | 'download' {
+  return p.origin ?? (p.cached ? 'cached' : 'download')
 }
 
 /**
@@ -3240,6 +3253,10 @@ export interface DependencyProgress {
   requirements?: string[]
   committed?: boolean
   result?: {
+    /** 私有 Python 供应中（`downloading_python`）：阶段与字节数（U05）；之后的状态沿用上一条 result，不能单看它 */
+    download?: { stage: string; done_bytes: number; total_bytes: number }
+    /** 供应中的那份私有 Python（#743：带 `origin`，界面据此判「在下载」还是「在准备自带的那份」） */
+    private_python?: Partial<PrivatePythonOffer> | null
     python?: string
     version?: string
     distribution?: string
@@ -3254,6 +3271,8 @@ export interface DependencyProgress {
    * false（再形成计划必然 `dependency_already_attempted`），界面不给「重试」。老服务端没有这个字段。
    */
   retryable?: boolean
+  /** 连不上默认包源、这次改用了 PyPI 镜像：镜像地址（此后每个快照都带；没用镜像时没有这个键） */
+  pypi_mirror?: string
 }
 
 export const createDependencyPlan = (body: {
