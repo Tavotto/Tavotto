@@ -572,7 +572,16 @@ def test_backup_dirs_that_are_symlinks_out_of_the_project_are_refused(store, tmp
     assert err.value.code == scriptbackup.ERROR_BACKUP_UNSAFE
     assert list(outside.iterdir()) == []
     assert script.read_bytes() == b"A = 1\n"
-    # 3) 链接拿掉：照常备份、替换
+    # 3) 链接指向项目**里面**别处也不行：备份位置只认实打实的目录链（lstat）
+    inside = store.root / "elsewhere"
+    inside.mkdir()
+    (store.project_dir / scriptbackup.slug_of("fig.py")).unlink()
+    os.symlink(inside, store.project_dir / scriptbackup.slug_of("fig.py"))
+    with pytest.raises(scriptbackup.ScriptEditError) as err:
+        scriptbackup.replace(store, "fig.py", b"A = 2\n", kind="t", expect_before=before)
+    assert err.value.code == scriptbackup.ERROR_BACKUP_UNSAFE
+    assert list(inside.iterdir()) == []
+    # 4) 链接拿掉：照常备份、替换
     (store.project_dir / scriptbackup.slug_of("fig.py")).unlink()
     rec = scriptbackup.replace(store, "fig.py", b"A = 2\n", kind="t", expect_before=before)
     assert (store.project_dir / rec["id"] / "original.py").read_bytes() == b"A = 1\n"
