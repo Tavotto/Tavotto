@@ -172,17 +172,94 @@ def _parents(tree: ast.AST) -> dict[int, ast.AST]:
     return out
 
 
-def _path_context(node: ast.Constant, parents: dict[int, ast.AST]) -> bool:
+class _Flow:
+    """一个值从常量流到哪些写出调用（§二.3 的「输出路径不改」）。模块级、按名字、保守：
+
+    值所在的表达式一路往上到语句，途中碰到写出调用（`inputremap.is_write_call`）→ 流到了，碰到读取调用
+    （`inputremap.is_read_call`）→ 到此为止（出来的是数据）；语句把它绑定给名字
+    （赋值 / 增量赋值 / 带注解赋值 / `for` 的迭代对象 / 参数默认值 / `self.x = …` 的属性名）→ 那些名字**每一处**
+    读取都再追一遍；在 `return` 里 → 这个函数的每一处调用再追一遍。同名不分作用域（宁可多拒）。
+
+    有它之前是逐一补形状：直接的 `savefig("/old/data/x.png")`、拼出来的 `savefig(Path("/old/data") / …)`、
+    再到赋给名字的 `OUTPUT = "/old/data"` 之后 `savefig(Path(OUTPUT) / …)`——同一族第三次（Codex 评 #730 P2），
+    所以换成追值的去向，而不是再认一种写法。"""
+
+    def __init__(self, tree: ast.AST, parents: dict[int, ast.AST]) -> None:
+        self.parents = parents
+        self.uses: dict[str, list[ast.AST]] = {}
+        for n in ast.walk(tree):
+            if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load):
+                self.uses.setdefault(n.id, []).append(n)
+            elif isinstance(n, ast.Attribute) and isinstance(n.ctx, ast.Load):
+                self.uses.setdefault("." + n.attr, []).append(n)
+            elif isinstance(n, ast.Call):
+                f = n.func
+                name = f.id if isinstance(f, ast.Name) else f.attr if isinstance(f, ast.Attribute) else ""
+                if name:
+                    self.uses.setdefault("()" + name, []).append(n)
+
+    @staticmethod
+    def _bound(target: ast.AST) -> list[str]:
+        out = []
+        for n in ast.walk(target):
+            if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store):
+                out.append(n.id)
+            elif isinstance(n, ast.Attribute) and isinstance(n.ctx, ast.Store):
+                out.append("." + n.attr)
+        return out
+
+    def _param_of_default(self, node: ast.AST, args: ast.arguments) -> list[str]:
+        positional = [*args.posonlyargs, *args.args]
+        for arg, default in zip(positional[len(positional) - len(args.defaults) :], args.defaults):
+            if default is node:
+                return [arg.arg]
+        for arg, default in zip(args.kwonlyargs, args.kw_defaults):
+            if default is node:
+                return [arg.arg]
+        return []
+
+    def reaches_write(self, node: ast.AST, seen: set[str] | None = None) -> bool:
+        seen = set() if seen is None else seen
+        child, up = node, self.parents.get(id(node))
+        while up is not None and not isinstance(up, ast.stmt):
+            if isinstance(up, ast.Call) and inputremap.is_write_call(up):
+                return True
+            if isinstance(up, ast.Call) and child is not up.func and inputremap.is_read_call(up):
+                return False  # 进了读取调用：出来的是数据，不再是这条路径
+            if isinstance(up, ast.arguments):
+                return self._names_reach(self._param_of_default(child, up), seen)
+            child, up = up, self.parents.get(id(up))
+        names: list[str] = []
+        if isinstance(up, ast.Assign):
+            names = [n for t in up.targets for n in self._bound(t)]
+        elif isinstance(up, (ast.AnnAssign, ast.AugAssign)):
+            names = self._bound(up.target)
+        elif isinstance(up, (ast.For, ast.AsyncFor)) and child is up.iter:
+            names = self._bound(up.target)
+        elif isinstance(up, ast.Return):
+            fn = self.parents.get(id(up))
+            while fn is not None and not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                fn = self.parents.get(id(fn))
+            names = ["()" + fn.name] if fn is not None else []
+        return self._names_reach(names, seen)
+
+    def _names_reach(self, names: list[str], seen: set[str]) -> bool:
+        for name in names:
+            if name in seen:
+                continue
+            seen.add(name)
+            if any(self.reaches_write(use, seen) for use in self.uses.get(name, [])):
+                return True
+        return False
+
+
+def _path_context(node: ast.Constant, parents: dict[int, ast.AST], flow: _Flow) -> bool:
     """这个常量是不是**在当路径用**的位置上（§二.3）。正面列举；不认得的一律不是。
 
-    先沿父节点一路走到语句为止：途中是存图 / 写出 / 写模式打开 / 建目录的调用（`inputremap.is_write_call`，
-    与「只认读取调用」同一套判据），它就是输出路径的一部分——`fig.savefig(Path("/old/data") / "out.png")`
-    里的 `/old/data` 直接父节点是 `Path(...)`，只看一层会把输出目的地也改掉（Codex 评 #730 P2）。"""
-    up = parents.get(id(node))
-    while up is not None and not isinstance(up, ast.stmt):
-        if isinstance(up, ast.Call) and inputremap.is_write_call(up):
-            return False
-        up = parents.get(id(up))
+    先问它的值会不会流到写出调用（`_Flow.reaches_write`：直接的、拼出来的、经名字 / 属性 / 参数默认值 /
+    返回值转手的都算）——流到了就是输出路径的一部分，不改（Codex 评 #730 P2 ×3）。"""
+    if flow.reaches_write(node):
+        return False
     parent = parents.get(id(node))
     if isinstance(parent, ast.keyword):
         parent = parents.get(id(parent))
@@ -270,6 +347,7 @@ def plan(
     except (SyntaxError, ValueError) as exc:
         raise Error(ERROR_UNREADABLE, f"脚本有语法错误，不改：{exc}") from exc
     parents = _parents(tree)
+    flow = _Flow(tree, parents)
     wanted = [(m, figcapture.remap_parts(m)) for m in missing]
     wanted = [(m, p) for m, p in wanted if p is not None and p[1]]
     # 规则只换得了与它 `from` 同一侧（相对 / 绝对）的串；另一侧的与这次指认无关，不报
@@ -305,7 +383,7 @@ def plan(
         if isinstance(parents.get(id(node)), ast.JoinedStr):
             skip(node, value, SKIP_FSTRING)
             continue
-        if not _path_context(node, parents):
+        if not _path_context(node, parents, flow):
             skip(node, value, SKIP_CONTEXT)
             continue
         span = src.span(node)

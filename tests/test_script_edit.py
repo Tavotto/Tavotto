@@ -152,6 +152,39 @@ def test_constructed_output_paths_are_never_rewritten(tmp_path, moved):
     assert reasons == {line: scriptedit.SKIP_CONTEXT for line in (3, 4, 5, 6)}
 
 
+def test_output_paths_reached_through_names_returns_and_defaults_are_never_rewritten(tmp_path, moved):
+    """输入与输出共用一个缺失前缀、输出经名字转手（`OUTPUT = OLD` 之后 `savefig(Path(OUTPUT) / …)`）：追值的去向，
+    流到写出调用的常量一律不改——赋值、链式赋值、属性、参数默认值、返回值都算；只流到读取调用的照改，
+    读出来的**数据**之后被写到哪里与路径无关（Codex 评 #730 P2，同族第三次，换成追值的去向）。"""
+    _new, rule = moved
+    src = (
+        "import numpy as np\nfrom pathlib import Path\n"
+        f'DATA = "{OLD}/data"\n'  # 3：只被读 → 改
+        f'OUTPUT = "{OLD}/data"\n'  # 4：经 Path(OUTPUT) 流到 savefig → 不改
+        "x = np.load(Path(DATA) / 'x.h5')\n"
+        "fig.savefig(Path(OUTPUT) / 'out.png')\n"
+        f'BASE = "{OLD}/data"\n'  # 7：BASE → DEST → savetxt → 不改
+        "DEST = Path(BASE) / 'res'\n"
+        "np.savetxt(DEST / 't.csv', x)\n"
+        f'def out_dir(p="{OLD}/data"):\n'  # 10：参数默认值流到 makedirs → 不改
+        "    import os; os.makedirs(p)\n"
+        "def where():\n"
+        f'    return "{OLD}/data"\n'  # 13：返回值流到 savefig → 不改
+        "fig.savefig(where() + '/b.png')\n"
+        "class R:\n"
+        "    def __init__(self):\n"
+        f'        self.target = "{OLD}/data"\n'  # 17：属性流到写模式 open → 不改
+        "    def go(self):\n"
+        "        open(self.target + '/o.txt', 'w')\n"
+        f'y = np.load("{OLD}/data/x.h5")\n'  # 20：读出来的数据被写出去，路径本身只进了读取 → 改
+        "np.save('/tmp/y.npy', y)\n"
+    )
+    plan = _plan(tmp_path, src, rule=rule, missing=[f"{OLD}/data/x.h5"])
+    assert sorted(e["line"] for e in plan.edits) == [3, 20]
+    reasons = {s["line"]: s["reason"] for s in plan.skipped}
+    assert reasons == {line: scriptedit.SKIP_CONTEXT for line in (4, 7, 10, 13, 17)}
+
+
 def test_nothing_to_change_says_why_line_by_line(tmp_path, moved):
     _new, rule = moved
     src = f'import h5py\nh5py.File(f"{OLD}/data/{{name}}.h5")\n'

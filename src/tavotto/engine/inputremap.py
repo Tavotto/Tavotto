@@ -662,6 +662,12 @@ def is_write_call(node: ast.Call) -> bool:
     )
 
 
+def is_read_call(node: ast.Call) -> bool:
+    """读取调用（`READ_FUNCS` / `read_*`，带模式的只认读模式）——脚本改写追值的去向时，值进了读取调用就成了数据、
+    不再是路径（`scriptedit._Flow`）。与 `static_missing` 同一个判据。"""
+    return _is_read_call(node)
+
+
 def _is_read_call(node: ast.Call) -> bool:
     name = databinding._func_name(node.func)
     if name.startswith("read_"):

@@ -63,8 +63,11 @@
 - **已替换、未确认落盘**：`atomicio.write_bytes` 在 `os.replace` 成功之后才报 `dir_fsync_failed`——脚本已经是
   改后的样子，不报「没改」：`_after_script_edit` 照常（会话失效、界面刷新），响应带 `durable: false`，界面换成
   `engine.scriptEditNotDurable` 那句提醒。改写与复原两条路同一处理。
-- **输出路径不改**：候选常量沿父节点走到语句，途中是存图 / 写出 / 写模式打开 / 建目录（`inputremap.is_write_call`，
-  与「只认读取调用」同一套模式判据）的一律跳过（`SKIP_CONTEXT`）。
+- **输出路径不改——追值的去向**（`scriptedit._Flow`）：候选常量的值流到存图 / 写出 / 写模式打开 / 建目录
+  （`inputremap.is_write_call`，与「只认读取调用」同一套模式判据）的一律跳过（`SKIP_CONTEXT`）。「流到」包括直接做
+  参数、拼进表达式（`Path(…) / …`、`join`、`+`）、经名字 / 链式赋值 / `self.x` 属性 / 参数默认值 / 函数返回值转手
+  （同名不分作用域，宁可多拒）；进了读取调用（`inputremap.is_read_call`）就到此为止——出来的是数据。不要再按
+  写法逐一补形状（直接的、拼出来的、赋值转手的是同一族，Codex 评 #730 三次）。
 - **只读**：`os.access`（有效权限）、脚本与所在文件夹的写权限位（以 root 运行时 `os.access` 无视权限位）、
   只读卷三判任一不过 → `script_readonly`。
 - 看护：`tests/test_script_edit.py`（候选判据、九种编码 / 换行的字节矩阵与撤销往返、自检三判、推规则扩展、
