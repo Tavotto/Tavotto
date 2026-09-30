@@ -742,7 +742,12 @@
     "undone": "Undone: {{label}}",
     "panelRebuilt": "Rebuilt from the source script",
     "panelRerenderedNoRerun": "Re-rendered with the current edits; the source script was not re-run",
-    "rebuildFailed": "Couldn’t rebuild. {{error}}"
+    "rebuildFailed": "Couldn’t rebuild. {{error}}",
+    "groupBlocked": {
+      "notResizable": "Some members are positioned automatically by matplotlib, so the group can't be moved or scaled",
+      "locked": "This group has a locked member; unlock it to move or scale the group",
+      "incomplete": "Some members have no position in this render, so the group can't be moved or scaled right now"
+    }
   },
   "tabs": {
     "allCanvases": "All canvases",

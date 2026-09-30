@@ -51,6 +51,7 @@ from colorbarmodel import (
     coincident_shared_axes_pairs,
     colorbar_host_count,
     colorbar_maps,
+    declared_parents,
     field_image_of,
     follow_map,
     scale_gids,
@@ -4421,6 +4422,90 @@ def _owner_axis_drawn(el: dict) -> bool:
     return True
 
 
+def _colorbar_structure(state: FigState, elements: list[dict]) -> list[dict]:
+    """色条的**结构归属**：写进元素表的 `parent_gid` / `owner_gids`，返回真实的组。
+
+    三件事分开说（归属 ≠ 分类 ≠ 颜色来源）：
+
+    * **归属**只认色条自己声明的宿主 `colorbarmodel.declared_parents`——matplotlib 在
+      `fig.colorbar(..., ax=...)` 那一刻记下的 ax 列表。`cax=` 建的没有这份记录，
+      归属保持原样（色条轴挂在整张图下），**不按位置、相邻、颜色去猜**；
+    * 声明了 1 个宿主：色条轴的 `parent_gid` = 那个子图；
+    * 声明了 ≥2 个宿主：生成一个组 `group:<色条轴 gid>`，成员 = 这几个子图 + 色条轴，
+      它们的 `parent_gid` = 组。组只是结构与布局（前端把组展开成成员一起平移 / 缩放），
+      **不是颜色来源**——色图 / 上下限照旧只经 `mappable_gid`（色条的 mappable）走。
+
+    说不清的一律不成组、保持原样：宿主有一个没进元素表（没画出来 / 被丢了）、成员不在
+    同一个（子）图里（`SubFigure`）、同一个子图被两条共享色条同时声明（两个组互相重叠，
+    单父树表达不了）。组的 gid 跟着色条轴的 gid 走，与元素表同一套稳定性。
+    """
+    by_gid = {e["gid"]: e for e in elements}
+    axes_gid = {
+        id(el["artist"]): el["gid"] for el in state.elements if el["role"] in ("axes", "axes3d")
+    }
+    shared: list[tuple] = []
+    for el in state.elements:
+        proxy = el["artist"]
+        if not isinstance(proxy, ColorbarProxy):
+            continue
+        cb_entry = by_gid.get(el["gid"])
+        cax_entry = by_gid.get(proxy.cbax_gid)
+        parents = declared_parents(proxy.cb)
+        if cb_entry is None or cax_entry is None or not parents:
+            continue
+        owners: list[str] = []
+        for p in parents:
+            g = axes_gid.get(id(p))
+            if g is None or g not in by_gid or g == proxy.cbax_gid:
+                owners = []
+                break
+            if g not in owners:
+                owners.append(g)
+        if not owners:
+            continue
+        cb_entry["owner_gids"] = owners
+        if len(owners) == 1:
+            cax_entry["parent_gid"] = owners[0]
+            continue
+        cax_fig = getattr(proxy.cb.ax, "figure", None)
+        if any(getattr(p, "figure", None) is not cax_fig for p in parents):
+            continue
+        shared.append((proxy, cb_entry, owners))
+
+    # 同一个子图出现在两个共享关系里：两个组互相重叠，单父树无法无损表达——都不成组
+    seen: dict[str, int] = {}
+    for proxy, _, owners in shared:
+        for g in [*owners, proxy.cbax_gid]:
+            seen[g] = seen.get(g, 0) + 1
+    groups: list[dict] = []
+    for proxy, cb_entry, owners in shared:
+        members = [*owners, proxy.cbax_gid]
+        if any(seen[g] > 1 for g in members):
+            continue
+        gid = f"group:{proxy.cbax_gid}"
+        boxes = [by_gid[g]["bbox"] for g in members if "bbox" in by_gid[g]]
+        x0 = min(b[0] for b in boxes)
+        y0 = min(b[1] for b in boxes)
+        x1 = max(b[0] + b[2] for b in boxes)
+        y1 = max(b[1] + b[3] for b in boxes)
+        group = {
+            "gid": gid,
+            "kind": "shared_colorbar",
+            "members": members,
+            "subplot_gids": owners,
+            "colorbar_gid": cb_entry["gid"],
+            "bbox": [x0, y0, x1 - x0, y1 - y0],
+            # 能整组平移 / 缩放 = 每个成员自己都能改落位（插图、寄生轴不行）
+            "resizable": all(by_gid[g].get("resizable", False) for g in members),
+        }
+        if cb_entry.get("mappable_gid"):
+            group["mappable_gid"] = cb_entry["mappable_gid"]
+        for g in members:
+            by_gid[g]["parent_gid"] = gid
+        groups.append(group)
+    return groups
+
+
 def build_manifest(state: FigState, stem: str) -> dict:
     """一份 manifest。**刻度记忆表只在这里开**（`overrides.ticklabel_memo`）。
 
@@ -4934,6 +5019,8 @@ def _measure_manifest(state: FigState, stem: str, arm, fig, renderer) -> dict:
             file=sys.stderr,
         )
 
+    groups = _colorbar_structure(state, elements)
+
     w_in, h_in = pathgeom.frame_size_inches(fig)
     out = {
         "stem": stem,
@@ -4955,6 +5042,10 @@ def _measure_manifest(state: FigState, stem: str, arm, fig, renderer) -> dict:
         # 脚本按 `bbox_inches` 存过盘、图幅却算不出来：这一版按 figsize 出图（可能切边），说出来
         # ——不说的话它与「脚本本来就不裁」分不开（ADR 0098 §一第 4 条）。加字段协议，同上
         out["frame_unavailable"] = unavailable
+    # 真实的组（共享色条的几个子图 + 那条色条）：可选、只在有组时出现。
+    # 加字段协议：老前端不认识它会原样忽略，元素表与几何一个字节不变。
+    if groups:
+        out["groups"] = groups
     # 诊断字段：画在图上、却没进元素表的 artist（`census` 在 instrument 里采）。
     # 可选、只在非空时出现——旧前端不认识它会原样忽略，写回自检只比 gid 集合
     # 与几何，不看这里。有它才谈得上「知道自己漏了什么」（§35）。
