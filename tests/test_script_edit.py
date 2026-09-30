@@ -1233,6 +1233,73 @@ def test_http_commit_rechecks_the_agent_under_the_script_lock_and_replaces_insid
     assert held == [True, True]  # 提交与复原各一次
 
 
+@pytest.mark.skipif(os.name == "nt", reason="进程组确认走 POSIX killpg；Windows 由 taskkill /T 在组长活着时收")
+def test_a_cancelled_agent_stays_busy_until_its_process_group_has_exited(app_project, tmp_path):
+    """取消 / 超时的会话，状态在 `kill()` 那一刻就变了，但进程（和它起的子进程）可能还没退、还在写（Codex 评 #730 P1）：
+    观察到整个进程组退出之前，脚本一律算忙，确认过的改写被拒；组里的子进程随组一起被收掉，迟到的写入不会落到原件上。
+    假 Agent：组长一直睡；它起的孙进程 0.8 秒后往脚本里写一行。"""
+    import subprocess
+    import sys
+    import threading
+    import time
+
+    from tavotto.engine import ai_bridge
+
+    m, root = app_project
+    client = m.app.test_client()
+    original = EXISTS_SCRIPT.format(old=OLD).encode("utf-8")
+    script = root / "fig.py"
+    script.write_bytes(original)
+    chosen = _touch(tmp_path / "moved" / "data" / "values.txt", "3\n")
+    body = {"entry": f"{OLD}/data/values.txt", "chosen": str(chosen), "chosen_kind": "file"}
+    token = _preview(client, script="fig.py", **body).get_json()["token"]
+    late = (
+        "import subprocess, sys, time\n"
+        "subprocess.Popen([sys.executable, '-c', "
+        f"\"import time; time.sleep(0.8); open({str(script)!r}, 'a').write('# agent was here\\\\n')\"])\n"
+        "time.sleep(60)\n"
+    )
+    proc = subprocess.Popen([sys.executable, "-c", late], start_new_session=True)  # 与真会话同样自成一组
+    sess = {
+        "id": "slow",
+        "status": "running",
+        "script_path": str(script),
+        "proc": proc,
+        "exited": threading.Event(),
+    }
+    ai_bridge.SESSIONS["slow"] = sess
+    try:
+        time.sleep(0.3)  # 孙进程起来了
+        # 慢退出：组长收到终止后还要一会儿才被观察到退出——用一个会拖住的 wait 模拟（先换好再起等待线程）
+        real_wait = proc.wait
+        gate = threading.Event()
+
+        def slow_wait(*a, **k):
+            gate.wait(5)
+            return real_wait(*a, **k)
+
+        proc.wait = slow_wait
+        waiter = threading.Thread(target=ai_bridge._await_exit, args=(sess,))
+        waiter.start()
+        assert ai_bridge.cancel("slow") is True
+        assert sess["status"] == "cancelled"
+        assert ai_bridge.script_busy(script), "取消之后、观察到退出之前仍算忙"
+        resp = client.post("/api/script-edit/commit", json={"token": token})
+        assert resp.status_code == 409 and resp.get_json()["code"] == scriptbackup.ERROR_SCRIPT_BUSY
+        gate.set()
+        waiter.join(10)
+        assert sess["exited"].is_set()
+        assert not ai_bridge.script_busy(script)
+        time.sleep(1.2)  # 孙进程若还活着，这时已经写了
+        assert script.read_bytes() == original, "进程组里的子进程没被收掉，迟到的写入落到了原件上"
+    finally:
+        ai_bridge.SESSIONS.pop("slow", None)
+        try:
+            proc.kill()
+        except OSError:
+            pass
+
+
 # --------------------------------------------------------------- 真 worker
 
 

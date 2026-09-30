@@ -21,6 +21,7 @@ import json
 import logging
 import os
 import shutil
+import signal
 import stat
 import subprocess
 import threading
@@ -364,14 +365,73 @@ def install_status(agent_id: str) -> dict:
 script_guard = scriptlock.script_guard
 
 
+def _terminate(sess: dict) -> None:
+    """杀掉会话的整个进程组（POSIX `killpg`；Windows `taskkill /T`，要趁组长还活着）。只是发出终止——
+    「已经退出」由 `_await_exit` 观察到才算（`script_busy` 看的是它）。"""
+    proc = sess.get("proc")
+    if proc is None:
+        return
+    try:
+        if os.name == "nt":
+            subprocess.run(
+                ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
+                stdin=subprocess.DEVNULL,  # 桌面 sidecar 的 stdin 是父进程死亡信号管道，不外传
+                capture_output=True,
+                timeout=10,
+                creationflags=CREATE_NO_WINDOW,
+            )
+        else:
+            os.killpg(proc.pid, signal.SIGKILL)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    try:
+        proc.kill()
+    except OSError:
+        pass
+
+
+#: 组长退出之后，等组里剩下的子进程被收掉的上限
+_GROUP_REAP_S = 5.0
+
+
+def _await_exit(sess: dict) -> None:
+    """等会话进程退出，再把组里剩下的子进程收掉、确认一个不剩，最后才置 `exited`（幂等）。
+
+    取消 / 超时的状态在 `kill()` 那一刻就变了，但进程可能还在把一次写入写完、它起的子进程也可能还活着——
+    这之前 `script_busy` 一律算忙，确认过的改写 / 复原不会和 Agent 的迟到写入竞争（Codex 评 #730 P1）。
+    POSIX 按进程组确认（`killpg(pgid, 0)` 报「没有这个组」才算）；Windows 只能确认组长退出（`taskkill /T` 在
+    `_terminate` 里趁组长活着收掉子树）。"""
+    proc = sess.get("proc")
+    exited = sess.get("exited")
+    try:
+        if proc is not None:
+            proc.wait()
+            if os.name != "nt":
+                deadline = time.monotonic() + _GROUP_REAP_S
+                while time.monotonic() < deadline:
+                    try:
+                        os.killpg(proc.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        break  # 组里一个都不剩
+                    except OSError:
+                        break
+                    time.sleep(0.02)
+    finally:
+        if exited is not None:
+            exited.set()
+
+
 def script_busy(script_path: str | Path) -> bool:
-    """这份脚本此刻有没有进行中的编码 Agent 会话（改写脚本要让路，ADR 0110 §五）。
+    """这份脚本此刻有没有编码 Agent 会话还没**真正结束**（改写脚本要让路，ADR 0110 §五）：状态还在跑，
+    或者状态已经是取消 / 超时 / 中断、但还没观察到进程（连同进程组）退出（`_await_exit`，Codex 评 #730 P1）。
 
     要当作「之后一直成立」来用，必须在 `script_guard` 里判、并在同一段锁里把事做完。
     """
     target = scriptlock.script_key(script_path)
     for sess in list(SESSIONS.values()):
-        if sess.get("status") != "running":
+        exited = sess.get("exited")
+        still_alive = exited is not None and not exited.is_set()
+        if sess.get("status") != "running" and not still_alive:
             continue
         try:
             if os.path.normcase(os.path.realpath(sess.get("script_path") or "")) == target:
@@ -633,6 +693,9 @@ def run(
             encoding="utf-8",
             errors="replace",
             creationflags=CREATE_NO_WINDOW,
+            # POSIX 上自成一个进程组：取消 / 超时时连它起的子进程一起收掉（`_terminate` / `_await_exit`）；
+            # Windows 的 `taskkill /T` 按 pid 找子树，不需要单独的组
+            start_new_session=os.name != "nt",
         )
         sess = {
             "id": sid,
@@ -650,6 +713,8 @@ def run(
             "snapshot": str(snap),
             "project": str(Path(figures_dir).resolve()),
             "proc": proc,
+            #: 观察到进程（连同进程组）确实退出之后才置位；之前 `script_busy` 一律算忙
+            "exited": threading.Event(),
             "started": time.time(),
         }
         SESSIONS[sid] = sess
@@ -687,9 +752,9 @@ def run(
                         sess["transcript"].append({"kind": kind, "text": text})
                     emit("ai.delta", {"session": sid, "kind": kind, "text": text})
                 if time.time() - sess["started"] > TIMEOUT_S:
-                    proc.kill()
+                    _terminate(sess)
                     sess["status"] = "timeout"
-            proc.wait()
+            _await_exit(sess)
             stderr_log.close()
             # 「这次 AI 改完的那一版」：回滚只认它（STATE-09）。在 `ai.done` 之前记下，
             # 前端收到完成事件后立刻点回滚也有据可查；sidecar 一并记，重启后照样认。
@@ -740,6 +805,8 @@ def run(
                 },
             )
         except Exception as exc:  # noqa: BLE001
+            _terminate(sess)
+            _await_exit(sess)
             sess["status"] = "failed"
             sess["refresh"] = sess.get("refresh") or {"status": "skipped"}
             ai_history.record_end(
@@ -985,8 +1052,8 @@ def get(sid: str) -> dict | None:
 def cancel(sid: str) -> bool:
     sess = SESSIONS.get(sid)
     if sess and sess["status"] == "running":
-        sess["proc"].kill()
-        sess["status"] = "cancelled"
+        _terminate(sess)
+        sess["status"] = "cancelled"  # 界面立刻显示取消；脚本仍算忙，直到 `_await_exit` 观察到退出
         ai_history.update_status(sid, "cancelled")
         return True
     return False
@@ -998,10 +1065,7 @@ def interrupt_all() -> int:
     n = 0
     for sess in SESSIONS.values():
         if sess["status"] == "running":
-            try:
-                sess["proc"].kill()
-            except OSError:
-                pass
+            _terminate(sess)
             sess["status"] = "interrupted"
             ai_history.update_status(sess["id"], "interrupted")
             n += 1

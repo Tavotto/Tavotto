@@ -51,7 +51,9 @@
   （`full` / `undo_edits`，两种都先把此刻的版本备份一份）。**令牌绑定浏览器会话 cookie**：只凭本机进程凭据
   （`session_client.AUTH_HEADER`，MCP / CLI 那条）的请求在预览 / 提交 / 复原上一律 403
   `script_edit_needs_ui`；令牌单次、十分钟、不出现在任何 MCP 结果里。编码 Agent 正在改同一份脚本 →
-  `script_busy`；`runtime:` 资产不适用。提交 / 复原之后与 AI 改完同一顺序：`shutdown_all` → 统一刷新 →
+  `script_busy`——「正在改」看的是**进程确实退出**，不是状态字段：取消 / 超时的状态在 `kill()` 那一刻就变了，进程
+  （和它起的子进程）可能还在写；会话带 `exited` 事件，`ai_bridge._await_exit` 等组长退出、再把进程组收到一个不剩
+  才置位（POSIX `start_new_session` + `killpg`；Windows `taskkill /T` 趁组长活着收子树），之前一律算忙；`runtime:` 资产不适用。提交 / 复原之后与 AI 改完同一顺序：`shutdown_all` → 统一刷新 →
   `panel.file_changed`。
 - **按脚本的锁**（`engine/scriptlock.py`）：本机服务并发处理请求，「判一次再写」的每一段都在同一把
   `script_guard`（真实路径、同线程可重入）里做完——Agent 从「脚本在不在」到登记进 `SESSIONS`；AI 回滚从
