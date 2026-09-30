@@ -178,19 +178,20 @@ def test_only_values_proven_to_feed_reads_are_rewritten(tmp_path, moved):
         "np.savetxt(DATA_DIR + '/z.csv', z)\n"
         f'HELPER = "{OLD}/data"\n'  # 15 传进不认得的函数 → 不改
         "mystery(HELPER)\n"
-        f'PAIR = ["{OLD}/data"]\n'  # 17 容器 → 不改
-        f'AGAIN = "{OLD}/data"\n'  # 18 重复赋值 → 不改
-        "AGAIN = AGAIN + '/x.h5'\n"
+        f'PAIR = ["{OLD}/data"]\n'  # 17 容器（之后按下标读）→ 不改
+        "np.load(PAIR[0])\n"
+        f'AGAIN = "{OLD}/data"\n'  # 19 重复赋值（每处读取看着都是读）→ 不改
+        "AGAIN = input()\n"
         "np.load(AGAIN)\n"
         "def where():\n"
-        f'    return "{OLD}/data"\n'  # 22 return → 不改
-        f'w = np.load("{OLD}/data/x.h5")\n'  # 23 直接读 → 改（读出的数据之后写到哪里与路径无关）
+        f'    return "{OLD}/data"\n'  # 23 return → 不改
+        f'w = np.load("{OLD}/data/x.h5")\n'  # 24 直接读 → 改（读出的数据之后写到哪里与路径无关）
         "np.save('/tmp/w.npy', w)\n"
     )
     plan = _plan(tmp_path, src, rule=rule, missing=[f"{OLD}/data/x.h5"])
-    assert sorted(e["line"] for e in plan.edits) == [3, 7, 10, 23]
+    assert sorted(e["line"] for e in plan.edits) == [3, 7, 10, 24]
     reasons = {s["line"]: s["reason"] for s in plan.skipped}
-    assert reasons == {line: scriptedit.SKIP_CONTEXT for line in (4, 12, 15, 17, 18, 22)}
+    assert reasons == {line: scriptedit.SKIP_CONTEXT for line in (4, 12, 15, 17, 19, 23)}
 
 
 def test_the_entry_being_fixed_may_go_straight_into_an_unknown_reader(tmp_path, moved):
