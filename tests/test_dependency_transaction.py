@@ -1342,11 +1342,11 @@ def _first_install_offline(monkeypatch) -> list[list[str]]:
     real = deprepair._run_pip
     calls: list[list[str]] = []
 
-    def _run_pip(argv, ev, log, on_started=None):
+    def _run_pip(argv, ev, log, on_started=None, **kw):
         calls.append(list(argv))
         if "install" in argv and "--index-url" not in argv:
             return deprepair.ERROR_NETWORK, _NETWORK_OUT
-        return real(argv, ev, log, on_started=on_started)
+        return real(argv, ev, log, on_started=on_started, **kw)  # deadline / watch 照原样交给真 pip
 
     monkeypatch.setattr(deprepair, "_run_pip", _run_pip)
     monkeypatch.setattr(deprepair, "user_package_source", lambda python: False)

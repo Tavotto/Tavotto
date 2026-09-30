@@ -810,6 +810,7 @@ def _install_guarded(plan_id: str, on_event) -> dict:
     try:
         return install(plan_id, on_event)
     except RepairError as exc:
+        _log_repair_failure("依赖修复", plan_id, exc.code)
         pinned = (exc.extra or {}).get("pinned")
         return _emit(
             plan_id,
@@ -985,6 +986,7 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
         cancel_ev,
         lambda text: _append_log(plan.plan_id, text, on_event),
         on_mirror=lambda url: _note_mirror(plan.plan_id, url, on_event),
+        on_source=lambda src: _note_source(plan.plan_id, src, on_event),
     )
     if code == ERROR_CANCELLED:
         return _finish_cancelled(plan, on_event, python)
@@ -1124,6 +1126,7 @@ def _rebuild_guarded(project, on_event, progress_id: str) -> dict:
     try:
         return rebuild_managed(project, on_event, progress_id=progress_id)
     except RepairError as exc:
+        _log_repair_failure("受管环境重建", progress_id, exc.code)
         return _emit(progress_id, STATE_FAILED, on_event, code=exc.code, error=str(exc))
     except Exception as exc:  # noqa: BLE001
         LOG.exception("受管环境重建异常")
@@ -1309,8 +1312,9 @@ def _pip_install(
     *,
     upgrade: bool = False,
     on_mirror=None,
+    on_source=None,
 ) -> tuple[str, str]:
-    """跑一次 pip install（网络类失败时按 `_run_pip_install` 的规则至多再走一次镜像）。
+    """跑一次 pip install（网络类失败 / 官方源太慢时按 `_run_pip_install` 的规则至多再走一次镜像）。
     回 `("", 输出)` 表示成功，否则 `(错误码, 输出)`。"""
     if depresolve.parse_requirement(requirement) is None:
         # 第二道门：真正拼进 argv 之前再验一次形状。第一道在解析处，
@@ -1325,11 +1329,12 @@ def _pip_install(
         cancel_ev,
         on_log,
         on_mirror=on_mirror,
+        on_source=on_source,
     )
 
 
 # ---------------------------------------------------------------------------
-# PyPI 镜像回退（ADR 0111）
+# PyPI 镜像回退（ADR 0111；慢 / 超时与预算：ADR 0112 §二）
 #
 # 国内网络直连 PyPI 常常连不上 / 读超时。先用官方 / 用户自己的配置装；**仅当**失败是网络类的、
 # 且用户没有自配任何包源时，改用一个固定的镜像重试**一次**。用户配过源（index / extra-index /
@@ -1343,17 +1348,138 @@ _PIP_SOURCE_ENV = ("PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL", "PIP_NO_INDEX", "PIP_
 _PIP_SOURCE_KEYS = ("index-url", "extra-index-url", "no-index", "find-links")
 
 
+#: 会作用于 `pip install` 的配置节：`global`、命令自己的 `install`、环境变量（`pip config list` 把
+#: `PIP_*` 列成 `:env:.<键>`）。`download` / `index` 等别的命令的节不影响安装。
+_PIP_INSTALL_SECTIONS = ("global", "install", ":env:")
+
+
+def _normalize_pip_key(key: str) -> str:
+    """pip 自己的键名规范化（`Configuration._normalized_keys` → `_normalize_name`）：小写、`_` 转 `-`、
+    去掉开头的 `--`。`--index-url` / `index_url` / `index-url` 是同一个键（#724 第 8 轮 Codex P2，并入 #737）。"""
+    key = key.strip().lower().replace("_", "-")
+    while key.startswith("-"):
+        key = key[1:]
+    return key
+
+
+def pip_config_keys(text: str) -> set[str]:
+    """`pip config list` 的输出 → 作用于 `pip install` 的已设键（规范化后）。**只收键、不收值**（值可能带凭据）。
+
+    判据的主语是 **pip 自己**合并好的结果（它按平台位置、编码、文件覆盖顺序与环境变量读完才打印）——
+    这里不复刻 pip 的配置发现（#737），只把它打印的 `<节>.<键>=<值>` 按节筛一遍。认不出形状的行跳过。"""
+    keys: set[str] = set()
+    for line in (text or "").splitlines():
+        name, sep, _value = line.partition("=")
+        if not sep:
+            continue
+        section, dot, key = name.strip().partition(".")
+        if not dot or section.lower() not in _PIP_INSTALL_SECTIONS:
+            continue
+        keys.add(_normalize_pip_key(key))
+    return keys
+
+
 def user_package_source(python: str) -> bool | None:
     """这个环境的 pip 是不是配了**用户自己的包源**（`_PIP_SOURCE_ENV` / `_PIP_SOURCE_KEYS`）。
 
     `custom_package_index` 的超集（多认 no-index / find-links）；只回真假、不回地址。问不出来回 None
-    ——镜像回退把 None 当「配过」处理（宁可不换源）。"""
+    ——镜像回退把 None 当「配过」处理（宁可不换源）。配置那一层**问 pip**（`pip config list`，在目标解释器里），
+    按节筛、按 pip 的规范化比键（`pip_config_keys`），不按子串猜。"""
     if any(os.environ.get(name) for name in _PIP_SOURCE_ENV):
         return True
     rc, out = _run([str(python), "-m", "pip", "config", "list"], 30)
     if rc != 0:
         return None
-    return any(k in out for k in _PIP_SOURCE_KEYS)
+    return bool(pip_config_keys(out) & set(_PIP_SOURCE_KEYS))
+
+
+#: 这次 pip install 用的是哪个包源（进日志、进进度 `pypi_source`）。闭集；不含地址——用户配的源只说「用户配置」。
+PIP_SOURCE_PYPI = "pypi"  # 没有任何自配：pip 默认的官方 PyPI
+PIP_SOURCE_USER = (
+    "user_config"  # 用户配过（index / extra-index / no-index / find-links，环境变量或配置文件）
+)
+PIP_SOURCE_UNKNOWN = "unknown"  # 问不出来（按「配过」处理，不换源）
+PIP_SOURCE_MIRROR = "tuna"  # 回退到 PYPI_MIRROR_URL 的那一次
+PIP_SOURCES = (PIP_SOURCE_PYPI, PIP_SOURCE_USER, PIP_SOURCE_UNKNOWN, PIP_SOURCE_MIRROR)
+
+#: 官方源「太慢」的判据（ADR 0112 §二；只在没有自配源、换得了源的第一次尝试上测）。取值理由：
+#:   * 阿里云华东 Windows 实测 files.pythonhosted.org 约 20 KB/s，TUNA 13 MB/s；matplotlib + numpy + 依赖的
+#:     wheel 合计约 30 MB——20 KB/s 要 25 分钟，15 分钟的总预算必然撞超时。
+#:   * `PIP_SLOW_BPS` = 100 kB/s：官方源第一次尝试最多能用的 10 分钟（总预算 − `PIP_MIRROR_RESERVE_S`）在这个
+#:     速度下约 60 MB，够装常见科学栈；比它慢就几乎注定在预算里装不完。正常宽带比它高一两个数量级，不会误换。
+#:   * 判法：pip 每下一个文件先打一行 `Downloading <名字> (<大小>)`，下完才打下一行。这一行出现后过了
+#:     `PIP_SLOW_GRACE_S`、且已经超过「大小 / PIP_SLOW_BPS」还没有下一行 → 这个文件的实际速度**一定**低于
+#:     阈值（没下完就是证据，不是估计）。小文件（元数据几十 kB）在宽限期内下完，不参与判定。
+#:   * 联网阶段（`Collecting` / `Downloading` / `Looking in indexes` / `Obtaining` 之后、`Installing collected
+#:     packages` 之前）连续 `PIP_STALL_S` 没有新的一行也算太慢（索引页慢到这个份上，后面的 wheel 更等不起）；
+#:     安装阶段不测（Windows 上杀软扫大 wheel 可以几分钟没输出，那不是网络）。
+PIP_SLOW_BPS = 100_000
+PIP_SLOW_GRACE_S = 30.0
+PIP_STALL_S = 90.0
+#: 预算（ADR 0112 §二）：`INSTALL_TIMEOUT_S` 是**这次安装**的总预算，两次尝试共用。换得了源时第一次最多用到
+#: 「总预算 − 这个保底」为止，保证镜像那一次至少还有 5 分钟（TUNA 13 MB/s 下 30 MB 十几秒）；不换源时第一次用满。
+PIP_MIRROR_RESERVE_S = 300.0
+
+_PIP_DOWNLOADING_RE = re.compile(
+    r"^\s*Downloading\s+\S+\s+\((\d+(?:\.\d+)?)\s*(bytes|B|kB|KB|MB|GB)\)", re.IGNORECASE
+)
+_PIP_UNIT = {"bytes": 1, "b": 1, "kb": 1000, "mb": 1000**2, "gb": 1000**3}
+_PIP_NETWORK_PHASE = ("collecting", "downloading", "looking in indexes", "obtaining")
+_PIP_INSTALL_PHASE = ("installing collected packages",)
+
+#: `_PipWatch.reason` 的闭集（进日志）。
+PIP_SLOW_DOWNLOAD = "slow_download"
+PIP_STALLED = "stalled"
+PIP_FIRST_BUDGET = "first_attempt_budget"
+PIP_SLOW_REASONS = (PIP_SLOW_DOWNLOAD, PIP_STALLED, PIP_FIRST_BUDGET)
+#: 换源理由的闭集（进日志）：三种「太慢」+ 网络类失败 + 超时。
+PIP_SWITCH_REASONS = (
+    *PIP_SLOW_REASONS,
+    ERROR_NETWORK,
+    ERROR_TIMEOUT,
+)
+
+
+class _PipWatch:
+    """官方源第一次尝试的测速（`_run_pip` 每 0.25 s 问一次 `verdict`）。判出来就是这次尝试的结局：
+    `_run_pip` 杀掉 pip、回 `ERROR_TIMEOUT`，`reason` 说为什么（`PIP_SLOW_REASONS`）。"""
+
+    def __init__(self, started: float, first_deadline: float):
+        self.first_deadline = first_deadline
+        self.last_line = started
+        self.download: tuple[float, float] | None = None  # (这一行出现的时刻, 字节数)
+        self.network_phase = True  # pip 起来先解析 / 下载
+        self.reason = ""
+        self.detail = ""
+
+    def feed(self, line: str, now: float) -> None:
+        self.last_line = now
+        low = line.strip().lower()
+        m = _PIP_DOWNLOADING_RE.match(line)
+        if m:
+            size = float(m.group(1)) * _PIP_UNIT[m.group(2).lower()]
+            self.download = (now, size)
+            self.network_phase = True
+            return
+        self.download = None
+        if low.startswith(_PIP_INSTALL_PHASE):
+            self.network_phase = False
+        elif low.startswith(_PIP_NETWORK_PHASE):
+            self.network_phase = True
+
+    def verdict(self, now: float) -> str:
+        if now >= self.first_deadline:
+            self.reason = PIP_FIRST_BUDGET
+        elif self.download is not None:
+            since, size = self.download
+            elapsed = now - since
+            if elapsed >= PIP_SLOW_GRACE_S and elapsed > size / PIP_SLOW_BPS:
+                self.reason = PIP_SLOW_DOWNLOAD
+                self.detail = f"{size / 1e6:.1f} MB 的文件 {elapsed:.0f} s 没下完"
+        elif self.network_phase and now - self.last_line >= PIP_STALL_S:
+            self.reason = PIP_STALLED
+            self.detail = f"联网阶段 {now - self.last_line:.0f} s 没有进展"
+        return self.reason
 
 
 def mirror_retry_warranted(code: str, user_source: bool | None) -> bool:
@@ -1362,43 +1488,96 @@ def mirror_retry_warranted(code: str, user_source: bool | None) -> bool:
     判据的主语：**这一次** pip 进程的结局（`_run_pip` 给的 code）与**这个环境**的 pip 配置。
     `ERROR_NETWORK` 只在 pip **退出码非零**且输出带网络特征（`_NETWORK_MARKERS`：DNS 失败 / 连不上 /
     读超时 / 代理错误 / pip 自己的 Retrying）时才会出现（`_run_pip` → `classify_pip_failure`）；退出码 0
-    哪怕输出里有过 Retrying 也是成功，不重试。取消 / 超时 / 冲突 / 找不到 / hash 不符都不是换源能解决的。
-    用户配过源（True）或问不出来（None）都不换。"""
-    return code == ERROR_NETWORK and user_source is False
+    哪怕输出里有过 Retrying 也是成功，不重试。`ERROR_TIMEOUT`（ADR 0112 §二）：没有自配源时第一次尝试
+    带着测速（`_PipWatch`）跑，太慢 / 用完第一次的预算就以它收场——那正是换源能解决的（实测 20 KB/s →
+    13 MB/s）；配过源时不测速、第一次用满总预算，超时就是终局。取消 / 冲突 / 找不到 / hash 不符都不是换源
+    能解决的。用户配过源（True）或问不出来（None）都不换。"""
+    return code in (ERROR_NETWORK, ERROR_TIMEOUT) and user_source is False
 
 
 def _run_pip_install(
-    build_argv, python: str, cancel_ev: threading.Event, on_log, *, on_mirror=None
+    build_argv, python: str, cancel_ev: threading.Event, on_log, *, on_mirror=None, on_source=None
 ) -> tuple[str, str]:
-    """装包的执行器：先按 `build_argv(None)`（官方 / 用户配置）跑；网络类失败且用户没自配源时，
-    按 `build_argv(PYPI_MIRROR_URL)` **再跑一次**，日志里写明用了镜像、`on_mirror(url)` 通知调用方记进
-    进度 / 结果。两条 argv 出处（`pip_install_argv` / `pip_install_joint_argv`）都经这里。
+    """装包的执行器：先按 `build_argv(None)`（官方 / 用户配置）跑；网络类失败、或（没有自配源时）官方源
+    太慢 / 用完第一次的预算，按 `build_argv(PYPI_MIRROR_URL)` **再跑一次**，日志里写明用了镜像、
+    `on_mirror(url)` 通知调用方记进进度 / 结果。两条 argv 出处（`pip_install_argv` / `pip_install_joint_argv`）
+    都经这里。
+
+    ADR 0112 §二：**先问 pip 配没配源**（一次 `pip config list`，约 1 s），因为要在开始之前决定两件事——
+    这次用的是哪个源（`on_source(PIP_SOURCES 之一)`、进日志）、第一次要不要带测速与分段预算。
+    `INSTALL_TIMEOUT_S` 是两次尝试**共用**的总预算：换得了源时第一次最多用到「总预算 −
+    `PIP_MIRROR_RESERVE_S`」，镜像那一次拿剩下的；换不了源时第一次用满。每次尝试的结局进 app.log。
 
     「用了镜像」的判据主语是**镜像那次 pip 进程**：只在它 `Popen` 成功之后（`_run_pip` 的 `on_started`）
-    才写日志、记 `pypi_mirror`。起之前取消（问配置期间、或那之后到 `Popen` 之前——`_run_pip` 起进程前
-    看一眼事件）/ 起不来（`OSError`）都不记，如实回 cancelled / failed；起来之后被取消照记——那次请求
-    确实发往了镜像（Codex #743 两轮 P2）。"""
-    code, out = _run_pip(build_argv(None), cancel_ev, on_log)
-    user_source = user_package_source(python) if code == ERROR_NETWORK else None
+    才写换源日志、记 `pypi_mirror` / 包源、写那句说明。起之前取消 / 起不来（`OSError`）都不记，如实回
+    cancelled / failed；起来之后被取消照记——那次请求确实发往了镜像（Codex #743 两轮 P2）。"""
+    started = time.time()
+    deadline = started + INSTALL_TIMEOUT_S
+    user_source = user_package_source(python)
+    if user_source is False:
+        source = PIP_SOURCE_PYPI
+    elif user_source:
+        source = PIP_SOURCE_USER
+    else:
+        source = PIP_SOURCE_UNKNOWN
+    LOG.info("pip install：包源 %s", logsafe.known(source, PIP_SOURCES))
+    if on_source is not None:
+        on_source(source)
+    watch = (
+        _PipWatch(started, deadline - PIP_MIRROR_RESERVE_S) if source == PIP_SOURCE_PYPI else None
+    )
+    code, out = _run_pip(build_argv(None), cancel_ev, on_log, deadline=deadline, watch=watch)
+    # 第一次的结局**先**进 app.log，再决定换不换源：换源的话两次尝试各一条结局（#745 Codex P2）
+    _log_pip_outcome(code, source)
     if not mirror_retry_warranted(code, user_source):
         return code, out
-    note = f"\n连不上默认的 Python 包源，改用 PyPI 镜像 {PYPI_MIRROR_URL} 重试一次\n"
-    started: list[bool] = []
+    reason = (watch.reason if watch is not None else "") or code
+    detail = watch.detail if watch is not None else ""
+    if reason in PIP_SLOW_REASONS:
+        note = f"\n默认的 Python 包源太慢（{detail or reason}），改用 PyPI 镜像 {PYPI_MIRROR_URL} 重试一次\n"
+    else:
+        note = f"\n连不上默认的 Python 包源，改用 PyPI 镜像 {PYPI_MIRROR_URL} 重试一次\n"
+    mirror_started: list[bool] = []
 
     def _mirror_started() -> None:
-        started.append(True)
-        LOG.warning("pip 网络类失败且未自配包源：改用 PyPI 镜像 %s 重试一次", PYPI_MIRROR_URL)
+        mirror_started.append(True)
+        LOG.warning(
+            "pip install 换源：官方 PyPI %s（%s）且未自配包源，改用 %s 重试一次（预算还剩 %.0f s）",
+            logsafe.known(reason, PIP_SWITCH_REASONS),
+            detail or "-",
+            PYPI_MIRROR_URL,
+            max(0.0, deadline - time.time()),
+        )
         # 先记字段、再写日志那句：每条路的 `on_log` 都经 `_append_log` 推一次快照，这样带着那句说明的第一个
-        # 快照就已经带着顶层 `pypi_mirror`——四条路（含联合准备的原地 / 换代）同一个字段、同一层、同一刻到达
+        # 快照就已经带着顶层 `pypi_mirror` / 包源——四条路（含联合准备的原地 / 换代）同一个字段、同一刻到达
         if on_mirror is not None:
             on_mirror(PYPI_MIRROR_URL)
+        if on_source is not None:
+            on_source(PIP_SOURCE_MIRROR)
         if on_log is not None:
             on_log(note)
 
     code, retry_out = _run_pip(
-        build_argv(PYPI_MIRROR_URL), cancel_ev, on_log, on_started=_mirror_started
+        build_argv(PYPI_MIRROR_URL),
+        cancel_ev,
+        on_log,
+        deadline=deadline,
+        on_started=_mirror_started,
     )
-    return code, out + (note if started else "") + retry_out
+    _log_pip_outcome(code, PIP_SOURCE_MIRROR if mirror_started else source)
+    return code, out + (note if mirror_started else "") + retry_out
+
+
+def _log_pip_outcome(code: str, source: str) -> None:
+    """一次 pip install 尝试的结局进 app.log：成功 INFO、失败 WARNING，都带稳定 code 与包源（闭集明文）。"""
+    if not code:
+        LOG.info("pip install 完成：包源 %s", logsafe.known(source, PIP_SOURCES))
+        return
+    LOG.warning(
+        "pip install 失败：%s（包源 %s）",
+        logsafe.known(code, LOGGED_ERROR_CODES),
+        logsafe.known(source, PIP_SOURCES),
+    )
 
 
 def _pip_uninstall(
@@ -1413,7 +1592,13 @@ def _pip_uninstall(
 
 
 def _run_pip(
-    argv: list[str], cancel_ev: threading.Event, on_log, *, on_started=None
+    argv: list[str],
+    cancel_ev: threading.Event,
+    on_log,
+    *,
+    deadline: float | None = None,
+    watch: "_PipWatch | None" = None,
+    on_started=None,
 ) -> tuple[str, str]:
     """流式跑一条 pip 命令（install / uninstall 共用的唯一执行器）。
 
@@ -1421,6 +1606,8 @@ def _run_pip(
     这里不再碰它的形状。起 pip 之前先看一眼取消：已经取消的不起（起了再杀，包可能已经写了一半）。
     `on_started()` 只在子进程**真起来之后**、读它的输出之前调一次（镜像回退据此才记「用了镜像」）；
     它抛异常不影响这次 pip。
+    `deadline`（绝对时刻）缺省为现在 + `INSTALL_TIMEOUT_S`；`_run_pip_install` 传进来的是两次尝试共用的那一个。
+    `watch` 判出「太慢」时同样杀掉、回 `ERROR_TIMEOUT`，理由在 `watch.reason`（ADR 0112 §二）。
     """
     if cancel_ev.is_set():
         return ERROR_CANCELLED, ""
@@ -1447,11 +1634,14 @@ def _run_pip(
             LOG.warning("pip 启动回调异常", exc_info=True)
 
     chunks: list[str] = []
-    deadline = time.time() + INSTALL_TIMEOUT_S
+    if deadline is None:
+        deadline = time.time() + INSTALL_TIMEOUT_S
 
     def _pump() -> None:
         for line in proc.stdout or ():
             chunks.append(line)
+            if watch is not None:
+                watch.feed(line, time.time())
             if on_log is not None:
                 on_log(line)
 
@@ -1467,7 +1657,7 @@ def _run_pip(
             _kill(proc)
             reader.join(timeout=2.0)
             return ERROR_CANCELLED, "".join(chunks)
-        if time.time() > deadline:
+        if time.time() > deadline or (watch is not None and watch.verdict(time.time())):
             _kill(proc)
             reader.join(timeout=2.0)
             return ERROR_TIMEOUT, "".join(chunks)
@@ -1652,7 +1842,7 @@ def custom_package_index(python: str) -> bool | None:
     rc, out = _run([str(python), "-m", "pip", "config", "list"], 30)
     if rc != 0:
         return None
-    return any(k in out for k in ("index-url", "extra-index-url"))
+    return bool(pip_config_keys(out) & {"index-url", "extra-index-url"})
 
 
 _LOG_MAX = 20_000
@@ -1680,6 +1870,33 @@ def _note_mirror(progress_id: str, url: str, on_event) -> None:
         snapshot = dict(rec)
     if on_event is not None:
         on_event(snapshot)
+
+
+def _note_source(progress_id: str, source: str, on_event) -> None:
+    """这次安装此刻用的是哪个包源（`PIP_SOURCES`；ADR 0112 §二）：记在进度记录的 `pypi_source` 上，之后每个
+    快照（含终态）都带着它，失败日志也按它说出来源。不含地址。"""
+    with _lock:
+        rec = _progress.get(progress_id)
+        if rec is None:
+            return
+        rec["pypi_source"] = source
+        snapshot = dict(rec)
+    if on_event is not None:
+        on_event(snapshot)
+
+
+def _log_repair_failure(entry: str, progress_id: str, code: str) -> None:
+    """四个线程入口的失败终态进 app.log（ADR 0112 §三）：稳定 code + 最后用的包源。2026-09-29 那台机器上
+    `dependency_install_timeout` 只落在 environment.json，日志里一个字都没有。"""
+    with _lock:
+        rec = _progress.get(progress_id) or {}
+        source = str(rec.get("pypi_source") or "-")
+    LOG.warning(
+        "%s失败：%s（包源 %s）",
+        entry,
+        logsafe.known(code, LOGGED_ERROR_CODES),
+        logsafe.known(source, PIP_SOURCES),
+    )
 
 
 def _emit(
@@ -2512,6 +2729,7 @@ def _run_package_job_guarded(job_id: str, on_event) -> dict:
     try:
         return run_package_job(job_id, on_event)
     except RepairError as exc:
+        _log_repair_failure("包操作", job_id, exc.code)
         return _emit_job(job_id, STATE_FAILED, on_event, code=exc.code, error=str(exc))
     except Exception as exc:  # noqa: BLE001
         LOG.exception("包操作线程异常")
@@ -2620,6 +2838,7 @@ def _run_package_job(job: PackageJob, env_key: str, on_event, cancel_ev: threadi
             log,
             upgrade=job.op == OP_UPDATE,
             on_mirror=lambda url: _note_mirror(job.job_id, url, on_event),
+            on_source=lambda src: _note_source(job.job_id, src, on_event),
         )
     if code == ERROR_CANCELLED:
         # 装 / 卸到一半：这个环境不再假装是干净的（我们自己的东西，重建即可）
@@ -3127,6 +3346,7 @@ def _prepare_guarded(plan_id: str, on_event, *, claimed: bool = False) -> dict:
     try:
         return prepare(plan_id, on_event, claimed=claimed)
     except RepairError as exc:
+        _log_repair_failure("联合依赖准备", plan_id, exc.code)
         return _emit(plan_id, STATE_FAILED, on_event, code=exc.code, error=str(exc))
     except Exception as exc:  # noqa: BLE001
         LOG.exception("联合准备线程异常")
@@ -3228,6 +3448,7 @@ def _run_joint_in_place(plan: JointRepairPlan, on_event, cancel_ev: threading.Ev
             cancel_ev,
             lambda text: _append_log(plan.plan_id, text, on_event),
             on_mirror=lambda url: _note_mirror(plan.plan_id, url, on_event),
+            on_source=lambda src: _note_source(plan.plan_id, src, on_event),
         )
     if code == ERROR_CANCELLED:
         health = projectenv.probe_environment(python)
@@ -3445,6 +3666,7 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
         cancel_ev,
         job.on_log,
         on_mirror=lambda url: _note_mirror(job.progress_id, url, None),
+        on_source=lambda src: _note_source(job.progress_id, src, None),
     )
     if code == ERROR_CANCELLED:
         managedenv.mark_generation(
@@ -4245,3 +4467,10 @@ def _spawn_gate(figures_dir: str, script_name: str) -> None:
 
 pool.register_spawn_gate(_spawn_gate)
 pool.register_environment_decider(decide_environment)
+
+
+#: 日志里按闭集明文放行的失败码：本模块全部 `ERROR_*` 的值 + 私有 Python 的（`_log_repair_failure` /
+#: `_log_pip_outcome`）。在模块末尾算一次——`ERROR_*` 分散在全文件各处，放在这里才收得全。
+LOGGED_ERROR_CODES = frozenset(
+    v for k, v in dict(globals()).items() if k.startswith("ERROR_") and isinstance(v, str)
+) | frozenset(privatepython.ERROR_CODES)

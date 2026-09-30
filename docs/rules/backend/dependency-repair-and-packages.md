@@ -184,6 +184,19 @@
   进度记录顶层 `pypi_mirror`——**只在镜像那次 pip 真起来之后**（`_run_pip(on_started=)`）才记，起之前取消 / 起不来都不记。联合准备（跑前准备弹窗那条路，原地 / 换代两种）与单包修复、包管理**同一个字段、同一层**（进度记录顶层），先记字段再写日志那句，带说明的第一个快照（`installing`）就已带着它。`custom_package_index` 仍只服务诊断（只问 index、只回真假）。看护
   `tests/test_pypi_mirror_fallback.py` + `tests/test_dependency_repair.py::test_the_managed_generation_records_the_mirror_on_its_progress`。
   包查找（`pip index versions`）不在回退范围内。
+- **慢 / 超时也换源、预算共用、结局进日志（ADR 0111 的 2026-09-29 修订；决策全文在 #744 带来的 ADR「自动测速选源」§二 / §三）**：`_run_pip_install`
+  **开始之前**问一次 pip（`user_package_source`：`pip config list` 的输出按 `pip_config_keys` 只收 `global` / `install` /
+  `:env:` 三节、键按 pip 的规范化——小写、`_` 转 `-`、去开头 `--`——比较；不按子串猜，`download.index-url` 不算），定下这次的
+  包源（闭集 `PIP_SOURCES`：pypi / user_config / unknown / tuna，进 app.log 与进度顶层 `pypi_source`，不含地址）。只有 `pypi`
+  时第一次尝试带 `_PipWatch`：pip 的 `Downloading <x> (<大小>)` 那一行出现后过了 `PIP_SLOW_GRACE_S` 且超过「大小 /
+  `PIP_SLOW_BPS`」还没下一行（这个文件的速度**一定**低于阈值）、或联网阶段连续 `PIP_STALL_S` 没有新行（装的阶段不测）、或用到
+  「总预算 − `PIP_MIRROR_RESERVE_S`」——`_run_pip` 杀掉 pip、回 `dependency_install_timeout`，`mirror_retry_warranted` 对它同样
+  放行（没自配源时）。`INSTALL_TIMEOUT_S` 是两次尝试**共用**的总预算（`_run_pip(deadline=)` 传同一个时刻），最坏 15 分钟见结论。
+  每次尝试的结局一条日志（`pip install 完成 / 失败：<code>（包源 <源>）`），换源一条 WARNING（理由闭集 `PIP_SLOW_REASONS` +
+  网络 / 超时）；四个线程入口的失败终态各一条 `<入口>失败：<code>（包源 <源>）`（`_log_repair_failure`）。
+  看护 `tests/test_pypi_slow_fallback.py`（真 pip 对两个本地简单索引：慢 / 卡住 / 连不上换镜像、用户配过源不测速不换、
+  `[download]` 节不算、两次共用预算、镜像回错字节 pip 拒绝、判据单测、四个入口的失败日志）。
+  已知缺口（不在本条范围）：索引回 5xx 时 pip 的输出只有 `from versions: none`，被分成 `dependency_not_found`、不触发回退。
 - `deprepair` 里每个 `ERROR_*` code 在两种语言里都要有文案——
   `engine.repairError.<code>` 或 `backend.<code>`，与卡片 `repairCodeMessage` 的查法
   同源（`test_every_repair_code_has_text_in_both_languages`，常量名从 AST 取、值从
