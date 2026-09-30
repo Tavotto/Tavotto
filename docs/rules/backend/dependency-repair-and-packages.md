@@ -72,7 +72,10 @@
   保留用户已有的配置、缓存不在数据目录外新建：他的 matplotlib 目录在就沿用（里面可能有 matplotlibrc / stylelib），
   没有就 `<data_dir>/cache/mpl`；Linux / FreeBSD 上配置与缓存是两个 XDG 目录、分别判断（#723）——只有配置目录时
   改到 `<data_dir>/cache/mpl-userconfig`（符号链接指回他的 matplotlibrc / stylelib），只有缓存目录时 `cache/mpl`；
-  不改 `XDG_CACHE_HOME`（会搬走用户脚本里其它库的缓存）；worker 的
+  不改 `XDG_CACHE_HOME`（会搬走用户脚本里其它库的缓存）。Codex 插件自管运行时的 venv（`<配置目录>/mcp-runtime/venv`，
+  `runtime.PLUGIN_RUNTIME_DIRNAME`）也算 Tavotto 自己建的（#733），但它不在数据目录里：缓存根是它旁边的
+  `mcp-runtime/cache`（`runtime._owned_cache_root`；删掉 `mcp-runtime` 即卸载干净），插件 `--provision` 的 pip
+  用同一个目录（`server.provision_env()`，两侧由 `test_the_plugin_runtime_cache_dir_is_one_path_on_both_sides` 对拍）；worker 的
   三条 spawn 路径只从 `pool.worker_env()` 取。用户的环境原样继承。看护 `tests/test_probe_leaves_no_trace.py`
   （PYTHONPATH 上的 `sitecustomize` 当传感器、先证明它是活的；新增入口就在 `_PROBES` / `_OWNED_SPAWNS` 加一行）。
 - **体检的主语是 worker 的启动导入链**（#435）：`_PROBE_SRC` 执行的是 `worker.py`

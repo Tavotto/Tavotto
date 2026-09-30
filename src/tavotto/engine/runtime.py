@@ -648,9 +648,24 @@ def probe_args(*, bundled: bool = False) -> list[str]:
 OWNED_ENV_DIRNAMES = ("environments", "worker-env", "private-python")
 
 
-def is_owned_python(python: str | os.PathLike | None) -> bool:
-    """这个解释器是不是 **Tavotto 自己建的**：数据目录下 `OWNED_ENV_DIRNAMES` 那几个目录里的
-    （受管环境各代、源码模式自建的 `worker-env/`、私有 Python）。
+#: Codex 插件自管运行时的家（`codex-plugin/mcp/server.py::managed_runtime_dir`：`<配置目录>/mcp-runtime`，
+#: venv 在其下 `venv/`）。它**不在数据目录里**（插件在引擎不可用时拿不到 `config.data_dir()`，只认配置目录），
+#: 但同样是 Tavotto 自己建的解释器：缓存落在它旁边的 `cache/`（#733）——删掉 `mcp-runtime` 即卸载干净，
+#: 插件 `--provision` 的 pip 用的也是这一个（`server.managed_cache_dir()`）。两侧由
+#: `tests/test_probe_leaves_no_trace.py::test_the_plugin_runtime_cache_dir_is_one_path_on_both_sides` 对拍。
+PLUGIN_RUNTIME_DIRNAME = "mcp-runtime"
+
+
+def _startswith_dir(path: str, root: str) -> bool:
+    return path.startswith(root.rstrip(os.sep) + os.sep)
+
+
+def _owned_cache_root(python: str | os.PathLike | None) -> str | None:
+    """这个解释器若是 Tavotto 自己建的，它的缓存根目录；不是回 None。
+
+    * 数据目录下 `OWNED_ENV_DIRNAMES` 那几个目录里的（受管环境各代、源码模式自建的 `worker-env/`、
+      私有 Python）→ `<data_dir>/cache`；
+    * Codex 插件自管运行时的 venv（`<配置目录>/mcp-runtime/venv/` 之下）→ `<配置目录>/mcp-runtime/cache`。
 
     判据是路径：Tavotto 只往 `config.data_dir()` 写（根 AGENTS.md 的不变量），它建出来的解释器都在
     那几个目录下。**不是「数据目录下的都算」**：`TAVOTTO_DATA_DIR` 可以被设成一个不专用的祖先目录
@@ -658,18 +673,32 @@ def is_owned_python(python: str | os.PathLike | None) -> bool:
     **不 realpath**——venv 的 python 是指向基础解释器的软链接，落到真身就把受管环境判成了它的 base。
     """
     if not python:
-        return False
+        return None
     from . import config
 
     try:
-        root = os.path.normcase(os.path.abspath(str(config.data_dir())))
         path = os.path.normcase(os.path.abspath(os.fspath(python)))
+        data = str(config.data_dir())
+        root = os.path.normcase(os.path.abspath(data))
+        plugin = os.path.abspath(os.path.join(str(config.config_dir()), PLUGIN_RUNTIME_DIRNAME))
     except (OSError, TypeError, ValueError):
-        return False
-    return any(
-        path.startswith(os.path.join(root, os.path.normcase(name)) + os.sep)
+        return None
+    if any(
+        _startswith_dir(path, os.path.join(root, os.path.normcase(name)))
         for name in OWNED_ENV_DIRNAMES
-    )
+    ):
+        return os.path.join(data, "cache")
+    if _startswith_dir(path, os.path.normcase(os.path.join(plugin, "venv"))):
+        return os.path.join(plugin, "cache")
+    return None
+
+
+def is_owned_python(python: str | os.PathLike | None) -> bool:
+    """这个解释器是不是 **Tavotto 自己建的**：数据目录下 `OWNED_ENV_DIRNAMES` 那几个目录里的
+    （受管环境各代、源码模式自建的 `worker-env/`、私有 Python），以及 Codex 插件自管运行时的 venv
+    （`PLUGIN_RUNTIME_DIRNAME`，#733）。判据与缓存各落哪里见 `_owned_cache_root`。
+    """
+    return _owned_cache_root(python) is not None
 
 
 def _xdg_matplotlib_dirs() -> tuple[str, str] | None:
@@ -782,7 +811,8 @@ def owned_env(
     """起 **Tavotto 自己的环境**（`is_owned_python`）时的环境变量；别人的环境回 None（原样继承）。
 
     base 给 `{}` 时回的就是**增量**（workerd 的 spawn 规格只收增量，`pool._spawn_spec`）。
-    两个缓存落回数据目录（`<data_dir>/cache/<名字>`，与 `child_env()` 的 `mpl` 同一个约定）：
+    两个缓存落回这个环境的缓存根（`_owned_cache_root`：数据目录里的环境是 `<data_dir>/cache/<名字>`，与
+    `child_env()` 的 `mpl` 同一个约定；Codex 插件自管运行时是 `<配置目录>/mcp-runtime/cache/<名字>`，#733）：
 
     * `PIP_CACHE_DIR` → `cache/pip`：受管环境里跑的 pip（装包 / 查找 / 包管理）默认把
       缓存写在 `%LOCALAPPDATA%\\pip`（2026-09-28 Windows 实测）。**只改缓存的位置**：
@@ -794,15 +824,13 @@ def owned_env(
       写字体缓存。改不改道、改到哪见 `_owned_mplconfigdir`：用户已有的配置照样生效
       （受管环境跑的是他的脚本，`plt.style.use("我的样式")` 得认得），缓存不在数据目录外新建。
 
-    清理：都在数据目录里，删 Tavotto 的数据目录就一并删掉（与受管环境 `envs/`、
-    私有 Python 同一个归宿），不在数据目录之外留任何东西。
+    清理：都在环境自己的归宿旁边——数据目录里的环境随数据目录一并删掉（与受管环境 `envs/`、
+    私有 Python 同一个归宿），插件自管运行时随 `mcp-runtime` 目录一并删掉；不在这两处之外留任何东西。
     """
-    if not is_owned_python(python):
+    cache = _owned_cache_root(python)
+    if cache is None:
         return None
-    from . import config
-
     env = dict(base if base is not None else os.environ)
-    cache = os.path.join(str(config.data_dir()), "cache")
     env["PIP_CACHE_DIR"] = os.path.join(cache, "pip")
     mpl = _owned_mplconfigdir(cache)
     if mpl is not None:
