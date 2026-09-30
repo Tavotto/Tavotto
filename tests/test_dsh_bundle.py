@@ -133,6 +133,10 @@ def node() -> str:
     return exe
 
 
+#: 胶水不该读的 ComSpec：出现在启动参数里就说明又退回了「cmd.exe 当 command」的形态
+BOGUS_COMSPEC = "X:\\not-a-shell\\cmd.exe"
+
+
 def _launch_spec(node: str, platform: str) -> dict:
     script = (
         f"const m = await import({json.dumps(GLUE.as_uri())});"
@@ -144,7 +148,9 @@ def _launch_spec(node: str, platform: str) -> dict:
         text=True,
         encoding="utf-8",
         timeout=60,
-        env={"PATH": "/usr/bin:/bin"},
+        # 继承本机环境：从零造的环境在 Windows 上缺 SystemRoot，node 起不来（CSPRNG 断言，退出码 134）。
+        # 只把 ComSpec 换成一个不存在的路径——胶水交出去的启动参数不许依赖它（旧形态就是拿它当 command）。
+        env={**os.environ, "ComSpec": BOGUS_COMSPEC},
     )
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)
@@ -167,6 +173,7 @@ def test_glue_launches_the_bundled_launcher(node, platform, command, args):
     的 `tool_timeout_sec`，dsh 的单位是毫秒。
     """
     spec = _launch_spec(node, platform)
+    assert BOGUS_COMSPEC not in [spec["command"], *spec["args"]]
     if platform == "win32":
         assert spec["command"] == str(PLUGIN / command)
     else:
