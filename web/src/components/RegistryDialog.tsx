@@ -50,6 +50,7 @@ import {
   onGateResolved,
   probeErrorOf,
   scriptRunEpoch,
+  useScriptRunStore,
   whenScriptIdle,
 } from '@/store/scriptRunStore'
 import { currentProjectId } from '@/lib/session'
@@ -128,6 +129,8 @@ interface ProbeNote {
   /** 停在起会话之前的门上：再打开授权框 / 运行目录确认框的载荷 */
   prepare?: DependencyPreparationOffer
   workdir?: WorkdirConfirmation
+  /** 载荷属于哪一代（`scriptRunEpoch`）：换过项目（含 A → B → A）就不再给再打开的按钮 */
+  gateEpoch?: number
 }
 
 function ReadinessBody() {
@@ -246,6 +249,7 @@ function ReadinessBody() {
             text,
             prepare: res.error!.dependency_preparation ?? undefined,
             workdir: res.error!.confirmation ?? undefined,
+            gateEpoch: epoch,
           },
         }))
         gated.current.set(script, { phase: gate, project, epoch })
@@ -1060,12 +1064,16 @@ export function parseStems(text: string): string[] {
 function ProbeNoteView({ note }: { note?: ProbeNote }) {
   useTranslation('dialogs')
   const setStatus = useUiStore((s) => s.setStatus)
+  // 再打开的按钮只给**这一代**的载荷：对话框开着换过项目（A → B → A 项目 id 相同、代际已变），上一代的
+  // offer 不许在这一代被作答（后端会按此刻的项目推计划去执行，而框里说的是上一代的那份，#740 Codex P2）
+  const epoch = useScriptRunStore((s) => s.epoch)
   if (!note) return null
+  const gateLive = note.gateEpoch === epoch
   return (
     <div className="type-caption mt-1">
       <p className="whitespace-pre-wrap">{note.text}</p>
-      {note.prepare && <DependencyPrepareButton offer={note.prepare} />}
-      {note.workdir && <WorkdirChooseButton confirmation={note.workdir} />}
+      {gateLive && note.prepare && <DependencyPrepareButton offer={note.prepare} />}
+      {gateLive && note.workdir && <WorkdirChooseButton confirmation={note.workdir} />}
       {/* 捕获成功的每张图可以直接作为 runtime 面板放上画布。没有磁盘产物的
           show-only 图从这里第一次真正进入产品。 */}
       {note.descriptors && note.descriptors.length > 0 && (

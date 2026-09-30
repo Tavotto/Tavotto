@@ -490,7 +490,18 @@ describe('绝不替用户决定', () => {
     await act(async () => useEnvStore.setState({ dependencyPreparation: null }))
     await clickIn(rowOf('Mystery.pdf')!, '准备依赖…')
     expect(useEnvStore.getState().dependencyPreparation, '行上没有再打开的入口').toEqual(offer)
-    useEnvStore.setState({ dependencyPreparation: null })
+    // 对话框开着换过项目（A → B → A）：上一代的载荷不再给再打开的按钮（#740 Codex P2）
+    await act(async () => {
+      useEnvStore.setState({ dependencyPreparation: null })
+      setCurrentProjectId('p2')
+      useScriptRunStore.getState().clear()
+      setCurrentProjectId('p1')
+      useScriptRunStore.getState().clear()
+    })
+    const stale = [...(rowOf('Mystery.pdf')?.querySelectorAll('button') ?? [])].find((b) =>
+      b.textContent?.includes('准备依赖…'),
+    )
+    expect(stale, '换过项目之后还留着上一代的「准备依赖…」').toBeUndefined()
     setCurrentProjectId(null)
   })
 
