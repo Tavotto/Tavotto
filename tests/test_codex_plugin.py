@@ -1531,6 +1531,10 @@ def test_launcher_is_stdlib_only_and_parses():
         # 重装锁用内核文件锁（进程退出即释放）：POSIX / Windows 各一个标准库
         "fcntl",
         "msvcrt",
+        # 只读探测 pip 的 index-url（配置文件 + 抹掉地址里的口令），#721；按 pip 的本地编码读配置
+        "configparser",
+        "locale",
+        "urllib",
         "__future__",
         "tavotto",
         "tavotto_mcp",
@@ -1555,8 +1559,34 @@ def test_launcher_reuses_the_plugin_locator_instead_of_a_third_copy():
     """
     src = (PLUGIN / "mcp" / "server.py").read_text(encoding="utf-8")
     assert "find_tavotto" in src, "启动器没有复用插件自带的定位器"
+    # 判据的主语是「Tavotto 装在哪」这条路径规则。LOCALAPPDATA 是它的输入之一，但 pip 的配置位置
+    # （#721：商店版 Python 的虚拟化 pip.ini 在 %LOCALAPPDATA%\Packages\… 下）也要读它，而那
+    # 不归定位器管。按 AST 判（不按行里的字样——拆成两行就能绕过）：代码里出现 "LOCALAPPDATA"
+    # 这个字符串常量的地方，只许在下面登记过用途的函数里；新用处要来这里登记并写出理由。
+    allowed = {
+        "_store_python_pip_configs": "商店版 Python 的虚拟化 pip 配置（#721），与 Tavotto 安装位置无关",
+    }
+    tree = ast.parse(src)
+    uses: list[str] = []
+
+    def walk(node, owner):
+        for child in ast.iter_child_nodes(node):
+            inner = (
+                child.name if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) else owner
+            )
+            if isinstance(child, ast.Constant) and child.value == "LOCALAPPDATA":
+                uses.append(owner)
+            walk(child, inner)
+
+    walk(tree, "<module>")
+    assert uses, "前提：尺子看得见 LOCALAPPDATA（#721 的商店版 pip 配置要用它）"
+    stray = sorted({u for u in uses if u not in allowed})
+    assert not stray, (
+        f"启动器在 {stray} 里用了 LOCALAPPDATA——Tavotto 装在哪由定位器说了算；"
+        "别的用途请在 allowed 里登记理由"
+    )
     for owned_by_the_locator in (
-        "LOCALAPPDATA",
+        "PROGRAMFILES",
         "install.json",
         "SIDECAR_REL",
         "UNINSTALL_KEY",
@@ -1565,6 +1595,31 @@ def test_launcher_reuses_the_plugin_locator_instead_of_a_third_copy():
         assert owned_by_the_locator not in src, (
             f"启动器里出现了 {owned_by_the_locator}——路径规则该由定位器说了算"
         )
+
+
+def test_every_read_only_interpreter_probe_in_the_launcher_passes_b():
+    """启动器里每一个「起解释器跑一句 `-c`」的只读探测都带 `-B`（Codex #717 / #724 连着几轮各抓到一处：
+    逐处补不如一把尺子）。判据按 AST：`subprocess.*` 的第一个参数是列表字面量、里面有 `"-c"` 的，必须
+    也有 `"-B"`。provision / 交棒那几处跑的不是 `-c`，不在此列。"""
+    src = (PLUGIN / "mcp" / "server.py").read_text(encoding="utf-8")
+    probes, missing = 0, []
+    for node in ast.walk(ast.parse(src)):
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "subprocess"
+            and node.args
+            and isinstance(node.args[0], ast.List)
+        ):
+            continue
+        consts = [e.value for e in node.args[0].elts if isinstance(e, ast.Constant)]
+        if "-c" in consts:
+            probes += 1
+            if "-B" not in consts:
+                missing.append(node.lineno)
+    assert probes >= 4, f"前提：尺子数得到那几处探测（{probes}）"
+    assert not missing, f"server.py 第 {missing} 行的只读探测没带 -B"
 
 
 def test_launcher_tells_desktop_only_users_the_truth():

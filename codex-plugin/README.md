@@ -134,7 +134,9 @@ python3 <插件目录>/mcp/server.py --health
 
 一行 JSON 说清：引擎找没找到（以及 resolver 每一步的结论与耗时）、画布产物
 在不在、桌面版装没装。它能区分开在 `codex plugin list` 里长得一模一样的
-几种状态：插件装了但没引擎（`desktop_only` / `tavotto_missing`）、显式指的
+几种状态：插件装了但没引擎（`desktop_only` / `tavotto_missing`）、引擎装了但版本
+对不上（`engine_too_old` / `engine_incompatible`，带版本号与升级命令；pip 配了镜像时提示镜像
+可能滞后并给出 `--index-url https://pypi.org/simple` 的写法）、显式指的
 解释器用不了（`engine_unavailable`）、一切就绪但**当前会话还没重载工具**
 （health 是绿的，那就新开会话）。
 

@@ -67,6 +67,11 @@ ERR_PLUGIN_AMBIGUOUS = "plugin_install_ambiguous"
 ERR_CANVAS = "canvas_incomplete"
 #: 引擎版本低于已装插件要求的最低版本
 ERR_ENGINE_OLD = "engine_too_old"
+#: 引擎在（pip / pipx 装的），桥却 import 不全，而说不出它是不是太旧（插件没带构建清单 /
+#: 装残了）。与插件降级 server 的同名 code 同义（#721）；「不知道」不并进「太旧」
+ERR_ENGINE_INCOMPATIBLE = "engine_incompatible"
+#: 插件体检报出的、要原样沿用的引擎版本类 code（降级 server 与本命令口径一致）
+_ENGINE_VERSION_CODES = (ERR_ENGINE_OLD, ERR_ENGINE_INCOMPATIBLE)
 
 #: 单条 Codex 命令的上限。marketplace add 要拉一次稀疏检出，给宽一点；
 #: 但必须有上限——没有网络时它会一直挂着，而调用方在等那行 JSON。
@@ -910,9 +915,15 @@ def _engine_step(plugin_dir: Path | None, py: str | None, *, apply: bool) -> dic
     server = plugin_dir / "mcp" / "server.py"
     if not server.is_file():
         return _step("engine", ok=False, detail=f"插件里没有 {server}", code=ERR_PROVISION)
-    rc, _out = _run([py, *probe_args(), str(server), "--health"], timeout=90, env=_health_env())
+    rc, out = _run([py, *probe_args(), str(server), "--health"], timeout=90, env=_health_env())
     if rc == 0:
         return _step("engine", ok=True, skipped=True, detail="插件已能解析到引擎")
+    # 插件已经判出「引擎在、版本对不上」（engine_too_old / engine_incompatible）：在这里就原样转述，
+    # 不当成「需要 provision」——否则冻结的桌面 CLI 上 doctor 在这一步就以 provision_failed 收场、
+    # 走不到 health 那一步的转述，install 还会另建一个环境盖住真正的原因（Codex #724 P1）
+    verdict = _engine_version_verdict("engine", _last_json(out) or {})
+    if verdict is not None:
+        return verdict
     if not apply:
         return _step("engine", ok=False, detail="需要 provision", code=ERR_PROVISION)
     # **复用插件自己的 --provision**，不抄第二份：那份实现知道该建在哪、装什么版本
@@ -1018,6 +1029,9 @@ def _health_step(plugin_dir: Path | None, py: str | None, summary: dict) -> dict
         "python": report.get("python"),
         "mode": report.get("mode"),
     }
+    verdict = _engine_version_verdict("health", report) if rc != 0 else None
+    if verdict is not None:
+        return verdict
     if rc != 0:
         return _step("health", ok=False, detail=out[-400:], code=ERR_HEALTH)
     if satisfied is False:
@@ -1026,10 +1040,41 @@ def _health_step(plugin_dir: Path | None, py: str | None, summary: dict) -> dict
             ok=False,
             code=ERR_ENGINE_OLD,
             detail=f"引擎 {engine_version} 低于已装插件要求的最低版本 {required}——插件的桥 import "
-            f"不动这么老的引擎。升级引擎（pipx upgrade tavotto / 升级桌面版），"
-            f"或把插件退回与引擎匹配的版本。",
+            f"不动这么老的引擎。" + _upgrade_hint(report.get("pip_index"), required),
         )
     return _step("health", ok=True, detail=out[-400:])
+
+
+def _engine_version_verdict(step: str, report: dict) -> dict | None:
+    """插件体检（`server.py --health` 的 JSON）判出的引擎版本类结论 → 一步失败；不是这类回 None。
+
+    插件的降级诊断已经判出「引擎在、版本对不上」：话术（两个版本号、升级命令、镜像提示）**只在插件
+    那一份里写**，这里原样转述，不写第二份（#721：两边口径一致）。engine / health 两步共用这一份。"""
+    code = report.get("code")
+    if code not in _ENGINE_VERSION_CODES or not isinstance(report.get("error"), str):
+        return None
+    recovery = [r for r in report.get("recovery") or [] if isinstance(r, str)]
+    return _step(
+        step,
+        ok=False,
+        code=code,
+        detail=report["error"] + ("\n恢复步骤：\n- " + "\n- ".join(recovery) if recovery else ""),
+    )
+
+
+def _upgrade_hint(index: object, required: str | None) -> str:
+    """引擎太老时「怎么升」的那句。pip 指向镜像时（探测只在插件那侧做：`server.pip_index`）整句换成
+    绕开镜像的命令，**不给**裸的 `pipx upgrade tavotto`——它照样去问那个镜像、装回旧版（Codex #724；
+    与插件 `upgrade_commands` 同一口径）。"""
+    tail = "或把插件退回与引擎匹配的版本。"
+    if not isinstance(index, dict) or not index.get("mirror"):
+        return f"升级引擎（pipx upgrade tavotto / 升级桌面版），{tail}"
+    pin = f'"tavotto[worker]=={required}"' if required else '"tavotto[worker]"'
+    return (
+        f"pip 的 index-url 指向镜像 {index.get('url')}（来自 {index.get('source')}），"
+        f"镜像可能还没同步到新版，照常升级会装回旧版。绕开镜像升级引擎：pipx install --force {pin} "
+        f"--index-url https://pypi.org/simple（或升级桌面版），{tail}"
+    )
 
 
 # ------------------------------ 三个子命令 ------------------------------
