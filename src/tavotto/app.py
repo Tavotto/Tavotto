@@ -6161,7 +6161,9 @@ def api_script_backups():
     """某脚本改写前留下的备份（新的在前），每条带 `state`：磁盘此刻是改后 / 改前 / 之后又被改过。"""
     ctx = current_ctx()
     script = request.args.get("script") or None  # 不带就列整个项目的（设置里那一栏）
-    entries = engine_scriptbackup.history(_script_store(ctx), script)
+    entries = engine_scriptbackup.history(
+        _script_store(ctx), script, undoable=engine_scriptedit.undoable
+    )
     # `script_abs` 是本机路径：给本机界面看的（与预览里的完整路径同一类），不出本机
     return jsonify({"ok": True, "script": script, "backups": entries})
 
@@ -6204,7 +6206,7 @@ def api_script_backups_restore():
             if now == (meta.get("after") or {}).get("sha256") or mode == "full":
                 new = original
             elif mode == "undo_edits":
-                new = engine_scriptedit.undo(current, meta.get("edits") or [])
+                new = engine_scriptedit.undo_edits_of(current, meta)
             else:
                 raise engine_scriptbackup.ScriptEditError(
                     engine_scriptedit.ERROR_RESTORE_CONFLICT, "mode 只能是 full / undo_edits"

@@ -269,9 +269,12 @@ export function ScriptBackupRows() {
             )}
             {b.state === 'changed' && (
               <>
-                <Button size="sm" variant="secondary" disabled={busy} onClick={() => void restore(b, 'undo_edits')}>
-                  {en('scriptBackupUndoEdits')}
-                </Button>
+                {/* 那几处字面量之后又被改了：只撤销做不到，只给整份恢复（判据在后端，与复原同一个） */}
+                {b.undoable && (
+                  <Button size="sm" variant="secondary" disabled={busy} onClick={() => void restore(b, 'undo_edits')}>
+                    {en('scriptBackupUndoEdits')}
+                  </Button>
+                )}
                 <Button size="sm" variant="secondary" disabled={busy} onClick={() => void restore(b, 'full')}>
                   {en('scriptBackupRestoreFull')}
                 </Button>

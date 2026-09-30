@@ -27,6 +27,7 @@ import stat
 import subprocess
 import time
 from pathlib import Path
+from typing import Callable
 
 from .. import __version__
 from . import atomicio, projectenv, scriptlock
@@ -396,10 +397,32 @@ def _state_of(meta: dict, current: str | None) -> str:
     return STATE_CHANGED
 
 
-def history(store: Store, script: str | None = None) -> list[dict]:
+def _bound(meta: dict, slug: str, name: str) -> bool:
+    """这份记录属于它所在的目录：`id` 就是 `<slug>/<目录名>`，`script` 的 slug 就是这个 slug。
+
+    复原的写目标（`meta["script"]`）与撤销明细全从记录里来：记录被改成指着另一个脚本（手改、同步盘冲突、
+    拷错目录）时，不绑定的话复原会把这份 `original.py` 写到**另一个**脚本上（Codex 评 #730 P2）。对不上的
+    一律当不存在。"""
+    script = meta.get("script")
+    return (
+        isinstance(script, str)
+        and bool(script)
+        and meta.get("id") == f"{slug}/{name}"
+        and slug_of(script) == slug
+    )
+
+
+def history(
+    store: Store,
+    script: str | None = None,
+    *,
+    undoable: Callable[[bytes, dict], bool] | None = None,
+) -> list[dict]:
     """备份记录（新的在前），每条多一个 `state`（相对磁盘此刻）。项目内那份不在就读镜像。
 
-    `script` 为 None 时列整个项目的（设置里的「脚本改写备份」）。
+    `script` 为 None 时列整个项目的（设置里的「脚本改写备份」）。`undoable(此刻字节, 记录)` 由调用方给
+    （`scriptedit.undoable`，与复原端点 `undo_edits` 同一个判据；本模块不认识改写明细）：只对「之后又被改过」
+    的记录问，结果进 `undoable`——界面据此决定给不给「只撤销那几处」。
     """
     if script is None:
         slugs: set[str] = set()
@@ -411,27 +434,38 @@ def history(store: Store, script: str | None = None) -> list[dict]:
     by_id: dict[str, dict] = {}
     for slug in slugs:
         for parent in (store.mirror_dir / slug, store.project_dir / slug):
-            for _d, meta in _metas(parent):
-                if isinstance(meta.get("id"), str):
+            for d, meta in _metas(parent):
+                if _bound(meta, slug, d.name):
                     by_id[meta["id"]] = meta
-    current: dict[str, str | None] = {}
+    current: dict[str, bytes | None] = {}
     out = []
     for meta in by_id.values():
-        name = meta.get("script") if isinstance(meta.get("script"), str) else ""
+        name = meta["script"]
         if name not in current:
             try:
-                current[name] = sha256(resolve(store.root, name).read_bytes())
+                current[name] = resolve(store.root, name).read_bytes()
             except (ScriptEditError, OSError):
                 current[name] = None
+        data = current[name]
+        now = None if data is None else sha256(data)
+        state = _state_of(meta, now)
         # `current_sha256`：列表算 state 那一刻磁盘上的脚本。复原时原样带回（`expected_sha256`），后端
         # 在锁里核对——界面挂着的是旧状态时不许按它做整份覆盖（Codex 评 #730 P1）
-        out.append(dict(meta, state=_state_of(meta, current[name]), current_sha256=current[name]))
+        can_undo = (
+            state == STATE_CHANGED
+            and data is not None
+            and undoable is not None
+            and undoable(data, meta)
+        )
+        out.append(dict(meta, state=state, current_sha256=now, undoable=can_undo))
     out.sort(key=lambda m: m.get("created", 0), reverse=True)
     return out
 
 
 def load(store: Store, backup_id: str) -> tuple[dict, bytes]:
-    """一份备份的记录与原字节。`id` 形如 `<slug>/<时间戳>`；两段都只许是目录名（不许 `..`）。"""
+    """一份备份的记录与原字节。`id` 形如 `<slug>/<时间戳>`；两段都只许是目录名（不许 `..`）。记录必须绑定在
+    它所在的目录上（`_bound`：`id` 与请求的一致、`script` 的 slug 就是目录的 slug），原字节必须是记录里的
+    改前哈希——否则当不存在，复原绝不按一份被改过的记录去写另一个脚本。"""
     parts = backup_id.split("/") if isinstance(backup_id, str) else []
     if len(parts) != 2 or any(not p or p in (".", "..") or "\\" in p for p in parts):
         raise ScriptEditError(ERROR_BACKUP_UNKNOWN, "没有这份备份", id=str(backup_id))
@@ -442,6 +476,10 @@ def load(store: Store, backup_id: str) -> tuple[dict, bytes]:
             data = (d / ORIGINAL_NAME).read_bytes()
         except (OSError, ValueError):
             continue
-        if isinstance(meta, dict) and sha256(data) == (meta.get("before") or {}).get("sha256"):
+        if (
+            isinstance(meta, dict)
+            and _bound(meta, parts[0], parts[1])
+            and sha256(data) == (meta.get("before") or {}).get("sha256")
+        ):
             return meta, data
     raise ScriptEditError(ERROR_BACKUP_UNKNOWN, "没有这份备份", id=backup_id)

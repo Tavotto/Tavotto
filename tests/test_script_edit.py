@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import ast
 import errno
+import json
 import os
 import stat
 from pathlib import Path
@@ -809,6 +810,90 @@ def test_http_restore_refuses_a_stale_view_of_the_script(app_project, tmp_path):
         },
     )
     assert resp.status_code == 200, resp.get_json()
+
+
+def _committed(client, root, tmp_path, name="fig.py"):
+    """提交一次改写，回（改前字节, 列表里那一条）。"""
+    original = EXISTS_SCRIPT.format(old=OLD).encode("utf-8")
+    (root / name).write_bytes(original)
+    chosen = _touch(tmp_path / "moved" / "data" / "values.txt", "3\n")
+    body = {"entry": f"{OLD}/data/values.txt", "chosen": str(chosen), "chosen_kind": "file"}
+    token = _preview(client, script=name, **body).get_json()["token"]
+    assert client.post("/api/script-edit/commit", json={"token": token}).status_code == 200
+    listed = client.get("/api/script-backups", query_string={"script": name}).get_json()["backups"]
+    return original, listed[0]
+
+
+def test_http_restore_refuses_a_record_that_points_at_another_script(app_project, tmp_path):
+    """备份记录被改成指着另一个脚本（手改、同步盘冲突、拷错目录）：记录要绑定在它所在的目录上——`id` 与请求的
+    一致、`script` 的 slug 就是目录的 slug——对不上当不存在，复原被拒，另一个脚本一个字节都不动（Codex 评 #730 P2）。
+    两份（项目里 / 镜像）都被改了也一样；列表里也不再出现它。"""
+    m, root = app_project
+    client = m.app.test_client()
+    _original, listed = _committed(client, root, tmp_path)
+    other = root / "other.py"
+    other.write_bytes(b"print('other')\n")
+    store = m._script_store(m.current_ctx())
+    for base in (store.project_dir, store.mirror_dir):
+        meta_path = base / listed["id"] / scriptbackup.META_NAME
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        meta["script"] = "other.py"
+        meta_path.write_text(json.dumps(meta), encoding="utf-8")
+    other_sha = scriptbackup.sha256(other.read_bytes())
+    resp = client.post(
+        "/api/script-backups/restore",
+        json={"backup_id": listed["id"], "mode": "full", "expected_sha256": other_sha},
+    )
+    assert resp.get_json()["code"] == scriptbackup.ERROR_BACKUP_UNKNOWN
+    assert other.read_bytes() == b"print('other')\n"
+    assert [
+        b["id"] for b in client.get("/api/script-backups").get_json()["backups"]
+    ] == []
+    # `id` 被改成别的目录名：同样当不存在
+    for base in (store.project_dir, store.mirror_dir):
+        meta_path = base / listed["id"] / scriptbackup.META_NAME
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        meta["script"] = "fig.py"
+        meta["id"] = listed["id"].split("/")[0] + "/0101_000000"
+        meta_path.write_text(json.dumps(meta), encoding="utf-8")
+    with pytest.raises(scriptbackup.ScriptEditError) as err:
+        scriptbackup.load(store, listed["id"])
+    assert err.value.code == scriptbackup.ERROR_BACKUP_UNKNOWN
+
+
+def test_http_history_offers_undo_edits_only_when_restore_could_do_it(app_project, tmp_path):
+    """列表的 `undoable` 与复原端点的 `undo_edits` 同一个判据（Codex 评 #730 P2）：别处改了、那几处字面量还在 →
+    true，点下去成功；那几处字面量本身又被改了 → false（界面不给「只撤销那几处」），端点同样拒。"""
+    m, root = app_project
+    client = m.app.test_client()
+    original, listed = _committed(client, root, tmp_path)
+    assert listed["state"] == scriptbackup.STATE_CURRENT and listed["undoable"] is False
+    edited = (root / "fig.py").read_bytes()
+
+    def row():
+        got = client.get("/api/script-backups", query_string={"script": "fig.py"}).get_json()
+        return next(b for b in got["backups"] if b["id"] == listed["id"])
+
+    # 那几处字面量被改掉了：只撤销做不到
+    moved = str(tmp_path / "moved").replace("\\", "/").encode()
+    (root / "fig.py").write_bytes(edited.replace(moved, b"/somewhere/else"))
+    now = row()
+    assert now["state"] == scriptbackup.STATE_CHANGED and now["undoable"] is False
+    resp = client.post(
+        "/api/script-backups/restore",
+        json={"backup_id": listed["id"], "mode": "undo_edits", "expected_sha256": now["current_sha256"]},
+    )
+    assert resp.get_json()["code"] == scriptedit.ERROR_RESTORE_CONFLICT
+    # 只改了别处：字面量还在 → 给按钮，点下去成功
+    (root / "fig.py").write_bytes(edited.replace(b"subplots()", b"subplots(dpi=90)"))
+    now = row()
+    assert now["state"] == scriptbackup.STATE_CHANGED and now["undoable"] is True
+    resp = client.post(
+        "/api/script-backups/restore",
+        json={"backup_id": listed["id"], "mode": "undo_edits", "expected_sha256": now["current_sha256"]},
+    )
+    assert resp.status_code == 200, resp.get_json()
+    assert (root / "fig.py").read_bytes() == original.replace(b"subplots()", b"subplots(dpi=90)")
 
 
 def test_http_a_replace_that_landed_but_was_not_fsynced_is_reported_as_done(

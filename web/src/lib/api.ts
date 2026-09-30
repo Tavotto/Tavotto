@@ -3243,6 +3243,8 @@ export interface ScriptBackup {
   state: ScriptBackupState
   /** 列表算 `state` 那一刻磁盘上脚本的 sha256（读不到为 null）；复原时原样带回，后端锁里核对 */
   current_sha256?: string | null
+  /** 「只撤销那几处」此刻能不能做（后端按复原同一个判据算；只在 `changed` 时可能为 true） */
+  undoable?: boolean
   edits?: ScriptEditPreview['edits']
 }
 

@@ -445,6 +445,21 @@ def self_check(old: bytes, new: bytes, edits: list[dict]) -> None:
 # ---------------------------------------------------------------- 复原（§七）
 
 
+def undo_edits_of(current: bytes, meta: dict) -> bytes:
+    """复原端点 `undo_edits` 的字节：按这份备份记录的明细逐处换回。"""
+    return undo(current, meta.get("edits") or [])
+
+
+def undoable(current: bytes, meta: dict) -> bool:
+    """「只撤销那几处」此刻能不能给：与复原端点**同一个**判据（`undo_edits_of` 不抛）。备份列表据此决定
+    显不显示那个按钮（Codex 评 #730 P2）——列表说能、点了却 `script_restore_conflict` 的按钮不给。"""
+    try:
+        undo_edits_of(current, meta)
+    except Error:
+        return False
+    return True
+
+
 def undo(current: bytes, edits: list[dict]) -> bytes:
     """「只撤销这几处路径」：每处 `after` 字面量还在原来那一行的原来那一列、或全文唯一一处，才换回 `before`。
 

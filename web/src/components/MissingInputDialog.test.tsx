@@ -455,7 +455,9 @@ describe('MissingInputDialog', () => {
   it('设置里的改写备份：此刻的状态决定给哪个复原按钮', async () => {
     const backups: ScriptBackup[] = [
       { id: 'fig.py/0929_1', kind: 'input_path', script: 'fig.py', created: 1, pristine: true, state: 'current' },
-      { id: 'b.py/0929_2', kind: 'input_path', script: 'b.py', created: 2, pristine: true, state: 'changed', current_sha256: 'b-now' },
+      { id: 'b.py/0929_2', kind: 'input_path', script: 'b.py', created: 2, pristine: true, state: 'changed', current_sha256: 'b-now', undoable: true },
+      // 之后连那几处字面量也被改了：后端说只撤销做不到（与复原同一个判据），只给整份恢复（Codex 评 #730 P2）
+      { id: 'd.py/0929_5', kind: 'input_path', script: 'd.py', created: 5, pristine: true, state: 'changed', current_sha256: 'd-now', undoable: false },
       { id: 'c.py/0929_3', kind: 'input_path', script: 'c.py', created: 3, pristine: true, state: 'before' },
       { id: 'c.py/0929_4', kind: 'restore', script: 'c.py', created: 4, pristine: false, state: 'current' },
     ]
@@ -467,6 +469,7 @@ describe('MissingInputDialog', () => {
     const buttons = (id: string) => [...row(id).querySelectorAll('button')].map((b) => b.textContent?.trim())
     expect(buttons('fig.py/0929_1')).toEqual([en('scriptBackupRestore')])
     expect(buttons('b.py/0929_2')).toEqual([en('scriptBackupUndoEdits'), en('scriptBackupRestoreFull')])
+    expect(buttons('d.py/0929_5')).toEqual([en('scriptBackupRestoreFull')])
     expect(buttons('c.py/0929_3')).toEqual([])
     expect(document.querySelector('[data-script-backup="c.py/0929_4"]'), '复原前的快照不列').toBeNull()
     await act(async () => (row('b.py/0929_2').querySelector('button') as HTMLButtonElement).click())

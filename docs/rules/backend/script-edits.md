@@ -38,7 +38,11 @@
     （`\r\n` / `\r` / `\n`），`ast` 的列是**这一行的 UTF-8 字节偏移**，换回字符列再按文件编码量；解码再编码
     回不到原字节的文件直接拒绝（`script_edit_unreadable`）。
   * `undo()`——复原时「只撤销这几处路径」：每处新字面量在原行原列、或全文唯一一处才换回，照样过自检；
-    否则 `script_restore_conflict`，只剩整份恢复。
+    否则 `script_restore_conflict`，只剩整份恢复。复原端点走 `undo_edits_of(此刻, 记录)`，备份列表的
+    `undoable` 走 `undoable(此刻, 记录)`——同一个判据，界面据它决定给不给「只撤销那几处」，不另判。
+  * 备份记录的**绑定**（`scriptbackup._bound`）：`meta.id` 就是 `<slug>/<目录名>`、`slug_of(meta.script)` 就是这个
+    slug——`load` 与 `history` 都先过它，对不上当不存在。复原的写目标来自记录，不绑定的话一份被改过的
+    `meta.json` 能把 `original.py` 写到另一个脚本上。
 - **端点与令牌**（`app.py`）：`POST /api/script-edit/input-path/preview` 不改任何字节、回 diff 与一次性令牌；
   `POST /api/script-edit/commit` 核销令牌 → 重读磁盘重算一遍，新字节 sha256 与预览时不同 →
   `script_edit_preview_stale`；`GET /api/script-backups?script=`；`POST /api/script-backups/restore`
