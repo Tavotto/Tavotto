@@ -52,6 +52,8 @@ shim（`#!/usr/bin/env node`），子进程里解析不到 `node`——退出码
 from __future__ import annotations
 
 import argparse
+import contextlib
+import errno
 import http.client
 import io
 import json
@@ -773,7 +775,71 @@ def verify_stable_snapshot(root: Path) -> dict:
     return receipt
 
 
+#: 本地市场目录旁的锁文件：同一时刻只许一个 install / upgrade 动一次性目录与换目录。
+_MARKETPLACE_LOCK = ".tavotto-marketplace.lock"
+
+
+class _MarketplaceBusy(Exception):
+    """另一个进程正持有本地市场的锁。"""
+
+
+@contextlib.contextmanager
+def _marketplace_lock(base: Path):
+    """本地市场的**内核**排他锁（非阻塞）：两个 install / upgrade 重叠（设置页一次、终端一次）时，
+    后来的那个不能把前一个正在解的 `.staging-*`、正在换的 `.old-*` 当残留收掉（Codex #725）。
+    用操作系统文件锁（POSIX `flock`、Windows `msvcrt.locking` 锁第 0 字节）：持有者崩溃或被杀，
+    内核在它退出时释放，不会留下过期锁——与插件重装锁同一个做法（codex-plugin/mcp/server.py
+    `_try_lock_fd`）。别人持有时抛 `_MarketplaceBusy`；锁子系统自己的错照常抛 OSError。"""
+    base.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(base / _MARKETPLACE_LOCK), os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            os.lseek(fd, 0, os.SEEK_SET)
+            try:
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            except OSError as exc:
+                if exc.errno in (errno.EACCES, getattr(errno, "EDEADLOCK", errno.EDEADLK)):
+                    raise _MarketplaceBusy() from exc
+                raise
+            try:
+                yield
+            finally:
+                try:
+                    os.lseek(fd, 0, os.SEEK_SET)
+                    msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+                except OSError:
+                    pass
+        else:
+            import fcntl
+
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError as exc:
+                if exc.errno in (errno.EAGAIN, errno.EWOULDBLOCK, errno.EACCES):
+                    raise _MarketplaceBusy() from exc
+                raise
+            yield  # 关 fd 即释放 flock
+    finally:
+        os.close(fd)
+
+
 def fetch_stable_snapshot() -> dict:
+    """持本地市场的锁跑 `_fetch_stable_snapshot_locked`；另一个 install / upgrade 正在动它时直接失败。"""
+    base = archive_marketplace_dir().parent
+    try:
+        with _marketplace_lock(base):
+            return _fetch_stable_snapshot_locked()
+    except _MarketplaceBusy:
+        raise ArchiveError(
+            f"另一个 tavotto codex install / upgrade 正在更新本地市场 {base}：等它结束后重跑本命令"
+        ) from None
+    except OSError as exc:
+        raise ArchiveError(f"拿不到本地市场 {base} 的锁：{exc}") from exc
+
+
+def _fetch_stable_snapshot_locked() -> dict:
     """下载发行分支压缩包 → 核对 → 换进 `archive_marketplace_dir()`。回这次装的是什么。
 
     核对全过之前，目标目录一个字节都不动：解在同级的 staging 里，最后一步才 `os.replace`
@@ -1263,7 +1329,14 @@ def _recover_managed_marketplace(root: str | None) -> tuple[bool, list[str]]:
     same = os.path.normcase(os.path.realpath(root)) == os.path.normcase(os.path.realpath(dest))
     if not same or dest.exists():
         return False, []
-    stuck = _remove_one_shot_dirs(dest.parent, dest)
+    try:
+        with _marketplace_lock(dest.parent):
+            stuck = _remove_one_shot_dirs(dest.parent, dest)
+    except _MarketplaceBusy:
+        # 另一个 install / upgrade 正在换目录：dest 不在可能只是它两次 replace 之间的一瞬，不插手
+        return False, []
+    except OSError as exc:
+        return False, [f"{dest.parent}（拿不到锁：{exc}）"]
     return dest.exists(), stuck
 
 

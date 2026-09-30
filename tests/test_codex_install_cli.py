@@ -2006,6 +2006,26 @@ def test_a_stranded_backup_that_cannot_be_moved_back_fails_the_marketplace_step(
     assert backup.is_dir(), "挪不回的备份仍是唯一的那份，不能删"
 
 
+def test_overlapping_archive_updates_are_serialized(no_git_machine, capsys):
+    """两个 install / upgrade 重叠时，后来的那个不能把前一个正在解的 `.staging-*` 当残留收掉：
+    本地市场持内核文件锁，别人持有时直接失败、一个目录都不动（Codex #725）。"""
+    from tavotto.engine import codexinstall
+
+    m = no_git_machine
+    z1, man1 = _stable_branch_zip(m["tmp"], "0.18.0")
+    m["github"].publish(z1, man1)
+    base = codexinstall.archive_marketplace_dir().parent
+    live = base / ".staging-live"
+    (live / "x").mkdir(parents=True)  # 另一个进程正在解的那棵树
+    with codexinstall._marketplace_lock(base):
+        with pytest.raises(codexinstall.ArchiveError, match="正在更新本地市场"):
+            codexinstall.fetch_stable_snapshot()
+        assert live.is_dir(), "别人正在用的一次性目录被收掉了"
+        assert m["github"].calls == [], "拿不到锁就不该开始下载"
+    info = codexinstall.fetch_stable_snapshot()  # 锁放开后照常
+    assert info["version"] == "0.18.0" and not live.exists()
+
+
 def test_a_failed_archive_attempt_still_reports_dirs_it_could_not_remove(
     no_git_machine, capsys, monkeypatch
 ):
