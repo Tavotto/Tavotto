@@ -85,11 +85,20 @@ const boxes = async (page: Page) => {
   return { abs, rel, unit }
 }
 
-/** 元素树在左栏抽屉里：画布上一动手抽屉可能收起，要用时再打开 */
+/**
+ * 元素树在左栏抽屉里：画布上一动手抽屉可能收起，要用时再打开。
+ *
+ * **只在关着时点轨道**，开没开看轨道自己的 `aria-expanded`（与 store 同步，没有动画滞后）：
+ * 进图内编辑时左栏若开着会顺手切到元素树（`actions.enterElementEdit`），这时再点一下轨道是
+ * **收起**。收起有动画，树还在 DOM 里多留一会儿，本机快、后面几步常常抢在它卸载前做完，
+ * CI 慢就卡在找树行上（#691 full-ci 两条腿同一处超时）。不看树可不可见来判断，也是同一个
+ * 理由：收起动画中它仍「可见」。
+ */
 async function openTree(page: Page) {
-  const tree = page.locator('[role="tree"]')
-  if (!(await tree.isVisible())) await page.locator('[data-rail="elements"]').click()
-  await expect(tree).toBeVisible()
+  const rail = page.locator('[data-rail="elements"]')
+  if ((await rail.getAttribute('aria-expanded')) !== 'true') await rail.click()
+  await expect(rail).toHaveAttribute('aria-expanded', 'true')
+  await expect(page.locator('[role="tree"]')).toBeVisible()
 }
 
 /**
@@ -153,7 +162,7 @@ test(
   await expect(page.locator('[data-display="exact"]').first()).toBeVisible({ timeout: 60_000 })
 
   // 1) 元素树：整张图 → 组 → B、C、色条轴
-  await page.locator('[data-rail="elements"]').click()
+  await openTree(page)
   const groupRow = page.locator(`[role="tree"] [data-el="${GROUP}"]`)
   await expect(groupRow).toBeVisible({ timeout: 30_000 })
   await expect(groupRow).toContainText('共享色条组')
@@ -264,7 +273,7 @@ test(
     await page.goto(a.baseURL)
     await page.getByText('Fig_shared.pdf').dblclick({ timeout: 30_000 })
     await expect(page.locator('[data-display="exact"]').first()).toBeVisible({ timeout: 60_000 })
-    await page.locator('[data-rail="elements"]').click()
+    await openTree(page)
     await expect(page.locator(`[role="tree"] [data-el="${GROUP}"]`)).toBeVisible({ timeout: 30_000 })
 
     await pickRow(page, GROUP)
