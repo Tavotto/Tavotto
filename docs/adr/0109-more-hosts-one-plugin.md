@@ -38,7 +38,8 @@ MiniMax Code 开源仓库 `c593d3d5`、Trae CN / 国际版文档全文），结�
    `TAVOTTO_MCP_ROOTS`、`roots/list`、用户确认、宿主工作区变量、cwd 兜底——与生成器 `validate_project_root`
    同一判据：主目录本身及其上级拒，子目录照收；两侧的主目录集合对拍。被拒又没有别的根时是独立一档
    `workspace_root_too_broad`（处置 `configure_roots`：换个目录启动宿主，或设 `TAVOTTO_MCP_ROOTS`）；支持确认框的
-   宿主在 cwd 兜底被拒时下一步仍是「请确认」。影响所有宿主：在 `~` 里启动 Claude Code 不再授权整个 home。
+   宿主在 cwd 兜底被拒时下一步仍是「请确认」；调用方明确给了主目录（或上级）的绝对路径时，确认状态记成
+   `too_broad`、同样报这一档（否则会让它「改传绝对路径重试」，而它给的就是绝对路径）。影响所有宿主：在 `~` 里启动 Claude Code 不再授权整个 home。
 4. **口径**（用户裁决三：能 Beta 的 Beta，其余升级生成器）：
    - **WorkBuddy → beta**，渠道与 Claude Code 相同（`claude-plugin`）：隔离 `CODEBUDDY_CONFIG_DIR` 从本地市场装、
      假的 OpenAI 兼容模型让 headless CLI 经 ToolSearch → DeferExecuteTool 真调 `tavotto_health`（引擎就绪、根来源

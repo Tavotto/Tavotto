@@ -444,6 +444,22 @@ def test_a_home_root_from_the_host_is_its_own_failure_bucket(authority, fake_hom
     assert authority.diagnostics()["authorization"]["code"] == CODE_ROOT_TOO_BROAD
 
 
+def test_an_explicit_home_candidate_is_too_broad_not_unconfirmed(authority, fake_home, monkeypatch):
+    """确认框宿主上调用方给了主目录的绝对路径：候选被拒要记下原因，失败档是「太宽」而不是「还没确认」；
+    换成项目目录再来一次，就按新路径重新判，不残留上一次的「太宽」。已绑定的目录不受影响。"""
+    authority.observe_client("2026-07-28", {"elicitation": {}}, {"name": "h", "version": "1"})
+    monkeypatch.chdir(authority.plugin_dir)
+    assert authority.user_binding_candidate(str(fake_home)) is None
+    assert authority.failure().code == CODE_ROOT_TOO_BROAD
+    assert authority.diagnostics()["workspace_confirmation"]["state"] == "too_broad"
+    project = fake_home / "paper" / "figures"
+    assert authority.user_binding_candidate(str(project)) == str(project.resolve())
+    assert authority.failure().code == "workspace_confirmation_required"
+    assert authority.accept_user_binding(str(project.resolve()))
+    assert authority.user_binding_candidate(str(fake_home)) is None
+    assert authority.snapshot().roots == (str(project.resolve()),)
+
+
 def test_a_home_cwd_on_a_confirmation_host_still_asks_for_confirmation(
     authority, fake_home, monkeypatch
 ):

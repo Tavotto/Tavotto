@@ -40,6 +40,7 @@
 - **授权根不收主目录（ADR 0109）**：`RootAuthority` 的五个入口（显式变量、`roots/list`、用户确认、宿主工作区
   变量、cwd 兜底）与生成器 `validate_project_root` 同一判据——主目录本身及其上级一律拒，子目录照收；
   主目录集合 `roots.home_dirs()` 与生成器 `_home_dirs()` 对拍。被拒而没有别的根时是独立一档
-  `workspace_root_too_broad`（支持确认框的宿主在 cwd 兜底被拒时仍报「请确认」）。看护 `tests/test_mcp_roots.py` 末节。
+  `workspace_root_too_broad`（支持确认框的宿主在 cwd 兜底被拒时仍报「请确认」；但调用方**明确给了**主目录的
+  绝对路径时，确认状态记成 `too_broad`、报「太宽」——让它「改传绝对路径重试」是错的）。看护 `tests/test_mcp_roots.py` 末节。
 - 看护：`tests/test_mcp_configure.py`（解包到树外按生成配置真起 server）、`tests/test_mcp_host_profiles.py`
   （九个 profile 的独立期望）、`tests/test_plugin_candidate.py` 末条（真实候选）。

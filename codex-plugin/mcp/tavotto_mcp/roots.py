@@ -201,6 +201,8 @@ _CONFIRMATION_FAILURE_CODES = {
     "cancelled": CODE_CONFIRMATION_CANCELLED,
     "no_response": CODE_CONFIRMATION_NO_RESPONSE,
     "auto_declined": CODE_CONFIRMATION_AUTO_DECLINED,
+    # 调用方明确给了绝对路径，只是它是主目录（或上级）：不是「还没确认」，重试同一个路径没用
+    "too_broad": CODE_ROOT_TOO_BROAD,
     "error": CODE_CONFIRMATION_ERROR,
     "stale": CODE_CONFIRMATION_STALE,
 }
@@ -431,6 +433,10 @@ class RootAuthority:
         with self._lock:
             if not self._client_elicitation or self._protocol_supported:
                 return None
+            if self._user_binding_state == "too_broad":
+                # 上一次给的是主目录；这一次换了路径，就按新路径重新判
+                self._user_binding_state = "available"
+                self._user_binding_error = None
         # 显式服务器配置是管理员边界，不允许一次交互把它扩宽。
         if (os.environ.get(ROOTS_ENV) or "").strip():
             return None
@@ -440,11 +446,15 @@ class RootAuthority:
                 return None
             candidate = real if os.path.isdir(real) else os.path.dirname(real)
             candidate = self._normalise_dir(candidate)
-            if (
-                is_filesystem_root(candidate)
-                or contains_home(candidate)
-                or _within(candidate, self.plugin_dir)
-            ):
+            if contains_home(candidate):
+                # 记下原因：否则下游只看到「还没确认」，让调用方「改传绝对路径重试」，而它给的
+                # 本来就是绝对路径（ADR 0109）。已绑定的目录不受影响。
+                with self._lock:
+                    if self._user_root is None:
+                        self._user_binding_state = "too_broad"
+                        self._user_binding_error = f"{candidate} {HOME_REJECTED}"
+                return None
+            if is_filesystem_root(candidate) or _within(candidate, self.plugin_dir):
                 return None
         except (OSError, ValueError):
             return None
