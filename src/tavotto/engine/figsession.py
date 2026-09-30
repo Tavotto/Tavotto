@@ -214,6 +214,8 @@ class LiveFigureSession:
         #: 写进过缓冲区、没有 stem 可认领的图（`figcapture.note_buffer_save`）：脚本跑完时交给 pyplot 兜底，
         #: 被脚本关掉的也补得回来
         self.buffer_saved: list = []
+        #: 名单满了没留下的次数（`note_buffer_save` 回 False）：跑完如实说一句，不静默
+        self.buffer_saved_overflow = 0
         #: 项目根：定义图幅的那次调用按「与原件同格式」挑（`figcapture.frame_call`）；
         #: None = 这条入口不谈原件（native bridge），取第一次调用
         self.frame_project_root: str | None = None

@@ -399,6 +399,18 @@ plt.close(fig)
 """
 
 
+OO_API_BUFFER_ONLY = """\
+import io
+from matplotlib.figure import Figure
+
+fig = Figure(figsize=(2, 1))
+fig.subplots().plot([1, 2])
+buf = io.BytesIO()
+fig.savefig(buf, format="png", dpi=50)
+assert buf.getvalue()[:8] == b"\\x89PNG\\r\\n\\x1a\\n"
+"""
+
+
 @needs_worker
 class TestFileObjectTargetsPassThrough:
     def test_desktop_script_can_read_back_what_it_saved(self, tmp_path):
@@ -430,6 +442,13 @@ class TestFileObjectTargetsPassThrough:
         assert list(stems) == ["buffer_only"], stems
         assert stems["buffer_only"]["source"] == "pyplot"  # 缓冲区不是磁盘上的原件
 
+    def test_an_object_oriented_script_without_pyplot_is_captured(self, tmp_path):
+        """只用 `Figure()`、从不 import pyplot 的脚本：存进缓冲区的图照样补回来（#739 Codex P2）。"""
+        figs = tmp_path / "figs"
+        write(figs, "oo_only.py", OO_API_BUFFER_ONLY)
+        stems = desktop_build(figs, "oo_only.py").get("stems") or {}
+        assert list(stems) == ["oo_only"], stems
+
     def test_browser_captures_the_buffer_only_figure_too(self, tmp_path):
         resp = browser_load(BUFFER_ONLY_THEN_CLOSE, "buffer_only.py", tmp_path / "ws")
         assert resp.get("ok"), resp
@@ -458,3 +477,23 @@ def test_bytes_filenames_are_paths_too(fake_mpl):
     assert figcapture.savefig_targets_path(b"out/Fig1.pdf")
     assert figcapture.savefig_stem(b"out/Fig1.pdf") == "Fig1"
     assert figcapture.savefig_call(b"out/Fig1.pdf", {})["format"] == "pdf"
+
+
+def test_the_buffer_save_list_is_bounded():
+    """循环「建图 → 存缓冲区 → 关图」的批量脚本不能把每张关掉的图都留到脚本结束（#739 Codex P2）：
+    名单最多留兜底上限那么多张，满了回 False（调用方据此如实说一句），同一张图重复存不占位。"""
+    retained: list = []
+    figs = [object() for _ in range(figcapture.MAX_PYPLOT_FALLBACK + 5)]
+    kept = [figcapture.note_buffer_save(retained, f) for f in figs]
+    assert len(retained) == figcapture.MAX_PYPLOT_FALLBACK
+    assert kept == [True] * figcapture.MAX_PYPLOT_FALLBACK + [False] * 5
+    assert figcapture.note_buffer_save(retained, figs[0]) is True  # 已在名单里：不算溢出
+    assert len(retained) == figcapture.MAX_PYPLOT_FALLBACK
+
+
+def test_retained_figures_are_collected_without_pyplot():
+    capture: dict = {}
+    fig = object()
+    stems, dropped = figcapture.collect_pyplot_figures(capture, "oo", None, retained=[fig])
+    assert (stems, dropped) == (["oo"], 0)
+    assert capture == {"oo": fig}

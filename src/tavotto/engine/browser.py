@@ -98,8 +98,8 @@ def _patched_savefig(self, fname, *args, **kwargs):
     if not _intercept:
         return _REAL_SAVEFIG(self, fname, *args, **kwargs)
     if not figcapture.savefig_targets_path(fname):
-        if _ACTIVE is not None:
-            figcapture.note_buffer_save(_ACTIVE.buffer_saved, self)
+        if _ACTIVE is not None and not figcapture.note_buffer_save(_ACTIVE.buffer_saved, self):
+            _ACTIVE.buffer_saved_overflow += 1
         return _REAL_SAVEFIG(self, fname, *args, **kwargs)
     stem = figcapture.savefig_stem(fname)
     if stem:
@@ -199,7 +199,8 @@ class BrowserSession:
         self.savefig_calls: dict[str, list | None] = {}
         #: stem → 与 `savefig_calls[stem]` 逐项对齐的 `bbox_extra_artists` 对象（算图幅用，ADR 0098）
         self.savefig_extras: dict[str, list] = {}
-        self.buffer_saved: list = []  # 写进过缓冲区的图（figcapture.note_buffer_save）
+        self.buffer_saved: list = []  # 写进过缓冲区的图（figcapture.note_buffer_save，有上限）
+        self.buffer_saved_overflow = 0  # 名单满了没留下的次数
         self.states: dict[str, overrides_mod.FigState] = {}
         self.revision = 0
         self.script_name = ""
@@ -290,6 +291,13 @@ class BrowserSession:
         for stem in fallback:
             self.capture_source[stem] = figcapture.SOURCE_PYPLOT
 
+        if self.buffer_saved_overflow:
+            # 与桌面同一句：满了没留下的那些若被脚本关掉就捕获不到——不确定丢没丢，所以不计入 truncated，只如实说
+            print(
+                f"[capture] 只存进缓冲区（BytesIO 等）的图超过 {figcapture.MAX_PYPLOT_FALLBACK} 张，"
+                f"之后的 {self.buffer_saved_overflow} 次没有保留：脚本关掉的那些不会出现在素材里",
+                file=sys.stderr,
+            )
         truncated = dropped + max(0, len(self.capture) - MAX_FIGURES)
         if len(self.capture) > MAX_FIGURES:
             for stem in list(self.capture)[MAX_FIGURES:]:

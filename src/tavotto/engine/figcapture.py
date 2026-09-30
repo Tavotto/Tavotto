@@ -813,15 +813,23 @@ def fallback_stems(taken, script_stem: str, count: int) -> list[str]:
     return out
 
 
-def note_buffer_save(retained: list, fig) -> None:
+def note_buffer_save(retained: list, fig, limit: int = MAX_PYPLOT_FALLBACK) -> bool:
     """一次写进文件对象（BytesIO 等）的 savefig 把这张图记进 `retained`（按 identity 去重、保序）。
 
     `savefig(buf); Image.open(buf).save("x.tiff"); plt.close(fig)` 这种脚本里，缓冲区那次是这张图
     **唯一**的一次存盘：它没有 stem 可认领，脚本随后又把图关了，跑完时 pyplot 里已经没有它——不记下来
     就一张图都捕获不到（#739 Codex P2）。`collect_pyplot_figures(retained=...)` 把它按兜底规则补回来。
+
+    **有上限**（默认就是兜底的张数上限）：名单里的是强引用，循环「建图 → 存缓冲区 → 关图」的批量脚本
+    不设上限会把每张关掉的图都留到脚本结束（内存涨、查重变平方）。兜底本来最多补 `limit` 张，多留无用。
+    返回 False = 这张是新的、但名单已满没留下——调用方要把这件事说出来（它若被关掉就捕获不到），不许静默。
     """
-    if all(f is not fig for f in retained):
-        retained.append(fig)
+    if any(f is fig for f in retained):
+        return True
+    if len(retained) >= max(0, int(limit)):
+        return False
+    retained.append(fig)
+    return True
 
 
 def collect_pyplot_figures(
@@ -846,10 +854,12 @@ def collect_pyplot_figures(
 
     `retained`：存进过缓冲区的图（`note_buffer_save`）。还活着的照常按 `get_fignums()` 的位置补；
     脚本已经关掉的排在活着的后面、按存盘先后补——没有 `retained` 时行为与以前逐字节相同。
+    `plt` 可以是 None（脚本只用 `Figure()` 这套面向对象 API、从没 import pyplot）：那时只补 `retained`。
     """
     seen = {id(f) for f in capture.values()}
     pending = []
-    for fig in [plt.figure(num) for num in plt.get_fignums()] + list(retained):
+    live = [plt.figure(num) for num in plt.get_fignums()] if plt is not None else []
+    for fig in live + list(retained):
         if id(fig) in seen:
             continue
         seen.add(id(fig))
