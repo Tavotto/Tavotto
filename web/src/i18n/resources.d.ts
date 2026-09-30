@@ -1360,7 +1360,7 @@ export default interface Resources {
       },
       "helpAbout": "关于{{label}}",
       "navGroup": {
-        "general": "通用",
+        "general": "应用",
         "integrations": "集成",
         "system": "系统",
         "workflow": "工作流"
