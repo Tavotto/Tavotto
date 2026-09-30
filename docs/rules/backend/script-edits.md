@@ -47,6 +47,22 @@
   `script_edit_needs_ui`；令牌单次、十分钟、不出现在任何 MCP 结果里。编码 Agent 正在改同一份脚本 →
   `script_busy`；`runtime:` 资产不适用。提交 / 复原之后与 AI 改完同一顺序：`shutdown_all` → 统一刷新 →
   `panel.file_changed`。
+- **按脚本的锁**（`engine/scriptlock.py`）：本机服务并发处理请求，「判一次再写」的每一段都在同一把
+  `script_guard`（真实路径、同线程可重入）里做完——Agent 从「脚本在不在」到登记进 `SESSIONS`；AI 回滚从
+  「是不是 AI 那一版」到写回；提交 / 复原从锁内复判 `script_busy` 到「校验和 → 备份 → 替换」。写脚本字节只经
+  `scriptlock.write_script`（不持锁就抛）。持有者清单写在 `scriptlock` 的模块说明里，`tests/test_script_lock.py`
+  从源码 AST 枚举调用方与它对账，并扫「目标名字带 script 的写字节调用」只许在 `scriptlock` 里。新增写脚本的
+  入口：先进清单、走 `write_script`。
+- **备份目录的包含性**：项目里那份（`tavottofile/script-backups/<slug>/<时间戳>/`）建之前从项目根往下逐级核对——
+  任何一级是符号链接（`lstat`，指向项目里面别处也不行）、不是文件夹、或 realpath 出了项目根
+  （`projectenv.contained_path`）→ `script_backup_unsafe`，脚本不改；建完时间戳目录再核一次。
+- **已替换、未确认落盘**：`atomicio.write_bytes` 在 `os.replace` 成功之后才报 `dir_fsync_failed`——脚本已经是
+  改后的样子，不报「没改」：`_after_script_edit` 照常（会话失效、界面刷新），响应带 `durable: false`，界面换成
+  `engine.scriptEditNotDurable` 那句提醒。改写与复原两条路同一处理。
+- **输出路径不改**：候选常量沿父节点走到语句，途中是存图 / 写出 / 写模式打开 / 建目录（`inputremap.is_write_call`，
+  与「只认读取调用」同一套模式判据）的一律跳过（`SKIP_CONTEXT`）。
+- **只读**：`os.access`（有效权限）、脚本与所在文件夹的写权限位（以 root 运行时 `os.access` 无视权限位）、
+  只读卷三判任一不过 → `script_readonly`。
 - 看护：`tests/test_script_edit.py`（候选判据、九种编码 / 换行的字节矩阵与撤销往返、自检三判、推规则扩展、
   三种实测 ENOENT 形态与归因、底座的拒绝 / 失败无残留 / 权限位 / 保留、HTTP 全流程与会话绑定、真 worker 的
   探路与 C++ 读取器、Agent 侧代码不许点名提交 / 复原端点的 AST 门禁）、`tests/test_mcp_server.py`
