@@ -166,7 +166,7 @@ describe('执行器与模型（一个选择器）', () => {
     await mount()
     expect(pairTrigger()).toBeNull()
     expect(range()).toBeNull()
-    expect(buttons().some((b) => b.textContent?.includes('打开编码 Agent 设置'))).toBe(true)
+    expect(buttons().some((b) => b.textContent?.includes('打开改图助手设置'))).toBe(true)
   })
 
   /**

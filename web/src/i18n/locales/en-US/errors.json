@@ -1,13 +1,13 @@
 {
   "backend": {
-    "ai_agent_disabled": "{{agent}} is turned off in settings. Turn it back on under Coding Agents.",
+    "ai_agent_disabled": "{{agent}} is turned off in settings. Turn it back on under Figure assistants.",
     "ai_agent_executable_invalid": "Can’t use that file as this agent’s executable: {{path}}. Your previous setting is unchanged.",
     "ai_agent_install_unsupported": "{{agent}} has no one-click install. Follow its own docs.",
     "ai_agent_needs_auth": "{{agent}} isn’t signed in. Sign in from its own command line, or point it at a custom model service in settings.",
     "ai_agent_not_installed": "No usable {{agent}} was found on this computer.",
-    "ai_agent_not_usable": "{{agent}} isn’t usable right now. Check its status under Coding Agents.",
+    "ai_agent_not_usable": "{{agent}} isn’t usable right now. Check its status under Figure assistants.",
     "ai_agent_probe_timeout": "Checking {{path}} timed out. You can try again; your previous setting is unchanged.",
-    "ai_agent_unknown": "Unknown coding agent: {{agent}}.",
+    "ai_agent_unknown": "Unknown figure assistant: {{agent}}.",
     "ai_revert_conflict": "{{script}} has changed since this AI edit. Reverting would overwrite those later changes, so nothing was reverted.",
     "ai_revert_failed": "Couldn’t revert the AI changes: {{reason}}",
     "ai_start_failed": "Couldn’t start the AI task: {{reason}}",

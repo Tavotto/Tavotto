@@ -75,10 +75,10 @@ export default interface Resources {
       "effort": "推理强度",
       "effortRaw": "强度原始值：{{value}}",
       "emptyHint": "助手会直接修改脚本，改动可回滚。",
-      "noCli": "没有可用的编码 Agent。",
+      "noCli": "没有可用的改图助手。",
       "noPanelTitle": "选中一张可编辑的图",
       "none": "—",
-      "openAiSettings": "打开编码 Agent 设置",
+      "openAiSettings": "打开改图助手设置",
       "placeholder": "例如：把图例移到左上角",
       "placeholderNoPanel": "先选中一张可编辑的图",
       "probing": "正在查找本机 CLI…",
@@ -1124,7 +1124,7 @@ export default interface Resources {
       },
       "agents": {
         "announce": {
-          "done": "编码 Agent 检测完成。",
+          "done": "改图助手检测完成。",
           "failed": "检测失败。显示上次结果。"
         },
         "backAria": "返回改图助手列表",
@@ -1184,7 +1184,7 @@ export default interface Resources {
           }
         },
         "codexIntegrationName": "{{product}} for Codex",
-        "currentDefaultAria": "{{name}} 是当前默认的编码 Agent",
+        "currentDefaultAria": "{{name}} 是当前默认的改图助手",
         "defaultButton": "默认",
         "detail": {
           "addEndpoint": "添加服务…",
@@ -1271,7 +1271,7 @@ export default interface Resources {
           "running": "正在安装…"
         },
         "lastChecked": "最近检测 {{time}}",
-        "noUsableAgent": "没有可用的编码 Agent。装好后点「重新检测」。",
+        "noUsableAgent": "没有可用的改图助手。装好后点「重新检测」。",
         "readiness": {
           "needs_auth": "需要登录",
           "ready": "已登录",
@@ -1280,7 +1280,7 @@ export default interface Resources {
         "refreshFailed": "重新检测失败。下面仍是上次结果。",
         "rescan": "重新检测",
         "rowAria": "{{name}} 的详情",
-        "setDefaultAria": "把 {{name}} 设为默认编码 Agent",
+        "setDefaultAria": "把 {{name}} 设为默认改图助手",
         "source": {
           "chatgpt_bundle": "ChatGPT 应用内置",
           "common_location": "常见安装位置",
@@ -1546,7 +1546,6 @@ export default interface Resources {
         "checkNow": "立即检查",
         "checking": "检查中…",
         "currentIs": "当前 {{version}}",
-        "currentVersion": "当前版本",
         "downloadAndInstall": "下载并安装",
         "downloadAndUpgrade": "下载并升级",
         "downloadProgressAria": "下载更新",
@@ -1737,14 +1736,14 @@ export default interface Resources {
   },
   "errors": {
     "backend": {
-      "ai_agent_disabled": "{{agent}} 已在设置中关闭。在「编码 Agent」里打开后再试。",
+      "ai_agent_disabled": "{{agent}} 已在设置中关闭。在「改图助手」里打开后再试。",
       "ai_agent_executable_invalid": "无法用作该 Agent 的可执行文件：{{path}}。原设置不变。",
       "ai_agent_install_unsupported": "{{agent}} 不支持一键安装，请按官方文档安装。",
       "ai_agent_needs_auth": "{{agent}} 还没有登录。在它自己的命令行里登录，或在设置里改用自定义模型服务。",
       "ai_agent_not_installed": "本机没有检测到可用的 {{agent}}。",
-      "ai_agent_not_usable": "{{agent}} 暂时不可用。在「编码 Agent」里查看状态。",
+      "ai_agent_not_usable": "{{agent}} 暂时不可用。在「改图助手」里查看状态。",
       "ai_agent_probe_timeout": "验证 {{path}} 超时。可以再试，原设置不变。",
-      "ai_agent_unknown": "无法识别该编码 Agent：{{agent}}。",
+      "ai_agent_unknown": "无法识别该改图助手：{{agent}}。",
       "ai_revert_conflict": "{{script}} 在这次 AI 修改之后又改过，回滚会覆盖后来的改动，已取消。",
       "ai_revert_failed": "无法撤销 AI 修改：{{reason}}",
       "ai_start_failed": "无法启动 AI 任务：{{reason}}",

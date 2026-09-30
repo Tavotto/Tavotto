@@ -1,13 +1,13 @@
 {
   "backend": {
-    "ai_agent_disabled": "{{agent}} 已在设置中关闭。在「编码 Agent」里打开后再试。",
+    "ai_agent_disabled": "{{agent}} 已在设置中关闭。在「改图助手」里打开后再试。",
     "ai_agent_executable_invalid": "无法用作该 Agent 的可执行文件：{{path}}。原设置不变。",
     "ai_agent_install_unsupported": "{{agent}} 不支持一键安装，请按官方文档安装。",
     "ai_agent_needs_auth": "{{agent}} 还没有登录。在它自己的命令行里登录，或在设置里改用自定义模型服务。",
     "ai_agent_not_installed": "本机没有检测到可用的 {{agent}}。",
-    "ai_agent_not_usable": "{{agent}} 暂时不可用。在「编码 Agent」里查看状态。",
+    "ai_agent_not_usable": "{{agent}} 暂时不可用。在「改图助手」里查看状态。",
     "ai_agent_probe_timeout": "验证 {{path}} 超时。可以再试，原设置不变。",
-    "ai_agent_unknown": "无法识别该编码 Agent：{{agent}}。",
+    "ai_agent_unknown": "无法识别该改图助手：{{agent}}。",
     "ai_revert_conflict": "{{script}} 在这次 AI 修改之后又改过，回滚会覆盖后来的改动，已取消。",
     "ai_revert_failed": "无法撤销 AI 修改：{{reason}}",
     "ai_start_failed": "无法启动 AI 任务：{{reason}}",

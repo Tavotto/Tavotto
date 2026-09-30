@@ -786,7 +786,7 @@
     },
     "agents": {
       "announce": {
-        "done": "Finished checking for coding agents.",
+        "done": "Finished checking for figure assistants.",
         "failed": "Check failed. Showing the last result."
       },
       "backAria": "Back to the figure assistant list",
@@ -932,7 +932,7 @@
         "running": "Installing…"
       },
       "lastChecked": "Last checked {{time}}",
-      "noUsableAgent": "No usable coding agent found. Install one, then click Rescan.",
+      "noUsableAgent": "No usable figure assistant found. Install one, then click Rescan.",
       "readiness": {
         "needs_auth": "Sign-in required",
         "ready": "Signed in",
@@ -941,7 +941,7 @@
       "refreshFailed": "Rescan failed. Showing the last result.",
       "rescan": "Rescan",
       "rowAria": "{{name}} details",
-      "setDefaultAria": "Make {{name}} the default coding agent",
+      "setDefaultAria": "Make {{name}} the default figure assistant",
       "source": {
         "chatgpt_bundle": "Bundled with the ChatGPT app",
         "common_location": "Common install location",
@@ -971,7 +971,7 @@
       "useFromAgents": "Connect an external tool",
       "useInProduct": "Set up the figure assistant",
       "viewGuide": "Read the guide",
-      "currentDefaultAria": "{{name}} is the current default coding agent"
+      "currentDefaultAria": "{{name}} is the current default figure assistant"
     },
     "canvas": {
       "companionsExplain": "Companion elements are hand-placed titles, axis labels, legends, colorbar axes and twinx twins. Without this, they stay behind when the axes move; turn it off to move only the axes.",
@@ -1193,7 +1193,6 @@
       "checkNow": "Check now",
       "checking": "Checking…",
       "currentIs": "current {{version}}",
-      "currentVersion": "Current version",
       "downloadAndInstall": "Download and install",
       "downloadAndUpgrade": "Download and upgrade",
       "downloadProgressAria": "Downloading the update",
