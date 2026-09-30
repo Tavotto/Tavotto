@@ -149,8 +149,9 @@ export function Segmented<T extends string>({
                 ? 'font-semibold text-ink'
                 : item.disabled
                   ? 'cursor-default text-ink-faint'
-                  : // 未选中的标签是要读的字：ink-3（≥4.5:1），不用 opacity 淡化
-                    'text-ink-3 hover:text-ink',
+                  : // 未选中的标签是要读的字：ink-2（2026-09-30 起槽是 ink 5% 叠在灰桌面上，ink-3 只剩
+                    // 4.14:1——e2e 的 axe 在问题面板里量到）；不用 opacity 淡化
+                    'text-ink-2 hover:text-ink',
             )}
           >
             {item.icon}
