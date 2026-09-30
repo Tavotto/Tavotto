@@ -10,7 +10,7 @@
   ——改了壳的 PR 因此一路全绿，Rust 侧判据合并前一次都不执行。
   **`tauri.conf.json` 的 `bundle.resources` 指向 `../dist/Tavotto`，空目录就够**
   （`mkdir -p dist/Tavotto`），所以这一格不必挂在完整打包之后，几十秒回来。
-  **两条腿：`ubuntu-latest` + `macos-latest`（2026-09-07，issue #282）。**
+  **两条腿：`ubuntu-24.04`（ci.yml 钉版，原 `ubuntu-latest`）+ `macos-latest`（2026-09-07，issue #282）。**
   clippy 只看得见参与编译的那一支，而 `main.rs` 的应用菜单有
   `#[cfg(target_os = "macos")]` 分支——只跑 Linux 腿时，那一支的 lint 在任何
   工作流里都没有执行位置（`desktop-tauri.yml` 的 Apple Silicon 腿只跑 `cargo test`，
@@ -20,7 +20,7 @@
   matrix 一变（少一类 runner，或把某条 cargo 命令用 `if:` 收窄到一条腿上）
   由 `tests/test_merge_queue_workflows.py::TestGates::test_desktop_shell_lints_both_sides_of_the_macos_cfg`
   与同类 `::test_the_rust_gates_run_on_every_desktop_shell_leg` 当场判红。
-  **job 名字变了**：显示名现在是 `desktop-shell (ubuntu-latest)` /
+  **job 名字变了**：显示名现在是 `desktop-shell (ubuntu-24.04)` /
   `desktop-shell (macos-latest)`，但 job **id** 仍是 `desktop-shell`，
   `needs:` 与 `--required` 读的都是 id，required contexts 也只有三个 Gate 名字
   （`scripts/ci/merge_queue_ruleset.py` 的 `GATE_CONTEXTS`）——所以仓库设置里
