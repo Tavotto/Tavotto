@@ -14,6 +14,18 @@ import { cn } from '@/lib/utils'
  */
 const MB = 1048576
 
+/**
+ * 供应私有 Python 的子阶段（后端 #743 `privatepython.STAGE_*` 闭集：downloading / verifying / extracting / launching /
+ * committed，经 `deprepair._provision_private_base` 放在进度的 `result.download.stage`）→ 一句话。`downloading` 在上面
+ * 按字节数说；`committed` 一闪而过、下一条就是创建环境，与认不出的一起落到通用的「正在准备 Python…」
+ */
+//: 文案键写成字面量：errors.json 的死键门禁按「源码里出现过这个串」判活
+const SUBSTAGE_TEXT: Record<string, string> = {
+  verifying: 'engine.repairPythonVerifying',
+  extracting: 'engine.repairDownloadUnpacking',
+  launching: 'engine.repairPythonLaunching',
+}
+
 type Stage = 'python' | 'env' | 'packages' | 'rerun'
 
 const STAGE_OF: Partial<Record<DependencyProgress['state'], Stage>> = {
@@ -48,8 +60,12 @@ function stepOf(p: DependencyProgress): { n: number; total: number } | null {
 export function RepairProgressLine({ progress, text }: { progress: DependencyProgress; text: string }) {
   const { t } = useTranslation('errors')
   const download = progress.state === 'downloading_python' ? progress.result?.download : undefined
-  // 下载完之后还有校验 / 解压 / 试启动几步：那时不再是字节数，换一句正在做什么
-  const downloading = !!download && download.stage === 'downloading' && download.total_bytes > 0
+  // 字节数只在**真的在下载**时说：安装包自带 / 已缓存的归档（进度里 `result.private_python.origin`，#743
+  // `_provision_private_base` 与计划载荷同一个字段）后端同样先发一条 `downloading`、0 字节——那时说「正在下载…
+  // 0 / 25 MB」是假话。缺 origin 的老后端按下载处理
+  const origin = progress.result?.private_python?.origin
+  const downloading =
+    !!download && download.stage === 'downloading' && download.total_bytes > 0 && (!origin || origin === 'download')
   const pct = downloading ? Math.min(100, Math.round((download.done_bytes / download.total_bytes) * 100)) : null
   const step = stepOf(progress)
   const line = !download
@@ -59,7 +75,8 @@ export function RepairProgressLine({ progress, text }: { progress: DependencyPro
           done: Math.round(download.done_bytes / MB),
           total: Math.round(download.total_bytes / MB),
         })}`
-      : t('engine.repairDownloadUnpacking')
+      : // 下载之后的几步各说各的（#743 `privatepython.STAGE_*` 闭集）；认不出的子阶段安静降级成通用的一句
+        t(SUBSTAGE_TEXT[download.stage] ?? 'engine.repairPythonPreparing')
   return (
     <div className="flex flex-col gap-1.5">
       <p className="type-section tabular-nums" data-repair-state={progress.state} data-repair-line>

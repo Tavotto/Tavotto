@@ -3244,6 +3244,8 @@ export interface DependencyProgress {
   result?: {
     /** 私有 Python 供应中（`downloading_python`）：阶段与字节数（U05）；之后的状态沿用上一条 result，不能单看它 */
     download?: { stage: string; done_bytes: number; total_bytes: number }
+    /** 供应中的那份私有 Python（#743：带 `origin`，界面据此判「在下载」还是「在准备自带的那份」） */
+    private_python?: Partial<PrivatePythonOffer> | null
     python?: string
     version?: string
     distribution?: string

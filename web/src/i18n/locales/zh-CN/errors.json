@@ -274,8 +274,8 @@
     "repairBody": "当前渲染环境缺少这个包。请选择下面可用的方式继续。",
     "repairCancel": "取消",
     "repairCancelled": "安装已取消",
-    "repairCancelledManaged": "安装已取消。Tavotto 环境已标记为未完成，下次会重新创建。",
-    "repairCancelledProjectEnv": "安装已取消。项目的 Python 环境可能已有部分改动。",
+    "repairCancelledManaged": "Tavotto 环境已标记为未完成，下次会重新创建。",
+    "repairCancelledProjectEnv": "项目的 Python 环境可能已有部分改动。",
     "repairClose": "知道了",
     "repairConfirmManaged": "Tavotto 会创建隔离的 Python 环境并装在那里。不改动你的源码和现有环境。",
     "repairConfirmProject": "安装到项目现有的 Python 环境（{{path}}）。",
@@ -462,7 +462,10 @@
     "repairFactBundled": "使用安装包自带的 {{product}} Python {{version}}，装包需要联网。",
     "repairFactCached": "使用已准备好的 {{product}} Python {{version}}，装包需要联网。",
     "repairFactNetwork": "装包需要联网。",
-    "repairFactUntouched": "不改动你的源码、电脑上已有的 Python 与 PATH。"
+    "repairFactUntouched": "不改动你的源码、电脑上已有的 Python 与 PATH。",
+    "repairPythonVerifying": "正在校验 Python…",
+    "repairPythonLaunching": "正在试启动 Python…",
+    "repairPythonPreparing": "正在准备 Python…"
   },
   "preflight": {
     "axisLabelFormat": "坐标轴标题「{{label}}」不是规范的「{{want}}」形式",

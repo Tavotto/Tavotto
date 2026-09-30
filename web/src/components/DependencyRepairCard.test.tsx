@@ -1096,6 +1096,38 @@ describe('安装进度', () => {
     expect(document.querySelector('[data-repair-line]')!.textContent).toContain(en('repairStep', { n: 1, total: 2 }))
   })
 
+  it('私有 Python 的子阶段按 #743 的真实形状各说各的；自带归档不说「下载」；认不出的降级成通用一句', async () => {
+    // #743（feat/one-click-python-backend @ 6399168b0）`deprepair._provision_private_base` 发的进度：
+    // state=downloading_python，result = {download: {stage, done_bytes, total_bytes}, private_python: {…, origin}}；
+    // stage 取自 `privatepython.STAGE_*` 闭集（downloading / verifying / extracting / launching / committed）
+    const shape = (stage: string, origin = 'download', done = 25 * 1048576) => ({
+      target_kind: 'tavotto_managed',
+      result: {
+        download: { stage, done_bytes: done, total_bytes: 25 * 1048576 },
+        private_python: { id: 'pbs', version: '3.13.15', target: 'darwin-arm64', download_bytes: 25 * 1048576, source_host: 'github.com', origin },
+      },
+    })
+    const line = () => document.querySelector('[data-repair-line]')!.textContent
+    await render()
+    for (const [stage, key] of [
+      ['verifying', 'repairPythonVerifying'],
+      ['extracting', 'repairDownloadUnpacking'],
+      ['launching', 'repairPythonLaunching'],
+      ['committed', 'repairPythonPreparing'],
+      ['stage_from_the_future', 'repairPythonPreparing'],
+    ] as const) {
+      await progress('downloading_python', shape(stage))
+      expect(line(), stage).toBe(en(key))
+    }
+    // 安装包自带的归档：后端同样先发一条 0 字节的 downloading——不许说「正在下载… 0 / 25 MB」
+    await progress('downloading_python', shape('downloading', 'bundled', 0))
+    expect(line()).toBe(en('repairPythonPreparing'))
+    expect(line()).not.toContain('MB')
+    // 真在下载：字节数照说
+    await progress('downloading_python', shape('downloading', 'download', 10 * 1048576))
+    expect(line()).toContain('10 / 25 MB')
+  })
+
   it('换用了 PyPI 镜像（#743 的真实形状）：只在「详情」里说一句；之后的快照照样带着', async () => {
     // 照抄后端 #743（feat/one-click-python-backend @ 6399168b0）`deprepair._note_mirror` 写进进度记录的形状：
     // 顶层字符串字段 `pypi_mirror`，值是 `PYPI_MIRROR_URL`；日志里同时有那一行说明。此后每个快照（含终态）都带

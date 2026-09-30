@@ -70,7 +70,8 @@
   受管目标 `available: null`（后端还在探基础解释器、offer 上没挂私有 Python）时卡片先 `previewManaged()` 形成一份计划**只读它的
   要素**（计划不装东西；按脚本 + 模块分格，两张卡同时预读互不覆盖，装好后清空重读），按它授权——否则计划多出一段下载，`planMatchesDisclosure` 不符，要多点一次确认页。进行中同样**一行**
   （`RepairProgressLine`：「正在安装 openpyxl…（3/4）」，下载那一段「正在下载 Python… 12 / 25 MB」+ 细进度条 +「取消」；
-  四个阶段的完整列表 `RepairStageList` 与 pip 日志在折叠的「详情」里），乐观的第一条进度（SSE 还没来）就带上目标 / 脚本 / 包名，之后缺目标的快照沿用上一条（阶段数按目标定）；
+  四个阶段的完整列表 `RepairStageList` 与 pip 日志在折叠的「详情」里），私有 Python 的子阶段按 #743 `privatepython.STAGE_*` 闭集各说各的（校验 / 解压 / 试启动），自带 / 已缓存的归档不说「下载」
+  与字节数，认不出的子阶段降级成「正在准备 Python…」；乐观的第一条进度（SSE 还没来）就带上目标 / 脚本 / 包名，之后缺目标的快照沿用上一条（阶段数按目标定）；
   字节数读 `result.download`、**只在 state 仍是
   `downloading_python` 时读**（后端的 result 沿用上一条）；换用 PyPI 镜像（进度记录顶层的 `pypi_mirror`，后端 #743 `deprepair._note_mirror` 给出；没有这个键时一个字都不说）
   只在「详情」里说。一键修复改用了电脑上已有的环境、或清掉了全局固定之后，停在缺这个包上的脚本行（这一行与同样缺它的）
@@ -82,7 +83,8 @@
   （修复进行中的那一行优先），装好后同样缺它的几行一起重跑（`rerunSameModule`；发起时把那几行记进 `scriptOffer.peers` 随作业收放，
   切走期间装好、切回来运行记录已清空时按名单补跑）；有修复 offer 的行不叠 `FailureRecovery`。
   缺包的脚本在素材库里单独归「需要修复」组、排最前；超时与一般失败仍在「可能需要原环境」。
-  看护：「默认可见」按**可见元素**判（`test/visibleBlocks.ts`：收起的 details 里只有 summary 可见；主区域按「。」数句子 ≤ 1、
+  看护：「默认可见」按**可见元素**判（`test/visibleBlocks.ts`：收起的 details 里只有 summary 可见；主区域按**语种自己的**句末标点数句子 ≤ 1（`sentenceCount`：中文「。！？」、英文后跟空白或到结尾的「. ! ?」，
+  没有规则的语种直接抛错；`oneSentence.test.tsx` 把每种状态 × 每个语种都跑一遍）、
   数看得见的主按钮 = 1；e2e 用 `checkVisibility`），不按子串——`DependencyRepairCard.test.tsx`「一键修复」、`DependencyPrepareDialog.test.tsx`、`ScriptLibrary.test.tsx`、
   `e2e/dependency-one-click.spec.ts`（`@feature:assets.dependency-one-click-repair`）。
 - **运行/取消是同一个按钮**（busy 态翻转）：取消后焦点天然留在原脚本行，
