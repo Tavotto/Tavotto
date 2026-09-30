@@ -203,6 +203,12 @@ class _InputOnly:
         self.aliases = databinding._Aliases(tree)
         self.stores: dict[str, int] = {}
         self.loads: dict[str, list[ast.Name]] = {}
+        #: 脚本自己定义的函数 / 类：同名于读取表（`def load(p): …`）也不算读取——里面做什么追不清，不做跨函数分析
+        self.user_defined = {
+            n.name
+            for n in ast.walk(tree)
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+        }
         for n in ast.walk(tree):
             if isinstance(n, ast.Name):
                 if isinstance(n.ctx, ast.Store):
@@ -228,6 +234,13 @@ class _InputOnly:
             if isinstance(up, ast.Call):
                 if inputremap.is_write_call(up):
                     return False
+                if isinstance(up.func, ast.Name) and up.func.id in self.user_defined:
+                    # 用户函数：去向未知。唯一例外同下（正在处理的那一条整串直接做实参）
+                    return (
+                        isinstance(child, ast.Constant)
+                        and child.value == self.observed
+                        and child in up.args
+                    )
                 method = child is up.func
                 if inputremap.is_read_call(up) or self._probe(up, method=method):
                     return True

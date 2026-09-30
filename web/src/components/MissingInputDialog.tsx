@@ -161,8 +161,9 @@ export function MissingInputDialog() {
             </div>
           )}
           {remappable && <p className="leading-relaxed">{t('engine.missingInputReadOnly')}</p>}
-          {/* 选中那个文件就推得出规则；数据整批换了文件夹、只想指一次时才用得上这个 */}
-          {pickable && desktop && !folderOnly && (
+          {/* 选中那个文件就推得出规则；数据整批换了文件夹、只想指一次时才用得上这个。只接受文件的探路（`isfile`
+              这类，`probe_kind === 'file'`）不给：选成一个同名文件夹，改写后 `isfile()` 照样 False（后端也拒，Codex 评 #730 P2） */}
+          {pickable && desktop && !folderOnly && primary.probe_kind !== 'file' && (
             <div>
               <Button variant="secondary" size="sm" disabled={busy} data-testid="missing-input-pick-dir" onClick={pickDir}>
                 {t('engine.missingInputPickDir')}

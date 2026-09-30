@@ -160,7 +160,8 @@ def test_only_values_proven_to_feed_reads_are_rewritten(tmp_path, moved):
     * 读写分名：`DATA` 只被读 → 改；`OUTPUT` 经 `Path(OUTPUT) / …` 进 `savefig` → 不改；链式赋值
       `BASE → SRC` 最后进读取 → 改；参数默认值只在函数体里被读 → 改。
     * 同名读写混用：`DATA_DIR` 既被读又被写 → 整条不改（读取那一侧由改指规则兜住，改指只影响读取）。
-    * 追不清：传进不认得的函数、放进容器、重复赋值、`return` → 不改。"""
+    * 追不清：传进不认得的函数 / 用户自己定义的函数（`emit(OUTPUT)`；同名于读取表的 `load(DATA)` 也算）、放进容器、
+      重复赋值、`return` → 不改，不做跨函数分析（Codex 评 #730 P2 第四次：翻成白名单）。"""
     _new, rule = moved
     src = (
         "import numpy as np, os\nfrom pathlib import Path\n"
@@ -171,7 +172,7 @@ def test_only_values_proven_to_feed_reads_are_rewritten(tmp_path, moved):
         f'BASE = "{OLD}/data"\n'  # 7 BASE → SRC → 读 → 改
         "SRC = os.path.join(BASE, 'x.h5')\n"
         "y = np.load(SRC)\n"
-        f'def load(p="{OLD}/data"):\n'  # 10 默认值只被读 → 改
+        f'def fetch(p="{OLD}/data"):\n'  # 10 默认值只在函数体里被读 → 改
         "    return np.load(Path(p) / 'x.h5')\n"
         f'DATA_DIR = "{OLD}/data"\n'  # 12 读写混用 → 不改
         "z = np.load(DATA_DIR + '/x.h5')\n"
@@ -187,11 +188,19 @@ def test_only_values_proven_to_feed_reads_are_rewritten(tmp_path, moved):
         f'    return "{OLD}/data"\n'  # 23 return → 不改
         f'w = np.load("{OLD}/data/x.h5")\n'  # 24 直接读 → 改（读出的数据之后写到哪里与路径无关）
         "np.save('/tmp/w.npy', w)\n"
+        "def emit(path):\n"
+        "    fig.savefig(Path(path) / 'out.png')\n"
+        f'OUT2 = "{OLD}/data"\n'  # 28 经用户函数的实参 → 去向未知，不改（不做跨函数分析）
+        "emit(OUT2)\n"
+        "def load(p):\n"
+        "    return np.load(p)\n"
+        f'IN2 = "{OLD}/data"\n'  # 32 经用户函数读取，即使函数名同读取表里的 `load` → 追不清，不改（交给改指兜底）
+        "load(IN2)\n"
     )
     plan = _plan(tmp_path, src, rule=rule, missing=[f"{OLD}/data/x.h5"])
     assert sorted(e["line"] for e in plan.edits) == [3, 7, 10, 24]
     reasons = {s["line"]: s["reason"] for s in plan.skipped}
-    assert reasons == {line: scriptedit.SKIP_CONTEXT for line in (4, 12, 15, 17, 19, 23)}
+    assert reasons == {line: scriptedit.SKIP_CONTEXT for line in (4, 12, 15, 17, 19, 23, 28, 32)}
 
 
 def test_the_entry_being_fixed_may_go_straight_into_an_unknown_reader(tmp_path, moved):

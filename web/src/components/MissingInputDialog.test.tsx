@@ -308,6 +308,8 @@ describe('MissingInputDialog', () => {
     }
     await act(async () => useEnvStore.getState().requestMissingInput(isfile))
     expect(byTestId('missing-input-pick-file'), 'isfile 问的是文件').not.toBeNull()
+    // 「详情」里的「选择所在文件夹」也不给：选成同名文件夹，改写后 isfile() 照样 False（Codex 评 #730 P2）
+    expect(byTestId('missing-input-pick-dir'), 'isfile 探路不给选文件夹').toBeNull()
     await act(async () => useEnvStore.getState().dismissMissingInput())
     // worker 说出来的那一串（顶层）也一样
     const requestedDir: MissingInputOffer = { ...listdir(), requested: '/Users/a/proj/runs.v1', via: 'probe', probe_kind: 'dir', others: [] }
