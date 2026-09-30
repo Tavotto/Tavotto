@@ -623,6 +623,17 @@ def test_pip_index_never_repeats_query_credentials(tmp_path):
     assert launcher._redact_url("https://pypi.org/simple") == "https://pypi.org/simple"
 
 
+def test_pip_index_never_repeats_path_credentials():
+    """私有索引常把令牌放在路径里：只留常见索引路径的固定词，其余每段换成 `***`（Codex #724 P1）。"""
+    got = launcher._redact_url("https://mirror.example/s3cret-t0ken/simple/")
+    assert "s3cret" not in got and got == "https://mirror.example/***/simple/"
+    assert launcher._redact_url(ALIYUN) == ALIYUN, "常见索引路径照原样说出口"
+    assert (
+        launcher._redact_url("https://nexus.corp/repository/pypi-proxy/simple")
+        == "https://nexus.corp/repository/***/simple"
+    )
+
+
 def test_pip_index_reads_the_interpreters_site_config(tmp_path, monkeypatch):
     """`pip config --site` 写在本解释器 `sys.prefix` 下（venv 里配的镜像，Codex #724 P2）。"""
     prefix = tmp_path / "venv"

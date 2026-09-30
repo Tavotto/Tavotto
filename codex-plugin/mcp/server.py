@@ -744,10 +744,23 @@ def _pip_config_files(environ) -> "list[tuple[str, str]]":
     return files
 
 
+#: 索引路径里可以原样说出口的段（常见索引路径的固定词）；其余每一段都换成 `***`——私有索引
+#: 常把令牌放在路径里（`https://mirror.example/<token>/simple`，Codex #724 P1）。按白名单留、
+#: 不按「像不像令牌」猜：猜错一次就是泄漏。
+_INDEX_PATH_WORDS = frozenset(
+    {
+        "pypi", "simple", "repository", "repositories", "api", "packages", "package",
+        "index", "pip", "python", "mirrors", "mirror", "web", "artifactory", "nexus",
+        "root", "pub", "public", "org", "pkg", "pkgs", "wheels", "devpi", "legacy",
+    }
+)  # fmt: skip
+
+
 def _redact_url(url: str) -> str:
-    """索引地址里可能带凭据：账号口令（`https://user:token@host/simple`）或签名查询串
-    （`https://mirror/simple?token=…`，Codex #724 P1）。说出口之前抹掉——口令换成 `***@`，
-    查询串整段换成 `?***`，片段去掉。解析不了的地址不原样交出，只报 `***`。"""
+    """索引地址里可能带凭据：账号口令（`https://user:token@host/simple`）、签名查询串
+    （`https://mirror/simple?token=…`）或路径里的令牌（`https://mirror/<token>/simple`，Codex #724 P1）。
+    说出口之前抹掉——口令换成 `***@`，查询串整段换成 `?***`，路径里不在 `_INDEX_PATH_WORDS` 的段
+    换成 `***`，片段去掉。解析不了的地址不原样交出，只报 `***`。"""
     from urllib.parse import urlsplit, urlunsplit  # noqa: PLC0415
 
     try:
@@ -760,8 +773,12 @@ def _redact_url(url: str) -> str:
     netloc = parts.netloc
     if "@" in netloc:
         netloc = "***@" + netloc.rsplit("@", 1)[1]
+    path = "/".join(
+        seg if (not seg or seg.lower() in _INDEX_PATH_WORDS) else "***"
+        for seg in parts.path.split("/")
+    )
     return urlunsplit(
-        parts._replace(netloc=netloc, query="***" if parts.query else "", fragment="")
+        parts._replace(netloc=netloc, path=path, query="***" if parts.query else "", fragment="")
     )
 
 
