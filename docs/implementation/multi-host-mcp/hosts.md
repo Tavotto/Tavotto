@@ -69,8 +69,8 @@
   `dsh.bundle.patch` → `dsh/cordis.patch.yml`），装法 `dsh plugin --profile web add
   "git+https://github.com/Tavotto/Tavotto.git#plugin-stable&path:/codex-plugin"`。缺的「包目录」由胶水插件
   `dsh/index.js` 按 `import.meta.url` 算出，作为服务 `tavotto` 提供——与 dsh-web-app 的 `webStartup` 同一个
-  做法，补丁里的 `!!js` 只读 `ctx.tavotto` 的字段、没有用户代码。启动器经 `/bin/sh`（Windows 经 `cmd /d /c`）
-  起，不依赖执行位；超时由 `.mcp.json` 的 `tool_timeout_sec` 换算；技能靠第二个 `dsh-skill-filesystem`
+  做法，补丁里的 `!!js` 只读 `ctx.tavotto` 的字段、没有用户代码。POSIX 上经 `/bin/sh mcp/launch`
+  起，不依赖执行位；Windows 上 command 就是 `mcp/launch.cmd`，由 MCP SDK 的 cross-spawn 拼 `cmd /d /s /c`；超时由 `.mcp.json` 的 `tool_timeout_sec` 换算；技能靠第二个 `dsh-skill-filesystem`
   提供者（`providerName: tavotto`、`includeDefaultRoots: false`）进目录；`cwd: !!js process.cwd()` 与 DSH 官方
   MCP 指南同一写法，授权目录 = dsh 启动目录。与 YAML patch 二选一（同名 serverName 后者加载失败）。
   客户端能力：`capabilities: {}`（**不回 roots**，授权只能靠 `TAVOTTO_MCP_ROOTS`，生成器已这样做）、

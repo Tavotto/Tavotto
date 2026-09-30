@@ -6,8 +6,8 @@
  * `tavotto` 提供出去；补丁里的 mcp-client 行 inject 它，再从 `ctx.tavotto` 取值
  * ——与 dsh-web-app 的 `webStartup` 同一个做法。
  *
- * 启动器与超时都不另写一份：启动器是包里那个 sh / cmd 双语的 `mcp/launch.cmd`，
- * 超时读 `.mcp.json` 的 `tool_timeout_sec`（插件里唯一的出处）。
+ * 启动器与超时都不另写一份：启动器是包里那一对 `mcp/launch`（sh）/ `mcp/launch.cmd`
+ * （批处理，#266），超时读 `.mcp.json` 的 `tool_timeout_sec`（插件里唯一的出处）。
  */
 
 import { readFileSync } from 'node:fs'
@@ -30,14 +30,17 @@ export const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)))
  * @returns {{command: string, args: string[], toolCallTimeoutMs: number, skillsDir: string}}
  */
 export function launchSpec(root, platform = process.platform) {
-  const launcher = join(root, 'mcp', 'launch.cmd')
   const server = join(root, 'mcp', 'server.py')
   const entry = JSON.parse(readFileSync(join(root, '.mcp.json'), 'utf8')).mcpServers.tavotto
-  // 不靠执行位：POSIX 上交给 sh 解释（启动器第一段就是 sh），Windows 上交给 cmd
-  // （Node 不经 shell 直接起不了 .cmd）。两边都与 Codex 起的是同一份启动器。
+  // POSIX 上交给 sh 解释，不靠 pnpm 保不保留执行位。Windows 上 command 直接是 launch.cmd：
+  // dsh-mcp-client 经 MCP SDK 的 StdioClientTransport 用 cross-spawn 起进程，它看到非 .exe
+  // 的文件会自己拼 `cmd.exe /d /s /c "<整条>"`、^ 转义全部元字符并逐字传给 CreateProcess。
+  // 反过来把 cmd.exe 当 command 传参数，参数由 libuv 按 MSVCRT 规则加引号，路径一带空格
+  // cmd 就切错（`\"` 它不认），怎么包载荷都修不了。cross-spawn 会先读首行找 shebang，所以
+  // launch.cmd 首行不能是 `#!`（#720 起是 `@echo off`）。两边都与 Codex 起的是同一对启动器。
   const [command, args] = platform === 'win32'
-    ? [process.env.ComSpec || 'cmd.exe', ['/d', '/c', launcher, server]]
-    : ['/bin/sh', [launcher, server]]
+    ? [join(root, 'mcp', 'launch.cmd'), [server]]
+    : ['/bin/sh', [join(root, 'mcp', 'launch'), server]]
   return {
     command,
     args,

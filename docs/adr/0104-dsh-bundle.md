@@ -25,8 +25,12 @@ DSH 以前只能靠配置生成器打印一段 Cordis YAML，用户手工合并�
    同一个做法（DSH 自己拒绝了「bundle manifest 里放 pre-boot context 模块」，选的就是「普通插件 + 服务」）。
    配置生成器那条「不生成宿主执行的代码」不受影响：这里执行的是**包里随发行件签出的**那一个文件，不是
    为某台机器生成的表达式。
-3. **同一个启动器、同一个超时出处。** POSIX 上 `/bin/sh <launch.cmd> <server.py>`（不依赖 pnpm 保不保留执行位），
-   Windows 上 `cmd /d /c`（Node 不经 shell 起不了 `.cmd`）。超时读 `.mcp.json` 的 `tool_timeout_sec` 换成毫秒。
+3. **同一对启动器、同一个超时出处。** POSIX 上 `/bin/sh <mcp/launch> <server.py>`（不依赖 pnpm 保不保留执行位），
+   Windows 上 command 直接是 `<mcp/launch.cmd>`、args 只有 `<server.py>`：dsh-mcp-client 经 MCP SDK 的
+   `StdioClientTransport` 用 cross-spawn 起进程，它对非 `.exe` 文件自己拼 `cmd.exe /d /s /c "<整条>"`、`^` 转义全部
+   元字符并逐字交给 CreateProcess。把 `cmd.exe` 当 command 传参数不行：参数由 libuv 按 MSVCRT 规则加引号，
+   `\"` cmd 不认，路径一带空格就切错，怎么包载荷都修不了。cross-spawn 先读首行找 shebang，所以
+   `launch.cmd` 首行不能是 `#!`（#720 起是 `@echo off`）。超时读 `.mcp.json` 的 `tool_timeout_sec` 换成毫秒。
    serverName 与 `.mcp.json` 同名，工具暴露为 `mcp__tavotto__<原名>`。
 4. **技能靠第二个本地技能提供者。** base 里那行 `skill-filesystem` 不动（补丁会整条替换 config，改它等于抹掉
    用户的设置）；另插一行 `providerName: tavotto`、`includeDefaultRoots: false`、`customSkillDirs` 只指包内
@@ -47,7 +51,9 @@ README 的 DeepSeek Harness 章节标「(Beta)」：支持矩阵里 `dsh` 为 `s
 `tests/test_dsh_bundle.py`：包身份与版本；`dsh.bundle.patch` / `main` 指到真文件；`files` 覆盖胶水读的路径；
 补丁三行的 name / inject / serverName / 字段；用真 `node` 跑胶水的 `launchSpec`（darwin / linux / win32 三种）核对
 启动器、server、毫秒超时与技能目录；技能名与描述长度合 dsh 目录的规矩；`STAGE_REQUIRED`；README 那行由
-`brand.DSH_*` 拼出。十一条变异（包名、胶水行名、serverName、秒当毫秒、直接执行启动器、`files` 漏 `mcp/`、
+`brand.DSH_*` 拼出；`launch.cmd` 首行不是 `#!`；Windows 上按照抄的 cross-spawn 7.0.6 算法（另有一条与真
+cross-spawn 输出逐字节对拍）拼出命令行，在含空格 / 括号 / `&` / `%` / `^` / `!` / 中文的目录里真起
+cmd → `launch.cmd` → Python，参数原样到达（只证明 cmd 与启动器，证明不了 cross-spawn 本身）。十一条变异（包名、胶水行名、serverName、秒当毫秒、直接执行启动器、`files` 漏 `mcp/`、
 打开默认技能根、去掉 cwd、摘 staging 要求、README 分支改 main、技能目录拼错）各自打红。
 
 ## 验收证据（2026-09-28，DSH 0.1.7-rc.2 从 npm 装进 scratch 前缀，macOS）

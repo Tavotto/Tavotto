@@ -23,7 +23,8 @@
 - **DSH bundle（ADR 0104）**：同一份目录兼作 npm 包 `tavotto-dsh`（`package.json` + `dsh/`），`dsh plugin add`
   经 pnpm 的 git 子目录规格从发行分支装。补丁没有包目录变量 → 胶水插件按 `import.meta.url` 提供服务
   `tavotto`，mcp-client / 技能提供者两行 `inject` 它；**补丁里的 `!!js` 只读 `ctx.tavotto` 与
-  `process.cwd()`**。启动器经 sh / cmd 起（不靠执行位）；serverName 与 `.mcp.json` 同名；超时按毫秒换算；
+  `process.cwd()`**。启动器 POSIX 经 `/bin/sh mcp/launch`（不靠执行位）、Windows 直接给 `mcp/launch.cmd` 由 cross-spawn 拼
+  `cmd /d /s /c`（给 `cmd.exe` 加参数的形态路径带空格就起不来）；serverName 与 `.mcp.json` 同名；超时按毫秒换算；
   技能提供者 `includeDefaultRoots: false` 且不与 base 的 `filesystem` 同名。`package.json` 的 `files` 覆盖
   胶水读的全部路径；三份文件进 `STAGE_REQUIRED`。安装规格唯一出处 `brand.DSH_*`。看护 `tests/test_dsh_bundle.py`。
 - 两种安装命令（`claude plugin …` 与 `dsh plugin …` 的规格 / 包名）凡在进版本库的 Markdown 里出现（ADR 与已发行的发行说明除外），

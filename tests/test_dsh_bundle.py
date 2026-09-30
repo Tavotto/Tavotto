@@ -8,9 +8,11 @@ dsh 按 `package.json` 的 `dsh.bundle.patch` 叠上补丁。补丁里没有「�
 """
 
 import json
+import os
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -142,39 +144,127 @@ def _launch_spec(node: str, platform: str) -> dict:
         text=True,
         encoding="utf-8",
         timeout=60,
-        env={"PATH": "/usr/bin:/bin", "ComSpec": "C:\\Windows\\system32\\cmd.exe"},
+        env={"PATH": "/usr/bin:/bin"},
     )
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)
 
 
 @pytest.mark.parametrize(
-    ("platform", "command", "prefix"),
+    ("platform", "command", "args"),
     [
-        ("darwin", "/bin/sh", []),
-        ("linux", "/bin/sh", []),
-        ("win32", "C:\\Windows\\system32\\cmd.exe", ["/d", "/c"]),
+        ("darwin", "/bin/sh", ["mcp/launch", "mcp/server.py"]),
+        ("linux", "/bin/sh", ["mcp/launch", "mcp/server.py"]),
+        ("win32", "mcp/launch.cmd", ["mcp/server.py"]),
     ],
 )
-def test_glue_launches_the_bundled_launcher(node, platform, command, prefix):
-    """胶水插件交出去的是**包里那个**双语启动器 + server.py 的绝对路径。
+def test_glue_launches_the_bundled_launcher(node, platform, command, args):
+    """胶水插件交出去的是**包里那对**启动器 + server.py 的绝对路径。
 
-    POSIX 上经 sh 解释，不依赖 pnpm 保不保留执行位；Windows 上经 cmd（Node 不经 shell 起不了
-    .cmd）。超时唯一出处是 `.mcp.json` 的 `tool_timeout_sec`，dsh 的单位是毫秒。
+    POSIX 上经 sh 解释 `mcp/launch`，不依赖 pnpm 保不保留执行位；Windows 上 command 就是
+    `mcp/launch.cmd`，由 cross-spawn 拼 `cmd /d /s /c`——把 cmd.exe 当 command 时路径一带空格
+    就起不来（见 `test_windows_cmd_line_survives_awkward_paths`）。超时唯一出处是 `.mcp.json`
+    的 `tool_timeout_sec`，dsh 的单位是毫秒。
     """
     spec = _launch_spec(node, platform)
-    assert spec["command"] == command
-    assert spec["args"] == [
-        *prefix,
-        str(PLUGIN / "mcp" / "launch.cmd"),
-        str(PLUGIN / "mcp" / "server.py"),
-    ]
-    for path in spec["args"][len(prefix) :]:
-        assert Path(path).is_file(), path
+    if platform == "win32":
+        assert spec["command"] == str(PLUGIN / command)
+    else:
+        assert spec["command"] == command
+    assert spec["args"] == [str(PLUGIN / a) for a in args]
+    for path in [spec["command"], *spec["args"]]:
+        if path != "/bin/sh":
+            assert Path(path).is_file(), path
     entry = json.loads(MCP_JSON.read_text(encoding="utf-8"))["mcpServers"]["tavotto"]
     assert spec["toolCallTimeoutMs"] == entry["tool_timeout_sec"] * 1000
     assert Path(spec["skillsDir"]) == PLUGIN / "skills"
     assert (Path(spec["skillsDir"]) / "tavotto-figure" / "SKILL.md").is_file()
+
+
+def test_windows_launcher_has_no_shebang():
+    """cross-spawn 起非 .exe 文件前先读首行找 shebang：有 `#!/bin/sh` 就改去执行 `sh`，
+    Windows 上找不到，DSH 的 Tavotto 一个工具都没有。"""
+    first = (PLUGIN / "mcp" / "launch.cmd").read_bytes().split(b"\n", 1)[0]
+    assert not first.startswith(b"#!"), first
+
+
+#: cross-spawn 的 cmd 元字符（7.0.6 `lib/util/escape.js` 的 metaCharsRegExp）
+_CMD_META = re.compile(r'([()\][%!^"`<>&|;, *?])')
+
+
+def _cross_spawn_cmdline(comspec: str, command: str, args: list[str]) -> str:
+    """照抄 cross-spawn 7.0.6（`lib/parse.js` 的 parseNonShell + `lib/util/escape.js`）在
+    Windows 上起非 .exe 文件时交给 CreateProcess 的整行命令（windowsVerbatimArguments）。
+
+    MCP SDK 的 StdioClientTransport（dsh-mcp-client 用的 ^1.12，1.12.0 与 1.31.0 都核过）
+    就是这样起 stdio server 的。这里抄的是算法，验证的是「cmd + launch.cmd 在这行命令下把
+    参数原样交给 server.py」，验证不到 cross-spawn 本身。
+    """
+
+    def escape_argument(arg: str) -> str:
+        arg = re.sub(r'(\\*)"', lambda m: m.group(1) * 2 + '\\"', arg)
+        arg = re.sub(r"(\\*)$", lambda m: m.group(1) * 2, arg)
+        return _CMD_META.sub(r"^\1", f'"{arg}"')
+
+    shell = " ".join(
+        [_CMD_META.sub(r"^\1", os.path.normpath(command))] + [escape_argument(a) for a in args]
+    )
+    return f'{comspec} /d /s /c "{shell}"'
+
+
+def test_cross_spawn_copy_matches_the_real_one():
+    """上面那份照抄与真 cross-spawn 7.0.6 逐字节相同（在 macOS 上把 process.platform 改成
+    win32 跑 `parse()` 取的原文）；抄错了，Windows 那条真跑证明的就是另一行命令。"""
+    line = _cross_spawn_cmdline(
+        "C:\\Windows\\system32\\cmd.exe",
+        "C:\\U\\paren (x86)\\mcp\\launch.cmd",
+        ["C:\\U\\paren (x86)\\mcp\\server.py", 'a "b" & c %PATH% ^ !', "tail\\"],
+    )
+    assert line == (
+        "C:\\Windows\\system32\\cmd.exe /d /s /c "
+        '"C:\\U\\paren^ ^(x86^)\\mcp\\launch.cmd '
+        '^"C:\\U\\paren^ ^(x86^)\\mcp\\server.py^" '
+        '^"a^ \\^"b\\^"^ ^&^ c^ ^%PATH^%^ ^^^ ^!^" '
+        '^"tail\\\\^""'
+    )
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="要真的 cmd.exe")
+@pytest.mark.parametrize(
+    "dirname",
+    ["with space", "paren (x86)", "amp & semi; comma,", "pct %PATH% caret ^ bang !", "中文 目录"],
+)
+def test_windows_cmd_line_survives_awkward_paths(tmp_path, dirname):
+    """包装在带空格 / 括号 / & / % / ^ / ! / 中文的目录里，按 cross-spawn 拼出的那行命令真起
+    cmd → launch.cmd → Python，server.py 收到的路径与参数一个字节不差。"""
+    mcp = tmp_path / dirname / "mcp"
+    mcp.mkdir(parents=True)
+    shutil.copy2(PLUGIN / "mcp" / "launch.cmd", mcp / "launch.cmd")
+    server = mcp / "server.py"
+    server.write_text(
+        "import json, sys\nprint(json.dumps([__file__, *sys.argv[1:]]))\n", encoding="utf-8"
+    )
+    # DSH 只传 server.py 一个参数；多带一个含元字符的，确认启动器 `%*` 原样转交
+    extra = "x & y %PATH% ^ ! (z)"
+    comspec = os.environ.get("ComSpec", "cmd.exe")
+    line = _cross_spawn_cmdline(comspec, str(mcp / "launch.cmd"), [str(server), extra])
+    env = {
+        **os.environ,
+        "TAVOTTO_MCP_PYTHON": sys.executable,
+        "TAVOTTO_CONFIG_DIR": str(tmp_path / "config"),
+        "PYTHONIOENCODING": "utf-8",
+    }
+    proc = subprocess.run(
+        line,
+        executable=comspec,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=120,
+        env=env,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout) == [str(server), extra]
 
 
 def test_skill_fits_the_dsh_catalog():
