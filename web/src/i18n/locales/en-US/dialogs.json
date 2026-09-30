@@ -786,11 +786,11 @@
     },
     "agents": {
       "announce": {
-        "done": "Finished checking for coding agents.",
+        "done": "Finished checking for figure assistants.",
         "failed": "Check failed. Showing the last result."
       },
-      "backAria": "Back to the coding agent list",
-      "backToList": "Coding Agents",
+      "backAria": "Back to the figure assistant list",
+      "backToList": "Figure assistants",
       "codexInstall": {
         "action": "Install the Codex integration",
         "announce": {
@@ -932,7 +932,7 @@
         "running": "Installing…"
       },
       "lastChecked": "Last checked {{time}}",
-      "noUsableAgent": "No usable coding agent found. Install one, then click Rescan.",
+      "noUsableAgent": "No usable figure assistant found. Install one, then click Rescan.",
       "readiness": {
         "needs_auth": "Sign-in required",
         "ready": "Signed in",
@@ -941,7 +941,7 @@
       "refreshFailed": "Rescan failed. Showing the last result.",
       "rescan": "Rescan",
       "rowAria": "{{name}} details",
-      "setDefaultAria": "Make {{name}} the default coding agent",
+      "setDefaultAria": "Make {{name}} the default figure assistant",
       "source": {
         "chatgpt_bundle": "Bundled with the ChatGPT app",
         "common_location": "Common install location",
@@ -966,12 +966,12 @@
         "broken": "Found an installation, but it won’t start.",
         "notInstalled": "{{product}} will detect it once installed."
       },
-      "title": "Coding Agents",
+      "title": "Figure assistants",
       "toggleAria": "Enable {{name}} in {{product}}",
       "useFromAgents": "Connect an external tool",
       "useInProduct": "Set up the figure assistant",
       "viewGuide": "Read the guide",
-      "currentDefaultAria": "{{name}} is the current default coding agent"
+      "currentDefaultAria": "{{name}} is the current default figure assistant"
     },
     "canvas": {
       "companionsExplain": "Companion elements are hand-placed titles, axis labels, legends, colorbar axes and twinx twins. Without this, they stay behind when the axes move; turn it off to move only the axes.",
@@ -1005,7 +1005,7 @@
       "summaryOk": "Runtime environment checks passed",
       "perfRow": "Record drag performance",
       "perfStart": "Start",
-      "perfTitle": "Performance"
+      "devTitle": "For developers"
     },
     "export": {
       "defaultFormats": "Default formats",
@@ -1016,9 +1016,9 @@
     },
     "general": {
       "language": "Language",
-      "layout": "Window layout",
+      "layout": "Interface looks off?",
       "layoutReset": "Interface layout reset; reload the page to see it",
-      "resetLayout": "Reset the interface layout"
+      "resetLayout": "Reset to default"
     },
     "helpAbout": "About {{label}}",
     "navLabel": "Settings sections",
@@ -1151,27 +1151,26 @@
       "showFullPath": "Show the full path of {{name}}",
       "copyPath": "Copy the full path of {{name}}",
       "allowWriteBack": "Allow writing back to original files",
-      "writeBackOffHint": "Write-back is off. Source figures and scripts can’t be overwritten; “Write back to the original file” is disabled.",
+      "writeBackOffHint": "Write-back is off. The original files can’t be overwritten; “Write back to the original file” is disabled.",
       "sectionProject": "Project",
       "sectionLocations": "Locations",
       "sectionWriteBack": "Writing back to sources",
-      "writeBackDesc": "Write-back overwrites the original PDF / PNG and script; the originals are backed up to the location above first.",
+      "sectionRuntime": "Running scripts",
+      "writeBackDesc": "Write-back overwrites the original PDF / PNG; the originals are backed up to the location above first.",
       "change": "Change…"
     },
     "section": {
-      "about": "About & privacy",
-      "ai": "Coding Agents",
+      "about": "About & updates",
+      "ai": "Figure assistants",
       "canvas": "Canvas and editing",
-      "diagnostics": "Diagnostics",
+      "diagnostics": "Help & diagnostics",
       "export": "Export",
       "general": "General",
-      "interface": "Interface",
-      "packages": "Packages",
+      "packages": "Python libraries",
       "project": "Project",
-      "sidebars": "Sidebars",
-      "spec": "Specs",
-      "style": "Styles",
-      "update": "Updates"
+      "sidebars": "Keep open",
+      "spec": "Journal specs",
+      "style": "Styles"
     },
     "shortcuts": {
       "label": "Shortcuts",
@@ -1194,7 +1193,6 @@
       "checkNow": "Check now",
       "checking": "Checking…",
       "currentIs": "current {{version}}",
-      "currentVersion": "Current version",
       "downloadAndInstall": "Download and install",
       "downloadAndUpgrade": "Download and upgrade",
       "downloadProgressAria": "Downloading the update",

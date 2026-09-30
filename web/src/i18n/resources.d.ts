@@ -75,10 +75,10 @@ export default interface Resources {
       "effort": "推理强度",
       "effortRaw": "强度原始值：{{value}}",
       "emptyHint": "助手会直接修改脚本，改动可回滚。",
-      "noCli": "没有可用的编码 Agent。",
+      "noCli": "没有可用的改图助手。",
       "noPanelTitle": "选中一张可编辑的图",
       "none": "—",
-      "openAiSettings": "打开编码 Agent 设置",
+      "openAiSettings": "打开改图助手设置",
       "placeholder": "例如：把图例移到左上角",
       "placeholderNoPanel": "先选中一张可编辑的图",
       "probing": "正在查找本机 CLI…",
@@ -1124,11 +1124,11 @@ export default interface Resources {
       },
       "agents": {
         "announce": {
-          "done": "编码 Agent 检测完成。",
+          "done": "改图助手检测完成。",
           "failed": "检测失败。显示上次结果。"
         },
-        "backAria": "返回编码 Agent 列表",
-        "backToList": "编码 Agent",
+        "backAria": "返回改图助手列表",
+        "backToList": "改图助手",
         "codexInstall": {
           "action": "安装 Codex 集成",
           "announce": {
@@ -1184,7 +1184,7 @@ export default interface Resources {
           }
         },
         "codexIntegrationName": "{{product}} for Codex",
-        "currentDefaultAria": "{{name}} 是当前默认的编码 Agent",
+        "currentDefaultAria": "{{name}} 是当前默认的改图助手",
         "defaultButton": "默认",
         "detail": {
           "addEndpoint": "添加服务…",
@@ -1271,7 +1271,7 @@ export default interface Resources {
           "running": "正在安装…"
         },
         "lastChecked": "最近检测 {{time}}",
-        "noUsableAgent": "没有可用的编码 Agent。装好后点「重新检测」。",
+        "noUsableAgent": "没有可用的改图助手。装好后点「重新检测」。",
         "readiness": {
           "needs_auth": "需要登录",
           "ready": "已登录",
@@ -1280,7 +1280,7 @@ export default interface Resources {
         "refreshFailed": "重新检测失败。下面仍是上次结果。",
         "rescan": "重新检测",
         "rowAria": "{{name}} 的详情",
-        "setDefaultAria": "把 {{name}} 设为默认编码 Agent",
+        "setDefaultAria": "把 {{name}} 设为默认改图助手",
         "source": {
           "chatgpt_bundle": "ChatGPT 应用内置",
           "common_location": "常见安装位置",
@@ -1305,7 +1305,7 @@ export default interface Resources {
           "broken": "已找到安装，但无法启动。",
           "notInstalled": "安装后 {{product}} 会自动检测"
         },
-        "title": "编码 Agent",
+        "title": "改图助手",
         "toggleAria": "在 {{product}} 中启用 {{name}}",
         "useFromAgents": "连接外部工具",
         "useInProduct": "配置改图助手",
@@ -1323,6 +1323,7 @@ export default interface Resources {
       "copy": "复制",
       "diagnostics": {
         "copyReport": "复制诊断",
+        "devTitle": "给开发者",
         "envNote": "「{{product}} 自带的渲染环境」随安装包附带，只读。装包会另建「本项目的 {{product}} 环境」，两者状态各自独立。",
         "fetchedAt": "本页数据取自 {{time}}",
         "healthTitle": "健康状态",
@@ -1336,7 +1337,6 @@ export default interface Resources {
         "okDetails": "各项检查结果",
         "perfRow": "记录拖动性能",
         "perfStart": "开始",
-        "perfTitle": "性能分析",
         "prepareFailed": "无法生成诊断报告。请重试。",
         "preparing": "正在生成…",
         "previewNote": "以下是将要复制的内容，密钥与个人路径已脱敏。确认后再复制。",
@@ -1354,13 +1354,13 @@ export default interface Resources {
       },
       "general": {
         "language": "界面语言",
-        "layout": "界面布局",
+        "layout": "界面乱了？",
         "layoutReset": "界面布局已重置，刷新页面后生效",
-        "resetLayout": "恢复界面默认布局"
+        "resetLayout": "恢复默认"
       },
       "helpAbout": "关于{{label}}",
       "navGroup": {
-        "general": "通用",
+        "general": "应用",
         "integrations": "集成",
         "system": "系统",
         "workflow": "工作流"
@@ -1494,27 +1494,26 @@ export default interface Resources {
         "scripts": "可编辑来源",
         "sectionLocations": "位置",
         "sectionProject": "项目",
+        "sectionRuntime": "运行",
         "sectionWriteBack": "写回源图",
         "showFullPath": "显示 {{name}} 的完整路径",
         "switch": "切换项目…",
         "useDefault": "恢复默认",
-        "writeBackDesc": "写回会覆盖原始 PDF / PNG 与脚本；执行前先将原文件备份到上面的位置。",
-        "writeBackOffHint": "写回已关闭。源图与脚本不会被覆盖，「写回原始文件」已停用。"
+        "writeBackDesc": "写回会覆盖原始 PDF / PNG；执行前先将原文件备份到上面的位置。",
+        "writeBackOffHint": "写回已关闭。原始文件不会被覆盖，「写回原始文件」已停用。"
       },
       "section": {
-        "about": "关于与隐私",
-        "ai": "编码 Agent",
+        "about": "关于与更新",
+        "ai": "改图助手",
         "canvas": "画布与编辑",
-        "diagnostics": "诊断",
+        "diagnostics": "帮助与诊断",
         "export": "导出",
-        "general": "常规",
-        "interface": "界面",
-        "packages": "包管理",
+        "general": "通用",
+        "packages": "Python 库",
         "project": "项目",
-        "sidebars": "侧栏",
-        "spec": "规范",
-        "style": "样式",
-        "update": "更新"
+        "sidebars": "一直开着",
+        "spec": "期刊规范",
+        "style": "样式"
       },
       "shortcuts": {
         "label": "快捷键",
@@ -1547,7 +1546,6 @@ export default interface Resources {
         "checkNow": "立即检查",
         "checking": "检查中…",
         "currentIs": "当前 {{version}}",
-        "currentVersion": "当前版本",
         "downloadAndInstall": "下载并安装",
         "downloadAndUpgrade": "下载并升级",
         "downloadProgressAria": "下载更新",
@@ -1738,14 +1736,14 @@ export default interface Resources {
   },
   "errors": {
     "backend": {
-      "ai_agent_disabled": "{{agent}} 已在设置中关闭。在「编码 Agent」里打开后再试。",
+      "ai_agent_disabled": "{{agent}} 已在设置中关闭。在「改图助手」里打开后再试。",
       "ai_agent_executable_invalid": "无法用作该 Agent 的可执行文件：{{path}}。原设置不变。",
       "ai_agent_install_unsupported": "{{agent}} 不支持一键安装，请按官方文档安装。",
       "ai_agent_needs_auth": "{{agent}} 还没有登录。在它自己的命令行里登录，或在设置里改用自定义模型服务。",
       "ai_agent_not_installed": "本机没有检测到可用的 {{agent}}。",
-      "ai_agent_not_usable": "{{agent}} 暂时不可用。在「编码 Agent」里查看状态。",
+      "ai_agent_not_usable": "{{agent}} 暂时不可用。在「改图助手」里查看状态。",
       "ai_agent_probe_timeout": "验证 {{path}} 超时。可以再试，原设置不变。",
-      "ai_agent_unknown": "无法识别该编码 Agent：{{agent}}。",
+      "ai_agent_unknown": "无法识别该改图助手：{{agent}}。",
       "ai_revert_conflict": "{{script}} 在这次 AI 修改之后又改过，回滚会覆盖后来的改动，已取消。",
       "ai_revert_failed": "无法撤销 AI 修改：{{reason}}",
       "ai_start_failed": "无法启动 AI 任务：{{reason}}",

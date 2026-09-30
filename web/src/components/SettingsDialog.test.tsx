@@ -76,12 +76,11 @@ afterEach(async () => {
 })
 
 describe('分区与深链', () => {
-  it('十一个分区按固定顺序出现，默认落在「常规」', async () => {
+  it('九个分区按固定顺序出现，默认落在「通用」', async () => {
     await open()
     expect(navButtons().map((b) => b.dataset.section)).toEqual(SECTIONS)
     expect(SECTIONS).toEqual([
       'general',
-      'interface',
       'project',
       'style',
       'spec',
@@ -89,18 +88,20 @@ describe('分区与深链', () => {
       'ai',
       'packages',
       'diagnostics',
-      'update',
       'about',
     ])
     expect(current()?.dataset.section).toBe('general')
     for (const id of SECTIONS) expect(navButtons().map((b) => b.textContent)).toContain(st(`section.${id}`))
   })
 
-  it('旧分区 id 深链到正确的新分区；不认识的回到常规', () => {
+  it('旧分区 id 深链到正确的新分区；不认识的回到通用', () => {
     expect(resolveSection('profiles')).toBe('spec')
-    expect(resolveSection('canvas')).toBe('interface')
-    expect(resolveSection('sidebars')).toBe('interface')
+    // 十一页并九页：被并掉的两页 id 仍认得，落在并入的那一页
+    expect(resolveSection('interface')).toBe('general')
+    expect(resolveSection('canvas')).toBe('general')
+    expect(resolveSection('sidebars')).toBe('general')
     expect(resolveSection('shortcuts')).toBe('general')
+    expect(resolveSection('update')).toBe('about')
     expect(resolveSection('ai')).toBe('ai')
     expect(resolveSection('nope')).toBeNull()
     expect(resolveSection(null)).toBeNull()
@@ -124,7 +125,7 @@ describe('尺寸与滚动合同', () => {
     await open()
     const before = { w: dialog().style.width, h: dialog().style.height }
     expect(before).toEqual({ w: `${SHELL_WIDTH}px`, h: SHELL_HEIGHT })
-    for (const id of ['packages', 'diagnostics', 'update', 'about', 'spec']) {
+    for (const id of ['packages', 'diagnostics', 'about', 'spec']) {
       await act(async () => navButtons().find((b) => b.dataset.section === id)!.click())
       expect({ w: dialog().style.width, h: dialog().style.height }).toEqual(before)
     }
@@ -155,7 +156,7 @@ describe('键盘', () => {
       })
     // 事件从当前按钮冒泡到 nav；jsdom 里直接对 nav 发也走同一个处理器
     await key('ArrowDown')
-    expect(current()?.dataset.section).toBe('interface')
+    expect(current()?.dataset.section).toBe('project')
     expect(document.activeElement).toBe(current())
     await key('End')
     expect(current()?.dataset.section).toBe('about')

@@ -150,7 +150,7 @@ function performMenuAction(action: MenuAction) {
       break
     case 'menu-check-updates':
       // 与设置页「检查更新」按钮同一个 action；它自己挡并发
-      ui.setSettingsOpen(true, 'update')
+      ui.setSettingsOpen(true, 'about')
       void useUpdateStore.getState().checkDesktop()
       break
     case 'menu-diagnostics':

@@ -5,6 +5,7 @@ import { backendErrorText, patchProjectSettings } from '@/lib/api'
 import { isDesktop, pickDirectory } from '@/lib/desktop'
 import { useProjectStore } from '@/store/projectStore'
 import { useUiStore } from '@/store/uiStore'
+import { EngineEnvironmentCard } from '../EngineEnvironmentCard'
 import { FolderOpen } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { Button, IconButton } from '../ui/Button'
@@ -145,6 +146,12 @@ export function ProjectSettings() {
         onCommit={(v) => void save({ backup_dir: v })}
         effective={project?.backup_dir}
       />
+    </SettingSection>
+
+    {/* 运行设置（用哪个 Python / 渲染环境、脚本运行目录，及在飞 PR 往这张卡里加的
+        记住的数据位置、脚本备份）原在「诊断」页；整张卡搬过来、不改卡的内部 */}
+    <SettingSection title={st('project.sectionRuntime')}>
+      <EngineEnvironmentCard />
     </SettingSection>
 
     <SettingSection title={st('project.sectionWriteBack')}>

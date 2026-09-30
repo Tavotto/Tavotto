@@ -83,9 +83,6 @@ export function UpdateSettings() {
 
   return (
     <SettingSection>
-      <SettingRow label={st('update.currentVersion')}>
-        <span className="font-mono text-sm text-ink">{status?.current ?? '…'}</span>
-      </SettingRow>
       {/* 标签自己就是那句说明（「每天自动检查」），不在下面再复述一遍（全面打磨 D35）；
           开关的名字用渲染那行可见文字的同一份，不另写一句同义的 */}
       <SettingRow label={st('update.autoCheck')} controlId="setting-update-auto">
@@ -225,9 +222,6 @@ function DesktopUpdateSettings({ status }: { status: UpdateStatus }) {
 
   return (
     <SettingSection>
-      <SettingRow label={st('update.currentVersion')}>
-        <span className="font-mono text-sm text-ink">{status.current}</span>
-      </SettingRow>
 
       <SettingRow
         label={st('update.check')}

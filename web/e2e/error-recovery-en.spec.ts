@@ -238,7 +238,7 @@ test('AI CLI 不可用：设置里英文说明找过哪些位置', async ({ app,
   // （CI runner 上没有这两个 CLI，这条在那儿真实运行）
   const caps = await (await fetch(`${a.baseURL}/api/ai/capabilities?refresh=1`)).json()
   const usable = (caps.agents ?? []).some((x: { usable?: boolean }) => x.usable)
-  test.skip(usable, '本机在惯例位置装有编码 Agent，「一个都没有」状态触发不了')
+  test.skip(usable, '本机在惯例位置装有改图助手，「一个都没有」状态触发不了')
 
   // 选中一个可参数化面板后打开助手 → 英文说明「两个 CLI 都没找到」+ 设置入口。
   // noCli 提示渲染在「Scope and agent」弹层里（AiPanel 的 agent 分区），
@@ -252,11 +252,11 @@ test('AI CLI 不可用：设置里英文说明找过哪些位置', async ({ app,
   // 弹层 portal 到文档根部的 dialog，不在 Right panel 子树里
   const scopeDialog = page.getByRole('dialog')
   await expect(
-    scopeDialog.getByText(/No coding agent available/i).first(),
+    scopeDialog.getByText(/No figure assistant available/i).first(),
   ).toBeVisible({ timeout: 30_000 })
-  // 可执行的下一步：打开编码 Agent 设置
+  // 可执行的下一步：打开改图助手设置
   await expect(
-    scopeDialog.getByRole('button', { name: /Open Coding Agent settings/i }).first(),
+    scopeDialog.getByRole('button', { name: /Open Figure assistant settings/i }).first(),
   ).toBeVisible()
   await expectNoCjk(panel, 'AI 面板')
   await expectNoCjk(scopeDialog, 'Scope and agent 弹层')
@@ -357,11 +357,11 @@ test('updater 离线：检查更新失败给英文报错，界面可继续', asy
   // 后端如实报失败（不是 500 traceback）
   expect([200, 502, 503]).toContain(res.status())
 
-  // 界面侧：设置 → 更新 → 检查，错误以英文显示
+  // 界面侧：设置 → 关于与更新 → 检查，错误以英文显示
   await page.getByRole('button', { name: /Settings/i }).click()
   const dialog = page.getByRole('dialog')
   await expect(dialog).toBeVisible()
-  await dialog.getByRole('button', { name: /Updates?/i }).click()
+  await dialog.getByRole('button', { name: /About & updates/i }).click()
   await dialog.getByRole('button', { name: /Check now|Check for updates/i }).click()
   const err = dialog.getByRole('alert').first()
   await expect(err).toBeVisible({ timeout: 60_000 })

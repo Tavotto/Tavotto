@@ -778,11 +778,11 @@
     },
     "agents": {
       "announce": {
-        "done": "编码 Agent 检测完成。",
+        "done": "改图助手检测完成。",
         "failed": "检测失败。显示上次结果。"
       },
-      "backAria": "返回编码 Agent 列表",
-      "backToList": "编码 Agent",
+      "backAria": "返回改图助手列表",
+      "backToList": "改图助手",
       "codexInstall": {
         "action": "安装 Codex 集成",
         "announce": {
@@ -924,7 +924,7 @@
         "running": "正在安装…"
       },
       "lastChecked": "最近检测 {{time}}",
-      "noUsableAgent": "没有可用的编码 Agent。装好后点「重新检测」。",
+      "noUsableAgent": "没有可用的改图助手。装好后点「重新检测」。",
       "readiness": {
         "needs_auth": "需要登录",
         "ready": "已登录",
@@ -933,7 +933,7 @@
       "refreshFailed": "重新检测失败。下面仍是上次结果。",
       "rescan": "重新检测",
       "rowAria": "{{name}} 的详情",
-      "setDefaultAria": "把 {{name}} 设为默认编码 Agent",
+      "setDefaultAria": "把 {{name}} 设为默认改图助手",
       "source": {
         "chatgpt_bundle": "ChatGPT 应用内置",
         "common_location": "常见安装位置",
@@ -958,12 +958,12 @@
         "broken": "已找到安装，但无法启动。",
         "notInstalled": "安装后 {{product}} 会自动检测"
       },
-      "title": "编码 Agent",
+      "title": "改图助手",
       "toggleAria": "在 {{product}} 中启用 {{name}}",
       "useFromAgents": "连接外部工具",
       "useInProduct": "配置改图助手",
       "viewGuide": "查看使用指南",
-      "currentDefaultAria": "{{name}} 是当前默认的编码 Agent"
+      "currentDefaultAria": "{{name}} 是当前默认的改图助手"
     },
     "canvas": {
       "companionsExplain": "关联元素是手动摆过位置的标题、轴标签、图例，以及色条轴与 twinx 孪生轴。不带它们，挪动子图时会留在原地；关掉则只动子图本身。",
@@ -997,7 +997,7 @@
       "summaryOk": "运行环境检查通过",
       "perfRow": "记录拖动性能",
       "perfStart": "开始",
-      "perfTitle": "性能分析"
+      "devTitle": "给开发者"
     },
     "export": {
       "defaultFormats": "默认格式",
@@ -1008,9 +1008,9 @@
     },
     "general": {
       "language": "界面语言",
-      "layout": "界面布局",
+      "layout": "界面乱了？",
       "layoutReset": "界面布局已重置，刷新页面后生效",
-      "resetLayout": "恢复界面默认布局"
+      "resetLayout": "恢复默认"
     },
     "helpAbout": "关于{{label}}",
     "navLabel": "设置分区",
@@ -1142,27 +1142,26 @@
       "showFullPath": "显示 {{name}} 的完整路径",
       "copyPath": "复制 {{name}} 的完整路径",
       "allowWriteBack": "允许写回原始文件",
-      "writeBackOffHint": "写回已关闭。源图与脚本不会被覆盖，「写回原始文件」已停用。",
+      "writeBackOffHint": "写回已关闭。原始文件不会被覆盖，「写回原始文件」已停用。",
       "sectionProject": "项目",
       "sectionLocations": "位置",
       "sectionWriteBack": "写回源图",
-      "writeBackDesc": "写回会覆盖原始 PDF / PNG 与脚本；执行前先将原文件备份到上面的位置。",
+      "sectionRuntime": "运行",
+      "writeBackDesc": "写回会覆盖原始 PDF / PNG；执行前先将原文件备份到上面的位置。",
       "change": "更改…"
     },
     "section": {
-      "about": "关于与隐私",
-      "ai": "编码 Agent",
+      "about": "关于与更新",
+      "ai": "改图助手",
       "canvas": "画布与编辑",
-      "diagnostics": "诊断",
+      "diagnostics": "帮助与诊断",
       "export": "导出",
-      "general": "常规",
-      "interface": "界面",
-      "packages": "包管理",
+      "general": "通用",
+      "packages": "Python 库",
       "project": "项目",
-      "sidebars": "侧栏",
-      "spec": "规范",
-      "style": "样式",
-      "update": "更新"
+      "sidebars": "一直开着",
+      "spec": "期刊规范",
+      "style": "样式"
     },
     "shortcuts": {
       "label": "快捷键",
@@ -1185,7 +1184,6 @@
       "checkNow": "立即检查",
       "checking": "检查中…",
       "currentIs": "当前 {{version}}",
-      "currentVersion": "当前版本",
       "downloadAndInstall": "下载并安装",
       "downloadAndUpgrade": "下载并升级",
       "downloadProgressAria": "下载更新",
@@ -1218,7 +1216,7 @@
       "resetAction": "重置"
     },
     "navGroup": {
-      "general": "通用",
+      "general": "应用",
       "workflow": "工作流",
       "integrations": "集成",
       "system": "系统"

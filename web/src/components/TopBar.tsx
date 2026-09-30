@@ -682,7 +682,7 @@ function MoreMenu() {
     >
       {hasUpdate && (
         <>
-          <MenuItem onSelect={() => ui().setSettingsOpen(true, 'update')}>
+          <MenuItem onSelect={() => ui().setSettingsOpen(true, 'about')}>
             <span className="flex items-center gap-2">
               <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-ink" aria-hidden />
               {t('topbar.updateAvailable', { version: latest })}

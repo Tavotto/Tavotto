@@ -136,7 +136,7 @@ afterEach(async () => {
 
 describe('各分区首屏没有说明文字墙', () => {
   // about 不在列：隐私最短摘要是**必须常驻**的一段（见下「该常驻的不许折叠」）
-  for (const section of ['general', 'project', 'interface', 'export', 'packages', 'diagnostics']) {
+  for (const section of ['general', 'project', 'export', 'packages', 'diagnostics']) {
     it(`${section} 分区最多一段长文`, async () => {
       await open(section)
       expect(proseCount()).toBeLessThanOrEqual(1)
@@ -151,9 +151,9 @@ describe('各分区首屏没有说明文字墙', () => {
    * 判据不写成「不含那几段旧文案」——旧 key 都删了，那种断言恒真。改判
    * **这一页有没有问号按钮**：只要有人再挂一个回来，这条就红。
    */
-  it('常规分区一个问号都没有', async () => {
+  it('通用分区只有「移动子图联动」那一个问号', async () => {
     await open('general')
-    expect(body().querySelectorAll('[data-help-tip]')).toHaveLength(0)
+    expect(body().querySelectorAll('[data-help-tip]')).toHaveLength(1)
   })
 
   /**
@@ -221,7 +221,7 @@ describe('小问号四种触发方式', () => {
   const helpBtn = () => byAria(st('helpAbout', { label: st(HELP_ROW) }))!
 
   it('鼠标悬停即展开，移开后收回', async () => {
-    await open('interface')
+    await open('general')
     const b = helpBtn()
     // React 的 onPointerEnter 是用冒泡的 pointerover 委托实现的，
     // 直接派 pointerenter 谁也收不到（那样写这条用例会「通过」但什么也没测）
@@ -233,7 +233,7 @@ describe('小问号四种触发方式', () => {
   })
 
   it('触摸（pointerType=touch）不走悬停，但点击能开', async () => {
-    await open('interface')
+    await open('general')
     const b = helpBtn()
     await act(async () => {
       b.dispatchEvent(new PointerEvent('pointerover', { bubbles: true, pointerType: 'touch' }))
@@ -248,14 +248,14 @@ describe('小问号四种触发方式', () => {
   })
 
   it('键盘聚焦即展开', async () => {
-    await open('interface')
+    await open('general')
     const b = helpBtn()
     await focusIt(b)
     expect(b.getAttribute('aria-expanded')).toBe('true')
   })
 
   it('Esc 关闭', async () => {
-    await open('interface')
+    await open('general')
     const b = helpBtn()
     await act(async () => {
       b.click()
@@ -298,7 +298,7 @@ describe('小问号四种触发方式', () => {
    * 三轮里红一轮——那不是「偶发」，是断言与缺陷在赛跑）。
    */
   it('Esc 之后不会被「焦点还回来」重新打开', async () => {
-    await open('interface')
+    await open('general')
     const b = helpBtn()
     // 点开：焦点留在 body 上，与真实鼠标操作一致
     await act(async () => {
@@ -319,7 +319,7 @@ describe('小问号四种触发方式', () => {
   })
 
   it('焦点真的离开过之后，再 Tab 回来仍然展开（闸只吃那一次）', async () => {
-    await open('interface')
+    await open('general')
     const b = helpBtn()
     await focusIt(b)
     await act(async () => {
@@ -337,12 +337,12 @@ describe('小问号四种触发方式', () => {
   })
 
   it('问号有明确的可达名，不是一个无名图标', async () => {
-    await open('interface')
+    await open('general')
     expect(helpBtn().getAttribute('aria-label')).toBe(st('helpAbout', { label: st(HELP_ROW) }))
   })
 
   it('展开时焦点留在问号上，不被搬进浮层（Tab 顺序不乱）', async () => {
-    await open('interface')
+    await open('general')
     const b = helpBtn()
     await focusIt(b)
     expect(document.activeElement).toBe(b)
@@ -457,19 +457,26 @@ describe('诊断页（Session 19 起渲染环境从 About 搬到这里）', () =
     expect(bodyText()).not.toContain('3.10.8')
   })
 
-  it('展开「技术详情」后完整路径才出现，且渲染环境卡只有一张', async () => {
+  it('展开「给开发者」后完整路径才出现；渲染环境卡搬到了「项目」页', async () => {
     await open('diagnostics')
-    const diag = buttons().find((b) => b.textContent?.trim() === st('techDetails'))!
+    const diag = buttons().find((b) => b.textContent?.trim() === st('diagnostics.devTitle'))!
     expect(diag.getAttribute('aria-expanded')).toBe('false')
     await act(async () => {
       diag.click()
     })
     expect(diag.getAttribute('aria-expanded')).toBe('true')
-    expect(bodyText()).toContain(PYTHON_PATH)
+    // 解释器绝对路径在那张卡里，卡搬去了「项目」页；这里只剩来源 / 版本 / 检查明细
     expect(bodyText()).toContain('3.10.8')
-    // 渲染环境卡只出现一次——此前 About 页里有两张。**按元素数，不按字符串
-    // 出现次数**：「渲染环境」四个字也出现在别的句子里（审计 T47 的环境说明）
+    // 运行设置（渲染环境卡）已搬到「项目」页；环境正常时诊断页上没有它。
+    // **按元素数，不按字符串出现次数**：「渲染环境」四个字也出现在别的句子里
+    expect(document.body.querySelectorAll('[data-engine-env-card]')).toHaveLength(0)
+    expect(document.body.querySelectorAll('[data-perf-probe-start]')).toHaveLength(1)
+  })
+
+  it('「项目」页有运行设置：渲染环境卡整张在这里，只有一张', async () => {
+    await open('project')
     expect(document.body.querySelectorAll('[data-engine-env-card]')).toHaveLength(1)
+    expect(bodyText()).toContain(st('project.sectionRuntime'))
   })
 
   it('About 页只剩产品与隐私两块，不再有渲染环境', async () => {
@@ -488,7 +495,7 @@ describe('SettingRow 布局稳定', () => {
     let rows = 0
     // 「样式」「规范」两页也进这张单子：那两页的只读摘要行与 SettingRow 共用同一份
     // 网格，「摘要 ↔ 输入框」切换时值与输入框从同一条竖线起排，差几个像素就是整列左右跳一下
-    for (const section of ['general', 'project', 'export', 'interface', 'style', 'spec']) {
+    for (const section of ['general', 'project', 'export', 'style', 'spec']) {
       await open(section)
       for (const el of body().querySelectorAll('[data-setting-row], [data-summary-row]')) {
         rows += 1

@@ -28,9 +28,10 @@ test('性能探针：录制真实拖动 + 自动测试 + 保存报告', async ({
   await expect(svgWrap.locator('svg')).toBeVisible({ timeout: 60_000 })
   await page.waitForTimeout(1500)
 
-  // 设置 → 诊断 → 性能分析 → 开始：设置关掉、探针面板挂出来
+  // 设置 → 帮助与诊断 → 给开发者（折叠）→ 记录拖动性能 → 开始：设置关掉、探针面板挂出来
   await page.locator('[data-rail="settings"]').click()
   await page.locator('[data-section="diagnostics"]').click()
+  await page.locator('[data-diagnostics-dev] button[aria-expanded]').first().click()
   await page.locator('[data-perf-probe-start]').click()
   const hud = page.locator('[data-perf-probe]')
   await expect(hud).toHaveAttribute('data-phase', 'recording')

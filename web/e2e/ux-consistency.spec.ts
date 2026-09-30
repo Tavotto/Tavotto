@@ -313,7 +313,7 @@ test('流程 D：设置页没有文字墙，问号键盘可达、Esc 可关，�
     )
 
   // Session 19 把设置分成十一个分区：这里挑五个正文最容易长成文字墙的
-  for (const section of ['常规', '界面', '项目', '样式', '导出']) {
+  for (const section of ['通用', '项目', '样式', '导出']) {
     await dialog.getByRole('navigation').getByRole('button', { name: section }).click()
     await page.waitForTimeout(250)
     expect(await proseCount(), `${section} 分区仍是文字墙`).toBeLessThanOrEqual(1)
@@ -321,8 +321,9 @@ test('流程 D：设置页没有文字墙，问号键盘可达、Esc 可关，�
   }
 
   // --- 常规页一个问号都没有（审计「说明文字专项补查」）---
-  await dialog.getByRole('navigation').getByRole('button', { name: '常规' }).click()
-  await expect(dialog.locator('[data-help-tip]')).toHaveCount(0)
+  // 通用页并入了「界面」，那唯一的小问号（拖动联动）就在这一页
+  await dialog.getByRole('navigation').getByRole('button', { name: '通用', exact: true }).click()
+  await expect(dialog.locator('[data-help-tip]')).toHaveCount(1)
 
   // 绝对路径的判据。**读的是 innerText 不是 textContent**：`textContent()` 把相邻
   // 元素的文字无分隔地粘在一起，于是「渲染引擎 Python」的末字符直接顶在
@@ -341,11 +342,19 @@ test('流程 D：设置页没有文字墙，问号键盘可达、Esc 可关，�
   // --- 项目页首屏没有绝对路径：正文只给末级目录，全路径在展开项里（审计 T40）---
   await dialog.getByRole('navigation').getByRole('button', { name: '项目' }).click()
   await page.waitForTimeout(250)
-  const projectScreen = await dialog.innerText()
+  // 「运行」组里的渲染环境卡自己会露出外部解释器路径（那是它的设计），不在这条判据里
+  const projectScreen = await dialog.evaluate((d) => {
+    // 就地隐藏再读 innerText（脱离文档的克隆没有渲染结果，innerText 会退化成粘连的 textContent）
+    const cards = [...d.querySelectorAll<HTMLElement>('[data-engine-env-card]')]
+    cards.forEach((n) => (n.style.display = 'none'))
+    const text = (d as HTMLElement).innerText
+    cards.forEach((n) => (n.style.display = ''))
+    return text
+  })
   expect(projectScreen).not.toMatch(absolutePath)
 
   // --- 问号：Tab 到它 → 展开 → Esc 收回。设置里唯一剩下的那个（界面 / 拖动联动）---
-  await dialog.getByRole('navigation').getByRole('button', { name: '界面' }).click()
+  await dialog.getByRole('navigation').getByRole('button', { name: '通用', exact: true }).click()
   const help = dialog.getByRole('button', { name: '关于移动子图时，同步移动标题和图例' })
   await expect(help).toHaveAttribute('aria-expanded', 'false')
   await help.focus()
@@ -357,15 +366,15 @@ test('流程 D：设置页没有文字墙，问号键盘可达、Esc 可关，�
   await expect(dialog).toBeVisible()
 
   // --- 关于与隐私：只说「发什么 / 不发什么」，一个绝对路径都没有 ---
-  await dialog.getByRole('navigation').getByRole('button', { name: '关于与隐私' }).click()
+  await dialog.getByRole('navigation').getByRole('button', { name: '关于与更新', exact: true }).click()
   await expect(dialog.getByText(/开启后只发送匿名的功能使用情况/)).toBeVisible()
 
   const aboutScreen = await dialog.innerText()
   expect(aboutScreen).not.toMatch(absolutePath)
 
   // --- 诊断：完整解释器路径只在折叠的「技术详情」里（Session 19 把诊断拆成独立分区）---
-  await dialog.getByRole('navigation').getByRole('button', { name: '诊断', exact: true }).click()
-  const diag = dialog.getByRole('button', { name: '技术详情' })
+  await dialog.getByRole('navigation').getByRole('button', { name: '帮助与诊断', exact: true }).click()
+  const diag = dialog.getByRole('button', { name: '给开发者' })
   await expect(diag).toHaveAttribute('aria-expanded', 'false')
   const firstScreen = await dialog.innerText()
   expect(firstScreen).not.toMatch(absolutePath)
