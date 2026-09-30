@@ -9,7 +9,7 @@ import { Dialog } from './ui/Dialog'
 import { Radio } from './ui/Radio'
 import { userEnvironmentName } from '@/lib/userEnvironmentText'
 import { listJoin } from '@/i18n/format'
-import { RepairProgressLine } from './RepairProgressLine'
+import { RepairProgressLine, RepairStageList } from './RepairProgressLine'
 import { downloadFact, oneClickEnvironmentSentence, oneClickSentence, repairShortMessage } from './DependencyRepairCard'
 
 /**
@@ -344,6 +344,24 @@ export function DependencyPrepareDialog() {
             progress={progress}
             text={en(STATE_TEXT[progress.state] ?? 'engine.dependencyPrepareState_preparing')}
           />
+          {/* 与修复卡同一套：默认只有那一行，完整的阶段列表、换用 PyPI 镜像的说明（进度记录顶层的 `pypi_mirror`，
+              #743 的联合准备两条路与单包修复同一个字段；没有这个键时一个字都不说）、日志都折叠在「详情」里 */}
+          <Details className="mt-1.5 text-xs text-ink-3" data-repair-progress-details>
+            <Summary className="text-ink-2">{en('engine.repairDetails')}</Summary>
+            <div className="mt-1">
+              <RepairStageList progress={progress} />
+            </div>
+            {progress.pypi_mirror && (
+              <p className="mt-1 leading-relaxed" data-repair-pypi-mirror>
+                {en('engine.repairPypiMirror', { mirror: progress.pypi_mirror })}
+              </p>
+            )}
+            {progress.log && (
+              <pre className="mt-1 max-h-40 overflow-y-auto whitespace-pre-wrap break-words rounded-sm bg-surface-2 p-1.5 font-mono text-xs">
+                {progress.log}
+              </pre>
+            )}
+          </Details>
         </div>
       )}
       {failing && !simple && (

@@ -242,6 +242,29 @@ describe('DependencyPrepareDialog', () => {
     )
   })
 
+  it('联合准备换用了 PyPI 镜像（#743 真事务实测的快照）：只在折叠的「详情」里说一句；没有这个键时不说', async () => {
+    planMock.mockResolvedValue({ plan: { plan_id: 'QGb0roUeTiyBLmNa1lKlDp8bKSDtZYfU', requirements: [] } as never })
+    prepareMock.mockResolvedValue({ started: true } as never)
+    await render(<DependencyPrepareDialog />)
+    await act(async () => useEnvStore.getState().requestDependencyPreparation(offer()))
+    await act(async () => button(en('oneClickRepair'))!.click())
+    await act(async () => {})
+    // 照抄 #743 @ 7cc13c53d 联合准备（受管环境换代）真事务里的快照
+    const snapshot = JSON.parse(
+      '{"plan_id":"QGb0roUeTiyBLmNa1lKlDp8bKSDtZYfU","state":"installing","code":"","error":null,"result":null,"target_kind":"tavotto_managed","script":"figure.py","requirements":["tavotto-test-alpha"],"flow":"joint","pypi_mirror":"https://pypi.tuna.tsinghua.edu.cn/simple","log":"…"}',
+    )
+    // 先来一条没有这个键的：安静，不说也不报错
+    await act(async () => useDepRepairStore.getState().onProgress({ ...snapshot, pypi_mirror: undefined }))
+    expect(document.querySelector('[data-repair-pypi-mirror]')).toBeNull()
+    expect(document.querySelector('[data-repair-line]')).toBeTruthy()
+    await act(async () => useDepRepairStore.getState().onProgress(snapshot))
+    const note = document.querySelector('[data-repair-pypi-mirror]')!
+    expect(note.textContent).toBe(en('repairPypiMirror', { mirror: 'https://pypi.tuna.tsinghua.edu.cn/simple' }))
+    expect(note.closest('details')!.open).toBe(false)
+    // 默认可见区不变：一句（标题）、一行进度、「详情」、「取消」
+    expect(visibleBlocks(dialog()!).map((b) => b.tag)).toEqual(['h2', 'p', 'summary', 'button'])
+  })
+
   it('一键修复进行中：只剩一行进度', async () => {
     planMock.mockResolvedValue({ plan: { plan_id: 'jp9', requirements: [] } as never })
     prepareMock.mockResolvedValue({ started: true } as never)
@@ -255,7 +278,8 @@ describe('DependencyPrepareDialog', () => {
       } as never),
     )
     const tags = visibleBlocks(dialog()!).map((b) => b.tag)
-    expect(tags).toEqual(['h2', 'p', 'button'])
+    // 一行进度 + 折叠的「详情」+「取消」
+    expect(tags).toEqual(['h2', 'p', 'summary', 'button'])
     expect(document.querySelector('[data-repair-line]')!.textContent).toBe(
       `${en('dependencyPrepareState_installing')}${en('repairStep', { n: 3, total: 4 })}`,
     )
