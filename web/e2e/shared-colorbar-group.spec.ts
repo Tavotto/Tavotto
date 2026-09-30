@@ -314,3 +314,63 @@ test(
     await expect(page.locator('[data-group-page]')).toBeVisible()
   },
 )
+
+test(
+  '选区 = 组 + 组外的子图一起选中：从组外子图里的东西起手拖，只挪那样东西，组不跟着走（Codex #691 P2）',
+  { tag: '@feature:figure.shared-colorbar-group' },
+  async ({ app, page }) => {
+    await page.addInitScript(() => {
+      for (const key of Object.keys(localStorage)) {
+        if (!key.includes('ui')) continue
+        try {
+          const saved = JSON.parse(localStorage.getItem(key) || '{}')
+          localStorage.setItem(key, JSON.stringify({ ...saved, snapEnabled: false }))
+        } catch {
+          /* 不是 JSON 的键不管 */
+        }
+      }
+    })
+    const a = await app({ figures: writeSharedProject() })
+    await page.goto(a.baseURL)
+    await page.getByText('Fig_shared.pdf').dblclick({ timeout: 30_000 })
+    await expect(page.locator('[data-display="exact"]').first()).toBeVisible({ timeout: 60_000 })
+    await openTree(page)
+    await expect(page.locator(`[role="tree"] [data-el="${GROUP}"]`)).toBeVisible({ timeout: 30_000 })
+
+    // 选区 = 组 + 组外的子图 A：键盘选组，鼠标 shift 加选 A（与 ux-consistency.spec.ts 同一个多选办法）
+    await pickRow(page, GROUP)
+    await expect(page.locator('[data-group-page]')).toBeVisible()
+    await page.locator('[role="tree"] [data-el="axes_0"]').click({ modifiers: ['Shift'] })
+    await expect(page.locator('[role="tree"] [aria-selected="true"]')).toHaveCount(2)
+
+    await page.waitForTimeout(500)
+    const b0 = await boxes(page)
+    const legendBox = () =>
+      page
+        .locator('[data-element-svg] svg [id="axes_0.legend"]')
+        .first()
+        .evaluate((n) => {
+          const r = (n as SVGGElement).getBoundingClientRect()
+          return { x: r.x, y: r.y, w: r.width, h: r.height }
+        })
+    const legendBefore = await legendBox()
+    expect(legendBefore.w, 'A 的图例画出来了').toBeGreaterThan(0)
+
+    // 从 A 的图例（组外子图里的东西，不是组成员的后代）起手拖：只挪图例自己，
+    // 组的成员（B、C、色条）与 A 本身都不该跟着整体平移（Codex #691 P2，r4141867077）
+    await settleAfter(page, async () => dragBy(page, await grabPoint(page, legendBefore), 40))
+    const b1 = await boxes(page)
+    for (const g of ['axes_0', 'axes_1', 'axes_2', 'axes_3']) {
+      expect(Math.abs(b1.rel[g] - b0.rel[g]), `${g} 不该跟着一起动`).toBeLessThan(1)
+    }
+    const legendAfter = await legendBox()
+    expect(legendAfter.x - legendBefore.x, '图例自己挪动了').toBeGreaterThan(15)
+
+    // 选区收窄成图例自己（普通单选钻进去），不是组也不是散选的 A
+    await expect(page.locator('[data-group-page]')).toHaveCount(0)
+    await openTree(page)
+    const picked = page.locator('[role="tree"] [aria-selected="true"]')
+    await expect(picked).toHaveCount(1)
+    expect(await picked.getAttribute('data-el')).toBe('axes_0.legend')
+  },
+)
