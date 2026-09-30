@@ -93,18 +93,11 @@ _REAL_SAVEFIG = mfigure.Figure.savefig
 
 
 def _patched_savefig(self, fname, *args, **kwargs):
-    """与 worker._patched_savefig 同语义：按 stem 捕获，不写用户的输出文件；写进文件对象的透传
-    （同时记进 `figcapture.BufferSaves`，脚本关掉它也补得回来）。"""
-    if not _intercept:
-        return _REAL_SAVEFIG(self, fname, *args, **kwargs)
-    if not figcapture.savefig_targets_path(fname):
-        if _ACTIVE is not None:
-            _ACTIVE.buffer_saves.note(self)
+    """与 worker._patched_savefig 同语义：按 stem 捕获，不写用户的输出文件；写进文件对象的透传。"""
+    if not _intercept or not figcapture.savefig_targets_path(fname):
         return _REAL_SAVEFIG(self, fname, *args, **kwargs)
     stem = figcapture.savefig_stem(fname)
     if stem:
-        # 这里**不** `buffer_saves.claim`：浏览器的保留上限就是捕获上限（MAX_FIGURES），认领要让出名额
-        # 至少得先有 MAX_FIGURES 张被认领——那时捕获早已满，让不让结果都一样（反证过：删掉它没有用例会红）。
         _session_capture().setdefault(stem, self)
         # 来源记账与 worker.CAPTURE_SOURCE 同语义：savefig 认领的 stem
         # **可能**有原始产物（在桌面上；这里的虚拟 FS 里永远没有）。
@@ -201,9 +194,6 @@ class BrowserSession:
         self.savefig_calls: dict[str, list | None] = {}
         #: stem → 与 `savefig_calls[stem]` 逐项对齐的 `bbox_extra_artists` 对象（算图幅用，ADR 0098）
         self.savefig_extras: dict[str, list] = {}
-        self.buffer_saves = figcapture.BufferSaves(
-            MAX_FIGURES
-        )  # 写进过缓冲区的图（有上限，真丢的计入 truncated）
         self.states: dict[str, overrides_mod.FigState] = {}
         self.revision = 0
         self.script_name = ""
@@ -289,9 +279,8 @@ class BrowserSession:
         # 而前端按 stem 索引一切。
         base = os.path.splitext(safe_name)[0]
         fallback, dropped = figcapture.collect_pyplot_figures(
-            self.capture, base, plt, limit=MAX_FIGURES, retained=self.buffer_saves.figures()
+            self.capture, base, plt, limit=MAX_FIGURES
         )
-        dropped += self.buffer_saves.lost()
         for stem in fallback:
             self.capture_source[stem] = figcapture.SOURCE_PYPLOT
 

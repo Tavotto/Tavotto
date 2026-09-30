@@ -211,9 +211,6 @@ class LiveFigureSession:
         #: stem -> 与 `savefig_calls[stem]` 逐项对齐的 `bbox_extra_artists` **对象**（进不了 JSON，
         #: 只活在这个进程里；算图幅时要把同一批 artist 交回 savefig，ADR 0098 §一）
         self.savefig_extras: dict[str, list] = {}
-        #: 写进过缓冲区、没有 stem 可认领的图（`figcapture.BufferSaves`）：脚本跑完时交给 pyplot 兜底，
-        #: 被脚本关掉的也补得回来；有上限，真丢的计入 dropped
-        self.buffer_saves = figcapture.BufferSaves()
         #: 项目根：定义图幅的那次调用按「与原件同格式」挑（`figcapture.frame_call`）；
         #: None = 这条入口不谈原件（native bridge），取第一次调用
         self.frame_project_root: str | None = None

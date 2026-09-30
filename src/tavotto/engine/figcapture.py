@@ -138,9 +138,7 @@ engine 目录平铺 import 它，Flask 父进程也 import 得动。
 from __future__ import annotations
 
 import builtins
-import contextlib
 import dataclasses
-import gc
 import hashlib
 import io
 import json
@@ -148,7 +146,6 @@ import os
 import pathlib
 import re
 import sys
-import weakref
 
 __all__ = [
     "savefig_stem",
@@ -172,7 +169,6 @@ __all__ = [
     "INPUT_OBSERVER_MAX_FILES",
     "OBSERVATION_PARTIAL",
     "MAX_PYPLOT_FALLBACK",
-    "BufferSaves",
     "SOURCE_SAVEFIG",
     "SOURCE_PYPLOT",
     "PROFILE_SAFE",
@@ -816,87 +812,8 @@ def fallback_stems(taken, script_stem: str, count: int) -> list[str]:
     return out
 
 
-class BufferSaves:
-    """写进文件对象（BytesIO 等）、没有 stem 可认领的 savefig 记在这里，脚本跑完交给 pyplot 兜底。
-
-    `savefig(buf); Image.open(buf).save("x.tiff"); plt.close(fig)` 这种脚本里，缓冲区那次是这张图
-    **唯一**的一次存盘：没有 stem 可认领，脚本随后又把图关了，跑完时 pyplot 里已经没有它——不记下来
-    就一张图都捕获不到（#739 Codex P2）。
-
-    三条约束（#739 Codex 各一条 P2）：
-
-    * **强引用有上限**（`limit`，就是兜底的张数上限）：循环「建图 → 存缓冲区 → 关图」的批量脚本不设
-      上限会把每张关掉的图都留到脚本结束。所有图只排**一个**全局顺序（弱引用），强引用永远钉在其中
-      最早的至多 `limit` 张上——让出的名额交给下一张最早的，顺序不会被「先强后弱」打乱。
-    * **被路径 savefig 认领了就让出名额**（`claim`）：已经有 stem 的图不需要兜底，占着名额会让后面
-      真正只存缓冲区的图没地方放。
-    * **真丢了要进结构化计数**（`lost`）：超出上限、又被脚本关掉并回收的图是实实在在丢了，
-      调用方把它并进 `dropped_figures` / `truncated_figures`，不是只写一行日志。
-    收集前 `figures()` 先 `gc.collect()`：matplotlib 的 Figure 有引用环，回收时机不定；不先回收，
-    「活着的补回来、死了的算丢」就会随 GC 时机漂移，同一个脚本两次跑出不同的 stem。
-    """
-
-    def __init__(self, limit: int = MAX_PYPLOT_FALLBACK):
-        self.limit = max(0, int(limit))
-        #: 所有记下、未被认领、仍活着的图 → 全局存盘序号（唯一的顺序；弱引用，不拖住内存）
-        self._order: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
-        #: 序号 → 图：**永远**钉住最早的至多 `limit` 张（强引用，脚本关掉它们也补得回来）
-        self._pinned: dict = {}
-        self._seq = 0
-        self._noted = 0  # 记下且未被认领的张数（含已被回收的），`lost()` 用它减去仍活着的
-        #: 被路径 savefig 认领过的图：之后再存缓冲区也不回名单（先存路径、后存缓冲区的顺序，#739 Codex P2）
-        self._claimed: weakref.WeakSet = weakref.WeakSet()
-
-    def note(self, fig) -> None:
-        if fig in self._order or fig in self._claimed:
-            return
-        self._seq += 1
-        self._order[fig] = self._seq
-        self._noted += 1
-        if len(self._pinned) < self.limit:
-            self._pinned[self._seq] = fig
-
-    def claim(self, fig) -> None:
-        """这张图被路径 savefig 认领了（有了 stem）：移出名单；它若钉着名额，把名额交给**最早的**
-        下一张仍活着、还没钉住的图——钉住的永远是全局顺序里最早的那几张（#739 Codex P2：
-        让出的名额给了更晚的一张，兜底按上限截断时丢的就是更早那张、stem 也跟着变）。"""
-        self._claimed.add(fig)
-        seq = self._order.pop(fig, None)
-        if seq is None:
-            return
-        self._noted -= 1
-        if self._pinned.pop(seq, None) is None:
-            return
-        waiting = [(s, f) for f, s in self._order.items() if s not in self._pinned]
-        if waiting:
-            s, f = min(waiting, key=lambda sf: sf[0])
-            self._pinned[s] = f
-
-    def __bool__(self) -> bool:
-        return self._noted > 0
-
-    def figures(self) -> list:
-        """交给兜底的图：仍活着的，按全局存盘先后（钉住的一定在其中）。
-
-        这次 `gc.collect()` 发生在脚本的 stdout 重定向**之后**：用户对象的 `__del__` / 弱引用回调此刻
-        `print` 的话会写进 worker 的 JSON 协议流，父进程读到一行非 JSON、把成功的构建判成协议错误
-        （#739 Codex P2）。所以回收期间 stdout 一律改道 stderr（进 worker.log），与调用方在哪无关。
-        """
-        with contextlib.redirect_stdout(sys.stderr):
-            gc.collect()
-        return [f for f, _ in sorted(self._order.items(), key=lambda kv: kv[1])]
-
-    def lost(self) -> int:
-        """记下、没被认领、已被回收的张数（在 `figures()` 之后问才准）。"""
-        return max(0, self._noted - len(self._order))
-
-
 def collect_pyplot_figures(
-    capture: dict,
-    script_stem: str,
-    plt,
-    limit: int = MAX_PYPLOT_FALLBACK,
-    retained=(),
+    capture: dict, script_stem: str, plt, limit: int = MAX_PYPLOT_FALLBACK
 ) -> tuple[list[str], int]:
     """把脚本跑完仍活着、且没被 savefig 认领的 pyplot Figure 补进 `capture`。
 
@@ -910,15 +827,11 @@ def collect_pyplot_figures(
 
     `plt.get_fignums()` 的顺序即产出顺序（pyplot 的 Gcf 按创建先后维护），
     stem 的序号只由「本次捕获里的第几张」决定，与 figure 号无关。
-
-    `retained`：存进过缓冲区的图（`BufferSaves.figures()`）。还活着的照常按 `get_fignums()` 的位置补；
-    脚本已经关掉的排在活着的后面、按存盘先后补——没有 `retained` 时行为与以前逐字节相同。
-    `plt` 可以是 None（脚本只用 `Figure()` 这套面向对象 API、从没 import pyplot）：那时只补 `retained`。
     """
     seen = {id(f) for f in capture.values()}
     pending = []
-    live = [plt.figure(num) for num in plt.get_fignums()] if plt is not None else []
-    for fig in live + list(retained):
+    for num in plt.get_fignums():
+        fig = plt.figure(num)
         if id(fig) in seen:
             continue
         seen.add(id(fig))

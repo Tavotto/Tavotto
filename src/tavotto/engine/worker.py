@@ -174,10 +174,7 @@ def _patched_savefig(self, fname, *args, **kwargs):
         return _REAL_SAVEFIG(self, fname, *args, **kwargs)
     to_path = figcapture.savefig_targets_path(fname)
     stem = _SAVE_AS or figcapture.savefig_stem(fname)  # 不是路径时 savefig_stem 是空串
-    if not stem and not to_path and SESSION is not None:
-        SESSION.buffer_saves.note(self)
     if stem and SESSION is not None:
-        SESSION.buffer_saves.claim(self)
         SESSION.add_figure(stem, self, figcapture.SOURCE_SAVEFIG)
         SESSION.note_savefig(
             stem,
@@ -597,15 +594,10 @@ class Worker(wireproto.V1Handler):
         # figure，而在这里 import 一次要白付几十毫秒（还会给纯 OO API 的脚本
         # 凭空建一个 figure 管理器）。
         _plt = sys.modules.get("matplotlib.pyplot")
-        # 只用 `Figure()` 的脚本从不 import pyplot，但存进缓冲区的图照样要补（#739 Codex P2）
-        if _plt is not None or self.session.buffer_saves:
+        if _plt is not None:
             fallback, dropped = figcapture.collect_pyplot_figures(
-                self.session.capture,
-                self.script.stem,
-                _plt,
-                retained=self.session.buffer_saves.figures(),
+                self.session.capture, self.script.stem, _plt
             )
-            dropped += self.session.buffer_saves.lost()
             for stem in fallback:
                 self.session.capture_source[stem] = figcapture.SOURCE_PYPLOT
             if dropped:
@@ -617,6 +609,7 @@ class Worker(wireproto.V1Handler):
                     file=sys.stderr,
                 )
                 self.dropped_figures = dropped
+
         self.session.instrument_all()
         self._descriptor_cache = self._build_descriptors()
         # 回执的 `inputs` 在**这一刻**定格：脚本已经跑完，之后进程里再读什么（导出时的字体缓存）都不是它的输入
