@@ -5,8 +5,8 @@
 是过期的规格。所以这里不按文件点名，而是扫**所有**进版本库的 Markdown（ADR 与已发行的发行说明
 是历史记录，不跟着改），凡是长得像这几条命令的地方都要与常量整段相等。
 
-另有非空约束：命令此刻对外登的地方（矩阵 beta 时是 README，此前是待发说明，2026-09-30 用户决定）
-与技能参考里必须真的扫到这几条，免得命令换了写法、正则一条都抓不到时本文件恒绿。
+另有非空约束：命令此刻对外登的地方（矩阵 beta 时是 README 与技能参考，此前只在待发说明，2026-09-30
+用户决定）必须真的扫到这几条，免得命令换了写法、正则一条都抓不到时本文件恒绿。
 """
 
 import json
@@ -96,7 +96,9 @@ def test_the_scan_really_sees_the_user_facing_commands():
         "dsh": ("dsh_spec",),
     }
     for host_id, kinds in wanted.items():
-        for rel in (_published_home(host_id), SKILL_REFERENCE):
+        home = _published_home(host_id)
+        # 技能与 README 同进退：渠道 promote 之前技能也不教装法（#692 / #694 评审）
+        for rel in (home, SKILL_REFERENCE) if home == README else (home,):
             for kind in kinds:
                 assert found[rel][kind], f"{rel} 里没扫到 {kind}：命令换了写法，正则要跟着改"
     if _published_home("dsh") == README:

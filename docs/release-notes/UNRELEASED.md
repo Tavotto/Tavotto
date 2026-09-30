@@ -74,7 +74,12 @@ The install path only works once this version has been promoted to the `plugin-s
 test_install_commands_from_brand.py 与 test_mcp_host_profiles.py 按矩阵这一档判命令该在 README 还是在这里。
 同时把指向这一节的提示加回：codex-plugin/integrations/configure.py 里 dsh 的 target 那句改回「更省事的是装 bundle
 （README「Using Tavotto with DeepSeek Harness」那条 dsh plugin 命令），就不需要这段 YAML；」
-（tests/test_readme_section_references.py 要求被引用的章节真的在）。ADR 0104「对外口径」。README 一节的原文：
+（tests/test_readme_section_references.py 要求被引用的章节真的在）。技能也加回：
+codex-plugin/skills/tavotto-figure/references/other-hosts.md 在 Claude Code 那段之后加「**DeepSeek Harness 优先走
+bundle**」一段（上面那条规格、`web` 换成所用 profile；装完新开 DSH 会话等 `mcp__tavotto__*`；授权目录 = 启动 `dsh`
+的目录，别在 HOME 里启动），「其余宿主」那句改成「（以及不想装插件 / bundle 的 Claude Code、DSH 用户）」；SKILL.md
+第 6 条的升级提示加「DSH bundle：`dsh plugin --profile <名> update tavotto-dsh`」。原文见 PR #694。
+ADR 0104「对外口径」。README 一节的原文：
 
 ### Using Tavotto with DeepSeek Harness (Beta)
 

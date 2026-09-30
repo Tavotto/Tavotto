@@ -50,7 +50,8 @@ README 的 DeepSeek Harness 章节标「(Beta)」：支持矩阵里 `dsh` 为 `s
 之前没有 `package.json` / `dsh/`，照 README 装会坏。合入时 README 不含这一节、矩阵里 `dsh` 仍是 `experimental`；
 安装规格完整留在 `docs/release-notes/UNRELEASED.md` 那一段，发版时把 README 一节加回、矩阵改回 `beta` +
 `channel: dsh-bundle`。`test_install_line_is_published_where_the_matrix_says` 按矩阵这一档判规格该在 README
-还是在待发说明，两边都钉。
+还是在待发说明，两边都钉；技能（`references/other-hosts.md`、`SKILL.md` 的升级提示）同理先不教装法，同一条
+用例钉住插件目录里没有 `dsh plugin --profile …`。发版时要加回的清单在待发说明那一段的注释里。
 
 ## 看护
 
