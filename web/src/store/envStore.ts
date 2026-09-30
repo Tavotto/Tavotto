@@ -90,10 +90,19 @@ interface EnvState {
    */
   pointAtData: (requested: string, chosen: string, kind: 'file' | 'dir' | 'auto') => Promise<string | null>
   /**
-   * 改指表换代了（后端事件 `input_remap_changed`，ADR 0106 §五）：**唯一**的作废入口——发起的窗口与同项目
-   * 开着的其它窗口都只走这里。`added` 时顺带重跑因「找不到数据」失败的脚本。
+   * 改指表换代了（ADR 0106 §五）：**唯一**的作废入口，按代次幂等——`generation` ≤ 已见代次就忽略，同一代
+   * 不论从哪条路来只作废一次。三条路径都调它：改指 / 删指接口的响应（发起的窗口收到就本地作废，不等事件）、
+   * 事件流 `input_remap_changed`（同项目的其它窗口）、重连 / 页面恢复时补拉到的代次（`noteInputRemapGeneration`）。
+   * 删掉之外的换代顺带重跑因「找不到数据」失败的脚本。
    */
-  onInputRemapChanged: (reason: 'added' | 'removed' | string) => void
+  onInputRemapChanged: (generation: number, reason: 'added' | 'removed' | 'catch_up' | string) => void
+  /**
+   * 拉到的此刻代次（环境刷新里带着）：这个窗口还没见过任何一代时只记作起点；比已见的新 = 期间有事件丢了，
+   * 补一次作废（`onInputRemapChanged(g, 'catch_up')`）。
+   */
+  noteInputRemapGeneration: (generation: number) => void
+  /** 这个窗口已按哪一代作废过（换项目清空；null = 还没见过） */
+  inputRemapSeen: number | null
   /** 设置里删一条改指规则；回 null 或一句失败原文 */
   forgetInputRemap: (rule: InputRemapRule) => Promise<string | null>
   /**
@@ -183,6 +192,7 @@ export const useEnvStore = create<EnvState>((set, get) => ({
   missingInput: null,
   inputRemapGeneration: 0,
   probeResultsGeneration: 0,
+  inputRemapSeen: null,
 
   requestWorkdirConfirmation: (payload, projectId) => {
     if (projectId !== undefined && projectId !== currentProjectId()) return
@@ -205,8 +215,8 @@ export const useEnvStore = create<EnvState>((set, get) => ({
       const env = get().env
       if (env?.project) set({ env: { ...env, project: { ...env.project, input_remap: res.input_remap } } })
       set({ missingInput: null })
-      // 重排 / 作废 / 重跑**不在这里做**：后端经事件流广播 `input_remap_changed`，这个窗口与同项目的其它
-      // 窗口都只按那条事件走 `onInputRemapChanged`（一条路径，ADR 0106 §五）
+      // 响应带回新代次：本地就作废，不等事件（事件丢了也不漏）；事件随后到时按代次去重，不再作废第二次
+      get().onInputRemapChanged(res.input_remap.generation, 'added')
       useUiStore.getState().setStatus(msg('engine.missingInputRemembered', undefined, 'errors'))
       return null
     } catch (e) {
@@ -221,20 +231,30 @@ export const useEnvStore = create<EnvState>((set, get) => ({
       if (epoch !== projectEpoch) return null
       const env = get().env
       if (env?.project) set({ env: { ...env, project: { ...env.project, input_remap: res.input_remap } } })
-      // 重画按「找不到就报错」：同样只走事件（`onInputRemapChanged`）
+      // 重画按「找不到就报错」：同样本地按响应的代次作废，事件按代次去重
+      get().onInputRemapChanged(res.input_remap.generation, 'removed')
       return null
     } catch (e) {
       if (epoch !== projectEpoch) return null
       return backendErrorText(e)
     }
   },
-  onInputRemapChanged: (reason) => {
+  onInputRemapChanged: (generation, reason) => {
     // 事件已按 pj 过滤到本项目（`handleServerEvent`）；换项目期间由 `restaleProjectRenders` 自己按代际丢弃
+    const seen = get().inputRemapSeen
+    if (seen !== null && generation <= seen) return
+    set({ inputRemapSeen: generation })
     const epoch = projectEpoch
-    // 新增 / 换了一处：因「找不到数据」失败的脚本重跑；删掉：只作废，回到「找不到就报错」
-    void restaleProjectRenders(epoch, reason === 'added')
-    // 设置里的「数据位置」列表：别的窗口改的也要看得见
+    // 删掉：只作废，回到「找不到就报错」；其余（新增 / 换了一处 / 补拉到的不知道是哪种）：因「找不到数据」
+    // 失败的脚本也重跑——没有规则救它就再失败一次，不会多错
+    void restaleProjectRenders(epoch, reason !== 'removed')
+    // 设置里的「数据位置」列表：别的窗口改的也要看得见（回来的代次 ≤ 已见，不会再作废一次）
     void get().refresh()
+  },
+  noteInputRemapGeneration: (generation) => {
+    const seen = get().inputRemapSeen
+    if (seen === null) set({ inputRemapSeen: generation })
+    else if (generation > seen) get().onInputRemapChanged(generation, 'catch_up')
   },
   requestDependencyPreparation: (offer, projectId) => {
     if (projectId !== undefined && projectId !== currentProjectId()) return
@@ -268,6 +288,9 @@ export const useEnvStore = create<EnvState>((set, get) => ({
       const env = await fetchEngineEnvironment()
       if (epoch !== projectEpoch) return // 响应里的 project 是发请求那个项目的
       set({ env })
+      // 改指表的代次（ADR 0106 §五）：重连 / 页面恢复的补拉就是这一次刷新
+      const g = env.project?.input_remap?.generation
+      if (typeof g === 'number') get().noteInputRemapGeneration(g)
     } catch {
       // 探测失败不该打扰用户：真要渲染时自然会报错
     }
@@ -381,6 +404,8 @@ export const useEnvStore = create<EnvState>((set, get) => ({
     // 换代**排在清空与重取之前**：之前发出的请求作废，下面这次 refresh 属于新项目
     projectEpoch += 1
     const env = get().env
+    // 已见代次属于旧项目：新项目的第一次刷新重新记起点
+    set({ inputRemapSeen: null })
     // 首开确认框属于旧项目：A 项目问的问题不能由 B 项目回答
     if (env)
       set({

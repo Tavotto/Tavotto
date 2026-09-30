@@ -758,7 +758,7 @@ def test_http_add_list_and_remove(client, figs, tmp_path):
 
 def test_every_window_of_the_project_hears_that_the_remap_table_changed(client, figs, tmp_path):
     """两个窗口开着同一个项目（两条事件流）：A 改指 / 删指，B 同样收到 `input_remap_changed`（带代次），
-    据此作废按旧表画的东西（Codex 评 #716 P1）。发起的 A 也只靠这条事件。"""
+    据此作废按旧表画的东西（Codex 评 #716 P1）。事件带的代次与接口响应里的一致，前端据此去重。"""
     import queue as _queue
 
     from tavotto import app as m
@@ -773,10 +773,10 @@ def test_every_window_of_the_project_hears_that_the_remap_table_changed(client, 
             json={"requested": "data/values.txt", "chosen": str(chosen), "chosen_kind": "file"},
         )
         assert resp.status_code == 200, resp.get_json()
-        assert (
-            client.delete("/api/engine/input-remap", json={"kind": P, "from": ""}).status_code
-            == 200
-        )
+        added_gen = resp.get_json()["input_remap"]["generation"]
+        resp = client.delete("/api/engine/input-remap", json={"kind": P, "from": ""})
+        assert resp.status_code == 200
+        removed_gen = resp.get_json()["input_remap"]["generation"]
 
         def remap_events(q):
             out = []
@@ -791,6 +791,8 @@ def test_every_window_of_the_project_hears_that_the_remap_table_changed(client, 
         assert got_a == got_b
         assert got_b[1]["generation"] == got_b[0]["generation"] + 1
         assert got_b[1]["generation"] == inputremap.generation(figs)
+        # 发起的窗口按接口响应本地作废的那一代，就是事件里的那一代
+        assert [e["generation"] for e in got_b] == [added_gen, removed_gen]
         assert {e["pj"] for e in got_b} == {m.current_ctx().id}
     finally:
         for q in (a, b):
@@ -815,7 +817,7 @@ def test_probe_registered_stems_follow_the_table_after_a_rebuild(
     try:
         (figs / "fig.py").write_text("print(1)\n", encoding="utf-8")
         discover.register(figs, "fig.py", ["group_A"], entry="__main__")
-        registry.load(figs)
+        m.refresh_project(m.current_ctx(), reason="probe", allow_static_merge=False)
         inputremap.record_registration(figs, "fig.py")  # 在「空表」下登记的
         inputremap.add_rule(figs, {"kind": P, "from": "", "to": str(tmp_path)})
 
@@ -841,14 +843,309 @@ def test_probe_registered_stems_follow_the_table_after_a_rebuild(
         assert not inputremap.registration_stale(figs, "fig.py")
         # 再来一次：已对上，不重复登记
         assert m._resync_registration(ctx, worker(inputremap.generation(figs))) is False
-        # 从没经试运行登记过（没记过指纹）的脚本不动
+        # 没登记过的脚本不在这里替它登记（那是试运行 / 发现的事）
         (figs / "other.py").write_text("print(2)\n", encoding="utf-8")
         other = worker(inputremap.generation(figs))
         other.script_name = "other.py"
         assert m._resync_registration(ctx, other) is False
+        assert "other.py" not in ctx.registry.all_scripts()
     finally:
         for pid in [p for p, c in list(m.PROJECTS.items()) if str(c.path) == str(figs)]:
             m.close_project(pid, wait=True)
+
+
+def test_a_legacy_registration_without_a_mark_reconciles_conservatively(
+    client, figs, tmp_path, monkeypatch
+):
+    """升级前登记的脚本没有指纹标记（Codex 评 #716 P1）：项目里有任何改指规则，就不知道它是在哪张表下登记的，
+    按过期处理——下一次 build 按真实产出重新登记一次；没有规则的维持原样（只可能是在「无表」下登记的）。"""
+    import types
+
+    from tavotto import app as m
+    from tavotto.engine import discover, registry
+
+    m.open_project(str(figs))
+    try:
+        (figs / "fig.py").write_text("print(1)\n", encoding="utf-8")
+        discover.register(figs, "fig.py", ["group_A"], entry="__main__")
+        ctx = m.current_ctx()
+        m.refresh_project(ctx, reason="probe", allow_static_merge=False)
+        assert inputremap.REGISTERED_KEY not in inputremap.config.project_settings(str(figs))
+
+        def stems_on_disk():
+            path = registry.existing_registry_path(figs)
+            return json.loads(path.read_text(encoding="utf-8"))["scripts"]["fig.py"]["stems"]
+
+        def worker():
+            return types.SimpleNamespace(
+                script_name="fig.py",
+                figures_dir=str(figs),
+                entry="__main__",
+                remap_generation=inputremap.generation(figs),
+                last_build_descriptors=[{"stem": "group_B"}],
+            )
+
+        # 无规则：没标记也不动
+        assert not inputremap.registration_stale(figs, "fig.py")
+        assert m._resync_registration(ctx, worker()) is False
+        assert stems_on_disk() == ["group_A"]
+        # 有规则、没标记：保守对账，按这次 build 重新登记并补上标记
+        inputremap.add_rule(figs, {"kind": P, "from": "", "to": str(tmp_path)})
+        assert inputremap.registration_stale(figs, "fig.py")
+        assert m._resync_registration(ctx, worker()) is True
+        assert stems_on_disk() == ["group_B"]
+        assert not inputremap.registration_stale(figs, "fig.py")
+        assert m._resync_registration(ctx, worker()) is False
+    finally:
+        for pid in [p for p, c in list(m.PROJECTS.items()) if str(c.path) == str(figs)]:
+            m.close_project(pid, wait=True)
+
+
+def test_a_remap_during_the_writeback_replace_loop_waits_for_the_commit(
+    client, tmp_path, monkeypatch
+):
+    """写回在替换循环中途（第一个目标已换、第二个还没换）时，另一个窗口改了指认（Codex 评 #716 P1）：改指持写锁，
+    要等这次提交整个落完才能改表、换代——写回不会一半按旧表、一半在新表之后落地。barrier 把写回钉在替换中途。"""
+    import threading
+
+    import pymupdf
+
+    from tavotto import app as m
+
+    figs = tmp_path / "figs"
+    figs.mkdir()
+    doc = pymupdf.open()
+    doc.new_page(width=100, height=50)
+    doc.save(figs / "Fig1.pdf")
+    doc.close()
+    (figs / "Fig1.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    (figs / "tavotto_registry.json").write_text(
+        json.dumps({"version": 1, "scripts": {"fig1.py": {"entry": "main", "stems": ["Fig1"]}}}),
+        encoding="utf-8",
+    )
+    (figs / "fig1.py").write_text("def main():\n    pass\n", encoding="utf-8")
+    payload = {"pdf": (figs / "Fig1.pdf").read_bytes(), "png": (figs / "Fig1.png").read_bytes()}
+    out = tmp_path / "_replay_out"
+    out.mkdir()
+    man = {"stem": "Fig1", "size_mm": [35.28, 17.64], "elements": []}
+    (out / "Fig1.json").write_text(json.dumps(man), encoding="utf-8")
+
+    class FakeWorker:
+        script_name, entry = "fig1.py", "main"
+        figures_dir = str(figs)
+        base = out_dir = out
+        built = True
+        script_sha1 = ""
+        last_patch_hash = ""
+        remap_generation = inputremap.generation(figs)
+
+        def override(self, stem, patches, preview_dpi=None, inline_svg=False):
+            return {"ok": True, "manifest": man, "warnings": []}
+
+        def export(self, stem, patches, path, fmt="pdf", dpi=600):
+            Path(path).write_bytes(payload[fmt])
+            return {"ok": True, "path": path, "warnings": []}
+
+        def shutdown(self):
+            pass
+
+    w = FakeWorker()
+    monkeypatch.setattr(m.engine_pool, "get", lambda *a, **k: w)
+    monkeypatch.setattr(m.engine_pool, "one_shot", lambda *a, **k: w)
+    monkeypatch.setattr(m.engine_pool, "discard", lambda _w: None)
+    monkeypatch.setattr(m, "_stop_remap_dependent_work", lambda root: None)
+
+    mid_replace = threading.Barrier(2, timeout=10)
+    release = threading.Event()
+    real_replace = Path.replace
+    order: list[str] = []
+
+    def replace_then_pause(self, target):
+        got = real_replace(self, target)
+        if Path(target).stem != "Fig1":
+            return got  # 配置 / 备份等别的原子写不算
+        order.append(f"replaced {Path(target).name}")
+        if Path(target).suffix == ".pdf":
+            mid_replace.wait()  # 第一个目标已换：告诉主线程「此刻在替换循环中途」
+            release.wait(10)
+        return got
+
+    monkeypatch.setattr(Path, "replace", replace_then_pause)
+    m.open_project(str(figs))
+    try:
+        before = inputremap.generation(figs)
+        result: dict = {}
+
+        def write_back():
+            with m.app.test_client() as c:
+                result["resp"] = c.post(
+                    "/api/engine/update_source", json={"id": "Fig1.pdf", "patches": []}
+                )
+
+        def remap():
+            inputremap.add_rule(figs, {"kind": P, "from": "", "to": str(tmp_path)})
+            order.append("remapped")
+
+        wb = threading.Thread(target=write_back)
+        wb.start()
+        mid_replace.wait()
+        rm = threading.Thread(target=remap)
+        rm.start()
+        rm.join(0.5)
+        # 改指在等：表没改、代次没动
+        assert rm.is_alive(), "改指没有等在途的写回提交"
+        assert inputremap.generation(figs) == before
+        release.set()
+        wb.join(10)
+        rm.join(10)
+        assert result["resp"].status_code == 200, result["resp"].get_json()
+        assert order == ["replaced Fig1.pdf", "replaced Fig1.png", "remapped"]
+        assert inputremap.generation(figs) == before + 1
+    finally:
+        release.set()
+        for pid in [p for p, c in list(m.PROJECTS.items()) if str(c.path) == str(figs)]:
+            m.close_project(pid, wait=True)
+
+
+def _export_job(tmp_path):
+    from tavotto.engine import exportjob
+
+    return exportjob.prepare(
+        {
+            "scope": "canvas",
+            "filename": "F",
+            "formats": ["pdf"],
+            "overwrite": "replace",
+            "canvas": {"page_w_mm": 10, "page_h_mm": 10, "objects": []},
+        },
+        tmp_path / "out",
+    )
+
+
+def test_an_export_is_not_published_when_the_table_changed_after_it_started(tmp_path):
+    """导出作业开始时记下代次，一路带到发布那一步（Codex 评 #716 P1）：渲染途中改了指认，提交守卫在锁里再核一次，
+    对不上就一个文件都不发布、报 `input_remap_changed`（可重试）；没改的照常发布。"""
+    from tavotto import app as m
+    from tavotto.engine import exportjob
+
+    root = tmp_path / "proj"
+    root.mkdir()
+
+    def produce_while(change):
+        def produce(j, tmp_dir):
+            p = tmp_dir / "F.pdf"
+            p.write_bytes(b"%PDF-1.4\n")
+            if change:
+                inputremap.add_rule(root, {"kind": P, "from": "", "to": str(tmp_path)})
+            return [exportjob.Produced(format="pdf", tmp_path=p, vector=True)]
+
+        return produce
+
+    job = _export_job(tmp_path)
+    payload = exportjob.run(
+        job,
+        produce_while(True),
+        classify_error=m._classify_export_error,
+        commit_guard=m._export_commit_guard(root),
+    )
+    assert payload["status"] == "failed"
+    assert payload["error"]["code"] == inputremap.ERROR_CHANGED
+    assert not (tmp_path / "out" / "F.pdf").exists()
+    assert not list((tmp_path / "out").glob(exportjob.TMP_PREFIX + "*"))
+
+    job = _export_job(tmp_path)
+    payload = exportjob.run(
+        job,
+        produce_while(False),
+        classify_error=m._classify_export_error,
+        commit_guard=m._export_commit_guard(root),
+    )
+    assert payload["status"] == "done", payload
+    assert (tmp_path / "out" / "F.pdf").exists()
+
+
+def test_a_remap_during_export_publishing_waits_for_the_publish(tmp_path, monkeypatch):
+    """发布循环中途改指：写锁等发布落完，发布出去的每个文件都属于同一代（barrier 把作业钉在发布中途）。"""
+    import threading
+
+    from tavotto import app as m
+    from tavotto.engine import atomicio, exportjob
+
+    root = tmp_path / "proj"
+    root.mkdir()
+    mid_publish = threading.Barrier(2, timeout=10)
+    release = threading.Event()
+    real_publish = atomicio.publish_file
+
+    def publish_then_pause(src, dest):
+        got = real_publish(src, dest)
+        mid_publish.wait()
+        release.wait(10)
+        return got
+
+    monkeypatch.setattr(exportjob.atomicio, "publish_file", publish_then_pause)
+
+    def produce(j, tmp_dir):
+        p = tmp_dir / "F.pdf"
+        p.write_bytes(b"%PDF-1.4\n")
+        return [exportjob.Produced(format="pdf", tmp_path=p, vector=True)]
+
+    job = _export_job(tmp_path)
+    before = inputremap.generation(root)
+    result: dict = {}
+    t = threading.Thread(
+        target=lambda: result.setdefault(
+            "payload",
+            exportjob.run(
+                job,
+                produce,
+                classify_error=m._classify_export_error,
+                commit_guard=m._export_commit_guard(root),
+            ),
+        )
+    )
+    t.start()
+    try:
+        mid_publish.wait()
+        rm = threading.Thread(
+            target=inputremap.add_rule, args=(root, {"kind": P, "from": "", "to": str(tmp_path)})
+        )
+        rm.start()
+        rm.join(0.5)
+        assert rm.is_alive(), "改指没有等在途的导出发布"
+        assert inputremap.generation(root) == before
+    finally:
+        release.set()
+    t.join(10)
+    rm.join(10)
+    assert result["payload"]["status"] == "done"
+    assert inputremap.generation(root) == before + 1
+
+
+def test_the_project_lock_admits_readers_together_and_writers_alone(tmp_path):
+    """读写锁本身：落地之间不互斥（同一项目两次写回可以同时提交）、可重入；改表等所有落地放手；
+    落地里改表是自锁，当场报错而不是挂死。"""
+    import threading
+
+    root = tmp_path / "proj"
+    root.mkdir()
+    both_in = threading.Barrier(2, timeout=5)
+
+    def land():
+        with inputremap.landing(root):
+            both_in.wait()  # 两个读者同时在锁里才过得去
+
+    readers = [threading.Thread(target=land) for _ in range(2)]
+    for t in readers:
+        t.start()
+    for t in readers:
+        t.join(10)
+    assert not both_in.broken
+    with inputremap.landing(root):
+        with inputremap.landing(root):  # 可重入
+            pass
+        with pytest.raises(RuntimeError):
+            inputremap.add_rule(root, {"kind": P, "from": "", "to": str(tmp_path)})
 
 
 def test_canonically_equal_sources_replace_each_other(tmp_path):

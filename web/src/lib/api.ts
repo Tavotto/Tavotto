@@ -3149,6 +3149,8 @@ export interface InputRemapRule {
 
 export interface InputRemapState {
   rules: InputRemapRule[]
+  /** 改指表此刻的代次（只增不减、跨后端重启也单调）：前端按它去重作废（ADR 0106 §五） */
+  generation: number
 }
 
 /** 用户指认了数据位置：后端推一条规则、按项目记住、关掉该项目的会话（ADR 0106） */
