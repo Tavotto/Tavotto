@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
-import { postDiagnosticsBundle, type TelemetrySettings } from '@/lib/api'
+import { fetchBuildVersion, postDiagnosticsBundle, type TelemetrySettings } from '@/lib/api'
 import { buildDiagnosticPayload } from '@/diagnostics'
 import { PRIVACY_DOC_URL, PRODUCT_NAME, REPO_URL } from '@/lib/brand'
 import { TELEMETRY_DISCLOSED_EVENTS } from '@/lib/telemetryDisclosure'
@@ -35,7 +35,21 @@ const st = (key: string, values?: Record<string, unknown>) =>
  */
 export function PrivacyAboutSettings() {
   useTranslation('dialogs')
-  const version = useUpdateStore((s) => s.status?.current)
+  const statusVersion = useUpdateStore((s) => s.status?.current)
+  // 更新接口失败时 status 取不到——那时恰恰最需要看到版本号（排错、报 bug）。
+  // 退回 `/api/version`（后端同一个 `current_version()`），status 取到之后仍以它为准
+  const [fallbackVersion, setFallbackVersion] = useState<string | undefined>()
+  useEffect(() => {
+    if (statusVersion) return
+    let live = true
+    fetchBuildVersion()
+      .then((r) => live && setFallbackVersion(r.version))
+      .catch(() => {})
+    return () => {
+      live = false
+    }
+  }, [statusVersion])
+  const version = statusVersion ?? fallbackVersion
   // 分区之间的间距由外壳统一给（`display: contents`）
   return (
     <div className="contents">

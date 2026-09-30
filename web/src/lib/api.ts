@@ -2809,7 +2809,7 @@ export const restoreHistory = (id: string, n: number, expectedMtime?: number) =>
 /* ------------------------------ 构建版本 ---------------------------------- */
 
 /** 服务器上 dist/index.html 当前引用的 bundle 名（如 index-DaQsrMg2） */
-export const fetchBuildVersion = () => jsonFetch<{ build: string }>('/api/version')
+export const fetchBuildVersion = () => jsonFetch<{ build: string; version?: string }>('/api/version')
 
 /**
  * 本页面自己跑的是哪个 bundle——直接从 <script src> 提取，

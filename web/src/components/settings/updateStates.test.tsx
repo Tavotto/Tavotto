@@ -21,6 +21,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { t } from '@/i18n'
 import { formatDateTime } from '@/i18n/format'
 import { UpdateSettings } from '@/components/settings/UpdateSettings'
+import { PrivacyAboutSettings } from '@/components/settings/PrivacyAboutSettings'
 import { useUpdateStore } from '@/store/updateStore'
 
 declare global {
@@ -371,5 +372,30 @@ describe('完成', () => {
     expect(text()).toContain(st('update.restartStrong'))
     // 重启之前那个按钮必须消失：再点一次只会再装一遍已经装好的东西
     expect(byLabel(st('update.downloadAndUpgrade'))).toBeUndefined()
+  })
+})
+
+describe('版本号不依赖更新接口', () => {
+  it('更新接口失败（status 取不到）时，关于页的产品头仍显示版本', async () => {
+    seed({ status: null })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL) =>
+        String(input).includes('/api/version')
+          ? Promise.resolve({
+              ok: true,
+              json: () => Promise.resolve({ build: 'dev', version: '0.99.1' }),
+            } as Response)
+          : Promise.reject(new Error('更新接口不通')),
+      ),
+    )
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => {
+      root.render(<PrivacyAboutSettings />)
+    })
+    await act(async () => {})
+    expect(text()).toContain('v0.99.1')
   })
 })
