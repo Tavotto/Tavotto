@@ -412,7 +412,9 @@ test('试运行撞上依赖门：弹授权框、不进「可能需要原环境�
   await expect(dialog).toBeVisible()
 
   // 「不准备，直接运行」：真后端记下跳过，这一行自动再试运行（真 worker）→ 发现图
-  await dialog.getByRole('button', { name: '不准备，直接运行' }).click()
+  // 「不准备，直接运行」收在默认折叠的「详情」里（#742 一键修复：默认只有一个主按钮）——先展开再点
+  await dialog.locator('[data-repair-advanced] summary').click()
+  await dialog.locator('[data-dependency-skip]').click()
   await expect(dialog).toHaveCount(0)
   await expect(page.getByText('已发现 1 张图')).toBeVisible({ timeout: 120_000 })
   await expect(page.locator('[data-card="runtime:show_only.py#show_only"]')).toBeVisible({ timeout: 30_000 })

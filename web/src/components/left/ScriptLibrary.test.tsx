@@ -926,8 +926,10 @@ describe('试运行撞上起会话之前的门', () => {
     // ② 不是失败：不进「可能需要原环境」，没有那两颗无关的出口
     expect(host.textContent).not.toContain('可能需要原环境')
     expect(host.textContent).not.toContain('选择渲染环境')
+    // 授权框就是 #742 改过的那一个：默认只有一个主按钮「一键修复」（不另起一套界面）
+    expect(docButton('准备并继续'), '跑前授权框不该再出现旧的主按钮').toBeUndefined()
     // 授权：先绑定计划再只发 plan_id
-    await act(async () => docButton('准备并继续')!.click())
+    await act(async () => docButton('一键修复')!.click())
     await flush()
     expect(createJointDependencyPlan).toHaveBeenCalledWith({ script: 'fig_labels.py', target: 'tavotto_managed' })
     expect(prepareJointDependencies).toHaveBeenCalledWith('jp-row')

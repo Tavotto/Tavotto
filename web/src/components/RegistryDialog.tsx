@@ -23,11 +23,13 @@ import {
   scanRegistry,
   writeRegistryEntry,
   type CapturedFigureDescriptor,
+  type DependencyPreparationOffer,
   type ReadinessPanel,
   type ReadinessReport,
   type ReadinessStatus,
   type RegistryView,
   type ScriptInventoryEntry,
+  type WorkdirConfirmation,
 } from '@/lib/api'
 import {
   PENDING_STATUSES,
@@ -47,10 +49,12 @@ import {
   handOffProbeGate,
   onGateResolved,
   probeErrorOf,
+  scriptRunEpoch,
   whenScriptIdle,
 } from '@/store/scriptRunStore'
 import { currentProjectId } from '@/lib/session'
 import { useUiStore } from '@/store/uiStore'
+import { DependencyPrepareButton, WorkdirChooseButton } from './WorkdirRow'
 import { Button, IconButton } from './ui/Button'
 import { Dialog } from './ui/Dialog'
 import { EmptyState } from './ui/EmptyState'
@@ -121,6 +125,9 @@ interface ProbeNote {
   traceback?: string
   /** 成功时：本次捕获的描述符（「添加到画布」把它们放成 runtime 面板） */
   descriptors?: CapturedFigureDescriptor[]
+  /** 停在起会话之前的门上：再打开授权框 / 运行目录确认框的载荷 */
+  prepare?: DependencyPreparationOffer
+  workdir?: WorkdirConfirmation
 }
 
 function ReadinessBody() {
@@ -173,20 +180,27 @@ function ReadinessBody() {
 
   // 停在门上的逐行试运行：门有了答案（授权准备 / 选定运行目录）就重跑那一行，与素材库脚本行同一个承诺。
   // 记下发起时的项目：换了项目的答案不重跑这边的行
-  const gated = useRef(new Map<string, { phase: 'needs_workdir' | 'needs_preparation'; project: string | null }>())
+  // 按**代际**记（`scriptRunEpoch`，每次换项目 +1）：A → B → A 回来的是同一个项目 id、却是新的一代，
+  // 上一代记下的待重跑不该在这一代被放行（#740 Codex P2）
+  const gated = useRef(
+    new Map<string, { phase: 'needs_workdir' | 'needs_preparation'; project: string | null; epoch: number }>(),
+  )
   const probeRef = useRef<(script: string) => void>(() => {})
   useEffect(
     () =>
       onGateResolved((phase, resolved) => {
         for (const [script, g] of [...gated.current]) {
           if (g.phase !== phase || (resolved && resolved !== script)) continue
-          if (g.project !== currentProjectId()) continue
+          if (g.project !== currentProjectId() || g.epoch !== scriptRunEpoch()) {
+            gated.current.delete(script)
+            continue
+          }
           gated.current.delete(script)
           // 素材库那一行可能也停在这道门上、此刻正被 `rerunGated` 重跑：同一脚本后端只许一个在跑，
           // 等它跑完再跑这一行的，别撞成 probe_in_progress 当场报失败
           // 等待期间换了项目（换代会清掉素材库的记账、等待随之 resolve）：这一行属于发起时的项目，不重跑
           void whenScriptIdle(script).then(() => {
-            if (currentProjectId() === g.project) probeRef.current(script)
+            if (currentProjectId() === g.project && scriptRunEpoch() === g.epoch) probeRef.current(script)
           })
         }
       }),
@@ -209,6 +223,7 @@ function ReadinessBody() {
   const probe = (script: string) =>
     run(script, async () => {
       const project = currentProjectId()
+      const epoch = scriptRunEpoch()
       // 门的两个 code 可能以非 2xx 回来（请求直接抛）：与素材库同一个解析器，抛出来的也认得门
       const res = await probeScript(script).catch((e: unknown) => {
         const error = probeErrorOf(e)
@@ -223,8 +238,17 @@ function ReadinessBody() {
         const text = formatMessage(
           backendCodeMsg(res.error!.code, res.error!.params, res.error!.message),
         )
-        setProbed((p) => ({ ...p, [script]: { text } }))
-        gated.current.set(script, { phase: gate, project })
+        // 行上留着再打开的入口（与画布错误块同一颗按钮）：同一时刻只开一份授权框，别的脚本的框开着时
+        // 这一份没弹出来；「稍后」关掉之后也要能再开——否则这一行就停在「还差一步」上无路可走（#740 Codex P2）
+        setProbed((p) => ({
+          ...p,
+          [script]: {
+            text,
+            prepare: res.error!.dependency_preparation ?? undefined,
+            workdir: res.error!.confirmation ?? undefined,
+          },
+        }))
+        gated.current.set(script, { phase: gate, project, epoch })
         return
       }
       gated.current.delete(script)
@@ -1040,6 +1064,8 @@ function ProbeNoteView({ note }: { note?: ProbeNote }) {
   return (
     <div className="type-caption mt-1">
       <p className="whitespace-pre-wrap">{note.text}</p>
+      {note.prepare && <DependencyPrepareButton offer={note.prepare} />}
+      {note.workdir && <WorkdirChooseButton confirmation={note.workdir} />}
       {/* 捕获成功的每张图可以直接作为 runtime 面板放上画布。没有磁盘产物的
           show-only 图从这里第一次真正进入产品。 */}
       {note.descriptors && note.descriptors.length > 0 && (

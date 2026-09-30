@@ -26,7 +26,7 @@ import { WorkdirChooseButton } from '@/components/WorkdirRow'
 import { i18n, t } from '@/i18n'
 import { setCurrentProjectId } from '@/lib/session'
 import { useEnvStore } from '@/store/envStore'
-import { onGateResolved } from '@/store/scriptRunStore'
+import { onGateResolved, useScriptRunStore } from '@/store/scriptRunStore'
 import { useRenderStore } from '@/store/renderStore'
 import { useUiStore } from '@/store/uiStore'
 
@@ -302,6 +302,26 @@ describe('WorkdirConfirmDialog', () => {
         await new Promise((r) => setTimeout(r, 0))
       })
       expect(resolved, 'A 的确认重跑了 B 的试运行').toEqual([])
+      // A → B → A：回到同一个项目 id，但已是新的一代——在途的那次选择没有落在这一代上，同样不重跑
+      resolved.length = 0
+      setCurrentProjectId('pA')
+      await act(async () => useEnvStore.getState().requestWorkdirConfirmation(rootEvidence()))
+      let release2!: (v: unknown) => void
+      setMock.mockReturnValue(new Promise((r) => (release2 = r)) as never)
+      await act(async () => button(en('workdirChooseRun'))!.click())
+      await act(async () => {
+        setCurrentProjectId('pB')
+        useScriptRunStore.getState().clear()
+        await useEnvStore.getState().resetProject()
+        setCurrentProjectId('pA')
+        useScriptRunStore.getState().clear()
+        await useEnvStore.getState().resetProject()
+      })
+      await act(async () => {
+        release2(ok)
+        await new Promise((r) => setTimeout(r, 0))
+      })
+      expect(resolved, 'A → B → A 之后，上一代的确认重跑了这一代的试运行').toEqual([])
     } finally {
       off()
       setCurrentProjectId(null)

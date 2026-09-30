@@ -442,6 +442,58 @@ describe('绝不替用户决定', () => {
     setCurrentProjectId(null)
   })
 
+  it('A → B → A：上一代记下的待重跑在这一代不被放行（#740 Codex P2）', async () => {
+    setCurrentProjectId('p1')
+    const offer = { code: 'dependency_preparation_required', script: 'dyn.py', plan: {}, target_kind: 'tavotto_managed', targets: [], rounds_remaining: 3, skipped: false }
+    mockProbe.mockResolvedValue({
+      script: 'dyn.py', entry: null, stems: [], descriptors: [], tried: [],
+      error: { code: 'dependency_preparation_required', message: '要先准备依赖', dependency_preparation: offer as never },
+    })
+    await open(reportOf(SIX))
+    await clickIn(rowOf('Mystery.pdf')!, '试运行并连接')
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0))
+    })
+    // 换到 p2 再回 p1：项目 id 相同、代际已变（projectStore 每次换代都清 scriptRunStore）
+    await act(async () => {
+      setCurrentProjectId('p2')
+      useScriptRunStore.getState().clear()
+      setCurrentProjectId('p1')
+      useScriptRunStore.getState().clear()
+    })
+    mockProbe.mockClear()
+    await act(async () => {
+      useScriptRunStore.getState().rerunGated('needs_preparation', 'dyn.py')
+      await new Promise((r) => setTimeout(r, 10))
+    })
+    expect(mockProbe, '上一代的待重跑在这一代被放行了').not.toHaveBeenCalled()
+    useEnvStore.setState({ dependencyPreparation: null })
+    setCurrentProjectId(null)
+  })
+
+  it('别的脚本的授权框开着时撞上的门：行上留着再打开的按钮，不停在「还差一步」上（#740 Codex P2）', async () => {
+    setCurrentProjectId('p1')
+    const other = { code: 'dependency_preparation_required', script: 'other.py', plan: {}, target_kind: 'tavotto_managed', targets: [], rounds_remaining: 3, skipped: false }
+    const offer = { ...other, script: 'dyn.py' }
+    useEnvStore.setState({ dependencyPreparation: other as never })
+    mockProbe.mockResolvedValue({
+      script: 'dyn.py', entry: null, stems: [], descriptors: [], tried: [],
+      error: { code: 'dependency_preparation_required', message: '要先准备依赖', dependency_preparation: offer as never },
+    })
+    await open(reportOf(SIX))
+    await clickIn(rowOf('Mystery.pdf')!, '试运行并连接')
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0))
+    })
+    expect(useEnvStore.getState().dependencyPreparation, '前提：开着的是别的脚本那一份').toEqual(other)
+    // 那一份作答完关掉之后，这一行能把自己的那份再打开
+    await act(async () => useEnvStore.setState({ dependencyPreparation: null }))
+    await clickIn(rowOf('Mystery.pdf')!, '准备依赖…')
+    expect(useEnvStore.getState().dependencyPreparation, '行上没有再打开的入口').toEqual(offer)
+    useEnvStore.setState({ dependencyPreparation: null })
+    setCurrentProjectId(null)
+  })
+
   it('冲突：两个候选都列出来，一个都不预选、也不自动写', async () => {
     await open(reportOf(SIX))
     const row = rowOf('Dup.pdf')!

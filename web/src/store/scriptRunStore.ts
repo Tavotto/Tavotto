@@ -161,6 +161,12 @@ export function whenScriptIdle(script: string): Promise<void> {
   })
 }
 
+/**
+ * 项目代际：每次换项目 `clear()` 都 +1（A → B → A 回到同一个项目 id，代际也已经变了）。跨 await 的
+ * 副作用（门放行后的重跑）按它判「还是不是发起时的那一代」，不按项目 id 判（#740 Codex P2）。
+ */
+export const scriptRunEpoch = (): number => useScriptRunStore.getState().epoch
+
 /** 门的 code → 它对应的相位（不是门回 null） */
 export function gatePhaseOf(error: ProbeError | null | undefined): 'needs_workdir' | 'needs_preparation' | null {
   if (!error) return null
