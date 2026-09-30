@@ -2,6 +2,8 @@ import { useDocumentStore } from '@/store/documentStore'
 import { setMomentSink, takeCheckpoint, markMoment } from '@/lib/timelineCheckpoint'
 import { onLayoutSaved } from '@/lib/layoutSaved'
 import { currentTimelineCtx } from '@/lib/timelineContext'
+import { currentProjectId } from '@/lib/session'
+import { useTimelineStore } from '@/store/timelineStore'
 
 /**
  * 排版时间线的自动节点：编辑停顿后落一个服务器快照；关键时刻另打点（ADR 0101）。
@@ -41,6 +43,27 @@ function timing(): { debounceMs: number; minGapMs: number } {
  */
 export function markWorkspaceOpened(): Promise<unknown> {
   return markMoment('open')
+}
+
+/**
+ * 等 `ready`（启动时素材清单与文档恢复都到齐）之后再打「打开项目」点——**只打给启动时那个
+ * 项目**（Codex #679）：`ready` 回来之前用户就切到了 B 的话，`adoptNow` 已经给 B 打过自己的
+ * 「打开」，这里再打就是 B 里多出来的一个。发起时记下项目代际与 pj，回来一核，对不上就丢；
+ * 返回的函数（Workspace 卸载时调）直接作废这一次。
+ */
+export function markWorkspaceOpenedAfter(ready: Promise<unknown>): () => void {
+  const gen = useTimelineStore.getState().gen
+  const pj = currentProjectId()
+  let cancelled = false
+  void ready
+    .then(() => {
+      if (cancelled || useTimelineStore.getState().gen !== gen || currentProjectId() !== pj) return
+      return markWorkspaceOpened()
+    })
+    .catch(() => undefined)
+  return () => {
+    cancelled = true
+  }
 }
 
 export function startVersionCheckpoints(): () => void {

@@ -12,7 +12,13 @@ vi.mock('@/lib/timelineThumb', () => ({
 import { emptyProject, type TextObject } from '@/types/document'
 import { useDocumentStore } from '@/store/documentStore'
 import { currentProjectId, setCurrentProjectId } from '@/lib/session'
-import { DEBOUNCE_MS, MIN_GAP_MS, startVersionCheckpoints } from '@/hooks/useVersionCheckpoints'
+import {
+  DEBOUNCE_MS,
+  MIN_GAP_MS,
+  markWorkspaceOpenedAfter,
+  startVersionCheckpoints,
+} from '@/hooks/useVersionCheckpoints'
+import { useTimelineStore } from '@/store/timelineStore'
 import { captureMoment, markMoment, takeCheckpoint } from './timelineCheckpoint'
 import { composeTimelineThumb } from './timelineThumb'
 import { groupTimeline } from './timelineGroups'
@@ -99,6 +105,63 @@ describe('takeCheckpoint', () => {
     expect(posts[0].headers['X-Tavotto-Project']).toBe('p_A')
     expect(posts[0].url).toContain('pj=p_A')
     expect(currentProjectId()).toBe('p_B')
+  })
+})
+
+describe('节点记下的画布名（Codex #679）', () => {
+  it('当前画布刚改名就打节点：记下的是新名字（取活文档，不取还没同步的画布列表）', async () => {
+    edit('t1')
+    const st = useDocumentStore.getState()
+    st.renameCanvas(st.activeCanvasId, '改过的名字')
+    expect(useDocumentStore.getState().canvases.find((c) => c.id === st.activeCanvasId)?.name).not.toBe(
+      '改过的名字',
+    ) // 前提：列表里那一条此刻确实还是旧名字
+    await takeCheckpoint({ auto: false, name: '存一个', allowEmpty: true })
+    expect(posts[0].body.canvasName).toBe('改过的名字')
+  })
+})
+
+describe('启动时的「打开项目」点只打给启动时那个项目（Codex #679）', () => {
+  const deferred = () => {
+    let resolve!: () => void
+    const promise = new Promise<void>((r) => (resolve = r))
+    return { promise, resolve }
+  }
+
+  it('加载途中切到别的项目：一个 open 都不打（新项目自己的「打开」由 adoptNow 打）', async () => {
+    const stop = startVersionCheckpoints()
+    setCurrentProjectId('p_A')
+    edit('t1')
+    const ready = deferred()
+    markWorkspaceOpenedAfter(ready.promise)
+    useTimelineStore.getState().clear() // 换项目：代际 +1
+    setCurrentProjectId('p_B')
+    ready.resolve()
+    await new Promise((r) => setTimeout(r, 0))
+    stop()
+    expect(posts.filter((p) => p.body.moment === 'open')).toHaveLength(0)
+  })
+
+  it('Workspace 卸载（取消）之后才到齐：不打', async () => {
+    const stop = startVersionCheckpoints()
+    edit('t1')
+    const ready = deferred()
+    markWorkspaceOpenedAfter(ready.promise)()
+    ready.resolve()
+    await new Promise((r) => setTimeout(r, 0))
+    stop()
+    expect(posts.filter((p) => p.body.moment === 'open')).toHaveLength(0)
+  })
+
+  it('对照：不切换，到齐之后照常打一个', async () => {
+    const stop = startVersionCheckpoints()
+    setCurrentProjectId('p_A')
+    edit('t1')
+    const ready = deferred()
+    markWorkspaceOpenedAfter(ready.promise)
+    ready.resolve()
+    await vi.waitFor(() => expect(posts.filter((p) => p.body.moment === 'open')).toHaveLength(1))
+    stop()
   })
 })
 

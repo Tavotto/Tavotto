@@ -700,7 +700,8 @@ function TimelineRow({
  */
 async function confirmRestoreTarget(meta: LayoutVersionMeta): Promise<boolean> {
   const s = useDocumentStore.getState()
-  const here = s.canvases.find((c) => c.id === s.activeCanvasId)?.name ?? s.doc.name
+  // 当前画布的名字取活文档的（`canvases` 里那一条要等下次切画布才同步改名）
+  const here = s.doc.name
   const target = resolveRestoreTarget(meta, s)
   if (target.kind === 'same') return true
   if (target.kind === 'other') {

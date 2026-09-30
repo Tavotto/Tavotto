@@ -27,13 +27,15 @@ import type { FigureDocument } from '@/types/document'
  * 看着好好的，恢复时才发现它不知道自己来自哪张画布（R-03）。
  */
 export function activeCanvasIdentity() {
-  const { doc, activeCanvasId, canvases, documentId } = useDocumentStore.getState()
+  const { doc, activeCanvasId, documentId } = useDocumentStore.getState()
   return {
     documentId,
     pj: currentProjectId(),
     doc,
     canvasId: activeCanvasId,
-    canvasName: canvases.find((c) => c.id === activeCanvasId)?.name ?? doc.name,
+    // 当前画布的名字取**活文档**的：改名只写 `doc.name`，`canvases` 里那一条要等下一次切画布
+    // 才同步，从列表里读会把改名之前的旧名字记进节点（Codex #679）
+    canvasName: doc.name,
   }
 }
 

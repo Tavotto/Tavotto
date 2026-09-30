@@ -53,6 +53,7 @@ import { useDocumentStore } from '@/store/documentStore'
 import { useTimelineStore } from '@/store/timelineStore'
 import { setCurrentProjectId } from '@/lib/session'
 import { useUiStore } from '@/store/uiStore'
+import { formatMessage } from '@/i18n'
 import { emptyProject, type FigureDocument, type TextObject } from '@/types/document'
 
 declare global {
@@ -1364,6 +1365,22 @@ describe('存为命名节点：第一次请求还没回来，再回车 / 再提�
     await act(async () => release({ version: meta({ id: 'n1' }) }))
     await flush()
     expect(mockCreate).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('恢复确认框里的「当前画布」名字取活文档（Codex #679）', () => {
+  it('当前画布刚改名：确认框说的是新名字', async () => {
+    await mount([meta({ id: 'a1', canvasId: 'c_gone', canvasName: '已删的画布' })])
+    const st = useDocumentStore.getState()
+    await act(async () => st.renameCanvas(st.activeCanvasId, '刚改的名字'))
+    await act(async () => previews()[0].click())
+    await flush()
+    await act(async () => $<HTMLButtonElement>('[data-timeline-preview-restore]')!.click())
+    await flush()
+    const confirm = useUiStore.getState().confirm
+    expect(confirm).not.toBeNull()
+    expect(formatMessage(confirm!.body)).toContain('刚改的名字')
+    await act(async () => confirm!.resolve(false))
   })
 })
 

@@ -60,7 +60,7 @@ import { restoreSession, startAutosave, useDocumentStore } from '@/store/documen
 import { useViewportStore } from '@/store/viewportStore'
 import { startLayoutAutoReflow } from '@/store/actions'
 import { startPageSizeFit } from '@/store/pageFit'
-import { markWorkspaceOpened, startVersionCheckpoints } from '@/hooks/useVersionCheckpoints'
+import { markWorkspaceOpenedAfter, startVersionCheckpoints } from '@/hooks/useVersionCheckpoints'
 import { installDiagnosticsWiring } from '@/diagnostics/wiring'
 import { installDiagnosticsDevHook } from '@/diagnostics'
 import { useSelectionStore } from '@/store/selectionStore'
@@ -148,7 +148,7 @@ function Workspace() {
     // 启动那次静默：探测失败不该在用户还没进设置页时弹东西
     void useAiStore.getState().loadCaps().catch(() => {})
     // 磁盘恢复是异步的：恢复到文档后重新适配视口
-    void Promise.all([assets, restoreSession()]).then(([, restored]) => {
+    const loaded = Promise.all([assets, restoreSession()]).then(([, restored]) => {
       if (restored) {
         const page = useDocumentStore.getState().doc.page
         useViewportStore.getState().fit(page.w, page.h)
@@ -156,9 +156,10 @@ function Workspace() {
       // 素材清单与文档**都到齐**之后再对账：两个请求谁先回来是不定的，
       // 只挂在其中一个上就会有一半的时候拿着空清单去同步（= 什么都没做）
       syncLoadedDocument()
-      // 排版时间线的「打开项目」时刻：文档此刻才就位，时间线也已经在跑（ADR 0101 §3）
-      void markWorkspaceOpened()
     })
+    // 排版时间线的「打开项目」时刻：文档此刻才就位，时间线也已经在跑（ADR 0101 §3）；
+    // 只打给启动时那个项目——回来之前切走了就丢（`markWorkspaceOpenedAfter`）
+    const stopOpenMark = markWorkspaceOpenedAfter(loaded)
     const stopAutosave = startAutosave()
     // 挂载之后再换进来的文档（教程重开 / 载入画布文件 / 最近文档 …）同样要对账
     const stopLoadSync = startDocumentLoadSync()
@@ -213,6 +214,7 @@ function Workspace() {
     window.addEventListener('tavotto:autosave-error', onAutosaveError)
     window.addEventListener('tavotto:doc-conflict', onDocConflict)
     return () => {
+      stopOpenMark()
       stopAutosave()
       stopLoadSync()
       stopPrune()
