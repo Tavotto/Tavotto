@@ -278,6 +278,33 @@ def test_a_probe_that_ran_under_the_old_table_is_not_registered(tmp_path, monkey
     assert registered == []
 
 
+def test_a_probe_registration_remembers_the_table_it_ran_under(tmp_path, monkeypatch):
+    """试运行登记时记下改指表指纹：之后表一变，`registration_stale` 才说得出这条登记要跟着重来。"""
+    from tavotto.engine import discover, probe as engine_probe
+
+    root = tmp_path / "proj"
+    root.mkdir()
+
+    def ran(figures_dir, script, should_cancel=None):
+        return {
+            "script": script,
+            "entry": "__main__",
+            "stems": ["fig"],
+            "descriptors": [],
+            "tried": ["__main__"],
+            "error": None,
+            "remap_generation": inputremap.generation(figures_dir),
+        }
+
+    monkeypatch.setattr(engine_probe, "probe", ran)
+    monkeypatch.setattr(discover, "register", lambda *a, **k: None)
+    monkeypatch.setattr(engine_probe.registry, "load", lambda *a, **k: None)
+    assert engine_probe.probe_and_register(root, "fig.py")["registered"] is True
+    assert not inputremap.registration_stale(root, "fig.py")
+    inputremap.add_rule(root, {"kind": P, "from": "", "to": str(tmp_path)})
+    assert inputremap.registration_stale(root, "fig.py")
+
+
 def test_a_pooled_session_from_an_older_table_is_not_reused(tmp_path):
     root = tmp_path / "proj"
     root.mkdir()
