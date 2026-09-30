@@ -72,7 +72,9 @@ The install path only works once this version has been promoted to the `plugin-s
 「### Using Tavotto from other AI editors and clients (experimental)」之前；命令整行由 `brand.DSH_*` 拼出），
 并把 docs/support-matrix.json 的 dsh 改回 `status: beta` + `channel: dsh-bundle`；tests/test_dsh_bundle.py、
 test_install_commands_from_brand.py 与 test_mcp_host_profiles.py 按矩阵这一档判命令该在 README 还是在这里。
-ADR 0104「对外口径」。README 一节的原文：
+同时把指向这一节的提示加回：codex-plugin/integrations/configure.py 里 dsh 的 target 那句改回「更省事的是装 bundle
+（README「Using Tavotto with DeepSeek Harness」那条 dsh plugin 命令），就不需要这段 YAML；」
+（tests/test_readme_section_references.py 要求被引用的章节真的在）。ADR 0104「对外口径」。README 一节的原文：
 
 ### Using Tavotto with DeepSeek Harness (Beta)
 
