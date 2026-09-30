@@ -371,17 +371,20 @@ def _terminate(sess: dict) -> None:
     proc = sess.get("proc")
     if proc is None:
         return
+    pid = getattr(proc, "pid", None)
     try:
-        if os.name == "nt":
+        if not isinstance(pid, int):
+            pass  # 没有 pid 的替身：只剩下面的 kill()
+        elif os.name == "nt":
             subprocess.run(
-                ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
+                ["taskkill", "/T", "/F", "/PID", str(pid)],
                 stdin=subprocess.DEVNULL,  # 桌面 sidecar 的 stdin 是父进程死亡信号管道，不外传
                 capture_output=True,
                 timeout=10,
                 creationflags=CREATE_NO_WINDOW,
             )
         else:
-            os.killpg(proc.pid, signal.SIGKILL)
+            os.killpg(pid, signal.SIGKILL)
     except (OSError, subprocess.SubprocessError):
         pass
     try:
@@ -406,7 +409,7 @@ def _await_exit(sess: dict) -> None:
     try:
         if proc is not None:
             proc.wait()
-            if os.name != "nt":
+            if os.name != "nt" and isinstance(getattr(proc, "pid", None), int):
                 deadline = time.monotonic() + _GROUP_REAP_S
                 while time.monotonic() < deadline:
                     try:
