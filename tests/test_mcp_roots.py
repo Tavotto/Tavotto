@@ -379,7 +379,7 @@ def test_diagnostics_expose_the_bucket_without_failing_a_call_first(authority, t
     assert authority.diagnostics()["authorization"] is None
 
 
-# ------------------ ADR 0106：主目录本身（及其上级）不是工作区 ------------------
+# ------------------ ADR 0109：主目录本身（及其上级）不是工作区 ------------------
 @pytest.fixture
 def fake_home(tmp_path, monkeypatch):
     """把「当前账户的主目录」换成 tmp 里的一个目录；真实账户目录（pwd 那一格）照样在集合里。"""

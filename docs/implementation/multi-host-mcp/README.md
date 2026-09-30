@@ -1,6 +1,6 @@
 # 多宿主本地 MCP 接入（Cursor / ZCode / DSH / WorkBuddy / Claude Code / Claude Desktop / Trae / VS Code / MiniMax Code）
 
-> 2026-09-28 追加（ADR 0106）：MiniMax Code profile；WorkBuddy 装 Claude 插件（Beta）；ZCode 的插件路线与 Trae 一键链接；
+> 2026-09-28 追加（ADR 0109）：MiniMax Code profile；WorkBuddy 装 Claude 插件（Beta）；ZCode 的插件路线与 Trae 一键链接；
 > Codex 的 MCP 配置改名 `codex.mcp.json`；授权根拒绝主目录。字段依据在 `hosts.md`，证据在 `acceptance.md`。
 
 > 这是一项**兼容性**改造，不是按宿主数新建产品：同一份版本化完整包、同一个 MCP

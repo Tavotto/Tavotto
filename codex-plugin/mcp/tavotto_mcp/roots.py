@@ -312,7 +312,7 @@ def contains_home(path: str) -> bool:
     主语是**授权根**：任何一个入口（``TAVOTTO_MCP_ROOTS``、``roots/list``、用户确认、
     宿主工作区变量、cwd 兜底）交来的目录。MiniMax Code 走插件时 ``roots/list`` 回的就是
     home，WorkBuddy / MiniMax 的插件进程 cwd 也可能是 home——「用户级配置」≠「允许读整个
-    用户目录」（ADR 0106，与配置生成器 ``validate_project_root`` 同一条线）。
+    用户目录」（ADR 0109，与配置生成器 ``validate_project_root`` 同一条线）。
     """
     return any(_within(home, path) for home in home_dirs())
 

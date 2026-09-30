@@ -296,7 +296,7 @@ def stage(
                 raise StageError(f"组装结果缺 {rel}")
         for rel in sorted(modes):
             if STAGE_FORBIDDEN.match(rel):
-                # 别的宿主会自动读它（插件根 .mcp.json / WorkBuddy 的 mcp/*.json），ADR 0106
+                # 别的宿主会自动读它（插件根 .mcp.json / WorkBuddy 的 mcp/*.json），ADR 0109
                 raise StageError(f"组装结果里有 {rel}：其它宿主会把它当自己的 MCP 配置读")
 
         lock = root / "web" / "pnpm-lock.yaml"

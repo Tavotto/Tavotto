@@ -1602,7 +1602,7 @@ def _interpreter_step(plugin_dir: Path | None, py: str | None, *, apply: bool) -
         )
     server = plugin_dir / "mcp" / "server.py"
     try:
-        # 新版叫 codex.mcp.json、已装旧版叫 .mcp.json：由 Codex 清单指向决定（ADR 0106）
+        # 新版叫 codex.mcp.json、已装旧版叫 .mcp.json：由 Codex 清单指向决定（ADR 0109）
         mcp_path = plugin_dir / pluginmanifest.mcp_config_rel(plugin_dir)
         data = json.loads(mcp_path.read_text(encoding="utf-8"))
         command = next(iter(data["mcpServers"].values()))["command"]

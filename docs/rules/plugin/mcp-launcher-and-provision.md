@@ -8,7 +8,7 @@
 
 - **Codex MCP 配置的 `command` 是插件自带的 `./mcp/launch`**（#172 → #266：2026-09-24 先做成
   sh / cmd 同一文件的双语启动器 `./mcp/launch.cmd`；2026-09-29 真 Windows 实测它零工具，拆成
-  一对文件）。配置文件自 ADR 0106（2026-09-28）起叫 `codex.mcp.json`、由 Codex 清单 `mcpServers` 指向（已装的
+  一对文件）。配置文件自 ADR 0109（2026-09-28）起叫 `codex.mcp.json`、由 Codex 清单 `mcpServers` 指向（已装的
   旧版仍是 `.mcp.json`，体检与钉 command 都按清单指向找，`pluginmanifest.mcp_config_rel`）。
   Codex 的 MCP 配置没有按平台分支的字段、没有候选链，`command` 也**不过 shell**
   （实测：`command` 与 `args` 分开传，相对路径按 `cwd` 解析），一个裸名字盖不住 POSIX 与

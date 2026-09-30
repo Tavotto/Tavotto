@@ -1,6 +1,6 @@
 # 各宿主的官方依据与生成的配置形状
 
-查证日期 **2026-09-24**；ZCode / WorkBuddy / Trae 于 **2026-09-28** 重查到官方全文或客户端源码，并新增 MiniMax Code（ADR 0106）。证据等级（`HOSTS[...]["evidence"]` 与本表一致，测试对拍）：
+查证日期 **2026-09-24**；ZCode / WorkBuddy / Trae 于 **2026-09-28** 重查到官方全文或客户端源码，并新增 MiniMax Code（ADR 0109）。证据等级（`HOSTS[...]["evidence"]` 与本表一致，测试对拍）：
 
 - `official_source`：读到了官方文档全文（直接抓取官方站点页面，或官方文档仓库的源文件）；
 - `search_snippet`：本次执行环境的出网代理拦了该站点（HTTP 403），只拿到同一官方域名下的
@@ -26,7 +26,7 @@
 
 工具超时的唯一出处是包里 Codex 配置的 `tool_timeout_sec`（1800 秒）；有经核实字段的
 宿主按单位换算（DSH / Claude Code / ZCode / MiniMax Code 都是毫秒 → 1 800 000；Trae 写进 `env`，启动超时同样由
-`startup_timeout_sec` 换算）。Codex 的这份配置自 ADR 0106 起叫 `codex.mcp.json`（由 Codex 清单的
+`startup_timeout_sec` 换算）。Codex 的这份配置自 ADR 0109 起叫 `codex.mcp.json`（由 Codex 清单的
 `mcpServers` 指向）——插件根不再有 `.mcp.json`，因为 Claude Code / ZCode / WorkBuddy / MiniMax Code 都会自动读那个名字。Codex 的字段名（`tool_timeout_sec`、
 `startup_timeout_sec`、`env_vars`、`cwd`）不抄给任何别的宿主。
 
@@ -52,7 +52,7 @@
   插件根 `.mcp.json` 会被读，再被清单同名条目**整条替换**（与 Claude Code 同方向）。市场：界面
   Settings → Plugins → Add marketplace，或 `zcode plugins marketplace add <owner/repo|git url|目录> [--sparse <路径>]`
   + `zcode plugins install tavotto@tavotto`；先读 `.claude-plugin/marketplace.json`，`git-subdir` 支持。
-  **同一份 Claude 清单直接可装**（ADR 0106），清单里为它加了 `timeoutMs`。市场条目不写 `version`
+  **同一份 Claude 清单直接可装**（ADR 0109），清单里为它加了 `timeoutMs`。市场条目不写 `version`
   （Claude Code 要求版本只在 plugin.json）——ZCode 按条目 `version` 判更新，所以**不会提示有新版**，
   更新要手动 `zcode plugins update tavotto@tavotto`。
 - 客户端能力：**不回 `roots/list`**、不声明 elicitation、不渲染 MCP Apps；server 进程的 cwd 是工作区目录，
@@ -99,7 +99,7 @@
   `${CLAUDE_PLUGIN_ROOT}` / `${CODEBUDDY_PLUGIN_ROOT}` 都替换。**合并方向与 Claude Code 相反**：先清单
   `mcpServers`，再用插件根 `.mcp.json` 与 `mcp/*.json` 按名覆盖——所以插件根有 Codex 形状的 `.mcp.json`
   时，Tavotto 按 `./mcp/launch.cmd` 在会话目录里起、ENOENT（隔离实测）；加 `.codebuddy-plugin/` 清单也盖不掉。
-  ADR 0106 因此把 Codex 的配置改名 `codex.mcp.json`，插件根不留任何自动读取的 MCP 配置。市场来源支持
+  ADR 0109 因此把 Codex 的配置改名 `codex.mcp.json`，插件根不留任何自动读取的 MCP 配置。市场来源支持
   `owner/repo`、git、https、zip、目录；插件来源支持 `git-subdir`（字段与 Claude Code 相同，要本机有 git）。
   界面入口：插件市场 → 添加市场（`Tavotto/Tavotto`）→ 安装 tavotto；没有一键 deep link。
 - 客户端能力：**不回 `roots/list`**、不声明 elicitation；server 进程的 cwd 是会话工作目录，授权落到 cwd 兜底
@@ -132,7 +132,7 @@
   `.claude-plugin/marketplace.json`（`git-subdir → plugin-stable`），装法
   `claude plugin marketplace add Tavotto/Tavotto --sparse .claude-plugin` 与
   `claude plugin install tavotto@tavotto`。插件的 MCP 条目写在 plugin.json 里、与 Codex 配置**同名**。
-  （ADR 0103 时 Codex 配置就是插件根 `.mcp.json`，Claude Code 先读它再按名替换；ADR 0106 起它改名
+  （ADR 0103 时 Codex 配置就是插件根 `.mcp.json`，Claude Code 先读它再按名替换；ADR 0109 起它改名
   `codex.mcp.json`，插件根没有 `.mcp.json` 了，Claude Code 只看到清单这一条——2.1.283 `mcp list` 实测只有
   `plugin:tavotto:tavotto` 一个、Connected。）条目同时带 `timeoutMs`（给 ZCode），Claude Code 忽略它。
   授权走 `roots/list`（启动目录 + `/add-dir`），不写 `TAVOTTO_MCP_ROOTS`。插件版不需要上面这段配置。
@@ -181,7 +181,7 @@
   `roots/list` 都是项目目录——生成器仍写 `TAVOTTO_MCP_ROOTS`。
 - **不走插件**：它认 `.claude-plugin/plugin.json` 与 `${CLAUDE_PLUGIN_ROOT}`，但兼容模式遇到未知字段整条丢弃——
   Claude 清单里给 ZCode 的 `timeoutMs` 会让 tavotto 被丢掉；插件进程的 cwd 与 roots 都是用户主目录（Tavotto 拒绝，
-  ADR 0106）；CLI 也不收 GitHub / 第三方市场。所以只给项目 `.mcp.json` 这条路。
+  ADR 0109）；CLI 也不收 GitHub / 第三方市场。所以只给项目 `.mcp.json` 这条路。
 - Skill：工作区 `.agents/skills`、`.claude/skills`、`.minimax/skills`。
 - 客户端能力：声明 `roots`（不 listChanged），不声明 elicitation，不渲染 MCP Apps。
 - `mcode exec` 即使配了自定义 provider 也要先登录 MiniMax 账户（0.5.8 实测），真宿主工具流程没跑。

@@ -16,7 +16,7 @@
   `host_ui_rendered` 永远是 `unknown_to_server`，不从资源在推断画布已显示。
 - **Claude Code 插件形态（ADR 0103）**：同一份插件目录多一份 `.claude-plugin/plugin.json`，仓库根
   `.claude-plugin/marketplace.json` 走 `git-subdir → plugin-stable`，发行链不改。plugin.json 的
-  `mcpServers` 与 Codex 配置**同名**（ADR 0106 前 Codex 配置就是插件根 `.mcp.json`，Claude Code 先读它再按名替换，名字不同 = Codex 那条也被
+  `mcpServers` 与 Codex 配置**同名**（ADR 0109 前 Codex 配置就是插件根 `.mcp.json`，Claude Code 先读它再按名替换，名字不同 = Codex 那条也被
   起一遍并失败），条目是同一个启动器的 `${CLAUDE_PLUGIN_ROOT}/` 写法、`timeout` 由 `tool_timeout_sec`
   换算成毫秒、不带 Codex 字段；不写 `skills` 键（会替换默认位置）；授权走 `roots/list`。进
   `STAGE_REQUIRED`、不进 `REQUIRED`。安装命令唯一出处 `brand.CLAUDE_*`。看护 `tests/test_claude_plugin.py`。
@@ -29,7 +29,7 @@
   胶水读的全部路径；三份文件进 `STAGE_REQUIRED`。安装规格唯一出处 `brand.DSH_*`。看护 `tests/test_dsh_bundle.py`。
 - 两种安装命令（`claude plugin …` 与 `dsh plugin …` 的规格 / 包名）凡在进版本库的 Markdown 里出现（ADR 与已发行的发行说明除外），
   都要与 `brand.CLAUDE_*` / `brand.DSH_*` 拼出的整段相等：看护 `tests/test_install_commands_from_brand.py`，不按文件点名。
-- **更多宿主装同一份 Claude 插件（ADR 0106）**：Claude Code / ZCode / WorkBuddy / MiniMax Code 都会自动读插件根
+- **更多宿主装同一份 Claude 插件（ADR 0109）**：Claude Code / ZCode / WorkBuddy / MiniMax Code 都会自动读插件根
   `.mcp.json`，而 WorkBuddy 让它**覆盖**清单同名条目（Codex 形状的相对启动器在那边 ENOENT）——所以 Codex 的配置
   改名 `codex.mcp.json`、由 Codex 清单 `mcpServers` 指向，**插件目录里不许有 `.mcp.json` 与 `mcp/*.json`**
   （`pluginmanifest.STAGE_FORBIDDEN`，stage 拒绝；已装的旧版仍是 `.mcp.json`，体检 / 钉 command 按清单指向找
@@ -37,7 +37,7 @@
   的插件兼容模式会因 `timeoutMs` 整条丢弃，所以它只走项目 `.mcp.json` 生成器。WorkBuddy 的安装入口（市场
   `brand.WORKBUDDY_MARKETPLACE` + `brand.CLAUDE_PLUGIN_REF`）唯一出处在 brand。Trae 生成器给一键链接
   （`install_links`，国际版 / 国内版两个前缀）、超时写 env、command 含空格拒绝。
-- **授权根不收主目录（ADR 0106）**：`RootAuthority` 的五个入口（显式变量、`roots/list`、用户确认、宿主工作区
+- **授权根不收主目录（ADR 0109）**：`RootAuthority` 的五个入口（显式变量、`roots/list`、用户确认、宿主工作区
   变量、cwd 兜底）与生成器 `validate_project_root` 同一判据——主目录本身及其上级一律拒，子目录照收；
   主目录集合 `roots.home_dirs()` 与生成器 `_home_dirs()` 对拍。被拒而没有别的根时是独立一档
   `workspace_root_too_broad`（支持确认框的宿主在 cwd 兜底被拒时仍报「请确认」）。看护 `tests/test_mcp_roots.py` 末节。

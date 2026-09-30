@@ -592,7 +592,7 @@ def tool_timeout_sec() -> "int | None":
 def codex_timeout_sec(field: str) -> "int | None":
     """超时的唯一出处：包里 Codex MCP 配置的 `tool_timeout_sec`（秒）。
 
-    配置文件是 Codex 清单 `mcpServers` 指向的那一份（`codex.mcp.json`，ADR 0106——
+    配置文件是 Codex 清单 `mcpServers` 指向的那一份（`codex.mcp.json`，ADR 0109——
     不叫 `.mcp.json`，别的宿主会自动读那个名字）。其他宿主有自己的字段与单位
     （DSH `toolCallTimeoutMs`、Claude Code `timeout` 都是毫秒），序列化时按单位换算，
     **不把 Codex 的字段名原样抄过去**。

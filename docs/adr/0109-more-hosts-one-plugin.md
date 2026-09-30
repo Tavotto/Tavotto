@@ -1,4 +1,4 @@
-# ADR 0106：ZCode / WorkBuddy / MiniMax Code / Trae 与同一份插件目录
+# ADR 0109：ZCode / WorkBuddy / MiniMax Code / Trae 与同一份插件目录
 
 日期：2026-09-28 · 状态：**Accepted**（用户 2026-09-28 要求「顺带再适配 Zcode、workbuddy、minimax code、Trae」，
 并对下面三处取舍当场拍板）

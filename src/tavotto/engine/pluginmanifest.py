@@ -48,7 +48,7 @@ CANVAS = GENERATED[0]
 #: （tests/test_plugin_stage.py 对拍）：那边是写的一侧，这边是验的一侧。
 WIDGET_STAMP = "<!-- tavotto-mcp-widget "
 #: 一份完整插件**必须**有的文件（缺一个都不是「完整插件」）
-#: Codex 的 MCP 配置文件（相对插件根）。**不叫 `.mcp.json`**（ADR 0106）：WorkBuddy / ZCode /
+#: Codex 的 MCP 配置文件（相对插件根）。**不叫 `.mcp.json`**（ADR 0109）：WorkBuddy / ZCode /
 #: Claude Code 都会读插件根的 `.mcp.json`，WorkBuddy 还让它覆盖清单里的同名条目，Codex 形状的
 #: `./mcp/launch.cmd` 在那边按会话目录解析、起不来。Codex 按清单 `mcpServers` 的路径读，名字随意。
 CODEX_MCP = "codex.mcp.json"
@@ -57,7 +57,7 @@ CODEX_MCP = "codex.mcp.json"
 LEGACY_MCP = ".mcp.json"
 MCP_CONFIGS = (CODEX_MCP, LEGACY_MCP)
 #: 新组装的 staging 里**不许**出现的文件：别的宿主会自动读它们（插件根 `.mcp.json`；
-#: WorkBuddy 还扫 `mcp/*.json`），出现就是把 Codex 形状的条目喂给了它们（ADR 0106）。
+#: WorkBuddy 还扫 `mcp/*.json`），出现就是把 Codex 形状的条目喂给了它们（ADR 0109）。
 STAGE_FORBIDDEN = re.compile(r"^(\.mcp\.json|mcp/[^/]+\.json)$")
 REQUIRED = (
     ".codex-plugin/plugin.json",
@@ -76,7 +76,7 @@ REQUIRED = (
 #: 把它们算进去会把一份完好的旧 Codex 插件报成损坏并让人重装（Codex 在 #559 上指出）。
 #: 新包里它们照样被核对：清单逐文件记着，缺了就是「与清单不符」。
 STAGE_REQUIRED = REQUIRED + (
-    # Codex MCP 配置的新名字（ADR 0106）；已装旧版里它叫 `.mcp.json`，体检按清单指向判
+    # Codex MCP 配置的新名字（ADR 0109）；已装旧版里它叫 `.mcp.json`，体检按清单指向判
     CODEX_MCP,
     # 非 Codex 宿主的接入入口：同一份包、同一个启动器（docs/implementation/multi-host-mcp/）
     "integrations/configure.py",
@@ -478,7 +478,7 @@ def verify_dir(
 
     required = [r for r in REQUIRED if not (legacy and r == "LICENSE")]
     try:
-        # 必需的 MCP 配置是清单指向的那一份：新包 codex.mcp.json、已装旧版 .mcp.json（ADR 0106）
+        # 必需的 MCP 配置是清单指向的那一份：新包 codex.mcp.json、已装旧版 .mcp.json（ADR 0109）
         required.append(mcp_config_rel(plugin_dir))
     except PluginManifestError as exc:
         problems.append(str(exc))

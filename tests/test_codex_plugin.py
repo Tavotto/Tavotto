@@ -1259,7 +1259,7 @@ MCP_JSON = PLUGIN / "codex.mcp.json"
 
 
 def test_manifest_declares_the_mcp_server(manifest):
-    """`mcpServers` 指向一个**存在的** Codex MCP 配置（codex.mcp.json，ADR 0106），且技能仍在。"""
+    """`mcpServers` 指向一个**存在的** Codex MCP 配置（codex.mcp.json，ADR 0109），且技能仍在。"""
     assert manifest["mcpServers"] == "./codex.mcp.json"
     assert MCP_JSON.is_file()
     assert manifest["skills"] == "./skills/", "加 MCP 不能把技能挤掉"
@@ -2126,7 +2126,7 @@ def test_real_codex_installs_the_plugin_from_a_local_marketplace(tmp_path):
     missing = [name for name, ok in found.items() if not ok]
     assert not missing, f"CODEX_HOME 的插件 checkout 里缺 {missing}"
 
-    # Codex 按清单 `mcpServers` 指的路径读 MCP 配置（ADR 0106 把它从 `.mcp.json` 改了名）：
+    # Codex 按清单 `mcpServers` 指的路径读 MCP 配置（ADR 0109 把它从 `.mcp.json` 改了名）：
     # 装完的插件必须真的带出 tavotto 这个 server，而不只是文件躺在缓存里
     proc = _codex(["mcp", "list"], home)
     assert proc.returncode == 0, proc.stdout + proc.stderr

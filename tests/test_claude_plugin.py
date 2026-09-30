@@ -1,7 +1,7 @@
 """Claude Code 插件（`codex-plugin/.claude-plugin/`）的形状看护（ADR 0103）。
 
 同一份插件目录同时是 Codex 插件与 Claude Code 插件（也被 ZCode / WorkBuddy 当 Claude 插件装，
-ADR 0106）。Codex 的 MCP 配置叫 `codex.mcp.json`、由 Codex 清单指向——**插件根不许有
+ADR 0109）。Codex 的 MCP 配置叫 `codex.mcp.json`、由 Codex 清单指向——**插件根不许有
 `.mcp.json`**：Claude Code / ZCode / WorkBuddy / MiniMax Code 都会自动读那个名字，WorkBuddy 还让它
 覆盖清单里的同名条目，Codex 形状的相对启动器在那边起不来。这里的断言盯的是「坏了不报错、
 只是另一家悄悄起不来」的那几处：多出一份自动读取的配置、名字对不上、字段抄成 Codex 的、
@@ -52,7 +52,7 @@ def test_manifest_identity_tracks_the_codex_plugin(manifest):
 
 
 def test_no_auto_discovered_mcp_config_in_the_plugin():
-    """插件目录里**没有**别的宿主会自动读的 MCP 配置（ADR 0106）。
+    """插件目录里**没有**别的宿主会自动读的 MCP 配置（ADR 0109）。
 
     Codex 的配置曾叫插件根 `.mcp.json`。Claude Code / ZCode 先读它、再让清单同名条目替换；
     WorkBuddy 反过来——清单在前、`.mcp.json` 与 `mcp/*.json` 在后覆盖，于是按 Codex 的
@@ -201,7 +201,7 @@ def test_install_lines_are_published_where_the_matrix_says():
 
 
 def test_workbuddy_section_installs_the_same_plugin_from_brand():
-    """WorkBuddy 章节（ADR 0106）：「添加市场」那一格填的整行就是 `brand.WORKBUDDY_MARKETPLACE`，装的是
+    """WorkBuddy 章节（ADR 0109）：「添加市场」那一格填的整行就是 `brand.WORKBUDDY_MARKETPLACE`，装的是
     `brand.CLAUDE_PLUGIN_REF`——同一份市场、同一个插件，不另起名字。"""
     text = (ROOT / "README.md").read_text(encoding="utf-8")
     section = text.split("### Using Tavotto with WorkBuddy (Beta)", 1)[1].split("\n### ", 1)[0]

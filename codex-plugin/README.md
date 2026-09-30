@@ -356,7 +356,7 @@ python3 skills/tavotto-figure/scripts/handoff.py figures/fig_removal_rate.py
 ```
 codex-plugin/
 ├── .codex-plugin/plugin.json          # 插件清单（Codex 认的唯一入口）
-├── codex.mcp.json                     # Codex 的 MCP server 声明（本地 stdio；不叫 .mcp.json，ADR 0106）
+├── codex.mcp.json                     # Codex 的 MCP server 声明（本地 stdio；不叫 .mcp.json，ADR 0109）
 ├── assets/tavotto.svg                 # composer 图标 / logo
 ├── integrations/configure.py         # 给非 Codex 宿主打印配置片段（只打印，不写文件）
 ├── mcp/

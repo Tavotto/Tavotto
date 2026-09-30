@@ -7,7 +7,7 @@
 ADR 0005 的「skills-only / 不做 MCP server」这一条**已被 ADR 0006 推翻**
 （交接那条路不变）。
 
-- 插件清单加 `"mcpServers": "./codex.mcp.json"`（ADR 0106 前叫 `./.mcp.json`；改名是因为别的宿主会自动读插件根
+- 插件清单加 `"mcpServers": "./codex.mcp.json"`（ADR 0109 前叫 `./.mcp.json`；改名是因为别的宿主会自动读插件根
   `.mcp.json`）；它是**本地 stdio**
   （`command: python3` + `args: ["./mcp/server.py"]` + `cwd/env_vars/tool_timeout_sec`）。
   字段形状取自 Codex 官方插件装出来的清单，**不要猜**。
@@ -28,7 +28,7 @@ ADR 0005 的「skills-only / 不做 MCP server」这一条**已被 ADR 0006 推�
   `code` ↔ 一个 `disposition` ↔ 一句下一步；「宿主声明了能力却没弹框」是独立一档
   （`fix_host_wiring`），**绝不能报成用户拒绝**——两者的处置正好相反。code 只作机器
   标识，不许当文案念给用户；
-  **每个入口都拒主目录本身及其上级**（ADR 0106：MiniMax Code 的插件路线 `roots/list` 回 home、WorkBuddy / MiniMax
+  **每个入口都拒主目录本身及其上级**（ADR 0109：MiniMax Code 的插件路线 `roots/list` 回 home、WorkBuddy / MiniMax
   的插件进程 cwd 可能是 home），与生成器同一判据；被拒又没有别的根时报 `workspace_root_too_broad`。
   root 改变后旧 session 必须回 `workspace_root_changed`。server→client 请求只能在
   活跃 `tools/call` 内发，reader pump 必须保序且有界等待。越界一律拒，**绝不

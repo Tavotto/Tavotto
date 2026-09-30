@@ -71,7 +71,7 @@ CLAUDE_SPARSE_PATHS = (".claude-plugin",)
 #: `claude plugin install` 的目标（插件名@marketplace 名）；两个名字各自的唯一出处是
 #: `.claude-plugin/marketplace.json` 的 `plugins[0].name` 与 `name`
 CLAUDE_PLUGIN_REF = "tavotto@tavotto"
-#: WorkBuddy 装的是**同一份** Claude 插件（ADR 0106）：它的「插件市场 → 添加市场」收 `owner/repo`，
+#: WorkBuddy 装的是**同一份** Claude 插件（ADR 0109）：它的「插件市场 → 添加市场」收 `owner/repo`，
 #: 读仓库根 `.claude-plugin/marketplace.json`，装 `CLAUDE_PLUGIN_REF`。界面里没有稀疏检出选项。
 #: 看护：`tests/test_claude_plugin.py`
 WORKBUDDY_MARKETPLACE = CODEX_MARKETPLACE

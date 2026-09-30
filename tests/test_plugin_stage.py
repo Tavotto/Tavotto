@@ -587,7 +587,7 @@ def test_stage_takes_sources_from_the_index_not_the_whole_directory(tmp_path):
 
 @pytest.mark.parametrize("forbidden", [".mcp.json", "mcp/extra.json"])
 def test_stage_refuses_a_file_other_hosts_auto_read(tmp_path, monkeypatch, forbidden):
-    """插件根 `.mcp.json` 与 `mcp/*.json` 不许进 staging（ADR 0106）：Claude Code / ZCode /
+    """插件根 `.mcp.json` 与 `mcp/*.json` 不许进 staging（ADR 0109）：Claude Code / ZCode /
     WorkBuddy / MiniMax Code 会自动把它们当自己的 MCP 配置读，WorkBuddy 还让它们覆盖清单里
     的同名条目——Codex 形状的相对启动器在那边 ENOENT。主语是 stage() 组装出来的那份目录。"""
     head = subprocess.run(
@@ -618,7 +618,7 @@ def test_stage_refuses_a_file_other_hosts_auto_read(tmp_path, monkeypatch, forbi
         src.unlink()
 
 
-# ================================================================ Codex MCP 配置的名字（ADR 0106）
+# ================================================================ Codex MCP 配置的名字（ADR 0109）
 
 
 def _write_codex_manifest(plugin: Path, target: str | None) -> None:

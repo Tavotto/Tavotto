@@ -151,7 +151,7 @@ def test_no_host_is_claimed_verified_without_evidence():
 
 
 #: beta 档的宿主 → (一键安装渠道, 验收矩阵子行的标签, README 章节里的宿主名)。
-#: WorkBuddy 装的是同一份 Claude 插件与同一个仓库根市场（ADR 0106），渠道相同、章节各写各的。
+#: WorkBuddy 装的是同一份 Claude 插件与同一个仓库根市场（ADR 0109），渠道相同、章节各写各的。
 BETA_CHANNELS = {
     "claude-code": ("claude-plugin", "插件", "Claude Code"),
     "workbuddy": ("claude-plugin", "插件", "WorkBuddy"),
