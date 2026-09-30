@@ -130,11 +130,44 @@ def test_no_host_is_claimed_verified_without_evidence():
     matrix = json.loads((ROOT / "docs" / "support-matrix.json").read_text(encoding="utf-8"))
     acceptance = (DOCS / "acceptance.md").read_text(encoding="utf-8")
     for host in matrix["mcp_hosts"]["hosts"]:
-        assert host["status"] in ("experimental", "verified")
+        assert host["status"] in ("experimental", "beta", "verified")
         if host["status"] == "verified":
             row = re.search(rf"^\| `{host['id']}` \|.*$", acceptance, flags=re.M).group(0)
             assert "host_verified" in row
             assert f"### 证据：{host['id']}" in acceptance
+
+
+#: beta 档的一键安装渠道 → (验收矩阵子行的标签, README 章节里的宿主名)
+BETA_CHANNELS = {
+    "claude-plugin": ("插件", "Claude Code"),
+    "dsh-bundle": ("bundle", "DeepSeek Harness"),
+}
+
+
+def test_beta_label_follows_the_matrix_and_its_evidence():
+    """README 的「(Beta)」只能由支持矩阵的 beta 档派生，beta 又只能由真宿主冒烟撑着（2026-09-28）。
+
+    三个方向都钉：beta 的宿主 → 验收子行至少 local_smoke、README 有带 (Beta) 的章节；
+    README 里每个带 (Beta) 的宿主章节 → 矩阵里是 beta。缺哪一边都是口径与事实分叉。
+    """
+    matrix = json.loads((ROOT / "docs" / "support-matrix.json").read_text(encoding="utf-8"))
+    acceptance = (DOCS / "acceptance.md").read_text(encoding="utf-8")
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    beta_names = set()
+    for host in matrix["mcp_hosts"]["hosts"]:
+        if host["status"] != "beta":
+            assert "channel" not in host, host
+            continue
+        sub, name = BETA_CHANNELS[host["channel"]]
+        row = re.search(rf"^\| `{host['id']}` · {sub} \|.*$", acceptance, flags=re.M)
+        assert row, f"{host['id']} 标 beta，但验收矩阵没有「{sub}」子行"
+        # 只看「工具完整流程」那一格：备注里「不算 host_verified」这类话会让整行子串匹配恒真
+        cells = [c.strip() for c in row.group(0).strip().strip("|").split("|")]
+        assert cells[3] in ("local_smoke", "host_verified"), cells
+        assert f"### Using Tavotto with {name} (Beta)" in readme.splitlines()
+        beta_names.add(name)
+    labelled = set(re.findall(r"^### Using Tavotto with (.+) \(Beta\)$", readme, flags=re.M))
+    assert labelled == beta_names
 
 
 def test_evidence_levels_match_the_hosts_doc(mod):

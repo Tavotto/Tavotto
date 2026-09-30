@@ -230,6 +230,8 @@ HOSTS: "dict[str, dict]" = {
         "target": [
             "<项目>/.mcp.json（project 作用域；交互会话里第一次用会请你批准）",
             "不要同时再用 claude mcp add 登记同名 tavotto：local / user 作用域会遮蔽它",
+            "已装 Tavotto 的 Claude Code 插件就不需要这段配置；"
+            "二选一——两样都装会出现两个 Tavotto server",
         ],
         "verify": [
             "在 Claude Code 里运行 /mcp：tavotto 为 connected，并能看到工具",

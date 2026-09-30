@@ -49,6 +49,17 @@ CODEX_PLUGIN_STABLE_BRANCH = "plugin-stable"
 #: `git-subdir` 来源里的仓库地址（Codex 对 https://github.com/… 会自动补 .git，这里直接写全）
 CODEX_PLUGIN_SOURCE_URL = f"{REPO_URL}.git"
 
+#: Claude Code 插件的安装参数（ADR 0103）。**同一份插件目录、同一条发行分支**：
+#: 仓库根 `.claude-plugin/marketplace.json` 的 `git-subdir` 指向
+#: `CODEX_PLUGIN_STABLE_BRANCH` 上的 `CODEX_PLUGIN_SUBDIR`，插件里多一份
+#: `.claude-plugin/plugin.json`。稀疏检出只要市场清单那一个目录。
+#: 看护：`tests/test_claude_plugin.py`
+CLAUDE_MARKETPLACE = CODEX_MARKETPLACE
+CLAUDE_SPARSE_PATHS = (".claude-plugin",)
+#: `claude plugin install` 的目标（插件名@marketplace 名）；两个名字各自的唯一出处是
+#: `.claude-plugin/marketplace.json` 的 `plugins[0].name` 与 `name`
+CLAUDE_PLUGIN_REF = "tavotto@tavotto"
+
 # 桌面壳的 bundle 标识，与 src-tauri/tauri.conf.json 的 identifier 严格同源。
 # 桌面日志目录（tauri 的 app_log_dir）按它推导：macOS 是
 # ~/Library/Logs/<id>/，Windows 是 %LOCALAPPDATA%\<id>\logs\。

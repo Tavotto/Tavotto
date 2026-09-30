@@ -59,6 +59,15 @@
 - 生成的 YAML 不含 `!!js` 标签（**不生成要宿主执行的代码**；本工具也从不读取 / 执行用户的 YAML）。
 - Skill 根：`<项目>/.dsh/skills`、`<项目>/.agents/skills`、`$DSH_HOME/skills`、`~/.agents/skills`；
   frontmatter 要 kebab-case `name` + `description`（`tavotto-figure` 满足）。
+- **插件 / 能力复核（2026-09-28，deepseek-harness `21638c56`）**：DSH 的插件是 **npm 包（bundle）**，
+  `package.json` 里 `"dsh": {"bundle": {"patch": "./cordis.patch.yml"}}`，用 `dsh plugin --profile <名> add <包>`
+  （pnpm 转发，也收绝对路径 / git 地址 / tarball）或 Web 的 Plugins 页安装；**不读** `.claude-plugin/`、
+  `.codex-plugin/` 或任何 marketplace.json，也不从插件里发现 Skill。bundle 的 `dsh-mcp-client` 行没有
+  「本包目录」变量（`${CLAUDE_PLUGIN_ROOT}` 只在 `hooks-claude-code` 里替换 hooks 命令），指向包内
+  `mcp/server.py` 要靠 `!!js`——本工具不生成宿主执行的代码，所以**不做 DSH bundle**，仍是 YAML patch。
+  客户端能力：`capabilities: {}`（**不回 roots**，授权只能靠 `TAVOTTO_MCP_ROOTS`，生成器已这样做）、
+  不支持 elicitation、不渲染 MCP Apps（只投影文本与图片）；未知字段静默忽略；同名 server 后者加载失败；
+  结果超过约 12 500 token 落盘成预览 + 路径；server instructions 上限 32 KiB。
 
 ### WorkBuddy（search_snippet，有冲突）
 
@@ -87,7 +96,13 @@
   `server.package_dir`。
 - `.mcp.json` 里无 `type` 视为 stdio，写 `type: "stdio"` 是完整形式；`timeout` 是毫秒、下限 1000。
 - Skill：`.claude/skills/<名>/SKILL.md`（项目）或 `~/.claude/skills/`（个人）——复制**整个**
-  `tavotto-figure/` 目录。插件形态（`.claude-plugin/plugin.json` + `${CLAUDE_PLUGIN_ROOT}`）本轮不做。
+  `tavotto-figure/` 目录。
+- **插件形态（ADR 0103，2026-09-28）**：`codex-plugin/.claude-plugin/plugin.json` + 仓库根
+  `.claude-plugin/marketplace.json`（`git-subdir → plugin-stable`），装法
+  `claude plugin marketplace add Tavotto/Tavotto --sparse .claude-plugin` 与
+  `claude plugin install tavotto@tavotto`。插件的 MCP 条目写在 plugin.json 里、与 `.mcp.json` **同名**
+  （Claude Code 先读插件根 `.mcp.json` 再按名替换；名字不同会把 Codex 那条也起一遍并 ENOENT）。
+  授权走 `roots/list`（启动目录 + `/add-dir`），不写 `TAVOTTO_MCP_ROOTS`。插件版不需要上面这段配置。
 - 桌面 **Code 标签页**读 `claude_desktop_config.json` + `~/.claude.json` + `.mcp.json`，同名时桌面
   配置优先、stdio 的 user 作用域优先于 `.mcp.json`（与 CLI 的优先级不同）；独立 CLI **不读**
   `claude_desktop_config.json`。所以 CLI 通过 ≠ Code 标签页通过 ≠ 桌面聊天通过，各记各的。

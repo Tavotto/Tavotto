@@ -16,3 +16,52 @@ release.yml 的「拼 release body」当场红（scripts/check_pending_release_n
 ## Codex plugin on Windows: MCP tools now appear
 
 On Windows, plugin 0.17.0 loaded as enabled, with its skill, but with no Tavotto tools at all, even with the engine installed. Codex gave no error. The bundled launcher was one file serving as both a shell script and a batch file, and `cmd.exe` echoed its first line (`#!/bin/sh`) to stdout ahead of the MCP handshake, so Codex dropped the server. The launcher is now two files: `mcp/launch` for macOS and Linux, and `mcp/launch.cmd` for Windows, whose first line is `@echo off`. `.mcp.json` points at `./mcp/launch`, and on Windows Codex resolves that to `launch.cmd`. macOS and Linux behave exactly as before. After upgrading the plugin, start a new Codex session. Diagnostic lines the server writes to stderr are now UTF-8, so on Windows systems whose code page is not UTF-8 they show up in the Codex logs instead of being dropped. If you are still on plugin 0.17.0 on Windows, run `codex plugin marketplace upgrade tavotto`. With this engine, `tavotto codex install` also treats any stdout output besides the health JSON as a launcher that does not start, and pins a verified interpreter into the installed copy.
+
+## Claude Code plugin (Beta)
+
+<!-- 发版时（2026-09-30 用户决定）：README 在 plugin-stable 带上 `.claude-plugin/` 之前不给安装方式。
+搬这一段的同时把「### Using Tavotto with Claude Code (Beta)」一节加回 README（两条命令见下，整行由
+`brand.CLAUDE_*` 拼出），并把 docs/support-matrix.json 的 claude-code 改回 `status: beta` +
+`channel: claude-plugin`；tests/test_claude_plugin.py 与 test_mcp_host_profiles.py 按矩阵这一档判
+命令该在 README 还是在这里。同时把指向这一节的提示加回：
+codex-plugin/integrations/configure.py 里 claude-code 的 target 那句改回「更省事的是装插件（README「Using Tavotto
+with Claude Code」的两条命令），就不需要这段配置；」（tests/test_readme_section_references.py 要求被引用的章节
+真的在）。技能里也要加回（插件随发版带着技能走，Codex 在 #692 评审里要求 promote 之前技能也不给装法）：
+codex-plugin/skills/tavotto-figure/references/other-hosts.md 在「工具缺失时」首段之后加回
+「**Claude Code（终端 / IDE 扩展 / 桌面 Code 标签页）优先走插件**」一段（同样两条命令 + `/reload-plugins`、
+`/mcp` 确认 `plugin:tavotto:tavotto`、授权目录 = 启动目录与 `/add-dir`），其后「其余宿主（以及不想装插件的
+Claude Code 用户）：」；Skill 表里 Claude Code 拆成「插件版（新开会话或 `/reload-plugins`；插件自带技能）」与
+「配置版」两行；SKILL.md 第 6 条的升级提示加「Claude Code 插件版：`claude plugin update tavotto@tavotto`」。原文见
+PR #692。ADR 0103「对外口径」。README 一节的原文（放回「### Using Tavotto from other AI
+editors and clients (experimental)」之前）：
+
+### Using Tavotto with Claude Code (Beta)
+
+The same plugin installs into Claude Code (terminal, IDE extensions and the desktop app's Code tab).
+Run these in a terminal, one at a time:
+
+```sh
+claude plugin marketplace add Tavotto/Tavotto --sparse .claude-plugin
+claude plugin install tavotto@tavotto
+pipx install "tavotto[worker]"
+```
+
+Then start a new Claude Code session, or run `/reload-plugins` in the one you have open. `/mcp` should list
+`plugin:tavotto:tavotto` as connected; ask Claude to call `tavotto_health` to confirm the engine is found.
+Tavotto may only open and write inside the folder Claude Code was started in (Claude Code reports it
+through MCP roots; `/add-dir` adds more). Claude Code shows no embedded canvas, so you work through the
+same tools: open, adjust, preflight, export. To keep editing by hand, hand the figure off to the desktop
+app. Update with `claude plugin update tavotto@tavotto`.
+
+Claude Desktop's chat and claude.ai don't start local MCP servers from plugins. For Claude Desktop, use the
+config generator below.
+-->
+
+Tavotto now installs into Claude Code as a plugin:
+`claude plugin marketplace add Tavotto/Tavotto --sparse .claude-plugin`, then
+`claude plugin install tavotto@tavotto`. It is the same plugin as for Codex (same MCP server and
+skill); Claude Code has no embedded canvas, so you edit through the tools. The folder Claude Code
+was started in is the authorized project. If you had set Tavotto up in Claude Code with the config
+generator, remove that `.mcp.json` entry after installing the plugin, or you will have two servers.
+The install path only works once this version has been promoted to the `plugin-stable` branch.
+
