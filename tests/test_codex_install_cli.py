@@ -1294,20 +1294,20 @@ state_p = os.environ["FAKE_CODEX_STATE"]
 home = os.environ["CODEX_HOME"]
 def load():
     try:
-        return json.load(open(state_p))
+        return json.load(open(state_p, encoding="utf-8"))
     except Exception:
         return {"mk": None, "installed": None}
 def save(d):
-    json.dump(d, open(state_p, "w"))
+    json.dump(d, open(state_p, "w", encoding="utf-8"))
 argv = sys.argv[1:]
-with open(os.environ["FAKE_CODEX_LOG"], "a") as f:
+with open(os.environ["FAKE_CODEX_LOG"], "a", encoding="utf-8") as f:
     f.write(json.dumps(argv) + "\n")
 want_json = "--json" in argv
 argv = [a for a in argv if a != "--json"]
 d = load()
 def mk_version():
     pj = os.path.join(d["mk"], "codex-plugin", ".codex-plugin", "plugin.json")
-    return json.load(open(pj))["version"]
+    return json.load(open(pj, encoding="utf-8"))["version"]
 if argv == ["--version"]:
     print("codex-cli 0.158.0-alpha.2.1"); sys.exit(0)
 if argv[:3] == ["plugin", "marketplace", "add"]:
@@ -1481,13 +1481,19 @@ def no_git_machine(tmp_path, monkeypatch):
     script.write_text(FAKE_CODEX_NO_GIT, encoding="utf-8")
     bindir = tmp_path / "bin"
     bindir.mkdir()
+    # 不指定编码的 open() 在这个假 codex 里一律当错误：Windows 的默认编码是 cp1252，插件的
+    # plugin.json 有中文，按默认编码读就崩——POSIX 上默认是 UTF-8 看不出来，#725 的这组用例在
+    # Windows 腿上全红了 5 轮合并组才被发现。两个平台上都让它当场红
+    strict = "-X warn_default_encoding -W error::EncodingWarning"
     if os.name == "nt":
         (bindir / "codex.cmd").write_text(
-            f'@"{sys.executable}" "{script}" %*\r\n', encoding="utf-8"
+            f'@"{sys.executable}" {strict} "{script}" %*\r\n', encoding="utf-8"
         )
     else:
         exe = bindir / "codex"
-        exe.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{script}" "$@"\n', encoding="utf-8")
+        exe.write_text(
+            f'#!/bin/sh\nexec "{sys.executable}" {strict} "{script}" "$@"\n', encoding="utf-8"
+        )
         exe.chmod(0o755)
     _real_python_shim(bindir, "python3")
     home = tmp_path / "home"
