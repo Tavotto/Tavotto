@@ -39,8 +39,8 @@
   装载清单与 `tests/import_architecture_baseline.json` 的 `extra_edges` 对拍在
   `tests/test_import_architecture.py`）。
 - **装载引擎代码的那一段不写字节码**（QA REL-01-B1）：engine 目录就是安装目录（macOS 上在
-  签过名的 `.app` 里），用户解释器没有 `-B`，而我们也不给它加（会关掉用户整个进程的缓存；
-  native 档明令不加标志）。所以 `worker.py` / `bridge_runner.py` 按文件装 `bridgeboot` 的那一下、
+  签过名的 `.app` 里），用户解释器不一路带 `-B`（会关掉用户整个进程的缓存；native 档明令不加标志；
+  safe worker 只在解释器启动期带，见下一条）。所以 `worker.py` / `bridge_runner.py` 按文件装 `bridgeboot` 的那一下、
   `load_engine_modules` 的装载窗口、`projectenv._PROBE_SRC` 执行 `worker.py` 那一段各自把
   `sys.dont_write_bytecode` 打开、finally 还原；一次性的 `discover.TARGET_PARSE_ARGS` 直接带 `-B`。
   新增「用户解释器执行安装目录里的引擎代码」的入口，要在 `tests/test_install_dir_bytecode_free.py`
@@ -52,6 +52,15 @@
   （项目根里的 `.venv` 是用户的环境）；只认包目录、不认整个前缀——前缀包住项目或就是项目根（`python -m venv .`）时
   项目源码照样不写。只挡项目目录、不是 `-B`：项目外的包照常缓存。native 档不装（它的契约是与 `python fig.py`
   逐字相同）。看护 `tests/test_install_dir_bytecode_free.py`（两种 entry + 项目内 `.venv` + 前缀包住项目 + venv 就在项目根）。
+  **守卫在解释器启动之前就生效**（#736）：项目本来就在 PYTHONPATH 上、里面有 `sitecustomize.py`（或 `.pth` import
+  项目模块）时，那些代码在 site 初始化阶段就被 import，早于 `build()`。所以非内置解释器以
+  `runtime.worker_args(bundled=False)` = `-B -X tavotto_project_bytecode` 起（Python 池、workerd 规格、
+  `deprepair.worker_self_test` 三条路径同一个出处）：启动期整个进程不写，worker.py 第一段
+  `_startup_bytecode_guard` 看到标记就按命令行上的项目根装守卫、再把字节码写入还给用户（他自己设了
+  `PYTHONDONTWRITEBYTECODE` 就保持不写）；之后 import 的包照常缓存。代价只在启动期（site 初始化时 import 的
+  site-packages 小模块不写缓存）；`-B` 会经 `sys.flags` 传给用户脚本用 multiprocessing 起的子进程（它们不写字节码，
+  结果不变）。内置 runtime 没有标记，`-B` 一路有效。看护同一文件的
+  `test_project_code_imported_at_interpreter_startup_writes_no_bytecode`（项目里的 sitecustomize 当传感器、先证明它活着）。
 - **`bridge_runner` / `bridgeboot` 启动阶段不许 import matplotlib**，
   钩子挂在 `sys.meta_path` 的后置 import 回调上。
 - **native 侧不许起后台线程**：Figure 归主线程，`LiveFigureSession` 有线程

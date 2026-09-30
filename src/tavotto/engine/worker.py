@@ -76,6 +76,109 @@ HERE = Path(__file__).resolve().parent
 if sys.path and os.path.realpath(sys.path[0]) == os.path.realpath(str(HERE)):
     del sys.path[0]
 
+
+def _inside(path: str, roots: tuple[str, ...]) -> bool:
+    return any(path == r or path.startswith(r.rstrip(os.sep) + os.sep) for r in roots)
+
+
+def _norm_path(p) -> str:
+    return os.path.normcase(os.path.realpath(os.fspath(p)))
+
+
+#: 当前解释器的包目录（stdlib / purelib / platlib）。**模块加载时就算好**：`sysconfig.get_paths()` 第一次调用
+#: 会惰性 import `_sysconfigdata_*`，放到 build 里项目目录已进 `sys.path` 之后再算，项目里同名的文件会被当成它
+#: import——在删除守卫与 savefig 拦截装好之前执行用户代码（Codex #717）。
+_INTERPRETER_PACKAGE_DIRS = tuple(
+    _norm_path(p)
+    for p in {sysconfig.get_paths().get(k) for k in ("stdlib", "platstdlib", "purelib", "platlib")}
+    if p
+)
+
+
+def _suppress_project_bytecode(roots) -> None:
+    """用户**项目目录里**的源码不写字节码：脚本自己（entry 不是 `__main__` 时按模块 import）与
+    它 import 的项目内模块，都不在项目里留 `__pycache__/*.pyc`。
+
+    2026-09-28 Windows 实测：系统 Python 3.12 渲染 `fig_data.py`（entry=main）之后，项目目录里多了
+    `__pycache__/fig_data.cpython-312.pyc`——`python fig_data.py` 跑主脚本从不写它。Tavotto 只是
+    替用户看图，项目目录里不该因此多出任何东西。
+
+    **只挡项目目录，不是整个进程**（所以不是全程 `-B` / `sys.dont_write_bytecode`）：
+    worker 起在用户的解释器上时，脚本运行期间才 import 的 numpy / scipy 子模块照常缓存——
+    没预编译的环境（uv 建的 venv 默认不编）关掉它，每次冷启动都要从源码重编
+    （`test_only_the_bundled_runtime_gets_b_flag`）。判据落在 `SourceFileLoader.set_data`
+    （它在 `SourceFileLoader` 里只被写字节码的那一步调用）：要写的 `.pyc` 落在项目根之下就不写；
+    但落在**当前解释器的包目录**（`sysconfig` 的 stdlib / purelib / platlib）之下的照写——项目根里放着
+    `.venv` 是常态，那是用户的环境，不是项目源码。只认包目录、不认整个解释器前缀：前缀包住项目
+    （项目在 Conda 环境目录里、`/usr/local` 下）或前缀就是项目根（`python -m venv .`）时，项目源码照样是
+    项目源码（Codex #717 两轮）。内置 runtime 本来就带 `-B`（`runtime.child_args`），这一段对它是 no-op。
+
+    **装的时刻**：非内置解释器上由 `_startup_bytecode_guard()` 在本模块最前面装（#736：解释器启动、
+    site 初始化阶段 import 的项目代码——PYTHONPATH 上的 `sitecustomize.py`、`.pth` import 的项目模块——
+    早于 `build()`），`build()` 再按同样的根装一次（幂等：包的是同一个原始 `set_data`）。
+    """
+    from importlib.machinery import SourceFileLoader  # noqa: PLC0415
+
+    project = tuple(_norm_path(r) for r in roots if r)
+    # 只豁免解释器的**包目录**（项目里的 `.venv/lib/.../site-packages`，模块加载时算好）；前缀本身不算——
+    # 它可能包住项目，也可能就是项目根
+    envs = _INTERPRETER_PACKAGE_DIRS
+    real_set_data = getattr(SourceFileLoader.set_data, "_tavotto_real", SourceFileLoader.set_data)
+
+    def set_data(self, path, data, *args, **kwargs):
+        try:
+            target = _norm_path(path)
+        except (OSError, TypeError, ValueError):
+            target = ""
+        if target and _inside(target, project) and not _inside(target, envs):
+            return None
+        return real_set_data(self, path, data, *args, **kwargs)
+
+    set_data._tavotto_real = real_set_data
+    SourceFileLoader.set_data = set_data
+
+
+#: 非内置解释器起 safe worker 时带的 `-X` 标记（`runtime.WORKER_BYTECODE_XOPTION` 的镜像，
+#: `tests/test_install_dir_bytecode_free.py` 对拍）：「启动期的 `-B` 是 Tavotto 为了挡住启动期 import 的
+#: 项目代码加的，守卫装好就放开」。内置 runtime 不带它，`-B` 一直有效（安装目录一个字节都不写）。
+_STARTUP_BYTECODE_XOPTION = "tavotto_project_bytecode"
+
+
+def _argv_roots(argv: list[str]) -> tuple[str, ...]:
+    """从命令行取项目根与脚本目录（`main()` 的 `--figures-dir` / `--script`，形状由
+    `execspec.worker_argv` 独家产出）。与 `build()` 装守卫用的 `(figures_dir, script.parent)` 是同一对。"""
+    roots = []
+    for flag in ("--figures-dir", "--script"):
+        try:
+            value = argv[argv.index(flag) + 1]
+        except (ValueError, IndexError):
+            continue
+        path = os.path.abspath(value)
+        roots.append(os.path.dirname(path) if flag == "--script" else path)
+    return tuple(roots)
+
+
+def _startup_bytecode_guard() -> None:
+    """#736：项目字节码守卫在**解释器启动之前**就要生效。
+
+    `build()` 里才装守卫的话，PYTHONPATH 本来就含项目目录、项目里又有 `sitecustomize.py`（或
+    site-packages 里某个 `.pth` import 了项目模块）时，这些代码在 site 初始化阶段就被 import、写下
+    `__pycache__`。所以非内置解释器以 `-B` 起（`runtime.worker_args`，带本标记）：启动期整个进程
+    不写字节码；走到这里（worker.py 的第一段）先按命令行上的项目根装守卫，再把字节码写入**还给
+    用户**——他自己设了 `PYTHONDONTWRITEBYTECODE`（且解释器认环境变量）就保持不写，否则照常写：
+    之后 import 的 numpy / matplotlib / 项目外模块照常缓存（`-B` 一路开着的话，没预编译的环境每次
+    冷启动都要重编科学栈）。代价只在启动期：site 初始化时 import 的 site-packages 模块不写缓存
+    （每次在内存里编一遍，都是很小的模块）。没有标记（内置 runtime、手工调试）什么都不做。"""
+    if _STARTUP_BYTECODE_XOPTION not in getattr(sys, "_xoptions", {}):
+        return
+    _suppress_project_bytecode(_argv_roots(sys.argv[1:]))
+    sys.dont_write_bytecode = bool(
+        os.environ.get("PYTHONDONTWRITEBYTECODE") and not sys.flags.ignore_environment
+    )
+
+
+_startup_bytecode_guard()
+
 _boot_spec = importlib.util.spec_from_file_location(
     "tavotto_bridge_boot", os.path.join(str(HERE), "bridgeboot.py")
 )
@@ -303,63 +406,6 @@ def _exit_status(code) -> int:
     if isinstance(code, int):
         return code
     return 1
-
-
-def _inside(path: str, roots: tuple[str, ...]) -> bool:
-    return any(path == r or path.startswith(r.rstrip(os.sep) + os.sep) for r in roots)
-
-
-def _norm_path(p) -> str:
-    return os.path.normcase(os.path.realpath(os.fspath(p)))
-
-
-#: 当前解释器的包目录（stdlib / purelib / platlib）。**模块加载时就算好**：`sysconfig.get_paths()` 第一次调用
-#: 会惰性 import `_sysconfigdata_*`，放到 build 里项目目录已进 `sys.path` 之后再算，项目里同名的文件会被当成它
-#: import——在删除守卫与 savefig 拦截装好之前执行用户代码（Codex #717）。
-_INTERPRETER_PACKAGE_DIRS = tuple(
-    _norm_path(p)
-    for p in {sysconfig.get_paths().get(k) for k in ("stdlib", "platstdlib", "purelib", "platlib")}
-    if p
-)
-
-
-def _suppress_project_bytecode(roots) -> None:
-    """用户**项目目录里**的源码不写字节码：脚本自己（entry 不是 `__main__` 时按模块 import）与
-    它 import 的项目内模块，都不在项目里留 `__pycache__/*.pyc`。
-
-    2026-09-28 Windows 实测：系统 Python 3.12 渲染 `fig_data.py`（entry=main）之后，项目目录里多了
-    `__pycache__/fig_data.cpython-312.pyc`——`python fig_data.py` 跑主脚本从不写它。Tavotto 只是
-    替用户看图，项目目录里不该因此多出任何东西。
-
-    **只挡项目目录，不是整个进程**（所以不是 `-B`，也不是全程 `sys.dont_write_bytecode`）：
-    worker 起在用户的解释器上时，脚本运行期间才 import 的 numpy / scipy 子模块照常缓存——
-    没预编译的环境（uv 建的 venv 默认不编）关掉它，每次冷启动都要从源码重编
-    （`test_only_the_bundled_runtime_gets_b_flag`）。判据落在 `SourceFileLoader.set_data`
-    （它在 `SourceFileLoader` 里只被写字节码的那一步调用）：要写的 `.pyc` 落在项目根之下就不写；
-    但落在**当前解释器的包目录**（`sysconfig` 的 stdlib / purelib / platlib）之下的照写——项目根里放着
-    `.venv` 是常态，那是用户的环境，不是项目源码。只认包目录、不认整个解释器前缀：前缀包住项目
-    （项目在 Conda 环境目录里、`/usr/local` 下）或前缀就是项目根（`python -m venv .`）时，项目源码照样是
-    项目源码（Codex #717 两轮）。内置 runtime 本来就带 `-B`（`runtime.child_args`），这一段对它是 no-op。
-    """
-    from importlib.machinery import SourceFileLoader  # noqa: PLC0415
-
-    project = tuple(_norm_path(r) for r in roots if r)
-    # 只豁免解释器的**包目录**（项目里的 `.venv/lib/.../site-packages`，模块加载时算好）；前缀本身不算——
-    # 它可能包住项目，也可能就是项目根
-    envs = _INTERPRETER_PACKAGE_DIRS
-    real_set_data = getattr(SourceFileLoader.set_data, "_tavotto_real", SourceFileLoader.set_data)
-
-    def set_data(self, path, data, *args, **kwargs):
-        try:
-            target = _norm_path(path)
-        except (OSError, TypeError, ValueError):
-            target = ""
-        if target and _inside(target, project) and not _inside(target, envs):
-            return None
-        return real_set_data(self, path, data, *args, **kwargs)
-
-    set_data._tavotto_real = real_set_data
-    SourceFileLoader.set_data = set_data
 
 
 @contextlib.contextmanager
