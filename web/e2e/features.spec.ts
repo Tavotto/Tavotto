@@ -390,17 +390,27 @@ test(
     await size.nth(1).press('Enter')
 
     // 重新取景：页面整张在视口内、在舞台中间，并且撑开到舞台的大半——视口不动的话
-    // 40 × 30 mm 的页面只剩舞台里的一小块
+    // 40 × 30 mm 的页面只剩舞台里的一小块。
+    //
+    // **等取景补间落定再量**（`viewportStore.animateTo`，180 ms）：第二次回车时页面高度
+    // 瞬间变成 30 mm，zoom / pan 却是从上一个落点补间过去的——途中页面水平居中（宽没变）、
+    // 竖直偏开，落定才居中。此前的判据是「撑满舞台的比例 > 0.6」，第一次回车（W = 40）的
+    // 取景就已满足，于是第一次轮询就放行、在补间半路上量；CI 上两次回车隔 116 ms 时实测
+    // 偏 3.5 / 3.8 px（#720 的 posix-e2e，trace 逐帧看得到页面中心 413 → 499 走完）。
+    // 明确条件：页面已是 40 : 30，且舞台上没有在走的视口补间（`data-view-tweening`）
     await expect
       .poll(async () => {
         const s = (await sheet.boundingBox())!
-        const g = (await stage.boundingBox())!
-        return Math.max(s.width / g.width, s.height / g.height)
-      }, { message: '换尺寸后页面应当重新撑满舞台' })
-      .toBeGreaterThan(0.6)
-    await expectInViewport(page, sheet, '页面')
+        return Math.abs(s.width / s.height - 40 / 30) < 0.01
+      }, { message: '页面应当换成 40 × 30' })
+      .toBe(true)
+    await expect(page.locator('[data-world-transform][data-view-tweening]')).toHaveCount(0)
     const s0 = (await sheet.boundingBox())!
     const g0 = (await stage.boundingBox())!
+    expect(Math.max(s0.width / g0.width, s0.height / g0.height), '换尺寸后页面应当重新撑满舞台').toBeGreaterThan(
+      0.6,
+    )
+    await expectInViewport(page, sheet, '页面')
     expect(Math.abs(s0.x + s0.width / 2 - (g0.x + g0.width / 2)), '页面应当水平居中').toBeLessThan(2)
     expect(Math.abs(s0.y + s0.height / 2 - (g0.y + g0.height / 2)), '页面应当垂直居中').toBeLessThan(2)
     expect(s0.width / s0.height).toBeCloseTo(40 / 30, 2)

@@ -87,7 +87,10 @@
   `fit`，否 → `setView` 瞬时落回并退出模式；直写 `zoom / pan` 会把上一张画布的
   `fitted` / `lastFit` 原样留下，下一次侧栏开合就按别的画布的取景框把还原出来的视口
   重算掉。空画布的起步提示按 `lib/emptyStateAnchor` 落在**纸面可见部分**的中心并
-  钳进视口，永远不出屏。
+  钳进视口，永远不出屏。**e2e 量取景几何要等补间落定**：`viewportStore.tweening` 挂在
+  舞台的 `data-world-transform` 上（`data-view-tweening`），等它消失再量；补间途中 zoom /
+  pan 与刚变的页面尺寸对不上（页面尺寸是瞬间变的），量出来的「居中」是半路上的值，
+  「比例已过阈值」这类条件可能被上一步的取景提前满足（#720 的 posix-e2e 偶发红）。
 - **换画布尺寸就重新取景；新加的图软上限缩放；页面外画淡（2026-09-28，用户反馈）**：
   同一份文档、同一张画布的 `page.w/h` 一变（预设、手填、横竖对调、样式预设带的页面、
   以及它们的撤销 / 重做）→ `store/pageFit.startPageSizeFit` 按新页面 `fitAnimated`，
