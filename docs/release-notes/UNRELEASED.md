@@ -23,7 +23,10 @@ On Windows, plugin 0.17.0 loaded as enabled, with its skill, but with no Tavotto
 搬这一段的同时把「### Using Tavotto with Claude Code (Beta)」一节加回 README（两条命令见下，整行由
 `brand.CLAUDE_*` 拼出），并把 docs/support-matrix.json 的 claude-code 改回 `status: beta` +
 `channel: claude-plugin`；tests/test_claude_plugin.py 与 test_mcp_host_profiles.py 按矩阵这一档判
-命令该在 README 还是在这里。ADR 0103「对外口径」。README 一节的原文（放回「### Using Tavotto from other AI
+命令该在 README 还是在这里。同时把指向这一节的提示加回：
+codex-plugin/integrations/configure.py 里 claude-code 的 target 那句改回「更省事的是装插件（README「Using Tavotto
+with Claude Code」的两条命令），就不需要这段配置；」（tests/test_readme_section_references.py 要求被引用的章节
+真的在）。ADR 0103「对外口径」。README 一节的原文（放回「### Using Tavotto from other AI
 editors and clients (experimental)」之前）：
 
 ### Using Tavotto with Claude Code (Beta)
