@@ -1042,14 +1042,14 @@ jobs:
           }
           if ($rc -ne 0) { throw "真窗口用例失败（pytest 退出码 $rc）" }
 
-          # skip 不是绿：除了指向 #715 的 xfail，一条 skip 都不许有；执行条数钉在实测值
-          # ——少收集一个文件、某条用例被 skip 掉，pytest 照样退 0。
+          # skip 不是绿：一条 skip（junit 里 xfail 也记成 <skipped>）都不许有；执行条数钉在实测值
+          # ——少收集一个文件、某条用例被 skip 掉，pytest 照样退 0。原先为 #715 的两条 xfail 开的豁免
+          # 随 #751 去掉：前提没了的豁免只会变成盲区
           $x = [xml](Get-Content $junit -Raw -Encoding utf8)
           $cases = @($x.SelectNodes('//testcase'))
-          $skipped = @($cases | Where-Object { $_.skipped -and $_.skipped.type -ne 'pytest.xfail' })
-          if ($skipped.Count) { throw "真窗口用例里有 $($skipped.Count) 条被 skip：$(($skipped | ForEach-Object name) -join ', ')" }
-          $xfail = @($cases | Where-Object { $_.skipped -and $_.skipped.type -eq 'pytest.xfail' })
-          Write-Host "执行 $($cases.Count) 条，其中 xfail（#715）$($xfail.Count) 条"
+          $skipped = @($cases | Where-Object { $_.skipped })
+          if ($skipped.Count) { throw "真窗口用例里有 $($skipped.Count) 条被 skip / xfail：$(($skipped | ForEach-Object name) -join ', ')" }
+          Write-Host "执行 $($cases.Count) 条"
           if ($cases.Count -ne 12) { throw "真窗口用例执行了 $($cases.Count) 条，预期 12 条（加减用例时同步这里）" }
 
       - name: 真窗口用例的取证（失败时）

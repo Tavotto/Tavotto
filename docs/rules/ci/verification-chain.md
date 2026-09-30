@@ -68,7 +68,7 @@
 - **真 Tauri 窗口用例**（issue #542，`tests/desktop_windows/`）：只有**真壳里的 WebView2**
   才量得到的那一段——Playwright 起的是浏览器，不是这个窗口，**不许拿它冒充**。
   * 腿：**只有** `nightly.yml` 的 `windows-install`「无 Python」档，在刚装好的 NSIS 产物上跑，
-    带 `TAVOTTO_DESKTOP_WINDOW_REQUIRED=1`（缺前提即红）；junit 里 xfail 以外的 skip 判红、
+    带 `TAVOTTO_DESKTOP_WINDOW_REQUIRED=1`（缺前提即红）；junit 里任何 skip（含 xfail）判红、
     执行条数钉在实测值。别处整目录 skip 并点名这条腿（`tests/test_e2e_leg_topology.py::TestDesktopWindowLeg`）。
     不进 PR 快档。
   * 通道：HKLM 策略 `SOFTWARE\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments`
@@ -86,8 +86,8 @@
   | 6 | 中文 / 英文 IME | **不覆盖** | IME 组字（TSF / IMM32 候选窗、上屏）只有真键盘 + 真输入法才有；CDP 的 `imeSetComposition` 是渲染进程里的合成事件，不是输入法，拿它判「IME 能用」是冒充。靠人工清单 |
   | 7 | 剪贴板跨应用 | `test_clipboard.py`：⌃C 后系统剪贴板里是对象载荷、所有者在本实例进程树里；别的应用改写载荷后 ⌃V 粘出改写后的样子；普通文字 ⌃V 不产生对象（没有内存兜底） | 图片 / 富文本格式没有用例（产品只收 `text/plain` 载荷） |
   | 8 | 真 WebView 拖动与 undo/redo | `test_drag_undo.py`：CDP 指针拖动、⌃Z 逐像素回原位、⌃⇧Z 回拖后 | 触控板 / 高 DPI 缩放下的指针换算 |
-  | 9 | 关掉再开恢复 | `test_restart_restore.py`：`WM_CLOSE` → 无参重开；**xfail(strict) 指向 #715**（origin 随端口变），同源 `location.reload()` 对照为绿 | — |
-  | 12 | 强杀后恢复 | 同上，`TerminateProcess` 壳、断言子进程跟着退；**xfail(strict) 指向 #715** | 「改动还没落盘就被杀」那一刻的崩溃副本：时序抢不稳，没有稳定的被测状态 |
+  | 9 | 关掉再开恢复 | `test_restart_restore.py`：`WM_CLOSE` → 无参重开；必绿（#718 稳定端口合入后转绿，#751 去掉了 xfail），同源 `location.reload()` 对照为绿 | — |
+  | 12 | 强杀后恢复 | 同上，`TerminateProcess` 壳、断言子进程跟着退；必绿（同上） | 「改动还没落盘就被杀」那一刻的崩溃副本：时序抢不稳，没有稳定的被测状态 |
   | 13 | 菜单 / 快捷键 / 焦点 | `test_menu_keyboard_focus.py`：真菜单栏上加速键逐条在位；菜单撤销 / 重做、⌃D 在输入框里让位、「设置」开关后焦点；纯键盘 Tab 到素材卡 → 放图 → 撤销 / 重做（#37 真机那一段） | 加速键表的**查表**（真按键 → 哪条命令）要真按键；这里投的是查表之后那条 `WM_COMMAND`，菜单栏上的加速键文字是它的镜像。#37 的完整键盘闭环仍在 `keyboard-golden-path.spec.ts`（chromium 与 WebView2 同引擎） |
 
   **macOS**：WKWebView 没有 WebDriver，**整张表都不覆盖**（包括 9 / 12 / 13）——壳里没有对外的
