@@ -37,3 +37,21 @@ export function visibleSentenceCount(root: Element): number {
 export function visiblePrimaryButtons(root: Element): number {
   return visibleElements(root).filter((el) => el.tagName === 'BUTTON' && el.className.includes('text-white')).length
 }
+
+/**
+ * 「详情」展开后有没有重复（2026-09-29 用户截图：「不改动源码」「隔离环境」、下载各说了两遍）：把区域里每个文字块按
+ * 句末标点切成句子，回重复出现的那些；另回几个「同一件事」的记号各出现了几次——句子措辞不同但说的是同一件事时，
+ * 只比句子抓不到
+ */
+export function repeatedSentences(root: Element): string[] {
+  const all = [...root.querySelectorAll('*')]
+    .filter((el) => [...el.childNodes].some((n) => n.nodeType === Node.TEXT_NODE && (n.textContent ?? '').trim()))
+    .flatMap((el) => (el.textContent ?? '').split(/[。；]/))
+    .map((t) => t.trim())
+    .filter(Boolean)
+  return all.filter((t, i) => all.indexOf(t) !== i)
+}
+
+export function mentionCount(root: Element, needle: string): number {
+  return (root.textContent ?? '').split(needle).length - 1
+}

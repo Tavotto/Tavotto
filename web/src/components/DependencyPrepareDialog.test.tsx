@@ -35,7 +35,13 @@ import { DependencyPrepareDialog } from '@/components/DependencyPrepareDialog'
 import { DependencyPrepareButton } from '@/components/WorkdirRow'
 import { i18n, t } from '@/i18n'
 import { listJoin } from '@/i18n/format'
-import { visibleBlocks, visiblePrimaryButtons, visibleSentenceCount } from '@/test/visibleBlocks'
+import {
+  mentionCount,
+  repeatedSentences,
+  visibleBlocks,
+  visiblePrimaryButtons,
+  visibleSentenceCount,
+} from '@/test/visibleBlocks'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { setCurrentProjectId } from '@/lib/session'
 import { useDepRepairStore } from '@/store/depRepairStore'
@@ -198,11 +204,29 @@ describe('DependencyPrepareDialog', () => {
     expect(visibleSentenceCount(dialog()!)).toBe(1)
     expect(visiblePrimaryButtons(dialog()!)).toBe(1)
     const advanced = document.querySelector('[data-repair-advanced]') as HTMLDetailsElement
-    expect(advanced.querySelector('[data-one-click-cost]')!.textContent).toBe(en('oneClickCostNetwork'))
+    expect(advanced.querySelector('[data-one-click-cost]')!.textContent).toBe(en('repairFactNetwork'))
     expect(advanced.querySelector('[data-dependency-requirements]')).toBeTruthy()
     expect(advanced.querySelector('[data-dependency-target]')).toBeTruthy()
     // 「不准备，直接运行」不再是并列的次按钮，收在详情里
     expect(advanced.querySelector('[data-dependency-skip]')).toBeTruthy()
+  })
+
+  it('一键修复框展开「详情」后没有重复的句子，下载 / 联网 / 不改动各只说一次', async () => {
+    const pp = {
+      id: 'pbs', version: '3.13.15', target: 'darwin-arm64', source_host: 'github.com',
+      download_bytes: 25 * 1048576, required: true, cached: false, network_required: true, origin: 'download' as const,
+    }
+    await render(<DependencyPrepareDialog />)
+    await act(async () =>
+      useEnvStore.getState().requestDependencyPreparation(
+        offer({ private_python: pp, targets: [{ ...offer().targets[0], private_python: pp }] }),
+      ),
+    )
+    const details = document.querySelector('[data-repair-advanced]')!
+    expect(repeatedSentences(details)).toEqual([])
+    expect(mentionCount(details, 'MB')).toBe(1)
+    expect(mentionCount(details, '联网')).toBe(1)
+    expect(mentionCount(details, '不改动')).toBe(1)
   })
 
   it('一键修复进行中：只剩一行进度', async () => {
@@ -264,7 +288,9 @@ describe('DependencyPrepareDialog', () => {
     await act(async () => radio('project_venv')!.click())
     expect(dialog()!.querySelector('h2')!.textContent).not.toContain('MB')
     expect(document.querySelector('[data-dependency-private-python]')).toBeNull()
-    expect(document.querySelector('[data-one-click-cost]')!.textContent).toBe(en('oneClickCostNetwork'))
+    // 项目 venv 不下载、不供应 Python：「要下载什么」那一条整条不出现，换成项目环境那句联网说明
+    expect(document.querySelector('[data-one-click-cost]')).toBeNull()
+    expect(text()).toContain(en('dependencyPrepareNetwork'))
     // ② 默认目标就是项目 venv：「详情」里不说受管目标的那份 Python
     await act(async () => useEnvStore.getState().dismissDependencyPreparation())
     await act(async () =>
@@ -287,7 +313,9 @@ describe('DependencyPrepareDialog', () => {
         offer({ targets: [{ ...offer().targets[0], private_python: { ...pp, origin: 'download' } }] }),
       ),
     )
-    expect(document.querySelector('[data-one-click-cost]')!.textContent).toBe(en('oneClickCostDownload', { mb: 25 }))
+    expect(document.querySelector('[data-one-click-cost]')!.textContent).toBe(
+      en('repairFactDownload', { version: '3.13.15', mb: 25, product: PRODUCT_NAME }),
+    )
     // 大小放进标题那一句里（括号），仍是一句
     expect(dialog()!.querySelector('h2')!.textContent).toBe(
       en('oneClickSentenceDownload', { packages: listJoin(['six', 'tabulate']), mb: 25 }),
@@ -300,10 +328,12 @@ describe('DependencyPrepareDialog', () => {
         offer({ targets: [{ ...offer().targets[0], private_python: { ...pp, origin: 'bundled', download_bytes: 0 } }] }),
       ),
     )
-    expect(document.querySelector('[data-one-click-cost]')!.textContent).toBe(en('oneClickCostNetwork'))
+    expect(document.querySelector('[data-one-click-cost]')!.textContent).toBe(
+      en('repairFactBundled', { version: '3.13.15', product: PRODUCT_NAME }),
+    )
     expect(dialog()!.querySelector('h2')!.textContent).not.toContain('MB')
     expect(document.querySelector('[data-dependency-private-python]')!.textContent).toBe(
-      en('dependencyPreparePrivatePythonBundled', { version: '3.13.15', product: PRODUCT_NAME }),
+      en('repairFactBundled', { version: '3.13.15', product: PRODUCT_NAME }),
     )
   })
 
@@ -490,7 +520,7 @@ describe('DependencyPrepareDialog', () => {
     await render(<DependencyPrepareDialog />)
     await act(async () => useEnvStore.getState().requestDependencyPreparation(clean({})))
     expect(document.querySelector('[data-dependency-private-python]')).not.toBeNull()
-    expect(text()).toContain(en('dependencyPreparePrivatePython', { version: '3.13.15', mb: 24, product: PRODUCT_NAME }))
+    expect(text()).toContain(en('repairFactDownload', { version: '3.13.15', mb: 24, product: PRODUCT_NAME }))
     expect(radio('tavotto_managed')!.disabled).toBe(false)
     // 同一时刻只开一份：换载荷要先关掉这一份
     await act(async () => useEnvStore.setState({ dependencyPreparation: null }))
@@ -499,7 +529,7 @@ describe('DependencyPrepareDialog', () => {
         clean({ cached: true, download_bytes: 0, network_required: false }),
       ),
     )
-    expect(text()).toContain(en('dependencyPreparePrivatePythonCached', { version: '3.13.15', product: PRODUCT_NAME }))
+    expect(text()).toContain(en('repairFactCached', { version: '3.13.15', product: PRODUCT_NAME }))
     expect(text()).not.toContain('MB')
     // 别的项目已经把私有 Python 供应好了（required=false、零字节）：本项目照样要建自己的一代，来源照样说出口
     await act(async () => useEnvStore.setState({ dependencyPreparation: null }))
@@ -508,7 +538,7 @@ describe('DependencyPrepareDialog', () => {
         clean({ required: false, cached: true, download_bytes: 0, network_required: false }),
       ),
     )
-    expect(text()).toContain(en('dependencyPreparePrivatePythonCached', { version: '3.13.15', product: PRODUCT_NAME }))
+    expect(text()).toContain(en('repairFactCached', { version: '3.13.15', product: PRODUCT_NAME }))
     expect(radio('tavotto_managed')!.disabled).toBe(false)
     // 没有这一段（有基础解释器）时一个字都不出现
     await act(async () => useEnvStore.setState({ dependencyPreparation: null }))

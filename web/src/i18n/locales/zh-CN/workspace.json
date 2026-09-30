@@ -532,7 +532,8 @@
     "starting": "正在启动渲染环境…",
     "viewResults": "查看捕获结果",
     "groupInfraName": "工具与配置脚本",
-    "recoveryDetails": "详情"
+    "recoveryDetails": "详情",
+    "group_needsFix": "需要修复"
   },
   "spineZone": {
     "label": "{{side}} · {{dir}}刻度 {{state}} · {{action}}",

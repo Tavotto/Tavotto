@@ -557,7 +557,8 @@
     "starting": "Starting the rendering environment…",
     "viewResults": "View captured figures",
     "groupInfraName": "Tools and config scripts",
-    "recoveryDetails": "Details"
+    "recoveryDetails": "Details",
+    "group_needsFix": "Needs fixing"
   },
   "spineZone": {
     "label": "{{side}} · {{dir}} ticks {{state}} · {{action}}",

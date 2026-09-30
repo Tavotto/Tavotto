@@ -41,7 +41,13 @@ import { PRODUCT_NAME } from '@/lib/brand'
 import { i18n, t } from '@/i18n'
 import { useDepRepairStore } from '@/store/depRepairStore'
 import { useRenderStore } from '@/store/renderStore'
-import { visibleBlocks, visiblePrimaryButtons, visibleSentenceCount } from '@/test/visibleBlocks'
+import {
+  mentionCount,
+  repeatedSentences,
+  visibleBlocks,
+  visiblePrimaryButtons,
+  visibleSentenceCount,
+} from '@/test/visibleBlocks'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -212,7 +218,7 @@ describe('缺依赖的修复卡片', () => {
 
   it('Tavotto 隔离环境的文案说明不会动用户已有的环境 —— 点之前就在卡片上', async () => {
     await render({ ...OFFER, targets: [OFFER.targets[1]] })
-    expect(text()).toContain(en('repairConfirmManaged'))
+    expect(text()).toContain(en('repairFactUntouched'))
     expect(text()).not.toContain(en('repairModifiesEnv'))
   })
 
@@ -328,7 +334,7 @@ describe('缺依赖的修复卡片', () => {
       ...OFFER,
       targets: [{ ...OFFER.targets[1], private_python: PRIVATE_PYTHON }],
     })
-    const disclosure = en('dependencyPreparePrivatePython', { version: '3.13.15', mb: 45, product: PRODUCT_NAME })
+    const disclosure = en('repairFactDownload', { version: '3.13.15', mb: 45, product: PRODUCT_NAME })
     expect(text()).toContain(disclosure)
     // 后端算出来的计划要下载的比卡片说的多：不执行，确认页把计划本身的数字说出口
     planMock.mockResolvedValue({
@@ -422,25 +428,25 @@ describe('一键修复（2026-09-29：面向不懂 Python 的用户）', () => {
     await render(managedOnly(PRIVATE_PYTHON))
     for (const jargon of ['3.13.15', '隔离', '/', 'Python 3']) expect(mainText()).not.toContain(jargon)
     const details = document.querySelector('[data-repair-advanced]')!
-    expect(details.textContent).toContain(en('oneClickCostDownload', { mb: 45 }))
-    expect(details.textContent).toContain(en('oneClickBodyManaged', { product: PRODUCT_NAME, packages: 'lmfit' }))
+    expect(details.textContent).toContain(en('repairFactDownload', { version: '3.13.15', mb: 45, product: PRODUCT_NAME }))
+    expect(details.textContent).toContain(en('repairFactUntouched'))
   })
 
   it('要下载时说大小；安装包自带 / 已缓存时不提下载；老后端没有 origin 时按 cached 推（缺省 = 下载）', async () => {
     await render(managedOnly(PRIVATE_PYTHON))
-    expect(cost()).toBe(en('oneClickCostDownload', { mb: 45 }))
+    expect(cost()).toBe(en('repairFactDownload', { version: '3.13.15', mb: 45, product: PRODUCT_NAME }))
     for (const [pp, said] of [
-      [{ ...PRIVATE_PYTHON, origin: 'download' as const }, en('oneClickCostDownload', { mb: 45 })],
-      [{ ...PRIVATE_PYTHON, origin: 'bundled' as const, download_bytes: 0, cached: false }, en('oneClickCostNetwork')],
-      [{ ...PRIVATE_PYTHON, origin: 'cached' as const, download_bytes: 0, cached: true }, en('oneClickCostNetwork')],
-      [{ ...PRIVATE_PYTHON, cached: true, download_bytes: 0 }, en('oneClickCostNetwork')],
-      [null, en('oneClickCostNetwork')],
+      [{ ...PRIVATE_PYTHON, origin: 'download' as const }, en('repairFactDownload', { version: '3.13.15', mb: 45, product: PRODUCT_NAME })],
+      [{ ...PRIVATE_PYTHON, origin: 'bundled' as const, download_bytes: 0, cached: false }, en('repairFactBundled', { version: '3.13.15', product: PRODUCT_NAME })],
+      [{ ...PRIVATE_PYTHON, origin: 'cached' as const, download_bytes: 0, cached: true }, en('repairFactCached', { version: '3.13.15', product: PRODUCT_NAME })],
+      [{ ...PRIVATE_PYTHON, cached: true, download_bytes: 0 }, en('repairFactCached', { version: '3.13.15', product: PRODUCT_NAME })],
+      [null, en('repairFactNetwork')],
     ] as const) {
       await act(async () => root.unmount())
       host.remove()
       await render(managedOnly(pp))
       expect(cost(), JSON.stringify(pp)).toBe(said)
-      if (said === en('oneClickCostNetwork')) expect(mainText()).not.toContain('MB')
+      if (!said.includes('MB')) expect(mainText()).not.toContain('MB')
     }
   })
 
@@ -472,10 +478,25 @@ describe('一键修复（2026-09-29：面向不懂 Python 的用户）', () => {
     }
   })
 
+  it('展开「详情」后没有重复：最多三条事实（装什么 / 下载什么多大 / 不改动什么），同一件事只说一次', async () => {
+    for (const offer of [managedOnly(PRIVATE_PYTHON), managedOnly({ ...PRIVATE_PYTHON, origin: 'bundled', download_bytes: 0 }), OFFER]) {
+      await act(async () => root?.unmount())
+      host?.remove()
+      await render(offer)
+      const details = document.querySelector('[data-one-click-repair] [data-repair-advanced]')!
+      expect(repeatedSentences(details)).toEqual([])
+      expect(document.querySelectorAll('[data-dependency-disclosure] > p').length).toBeLessThanOrEqual(3)
+      expect(mentionCount(details, '不改动'), '「不改动…」说了不止一次').toBe(1)
+      expect(mentionCount(details, 'MB')).toBeLessThanOrEqual(1)
+      expect(mentionCount(details, '联网'), '联网说了不止一次').toBe(1)
+      expect(mentionCount(details, '隔离')).toBe(0)
+    }
+  })
+
   it('安装包自带的 Python：「高级」里的明细说自带，不说「已下载」', async () => {
     await render(managedOnly({ ...PRIVATE_PYTHON, origin: 'bundled', download_bytes: 0 }))
     const line = document.querySelector('[data-dependency-private-python]')!.textContent
-    expect(line).toBe(en('dependencyPreparePrivatePythonBundled', { version: '3.13.15', product: PRODUCT_NAME }))
+    expect(line).toBe(en('repairFactBundled', { version: '3.13.15', product: PRODUCT_NAME }))
   })
 
   it('「换一个 Python」与「选择渲染环境」收在默认折叠的「高级」里；后者就地打开渲染环境对话框', async () => {
@@ -502,7 +523,7 @@ describe('一键修复（2026-09-29：面向不懂 Python 的用户）', () => {
     expect(cost()).toBe(en('oneClickChecking'))
     expect(byName(en('oneClickRepair'))!.disabled).toBe(true)
     await act(async () => resolvePreview({ plan: { ...MANAGED_PLAN, plan_id: 'plan-preview' } }))
-    expect(cost()).toBe(en('oneClickCostDownload', { mb: 45 }))
+    expect(cost()).toBe(en('repairFactDownload', { version: '3.13.15', mb: 45, product: PRODUCT_NAME }))
     expect(byName(en('oneClickRepair'))!.disabled).toBe(false)
     planMock.mockResolvedValue({ plan: MANAGED_PLAN })
     await click(en('oneClickRepair'))
@@ -814,10 +835,10 @@ describe('受管环境一次授权（2026-09-28）', () => {
     expect(block, '受管目标下面没有披露块').toBeTruthy()
     const said = block!.textContent ?? ''
     expect(said).toContain(en('repairWillInstall', { requirement: 'lmfit>=1.3' }))
-    expect(said).toContain(en('repairNeedsNetwork'))
-    expect(said).toContain(en('repairConfirmManaged'))
+    // 三条各说一件事：装什么（上一行已查）/ 下载什么多大（含联网）/ 不改动什么
+    expect(said).toContain(en('repairFactUntouched'))
     expect(said).toContain(
-      en('dependencyPreparePrivatePython', { version: '3.13.15', mb: 45, product: PRODUCT_NAME }),
+      en('repairFactDownload', { version: '3.13.15', mb: 45, product: PRODUCT_NAME }),
     )
   })
 

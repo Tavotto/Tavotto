@@ -63,7 +63,8 @@
   一句话（「这个脚本还缺 openpyxl，点一下自动装好。」；要下载私有 Python 时大小用括号放进同一句——「…自动装好（需下载约
   25 MB）。」，`oneClickSentence()` 一处拼，安装包自带 / 已缓存 / 已就位时不提下载）+ 一个主按钮「一键修复」+ 折叠标题「详情」（`data-repair-advanced`）——
   没有标题、解释段落、列表、第二个并列按钮。这台电脑上已有装好那个包的环境时改用它（不装、不下载），否则装进为项目准备的受管
-  环境。下载大小（`data-one-click-cost`，来源只按 `privatePythonOrigin()` 判：`bundled` / `cached` 不提下载，字段缺失按
+  环境。「详情」里受管环境那一段最多三条、各说一件事（要装什么 / 要下载什么多大——联网只在这一条里说，`downloadFact()` /
+  不改动什么），修复卡与跑前授权框同一套；下载大小（`data-one-click-cost`，来源只按 `privatePythonOrigin()` 判：`bundled` / `cached` 不提下载，字段缺失按
   `cached` 推、再缺按下载）、环境说明、需求串、其余目标、被跳过的系统解释器、「换一个 Python」（`OtherPython`，兜底出口必须
   **始终在**）与「选择渲染环境」全在「详情」里。两样都没有时才把各条路摊开；真的无路可走时同样一句话（`repairManagedUnavailable`，版本范围与「指定已有 Python」在「详情」里）。
   受管目标 `available: null`（后端还在探基础解释器、offer 上没挂私有 Python）时卡片先 `previewManaged()` 形成一份计划**只读它的
@@ -77,6 +78,7 @@
   短语，其余照样进「详情」。同一个包缺在几个脚本上**只挂一张卡**
   （修复进行中的那一行优先），装好后同样缺它的几行一起重跑（`rerunSameModule`；发起时把那几行记进 `scriptOffer.peers` 随作业收放，
   切走期间装好、切回来运行记录已清空时按名单补跑）；有修复 offer 的行不叠 `FailureRecovery`。
+  缺包的脚本在素材库里单独归「需要修复」组、排最前；超时与一般失败仍在「可能需要原环境」。
   看护：「默认可见」按**可见元素**判（`test/visibleBlocks.ts`：收起的 details 里只有 summary 可见；主区域按「。」数句子 ≤ 1、
   数看得见的主按钮 = 1；e2e 用 `checkVisibility`），不按子串——`DependencyRepairCard.test.tsx`「一键修复」、`DependencyPrepareDialog.test.tsx`、`ScriptLibrary.test.tsx`、
   `e2e/dependency-one-click.spec.ts`（`@feature:assets.dependency-one-click-repair`）。

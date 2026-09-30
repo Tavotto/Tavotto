@@ -247,31 +247,15 @@ export function DependencyRepairCard({
   const managed = primary?.kind === 'tavotto_managed'
   const advanced = (
     <Advanced>
-      {managed && (
-        // 一键修复要花什么、会做什么：默认不露（2026-09-29 用户：卡片只许一句话 + 一个主按钮），想核对的人展开看
-        <div data-one-click-explain>
-          <p className="text-xs leading-relaxed text-ink-2" data-one-click-cost>
-            {checking
-              ? en('oneClickChecking')
-              : disclosed && privatePythonOrigin(disclosed) === 'download'
-                ? en('oneClickCostDownload', { mb: Math.max(1, Math.round(disclosed.download_bytes / 1048576)) })
-                : en('oneClickCostNetwork')}
-          </p>
-          <p className="mt-1 text-xs leading-relaxed text-ink-3">
-            {en('oneClickBodyManaged', { product: PRODUCT_NAME, packages: pkg })}
-          </p>
-        </div>
-      )}
       {managedReady && offer.requirement && (
-        // 一次授权的技术明细（装的需求串 / 私有 Python 的版本与体积）；受管环境排在「已有环境」之后、收在这里时，
-        // 这就是点它之前的披露
-        <div data-dependency-disclosure>
-          <p className="text-xs leading-relaxed text-ink-3">
-            {en('repairWillInstall', { requirement: offer.requirement.requirement })}
-            {` · ${en('repairNeedsNetwork')}`}
+        // 点之前的披露（一次授权），最多三条、各说一件事（2026-09-29 用户：「详情」不许重复啰嗦）：
+        // 要装什么 / 要下载什么（多大）/ 不改动什么
+        <div className="flex flex-col gap-1 text-xs leading-relaxed text-ink-3" data-dependency-disclosure>
+          <p>{en('repairWillInstall', { requirement: offer.requirement.requirement })}</p>
+          <p data-one-click-cost {...(disclosed ? { 'data-dependency-private-python': '' } : {})}>
+            {checking ? en('oneClickChecking') : downloadFact(disclosed)}
           </p>
-          <p className="mt-1 text-xs leading-relaxed text-ink-3">{en('repairConfirmManaged')}</p>
-          {disclosed && <PrivatePythonDisclosure offer={disclosed} />}
+          <p>{en('repairFactUntouched')}</p>
         </div>
       )}
       {primary?.kind === 'system_interpreter' && (
@@ -471,6 +455,19 @@ export function oneClickEnvironmentSentence(privatePython: PrivatePythonOffer | 
   return privatePython && privatePythonOrigin(privatePython) === 'download'
     ? en('oneClickSentenceEnvDownload', { mb: Math.max(1, Math.round(privatePython.download_bytes / 1048576)) })
     : en('oneClickSentenceEnv')
+}
+
+/**
+ * 「详情」里「要下载什么」那一条（修复卡与跑前授权框共用）：要下载私有 Python 时说版本与大小，安装包自带 / 已就位时
+ * 说用的是哪一份；都顺带一句装包要联网——联网只在这一条里说，不另起一行
+ */
+export function downloadFact(privatePython: PrivatePythonOffer | null): string {
+  if (!privatePython) return en('repairFactNetwork')
+  const values = { product: PRODUCT_NAME, version: privatePython.version }
+  const origin = privatePythonOrigin(privatePython)
+  if (origin === 'bundled') return en('repairFactBundled', values)
+  if (origin === 'cached') return en('repairFactCached', values)
+  return en('repairFactDownload', { ...values, mb: Math.max(1, Math.round(privatePython.download_bytes / 1048576)) })
 }
 
 /** Both the offer and the final plan must disclose the Python download before authorization. */

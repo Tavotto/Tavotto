@@ -213,6 +213,9 @@ test(
     // ① 脚本行上一张卡：画出来的只有一句话、一个主按钮、「详情」折叠标题
     const card = page.locator('[data-script-dependency-repair] [data-one-click-repair="tavotto_managed"]')
     await expect(card).toBeVisible({ timeout: 30_000 })
+    // 缺包的脚本归在直白的「需要修复」组下，不叫「可能需要原环境」
+    await expect(page.getByRole('list', { name: '需要修复' })).toContainText(SCRIPT)
+    await expect(page.getByText('可能需要原环境')).toHaveCount(0)
     const button = card.locator('[data-one-click-repair-button]')
     await expectReachable(page, button, '一键修复按钮')
     expect(await renderedBlocks(card)).toEqual([
@@ -226,7 +229,7 @@ test(
     await expect(card.locator('[data-one-click-cost]')).toBeHidden()
     await expect(page.getByText('可能依赖原来的 Python 环境')).toBeHidden()
     await card.locator('[data-repair-advanced] > summary').click()
-    await expect(card.locator('[data-one-click-cost]')).toHaveText('需要联网，约下载 25 MB。')
+    await expect(card.locator('[data-one-click-cost]')).toHaveText('需下载 Tavotto 自己的 Python 3.13.15（约 25 MB），装包也需要联网。')
     await card.locator('[data-repair-advanced] > summary').click()
 
     // ② 点一次：形成计划并直接开始（安装请求只带 plan_id），没有第二步确认

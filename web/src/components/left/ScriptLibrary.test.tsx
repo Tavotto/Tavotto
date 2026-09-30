@@ -411,6 +411,32 @@ describe('运行 / 取消 / 结果', () => {
     useDepRepairStore.getState().reset()
   })
 
+  it('缺包的脚本单独归「需要修复」组（排最前）；超时与一般失败仍在「可能需要原环境」', async () => {
+    mockRegistry.mockResolvedValue(view([entry({ script: 'a.py' }), entry({ script: 'b.py' }), entry({ script: 'c.py' })]))
+    mockProbe.mockImplementation(async (script: string) => ({
+      ...ok([]),
+      script,
+      registered: false,
+      error:
+        script === 'a.py'
+          ? { code: 'missing_dependency', message: '缺少依赖包：pandas', params: { module: 'pandas' } }
+          : script === 'b.py'
+            ? { code: 'execution_timeout', message: '超时' }
+            : { code: 'script_failed', message: '脚本出错' },
+    }))
+    await mount()
+    for (const btn of [...host.querySelectorAll<HTMLButtonElement>('button[aria-label$="并发现图"]')]) {
+      await act(async () => btn.click())
+      await flush()
+    }
+    const groups = [...host.querySelectorAll('section ul[aria-label]')].map((ul) => ({
+      name: ul.getAttribute('aria-label'),
+      scripts: [...ul.querySelectorAll('li > div span.font-mono')].map((s) => s.getAttribute('title')),
+    }))
+    expect(groups[0]).toEqual({ name: '需要修复', scripts: ['a.py'] })
+    expect(groups.find((g) => g.name === '可能需要原环境')?.scripts).toEqual(['b.py', 'c.py'])
+  })
+
   it('没出图（script_no_figure）不进「可能需要原环境」组', async () => {
     mockRegistry.mockResolvedValue(view([entry({ script: 'show.py' })]))
     mockProbe.mockResolvedValue({

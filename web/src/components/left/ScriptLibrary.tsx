@@ -38,10 +38,13 @@ const sc = (key: string, values?: Record<string, unknown>) =>
   translate(`scripts.${key}`, { ns: 'workspace', ...(values ?? {}) })
 
 
-type Group = 'linked' | 'notRun' | 'runtimeNames' | 'needsEnv' | 'infra'
-const GROUP_ORDER: Group[] = ['linked', 'notRun', 'runtimeNames', 'needsEnv', 'infra']
+type Group = 'needsFix' | 'linked' | 'notRun' | 'runtimeNames' | 'needsEnv' | 'infra'
+const GROUP_ORDER: Group[] = ['needsFix', 'linked', 'notRun', 'runtimeNames', 'needsEnv', 'infra']
 
 function groupOf(entry: ScriptInventoryEntry, run: ScriptRunState | undefined): Group {
+  // 缺包是能一键修好的那一类：单独一组「需要修复」、排在最前（2026-09-29：「可能需要原环境」对不懂 Python 的
+  // 用户是术语）。超时与一般失败仍在下面那组——它们真的可能与原来的环境 / 运行方式有关
+  if (run?.phase === 'missing_dependency') return 'needsFix'
   // 本会话 safe 运行失败且形状像环境问题的，收进「可能需要原环境」——
   // 恢复路径文案（总纲 §四）挂在组上，一眼看全
   if (needsNative(run)) return 'needsEnv'

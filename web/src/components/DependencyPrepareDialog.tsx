@@ -9,9 +9,8 @@ import { Dialog } from './ui/Dialog'
 import { Radio } from './ui/Radio'
 import { userEnvironmentName } from '@/lib/userEnvironmentText'
 import { listJoin } from '@/i18n/format'
-import { privatePythonOrigin, type PrivatePythonOffer } from '@/lib/api'
 import { RepairProgressLine } from './RepairProgressLine'
-import { oneClickEnvironmentSentence, oneClickSentence, privatePythonText } from './DependencyRepairCard'
+import { downloadFact, oneClickEnvironmentSentence, oneClickSentence } from './DependencyRepairCard'
 
 /**
  * 跑前的那一次授权（U04，ADR 0061 §六）：后端起第一个 worker 之前看一眼脚本开跑要的第三方包
@@ -205,12 +204,6 @@ export function DependencyPrepareDialog() {
           {en('engine.userEnvNone')}
         </p>
       )}
-      {privatePython && (
-        // 这台机器没有可用的 Python：这次授权包含先准备 Tavotto 自己的一份（U05）；要下载时说体积
-        <p className="mt-2 text-xs leading-relaxed text-ink-2" data-dependency-private-python>
-          {privatePythonText(privatePython)}
-        </p>
-      )}
       {partial.length > 0 && (
         <Details className="mt-2 text-xs text-ink-3" data-user-env-partial>
           <Summary className="cursor-pointer">{en('engine.userEnvPartial')}</Summary>
@@ -225,7 +218,21 @@ export function DependencyPrepareDialog() {
           </ul>
         </Details>
       )}
-      {!envChosen && (
+      {!envChosen && target === 'tavotto_managed' && (
+        // 装进 Tavotto 自己的环境：要装什么是上面那张清单，这里只补另外两件事、各一条（与修复卡同一套，不重复）——
+        // 要下载什么（私有 Python 多大 / 自带的是哪一份；联网只在这一条里说）、不改动什么
+        <>
+          <p
+            className="mt-2 text-xs leading-relaxed text-ink-2"
+            data-one-click-cost
+            {...(privatePython ? { 'data-dependency-private-python': '' } : {})}
+          >
+            {downloadFact(privatePython)}
+          </p>
+          <p className="mt-1 text-xs leading-relaxed text-ink-3">{en('engine.repairFactUntouched')}</p>
+        </>
+      )}
+      {!envChosen && target === 'project_venv' && (
         <p className="mt-2 text-xs leading-relaxed text-ink-3">{en('engine.dependencyPrepareNetwork')}</p>
       )}
     </>
@@ -294,12 +301,7 @@ export function DependencyPrepareDialog() {
         <Details className={cn('text-xs', !simple && 'mt-2')} data-repair-advanced>
           <Summary className="type-meta cursor-pointer">{en('engine.repairAdvanced')}</Summary>
           <div className="mt-2">
-            {simple && (
-              <p className="text-xs leading-relaxed text-ink-2" data-one-click-cost>
-                {oneClickCost(privatePython, en)}
-              </p>
-            )}
-            <div className="mt-2">{details}</div>
+            {details}
             {simple && <div className="mt-2">{targetChoice}</div>}
             <Button
               variant="ghost"
@@ -342,17 +344,4 @@ export function DependencyPrepareDialog() {
 function requirementName(requirement: string): string {
   const m = /^[A-Za-z0-9._-]+/.exec(requirement.trim())
   return m ? m[0] : requirement
-}
-
-/** 一键修复那一行「要花什么」：要下载私有 Python 时说大小，自带 / 已缓存时只说要联网（装包仍要联网） */
-function oneClickCost(
-  privatePython: PrivatePythonOffer | null,
-  en: (key: string, values?: Record<string, unknown>) => string,
-): string {
-  if (privatePython && privatePythonOrigin(privatePython) === 'download') {
-    return en('engine.oneClickCostDownload', {
-      mb: Math.max(1, Math.round(privatePython.download_bytes / 1048576)),
-    })
-  }
-  return en('engine.oneClickCostNetwork')
 }
