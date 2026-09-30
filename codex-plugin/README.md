@@ -114,7 +114,8 @@ python3 <插件目录>/mcp/server.py --provision
 装与插件同版本的 `tavotto[worker]`（钉版本可复现；`[worker]` 带上
 matplotlib/numpy 渲染栈——pip 形态的引擎发现不了桌面 App 里的内置
 runtime，自管环境必须自己能渲染）。**不碰**系统 Python、Conda、
-用户 site-packages 或 shell 配置；删掉 `mcp-runtime` 目录即卸载。离线环境
+用户 site-packages 或 shell 配置；它的 pip / matplotlib 缓存也在这个目录里
+（`mcp-runtime/cache`），删掉 `mcp-runtime` 目录即卸载。离线环境
 用 `--from /path/to/tavotto-x.y.z-py3-none-any.whl`（或源码目录）。
 装完**新开一个 Codex 会话**。
 

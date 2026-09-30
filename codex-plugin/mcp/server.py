@@ -306,6 +306,31 @@ def managed_runtime_dir() -> str:
     return os.path.join(_plugin_locator().config_dir(), "mcp-runtime")
 
 
+def managed_cache_dir() -> str:
+    """自管环境的缓存归宿：`mcp-runtime/cache`（#733）。
+
+    自管 venv 不在 Tavotto 数据目录里（本文件在引擎不可用时拿不到 `config.data_dir()`），它的 pip /
+    matplotlib 缓存就放在它自己旁边：删掉 `mcp-runtime` 即卸载干净，`venv --clear` 重建时缓存留着复用。
+    两个用处——这里 `--provision` 起的 pip（`provision_env()`），以及引擎从这个解释器起的 worker /
+    探测（`engine/runtime.owned_env` 按 `runtime.PLUGIN_RUNTIME_DIRNAME` 认出它，算出的是同一个目录；
+    `tests/test_probe_leaves_no_trace.py` 两侧对拍）。
+    """
+    return os.path.join(managed_runtime_dir(), "cache")
+
+
+def provision_env() -> dict:
+    """`--provision` 起子进程（建 venv、pip install）用的环境：`PIP_CACHE_DIR` → `mcp-runtime/cache/pip`。
+
+    与引擎侧 `runtime.owned_env` 的 pip 那一半同义：**只改缓存的位置**，用户 pip 配置里的 index-url /
+    代理 / 证书照样生效（不加 `--isolated`），用户关掉缓存（`no-cache-dir`）照样压过它。不设
+    `MPLCONFIGDIR`：provision 这一段不 import matplotlib（装包 + 验 `import tavotto.engine`），
+    从这个解释器起的 worker 由引擎按 `runtime._owned_mplconfigdir` 定。
+    """
+    env = dict(os.environ)
+    env["PIP_CACHE_DIR"] = os.path.join(managed_cache_dir(), "pip")
+    return env
+
+
 def managed_python() -> str:
     """自管 venv 里的解释器路径（存不存在由调用方查）。"""
     venv = os.path.join(managed_runtime_dir(), "venv")
@@ -1200,7 +1225,8 @@ def provision(spec: "str | None" = None, python_base: "str | None" = None) -> "t
     """`--provision`：建插件自管 venv 并装引擎（钉在插件版本上，可复现）。
 
     * 只写 Tavotto 配置目录下的 `mcp-runtime/`——**绝不动**系统 Python、
-      Conda、用户 site-packages、shell 配置；
+      Conda、用户 site-packages、shell 配置；pip 的缓存也在这里
+      （`mcp-runtime/cache/pip`，`provision_env()`，#733）；
     * **基础解释器先验版本再建 venv**（`find_venv_base()`）：启动本文件的
       `python3` 不一定在引擎的支持区间里（macOS 上它常是 Xcode CLT 的 3.9），
       venv 会原样继承它的版本，然后 pip 只会说一句 "No matching distribution
@@ -1224,11 +1250,12 @@ def provision(spec: "str | None" = None, python_base: "str | None" = None) -> "t
     venv_dir = os.path.join(root, "venv")
     python = managed_python()
     steps: "list[dict]" = []
+    env = provision_env()  # pip 缓存落在 mcp-runtime 自己旁边，不在用户的 pip 默认位置（#733）
 
     def _run(argv, what):
         t = time.monotonic()
         try:
-            proc = subprocess.run(argv, capture_output=True, text=True, timeout=900)
+            proc = subprocess.run(argv, capture_output=True, text=True, timeout=900, env=env)
         except (OSError, subprocess.TimeoutExpired) as exc:
             steps.append({"step": what, "ok": False, "error": str(exc)})
             return False

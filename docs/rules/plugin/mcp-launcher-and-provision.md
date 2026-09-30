@@ -81,6 +81,12 @@
   在区间外建出来的 venv 用 `venv --clear` 重建；一个都没有就以 `no_supported_python`
   失败并逐个说出版本，**不在区间外的解释器上起 pip**；`--python` 显式指定时只认那一个——
   先验它、已有的 venv 也换到它上面（已有环境在区间内不是跳过它的理由，#453 评审 P2）。
+  **自管环境的缓存在它旁边**（#733）：`--provision` 起的子进程（建 venv、pip install）带 `PIP_CACHE_DIR` →
+  `mcp-runtime/cache/pip`（`provision_env()`，只改位置、用户 pip 配置照常生效）；从这个解释器起的 worker /
+  探测由引擎 `runtime.owned_env` 认出它（`PLUGIN_RUNTIME_DIRNAME`），pip 与 matplotlib 缓存同落 `mcp-runtime/cache`。
+  不落数据目录：本文件在引擎不可用时拿不到 `config.data_dir()`，放在旁边则删 `mcp-runtime` 即卸载干净、
+  `venv --clear` 重建时缓存照样复用。看护 `tests/test_mcp_resolver.py::test_provision_keeps_the_pip_cache_beside_the_managed_runtime`
+  与 `tests/test_probe_leaves_no_trace.py` 末节。
   区间常量 `PYTHON_MIN` / `PYTHON_MAX_EXCLUSIVE` 是 `engine/projectenv.py` 的镜像
   （`test_provision_python_range_mirrors_the_engine` 对拍），改 `requires-python` 要一起改。
   **装完插件/引擎必须新开 Codex 会话**——已开的会话不重载工具，

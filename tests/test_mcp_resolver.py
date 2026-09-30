@@ -391,6 +391,35 @@ def test_provision_pins_the_plugin_version_and_verifies(
     assert venv_call[0] == sys.executable and "--clear" not in venv_call
 
 
+def test_provision_keeps_the_pip_cache_beside_the_managed_runtime(
+    tmp_path, monkeypatch, launcher_is_supported
+):
+    """#733：`--provision` 起的每个子进程（建 venv、pip install）都带 `PIP_CACHE_DIR` →
+    `mcp-runtime/cache/pip`——不落到用户 pip 的默认位置（Windows 上是 `%LOCALAPPDATA%\\pip`）；
+    其余环境原样继承（用户的 index-url / 代理由他的 pip 配置与环境变量决定）。判据的主语是真正交给
+    子进程的 env。"""
+    seen: list = []
+    ok = _ok_run([])
+
+    def fake_run(argv, **kw):
+        seen.append((list(argv), kw.get("env")))
+        return ok(argv, **kw)
+
+    monkeypatch.setenv("PIP_INDEX_URL", "https://pypi.example.invalid/simple")
+    monkeypatch.delenv("PIP_CACHE_DIR", raising=False)
+    monkeypatch.setattr(launcher.subprocess, "run", fake_run)
+    monkeypatch.setattr(launcher, "_importable", lambda p, **kw: True)
+    report, rc = launcher.provision()
+    assert rc == 0 and report["ok"] is True
+    expected = os.path.join(launcher.managed_runtime_dir(), "cache", "pip")
+    steps = {"venv" if argv[1:3] == ["-m", "venv"] else "pip": env for argv, env in seen}
+    assert set(steps) == {"venv", "pip"}, seen
+    for what, env in steps.items():
+        assert env is not None and env["PIP_CACHE_DIR"] == expected, what
+        assert env["PIP_INDEX_URL"] == "https://pypi.example.invalid/simple", what
+    assert launcher.managed_cache_dir() == os.path.dirname(expected)
+
+
 def test_provision_failure_is_structured(tmp_path, monkeypatch, launcher_is_supported):
     def fake_run(argv, **kw):
         class R:

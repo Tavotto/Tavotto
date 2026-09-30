@@ -167,9 +167,11 @@ def fake_home(tmp_path, monkeypatch) -> Path:
     return home
 
 
-def _owned_python(tmp_path: Path) -> str:
-    """数据目录里的一个 venv（受管环境的形态）；科学栈与 pip 经 .pth 借宿主的，不联网。"""
-    root = tmp_path / "data" / "environments" / "p" / "envs" / "g1"
+def _owned_python(tmp_path: Path, root: Path | None = None) -> str:
+    """数据目录里的一个 venv（受管环境的形态；`root` 给了就建在那儿）；科学栈与 pip 经 .pth 借宿主的，
+    不联网。"""
+    default = root is None
+    root = root or tmp_path / "data" / "environments" / "p" / "envs" / "g1"
     subprocess.run(
         [USER_PYTHON, "-m", "venv", "--without-pip", str(root)],
         check=True,
@@ -197,7 +199,8 @@ def _owned_python(tmp_path: Path) -> str:
         check=True,
     ).stdout.strip()
     Path(site, "host.pth").write_text(host + "\n", encoding="utf-8")
-    assert runtime.is_owned_python(str(py)), "前提：它在数据目录里"
+    if default:  # 给了 `root` 的调用方自己判它算不算（那正是被测对象，不在前提里先断言）
+        assert runtime.is_owned_python(str(py)), "前提：它在数据目录里"
     return str(py)
 
 
@@ -539,3 +542,72 @@ def test_every_spawn_on_a_tavotto_environment_carries_the_cache_dirs(
     for env in seen:
         assert env is not None and env["PIP_CACHE_DIR"] == str(cache / "pip"), name
         assert env["MPLCONFIGDIR"] == str(cache / "mpl"), name
+
+
+# ------------------------------------------------ Codex 插件自管运行时（#733）
+def _plugin_launcher():
+    """插件的 `mcp/server.py`（插件 import 不到 tavotto，这里反过来按文件装载它）。"""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("_plugin_launcher_733", _PLUGIN_SERVER)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+@pytest.fixture
+def plugin_runtime(fake_home, tmp_path, monkeypatch):
+    """配置目录与数据目录分开（Linux / Windows 上的常态）；回插件与它的自管解释器路径。"""
+    monkeypatch.setenv("TAVOTTO_CONFIG_DIR", str(tmp_path / "cfg"))
+    launcher = _plugin_launcher()
+    return launcher, launcher.managed_python()
+
+
+def test_the_plugin_runtime_cache_dir_is_one_path_on_both_sides(plugin_runtime, tmp_path):
+    """插件自管 venv 是 Tavotto 自己建的解释器，缓存归宿是它旁边的 `mcp-runtime/cache`：引擎给从它起的
+    worker / 探测算的（`runtime.owned_env`）与插件 `--provision` 给 pip 的（`provision_env`）是同一个目录。
+    配置目录下别处的解释器不算。"""
+    launcher, py = plugin_runtime
+    assert runtime.PLUGIN_RUNTIME_DIRNAME == os.path.basename(launcher.managed_runtime_dir())
+    cache = launcher.managed_cache_dir()
+    assert cache == str(tmp_path / "cfg" / "mcp-runtime" / "cache")
+    assert runtime.is_owned_python(py)
+    assert runtime.owned_env(py, base={})["PIP_CACHE_DIR"] == os.path.join(cache, "pip")
+    assert launcher.provision_env()["PIP_CACHE_DIR"] == os.path.join(cache, "pip")
+    for other in (
+        tmp_path / "cfg" / "bin" / "python",
+        tmp_path / "cfg" / "mcp-runtime" / "python",
+        tmp_path / "cfg" / "mcp-runtime-old" / "venv" / "bin" / "python",
+    ):
+        assert not runtime.is_owned_python(str(other)), other
+
+
+def test_workers_from_the_plugin_runtime_cache_beside_it(plugin_runtime, fake_home, tmp_path):
+    """#733 的 worker 那一半：MCP server 跑在插件自管 venv 上时，渲染解释器就是它自己
+    （`SOURCE_CURRENT`）。worker 的 env 带上 `mcp-runtime/cache` 下的两个缓存；真执行 worker.py
+    （体检，matplotlib 建字体缓存）与 pip 之后，缓存都在那儿，假家目录与数据目录里什么都不多。"""
+    launcher, managed = plugin_runtime
+    venv = Path(launcher.managed_runtime_dir()) / "venv"
+    _owned_python(tmp_path, venv)
+    py = managed  # venv 的 bin/ 里 python 与 python3 都在；用插件真交棒的那一个
+    assert os.path.isfile(py), "前提：建在插件算出的那个位置"
+    cache = Path(launcher.managed_cache_dir())
+    assert pool.worker_env(py, pool.SOURCE_CURRENT, base={}) == {
+        "PIP_CACHE_DIR": str(cache / "pip"),
+        "MPLCONFIGDIR": str(cache / "mpl"),
+    }
+    info = projectenv.probe_environment(py)
+    assert info.get("tavotto_worker_ok") is True, info
+    assert list((cache / "mpl").glob("fontlist-*.json")), "字体缓存不在 mcp-runtime/cache 里"
+    code, out = deprepair._run_pip(
+        [py, "-m", "pip", "cache", "dir"], deprepair.threading.Event(), None
+    )
+    got = out.strip().splitlines()[-1] if out.strip() else ""
+    assert code == "" and os.path.normcase(os.path.normpath(got)) == os.path.normcase(
+        os.path.normpath(str(cache / "pip"))
+    ), out
+    assert _home_entries(fake_home) == []
+    for name in ("pip", "mpl"):  # 数据目录里的 cache/probe 是体检自己的结果缓存，不是这个环境的
+        assert not (tmp_path / "data" / "cache" / name).exists(), (
+            f"插件运行时的 {name} 缓存跑进了数据目录"
+        )
