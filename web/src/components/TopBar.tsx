@@ -100,8 +100,14 @@ export function TopBar() {
   const fastEdit = useWorkspaceStore((s) => s.mode === 'fast_edit')
   return (
     // `data-topbar`：顶栏的稳定机器标识（e2e 量它里面的按钮，不认 <header> 标签）
-    <header data-topbar className="flex h-11 shrink-0 items-center justify-between gap-3 bg-surface px-3">
-      <div className="flex min-w-0 flex-1 items-center gap-1.5">
+    // 窄于 900：三段之间的空隙与两侧内边距收紧（12 → 6、12 → 8），左 / 右段内部的按钮间距也收到 4。界面外观换新（#756）之后按钮
+    // 与图标钮的内边距变大，600 宽下三段合起来溢出十几 px（时钟 / 书签钮压到撤销、标注钮压到缩放），
+    // 空隙是唯一不改控件尺寸就能让出来的量（e2e/topbar-narrow.spec.ts）
+    <header
+      data-topbar
+      className="flex h-11 shrink-0 items-center justify-between gap-3 bg-surface px-3 max-[899px]:gap-1.5 max-[899px]:px-2"
+    >
+      <div className="flex min-w-0 flex-1 items-center gap-1.5 max-[899px]:gap-1">
         {/* 回到项目列表：左上角是「离开这里」的位置（桌面壳用系统标题栏，红绿灯不在网页里） */}
         <HomeButton />
         <Brand />
@@ -120,7 +126,7 @@ export function TopBar() {
 
       <ToolCluster layoutTools={!fastEdit} />
 
-      <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
+      <div className="flex min-w-0 flex-1 items-center justify-end gap-2 max-[899px]:gap-1">
         <ZoomControls />
         {/* 写回原始文件是高频动作，常驻导出左侧；导出仍是顶栏唯一填色主动作 */}
         <WriteBackTopBarButton />
