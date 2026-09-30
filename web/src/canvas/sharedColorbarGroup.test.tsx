@@ -598,6 +598,46 @@ describe('被挡住的组认领同时点名的成员：拖动 / 对齐都不把�
 })
 
 /**
+ * 组 + 组外的散选子图一起选中：祖先链匹配（`entryUnder`）只对**选中组展开出来的成员**生效，
+ * 散选条目只认精确命中（`geomGid(hit)` 恰好等于那个条目）。以前 `entries` 里两种条目混在一起
+ * 传给 `entryUnder`，散选那张子图里的东西也被当成了"成员的后代"，从它里面起手拖会连组一起整体
+ * 平移（Codex #691 P2，r4141867077）。
+ */
+describe('组 + 组外的散选子图一起选中：祖先链匹配只认组成员，散选条目只认精确命中（Codex #691 P2）', () => {
+  it('选区 = 组 + 组外的 A：从 A 的标题起手拖，只挪那个标题，组与 A 都不动、不触发整组平移', async () => {
+    await mount()
+    act(() => useUiStore.getState().setSelectedGids([GROUP, 'axes_0']))
+    await drag(ON_A_TITLE, 40)
+    expect(useUiStore.getState().selectedGids).toEqual(['axes_0.title'])
+    expect(overrideOf('axes_0.title', 'pos_frac')).toBeDefined()
+    for (const g of ['axes_0', 'axes_1', 'axes_2', 'axes_3']) expect(positionOf(g)).toBeUndefined()
+  })
+
+  it('对照：只选中组，从成员子图里的线起手拖，照旧整组平移（上一轮用例保持绿）', async () => {
+    await mount()
+    act(() => useUiStore.getState().setSelectedGid(GROUP))
+    await drag(ON_C_LINE, 40)
+    const dfx = 40 / LAYOUT.width
+    for (const g of ['axes_1', 'axes_2', 'axes_3']) {
+      expect(positionOf(g)![0]).toBeCloseTo(POS[g][0] + dfx, 4)
+    }
+    expect(useUiStore.getState().selectedGids).toEqual([GROUP])
+  })
+
+  it('对照：选区 = 组 + A，拖 A 本身（精确命中）：按多选原有行为，组与 A 一起走', async () => {
+    await mount()
+    act(() => useUiStore.getState().setSelectedGids([GROUP, 'axes_0']))
+    // 落在 A 的图幅里、避开它的标题（标题的 bbox 在 y: 0.06–0.10）
+    await drag([0.1, 0.5], 40)
+    const dfx = 40 / LAYOUT.width
+    for (const g of ['axes_0', 'axes_1', 'axes_2', 'axes_3']) {
+      expect(positionOf(g)![0]).toBeCloseTo(POS[g][0] + dfx, 4)
+    }
+    expect(useUiStore.getState().selectedGids).toEqual([GROUP, 'axes_0'])
+  })
+})
+
+/**
  * 等宽 / 等高以**最后选中的那一个**为基准（`layoutBoxes` 取末位）。组当一个单位参与时，单位按选区
  * 原来的顺序排：先选 A 再选组 → 组是基准；反过来 A 是基准。组的位置按它自己、它的成员或几何落在
  * 成员上的元素最先出现的那一处算（Codex #691）。

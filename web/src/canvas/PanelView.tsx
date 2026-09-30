@@ -10,6 +10,7 @@ import { engineTransport } from '@/lib/engineTransport'
 import {
   alignEntries,
   blockedGroupsIn,
+  claimedBySelectedGroups,
   entryUnder,
   geomGid,
   segIntersectsRect,
@@ -745,13 +746,13 @@ function ElementHitLayer({
     }
     if (hit && manifest && (ui.selectedGids.length > 1 || groupSelected)) {
       const entries = alignEntries(obj, manifest, ui.selectedGids)
-      const inSelection = groupSelected
-        ? entryUnder(
-            manifest,
-            entries.map((en) => en.key),
-            hit,
-          ) !== null
-        : entries.some((en) => en.key === geomGid(hit))
+      // 祖先链匹配只对选中组展开出来的成员生效（`claimedBySelectedGroups`：成员本身，或几何落在
+      // 成员上的色条 / 位图）——entries 里同时混着散选的条目（组 + 一张无关子图一起选中时），
+      // 那些散选条目只认精确命中，否则点无关子图里的一条线也会被当成它的后代（Codex #691）。
+      const claimed = claimedBySelectedGroups(manifest, ui.selectedGids)
+      const groupMemberKeys = entries.filter((en) => claimed(en.key)).map((en) => en.key)
+      const looseKeys = new Set(entries.filter((en) => !claimed(en.key)).map((en) => en.key))
+      const inSelection = entryUnder(manifest, groupMemberKeys, hit) !== null || looseKeys.has(geomGid(hit))
       if (entries.length > 1 && inSelection) {
         startElementGroupMove(
           e,
