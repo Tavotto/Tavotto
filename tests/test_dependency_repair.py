@@ -1385,7 +1385,14 @@ def _stub_generation_until_pip(monkeypatch, *, pip_code: str) -> list[str]:
     )
     monkeypatch.setattr(deprepair, "_run", lambda argv, timeout: (0, "pip 24.0"))
     monkeypatch.setattr(
-        deprepair, "_run_pip", lambda argv, ev, log: (runs.append("pip"), (pip_code, "out"))[1]
+        deprepair,
+        "_run_pip",
+        # 桩代表「pip 进程起来了」：照真 `_run_pip` 的约定调 `on_started`
+        lambda argv, ev, log, on_started=None: (
+            runs.append("pip"),
+            on_started and on_started(),
+            (pip_code, "out"),
+        )[2],
     )
     return runs
 
@@ -1454,8 +1461,10 @@ def test_the_managed_generation_records_the_mirror_on_its_progress(project, monk
     _stub_generation_until_pip(monkeypatch, pip_code="")
     seen: list[list[str]] = []
 
-    def _fake_run_pip(argv, ev, log):
+    def _fake_run_pip(argv, ev, log, on_started=None):
         seen.append(argv)
+        if on_started is not None:
+            on_started()  # 桩代表 pip 进程已起来（真 `_run_pip` 在 Popen 之后调它）
         return (
             (deprepair.ERROR_NETWORK, "Retrying (Retry(total=4))") if len(seen) == 1 else ("", "")
         )

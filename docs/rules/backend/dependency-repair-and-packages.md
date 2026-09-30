@@ -178,7 +178,7 @@
   `dependency_network_unavailable`（pip 退出码非零 + 网络特征；退出码 0 不算）且这个环境没有用户自配源
   （四个 `PIP_*` 环境变量 / `pip config list` 的 index-url · extra-index-url · no-index · find-links；问不出来按
   「配过」）——才带 `--index-url PYPI_MIRROR_URL`（清华 TUNA，固定一个）**再跑一次**，不再换。日志一行写明、
-  进度记录顶层 `pypi_mirror`。`custom_package_index` 仍只服务诊断（只问 index、只回真假）。看护
+  进度记录顶层 `pypi_mirror`——**只在镜像那次 pip 真起来之后**（`_run_pip(on_started=)`）才记，起之前取消 / 起不来都不记。`custom_package_index` 仍只服务诊断（只问 index、只回真假）。看护
   `tests/test_pypi_mirror_fallback.py` + `tests/test_dependency_repair.py::test_the_managed_generation_records_the_mirror_on_its_progress`。
   包查找（`pip index versions`）不在回退范围内。
 - `deprepair` 里每个 `ERROR_*` code 在两种语言里都要有文案——

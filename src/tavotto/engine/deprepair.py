@@ -1249,23 +1249,31 @@ def _run_pip_install(
 ) -> tuple[str, str]:
     """装包的执行器：先按 `build_argv(None)`（官方 / 用户配置）跑；网络类失败且用户没自配源时，
     按 `build_argv(PYPI_MIRROR_URL)` **再跑一次**，日志里写明用了镜像、`on_mirror(url)` 通知调用方记进
-    进度 / 结果。两条 argv 出处（`pip_install_argv` / `pip_install_joint_argv`）都经这里。"""
+    进度 / 结果。两条 argv 出处（`pip_install_argv` / `pip_install_joint_argv`）都经这里。
+
+    「用了镜像」的判据主语是**镜像那次 pip 进程**：只在它 `Popen` 成功之后（`_run_pip` 的 `on_started`）
+    才写日志、记 `pypi_mirror`。起之前取消（问配置期间、或那之后到 `Popen` 之前——`_run_pip` 起进程前
+    看一眼事件）/ 起不来（`OSError`）都不记，如实回 cancelled / failed；起来之后被取消照记——那次请求
+    确实发往了镜像（Codex #743 两轮 P2）。"""
     code, out = _run_pip(build_argv(None), cancel_ev, on_log)
     user_source = user_package_source(python) if code == ERROR_NETWORK else None
     if not mirror_retry_warranted(code, user_source):
         return code, out
-    if cancel_ev.is_set():
-        # 问配置那一下（一个子进程）期间到达的取消：镜像根本不会被请求，就不许先把「用了镜像」记进进度 /
-        # 日志——终态会谎称用过镜像（Codex #743 P2）。与 `_run_pip` 起进程前看一眼事件同一条纪律
-        return ERROR_CANCELLED, out
     note = f"\n连不上默认的 Python 包源，改用 PyPI 镜像 {PYPI_MIRROR_URL} 重试一次\n"
-    LOG.warning("pip 网络类失败且未自配包源：改用 PyPI 镜像 %s 重试一次", PYPI_MIRROR_URL)
-    if on_log is not None:
-        on_log(note)
-    if on_mirror is not None:
-        on_mirror(PYPI_MIRROR_URL)
-    code, retry_out = _run_pip(build_argv(PYPI_MIRROR_URL), cancel_ev, on_log)
-    return code, out + note + retry_out
+    started: list[bool] = []
+
+    def _mirror_started() -> None:
+        started.append(True)
+        LOG.warning("pip 网络类失败且未自配包源：改用 PyPI 镜像 %s 重试一次", PYPI_MIRROR_URL)
+        if on_log is not None:
+            on_log(note)
+        if on_mirror is not None:
+            on_mirror(PYPI_MIRROR_URL)
+
+    code, retry_out = _run_pip(
+        build_argv(PYPI_MIRROR_URL), cancel_ev, on_log, on_started=_mirror_started
+    )
+    return code, out + (note if started else "") + retry_out
 
 
 def _pip_uninstall(
@@ -1279,11 +1287,15 @@ def _pip_uninstall(
     return _run_pip(pip_uninstall_argv(python, distribution), cancel_ev, on_log)
 
 
-def _run_pip(argv: list[str], cancel_ev: threading.Event, on_log) -> tuple[str, str]:
+def _run_pip(
+    argv: list[str], cancel_ev: threading.Event, on_log, *, on_started=None
+) -> tuple[str, str]:
     """流式跑一条 pip 命令（install / uninstall 共用的唯一执行器）。
 
     可取消、有超时、日志逐行回调。**argv 由调用方的两个 `*_argv()` 出处拼好**，
     这里不再碰它的形状。起 pip 之前先看一眼取消：已经取消的不起（起了再杀，包可能已经写了一半）。
+    `on_started()` 只在子进程**真起来之后**、读它的输出之前调一次（镜像回退据此才记「用了镜像」）；
+    它抛异常不影响这次 pip。
     """
     if cancel_ev.is_set():
         return ERROR_CANCELLED, ""
@@ -1303,6 +1315,11 @@ def _run_pip(argv: list[str], cancel_ev: threading.Event, on_log) -> tuple[str, 
         )
     except OSError as exc:
         return ERROR_FAILED, str(exc)
+    if on_started is not None:
+        try:
+            on_started()
+        except Exception:  # noqa: BLE001 — 通知失败不许让已经起来的 pip 变成孤儿
+            LOG.warning("pip 启动回调异常", exc_info=True)
 
     chunks: list[str] = []
     deadline = time.time() + INSTALL_TIMEOUT_S
