@@ -270,3 +270,168 @@ test(
     await expect(page.locator('[data-script-dependency-repair]')).toHaveCount(0)
   },
 )
+
+/**
+ * 2026-09-29 干净 macOS 虚拟机实测的死胡同：单包修复装完 openpyxl 之后，自动重跑撞上跑前门「缺 pandas」
+ * （`dependency_preparation_required`）。这一行以前变成红字 +「可能需要原环境」，没有一键修复。现在它与缺包同一个
+ * 形状：一句话 + 一个主按钮，点一次走联合准备（`/api/engine/dependencies/*`），进度一行，装好后自动重跑。
+ * 后端把整份脚本要的包一次装齐的一半由 `tests/test_dependency_transaction.py` 的真事务用例守着。
+ */
+test(
+  '一键修复：开跑前要准备依赖的脚本行同样只有一句话 + 一个主按钮，点一次走联合准备，装好后自动重跑出图',
+  { tag: ['@feature:assets.dependency-one-click-repair'] },
+  async ({ app, page }) => {
+    const dir = path.join(os.tmpdir(), `tavotto-e2e-oneclick-joint-${Date.now()}`)
+    writeProject(dir)
+    const a = await app({ figures: dir })
+    await page.setViewportSize({ width: 1440, height: 900 })
+
+    const JOINT_PLAN_ID = 'e2e-joint-plan'
+    const joint = {
+      plan_version: 1,
+      status: 'ready',
+      target_kind: 'tavotto_managed',
+      script: SCRIPT,
+      needed: [],
+      missing: [],
+      satisfied: [],
+      unknown: [],
+      possible: [],
+      requirements: ['pandas', 'openpyxl'],
+      constraints: [],
+      require_hashes: false,
+      adapter: [],
+      blocked: [],
+      selection: { selected_groups: [], available_groups: [], unselected_groups: [], skipped_marker: [] },
+      identity: 'e2e',
+    }
+    const preparation = {
+      code: 'dependency_preparation_required',
+      script: SCRIPT,
+      plan: joint,
+      target_kind: 'tavotto_managed',
+      targets: [
+        {
+          kind: 'tavotto_managed',
+          venv: '',
+          python: '',
+          modifies_user_environment: false,
+          creates_environment: true,
+          available: true,
+          reason: '',
+        },
+      ],
+      rounds_remaining: 3,
+      skipped: false,
+      clean_machine: false,
+      private_python: null,
+      user_environments: [],
+    }
+    const jointProgress = (state: string, extra: Record<string, unknown> = {}) => ({
+      plan_id: JOINT_PLAN_ID,
+      state,
+      log: '',
+      error: null,
+      code: '',
+      flow: 'joint',
+      requirements: ['pandas', 'openpyxl'],
+      target_kind: 'tavotto_managed',
+      script: SCRIPT,
+      ...extra,
+    })
+
+    const events = serveEvents(page)
+    await events.install()
+    let probes = 0
+    await page.route(/\/api\/registry\/probe(\?|$)/, async (route) => {
+      probes += 1
+      if (probes > 1) return route.fallback()
+      await route.fulfill({
+        json: {
+          script: SCRIPT,
+          entry: null,
+          stems: [],
+          descriptors: [],
+          tried: [],
+          registered: false,
+          dropped_figures: 0,
+          error: {
+            code: 'dependency_preparation_required',
+            message: '这个脚本开跑就需要的包目标环境里没有：pandas',
+            dependency_preparation: preparation,
+          },
+        },
+      })
+    })
+    const planBodies: unknown[] = []
+    await page.route(/\/api\/engine\/dependencies\/plan(\?|$)/, async (route) => {
+      planBodies.push(route.request().postDataJSON())
+      await route.fulfill({
+        json: {
+          plan: {
+            plan_id: JOINT_PLAN_ID,
+            script: SCRIPT,
+            target_kind: 'tavotto_managed',
+            python: '',
+            requirements: ['pandas', 'openpyxl'],
+            constraints: [],
+            require_hashes: false,
+            adapter: [],
+            identity: 'e2e',
+            needed_imports: ['pandas', 'openpyxl'],
+            groups: [],
+            modifies_user_environment: false,
+            creates_environment: true,
+            network_required: true,
+            expires_at: Date.now() / 1000 + 600,
+            joint,
+          },
+        },
+      })
+    })
+    const prepareBodies: unknown[] = []
+    await page.route(/\/api\/engine\/dependencies\/prepare(\?|$)/, async (route) => {
+      prepareBodies.push(route.request().postDataJSON())
+      await route.fulfill({ json: { started: true, ...jointProgress('preparing') } })
+    })
+
+    await page.goto(a.baseURL)
+    await expect(page.getByText(SCRIPT).first()).toBeVisible({ timeout: 30_000 })
+    await page.getByRole('button', { name: `运行 ${SCRIPT} 并发现图` }).click()
+
+    // ① 一句话 + 一个主按钮（其余收在折叠的「详情」里），归「需要修复」，没有老的「可能依赖原来的 Python 环境」
+    const card = page.locator('[data-script-preparation]')
+    await expect(card).toBeVisible({ timeout: 30_000 })
+    await expect(page.getByRole('list', { name: '需要修复' })).toContainText(SCRIPT)
+    await expect(page.getByText('可能需要原环境')).toHaveCount(0)
+    await expect(page.getByText('可能依赖原来的 Python 环境')).toHaveCount(0)
+    const button = card.locator('[data-script-preparation-fix]')
+    await expectReachable(page, button, '一键修复按钮')
+    expect(await renderedBlocks(card)).toEqual([
+      'p:这个脚本还缺 pandas和openpyxl，点一下自动装好。',
+      'button:一键修复',
+      'summary:详情',
+    ])
+
+    // ② 点一次：绑定联合计划、只发 plan_id 执行；没有弹授权框
+    await button.click()
+    await expect.poll(() => prepareBodies.length).toBe(1)
+    expect(planBodies).toEqual([{ script: SCRIPT, target: 'tavotto_managed' }])
+    expect(prepareBodies[0]).toEqual({ plan_id: JOINT_PLAN_ID })
+    await expect(page.locator('[data-dialog="dependency-prepare"]')).toHaveCount(0)
+
+    // ③ 进度一行，跟着换
+    events.push(jointProgress('creating_env'))
+    const line = card.locator('[data-repair-line]')
+    await expect(line).toHaveText('正在创建 Python 环境…（2/4）', { timeout: 15_000 })
+    await expectReachable(page, line, '进度')
+    events.push(jointProgress('installing'))
+    await expect(line).toHaveText('正在安装…（3/4）', { timeout: 15_000 })
+
+    // ④ 装好：这一行自动重跑（真后端、真 worker），图出来，卡片收起
+    events.push(jointProgress('done', { result: { ok: true } }))
+    await expect(page.getByText('已发现 1 张图')).toBeVisible({ timeout: 120_000 })
+    expect(probes).toBe(2)
+    await expect(page.locator('[data-script-preparation]')).toHaveCount(0)
+  },
+)

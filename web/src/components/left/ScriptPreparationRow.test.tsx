@@ -207,7 +207,9 @@ describe('脚本行：开跑前要先准备依赖', () => {
     // 没有弹授权框：这一行自己承载进度
     expect(useEnvStore.getState().dependencyPreparation).toBeNull()
     expect(host.querySelector('[data-script-preparation-sentence]')).toBeNull()
-    expect(host.querySelector('[data-script-preparation] [role="progressbar"], [data-script-preparation] progress')).toBeDefined()
+    // 只剩一行进度 + 取消（不再有主按钮）
+    const card = host.querySelector('[data-script-preparation]')!
+    expect([...card.querySelectorAll('button')].map((x) => x.textContent)).toEqual(['取消'])
     // 装好：进度带着计划所属的脚本 → 这一行重跑
     mockProbe.mockClear()
     mockProbe.mockResolvedValue({ ...preparationResult(offerOf()), error: null, descriptors: [] })
