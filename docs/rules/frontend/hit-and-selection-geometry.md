@@ -137,7 +137,10 @@
   方向键 `announceUnmovable`、组页）用同一判据的 `blockedGroupsIn`，按原因说 `status.groupBlocked.*` /
   组页那一句，只点不拖照常钻进去。不做「跳过不能动的、挪其余的」：共享色条组的意义就是一起动，与画布
   对象组的 `movableTargets` 同一条规则。**新原因只往 `groupTransformBlocked` 里加**（Codex #691 同形状
-  出现第二次后收成一处）。多宿主
+  出现第二次后收成一处）。
+  **不变式：组的变换只有全员刚性与零两种结果**——`expandGroups` 之后的出口不许再逐个过滤成员（方向键
+  曾按隐藏过滤、把隐藏成员丢掉）；对齐 / 分布把组当一个单位（`alignUnits`）。看护：`sharedColorbarGroup.test`
+  「写下的成员 = expandGroups 的结果」，每个写几何的出口一条。多宿主
   色条不在任何宿主的 `follow_gids` 里：单拖 B 时 C 与色条都不动。看护：
   `canvas/sharedColorbarGroup.test.tsx`。
 

@@ -21,11 +21,11 @@
  */
 import { layoutBoxes } from '@/lib/axesLayout'
 import {
-  alignEntries,
+  alignUnits,
   annotationAlignEntries,
-  isAnnotationEntry,
   panelFullRect,
-  type MixedEntry,
+  type AlignUnit,
+  type AnnotationEntry,
 } from '@/lib/elementGeom'
 import type { AlignMode } from '@/lib/geometry'
 import { msg } from '@/i18n'
@@ -129,11 +129,12 @@ export function alignSelectedPanelElements(panelId: string, mode: AlignMode): Al
       (o.type === 'text' || o.type === 'arrow' || o.type === 'shape'),
   )
 
-  // 5. 重算条目
-  const items: MixedEntry[] = [
-    ...alignEntries(panel, manifest, gids),
+  // 5. 重算条目。选区里的组整组当一个单位（`alignUnits`）：逐个成员排版会把组拆散
+  const items: (AlignUnit | AnnotationEntry)[] = [
+    ...alignUnits(panel, manifest, gids),
     ...annotationAlignEntries(panel, annotations),
   ]
+  const isAnnotation = (it: AlignUnit | AnnotationEntry): it is AnnotationEntry => 'objectId' in it
   if (items.length < 2) return blocked(panelId, mode, 'too-few')
   // 进来的框必须先是有限数，否则 min/max 会把 NaN 传染给整批
   if (!items.every((it) => finiteBox(it.box))) return blocked(panelId, mode, 'invalid')
@@ -150,7 +151,7 @@ export function alignSelectedPanelElements(panelId: string, mode: AlignMode): Al
     const next = boxes.get(it.key)
     if (!next) continue // layoutBoxes 已经把 no-op 摘掉了
     if (!finiteBox(next)) return blocked(panelId, mode, 'invalid')
-    if (isAnnotationEntry(it)) {
+    if (isAnnotation(it)) {
       const x = full.x + next[0] * full.w
       const y = full.y + next[1] * full.h
       if (!finite(x) || !finite(y)) return blocked(panelId, mode, 'invalid')
@@ -159,17 +160,19 @@ export function alignSelectedPanelElements(panelId: string, mode: AlignMode): Al
       if (!obj) return blocked(panelId, mode, 'invalid')
       moves.push({ id: it.objectId, x, y })
     } else {
-      const patch = it.write(next)
-      const v = patch.value
-      if (!Array.isArray(v) || !v.length || !v.every(finite)) {
-        return blocked(panelId, mode, 'invalid')
+      // 一个单位可能落成几条（组 = 每个成员一条）：任何一条不合法就整批取消
+      for (const patch of it.writes(next)) {
+        const v = patch.value
+        if (!Array.isArray(v) || !v.length || !v.every(finite)) {
+          return blocked(panelId, mode, 'invalid')
+        }
+        // gid 必须还在权威 manifest 里——写一条指不到东西的 override 等于
+        // 当场制造一个孤儿
+        if (!manifest.elements.some((e) => e.gid === patch.gid || e.gid === it.key)) {
+          return blocked(panelId, mode, 'invalid')
+        }
+        patches.push(patch)
       }
-      // gid 必须还在权威 manifest 里——写一条指不到东西的 override 等于
-      // 当场制造一个孤儿
-      if (!manifest.elements.some((e) => e.gid === patch.gid || e.gid === it.key)) {
-        return blocked(panelId, mode, 'invalid')
-      }
-      patches.push(patch)
     }
   }
 
@@ -190,10 +193,10 @@ export function alignSelectedPanelElements(panelId: string, mode: AlignMode): Al
     exact_authority: view.exact,
     // **只有数字与技术 gid**：条目的 label 里有用户的文字与文件名
     input_geometry: items
-      .filter((it) => !isAnnotationEntry(it))
+      .filter((it) => !isAnnotation(it))
       .map((it) => ({ gid: it.key, bbox: it.box })),
     output_geometry: items
-      .filter((it) => !isAnnotationEntry(it))
+      .filter((it) => !isAnnotation(it))
       .flatMap((it) => {
         const next = boxes.get(it.key)
         return next ? [{ gid: it.key, bbox: next }] : []

@@ -256,6 +256,12 @@ export interface AlignEntry extends AlignItem {
  * - `locked`：有成员被元素树锁住（成员本身，或共享的那条色条元素——锁的是它、几何在色条轴上）；
  * - `incomplete`：有成员在这一版里拿不到可写的落位（不在元素表里、不可对齐、没有 position）——
  *   `alignEntries` 会静默跳过它，剩下的照样成组平移，组就被拆开了。
+ *
+ * **不变式：组的变换只有全员刚性与零两种结果。** 这里没有原因，就是全员；有原因，就是零。
+ * `expandGroups` 之后的任何出口都不许再逐个过滤成员（隐藏、锁定、没几何…）——方向键微调曾在
+ * 下游按隐藏过滤、把隐藏的成员丢掉（Codex #691）；对齐 / 分布也不许逐个成员排版
+ * （`alignUnits` 把组当一个单位）。看护：`sharedColorbarGroup.test` 的「写下的成员 =
+ * expandGroups 的结果」一组用例，每个写几何的出口一条。
  */
 export type GroupBlockReason = 'not_resizable' | 'locked' | 'incomplete'
 
@@ -812,4 +818,48 @@ export function groupBoxes(group: Group, next: Rect4): Map<string, Rect4> {
 export function groupPatches(group: Group, next: Rect4): PanelOverride[] {
   const boxes = groupBoxes(group, next)
   return group.entries.map((e) => e.write(boxes.get(e.key)!))
+}
+
+/**
+ * 对齐 / 分布 / 等宽等高用的条目：选区里的组（`Manifest.groups`）**整组当一个单位**——框是成员的
+ * 并集，落位时成员按 `groupBoxes` 一起重映射（相对布局不变）。逐个成员参与排版的话，「左对齐」
+ * 会把 B、C 与色条叠到同一条左边上，所有成员都动了、组却散了（Codex #691：组的变换只有全员
+ * 刚性与零两种结果）。不能整体变换的组（`groupTransformBlocked`）不出条目 = 整组不动；选区里
+ * 同时点名的组成员跟着组走，不另出一条。其余元素与 `alignEntries` 一样。
+ *
+ * 每个条目都有 `writes`：一个单位落成几条 override（组 = 每个成员一条）。
+ */
+export type AlignUnit = AlignItem & { label: string; writes: (box: Rect4) => PanelOverride[] }
+
+export function alignUnits(panel: PanelObject, manifest: Manifest, gids: string[]): AlignUnit[] {
+  const groups = (manifest.groups ?? []).filter((g) => gids.includes(g.gid))
+  const units: AlignUnit[] = []
+  for (const g of groups) {
+    const group = groupOf(alignEntries(panel, manifest, [g.gid]))
+    if (!group) continue
+    units.push({
+      key: g.gid,
+      label: g.gid,
+      resizable: true,
+      box: group.box,
+      writes: (box) => groupPatches(group, box),
+    })
+  }
+  // 组成员（被挡住的组也算）不单独出条目：只挪它会拆开组
+  const members = new Set(groups.flatMap((g) => g.members))
+  const loose = alignEntries(
+    panel,
+    manifest,
+    gids.filter((gid) => !groups.some((g) => g.gid === gid)),
+  ).filter((en) => !members.has(en.key))
+  return [
+    ...units,
+    ...loose.map(({ key, label, resizable, box, write }) => ({
+      key,
+      label,
+      resizable,
+      box,
+      writes: (next: Rect4) => [write(next)],
+    })),
+  ]
 }

@@ -29,6 +29,7 @@ import { useUiStore } from '@/store/uiStore'
 import { mmToWorld, useViewportStore } from '@/store/viewportStore'
 import { seedExactRender } from '@/test/renderFixtures'
 import { emptyProject, type PanelObject } from '@/types/document'
+import { alignSelectedPanelElements } from '@/store/alignAction'
 import { startGroupResize } from './interactions'
 import { OverlaySvg } from './OverlaySvg'
 import { PanelView } from './PanelView'
@@ -478,5 +479,76 @@ describe('组不能整体变换 = 整组不动（拖动 / 组框手柄 / 属性�
     expect(await handles()).toBe(0)
     expect(resolveGroup(livePanel(), m(), [GROUP])).toBeNull()
     expect(alignEntries(livePanel(), m(), [GROUP])).toEqual([])
+  })
+})
+
+/**
+ * 不变式：**组的变换只有全员刚性与零两种结果**。每个会写几何的出口，写下的成员集合必须
+ * 正好等于 `expandGroups` 给的那一份——以后谁在出口下游再加一道逐个过滤（隐藏、锁定、
+ * 没几何…），这里直接红。夹具里 C 是隐藏的（`visible: false`）：隐藏不是挡住整组的原因，
+ * 隐藏的成员照样跟着组走（Codex #691）。
+ */
+describe('不变式：组的变换写下的成员 = expandGroups 的结果（隐藏成员也在）', () => {
+  const hiddenC = (): Manifest => {
+    const m = manifest()
+    return {
+      ...m,
+      elements: m.elements.map((e) =>
+        e.gid === 'axes_2'
+          ? { ...e, editable: [...e.editable, { prop: 'visible', type: 'bool', value: false } as never] }
+          : e,
+      ),
+    }
+  }
+  const written = () => [...new Set(livePanel().overrides.map((o) => o.gid))].sort()
+  const expected = () => [...expandGroups(livePanel(), hiddenC(), [GROUP])].sort()
+
+  beforeEach(async () => {
+    await setup(hiddenC())
+  })
+
+  it('夹具自检：隐藏的 C 仍在展开结果里（组能整体变换）', () => {
+    expect(expected()).toEqual(['axes_1', 'axes_2', 'axes_3'])
+  })
+
+  it('拖组里任一成员', async () => {
+    await mount()
+    act(() => useUiStore.getState().setSelectedGid(GROUP))
+    await drag(ON_B, 40)
+    expect(written()).toEqual(expected())
+  })
+
+  it('组框手柄缩放', async () => {
+    const group = resolveGroup(livePanel(), hiddenC(), [GROUP])!
+    expect(group.entries.map((e) => e.key).sort()).toEqual(expected())
+    const down = { clientX: 0, clientY: 0, button: 0, stopPropagation() {} }
+    startGroupResize(down as never, livePanel(), group, LAYOUT, 'e')
+    await act(async () => {
+      window.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientX: -50, clientY: 0 }))
+      window.dispatchEvent(new MouseEvent('pointerup', { bubbles: true, clientX: -50, clientY: 0 }))
+    })
+    expect(written()).toEqual(expected())
+  })
+
+  it('对齐（组与组外的 A 一起左对齐）：组整体当一个单位，成员刚性平移、相对布局不变', async () => {
+    act(() => useUiStore.getState().setSelectedGids([GROUP, 'axes_0']))
+    const res = alignSelectedPanelElements('p1', 'left')
+    expect(res.ok).toBe(true)
+    const members = written().filter((g) => g !== 'axes_0')
+    expect(members).toEqual(expected())
+    // 刚性：B、C、色条同一个横向位移，宽高不变
+    const dx = positionOf('axes_1')![0] - POS.axes_1[0]
+    expect(Math.abs(dx)).toBeGreaterThan(1e-3)
+    for (const g of ['axes_1', 'axes_2', 'axes_3']) {
+      expect(positionOf(g)![0] - POS[g][0]).toBeCloseTo(dx, 6)
+      expect(positionOf(g)!.slice(2)).toEqual(POS[g].slice(2))
+    }
+  })
+
+  it('对齐时选区里同时点名了组成员：成员跟着组走、不另出一条（不会被单独对齐拆出去）', async () => {
+    act(() => useUiStore.getState().setSelectedGids([GROUP, 'axes_1', 'axes_0']))
+    expect(alignSelectedPanelElements('p1', 'left').ok).toBe(true)
+    const dx = positionOf('axes_1')![0] - POS.axes_1[0]
+    for (const g of ['axes_2', 'axes_3']) expect(positionOf(g)![0] - POS[g][0]).toBeCloseTo(dx, 6)
   })
 })

@@ -17,6 +17,7 @@ import { literal } from '@/i18n'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { MATPLOTLIB_SVG } from '@/lib/__fixtures__/matplotlibSvg'
+import { expandGroups } from '@/lib/elementGeom'
 import type { EngineRenderOptions, Manifest, ManifestElement } from '@/lib/api'
 import { runMenuAction } from '@/hooks/menuActions'
 import { runUndoRedo, useKeyboard } from '@/hooks/useKeyboard'
@@ -586,6 +587,26 @@ describe('图内元素：与拖动同一套移动规则', () => {
     expect(overrideOf('axes_0', 'position')![0]).toBeCloseTo(0.1 + 5 / PAGE_W, 4)
     expect(overrideOf('axes_1', 'position')![0]).toBeCloseTo(0.72 + 5 / PAGE_W, 4)
     expect(overrideOf('axes_2', 'position')![0]).toBeCloseTo(0.85 + 5 / PAGE_W, 4)
+    expect(past()).toHaveLength(1)
+  })
+
+  it('选中的组里有隐藏的成员：隐藏的照样跟着整组走（写下的成员 = expandGroups 的结果），与拖动一致', async () => {
+    const hidden: Manifest = {
+      ...groupManifest,
+      elements: groupManifest.elements.map((e) =>
+        e.gid === 'axes_1'
+          ? { ...e, editable: [...e.editable, { prop: 'visible', type: 'bool', value: false }] }
+          : e,
+      ),
+    }
+    await setup({ manifest: hidden })
+    editFigure([GROUP])
+    tap('ArrowRight', { shiftKey: true })
+    settle()
+    const written = [...new Set(livePanel().overrides.map((o) => o.gid))].sort()
+    expect(written).toEqual([...expandGroups(livePanel(), hidden, [GROUP])].sort())
+    expect(written).toEqual(['axes_0', 'axes_1', 'axes_2'])
+    expect(overrideOf('axes_1', 'position')![0]).toBeCloseTo(0.72 + 5 / PAGE_W, 4)
     expect(past()).toHaveLength(1)
   })
 

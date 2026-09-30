@@ -296,10 +296,21 @@ function startMover(b: FigureBurst): InFigureMove | null | 'unmovable' {
  */
 function moverFor(panel: PanelObject, manifest: Manifest, gids: string[]): InFigureMove | null {
   const locked = new Set(panel.lockedGids ?? [])
-  const els = expandGroups(panel, manifest, gids)
-    .filter((g) => !locked.has(g))
+  const isGroup = (g: string) => !!manifest.groups?.some((x) => x.gid === g)
+  // 组的成员整组来、整组走：`expandGroups` 给的就是全员或零（能不能整体变换它已经判过），
+  // 下游**不再逐个过滤**——隐藏的成员照样跟着组走（与拖动一致），否则剩下的被平移、组被拆开
+  // （Codex #691）。锁定 / 隐藏的逐个过滤只对散选的元素
+  const members = expandGroups(panel, manifest, gids.filter(isGroup))
+  const loose = gids
+    .filter((g) => !isGroup(g) && !members.includes(g) && !locked.has(g))
     .map((g) => manifest.elements.find((el) => el.gid === g))
     .filter((el): el is NonNullable<typeof el> => !!el && el.gid !== 'figure' && !isElementHidden(el))
+  const els = [
+    ...members
+      .map((g) => manifest.elements.find((el) => el.gid === g))
+      .filter((el): el is NonNullable<typeof el> => !!el),
+    ...loose,
+  ]
   if (els.length > 1) {
     const entries = alignEntries(panel, manifest, els.map((el) => el.gid))
     if (entries.length > 1) return groupMove(panel, entries)
