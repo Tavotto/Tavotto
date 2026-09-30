@@ -174,7 +174,7 @@ HOSTS: "dict[str, dict]" = {
             "<项目>/.agents/mcp.json（注意：同一作用域的 .zcode 配置里只要定义了任何 MCP"
             " 服务，这个文件就整份被跳过）",
             "或 ZCode 的 MCP 设置界面手动添加",
-            "更省事的是装插件（README「Using Tavotto with ZCode」的两条命令），就不需要这段配置；"
+            "已装 Tavotto 的 Claude 插件（ZCode 装的是同一份）就不需要这段配置；"
             "二选一——两样都装会出现两个 Tavotto server",
         ],
         "verify": [
