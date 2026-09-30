@@ -203,7 +203,7 @@ test('图内多选在两侧之间放不下完整栏时：压缩档，整条栏�
   await page.setViewportSize({ width: 560, height: 860 })
   // 窄断点下右栏成了盖在画布上的抽屉：先收起，再适应画布把图放回眼前
   await page.locator('[data-inspector-close]').click()
-  // 窄于 900 时顶栏的「适应画布」图标钮收起（ADR 0101 §8）：从缩放菜单里点同一条
+  // 适应画布：从缩放菜单里点（菜单在画布标签行里，任何宽度都在；图标钮在浮动工具条里）
   await expect(page.locator('[data-zoom-menu]')).toHaveCount(1)
   await page.locator('[data-zoom-menu]').click()
   await expect(page.locator('[data-fit-canvas-item]')).toHaveCount(1)

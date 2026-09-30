@@ -23,7 +23,7 @@ import { Button } from '../ui/Button'
 import { Dialog } from '../ui/Dialog'
 import { CopyButton } from '../settings/CopyButton'
 import { Toggle } from '../ui/Toggle'
-import { Tip } from '../ui/Tooltip'
+import { MenuItem } from '../ui/Menu'
 import { captureMoment, markMoment, momentWithDoc } from '@/lib/timelineCheckpoint'
 
 const stemOf = (fileId: string) => fileId.split('/').pop()?.replace(/\.[^.]+$/, '') ?? fileId
@@ -39,7 +39,7 @@ const wb = (key: string, values?: Record<string, unknown>) =>
  *
  * 两个入口共用同一个确认对话框：
  * - 属性页里的 UpdateSourceButton（单面板，随选中面板出现）
- * - 顶栏的 WriteBackTopBarButton（高频动作常驻在导出旁，可一次写回多个面板）
+ * - 「⋯」菜单第一项 useWriteBackMenuEntry（可一次写回多个面板）
  */
 
 interface WriteBackResult {
@@ -485,43 +485,32 @@ export function useWriteBackTargets(): PanelObject[] {
   }, [objects, selectedIds, elementPanelId, assets])
 }
 
-/** 顶栏入口：高频动作常驻在「导出」左侧；无可写回内容时禁用而不消失 */
-export function WriteBackTopBarButton() {
+/**
+ * 「⋯」菜单第一项：写回原始文件…（2026-09-30 重设计：写回从顶栏搬进 ⋯，与属性栏「源文件」里
+ * 那一颗是同一个写回窗口）。无可写回内容时禁用并在项里写出原因，而不是消失；
+ * 可写回的图不止一张时，项右侧的数字就是张数（此前顶栏按钮上的「写回 n」）。
+ *
+ * 窗口不能挂在菜单项里（菜单一合上项就卸载、窗口跟着没了），所以返回两块：
+ * `item` 放进菜单，`dialog` 放在菜单外面。
+ */
+export function useWriteBackMenuEntry() {
   useTranslation('inspector')
   const [open, setOpen] = useState(false)
   const targets = useWriteBackTargets()
   const readOnly = useProjectStore((s) => s.project?.settings?.allow_write_back === false)
   const disabled = !targets.length || readOnly
-
-  const tip = readOnly
-    ? wb('topBarReadOnly')
-    : !targets.length
-      ? wb('noOverridesTitle')
-      : targets.length === 1
-        ? wb('topBarOne', { stem: stemOf(targets[0].fileId) })
-        : wb('topBarMany', { count: targets.length })
-
-  return (
-    <>
-      <Tip label={tip}>
-        <Button
-          data-write-back="open"
-          data-write-back-entry="topbar"
-          // ghost（2026-09-15 打磨批次 F）：顶栏右侧只剩一颗填色的「导出」，其余不带壳
-          variant="ghost"
-          size="md"
-          disabled={disabled}
-          aria-label={wb('buttonLabel')}
-          onClick={() => setOpen(true)}
-        >
-          <FileUp size={ICON_SIZE.md} />
-          {/* 窄于 900 只留图标（顶栏三段放不下时不许互相压住；aria-label 照旧） */}
-          <span className="max-[899px]:sr-only">
-            {targets.length > 1 ? wb('topBarShortCount', { count: targets.length }) : wb('topBarShort')}
-          </span>
-        </Button>
-      </Tip>
-      <WriteBackDialog panels={targets} open={open} onOpenChange={setOpen} />
-    </>
+  const item = (
+    <MenuItem
+      data-write-back="open"
+      data-write-back-entry="menu"
+      disabled={disabled}
+      reason={readOnly ? wb('topBarReadOnly') : !targets.length ? wb('noOverridesTitle') : undefined}
+      shortcut={targets.length > 1 ? String(targets.length) : undefined}
+      onSelect={() => setOpen(true)}
+    >
+      {wb('menuItem')}
+    </MenuItem>
   )
+  const dialog = <WriteBackDialog panels={targets} open={open} onOpenChange={setOpen} />
+  return { item, dialog }
 }

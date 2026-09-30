@@ -13,6 +13,7 @@ import type { DismissTimer } from '@/lib/dismissTimer'
 import { DURATION, usePresence } from '@/lib/motion'
 import { formatMm } from '@/lib/units'
 import { cn } from '@/lib/utils'
+import { useCanvasToolbarVisible } from './CanvasToolbar'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
 import { useSelectionStore } from '@/store/selectionStore'
@@ -60,6 +61,7 @@ export function CanvasHud() {
   const tool = useUiStore((s) => s.tool)
   const objects = useDocumentStore((s) => s.doc.objects)
   const ids = useSelectionStore((s) => s.ids)
+  const toolbarUp = useCanvasToolbarVisible()
 
   // 方向键微调这一段也算交互中：读数盒先报这一段挪了多少（ADR 0093）
   const interacting = GEOMETRY_KINDS.has(kind) || !!nudge
@@ -75,7 +77,11 @@ export function CanvasHud() {
 
   return (
     <div
-      className="pointer-events-none absolute bottom-3 left-3 z-10 flex max-w-[calc(100%-1.5rem)] flex-col items-start gap-1"
+      // 画布底部有浮动工具条时抬到它上面去：读数 / 提示与工具条同在底边会叠在一起
+      className={cn(
+        'pointer-events-none absolute left-3 z-10 flex max-w-[calc(100%-1.5rem)] flex-col items-start gap-1',
+        toolbarUp ? 'bottom-16' : 'bottom-3',
+      )}
       aria-hidden={interacting ? undefined : true}
     >
       {showReadings && (
@@ -261,6 +267,7 @@ export function NotificationRail() {
   const hintToken = useHintStore((s) => s.token)
   const dismissHint = useHintStore((s) => s.dismiss)
   const hintText = hint ? t(`hints.${hint}`) : ''
+  const toolbarUp = useCanvasToolbarVisible()
 
   // 「编辑原图」这一次把图加进了文档（此前不在）：说出口，并给撤销；回排版 / 撤销即消失
   const justAdded = useWorkspaceStore(
@@ -335,7 +342,13 @@ export function NotificationRail() {
   const hintPresence = usePresence(!!hint && hintHasSlot, DURATION.exit)
 
   return (
-    <div className="pointer-events-none absolute inset-x-0 bottom-4 z-20 flex flex-col items-center gap-1.5 px-4">
+    <div
+      // 画布底部有浮动工具条时整列抬到它上面去（toast 居中、工具条也居中，不抬就叠在一起）
+      className={cn(
+        'pointer-events-none absolute inset-x-0 z-20 flex flex-col items-center gap-1.5 px-4',
+        toolbarUp ? 'bottom-16' : 'bottom-4',
+      )}
+    >
       {/* aria-live 常驻在 DOM 里，读屏器才能捕捉内容变化。
           `data-status-live` 是这块播报区的**稳定机器标识**：`role="status"` 全产品有十几个
           产出点（快速编辑那行常驻说明、素材库、导出面板、问题面板……），所以

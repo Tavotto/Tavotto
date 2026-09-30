@@ -32,6 +32,7 @@ import { MenuButton } from '@/components/ui/Menu'
 import { NumberField, TextArea } from '@/components/ui/Input'
 import { LegendPositionPicker } from '@/components/inspector/controls/LegendPositionPicker'
 import { effectiveOverride } from '@/lib/effectiveOverride'
+import { BOTTOM_SAFE } from './context-bar/position'
 
 /**
  * 右键快捷编辑：光标处的小弹层。
@@ -101,7 +102,7 @@ function ElementPopover({
     const h = el?.offsetHeight ?? 160
     setPos({
       x: Math.max(MARGIN, Math.min(at.x, window.innerWidth - w - MARGIN)),
-      y: Math.max(MARGIN, Math.min(at.y, window.innerHeight - h - MARGIN)),
+      y: Math.max(MARGIN, Math.min(at.y, window.innerHeight - BOTTOM_SAFE - h - MARGIN)),
     })
     // 双击文字进来的直接聚焦内容框（全选便于整段替换）；
     // 其余情况焦点给容器，Tab 才能走到弹层里的控件
