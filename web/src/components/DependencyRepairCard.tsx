@@ -9,14 +9,8 @@ import {
   type PrivatePythonOffer,
   type SystemInterpreterRejection,
 } from '@/lib/api'
-import { useRenderStore } from '@/store/renderStore'
 import { currentProjectId } from '@/lib/session'
-import {
-  isRepairRunning,
-  managedPreviewKey,
-  rerunAfterEnvironmentChange,
-  useDepRepairStore,
-} from '@/store/depRepairStore'
+import { isRepairRunning, managedPreviewKey, useDepRepairStore } from '@/store/depRepairStore'
 import { useEnvStore } from '@/store/envStore'
 import { useUiStore } from '@/store/uiStore'
 import { Settings } from '@/components/ui/icons'
@@ -92,6 +86,7 @@ export function DependencyRepairCard({
     adoptSystemPython,
     cancel,
     reset,
+    clearPinnedInterpreter,
     managedPreviews,
     previewManaged,
   } = useDepRepairStore()
@@ -168,12 +163,8 @@ export function DependencyRepairCard({
       <Pinned
         module={pkg}
         pinned={pinned}
-        onCleared={() => {
-          reset()
-          // 固定清掉了、项目环境从此轮得到：停在缺包上的脚本行（这一行与同样缺它的）重跑——那一行的 offer 还带着
-          // 旧的 `pinned`，不重跑的话卡片会一直停在「恢复自动检测」上（与改用已有解释器同一类，Codex #742）
-          rerunAfterEnvironmentChange(script, module)
-        }}
+        // 清固定、收卡、重排、重跑都在 store 里，按项目代际判（Codex #742 P1）
+        onClear={() => clearPinnedInterpreter(module, script)}
       />
     )
   }
@@ -550,14 +541,13 @@ export function privatePythonText(offer: NonNullable<DependencyTarget['private_p
 function Pinned({
   module,
   pinned,
-  onCleared,
+  onClear,
 }: {
   module: string
   pinned: InterpreterPin
-  onCleared: () => void
+  onClear: () => Promise<string | null>
 }) {
   useTranslation('errors')
-  const { setPython } = useEnvStore()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const fromEnv = pinned.source === 'env_override'
@@ -570,14 +560,9 @@ function Pinned({
     : en(`sourceLabel.${pinned.source || 'unknown'}`, { product: PRODUCT_NAME })
   const clear = async () => {
     setBusy(true)
-    const failure = await setPython(null)
+    const failure = await onClear()
     setBusy(false)
     setError(failure)
-    if (failure) return
-    // 清掉之后这张卡的前提没了：先把 store 里记下的那条固定与错误清空，再把因
-    // 缺包失败的渲染重新排上（顺序无所谓，两者都不依赖对方）
-    onCleared()
-    useRenderStore.getState().retryEnvironmentFailures()
   }
   return (
     <div data-dependency-repair-pinned className="flex flex-col gap-2.5 rounded-md bg-surface p-3 shadow-card">

@@ -48,6 +48,13 @@ const parkedRetry = new Map<
 >()
 const projectKey = (project: string | null): string => project ?? ''
 
+/**
+ * 「环境换过了、那几行该重跑」但换的那一刻用户已经切到别的项目：按所属项目停放，切回来时再续（与装包作业
+ * 「切走期间装好 → 切回来补跑」同一条路，`clear()` 里放回）。不是装包作业、没有进度可收放，所以单独一格。
+ * 改用已有解释器 / 清掉全局固定两条路共用（Codex #742）
+ */
+const pendingReruns = new Map<string, { script?: string; peers: string[] }>()
+
 /** 单包修复的一次请求（重试时原样再发一次） */
 export interface RepairRequest {
   module: string
@@ -168,6 +175,12 @@ interface DepRepairState {
    * 缺它的其它行）同样重跑：一键修复的首选就是这条路，改用之后那一行还停在缺包上的话卡片永远收不掉（Codex #742）
    */
   adoptSystemPython: (python: string, module: string, script?: string) => Promise<void>
+  /**
+   * 修复卡上的「恢复自动检测」：清掉全局显式解释器（`setPython(null)`），成功后收起这张卡、重排失败的渲染、重跑
+   * 停在缺包上的脚本行。回 `null` = 成功，否则是那句错误。发请求那一刻记下项目代际：回来时已切项目的话，这些
+   * 属于 A 的副作用一个都不在 B 上做，重跑停放到 A、切回来再续（Codex #742 P1）
+   */
+  clearPinnedInterpreter: (module: string, script?: string) => Promise<string | null>
   /**
    * 依赖弹窗里点「改用这个环境」（ADR 0079）：交 id 给后端体检并记成本项目的选择；成功就关框、
    * 把卡在这道门上的面板重排。失败把原文留在框里。
@@ -455,9 +468,17 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
   adoptSystemPython: async (python, module, script) => {
     if (get().busy) return
     const epoch = projectEpoch
+    const owner = currentProjectId()
+    // 同样缺这个包的其它行此刻就记下：切走再切回之后 scriptRunStore 已清空，只能按这份名单认
+    const peers = scriptsMissing(module).filter((s) => s !== script)
     set({ busy: true, errorCode: '', errorText: '' })
     const error = await useEnvStore.getState().setProjectPython(python, module)
-    if (epoch !== projectEpoch) return
+    if (epoch !== projectEpoch) {
+      // 已切到 B：B 的渲染、B 的脚本行一概不动。改用记在 A 上（后端按请求那一刻的 pj）——但 `setProjectPython`
+      // 换代之后成败都回 null，分不出来；停放一次重跑无害：没改成的话那一行重跑出来仍是缺包，卡片照旧挂回去
+      parkRerun(owner, script, peers)
+      return
+    }
     if (error) {
       // `setProjectPython` 已经把后端原文翻成一句话；code 由环境 store 吞掉了，
       // 这里只有原文可显示——它本来就是 `backendErrorText()` 按 code 翻好的。
@@ -466,7 +487,27 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
     }
     set({ busy: false })
     useRenderStore.getState().retryEnvironmentFailures()
-    rerunAfterEnvironmentChange(script, module)
+    rerunAfterEnvironmentChange(script, module, peers)
+  },
+
+  clearPinnedInterpreter: async (module, script) => {
+    const epoch = projectEpoch
+    const owner = currentProjectId()
+    const peers = scriptsMissing(module).filter((s) => s !== script)
+    const failure = await useEnvStore.getState().setPython(null)
+    if (epoch !== projectEpoch) {
+      // 全局固定清没清掉这里分不出来（换代之后 `setPython` 成败都回 null，并已按 B 刷过环境）；A 的卡片状态、
+      // A 的脚本行重跑都不在 B 上做——重跑停放到 A，切回来续（B 的修复状态不 reset、B 的脚本一行都不跑）
+      parkRerun(owner, script, peers)
+      return null
+    }
+    if (failure) return failure
+    // 清掉之后这张卡的前提没了：store 里记下的那条固定与错误清空，因缺包失败的渲染重新排上，停在缺包上的脚本行
+    // （这一行与同样缺它的）重跑——那一行的 offer 还带着旧的 `pinned`，不重跑的话卡片会一直停在「恢复自动检测」上
+    get().reset()
+    useRenderStore.getState().retryEnvironmentFailures()
+    rerunAfterEnvironmentChange(script, module, peers)
+    return null
   },
 
   cancel: async () => {
@@ -636,6 +677,12 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
     // 从脚本行发起的修复在切走期间装好了（#729）：终态副作用当时不在别的项目上派发，切回来补上与「没切走」
     // 同一件事——重跑那一行（同一条 `rerunScriptAfterRepair`）、收起卡片。收起之后这份作业不再被收放，
     // 再切走切回不会重复触发
+    // 切走期间「改用已有解释器 / 清掉全局固定」回来了（停放在这一格）：与装好之后同一件事，补跑那几行
+    const pend = pendingReruns.get(here)
+    if (pend) {
+      pendingReruns.delete(here)
+      rerunSameModule(undefined, undefined, [...(pend.script ? [pend.script] : []), ...pend.peers])
+    }
     if (back?.state === 'done' && retryCtx?.scriptOffer) {
       const script = back.script ?? retryCtx.request?.script
       // 同样缺这个包的其它行一起补跑（与没切走时 `rerunSameModule` 同一件事；那几行的运行记录也随切项目清掉了）
@@ -726,9 +773,23 @@ function rerunScriptAfterRepair(script: string | undefined, fromScriptRow = fals
  * 脚本行——发起的那一行与同样缺它的其它行——现在就重跑（只认仍停在 `missing_dependency` 的，用户已经重跑 / 收起过的不动）。
  * 与装好之后 `onProgress` 那半边同一件事
  */
-export function rerunAfterEnvironmentChange(script: string | undefined, importName: string | undefined): void {
+export function rerunAfterEnvironmentChange(
+  script: string | undefined,
+  importName: string | undefined,
+  peers: string[] = [],
+): void {
   rerunScriptAfterRepair(script)
-  rerunSameModule(importName, script)
+  rerunSameModule(importName, script, peers)
+}
+
+/** 所属项目此刻不开着：那几行的重跑停放到它那一格，切回来 `clear()` 续上（同一格里的名单合并） */
+function parkRerun(owner: string | null, script: string | undefined, peers: string[]): void {
+  const key = projectKey(owner)
+  const prev = pendingReruns.get(key)
+  pendingReruns.set(key, {
+    script: script ?? prev?.script,
+    peers: [...new Set([...(prev?.peers ?? []), ...(prev?.script && prev.script !== script ? [prev.script] : []), ...peers])],
+  })
 }
 
 /** 脚本行发起时记下同样缺这个包的其它脚本（重试时沿用第一次记下的：那时运行记录可能已随切项目清掉） */

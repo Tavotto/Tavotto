@@ -22,6 +22,7 @@ import { useDepRepairStore } from './depRepairStore'
 import { useEnvStore } from './envStore'
 import { useProjectStore } from './projectStore'
 import { useRenderStore } from './renderStore'
+import { useScriptRunStore, type ScriptRunState } from './scriptRunStore'
 
 /** 被扣住的请求：url 片段 → 放行函数（由用例决定何时、回什么） */
 const held = new Map<string, (body: unknown, status?: number) => void>()
@@ -615,5 +616,103 @@ describe('全局解释器改动在切项目之后才回来（#606 第 4 条）',
     const env = useEnvStore.getState().env
     expect(env?.python).toBe('/usr/bin/python3.12')
     expect(JSON.stringify(env ?? {})).not.toContain('/envs/a')
+  })
+})
+
+// ---------------------------------------------------------------- Codex #742：await 之后已切项目
+
+/** 一行停在缺 `module` 上的脚本（与试运行以 missing_dependency 收场时 scriptRunStore 里的那份同形） */
+const stuck = (module: string): ScriptRunState => ({
+  phase: 'missing_dependency',
+  descriptors: [],
+  droppedFigures: 0,
+  error: { code: 'missing_dependency', message: '', params: { module } },
+  cancelRequested: false,
+  gen: 0,
+})
+const probed = () =>
+  calls.filter((c) => c.url.includes('/api/registry/probe')).map((c) => (c.body as { script: string }).script).sort()
+
+describe('环境改动的回调按项目代际判（Codex #742）', () => {
+  beforeEach(() => {
+    useScriptRunStore.getState().clear()
+    useScriptRunStore.setState({ byScript: { 'fig.py': stuck('lmfit'), 'peer.py': stuck('lmfit') } })
+    useDepRepairStore.setState({ managedPreviews: {} })
+  })
+
+  it('P1：A 上「恢复自动检测」在途时切到 B——回来的回调不作用于 B（不 reset、不重排、不跑 B 的脚本），切回 A 续跑', async () => {
+    let release: (v: string | null) => void = () => {}
+    vi.spyOn(useEnvStore.getState(), 'setPython').mockReturnValue(new Promise<string | null>((r) => (release = r)))
+    const pending = useDepRepairStore.getState().clearPinnedInterpreter('lmfit', 'fig.py')
+    await switchTo('p2')
+    // B 上也有一行缺同一个包、B 自己的修复状态也在：A 的回调一样都不许碰
+    useScriptRunStore.setState({ byScript: { 'b.py': stuck('lmfit') } })
+    useDepRepairStore.setState({ errorCode: 'b_own_error', pinned: { python: '/b', source: 'configured' } })
+    const retry = vi.spyOn(useRenderStore.getState(), 'retryEnvironmentFailures')
+    calls.length = 0
+    release(null)
+    expect(await pending).toBeNull()
+    expect(probed(), 'A 的回调在 B 上跑了脚本').toEqual([])
+    expect(retry).not.toHaveBeenCalled()
+    expect(useDepRepairStore.getState().errorCode, 'A 的回调把 B 的修复状态 reset 了').toBe('b_own_error')
+    expect(useDepRepairStore.getState().pinned?.python).toBe('/b')
+    // 切回 A：与「切走期间装好」同一条路，补跑那一行与同样缺它的那一行
+    await switchTo('p1')
+    await vi.waitFor(() => expect(probed()).toEqual(['fig.py', 'peer.py']))
+    // 再切走切回不重复
+    await switchTo('p2')
+    await switchTo('p1')
+    expect(probed()).toEqual(['fig.py', 'peer.py'])
+  })
+
+  it('对照：没切项目时「恢复自动检测」立刻收卡、重排、重跑（尺子是活的）', async () => {
+    vi.spyOn(useEnvStore.getState(), 'setPython').mockResolvedValue(null)
+    useDepRepairStore.setState({ pinned: { python: '/a', source: 'configured' } })
+    const retry = vi.spyOn(useRenderStore.getState(), 'retryEnvironmentFailures')
+    calls.length = 0
+    expect(await useDepRepairStore.getState().clearPinnedInterpreter('lmfit', 'fig.py')).toBeNull()
+    expect(useDepRepairStore.getState().pinned).toBeNull()
+    expect(retry).toHaveBeenCalled()
+    await vi.waitFor(() => expect(probed()).toEqual(['fig.py', 'peer.py']))
+  })
+
+  it('P2：A 上「改用已有环境」在途时切到 B——B 不跑；切回 A，那一行与同样缺它的行续跑', async () => {
+    let release: (v: string | null) => void = () => {}
+    vi.spyOn(useEnvStore.getState(), 'setProjectPython').mockReturnValue(new Promise<string | null>((r) => (release = r)))
+    const pending = useDepRepairStore.getState().adoptSystemPython('/usr/bin/python3', 'lmfit', 'fig.py')
+    await switchTo('p2')
+    useScriptRunStore.setState({ byScript: { 'b.py': stuck('lmfit') } })
+    calls.length = 0
+    release(null)
+    await pending
+    expect(probed()).toEqual([])
+    await switchTo('p1')
+    await vi.waitFor(() => expect(probed()).toEqual(['fig.py', 'peer.py']))
+  })
+
+  it('预读计划在途时切到 B：回来的计划不落进 B（B 上没有这一格）', async () => {
+    const armed = holdOnce('/api/engine/dependency/plan')
+    const pending = useDepRepairStore.getState().previewManaged({ module: 'lmfit', script: 'fig.py', target: 'tavotto_managed' })
+    const release = await armed
+    await switchTo('p2')
+    release({ plan: PLAN_A })
+    await pending
+    expect(useDepRepairStore.getState().managedPreviews).toEqual({})
+  })
+
+  it('一键修复（installNow）的计划请求在途时切到 B：不在 B 上执行、不落计划', async () => {
+    const armed = holdOnce('/api/engine/dependency/plan')
+    const pending = useDepRepairStore.getState().installNow(
+      { module: 'lmfit', script: 'fig.py', target: 'tavotto_managed' },
+      { requirement: PLAN_A.requirement, target_kind: 'tavotto_managed', private_python: null },
+    )
+    const release = await armed
+    await switchTo('p2')
+    calls.length = 0
+    release({ plan: { ...PLAN_A, target_kind: 'tavotto_managed', modifies_user_environment: false } })
+    await pending
+    expect(calls.some((c) => c.url.includes('/api/engine/dependency/install'))).toBe(false)
+    expect(useDepRepairStore.getState().plan).toBeNull()
+    expect(useDepRepairStore.getState().progress).toBeNull()
   })
 })
