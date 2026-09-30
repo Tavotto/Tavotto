@@ -813,6 +813,10 @@ class TestJointTransaction:
         )
         selected, source = engine_pool.resolve_worker_python(str(project), script="figure.py")
         assert source == engine_pool.SOURCE_PROJECT_VENV and _importable(selected, BETA[1])
+        # offer 上受管目标如实说出这一代要装的全部包（卡片那一句话据此写，不只说缺的那个）
+        offer = deprepair.offer(project, "figure.py", ALPHA[1])
+        managed = next(t for t in offer["targets"] if t["kind"] == deprepair.TARGET_MANAGED)
+        assert set(managed["requirements"]) == {ALPHA[0], BETA[0]}
         plan = deprepair.create_plan(
             project, "figure.py", ALPHA[1], target_kind=deprepair.TARGET_MANAGED
         )
@@ -824,6 +828,8 @@ class TestJointTransaction:
         deprepair.install_async(plan.plan_id)
         rec = wait_for(plan.plan_id)
         assert rec["state"] == deprepair.STATE_DONE, rec
+        # 进度记录带着真正装的全部包：进度行按它说
+        assert set(rec["requirements"]) == {ALPHA[0], BETA[0]}
         mpy = managedenv.python_of(project)
         assert _importable(mpy, ALPHA[1]) and _importable(mpy, BETA[1])
         # 装完之后跑前门：此刻选中的就是新一代，什么都不缺

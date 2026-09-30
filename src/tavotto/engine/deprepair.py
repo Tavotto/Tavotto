@@ -525,6 +525,16 @@ def offer(project: str | Path, script: str, module: str, project_env: dict | Non
     private = privatepython.offer_payload() if available is False else None
     if private is not None:
         available = True
+    # 新建第一代时这一代要装的全部包（联合求解，与 `create_plan` 同一份）：卡片那一句话如实说出来，而不是只说缺的这个。
+    # 基础解释器还在后台探（`available` 为 None）时不算（量事实要起子进程）——卡片那时按预读的计划说
+    requirements: list[str] | None = None
+    if requirement is not None and available is not False and not managed["exists"]:
+        try:
+            wide = _widen_for_fresh_generation(root, script, requirement)
+        except Exception:  # noqa: BLE001 — 披露是尽力而为：量不出就退回只说缺的那一个
+            LOG.debug("offer: 联合求解失败", exc_info=True)
+            wide = None
+        requirements = list(wide.requirements) if wide else None
     out["targets"].append(
         {
             "kind": TARGET_MANAGED,
@@ -532,6 +542,7 @@ def offer(project: str | Path, script: str, module: str, project_env: dict | Non
             "python": "",
             "modifies_user_environment": False,
             "creates_environment": not managed["exists"],
+            "requirements": requirements,
             # None = 还不知道（基础解释器正在后台探）。界面照样把这条列出来，
             # 真正的答案在创建计划那一步——那时用户已经点过，等几秒是合理的。
             "available": available,
@@ -1700,6 +1711,8 @@ def _emit(
                 distribution=plan.requirement.distribution,
                 target_kind=plan.target_kind,
                 script=plan.script,
+                # 这一代真正要装的全部包（单包修复新建第一代时多于一个）：进度行按它说，不只说用户点的那个
+                requirements=list(plan.requirements),
             )
             if state in (STATE_FAILED, STATE_CANCELLED):
                 # 终态上说清「同一个需求这一轮还能不能再装」：pip 跑成之后（验证 / 自检期间取消、验证没过）
