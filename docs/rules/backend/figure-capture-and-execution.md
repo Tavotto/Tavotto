@@ -91,7 +91,9 @@
     native 不改指。④ **代次**（ADR 0106 §五）：改指表按项目一个代次，增 / 换 / 删与读改写同一把锁；
     三条 spawn 路径用 `inputremap.snapshot()` 同一刻取代次与规则、会话带 `remap_generation`，池复用前核对；
     依赖映射的落地（渲染回包、runtime 物化、试运行登记、写回、导出）在 `inputremap.landing()` 里核对，
-    对不上报 `input_remap_changed`（409 可重试）。新增依赖映射的工作点先接到这里，清单在 ADR 0106 §五。
+    对不上报 `input_remap_changed`（409 可重试）。改表后经事件流广播 `input_remap_changed`，所有窗口（含发起的）
+    只按它作废前端缓存；试运行登记的 stems 在本机项目设置里记指纹，下一次按新表 build 后按真实产出重新登记。
+    新增依赖映射的工作点先接到这里，清单在 ADR 0106 §五。
     看护 `tests/test_missing_input.py`（真 worker 相对 / 绝对 / 脚本目录模式 / 原件回来 /
     同名诱饵 / 试运行 / 三条 spawn 路径）、`web/src/components/MissingInputDialog.test.tsx`、
     `web/e2e/missing-input.spec.ts`。
