@@ -1405,8 +1405,9 @@ def _run_pip_install(
         _PipWatch(started, deadline - PIP_MIRROR_RESERVE_S) if source == PIP_SOURCE_PYPI else None
     )
     code, out = _run_pip(build_argv(None), cancel_ev, on_log, deadline=deadline, watch=watch)
+    # 第一次的结局**先**进 app.log，再决定换不换源：换源的话两次尝试各一条结局（#745 Codex P2）
+    _log_pip_outcome(code, source)
     if not mirror_retry_warranted(code, user_source):
-        _log_pip_outcome(code, source)
         return code, out
     reason = (watch.reason if watch is not None else "") or code
     detail = watch.detail if watch is not None else ""

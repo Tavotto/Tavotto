@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sys
 import threading
 from pathlib import Path
@@ -253,6 +254,34 @@ def test_the_single_package_install_goes_through_the_mirror_fallback(monkeypatch
         deprepair.pip_install_argv("/env/bin/python", "lmfit>=1.3", index_url=MIRROR),
     ]
     assert mirrors == [MIRROR]
+
+
+@pytest.mark.parametrize(
+    "first_code", [deprepair.ERROR_NETWORK, deprepair.ERROR_TIMEOUT], ids=["network", "timeout"]
+)
+def test_both_attempts_log_their_outcome_when_the_mirror_is_used(monkeypatch, caplog, first_code):
+    """换源时 app.log 里两次尝试**各一条**结局：官方源那次的失败 code + 包源在换源之前就写下，镜像那次的
+    结局随后——只记镜像那次的话，事后看不出第一次是断网还是太慢（#745 Codex P2）。"""
+    seen: list[list[str]] = []
+
+    def _fake_run_pip(argv, ev, log, on_started=None, **_kw):
+        seen.append(argv)
+        if on_started is not None:
+            on_started()
+        return (first_code, NETWORK_OUT) if len(seen) == 1 else ("", "ok")
+
+    monkeypatch.setattr(deprepair, "_run_pip", _fake_run_pip)
+    monkeypatch.setattr(deprepair, "user_package_source", lambda python: False)
+    caplog.set_level(logging.INFO, logger="tavotto.deprepair")
+    code, _ = deprepair._pip_install("/env/bin/python", "lmfit>=1.3", threading.Event(), None)
+    assert code == "" and len(seen) == 2
+    lines = [r.getMessage() for r in caplog.records if r.name == "tavotto.deprepair"]
+    first = next(i for i, m in enumerate(lines) if m.startswith("pip install 失败："))
+    switch = next(i for i, m in enumerate(lines) if m.startswith("pip install 换源："))
+    done = next(i for i, m in enumerate(lines) if m.startswith("pip install 完成："))
+    assert first_code in lines[first] and deprepair.PIP_SOURCE_PYPI in lines[first]
+    assert deprepair.PIP_SOURCE_MIRROR in lines[done]
+    assert first < switch < done
 
 
 @pytest.mark.parametrize("env", SOURCE_ENV)
