@@ -293,10 +293,13 @@ describe('恢复：先存「恢复前」，再写，⌘Z 能退回', () => {
 
 describe('恢复在飞时预览锁住（Codex #679 P1）', () => {
   // 「恢复前」节点还没存完就能关掉预览回去编辑的话，晚到的恢复会把新编辑整份盖掉
-  const ways = {
-    Esc: async () =>
-      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })),
-    右上角关闭: async () => $<HTMLButtonElement>('[data-dialog-close]')?.click(),
+  const ways: Record<string, () => Promise<void>> = {
+    Esc: async () => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    },
+    右上角关闭: async () => {
+      $<HTMLButtonElement>('[data-dialog-close]')?.click()
+    },
     点外面: async () => {
       // Radix 在打开后的下一个宏任务里才挂上「点外面」的监听；左键按下要等随后的
       // click 才判定是不是点在外面——照真鼠标的顺序两下都发
@@ -313,14 +316,14 @@ describe('恢复在飞时预览锁住（Codex #679 P1）', () => {
     expect($('[data-timeline-preview]')).not.toBeNull()
   }
 
-  it.each(Object.keys(ways) as (keyof typeof ways)[])('对照：没在恢复时，%s 能关掉预览', async (how) => {
+  it.each(Object.keys(ways))('对照：没在恢复时，%s 能关掉预览', async (how) => {
     await open()
     await act(ways[how])
     await flush()
     expect(useTimelineStore.getState().preview).toBeNull()
   })
 
-  it.each(Object.keys(ways) as (keyof typeof ways)[])(
+  it.each(Object.keys(ways))(
     '「恢复前」还在存时，%s 关不掉；存失败落定后照常能关',
     async (how) => {
       let fail!: (e: unknown) => void
@@ -366,7 +369,7 @@ describe('恢复在飞时预览锁住（Codex #679 P1）', () => {
   })
 
   it('「恢复前」存完之后照常恢复、预览退出', async () => {
-    let done!: (v: unknown) => void
+    let done!: (v: Awaited<ReturnType<typeof createVersion>>) => void
     mockCreate.mockImplementationOnce(() => new Promise((resolve) => (done = resolve)))
     await open()
     await act(async () => $<HTMLButtonElement>('[data-timeline-preview-restore]')!.click())
