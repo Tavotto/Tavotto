@@ -739,9 +739,12 @@ def _zh_display_name(name: str, records) -> str | None:
     return None
 
 
-#: `fontManager.ttflist` 里已经看过的条数。`addfont` 只往尾部追加，脚本自己注册的
-#: 字体（重跑时也会）从这里接着补，已看过的不再读 name 表。
-_ALIAS_CURSOR = 0
+#: (哪一个 `fontManager`, 它的 `ttflist` 里已经看过的条数)。`addfont` 只往尾部追加，
+#: 脚本自己注册的字体（重跑时也会）从这里接着补，已看过的不再读 name 表。游标只对
+#: **那一个**注册表有效：用户代码重载 / 替换了 `font_manager.fontManager`（或
+#: `_load_fontmanager` 重建），新表从头扫——只认长度的话，新表条数不超过旧游标就整份
+#: 跳过，只有中文名的族一直是 `??`。与 `font_generation` 同一口径：认对象本身。
+_ALIAS_CURSOR: tuple[object | None, int] = (None, 0)
 
 
 def register_font_name_aliases() -> int:
@@ -760,9 +763,12 @@ def register_font_name_aliases() -> int:
     from matplotlib import font_manager
 
     fm = font_manager.fontManager
-    if _ALIAS_CURSOR >= len(fm.ttflist):
+    owner, seen = _ALIAS_CURSOR
+    if owner is not fm:
+        seen = 0
+    if seen >= len(fm.ttflist):
         return 0
-    fresh = fm.ttflist[_ALIAS_CURSOR:]
+    fresh = fm.ttflist[seen:]
     added = []
 
     def key_of(e) -> tuple[str, int]:
@@ -801,7 +807,7 @@ def register_font_name_aliases() -> int:
         fm.ttflist.extend(added)
         fm._findfont_cached.cache_clear()
         _FONT_PRESENT.clear()
-    _ALIAS_CURSOR = len(fm.ttflist)
+    _ALIAS_CURSOR = (fm, len(fm.ttflist))
     return len(added)
 
 
@@ -843,6 +849,9 @@ _FONT_GEN: tuple | None = None
 def font_generation() -> tuple:
     """matplotlib 字体注册表此刻的「代次」：注册表对象本身 + 登记了多少张脸。
 
+    认的是**对象本身**，不是 `id()`：旧注册表被回收后新对象可能拿到同一个 id，
+    按 id 比就会把新表当成旧表。代次里持着对象，旧表在下一次对齐之前不会被回收。
+
     字体装没装**不是**一个 worker 生命周期里的常量：脚本自己 `addfont`、fname 放开时
     我们替它 `addfont`（`_face_of_font_file`）、native 会话两次 `plt.show()` 之间引入
     项目字体，都会让注册表变长；`_load_fontmanager` 重建则换掉整个对象。matplotlib
@@ -851,7 +860,7 @@ def font_generation() -> tuple:
     from matplotlib import font_manager
 
     fm = font_manager.fontManager
-    return (id(fm), len(fm.ttflist), len(fm.afmlist))
+    return (fm, len(fm.ttflist), len(fm.afmlist))
 
 
 def sync_font_caches() -> tuple:

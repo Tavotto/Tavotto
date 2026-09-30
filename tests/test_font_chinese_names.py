@@ -140,6 +140,30 @@ assert after.get(LATER) == "塔沃后加名", after.get(LATER)
 assert LATER in manifest.installed_font_families()
 # 注册表没变：不重读（同一个对象）
 assert manifest.installed_font_display_names() is after
+
+# 5) 用户代码换了一个 fontManager（条目比旧游标少）：别名游标跟着注册表对象走，
+#    新表从头扫，只有中文名的族照样按真名选得到
+import copy
+
+overrides.register_font_name_aliases()
+old_fm = fm.fontManager
+new_fm = copy.copy(old_fm)
+new_fm.ttflist = []
+fm.fontManager = new_fm
+try:
+    NEW_ZH = "換表測試體"
+    fresh = make_font(os.path.join(tmp, "swap.ttf"), [
+        (1, 3, 1, 0x0404, NEW_ZH), (2, 3, 1, 0x0404, "Regular"),
+        (6, 3, 1, 0x0409, "TavottoSwap"),
+    ])
+    new_fm.addfont(fresh)
+    assert len(new_fm.ttflist) < len(old_fm.ttflist)
+    assert overrides.register_font_name_aliases() >= 1
+    hit = new_fm.findfont(fm.FontProperties(family=[NEW_ZH]), fallback_to_default=False)
+    assert os.path.samefile(hit, fresh), hit
+    assert NEW_ZH in manifest.installed_font_families()
+finally:
+    fm.fontManager = old_fm
 print("OK")
 """
 )
