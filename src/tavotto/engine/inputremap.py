@@ -620,6 +620,48 @@ _MODAL_READS = {"open": 1, "File": 1, "Dataset": 1}
 _WRITE_MODE_CHARS = "wax+"
 
 
+#: 写出 / 建输出目录的调用（取末段名）：它们实参里的路径是**输出**，不是要找的数据，也不许被改写。
+#: 存图调用的唯一出处是 `databinding.SAVE_FUNCS`；这里补上写数据文件与建目录的，外加写模式的 `open` 类。
+WRITE_FUNCS = frozenset(
+    {
+        "savetxt",
+        "savez",
+        "savez_compressed",
+        "tofile",
+        "to_csv",
+        "to_excel",
+        "to_parquet",
+        "to_json",
+        "to_pickle",
+        "to_hdf",
+        "to_netcdf",
+        "to_feather",
+        "write_text",
+        "write_bytes",
+        "makedirs",
+        "mkdir",
+    }
+)
+
+
+def is_write_call(node: ast.Call) -> bool:
+    """存图 / 写出 / 建输出目录，或写 / 追加 / 读写模式的打开——与 `_is_read_call` 同一套模式判据。"""
+    name = databinding._func_name(node.func)
+    if name in databinding.SAVE_FUNCS or name in WRITE_FUNCS:
+        return True
+    pos = _MODAL_READS.get(name)
+    if pos is None:
+        return False
+    mode = node.args[pos] if len(node.args) > pos else None
+    if mode is None:
+        mode = next((k.value for k in node.keywords if k.arg == "mode"), None)
+    return (
+        isinstance(mode, ast.Constant)
+        and isinstance(mode.value, str)
+        and any(c in mode.value for c in _WRITE_MODE_CHARS)
+    )
+
+
 def _is_read_call(node: ast.Call) -> bool:
     name = databinding._func_name(node.func)
     if name.startswith("read_"):

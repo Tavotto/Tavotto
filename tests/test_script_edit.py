@@ -133,6 +133,24 @@ def test_non_path_positions_are_reported_and_left_alone(tmp_path, moved):
     }
 
 
+def test_constructed_output_paths_are_never_rewritten(tmp_path, moved):
+    """输出目的地是拼出来的（`fig.savefig(Path(OLD) / "out.png")`）：常量的直接父节点是 `Path(...)`，但往上
+    是存图 / 写出 / 写模式打开 / 建目录——同属输出，不改（Codex 评 #730 P2；判据与「只认读取调用」同一套）。"""
+    _new, rule = moved
+    src = (
+        "import os, numpy as np\nfrom pathlib import Path\n"
+        f'fig.savefig(Path("{OLD}/data") / "out.png")\n'
+        f'np.savetxt(os.path.join("{OLD}/data", "t.csv"), [1])\n'
+        f'open(Path("{OLD}/data") / "log.txt", "w")\n'
+        f'os.makedirs("{OLD}/data", exist_ok=True)\n'
+        f'x = np.load(Path("{OLD}/data") / "x.h5")\n'
+    )
+    plan = _plan(tmp_path, src, rule=rule, missing=[f"{OLD}/data/x.h5"])
+    assert [e["line"] for e in plan.edits] == [7]
+    reasons = {s["line"]: s["reason"] for s in plan.skipped}
+    assert reasons == {line: scriptedit.SKIP_CONTEXT for line in (3, 4, 5, 6)}
+
+
 def test_nothing_to_change_says_why_line_by_line(tmp_path, moved):
     _new, rule = moved
     src = f'import h5py\nh5py.File(f"{OLD}/data/{{name}}.h5")\n'

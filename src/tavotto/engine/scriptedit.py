@@ -29,7 +29,7 @@ import time
 import tokenize
 from pathlib import Path
 
-from . import databinding, figcapture, inputremap, scriptbackup
+from . import figcapture, inputremap, scriptbackup
 
 #: 稳定错误码（`tests/test_error_codes.py` 读这张表）。
 ERROR_NOTHING_TO_CHANGE = "script_edit_nothing_to_change"
@@ -173,7 +173,16 @@ def _parents(tree: ast.AST) -> dict[int, ast.AST]:
 
 
 def _path_context(node: ast.Constant, parents: dict[int, ast.AST]) -> bool:
-    """这个常量是不是**在当路径用**的位置上（§二.3）。正面列举；不认得的一律不是。"""
+    """这个常量是不是**在当路径用**的位置上（§二.3）。正面列举；不认得的一律不是。
+
+    先沿父节点一路走到语句为止：途中是存图 / 写出 / 写模式打开 / 建目录的调用（`inputremap.is_write_call`，
+    与「只认读取调用」同一套判据），它就是输出路径的一部分——`fig.savefig(Path("/old/data") / "out.png")`
+    里的 `/old/data` 直接父节点是 `Path(...)`，只看一层会把输出目的地也改掉（Codex 评 #730 P2）。"""
+    up = parents.get(id(node))
+    while up is not None and not isinstance(up, ast.stmt):
+        if isinstance(up, ast.Call) and inputremap.is_write_call(up):
+            return False
+        up = parents.get(id(up))
     parent = parents.get(id(node))
     if isinstance(parent, ast.keyword):
         parent = parents.get(id(parent))
@@ -194,7 +203,7 @@ def _path_context(node: ast.Constant, parents: dict[int, ast.AST]) -> bool:
 
 
 def _is_save_call(call: ast.Call) -> bool:
-    return databinding._func_name(call.func) in databinding.SAVE_FUNCS
+    return inputremap.is_write_call(call)
 
 
 def _literal_form(segment: str) -> tuple[str, str] | None:
