@@ -804,6 +804,7 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
             on_log=lambda text: _append_log(plan.plan_id, text, on_event),
             label=f"repair-{req.distribution}",
             provision_private=plan.private_python is not None,
+            private_plan=plan.private_python,
             # 「这一轮装成功过」与项目 venv 那条路同一条纪律（#466）：代事务在 **pip 退出码 0 之后**
             # 才登记。以前写在建代之前，私有 Python 下载失败 / 取消 / 断网的那一次也被记成「装过了」，
             # 界面说「检查网络后重试」，重试撞到的却是 `dependency_already_attempted`，只能重启应用
@@ -3051,6 +3052,7 @@ def prepare(plan_id: str, on_event=None, *, claimed: bool = False) -> dict:
                 on_log=lambda text: _append_log(plan.plan_id, text, on_event),
                 label=f"prepare-{len(plan.requirements)}",
                 provision_private=plan.private_python is not None,
+                private_plan=plan.private_python,
                 groups=plan.groups,
                 replan=plan.replan,
                 inputs_digest=plan.inputs_digest,
@@ -3161,6 +3163,9 @@ class _GenerationJob:
     #: 计划里明示过「将下载私有 Python」的授权才为真（U05）；重建 / 包管理首装为假——
     #: 那两条路没有说出口的下载，没有基础解释器就照旧 `managed_env_unavailable`。
     provision_private: bool = False
+    #: 计划里告诉用户的那段私有 Python 载荷（`offer_payload()` / `present_payload()`）：执行时来源必须还是它说的
+    #: 那一处（`origin`、同一个 id），否则 `repair_plan_stale`——不静默换源、不变成联网下载（ADR 0111 §一）。
+    private_plan: dict | None = None
     #: 计划的事实来自替身：供应之后按真解释器重算 delta / 关键 import / 记账（`_replan_on_base`）。
     replan: bool = False
     #: 单包修复才有：`_attempted` 的键 (项目指纹, 环境 key, 需求串)。**只在 pip 退出码 0 之后**登记
@@ -3515,9 +3520,22 @@ def _provision_private_base(job: _GenerationJob, cancel_ev: threading.Event) -> 
     source = privatepython.source_for()
     if source is None:
         raise RepairError(privatepython.ERROR_NOT_OFFERED, "这个目标上不提供私有 Python")
-    # 字节从哪来（安装包附带 / 缓存 / 下载，ADR 0111）：进度里与计划载荷同一个字段名，界面据此说
-    # 「正在准备」还是「正在下载」
-    payload = {**source.to_payload(), "origin": privatepython.archive_origin(source)}
+    planned = job.private_plan or {}
+    if planned.get("id") and planned["id"] != source.id:
+        # 确认之后锁文件换了（升级 / 换版本）：要准备的已不是用户看过的那一份（版本 / 字节数 / 来源都可能变）
+        raise RepairError(ERROR_PLAN_STALE, "确认之后要准备的 Python 换了一份")
+    # 执行只从计划说过的那一处取（ADR 0111 §一）：offer 的 `origin`，已就位载荷（`required=False`）则要求它仍在
+    required_origin = planned.get("origin") or (
+        privatepython.REQUIRE_PRESENT if planned.get("required") is False else None
+    )
+    # 字节从哪来（安装包附带 / 缓存 / 下载）：进度里与计划载荷同一个字段名，界面据此说「正在准备」还是
+    # 「正在下载」——就是计划里说的那一处
+    payload = {
+        **source.to_payload(),
+        "origin": required_origin
+        if required_origin in privatepython.ORIGINS
+        else privatepython.archive_origin(source),
+    }
 
     def _progress(stage: str, done: int, total: int) -> None:
         job.emit(
@@ -3530,10 +3548,15 @@ def _provision_private_base(job: _GenerationJob, cancel_ev: threading.Event) -> 
 
     _progress(privatepython.STAGE_DOWNLOADING, 0, source.size)
     try:
-        python = privatepython.provision(source, cancel_ev=cancel_ev, on_progress=_progress)
+        python = privatepython.provision(
+            source, cancel_ev=cancel_ev, on_progress=_progress, required_origin=required_origin
+        )
     except privatepython.ProvisionError as exc:
         if exc.code == privatepython.ERROR_CANCELLED:
             return {"cancelled": True}
+        if exc.code == privatepython.ERROR_SOURCE_CHANGED:
+            # 计划说的来源此刻不成立：不换源，让用户按此刻的情况重新确认（重新规划会把新的来源 / 字节数说出口）
+            raise RepairError(ERROR_PLAN_STALE, str(exc)) from exc
         raise RepairError(exc.code, str(exc), **exc.detail) from exc
     global _base_python, _base_python_known
     with _lock:

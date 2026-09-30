@@ -45,6 +45,15 @@ bundled / cached 时 `download_bytes=0`、`network_required=false`；`cached` �
 bundled 时它也是 true（旧界面不会把它说成要下载）。供应进度（`downloading_python`）的 `private_python` 段带同名字段；
 账（`ledger.json`）每条记 `origin`。`present_payload()`（已就位）不带 `origin`——那时不需要任何归档。
 
+**计划说的来源就是执行的来源**（Codex #743 第四轮）：用户确认的是计划里那段载荷——来源、字节数、要不要联网。
+执行（`_GenerationJob.private_plan` → `privatepython.provision(required_origin=)`）只从计划说过的那一处取：
+计划说 `bundled` 就只认包内那份，`cached` 就只认缓存，`download` 就只下载；计划时已就位（`present_payload`）就要求它仍在。
+「计划之后、执行之前」状态变了——包内那份不见了 / 字节变了、缓存被删 / 坏了、下载计划之后多出一份本地归档、已就位的那份
+被删、锁换了一份（id 不同）——一律 `private_python_source_changed` → 事务收成 `repair_plan_stale`：不换成另一个没说过的
+来源，尤其**不会变成联网下载**；这一代不登记，重新规划把此刻的来源说出口。唯一不看来源的是「执行时 runtime 已在」（别的
+项目刚供应过）：那不取任何归档、不联网。并发时挂到别的计划领起的那份供应上、它因自己的来源不成立而失败的，按本消费者的
+来源再领一次（至多一次）。不绑定来源（`required_origin=None`）只剩工程 / 目标腿的直接调用。
+
 「优先包内」的理由：它是随签名安装包一起到用户手里的字节，零网络；缓存在它之后是因为两者等价（都校验过），而包内那份
 永远在、缓存可能被清。
 
