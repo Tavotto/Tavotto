@@ -216,7 +216,11 @@ def test_both_attempts_share_one_budget(tmp_path, wheel, monkeypatch, caplog):
     with SimpleIndex(wheel) as official, SimpleIndex(wheel) as mirror:
         official.throttle_bps = mirror.throttle_bps = 16 * 1024  # 各要约 25 s
         code, _out, sources, _m, elapsed = _install(_builder(official, mirror, dest))
-        assert _files(official) == 1 and _files(mirror) == 1
+        # 前提：第一次确实在官方源上下着（被「第一次的预算」截断，不是起不来）。镜像那一次只要求
+        # **pip 进程真起来了**（`sources` 里的 tuna 只在 `on_started` 里记）——它拿到的只剩约 3 s，
+        # Windows runner 上 pip 光启动 + 取索引页就可能用掉，未必走得到 /files/（backend-platforms
+        # windows-latest 226c2080 实测 0 次）。这条量的是「两次共用一个预算」，镜像下没下到文件不是它的主语
+        assert _files(official) == 1
     assert code == deprepair.ERROR_TIMEOUT
     assert elapsed < 6.0 + 1.5, f"两次尝试共用 6 s 的预算，实际 {elapsed:.1f} s"
     assert sources == [deprepair.PIP_SOURCE_PYPI, deprepair.PIP_SOURCE_MIRROR]
