@@ -676,7 +676,7 @@ def static_missing(
 
     相对的看 `databinding.evidence`：脚本目录与项目根**两处都** `missing`（项目外的 `outside` 不算，
     那里不看）；探路目标同理，`via` 标成 `probe` / `glob`。绝对的只 `os.path.exists`（不读、不列目录）。
-    已经被改指表救回来的不列。
+    已经被改指表救回来的读取（`via=open`）不列；探路（`probe` / `glob`）的不查改指表，规则解析得了也照列。
     """
     root_path = Path(root)
     script_path = root_path / figcapture.normalize_relative_script(script)
@@ -690,7 +690,9 @@ def static_missing(
     def _add(path: str, absolute: bool, via: str) -> None:
         if len(out) >= MAX_OTHERS or any(o["path"] == path for o in out):
             return
-        if _resolved(rules, path):
+        # 只有真走改指表的读取（`open`）才会被规则救回来；exists / glob / listdir 不查表——规则碰巧能解析
+        # 那一串，脚本照样走「不存在」那一支，这一条要留着按「改指救不回」说（Codex 评 #716 P2）
+        if via == VIA_OPEN and _resolved(rules, path):
             return
         out.append({"path": path, "absolute": absolute, "via": via})
 
