@@ -2026,6 +2026,29 @@ def test_overlapping_archive_updates_are_serialized(no_git_machine, capsys):
     assert info["version"] == "0.18.0" and not live.exists()
 
 
+def test_a_missing_marketplace_seen_while_another_update_holds_the_lock_fails(
+    no_git_machine, capsys
+):
+    """另一个 install / upgrade 正在换目录（持锁、目录在两次 replace 之间缺着）：这边不插手恢复，但
+    marketplace 一步要报失败——不能当「没什么要恢复」判成自定义来源跳过、报成功（Codex #725）。"""
+    from tavotto.engine import codexinstall
+
+    m = no_git_machine
+    z1, man1 = _stable_branch_zip(m["tmp"], "0.18.0")
+    m["github"].publish(z1, man1)
+    assert _cli_json(m, capsys, "install")[0] == 0
+    dest = codexinstall.archive_marketplace_dir()
+    backup = dest.parent / ".old-4242"
+    os.replace(dest, backup)  # 对方正在两次 replace 之间
+    with codexinstall._marketplace_lock(dest.parent):
+        rc, data = _cli_json(m, capsys, "upgrade")
+    assert rc != 0, data
+    steps = {st["step"]: st for st in data["steps"]}
+    assert steps["marketplace"]["ok"] is False, steps["marketplace"]
+    assert "正在更新" in steps["marketplace"]["detail"], steps["marketplace"]
+    assert backup.is_dir() and not dest.exists(), "持锁的那一方的目录一个都不能动"
+
+
 def test_a_failed_archive_attempt_still_reports_dirs_it_could_not_remove(
     no_git_machine, capsys, monkeypatch
 ):

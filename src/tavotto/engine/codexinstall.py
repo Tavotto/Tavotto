@@ -1333,8 +1333,11 @@ def _recover_managed_marketplace(root: str | None) -> tuple[bool, list[str]]:
         with _marketplace_lock(dest.parent):
             stuck = _remove_one_shot_dirs(dest.parent, dest)
     except _MarketplaceBusy:
-        # 另一个 install / upgrade 正在换目录：dest 不在可能只是它两次 replace 之间的一瞬，不插手
-        return False, []
+        # 另一个 install / upgrade 正在换目录：dest 不在可能只是它两次 replace 之间的一瞬。不插手，但也
+        # 不能当成「没什么要恢复」往下走——目录缺着会被判成自定义来源跳过、靠缓存里的旧插件报成功（Codex #725）
+        return False, [
+            f"{dest.parent}（另一个 tavotto codex install / upgrade 正在更新它，等它结束后重跑）"
+        ]
     except OSError as exc:
         return False, [f"{dest.parent}（拿不到锁：{exc}）"]
     return dest.exists(), stuck
@@ -1363,9 +1366,9 @@ def _marketplace_step(codex: str, *, apply: bool, summary: dict, upgrade: bool =
             "marketplace",
             ok=False,
             code=ERR_MARKETPLACE,
-            detail=f"Codex 登记的本地市场 {archive_marketplace_dir()} 不在，上一次留下的备份挪不回去："
+            detail=f"Codex 登记的本地市场 {archive_marketplace_dir()} 不在，恢复不了："
             + "、".join(stuck)
-            + "。多半是杀毒软件或别的程序占着它：关掉占用后重跑本命令。",
+            + "。多半是另一个 install / upgrade 正在进行，或杀毒软件占着备份：等它结束 / 关掉占用后重跑本命令。",
         )
     if mk["state"] == "unknown":
         # 「不知道」不是「没有」：这时候跑 add 是盲改
