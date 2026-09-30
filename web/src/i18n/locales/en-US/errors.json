@@ -522,7 +522,8 @@
     "repairFactEnvDownload": "Downloads {{product}}’s own Python {{version}} (about {{mb}} MB).",
     "repairFactEnvBundled": "Uses the {{product}} Python {{version}} that came with the installer; no internet needed.",
     "repairFactEnvCached": "Uses the {{product}} Python {{version}} that is already set up; no internet needed.",
-    "repairAlternatives": "Other ways (alternatives)"
+    "repairAlternatives": "Other ways (alternatives)",
+    "repairEnvNotApplied": "The switch didn’t take effect: this project still isn’t using that Python, so the scripts weren’t rerun."
   },
   "preflight": {
     "axisLabelFormat": "The axis title “{{label}}” isn't in the profile's “{{want}}” form.",

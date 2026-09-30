@@ -2054,6 +2054,7 @@ export default interface Resources {
       "repairDownloadAria": "下载进度",
       "repairDownloadBytes": "{{done}} / {{total}} MB",
       "repairDownloadUnpacking": "正在解压 Python…",
+      "repairEnvNotApplied": "切换没有生效：这个项目此刻用的还不是那个 Python，脚本没有重跑。",
       "repairError": {
         "dependency_already_attempted": "已经往这个环境装过它了，再装一遍不会有变化。重新启动 Tavotto 后可以再试。",
         "dependency_already_present": "这个环境里已经有它了，但当前渲染用的不是这个环境。",

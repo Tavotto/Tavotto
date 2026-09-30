@@ -8,8 +8,11 @@ import {
   installDependencyPlan,
   prepareJointDependencies,
   rebuildManagedEnvironment,
+  setEngineEnvironment,
+  setProjectEnvironment,
   setProjectUserEnvironment,
   skipDependencyPreparation,
+  backendErrorText,
   type DependencyProgress,
   type DependencyRepairOffer,
   type DependencyRepairPlan,
@@ -17,8 +20,10 @@ import {
   type JointDependencyPlan,
   type JointDependencyRepairPlan,
   type PrivatePythonOffer,
+  privatePythonOrigin,
 } from '@/lib/api'
 import { currentProjectId } from '@/lib/session'
+import { t } from '@/i18n'
 import { useEnvStore } from '@/store/envStore'
 import { useRenderStore } from '@/store/renderStore'
 import { useScriptRunStore } from '@/store/scriptRunStore'
@@ -53,17 +58,43 @@ const projectKey = (project: string | null): string => project ?? ''
  * 「切走期间装好 → 切回来补跑」同一条路，`clear()` 里放回）。不是装包作业、没有进度可收放，所以单独一格。
  * 改用已有解释器 / 清掉全局固定两条路共用（Codex #742）
  */
-const pendingReruns = new Map<string, { script?: string; peers: string[] }>()
+const pendingEnvChanges = new Map<string, EnvChange>()
 
 /**
- * 只给测试用：清空本模块的停放槽（作业所属 `startedPlans`、重试上下文 `parkedRetry`、环境改动的重跑
- * `pendingReruns`）。它们是模块级的、活得比一次 zustand reset 长——不清的话上一条用例停放下来的东西会在下一条
+ * 一次「环境换过了」（改用已有解释器 / 清掉全局固定）的**带标签的结局**（Codex #742 P1）：成功还是失败、失败的原文、
+ * 成功时该如何核实，连同那几行要重跑的脚本一起。不在所属项目上的时候整份停放——**绝不把成败当成未知**：失败的
+ * 回来只在卡片上说那一句、不重跑；成功的回来先按此刻重新读一次环境、核实确实生效了才重跑，没生效按失败处理。
+ * （用户自己的 Python 以脚本目录为 cwd，脚本在走到缺的那个 import 之前就可能写项目里的文件——在没换成的解释器下
+ * 重跑不是「无害」的。）
+ */
+interface EnvChange {
+  kind: 'adopt' | 'unpin'
+  module: string
+  script?: string
+  peers: string[]
+  /** 从脚本行发起的：那一行的 offer（失败留在卡片上时，切项目清空了运行记录，卡片靠它挂回来） */
+  scriptOffer: ScriptRepairOffer | null
+  outcome:
+    | { ok: false; error: string }
+    | {
+        ok: true
+        /** 核实用：改用 → 项目此刻该用的解释器（后端回的规范路径）；清固定 → 被清掉的那条固定 */
+        expectPython: string
+        pinnedSource?: string
+        /** 当场（没切过项目）就用的响应：写回 env */
+        apply: () => void
+      }
+}
+
+/**
+ * 只给测试用：清空本模块的停放槽（作业所属 `startedPlans`、重试上下文 `parkedRetry`、环境改动的结局
+ * `pendingEnvChanges`）。它们是模块级的、活得比一次 zustand reset 长——不清的话上一条用例停放下来的东西会在下一条
  * 用例切项目时被 drain，用例之间互相串（`projectEpoch` 只增不减，不清：各处只比「变没变」）
  */
 export function __resetDepRepairParkingForTests(): void {
   startedPlans.clear()
   parkedRetry.clear()
-  pendingReruns.clear()
+  pendingEnvChanges.clear()
 }
 
 /** 所属项目此刻就是开着的那个（没切过，或 A → B → A 已经切回来了） */
@@ -106,6 +137,11 @@ export interface ScriptRepairOffer {
    * 收放：切走期间装好的话，切回来时 `scriptRunStore` 已被清空、认不出谁也缺它，只能按这份名单补跑（Codex #742）
    */
   peers?: string[]
+  /**
+   * 这份 offer 挂在哪一行（改用 / 清固定失败、结局留在卡片上时用：那时没有 `request`，脚本行按它认领；
+   * 装包作业那条路的认领仍按 `request.script`）
+   */
+  script?: string
 }
 
 /**
@@ -120,7 +156,7 @@ export interface RepairDisclosure {
 }
 
 /**
- * 计划有没有超出用户看到的：目标、需求串逐字相同，不改用户环境；私有 Python 这一段只许「更少」——
+ * 计划有没有超出用户看到的：目标、需求串逐字相同，不改用户环境；私有 Python 这一段来源要对得上、只许「更少」——
  * 看到的是「要下载 N MB」，计划变成「已缓存 / 不用下载」可以；看到的是「不用下载」或更小的体积，
  * 计划却要下载（或换了一份 Python），就不算同一次授权。
  */
@@ -131,8 +167,13 @@ export function planMatchesDisclosure(plan: DependencyRepairPlan, seen: RepairDi
   if (!now) return true
   const was = seen.private_python
   if (!was || now.id !== was.id || now.version !== was.version) return false
-  if (now.cached) return true
-  return !was.cached && now.download_bytes <= was.download_bytes
+  // 来源（安装包自带 / 已缓存 / 下载）是计划的一部分：后端按它绑定、执行时对不上就当计划过期（#743）。卡片说的是
+  // 「用自带的 / 用已缓存的」，计划却换成了另一个——两边都是 cached、零字节也不算同一次授权（Codex #742）。
+  // 只有「说的是要下载，计划变成不用下载 / 下得更少」这一种「更少」放行
+  const nowOrigin = privatePythonOrigin(now)
+  const wasOrigin = privatePythonOrigin(was)
+  if (wasOrigin !== 'download') return nowOrigin === wasOrigin
+  return nowOrigin !== 'download' || now.download_bytes <= was.download_bytes
 }
 
 /**
@@ -202,13 +243,23 @@ interface DepRepairState {
    * 渲染重新排上——与装完包之后那半边同一件事。素材库里因缺这个包停下的脚本行（发起的那一行 `script` 与同样
    * 缺它的其它行）同样重跑：一键修复的首选就是这条路，改用之后那一行还停在缺包上的话卡片永远收不掉（Codex #742）
    */
-  adoptSystemPython: (python: string, module: string, script?: string) => Promise<void>
+  adoptSystemPython: (
+    python: string,
+    module: string,
+    script?: string,
+    scriptOffer?: ScriptRepairOffer | null,
+  ) => Promise<void>
   /**
    * 修复卡上的「恢复自动检测」：清掉全局显式解释器（`setPython(null)`），成功后收起这张卡、重排失败的渲染、重跑
    * 停在缺包上的脚本行。回 `null` = 成功，否则是那句错误。发请求那一刻记下项目代际：回来时已切项目的话，这些
    * 属于 A 的副作用一个都不在 B 上做，重跑停放到 A、切回来再续（Codex #742 P1）
    */
-  clearPinnedInterpreter: (module: string, script?: string) => Promise<string | null>
+  clearPinnedInterpreter: (
+    module: string,
+    script?: string,
+    pinned?: InterpreterPin | null,
+    scriptOffer?: ScriptRepairOffer | null,
+  ) => Promise<string | null>
   /**
    * 依赖弹窗里点「改用这个环境」（ADR 0079）：交 id 给后端体检并记成本项目的选择；成功就关框、
    * 把卡在这道门上的面板重排。失败把原文留在框里。
@@ -493,62 +544,69 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
     }
   },
 
-  adoptSystemPython: async (python, module, script) => {
+  adoptSystemPython: async (python, module, script, scriptOffer = null) => {
     if (get().busy) return
-    const epoch = projectEpoch
     const owner = currentProjectId()
+    const epoch = projectEpoch
     // 同样缺这个包的其它行此刻就记下：切走再切回之后 scriptRunStore 已清空，只能按这份名单认
     const peers = scriptsMissing(module).filter((s) => s !== script)
     set({ busy: true, errorCode: '', errorText: '' })
-    const error = await useEnvStore.getState().setProjectPython(python, module)
-    // 换过代：`setProjectPython` 成败都回 null、A 的项目环境也没写进 env（它按自己的代际丢了）——分不出成败，
-    // 重跑一次无害：没改成的话那一行重跑出来仍是缺包，卡片照旧挂回去
-    const switched = epoch !== projectEpoch
-    deliverToOwner(
-      owner,
-      () => {
-        if (error) {
-          // `setProjectPython` 已经把后端原文翻成一句话；code 由环境 store 吞掉了，
-          // 这里只有原文可显示——它本来就是 `backendErrorText()` 按 code 翻好的。
-          set({ busy: false, errorCode: '', errorText: error })
-          return
-        }
-        set({ busy: false })
-        // A → B → A：A 的环境状态要按此刻重新问（那次响应被丢了）
-        if (switched) void useEnvStore.getState().refresh()
-        useRenderStore.getState().retryEnvironmentFailures()
-        rerunAfterEnvironmentChange(script, module, peers, switched)
-      },
-      // 此刻开着的是 B：B 的渲染、B 的脚本行一概不动，重跑停放到 A
-      () => parkRerun(owner, script, peers),
-    )
+    let change: EnvChange
+    try {
+      // 直接问后端、自己拿**带标签的**结局：`envStore.setProjectPython` 换代之后成败都回 null，分不出来
+      const res = await setProjectEnvironment(python, module)
+      change = {
+        kind: 'adopt', module, script, peers, scriptOffer,
+        outcome: {
+          ok: true,
+          expectPython: res.project?.python ?? python,
+          apply: () => {
+            const env = useEnvStore.getState().env
+            if (env) useEnvStore.setState({ env: { ...env, project: res.project } })
+            else void useEnvStore.getState().refresh()
+          },
+        },
+      }
+    } catch (e) {
+      change = {
+        kind: 'adopt', module, script, peers, scriptOffer,
+        outcome: { ok: false, error: e instanceof Error ? backendErrorText(e) : t('engine.setPythonFailed', { ns: 'errors' }) },
+      }
+    }
+    await settleEnvChange(owner, change, epoch !== projectEpoch)
   },
 
-  clearPinnedInterpreter: async (module, script) => {
-    const epoch = projectEpoch
+  clearPinnedInterpreter: async (module, script, pinned = null, scriptOffer = null) => {
     const owner = currentProjectId()
+    const epoch = projectEpoch
     const peers = scriptsMissing(module).filter((s) => s !== script)
-    const failure = await useEnvStore.getState().setPython(null)
-    const switched = epoch !== projectEpoch
-    // 换过代的话 `setPython` 成败都回 null（并已按此刻的项目刷过环境）；分不出来，按清掉了处理——重跑一次无害
-    let result: string | null = null
-    deliverToOwner(
-      owner,
-      () => {
-        if (failure) {
-          result = failure
-          return
-        }
-        // 清掉之后这张卡的前提没了：store 里记下的那条固定与错误清空，因缺包失败的渲染重新排上，停在缺包上的脚本行
-        // （这一行与同样缺它的）重跑——那一行的 offer 还带着旧的 `pinned`，不重跑的话卡片会一直停在「恢复自动检测」上
-        get().reset()
-        useRenderStore.getState().retryEnvironmentFailures()
-        rerunAfterEnvironmentChange(script, module, peers, switched)
-      },
-      // 此刻开着的是 B：A 的卡片状态、A 的脚本行重跑都不在 B 上做（B 的修复状态不 reset、B 的脚本一行都不跑）
-      () => parkRerun(owner, script, peers),
-    )
-    return result
+    let change: EnvChange
+    try {
+      const env = await setEngineEnvironment(null)
+      change = {
+        kind: 'unpin', module, script, peers, scriptOffer,
+        outcome: {
+          ok: true,
+          expectPython: pinned?.python ?? '',
+          pinnedSource: pinned?.source,
+          apply: () => {
+            useEnvStore.setState({ env })
+            if (!env.project) void useEnvStore.getState().refresh()
+          },
+        },
+      }
+    } catch (e) {
+      change = {
+        kind: 'unpin', module, script, peers, scriptOffer,
+        outcome: { ok: false, error: e instanceof Error ? backendErrorText(e) : t('engine.setPythonFailed', { ns: 'errors' }) },
+      }
+    }
+    // 当场（所属项目没离开过）失败：错误交回卡片自己的那一行说；其余一律走 `settleEnvChange`
+    if (!change.outcome.ok && epoch === projectEpoch) {
+      return change.outcome.error
+    }
+    await settleEnvChange(owner, change, epoch !== projectEpoch)
+    return null
   },
 
   cancel: async () => {
@@ -727,10 +785,11 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
     // 同一件事——重跑那一行（同一条 `rerunScriptAfterRepair`）、收起卡片。收起之后这份作业不再被收放，
     // 再切走切回不会重复触发
     // 切走期间「改用已有解释器 / 清掉全局固定」回来了（停放在这一格）：与装好之后同一件事，补跑那几行
-    const pend = pendingReruns.get(here)
+    const pend = pendingEnvChanges.get(here)
     if (pend) {
-      pendingReruns.delete(here)
-      rerunSameModule(undefined, undefined, [...(pend.script ? [pend.script] : []), ...pend.peers])
+      pendingEnvChanges.delete(here)
+      // 回到所属项目：失败的只说那一句、不重跑；成功的按此刻重新读一次环境、核实生效了才重跑
+      void applyEnvChange(here === '' ? null : here, pend, true)
     }
     if (back?.state === 'done' && retryCtx?.scriptOffer) {
       const script = back.script ?? retryCtx.request?.script
@@ -838,14 +897,66 @@ export function rerunAfterEnvironmentChange(
   rerunSameModule(importName, script, peers)
 }
 
-/** 所属项目此刻不开着：那几行的重跑停放到它那一格，切回来 `clear()` 续上（同一格里的名单合并） */
-function parkRerun(owner: string | null, script: string | undefined, peers: string[]): void {
-  const key = projectKey(owner)
-  const prev = pendingReruns.get(key)
-  pendingReruns.set(key, {
-    script: script ?? prev?.script,
-    peers: [...new Set([...(prev?.peers ?? []), ...(prev?.script && prev.script !== script ? [prev.script] : []), ...peers])],
-  })
+/**
+ * 环境改动的结局交给所属项目（同 `deliverToOwner` 那一条规则）：所属项目开着就当场落地，不开着就整份停放，
+ * 回到它时 `clear()` 取出来落地。`switched` = 发请求之后换过代（含 A → B → A 已经切回）：那时响应里的环境属于
+ * 发请求那一刻，不直接写，改为按此刻重新读一次再核实
+ */
+async function settleEnvChange(owner: string | null, change: EnvChange, switched: boolean): Promise<void> {
+  let run: Promise<void> | null = null
+  deliverToOwner(
+    owner,
+    () => {
+      run = applyEnvChange(owner, change, switched)
+    },
+    () => {
+      pendingEnvChanges.set(projectKey(owner), change)
+    },
+  )
+  if (run) await run
+}
+
+/** 环境改动落地到所属项目（此刻开着）。`verify`：先按此刻重新读环境、核实生效了才算成功 */
+async function applyEnvChange(owner: string | null, change: EnvChange, verify: boolean): Promise<void> {
+  const store = useDepRepairStore
+  const fail = (error: string) =>
+    store.setState({
+      busy: false,
+      errorCode: '',
+      errorText: error,
+      // 从脚本行发起的：运行记录可能随切项目清掉了，卡片靠这份 offer 挂回那一行、把失败那一句说出来
+      ...(change.scriptOffer && change.script ? { scriptOffer: { ...change.scriptOffer, script: change.script } } : {}),
+    })
+  const outcome = change.outcome
+  if (!outcome.ok) {
+    fail(outcome.error)
+    return
+  }
+  if (verify) {
+    const epoch = projectEpoch
+    await useEnvStore.getState().refresh()
+    // 核实期间又切走了：整份再停放回去，回来再核
+    if (epoch !== projectEpoch || !ownerIsCurrent(owner)) {
+      pendingEnvChanges.set(projectKey(owner), change)
+      return
+    }
+    const env = useEnvStore.getState().env
+    const applied =
+      change.kind === 'adopt'
+        ? env?.project?.python === outcome.expectPython
+        : !!env && !(env.source === outcome.pinnedSource && env.python === outcome.expectPython)
+    if (!applied) {
+      fail(t('engine.repairEnvNotApplied', { ns: 'errors' }))
+      return
+    }
+  } else {
+    outcome.apply()
+  }
+  // 生效了：这张卡的前提没了（清固定时连同记下的那条固定一起清），失败的渲染重排，停在缺包上的那几行重跑
+  if (change.kind === 'unpin') store.getState().reset()
+  else store.setState({ busy: false })
+  useRenderStore.getState().retryEnvironmentFailures()
+  rerunAfterEnvironmentChange(change.script, change.module, change.peers, verify)
 }
 
 /** 脚本行发起时记下同样缺这个包的其它脚本（重试时沿用第一次记下的：那时运行记录可能已随切项目清掉） */

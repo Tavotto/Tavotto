@@ -69,6 +69,8 @@
   不改动什么），修复卡与跑前授权框同一套；下载大小（`data-one-click-cost`，来源只按 `privatePythonOrigin()` 判：`bundled` / `cached` 不提下载，字段缺失按
   `cached` 推、再缺按下载）、环境说明、需求串、其余目标、被跳过的系统解释器、「换一个 Python」（`OtherPython`，兜底出口必须
   **始终在**）与「选择渲染环境」全在「详情」里。两样都没有时才把各条路摊开；真的无路可走时同样一句话（`repairManagedUnavailable`，版本范围与「指定已有 Python」在「详情」里）。
+  一次授权的比对（`planMatchesDisclosure`）连私有 Python 的**来源**一起比：说的是自带 / 已缓存、计划换成另一个就停在
+  确认页（只有「说要下载、计划变成不下 / 下得更少」放行）。
   受管目标 `available: null`（后端还在探基础解释器、offer 上没挂私有 Python）时卡片先 `previewManaged()` 形成一份计划**只读它的
   要素**（只在受管目标**会是主按钮**时读——已有解释器是主按钮时不读，免得「检查中」把它禁用住；计划不装东西；按脚本 + 模块分格，两张卡同时预读互不覆盖，装好后清空重读），按它授权——否则计划多出一段下载，`planMatchesDisclosure` 不符，要多点一次确认页。进行中同样**一行**
   （`RepairProgressLine`：「正在安装 openpyxl…（3/4）」，下载那一段「正在下载 Python… 12 / 25 MB」+ 细进度条 +「取消」；
@@ -78,7 +80,10 @@
   `downloading_python` 时读**（后端的 result 沿用上一条）；换用 PyPI 镜像（进度记录顶层的 `pypi_mirror`，后端 #743 `deprepair._note_mirror` 给出；没有这个键时一个字都不说）
   只在「详情」里说（修复卡与跑前授权框的进行中都一样：#743 的联合准备两条路与单包修复同一个字段）。一键修复改用了电脑上已有的环境、或清掉了全局固定之后，停在缺这个包上的脚本行（这一行与同样缺它的）
   立刻重跑（`rerunAfterEnvironmentChange`，与装好之后同一件事）；发请求那一刻记项目代际，回来时已切项目的话这些
-  副作用一个都不在新项目上做，重跑按所属项目停放（`pendingReruns`）、切回来 `clear()` 续上。判「作用于谁」的规则只有
+  副作用一个都不在新项目上做，结局按所属项目停放（`pendingEnvChanges`）、切回来 `clear()` 取出来落地。结局**带标签**，绝不把成败当成未知：失败的回来
+  只在卡片上说那一句、不重跑；成功的回来先按此刻重新读一次环境、核实确实生效了才重跑，没生效按失败处理（用户自己的
+  Python 以脚本目录为 cwd，在没换成的解释器下重跑并不无害）。所以这两条路直接问后端拿结局，不经 `envStore` 那两个
+  换代后成败都回 null 的方法。判「作用于谁」的规则只有
   一条、一个辅助函数 `deliverToOwner`：结果回来时所属项目就是当前项目（含 A → B → A 已经切回）就立即执行，不是就停放——
   判的是所属项目，不是代际（代际变了、所属项目却开着时停放下去就没人再取）；安装完成（`onProgress`）/ 迟到的失败（`lateFailure`）/ 重建实况都经它。模块级的停放槽（`startedPlans` / `parkedRetry` /
   `pendingReruns`）活得比 zustand reset 长，测试在 `beforeEach` 里调 `__resetDepRepairParkingForTests()`，用例互不串（「恢复自动检测」因此挪进

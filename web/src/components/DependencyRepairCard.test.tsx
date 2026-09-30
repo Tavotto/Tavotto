@@ -1007,6 +1007,39 @@ describe('受管环境一次授权（2026-09-28）', () => {
     expect(installMock).toHaveBeenCalledWith('plan-managed')
   })
 
+  it('私有 Python 的来源变了（卡片说自带 / 已缓存，计划换成另一个）：两边都零字节也停在确认页，不执行（Codex #742）', async () => {
+    const zero = { ...PRIVATE_PYTHON, cached: true, download_bytes: 0, network_required: false }
+    for (const [seen, planned] of [
+      ['bundled', 'cached'],
+      ['cached', 'bundled'],
+    ] as const) {
+      await act(async () => root?.unmount())
+      host?.remove()
+      useDepRepairStore.getState().reset()
+      installMock.mockClear()
+      planMock.mockResolvedValue({ plan: { ...MANAGED_PLAN, private_python: { ...zero, origin: planned } } })
+      await render({ ...OFFER, targets: [{ ...OFFER.targets[1], private_python: { ...zero, origin: seen } }] })
+      await click(managedButton())
+      expect(installMock, `${seen} → ${planned} 被当成同一次授权执行了`).not.toHaveBeenCalled()
+      expect(byName(en('repairPrepareAndContinue'))).toBeTruthy()
+    }
+    // 对照：来源相同照常一次开始；说的是下载、计划变成不用下载（更少）也照常开始
+    for (const [seen, planned] of [
+      [{ ...zero, origin: 'bundled' as const }, { ...zero, origin: 'bundled' as const }],
+      [{ ...PRIVATE_PYTHON, origin: 'download' as const }, { ...zero, origin: 'cached' as const }],
+    ]) {
+      await act(async () => root?.unmount())
+      host?.remove()
+      useDepRepairStore.getState().reset()
+      installMock.mockClear()
+      installMock.mockResolvedValue({ started: true } as never)
+      planMock.mockResolvedValue({ plan: { ...MANAGED_PLAN, private_python: planned } })
+      await render({ ...OFFER, targets: [{ ...OFFER.targets[1], private_python: seen }] })
+      await click(managedButton())
+      expect(installMock).toHaveBeenCalledTimes(1)
+    }
+  })
+
   it('卡片没说要下载、计划却要下载：停在确认页，不执行', async () => {
     planMock.mockResolvedValue({ plan: MANAGED_PLAN })
     await render({ ...OFFER, targets: [OFFER.targets[1]] })

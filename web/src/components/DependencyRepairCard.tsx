@@ -145,7 +145,7 @@ export function DependencyRepairCard({
   const act = (tg: DependencyTarget) =>
     tg.kind === 'system_interpreter'
       ? // 采用已有的解释器不经 plan：没有要安装的东西可以「计划」
-        void adoptSystemPython(tg.python, module, script)
+        void adoptSystemPython(tg.python, module, script, origin)
       : tg.kind === 'tavotto_managed' && offer.requirement
         ? // 一次授权：卡片已经把计划的要素说出口，点一次就开始
           void installNow(
@@ -173,7 +173,8 @@ export function DependencyRepairCard({
         module={pkg}
         pinned={pinned}
         // 清固定、收卡、重排、重跑都在 store 里，按项目代际判（Codex #742 P1）
-        onClear={() => clearPinnedInterpreter(module, script)}
+        onClear={() => clearPinnedInterpreter(module, script, pinned, origin)}
+        storeError={errorText}
       />
     )
   }
@@ -578,10 +579,13 @@ function Pinned({
   module,
   pinned,
   onClear,
+  storeError,
 }: {
   module: string
   pinned: InterpreterPin
   onClear: () => Promise<string | null>
+  /** 切项目期间才回来的结局（失败 / 回来核实没生效）记在 store 里，这张卡照样把它说出来 */
+  storeError: string
 }) {
   useTranslation('errors')
   const [busy, setBusy] = useState(false)
@@ -622,7 +626,7 @@ function Pinned({
           </Button>
         </div>
       )}
-      {error && <p className="text-xs text-danger">{error}</p>}
+      {(error || storeError) && <p className="text-xs text-danger">{error || storeError}</p>}
     </div>
   )
 }

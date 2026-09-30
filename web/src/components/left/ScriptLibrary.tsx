@@ -281,7 +281,7 @@ interface RepairOwner {
 
 function useRepairOwner(): RepairOwner {
   const owner = useDepRepairStore((s) => s.request?.script ?? s.progress?.script ?? '')
-  const heldFor = useDepRepairStore((s) => s.request?.script ?? '')
+  const heldFor = useDepRepairStore((s) => s.request?.script ?? s.scriptOffer?.script ?? '')
   const held = useDepRepairStore((s) => s.scriptOffer)
   return { owner, heldFor, held }
 }

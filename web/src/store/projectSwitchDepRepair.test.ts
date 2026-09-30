@@ -17,6 +17,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { setCurrentProjectId } from '@/lib/session'
+import { t } from '@/i18n'
 import type { DependencyPreparationOffer, DependencyProgress, DependencyRepairPlan } from '@/lib/api'
 import { __resetDepRepairParkingForTests, useDepRepairStore } from './depRepairStore'
 import { useEnvStore } from './envStore'
@@ -34,6 +35,9 @@ let stateAnswer: unknown = { state: 'idle', plan_id: '', log: '', error: null, c
 let rebuildNetworkError = false
 /** 后端此刻的全局解释器（`GET /api/engine/environment` 回它） */
 let globalPython = '/p'
+/** GET 环境时的全局来源与项目解释器（回到所属项目核实「改用 / 清固定生效了没有」时读它们） */
+let globalSource = 'system'
+let projectPython = ''
 
 const PLAN_A: DependencyRepairPlan = {
   plan_id: 'plan-a',
@@ -64,7 +68,12 @@ globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
     return respond({ started: true, plan_id: 'plan-a', state: 'installing', log: '', error: null, code: '' })
   if (u.includes('/managed/rebuild') && rebuildNetworkError) throw new TypeError('Failed to fetch')
   const body = u.includes('/api/engine/environment')
-    ? { ok: true, python: globalPython, source: 'system', project: { open: true } }
+    ? {
+        ok: true,
+        python: globalPython,
+        source: globalSource,
+        project: { open: true, ...(projectPython ? { python: projectPython } : {}) },
+      }
     : u.includes('/api/projects/recent')
       ? { recent: [] }
       : u.includes('/api/projects/open')
@@ -127,6 +136,8 @@ beforeEach(async () => {
   stateAnswer = { state: 'idle', plan_id: '', log: '', error: null, code: '' }
   rebuildNetworkError = false
   globalPython = '/p'
+  globalSource = 'system'
+  projectPython = ''
   useEnvStore.setState({
     setProjectPython: ENV_ORIGINAL.setProjectPython,
     refresh: ENV_ORIGINAL.refresh,
@@ -349,14 +360,12 @@ describe('换项目时的依赖修复状态（issue #590）', () => {
   })
 
   it('A 的「改用系统解释器」在途时切到 B：不重排 B 的渲染', async () => {
-    let release: (v: string | null) => void = () => {}
-    vi.spyOn(useEnvStore.getState(), 'setProjectPython').mockReturnValue(
-      new Promise<string | null>((r) => (release = r)),
-    )
+    const armed = holdOnce('/api/engine/environment')
     const pending = useDepRepairStore.getState().adoptSystemPython('/usr/bin/python3', 'lmfit')
+    const release = await armed
     await switchTo('p2')
     const retry = vi.spyOn(useRenderStore.getState(), 'retryEnvironmentFailures')
-    release(null)
+    release({ ok: true, project: { open: true, python: '/usr/bin/python3' } })
     await pending
     expect(retry).not.toHaveBeenCalled()
     expect(useDepRepairStore.getState().busy).toBe(false)
@@ -642,54 +651,122 @@ describe('环境改动的回调按项目代际判（Codex #742）', () => {
     useDepRepairStore.setState({ managedPreviews: {} })
   })
 
-  it('P1：A 上「恢复自动检测」在途时切到 B——回来的回调不作用于 B（不 reset、不重排、不跑 B 的脚本），切回 A 续跑', async () => {
-    let release: (v: string | null) => void = () => {}
-    vi.spyOn(useEnvStore.getState(), 'setPython').mockReturnValue(new Promise<string | null>((r) => (release = r)))
-    const pending = useDepRepairStore.getState().clearPinnedInterpreter('lmfit', 'fig.py')
+  it('P1：A 上「恢复自动检测」在途时切到 B——回来的结局不作用于 B（不 reset、不重排、不跑 B 的脚本），切回 A 核实后续跑', async () => {
+    const armed = holdOnce('/api/engine/environment')
+    const pending = useDepRepairStore
+      .getState()
+      .clearPinnedInterpreter('lmfit', 'fig.py', { python: '/a', source: 'configured' })
+    const release = await armed
     await switchTo('p2')
-    // B 上也有一行缺同一个包、B 自己的修复状态也在：A 的回调一样都不许碰
+    // B 上也有一行缺同一个包、B 自己的修复状态也在：A 的结局一样都不许碰
     useScriptRunStore.setState({ byScript: { 'b.py': stuck('lmfit') } })
     useDepRepairStore.setState({ errorCode: 'b_own_error', pinned: { python: '/b', source: 'configured' } })
     const retry = vi.spyOn(useRenderStore.getState(), 'retryEnvironmentFailures')
     calls.length = 0
-    release(null)
+    release({ ok: true, python: '/p', source: 'system', project: { open: true } })
     expect(await pending).toBeNull()
-    expect(probed(), 'A 的回调在 B 上跑了脚本').toEqual([])
+    expect(probed(), 'A 的结局在 B 上跑了脚本').toEqual([])
     expect(retry).not.toHaveBeenCalled()
-    expect(useDepRepairStore.getState().errorCode, 'A 的回调把 B 的修复状态 reset 了').toBe('b_own_error')
+    expect(useDepRepairStore.getState().errorCode, 'A 的结局把 B 的修复状态 reset 了').toBe('b_own_error')
     expect(useDepRepairStore.getState().pinned?.python).toBe('/b')
-    // 切回 A：与「切走期间装好」同一条路，补跑那一行与同样缺它的那一行
+    // 切回 A：按此刻读环境（不再是 /a 那条固定）核实生效了，补跑那一行与同样缺它的那一行
     await switchTo('p1')
     await vi.waitFor(() => expect(probed()).toEqual(['fig.py', 'peer.py']))
-    // 再切走切回不重复
     await switchTo('p2')
     await switchTo('p1')
     expect(probed()).toEqual(['fig.py', 'peer.py'])
   })
 
   it('对照：没切项目时「恢复自动检测」立刻收卡、重排、重跑（尺子是活的）', async () => {
-    vi.spyOn(useEnvStore.getState(), 'setPython').mockResolvedValue(null)
     useDepRepairStore.setState({ pinned: { python: '/a', source: 'configured' } })
     const retry = vi.spyOn(useRenderStore.getState(), 'retryEnvironmentFailures')
     calls.length = 0
-    expect(await useDepRepairStore.getState().clearPinnedInterpreter('lmfit', 'fig.py')).toBeNull()
+    expect(
+      await useDepRepairStore.getState().clearPinnedInterpreter('lmfit', 'fig.py', { python: '/a', source: 'configured' }),
+    ).toBeNull()
     expect(useDepRepairStore.getState().pinned).toBeNull()
     expect(retry).toHaveBeenCalled()
     await vi.waitFor(() => expect(probed()).toEqual(['fig.py', 'peer.py']))
   })
 
-  it('P2：A 上「改用已有环境」在途时切到 B——B 不跑；切回 A，那一行与同样缺它的行续跑', async () => {
-    let release: (v: string | null) => void = () => {}
-    vi.spyOn(useEnvStore.getState(), 'setProjectPython').mockReturnValue(new Promise<string | null>((r) => (release = r)))
+  it('P2：A 上「改用已有环境」在途时切到 B——B 不跑；切回 A 核实生效后，那一行与同样缺它的行续跑', async () => {
+    const armed = holdOnce('/api/engine/environment')
     const pending = useDepRepairStore.getState().adoptSystemPython('/usr/bin/python3', 'lmfit', 'fig.py')
+    const release = await armed
     await switchTo('p2')
     useScriptRunStore.setState({ byScript: { 'b.py': stuck('lmfit') } })
     calls.length = 0
-    release(null)
+    release({ ok: true, project: { open: true, python: '/usr/bin/python3' } })
     await pending
     expect(probed()).toEqual([])
+    projectPython = '/usr/bin/python3' // A 此刻确实用着它
     await switchTo('p1')
     await vi.waitFor(() => expect(probed()).toEqual(['fig.py', 'peer.py']))
+  })
+
+  it('P1：切走期间「改用已有环境」失败——回到 A 在卡片上说失败那一句，不重跑', async () => {
+    const armed = holdOnce('/api/engine/environment')
+    const rowOffer = { offer: { import_name: 'lmfit', script: 'fig.py' }, module: 'lmfit' } as never
+    const pending = useDepRepairStore.getState().adoptSystemPython('/usr/bin/python3', 'lmfit', 'fig.py', rowOffer)
+    const release = await armed
+    await switchTo('p2')
+    calls.length = 0
+    release({ error: '这个环境里也没有 lmfit', code: 'project_env_module_missing' }, 400)
+    await pending
+    await switchTo('p1')
+    await new Promise((r) => setTimeout(r, 20))
+    expect(probed(), '改用失败了还在没换成的解释器下重跑').toEqual([])
+    const s = useDepRepairStore.getState()
+    expect(s.errorText).not.toBe('')
+    // 那一行靠这份 offer 挂回卡片（运行记录随切项目清掉了）
+    expect(s.scriptOffer?.script).toBe('fig.py')
+  })
+
+  it('P1：切走期间「改用已有环境」成功，但回到 A 读到的环境不是它——按失败处理，不重跑', async () => {
+    const armed = holdOnce('/api/engine/environment')
+    const pending = useDepRepairStore.getState().adoptSystemPython('/usr/bin/python3', 'lmfit', 'fig.py')
+    const release = await armed
+    await switchTo('p2')
+    calls.length = 0
+    release({ ok: true, project: { open: true, python: '/usr/bin/python3' } })
+    await pending
+    projectPython = '/somewhere/else/python' // 回来时 A 用的已经不是它（别处又改过）
+    await switchTo('p1')
+    await vi.waitFor(() => expect(useDepRepairStore.getState().errorText).toContain(t('engine.repairEnvNotApplied', { ns: 'errors' })))
+    expect(probed()).toEqual([])
+  })
+
+  it('P1：切走期间「恢复自动检测」失败——回到 A 不重跑、卡片说失败', async () => {
+    const armed = holdOnce('/api/engine/environment')
+    const pending = useDepRepairStore
+      .getState()
+      .clearPinnedInterpreter('lmfit', 'fig.py', { python: '/a', source: 'configured' })
+    const release = await armed
+    await switchTo('p2')
+    calls.length = 0
+    release({ error: '设置写入失败' }, 500)
+    expect(await pending).toBeNull()
+    await switchTo('p1')
+    await new Promise((r) => setTimeout(r, 20))
+    expect(probed()).toEqual([])
+    expect(useDepRepairStore.getState().errorText).toContain('设置写入失败')
+  })
+
+  it('P1：切走期间「恢复自动检测」成功，但回到 A 那条固定还在——按失败处理，不重跑', async () => {
+    const armed = holdOnce('/api/engine/environment')
+    const pending = useDepRepairStore
+      .getState()
+      .clearPinnedInterpreter('lmfit', 'fig.py', { python: '/a', source: 'configured' })
+    const release = await armed
+    await switchTo('p2')
+    calls.length = 0
+    release({ ok: true, python: '/p', source: 'system', project: { open: true } })
+    await pending
+    globalPython = '/a' // 回来时全局固定又是 /a（别处又设回去了）
+    globalSource = 'configured'
+    await switchTo('p1')
+    await vi.waitFor(() => expect(useDepRepairStore.getState().errorText).toContain(t('engine.repairEnvNotApplied', { ns: 'errors' })))
+    expect(probed()).toEqual([])
   })
 
   it('预读计划在途时切到 B：回来的计划不落进 B（B 上没有这一格）', async () => {
@@ -735,14 +812,15 @@ describe('A → B → A 在结果回来之前已切回：结果立即作用于 A
     await switchTo('p1')
   }
 
-  it('改用已有环境：切回之后才回来，立即重排、重跑那两行（不停放）', async () => {
-    let release: (v: string | null) => void = () => {}
-    vi.spyOn(useEnvStore.getState(), 'setProjectPython').mockReturnValue(new Promise<string | null>((r) => (release = r)))
+  it('改用已有环境：切回之后才回来，核实生效后立即重排、重跑那两行（不停放）', async () => {
+    const armed = holdOnce('/api/engine/environment')
     const pending = useDepRepairStore.getState().adoptSystemPython('/usr/bin/python3', 'lmfit', 'fig.py')
+    const release = await armed
     await bounce()
+    projectPython = '/usr/bin/python3'
     const retry = vi.spyOn(useRenderStore.getState(), 'retryEnvironmentFailures')
     calls.length = 0
-    release(null)
+    release({ ok: true, project: { open: true, python: '/usr/bin/python3' } })
     await pending
     expect(retry).toHaveBeenCalled()
     await vi.waitFor(() => expect(probed()).toEqual(['fig.py', 'peer.py']))
@@ -751,16 +829,18 @@ describe('A → B → A 在结果回来之前已切回：结果立即作用于 A
     expect(probed()).toEqual(['fig.py', 'peer.py'])
   })
 
-  it('恢复自动检测：切回之后才回来，立即收卡（清掉 A 的固定）、重排、重跑那两行', async () => {
-    let release: (v: string | null) => void = () => {}
-    vi.spyOn(useEnvStore.getState(), 'setPython').mockReturnValue(new Promise<string | null>((r) => (release = r)))
-    const pending = useDepRepairStore.getState().clearPinnedInterpreter('lmfit', 'fig.py')
+  it('恢复自动检测：切回之后才回来，核实生效后立即收卡（清掉 A 的固定）、重排、重跑那两行', async () => {
+    const armed = holdOnce('/api/engine/environment')
+    const pending = useDepRepairStore
+      .getState()
+      .clearPinnedInterpreter('lmfit', 'fig.py', { python: '/a', source: 'configured' })
+    const release = await armed
     await bounce()
-    // 切回 A 之后卡片又拿到了那条固定（比如 A 的 offer 带着它）：回调要把它收掉
+    // 切回 A 之后卡片又拿到了那条固定（比如 A 的 offer 带着它）：结局要把它收掉
     useDepRepairStore.setState({ pinned: { python: '/a', source: 'configured' } })
     const retry = vi.spyOn(useRenderStore.getState(), 'retryEnvironmentFailures')
     calls.length = 0
-    release(null)
+    release({ ok: true, python: '/p', source: 'system', project: { open: true } })
     expect(await pending).toBeNull()
     expect(useDepRepairStore.getState().pinned).toBeNull()
     expect(retry).toHaveBeenCalled()
