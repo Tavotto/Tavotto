@@ -29,7 +29,7 @@ import time
 import tokenize
 from pathlib import Path
 
-from . import figcapture, inputremap, scriptbackup
+from . import databinding, figcapture, inputremap, scriptbackup
 
 #: 稳定错误码（`tests/test_error_codes.py` 读这张表）。
 ERROR_NOTHING_TO_CHANGE = "script_edit_nothing_to_change"
@@ -172,111 +172,130 @@ def _parents(tree: ast.AST) -> dict[int, ast.AST]:
     return out
 
 
-class _Flow:
-    """一个值从常量流到哪些写出调用（§二.3 的「输出路径不改」）。模块级、按名字、保守：
+#: 值穿过它们仍是「这条路径」（拼路径 / 规范化 / 换后缀）：`os.path.join / abspath / …`、`str()`、`os.fspath()`
+_PATH_PASSTHROUGH_FUNCS = frozenset(
+    {"join", "abspath", "normpath", "realpath", "expanduser", "expandvars", "str", "fspath"}
+)
+#: 路径对象上的方法，结果仍是路径
+_PATH_PASSTHROUGH_METHODS = frozenset(
+    {"joinpath", "with_suffix", "with_name", "with_stem", "resolve", "absolute", "expanduser"}
+)
 
-    值所在的表达式一路往上到语句，途中碰到写出调用（`inputremap.is_write_call`）→ 流到了，碰到读取调用
-    （`inputremap.is_read_call`）→ 到此为止（出来的是数据）；语句把它绑定给名字
-    （赋值 / 增量赋值 / 带注解赋值 / `for` 的迭代对象 / 参数默认值 / `self.x = …` 的属性名）→ 那些名字**每一处**
-    读取都再追一遍；在 `return` 里 → 这个函数的每一处调用再追一遍。同名不分作用域（宁可多拒）。
 
-    有它之前是逐一补形状：直接的 `savefig("/old/data/x.png")`、拼出来的 `savefig(Path("/old/data") / …)`、
-    再到赋给名字的 `OUTPUT = "/old/data"` 之后 `savefig(Path(OUTPUT) / …)`——同一族第三次（Codex 评 #730 P2），
-    所以换成追值的去向，而不是再认一种写法。"""
+class _InputOnly:
+    """这个常量的值能不能**证明只喂给读取 / 探路**（§二.3 的「输出路径不改」）。只接受证得出来的：
 
-    def __init__(self, tree: ast.AST, parents: dict[int, ast.AST]) -> None:
+    从常量往外走，穿过拼路径的写法（`Path(…)`、`/`、`+`、`os.path.join`、f-string、路径方法）直到碰上
+    一个调用——是读取（`inputremap.is_read_call`）或探路（exists / listdir / glob，与 `_probe_via_of_constants`
+    同一张表）就成立；是写出（`inputremap.is_write_call`）或别的函数（传进去就追不清了）就不成立。赋给名字的：
+    名字必须只赋值过一次（与 `static_missing` 的「只赋值一次的名字」同一个前提），且它的**每一处**读取都按上面
+    证得出；链式赋值（`DEST = Path(BASE) / …`）接着追。参数默认值按函数体里对那个参数的每一处读取同样追。
+    放进容器、`return`、`for`、重复赋值、属性、传进不认得的函数……一律追不清，不接受；唯一的例外是用户正在
+    处理的那一条（`observed`）整串直接做不认得的函数的实参——那一条本身就是「脚本读它失败」的证据。
+
+    读写混用（同一个 `DATA_DIR` 既读又写）因此整条不进候选：读取那一侧由改指规则兜住——改指只影响读取，
+    不会动输出。有它之前是逐一补「会流到写出」的形状（直接的、拼出来的、赋值转手的，Codex 评 #730 三次），
+    换成只认正面证据。"""
+
+    def __init__(self, tree: ast.AST, parents: dict[int, ast.AST], observed: str | None = None) -> None:
         self.parents = parents
-        self.uses: dict[str, list[ast.AST]] = {}
+        self.observed = observed
+        self.aliases = databinding._Aliases(tree)
+        self.stores: dict[str, int] = {}
+        self.loads: dict[str, list[ast.Name]] = {}
         for n in ast.walk(tree):
-            if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load):
-                self.uses.setdefault(n.id, []).append(n)
-            elif isinstance(n, ast.Attribute) and isinstance(n.ctx, ast.Load):
-                self.uses.setdefault("." + n.attr, []).append(n)
-            elif isinstance(n, ast.Call):
-                f = n.func
-                name = f.id if isinstance(f, ast.Name) else f.attr if isinstance(f, ast.Attribute) else ""
-                if name:
-                    self.uses.setdefault("()" + name, []).append(n)
+            if isinstance(n, ast.Name):
+                if isinstance(n.ctx, ast.Store):
+                    self.stores[n.id] = self.stores.get(n.id, 0) + 1
+                elif isinstance(n.ctx, ast.Load):
+                    self.loads.setdefault(n.id, []).append(n)
+            elif isinstance(n, ast.arg):
+                self.stores[n.arg] = self.stores.get(n.arg, 0) + 1
 
-    @staticmethod
-    def _bound(target: ast.AST) -> list[str]:
-        out = []
-        for n in ast.walk(target):
-            if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store):
-                out.append(n.id)
-            elif isinstance(n, ast.Attribute) and isinstance(n.ctx, ast.Store):
-                out.append("." + n.attr)
-        return out
+    def _probe(self, call: ast.Call, *, method: bool) -> bool:
+        name = databinding._func_name(call.func)
+        if method:
+            return name in databinding.PATH_METHOD_PROBES or name in databinding.PATH_METHOD_GLOBS
+        return (
+            name in databinding.PATH_PROBE_FUNCS
+            or name in databinding.DIR_PROBE_FUNCS
+            or self.aliases.glob_call(call.func) is not None
+        )
 
-    def _param_of_default(self, node: ast.AST, args: ast.arguments) -> list[str]:
-        positional = [*args.posonlyargs, *args.args]
-        for arg, default in zip(positional[len(positional) - len(args.defaults) :], args.defaults):
-            if default is node:
-                return [arg.arg]
-        for arg, default in zip(args.kwonlyargs, args.kw_defaults):
-            if default is node:
-                return [arg.arg]
-        return []
-
-    def reaches_write(self, node: ast.AST, seen: set[str] | None = None) -> bool:
-        seen = set() if seen is None else seen
+    def proven(self, node: ast.AST, seen: frozenset[str] = frozenset()) -> bool:
         child, up = node, self.parents.get(id(node))
-        while up is not None and not isinstance(up, ast.stmt):
-            if isinstance(up, ast.Call) and inputremap.is_write_call(up):
-                return True
-            if isinstance(up, ast.Call) and child is not up.func and inputremap.is_read_call(up):
-                return False  # 进了读取调用：出来的是数据，不再是这条路径
-            if isinstance(up, ast.arguments):
-                return self._names_reach(self._param_of_default(child, up), seen)
+        while up is not None:
+            if isinstance(up, ast.Call):
+                if inputremap.is_write_call(up):
+                    return False
+                method = child is up.func
+                if inputremap.is_read_call(up) or self._probe(up, method=method):
+                    return True
+                name = databinding._func_name(up.func)
+                if method:
+                    if name not in _PATH_PASSTHROUGH_METHODS:
+                        return False
+                elif not (name in self.aliases.path_ctors or name in _PATH_PASSTHROUGH_FUNCS):
+                    # 唯一的例外：整串就是用户正在处理的那一条（`observed`，脚本读它失败才有这一条——C++ 读取器
+                    # 常经不认得的库函数 / 包装函数打开，ADR 0110 §一），且它**整个**就是这次调用的实参
+                    return (
+                        isinstance(child, ast.Constant)
+                        and child.value == self.observed
+                        and child in up.args
+                    )
+            elif isinstance(up, ast.BinOp):
+                if not isinstance(up.op, (ast.Div, ast.Add)):
+                    return False
+            elif isinstance(up, ast.Attribute):
+                if up.value is not child:
+                    return False
+            elif isinstance(up, ast.arguments):
+                return self._default_proven(child, up, seen)
+            elif isinstance(up, (ast.Assign, ast.AnnAssign)):
+                targets = up.targets if isinstance(up, ast.Assign) else [up.target]
+                if up.value is not child or len(targets) != 1 or not isinstance(targets[0], ast.Name):
+                    return False
+                return self._name_proven(targets[0].id, self.loads.get(targets[0].id, []), seen)
+            elif not isinstance(up, (ast.keyword, ast.JoinedStr, ast.FormattedValue)):
+                return False  # 容器 / 下标 / 比较 / return / for / 表达式语句……：追不清
             child, up = up, self.parents.get(id(up))
-        names: list[str] = []
-        if isinstance(up, ast.Assign):
-            names = [n for t in up.targets for n in self._bound(t)]
-        elif isinstance(up, (ast.AnnAssign, ast.AugAssign)):
-            names = self._bound(up.target)
-        elif isinstance(up, (ast.For, ast.AsyncFor)) and child is up.iter:
-            names = self._bound(up.target)
-        elif isinstance(up, ast.Return):
-            fn = self.parents.get(id(up))
-            while fn is not None and not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                fn = self.parents.get(id(fn))
-            names = ["()" + fn.name] if fn is not None else []
-        return self._names_reach(names, seen)
-
-    def _names_reach(self, names: list[str], seen: set[str]) -> bool:
-        for name in names:
-            if name in seen:
-                continue
-            seen.add(name)
-            if any(self.reaches_write(use, seen) for use in self.uses.get(name, [])):
-                return True
         return False
 
+    def _name_proven(self, name: str, uses: list[ast.Name], seen: frozenset[str]) -> bool:
+        if name in seen or self.stores.get(name) != 1 or not uses:
+            return False
+        return all(self.proven(u, seen | {name}) for u in uses)
 
-def _path_context(node: ast.Constant, parents: dict[int, ast.AST], flow: _Flow) -> bool:
-    """这个常量是不是**在当路径用**的位置上（§二.3）。正面列举；不认得的一律不是。
+    def _default_proven(self, node: ast.AST, args: ast.arguments, seen: frozenset[str]) -> bool:
+        positional = [*args.posonlyargs, *args.args]
+        pairs = [
+            *zip(positional[len(positional) - len(args.defaults) :], args.defaults),
+            *zip(args.kwonlyargs, args.kw_defaults),
+        ]
+        arg = next((a for a, d in pairs if d is node), None)
+        fn = self.parents.get(id(args))
+        if arg is None or not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            return False
+        body = fn.body if isinstance(fn.body, list) else [fn.body]
+        uses = [
+            n
+            for stmt in body
+            for n in ast.walk(stmt)
+            if isinstance(n, ast.Name) and n.id == arg.arg and isinstance(n.ctx, ast.Load)
+        ]
+        # 函数体里对它重新赋值就追不清
+        if any(
+            isinstance(n, ast.Name) and n.id == arg.arg and isinstance(n.ctx, ast.Store)
+            for stmt in body
+            for n in ast.walk(stmt)
+        ):
+            return False
+        return bool(uses) and all(self.proven(u, seen | {arg.arg}) for u in uses)
 
-    先问它的值会不会流到写出调用（`_Flow.reaches_write`：直接的、拼出来的、经名字 / 属性 / 参数默认值 /
-    返回值转手的都算）——流到了就是输出路径的一部分，不改（Codex 评 #730 P2 ×3）。"""
-    if flow.reaches_write(node):
-        return False
-    parent = parents.get(id(node))
-    if isinstance(parent, ast.keyword):
-        parent = parents.get(id(parent))
-        return isinstance(parent, ast.Call) and not _is_save_call(parent)
-    if isinstance(parent, ast.Call):
-        return node in parent.args and not _is_save_call(parent)
-    if isinstance(parent, (ast.Assign, ast.AnnAssign, ast.Return)):
-        return parent.value is node
-    if isinstance(parent, ast.arguments):
-        return True  # 参数默认值
-    if isinstance(parent, ast.BinOp):
-        return isinstance(parent.op, (ast.Div, ast.Add))
-    if isinstance(parent, (ast.List, ast.Tuple, ast.Set)):
-        return True
-    if isinstance(parent, ast.Dict):
-        return any(v is node for v in parent.values)
-    return False
+
+def _path_context(node: ast.Constant, flow: _InputOnly) -> bool:
+    """这个常量是不是**只当输入路径用**（§二.3）：证得出只喂给读取 / 探路的才改（`_InputOnly`）。"""
+    return flow.proven(node)
 
 
 def _is_save_call(call: ast.Call) -> bool:
@@ -347,7 +366,7 @@ def plan(
     except (SyntaxError, ValueError) as exc:
         raise Error(ERROR_UNREADABLE, f"脚本有语法错误，不改：{exc}") from exc
     parents = _parents(tree)
-    flow = _Flow(tree, parents)
+    flow = _InputOnly(tree, parents, missing[0] if missing else None)
     wanted = [(m, figcapture.remap_parts(m)) for m in missing]
     wanted = [(m, p) for m, p in wanted if p is not None and p[1]]
     # 规则只换得了与它 `from` 同一侧（相对 / 绝对）的串；另一侧的与这次指认无关，不报
@@ -383,7 +402,7 @@ def plan(
         if isinstance(parents.get(id(node)), ast.JoinedStr):
             skip(node, value, SKIP_FSTRING)
             continue
-        if not _path_context(node, parents, flow):
+        if not _path_context(node, flow):
             skip(node, value, SKIP_CONTEXT)
             continue
         span = src.span(node)

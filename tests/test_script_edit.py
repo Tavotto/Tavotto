@@ -76,6 +76,7 @@ def test_equal_and_prefix_constants_are_rewritten_to_absolute_forward_slash_path
         f'DATA = "{OLD}/data"\n'
         f'if not os.path.exists("{OLD}/data/x.h5"):\n    raise SystemExit(1)\n'
         f'files = glob.glob(r"{OLD}/data/runs/*.csv")\n'
+        "x = open(DATA + '/x.h5')\n"
     )
     plan = _plan(tmp_path, src, rule=rule, missing=[f"{OLD}/data/x.h5", f"{OLD}/data/runs/*.csv"])
     got = {e["line"]: e["value_after"] for e in plan.edits}
@@ -103,7 +104,7 @@ def test_paths_that_exist_are_never_touched(tmp_path, moved):
     here = tmp_path / "here"
     _touch(here / "data" / "y.csv")
     rule = {"kind": P, "from": str(here), "to": str(new)}
-    src = f'D = "{here}"\nF = "{here}/data/x.h5"\n'  # 目录在，缺的是更深那一段
+    src = f'D = "{here}"\nF = "{here}/data/x.h5"\nopen(D)\nopen(F)\n'  # 目录在，缺的是更深那一段
     plan = _plan(tmp_path, src, rule=rule, missing=[f"{here}/data/x.h5"])
     assert [e["line"] for e in plan.edits] == [2]
 
@@ -119,6 +120,7 @@ def test_non_path_positions_are_reported_and_left_alone(tmp_path, moved):
         f'print(f"{OLD}/data/{{1}}")\n'
         f'y = ("{OLD}/da" "ta")\n'
         f'z = "{OLD}/data"\n'
+        "open(y)\nopen(z)\n"
     )
     plan = _plan(tmp_path, src, rule=rule, missing=[f"{OLD}/data/x.h5"])
     assert [e["line"] for e in plan.edits] == [8]
@@ -152,37 +154,59 @@ def test_constructed_output_paths_are_never_rewritten(tmp_path, moved):
     assert reasons == {line: scriptedit.SKIP_CONTEXT for line in (3, 4, 5, 6)}
 
 
-def test_output_paths_reached_through_names_returns_and_defaults_are_never_rewritten(tmp_path, moved):
-    """输入与输出共用一个缺失前缀、输出经名字转手（`OUTPUT = OLD` 之后 `savefig(Path(OUTPUT) / …)`）：追值的去向，
-    流到写出调用的常量一律不改——赋值、链式赋值、属性、参数默认值、返回值都算；只流到读取调用的照改，
-    读出来的**数据**之后被写到哪里与路径无关（Codex 评 #730 P2，同族第三次，换成追值的去向）。"""
+def test_only_values_proven_to_feed_reads_are_rewritten(tmp_path, moved):
+    """只接受证得出只喂给读取 / 探路的值（Codex 评 #730 P2，同族第三次，换成正面证据）。三类：
+
+    * 读写分名：`DATA` 只被读 → 改；`OUTPUT` 经 `Path(OUTPUT) / …` 进 `savefig` → 不改；链式赋值
+      `BASE → SRC` 最后进读取 → 改；参数默认值只在函数体里被读 → 改。
+    * 同名读写混用：`DATA_DIR` 既被读又被写 → 整条不改（读取那一侧由改指规则兜住，改指只影响读取）。
+    * 追不清：传进不认得的函数、放进容器、重复赋值、`return` → 不改。"""
     _new, rule = moved
     src = (
-        "import numpy as np\nfrom pathlib import Path\n"
-        f'DATA = "{OLD}/data"\n'  # 3：只被读 → 改
-        f'OUTPUT = "{OLD}/data"\n'  # 4：经 Path(OUTPUT) 流到 savefig → 不改
+        "import numpy as np, os\nfrom pathlib import Path\n"
+        f'DATA = "{OLD}/data"\n'  # 3 读 → 改
+        f'OUTPUT = "{OLD}/data"\n'  # 4 写 → 不改
         "x = np.load(Path(DATA) / 'x.h5')\n"
         "fig.savefig(Path(OUTPUT) / 'out.png')\n"
-        f'BASE = "{OLD}/data"\n'  # 7：BASE → DEST → savetxt → 不改
-        "DEST = Path(BASE) / 'res'\n"
-        "np.savetxt(DEST / 't.csv', x)\n"
-        f'def out_dir(p="{OLD}/data"):\n'  # 10：参数默认值流到 makedirs → 不改
-        "    import os; os.makedirs(p)\n"
+        f'BASE = "{OLD}/data"\n'  # 7 BASE → SRC → 读 → 改
+        "SRC = os.path.join(BASE, 'x.h5')\n"
+        "y = np.load(SRC)\n"
+        f'def load(p="{OLD}/data"):\n'  # 10 默认值只被读 → 改
+        "    return np.load(Path(p) / 'x.h5')\n"
+        f'DATA_DIR = "{OLD}/data"\n'  # 12 读写混用 → 不改
+        "z = np.load(DATA_DIR + '/x.h5')\n"
+        "np.savetxt(DATA_DIR + '/z.csv', z)\n"
+        f'HELPER = "{OLD}/data"\n'  # 15 传进不认得的函数 → 不改
+        "mystery(HELPER)\n"
+        f'PAIR = ["{OLD}/data"]\n'  # 17 容器 → 不改
+        f'AGAIN = "{OLD}/data"\n'  # 18 重复赋值 → 不改
+        "AGAIN = AGAIN + '/x.h5'\n"
+        "np.load(AGAIN)\n"
         "def where():\n"
-        f'    return "{OLD}/data"\n'  # 13：返回值流到 savefig → 不改
-        "fig.savefig(where() + '/b.png')\n"
-        "class R:\n"
-        "    def __init__(self):\n"
-        f'        self.target = "{OLD}/data"\n'  # 17：属性流到写模式 open → 不改
-        "    def go(self):\n"
-        "        open(self.target + '/o.txt', 'w')\n"
-        f'y = np.load("{OLD}/data/x.h5")\n'  # 20：读出来的数据被写出去，路径本身只进了读取 → 改
-        "np.save('/tmp/y.npy', y)\n"
+        f'    return "{OLD}/data"\n'  # 22 return → 不改
+        f'w = np.load("{OLD}/data/x.h5")\n'  # 23 直接读 → 改（读出的数据之后写到哪里与路径无关）
+        "np.save('/tmp/w.npy', w)\n"
     )
     plan = _plan(tmp_path, src, rule=rule, missing=[f"{OLD}/data/x.h5"])
-    assert sorted(e["line"] for e in plan.edits) == [3, 20]
+    assert sorted(e["line"] for e in plan.edits) == [3, 7, 10, 23]
     reasons = {s["line"]: s["reason"] for s in plan.skipped}
-    assert reasons == {line: scriptedit.SKIP_CONTEXT for line in (4, 7, 10, 13, 17)}
+    assert reasons == {line: scriptedit.SKIP_CONTEXT for line in (4, 12, 15, 17, 18, 22)}
+
+
+def test_the_entry_being_fixed_may_go_straight_into_an_unknown_reader(tmp_path, moved):
+    """唯一的例外：用户正在处理的那一条（`missing[0]`，脚本读它失败才有这一条）整串直接做不认得的函数
+    （C++ 读取器 / 包装函数，ADR 0110 §一）的实参 → 改；别的串、拼过的、写出调用里的仍然不改。"""
+    _new, rule = moved
+    src = (
+        f'v = h5py_file("{OLD}/data/x.h5")\n'  # 1 就是那一条、整串直接做实参 → 改
+        f'u = h5py_file("{OLD}/data/runs/a.csv")\n'  # 2 不是那一条 → 不改
+        f'fig.savefig("{OLD}/data/x.h5")\n'  # 3 写出 → 不改
+    )
+    plan = _plan(
+        tmp_path, src, rule=rule, missing=[f"{OLD}/data/x.h5", f"{OLD}/data/runs/a.csv"]
+    )
+    assert [e["line"] for e in plan.edits] == [1]
+    assert {s["line"] for s in plan.skipped} == {2, 3}
 
 
 def test_nothing_to_change_says_why_line_by_line(tmp_path, moved):
@@ -200,7 +224,7 @@ def test_quotes_are_escaped_and_raw_strings_that_cannot_hold_them_are_refused(tm
     new = tmp_path / "it's"
     _touch(new / "x.csv")
     rule = {"kind": P, "from": OLD, "to": str(new)}
-    src = f"a = '{OLD}/x.csv'\nb = r'{OLD}/x.csv'\n"
+    src = f"a = '{OLD}/x.csv'\nb = r'{OLD}/x.csv'\ndef f():\n    open(a)\n    open(b)\n"
     plan = _plan(tmp_path, src, rule=rule, missing=[f"{OLD}/x.csv"])
     assert [e["line"] for e in plan.edits] == [1]
     ns: dict = {}
@@ -215,7 +239,7 @@ def test_a_renamed_file_rule_does_not_rewrite_the_directory_constant(tmp_path):
     chosen = _touch(tmp_path / "new" / "renamed.h5")
     rule = inputremap.derive_location(f"{OLD}/data/x.h5", str(chosen), chosen_is_dir=False)
     assert rule["kind"] == figcapture.REMAP_FILE
-    src = f'D = "{OLD}/data"\nF = "{OLD}/data/x.h5"\n'
+    src = f'D = "{OLD}/data"\nF = "{OLD}/data/x.h5"\nopen(D)\nopen(F)\n'
     plan = _plan(tmp_path, src, rule=rule, missing=[f"{OLD}/data/x.h5"])
     assert [e["line"] for e in plan.edits] == [2]
     assert plan.skipped == [
@@ -226,7 +250,7 @@ def test_a_renamed_file_rule_does_not_rewrite_the_directory_constant(tmp_path):
 def test_windows_targets_are_written_with_forward_slashes(tmp_path, monkeypatch):
     monkeypatch.setattr(inputremap, "location_exists", lambda p: p.startswith("C:"))
     rule = {"kind": P, "from": OLD, "to": "C:\\Data\\new"}
-    plan = _plan(tmp_path, f'F = "{OLD}/x.csv"\n', rule=rule, missing=[f"{OLD}/x.csv"])
+    plan = _plan(tmp_path, f'F = open("{OLD}/x.csv")\n', rule=rule, missing=[f"{OLD}/x.csv"])
     assert plan.edits[0]["value_after"] == "C:/Data/new/x.csv"
     assert plan.edits[0]["after"] == '"C:/Data/new/x.csv"'
 
@@ -249,15 +273,15 @@ def test_rewriting_a_relative_constant_uses_the_relative_root_rule(tmp_path):
 # --------------------------------------------------------------- 字节矩阵
 
 _MATRIX = {
-    "utf8-lf": ("# 中文注释\nF = '{p}'\n", "utf-8", b""),
-    "crlf": ("# c\r\nF = '{p}'\r\nG = 1\r\n", "utf-8", b""),
-    "bom-crlf": ("# c\r\nF = '{p}'\r\n", "utf-8", b"\xef\xbb\xbf"),
-    "gbk": ("# -*- coding: gbk -*-\n# 数据在这里\nF = '{p}'  # 路径\n", "gbk", b""),
-    "latin1": ("# -*- coding: latin-1 -*-\n# caf\xe9\nF = '{p}'\n", "latin-1", b""),
-    "mixed": ("# a\r\n# b\nF = '{p}'\r\nG = 2\n", "utf-8", b""),
-    "lone-cr": ("# a\rF = '{p}'\rG = 3\r", "utf-8", b""),
-    "no-final-newline": ("F = '{p}'", "utf-8", b""),
-    "tabs-and-unicode-before": ("if 1:\n\tα = 'é'; F = '{p}'\n", "utf-8", b""),
+    "utf8-lf": ("# 中文注释\nF = open('{p}')\n", "utf-8", b""),
+    "crlf": ("# c\r\nF = open('{p}')\r\nG = 1\r\n", "utf-8", b""),
+    "bom-crlf": ("# c\r\nF = open('{p}')\r\n", "utf-8", b"\xef\xbb\xbf"),
+    "gbk": ("# -*- coding: gbk -*-\n# 数据在这里\nF = open('{p}')  # 路径\n", "gbk", b""),
+    "latin1": ("# -*- coding: latin-1 -*-\n# caf\xe9\nF = open('{p}')\n", "latin-1", b""),
+    "mixed": ("# a\r\n# b\nF = open('{p}')\r\nG = 2\n", "utf-8", b""),
+    "lone-cr": ("# a\rF = open('{p}')\rG = 3\r", "utf-8", b""),
+    "no-final-newline": ("F = open('{p}')", "utf-8", b""),
+    "tabs-and-unicode-before": ("if 1:\n\tα = 'é'; F = open('{p}')\n", "utf-8", b""),
 }
 
 
@@ -278,7 +302,7 @@ def test_an_encoding_that_cannot_hold_the_new_path_is_refused(tmp_path):
     new = tmp_path / "数据"
     _touch(new / "x.csv")
     rule = {"kind": P, "from": OLD, "to": str(new)}
-    data = f"# -*- coding: latin-1 -*-\nF = '{OLD}/x.csv'\n".encode("latin-1")
+    data = f"# -*- coding: latin-1 -*-\nF = open('{OLD}/x.csv')\n".encode("latin-1")
     with pytest.raises(scriptbackup.ScriptEditError) as err:
         _plan(tmp_path, data, rule=rule, missing=[f"{OLD}/x.csv"])
     assert err.value.params["skipped"][0]["reason"] == scriptedit.SKIP_ENCODING
@@ -286,7 +310,7 @@ def test_an_encoding_that_cannot_hold_the_new_path_is_refused(tmp_path):
 
 def test_self_check_refuses_any_change_beyond_the_listed_constants(tmp_path, moved):
     _new, rule = moved
-    src = f'# note\nG = "keep"\nF = "{OLD}/data/x.h5"\nH = 1\n'.encode()
+    src = f'# note\nG = "keep"\nF = open("{OLD}/data/x.h5")\nH = 1\n'.encode()
     plan = _plan(tmp_path, src, rule=rule, missing=[f"{OLD}/data/x.h5"])
     scriptedit.self_check(src, plan.new_bytes, plan.edits)
     # 常量值变了：AST 那一判
@@ -306,7 +330,7 @@ def test_self_check_refuses_any_change_beyond_the_listed_constants(tmp_path, mov
 
 def test_undo_keeps_later_edits_and_refuses_when_the_path_itself_was_changed(tmp_path, moved):
     _new, rule = moved
-    src = f'import os\nF = "{OLD}/data/x.h5"\nG = 1\n'
+    src = f'import os\nF = open("{OLD}/data/x.h5")\nG = 1\n'
     plan = _plan(tmp_path, src, rule=rule, missing=[f"{OLD}/data/x.h5"])
     later = b"# my note\n" + plan.new_bytes.replace(b"G = 1", b"G = 2")
     back = scriptedit.undo(later, plan.edits)
@@ -321,7 +345,7 @@ def test_undo_finds_two_rewrites_on_one_line_after_the_first_changed_length(tmp_
     """同一行改了两处、前一处换了长度：后一处记的是改写前的列，要按前面的长度差挪过去；两处改成同一串时
     全文回退会撞上两处匹配——不挪的话，Tavotto 自己改出来的脚本「只撤销这几处」反倒复原不了（Codex 评 #730 P2）。"""
     _new, rule = moved
-    src = f'import os\nF, G = "{OLD}/data/x.h5", "{OLD}/data/x.h5"\nH = 1\n'
+    src = f'import os\nF, G = open("{OLD}/data/x.h5"), open("{OLD}/data/x.h5")\nH = 1\n'
     plan = _plan(tmp_path, src, rule=rule, missing=[f"{OLD}/data/x.h5"])
     assert len(plan.edits) == 2 and len({e["after"] for e in plan.edits}) == 1
     assert len(plan.edits[0]["after"]) != len(plan.edits[0]["before"])

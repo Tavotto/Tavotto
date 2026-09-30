@@ -63,11 +63,13 @@
 - **已替换、未确认落盘**：`atomicio.write_bytes` 在 `os.replace` 成功之后才报 `dir_fsync_failed`——脚本已经是
   改后的样子，不报「没改」：`_after_script_edit` 照常（会话失效、界面刷新），响应带 `durable: false`，界面换成
   `engine.scriptEditNotDurable` 那句提醒。改写与复原两条路同一处理。
-- **输出路径不改——追值的去向**（`scriptedit._Flow`）：候选常量的值流到存图 / 写出 / 写模式打开 / 建目录
-  （`inputremap.is_write_call`，与「只认读取调用」同一套模式判据）的一律跳过（`SKIP_CONTEXT`）。「流到」包括直接做
-  参数、拼进表达式（`Path(…) / …`、`join`、`+`）、经名字 / 链式赋值 / `self.x` 属性 / 参数默认值 / 函数返回值转手
-  （同名不分作用域，宁可多拒）；进了读取调用（`inputremap.is_read_call`）就到此为止——出来的是数据。不要再按
-  写法逐一补形状（直接的、拼出来的、赋值转手的是同一族，Codex 评 #730 三次）。
+- **只改证得出只喂给读取的值**（`scriptedit._InputOnly`）：从常量往外走，穿过拼路径的写法（`Path(…)`、`/`、`+`、
+  `os.path.join`、f-string、路径方法）直到碰上调用——读取（`inputremap.is_read_call`）或探路（exists / listdir /
+  glob，与 `_probe_via_of_constants` 同一张表）才成立；写出（`inputremap.is_write_call`）或不认得的函数都不成立。
+  赋给名字的：名字只赋值过一次（与 `static_missing` 同一个前提），且**每一处**读取都证得出；链式赋值接着追；参数
+  默认值按函数体里的每一处读取追。读写混用（同一个 `DATA_DIR` 既读又写）整条不进候选；容器、`return`、`for`、
+  重复赋值、属性、传进不认得的函数一律追不清，不改（`SKIP_CONTEXT`）。唯一例外：用户正在处理的那一条（`missing[0]`）
+  整串直接做不认得的函数的实参（C++ 读取器常经包装函数打开）。不要再按「会流到写出」的写法逐一补形状（Codex 评 #730 三次）。
 - **只读**：`os.access`（有效权限）、脚本与所在文件夹的写权限位（以 root 运行时 `os.access` 无视权限位）、
   只读卷三判任一不过 → `script_readonly`。
 - 看护：`tests/test_script_edit.py`（候选判据、九种编码 / 换行的字节矩阵与撤销往返、自检三判、推规则扩展、
