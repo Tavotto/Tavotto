@@ -54,6 +54,15 @@ describe('复原脚本时换了项目', () => {
     expect(useEnvStore.getState().scriptBackupGeneration).toBe(generation)
   })
 
+  it('已换好但没确认落盘（durable: false）：照常刷新，状态换成提醒而不是「已恢复」', async () => {
+    const pending = useEnvStore.getState().restoreScriptBackup(BACKUP, 'full')
+    release(new Response(JSON.stringify({ ok: true, script: 'fig.py', durable: false }), { status: 200 }))
+    expect(await pending).toBeNull()
+    const status = useUiStore.getState().status as { key?: string } | null
+    expect(status?.key).toBe('engine.scriptEditNotDurable')
+    expect(useRenderStore.getState().byKey['b.py']?.stale).toBe(true)
+  })
+
   it('没换项目：照常报状态、重排失败面板、刷新列表', async () => {
     const generation = useEnvStore.getState().scriptBackupGeneration
     const pending = useEnvStore.getState().restoreScriptBackup(BACKUP, 'full')

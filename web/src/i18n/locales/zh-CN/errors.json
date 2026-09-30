@@ -581,6 +581,7 @@
     "rewriteConfirm": "我已查看以上改动，知道这会修改我的脚本",
     "rewriteBack": "返回",
     "rewriteApply": "修改脚本",
+    "scriptEditNotDurable": "已改写 {{script}}，但磁盘没能确认这次写入已落盘（断电可能丢失）。脚本现在是改后的样子；如需保险，请稍后检查或另存一份。",
     "rewriteDone": "已改写「{{script}}」里的数据路径，正在重新运行。可以在 设置 →「环境诊断」里恢复原脚本。",
     "rewriteSkippedTitle": "这些地方没改：",
     "rewriteSkip": {

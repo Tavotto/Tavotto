@@ -6151,7 +6151,9 @@ def api_script_edit_commit():
         return _script_edit_error(exc)
     LOG.info("改写脚本里的数据路径: %s 处（%s）", len(plan.edits), script)
     _after_script_edit(ctx, script)
-    return jsonify({"ok": True, "script": script, "backup": record})
+    return jsonify(
+        {"ok": True, "script": script, "backup": record, "durable": record.get("durable", True)}
+    )
 
 
 @app.get("/api/script-backups")
@@ -6219,7 +6221,9 @@ def api_script_backups_restore():
         return _script_edit_error(exc)
     LOG.info("复原脚本: %s（%s）", script, mode)
     _after_script_edit(ctx, script)
-    return jsonify({"ok": True, "script": script, "backup": record})
+    return jsonify(
+        {"ok": True, "script": script, "backup": record, "durable": record.get("durable", True)}
+    )
 
 
 # --------------------- 异步准备（统一实施包 U01，ADR 0053）---------------------

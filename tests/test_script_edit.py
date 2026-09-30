@@ -802,6 +802,59 @@ def test_http_restore_refuses_a_stale_view_of_the_script(app_project, tmp_path):
     assert resp.status_code == 200, resp.get_json()
 
 
+def test_http_a_replace_that_landed_but_was_not_fsynced_is_reported_as_done(
+    app_project, tmp_path, monkeypatch
+):
+    """`os.replace` 已经成功、只有目录项落盘失败（`dir_fsync_failed`）：脚本**已经**改了——不许报「没改」，
+    会话失效 / 界面刷新照常（`_after_script_edit`），响应标明 `durable: false`；复原同样（Codex 评 #730 P2）。"""
+    from tavotto.engine import atomicio, scriptlock
+
+    m, root = app_project
+    client = m.app.test_client()
+    original = EXISTS_SCRIPT.format(old=OLD).encode("utf-8")
+    (root / "fig.py").write_bytes(original)
+    chosen = _touch(tmp_path / "moved" / "data" / "values.txt", "3\n")
+    body = {"entry": f"{OLD}/data/values.txt", "chosen": str(chosen), "chosen_kind": "file"}
+    real_write = scriptlock.write_script
+
+    def write_then_fsync_fails(path, data, *, mode=None):
+        real_write(path, data, mode=mode)
+        raise atomicio.AtomicWriteError("dir_fsync_failed", "目录项落盘失败", path)
+
+    refreshed: list = []
+    monkeypatch.setattr(scriptbackup.scriptlock, "write_script", write_then_fsync_fails)
+    monkeypatch.setattr(m, "_after_script_edit", lambda ctx, script: refreshed.append(script))
+    token = _preview(client, script="fig.py", **body).get_json()["token"]
+    resp = client.post("/api/script-edit/commit", json={"token": token})
+    assert resp.status_code == 200, resp.get_json()
+    assert resp.get_json()["durable"] is False
+    assert (root / "fig.py").read_bytes() != original
+    assert refreshed == ["fig.py"]
+    backup = resp.get_json()["backup"]
+    resp = client.post(
+        "/api/script-backups/restore",
+        json={
+            "backup_id": backup["id"],
+            "mode": "full",
+            "expected_sha256": scriptbackup.sha256((root / "fig.py").read_bytes()),
+        },
+    )
+    assert resp.status_code == 200, resp.get_json()
+    assert resp.get_json()["durable"] is False
+    assert (root / "fig.py").read_bytes() == original
+    assert refreshed == ["fig.py", "fig.py"]
+
+    # 真的没替换上（replace 之前就失败）：照旧是「没改」
+    def fails_before_replace(path, data, *, mode=None):
+        raise atomicio.AtomicWriteError("replace_failed", "替换失败", path)
+
+    monkeypatch.setattr(scriptbackup.scriptlock, "write_script", fails_before_replace)
+    token = _preview(client, script="fig.py", **body).get_json()["token"]
+    resp = client.post("/api/script-edit/commit", json={"token": token})
+    assert resp.status_code == 409 and resp.get_json()["code"] == scriptbackup.ERROR_REPLACE_FAILED
+    assert (root / "fig.py").read_bytes() == original
+
+
 def test_http_commit_refuses_when_the_script_changed_after_the_preview(app_project, tmp_path):
     m, root = app_project
     client = m.app.test_client()

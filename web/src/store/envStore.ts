@@ -283,7 +283,11 @@ export const useEnvStore = create<EnvState>((set, get) => ({
       set((s) => ({ inputRemapGeneration: s.inputRemapGeneration + 1 }))
       useUiStore
         .getState()
-        .setStatus(msg('engine.rewriteDone', { script: res.script }, 'errors'))
+        .setStatus(
+          res.durable === false
+            ? msg('engine.scriptEditNotDurable', { script: res.script }, 'errors')
+            : msg('engine.rewriteDone', { script: res.script }, 'errors'),
+        )
       return null
     } catch (e) {
       if (epoch !== projectEpoch) return null
@@ -298,9 +302,16 @@ export const useEnvStore = create<EnvState>((set, get) => ({
     const epoch = projectEpoch
     let error: string | null = null
     try {
-      await restoreScriptBackupRequest(backup.id, mode, backup.current_sha256)
+      const res = await restoreScriptBackupRequest(backup.id, mode, backup.current_sha256)
       if (epoch !== projectEpoch) return null
-      useUiStore.getState().setStatus(msg('engine.scriptBackupRestored', { script: backup.script }, 'errors'))
+      // 已换好、只是没确认落盘（`durable: false`）：照常刷新，但换一句提醒，不说「已恢复」就完事
+      useUiStore
+        .getState()
+        .setStatus(
+          res.durable === false
+            ? msg('engine.scriptEditNotDurable', { script: backup.script }, 'errors')
+            : msg('engine.scriptBackupRestored', { script: backup.script }, 'errors'),
+        )
       const { useRenderStore } = await import('@/store/renderStore')
       if (epoch !== projectEpoch) return null
       useRenderStore.getState().retryEnvironmentFailures()

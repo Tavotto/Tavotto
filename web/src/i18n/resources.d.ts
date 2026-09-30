@@ -1916,6 +1916,7 @@ export default interface Resources {
       "scan_failed": "扫描失败：{{reason}}",
       "script_backup_failed": "备份写不进去，脚本没有被修改：{{script}}。请检查磁盘空间和目录权限。",
       "script_backup_unknown": "找不到这份备份：{{id}}",
+      "script_backup_unsafe": "项目里的备份文件夹经过符号链接或不在项目里（{{script}}），为了不把备份写到别处，脚本没有被修改。",
       "script_busy": "编码 Agent 正在修改这份脚本（{{script}}），等它结束后再试。",
       "script_changed": "写回被阻止：脚本在会话期间被修改过，请重新渲染后再试",
       "script_changed_since_preview": "预览之后脚本被改过了（{{script}}），脚本没有被修改。请重新预览。",
@@ -2288,6 +2289,7 @@ export default interface Resources {
         "current": "现在就是改写后的版本"
       },
       "scriptBackupUndoEdits": "只撤销那几处路径",
+      "scriptEditNotDurable": "已改写 {{script}}，但磁盘没能确认这次写入已落盘（断电可能丢失）。脚本现在是改后的样子；如需保险，请稍后检查或另存一份。",
       "setPythonFailed": "设置失败",
       "sourceLabel": {
         "bundled": "{{product}} 渲染环境",

@@ -581,6 +581,7 @@
     "rewriteConfirm": "I've reviewed the changes above and understand this modifies my script",
     "rewriteBack": "Back",
     "rewriteApply": "Modify script",
+    "scriptEditNotDurable": "{{script}} was rewritten, but the disk did not confirm the write was flushed (a power loss could undo it). The script is now in its edited state; check it later or keep a copy to be safe.",
     "rewriteDone": "Changed the data paths in “{{script}}” and running it again. You can restore the original in Settings → Environment diagnostics.",
     "rewriteSkippedTitle": "Not changed:",
     "rewriteSkip": {

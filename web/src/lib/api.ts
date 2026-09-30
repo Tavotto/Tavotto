@@ -3261,7 +3261,7 @@ export const previewInputPathEdit = (
 
 /** 用户勾选确认之后：两处备份 → 原子替换（令牌只在这个窗口的会话里有效） */
 export const commitScriptEdit = (token: string) =>
-  jsonFetch<{ ok: boolean; script: string; backup: ScriptBackup }>('/api/script-edit/commit', {
+  jsonFetch<{ ok: boolean; script: string; backup: ScriptBackup; durable?: boolean }>('/api/script-edit/commit', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ token }),
@@ -3280,7 +3280,7 @@ export const restoreScriptBackup = (
   mode: 'full' | 'undo_edits',
   expectedSha256: string | null | undefined,
 ) =>
-  jsonFetch<{ ok: boolean; script: string; unchanged?: boolean }>('/api/script-backups/restore', {
+  jsonFetch<{ ok: boolean; script: string; unchanged?: boolean; durable?: boolean }>('/api/script-backups/restore', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ backup_id: backupId, mode, expected_sha256: expectedSha256 ?? null }),

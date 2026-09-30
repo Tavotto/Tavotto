@@ -368,12 +368,18 @@ def _replace_locked(
         raise ScriptEditError(
             ERROR_SCRIPT_CHANGED, "预览之后脚本被改过了，请重新预览", script=script
         )
+    durable = True
     try:
         scriptlock.write_script(path, new_bytes, mode=stat.S_IMODE(st.st_mode))
     except atomicio.AtomicWriteError as exc:
-        raise ScriptEditError(
-            ERROR_REPLACE_FAILED, f"替换失败，脚本没有被修改：{exc.message}", script=script
-        ) from exc
+        if exc.code != "dir_fsync_failed":
+            raise ScriptEditError(
+                ERROR_REPLACE_FAILED, f"替换失败，脚本没有被修改：{exc.message}", script=script
+            ) from exc
+        # `os.replace` 已经成功：脚本**已经**是改后的那份，只是目录项没确认落盘。不能报「没改」——调用方
+        # 照常让会话失效、刷新界面，再提醒一句（Codex 评 #730 P2）
+        durable = False
+    record["durable"] = durable
     for parent in (store.project_dir / slug, store.mirror_dir / slug):
         try:
             _prune(parent)
