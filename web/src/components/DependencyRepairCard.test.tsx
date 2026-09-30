@@ -1078,6 +1078,52 @@ describe('受管环境一次授权（2026-09-28）', () => {
     }
   })
 
+  it('卡片只披露了一个包、点击时形成的计划多出别的包：停在确认页列出全部，不执行（Codex #760 P1）', async () => {
+    // 预读时只有 lmfit（脚本 / 声明在点击前又多了 pandas，或预读那一步没算出来）
+    planMock.mockResolvedValueOnce({ plan: MANAGED_PLAN })
+    planMock.mockResolvedValue({ plan: { ...MANAGED_PLAN, requirements: ['lmfit>=1.3', 'pandas'] } })
+    await render({ ...OFFER, targets: [OFFER.targets[1]] })
+    await click(managedButton())
+    expect(installMock).not.toHaveBeenCalled()
+    expect(byName(en('repairPrepareAndContinue'))).toBeTruthy()
+    expect(text()).toContain('将安装：lmfit>=1.3 和 pandas')
+  })
+
+  it('预读没读到（失败）时授权按 offer 那一个包算：计划一多就回到确认页', async () => {
+    planMock.mockRejectedValueOnce(new ApiError('慢', 500, { code: 'internal_error' }))
+    planMock.mockResolvedValue({ plan: { ...MANAGED_PLAN, requirements: ['lmfit>=1.3', 'pandas'] } })
+    await render({ ...OFFER, targets: [OFFER.targets[1]] })
+    await act(async () => {})
+    await click(managedButton())
+    expect(installMock).not.toHaveBeenCalled()
+    expect(byName(en('repairPrepareAndContinue'))).toBeTruthy()
+  })
+
+  it('确认页点过之后重试：沿用用户看到的整份清单，再多出的包同样回到确认页', async () => {
+    planMock.mockResolvedValueOnce({ plan: MANAGED_PLAN })
+    planMock.mockResolvedValueOnce({ plan: { ...MANAGED_PLAN, requirements: ['lmfit>=1.3', 'pandas'] } })
+    installMock.mockResolvedValue({ started: true } as never)
+    await render({ ...OFFER, targets: [OFFER.targets[1]] })
+    await click(managedButton())
+    await click(en('repairPrepareAndContinue')) // 用户在确认页看过 lmfit + pandas 并同意
+    expect(installMock).toHaveBeenCalledTimes(1)
+    expect(useDepRepairStore.getState().authorized?.requirements).toEqual(['lmfit>=1.3', 'pandas'])
+    await act(() => {
+      useDepRepairStore.getState().onProgress({
+        plan_id: 'plan-managed', state: 'failed', log: '', error: '', code: 'private_python_offline',
+        target_kind: 'tavotto_managed',
+      } as never)
+    })
+    // 重试：清单与授权相同 → 直接装；多出 numpy → 回到确认页
+    planMock.mockResolvedValueOnce({
+      plan: { ...MANAGED_PLAN, plan_id: 'again', requirements: ['lmfit>=1.3', 'pandas', 'numpy'] },
+    })
+    await act(async () => (document.querySelector('[data-dependency-repair-retry]') as HTMLButtonElement).click())
+    await act(async () => {})
+    expect(installMock).toHaveBeenCalledTimes(1)
+    expect(byName(en('repairPrepareAndContinue'))).toBeTruthy()
+  })
+
   it('卡片没说要下载、计划却要下载：停在确认页，不执行', async () => {
     // 预读时计划不用下载（卡片据此写那一句、授权），点下去形成的计划却要下载：不执行
     planMock.mockResolvedValueOnce({ plan: { ...MANAGED_PLAN, private_python: null } })

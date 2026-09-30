@@ -19,6 +19,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   createJointDependencyPlan: vi.fn(),
   prepareJointDependencies: vi.fn(),
   cancelJointDependencies: vi.fn().mockResolvedValue({}),
+  setProjectUserEnvironment: vi.fn(),
   fetchEngineEnvironment: vi.fn().mockResolvedValue({}),
 }))
 
@@ -28,13 +29,17 @@ import {
   fetchRegistry,
   prepareJointDependencies,
   probeScript,
+  setProjectUserEnvironment,
+  cancelJointDependencies,
   type DependencyPreparationOffer,
   type JointDependencyPlan,
   type ProbeResult,
   type RegistryView,
   type ScriptInventoryEntry,
 } from '@/lib/api'
+import { DependencyPrepareDialog } from '@/components/DependencyPrepareDialog'
 import { ScriptLibrary } from '@/components/left/ScriptLibrary'
+import { setCurrentProjectId } from '@/lib/session'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useEnvStore } from '@/store/envStore'
 import { useScriptLibraryStore } from '@/store/scriptLibraryStore'
@@ -134,6 +139,7 @@ async function mountAndRun() {
     root.render(
       <TooltipProvider>
         <ScriptLibrary query="" />
+        <DependencyPrepareDialog />
       </TooltipProvider>,
     )
   })
@@ -145,6 +151,14 @@ async function mountAndRun() {
 const buttonByText = (text: string): HTMLButtonElement => {
   const btn = [...host.querySelectorAll('button')].find((b) => (b.textContent ?? '').includes(text))
   if (!btn) throw new Error(`没有找到按钮: ${text}`)
+  return btn as HTMLButtonElement
+}
+
+const dialogButton = (text: string): HTMLButtonElement => {
+  const btn = [...document.querySelectorAll('[data-dialog="dependency-prepare"] button')].find((b) =>
+    (b.textContent ?? '').includes(text),
+  )
+  if (!btn) throw new Error(`授权框里没有按钮: ${text}`)
   return btn as HTMLButtonElement
 }
 
@@ -272,5 +286,123 @@ describe('脚本行：开跑前要先准备依赖', () => {
     await flush()
     expect(useEnvStore.getState().dependencyPreparation?.script).toBe(SCRIPT)
     expect(createJointDependencyPlan).not.toHaveBeenCalled()
+  })
+
+  it('计划超出了用户看到的（绑定回来多了 numpy）：不执行，脚本行重跑一次拿新的披露（Codex #760 P1）', async () => {
+    mockProbe.mockResolvedValue(preparationResult(offerOf()))
+    vi.mocked(createJointDependencyPlan).mockResolvedValue({
+      plan: { ...(plan('joint-row') as object), requirements: ['pandas', 'openpyxl', 'numpy'] } as never,
+    })
+    await mountAndRun()
+    mockProbe.mockClear()
+    await act(async () => buttonByText('一键修复').click())
+    await flush()
+    expect(prepareJointDependencies).not.toHaveBeenCalled()
+    expect(mockProbe).toHaveBeenCalledTimes(1) // 按此刻的输入重新披露
+    expect(useDepRepairStore.getState().jointScript).toBe('')
+  })
+
+  it('授权框里同样：绑定回来的计划超出 offer，不执行、框关掉重排', async () => {
+    const offer = offerOf({
+      user_environments: [
+        {
+          id: 'env1', source: 'conda', label: 'sci', ok: false, code: '', support: 'verified',
+          python_version: '3.12', matplotlib_version: '3.9', missing: ['pandas'], satisfies: false,
+        },
+      ],
+    })
+    vi.mocked(createJointDependencyPlan).mockResolvedValue({
+      plan: { ...(plan('joint-dlg') as object), requirements: ['pandas', 'openpyxl', 'numpy'] } as never,
+    })
+    await mountAndRun()
+    await act(async () => useEnvStore.getState().requestDependencyPreparation(offer))
+    await act(async () => dialogButton('一键修复').click())
+    await flush()
+    expect(prepareJointDependencies).not.toHaveBeenCalled()
+    expect(useEnvStore.getState().dependencyPreparation).toBeNull()
+  })
+
+  it('授权框里改用装齐的用户环境：成功后发起的脚本行重跑（Codex #760 P2）', async () => {
+    const offer = offerOf({
+      user_environments: [
+        {
+          id: 'env1', source: 'conda', label: 'sci', ok: true, code: '', support: 'verified',
+          python_version: '3.12', matplotlib_version: '3.9', missing: [], satisfies: true,
+        },
+      ],
+    })
+    mockProbe.mockResolvedValue(preparationResult(offer))
+    vi.mocked(setProjectUserEnvironment).mockResolvedValue({ project: { python: '/envs/sci/bin/python' } } as never)
+    await mountAndRun()
+    await act(async () => buttonByText('一键修复').click()) // 有装齐的用户环境：打开授权框
+    await flush()
+    mockProbe.mockClear()
+    mockProbe.mockResolvedValue({ ...preparationResult(offer), error: null, descriptors: [] })
+    await act(async () => dialogButton('改用这个环境').click())
+    await flush()
+    expect(setProjectUserEnvironment).toHaveBeenCalledWith('env1', SCRIPT)
+    expect(mockProbe).toHaveBeenCalledTimes(1)
+    expect(mockProbe.mock.calls[0][0]).toBe(SCRIPT)
+  })
+
+  describe('从脚本行发起后切项目再切回（A → B → A）', () => {
+    const switchTo = async (id: string) => {
+      await act(async () => {
+        setCurrentProjectId(id)
+        useScriptRunStore.getState().clear()
+        useDepRepairStore.getState().clear()
+      })
+      await flush()
+    }
+    const startFromRow = async () => {
+      setCurrentProjectId('pA')
+      mockProbe.mockResolvedValue(preparationResult(offerOf()))
+      vi.mocked(createJointDependencyPlan).mockResolvedValue({ plan: plan('joint-row') })
+      vi.mocked(prepareJointDependencies).mockResolvedValue({ started: true } as never)
+      await mountAndRun()
+      await act(async () => buttonByText('一键修复').click())
+      await flush()
+      await act(async () => {
+        useDepRepairStore.getState().onProgress({
+          plan_id: 'joint-row', state: 'installing', log: '', error: null, code: '', flow: 'joint',
+          script: SCRIPT, requirements: ['pandas', 'openpyxl'], target_kind: 'tavotto_managed',
+        } as never)
+      })
+      await switchTo('pB')
+    }
+    afterEach(() => setCurrentProjectId(null))
+
+    it('还在装：切回 A，脚本行仍认得这份进度并能取消', async () => {
+      await startFromRow()
+      await switchTo('pA')
+      expect(useDepRepairStore.getState().jointScript).toBe(SCRIPT)
+      // 脚本行的运行记录随切项目清空了：先让它回到「要先准备」，进度按归属挂回这一行
+      mockProbe.mockResolvedValue(preparationResult(offerOf()))
+      await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label$="并发现图"]')!.click())
+      await flush()
+      const card = host.querySelector('[data-script-preparation]')!
+      expect(card.querySelector('[data-repair-line]')!.textContent).toContain('正在安装 pandas 和 openpyxl')
+      await act(async () => buttonByText('取消').click())
+      expect(cancelJointDependencies).toHaveBeenCalledWith('joint-row')
+    })
+
+    it('切走期间装好：切回 A 自动重跑那一行一次，不重复', async () => {
+      await startFromRow()
+      mockProbe.mockClear()
+      mockProbe.mockResolvedValue({ ...preparationResult(offerOf()), error: null, descriptors: [] })
+      await act(async () => {
+        useDepRepairStore.getState().onProgress({
+          plan_id: 'joint-row', state: 'done', log: '', error: null, code: '', flow: 'joint', script: SCRIPT,
+        } as never)
+      })
+      await flush()
+      expect(mockProbe).not.toHaveBeenCalled()
+      await switchTo('pA')
+      expect(mockProbe).toHaveBeenCalledTimes(1)
+      expect(mockProbe.mock.calls[0][0]).toBe(SCRIPT)
+      await switchTo('pB')
+      await switchTo('pA')
+      expect(mockProbe).toHaveBeenCalledTimes(1)
+    })
   })
 })
