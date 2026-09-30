@@ -134,8 +134,8 @@ def test_install_lines_are_published_where_the_matrix_says():
     """两条安装命令整行等于由常量拼出来的那两行，放在哪由支持矩阵的这一档决定（2026-09-30 用户决定）。
 
     * `beta`：plugin-stable 已带清单，README 给出这两行（整行相等，不是包含）；
-    * 其它：plugin-stable 还没带 `.claude-plugin/`，照 README 装会坏，所以 README **一行都不许有**，
-      两行只在待发说明 `UNRELEASED.md` 里等发版。发版时把 README 一节加回、矩阵改回 beta——
+    * 其它：plugin-stable 还没带 `.claude-plugin/`，照 README 装会坏，所以 README 与插件（技能）里
+      **一行都不许有**，两行只在待发说明 `UNRELEASED.md` 里等发版。发版时把 README 一节加回、矩阵改回 beta——
       漏了哪一步，这里或 `test_beta_label_follows_the_matrix_and_its_evidence` 就红。
     """
     expected = [
@@ -154,6 +154,25 @@ def test_install_lines_are_published_where_the_matrix_says():
         assert found == expected
         return
     assert found == []
+    # 技能随插件发给所有宿主的 agent，也不许先教装法（Codex 在本 PR 评审里指出）
+    tracked = subprocess.run(
+        ["git", "-C", str(ROOT), "ls-files", "--", brand.CODEX_PLUGIN_SUBDIR],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
+    ).stdout.splitlines()
+    assert tracked, "git ls-files 没列出插件目录（判据没在量东西）"
+    early = [
+        rel
+        for rel in tracked
+        if rel.endswith((".md", ".py", ".json", ".yaml", ".js"))
+        and re.search(
+            r"claude plugin (marketplace add|install|update) ",
+            (ROOT / rel).read_text(encoding="utf-8"),
+        )
+    ]
+    assert early == [], f"渠道还没 promote，插件里却已经在教 Claude Code 的装法：{early}"
     pending = (ROOT / "docs" / "release-notes" / "UNRELEASED.md").read_text(encoding="utf-8")
     pending = re.sub(r"\s+", " ", pending)
     for line in expected:

@@ -48,7 +48,9 @@ README 的 Claude Code 章节标「(Beta)」，由 `docs/support-matrix.json` �
 `claude-code` 仍是 `experimental`（beta 档说的是「这条渠道能装」，此刻它还不能）；两条命令完整留在
 `docs/release-notes/UNRELEASED.md` 那一段，发版时随段落搬走的同时把 README 一节加回、矩阵改回 `beta` +
 `channel: claude-plugin`。`tests/test_claude_plugin.py::test_install_lines_are_published_where_the_matrix_says`
-按矩阵这一档判命令该在 README 还是在待发说明，两边都钉。
+按矩阵这一档判命令该在 README 还是在待发说明，两边都钉。技能（`references/other-hosts.md`、`SKILL.md` 的
+升级提示）同理先不教装法，同一条用例钉住插件目录里没有 `claude plugin …` 命令；配置生成器的提示不指向未上
+README 的章节（`tests/test_readme_section_references.py`）。发版时要加回的清单在待发说明那一段的注释里。
 
 ## 看护
 

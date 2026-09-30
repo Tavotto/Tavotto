@@ -26,7 +26,13 @@ On Windows, plugin 0.17.0 loaded as enabled, with its skill, but with no Tavotto
 命令该在 README 还是在这里。同时把指向这一节的提示加回：
 codex-plugin/integrations/configure.py 里 claude-code 的 target 那句改回「更省事的是装插件（README「Using Tavotto
 with Claude Code」的两条命令），就不需要这段配置；」（tests/test_readme_section_references.py 要求被引用的章节
-真的在）。ADR 0103「对外口径」。README 一节的原文（放回「### Using Tavotto from other AI
+真的在）。技能里也要加回（插件随发版带着技能走，Codex 在 #692 评审里要求 promote 之前技能也不给装法）：
+codex-plugin/skills/tavotto-figure/references/other-hosts.md 在「工具缺失时」首段之后加回
+「**Claude Code（终端 / IDE 扩展 / 桌面 Code 标签页）优先走插件**」一段（同样两条命令 + `/reload-plugins`、
+`/mcp` 确认 `plugin:tavotto:tavotto`、授权目录 = 启动目录与 `/add-dir`），其后「其余宿主（以及不想装插件的
+Claude Code 用户）：」；Skill 表里 Claude Code 拆成「插件版（新开会话或 `/reload-plugins`；插件自带技能）」与
+「配置版」两行；SKILL.md 第 6 条的升级提示加「Claude Code 插件版：`claude plugin update tavotto@tavotto`」。原文见
+PR #692。ADR 0103「对外口径」。README 一节的原文（放回「### Using Tavotto from other AI
 editors and clients (experimental)」之前）：
 
 ### Using Tavotto with Claude Code (Beta)
