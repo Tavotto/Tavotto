@@ -58,7 +58,6 @@ const STATE_KEY: Record<string, string> = {
   installing: 'repairInstalling',
   verifying: 'repairVerifying',
   done: 'repairDone',
-  failed: 'repairFailed',
   cancelled: 'repairCancelled',
 }
 
@@ -262,8 +261,10 @@ export function DependencyRepairCard({
     </div>
   )
   const managed = primary?.kind === 'tavotto_managed'
+  const failing = !!(errorCode || errorText)
   const advanced = (
     <Advanced>
+      {failing && <FailureDetail code={errorCode} text={errorText} />}
       {managedReady && offer.requirement && (
         // 点之前的披露（一次授权），最多三条、各说一件事（2026-09-29 用户：「详情」不许重复啰嗦）：
         // 要装什么 / 要下载什么（多大）/ 不改动什么
@@ -302,11 +303,18 @@ export function DependencyRepairCard({
     // 默认可见的只有：一句话 + 一个主按钮 +「详情」（折叠）。标题、解释、下载大小都不摆出来
     return (
       <div className="flex flex-col gap-2 rounded-md bg-surface p-3 shadow-card" data-one-click-repair={primary.kind}>
-        <p className="text-sm leading-relaxed text-ink" data-one-click-sentence>
-          {managed
-            ? oneClickSentence(pkg, checking ? null : disclosed)
-            : en('oneClickSentenceSystem', { module: pkg })}
-        </p>
+        {failing ? (
+          // 失败了：那一句换成故障那一句（原因 + 下一步），不在它下面再叠一句；完整说明在「详情」里
+          <p className="text-sm leading-relaxed text-danger" data-repair-failure>
+            {repairShortMessage(errorCode)}
+          </p>
+        ) : (
+          <p className="text-sm leading-relaxed text-ink" data-one-click-sentence>
+            {managed
+              ? oneClickSentence(pkg, checking ? null : disclosed)
+              : en('oneClickSentenceSystem', { module: pkg })}
+          </p>
+        )}
         <Button
           className="self-start"
           variant="primary"
@@ -317,7 +325,6 @@ export function DependencyRepairCard({
         >
           {en('oneClickRepair')}
         </Button>
-        <Failure code={errorCode} text={errorText} />
         {advanced}
       </div>
     )
@@ -327,10 +334,15 @@ export function DependencyRepairCard({
     // 真的无路可走（没有可建环境的 Python，也没有可下载的那份）：同样一句话说清下一步，其余收进「详情」
     return (
       <div className="flex flex-col gap-2 rounded-md bg-surface p-3 shadow-card">
-        <p className="text-sm leading-relaxed text-ink" data-managed-env-unavailable>
-          {en('repairManagedUnavailable')}
-        </p>
-        <Failure code={errorCode} text={errorText} />
+        {failing ? (
+          <p className="text-sm leading-relaxed text-danger" data-repair-failure>
+            {repairShortMessage(errorCode)}
+          </p>
+        ) : (
+          <p className="text-sm leading-relaxed text-ink" data-managed-env-unavailable>
+            {en('repairManagedUnavailable')}
+          </p>
+        )}
         {advanced}
       </div>
     )
@@ -736,11 +748,13 @@ function RepairProgress({
         <RepairProgressLine progress={progress} text={en(key, { module: progress.distribution || module })} />
       ) : (
       <div>
-        <h3 className="type-section">{en(key, { module: progress.distribution || module })}</h3>
-        {failed && (
-          <p className="mt-1 text-xs leading-relaxed text-danger">
-            {repairCodeMessage(progress.code) ?? progress.error ?? ''}
+        {failed ? (
+          // 失败：只露一句（原因 + 下一步，`repairShortMessage`），标题、完整说明、错误码、日志都在「详情」里
+          <p className="text-sm leading-relaxed text-danger" data-repair-failure>
+            {repairShortMessage(progress.code)}
           </p>
+        ) : (
+          <h3 className="type-section">{en(key, { module: progress.distribution || module })}</h3>
         )}
         {cancelled && (
           <p className="mt-1 text-xs leading-relaxed text-ink-2">
@@ -765,13 +779,18 @@ function RepairProgress({
           </>
         )}
       </div>
-      {(progress.log || progress.pypi_mirror || (!failed && !cancelled)) && (
+      {(progress.log || progress.pypi_mirror || !cancelled) && (
         // 默认折叠：完整的阶段列表、换用镜像的说明、pip 日志（主区域只有那一行进度）
         <Details className="text-xs text-ink-3" data-repair-progress-details>
           <Summary className="text-ink-2">{en('repairDetails')}</Summary>
           {!failed && !cancelled && (
             <div className="mt-1">
               <RepairStageList progress={progress} />
+            </div>
+          )}
+          {failed && (
+            <div className="mt-1">
+              <FailureDetail code={progress.code} text={progress.error} />
             </div>
           )}
           {progress.pypi_mirror && (
@@ -806,9 +825,47 @@ export function repairCodeMessage(code: string): string | null {
   return null
 }
 
+/**
+ * 故障的**那一句**（2026-09-29 用户：故障卡同样「一句话就能读懂」）：原因 + 下一步合成一句，按错误码查
+ * `repairErrorShort.*`；没登记的码（含只在 `backend.*` 里有文案的）与只有后端原文的一律「没装好，原因在详情里」。
+ * 完整的说明（`repairError.*` / 后端原文，可以是多句）与错误码只进「详情」（`FailureDetail`）——`repairError.*`
+ * 那张表设置 › 包管理页照旧整句在用，不动它
+ */
+export function repairShortMessage(code: string): string {
+  if (code && i18n.exists(`engine.repairErrorShort.${code}`, { ns: 'errors' })) return en(`repairErrorShort.${code}`)
+  return en('repairErrorShortGeneric')
+}
+
+/** 「详情」里的故障明细：完整说明 + 错误码（两样都没有就不渲染） */
+function FailureDetail({ code, text }: { code: string; text: string | null | undefined }) {
+  const full = repairCodeMessage(code) ?? text ?? ''
+  if (!code && !full) return null
+  return (
+    <div className="flex flex-col gap-0.5 text-xs leading-relaxed text-ink-3" data-repair-failure-detail>
+      {full && <p>{full}</p>}
+      {code && <p className="font-mono">{en('repairErrorCode', { code })}</p>}
+    </div>
+  )
+}
+
+/**
+ * 摊开各条路的那几种卡（解析不出包名 / 只有项目环境 / 确认页）上的故障：同样只露那一句，完整说明折叠在它自己的「详情」里
+ */
 function Failure({ code, text }: { code: string; text: string }) {
   if (!code && !text) return null
-  return <p className="text-xs leading-relaxed text-danger">{repairCodeMessage(code) ?? text}</p>
+  return (
+    <div className="flex flex-col gap-1">
+      <p className="text-xs leading-relaxed text-danger" data-repair-failure>
+        {repairShortMessage(code)}
+      </p>
+      <Details className="text-xs text-ink-3">
+        <Summary className="text-ink-2">{en('repairDetails')}</Summary>
+        <div className="mt-1">
+          <FailureDetail code={code} text={text} />
+        </div>
+      </Details>
+    </div>
+  )
 }
 
 /**

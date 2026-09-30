@@ -10,7 +10,7 @@ import { Radio } from './ui/Radio'
 import { userEnvironmentName } from '@/lib/userEnvironmentText'
 import { listJoin } from '@/i18n/format'
 import { RepairProgressLine } from './RepairProgressLine'
-import { downloadFact, oneClickEnvironmentSentence, oneClickSentence } from './DependencyRepairCard'
+import { downloadFact, oneClickEnvironmentSentence, oneClickSentence, repairShortMessage } from './DependencyRepairCard'
 
 /**
  * 跑前的那一次授权（U04，ADR 0061 §六）：后端起第一个 worker 之前看一眼脚本开跑要的第三方包
@@ -94,6 +94,9 @@ export function DependencyPrepareDialog() {
   const errorLine = code
     ? t(codeKey, { defaultValue: errorText || progress?.error || code })
     : errorText || progress?.error || ''
+  // 故障同样只露一句（原因 + 下一步，`repairShortMessage`）：一键修复框里它就是标题，别的框里它接在标题下面、
+  // 顶掉那段说明；完整的说明、错误码、blocked 的逐条理由都在「详情」里
+  const failing = !running && !!errorLine
   const targets = offer.targets.filter((o) => o.kind !== 'system_interpreter')
   const chosen = targets.find((o) => o.kind === target)
   const managed = targets.find((o) => o.kind === 'tavotto_managed')
@@ -244,14 +247,18 @@ export function DependencyPrepareDialog() {
         if (!v && !busy && !running) dismiss()
       }}
       title={
-        simple
+        simple && failing
+          ? repairShortMessage(code)
+          : simple
           ? // 干净机器上什么包都不缺（`requirements: []`）时，要授权的是准备环境本身：换一句，不写「还缺 」（Codex #742）
             plan.requirements.length
             ? oneClickSentence(packages, privatePython)
             : oneClickEnvironmentSentence(privatePython)
           : en('engine.dependencyPrepareTitle', { count: plan.requirements.length })
       }
-      description={!simple && complete.length ? en('engine.userEnvBody', { script: offer.script }) : undefined}
+      description={
+        !simple && complete.length && !failing ? en('engine.userEnvBody', { script: offer.script }) : undefined
+      }
       size="sm"
       busy={busy || running}
       anchor="dependency-prepare"
@@ -301,6 +308,21 @@ export function DependencyPrepareDialog() {
         <Details className={cn('text-xs', !simple && 'mt-2')} data-repair-advanced>
           <Summary className="type-meta cursor-pointer">{en('engine.repairAdvanced')}</Summary>
           <div className="mt-2">
+            {failing && (
+              <div className="mb-2 flex flex-col gap-0.5 text-xs leading-relaxed text-ink-3" data-dependency-error-detail>
+                <p>{errorLine}</p>
+                {blocked && blocked.blocked.length > 0 && (
+                  <ul className="flex flex-col gap-0.5" data-dependency-blocked>
+                    {blocked.blocked.map((b) => (
+                      <li key={b.code}>
+                        {en(BLOCKED_TEXT[b.code] ?? 'engine.dependencyBlocked_dependency_target_unavailable')}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {code && <p className="font-mono">{en('engine.repairErrorCode', { code })}</p>}
+              </div>
+            )}
             {details}
             {simple && <div className="mt-2">{targetChoice}</div>}
             <Button
@@ -324,16 +346,9 @@ export function DependencyPrepareDialog() {
           />
         </div>
       )}
-      {blocked && blocked.blocked.length > 0 && (
-        <ul className="mt-2 flex flex-col gap-0.5 text-xs text-danger" data-dependency-blocked>
-          {blocked.blocked.map((b) => (
-            <li key={b.code}>{en(BLOCKED_TEXT[b.code] ?? 'engine.dependencyBlocked_dependency_target_unavailable')}</li>
-          ))}
-        </ul>
-      )}
-      {!running && errorLine && (
-        <p className="mt-1 text-xs text-danger" data-dependency-error={code}>
-          {errorLine}
+      {failing && !simple && (
+        <p className="mt-2 text-xs text-danger" data-dependency-error={code}>
+          {repairShortMessage(code)}
         </p>
       )}
     </Dialog>

@@ -5,7 +5,9 @@
  * 句子按语种自己的句末标点数（`sentenceCount`：中文「。！？」，英文后面跟空白或到结尾的「. ! ?」）——Codex #742
  * 抓到过只数「。」时英文两句蒙混过关。新加一个语种时 `LOCALES` 自动带上它，`sentenceCount` 没有它的规则就抛错。
  *
- * 失败态不在这里：错误原因来自 `repairError.*` 那张大表（按错误码给出下一步，有的就是两句），不属于这张卡的文案。
+ * 失败态同样在这里（2026-09-29 用户：所有故障卡都要一句话）：每个 `repairError.*` 错误码 × 每个语种各一例——修复卡的
+ * 失败结局、一键修复卡起点上的失败（形成计划 / 改用环境被拒）、跑前授权框的失败。卡上露的是 `repairErrorShort.*`
+ * 那一句；`repairError.*` 的完整说明（设置 › 包管理页照旧在用、可以是多句）只在「详情」里。
  */
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -134,11 +136,64 @@ beforeEach(() => {
   useEnvStore.setState({ dependencyPreparation: null })
 })
 afterEach(async () => {
-  await act(async () => root.unmount())
-  host.remove()
+  // 「表是完整的」那两条不挂组件
+  if (root) await act(async () => root.unmount())
+  host?.remove()
+  root = undefined as never
+  host = undefined as never
   document.body.innerHTML = ''
   useDepRepairStore.getState().reset()
   await i18n.changeLanguage('zh-CN')
+})
+
+/** 每个语种各自的错误码表（两个语种的码集合由 i18n:check 看护相等；这里各取各的，任何一侧多出来的码也跑到） */
+const codesOf = (lang: string): string[] =>
+  Object.keys((resources as Record<string, { errors: { engine: { repairError: object } } }>)[lang].errors.engine.repairError)
+const CASES = LOCALES.flatMap((lang) => codesOf(lang).map((code) => [lang, code] as const))
+
+describe('故障那一句的表是完整的', () => {
+  it.each(LOCALES)('%s：每个 repairError 码都有一句话版本（repairErrorShort）', (lang) => {
+    const table = (resources as Record<string, { errors: { engine: { repairErrorShort?: Record<string, string> } } }>)[lang]
+      .errors.engine.repairErrorShort ?? {}
+    expect(Object.keys(table).sort()).toEqual(codesOf(lang).sort())
+  })
+})
+
+describe.each(CASES)('故障一句话（%s / %s）', (lang, code) => {
+  beforeEach(async () => {
+    await i18n.changeLanguage(lang)
+  })
+
+  it('修复卡失败结局：恰好一句，完整说明与错误码在「详情」里', async () => {
+    useDepRepairStore.setState({
+      progress: { plan_id: 'p', state: 'failed', log: 'pip output', error: '后端原文', code, target_kind: 'tavotto_managed' } as DependencyProgress,
+      request: { module: 'openpyxl', script: 'fig.py', target: 'tavotto_managed' },
+    })
+    await mount(<DependencyRepairCard offer={offer()} module="openpyxl" script="fig.py" />)
+    const card = host.querySelector('.shadow-card')!
+    expect(visibleSentenceCount(card, lang)).toBe(1)
+    expect(visiblePrimaryButtons(card)).toBeLessThanOrEqual(1)
+    const detail = card.querySelector('[data-repair-failure-detail]')!
+    expect(detail.closest('details')!.open).toBe(false)
+    expect(detail.textContent).toContain(code)
+  })
+
+  it('一键修复卡起点上的失败：那一句换成故障那一句，不叠第二句', async () => {
+    useDepRepairStore.setState({ errorCode: code, errorText: '后端原文' })
+    await mount(<DependencyRepairCard offer={offer()} module="openpyxl" script="fig.py" />)
+    const card = host.querySelector('.shadow-card')!
+    expect(visibleSentenceCount(card, lang)).toBe(1)
+    expect(visiblePrimaryButtons(card)).toBe(1)
+  })
+
+  it('跑前授权框失败：至多一句、恰好一个主按钮', async () => {
+    await mount(<DependencyPrepareDialog />)
+    await act(async () => useEnvStore.getState().requestDependencyPreparation(prep()))
+    await act(async () => useDepRepairStore.setState({ errorCode: code, errorText: '后端原文' }))
+    const dialog = document.querySelector('[data-dialog="dependency-prepare"]')!
+    expect(visibleSentenceCount(dialog, lang)).toBeLessThanOrEqual(1)
+    expect(visiblePrimaryButtons(dialog)).toBe(1)
+  })
 })
 
 describe.each(LOCALES)('一句话（%s）', (lang) => {

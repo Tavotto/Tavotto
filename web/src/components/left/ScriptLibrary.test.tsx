@@ -716,7 +716,7 @@ describe('脚本行发起的修复切项目再切回（#729）', () => {
     expect(card(), '失败的结局不该落到 B 的脚本行上').toBeNull()
     await switchTo('pA')
     expect(card(), '切回 A 后脚本行上看不到失败结局').toBeTruthy()
-    expect(card()!.textContent).toContain('安装未完成')
+    expect(card()!.querySelector('[data-repair-failure]')!.textContent).toBe('下载没成功，检查网络后点重试。')
     const retry = card()!.querySelector<HTMLButtonElement>('[data-dependency-repair-retry]')
     expect(retry, '失败结局上没有「重试」').toBeTruthy()
     vi.mocked(createDependencyPlan).mockClear()

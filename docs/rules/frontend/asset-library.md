@@ -83,8 +83,13 @@
   （修复进行中的那一行优先），装好后同样缺它的几行一起重跑（`rerunSameModule`；发起时把那几行记进 `scriptOffer.peers` 随作业收放，
   切走期间装好、切回来运行记录已清空时按名单补跑）；有修复 offer 的行不叠 `FailureRecovery`。
   缺包的脚本在素材库里单独归「需要修复」组、排最前；超时与一般失败仍在「可能需要原环境」。
+  **故障同样一句**：一键修复卡的失败结局、起点上的失败（形成计划 / 改用环境被拒）、跑前授权框的失败，默认只露原因 + 下一步
+  合成的那一句（`repairShortMessage` → `repairErrorShort.<code>`，没登记的码与只有后端原文的落到 `repairErrorShortGeneric`）
+  和一个主按钮；`repairError.*` 的完整说明、错误码、日志、blocked 的逐条理由只在「详情」里。`repairError.*` 本身不改——
+  设置 › 包管理页（`repairCodeMessage`）照旧整句在用。
   看护：「默认可见」按**可见元素**判（`test/visibleBlocks.ts`：收起的 details 里只有 summary 可见；主区域按**语种自己的**句末标点数句子 ≤ 1（`sentenceCount`：中文「。！？」、英文后跟空白或到结尾的「. ! ?」，
-  没有规则的语种直接抛错；`oneSentence.test.tsx` 把每种状态 × 每个语种都跑一遍）、
+  没有规则的语种直接抛错；`oneSentence.test.tsx` 把每种状态 × 每个语种都跑一遍，故障按每个 `repairError` 码 × 每个语种各一例，并核对
+  `repairErrorShort` 与 `repairError` 的码集合相等）、
   数看得见的主按钮 = 1；e2e 用 `checkVisibility`），不按子串——`DependencyRepairCard.test.tsx`「一键修复」、`DependencyPrepareDialog.test.tsx`、`ScriptLibrary.test.tsx`、
   `e2e/dependency-one-click.spec.ts`（`@feature:assets.dependency-one-click-repair`）。
 - **运行/取消是同一个按钮**（busy 态翻转）：取消后焦点天然留在原脚本行，

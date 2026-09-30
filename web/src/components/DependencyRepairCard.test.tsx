@@ -857,7 +857,7 @@ describe('渲染解释器被全局固定（#465）', () => {
       } as never)
     })
     expect(document.querySelector('[data-dependency-repair-pinned]')).toBeTruthy()
-    expect(text()).not.toContain(en('repairFailed'))
+    expect(document.querySelector('[data-repair-failure]')).toBeNull()
     // 清掉之后 store 里的那条固定也要清，否则卡片永远停在这一支
     clearGlobalMock.mockResolvedValue({ ok: true, project: { open: true } } as never)
     await click(en('repairPinnedClear'))
