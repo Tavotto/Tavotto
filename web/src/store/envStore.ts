@@ -89,6 +89,11 @@ interface EnvState {
    * 「找不到数据」失败的面板重新排上。回 null 或一句失败原文（本地化过的）。
    */
   pointAtData: (requested: string, chosen: string, kind: 'file' | 'dir' | 'auto') => Promise<string | null>
+  /**
+   * 改指表换代了（后端事件 `input_remap_changed`，ADR 0106 §五）：**唯一**的作废入口——发起的窗口与同项目
+   * 开着的其它窗口都只走这里。`added` 时顺带重跑因「找不到数据」失败的脚本。
+   */
+  onInputRemapChanged: (reason: 'added' | 'removed' | string) => void
   /** 设置里删一条改指规则；回 null 或一句失败原文 */
   forgetInputRemap: (rule: InputRemapRule) => Promise<string | null>
   /**
@@ -200,10 +205,8 @@ export const useEnvStore = create<EnvState>((set, get) => ({
       const env = get().env
       if (env?.project) set({ env: { ...env, project: { ...env.project, input_remap: res.input_remap } } })
       set({ missingInput: null })
-      // 后端已经关掉了这个项目的会话；失败的面板重排，经旧规则画成功的也要重画
-      // （同 kind / from 的规则被这次替换时，它们读的是旧位置的数据）
-      // 素材库「运行并发现图」那条入口因「找不到数据」失败的脚本同样重跑（第二个参数）
-      if (!(await restaleProjectRenders(epoch, true))) return null
+      // 重排 / 作废 / 重跑**不在这里做**：后端经事件流广播 `input_remap_changed`，这个窗口与同项目的其它
+      // 窗口都只按那条事件走 `onInputRemapChanged`（一条路径，ADR 0106 §五）
       useUiStore.getState().setStatus(msg('engine.missingInputRemembered', undefined, 'errors'))
       return null
     } catch (e) {
@@ -218,13 +221,20 @@ export const useEnvStore = create<EnvState>((set, get) => ({
       if (epoch !== projectEpoch) return null
       const env = get().env
       if (env?.project) set({ env: { ...env, project: { ...env.project, input_remap: res.input_remap } } })
-      // 删了规则：经它画成功的面板还挂着旧数据的样子，按「找不到就报错」重画
-      await restaleProjectRenders(epoch)
+      // 重画按「找不到就报错」：同样只走事件（`onInputRemapChanged`）
       return null
     } catch (e) {
       if (epoch !== projectEpoch) return null
       return backendErrorText(e)
     }
+  },
+  onInputRemapChanged: (reason) => {
+    // 事件已按 pj 过滤到本项目（`handleServerEvent`）；换项目期间由 `restaleProjectRenders` 自己按代际丢弃
+    const epoch = projectEpoch
+    // 新增 / 换了一处：因「找不到数据」失败的脚本重跑；删掉：只作废，回到「找不到就报错」
+    void restaleProjectRenders(epoch, reason === 'added')
+    // 设置里的「数据位置」列表：别的窗口改的也要看得见
+    void get().refresh()
   },
   requestDependencyPreparation: (offer, projectId) => {
     if (projectId !== undefined && projectId !== currentProjectId()) return

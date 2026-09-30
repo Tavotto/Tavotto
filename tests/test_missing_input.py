@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import builtins
 import io
+import json
 import os
 import pathlib
 from pathlib import Path
@@ -726,6 +727,125 @@ def test_http_add_list_and_remove(client, figs, tmp_path):
     finally:
         for pid in [p for p, ctx in list(m.PROJECTS.items()) if str(ctx.path) == str(figs)]:
             m.close_project(pid, wait=True)
+
+
+def test_every_window_of_the_project_hears_that_the_remap_table_changed(client, figs, tmp_path):
+    """两个窗口开着同一个项目（两条事件流）：A 改指 / 删指，B 同样收到 `input_remap_changed`（带代次），
+    据此作废按旧表画的东西（Codex 评 #716 P1）。发起的 A 也只靠这条事件。"""
+    import queue as _queue
+
+    from tavotto import app as m
+
+    m.open_project(str(figs))
+    a, b = _queue.Queue(), _queue.Queue()
+    m._sse_subs.extend([a, b])
+    try:
+        chosen = _touch(tmp_path / "moved" / "data" / "values.txt")
+        resp = client.post(
+            "/api/engine/input-remap",
+            json={"requested": "data/values.txt", "chosen": str(chosen), "chosen_kind": "file"},
+        )
+        assert resp.status_code == 200, resp.get_json()
+        assert (
+            client.delete("/api/engine/input-remap", json={"kind": P, "from": ""}).status_code
+            == 200
+        )
+
+        def remap_events(q):
+            out = []
+            while not q.empty():
+                ev, data = q.get_nowait()
+                if ev == "input_remap_changed":
+                    out.append(data)
+            return out
+
+        got_a, got_b = remap_events(a), remap_events(b)
+        assert [e["reason"] for e in got_b] == ["added", "removed"]
+        assert got_a == got_b
+        assert got_b[1]["generation"] == got_b[0]["generation"] + 1
+        assert got_b[1]["generation"] == inputremap.generation(figs)
+        assert {e["pj"] for e in got_b} == {m.current_ctx().id}
+    finally:
+        for q in (a, b):
+            if q in m._sse_subs:
+                m._sse_subs.remove(q)
+        for pid in [p for p, ctx in list(m.PROJECTS.items()) if str(ctx.path) == str(figs)]:
+            m.close_project(pid, wait=True)
+
+
+def test_probe_registered_stems_follow_the_table_after_a_rebuild(
+    client, figs, tmp_path, monkeypatch
+):
+    """试运行在旧表下登记了 `group_A`；改指之后按新数据只捕获得到 `group_B`。这个脚本的会话按新表 build 之后
+    （渲染里、`unknown_stem` 或成功都一样），注册表按这次 build 的真实产出重新登记，自动重渲染不再一直
+    `unknown_stem`（Codex 评 #716 P1）。不多跑一次脚本；代次不对、没记过的不动。"""
+    import types
+
+    from tavotto import app as m
+    from tavotto.engine import discover, registry
+
+    m.open_project(str(figs))
+    try:
+        (figs / "fig.py").write_text("print(1)\n", encoding="utf-8")
+        discover.register(figs, "fig.py", ["group_A"], entry="__main__")
+        registry.load(figs)
+        inputremap.record_registration(figs, "fig.py")  # 在「空表」下登记的
+        inputremap.add_rule(figs, {"kind": P, "from": "", "to": str(tmp_path)})
+
+        def stems_on_disk():
+            path = registry.existing_registry_path(figs)
+            return json.loads(path.read_text(encoding="utf-8"))["scripts"]["fig.py"]["stems"]
+
+        def worker(gen):
+            return types.SimpleNamespace(
+                script_name="fig.py",
+                figures_dir=str(figs),
+                entry="__main__",
+                remap_generation=gen,
+                last_build_descriptors=[{"stem": "group_B"}],
+            )
+
+        ctx = m.current_ctx()
+        stale_gen = inputremap.generation(figs) - 1
+        assert m._resync_registration(ctx, worker(stale_gen)) is False  # 按旧表 build 的：不动
+        assert stems_on_disk() == ["group_A"]
+        assert m._resync_registration(ctx, worker(inputremap.generation(figs))) is True
+        assert stems_on_disk() == ["group_B"]
+        assert not inputremap.registration_stale(figs, "fig.py")
+        # 再来一次：已对上，不重复登记
+        assert m._resync_registration(ctx, worker(inputremap.generation(figs))) is False
+        # 从没经试运行登记过（没记过指纹）的脚本不动
+        (figs / "other.py").write_text("print(2)\n", encoding="utf-8")
+        other = worker(inputremap.generation(figs))
+        other.script_name = "other.py"
+        assert m._resync_registration(ctx, other) is False
+    finally:
+        for pid in [p for p, c in list(m.PROJECTS.items()) if str(c.path) == str(figs)]:
+            m.close_project(pid, wait=True)
+
+
+def test_canonically_equal_sources_replace_each_other(tmp_path):
+    """`data` / `./data` / `data/`、反斜杠写法是同一处：新指认的那条替换旧的，不被旧的遮住（Codex 评 #716 P2）。"""
+    root = tmp_path / "proj"
+    root.mkdir()
+    (tmp_path / "one").mkdir()
+    (tmp_path / "two").mkdir()
+    (tmp_path / "three").mkdir()
+    inputremap.add_rule(root, {"kind": P, "from": "data", "to": str(tmp_path / "one")})
+    inputremap.add_rule(root, {"kind": P, "from": "./data", "to": str(tmp_path / "two")})
+    assert inputremap.rules_for(root) == [
+        {"kind": P, "from": "./data", "to": str(tmp_path / "two")}
+    ]
+    assert (
+        figcapture.remap_target(inputremap.rules_for(root), "data/x.csv")
+        == str(tmp_path / "two").replace("\\", "/") + "/x.csv"
+    )
+    inputremap.add_rule(root, {"kind": P, "from": "C:\\Users\\a", "to": str(tmp_path / "one")})
+    inputremap.add_rule(root, {"kind": P, "from": "c:/Users/a/", "to": str(tmp_path / "three")})
+    froms = [r["from"] for r in inputremap.rules_for(root)]
+    assert froms == ["./data", "c:/Users/a/"]
+    inputremap.remove_rule(root, P, "data/")  # 删也按同一处认
+    assert [r["from"] for r in inputremap.rules_for(root)] == ["c:/Users/a/"]
 
 
 def test_all_three_spawn_paths_take_the_rules_from_one_place(monkeypatch, tmp_path):
