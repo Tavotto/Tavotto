@@ -16,8 +16,9 @@
  * 这里的 beforeEach 收回。用 `i18n.changeLanguage` 而不是 `setLocale`：后者
  * 会写 localStorage 偏好，那本身是被测行为，前置动作不该替它写。
  */
-import { beforeEach } from 'vitest'
+import { afterEach, beforeEach } from 'vitest'
 import { DEFAULT_LOCALE, i18n, initI18n } from '@/i18n'
+import { cancelFocusRescues } from '@/lib/focusRescue'
 import { forgetProjectFilesInSession } from '@/lib/projectFile'
 
 const pinNavigator = () => {
@@ -40,4 +41,14 @@ beforeEach(async () => {
   forgetProjectFilesInSession()
   pinNavigator()
   if (i18n.language !== DEFAULT_LOCALE) await i18n.changeLanguage(DEFAULT_LOCALE)
+})
+
+
+// 焦点救援（`lib/focusRescue.ts`）不属于任何组件：store 的状态切换发起、最多活 2 秒后自己
+// 收掉。用例在这 2 秒里结束的话，文件跑完 jsdom 被拆掉，它的定时器 / MutationObserver
+// 再醒来就是 `document is not defined`——用例全绿，vitest 却记一个 Unhandled Error、
+// 退出码 1（#679 的 CI run 36660528689）。全量里有十来个文件、上百条用例会留下它，
+// 所以这里一刀切：每条用例结束都停掉，谁也活不过它的用例
+afterEach(() => {
+  cancelFocusRescues()
 })

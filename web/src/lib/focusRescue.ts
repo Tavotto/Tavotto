@@ -20,6 +20,22 @@
  * input），分界线是「焦点还在不在文档里」。
  */
 
+/**
+ * 还在盯着的救援（每一次 `rescueFocus` 一个 stop）。救援不属于任何组件——它由 store 里的
+ * 状态切换发起、最多活 `within` 毫秒后自己收掉——所以没有「组件卸载时清理」这个时机；
+ * 需要在外部一刀切掉的场合（测试环境拆掉之前：jsdom 没了，定时器再跑到 `stop()` 就是
+ * `document is not defined`）走 {@link cancelFocusRescues}。
+ */
+const active = new Set<() => void>()
+
+/** 此刻还在盯着的救援有几个 */
+export const pendingFocusRescues = (): number => active.size
+
+/** 全部停掉（断开 observer、清定时器、摘监听）。测试的全局 afterEach 用它 */
+export function cancelFocusRescues(): void {
+  for (const stop of [...active]) stop()
+}
+
 /** 这个元素还在文档里、并且看得见吗？（焦点接手者必须两条都满足） */
 function alive(el: Element | null | undefined): el is HTMLElement {
   return (
@@ -51,6 +67,7 @@ export function rescueFocus(
   const stop = () => {
     if (done) return
     done = true
+    active.delete(stop)
     observer.disconnect()
     clearTimeout(timer)
     document.removeEventListener('focusin', onFocusIn, true)
@@ -76,6 +93,7 @@ export function rescueFocus(
   })
   const timer = setTimeout(stop, within)
 
+  active.add(stop)
   document.addEventListener('focusin', onFocusIn, true)
   observer.observe(document.body, { childList: true, subtree: true })
   // 也可能这一刻就已经掉了（同步卸载）
