@@ -347,6 +347,24 @@ describe('恢复在飞时预览锁住（Codex #679 P1）', () => {
     },
   )
 
+  it('忙按上下文记账：A 的恢复还在飞时换了项目，新上下文里的预览照常能关', async () => {
+    mockCreate.mockImplementationOnce(() => new Promise(() => {}))
+    await open()
+    await act(async () => $<HTMLButtonElement>('[data-timeline-preview-restore]')!.click())
+    await flush()
+    expect($('[data-dialog="timeline-preview"]')!.getAttribute('aria-busy')).toBe('true')
+    // 排版 id 相同的另一个项目：只有项目代际变了
+    await act(async () => useTimelineStore.getState().clear())
+    await flush()
+    await act(async () => previews()[0].click())
+    await flush()
+    expect($('[data-timeline-preview]')).not.toBeNull()
+    expect($('[data-dialog="timeline-preview"]')!.getAttribute('aria-busy')).toBeNull()
+    await act(ways.Esc)
+    await flush()
+    expect(useTimelineStore.getState().preview).toBeNull()
+  })
+
   it('「恢复前」存完之后照常恢复、预览退出', async () => {
     let done!: (v: unknown) => void
     mockCreate.mockImplementationOnce(() => new Promise((resolve) => (done = resolve)))
