@@ -89,10 +89,10 @@ describe('画布标签条', () => {
     expect(second.className, '未选中不加粗').not.toContain('font-semibold')
   })
 
-  it('条高 36：与右栏页签同档（此前 32）；页签填满条的内容盒，不另写 36', () => {
+  it('条高 44：与右栏页签条同高（2026-09-30 重设计，两条底边 hairline 连成一条）；页签填满条的内容盒，不另写高度', () => {
     mount()
     const strip = host.querySelector('[data-canvas-tabs]') as HTMLElement
-    expect(strip.parentElement!.className, '条本身 36').toContain('h-9')
+    expect(strip.parentElement!.className, '条本身 44').toContain('h-11')
     // 条带 border-b，内容盒只剩 35：页签再写 h-9 就纵向多出 1px，横滚条的 overflow-y 被算成
     // auto，WebKit 画出一根竖滚动条。像素由 e2e/canvas-tabs-scroll.spec.ts 在真浏览器里量
     for (const t of tabs()) {

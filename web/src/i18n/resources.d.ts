@@ -3191,7 +3191,7 @@ export default interface Resources {
       "diagnostics": "诊断",
       "dpiHint": "位图在当前尺寸下的实际分辨率",
       "dpiHintBad": "低于 300dpi，印刷会发虚",
-      "editElements": "编辑图内元素",
+      "editElements": "改图里的内容",
       "effectiveDpi": "等效 DPI",
       "effectivePt": "等效字号",
       "exitElementEdit": "退出图内编辑",
@@ -4144,7 +4144,7 @@ export default interface Resources {
       "fast_edit_entered": "你的改动会保存到当前排版，原始文件不动。",
       "multi_select": "用选区旁的浮动栏对齐和分布。",
       "panel_editable": "双击进入图内编辑。",
-      "panel_layout_only": "这张图可在版面上摆放；连接源脚本后可编辑图内元素。",
+      "panel_layout_only": "这张图可在版面上摆放；连接源脚本后能改图里的内容。",
       "problem_found": "左侧「问题」可定位对象和属性字段。"
     },
     "history": {
@@ -4343,7 +4343,7 @@ export default interface Resources {
       "cropRotatedReason": "旋转过的图暂不能裁剪，先取消旋转",
       "deleteCount": "删除 {{count}} 个对象",
       "duplicate": "创建副本",
-      "editElements": "编辑图内元素",
+      "editElements": "改图里的内容",
       "editText": "编辑文字",
       "hide": "隐藏此元素",
       "hideCount": "隐藏 {{count}} 个",
@@ -4384,6 +4384,17 @@ export default interface Resources {
       "problemsCount_other": "问题 · {{count}}",
       "readiness": "项目接入状态",
       "settings": "设置",
+      "short": {
+        "assets": "素材",
+        "canvases": "画布",
+        "elements": "图内",
+        "layers": "图层",
+        "problems": "问题",
+        "readiness": "状态",
+        "settings": "设置",
+        "style": "样式",
+        "workspace": "项目"
+      },
       "style": "样式",
       "workspace": "工作区"
     },
@@ -4559,7 +4570,7 @@ export default interface Resources {
       "renderFailed": "无法渲染 {{name}}",
       "renderFailedWithError": "无法渲染 {{name}}。{{error}}",
       "scriptChanged_other": "脚本已更新，{{count}} 张图已重新渲染",
-      "sourceLinked_other": "已找到源脚本，双击图即可编辑图内元素（{{count}} 张）",
+      "sourceLinked_other": "已找到源脚本，双击图就能改图里的内容（{{count}} 张）",
       "sourceLostEditing": "源脚本关系已失效，已返回画布。图片和它在画布上的摆放都保留着。",
       "sourceLost_other": "源脚本关系已失效，{{count}} 张图已改为普通图片。图片和它们在画布上的摆放都保留着。",
       "styleCopiedArrow": "已复制箭头样式（线宽 / 颜色 / 端型 / 线型）",

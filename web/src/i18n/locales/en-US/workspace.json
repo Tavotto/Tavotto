@@ -473,6 +473,17 @@
     "problemsCount_other": "Problems · {{count}}",
     "readiness": "Project readiness",
     "settings": "Settings",
+    "short": {
+      "assets": "Assets",
+      "canvases": "Canvas",
+      "elements": "Elements",
+      "layers": "Layers",
+      "problems": "Issues",
+      "readiness": "Status",
+      "settings": "Settings",
+      "style": "Style",
+      "workspace": "Project"
+    },
     "style": "Style",
     "workspace": "Workspace"
   },

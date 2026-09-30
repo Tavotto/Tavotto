@@ -626,7 +626,7 @@
     "diagnostics": "诊断",
     "dpiHint": "位图在当前尺寸下的实际分辨率",
     "dpiHintBad": "低于 300dpi，印刷会发虚",
-    "editElements": "编辑图内元素",
+    "editElements": "改图里的内容",
     "effectiveDpi": "等效 DPI",
     "effectivePt": "等效字号",
     "exitElementEdit": "退出图内编辑",

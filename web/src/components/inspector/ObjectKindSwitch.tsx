@@ -60,7 +60,8 @@ export function ObjectKindSwitch({ objs }: { objs: CanvasObject[] }) {
           data-kind-switch
           aria-label={translate('kindSwitch.aria', { ns: 'inspector', name: currentLabel })}
           className={cn(
-            'group flex shrink-0 items-center gap-0.5 rounded-sm bg-surface-active py-px pl-1 pr-0.5 text-xs text-ink-2',
+            // 身份块上面那行灰字里的一个词（2026-09-30 重设计）：不再是灰底小片，悬停才有底
+            'group -ml-1 flex shrink-0 items-center gap-0.5 rounded-sm py-px pl-1 pr-0.5 text-xs text-ink-3',
             'outline-none transition-colors hover:bg-surface-hover hover:text-ink focus-visible:focus-ring',
             'data-[state=open]:bg-selected data-[state=open]:text-ink',
           )}
@@ -101,7 +102,7 @@ export function ObjectKindSwitch({ objs }: { objs: CanvasObject[] }) {
 /** 不可切换时的静态徽标：与可切换那颗同一套底色与字号，只是不点得动 */
 export function KindBadge({ children }: { children: React.ReactNode }) {
   return (
-    <span data-object-kind className="shrink-0 rounded-sm bg-surface-active px-1 text-xs text-ink-2">
+    <span data-object-kind className="shrink-0 text-xs text-ink-3">
       {children}
     </span>
   )

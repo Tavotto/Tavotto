@@ -413,7 +413,7 @@ function MatchFigureSize({
       {tx('matchHint', { eff })}
       <button
         onClick={() => onMatch(eff)}
-        className="ml-1.5 text-accent underline-offset-2 hover:underline"
+        className="ml-1.5 text-ink-2 underline-offset-2 hover:text-ink hover:underline"
       >
         {tx('matchAction')}
       </button>

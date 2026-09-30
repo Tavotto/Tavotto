@@ -105,7 +105,8 @@ export function Segmented<T extends string>({
       aria-label={ariaLabel}
       onKeyDown={onKeyDown}
       className={cn(
-        'relative flex h-7 w-full items-stretch rounded-sm bg-surface-active p-0.5',
+        // 胶囊槽 + 白色胶囊 thumb（2026-09-30 重设计，与带字按钮同形）
+        'relative flex h-7 w-full items-stretch rounded-full bg-surface-hover p-0.5',
         className,
       )}
       {...rest}
@@ -115,7 +116,7 @@ export function Segmented<T extends string>({
           aria-hidden
           data-segmented-thumb
           className={cn(
-            'pointer-events-none absolute inset-y-0.5 left-0 rounded-xs bg-surface shadow-thumb',
+            'pointer-events-none absolute inset-y-0.5 left-0 rounded-full bg-surface shadow-thumb',
             thumb.animate && 'transition-[transform,width] duration-base ease-pop',
           )}
           style={thumb.style}
@@ -141,15 +142,16 @@ export function Segmented<T extends string>({
             className={cn(
               // relative：压在滑动的选中底之上；每格不再自己画 bg-selected
               'relative flex min-w-7 flex-1 items-center justify-center gap-1 whitespace-nowrap px-2 text-sm outline-none',
-              // 每格同形（rounded-xs，与 thumb 同）：此前 first:/last: 落在 thumb 上失效，只剩键盘焦点环末格圆角、其余方角
-              'rounded-xs',
+              // 每格同形（rounded-full，与 thumb 同）：此前 first:/last: 落在 thumb 上失效，只剩键盘焦点环末格圆角、其余方角
+              'rounded-full',
               'transition-colors duration-fast focus-visible:z-10 focus-visible:focus-ring',
               active
                 ? 'font-semibold text-ink'
                 : item.disabled
                   ? 'cursor-default text-ink-faint'
-                  : // 未选中的标签是要读的字：ink-3（≥4.5:1），不用 opacity 淡化
-                    'text-ink-3 hover:text-ink',
+                  : // 未选中的标签是要读的字：ink-2（2026-09-30 起槽是 ink 5% 叠在灰桌面上，ink-3 只剩
+                    // 4.14:1——e2e 的 axe 在问题面板里量到）；不用 opacity 淡化
+                    'text-ink-2 hover:text-ink',
             )}
           >
             {item.icon}

@@ -224,7 +224,7 @@ export function CodingAgentsSection() {
                 href={CODEX_GUIDE_URL}
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex shrink-0 items-center gap-1 text-xs text-accent outline-none hover:underline focus-visible:focus-ring"
+                className="inline-flex shrink-0 items-center gap-1 text-xs text-ink-2 underline-offset-2 outline-none hover:text-ink hover:underline focus-visible:focus-ring"
               >
                 {ag('viewGuide')}
                 <ExternalLink size={ICON_SIZE.xs} aria-hidden />
