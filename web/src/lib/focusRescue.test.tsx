@@ -140,7 +140,8 @@ describe('救援活不过用例（#679 CI：用例全绿、vitest 记一个 Unha
   describe('全局 afterEach（src/test/setup.ts）', () => {
     it('（前一条）留下一个还在盯着的救援就结束', () => {
       mk('button', 'trigger').focus()
-      rescueFocus(() => successor)
+      // 接手者永远选不出来：下一条用例的 beforeEach 重摆 DOM 也收不掉它，只剩全局 afterEach
+      rescueFocus(() => null)
       expect(pendingFocusRescues()).toBe(1)
     })
 
