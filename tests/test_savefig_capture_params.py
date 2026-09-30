@@ -545,6 +545,25 @@ def test_buffer_saves_keeps_at_most_limit_strong_references():
     assert saves.lost() == 2
 
 
+def test_buffer_saves_collects_garbage_before_deciding_what_was_lost():
+    """matplotlib 的 Figure 有引用环，回收时机不定：`figures()` 不先 `gc.collect()` 的话，「活着的补回来、
+    死了的算丢」会随 GC 时机漂移，同一个脚本两次跑出不同的 stem。关掉自动 GC 把这件事钉成确定的。"""
+    import gc
+
+    class _Cyclic:
+        def __init__(self):
+            self.me = self  # 引用环：引用计数归零也不会立即回收
+
+    saves = figcapture.BufferSaves(limit=0)
+    gc.disable()
+    try:
+        saves.note(_Cyclic())  # 满了：只挂弱引用；随即没人引用它，但环还在
+        assert saves.figures() == []
+        assert saves.lost() == 1
+    finally:
+        gc.enable()
+
+
 def test_claimed_figures_give_back_their_slot():
     """被路径 savefig 认领了（有了 stem）的图让出名额，也不算作可能丢失（#739 Codex P2）。"""
     saves = figcapture.BufferSaves(limit=2)

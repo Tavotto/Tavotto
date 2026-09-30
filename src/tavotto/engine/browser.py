@@ -103,9 +103,9 @@ def _patched_savefig(self, fname, *args, **kwargs):
         return _REAL_SAVEFIG(self, fname, *args, **kwargs)
     stem = figcapture.savefig_stem(fname)
     if stem:
+        # 这里**不** `buffer_saves.claim`：浏览器的保留上限就是捕获上限（MAX_FIGURES），认领要让出名额
+        # 至少得先有 MAX_FIGURES 张被认领——那时捕获早已满，让不让结果都一样（反证过：删掉它没有用例会红）。
         _session_capture().setdefault(stem, self)
-        if _ACTIVE is not None:
-            _ACTIVE.buffer_saves.claim(self)  # 有了 stem：不再需要兜底，让出名额
         # 来源记账与 worker.CAPTURE_SOURCE 同语义：savefig 认领的 stem
         # **可能**有原始产物（在桌面上；这里的虚拟 FS 里永远没有）。
         _session_sources().setdefault(stem, figcapture.SOURCE_SAVEFIG)
