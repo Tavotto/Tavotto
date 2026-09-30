@@ -80,12 +80,12 @@ describe('单选面板：变换 → 内容适配 → 排列 → 源文件', () =
     expect(headings()).toEqual(['位置与尺寸', '图片', '排列', '更多', '源文件与高级'])
   })
 
-  it('进图内编辑的入口还在，是头部之下的一颗按钮，不撑满整栏', () => {
-    const btn = all('button').find((b) => b.textContent?.trim() === '编辑图内元素') as
+  it('进图内编辑的入口还在，是头部之下的一颗整行宽的按钮（2026-09-30 重设计：选中一张图时第一件事就是进去改）', () => {
+    const btn = all('button').find((b) => b.textContent?.trim() === '改图里的内容') as
       | HTMLButtonElement
       | undefined
     expect(btn).toBeDefined()
-    expect(btn!.className).not.toMatch(/\bflex-1\b|\bw-full\b/)
+    expect(btn!.className).toMatch(/\bflex-1\b/)
     // 它在第一个分组之前（头部延伸），不在任何带标题的分组里
     const firstTitled = section('位置与尺寸')
     expect(btn!.compareDocumentPosition(firstTitled) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()

@@ -7,12 +7,11 @@
     "title": "Unsaved changes"
   },
   "engineEnv": {
-    "description": "{{product}} runs your scripts in this Python environment.",
     "title": "Rendering environment"
   },
   "export": {
     "advanced": "Advanced",
-    "blockedTitle": "Blocking problems or items that can’t be verified automatically. Tick the confirmation above before exporting.",
+    "blockedTitle": "Blocking problems or items that can’t be verified. Tick the confirmation to export.",
     "blockingListLabel": "Blocking problems",
     "blockingMore_one": "{{count}} more — open the problems panel",
     "blockingGroupCount": "{{count}} items",
@@ -35,7 +34,7 @@
     "editedDuringExport": "This layout changed during export. The files hold what it looked like when you pressed Export.",
     "epsHint": "Vector · no transparency",
     "epsUnavailable": {
-      "canvas_scope": "EPS is available only for a single figure at original size. The canvas is composed by the PDF engine, which doesn’t produce PostScript.",
+      "canvas_scope": "EPS is available only for a single figure at original size.",
       "no_script": "This figure has no script to re-run. EPS can only come from the script."
     },
     "exported": "Exported: {{files}}",
@@ -60,10 +59,10 @@
       "rotation": "rotation",
       "scale": "scaling"
     },
-    "jobLost": "This export job is no longer on the server, possibly after a restart. The files may have been written; check the folder or export again.",
+    "jobLost": "This export job is no longer on the server. The files may have been written; check the folder or export again.",
     "locate": "Locate",
     "locateAria": "Locate {{subject}}: {{title}}",
-    "locatedHint": "Jumped to the problem. Press Export again to return; your settings are kept.",
+    "locatedHint": "Press Export again to return; your settings are kept.",
     "mmSize": "{{w}} × {{h}} mm",
     "openProblems": "Open problems panel",
     "operationFailed": "Couldn’t finish: {{error}}",
@@ -99,7 +98,7 @@
     "profileSync": "Sync to the new version",
     "profileUpdateAvailable": "A newer version of this spec is available.",
     "replaced": "replaced",
-    "reportTitle": "Writes a JSON report alongside the images: spec, fonts, sizes, line widths, figure size, check results and export settings, for submission records.",
+    "reportTitle": "Also writes a JSON report for your submission records.",
     "reportToggle": "Generate a style check report",
     "retry": "Try again",
     "revealFailed": "Couldn’t reveal it in the file manager. The file is at: {{path}}",
@@ -116,7 +115,7 @@
       "unknown_figure": "This figure's details can't be found, so only the canvas can be exported."
     },
     "severityCount": "{{count}} {{label}}",
-    "sizeDiskDiffers": "The file on disk is {{dw}} × {{dh}} mm (cropped to its contents when the script saved it). Exporting at the figure size, {{w}} × {{h}} mm.",
+    "sizeDiskDiffers": "The file on disk is {{dw}} × {{dh}} mm (cropped when the script saved it). Exporting at the figure size, {{w}} × {{h}} mm.",
     "sizeUnknownShort": "size unknown",
     "start": "Export",
     "targetNoFigure": "No current figure",
@@ -126,7 +125,7 @@
     "transparentNotForRaster": "This figure is exported as-is, so its own background is kept.",
     "warningsIntro": "These edits couldn’t be applied to the re-rendered figures, so the output may differ from the canvas:",
     "strictToggle": "Strict file check",
-    "strictTitle": "Reopens each finished file and checks it against the selected profile: integrity, size, embedded fonts, text layer, image resolution. A file that fails or can’t be checked is not saved. EPS is not covered.",
+    "strictTitle": "Reopens each finished file and checks it against the selected profile. A file that fails or can’t be checked is not saved. EPS is not checked.",
     "inspection": {
       "verified": "Checked",
       "unknown": "Not checked",
@@ -160,7 +159,7 @@
     "saveAs": "Save as",
     "saveTitle": "Save layout as",
     "saveToProject": "Save to project",
-    "saveToProjectHint": "This layout is only on this computer so far. Once it’s in the project, saving again updates this file in the project.",
+    "saveToProjectHint": "This layout is only on this computer. Once saved into the project, saving again updates that file.",
     "saveToProjectTitle": "Save to project",
     "saved": "Saved as a new layout: {{name}}",
     "saving": "Saving…",
@@ -198,8 +197,8 @@
   "nativeRun": {
     "approve": "Run and connect",
     "approving": "Connecting…",
-    "argCount_one": "{{count}} (its value is not passed to this window)",
-    "argCount_other": "{{count}} (values are not passed to this window)",
+    "argCount_one": "{{count}} (value not shown)",
+    "argCount_other": "{{count}} (values not shown)",
     "cancel": "Cancel",
     "descriptionQueued": "{{queued}} more queued after this one.",
     "fields": {
@@ -475,39 +474,30 @@
     "insertSymbolAria": "Insert symbol {{symbol}}",
     "items": {
       "axes": {
-        "hint": "x / y direction indicator",
         "label": "Axis directions"
       },
       "braceGroup": {
-        "hint": "Brace with a caption",
         "label": "Brace grouping"
       },
       "callout": {
-        "hint": "Leader line with text",
         "label": "Leader callout"
       },
       "crystal": {
-        "hint": "Arrow with a [001] label",
         "label": "Crystal direction arrow"
       },
       "dimension": {
-        "hint": "Double-headed arrow with end caps",
         "label": "Dimension line"
       },
       "errorbar": {
-        "hint": "I-beam with a ± value",
         "label": "Error annotation"
       },
       "magnifier": {
-        "hint": "Dashed box, leader line and enlarged box",
         "label": "Zoom inset"
       },
       "reversible": {
-        "hint": "Two opposing arrows (⇌)",
         "label": "Reversible reaction arrows"
       },
       "scalebar": {
-        "hint": "Thick line with a length label",
         "label": "Scale bar"
       }
     },
@@ -639,7 +629,7 @@
     "addToCanvas": "Add to canvas",
     "allEditable_one": "{{count}} figure ready",
     "allEditable_other": "{{count}} figures ready",
-    "allScriptsHint": "Every .py in the project is listed here, including scripts whose output can’t be determined from the code. Run one, and it’s linked by what it actually draws.",
+    "allScriptsHint": "Every .py in the project is listed. Run one to link it by what it actually draws.",
     "allScriptsTitle": "All scripts",
     "autoLink": "Connect automatically",
     "emptyHint": "Run a plotting script, or drop a PDF or PNG into the figure folder.",
@@ -663,7 +653,7 @@
     "moreAria": "More actions for {{name}}",
     "none": "—",
     "nothingNew": "Scan finished; nothing new to connect",
-    "orphanConflicts": "More than one script produces these figure names: {{stems}}. No matching file exists yet; assign them under “All scripts” below.",
+    "orphanConflicts": "More than one script produces these figure names: {{stems}}. Assign them under “All scripts” below.",
     "pickSourceAria": "Pick a source script for {{name}}",
     "pickSourcePlaceholder": "Pick a source script",
     "probeAndLink": "Test run and connect",
@@ -821,7 +811,8 @@
             "plugin_add_failed": "The plugin isn't installed yet. This run only diagnosed, so nothing changed; running the install sets it up.",
             "provision_failed": "The plugin doesn't have a matching version of the Tavotto engine yet. This run only diagnosed, so nothing changed; running the install sets it up."
           },
-          "engine_too_old": "The Tavotto engine on this machine is older than the minimum the installed plugin requires, so the plugin's bridge can't drive it. Upgrade the engine (pipx upgrade tavotto, or update the desktop app), or roll the plugin back to a version that matches.",
+          "engine_incompatible": "A Tavotto engine is installed on this machine, but the plugin's bridge can't drive it. Most likely the engine is older than the plugin, or the install is incomplete (this copy of the plugin can't tell which minimum engine version it needs). Install the engine at the same version as the plugin; the details below have commands you can copy. If pip is set up to use a mirror, the details also warn that the mirror may lag behind and show how to bypass it.",
+          "engine_too_old": "The Tavotto engine on this machine is older than the minimum the installed plugin requires, so the plugin's bridge can't drive it. Upgrade the engine (pipx upgrade tavotto, or update the desktop app), or roll the plugin back to a version that matches. If pip uses a mirror, it may not have the new version yet; the details show how to bypass it.",
           "health_failed": "Everything is installed, but the health check failed — the plugin still can't find a usable Tavotto engine. Expand the details below for what it reported.",
           "interpreter_unusable": "The plugin’s launcher command can’t run on this machine, so Codex would show no tools. On Windows, python3 is often the Microsoft Store placeholder: it appears installed but exits immediately. Installing switches to an interpreter verified to run; if none is found, install Python or set TAVOTTO_MCP_PYTHON and try again.",
           "marketplace_add_failed": "Couldn't register Tavotto as a Codex plugin marketplace. Usually there's no network access, or no permission to write Codex's config directory.",
@@ -1248,11 +1239,10 @@
     "bold": "Bold",
     "deleteBody": "It can’t be recovered. Edits already applied to the layout are unaffected.",
     "deleteTitle": "Delete style “{{name}}”?",
-    "descriptionEmpty": "Save font sizes, line widths, ticks and palettes as a named style, then apply it in bulk. Only figure edits are written; source files stay untouched.",
-    "emptyBody": "No styles saved yet. Select a rendered, editable figure to extract its font sizes, line widths, ticks and palette as a start.",
-    "emptyDraft": "Empty style. Click “Extract from the current figure” to read its font sizes, line widths, ticks and palette, then delete what you don’t want to unify and save.",
+    "emptyBody": "No styles saved yet. Select a rendered, editable figure to extract one from it.",
+    "emptyDraft": "Empty style. Click “Extract from the current figure”, then delete what you don’t want to unify.",
     "extract": "Extract from the current figure",
-    "extractNeedPanel": "Select a rendered, editable figure to extract from",
+    "extractNeedPanel": "Select a rendered, editable figure first",
     "group": {
       "axes": "Axes",
       "legend": "Legend",
@@ -1264,12 +1254,12 @@
     "legendTitle": "Legend title",
     "namePlaceholder": "Style name (e.g. “AMFE main text”)",
     "nameRequired": "Give the style a name first",
-    "needPanel": "Select a rendered, editable figure on the canvas first",
+    "needPanel": "Select a rendered, editable figure first",
     "newStyle": "New style",
     "noSavedStyles": "No styles saved yet",
     "pageSizeSuffix": " ({{w}} × {{h}} mm)",
     "paletteSwatchAria": "Palette colour {{index}}",
-    "paletteTitle": "Series palette, cycled in the order lines, scatters, and bars appear.",
+    "paletteTitle": "Series palette, cycled in order of appearance.",
     "removeColor": "Remove colour",
     "removeEntry": "Remove this item",
     "removeEntryNamed": "Remove “{{role}} · {{prop}}” from this style",
@@ -1300,8 +1290,8 @@
   "telemetry": {
     "allow": "Share anonymous usage",
     "decline": "Not now",
-    "intro": "Send anonymous usage statistics so we can see which features get used. Off by default; a local random UUID, not tied to an account.",
-    "later": "You can change this any time under Settings → Privacy, diagnostics & About.",
+    "intro": "Send anonymous usage statistics to show which features get used. Off by default; not tied to an account.",
+    "later": "You can change this any time in Settings.",
     "neverData": "Scientific data and text inside figures",
     "neverFigures": "Your figures and project files",
     "neverPaths": "Filenames and paths",
@@ -1319,7 +1309,6 @@
   "updateNotice": {
     "title": "Version {{version}} is available",
     "current": "You’re on {{version}}",
-    "intro": "Update to get this release’s new features and fixes.",
     "notesTitle": "What’s new",
     "releaseNotes": "Full release notes",
     "later": "Later",
@@ -1331,7 +1320,7 @@
     "relaunch": "Restart now",
     "relaunchLater": "Restart later",
     "upgrading": "Upgrading…",
-    "upgraded": "Upgraded to {{version}}. Restart Tavotto to use it.",
+    "upgraded": "Upgraded to {{version}}. Restart to use it.",
     "gotIt": "Got it",
     "failed": "Couldn’t update. You’re still on the current version.",
     "retry": "Try again",
@@ -1416,7 +1405,6 @@
     "pause": "Pause tutorial",
     "back": "Back",
     "skipStep": "Skip this step",
-    "start": "Start",
     "explore": "Keep exploring",
     "openOwnProject": "Open my own project",
     "resolvedContinue": "Already fixed, continue",
@@ -1459,16 +1447,12 @@
       "confirm": "Reset and start over"
     },
     "steps": {
-      "welcome": {
-        "title": "Learn Tavotto with a sample",
-        "body": "An offline tutorial copy: edit freely and restart any time; your own projects are never affected. Next, you’ll walk through the two core workflows."
-      },
       "open_fast_edit": {
-        "title": "Open a figure",
-        "body": "Double-click Fig2_correlation in the “Assets” drawer on the left to edit inside the figure.",
+        "title": "Double-click this figure",
+        "body": "Double-click Fig2_correlation in the “Assets” drawer on the left to edit inside the figure. This is a tutorial copy: edit freely, your own projects are untouched.",
         "canvas": {
-          "title": "Open a figure",
-          "body": "Double-click Fig2_correlation on the canvas to edit inside the figure. Its card in the “Assets” drawer works too."
+          "title": "Double-click this figure",
+          "body": "Double-click Fig2_correlation on the canvas to edit inside the figure. Its card in the “Assets” drawer works too. This is a tutorial copy: edit freely, your own projects are untouched."
         }
       },
       "select_text": {
@@ -1558,15 +1542,14 @@
     "title": "The script needs input",
     "question": "Question {{index}} · {{script}}",
     "outputLabel": "Script output so far",
-    "noOutput": "The script hasn’t printed anything yet.",
     "promptLabel": "The script’s prompt",
     "noPrompt": "The script is reading standard input without a prompt.",
     "answerLabel": "Your answer",
     "getpassNote": "The script reads this with getpass: it is shown in plain text here, and this answer is not remembered.",
-    "rememberNote": "Answers are remembered for this project and reused on the next run; you can review and change them on the script row.",
+    "rememberNote": "Answers are remembered for this project and reused on the next run.",
     "submit": "Submit",
     "eof": "End input",
-    "eofTip": "Tell the script there is no more input (like Ctrl-D in a terminal)",
+    "eofTip": "Tell the script there is no more input (like Ctrl-D)",
     "stop": "Stop script",
     "failed": "Couldn’t submit: {{error}}",
     "autofilled": "Used your last answer: {{answer}}",
@@ -1574,8 +1557,8 @@
     "manageAria": "Review and change the remembered input for {{script}}",
     "manageTip": "Remembered input",
     "manageTitle": "Remembered input · {{script}}",
-    "manageIntro": "The input this script read when it ran. Changing an answer reruns the script right away.",
-    "manageWhere": "Answers are stored in {{path}} inside the project folder and travel with it when you copy, sync or share the folder; project packages don’t include them.",
+    "manageIntro": "Changing an answer reruns the script right away.",
+    "manageWhere": "Answers are stored in {{path}} in the project folder and travel with it; project packages don’t include them.",
     "manageEmpty": "This script has no remembered input.",
     "managePrompt": "Question {{index}}: {{prompt}}",
     "manageNoPrompt": "Question {{index}} (reading standard input)",

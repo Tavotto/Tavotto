@@ -41,9 +41,16 @@
   **证书校验失败不是离线**：有界重试后最后一次失败的根是 `ssl.SSLCertVerificationError`（缺根 / 过期 / 主机名不符 /
   被中间设备换证书）→ `private_python_tls`，文案说「证书校验失败」而不是「检查网络」；别的 `SSLError`（协议层）仍归
   offline。每次传输失败一条 WARNING：根异常类型与信任来源按闭集明文（`logsafe.known`），消息本机原样、诊断包里哈希。
+- **来源队列：主地址 → 镜像，自动测速选源（ADR 0112，2026-09-29）**：镜像地址只从锁推导（`python.mirrors` 的
+  `base` + release + 主地址的文件名，唯一出处 `privatepython.mirror_urls`；`validate_lock` 钉住「url 是 pbs 这个 release 的发行地址」
+  这一前提），不逐目标另写。换源的三种理由：传输层失败用完 `DOWNLOAD_ATTEMPTS`（按来源计）/ HTTP 4xx·5xx / 太慢（还有下一个来源且
+  此前没有来源因慢被放弃时，收字节满 `SLOW_GRACE_S` 后按全程平均速度估的剩余时间 > `SLOW_ETA_S`）；因慢放弃的来源排队尾、不测速地
+  再试一次；只有一个来源时不测速。**镜像不是信任来源**：hash 不符不换源、不重试，镜像篡改停在 `private_python_hash_mismatch`。
+  每个来源从零下（不续传）。每次换源一条 WARNING、完成一条 INFO、供应失败一条 WARNING（code + 来源主机，主机名按 `logsafe.known`
+  对固定常量 `SOURCE_HOSTS` 判明文——不从这份来源的 url 现推，那样恒真；与锁一致由用例钉住）；账记 `downloaded_from`，进度 `private_python.source_host` 报此刻在下的主机（`downloading_from`）。
 - **联网只有一条路**：每次现建的 `urllib.request.build_opener(tlstrust.https_handler(ctx))`——代理只从
   `HTTP(S)_PROXY` / `NO_PROXY` 环境变量来、在下载那一刻读（与 `updater` / `telemetry` / pip 同一张脸；
-  三处出站 HTTPS 都经 `tlstrust`，`tests/test_outbound_https_trust.py` 按 AST 钉）、`User-Agent: Tavotto/<版本>`、
+  出站 HTTPS（私有 Python、遥测、检查更新、无 git 时的插件压缩包）都经 `tlstrust`，`tests/test_outbound_https_trust.py` 按 AST 钉）、`User-Agent: Tavotto/<版本>`、
   不带身份；**不读** pip.conf / uv 配置 / 用户配置 / 项目设置（对 `config` 只调 `data_path` / `data_dir`，AST 钉）。
   **证书按平台原生校验**（2026-09-28 起）：上下文唯一出处 `engine/tlstrust.client_context()` = `truststore.SSLContext
   (PROTOCOL_TLS_CLIENT)`（Windows CryptoAPI 建链、缺根按需补装；macOS SecTrust；Linux OpenSSL + 系统 CA——与 pip 一致）。
@@ -83,7 +90,7 @@
   换版本 = 改锁（新 sha256 → 新 id → 新目录）+ 每个目标重新取得资格，不自动追最新。
 - **错误码闭集** `privatepython.ERROR_CODES`（十一条 `private_python_*`，`private_python_tls` 2026-09-28 加、`private_python_source_changed` 2026-09-30 加），文案在 `web/src/i18n/locales/*/errors.json` 的
   `engine.repairError`（与 deprepair 同一张表；`tests/test_private_python.py` 钉两种语言都有）。
-- 看护：`tests/test_private_python.py`（锁 / 同源对 / 目标名 / 逃生门；本地供应服务 + 假归档跑真实状态机：正例、
+- 看护：`tests/test_private_python.py`（锁 / 同源对 / 目标名 / 逃生门；本地供应服务 + 假归档跑真实状态机：正例、主地址慢 / 404 / 连不上换镜像、因慢放弃的主地址在镜像失败时回头、单来源不测速、镜像篡改拒绝（`TestMirrorFallback`）、
   缓存零请求、坏缓存不复用、篡改 / 截断 / 错期望值 / 离线 / 死代理对照 / 404 / zip-slip 六种 + 成员校验逐形状 /
   起不来 / 版本不符 / 无可执行位 / 磁盘配额；并发去重、消费者取消、最后一个取消中止、提交前中止、提交后取消无效、
   退役、孤儿 staging；HOME / 环境隔离、AST 判 import 闭集；`TestRealArchive` 真 pbs 归档要

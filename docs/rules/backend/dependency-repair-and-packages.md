@@ -72,7 +72,10 @@
   保留用户已有的配置、缓存不在数据目录外新建：他的 matplotlib 目录在就沿用（里面可能有 matplotlibrc / stylelib），
   没有就 `<data_dir>/cache/mpl`；Linux / FreeBSD 上配置与缓存是两个 XDG 目录、分别判断（#723）——只有配置目录时
   改到 `<data_dir>/cache/mpl-userconfig`（符号链接指回他的 matplotlibrc / stylelib），只有缓存目录时 `cache/mpl`；
-  不改 `XDG_CACHE_HOME`（会搬走用户脚本里其它库的缓存）；worker 的
+  不改 `XDG_CACHE_HOME`（会搬走用户脚本里其它库的缓存）。Codex 插件自管运行时的 venv（`<配置目录>/mcp-runtime/venv`，
+  `runtime.PLUGIN_RUNTIME_DIRNAME`）也算 Tavotto 自己建的（#733），但它不在数据目录里：缓存根是它旁边的
+  `mcp-runtime/cache`（`runtime._owned_cache_root`；删掉 `mcp-runtime` 即卸载干净），插件 `--provision` 的 pip
+  用同一个目录（`server.provision_env()`，两侧由 `test_the_plugin_runtime_cache_dir_is_one_path_on_both_sides` 对拍）；worker 的
   三条 spawn 路径只从 `pool.worker_env()` 取。用户的环境原样继承。看护 `tests/test_probe_leaves_no_trace.py`
   （PYTHONPATH 上的 `sitecustomize` 当传感器、先证明它是活的；新增入口就在 `_PROBES` / `_OWNED_SPAWNS` 加一行）。
 - **体检的主语是 worker 的启动导入链**（#435）：`_PROBE_SRC` 执行的是 `worker.py`
@@ -181,6 +184,19 @@
   进度记录顶层 `pypi_mirror`——**只在镜像那次 pip 真起来之后**（`_run_pip(on_started=)`）才记，起之前取消 / 起不来都不记。联合准备（跑前准备弹窗那条路，原地 / 换代两种）与单包修复、包管理**同一个字段、同一层**（进度记录顶层），先记字段再写日志那句，带说明的第一个快照（`installing`）就已带着它。`custom_package_index` 仍只服务诊断（只问 index、只回真假）。看护
   `tests/test_pypi_mirror_fallback.py` + `tests/test_dependency_repair.py::test_the_managed_generation_records_the_mirror_on_its_progress`。
   包查找（`pip index versions`）不在回退范围内。
+- **慢 / 超时也换源、预算共用、结局进日志（ADR 0111 的 2026-09-29 修订；决策全文在 #744 带来的 ADR「自动测速选源」§二 / §三）**：`_run_pip_install`
+  **开始之前**问一次 pip（`user_package_source`：`pip config list` 的输出按 `pip_config_keys` 只收 `global` / `install` /
+  `:env:` 三节、键按 pip 的规范化——小写、`_` 转 `-`、去开头 `--`——比较；不按子串猜，`download.index-url` 不算），定下这次的
+  包源（闭集 `PIP_SOURCES`：pypi / user_config / unknown / tuna，进 app.log 与进度顶层 `pypi_source`，不含地址）。只有 `pypi`
+  时第一次尝试带 `_PipWatch`：pip 的 `Downloading <x> (<大小>)` 那一行出现后过了 `PIP_SLOW_GRACE_S` 且超过「大小 /
+  `PIP_SLOW_BPS`」还没下一行（这个文件的速度**一定**低于阈值）、或联网阶段连续 `PIP_STALL_S` 没有新行（装的阶段不测）、或用到
+  「总预算 − `PIP_MIRROR_RESERVE_S`」——`_run_pip` 杀掉 pip、回 `dependency_install_timeout`，`mirror_retry_warranted` 对它同样
+  放行（没自配源时）。`INSTALL_TIMEOUT_S` 是两次尝试**共用**的总预算（`_run_pip(deadline=)` 传同一个时刻），最坏 15 分钟见结论。
+  每次尝试的结局一条日志（`pip install 完成 / 失败：<code>（包源 <源>）`），换源一条 WARNING（理由闭集 `PIP_SLOW_REASONS` +
+  网络 / 超时）；四个线程入口的失败终态各一条 `<入口>失败：<code>（包源 <源>）`（`_log_repair_failure`）。
+  看护 `tests/test_pypi_slow_fallback.py`（真 pip 对两个本地简单索引：慢 / 卡住 / 连不上换镜像、用户配过源不测速不换、
+  `[download]` 节不算、两次共用预算、镜像回错字节 pip 拒绝、判据单测、四个入口的失败日志）。
+  已知缺口（不在本条范围）：索引回 5xx 时 pip 的输出只有 `from versions: none`，被分成 `dependency_not_found`、不触发回退。
 - `deprepair` 里每个 `ERROR_*` code 在两种语言里都要有文案——
   `engine.repairError.<code>` 或 `backend.<code>`，与卡片 `repairCodeMessage` 的查法
   同源（`test_every_repair_code_has_text_in_both_languages`，常量名从 AST 取、值从
@@ -276,7 +292,7 @@
   `legacy` 一代，第一次按代时登记进 `generations`。**目录名永远不撞在册的代**（`managedenv.fresh_generation`：同一份
   身份再来一次——重建两次同一份账——而那一代还 active / 旧代还有人用，就 `g<身份>-2`、`-3`……；`register_generation`
   拒绝重新登记 active 或 `ready` 的代），身份字段照记（Codex #461 P1：否则 active 目录会被当成「上次建到一半的」删掉）。
-- **四条路一个事务**（`deprepair._run_generation`）：联合准备 `prepare()`、单包修复到受管环境 `install()`（delta 一条）、
+- **四条路一个事务**（`deprepair._run_generation`）：联合准备 `prepare()`、单包修复到受管环境 `install()`（delta 一条；**新建第一代（没有 active 代）时是脚本开跑所需的全部第三方依赖**：`create_plan` 复用联合求解存进 `RepairPlan.widened`，ADR 0061 §五 2026-09-30 修订，看护 `test_single_package_repair_on_a_fresh_generation_installs_everything_the_script_needs`）、
   重建 `rebuild_managed()`（delta 为空 = 按账重建）、包管理里环境还不在时的首装。没有第二套建 / 装 / 验代码；包管理对
   **已有** active 那一代的原地 install / update / uninstall 不变。
 - **锁仍是 `envlease` 那一张表**：换代拿合成 key `tavotto_managed:<项目指纹>` + active 那一代的解释器，

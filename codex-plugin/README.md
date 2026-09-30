@@ -114,7 +114,8 @@ python3 <插件目录>/mcp/server.py --provision
 装与插件同版本的 `tavotto[worker]`（钉版本可复现；`[worker]` 带上
 matplotlib/numpy 渲染栈——pip 形态的引擎发现不了桌面 App 里的内置
 runtime，自管环境必须自己能渲染）。**不碰**系统 Python、Conda、
-用户 site-packages 或 shell 配置；删掉 `mcp-runtime` 目录即卸载。离线环境
+用户 site-packages 或 shell 配置；它的 pip / matplotlib 缓存也在这个目录里
+（`mcp-runtime/cache`），删掉 `mcp-runtime` 目录即卸载。离线环境
 用 `--from /path/to/tavotto-x.y.z-py3-none-any.whl`（或源码目录）。
 装完**新开一个 Codex 会话**。
 
@@ -133,7 +134,9 @@ python3 <插件目录>/mcp/server.py --health
 
 一行 JSON 说清：引擎找没找到（以及 resolver 每一步的结论与耗时）、画布产物
 在不在、桌面版装没装。它能区分开在 `codex plugin list` 里长得一模一样的
-几种状态：插件装了但没引擎（`desktop_only` / `tavotto_missing`）、显式指的
+几种状态：插件装了但没引擎（`desktop_only` / `tavotto_missing`）、引擎装了但版本
+对不上（`engine_too_old` / `engine_incompatible`，带版本号与升级命令；pip 配了镜像时提示镜像
+可能滞后并给出 `--index-url https://pypi.org/simple` 的写法）、显式指的
 解释器用不了（`engine_unavailable`）、一切就绪但**当前会话还没重载工具**
 （health 是绿的，那就新开会话）。
 

@@ -60,7 +60,8 @@ export const RIGHT_MIN = 320
 export const RIGHT_MAX = 480
 export const RIGHT_DEFAULT = 360
 /** 常驻图标轨道宽度 */
-export const RAIL_W = 44
+// 64（2026-09-30 重设计）：轨钮下面写短名，44 放不下两个汉字 + 两侧留白
+export const RAIL_W = 64
 
 /**
  * 工作区断点。画布是主角，窄下来时先让侧栏让路，而不是压缩画布：

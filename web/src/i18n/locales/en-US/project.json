@@ -31,8 +31,6 @@
   },
   "figurePicker": {
     "addToCanvas": "Add to canvas",
-    "description_one": "The script produced {{count}} figure — pick the one to open",
-    "description_other": "The script produced {{count}} figures — pick the one to open",
     "empty": "No figures are registered for this script yet. Run it from the Scripts section of the asset library to capture them.",
     "listAria": "Figures produced by this script",
     "needsRun": "Run it first",
@@ -101,21 +99,10 @@
     "menuOpen": "Open",
     "more": "More",
     "newcomer": {
-      "bundled": "A sample script ships with the app. Click to try the whole flow.",
       "import": "Import my script",
-      "lead": "Import your plotting script, let the figures it makes be found automatically, and arrange them on a layout canvas into a finished paper figure.",
-      "step1Body": "Choose a .py file with your plotting code. {{product}} reads and analyzes it.",
-      "step1Title": "Import a Python script",
-      "step2Body": "{{product}} finds the figures your script makes — no hunting for files.",
-      "step2Title": "Figures are found for you",
-      "step3Body": "Arrange freely on a visual canvas: resize, align, restyle and export quickly.",
-      "step3Title": "Lay them out on the canvas",
-      "stepsLabel": "Three steps to start",
-      "tipBody": "Drag to arrange, snap to alignment guides, resize quickly — tidy and export your figures in one place.",
-      "tipTitle": "Once you’re in the editor, it’s simple",
-      "title": "Lay out paper figures straight from your Python scripts",
+      "title": "Where is your plotting script?",
       "tryResume": "Resume the sample tutorial",
-      "tryStart": "Try it with a sample"
+      "tryStart": "Learn with a sample (guided)"
     },
     "openedAgo": "Opened {{when}}",
     "otherWays": "New project or open by path",
@@ -135,7 +122,7 @@
   "switcher": {
     "home": "Back to projects",
     "newTabLabel": "Open in a new tab",
-    "newTabTip": "Open in a new tab. Switch to another project there.",
+    "newTabTip": "Open in a new tab",
     "trigger": "Current project {{name}} — click to switch"
   },
   "workspace": {

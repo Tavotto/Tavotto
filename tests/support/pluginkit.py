@@ -57,8 +57,13 @@ def synthetic_staging(
     widget_salt: str = "",
     fingerprint: str = "feedfacecafebeef",
     audit: dict | None = None,
+    overrides: dict[str, bytes] | None = None,
 ) -> dict:
-    """在 `dest` 摆一份形状真实的插件目录并写清单；返回清单。"""
+    """在 `dest` 摆一份形状真实的插件目录并写清单；返回清单。
+
+    `overrides`：写清单**之前**替换掉的文件（插件内相对路径 → 内容），例如把 `mcp/server.py`
+    换成一个秒回体检 JSON 的假 server——清单照替换后的内容写，这份插件仍是自洽的发行件。
+    """
     stage = load_script("plugin_stage")
     dest.mkdir(parents=True, exist_ok=True)
     modes: dict[str, str] = {}
@@ -76,6 +81,11 @@ def synthetic_staging(
     modes["mcp/widget/canvas.html"] = "100644"
     (dest / "LICENSE").write_bytes((ROOT / "LICENSE").read_bytes())
     modes["LICENSE"] = "100644"
+    for rel, data in (overrides or {}).items():
+        out = dest / rel
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(data)
+        modes.setdefault(rel, "100644")
     if version is not None:
         pj = dest / ".codex-plugin" / "plugin.json"
         import json
@@ -95,6 +105,26 @@ def synthetic_staging(
     )
 
 
+#: 夹具里的 git 同样不许留后台维护进程（#604）：clone / push / fetch / commit 返回后分离出的
+#: `maintenance run --auto` / `gc --auto` 还在往 tmp 仓库里写，与随后的删除赛跑。
+#: 与 `scripts/plugin_publish.py::GIT_CONFIG` 的维护项严格同源（`docs/rules/repo/same-origin-pairs.md`；
+#: `test_plugin_publish.py::test_fixture_git_mirrors_the_publisher_maintenance_settings` 对拍）。
+#: 只放这两项：夹具的 autocrlf 由各用例用 `-c` 自己决定，不在这里钉死。
+NO_AUTO_MAINTENANCE: tuple[tuple[str, str], ...] = (
+    ("maintenance.auto", "false"),
+    ("gc.auto", "0"),
+)
+
+
+def no_auto_maintenance_env() -> dict[str, str]:
+    """`NO_AUTO_MAINTENANCE` 摊成 `GIT_CONFIG_COUNT/KEY_n/VALUE_n`；夹具外直接起 git 的用例也用它。"""
+    env = {"GIT_CONFIG_COUNT": str(len(NO_AUTO_MAINTENANCE))}
+    for i, (key, value) in enumerate(NO_AUTO_MAINTENANCE):
+        env[f"GIT_CONFIG_KEY_{i}"] = key
+        env[f"GIT_CONFIG_VALUE_{i}"] = value
+    return env
+
+
 def git(*args: str, cwd: Path | None = None, env: dict | None = None) -> str:
     base_env = {
         **os.environ,
@@ -103,6 +133,7 @@ def git(*args: str, cwd: Path | None = None, env: dict | None = None) -> str:
         "GIT_COMMITTER_NAME": "t",
         "GIT_COMMITTER_EMAIL": "t@example.invalid",
         "GIT_TERMINAL_PROMPT": "0",
+        **no_auto_maintenance_env(),
     }
     if env:
         base_env.update(env)

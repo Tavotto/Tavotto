@@ -88,10 +88,15 @@
         {
           "spec": "dependency-one-click.spec.ts",
           "title": "一键修复：缺包的脚本行只有一句话 + 一个主按钮，点一次、进度一行（第几步 / 下载 MB），装好后自动重跑出图"
+        },
+        {
+          "spec": "dependency-one-click.spec.ts",
+          "title": "一键修复：开跑前要准备依赖的脚本行同样只有一句话 + 一个主按钮，点一次走联合准备，装好后自动重跑出图"
         }
       ],
       "desktop_manual": [
-        "在一台没有装 Python 的 macOS / Windows 上打开一个 import 了 openpyxl 的脚本项目，脚本行点「运行并发现图」：卡片只有一句「这个脚本还缺 openpyxl，点一下自动装好。」和「一键修复」按钮（下载大小、路径输入框都在折叠的「详情」里）；点一次，进度只有一行（下载时显示「12 / 25 MB」，之后是「（3/4）」这样的第几步），装好后那一行自动重跑出图"
+        "在一台没有装 Python 的 macOS / Windows 上打开一个 import 了 openpyxl 的脚本项目，脚本行点「运行并发现图」：卡片只有一句「这个脚本还缺 openpyxl，点一下自动装好。」和「一键修复」按钮（下载大小、路径输入框都在折叠的「详情」里）；点一次，进度只有一行（下载时显示「12 / 25 MB」，之后是「（3/4）」这样的第几步），装好后那一行自动重跑出图",
+        "在一台没有装 Python 的 macOS / Windows 上打开一个同时 import pandas 与 openpyxl 的脚本项目（内置 runtime 有 pandas、没有 openpyxl），脚本行点「运行并发现图」：点一次「一键修复」后，自动重跑不会再停在「脚本开跑就需要的包渲染环境里没有」；脚本行始终只有一句话 + 一个主按钮，没有「可能需要原环境」"
       ]
     },
     {
@@ -310,6 +315,30 @@
       ]
     },
     {
+      "id": "figure.shared-colorbar-group",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "共享色条的几个子图成组：元素树里选中组，整组平移 / 缩放",
+        "en-US": "Subplots sharing a colorbar form a group: select it in the element tree to move / scale them together"
+      },
+      "entry": "图内编辑 → 左栏「图内元素」→ 共享色条组",
+      "e2e": [
+        {
+          "spec": "shared-colorbar-group.spec.ts",
+          "title": "共享色条成组：树、整组平移、撤销重做、钻进成员、单拖不带色条、重开还在"
+        },
+        {
+          "spec": "shared-colorbar-group.spec.ts",
+          "title": "选中组后从成员子图里的标题起手拖 = 整组平移（不是只挪标题）"
+        },
+        {
+          "spec": "shared-colorbar-group.spec.ts",
+          "title": "选区 = 组 + 组外的子图一起选中：从组外子图里的东西起手拖，只挪那样东西，组不跟着走（Codex #691 P2）"
+        }
+      ]
+    },
+    {
       "id": "figure.patch-drag-carries",
       "status": "active",
       "platform": "both",
@@ -462,6 +491,10 @@
         {
           "spec": "asset-library.spec.ts",
           "title": "完整链：保存 → 关闭 → 重开 → 重放 → 预检 → 导出 PDF/PNG"
+        },
+        {
+          "spec": "layout-session.spec.ts",
+          "title": "新开一个空存储的浏览器 context：恢复上次的排版"
         }
       ],
       "desktop_manual": [

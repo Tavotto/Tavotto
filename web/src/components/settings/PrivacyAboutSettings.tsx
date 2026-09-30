@@ -64,7 +64,7 @@ function ProductBlock({ version }: { version?: string }) {
             // 正文句子里的链接必须**不靠颜色**也能认出来（axe
             // link-in-text-block，serious）——只在悬停时下划线等于对色觉障碍
             // 与灰度打印一律无效。这一页此前从没被 axe 跑过，所以一直没人看见
-            className="text-accent underline underline-offset-2"
+            className="text-ink-2 underline underline-offset-2 hover:text-ink"
           >
             {st('about.source')}
           </a>
@@ -143,7 +143,7 @@ function PrivacyBlock() {
         href={PRIVACY_DOC_URL}
         target="_blank"
         rel="noreferrer"
-        className="self-start text-xs text-accent underline underline-offset-2"
+        className="self-start text-xs text-ink-2 underline underline-offset-2 hover:text-ink"
       >
         {st('about.telemetry.policy')}
       </a>

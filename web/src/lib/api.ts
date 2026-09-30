@@ -780,6 +780,65 @@ export const deleteAutosave = (docId: string) =>
     method: 'DELETE',
   })
 
+/* --------------------- 会话状态以后端为准（#715 PR-B） --------------------- */
+/**
+ * 「这个项目上次开着哪份排版」存在数据目录（后端 `engine/layoutsession.py`），不再只存
+ * localStorage：桌面版换了端口 = 换了 origin = 一份空的 localStorage。项目按 pj 认，
+ * 没开项目是单独一组。
+ */
+export interface LayoutSessionLast {
+  doc_id: string
+  name: string
+  at: number
+}
+
+/**
+ * 读后端记着的「上次开着的排版」。三种结局要分开：
+ * - `{ last }`：后端有这组端点（`last` 为 null = 这个项目还没记过）；
+ * - `undefined`：后端**没有**这组端点（404：playground、嵌入画布、旧后端）或此刻不可达——
+ *   调用方退回 localStorage 的旧逻辑。「不知道」不能折成「没记过」：后者会让调用方不再看本机缓存。
+ */
+export async function fetchLayoutSession(
+  pj?: string | null,
+): Promise<{ last: LayoutSessionLast | null } | undefined> {
+  try {
+    const body = await jsonFetch<{ last?: unknown }>('/api/layout-session', undefined, pj)
+    const last = body?.last as Partial<LayoutSessionLast> | null | undefined
+    return {
+      last:
+        last && typeof last.doc_id === 'string' && last.doc_id
+          ? { doc_id: last.doc_id, name: typeof last.name === 'string' ? last.name : '', at: Number(last.at) || 0 }
+          : null,
+    }
+  } catch {
+    return undefined
+  }
+}
+
+export const putLayoutSessionLast = (ref: { doc_id: string; name: string }, pj?: string | null) =>
+  jsonFetch<{ ok: boolean; last: LayoutSessionLast }>(
+    '/api/layout-session/last',
+    { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(ref) },
+    pj,
+  )
+
+/** 导出默认值（按用户一份，数据目录）。`undefined` = 后端没有这组端点 / 不可达。 */
+export async function fetchExportDefaultsRemote(): Promise<{ defaults: unknown } | undefined> {
+  try {
+    const body = await jsonFetch<{ defaults?: unknown }>('/api/preferences/export-defaults')
+    return { defaults: body?.defaults ?? null }
+  } catch {
+    return undefined
+  }
+}
+
+export const putExportDefaultsRemote = (value: unknown) =>
+  jsonFetch<{ ok: boolean }>('/api/preferences/export-defaults', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(value),
+  })
+
 /* --------------------------- 布局版本时间线 -------------------------------- */
 /**
  * 整份布局文档的版本历史，按 documentId 存在服务器 layouts/_versions/ 下，
@@ -1606,6 +1665,18 @@ export interface ManifestElement {
   colorbar_key?: string
   host_gid?: string
   /**
+   * 色条**声明的宿主**（`fig.colorbar(..., ax=[…])` 的 ax 列表，matplotlib 建色条时
+   * 记下的，引擎 `colorbarmodel.declared_parents`）。结构归属的证据，与颜色来源
+   * （`mappable_gid`）是两件事。`cax=` 建的色条没有声明，缺席。
+   */
+  owner_gids?: string[]
+  /**
+   * **显式结构父级**（引擎 `manifest._colorbar_structure`）：共享色条的成员子图与色条轴
+   * 指向它们的组（`Manifest.groups`），单宿主色条的色条轴指向宿主子图。元素树与面包屑
+   * 先认它、再按 gid 路径逐级回退（`roles/hierarchy.parentGid`）。缺席 = 按路径。
+   */
+  parent_gid?: string
+  /**
    * 色条**给谁上色**：那个 image / 集合元素的 gid。色条与它是同一份颜色映射
    * 状态的两个 gid（引擎 `ALIAS_GROUPS`），界面上「与图像共用色阶」这句话与
    * 「选中图像」那个入口靠的就是它。可选：脚本自己造的 ScalarMappable 没有
@@ -1669,10 +1740,37 @@ export interface ManifestElement {
   }
 }
 
+/**
+ * 真实的组：几个子图与它们共享的附件（第一阶段只有显式声明的共享色条）。
+ *
+ * 组**不是**图内元素：它不在 `elements` 里、画布上点不中、没有 override 可写。它是
+ * 可选择的结构节点——选中它 = 选中它的成员一起平移 / 缩放（`lib/elementGeom.alignEntries`
+ * 把组展开成成员）。每次渲染由引擎从脚本自己的调用参数重新推出，不进文档；组上的
+ * 布局操作落成成员各自的 position override。产生者只有 `engine/manifest._colorbar_structure`。
+ */
+export interface ManifestGroup {
+  /** `group:<色条轴 gid>`，与元素 gid 同一套稳定性 */
+  gid: string
+  kind: 'shared_colorbar'
+  /** 成员（结构子节点，也是布局一起变换的那批）：子图 + 色条轴 */
+  members: string[]
+  subplot_gids: string[]
+  /** 共享的那条色条元素 */
+  colorbar_gid: string
+  /** 色条的颜色来源（它的 mappable）。组只转述、不代替：换色图仍写在色条 / mappable 上 */
+  mappable_gid?: string
+  /** 成员框的并集（figure 分数、y 向下） */
+  bbox: [number, number, number, number]
+  /** 每个成员都能改落位 = 组能整体平移 / 缩放 */
+  resizable: boolean
+}
+
 export interface Manifest {
   stem: string
   size_mm: [number, number]
   elements: ManifestElement[]
+  /** 真实的组（见 `ManifestGroup`）。可选：没有组时不发，老引擎也不发 */
+  groups?: ManifestGroup[]
   /**
    * 这台机器上 matplotlib 认得的全部字体族（引擎 `installed_font_families()`），
    * 排好序、每一个都画得出来。**整份 manifest 只发一次**——逐条塞进每个文字
@@ -3227,6 +3325,8 @@ export interface InterpreterPin {
 /** 后端发出来的安装计划。`plan_id` 是这次授权的凭据，不可猜、有有效期。 */
 export interface DependencyRepairPlan extends DependencyRequirementInfo {
   plan_id: string
+  /** 这次授权真正要装的全部包（规范串）：新建第一代时多于用户点的那一个；老后端没有这个字段 */
+  requirements?: string[]
   target_kind: 'project_venv' | 'tavotto_managed'
   python: string
   creates_environment: boolean
@@ -3718,6 +3818,13 @@ export interface ProbeError {
    * 图还没上画布时，那是新用户走到安装的唯一入口。
    */
   dependency_repair?: DependencyRepairOffer
+  /**
+   * `dependency_preparation_required`（U04）时起会话之前那道依赖门的载荷——与渲染端点同一份投影
+   * （`probe._error_from_worker`）。素材库据此弹同一个 `DependencyPrepareDialog`，不是一句「试运行失败」。
+   */
+  dependency_preparation?: DependencyPreparationOffer
+  /** `workdir_confirmation_required`（U03）时运行目录那道门的载荷（同上，`WorkdirConfirmDialog`） */
+  confirmation?: WorkdirConfirmation
 }
 
 export interface ProbeResult {

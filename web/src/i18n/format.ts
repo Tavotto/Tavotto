@@ -14,7 +14,18 @@ import { currentLocale } from './index'
 export function listJoin(parts: string[], type: 'conjunction' | 'disjunction' = 'conjunction'): string {
   if (parts.length <= 1) return parts[0] ?? ''
   try {
-    return new Intl.ListFormat(currentLocale(), { style: 'long', type }).format(parts)
+    const pieces = new Intl.ListFormat(currentLocale(), { style: 'long', type }).formatToParts(parts)
+    // 中文的「和 / 或」两侧是英文包名 / 文件名时要留空格（「pandas 和 openpyxl」，不是「pandas和openpyxl」）：
+    // 只在连接词紧邻 ASCII 字母数字时补，汉字之间照旧不加。收在这一处，不在每条文案里手补
+    const ascii = /[A-Za-z0-9]/
+    return pieces
+      .map((piece, i) => {
+        if (piece.type !== 'literal' || !/^[和或]$/.test(piece.value)) return piece.value
+        const before = pieces[i - 1]?.value.slice(-1) ?? ''
+        const after = pieces[i + 1]?.value.charAt(0) ?? ''
+        return `${ascii.test(before) ? ' ' : ''}${piece.value}${ascii.test(after) ? ' ' : ''}`
+      })
+      .join('')
   } catch {
     return parts.join(currentLocale() === 'zh-CN' ? '、' : ', ')
   }

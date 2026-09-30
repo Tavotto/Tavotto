@@ -222,20 +222,15 @@ describe('步骤表', () => {
 })
 
 describe('完整流程：每一步都由真实动作完成', () => {
-  it('welcome 是手动步骤，引擎不会自己跳过', async () => {
-    expect(ob().currentStep).toBe('welcome')
+  it('第一步就是 open_fast_edit；图内编辑态已经在了 → 立刻被识别为完成（提前完成的动作自动识别）', async () => {
+    expect(ob().currentStep).toBe('open_fast_edit')
     enterElementEdit('p2')
     await tick()
-    expect(ob().currentStep).toBe('welcome')
-    completeStep('welcome')
-    await tick()
-    // 图内编辑态已经在了 → open_fast_edit 立刻被识别为完成（提前完成的动作自动识别）
     expect(ob().completedSteps).toContain('open_fast_edit')
     expect(ob().currentStep).toBe('select_text')
   })
 
   it('open_fast_edit：只认那张图；进别的图不算', async () => {
-    completeStep('welcome')
     enterElementEdit('p1')
     await tick()
     expect(ob().currentStep).toBe('open_fast_edit')
@@ -245,7 +240,6 @@ describe('完整流程：每一步都由真实动作完成', () => {
   })
 
   it('select_text：主选必须是文字类 role；选曲线不算、选 figure 不算', async () => {
-    completeStep('welcome')
     openFastEdit('Fig2_correlation.pdf')
     await tick()
     useUiStore.getState().setSelectedGid('axes_0.lines_0')
@@ -260,7 +254,6 @@ describe('完整流程：每一步都由真实动作完成', () => {
   })
 
   it('change_typography：要一条真实的排版 override + 一条历史；非排版属性不算；重放不算', async () => {
-    completeStep('welcome')
     openFastEdit('Fig2_correlation.pdf')
     await tick()
     useUiStore.getState().setSelectedGid('axes_0.title')
@@ -286,7 +279,6 @@ describe('完整流程：每一步都由真实动作完成', () => {
   })
 
   it('locate_problem：真实 focusObject 成功且落在教程面板上才算；失败不算', async () => {
-    completeStep('welcome')
     openFastEdit('Fig2_correlation.pdf')
     await tick()
     useUiStore.getState().setSelectedGid('axes_0.title')
@@ -334,7 +326,6 @@ describe('完整流程：每一步都由真实动作完成', () => {
   })
 
   it('export_original / add_to_layout / multi_select_align / export_canvas → done', async () => {
-    completeStep('welcome')
     openFastEdit('Fig2_correlation.pdf')
     await tick()
     useUiStore.getState().setSelectedGid('axes_0.title')
@@ -414,7 +405,6 @@ const runAction = (id: StepId) => {
 
 describe('前置状态先验：缺了就说清并给真实行动，不「等待」', () => {
   it('select_text / change_typography / locate_problem：还在画布模式时说「要在图内编辑里」，按钮打开那张图', async () => {
-    completeStep('welcome')
     // 跳过第 1 步：人还在画布模式
     expect(useWorkspaceStore.getState().mode).toBe('layout')
     for (const id of ['select_text', 'change_typography'] as const) {
@@ -444,7 +434,6 @@ describe('前置状态先验：缺了就说清并给真实行动，不「等待�
   })
 
   it('locate_problem：那张图没渲染过 → 问题面板里不会有它的问题，先打开它一次', async () => {
-    completeStep('welcome')
     useRenderStore.getState().clear()
     expect(currentContext().elements).toBeNull()
     expect(reasonOf('locate_problem')).toBe('editPanelNotRendered')
@@ -455,7 +444,6 @@ describe('前置状态先验：缺了就说清并给真实行动，不「等待�
   })
 
   it('要编辑的那张图不在文档里：说「不在这份画布里」，按钮把它打开（经素材表加进来）', async () => {
-    completeStep('welcome')
     const s = useDocumentStore.getState()
     useDocumentStore.setState({ doc: { ...s.doc, objects: s.doc.objects.filter((o) => o.id !== 'p2') } })
     expect(currentContext().edit).toBeNull()
@@ -469,7 +457,6 @@ describe('前置状态先验：缺了就说清并给真实行动，不「等待�
   })
 
   it('multi_select_align：在快速编辑里说「要回到画布」，按钮回排版；只剩一张时说「先加 Fig1_kinetics」', async () => {
-    completeStep('welcome')
     openFastEdit('Fig2_correlation.pdf')
     await tick()
     expect(reasonOf('multi_select_align')).toBe('notInLayout')
@@ -495,7 +482,6 @@ describe('前置状态先验：缺了就说清并给真实行动，不「等待�
   })
 
   it('没有元数据时不下结论（那是「等待」的合法窗口）', () => {
-    completeStep('welcome')
     useTutorialStore.setState({ meta: null })
     for (const id of ['select_text', 'change_typography', 'locate_problem', 'multi_select_align'] as const) {
       expect(pre(id).ok).toBe(true)
@@ -505,7 +491,6 @@ describe('前置状态先验：缺了就说清并给真实行动，不「等待�
 
 describe('add_to_layout 按文档里实际有几张图说话', () => {
   it('只剩一张：变体说「还缺 Fig1_kinetics」、锚点指素材、按钮把它加进来；加完回到原文案并完成', async () => {
-    completeStep('welcome')
     const s = useDocumentStore.getState()
     useDocumentStore.setState({ doc: { ...s.doc, objects: s.doc.objects.filter((o) => o.id !== 'p1') } })
     ob().goTo('add_to_layout')
@@ -529,7 +514,6 @@ describe('add_to_layout 按文档里实际有几张图说话', () => {
   })
 
   it('两张都在但在快速编辑里：锚点是快速编辑条的「添加到画布」，没有多余的按钮', async () => {
-    completeStep('welcome')
     openFastEdit('Fig2_correlation.pdf')
     await tick()
     const def = stepById('add_to_layout')
@@ -545,7 +529,6 @@ describe('四条结束路径：完成与跳过分别记账，结束页按账说�
   const outcomesNow = () => currentContext().outcomes
 
   it('全做：结束页是「完成」变体，跳过 0', async () => {
-    completeStep('welcome')
     for (const id of REAL_STEP_IDS) completeStep(id)
     expect(ob().currentStep).toBe('done')
     expect(outcomesNow()).toEqual({ done: REAL_STEP_IDS.length, skipped: 0, total: REAL_STEP_IDS.length })
@@ -556,7 +539,6 @@ describe('四条结束路径：完成与跳过分别记账，结束页按账说�
   })
 
   it('全跳：每一步都能跳、结束页说「跳过了全部」，不用完成式', async () => {
-    completeStep('welcome')
     for (let i = 0; i < REAL_STEP_IDS.length; i++) {
       expect(stepById(ob().currentStep!).manual).toBeFalsy()
       skipStep()
@@ -572,7 +554,6 @@ describe('四条结束路径：完成与跳过分别记账，结束页按账说�
   })
 
   it('部分完成后退出再进入：进度与两本账都在，继续到结束页说「完成 n 步，跳过 m 步」', async () => {
-    completeStep('welcome')
     openFastEdit('Fig2_correlation.pdf')
     await tick()
     expect(ob().completedSteps).toContain('open_fast_edit')
@@ -581,7 +562,7 @@ describe('四条结束路径：完成与跳过分别记账，结束页按账说�
     const persisted = migratePersisted(JSON.parse(JSON.stringify(ob())))
     expect(persisted.status).toBe('paused')
     expect(persisted.currentStep).toBe('select_text')
-    expect(persisted.completedSteps).toEqual(['welcome', 'open_fast_edit'])
+    expect(persisted.completedSteps).toEqual(['open_fast_edit'])
     expect(persisted.skippedSteps).toEqual([])
     ob().resume()
     expect(ob().currentStep).toBe('select_text')
@@ -594,7 +575,6 @@ describe('四条结束路径：完成与跳过分别记账，结束页按账说�
   })
 
   it('中途切走项目再回来：系统暂停 → 自动继续 → 能走到结束', async () => {
-    completeStep('welcome')
     openFastEdit('Fig2_correlation.pdf')
     await tick()
     useProjectStore.setState({ project: { open: true, id: 'p_other' } })
@@ -611,7 +591,6 @@ describe('四条结束路径：完成与跳过分别记账，结束页按账说�
   })
 
   it('返回再真的做完一步：从跳过那本账里移出', async () => {
-    completeStep('welcome')
     skipStep() // open_fast_edit
     expect(ob().skippedSteps).toEqual(['open_fast_edit'])
     ob().back()
@@ -626,7 +605,6 @@ describe('四条结束路径：完成与跳过分别记账，结束页按账说�
 
 describe('暂停与恢复', () => {
   it('切到别的项目 → 系统暂停；切回来 → 自动继续；用户暂停不会被自动继续', async () => {
-    completeStep('welcome')
     useProjectStore.setState({ project: { open: true, id: 'p_other' } })
     await tick()
     expect(ob().status).toBe('paused')
@@ -641,7 +619,6 @@ describe('暂停与恢复', () => {
   })
 
   it('换成别的文档也算离开；不在教程里发生的动作不累计信号', async () => {
-    completeStep('welcome')
     openFastEdit('Fig2_correlation.pdf')
     await tick()
     useUiStore.getState().setSelectedGid('axes_0.title')

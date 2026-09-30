@@ -64,7 +64,15 @@
   （pnpm 转发，也收绝对路径 / git 地址 / tarball）或 Web 的 Plugins 页安装；**不读** `.claude-plugin/`、
   `.codex-plugin/` 或任何 marketplace.json，也不从插件里发现 Skill。bundle 的 `dsh-mcp-client` 行没有
   「本包目录」变量（`${CLAUDE_PLUGIN_ROOT}` 只在 `hooks-claude-code` 里替换 hooks 命令），指向包内
-  `mcp/server.py` 要靠 `!!js`——本工具不生成宿主执行的代码，所以**不做 DSH bundle**，仍是 YAML patch。
+  `mcp/server.py` 要靠 `!!js`——**配置生成器**不生成宿主执行的代码，所以它仍打印 YAML patch。
+- **Bundle 形态（ADR 0104，2026-09-28）**：同一份插件目录兼作 npm 包 `tavotto-dsh`（`package.json` 的
+  `dsh.bundle.patch` → `dsh/cordis.patch.yml`），装法 `dsh plugin --profile web add
+  "git+https://github.com/Tavotto/Tavotto.git#plugin-stable&path:/codex-plugin"`。缺的「包目录」由胶水插件
+  `dsh/index.js` 按 `import.meta.url` 算出，作为服务 `tavotto` 提供——与 dsh-web-app 的 `webStartup` 同一个
+  做法，补丁里的 `!!js` 只读 `ctx.tavotto` 的字段、没有用户代码。POSIX 上经 `/bin/sh mcp/launch`
+  起，不依赖执行位；Windows 上 command 就是 `mcp/launch.cmd`，由 MCP SDK 的 cross-spawn 拼 `cmd /d /s /c`；超时由 `.mcp.json` 的 `tool_timeout_sec` 换算；技能靠第二个 `dsh-skill-filesystem`
+  提供者（`providerName: tavotto`、`includeDefaultRoots: false`）进目录；`cwd: !!js process.cwd()` 与 DSH 官方
+  MCP 指南同一写法，授权目录 = dsh 启动目录。与 YAML patch 二选一（同名 serverName 后者加载失败）。
   客户端能力：`capabilities: {}`（**不回 roots**，授权只能靠 `TAVOTTO_MCP_ROOTS`，生成器已这样做）、
   不支持 elicitation、不渲染 MCP Apps（只投影文本与图片）；未知字段静默忽略；同名 server 后者加载失败；
   结果超过约 12 500 token 落盘成预览 + 路径；server instructions 上限 32 KiB。
@@ -151,7 +159,7 @@
 | --- | --- | --- | --- |
 | 宿主 MCP 列表里 tavotto 红 / 起不来 | 服务器没启动 | 宿主日志；`<python> <包>/mcp/server.py --health` 在终端跑不跑得起来 | 重新生成配置（`--python` 指一个真能跑的解释器）；包目录挪过就重新生成 |
 | 列表里是绿的，但对话里没有工具 | 工具没发现 / 当前智能体未启用 | VS Code Configure Tools、Trae 智能体 MCP 栏、DSH 等 `mcp__tavotto__*` 出现 | 在所用智能体里启用；重开对话 |
-| 只有 `tavotto_health` 一个工具 | 引擎不可用（降级 server） | health 的 `code`：`desktop_only` / `tavotto_missing` / `engine_too_old` / `engine_unavailable` | 按 code 只修那一项（provision / pipx / 升级引擎） |
+| 只有 `tavotto_health` 一个工具 | 引擎不可用（降级 server） | health 的 `code`：`desktop_only` / `tavotto_missing` / `engine_too_old` / `engine_incompatible` / `engine_unavailable` | 按 code 只修那一项（provision / pipx / 升级引擎） |
 | 工具在，但打开图报 `path_out_of_scope` / `no_workspace_root` | 项目未授权 | health 的 `roots` / `root_authority.source` | 用正确的 `--project-root` 重新生成；不要放宽到 HOME |
 | 工具正常、没有画布 | UI 没显示 | `checks.canvas_resource.ok` 为真但宿主不渲染 MCP Apps | 这是宿主能力 / 设置；工具流程照常走完，不要把外部窗口叫「内嵌画布」 |
 | 宿主提示被管理员 / 策略禁止 | 组织策略 | 宿主的策略提示 | 找管理员；**不要**把「全部工具自动批准 / 关闭安全策略」当通用修复 |

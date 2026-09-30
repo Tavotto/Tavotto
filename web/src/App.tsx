@@ -71,6 +71,7 @@ import { onDesktopMenu, onDesktopOpen } from '@/lib/desktop'
 import { DURATION, usePresence } from '@/lib/motion'
 import { applyOpenRequest, readOpenRequestFromUrl, type OpenRequest } from '@/lib/openRequest'
 import { msg } from '@/i18n'
+import { hydrateExportDefaults } from '@/lib/exportDefaults'
 
 export function App() {
   const phase = useProjectStore((s) => s.phase)
@@ -86,6 +87,9 @@ export function App() {
     // 连 install_id 都不会生成；同意态还是 unset 时由 TelemetryConsentDialog
     // 问一次（问之前同样什么都没发）。
     void useTelemetryStore.getState().load()
+    // 导出默认值以后端为准（#715 PR-B）：换了 origin 的本机缓存是空的，先从数据目录取回来。
+    // 导出对话框 / 设置页同步读本机缓存，这一步在它们打开之前就落地了
+    void hydrateExportDefaults()
   }, [])
   useDesktopMenu()
   useHandoff()
@@ -227,9 +231,10 @@ function Workspace() {
 
   return (
     <TooltipProvider>
-      <div className="flex h-full flex-col overflow-hidden bg-bg text-ink">
+      {/* 顶栏坐在灰色桌面上（2026-09-30 重设计）：它自己的 bg-surface 在这里按桌面色覆盖——
+          不去改 TopBar 那一行，免得和在飞的 #679（给同一行加 data-topbar）撞车 */}
+      <div className="flex h-full flex-col overflow-hidden bg-bg text-ink [&>header]:bg-bg">
         <TopBar />
-        {!fastEdit && <CanvasTabs />}
         {outdated && <UpdateBanner />}
         <DocumentBanner />
         <ProjectReadinessBanner />
@@ -237,14 +242,25 @@ function Workspace() {
           <LeftRail />
           {/* 窄屏时抽屉盖在画布上（绝对定位在轨道右侧），画布宽度不被侵占 */}
           {left.mounted && <LeftPanel overlay={overlay} state={left.state} />}
-          <div className="relative flex min-w-0 flex-1 flex-col">
-            <CanvasStage />
-            <CanvasHud />
-            <NativeSessionCards />
-            <NotificationRail />
-            <PerfProbeHud />
+          {/* 工作面板（2026-09-30 重设计，参照 OpenBitFun）：灰色桌面上放导航，作品放进这一块
+              白色圆角面板——画布标签行 + 画布 + 属性栏。画布灰直接铺到面板边缘、由面板圆角裁切，
+              不留一圈白边；标签行与属性栏页签条同高 44，底边 hairline 连成一条 */}
+          <div
+            data-work-panel
+            className="relative mb-2 mr-2 flex min-w-0 flex-1 overflow-hidden rounded-panel bg-surface shadow-card"
+          >
+            <div className="relative flex min-w-0 flex-1 flex-col">
+              {!fastEdit && <CanvasTabs />}
+              <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+                <CanvasStage />
+                <CanvasHud />
+                <NativeSessionCards />
+                <NotificationRail />
+                <PerfProbeHud />
+              </div>
+            </div>
+            {right.mounted && <Inspector overlay={overlay} state={right.state} />}
           </div>
-          {right.mounted && <Inspector overlay={overlay} state={right.state} />}
           {scrim.mounted && (
             <button
               // `data-scrim` 是「左抽屉此刻是覆盖式的、盖住了它下面的东西」这件事

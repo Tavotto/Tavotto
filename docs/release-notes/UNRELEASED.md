@@ -65,3 +65,47 @@ was started in is the authorized project. If you had set Tavotto up in Claude Co
 generator, remove that `.mcp.json` entry after installing the plugin, or you will have two servers.
 The install path only works once this version has been promoted to the `plugin-stable` branch.
 
+## DeepSeek Harness bundle (Beta)
+
+<!-- 发版时（2026-09-30 用户决定）：README 在 plugin-stable 带上 `package.json` / `dsh/` 之前不给安装方式。
+搬这一段的同时把「### Using Tavotto with DeepSeek Harness (Beta)」一节加回 README（放在 Claude Code 那节之后、
+「### Using Tavotto from other AI editors and clients (experimental)」之前；命令整行由 `brand.DSH_*` 拼出），
+并把 docs/support-matrix.json 的 dsh 改回 `status: beta` + `channel: dsh-bundle`；tests/test_dsh_bundle.py、
+test_install_commands_from_brand.py 与 test_mcp_host_profiles.py 按矩阵这一档判命令该在 README 还是在这里。
+同时把指向这一节的提示加回：codex-plugin/integrations/configure.py 里 dsh 的 target 那句改回「更省事的是装 bundle
+（README「Using Tavotto with DeepSeek Harness」那条 dsh plugin 命令），就不需要这段 YAML；」
+（tests/test_readme_section_references.py 要求被引用的章节真的在）。技能也加回：
+codex-plugin/skills/tavotto-figure/references/other-hosts.md 在 Claude Code 那段之后加「**DeepSeek Harness 优先走
+bundle**」一段（上面那条规格、`web` 换成所用 profile；装完新开 DSH 会话等 `mcp__tavotto__*`；授权目录 = 启动 `dsh`
+的目录，别在 HOME 里启动），「其余宿主」那句改成「（以及不想装插件 / bundle 的 Claude Code、DSH 用户）」；SKILL.md
+第 6 条的升级提示加「DSH bundle：`dsh plugin --profile <名> update tavotto-dsh`」。原文见 PR #694。
+ADR 0104「对外口径」。README 一节的原文：
+
+### Using Tavotto with DeepSeek Harness (Beta)
+
+The same plugin is also a DeepSeek Harness bundle. Add it to the profile you use (`web` here, the one
+`dsh web` starts):
+
+```sh
+dsh plugin --profile web add "git+https://github.com/Tavotto/Tavotto.git#plugin-stable&path:/codex-plugin"
+pipx install "tavotto[worker]"
+```
+
+Start a new session (`dsh web`). The tools show up as `mcp__tavotto__*` once discovery finishes, and the
+`tavotto-figure` skill is in the skill catalog. Tavotto may only open and write inside the folder you started
+`dsh` in, so start it in your project, not in your home folder. DSH shows no embedded canvas; you work through the
+tools. To update, run `dsh plugin --profile web update tavotto-dsh`. The bundle replaces the hand-merged
+`cordis.patch.yml` from the config generator below: use one or the other, not both (two rows would claim the
+same `tavotto` server name).
+-->
+
+Tavotto now installs into DeepSeek Harness as a profile bundle:
+`dsh plugin --profile web add "git+https://github.com/Tavotto/Tavotto.git#plugin-stable&path:/codex-plugin"`.
+The MCP tools (`mcp__tavotto__*`) and the `tavotto-figure` skill come with it; no YAML to merge. The folder
+you start `dsh` in is the authorized project. If you had merged the config generator's `cordis.patch.yml`
+row for Tavotto, remove it after installing the bundle: two rows with the same `tavotto` server name make the
+second one fail to load. Like the Claude Code plugin, this works once this version is on `plugin-stable`.
+
+## Codex plugin: an old pip/pipx engine is no longer reported as "desktop app only"
+
+If the `tavotto` engine installed with pip or pipx was too old for the plugin, the plugin's health check could report `desktop_only` ("only the desktop app is installed") and suggest steps that did not fix it. This happened when the plugin could not state a minimum engine version (a plugin installed from a local marketplace or source checkout) or when the engine's CLI could not report its version. A common trigger is a pip mirror that has not synced the new release yet, so `pipx install "tavotto[worker]"` installs an older version. The health check now asks the engine's own Python environment for its version. It reports `engine_too_old` with both versions when it knows the minimum, and a new code, `engine_incompatible`, when it doesn't. Both give upgrade commands such as `pipx install --force "tavotto[worker]==<version>"`. If pip's `index-url` points to a mirror (from `PIP_INDEX_URL` or a pip config file, read only), the message says the mirror may lag and adds `--index-url https://pypi.org/simple` to each command. `tavotto codex doctor` reports the same code and text.

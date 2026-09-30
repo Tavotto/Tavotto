@@ -458,8 +458,10 @@ def test_bundled_worker_never_writes_into_the_install_dir():
 
 
 def test_only_the_bundled_runtime_gets_b_flag(tmp_path, monkeypatch):
-    """`-B` 只加给内置 runtime。用户自己的环境是他的地盘——替他关掉字节码缓存
-    会让每次冷启动都变慢，而我们没有理由那么做。"""
+    """一路 `-B` 只加给内置 runtime。用户自己的环境是他的地盘——替他关掉字节码缓存
+    会让每次冷启动都变慢，而我们没有理由那么做。别的解释器只在启动期 `-B` 并带 `-X` 标记，
+    worker 装好项目字节码守卫后放开（#736；放开之后照常缓存由
+    `test_install_dir_bytecode_free.py` 真跑看着）。"""
     py = _bundled(tmp_path, monkeypatch)
     monkeypatch.setattr(pool, "_has_matplotlib", lambda p, **kw: True)
     monkeypatch.setattr(runtime, "is_frozen", lambda: True)
@@ -480,6 +482,7 @@ def test_only_the_bundled_runtime_gets_b_flag(tmp_path, monkeypatch):
     figs.mkdir()
     pool.EngineWorker("f.py", str(figs), "main")
     assert seen[0][0] == py and seen[0][1] == "-B"
+    assert runtime.WORKER_BYTECODE_XOPTION not in seen[0], "内置 runtime 的 -B 不许被放开"
 
     seen.clear()
     pool.reset_worker_python()
@@ -488,7 +491,8 @@ def test_only_the_bundled_runtime_gets_b_flag(tmp_path, monkeypatch):
     mine.write_text("#!/bin/sh\n")
     monkeypatch.setenv("TAVOTTO_WORKER_PYTHON", str(mine))
     pool.EngineWorker("f.py", str(figs), "main")
-    assert seen[0][0] == str(mine) and "-B" not in seen[0]
+    assert seen[0][0] == str(mine)
+    assert seen[0][1:4] == ["-B", "-X", runtime.WORKER_BYTECODE_XOPTION], seen[0]
 
 
 # ---------------- bootstrap：不再劝用户装 Python -------------------------------

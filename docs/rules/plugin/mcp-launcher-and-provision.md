@@ -71,6 +71,22 @@
   `canvas_ui: {available: false, code: "widget_missing"}` 并在文字里说出口，
   `resources/read` 对缺失产物报「缺失 + 修法」而不是回空 HTML。
   看护 `tests/test_mcp_resolver.py` + `tests/test_mcp_stdio.py`。
+- **降级诊断窄的先判、宽的兜底（#285、#721）**：`found["cmd"]` 有东西时依次判
+  `engine_too_old`（清单有下限、版本低于它）→ `engine_incompatible`（CLI 背后**有**装着 tavotto
+  的解释器，桥却 import 不全，而说不出是不是太旧：插件没带 `plugin-build.json`，或版本够了却
+  装残了）→ `desktop_only`（只剩 CLI 背后没有解释器的 frozen `tavotto-cli`）。版本先问 CLI 背后
+  那个解释器的 `importlib.metadata`（`engine_behind_cli`，只读分发元数据、不 import tavotto），
+  问不出再问 `tavotto doctor --json`；「不知道」各是独立一档，不许并进相邻取值。这两格的恢复
+  是**升级引擎**（`upgrade_commands`：`pipx upgrade tavotto` / `pipx install --force
+  "tavotto[worker]==<版本>"`），不给 `--provision`。pip 的 index-url 指向镜像时
+  （`pip_index`：`PIP_INDEX_URL` + pip 配置文件，只读；说出口的地址只有协议与主机——口令、路径、查询串一律抹掉；配置文件的位置（按平台）、
+  编码（本地首选编码）与覆盖顺序照 pip 自己的 `Configuration`；Windows 商店版 Python
+  的配置被虚拟化在 `%LOCALAPPDATA%\Packages\PythonSoftwareFoundation.Python.*\LocalCache\Roaming\pip\pip.ini`，
+  那几份任一指向非 PyPI 即判镜像；启动器解释器 ≠ 装引擎的解释器时，`effective_pip_index` 再在
+  引擎背后那个解释器里跑一遍 `pip_index()`，任一侧是镜像就按镜像报）文案说镜像可能滞后、
+  每条命令带 `--index-url https://pypi.org/simple`、不给裸的 `pipx upgrade`。`--health` 带
+  `engine_version` / `min_tavotto_version` / `pip_index`；`tavotto codex doctor` 原样转述插件
+  这份话术（`codexinstall._health_step`），不写第二份。看护 `tests/test_mcp_diagnose.py`。
 - **`--provision` 建 venv 之前先验基础解释器的版本**（2026-09-20）：启动器允许在很老的
   `python3` 上跑（纯标准库），但 venv 继承它的版本——macOS 上 `python3` 常是 Xcode CLT
   的 3.9，而引擎的 `requires-python` 是 `>=3.10,<3.15`，区间外的解释器上 pip 只会说一句
@@ -81,6 +97,12 @@
   在区间外建出来的 venv 用 `venv --clear` 重建；一个都没有就以 `no_supported_python`
   失败并逐个说出版本，**不在区间外的解释器上起 pip**；`--python` 显式指定时只认那一个——
   先验它、已有的 venv 也换到它上面（已有环境在区间内不是跳过它的理由，#453 评审 P2）。
+  **自管环境的缓存在它旁边**（#733）：`--provision` 起的子进程（建 venv、pip install）带 `PIP_CACHE_DIR` →
+  `mcp-runtime/cache/pip`（`provision_env()`，只改位置、用户 pip 配置照常生效）；从这个解释器起的 worker /
+  探测由引擎 `runtime.owned_env` 认出它（`PLUGIN_RUNTIME_DIRNAME`），pip 与 matplotlib 缓存同落 `mcp-runtime/cache`。
+  不落数据目录：本文件在引擎不可用时拿不到 `config.data_dir()`，放在旁边则删 `mcp-runtime` 即卸载干净、
+  `venv --clear` 重建时缓存照样复用。看护 `tests/test_mcp_resolver.py::test_provision_keeps_the_pip_cache_beside_the_managed_runtime`
+  与 `tests/test_probe_leaves_no_trace.py` 末节。
   区间常量 `PYTHON_MIN` / `PYTHON_MAX_EXCLUSIVE` 是 `engine/projectenv.py` 的镜像
   （`test_provision_python_range_mirrors_the_engine` 对拍），改 `requires-python` 要一起改。
   **装完插件/引擎必须新开 Codex 会话**——已开的会话不重载工具，

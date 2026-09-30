@@ -230,7 +230,7 @@ test('完整链：保存 → 关闭 → 重开 → 重放 → 预检 → 导出 
   // **这一条走的是画布上的对象**（重开项目后从版上点进去），不是素材卡——
   // 那条路径 Prompt 09 一个字没改，右栏入口照旧。
   await obj.click()
-  await page.getByRole('button', { name: '编辑图内元素' }).first().click()
+  await page.getByRole('button', { name: '改图里的内容' }).first().click()
   await expect(page.locator('[data-element-svg] svg').first()).toBeVisible({ timeout: 120_000 })
   await openElementsTab(page)
   await (await expandTreeUntil(page, /^标题/)).click()
@@ -342,6 +342,77 @@ test('多 Figure：?pick= 打开选择器，选第二张加的就是第二张', 
   expect(panels).toHaveLength(1)
   expect(panels[0].fileId).toBe(`runtime:show_two.py#${stems[1]}`)
   expect(panels[0].fileId).toContain(secondStem)
+})
+
+/**
+ * 起会话之前的依赖门（Windows 真机验收，main 493a1310）：项目里只有脚本、还没有图，试运行 200 回来、
+ * `error.code == dependency_preparation_required` 带整份载荷。以前这一行掉进「可能需要原环境」，出口只有
+ * 「选择渲染环境 / 复制诊断」，新用户走不到安装。
+ *
+ * 门的那一次响应用 `page.route` 造（真后端要触发它得先让受管环境缺一个可装的包、授权后还要联网装），其余全走
+ * 真后端：行内是一句话 + 一键修复（不弹授权框，用户 2026-09-30 的决定，见 #760）；「详情」里的「不准备，直接运行」（真 `POST /api/engine/dependencies/skip`）
+ * 放行后自动重跑 → 真 worker → 发现图、运行时图卡片出现。授权准备成功后的重跑由 `ScriptLibrary.test.tsx` 与
+ * `dependency-one-click.spec.ts` 看护（SSE 在这里造不了）。
+ */
+test('试运行撞上依赖门：行内一句话 + 一键修复（不弹框、不进「可能需要原环境」）；放行后再跑出图', async ({
+  app,
+  page,
+}) => {
+  const dir = path.join(os.tmpdir(), `tavotto-e2e-depgate-${Date.now()}`)
+  writeShowOnlyProject(dir)
+  const a = await app({ figures: dir })
+  let gated = 0
+  // 请求带 `?pj=` 查询串：用正则认路径（不认 `/probe/cancel`）
+  await page.route(/\/api\/registry\/probe(\?|$)/, async (route) => {
+    if (gated > 0) return route.continue()
+    gated += 1
+    const plan = {
+      plan_version: 1, status: 'ready', target_kind: 'tavotto_managed', script: 'show_only.py', needed: [],
+      missing: [{ import_name: 'adjustText', distribution: 'adjusttext', resolution_source: 'curated', declared: false, specifiers: [], via: [] }],
+      satisfied: [], unknown: [], possible: [], requirements: ['adjusttext'], constraints: [], require_hashes: false,
+      adapter: [], blocked: [],
+      selection: { selected_groups: [], available_groups: [], unselected_groups: [], skipped_marker: [] },
+      identity: 'e2e',
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        script: 'show_only.py', entry: null, stems: [], descriptors: [], tried: [], registered: false,
+        error: {
+          code: 'dependency_preparation_required',
+          message: '脚本开跑就需要的包渲染环境里没有，要先准备依赖',
+          dependency_preparation: {
+            code: 'dependency_preparation_required', script: 'show_only.py', plan, target_kind: 'tavotto_managed',
+            targets: [{ kind: 'tavotto_managed', venv: '', python: '', modifies_user_environment: false, creates_environment: true, available: true, reason: '' }],
+            rounds_remaining: 3, skipped: false,
+          },
+        },
+      }),
+    })
+  })
+
+  await page.goto(a.baseURL)
+  await expect(page.getByRole('heading', { name: '脚本' })).toBeVisible({ timeout: 30_000 })
+  await page.getByRole('button', { name: '运行 show_only.py 并发现图' }).click()
+
+  // 行内一句话 + 一键修复（用户 2026-09-30 的决定，#760；此前 #740 是弹授权框）：不弹框、不进「可能需要原环境」
+  const card = page.locator('[data-script-preparation]')
+  await expect(card).toBeVisible()
+  await expect(page.locator('[data-dialog="dependency-prepare"]')).toHaveCount(0)
+  await expect(card.locator('[data-script-preparation-sentence]')).toHaveText('这个脚本还缺 adjusttext，点一下自动装好。')
+  await expect(card.locator('[data-script-preparation-fix]')).toHaveText('一键修复')
+  await expect(page.getByText('可能需要原环境')).toHaveCount(0)
+  await expect(page.getByRole('list', { name: '需要修复' })).toContainText('show_only.py')
+
+  // 「详情」里「其他方式（备选）」的「不准备，直接运行」：真 `POST /api/engine/dependencies/skip`，然后这一行自动再试运行
+  // （真 worker）→ 发现图（授权准备成功后的重跑由 `ScriptLibrary.test.tsx` 与 `dependency-one-click.spec.ts` 看护：SSE 在这里造不了）
+  await card.locator('details > summary').click()
+  await card.locator('[data-script-preparation-skip]').click()
+  await expect(page.getByText('已发现 1 张图')).toBeVisible({ timeout: 120_000 })
+  await expect(page.locator('[data-card="runtime:show_only.py#show_only"]')).toBeVisible({ timeout: 30_000 })
+  await expect(page.locator('[data-script-preparation]')).toHaveCount(0)
+  expect(gated).toBe(1)
 })
 
 test('窄视口：脚本行的「运行并发现图」仍可见可点', async ({ app, page }) => {

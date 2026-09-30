@@ -386,7 +386,7 @@ function MultiArrangeExtras() {
       {/* 成组 / 取消成组都是即时命令：点完不留选中态 */}
       <ArrangeRow label={ar('group')}>
         <div className="flex gap-0.5">
-          <IconButton label={ar('group')} tip={ar('groupTip')} onClick={groupSelected}>
+          <IconButton label={ar('group')} onClick={groupSelected}>
             <Group size={ICON_SIZE.md} />
           </IconButton>
           <IconButton label={ar('ungroup')} tip={ar('ungroupTip')} disabled={!grouped} onClick={ungroupSelected}>

@@ -7,6 +7,7 @@ import {
   ChartScatter,
   Fullscreen,
   GitCommitVertical,
+  Group,
   Image,
   LayoutList,
   Minus,
@@ -33,6 +34,8 @@ import {
  */
 export const ROLE_ICONS: Record<string, IconComponent> = {
   figure: Fullscreen,
+  // 共享附件的几个子图（与画布对象的「成组」同一个语义、同一个图标）
+  group: Group,
   axes: Square,
   axes3d: Box,
   text: Type,

@@ -18,6 +18,16 @@
 - 安装命令两条分开写（不用 `&&`）；GitHub 源只需 `--sparse .agents/plugins`：市场清单
   的插件来源是 `git-subdir → plugin-stable`（ADR 0043），插件本体来自发行分支，不从源码
   checkout 里取。唯一出处 `brand.CODEX_SPARSE_PATHS`，README / 恢复文档由它派生。
+- **没有 git 的机器（只装了 Codex 桌面版的 Windows，#722）**：README 主路那条
+  `marketplace add` 起不来 git。`tavotto codex install` 找桌面版自带的 CLI（`%LOCALAPPDATA%\OpenAI\
+  Codex\bin\<哈希>\codex.exe`），**只在** Codex 回 `failed to run git …` 时改从发行分支的 GitHub
+  压缩包装：随包清单逐文件核对 + 收据 content_digest 与同一 release 附带的 `codex-plugin-build.json`
+  一致，才登记成本地市场（目录在 `config.data_dir()`，不碰 `~/.codex`）；git 跑了但失败不改道。
+  压缩包地址、顶层目录名、附件名唯一出处 `brand.CODEX_PLUGIN_STABLE_ARCHIVE_*` /
+  `CODEX_PLUGIN_BUILD_ASSET`，收据名 `pluginmanifest.RELEASE_RECEIPT` 与发布器对拍。本地市场没有
+  `marketplace upgrade`，升级是 `tavotto codex upgrade`。看护 `tests/test_codex_install_cli.py`
+  （#722 那一节）。**不改发行分支本身**：分支根上那份 `local ./codex-plugin` 市场清单正是这条路
+  能成立的前提。
 - SKILL.md 收敛为「触发条件 + 会话入口状态机 + 核心图文件契约 + MCP 工具
   顺序 + 完成判据」，细节按需读 `skills/tavotto-figure/references/`：
   first-run-and-recovery（安装/provision/错误码/新会话）、figure-contract

@@ -7,7 +7,15 @@ import { useDecodedSvg } from '@/lib/useDecodedSvg'
 import { useHtmlMarkup } from '@/lib/useHtmlMarkup'
 import { useRetryingSrc } from '@/lib/imgRetry'
 import { engineTransport } from '@/lib/engineTransport'
-import { alignEntries, geomGid, segIntersectsRect } from '@/lib/elementGeom'
+import {
+  alignEntries,
+  blockedGroupsIn,
+  claimedBySelectedGroups,
+  entryUnder,
+  geomGid,
+  segIntersectsRect,
+  selectionHasGroup,
+} from '@/lib/elementGeom'
 import { DURATION, prefersReducedMotion, usePresence } from '@/lib/motion'
 import { geomHitsRect } from '@/lib/pathGeom'
 import { pickBucket } from '@/lib/units'
@@ -60,6 +68,7 @@ import {
   guardStale,
   isElementHidden,
   pickElement,
+  explainBlockedGroupDrag,
   startElementGroupMove,
   startInFigureDrag,
   trackPointer,
@@ -717,11 +726,41 @@ function ElementHitLayer({
       startBandSelect(e)
       return
     }
-    // 拖多选里的任一成员 = 整组平移，且不改动选择（与画布层多选拖动一致）
-    if (hit && manifest && ui.selectedGids.length > 1) {
+    // 拖多选里的任一成员 = 整组平移，且不改动选择（与画布层多选拖动一致）。
+    // 选中的是一个**组**（从元素树选的）时同理：拖它的任一成员 = 整组走；
+    // 只点不拖 = 钻进去选中那个成员——选中子图不会误触发组操作，反过来也一样。
+    // 组的「任一成员」含成员子图里的东西（线、标题、图例…，`entryUnder` 沿真实父级找）；
+    // 普通多选仍只认点到的正是选中的那一个
+    const groupSelected = selectionHasGroup(manifest, ui.selectedGids)
+    // 选中的组不能整体变换（`groupTransformBlocked`：锁定 / 落位不归 Tavotto 管 / 成员不全）
+    // 而按在组里：点一下照常钻进去，拖起来按原因说一句——不落到下面的单选分派、把能动的
+    // 那个成员单独拖走
+    const blocked = groupSelected ? blockedGroupsIn(obj, manifest, ui.selectedGids) : []
+    const blockedHit =
+      hit && manifest
+        ? blocked.find((b) => entryUnder(manifest, b.group.members, hit) !== null)
+        : undefined
+    if (hit && blockedHit) {
+      explainBlockedGroupDrag(e, blockedHit.reason, () => useUiStore.getState().setSelectedGid(hit.gid))
+      return
+    }
+    if (hit && manifest && (ui.selectedGids.length > 1 || groupSelected)) {
       const entries = alignEntries(obj, manifest, ui.selectedGids)
-      if (entries.length > 1 && entries.some((en) => en.key === geomGid(hit))) {
-        startElementGroupMove(e, obj, entries, layout)
+      // 祖先链匹配只对选中组展开出来的成员生效（`claimedBySelectedGroups`：成员本身，或几何落在
+      // 成员上的色条 / 位图）——entries 里同时混着散选的条目（组 + 一张无关子图一起选中时），
+      // 那些散选条目只认精确命中，否则点无关子图里的一条线也会被当成它的后代（Codex #691）。
+      const claimed = claimedBySelectedGroups(manifest, ui.selectedGids)
+      const groupMemberKeys = entries.filter((en) => claimed(en.key)).map((en) => en.key)
+      const looseKeys = new Set(entries.filter((en) => !claimed(en.key)).map((en) => en.key))
+      const inSelection = entryUnder(manifest, groupMemberKeys, hit) !== null || looseKeys.has(geomGid(hit))
+      if (entries.length > 1 && inSelection) {
+        startElementGroupMove(
+          e,
+          obj,
+          entries,
+          layout,
+          groupSelected ? () => useUiStore.getState().setSelectedGid(hit.gid) : undefined,
+        )
         return
       }
     }

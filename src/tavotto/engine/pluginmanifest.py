@@ -37,6 +37,9 @@ SCHEMA = 1
 BUILD_MANIFEST = "plugin-build.json"
 #: zip 顶层目录 / 发行分支里插件所在目录——与旧 `codex-plugin-<版本>.zip` 的形状一致
 PLUGIN_SUBDIR = "codex-plugin"
+#: 发行分支根上的收据（写的一侧是 `scripts/plugin_publish.RECEIPT`，tests/test_codex_install_cli.py
+#: 对拍）。`tavotto codex install` 在没有 git 时从分支压缩包装插件，读它来认「这是哪次发行」。
+RELEASE_RECEIPT = "plugin-release.json"
 #: 插件里**由构建产生**的文件：不从 `git ls-files` 取，只认显式交进来的那份
 GENERATED = ("mcp/widget/canvas.html",)
 CANVAS = GENERATED[0]
@@ -66,6 +69,10 @@ STAGE_REQUIRED = REQUIRED + (
     "integrations/configure.py",
     # Claude Code 插件清单：同一份包经 `.claude-plugin/marketplace.json` 装进 Claude Code（ADR 0103）
     ".claude-plugin/plugin.json",
+    # DeepSeek Harness bundle：同一份目录兼作 npm 包（ADR 0104）
+    "package.json",
+    "dsh/index.js",
+    "dsh/cordis.patch.yml",
 )
 #: 已装副本里允许被 `tavotto codex install` 改动 command 的两份清单（严格同源对）
 PINNABLE_MCP = ".mcp.json"
@@ -399,6 +406,7 @@ def verify_dir(
     expect_content_digest: str | None = None,
     installed: bool = False,
     legacy: bool = False,
+    command_policy: bool = True,
 ) -> list[str]:
     """逐条核对一份插件目录。回问题清单（空 = 通过）。
 
@@ -408,6 +416,10 @@ def verify_dir(
       绝对路径（规范形与清单一致），其余文件仍然逐字节核对。
     * `legacy=True`：没有清单的旧发行件（bootstrap 用）——只验 REQUIRED（不含清单与
       LICENSE）、画布合格、command 裸名字。
+    * `command_policy=False`：只验「与发行时逐字节一致」，不验「发行件的 command 该长什么样」。
+      后者是**发布那一刻**的规矩，由发布器按当时的版本执行；`tavotto codex install` 从发行分支
+      压缩包装插件时（#722）要装的是已经发出去的那一份——新引擎的形态规矩（例如 #266 把
+      `./mcp/launch.cmd` 换成 `./mcp/launch`）不该把一份完好的旧发行件判成坏的。
     """
     problems: list[str] = []
     if not plugin_dir.is_dir():
@@ -440,6 +452,8 @@ def verify_dir(
                 problems.append(f"{path} 解析不了：{exc}")
                 continue
             seen_commands[path] = commands
+            if not command_policy:
+                continue
             if not installed:
                 for cmd in commands:
                     if _is_path_like(cmd) and not _is_bundled_launcher(
@@ -453,7 +467,7 @@ def verify_dir(
                 for cmd in commands:
                     # `./` 开头的相对 command 按**插件根**解析（Codex 起 server 的 cwd），不按本进程
                     # 的 cwd——否则已发行的 0.17.0（command 是 `./mcp/launch.cmd`）装在任何机器上
-                    # 都会被判成「指向不存在的解释器」（#722 在真 codex 0.157 上撞到，挪自 #725）。
+                    # 都会被判成「指向不存在的解释器」（#722 在真 codex 0.157 上撞到）。
                     target = plugin_dir / cmd[2:] if cmd.startswith("./") else Path(cmd)
                     if (
                         _is_path_like(cmd)

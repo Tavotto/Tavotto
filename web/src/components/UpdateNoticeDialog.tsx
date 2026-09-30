@@ -97,7 +97,9 @@ export function UpdateNoticeDialog() {
   } else {
     // 还没动手（含失败后再来一次）：说明 + 出口
     const failed = kind === 'desktop' ? store.desktopError : store.applyFailed ? store.applyLog : null
-    body = (
+    const hasBody =
+      !!notice.notes || kind === 'manual' || !!notice.notesUrl || (failed !== null && failed !== undefined)
+    body = !hasBody ? null : (
       <div className="flex flex-col gap-2.5">
         {notice.notes ? (
           <section>
@@ -108,9 +110,7 @@ export function UpdateNoticeDialog() {
               {notice.notes}
             </pre>
           </section>
-        ) : (
-          <p className="text-xs leading-relaxed text-ink-2">{tt('intro')}</p>
-        )}
+        ) : null}
         {kind === 'manual' && (
           <p className="text-xs leading-relaxed text-ink-2">
             {tt('sourceBody')}{' '}
@@ -122,7 +122,7 @@ export function UpdateNoticeDialog() {
             href={notice.notesUrl}
             target="_blank"
             rel="noreferrer"
-            className="self-start text-xs text-accent hover:underline"
+            className="self-start text-xs text-ink-2 underline-offset-2 hover:text-ink hover:underline"
           >
             {tt('releaseNotes')}
           </a>

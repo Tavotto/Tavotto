@@ -49,10 +49,15 @@ export function LeftPanel({
       className={cn(
         // overflow-hidden 是动效的一部分：停靠态动的是外层 width，内容包在下面
         // 那层定宽 div 里，所以展开收起时抽屉自己的子树一次都不重排
-        'relative shrink-0 overflow-hidden bg-surface',
-        // 停靠时与画布之间一根 hairline；覆盖式只留浮层投影——投影自带 1px 环，
-        // 再画一条实边就是双描边（宪法第一节「浮层不再画实色 border」；左栏审计 L20）
-        overlay ? 'absolute inset-y-0 z-30 shadow-pop' : 'border-r border-border',
+        'relative shrink-0 overflow-hidden',
+        // 停靠时抽屉就坐在灰色桌面上（2026-09-30 重设计）：与右边的白色工作面板之间靠明度差分开，
+        // 不画线。覆盖式是浮层：白底 + 浮层投影——投影自带 1px 环，再画一条实边就是双描边
+        // （宪法第一节「浮层不再画实色 border」；左栏审计 L20）
+        // 可编辑框在桌面上换成白底（field 比桌面还浅，放在灰上就看不出是个框）：只改这一棵子树里的
+        // 两个 token，fieldBox 原语不动
+        overlay
+          ? 'absolute inset-y-0 z-30 bg-surface shadow-pop'
+          : 'bg-bg [--color-field-hover:var(--color-surface-2)] [--color-field:var(--color-surface)]',
         motion.className,
       )}
     >
@@ -78,7 +83,6 @@ export function LeftPanel({
           <IconButton
             side="bottom"
             label={pinned ? t('drawer.unpin') : t('drawer.pin')}
-            tip={pinned ? t('drawer.unpinHint') : t('drawer.pinHint')}
             active={pinned}
             aria-pressed={pinned}
             className="-mr-1.5"

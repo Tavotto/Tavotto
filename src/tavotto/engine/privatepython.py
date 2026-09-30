@@ -134,8 +134,24 @@ STAGE_COMMITTED = "committed"
 
 NETWORK_TIMEOUT_S = 30
 #: 传输层失败的有界重试（hash 不符**绝不**重试：对不上的文件是拒绝的对象，不是再下一次的对象）。
+#: 按**来源**计：主地址用完这几次才换镜像。
 DOWNLOAD_ATTEMPTS = 2
 CHUNK = 1 << 20
+#: 下载时一次读多少（`read1`：有多少回多少，最多这么多）。小于 CHUNK：20 KB/s 的线路上 1 MiB 一读要等
+#: 50 s，测速判据就要等那么久才轮得到一次。
+READ_BYTES = 64 * 1024
+
+#: 「太慢，换镜像」（2026-09-29 用户裁决「自动测速选源」；ADR 0063 修订）：还有下一个来源、且此前没有
+#: 哪个来源因为慢被放弃过时，开始收字节后至少量 `SLOW_GRACE_S` 秒，此后任一时刻按**全程平均速度**估的
+#: 剩余时间超过 `SLOW_ETA_S` 就放弃这个来源、换下一个。取值的理由（与实测对着看）：
+#:   * 阿里云华东 Windows Server 2025 实测 GitHub 20–40 KB/s——47 MB 估剩余约 20 分钟，20 s 内判出；
+#:     npmmirror 同一个文件 11 MB/s，几秒下完。旧行为是硬等 21 分钟。
+#:   * 3 分钟 = Windows 归档（47 MB）要 ≥ 约 260 KB/s、Linux x86_64（118 MB）要 ≥ 约 660 KB/s 才不换——
+#:     正常宽带远高于此，不会被误换；误换的代价只是丢掉 ≤ 20 s 的字节、从镜像重下同一份（hash 照验）。
+#:   * 平均而不是瞬时速度：TCP 慢启动与偶发抖动不该触发切换；20 s 的量程让平均值站得住。
+#: 放弃的来源不删：后面的来源都失败时它会被**不再测速**地再试一次（慢总比没有好）。
+SLOW_GRACE_S = 20.0
+SLOW_ETA_S = 180.0
 PROBE_TIMEOUT_S = 60
 #: 等别的消费者把同一份下载完的上限；超过按离线处置（不是永远等）。
 WAIT_TIMEOUT_S = 1800
@@ -146,6 +162,15 @@ DISK_MARGIN_BYTES = 64 * 1024 * 1024
 STALE_STAGING_S = 3600
 
 _lock = threading.RLock()
+
+
+class _TooSlow(Exception):
+    """这个来源太慢（`SLOW_ETA_S`）：换下一个。不出本模块。"""
+
+    def __init__(self, rate_bps: float, eta_s: float):
+        super().__init__(f"{rate_bps:.0f} B/s, ETA {eta_s:.0f} s")
+        self.rate_bps = rate_bps
+        self.eta_s = eta_s
 
 
 class ProvisionError(RuntimeError):
@@ -172,6 +197,14 @@ class PythonSource:
     archive_root: str
     python_rel: str
     enabled: bool
+    #: 同一份文件的备用地址（锁里 `python.mirrors` 按规则推导，`mirror_urls`）；不是信任来源——
+    #: 字节照样按 `sha256` 校验。
+    mirrors: tuple[str, ...] = ()
+
+    @property
+    def urls(self) -> tuple[str, ...]:
+        """按顺序试的来源：锁里的 url 在前，镜像在后。"""
+        return (self.url, *self.mirrors)
 
     @property
     def id(self) -> str:
@@ -248,6 +281,37 @@ def validate_lock(lock: dict) -> None:
         rel = str(t["python_rel"])
         if rel.startswith(("/", "\\")) or ".." in rel.split("/"):
             raise ValueError(f"{name}: python_rel 必须是相对路径")
+    mirrors = py.get("mirrors", [])
+    if not isinstance(mirrors, list):
+        raise ValueError("python.mirrors 必须是列表")
+    for m in mirrors:
+        if not isinstance(m, dict) or not m.get("name") or not m.get("base"):
+            raise ValueError("python.mirrors 的每一项要有 name 与 base")
+        base = str(m["base"])
+        if not base.startswith("https://") or not base.endswith("/"):
+            raise ValueError(f"镜像 {m['name']} 的 base 必须是 https 且以 / 结尾")
+    if mirrors:
+        # 推导规则成立的前提：主地址就是 pbs 这个 release 的发行地址，文件名就是镜像上的文件名
+        prefix = f"{PBS_RELEASE_PREFIX}{py['release']}/"
+        for name, t in targets.items():
+            url = str(t["url"])
+            if not url.startswith(prefix) or "/" in url[len(prefix) :]:
+                raise ValueError(f"{name}: 配了镜像时 url 必须是 {prefix}<文件名>")
+
+
+#: 镜像推导规则的前提：锁里的主地址是 pbs 某个 release 的发行地址（`validate_lock` 钉着）。
+PBS_RELEASE_PREFIX = "https://github.com/astral-sh/python-build-standalone/releases/download/"
+
+
+def mirror_urls(lock: dict, target: dict) -> tuple[str, ...]:
+    """一个目标的镜像地址——**唯一**推导规则：`<base><release>/<主地址的文件名>`（文件名按主地址原样，
+    `%2B` 不解码不重编码）。镜像上的文件与 GitHub release 同名同字节（2026-09-29 逐目标核过 size，
+    Windows 那份核过 sha256）；字节对不上照样拒绝，推导错了的代价是一次 404，不是信任。"""
+    release = str(lock["python"]["release"])
+    filename = str(target["url"]).rsplit("/", 1)[-1]
+    return tuple(
+        f"{m['base']}{release}/{filename}" for m in lock["python"].get("mirrors", []) or []
+    )
 
 
 def load_lock(path: Path | None = None) -> dict:
@@ -290,6 +354,7 @@ def source_for(target: str | None = None, lock: dict | None = None) -> PythonSou
         archive_root=str(py["archive_root"]),
         python_rel=str(t["python_rel"]),
         enabled=bool(t["enabled"]),
+        mirrors=mirror_urls(lock, t),
     )
 
 
@@ -401,7 +466,7 @@ def _write_ledger(data: dict) -> None:
         LOG.warning("私有 Python 账写入失败: %s", exc)
 
 
-def _record(source: PythonSource, probe: dict, origin: str = "") -> None:
+def _record(source: PythonSource, probe: dict, origin: str = "", downloaded_from: str = "") -> None:
     with _lock:
         data = read_ledger()
         data["runtimes"][source.id] = {
@@ -417,6 +482,8 @@ def _record(source: PythonSource, probe: dict, origin: str = "") -> None:
             "last_used": int(time.time()),
             "reported_version": str(probe.get("version", "")),
             "origin": origin,
+            # 这份字节实际从哪个主机来（主地址 / 镜像；包内 / 缓存命中时为空）——只是账，信任看的是 sha256
+            "downloaded_from": downloaded_from,
         }
         _write_ledger(data)
 
@@ -592,9 +659,30 @@ class _Inflight:
         self.progress: tuple[str, int, int] = (STAGE_DOWNLOADING, 0, int(source.size))
         self.listeners: list = []
         self.trust_source = ""  # 最近一次传输用的信任来源（`tlstrust.SOURCES`；只进日志）
+        self.source_host = ""  # 正在 / 最后从哪个主机下（主地址或镜像）；进度与账用，缓存命中为空
 
 
 _inflight: dict[str, _Inflight] = {}
+
+
+#: 已发行的来源主机（锁的主地址前缀 `PBS_RELEASE_PREFIX` 与镜像 base 的主机）：只有它们进日志时明文。
+#: **固定常量**而不是从这份 `PythonSource` 的 url 现推——现推的话判据恒真，调用方传进来的任何主机
+#: 都会被当成「已知」原样进诊断包（#744 Codex P1）。与锁一致由
+#: `test_source_hosts_allowlist_matches_the_shipped_lock` 钉住；锁里加了新来源主机要同步这里。
+SOURCE_HOSTS = frozenset({"github.com", "registry.npmmirror.com"})
+
+
+def _plain_host(host: str):
+    """来源主机名进日志：是 `SOURCE_HOSTS` 里的就明文（`logsafe.known`，诊断包里也看得见换没换源），
+    否则照常按自由文本处置（诊断包里哈希）。空串写成 `-`。"""
+    return logsafe.known(host, SOURCE_HOSTS) if host else "-"
+
+
+def downloading_from(source: PythonSource) -> str:
+    """这份供应此刻从哪个主机下（换了镜像就是镜像的主机名）；没在下回空串。进度载荷用。"""
+    with _lock:
+        job = _inflight.get(source.id)
+        return job.source_host if job is not None else ""
 
 
 def provision(
@@ -689,6 +777,13 @@ def _run_inflight(job: _Inflight) -> None:
         job.result = _provision_once(job.source, job)
     except ProvisionError as exc:
         job.error = exc
+        # 失败进 app.log（稳定 code + 最后在用的来源主机）：2026-09-29 那台机器上失败只落在
+        # environment.json，日志里一个字都没有
+        LOG.warning(
+            "私有 Python 供应失败：%s（来源 %s）",
+            logsafe.known(exc.code, ERROR_CODES),
+            _plain_host(job.source_host),
+        )
     except Exception as exc:  # noqa: BLE001 — 线程里不许漏异常：消费者要拿到一个 code
         LOG.exception("私有 Python 供应线程异常")
         job.error = ProvisionError(ERROR_WRITE_FAILED, str(exc))
@@ -769,7 +864,7 @@ def _provision_once(source: PythonSource, job: _Inflight) -> str:
     result = python_of(source)
     if not result:
         raise ProvisionError(ERROR_LAUNCH_FAILED, "改名后最终目录里没有可执行的解释器")
-    _record(source, probe, origin)
+    _record(source, probe, origin, job.source_host if origin == ORIGIN_DOWNLOAD else "")
     _emit(job, STAGE_COMMITTED, source.size, source.size)
     LOG.info("私有 Python 就位: %s（%s，归档来自 %s）", source.id, source.version, origin)
     return result
@@ -822,70 +917,121 @@ def _download(source: PythonSource, job: _Inflight) -> tuple[Path, str]:
     # 上去，后完成的再 replace 一次同一份字节（校验过才会走到这里）——不会有谁在 rename 时发现
     # 自己的 `.part` 已被别人搬走（Codex #464 P2）。孤儿 `.part` 由 `_reap_orphans` 按时限清。
     part = dest.with_name(f"{dest.name}.{os.getpid()}-{secrets.token_hex(4)}.part")
+    # 来源按顺序试（ADR 0063 修订 2026-09-29「自动测速选源」）：主地址 → 镜像。换来源的三种理由：
+    # 传输层失败用完 `DOWNLOAD_ATTEMPTS` 次、HTTP 4xx / 5xx、太慢（`_TooSlow`，只在还有下一个来源且
+    # 此前没有来源因慢被放弃时才测）。因慢被放弃的来源排到队尾、不再测速地再试一次。每次换源一条 WARNING。
+    # 每个来源都从零开始下（不续传）：判据的主语是**最终落盘的整份字节**，与来源无关。
+    # **hash 不符不换源、不重试**——对不上的字节不管来自哪里都是拒绝的对象（镜像篡改就停在这里）。
+    queue: list[tuple[str, bool]] = [(url, False) for url in source.urls]
+    abandoned_slow = False
     last: Exception | None = None
-    for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
-        _check_abort(job)
-        try:
-            got = _fetch(source, part, job)
-        except urllib.error.HTTPError as exc:
-            part.unlink(missing_ok=True)
-            raise ProvisionError(
-                ERROR_SOURCE_UNAVAILABLE, f"来源回 HTTP {exc.code}", status=int(exc.code)
-            ) from exc
-        except (
-            urllib.error.URLError,
-            http.client.HTTPException,
-            socket.timeout,
-            TimeoutError,
-            ConnectionError,
-            OSError,
-        ) as exc:
-            part.unlink(missing_ok=True)
-            last = exc
-            _log_transport_failure(attempt, exc, job.trust_source)
-            if attempt < DOWNLOAD_ATTEMPTS:
-                time.sleep(1.0)
-            continue
-        except BaseException:
-            part.unlink(missing_ok=True)
-            raise
-        _emit(job, STAGE_VERIFYING, source.size, source.size)
-        if got != source.sha256:
-            part.unlink(missing_ok=True)
-            raise ProvisionError(
-                ERROR_HASH_MISMATCH,
-                "下载的归档 SHA-256 与锁文件不符",
-                expected=source.sha256,
-                got=got,
+    cert: BaseException | None = None
+    http_failures = 0
+    tried = 0
+    while queue:
+        url, retry = queue.pop(0)
+        tried += 1
+        host = urllib.parse.urlsplit(url).hostname or ""
+        with _lock:
+            job.source_host = host
+        judge = bool(queue) and not abandoned_slow and not retry
+        reason = ""
+        for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
+            _check_abort(job)
+            try:
+                got = _fetch(source, url, part, job, judge_slow=judge)
+            except _TooSlow as exc:
+                part.unlink(missing_ok=True)
+                abandoned_slow = True
+                queue.append((url, True))
+                reason = f"too_slow（{exc.rate_bps / 1024:.0f} KB/s，预计还要 {exc.eta_s:.0f} s）"
+                break
+            except urllib.error.HTTPError as exc:
+                part.unlink(missing_ok=True)
+                http_failures += 1
+                last = exc
+                reason = f"HTTP {exc.code}"
+                break
+            except (
+                urllib.error.URLError,
+                http.client.HTTPException,
+                socket.timeout,
+                TimeoutError,
+                ConnectionError,
+                OSError,
+            ) as exc:
+                part.unlink(missing_ok=True)
+                last = exc
+                cert = cert or tlstrust.cert_verification_error(exc)
+                _log_transport_failure(attempt, exc, job.trust_source, _plain_host(host))
+                reason = "transport（{}）".format(
+                    logsafe.known(type(tlstrust.root_cause(exc)).__name__, TRANSPORT_ERROR_NAMES)
+                )
+                if attempt < DOWNLOAD_ATTEMPTS:
+                    time.sleep(1.0)
+                continue
+            except BaseException:
+                part.unlink(missing_ok=True)
+                raise
+            _emit(job, STAGE_VERIFYING, source.size, source.size)
+            if got != source.sha256:
+                part.unlink(missing_ok=True)
+                LOG.warning(
+                    "私有 Python 归档 SHA-256 与锁不符（来源 %s）：拒绝，不换源",
+                    _plain_host(host),
+                )
+                raise ProvisionError(
+                    ERROR_HASH_MISMATCH,
+                    "下载的归档 SHA-256 与锁文件不符",
+                    expected=source.sha256,
+                    got=got,
+                )
+            try:
+                os.replace(part, dest)
+            except OSError as exc:
+                part.unlink(missing_ok=True)
+                # Windows 上正式名被别的进程打开着（它刚把自己那份搬上去、正在解包）时 replace 会拒
+                # （共享冲突）：那一份的字节校验过才叫这个名字，hash 对得上就直接用它——两个进程同时供应
+                # 同一份，后到的复用而不是报 write_failed（#467 Windows 腿确定性红）
+                if _is_verified_archive(dest, source):
+                    LOG.info("归档 %s 已由别的进程落盘，复用", source.archive_name)
+                    return dest, ORIGIN_DOWNLOAD
+                raise ProvisionError(ERROR_WRITE_FAILED, f"归档落盘失败: {exc}") from exc
+            LOG.info(
+                "私有 Python 归档下载完成：来源 %s（%s）",
+                _plain_host(host),
+                source.archive_name,
             )
-        try:
-            os.replace(part, dest)
-        except OSError as exc:
-            part.unlink(missing_ok=True)
-            # Windows 上正式名被别的进程打开着（它刚把自己那份搬上去、正在解包）时 replace 会拒
-            # （共享冲突）：那一份的字节校验过才叫这个名字，hash 对得上就直接用它——两个进程同时供应
-            # 同一份，后到的复用而不是报 write_failed（#467 Windows 腿确定性红）
-            if _is_verified_archive(dest, source):
-                LOG.info("归档 %s 已由别的进程落盘，复用", source.archive_name)
-                return dest, ORIGIN_DOWNLOAD
-            raise ProvisionError(ERROR_WRITE_FAILED, f"归档落盘失败: {exc}") from exc
-        return dest, ORIGIN_DOWNLOAD
-    cert = tlstrust.cert_verification_error(last) if last is not None else None
+            return dest, ORIGIN_DOWNLOAD
+        if queue:
+            nxt = urllib.parse.urlsplit(queue[0][0]).hostname or ""
+            LOG.warning(
+                "私有 Python 下载源 %s 放弃：%s；改用 %s",
+                _plain_host(host),
+                reason,
+                _plain_host(nxt),
+            )
     if cert is not None:
         raise ProvisionError(ERROR_TLS, f"证书校验失败: {cert}")
+    if http_failures and http_failures == tried:
+        status = int(getattr(last, "code", 0) or 0)
+        raise ProvisionError(ERROR_SOURCE_UNAVAILABLE, f"来源回 HTTP {status}", status=status)
     raise ProvisionError(ERROR_OFFLINE, f"下载失败: {last}")
 
 
-def _log_transport_failure(attempt: int, exc: BaseException, trust_source: str) -> None:
+def _log_transport_failure(
+    attempt: int, exc: BaseException, trust_source: str, host: str = ""
+) -> None:
     """一次传输失败进日志：根异常类型（闭集明文）、信任来源（闭集明文）、OpenSSL 的 verify_code（数）、
     消息（自由文本：app.log 原样，诊断包里哈希）。2026-09-28 那台机器上 app.log 里什么都没有——
     「无法下载」到底是超时还是证书，只能靠事后另起进程复现。"""
     root = tlstrust.root_cause(exc)
     cert = tlstrust.cert_verification_error(exc)
     LOG.warning(
-        "私有 Python 下载第 %d/%d 次失败：%s（信任来源 %s，verify_code=%s）: %s",
+        "私有 Python 下载第 %d/%d 次失败（来源 %s）：%s（信任来源 %s，verify_code=%s）: %s",
         attempt,
         DOWNLOAD_ATTEMPTS,
+        host,
         logsafe.known(type(root).__name__, TRANSPORT_ERROR_NAMES),
         logsafe.known(trust_source, tlstrust.SOURCES),
         getattr(cert, "verify_code", None) if cert is not None else None,
@@ -908,9 +1054,14 @@ def _user_agent() -> str:
     return f"{brand.PRODUCT_NAME}/{__version__}"
 
 
-def _fetch(source: PythonSource, part: Path, job: _Inflight) -> str:
-    """一次传输：流式写 `.part` 并顺手算 sha256；回实得 hash。取消 / 中止时抛。"""
-    req = urllib.request.Request(source.url, headers={"User-Agent": _user_agent()})
+def _fetch(
+    source: PythonSource, url: str, part: Path, job: _Inflight, *, judge_slow: bool = False
+) -> str:
+    """一次传输：流式写 `.part` 并顺手算 sha256；回实得 hash。取消 / 中止时抛。
+
+    `judge_slow`：收字节满 `SLOW_GRACE_S` 秒后，按全程平均速度估的剩余时间超过 `SLOW_ETA_S` 就抛
+    `_TooSlow`（调用方换下一个来源）。总量按锁里的 `size` 算——那是唯一可信的总数。"""
+    req = urllib.request.Request(url, headers={"User-Agent": _user_agent()})
     h = hashlib.sha256()
     done = 0
     _emit(job, STAGE_DOWNLOADING, 0, source.size)
@@ -928,9 +1079,11 @@ def _fetch(source: PythonSource, part: Path, job: _Inflight) -> str:
     job.trust_source = tlstrust.source_of(ctx)
     opener = urllib.request.build_opener(tlstrust.https_handler(ctx))
     with fh, opener.open(req, timeout=NETWORK_TIMEOUT_S) as resp:
+        started = time.monotonic()
+        read = getattr(resp, "read1", None) or resp.read
         while True:
             _check_abort(job)
-            chunk = resp.read(CHUNK)
+            chunk = read(READ_BYTES)
             if not chunk:
                 break
             try:
@@ -940,6 +1093,13 @@ def _fetch(source: PythonSource, part: Path, job: _Inflight) -> str:
             h.update(chunk)
             done += len(chunk)
             _emit(job, STAGE_DOWNLOADING, done, source.size)
+            if judge_slow:
+                elapsed = time.monotonic() - started
+                if elapsed >= SLOW_GRACE_S:
+                    rate = done / elapsed if elapsed > 0 else 0.0
+                    eta = (max(0, source.size - done) / rate) if rate > 0 else float("inf")
+                    if eta > SLOW_ETA_S:
+                        raise _TooSlow(rate, eta)
     return h.hexdigest()
 
 

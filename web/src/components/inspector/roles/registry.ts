@@ -1,5 +1,6 @@
 import { optionLabel as baseOptionLabel, propLabel as basePropLabel } from '@/store/actions'
 import { displayLabel } from './mathtext'
+import type { Manifest, ManifestGroup } from '@/lib/api'
 import { currentLocale, t } from '@/i18n'
 
 /**
@@ -354,4 +355,18 @@ export function groupHasContent(
     if (!(f.prop in NEUTRAL)) return false
     return f.value !== NEUTRAL[f.prop]
   })
+}
+
+/**
+ * 组的显示名：「共享色条组（子图 2、子图 3）」。组不是图内元素、引擎不给它起中文名——
+ * 名字由成员子图的名字现拼，跟着当前语言走（成员名照样过 `engineLabel`）。元素树、
+ * 面包屑、「只看此分支」的提示条都从这一个出口取。
+ */
+export function groupName(group: ManifestGroup, manifest: Manifest): string {
+  const sep = t('modelGroup.memberSeparator', { ns: 'inspector' })
+  const members = group.subplot_gids
+    .map((g) => manifest.elements.find((e) => e.gid === g))
+    .map((e, i) => (e ? engineLabel(e.label) : group.subplot_gids[i]))
+    .join(sep)
+  return t('modelGroup.sharedColorbar', { ns: 'inspector', members })
 }

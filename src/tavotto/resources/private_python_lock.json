@@ -17,7 +17,13 @@
     "enabled 是**产品默认是否在该目标上提供这条路**：06 §2——无系统 Python 的资格只能来自目标平台的",
     "真实验证，取得之前保持 false（代码在、能力不默认开）。工程验证与 CI 目标腿用环境变量",
     "TAVOTTO_PRIVATE_PYTHON=1 打开（与 TAVOTTO_RUNTIME_HOST_ARCH 同一档的逃生门，不是给用户的开关）。",
-    "换版本 = 改这里的 version / release / url / sha256 / size，并让每个目标重新取得资格，不自动追最新。"
+    "换版本 = 改这里的 version / release / url / sha256 / size，并让每个目标重新取得资格，不自动追最新。",
+    "",
+    "python.mirrors 是**同一份文件**的备用下载地址（2026-09-29，ADR 0063 修订「自动测速选源」）：每个目标的",
+    "镜像地址 = base + release + \"/\" + 该目标 url 的文件名（按 url 原样、不重新编码），不逐目标另写一份——",
+    "换版本时只改 url，镜像跟着走（tests/test_private_python.py 钉推导规则与「url 必须是 pbs 的 release 地址」）。",
+    "镜像**不是信任来源**：下载到的字节照样按这里的 sha256 / size 校验，对不上就拒绝，与主地址同一道关。",
+    "先试 url（GitHub）；失败，或测得的速度让剩余时间长得不合理（privatepython.SLOW_ETA_S），才换镜像。"
   ],
   "python": {
     "version": "3.13.15",
@@ -27,7 +33,13 @@
     "archive_root": "python",
     "checksums": "https://github.com/astral-sh/python-build-standalone/releases/download/20260814/SHA256SUMS",
     "checksums_sha256": "0e27ff80c0075aa29730035faf2b94a00498f348131c6e8997cbbb5b77584966",
-    "doc": "https://github.com/astral-sh/python-build-standalone"
+    "doc": "https://github.com/astral-sh/python-build-standalone",
+    "mirrors": [
+      {
+        "name": "npmmirror",
+        "base": "https://registry.npmmirror.com/-/binary/python-build-standalone/"
+      }
+    ]
   },
   "targets": {
     "macos-arm64": {

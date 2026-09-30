@@ -75,6 +75,7 @@ from .engine import (
     figcapture as engine_figcapture,
     handoff as engine_handoff,
     inputbroker as engine_inputbroker,
+    layoutsession as engine_layoutsession,
     locate as engine_locate,
     logsafe as engine_logsafe,
     managedenv as engine_managedenv,
@@ -2833,7 +2834,11 @@ def api_tutorial_open():
     # 里的排版——页面尺寸、面板摆放都可能已经不是这份资源的了（2026-09-13 把
     # 教程图幅从 80 mm 改到 65 mm 时抓到：旧槽位把面板按 1.19 倍摆回来，线宽
     # 检查全红）。副本目录都换了，进度本来就随目录走；槽位一并清掉，与重置同一处
-    cleared = _clear_tutorial_local_state(_project_id(tp.path), tp.metadata) if tp.created else []
+    cleared = (
+        _clear_tutorial_local_state(_project_id(tp.path), tp.metadata, tp.path)
+        if tp.created
+        else []
+    )
     try:
         status = open_project(str(tp.path), make_default=bool(body.get("default", True)))
     except engine_tutorial.TutorialError as exc:
@@ -2854,7 +2859,9 @@ def api_tutorial_open():
     )
 
 
-def _clear_tutorial_local_state(pid: str, meta: dict) -> list[str]:
+def _clear_tutorial_local_state(
+    pid: str, meta: dict, project_path: Path | None = None
+) -> list[str]:
     """重置时清掉数据目录里**只属于教程**的两样东西；别的项目一个字节不碰。
 
     * 教程画布的自动保存槽位（`document_id` 是元数据里定死的）；
@@ -2862,8 +2869,19 @@ def _clear_tutorial_local_state(pid: str, meta: dict) -> list[str]:
       旧基线描述的是已经不存在的写回结果。
     项目内的 `tavottofile/`（画布、导出、版本历史）随目录整个换掉。
     全局 recent 不动（路径没变），遥测同意与 onboarding 状态不属于这里。
+    另外（#715 PR-B，给了 `project_path` 时）：数据目录会话状态里教程项目的「上次开着的排版」
+    与教程画布槽位的归属（`engine/layoutsession.py`）；不进返回的 `cleared`（那是文件名清单）。
     """
     removed: list[str] = []
+    # 会话状态（#715 PR-B）：教程项目「上次开着的排版」与教程画布槽位的归属一并清掉——
+    # 槽位删了，指向它的记录留着的话下次打开教程会报一份不存在的「找不到上次排版」
+    if project_path is not None:
+        try:
+            engine_layoutsession.forget_project(
+                engine_layoutsession.project_key(project_path), [str(meta["document_id"])]
+            )
+        except OSError as exc:
+            LOG.warning("重置教程：会话状态清不掉（%s）", exc)
     for target in (_autosave_path(str(meta["document_id"])), _baked_store().path_for(pid)):
         try:
             target.unlink()
@@ -2901,7 +2919,7 @@ def api_tutorial_reset():
                 pass
         return _tutorial_error(exc)
     pid = _project_id(tp.path)
-    cleared = _clear_tutorial_local_state(pid, meta)
+    cleared = _clear_tutorial_local_state(pid, meta, tp.path)
     try:
         status = open_project(
             str(tp.path), make_default=bool(body.get("default", was_default or ctx is None))
@@ -7208,14 +7226,48 @@ def api_autosave_put(doc_id):
         # **在锁里读**：放到锁外读的话，返回给 A 的可能是 B 刚写下的那份内容的
         # hash，于是 A 的下一次写会带着一个「不是我写的」基线过来。
         revision = engine_atomicio.content_revision(p)
+    # 槽位归属（#715 PR-B）：这一份属于发请求那一刻的项目（前端按**排队那一刻**的 pj 发，
+    # `session.apiUrlFor`）。记不下只少一条归属，绝不让这次保存失败——内容已经落盘了。
+    _record_autosave_owner(p.stem)
     # 清理放在锁**外**：`_document_lock` 不可重入，而清理要去锁别的路径。
     _prune_autosave_slots(p)
     return jsonify({"ok": True, "saved_at": int(time.time() * 1000), "revision": revision})
 
 
-#: 自动保存槽位的磁盘上限。**这是一道兜底，不是主清理路径。**
+_OWNER_UNKNOWN = object()
+
+
+def _layout_session_owner():
+    """这次请求的槽位属于哪个项目：项目键 / `None`（没开项目）/ `_OWNER_UNKNOWN`。
+
+    与 `_request_ctx()` 同一套认法，只差一处：**指名了一个已经不在的项目时不抛**。自动保存
+    从来不因 pj 失效而拒写（那份内容是用户的工作），归属在这时是「不知道」，不记。
+    """
+    try:
+        ctx = _request_ctx()
+    except NoProjectError:
+        return _OWNER_UNKNOWN
+    return engine_layoutsession.project_key(ctx.path) if ctx is not None else None
+
+
+def _record_autosave_owner(doc_id: str) -> None:
+    owner = _layout_session_owner()
+    if owner is _OWNER_UNKNOWN:
+        return
+    try:
+        engine_layoutsession.record_owner(doc_id, owner)
+    except OSError as exc:
+        LOG.warning("自动保存槽位归属记不下（%s）", exc)
+
+
+#: 自动保存槽位的磁盘上限。
 #:
-#: 主清理在前端：`documentStore.flushAutosave` 每次落盘都会把被 `tavotto.docIndex`
+#: **2026-09-29 起（#715 PR-B）这是唯一的清理路径**：前端不再按本机 `tavotto.docIndex` 发
+#: DELETE（换了 origin 的前端索引是空的，按它删会删错；而它挤掉的槽位本来也只是「本机列表里
+#: 放不下了」，不是「用户不要了」）。参与清理的只有 `engine/layoutsession.py` 里**记着归属**的
+#: 槽位，且各项目「上次开着的」那一份永不删；没有归属的旧槽位在找回入口（PR-C）上线前不动。
+#:
+#: 下面是 PR-B 之前的原文（历史）：主清理在前端：`documentStore.flushAutosave` 每次落盘都会把被 `tavotto.docIndex`
 #: （`MAX_SLOTS = 12`）挤出去的文档的磁盘槽位一并 `DELETE` 掉。但那条路只在
 #: 「同一个浏览器 profile 的索引还在」时有效——清过站点数据、换个浏览器、换台
 #: 机器共用同一个数据目录、或者那次 DELETE 恰好失败（前端 `.catch(() => {})`），
@@ -7269,6 +7321,19 @@ def _prune_autosave_slots(keep: Path) -> list[str]:
     except OSError:
         # 目录还不存在 / 读不动：没什么可裁的，也绝不能因此让这次保存失败。
         return []
+    # 归属（#715 PR-B）：只有**记着归属**的槽位参与这道兜底。没有归属的旧槽位是 PR-B 之前
+    # 留下的（多半正是 #715 里换了 origin 之后界面上找不回来的那些），在找回入口（PR-C）
+    # 上线之前一个都不删——删了就再也找不回来了。各项目「上次开着的」那一份同样不删。
+    try:
+        owned = engine_layoutsession.owners()
+        protected = engine_layoutsession.protected_doc_ids()
+        engine_layoutsession.drop_owners_not_in(
+            {path.stem for _m, _s, path in rows},
+            lambda doc_id: (AUTOSAVE_DIR / f"{doc_id}.json").is_file(),
+        )
+    except OSError:
+        return []
+    rows = [r for r in rows if r[2].stem in owned and r[2].stem not in protected]
     rows.sort(key=lambda r: r[0], reverse=True)  # 新的在前
     total = 0
     victims: list[tuple[int, Path]] = []
@@ -7279,14 +7344,22 @@ def _prune_autosave_slots(keep: Path) -> list[str]:
             victims.append((mtime_ns, path))
     removed: list[str] = []
     for mtime_ns, path in victims:
-        with _document_lock(path):
+
+        def _unlink(path: Path = path, mtime_ns: int = mtime_ns) -> bool:
             try:
                 if path.stat().st_mtime_ns != mtime_ns:
-                    continue
+                    return False
                 path.unlink()
             except OSError:
-                continue
-        removed.append(path.name)
+                return False
+            return True
+
+        # 上面的 `protected` 只是快照：删之前在会话状态锁里重判一次（并发的「记成上次开着的」
+        # 插不进判与删之间），删了当场忘掉它的归属——见 `remove_slot_unless_protected`
+        with _document_lock(path):
+            gone = engine_layoutsession.remove_slot_unless_protected(path.stem, _unlink)
+        if gone:
+            removed.append(path.name)
     if removed:
         LOG.info("自动保存槽位清理：删掉 %d 份无人认领的旧槽位", len(removed))
     return removed
@@ -7309,7 +7382,58 @@ def api_autosave_delete(doc_id):
             p.unlink()
         except OSError:
             pass
+    if not p.exists():
+        try:
+            engine_layoutsession.forget_documents([p.stem])
+        except OSError as exc:
+            LOG.warning("删除槽位后会话状态没跟上（%s）", exc)
     return jsonify({"ok": True})
+
+
+# ------------------------- 会话状态（#715 PR-B） -----------------------------
+# 「这个项目上次开着哪份排版」以数据目录为准（`engine/layoutsession.py`），前端 localStorage
+# 只当缓存：桌面版换了端口 = 换了 origin = 一份空的 localStorage。两个端点都在 ADR 0008 的
+# 认证之下（不进 `security._PUBLIC_PATHS`）；项目按 `_request_ctx()` 认，没开项目是单独一组。
+# 回给前端的只有 doc_id / 名字 / 时间，不带项目路径。
+
+
+@app.get("/api/layout-session")
+def api_layout_session_get():
+    ctx = _request_ctx()
+    key = engine_layoutsession.project_key(ctx.path) if ctx is not None else None
+    resp = jsonify({"last": engine_layoutsession.last_for(key)})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.put("/api/layout-session/last")
+def api_layout_session_put_last():
+    body = request.get_json(silent=True)
+    doc_id = body.get("doc_id") if isinstance(body, dict) else None
+    name = body.get("name", "") if isinstance(body, dict) else None
+    if not engine_layoutsession.valid_doc_id(doc_id) or not isinstance(name, str):
+        return jsonify({"error": "doc_id / name 不合法", "code": "bad_request"}), 400
+    ctx = _request_ctx()
+    key = engine_layoutsession.project_key(ctx.path) if ctx is not None else None
+    last = engine_layoutsession.set_last(key, doc_id, name)
+    return jsonify({"ok": True, "last": last})
+
+
+@app.get("/api/preferences/export-defaults")
+def api_export_defaults_get():
+    """导出默认值（按用户一份，数据目录）。没存过是 `{"defaults": null}`，不是 404。"""
+    resp = jsonify({"defaults": engine_layoutsession.read_export_defaults()})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.put("/api/preferences/export-defaults")
+def api_export_defaults_put():
+    try:
+        value = engine_layoutsession.write_export_defaults(request.get_json(silent=True))
+    except ValueError:
+        return jsonify({"error": "导出默认值不合法", "code": "bad_request"}), 400
+    return jsonify({"ok": True, "defaults": value})
 
 
 # ------------------------- 布局版本时间线 -----------------------------------

@@ -193,6 +193,8 @@ HOSTS: "dict[str, dict]" = {
             "单次：dsh web --patch tavotto.cordis.yml",
             "长期：合并进 $DSH_HOME/profiles/<名字>/cordis.patch.yml（或 $DSH_HOME/cordis.patch.yml；"
             "$DSH_HOME 默认 ~/.dsh）",
+            "已装 Tavotto 的 DSH bundle（tavotto-dsh）就不需要这段 YAML；"
+            "二选一——同名 serverName 的第二行会加载失败",
         ],
         "verify": [
             "新开一个 DSH 会话，等 mcp__tavotto__* 工具出现（发现是异步的）",

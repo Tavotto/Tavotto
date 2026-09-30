@@ -15,3 +15,11 @@
   手动入口 `plugin-stable.yml`
   （bootstrap / promote / rollback，从 Release 资产取内容）。手册：`docs/ci/plugin-stable-channel.md`。
   **发行分支不触发任何源码 CI**——没有 workflow 监听它，GITHUB_TOKEN 的推送也不触发。
+- **发布器的临时仓库不留后台维护进程（#604，2026-09-30）**：`scripts/plugin_publish.py` 每条 git
+  命令都带 `GIT_CONFIG`（`git_config_env()` 按序生成 COUNT 与编号，不手写），其中
+  `maintenance.auto=false`、`gc.auto=0`——否则 fetch / commit 分离出的 `maintenance run --auto`
+  与 `TemporaryDirectory` 清理赛跑，ENOTEMPTY 盖掉真正的结论。插件测试夹具
+  `tests/support/pluginkit.py::NO_AUTO_MAINTENANCE` 是这两项的镜像（严格同源对，
+  `docs/rules/repo/same-origin-pairs.md`）；看护 `tests/test_plugin_publish.py::test_fixture_git_mirrors_the_publisher_maintenance_settings`
+  与 `::test_publisher_fetch_spawns_no_background_maintenance`（后者量「起没起那个进程」，
+  不赌时序：ENOTEMPTY 本身本机 2200 轮复现不出）。

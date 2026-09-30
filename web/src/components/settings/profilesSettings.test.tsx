@@ -1111,7 +1111,7 @@ describe('样式页字体下拉的「未安装」标记（Codex #703）', () => 
       buttons().find((b) => b.textContent?.includes('投稿用'))!.click()
     })
     const cell = (row: string) => document.body.querySelector(`[data-style-cell="${row}.family"]`)!
-    const hint = '这台电脑没装这个字体，图上用的是别的字体。换一个可用的字体，或装上它。'
+    const hint = '这台电脑没装这个字体，图上用的是别的字体。'
     // 当前值留着，下面一句 warning；别的行（没设字体）没有
     expect(cell('title').textContent).toContain('Comic Neue')
     expect(cell('title').textContent).toContain(hint)
@@ -1189,7 +1189,7 @@ describe('样式里写着、却没有哪张图请求过的未安装字体（Code
     }) as unknown as Manifest
   const renderOf = (m: Manifest) =>
     ({ fileId: 'f', rev: 1, manifest: m, svg: null, svgBytes: 0, status: 'ready' }) as unknown as PanelRender
-  const hint = '这台电脑没装这个字体，图上用的是别的字体。换一个可用的字体，或装上它。'
+  const hint = '这台电脑没装这个字体，图上用的是别的字体。'
 
   it('figureFamilyOptions 报本机表是否已知：每一张图都带完整本机表才算，混着一个老引擎就不算', () => {
     expect(figureFamilyOptions({ a: modern(['Arial']) }).machineKnown).toBe(true)

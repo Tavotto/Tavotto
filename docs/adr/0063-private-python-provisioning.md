@@ -192,3 +192,8 @@ spike 里「一条 resolver」的选择；产品里再下载一个 37 MB 的 uv 
   `CERT_REQUIRED` + 主机名，不降级，AST 钉），证书校验失败单列 `private_python_tls`（第十个 code），每次传输失败
   的根异常进日志。`privatepython.py` 仍不 import `ssl`；运行时依赖多一个 truststore（纯 Python、MIT），冻结产物经
   `tavotto.spec` 的 hiddenimports 收进。细则见 `docs/rules/backend/private-python.md`。
+* **修订（2026-09-29，§六 / §十，ADR 0112）**：「来源只有锁里那一个地址」改为**来源队列**：锁里的 url（GitHub）在前，
+  锁的 `python.mirrors` 按规则推导出的同名文件（npmmirror）在后；主地址传输失败 / HTTP 失败 / **测速太慢**（收字节满 20 s 后按平均
+  速度估的剩余时间 > 3 分钟）就换镜像，因慢放弃的来源在镜像也失败时不测速地再试一次。起因：阿里云华东 Windows 实测 GitHub
+  20–40 KB/s，47 MB 硬等 21 分钟，npmmirror 11 MB/s。**信任不变**：字节不管来自哪里都按锁的 sha256 校验，hash 不符不换源、不重试。
+  换源 / 完成 / 失败各一条日志，账多 `downloaded_from`，进度的 `source_host` 报此刻在下的主机。续传仍不做（§十）。

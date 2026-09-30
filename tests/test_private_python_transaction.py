@@ -293,6 +293,34 @@ class TestPrivateBase:
         assert server.requests == [f"/{src.archive_name}"]
         assert managedenv.referenced_base_runtimes() == {src.id}
 
+    @needs_real_base
+    def test_single_package_plan_with_the_download_installs_the_whole_script_set(
+        self, tmp_path, house, no_base, fake
+    ):
+        """干净机器实测（2026-09-29）的私有 Python 版：单包修复要新建第一代（还要先下载 Python）时，计划也列脚本开跑
+        要的全部包，供应之后按真解释器重算仍保留用户点的那个，两个包都装进新一代。"""
+        server, src, _ = fake
+        beta = ("tavotto-test-beta", "tavotto_test_beta")
+        build_wheel(house, name=beta[0], import_name=beta[1], version="1.0")
+        project = _project(tmp_path)
+        (project / "requirements.txt").write_text(f"{ALPHA[0]}\n{beta[0]}\n", encoding="utf-8")
+        (project / "figure.py").write_text(
+            f"import {ALPHA[1]}\nimport {beta[1]}\n", encoding="utf-8"
+        )
+        deadline = time.time() + 30
+        while deprepair.managed_available() is None and time.time() < deadline:
+            time.sleep(0.05)
+        plan = deprepair.create_plan(
+            project, "figure.py", ALPHA[1], target_kind=deprepair.TARGET_MANAGED
+        )
+        assert plan.private_python is not None and plan.widened is not None
+        assert set(plan.requirements) == {ALPHA[0], beta[0]}
+        deprepair.install_async(plan.plan_id)
+        rec = wait_for(plan.plan_id)
+        assert rec["state"] == deprepair.STATE_DONE, json.dumps(rec, ensure_ascii=False)
+        managed = managedenv.python_of(project)
+        assert _in(managed, f"import {ALPHA[1]}, {beta[1]}; print('ok')") == "ok"
+
     def test_single_package_repair_on_an_existing_environment_still_offers_the_private_base(
         self, tmp_path, house, offline_managed_env, fake, monkeypatch
     ):

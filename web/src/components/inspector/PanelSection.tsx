@@ -431,12 +431,10 @@ function PanelMoreSection({ objs }: { objs: PanelObject[] }) {
 
         {/* 替换素材是设置行里的一个动作，不是整行 CTA */}
         <Row label={pn('replace')} labelWidth={INSPECTOR_LABEL_W}>
-          <Tip label={pn('replaceTip')}>
-            <Button variant="secondary" size="sm" disabled={!one} onClick={() => setReplacing(true)}>
-              <Replace size={ICON_SIZE.sm} className="text-ink-3" />
-              {pn('replaceAction')}
-            </Button>
-          </Tip>
+          <Button variant="secondary" size="sm" disabled={!one} onClick={() => setReplacing(true)}>
+            <Replace size={ICON_SIZE.sm} className="text-ink-3" />
+            {pn('replaceAction')}
+          </Button>
         </Row>
         {one && (
           <ReplaceAssetDialog panel={one} open={replacing} onOpenChange={setReplacing} />
@@ -705,7 +703,8 @@ function ElementEditEntry({ panel }: { panel: PanelObject }) {
         <Button
           variant="secondary"
           size="sm"
-          className="min-w-0 shrink"
+          // 整行宽（2026-09-30 重设计）：选中一张图时，属性栏第一件事就是「进去改」
+          className="min-w-0 flex-1 justify-center"
           active={editing}
           onClick={() => {
             if (editing) {

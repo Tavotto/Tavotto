@@ -112,6 +112,30 @@ class PublishError(Exception):
 # ------------------------------------------------------------------ git
 
 
+#: 发布器每一条 git 命令都带的配置（经 `GIT_CONFIG_COUNT/KEY_n/VALUE_n` 注入；
+#: 编号由 `git_config_env()` 按顺序生成，不手写）。
+GIT_CONFIG: tuple[tuple[str, str], ...] = (
+    # 分支内容不许被本机 autocrlf 改写：树里的字节就是发行字节
+    ("core.autocrlf", "false"),
+    ("core.safecrlf", "false"),
+    # #604：fetch / commit 返回前会分离出后台 `maintenance run --auto` / `gc --auto`，
+    # 父进程返回后它还在往临时仓库的 `.git/objects` 里写，与 `TemporaryDirectory` 的
+    # 清理赛跑——清理抛 ENOTEMPTY，盖掉真正的结论（本该是一次干净的拒绝）。
+    # 临时仓库用完即删，维护对它没有任何价值：两项都关。
+    ("maintenance.auto", "false"),
+    ("gc.auto", "0"),
+)
+
+
+def git_config_env(pairs: tuple[tuple[str, str], ...] = GIT_CONFIG) -> dict[str, str]:
+    """把 `(key, value)` 序列摊成 git 的环境变量配置；COUNT 与编号都由序列本身决定。"""
+    env = {"GIT_CONFIG_COUNT": str(len(pairs))}
+    for i, (key, value) in enumerate(pairs):
+        env[f"GIT_CONFIG_KEY_{i}"] = key
+        env[f"GIT_CONFIG_VALUE_{i}"] = value
+    return env
+
+
 def _git_env() -> dict[str, str]:
     env = {**os.environ}
     env.update(
@@ -121,12 +145,7 @@ def _git_env() -> dict[str, str]:
             "GIT_AUTHOR_EMAIL": BOT_EMAIL,
             "GIT_COMMITTER_NAME": BOT_NAME,
             "GIT_COMMITTER_EMAIL": BOT_EMAIL,
-            # 分支内容不许被本机 autocrlf 改写：树里的字节就是发行字节
-            "GIT_CONFIG_COUNT": "2",
-            "GIT_CONFIG_KEY_0": "core.autocrlf",
-            "GIT_CONFIG_VALUE_0": "false",
-            "GIT_CONFIG_KEY_1": "core.safecrlf",
-            "GIT_CONFIG_VALUE_1": "false",
+            **git_config_env(),
         }
     )
     return env

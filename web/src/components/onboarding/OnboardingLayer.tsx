@@ -314,7 +314,7 @@ function ActiveStep({ stepId }: { stepId: StepId }) {
   // 里根本没有那张图）。标题仍是这一步的标题——用户知道自己卡在哪一步上
   const body = blocked ? ob(`precondition.${pre.reason}`, pre.values) : ob(`steps.${variant}.body`, values)
   const index = STEP_IDS.indexOf(stepId)
-  const progress = index >= 1 && index <= REAL_STEPS ? ob('progress', { n: index, total: REAL_STEPS }) : null
+  const progress = index >= 0 && index < REAL_STEPS ? ob('progress', { n: index + 1, total: REAL_STEPS }) : null
   const altDone = !blocked && (def.altDone?.(ctx) ?? false)
   // 主动作：前置缺了 → 补前置的那颗；否则步骤自己给的（比如「加入 Fig1_kinetics」）
   const stepAction = blocked ? pre.action : def.action?.(ctx)
@@ -332,13 +332,11 @@ function ActiveStep({ stepId }: { stepId: StepId }) {
   }
 
   const primary =
-    stepId === 'welcome'
-      ? { label: ob('start'), onClick: () => completeStep('welcome'), autoFocus: true }
-      : stepId === 'done'
-        ? { label: ob('explore'), onClick: () => useOnboardingStore.getState().complete(), autoFocus: true }
-        : altDone
-          ? { label: ob('resolvedContinue'), onClick: () => completeStep(stepId) }
-          : actionButton
+    stepId === 'done'
+      ? { label: ob('explore'), onClick: () => useOnboardingStore.getState().complete(), autoFocus: true }
+      : altDone
+        ? { label: ob('resolvedContinue'), onClick: () => completeStep(stepId) }
+        : actionButton
   const secondary =
     stepId === 'done'
       ? {

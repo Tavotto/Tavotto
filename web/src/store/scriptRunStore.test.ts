@@ -1,13 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { cancelProbe, probeScript, type CapturedFigureDescriptor, type ProbeResult } from '@/lib/api'
+import { setCurrentProjectId } from '@/lib/session'
+import { useEnvStore } from './envStore'
 import { useRenderStore } from './renderStore'
 import { useRuntimeAssetStore } from './runtimeAssetStore'
-import { isBusyPhase, needsNative, useScriptRunStore } from './scriptRunStore'
+import { isBusyPhase, isGatePhase, needsNative, useScriptRunStore } from './scriptRunStore'
 
 vi.mock('@/lib/api', () => ({
   // scriptRunStore 直接用的三样
   probeScript: vi.fn(),
   cancelProbe: vi.fn().mockResolvedValue({ cancelling: true }),
+  // 起会话之前两道门的 code（与 `@/lib/api` 同值；本文件整份 mock 掉了 api）
+  DEPENDENCY_PREPARATION_CODE: 'dependency_preparation_required',
+  WORKDIR_CONFIRMATION_CODE: 'workdir_confirmation_required',
   ApiError: class ApiError extends Error {
     status: number
     body: Record<string, unknown>
@@ -218,5 +223,127 @@ describe('scriptRunStore 状态机', () => {
     await useScriptRunStore.getState().run('fig.py')
     expect(state().phase).toBe('failed')
     expect(state().error?.code).toBe('probe_in_progress')
+  })
+})
+
+/**
+ * 起会话之前的两道门（U03 运行目录 / U04 依赖准备）：试运行以 `workdir_confirmation_required` /
+ * `dependency_preparation_required` 回来时不是失败——载荷交给 `envStore`（与渲染那条路同一个框），
+ * 相位是 needs_workdir / needs_preparation、不进「可能需要原环境」；有了答案之后 `rerunGated` 重跑那一行。
+ * Windows 真机验收（main 493a1310）：只有脚本、画布上还没图时，这里漏了就再也走不到安装。
+ */
+describe('试运行撞上起会话之前的门', () => {
+  const offer = {
+    code: 'dependency_preparation_required',
+    script: 'fig.py',
+    plan: { status: 'ready', script: 'fig.py', requirements: ['adjusttext'] },
+    target_kind: 'tavotto_managed',
+    targets: [],
+    rounds_remaining: 3,
+    skipped: false,
+  }
+  const confirmation = {
+    kind: 'workdir',
+    code: 'workdir_confirmation_required',
+    script: 'fig.py',
+    reason: 'script_dir_evidence',
+    recommended: 'project',
+    options: [],
+    conflicts: [],
+    reads: [],
+  }
+  const gated = (code: string, extra: Record<string, unknown>): ProbeResult => ({
+    ...failed(code),
+    error: { code, message: '原文', ...extra } as ProbeResult['error'],
+  })
+
+  beforeEach(() => {
+    setCurrentProjectId('p1')
+    useEnvStore.setState({ dependencyPreparation: null, workdirConfirmation: null })
+  })
+
+  it('脚本行 ▶（inlineGate）：依赖门在行内呈现，不交给 envStore（不弹框）；运行目录门照旧交；重跑沿用行内标记', async () => {
+    mockProbe.mockResolvedValueOnce(gated('dependency_preparation_required', { dependency_preparation: offer }))
+    await useScriptRunStore.getState().run('fig.py', { inlineGate: true })
+    expect(state().phase).toBe('needs_preparation')
+    expect(state().error?.dependency_preparation).toEqual(offer)
+    expect(useEnvStore.getState().dependencyPreparation).toBeNull()
+    // 门放行后重跑（`rerunGated`，不带 opts）：仍是行内，再撞上门也不弹框
+    mockProbe.mockResolvedValueOnce(gated('dependency_preparation_required', { dependency_preparation: offer }))
+    useScriptRunStore.getState().rerunGated('needs_preparation', 'fig.py')
+    await Promise.resolve()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(useEnvStore.getState().dependencyPreparation).toBeNull()
+    // 运行目录门不受影响
+    useScriptRunStore.getState().clear()
+    mockProbe.mockResolvedValueOnce(gated('workdir_confirmation_required', { confirmation }))
+    await useScriptRunStore.getState().run('fig.py', { inlineGate: true })
+    expect(useEnvStore.getState().workdirConfirmation).toEqual(confirmation)
+  })
+
+  it('依赖门：相位 needs_preparation、不进「可能需要原环境」，载荷交给 envStore（授权框据此弹出）', async () => {
+    mockProbe.mockResolvedValueOnce(gated('dependency_preparation_required', { dependency_preparation: offer }))
+    await useScriptRunStore.getState().run('fig.py')
+    expect(state().phase).toBe('needs_preparation')
+    expect(isGatePhase(state().phase)).toBe(true)
+    expect(needsNative(state())).toBe(false)
+    expect(state().error?.dependency_preparation).toEqual(offer)
+    expect(useEnvStore.getState().dependencyPreparation).toEqual(offer)
+  })
+
+  it('运行目录门：相位 needs_workdir、不进「可能需要原环境」，载荷交给 envStore', async () => {
+    mockProbe.mockResolvedValueOnce(gated('workdir_confirmation_required', { confirmation }))
+    await useScriptRunStore.getState().run('fig.py')
+    expect(state().phase).toBe('needs_workdir')
+    expect(needsNative(state())).toBe(false)
+    expect(useEnvStore.getState().workdirConfirmation).toEqual(confirmation)
+  })
+
+  it('HTTP 层带着门的载荷回来（非 200）：同样交出、同样不算失败', async () => {
+    const { ApiError } = await import('@/lib/api')
+    mockProbe.mockRejectedValueOnce(
+      new ApiError('要先准备', 409, { code: 'dependency_preparation_required', dependency_preparation: offer }),
+    )
+    await useScriptRunStore.getState().run('fig.py')
+    expect(state().phase).toBe('needs_preparation')
+    expect(useEnvStore.getState().dependencyPreparation).toEqual(offer)
+  })
+
+  it('门的 code 没带载荷：没有框可弹，按失败落（留在有出口的那一组）', async () => {
+    mockProbe.mockResolvedValueOnce(gated('dependency_preparation_required', {}))
+    await useScriptRunStore.getState().run('fig.py')
+    expect(state().phase).toBe('failed')
+    expect(needsNative(state())).toBe(true)
+    expect(useEnvStore.getState().dependencyPreparation).toBeNull()
+  })
+
+  it('发请求时的项目已经切走：载荷不摆到新项目上', async () => {
+    const d = deferredProbe()
+    void useScriptRunStore.getState().run('fig.py')
+    setCurrentProjectId('p2')
+    d.resolve(gated('dependency_preparation_required', { dependency_preparation: offer }))
+    await flush()
+    expect(useEnvStore.getState().dependencyPreparation).toBeNull()
+  })
+
+  it('rerunGated：只重跑停在这道门上的那一行；用户已经重跑 / 收起过的不动', async () => {
+    mockProbe.mockResolvedValueOnce(gated('dependency_preparation_required', { dependency_preparation: offer }))
+    await useScriptRunStore.getState().run('fig.py')
+    mockProbe.mockResolvedValueOnce(failed('script_no_figure'))
+    await useScriptRunStore.getState().run('other.py')
+    mockProbe.mockClear()
+    mockProbe.mockResolvedValue(ok([desc('fig')]))
+    // 别的脚本、别的门：不动
+    useScriptRunStore.getState().rerunGated('needs_preparation', 'other.py')
+    useScriptRunStore.getState().rerunGated('needs_workdir')
+    expect(mockProbe).not.toHaveBeenCalled()
+    useScriptRunStore.getState().rerunGated('needs_preparation', 'fig.py')
+    await flush()
+    expect(mockProbe).toHaveBeenCalledTimes(1)
+    expect(mockProbe.mock.calls[0][0]).toBe('fig.py')
+    expect(state().phase).toBe('captured_one')
+    // 已经不在门上：再来一次不重复跑
+    useScriptRunStore.getState().rerunGated('needs_preparation', 'fig.py')
+    expect(mockProbe).toHaveBeenCalledTimes(1)
   })
 })

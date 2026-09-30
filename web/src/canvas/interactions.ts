@@ -38,6 +38,8 @@ import {
   type AlignEntry,
   type CarriedItem,
   type Group,
+  groupBlockedMessage,
+  type GroupBlockReason,
 } from '@/lib/elementGeom'
 import { newId } from '@/lib/id'
 import {
@@ -1445,6 +1447,30 @@ export function immovableMessage(el: ManifestElement): UiMessage {
   )
 }
 
+/**
+ * 选中的组不能整体变换（`elementGeom.groupTransformBlocked`），又在组里按下：点一下照常钻进去
+ * 选中点到的那个（`onTap`）；**真的拖起来**才按原因说一句，一次手势只说一次。不写文档、不进
+ * 历史，也不落到单选分派把能动的那个成员单独拖走——与 `explainImmovableDrag` 同一个形状，
+ * 方向键微调说的是同一句。
+ */
+export function explainBlockedGroupDrag(
+  e: ReactPointerEvent,
+  reason: GroupBlockReason,
+  onTap: () => void,
+) {
+  let told = false
+  trackPointer(e, {
+    onMove: () => {
+      if (told) return
+      told = true
+      useUiStore.getState().setStatus(groupBlockedMessage(reason))
+    },
+    onEnd: (moved, _ev, end) => {
+      if (!moved && !end.cancelled) onTap()
+    },
+  })
+}
+
 /** 按下图内元素开始拖动（PanelView 的单选分派）。回 false = 这个元素不能移动 */
 export function startInFigureDrag(
   e: ReactPointerEvent,
@@ -1488,6 +1514,8 @@ function trackInFigureMove(
   panel: PanelObject,
   layout: { width: number; height: number },
   mv: InFigureMove,
+  /** 按下又松开、没拖动（也没被作废）时调用 */
+  onTap?: () => void,
 ) {
   e.stopPropagation()
   interaction().begin('element')
@@ -1516,7 +1544,10 @@ function trackInFigureMove(
     onEnd: (moved, ev, end) => {
       unwatchKeys()
       interaction().end()
-      if (!moved || end.cancelled) mv.cancel(end.cancelled)
+      if (!moved || end.cancelled) {
+        mv.cancel(end.cancelled)
+        if (!moved && !end.cancelled) onTap?.()
+      }
       // 跟随集合按松手那一下的修饰键定（见 carriesContents）
       else mv.commit(last[0], last[1], carriesContents(ev))
     },
@@ -2161,8 +2192,10 @@ export function startElementGroupMove(
   panel: PanelObject,
   entries: AlignEntry[],
   layout: { width: number; height: number },
+  /** 按下又松开、没拖动时调用（选中的是组时 = 钻进去选中点到的成员） */
+  onTap?: () => void,
 ) {
-  trackInFigureMove(e, panel, layout, groupMove(panel, entries))
+  trackInFigureMove(e, panel, layout, groupMove(panel, entries), onTap)
 }
 
 /**

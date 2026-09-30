@@ -89,6 +89,7 @@ def test_two_frontend_branches_combine_without_a_generated_artifact_conflict(tmp
             "GIT_AUTHOR_EMAIL": "t@x",
             "GIT_COMMITTER_NAME": "t",
             "GIT_COMMITTER_EMAIL": "t@x",
+            **kit.no_auto_maintenance_env(),
         },
     )
     assert proc.returncode == 0, f"组合 B 失败：{proc.stdout}{proc.stderr}"
