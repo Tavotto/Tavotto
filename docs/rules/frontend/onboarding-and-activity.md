@@ -23,12 +23,13 @@
   没换文档 / 没做成就 `resumeAutosave` 接回。
 * **主页两版只按 onboarding 状态分（2026-09-26）**：`lib/onboarding/tutorial.homeVariant(status)`
   是唯一判据——`completed` / `skipped` → 老手版，`not_started` / `active` / `paused` → 新手版；
-  **不另设标志、渲染主页不写任何东西**（派生出来的版式不许回写偏好）。新手版的主按钮就是教程入口
-  （`runTutorialEntry('picker')`，锚点 `tutorial-entry`，暂停过的显示「继续」）；老手版的「使用示例
+  **不另设标志、渲染主页不写任何东西**（派生出来的版式不许回写偏好）。新手版 = 一句大问题 + 拖放区 + 黑色主按钮「导入我的脚本」，教程入口
+  （`runTutorialEntry('picker')`，锚点 `tutorial-entry`，暂停过的显示「继续」）降为次按钮「用示例学一遍（带引导）」
+  （三步说明卡与提示条已删，拖放区标题本身就是说明；两版共用一个 `DropZone`）；老手版的「使用示例
   脚本试试看」走 `openSampleProject()` = `startTutorial(source, { guide: false })`：同一条认领链路打开
   示例项目，**onboarding 一个字段都不碰**、不记 `tutorial_started`——否则一次「看看示例」就把
   `completed` 改回 `active`，下次回主页又成了新手版。「重新开始教程」照旧在「全部项目」视图、帮助菜单、
-  命令面板、设置里。「已随安装包内置示例脚本」只在 `GET /api/tutorial` 回 `available: true` 时显示。
+  命令面板、设置里。示例资源坏了（`available: false`）才多说一句「请重新安装」，正常时不说「已内置」。
 * **完成条件在 `lib/onboarding/steps.ts`**：状态可说清的读 store，说不清的读 `StepSignals`（引擎按
   信号累计、按 `consumes` 消费）。教程要编辑的是带 `spec_issue` 的那张（T-108）。**不用 DOM 文案 /
   CSS class 猜状态；不为教程复制任何 action。**

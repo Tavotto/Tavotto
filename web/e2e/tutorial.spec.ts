@@ -6,7 +6,7 @@ import type { Page } from '@playwright/test'
 /**
  * 新手教程（Prompt 21，ADR 0040）——只有真浏览器 + 真后端才能回答的那几件：
  *
- *   * 从主页新手版的「用示例体验一次」（教程入口锚点）开始，**每一步都由真实动作完成**：
+ *   * 从主页新手版的「用示例学一遍（带引导）」（教程入口锚点）开始，**每一步都由真实动作完成**：
  *     双击素材卡进快速编辑、选标题、改字号、从「问题」定位那条 7 pt、开导出面板
  *     确认原图、加入画布、Shift 多选 + 顶对齐、确认画布导出；
  *   * coachmark 贴着真实锚点、没有遮罩、导出面板开着时它在面板里（模态对话框外面
@@ -24,9 +24,9 @@ const coachmark = (page: Page) => page.locator('[data-onboarding-coachmark]')
 
 async function openTutorialFromPicker(page: Page, baseURL: string) {
   await page.goto(baseURL)
-  // 主页新手版的主按钮就是教程入口（锚点唯一：全部项目视图里那一行与它不同时在屏上）
+  // 主页新手版的次按钮就是教程入口（锚点唯一：全部项目视图里那一行与它不同时在屏上）
   const entry = page.locator('[data-onboarding-anchor="tutorial-entry"]')
-  await expect(entry).toHaveText(/用示例体验一次/)
+  await expect(entry).toHaveText(/用示例学一遍（带引导）/)
   await entry.click()
   // 工作台起来：第一步直接是「双击这张图」（没有欢迎卡）
   await expect(coachmark(page)).toBeVisible({ timeout: 60_000 })

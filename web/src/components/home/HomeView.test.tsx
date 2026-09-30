@@ -158,20 +158,26 @@ describe('两版切换判据', () => {
 })
 
 describe('新手版', () => {
-  it('三步 + 主按钮开始教程；暂停过的人看到「继续」', async () => {
+  it('一句大问题 + 拖放区 + 黑色主按钮导入；没有三步说明卡；示例教程是次按钮，暂停过的人看到「继续」', async () => {
     await mount()
-    expect(host.querySelectorAll('ol > li')).toHaveLength(3)
+    expect(host.querySelector('ol')).toBeNull()
+    expect(host.querySelector('[data-home-dropzone]')).not.toBeNull()
+    expect(host.querySelector('h1')!.textContent).toContain('你的绘图脚本在哪里')
+    const importBtn = host.querySelector<HTMLButtonElement>('button[data-home-import]')!
+    expect(importBtn.className).toContain('bg-ink')
     const primary = host.querySelector<HTMLButtonElement>('[data-onboarding-anchor="tutorial-entry"]')!
-    expect(primary.textContent).toContain('用示例体验一次')
+    expect(primary.className).not.toContain('bg-ink')
+    expect(primary.textContent).toContain('用示例学一遍（带引导）')
     await click(primary)
     expect(tutorial.runTutorialEntry).toHaveBeenCalledWith('picker')
     await act(async () => setOnboarding('paused'))
     expect(host.querySelector('[data-onboarding-anchor="tutorial-entry"]')!.textContent).toContain('继续示例教程')
   })
 
-  it('「已随安装包内置」只在后端验过资源时说；资源坏了说重新安装；没有教程 API 时整块不出现', async () => {
+  it('资源坏了说重新安装（禁用示例按钮）；没有教程 API 时示例按钮不出现；正常时不多说一句', async () => {
     await mount()
-    expect(host.textContent).toContain('已随安装包内置示例脚本')
+    expect(host.textContent).not.toContain('已随安装包内置示例脚本')
+    expect(host.querySelector('[data-home-sample-note]')).toBeNull()
     act(() => root.unmount())
     host.remove()
 
@@ -193,7 +199,7 @@ describe('新手版', () => {
     expect(host.querySelector('[data-home-import]')).not.toBeNull()
   })
 
-  it('资源探测还没回来：那句「已内置」先不说（还不知道成不成立）', async () => {
+  it('资源探测还没回来：示例按钮在、不带任何说明句', async () => {
     tutorialApi = 'pending'
     await mount()
     expect(host.querySelector('[data-onboarding-anchor="tutorial-entry"]')).not.toBeNull()
