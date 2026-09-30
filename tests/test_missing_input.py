@@ -405,7 +405,9 @@ def test_an_absolute_path_the_script_wrote_keeps_its_absolute_identity(remapped,
     box = pathlib.Path.cwd()
     absolute = str(box / "data" / "x.csv")
     rules = [{"kind": P, "from": "", "to": str(tmp_path / "moved")}]
-    misses = remapped(rules, script_source=f"import pandas as pd\npd.read_csv({absolute!r})\n")
+    # 脚本里恰好也有个 `"data"` 常量（字典键）：相对常量能认领它，但绝对常量认领在先——仍是绝对身份
+    source = f"import pandas as pd\ncfg = {{'data': 1}}\npd.read_csv({absolute!r})\n"
+    misses = remapped(rules, script_source=source)
     with pytest.raises(FileNotFoundError) as err:
         open(absolute)
     fact = figcapture.missing_input_of(err.value, misses)
