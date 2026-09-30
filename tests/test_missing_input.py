@@ -327,9 +327,9 @@ def remapped(tmp_path, monkeypatch):
     originals = (builtins.open, io.open, pathlib.Path.open)
     installed = []
 
-    def install(rules):
+    def install(rules, **kw):
         misses = figcapture.InputMisses()
-        installed.append(figcapture.install_input_remap(rules, misses, str(box)))
+        installed.append(figcapture.install_input_remap(rules, misses, str(box), **kw))
         return misses
 
     yield install
@@ -395,6 +395,24 @@ def test_a_miss_normalized_against_the_base_is_matched_after_a_chdir(
     fact = figcapture.missing_input_of(err.value, misses)
     assert fact is not None and fact["requested"] == "y.csv"
     assert os.path.realpath(fact["cwd"]) == os.path.realpath(box / "sub")
+
+
+def test_an_absolute_path_the_script_wrote_keeps_its_absolute_identity(remapped, tmp_path):
+    """`cwd_mode=project`：脚本显式写的 `<项目>/data/x.csv`（落在 cwd 里）缺了——一条宽泛的相对规则不许悄悄接管它，
+    落空也按**绝对**路径记（弹窗据此推出的是绝对的 `from`，不是影响全项目相对读取的 `from=""`，Codex 评 #716 P1）。
+    证据是脚本源码：只有相对常量能认领、绝对常量没认领的，才当成相对路径被库规范化出来的（PIL 那种）。"""
+    _touch(tmp_path / "moved" / "data" / "x.csv", "moved")
+    box = pathlib.Path.cwd()
+    absolute = str(box / "data" / "x.csv")
+    rules = [{"kind": P, "from": "", "to": str(tmp_path / "moved")}]
+    misses = remapped(rules, script_source=f"import pandas as pd\npd.read_csv({absolute!r})\n")
+    with pytest.raises(FileNotFoundError) as err:
+        open(absolute)
+    fact = figcapture.missing_input_of(err.value, misses)
+    assert fact is not None and fact["requested"] == absolute
+    # 同一个绝对串，脚本写的是相对的 `data/x.csv`（库先 realpath 再打开）：仍按相对那一段查表、被规则救回
+    remapped(rules, script_source='from PIL import Image\nImage.open("data/x.csv")\n')
+    assert open(absolute).read() == "moved"
 
 
 def test_numpy_loadtxt_is_remapped_and_named_without_a_filename(remapped, tmp_path):
@@ -977,7 +995,7 @@ def test_a_legacy_registration_without_a_mark_reconciles_conservatively(
 def test_a_remap_during_the_writeback_replace_loop_waits_for_the_commit(
     client, tmp_path, monkeypatch
 ):
-    """写回在替换循环中途（第一个目标已换、第二个还没换）时，另一个窗口改了指认（Codex 评 #716 P1）：改指持写锁，
+    """写回在替换循环中途（第一个目标已换、第二个还没换）时，另一个窗口改了指认（Codex 评 #716 P1）：改指持项目锁，
     要等这次提交整个落完才能改表、换代——写回不会一半按旧表、一半在新表之后落地。barrier 把写回钉在替换中途。"""
     import threading
 
@@ -1138,7 +1156,7 @@ def test_an_export_is_not_published_when_the_table_changed_after_it_started(tmp_
 
 
 def test_a_remap_during_export_publishing_waits_for_the_publish(tmp_path, monkeypatch):
-    """发布循环中途改指：写锁等发布落完，发布出去的每个文件都属于同一代（barrier 把作业钉在发布中途）。"""
+    """发布循环中途改指：改指的项目锁等发布落完，发布出去的每个文件都属于同一代（barrier 把作业钉在发布中途）。"""
     import threading
 
     from tavotto import app as m
@@ -1195,30 +1213,93 @@ def test_a_remap_during_export_publishing_waits_for_the_publish(tmp_path, monkey
     assert inputremap.generation(root) == before + 1
 
 
-def test_the_project_lock_admits_readers_together_and_writers_alone(tmp_path):
-    """读写锁本身：落地之间不互斥（同一项目两次写回可以同时提交）、可重入；改表等所有落地放手；
-    落地里改表是自锁，当场报错而不是挂死。"""
+def test_two_concurrent_re_registrations_keep_both_updates(tmp_path, monkeypatch):
+    """两个脚本同时重新登记（Codex 评 #716 P1）：注册表整段读改写在项目锁里，后写的不整值覆盖先写的。
+    读完文件之后停一下，让另一个线程也读到同一份——没有锁时后写的一方吞掉前一方的 stems。"""
+    import threading
+
+    from tavotto.engine import discover, registry
+
+    root = tmp_path / "proj"
+    root.mkdir()
+    discover.register(root, "a.py", ["a_old"], entry="__main__")
+    discover.register(root, "b.py", ["b_old"], entry="__main__")
+    real_write = discover.write_config
+    both_read = threading.Barrier(2, timeout=0.5)
+
+    def slow_write(figures_dir, cfg):
+        try:
+            both_read.wait()  # 有锁时另一个线程进不来，等不到：超时后照常写
+        except threading.BrokenBarrierError:
+            pass
+        return real_write(figures_dir, cfg)
+
+    monkeypatch.setattr(discover, "write_config", slow_write)
+    threads = [
+        threading.Thread(target=discover.register, args=(root, name, [stem]), kwargs={"entry": "__main__"})
+        for name, stem in (("a.py", "a_new"), ("b.py", "b_new"))
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(10)
+    path = registry.existing_registry_path(root)
+    scripts = json.loads(path.read_text(encoding="utf-8"))["scripts"]
+    assert scripts["a.py"]["stems"] == ["a_new"]
+    assert scripts["b.py"]["stems"] == ["b_new"]
+
+
+def test_state_reads_the_table_and_its_generation_together(tmp_path, monkeypatch):
+    """设置页读改指表时另一个窗口正在改（Codex 评 #716 P2）：表与代次在同一次持锁里取——读到的永远是配套的
+    一对，不会是「旧表 + 新代次」（前端记下新代次之后会把随后的事件当已见，列表就一直是旧的）。"""
     import threading
 
     root = tmp_path / "proj"
     root.mkdir()
-    both_in = threading.Barrier(2, timeout=5)
+    before = inputremap.generation(root)
+    real_entries = inputremap._entries
+    in_state = threading.Event()
+    proceed = threading.Event()
+    state_thread: dict = {}
 
-    def land():
-        with inputremap.landing(root):
-            both_in.wait()  # 两个读者同时在锁里才过得去
+    def slow_entries(r):
+        out = real_entries(r)
+        if threading.get_ident() == state_thread.get("id"):
+            in_state.set()
+            proceed.wait(0.5)  # 有锁时改指进不来；没锁时它此刻改表、换代
+        return out
 
-    readers = [threading.Thread(target=land) for _ in range(2)]
-    for t in readers:
-        t.start()
-    for t in readers:
-        t.join(10)
-    assert not both_in.broken
+    monkeypatch.setattr(inputremap, "_entries", slow_entries)
+    got: dict = {}
+
+    def read_state():
+        state_thread["id"] = threading.get_ident()
+        got["state"] = inputremap.state(root)
+
+    t = threading.Thread(target=read_state)
+    t.start()
+    assert in_state.wait(5)
+    w = threading.Thread(
+        target=inputremap.add_rule, args=(root, {"kind": P, "from": "", "to": str(tmp_path)})
+    )
+    w.start()
+    w.join(0.3)
+    proceed.set()
+    t.join(10)
+    w.join(10)
+    st = got["state"]
+    assert (st["rules"], st["generation"]) == ([], before), "读到的表与代次不是同一刻的"
+    assert inputremap.generation(root) == before + 1
+
+
+def test_the_project_mutex_is_reentrant_on_one_thread(tmp_path):
+    """同一线程落地里再落地、落地里改表（登记 → 记标记、物化 → 取状态）不自锁。"""
+    root = tmp_path / "proj"
+    root.mkdir()
     with inputremap.landing(root):
-        with inputremap.landing(root):  # 可重入
-            pass
-        with pytest.raises(RuntimeError):
+        with inputremap.landing(root):
             inputremap.add_rule(root, {"kind": P, "from": "", "to": str(tmp_path)})
+        assert inputremap.state(root)["rules"]
 
 
 def test_canonically_equal_sources_replace_each_other(tmp_path):

@@ -88,15 +88,14 @@
     `ExecutionSpec.input_remap`（本机路径，**不进** `stable_payload`），`worker_argv` 只在非空时多
     `--input-remap <json>`，三条 spawn 路径都从 `inputremap.rules_for` 取。**探路调用（exists / glob /
     listdir）与 C++ 读取器救不回**——载荷里 `via` 标 `probe` / `glob`，对话框如实说、不给按钮。
-    native 不改指。④ **代次 + 项目读写锁**（ADR 0106 §五）：改指表按项目一个代次（跨重启单调）；增 / 换 / 删持
-    项目**写锁**，读改写与换代一整段。三条 spawn 路径用 `inputremap.snapshot()` 同一刻取代次与规则、会话带
-    `remap_generation`，池复用前核对；依赖映射的落地（渲染回包、runtime 物化、试运行登记与重新登记、写回、
-    导出作业的发布）进 `inputremap.landing()`：持**读锁**核对代次，并**一直持到提交完成**（写回的备份 + 整个
-    replace 循环、导出的整个发布循环；导出作业带着开始时的代次经 `exportjob.run(commit_guard=)` 到发布点），
-    对不上报 `input_remap_changed`（409 可重试）。**不持锁执行脚本**：锁里不取会起新会话的 worker。前端作废按
-    代次幂等（`envStore.onInputRemapChanged(generation)`）：接口响应、事件流、重连 / 页面恢复补拉三条路都调，
-    同一代只执行一次。试运行登记的 stems 在本机项目设置里记指纹（无标记 + 有规则 = 过期），下一次按新表 build
-    后按真实产出重新登记。新增依赖映射的工作点先接到这里，清单与各自的持锁区间在 ADR 0106 §五。
+    native 不改指。④ **代次 + 按项目的一把互斥锁**（ADR 0106 §五，`inputremap.project_mutex`，可重入）：改指表按项目一个代次（跨重启单调）。
+    同一把锁里：改表与换代、`state()` / `snapshot()` 的「表 + 代次」、注册表整段读改写（`discover.register`）与登记标记、
+    所有落地提交（渲染回包的核对、runtime 物化、试运行登记与重新登记、写回的备份 + 整个 replace 循环、导出作业
+    经 `exportjob.run(commit_guard=)` 的整个发布循环）。对不上报 `input_remap_changed`（409 可重试）。**锁序：池锁 →
+    项目锁**，持项目锁时不取池锁、不起会话、不跑脚本。前端作废按代次幂等（`envStore.onInputRemapChanged(generation)`）：
+    接口响应、事件流、重连 / 页面恢复补拉三条路都调，同一代只执行一次。试运行登记的 stems 在本机项目设置里记指纹
+    （无标记 + 有规则 = 过期），下一次按新表 build 后按真实产出重新登记（一张没出也算）。落在 cwd 里的绝对路径
+    证得出是相对路径规范化来的才按相对处理（`figcapture.path_literals`），否则保留绝对身份。新增依赖映射的工作点先接到这里，清单与各自的持锁区间在 ADR 0106 §五。
     看护 `tests/test_missing_input.py`（真 worker 相对 / 绝对 / 脚本目录模式 / 原件回来 /
     同名诱饵 / 试运行 / 三条 spawn 路径）、`web/src/components/MissingInputDialog.test.tsx`、
     `web/e2e/missing-input.spec.ts`。

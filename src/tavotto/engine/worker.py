@@ -515,8 +515,16 @@ class Worker(wireproto.V1Handler):
         # 数据改指（ADR 0106）装在观察器**外**、只读回退**内**：回退先找脚本目录，找不到才轮到
         # 用户指认的改指表；改道来的读经观察器记下。没有规则也装——落空的读要记账。
         self._input_misses = figcapture.InputMisses()
+        # 脚本源码给改指当证据：落在 cwd 里的绝对路径是不是相对路径规范化来的（证不出就保留绝对身份）
+        try:
+            script_source = self.script.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            script_source = ""
         figcapture.install_input_remap(
-            self.input_remap, self._input_misses, str(self.workdir or self.sandbox)
+            self.input_remap,
+            self._input_misses,
+            str(self.workdir or self.sandbox),
+            script_source=script_source,
         )
         if self.workdir is None:
             figcapture.install_relative_read_fallback(
