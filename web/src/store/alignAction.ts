@@ -23,9 +23,11 @@ import { layoutBoxes } from '@/lib/axesLayout'
 import {
   alignUnits,
   annotationAlignEntries,
+  blockedGroupsIn,
   panelFullRect,
   type AlignUnit,
   type AnnotationEntry,
+  type GroupBlockReason,
 } from '@/lib/elementGeom'
 import type { AlignMode } from '@/lib/geometry'
 import { msg } from '@/i18n'
@@ -58,10 +60,15 @@ export type AlignBlocked =
   | 'invalid'
   /** 谁都不用动 */
   | 'noop'
+  /**
+   * 选区里有不能整体变换的组（`groupTransformBlocked`）：整次对齐都不做，说出组为什么动不了。
+   * 只排它、对齐其余的话，同时点名的成员会被当散选单独挪走、把组拆开（Codex #691）
+   */
+  | 'group-blocked'
 
 export type AlignResult =
   | { ok: true; patches: number; moves: number }
-  | { ok: false; reason: AlignBlocked }
+  | { ok: false; reason: AlignBlocked; /** `group-blocked` 时组动不了的原因 */ group?: GroupBlockReason }
 
 /** 数字校验：非有限数一律当作算坏了 */
 const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
@@ -129,7 +136,13 @@ export function alignSelectedPanelElements(panelId: string, mode: AlignMode): Al
       (o.type === 'text' || o.type === 'arrow' || o.type === 'shape'),
   )
 
-  // 5. 重算条目。选区里的组整组当一个单位（`alignUnits`）：逐个成员排版会把组拆散
+  // 5. 重算条目。选区里有动不了的组：整次不做，说出为什么（与拖它、按方向键同一句）
+  const [stuck] = blockedGroupsIn(panel, manifest, gids)
+  if (stuck) {
+    blocked(panelId, mode, 'group-blocked')
+    return { ok: false, reason: 'group-blocked', group: stuck.reason }
+  }
+  // 选区里的组整组当一个单位（`alignUnits`）：逐个成员排版会把组拆散
   const items: (AlignUnit | AnnotationEntry)[] = [
     ...alignUnits(panel, manifest, gids),
     ...annotationAlignEntries(panel, annotations),
@@ -223,6 +236,8 @@ const BLOCK_REASON = {
   'too-few': 'empty_selection',
   invalid: 'no_geometry_change',
   noop: 'nothing_to_write',
+  // 诊断闭集不为它新开一档：对诊断来说就是「没有够格参与的条目」
+  'group-blocked': 'empty_selection',
 } as const
 
 function blocked(

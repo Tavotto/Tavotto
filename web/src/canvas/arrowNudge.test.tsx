@@ -590,6 +590,16 @@ describe('图内元素：与拖动同一套移动规则', () => {
     expect(past()).toHaveLength(1)
   })
 
+  it('选中的组被挡住（锁了一个成员）、又同时点名了一个没锁的成员：那个成员也不动，说组为什么动不了', async () => {
+    await setup({ manifest: groupManifest, panel: { lockedGids: ['axes_1'] } as Partial<PanelObject> })
+    editFigure([GROUP, 'axes_0'])
+    tap('ArrowRight', { shiftKey: true })
+    settle()
+    expect(livePanel().overrides).toHaveLength(0)
+    expect(past()).toHaveLength(0)
+    expect(status()).toContain('groupBlocked.locked')
+  })
+
   it('选中的组里有隐藏的成员：隐藏的照样跟着整组走（写下的成员 = expandGroups 的结果），与拖动一致', async () => {
     const hidden: Manifest = {
       ...groupManifest,

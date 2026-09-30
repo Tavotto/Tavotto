@@ -38,6 +38,7 @@ import {
   type AlignEntry,
   type CarriedItem,
   type Group,
+  groupBlockedMessage,
   type GroupBlockReason,
 } from '@/lib/elementGeom'
 import { newId } from '@/lib/id'
@@ -1445,15 +1446,6 @@ export function immovableMessage(el: ManifestElement): UiMessage {
     'workspace',
   )
 }
-
-/** 组不能整体变换时说的那句（按原因；拖动、方向键共用） */
-const GROUP_BLOCKED_STATUS: Record<GroupBlockReason, string> = {
-  not_resizable: 'status.groupBlocked.notResizable',
-  locked: 'status.groupBlocked.locked',
-  incomplete: 'status.groupBlocked.incomplete',
-}
-export const groupBlockedMessage = (reason: GroupBlockReason): UiMessage =>
-  msg(GROUP_BLOCKED_STATUS[reason], undefined, 'workspace')
 
 /**
  * 选中的组不能整体变换（`elementGeom.groupTransformBlocked`），又在组里按下：点一下照常钻进去

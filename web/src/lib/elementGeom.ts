@@ -1,6 +1,6 @@
 import type { Manifest, ManifestElement, ManifestGroup } from './api'
 import { segIntersectsSeg } from './pathGeom'
-import { t } from '@/i18n'
+import { msg, t, type UiMessage } from '@/i18n'
 import type { AlignMode } from './geometry'
 import {
   flipY,
@@ -265,6 +265,15 @@ export interface AlignEntry extends AlignItem {
  */
 export type GroupBlockReason = 'not_resizable' | 'locked' | 'incomplete'
 
+/** 组不能整体变换时说的那句（按原因；拖动、方向键、对齐共用） */
+const GROUP_BLOCKED_STATUS: Record<GroupBlockReason, string> = {
+  not_resizable: 'status.groupBlocked.notResizable',
+  locked: 'status.groupBlocked.locked',
+  incomplete: 'status.groupBlocked.incomplete',
+}
+export const groupBlockedMessage = (reason: GroupBlockReason): UiMessage =>
+  msg(GROUP_BLOCKED_STATUS[reason], undefined, 'workspace')
+
 export function groupTransformBlocked(
   panel: Pick<PanelObject, 'lockedGids' | 'overrides'>,
   manifest: Manifest,
@@ -311,13 +320,42 @@ export function expandGroups(
   gids: readonly string[],
 ): string[] {
   if (!manifest.groups?.length) return [...gids]
+  const claimed = claimedBySelectedGroups(manifest, gids)
   const out: string[] = []
   for (const gid of gids) {
     const group = manifest.groups.find((g) => g.gid === gid)
-    const parts = group ? (groupTransformBlocked(panel, manifest, group) ? [] : group.members) : [gid]
+    // 选区里同时点名的组成员（或几何落在成员上的色条 / 位图）归它的组管：组能整体变换就随全员来，
+    // 组被挡住就是零——**不因为组展开为空就退回成散选**，否则单独挪它会把组拆开（Codex #691）
+    const parts = group
+      ? groupTransformBlocked(panel, manifest, group)
+        ? []
+        : group.members
+      : claimed(gid)
+        ? []
+        : [gid]
     for (const g of parts) if (!out.includes(g)) out.push(g)
   }
   return out
+}
+
+/**
+ * 选区里的组「认领」了哪些 gid：组成员本身，以及几何落在成员上的元素（共享色条元素 → 色条轴、
+ * 位图 → 宿主子图）。认领与组能不能整体变换无关——被挡住的组，它的成员照样不能被当散选单独挪。
+ * 成员子图里的其它东西（标题、线…）不算：挪它们不改组的落位。
+ */
+export function claimedBySelectedGroups(
+  manifest: Manifest,
+  gids: readonly string[],
+): (gid: string) => boolean {
+  const members = new Set(
+    (manifest.groups ?? []).filter((g) => gids.includes(g.gid)).flatMap((g) => g.members),
+  )
+  if (!members.size) return () => false
+  return (gid) => {
+    if (members.has(gid)) return true
+    const el = manifest.elements.find((e) => e.gid === gid)
+    return !!el && members.has(geomGid(el))
+  }
 }
 
 /**

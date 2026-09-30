@@ -555,3 +555,45 @@ describe('不变式：组的变换写下的成员 = expandGroups 的结果（隐
     }
   })
 })
+
+/**
+ * 被挡住的组（这里锁了 C）与它**同时点名的成员**：成员归组管，组动不了它也动不了——不因为组
+ * 展开为空就把它当散选单独挪走（Codex #691）。组外的 A 照常。
+ */
+describe('被挡住的组认领同时点名的成员：拖动 / 对齐都不把它单独挪走', () => {
+  const ON_A: [number, number] = [0.15, 0.5]
+
+  it.each([
+    ['子图 2（成员本身）', 'axes_1'],
+    ['共享色条元素（几何落在色条轴上）', 'axes_3.colorbar'],
+    ['B 的位图（几何落在子图 2 上）', 'axes_1.images_0'],
+  ])('选区 = 组 + %s + 组外的 A：拖 A 只挪 A，组的成员一个都不写', async (_name, member) => {
+    lock(['axes_2'])
+    await mount()
+    act(() => useUiStore.getState().setSelectedGids([GROUP, member, 'axes_0']))
+    await drag(ON_A, 40)
+    expect(positionOf('axes_0')![0]).toBeCloseTo(POS.axes_0[0] + 40 / LAYOUT.width, 4)
+    for (const g of ['axes_1', 'axes_2', 'axes_3']) expect(positionOf(g)).toBeUndefined()
+  })
+
+  it('选区 = 组 + 没锁的成员：拖那个成员 = 组被挡住的提示，什么都不写', async () => {
+    lock(['axes_2'])
+    await mount()
+    act(() => useUiStore.getState().setSelectedGids([GROUP, 'axes_1']))
+    await drag(ON_B, 40)
+    expect(livePanel().overrides).toEqual([])
+    expect(statusText()).toContain('groupBlocked.locked')
+  })
+
+  it('对齐：选区里有被挡住的组，整次不做，按原因说', async () => {
+    lock(['axes_2'])
+    act(() => useUiStore.getState().setSelectedGids([GROUP, 'axes_1', 'axes_0']))
+    expect(alignSelectedPanelElements('p1', 'left')).toEqual({
+      ok: false,
+      reason: 'group-blocked',
+      group: 'locked',
+    })
+    expect(livePanel().overrides).toEqual([])
+  })
+})
+

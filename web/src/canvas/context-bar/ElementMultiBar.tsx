@@ -8,7 +8,7 @@ import { FIGURE_TEXT_BATCH_PROPS } from '@/components/inspector/typographyAdapte
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { Button } from '@/components/ui/Button'
 import { Tip } from '@/components/ui/Tooltip'
-import { alignEntries, annotationAlignEntries } from '@/lib/elementGeom'
+import { alignEntries, annotationAlignEntries, groupBlockedMessage } from '@/lib/elementGeom'
 import type { AlignMode } from '@/lib/geometry'
 import { alignSelectedPanelElements } from '@/store/alignAction'
 import { useDocumentStore } from '@/store/documentStore'
@@ -86,7 +86,8 @@ export function ElementMultiBar({
     const res = alignSelectedPanelElements(panel.id, mode)
     if (res.ok) return
     // 拒绝必须说得出原因（与属性页对齐区同一套文案）
-    if (res.reason === 'syncing') setStatus(msg('element.alignSyncing', undefined, 'inspector'))
+    if (res.reason === 'group-blocked' && res.group) setStatus(groupBlockedMessage(res.group))
+    else if (res.reason === 'syncing') setStatus(msg('element.alignSyncing', undefined, 'inspector'))
     else if (res.reason === 'noop') setStatus(msg('element.alignNoop', undefined, 'inspector'))
     else if (res.reason === 'invalid')
       setStatus(msg('element.alignInvalid', undefined, 'inspector'), 'error')

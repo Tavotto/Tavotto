@@ -22,7 +22,9 @@
 import {
   alignEntries,
   blockedGroupsIn,
+  claimedBySelectedGroups,
   expandGroups,
+  groupBlockedMessage,
   isElementHidden,
   panelFullRect,
 } from '@/lib/elementGeom'
@@ -40,7 +42,6 @@ import { moveLabel, warnBlockedGroups } from '@/store/actions'
 import { panelRotation, unrotateVec, type PanelObject } from '@/types/document'
 import {
   draggableSelection,
-  groupBlockedMessage,
   groupMove,
   immovableMessage,
   inFigureMoveOf,
@@ -301,8 +302,10 @@ function moverFor(panel: PanelObject, manifest: Manifest, gids: string[]): InFig
   // 下游**不再逐个过滤**——隐藏的成员照样跟着组走（与拖动一致），否则剩下的被平移、组被拆开
   // （Codex #691）。锁定 / 隐藏的逐个过滤只对散选的元素
   const members = expandGroups(panel, manifest, gids.filter(isGroup))
+  // 散选 = 不是组、也不被选区里任何一个组认领（被挡住的组也认领：它的成员不能被单独挪走）
+  const claimed = claimedBySelectedGroups(manifest, gids)
   const loose = gids
-    .filter((g) => !isGroup(g) && !members.includes(g) && !locked.has(g))
+    .filter((g) => !isGroup(g) && !claimed(g) && !locked.has(g))
     .map((g) => manifest.elements.find((el) => el.gid === g))
     .filter((el): el is NonNullable<typeof el> => !!el && el.gid !== 'figure' && !isElementHidden(el))
   const els = [

@@ -40,6 +40,7 @@ import {
   annotationAlignEntries,
   GEOMETRY_WRITE_PROPS,
   geomTarget,
+  groupBlockedMessage,
   groupOf,
   groupPatches,
   type Group,
@@ -2606,7 +2607,8 @@ function AlignSection({
     const res = alignSelectedPanelElements(panel.id, mode)
     if (res.ok) return
     // 拒绝必须说得出原因：什么都不发生而界面一声不吭，用户只会再点几下
-    if (res.reason === 'syncing') setStatus(elMsg('alignSyncing'))
+    if (res.reason === 'group-blocked' && res.group) setStatus(groupBlockedMessage(res.group))
+    else if (res.reason === 'syncing') setStatus(elMsg('alignSyncing'))
     else if (res.reason === 'noop') setStatus(elMsg('alignNoop'))
     else if (res.reason === 'invalid') setStatus(elMsg('alignInvalid'), 'error')
   }
