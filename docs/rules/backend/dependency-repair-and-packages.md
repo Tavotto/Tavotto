@@ -172,6 +172,15 @@
   诊断只记 `custom_package_index: true/false`，**绝不记地址**。本轮**没有加
   遥测事件**（EVENTS 扩容要升 CONSENT_VERSION 并让所有人重新同意，理由见
   ADR 0019 §十二）。
+- **PyPI 镜像回退（ADR 0111，2026-09-29）**：四条装包路径都经 `_run_pip_install`（两条 argv 出处
+  `pip_install_argv` / `pip_install_joint_argv` 各多一个只在这里传的 `index_url`，默认 argv 一个字节不变）。
+  先按官方 / 用户配置跑；**仅当** `mirror_retry_warranted(code, user_package_source(python))`——code 是
+  `dependency_network_unavailable`（pip 退出码非零 + 网络特征；退出码 0 不算）且这个环境没有用户自配源
+  （四个 `PIP_*` 环境变量 / `pip config list` 的 index-url · extra-index-url · no-index · find-links；问不出来按
+  「配过」）——才带 `--index-url PYPI_MIRROR_URL`（清华 TUNA，固定一个）**再跑一次**，不再换。日志一行写明、
+  进度记录顶层 `pypi_mirror`——**只在镜像那次 pip 真起来之后**（`_run_pip(on_started=)`）才记，起之前取消 / 起不来都不记。联合准备（跑前准备弹窗那条路，原地 / 换代两种）与单包修复、包管理**同一个字段、同一层**（进度记录顶层），先记字段再写日志那句，带说明的第一个快照（`installing`）就已带着它。`custom_package_index` 仍只服务诊断（只问 index、只回真假）。看护
+  `tests/test_pypi_mirror_fallback.py` + `tests/test_dependency_repair.py::test_the_managed_generation_records_the_mirror_on_its_progress`。
+  包查找（`pip index versions`）不在回退范围内。
 - `deprepair` 里每个 `ERROR_*` code 在两种语言里都要有文案——
   `engine.repairError.<code>` 或 `backend.<code>`，与卡片 `repairCodeMessage` 的查法
   同源（`test_every_repair_code_has_text_in_both_languages`，常量名从 AST 取、值从

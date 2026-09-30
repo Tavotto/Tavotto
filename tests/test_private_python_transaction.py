@@ -40,6 +40,7 @@ from tavotto.engine import (
     managedenv,
     pool as engine_pool,
     privatepython,
+    runtime,
 )
 
 pytest_plugins = ("support.dependency_repair",)
@@ -706,6 +707,131 @@ class TestPrivateBase:
 
 
 # ================================================================ 干净机器：一个渲染解释器都没有（PR B）
+class TestPlannedSourceInTheTransaction:
+    """ADR 0111 §一 在事务层：计划里告诉用户的来源（`private_python.origin` / 已就位 / 那一份 id）在确认之后变了
+    → `repair_plan_stale`，不换源、不联网、这一代不登记；重新规划把此刻的来源说出口后照常成功。服务一直在线：
+    拦住「换成下载」的只能是判据本身。"""
+
+    def _archive(self, tmp_path, src) -> Path:
+        return tmp_path / "serve" / src.archive_name
+
+    def _stale(self, project, plan, server):
+        rec, _ = _prepare(plan.plan_id)
+        assert rec["state"] == deprepair.STATE_FAILED, json.dumps(rec, ensure_ascii=False)
+        assert rec["code"] == deprepair.ERROR_PLAN_STALE
+        assert server.requests == []
+        assert managedenv.generations(project) == {}
+        return rec
+
+    def test_cache_deleted_after_confirmation_is_stale_not_a_download(
+        self, tmp_path, house, no_base, fake
+    ):
+        server, src, _ = fake
+        privatepython.downloads_dir().mkdir(parents=True)
+        shutil.copy2(self._archive(tmp_path, src), privatepython.archive_path(src))
+        project = _project(tmp_path)
+        plan = deprepair.create_joint_plan(project, "figure.py")
+        assert plan.private_python["origin"] == "cached"
+        assert plan.private_python["network_required"] is False
+        privatepython.archive_path(src).unlink()
+        self._stale(project, plan, server)
+        again = deprepair.create_joint_plan(project, "figure.py")
+        assert again.private_python["origin"] == "download"  # 重新规划如实说要下载
+        rec, _ = _prepare(again.plan_id)
+        assert rec["state"] == deprepair.STATE_DONE, rec
+        assert server.requests == [f"/{src.archive_name}"]
+
+    def test_bundled_archive_gone_after_confirmation_is_stale_not_a_download(
+        self, tmp_path, house, no_base, fake, monkeypatch
+    ):
+        server, src, _ = fake
+        bundle = tmp_path / "bundle"
+        bundle.mkdir()
+        shutil.copy2(self._archive(tmp_path, src), bundle / src.archive_name)
+        monkeypatch.setenv(runtime.PRIVATE_PYTHON_BUNDLE_ENV, str(bundle))
+        project = _project(tmp_path)
+        plan = deprepair.create_joint_plan(project, "figure.py")
+        assert plan.private_python["origin"] == "bundled"
+        (bundle / src.archive_name).unlink()
+        self._stale(project, plan, server)
+
+    def test_a_cache_appearing_after_a_download_plan_is_stale(self, tmp_path, house, no_base, fake):
+        server, src, _ = fake
+        project = _project(tmp_path)
+        plan = deprepair.create_joint_plan(project, "figure.py")
+        assert plan.private_python["origin"] == "download"
+        privatepython.downloads_dir().mkdir(parents=True)
+        shutil.copy2(self._archive(tmp_path, src), privatepython.archive_path(src))
+        self._stale(project, plan, server)
+
+    def test_a_changed_lock_after_confirmation_is_stale(
+        self, tmp_path, house, no_base, fake, monkeypatch
+    ):
+        """确认之后锁换了一份（升级 / 换版本：id、字节数都可能变）：要准备的已不是用户看过的那一份。"""
+        server, src, _ = fake
+        privatepython.downloads_dir().mkdir(parents=True)
+        shutil.copy2(self._archive(tmp_path, src), privatepython.archive_path(src))
+        project = _project(tmp_path)
+        plan = deprepair.create_joint_plan(project, "figure.py")
+        assert plan.private_python["id"] == src.id
+        other = privatepython.PythonSource(**{**src.__dict__, "sha256": "f" * 64})
+        monkeypatch.setattr(privatepython, "source_for", lambda target=None, lock=None: other)
+        self._stale(project, plan, server)
+
+    @pytest.mark.parametrize(
+        "planned,required",
+        [
+            ({"origin": "bundled", "required": True}, "bundled"),
+            ({"origin": "cached", "required": True}, "cached"),
+            ({"origin": "download", "required": True}, "download"),
+            ({"required": False}, privatepython.REQUIRE_PRESENT),  # present_payload：已就位
+        ],
+    )
+    def test_the_execution_step_passes_the_planned_origin_and_maps_a_change_to_stale(
+        self, fake, monkeypatch, planned, required
+    ):
+        """`_provision_private_base` 把计划载荷的来源原样交给供应器（已就位 → 要求它仍在），供应器说来源变了
+        就收成 `repair_plan_stale`；锁换了一份（id 不同）连供应器都不叫。"""
+        from types import SimpleNamespace
+
+        _server, src, _ = fake
+        seen: list[str | None] = []
+
+        def _provision(source, *, cancel_ev=None, on_progress=None, required_origin=None):
+            seen.append(required_origin)
+            raise privatepython.ProvisionError(privatepython.ERROR_SOURCE_CHANGED, "changed")
+
+        monkeypatch.setattr(privatepython, "provision", _provision)
+        job = SimpleNamespace(private_plan={**planned, "id": src.id}, emit=lambda *a, **k: None)
+        with pytest.raises(deprepair.RepairError) as err:
+            deprepair._provision_private_base(job, threading.Event())
+        assert err.value.code == deprepair.ERROR_PLAN_STALE and seen == [required]
+        job.private_plan = {**planned, "id": "cpython-other"}
+        with pytest.raises(deprepair.RepairError) as err:
+            deprepair._provision_private_base(job, threading.Event())
+        assert err.value.code == deprepair.ERROR_PLAN_STALE and seen == [required]
+
+    def test_the_planned_local_origin_is_honoured_when_nothing_changed(
+        self, tmp_path, house, no_base, fake
+    ):
+        server, src, _ = fake
+        privatepython.downloads_dir().mkdir(parents=True)
+        shutil.copy2(self._archive(tmp_path, src), privatepython.archive_path(src))
+        project = _project(tmp_path)
+        plan = deprepair.create_joint_plan(project, "figure.py")
+        assert plan.private_python["origin"] == "cached"
+        rec, events = _prepare(plan.plan_id)
+        assert rec["state"] == deprepair.STATE_DONE, rec
+        assert server.requests == []
+        progress = [
+            e["result"]["private_python"]
+            for e in events
+            if e.get("state") == deprepair.STATE_DOWNLOADING_PYTHON
+        ]
+        assert progress and all(p["origin"] == "cached" for p in progress)
+        assert privatepython.read_ledger()["runtimes"][src.id]["origin"] == "cached"
+
+
 @pytest.fixture
 def no_interpreter(monkeypatch, no_base):
     """`resolve_worker_python` 什么都找不到（`no_worker_python`）：干净机器的形状——`no_base` 之外连渲染解释器
