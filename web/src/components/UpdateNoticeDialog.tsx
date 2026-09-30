@@ -97,7 +97,9 @@ export function UpdateNoticeDialog() {
   } else {
     // 还没动手（含失败后再来一次）：说明 + 出口
     const failed = kind === 'desktop' ? store.desktopError : store.applyFailed ? store.applyLog : null
-    body = (
+    const hasBody =
+      !!notice.notes || kind === 'manual' || !!notice.notesUrl || (failed !== null && failed !== undefined)
+    body = !hasBody ? null : (
       <div className="flex flex-col gap-2.5">
         {notice.notes ? (
           <section>

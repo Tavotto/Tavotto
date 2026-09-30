@@ -153,7 +153,8 @@
 
 - `PresetsDialog` 卡片去掉 `title={presetHint(id)}`，`lib/presets.ts` 删 `presetHint`
 - `EngineEnvironmentDialog` / `StyleDialog` / `FigurePickerDialog` 去掉 `description` 副标题（及 `PRODUCT_NAME` 的无用 import）
-- `UpdateNoticeDialog`：无发行说明时不再摆一句 intro（三元的 else 分支改 null）
+- `UpdateNoticeDialog`：无发行说明时不再摆一句 intro；标题已含版本号，正文没有任何内容（无说明、无链接、无失败信息）时 body 为 null
+- `ui/Dialog`：children 为 null / false 时不渲染正文容器（否则空正文仍留 24px 内边距）
 - `ScriptInputDialog`：没有输出时整节（含小标题「脚本到目前为止的输出」）不显示，不再写「还没有输出」
 - `ElementInspector`：对齐说明只留一句；批量修改的「改动将写入选中的 N 个元素」删去，仅「类型不同」时才出一句
 - `ArrangeSection` / `MultiSelectionBar` / `Inspector` / `LeftPanel` / `ElementTree` / `ProblemPanel` / `ProblemCards` / `PanelSection` 去掉复述控件名的 `tip` / `title` / `hint` 属性（`IconButton` 缺省气泡就是按钮名）
@@ -172,7 +173,7 @@
 
 ## 让路（在飞 PR，待合入后再删）
 
-- `errors.json` 的 `engine.*`（依赖修复 / 运行目录 / 改指表 / 脚本备份等整片）：#716 #730 #760 在改，且这一片文案较长，另开一轮。
+- **待办：让路** — `errors.json` 的 `engine.*`（依赖修复 / 运行目录 / 改指表 / 脚本备份等整片）：#716 #730 #760 在改，本轮不动，等它们合入后另开一轮。
 - `workspace.status.grouped_other`：#691 新增 `groupBlocked` 紧邻它，merge-tree 报 resources.d.ts 冲突，撤回（原文「点任一成员会整组选中」待 #691 合入后再缩）。
 - `dialogs.versions.*`（含 `compareDescription` / `compareTip` / `keepTitle` / `restored`）：#679 改了整片。
 - `dialogs.settings.*`、`project.home.*`、`dialogs.onboarding.*` / `workspace.hints.*`：其它子代理在改，未碰。
