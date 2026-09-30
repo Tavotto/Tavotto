@@ -888,7 +888,6 @@ describe('试运行撞上起会话之前的门', () => {
   const prepDialog = () => document.querySelector('[data-dialog="dependency-prepare"]')
   const docButton = (label: string) =>
     [...document.querySelectorAll('button')].find((b) => b.textContent?.trim() === label) as HTMLButtonElement | undefined
-  const reopen = () => host.querySelector('[data-script-dependency-prepare] button') as HTMLButtonElement | null
 
   beforeEach(() => {
     setCurrentProjectId('p1')
