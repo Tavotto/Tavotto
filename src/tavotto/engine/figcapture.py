@@ -1427,12 +1427,39 @@ class InputMisses:
         return [m["requested"] for m in self.items]
 
 
-def install_input_remap(rules, misses: InputMisses, base_dir: str | None = None):
+def path_literals(source: str | None) -> tuple[list[tuple[str, ...]], list[tuple[str, ...]]]:
+    """脚本里写着的路径常量 → `(绝对的路径段, 相对的路径段)`（`remap_parts` 规范化过；空段、说不清的不要）。
+    `install_input_remap` 靠它判一条落在 cwd 里的绝对路径到底是脚本写的绝对路径，还是相对路径被库规范化出来的。"""
+    import ast
+
+    abs_parts: list[tuple[str, ...]] = []
+    rel_parts: list[tuple[str, ...]] = []
+    if not source:
+        return abs_parts, rel_parts
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError):
+        return abs_parts, rel_parts
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and "\n" not in node.value:
+            parsed = remap_parts(node.value)
+            if parsed is None or not parsed[1]:
+                continue
+            (abs_parts if parsed[0] else rel_parts).append(parsed[1])
+    return abs_parts, rel_parts
+
+
+def install_input_remap(
+    rules, misses: InputMisses, base_dir: str | None = None, *, script_source: str | None = None
+):
     """装上改指（ADR 0106）与落空记账；返回卸载函数。
 
     `base_dir` 是装的那一刻脚本的 cwd（沙盒或脚本目录 / 项目根）：`Image.open` 这类先
-    realpath 的库递进来的是 `<cwd>/x.png`——在 cwd 之内的绝对路径按相对路径那一段查表，
-    与只读回退同一个理由（语义上就是那条相对路径）。
+    realpath 的库递进来的是 `<cwd>/x.png`——在 cwd 之内的绝对路径，**能证明**是相对路径规范化来的才按相对
+    那一段查表、记账。证据是脚本源码（`script_source`，`path_literals`）：有相对常量的路径段是它的前缀、且没有
+    绝对常量认领它。证不出就**保留绝对身份**——`cwd_mode=project` 时脚本显式写的 `<项目>/data/x.csv` 缺了，
+    一条宽泛的相对规则不许悄悄接管它，弹窗也不许把它当相对路径推出一条 `from=""` 的全项目规则（Codex 评 #716
+    P1）。没给源码（旧调用方）维持原来的判法。
 
     只在**原路径打开抛 `FileNotFoundError`** 之后查表：成功的打开零额外开销，原路径存在时
     永远读原路径。只读模式才改（写 / 追加 / 读写一个字节都不改道）；改指目标必须是文件，
@@ -1443,9 +1470,21 @@ def install_input_remap(rules, misses: InputMisses, base_dir: str | None = None)
     real_io_open = io.open
     real_path_open = pathlib.Path.open
     base = os.path.abspath(base_dir if base_dir is not None else os.getcwd())
+    literals = path_literals(script_source) if script_source is not None else None
+
+    def _proven_relative(name: str, rel: str) -> bool:
+        if literals is None:
+            return True
+        abs_lits, rel_lits = literals
+        for n in {name, os.path.realpath(name)}:
+            parsed = remap_parts(n)
+            if parsed and any(parsed[1][: len(p)] == p for p in abs_lits):
+                return False  # 脚本自己写着这条（或它的上级）绝对路径
+        parsed = remap_parts(rel)
+        return bool(parsed) and any(parsed[1][: len(p)] == p for p in rel_lits)
 
     def _script_name(name: str) -> str:
-        """落在 base 里的绝对路径 → 相对那一段（脚本当初写的多半就是它）；否则原样。"""
+        """落在 base 里、能证明是相对路径规范化来的绝对路径 → 相对那一段；否则原样（保留绝对身份）。"""
         if not os.path.isabs(name):
             return name
         try:
@@ -1456,7 +1495,9 @@ def install_input_remap(rules, misses: InputMisses, base_dir: str | None = None)
         except (OSError, ValueError):
             return name
         rel = os.path.relpath(real, real_base)
-        return name if rel.startswith("..") or rel == "." else rel
+        if rel.startswith("..") or rel == ".":
+            return name
+        return rel if _proven_relative(name, rel) else name
 
     def _alt(file) -> tuple[str | None, str | None]:
         """回 `(改指目标, 记账用的名字)`；不是路径（fd / 文件对象）两个都是 None。"""

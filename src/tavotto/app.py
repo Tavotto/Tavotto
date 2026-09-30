@@ -1491,7 +1491,7 @@ def _classify_export_error(exc: BaseException):
 
 def _export_commit_guard(root):
     """导出作业的提交守卫（ADR 0106 §五）：作业开始时记下改指表代次，一路带到发布那一步——`exportjob.run`
-    在提交点之前进这个守卫，持项目读锁**再核一次**、一直持到最后一个文件发布完。开始之后改了指认，
+    在提交点之前进这个守卫，持项目锁**再核一次**、一直持到最后一个文件发布完。开始之后改了指认，
     这次导出按旧位置的数据画 → 一个文件都不发布（`input_remap_changed`，可重试）。没有项目的导出不拦。"""
     if not root:
         return None
@@ -5252,7 +5252,7 @@ def _write_source_files(
     # 冒出去成了 500，`.updating` 留在图库里。备份与 staging 在任何一个原件被动之前
     # 全部拷完并 fsync（ADR 0023 §3.1，issue #252），失败时原件一个都还没碰过。
     # 热态与重放必须是同一代改指表画的、且落地前表没变（ADR 0106 §五）：否则两边读的不是同一份数据，
-    # 像素门过了也不说明什么——不写（409 可重试），staging 清掉。核对之后**一直持项目读锁到最后一个
+    # 像素门过了也不说明什么——不写（409 可重试），staging 清掉。核对之后**一直持项目锁到最后一个
     # replace 完成**：改指等这次提交落完才能换代，核对与提交之间没有空隙（Codex 评 #716 P1）
     remap_guard = (
         engine_inputremap.landing(

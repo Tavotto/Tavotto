@@ -89,83 +89,27 @@ def fingerprint(root: str | os.PathLike) -> str:
     return hashlib.sha256(canon).hexdigest()
 
 
-# ---------------------------------------------------------------- 代次与项目读写锁（ADR 0106 §五）
+# ---------------------------------------------------------------- 代次与项目互斥锁（ADR 0106 §五）
 #
 # 改指表每次成功改动（增 / 换 / 删）代次 +1。依赖映射的后端工作（起 worker 时取规则、试运行登记、runtime
 # 物化、写回、导出发布）在**开始时**记下代次（`snapshot()` 与规则一起取，二者同一刻），落地时进
-# `landing()`：持**这个项目的读锁**核对代次，并且**一直持到提交完成**（整个备份 + 替换循环、整个发布
-# 循环）——对不上就丢弃、报 `input_remap_changed`（可重试）。改指 / 删指持写锁：等在途的提交全部落完才改表、
-# 换代，改完之后开始的落地一定看得见新代次。「核对」与「提交」之间没有空隙（Codex 评 #716 P1 ×4）。
-# 不持锁执行脚本本身：锁只覆盖落地和提交那一段。清单与各自的持锁区间在 ADR 0106 §五。
-
-
-class _ProjectLock:
-    """一个项目的读写锁。读者可重入（同一线程落地里再落地、物化里取会话），写者等所有读者放手；
-    有写者在等时新读者排在它后面（不让连续的落地把改指饿死）——已持读锁的线程再进不排队，否则自锁。"""
-
-    def __init__(self) -> None:
-        self._cond = threading.Condition(threading.Lock())
-        self._readers = 0
-        self._writer = False
-        self._writers_waiting = 0
-        self._held = threading.local()
-
-    def _depth(self) -> int:
-        return getattr(self._held, "depth", 0)
-
-    @contextlib.contextmanager
-    def read(self):
-        depth = self._depth()
-        with self._cond:
-            if depth == 0:
-                while self._writer or self._writers_waiting:
-                    self._cond.wait()
-            self._readers += 1
-        self._held.depth = depth + 1
-        try:
-            yield
-        finally:
-            self._held.depth = depth
-            with self._cond:
-                self._readers -= 1
-                if not self._readers:
-                    self._cond.notify_all()
-
-    @contextlib.contextmanager
-    def write(self):
-        if self._depth():
-            # 落地里改表 = 等自己放手：永远等不到。这是调用方的 bug，当场说出来
-            raise RuntimeError("持着改指表读锁的线程不能改表")
-        with self._cond:
-            self._writers_waiting += 1
-            try:
-                while self._writer or self._readers:
-                    self._cond.wait()
-            finally:
-                self._writers_waiting -= 1
-            self._writer = True
-        try:
-            yield
-        finally:
-            with self._cond:
-                self._writer = False
-                self._cond.notify_all()
-
-
-#: 只护 `_GENERATIONS` / `_LOCKS` 两张字典本身（瞬时）；项目级的互斥在 `_ProjectLock`
+# `landing()`：持**这个项目的互斥锁**核对代次，并且**一直持到提交完成**——对不上就丢弃、报
+# `input_remap_changed`（可重试）。同一把锁还护着：改指表的读 / 改 / 写与换代、`state()` / `snapshot()` 的
+# 「表 + 代次」一起取、注册表文件的整段读改写（`discover.register`）与登记标记（`record_registration`）。
+#
+# 一把锁而不是读写锁（用户 2026-09-30 拍板）：读写锁下每轮都还能找出新的并发窗口（读者之间的注册表读改写、
+# 读表与读代次之间……），逐个补不收敛；一把按项目的互斥锁一次消掉整类竞态。代价：同一项目的写回、导出发布、
+# 登记彼此串行——都只是落地那一小段（长活——跑脚本、渲染——在锁外），桌面上感觉不到。
+#
+# **锁序**：池锁（`pool._lock`）→ 项目锁。池在自己的锁里起会话会调 `snapshot()`（拿项目锁）；所以**持项目锁
+# 时绝不取池锁**——锁里不取会话、不起会话、不跑脚本（物化先在锁外取会话，再进锁）。配置锁是叶子。
 _META = threading.Lock()
 _GENERATIONS: dict[str, int] = {}
 #: 代次的起点：进程启动时刻的毫秒数。进程内的代次只增不减，**跨重启也单调**——重启后的任何一代都大于重启前
 #: 见过的任何一代（一次重启之间换不了几千代），前端按「代次 ≤ 已见就忽略」去重、重连补拉时发现变大就补一次
 #: 作废，不会被重启归零骗过去
 _BASE = int(time.time() * 1000)
-_LOCKS: dict[str, _ProjectLock] = {}
-#: 改表 + 换代这一小段（写者在写锁里再拿它）与 `snapshot()` 互斥：取到的规则与代次是同一刻的一对。
-#: `snapshot()` **不拿项目读锁**——它在池锁里被调（起会话），而持读锁的落地可能正等池锁：读锁在那里就是
-#: 「读者 → 池锁 → 等写者 → 等读者」的环。这把锁里不等任何别的锁（配置锁除外，它是叶子）
-_TABLE = threading.Lock()
-#: `record_registration` 的读-改-写：多个落地可以同时持读锁，登记标记不能互相吞
-_MARKS = threading.Lock()
+_MUTEXES: dict[str, threading.RLock] = {}
 
 
 class RemapChanged(RuntimeError):
@@ -178,35 +122,35 @@ def _gen_key(root: str | os.PathLike) -> str:
     return os.path.normcase(os.path.realpath(os.fspath(root)))
 
 
-def _project_lock(root: str | os.PathLike) -> _ProjectLock:
+def project_mutex(root: str | os.PathLike) -> threading.RLock:
+    """这个项目的互斥锁（可重入）。持有它时不许取池锁（锁序见上）。"""
     key = _gen_key(root)
     with _META:
-        lock = _LOCKS.get(key)
+        lock = _MUTEXES.get(key)
         if lock is None:
-            lock = _LOCKS[key] = _ProjectLock()
+            lock = _MUTEXES[key] = threading.RLock()
         return lock
 
 
 def generation(root: str | os.PathLike) -> int:
-    """这个项目改指表此刻的代次（起点 `_BASE`，只增不减）。"""
+    """这个项目改指表此刻的代次（起点 `_BASE`，只增不减）。单读一个整数；要与规则一起取用 `snapshot()`。"""
     key = _gen_key(root)
     with _META:
         return _GENERATIONS.get(key, _BASE)
 
 
 def snapshot(root: str | os.PathLike) -> tuple[int, list[dict]]:
-    """`(代次, 规则)`——同一刻取的一对（写者改表与换代在 `_TABLE` 里是一整段，读不到半截）。
-    起 worker 的三条路径都从这里取，worker 记下代次。"""
-    with _TABLE:
+    """`(代次, 规则)`——在项目锁里一起取（改表与换代也在这把锁里，读不到半截）。起 worker 的三条路径都从这里取。"""
+    with project_mutex(root):
         return generation(root), rules_for(root)
 
 
 @contextlib.contextmanager
 def landing(root: str | os.PathLike, *generations: int | None):
-    """持项目读锁核对：给的每个代次都还是此刻的代次，才让块里的落地发生；对不上抛 `RemapChanged`。
-    `None` = 这份工作不带代次（测试替身 / 与映射无关），不拦。**整个块都在读锁里**：块里写的就是提交本身
+    """持项目锁核对：给的每个代次都还是此刻的代次，才让块里的落地发生；对不上抛 `RemapChanged`。
+    `None` = 这份工作不带代次（测试替身 / 与映射无关），不拦。**整个块都在锁里**：块里写的就是提交本身
     （写回的备份 + 替换循环、导出的发布循环、登记、物化），改指等它们落完才能改表。"""
-    with _project_lock(root).read():
+    with project_mutex(root):
         now = generation(root)
         stale = [g for g in generations if g is not None and g != now]
         if stale:
@@ -222,7 +166,7 @@ REGISTERED_KEY = "input_remap_registered"
 
 def record_registration(root: str | os.PathLike, script: str) -> None:
     """试运行按此刻的改指表登记了 `script` 的 stems：记下这张表的指纹（在 `landing()` 里调）。"""
-    with _MARKS:
+    with project_mutex(root):
         raw = config.project_settings(str(root)).get(REGISTERED_KEY)
         marks = dict(raw) if isinstance(raw, dict) else {}
         marks[script] = fingerprint(root)
@@ -243,7 +187,7 @@ def registration_stale(root: str | os.PathLike, script: str) -> bool:
 
 
 def _bump(root: str | os.PathLike) -> int:
-    """换代（只在写锁里调）；回新代次。"""
+    """换代（只在项目锁里调）；回新代次。"""
     key = _gen_key(root)
     with _META:
         _GENERATIONS[key] = _GENERATIONS.get(key, _BASE) + 1
@@ -265,10 +209,13 @@ def state(root: str | os.PathLike) -> dict:
     """设置界面读：`{rules: [{kind, from, to, added_at, target_exists}], generation}`。`generation` 是此刻的
     代次：改指 / 删指的响应带着它，发起的窗口收到就本地作废；事件流重连 / 页面恢复时拉一次，落后就补一次
     （前端按代次去重，ADR 0106 §五）。"""
-    rules = []
-    for r in _entries(root):
-        rules.append({**r, "target_exists": os.path.exists(r["to"])})
-    return {"rules": rules, "generation": generation(root)}
+    # 表与代次在同一次持锁里取：分开取的话，读到旧表 + 新代次，前端记下新代次、把随后的事件当「已见」忽略，
+    # 设置里的列表就一直是旧的（Codex 评 #716 P2）
+    with project_mutex(root):
+        entries = _entries(root)
+        gen = generation(root)
+    rules = [{**r, "target_exists": os.path.exists(r["to"])} for r in entries]
+    return {"rules": rules, "generation": gen}
 
 
 def _same_source(a: dict, b: dict) -> bool:
@@ -290,9 +237,9 @@ def add_rule(root: str | os.PathLike, rule: dict) -> dict:
     if not clean:
         raise RemapError(ERROR_REQUESTED_INVALID, "改指规则不合法")
     new = {**clean[0], "added_at": time.time()}
-    # 读、改、写、换代整段持写锁：两个窗口同时指认，后写的不许吞掉先写的那条（Codex 评 #716 P2）；
+    # 读、改、写、换代整段持项目锁：两个窗口同时指认，后写的不许吞掉先写的那条（Codex 评 #716 P2）；
     # 在途的落地（写回 / 导出发布 / 登记 / 物化）先落完
-    with _project_lock(root).write(), _TABLE:
+    with project_mutex(root):
         kept = [r for r in _entries(root) if not _same_source(r, new)]
         rules = [*kept, new][-figcapture.MAX_REMAP_RULES :]
         config.set_project_settings(str(root), {SETTINGS_KEY: {"rules": rules}})
@@ -302,7 +249,7 @@ def add_rule(root: str | os.PathLike, rule: dict) -> dict:
 
 def remove_rule(root: str | os.PathLike, kind: str, src: str) -> dict:
     """删一条规则；删了就是回到报错。没有这一条 → `input_remap_rule_unknown`。"""
-    with _project_lock(root).write(), _TABLE:
+    with project_mutex(root):
         entries = _entries(root)
         kept = [r for r in entries if not _same_source(r, {"kind": kind, "from": src})]
         if len(kept) == len(entries):
