@@ -56,11 +56,11 @@ if _MISSING:
 #: 加腿 / 删腿 / 换 runner 都必须回到这里，顺便重估下面每一条 skip。
 E2E_LEGS = {
     "windows-exe-smoke": "windows-latest",
-    "posix-e2e": "ubuntu-latest",
+    "posix-e2e": "ubuntu-24.04",
 }
 
 #: runner → 它是不是 win32。判据只关心这一个维度（`process.platform`）。
-_IS_WINDOWS = {"windows-latest": True, "ubuntu-latest": False, "macos-latest": False}
+_IS_WINDOWS = {"windows-latest": True, "ubuntu-24.04": False, "macos-latest": False}
 
 #: 带 `test.skip(process.platform …)` 的 spec 与条数。这是**枚举**不是白名单：
 #: 新增一条按平台跳过的用例就必须回到这里，顺便被问一句「哪条腿会执行它」。

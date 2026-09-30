@@ -969,7 +969,7 @@ def test_the_lab_dispatch_uses_the_ci_infra_pat_and_reds_when_it_is_missing(path
     wf = _wf(path)
     body = wf.jobs[job]
     header = body.split("steps:")[0]
-    assert re.search(r"^\s+runs-on:\s*ubuntu-24.04\s*$", header, re.M), "派发要在托管机上"
+    assert re.search(r"^\s+runs-on:\s*ubuntu-latest\s*$", header, re.M), "派发要在托管机上"
     needs = re.search(r"^\s+needs:\s*(.+?)\s*$", header, re.M)
     assert needs and trust_job in re.findall(r"[\w-]+", needs.group(1)), (
         f"{path.name}::{job} 的 needs 里没有 {trust_job}——派发必须排在信任判断之后"

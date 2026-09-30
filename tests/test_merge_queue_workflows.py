@@ -122,6 +122,7 @@ GATE_IN_CODEQL = "CodeQL gate"
 #: 顺便被问一句「它属于哪一类」。
 _RUNNER_IS_MACOS = {
     "ubuntu-24.04": False,
+    "ubuntu-latest": False,
     "macos-latest": True,
     "windows-latest": False,
 }
@@ -533,9 +534,7 @@ class TestPullRequestEventTypes:
         import shutil
         import subprocess
 
-        assert re.search(
-            r"(?m)^    runs-on: ubuntu-24.04$", _code(_job(CI, "ci-integration-gate"))
-        )
+        assert re.search(r"(?m)^    runs-on: ubuntu-24.04$", _code(_job(CI, "ci-integration-gate")))
         bash = shutil.which("bash")
         if bash is None or sys.platform == "win32":
             pytest.skip("Gate 那一步只在 ubuntu-24.04 的 bash 里执行；本机没有可用的 bash")
@@ -2619,7 +2618,9 @@ class TestCacheSeed:
 #: 加一类托管 runner（比如 `ubuntu-24.04-arm`）要回到这里登记一次，顺便被问一句
 #: 「它是托管的吗」。`macos-26-intel` 是 GitHub 托管的 Intel 镜像（ADR 0076，只有
 #: desktop-tauri.yml 的发行构建用它；那条 workflow 不监听 PR 事件）。
-_HOSTED_RUNNERS = frozenset({"ubuntu-24.04", "macos-latest", "windows-latest", "macos-26-intel"})
+_HOSTED_RUNNERS = frozenset(
+    {"ubuntu-24.04", "ubuntu-latest", "macos-latest", "windows-latest", "macos-26-intel"}
+)
 
 #: 注册 self-hosted runner 时 GitHub 自动打上的标签（`self-hosted` + OS + 架构）。
 #: actionlint 认得它们，所以它们不用出现在 `.github/actionlint.yaml` 里；
