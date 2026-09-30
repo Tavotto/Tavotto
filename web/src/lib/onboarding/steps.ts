@@ -371,12 +371,6 @@ function revealObjectInViewport(panel: PanelObject | undefined): void {
 
 export const STEPS: readonly StepDef[] = [
   {
-    id: 'welcome',
-    manual: true,
-    done: () => false,
-    anchor: () => NONE,
-  },
-  {
     id: 'open_fast_edit',
     // 真实状态：那张图的图内编辑态已经进入（只有 enterElementEdit 能产生它）
     done: (ctx) => !!ctx.edit && ctx.elementPanelId === ctx.edit.panel.id,

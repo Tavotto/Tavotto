@@ -81,7 +81,7 @@ watcher 下一轮还会再试。
 | `project_refresh_completed` | 服务端 `app.refresh_project` 成功之后（四条路径唯一漏斗） | `source ∈ {watcher, manual, codex, ai}`；`changed_bucket ∈ {none, one, few(2–5), many}`。probe / 手工登记 / 打开项目**不记** |
 | `project_readiness_opened` | `projectReadinessStore.openCenter({source})` 报告到了之后 | `source ∈ {banner, panel, quickedit, palette}`；`status_bucket ∈ {all_editable, mixed, layout_only}`（零张图不发） |
 | `tutorial_started` | `lib/onboarding/tutorial.landTutorial` 真的开始 / 重新开始时 | `source ∈ {picker, help, settings, palette}`；`tutorial_version` |
-| `tutorial_step_completed` | `flow.completeStep(id, 'done')`（跳过不记） | `step_id`（`stepIds.ts` 的十个）；`tutorial_version` |
+| `tutorial_step_completed` | `flow.completeStep(id, 'done')`（跳过不记） | `step_id`（`stepIds.ts` 的九个；代理另收旧值 `welcome`，见 ADR 0040 修订）；`tutorial_version` |
 | `tutorial_completed` | 最后一步之后 | `tutorial_version` |
 | `context_bar_multi_used` | `lib/activityTelemetry`：活动信号 + **浮动栏来源作用域**；「更多」直接记 | `action_id`（13 个）；`selection_size_bucket ∈ {2, 3_5, 6_plus}` |
 | `document_saved` | `documentStore.scheduleDiskWrite` 的三个结局 | `trigger ∈ {manual, autosave}`；`outcome ∈ {ok, conflict, failed}` |

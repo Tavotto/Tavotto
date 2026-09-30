@@ -11,7 +11,7 @@
   它不是遥测：不出网、不落盘；Prompt 22 映射遥测只许从这张表挑，且必须经同意态与后端白名单。
 * **教程状态只在 `store/onboardingStore.ts`**（`tavotto.onboarding`）：状态机 / 步骤 id / 提示记录 /
   教程项目与文档 id；不记 DOM、文案、路径、对象 id。改步骤内容升 `ONBOARDING_FLOW_VERSION`，
-  **不改 step id**（`lib/onboarding/stepIds.ts` 是持久化格式的一部分）。关掉 coachmark 是 `paused`
+  **不改 step id**（`lib/onboarding/stepIds.ts` 是持久化格式的一部分）。删步骤要在 `migratePersisted` 里把停在它上面的进行中 / 暂停用户落到新位置，并同步遥测枚举（前端 / `engine/telemetry.py` / 代理契约三处同源）；2026-09-30 取消 `welcome` 即照此办理（ADR 0040 修订）。关掉 coachmark 是 `paused`
   （`pausedBy: 'user'`），切走项目是 `paused`（`'system'`），绝不伪装 `completed`。
 * **四个入口共用 `lib/onboarding/tutorial.ts`**（`tutorialEntry / runTutorialEntry / resetTutorial /
   resetHints`）：项目选择器、顶栏更多、命令面板、设置常规。**不许在入口里判状态**。打开教程走

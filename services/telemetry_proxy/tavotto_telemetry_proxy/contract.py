@@ -42,6 +42,13 @@ AUTO_PROPS: dict[str, dict] = {
     "distribution": enum("desktop", "pipx", "pip", "source", "unknown"),
 }
 
+# 代理白名单里比当前客户端多出的枚举值：只收不发的旧值，逐条写死、写明来由。
+# 跨侧对拍测试（tests/test_telemetry_proxy.py）把它当唯一放行清单——代理多出这里以外的任何值都会红。
+LEGACY_ENUM_VALUES: dict[str, dict[str, tuple[str, ...]]] = {
+    # 2026-09-30 教程取消欢迎步骤；0.17.0 及更早的客户端仍会发 welcome
+    "tutorial_step_completed": {"step_id": ("welcome",)},
+}
+
 EVENTS: dict[str, dict[str, dict]] = {
     "telemetry_enabled": {"source": enum("first_run", "settings")},
     "app_started": {"app_mode": enum("desktop", "browser")},
@@ -81,6 +88,9 @@ EVENTS: dict[str, dict[str, dict]] = {
     },
     "tutorial_step_completed": {
         "step_id": enum(
+            # 只收不发：客户端自 2026-09-30 起没有欢迎步骤（不再发 welcome），但代理要服务
+            # 已发布的旧客户端（0.17.0 等），删掉它们的教程漏斗数据会一直被丢到升级为止。
+            # 见 LEGACY_ENUM_VALUES；跨侧对拍只放行那张显式清单
             "welcome",
             "open_fast_edit",
             "select_text",

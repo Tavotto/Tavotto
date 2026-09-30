@@ -1417,7 +1417,6 @@
     "pause": "Pause tutorial",
     "back": "Back",
     "skipStep": "Skip this step",
-    "start": "Start",
     "explore": "Keep exploring",
     "openOwnProject": "Open my own project",
     "resolvedContinue": "Already fixed, continue",
@@ -1460,16 +1459,12 @@
       "confirm": "Reset and start over"
     },
     "steps": {
-      "welcome": {
-        "title": "Learn Tavotto with a sample",
-        "body": "An offline tutorial copy: edit freely and restart any time; your own projects are never affected. Next, you’ll walk through the two core workflows."
-      },
       "open_fast_edit": {
-        "title": "Open a figure",
-        "body": "Double-click Fig2_correlation in the “Assets” drawer on the left to edit inside the figure.",
+        "title": "Double-click this figure",
+        "body": "Double-click Fig2_correlation in the “Assets” drawer on the left to edit inside the figure. This is a tutorial copy: edit freely, your own projects are untouched.",
         "canvas": {
-          "title": "Open a figure",
-          "body": "Double-click Fig2_correlation on the canvas to edit inside the figure. Its card in the “Assets” drawer works too."
+          "title": "Double-click this figure",
+          "body": "Double-click Fig2_correlation on the canvas to edit inside the figure. Its card in the “Assets” drawer works too. This is a tutorial copy: edit freely, your own projects are untouched."
         }
       },
       "select_text": {
