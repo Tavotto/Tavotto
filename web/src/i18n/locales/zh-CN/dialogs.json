@@ -7,12 +7,11 @@
     "title": "有未保存的修改"
   },
   "engineEnv": {
-    "description": "{{product}} 用这个 Python 环境运行你的脚本。",
     "title": "渲染环境"
   },
   "export": {
     "advanced": "高级选项",
-    "blockedTitle": "有阻断性问题或无法自动核验的项。勾选上方确认后再导出。",
+    "blockedTitle": "有阻断问题或无法核验的项。勾选确认后才能导出。",
     "blockingListLabel": "阻断性问题",
     "blockingMore_other": "还有 {{count}} 条，在问题面板中查看",
     "blockingGroupCount": "{{count}} 项",
@@ -33,7 +32,7 @@
     "editedDuringExport": "导出期间排版又改了。文件里是点「导出」时的内容。",
     "epsHint": "矢量 · 不支持透明度",
     "epsUnavailable": {
-      "canvas_scope": "EPS 只支持按「原图尺寸」导出单张图。画布由 PDF 引擎合成，不支持 PostScript。",
+      "canvas_scope": "EPS 只支持按「原图尺寸」导出单张图。",
       "no_script": "此图没有可重新运行的脚本。EPS 只能由脚本生成。"
     },
     "exported": "导出完成：{{files}}",
@@ -58,10 +57,10 @@
       "rotation": "旋转",
       "scale": "缩放"
     },
-    "jobLost": "找不到这次导出的作业，服务可能重启过。文件可能已写出，请检查导出目录或重新导出。",
+    "jobLost": "找不到这次导出的作业。文件可能已写出，请检查导出目录或重新导出。",
     "locate": "定位",
     "locateAria": "定位到{{subject}}：{{title}}",
-    "locatedHint": "已定位到问题。再点「导出」回到导出面板，设置还在。",
+    "locatedHint": "再点「导出」回到导出面板，设置还在。",
     "mmSize": "{{w}} × {{h}} mm",
     "openProblems": "在问题面板中查看",
     "operationFailed": "无法完成：{{error}}",
@@ -97,7 +96,7 @@
     "profileSync": "同步到新版",
     "profileUpdateAvailable": "这套规范有了新版本。",
     "replaced": "已覆盖",
-    "reportTitle": "随导出生成一份 JSON 报告：所用规范、字体、字号、线宽、图幅、检查结果与导出设置，供投稿留档。",
+    "reportTitle": "随导出生成一份 JSON 报告，供投稿留档。",
     "reportToggle": "生成样式检查报告",
     "retry": "重试",
     "revealFailed": "无法在文件管理器中定位，文件在：{{path}}",
@@ -114,7 +113,7 @@
       "unknown_figure": "找不到这张图的信息，暂时只能按画布导出。"
     },
     "severityCount": "{{count}} {{label}}",
-    "sizeDiskDiffers": "磁盘上的原文件为 {{dw}} × {{dh}} mm（脚本保存时已裁至内容范围）。将按图幅 {{w}} × {{h}} mm 导出。",
+    "sizeDiskDiffers": "磁盘上的原文件为 {{dw}} × {{dh}} mm（脚本保存时已裁边），将按图幅 {{w}} × {{h}} mm 导出。",
     "sizeUnknownShort": "尺寸未知",
     "start": "开始导出",
     "targetNoFigure": "当前没有图",
@@ -124,7 +123,7 @@
     "transparentNotForRaster": "这张图是照原样导出的，背景由它自己决定。",
     "warningsIntro": "以下修改未能应用到重渲染的图上，成图可能与画布不一致：",
     "strictToggle": "严格核验产物",
-    "strictTitle": "按所选规范重新打开写好的文件核对：完整性、尺寸、字体嵌入、文字层、图像分辨率。有一项不合格或无法核验，那个文件就不会保存。EPS 不在核验范围内。",
+    "strictTitle": "按所选规范重新打开写好的文件核对；不合格或无法核验的文件不会保存。EPS 不核验。",
     "inspection": {
       "verified": "已核验",
       "unknown": "未核验",
@@ -158,7 +157,7 @@
     "saveAs": "另存为",
     "saveTitle": "另存为新排版",
     "saveToProject": "存进项目",
-    "saveToProjectHint": "这份排版还只在本机。存进项目之后，再保存会直接更新项目里的这个文件。",
+    "saveToProjectHint": "这份排版还只在本机。存进项目后，再保存会更新项目里的这个文件。",
     "saveToProjectTitle": "存进项目",
     "saved": "已另存为新排版：{{name}}",
     "saving": "正在保存…",
@@ -196,7 +195,7 @@
   "nativeRun": {
     "approve": "运行并连接",
     "approving": "正在连接…",
-    "argCount_other": "{{count}} 个（参数值不会传入此窗口）",
+    "argCount_other": "{{count}} 个（不显示参数值）",
     "cancel": "取消",
     "descriptionQueued": "还有 {{queued}} 条在排队。",
     "fields": {
@@ -471,39 +470,30 @@
     "insertSymbolAria": "插入符号 {{symbol}}",
     "items": {
       "axes": {
-        "hint": "x / y 方向角标",
         "label": "坐标方向"
       },
       "braceGroup": {
-        "hint": "大括号 + 说明文字",
         "label": "括号分组"
       },
       "callout": {
-        "hint": "引线 + 文字",
         "label": "引线标注"
       },
       "crystal": {
-        "hint": "箭头 + [001] 标注",
         "label": "晶向箭头"
       },
       "dimension": {
-        "hint": "双向箭头 + 两端界线",
         "label": "尺寸线"
       },
       "errorbar": {
-        "hint": "工字线 + ± 值",
         "label": "误差标注"
       },
       "magnifier": {
-        "hint": "虚线框 + 引出线 + 放大框",
         "label": "局部放大框"
       },
       "reversible": {
-        "hint": "两条反向箭头（⇌）",
         "label": "可逆反应箭头"
       },
       "scalebar": {
-        "hint": "粗线 + 长度标注",
         "label": "比例尺"
       }
     },
@@ -634,7 +624,7 @@
   "readiness": {
     "addToCanvas": "添加到画布",
     "allEditable_other": "{{count}} 张图已就绪",
-    "allScriptsHint": "这里列出项目里的所有 .py，包括无法从代码判断输出的脚本。试运行一次后，按实际画出的图建立关联。",
+    "allScriptsHint": "这里列出全部 .py。试运行一次，按实际画出的图建立关联。",
     "allScriptsTitle": "全部脚本",
     "autoLink": "自动连接",
     "emptyHint": "运行一个绘图脚本，或者把 PDF / PNG 放进图库目录。",
@@ -657,7 +647,7 @@
     "moreAria": "{{name}} 的更多操作",
     "none": "—",
     "nothingNew": "扫描完成，没有新的可连接脚本",
-    "orphanConflicts": "多个脚本指向同一图名：{{stems}}。项目里尚无对应的图文件，可在下方「全部脚本」中指定归属。",
+    "orphanConflicts": "多个脚本指向同一图名：{{stems}}。可在下方「全部脚本」中指定归属。",
     "pickSourceAria": "为 {{name}} 选择源脚本",
     "pickSourcePlaceholder": "选择源脚本",
     "probeAndLink": "试运行并连接",
@@ -1240,11 +1230,10 @@
     "bold": "粗体",
     "deleteBody": "删除后无法找回。已应用到排版的修改不受影响。",
     "deleteTitle": "删除样式「{{name}}」？",
-    "descriptionEmpty": "把字号、线宽、刻度、配色存成命名样式，批量应用。只写图内修改，不改源文件。",
-    "emptyBody": "还没有保存的样式。选中一张已渲染、可编辑的图，提取字号、线宽、刻度、配色作为起点。",
-    "emptyDraft": "空样式。点「从当前图提取」读取字号、线宽、刻度、配色，删掉不想统一的项，再保存。",
+    "emptyBody": "还没有保存的样式。选中一张图后可从它提取。",
+    "emptyDraft": "空样式。点「从当前图提取」，再删掉不想统一的项。",
     "extract": "从当前图提取",
-    "extractNeedPanel": "选中一张已渲染、可编辑的图后可提取",
+    "extractNeedPanel": "先选中一张可编辑的图",
     "group": {
       "axes": "坐标轴",
       "legend": "图例",
@@ -1256,12 +1245,12 @@
     "legendTitle": "图例标题",
     "namePlaceholder": "样式名称（如「AMFE 正文图」）",
     "nameRequired": "先给样式起个名字",
-    "needPanel": "先在画布上选中一张已渲染、可编辑的图",
+    "needPanel": "先选中一张可编辑的图",
     "newStyle": "新建样式",
     "noSavedStyles": "还没有保存的样式",
     "pageSizeSuffix": "（{{w}} × {{h}} mm）",
     "paletteSwatchAria": "配色第 {{index}} 色",
-    "paletteTitle": "系列配色，按曲线、散点、柱形的出现顺序循环。",
+    "paletteTitle": "系列配色，按出现顺序循环。",
     "removeColor": "移除颜色",
     "removeEntry": "移除此项",
     "removeEntryNamed": "从样式中移除「{{role}} · {{prop}}」",
@@ -1292,8 +1281,8 @@
   "telemetry": {
     "allow": "分享匿名用量",
     "decline": "暂不",
-    "intro": "可发送匿名用量统计，帮我们了解哪些功能有人用。默认关闭；标识是本机随机 UUID，与账号无关。",
-    "later": "随时可在「设置 → 隐私、诊断与 About」里改。",
+    "intro": "可发送匿名用量统计，了解哪些功能有人用。默认关闭，与账号无关。",
+    "later": "随时可在设置里改。",
     "neverData": "科研数据与图内文字",
     "neverFigures": "你的图与项目文件",
     "neverPaths": "文件名与路径",
@@ -1311,7 +1300,6 @@
   "updateNotice": {
     "title": "新版本 {{version}} 已发布",
     "current": "当前版本 {{version}}",
-    "intro": "更新后即可使用本版的新功能与修复。",
     "notesTitle": "本版新增内容",
     "releaseNotes": "查看完整发行说明",
     "later": "稍后",
@@ -1323,7 +1311,7 @@
     "relaunch": "立即重启",
     "relaunchLater": "稍后重启",
     "upgrading": "正在升级…",
-    "upgraded": "已升级到 {{version}}。重启 Tavotto 后生效。",
+    "upgraded": "已升级到 {{version}}，重启后生效。",
     "gotIt": "知道了",
     "failed": "无法更新。当前版本不变。",
     "retry": "再试一次",
@@ -1547,15 +1535,14 @@
     "title": "脚本需要输入",
     "question": "第 {{index}} 个问题 · {{script}}",
     "outputLabel": "脚本到目前为止的输出",
-    "noOutput": "脚本还没有输出任何内容。",
     "promptLabel": "脚本的提示",
     "noPrompt": "脚本在读取标准输入，没有给提示。",
     "answerLabel": "你的回答",
     "getpassNote": "脚本用 getpass 读取这一项：这里显示的是明文，这个答案不会被记住。",
-    "rememberNote": "回答会按项目记住，下次运行自动使用；随时可以在脚本行上查看和修改。",
+    "rememberNote": "答案会按项目记住，下次运行自动使用。",
     "submit": "提交",
     "eof": "结束输入",
-    "eofTip": "告诉脚本输入已经结束（相当于终端里的 Ctrl-D）",
+    "eofTip": "告诉脚本输入已结束（相当于 Ctrl-D）",
     "stop": "停止脚本",
     "failed": "提交失败：{{error}}",
     "autofilled": "已用上次的答案：{{answer}}",
@@ -1563,8 +1550,8 @@
     "manageAria": "查看和修改 {{script}} 记住的输入",
     "manageTip": "记住的输入",
     "manageTitle": "记住的输入 · {{script}}",
-    "manageIntro": "这个脚本运行时读到的输入。改了答案会立刻重新运行脚本。",
-    "manageWhere": "答案保存在项目文件夹的 {{path}} 里，会随项目文件夹一起复制、同步或分享；项目包不包含它。",
+    "manageIntro": "改了答案会立刻重新运行脚本。",
+    "manageWhere": "答案存在项目文件夹的 {{path}} 里，随文件夹一起复制或分享；项目包不含它。",
     "manageEmpty": "这个脚本没有记住的输入。",
     "managePrompt": "第 {{index}} 个问题：{{prompt}}",
     "manageNoPrompt": "第 {{index}} 个问题（读取标准输入）",

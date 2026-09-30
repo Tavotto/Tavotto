@@ -114,7 +114,6 @@ export const PRESET_IDS: PresetId[] = [
 ]
 
 export const presetLabel = (id: PresetId) => t(`presets.items.${id}.label`, { ns: 'dialogs' })
-export const presetHint = (id: PresetId) => t(`presets.items.${id}.hint`, { ns: 'dialogs' })
 
 /** 常用希腊字母 / 数学 / 单位符号：点击即插入一个文字对象 */
 export const SYMBOLS = [

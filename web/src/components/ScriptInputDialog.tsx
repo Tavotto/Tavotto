@@ -82,9 +82,9 @@ export function ScriptInputDialog() {
           if (!busy) void store.submit(value)
         }}
       >
-        <section className="flex flex-col gap-1">
-          <h3 className="type-meta">{si('outputLabel')}</h3>
-          {head.stdout_tail ? (
+        {head.stdout_tail && (
+          <section className="flex flex-col gap-1">
+            <h3 className="type-meta">{si('outputLabel')}</h3>
             <pre
               ref={outRef}
               data-script-input-output=""
@@ -92,10 +92,8 @@ export function ScriptInputDialog() {
             >
               {head.stdout_tail}
             </pre>
-          ) : (
-            <p className="text-ink-3">{si('noOutput')}</p>
-          )}
-        </section>
+          </section>
+        )}
         <section className="flex flex-col gap-1">
           <h3 className="type-meta">{si('promptLabel')}</h3>
           {head.prompt ? (

@@ -165,7 +165,6 @@ export function Inspector({
                aria-pressed 与气泡文案不变。 */
             <IconButton
               label={t(pinned ? 'pinnedAria' : 'autoHideAria')}
-              tip={t(pinned ? 'pinnedTip' : 'autoHideTip')}
               side="bottom"
               iconSize="sm"
               aria-pressed={pinned}

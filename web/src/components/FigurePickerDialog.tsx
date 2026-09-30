@@ -77,7 +77,6 @@ export function FigurePickerDialog() {
         if (!v) close()
       }}
       title={fp('title', { script })}
-      description={fp('description', { count: entries.length })}
       size="md"
     >
       {entries.length === 0 ? (

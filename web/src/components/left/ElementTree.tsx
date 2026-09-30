@@ -282,7 +282,6 @@ export function ElementTree() {
       <EmptyState
         icon={EditableFigureIcon}
         title={et('noPanelTitle')}
-        hint={et('noPanelHint')}
         action={{
           label: et('locateEditable'),
           // 选中即够：这棵树的目标面板就是「选中的那张可编辑的图」，不必先进编辑态

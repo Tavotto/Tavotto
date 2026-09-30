@@ -108,9 +108,7 @@ export function UpdateNoticeDialog() {
               {notice.notes}
             </pre>
           </section>
-        ) : (
-          <p className="text-xs leading-relaxed text-ink-2">{tt('intro')}</p>
-        )}
+        ) : null}
         {kind === 'manual' && (
           <p className="text-xs leading-relaxed text-ink-2">
             {tt('sourceBody')}{' '}
