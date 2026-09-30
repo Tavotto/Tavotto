@@ -1047,10 +1047,21 @@ def declared_parents(cb):
 
     这是 matplotlib 在**建色条那一刻**按调用参数记下的 `ax` 列表（`make_axes` /
     `make_axes_gridspec` 写、constrained layout 读），不是从渲染结果反推的——共享色条
-    成组（manifest 的 `groups`）与色条的结构归属都只认它。没有它就不下结论。"""
+    成组（manifest 的 `groups`）与色条的结构归属都只认它。没有它就不下结论。
+
+    **按对象身份去重、保序**：`fig.colorbar(im, ax=[ax, ax])` 是合法写法，matplotlib 照记
+    两项（3.11.2 实测 `parents = [ax, ax]`），但宿主只有一个。「几个宿主」（`colorbar_host_count`：
+    随行表、方向能力）与「挂在谁下面 / 成不成组」（`manifest._colorbar_structure`）都从这一份
+    去重后的集合取——各数各的话，树里挂在 ax 下、拖 ax 色条却不跟（Codex #691）。"""
     info = getattr(getattr(cb, "ax", None), "_colorbar_info", None)
     parents = info.get("parents") if isinstance(info, dict) else None
-    return list(parents) if parents else None
+    if not parents:
+        return None
+    distinct: list = []
+    for p in parents:
+        if not any(p is q for q in distinct):
+            distinct.append(p)
+    return distinct
 
 
 def _orphan_scopes(cbar_of_ax: dict, axes) -> list[tuple]:
@@ -1253,10 +1264,10 @@ def colorbar_host_count(cb) -> int:
     真修法要把宿主从一个 axes 改成一组、`_cb_place` / `_cb_target_rect` /
     `axes_follow` 三处按并集算——那是落位模型的改动，1.0 稳定期不做（issue #69）。
     在那之前**不宣称这条能力**：宁可少开放一个，不可开放了却画错。
+
+    宿主按 `declared_parents` 去重后数：`ax=[ax, ax]` 是 1 个（与结构归属同一份集合）。
     """
-    cax = getattr(cb, "ax", None)
-    info = getattr(cax, "_colorbar_info", None)
-    parents = info.get("parents") if isinstance(info, dict) else None
+    parents = declared_parents(cb)
     return len(parents) if parents else 1
 
 

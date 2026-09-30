@@ -81,7 +81,17 @@ def _overlap(stem):
     fig.savefig(stem + ".pdf")
 
 
+def _dup(stem):
+    # 同一个子图在 ax= 里写了两遍：matplotlib 照记两项，宿主只有一个
+    fig, (ax, other) = plt.subplots(1, 2, figsize=(7.0, 3.0))
+    im = ax.imshow(Z)
+    other.plot([0, 1])
+    fig.colorbar(im, ax=[ax, ax])
+    fig.savefig(stem + ".pdf")
+
+
 def main():
+    _dup("DupHost")
     _shared("Shared")
     _shared("SharedCL", layout="constrained")
     _single("Single")
@@ -170,6 +180,20 @@ def test_single_host_colorbar_nests_under_its_subplot(library):
     assert _el(man, cax)["parent_gid"] == "axes_0"
     # 单宿主色条照旧随子图走
     assert cax in _el(man, "axes_0")["follow_gids"]
+
+
+def test_repeated_declared_host_is_one_host_everywhere(library):
+    """`ax=[ax, ax]`：宿主按去重后算 1 个，树里的挂法与拖动的随行关系、方向能力一致——
+    色条轴挂在 ax 下、在 ax 的随行表里（拖 ax 色条跟着走），不成组，方向照常可改。"""
+    man = _render(library, "DupHost")
+    (cb,) = _by_role(man, "colorbar")
+    cax = cb["geom_gid"]
+    assert cb["owner_gids"] == ["axes_0"]
+    assert _el(man, cax)["parent_gid"] == "axes_0"
+    assert cax in (_el(man, "axes_0").get("follow_gids") or [])
+    assert not man.get("groups")
+    assert any(f["prop"] == "orientation" for f in _el(man, cb["gid"])["editable"])
+    assert not _el(man, cb["gid"]).get("unsupported_props")
 
 
 def test_unrelated_subplots_are_not_grouped(library):
