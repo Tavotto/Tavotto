@@ -362,6 +362,27 @@ with open("handle.png", "rb") as fh:
 """
 
 
+BUFFERED_PAPER_STYLE = """\
+import io
+from PIL import Image
+
+def save(fig, stem, outdir=None):
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=50, bbox_inches="tight")
+    buf.seek(0)
+    with Image.open(buf) as raster:
+        raster.convert("RGB").load()
+"""
+USES_BUFFERED_PAPER_STYLE = """\
+import matplotlib.pyplot as plt
+from paper_style import save
+
+fig, ax = plt.subplots(figsize=(2, 1))
+ax.plot([1, 2])
+save(fig, "Fig9")
+"""
+
+
 @needs_worker
 class TestFileObjectTargetsPassThrough:
     def test_desktop_script_can_read_back_what_it_saved(self, tmp_path):
@@ -373,6 +394,16 @@ class TestFileObjectTargetsPassThrough:
         # 写到路径的那次照旧被拦（记账、不落盘）；写进文件对象的两次不是产物、不记账
         assert [c["format"] for c in d["savefig_calls"]] == ["pdf"]
         assert not (figs / "Fig4.pdf").exists()
+
+    def test_a_buffered_save_inside_paper_style_is_recorded(self, tmp_path):
+        """图库的 `save` 先存进缓冲区再转 TIFF：那次 savefig 透传（缓冲区不能是空的），同时按 stem
+        记账——它是这张图唯一的一次存盘，tight 的图幅就靠它（#739 Codex P2）。"""
+        figs = tmp_path / "figs"
+        write(figs, "paper_style.py", BUFFERED_PAPER_STYLE)
+        write(figs, "uses.py", USES_BUFFERED_PAPER_STYLE)
+        (d,) = desktop_build(figs, "uses.py")["descriptors"]
+        assert d["stem"] == "Fig9"
+        assert [(c["format"], c["bbox_inches"]) for c in d["savefig_calls"]] == [("png", "tight")]
 
     def test_browser_behaves_the_same(self, tmp_path):
         resp = browser_load(BUFFER_TO_TIFF, "fig4.py", tmp_path / "ws")

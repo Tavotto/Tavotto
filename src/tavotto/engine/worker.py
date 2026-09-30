@@ -166,11 +166,14 @@ def _patched_savefig(self, fname, *args, **kwargs):
     """通用兜底：raw fig.savefig 的脚本也被捕获；同 stem 的 pdf/png 只记一次。
 
     写进文件对象（BytesIO 等）的不拦：那不是一份图产物，脚本接着要读它
-    （`figcapture.savefig_targets_path`）。
+    （`figcapture.savefig_targets_path`）。但在 `paper_style.save(fig, stem)` 里时照样**记账**
+    到那个 stem 名下——图库的 save 先存进缓冲区再转 TIFF 时，这就是它唯一的一次 savefig，
+    漏记会让 `bbox_inches="tight"` 这类参数看不见、图幅与它生成的 TIFF 对不上（#739 Codex P2）。
     """
-    if not _intercept or not figcapture.savefig_targets_path(fname):
+    if not _intercept:
         return _REAL_SAVEFIG(self, fname, *args, **kwargs)
-    stem = _SAVE_AS or figcapture.savefig_stem(fname)
+    to_path = figcapture.savefig_targets_path(fname)
+    stem = _SAVE_AS or figcapture.savefig_stem(fname)  # 不是路径时 savefig_stem 是空串
     if stem and SESSION is not None:
         SESSION.add_figure(stem, self, figcapture.SOURCE_SAVEFIG)
         SESSION.note_savefig(
@@ -179,6 +182,8 @@ def _patched_savefig(self, fname, *args, **kwargs):
             figcapture.savefig_call(fname, kwargs),
             kwargs.get("bbox_extra_artists"),
         )
+    if not to_path:
+        return _REAL_SAVEFIG(self, fname, *args, **kwargs)
     return None
 
 
