@@ -4101,6 +4101,10 @@ def api_engine_render():
         )
     except engine_pool.WorkerError as exc:
         LOG.error("引擎渲染失败: %s: %s", stem, exc)
+        # 按新改指表 build 过、只是图名变了（stems 由数据决定，`unknown_stem`）：注册表按这次 build 的真实
+        # 产出重新登记，新图在素材库里出现（ADR 0106 §五）
+        if exc.code == "unknown_stem":
+            _resync_registration(current_ctx(), worker)
         sse_publish("render.failed", {"pj": pj, "id": rel_id, "error": str(exc)})
         return jsonify(_worker_error_payload(exc)), 500
     except Exception as exc:
@@ -4139,6 +4143,7 @@ def api_engine_render():
         sse_publish("render.failed", {"pj": pj, "id": rel_id, "error": str(exc)})
         raise
     sse_publish("render.done", {"pj": pj, "id": rel_id, "rev": worker.rev})
+    _resync_registration(current_ctx(), worker)
     if engine_runtimeasset.is_runtime_id(rel_id):
         # 重开文档时的首帧占位从这里来：刷新 materialized cache 的预览与
         # metadata（描述符取自本会话 build 响应，只复制文件、不二次执行）。
@@ -5841,6 +5846,50 @@ def api_engine_input_remap_get():
     return jsonify({"ok": True, "input_remap": engine_inputremap.state(root)})
 
 
+def _resync_registration(ctx, worker) -> bool:
+    """试运行登记的 stems 是在另一张改指表下得出的（ADR 0106 §五，`inputremap.registration_stale`）：按这个
+    会话**刚刚按新表 build 出来**的真实产出重新登记——不多跑一次脚本。改之前图名是 `group_A`、按新数据只有
+    `group_B` 的话，旧名留在注册表里，自动重渲染就一直 `unknown_stem`（Codex 评 #716 P1）。
+
+    落地在改指表的锁里核对这个会话的代次；没 build 出任何图、不是按此刻的表 build 的，都不动。回有没有改。"""
+    script = getattr(worker, "script_name", "") or ""
+    root = getattr(worker, "figures_dir", None)
+    if not script or not root or not engine_inputremap.registration_stale(root, script):
+        return False
+    stems = sorted(
+        {
+            str(d["stem"])
+            for d in (getattr(worker, "last_build_descriptors", None) or [])
+            if isinstance(d, dict) and d.get("stem")
+        }
+    )
+    if not stems:
+        return False
+    try:
+        with engine_inputremap.landing(root, getattr(worker, "remap_generation", None)):
+            # cost 给空串：`register` 保留磁盘上原来那个值
+            engine_discover.register(root, script, stems, entry=worker.entry, cost="")
+            engine_inputremap.record_registration(root, script)
+    except engine_inputremap.RemapChanged:
+        return False
+    LOG.info("改指表变了，按这次 build 的产出重新登记: %s → %s", script, stems)
+    refresh_project(ctx, reason="probe", allow_static_merge=False)
+    return True
+
+
+def _publish_remap_changed(root: str, reason: str) -> None:
+    """改指表换代了：经项目事件流告诉**所有**开着这个项目的窗口（发起的那个也一样只认这条事件）——
+    它们据此作废按旧表画的渲染 / 素材判定 / 试运行结果（ADR 0106 §五，Codex 评 #716 P1）。"""
+    sse_publish(
+        "input_remap_changed",
+        {
+            "pj": current_ctx().id,
+            "generation": engine_inputremap.generation(root),
+            "reason": reason,
+        },
+    )
+
+
 def _stop_remap_dependent_work(root: str) -> None:
     """改指表刚换代：收掉这个项目的会话，并**取消**在跑的试运行（置标志 + 硬杀）。取消只是尽早停——
     正确性由代次保证：没停下来的那次落地前核对代次，对不上就丢弃（ADR 0106 §五）。"""
@@ -5883,6 +5932,7 @@ def api_engine_input_remap_add():
     except engine_inputremap.RemapError as exc:
         return _input_remap_error(exc)
     _stop_remap_dependent_work(root)
+    _publish_remap_changed(root, "added")
     LOG.info("数据改指: 新增一条 %s 规则（%s）", rule["kind"], root)
     return jsonify({"ok": True, "rule": rule, "input_remap": state})
 
@@ -5901,6 +5951,7 @@ def api_engine_input_remap_delete():
     except engine_inputremap.RemapError as exc:
         return _input_remap_error(exc)
     _stop_remap_dependent_work(root)
+    _publish_remap_changed(root, "removed")
     return jsonify({"ok": True, "input_remap": state})
 
 

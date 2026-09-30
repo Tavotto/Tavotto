@@ -419,6 +419,8 @@ def probe_and_register(
                 figures_dir, script, result["stems"], entry=result["entry"], cost=cost
             )
             registry.load(figures_dir)
+            # stems 可能由数据决定：记下是在哪张改指表下登记的，表变了渲染时据此重新登记
+            inputremap.record_registration(figures_dir, script)
     except inputremap.RemapChanged as exc:
         LOG.info("试运行结果作废（%s）: %s", exc, script)
         return {

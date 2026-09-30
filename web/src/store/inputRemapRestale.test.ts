@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useEnvStore } from './envStore'
 import { useRenderStore } from './renderStore'
 import { useRuntimeAssetStore } from './runtimeAssetStore'
@@ -83,8 +83,18 @@ describe('改指表变了：成功画过的面板同样重画', () => {
     useEnvStore.setState({ missingInput: null })
   })
 
-  it('新增 / 替换一条规则：失败的与成功的面板都标 stale', async () => {
+  it('发起的窗口也只认事件：pointAtData 自己不作废任何东西（一条路径，ADR 0106 §五）', async () => {
     expect(await useEnvStore.getState().pointAtData('/old/data/x.csv', '/new/data/x.csv', 'file')).toBeNull()
+    expect(await useEnvStore.getState().forgetInputRemap({ kind: 'prefix', from: '/old/data', to: '/new/data' } as never)).toBeNull()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(staleOf('ok.py')).toBe(false)
+    expect(inflightInvalidations).toBe(0)
+    expect(probed).toEqual([])
+  })
+
+  it('新增 / 替换一条规则（事件 reason=added）：失败的与成功的面板都标 stale', async () => {
+    useEnvStore.getState().onInputRemapChanged('added')
+    await vi.waitFor(() => expect(inflightInvalidations).toBe(1))
     expect(staleOf('missing.py')).toBe(true)
     expect(staleOf('ok.py')).toBe(true)
     expect(useRenderStore.getState().tracked['ok.py']).toBe(true)
@@ -96,9 +106,9 @@ describe('改指表变了：成功画过的面板同样重画', () => {
     expect(probeScripts()).toEqual(['broken.py', 'lost.py', 'nofig.py'])
   })
 
-  it('删一条规则：经它画成功的面板标 stale（回到「找不到就报错」）', async () => {
-    const rule = { kind: 'prefix', from: '/old/data', to: '/new/data' } as const
-    expect(await useEnvStore.getState().forgetInputRemap(rule as never)).toBeNull()
+  it('删一条规则（事件 reason=removed）：经它画成功的面板标 stale（回到「找不到就报错」）', async () => {
+    useEnvStore.getState().onInputRemapChanged('removed')
+    await vi.waitFor(() => expect(inflightInvalidations).toBe(1))
     expect(staleOf('ok.py')).toBe(true)
     expect(staleOf('missing.py')).toBe(true)
     expect(runtimeChecked()).toBe(false)

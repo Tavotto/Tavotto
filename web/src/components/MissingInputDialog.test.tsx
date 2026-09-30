@@ -168,9 +168,12 @@ describe('MissingInputDialog', () => {
     expect(addMock).toHaveBeenCalledWith('data/values.txt', '/Volumes/B/proj/data/values.txt', 'file')
     expect(useEnvStore.getState().missingInput).toBeNull()
     expect(dialog()).toBeNull()
-    // 重排在 renderStore / runtimeAssetStore 两个动态 import 之后：首次加载模块是真异步，不止一个微任务
-    await vi.waitFor(() => expect(useRenderStore.getState().byKey.k.stale, '没重新排上').toBe(true))
+    // 重排只经后端广播的 `input_remap_changed`（ADR 0106 §五）：这里替事件流把它送进来。
+    // 重排在两个动态 import 之后：首次加载模块是真异步，不止一个微任务
     expect(useEnvStore.getState().env?.project?.input_remap?.rules).toHaveLength(1)
+    expect(useRenderStore.getState().byKey.k.stale, '没等事件就自己重排了').toBe(false)
+    useEnvStore.getState().onInputRemapChanged('added')
+    await vi.waitFor(() => expect(useRenderStore.getState().byKey.k.stale, '没重新排上').toBe(true))
   })
 
   it('指认文件夹按 dir 发；取消选择器什么都不发', async () => {

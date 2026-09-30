@@ -134,6 +134,29 @@ def landing(root: str | os.PathLike, *generations: int | None):
         yield
 
 
+#: 本机项目设置里记「这个脚本是在哪一张改指表下由试运行登记的」：`{脚本: 指纹}`。注册表
+#: （`tavotto_registry.json`）随项目走、不放本机路径的派生物，所以不写进注册表本身；进程内的代次重启就归零，
+#: 能跨重启对账的是指纹。
+REGISTERED_KEY = "input_remap_registered"
+
+
+def record_registration(root: str | os.PathLike, script: str) -> None:
+    """试运行按此刻的改指表登记了 `script` 的 stems：记下这张表的指纹（在 `landing()` 里调）。"""
+    with _LOCK:
+        raw = config.project_settings(str(root)).get(REGISTERED_KEY)
+        marks = dict(raw) if isinstance(raw, dict) else {}
+        marks[script] = fingerprint(root)
+        config.set_project_settings(str(root), {REGISTERED_KEY: marks})
+
+
+def registration_stale(root: str | os.PathLike, script: str) -> bool:
+    """`script` 的 stems 是在另一张改指表下试运行登记的（stems 可能由数据决定）。没记过的不算。"""
+    raw = config.project_settings(str(root)).get(REGISTERED_KEY)
+    if not isinstance(raw, dict) or script not in raw:
+        return False
+    return raw[script] != fingerprint(root)
+
+
 def _bump(root: str | os.PathLike) -> None:
     key = _gen_key(root)
     _GENERATIONS[key] = _GENERATIONS.get(key, 0) + 1
@@ -158,17 +181,28 @@ def state(root: str | os.PathLike) -> dict:
     return {"rules": rules}
 
 
+def _same_source(a: dict, b: dict) -> bool:
+    """两条规则的 `from` 是不是同一处：按 `remap_parts` 规范化之后比（`data` / `./data` / `data/`、
+    Windows 的反斜杠写法、盘符大小写都是同一处），同 kind 才算。"""
+    if a["kind"] != b["kind"]:
+        return False
+    if a["from"] == b["from"]:
+        return True
+    pa = figcapture.remap_parts(a["from"]) if a["from"] else (False, ())
+    pb = figcapture.remap_parts(b["from"]) if b["from"] else (False, ())
+    return pa is not None and pa == pb
+
+
 def add_rule(root: str | os.PathLike, rule: dict) -> dict:
-    """记一条规则（同 kind 同 `from` 的旧规则被替换——用户重新指认了同一处）。"""
+    """记一条规则。同 kind、`from` 规范化后是同一处的旧规则被替换——用户重新指认了同一处，最新的那条胜出
+    （按原串比的话 `./data` 与 `data` 两条并存，`remap_target` 取先到的那条，新指认被旧的遮住，Codex 评 #716 P2）。"""
     clean = figcapture.clean_remap_rules([rule])
     if not clean:
         raise RemapError(ERROR_REQUESTED_INVALID, "改指规则不合法")
     new = {**clean[0], "added_at": time.time()}
     # 读、改、写、换代整段一把锁：两个窗口同时指认，后写的不许吞掉先写的那条（Codex 评 #716 P2）
     with _LOCK:
-        kept = [
-            r for r in _entries(root) if not (r["kind"] == new["kind"] and r["from"] == new["from"])
-        ]
+        kept = [r for r in _entries(root) if not _same_source(r, new)]
         rules = [*kept, new][-figcapture.MAX_REMAP_RULES :]
         config.set_project_settings(str(root), {SETTINGS_KEY: {"rules": rules}})
         _bump(root)
@@ -179,7 +213,7 @@ def remove_rule(root: str | os.PathLike, kind: str, src: str) -> dict:
     """删一条规则；删了就是回到报错。没有这一条 → `input_remap_rule_unknown`。"""
     with _LOCK:
         entries = _entries(root)
-        kept = [r for r in entries if not (r["kind"] == kind and r["from"] == src)]
+        kept = [r for r in entries if not _same_source(r, {"kind": kind, "from": src})]
         if len(kept) == len(entries):
             raise RemapError(ERROR_RULE_UNKNOWN, "没有这条改指规则", source=src)
         config.set_project_settings(str(root), {SETTINGS_KEY: {"rules": kept} if kept else None})

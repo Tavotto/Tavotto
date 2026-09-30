@@ -2635,6 +2635,8 @@ export type ServerEvent =
   | ({ kind: 'script.input_closed'; id: string; reason?: string } & ProjectScoped)
   /** 能答题的事件流（`answers=1`）连上时报的流 id：界面据此报「我此刻在看哪个项目」（`listenScriptInput`）。 */
   | { kind: 'stream.hello'; stream_id: string }
+  /** 改指表换代了（ADR 0106 §五）：同项目的每个窗口都据此作废按旧表画的渲染 / 素材判定 / 试运行结果 */
+  | ({ kind: 'input_remap_changed'; generation: number; reason: 'added' | 'removed' | string } & ProjectScoped)
   /** 用记住的答案自动回填了一问：界面给一条「已用上次的答案（修改）」的轻提示。 */
   | ({
       kind: 'script.input_autofilled'
@@ -2755,6 +2757,7 @@ const EVENT_KINDS = [
   'script.input_closed',
   'script.input_autofilled',
   'stream.hello',
+  'input_remap_changed',
 ] as const
 
 /**

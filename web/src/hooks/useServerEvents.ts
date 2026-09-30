@@ -148,6 +148,10 @@ export function handleServerEvent(ev: ServerEvent) {
       // 能答题的事件流连上了：记下流 id，报一次在看哪个项目（后端只把在看那个项目的流算作答题方）
       useScriptInputStore.getState().onStreamHello(ev.stream_id)
       break
+    case 'input_remap_changed':
+      // 改指表换代（ADR 0106 §五）：发起的窗口与其它窗口同一条路
+      useEnvStore.getState().onInputRemapChanged(ev.reason)
+      break
     case 'script.input_closed':
       useScriptInputStore.getState().onClosed(ev.id)
       break
