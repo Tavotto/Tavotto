@@ -307,6 +307,10 @@
         {
           "spec": "shared-colorbar-group.spec.ts",
           "title": "选中组后从成员子图里的标题起手拖 = 整组平移（不是只挪标题）"
+        },
+        {
+          "spec": "shared-colorbar-group.spec.ts",
+          "title": "选区 = 组 + 组外的子图一起选中：从组外子图里的东西起手拖，只挪那样东西，组不跟着走（Codex #691 P2）"
         }
       ]
     },
