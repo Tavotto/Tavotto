@@ -111,6 +111,32 @@ describe('zoomBy（顶栏 ± 与 ⌘±）', () => {
 
 })
 
+/**
+ * `tweening`：补间在走时为真，落定或被掐断即假。舞台把它挂成 `data-view-tweening`，
+ * e2e 等它消失再量几何（#720 的 posix-e2e：补间半路量「居中」偏了 3.5 px）。
+ */
+describe('tweening：补间在走 / 落定', () => {
+  it('补间起步即为真，落定后为假', async () => {
+    useViewportStore.getState().fitAnimated(100, 60)
+    expect(useViewportStore.getState().tweening).toBe(true)
+    await settle()
+    expect(useViewportStore.getState().tweening).toBe(false)
+  })
+
+  it('直接操纵掐断补间：当场为假', () => {
+    useViewportStore.getState().setZoomCentered(3)
+    expect(useViewportStore.getState().tweening).toBe(true)
+    useViewportStore.getState().zoomAt(1.1, 10, 10)
+    expect(useViewportStore.getState().tweening).toBe(false)
+  })
+
+  it('reduced motion 下同步落终态，不留在「在走」', () => {
+    setReducedMotion(true)
+    useViewportStore.getState().fitAnimated(100, 60)
+    expect(useViewportStore.getState().tweening).toBe(false)
+  })
+})
+
 describe('直接操纵掐断补间', () => {
   it('滚轮缩放（zoomAt）掐断，且自己永远瞬时', async () => {
     useViewportStore.getState().setZoomCentered(4)
