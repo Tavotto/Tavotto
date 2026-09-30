@@ -81,14 +81,17 @@
   问不出再问 `tavotto doctor --json`；「不知道」各是独立一档，不许并进相邻取值。这两格的恢复
   是**升级引擎**（`upgrade_commands`：`pipx upgrade tavotto` / `pipx install --force
   "tavotto[worker]==<版本>"`），不给 `--provision`。pip 的 index-url 指向镜像时
-  （`pip_index`：`PIP_INDEX_URL` + pip 配置文件，只读；说出口的地址只有协议与主机——口令、路径、查询串一律抹掉；配置文件的位置（按平台）、
-  编码（本地首选编码）与覆盖顺序照 pip 自己的 `Configuration`；Windows 商店版 Python
-  的配置被虚拟化在 `%LOCALAPPDATA%\Packages\PythonSoftwareFoundation.Python.*\LocalCache\Roaming\pip\pip.ini`，
-  那几份任一指向非 PyPI 即判镜像；启动器解释器 ≠ 装引擎的解释器时，`effective_pip_index` 再在
-  引擎背后那个解释器里跑一遍 `pip_index()`，任一侧是镜像就按镜像报）文案说镜像可能滞后、
+  （`pip_index` / `pip_index_of`：**直接问 pip**——在目标解释器里跑 `python -B -m pip config list`，不复刻 pip 的配置发现（位置、编码、覆盖顺序、site、商店版虚拟化都由 pip 自己读，#737）；
+  只看 `global` / `install` / `:env:` 三节、键名按 pip 规范化、节按 `:env:` > `install` > `global` 取生效的 index-url，`download.index-url` 不算——这份读法与引擎 `deprepair.pip_config_keys` 是严格同源对（`tests/test_pip_config_pair.py`）；
+  目标解释器没有 pip（pipx 的 venv 默认如此）时改用 pipx 共享库里的 pip（`PIPX_SHARED_LIBS` 或 `<PIPX_HOME>/venvs` 旁边的 `shared`）带 `--python` 按目标求值，再问不到就报 `source: "unknown"`、不猜，话里说「不知道」并给出绕开镜像的写法；
+  说出口的地址只有协议与主机——口令、路径、查询串一律抹掉；
+  `source` 只报 `pip_config` / `PIP_INDEX_URL`；
+  两跳都带 `-B` 且设 `PYTHONDONTWRITEBYTECODE=1`；
+  启动器解释器 ≠ 装引擎的解释器时，`effective_pip_index` 两边都问，任一侧是镜像就按镜像报，引擎那边问不到才用启动器这边的）文案说镜像可能滞后、
   每条命令带 `--index-url https://pypi.org/simple`、不给裸的 `pipx upgrade`。`--health` 带
   `engine_version` / `min_tavotto_version` / `pip_index`；`tavotto codex doctor` 原样转述插件
-  这份话术（`codexinstall._health_step`），不写第二份。看护 `tests/test_mcp_diagnose.py`。
+  这份话术（`codexinstall._health_step`），不写第二份。看护 `tests/test_mcp_diagnose.py`、
+  `tests/test_pip_config_pair.py`。
 - **`--provision` 建 venv 之前先验基础解释器的版本**（2026-09-20）：启动器允许在很老的
   `python3` 上跑（纯标准库），但 venv 继承它的版本——macOS 上 `python3` 常是 Xcode CLT
   的 3.9，而引擎的 `requires-python` 是 `>=3.10,<3.15`，区间外的解释器上 pip 只会说一句

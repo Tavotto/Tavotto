@@ -719,56 +719,6 @@ PYPI_SIMPLE = "https://pypi.org/simple"
 _PYPI_HOSTS = ("pypi.org", "www.pypi.org", "pypi.python.org")
 
 
-def _pip_config_files(environ) -> "list[tuple[str, str]]":
-    """pip 读配置文件的位置与类别（`global` / `user` / `site` / `PIP_CONFIG_FILE`），**按 pip 的加载顺序**
-    （后读的覆盖先读的）：全局 → 旧式用户 → 用户 → site（本解释器 `sys.prefix` 下的 `pip.conf` /
-    `pip.ini`，`pip config --site` 写的那份）→ `PIP_CONFIG_FILE`。只列路径，存不存在由调用方查。
-    类别是给人看的「来自哪」——**路径本身不出门**（体检结果会进模型看得见的 `tavotto_health`）。
-
-    照 pip 的 `Configuration.iter_config_files`：`PIP_CONFIG_FILE` 指向一个**存在的**文件时，用户级
-    配置（旧式与当前）整个不读——全局、site 与那份文件照读（Codex #724）。"""
-    files: "list[tuple[str, str]]" = []
-    extra = (environ.get("PIP_CONFIG_FILE") or "").strip()
-    load_user = not (extra and os.path.isfile(extra))
-    home = environ.get("USERPROFILE" if os.name == "nt" else "HOME") or os.path.expanduser("~")
-    user: "list[str]" = []
-    if os.name == "nt":
-        programdata = environ.get("PROGRAMDATA") or environ.get("ALLUSERSPROFILE")
-        if programdata:
-            files.append((os.path.join(programdata, "pip", "pip.ini"), "global"))
-        user.append(os.path.join(home, "pip", "pip.ini"))
-        appdata = environ.get("APPDATA")
-        if appdata:
-            user.append(os.path.join(appdata, "pip", "pip.ini"))
-    elif sys.platform == "darwin":
-        # pip `site_config_dirs` 的 darwin 分支只回 `site_data_dir`：不看 XDG_CONFIG_DIRS、也不加 /etc
-        # ——那里一份不相干的旧 pip.conf 不能翻转结论（Codex #724）
-        files.append(("/Library/Application Support/pip/pip.conf", "global"))
-    else:
-        for d in (environ.get("XDG_CONFIG_DIRS") or "/etc/xdg").split(":"):
-            if d:
-                files.append((os.path.join(d, "pip", "pip.conf"), "global"))
-        files.append(("/etc/pip.conf", "global"))
-    if os.name != "nt":
-        user.append(os.path.join(home, ".pip", "pip.conf"))
-        xdg = environ.get("XDG_CONFIG_HOME") or os.path.join(home, ".config")
-        library = os.path.join(home, "Library", "Application Support", "pip")
-        # macOS 上 pip 只认**一个**当前用户配置：`~/Library/Application Support/pip` 在就用它，不在才用
-        # XDG 那个（pip `appdirs._macos_user_config_dir`，Codex #724）；两个都读会让另一份旧配置翻转结论
-        if sys.platform == "darwin" and os.path.isdir(library):
-            user.append(os.path.join(library, "pip.conf"))
-        else:
-            user.append(os.path.join(xdg, "pip", "pip.conf"))
-    if load_user:
-        files.extend((u, "user") for u in user)
-    # site 配置：pip 按**跑它的那个解释器**的 sys.prefix 找（venv 里 `pip config --site` 配的镜像就在
-    # 这里）。`pip_index_of` 在目标解释器里跑本函数，sys.prefix 正是那个环境（Codex #724 P2）
-    files.append((os.path.join(sys.prefix, "pip.ini" if os.name == "nt" else "pip.conf"), "site"))
-    if extra:
-        files.append((extra, "PIP_CONFIG_FILE"))
-    return files
-
-
 def _redact_url(url: str) -> str:
     """索引地址里可能带凭据：账号口令（`https://user:token@host/simple`）、签名查询串
     （`https://mirror/simple?token=…`）或路径里的令牌（`https://mirror/<token>/simple`）。说出口的只有
@@ -793,73 +743,6 @@ def _redact_url(url: str) -> str:
     )
 
 
-#: Windows 商店版 Python 的包名前缀（`PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0`）。
-_STORE_PYTHON_PREFIX = "PythonSoftwareFoundation.Python."
-
-
-def _store_python_pip_configs(environ) -> "list[str]":
-    """Windows 商店版 Python 的 pip 配置：它写 `%APPDATA%` 时被**文件系统虚拟化**到
-    `%LOCALAPPDATA%/Packages/PythonSoftwareFoundation.Python.*/LocalCache/Roaming`，只有商店版
-    Python 进程在 `%APPDATA%/pip/pip.ini` 看得到它（#721 真机：`pip config debug` 说文件在
-    `%APPDATA%/pip/pip.ini`，PowerShell 在那儿找不到）。启动器跑在别的 Python 上时照原路径
-    读会漏掉镜像，所以把每个商店版 Python 的那一份都列出来。只看 `LOCALAPPDATA`，不判平台：
-    没设它的机器上这里什么都不列。"""
-    local = (environ.get("LOCALAPPDATA") or "").strip()
-    if not local:
-        return []
-    packages = os.path.join(local, "Packages")
-    try:
-        names = sorted(os.listdir(packages))
-    except OSError:
-        return []
-    return [
-        os.path.join(packages, n, "LocalCache", "Roaming", "pip", "pip.ini")
-        for n in names
-        if n.startswith(_STORE_PYTHON_PREFIX)
-    ]
-
-
-def _index_urls_in(path: str) -> "dict[str, str]":
-    """一个 pip 配置文件里各节的 index-url（`{"global": …, "install": …}`，只含写了的那几节）；读不到回空。
-
-    节不在这里压平：pip 先把所有文件合并、**再**按 `global` → `install` 排节（`ConfigOptionParser.
-    _get_ordered_configuration_items`），所以全局配置里的 `[install]` 压过用户配置里的 `[global]`
-    （Codex #724）。合并在 `_merged_index_url` 里做。"""
-    import configparser  # noqa: PLC0415 — 只有降级 / 体检路径用得到
-    import locale  # noqa: PLC0415
-
-    if not os.path.isfile(path):
-        return {}
-    parser = configparser.RawConfigParser()
-    try:
-        # 照 pip（`Configuration._construct_parser`）按本地编码读：中文 Windows 上 `pip config` 写的、
-        # 带中文注释的 pip.ini 是 GBK，按 UTF-8 读会整份当空、漏掉镜像（Codex #724）
-        parser.read(path, encoding=locale.getpreferredencoding(False))
-    except (configparser.Error, OSError, UnicodeDecodeError):
-        return {}
-    out: "dict[str, str]" = {}
-    for section in ("global", "install"):
-        for key in ("index-url", "index_url"):
-            if parser.has_option(section, key):
-                value = parser.get(section, key).strip()
-                if value:
-                    out[section] = value
-    return out
-
-
-def _merged_index_url(files: "list[tuple[str, str]]") -> "tuple[str | None, str | None]":
-    """按 pip 的顺序合并多份配置：每一节里后读的文件覆盖先读的，节与节之间 `install` 压过 `global`。
-    回 (地址, 来自哪一类文件)；都没写回 (None, None)。"""
-    merged: "dict[str, tuple[str, str]]" = {}
-    for path, kind in files:
-        for section, url in _index_urls_in(path).items():
-            merged[section] = (url, kind)
-    for section in ("install", "global"):
-        if section in merged:
-            return merged[section]
-    return None, None
-
-
 def _is_mirror(url: str) -> bool:
     from urllib.parse import urlsplit  # noqa: PLC0415
 
@@ -870,86 +753,156 @@ def _is_mirror(url: str) -> bool:
     return host not in _PYPI_HOSTS
 
 
-def pip_index(environ=None) -> "dict | None":
-    """pip 现在从哪个索引装包（**只读**：环境变量 + pip 配置文件，不起 pip）。
+#: 作用于 `pip install` 的配置节：`global`、命令自己的 `install`、环境变量（`pip config list` 把 `PIP_*`
+#: 列成 `:env:.<键>`）。`download` / `index` 等别的命令的节不影响安装。**引擎 `deprepair._PIP_INSTALL_SECTIONS`
+#: 的镜像**（插件 import 不到引擎；同源对，看护 `tests/test_pip_config_pair.py`）。元组顺序就是 pip 的覆盖
+#: 顺序（`ConfigOptionParser._get_ordered_configuration_items`：global → 命令名 → :env:，后者生效）。
+_PIP_INSTALL_SECTIONS = ("global", "install", ":env:")
 
-    回 `{"url": 地址（只剩协议与主机，口令 / 路径 / 查询串已抹）, "source": 来自哪个文件或 PIP_INDEX_URL, "mirror": bool}`；
-    没有任何配置（= 用 PyPI 默认值）回 None。镜像滞后是 #721 的现场：阿里云镜像上只有
-    0.15.0，`pipx install "tavotto[worker]"` 就装到 0.15.0，照常 `pipx upgrade` 也升不上去。
-
-    顺序照 pip：配置文件按加载顺序后读的覆盖先读的，`PIP_INDEX_URL` 压过全部（它对每个 Python
-    都生效）。商店版 Python 的虚拟化配置（`_store_python_pip_configs`）是另一个 Python 的配置，
-    排不进同一条覆盖链——那几份里**任一**指向非 PyPI 且上面没判出镜像时，就按镜像报：
-    宁可多给一个 `--index-url`（直连 PyPI 照样装得上），也不能让滞后的镜像再装回旧版。
-    """
-    env = os.environ if environ is None else environ
-    url, source = None, None
-    # PIP_CONFIG_FILE=os.devnull 是 pip 约定的「一个配置文件都不读」
-    read_files = (env.get("PIP_CONFIG_FILE") or "").strip() != os.devnull
-    if read_files:
-        url, source = _merged_index_url(_pip_config_files(env))
-    from_env = (env.get("PIP_INDEX_URL") or "").strip()
-    if from_env:
-        url, source = from_env, "PIP_INDEX_URL"
-    elif (
-        read_files
-        and not (url and _is_mirror(url))
-        # 商店版的虚拟化配置是用户级的：PIP_CONFIG_FILE 指着存在的文件时 pip 不读用户级配置
-        and not os.path.isfile((env.get("PIP_CONFIG_FILE") or "").strip())
-    ):
-        for path in _store_python_pip_configs(env):
-            found, _kind = _merged_index_url([(path, "store_python")])
-            if found and _is_mirror(found):
-                url, source = found, "store_python"
-                break
-    if not url:
-        return None
-    return {"url": _redact_url(url), "source": source, "mirror": _is_mirror(url)}
+#: `pip_index()` 问不到 pip 时的结论：**不知道**，不猜（#737）。与「没配置」（None = 用 PyPI 默认）是两档。
+PIP_INDEX_UNKNOWN = {"url": None, "source": "unknown", "mirror": None}
 
 
-def pip_index_of(python: "str | None", timeout: float = 15.0) -> "dict | None":
-    """**那个解释器**看到的 pip 索引：在它里面跑一遍本文件的 `pip_index()`。
+def _normalize_pip_key(key: str) -> str:
+    """pip 的键名规范化：小写、`_` 转 `-`、去掉开头的 `-`（`--index-url` / `index_url` / `index-url` 是同一个
+    键，#724 第 8 轮 Codex P2，并入 #737）。**引擎 `deprepair._normalize_pip_key` 的镜像**。"""
+    key = key.strip().lower().replace("_", "-")
+    while key.startswith("-"):
+        key = key[1:]
+    return key
 
-    装引擎的是 pipx / pip 背后的那个 Python，不一定是跑启动器的这个——商店版 Python 的
-    pip 配置只有商店版进程看得见（`_store_python_pip_configs`），一台机器上 python.org 与
-    商店版并存时两边读到的不是同一份。问不到（起不来 / 超时 / 输出不对）回 None。
-    本文件只依赖标准库、没有 import 副作用，所以在旧引擎的解释器里 import 它是安全的。
-    """
-    if not python:
-        return None
-    code = (
-        "import json, sys; sys.path.insert(0, sys.argv[1]); import server; "
-        "print(json.dumps(server.pip_index()))"
-    )
+
+def _pip_config_value(raw: str) -> str:
+    """`pip config list` 按 `repr` 打印值（`global.index-url='https://…'`）；解不出 repr 就去掉外层引号。"""
+    import ast  # noqa: PLC0415 — 只有体检路径用得到
+
+    raw = raw.strip()
+    try:
+        value = ast.literal_eval(raw)
+    except (ValueError, SyntaxError):
+        value = raw.strip("'\"")
+    return value if isinstance(value, str) else str(value)
+
+
+def pip_config_items(text: str) -> "list[tuple[str, str, str]]":
+    """`pip config list` 的输出 → 作用于 `pip install` 的 `(节, 规范化后的键, 值)`，按出现顺序。
+
+    判据的主语是 **pip 自己**合并好的结果（它按平台位置、编码、文件覆盖顺序与环境变量读完才打印）——
+    这里不复刻 pip 的配置发现（#737），只把它打印的 `<节>.<键>=<值>` 按节筛一遍。认不出形状的行跳过。
+    按节筛、键名规范化与引擎 `deprepair.pip_config_keys` 同源（插件多收一个值：要判是不是镜像）。"""
+    items: "list[tuple[str, str, str]]" = []
+    for line in (text or "").splitlines():
+        name, sep, value = line.partition("=")
+        if not sep:
+            continue
+        section, dot, key = name.strip().partition(".")
+        if not dot or section.lower() not in _PIP_INSTALL_SECTIONS:
+            continue
+        items.append((section.lower(), _normalize_pip_key(key), _pip_config_value(value)))
+    return items
+
+
+def pip_config_index_url(text: str) -> "tuple[str | None, str | None]":
+    """`pip config list` 的输出里 `pip install` 实际用的 index-url 与它来自哪一节：节按 pip 的覆盖顺序
+    （`:env:` 压过 `install` 压过 `global`），同一节里后出现的生效。没写回 (None, None)；写了空值回 ("", 节)
+    ——「设没设」与引擎 `pip_config_keys` 逐条一致，空地址当没配由调用方判。"""
+    found: "dict[str, str]" = {}
+    for section, key, value in pip_config_items(text):
+        if key == "index-url":
+            found[section] = value.strip()
+    for section in reversed(_PIP_INSTALL_SECTIONS):
+        if section in found:
+            return found[section], section
+    return None, None
+
+
+def _pipx_shared_python(python: str, environ) -> "str | None":
+    """pipx 共享库（`PIPX_SHARED_LIBS`，默认 `<PIPX_HOME>/shared`）里的解释器：pipx 建的 venv 默认**不带
+    pip**，它装包用的是这份共享的 pip。先认环境变量，再按 pipx 的目录形状（`<PIPX_HOME>/venvs/<名>/bin/python`
+    → `<PIPX_HOME>/shared`）找；都没有回 None。"""
+    shared = (environ.get("PIPX_SHARED_LIBS") or "").strip()
+    if not shared:
+        venv = os.path.dirname(os.path.dirname(os.path.abspath(python)))
+        venvs = os.path.dirname(venv)
+        if os.path.basename(venvs).lower() != "venvs":
+            return None
+        shared = os.path.join(os.path.dirname(venvs), "shared")
+    for rel in (("Scripts", "python.exe"), ("bin", "python"), ("bin", "python3")):
+        cand = os.path.join(shared, *rel)
+        if os.path.isfile(cand):
+            return cand
+    return None
+
+
+def _run_pip_config_list(argv: "list[str]", environ, timeout: float) -> "str | None":
+    # 只读体检：`-B` 管住起的这个解释器，`PYTHONDONTWRITEBYTECODE` 管住 `pip --python` 再起的那个
+    env = {**environ, "PYTHONDONTWRITEBYTECODE": "1"}
     try:
         proc = subprocess.run(
-            # `-B`：只读体检，不往插件目录（已装副本 / 本地市场检出）里写 server 的 .pyc
-            [python, "-B", "-c", code, HERE],
+            argv,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            env=env,
             timeout=timeout,
         )
     except (OSError, subprocess.TimeoutExpired, ValueError):
         return None
     if proc.returncode != 0:
         return None
-    lines = (proc.stdout or b"").decode("utf-8", "replace").strip().splitlines()
-    try:
-        data = json.loads(lines[-1]) if lines else None
-    except ValueError:
+    return (proc.stdout or b"").decode("utf-8", "replace")
+
+
+def pip_index_of(python: "str | None", environ=None, timeout: float = 15.0) -> "dict | None":
+    """**那个解释器**的 pip 从哪个索引装包——直接问 pip（`python -m pip config list`，#737），不复刻 pip 的
+    配置发现：平台位置、编码、文件覆盖顺序、`PIP_CONFIG_FILE`、site 配置、Windows 商店版 Python 的虚拟化
+    配置，都由 pip 自己在那个解释器里按它的规则读完。
+
+    回 `{"url": 地址（只剩协议与主机，口令 / 路径 / 查询串已抹）, "source": "PIP_INDEX_URL" | "pip_config",
+    "mirror": bool}`；pip 说没配 index-url（= 用 PyPI 默认值）回 None；**问不到**回 `PIP_INDEX_UNKNOWN`
+    ——不猜。那个解释器没有 pip 时（pipx 的 venv 默认如此）先试 pipx 共享库里的 pip，用 `--python`
+    让它按目标解释器求值（site 配置与装包时一致）；再不行就是不知道。`python` 为空回 None（没有可问的）。
+    镜像滞后是 #721 的现场：阿里云镜像上只有 0.15.0，`pipx upgrade` 也升不上去。"""
+    if not python:
         return None
-    return data if isinstance(data, dict) and isinstance(data.get("url"), str) else None
+    env = os.environ if environ is None else environ
+    text = _run_pip_config_list([python, "-B", "-m", "pip", "config", "list"], env, timeout)
+    if text is None:
+        shared = _pipx_shared_python(python, env)
+        if shared:
+            text = _run_pip_config_list(
+                [shared, "-B", "-m", "pip", "--python", python, "config", "list"], env, timeout
+            )
+    if text is None:
+        return dict(PIP_INDEX_UNKNOWN)
+    url, section = pip_config_index_url(text)
+    if not url:
+        return None
+    source = "PIP_INDEX_URL" if section == ":env:" else "pip_config"
+    return {"url": _redact_url(url), "source": source, "mirror": _is_mirror(url)}
+
+
+def pip_index(environ=None) -> "dict | None":
+    """启动器**这个**解释器的 pip 看到的索引（`pip_index_of(sys.executable)`）。"""
+    return pip_index_of(sys.executable, environ)
+
+
+def pip_index_unknown(index: "dict | None") -> bool:
+    return isinstance(index, dict) and index.get("source") == "unknown"
 
 
 def effective_pip_index(engine_python: "str | None" = None) -> "dict | None":
-    """给升级命令用的索引结论：启动器这边读到的 + 引擎背后那个解释器读到的，**任一是镜像
-    就按镜像报**（理由同 `pip_index` 末段）；都不是镜像时优先报引擎那边的。"""
+    """给升级命令用的索引结论：启动器这边问到的 + 引擎背后那个解释器问到的，**任一是镜像就按镜像报**
+    ——宁可多给一个 `--index-url`（直连 PyPI 照样装得上），也不能让滞后的镜像再装回旧版；都不是镜像时
+    优先报引擎那边的，那边问不到才用这边的。"""
     here = pip_index()
+    if not engine_python:
+        return here
     there = pip_index_of(engine_python)
     for cand in (there, here):
         if cand and cand.get("mirror"):
             return cand
-    return there or here
+    return here if pip_index_unknown(there) else there
 
 
 def upgrade_commands(target: "str | None", index: "dict | None") -> "list[str]":
@@ -971,21 +924,22 @@ def upgrade_commands(target: "str | None", index: "dict | None") -> "list[str]":
 
 #: `pip_index()` 的 `source` 是类别，不是路径（路径会进模型看得见的体检结果）；这里是给人看的说法。
 _SOURCE_LABELS = {
-    "global": "全局 pip 配置",
-    "user": "用户的 pip 配置",
-    "site": "当前环境的 pip 配置（site）",
-    "PIP_CONFIG_FILE": "PIP_CONFIG_FILE 指向的配置",
-    "store_python": "商店版 Python 的 pip 配置",
+    "pip_config": "pip 的配置（pip config list）",
     "PIP_INDEX_URL": "环境变量 PIP_INDEX_URL",
 }
 
 
 def mirror_note(target: "str | None", index: "dict | None") -> str:
-    """pip 指向镜像时补的那句；不是镜像（或没配置）回空串。"""
+    """pip 指向镜像时补的那句；问不到 pip 时如实说不知道（不猜，#737）；不是镜像（或没配置）回空串。"""
+    want = f"到 {target}" if target else "到新版"
+    if pip_index_unknown(index):
+        return (
+            "（问不到这个环境的 pip 用哪个索引：它没有 pip，也找不到 pipx 共享的 pip。若升级后还是旧版，"
+            f"多半是镜像还没同步{want}，在命令后加 `--index-url {PYPI_SIMPLE}` 直连 PyPI 再装一次。）"
+        )
     if not index or not index.get("mirror"):
         return ""
     # 版本号两侧留空格（中文里数字紧贴汉字会读成一个词）；没有版本号时说「新版」
-    want = f"到 {target}" if target else "到新版"
     return (
         f"注意：pip 的 index-url 指向镜像 {index['url']}（来自 {_SOURCE_LABELS.get(index['source'], index['source'])}），"
         f"镜像可能还没同步{want}，照常升级只会再装回镜像上那一版——命令里的 "
