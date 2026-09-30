@@ -4,6 +4,7 @@ import type { WorkdirMode } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { useEnvStore } from '@/store/envStore'
 import { useScriptRunStore } from '@/store/scriptRunStore'
+import { currentProjectId } from '@/lib/session'
 import { Button } from './ui/Button'
 import { Dialog } from './ui/Dialog'
 import { Radio } from './ui/Radio'
@@ -50,12 +51,16 @@ export function WorkdirConfirmDialog() {
   const confirm = async () => {
     if (!choice) return
     setBusy(true)
+    const project = currentProjectId()
     const err = await setWorkdirMode(choice, { confirmed: true })
     setBusy(false)
     if (err) {
       setError(err)
       return
     }
+    // 作答期间换了项目：`setWorkdirMode` 的「换代作废」也回 null，与成功同形——按发起时的项目判，
+    // 别拿 A 的确认去重跑 B 停在门上的试运行（#740 Codex P2）
+    if (currentProjectId() !== project) return
     // 素材库脚本行上停在这道门上的试运行重跑（面板的渲染由 `setWorkdirMode` 重排）。运行目录是项目级的：
     // 停在这一相位上的全部重跑。放在这里而不是 envStore：envStore → scriptRunStore 会让既有的 import 环扩大
     useScriptRunStore.getState().rerunGated('needs_workdir')

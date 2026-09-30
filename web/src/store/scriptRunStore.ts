@@ -119,6 +119,28 @@ export const isGatePhase = (phase: ScriptRunPhase | undefined): boolean =>
  * 旧载荷不弹——判据在 `envStore` 那一侧）。`projectId` 是发这次试运行时的项目。回 true = 是门、已交出。
  * 素材库脚本行（经 `run`）与接入中心的试运行共用这一处，别的试运行入口也走这里。
  */
+/** 门的 code → 它对应的相位（不是门回 null） */
+export function gatePhaseOf(error: ProbeError | null | undefined): 'needs_workdir' | 'needs_preparation' | null {
+  if (!error) return null
+  if (error.code === DEPENDENCY_PREPARATION_CODE && error.dependency_preparation) return 'needs_preparation'
+  if (error.code === WORKDIR_CONFIRMATION_CODE && error.confirmation) return 'needs_workdir'
+  return null
+}
+
+type GateResolved = (phase: 'needs_workdir' | 'needs_preparation', script?: string) => void
+const gateListeners = new Set<GateResolved>()
+
+/**
+ * 门有了答案时通知：不在本 store 里记账的试运行入口（接入中心的逐行试运行）靠它重跑自己停在门上的那一行
+ * ——否则作答之后那一行停在「还差一步」上、要用户再点一次（#740 Codex P2）。回退订函数。
+ */
+export function onGateResolved(cb: GateResolved): () => void {
+  gateListeners.add(cb)
+  return () => {
+    gateListeners.delete(cb)
+  }
+}
+
 export function handOffProbeGate(error: ProbeError | null | undefined, projectId: string | null): boolean {
   if (!error) return false
   if (error.code === DEPENDENCY_PREPARATION_CODE && error.dependency_preparation) {
@@ -278,6 +300,7 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
     for (const name of scripts) {
       if (get().byScript[name]?.phase === phase) void get().run(name)
     }
+    for (const cb of [...gateListeners]) cb(phase, script)
   },
 
   clear: () => set((s) => ({ byScript: {}, epoch: s.epoch + 1 })),

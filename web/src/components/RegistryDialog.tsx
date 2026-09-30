@@ -42,7 +42,7 @@ import { addPanelToCanvas, addRuntimePanelToCanvas } from '@/store/workspace'
 import { useAssetStore } from '@/store/assetStore'
 import { refreshAssetsAndSync } from '@/store/liveSync'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
-import { handOffProbeGate } from '@/store/scriptRunStore'
+import { gatePhaseOf, handOffProbeGate, onGateResolved } from '@/store/scriptRunStore'
 import { currentProjectId } from '@/lib/session'
 import { useUiStore } from '@/store/uiStore'
 import { Button, IconButton } from './ui/Button'
@@ -165,6 +165,23 @@ function ReadinessBody() {
     }
   }
 
+  // 停在门上的逐行试运行：门有了答案（授权准备 / 选定运行目录）就重跑那一行，与素材库脚本行同一个承诺。
+  // 记下发起时的项目：换了项目的答案不重跑这边的行
+  const gated = useRef(new Map<string, { phase: 'needs_workdir' | 'needs_preparation'; project: string | null }>())
+  const probeRef = useRef<(script: string) => void>(() => {})
+  useEffect(
+    () =>
+      onGateResolved((phase, resolved) => {
+        for (const [script, g] of [...gated.current]) {
+          if (g.phase !== phase || (resolved && resolved !== script)) continue
+          if (g.project !== currentProjectId()) continue
+          gated.current.delete(script)
+          void probeRef.current(script)
+        }
+      }),
+    [],
+  )
+
   const scan = () =>
     run('scan', async () => {
       const res = await scanRegistry()
@@ -183,13 +200,16 @@ function ReadinessBody() {
       const project = currentProjectId()
       const res = await probeScript(script)
       // 起会话之前的门（运行目录 / 依赖准备）不是试运行失败：弹与渲染、素材库同一个框，这一行只说还差什么
-      if (handOffProbeGate(res.error, project)) {
+      const gate = gatePhaseOf(res.error)
+      if (gate && handOffProbeGate(res.error, project)) {
         const text = formatMessage(
           backendCodeMsg(res.error!.code, res.error!.params, res.error!.message),
         )
         setProbed((p) => ({ ...p, [script]: { text } }))
+        gated.current.set(script, { phase: gate, project })
         return
       }
+      gated.current.delete(script)
       if (res.error) {
         // 主文案先按稳定 code 翻成当前语言（后端中文原文只是回退）；
         // traceback 不进主文案，收在「诊断详情」里。
@@ -206,6 +226,8 @@ function ReadinessBody() {
         [script]: { text: parts.join(' '), descriptors: res.descriptors },
       }))
     })
+
+  probeRef.current = probe
 
   const link = (panel: ReadinessPanel, script: string) =>
     run(`link:${panel.id}`, async () => {

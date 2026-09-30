@@ -47,6 +47,7 @@ import {
 } from '@/store/projectReadinessStore'
 import { useUiStore } from '@/store/uiStore'
 import { useEnvStore } from '@/store/envStore'
+import { useScriptRunStore } from '@/store/scriptRunStore'
 import { setCurrentProjectId } from '@/lib/session'
 import { reasonText, statusLabel } from '@/lib/readinessText'
 
@@ -320,6 +321,21 @@ describe('绝不替用户决定', () => {
     })
     expect(useEnvStore.getState().dependencyPreparation, '载荷没交给 envStore').toEqual(offer)
     expect(dialog().textContent).not.toContain('试运行失败')
+    // 门有了答案（授权准备成功）：这一行自动重跑，不要用户再点一次（#740 Codex P2）
+    mockProbe.mockClear()
+    mockProbe.mockResolvedValue({ script: 'dyn.py', entry: null, stems: ['Mystery'], descriptors: [], tried: [] } as never)
+    await act(async () => {
+      useScriptRunStore.getState().rerunGated('needs_preparation', 'dyn.py')
+      await new Promise((r) => setTimeout(r, 0))
+    })
+    expect(mockProbe, '门放行之后那一行没有重跑').toHaveBeenCalledWith('dyn.py')
+    // 别的脚本的答案不重跑这一行
+    mockProbe.mockClear()
+    await act(async () => {
+      useScriptRunStore.getState().rerunGated('needs_preparation', 'other.py')
+      await new Promise((r) => setTimeout(r, 0))
+    })
+    expect(mockProbe).not.toHaveBeenCalled()
     useEnvStore.setState({ dependencyPreparation: null })
     setCurrentProjectId(null)
   })

@@ -114,8 +114,10 @@
   同一个 `DependencyPrepareDialog` / `WorkdirConfirmDialog`、同一次作答（发请求那一刻的项目挡串项目）。「稍后」之后脚本行上
   是与画布错误块同一颗再打开的按钮（`GateReopen`）。有了答案由作答的一方调 `rerunGated` 重跑停在门上的那一行：准备成功
   （`depRepairStore.onProgress` 的 joint done，按进度里的 `script`）、明确跳过、改用用户环境按脚本；运行目录由
-  `WorkdirConfirmDialog` 选定后重跑停在这一相位上的全部（项目级；放在组件里是因为 envStore → scriptRunStore 会扩大既有 import 环）。
-  接入中心的试运行走同一个 `handOffProbeGate`，不报「试运行失败」。**新写一个调试运行端点的入口，先认这两个 code。**
+  `WorkdirConfirmDialog` 选定后重跑停在这一相位上的全部（项目级；放在组件里是因为 envStore → scriptRunStore 会扩大既有 import 环；
+  作答期间换了项目就不重跑——`setWorkdirMode` 的换代作废与成功同形，按发起时的 pj 判）。
+  接入中心的试运行走同一个 `handOffProbeGate`，不报「试运行失败」；它不在 `scriptRunStore` 里记账，停在门上的行经
+  `onGateResolved`（`rerunGated` 顺带通知）在答案到来时重跑（同脚本、同项目）。**新写一个调试运行端点的入口，先认这两个 code。**
   看护 `scriptRunStore.test.ts`「试运行撞上起会话之前的门」、`ScriptLibrary.test.tsx` 同名 describe、
   `RegistryDialog.test.tsx`、`e2e/asset-library.spec.ts`「试运行撞上依赖门」。
 - **运行/取消是同一个按钮**（busy 态翻转）：取消后焦点天然留在原脚本行，
