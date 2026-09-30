@@ -291,6 +291,78 @@ describe('恢复：先存「恢复前」，再写，⌘Z 能退回', () => {
   })
 })
 
+describe('恢复在飞时预览锁住（Codex #679 P1）', () => {
+  // 「恢复前」节点还没存完就能关掉预览回去编辑的话，晚到的恢复会把新编辑整份盖掉
+  const ways = {
+    Esc: async () =>
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })),
+    右上角关闭: async () => $<HTMLButtonElement>('[data-dialog-close]')?.click(),
+    点外面: async () => {
+      // Radix 在打开后的下一个宏任务里才挂上「点外面」的监听；左键按下要等随后的
+      // click 才判定是不是点在外面——照真鼠标的顺序两下都发
+      await new Promise((r) => setTimeout(r, 0))
+      const init = { bubbles: true, cancelable: true, button: 0 }
+      document.body.dispatchEvent(new PointerEvent('pointerdown', { ...init, pointerType: 'mouse' }))
+      document.body.dispatchEvent(new MouseEvent('click', init))
+    },
+  }
+  const open = async () => {
+    await mount([meta()])
+    await act(async () => previews()[0].click())
+    await flush()
+    expect($('[data-timeline-preview]')).not.toBeNull()
+  }
+
+  it.each(Object.keys(ways) as (keyof typeof ways)[])('对照：没在恢复时，%s 能关掉预览', async (how) => {
+    await open()
+    await act(ways[how])
+    await flush()
+    expect(useTimelineStore.getState().preview).toBeNull()
+  })
+
+  it.each(Object.keys(ways) as (keyof typeof ways)[])(
+    '「恢复前」还在存时，%s 关不掉；存失败落定后照常能关',
+    async (how) => {
+      let fail!: (e: unknown) => void
+      mockCreate.mockImplementationOnce(() => new Promise((_, reject) => (fail = reject)))
+      await open()
+      await act(async () => $<HTMLButtonElement>('[data-timeline-preview-restore]')!.click())
+      await flush()
+      expect(mockCreate).toHaveBeenCalledTimes(1)
+      expect($('[data-dialog="timeline-preview"]')!.getAttribute('aria-busy')).toBe('true')
+      expect($<HTMLButtonElement>('[data-timeline-preview-close]')!.disabled).toBe(true)
+
+      await act(ways[how])
+      await flush()
+      expect(useTimelineStore.getState().preview).not.toBeNull()
+      expect($('[data-timeline-preview]')).not.toBeNull()
+
+      await act(async () => fail(new Error('disk full')))
+      await flush()
+      expect(ids()).toEqual(['now'])
+      expect($('[data-dialog="timeline-preview"]')!.getAttribute('aria-busy')).toBeNull()
+      await act(ways[how])
+      await flush()
+      expect(useTimelineStore.getState().preview).toBeNull()
+    },
+  )
+
+  it('「恢复前」存完之后照常恢复、预览退出', async () => {
+    let done!: (v: unknown) => void
+    mockCreate.mockImplementationOnce(() => new Promise((resolve) => (done = resolve)))
+    await open()
+    await act(async () => $<HTMLButtonElement>('[data-timeline-preview-restore]')!.click())
+    await flush()
+    await act(ways.Esc)
+    await flush()
+    expect(useTimelineStore.getState().preview).not.toBeNull()
+    await act(async () => done({ version: meta({ id: 'v_backup' }) }))
+    await flush()
+    expect(ids()).toEqual(['old'])
+    expect(useTimelineStore.getState().preview).toBeNull()
+  })
+})
+
 /* ------------------------------ 分组与筛选 -------------------------------- */
 
 describe('按天分组、类型标记、只看命名', () => {

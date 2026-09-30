@@ -861,16 +861,32 @@ const ZOOM_STEPS = [0.5, 0.75, 1, 1.5, 2, 3]
  *   「与当前对比」两种：并排（那一刻 | 当前）与叠加（底图 = 那一刻，描边 = 当前）。
  * - 右边是差异列表。
  * - 默认焦点在「关闭」上：回车不会误触恢复。
+ * - 恢复在飞时整个对话框锁住（`busy`：右上角关闭 / Esc / 点外面都不关）：「恢复前」
+ *   节点还没存完就让人关掉回去编辑，晚到的恢复会把这些新编辑整份盖掉（Codex #679）。
+ *   忙按上下文记账：A 的恢复还在飞时换到 B，B 的预览不该被锁住。
  */
 function TimelinePreviewDialog() {
   useTranslation(['dialogs', 'common'])
   const preview = useTimelineStore((s) => s.preview)
   const docId = useDocumentStore((s) => s.documentId)
+  const gen = useTimelineStore((s) => s.gen)
+  const ctx = timelineCtxKey(gen, docId)
   const active = preview && preview.docId === docId ? preview : null
+  const [restoringCtx, setRestoringCtx] = useState<string | null>(null)
+  const restoring = restoringCtx === ctx
   const close = () => useTimelineStore.getState().setPreview(null)
   const closeRef = useRef<HTMLButtonElement>(null)
+  const restore = async (meta: LayoutVersionMeta, doc: FigureDocument) => {
+    setRestoringCtx(ctx)
+    try {
+      await restoreNode(meta, doc)
+    } finally {
+      setRestoringCtx((c) => (c === ctx ? null : c))
+    }
+  }
   return (
     <Dialog
+      busy={restoring}
       initialFocusRef={closeRef}
       open={!!active}
       onOpenChange={(v) => {
@@ -882,7 +898,16 @@ function TimelinePreviewDialog() {
       width={typeof window === 'undefined' ? 1200 : Math.round(window.innerWidth * 0.8)}
       height="80vh"
     >
-      {active && <PreviewBody meta={active.meta} doc={active.doc} onClose={close} closeRef={closeRef} />}
+      {active && (
+        <PreviewBody
+          meta={active.meta}
+          doc={active.doc}
+          onClose={close}
+          closeRef={closeRef}
+          restoring={restoring}
+          onRestore={restore}
+        />
+      )}
     </Dialog>
   )
 }
@@ -898,18 +923,22 @@ function PreviewBody({
   doc,
   onClose,
   closeRef,
+  restoring,
+  onRestore,
 }: {
   meta: LayoutVersionMeta
   doc: FigureDocument | null
   onClose: () => void
   /** 「关闭」钮：对话框的默认焦点（回车不会误触恢复） */
   closeRef: React.RefObject<HTMLButtonElement | null>
+  /** 恢复在飞：状态在外层对话框上（它要据此锁住关闭），这里只管按钮 */
+  restoring: boolean
+  onRestore: (meta: LayoutVersionMeta, doc: FigureDocument) => Promise<void>
 }) {
   const currentDoc = useCurrentDocFor(meta)
   const [view, setView] = useState<PreviewView>('moment')
   const [zoom, setZoom] = useState<number | 'fit'>('fit')
   const [approximate, setApproximate] = useState(false)
-  const [busy, setBusy] = useState(false)
   const stageRef = useRef<HTMLDivElement>(null)
   const [stage, setStage] = useState({ w: 0, h: 0 })
 
@@ -941,15 +970,8 @@ function PreviewBody({
     if (next != null) setZoom(next === 1 ? 'fit' : next)
   }
 
-  const restore = async () => {
-    if (!doc) return
-    // 换了上下文时这个对话框随预览一起卸载，busy 无处可落；守卫在 `restoreNode` 里
-    setBusy(true)
-    try {
-      await restoreNode(meta, doc)
-    } finally {
-      setBusy(false)
-    }
+  const restore = () => {
+    if (doc) void onRestore(meta, doc)
   }
 
   const frame = (d: FigureDocument, caption: string | null, opts?: { outlineOver?: FigureDocument }) => (
@@ -1035,12 +1057,12 @@ function PreviewBody({
         </aside>
       </div>
       <div className="flex shrink-0 items-center justify-end gap-2 border-t border-border px-4 py-3">
-        <Button ref={closeRef} onClick={onClose} disabled={busy} data-timeline-preview-close>
+        <Button ref={closeRef} onClick={onClose} disabled={restoring} data-timeline-preview-close>
           {vd('closePreview')}
         </Button>
         <Button
           variant="primary"
-          loading={busy}
+          loading={restoring}
           disabled={!doc}
           onClick={restore}
           data-timeline-preview-restore
