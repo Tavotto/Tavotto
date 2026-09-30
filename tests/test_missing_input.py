@@ -417,6 +417,55 @@ def test_an_absolute_path_the_script_wrote_keeps_its_absolute_identity(remapped,
     assert open(absolute).read() == "moved"
 
 
+def test_a_path_built_from_file_dunder_keeps_its_absolute_identity(remapped, tmp_path):
+    """`Path(__file__).parent / "data" / "x.csv"`：`"data"`、`"x.csv"` 是拼绝对路径用的片段，不是
+    「脚本写着相对路径 data/x.csv」的证据——宽泛的相对规则不许接管它（Codex 评 #716 P1
+    "Require actual relative-use evidence before remapping"）。"""
+    _touch(tmp_path / "moved" / "data" / "x.csv", "moved")
+    box = pathlib.Path.cwd()
+    absolute = str(box / "data" / "x.csv")
+    rules = [{"kind": P, "from": "", "to": str(tmp_path / "moved")}]
+    source = "from pathlib import Path\np = Path(__file__).parent / 'data' / 'x.csv'\n"
+    misses = remapped(rules, script_source=source)
+    with pytest.raises(FileNotFoundError) as err:
+        open(absolute)
+    fact = figcapture.missing_input_of(err.value, misses)
+    assert fact is not None and fact["requested"] == absolute
+
+
+def test_a_path_built_with_os_path_join_and_dirname_keeps_its_absolute_identity(remapped, tmp_path):
+    """同上，换成 `os.path.join(os.path.dirname(__file__), "data", "x.csv")` 这种拼法。"""
+    _touch(tmp_path / "moved" / "data" / "x.csv", "moved")
+    box = pathlib.Path.cwd()
+    absolute = str(box / "data" / "x.csv")
+    rules = [{"kind": P, "from": "", "to": str(tmp_path / "moved")}]
+    source = "import os\np = os.path.join(os.path.dirname(__file__), 'data', 'x.csv')\n"
+    misses = remapped(rules, script_source=source)
+    with pytest.raises(FileNotFoundError) as err:
+        open(absolute)
+    fact = figcapture.missing_input_of(err.value, misses)
+    assert fact is not None and fact["requested"] == absolute
+
+
+def test_path_literals_excludes_fragments_used_to_build_an_absolute_path():
+    """`path_literals` 本身的单测：绝对锚点后面的拼接片段一个都不进相对/绝对证据。"""
+    abs_lits, rel_lits = figcapture.path_literals(
+        "from pathlib import Path\np = Path(__file__).parent / 'data' / 'x.csv'\n"
+    )
+    assert abs_lits == [] and rel_lits == []
+    abs_lits, rel_lits = figcapture.path_literals(
+        "import os\np = os.path.join(os.path.dirname(__file__), 'data', 'x.csv')\n"
+    )
+    assert abs_lits == [] and rel_lits == []
+
+
+def test_path_literals_still_counts_a_join_with_no_absolute_anchor():
+    """`os.path.join("data", "x.csv")` 拼出来的结果本身就是相对路径：没有绝对锚点时两段仍然算数。"""
+    abs_lits, rel_lits = figcapture.path_literals("import os\np = os.path.join('data', 'x.csv')\n")
+    assert abs_lits == []
+    assert rel_lits == [("data",), ("x.csv",)]
+
+
 def test_numpy_loadtxt_is_remapped_and_named_without_a_filename(remapped, tmp_path):
     np = pytest.importorskip("numpy")
     _touch(tmp_path / "moved" / "d.txt", "1 2 3")
@@ -1238,7 +1287,9 @@ def test_two_concurrent_re_registrations_keep_both_updates(tmp_path, monkeypatch
 
     monkeypatch.setattr(discover, "write_config", slow_write)
     threads = [
-        threading.Thread(target=discover.register, args=(root, name, [stem]), kwargs={"entry": "__main__"})
+        threading.Thread(
+            target=discover.register, args=(root, name, [stem]), kwargs={"entry": "__main__"}
+        )
         for name, stem in (("a.py", "a_new"), ("b.py", "b_new"))
     ]
     for t in threads:

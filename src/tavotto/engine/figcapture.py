@@ -1429,7 +1429,17 @@ class InputMisses:
 
 def path_literals(source: str | None) -> tuple[list[tuple[str, ...]], list[tuple[str, ...]]]:
     """脚本里写着的路径常量 → `(绝对的路径段, 相对的路径段)`（`remap_parts` 规范化过；空段、说不清的不要）。
-    `install_input_remap` 靠它判一条落在 cwd 里的绝对路径到底是脚本写的绝对路径，还是相对路径被库规范化出来的。"""
+    `install_input_remap` 靠它判一条落在 cwd 里的绝对路径到底是脚本写的绝对路径，还是相对路径被库规范化出来的。
+
+    证据必须是一个**本身就是相对路径的表达式**，不是任意匹配上的字符串常量：`/` 拼接
+    （`pathlib` 的 `__truediv__`）或 `os.path.join` 一类拼接里，只要某个操作数是绝对锚点
+    （`__file__`、`Path(__file__).parent` 系（含链式 `.parent` / `.resolve()`）、`os.getcwd()`、
+    `Path.cwd()`、`os.path.dirname(__file__)`、`Path.home()`、本身就是绝对路径的常量），这整条
+    拼接里的字符串片段都不算「脚本写着相对路径」的证据——它们是拼绝对路径用的片段，不是相对路径本身
+    （Codex 评 #716 P1「Require actual relative-use evidence before remapping」：`Path(__file__).parent
+    / "data" / "x.csv"` 里的 `"data"` 不能被当成「脚本写过相对路径 data」）。没有绝对锚点的拼接
+    （`os.path.join("data", "x.csv")` 这类，结果本身就是相对路径）与孤立常量一样，各段仍然算数。
+    """
     import ast
 
     abs_parts: list[tuple[str, ...]] = []
@@ -1440,12 +1450,91 @@ def path_literals(source: str | None) -> tuple[list[tuple[str, ...]], list[tuple
         tree = ast.parse(source)
     except (SyntaxError, ValueError):
         return abs_parts, rel_parts
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Constant) and isinstance(node.value, str) and "\n" not in node.value:
+
+    def _record(node: ast.AST) -> None:
+        if (
+            isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and "\n" not in node.value
+        ):
             parsed = remap_parts(node.value)
             if parsed is None or not parsed[1]:
-                continue
+                return
             (abs_parts if parsed[0] else rel_parts).append(parsed[1])
+
+    def _is_name_or_attr(func: ast.AST, name: str) -> bool:
+        return (isinstance(func, ast.Name) and func.id == name) or (
+            isinstance(func, ast.Attribute) and func.attr == name
+        )
+
+    def _is_absolute_anchor(node: ast.AST) -> bool:
+        """脚本源码里能确定代表「此刻的绝对锚点」的表达式，枚举见上面 docstring。"""
+        while True:
+            if isinstance(node, ast.Attribute) and node.attr == "parent":
+                node = node.value
+                continue
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "resolve"
+            ):
+                node = node.func.value
+                continue
+            break
+        if isinstance(node, ast.Name) and node.id == "__file__":
+            return True
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            parsed = remap_parts(node.value)
+            return bool(parsed and parsed[0])
+        if isinstance(node, ast.Call):
+            func = node.func
+            has_file_arg = any(isinstance(a, ast.Name) and a.id == "__file__" for a in node.args)
+            if _is_name_or_attr(func, "Path") and has_file_arg:
+                return True
+            if _is_name_or_attr(func, "dirname") and has_file_arg:
+                return True
+            if _is_name_or_attr(func, "getcwd") or _is_name_or_attr(func, "cwd"):
+                return True
+            if _is_name_or_attr(func, "home"):
+                return True
+        return False
+
+    def _is_join_call(node: ast.AST) -> bool:
+        return isinstance(node, ast.Call) and _is_name_or_attr(node.func, "join")
+
+    def _flatten(node: ast.AST, out: list[ast.AST]) -> None:
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+            _flatten(node.left, out)
+            _flatten(node.right, out)
+        else:
+            out.append(node)
+
+    def _visit_operands(operands: list[ast.AST]) -> None:
+        # 拼接里只要有一个操作数是绝对锚点，整条拼接的字符串片段都不独立算数（也不认领绝对证据）：
+        # 追不清哪一段才是「脚本写的相对路径」时，宁可不算证据，保留绝对身份。
+        anchored = any(_is_absolute_anchor(op) for op in operands)
+        for op in operands:
+            if anchored and isinstance(op, ast.Constant):
+                continue
+            _visit(op)
+
+    def _visit(node: ast.AST) -> None:
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+            operands: list[ast.AST] = []
+            _flatten(node, operands)
+            _visit_operands(operands)
+            return
+        if _is_join_call(node):
+            operands = []
+            for arg in node.args:
+                _flatten(arg, operands)
+            _visit_operands(operands)
+            return
+        _record(node)
+        for child in ast.iter_child_nodes(node):
+            _visit(child)
+
+    _visit(tree)
     return abs_parts, rel_parts
 
 
