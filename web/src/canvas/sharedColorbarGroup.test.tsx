@@ -546,9 +546,12 @@ describe('不变式：组的变换写下的成员 = expandGroups 的结果（隐
   })
 
   it('对齐时选区里同时点名了组成员：成员跟着组走、不另出一条（不会被单独对齐拆出去）', async () => {
+    // 右对齐：组本来就在最右、整组不动，只有 A 挪过去。B 若另出一条，会被单独对齐到右边、拆出组
     act(() => useUiStore.getState().setSelectedGids([GROUP, 'axes_1', 'axes_0']))
-    expect(alignSelectedPanelElements('p1', 'left').ok).toBe(true)
-    const dx = positionOf('axes_1')![0] - POS.axes_1[0]
-    for (const g of ['axes_2', 'axes_3']) expect(positionOf(g)![0] - POS[g][0]).toBeCloseTo(dx, 6)
+    expect(alignSelectedPanelElements('p1', 'right').ok).toBe(true)
+    expect(positionOf('axes_0')![0]).toBeCloseTo(0.88 - POS.axes_0[2], 6)
+    for (const g of ['axes_1', 'axes_2', 'axes_3']) {
+      expect(positionOf(g) ?? POS[g]).toEqual(POS[g])
+    }
   })
 })
