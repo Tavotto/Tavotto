@@ -14,6 +14,7 @@ from __future__ import annotations
 import ast
 import io
 import json
+import os
 import re
 import threading
 import time
@@ -496,11 +497,45 @@ def test_a_thumbnail_folder_that_cannot_be_listed_does_not_fail_a_committed_writ
     assert "列不出来" in caplog.text
 
 
-def test_switching_thumbnail_format_deletes_the_old_one_before_writing(client, monkeypatch):
-    """换格式时先删旧格式再写新图：删不掉就在写之前失败——什么都没提交、重试安全；
-    不会出现「新图写了、接口却报错」，也不会留下一张会被先认出来的旧格式图。"""
+def test_switching_format_keeps_the_old_thumbnail_when_the_new_write_fails(client, monkeypatch):
+    """换格式时先原子写新图：写不进去就回失败，而旧图原样还在（Codex #679）——先删后写的
+    话，写失败时旧图已经没了，接口却说「什么都没换」。"""
     v = _create(client, auto=True)
-    client.put(f"/api/versions/d1/{v['id']}/thumb", data=b"webp", content_type="image/webp")
+    client.put(f"/api/versions/d1/{v['id']}/thumb", data=b"webp-old", content_type="image/webp")
+
+    def fail(path, data, *a, **kw):
+        raise OSError(28, "No space left on device", str(path))
+
+    monkeypatch.setattr(m.engine_atomicio, "write_bytes", fail)
+    resp = client.put(
+        f"/api/versions/d1/{v['id']}/thumb", data=b"png-new", content_type="image/png"
+    )
+    assert resp.status_code == 500
+    assert sorted(p.name for p in _thumbs_dir().iterdir()) == [f"{v['id']}.webp"]
+    got = client.get(f"/api/versions/d1/{v['id']}/thumb")
+    assert got.status_code == 200 and got.data == b"webp-old"
+
+
+def test_switching_format_deletes_the_old_one_after_the_new_write(client):
+    v = _create(client, auto=True)
+    client.put(f"/api/versions/d1/{v['id']}/thumb", data=b"webp-old", content_type="image/webp")
+    resp = client.put(
+        f"/api/versions/d1/{v['id']}/thumb", data=b"png-new", content_type="image/png"
+    )
+    assert resp.status_code == 200
+    assert sorted(p.name for p in _thumbs_dir().iterdir()) == [f"{v['id']}.png"]
+    assert client.get(f"/api/versions/d1/{v['id']}/thumb").data == b"png-new"
+
+
+def test_an_undeletable_old_format_does_not_fail_the_switch_and_the_new_one_wins(
+    client, monkeypatch
+):
+    """写成之后删旧图是尽力清理：删不掉只记日志、响应照常成功；两张同时在时取较新的
+    那张——刚写上的新图，而不是按格式先后被先认出来的旧 webp。"""
+    v = _create(client, auto=True)
+    client.put(f"/api/versions/d1/{v['id']}/thumb", data=b"webp-old", content_type="image/webp")
+    old = _thumbs_dir() / f"{v['id']}.webp"
+    os.utime(old, ns=(1_000_000_000, 1_000_000_000))  # 旧图确实更旧（与文件系统的时钟粒度无关）
     real = Path.unlink
 
     def unlink(self, *a, **kw):
@@ -509,9 +544,16 @@ def test_switching_thumbnail_format_deletes_the_old_one_before_writing(client, m
         return real(self, *a, **kw)
 
     monkeypatch.setattr(Path, "unlink", unlink)
-    resp = client.put(f"/api/versions/d1/{v['id']}/thumb", data=b"png", content_type="image/png")
-    assert resp.status_code == 500  # 失败在提交之前：报错是真话
-    assert sorted(p.name for p in _thumbs_dir().iterdir()) == [f"{v['id']}.webp"]
+    resp = client.put(
+        f"/api/versions/d1/{v['id']}/thumb", data=b"png-new", content_type="image/png"
+    )
+    assert resp.status_code == 200 and resp.get_json()["thumb"] == "png"
+    assert sorted(p.name for p in _thumbs_dir().iterdir()) == sorted(
+        [f"{v['id']}.png", f"{v['id']}.webp"]
+    )
+    assert client.get(f"/api/versions/d1/{v['id']}/thumb").data == b"png-new"
+    listed = next(x for x in _list(client)["versions"] if x["id"] == v["id"])
+    assert listed["thumb"] == "png"
 
 
 def test_thumbnails_of_one_layout_do_not_touch_another(client):

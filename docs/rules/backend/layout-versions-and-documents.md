@@ -37,7 +37,7 @@
   `versions/thumbs/<排版 id>/<vid>.<webp|png>`，**不进时间线 JSON**（有没有 = 文件在不在；
   记进 JSON 的话每挂一张图就多一次整写），`_sweep_version_thumbs` 按目录清孤儿、只认
   `_VERSION_ID_RE` 的名字——它在时间线 JSON 提交**之后**跑，连目录都列不出来也只记日志，
-  不让已成功的写入回 500（前端一重试就多一个节点，#679）；换缩略图格式先删旧格式再写新图；PUT 的 256 KiB 上限卡在读取本身（`_read_body_capped`，
+  不让已成功的写入回 500（前端一重试就多一个节点，#679）；换缩略图格式先原子写新图、落地后再删旧格式（删不掉只记日志；两张同时在时取较新的那张，新图胜出，#679）；PUT 的 256 KiB 上限卡在读取本身（`_read_body_capped`，
   chunked 请求没有 Content-Length）。列表端点的 `budget` 在文件没超上限时不量 `namedBytes`（缺席，
   不冒充 0）。
 - **论文样式**：`/api/styles`（`layouts/_styles.json`）；前端按角色映射成

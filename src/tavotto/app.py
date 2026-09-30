@@ -7779,16 +7779,26 @@ def _version_thumb_path(doc_id: str, vid: object) -> Path | None:
 
     有没有缩略图是**文件在不在**，不记进时间线 JSON：记进去的话每挂一张图都要把
     整份时间线（大排版十几 MB）再整写一遍，自动节点的写入代价就翻了一倍
-    （实测见 ADR 0101）。两种格式都看：同一个节点只会留一张（PUT 会删另一种）。
+    （实测见 ADR 0101）。
+
+    两种格式都看，**同时都在时取较新的那张**（按 mtime；PUT 先写新的、再删另一种，删不掉
+    时两张会同时在，Codex #679）——写入顺序保证新图更新，于是新图胜出，不会一张删不掉的
+    旧格式图把刚换上的顶回去。
     """
     if not isinstance(vid, str) or not _VERSION_ID_RE.match(vid):
         return None
     d = _version_thumbs_dir(doc_id)
+    found: list[tuple[int, Path]] = []
     for ext in _VERSION_THUMB_TYPES.values():
         p = d / f"{vid}.{ext}"
-        if p.is_file():
-            return p
-    return None
+        try:
+            if p.is_file():
+                found.append((p.stat().st_mtime_ns, p))
+        except OSError:
+            continue
+    if not found:
+        return None
+    return max(found, key=lambda t: t[0])[1]
 
 
 def _sweep_version_thumbs(doc_id: str, kept_ids: set) -> None:
@@ -8165,17 +8175,19 @@ def api_versions_thumb_put(doc_id, vid):
         # 顺手清孤儿（已经读出节点清单了，扫一遍目录不另花什么）
         _sweep_version_thumbs(doc_id, ids)
         d = _version_thumbs_dir(doc_id)
-        # 先删另一种格式、再写这一张：提交（写图）之后不留任何能让响应变 500 的步骤
-        # （Codex #679）。删不掉就在写之前报错——什么都没提交，重试是安全的；反过来
-        # 先写后删的话，删失败要么回 500（图其实已经换了），要么吞掉、留下一张旧格式图
-        # 被 `_version_thumb_path` 先认出来（它先看 webp）。
+        # **先原子写新图、落地之后再删另一种格式的旧图**（Codex #679）：新图写失败时旧图
+        # 还在，接口报失败也就是真话（什么都没换）；先删后写的话，写失败时旧图已经没了。
+        # 写成之后删旧图是尽力清理：删不掉只记日志、不算失败——两张同时在时
+        # `_version_thumb_path` 取较新的那张，刚写上的新图胜出。
+        engine_atomicio.write_bytes(d / f"{vid}.{ext}", data)
         for other in _VERSION_THUMB_TYPES.values():
             if other != ext:
                 try:
                     (d / f"{vid}.{other}").unlink()
                 except FileNotFoundError:
                     pass
-        engine_atomicio.write_bytes(d / f"{vid}.{ext}", data)
+                except OSError as exc:
+                    LOG.warning("旧格式的版本缩略图删不掉（新图已写上，它胜出）: %s: %s", d, exc)
     return jsonify({"ok": True, "thumb": ext})
 
 

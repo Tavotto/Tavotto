@@ -130,4 +130,17 @@ describe('名字', () => {
     expect(versionDisplayName(v({ name: '2026-09-06 21:30' }))).toBe('2026-09-06 21:30')
     expect(versionDisplayName(v({ name: '09-06' }))).toBe('09-06')
   })
+
+  it('命名节点（kind 是权威）：名字长得像时间串也照常显示（Codex #679）', () => {
+    expect(versionDisplayName(v({ kind: 'named', named: true, name: '09-30 10:32' }))).toBe('09-30 10:32')
+    expect(versionDisplayName(v({ kind: 'named', named: true, name: '  09-30 10:32 ' }))).toBe('09-30 10:32')
+    // 其余类型的名字是程序起的，照旧不显示
+    expect(versionDisplayName(v({ kind: 'auto', name: '09-30 10:32' }))).toBeNull()
+    expect(versionDisplayName(v({ kind: 'manual', name: '09-30 10:32' }))).toBeNull()
+  })
+
+  it('对照：不带 kind 的旧响应，时间串形状照旧当程序起的名字', () => {
+    expect(versionDisplayName(v({ kind: undefined, name: '09-30 10:32' }))).toBeNull()
+    expect(versionDisplayName(v({ kind: undefined, name: '投稿前' }))).toBe('投稿前')
+  })
 })
