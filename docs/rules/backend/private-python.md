@@ -50,7 +50,7 @@
   对固定常量 `SOURCE_HOSTS` 判明文——不从这份来源的 url 现推，那样恒真；与锁一致由用例钉住）；账记 `downloaded_from`，进度 `private_python.source_host` 报此刻在下的主机（`downloading_from`）。
 - **联网只有一条路**：每次现建的 `urllib.request.build_opener(tlstrust.https_handler(ctx))`——代理只从
   `HTTP(S)_PROXY` / `NO_PROXY` 环境变量来、在下载那一刻读（与 `updater` / `telemetry` / pip 同一张脸；
-  三处出站 HTTPS 都经 `tlstrust`，`tests/test_outbound_https_trust.py` 按 AST 钉）、`User-Agent: Tavotto/<版本>`、
+  出站 HTTPS（私有 Python、遥测、检查更新、无 git 时的插件压缩包）都经 `tlstrust`，`tests/test_outbound_https_trust.py` 按 AST 钉）、`User-Agent: Tavotto/<版本>`、
   不带身份；**不读** pip.conf / uv 配置 / 用户配置 / 项目设置（对 `config` 只调 `data_path` / `data_dir`，AST 钉）。
   **证书按平台原生校验**（2026-09-28 起）：上下文唯一出处 `engine/tlstrust.client_context()` = `truststore.SSLContext
   (PROTOCOL_TLS_CLIENT)`（Windows CryptoAPI 建链、缺根按需补装；macOS SecTrust；Linux OpenSSL + 系统 CA——与 pip 一致）。

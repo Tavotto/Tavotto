@@ -273,6 +273,7 @@ class TestUpdater:
 #: 产品里的出站 HTTPS（非回环）调用点：模块 → 建 opener 的那个函数。与 `tlstrust` 模块头的清单、
 #: PR 里的枚举表是同一份事实——多一处少一处这里都红，逼着清单跟着改。
 OUTBOUND = {
+    "engine/codexinstall.py": "_fetch",
     "engine/privatepython.py": "_fetch",
     "engine/telemetry.py": "_post",
     "engine/updater.py": "_fetch_latest_release",
@@ -430,7 +431,7 @@ class TestStructure:
         assert {"app.py", "engine/handoff.py", "engine/session_client.py"} <= urlopen_modules, (
             urlopen_modules
         )
-        assert not urlopen_modules & set(OUTBOUND), "出站三处不许再留模块级 urlopen"
+        assert not urlopen_modules & set(OUTBOUND), "出站各处不许再留模块级 urlopen"
 
     @pytest.mark.parametrize(
         ("snippet", "expect"),
@@ -472,8 +473,8 @@ class TestStructure:
         bad, openers = _outbound_violations("engine/x.py", ast.parse(ok))
         assert bad == [] and openers == {"engine/x.py": "f"}
 
-    def test_the_tlstrust_inventory_names_the_same_three_call_sites(self):
-        """`tlstrust` 模块头的清单与 `OUTBOUND` 同一份事实：三处函数名都写在那里。"""
+    def test_the_tlstrust_inventory_names_the_same_call_sites(self):
+        """`tlstrust` 模块头的清单与 `OUTBOUND` 同一份事实：每一处的函数名都写在那里。"""
         doc = (
             ast.get_docstring(ast.parse((SRC / "engine" / "tlstrust.py").read_text("utf-8"))) or ""
         )
