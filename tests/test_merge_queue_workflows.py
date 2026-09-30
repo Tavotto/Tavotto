@@ -1665,7 +1665,7 @@ class TestPlaywrightShards:
 
     @pytest.mark.parametrize(
         "job_id, step_minutes, job_minutes",
-        [("windows-exe-smoke", 30, 60), ("posix-e2e", 20, 45)],
+        [("windows-exe-smoke", 30, 60), ("posix-e2e", 35, 45)],
     )
     def test_the_playwright_step_has_a_step_level_timeout(self, job_id, step_minutes, job_minutes):
         """主语是 **step** 的 `timeout-minutes`（缩进 8），不是 job 的（缩进 4）——job 级的不动。"""
@@ -1691,7 +1691,7 @@ class TestPlaywrightShards:
         assert self.JOB in _needs_of(gate) and self.JOB in _required_of(gate)
 
     def test_posix_e2e_stays_a_single_job_on_configured_projects(self):
-        """posix-e2e 不分片（7 分钟，不在关键路径上）；它写死的 project 名必须仍在配置里。"""
+        """posix-e2e 目前不分片（单 worker 约 19.7 分钟，step 上限 35；分片另开 issue）；它写死的 project 名必须仍在配置里。"""
         block = _job(CI, "posix-e2e")
         assert not re.search(r"(?m)^    strategy:", _code(block)), (
             "posix-e2e 分片了——先改文档里的决定"
