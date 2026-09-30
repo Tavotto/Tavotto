@@ -1214,7 +1214,7 @@ def test_plugin_zip_contains_the_skill(tmp_path):
         "codex-plugin/.codex-plugin/plugin.json",
         "codex-plugin/skills/tavotto-figure/SKILL.md",
         "codex-plugin/skills/tavotto-figure/scripts/handoff.py",
-        "codex-plugin/.mcp.json",
+        "codex-plugin/codex.mcp.json",
         "codex-plugin/mcp/server.py",
         "codex-plugin/mcp/widget/canvas.html",
     ):
@@ -1255,12 +1255,12 @@ def test_release_workflow_publishes_the_plugin_channel():
 # 这几条盯的是「Codex 装上了、但一个工具都看不见」——清单字段错一个字，
 # 症状就是插件安安静静地只剩技能。字段形状取自官方插件（`codex plugin` 装出来的
 # `~/.codex/plugins/cache/**/.codex-plugin/plugin.json` 与它们的 `.mcp.json`）。
-MCP_JSON = PLUGIN / ".mcp.json"
+MCP_JSON = PLUGIN / "codex.mcp.json"
 
 
 def test_manifest_declares_the_mcp_server(manifest):
-    """`mcpServers` 指向一个**存在的** .mcp.json，且技能仍在。"""
-    assert manifest["mcpServers"] == "./.mcp.json"
+    """`mcpServers` 指向一个**存在的** Codex MCP 配置（codex.mcp.json，ADR 0109），且技能仍在。"""
+    assert manifest["mcpServers"] == "./codex.mcp.json"
     assert MCP_JSON.is_file()
     assert manifest["skills"] == "./skills/", "加 MCP 不能把技能挤掉"
 
@@ -2021,7 +2021,7 @@ def test_openai_yaml_declares_the_mcp_dependency():
     安装提示。测试不引第三方 yaml 库（.venv 纯净），按受控文件形状做行级断言。
     """
     yaml_text = (SKILL_DIR / "agents" / "openai.yaml").read_text(encoding="utf-8")
-    mcp = json.loads((PLUGIN / ".mcp.json").read_text(encoding="utf-8"))
+    mcp = json.loads((PLUGIN / "codex.mcp.json").read_text(encoding="utf-8"))
     (server_key,) = mcp["mcpServers"].keys()
     command = mcp["mcpServers"][server_key]["command"]
 
@@ -2119,12 +2119,18 @@ def test_real_codex_installs_the_plugin_from_a_local_marketplace(tmp_path):
     assert "tavotto@tavotto-dev" in proc.stdout
 
     # CODEX_HOME 里能找到插件本体的关键文件（缓存布局是实现细节，按内容找）
-    found = {name: False for name in ("plugin.json", "SKILL.md", ".mcp.json", "openai.yaml")}
+    found = {name: False for name in ("plugin.json", "SKILL.md", "codex.mcp.json", "openai.yaml")}
     for path in home.rglob("*"):
         if path.name in found:
             found[path.name] = True
     missing = [name for name, ok in found.items() if not ok]
     assert not missing, f"CODEX_HOME 的插件 checkout 里缺 {missing}"
+
+    # Codex 按清单 `mcpServers` 指的路径读 MCP 配置（ADR 0109 把它从 `.mcp.json` 改了名）：
+    # 装完的插件必须真的带出 tavotto 这个 server，而不只是文件躺在缓存里
+    proc = _codex(["mcp", "list"], home)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert re.search(r"^tavotto\s+\./mcp/launch\s", proc.stdout, re.M), proc.stdout
 
 
 @needs_codex_cli

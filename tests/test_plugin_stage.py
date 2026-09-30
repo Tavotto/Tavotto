@@ -171,7 +171,7 @@ def test_a_canvas_from_another_build_with_this_identity_is_caught(tmp_path):
 
 def test_release_staging_refuses_an_absolute_interpreter_path(staging):
     d, _m = staging
-    mcp = d / ".mcp.json"
+    mcp = d / "codex.mcp.json"
     data = json.loads(mcp.read_text(encoding="utf-8"))
     for entry in data["mcpServers"].values():
         entry["command"] = sys.executable
@@ -207,7 +207,7 @@ def test_release_staging_accepts_only_the_bundled_relative_launcher(staging, com
             f.write_text('#!/bin/sh\nexec python3 "$@"\n', encoding="utf-8")
     for name in ("launch", "other.cmd"):
         (d / "mcp" / name).chmod(0o755)
-    mcp = d / ".mcp.json"
+    mcp = d / "codex.mcp.json"
     data = json.loads(mcp.read_text(encoding="utf-8"))
     for entry in data["mcpServers"].values():
         entry["command"] = command
@@ -297,7 +297,7 @@ def test_installed_copy_pinned_by_the_real_installer_verifies(staging):
 
 def test_installed_copy_with_only_one_side_pinned_is_reported(staging):
     d, _m = staging
-    mcp = d / ".mcp.json"
+    mcp = d / "codex.mcp.json"
     data = json.loads(mcp.read_text(encoding="utf-8"))
     for entry in data["mcpServers"].values():
         entry["command"] = sys.executable
@@ -316,7 +316,7 @@ def test_installed_copy_pinned_to_a_missing_interpreter_is_reported(staging, tmp
 
 def test_installed_copy_with_a_changed_non_command_field_is_reported(staging):
     d, _m = staging
-    mcp = d / ".mcp.json"
+    mcp = d / "codex.mcp.json"
     data = json.loads(mcp.read_text(encoding="utf-8"))
     for entry in data["mcpServers"].values():
         entry["command"] = sys.executable
@@ -373,7 +373,7 @@ def test_zip_is_deterministic_and_round_trips(staging, tmp_path):
     names = zipfile.ZipFile(z1).namelist()
     assert all(n.startswith("codex-plugin/") for n in names)
     assert "codex-plugin/.codex-plugin/plugin.json" in names, "dotfile 进了 zip"
-    assert "codex-plugin/.mcp.json" in names
+    assert "codex-plugin/codex.mcp.json" in names
     assert "codex-plugin/plugin-build.json" in names
     out = stage.unpack_zip(z1, tmp_path / "unpacked")
     assert (
@@ -583,6 +583,112 @@ def test_stage_takes_sources_from_the_index_not_the_whole_directory(tmp_path):
         assert not (out / "mcp" / "stray_untracked_file.txt").exists()
     finally:
         stray.unlink()
+
+
+@pytest.mark.parametrize("forbidden", [".mcp.json", "mcp/extra.json"])
+def test_stage_refuses_a_file_other_hosts_auto_read(tmp_path, monkeypatch, forbidden):
+    """插件根 `.mcp.json` 与 `mcp/*.json` 不许进 staging（ADR 0109）：Claude Code / ZCode /
+    WorkBuddy / MiniMax Code 会自动把它们当自己的 MCP 配置读，WorkBuddy 还让它们覆盖清单里
+    的同名条目——Codex 形状的相对启动器在那边 ENOENT。主语是 stage() 组装出来的那份目录。"""
+    head = subprocess.run(
+        ["git", "-C", str(ROOT), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    ).stdout.strip()
+    real = stage.tracked_plugin_files
+    monkeypatch.setattr(
+        stage, "tracked_plugin_files", lambda root: [*real(root), (forbidden, "100644")]
+    )
+    src = ROOT / "codex-plugin" / forbidden
+    assert not src.exists(), f"源码树里已经有 {forbidden}"
+    src.write_text('{"mcpServers": {}}\n', encoding="utf-8")
+    try:
+        widget = kit.write_fake_widget(tmp_path / "canvas.html")
+        with pytest.raises(stage.StageError, match="当自己的 MCP 配置"):
+            stage.stage(
+                tmp_path / "s",
+                widget,
+                source_sha=head,
+                root=ROOT,
+                allow_dirty=True,
+                skip_fingerprint=True,
+            )
+    finally:
+        src.unlink()
+
+
+# ================================================================ Codex MCP 配置的名字（ADR 0109）
+
+
+def _write_codex_manifest(plugin: Path, target: str | None) -> None:
+    pj = plugin / ".codex-plugin" / "plugin.json"
+    pj.parent.mkdir(parents=True, exist_ok=True)
+    data = {"name": "tavotto", "version": "0.17.0"}
+    if target is not None:
+        data["mcpServers"] = target
+    pj.write_text(json.dumps(data), encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("target", "expected"),
+    [("./codex.mcp.json", "codex.mcp.json"), ("./.mcp.json", ".mcp.json")],
+)
+def test_the_mcp_config_is_whatever_the_codex_manifest_points_at(tmp_path, target, expected):
+    """新包 `codex.mcp.json`、已装旧版 `.mcp.json`：由 Codex 清单说了算（Codex 自己也这样找）。
+    两个文件都摆上，结论只能来自清单，不能来自「哪个在」。"""
+    for name in pluginmanifest.MCP_CONFIGS:
+        (tmp_path / name).write_text("{}", encoding="utf-8")
+    _write_codex_manifest(tmp_path, target)
+    assert pluginmanifest.mcp_config_rel(tmp_path) == expected
+
+
+def test_a_codex_manifest_pointing_elsewhere_is_refused(tmp_path):
+    _write_codex_manifest(tmp_path, "./mcp/other.json")
+    with pytest.raises(pluginmanifest.PluginManifestError, match="mcpServers"):
+        pluginmanifest.mcp_config_rel(tmp_path)
+
+
+def _as_legacy_install(d: Path) -> None:
+    """把一份新 staging 改成 0.17.0 那种布局：配置叫 `.mcp.json`，清单指向它，重写构建清单。"""
+    (d / pluginmanifest.CODEX_MCP).rename(d / pluginmanifest.LEGACY_MCP)
+    pj = d / ".codex-plugin" / "plugin.json"
+    pj.write_text(
+        pj.read_text(encoding="utf-8").replace('"./codex.mcp.json"', '"./.mcp.json"'),
+        encoding="utf-8",
+    )
+    old = json.loads((d / pluginmanifest.BUILD_MANIFEST).read_text(encoding="utf-8"))
+    (d / pluginmanifest.BUILD_MANIFEST).unlink()
+    modes = {e["path"]: e["mode"] for e in old["files"]}
+    modes[pluginmanifest.LEGACY_MCP] = modes.pop(pluginmanifest.CODEX_MCP)
+    pluginmanifest.write_build_manifest(
+        d,
+        modes=modes,
+        source_sha=old["source_sha"],
+        fingerprint=old["build_inputs_fingerprint"],
+        lockfile_sha256=old["lockfile_sha256"],
+        toolchain=old["toolchain"],
+        min_tavotto_version=old["min_tavotto_version"],
+    )
+
+
+def test_an_installed_legacy_copy_still_verifies_and_pins(staging):
+    """用户机器上已装的旧版（`.mcp.json`）不许被新引擎的体检报成损坏，钉 command 也照旧两侧一起换。"""
+    d, _m = staging
+    _as_legacy_install(d)
+    assert stage.verify_dir(d) == []
+    _pin_with_the_real_installer(d, sys.executable)
+    assert stage.verify_dir(d, installed=True) == []
+    mcp = json.loads((d / ".mcp.json").read_text(encoding="utf-8"))
+    assert mcp["mcpServers"]["tavotto"]["command"] == sys.executable
+
+
+def test_the_config_the_manifest_points_at_is_required(staging):
+    """清单指向的那份配置缺了就是「缺必需文件」——不能因为 REQUIRED 里不再写死名字就漏掉。"""
+    d, _m = staging
+    (d / pluginmanifest.CODEX_MCP).unlink()
+    probs = stage.verify_dir(d, installed=True)
+    assert any(f"缺少必需文件 {pluginmanifest.CODEX_MCP}" in s for s in probs), probs
 
 
 # ================================================================ 画布构建器的输入与写盘

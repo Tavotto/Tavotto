@@ -30,7 +30,8 @@ Tavotto 在所有宿主里是**同一份完整包、同一个 MCP 服务、同�
    `py`），或者给出已装 Python 的绝对路径，例如 `& 'C:\Python312\python.exe' '<完整包>\integrations\configure.py' …`。
 
    `<宿主>` 是 `cursor` / `zcode` / `dsh` / `workbuddy` / `claude-code` / `claude-desktop` /
-   `trae` / `vscode` 之一。它**只打印**配置（stdout）以及说明（stderr）：合并到哪个文件或界面、
+   `trae` / `vscode` / `minimax-code` 之一。Trae 的说明里还有一键安装链接（国际版 `trae://`、国内版 `trae-cn://`），
+   在浏览器地址栏打开后在 Trae 里点确认即可。它**只打印**配置（stdout）以及说明（stderr）：合并到哪个文件或界面、
    授权的是哪个目录、引擎是否就绪、怎样确认宿主真的加载了、Skill 怎么装。它不写任何文件。
 3. 按说明合并配置，再按下表让宿主重新加载。
 
@@ -43,7 +44,8 @@ Tavotto 在所有宿主里是**同一份完整包、同一个 MCP 服务、同�
 | Claude Code（CLI） | 重开会话，用 `/mcp` 确认 connected（项目 `.mcp.json` 第一次要批准） | 复制到 `.claude/skills/` |
 | Claude Desktop（聊天） | **完全退出**再打开 | 没有原生入口：`--emit instructions` 放进项目说明 |
 | VS Code（Copilot Agent） | MCP: List Servers → 启动 tavotto；在 Configure Tools 里勾选 | 复制到 `.github/skills/` |
-| Trae | MCP 列表确认已连接，**并把 tavotto 加进所用智能体** | `--emit instructions` 放进规则或智能体提示词 |
+| Trae | MCP 列表确认已连接，**并把 tavotto 加进所用智能体** | 复制到 `.trae/skills/`（全局：国际版 `~/.trae/skills/`、国内版 `~/.trae-cn/skills/`） |
+| MiniMax Code | 在项目目录里重开 `mcode`（项目 `.mcp.json` 免批准自动加载） | 复制到 `.agents/skills/` 或 `.minimax/skills/` |
 | DSH | 新开会话，等 `mcp__tavotto__*` 工具出现 | 复制到 `.dsh/skills/` 或 `.agents/skills/` |
 | WorkBuddy / ZCode | 在 MCP 设置里确认已连接，重开对话 | `--emit instructions` |
 

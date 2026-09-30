@@ -15,7 +15,7 @@ release.yml 的「拼 release body」当场红（scripts/check_pending_release_n
 
 ## Codex plugin on Windows: MCP tools now appear
 
-On Windows, plugin 0.17.0 loaded as enabled, with its skill, but with no Tavotto tools at all, even with the engine installed. Codex gave no error. The bundled launcher was one file serving as both a shell script and a batch file, and `cmd.exe` echoed its first line (`#!/bin/sh`) to stdout ahead of the MCP handshake, so Codex dropped the server. The launcher is now two files: `mcp/launch` for macOS and Linux, and `mcp/launch.cmd` for Windows, whose first line is `@echo off`. `.mcp.json` points at `./mcp/launch`, and on Windows Codex resolves that to `launch.cmd`. macOS and Linux behave exactly as before. After upgrading the plugin, start a new Codex session. Diagnostic lines the server writes to stderr are now UTF-8, so on Windows systems whose code page is not UTF-8 they show up in the Codex logs instead of being dropped. If you are still on plugin 0.17.0 on Windows, run `codex plugin marketplace upgrade tavotto`. With this engine, `tavotto codex install` also treats any stdout output besides the health JSON as a launcher that does not start, and pins a verified interpreter into the installed copy.
+On Windows, plugin 0.17.0 loaded as enabled, with its skill, but with no Tavotto tools at all, even with the engine installed. Codex gave no error. The bundled launcher was one file serving as both a shell script and a batch file, and `cmd.exe` echoed its first line (`#!/bin/sh`) to stdout ahead of the MCP handshake, so Codex dropped the server. The launcher is now two files: `mcp/launch` for macOS and Linux, and `mcp/launch.cmd` for Windows, whose first line is `@echo off`. The Codex MCP config points at `./mcp/launch`, and on Windows Codex resolves that to `launch.cmd`. macOS and Linux behave exactly as before. After upgrading the plugin, start a new Codex session. Diagnostic lines the server writes to stderr are now UTF-8, so on Windows systems whose code page is not UTF-8 they show up in the Codex logs instead of being dropped. If you are still on plugin 0.17.0 on Windows, run `codex plugin marketplace upgrade tavotto`. With this engine, `tavotto codex install` also treats any stdout output besides the health JSON as a launcher that does not start, and pins a verified interpreter into the installed copy.
 
 ## Claude Code plugin (Beta)
 
@@ -109,3 +109,59 @@ second one fail to load. Like the Claude Code plugin, this works once this versi
 ## Codex plugin: an old pip/pipx engine is no longer reported as "desktop app only"
 
 If the `tavotto` engine installed with pip or pipx was too old for the plugin, the plugin's health check could report `desktop_only` ("only the desktop app is installed") and suggest steps that did not fix it. This happened when the plugin could not state a minimum engine version (a plugin installed from a local marketplace or source checkout) or when the engine's CLI could not report its version. A common trigger is a pip mirror that has not synced the new release yet, so `pipx install "tavotto[worker]"` installs an older version. The health check now asks the engine's own Python environment for its version. It reports `engine_too_old` with both versions when it knows the minimum, and a new code, `engine_incompatible`, when it doesn't. Both give upgrade commands such as `pipx install --force "tavotto[worker]==<version>"`. If pip's `index-url` points to a mirror (from `PIP_INDEX_URL` or a pip config file, read only), the message says the mirror may lag and adds `--index-url https://pypi.org/simple` to each command. `tavotto codex doctor` reports the same code and text.
+
+## WorkBuddy plugin (Beta), and more hosts
+
+<!-- 发版时（2026-09-30 用户决定）：WorkBuddy 与 Claude Code / DSH 一样，README 在 plugin-stable 带上
+`.claude-plugin/` 之前不给装法。09-28 用户定的「只有 WorkBuddy 标 Beta（ZCode 缺登录后的实测，仍是实验）」不推翻，
+只是推迟到发版生效。搬这一段的同时：
+1. 把下面「### Using Tavotto with WorkBuddy (Beta)」一节加回 README（Claude Code、DSH 两节之后，「### Using Tavotto
+   from other AI editors and clients (experimental)」之前；「添加市场」那格整行是 `brand.WORKBUDDY_MARKETPLACE`）；
+2. docs/support-matrix.json 的 workbuddy 改回 `status: beta` + `channel: claude-plugin`；
+3. codex-plugin/integrations/configure.py 里 workbuddy 的 target 那句改回「更省事的是装插件（README「Using Tavotto
+   with WorkBuddy」的两条命令），就不需要这段配置；」；
+4. 技能 codex-plugin/skills/tavotto-figure/references/other-hosts.md 加回「**WorkBuddy 优先走插件**」一段（插件市场
+   「添加市场」填 `Tavotto/Tavotto`，装 `tavotto@tavotto`，没装引擎再 `pipx install "tavotto[worker]"`，新开对话；
+   授权目录是对话的工作目录，别在 HOME 里用）与「**ZCode** 也能从自己的插件市场装同一份插件……但还没在登录后的真
+   会话里跑过；把这一点告诉用户」一段，「其余宿主」那句加上 WorkBuddy；Skill 表把「WorkBuddy / ZCode」拆成
+   「WorkBuddy（插件版）| 新开对话，让它调用 `tavotto_health` | 插件自带，不用复制」与「WorkBuddy / ZCode（配置版）」，
+   DSH 拆成「DSH（bundle）| … | bundle 自带，不用复制」与「DSH（YAML patch）」。原文见 PR #712；
+5. README experimental 段末「Per-host sources … hosts.md`.」之后加回一句：「ZCode can also install the Claude Code
+   plugin above from its own plugin marketplace; that route hasn't been run in a signed-in ZCode session yet.」
+tests/test_claude_plugin.py::test_workbuddy_section_installs_the_same_plugin_from_brand 按矩阵这一档判这一节该在
+README 还是在这里。README 一节的原文：
+
+### Using Tavotto with WorkBuddy (Beta)
+
+WorkBuddy installs the same plugin as Claude Code. In WorkBuddy open the plugin marketplace, choose **Add
+marketplace**, and enter:
+
+```text
+Tavotto/Tavotto
+```
+
+Install `tavotto@tavotto` from the new marketplace, then run `pipx install "tavotto[worker]"` in a terminal. Start a
+new conversation and ask WorkBuddy to call `tavotto_health` to confirm the engine is found. Tavotto may only open and
+write inside the conversation's working folder (WorkBuddy doesn't report MCP roots), so work in your project folder,
+not your home folder. The embedded canvas hasn't been checked in WorkBuddy yet; the tools work without it. If you
+added Tavotto by hand with the config generator below, remove that entry, or you will have two Tavotto servers.
+-->
+
+WorkBuddy installs the same plugin as Claude Code: in WorkBuddy's plugin marketplace choose **Add marketplace**,
+enter `Tavotto/Tavotto`, then install `tavotto@tavotto`. The conversation's working folder is the authorized
+project. If you had added Tavotto to WorkBuddy by hand with the config generator, remove that entry after
+installing the plugin. Like the other plugins, this works once this version is on `plugin-stable`.
+
+The config generator gained `--host minimax-code` (a project `.mcp.json` for MiniMax Code), and for Trae it now
+prints one-click install links (`trae://` for the international edition, `trae-cn://` for the China edition), puts
+Trae's timeouts in `env`, and refuses a Python path with spaces, which Trae can't parse. Trae's skill now goes in
+`.trae/skills/`. ZCode's generated config now carries `timeoutMs`, so long exports no longer time out after 30 s.
+
+Tavotto no longer accepts your whole home folder (or a folder above it) as the authorized workspace, from any
+source: `TAVOTTO_MCP_ROOTS`, the host's MCP roots, a confirmation prompt, or the folder the server was started in.
+Before, a host that reported the home folder as its root let Tavotto open anything under it. Start the host in a
+project folder, or set `TAVOTTO_MCP_ROOTS` to the project; the error now says so (`workspace_root_too_broad`).
+
+In the plugin, Codex's MCP config is now `codex.mcp.json` instead of `.mcp.json`, because other hosts read a
+plugin's `.mcp.json` on their own and tried to start Tavotto from the wrong folder. Codex users don't need to do
+anything: plugin updates pick it up, and an already-installed older version still checks out as healthy.

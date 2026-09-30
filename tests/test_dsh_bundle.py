@@ -25,7 +25,7 @@ PLUGIN = ROOT / brand.CODEX_PLUGIN_SUBDIR
 PACKAGE = PLUGIN / "package.json"
 PATCH = PLUGIN / "dsh" / "cordis.patch.yml"
 GLUE = PLUGIN / "dsh" / "index.js"
-MCP_JSON = PLUGIN / ".mcp.json"
+MCP_JSON = PLUGIN / "codex.mcp.json"
 #: dsh-mcp-client 的 serverName 判据（packages/mcp/mcp-client/src/index.ts）
 SERVER_NAME = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
 #: dsh-skill 的目录描述上限（catalogDescriptionMaxLength）
@@ -93,7 +93,7 @@ def test_package_files_cover_what_the_glue_reads():
         if entry.rstrip("/") in STAGING_ONLY:
             continue
         assert (PLUGIN / entry).exists(), f"files 里的 {entry} 不在插件目录里"
-    for needed in ("dsh/", "mcp/", "skills/", ".mcp.json"):
+    for needed in ("dsh/", "mcp/", "skills/", ".codex-plugin/", "codex.mcp.json"):
         assert needed in files
 
 
@@ -107,7 +107,7 @@ def test_patch_rows_wire_the_glue_to_the_mcp_client_and_skills():
     assert _strip_quotes(mcp["name"]) == "@deepseek-ai/dsh-mcp-client"
     assert mcp["inject"] == "[tavotto]"
     assert mcp["transport"] == "stdio"
-    # 工具暴露名 mcp__<serverName>__<原名>；与 .mcp.json 的 server key 同名
+    # 工具暴露名 mcp__<serverName>__<原名>；与 Codex 配置（codex.mcp.json）的 server key 同名
     ((codex_name,),) = [tuple(json.loads(MCP_JSON.read_text(encoding="utf-8"))["mcpServers"])]
     assert mcp["serverName"] == codex_name and SERVER_NAME.match(codex_name)
     assert mcp["command"] == "!!js ctx.tavotto.command"
@@ -169,8 +169,8 @@ def test_glue_launches_the_bundled_launcher(node, platform, command, args):
 
     POSIX 上经 sh 解释 `mcp/launch`，不依赖 pnpm 保不保留执行位；Windows 上 command 就是
     `mcp/launch.cmd`，由 cross-spawn 拼 `cmd /d /s /c`——把 cmd.exe 当 command 时路径一带空格
-    就起不来（见 `test_windows_cmd_line_survives_awkward_paths`）。超时唯一出处是 `.mcp.json`
-    的 `tool_timeout_sec`，dsh 的单位是毫秒。
+    就起不来（见 `test_windows_cmd_line_survives_awkward_paths`）。超时唯一出处是 Codex 配置
+    `codex.mcp.json` 的 `tool_timeout_sec`，dsh 的单位是毫秒。
     """
     spec = _launch_spec(node, platform)
     assert BOGUS_COMSPEC not in [spec["command"], *spec["args"]]

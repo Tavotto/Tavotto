@@ -240,7 +240,7 @@ def test_bootstrap_creates_a_full_projection_with_receipt(remote, tmp_path):
     d, tip = _bootstrap(r, tmp_path, sha)
     names = kit.git("ls-tree", "-r", "--name-only", tip, cwd=r).splitlines()
     assert "codex-plugin/.codex-plugin/plugin.json" in names
-    assert "codex-plugin/.mcp.json" in names
+    assert "codex-plugin/codex.mcp.json" in names
     assert "codex-plugin/mcp/widget/canvas.html" in names
     assert "codex-plugin/plugin-build.json" in names
     assert ".gitattributes" in names and ".agents/plugins/marketplace.json" in names
@@ -985,10 +985,10 @@ def test_an_autocrlf_checkout_still_matches_the_zip(remote, tmp_path):
     # 分支里的 blob 也必须与 staging 逐字节相同：提交时没被 autocrlf 改写，检出时也没被
     # 改写（staging 在 Windows runner 上本身就是 CRLF 检出的，所以这里不断言「没有 CRLF」，
     # 断言的是三处同一份字节）
-    proc = _git_proc("-C", str(r), "show", f"{tip}:codex-plugin/.mcp.json", text=False)
+    proc = _git_proc("-C", str(r), "show", f"{tip}:codex-plugin/codex.mcp.json", text=False)
     assert proc.returncode == 0, proc.stderr
     blob = proc.stdout
-    assert blob == (d / ".mcp.json").read_bytes() == (checkout / ".mcp.json").read_bytes()
+    assert blob == (d / "codex.mcp.json").read_bytes() == (checkout / "codex.mcp.json").read_bytes()
 
 
 def test_a_codex_style_sparse_clone_gets_the_whole_plugin(remote, tmp_path):

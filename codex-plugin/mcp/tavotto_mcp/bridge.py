@@ -61,6 +61,7 @@ from .roots import (
     CODE_AMBIGUOUS_ROOT,
     CODE_NO_WORKSPACE_ROOT,
     CODE_PATH_OUT_OF_SCOPE,
+    CODE_ROOT_TOO_BROAD,
     CODE_ROOTS_ERROR,
     CODE_ROOTS_NO_RESPONSE,
     ROOTS_ENV,
@@ -70,7 +71,7 @@ from .roots import (
     canonical_path,
 )
 
-#: 工作区提示：装好的插件里 `.mcp.json` 的 `cwd` 指向**插件自己的目录**
+#: 工作区提示：装好的插件里 Codex MCP 配置（`codex.mcp.json`）的 `cwd` 指向**插件自己的目录**
 #: （`./mcp/server.py` 要靠它解析），于是「不给就用进程 cwd」在真实安装下
 #: 等于把用户工作区里的每一张图都判成 `path_out_of_scope`——默认流程根本
 #: 跑不起来。所以 cwd 只在它**不是插件目录**时才算数（源码树里直接跑
@@ -162,7 +163,7 @@ def _no_roots_error() -> "BridgeError":
     diagnostics = root_diagnostics()
     confirmation = diagnostics.get("workspace_confirmation") or {}
     failure = workspace_failure()
-    if failure.code in {CODE_ROOTS_NO_RESPONSE, CODE_ROOTS_ERROR}:
+    if failure.code in {CODE_ROOTS_NO_RESPONSE, CODE_ROOTS_ERROR, CODE_ROOT_TOO_BROAD}:
         detail = "；".join(diagnostics.get("warnings") or ())
     elif failure.code == CODE_NO_WORKSPACE_ROOT:
         detail = (

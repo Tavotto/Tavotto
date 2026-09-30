@@ -560,6 +560,50 @@ def test_rootless_elicitation_requires_an_absolute_existing_candidate(monkeypatc
     assert "绝对" in payload["recovery"]
 
 
+@pytest.mark.parametrize("which", ["home", "parent"])
+def test_rootless_elicitation_given_the_home_folder_says_too_broad(tmp_path, monkeypatch, which):
+    """调用方给的**就是**绝对路径，只是它是主目录（或上级）：不弹框，也不能回「请改传绝对路径」
+    ——那句恢复话术对它是错的；要回「太宽，给项目目录」（ADR 0109，Codex 在 #712 评审里指出）。"""
+    home = tmp_path / "home"
+    (home / "paper").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    for name in ("USERPROFILE", "HOMEDRIVE", "HOMEPATH"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.delenv(bridge.ROOTS_ENV, raising=False)
+    for name in bridge.WORKSPACE_ENVS:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.chdir(PLUGIN / "mcp")
+    target = home if which == "home" else home.parent
+    incoming = [
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {"elicitation": {}},
+            },
+        },
+        {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+                "name": "tavotto_open_figure",
+                "arguments": {"project_path": str(target)},
+            },
+        },
+    ]
+    wire = b"".join((json.dumps(msg) + "\n").encode() for msg in incoming)
+    out = io.BytesIO()
+    assert server.Server(rpc.StdioConnection(io.BytesIO(wire), out)).serve_forever() == 0
+    frames = [json.loads(line) for line in out.getvalue().splitlines()]
+    assert len(frames) == 2, "主目录不该弹确认框"
+    payload = frames[1]["result"]["structuredContent"]
+    assert payload["code"] == "workspace_root_too_broad"
+    assert "项目目录" in payload["recovery"]
+
+
 def test_roots_client_that_disconnects_fails_closed_without_internal_error(tmp_path, monkeypatch):
     """声明 capability 却不回答的 host 不得锁死，也不得退回插件 cwd。
 

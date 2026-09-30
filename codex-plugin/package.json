@@ -24,7 +24,7 @@
     "integrations/",
     ".codex-plugin/",
     ".claude-plugin/",
-    ".mcp.json",
+    "codex.mcp.json",
     "plugin-build.json",
     "LICENSE",
     "README.md"

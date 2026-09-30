@@ -24,7 +24,7 @@
   | `engine/projectenv.PYTHON_MIN`/`PYTHON_MAX_EXCLUSIVE` ↔ `codex-plugin/mcp/server.py` 同名常量（`--provision` 挑 venv 基础解释器用） | `test_mcp_resolver.py::test_provision_python_range_mirrors_the_engine`（projectenv 那侧再由 `test_support_matrix.py` 钉在 pyproject 的 `requires-python` 上） |
   | `engine/runtime._owned_mplconfigdir`（+ `_MPL_CONFIG_ENTRIES` / `MPL_LINKED_CONFIG_DIRNAME`）↔ codex-plugin `handoff.mplconfigdir_for`（跑用户脚本的 `MPLCONFIGDIR`） | `test_codex_plugin.py::test_script_env_mpl_rule_mirrors_the_engine`（平台 × 目录在不在 × 用户设没设） |
   | `engine/runtime.PLUGIN_RUNTIME_DIRNAME` + `_owned_cache_root` 的插件那一支 ↔ `codex-plugin/mcp/server.py` `managed_runtime_dir` / `managed_cache_dir` / `provision_env`（自管运行时的缓存归宿，#733） | `test_probe_leaves_no_trace.py::test_the_plugin_runtime_cache_dir_is_one_path_on_both_sides` |
-  | codex-plugin `.mcp.json` ↔ `skills/tavotto-figure/agents/openai.yaml` 依赖声明 | `tests/test_codex_plugin.py` |
+  | codex-plugin `codex.mcp.json` ↔ `skills/tavotto-figure/agents/openai.yaml` 依赖声明 | `tests/test_codex_plugin.py` |
   | 上面这一对在**已装副本**里也得同步（`tavotto codex install` 换启动命令时两侧一起改） | `tests/test_codex_install_cli.py` |
   | 遥测 `EVENTS` 表 ↔ 代理白名单 | `test_client_and_proxy_contracts_match` |
   | 遥测 `EVENTS` 表 ↔ `web/src/lib/telemetryDisclosure.ts` + 两份界面文案 | `tests/test_telemetry_disclosure.py`（顺序也比；界面上那份「会发送哪些数据」不许漏一条，也不许多写一条） |
