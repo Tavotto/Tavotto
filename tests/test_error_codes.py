@@ -203,6 +203,7 @@ USER_VISIBLE_CODES = {
     "script_replace_failed": {"script"},
     "script_backup_unknown": {"id"},
     "script_busy": {"script"},
+    "script_backup_unsafe": {"script"},
     "script_edit_nothing_to_change": set(),
     "script_edit_unreadable": set(),
     "script_edit_self_check_failed": set(),

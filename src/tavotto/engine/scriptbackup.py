@@ -42,6 +42,9 @@ ERROR_BACKUP_FAILED = "script_backup_failed"
 ERROR_REPLACE_FAILED = "script_replace_failed"
 ERROR_BACKUP_UNKNOWN = "script_backup_unknown"
 ERROR_SCRIPT_BUSY = "script_busy"
+#: 项目里的备份目录（`tavottofile/script-backups/` 或它下面的那一级）是符号链接 / 不在项目里：写过去就落到
+#: 项目外了——拒绝，脚本不改
+ERROR_BACKUP_UNSAFE = "script_backup_unsafe"
 ERROR_CODES = (
     ERROR_SCRIPT_BUSY,
     ERROR_SCRIPT_NOT_FOUND,
@@ -52,6 +55,7 @@ ERROR_CODES = (
     ERROR_BACKUP_FAILED,
     ERROR_REPLACE_FAILED,
     ERROR_BACKUP_UNKNOWN,
+    ERROR_BACKUP_UNSAFE,
 )
 
 #: 每份脚本保留多少条非 pristine 备份（与 AI 快照同一个数，ADR 0094 §六）。
@@ -189,6 +193,30 @@ def checksum_manifests(path: Path) -> list[str]:
     return out
 
 
+def _contained_backup_dir(store: Store, script: str, path: Path) -> Path:
+    """项目里那份备份要写进的目录 `path`（`<project_dir>/<slug>` 或它下面的时间戳目录）：从项目根往下**每一级**
+    都不许是符号链接（`lstat`）、实体都在项目根内（`projectenv.contained_path`，realpath 之后按前缀判）。
+    `tavottofile/script-backups` 或 slug 目录被换成指向项目外的链接时，`mkdir` / 写文件会跟过去把
+    `original.py` / `meta.json` 写到项目外（Codex 评 #730 P1）。不在项目里 / 不是目录 → `script_backup_unsafe`。"""
+    root = Path(store.root)
+    try:
+        rel = path.relative_to(root)
+    except ValueError:
+        raise ScriptEditError(
+            ERROR_BACKUP_UNSAFE, f"备份目录不在项目里：{path}", script=script
+        ) from None
+    cur = root
+    for part in rel.parts:
+        cur = cur / part
+        if cur.is_symlink() or (os.path.lexists(cur) and not cur.is_dir()):
+            raise ScriptEditError(
+                ERROR_BACKUP_UNSAFE, f"备份目录经过符号链接或不是文件夹：{cur}", script=script
+            )
+    if projectenv.contained_path(root, rel) is None:
+        raise ScriptEditError(ERROR_BACKUP_UNSAFE, f"备份目录不在项目里：{path}", script=script)
+    return path
+
+
 def _new_dir(parent: Path, base: str) -> Path:
     """`<月日_时分秒>`，同一秒已占用接 `-2`、`-3`；`mkdir` 本身就是占有（与写回备份同一做法）。"""
     parent.mkdir(parents=True, exist_ok=True)
@@ -306,9 +334,12 @@ def _replace_locked(
         "project": _existing_ancestor(store.project_dir / slug),
         "mirror": _existing_ancestor(store.mirror_dir / slug),
     }
+    # 项目里那一份：建之前逐级核对（链接 / 出项目就拒），建完再核一次新建的时间戳目录（防中途被换成链接）
+    _contained_backup_dir(store, script, store.project_dir / slug)
     try:
         pdir = _new_dir(store.project_dir / slug, time.strftime("%m%d_%H%M%S"))
         created.append(pdir)
+        _contained_backup_dir(store, script, pdir)
         mdir = store.mirror_dir / slug / pdir.name
         mdir.mkdir(parents=True, exist_ok=False)
         created.append(mdir)
@@ -320,6 +351,10 @@ def _replace_locked(
         # 改后的脚本在、两份备份目录却可能都不在（Codex 评 #730 P2）
         for d, anchor in ((pdir, anchors["project"]), (mdir, anchors["mirror"])):
             _fsync_parents(d, anchor)
+    except ScriptEditError:
+        for d in created:
+            shutil.rmtree(d, ignore_errors=True)  # 链接本身 rmtree 不跟过去（它拒绝符号链接）
+        raise
     except (OSError, atomicio.AtomicWriteError) as exc:
         for d in created:
             shutil.rmtree(d, ignore_errors=True)

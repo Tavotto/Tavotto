@@ -215,6 +215,7 @@
     "script_backup_failed": "备份写不进去，脚本没有被修改：{{script}}。请检查磁盘空间和目录权限。",
     "script_replace_failed": "替换失败，脚本没有被修改：{{script}}。关闭正在占用它的程序后重试。",
     "script_backup_unknown": "找不到这份备份：{{id}}",
+    "script_backup_unsafe": "项目里的备份文件夹经过符号链接或不在项目里（{{script}}），为了不把备份写到别处，脚本没有被修改。",
     "script_busy": "编码 Agent 正在修改这份脚本（{{script}}），等它结束后再试。",
     "script_edit_nothing_to_change": "脚本里没有能安全改写的路径常量，脚本没有被修改。",
     "script_edit_unreadable": "这份脚本的编码或语法读不准，Tavotto 不改它。",

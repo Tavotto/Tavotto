@@ -546,6 +546,38 @@ def test_mode_read_only_scripts_and_folders_are_refused_even_when_access_says_wr
         os.chmod(ro_file, 0o644)
 
 
+@pytest.mark.skipif(os.name == "nt", reason="符号链接")
+def test_backup_dirs_that_are_symlinks_out_of_the_project_are_refused(store, tmp_path):
+    """项目里的 `script-backups/` 或 slug 目录被换成指向项目外的符号链接：拒绝（`script_backup_unsafe`），
+    项目外一个字节都没写，脚本不改（Codex 评 #730 P1）。"""
+    script = store.root / "fig.py"
+    script.write_bytes(b"A = 1\n")
+    before = scriptbackup.sha256(b"A = 1\n")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    # 1) script-backups 本身是链接
+    store.project_dir.parent.mkdir(parents=True)
+    os.symlink(outside, store.project_dir)
+    with pytest.raises(scriptbackup.ScriptEditError) as err:
+        scriptbackup.replace(store, "fig.py", b"A = 2\n", kind="t", expect_before=before)
+    assert err.value.code == scriptbackup.ERROR_BACKUP_UNSAFE
+    assert list(outside.iterdir()) == []
+    assert script.read_bytes() == b"A = 1\n"
+    # 2) script-backups 是真目录，slug 那一级是链接
+    store.project_dir.unlink()
+    store.project_dir.mkdir()
+    os.symlink(outside, store.project_dir / scriptbackup.slug_of("fig.py"))
+    with pytest.raises(scriptbackup.ScriptEditError) as err:
+        scriptbackup.replace(store, "fig.py", b"A = 2\n", kind="t", expect_before=before)
+    assert err.value.code == scriptbackup.ERROR_BACKUP_UNSAFE
+    assert list(outside.iterdir()) == []
+    assert script.read_bytes() == b"A = 1\n"
+    # 3) 链接拿掉：照常备份、替换
+    (store.project_dir / scriptbackup.slug_of("fig.py")).unlink()
+    rec = scriptbackup.replace(store, "fig.py", b"A = 2\n", kind="t", expect_before=before)
+    assert (store.project_dir / rec["id"] / "original.py").read_bytes() == b"A = 1\n"
+
+
 def test_pristine_is_kept_forever_and_only_recent_ones_are_pruned(store, monkeypatch):
     monkeypatch.setattr(scriptbackup, "KEEP_RECENT", 2)
     script = store.root / "fig.py"
