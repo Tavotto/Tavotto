@@ -95,6 +95,25 @@ def synthetic_staging(
     )
 
 
+#: 夹具里的 git 同样不许留后台维护进程（#604）：clone / push / fetch / commit 返回后分离出的
+#: `maintenance run --auto` / `gc --auto` 还在往 tmp 仓库里写，与随后的删除赛跑。
+#: 与 `scripts/plugin_publish.py::GIT_CONFIG` 的后两项同源（`test_plugin_publish` 对拍）。
+#: 只放这两项：夹具的 autocrlf 由各用例用 `-c` 自己决定，不在这里钉死。
+NO_AUTO_MAINTENANCE: tuple[tuple[str, str], ...] = (
+    ("maintenance.auto", "false"),
+    ("gc.auto", "0"),
+)
+
+
+def no_auto_maintenance_env() -> dict[str, str]:
+    """`NO_AUTO_MAINTENANCE` 摊成 `GIT_CONFIG_COUNT/KEY_n/VALUE_n`；夹具外直接起 git 的用例也用它。"""
+    env = {"GIT_CONFIG_COUNT": str(len(NO_AUTO_MAINTENANCE))}
+    for i, (key, value) in enumerate(NO_AUTO_MAINTENANCE):
+        env[f"GIT_CONFIG_KEY_{i}"] = key
+        env[f"GIT_CONFIG_VALUE_{i}"] = value
+    return env
+
+
 def git(*args: str, cwd: Path | None = None, env: dict | None = None) -> str:
     base_env = {
         **os.environ,
@@ -103,6 +122,7 @@ def git(*args: str, cwd: Path | None = None, env: dict | None = None) -> str:
         "GIT_COMMITTER_NAME": "t",
         "GIT_COMMITTER_EMAIL": "t@example.invalid",
         "GIT_TERMINAL_PROMPT": "0",
+        **no_auto_maintenance_env(),
     }
     if env:
         base_env.update(env)

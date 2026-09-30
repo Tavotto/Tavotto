@@ -1018,3 +1018,68 @@ def test_publisher_never_executes_plugin_code(remote, tmp_path, monkeypatch):
     assert not sentinel.exists()
     monkeypatch.delenv("PYTHONPATH")
     assert os.environ.get("PYTHONPATH") is None
+
+
+# ================================================================ 不留后台维护进程（#604）
+
+_NO_AUTO_MAINTENANCE = {"maintenance.auto": "false", "gc.auto": "0"}
+
+
+def _env_config(env: dict[str, str]) -> dict[str, str]:
+    """按 git 自己的读法（COUNT 决定读几对）把 `GIT_CONFIG_*` 还原成 {key: value}。"""
+    n = int(env["GIT_CONFIG_COUNT"])
+    got = {env[f"GIT_CONFIG_KEY_{i}"]: env[f"GIT_CONFIG_VALUE_{i}"] for i in range(n)}
+    assert len(got) == n, "GIT_CONFIG_KEY_n 有重复"
+    return got
+
+
+def test_git_env_turns_off_background_maintenance():
+    """#604：`_git_env()` 关掉 `maintenance.auto` 与 `gc.auto`，autocrlf 那两项仍在。
+
+    主语是 **git 读到的配置**：按 COUNT 读 KEY_0..KEY_{n-1}——编号跳号或 COUNT 没跟着涨，
+    多出的那一对 git 根本不读，这里同样读不到。夹具的 git（`pluginkit`）是同一对的镜像。"""
+    got = _env_config(pub._git_env())
+    for key, value in _NO_AUTO_MAINTENANCE.items():
+        assert got.get(key) == value, f"_git_env() 没带 {key}={value}"
+    assert got.get("core.autocrlf") == "false" and got.get("core.safecrlf") == "false"
+    assert _env_config(kit.no_auto_maintenance_env()) == _NO_AUTO_MAINTENANCE
+
+
+def _spawned_maintenance(env: dict[str, str], tmp_path: Path, name: str) -> list[str]:
+    """在一个新仓库里 fetch 一次，回 GIT_TRACE 里「起了后台维护 / gc」的那几行。"""
+    (tmp_path / name).mkdir()
+    remote, _sha = kit.bare_remote_with_main(tmp_path / name)
+    repo = tmp_path / name / "repo"
+    kit.git("init", "--quiet", str(repo))
+    proc = subprocess.run(
+        ["git", "-C", str(repo), "fetch", "--quiet", str(remote), "refs/heads/main"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env={**env, "GIT_TRACE": "1"},
+    )
+    assert proc.returncode == 0, proc.stderr
+    return [
+        ln
+        for ln in proc.stderr.splitlines()
+        if "run_command:" in ln and ("maintenance run" in ln or " gc " in ln)
+    ]
+
+
+def test_publisher_fetch_spawns_no_background_maintenance(tmp_path):
+    """行为侧：用发布器的环境 fetch，git 不再分离出 `maintenance run --auto` / `gc --auto`。
+
+    先对照：同一次 fetch 去掉 `GIT_CONFIG_*`，trace 里**必须**看得到那条 run_command——否则
+    这台机器的 git 本来就不起后台维护，「没看到」证明不了任何事，用例直接红而不是假绿。
+
+    盲点（写在判据旁）：本用例证明的是「不再起那个后台进程」，**没有**复现 ENOTEMPTY 本身——
+    2026-09-30 在 macOS / git 2.54 上去掉这两项、8～16 线程并发「fetch 后立刻删临时仓库」
+    共 2200 轮，一次都没撞上（CI runner 上撞车的概率远高于本机）。赛跑的一方被整个拿掉，
+    所以主语落在「有没有起那个进程」，不去赌时序。"""
+    env = pub._git_env()
+    control = {k: v for k, v in env.items() if not k.startswith("GIT_CONFIG_")}
+    assert _spawned_maintenance(control, tmp_path, "control"), (
+        "对照组没起后台维护：这台 git 的 trace 里看不到 run_command，本用例无从判定"
+    )
+    assert _spawned_maintenance(env, tmp_path, "publisher") == []
