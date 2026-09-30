@@ -137,7 +137,24 @@ async function dragBy(page: Page, from: { x: number; y: number }, dx: number) {
   await page.mouse.up()
 }
 
-const center = (b: { x: number; y: number; w: number; h: number }) => ({ x: b.x + b.w / 2, y: b.y + b.h / 2 })
+/**
+ * 在框里挑一个**真的落在画布命中层上**的点（`elementFromPoint` 落进 `[data-authority="ready"]`）：
+ * 初次取景的倍率每次不同（实测 86%–102%），倍率大时 B 的中心会被右栏盖住，按中心拖等于拖右栏
+ * （#691 rebase 后本机 1/3 红在这里）。先试中心，再往左挪一点——不挪到左边缘，整组左移过之后 B 的
+ * 左缘压着 A
+ */
+async function grabPoint(page: Page, b: { x: number; y: number; w: number; h: number }) {
+  const p = await page.evaluate(({ x, y, w, h }) => {
+    for (const fx of [0.5, 0.4, 0.3]) {
+      const px = x + w * fx
+      const py = y + h / 2
+      if (document.elementFromPoint(px, py)?.closest('[data-authority="ready"]')) return { x: px, y: py }
+    }
+    return null
+  }, b)
+  expect(p, '框里找不到一个没被栏盖住、落在画布上的点').not.toBeNull()
+  return p!
+}
 
 test(
   '共享色条成组：树、整组平移、撤销重做、钻进成员、单拖不带色条、重开还在',
@@ -183,7 +200,7 @@ test(
   const b0 = await boxes(page)
   expect(Object.keys(b0.abs).sort()).toEqual(['axes_0', 'axes_1', 'axes_2', 'axes_3'])
   // 往左拖：组右边贴着图幅，往右会被钳住
-  await settleAfter(page, () => dragBy(page, center(b0.abs.axes_1), -60))
+  await settleAfter(page, async () => dragBy(page, await grabPoint(page, b0.abs.axes_1), -60))
   const b1 = await boxes(page)
   for (const g of ['axes_1', 'axes_2', 'axes_3']) {
     expect(b0.rel[g] - b1.rel[g], `${g} 应当跟着整组左移`).toBeGreaterThan(40)
@@ -218,7 +235,7 @@ test(
   await pickRow(page, 'axes_1')
   await page.waitForTimeout(500)
   const b3b = await boxes(page)
-  await settleAfter(page, () => dragBy(page, center(b3b.abs.axes_1), 40))
+  await settleAfter(page, async () => dragBy(page, await grabPoint(page, b3b.abs.axes_1), 40))
   const b4 = await boxes(page)
   expect(b4.rel.axes_1 - b3b.rel.axes_1, 'B 自己右移了').toBeGreaterThan(25)
   expect(Math.abs(b4.rel.axes_2 - b3b.rel.axes_2), 'C 不动').toBeLessThan(1)
@@ -288,7 +305,7 @@ test(
         return { x: r.x, y: r.y, w: r.width, h: r.height }
       })
     expect(title.w, 'B 的标题画出来了').toBeGreaterThan(0)
-    await settleAfter(page, () => dragBy(page, center(title), -60))
+    await settleAfter(page, async () => dragBy(page, await grabPoint(page, title), -60))
     const b1 = await boxes(page)
     for (const g of ['axes_1', 'axes_2', 'axes_3']) {
       expect(b0.rel[g] - b1.rel[g], `${g} 应当跟着整组左移`).toBeGreaterThan(40)
