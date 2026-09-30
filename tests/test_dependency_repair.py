@@ -1492,8 +1492,10 @@ def test_the_managed_generation_names_its_pypi_source_on_the_progress(
     _stub_generation_until_pip(monkeypatch, pip_code="")
     seen: list[list[str]] = []
 
-    def _fake_run_pip(argv, ev, log, **_kw):
+    def _fake_run_pip(argv, ev, log, on_started=None, **_kw):
         seen.append(argv)
+        if on_started is not None:
+            on_started()  # 桩代表 pip 进程已起来（真 `_run_pip` 在 Popen 之后调它；换源只在这之后记）
         if switch and len(seen) == 1:
             return deprepair.ERROR_NETWORK, "Retrying (Retry(total=4))"
         return "", ""

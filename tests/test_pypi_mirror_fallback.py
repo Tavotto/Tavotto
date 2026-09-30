@@ -137,8 +137,9 @@ def test_the_mirror_is_tried_at_most_once(tmp_path, monkeypatch):
 
 
 def test_a_cancellation_during_the_config_probe_never_claims_the_mirror(tmp_path, monkeypatch):
-    """Codex #743 P2：第一次网络失败后问配置（一个子进程）期间到达的取消——镜像不会被请求，所以既不许
-    `on_mirror`（进度的 `pypi_mirror`）也不许在日志里写「改用镜像」；如实回 cancelled，镜像那次不起。"""
+    """Codex #743 P2：问配置（一个子进程）期间到达的取消——镜像不会被请求，所以既不许 `on_mirror`（进度的
+    `pypi_mirror`）也不许在日志里写「改用镜像」；如实回 cancelled。ADR 0112 §二 起配置在**第一次之前**问
+    （要先定包源与测速），所以这时一次 pip 都还没起：取消之后第一次也不起。"""
     runs = tmp_path / "runs.jsonl"
     ev = threading.Event()
 
@@ -157,7 +158,7 @@ def test_a_cancellation_during_the_config_probe_never_claims_the_mirror(tmp_path
         on_mirror=mirrors.append,
     )
     assert code == deprepair.ERROR_CANCELLED
-    assert mirrors == [] and len(_runs(runs)) == 1
+    assert mirrors == [] and len(_runs(runs)) == 0
     assert not any(MIRROR in line for line in logs) and MIRROR not in out
 
 
