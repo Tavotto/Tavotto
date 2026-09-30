@@ -383,10 +383,35 @@ function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: P
     const RoleIcon = roleIcon(el?.role ?? 'figure')
 
     // 身份块（2026-09-30 重设计）：一行灰色路径（只有祖先，每级可点）在上、一行大号名字在下。
-    // DOM 里仍是「名字行 → 路径行」（读屏先念名字），列方向反过来排——这样与在飞的 #691 改的那几行
-    // （「整张图」徽标的条件）不相邻，合并不撞
+    // DOM 顺序就是视觉顺序（键盘 Tab 先到路径、再到隐藏钮）
     return (
-      <header data-identity className="mx-3 mb-3 flex shrink-0 flex-col-reverse gap-2 border-b border-border pb-3 pt-3">
+      <header data-identity className="mx-3 mb-3 flex shrink-0 flex-col gap-2 border-b border-border pb-3 pt-3">
+        {(crumbs.length > 1 || modified > 0) && (
+          <p className="flex min-h-4 items-center gap-1.5 text-xs text-ink-3">
+            {crumbs.length > 1 && (
+              <span className="flex min-w-0 items-center gap-1 truncate" title={crumbs.join(' / ')}>
+                {crumbs.slice(0, -1).map((c, i) => (
+                  <span key={`${i}-${c}`} className="flex min-w-0 items-center gap-1">
+                    {i > 0 && <ChevronRight size={ICON_SIZE.xs} aria-hidden className="shrink-0" />}
+                    <button
+                      type="button"
+                      data-crumb={crumbTargets[i]}
+                      onClick={() => useUiStore.getState().setSelectedGid(crumbTargets[i])}
+                      className="min-w-0 truncate rounded-xs text-ink-3 outline-none hover:text-ink focus-visible:focus-ring"
+                    >
+                      {c}
+                    </button>
+                  </span>
+                ))}
+              </span>
+            )}
+            {/* 「n 项已修改」徽标本身就是恢复菜单（恢复此元素 / 恢复整张图）：
+                改了几项与怎么撤回是同一个问题的两半，不另起一行 */}
+            <span className="ml-auto shrink-0">
+              <RestoreMenu panel={panel} gid={el?.gid} count={modified} />
+            </span>
+          </p>
+        )}
         <div className="flex min-h-7 items-center gap-2">
           {/* 图标按角色查树里那张表（roles/roleIcons）：标题是 T、曲线是折线、图例是列表，
               与左栏元素树同一张脸；以前不管选了什么都是同一个图片图标 */}
@@ -420,32 +445,6 @@ function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: P
             )}
           </span>
         </div>
-        {(crumbs.length > 1 || modified > 0) && (
-          <p className="flex min-h-4 items-center gap-1.5 text-xs text-ink-3">
-            {crumbs.length > 1 && (
-              <span className="flex min-w-0 items-center gap-1 truncate" title={crumbs.join(' / ')}>
-                {crumbs.slice(0, -1).map((c, i) => (
-                  <span key={`${i}-${c}`} className="flex min-w-0 items-center gap-1">
-                    {i > 0 && <ChevronRight size={ICON_SIZE.xs} aria-hidden className="shrink-0" />}
-                    <button
-                      type="button"
-                      data-crumb={crumbTargets[i]}
-                      onClick={() => useUiStore.getState().setSelectedGid(crumbTargets[i])}
-                      className="min-w-0 truncate rounded-xs text-ink-3 outline-none hover:text-ink focus-visible:focus-ring"
-                    >
-                      {c}
-                    </button>
-                  </span>
-                ))}
-              </span>
-            )}
-            {/* 「n 项已修改」徽标本身就是恢复菜单（恢复此元素 / 恢复整张图）：
-                改了几项与怎么撤回是同一个问题的两半，不另起一行 */}
-            <span className="ml-auto shrink-0">
-              <RestoreMenu panel={panel} gid={el?.gid} count={modified} />
-            </span>
-          </p>
-        )}
       </header>
     )
   }

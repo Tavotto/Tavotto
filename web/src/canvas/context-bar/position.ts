@@ -11,8 +11,8 @@ import { mmToPx, mmToViewX, mmToViewY, type ViewTransform } from '@/store/viewpo
  */
 
 export const MARGIN = 8
-/** 顶栏 + 标签条的高度：工具条不该盖到它们上面 */
-export const TOP_SAFE = 76
+/** 顶栏 + 标签条的高度：工具条不该盖到它们上面（2026-09-30 标签条改成与属性栏页签条同高 44：44 + 44） */
+export const TOP_SAFE = 88
 /**
  * 完整多选栏（计数 + 参照 + 六向对齐 + 分布 / 尺寸 + 成组 + 更多）需要的最小可用宽度；
  * 侧栏之间比它窄时压缩成「对齐 / 分布 / 尺寸」三个弹层入口，不让它越界或压住侧栏

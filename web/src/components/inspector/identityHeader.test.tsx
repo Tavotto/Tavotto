@@ -275,6 +275,23 @@ describe('右栏的壳（2026-09-15 全面打磨 S2 / S3 / S4）', () => {
   })
 })
 
+describe('身份块的 DOM 顺序就是视觉顺序（2026-09-30 重设计，Codex #756）', () => {
+  it('路径行（可点的祖先）在名字之前：键盘 Tab 先到路径、再到名字行里的隐藏钮', async () => {
+    await seed([panel], ['p1'])
+    seedExactRender(panel, manifest as never)
+    useUiStore.getState().setElementPanel('p1')
+    useUiStore.setState({ selectedGids: ['axes_0.title'] })
+    await mount()
+    const header = document.querySelector('header[data-identity]')!
+    const crumb = header.querySelector('[data-crumb]')!
+    const h2 = header.querySelector('h2')!
+    expect(crumb, '选了子图里的元素时要有可点的祖先').toBeTruthy()
+    expect(crumb.compareDocumentPosition(h2) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    // 不靠 CSS 反排制造视觉顺序（那样 Tab 顺序与看到的相反）
+    expect(header.className).not.toContain('flex-col-reverse')
+  })
+})
+
 describe('图内元素的头部图标按角色（2026-09-12 critique P3）', () => {
   it('选中标题时是文字图标，不是面板那个图片图标；整张图是 Fullscreen（外框含内容区）', async () => {
     await seed([panel], ['p1'])
