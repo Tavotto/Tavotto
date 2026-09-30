@@ -93,8 +93,13 @@ _REAL_SAVEFIG = mfigure.Figure.savefig
 
 
 def _patched_savefig(self, fname, *args, **kwargs):
-    """与 worker._patched_savefig 同语义：按 stem 捕获，不写用户的输出文件；写进文件对象的透传。"""
-    if not _intercept or not figcapture.savefig_targets_path(fname):
+    """与 worker._patched_savefig 同语义：按 stem 捕获，不写用户的输出文件；写进文件对象的透传
+    （同时记进保留名单，脚本关掉它也补得回来，`figcapture.note_buffer_save`）。"""
+    if not _intercept:
+        return _REAL_SAVEFIG(self, fname, *args, **kwargs)
+    if not figcapture.savefig_targets_path(fname):
+        if _ACTIVE is not None:
+            figcapture.note_buffer_save(_ACTIVE.buffer_saved, self)
         return _REAL_SAVEFIG(self, fname, *args, **kwargs)
     stem = figcapture.savefig_stem(fname)
     if stem:
@@ -194,6 +199,7 @@ class BrowserSession:
         self.savefig_calls: dict[str, list | None] = {}
         #: stem → 与 `savefig_calls[stem]` 逐项对齐的 `bbox_extra_artists` 对象（算图幅用，ADR 0098）
         self.savefig_extras: dict[str, list] = {}
+        self.buffer_saved: list = []  # 写进过缓冲区的图（figcapture.note_buffer_save）
         self.states: dict[str, overrides_mod.FigState] = {}
         self.revision = 0
         self.script_name = ""
@@ -279,7 +285,7 @@ class BrowserSession:
         # 而前端按 stem 索引一切。
         base = os.path.splitext(safe_name)[0]
         fallback, dropped = figcapture.collect_pyplot_figures(
-            self.capture, base, plt, limit=MAX_FIGURES
+            self.capture, base, plt, limit=MAX_FIGURES, retained=self.buffer_saved
         )
         for stem in fallback:
             self.capture_source[stem] = figcapture.SOURCE_PYPLOT

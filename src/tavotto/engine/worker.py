@@ -174,6 +174,8 @@ def _patched_savefig(self, fname, *args, **kwargs):
         return _REAL_SAVEFIG(self, fname, *args, **kwargs)
     to_path = figcapture.savefig_targets_path(fname)
     stem = _SAVE_AS or figcapture.savefig_stem(fname)  # 不是路径时 savefig_stem 是空串
+    if not stem and not to_path and SESSION is not None:
+        figcapture.note_buffer_save(SESSION.buffer_saved, self)
     if stem and SESSION is not None:
         SESSION.add_figure(stem, self, figcapture.SOURCE_SAVEFIG)
         SESSION.note_savefig(
@@ -596,7 +598,7 @@ class Worker(wireproto.V1Handler):
         _plt = sys.modules.get("matplotlib.pyplot")
         if _plt is not None:
             fallback, dropped = figcapture.collect_pyplot_figures(
-                self.session.capture, self.script.stem, _plt
+                self.session.capture, self.script.stem, _plt, retained=self.session.buffer_saved
             )
             for stem in fallback:
                 self.session.capture_source[stem] = figcapture.SOURCE_PYPLOT

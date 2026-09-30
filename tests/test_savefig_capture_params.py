@@ -383,6 +383,22 @@ save(fig, "Fig9")
 """
 
 
+BUFFER_ONLY_THEN_CLOSE = """\
+import io
+import matplotlib.pyplot as plt
+from PIL import Image
+
+fig, ax = plt.subplots(figsize=(2, 1))
+ax.plot([1, 2])
+buf = io.BytesIO()
+fig.savefig(buf, format="png", dpi=50)
+buf.seek(0)
+with Image.open(buf) as raster:
+    raster.convert("RGB").load()
+plt.close(fig)
+"""
+
+
 @needs_worker
 class TestFileObjectTargetsPassThrough:
     def test_desktop_script_can_read_back_what_it_saved(self, tmp_path):
@@ -404,6 +420,20 @@ class TestFileObjectTargetsPassThrough:
         (d,) = desktop_build(figs, "uses.py")["descriptors"]
         assert d["stem"] == "Fig9"
         assert [(c["format"], c["bbox_inches"]) for c in d["savefig_calls"]] == [("png", "tight")]
+
+    def test_a_figure_only_ever_saved_to_a_buffer_is_still_captured(self, tmp_path):
+        """缓冲区那次是这张图唯一的存盘、脚本随后 `plt.close(fig)`：跑完时 pyplot 里已经没有它，
+        仍要按兜底规则捕获到（#739 Codex P2）——否则脚本不崩了，却一张图都没有。"""
+        figs = tmp_path / "figs"
+        write(figs, "buffer_only.py", BUFFER_ONLY_THEN_CLOSE)
+        stems = desktop_build(figs, "buffer_only.py").get("stems") or {}
+        assert list(stems) == ["buffer_only"], stems
+        assert stems["buffer_only"]["source"] == "pyplot"  # 缓冲区不是磁盘上的原件
+
+    def test_browser_captures_the_buffer_only_figure_too(self, tmp_path):
+        resp = browser_load(BUFFER_ONLY_THEN_CLOSE, "buffer_only.py", tmp_path / "ws")
+        assert resp.get("ok"), resp
+        assert [d["stem"] for d in resp["descriptors"]] == ["buffer_only"]
 
     def test_browser_behaves_the_same(self, tmp_path):
         resp = browser_load(BUFFER_TO_TIFF, "fig4.py", tmp_path / "ws")

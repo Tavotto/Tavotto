@@ -169,6 +169,7 @@ __all__ = [
     "INPUT_OBSERVER_MAX_FILES",
     "OBSERVATION_PARTIAL",
     "MAX_PYPLOT_FALLBACK",
+    "note_buffer_save",
     "SOURCE_SAVEFIG",
     "SOURCE_PYPLOT",
     "PROFILE_SAFE",
@@ -812,8 +813,23 @@ def fallback_stems(taken, script_stem: str, count: int) -> list[str]:
     return out
 
 
+def note_buffer_save(retained: list, fig) -> None:
+    """一次写进文件对象（BytesIO 等）的 savefig 把这张图记进 `retained`（按 identity 去重、保序）。
+
+    `savefig(buf); Image.open(buf).save("x.tiff"); plt.close(fig)` 这种脚本里，缓冲区那次是这张图
+    **唯一**的一次存盘：它没有 stem 可认领，脚本随后又把图关了，跑完时 pyplot 里已经没有它——不记下来
+    就一张图都捕获不到（#739 Codex P2）。`collect_pyplot_figures(retained=...)` 把它按兜底规则补回来。
+    """
+    if all(f is not fig for f in retained):
+        retained.append(fig)
+
+
 def collect_pyplot_figures(
-    capture: dict, script_stem: str, plt, limit: int = MAX_PYPLOT_FALLBACK
+    capture: dict,
+    script_stem: str,
+    plt,
+    limit: int = MAX_PYPLOT_FALLBACK,
+    retained=(),
 ) -> tuple[list[str], int]:
     """把脚本跑完仍活着、且没被 savefig 认领的 pyplot Figure 补进 `capture`。
 
@@ -827,11 +843,13 @@ def collect_pyplot_figures(
 
     `plt.get_fignums()` 的顺序即产出顺序（pyplot 的 Gcf 按创建先后维护），
     stem 的序号只由「本次捕获里的第几张」决定，与 figure 号无关。
+
+    `retained`：存进过缓冲区的图（`note_buffer_save`）。还活着的照常按 `get_fignums()` 的位置补；
+    脚本已经关掉的排在活着的后面、按存盘先后补——没有 `retained` 时行为与以前逐字节相同。
     """
     seen = {id(f) for f in capture.values()}
     pending = []
-    for num in plt.get_fignums():
-        fig = plt.figure(num)
+    for fig in [plt.figure(num) for num in plt.get_fignums()] + list(retained):
         if id(fig) in seen:
             continue
         seen.add(id(fig))
