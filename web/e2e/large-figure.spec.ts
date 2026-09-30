@@ -29,7 +29,7 @@
  */
 import { expect } from "@playwright/test";
 import { execFileSync } from "node:child_process";
-import { cpSync, mkdtempSync } from "node:fs";
+import { cpSync, mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { startApp, test, type RunningApp } from "./fixtures";
@@ -212,6 +212,15 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => {
   await app?.stop();
+});
+
+// 每条用例从空白排版起步。这几条共用**一个后端**（上面 serial + beforeAll），而 #719 起「上次开着
+// 哪份排版」记在后端数据目录（`state/layout-sessions.json`）：新开的浏览器 context 本机存储是空的，
+// 照样会被恢复到上一条用例留下的那份（画布上已经有一个面板），「撤销把双击加的面板撤掉 → 画布
+// 回到 0 个」就量错了主语。删掉这份记录 = 这一条用例对后端来说是「没记过」，与改造前每条用例
+// 一个空 localStorage 的起点相同；自动保存槽位不动。
+test.beforeEach(async () => {
+  rmSync(path.join(app.dataDir, "state", "layout-sessions.json"), { force: true });
 });
 
 test("大图预览：落到 hybrid/raster，DOM 不再吃下几十万个节点，且照常可编辑", async ({
