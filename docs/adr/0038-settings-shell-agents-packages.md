@@ -254,3 +254,29 @@ sdist 的版本会当场失败，裸名字让 pip 自己挑最新的、有轮子
 `web/src/components/settings/PackagesSearch.test.tsx`（27 条）。两侧各做过一轮手工
 变异反证（15 + 15 条，全部打红）。真实联网只在开发时手工验证过：`numpy` /
 `lmfit` 查到、不存在的名字报 not_found、不可达的索引报 offline。
+
+## 2026-09-30 修订：十一个分区并成九个（界面重设计）
+
+小白用户看到「常规 / 界面」「更新 / 关于」两对页面各只有三四行，分不清该点哪一个；
+「诊断」里又混着运行设置与开发者工具。合并后 `SECTIONS` 是九个：
+
+```text
+general     通用            （原「常规」+「界面」）
+project     项目            （多一组「运行」：渲染环境 / 用哪个 Python / 脚本运行目录）
+style       样式
+spec        期刊规范
+export      导出
+ai          改图助手        （id 仍是 ai）
+packages    Python 库
+diagnostics 帮助与诊断      （「记录拖动性能」与技术详情收进折叠的「给开发者」）
+about       关于与更新      （原「更新」并进来；产品 → 检查更新 → 隐私）
+```
+
+* **别名表新增** `interface → general`、`update → about`（与原有的 `profiles → spec`、
+  `canvas / sidebars / shortcuts → general` 并存）。深链调用方不再写旧 id；顶栏菜单与桌面
+  菜单的「检查更新」已改为 `about`。分区 id 是持久化 / 深链格式的一部分，`ai`、
+  `diagnostics` 没有改名。
+* **运行设置整张卡搬家**：`EngineEnvironmentCard`（内含 `WorkdirRow`，以及在飞 PR 往里加的
+  记住的数据位置 / 改写脚本前的备份）挂到「项目」页，不改卡的内部；诊断页只在环境
+  **异常**时于状态卡下挂它（缺件不许折叠）。
+* 「允许写回原始文件」的说明改正：写回从不动脚本，只覆盖同名 PDF / PNG，去掉「与脚本」。

@@ -13,13 +13,14 @@ import { useUiStore } from '@/store/uiStore'
 import { Button } from '../ui/Button'
 import { Kbd } from '../ui/Kbd'
 import { Select } from '../ui/Select'
+import { InterfaceSettings } from './InterfaceSettings'
 import { SettingRow, SettingSection } from './SettingRow'
 
 const st = (key: string, values?: Record<string, unknown>) =>
   translate(`settings.${key}`, { ns: 'dialogs', ...(values ?? {}) })
 
 /**
- * 常规。五个真动作：语言、恢复默认布局、快捷键、教程、重新显示操作提示。
+ * 通用（原「常规」+「界面」）。五个真动作：语言、恢复默认布局、快捷键、教程、重新显示操作提示。
  *
  * **这一页一个问号都没有**（UI 审计「说明文字专项补查」）。改动前每一行标签
  * 后面都挂着一个点击式问号，而打开之后是：
@@ -39,6 +40,17 @@ const st = (key: string, values?: Record<string, unknown>) =>
  */
 export function GeneralSettings({ close }: { close: () => void }) {
   useTranslation('dialogs')
+  // 「常规」与「界面」合成一页（2026-09-30）：分区之间的间距由外壳统一给，
+  // `display: contents` 让两块直接成为内容容器的子项
+  return (
+    <div className="contents">
+      <GeneralRows close={close} />
+      <InterfaceSettings close={close} />
+    </div>
+  )
+}
+
+function GeneralRows({ close }: { close: () => void }) {
   const setStatus = useUiStore((s) => s.setStatus)
   const locale = useLocale()
   return (

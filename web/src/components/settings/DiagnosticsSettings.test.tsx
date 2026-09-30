@@ -137,7 +137,7 @@ describe('首屏', () => {
 
   it('两个环境不再同名，并且说清它们不是同一个（审计 T47）', async () => {
     await mount()
-    await act(async () => byName(st('techDetails'))!.click())
+    await act(async () => byName(st('diagnostics.devTitle'))!.click())
     expect(text()).toContain(st('diagnostics.envNote', { product: 'Tavotto' }))
     // 「自带的」与「这个项目的」是两个不同的名字，不许有一个光叫「Tavotto 环境」
     const bundled = t('engine.sourceLabel.bundled', { ns: 'errors', product: 'Tavotto' })
@@ -161,12 +161,12 @@ describe('首屏', () => {
     expect(text()).toContain(st('diagnostics.summaryOk'))
   })
 
-  it('渲染环境卡只在技术详情里、只有一张；内置包版本清单不在这一页', async () => {
+  it('环境正常时渲染环境卡不在这一页（搬到了「项目」页）；给开发者里有检查明细；内置包版本清单不在这一页', async () => {
     await mount()
     // 按元素数，不按字符串出现次数——「渲染环境」四个字也出现在别的句子里
     expect(document.querySelectorAll('[data-engine-env-card]')).toHaveLength(0)
-    await act(async () => byName(st('techDetails'))!.click())
-    expect(document.querySelectorAll('[data-engine-env-card]')).toHaveLength(1)
+    await act(async () => byName(st('diagnostics.devTitle'))!.click())
+    expect(document.querySelectorAll('[data-engine-env-card]')).toHaveLength(0)
     expect(text()).toContain(PYTHON_PATH)
     expect(text()).not.toContain('2.1.0') // numpy 版本归包管理页
   })

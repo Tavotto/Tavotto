@@ -152,7 +152,7 @@ describe('T38 常规：说明改成动作与结果', () => {
 
 describe('T39 界面：结果式名称 + 条件状态', () => {
   it('侧栏开关用结果式名称，标签是真的 label 且指着那个开关', async () => {
-    await open('interface')
+    await open('general')
     const label = [...body().querySelectorAll('label')].find(
       (l) => l.textContent?.trim() === st('sidebars.leftPinned'),
     ) as HTMLLabelElement
@@ -164,7 +164,7 @@ describe('T39 界面：结果式名称 + 条件状态', () => {
   })
 
   it('点标签文字等于点开关', async () => {
-    await open('interface')
+    await open('general')
     const before = useUiStore.getState().leftPinned
     const label = [...body().querySelectorAll('label')].find(
       (l) => l.textContent?.trim() === st('sidebars.leftPinned'),
@@ -177,7 +177,7 @@ describe('T39 界面：结果式名称 + 条件状态', () => {
 
   it('宽窗口下不写任何窗口宽度的限制', async () => {
     useUiStore.setState({ layout: 'wide' })
-    await open('interface')
+    await open('general')
     expect(bodyText()).not.toContain(st('sidebars.pinLimitedMedium'))
     expect(bodyText()).not.toContain(st('sidebars.pinLimitedNarrow'))
     // 像素断点整个从界面上撤掉了（旧文案写着 1440，而真实断点是 1280）
@@ -187,19 +187,19 @@ describe('T39 界面：结果式名称 + 条件状态', () => {
 
   it('互斥断点下就近说明「只能固定一侧」', async () => {
     useUiStore.setState({ layout: 'medium' })
-    await open('interface')
+    await open('general')
     expect(bodyText()).toContain(st('sidebars.pinLimitedMedium'))
   })
 
   it('窄窗口下说明常驻不生效', async () => {
     useUiStore.setState({ layout: 'narrow' })
-    await open('interface')
+    await open('general')
     expect(bodyText()).toContain(st('sidebars.pinLimitedNarrow'))
   })
 
   it('联动开关配前后示意，而且随开关换说法', async () => {
     useUiStore.setState({ dragAxesWithCompanions: true })
-    await open('interface')
+    await open('general')
     const svg = body().querySelector('svg[role="img"]')
     expect(svg?.getAttribute('aria-label')).toBe(st('canvas.diagramOn'))
     await act(async () => {
@@ -213,7 +213,7 @@ describe('T39 界面：结果式名称 + 条件状态', () => {
 
   it('「画布设置」直接到右栏的画布页', async () => {
     useUiStore.setState({ rightTab: 'properties' })
-    await open('interface')
+    await open('general')
     await act(async () => {
       byText(st('canvas.openCanvasSettings'))!.click()
     })

@@ -207,7 +207,8 @@ describe('可撤销：两个方向都写得回后端', () => {
   it('界面上没有任何一个能写回「未选择」的入口', async () => {
     await open(settings({ consent: 'unset', enabled: false }))
     expect(
-      document.body.querySelectorAll('[role="switch"], [role="radiogroup"]'),
+      // 「关于与更新」页里还有「每天自动检查」那颗更新开关，不是同意控件
+      document.body.querySelectorAll('[role="switch"]:not(#setting-update-auto), [role="radiogroup"]'),
     ).toHaveLength(1)
     patchMock.mockResolvedValue(settings({ consent: 'enabled', enabled: true }))
     await clickToggle()

@@ -1127,8 +1127,8 @@ export default interface Resources {
           "done": "编码 Agent 检测完成。",
           "failed": "检测失败。显示上次结果。"
         },
-        "backAria": "返回编码 Agent 列表",
-        "backToList": "编码 Agent",
+        "backAria": "返回改图助手列表",
+        "backToList": "改图助手",
         "codexInstall": {
           "action": "安装 Codex 集成",
           "announce": {
@@ -1305,7 +1305,7 @@ export default interface Resources {
           "broken": "已找到安装，但无法启动。",
           "notInstalled": "安装后 {{product}} 会自动检测"
         },
-        "title": "编码 Agent",
+        "title": "改图助手",
         "toggleAria": "在 {{product}} 中启用 {{name}}",
         "useFromAgents": "连接外部工具",
         "useInProduct": "配置改图助手",
@@ -1323,6 +1323,7 @@ export default interface Resources {
       "copy": "复制",
       "diagnostics": {
         "copyReport": "复制诊断",
+        "devTitle": "给开发者",
         "envNote": "「{{product}} 自带的渲染环境」随安装包附带，只读。装包会另建「本项目的 {{product}} 环境」，两者状态各自独立。",
         "fetchedAt": "本页数据取自 {{time}}",
         "healthTitle": "健康状态",
@@ -1336,7 +1337,6 @@ export default interface Resources {
         "okDetails": "各项检查结果",
         "perfRow": "记录拖动性能",
         "perfStart": "开始",
-        "perfTitle": "性能分析",
         "prepareFailed": "无法生成诊断报告。请重试。",
         "preparing": "正在生成…",
         "previewNote": "以下是将要复制的内容，密钥与个人路径已脱敏。确认后再复制。",
@@ -1354,9 +1354,9 @@ export default interface Resources {
       },
       "general": {
         "language": "界面语言",
-        "layout": "界面布局",
+        "layout": "界面乱了？",
         "layoutReset": "界面布局已重置，刷新页面后生效",
-        "resetLayout": "恢复界面默认布局"
+        "resetLayout": "恢复默认"
       },
       "helpAbout": "关于{{label}}",
       "navGroup": {
@@ -1494,27 +1494,26 @@ export default interface Resources {
         "scripts": "可编辑来源",
         "sectionLocations": "位置",
         "sectionProject": "项目",
+        "sectionRuntime": "运行",
         "sectionWriteBack": "写回源图",
         "showFullPath": "显示 {{name}} 的完整路径",
         "switch": "切换项目…",
         "useDefault": "恢复默认",
-        "writeBackDesc": "写回会覆盖原始 PDF / PNG 与脚本；执行前先将原文件备份到上面的位置。",
-        "writeBackOffHint": "写回已关闭。源图与脚本不会被覆盖，「写回原始文件」已停用。"
+        "writeBackDesc": "写回会覆盖原始 PDF / PNG；执行前先将原文件备份到上面的位置。",
+        "writeBackOffHint": "写回已关闭。原始文件不会被覆盖，「写回原始文件」已停用。"
       },
       "section": {
-        "about": "关于与隐私",
-        "ai": "编码 Agent",
+        "about": "关于与更新",
+        "ai": "改图助手",
         "canvas": "画布与编辑",
-        "diagnostics": "诊断",
+        "diagnostics": "帮助与诊断",
         "export": "导出",
-        "general": "常规",
-        "interface": "界面",
-        "packages": "包管理",
+        "general": "通用",
+        "packages": "Python 库",
         "project": "项目",
-        "sidebars": "侧栏",
-        "spec": "规范",
-        "style": "样式",
-        "update": "更新"
+        "sidebars": "一直开着",
+        "spec": "期刊规范",
+        "style": "样式"
       },
       "shortcuts": {
         "label": "快捷键",

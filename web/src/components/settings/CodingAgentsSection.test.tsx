@@ -89,7 +89,7 @@ const openFold = (name: string) =>
     .click()
 
 describe('编码 Agent 一级页面', () => {
-  it('导航项叫「编码 Agent」，不再叫 AI', async () => {
+  it('导航项叫「改图助手」，不再叫 AI', async () => {
     await open()
     const nav = document.querySelector('nav')!
     expect(nav.textContent).toContain(ag('title'))

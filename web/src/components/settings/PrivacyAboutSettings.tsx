@@ -11,6 +11,7 @@ import { BrandMark } from '../ui/BrandMark'
 import { Button } from '../ui/Button'
 import { Toggle } from '../ui/Toggle'
 import { DiagnosticDisclosure, SettingRow, SettingSection } from './SettingRow'
+import { UpdateSettings } from './UpdateSettings'
 
 const st = (key: string, values?: Record<string, unknown>) =>
   translate(`settings.${key}`, { ns: 'dialogs', ...(values ?? {}) })
@@ -39,6 +40,8 @@ export function PrivacyAboutSettings() {
   return (
     <div className="contents">
       <ProductBlock version={version} />
+      {/* 「更新」并进这一页（2026-09-30）：版本在上、检查更新紧随其后，再是隐私 */}
+      <UpdateSettings />
       <PrivacyBlock />
     </div>
   )
