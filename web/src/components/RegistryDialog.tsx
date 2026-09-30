@@ -42,7 +42,13 @@ import { addPanelToCanvas, addRuntimePanelToCanvas } from '@/store/workspace'
 import { useAssetStore } from '@/store/assetStore'
 import { refreshAssetsAndSync } from '@/store/liveSync'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
-import { gatePhaseOf, handOffProbeGate, onGateResolved } from '@/store/scriptRunStore'
+import {
+  gatePhaseOf,
+  handOffProbeGate,
+  onGateResolved,
+  probeErrorOf,
+  whenScriptIdle,
+} from '@/store/scriptRunStore'
 import { currentProjectId } from '@/lib/session'
 import { useUiStore } from '@/store/uiStore'
 import { Button, IconButton } from './ui/Button'
@@ -176,7 +182,9 @@ function ReadinessBody() {
           if (g.phase !== phase || (resolved && resolved !== script)) continue
           if (g.project !== currentProjectId()) continue
           gated.current.delete(script)
-          void probeRef.current(script)
+          // 素材库那一行可能也停在这道门上、此刻正被 `rerunGated` 重跑：同一脚本后端只许一个在跑，
+          // 等它跑完再跑这一行的，别撞成 probe_in_progress 当场报失败
+          void whenScriptIdle(script).then(() => probeRef.current(script))
         }
       }),
     [],
@@ -198,7 +206,14 @@ function ReadinessBody() {
   const probe = (script: string) =>
     run(script, async () => {
       const project = currentProjectId()
-      const res = await probeScript(script)
+      // 门的两个 code 可能以非 2xx 回来（请求直接抛）：与素材库同一个解析器，抛出来的也认得门
+      const res = await probeScript(script).catch((e: unknown) => {
+        const error = probeErrorOf(e)
+        if (!gatePhaseOf(error)) throw e
+        return { script, entry: null, stems: [], descriptors: [], tried: [], error } as Awaited<
+          ReturnType<typeof probeScript>
+        >
+      })
       // 起会话之前的门（运行目录 / 依赖准备）不是试运行失败：弹与渲染、素材库同一个框，这一行只说还差什么
       const gate = gatePhaseOf(res.error)
       if (gate && handOffProbeGate(res.error, project)) {

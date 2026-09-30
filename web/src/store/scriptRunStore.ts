@@ -119,6 +119,48 @@ export const isGatePhase = (phase: ScriptRunPhase | undefined): boolean =>
  * 旧载荷不弹——判据在 `envStore` 那一侧）。`projectId` 是发这次试运行时的项目。回 true = 是门、已交出。
  * 素材库脚本行（经 `run`）与接入中心的试运行共用这一处，别的试运行入口也走这里。
  */
+/**
+ * 试运行请求**抛出来**的错误（非 2xx：门的两个 code 就是以 409 回来的）→ `ProbeError`，载荷一并带上。
+ * 素材库脚本行与接入中心共用这一处：各自解析的话，一边认得门、一边把它当成普通失败（#740 Codex P2）。
+ */
+export function probeErrorOf(e: unknown): ProbeError {
+  const api = e instanceof ApiError ? e : null
+  const body = (api?.body ?? {}) as {
+    code?: string
+    params?: Record<string, unknown>
+    dependency_preparation?: DependencyPreparationOffer
+    confirmation?: WorkdirConfirmation
+  }
+  const code = body.code ?? ''
+  return {
+    code: code || 'internal_error',
+    message: e instanceof Error ? e.message : String(e),
+    params: body.params,
+    dependency_preparation: body.dependency_preparation,
+    confirmation: body.confirmation,
+  }
+}
+
+/**
+ * 这个脚本在本 store 里没有正在跑的试运行时 resolve。门放行后本 store 与接入中心会各自重跑同一个脚本，
+ * 后端同一脚本只许一个在跑（另一个回 `probe_in_progress`）——接入中心先等本 store 那一次跑完再跑自己的
+ * （#740 Codex P2）。
+ */
+export function whenScriptIdle(script: string): Promise<void> {
+  const busy = () => {
+    const e = useScriptRunStore.getState().byScript[script]
+    return !!e && isBusyPhase(e.phase)
+  }
+  if (!busy()) return Promise.resolve()
+  return new Promise((resolve) => {
+    const unsub = useScriptRunStore.subscribe(() => {
+      if (busy()) return
+      unsub()
+      resolve()
+    })
+  })
+}
+
 /** 门的 code → 它对应的相位（不是门回 null） */
 export function gatePhaseOf(error: ProbeError | null | undefined): 'needs_workdir' | 'needs_preparation' | null {
   if (!error) return null
@@ -242,21 +284,7 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
       }
     } catch (e) {
       if (stale()) return
-      const api = e instanceof ApiError ? e : null
-      const body = (api?.body ?? {}) as {
-        code?: string
-        params?: Record<string, unknown>
-        dependency_preparation?: DependencyPreparationOffer
-        confirmation?: WorkdirConfirmation
-      }
-      const code = body.code ?? ''
-      const error: ProbeError = {
-        code: code || 'internal_error',
-        message: e instanceof Error ? e.message : String(e),
-        params: body.params,
-        dependency_preparation: body.dependency_preparation,
-        confirmation: body.confirmation,
-      }
+      const error = probeErrorOf(e)
       settle({ phase: phaseOf(error), error, descriptors: [] })
       handOffProbeGate(error, projectAtStart)
     }

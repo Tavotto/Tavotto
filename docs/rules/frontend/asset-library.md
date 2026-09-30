@@ -117,7 +117,8 @@
   `WorkdirConfirmDialog` 选定后重跑停在这一相位上的全部（项目级；放在组件里是因为 envStore → scriptRunStore 会扩大既有 import 环；
   作答期间换了项目就不重跑——`setWorkdirMode` 的换代作废与成功同形，按发起时的 pj 判）。
   接入中心的试运行走同一个 `handOffProbeGate`，不报「试运行失败」；它不在 `scriptRunStore` 里记账，停在门上的行经
-  `onGateResolved`（`rerunGated` 顺带通知）在答案到来时重跑（同脚本、同项目）。**新写一个调试运行端点的入口，先认这两个 code。**
+  `onGateResolved`（`rerunGated` 顺带通知）在答案到来时重跑（同脚本、同项目），且先等素材库同一脚本的那次
+  重跑结束（`whenScriptIdle`；后端同一脚本只许一个在跑）。抛出来的错误（门以 409 回来）两边都经 `probeErrorOf` 解析。**新写一个调试运行端点的入口，先认这两个 code。**
   看护 `scriptRunStore.test.ts`「试运行撞上起会话之前的门」、`ScriptLibrary.test.tsx` 同名 describe、
   `RegistryDialog.test.tsx`、`e2e/asset-library.spec.ts`「试运行撞上依赖门」。
 - **运行/取消是同一个按钮**（busy 态翻转）：取消后焦点天然留在原脚本行，

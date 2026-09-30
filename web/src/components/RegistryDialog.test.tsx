@@ -24,6 +24,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
 }))
 
 import {
+  ApiError,
   fetchPanels,
   fetchReadiness,
   fetchRegistry,
@@ -337,6 +338,68 @@ describe('绝不替用户决定', () => {
     })
     expect(mockProbe).not.toHaveBeenCalled()
     useEnvStore.setState({ dependencyPreparation: null })
+    setCurrentProjectId(null)
+  })
+
+  it('门以非 2xx 回来（请求直接抛 409）：同样交给授权框，不报「试运行失败」（#740 Codex P2）', async () => {
+    setCurrentProjectId('p1')
+    useEnvStore.setState({ dependencyPreparation: null })
+    const offer = { code: 'dependency_preparation_required', script: 'dyn.py', plan: {}, target_kind: 'tavotto_managed', targets: [], rounds_remaining: 3, skipped: false }
+    mockProbe.mockRejectedValue(
+      new ApiError('要先准备依赖', 409, { code: 'dependency_preparation_required', dependency_preparation: offer }),
+    )
+    await open(reportOf(SIX))
+    await clickIn(rowOf('Mystery.pdf')!, '试运行并连接')
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0))
+    })
+    expect(useEnvStore.getState().dependencyPreparation, '抛出来的门没交给 envStore').toEqual(offer)
+    expect(dialog().textContent).not.toContain('试运行失败')
+    useEnvStore.setState({ dependencyPreparation: null })
+    setCurrentProjectId(null)
+  })
+
+  it('门放行时素材库那一行也在重跑同一个脚本：接入中心等它跑完再跑，不并发撞 probe_in_progress（#740 Codex P2）', async () => {
+    setCurrentProjectId('p1')
+    const offer = { code: 'dependency_preparation_required', script: 'dyn.py', plan: {}, target_kind: 'tavotto_managed', targets: [], rounds_remaining: 3, skipped: false }
+    mockProbe.mockResolvedValue({
+      script: 'dyn.py', entry: null, stems: [], descriptors: [], tried: [],
+      error: { code: 'dependency_preparation_required', message: '要先准备依赖', dependency_preparation: offer as never },
+    })
+    await open(reportOf(SIX))
+    await clickIn(rowOf('Mystery.pdf')!, '试运行并连接')
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0))
+    })
+    // 素材库那一行同样停在这道门上
+    useScriptRunStore.setState((st) => ({
+      byScript: { ...st.byScript, 'dyn.py': { ...(st.byScript['dyn.py'] ?? {}), phase: 'needs_preparation', gen: 1 } as never },
+    }))
+    mockProbe.mockClear()
+    let finish!: () => void
+    const held = new Promise<void>((r) => (finish = r))
+    let inFlight = 0
+    let maxInFlight = 0
+    mockProbe.mockImplementation(async () => {
+      inFlight += 1
+      maxInFlight = Math.max(maxInFlight, inFlight)
+      if (mockProbe.mock.calls.length === 1) await held
+      inFlight -= 1
+      return { script: 'dyn.py', entry: null, stems: ['Mystery'], descriptors: [], tried: [] } as never
+    })
+    await act(async () => {
+      useScriptRunStore.getState().rerunGated('needs_preparation', 'dyn.py')
+      await new Promise((r) => setTimeout(r, 0))
+    })
+    expect(mockProbe, '素材库那一次还没跑完，接入中心就又发了一次').toHaveBeenCalledTimes(1)
+    await act(async () => {
+      finish()
+      await new Promise((r) => setTimeout(r, 10))
+    })
+    expect(mockProbe).toHaveBeenCalledTimes(2)
+    expect(maxInFlight).toBe(1)
+    useEnvStore.setState({ dependencyPreparation: null })
+    useScriptRunStore.getState().clear()
     setCurrentProjectId(null)
   })
 
