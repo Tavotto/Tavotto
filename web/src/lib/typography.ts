@@ -74,6 +74,52 @@ export const WEIGHTS = ['normal', 'bold'] as const
 export const STYLES = ['normal', 'italic'] as const
 export const HALIGNS = ['left', 'center', 'right'] as const
 
+/**
+ * matplotlib 字重名 → 数值（`font_manager.weight_dict`）。从图里提取的样式可能写着
+ * `semibold` / `600` 这类非规范字重，引擎与后端都原样保留。
+ */
+const WEIGHT_NUMBER: Record<string, number> = {
+  ultralight: 100,
+  light: 200,
+  normal: 400,
+  regular: 400,
+  book: 400,
+  medium: 500,
+  roman: 500,
+  semibold: 600,
+  demibold: 600,
+  demi: 600,
+  bold: 700,
+  heavy: 800,
+  'extra bold': 800,
+  black: 900,
+}
+
+/**
+ * 一个字重算不算「加粗」：≥ 600 算（与引擎归一 fname 字体字重的口径同一条，#704）。
+ * 认不出的名字不算。
+ */
+export function weightIsBold(raw: unknown): boolean {
+  const n = weightNumber(raw)
+  return n !== null && n >= 600
+}
+
+/** 字重 → 数值（数字、数字串、matplotlib 字重名）；认不出的是 null */
+export function weightNumber(raw: unknown): number | null {
+  const n =
+    typeof raw === 'number'
+      ? raw
+      : typeof raw === 'string'
+        ? (WEIGHT_NUMBER[raw.trim().toLowerCase()] ?? (raw.trim() === '' ? NaN : Number(raw)))
+        : NaN
+  return Number.isFinite(n) ? n : null
+}
+
+/** 一个字形算不算「斜体」：不是 `normal` 就算（`oblique` 算斜体，与引擎同一口径，#704） */
+export function styleIsItalic(raw: unknown): boolean {
+  return typeof raw === 'string' && raw.trim() !== '' && raw.trim().toLowerCase() !== 'normal'
+}
+
 export type FontWeight = (typeof WEIGHTS)[number]
 export type FontStyle = (typeof STYLES)[number]
 export type HAlign = (typeof HALIGNS)[number]
@@ -306,10 +352,10 @@ const HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i
  * `fieldOf` 与写入前的校验（`coerceTypography` 认的是 `field.options`）拿到的
  * 必须是同一份表，否则下拉里选得到、写下去却被判成「不是选项」。
  *
- * 首选项在前、本机的按引擎排好的序接在后面、去重；别的字段与没有本机表的
- * 老引擎原样返回（同一个对象，memo 不白白失效）。
+ * 首选项在前、本机的按引擎排好的序接在后面、去重；本机表里有的名字不再算不可用；别的字段、
+ * 没有本机表的老引擎、并完什么都没变的，原样返回（同一个对象，memo 不白白失效）。
  */
-export function withMachineFamilies<F extends Pick<EditableField, 'prop' | 'options'>>(
+export function withMachineFamilies<F extends Pick<EditableField, 'prop' | 'options' | 'options_unavailable'>>(
   field: F | undefined,
   families: readonly string[] | undefined,
 ): F | undefined {
@@ -317,7 +363,19 @@ export function withMachineFamilies<F extends Pick<EditableField, 'prop' | 'opti
   const own = field.options ?? []
   const seen = new Set(own)
   const extra = families.filter((f) => !seen.has(f))
-  return extra.length ? { ...field, options: [...own, ...extra] } : field
+  // 本机表里有的就**画得出**（引擎列本机表的判据就是「matplotlib 解析得到」）：字段级的
+  // `options_unavailable` 若还标着它，是字段那边判错了（刻度字体族曾按「不在首选项里」标，
+  // Codex #703），以本机表为准撤掉——属性页与设置 › 样式页都经这里，口径只有一份
+  const machine = new Set(families)
+  const missing = field.options_unavailable
+  const kept = missing?.filter((f) => !machine.has(f))
+  const missingChanged = !!missing && kept!.length !== missing.length
+  if (!extra.length && !missingChanged) return field
+  return {
+    ...field,
+    options: extra.length ? [...own, ...extra] : own,
+    ...(missingChanged ? { options_unavailable: kept } : {}),
+  }
 }
 
 export function coerceTypography(

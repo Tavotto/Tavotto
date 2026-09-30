@@ -128,7 +128,28 @@
   还没落定的值（`usePendingWrites`），显示与「在当前值上做」的动作（粗 / 斜体开关、↑↓ 步进）都按它算，落定后放掉
   （Codex #662 P2：否则连点两下加粗会排进两次 `bold`）。文字颜色、线条 / 边框颜色没进面板：取色是连续手势，绑定时每一下都要存一次库，得先有「一轮取色 = 一次
   存库」的收口。
-  看护：`components/left/stylePanel.test.tsx`、`lib/stylePresets.test.ts`、`store/styleBinding.test.ts`、`lib/migrate.style.test.ts`。
+  **设置 › 样式页与面板同一张行表**（2026-09-28）：`settings/StyleProfileFields.tsx` 的行从 `FIGURE_TEXT_ROWS` /
+  `FIGURE_LINE_ROWS` 派生（另加「其余文字」= `element.text`），面板加一行、设置跟着多一行，不另抄一份角色 × 属性。
+  编辑的是样式本身，所以每格多一档「未设置」（占位写「未设置」不写「多个值」），且**每一格都能单独回到它**：数字框清空后
+  回车 / 失焦删掉这个键、不写 0（`NumberField.onClear`），字体下拉顶上一项「未设置」，粗 / 斜体的三态循环；行尾 ×
+  是「整行清除」（名字写明整行）；删空的角色不留空壳。控件认不出的值（字号 `large`、字体是一串候选、画布标注的
+  粗斜体不是 boolean、线宽 / 刻度长宽不是数、刻度方向不是字符串；规范页的数字字段同样）照原值显示（`profilePath.rawValueText`）、
+  不当成没设，不点就原样保存，也能单独清；只读摘要同口径。粗 / 斜体是
+  看得出的三态：未设置（面板「多个值」同一副第三态视觉、`aria-pressed="mixed"`，名字换成「未设置」）→ 开 → 显式关
+  （写 `normal` / false，应用时一律去掉，≠ 未设置的「保留原样」）→ 回到未设置，悬停三句各说应用时会怎样；从图里提取的非规范值（`semibold` / `600` / `oblique`）
+  按 `lib/typography.weightIsBold`（≥ 600）/ `styleIsItalic`（非 normal，与引擎 #704 同一口径）显示成开 / 关、悬停说原值，
+  不点就原样保存，点了按显示的那一态往下走；字体选项 = 通用三族 + **每一张**已渲染的图里引擎报过的首选项与本机族（逐张走 `withMachineFamilies`，按键排序）
+  + 样式里已写着的名字；`options_unavailable` 跟着并，口径「任一运行时画得出就不算不可用」（样式里写着、没有哪张图
+  请求过的名字：**每一张**图的运行时都报了完整本机表时不在任何一份里就标，混着老引擎、可用性未知时不标），标记与 warning 用属性页
+  同一副（`FontMissingTag` / `FontMissingHint`），名字不换；内容没变时选项对象引用不变（选项与标记都比）；
+  改动以函数交出（字体下拉按数据 memo，回调不许捏着旧草稿）。只读那份每行一句摘要（字体 · 字号 · 粗斜体）。
+  示例图（`lib/styleSample.ts`）每一笔只读它自己那一维（同一张行表），没设是示例默认、不从别的角色回落——应用时
+  `element.text` 只落在 `text` 角色上、边框线宽不改刻度线宽，示例跟着变就是预告不会发生的事。
+  字重 / 字形照原值画（`light` → 200、`600`、`oblique`，与 `planStyle` 交给引擎的同一个值），归一只给开关与字宽估算。
+  字号超出示例预算时几何里**所有**长度（字号、线宽、边框、刻度长度 / 线宽）乘同一个系数（`fitSampleGeometry`），
+  版面与画框再按缩后的几何现算（`sampleLayout`），比例与应用后一致。
+  看护：`components/left/stylePanel.test.tsx`、`lib/stylePresets.test.ts`、`store/styleBinding.test.ts`、`lib/migrate.style.test.ts`、
+  `components/settings/profilesSettings.test.tsx`、`lib/styleSample.test.ts`。
 - 看护：`store/projectReadinessStore.test.ts`、`components/RegistryDialog.test.tsx`、
   `components/WorkdirConfirmDialog.test.tsx`、`components/WorkdirRow.test.tsx`、
   `components/DependencyPrepareDialog.test.tsx`、`components/notificationRail.test.tsx`（「已改用你的环境」）、

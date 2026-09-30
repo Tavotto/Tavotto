@@ -198,3 +198,11 @@ hash 这一份」——不然前端根本拿不到基线；而 `send_file` 留�
 - **编辑历史面板的形态**：现有版本抽屉已经区分 undo 栈 / 检查点 / 恢复，
   但它的入口仍在文档菜单里。左上区域的独立入口留给 Prompt 08 的左栏改造，
   免得同一块区域两个 Session 各摆一次。
+
+## 修订（2026-09-29，[ADR 0108](0108-desktop-stable-origin-and-backend-session-state.md)，issue #715）
+
+- **§4 的本机副本依赖 origin 稳定。** `tavotto.autosave.<id>` / `tavotto.recovery.<id>` 只能留在前端（它们存在的前提就是
+  后端写不进去），而 localStorage 按 origin 隔离。桌面版此前每次启动换端口，§4 的「启动时还留着一份副本」在桌面上
+  从来读不到；PR-A 起桌面端口尽量稳定，端口被占的那次启动仍读不到——已知残余。
+- **§9「没有 index.json」部分改写。** 前端的 `docIndex` 迁后端（PR-B）：它决定删哪些磁盘槽位，不该由一份随 origin
+  丢失的本机索引说了算；`owners{doc_id → 项目}` 记在 `layout-sessions.json`，`/api/layouts` 的列表仍靠 glob 现算。

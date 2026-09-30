@@ -93,8 +93,8 @@ _REAL_SAVEFIG = mfigure.Figure.savefig
 
 
 def _patched_savefig(self, fname, *args, **kwargs):
-    """与 worker._patched_savefig 同语义：按 stem 捕获，不写用户的输出文件。"""
-    if not _intercept:
+    """与 worker._patched_savefig 同语义：按 stem 捕获，不写用户的输出文件；写进文件对象的透传。"""
+    if not _intercept or not figcapture.savefig_targets_path(fname):
         return _REAL_SAVEFIG(self, fname, *args, **kwargs)
     stem = figcapture.savefig_stem(fname)
     if stem:

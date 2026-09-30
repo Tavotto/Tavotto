@@ -570,7 +570,7 @@ class TestJointTransaction:
         real_argv = deprepair.pip_install_joint_argv
         started = threading.Event()
 
-        def _slow(python, r, c, *, require_hashes=False):
+        def _slow(python, r, c, *, require_hashes=False, index_url=None):
             started.set()
             return [python, "-c", "import time; time.sleep(30)"]
 
@@ -1229,3 +1229,75 @@ class TestGate:
         assert service.wait("p", 30)
         assert result.status == preparation.STATUS_NEEDS_INPUT
         assert result.required_input == payload and result.error is None
+
+
+# ===========================================================================
+# ④ 联合准备里的 PyPI 镜像回退（ADR 0111；Codex #743）：跑前准备那条路与单包修复**同一个字段、同一层**——
+#    进度记录顶层的 `pypi_mirror`，与日志里那句说明同一个快照到达（`installing`），不等到验证。
+# ===========================================================================
+_NETWORK_OUT = (
+    "WARNING: Retrying (Retry(total=4)) after connection broken by 'NewConnectionError'\n"
+)
+
+
+def _first_install_offline(monkeypatch) -> list[list[str]]:
+    """第一次 `pip install`（没带 `--index-url`）装作断网；镜像那次交给真 pip（`PIP_NO_INDEX` 下 `--index-url`
+    被忽略、照样从本地 wheelhouse 装——量的是事务与进度，不是镜像站）。用户源判为「没配」（真 wheelhouse
+    靠的正是 PIP_NO_INDEX，不桩这一问就不会走到镜像）。"""
+    real = deprepair._run_pip
+    calls: list[list[str]] = []
+
+    def _run_pip(argv, ev, log, on_started=None):
+        calls.append(list(argv))
+        if "install" in argv and "--index-url" not in argv:
+            return deprepair.ERROR_NETWORK, _NETWORK_OUT
+        return real(argv, ev, log, on_started=on_started)
+
+    monkeypatch.setattr(deprepair, "_run_pip", _run_pip)
+    monkeypatch.setattr(deprepair, "user_package_source", lambda python: False)
+    return calls
+
+
+def _assert_mirror_surfaced(plan, events: list[dict], rec: dict, calls: list[list[str]]) -> None:
+    url = deprepair.PYPI_MIRROR_URL
+    assert rec["state"] == deprepair.STATE_DONE, rec
+    assert rec["flow"] == "joint" and rec["pypi_mirror"] == url and url in rec["log"]
+    installs = [a for a in calls if "install" in a]
+    assert len(installs) == 2 and installs[1][installs[1].index("--index-url") + 1] == url
+    states = [e.get("state") for e in events]
+    first_mirror = next(i for i, e in enumerate(events) if e.get("pypi_mirror") == url)
+    first_note = next(i for i, e in enumerate(events) if url in (e.get("log") or ""))
+    # 字段与日志那句同一刻到达：带说明的第一个快照就带着顶层 `pypi_mirror`（界面不必解析日志）
+    assert first_mirror <= first_note
+    assert events[first_mirror]["state"] == deprepair.STATE_INSTALLING
+    assert (
+        events[first_mirror]["flow"] == "joint" and events[first_mirror]["plan_id"] == plan.plan_id
+    )
+    assert deprepair.STATE_VERIFYING in states
+    assert first_mirror < states.index(deprepair.STATE_VERIFYING)  # 当场推，不等验证
+
+
+@needs_worker
+class TestJointMirrorProgress:
+    def test_managed_generation_surfaces_the_mirror_at_the_top_of_the_joint_progress(
+        self, tmp_path, house, offline_managed_env, monkeypatch
+    ):
+        project = _project(tmp_path, requirements=f"{ALPHA[0]}\n", script=f"import {ALPHA[1]}\n")
+        calls = _first_install_offline(monkeypatch)
+        plan = deprepair.create_joint_plan(project, "figure.py")
+        assert plan.target_kind == deprepair.TARGET_MANAGED
+        events: list[dict] = []
+        deprepair.prepare_async(plan.plan_id, on_event=events.append)
+        _assert_mirror_surfaced(plan, events, wait_for(plan.plan_id), calls)
+
+    def test_in_place_install_surfaces_the_mirror_at_the_top_of_the_joint_progress(
+        self, tmp_path, house, monkeypatch
+    ):
+        project = _project(tmp_path, requirements=f"{ALPHA[0]}\n", script=f"import {ALPHA[1]}\n")
+        real_venv(project)
+        plan = deprepair.create_joint_plan(project, "figure.py")
+        assert plan.target_kind == deprepair.TARGET_PROJECT_VENV
+        calls = _first_install_offline(monkeypatch)
+        events: list[dict] = []
+        deprepair.prepare_async(plan.plan_id, on_event=events.append)
+        _assert_mirror_surfaced(plan, events, wait_for(plan.plan_id), calls)

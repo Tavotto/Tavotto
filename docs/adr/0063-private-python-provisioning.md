@@ -180,6 +180,10 @@ spike 里「一条 resolver」的选择；产品里再下载一个 37 MB 的 uv 
 * 改了：ADR 0019 §一 的「基础解释器从哪来」多了末级；ADR 0061 §四 的接入规则按 §二 兑现（uv 不进产品）；
   `packaging/AGENTS.md`「内置渲染 runtime」多一段「私有 Python 与它的关系」。
 * U09 / U11 拿走：`base_runtime` 进回执的环境身份；发行时的目标资格与 `enabled` 的翻转。
+* **修订（2026-09-29，§一 / §六 / §十，ADR 0111）**：归档来源从「只有锁 URL」变成按序三处——安装包附带的归档
+  （桌面版随包带本目标那份，sha256 等于锁才用）→ 缓存 → 锁 URL；`offer_payload()` 多 `origin`。§十「私有镜像不在本轮」
+  对 **PyPI** 不再成立：pip 网络类失败且用户没自配源时改用固定镜像重试一次（私有 Python 归档本身仍不做镜像）。
+  `enabled` 仍全 false。
 * **修订（2026-09-28，§六）**：「TLS 校验默认开」原来靠 `HTTPSHandler` 的默认上下文，即 OpenSSL 读到的根证书快照。
   干净 Windows（Server 2025 实测）的证书库起初没有 ISRG Root X1——Windows 只在 CryptoAPI 建链时按需补装，
   `ssl.create_default_context()` 只枚举已装的根——于是下载 `CERTIFICATE_VERIFY_FAILED`，被报成

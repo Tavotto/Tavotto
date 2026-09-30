@@ -330,6 +330,7 @@
       "private_python_launch_failed": "The downloaded Python won’t start and was refused.",
       "private_python_not_offered": "Tavotto can’t provide its own Python on this computer yet. Install Python 3.10 or newer, or pick an existing environment.",
       "private_python_offline": "Couldn’t download Python. Check your connection and try again; existing environments are unaffected.",
+      "private_python_source_changed": "Where Python would come from changed after you confirmed (the archive in the app or the cached copy is gone, or a new one appeared). Confirm again.",
       "private_python_source_unavailable": "The download location no longer has this Python. Update Tavotto and try again.",
       "private_python_tls": "Couldn’t verify the download server’s certificate (certificate verification failed), so Python wasn’t downloaded. This isn’t a connection problem: this computer may be missing a root certificate, or a proxy on your network may be replacing certificates. Run system updates or contact your network administrator, then try again; existing environments are unaffected.",
       "private_python_write_failed": "Couldn’t write to Tavotto’s data directory.",

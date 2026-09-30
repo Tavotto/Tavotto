@@ -26,6 +26,16 @@
   在 `data_dir` 之下 → 常规文件 + 可执行位 → **真起一次**（`-I -c`，自报版本必须等于锁的版本）→ 才改名。
   坏 hash / 截断 / 错期望值的路上解释器执行计数为 0、无新目录、`.part` 当场删；hash 不符**绝不重试**，
   传输层失败才有界重试；缓存里对不上的归档不是复用对象。
+- **归档来源按序三处（ADR 0111，2026-09-29）**：安装包附带的归档（`runtime.private_python_bundle_dirs()`：冻结产物的
+  `_internal/private-python/`，`TAVOTTO_PRIVATE_PYTHON_BUNDLE` 排他覆盖）→ `downloads/` 里校验过的缓存 → 锁 URL。每一处都
+  **整份 sha256 等于锁**才用；包内那份对不上就当它不在（WARNING、不删、往下走），**不复制**进 `downloads/`，之后仍是
+  成员校验 → staging → 真起 → `os.replace` 那一条链。`offer_payload()` 带 `origin`（`ORIGINS`：`bundled` / `cached` /
+  `download`；前两种 `download_bytes=0`、`cached=true`），供应进度的 `private_python` 段同名字段，账记 `origin`。
+  **执行只从计划说过的那一处取**（`provision(required_origin=)`，`_GenerationJob.private_plan`）：来源变了（包内 / 缓存
+  没了或坏了、下载计划后多出本地归档、已就位的没了）→ `private_python_source_changed`，锁换了（id 不同）→ 同样；事务收成
+  `repair_plan_stale`，绝不换源、绝不变成联网下载；执行时 runtime 已在则照常。
+  打包侧（`scripts/stage_private_python.py` → `tavotto.spec`）见 `packaging/AGENTS.md`。看护
+  `tests/test_private_python.py::TestBundledArchive`、`tests/test_private_python_bundle.py`。
 - **离线三档**：有校验过的缓存 → 零请求（FO24）；无缓存连不上 → `private_python_offline`，有界、不建目录（FO25，
   safe_stop 不计自动成功）；来源回 4xx / 5xx → `private_python_source_unavailable`（要升级 Tavotto，不是重试）。
   **证书校验失败不是离线**：有界重试后最后一次失败的根是 `ssl.SSLCertVerificationError`（缺根 / 过期 / 主机名不符 /
@@ -71,7 +81,7 @@
 - **能力默认关**：锁文件每个目标的 `enabled` 在无系统 Python 的资格取得前保持 `false`（06 §2）；
   `TAVOTTO_PRIVATE_PYTHON=1|0` 是工程 / CI 目标腿的逃生门（与 `TAVOTTO_RUNTIME_HOST_ARCH` 同一档），不是产品设置。
   换版本 = 改锁（新 sha256 → 新 id → 新目录）+ 每个目标重新取得资格，不自动追最新。
-- **错误码闭集** `privatepython.ERROR_CODES`（十条 `private_python_*`，`private_python_tls` 2026-09-28 加），文案在 `web/src/i18n/locales/*/errors.json` 的
+- **错误码闭集** `privatepython.ERROR_CODES`（十一条 `private_python_*`，`private_python_tls` 2026-09-28 加、`private_python_source_changed` 2026-09-30 加），文案在 `web/src/i18n/locales/*/errors.json` 的
   `engine.repairError`（与 deprepair 同一张表；`tests/test_private_python.py` 钉两种语言都有）。
 - 看护：`tests/test_private_python.py`（锁 / 同源对 / 目标名 / 逃生门；本地供应服务 + 假归档跑真实状态机：正例、
   缓存零请求、坏缓存不复用、篡改 / 截断 / 错期望值 / 离线 / 死代理对照 / 404 / zip-slip 六种 + 成员校验逐形状 /

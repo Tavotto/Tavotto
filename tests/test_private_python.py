@@ -41,6 +41,7 @@ def _isolated(tmp_path, monkeypatch):
     data.mkdir()
     monkeypatch.setenv("TAVOTTO_DATA_DIR", str(data))
     monkeypatch.setenv("TAVOTTO_PRIVATE_PYTHON", "1")
+    monkeypatch.delenv(runtime.PRIVATE_PYTHON_BUNDLE_ENV, raising=False)
     # 死代理：任何走代理的联网当场被拒。本地回环服务由 NO_PROXY 放行——与真实机器上的
     # 代理配置同一张脸（urllib 只认环境变量），不是给产品代码开的口子。
     # urllib 对 `*_proxy` 小写优先于大写：四个变量两种拼法都设，别让宿主 / runner 里的小写那份决定判据
@@ -439,6 +440,245 @@ class TestProvision:
         assert err.value.code == privatepython.ERROR_OFFLINE
         assert not privatepython.archive_path(src).exists()  # 坏缓存被清掉，不留着骗下一次
         assert _launch_count(launches) in (0, None) and _runtime_dirs() == set()
+
+
+# ================================================================ 安装包附带的归档（ADR 0111）
+def _count_fetches(monkeypatch) -> list[str]:
+    """`privatepython._fetch`（唯一的联网函数）被调用的记录：判「有没有去下载」的主语。"""
+    calls: list[str] = []
+    real = privatepython._fetch
+
+    def _counting(source, part, job):
+        calls.append(source.url)
+        return real(source, part, job)
+
+    monkeypatch.setattr(privatepython, "_fetch", _counting)
+    return calls
+
+
+def _bundle(tmp_path, monkeypatch, archive: Path, data: bytes | None = None) -> Path:
+    """把归档摆进一个「安装包目录」并经排他覆盖指过去（冻结产物里是 `_internal/private-python/`）。"""
+    folder = tmp_path / "bundle"
+    folder.mkdir(exist_ok=True)
+    dest = folder / archive.name
+    dest.write_bytes(archive.read_bytes() if data is None else data)
+    monkeypatch.setenv(runtime.PRIVATE_PYTHON_BUNDLE_ENV, str(folder))
+    return dest
+
+
+class TestBundledArchive:
+    def test_a_verified_bundled_archive_is_used_without_calling_the_downloader(
+        self, tmp_path, launches, monkeypatch
+    ):
+        """包内归档 sha256 与锁一致：offer 说 `origin=bundled`、零字节；供应时下载函数调用 0 次、本地服务零请求，
+        仍走校验 → 解包 → 真起 → 原子改名那一条链；归档不复制进 `downloads/`，账记来源。"""
+        archive, sha, rel = _make(tmp_path, launches)
+        bundled = _bundle(tmp_path, monkeypatch, archive)
+        fetches = _count_fetches(monkeypatch)
+        with LoopbackServer(tmp_path / "serve") as server:
+            src = _source(server, archive, sha, rel)
+            offer = privatepython.offer_payload(src)
+            assert offer["origin"] == privatepython.ORIGIN_BUNDLED
+            assert offer["download_bytes"] == 0 and offer["network_required"] is False
+            assert offer["cached"] is True
+            python = privatepython.provision(src)
+            assert fetches == [] and server.requests == []
+        assert Path(python) == privatepython.runtime_dir(src) / rel and Path(python).is_file()
+        assert _launch_count(launches) in (1, None)
+        assert _runtime_dirs() == {src.id} and _parts() == []
+        assert not privatepython.archive_path(src).exists()  # 没有复制第二份
+        assert bundled.is_file()  # 安装目录里的那份原样（只读的安装目录不该被动）
+        assert privatepython.read_ledger()["runtimes"][src.id]["origin"] == "bundled"
+
+    @pytest.mark.parametrize("damage", ["truncated", "tampered"])
+    def test_a_bundled_archive_with_wrong_bytes_is_refused_and_the_lock_url_is_used(
+        self, tmp_path, launches, monkeypatch, damage
+    ):
+        """包内那份对不上锁（截断 / 被改）：不是可用来源——不解、不起；offer 如实说要下载，供应按锁 URL 下一次。"""
+        archive, sha, rel = _make(tmp_path, launches)
+        raw = archive.read_bytes()
+        bad = raw[:-100] if damage == "truncated" else raw[:-1] + bytes([raw[-1] ^ 0xFF])
+        bundled = _bundle(tmp_path, monkeypatch, archive, bad)
+        fetches = _count_fetches(monkeypatch)
+        with LoopbackServer(tmp_path / "serve") as server:
+            src = _source(server, archive, sha, rel)
+            assert privatepython.bundled_archive(src) is None
+            offer = privatepython.offer_payload(src)
+            assert offer["origin"] == privatepython.ORIGIN_DOWNLOAD
+            assert offer["download_bytes"] == archive.stat().st_size and offer["cached"] is False
+            python = privatepython.provision(src)
+            assert len(fetches) == 1 and server.requests == [f"/{archive.name}"]
+        assert Path(python).is_file() and _launch_count(launches) in (1, None)
+        assert privatepython.read_ledger()["runtimes"][src.id]["origin"] == "download"
+        assert bundled.read_bytes() == bad  # 不去改安装目录
+
+    def test_origin_is_cached_when_only_the_data_dir_holds_a_verified_archive(
+        self, tmp_path, launches, monkeypatch
+    ):
+        archive, sha, rel = _make(tmp_path, launches)
+        src = _source(None, archive, sha, rel)
+        assert privatepython.offer_payload(src)["origin"] == privatepython.ORIGIN_DOWNLOAD
+        privatepython.downloads_dir().mkdir(parents=True)
+        shutil.copy2(archive, privatepython.archive_path(src))
+        assert privatepython.offer_payload(src)["origin"] == privatepython.ORIGIN_CACHED
+        fetches = _count_fetches(monkeypatch)
+        privatepython.provision(src)
+        assert fetches == []
+        assert privatepython.read_ledger()["runtimes"][src.id]["origin"] == "cached"
+
+    def test_bundle_dirs_follow_the_frozen_layout_and_the_override_is_exclusive(
+        self, tmp_path, monkeypatch
+    ):
+        """定位与内置 runtime 同一套（`_MEIPASS` → exe 同级 → `exe/_internal`）；源码树 / wheel 不带：空表。"""
+        assert runtime.private_python_bundle_dirs() == []  # 非冻结
+        meipass = str(tmp_path / "meipass")
+        exe = str(tmp_path / "Tavotto")
+        monkeypatch.setattr(runtime.sys, "frozen", True, raising=False)
+        monkeypatch.setattr(runtime.sys, "_MEIPASS", meipass, raising=False)
+        monkeypatch.setattr(runtime.sys, "executable", exe)
+        name = runtime.PRIVATE_PYTHON_BUNDLE_DIR_NAME
+        assert runtime.private_python_bundle_dirs() == [
+            os.path.join(meipass, name),
+            os.path.join(str(tmp_path), name),
+            os.path.join(str(tmp_path), "_internal", name),
+        ]
+        monkeypatch.setenv(runtime.PRIVATE_PYTHON_BUNDLE_ENV, str(tmp_path / "only"))
+        assert runtime.private_python_bundle_dirs() == [str(tmp_path / "only")]
+
+
+# ================================================================ 计划说的来源 == 执行的来源（ADR 0111 §一）
+class TestPlannedOrigin:
+    """计划里告诉用户的来源（`required_origin`）在「计划之后、执行之前」变了：要么按计划执行，要么
+    `private_python_source_changed`（事务层收成 `repair_plan_stale`），**绝不静默换源、绝不变成联网下载**。
+    判「有没有联网」的主语：下载函数 `_fetch` 的调用记录 + 本地服务的请求日志（服务一直在线——换源是
+    做得到的，拦住它的只能是判据本身）。"""
+
+    def _setup(self, tmp_path, launches, monkeypatch, server):
+        archive, sha, rel = _make(tmp_path, launches)
+        src = _source(server, archive, sha, rel)
+        return archive, src, _count_fetches(monkeypatch)
+
+    def _cache(self, archive, src, data: bytes | None = None):
+        privatepython.downloads_dir().mkdir(parents=True, exist_ok=True)
+        privatepython.archive_path(src).write_bytes(archive.read_bytes() if data is None else data)
+
+    def _refused(self, src, required, fetches, server):
+        with pytest.raises(privatepython.ProvisionError) as err:
+            privatepython.provision(src, required_origin=required)
+        assert err.value.code == privatepython.ERROR_SOURCE_CHANGED
+        assert fetches == [] and server.requests == []
+        assert _runtime_dirs() == set() and privatepython.python_of(src) is None
+
+    @pytest.mark.parametrize("change", ["removed", "bytes-changed", "removed-but-cache-exists"])
+    def test_planned_bundled_archive_gone_or_changed_is_refused_without_network(
+        self, tmp_path, launches, monkeypatch, change
+    ):
+        with LoopbackServer(tmp_path / "serve") as server:
+            archive, src, fetches = self._setup(tmp_path, launches, monkeypatch, server)
+            bundled = _bundle(tmp_path, monkeypatch, archive)
+            assert privatepython.offer_payload(src)["origin"] == "bundled"  # 计划时
+            if change == "bytes-changed":
+                raw = archive.read_bytes()
+                bundled.write_bytes(raw[:-1] + bytes([raw[-1] ^ 0xFF]))
+            else:
+                bundled.unlink()
+            if change == "removed-but-cache-exists":
+                self._cache(archive, src)  # 缓存也不是计划里的来源
+            self._refused(src, privatepython.ORIGIN_BUNDLED, fetches, server)
+
+    @pytest.mark.parametrize("change", ["deleted", "corrupted"])
+    def test_planned_cache_gone_or_corrupted_is_refused_without_network(
+        self, tmp_path, launches, monkeypatch, change
+    ):
+        with LoopbackServer(tmp_path / "serve") as server:
+            archive, src, fetches = self._setup(tmp_path, launches, monkeypatch, server)
+            self._cache(archive, src)
+            assert privatepython.offer_payload(src)["origin"] == "cached"  # 计划时
+            if change == "deleted":
+                privatepython.archive_path(src).unlink()
+            else:
+                self._cache(archive, src, archive.read_bytes()[:-100])
+            self._refused(src, privatepython.ORIGIN_CACHED, fetches, server)
+
+    @pytest.mark.parametrize("appeared", ["cache", "bundle"])
+    def test_a_local_archive_appearing_after_a_download_plan_is_not_silently_used(
+        self, tmp_path, launches, monkeypatch, appeared
+    ):
+        """计划说「要下载 N 字节」，执行前多出一份本地归档：那不是用户看过的来源——过期、重新确认。"""
+        with LoopbackServer(tmp_path / "serve") as server:
+            archive, src, fetches = self._setup(tmp_path, launches, monkeypatch, server)
+            assert privatepython.offer_payload(src)["origin"] == "download"  # 计划时
+            if appeared == "cache":
+                self._cache(archive, src)
+            else:
+                _bundle(tmp_path, monkeypatch, archive)
+            self._refused(src, privatepython.ORIGIN_DOWNLOAD, fetches, server)
+
+    def test_a_runtime_present_at_plan_time_but_gone_is_refused_without_network(
+        self, tmp_path, launches, monkeypatch
+    ):
+        """计划时私有 Python 已就位（`present_payload`，零字节、不联网），执行前被删：不去下载。"""
+        with LoopbackServer(tmp_path / "serve") as server:
+            archive, src, fetches = self._setup(tmp_path, launches, monkeypatch, server)
+            _bundle(tmp_path, monkeypatch, archive)
+            privatepython.provision(src)
+            assert privatepython.present_payload(src) is not None  # 计划时
+            shutil.rmtree(privatepython.runtime_dir(src))
+            monkeypatch.delenv(runtime.PRIVATE_PYTHON_BUNDLE_ENV)
+            self._refused(src, privatepython.REQUIRE_PRESENT, fetches, server)
+
+    @pytest.mark.parametrize("origin", ["bundled", "cached", "download"])
+    def test_each_planned_origin_is_honoured_when_nothing_changed(
+        self, tmp_path, launches, monkeypatch, origin
+    ):
+        with LoopbackServer(tmp_path / "serve") as server:
+            archive, src, fetches = self._setup(tmp_path, launches, monkeypatch, server)
+            if origin == "bundled":
+                _bundle(tmp_path, monkeypatch, archive)
+            elif origin == "cached":
+                self._cache(archive, src)
+            assert privatepython.offer_payload(src)["origin"] == origin
+            python = privatepython.provision(src, required_origin=origin)
+            assert Path(python).is_file()
+            assert len(fetches) == (1 if origin == "download" else 0)
+            assert privatepython.read_ledger()["runtimes"][src.id]["origin"] == origin
+
+    def test_an_already_present_runtime_satisfies_any_plan_without_network(
+        self, tmp_path, launches, monkeypatch
+    ):
+        """执行时 runtime 已在（别的项目刚供应过）：不取任何归档、不联网——哪个计划都照常。"""
+        with LoopbackServer(tmp_path / "serve") as server:
+            archive, src, fetches = self._setup(tmp_path, launches, monkeypatch, server)
+            self._cache(archive, src)
+            python = privatepython.provision(src)
+            fetches.clear()
+            privatepython.archive_path(src).unlink()
+            for required in (*privatepython.ORIGINS, privatepython.REQUIRE_PRESENT):
+                assert privatepython.provision(src, required_origin=required) == python
+            assert fetches == [] and server.requests == []
+
+    def test_a_consumer_attached_to_another_plans_failed_provisioning_retries_on_its_own_origin(
+        self, tmp_path, launches, monkeypatch
+    ):
+        """挂上的是别的计划领起的那一份（它要下载，却发现多出一份缓存 → source_changed）：那不是本消费者的
+        计划过期——按自己的来源（cached）再领一次，成功、不联网。"""
+        with LoopbackServer(tmp_path / "serve") as server:
+            archive, src, fetches = self._setup(tmp_path, launches, monkeypatch, server)
+            self._cache(archive, src)
+            other = privatepython._Inflight(src, privatepython.ORIGIN_DOWNLOAD)
+            privatepython._inflight[src.id] = other
+
+            def _fail_later():
+                time.sleep(0.3)
+                other.error = privatepython.ProvisionError(privatepython.ERROR_SOURCE_CHANGED, "x")
+                with privatepython._lock:
+                    privatepython._inflight.pop(src.id, None)
+                other.done.set()
+
+            threading.Thread(target=_fail_later, daemon=True).start()
+            python = privatepython.provision(src, required_origin=privatepython.ORIGIN_CACHED)
+            assert Path(python).is_file() and fetches == [] and server.requests == []
+            assert privatepython.read_ledger()["runtimes"][src.id]["origin"] == "cached"
 
 
 # ================================================================ 负例：坏 hash / 截断 / 离线 / 越界 / 起不来

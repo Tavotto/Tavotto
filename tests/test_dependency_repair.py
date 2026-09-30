@@ -352,7 +352,7 @@ def test_the_plan_binds_the_requirement_not_the_request(project, monkeypatch):
 
     installs: list[str] = []
     monkeypatch.setattr(
-        deprepair, "_pip_install", lambda py, req, ev, log: (installs.append(req), ("", ""))[1]
+        deprepair, "_pip_install", lambda py, req, ev, log, **_: (installs.append(req), ("", ""))[1]
     )
     monkeypatch.setattr(deprepair, "_run", lambda argv, timeout: (0, "pip 24.0"))
     monkeypatch.setattr(
@@ -654,7 +654,7 @@ def test_imports_can_pass_while_the_worker_still_cannot_run(project, monkeypatch
         str(project), "figure.py", FIXTURE_IMPORT, target_kind=deprepair.TARGET_PROJECT_VENV
     )
     monkeypatch.setattr(deprepair, "_run", lambda argv, t: (0, "pip 24.0"))
-    monkeypatch.setattr(deprepair, "_pip_install", lambda *a: ("", "ok"))
+    monkeypatch.setattr(deprepair, "_pip_install", lambda *a, **_: ("", "ok"))
     monkeypatch.setattr(deprepair, "installed_version", lambda py, dist: "1.0")
     # 第一、二层：都说没问题
     monkeypatch.setattr(
@@ -749,7 +749,7 @@ def test_an_environment_without_pip_is_reported_not_silently_fixed(project, monk
 
     monkeypatch.setattr(deprepair, "_run", _no_pip)
     monkeypatch.setattr(
-        deprepair, "_pip_install", lambda *a: pytest.fail("没有 pip 就不该走到安装")
+        deprepair, "_pip_install", lambda *a, **_: pytest.fail("没有 pip 就不该走到安装")
     )
     with pytest.raises(deprepair.RepairError) as err:
         deprepair.install(plan.plan_id)
@@ -1190,7 +1190,7 @@ def test_a_pin_set_during_confirmation_stops_the_install(project, monkeypatch):
     )
     _pin_in_settings(monkeypatch, sys.executable)
     monkeypatch.setattr(
-        deprepair, "_pip_install", lambda *a: pytest.fail("固定生效时一个字节都不该装")
+        deprepair, "_pip_install", lambda *a, **_: pytest.fail("固定生效时一个字节都不该装")
     )
     with pytest.raises(deprepair.RepairError) as err:
         deprepair.install(plan.plan_id)
@@ -1272,7 +1272,7 @@ def _stub_pip(monkeypatch, *, pip_code: str) -> None:
     它同时是 create_plan 的「目标环境缺不缺」与安装后的「装进去了没」两处判据，
     用例各自按需要摆。"""
     monkeypatch.setattr(deprepair, "_run", lambda argv, timeout: (0, "pip 24.0"))
-    monkeypatch.setattr(deprepair, "_pip_install", lambda *a: (pip_code, "pip output"))
+    monkeypatch.setattr(deprepair, "_pip_install", lambda *a, **_: (pip_code, "pip output"))
     monkeypatch.setattr(deprepair, "worker_self_test", lambda py: {"ok": True})
     monkeypatch.setattr(deprepair, "installed_version", lambda py, dist: "1.0")
 
@@ -1339,7 +1339,7 @@ def test_a_second_plan_formed_before_the_first_install_finished_does_not_repeat_
     runs: list[str] = []
     monkeypatch.setattr(deprepair, "_run", lambda argv, timeout: (0, "pip 24.0"))
     monkeypatch.setattr(
-        deprepair, "_pip_install", lambda py, req, ev, log: (runs.append(req), ("", ""))[1]
+        deprepair, "_pip_install", lambda py, req, ev, log, **_: (runs.append(req), ("", ""))[1]
     )
     monkeypatch.setattr(
         deprepair.projectenv, "probe_environment", lambda py, mod=None: {"ok": True, "python": py}
@@ -1385,7 +1385,14 @@ def _stub_generation_until_pip(monkeypatch, *, pip_code: str) -> list[str]:
     )
     monkeypatch.setattr(deprepair, "_run", lambda argv, timeout: (0, "pip 24.0"))
     monkeypatch.setattr(
-        deprepair, "_run_pip", lambda argv, ev, log: (runs.append("pip"), (pip_code, "out"))[1]
+        deprepair,
+        "_run_pip",
+        # 桩代表「pip 进程起来了」：照真 `_run_pip` 的约定调 `on_started`
+        lambda argv, ev, log, on_started=None: (
+            runs.append("pip"),
+            on_started and on_started(),
+            (pip_code, "out"),
+        )[2],
     )
     return runs
 
@@ -1439,11 +1446,40 @@ def test_a_failed_managed_pip_run_leaves_the_requirement_retryable(
         with pytest.raises(deprepair.RepairError) as err:
             deprepair.install(plan.plan_id)
         assert err.value.code == pip_code
-    assert runs == ["pip"]
+    # 断网那条按 ADR 0111 再走一次镜像（桩里的 `pip config list` 什么源都没配），仍断网就如实失败；取消不换源
+    assert runs == (["pip", "pip"] if pip_code == deprepair.ERROR_NETWORK else ["pip"])
     again = deprepair.create_plan(
         str(project), "figure.py", FIXTURE_IMPORT, target_kind=deprepair.TARGET_MANAGED
     )
     assert again.plan_id
+
+
+def test_the_managed_generation_records_the_mirror_on_its_progress(project, monkeypatch, tmp_path):
+    """ADR 0111：受管环境换代那条（联合 argv 出处）断网且没自配源时改用镜像重试一次；进度记录带 `pypi_mirror`，
+    日志里写明——之后成败照常（这里验证那步打桩失败也无妨，看的是镜像有没有被说出口）。"""
+    plan = _managed_plan(project, monkeypatch, tmp_path, private=False)
+    _stub_generation_until_pip(monkeypatch, pip_code="")
+    seen: list[list[str]] = []
+
+    def _fake_run_pip(argv, ev, log, on_started=None):
+        seen.append(argv)
+        if on_started is not None:
+            on_started()  # 桩代表 pip 进程已起来（真 `_run_pip` 在 Popen 之后调它）
+        return (
+            (deprepair.ERROR_NETWORK, "Retrying (Retry(total=4))") if len(seen) == 1 else ("", "")
+        )
+
+    monkeypatch.setattr(deprepair, "_run_pip", _fake_run_pip)
+    try:
+        deprepair.install(plan.plan_id)
+    except deprepair.RepairError:
+        pass
+    assert len(seen) == 2
+    assert "--index-url" not in seen[0]
+    assert seen[1][seen[1].index("--index-url") + 1] == deprepair.PYPI_MIRROR_URL
+    rec = deprepair.progress(plan.plan_id)
+    assert rec.get("pypi_mirror") == deprepair.PYPI_MIRROR_URL
+    assert deprepair.PYPI_MIRROR_URL in rec.get("log", "")
 
 
 @pytest.mark.parametrize(

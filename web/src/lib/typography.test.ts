@@ -23,7 +23,9 @@ import {
   propOfPath,
   propertyPathOf,
   readCanvasText,
+  styleIsItalic,
   supportsTypography,
+  weightIsBold,
   writeCanvasText,
   type TypographyKind,
 } from './typography'
@@ -194,5 +196,19 @@ describe('校验与规整', () => {
     expect(coerceTypography('color', '#AABBCC')).toEqual({ ok: true, value: '#AABBCC' })
     expect(coerceTypography('color', 'red')).toEqual({ ok: false, reason: 'not_a_color' })
     expect(coerceTypography('color', 123)).toEqual({ ok: false, reason: 'not_a_color' })
+  })
+})
+
+describe('weightIsBold / styleIsItalic：非规范字重 / 字形的归一（与引擎 fname 字体同一口径，#704）', () => {
+  it('字重 ≥ 600 算加粗：数字、数字串与 matplotlib 字重名', () => {
+    for (const v of [600, 700, 900, '600', 'semibold', 'demibold', 'demi', 'bold', 'heavy', 'extra bold', 'black', ' Bold '])
+      expect(weightIsBold(v), String(v)).toBe(true)
+    for (const v of [599, 500, '500', 'medium', 'roman', 'normal', 'regular', 'book', 'light', 'ultralight', '', 'wide', undefined, null, true])
+      expect(weightIsBold(v), String(v)).toBe(false)
+  })
+
+  it('字形不是 normal 就算斜体（oblique 算）', () => {
+    for (const v of ['italic', 'oblique', 'Oblique']) expect(styleIsItalic(v), v).toBe(true)
+    for (const v of ['normal', ' Normal ', '', undefined, null, true]) expect(styleIsItalic(v), String(v)).toBe(false)
   })
 })

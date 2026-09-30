@@ -203,7 +203,8 @@ export function useFigureTypography(
     unavailableOptions: (prop) => {
       const m = mp(prop)
       if (!m) return EMPTY
-      return inner.fieldOf(m)?.options_unavailable ?? EMPTY
+      // 读并过本机表的那一份：本机表里有的不算不可用（`withMachineFamilies`，与设置 › 样式页同一口径）
+      return fieldFor(m)?.options_unavailable ?? EMPTY
     },
   }
 }

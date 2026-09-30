@@ -195,6 +195,17 @@ interface NumberFieldProps {
   disabled?: boolean
   /** 多选且取值不一致：留空并显示占位符，而不是谎报一个数 */
   mixed?: boolean
+  /**
+   * `mixed` 时的占位文字，缺省「多个值」。留空的原因不是「几处不一样」时换掉它：设置 › 样式页
+   * 里留空是「这份样式没管这一项」，写「多个值」就是在说一件不存在的事
+   */
+  mixedPlaceholder?: string
+  /**
+   * 给了它，清空框就是一个值：「这一项回到没设置」（设置 › 样式页，删掉这个键，不写 0）。
+   * 清空后 Enter / 失焦提交；框本来就是空的（`mixed`，比如样式里写着一个认不出的数）时，
+   * 在空框里按 Backspace / Delete 也算。不给时空框照旧还原（属性页：数不能「没有」）
+   */
+  onClear?: () => void
   className?: string
   title?: string
   /** 无障碍名。缺省时从字符串 prefix/unit 推导（"X (mm)"）；prefix 不是
@@ -224,6 +235,8 @@ export function NumberField({
   fill,
   disabled,
   mixed,
+  mixedPlaceholder,
+  onClear,
   className,
   title,
   ariaLabel,
@@ -280,6 +293,10 @@ export function NumberField({
     // 原文没动过就不提交：键盘用户 Tab 路过一个输入框（聚焦→失焦）不该
     // 产生 onChange——上层会把它记成一条“修改”历史，撤销时表现为
     // 「按了没反应」（issue #37 的纯键盘闭环实测撞见）。
+    if (onClear && raw.trim() === '' && raw !== display) {
+      onClear()
+      return
+    }
     if (raw === display) return
     const parsed = Number(raw)
     if (raw.trim() !== '' && Number.isFinite(parsed)) commit(parsed)
@@ -372,7 +389,7 @@ export function NumberField({
           aria-label={derivedLabel}
           disabled={disabled}
           value={text}
-          placeholder={mixed ? t('mixed') : undefined}
+          placeholder={mixed ? (mixedPlaceholder ?? t('mixed')) : undefined}
           onChange={(e) => setText(e.target.value)}
           onFocus={(e) => {
             setFocused(true)
@@ -389,6 +406,8 @@ export function NumberField({
               submit(text)
               skipBlurSubmit.current = true
               ;(e.target as HTMLInputElement).blur()
+            } else if (onClear && mixed && (e.key === 'Backspace' || e.key === 'Delete') && text === '') {
+              onClear()
             } else if (e.key === 'Escape') {
               setText(display)
               skipBlurSubmit.current = true

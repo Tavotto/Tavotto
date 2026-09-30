@@ -11,6 +11,7 @@ worker 在此转换为各 artist 自己的坐标系。
 from __future__ import annotations
 
 import contextlib
+import filecmp
 import hashlib
 import math
 import numbers
@@ -631,10 +632,44 @@ def cjk_fallback_candidates() -> tuple[str, ...]:
     return tuple(seen)
 
 
-#: 探测结果按进程缓存：字体装没装在一个 worker 的生命周期里不会变。
+#: 探测结果按进程缓存，随字体注册表的代次失效（`sync_font_caches`）。
 #: （`manifest._font_installed` 读的也是这一张表——「这个名字画不画得出」
 #: 全 worker 只有一个判据。）
 _FONT_PRESENT: dict[str, bool] = {}
+
+#: 下面这些派生缓存上次对齐时的字体注册表代次（`font_generation`）。
+_FONT_GEN: tuple | None = None
+
+
+def font_generation() -> tuple:
+    """matplotlib 字体注册表此刻的「代次」：注册表对象本身 + 登记了多少张脸。
+
+    字体装没装**不是**一个 worker 生命周期里的常量：脚本自己 `addfont`、fname 放开时
+    我们替它 `addfont`（`_face_of_font_file`）、native 会话两次 `plt.show()` 之间引入
+    项目字体，都会让注册表变长；`_load_fontmanager` 重建则换掉整个对象。matplotlib
+    自己的 `findfont` 缓存在 `addfont` 里清掉了，我们从它派生的缓存只认这一个代次。
+    """
+    from matplotlib import font_manager
+
+    fm = font_manager.fontManager
+    return (id(fm), len(fm.ttflist), len(fm.afmlist))
+
+
+def sync_font_caches() -> tuple:
+    """以 `fontManager` 为数据源的派生缓存的**唯一**失效点：代次变了就全部作废。
+
+    名单：本模块的 `_FONT_PRESENT`（画不画得出）、`_CJK_TAIL`（回退尾巴）、
+    `_FILE_FACE`（fname 反查，结论取决于同族还登记了哪些脸）；`manifest` 的
+    `installed_font_families` 按代次作缓存键。每个读缓存的入口先调这里。
+    """
+    global _FONT_GEN, _CJK_TAIL
+    gen = font_generation()
+    if gen != _FONT_GEN:
+        _FONT_GEN = gen
+        _FONT_PRESENT.clear()
+        _CJK_TAIL = None
+        _FILE_FACE.clear()
+    return gen
 
 
 def font_installed(name: str) -> bool:
@@ -645,6 +680,7 @@ def font_installed(name: str) -> bool:
     正是它让 playground 里选 Times New Roman 静默变成 DejaVuSans——链路全通、
     override 记下了、图重绘了，只有字形没变，界面还报告成功。
     """
+    sync_font_caches()
     hit = _FONT_PRESENT.get(name)
     if hit is None:
         from matplotlib import font_manager
@@ -670,9 +706,11 @@ _CJK_TAIL: tuple[str, ...] | None = None
 def cjk_fallback_tail() -> tuple[str, ...]:
     """这台机器上**装了的**中日韩候选，按偏好顺序。没装一个就是空元组。
 
-    进程内缓存一次：它跟在每一段文字的族列表后面，一次 build 要问几百遍。
+    进程内缓存，随字体注册表的代次失效：它跟在每一段文字的族列表后面，一次 build
+    要问几百遍。
     """
     global _CJK_TAIL
+    sync_font_caches()
     if _CJK_TAIL is None:
         if os.environ.get(CJK_FALLBACK_ENV, "").strip() == "0":
             _CJK_TAIL = ()
@@ -696,12 +734,149 @@ def _family_chain(fam) -> list[str]:
     return head + [f for f in fallback_tail() if f not in head]
 
 
+#: worker 这一侧认的字体文件扩展名：TrueType / OpenType 及它们的字体集。fname 放开
+#: （`_face_of_font_file`）只认这一份；字体集 `.ttc` / `.otc` 与 `manifest._ft_font`
+#: 按面索引读字体集是同一套认法（父进程 `rendercore/fonts.py` 的批准字体扫描是另一个
+#: 进程，名单与这里相同）。
+FONT_FILE_SUFFIXES = (".ttf", ".otf", ".ttc", ".otc")
+
+#: 字体文件身份（`font_file_key`）→ 能把它原样找回来的 (族名, style, variant, weight,
+#: stretch)；`None` 表示按名字找不回同一个文件，只能留着 fname。按进程缓存。
+_FILE_FACE: dict[tuple, tuple | None] = {}
+
+
+def _same_file(a, b) -> bool:
+    try:
+        return os.path.samefile(os.fspath(a), os.fspath(b))
+    except (OSError, TypeError):
+        return False
+
+
+def font_face_index(path) -> int:
+    """字体路径带的面索引：matplotlib 3.11 起 `findfont` 给的是 `FontPath`（`str` 子类，
+    带 `.face_index`），`fname=` 接过去原样存着、渲染也按它读字体集里那一张脸。3.10 及以前
+    是普通 `str`，恒为 0。**任何把字体路径变成普通字符串的地方都会丢掉它**
+    （`os.path.abspath`、`str()`），所以先取出来再转。"""
+    return int(getattr(path, "face_index", 0) or 0)
+
+
+def font_file_key(path, face_index: int | None = None) -> tuple:
+    """按字体（文件, 面）缓存的**唯一**键：文件本身，不是脚本写的那串路径。native 会话里
+    两次 `plt.show()` 之间脚本可以换 cwd，同一个相对 fname（`fonts/main.ttf`）指的就是另一个
+    文件；同一个文件被原地换掉（字节变了）也要重新读。字体集（`.ttc` / `.otc`）里不同的脸
+    是不同的键——`face_index` 不给就取路径自带的（`font_face_index`）。
+
+    第 0 项是绝对路径、最后一项是面索引，打开字体用这两项。以字体路径作键的缓存都走这里：
+    本模块的 `_FILE_FACE`、`manifest._FT_FONTS`。"""
+    index = font_face_index(path) if face_index is None else int(face_index)
+    path = os.path.abspath(os.fspath(path))
+    try:
+        st = os.stat(path)
+    except OSError:
+        return (path, index)
+    return (path, st.st_dev, st.st_ino, st.st_mtime_ns, st.st_size, index)
+
+
+def open_font_face(path: str, index: int):
+    """打开字体文件里的**这一张脸**。索引非 0 只可能来自 3.11+ 的 `FontPath`，那些版本一定
+    有 `face_index` 关键字；旧版走无关键字那支，签名与从前逐字相同。**不吞 TypeError**：
+    真出现了「有索引却传不进去」，宁可当场炸，也不要退回去读错的那张脸。"""
+    from matplotlib.ft2font import FT2Font
+
+    return FT2Font(path, face_index=index) if index else FT2Font(path)
+
+
+def _face_of_font_file(path: str) -> tuple | None:
+    """`FontProperties(fname=…)` 指向的那个文件，按名字怎么点才能**找回它本身**。
+
+    只认 `FONT_FILE_SUFFIXES`。fname 渲染时读的是路径带的那张脸（`font_face_index`：
+    3.11+ 的 `FontPath` 可以指向字体集里第 N 张，更早恒为第 0 张），这里读、验证的也是它。
+    没注册过的（脚本自带的字体文件）先 `addfont` 注册。按族名 + 字重 / 字形反查
+    必须解析回**同一个文件（或字节相同的拷贝）的同一张脸**才算数——同名但版本
+    不同的另一份、字重对不上的兄弟文件都会让正文那张脸变样，那种宁可不接回退，
+    也不换掉拉丁字的脸（manifest 仍按那个文件照实报缺字）。
+
+    字重 / 字形**先归一到界面的词表**再反查：「粗细」只认 normal / bold、「字形」
+    只认 normal / italic（manifest 报的是 `str(get_fontweight())` /
+    `str(get_fontstyle())`），Light 的 300、Oblique 写进 Text 会让下拉一项都选不中。
+    归一之后仍然解析回同一个文件才放——同族里另有 Regular 的 Light 文件，按
+    normal 找到的是 Regular，于是留着 fname。
+    """
+    sync_font_caches()
+    key = font_file_key(path)
+    if key in _FILE_FACE:
+        return _FILE_FACE[key]
+    path, index = key[0], key[-1]
+    hit = None
+    if os.path.splitext(path)[1].lower() in FONT_FILE_SUFFIXES:
+        from matplotlib import font_manager
+
+        try:
+            entry = font_manager.ttfFontProperty(open_font_face(path, index))
+            fm = font_manager.fontManager
+            if not any(_same_file(e.fname, path) for e in fm.ttflist):
+                fm.addfont(path)
+            w = entry.weight  # 新版是数值，老版可能是 'light' 这样的名字
+            w = font_manager.weight_dict.get(w, 400) if isinstance(w, str) else int(w)
+            weight = "bold" if w >= 600 else "normal"
+            style = "normal" if entry.style == "normal" else "italic"
+            face = (entry.name, style, entry.variant, weight, entry.stretch)
+            probe = font_manager.FontProperties(
+                family=[face[0]], style=face[1], variant=face[2], weight=face[3], stretch=face[4]
+            )
+            found = font_manager.findfont(probe, fallback_to_default=False)
+            # 同一份字节算同一张脸：项目里自带一份 times.ttf、系统里也装着 Times 时，
+            # 按名字找到的是系统那份——画出来一个像素都不差
+            same = _same_file(found, path) or filecmp.cmp(found, path, shallow=False)
+            if same and font_face_index(found) == index:
+                hit = face
+        except (OSError, RuntimeError, ValueError):  # 坏字体文件：留着 fname，照旧渲染
+            hit = None
+    _FILE_FACE[key] = hit
+    return hit
+
+
+def _release_font_file(t: Text) -> bool:
+    """脚本用 `FontProperties(fname=…)` 锁了单个字体文件的文字：换成等价的族名。
+
+    matplotlib 里 fname 一旦有值，族列表**整个被忽略**，所有字形只从那一个文件
+    里找——回退尾巴接上了也不起作用。实测（用户反馈，Windows）：改图助手把全局
+    字体改成 `fname="times.ttf"` 之后，数字与拉丁字母正常、汉字全是方框；
+    manifest 按族列表算 face / 缺字，于是还报「中文由回退链画出、没有缺字」，
+    问题面板对方框一盏灯都不亮，下拉里改字体也改不动它（fname 照样压着）。
+
+    换成「那个文件的族名 + 同样的字重 / 字形」之后，正文仍然是那一个文件（反查
+    验证过），缺的字形才轮到尾巴。找不回同一个文件时原样不动。返回是否动过。
+    """
+    fp = t.get_fontproperties()
+    path = fp.get_file()
+    if path is None:
+        return False
+    face = _face_of_font_file(path)  # 原样传：`FontPath` 的面索引不许在这里丢掉
+    if face is None:
+        return False
+    name, style, variant, weight, stretch = face
+    fp = fp.copy()
+    fp.set_file(None)
+    fp.set_family([name])
+    fp.set_style(style)
+    fp.set_variant(variant)
+    fp.set_weight(weight)
+    fp.set_stretch(stretch)
+    t.set_fontproperties(fp)
+    return True
+
+
 def ensure_text_fallback(t: Text) -> bool:
-    """给一个 Text 的族列表补上回退尾巴；已经齐了就什么都不动。返回是否动过。"""
+    """给一个 Text 的族列表补上回退尾巴；已经齐了就什么都不动。返回是否动过。
+
+    脚本用 fname 锁了字体文件的，先换成族名（`_release_font_file`）——否则尾巴不起作用。
+    """
+    released = _release_font_file(t)
     fams = [str(f) for f in (t.get_fontfamily() or [])]
     chain = _family_chain(fams) if fams else _family_chain(list(mpl.rcParams["font.family"]))
     if chain == fams:
-        return False
+        return released
     t.set_fontfamily(chain)
     return True
 

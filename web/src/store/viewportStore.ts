@@ -36,6 +36,12 @@ interface ViewportState {
   readoutZoom: number
   /** 最近一次缩放是不是一步到位的（补间路径）——是才让读数滚，滚轮那种连续输入即时换数 */
   readoutRolls: boolean
+  /**
+   * 视口补间正在走（`animateTo` 起步到落定 / 被掐断）。只给观察者用：舞台把它挂成
+   * `data-view-tweening`，e2e 据此等取景落定再量几何——补间途中 zoom / pan 与刚变的页面
+   * 尺寸对不上，量出来的「居中」是半路上的值（#720 的 posix-e2e 偶发红）。
+   */
+  tweening: boolean
 
   setViewRect: (rect: { left: number; top: number; width: number; height: number }) => void
   setSpaceDown: (v: boolean) => void
@@ -117,6 +123,7 @@ let animTarget: ViewTarget | null = null
 function stopAnim() {
   cancelAnim?.()
   cancelAnim = null
+  if (animTarget) useViewportStore.setState({ tweening: false })
   animTarget = null
 }
 
@@ -153,7 +160,7 @@ function animateTo(set: Setter, get: Getter, target: ViewTarget) {
   if (s.zoom === target.zoom && s.panX === target.panX && s.panY === target.panY) return
   const from = { zoom: s.zoom, panX: s.panX, panY: s.panY }
   animTarget = target
-  set({ readoutZoom: target.zoom, readoutRolls: true })
+  set({ readoutZoom: target.zoom, readoutRolls: true, tweening: true })
   cancelAnim = tween({
     duration: DURATION.base,
     onUpdate: (e) =>
@@ -165,6 +172,7 @@ function animateTo(set: Setter, get: Getter, target: ViewTarget) {
     onDone: () => {
       cancelAnim = null
       animTarget = null
+      set({ tweening: false })
     },
   })
 }
@@ -249,6 +257,7 @@ export const useViewportStore = create<ViewportState>((set, get) => ({
   fitted: false,
   readoutZoom: 1,
   readoutRolls: false,
+  tweening: false,
 
   setViewRect: ({ left, top, width, height }) => {
     const s = get()

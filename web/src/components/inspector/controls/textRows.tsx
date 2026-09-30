@@ -72,9 +72,15 @@ export function StyleToggle({
   hint,
   onClick,
   disabled,
+  mixedText,
   children,
 }: {
   state: 'on' | 'off' | 'mixed'
+  /**
+   * 第三态叫什么（默认「多个值」）。设置 › 样式页编辑的是样式本身，第三态是「未设置」——
+   * 同一副视觉（按钮下一道短横、`aria-pressed="mixed"`），读屏说的是它自己的意思
+   */
+  mixedText?: string
   /** 按钮说的是它干什么（加粗），不是属性叫什么（字重） */
   label: string
   /** 悬停时补一句当前值——图标按下与否在小尺寸下不总是一眼可辨 */
@@ -84,8 +90,8 @@ export function StyleToggle({
   disabled?: boolean
   children: ReactNode
 }) {
-  const mixedText = translate('element.mixedValues', { ns: 'inspector' })
-  const name = state === 'mixed' ? `${label} · ${mixedText}` : label
+  const third = mixedText ?? translate('element.mixedValues', { ns: 'inspector' })
+  const name = state === 'mixed' ? `${label} · ${third}` : label
   return (
     <Tip label={hint ?? name}>
       <Button
@@ -117,6 +123,18 @@ export function StyleToggle({
       </Button>
     </Tip>
   )
+}
+
+/**
+ * 「这个运行时画不出来」的字体：选项后的小标记与当前值下面的 warning。属性页与设置 › 样式页
+ * 共用这一副（`options_unavailable`；名字保留、不换掉）。
+ */
+export function FontMissingTag() {
+  return <span className="ml-1 font-sans text-ink-3">{tc('fontMissingTag')}</span>
+}
+
+export function FontMissingHint() {
+  return <p className="pl-1 text-xs leading-relaxed text-warn">{tc('fontMissingHint')}</p>
 }
 
 function FontFamilyRowView({
@@ -168,18 +186,14 @@ function FontFamilyRowView({
             label: (
               <span style={{ fontFamily: fontStackOf(o) }}>
                 {optionLabelOf(o)}
-                {missing.has(o) && (
-                  <span className="ml-1 font-sans text-ink-3">{tc('fontMissingTag')}</span>
-                )}
+                {missing.has(o) && <FontMissingTag />}
               </span>
             ),
           }))}
         />
         {overridden && onReset && <ResetChip label={label} onReset={onReset} />}
       </Row>
-      {!mixed && missing.has(value) && (
-        <p className="pl-1 text-xs leading-relaxed text-warn">{tc('fontMissingHint')}</p>
-      )}
+      {!mixed && missing.has(value) && <FontMissingHint />}
     </>
   )
 }

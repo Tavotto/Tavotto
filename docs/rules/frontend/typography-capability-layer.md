@@ -51,7 +51,9 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
   （与 override 同一个数）。两位小数、`toFixed`（与问题面板的 `eff.toFixed(2)` 同一种取整）。
   上下界约束的是脚本值，换到页面上显示与钳位。画布标注的 `sizePt` 本来就是页面 pt，不换算。
 * 装不上的字体：`manifest` 的 `options_unavailable` → 界面**保留名字 +
-  warning**，绝不换掉再改文档。
+  warning**，绝不换掉再改文档。本机表（`font_families`）里有的名字**不算**不可用——撤标记只在
+  `withMachineFamilies` 一处，属性页（`unavailableOptions` 读并过的字段）与设置 › 样式页同一口径；
+  引擎侧文字与刻度的字体族字段同一条判据（`font_installed`，画不出才标）。
 * 图内中文（ADR 0045）：引擎给每段文字接了本机的中日韩回退链，manifest 用
   `cjk_family` 报是哪张脸画的；预检 `cjk-fallback-missing` 的主语是它（不是正文
   族名），`preflight.ts` 与 Python 侧同源，golden 向量看护。

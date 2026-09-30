@@ -25,6 +25,10 @@
   一律拒绝，不靠 `tarfile` 的默认行为），落点再过一次 `_assert_under`。不改 PATH、shell、
   注册表、默认 Python、用户的 `.python-version`——本模块没有任何一行写到那些地方，用例用
   HOME / PATH 前后快照钉住。
+* **字节的来源按序三处，信任只有一条**（ADR 0111）：安装包附带的归档（`runtime.private_python_bundle_dirs`，
+  桌面版随包带本目标那份 pbs 归档）→ `downloads/` 里校验过的缓存 → 锁里的 URL。前两处不联网；每一处都是
+  **整份 sha256 与锁一致才用**，包内那份对不上就当它不在（记 WARNING）、往下一处走。包内归档**不复制**进
+  `downloads/`：它本身就是一份校验过的本地归档，后面解包 / 真起 / 原子改名是同一条链。
 * **联网只有一条路**：`urllib`（代理只从 `HTTP(S)_PROXY` / `NO_PROXY` 环境变量来），证书按
   **平台原生**校验（`tlstrust`：truststore——干净 Windows 缺 ISRG Root X1 时由 CryptoAPI 按需补装，
   2026-09-28 实测），不读 pip.conf / uv 配置 / 项目设置，不带任何身份。离线 = 传输层失败，
@@ -90,6 +94,10 @@ ERROR_LAUNCH_FAILED = "private_python_launch_failed"
 ERROR_WRITE_FAILED = "private_python_write_failed"
 #: 证书校验失败（缺根 / 过期 / 主机名不符 / 被中间设备换了证书）：不是离线，「检查网络」帮不上忙。
 ERROR_TLS = "private_python_tls"
+#: 计划时告诉用户的归档来源（`required_origin`）此刻已不成立（包内那份不见了 / 缓存被删 / 多出一份本不该用的
+#: 本地归档 / 已就位的那份没了）：**不换成另一个没说过的来源**，尤其不变成联网下载——让调用方按「计划过期」
+#: 请用户重新确认（ADR 0111 §一）。
+ERROR_SOURCE_CHANGED = "private_python_source_changed"
 ERROR_CODES = (
     ERROR_NOT_OFFERED,
     ERROR_OFFLINE,
@@ -101,10 +109,21 @@ ERROR_CODES = (
     ERROR_LAUNCH_FAILED,
     ERROR_WRITE_FAILED,
     ERROR_TLS,
+    ERROR_SOURCE_CHANGED,
 )
 
 #: 传输层失败的根异常类型名（闭集唯一出处在 `tlstrust`：遥测 / 检查更新记同一张表）。
 TRANSPORT_ERROR_NAMES = tlstrust.TRANSPORT_ERROR_NAMES
+
+#: 归档从哪来（`offer_payload()["origin"]` 与账里的 `origin`；闭集，ADR 0111）：安装包附带 / 数据目录里
+#: 校验过的缓存 / 按锁 URL 下载。前两种不联网（`download_bytes=0`）。
+ORIGIN_BUNDLED = "bundled"
+ORIGIN_CACHED = "cached"
+ORIGIN_DOWNLOAD = "download"
+ORIGINS = (ORIGIN_BUNDLED, ORIGIN_CACHED, ORIGIN_DOWNLOAD)
+#: `provision(required_origin=)` 的第四个取值：计划时私有 Python 已就位（`present_payload()`），执行时它必须仍在
+#: ——不解任何归档、不联网。不是 `ORIGINS` 的一员（载荷里没有这个来源）。
+REQUIRE_PRESENT = "present"
 
 #: 下载阶段（`on_progress(stage, done, total)` 的第一个参数；闭集）。
 STAGE_DOWNLOADING = "downloading"
@@ -336,6 +355,40 @@ def read_ledger() -> dict:
     return data
 
 
+def bundled_archive(source: PythonSource) -> Path | None:
+    """安装包附带的这个目标的归档：文件在、**且整份 sha256 等于锁**才回路径；否则 None。
+
+    判据的主语：包内那个文件**此刻**的字节（不信文件名、不信大小）。对不上的包内归档不是可用来源——
+    记 WARNING、当它不在，调用方往缓存 / 下载那一处走（安装目录是只读的，删不掉也不该删）。"""
+    for folder in runtime.private_python_bundle_dirs():
+        cand = Path(folder) / source.archive_name
+        try:
+            if not cand.is_file():
+                continue
+            got = _sha256_file(cand)
+        except OSError as exc:
+            LOG.warning("包内私有 Python 归档读不了，不用它: %s", exc)
+            continue
+        if got == source.sha256:
+            return cand
+        LOG.warning(
+            "包内私有 Python 归档 SHA-256 与锁不符，不用它（期望 %s，实得 %s）", source.sha256, got
+        )
+    return None
+
+
+def archive_origin(source: PythonSource) -> str:
+    """供应**此刻**会从哪拿到归档（`ORIGINS`）：包内 → 缓存 → 下载。每一处都按锁的 sha256 判。"""
+    if bundled_archive(source) is not None:
+        return ORIGIN_BUNDLED
+    try:
+        if _cached_archive_ok(source):
+            return ORIGIN_CACHED
+    except OSError:
+        pass
+    return ORIGIN_DOWNLOAD
+
+
 def _write_ledger(data: dict) -> None:
     path = root_dir() / LEDGER_NAME
     try:
@@ -348,7 +401,7 @@ def _write_ledger(data: dict) -> None:
         LOG.warning("私有 Python 账写入失败: %s", exc)
 
 
-def _record(source: PythonSource, probe: dict) -> None:
+def _record(source: PythonSource, probe: dict, origin: str = "") -> None:
     with _lock:
         data = read_ledger()
         data["runtimes"][source.id] = {
@@ -363,6 +416,7 @@ def _record(source: PythonSource, probe: dict) -> None:
             "provisioned_at": int(time.time()),
             "last_used": int(time.time()),
             "reported_version": str(probe.get("version", "")),
+            "origin": origin,
         }
         _write_ledger(data)
 
@@ -427,23 +481,23 @@ def status(source: PythonSource | None = None) -> dict:
 def offer_payload(source: PythonSource | None = None) -> dict | None:
     """挂在计划上的「要不要先准备私有 Python」段；不提供 / 已在时回 None。
 
-    有值就意味着这次授权**包含下载**：`download_bytes` 是界面必须说出口的数字
-    （已有校验过的归档缓存时 `cached=True`、`download_bytes=0`——那时不联网，FO24）。
+    有值就意味着这次授权**包含准备私有 Python**；`origin`（`ORIGINS`，ADR 0111）说字节从哪来：
+    `bundled` 安装包附带、`cached` 数据目录里校验过的缓存——这两种不联网，`download_bytes=0`、
+    `cached=True`（`cached` 保留原义「有校验过的本地归档、不联网」，FO24）；`download` 才按锁 URL 下载，
+    `download_bytes` 是界面必须说出口的数字。
     """
     source = source or source_for()
     if source is None or not offered(source) or python_of(source) is not None:
         return None
-    cached = False
-    try:
-        cached = _cached_archive_ok(source)
-    except OSError:
-        cached = False
+    origin = archive_origin(source)
+    local = origin != ORIGIN_DOWNLOAD
     return {
         **source.to_payload(),
         "required": True,
-        "cached": cached,
-        "download_bytes": 0 if cached else int(source.size),
-        "network_required": not cached,
+        "origin": origin,
+        "cached": local,
+        "download_bytes": 0 if local else int(source.size),
+        "network_required": not local,
     }
 
 
@@ -525,8 +579,10 @@ def require_free_disk(source: PythonSource) -> None:
 class _Inflight:
     """同一个 id 正在进行的一次供应：一个下载线程，若干消费者各自等。"""
 
-    def __init__(self, source: PythonSource):
+    def __init__(self, source: PythonSource, required_origin: str | None = None):
         self.source = source
+        #: 领头消费者的计划说过的来源（`ORIGINS`）；None = 不绑定（工程 / 目标腿直接调用），按序三处。
+        self.required_origin = required_origin
         self.done = threading.Event()
         self.abort = threading.Event()
         self.consumers = 0
@@ -547,8 +603,13 @@ def provision(
     cancel_ev: threading.Event | None = None,
     on_progress=None,
     wait_timeout: float = WAIT_TIMEOUT_S,
+    required_origin: str | None = None,
 ) -> str:
     """把这个目标的私有 Python 准备好，回解释器路径。已在就直接回（不联网、不起子进程）。
+
+    `required_origin`（ADR 0111）：计划时告诉用户的来源（`offer_payload()["origin"]`，或计划时已就位的
+    `REQUIRE_PRESENT`）。给了就**只从这一处取**：此刻不成立即 `private_python_source_changed`，绝不静默换成
+    另一处（尤其不变成联网下载）。runtime 已在（`python_of`）永远可用——那不取任何归档、不联网。
 
     同一个 id 的并发调用只下载一次：第一个消费者起下载线程，其余的等它；每个消费者只管
     自己的 `cancel_ev`——它取消只是自己以 `private_python_cancelled` 退出，下载在最后一个
@@ -560,15 +621,37 @@ def provision(
     existing = python_of(source)
     if existing:
         return existing
+    if required_origin == REQUIRE_PRESENT:
+        raise ProvisionError(ERROR_SOURCE_CHANGED, "计划时已就位的私有 Python 不见了")
     if cancel_ev is not None and cancel_ev.is_set():
         # 进来之前就取消了：不起下载线程、不挂到别人的下载上（快的本地 / 缓存供应会在第一次轮询
         # 之前就提交，那时「已取消」的消费者拿到的是成功——Codex #464 第二轮 P2）
         raise ProvisionError(ERROR_CANCELLED, "已取消")
+    for _attempt in range(2):
+        job = _consume(source, cancel_ev, on_progress, wait_timeout, required_origin)
+        err = job.error
+        if (
+            err is not None
+            and err.code == ERROR_SOURCE_CHANGED
+            and job.required_origin != required_origin
+        ):
+            # 挂上的是别的计划领起的那一份（它说的来源不成立）：这不是本消费者的计划过期——按自己的
+            # 来源再领一次（至多一次）
+            continue
+        break
+    if job.error is not None:
+        raise ProvisionError(job.error.code, str(job.error), **job.error.detail)
+    assert job.result
+    return job.result
+
+
+def _consume(source, cancel_ev, on_progress, wait_timeout, required_origin) -> _Inflight:
+    """挂到同一个 id 正在进行的那份供应上（没有就领一份），等它结束；回那份 `_Inflight`（结果或错误在上面）。"""
     with _lock:
         job = _inflight.get(source.id)
         leader = job is None
         if job is None:
-            job = _Inflight(source)
+            job = _Inflight(source, required_origin)
             _inflight[source.id] = job
         job.consumers += 1
         if on_progress is not None:
@@ -598,10 +681,7 @@ def provision(
                 job.listeners.remove(on_progress)
             if job.consumers <= 0 and not job.committed.is_set():
                 job.abort.set()  # 最后一个消费者也走了：中止下载、清掉半成品
-    if job.error is not None:
-        raise ProvisionError(job.error.code, str(job.error), **job.error.detail)
-    assert job.result
-    return job.result
+    return job
 
 
 def _run_inflight(job: _Inflight) -> None:
@@ -654,7 +734,7 @@ def _provision_once(source: PythonSource, job: _Inflight) -> str:
     if existing:
         return existing
     require_free_disk(source)
-    archive = _download(source, job)
+    archive, origin = _download(source, job)
     _check_abort(job)
     staging = runtimes / f"{STAGING_PREFIX}{source.id}-{os.getpid()}"
     if staging.exists():
@@ -689,9 +769,9 @@ def _provision_once(source: PythonSource, job: _Inflight) -> str:
     result = python_of(source)
     if not result:
         raise ProvisionError(ERROR_LAUNCH_FAILED, "改名后最终目录里没有可执行的解释器")
-    _record(source, probe)
+    _record(source, probe, origin)
     _emit(job, STAGE_COMMITTED, source.size, source.size)
-    LOG.info("私有 Python 就位: %s（%s）", source.id, source.version)
+    LOG.info("私有 Python 就位: %s（%s，归档来自 %s）", source.id, source.version, origin)
     return result
 
 
@@ -703,8 +783,9 @@ def _sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
-def _download(source: PythonSource, job: _Inflight) -> Path:
-    """校验过的归档路径。缓存命中且 sha256 一致就不联网；否则下到 `.part`、整份校验通过才改名。
+def _download(source: PythonSource, job: _Inflight) -> tuple[Path, str]:
+    """校验过的归档路径与它的来源（`ORIGINS`）。安装包附带的那份 sha256 与锁一致就直接用它（不复制、
+    不联网，ADR 0111）；否则缓存命中且 sha256 一致也不联网；再否则下到 `.part`、整份校验通过才改名。
 
     传输层失败（连不上 / 超时 / 读到一半断）有界重试后报 `private_python_offline`；最后一次失败的
     根是**证书校验失败**时报 `private_python_tls`（2026-09-28 干净 Windows 实测：缺 ISRG Root X1 被报成
@@ -712,15 +793,31 @@ def _download(source: PythonSource, job: _Inflight) -> Path:
     HTTP 4xx / 5xx 报 `private_python_source_unavailable`（钉死的地址上没有这个文件——那是
     要升级 Tavotto 的事，不是重试的事）；hash 不符报 `private_python_hash_mismatch`，**不重试**。
     """
+    required = job.required_origin
+    bundled = (
+        bundled_archive(source) if required in (None, ORIGIN_BUNDLED, ORIGIN_DOWNLOAD) else None
+    )
+    if bundled is not None and required in (None, ORIGIN_BUNDLED):
+        _emit(job, STAGE_VERIFYING, source.size, source.size)
+        return bundled, ORIGIN_BUNDLED
+    if required == ORIGIN_BUNDLED:
+        raise ProvisionError(ERROR_SOURCE_CHANGED, "计划时的包内归档此刻不可用（不见了或校验不符）")
+    if bundled is not None:  # 计划说要下载，此刻却多出一份包内归档：不是计划里的来源
+        raise ProvisionError(ERROR_SOURCE_CHANGED, "计划说要下载，此刻却有了包内归档")
     dest = archive_path(source)
     try:
         if dest.is_file():
             _emit(job, STAGE_VERIFYING, 0, source.size)
             if _sha256_file(dest) == source.sha256:
-                return dest
+                if required == ORIGIN_DOWNLOAD:
+                    raise ProvisionError(ERROR_SOURCE_CHANGED, "计划说要下载，此刻却多出一份缓存")
+                return dest, ORIGIN_CACHED
             dest.unlink()  # 缓存里躺着一份对不上的：不是复用对象
     except OSError as exc:
         raise ProvisionError(ERROR_WRITE_FAILED, f"归档缓存不可读: {exc}") from exc
+    if required == ORIGIN_CACHED:
+        # 计划说「有缓存、不联网」：缓存没了（或坏了）就是计划过期，不联网去补
+        raise ProvisionError(ERROR_SOURCE_CHANGED, "计划时的归档缓存此刻不可用")
     # `.part` 带 pid + 随机后缀：两个进程同时供应同一份时各写各的，先完成的把正式名 `os.replace`
     # 上去，后完成的再 replace 一次同一份字节（校验过才会走到这里）——不会有谁在 rename 时发现
     # 自己的 `.part` 已被别人搬走（Codex #464 P2）。孤儿 `.part` 由 `_reap_orphans` 按时限清。
@@ -770,9 +867,9 @@ def _download(source: PythonSource, job: _Inflight) -> Path:
             # 同一份，后到的复用而不是报 write_failed（#467 Windows 腿确定性红）
             if _is_verified_archive(dest, source):
                 LOG.info("归档 %s 已由别的进程落盘，复用", source.archive_name)
-                return dest
+                return dest, ORIGIN_DOWNLOAD
             raise ProvisionError(ERROR_WRITE_FAILED, f"归档落盘失败: {exc}") from exc
-        return dest
+        return dest, ORIGIN_DOWNLOAD
     cert = tlstrust.cert_verification_error(last) if last is not None else None
     if cert is not None:
         raise ProvisionError(ERROR_TLS, f"证书校验失败: {cert}")

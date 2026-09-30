@@ -130,6 +130,14 @@ Python，首次渲染也不联网：
   仍不可污染，私有 Python 只当 `python -m venv` 的 base，落在用户数据目录 `<data_dir>/private-python/`。
   Windows 那边分工明确：embeddable 继续当渲染 runtime，pbs 当 base（embeddable 没有 venv / ensurepip）。
   每个目标的 `enabled` 在无系统 Python 的目标资格取得前保持 false。
+- **私有 Python 归档随桌面安装包附带**（2026-09-29，ADR 0111）：`scripts/stage_private_python.py` 按**产品读的同一份锁**
+  取本目标的 pbs 归档（经 `build_worker_runtime.download`，同一个缓存 `build/runtime-cache/`：macOS 两目标与内置 runtime
+  同一份、缓存命中；Windows 另下 ~47 MB）放进 `build/private-python-bundle/`（只许一份）；`build_desktop.py` 在 PyInstaller
+  之前调它（`--skip-private-python` 跳过并删掉上次备好的那份）；`tavotto.spec` 用同一把尺 `check_bundle()` 收进 `_internal/private-python/`
+  （目的地与 `runtime.PRIVATE_PYTHON_BUNDLE_DIR_NAME` 同源），`TAVOTTO_REQUIRE_PRIVATE_PYTHON=1`（`desktop-tauri.yml`
+  打开）时缺了拒绝打包。增量 macOS +25 MB、Windows +47 MB。它是**归档不是解释器**：运行时 sha256 等于锁才用、解到
+  用户数据目录。wheel / sdist 绝不带（pyproject `exclude` 挡 `build/private-python-bundle/**`）。看护
+  `tests/test_private_python_bundle.py`。
 - **浏览器 playground 的运行时锁**：`packaging/playground-runtime.json`
   钉死 Pyodide 版本与包白名单（前端 JSON import + 构建脚本共读），
   细节见 `docs/rules/frontend/browser-playground.md`。

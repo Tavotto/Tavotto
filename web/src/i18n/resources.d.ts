@@ -851,6 +851,7 @@ export default interface Resources {
       "builtin.spec.lab-publication-v1": "默认规范",
       "builtin.style.default": "默认样式",
       "clearField": "清除{{field}}",
+      "clearRow": "清除整行（{{row}}）：这一行的每一格都回到未设置",
       "conflict": "「{{name}}」已在别处被修改。请重新打开后再编辑。",
       "copyOf": "{{name}} 副本",
       "delete": "删除",
@@ -867,23 +868,39 @@ export default interface Resources {
       "duplicateToEdit": "复制一份再修改",
       "empty": "还没有配置",
       "export": "导出为文件",
+      "face": {
+        "bold": "粗体",
+        "italic": "斜体",
+        "notBold": "不加粗",
+        "notItalic": "不倾斜",
+        "styleValue": "字形 {{value}}",
+        "weightValue": "字重 {{value}}"
+      },
+      "faceHint": {
+        "style": {
+          "off": "斜体：一律不倾斜——应用时去掉图里的斜体（点一下回到未设置）",
+          "on": "斜体：倾斜（点一下改为一律不倾斜）",
+          "otherOff": "斜体：样式里写的是「{{value}}」，不算斜体——应用时照原值写（点一下改为斜体）",
+          "otherOn": "斜体：样式里写的是「{{value}}」，算斜体——应用时照原值写（点一下改为一律不倾斜）",
+          "unset": "斜体：未设置——应用时保留图里原来的字形（点一下改为斜体）"
+        },
+        "weight": {
+          "off": "粗体：一律不加粗——应用时去掉图里的加粗（点一下回到未设置）",
+          "on": "粗体：加粗（点一下改为一律不加粗）",
+          "otherOff": "粗体：样式里写的是「{{value}}」，不算加粗——应用时照原值写（点一下改为加粗）",
+          "otherOn": "粗体：样式里写的是「{{value}}」，算加粗——应用时照原值写（点一下改为一律不加粗）",
+          "unset": "粗体：未设置——应用时保留图里原来的粗细（点一下改为加粗）"
+        }
+      },
       "field": {
-        "annotationFont": "标注字号",
-        "axisFont": "轴标题字号",
-        "baseFont": "正文字号",
         "defaultFont": "正文字号",
         "doubleWidth": "双栏宽",
         "exportDpi": "推荐导出分辨率",
         "floorFont": "绝对下限",
-        "legendFont": "图例字号",
-        "lineWidth": "线宽",
         "maxFont": "最大字号",
         "minDpi": "最低分辨率",
         "minFont": "最小字号",
         "singleWidth": "单栏宽",
-        "spineWidth": "边框线宽",
-        "tickFont": "刻度字号",
-        "titleFont": "标题字号",
         "widthTolerance": "宽度容差"
       },
       "follow": "跟随更新",
@@ -892,8 +909,7 @@ export default interface Resources {
         "lines": "线条",
         "page": "页面与栏宽",
         "raster": "位图",
-        "text": "文字",
-        "ticks": "刻度"
+        "text": "文字"
       },
       "import": "从文件导入",
       "inUse": "本项目在用",
@@ -920,6 +936,9 @@ export default interface Resources {
       "restoreConfirm": "恢复",
       "restoreNeedsOrigin": "不是从内置复制来的，没有可恢复的默认值",
       "restoreTitle": "把「{{name}}」恢复成默认值？",
+      "row": {
+        "text": "其余文字"
+      },
       "save": "保存",
       "saved": "已保存「{{name}}」",
       "snapshotHint": "项目保存选中时的规则快照。全局规范之后的修改不影响本项目，除非打开「跟随更新」。",
@@ -2080,6 +2099,7 @@ export default interface Resources {
         "private_python_launch_failed": "下载的 Python 无法启动，已拒绝使用。",
         "private_python_not_offered": "这台电脑上还不能由 Tavotto 自备 Python。请安装 Python 3.10 以上，或选择已有环境。",
         "private_python_offline": "无法下载 Python。检查网络后重试；已有的环境不受影响。",
+        "private_python_source_changed": "准备 Python 的来源在确认之后变了（安装包里的归档或缓存不见了，或多出了一份）。请重新确认一次。",
         "private_python_source_unavailable": "下载地址上没有这份 Python。请升级 Tavotto 后再试。",
         "private_python_tls": "无法验证下载地址的证书（证书校验失败），已停止下载 Python。这不是网络断开：可能是这台电脑缺少根证书，或网络中的代理替换了证书。请运行系统更新或联系网络管理员后重试；已有的环境不受影响。",
         "private_python_write_failed": "无法写入 Tavotto 的数据目录。",

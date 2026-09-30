@@ -242,7 +242,7 @@ def test_pip_success_alone_is_not_success(client, project, wheelhouse, monkeypat
     _probe(client)
     plan = _plan(client, FIXTURE_IMPORT, deprepair.TARGET_PROJECT_VENV)
     monkeypatch.setattr(
-        deprepair, "_pip_install", lambda py, req, ev, log: ("", "Successfully installed\n")
+        deprepair, "_pip_install", lambda py, req, ev, log, **_: ("", "Successfully installed\n")
     )
     final = _install(client, plan["plan_id"])
     assert final["state"] == deprepair.STATE_FAILED
@@ -412,10 +412,10 @@ def test_cancelling_leaves_the_managed_environment_marked_incomplete(
 
     real_pip = deprepair._pip_install
 
-    def _slow(python, requirement, cancel_ev, on_log):
+    def _slow(python, requirement, cancel_ev, on_log, **kw):
         # 第一个包（基础栈）正常装，之后的那次故意等到取消到达
         if requirement in managedenv.BASE_PACKAGES:
-            return real_pip(python, requirement, cancel_ev, on_log)
+            return real_pip(python, requirement, cancel_ev, on_log, **kw)
         deadline = time.time() + 30
         while not cancel_ev.is_set() and time.time() < deadline:
             time.sleep(0.05)

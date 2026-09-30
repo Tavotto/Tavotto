@@ -366,6 +366,10 @@ jobs:
           # 构建一致、冒烟状态是 passed——少任何一条都当场失败，而不是安静地
           # 产出一个「装完不能渲染」的安装包。
           TAVOTTO_REQUIRE_RUNTIME: "1"
+          # 本目标的私有 Python 归档（ADR 0111）也必须随包：build_desktop.py 经 stage_private_python.py
+          # 按锁的 sha256 取到（macOS 两腿与上一步的 runtime 同一份归档，缓存命中；Windows 另下 pbs），
+          # tavotto.spec 缺了 / 对不上就当场失败
+          TAVOTTO_REQUIRE_PRIVATE_PYTHON: "1"
         run: python scripts/build_desktop.py --skip-tauri
 
       - name: 壳的单测（交接契约 --open/--stem）

@@ -53,6 +53,7 @@ export function CanvasStage() {
   const zoom = useViewportStore((s) => s.zoom)
   const panX = useViewportStore((s) => s.panX)
   const panY = useViewportStore((s) => s.panY)
+  const tweening = useViewportStore((s) => s.tweening)
   const setViewRect = useViewportStore((s) => s.setViewRect)
   const page = useDocumentStore((s) => s.doc.page)
   const objects = useDocumentStore((s) => s.doc.objects)
@@ -214,9 +215,11 @@ export function CanvasStage() {
         }}
       >
         {/* 唯一的世界变换。`data-world-transform` 是稳定选择器：e2e 靠它量
-            「切模式时画布有没有意外移动」（审计 T01），别改名 */}
+            「切模式时画布有没有意外移动」（审计 T01），别改名。`data-view-tweening`
+            在视口补间途中出现：e2e 等它消失再量几何，不用固定延时 */}
         <div
           data-world-transform
+          data-view-tweening={tweening || undefined}
           className="absolute left-0 top-0 origin-top-left"
           style={{
             transform: `translate(${panX}px, ${panY}px) scale(${zoom})`,

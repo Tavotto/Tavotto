@@ -1,0 +1,11 @@
+{
+  "_comment": "桌面壳 → sidecar 的 stdin 首行 JSON 里「建议端口」字段（issue #715 PR-A，ADR 0108）。严格同源对：生产方 src-tauri/src/sidecar/port_memory.rs（hello_field_is_the_golden_pair）与消费方 src/tavotto/desktop.py（tests/test_desktop_sidecar.py::test_preferred_port_field_is_the_golden_pair）各读这份，不读对方源码。accepted = 消费方必须原样采用的值；ignored = 必须忽略（退回系统分配）的值。",
+  "field": "preferred_port",
+  "valid_min": 1024,
+  "valid_max": 65535,
+  "first_choice_min": 20000,
+  "first_choice_max": 29999,
+  "misses_before_relearn": 3,
+  "accepted": [1024, 20000, 24680, 29999, 51234, 65535],
+  "ignored": [0, 80, 1023, 65536, -1, "24680", true, false, 24680.5, null, [24680], {"port": 24680}]
+}

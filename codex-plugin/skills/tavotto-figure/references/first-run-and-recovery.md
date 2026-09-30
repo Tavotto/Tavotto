@@ -27,7 +27,7 @@ Codex 不认识这种来源时，`codex plugin list` 里不会出现 `tavotto`�
 ### 插件明明装着、也新开过会话，工具还是一个都没有（多见于 Windows）
 
 这时候**不是插件没装**，是 Codex 起 MCP server 的那一跳没起来。插件的启动命令是
-自带的 `./mcp/launch.cmd`，它会自己找一个能跑的 Python（Windows 上会跳过微软商店的
+自带的 `./mcp/launch`（Windows 上实际跑的是同目录的 `launch.cmd`），它会自己找一个能跑的 Python（Windows 上会跳过微软商店的
 App Execution Alias——命令**存在**、启动起来只有一个 9009 且什么都不打印）；还是一个
 工具都没有，说明这台机器上它一个能跑的 Python 都没找到，连会说人话的降级 server 都
 起不来，Codex 那边也不会为此报任何错。
@@ -85,7 +85,7 @@ codex plugin marketplace upgrade tavotto
 ```
 
 升级后同样要新开会话。升级会把插件目录整个换掉，之前 `tavotto codex install` 钉进
-已装副本的解释器绝对路径会被换回自带的 `./mcp/launch.cmd`——它自己找 Python，多数
+已装副本的解释器绝对路径会被换回自带的 `./mcp/launch`——它自己找 Python，多数
 机器上不用再做什么；**Windows 上升级后若又一个工具都没有，再跑一次
 `tavotto codex install`**。
 不自动升级、不反复提醒、不为此打断手里的活。`update`

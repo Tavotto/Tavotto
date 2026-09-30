@@ -7,7 +7,7 @@
 走的是 Tauri 壳同一套协议（stdin 首行 JSON 送 nonce、握手文件、stdin EOF =
 父进程退出），依次验证：
 
-1. 动态端口 + 握手文件（ready/port/pid，无密钥）
+1. 端口（本脚本不发 preferred_port → 系统分配）+ 握手文件（ready/port/pid，无密钥）
 2. 未认证请求 401；错误 nonce 403；正确 nonce → cookie；nonce 重放 403
 3. Host/Origin 校验
 4. 打开 examples/figures 项目 → 素材扫描

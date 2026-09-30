@@ -605,6 +605,21 @@ def source_artifact_from_file(
     )
 
 
+def savefig_targets_path(fname) -> bool:
+    """`savefig(fname)` 写的是不是一个**路径**（而不是 BytesIO / 脚本自己打开的文件对象）。
+
+    safe worker 与浏览器的拦截只吞写到路径的那些（那才是「一份图产物」，沙盒纪律管的是它）；
+    写进文件对象的原样透传——`savefig(buf, format="png"); Image.open(buf)` 是转 TIFF 的
+    常见写法，吞掉它 buf 就是空的，脚本在 PIL 那一行崩（2026-09-29 用户实报
+    `cannot identify image file <_io.BytesIO ...>`）。脚本自己 `open(path, "wb")` 出来的
+    句柄也一样：文件在 open 那一刻已经建好（截断），吞掉 savefig 只会留下一个 0 字节的文件。
+
+    `bytes` 也是路径（`savefig(b"out.pdf")` 照样落盘，#739 Codex P2）：漏掉它会把一次真实写盘放出沙盒。
+    取名 / 推格式一律经 `os.fsdecode`，str / bytes / PathLike 同一条路。
+    """
+    return isinstance(fname, (str, bytes, os.PathLike))
+
+
 def savefig_stem(fname) -> str:
     """`savefig(fname)` 的第一个参数 → stem；不是路径（缓冲区）时返回空串。
 
@@ -613,9 +628,9 @@ def savefig_stem(fname) -> str:
     多后缀上一致，在 `Path("out")/"f.pdf"` 上也一致——但「一致」这件事没有
     任何东西看着它。
     """
-    if not isinstance(fname, (str, os.PathLike)):
+    if not savefig_targets_path(fname):
         return ""  # BytesIO / 文件对象：不是一份产物
-    return os.path.splitext(os.path.basename(os.fspath(fname)))[0]
+    return os.path.splitext(os.path.basename(os.fsdecode(fname)))[0]
 
 
 def savefig_call(fname, kwargs: dict) -> dict:
@@ -668,8 +683,8 @@ def savefig_call(fname, kwargs: dict) -> dict:
             return str(value)
 
     fmt = kwargs.get("format")
-    if fmt is None and isinstance(fname, (str, os.PathLike)):
-        fmt = os.path.splitext(os.fspath(fname))[1][1:] or None
+    if fmt is None and savefig_targets_path(fname):
+        fmt = os.path.splitext(os.fsdecode(fname))[1][1:] or None
     if fmt is None:
         fmt = rc.get("savefig.format")
 
