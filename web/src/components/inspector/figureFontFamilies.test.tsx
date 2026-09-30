@@ -86,9 +86,12 @@ let root: Root
 let host: HTMLDivElement
 let adapter: TypographyAdapter
 
+/** 选中的元素（默认标题；个别用例换成带 `options_unavailable` 的那一份） */
+let selected: ManifestElement[] = [titleEl]
+
 function Harness() {
   const panel = useDocumentStore((s) => s.doc.objects.find((o) => o.id === 'p1')) as PanelObject
-  adapter = useFigureTypography(panel, [titleEl], FIGURE_TEXT_SINGLE_PROPS)
+  adapter = useFigureTypography(panel, selected, FIGURE_TEXT_SINGLE_PROPS)
   return null
 }
 
@@ -118,6 +121,7 @@ beforeEach(() => {
 })
 
 afterEach(async () => {
+  selected = [titleEl]
   await act(async () => root?.unmount())
   host?.remove()
   resetGestureCoordinator()
@@ -143,6 +147,39 @@ describe('withMachineFamilies（并表的唯一出处）', () => {
     expect(withMachineFamilies(field, [])).toBe(field)
     expect(withMachineFamilies(field, ['Arial'])).toBe(field)
     expect(withMachineFamilies(undefined, MACHINE)).toBeUndefined()
+  })
+
+  it('本机表里有的名字不算不可用：字段级 options_unavailable 标错了（刻度字体族曾按「不在首选项里」标）以本机表为准', () => {
+    const field = f('fontfamily', 'enum', 'Avenir', {
+      options: ['Avenir', ...PREFERRED],
+      options_unavailable: ['Avenir', 'No Such Font'],
+    })
+    const merged = withMachineFamilies(field, MACHINE)!
+    expect(merged.options_unavailable).toEqual(['No Such Font'])
+    // 本机表没有新名字、也没有要撤的标记：原样返回同一个对象
+    const clean = f('fontfamily', 'enum', 'Nope', { options: ['Nope', 'Arial'], options_unavailable: ['Nope'] })
+    expect(withMachineFamilies(clean, ['Arial'])).toBe(clean)
+  })
+})
+
+describe('useFigureTypography：属性页的「未安装」与本机表同一口径', () => {
+  it('字段标了不可用、本机表里却有：属性页不再标它；真没装的照标', async () => {
+    const el = {
+      ...titleEl,
+      editable: titleEl.editable.map((x) =>
+        x.prop === 'fontfamily'
+          ? f('fontfamily', 'enum', 'Avenir', { options: ['Avenir', ...PREFERRED], options_unavailable: ['Avenir'] })
+          : x,
+      ),
+    } as ManifestElement
+    selected = [el]
+    await mount({ ...manifestOf(MACHINE), elements: [el] } as unknown as Manifest)
+    expect(adapter.unavailableOptions('fontFamily')).toEqual([])
+    await act(async () => root.unmount())
+    host.remove()
+    useRenderStore.getState().clear()
+    await mount({ ...manifestOf(['Arial']), elements: [el] } as unknown as Manifest)
+    expect(adapter.unavailableOptions('fontFamily')).toEqual(['Avenir'])
   })
 })
 
