@@ -83,6 +83,7 @@ import {
 import type { PanelObject } from '@/types/document'
 import {
   engineLabel,
+  fontFamilyOptionLabel,
   groupLabel,
   groupRank,
   optionLabel,
@@ -1779,23 +1780,31 @@ function BatchFieldRow({
               return <ArrowStylePicker value={v} options={opts} onChange={writeOnce} ariaLabel={label} />
             case 'font':
               // 本机字体族接在首选项后面（唯一的并表出处 `withMachineFamilies`）
-              return (
-                <Select
-                  className="min-w-0 flex-1"
-                  value={mixed ? '' : String(first ?? '')}
-                  placeholder={el('mixedValues')}
-                  onChange={(x) => writeOnce(x)}
-                  options={(withMachineFamilies(field, batchManifest?.font_families)?.options ?? opts).map((o) => ({
-                    value: o,
-                    label: (
-                      <span style={{ fontFamily: fontStackOf(o) }}>
-                        {optionLabel('fontfamily', o)}
-                      </span>
-                    ),
-                  }))}
-                  ariaLabel={label}
-                />
-              )
+              {
+                const merged = withMachineFamilies(
+                  field,
+                  batchManifest?.font_families,
+                  batchManifest?.font_family_names,
+                )
+                const fontOpts = merged?.options ?? opts
+                return (
+                  <Select
+                    className="min-w-0 flex-1"
+                    value={mixed ? '' : String(first ?? '')}
+                    placeholder={el('mixedValues')}
+                    onChange={(x) => writeOnce(x)}
+                    options={fontOpts.map((o) => ({
+                      value: o,
+                      label: (
+                        <span style={{ fontFamily: fontStackOf(o) }}>
+                          {fontFamilyOptionLabel(o, merged?.option_labels, fontOpts)}
+                        </span>
+                      ),
+                    }))}
+                    ariaLabel={label}
+                  />
+                )
+              }
             default:
               return (
                 <Select
@@ -2153,19 +2162,29 @@ function FieldRow({
       )
     case 'font':
       // 本机字体族接在首选项后面（唯一的并表出处 `withMachineFamilies`）
-      return wrap(
-        <Select
-          value={enumValue}
-          onChange={(v) => writeOnce(v)}
-          options={(withMachineFamilies(field, rowManifest?.font_families)?.options ?? enumOptions).map((o) => ({
-            value: o,
-            label: (
-              <span style={{ fontFamily: fontStackOf(o) }}>{optionLabel('fontfamily', o)}</span>
-            ),
-          }))}
-          ariaLabel={label}
-        />,
-      )
+      {
+        const merged = withMachineFamilies(
+          field,
+          rowManifest?.font_families,
+          rowManifest?.font_family_names,
+        )
+        const fontOpts = merged?.options ?? enumOptions
+        return wrap(
+          <Select
+            value={enumValue}
+            onChange={(v) => writeOnce(v)}
+            options={fontOpts.map((o) => ({
+              value: o,
+              label: (
+                <span style={{ fontFamily: fontStackOf(o) }}>
+                  {fontFamilyOptionLabel(o, merged?.option_labels, fontOpts)}
+                </span>
+              ),
+            }))}
+            ariaLabel={label}
+          />,
+        )
+      }
     case 'aspect':
       // 纵横比：自动 / 等比例 / 自定义比例——绝不落进下面 text 那一支的富文本编辑器。
       // 自定义档是两行（分段控件 + 数字框），标签对齐第一行，不悬在两行中间

@@ -1,6 +1,6 @@
 import { optionLabel as baseOptionLabel, propLabel as basePropLabel } from '@/store/actions'
 import { displayLabel } from './mathtext'
-import { t } from '@/i18n'
+import { currentLocale, t } from '@/i18n'
 
 /**
  * 图内元素属性的显示注册表。
@@ -73,6 +73,64 @@ export const roleName = (role: string): string =>
  * （`propLabel`）不一样，它**真有**角色专属的第一跳，所以留着。
  */
 export const optionLabel = (prop: string, value: string): string => baseOptionLabel(prop, value)
+
+/**
+ * 这个下拉（`options`）里**不止一项**会显示成它的名字。两种撞法都要数：两个族的中文名相同
+ * （`BiauKaiHK` 与 `BiauKaiHK Regular` 都叫「標楷體-港澳」），以及有中文名的族撞上
+ * 一个**本身就叫这个名字**、表里没有显示名的族（只有中文名的「宋体」与 `Songti SC`
+ * →「宋体」）——只数表里的值会漏掉后一种，两项显示得一模一样。
+ *
+ * 按 (选项数组, 表对象, 语言) 缓存：下拉每一项都要问一次，同一次渲染里的调用共用一份
+ */
+const SHARED_NAMES = new WeakMap<object, WeakMap<object, { lang: string; names: Set<string> }>>()
+
+function sharedNames(
+  labels: Readonly<Record<string, string>>,
+  options: readonly string[],
+): Set<string> {
+  const lang = currentLocale()
+  let byLabels = SHARED_NAMES.get(options)
+  if (!byLabels) SHARED_NAMES.set(options, (byLabels = new WeakMap()))
+  const hit = byLabels.get(labels)
+  if (hit && hit.lang === lang) return hit.names
+  const seen = new Set<string>()
+  const names = new Set<string>()
+  const shown = (name: string) => {
+    if (seen.has(name)) names.add(name)
+    seen.add(name)
+  }
+  // 只数**这个下拉里**的项：显示名表是整份 manifest 的，StylePanel 那一行的选项只是它的子集，
+  // 选项之外的同名族不该给唯一看得见的那一项补上族名
+  for (const o of new Set(options)) {
+    const zh = labels[o]
+    shown(zh && zh !== o ? zh : optionLabel('fontfamily', o))
+  }
+  byLabels.set(labels, { lang, names })
+  return names
+}
+
+/**
+ * 字体下拉一项的显示名：中文界面显示中文名（`Songti SC` → 宋体-简），英文界面显示
+ * 族名——一种语言只显示一个名字。没有中文名的、通用族（serif 等）照旧走 `optionLabel`。
+ *
+ * 唯一的例外是**重名**（见 `sharedNames`）：下拉里另有一项也显示成这个中文名时，只显示
+ * 中文名就是两个一模一样的项，这时补上族名「標楷體-港澳（BiauKaiHK Regular）」分得开。
+ *
+ * `labels` 是字段上的 `option_labels`（`withMachineFamilies` 从 manifest 挂上来的），
+ * `options` 是**这个下拉的全部选项**（撞名要连没有显示名的族一起数，所以必传）。
+ * 只管显示，写入值永远是 `value`。
+ */
+export function fontFamilyOptionLabel(
+  value: string,
+  labels: Readonly<Record<string, string>> | undefined,
+  options: readonly string[],
+): string {
+  const zh = labels?.[value]
+  if (!labels || !zh || zh === value || !currentLocale().startsWith('zh')) {
+    return optionLabel('fontfamily', value)
+  }
+  return sharedNames(labels, options).has(zh) ? `${zh}（${value}）` : zh
+}
 
 /* ---------------------- 引擎发过来的分组名 → 显示名 ------------------------ */
 

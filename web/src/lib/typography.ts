@@ -355,26 +355,32 @@ const HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i
  * 首选项在前、本机的按引擎排好的序接在后面、去重；本机表里有的名字不再算不可用；别的字段、
  * 没有本机表的老引擎、并完什么都没变的，原样返回（同一个对象，memo 不白白失效）。
  */
-export function withMachineFamilies<F extends Pick<EditableField, 'prop' | 'options' | 'options_unavailable'>>(
+export function withMachineFamilies<
+  F extends Pick<EditableField, 'prop' | 'options' | 'options_unavailable' | 'option_labels'>,
+>(
   field: F | undefined,
   families: readonly string[] | undefined,
+  /** manifest 顶层 `font_family_names`：并表时一起挂上，下拉显示中文名（值不变） */
+  names?: Readonly<Record<string, string>>,
 ): F | undefined {
-  if (!field || field.prop !== 'fontfamily' || !families?.length) return field
+  if (!field || field.prop !== 'fontfamily') return field
   const own = field.options ?? []
   const seen = new Set(own)
-  const extra = families.filter((f) => !seen.has(f))
+  const extra = (families ?? []).filter((f) => !seen.has(f))
   // 本机表里有的就**画得出**（引擎列本机表的判据就是「matplotlib 解析得到」）：字段级的
   // `options_unavailable` 若还标着它，是字段那边判错了（刻度字体族曾按「不在首选项里」标，
   // Codex #703），以本机表为准撤掉——属性页与设置 › 样式页都经这里，口径只有一份
-  const machine = new Set(families)
+  const machine = new Set(families ?? [])
   const missing = field.options_unavailable
   const kept = missing?.filter((f) => !machine.has(f))
   const missingChanged = !!missing && kept!.length !== missing.length
-  if (!extra.length && !missingChanged) return field
+  const labeled = names && Object.keys(names).length > 0 && field.option_labels !== names
+  if (!extra.length && !missingChanged && !labeled) return field
   return {
     ...field,
     options: extra.length ? [...own, ...extra] : own,
     ...(missingChanged ? { options_unavailable: kept } : {}),
+    ...(labeled ? { option_labels: names as Record<string, string> } : {}),
   }
 }
 

@@ -95,6 +95,7 @@ from overrides import (
     collection_caps,
     color_mapping_is_live,
     colorbar_mapping_is_live,
+    font_display_names,
     font_face_index,
     font_file_key,
     font_installed,
@@ -105,6 +106,7 @@ from overrides import (
     offsetbox_draggable,
     offsetbox_frame,
     open_font_face,
+    register_font_name_aliases,
     remember_axis_directions,
     scale_options,
     set_original_reader,
@@ -1340,7 +1342,11 @@ def _family_options() -> list[str]:
 
 def installed_font_families() -> tuple[str, ...]:
     """本机字体族（见 `_installed_font_families`），按字体注册表的代次缓存：脚本或
-    fname 放开 `addfont` 了新字体，下一份 manifest 就列得出它（`overrides.sync_font_caches`）。"""
+    fname 放开 `addfont` 了新字体，下一份 manifest 就列得出它（`overrides.sync_font_caches`）。
+
+    只有中文名的字体先按真名补登记（`overrides.register_font_name_aliases`）：补登记本身会
+    让注册表变长，所以**先补、再取代次**，否则刚算好的表下一次就被当成过期的重算一遍。"""
+    register_font_name_aliases()
     return _installed_font_families(sync_font_caches())
 
 
@@ -1358,6 +1364,8 @@ def _installed_font_families(_generation: tuple) -> tuple[str, ...]:
     的扫描结果本来就是磁盘缓存来的，但去重排序几百个名字也不值得每份 manifest
     重做。
     """
+    # 只有中文名的字体已经按真名补登记过（`installed_font_families`）：下面按 `?`
+    # 滤掉的是 FreeType 读坏的那条，补上的真名照常列出
     names = {
         str(entry.name)
         for entry in font_manager.fontManager.ttflist
@@ -1368,6 +1376,22 @@ def _installed_font_families(_generation: tuple) -> tuple[str, ...]:
         if str(entry.name) and not str(entry.name).startswith(".") and "?" not in str(entry.name)
     }
     return tuple(sorted(names, key=lambda n: (n.casefold(), n)))
+
+
+def installed_font_display_names() -> dict[str, str]:
+    """本机字体族里有中文名的那些：{族名: 中文名}（`overrides.font_display_names`）。
+
+    只用于下拉的显示，写进 override 的仍是族名。按字体注册表的代次缓存（与
+    `installed_font_families` 同一个失效点 `overrides.sync_font_caches`）：脚本或 fname
+    放开 `addfont` 了新字体，下一份 manifest 就有它的显示名；注册表没变就不再读 name 表。
+    """
+    register_font_name_aliases()  # 与 `installed_font_families` 同理：先补登记，再取代次
+    return _installed_font_display_names(sync_font_caches())
+
+
+@lru_cache(maxsize=1)
+def _installed_font_display_names(_generation: tuple) -> dict[str, str]:
+    return font_display_names(installed_font_families())
 
 
 def _text_fields(t) -> list[dict]:
@@ -4918,6 +4942,9 @@ def _measure_manifest(state: FigState, stem: str, arm, fig, renderer) -> dict:
         # 本机字体族，整份 manifest 只发一次（理由见 `_family_options`）。
         # 加字段协议：老前端不认识它会原样忽略，字体下拉照旧只有首选项。
         "font_families": list(installed_font_families()),
+        # 其中有中文名的：{族名: 中文名}，只给下拉显示用（值仍是族名）。
+        # 加字段协议：老前端原样忽略，照旧显示族名。
+        "font_family_names": dict(installed_font_display_names()),
     }
     frame = pathgeom.frame_report(fig)
     if frame is not None:

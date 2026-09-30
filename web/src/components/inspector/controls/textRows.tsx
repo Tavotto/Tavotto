@@ -156,7 +156,16 @@ function FontFamilyRowView({
   labelWidth?: number
   overridden?: boolean
   onReset?: () => void
+  /**
+   * 选项的显示名。**在渲染里调用**，所以它必须是当次渲染的那一份（不经 ref 转发），
+   * 而且只能依赖 memo 比较的数据（`options` / `optionLabels` / `lang`）——比较器不比它
+   */
   optionLabelOf: (v: string) => string
+  /**
+   * 选项显示名表（`option_labels`，字体的中文名）。组件体不读它——显示走
+   * `optionLabelOf`；它在这里只为让 memo 在显示名到达 / 变化时重画
+   */
+  optionLabels?: Readonly<Record<string, string>>
   /** 多选且字体不一致：显示「多个值」占位，绝不谎报其中某一个的字体 */
   mixed?: boolean
   /**
@@ -203,14 +212,24 @@ type FontFamilyRowProps = Omit<Parameters<typeof FontFamilyRowView>[0], 'lang'>
 const sameList = (a: readonly string[] = [], b: readonly string[] = []) =>
   a === b || (a.length === b.length && a.every((v, i) => v === b[i]))
 
+const sameLabels = (
+  a: Readonly<Record<string, string>> = {},
+  b: Readonly<Record<string, string>> = {},
+) => {
+  if (a === b) return true
+  const keys = Object.keys(a)
+  return keys.length === Object.keys(b).length && keys.every((k) => a[k] === b[k])
+}
+
 /**
  * 字体下拉的选项是本机字体并表（`withMachineFamilies`），常见四五百项；Radix Select
  * **收起时也把全部 item 渲进一个 DocumentFragment**（登记选项用），所以属性页每重渲染
  * 一次它就把几百项全部重建一遍。2026-09-23 的剖析里它占了松手 / 换图 / 按下那三次
  * React 提交的六成（性能探针 ADR 0075；M2 Pro 上松手那一帧 113ms 里 React 84ms）。
  *
- * 所以按**数据**比较：值 / 选项内容 / 不可用项 / 修改状态 / 标签宽 / 语言都没变就不重画。
- * 选项数组常是新引用、内容相同，按内容比。
+ * 所以按**数据**比较：值 / 选项内容 / 显示名表 / 不可用项 / 修改状态 / 标签宽 / 语言都没变
+ * 就不重画。选项数组与显示名表（每次渲染响应里的 `font_family_names` 都是新对象）常是
+ * 新引用、内容相同，按内容比。
  */
 const FontFamilyRowMemo = memo(
   FontFamilyRowView,
@@ -220,6 +239,7 @@ const FontFamilyRowMemo = memo(
     a.overridden === b.overridden &&
     a.labelWidth === b.labelWidth &&
     a.lang === b.lang &&
+    sameLabels(a.optionLabels, b.optionLabels) &&
     !!a.onReset === !!b.onReset &&
     sameList(a.options, b.options) &&
     sameList(a.unavailable, b.unavailable),
@@ -227,23 +247,24 @@ const FontFamilyRowMemo = memo(
 
 export function FontFamilyRow(props: FontFamilyRowProps) {
   const { i18n } = useTranslation()
-  // **回调始终指向最新一次渲染的那一份**：memo 跳过重画时，里面挂的还是上一次的回调。
-  // 换选中另一个字体相同的元素，数据全等、组件不重画——这时要是用旧的 onChange，字体会
-  // 写到**上一个**元素上。所以传进去的是稳定的转发器，转发给 ref 里最新的那个
+  // **事件回调始终指向最新一次渲染的那一份**：memo 跳过重画时，里面挂的还是上一次的
+  // 回调。换选中另一个字体相同的元素，数据全等、组件不重画——这时要是用旧的 onChange，
+  // 字体会写到**上一个**元素上。所以传进去的是稳定的转发器，转发给 ref 里最新的那个。
+  // ref 在 layout effect 里才更新，所以**只许事件里读**（点击总在提交之后）；渲染里要
+  // 调的 `optionLabelOf` 不走这里，原样传下去——走 ref 的话 memo 因显示名变了而重画时
+  // 读到的是上一次渲染的它，画出来的仍是旧名字，之后内容相同的渲染又都被跳过
   const latest = useRef(props)
   useLayoutEffect(() => {
     latest.current = props
   })
   const onChange = useCallback((v: string) => latest.current.onChange(v), [])
   const onReset = useCallback(() => latest.current.onReset?.(), [])
-  const optionLabelOf = useCallback((v: string) => latest.current.optionLabelOf(v), [])
   return (
     <FontFamilyRowMemo
       {...props}
       lang={i18n.language}
       onChange={onChange}
       onReset={props.onReset ? onReset : undefined}
-      optionLabelOf={optionLabelOf}
     />
   )
 }

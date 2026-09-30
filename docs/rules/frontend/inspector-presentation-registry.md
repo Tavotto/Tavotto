@@ -79,6 +79,21 @@
   与写入前的 `coerceTypography` 拿的必须是同一份表，否则下拉里选得到、写下去却被判成
   「不是选项」；`ElementInspector` 兜底用的两个通用字体 `Select` 也过它。老引擎不发
   这张表时行为一字不变。看护 `figureFontFamilies.test.tsx`。
+* **字体的中文显示名（2026-09-28）**：matplotlib 按 FreeType 的族名登记字体（`Songti SC`），
+  中文名在 name 表里。引擎读出来发在 manifest 顶层 `font_family_names`（{族名: 中文名}，
+  `overrides.font_display_names`），`withMachineFamilies` 并表时挂成字段的 `option_labels`；
+  下拉一项的文字**只经 `roles/registry.fontFamilyOptionLabel`**——中文界面只显示中文名
+  「宋体-简」，英文界面只显示族名（一种语言一个名字，2026-09-28 用户定）；只有撞名时才补族名
+  分开（「標楷體-港澳（BiauKaiHK Regular）」，重名带括号 2026-09-29 用户定）。撞名要数**这个下拉的
+  全部选项**显示成什么——两个族中文名相同，或者有中文名的族撞上一个本身就叫这个名字、没有显示名
+  的族（只有中文名的「宋体」与 `Songti SC` →「宋体」），所以 `options` 必传。**只管显示**：写入值、
+  校验、文档里存的都是族名。撞名只数键在 `options` 里的显示名（显示名表是整份 manifest 的，一行的选项只是子集）。
+  显示名表每次渲染响应都是新对象，`FontFamilyRowMemo` 按内容比；显示函数 `optionLabelOf`
+  在渲染里调用，原样传给视图、不经 ref 转发（ref 在 layout effect 才更新，只许事件回调读）
+  （看护 `fontFamilyRow.test.tsx`）。
+  只有中文名的字体（FreeType 读成 `??????SC`）由引擎按真名补登记
+  （`overrides.register_font_name_aliases`），真名本身就是族名、没有显示名。
+  看护 `figureFontFamilies.test.tsx` 的「字体的中文显示名」一组与 `tests/test_font_chinese_names.py`。
 * 看护：`presentation/registry.test.ts`、`legendCard.test.tsx`、
   `legendSpacingCard.test.tsx`、`colorScalePanels.test.tsx`、
   `axes3dPanel.test.tsx`、`tickTaskCard.test.tsx`、`lib/viewAngle.test.ts`
@@ -95,5 +110,5 @@
 - 控件形态按 prop + 角色认
 - 「脚本原始」格画 `marker_original`
 - 色阶共用关系只认 `mappable_gid` / `scale_gids`（谓词 `colorbarCovers` 一处）
-- 本机字体并表只在 `withMachineFamilies` 一处
+- 本机字体并表只在 `withMachineFamilies` 一处；字体选项文字只经 `fontFamilyOptionLabel`
 - 多选事实全体一致才给

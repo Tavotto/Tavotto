@@ -11,7 +11,7 @@ import {
   type TypographyProp,
 } from '@/lib/typography'
 import type { TypographyAdapter } from '../typographyAdapter'
-import { optionLabel } from '../roles/registry'
+import { fontFamilyOptionLabel } from '../roles/registry'
 import { INSPECTOR_LABEL_W } from '../layout'
 import {
   AlignmentRow,
@@ -89,7 +89,10 @@ export function TypographyControls({
             options={family.options ?? []}
             unavailable={adapter.unavailableOptions('fontFamily')}
             onChange={(v) => adapter.writeOnce('fontFamily', v)}
-            optionLabelOf={(o) => optionLabel('fontfamily', o)}
+            optionLabels={family.option_labels}
+            optionLabelOf={(o) =>
+              fontFamilyOptionLabel(o, family.option_labels, family.options ?? [])
+            }
             overridden={dirty('fontFamily')}
             onReset={reset('fontFamily')}
           />
