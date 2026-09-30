@@ -148,9 +148,11 @@ def test_the_real_ci_yml_yields_the_two_gates_and_their_closed_sets(live_workflo
         "python": ["3.10", "3.13", "3.14"],
         "shard": ["1", "2"],
     }
+    # backend-platforms 2026-09-30 起是 3 片（backend-fast 仍是 2 片；两个 job 片数不必
+    # 相同，理由见 docs/rules/ci/pytest-shards.md）。
     assert live_workflow["backend-platforms"]["matrix"] == {
         "os": ["macos-latest", "windows-latest"],
-        "shard": ["1", "2"],
+        "shard": ["1", "2", "3"],
     }
 
 

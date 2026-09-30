@@ -3,12 +3,21 @@
 > 原文出自 `.github/AGENTS.md`「门禁纪律」（2026-09-18 指导文档治理时按主题拆出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`.github/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 
-- **backend 的 pytest 按文件分 2 片（CI03a，2026-09-16）**：`backend-fast` / `backend-platforms`
-  的 matrix 各有一根 `shard: [1, 2]` 轴，命令是 `python -m pytest --shard=K/2 --shard-manifest=… --junitxml … -rs`（两个
+- **backend 的 pytest 按文件分片（CI03a，2026-09-16）**：`backend-fast` / `backend-platforms`
+  的 matrix 各有一根 `shard` 轴，命令是 `python -m pytest --shard=K/N --shard-manifest=… --junitxml … -rs`（两个
   conftest 选项**必须 `=` 形式**：pytest 预解析会把未知选项的下一个 token 当路径去找 conftest，
-  空格形式在路径已存在时 rc 4「unrecognized arguments」）。
+  空格形式在路径已存在时 rc 4「unrecognized arguments」）。**片数两个 job 不必相同**：
+  `backend-fast` 是 2 片（`shard: [1, 2]`，命令 `--shard=K/2`）；`backend-platforms`
+  2026-09-30 起是 3 片（`shard: [1, 2, 3]`，命令 `--shard=K/3`）——套件继续变大，2 片下
+  Windows 已经吃到 60 分钟上限（#679 run 36685053740 分片 1 撞点被取消：不是挂死，进度
+  一直在走，10%→50% 这一段用了 39 分钟，只是太慢；同日另两组分片分别是 39:41 与
+  47:45，余量已经很薄）。上限本身是防挂死的止血阀（2026-08-28 没有上限时堵过合并队列
+  8 小时 20 分），不靠抬数字续命，靠加片给余量，上限继续钉在 60。改任一个 job 的片数
+  要同步改：`tests/test_merge_queue_workflows.py::test_pytest_shards_agree_between_the_matrix_and_the_command`
+  按 job_id 各自的期望片数、`tests/test_ci_baseline.py` 里对 `live_workflow[...]["matrix"]`
+  的断言，以及 `.github/workflows/ci.yml` 里那个 job 的实测评论。
   分片在**同一进程 collection 之后**做（`tests/conftest.py` → `tests/support/shard.py`）：每个进程
-  算出全部两片，自验 **nodeid 集合**的并集 == 全集、两两不交、每片非空、无重复，任一条不成立
+  算出全部 N 片，自验 **nodeid 集合**的并集 == 全集、两两不交、每片非空、无重复，任一条不成立
   rc 4——不是静默跑全集，也不是静默跑空集。**不带 `--shard` 时钩子是 no-op**，nightly.yml /
   desktop-tauri.yml 的 pytest 命令没有它，跑的仍是全集，
   `tests/test_merge_queue_workflows.py::TestGates::test_unsharded_pytest_lanes_stay_unsharded` 钉住。

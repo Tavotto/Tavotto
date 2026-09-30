@@ -529,8 +529,10 @@ jobs:
   # tests/test_support_matrix.py 钉住「support-matrix 里 tested 的最高档必须在
   # 这个矩阵里有腿」——上界放开了却没有腿在跑它，就是一句空承诺。
   #
-  # **每档再按文件分 2 片**（CI03a，2026-09-16；设计与实测见
-  # docs/implementation/ci-foundation/CI03A_PYTEST_SHARDS.md）：
+  # **每档再按文件分片**（CI03a，2026-09-16；设计与实测见
+  # docs/implementation/ci-foundation/CI03A_PYTEST_SHARDS.md）。以下按 backend-fast
+  # 的 2 片举例——backend-platforms **2026-09-30 起改成 3 片**（理由见它自己的注释），
+  # 机制逐条相同，`K/2` 处换成 `K/3`：
   #   * 为什么按文件、不拆文件：29 个文件有 module 级 fixture、文件内共享 worker /
   #     figure 状态（CI_BASELINE.md §7）；文件是 fixture 生命周期自洽的最小单位。
   #   * 为什么 2 片：CI00 实测这条腿 35 分钟、前 25 个文件占 900/1129 秒，按文件贪心
@@ -544,9 +546,9 @@ jobs:
   #     `--required` 闭集里 backend-fast 仍是那一个 job id，Gate 照红。**job id 不变**，
   #     显示名变成 `backend-fast (3.10, 1)`；required context 只有三个 Gate 名字，
   #     仓库设置不用重新登记任何检查。
-  #   * 权重表怎么更新：tests/support/shard_weights.json 只影响两片平不平衡，不影响
-  #     覆盖。每一片都把 junit + manifest 上传成 artifact（下面那一步）；把同一 os
-  #     的两片 junit 喂给 `python tests/support/shard.py --from-junit …` 就是新表。
+  #   * 权重表怎么更新：tests/support/shard_weights.json 只影响片间平不平衡，不影响
+  #     覆盖。每一片都把 junit + manifest 上传成 artifact（下面那一步）；把同一档的
+  #     所有片的 junit 喂给 `python tests/support/shard.py --from-junit …` 就是新表。
   #   * 回退：去掉 `shard` 轴 + 命令里去掉 `--shard …`（钩子留着无害，不带参数时不动
   #     collection）。
   backend-fast:
@@ -622,10 +624,17 @@ jobs:
   # 组合提交（或带 full-ci 标签的 PR）上跑——普通 PR 不再等两台最慢的
   # runner，而最终进 main 的每一棵树仍然四档全跑过。
   #
-  # 每个 os 再按文件分 2 片（CI03a）：分片方式、自验、漏片兜底与 backend-fast 那一段
-  # 相同；这里是 merge_group 的关键路径（CI01 删边之后 Windows 腿 2443s 中位是全图
-  # 最长的一条），分片的收益首先落在这里。Windows 与 macOS 的真实平衡要等本 job 的
-  # junit artifact——权重表现在是本机 macOS 的样本。
+  # 每个 os 再按文件分片（CI03a）：分片方式、自验、漏片兜底与 backend-fast 那一段
+  # 相同；这里是 merge_group 的关键路径（CI01 删边之后 Windows 腿是全图最长的一条），
+  # 分片的收益首先落在这里。
+  #
+  # **2026-09-30 从 2 片改到 3 片（60 分钟上限不动）**：套件继续变大，2 片下 Windows
+  # 已经吃到上限——#679 run 36685053740 分片 1 从 07:41:31 起跑 pytest，08:38:58 到
+  # 92%、08:40 撞 60 分钟被取消（不是挂死：进度一直在走，10%→50% 这一段用了 39
+  # 分钟，只是太慢）。同一天另外两组分片 1/2 分别是 39:41（#716 run 36672457255）与
+  # 47:45（#694 job 109764360587），余量已经很薄。上限本身是防挂死的止血阀
+  # （2026-08-28 没有上限时堵过合并队列 8 小时 20 分），不该靠抬数字续命；按分片给
+  # 余量，上限继续钉在 60。
   backend-platforms:
     if: >-
       github.event_name == 'merge_group'
@@ -636,16 +645,18 @@ jobs:
       # 写成轴（`include` 不做笛卡尔积）。python 固定 3.13，写在 setup-python 上。
       matrix:
         os: [macos-latest, windows-latest]
-        shard: [1, 2]
+        shard: [1, 2, 3]
     runs-on: ${{ matrix.os }}
-    # 分片后每片实测：Windows 19–26 分钟（1138–1533s）、macOS 14–17 分钟（833–1006s），
-    # 套件 4686 条（合入后三个真实合并组 35061049078 / 35069266028 / 35073686963；条数是
-    # CI05 对五条腿 junit 并集的核验，docs/implementation/ci-foundation/evidence/ci05/shards/）。
+    # 2 片时实测（合入后三个真实合并组 35061049078 / 35069266028 / 35073686963）：
+    # Windows 19–26 分钟（1138–1533s）、macOS 14–17 分钟（833–1006s），套件 4686 条
+    # （CI05 对五条腿 junit 并集的核验，docs/implementation/ci-foundation/evidence/ci05/shards/）。
     # 分片前 Windows 整档中位 40.7、max 47.8 分钟（CI_BASELINE.md §12）。历史：2026-09-13
     # #340 的组跑到 45:00 被当时的上限取消、整组按 failed_checks 踢出——上一轮定 45 时实测
     # 还是 27:57 / 2994 条，套件长了一半上限没动，余量归零，于是抬到与 windows-exe-smoke
     # 同档的 60。**必须有**上限：这个 job 没有上限时，一条挂死的用例会把整个**合并队列**
-    # 堵住——2026-08-28 就发生过一次，8 小时 20 分，其间没有任何 PR 能落地。
+    # 堵住——2026-08-28 就发生过一次，8 小时 20 分，其间没有任何 PR 能落地。改到 3 片的
+    # 理由见上面 2026-09-30 那段；权重表现在是本机 macOS 的样本，Windows 与 macOS 的真实
+    # 平衡要等这次 3 片跑完的 junit artifact。
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -674,11 +685,11 @@ jobs:
       # worker 复用的决定要从这份名单来，不从猜。
       # 路径用 `${{ runner.temp }}`（runner 替换，与 shell 无关）：Windows 腿默认 pwsh、
       # macOS 腿 bash，`$RUNNER_TEMP` / `$env:RUNNER_TEMP` 两种写法只有一种能同时成立。
-      # `--shard=K/2` 的 2 与 matrix.shard 的长度必须是同一个数（合同测试对拍）；
+      # `--shard=K/3` 的 3 与 matrix.shard 的长度必须是同一个数（合同测试对拍）；
       # 两个 conftest 选项写成 `--opt=值` 的理由见 backend-fast 那一步。
       - name: pytest
         run: >-
-          python -m pytest --shard=${{ matrix.shard }}/2
+          python -m pytest --shard=${{ matrix.shard }}/3
           --shard-manifest="${{ runner.temp }}/shard-manifest.json"
           --junitxml "${{ runner.temp }}/junit.xml"
           --durations=50 -rs
