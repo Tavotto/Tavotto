@@ -667,11 +667,17 @@ class _Inflight:
 _inflight: dict[str, _Inflight] = {}
 
 
-def _plain_host(source: PythonSource, host: str):
-    """来源主机名进日志：是锁里推得出的主机（主地址 / 镜像）就明文（`logsafe.known`，诊断包里也看得见
-    换没换源），否则照常按自由文本处置。空串写成 `-`。"""
-    hosts = {urllib.parse.urlsplit(u).hostname or "" for u in source.urls} - {""}
-    return logsafe.known(host, hosts) if host else "-"
+#: 已发行的来源主机（锁的主地址前缀 `PBS_RELEASE_PREFIX` 与镜像 base 的主机）：只有它们进日志时明文。
+#: **固定常量**而不是从这份 `PythonSource` 的 url 现推——现推的话判据恒真，调用方传进来的任何主机
+#: 都会被当成「已知」原样进诊断包（#744 Codex P1）。与锁一致由
+#: `test_source_hosts_allowlist_matches_the_shipped_lock` 钉住；锁里加了新来源主机要同步这里。
+SOURCE_HOSTS = frozenset({"github.com", "registry.npmmirror.com"})
+
+
+def _plain_host(host: str):
+    """来源主机名进日志：是 `SOURCE_HOSTS` 里的就明文（`logsafe.known`，诊断包里也看得见换没换源），
+    否则照常按自由文本处置（诊断包里哈希）。空串写成 `-`。"""
+    return logsafe.known(host, SOURCE_HOSTS) if host else "-"
 
 
 def downloading_from(source: PythonSource) -> str:
@@ -778,7 +784,7 @@ def _run_inflight(job: _Inflight) -> None:
         LOG.warning(
             "私有 Python 供应失败：%s（来源 %s）",
             logsafe.known(exc.code, ERROR_CODES),
-            _plain_host(job.source, job.source_host),
+            _plain_host(job.source_host),
         )
     except Exception as exc:  # noqa: BLE001 — 线程里不许漏异常：消费者要拿到一个 code
         LOG.exception("私有 Python 供应线程异常")
@@ -959,7 +965,7 @@ def _download(source: PythonSource, job: _Inflight) -> tuple[Path, str]:
                 part.unlink(missing_ok=True)
                 last = exc
                 cert = cert or tlstrust.cert_verification_error(exc)
-                _log_transport_failure(attempt, exc, job.trust_source, _plain_host(source, host))
+                _log_transport_failure(attempt, exc, job.trust_source, _plain_host(host))
                 reason = "transport（{}）".format(
                     logsafe.known(type(tlstrust.root_cause(exc)).__name__, TRANSPORT_ERROR_NAMES)
                 )
@@ -974,7 +980,7 @@ def _download(source: PythonSource, job: _Inflight) -> tuple[Path, str]:
                 part.unlink(missing_ok=True)
                 LOG.warning(
                     "私有 Python 归档 SHA-256 与锁不符（来源 %s）：拒绝，不换源",
-                    _plain_host(source, host),
+                    _plain_host(host),
                 )
                 raise ProvisionError(
                     ERROR_HASH_MISMATCH,
@@ -995,7 +1001,7 @@ def _download(source: PythonSource, job: _Inflight) -> tuple[Path, str]:
                 raise ProvisionError(ERROR_WRITE_FAILED, f"归档落盘失败: {exc}") from exc
             LOG.info(
                 "私有 Python 归档下载完成：来源 %s（%s）",
-                _plain_host(source, host),
+                _plain_host(host),
                 source.archive_name,
             )
             return dest, ORIGIN_DOWNLOAD
@@ -1003,9 +1009,9 @@ def _download(source: PythonSource, job: _Inflight) -> tuple[Path, str]:
             nxt = urllib.parse.urlsplit(queue[0][0]).hostname or ""
             LOG.warning(
                 "私有 Python 下载源 %s 放弃：%s；改用 %s",
-                _plain_host(source, host),
+                _plain_host(host),
                 reason,
-                _plain_host(source, nxt),
+                _plain_host(nxt),
             )
     if cert is not None:
         raise ProvisionError(ERROR_TLS, f"证书校验失败: {cert}")

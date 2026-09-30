@@ -1646,3 +1646,33 @@ class TestRealArchive:
             )
             == root
         )
+
+
+def test_source_hosts_allowlist_matches_the_shipped_lock():
+    """进日志明文的来源主机是固定常量；它与锁里真正会用到的主机（每个目标的主地址 + 推导出的
+    镜像地址）逐一相等——锁加了新来源而这里没跟，新主机就只会被哈希（看不出换没换源），反过来
+    这里多一个没人用的主机就是白给的明文口子。"""
+    from tavotto.engine import privatepython as pp
+
+    lock = pp.load_lock()
+    urls = []
+    for target in lock["targets"].values():
+        urls.append(target["url"])
+        urls.extend(pp.mirror_urls(lock, target))
+    import urllib.parse
+
+    hosts = {urllib.parse.urlsplit(u).hostname for u in urls}
+    assert hosts == set(pp.SOURCE_HOSTS)
+
+
+def test_an_unexpected_source_host_is_not_logged_in_plain(tmp_path):
+    """调用方传进来的来源里若有别的主机（坏锁 / 以后的调用方），它进日志时不是明文——判据是
+    固定的主机表，不是「这份来源自己的 url 里有没有它」（那样恒真，#744 Codex P1）。"""
+    from tavotto.engine import logsafe, privatepython as pp
+
+    assert isinstance(pp._plain_host("github.com"), logsafe.Plain)
+    assert isinstance(pp._plain_host("registry.npmmirror.com"), logsafe.Plain)
+    leaked = pp._plain_host("intranet.corp.example")
+    assert not isinstance(leaked, logsafe.Plain)
+    assert leaked == "intranet.corp.example"  # 原样交回，诊断包按自由文本哈希
+    assert pp._plain_host("") == "-"

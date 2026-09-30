@@ -47,7 +47,7 @@
   此前没有来源因慢被放弃时，收字节满 `SLOW_GRACE_S` 后按全程平均速度估的剩余时间 > `SLOW_ETA_S`）；因慢放弃的来源排队尾、不测速地
   再试一次；只有一个来源时不测速。**镜像不是信任来源**：hash 不符不换源、不重试，镜像篡改停在 `private_python_hash_mismatch`。
   每个来源从零下（不续传）。每次换源一条 WARNING、完成一条 INFO、供应失败一条 WARNING（code + 来源主机，主机名按 `logsafe.known`
-  明文）；账记 `downloaded_from`，进度 `private_python.source_host` 报此刻在下的主机（`downloading_from`）。
+  对固定常量 `SOURCE_HOSTS` 判明文——不从这份来源的 url 现推，那样恒真；与锁一致由用例钉住）；账记 `downloaded_from`，进度 `private_python.source_host` 报此刻在下的主机（`downloading_from`）。
 - **联网只有一条路**：每次现建的 `urllib.request.build_opener(tlstrust.https_handler(ctx))`——代理只从
   `HTTP(S)_PROXY` / `NO_PROXY` 环境变量来、在下载那一刻读（与 `updater` / `telemetry` / pip 同一张脸；
   三处出站 HTTPS 都经 `tlstrust`，`tests/test_outbound_https_trust.py` 按 AST 钉）、`User-Agent: Tavotto/<版本>`、
