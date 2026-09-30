@@ -1201,7 +1201,7 @@ describe('安装进度', () => {
     await progress('cancelled', { target_kind: 'project_venv', code: 'dependency_install_cancelled' })
     expect(text()).toContain(en('repairCancelledProjectEnv'))
     // 受管环境那句是另一种处置，不能混用
-    expect(text()).not.toContain(en('repairCancelledManaged'))
+    expect(text()).not.toContain(en('repairCancelledManaged', { product: PRODUCT_NAME }))
   })
 
   it('装完之后把那次失败的渲染重新排上 —— 否则图永远不会自己出来', async () => {

@@ -30,6 +30,7 @@ import {
   type DependencyPreparationOffer,
   type UserEnvironment,
   type JointDependencyPlan,
+  type PrivatePythonOffer,
 } from '@/lib/api'
 import { DependencyPrepareDialog } from '@/components/DependencyPrepareDialog'
 import { DependencyPrepareButton } from '@/components/WorkdirRow'
@@ -181,7 +182,7 @@ describe('DependencyPrepareDialog', () => {
       en('dependencyPrepareTitle', { count: 2 }),
       en('dependencyTarget_project_venv'),
       en('dependencyTargetHint_project_venv', { venv: '.venv' }),
-      en('dependencyTarget_tavotto_managed'),
+      en('dependencyTarget_tavotto_managed', { product: PRODUCT_NAME }),
       en('dependencyTargetHint_tavotto_managed'),
       en('repairAdvanced'),
       en('dependencyPrepareLater'),
@@ -306,6 +307,35 @@ describe('DependencyPrepareDialog', () => {
       useEnvStore.getState().requestDependencyPreparation(clean({ ...pp, origin: 'bundled' as never, download_bytes: 0 })),
     )
     expect(title()).toBe(en('oneClickSentenceEnv'))
+  })
+
+  it('只准备环境（requirements 为空）：「详情」里不说「装包需要联网」，只说准备哪份 Python（Codex #742）', async () => {
+    const pp = {
+      id: 'pbs', version: '3.13.15', target: 'darwin-arm64', source_host: 'github.com',
+      download_bytes: 25 * 1048576, required: true, cached: false, network_required: true, origin: 'download' as const,
+    }
+    const clean = (private_python: PrivatePythonOffer | null) =>
+      offer({
+        clean_machine: true,
+        private_python,
+        plan: joint({ status: 'nothing_needed', missing: [], unknown: [], requirements: [], constraints: [] }),
+      })
+    const cost = () => document.querySelector('[data-one-click-cost]')?.textContent ?? null
+    const details = () => document.querySelector('[data-repair-advanced]')!.textContent ?? ''
+    await render(<DependencyPrepareDialog />)
+    for (const [pp2, expected] of [
+      [pp, en('repairFactEnvDownload', { product: PRODUCT_NAME, version: '3.13.15', mb: 25 })],
+      [{ ...pp, origin: 'bundled' as const, download_bytes: 0 }, en('repairFactEnvBundled', { product: PRODUCT_NAME, version: '3.13.15' })],
+      [{ ...pp, origin: 'cached' as const, download_bytes: 0 }, en('repairFactEnvCached', { product: PRODUCT_NAME, version: '3.13.15' })],
+      [null, null],
+    ] as const) {
+      await act(async () => useEnvStore.getState().dismissDependencyPreparation())
+      await act(async () => useEnvStore.getState().requestDependencyPreparation(clean(pp2)))
+      expect(cost(), JSON.stringify(pp2)).toBe(expected)
+      // 没有要装的包：「装包」的联网说明一个都不许出现（受管环境那条与项目 venv 那条都不说）
+      for (const said of [en('repairFactNetwork'), '装包需要联网', '装包也需要联网']) expect(details()).not.toContain(said)
+      expect(details()).not.toContain(en('dependencyPrepareNetwork'))
+    }
   })
 
   it('私有 Python 的披露跟着选中的目标走：选了项目 venv 就不说要下载 / 供应 Python（Codex #742）', async () => {

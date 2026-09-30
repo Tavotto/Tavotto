@@ -490,7 +490,20 @@ export function oneClickEnvironmentSentence(privatePython: PrivatePythonOffer | 
  * 「详情」里「要下载什么」那一条（修复卡与跑前授权框共用）：要下载私有 Python 时说版本与大小，安装包自带 / 已就位时
  * 说用的是哪一份；都顺带一句装包要联网——联网只在这一条里说，不另起一行
  */
-export function downloadFact(privatePython: PrivatePythonOffer | null): string {
+export function downloadFact(
+  privatePython: PrivatePythonOffer | null,
+  { packages = true }: { packages?: boolean } = {},
+): string | null {
+  // 只准备环境、一个包都不装（干净机器上的 `nothing_needed` 计划）：不说「装包需要联网」（Codex #742）；
+  // 连私有 Python 都不用准备时这一条整条不出现
+  if (!packages) {
+    if (!privatePython) return null
+    const values = { product: PRODUCT_NAME, version: privatePython.version }
+    const origin = privatePythonOrigin(privatePython)
+    if (origin === 'bundled') return en('repairFactEnvBundled', values)
+    if (origin === 'cached') return en('repairFactEnvCached', values)
+    return en('repairFactEnvDownload', { ...values, mb: Math.max(1, Math.round(privatePython.download_bytes / 1048576)) })
+  }
   if (!privatePython) return en('repairFactNetwork')
   const values = { product: PRODUCT_NAME, version: privatePython.version }
   const origin = privatePythonOrigin(privatePython)
@@ -760,7 +773,7 @@ function RepairProgress({
           <p className="mt-1 text-xs leading-relaxed text-ink-2">
             {progress.target_kind === 'project_venv'
               ? en('repairCancelledProjectEnv')
-              : en('repairCancelledManaged')}
+              : en('repairCancelledManaged', { product: PRODUCT_NAME })}
           </p>
         )}
       </div>
@@ -832,7 +845,8 @@ export function repairCodeMessage(code: string): string | null {
  * 那张表设置 › 包管理页照旧整句在用，不动它
  */
 export function repairShortMessage(code: string): string {
-  if (code && i18n.exists(`engine.repairErrorShort.${code}`, { ns: 'errors' })) return en(`repairErrorShort.${code}`)
+  if (code && i18n.exists(`engine.repairErrorShort.${code}`, { ns: 'errors' }))
+    return en(`repairErrorShort.${code}`, { product: PRODUCT_NAME })
   return en('repairErrorShortGeneric')
 }
 

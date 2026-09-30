@@ -87,6 +87,9 @@
   合成的那一句（`repairShortMessage` → `repairErrorShort.<code>`，没登记的码与只有后端原文的落到 `repairErrorShortGeneric`）
   和一个主按钮；`repairError.*` 的完整说明、错误码、日志、blocked 的逐条理由只在「详情」里。`repairError.*` 本身不改——
   设置 › 包管理页（`repairCodeMessage`）照旧整句在用。
+  这一组新文案一律经 `{{product}}` 插值、不手写产品名（仓库里没有扫语言包的品牌门禁，存量文案里还有手写的；
+  `i18n/prBrand.test.ts` 先钉住一键修复碰过的键）。只准备环境（联合计划 `requirements` 为空）时「详情」不说「装包需要联网」，
+  只说准备哪份 Python（`downloadFact(pp, { packages: false })`）。
   看护：「默认可见」按**可见元素**判（`test/visibleBlocks.ts`：收起的 details 里只有 summary 可见；主区域按**语种自己的**句末标点数句子 ≤ 1（`sentenceCount`：中文「。！？」、英文后跟空白或到结尾的「. ! ?」，
   没有规则的语种直接抛错；`oneSentence.test.tsx` 把每种状态 × 每个语种都跑一遍，故障按每个 `repairError` 码 × 每个语种各一例，并核对
   `repairErrorShort` 与 `repairError` 的码集合相等）、

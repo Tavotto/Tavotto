@@ -8,6 +8,7 @@ import { Details, Summary } from './ui/Details'
 import { Dialog } from './ui/Dialog'
 import { Radio } from './ui/Radio'
 import { userEnvironmentName } from '@/lib/userEnvironmentText'
+import { PRODUCT_NAME } from '@/lib/brand'
 import { listJoin } from '@/i18n/format'
 import { RepairProgressLine, RepairStageList } from './RepairProgressLine'
 import { downloadFact, oneClickEnvironmentSentence, oneClickSentence, repairShortMessage } from './DependencyRepairCard'
@@ -108,6 +109,8 @@ export function DependencyPrepareDialog() {
   const privatePython =
     !envChosen && chosen?.kind === 'tavotto_managed' ? (chosen.private_python ?? offer.private_python ?? null) : null
   const packages = listJoin(plan.requirements.map(requirementName))
+  // 「详情」里「要下载什么」那一条：只准备环境（没有要装的包）时不说「装包需要联网」
+  const cost = downloadFact(privatePython, { packages: plan.requirements.length > 0 })
   const targetChoice = (
     <>
       <fieldset className="flex flex-col gap-1" data-dependency-target>
@@ -166,7 +169,7 @@ export function DependencyPrepareDialog() {
                 onChange={() => setChoice(kind)}
               />
               <span className="min-w-0 flex-1">
-                <span className="block text-sm text-ink">{en(TARGET_LABEL[kind])}</span>
+                <span className="block text-sm text-ink">{en(TARGET_LABEL[kind], { product: PRODUCT_NAME })}</span>
                 <span className="mt-0.5 block text-xs leading-relaxed text-ink-3">
                   {kind === 'project_venv'
                     ? en(TARGET_HINT[kind], { venv: opt.venv || opt.python })
@@ -225,17 +228,19 @@ export function DependencyPrepareDialog() {
         // 装进 Tavotto 自己的环境：要装什么是上面那张清单，这里只补另外两件事、各一条（与修复卡同一套，不重复）——
         // 要下载什么（私有 Python 多大 / 自带的是哪一份；联网只在这一条里说）、不改动什么
         <>
-          <p
-            className="mt-2 text-xs leading-relaxed text-ink-2"
-            data-one-click-cost
-            {...(privatePython ? { 'data-dependency-private-python': '' } : {})}
-          >
-            {downloadFact(privatePython)}
-          </p>
+          {cost && (
+            <p
+              className="mt-2 text-xs leading-relaxed text-ink-2"
+              data-one-click-cost
+              {...(privatePython ? { 'data-dependency-private-python': '' } : {})}
+            >
+              {cost}
+            </p>
+          )}
           <p className="mt-1 text-xs leading-relaxed text-ink-3">{en('engine.repairFactUntouched')}</p>
         </>
       )}
-      {!envChosen && target === 'project_venv' && (
+      {!envChosen && target === 'project_venv' && plan.requirements.length > 0 && (
         <p className="mt-2 text-xs leading-relaxed text-ink-3">{en('engine.dependencyPrepareNetwork')}</p>
       )}
     </>
