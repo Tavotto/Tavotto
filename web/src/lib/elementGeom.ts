@@ -890,14 +890,30 @@ export function alignUnits(panel: PanelObject, manifest: Manifest, gids: string[
     manifest,
     gids.filter((gid) => !groups.some((g) => g.gid === gid)),
   ).filter((en) => !members.has(en.key))
-  return [
-    ...units,
+  // **按选区原来的顺序排**：samew / sameh 以末位为基准（「最后选中的那个」），组全排在散选前面的话，
+  // 先选散选、再 ⇧ 选组时基准就错成了散选元素（Codex #691）。组的位置 = 它自己、它的成员或几何落在
+  // 成员上的元素在选区里最先出现的那一处；散选条目 = 几何落点是它的那个 gid 最先出现处
+  const els = new Map(manifest.elements.map((e) => [e.gid, e]))
+  const geomOf = (gid: string) => {
+    const el = els.get(gid)
+    return el ? geomGid(el) : gid
+  }
+  const firstIndex = (hit: (gid: string) => boolean) => {
+    const i = gids.findIndex(hit)
+    return i < 0 ? gids.length : i
+  }
+  const ordered: { at: number; unit: AlignUnit }[] = [
+    ...units.map((unit) => {
+      const g = groups.find((x) => x.gid === unit.key)!
+      return {
+        at: firstIndex((gid) => gid === g.gid || g.members.includes(geomOf(gid))),
+        unit,
+      }
+    }),
     ...loose.map(({ key, label, resizable, box, write }) => ({
-      key,
-      label,
-      resizable,
-      box,
-      writes: (next: Rect4) => [write(next)],
+      at: firstIndex((gid) => geomOf(gid) === key),
+      unit: { key, label, resizable, box, writes: (next: Rect4) => [write(next)] },
     })),
   ]
+  return ordered.sort((a, b) => a.at - b.at).map((o) => o.unit)
 }

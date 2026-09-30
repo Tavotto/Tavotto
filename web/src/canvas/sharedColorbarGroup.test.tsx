@@ -597,3 +597,35 @@ describe('被挡住的组认领同时点名的成员：拖动 / 对齐都不把�
   })
 })
 
+/**
+ * 等宽 / 等高以**最后选中的那一个**为基准（`layoutBoxes` 取末位）。组当一个单位参与时，单位按选区
+ * 原来的顺序排：先选 A 再选组 → 组是基准；反过来 A 是基准。组的位置按它自己、它的成员或几何落在
+ * 成员上的元素最先出现的那一处算（Codex #691）。
+ */
+describe('对齐单位按选区顺序：等宽的基准是最后选中的那一个', () => {
+  const GROUP_W = 0.5 // B 左边到色条右边
+
+  it('先选 A、再选组：组是基准，A 变成组的宽，组不动', async () => {
+    act(() => useUiStore.getState().setSelectedGids(['axes_0', GROUP]))
+    expect(alignSelectedPanelElements('p1', 'samew').ok).toBe(true)
+    expect(positionOf('axes_0')![2]).toBeCloseTo(GROUP_W, 6)
+    for (const g of ['axes_1', 'axes_2', 'axes_3']) expect(positionOf(g)).toBeUndefined()
+  })
+
+  it('先选组、再选 A：A 是基准，组整体缩成 A 的宽，A 不动', async () => {
+    act(() => useUiStore.getState().setSelectedGids([GROUP, 'axes_0']))
+    expect(alignSelectedPanelElements('p1', 'samew').ok).toBe(true)
+    expect(positionOf('axes_0')).toBeUndefined()
+    const k = POS.axes_0[2] / GROUP_W
+    for (const g of ['axes_1', 'axes_2', 'axes_3']) expect(positionOf(g)![2]).toBeCloseTo(POS[g][2] * k, 6)
+  })
+
+  it('组的成员先于 A 被点名、组在最后：组的位置按成员那一处算，A 仍是末位基准', async () => {
+    act(() => useUiStore.getState().setSelectedGids(['axes_1', 'axes_0', GROUP]))
+    expect(alignSelectedPanelElements('p1', 'samew').ok).toBe(true)
+    expect(positionOf('axes_0')).toBeUndefined()
+    const k = POS.axes_0[2] / GROUP_W
+    expect(positionOf('axes_1')![2]).toBeCloseTo(POS.axes_1[2] * k, 6)
+  })
+})
+
