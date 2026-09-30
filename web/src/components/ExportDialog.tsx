@@ -67,7 +67,11 @@ import {
 import { msg, t as translate } from "@/i18n";
 import { emitActivity } from "@/lib/activity";
 import { useHtmlMarkup } from "@/lib/useHtmlMarkup";
-import { readExportDefaults, writeExportDefaults } from "@/lib/exportDefaults";
+import {
+  onExportDefaultsHydrated,
+  readExportDefaults,
+  writeExportDefaults,
+} from "@/lib/exportDefaults";
 import { inspectionState } from "@/lib/artifactInspection";
 import { RetryImg } from "@/components/ui/RetryImg";
 import {
@@ -434,6 +438,32 @@ export function ExportDialog() {
      */
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, documentId]);
+
+  // 导出默认值以后端为准（#715 PR-B）：这个对话框在 App 里常驻挂载，上面几个 useState 的初值
+  // 在挂载那一刻读的本机缓存——换了 origin 的首启那一刻还是空的。后端那份取回来之后重读一次；
+  // 对话框此刻开着就先记下、**关上时**再重读（用户可能正在改，不当面换掉；但也不丢——
+  // 否则关了再开仍是取回前的 600 ppi，#719 Codex P2）
+  const hydrationDeferred = useRef(false);
+  const applyHydratedDefaults = useCallback(() => {
+    const d = readExportDefaults();
+    setFormats(d.formats);
+    setPpi(d.dpi);
+    setWithReport(d.withProof);
+    setStrict(d.strictInspection);
+  }, []);
+  useEffect(
+    () =>
+      onExportDefaultsHydrated(() => {
+        if (useUiStore.getState().exportOpen) hydrationDeferred.current = true;
+        else applyHydratedDefaults();
+      }),
+    [applyHydratedDefaults],
+  );
+  useEffect(() => {
+    if (open || !hydrationDeferred.current) return;
+    hydrationDeferred.current = false;
+    applyHydratedDefaults();
+  }, [open, applyHydratedDefaults]);
 
   // 本地活动信号：面板开着时输出范围是什么（初值与每次切换都发）。教程按它
   // 判「用户确认过原图 / 画布」——不读 DOM、不猜 CSS class

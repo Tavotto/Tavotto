@@ -18,12 +18,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
   postTelemetryEvent: vi.fn(() => Promise.resolve({ accepted: true })),
+  // 后端导出默认值（#715 PR-B）：默认「后端没有这组端点」，个别用例改答
+  fetchExportDefaultsRemote: vi.fn(() => Promise.resolve(undefined)),
 }))
 
 import { ExportDialog } from '@/components/ExportDialog'
 import { pixelPreview } from '@/lib/exportRequest'
-import { readExportDefaults, writeExportDefaults } from '@/lib/exportDefaults'
-import { postTelemetryEvent } from '@/lib/api'
+import { hydrateExportDefaults, readExportDefaults, writeExportDefaults } from '@/lib/exportDefaults'
+import { fetchExportDefaultsRemote, postTelemetryEvent } from '@/lib/api'
 import { setTelemetryEnabled } from '@/lib/telemetry'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useAssetStore } from '@/store/assetStore'
@@ -580,6 +582,47 @@ describe('统一 ExportRequest', () => {
     expect(ppiSelect()).toBeTruthy()
     await click(button('开始导出')!)
     expect(exportBodies[0].ppi).toBe(600)
+  })
+})
+
+describe('导出默认值以后端为准（#715 PR-B）', () => {
+  it('对话框常驻挂载之后才取回的后端默认值：下次打开用取回的值（换 origin 首启不退回 600 ppi）', async () => {
+    await setup(9) // 本机缓存是空的：挂载时读到 600
+    await act(async () => {
+      useUiStore.getState().setExportOpen(false)
+    })
+    vi.mocked(fetchExportDefaultsRemote).mockResolvedValueOnce({
+      defaults: { dpi: '1200', formats: ['pdf', 'png'], withProof: false, strictInspection: false },
+    })
+    await act(async () => {
+      await hydrateExportDefaults()
+    })
+    expect(readExportDefaults().dpi).toBe('1200') // 前提：缓存已被后端那份覆盖
+    await act(async () => {
+      useUiStore.getState().setExportOpen(true)
+    })
+    await click(button('开始导出')!)
+    expect(exportBodies.at(-1)!.ppi).toBe(1200)
+  })
+})
+
+describe('导出默认值：对话框开着时取回的后端值', () => {
+  it('开着时不当面换掉；关上之后重读，再打开用取回的值', async () => {
+    await setup(9) // 开着，缓存空：600
+    vi.mocked(fetchExportDefaultsRemote).mockResolvedValueOnce({
+      defaults: { dpi: '1200', formats: ['pdf', 'png'], withProof: false, strictInspection: false },
+    })
+    await act(async () => {
+      await hydrateExportDefaults()
+    })
+    await act(async () => {
+      useUiStore.getState().setExportOpen(false)
+    })
+    await act(async () => {
+      useUiStore.getState().setExportOpen(true)
+    })
+    await click(button('开始导出')!)
+    expect(exportBodies.at(-1)!.ppi).toBe(1200)
   })
 })
 

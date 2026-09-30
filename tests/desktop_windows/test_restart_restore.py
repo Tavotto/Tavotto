@@ -14,6 +14,9 @@ origin 的一部分——「上次打开的排版」与崩溃兜底副本都只�
 
 from __future__ import annotations
 
+import json
+import time
+
 from _canvas import object_ids, place_figure, wait_on_disk
 
 
@@ -42,7 +45,26 @@ def _prepare(desktop_app, project_dir):
     d = desktop_app.launch("--open", str(project_dir))
     oid = place_figure(d, "Fig2_yield.pdf")
     wait_on_disk(desktop_app.data_dir, oid)
+    # 前提：「上次开着哪份」记在**这条用例自己的**数据目录里（#719，`TAVOTTO_DATA_DIR` → state/）。
+    # 记到全机共享的地方的话，清掉浏览器存储也隔离不了用例，下面「回来了」量的可能是上一条留下的
+    session = desktop_app.data_dir / "state" / "layout-sessions.json"
+    deadline = time.monotonic() + 30
+    while _last_recorded(session) is False and time.monotonic() < deadline:
+        time.sleep(0.25)
+    assert _last_recorded(session), (
+        f"会话状态没落在本用例的数据目录里（或没记上一份排版）：{session}"
+    )
     return d, object_ids(d), desktop_app.origin()
+
+
+def _last_recorded(session) -> bool:
+    """会话文件已经在、而且记着一份「上次开着的」排版。"""
+    try:
+        data = json.loads(session.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    groups = [*data.get("projects", {}).values(), data.get("no_project", {})]
+    return any(g.get("last") for g in groups if isinstance(g, dict))
 
 
 def test_close_then_reopen_restores_the_layout(desktop_app, project_dir):

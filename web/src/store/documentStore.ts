@@ -3,7 +3,8 @@ import { perfSpan } from '@/perf/core'
 import { enablePatches, produceWithPatches, type Patch } from 'immer'
 import * as history from '@/lib/history'
 import { rebaseToCurrentNative, sizeBasisOf, type SizeBasis } from '@/lib/panelNativeSize'
-import { deleteAutosave, fetchAutosave, fetchAutosaveSummary, putAutosave } from '@/lib/api'
+import { fetchAutosave, fetchAutosaveSummary, putAutosave } from '@/lib/api'
+import { fetchRemoteProjectDocument } from '@/lib/projectDocs'
 import {
   blocksDiskWrite,
   createDiskWriter,
@@ -1130,15 +1131,10 @@ function flushAutosaveNow(): FlushResult {
   }
   const before = readIndex()
   const kept = writeIndex([entry, ...before.filter((e) => e.id !== state.documentId)])
-  // 被索引挤掉的文档：磁盘槽位一并清理
-  const keptIds = new Set(kept.map((e) => e.id))
-  for (const e of before) {
-    if (!keptIds.has(e.id) && e.id !== state.documentId) {
-      void deleteAutosave(e.id).catch(() => {})
-      // 槽位没了，绑定也就没有工作副本可指了（项目里的文件一个字节不动）
-      forgetProjectFile(e.id)
-    }
-  }
+  // 被本机索引挤掉的文档**不再**发 DELETE 删它的磁盘槽位（#715 PR-B）：索引只是本机
+  // 「最近文档」列表放不下了，不是用户不要了；换了 origin 的索引还是空的，按它删会删错。
+  // 磁盘槽位的清理只由后端做（`app._prune_autosave_slots`，按槽位归属）。
+  // 项目文件绑定（`projectFile`）因此也留着：槽位还在，它仍有工作副本可指。
   writeCurrentId(state.documentId)
   useDocumentStore.setState({ dirty: false, recentDocs: kept })
   return 'saved'
@@ -1603,16 +1599,26 @@ export async function restoreSession(): Promise<boolean> {
   const index = readIndex()
   useDocumentStore.setState({ recentDocs: index })
   if (consumeSkipRestore()) return false
-  const id = readCurrentId()
-  if (!id) return false
   // 工作台挂载**之前**已经有人把这份文档装进来了（教程的 prepareDocument、切项目时接回上次的
   // 文档）：内存里这份就是它、而且是最新的，不再从磁盘读一遍盖上去。盖上去的是刚落盘的那一版，
   // 在它路上的这段时间里用户若已开始拖动，拖动当场作废——慢机器上教程一打开就拖，图纹丝不动
   // （windows-exe-smoke 上撞到过；e2e tutorial.spec「教程刚打开就拖」把读盘压慢后在任何机器上复现）
   // 装它的那一方（`loadAutosavedDocument`）已经把读盘带回来的待裁决事项挂上了，这里不再重复
   const before = useDocumentStore.getState()
-  if (before.documentId === id) return false
   const identity = persistedIdentity(before)
+  const localId = readCurrentId()
+  // 本机记录就指着内存里这份（装它的那一方刚写过）：一个请求都不发
+  if (localId && before.documentId === localId) return false
+  // 取哪一份：**当前项目的 last（后端为准，#715 PR-B）→ 旧的本机 currentDoc**。桌面版换了
+  // 端口 = 换了 origin = 本机存储是空的，只有后端还记得。后端没有这组端点（404：playground、
+  // 嵌入画布、旧后端）或不可达时 `undefined`，退回本机那一条——即改造前的行为。
+  const pj = currentProjectId()
+  const remote = pj ? await fetchRemoteProjectDocument(pj) : undefined
+  const id = remote?.id ?? localId
+  if (!id) return false
+  if (useDocumentStore.getState().documentId === id) return false
+  // 问后端的这段路上别处换过文档或改过它：那份更新，这次恢复让位（与下面读盘那段同一条判据）
+  if (persistedIdentity(useDocumentStore.getState()).some((v, i) => v !== identity[i])) return false
   const { doc: pd, notice } = await readAutosaveDoc(id)
   // 读盘在路上时别处换过文档或改过它的任何一片要落盘的内容：那份更新，这次恢复让位
   const now = persistedIdentity(useDocumentStore.getState())
