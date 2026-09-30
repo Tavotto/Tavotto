@@ -140,7 +140,10 @@
   出现第二次后收成一处）。
   **不变式：组的变换只有全员刚性与零两种结果**——`expandGroups` 之后的出口不许再逐个过滤成员（方向键
   曾按隐藏过滤、把隐藏成员丢掉）；对齐 / 分布把组当一个单位（`alignUnits`）。看护：`sharedColorbarGroup.test`
-  「写下的成员 = expandGroups 的结果」，每个写几何的出口一条。多宿主
+  「写下的成员 = expandGroups 的结果」，每个写几何的出口一条。
+  **组认领同时点名的成员**（`elementGeom.claimedBySelectedGroups`：成员本身与几何落在成员上的色条 / 位图），
+  与组能不能整体变换无关：被挡住的组展开为空，它的成员也不许退回成散选被单独挪走（拖动经
+  `expandGroups`、方向键 `moverFor` 同一个判据）；对齐遇到被挡住的组整次不做、按原因说（`group-blocked`）。多宿主
   色条不在任何宿主的 `follow_gids` 里：单拖 B 时 C 与色条都不动。看护：
   `canvas/sharedColorbarGroup.test.tsx`。
 
