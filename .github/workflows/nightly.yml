@@ -269,11 +269,16 @@ jobs:
           PIP_DEFAULT_TIMEOUT: "30"
           PIP_RETRIES: "5"
           TAVOTTO_REQUIRE_RUNTIME: "1"
+          TAVOTTO_REQUIRE_PRIVATE_PYTHON: ${{ matrix.python == 'none' && '1' || '0' }}
         run: |
           python -m pip install --upgrade pip pyinstaller
           python -m pip install -r requirements.txt
           python scripts/fetch_fonts.py
           python scripts/fetch_fonts.py --check
+          # 「无 Python」腿产出的冻结安装包要与正式发行形态一致：带上私有 Python 归档（ADR 0111 / #743；
+          # desktop-tauri.yml 同样备料并设 REQUIRE），缺了 tavotto.spec 直接拒绝打包。这条腿不走
+          # build_desktop.py，所以要自己在 PyInstaller 之前备料。另外两档验的是「用户自己的 Python」，不要求归档。
+          if ($env:TAVOTTO_REQUIRE_PRIVATE_PYTHON -eq "1") { python scripts/stage_private_python.py }
           pyinstaller packaging/tavotto.spec --noconfirm
 
       - name: 准备「用户的 Python」— conda

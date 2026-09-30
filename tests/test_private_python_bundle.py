@@ -172,6 +172,17 @@ def test_the_release_workflow_requires_the_archive():
     assert 'TAVOTTO_REQUIRE_PRIVATE_PYTHON: "1"' in wf
 
 
+def test_nightly_no_python_leg_stages_the_archive_before_pyinstaller():
+    """nightly 的「无 Python」腿不走 build_desktop.py、自己跑 PyInstaller：冻结包要与发行形态一致，
+    就得在 PyInstaller 之前备料，且只对这一档打开 REQUIRE（另外两档不要求归档）。"""
+    wf = (REPO / ".github" / "workflows" / "nightly.yml").read_text(encoding="utf-8")
+    assert (
+        "TAVOTTO_REQUIRE_PRIVATE_PYTHON: ${{ matrix.python == 'none' && '1' || '0' }}" in wf
+    )
+    stage = wf.index("python scripts/stage_private_python.py")
+    assert stage < wf.index("pyinstaller packaging/tavotto.spec")
+
+
 @pytest.mark.skipif(tomllib is None, reason="需要 tomllib（Python ≥ 3.11）")
 def test_wheel_and_sdist_never_pick_up_the_archive():
     cfg = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))
