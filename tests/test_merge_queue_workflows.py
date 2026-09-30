@@ -121,7 +121,7 @@ GATE_IN_CODEQL = "CodeQL gate"
 #: （issue #282）。这是**枚举**不是白名单：加一个新 runner 就必须回到这里，
 #: 顺便被问一句「它属于哪一类」。
 _RUNNER_IS_MACOS = {
-    "ubuntu-latest": False,
+    "ubuntu-24.04": False,
     "macos-latest": True,
     "windows-latest": False,
 }
@@ -223,7 +223,7 @@ def _tiers_of(job_block: str) -> set[tuple[str, str]]:
     if "os" in axes:
         oses = axes["os"]
     else:
-        m = re.search(r"(?m)^    runs-on: ([\w-]+)$", code)
+        m = re.search(r"(?m)^    runs-on: ([\w.-]+)$", code)
         assert m, "os 不在 matrix 轴上，runs-on 又不是字面量"
         oses = [m.group(1)]
     if "python" in axes:
@@ -527,18 +527,18 @@ class TestPullRequestEventTypes:
         `$RUNNER_TEMP/trusted-gate/`，与那一步「取默认分支上的可信判定器」落的位置相同）。
         返回判定器 stdout 那一行机器可读 JSON，并核对退出码与结论一致。
 
-        那一步在 ci.yml 里 `runs-on: ubuntu-latest`，Bash 是它唯一的执行环境；本机没有 bash
+        那一步在 ci.yml 里 `runs-on: ubuntu-24.04`，Bash 是它唯一的执行环境；本机没有 bash
         的平台（Windows 腿）如实 skip，而不是换一套复刻的 Python 分支去「代跑」。
         """
         import shutil
         import subprocess
 
         assert re.search(
-            r"(?m)^    runs-on: ubuntu-latest$", _code(_job(CI, "ci-integration-gate"))
+            r"(?m)^    runs-on: ubuntu-24.04$", _code(_job(CI, "ci-integration-gate"))
         )
         bash = shutil.which("bash")
         if bash is None or sys.platform == "win32":
-            pytest.skip("Gate 那一步只在 ubuntu-latest 的 bash 里执行；本机没有可用的 bash")
+            pytest.skip("Gate 那一步只在 ubuntu-24.04 的 bash 里执行；本机没有可用的 bash")
 
         work = Path(tempfile.mkdtemp(dir=tmp_path))  # 同一个用例里会跑多行，各自一套目录
         runner_temp = work / "runner-temp"
@@ -1025,9 +1025,9 @@ class TestGates:
         platforms = _job(CI, "backend-platforms")
         tiers = _tiers_of(fast) | _tiers_of(platforms)
         assert tiers == {
-            ("ubuntu-latest", "3.10"),
-            ("ubuntu-latest", "3.13"),
-            ("ubuntu-latest", "3.14"),
+            ("ubuntu-24.04", "3.10"),
+            ("ubuntu-24.04", "3.13"),
+            ("ubuntu-24.04", "3.14"),
             ("macos-latest", "3.13"),
             ("windows-latest", "3.13"),
         }, f"backend 覆盖漂了：{sorted(tiers)}"
@@ -1650,7 +1650,7 @@ class TestPlaywrightShards:
         )
 
     def test_every_artifact_of_the_sharded_job_is_named_per_shard(self):
-        """upload-artifact v4 同名会失败：同一 job id 下的 artifact 名在矩阵展开后不能相同。"""
+        """upload-artifact v6 同名会失败：同一 job id 下的 artifact 名在矩阵展开后不能相同。"""
         names = TestHeavyLaneDependencies._artifact_names(_job(CI, self.JOB), "upload")
         assert len(names) >= 3, f"前提：这条腿至少三个 upload-artifact：{names}"
         for n in names:
@@ -1828,8 +1828,8 @@ class TestPackageSmokeIsolation:
         assert re.search(r"(?m)^    runs-on: \$\{\{ matrix\.os \}\}\s*$", code)
         legs = {(e["os"], e["python"]) for e in _matrix_include(block)}
         assert legs == {
-            ("ubuntu-latest", "3.13"),
-            ("ubuntu-latest", "3.14"),
+            ("ubuntu-24.04", "3.13"),
+            ("ubuntu-24.04", "3.14"),
             ("macos-latest", "3.13"),
             ("windows-latest", "3.13"),
         }, legs
@@ -2387,7 +2387,7 @@ def _if_of_step(step: str) -> str:
 #: 消费者 job 的 `runs-on` 里的 `runner.os` 值 → matrix 里的 runner 标签。种子 job 里 Linux 专属
 #: 的步骤（装 Tauri 系统依赖）用 `runner.os == 'Linux'` 判，而 matrix 用的是标签；两套名字的对应
 #: 关系是**枚举**，加一类 runner 要回到这里登记。
-_RUNNER_OS_LABEL = {"Linux": "ubuntu-latest", "macOS": "macos-latest", "Windows": "windows-latest"}
+_RUNNER_OS_LABEL = {"Linux": "ubuntu-24.04", "macOS": "macos-latest", "Windows": "windows-latest"}
 
 
 def _job_oses(job_id: str) -> set[str]:
@@ -2619,7 +2619,7 @@ class TestCacheSeed:
 #: 加一类托管 runner（比如 `ubuntu-24.04-arm`）要回到这里登记一次，顺便被问一句
 #: 「它是托管的吗」。`macos-26-intel` 是 GitHub 托管的 Intel 镜像（ADR 0076，只有
 #: desktop-tauri.yml 的发行构建用它；那条 workflow 不监听 PR 事件）。
-_HOSTED_RUNNERS = frozenset({"ubuntu-latest", "macos-latest", "windows-latest", "macos-26-intel"})
+_HOSTED_RUNNERS = frozenset({"ubuntu-24.04", "macos-latest", "windows-latest", "macos-26-intel"})
 
 #: 注册 self-hosted runner 时 GitHub 自动打上的标签（`self-hosted` + OS + 架构）。
 #: actionlint 认得它们，所以它们不用出现在 `.github/actionlint.yaml` 里；
