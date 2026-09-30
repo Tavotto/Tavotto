@@ -1286,6 +1286,10 @@ def test_a_cancelled_agent_stays_busy_until_its_process_group_has_exited(app_pro
         assert ai_bridge.script_busy(script), "取消之后、观察到退出之前仍算忙"
         resp = client.post("/api/script-edit/commit", json={"token": token})
         assert resp.status_code == 409 and resp.get_json()["code"] == scriptbackup.ERROR_SCRIPT_BUSY
+        # 组长迟迟没被观察到退出的这段时间，孙进程到点想写：取消那一刻就得连组杀掉，不能等组长退出之后才收
+        time.sleep(1.0)
+        assert ai_bridge.script_busy(script)
+        assert script.read_bytes() == original, "取消时没连进程组一起杀，孙进程写进了原件"
         gate.set()
         waiter.join(10)
         assert sess["exited"].is_set()
