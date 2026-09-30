@@ -81,6 +81,8 @@ interface EnvChange {
   peers: string[]
   /** 从脚本行发起的：那一行的 offer（失败留在卡片上时，切项目清空了运行记录，卡片靠它挂回来） */
   scriptOffer: ScriptRepairOffer | null
+  /** 改用成功后要重跑的门（#740 的 `rerunGated`）：授权框里改用装齐的用户环境走它 */
+  gate?: 'needs_preparation'
   outcome:
     | { ok: false; error: string }
     | {
@@ -439,6 +441,8 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
     useEnvStore.getState().dismissDependencyPreparation()
     // 门放行了：那次「先准备」的渲染重新排上，缺包会以 missing_dependency 回来（运行后那条路）
     useRenderStore.getState().retryEnvironmentFailures()
+    // 素材库脚本行上停在这道门上的那次试运行同样重跑（图还没上画布时，门是从那里撞上的）
+    useScriptRunStore.getState().rerunGated('needs_preparation', offer.script)
   },
 
   makePlan: async (args, scriptOffer = null) => {
@@ -579,6 +583,7 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
           script,
           peers: [],
           scriptOffer: null,
+          gate: 'needs_preparation',
           outcome: {
             ok: true,
             expectPython: res.project?.python ?? '',
@@ -770,8 +775,13 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
         rerun = rerunScriptAfterRepair(p.script, !!scriptOffer && request?.script === p.script)
         // 同一个包缺在别的脚本上（素材库只给它们挂了一张卡）：装进的是同一个项目环境，一起重跑
         rerunSameModule(p.import_name, p.script, request?.script === p.script ? scriptOffer?.peers : undefined)
-        // 联合准备装完：授权框收掉（渲染会重排；缺的那一次错误也随之清）
-        if (p.flow === 'joint') useEnvStore.getState().dismissDependencyPreparation()
+        // 联合准备装完：授权框收掉（渲染会重排；缺的那一次错误也随之清）；素材库脚本行上停在这道门上的
+        // 那次试运行重跑——试运行撞上的门，授权后应当直接出图（Windows 真机验收 main 493a1310）
+        if (p.flow === 'joint') {
+          const script = p.script || useEnvStore.getState().dependencyPreparation?.script
+          useEnvStore.getState().dismissDependencyPreparation()
+          if (script) useScriptRunStore.getState().rerunGated('needs_preparation', script)
+        }
       }
       if (p.state !== 'done') {
         set({ errorCode: p.code || '', errorText: p.error || '', pinned: p.pinned ?? null })
@@ -932,9 +942,7 @@ function rerunScriptAfterRepair(script: string | undefined, fromScriptRow = fals
   if (!script) return false
   const runs = useScriptRunStore.getState()
   const phase = runs.byScript[script]?.phase
-  // 停在「开跑前要先准备依赖」上的行同样重跑（联合准备装完之后，2026-09-29 干净虚拟机实测）
-  if (phase !== 'missing_dependency' && phase !== 'needs_preparation' && !(fromScriptRow && phase === undefined))
-    return false
+  if (phase !== 'missing_dependency' && !(fromScriptRow && phase === undefined)) return false
   void runs.run(script)
   return true
 }
@@ -1015,6 +1023,7 @@ async function applyEnvChange(owner: string | null, change: EnvChange, verify: b
   else store.setState({ busy: false })
   useRenderStore.getState().retryEnvironmentFailures()
   rerunAfterEnvironmentChange(change.script, change.module, change.peers, verify)
+  if (change.gate) useScriptRunStore.getState().rerunGated(change.gate, change.script)
 }
 
 /** 脚本行发起时记下同样缺这个包的其它脚本（重试时沿用第一次记下的：那时运行记录可能已随切项目清掉） */

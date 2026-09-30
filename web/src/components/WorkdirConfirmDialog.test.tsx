@@ -26,6 +26,7 @@ import { WorkdirChooseButton } from '@/components/WorkdirRow'
 import { i18n, t } from '@/i18n'
 import { setCurrentProjectId } from '@/lib/session'
 import { useEnvStore } from '@/store/envStore'
+import { onGateResolved, useScriptRunStore } from '@/store/scriptRunStore'
 import { useRenderStore } from '@/store/renderStore'
 import { useUiStore } from '@/store/uiStore'
 
@@ -263,6 +264,66 @@ describe('WorkdirConfirmDialog', () => {
       await act(async () => useEnvStore.getState().requestWorkdirConfirmation(rootEvidence(), 'proj-b'))
       expect(dialog()).not.toBeNull()
     } finally {
+      setCurrentProjectId(null)
+    }
+  })
+
+  it('作答期间换了项目：A 的确认不去重跑 B 停在门上的试运行；同项目照常重跑（#740 Codex P2）', async () => {
+    const resolved: string[] = []
+    const off = onGateResolved((phase) => resolved.push(phase))
+    const ok = {
+      ok: true,
+      workdir: { mode: 'project_root', modes: [] },
+      project: { open: true, workdir: { mode: 'project_root', modes: ['sandbox', 'project', 'project_root'] } },
+    } as never
+    try {
+      // 同项目：确认成功 → 通知一次
+      setCurrentProjectId('pA')
+      setMock.mockResolvedValue(ok)
+      await render(<WorkdirConfirmDialog />)
+      await act(async () => useEnvStore.getState().requestWorkdirConfirmation(rootEvidence()))
+      await act(async () => button(en('workdirChooseRun'))!.click())
+      await act(async () => {})
+      expect(resolved).toEqual(['needs_workdir'])
+      // 换项目：PATCH 在路上时切到 B，回来之后不重跑
+      resolved.length = 0
+      let release!: (v: unknown) => void
+      setMock.mockReturnValue(new Promise((r) => (release = r)) as never)
+      await act(async () => useEnvStore.getState().requestWorkdirConfirmation(rootEvidence()))
+      await act(async () => button(en('workdirChooseRun'))!.click())
+      const { fetchEngineEnvironment } = await import('@/lib/api')
+      vi.mocked(fetchEngineEnvironment).mockResolvedValue(env())
+      await act(async () => {
+        setCurrentProjectId('pB')
+        await useEnvStore.getState().resetProject()
+      })
+      await act(async () => {
+        release(ok)
+        await new Promise((r) => setTimeout(r, 0))
+      })
+      expect(resolved, 'A 的确认重跑了 B 的试运行').toEqual([])
+      // A → B → A：回到同一个项目 id，但已是新的一代——在途的那次选择没有落在这一代上，同样不重跑
+      resolved.length = 0
+      setCurrentProjectId('pA')
+      await act(async () => useEnvStore.getState().requestWorkdirConfirmation(rootEvidence()))
+      let release2!: (v: unknown) => void
+      setMock.mockReturnValue(new Promise((r) => (release2 = r)) as never)
+      await act(async () => button(en('workdirChooseRun'))!.click())
+      await act(async () => {
+        setCurrentProjectId('pB')
+        useScriptRunStore.getState().clear()
+        await useEnvStore.getState().resetProject()
+        setCurrentProjectId('pA')
+        useScriptRunStore.getState().clear()
+        await useEnvStore.getState().resetProject()
+      })
+      await act(async () => {
+        release2(ok)
+        await new Promise((r) => setTimeout(r, 0))
+      })
+      expect(resolved, 'A → B → A 之后，上一代的确认重跑了这一代的试运行').toEqual([])
+    } finally {
+      off()
       setCurrentProjectId(null)
     }
   })

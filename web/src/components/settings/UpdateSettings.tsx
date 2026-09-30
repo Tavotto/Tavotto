@@ -153,7 +153,7 @@ export function UpdateSettings() {
                 href={status.html_url}
                 target="_blank"
                 rel="noreferrer"
-                className="text-xs text-accent hover:underline"
+                className="text-xs text-ink-2 underline-offset-2 hover:text-ink hover:underline"
               >
                 {st('update.releaseNotes')}
               </a>
@@ -252,7 +252,7 @@ function DesktopUpdateSettings({ status }: { status: UpdateStatus }) {
             href={status.releases_url}
             target="_blank"
             rel="noreferrer"
-            className="text-xs text-accent hover:underline"
+            className="text-xs text-ink-2 underline-offset-2 hover:text-ink hover:underline"
           >
             {st('update.manualDownload')}
           </a>
@@ -308,7 +308,7 @@ function DesktopUpdateSettings({ status }: { status: UpdateStatus }) {
                 href={status.releases_url}
                 target="_blank"
                 rel="noreferrer"
-                className="text-xs text-accent hover:underline"
+                className="text-xs text-ink-2 underline-offset-2 hover:text-ink hover:underline"
               >
                 {st('update.releaseNotes')}
               </a>

@@ -74,9 +74,10 @@ async function mount(node: React.ReactNode) {
 const byText = (text: string) =>
   [...document.querySelectorAll('button')].filter((b) => b.textContent?.trim() === text)
 
-/** 画成按钮的那些（`Button` 一律带边框 / 底色；次级入口是裸文字链接） */
+/** 画成按钮的那些（`Button` 的次按钮是灰底胶囊、主按钮黑底——静态就有底色；次级入口是裸文字链接，
+ *  只有 hover 时才有底，所以按「不带前缀的底色类」判，`hover:bg-surface-hover` 不算） */
 const chromedButtons = () =>
-  [...document.querySelectorAll('button')].filter((b) => b.className.includes('border-border'))
+  [...document.querySelectorAll('button')].filter((b) => /(^|\s)(bg-surface-hover|bg-ink)(\s|$)/.test(b.className))
 
 beforeEach(async () => {
   document.body.innerHTML = ''

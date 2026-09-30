@@ -27,17 +27,29 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   fetchEngineEnvironment: vi.fn().mockResolvedValue({}),
   setProjectEnvironment: vi.fn(),
   setEngineEnvironment: vi.fn(),
+  createJointDependencyPlan: vi.fn(),
+  prepareJointDependencies: vi.fn(),
+  skipDependencyPreparation: vi.fn(),
+  setProjectWorkdir: vi.fn(),
 }))
 
 import {
   cancelDependencyPlan,
   cancelProbe,
   createDependencyPlan,
+  createJointDependencyPlan,
+  DEPENDENCY_PREPARATION_CODE,
   fetchRegistry,
   installDependencyPlan,
+  prepareJointDependencies,
   probeScript,
   setEngineEnvironment,
   setProjectEnvironment,
+  setProjectWorkdir,
+  skipDependencyPreparation,
+  WORKDIR_CONFIRMATION_CODE,
+  type DependencyPreparationOffer,
+  type WorkdirConfirmation,
   type CapturedFigureDescriptor,
   type DependencyRepairOffer,
   type ProbeResult,
@@ -46,7 +58,9 @@ import {
 } from '@/lib/api'
 import { i18n } from '@/i18n'
 import { setCurrentProjectId } from '@/lib/session'
+import { DependencyPrepareDialog } from '@/components/DependencyPrepareDialog'
 import { EngineEnvironmentDialog } from '@/components/EngineEnvironmentDialog'
+import { WorkdirConfirmDialog } from '@/components/WorkdirConfirmDialog'
 import { ScriptLibrary } from '@/components/left/ScriptLibrary'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useEnvStore } from '@/store/envStore'
@@ -128,6 +142,9 @@ async function mount(query = '') {
         <ScriptLibrary query={query} />
         {/* 与 App 根一样挂着：「选择渲染环境」就地打开的就是它 */}
         <EngineEnvironmentDialog />
+        {/* 同上：起会话之前的两道门弹的就是它们 */}
+        <DependencyPrepareDialog />
+        <WorkdirConfirmDialog />
       </TooltipProvider>,
     )
   })
@@ -828,5 +845,156 @@ describe('脚本行发起的修复切项目再切回（#729）', () => {
     // 「知道了」收起：offer 随之放掉，这一行回到没有卡片（scriptRunStore 里也没有那次运行了）
     await act(async () => useDepRepairStore.getState().reset())
     expect(card()).toBeNull()
+  })
+})
+
+/**
+ * 起会话之前的门（Windows 真机验收，main 493a1310）：项目里只有一个 `from adjustText import adjust_text` 的脚本、
+ * 还没有任何图。试运行 200 回来、`error.code == dependency_preparation_required` 带整份载荷——以前前端把它当成
+ * 一次失败塞进「可能需要原环境」，出口只有「选择渲染环境 / 复制诊断」，新用户走不到安装。
+ * 判据的主语：素材库脚本行（`scriptRunStore.run`）拿到这份载荷后，① 授权框（同一个 `DependencyPrepareDialog`）
+ * 弹出；② 这一行不进「可能需要原环境」；③ 授权并准备成功后自动再试运行一次、出图；④ 「稍后」之后行上有再打开的
+ * 入口、「不准备，直接运行」之后同样重跑；⑤ 运行目录那道门同形。
+ */
+describe('试运行撞上起会话之前的门', () => {
+  const prepOffer: DependencyPreparationOffer = {
+    code: DEPENDENCY_PREPARATION_CODE,
+    script: 'fig_labels.py',
+    plan: {
+      plan_version: 1, status: 'ready', target_kind: 'tavotto_managed', script: 'fig_labels.py', needed: [],
+      missing: [{ import_name: 'adjustText', distribution: 'adjusttext', resolution_source: 'curated', declared: false, specifiers: [], via: [] }],
+      satisfied: [], unknown: [], possible: [], requirements: ['adjusttext'], constraints: [], require_hashes: false,
+      adapter: [], blocked: [],
+      selection: { selected_groups: [], available_groups: [], unselected_groups: [], skipped_marker: [] },
+      identity: 'id',
+    },
+    target_kind: 'tavotto_managed',
+    targets: [
+      { kind: 'tavotto_managed', venv: '', python: '', modifies_user_environment: false, creates_environment: true, available: true, reason: '' },
+    ],
+    rounds_remaining: 3,
+    skipped: false,
+  }
+  const gateProbe = (): ProbeResult => ({
+    ...ok([]),
+    script: 'fig_labels.py',
+    registered: false,
+    error: {
+      code: DEPENDENCY_PREPARATION_CODE,
+      message: '脚本开跑就需要的包渲染环境里没有，要先准备依赖',
+      dependency_preparation: prepOffer,
+    },
+  })
+  const prepDialog = () => document.querySelector('[data-dialog="dependency-prepare"]')
+  const docButton = (label: string) =>
+    [...document.querySelectorAll('button')].find((b) => b.textContent?.trim() === label) as HTMLButtonElement | undefined
+  const reopen = () => host.querySelector('[data-script-dependency-prepare] button') as HTMLButtonElement | null
+
+  beforeEach(() => {
+    setCurrentProjectId('p1')
+    useEnvStore.setState({ dependencyPreparation: null, workdirConfirmation: null })
+    useDepRepairStore.getState().reset()
+    vi.mocked(createJointDependencyPlan).mockReset()
+    vi.mocked(prepareJointDependencies).mockReset()
+    vi.mocked(skipDependencyPreparation).mockReset()
+    vi.mocked(setProjectWorkdir).mockReset()
+    mockRegistry.mockResolvedValue(view([entry({ script: 'fig_labels.py' })]))
+  })
+  afterEach(() => {
+    useEnvStore.setState({ dependencyPreparation: null, workdirConfirmation: null })
+    useDepRepairStore.getState().reset()
+    document.body.innerHTML = ''
+    setCurrentProjectId(null)
+  })
+
+  it('依赖门（脚本行 ▶）：行内一句话 + 一键修复，不弹授权框、不进「可能需要原环境」；点一次走联合准备，装好后自动再试运行、出图（用户 2026-09-30 的决定）', async () => {
+    mockProbe.mockResolvedValueOnce(gateProbe())
+    vi.mocked(createJointDependencyPlan).mockResolvedValue({
+      plan: {
+        plan_id: 'jp-row', script: 'fig_labels.py', target_kind: 'tavotto_managed', python: '', requirements: ['adjusttext'],
+        constraints: [], require_hashes: false, adapter: [], identity: 'id', needed_imports: ['adjustText'], groups: [],
+        modifies_user_environment: false, creates_environment: true, network_required: true, expires_at: 0, joint: prepOffer.plan,
+      },
+    } as never)
+    vi.mocked(prepareJointDependencies).mockResolvedValue({ started: true } as never)
+    await mount()
+    await act(async () => runButton().click())
+    await flush()
+    // ① 行内直接给：不弹框，载荷不交给 envStore
+    expect(prepDialog(), '行内呈现时不该弹授权框').toBeNull()
+    expect(useEnvStore.getState().dependencyPreparation).toBeNull()
+    expect(host.querySelector('[data-script-preparation-sentence]')!.textContent).toBe('这个脚本还缺 adjusttext，点一下自动装好。')
+    // ② 不是失败：不进「可能需要原环境」，没有那两颗无关的出口
+    expect(host.textContent).not.toContain('可能需要原环境')
+    expect([...host.querySelectorAll('[data-script-preparation] button')].filter((b) => !b.closest('details')).map((b) => b.textContent)).toEqual(['一键修复'])
+    // ③ 点一次：先绑定计划再只发 plan_id
+    await act(async () => buttonByText('一键修复').click())
+    await flush()
+    expect(createJointDependencyPlan).toHaveBeenCalledWith({ script: 'fig_labels.py', target: 'tavotto_managed' })
+    expect(prepareJointDependencies).toHaveBeenCalledWith('jp-row')
+    // ④ 准备成功（SSE 带着计划所属的脚本）→ #740 的 `rerunGated`：这一行自动再试运行一次、出图
+    mockProbe.mockClear()
+    mockProbe.mockResolvedValue({ ...ok([desc('Fig1')]), script: 'fig_labels.py' })
+    await act(async () =>
+      useDepRepairStore.getState().onProgress({
+        plan_id: 'jp-row', state: 'done', log: '', error: null, code: '', flow: 'joint', script: 'fig_labels.py',
+      }),
+    )
+    await flush()
+    expect(mockProbe, '准备成功后没有自动重跑试运行').toHaveBeenCalledTimes(1)
+    expect(mockProbe.mock.calls[0][0]).toBe('fig_labels.py')
+    expect(useScriptRunStore.getState().byScript['fig_labels.py']?.phase).toBe('captured_one')
+  })
+
+  it('其他入口（图卡 / 修复后重跑不带行内标记）撞上依赖门仍弹授权框；「稍后」「不准备，直接运行」的 #740 行为不变', async () => {
+    mockProbe.mockResolvedValueOnce(gateProbe())
+    vi.mocked(skipDependencyPreparation).mockResolvedValue({ skipped: true } as never)
+    await mount()
+    await act(async () => void useScriptRunStore.getState().run('fig_labels.py')) // 不是脚本行 ▶
+    await flush()
+    expect(useEnvStore.getState().dependencyPreparation, '载荷没交给 envStore').toEqual(prepOffer)
+    expect(prepDialog(), '授权框没弹').toBeTruthy()
+    mockProbe.mockClear()
+    mockProbe.mockResolvedValue({ ...ok([desc('Fig1')]), script: 'fig_labels.py' })
+    await act(async () => docButton('不准备，直接运行')!.click())
+    await flush()
+    expect(skipDependencyPreparation).toHaveBeenCalledWith('fig_labels.py')
+    expect(mockProbe, '明确跳过之后没有重跑试运行').toHaveBeenCalledTimes(1)
+  })
+
+  it('运行目录门同形：载荷交给 envStore、行上有「选择运行目录…」、选定后重跑', async () => {
+    const confirmation: WorkdirConfirmation = {
+      kind: 'workdir', code: WORKDIR_CONFIRMATION_CODE, script: 'fig_labels.py', reason: 'script_dir_evidence',
+      recommended: 'project', options: [], conflicts: [], reads: [],
+    }
+    mockProbe.mockResolvedValueOnce({
+      ...ok([]),
+      script: 'fig_labels.py',
+      registered: false,
+      error: { code: WORKDIR_CONFIRMATION_CODE, message: '要先选择脚本的运行目录', confirmation },
+    })
+    vi.mocked(setProjectWorkdir).mockResolvedValue({ project: { open: true } } as never)
+    await mount()
+    await act(async () => runButton().click())
+    await flush()
+    expect(useEnvStore.getState().workdirConfirmation, '载荷没交给 envStore').toEqual(confirmation)
+    expect(host.textContent).not.toContain('可能需要原环境')
+    const reopenWorkdir = () => host.querySelector('[data-script-workdir-choose] button') as HTMLButtonElement | null
+    // 「稍后」之后行上有再打开的入口
+    await act(async () => docButton('稍后')!.click())
+    await flush()
+    expect(useEnvStore.getState().workdirConfirmation).toBeNull()
+    expect(reopenWorkdir(), '行上没有再打开的入口').toBeTruthy()
+    await act(async () => reopenWorkdir()!.click())
+    await flush()
+    expect(useEnvStore.getState().workdirConfirmation, '再打开没有把载荷交回 envStore').toEqual(confirmation)
+    mockProbe.mockClear()
+    mockProbe.mockResolvedValue({ ...ok([desc('Fig1')]), script: 'fig_labels.py' })
+    // 在确认框里选定（推荐项已预选）→ 这一行自动再试运行
+    await act(async () => docButton('运行')!.click())
+    await flush()
+    expect(setProjectWorkdir).toHaveBeenCalledWith('project')
+    expect(mockProbe, '选定运行目录后没有重跑试运行').toHaveBeenCalledTimes(1)
+    expect(useScriptRunStore.getState().byScript['fig_labels.py']?.phase).toBe('captured_one')
   })
 })

@@ -22,6 +22,8 @@
   | 桌面壳 stdin 首行的 `preferred_port`：生产方 `src-tauri/src/sidecar/port_memory.rs`（`HELLO_FIELD` / `VALID` / `FIRST_CHOICE`）↔ 消费方 `src/tavotto/desktop.py`（`PREFERRED_PORT_FIELD` / `PREFERRED_PORT_MIN` / `_MAX`，`parse_preferred_port`）（ADR 0108：字段名漂了，sidecar 永远读不到建议端口，每次启动换 origin，而启动照常成功） | 两侧各读 `tests/golden/desktop_preferred_port.json`：`port_memory.rs` 的 `hello_field_is_the_golden_pair` + `tests/test_desktop_sidecar.py::test_preferred_port_field_is_the_golden_pair`（不读对方源码） |
   | `engine/locate.py` ↔ codex-plugin `handoff.py` | `test_install_locate.py::test_plugin_mirrors_the_locator` |
   | `engine/projectenv.PYTHON_MIN`/`PYTHON_MAX_EXCLUSIVE` ↔ `codex-plugin/mcp/server.py` 同名常量（`--provision` 挑 venv 基础解释器用） | `test_mcp_resolver.py::test_provision_python_range_mirrors_the_engine`（projectenv 那侧再由 `test_support_matrix.py` 钉在 pyproject 的 `requires-python` 上） |
+  | `engine/runtime._owned_mplconfigdir`（+ `_MPL_CONFIG_ENTRIES` / `MPL_LINKED_CONFIG_DIRNAME`）↔ codex-plugin `handoff.mplconfigdir_for`（跑用户脚本的 `MPLCONFIGDIR`） | `test_codex_plugin.py::test_script_env_mpl_rule_mirrors_the_engine`（平台 × 目录在不在 × 用户设没设） |
+  | `engine/runtime.PLUGIN_RUNTIME_DIRNAME` + `_owned_cache_root` 的插件那一支 ↔ `codex-plugin/mcp/server.py` `managed_runtime_dir` / `managed_cache_dir` / `provision_env`（自管运行时的缓存归宿，#733） | `test_probe_leaves_no_trace.py::test_the_plugin_runtime_cache_dir_is_one_path_on_both_sides` |
   | codex-plugin `.mcp.json` ↔ `skills/tavotto-figure/agents/openai.yaml` 依赖声明 | `tests/test_codex_plugin.py` |
   | 上面这一对在**已装副本**里也得同步（`tavotto codex install` 换启动命令时两侧一起改） | `tests/test_codex_install_cli.py` |
   | 遥测 `EVENTS` 表 ↔ 代理白名单 | `test_client_and_proxy_contracts_match` |

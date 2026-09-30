@@ -1,6 +1,6 @@
-import type { Manifest, ManifestElement } from './api'
+import type { Manifest, ManifestElement, ManifestGroup } from './api'
 import { segIntersectsSeg } from './pathGeom'
-import { t } from '@/i18n'
+import { msg, t, type UiMessage } from '@/i18n'
 import type { AlignMode } from './geometry'
 import {
   flipY,
@@ -20,6 +20,7 @@ import {
   type PanelOverride,
 } from '@/types/document'
 import { effectiveOverride, isEffectiveOverrideAt } from '@/lib/effectiveOverride'
+import { structuralParent } from '@/components/inspector/roles/hierarchy'
 
 /**
  * 图内元素的几何代理层。
@@ -163,7 +164,7 @@ export function geomTarget(
 }
 
 /** 元素当前的 axes position（优先取尚未渲染回来的 override） */
-export function positionOf(panel: PanelObject, el: ManifestElement): Rect4 | null {
+export function positionOf(panel: Pick<PanelObject, 'overrides'>, el: ManifestElement): Rect4 | null {
   const ov = effectiveOverride(panel.overrides, el.gid, 'position')
   if (ov && Array.isArray(ov.value)) return (ov.value as number[]).slice(0, 4) as Rect4
   const f = el.editable.find((x) => x.prop === 'position')
@@ -247,8 +248,148 @@ export interface AlignEntry extends AlignItem {
 }
 
 /**
+ * 组**不能整体变换**的原因（`groupTransformBlocked`）。整组不动、不拆开：共享色条组的意义就是
+ * 成员一起动，只挪能动的那几个会把色条与子图拆开——与画布对象的组「组内有锁定成员整组不动」
+ * （`store/actions.movableTargets`）同一条规则。新的原因只往这里加，调用方按 reason 说话。
+ *
+ * - `not_resizable`：有成员落位不归 Tavotto 管（插图、寄生轴；引擎的 `group.resizable`）；
+ * - `locked`：有成员被元素树锁住（成员本身，或共享的那条色条元素——锁的是它、几何在色条轴上）；
+ * - `incomplete`：有成员在这一版里拿不到可写的落位（不在元素表里、不可对齐、没有 position）——
+ *   `alignEntries` 会静默跳过它，剩下的照样成组平移，组就被拆开了。
+ *
+ * **不变式：组的变换只有全员刚性与零两种结果。** 这里没有原因，就是全员；有原因，就是零。
+ * `expandGroups` 之后的任何出口都不许再逐个过滤成员（隐藏、锁定、没几何…）——方向键微调曾在
+ * 下游按隐藏过滤、把隐藏的成员丢掉（Codex #691）；对齐 / 分布也不许逐个成员排版
+ * （`alignUnits` 把组当一个单位）。看护：`sharedColorbarGroup.test` 的「写下的成员 =
+ * expandGroups 的结果」一组用例，每个写几何的出口一条。
+ */
+export type GroupBlockReason = 'not_resizable' | 'locked' | 'incomplete'
+
+/** 组不能整体变换时说的那句（按原因；拖动、方向键、对齐共用） */
+const GROUP_BLOCKED_STATUS: Record<GroupBlockReason, string> = {
+  not_resizable: 'status.groupBlocked.notResizable',
+  locked: 'status.groupBlocked.locked',
+  incomplete: 'status.groupBlocked.incomplete',
+}
+export const groupBlockedMessage = (reason: GroupBlockReason): UiMessage =>
+  msg(GROUP_BLOCKED_STATUS[reason], undefined, 'workspace')
+
+export function groupTransformBlocked(
+  panel: Pick<PanelObject, 'lockedGids' | 'overrides'>,
+  manifest: Manifest,
+  group: ManifestGroup,
+): GroupBlockReason | null {
+  if (!group.resizable) return 'not_resizable'
+  const locked = panel.lockedGids ?? []
+  if ([...group.members, group.colorbar_gid].some((g) => locked.includes(g))) return 'locked'
+  for (const gid of group.members) {
+    const el = manifest.elements.find((e) => e.gid === gid)
+    if (!el || !isAlignable(el) || !el.resizable) return 'incomplete'
+    if (!positionOf(panel, geomTarget(manifest, el))) return 'incomplete'
+  }
+  return null
+}
+
+/** 选区里不能整体变换的组与原因（调用方据此说出来） */
+export const blockedGroupsIn = (
+  panel: Pick<PanelObject, 'lockedGids' | 'overrides'> | null | undefined,
+  manifest: Manifest | null | undefined,
+  gids: readonly string[],
+): { group: ManifestGroup; reason: GroupBlockReason }[] =>
+  !panel || !manifest
+    ? []
+    : (manifest.groups ?? []).flatMap((group) => {
+        if (!gids.includes(group.gid)) return []
+        const reason = groupTransformBlocked(panel, manifest, group)
+        return reason ? [{ group, reason }] : []
+      })
+
+/**
+ * 选区里的组展开成它的成员（`Manifest.groups`）。组自己没有几何属性：整组平移 / 缩放
+ * 就是成员（子图 + 共享的色条轴）按同一个参照框一起变换，每个成员写自己那条 position。
+ * 不能整体变换的组（`groupTransformBlocked` 有原因）展开为空 = 整组不动。
+ *
+ * **判据只在这里用一次**：拖动（PanelView → `alignEntries`）、组框手柄（OverlaySvg →
+ * `resolveGroup`）、属性页的整组缩放（GroupPage / ElementInspector → `resolveGroup` /
+ * `alignEntries`）、方向键微调（`nudge.moverFor`）都经这一个出口；要说出原因的（拖起来、
+ * 按方向键、组页）用同一个判据的 `blockedGroupsIn`。
+ */
+export function expandGroups(
+  panel: Pick<PanelObject, 'lockedGids' | 'overrides'>,
+  manifest: Manifest,
+  gids: readonly string[],
+): string[] {
+  if (!manifest.groups?.length) return [...gids]
+  const claimed = claimedBySelectedGroups(manifest, gids)
+  const out: string[] = []
+  for (const gid of gids) {
+    const group = manifest.groups.find((g) => g.gid === gid)
+    // 选区里同时点名的组成员（或几何落在成员上的色条 / 位图）归它的组管：组能整体变换就随全员来，
+    // 组被挡住就是零——**不因为组展开为空就退回成散选**，否则单独挪它会把组拆开（Codex #691）
+    const parts = group
+      ? groupTransformBlocked(panel, manifest, group)
+        ? []
+        : group.members
+      : claimed(gid)
+        ? []
+        : [gid]
+    for (const g of parts) if (!out.includes(g)) out.push(g)
+  }
+  return out
+}
+
+/**
+ * 选区里的组「认领」了哪些 gid：组成员本身，以及几何落在成员上的元素（共享色条元素 → 色条轴、
+ * 位图 → 宿主子图）。认领与组能不能整体变换无关——被挡住的组，它的成员照样不能被当散选单独挪。
+ * 成员子图里的其它东西（标题、线…）不算：挪它们不改组的落位。
+ */
+export function claimedBySelectedGroups(
+  manifest: Manifest,
+  gids: readonly string[],
+): (gid: string) => boolean {
+  const members = new Set(
+    (manifest.groups ?? []).filter((g) => gids.includes(g.gid)).flatMap((g) => g.members),
+  )
+  if (!members.size) return () => false
+  return (gid) => {
+    if (members.has(gid)) return true
+    const el = manifest.elements.find((e) => e.gid === gid)
+    return !!el && members.has(geomGid(el))
+  }
+}
+
+/**
+ * 命中的元素落在哪一个条目（成员，按 key = 几何落点 gid）的子树里：自己或某个真实祖先（`structuralParent`，
+ * 先认显式 `parent_gid` 再按 gid 路径）的几何落点就是某个条目的 key，回那个 key；都不是回 null。
+ *
+ * 选中组之后拖动可以从成员子图里的任何东西起手（线、标题、图例、注释）——只比
+ * `geomGid(hit)` 的话只有点在子图空白处 / 位图上才整组走，点到一条线就把选区换成那条线
+ * （Codex #691）。组外的元素一路走到整张图也碰不到任何条目，回 null。
+ */
+export function entryUnder(
+  manifest: Manifest,
+  entryKeys: readonly string[],
+  hit: ManifestElement,
+): string | null {
+  const keys = new Set(entryKeys)
+  const els = new Map(manifest.elements.map((e) => [e.gid, e]))
+  const parentOf = structuralParent(manifest)
+  const seen = new Set<string>()
+  for (let g: string | null = hit.gid; g && !seen.has(g); g = parentOf(g)) {
+    seen.add(g)
+    const el = els.get(g) // 组节点不在元素表里：跳过、接着往上
+    if (el && keys.has(geomGid(el))) return geomGid(el)
+  }
+  return null
+}
+
+/** 选区里有组 */
+export const selectionHasGroup = (manifest: Manifest | null | undefined, gids: readonly string[]) =>
+  !!manifest?.groups?.some((g) => gids.includes(g.gid))
+
+/**
  * 把选中的 gid 列表整理成对齐用的条目：
- * 位图归并到宿主子图，同一几何落点只保留一条。
+ * 组先展开成成员（`expandGroups`），位图归并到宿主子图，同一几何落点只保留一条。
  * 子图的框从 position 换算（而不是 manifest bbox）—— aspect="equal" 的子图
  * 渲染后会贴合长宽比，bbox 与请求值略有出入，用请求空间算才不会反复回写。
  */
@@ -260,7 +401,7 @@ export function alignEntries(
   const out: AlignEntry[] = []
   const seen = new Set<string>()
 
-  for (const gid of gids) {
+  for (const gid of expandGroups(panel, manifest, gids)) {
     const el = manifest.elements.find((e) => e.gid === gid)
     if (!el || !isAlignable(el)) continue
     const key = geomGid(el)
@@ -715,4 +856,64 @@ export function groupBoxes(group: Group, next: Rect4): Map<string, Rect4> {
 export function groupPatches(group: Group, next: Rect4): PanelOverride[] {
   const boxes = groupBoxes(group, next)
   return group.entries.map((e) => e.write(boxes.get(e.key)!))
+}
+
+/**
+ * 对齐 / 分布 / 等宽等高用的条目：选区里的组（`Manifest.groups`）**整组当一个单位**——框是成员的
+ * 并集，落位时成员按 `groupBoxes` 一起重映射（相对布局不变）。逐个成员参与排版的话，「左对齐」
+ * 会把 B、C 与色条叠到同一条左边上，所有成员都动了、组却散了（Codex #691：组的变换只有全员
+ * 刚性与零两种结果）。不能整体变换的组（`groupTransformBlocked`）不出条目 = 整组不动；选区里
+ * 同时点名的组成员跟着组走，不另出一条。其余元素与 `alignEntries` 一样。
+ *
+ * 每个条目都有 `writes`：一个单位落成几条 override（组 = 每个成员一条）。
+ */
+export type AlignUnit = AlignItem & { label: string; writes: (box: Rect4) => PanelOverride[] }
+
+export function alignUnits(panel: PanelObject, manifest: Manifest, gids: string[]): AlignUnit[] {
+  const groups = (manifest.groups ?? []).filter((g) => gids.includes(g.gid))
+  const units: AlignUnit[] = []
+  for (const g of groups) {
+    const group = groupOf(alignEntries(panel, manifest, [g.gid]))
+    if (!group) continue
+    units.push({
+      key: g.gid,
+      label: g.gid,
+      resizable: true,
+      box: group.box,
+      writes: (box) => groupPatches(group, box),
+    })
+  }
+  // 组成员（被挡住的组也算）不单独出条目：只挪它会拆开组
+  const members = new Set(groups.flatMap((g) => g.members))
+  const loose = alignEntries(
+    panel,
+    manifest,
+    gids.filter((gid) => !groups.some((g) => g.gid === gid)),
+  ).filter((en) => !members.has(en.key))
+  // **按选区原来的顺序排**：samew / sameh 以末位为基准（「最后选中的那个」），组全排在散选前面的话，
+  // 先选散选、再 ⇧ 选组时基准就错成了散选元素（Codex #691）。组的位置 = 它自己、它的成员或几何落在
+  // 成员上的元素在选区里最先出现的那一处；散选条目 = 几何落点是它的那个 gid 最先出现处
+  const els = new Map(manifest.elements.map((e) => [e.gid, e]))
+  const geomOf = (gid: string) => {
+    const el = els.get(gid)
+    return el ? geomGid(el) : gid
+  }
+  const firstIndex = (hit: (gid: string) => boolean) => {
+    const i = gids.findIndex(hit)
+    return i < 0 ? gids.length : i
+  }
+  const ordered: { at: number; unit: AlignUnit }[] = [
+    ...units.map((unit) => {
+      const g = groups.find((x) => x.gid === unit.key)!
+      return {
+        at: firstIndex((gid) => gid === g.gid || g.members.includes(geomOf(gid))),
+        unit,
+      }
+    }),
+    ...loose.map(({ key, label, resizable, box, write }) => ({
+      at: firstIndex((gid) => geomOf(gid) === key),
+      unit: { key, label, resizable, box, writes: (next: Rect4) => [write(next)] },
+    })),
+  ]
+  return ordered.sort((a, b) => a.at - b.at).map((o) => o.unit)
 }

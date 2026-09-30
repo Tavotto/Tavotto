@@ -2,26 +2,26 @@
 name: Tavotto
 description: matplotlib 科研图的可视化编辑器——Paper × Instrument，紧凑的桌面工具
 colors:
-  bg: "#f7f6f3"
-  canvas: "#eaeae6"
+  bg: "#eeede9"
+  canvas: "#f3f2ee"
   surface: "#ffffff"
   surface-2: "#f7f7f4"
   field: "#f1f0ec"
   field-hover: "#edece8"
-  border-control: "#8a8a82"
+  border-control: "#84847c"
   ink: "#1b1b18"
   ink-2: "#5c5c55"
   ink-3: "#6b6b64"
   ink-faint: "#a3a39a"
-  accent: "#2868b7"
-  accent-subtle: "#e9f0f9"
+  accent: "#2c73de"
+  accent-subtle: "#ebf2fc"
   danger: "#c4442a"
   danger-subtle: "#fdf3f1"
   warn: "#8a5a00"
   warn-subtle: "#f7efe0"
   ok: "#2b7649"
   ok-subtle: "#e6f3ea"
-  sel: "#2f6fed"
+  sel: "#4685e2"
 typography:
   title:
     fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Helvetica Neue', 'Microsoft YaHei', system-ui, sans-serif"
@@ -65,6 +65,7 @@ rounded:
   sm: "6px"
   md: "10px"
   lg: "14px"
+  panel: "16px"
 spacing:
   control: "28px"
   setting-row: "48px"
@@ -72,28 +73,27 @@ components:
   button-primary:
     backgroundColor: "{colors.ink}"
     textColor: "#ffffff"
-    rounded: "{rounded.sm}"
+    rounded: "9999px"
     height: "{spacing.control}"
   button-secondary:
-    backgroundColor: "{colors.surface}"
     textColor: "{colors.ink}"
-    rounded: "{rounded.sm}"
+    rounded: "9999px"
     height: "{spacing.control}"
   button-ghost:
     textColor: "{colors.ink}"
-    rounded: "{rounded.sm}"
+    rounded: "9999px"
     height: "{spacing.control}"
   button-danger:
     textColor: "{colors.danger}"
-    rounded: "{rounded.sm}"
+    rounded: "9999px"
     height: "{spacing.control}"
   icon-button:
-    rounded: "{rounded.sm}"
+    rounded: "{rounded.md}"
     size: "{spacing.control}"
   input:
     backgroundColor: "{colors.field}"
     textColor: "{colors.ink}"
-    rounded: "{rounded.sm}"
+    rounded: "{rounded.md}"
     height: "{spacing.control}"
   badge:
     rounded: "9999px"
@@ -118,7 +118,7 @@ components:
 
 **Creative North Star: "Paper × Instrument"**
 
-一件用于科研图制作与论文排版的精密仪器：微微的纸张感（暖灰白底 `#f7f6f3`，不黄不米）、
+一件用于科研图制作与论文排版的精密仪器：灰色桌面（`#eeede9`）上放导航，作品放进一块白色圆角的工作面板（2026-09-30 重设计，参照 OpenBitFun）、
 工程工具的精确（28px 控件、单位排成竖线的数字框、毫米制）、桌面软件的成熟。极简但不空洞，
 克制但有设计——精致来自比例、对齐、间距、字体层级、图标与状态，**不来自装饰**。
 
@@ -136,12 +136,12 @@ components:
 
 ### Primary
 - **Ink（近黑）** (`#1b1b18`)：主文字、主按钮填色、选中态的字重。不是纯黑。
-- **Tavotto Blue（品牌蓝）** (`#2868b7`)：焦点环、链接、AI 入口、画布选择框——小面积。
+- **Tavotto Blue（品牌蓝）**：色相取自用户定的 `#5A92E5`（2026-09-30）。它本身对白只有 3.14:1，所以焦点环 / 蓝字用同色相压深的 `#2c73de`（≥4.5:1），画布选择框用 `#4685e2`（≥3:1）；浅底 `#ebf2fc`。只给选择、焦点——链接改成灰字（`ink-2` + 悬停下划线）。
 
 ### Neutral
-- **Paper（纸面）** (`#f7f6f3`) 应用底 · **Canvas（画布灰）** (`#eaeae6`) · **Surface（白）** (`#ffffff`) 面板 / 浮层 / 卡 · **Surface-2** (`#f7f7f4`) 只读值与徽章底 · **Field** (`#f1f0ec`，hover `#edece8`) 所有可编辑框的底（比面板深一级、无边；参考 Codex） · **Selected**（ink 10% 叠加：hover 5% < active 8% < selected 10%）
+- **Desk（桌面）** (`#eeede9`) 应用底：顶栏、左轨、停靠的抽屉坐在它上面 · **Canvas（画布灰）** (`#f3f2ee`) 工作面板里画布那一块 · **Surface（白）** (`#ffffff`) 工作面板 / 浮层 / 卡 · **Surface-2** (`#f7f7f4`) 只读值与徽章底 · **Field** (`#f1f0ec`，hover `#edece8`) 所有可编辑框的底（比面板深一级、无边；参考 Codex） · **Selected**（ink 10% 叠加：hover 5% < active 8% < selected 10%）
 - **Ink-2 / Ink-3 / Ink-faint** (`#5c5c55` / `#6b6b64` / `#a3a39a`)：次级、元数据、禁用。Ink-2 在所有底色上 ≥4.5:1；**Ink-3 只在白 / Surface-2 / Paper 上达标**（5.37 / 5.00 / 4.78），在 Canvas 画布灰上只有 4.45:1——画布底色上直接写字用 Ink-2（`index.css` 里 `--color-ink-3` 的注释是这条的权威）；faint 不用于要读的字
-- **Border / Border-strong**（ink 12% / 18% 叠加）：hairline 只给区域边界、次级按钮 · **可编辑框静态没有边**：Field 底就是「框」，聚焦 / 打开才是不透明 accent 边——有框 = 能改，3:1 由聚焦态承担（2026-09-15，宪法第二十二节） · **Border-control** (`#8a8a82`)：未选中复选框 / 单选、关态开关轨道，边界就是全部识别信息，≥3:1
+- **Border / Border-strong**（ink 12% / 18% 叠加）：hairline 只给区域边界、次级按钮 · **可编辑框静态没有边**：Field 底就是「框」，聚焦 / 打开才是不透明 accent 边——有框 = 能改，3:1 由聚焦态承担（2026-09-15，宪法第二十二节） · **Border-control** (`#84847c`)：未选中复选框 / 单选、关态开关轨道，边界就是全部识别信息，≥3:1
 
 ### Named Rules
 **The Small Blue Rule.** 蓝色不做任何大块背景、不做按钮填色；主按钮是近黑 `bg-ink`。
@@ -172,8 +172,8 @@ components:
 
 ## Shapes
 
-四档圆角 + full，Tailwind 自带的 xl / 2xl 已清空：xs 3（16px 高以下的小片、分段 thumb）、sm 6（控件）、
-md 10（卡片与浮层）、lg 14（对话框、命令面板）、full（圆点、开关、徽章）。浮层比控件大 4～8。**宪法第二节**。
+四档圆角 + panel + full，Tailwind 自带的 xl / 2xl 已清空：xs 3（16px 高以下的小片）、sm 6（输入以外的小控件、树行）、
+md 10（输入框、图标钮、卡片与浮层）、lg 14（对话框、命令面板）、panel 16（工作面板，全产品一处）、full（带字的按钮、分段控件、圆点、开关、徽章）。**宪法第二节、第二十五节**。
 
 ## Components
 

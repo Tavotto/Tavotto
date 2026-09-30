@@ -3,6 +3,7 @@ import type { MenuAction } from '@/lib/desktop'
 import type { AlignMode } from '@/lib/geometry'
 import { alignSelectedTo, duplicateSelected, runManualSave } from '@/store/actions'
 import { alignSelectedPanelElements, type AlignBlocked } from '@/store/alignAction'
+import { groupBlockedMessage, type GroupBlockReason } from '@/lib/elementGeom'
 import { alignRefFor } from '@/store/arrangeStore'
 import { runDiscreteAction, type DiscreteScope } from '@/store/gestureCoordinator'
 import { useProjectStore } from '@/store/projectStore'
@@ -17,9 +18,14 @@ const ALIGN_PREFIX = 'menu-align-'
  * 图内对齐被拒时说什么。前三条与属性页对齐工具条（`ElementInspector` 的 `AlignSection`）
  * 同一句；工具条在选得不够时把按钮置灰，菜单没法置灰，只能说出口。
  */
-function reportElementAlignBlocked(reason: AlignBlocked, mode: AlignMode) {
+function reportElementAlignBlocked(
+  reason: AlignBlocked,
+  mode: AlignMode,
+  group?: GroupBlockReason,
+) {
   const ui = useUiStore.getState()
-  if (reason === 'syncing') ui.setStatus(msg('element.alignSyncing', undefined, 'inspector'))
+  if (reason === 'group-blocked' && group) ui.setStatus(groupBlockedMessage(group))
+  else if (reason === 'syncing') ui.setStatus(msg('element.alignSyncing', undefined, 'inspector'))
   else if (reason === 'noop') ui.setStatus(msg('element.alignNoop', undefined, 'inspector'))
   else if (reason === 'invalid') {
     ui.setStatus(msg('element.alignInvalid', undefined, 'inspector'), 'error')
@@ -121,7 +127,7 @@ function performMenuAction(action: MenuAction) {
     // 写的是 override，快速编辑这一屏看得见，所以排在快速编辑闸前面。
     if (ui.elementPanelId && ui.selectedGids.length) {
       const res = alignSelectedPanelElements(ui.elementPanelId, mode)
-      if (!res.ok) reportElementAlignBlocked(res.reason, mode)
+      if (!res.ok) reportElementAlignBlocked(res.reason, mode, res.group)
       return
     }
     // 画布对齐写的是版面上的 x/y：快速编辑这一屏没有版面，改了用户也看不见

@@ -17,11 +17,11 @@ import {
   Type,
   type IconComponent,
 } from '@/components/ui/icons'
-import { parentGid } from '@/components/inspector/roles/hierarchy'
+import { structuralParent } from '@/components/inspector/roles/hierarchy'
 import { roleIcon } from '@/components/inspector/roles/roleIcons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { EditableFigureIcon } from '@/components/ui/semanticIcons'
-import type { Manifest, ManifestElement } from '@/lib/api'
+import type { Manifest, ManifestElement, ManifestGroup } from '@/lib/api'
 import { isElementHidden } from '@/canvas/interactions'
 import { cn } from '@/lib/utils'
 import { listRowClass } from '@/components/ui/listRow'
@@ -39,7 +39,7 @@ import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import type { PanelObject } from '@/types/document'
 import { untruncatedLabel } from '../inspector/identityCrumbs'
-import { engineLabel, roleName, unsupportedOf } from '../inspector/roles/registry'
+import { engineLabel, groupName, roleName, unsupportedOf } from '../inspector/roles/registry'
 import { Button, IconButton } from '../ui/Button'
 import { EmptyState } from '../ui/EmptyState'
 import { Menu, MenuItem } from '../ui/Menu'
@@ -49,22 +49,29 @@ import { isEffectiveOverrideAt } from '@/lib/effectiveOverride'
 /**
  * 图内元素导航器。
  *
- * 由 manifest.elements 的 gid 结构建树（figure → 子图 → 语义聚类 → 元素），
+ * 由 manifest 的结构建树（figure → [组] → 子图 → 语义聚类 → 元素 → 零件）。父级只有
+ * `roles/hierarchy.structuralParent` 一处：先认引擎给的显式 `parent_gid`（共享色条的
+ * 组、单宿主色条挂回子图），再按 gid 路径回退。组是真实节点（可选中，选中 = 成员一起
+ * 平移 / 缩放）；语义聚类（抽屉）只是视图容器，不可选中、不进面包屑。
  * 是柱形系列、刻度组、重叠元素这些「画布上点不准」元素的稳定选择入口。
  * 选中走 uiStore.selectedGids —— 与画布点击、ElementInspector、批量编辑同一条通路；
  * 隐藏/恢复走 visible override（非破坏、进撤销）；锁定写在 PanelObject.lockedGids 上。
  */
 
-/** 树节点：真实元素或语义聚类标题（聚类不可选中，只组织层级） */
+/** 树节点：真实元素、真实的组或语义聚类标题（聚类不可选中，只组织层级） */
 interface TreeNode {
   el?: ManifestElement
+  group?: ManifestGroup
   /** 聚类节点：labelKey 而不是成品文案——切语言时同一棵树要跟着换说法 */
   cluster?: { key: string; labelKey: string }
   children: TreeNode[]
 }
 
 const nodeKey = (n: TreeNode, parentKey = ''): string =>
-  n.el ? n.el.gid : `${parentKey}#${n.cluster!.key}`
+  n.el ? n.el.gid : n.group ? n.group.gid : `${parentKey}#${n.cluster!.key}`
+
+/** 这一行指代的真实节点（元素或组）；聚类行没有 */
+const nodeGid = (n: TreeNode): string | undefined => n.el?.gid ?? n.group?.gid
 
 /** 本组文案在 workspace:elementTree.* 下 */
 const et = (key: string, values?: Record<string, unknown>) =>
@@ -91,20 +98,30 @@ const CLUSTERS: { key: string; labelKey: string; icon: IconComponent; roles: Set
 ]
 const clusterIcon = (key: string): IconComponent => CLUSTERS.find((c) => c.key === key)?.icon ?? Shapes
 
-const clusterOf = (role: string): (typeof CLUSTERS)[number] | undefined =>
-  CLUSTERS.find((c) => c.roles.has(role))
+/**
+ * 展示分类（抽屉）按元素**是什么**分，与它挂在谁下面无关：色条轴（单宿主色条挂回子图
+ * 之后它就是子图的直接子节点）与图例同属「图例与色条」。
+ */
+const clusterOf = (el: ManifestElement): (typeof CLUSTERS)[number] | undefined =>
+  CLUSTERS.find((c) => c.roles.has(el.is_colorbar ? 'colorbar' : el.role))
 
 function buildTree(manifest: Manifest): TreeNode[] {
   const nodes = new Map<string, TreeNode>()
   for (const el of manifest.elements) nodes.set(el.gid, { el, children: [] })
-  const byGid = new Set(nodes.keys())
+  for (const group of manifest.groups ?? []) nodes.set(group.gid, { group, children: [] })
+  const parentOf = structuralParent(manifest)
   const roots: TreeNode[] = []
-  for (const el of manifest.elements) {
-    const node = nodes.get(el.gid)!
-    const p = parentGid(el.gid, (g) => byGid.has(g))
-    if (p && nodes.has(p)) nodes.get(p)!.children.push(node)
-    else roots.push(node)
+  const placed = new Set<string>()
+  const place = (gid: string) => {
+    if (placed.has(gid)) return
+    placed.add(gid)
+    const p = parentOf(gid)
+    // 组在它第一个成员出现的位置落座：整体顺序仍贴着引擎的元素序
+    if (p && nodes.has(p) && !nodes.get(p)!.el) place(p)
+    if (p && nodes.has(p)) nodes.get(p)!.children.push(nodes.get(gid)!)
+    else roots.push(nodes.get(gid)!)
   }
+  for (const el of manifest.elements) place(el.gid)
 
   // 子图直属元素按语义聚类；元素很少的子图不加聚类层
   for (const node of nodes.values()) {
@@ -114,7 +131,7 @@ function buildTree(manifest: Manifest): TreeNode[] {
     const buckets = new Map<string, TreeNode>()
     const next: TreeNode[] = []
     for (const child of node.children) {
-      const c = child.el ? clusterOf(child.el.role) : undefined
+      const c = child.el ? clusterOf(child.el) : undefined
       if (!c) {
         next.push(child)
         continue
@@ -157,8 +174,9 @@ function flatten(
 }
 
 /** 命中搜索：标签 / 角色名 / gid（聚类节点按聚类名） */
-function matches(n: TreeNode, q: string): boolean {
+function matches(n: TreeNode, q: string, manifest: Manifest): boolean {
   if (n.cluster) return et(n.cluster.labelKey).toLowerCase().includes(q)
+  if (n.group) return groupName(n.group, manifest).toLowerCase().includes(q)
   const el = n.el!
   return (
     el.label.toLowerCase().includes(q) ||
@@ -168,14 +186,14 @@ function matches(n: TreeNode, q: string): boolean {
 }
 
 /** 保留匹配节点与其祖先/后代的过滤树 */
-function filterTree(nodes: TreeNode[], q: string): TreeNode[] {
+function filterTree(nodes: TreeNode[], q: string, manifest: Manifest): TreeNode[] {
   const out: TreeNode[] = []
   for (const n of nodes) {
-    if (matches(n, q)) {
+    if (matches(n, q, manifest)) {
       out.push(n) // 自身命中：整棵子树保留
       continue
     }
-    const kids = filterTree(n.children, q)
+    const kids = filterTree(n.children, q, manifest)
     if (kids.length) out.push({ ...n, children: kids })
   }
   return out
@@ -185,7 +203,7 @@ function filterTree(nodes: TreeNode[], q: string): TreeNode[] {
 function isolateTree(nodes: TreeNode[], gid: string): TreeNode[] {
   const out: TreeNode[] = []
   for (const n of nodes) {
-    if (n.el?.gid === gid) {
+    if (nodeGid(n) === gid) {
       out.push(n)
       continue
     }
@@ -199,7 +217,7 @@ function isolateTree(nodes: TreeNode[], gid: string): TreeNode[] {
 function ancestorKeys(nodes: TreeNode[], gid: string, parentKey = ''): string[] | null {
   for (const n of nodes) {
     const key = nodeKey(n, parentKey)
-    if (n.el?.gid === gid) return []
+    if (nodeGid(n) === gid) return []
     const below = ancestorKeys(n.children, gid, key)
     if (below) return [key, ...below]
   }
@@ -304,9 +322,9 @@ function TreeView({ panel, manifest }: { panel: PanelObject; manifest: Manifest 
   const shown = useMemo(() => {
     let nodes = tree
     if (isolated) nodes = isolateTree(nodes, isolated)
-    if (q) nodes = filterTree(nodes, q)
+    if (q) nodes = filterTree(nodes, q, manifest)
     return nodes
-  }, [tree, isolated, q])
+  }, [tree, isolated, q, manifest])
 
   const isOpen = (n: TreeNode, key: string) => {
     // 搜索 / 只看分支时全部展开，否则命不中匹配项
@@ -315,9 +333,11 @@ function TreeView({ panel, manifest }: { panel: PanelObject; manifest: Manifest 
     // 各自的直接成员都看得见；成员自己再带的一层（刻度组下的每个刻度文字、柱形系列
     // 下的每根柱、图例下的每一项）收起（2026-09-13 审计 B44：一进来就铺到叶子，
     // 「刻度」一词重复十几行，结构密度高过当前任务；只开两级又什么都看不见）
+    // 组与子图同一待遇：它的直接成员（子图、共享的色条轴）默认看得见
     const role = n.el?.role
     return (
-      open[key] ?? (!!n.cluster || n.el?.gid === 'figure' || role === 'axes' || role === 'axes3d')
+      open[key] ??
+      (!!n.cluster || !!n.group || n.el?.gid === 'figure' || role === 'axes' || role === 'axes3d')
     )
   }
   const rows = useMemo(
@@ -402,7 +422,7 @@ function TreeView({ panel, manifest }: { panel: PanelObject; manifest: Manifest 
 
   // 没有选中时 primaryGid 是 undefined，而聚类行的 `el` 也是 undefined——直接比会停在第一个聚类行
   const focusKey =
-    (primaryGid !== undefined ? rows.find((r) => r.node.el?.gid === primaryGid)?.key : undefined) ??
+    (primaryGid !== undefined ? rows.find((r) => nodeGid(r.node) === primaryGid)?.key : undefined) ??
     rows[0]?.key
 
   return (
@@ -430,7 +450,8 @@ function TreeView({ panel, manifest }: { panel: PanelObject; manifest: Manifest 
             {et('isolated', {
               label: (() => {
                 const hit = manifest.elements.find((e) => e.gid === isolated)
-                return hit ? engineLabel(hit.label) : isolated
+                const group = manifest.groups?.find((g) => g.gid === isolated)
+                return hit ? engineLabel(hit.label) : group ? groupName(group, manifest) : isolated
               })(),
             })}
           </span>
@@ -468,6 +489,33 @@ function TreeView({ panel, manifest }: { panel: PanelObject; manifest: Manifest 
               />
             )
           }
+          if (node.group) {
+            const g = node.group
+            return (
+              <ElementRow
+                key={key}
+                rowKey={key}
+                panelId={panelId}
+                gid={g.gid}
+                label={groupName(g, manifest)}
+                role="group"
+                name={groupName(g, manifest)}
+                canHide={false}
+                lockable={false}
+                readonly={false}
+                hidden={false}
+                locked={false}
+                depth={depth}
+                selected={selectedGids.includes(g.gid)}
+                tabbable={focusKey === key}
+                expanded={node.children.length ? isOpen(node, key) : undefined}
+                onToggle={toggle}
+                onSelect={selectGid}
+                onIsolate={setIsolated}
+                onMoveFocus={moveFocus}
+              />
+            )
+          }
           const el = node.el!
           return (
             <ElementRow
@@ -479,6 +527,7 @@ function TreeView({ panel, manifest }: { panel: PanelObject; manifest: Manifest 
               role={el.role}
               name={rowLabel(el)}
               canHide={canHide(el)}
+              lockable={el.gid !== 'figure'}
               readonly={el.editable.length === 0}
               hidden={hiddenGids.has(el.gid) || isElementHidden(el)}
               locked={lockedGids.has(el.gid)}
@@ -573,6 +622,7 @@ const ElementRow = memo(function ElementRow({
   role,
   name,
   canHide,
+  lockable,
   readonly,
   hidden,
   locked,
@@ -594,6 +644,8 @@ const ElementRow = memo(function ElementRow({
   /** 行上显示的名字，`rowLabel(el)` 的结果 */
   name: string
   canHide: boolean
+  /** 锁定写在 PanelObject.lockedGids、挡的是画布命中：整张图与组（画布上本来点不中）不给 */
+  lockable: boolean
   readonly: boolean
   hidden: boolean
   locked: boolean
@@ -712,7 +764,7 @@ const ElementRow = memo(function ElementRow({
           <MenuItem icon={Crosshair} onSelect={() => onIsolate(gid)}>
             {et('isolateBranch')}
           </MenuItem>
-          {gid !== 'figure' && (
+          {lockable && (
             <MenuItem icon={locked ? LockOpen : Lock} onSelect={() => toggleElementLocked(panelId, gid, label)}>
               {et(locked ? 'unlock' : 'lock')}
             </MenuItem>

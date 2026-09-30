@@ -176,7 +176,7 @@ test(
     await expect(bar).toHaveCount(1)
     await expectInViewport(page, bar, '单选浮动栏')
     // 产品没给这颗按钮 data 锚点：按可达名认，收在浮动栏里（不取全页第一个）
-    const editBtn = bar.getByRole('button', { name: /图内元素/ })
+    const editBtn = bar.getByRole('button', { name: /改图里的内容|Edit figure elements/ })
     await expect(editBtn).toHaveCount(1)
     await expectHittable(editBtn, '「编辑图内元素」')
 

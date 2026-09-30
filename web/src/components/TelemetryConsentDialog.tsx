@@ -75,7 +75,7 @@ export function TelemetryConsentDialog() {
             href={PRIVACY_DOC_URL}
             target="_blank"
             rel="noreferrer"
-            className="text-accent hover:underline"
+            className="text-ink-2 underline-offset-2 hover:text-ink hover:underline"
           >
             {tt('policy')}
           </a>

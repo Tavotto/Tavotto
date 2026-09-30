@@ -1562,7 +1562,14 @@ def worker_self_test(python: str) -> dict:
         spec = execspec.safe_spec(
             _SELFTEST_NAME, str(root), "__main__", interpreter=str(python), sandbox=str(sandbox)
         )
-        argv = execspec.worker_argv(spec, worker_py=pool.WORKER_PY, out_dir=out_dir)
+        argv = execspec.worker_argv(
+            spec,
+            worker_py=pool.WORKER_PY,
+            out_dir=out_dir,
+            runtime_args=runtime.worker_args(
+                bundled=pool.same_python(python, runtime.bundled_python())
+            ),
+        )
         proc = subprocess.Popen(
             argv,
             stdin=subprocess.PIPE,
@@ -3686,7 +3693,11 @@ def _provision_private_base(job: _GenerationJob, cancel_ev: threading.Event) -> 
             STATE_DOWNLOADING_PYTHON,
             result={
                 "download": {"stage": stage, "done_bytes": int(done), "total_bytes": int(total)},
-                "private_python": payload,
+                # 换了镜像（ADR 0063 修订 2026-09-29 / ADR 0112）时进度说出此刻真在下的那个主机
+                "private_python": {
+                    **payload,
+                    "source_host": privatepython.downloading_from(source) or payload["source_host"],
+                },
             },
         )
 

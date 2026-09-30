@@ -17,6 +17,7 @@ import { literal } from '@/i18n'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { MATPLOTLIB_SVG } from '@/lib/__fixtures__/matplotlibSvg'
+import { expandGroups } from '@/lib/elementGeom'
 import type { EngineRenderOptions, Manifest, ManifestElement } from '@/lib/api'
 import { runMenuAction } from '@/hooks/menuActions'
 import { runUndoRedo, useKeyboard } from '@/hooks/useKeyboard'
@@ -106,6 +107,39 @@ const manifest: Manifest = {
   ],
 }
 
+// 共享色条的组（ADR 0102）：组不在元素表里，只在 `groups` 里，成员是子图 1、子图 2 与色条轴
+const axes2: ManifestElement = {
+  ...axes,
+  gid: 'axes_1',
+  label: '子图 2',
+  bbox: [0.72, 0.1, 0.1, 0.6],
+  editable: [{ prop: 'position', type: 'rect', value: [0.72, 0.3, 0.1, 0.6] }],
+}
+const cbarAxes: ManifestElement = {
+  ...axes,
+  gid: 'axes_2',
+  label: '色条轴',
+  bbox: [0.85, 0.1, 0.03, 0.6],
+  editable: [{ prop: 'position', type: 'rect', value: [0.85, 0.3, 0.03, 0.6] }],
+  is_colorbar: true,
+}
+const GROUP = 'group:axes_2'
+const groupManifest: Manifest = {
+  ...manifest,
+  elements: [...manifest.elements, axes2, cbarAxes],
+  groups: [
+    {
+      gid: GROUP,
+      kind: 'shared_colorbar',
+      members: ['axes_0', 'axes_1', 'axes_2'],
+      subplot_gids: ['axes_0', 'axes_1'],
+      colorbar_gid: 'axes_2.colorbar',
+      bbox: [0.1, 0.1, 0.78, 0.6],
+      resizable: true,
+    },
+  ],
+}
+
 const panelOf = (over: Partial<PanelObject> = {}): PanelObject =>
   ({
     id: 'p1',
@@ -183,7 +217,9 @@ function settle() {
 
 /* -------------------------------- 环境搭建 -------------------------------- */
 
-async function setup(opts: { panel?: Partial<PanelObject>; extra?: (ShapeObject | PanelObject)[] } = {}) {
+async function setup(
+  opts: { panel?: Partial<PanelObject>; extra?: (ShapeObject | PanelObject)[]; manifest?: Manifest } = {},
+) {
   engineRender.mockReset()
   // 权威渲染一律悬着：这里量的是「这一段里发没发、提交时发几次」，不需要它回来
   engineRender.mockReturnValue(new Promise(() => {}))
@@ -208,7 +244,7 @@ async function setup(opts: { panel?: Partial<PanelObject>; extra?: (ShapeObject 
   useDocumentStore.getState().commit(literal('加对象'), (d) => {
     d.objects.push(panelOf(opts.panel), ...(opts.extra ?? []))
   })
-  seedRender()
+  seedRender(opts.manifest)
   document.body.innerHTML = `<div data-element-svg="p1">${MATPLOTLIB_SVG}</div>`
   const svg = document.querySelector('[data-element-svg="p1"] svg')!
   for (const gid of [title.gid, legend.gid]) {
@@ -225,11 +261,11 @@ async function setup(opts: { panel?: Partial<PanelObject>; extra?: (ShapeObject 
 }
 
 /** 当前文档这一版的权威渲染到了（几何权威 = 文档的 overrides 与渲染对得上） */
-function seedRender() {
+function seedRender(m: Manifest = manifest) {
   const p = livePanel()
   useRenderStore.getState().patch(renderKeyOf(p), {
     fileId: 'Fig1.pdf',
-    manifest,
+    manifest: m,
     svg: MATPLOTLIB_SVG,
     rev: 1,
     status: 'ready',
@@ -541,6 +577,78 @@ describe('图内元素：与拖动同一套移动规则', () => {
     expect(overrideOf(legend.gid, 'loc_frac')![0]).toBeCloseTo(0.5 - 1 / PAGE_W, 9)
     expect(past()).toHaveLength(1)
   })
+
+  it('选中的是组（元素树里选的）：成员整组平移，与拖组里任一成员同一套；一条撤销', async () => {
+    await setup({ manifest: groupManifest })
+    editFigure([GROUP])
+    tap('ArrowRight', { shiftKey: true })
+    settle()
+    expect(status()).not.toContain('nudgeNotMovable')
+    expect(overrideOf('axes_0', 'position')![0]).toBeCloseTo(0.1 + 5 / PAGE_W, 4)
+    expect(overrideOf('axes_1', 'position')![0]).toBeCloseTo(0.72 + 5 / PAGE_W, 4)
+    expect(overrideOf('axes_2', 'position')![0]).toBeCloseTo(0.85 + 5 / PAGE_W, 4)
+    expect(past()).toHaveLength(1)
+  })
+
+  it('选中的组被挡住（锁了一个成员）、又同时点名了一个没锁的成员：那个成员也不动，说组为什么动不了', async () => {
+    await setup({ manifest: groupManifest, panel: { lockedGids: ['axes_1'] } as Partial<PanelObject> })
+    editFigure([GROUP, 'axes_0'])
+    tap('ArrowRight', { shiftKey: true })
+    settle()
+    expect(livePanel().overrides).toHaveLength(0)
+    expect(past()).toHaveLength(0)
+    expect(status()).toContain('groupBlocked.locked')
+  })
+
+  it('选中的组里有隐藏的成员：隐藏的照样跟着整组走（写下的成员 = expandGroups 的结果），与拖动一致', async () => {
+    const hidden: Manifest = {
+      ...groupManifest,
+      elements: groupManifest.elements.map((e) =>
+        e.gid === 'axes_1'
+          ? { ...e, editable: [...e.editable, { prop: 'visible', type: 'bool', value: false }] }
+          : e,
+      ),
+    }
+    await setup({ manifest: hidden })
+    editFigure([GROUP])
+    tap('ArrowRight', { shiftKey: true })
+    settle()
+    const written = [...new Set(livePanel().overrides.map((o) => o.gid))].sort()
+    expect(written).toEqual([...expandGroups(livePanel(), hidden, [GROUP])].sort())
+    expect(written).toEqual(['axes_0', 'axes_1', 'axes_2'])
+    expect(overrideOf('axes_1', 'position')![0]).toBeCloseTo(0.72 + 5 / PAGE_W, 4)
+    expect(past()).toHaveLength(1)
+  })
+
+  it.each([
+    ['锁住一个成员', 'groupBlocked.locked', groupManifest, ['axes_1']],
+    [
+      '成员落位不归 Tavotto 管',
+      'groupBlocked.notResizable',
+      { ...groupManifest, groups: [{ ...groupManifest.groups![0], resizable: false }] },
+      [],
+    ],
+    [
+      '成员这一版没有 position',
+      'groupBlocked.incomplete',
+      {
+        ...groupManifest,
+        elements: groupManifest.elements.map((e) => (e.gid === 'axes_1' ? { ...e, editable: [] } : e)),
+      },
+      [],
+    ],
+  ] as [string, string, Manifest, string[]][])(
+    '选中的组不能整体变换（%s）：整组不动（不是只挪能动的那几个），按原因说',
+    async (_name, key, m, locked) => {
+      await setup({ manifest: m, panel: { lockedGids: locked } as Partial<PanelObject> })
+      editFigure([GROUP])
+      tap('ArrowRight', { shiftKey: true })
+      settle()
+      expect(livePanel().overrides).toHaveLength(0)
+      expect(past()).toHaveLength(0)
+      expect(status()).toContain(key)
+    },
+  )
 
   it('锁定的图内元素、不能拖的元素：不动，并说出来', async () => {
     await setup({ panel: { lockedGids: [title.gid] } as Partial<PanelObject> })

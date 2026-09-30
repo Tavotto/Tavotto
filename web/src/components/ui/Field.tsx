@@ -4,7 +4,7 @@ import { ICON_SIZE } from './Icon'
 import { DURATION, usePresence } from '@/lib/motion'
 import { cn } from '@/lib/utils'
 
-/** Inspector 分组：标题 + 内容。组间靠留白分层，不再画分隔线 */
+/** Inspector 分组：标题 + 内容。属性栏里组与组之间一条内缩的 hairline（2026-09-30 重设计，index.css 的 `[data-section]` 规则）；别处靠留白 */
 export function Section({
   title,
   action,
@@ -23,7 +23,7 @@ export function Section({
   // 分区头「上宽下紧」（上 16 / 下 4，Claude 分区头 padding 16 6 4）：标题贴着自己的内容，
   // 不是均匀地悬在两组之间（2026-09-15 审计 B14）
   return (
-    <section {...rest} className={cn('px-3 pb-4 pt-4 [&+&]:pt-0', className)}>
+    <section data-section {...rest} className={cn('px-3 pb-4 pt-4 [&+&]:pt-0', className)}>
       {title && (
         <header className="mb-1 flex h-4 items-center justify-between">
           <h3

@@ -791,7 +791,19 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
   const guarded = (start: (e: React.PointerEvent) => void) => guardStale(panel, start)
   // 多选且全是子图 → 组包围框接管手柄，成组缩放
   const group = resolveGroup(panel, manifest, selectedGids)
-  const groupBox = group ? toBox(preview?.group ?? group.box) : null
+  // 选中的是一个真实的组（从元素树选的，`Manifest.groups`）：组框之外，成员各描一道
+  // 细虚线，看得出「这一框里是哪几个」；成员有落位不归 Tavotto 管、组不能整体变换时
+  // （`resizable: false`）没有手柄，只画引擎给的组框
+  const selectedModelGroups = (manifest.groups ?? []).filter((g) => selectedGids.includes(g.gid))
+  const memberBoxes = selectedModelGroups
+    .flatMap((g) => g.members)
+    .map((g) => resolve(g))
+    .filter((r): r is NonNullable<typeof r> => !!r)
+  const groupBox = group
+    ? toBox(preview?.group ?? group.box)
+    : selectedModelGroups.length === 1 && selectedGids.length === 1
+      ? toBox(selectedModelGroups[0].bbox)
+      : null
   // 单选子图仍是它自己的八个手柄
   const axesBox = !groupBox && primary?.target.resizable ? primary.box : null
   // 单选图例 → 四个角手柄，整体缩放（对角不动，见 startLegendScale）
@@ -882,6 +894,18 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
             />
           ),
         )}
+
+        {memberBoxes.map((r) => (
+          <rect
+            key={`member-${r.key}`}
+            {...rectAttrs(r.box)}
+            fill="none"
+            stroke="var(--color-sel)"
+            strokeWidth={1}
+            strokeOpacity={0.5}
+            strokeDasharray="2 2"
+          />
+        ))}
 
         {/* 组包围框：只有细虚线 + 手柄，不加底色，与单元素选中框区分 */}
         {groupBox && (
@@ -996,6 +1020,7 @@ function Handle({
   const p = handlePos(box, dir)
   return (
     <rect
+      data-element-handle={dir}
       data-legend-scale={legendScale}
       x={p.x - HANDLE / 2}
       y={p.y - HANDLE / 2}

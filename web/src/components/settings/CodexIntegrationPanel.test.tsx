@@ -101,6 +101,9 @@ describe('失败按 error_code 翻译，不透传英文 code', () => {
     // #256 给引擎加的两个：启动命令在这台机器上起不来 / 两份清单没能一起换上去
     'interpreter_unusable',
     'pin_failed',
+    // 引擎在、版本对不上（#285 / #721）：与插件降级 server 同名的两个 code
+    'engine_too_old',
+    'engine_incompatible',
   ]
 
   for (const code of CODES) {

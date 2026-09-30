@@ -39,19 +39,22 @@ const VARIANTS: Record<Variant, string> = {
   // data-[state=open]：作为菜单 / 弹层触发器时（Radix Trigger asChild 把 data-state 落在这颗钮上）
   // 浮层开着的期间底色常驻，浮层与它的按钮才看得出因果（2026-09-15 审计 B01）
   ghost: 'text-ink hover:bg-surface-hover active:bg-surface-active data-[state=open]:bg-surface-active',
+  // 次按钮 = 灰底胶囊、无边线（2026-09-30 重设计）：白面板与灰桌面上都是「比底深一档」，
+  // 与黑色主按钮一深一浅两档，不再靠一圈描边说「我是按钮」
   secondary:
-    'border border-border bg-surface text-ink hover:border-border-strong hover:bg-surface-hover active:bg-surface-active data-[state=open]:bg-surface-active',
+    'bg-surface-hover text-ink hover:bg-surface-active active:bg-selected data-[state=open]:bg-surface-active',
   // 主动作用近黑色；蓝色只留给选择 / 焦点 / 链接
   primary: 'bg-ink text-white hover:bg-ink/90 active:bg-ink/95',
   danger: 'text-danger hover:bg-danger-subtle active:bg-danger/15',
 }
 
 const SIZES: Record<Size, string> = {
-  sm: 'h-7 px-2 gap-1 text-sm rounded-sm',
-  md: 'h-7 px-2.5 gap-1.5 text-sm rounded-sm',
-  icon: 'h-7 w-7 rounded-sm',
+  // 带字的按钮一律胶囊（2026-09-30 重设计，参照 OpenBitFun）；图标钮是圆角方块（md 10）
+  sm: 'h-7 px-2.5 gap-1 text-sm rounded-full',
+  md: 'h-7 px-3 gap-1.5 text-sm rounded-full',
+  icon: 'h-7 w-7 rounded-md',
   // 图标点击区不小于 28px；两档只差图标字号
-  'icon-sm': 'h-7 w-7 rounded-sm',
+  'icon-sm': 'h-7 w-7 rounded-md',
   // 20px 行内小钮：圆角仍是 6（Claude 的 20px 行钮圆角 5，不降到 3）
   'icon-xs': 'h-5 w-5 rounded-sm',
 }

@@ -52,6 +52,8 @@ Tavotto 在所有宿主里是**同一份完整包、同一个 MCP 服务、同�
 处理方法与 Codex 相同，见 `first-run-and-recovery.md`：按 `code` 只修那一项。**恢复命令直接用
 health 结果里 `recovery` 给的原文**，那里是这台机器上的真实路径。修完按上表重新加载。
 `desktop_only` 的意思是装了桌面版：交接可用，MCP 工具还需要一个 Python 环境。
+`engine_too_old` / `engine_incompatible` 的意思是装着 pip / pipx 形态的引擎、只是版本对不上：
+照 `recovery` 升级引擎（镜像滞后时命令里带 `--index-url https://pypi.org/simple`），不要 provision。
 
 ## 能力差异（按实际情况说，不夸大）
 

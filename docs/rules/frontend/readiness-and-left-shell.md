@@ -64,7 +64,8 @@
   Codex #470 P2）；
   blocked 的计划把 `joint.blocked` 的理由摆出来、不装；「不准备，直接运行」= `POST /api/engine/dependencies/skip`
   （这道门一直问到有答案——授权或明确跳过），载荷留在 `PanelRender.dependencyPreparation`，错误块的
-  `DependencyPrepareButton` 能再打开；同一时刻只开一份；换了项目的旧载荷不弹。**目标与状态的文案键写成
+  `DependencyPrepareButton` 能再打开；同一时刻只开一份；换了项目的旧载荷不弹。素材库试运行撞上同一道门时经
+  `scriptRunStore.handOffProbeGate` 交同一份载荷、准备成功后重跑那一行（全文在 `asset-library.md`）。**目标与状态的文案键写成
   字面量**（`TARGET_LABEL` / `STATE_TEXT` / `BLOCKED_TEXT` 表）。MCP 那一面是同一份决定：
   `tavotto_open_figure(prepare_dependencies=…)`。
   **用户自己的环境（ADR 0079）**：载荷的 `user_environments` 里装齐的排在安装目标前面、同一组单选，
@@ -88,6 +89,14 @@
   `components/left/elementTreeRerender.test.tsx`（A1 无关提交零重画 / A2 新 manifest 零重画、
   单行 label 或行名变只重画那一行 / A3 selected·tabbable·hidden·locked·expanded 各自只重画
   那一行并显示新状态；观测点是 `<li>` 上 React 记的 props 对象，读不到直接抛）。
+- **元素树的父级只有 `roles/hierarchy.structuralParent` 一份（ADR 0102）**：先认 manifest 的显式
+  `parent_gid`（指向的元素或组确实在），再按 gid 路径回退；组（`Manifest.groups`）挂在整张图下。
+  组是**真实节点**（可选中、进面包屑，选中 = 成员一起平移 / 缩放），抽屉是**视图容器**（不可选中、
+  不进面包屑、不参与几何）；组下不加抽屉。抽屉按元素**是什么**分（`clusterOf(el)`：色条轴与
+  图例同进「图例与色条」），与它挂在谁下面无关。面包屑走 `ancestorsOf` 的真实祖先链，色条轴
+  那一级不单列。选中组时属性区是组页（`inspector/GroupPage.tsx` 的 `PanelElementPage` 分流）。
+  看护：`components/left/elementTreeGroups.test.tsx`、`inspector/groupInspector.test.tsx`、
+  `roles/hierarchy.test.ts`。
 - **左栏「工作区」抽屉（2026-09-24）**：切项目的列表**只有一份**，住在
   `components/left/WorkspaceList.tsx`（当前 · 收藏 · 最近，最近不截断）。顶栏项目名
   （`ProjectSwitcher`）只做 `railClick('workspace')`，不再自己弹菜单——两处各列一遍
