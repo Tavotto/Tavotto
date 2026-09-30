@@ -466,6 +466,55 @@ def test_path_literals_still_counts_a_join_with_no_absolute_anchor():
     assert rel_lits == [("data",), ("x.csv",)]
 
 
+def test_a_path_built_from_an_anchor_assigned_to_a_local_keeps_its_absolute_identity(
+    remapped, tmp_path
+):
+    """`root = Path(__file__).parent; root / "data" / "x.csv"`：把绝对锚点先赋给局部变量再拼接，
+    拼接的操作数是一个解析不了的名字（`Name("root")`），不是「已知的相对常量」——不去追踪 `root`
+    是不是绝对锚点的赋值，解析不了就不算数（Codex 评 #716 第二轮 P1
+    "Reject unresolved anchors as relative-path evidence"）。"""
+    _touch(tmp_path / "moved" / "data" / "x.csv", "moved")
+    box = pathlib.Path.cwd()
+    absolute = str(box / "data" / "x.csv")
+    rules = [{"kind": P, "from": "", "to": str(tmp_path / "moved")}]
+    source = "from pathlib import Path\nroot = Path(__file__).parent\np = root / 'data' / 'x.csv'\n"
+    misses = remapped(rules, script_source=source)
+    with pytest.raises(FileNotFoundError) as err:
+        open(absolute)
+    fact = figcapture.missing_input_of(err.value, misses)
+    assert fact is not None and fact["requested"] == absolute
+
+
+def test_a_path_built_with_os_path_join_of_an_assigned_dirname_keeps_its_absolute_identity(
+    remapped, tmp_path
+):
+    """同上，换成 `base = os.path.dirname(__file__); os.path.join(base, "data", "x.csv")`。"""
+    _touch(tmp_path / "moved" / "data" / "x.csv", "moved")
+    box = pathlib.Path.cwd()
+    absolute = str(box / "data" / "x.csv")
+    rules = [{"kind": P, "from": "", "to": str(tmp_path / "moved")}]
+    source = (
+        "import os\nbase = os.path.dirname(__file__)\np = os.path.join(base, 'data', 'x.csv')\n"
+    )
+    misses = remapped(rules, script_source=source)
+    with pytest.raises(FileNotFoundError) as err:
+        open(absolute)
+    fact = figcapture.missing_input_of(err.value, misses)
+    assert fact is not None and fact["requested"] == absolute
+
+
+def test_path_literals_excludes_fragments_behind_an_assigned_anchor():
+    """`path_literals` 单测：锚点先赋给局部变量再拼接，`Name` 操作数一样建不了相对证据。"""
+    abs_lits, rel_lits = figcapture.path_literals(
+        "from pathlib import Path\nroot = Path(__file__).parent\np = root / 'data' / 'x.csv'\n"
+    )
+    assert abs_lits == [] and rel_lits == []
+    abs_lits, rel_lits = figcapture.path_literals(
+        "import os\nbase = os.path.dirname(__file__)\np = os.path.join(base, 'data', 'x.csv')\n"
+    )
+    assert abs_lits == [] and rel_lits == []
+
+
 def test_numpy_loadtxt_is_remapped_and_named_without_a_filename(remapped, tmp_path):
     np = pytest.importorskip("numpy")
     _touch(tmp_path / "moved" / "d.txt", "1 2 3")
