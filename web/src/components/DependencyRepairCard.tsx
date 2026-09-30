@@ -107,8 +107,17 @@ export function DependencyRepairCard({
   // 受管目标能不能用 offer 形成时还不知道（后端在后台探基础解释器，于是也没挂私有 Python）：先形成一份计划
   // 读出真实要素（计划这一步什么都不装）。不预读的话，一键修复点下去计划多出一段下载，只能停在确认页再点一次
   const previewArgs = { module, script, target: 'tavotto_managed' as const }
+  // 只在受管目标**会是主按钮**时预读（Codex #742）：这台电脑上已有装好这个包的解释器时，主按钮是改用它——
+  // 那时去预读用不上的受管计划，「检查中」会把一个已经就绪的主按钮禁用住，慢的 / 卡住的请求让用户点不了。
+  // 已有解释器能不能用与预读无关（系统候选的体检与基础解释器的探测各走各的），所以这里先判它
+  const systemReady = offer.targets.some((tg) => tg.kind === 'system_interpreter' && tg.available !== false)
   const needPreview =
-    canInstall && !pinnedSince && !offer.pinned && managedTarget?.available === null && !managedTarget.private_python
+    canInstall &&
+    !systemReady &&
+    !pinnedSince &&
+    !offer.pinned &&
+    managedTarget?.available === null &&
+    !managedTarget.private_python
   // 这张卡自己那一格（按脚本 + 模块）：同时挂着的另一张卡预读别的包不会盖掉它
   const preview = managedPreviews[managedPreviewKey(previewArgs)] ?? null
   useEffect(() => {

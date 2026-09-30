@@ -593,6 +593,53 @@ describe('一键修复（2026-09-29：面向不懂 Python 的用户）', () => {
   })
 })
 
+describe('预读、披露、「检查中」只跟着主按钮指向的那个目标走（Codex #742）', () => {
+  const SYSTEM_READY = {
+    kind: 'system_interpreter' as const, venv: '', python: '/usr/local/bin/python3', modifies_user_environment: false,
+    creates_environment: false, available: true, reason: '', python_version: '3.12.4', support: 'verified',
+  }
+  const MANAGED_UNKNOWN = { ...OFFER.targets[1], available: null }
+  const oneClick = () => document.querySelector('[data-one-click-repair-button]') as HTMLButtonElement | null
+
+  it('主按钮是已有解释器、受管目标还在探（available=null）：不预读受管计划，主按钮不被「检查中」禁用，点了就改用', async () => {
+    planMock.mockImplementation(() => new Promise(() => {})) // 真去预读的话它永远不回来
+    adoptMock.mockResolvedValue({ ok: true, project: { open: true } } as never)
+    await render({ ...OFFER, targets: [SYSTEM_READY, MANAGED_UNKNOWN] })
+    expect(document.querySelector('[data-one-click-repair]')!.getAttribute('data-one-click-repair')).toBe('system_interpreter')
+    expect(planMock, '为用不上的受管目标发了预读').not.toHaveBeenCalled()
+    expect(oneClick()!.disabled).toBe(false)
+    expect(oneClick()!.hasAttribute('aria-busy')).toBe(false)
+    // 那一句说的是改用已有环境，不带受管那边的下载大小
+    expect(document.querySelector('[data-one-click-sentence]')!.textContent).toBe(
+      en('oneClickSentenceSystem', { module: 'lmfit' }),
+    )
+    await click(en('oneClickRepair'))
+    expect(adoptMock).toHaveBeenCalledWith('/usr/local/bin/python3', 'lmfit')
+    expect(planMock).not.toHaveBeenCalled()
+  })
+
+  it('主按钮是受管环境、还在探：预读受管计划，回来之前主按钮等它（对照：尺子是活的）', async () => {
+    planMock.mockImplementation(() => new Promise(() => {}))
+    await render({ ...OFFER, targets: [MANAGED_UNKNOWN] })
+    expect(document.querySelector('[data-one-click-repair]')!.getAttribute('data-one-click-repair')).toBe('tavotto_managed')
+    expect(planMock).toHaveBeenCalledWith({ module: 'lmfit', script: 'figure.py', target: 'tavotto_managed' })
+    expect(oneClick()!.disabled).toBe(true)
+  })
+
+  it('主目标是项目环境（受管目标用不了）：不预读，项目环境那颗按钮可点', async () => {
+    await render({ ...OFFER, targets: [OFFER.targets[0], { ...OFFER.targets[1], available: false, reason: 'managed_env_unavailable' }] })
+    expect(planMock).not.toHaveBeenCalled()
+    expect(oneClick()).toBeNull()
+    expect(byName(en('repairUseProjectEnv'))!.disabled).toBe(false)
+  })
+
+  it('主动作是「恢复自动检测」（全局固定着）：不预读，恢复按钮可点', async () => {
+    await render({ ...OFFER, targets: [MANAGED_UNKNOWN], pinned: { python: '/opt/venv/bin/python', source: 'configured' } })
+    expect(planMock).not.toHaveBeenCalled()
+    expect(byName(en('repairPinnedClear'))!.disabled).toBe(false)
+  })
+})
+
 describe('无障碍与窄栏', () => {
   it('所有动作都是真的 button / input，键盘到得了', async () => {
     await render({ ...OFFER, requirement: null, targets: [OFFER.targets[1]] })
