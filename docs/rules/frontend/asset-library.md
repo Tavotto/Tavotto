@@ -71,10 +71,12 @@
   （`RepairProgressLine`：「正在安装 openpyxl…（3/4）」，下载那一段「正在下载 Python… 12 / 25 MB」+ 细进度条 +「取消」；
   四个阶段的完整列表 `RepairStageList` 与 pip 日志在折叠的「详情」里），字节数读 `result.download`、**只在 state 仍是
   `downloading_python` 时读**（后端的 result 沿用上一条）；换用 PyPI 镜像（`pypi_mirror`）只在「安装详情」里说。跑前授权框
-  （`DependencyPrepareDialog`）同一套：没有装齐的用户环境、默认目标是受管环境时，标题就是那一句，底部只有「稍后」「一键修复」，
+  （`DependencyPrepareDialog`）同一套：没有装齐的用户环境、默认目标是受管环境时，标题就是那一句（干净机器上什么包都
+  不缺时换成「需要先准备运行环境」那一句；私有 Python 的披露只跟**此刻选中的**目标走，选了项目 venv 就不提），底部只有「稍后」「一键修复」，
   其余（含「不准备，直接运行」）进「详情」；默认目标是项目 venv（会改用户环境）时目标单选留在外面，每个选项的说明压成一句
   短语，其余照样进「详情」。同一个包缺在几个脚本上**只挂一张卡**
-  （修复进行中的那一行优先），装好后同样缺它的几行一起重跑（`rerunSameModule`）；有修复 offer 的行不叠 `FailureRecovery`。
+  （修复进行中的那一行优先），装好后同样缺它的几行一起重跑（`rerunSameModule`；发起时把那几行记进 `scriptOffer.peers` 随作业收放，
+  切走期间装好、切回来运行记录已清空时按名单补跑）；有修复 offer 的行不叠 `FailureRecovery`。
   看护：「默认可见」按**可见元素**判（`test/visibleBlocks.ts`：收起的 details 里只有 summary 可见；主区域按「。」数句子 ≤ 1、
   数看得见的主按钮 = 1；e2e 用 `checkVisibility`），不按子串——`DependencyRepairCard.test.tsx`「一键修复」、`DependencyPrepareDialog.test.tsx`、`ScriptLibrary.test.tsx`、
   `e2e/dependency-one-click.spec.ts`（`@feature:assets.dependency-one-click-repair`）。

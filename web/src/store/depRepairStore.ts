@@ -66,6 +66,11 @@ export interface RepairRequest {
 export interface ScriptRepairOffer {
   offer: DependencyRepairOffer
   module: string
+  /**
+   * 发起那一刻同样停在缺这个包上的**其它**脚本（2026-09-29：同一个包缺在几行上只挂一张卡，装好一起重跑）。随作业
+   * 收放：切走期间装好的话，切回来时 `scriptRunStore` 已被清空、认不出谁也缺它，只能按这份名单补跑（Codex #742）
+   */
+  peers?: string[]
 }
 
 /**
@@ -304,7 +309,7 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
   makePlan: async (args, scriptOffer = null) => {
     if (get().busy) return
     const epoch = projectEpoch
-    set({ busy: true, errorCode: '', errorText: '', plan: null, request: args, scriptOffer })
+    set({ busy: true, errorCode: '', errorText: '', plan: null, request: args, scriptOffer: withPeers(scriptOffer, args.script) })
     try {
       const { plan } = await createDependencyPlan(args)
       if (epoch !== projectEpoch) return // A 的计划不落进 B 的确认卡片
@@ -319,7 +324,15 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
   installNow: async (args, seen, scriptOffer = null) => {
     if (get().busy) return
     const epoch = projectEpoch
-    set({ busy: true, errorCode: '', errorText: '', plan: null, progress: null, request: args, scriptOffer })
+    set({
+      busy: true,
+      errorCode: '',
+      errorText: '',
+      plan: null,
+      progress: null,
+      request: args,
+      scriptOffer: withPeers(scriptOffer, args.script),
+    })
     let plan: DependencyRepairPlan
     try {
       plan = (await createDependencyPlan(args)).plan
@@ -525,7 +538,7 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
         const { request, scriptOffer } = get()
         rerun = rerunScriptAfterRepair(p.script, !!scriptOffer && request?.script === p.script)
         // 同一个包缺在别的脚本上（素材库只给它们挂了一张卡）：装进的是同一个项目环境，一起重跑
-        rerunSameModule(p.import_name, p.script)
+        rerunSameModule(p.import_name, p.script, request?.script === p.script ? scriptOffer?.peers : undefined)
         // 联合准备装完：授权框收掉（渲染会重排；缺的那一次错误也随之清）
         if (p.flow === 'joint') useEnvStore.getState().dismissDependencyPreparation()
       }
@@ -596,6 +609,8 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
     // 再切走切回不会重复触发
     if (back?.state === 'done' && retryCtx?.scriptOffer) {
       const script = back.script ?? retryCtx.request?.script
+      // 同样缺这个包的其它行一起补跑（与没切走时 `rerunSameModule` 同一件事；那几行的运行记录也随切项目清掉了）
+      rerunSameModule(undefined, script, retryCtx.scriptOffer.peers)
       if (rerunScriptAfterRepair(script, true)) get().reset()
     }
   },
@@ -677,18 +692,37 @@ function rerunScriptAfterRepair(script: string | undefined, fromScriptRow = fals
   return true
 }
 
+/** 脚本行发起时记下同样缺这个包的其它脚本（重试时沿用第一次记下的：那时运行记录可能已随切项目清掉） */
+function withPeers(scriptOffer: ScriptRepairOffer | null, script: string): ScriptRepairOffer | null {
+  if (!scriptOffer || scriptOffer.peers) return scriptOffer
+  const importName = scriptOffer.offer.import_name || scriptOffer.module
+  return { ...scriptOffer, peers: scriptsMissing(importName).filter((s) => s !== script) }
+}
+
+/** 此刻停在 `missing_dependency`、缺的正是这个 import 的脚本 */
+function scriptsMissing(importName: string): string[] {
+  return Object.entries(useScriptRunStore.getState().byScript)
+    .filter(([, state]) => {
+      if (state.phase !== 'missing_dependency') return false
+      return (state.error?.dependency_repair?.import_name ?? state.error?.params?.module) === importName
+    })
+    .map(([script]) => script)
+}
+
 /**
  * 装好一个包之后，素材库里**因缺同一个包**停下的其它脚本也重跑一遍（2026-09-29：同一原因失败的几行只挂一张卡，
  * 修好一次就该全好）。只认此刻仍停在 `missing_dependency`、且缺的正是这个 import 的那几行
  */
-function rerunSameModule(importName: string | undefined, except: string | undefined): void {
-  if (!importName) return
+function rerunSameModule(importName: string | undefined, except: string | undefined, peers: string[] = []): void {
   const runs = useScriptRunStore.getState()
-  for (const [script, state] of Object.entries(runs.byScript)) {
-    if (script === except || state.phase !== 'missing_dependency') continue
-    const missing = state.error?.dependency_repair?.import_name ?? state.error?.params?.module
-    if (missing === importName) void runs.run(script)
+  // 此刻看得出也缺它的，加上发起时记下的那几行（切过项目的话运行记录已清空，只能按名单认——那时它们没有运行记录，
+  // 与 `rerunScriptAfterRepair` 的 fromScriptRow 同一条判据：没记录或仍停在缺包上才跑；用户切回来之后自己跑过的不动）
+  const targets = new Set(importName ? scriptsMissing(importName) : [])
+  for (const peer of peers) {
+    const phase = runs.byScript[peer]?.phase
+    if (phase === undefined || phase === 'missing_dependency') targets.add(peer)
   }
+  for (const script of targets) if (script !== except) void runs.run(script)
 }
 
 /** 安装是不是正在进行（界面据此禁用按钮、显示进度而不是选项） */

@@ -645,6 +645,55 @@ describe('脚本行发起的修复切项目再切回（#729）', () => {
     expect(mockProbe).toHaveBeenCalledTimes(1)
   })
 
+  /** A 上两个脚本缺同一个包：只挂一张卡（fig_labels.py 那行），在它上面装、然后切到 B */
+  async function installForTwoThenLeave() {
+    mockRegistry.mockResolvedValue(view([entry({ script: 'fig_labels.py' }), entry({ script: 'other.py' })]))
+    mockProbe.mockImplementation(async (script: string) => ({
+      ...ok([]),
+      script,
+      registered: false,
+      error: {
+        code: 'missing_dependency',
+        message: '缺少依赖包：adjustText',
+        params: { module: 'adjustText' },
+        dependency_repair: { ...offer, script },
+      },
+    }))
+    await mount()
+    for (const btn of [...host.querySelectorAll<HTMLButtonElement>('button[aria-label$="并发现图"]')]) {
+      await act(async () => btn.click())
+      await flush()
+    }
+    expect(host.querySelectorAll('[data-script-dependency-repair]')).toHaveLength(1)
+    await act(async () => buttonByText('一键修复').click())
+    await flush()
+    await act(async () => useDepRepairStore.getState().onProgress(progress('installing')))
+    await switchTo('pB')
+    mockProbe.mockReset()
+    mockProbe.mockImplementation(async (script: string) => ({ ...ok([desc('Fig1')]), script }))
+  }
+
+  it('同一个包缺在两行上：切走期间装好，切回 A 两行都重跑（Codex #742：运行记录已随切项目清空）', async () => {
+    await installForTwoThenLeave()
+    await act(async () => useDepRepairStore.getState().onProgress(progress('done', { import_name: 'adjustText' })))
+    await flush()
+    expect(mockProbe, 'B 上不该重跑 A 的脚本').not.toHaveBeenCalled()
+    await switchTo('pA')
+    expect(mockProbe.mock.calls.map((c) => c[0]).sort()).toEqual(['fig_labels.py', 'other.py'])
+    // 再切走切回不重复
+    await switchTo('pB')
+    await switchTo('pA')
+    expect(mockProbe).toHaveBeenCalledTimes(2)
+  })
+
+  it('同一个包缺在两行上：切回 A 时还在装，之后在 A 上装好——两行都重跑', async () => {
+    await installForTwoThenLeave()
+    await switchTo('pA')
+    await act(async () => useDepRepairStore.getState().onProgress(progress('done', { import_name: 'adjustText' })))
+    await flush()
+    expect(mockProbe.mock.calls.map((c) => c[0]).sort()).toEqual(['fig_labels.py', 'other.py'])
+  })
+
   it('成功：切回 A 时还在装，之后在 A 上装好——同样自动重跑那一行一次', async () => {
     await installFromRowThenLeave()
     await switchTo('pA')

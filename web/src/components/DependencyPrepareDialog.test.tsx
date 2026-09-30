@@ -224,6 +224,58 @@ describe('DependencyPrepareDialog', () => {
     )
   })
 
+  it('干净机器、什么包都不缺（requirements 为空）：那一句说准备环境本身，不写「还缺 」（Codex #742）', async () => {
+    const pp = {
+      id: 'pbs', version: '3.13.15', target: 'darwin-arm64', source_host: 'github.com',
+      download_bytes: 25 * 1048576, required: true, cached: false, network_required: true, origin: 'download' as const,
+    }
+    await render(<DependencyPrepareDialog />)
+    const clean = (private_python: typeof pp | null) =>
+      offer({
+        clean_machine: true,
+        private_python,
+        plan: joint({ status: 'nothing_needed', missing: [], unknown: [], requirements: [], constraints: [] }),
+      })
+    await act(async () => useEnvStore.getState().requestDependencyPreparation(clean(pp)))
+    const title = () => dialog()!.querySelector('h2')!.textContent
+    expect(title()).toBe(en('oneClickSentenceEnvDownload', { mb: 25 }))
+    expect(visibleSentenceCount(dialog()!)).toBe(1)
+    await act(async () => useEnvStore.getState().dismissDependencyPreparation())
+    await act(async () =>
+      useEnvStore.getState().requestDependencyPreparation(clean({ ...pp, origin: 'bundled' as never, download_bytes: 0 })),
+    )
+    expect(title()).toBe(en('oneClickSentenceEnv'))
+  })
+
+  it('私有 Python 的披露跟着选中的目标走：选了项目 venv 就不说要下载 / 供应 Python（Codex #742）', async () => {
+    const pp = {
+      id: 'pbs', version: '3.13.15', target: 'darwin-arm64', source_host: 'github.com',
+      download_bytes: 25 * 1048576, required: true, cached: false, network_required: true, origin: 'download' as const,
+    }
+    const managedWithPython = { ...offer().targets[0], private_python: pp }
+    const venvTarget = withProjectVenv().targets[0]
+    // ① 一键修复框里把目标从受管环境换成项目 venv：标题与「详情」都不再提下载
+    await render(<DependencyPrepareDialog />)
+    await act(async () =>
+      useEnvStore.getState().requestDependencyPreparation(offer({ targets: [managedWithPython, venvTarget] })),
+    )
+    expect(dialog()!.querySelector('h2')!.textContent).toContain('25 MB')
+    expect(document.querySelector('[data-dependency-private-python]')).not.toBeNull()
+    await act(async () => radio('project_venv')!.click())
+    expect(dialog()!.querySelector('h2')!.textContent).not.toContain('MB')
+    expect(document.querySelector('[data-dependency-private-python]')).toBeNull()
+    expect(document.querySelector('[data-one-click-cost]')!.textContent).toBe(en('oneClickCostNetwork'))
+    // ② 默认目标就是项目 venv：「详情」里不说受管目标的那份 Python
+    await act(async () => useEnvStore.getState().dismissDependencyPreparation())
+    await act(async () =>
+      useEnvStore.getState().requestDependencyPreparation(
+        offer({ target_kind: 'project_venv', targets: [venvTarget, managedWithPython] }),
+      ),
+    )
+    expect(radio('project_venv')!.checked).toBe(true)
+    expect(document.querySelector('[data-dependency-private-python]')).toBeNull()
+  })
+
   it('一键修复要下载私有 Python 时说大小；安装包自带时不提下载', async () => {
     const pp = {
       id: 'pbs', version: '3.13.15', target: 'darwin-arm64', source_host: 'github.com',

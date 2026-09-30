@@ -11,7 +11,7 @@ import { userEnvironmentName } from '@/lib/userEnvironmentText'
 import { listJoin } from '@/i18n/format'
 import { privatePythonOrigin, type PrivatePythonOffer } from '@/lib/api'
 import { RepairProgressLine } from './RepairProgressLine'
-import { oneClickSentence, privatePythonText } from './DependencyRepairCard'
+import { oneClickEnvironmentSentence, oneClickSentence, privatePythonText } from './DependencyRepairCard'
 
 /**
  * 跑前的那一次授权（U04，ADR 0061 §六）：后端起第一个 worker 之前看一眼脚本开跑要的第三方包
@@ -101,7 +101,10 @@ export function DependencyPrepareDialog() {
   // 一键修复的形态按**载荷**定（不按此刻的单选）：在「高级」里换了目标，版面不跳
   const simple = complete.length === 0 && offer.target_kind === 'tavotto_managed' && managed?.available !== false
   const oneClick = simple && !envChosen && target === 'tavotto_managed'
-  const privatePython = managed?.private_python ?? offer.private_python ?? null
+  // 私有 Python 的披露跟**此刻选中的目标**走（Codex #742）：装进项目 venv / 改用用户环境都不下载、不供应 Python，
+  // 标题与「详情」都不许替那条路说「要下载」。载荷顶层那份（干净机器）同样只属于受管目标
+  const privatePython =
+    !envChosen && chosen?.kind === 'tavotto_managed' ? (chosen.private_python ?? offer.private_python ?? null) : null
   const packages = listJoin(plan.requirements.map(requirementName))
   const targetChoice = (
     <>
@@ -235,7 +238,10 @@ export function DependencyPrepareDialog() {
       }}
       title={
         simple
-          ? oneClickSentence(packages, privatePython)
+          ? // 干净机器上什么包都不缺（`requirements: []`）时，要授权的是准备环境本身：换一句，不写「还缺 」（Codex #742）
+            plan.requirements.length
+            ? oneClickSentence(packages, privatePython)
+            : oneClickEnvironmentSentence(privatePython)
           : en('engine.dependencyPrepareTitle', { count: plan.requirements.length })
       }
       description={!simple && complete.length ? en('engine.userEnvBody', { script: offer.script }) : undefined}

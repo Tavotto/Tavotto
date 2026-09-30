@@ -458,7 +458,9 @@
     "repairStage_env": "创建运行环境",
     "repairStage_packages": "安装所需的包",
     "repairStage_rerun": "重新运行",
-    "oneClickSentenceDownload": "这个脚本还缺 {{packages}}，点一下自动装好（需下载约 {{mb}} MB）。"
+    "oneClickSentenceDownload": "这个脚本还缺 {{packages}}，点一下自动装好（需下载约 {{mb}} MB）。",
+    "oneClickSentenceEnv": "这个脚本需要先准备运行环境，点一下自动准备好。",
+    "oneClickSentenceEnvDownload": "这个脚本需要先准备运行环境，点一下自动准备好（需下载约 {{mb}} MB）。"
   },
   "preflight": {
     "axisLabelFormat": "坐标轴标题「{{label}}」不是规范的「{{want}}」形式",

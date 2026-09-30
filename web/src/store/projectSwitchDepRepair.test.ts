@@ -264,11 +264,13 @@ describe('换项目时的依赖修复状态（issue #590）', () => {
       .makePlan({ module: 'lmfit', script: 'fig.py', target: 'tavotto_managed' }, rowOffer)
     await useDepRepairStore.getState().install()
     useDepRepairStore.getState().onProgress(progress('installing'))
-    expect(useDepRepairStore.getState().scriptOffer).toBe(rowOffer)
+    // 发起时补上了同样缺这个包的其它行（`peers`，此处没有）：内容是那份 offer，收放前后是同一个对象
+    const held = useDepRepairStore.getState().scriptOffer
+    expect(held).toEqual({ ...(rowOffer as object), peers: [] })
     await switchTo('p2')
     expect(useDepRepairStore.getState().scriptOffer).toBeNull()
     await switchTo('p1')
-    expect(useDepRepairStore.getState().scriptOffer).toBe(rowOffer)
+    expect(useDepRepairStore.getState().scriptOffer).toBe(held)
     expect(useDepRepairStore.getState().progress?.state).toBe('installing')
   })
 

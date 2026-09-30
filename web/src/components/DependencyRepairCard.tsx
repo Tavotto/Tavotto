@@ -466,6 +466,13 @@ export function oneClickSentence(packages: string, privatePython: PrivatePythonO
     : en('oneClickSentence', { packages })
 }
 
+/** 同上，干净机器上只需要准备环境本身（没有要装的包）时的那一句 */
+export function oneClickEnvironmentSentence(privatePython: PrivatePythonOffer | null): string {
+  return privatePython && privatePythonOrigin(privatePython) === 'download'
+    ? en('oneClickSentenceEnvDownload', { mb: Math.max(1, Math.round(privatePython.download_bytes / 1048576)) })
+    : en('oneClickSentenceEnv')
+}
+
 /** Both the offer and the final plan must disclose the Python download before authorization. */
 function PrivatePythonDisclosure({ offer }: { offer: NonNullable<DependencyTarget['private_python']> }) {
   return (

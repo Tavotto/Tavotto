@@ -2000,6 +2000,8 @@ export default interface Resources {
       "oneClickRepair": "一键修复",
       "oneClickSentence": "这个脚本还缺 {{packages}}，点一下自动装好。",
       "oneClickSentenceDownload": "这个脚本还缺 {{packages}}，点一下自动装好（需下载约 {{mb}} MB）。",
+      "oneClickSentenceEnv": "这个脚本需要先准备运行环境，点一下自动准备好。",
+      "oneClickSentenceEnvDownload": "这个脚本需要先准备运行环境，点一下自动准备好（需下载约 {{mb}} MB）。",
       "oneClickSentenceSystem": "电脑上已有装好 {{module}} 的环境，点一下直接改用它。",
       "pathAria": "渲染解释器路径",
       "pathPlaceholder": "/path/to/python",

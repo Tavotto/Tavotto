@@ -458,7 +458,9 @@
     "repairStage_env": "Create the environment",
     "repairStage_packages": "Install packages",
     "repairStage_rerun": "Run again",
-    "oneClickSentenceDownload": "This script is missing {{packages}}. One click installs it (about {{mb}} MB to download)."
+    "oneClickSentenceDownload": "This script is missing {{packages}}. One click installs it (about {{mb}} MB to download).",
+    "oneClickSentenceEnv": "This script needs a runtime environment first. One click sets it up.",
+    "oneClickSentenceEnvDownload": "This script needs a runtime environment first. One click sets it up (about {{mb}} MB to download)."
   },
   "preflight": {
     "axisLabelFormat": "The axis title “{{label}}” isn't in the profile's “{{want}}” form.",
