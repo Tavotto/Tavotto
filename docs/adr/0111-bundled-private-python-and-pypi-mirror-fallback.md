@@ -123,6 +123,8 @@ Python 包源，改用 PyPI 镜像 … 重试一次」，进度记录顶层 `pyp
 后续单独的 PR，按 ADR 0064 §四 带第三档证据（干净目标 + 冻结产物 + 正常入口）；那份证据从此应当包括「包内归档命中、
 零下载」这一格。
 
+（2026-09-30 更新：翻开关的 PR 已按此另开，三个桌面目标 `enabled: true`。）
+
 ## 看护
 
 * `tests/test_private_python.py::TestBundledArchive`：包内归档命中 → 下载函数（`_fetch`）调用 0 次、本地服务零请求、
