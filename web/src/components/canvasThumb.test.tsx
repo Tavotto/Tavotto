@@ -23,11 +23,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
-  fetchVersions: vi.fn(),
+  fetchTimeline: vi.fn(),
   fetchVersionDoc: vi.fn(),
 }))
 
-import { fetchVersionDoc, fetchVersions, type LayoutVersionMeta } from '@/lib/api'
+import { fetchVersionDoc, fetchTimeline, type LayoutVersionMeta } from '@/lib/api'
 import { literal } from '@/i18n'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { CanvasList } from '@/components/left/CanvasList'
@@ -127,7 +127,7 @@ beforeEach(async () => {
   document.body.innerHTML = ''
   localStorage.clear()
   vi.clearAllMocks()
-  vi.mocked(fetchVersions).mockResolvedValue([version])
+  vi.mocked(fetchTimeline).mockResolvedValue({ versions: [version] })
   vi.mocked(fetchVersionDoc).mockResolvedValue({ ...version, doc: emptyProject().canvases[0] as never })
   useAssetStore.setState({ byId: { 'a.pdf': { id: 'a.pdf', mtime: 7 } } } as never)
   useUiStore.setState({ versionsOpen: true })

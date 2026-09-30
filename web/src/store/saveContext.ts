@@ -30,6 +30,9 @@
  * | 同上 | `fetchLayout` 失败 | 错误进对话框走 `ifStillCurrent`；切走了改在状态条上说 |
  * | 同上 | `openLayoutDocument` | 只关对话框（换排版是它自己做的，此刻的上下文就是它换来的） |
  *
+ * 写成之后**立刻**发「排版写成了」（`emitLayoutSaved`，带写出去那份的快照）：在上表任何「之后」的步骤
+ * 之前，时间线的「保存」点不受后续步骤成败影响（ADR 0101 §7）。
+ *
  * 不受上下文约束的只有两样：状态条（全局通知，话里点名了是哪个文件）与对话框自己的 `busy` /
  * 在路上标记（描述的是这个组件发出的请求，请求结束就该复位，不复位对话框会永远转圈）。
  * 另存为成功后原先还有一次 `fetchLayoutNames()` 刷新名单（0.1.0 起）——对话框紧接着就关了，
@@ -37,6 +40,7 @@
  */
 import { msg } from '@/i18n'
 import { currentProjectId } from '@/lib/session'
+import { captureMoment, type MomentSnapshot } from '@/lib/timelineCheckpoint'
 import { activeProjectFile, useDocumentStore } from './documentStore'
 import { useUiStore } from './uiStore'
 
@@ -46,6 +50,18 @@ export interface SaveContext {
   readonly pj: string | null
   /** 入口那一刻绑定的项目文件（相对项目根）；没绑定 = `null` */
   readonly file: string | null
+  /**
+   * 同一刻的**排版时间线快照**（`captureMoment()`：时间线上下文 + 这份文档 + 面板图源）。
+   * 写成之后发「排版写成了」时带它：「保存」点只打给被存的那一份、拍的是写出去的那份内容
+   * （ADR 0101 §7；Codex #679）。本机保存与另存为在入口就序列化，所以就是这一份；⌘S 写回
+   * 项目文件排队之后才 `buildProject()`，在那一刻另取（`projectSave.writeOnce`）。
+   *
+   * 时间线上下文与上面三维**不是同一个判据**：节点归档在排版 id 名下，同一份排版被重新载入
+   * （`loadSeq` 变）或改绑了文件（`file` 变）之后，节点仍属于它——那两维管的是「还要不要
+   * 继续写 / 弹框」；项目那一维时间线用项目代际（`timelineStore.gen`），与 pj 同一时刻变。
+   * 两份在入口**同一次**捕获里取，不各算各的。
+   */
+  readonly moment: MomentSnapshot
 }
 
 export function captureSaveContext(): SaveContext {
@@ -55,6 +71,7 @@ export function captureSaveContext(): SaveContext {
     loadSeq: s.loadSeq,
     pj: currentProjectId(),
     file: activeProjectFile()?.file ?? null,
+    moment: captureMoment(),
   }
 }
 

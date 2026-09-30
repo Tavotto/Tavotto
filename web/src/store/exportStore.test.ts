@@ -19,6 +19,8 @@ import { useDocumentStore } from './documentStore'
 import { emptyProject, type PanelObject } from '@/types/document'
 import { literal } from '@/i18n'
 import type { ExportRequestInput } from '@/lib/exportRequest'
+import { setMomentSink, type MomentSnapshot } from '@/lib/timelineCheckpoint'
+import { useTimelineStore } from './timelineStore'
 
 const panel: PanelObject = {
   id: 'p1',
@@ -314,5 +316,91 @@ describe('陈旧的轮询不许改排当下的轮询', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+describe('「导出」时刻属于被导出的那份排版（ADR 0101；Codex #679）', () => {
+  /** 起作业回 running，终局由用例自己喂 */
+  const startRunning = () => {
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify(job({ status: 'running' })), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })) as typeof fetch
+  }
+  let moments: string[] = []
+  let snaps: (MomentSnapshot | undefined)[] = []
+  beforeEach(() => {
+    moments = []
+    snaps = []
+    setMomentSink(async (m, snap) => {
+      moments.push(`${m}@${useDocumentStore.getState().documentId}`)
+      snaps.push(snap)
+      return null
+    })
+  })
+  afterEach(() => setMomentSink(null))
+
+  it('不换排版：完成时照常给它打「导出」点', async () => {
+    startRunning()
+    await runExport(inputOf())
+    applyExportJob(job({ status: 'done', outputs: [doneOutput] }))
+    expect(moments).toEqual(['export@d_store'])
+  })
+
+  it.each(['done', 'failed'] as const)(
+    '快照用完即放：作业进终局（%s）之后 store 里不再留着那份文档与图源',
+    async (status) => {
+      startRunning()
+      await runExport(inputOf())
+      expect(useExportStore.getState().momentSnapshot).not.toBeNull()
+      applyExportJob(job({ status, outputs: status === 'done' ? [doneOutput] : [] }))
+      expect(useExportStore.getState().momentSnapshot).toBeNull()
+      // 打点拿到的是清掉之前那一份
+      if (status === 'done') expect(snaps[0]?.identity.doc).toBeTruthy()
+    },
+  )
+
+  it('快照用完即放：导出途中换项目（resetExportState）当场清掉', async () => {
+    startRunning()
+    await runExport(inputOf())
+    expect(useExportStore.getState().momentSnapshot).not.toBeNull()
+    resetExportState()
+    expect(useExportStore.getState().momentSnapshot).toBeNull()
+  })
+
+  it('快照用完即放：起作业本身失败，不留着', async () => {
+    globalThis.fetch = (async () => {
+      throw new Error('后端没回应')
+    }) as typeof fetch
+    await runExport(inputOf())
+    expect(useExportStore.getState().startError?.code).toBe('start_failed')
+    expect(useExportStore.getState().momentSnapshot).toBeNull()
+  })
+
+  it('导出途中接着改同一份排版：节点里放的是**被导出的那一份**（导出请求里的文档）', async () => {
+    startRunning()
+    const exported = useDocumentStore.getState().doc
+    await runExport(inputOf())
+    useDocumentStore.getState().commit(literal('导出途中加字'), (d) => {
+      d.objects.push({ ...panel, id: 'p2' })
+    })
+    applyExportJob(job({ status: 'done', outputs: [doneOutput] }))
+    expect(moments).toEqual(['export@d_store'])
+    expect(snaps[0]?.identity.doc).toBe(exported)
+    expect(snaps[0]?.identity.doc.objects.map((o) => o.id)).toEqual(['p1'])
+  })
+
+  it.each([
+    ['同项目里换了排版', () => useDocumentStore.getState().switchDocument(emptyProject(), 'd_other')],
+    ['换了项目（排版 id 恰好相同）', async () => useTimelineStore.getState().clear()],
+  ])('导出途中%s：完成时不给换上来的那一份打点', async (_name, leave) => {
+    startRunning()
+    await runExport(inputOf())
+    await leave()
+    applyExportJob(job({ status: 'done', outputs: [doneOutput] }))
+    expect(moments).toEqual([])
+    // 作业本身照常进终局：丢的只是时间线上的那一个点
+    expect(useExportStore.getState().job?.status).toBe('done')
   })
 })

@@ -52,7 +52,7 @@ import type { ProjectFileBinding } from '@/lib/projectFile'
 import { useAssetStore } from './assetStore'
 import {
   readAutosaveDoc,
-  saveNow,
+  saveNowWithResult,
   setProjectFile,
   useDocumentStore,
   type CommitOptions,
@@ -75,6 +75,8 @@ import {
   rotateVec,
   rotationSwaps,
 } from '@/types/document'
+import { emitLayoutSaved } from '@/lib/layoutSaved'
+import { useTimelineStore } from './timelineStore'
 
 /** 本文件的历史标签与状态提示都在 workspace 命名空间下 */
 const hist = (key: string, values?: Record<string, unknown>): UiMessage =>
@@ -360,6 +362,10 @@ export function restoreLayoutVersion(label: UiMessage, version: FigureDocument) 
       // 升级前存下的检查点里的面板照样按 ADR 0098 迁移（与读档同一个函数）
       d.objects = migrateFigureFrames(structuredClone(version.objects))
       d.guides = structuredClone(version.guides)
+      // 布局组跟着对象走：对象身上的 groupId 指向的是**那一版**的组。只换对象
+      // 不换组，恢复出来的对象会挂在当前排版里不存在（或成员不同）的组上
+      if (version.layoutGroups?.length) d.layoutGroups = structuredClone(version.layoutGroups)
+      else delete d.layoutGroups
     },
     { overrides: 'restored' },
   )
@@ -532,7 +538,7 @@ export async function runManualSave(): Promise<void> {
   const ui = useUiStore.getState()
   // 按下 ⌘S 那一刻的排版 / 项目 / 绑定：整条链只用它（`saveContext.ts`）
   const ctx = captureSaveContext()
-  const state = await saveNow()
+  const { state, wrote } = await saveNowWithResult()
   // saveNow 途中切走了：本机那一份（入口那份）已经照常落盘，项目文件这一步不再做——
   // 此刻开着的是另一份，写它、给它弹「存进项目」都不是用户要的；没写进项目要说出来
   if (ctx.pj !== null && !stillCurrent(ctx)) {
@@ -549,6 +555,10 @@ export async function runManualSave(): Promise<void> {
     }
     return
   }
+  // 「排版写成了」由保存侧发，时间线订阅它打「保存」点（ADR 0101 §7）；点属于按下 ⌘S 那一份。
+  // 跟**这次写没写成**走，不跟最终的实时状态走：写的途中又改过的话状态照实是 dirty，
+  // 但按下那一刻的内容已经在盘上了（Codex #679）
+  if (wrote) emitLayoutSaved('local', { moment: ctx.moment })
   if (state === 'saved' || state === 'clean') {
     ui.setStatus(msg('save.doneLocal', undefined, 'workspace'))
   } else if (state === 'conflict') {
@@ -558,6 +568,22 @@ export async function runManualSave(): Promise<void> {
   }
   // dirty / saving：保存期间用户又改了，或又排了一次写。那不是失败，
   // 顶栏的状态会继续往下走，这里不再多说一句话。
+}
+
+/** 打开 / 关闭排版时间线（顶栏时钟钮、⇧⌘H、命令面板共用；ADR 0101） */
+export function toggleTimeline(): void {
+  const ui = useUiStore.getState()
+  ui.setVersionsOpen(!ui.versionsOpen)
+}
+
+/**
+ * 「把现在存为命名节点」（⌥⌘S、命令面板；ADR 0101）：打开顶栏书签钮下的命名浮层，
+ * **不用先打开抽屉**（用户 2026-09-27 反馈）。名字要用户自己起——命名节点的全部
+ * 意义就是「这个名字是我起的」，所以不替他编一个。
+ */
+export function startNamedNode(): void {
+  finishActiveGesture()
+  useTimelineStore.getState().setNamingOpen(true)
 }
 
 export async function newBlankDocument(): Promise<void> {

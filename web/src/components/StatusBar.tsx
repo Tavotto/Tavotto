@@ -341,7 +341,14 @@ export function NotificationRail() {
           产出点（快速编辑那行常驻说明、素材库、导出面板、问题面板……），所以
           `[role="status"]` 取第一个拿到的是「文档里排在最前的那个 status」，不是
           「应用刚说了什么」。要问后者的（e2e）一律认这个属性，见 `web/AGENTS.md`。 */}
-      <div aria-live="polite" role="status" data-status-live className="sr-only">
+      {/* `data-status-key`：刚说的那句话的消息键（e2e 认它，不认译文——换语言照样判得了） */}
+      <div
+        aria-live="polite"
+        role="status"
+        data-status-live
+        data-status-key={tone === 'info' && status ? status.key : undefined}
+        className="sr-only"
+      >
         {tone === 'info' ? liveText : ''}
       </div>
       <div aria-live="assertive" role="alert" className="sr-only">

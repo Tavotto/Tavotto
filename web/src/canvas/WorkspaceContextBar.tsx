@@ -113,8 +113,11 @@ export function WorkspaceContextBar() {
         {/* 单行：返回 + 面包屑 + 添加到画布。浮条按内容量宽，这一行默认正好装下，
             面包屑（唯一可伸缩项）完整显示；只有画布窄到装不下才 truncate。两颗
             按钮 shrink-0 + nowrap，不参与压缩——挤压等于叠字 */}
-        <div className="flex min-w-0 items-center gap-1">
-          <div className="flex min-w-0 flex-1 items-center gap-1">
+        <div className="flex min-w-0 flex-wrap items-center gap-1">
+          {/* `flex-auto`（基准 = 内容宽）而不是 `flex-1`：基准为 0 的一项永远「装得下」，行不会折。
+              画布被覆盖式侧栏挤到装不下「返回画布」+ 面包屑 +「添加到画布」时，右边那颗折到第二行，
+              而不是压到返回钮上面让它点不到（合并组 e2e：顶栏 600 宽，返回钮被添加钮盖住） */}
+          <div className="flex min-w-0 flex-auto items-center gap-1">
             {/* `data-onboarding-anchor="to-layout"`：新手教程 Step 6 的 coachmark 挂这颗。
                 `data-exit-element-edit`：图内编辑态的**唯一**退出入口——e2e 拿它判「进了
                 图内编辑」，属性页的「编辑图内元素」按钮进编辑后把焦点交到这里 */}
@@ -158,7 +161,7 @@ export function WorkspaceContextBar() {
             </ol>
           </div>
           {fastEdit && (
-            <>
+            <div className="ms-auto flex shrink-0 items-center gap-1">
               <Sep />
               {/* `data-onboarding-anchor`：新手教程 Step 6 的 coachmark 挂这颗按钮 */}
               <Button
@@ -171,7 +174,7 @@ export function WorkspaceContextBar() {
                 <Plus size={ICON_SIZE.sm} />
                 {t('fastEdit.addToCanvas')}
               </Button>
-            </>
+            </div>
           )}
         </div>
 

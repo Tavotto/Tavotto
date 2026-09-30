@@ -74,6 +74,7 @@ import {
   trackPointer,
 } from './interactions'
 import { openQuickEdit } from './quickEditStore'
+import { panelContentTransform, panelTransformCss } from '@/lib/panelTransform'
 
 /**
  * 面板显示：
@@ -304,16 +305,8 @@ export function PanelView({ obj }: { obj: PanelObject }) {
           height: contentH,
           left: (boxW - contentW) / 2,
           top: (boxH - contentH) / 2,
-          // transform 从右往左应用：先在内容空间翻转，再旋转落位
-          transform:
-            [
-              rot ? `rotate(${rot}deg)` : '',
-              obj.flipH || obj.flipV
-                ? `scale(${obj.flipH ? -1 : 1}, ${obj.flipV ? -1 : 1})`
-                : '',
-            ]
-              .filter(Boolean)
-              .join(' ') || undefined,
+          // 先在内容空间翻转，再旋转落位——与时间线缩略图共用 `lib/panelTransform` 这一份
+          transform: panelTransformCss(panelContentTransform(obj)),
           opacity: obj.opacity ?? undefined,
         }}
       >

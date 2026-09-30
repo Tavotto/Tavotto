@@ -106,4 +106,14 @@ describe('prepareEmbeddedSvg', () => {
     expect(out).toContain('preserveAspectRatio="none"')
     expect(out).toContain('viewBox="0 0 80 60"')
   })
+
+  it('原文已经带着 preserveAspectRatio / style：不拼出重复属性，整份仍能解析（Codex #679）', () => {
+    const out = prepareEmbeddedSvg(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="80pt" preserveAspectRatio="xMidYMid" style="color:red" viewBox="0 0 80 60"><g/></svg>',
+    )
+    const head = out.slice(0, out.indexOf('>'))
+    expect(head.split('preserveAspectRatio=').length - 1).toBe(1)
+    expect(head.split('style=').length - 1).toBe(1)
+    expect(new DOMParser().parseFromString(out, 'image/svg+xml').getElementsByTagName('parsererror')).toHaveLength(0)
+  })
 })
