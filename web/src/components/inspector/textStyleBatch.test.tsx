@@ -486,6 +486,17 @@ describe('混排选区（图内文字 + 画布标注）', () => {
     expect(textOf()).toContain('一条画布标注')
   })
 
+  it('对齐说明按选区选一句真话：有标注说标注会移动，无标注说只改图内布局', async () => {
+    addAnnotation()
+    await mount(['axes_0.title', 'axes_0.xaxis.label'])
+    expect(textOf()).toContain('选中的画布标注会移到同一条基线')
+    expect(textOf()).not.toContain('只调整图内布局')
+    useSelectionStore.setState({ ids: [] })
+    await mount(['axes_0.title', 'axes_0.xaxis.label'])
+    expect(textOf()).toContain('只调整图内布局')
+    expect(textOf()).not.toContain('选中的画布标注会移到同一条基线')
+  })
+
   it('标注移出选区后，批量入口回来', async () => {
     await mount(['axes_0.title', 'axes_0.xaxis.label'])
     expect(textOf()).toContain('个文字元素的公共样式')

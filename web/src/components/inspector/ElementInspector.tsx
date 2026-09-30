@@ -2648,11 +2648,7 @@ function AlignSection({
       </div>
       {group && <ScaleField panel={panel} group={group} />}
       <p className="mt-2 text-xs leading-relaxed text-ink-3">
-        {syncing ? (
-          el('alignSyncing')
-        ) : (
-          el('alignHint')
-        )}
+        {syncing ? el('alignSyncing') : el(hasAnnotations ? 'alignHintAnnotations' : 'alignHint')}
       </p>
       <ul className="mt-2 flex flex-col gap-0.5">
         {items.map((it, i) => (

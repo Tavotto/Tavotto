@@ -200,6 +200,7 @@
     "alignBaselineSize": "等宽/等高基准",
     "alignHdist": "水平等距（≥3）",
     "alignHint": "只调整图内布局，不改变这张图在画布上的尺寸。",
+    "alignHintAnnotations": "选中的画布标注会移到同一条基线，位置改在画布上。",
     "alignInvalid": "选区里的元素几何异常，对齐已取消。",
     "alignNoop": "这些元素已对齐。",
     "alignRefBoundsTip": "{{tip}} · 对齐到选区边界",

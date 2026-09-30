@@ -203,6 +203,7 @@
     "alignBaselineSize": "Size reference",
     "alignHdist": "Distribute horizontally (needs 3+)",
     "alignHint": "Only changes the layout inside the figure; the figure keeps its size on the canvas.",
+    "alignHintAnnotations": "Selected canvas annotations move onto the same baseline; their position changes on the canvas.",
     "alignInvalid": "An element in the selection has invalid geometry. Alignment cancelled.",
     "alignNoop": "These elements are already aligned.",
     "alignRefBoundsTip": "{{tip}} · aligns to the selection bounds",
