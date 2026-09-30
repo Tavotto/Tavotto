@@ -20,6 +20,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   prepareJointDependencies: vi.fn(),
   cancelJointDependencies: vi.fn().mockResolvedValue({}),
   setProjectUserEnvironment: vi.fn(),
+  skipDependencyPreparation: vi.fn(),
   fetchEngineEnvironment: vi.fn().mockResolvedValue({}),
 }))
 
@@ -30,6 +31,7 @@ import {
   prepareJointDependencies,
   probeScript,
   setProjectUserEnvironment,
+  skipDependencyPreparation,
   cancelJointDependencies,
   type DependencyPreparationOffer,
   type JointDependencyPlan,
@@ -248,6 +250,24 @@ describe('脚本行：开跑前要先准备依赖', () => {
     expect(mockProbe).toHaveBeenCalledTimes(1)
     expect(mockProbe.mock.calls[0][0]).toBe(SCRIPT)
     expect(host.querySelector('[data-script-preparation]')).toBeNull()
+  })
+
+  it('「详情」里的「其他方式（备选）」有「不准备，直接运行」：走同一个 skip 接口，然后这一行重跑（#740 的能力）', async () => {
+    mockProbe.mockResolvedValue(preparationResult(offerOf()))
+    vi.mocked(skipDependencyPreparation).mockResolvedValue({ ok: true, script: SCRIPT, skipped: true })
+    await mountAndRun()
+    const card = host.querySelector('[data-script-preparation]')!
+    const skip = card.querySelector<HTMLButtonElement>('[data-script-preparation-skip]')!
+    // 默认折叠：可见区仍只有一句话 + 一个主按钮
+    expect(skip.closest('details')!.hasAttribute('open')).toBe(false)
+    expect(card.querySelector('details')!.textContent).toContain('其他方式（备选）')
+    mockProbe.mockClear()
+    mockProbe.mockResolvedValue({ ...preparationResult(offerOf()), error: null, descriptors: [] })
+    await act(async () => skip.click())
+    await flush()
+    expect(skipDependencyPreparation).toHaveBeenCalledWith(SCRIPT)
+    expect(mockProbe).toHaveBeenCalledTimes(1)
+    expect(mockProbe.mock.calls[0][0]).toBe(SCRIPT)
   })
 
   it('装失败：只说一句原因 + 「重试」，重试再走一遍联合准备', async () => {

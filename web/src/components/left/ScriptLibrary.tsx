@@ -372,6 +372,18 @@ function ScriptPreparation({ script, run }: { script: string; run: ScriptRunStat
               </ul>
             )}
             {cost && <p className="type-caption">{cost}</p>}
+            {/* 「其他方式（备选）」：#740 授权框里就有的「不准备，直接运行」（同一个 skip 接口，之后 `rerunGated` 重跑这一行） */}
+            <p className="type-meta">{en('engine.repairAlternatives')}</p>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="self-start"
+              disabled={busy}
+              data-script-preparation-skip
+              onClick={() => void useDepRepairStore.getState().skipPreparation(offer)}
+            >
+              {en('engine.dependencyPrepareSkip')}
+            </Button>
             <Button
               variant="secondary"
               size="sm"

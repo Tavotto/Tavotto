@@ -320,7 +320,7 @@ interface DepRepairState {
   prepare: (target: 'project_venv' | 'tavotto_managed', offerArg?: DependencyPreparationOffer) => Promise<void>
   cancelPreparation: () => Promise<void>
   /** 「不准备，直接运行」：明确的 skip（这道门一直问到有答案），然后关框并重排那次失败的渲染 */
-  skipPreparation: () => Promise<void>
+  skipPreparation: (offerArg?: DependencyPreparationOffer) => Promise<void>
 }
 
 /** 预读的那份计划：`key` 认是哪个脚本的哪个包；`pending` 期间卡片的主按钮等它 */
@@ -422,8 +422,8 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
     }
   },
 
-  skipPreparation: async () => {
-    const offer = useEnvStore.getState().dependencyPreparation
+  skipPreparation: async (offerArg) => {
+    const offer = offerArg ?? useEnvStore.getState().dependencyPreparation
     if (!offer || get().busy) return
     const epoch = projectEpoch
     set({ busy: true })

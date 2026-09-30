@@ -350,8 +350,8 @@ test('多 Figure：?pick= 打开选择器，选第二张加的就是第二张', 
  * 「选择渲染环境 / 复制诊断」，新用户走不到安装。
  *
  * 门的那一次响应用 `page.route` 造（真后端要触发它得先让受管环境缺一个可装的包、授权后还要联网装），其余全走
- * 真后端：行内是一句话 + 一键修复（不弹授权框，用户 2026-09-30 的决定，见 #760）；真 `POST /api/engine/dependencies/skip`
- * 放行后再点 ▶ → 真 worker → 发现图、运行时图卡片出现。授权准备成功后的重跑由 `ScriptLibrary.test.tsx` 与
+ * 真后端：行内是一句话 + 一键修复（不弹授权框，用户 2026-09-30 的决定，见 #760）；「详情」里的「不准备，直接运行」（真 `POST /api/engine/dependencies/skip`）
+ * 放行后自动重跑 → 真 worker → 发现图、运行时图卡片出现。授权准备成功后的重跑由 `ScriptLibrary.test.tsx` 与
  * `dependency-one-click.spec.ts` 看护（SSE 在这里造不了）。
  */
 test('试运行撞上依赖门：行内一句话 + 一键修复（不弹框、不进「可能需要原环境」）；放行后再跑出图', async ({
@@ -405,11 +405,10 @@ test('试运行撞上依赖门：行内一句话 + 一键修复（不弹框、�
   await expect(page.getByText('可能需要原环境')).toHaveCount(0)
   await expect(page.getByRole('list', { name: '需要修复' })).toContainText('show_only.py')
 
-  // 真后端记下「不准备，直接运行」后，再点 ▶：门放行，真 worker 跑出图（重跑那一半由 dependency-one-click.spec.ts 与
-  // ScriptLibrary.test.tsx 看护：SSE 在这里造不了）
-  const skipped = await page.request.post(`${a.baseURL}/api/engine/dependencies/skip`, { data: { script: 'show_only.py' } })
-  expect(skipped.ok()).toBe(true)
-  await page.getByRole('button', { name: '运行 show_only.py 并发现图' }).click()
+  // 「详情」里「其他方式（备选）」的「不准备，直接运行」：真 `POST /api/engine/dependencies/skip`，然后这一行自动再试运行
+  // （真 worker）→ 发现图（授权准备成功后的重跑由 `ScriptLibrary.test.tsx` 与 `dependency-one-click.spec.ts` 看护：SSE 在这里造不了）
+  await card.locator('details > summary').click()
+  await card.locator('[data-script-preparation-skip]').click()
   await expect(page.getByText('已发现 1 张图')).toBeVisible({ timeout: 120_000 })
   await expect(page.locator('[data-card="runtime:show_only.py#show_only"]')).toBeVisible({ timeout: 30_000 })
   await expect(page.locator('[data-script-preparation]')).toHaveCount(0)
