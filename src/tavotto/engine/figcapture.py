@@ -138,6 +138,7 @@ engine 目录平铺 import 它，Flask 父进程也 import 得动。
 from __future__ import annotations
 
 import builtins
+import contextlib
 import dataclasses
 import gc
 import hashlib
@@ -843,9 +844,11 @@ class BufferSaves:
         self._pinned: dict = {}
         self._seq = 0
         self._noted = 0  # 记下且未被认领的张数（含已被回收的），`lost()` 用它减去仍活着的
+        #: 被路径 savefig 认领过的图：之后再存缓冲区也不回名单（先存路径、后存缓冲区的顺序，#739 Codex P2）
+        self._claimed: weakref.WeakSet = weakref.WeakSet()
 
     def note(self, fig) -> None:
-        if fig in self._order:
+        if fig in self._order or fig in self._claimed:
             return
         self._seq += 1
         self._order[fig] = self._seq
@@ -857,6 +860,7 @@ class BufferSaves:
         """这张图被路径 savefig 认领了（有了 stem）：移出名单；它若钉着名额，把名额交给**最早的**
         下一张仍活着、还没钉住的图——钉住的永远是全局顺序里最早的那几张（#739 Codex P2：
         让出的名额给了更晚的一张，兜底按上限截断时丢的就是更早那张、stem 也跟着变）。"""
+        self._claimed.add(fig)
         seq = self._order.pop(fig, None)
         if seq is None:
             return
@@ -872,8 +876,14 @@ class BufferSaves:
         return self._noted > 0
 
     def figures(self) -> list:
-        """交给兜底的图：仍活着的，按全局存盘先后（钉住的一定在其中）。"""
-        gc.collect()
+        """交给兜底的图：仍活着的，按全局存盘先后（钉住的一定在其中）。
+
+        这次 `gc.collect()` 发生在脚本的 stdout 重定向**之后**：用户对象的 `__del__` / 弱引用回调此刻
+        `print` 的话会写进 worker 的 JSON 协议流，父进程读到一行非 JSON、把成功的构建判成协议错误
+        （#739 Codex P2）。所以回收期间 stdout 一律改道 stderr（进 worker.log），与调用方在哪无关。
+        """
+        with contextlib.redirect_stdout(sys.stderr):
+            gc.collect()
         return [f for f, _ in sorted(self._order.items(), key=lambda kv: kv[1])]
 
     def lost(self) -> int:

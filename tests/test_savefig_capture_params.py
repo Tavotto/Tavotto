@@ -435,6 +435,40 @@ for i in range(11):
 """
 
 
+PATH_THEN_BUFFER = """\
+import io
+import matplotlib.pyplot as plt
+
+for i in range(8):  # 前 8 张：先按路径存盘（被认领），再存缓冲区
+    fig, ax = plt.subplots(figsize=(1, 1))
+    fig.savefig(f"F{i}.pdf")
+    fig.savefig(io.BytesIO(), format="png", dpi=20)
+    plt.close(fig)
+fig, ax = plt.subplots(figsize=(1, 1))  # 第 9 张：只存缓冲区、随后关掉
+fig.savefig(io.BytesIO(), format="png", dpi=20)
+plt.close(fig)
+"""
+NOISY_FINALIZER = """\
+import gc
+import io
+import matplotlib.pyplot as plt
+
+gc.disable()  # 让下面这个环只可能在引擎自己的 gc.collect() 里被回收
+
+
+class Noisy:
+    def __del__(self):
+        print("bye from __del__")
+
+
+n = Noisy()
+n.me = n
+del n
+fig, ax = plt.subplots(figsize=(1, 1))
+fig.savefig(io.BytesIO(), format="png", dpi=20)
+"""
+
+
 @needs_worker
 class TestFileObjectTargetsPassThrough:
     def test_desktop_script_can_read_back_what_it_saved(self, tmp_path):
@@ -494,6 +528,21 @@ class TestFileObjectTargetsPassThrough:
         assert resp.get("ok"), resp
         assert len(resp["descriptors"]) == figcapture.MAX_PYPLOT_FALLBACK
         assert resp.get("truncated_figures") == 11 - figcapture.MAX_PYPLOT_FALLBACK
+
+    def test_figures_claimed_by_path_first_do_not_come_back_through_a_buffer(self, tmp_path):
+        """反过来的顺序：先按路径存盘（被认领）、再存缓冲区——不回名单，第 9 张只存缓冲区的照样补回来（#739 Codex P2）。"""
+        figs = tmp_path / "figs"
+        write(figs, "reverse.py", PATH_THEN_BUFFER)
+        resp = desktop_build(figs, "reverse.py")
+        assert list(resp.get("stems") or {}) == [*(f"F{i}" for i in range(8)), "reverse"]
+        assert not resp.get("dropped_figures")
+
+    def test_a_printing_finalizer_during_collection_does_not_break_the_protocol(self, tmp_path):
+        """引擎在脚本 stdout 重定向之后强制回收：`__del__` 里的 print 不能写进 JSON 协议流（#739 Codex P2）。"""
+        figs = tmp_path / "figs"
+        write(figs, "noisy.py", NOISY_FINALIZER)
+        resp = desktop_build(figs, "noisy.py")
+        assert list(resp.get("stems") or {}) == ["noisy"], resp
 
     def test_browser_captures_the_buffer_only_figure_too(self, tmp_path):
         resp = browser_load(BUFFER_ONLY_THEN_CLOSE, "buffer_only.py", tmp_path / "ws")
@@ -599,6 +648,38 @@ def test_with_several_waiting_the_oldest_gets_the_slot():
     assert saves.figures() == [b_ref()]
     assert b_ref() is not None and c_ref() is None
     assert saves.lost() == 1
+
+
+def test_a_claimed_figure_saved_to_a_buffer_later_is_not_noted_again():
+    saves = figcapture.BufferSaves(limit=1)
+    a, b = _Fig(), _Fig()
+    saves.claim(a)  # 先按路径存盘被认领
+    saves.note(a)  # 之后又存缓冲区
+    saves.note(b)
+    assert saves.figures() == [b]
+    assert b in saves._pinned.values()
+
+
+def test_collection_output_goes_to_stderr(capsys):
+    """回收期间 `__del__` 的 print 改道 stderr：stdout 在 worker 里是协议流。"""
+    import gc
+
+    class _Noisy:
+        def __init__(self):
+            self.me = self
+
+        def __del__(self):
+            print("bye")
+
+    saves = figcapture.BufferSaves()
+    gc.disable()
+    try:
+        _Noisy()
+        saves.figures()
+    finally:
+        gc.enable()
+    out = capsys.readouterr()
+    assert out.out == "" and "bye" in out.err
 
 
 def test_claimed_figures_give_back_their_slot():
