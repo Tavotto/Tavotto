@@ -236,7 +236,9 @@ test(
     await button.click()
     await expect.poll(() => installBodies.length).toBe(1)
     expect(installBodies[0]).toEqual({ plan_id: PLAN_ID })
-    expect(planBodies).toEqual([{ module: 'openpyxl', script: SCRIPT, target: 'tavotto_managed' }])
+    // 卡片一出现就预读一次计划（新建第一代时要装的全部包只有计划里才有），点下去再形成一次真正执行的
+    const body = { module: 'openpyxl', script: SCRIPT, target: 'tavotto_managed' }
+    expect(planBodies).toEqual([body, body])
     await expect(page.getByText('准备环境并继续')).toHaveCount(0)
 
     // ③ 下载私有 Python：进度只有一行，MB 来自进度里的字节数
