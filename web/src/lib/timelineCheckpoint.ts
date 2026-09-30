@@ -76,15 +76,26 @@ export function captureMoment(doc?: FigureDocument): MomentSnapshot {
  * 给「操作本身会改文档」的时刻用——写回带标注时，写成之后画布上的标注原件会被删掉，
  * 节点要记删掉之后的样子，否则从它恢复标注会出现两份（Codex #679）。
  *
- * **缩略图不跟着换**：面板图源是发起那一刻的（写回前的图，里面还没有标注），它只和
- * 发起那一刻的文档配得上——旧图叠上标注原件，正是这次写回烙进原图的样子。拿新文档配
- * 旧图，标注在缩略图里就凭空没了；拿新文档重取图源也一样（写回后的图要等重渲染，
- * 此刻 renderStore 里还是旧的）。
+ * **缩略图默认不跟着换**（`thumbDoc` 省略时取发起那一刻的旧文档）：面板此刻**已经拿在
+ * 手里**的图源（renderStore 里的 SVG）是写回前的、还没有标注，只和发起那一刻的旧文档
+ * 配得上——旧图叠上标注原件，正是这次写回烙进原图的样子。
+ *
+ * **有的面板此刻拿不到 SVG，缩略图合成时才去取 `/api/render` 的 URL**（预览预算裁掉了它，
+ * 或解码失败）——那次取图发生在写回**之后**，`/api/render` 不认请求里旧的 `m` 值，按磁盘
+ * 现状回应，取回的已经是烙进标注的新文件。这类面板要显式传 `thumbDoc`：调用方按每个面板
+ * 此刻有没有 SVG 分别决定要不要把它的标注原件也从 `thumbDoc` 里摘掉——摘掉的话缩略图与
+ * 「拍时才现取的图」是同一个时刻（都是写回后），标注只来自那张现取的图，不再叠一遍原件；
+ * 不摘的话跟旧文档一样叠一遍。不传就整份沿用旧文档（向后兼容，见 `UpdateSourceButton.tsx`
+ * 的 `liveIds` 那一段，Codex #679 P1 追加）。
  */
-export function momentWithDoc(snapshot: MomentSnapshot, doc: FigureDocument): MomentSnapshot {
+export function momentWithDoc(
+  snapshot: MomentSnapshot,
+  doc: FigureDocument,
+  thumbDoc?: FigureDocument,
+): MomentSnapshot {
   return {
     ...snapshot,
-    thumbDoc: snapshot.thumbDoc ?? snapshot.identity.doc,
+    thumbDoc: snapshot.thumbDoc ?? thumbDoc ?? snapshot.identity.doc,
     identity: { ...snapshot.identity, doc },
   }
 }
