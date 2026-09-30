@@ -1033,6 +1033,11 @@ class TestGates:
         }, f"backend 覆盖漂了：{sorted(tiers)}"
         assert "python -m pytest" in _code(fast) and "python -m pytest" in _code(platforms)
 
+    #: 各 job 现在定的片数——两个 job **不必相同**（2026-09-30 起 backend-platforms 是
+    #: 3 片、backend-fast 仍是 2 片，理由见 docs/rules/ci/pytest-shards.md）。改一个 job
+    #: 的片数要同时改这里与文档里的实测。
+    _EXPECTED_SHARD_COUNTS = {"backend-fast": 2, "backend-platforms": 3}
+
     @pytest.mark.parametrize("job_id", ["backend-fast", "backend-platforms"])
     def test_pytest_shards_agree_between_the_matrix_and_the_command(self, job_id):
         """`--shard K/N` 的 N 与 matrix.shard 的片数必须是**同一个数**，且轴恰好是 1..N。
@@ -1048,7 +1053,8 @@ class TestGates:
         assert axes["shard"] == [str(i) for i in range(1, n + 1)], (
             f"{job_id} 的 shard 轴必须恰好是 1..N，收到 {axes['shard']}"
         )
-        assert n == 2, f"{job_id} 现在定的是 2 片；改片数要同时改这里与文档里的实测"
+        expected = self._EXPECTED_SHARD_COUNTS[job_id]
+        assert n == expected, f"{job_id} 现在定的是 {expected} 片；改片数要同时改这里与文档里的实测"
         code = _code(block)
         # `--shard=K/N` 与 `--shard-manifest=PATH` **必须是 `=` 形式**：这两个选项在
         # tests/conftest.py 里注册，pytest 预解析时把未知选项的下一个 token 当路径去找
