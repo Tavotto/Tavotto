@@ -229,6 +229,19 @@ describe('DependencyPrepareDialog', () => {
     expect(mentionCount(details, '不改动')).toBe(1)
   })
 
+  it('跑前授权框选了项目 venv：乐观进度就带着目标，只有两步（Codex #742）', async () => {
+    planMock.mockResolvedValue({ plan: { plan_id: 'jpv', target_kind: 'project_venv', script: 'figure.py', requirements: [] } as never })
+    prepareMock.mockImplementation(() => new Promise(() => {}))
+    await render(<DependencyPrepareDialog />)
+    await act(async () => useEnvStore.getState().requestDependencyPreparation(withProjectVenv()))
+    await act(async () => button(en('dependencyPrepareRun'))!.click())
+    await act(async () => {})
+    expect(useDepRepairStore.getState().progress!.target_kind).toBe('project_venv')
+    expect(document.querySelector('[data-repair-line]')!.textContent).toBe(
+      `${en('dependencyPrepareState_preparing')}${en('repairStep', { n: 1, total: 2 })}`,
+    )
+  })
+
   it('一键修复进行中：只剩一行进度', async () => {
     planMock.mockResolvedValue({ plan: { plan_id: 'jp9', requirements: [] } as never })
     prepareMock.mockResolvedValue({ started: true } as never)

@@ -155,8 +155,11 @@ interface DepRepairState {
    * 私有 Python）时，卡片先形成一份计划**只为读出它的真实要素**（要不要下载、多大；计划这一步什么都不装，
    * ADR 0019 §四）。卡片按它披露、按它授权——不然用户点一次「一键修复」，计划却多出一段下载，
    * `planMatchesDisclosure` 不符，只能停在确认页再点一次。
+   *
+   * **按脚本 + 模块分格**（Codex #742）：右栏与脚本行上可以同时挂着两张卡，一格一份，谁都不覆盖谁；切项目清空
+   * （计划说的是那个项目的环境），`reset()` 不动（关掉一张卡不该让另一张卡回到「正在检查」）
    */
-  managedPreview: ManagedPreview | null
+  managedPreviews: Readonly<Record<string, ManagedPreview>>
   previewManaged: (args: RepairRequest) => Promise<void>
   /**
    * 采用这台机器上已有的、已经装着那个包的解释器（ADR 0044）。**不是安装**：
@@ -234,7 +237,7 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
   request: null,
   authorized: null,
   scriptOffer: null,
-  managedPreview: null,
+  managedPreviews: {},
   parked: {},
   rebuilding: {},
   rebuildRunningFor: (project) => !!get().rebuilding[projectKey(project)],
@@ -262,6 +265,9 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
           code: '',
           flow: 'joint',
           requirements: plan.requirements,
+          // 乐观的这一条也带上目标：阶段数按它定（项目 venv 只有两步），不能等 SSE 第一条（Codex #742）
+          target_kind: plan.target_kind,
+          script: plan.script,
         },
       })
       await prepareJointDependencies(plan.plan_id)
@@ -351,19 +357,20 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
 
   previewManaged: async (args) => {
     const key = managedPreviewKey(args)
-    const now = get().managedPreview
-    if (now?.key === key) return // 同一份只问一次（在途或已有结论）
+    if (get().managedPreviews[key]) return // 同一份只问一次（在途或已有结论）
     const epoch = projectEpoch
-    set({ managedPreview: { key, pending: true, plan: null, code: '' } })
+    const put = (v: ManagedPreview) => set({ managedPreviews: { ...get().managedPreviews, [key]: v } })
+    put({ key, pending: true, plan: null, code: '' })
     try {
       const { plan } = await createDependencyPlan({ ...args, target: 'tavotto_managed' })
-      if (epoch !== projectEpoch || get().managedPreview?.key !== key) return
-      set({ managedPreview: { key, pending: false, plan, code: '' } })
+      if (epoch !== projectEpoch) return
+      put({ key, pending: false, plan, code: '' })
     } catch (e) {
-      if (epoch !== projectEpoch || get().managedPreview?.key !== key) return
+      if (epoch !== projectEpoch) return
       const { code, pinned } = failure(e)
+      put({ key, pending: false, plan: null, code })
       // 预读时才发现被全局固定：与形成计划被拒同一支（卡片切到「恢复自动检测」）
-      set({ managedPreview: { key, pending: false, plan: null, code }, ...(pinned ? { pinned } : {}) })
+      if (pinned) set({ pinned })
     }
   },
 
@@ -397,7 +404,20 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
     try {
       // 乐观地先进 preparing：SSE 的第一条要等后端线程起来，中间那一下
       // 空窗期里按钮已经禁用了，界面却还什么都没说。
-      set({ progress: { plan_id: plan.plan_id, state: 'preparing', log: '', error: null, code: '' } })
+      // 目标 / 脚本 / 包名同样先带上：阶段数、那一句「正在安装 X」、脚本行认领都按它们，不等 SSE 第一条（Codex #742）
+      set({
+        progress: {
+          plan_id: plan.plan_id,
+          state: 'preparing',
+          log: '',
+          error: null,
+          code: '',
+          target_kind: plan.target_kind,
+          import_name: plan.import_name,
+          distribution: plan.distribution,
+          script: get().request?.script,
+        },
+      })
       await installDependencyPlan(plan.plan_id)
       if (epoch !== projectEpoch) return
       set({ busy: false })
@@ -465,7 +485,14 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
     // 推进度——所属登记在 await 之后的话，那几条会被当成「不是自己起的」丢掉。进度 id 也在这里生成（#606）
     const id = newRebuildProgressId()
     startedPlans.set(id, owner)
-    const started: DependencyProgress = { plan_id: id, state: 'creating_env', log: '', error: null, code: '' }
+    const started: DependencyProgress = {
+      plan_id: id,
+      state: 'creating_env',
+      log: '',
+      error: null,
+      code: '',
+      target_kind: 'tavotto_managed',
+    }
     set({
       busy: true,
       errorCode: '',
@@ -511,7 +538,7 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
     const owner = startedPlans.get(p.plan_id)
     if (owner !== undefined && projectKey(owner) !== projectKey(currentProjectId())) {
       if (get().parked[projectKey(owner)]?.plan_id === p.plan_id)
-        set({ parked: { ...get().parked, [projectKey(owner)]: p } })
+        set({ parked: { ...get().parked, [projectKey(owner)]: keepTarget(p, get().parked[projectKey(owner)]) } })
       return
     }
     // 只认**自己发起的**那条：单包计划 / 联合计划 / 自己点的重建（三处都在发请求之前就把 id 记下了）。
@@ -520,7 +547,7 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
     const { plan, jointPlan, progress } = get()
     const owned = p.plan_id === plan?.plan_id || p.plan_id === jointPlan?.plan_id || p.plan_id === progress?.plan_id
     if (!owned) return
-    set({ progress: p })
+    set({ progress: keepTarget(p, progress) })
     if (p.state === 'done' || p.state === 'failed' || p.state === 'cancelled') {
       // 环境那半边变了（换了解释器 / 建了受管环境），刷一次环境状态
       void useEnvStore.getState().refresh()
@@ -546,8 +573,9 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
         set({ errorCode: p.code || '', errorText: p.error || '', pinned: p.pinned ?? null })
       }
       // 计划是一次性的：成功也好失败也好，都不该留着一个已经被消费掉的
-      // plan_id 让用户再点一次「安装」。
-      set({ plan: null, jointPlan: null })
+      // plan_id 让用户再点一次「安装」。预读的那些同理：环境刚变过（可能已经有了私有 Python），它们说的下载
+      // 已经不算数，下一张卡要按新环境重读
+      set({ plan: null, jointPlan: null, ...(p.state === 'done' ? { managedPreviews: {} } : {}) })
       // 从脚本行起的修复：那一行已经重跑、卡片随之收起，「已安装」这条进度没有地方再「知道了」——
       // 留着它，别的脚本行会因为「修复属于别人」一直不给卡片
       if (rerun) get().reset()
@@ -567,7 +595,6 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
       request: null,
       authorized: null,
       scriptOffer: null,
-      managedPreview: null,
     }),
 
   clear: () => {
@@ -594,7 +621,7 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
       jointPlan: null,
       jointBlocked: null,
       pinned: null,
-      managedPreview: null,
+      managedPreviews: {},
       request: retryCtx?.request ?? null,
       authorized: retryCtx?.authorized ?? null,
       scriptOffer: retryCtx?.scriptOffer ?? null,
@@ -723,6 +750,15 @@ function rerunSameModule(importName: string | undefined, except: string | undefi
     if (phase === undefined || phase === 'missing_dependency') targets.add(peer)
   }
   for (const script of targets) if (script !== except) void runs.run(script)
+}
+
+/**
+ * 新一条进度没带目标时沿用上一条的（同一个 plan_id）：阶段数按目标定，某一条快照缺字段不能让界面在
+ * 「两步」与「四步」之间跳（Codex #742）
+ */
+function keepTarget(next: DependencyProgress, prev: DependencyProgress | null | undefined): DependencyProgress {
+  if (next.target_kind || !prev?.target_kind || prev.plan_id !== next.plan_id) return next
+  return { ...next, target_kind: prev.target_kind }
 }
 
 /** 安装是不是正在进行（界面据此禁用按钮、显示进度而不是选项） */

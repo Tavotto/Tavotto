@@ -88,7 +88,7 @@ export function DependencyRepairCard({
     adoptSystemPython,
     cancel,
     reset,
-    managedPreview,
+    managedPreviews,
     previewManaged,
   } = useDepRepairStore()
   const [manual, setManual] = useState('')
@@ -110,7 +110,8 @@ export function DependencyRepairCard({
   const previewArgs = { module, script, target: 'tavotto_managed' as const }
   const needPreview =
     canInstall && !pinnedSince && !offer.pinned && managedTarget?.available === null && !managedTarget.private_python
-  const preview = managedPreview?.key === managedPreviewKey(previewArgs) ? managedPreview : null
+  // 这张卡自己那一格（按脚本 + 模块）：同时挂着的另一张卡预读别的包不会盖掉它
+  const preview = managedPreviews[managedPreviewKey(previewArgs)] ?? null
   useEffect(() => {
     if (needPreview) void previewManaged(previewArgs)
     // previewArgs 由这三样决定；同一份只问一次（store 按 key 去重）

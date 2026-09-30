@@ -170,6 +170,8 @@ beforeEach(() => {
   adoptMock.mockReset()
   clearGlobalMock.mockReset()
   useDepRepairStore.getState().reset()
+  // 预读按卡分格、`reset()` 不动它们（关一张卡不该让另一张回到「正在检查」）：用例之间自己清
+  useDepRepairStore.setState({ managedPreviews: {} })
 })
 
 afterEach(async () => {
@@ -530,6 +532,48 @@ describe('一键修复（2026-09-29：面向不懂 Python 的用户）', () => {
     expect(installMock).toHaveBeenCalledTimes(1)
     expect(installMock).toHaveBeenCalledWith('plan-managed')
     expect(byName(en('repairPrepareAndContinue'))).toBeUndefined()
+  })
+
+  it('两张卡同时预读（右栏一张、脚本行一张，缺的包不同）：各拿各的结果，谁都不停在「正在检查」（Codex #742）', async () => {
+    const resolvers: Record<string, (v: { plan: DependencyRepairPlan }) => void> = {}
+    planMock.mockImplementation(
+      (args: { module: string }) => new Promise((r) => (resolvers[args.module] = r)) as never,
+    )
+    const pending = { ...OFFER.targets[1], available: null }
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => {
+      root.render(
+        <>
+          <div data-card-a>
+            <DependencyRepairCard offer={{ ...OFFER, targets: [pending] }} module="lmfit" script="figure.py" />
+          </div>
+          <div data-card-b>
+            <DependencyRepairCard
+              offer={{ ...OFFER, import_name: 'openpyxl', script: 'other.py', targets: [pending],
+                requirement: { ...OFFER.requirement!, import_name: 'openpyxl', distribution: 'openpyxl', requirement: 'openpyxl' } }}
+              module="openpyxl"
+              script="other.py"
+            />
+          </div>
+        </>,
+      )
+    })
+    expect(Object.keys(resolvers).sort()).toEqual(['lmfit', 'openpyxl'])
+    // A 先发、B 后发；A 的结果回来时 B 还在途——A 不许因为「格子被 B 占了」而认不出自己的结果
+    await act(async () => resolvers.lmfit({ plan: { ...MANAGED_PLAN, plan_id: 'pa' } }))
+    await act(async () =>
+      resolvers.openpyxl({ plan: { ...MANAGED_PLAN, plan_id: 'pb', import_name: 'openpyxl', distribution: 'openpyxl', requirement: 'openpyxl', private_python: null } }),
+    )
+    const button = (sel: string) =>
+      document.querySelector(`${sel} [data-one-click-repair-button]`) as HTMLButtonElement
+    const sentence = (sel: string) => document.querySelector(`${sel} [data-one-click-sentence]`)!.textContent
+    expect(button('[data-card-a]').disabled, 'A 卡停在「正在检查」').toBe(false)
+    expect(button('[data-card-b]').disabled, 'B 卡停在「正在检查」').toBe(false)
+    // 各说各的：A 要下载私有 Python，B 不用
+    expect(sentence('[data-card-a]')).toBe(en('oneClickSentenceDownload', { packages: 'lmfit', mb: 45 }))
+    expect(sentence('[data-card-b]')).toBe(en('oneClickSentence', { packages: 'openpyxl' }))
   })
 
   it('预读说这台电脑建不了环境（managed_env_unavailable）：没有一键修复，说清下一步，出口在「高级」里', async () => {
@@ -1028,6 +1072,28 @@ describe('安装进度', () => {
     await progress('installing', { target_kind: 'project_venv' })
     expect(line()).toBe(`${en('repairInstalling', { module: 'lmfit' })}${en('repairStep', { n: 1, total: 2 })}`)
     expect(document.querySelector('[data-repair-download]')).toBeNull()
+  })
+
+  it('项目环境的乐观进度（SSE 还没来）就带着目标：只有两步，不显示「准备 Python」（Codex #742）', async () => {
+    planMock.mockResolvedValue({ plan: PLAN })
+    installMock.mockImplementation(() => new Promise(() => {})) // 安装请求一直挂着：此刻只有乐观的那一条
+    await render()
+    await click(en('repairUseProjectEnv'))
+    await click(en('repairInstallToProject'))
+    const p = useDepRepairStore.getState().progress!
+    expect(p.state).toBe('preparing')
+    expect(p.target_kind).toBe('project_venv')
+    expect(document.querySelector('[data-repair-line]')!.textContent).toBe(
+      `${en('repairPreparing')}${en('repairStep', { n: 1, total: 2 })}`,
+    )
+    expect([...document.querySelectorAll('[data-repair-stage]')].map((li) => li.getAttribute('data-repair-stage')))
+      .toEqual(['packages', 'rerun'])
+    // 之后某一条快照没带目标：沿用上一条的，不在两步与四步之间跳
+    await act(() => {
+      useDepRepairStore.getState().onProgress({ plan_id: 'plan-abc', state: 'installing', log: '', error: null, code: '' } as never)
+    })
+    expect(useDepRepairStore.getState().progress!.target_kind).toBe('project_venv')
+    expect(document.querySelector('[data-repair-line]')!.textContent).toContain(en('repairStep', { n: 1, total: 2 }))
   })
 
   it('换用了 PyPI 镜像：只在「安装详情」里说一句', async () => {

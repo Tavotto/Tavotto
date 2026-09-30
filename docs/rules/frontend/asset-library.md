@@ -68,9 +68,10 @@
   `cached` 推、再缺按下载）、环境说明、需求串、其余目标、被跳过的系统解释器、「换一个 Python」（`OtherPython`，兜底出口必须
   **始终在**）与「选择渲染环境」全在「详情」里。两样都没有时才把各条路摊开；真的无路可走时同样一句话（`repairManagedUnavailable`，版本范围与「指定已有 Python」在「详情」里）。
   受管目标 `available: null`（后端还在探基础解释器、offer 上没挂私有 Python）时卡片先 `previewManaged()` 形成一份计划**只读它的
-  要素**（计划不装东西），按它授权——否则计划多出一段下载，`planMatchesDisclosure` 不符，要多点一次确认页。进行中同样**一行**
+  要素**（计划不装东西；按脚本 + 模块分格，两张卡同时预读互不覆盖，装好后清空重读），按它授权——否则计划多出一段下载，`planMatchesDisclosure` 不符，要多点一次确认页。进行中同样**一行**
   （`RepairProgressLine`：「正在安装 openpyxl…（3/4）」，下载那一段「正在下载 Python… 12 / 25 MB」+ 细进度条 +「取消」；
-  四个阶段的完整列表 `RepairStageList` 与 pip 日志在折叠的「详情」里），字节数读 `result.download`、**只在 state 仍是
+  四个阶段的完整列表 `RepairStageList` 与 pip 日志在折叠的「详情」里），乐观的第一条进度（SSE 还没来）就带上目标 / 脚本 / 包名，之后缺目标的快照沿用上一条（阶段数按目标定）；
+  字节数读 `result.download`、**只在 state 仍是
   `downloading_python` 时读**（后端的 result 沿用上一条）；换用 PyPI 镜像（`pypi_mirror`）只在「安装详情」里说。跑前授权框
   （`DependencyPrepareDialog`）同一套：没有装齐的用户环境、默认目标是受管环境时，标题就是那一句（干净机器上什么包都
   不缺时换成「需要先准备运行环境」那一句；私有 Python 的披露只跟**此刻选中的**目标走，选了项目 venv 就不提），底部只有「稍后」「一键修复」，
