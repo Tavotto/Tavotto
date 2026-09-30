@@ -185,25 +185,27 @@ def test_release_staging_refuses_an_absolute_interpreter_path(staging):
 @pytest.mark.parametrize(
     ("command", "ok"),
     [
-        ("./mcp/launch.cmd", True),  # 插件自带、按 cwd（插件根）解析的启动器（#266）
+        ("./mcp/launch", True),  # 插件自带、按 cwd（插件根）解析的启动器对（#266）
+        # Windows 半边不能当 command：POSIX 上它不是可执行的 sh（#266 之前的双语文件已拆开）
+        ("./mcp/launch.cmd", False),
         ("./mcp/missing.cmd", False),  # 指向不存在的文件
         ("./mcp/../../outside.cmd", False),  # 跳出插件目录
-        ("mcp/launch.cmd", False),  # 不是 ./ 开头：Codex 当成 PATH 上的名字去找
-        (".\\mcp\\launch.cmd", False),  # 反斜杠：只在 Windows 上是路径
+        ("mcp/launch", False),  # 不是 ./ 开头：Codex 当成 PATH 上的名字去找
+        (".\\mcp\\launch", False),  # 反斜杠：只在 Windows 上是路径
         ("./mcp/server.py", False),  # 在插件里但不是那个启动器：POSIX 上起不来（#548 P2）
         ("./mcp/other.cmd", False),  # 可执行、在插件里，但不是**那一个**启动器
     ],
 )
 def test_release_staging_accepts_only_the_bundled_relative_launcher(staging, command, ok):
-    """发行件里的路径形 command 只放行一种：插件自带且可执行的 `./mcp/launch.cmd`。
-    机器相关的绝对路径仍然只属于已装副本（上一条用例）。"""
+    """发行件里的路径形 command 只放行一种：插件自带且可执行的 `./mcp/launch`（Windows 半边
+    `mcp/launch.cmd` 同在）。机器相关的绝对路径仍然只属于已装副本（上一条用例）。"""
     d, _m = staging
-    for name in ("launch.cmd", "other.cmd", "server.py"):
+    for name in ("launch", "launch.cmd", "other.cmd", "server.py"):
         f = d / "mcp" / name
         f.parent.mkdir(parents=True, exist_ok=True)
         if not f.exists():
             f.write_text('#!/bin/sh\nexec python3 "$@"\n', encoding="utf-8")
-    for name in ("launch.cmd", "other.cmd"):
+    for name in ("launch", "other.cmd"):
         (d / "mcp" / name).chmod(0o755)
     mcp = d / ".mcp.json"
     data = json.loads(mcp.read_text(encoding="utf-8"))
@@ -232,13 +234,28 @@ def test_release_staging_rejects_a_launcher_that_is_not_executable(staging):
 def test_the_manifest_mode_of_the_launcher_wins_over_the_filesystem(tmp_path):
     """Windows 上文件系统没有执行位：模式以 staging 清单 / git 为准，不看 os.access。"""
     d = tmp_path / "p"
-    launch = d / "mcp" / "launch.cmd"
+    launch = d / "mcp" / "launch"
     launch.parent.mkdir(parents=True)
     launch.write_text("x", encoding="utf-8")
     launch.chmod(0o755)
-    cmd = "./mcp/launch.cmd"
-    assert pluginmanifest._is_bundled_launcher(cmd, d, {"mcp/launch.cmd": "100755"})
-    assert not pluginmanifest._is_bundled_launcher(cmd, d, {"mcp/launch.cmd": "100644"})
+    (d / "mcp" / "launch.cmd").write_text("@echo off\n", encoding="ascii")
+    cmd = "./mcp/launch"
+    assert pluginmanifest._is_bundled_launcher(cmd, d, {"mcp/launch": "100755"})
+    assert not pluginmanifest._is_bundled_launcher(cmd, d, {"mcp/launch": "100644"})
+
+
+def test_the_bundled_launcher_needs_its_windows_half(tmp_path):
+    """`./mcp/launch` 在 Windows 上由 Codex 按 PATHEXT 落到同目录的 `launch.cmd`（真 Windows 11 +
+    Codex Desktop 实测）。发行件里只有 POSIX 半边时，Windows 用户又是零工具——验收要红。"""
+    d = tmp_path / "p"
+    launch = d / "mcp" / "launch"
+    launch.parent.mkdir(parents=True)
+    launch.write_text("x", encoding="utf-8")
+    launch.chmod(0o755)
+    modes = {"mcp/launch": "100755"}
+    assert not pluginmanifest._is_bundled_launcher("./mcp/launch", d, modes)
+    (d / "mcp" / "launch.cmd").write_text("@echo off\n", encoding="ascii")
+    assert pluginmanifest._is_bundled_launcher("./mcp/launch", d, modes)
 
 
 def test_without_a_mode_source_windows_does_not_reject_the_bundled_launcher(tmp_path, monkeypatch):
@@ -246,15 +263,16 @@ def test_without_a_mode_source_windows_does_not_reject_the_bundled_launcher(tmp_
     「路径形 command」——旧发行件体检、`write_build_manifest(modes={})` 都会在 Windows 上
     误红。有清单时仍照清单判（清单说 100644 照样拒）。"""
     d = tmp_path / "p"
-    launch = d / "mcp" / "launch.cmd"
+    launch = d / "mcp" / "launch"
     launch.parent.mkdir(parents=True)
     launch.write_text("x", encoding="utf-8")
     launch.chmod(0o644)
-    cmd = "./mcp/launch.cmd"
+    (d / "mcp" / "launch.cmd").write_text("@echo off\n", encoding="ascii")
+    cmd = "./mcp/launch"
     monkeypatch.setattr(pluginmanifest, "_fs_exec_bit_observable", lambda: False)
     assert pluginmanifest._is_bundled_launcher(cmd, d, {})
     assert pluginmanifest._is_bundled_launcher(cmd, d, None)
-    assert not pluginmanifest._is_bundled_launcher(cmd, d, {"mcp/launch.cmd": "100644"})
+    assert not pluginmanifest._is_bundled_launcher(cmd, d, {"mcp/launch": "100644"})
     if os.name != "nt":
         monkeypatch.setattr(pluginmanifest, "_fs_exec_bit_observable", lambda: True)
         assert not pluginmanifest._is_bundled_launcher(cmd, d, {}), "POSIX 上不可执行仍要拒"

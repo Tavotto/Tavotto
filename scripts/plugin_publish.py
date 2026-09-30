@@ -402,7 +402,7 @@ def build_commit(
 
     run("add", "-A", "--", ".")
     # 执行位写进 index，不信文件系统：Windows 上没有执行位（chmod / os.access 都是空操作），
-    # `git add` 一律记成 100644，插件自带的可执行启动器（mcp/launch.cmd，#266）就丢了 100755
+    # `git add` 一律记成 100644，插件自带的可执行启动器（mcp/launch，#266）就丢了 100755
     # ——推上去的树 content_digest 对不上 staging，发布在 Windows 上整条红。模式以清单为准
     # （plugin_stage.write_zip 同一个出处），没有清单的 legacy 件才退回文件系统。
     manifest = plugin_stage.read_manifest(plugin_dir)
@@ -701,7 +701,7 @@ def run_publish(args, *, fetch=None) -> int:
             # 把旧提交的插件目录检出到临时目录当作 staging
             restore_dir = tmp / "restore"
             restore_dir.mkdir()
-            # 带上模式一起读：插件里有可执行的启动器（mcp/launch.cmd，#266），只写字节
+            # 带上模式一起读：插件里有可执行的启动器（mcp/launch，#266），只写字节
             # 会把 100755 丢成 100644——重建出来的树 content_digest 就对不上它的收据
             listing = git(
                 repo,

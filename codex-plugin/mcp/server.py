@@ -1384,8 +1384,22 @@ def _utf8_stdio() -> None:
                 pass
 
 
+def _utf8_stderr() -> None:
+    """诊断行（「引擎解释器 …，交棒」「没找到能 import tavotto.engine 的解释器 …」）一律按
+    UTF-8 写 stderr。Codex 按 UTF-8 读 MCP server 的 stderr：Windows 上管道默认是 ANSI 代码页
+    （中文系统是 GBK），第一行中文就让它记下「stream did not contain valid UTF-8」并**停读**
+    ——这正是降级时唯一会说人话的那一行，被丢得一字不剩（#266，真 Windows 11 + Codex Desktop
+    实测）。只动 stderr：stdout 归协议，由各自的路径设定。"""
+    if hasattr(sys.stderr, "reconfigure"):
+        try:
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+        except (ValueError, OSError):
+            pass
+
+
 def main() -> int:
     argv = sys.argv[1:]
+    _utf8_stderr()
     if "--health" in argv or "--provision" in argv:
         _utf8_stdio()
     if "--health" in argv:

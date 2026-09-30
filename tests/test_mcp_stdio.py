@@ -358,3 +358,43 @@ def test_degraded_mode_health_check_is_actionable(degraded_client):
     assert body["engine"]["available"] is False
     joined = " ".join(body["recovery"])
     assert "--provision" in joined and "新开" in joined
+
+
+def test_diagnostics_reach_the_host_as_utf8_even_under_an_ansi_code_page(tmp_path):
+    """#266 真机：Codex 按 UTF-8 读 MCP server 的 stderr。Windows 上管道默认是 ANSI 代码页（中文
+    系统 GBK），降级那一行中文诊断一出，Codex 记下「stream did not contain valid UTF-8」并停读——
+    唯一说人话的那一行被丢得一字不剩。这里用 PYTHONIOENCODING=gbk 在任何平台上复现「stderr 默认
+    不是 UTF-8」，要求 stderr 字节是合法 UTF-8 且带着那行诊断。"""
+    venv_dir = tmp_path / "bare-venv"
+    venv.EnvBuilder(with_pip=False).create(str(venv_dir))
+    bare = venv_dir / ("Scripts/python.exe" if os.name == "nt" else "bin/python3")
+    empty = tmp_path / "empty-bin"
+    empty.mkdir()
+    env = {
+        **os.environ,
+        "PATH": str(empty),
+        "HOME": str(tmp_path),
+        "TAVOTTO_CONFIG_DIR": str(tmp_path / "config"),
+        "LOCALAPPDATA": str(tmp_path / "lapp"),
+        "PROGRAMFILES": str(tmp_path / "pf"),
+        "PYTHONIOENCODING": "gbk",
+    }
+    for name in (
+        "TAVOTTO_CLI",
+        "TAVOTTO_MCP_PYTHON",
+        "TAVOTTO_WORKER_PYTHON",
+        "MM_WORKER_PYTHON",
+        "TAVOTTO_MCP_EXECED",
+        "PYTHONPATH",
+    ):
+        env.pop(name, None)
+    proc = subprocess.run(
+        [str(bare), str(SERVER)],
+        input=b"",
+        capture_output=True,
+        env=env,
+        cwd=str(ROOT),
+        timeout=120,
+    )
+    text = proc.stderr.decode("utf-8")  # 不是合法 UTF-8 就在这里抛
+    assert "tavotto-mcp:" in text and "降级" in text, text

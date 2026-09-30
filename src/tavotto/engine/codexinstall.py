@@ -244,10 +244,66 @@ def launcher_starts(command: str, server: Path) -> tuple[bool, str]:
     代价说清楚：命令若真是商店别名，跑这一次可能会弹一次商店窗口。那正是 Codex
     每次起 server 时已经在发生的事，这里花一次把它换掉。
     """
-    rc, out = _run([command, str(server), "--health"], timeout=120, env=_health_env())
-    if _last_json(out) is not None:
+    try:
+        p = subprocess.run(
+            [command, str(server), "--health"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=120,
+            env=_health_env(),
+            creationflags=CREATE_NO_WINDOW,
+        )
+    except FileNotFoundError:
+        return False, f"退出码 127，找不到可执行文件：{command}"
+    except subprocess.TimeoutExpired:
+        return False, "退出码 124，超过 120s 没有返回"
+    except OSError as exc:
+        return False, f"退出码 126，{type(exc).__name__}: {exc}"
+    rc, out = p.returncode, (p.stdout or "")
+    # stdout 必须**恰好**是一行体检 JSON：Codex 把 server 的 stdout 当协议流，第一帧前多出来的
+    # 任何一行（0.17.0 的双语启动器让 cmd 回显 shebang；空行；别的 JSON 形状的调试输出）在真
+    # Windows + Codex Desktop 上就是握手失败、零工具（#266）。只看「最后一行是 JSON」或「每行都是
+    # JSON」都会把那种启动器判成起得来、不去钉（Codex #720）。
+    lines = out.splitlines()
+    healthy = [ln for ln in lines if "ok" in (_last_json(ln) or {})]
+    if len(lines) == 1 and healthy:
         return True, f"退出码 {rc}，启动器回了体检 JSON"
-    return False, f"退出码 {rc}，没有体检 JSON：{(out[-160:] or '（零输出）')}"
+    if healthy:
+        others = [ln for ln in lines if ln not in healthy] or healthy[1:]
+        return (
+            False,
+            f"退出码 {rc}，stdout 在体检 JSON 之外还有输出（Codex 会因此断连）："
+            f"{(others[0][:160] or '（空行）')}",
+        )
+    tail = (out + (p.stderr or "")).strip()
+    return False, f"退出码 {rc}，没有体检 JSON：{(tail[-160:] or '（零输出）')}"
+
+
+def plugin_relative_command(
+    plugin_dir: Path, command: str, *, windows: bool | None = None, pathext: str | None = None
+) -> str:
+    """`.mcp.json` 的 `command` → Codex 在这台机器上**实际会执行的那个文件**（#266）。
+
+    `./` 开头的相对 command 按插件根（Codex 起 server 时的 `cwd`）解析，不按本进程的 cwd。
+    Windows 上 Codex 的 program resolver 给无扩展名的路径按 PATHEXT 补扩展名、**先于**无扩展名
+    的原名——真 Windows 11 + Codex Desktop（codex-cli 0.158）实测：`mcp/launch` 与
+    `mcp/launch.cmd` 同在时 `./mcp/launch` 被解析成 `launch.cmd`。这里照做，否则会拿 POSIX 半边
+    的 sh 脚本去 CreateProcess（「不是有效的 Win32 应用程序」），把一个好好的启动器判成起不来。
+    """
+    if not command.startswith("./"):
+        return command
+    path = plugin_dir / command[2:]
+    if windows is None:
+        windows = os.name == "nt"
+    if windows and not path.suffix:
+        exts = pathext if pathext is not None else os.environ.get("PATHEXT", ".COM;.EXE;.BAT;.CMD")
+        for ext in (e for e in exts.split(";") if e):
+            candidate = path.with_name(path.name + ext.lower())
+            if candidate.is_file():
+                return str(candidate)
+    return str(path)
 
 
 def _is_our_plugin_dir(path: Path) -> bool:
@@ -895,10 +951,10 @@ def _interpreter_step(plugin_dir: Path | None, py: str | None, *, apply: bool) -
             code=ERR_INTERPRETER,
             detail=f"读不出 {mcp_path} 里的 mcpServers[...].command",
         )
-    # 发行件的 command 是插件自带的 `./mcp/launch.cmd`（#266）：Codex 按 `.mcp.json` 的
-    # `cwd`（插件根）解析它，这里也必须按插件根解析——按本进程的 cwd 解析会把一个
-    # 好好的启动器判成「起不来」，然后把它换掉。
-    runnable = str(plugin_dir / command[2:]) if command.startswith("./") else command
+    # 发行件的 command 是插件自带的 `./mcp/launch`（#266）：Codex 按 `.mcp.json` 的
+    # `cwd`（插件根）解析它、Windows 上再按 PATHEXT 落到 `launch.cmd`，这里照同一条路解析——
+    # 按本进程的 cwd 或不补扩展名，都会把一个好好的启动器判成「起不来」，然后把它换掉。
+    runnable = plugin_relative_command(plugin_dir, command)
     ok, detail = launcher_starts(runnable, server)
     if ok:
         return _step("interpreter", ok=True, skipped=True, detail=f"`{command}`：{detail}")
