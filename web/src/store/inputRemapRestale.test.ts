@@ -126,11 +126,12 @@ describe('改指表变了：成功画过的面板同样重画', () => {
     expect(inflightInvalidations).toBe(1)
     // 刚开项目（换项目清空了已见代次）：第一次拉到的只是起点，不作废
     seed()
-    useEnvStore.setState({ inputRemapSeen: null })
-    await useEnvStore.getState().refresh()
+    useEnvStore.setState({ env: { project: { open: true } } as never })
+    useEnvStore.getState().resetProject() // 换项目：已见代次清空，随后那次刷新只记起点
+    expect(useEnvStore.getState().inputRemapSeen).toBeNull()
+    await vi.waitFor(() => expect(useEnvStore.getState().inputRemapSeen).toBe(104))
     await new Promise((r) => setTimeout(r, 0))
     expect(inflightInvalidations).toBe(0)
-    expect(useEnvStore.getState().inputRemapSeen).toBe(104)
   })
 
   it('新增 / 替换一条规则（事件 reason=added）：失败的与成功的面板都标 stale', async () => {
