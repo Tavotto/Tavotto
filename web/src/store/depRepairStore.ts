@@ -56,6 +56,7 @@ const parkedRetry = new Map<
     scriptOffer: ScriptRepairOffer | null
     /** 素材库脚本行发起的联合准备属于哪个脚本（进度认领 / 取消 / 装好重跑） */
     jointScript: string
+    jointOffer: DependencyPreparationOffer | null
   }
 >()
 const projectKey = (project: string | null): string => project ?? ''
@@ -313,6 +314,8 @@ interface DepRepairState {
   jointBlocked: JointDependencyPlan | null
   /** 最近一次 `prepare` 是为哪个脚本发起的（素材库脚本行据此认领进度 / 失败；`reset` / 切项目清空） */
   jointScript: string
+  /** 最近一次 `prepare` 用的那份联合计划载荷（脚本行渲染进度 / 失败 / 重试要它；切项目随作业停放、切回放回） */
+  jointOffer: DependencyPreparationOffer | null
   /**
    * 一步：绑定计划 → 执行（只发 plan_id）。目标由用户在框里选；脚本来自 envStore 里的载荷——素材库脚本行
    * （那里没有框、载荷住在那次运行的错误里）把载荷作为 `offerArg` 直接交进来。
@@ -352,6 +355,7 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
   jointPlan: null,
   jointBlocked: null,
   jointScript: '',
+  jointOffer: null,
   request: null,
   authorized: null,
   scriptOffer: null,
@@ -366,7 +370,7 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
     const epoch = projectEpoch
     let planId = ''
     // 素材库脚本行发起的才记归属（切项目停放 / 认领进度 / 装好重跑）；授权框发起的归框，不往脚本行上重跑
-    set({ busy: true, errorCode: '', errorText: '', jointBlocked: null, jointScript: offerArg ? offer.script : '' })
+    set({ busy: true, errorCode: '', errorText: '', jointBlocked: null, jointScript: offerArg ? offer.script : '', jointOffer: offer })
     try {
       const { plan } = await createJointDependencyPlan({ script: offer.script, target })
       // 绑定回来时已经切了项目：这是 A 的计划，不在 B 上执行（绑定不装，丢掉即可）
@@ -375,7 +379,7 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
       // 授权框关掉后重排那次失败的渲染（新的框带新的清单）。计划只是记录、不装，丢掉即可
       const seen = new Set(offer.plan.requirements.map(requirementKey))
       if (plan.requirements.some((r) => !seen.has(requirementKey(r)))) {
-        set({ busy: false, jointPlan: null, jointScript: '' })
+        set({ busy: false, jointPlan: null, jointScript: '', jointOffer: null })
         if (offerArg) void useScriptRunStore.getState().run(offer.script)
         else {
           useEnvStore.getState().dismissDependencyPreparation()
@@ -807,6 +811,7 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
       jointPlan: null,
       jointBlocked: null,
       jointScript: '',
+      jointOffer: null,
       request: null,
       authorized: null,
       scriptOffer: null,
@@ -815,14 +820,14 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
   clear: () => {
     // 换代**排在清空之前**：清空只处置已经落地的那份，换代处置还在飞的那些
     projectEpoch += 1
-    const { progress, parked, request, authorized, scriptOffer, jointScript } = get()
+    const { progress, parked, request, authorized, scriptOffer, jointScript, jointOffer } = get()
     const next = { ...parked }
     // 此刻显示的作业收进它**所属**项目那格（`resetForNewProject` 跑的时候 currentProjectId 已经是新项目，
     // 所属项目只能问作业自己）。认不出所属的（不是本标签页起的）不收——本来也不该显示
     if (progress && startedPlans.has(progress.plan_id)) {
       const owner = projectKey(startedPlans.get(progress.plan_id) ?? null)
       next[owner] = progress
-      parkedRetry.set(owner, { request, authorized, scriptOffer, jointScript })
+      parkedRetry.set(owner, { request, authorized, scriptOffer, jointScript, jointOffer })
     }
     // 新项目上次切走时收着的作业放回来：还在跑就接着显示，切走期间结束了就把结局交出来（不静默丢）
     const here = projectKey(currentProjectId())
@@ -836,6 +841,7 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
       jointPlan: null,
       jointBlocked: null,
       jointScript: retryCtx?.jointScript ?? '',
+      jointOffer: retryCtx?.jointOffer ?? null,
       pinned: null,
       managedPreviews: {},
       request: retryCtx?.request ?? null,
@@ -857,6 +863,10 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
       // 回到所属项目：失败的只说那一句、不重跑；成功的按此刻重新读一次环境、核实生效了才重跑
       void applyEnvChange(here === '' ? null : here, pend, true)
     }
+    // 授权框发起的联合准备（不是脚本行）切走再切回：`envStore` 已随切项目清空，框里的进度 / 取消 / 失败结局没有载荷可挂，
+    // 用停放的那份载荷把框重新打开（同一个框、同一份进度）；脚本行发起的由行按 `jointOffer` 自己渲染
+    if (back && back.flow === 'joint' && back.state !== 'done' && retryCtx?.jointOffer && !retryCtx.jointScript)
+      useEnvStore.getState().requestDependencyPreparation(retryCtx.jointOffer, currentProjectId())
     if (back?.state === 'done' && (retryCtx?.scriptOffer || retryCtx?.jointScript)) {
       const script = back.script ?? retryCtx.request?.script ?? retryCtx.jointScript
       // 同样缺这个包的其它行一起补跑（与没切走时 `rerunSameModule` 同一件事；那几行的运行记录也随切项目清掉了）

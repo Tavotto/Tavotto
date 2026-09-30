@@ -304,9 +304,11 @@ function ScriptPreparation({ script, run }: { script: string; run: ScriptRunStat
   const busy = useDepRepairStore((s) => s.busy)
   const errorCode = useDepRepairStore((s) => s.errorCode)
   const jointScript = useDepRepairStore((s) => s.jointScript)
-  const offer = run?.phase === 'needs_preparation' ? run.error?.dependency_preparation : undefined
-  if (!offer) return null
+  const jointOffer = useDepRepairStore((s) => s.jointOffer)
   const mine = jointScript === script
+  // 载荷：这一行那次运行留下的；切项目再切回后运行记录已清空，就用随作业停放 / 放回的那份（进度、取消、重试不需要再点运行）
+  const offer = (run?.phase === 'needs_preparation' ? run.error?.dependency_preparation : undefined) ?? (mine && progress?.flow === 'joint' && progress.state !== 'done' ? jointOffer : null)
+  if (!offer) return null
   const joint = mine && progress?.flow === 'joint' ? progress : null
   const running = !!joint && isRepairRunning(joint)
   const code = mine ? errorCode || (joint && (joint.state === 'failed' || joint.state === 'cancelled') ? joint.code : '') : ''

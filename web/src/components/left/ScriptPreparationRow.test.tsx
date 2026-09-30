@@ -396,14 +396,62 @@ describe('脚本行：开跑前要先准备依赖', () => {
       await startFromRow()
       await switchTo('pA')
       expect(useDepRepairStore.getState().jointScript).toBe(SCRIPT)
-      // 脚本行的运行记录随切项目清空了：先让它回到「要先准备」，进度按归属挂回这一行
-      mockProbe.mockResolvedValue(preparationResult(offerOf()))
-      await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label$="并发现图"]')!.click())
-      await flush()
+      // 脚本行的运行记录随切项目清空了，但载荷随作业一起放回：不需要再点运行，进度行与取消立刻在
+      expect(useScriptRunStore.getState().byScript[SCRIPT], '前提：运行记录确实被清空').toBeUndefined()
       const card = host.querySelector('[data-script-preparation]')!
       expect(card.querySelector('[data-repair-line]')!.textContent).toContain('正在安装 pandas 和 openpyxl')
       await act(async () => buttonByText('取消').click())
       expect(cancelJointDependencies).toHaveBeenCalledWith('joint-row')
+    })
+
+    it('取消真的生效：点了取消，进度落到取消结局，行上是句子 + 「重试」', async () => {
+      await startFromRow()
+      await switchTo('pA')
+      await act(async () => buttonByText('取消').click())
+      expect(cancelJointDependencies).toHaveBeenCalledWith('joint-row')
+      await act(async () => {
+        useDepRepairStore.getState().onProgress({
+          plan_id: 'joint-row', state: 'cancelled', log: '', error: null, code: 'dependency_cancelled', flow: 'joint',
+          script: SCRIPT, requirements: ['pandas', 'openpyxl'], target_kind: 'tavotto_managed',
+        } as never)
+      })
+      const card = host.querySelector('[data-script-preparation]')!
+      expect(card.querySelector('[data-script-preparation-sentence]')).toBeTruthy()
+      expect([...card.querySelectorAll('button')].some((b) => b.textContent === '重试')).toBe(true)
+    })
+
+    it('授权框发起的联合准备：切走再切回，框按停放的载荷重新打开，进度与取消都在', async () => {
+      setCurrentProjectId('pA')
+      const offer = offerOf({
+        user_environments: [
+          {
+            id: 'env1', source: 'conda', label: 'sci', ok: false, code: '', support: 'verified',
+            python_version: '3.12', matplotlib_version: '3.9', missing: ['pandas'], satisfies: false,
+          },
+        ],
+      })
+      vi.mocked(createJointDependencyPlan).mockResolvedValue({ plan: plan('joint-dlg') })
+      vi.mocked(prepareJointDependencies).mockResolvedValue({ started: true } as never)
+      await mountAndRun()
+      await act(async () => useEnvStore.getState().requestDependencyPreparation(offer))
+      await act(async () => dialogButton('一键修复').click())
+      await flush()
+      await act(async () => {
+        useDepRepairStore.getState().onProgress({
+          plan_id: 'joint-dlg', state: 'installing', log: '', error: null, code: '', flow: 'joint',
+          script: SCRIPT, requirements: ['pandas', 'openpyxl'], target_kind: 'tavotto_managed',
+        } as never)
+      })
+      await switchTo('pB')
+      await act(async () => useEnvStore.getState().resetProject()) // 与 `resetForNewProject` 同序：envStore 先清
+      expect(useEnvStore.getState().dependencyPreparation).toBeNull()
+      await switchTo('pA')
+      expect(useEnvStore.getState().dependencyPreparation?.script).toBe(SCRIPT)
+      expect(document.querySelector('[data-dialog="dependency-prepare"] [data-repair-line]')!.textContent).toContain(
+        '正在安装 pandas 和 openpyxl',
+      )
+      await act(async () => dialogButton('取消').click())
+      expect(cancelJointDependencies).toHaveBeenCalledWith('joint-dlg')
     })
 
     it('切走期间装好：切回 A 自动重跑那一行一次，不重复', async () => {
