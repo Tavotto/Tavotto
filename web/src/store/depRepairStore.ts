@@ -403,6 +403,8 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
     useEnvStore.getState().dismissDependencyPreparation()
     // 门放行了：那次「先准备」的渲染重新排上，缺包会以 missing_dependency 回来（运行后那条路）
     useRenderStore.getState().retryEnvironmentFailures()
+    // 素材库脚本行上停在这道门上的那次试运行同样重跑（图还没上画布时，门是从那里撞上的）
+    useScriptRunStore.getState().rerunGated('needs_preparation', offer.script)
   },
 
   makePlan: async (args, scriptOffer = null) => {
@@ -537,6 +539,7 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
       set({ busy: false })
       envStore.dismissDependencyPreparation()
       useRenderStore.getState().retryEnvironmentFailures()
+      useScriptRunStore.getState().rerunGated('needs_preparation', script)
     } catch (e) {
       if (epoch !== projectEpoch) return
       const { code, text } = failure(e)
@@ -716,8 +719,13 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
         rerun = rerunScriptAfterRepair(p.script, !!scriptOffer && request?.script === p.script)
         // 同一个包缺在别的脚本上（素材库只给它们挂了一张卡）：装进的是同一个项目环境，一起重跑
         rerunSameModule(p.import_name, p.script, request?.script === p.script ? scriptOffer?.peers : undefined)
-        // 联合准备装完：授权框收掉（渲染会重排；缺的那一次错误也随之清）
-        if (p.flow === 'joint') useEnvStore.getState().dismissDependencyPreparation()
+        // 联合准备装完：授权框收掉（渲染会重排；缺的那一次错误也随之清）；素材库脚本行上停在这道门上的
+        // 那次试运行重跑——试运行撞上的门，授权后应当直接出图（Windows 真机验收 main 493a1310）
+        if (p.flow === 'joint') {
+          const script = p.script || useEnvStore.getState().dependencyPreparation?.script
+          useEnvStore.getState().dismissDependencyPreparation()
+          if (script) useScriptRunStore.getState().rerunGated('needs_preparation', script)
+        }
       }
       if (p.state !== 'done') {
         set({ errorCode: p.code || '', errorText: p.error || '', pinned: p.pinned ?? null })

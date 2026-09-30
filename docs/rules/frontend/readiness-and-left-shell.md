@@ -64,7 +64,8 @@
   Codex #470 P2）；
   blocked 的计划把 `joint.blocked` 的理由摆出来、不装；「不准备，直接运行」= `POST /api/engine/dependencies/skip`
   （这道门一直问到有答案——授权或明确跳过），载荷留在 `PanelRender.dependencyPreparation`，错误块的
-  `DependencyPrepareButton` 能再打开；同一时刻只开一份；换了项目的旧载荷不弹。**目标与状态的文案键写成
+  `DependencyPrepareButton` 能再打开；同一时刻只开一份；换了项目的旧载荷不弹。素材库试运行撞上同一道门时经
+  `scriptRunStore.handOffProbeGate` 交同一份载荷、准备成功后重跑那一行（全文在 `asset-library.md`）。**目标与状态的文案键写成
   字面量**（`TARGET_LABEL` / `STATE_TEXT` / `BLOCKED_TEXT` 表）。MCP 那一面是同一份决定：
   `tavotto_open_figure(prepare_dependencies=…)`。
   **用户自己的环境（ADR 0079）**：载荷的 `user_environments` 里装齐的排在安装目标前面、同一组单选，
