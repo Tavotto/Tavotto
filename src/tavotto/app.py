@@ -6034,6 +6034,22 @@ def _input_path_plan(root: Path, script: str, path: Path, entry, chosen, chosen_
             engine_inputremap.ERROR_CHOSEN_INVALID, f"这里要的是文件夹：{chosen}", path=chosen
         )
     rule = engine_inputremap.derive_location(entry, chosen, chosen_is_dir=chosen_kind == "dir")
+    # 探路要的是文件 / 文件夹：看的是**改写之后这一条落到哪里**，不只看用户点的是什么。只接受文件的探路
+    # （`isfile`……）选了一个同名文件夹，推出的前缀规则会把常量改成那个文件夹，`isfile()` 照样 False、同一个框
+    # 再弹（Codex 评 #730 P2）；反过来同理。判据是改写后的目标本身
+    if wanted in (engine_inputremap.PROBE_FILE, engine_inputremap.PROBE_DIR):
+        target = engine_figcapture.remap_target([rule], entry, whole=True)
+        ok = target is not None and (
+            os.path.isfile(target)
+            if wanted == engine_inputremap.PROBE_FILE
+            else os.path.isdir(target)
+        )
+        if not ok:
+            raise engine_inputremap.RemapError(
+                engine_inputremap.ERROR_CHOSEN_INVALID,
+                f"这里要的是{'文件' if wanted == engine_inputremap.PROBE_FILE else '文件夹'}：{chosen}",
+                path=chosen,
+            )
     missing = [entry] + [o["path"] for o in statics]
     plan = engine_scriptedit.plan(
         path.read_bytes(), rule=rule, missing=missing, script_dir=path.parent, root=root

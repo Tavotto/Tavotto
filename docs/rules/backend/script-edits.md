@@ -26,7 +26,9 @@
   * 每条缺失路径带 `probe_kind`（`inputremap.PROBE_KIND_OF`：键恰好是 databinding 三张探路表的并集，
     `test_every_probe_function_is_labelled_file_or_dir` 对账）：`dir`（`listdir` / `scandir` / `walk` /
     `iterdir` / `isdir`、glob）只许指认文件夹——界面只给「选择文件夹」，`_input_path_plan` 再拒文件
-    （`input_remap_chosen_invalid`）；指认成文件的话改写后重跑就是 `NotADirectoryError`。
+    （`input_remap_chosen_invalid`）；指认成文件的话改写后重跑就是 `NotADirectoryError`。`file`（`isfile`……）与 `dir`
+    都再按**改写之后这一条落到哪里**判（`remap_target(…, whole=True)` 必须是文件 / 文件夹）：选了与文件同名的文件夹，
+    推出的前缀规则会把常量改成那个文件夹，`isfile()` 照样 False、同一个框再弹（Codex 评 #730 P2）。
   * 候选常量：值与某条缺失路径**按路径段**相等或是其前缀、自己此刻也不存在、与规则 `from` 同一侧
     （相对 / 绝对）；写法是单个单行普通字符串 token；语境是调用实参（存图调用除外）、赋值 / return 的整个右值、
     参数默认值、`/` 或 `+` 的操作数、容器元素、字典的值。f-string / 隐式拼接 / 三引号 / 下标 / 字典键 / 比较

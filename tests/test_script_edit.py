@@ -1130,6 +1130,30 @@ def test_http_refuses_a_file_for_a_directory_probe(app_project, tmp_path):
     assert resp.status_code == 200, resp.get_json()
 
 
+def test_http_refuses_a_folder_that_leaves_a_file_probe_pointing_at_a_folder(app_project, tmp_path):
+    """只接受文件的探路（`isfile`）：用户选了一个与它同名的**文件夹**，推出的规则会把常量改成那个文件夹，`isfile()`
+    照样 False、同一个框再弹（Codex 评 #730 P2）。判的是改写之后这一条落到哪里——落到文件才接受；选文件、
+    或选里面真有这个文件的上级文件夹都照常。"""
+    m, root = app_project
+    client = m.app.test_client()
+    (root / "fig.py").write_text(
+        f'import os\nif not os.path.isfile("{OLD}/INPUT"):\n    raise SystemExit(1)\n',
+        encoding="utf-8",
+    )
+    decoy = tmp_path / "decoy" / "INPUT"
+    decoy.mkdir(parents=True)
+    for kind in ("dir", "auto"):
+        resp = _preview(
+            client, script="fig.py", entry=f"{OLD}/INPUT", chosen=str(decoy), chosen_kind=kind
+        )
+        assert resp.status_code == 400, (kind, resp.get_json())
+        assert resp.get_json()["code"] == inputremap.ERROR_CHOSEN_INVALID
+    real = _touch(tmp_path / "new" / "INPUT")
+    for chosen, kind in ((real, "file"), (real.parent, "dir")):
+        resp = _preview(client, script="fig.py", entry=f"{OLD}/INPUT", chosen=str(chosen), chosen_kind=kind)
+        assert resp.status_code == 200, (kind, resp.get_json())
+
+
 def test_http_refuses_runtime_assets_and_scripts_an_agent_is_editing(
     app_project, tmp_path, monkeypatch
 ):
