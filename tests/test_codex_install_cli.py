@@ -2284,7 +2284,8 @@ def _old_launcher_shape(plugin: Path) -> str:
     from tavotto.engine import pluginmanifest
 
     manifest = json.loads((plugin / pluginmanifest.BUILD_MANIFEST).read_text(encoding="utf-8"))
-    for rel in (".mcp.json", "skills/tavotto-figure/agents/openai.yaml"):
+    # 只换 command；配置文件名按这份发行件自己的清单走（ADR 0109 起叫 codex.mcp.json）
+    for rel in (pluginmanifest.mcp_config_rel(plugin), "skills/tavotto-figure/agents/openai.yaml"):
         f = plugin / rel
         f.write_text(
             f.read_text(encoding="utf-8").replace("./mcp/launch", "./mcp/launch.cmd"), "utf-8"

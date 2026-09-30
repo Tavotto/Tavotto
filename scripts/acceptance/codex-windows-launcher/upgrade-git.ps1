@@ -71,7 +71,7 @@ Invoke-Git update-server-info
 Invoke-Git log --oneline
 Invoke-Cx @('plugin', 'marketplace', 'upgrade', 'tavotto')
 $cache = Join-Path $h 'plugins\cache\tavotto\tavotto'
-Get-ChildItem -Recurse -File $cache | Where-Object { $_.FullName -match '\\mcp\\launch' -or $_.Name -eq '.mcp.json' } | ForEach-Object {
+Get-ChildItem -Recurse -File $cache | Where-Object { $_.FullName -match '\\mcp\\launch' -or $_.Name -in @('.mcp.json', 'codex.mcp.json') } | ForEach-Object {
     $t = [System.IO.File]::ReadAllText($_.FullName)
     "  cache: $($_.FullName.Substring($cache.Length)) first line: " + $t.Split("`n")[0]
 }

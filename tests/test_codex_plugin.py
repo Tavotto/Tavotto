@@ -2130,7 +2130,7 @@ def test_real_codex_installs_the_plugin_from_a_local_marketplace(tmp_path):
     # 装完的插件必须真的带出 tavotto 这个 server，而不只是文件躺在缓存里
     proc = _codex(["mcp", "list"], home)
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert re.search(r"^tavotto\s+\./mcp/launch\.cmd", proc.stdout, re.M), proc.stdout
+    assert re.search(r"^tavotto\s+\./mcp/launch\s", proc.stdout, re.M), proc.stdout
 
 
 @needs_codex_cli

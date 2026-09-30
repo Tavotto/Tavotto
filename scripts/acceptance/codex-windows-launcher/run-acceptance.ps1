@@ -52,10 +52,19 @@ function Get-CachedPlugin([string]$CodexHome) {
     Get-ChildItem -Directory (Join-Path $CodexHome 'plugins\cache\tavotto\tavotto') | Select-Object -First 1
 }
 
+# The Codex MCP config is whatever the Codex manifest's `mcpServers` points at: `.mcp.json` up to
+# 0.17.x, `codex.mcp.json` from ADR 0109 on (other hosts auto-read a plugin-root `.mcp.json`).
+function Get-McpConfig([string]$PluginDir) {
+    $manifest = [System.IO.File]::ReadAllText((Join-Path $PluginDir '.codex-plugin\plugin.json'))
+    $rel = [regex]::Match($manifest, '"mcpServers"\s*:\s*"(?:\./)?([^"]*)"').Groups[1].Value
+    if (-not $rel) { $rel = '.mcp.json' }
+    Join-Path $PluginDir $rel
+}
+
 function Show-Launcher([string]$CodexHome) {
     $p = Get-CachedPlugin $CodexHome
     "cached plugin: $($p.FullName)"
-    $mcp = [System.IO.File]::ReadAllText((Join-Path $p.FullName '.mcp.json'))
+    $mcp = [System.IO.File]::ReadAllText((Get-McpConfig $p.FullName))
     "command: " + ([regex]::Match($mcp, '"command"\s*:\s*"([^"]*)"').Groups[1].Value)
     $raw = [System.IO.File]::ReadAllBytes((Join-Path $p.FullName 'mcp\launch.cmd'))
     $cr = @($raw | Where-Object { $_ -eq 13 }).Count
@@ -108,7 +117,7 @@ switch ($Step) {
         $h = Join-Path $Root 'home-python3'
         Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $h
         Copy-Item -Recurse $src $h
-        $mcp = Join-Path (Get-CachedPlugin $h).FullName '.mcp.json'
+        $mcp = Get-McpConfig (Get-CachedPlugin $h).FullName
         # .NET file APIs: Windows PowerShell 5.1's Get-Content reads BOM-less UTF-8 as ANSI
         # the command is ./mcp/launch.cmd up to 0.17.0 and ./mcp/launch after #266: match both, and
         # refuse to probe an unchanged copy (it would report the working install, not the python3 shape)
