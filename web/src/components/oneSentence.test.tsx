@@ -173,6 +173,9 @@ describe.each(CASES)('故障一句话（%s / %s）', (lang, code) => {
     const card = host.querySelector('.shadow-card')!
     expect(visibleSentenceCount(card, lang)).toBe(1)
     expect(visiblePrimaryButtons(card)).toBeLessThanOrEqual(1)
+    // 产品名经 {{product}} 插值：调用处漏传的话界面上会露出原样的占位符
+    expect(card.textContent).not.toMatch(/\{\{\w+\}\}/)
+    expect(card.textContent).not.toContain('{{')
     const detail = card.querySelector('[data-repair-failure-detail]')!
     expect(detail.closest('details')!.open).toBe(false)
     expect(detail.textContent).toContain(code)
@@ -193,6 +196,7 @@ describe.each(CASES)('故障一句话（%s / %s）', (lang, code) => {
     const dialog = document.querySelector('[data-dialog="dependency-prepare"]')!
     expect(visibleSentenceCount(dialog, lang)).toBeLessThanOrEqual(1)
     expect(visiblePrimaryButtons(dialog)).toBe(1)
+    expect(dialog.textContent).not.toContain('{{')
   })
 })
 
