@@ -150,7 +150,7 @@ e2e 把间隔**注入**调小（`window.__TAVOTTO_TIMELINE_TIMING__ = { debounce
 
 - 合成在 `lib/timelineThumb.ts`：面板取 `panelRender(...)` 的 SVG（编辑器里看到的那份，带
   overrides），根元素补上像素宽高后 `drawImage`；没有 SVG 的面板退回素材图（`panelSrc`）；
-  裁剪 / 90° 旋转 / 透明度照做；文字按页面字号画、形状画轮廓；箭头头部、虚线不画。
+  裁剪 / 90° 旋转 / 翻转 / 透明度照做（旋转与翻转和画布共用 `lib/panelTransform` 一份，Codex #679）；文字按页面字号画、形状画轮廓；箭头头部、虚线不画。
   任何一步失败（解码、taint、编码）→ 没有缩略图，节点照拍。
 - 为什么不在后端出图：每个节点一轮 matplotlib，2 分钟一次付不起；为什么不塞进 JSON：
   base64 的图会让每条节点多几十 KB、每次整写都搬一遍。
