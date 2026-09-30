@@ -139,7 +139,8 @@
   对象组的 `movableTargets` 同一条规则。**新原因只往 `groupTransformBlocked` 里加**（Codex #691 同形状
   出现第二次后收成一处）。
   **不变式：组的变换只有全员刚性与零两种结果**——`expandGroups` 之后的出口不许再逐个过滤成员（方向键
-  曾按隐藏过滤、把隐藏成员丢掉）；对齐 / 分布把组当一个单位（`alignUnits`）。看护：`sharedColorbarGroup.test`
+  曾按隐藏过滤、把隐藏成员丢掉）；对齐 / 分布把组当一个单位（`alignUnits`），单位按选区原来的顺序排——
+  等宽 / 等高以末位（最后选中的那一个）为基准，组的位置按它或它的成员最先出现处算。看护：`sharedColorbarGroup.test`
   「写下的成员 = expandGroups 的结果」，每个写几何的出口一条。
   **组认领同时点名的成员**（`elementGeom.claimedBySelectedGroups`：成员本身与几何落在成员上的色条 / 位图），
   与组能不能整体变换无关：被挡住的组展开为空，它的成员也不许退回成散选被单独挪走（拖动经
