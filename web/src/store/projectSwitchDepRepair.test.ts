@@ -18,7 +18,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { setCurrentProjectId } from '@/lib/session'
 import type { DependencyPreparationOffer, DependencyProgress, DependencyRepairPlan } from '@/lib/api'
-import { useDepRepairStore } from './depRepairStore'
+import { __resetDepRepairParkingForTests, useDepRepairStore } from './depRepairStore'
 import { useEnvStore } from './envStore'
 import { useProjectStore } from './projectStore'
 import { useRenderStore } from './renderStore'
@@ -122,6 +122,8 @@ const ENV_ORIGINAL = { ...useEnvStore.getState() }
 const RENDER_ORIGINAL = { ...useRenderStore.getState() }
 
 beforeEach(async () => {
+  // 模块级的停放槽活得比 zustand reset 长：每条用例从空的开始（互不串）
+  __resetDepRepairParkingForTests()
   stateAnswer = { state: 'idle', plan_id: '', log: '', error: null, code: '' }
   rebuildNetworkError = false
   globalPython = '/p'

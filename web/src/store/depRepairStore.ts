@@ -55,6 +55,17 @@ const projectKey = (project: string | null): string => project ?? ''
  */
 const pendingReruns = new Map<string, { script?: string; peers: string[] }>()
 
+/**
+ * 只给测试用：清空本模块的停放槽（作业所属 `startedPlans`、重试上下文 `parkedRetry`、环境改动的重跑
+ * `pendingReruns`）。它们是模块级的、活得比一次 zustand reset 长——不清的话上一条用例停放下来的东西会在下一条
+ * 用例切项目时被 drain，用例之间互相串（`projectEpoch` 只增不减，不清：各处只比「变没变」）
+ */
+export function __resetDepRepairParkingForTests(): void {
+  startedPlans.clear()
+  parkedRetry.clear()
+  pendingReruns.clear()
+}
+
 /** 所属项目此刻就是开着的那个（没切过，或 A → B → A 已经切回来了） */
 const ownerIsCurrent = (owner: string | null): boolean => projectKey(owner) === projectKey(currentProjectId())
 
@@ -63,9 +74,13 @@ const ownerIsCurrent = (owner: string | null): boolean => projectKey(owner) === 
  * 它那一格，回到它时由 `clear()` drain。判的是「所属项目是不是当前项目」，**不是**「代际变没变」——A → B → A
  * 在回来之前就切完了的话代际变了、所属项目却正开着，而 `clear()` 那次 drain 已经过去，停放下去就没人再取
  */
-function deliverToOwner(owner: string | null, now: () => void, park: () => void): void {
-  if (ownerIsCurrent(owner)) now()
-  else park()
+function deliverToOwner(owner: string | null, now: () => void, park: () => void): boolean {
+  if (ownerIsCurrent(owner)) {
+    now()
+    return true
+  }
+  park()
+  return false
 }
 
 /** 单包修复的一次请求（重试时原样再发一次） */
@@ -604,12 +619,20 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
     }
     // 作业属于**别的项目**（本标签页起的、起完切走了）：进度只更新它那一格，此刻的界面与副作用
     // （刷环境 / 重排渲染 / 关框 / 错误文案）一个都不碰——那些说的都是此刻开着的项目（issue #590）
+    // 同一条规则（`deliverToOwner`）：所属项目此刻开着（含 A → B → A 已经切回）就往下走、当场派发；不是就停放
     const owner = startedPlans.get(p.plan_id)
-    if (owner !== undefined && !ownerIsCurrent(owner)) {
-      if (get().parked[projectKey(owner)]?.plan_id === p.plan_id)
-        set({ parked: { ...get().parked, [projectKey(owner)]: keepTarget(p, get().parked[projectKey(owner)]) } })
+    if (
+      owner !== undefined &&
+      !deliverToOwner(
+        owner,
+        () => {},
+        () => {
+          if (get().parked[projectKey(owner)]?.plan_id === p.plan_id)
+            set({ parked: { ...get().parked, [projectKey(owner)]: keepTarget(p, get().parked[projectKey(owner)]) } })
+        },
+      )
+    )
       return
-    }
     // 只认**自己发起的**那条：单包计划 / 联合计划 / 自己点的重建（三处都在发请求之前就把 id 记下了）。
     // `engine.dependency` 不带项目判别、广播给每个订阅者——别的标签页 / 项目的计划装完，不能收掉
     // 这里的授权框、也不能把这里的渲染重排（Codex #470 P2）。
@@ -763,22 +786,26 @@ function lateFailure(planId: string, e: unknown): void {
   if (owner === undefined) return
   const { code, text } = failure(e)
   const store = useDepRepairStore.getState()
-  // A → B → A 之后才被拒：作业已经被 `clear()` 放回当前的 `progress`，`parked` 里没有它了（#605 评审 P2）。
-  // 所属项目此刻开着，就在当前卡片上说出结局
-  if (ownerIsCurrent(owner)) {
-    if (store.progress?.plan_id !== planId) return
-    useDepRepairStore.setState({
-      busy: false,
-      progress: { ...store.progress, state: 'failed', code, error: text },
-      errorCode: code,
-      errorText: text,
-    })
-    return
-  }
-  const key = projectKey(owner)
-  const p = store.parked[key]
-  if (!p || p.plan_id !== planId) return
-  useDepRepairStore.setState({ parked: { ...store.parked, [key]: { ...p, state: 'failed', code, error: text } } })
+  // 同一条规则（`deliverToOwner`）。A → B → A 之后才被拒：作业已经被 `clear()` 放回当前的 `progress`，`parked`
+  // 里没有它了（#605 评审 P2）——所属项目此刻开着，就在当前卡片上说出结局；不开着就记进它那格
+  deliverToOwner(
+    owner,
+    () => {
+      if (store.progress?.plan_id !== planId) return
+      useDepRepairStore.setState({
+        busy: false,
+        progress: { ...store.progress, state: 'failed', code, error: text },
+        errorCode: code,
+        errorText: text,
+      })
+    },
+    () => {
+      const key = projectKey(owner)
+      const p = store.parked[key]
+      if (!p || p.plan_id !== planId) return
+      useDepRepairStore.setState({ parked: { ...store.parked, [key]: { ...p, state: 'failed', code, error: text } } })
+    },
+  )
 }
 
 /**

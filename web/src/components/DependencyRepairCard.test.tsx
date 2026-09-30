@@ -39,7 +39,7 @@ import {
 import { DependencyRepairCard } from '@/components/DependencyRepairCard'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { i18n, t } from '@/i18n'
-import { useDepRepairStore } from '@/store/depRepairStore'
+import { __resetDepRepairParkingForTests, useDepRepairStore } from '@/store/depRepairStore'
 import { useRenderStore } from '@/store/renderStore'
 import {
   mentionCount,
@@ -162,6 +162,8 @@ const click = async (name: string) => {
 }
 
 beforeEach(() => {
+  // 模块级的停放槽活得比 zustand reset 长：每条用例从空的开始（互不串）
+  __resetDepRepairParkingForTests()
   planMock.mockReset()
   installMock.mockReset()
   cancelMock.mockReset()

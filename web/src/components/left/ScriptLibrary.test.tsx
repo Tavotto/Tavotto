@@ -11,7 +11,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 // 修复卡片的状态（缺包时脚本行上的那张卡，与画布上的是同一个 store）
-import { useDepRepairStore } from '@/store/depRepairStore'
+import { __resetDepRepairParkingForTests, useDepRepairStore } from '@/store/depRepairStore'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/lib/api', async (importOriginal) => ({
@@ -151,6 +151,8 @@ const runButton = (): HTMLButtonElement => {
 }
 
 beforeEach(() => {
+  // 模块级的停放槽活得比 zustand reset 长：每条用例从空的开始（互不串）
+  __resetDepRepairParkingForTests()
   localStorage.clear()
   useScriptLibraryStore.getState().clear()
   useScriptRunStore.getState().clear()

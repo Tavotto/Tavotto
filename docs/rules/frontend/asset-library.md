@@ -78,7 +78,8 @@
   立刻重跑（`rerunAfterEnvironmentChange`，与装好之后同一件事）；发请求那一刻记项目代际，回来时已切项目的话这些
   副作用一个都不在新项目上做，重跑按所属项目停放（`pendingReruns`）、切回来 `clear()` 续上。判「作用于谁」的规则只有
   一条、一个辅助函数 `deliverToOwner`：结果回来时所属项目就是当前项目（含 A → B → A 已经切回）就立即执行，不是就停放——
-  判的是所属项目，不是代际（代际变了、所属项目却开着时停放下去就没人再取）；安装完成 / 迟到的失败 / 重建实况同一条（「恢复自动检测」因此挪进
+  判的是所属项目，不是代际（代际变了、所属项目却开着时停放下去就没人再取）；安装完成（`onProgress`）/ 迟到的失败（`lateFailure`）/ 重建实况都经它。模块级的停放槽（`startedPlans` / `parkedRetry` /
+  `pendingReruns`）活得比 zustand reset 长，测试在 `beforeEach` 里调 `__resetDepRepairParkingForTests()`，用例互不串（「恢复自动检测」因此挪进
   store：`clearPinnedInterpreter`）。看护 `projectSwitchDepRepair.test.ts`「环境改动的回调按项目代际判」。跑前授权框
   （`DependencyPrepareDialog`）同一套：没有装齐的用户环境、默认目标是受管环境时，标题就是那一句（干净机器上什么包都
   不缺时换成「需要先准备运行环境」那一句；私有 Python 的披露只跟**此刻选中的**目标走，选了项目 venv 就不提），底部只有「稍后」「一键修复」，

@@ -33,7 +33,7 @@ import { DependencyRepairCard } from '@/components/DependencyRepairCard'
 import { DependencyPrepareDialog } from '@/components/DependencyPrepareDialog'
 import { i18n, resources } from '@/i18n'
 import { setCurrentProjectId } from '@/lib/session'
-import { useDepRepairStore } from '@/store/depRepairStore'
+import { __resetDepRepairParkingForTests, useDepRepairStore } from '@/store/depRepairStore'
 import { useEnvStore } from '@/store/envStore'
 import { visiblePrimaryButtons, visibleSentenceCount } from '@/test/visibleBlocks'
 
@@ -130,6 +130,8 @@ async function mount(node: React.ReactNode) {
 }
 
 beforeEach(() => {
+  // 模块级的停放槽活得比 zustand reset 长：每条用例从空的开始（互不串）
+  __resetDepRepairParkingForTests()
   setCurrentProjectId('p1')
   useDepRepairStore.getState().reset()
   useDepRepairStore.setState({ managedPreviews: {} })

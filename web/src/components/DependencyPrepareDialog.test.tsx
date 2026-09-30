@@ -45,7 +45,7 @@ import {
 } from '@/test/visibleBlocks'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { setCurrentProjectId } from '@/lib/session'
-import { useDepRepairStore } from '@/store/depRepairStore'
+import { __resetDepRepairParkingForTests, useDepRepairStore } from '@/store/depRepairStore'
 import { useEnvStore } from '@/store/envStore'
 import { useRenderStore } from '@/store/renderStore'
 
@@ -128,6 +128,8 @@ const button = (label: string) =>
     | undefined
 
 beforeEach(() => {
+  // 模块级的停放槽活得比 zustand reset 长：每条用例从空的开始（互不串）
+  __resetDepRepairParkingForTests()
   planMock.mockReset()
   prepareMock.mockReset()
   envMock.mockReset()
