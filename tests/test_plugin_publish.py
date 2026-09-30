@@ -1037,12 +1037,37 @@ def test_git_env_turns_off_background_maintenance():
     """#604：`_git_env()` 关掉 `maintenance.auto` 与 `gc.auto`，autocrlf 那两项仍在。
 
     主语是 **git 读到的配置**：按 COUNT 读 KEY_0..KEY_{n-1}——编号跳号或 COUNT 没跟着涨，
-    多出的那一对 git 根本不读，这里同样读不到。夹具的 git（`pluginkit`）是同一对的镜像。"""
+    多出的那一对 git 根本不读，这里同样读不到。"""
     got = _env_config(pub._git_env())
     for key, value in _NO_AUTO_MAINTENANCE.items():
         assert got.get(key) == value, f"_git_env() 没带 {key}={value}"
     assert got.get("core.autocrlf") == "false" and got.get("core.safecrlf") == "false"
-    assert _env_config(kit.no_auto_maintenance_env()) == _NO_AUTO_MAINTENANCE
+
+
+def test_fixture_git_mirrors_the_publisher_maintenance_settings():
+    """严格同源对（`docs/rules/repo/same-origin-pairs.md`）：`pluginkit.NO_AUTO_MAINTENANCE`
+    是 `plugin_publish.GIT_CONFIG` 里维护那几项（`maintenance.*` / `gc.*`）的镜像。
+
+    两侧都按 git 读到的样子比（`GIT_CONFIG_*` 摊开再还原），不比 Python 元组：发布器那侧
+    加一项 / 改一个值而夹具没跟，这里红。"""
+    authority = {
+        k: v
+        for k, v in _env_config(pub._git_env()).items()
+        if k.startswith(("maintenance.", "gc."))
+    }
+    assert authority, "发布器那侧一项维护配置都没有：对拍的前提不成立"
+    assert _env_config(kit.no_auto_maintenance_env()) == authority
+
+
+def _isolated_from_host_config(env: dict[str, str], tmp_path: Path) -> dict[str, str]:
+    """把 git 的 global / system 配置换成空：对照组读到的只能是 git 的内建默认值。
+
+    否则跑用例的机器全局里已经写了 `maintenance.auto=false`（或关了 gc）时，对照组也不起
+    后台维护，用例在实现正确时也红（Codex 在 #766 上实测过）。用一个空文件而不是
+    `os.devnull`：Git for Windows 对 `nul` 作 `GIT_CONFIG_GLOBAL` 的支持不必去赌。"""
+    empty = tmp_path / "empty-gitconfig"
+    empty.write_text("", encoding="utf-8")
+    return {**env, "GIT_CONFIG_GLOBAL": str(empty), "GIT_CONFIG_NOSYSTEM": "1"}
 
 
 def _spawned_maintenance(env: dict[str, str], tmp_path: Path, name: str) -> list[str]:
@@ -1057,7 +1082,7 @@ def _spawned_maintenance(env: dict[str, str], tmp_path: Path, name: str) -> list
         text=True,
         encoding="utf-8",
         errors="replace",
-        env={**env, "GIT_TRACE": "1"},
+        env={**_isolated_from_host_config(env, tmp_path), "GIT_TRACE": "1"},
     )
     assert proc.returncode == 0, proc.stderr
     return [
@@ -1072,6 +1097,7 @@ def test_publisher_fetch_spawns_no_background_maintenance(tmp_path):
 
     先对照：同一次 fetch 去掉 `GIT_CONFIG_*`，trace 里**必须**看得到那条 run_command——否则
     这台机器的 git 本来就不起后台维护，「没看到」证明不了任何事，用例直接红而不是假绿。
+    两组都隔离了宿主的 global / system 配置，两组之间唯一的差别就是 `GIT_CONFIG_*`。
 
     盲点（写在判据旁）：本用例证明的是「不再起那个后台进程」，**没有**复现 ENOTEMPTY 本身——
     2026-09-30 在 macOS / git 2.54 上去掉这两项、8～16 线程并发「fetch 后立刻删临时仓库」

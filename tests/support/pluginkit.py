@@ -97,7 +97,8 @@ def synthetic_staging(
 
 #: 夹具里的 git 同样不许留后台维护进程（#604）：clone / push / fetch / commit 返回后分离出的
 #: `maintenance run --auto` / `gc --auto` 还在往 tmp 仓库里写，与随后的删除赛跑。
-#: 与 `scripts/plugin_publish.py::GIT_CONFIG` 的后两项同源（`test_plugin_publish` 对拍）。
+#: 与 `scripts/plugin_publish.py::GIT_CONFIG` 的维护项严格同源（`docs/rules/repo/same-origin-pairs.md`；
+#: `test_plugin_publish.py::test_fixture_git_mirrors_the_publisher_maintenance_settings` 对拍）。
 #: 只放这两项：夹具的 autocrlf 由各用例用 `-c` 自己决定，不在这里钉死。
 NO_AUTO_MAINTENANCE: tuple[tuple[str, str], ...] = (
     ("maintenance.auto", "false"),
