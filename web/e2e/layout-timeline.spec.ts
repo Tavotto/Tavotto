@@ -339,6 +339,10 @@ test('只差水平翻转的两个节点：缩略图不一样，而且是左右�
 }) => {
   test.setTimeout(240_000)
   await page.setViewportSize({ width: 1440, height: 900 })
+  // 缩略图合成走了哪一路图源（失败信息里带上）
+  await page.addInitScript(() => {
+    ;(window as unknown as Record<string, unknown>).__TAVOTTO_THUMB_TRACE__ = []
+  })
   const a = await app()
   await page.goto(a.baseURL)
   // 放一张图（按页面居中落位：整张缩略图左右镜像时，面板映到它自己身上）
@@ -368,7 +372,12 @@ test('只差水平翻转的两个节点：缩略图不一样，而且是左右�
     await thumbOf('原样').getAttribute('src'),
     await thumbOf('翻转').getAttribute('src'),
   ]
-  // 两张图逐像素比：原样 vs 翻转差得多；把「原样」左右镜像之后再比，差得少得多——方向对
+  // 判据量的是**面板内容的左右分布**，不是逐像素相等：两个节点的缩略图可能取自不同的图源
+  // （先拍的那张还是素材图、后拍的那张已经换成引擎 SVG——笔画粗细、抗锯齿、字形都不一样），
+  // 逐像素镜像差在 Windows 的 WebKit 上量到过 0.51（CI run 36654291346），而两张图明明互为
+  // 镜像。按列统计「墨量」（每一列暗了多少）得到一条横向分布曲线：翻转之后的曲线应当与原样
+  // 的曲线**倒过来**高度相关、与原样本身明显不相关。面板按页面居中落位，整张缩略图的左右
+  // 镜像就是面板自己的镜像（前提在下面断言）。
   const m = await page.evaluate(
     async ([p, f]) => {
       const load = async (src: string) => {
@@ -379,32 +388,59 @@ test('只差水平翻转的两个节点：缩略图不一样，而且是左右�
         c.width = img.naturalWidth
         c.height = img.naturalHeight
         const ctx = c.getContext('2d')!
-        return { ctx, w: c.width, h: c.height, img }
+        ctx.drawImage(img, 0, 0)
+        return { data: ctx.getImageData(0, 0, c.width, c.height).data, w: c.width, h: c.height }
       }
       const A = await load(p!)
       const B = await load(f!)
-      A.ctx.drawImage(A.img, 0, 0)
-      const a = A.ctx.getImageData(0, 0, A.w, A.h).data
-      B.ctx.drawImage(B.img, 0, 0)
-      const b = B.ctx.getImageData(0, 0, B.w, B.h).data
-      const M = await load(p!)
-      M.ctx.translate(M.w, 0)
-      M.ctx.scale(-1, 1)
-      M.ctx.drawImage(M.img, 0, 0)
-      const mirrored = M.ctx.getImageData(0, 0, M.w, M.h).data
-      let plain = 0
-      let mirror = 0
-      for (let i = 0; i < a.length; i += 4) {
-        for (let k = 0; k < 3; k++) {
-          plain += Math.abs(a[i + k] - b[i + k])
-          mirror += Math.abs(mirrored[i + k] - b[i + k])
-        }
+      const profile = (x: { data: Uint8ClampedArray; w: number; h: number }) => {
+        const cols = new Array<number>(x.w).fill(0)
+        for (let y = 0; y < x.h; y++)
+          for (let c = 0; c < x.w; c++) {
+            const i = (y * x.w + c) * 4
+            cols[c] += 765 - (x.data[i] + x.data[i + 1] + x.data[i + 2])
+          }
+        return cols
       }
-      return { plain, mirror, size: [A.w, A.h, B.w, B.h] }
+      const corr = (u: number[], v: number[]) => {
+        const n = u.length
+        const mu = u.reduce((s, x) => s + x, 0) / n
+        const mv = v.reduce((s, x) => s + x, 0) / n
+        let num = 0
+        let du = 0
+        let dv = 0
+        for (let i = 0; i < n; i++) {
+          num += (u[i] - mu) * (v[i] - mv)
+          du += (u[i] - mu) ** 2
+          dv += (v[i] - mv) ** 2
+        }
+        return num / Math.sqrt(du * dv)
+      }
+      let plain = 0
+      for (let i = 0; i < A.data.length; i += 4)
+        for (let k = 0; k < 3; k++) plain += Math.abs(A.data[i + k] - B.data[i + k])
+      const pa = profile(A)
+      const pb = profile(B)
+      // 面板在页面上的左右位置（有墨的列的中点）：居中才能拿整张图的镜像当面板的镜像
+      const inked = pa.map((v, i) => (v > 0 ? i : -1)).filter((i) => i >= 0)
+      const center = (inked[0] + inked[inked.length - 1]) / 2
+      return {
+        plain,
+        mirrored: corr(pb, [...pa].reverse()),
+        unmirrored: corr(pb, pa),
+        center,
+        size: [A.w, A.h, B.w, B.h],
+      }
     },
     [plainSrc, flippedSrc],
   )
-  expect(m.size[0], JSON.stringify(m)).toBe(m.size[2])
-  expect(m.plain, JSON.stringify(m)).toBeGreaterThan(50_000) // 两张确实不一样
-  expect(m.mirror, JSON.stringify(m)).toBeLessThan(m.plain * 0.4) // 而且是左右镜像
+  const why = JSON.stringify({
+    m,
+    trace: await page.evaluate(() => (window as unknown as Record<string, unknown>).__TAVOTTO_THUMB_TRACE__),
+  })
+  expect(m.size[0], why).toBe(m.size[2])
+  expect(Math.abs(m.center - m.size[0] / 2), why).toBeLessThan(3) // 前提：面板在缩略图里左右居中
+  expect(m.plain, why).toBeGreaterThan(50_000) // 两张确实不一样
+  expect(m.mirrored, why).toBeGreaterThan(0.85) // 翻转那张的左右分布 = 原样的倒过来
+  expect(m.mirrored - m.unmirrored, why).toBeGreaterThan(0.3) // 而不是原样本身
 })
