@@ -164,9 +164,10 @@ interface DepRepairState {
   /**
    * 采用这台机器上已有的、已经装着那个包的解释器（ADR 0044）。**不是安装**：
    * 走项目环境 PATCH（带 `module` 让后端连那个包一起验），成功后把失败的
-   * 渲染重新排上——与装完包之后那半边同一件事。
+   * 渲染重新排上——与装完包之后那半边同一件事。素材库里因缺这个包停下的脚本行（发起的那一行 `script` 与同样
+   * 缺它的其它行）同样重跑：一键修复的首选就是这条路，改用之后那一行还停在缺包上的话卡片永远收不掉（Codex #742）
    */
-  adoptSystemPython: (python: string, module: string) => Promise<void>
+  adoptSystemPython: (python: string, module: string, script?: string) => Promise<void>
   /**
    * 依赖弹窗里点「改用这个环境」（ADR 0079）：交 id 给后端体检并记成本项目的选择；成功就关框、
    * 把卡在这道门上的面板重排。失败把原文留在框里。
@@ -451,7 +452,7 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
     }
   },
 
-  adoptSystemPython: async (python, module) => {
+  adoptSystemPython: async (python, module, script) => {
     if (get().busy) return
     const epoch = projectEpoch
     set({ busy: true, errorCode: '', errorText: '' })
@@ -465,6 +466,7 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
     }
     set({ busy: false })
     useRenderStore.getState().retryEnvironmentFailures()
+    rerunAfterEnvironmentChange(script, module)
   },
 
   cancel: async () => {
@@ -717,6 +719,16 @@ function rerunScriptAfterRepair(script: string | undefined, fromScriptRow = fals
   if (phase !== 'missing_dependency' && !(fromScriptRow && phase === undefined)) return false
   void runs.run(script)
   return true
+}
+
+/**
+ * 项目的环境刚换过（改用了已有的解释器 / 清掉了全局固定），不是装包作业、没有进度可等：素材库里停在缺这个包上的
+ * 脚本行——发起的那一行与同样缺它的其它行——现在就重跑（只认仍停在 `missing_dependency` 的，用户已经重跑 / 收起过的不动）。
+ * 与装好之后 `onProgress` 那半边同一件事
+ */
+export function rerunAfterEnvironmentChange(script: string | undefined, importName: string | undefined): void {
+  rerunScriptAfterRepair(script)
+  rerunSameModule(importName, script)
 }
 
 /** 脚本行发起时记下同样缺这个包的其它脚本（重试时沿用第一次记下的：那时运行记录可能已随切项目清掉） */

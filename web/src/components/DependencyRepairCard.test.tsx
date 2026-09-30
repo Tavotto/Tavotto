@@ -1096,6 +1096,45 @@ describe('安装进度', () => {
     expect(document.querySelector('[data-repair-line]')!.textContent).toContain(en('repairStep', { n: 1, total: 2 }))
   })
 
+  it('换用了 PyPI 镜像（#743 的真实形状）：只在「详情」里说一句；之后的快照照样带着', async () => {
+    // 照抄后端 #743（feat/one-click-python-backend @ 6399168b0）`deprepair._note_mirror` 写进进度记录的形状：
+    // 顶层字符串字段 `pypi_mirror`，值是 `PYPI_MIRROR_URL`；日志里同时有那一行说明。此后每个快照（含终态）都带
+    const mirror = 'https://pypi.tuna.tsinghua.edu.cn/simple'
+    const snapshot = {
+      log: `Collecting openpyxl\nERROR: Could not find a version\n\n连不上默认的 Python 包源，改用 PyPI 镜像 ${mirror} 重试一次\n`,
+      plan_id: 'plan-abc',
+      state: 'installing',
+      code: '',
+      error: null,
+      result: null,
+      import_name: 'lmfit',
+      distribution: 'lmfit',
+      target_kind: 'tavotto_managed',
+      script: 'figure.py',
+      pypi_mirror: mirror,
+    }
+    await render()
+    await act(() => {
+      own()
+      useDepRepairStore.getState().onProgress(snapshot as never)
+    })
+    const note = document.querySelector('[data-repair-pypi-mirror]')!
+    expect(note.closest('details')!.open).toBe(false)
+    expect(note.textContent).toBe(en('repairPypiMirror', { mirror }))
+    await act(() => {
+      useDepRepairStore.getState().onProgress({ ...snapshot, state: 'verifying' } as never)
+    })
+    expect(document.querySelectorAll('[data-repair-pypi-mirror]')).toHaveLength(1)
+  })
+
+  it('没用镜像（进度里没有 pypi_mirror 这个键）：一个字都不说，也不报错', async () => {
+    await render()
+    await progress('installing', { log: 'Collecting lmfit' })
+    expect(document.querySelector('[data-repair-pypi-mirror]')).toBeNull()
+    expect(text()).not.toContain(en('repairPypiMirror', { mirror: '' }).slice(0, 6))
+    expect(document.querySelector('[data-repair-line]')).toBeTruthy()
+  })
+
   it('换用了 PyPI 镜像：只在「安装详情」里说一句', async () => {
     await render()
     await progress('installing', { pypi_mirror: 'https://pypi.tuna.tsinghua.edu.cn/simple' })

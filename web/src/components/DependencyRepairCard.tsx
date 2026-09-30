@@ -11,7 +11,12 @@ import {
 } from '@/lib/api'
 import { useRenderStore } from '@/store/renderStore'
 import { currentProjectId } from '@/lib/session'
-import { isRepairRunning, managedPreviewKey, useDepRepairStore } from '@/store/depRepairStore'
+import {
+  isRepairRunning,
+  managedPreviewKey,
+  rerunAfterEnvironmentChange,
+  useDepRepairStore,
+} from '@/store/depRepairStore'
 import { useEnvStore } from '@/store/envStore'
 import { useUiStore } from '@/store/uiStore'
 import { Settings } from '@/components/ui/icons'
@@ -137,7 +142,7 @@ export function DependencyRepairCard({
   const act = (tg: DependencyTarget) =>
     tg.kind === 'system_interpreter'
       ? // 采用已有的解释器不经 plan：没有要安装的东西可以「计划」
-        void adoptSystemPython(tg.python, module)
+        void adoptSystemPython(tg.python, module, script)
       : tg.kind === 'tavotto_managed' && offer.requirement
         ? // 一次授权：卡片已经把计划的要素说出口，点一次就开始
           void installNow(
@@ -160,7 +165,18 @@ export function DependencyRepairCard({
   // 再说一遍失败。
   const pinned = offer.pinned ?? pinnedSince
   if (pinned) {
-    return <Pinned module={pkg} pinned={pinned} onCleared={reset} />
+    return (
+      <Pinned
+        module={pkg}
+        pinned={pinned}
+        onCleared={() => {
+          reset()
+          // 固定清掉了、项目环境从此轮得到：停在缺包上的脚本行（这一行与同样缺它的）重跑——那一行的 offer 还带着
+          // 旧的 `pinned`，不重跑的话卡片会一直停在「恢复自动检测」上（与改用已有解释器同一类，Codex #742）
+          rerunAfterEnvironmentChange(script, module)
+        }}
+      />
+    )
   }
 
   // ---- 安装进行中 / 刚结束：只显示进度，不再显示一堆选项 ------------------

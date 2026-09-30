@@ -72,7 +72,9 @@
   （`RepairProgressLine`：「正在安装 openpyxl…（3/4）」，下载那一段「正在下载 Python… 12 / 25 MB」+ 细进度条 +「取消」；
   四个阶段的完整列表 `RepairStageList` 与 pip 日志在折叠的「详情」里），乐观的第一条进度（SSE 还没来）就带上目标 / 脚本 / 包名，之后缺目标的快照沿用上一条（阶段数按目标定）；
   字节数读 `result.download`、**只在 state 仍是
-  `downloading_python` 时读**（后端的 result 沿用上一条）；换用 PyPI 镜像（`pypi_mirror`）只在「安装详情」里说。跑前授权框
+  `downloading_python` 时读**（后端的 result 沿用上一条）；换用 PyPI 镜像（进度记录顶层的 `pypi_mirror`，后端 #743 `deprepair._note_mirror` 给出；没有这个键时一个字都不说）
+  只在「详情」里说。一键修复改用了电脑上已有的环境、或清掉了全局固定之后，停在缺这个包上的脚本行（这一行与同样缺它的）
+  立刻重跑（`rerunAfterEnvironmentChange`，与装好之后同一件事）。跑前授权框
   （`DependencyPrepareDialog`）同一套：没有装齐的用户环境、默认目标是受管环境时，标题就是那一句（干净机器上什么包都
   不缺时换成「需要先准备运行环境」那一句；私有 Python 的披露只跟**此刻选中的**目标走，选了项目 venv 就不提），底部只有「稍后」「一键修复」，
   其余（含「不准备，直接运行」）进「详情」；默认目标是项目 venv（会改用户环境）时目标单选留在外面，每个选项的说明压成一句
