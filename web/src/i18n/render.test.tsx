@@ -107,7 +107,7 @@ describe('ProjectPicker', () => {
     mount(<ProjectPicker />)
     let text = uiText()
     expect(text).toContain('选择项目')
-    expect(text).toContain('用 Python 脚本，轻松完成论文图排版')
+    expect(text).toContain('你的绘图脚本在哪里？')
     expect(text).toContain('导入我的脚本')
     showAll()
     text = uiText()

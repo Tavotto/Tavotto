@@ -3760,21 +3760,10 @@ export default interface Resources {
       "menuOpen": "打开",
       "more": "更多",
       "newcomer": {
-        "bundled": "已随安装包内置示例脚本，点击即可体验完整流程。",
         "import": "导入我的脚本",
-        "lead": "导入你的绘图脚本，自动识别生成的图片，进入排版画布，轻松完成论文图的整理与排版。",
-        "step1Body": "选择包含绘图代码的 .py 文件，{{product}} 会读取并分析它。",
-        "step1Title": "导入 Python 脚本",
-        "step2Body": "{{product}} 会自动识别脚本生成的图片，无需手动查找。",
-        "step2Title": "自动识别图片",
-        "step3Body": "在可视化画布中自由排版，调整大小、对齐和样式，快速导出。",
-        "step3Title": "进入排版画布",
-        "stepsLabel": "三步开始",
-        "tipBody": "支持拖拽排版、对齐参考线、快速调整尺寸，一站式完成图的整理与导出。",
-        "tipTitle": "进入编辑器后，操作非常简单",
-        "title": "用 Python 脚本，轻松完成论文图排版",
+        "title": "你的绘图脚本在哪里？",
         "tryResume": "继续示例教程",
-        "tryStart": "用示例体验一次"
+        "tryStart": "用示例学一遍（带引导）"
       },
       "openedAgo": "打开于 {{when}}",
       "otherWays": "新建项目或按路径打开",
