@@ -203,6 +203,29 @@ def test_only_values_proven_to_feed_reads_are_rewritten(tmp_path, moved):
     assert reasons == {line: scriptedit.SKIP_CONTEXT for line in (4, 12, 15, 17, 19, 23, 28, 32)}
 
 
+def test_method_calls_require_a_known_library_receiver(tmp_path, moved):
+    """方法调用（`obj.method(...)`）同名于读取表也不够——接收者要证得出是已知库模块（顶层 import 名）
+    才信读取表；脚本自己定义的方法、脚本内的实例或变量一概去向未知（Codex 评 #730 P2：此前「用户自
+    定义」的检查只查了直接的 `ast.Name` 调用，属性调用漏判，`Sink().load(...)` 会被当 `np.load` 一样
+    改写）。`np.load(...)` 本身继续照改，见 `test_only_values_proven_to_feed_reads_are_rewritten`。"""
+    _new, rule = moved
+    src = (
+        "class Sink:\n"
+        "    def load(self, p):\n"
+        "        return p\n"
+        f'IN1 = "{OLD}/data"\n'  # 4 脚本里有个同名方法 → 去向未知，不改
+        "Sink().load(IN1)\n"
+        f'IN2 = "{OLD}/data"\n'  # 6 接收者是脚本内的变量 → 去向未知，不改
+        "sink = Sink()\n"
+        "sink.load(IN2)\n"
+    )
+    with pytest.raises(scriptbackup.ScriptEditError) as err:
+        _plan(tmp_path, src, rule=rule, missing=[f"{OLD}/data/x.h5"])
+    assert err.value.code == scriptedit.ERROR_NOTHING_TO_CHANGE
+    reasons = {s["line"]: s["reason"] for s in err.value.params["skipped"]}
+    assert reasons == {4: scriptedit.SKIP_CONTEXT, 6: scriptedit.SKIP_CONTEXT}
+
+
 def test_the_entry_being_fixed_may_go_straight_into_an_unknown_reader(tmp_path, moved):
     """唯一的例外：用户正在处理的那一条（`missing[0]`，脚本读它失败才有这一条）整串直接做不认得的函数
     （C++ 读取器 / 包装函数，ADR 0110 §一）的实参 → 改；别的串、拼过的、写出调用里的仍然不改。"""

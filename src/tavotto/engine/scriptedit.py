@@ -193,6 +193,11 @@ class _InputOnly:
     放进容器、`return`、`for`、重复赋值、属性、传进不认得的函数……一律追不清，不接受；唯一的例外是用户正在
     处理的那一条（`observed`）整串直接做不认得的函数的实参——那一条本身就是「脚本读它失败」的证据。
 
+    方法调用（`obj.method(...)`）额外要求接收者证得出是已知库模块（`import numpy as np` 这类顶层 import
+    名，没在别处被重新绑定过）才信读取表——脚本自己定义的方法（`class Sink: def load(self, p): ...`）、
+    脚本内的实例或变量一概当去向未知，哪怕方法名同读取表里的 `load`（`_known_reader_receiver`，Codex 评
+    #730 P2：此前只查过直接的 `ast.Name` 调用，属性调用漏判）。
+
     读写混用（同一个 `DATA_DIR` 既读又写）因此整条不进候选：读取那一侧由改指规则兜住——改指只影响读取，
     不会动输出。有它之前是逐一补「会流到写出」的形状（直接的、拼出来的、赋值转手的，Codex 评 #730 三次），
     换成只认正面证据。"""
@@ -209,6 +214,22 @@ class _InputOnly:
             for n in ast.walk(tree)
             if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
         }
+        #: 脚本里任何 class 定义的方法名：方法调用撞上读取表时，同名的自定义方法一律当证据不足
+        self.class_method_names = {
+            m.name
+            for n in ast.walk(tree)
+            if isinstance(n, ast.ClassDef)
+            for m in n.body
+            if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        #: `import numpy as np` 这类顶层 import 名——方法调用的接收者只有落在这张表里才信读取表；
+        #: 之后在 stores 里再被重新绑定过的排除（`np = something_else` 之后就说不清了）
+        self.module_names = {
+            alias.asname or alias.name.split(".")[0]
+            for n in ast.walk(tree)
+            if isinstance(n, ast.Import)
+            for alias in n.names
+        }
         for n in ast.walk(tree):
             if isinstance(n, ast.Name):
                 if isinstance(n.ctx, ast.Store):
@@ -217,6 +238,14 @@ class _InputOnly:
                     self.loads.setdefault(n.id, []).append(n)
             elif isinstance(n, ast.arg):
                 self.stores[n.arg] = self.stores.get(n.arg, 0) + 1
+        self.module_names -= set(self.stores)
+
+    def _known_reader_receiver(self, attr: ast.Attribute) -> bool:
+        """`attr`（如 `np.load`）的接收者是不是明确的已知库模块——只有这样才信读取表；拿不准（脚本自己的
+        方法、实例、变量……）一概不信，哪怕方法名同读取表里的 `load`（ADR 0110 §二.3，Codex 评 #730 P2）。"""
+        if attr.attr in self.class_method_names:
+            return False
+        return isinstance(attr.value, ast.Name) and attr.value.id in self.module_names
 
     def _probe(self, call: ast.Call, *, method: bool) -> bool:
         name = databinding._func_name(call.func)
@@ -236,6 +265,18 @@ class _InputOnly:
                     return False
                 if isinstance(up.func, ast.Name) and up.func.id in self.user_defined:
                     # 用户函数：去向未知。唯一例外同下（正在处理的那一条整串直接做实参）
+                    return (
+                        isinstance(child, ast.Constant)
+                        and child.value == self.observed
+                        and child in up.args
+                    )
+                if (
+                    isinstance(up.func, ast.Attribute)
+                    and inputremap.is_read_call(up)
+                    and not self._known_reader_receiver(up.func)
+                ):
+                    # 方法调用撞上读取表（比如脚本自己的 `Sink().load(...)`）：接收者不是已知库模块，
+                    # 去向未知，不当证据。唯一例外同上（正在处理的那一条整串直接做实参）
                     return (
                         isinstance(child, ast.Constant)
                         and child.value == self.observed
