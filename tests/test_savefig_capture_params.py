@@ -537,7 +537,7 @@ def test_buffer_saves_keeps_at_most_limit_strong_references():
     for i in range(5):  # 不用 `for f in figs`：循环变量会一直引用最后一张，它就回收不掉
         saves.note(figs[i])
     saves.note(figs[0])  # 同一张重复存：不占位、不算溢出
-    assert len(saves._strong) == 3
+    assert len(saves._pinned) == 3
     assert saves.figures() == figs  # 超出的两张还活着：照样补回来
     assert saves.lost() == 0
     del figs[3:]  # 超出的两张被脚本关掉、不再有人引用
@@ -562,6 +562,26 @@ def test_buffer_saves_collects_garbage_before_deciding_what_was_lost():
         assert saves.lost() == 1
     finally:
         gc.enable()
+
+
+def test_a_released_slot_goes_to_the_oldest_waiting_figure():
+    """a、b 钉满名额，c 只挂弱引用；a 被认领让出的名额必须给**更早的** c，而不是之后才存的 d——否则 c
+    一旦没人引用就被回收、算作丢失，而更晚的 d 却留下了，兜底的 stem 顺序也跟着变（#739 Codex P2）。"""
+    import weakref
+
+    saves = figcapture.BufferSaves(limit=2)
+    a, b, c = _Fig(), _Fig(), _Fig()
+    saves.note(a)
+    saves.note(b)
+    saves.note(c)
+    saves.claim(a)
+    c_ref = weakref.ref(c)
+    del c  # 脚本不再引用 c：只有名单里的强引用能留住它
+    d = _Fig()
+    saves.note(d)
+    assert saves.figures() == [b, c_ref(), d]
+    assert c_ref() is not None
+    assert saves.lost() == 0
 
 
 def test_claimed_figures_give_back_their_slot():

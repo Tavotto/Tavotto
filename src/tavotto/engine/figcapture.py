@@ -825,7 +825,8 @@ class BufferSaves:
     三条约束（#739 Codex 各一条 P2）：
 
     * **强引用有上限**（`limit`，就是兜底的张数上限）：循环「建图 → 存缓冲区 → 关图」的批量脚本不设
-      上限会把每张关掉的图都留到脚本结束。超出的只挂**弱引用**——不拖住内存，但仍活着的还补得回来。
+      上限会把每张关掉的图都留到脚本结束。所有图只排**一个**全局顺序（弱引用），强引用永远钉在其中
+      最早的至多 `limit` 张上——让出的名额交给下一张最早的，顺序不会被「先强后弱」打乱。
     * **被路径 savefig 认领了就让出名额**（`claim`）：已经有 stem 的图不需要兜底，占着名额会让后面
       真正只存缓冲区的图没地方放。
     * **真丢了要进结构化计数**（`lost`）：超出上限、又被脚本关掉并回收的图是实实在在丢了，
@@ -836,43 +837,48 @@ class BufferSaves:
 
     def __init__(self, limit: int = MAX_PYPLOT_FALLBACK):
         self.limit = max(0, int(limit))
-        self._strong: list = []
-        self._weak: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()  # fig -> 先后序号
+        #: 所有记下、未被认领、仍活着的图 → 全局存盘序号（唯一的顺序；弱引用，不拖住内存）
+        self._order: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
+        #: 序号 → 图：**永远**钉住最早的至多 `limit` 张（强引用，脚本关掉它们也补得回来）
+        self._pinned: dict = {}
         self._seq = 0
-        self._overflowed = 0  # 进过弱引用区、且没被认领的张数
+        self._noted = 0  # 记下且未被认领的张数（含已被回收的），`lost()` 用它减去仍活着的
 
     def note(self, fig) -> None:
-        if any(f is fig for f in self._strong) or fig in self._weak:
-            return
-        if len(self._strong) < self.limit:
-            self._strong.append(fig)
+        if fig in self._order:
             return
         self._seq += 1
-        self._weak[fig] = self._seq
-        self._overflowed += 1
+        self._order[fig] = self._seq
+        self._noted += 1
+        if len(self._pinned) < self.limit:
+            self._pinned[self._seq] = fig
 
     def claim(self, fig) -> None:
-        """这张图被路径 savefig 认领了（有了 stem）：让出名额 / 不再算作可能丢失。"""
-        for i, f in enumerate(self._strong):
-            if f is fig:
-                del self._strong[i]
-                return
-        if fig in self._weak:
-            del self._weak[fig]
-            self._overflowed -= 1
+        """这张图被路径 savefig 认领了（有了 stem）：移出名单；它若钉着名额，把名额交给**最早的**
+        下一张仍活着、还没钉住的图——钉住的永远是全局顺序里最早的那几张（#739 Codex P2：
+        让出的名额给了更晚的一张，兜底按上限截断时丢的就是更早那张、stem 也跟着变）。"""
+        seq = self._order.pop(fig, None)
+        if seq is None:
+            return
+        self._noted -= 1
+        if self._pinned.pop(seq, None) is None:
+            return
+        waiting = [(s, f) for f, s in self._order.items() if s not in self._pinned]
+        if waiting:
+            s, f = min(waiting, key=lambda sf: sf[0])
+            self._pinned[s] = f
 
     def __bool__(self) -> bool:
-        return bool(self._strong) or self._overflowed > 0
+        return self._noted > 0
 
     def figures(self) -> list:
-        """交给兜底的图：强引用的（按存盘先后），再接上弱引用区里仍活着的（按存盘先后）。"""
+        """交给兜底的图：仍活着的，按全局存盘先后（钉住的一定在其中）。"""
         gc.collect()
-        alive = sorted(self._weak.items(), key=lambda kv: kv[1])
-        return list(self._strong) + [f for f, _ in alive]
+        return [f for f, _ in sorted(self._order.items(), key=lambda kv: kv[1])]
 
     def lost(self) -> int:
-        """超出上限、没被认领、已被回收的张数（在 `figures()` 之后问才准）。"""
-        return max(0, self._overflowed - len(self._weak))
+        """记下、没被认领、已被回收的张数（在 `figures()` 之后问才准）。"""
+        return max(0, self._noted - len(self._order))
 
 
 def collect_pyplot_figures(
