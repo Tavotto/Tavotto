@@ -390,3 +390,10 @@ def test_only_paths_are_intercepted():
     assert figcapture.savefig_targets_path(Path("out") / "Fig1.pdf")
     assert not figcapture.savefig_targets_path(io.BytesIO())
     assert figcapture.savefig_stem(io.BytesIO()) == ""
+
+
+def test_bytes_filenames_are_paths_too(fake_mpl):
+    """`savefig(b"out/Fig1.pdf")` 照样落盘：它是路径，要被拦、按 stem 记账（#739 Codex P2）。"""
+    assert figcapture.savefig_targets_path(b"out/Fig1.pdf")
+    assert figcapture.savefig_stem(b"out/Fig1.pdf") == "Fig1"
+    assert figcapture.savefig_call(b"out/Fig1.pdf", {})["format"] == "pdf"
