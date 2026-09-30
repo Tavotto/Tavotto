@@ -55,6 +55,19 @@ const projectKey = (project: string | null): string => project ?? ''
  */
 const pendingReruns = new Map<string, { script?: string; peers: string[] }>()
 
+/** 所属项目此刻就是开着的那个（没切过，或 A → B → A 已经切回来了） */
+const ownerIsCurrent = (owner: string | null): boolean => projectKey(owner) === projectKey(currentProjectId())
+
+/**
+ * 异步结果交给所属项目的**唯一**规则（Codex #742）：结果回来时所属项目就是当前项目，立即执行；不是，就停放到
+ * 它那一格，回到它时由 `clear()` drain。判的是「所属项目是不是当前项目」，**不是**「代际变没变」——A → B → A
+ * 在回来之前就切完了的话代际变了、所属项目却正开着，而 `clear()` 那次 drain 已经过去，停放下去就没人再取
+ */
+function deliverToOwner(owner: string | null, now: () => void, park: () => void): void {
+  if (ownerIsCurrent(owner)) now()
+  else park()
+}
+
 /** 单包修复的一次请求（重试时原样再发一次） */
 export interface RepairRequest {
   module: string
@@ -473,21 +486,27 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
     const peers = scriptsMissing(module).filter((s) => s !== script)
     set({ busy: true, errorCode: '', errorText: '' })
     const error = await useEnvStore.getState().setProjectPython(python, module)
-    if (epoch !== projectEpoch) {
-      // 已切到 B：B 的渲染、B 的脚本行一概不动。改用记在 A 上（后端按请求那一刻的 pj）——但 `setProjectPython`
-      // 换代之后成败都回 null，分不出来；停放一次重跑无害：没改成的话那一行重跑出来仍是缺包，卡片照旧挂回去
-      parkRerun(owner, script, peers)
-      return
-    }
-    if (error) {
-      // `setProjectPython` 已经把后端原文翻成一句话；code 由环境 store 吞掉了，
-      // 这里只有原文可显示——它本来就是 `backendErrorText()` 按 code 翻好的。
-      set({ busy: false, errorCode: '', errorText: error })
-      return
-    }
-    set({ busy: false })
-    useRenderStore.getState().retryEnvironmentFailures()
-    rerunAfterEnvironmentChange(script, module, peers)
+    // 换过代：`setProjectPython` 成败都回 null、A 的项目环境也没写进 env（它按自己的代际丢了）——分不出成败，
+    // 重跑一次无害：没改成的话那一行重跑出来仍是缺包，卡片照旧挂回去
+    const switched = epoch !== projectEpoch
+    deliverToOwner(
+      owner,
+      () => {
+        if (error) {
+          // `setProjectPython` 已经把后端原文翻成一句话；code 由环境 store 吞掉了，
+          // 这里只有原文可显示——它本来就是 `backendErrorText()` 按 code 翻好的。
+          set({ busy: false, errorCode: '', errorText: error })
+          return
+        }
+        set({ busy: false })
+        // A → B → A：A 的环境状态要按此刻重新问（那次响应被丢了）
+        if (switched) void useEnvStore.getState().refresh()
+        useRenderStore.getState().retryEnvironmentFailures()
+        rerunAfterEnvironmentChange(script, module, peers, switched)
+      },
+      // 此刻开着的是 B：B 的渲染、B 的脚本行一概不动，重跑停放到 A
+      () => parkRerun(owner, script, peers),
+    )
   },
 
   clearPinnedInterpreter: async (module, script) => {
@@ -495,19 +514,26 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
     const owner = currentProjectId()
     const peers = scriptsMissing(module).filter((s) => s !== script)
     const failure = await useEnvStore.getState().setPython(null)
-    if (epoch !== projectEpoch) {
-      // 全局固定清没清掉这里分不出来（换代之后 `setPython` 成败都回 null，并已按 B 刷过环境）；A 的卡片状态、
-      // A 的脚本行重跑都不在 B 上做——重跑停放到 A，切回来续（B 的修复状态不 reset、B 的脚本一行都不跑）
-      parkRerun(owner, script, peers)
-      return null
-    }
-    if (failure) return failure
-    // 清掉之后这张卡的前提没了：store 里记下的那条固定与错误清空，因缺包失败的渲染重新排上，停在缺包上的脚本行
-    // （这一行与同样缺它的）重跑——那一行的 offer 还带着旧的 `pinned`，不重跑的话卡片会一直停在「恢复自动检测」上
-    get().reset()
-    useRenderStore.getState().retryEnvironmentFailures()
-    rerunAfterEnvironmentChange(script, module, peers)
-    return null
+    const switched = epoch !== projectEpoch
+    // 换过代的话 `setPython` 成败都回 null（并已按此刻的项目刷过环境）；分不出来，按清掉了处理——重跑一次无害
+    let result: string | null = null
+    deliverToOwner(
+      owner,
+      () => {
+        if (failure) {
+          result = failure
+          return
+        }
+        // 清掉之后这张卡的前提没了：store 里记下的那条固定与错误清空，因缺包失败的渲染重新排上，停在缺包上的脚本行
+        // （这一行与同样缺它的）重跑——那一行的 offer 还带着旧的 `pinned`，不重跑的话卡片会一直停在「恢复自动检测」上
+        get().reset()
+        useRenderStore.getState().retryEnvironmentFailures()
+        rerunAfterEnvironmentChange(script, module, peers, switched)
+      },
+      // 此刻开着的是 B：A 的卡片状态、A 的脚本行重跑都不在 B 上做（B 的修复状态不 reset、B 的脚本一行都不跑）
+      () => parkRerun(owner, script, peers),
+    )
+    return result
   },
 
   cancel: async () => {
@@ -558,7 +584,7 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
         actual = null
       }
       if (actual && actual.plan_id === id && actual.state !== 'idle') {
-        adoptActualRebuild(owner, epoch, actual)
+        adoptActualRebuild(owner, actual)
         return
       }
       // 没起来：结局交给所属那格（此刻开着就是当前卡片），撤掉乐观进度与这个项目的单飞
@@ -579,7 +605,7 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
     // 作业属于**别的项目**（本标签页起的、起完切走了）：进度只更新它那一格，此刻的界面与副作用
     // （刷环境 / 重排渲染 / 关框 / 错误文案）一个都不碰——那些说的都是此刻开着的项目（issue #590）
     const owner = startedPlans.get(p.plan_id)
-    if (owner !== undefined && projectKey(owner) !== projectKey(currentProjectId())) {
+    if (owner !== undefined && !ownerIsCurrent(owner)) {
       if (get().parked[projectKey(owner)]?.plan_id === p.plan_id)
         set({ parked: { ...get().parked, [projectKey(owner)]: keepTarget(p, get().parked[projectKey(owner)]) } })
       return
@@ -716,13 +742,14 @@ function releaseRebuild(owner: string | null, id: string): void {
  * POST 失败、但后端说这次重建其实起了（#606 第 5 条）：照 SSE 进度的规矩把实况接回来——在跑就接着显示、
  * 单飞保持；已有结局就交给 `onProgress`（放开单飞、派发终局）。所属项目此刻不开着，就收进它那一格。
  */
-function adoptActualRebuild(owner: string | null, epoch: number, actual: DependencyProgress): void {
+function adoptActualRebuild(owner: string | null, actual: DependencyProgress): void {
   const store = useDepRepairStore.getState()
-  if (epoch === projectEpoch) {
-    useDepRepairStore.setState({ busy: false, progress: actual })
-  } else {
-    useDepRepairStore.setState({ parked: { ...store.parked, [projectKey(owner)]: actual } })
-  }
+  // 同一条规则：所属项目此刻开着（含 A → B → A 已经切回）就接到当前卡片上，否则停放到它那格
+  deliverToOwner(
+    owner,
+    () => useDepRepairStore.setState({ busy: false, progress: actual }),
+    () => useDepRepairStore.setState({ parked: { ...store.parked, [projectKey(owner)]: actual } }),
+  )
   if (TERMINAL.includes(actual.state)) useDepRepairStore.getState().onProgress(actual)
 }
 const TERMINAL: readonly DependencyProgress['state'][] = ['done', 'failed', 'cancelled']
@@ -738,7 +765,7 @@ function lateFailure(planId: string, e: unknown): void {
   const store = useDepRepairStore.getState()
   // A → B → A 之后才被拒：作业已经被 `clear()` 放回当前的 `progress`，`parked` 里没有它了（#605 评审 P2）。
   // 所属项目此刻开着，就在当前卡片上说出结局
-  if (projectKey(owner) === projectKey(currentProjectId())) {
+  if (ownerIsCurrent(owner)) {
     if (store.progress?.plan_id !== planId) return
     useDepRepairStore.setState({
       busy: false,
@@ -777,8 +804,10 @@ export function rerunAfterEnvironmentChange(
   script: string | undefined,
   importName: string | undefined,
   peers: string[] = [],
+  /** 发起之后切过项目（A → B → A）：运行记录随切项目清空了，发起行「没有记录」也算仍停在缺包上（同 #729） */
+  afterSwitch = false,
 ): void {
-  rerunScriptAfterRepair(script)
+  rerunScriptAfterRepair(script, afterSwitch)
   rerunSameModule(importName, script, peers)
 }
 

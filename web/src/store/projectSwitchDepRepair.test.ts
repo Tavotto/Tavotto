@@ -716,3 +716,110 @@ describe('环境改动的回调按项目代际判（Codex #742）', () => {
     expect(useDepRepairStore.getState().progress).toBeNull()
   })
 })
+
+/**
+ * 统一规则：结果回来时所属项目就是当前项目，立即执行；不是就停放、回到它时 drain（`deliverToOwner`，Codex #742）。
+ * 这里每一条都是 A → B → A **在结果回来之前**已经切回 A：代际变了、所属项目却正开着——`clear()` 那次 drain 已经
+ * 过去，停放下去就没人再取。审计表里用到停放的每一行各一条
+ */
+describe('A → B → A 在结果回来之前已切回：结果立即作用于 A（Codex #742）', () => {
+  beforeEach(() => {
+    useScriptRunStore.getState().clear()
+    useScriptRunStore.setState({ byScript: { 'fig.py': stuck('lmfit'), 'peer.py': stuck('lmfit') } })
+    useDepRepairStore.setState({ managedPreviews: {} })
+  })
+  const bounce = async () => {
+    await switchTo('p2')
+    await switchTo('p1')
+  }
+
+  it('改用已有环境：切回之后才回来，立即重排、重跑那两行（不停放）', async () => {
+    let release: (v: string | null) => void = () => {}
+    vi.spyOn(useEnvStore.getState(), 'setProjectPython').mockReturnValue(new Promise<string | null>((r) => (release = r)))
+    const pending = useDepRepairStore.getState().adoptSystemPython('/usr/bin/python3', 'lmfit', 'fig.py')
+    await bounce()
+    const retry = vi.spyOn(useRenderStore.getState(), 'retryEnvironmentFailures')
+    calls.length = 0
+    release(null)
+    await pending
+    expect(retry).toHaveBeenCalled()
+    await vi.waitFor(() => expect(probed()).toEqual(['fig.py', 'peer.py']))
+    // 没有停放下去：再切走切回不会再跑一遍
+    await bounce()
+    expect(probed()).toEqual(['fig.py', 'peer.py'])
+  })
+
+  it('恢复自动检测：切回之后才回来，立即收卡（清掉 A 的固定）、重排、重跑那两行', async () => {
+    let release: (v: string | null) => void = () => {}
+    vi.spyOn(useEnvStore.getState(), 'setPython').mockReturnValue(new Promise<string | null>((r) => (release = r)))
+    const pending = useDepRepairStore.getState().clearPinnedInterpreter('lmfit', 'fig.py')
+    await bounce()
+    // 切回 A 之后卡片又拿到了那条固定（比如 A 的 offer 带着它）：回调要把它收掉
+    useDepRepairStore.setState({ pinned: { python: '/a', source: 'configured' } })
+    const retry = vi.spyOn(useRenderStore.getState(), 'retryEnvironmentFailures')
+    calls.length = 0
+    release(null)
+    expect(await pending).toBeNull()
+    expect(useDepRepairStore.getState().pinned).toBeNull()
+    expect(retry).toHaveBeenCalled()
+    await vi.waitFor(() => expect(probed()).toEqual(['fig.py', 'peer.py']))
+    await bounce()
+    expect(probed()).toEqual(['fig.py', 'peer.py'])
+  })
+
+  it('安装完成：A → B → A 之后才装好，立即重排、重跑发起行与同包的其它行', async () => {
+    const rowOffer = { offer: { import_name: 'lmfit', script: 'fig.py' }, module: 'lmfit' } as never
+    await useDepRepairStore.getState().makePlan({ module: 'lmfit', script: 'fig.py', target: 'tavotto_managed' }, rowOffer)
+    await useDepRepairStore.getState().install()
+    useDepRepairStore.getState().onProgress(progress('installing'))
+    await bounce()
+    const retry = vi.spyOn(useRenderStore.getState(), 'retryEnvironmentFailures')
+    calls.length = 0
+    useDepRepairStore.getState().onProgress(progress('done', { script: 'fig.py', import_name: 'lmfit' }))
+    expect(retry).toHaveBeenCalled()
+    await vi.waitFor(() => expect(probed()).toEqual(['fig.py', 'peer.py']))
+  })
+
+  it('失败后重试：A → B → A 之后才失败，结局与「就地重试」的上下文都在 A 的卡片上', async () => {
+    await startInstallOnA()
+    await bounce()
+    useDepRepairStore.getState().onProgress(progress('failed', { code: 'dependency_network_unavailable', error: '断网' }))
+    const s = useDepRepairStore.getState()
+    expect(s.progress?.state).toBe('failed')
+    expect(s.errorCode).toBe('dependency_network_unavailable')
+    expect(s.request).toMatchObject({ module: 'lmfit', script: 'fig.py' })
+    expect(s.parked).toEqual({})
+  })
+
+  it('跑前弹窗准备：A → B → A 之后才装好，立即重排 A 的渲染', async () => {
+    useEnvStore.getState().requestDependencyPreparation(offer('fig.py'))
+    const armed = holdOnce('/api/engine/dependencies/plan')
+    const pending = useDepRepairStore.getState().prepare('tavotto_managed')
+    const release = await armed
+    release({ plan: { plan_id: 'jp-a', script: 'fig.py', target_kind: 'tavotto_managed', requirements: ['lmfit'] } })
+    await pending
+    expect(useDepRepairStore.getState().progress?.plan_id).toBe('jp-a')
+    await bounce()
+    expect(useDepRepairStore.getState().progress?.plan_id, '切回 A 没接上联合准备的作业').toBe('jp-a')
+    const retry = vi.spyOn(useRenderStore.getState(), 'retryEnvironmentFailures')
+    useDepRepairStore.getState().onProgress(progress('done', { plan_id: 'jp-a', flow: 'joint' }))
+    expect(retry).toHaveBeenCalled()
+    expect(useDepRepairStore.getState().progress?.state).toBe('done')
+  })
+
+  it('重建：POST 失败、实况在建，而 A → B → A 已经切回——实况接到 A 的卡片上（不停放）', async () => {
+    const armed = holdOnce('/managed/rebuild')
+    const pending = useDepRepairStore.getState().rebuildManaged()
+    const release = await armed
+    const id = lastRebuildId()
+    await bounce()
+    stateAnswer = { plan_id: id, state: 'installing', log: '', error: null, code: '' }
+    release({ error: '网关超时' }, 504)
+    await pending
+    const s = useDepRepairStore.getState()
+    expect(s.progress?.plan_id, '实况被停放进了 A 那格，而 A 正开着——没人再取').toBe(id)
+    expect(s.progress?.state).toBe('installing')
+    expect(s.parked).toEqual({})
+    expect(s.rebuildRunningFor('p1')).toBe(true)
+  })
+})
