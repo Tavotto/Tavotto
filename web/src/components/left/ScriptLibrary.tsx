@@ -21,8 +21,12 @@ import { useUiStore } from '@/store/uiStore'
 import { Button, IconButton } from '../ui/Button'
 import { Dialog } from '../ui/Dialog'
 import { EmptyState } from '../ui/EmptyState'
-import { DependencyRepairCard } from '../DependencyRepairCard'
-import { useDepRepairStore, type ScriptRepairOffer } from '@/store/depRepairStore'
+import { DependencyRepairCard, downloadFact, oneClickEnvironmentSentence, oneClickSentence, repairShortMessage } from '../DependencyRepairCard'
+import { oneClickShape, requirementName, STATE_TEXT } from '../DependencyPrepareDialog'
+import { RepairProgressLine } from '../RepairProgressLine'
+import { isRepairRunning, useDepRepairStore, type ScriptRepairOffer } from '@/store/depRepairStore'
+import { useEnvStore } from '@/store/envStore'
+import { listJoin } from '@/i18n/format'
 
 /**
  * 素材库「脚本」区（Session 5，普通入口）：项目里每个合理 .py 一行，
@@ -44,7 +48,8 @@ const GROUP_ORDER: Group[] = ['needsFix', 'linked', 'notRun', 'runtimeNames', 'n
 function groupOf(entry: ScriptInventoryEntry, run: ScriptRunState | undefined): Group {
   // 缺包是能一键修好的那一类：单独一组「需要修复」、排在最前（2026-09-29：「可能需要原环境」对不懂 Python 的
   // 用户是术语）。超时与一般失败仍在下面那组——它们真的可能与原来的环境 / 运行方式有关
-  if (run?.phase === 'missing_dependency') return 'needsFix'
+  // 「开跑前要先准备依赖」（联合准备的授权）同样能一键修好：与缺包同一组
+  if (run?.phase === 'missing_dependency' || run?.phase === 'needs_preparation') return 'needsFix'
   // 本会话 safe 运行失败且形状像环境问题的，收进「可能需要原环境」——
   // 恢复路径文案（总纲 §四）挂在组上，一眼看全
   if (needsNative(run)) return 'needsEnv'
@@ -232,6 +237,7 @@ function ScriptRow({
       </div>
 
       {repairCard && <ScriptDependencyRepair script={entry.script} run={run} />}
+      <ScriptPreparation script={entry.script} run={run} />
       <FailureRecovery script={entry.script} run={run} />
 
       {run && run.descriptors.length > 0 && (
@@ -268,6 +274,100 @@ function ScriptDependencyRepair({ script, run }: { script: string; run: ScriptRu
         script={found.offer.script || script}
         fromScriptRow
       />
+    </div>
+  )
+}
+
+/**
+ * 开跑前要先准备依赖（`dependency_preparation_required`，U04）时这一行的一句话 + 一个主按钮（2026-09-29 干净虚拟机
+ * 实测：单包修复装完，自动重跑撞上跑前门，这一行只剩一行红字与「选择渲染环境」，小白卡死）。与画布渲染那条路上弹的
+ * 授权框（`DependencyPrepareDialog`）是同一份联合计划、同一个 `prepare`、同一套句子：授权只有一句人话时直接执行，
+ * 进度就是这一行下面的一行；要在目标 / 用户环境之间选的时候，主按钮打开授权框。装好后 `depRepairStore` 把这一行重跑
+ * （`rerunScriptAfterRepair`）。完整的需求串、下载与联网说明、「选择渲染环境」都收在默认折叠的「详情」里。
+ */
+function ScriptPreparation({ script, run }: { script: string; run: ScriptRunState | undefined }) {
+  useTranslation('workspace')
+  useTranslation('errors')
+  const en = (key: string, values?: Record<string, unknown>) => translate(key, { ns: 'errors', ...(values ?? {}) })
+  const progress = useDepRepairStore((s) => s.progress)
+  const busy = useDepRepairStore((s) => s.busy)
+  const errorCode = useDepRepairStore((s) => s.errorCode)
+  const jointScript = useDepRepairStore((s) => s.jointScript)
+  const offer = run?.phase === 'needs_preparation' ? run.error?.dependency_preparation : undefined
+  if (!offer) return null
+  const mine = jointScript === script
+  const joint = mine && progress?.flow === 'joint' ? progress : null
+  const running = !!joint && isRepairRunning(joint)
+  const code = mine ? errorCode || (joint && (joint.state === 'failed' || joint.state === 'cancelled') ? joint.code : '') : ''
+  const { simple, privatePython } = oneClickShape(offer)
+  const requirements = offer.plan.requirements
+  const packages = listJoin(requirements.map(requirementName))
+  const sentence = code
+    ? repairShortMessage(code)
+    : requirements.length
+      ? oneClickSentence(packages, privatePython)
+      : oneClickEnvironmentSentence(privatePython)
+  const cost = downloadFact(privatePython, { packages: requirements.length > 0 })
+  const onFix = () => {
+    if (simple) void useDepRepairStore.getState().prepare('tavotto_managed', offer)
+    else useEnvStore.getState().requestDependencyPreparation(offer)
+  }
+  return (
+    // 与恢复说明同一列缩进：它是这一行的延续，不是另一块区域
+    <div className="mb-1.5 mt-0.5 flex flex-col gap-1.5 pl-8 pr-2" data-script-preparation>
+      {running && joint ? (
+        <>
+          <RepairProgressLine progress={joint} text={en(STATE_TEXT[joint.state] ?? 'engine.dependencyPrepareState_preparing')} />
+          <Button
+            variant="secondary"
+            size="sm"
+            className="self-start"
+            onClick={() => void useDepRepairStore.getState().cancelPreparation()}
+          >
+            {en('engine.dependencyPrepareCancel')}
+          </Button>
+        </>
+      ) : (
+        <>
+          <p className="type-caption" data-script-preparation-sentence>
+            {sentence}
+          </p>
+          <Button
+            variant="primary"
+            size="sm"
+            className="self-start"
+            disabled={busy || isRepairRunning(progress)}
+            data-script-preparation-fix
+            onClick={onFix}
+          >
+            {code ? en('engine.dependencyPrepareRetry') : en('engine.oneClickRepair')}
+          </Button>
+        </>
+      )}
+      {!running && (
+        <Details data-script-preparation-details>
+          <Summary className="type-meta cursor-pointer">{sc('recoveryDetails')}</Summary>
+          <div className="mt-1.5 flex flex-col gap-1.5">
+            {requirements.length > 0 && (
+              <ul className="flex flex-col gap-0.5 font-mono text-xs text-ink-2">
+                {requirements.map((req) => (
+                  <li key={req}>{req}</li>
+                ))}
+              </ul>
+            )}
+            {cost && <p className="type-caption">{cost}</p>}
+            <Button
+              variant="secondary"
+              size="sm"
+              className="self-start"
+              onClick={() => useUiStore.getState().setEngineEnvOpen(true)}
+            >
+              <Settings size={ICON_SIZE.sm} />
+              {sc('openEnvSettings')}
+            </Button>
+          </div>
+        </Details>
+      )}
     </div>
   )
 }

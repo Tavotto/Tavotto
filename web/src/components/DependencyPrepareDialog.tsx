@@ -8,6 +8,7 @@ import { Details, Summary } from './ui/Details'
 import { Dialog } from './ui/Dialog'
 import { Radio } from './ui/Radio'
 import { userEnvironmentName } from '@/lib/userEnvironmentText'
+import type { DependencyPreparationOffer, PrivatePythonOffer } from '@/lib/api'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { listJoin } from '@/i18n/format'
 import { RepairProgressLine, RepairStageList } from './RepairProgressLine'
@@ -48,7 +49,7 @@ const TARGET_HINT: Record<Target, string> = {
   tavotto_managed: 'engine.dependencyTargetHint_tavotto_managed',
   project_venv: 'engine.dependencyTargetHint_project_venv',
 }
-const STATE_TEXT: Record<string, string> = {
+export const STATE_TEXT: Record<string, string> = {
   preparing: 'engine.dependencyPrepareState_preparing',
   downloading_python: 'engine.dependencyPrepareState_downloading_python',
   creating_env: 'engine.dependencyPrepareState_creating_env',
@@ -60,6 +61,29 @@ const BLOCKED_TEXT: Record<string, string> = {
   dependency_conflict: 'engine.dependencyBlocked_dependency_conflict',
   dependency_hashes_incomplete: 'engine.dependencyBlocked_dependency_hashes_incomplete',
   dependency_target_unavailable: 'engine.dependencyBlocked_dependency_target_unavailable',
+}
+
+/**
+ * 一键修复的形态按**载荷**定（授权框与素材库脚本行共用这一份判据）：没有装齐的用户环境、后端默认装进 Tavotto
+ * 自己的环境、这个环境又能建——授权只有一句人话和一个主按钮。`privatePython` 是默认目标（受管环境）上要不要先准备
+ * 私有 Python 的披露。不满足时脚本行退回打开授权框（那里有目标 / 用户环境的选择）
+ */
+export function oneClickShape(offer: DependencyPreparationOffer): {
+  simple: boolean
+  privatePython: PrivatePythonOffer | null
+} {
+  const complete = (offer.user_environments ?? []).filter((e) => e.satisfies)
+  const managed = offer.targets.find((o) => o.kind === 'tavotto_managed')
+  return {
+    simple: complete.length === 0 && offer.target_kind === 'tavotto_managed' && managed?.available !== false,
+    privatePython: managed?.private_python ?? offer.private_python ?? null,
+  }
+}
+
+/** 需求串 → 包名（`tabulate[widechars]==0.9.0` → `tabulate`）：一键修复那句人话只说装哪些包，完整形态在「高级」里 */
+export function requirementName(requirement: string): string {
+  const m = /^[A-Za-z0-9._-]+/.exec(requirement.trim())
+  return m ? m[0] : requirement
 }
 
 export function DependencyPrepareDialog() {
@@ -100,9 +124,8 @@ export function DependencyPrepareDialog() {
   const failing = !running && !!errorLine
   const targets = offer.targets.filter((o) => o.kind !== 'system_interpreter')
   const chosen = targets.find((o) => o.kind === target)
-  const managed = targets.find((o) => o.kind === 'tavotto_managed')
   // 一键修复的形态按**载荷**定（不按此刻的单选）：在「高级」里换了目标，版面不跳
-  const simple = complete.length === 0 && offer.target_kind === 'tavotto_managed' && managed?.available !== false
+  const { simple } = oneClickShape(offer)
   const oneClick = simple && !envChosen && target === 'tavotto_managed'
   // 私有 Python 的披露跟**此刻选中的目标**走（Codex #742）：装进项目 venv / 改用用户环境都不下载、不供应 Python，
   // 标题与「详情」都不许替那条路说「要下载」。载荷顶层那份（干净机器）同样只属于受管目标
@@ -376,10 +399,4 @@ export function DependencyPrepareDialog() {
       )}
     </Dialog>
   )
-}
-
-/** 需求串 → 包名（`tabulate[widechars]==0.9.0` → `tabulate`）：一键修复那句人话只说装哪些包，完整形态在「高级」里 */
-function requirementName(requirement: string): string {
-  const m = /^[A-Za-z0-9._-]+/.exec(requirement.trim())
-  return m ? m[0] : requirement
 }

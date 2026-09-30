@@ -8,6 +8,7 @@ vi.mock('@/lib/api', () => ({
   // scriptRunStore 直接用的三样
   probeScript: vi.fn(),
   cancelProbe: vi.fn().mockResolvedValue({ cancelling: true }),
+  DEPENDENCY_PREPARATION_CODE: 'dependency_preparation_required',
   ApiError: class ApiError extends Error {
     status: number
     body: Record<string, unknown>
@@ -101,6 +102,8 @@ describe('scriptRunStore 状态机', () => {
   it('错误码 → 相位映射（missing_dependency / timeout / no_figure / cancelled / failed）', async () => {
     const cases: Array<[string, string]> = [
       ['missing_dependency', 'missing_dependency'],
+      // 开跑前要先准备依赖是授权不是失败：自成一相，不落进 `failed`（那会被归到「可能需要原环境」）
+      ['dependency_preparation_required', 'needs_preparation'],
       ['execution_timeout', 'timeout'],
       ['script_no_figure', 'no_figure'],
       ['execution_cancelled', 'cancelled'],
@@ -118,6 +121,7 @@ describe('scriptRunStore 状态机', () => {
   it('needsNative 判据：缺包 / 超时 / 失败进「可能需要原环境」，取消与没出图不进', async () => {
     for (const [code, expected] of [
       ['missing_dependency', true],
+      ['dependency_preparation_required', false],
       ['execution_timeout', true],
       ['script_probe_failed', true],
       ['execution_cancelled', false],

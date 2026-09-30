@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import {
   ApiError,
   cancelProbe,
+  DEPENDENCY_PREPARATION_CODE,
   probeScript,
   type CapturedFigureDescriptor,
   type ProbeError,
@@ -37,6 +38,7 @@ export type ScriptRunPhase =
   | 'captured_many'
   | 'no_figure'
   | 'missing_dependency'
+  | 'needs_preparation' // 开跑前要先准备依赖（联合准备的授权，不是失败）
   | 'timeout'
   | 'cancelled'
   | 'failed'
@@ -78,6 +80,7 @@ export const needsNative = (state: ScriptRunState | undefined): boolean =>
 
 const PHASE_BY_CODE: Record<string, ScriptRunPhase> = {
   missing_dependency: 'missing_dependency',
+  [DEPENDENCY_PREPARATION_CODE]: 'needs_preparation',
   execution_timeout: 'timeout',
   execution_cancelled: 'cancelled',
   script_no_figure: 'no_figure',

@@ -13,6 +13,7 @@ import {
   setProjectUserEnvironment,
   skipDependencyPreparation,
   backendErrorText,
+  type DependencyPreparationOffer,
   type DependencyProgress,
   type DependencyRepairOffer,
   type DependencyRepairPlan,
@@ -292,8 +293,13 @@ interface DepRepairState {
   jointPlan: JointDependencyRepairPlan | null
   /** 计划绑定不了（blocked / 什么都不缺）时后端交回的计划——界面按 blocked 的理由说下一步 */
   jointBlocked: JointDependencyPlan | null
-  /** 一步：绑定计划 → 执行（只发 plan_id）。目标由用户在框里选；脚本来自 envStore 里的载荷。 */
-  prepare: (target: 'project_venv' | 'tavotto_managed') => Promise<void>
+  /** 最近一次 `prepare` 是为哪个脚本发起的（素材库脚本行据此认领进度 / 失败；`reset` / 切项目清空） */
+  jointScript: string
+  /**
+   * 一步：绑定计划 → 执行（只发 plan_id）。目标由用户在框里选；脚本来自 envStore 里的载荷——素材库脚本行
+   * （那里没有框、载荷住在那次运行的错误里）把载荷作为 `offerArg` 直接交进来。
+   */
+  prepare: (target: 'project_venv' | 'tavotto_managed', offerArg?: DependencyPreparationOffer) => Promise<void>
   cancelPreparation: () => Promise<void>
   /** 「不准备，直接运行」：明确的 skip（这道门一直问到有答案），然后关框并重排那次失败的渲染 */
   skipPreparation: () => Promise<void>
@@ -327,6 +333,7 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
   pinned: null,
   jointPlan: null,
   jointBlocked: null,
+  jointScript: '',
   request: null,
   authorized: null,
   scriptOffer: null,
@@ -335,12 +342,12 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
   rebuilding: {},
   rebuildRunningFor: (project) => !!get().rebuilding[projectKey(project)],
 
-  prepare: async (target) => {
-    const offer = useEnvStore.getState().dependencyPreparation
+  prepare: async (target, offerArg) => {
+    const offer = offerArg ?? useEnvStore.getState().dependencyPreparation
     if (!offer || get().busy) return
     const epoch = projectEpoch
     let planId = ''
-    set({ busy: true, errorCode: '', errorText: '', jointBlocked: null })
+    set({ busy: true, errorCode: '', errorText: '', jointBlocked: null, jointScript: offer.script })
     try {
       const { plan } = await createJointDependencyPlan({ script: offer.script, target })
       // 绑定回来时已经切了项目：这是 A 的计划，不在 B 上执行（绑定不装，丢掉即可）
@@ -742,6 +749,7 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
       pinned: null,
       jointPlan: null,
       jointBlocked: null,
+      jointScript: '',
       request: null,
       authorized: null,
       scriptOffer: null,
@@ -770,6 +778,7 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
       plan: null,
       jointPlan: null,
       jointBlocked: null,
+      jointScript: '',
       pinned: null,
       managedPreviews: {},
       request: retryCtx?.request ?? null,
@@ -876,7 +885,9 @@ function rerunScriptAfterRepair(script: string | undefined, fromScriptRow = fals
   if (!script) return false
   const runs = useScriptRunStore.getState()
   const phase = runs.byScript[script]?.phase
-  if (phase !== 'missing_dependency' && !(fromScriptRow && phase === undefined)) return false
+  // 停在「开跑前要先准备依赖」上的行同样重跑（联合准备装完之后，2026-09-29 干净虚拟机实测）
+  if (phase !== 'missing_dependency' && phase !== 'needs_preparation' && !(fromScriptRow && phase === undefined))
+    return false
   void runs.run(script)
   return true
 }

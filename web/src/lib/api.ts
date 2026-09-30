@@ -3718,6 +3718,11 @@ export interface ProbeError {
    * 图还没上画布时，那是新用户走到安装的唯一入口。
    */
   dependency_repair?: DependencyRepairOffer
+  /**
+   * `dependency_preparation_required` 时（U04）：脚本开跑要的包目标环境里没有、能一次装全——与渲染端点同一份联合计划
+   * 载荷（`probe._error_from_worker` 原样带出）。素材库「脚本」行据此给一句话 + 一键修复，而不是一行红字。
+   */
+  dependency_preparation?: DependencyPreparationOffer
 }
 
 export interface ProbeResult {
