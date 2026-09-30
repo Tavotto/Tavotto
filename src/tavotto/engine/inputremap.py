@@ -989,8 +989,11 @@ def native_miss(
 
     ADR 0110 §一：C++ 读取器不经四个打开入口，worker 说不出是哪串常量；这里拿脚本的静态证据对。
     候选只来自 `static_missing`（脚本里以常量出现、此刻哪儿都找不到的）。异常里的路径（`filename`，
-    没有就是消息里引号括着的 `named`）按脚本写法那一侧（cwd 之内换回相对）与候选按路径段比：
-    整串相等优先，其次候选是它的前缀（目录常量拼出来的）、路径段最长的那条。对不上任何一条——
+    没有就是消息里引号括着的 `named`）与候选按路径段比：整串相等优先，其次候选是它的前缀（目录常量
+    拼出来的）、路径段最长的那条。cwd 之内的绝对路径按脚本写法那一侧（换回相对）**与**原样的绝对
+    写法两种都试——脚本写的到底是绝对还是 cwd 相对，异常本身说不清（xarray 先 abspath 再报），
+    `native_miss` 要求候选与报告的路径同为绝对或同为相对，选错一种就永远对不上脚本自己写的绝对路径
+    （与 #716「绝对路径保留绝对身份」同一个口径，Codex 评 #730 P2）；两种写法都对不上任何一条候选——
     不判，调用方照旧是 `script_error`（判不出就别判）。
     """
     if not isinstance(enoent, dict):
@@ -1000,27 +1003,33 @@ def native_miss(
         return None
     cwd = enoent.get("cwd") if isinstance(enoent.get("cwd"), str) else ""
     written = _as_written(raw, cwd)
-    parsed = figcapture.remap_parts(written)
-    if parsed is None or not parsed[1]:
+    forms = [written] if written == raw else [written, raw]
+    parsed_forms = [(w, figcapture.remap_parts(w)) for w in forms]
+    parsed_forms = [(w, p) for w, p in parsed_forms if p is not None and p[1]]
+    if not parsed_forms:
         return None
     rules = rules if rules is not None else rules_for(root)
-    best: tuple[int, str] | None = None
+    best: tuple[int, str, str, bool] | None = None  # (段数, 候选原文, 匹配用的写法, 是否绝对)
     # 归因的候选放宽到「像数据路径的常量」（不要求进了已知的读取调用）：C++ 读取器常包在用户自己的函数里，
     # 而 ENOENT 与常量逐段对上本身就是强证据；弹窗的「一并修好」仍只列读取调用的实参
     for cand in static_missing(script, root, rules, reads_only=False):
         cparsed = figcapture.remap_parts(cand["path"])
-        if cparsed is None or cparsed[0] != parsed[0] or not cparsed[1]:
+        if cparsed is None or not cparsed[1]:
             continue
-        n = len(cparsed[1])
-        if parsed[1][:n] != cparsed[1]:
-            continue
-        if best is None or n > best[0]:
-            best = (n, cand["path"])
+        for w, parsed in parsed_forms:
+            if cparsed[0] != parsed[0]:
+                continue  # 一份是绝对一份是相对，说的不是同一种写法，不比
+            n = len(cparsed[1])
+            if parsed[1][:n] != cparsed[1]:
+                continue
+            if best is None or n > best[0]:
+                best = (n, cand["path"], w, parsed[0])
     if best is None:
         return None
+    _, literal, matched_written, absolute = best
     return {
-        "requested": written,
-        "absolute": bool(parsed[0]),
+        "requested": matched_written,
+        "absolute": absolute,
         "cwd": cwd,
-        "literal": best[1],
+        "literal": literal,
     }

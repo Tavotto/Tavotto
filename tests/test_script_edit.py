@@ -507,6 +507,24 @@ def test_native_miss_matches_exactly_one_literal_or_says_nothing(tmp_path):
     assert inputremap.native_miss("fig.py", tmp_path, {"filename": None, "named": None}) is None
 
 
+def test_native_miss_keeps_the_absolute_form_when_the_script_wrote_it_absolute(tmp_path):
+    """脚本自己写的就是绝对路径，恰好落在 worker 的 cwd 之内：`_as_written` 会把异常里的文件名换成
+    相对——但静态候选仍是绝对，`native_miss` 要求两边同为绝对或同为相对，换错一种就永远对不上，
+    C++ 读取器的绝对路径缺失就只是个 `script_error`，进不了改写流程（与 #716「绝对路径保留绝对
+    身份」同一个口径，Codex 评 #730 P2）。"""
+    abs_path = tmp_path / "run" / "x.h5"
+    (tmp_path / "fig.py").write_text(
+        f'import h5py\nh5py.File("{abs_path}")\n',
+        encoding="utf-8",
+    )
+    cwd = str(tmp_path)
+    hit = inputremap.native_miss("fig.py", tmp_path, {"filename": str(abs_path), "cwd": cwd})
+    assert hit is not None
+    assert hit["requested"] == str(abs_path).replace("\\", "/")
+    assert hit["literal"] == str(abs_path).replace("\\", "/")
+    assert hit["absolute"] is True
+
+
 def test_missing_input_of_prefers_the_path_named_in_the_message(tmp_path):
     misses = figcapture.InputMisses()
     misses.note("local.cfg")  # 一次被 try 吞掉的可选读
