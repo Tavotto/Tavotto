@@ -83,7 +83,6 @@ export function LeftPanel({
           <IconButton
             side="bottom"
             label={pinned ? t('drawer.unpin') : t('drawer.pin')}
-            tip={pinned ? t('drawer.unpinHint') : t('drawer.pinHint')}
             active={pinned}
             aria-pressed={pinned}
             className="-mr-1.5"

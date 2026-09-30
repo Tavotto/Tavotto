@@ -162,14 +162,17 @@ export function Dialog({
               )}
             </div>
           </div>
-          <div
-            className={cn(
-              'min-h-0 flex-1',
-              shell ? 'flex flex-col overflow-hidden' : 'overflow-y-auto px-5 py-3',
-            )}
-          >
-            {children}
-          </div>
+          {/* 没有正文（标题已说完）就不摆这块留白 */}
+          {children != null && children !== false && (
+            <div
+              className={cn(
+                'min-h-0 flex-1',
+                shell ? 'flex flex-col overflow-hidden' : 'overflow-y-auto px-5 py-3',
+              )}
+            >
+              {children}
+            </div>
+          )}
           {footer && (
             <div className="flex items-center justify-end gap-2 px-5 pb-4 pt-1">
               {footer}

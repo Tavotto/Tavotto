@@ -215,7 +215,6 @@ export function StyleDialog() {
         open={open}
         onOpenChange={setOpen}
         title={sd('title')}
-        description={sd('descriptionEmpty')}
         width={520}
         busy={busy}
         covered={covered}

@@ -878,7 +878,7 @@ describe('排版：两列网格、「多个值」放得下且有说明', () => {
     expect(ticks.placeholder).toBe('多个值')
     expect(ticks.className, '不再按 4 个等宽字符定宽（那样「多个值」被裁成「多个僮」）').toContain('w-full')
     expect(ticks.closest('[title]')?.getAttribute('title')).toBe(
-      '这张图里这几处的值不一样；输入一个值会把它们统一',
+      '这几处的值不一样；输入一个值会统一它们',
     )
   })
 

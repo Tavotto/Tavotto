@@ -3,7 +3,6 @@ import {
   insertPreset,
   insertSymbol,
   PRESET_IDS,
-  presetHint,
   presetLabel,
   SYMBOLS,
 } from '@/lib/presets'
@@ -34,7 +33,6 @@ export function PresetsDialog({ open, onClose }: { open: boolean; onClose: () =>
               <button
                 type="button"
                 data-preset={id}
-                title={presetHint(id)}
                 aria-label={presetLabel(id)}
                 onClick={() => {
                   insertPreset(id)

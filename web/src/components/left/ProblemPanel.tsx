@@ -382,7 +382,6 @@ export function ProblemPanel() {
             <EmptyState
               icon={CircleCheck}
               title={pr('drillDone')}
-              hint={pr('drillDoneHint')}
               action={{ label: view === 'category' ? pr('backCategories') : pr('backFigures'), onClick: back }}
             />
           ) : (

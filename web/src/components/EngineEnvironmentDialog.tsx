@@ -1,5 +1,4 @@
 import { useTranslation } from 'react-i18next'
-import { PRODUCT_NAME } from '@/lib/brand'
 import { useUiStore } from '@/store/uiStore'
 import { EngineEnvironmentCard } from './EngineEnvironmentCard'
 import { Dialog } from './ui/Dialog'
@@ -24,7 +23,6 @@ export function EngineEnvironmentDialog() {
       open={open}
       onOpenChange={setOpen}
       title={t('engineEnv.title')}
-      description={t('engineEnv.description', { product: PRODUCT_NAME })}
       size="lg"
       anchor="engine-environment"
     >

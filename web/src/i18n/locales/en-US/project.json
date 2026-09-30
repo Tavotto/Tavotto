@@ -31,8 +31,6 @@
   },
   "figurePicker": {
     "addToCanvas": "Add to canvas",
-    "description_one": "The script produced {{count}} figure — pick the one to open",
-    "description_other": "The script produced {{count}} figures — pick the one to open",
     "empty": "No figures are registered for this script yet. Run it from the Scripts section of the asset library to capture them.",
     "listAria": "Figures produced by this script",
     "needsRun": "Run it first",
@@ -124,7 +122,7 @@
   "switcher": {
     "home": "Back to projects",
     "newTabLabel": "Open in a new tab",
-    "newTabTip": "Open in a new tab. Switch to another project there.",
+    "newTabTip": "Open in a new tab",
     "trigger": "Current project {{name}} — click to switch"
   },
   "workspace": {

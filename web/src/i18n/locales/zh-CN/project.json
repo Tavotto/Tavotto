@@ -31,7 +31,6 @@
   },
   "figurePicker": {
     "addToCanvas": "添加到画布",
-    "description_other": "脚本产出 {{count}} 张图，选择要打开的一张",
     "empty": "此脚本尚未登记任何图。在素材库的「脚本」区运行它以捕获图。",
     "listAria": "脚本产出的图",
     "needsRun": "先运行一次",
@@ -123,7 +122,7 @@
   "switcher": {
     "home": "回到项目列表",
     "newTabLabel": "在新标签页打开",
-    "newTabTip": "在新标签页打开，可切到另一个项目",
+    "newTabTip": "在新标签页打开",
     "trigger": "当前项目 {{name}}，点击切换"
   },
   "workspace": {

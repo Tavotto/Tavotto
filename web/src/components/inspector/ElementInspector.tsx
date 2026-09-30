@@ -1463,11 +1463,9 @@ function TextStyleBatchSection({
         <p className="text-xs text-ink-3">{el('batchNoCommon')}</p>
       ) : (
         <>
-          <p className="mb-1.5 text-xs text-ink-3">
-            {roles.length > 1
-              ? el('textBatchHintMixed', { count: elements.length })
-              : el('batchHint', { count: elements.length })}
-          </p>
+          {roles.length > 1 && (
+            <p className="mb-1.5 text-xs text-ink-3">{el('textBatchHintMixed', { count: elements.length })}</p>
+          )}
           <TypographyControls adapter={adapter} labelWidth={LABEL_W} />
         </>
       )}
@@ -1525,9 +1523,6 @@ function BatchSection({
         <p className="text-xs text-ink-3">{el('batchNoCommon')}</p>
       ) : (
         <>
-          <p className="mb-1.5 text-xs text-ink-3">
-            {el('batchHint', { count: elements.length })}
-          </p>
           {rows(flat)}
           {ordered.map(([name, list]) => {
             const open = openGroups[name] ?? false
@@ -2555,7 +2550,6 @@ export function ScaleField({ panel, group, meta }: { panel: PanelObject; group: 
         max={400}
         step={5}
         unit="%"
-        title={el('scaleTitle')}
         onChange={setPct}
       />
       <Button size="sm" variant="secondary" disabled={!ready} onClick={apply} data-scale-apply>
@@ -2654,15 +2648,7 @@ function AlignSection({
       </div>
       {group && <ScaleField panel={panel} group={group} />}
       <p className="mt-2 text-xs leading-relaxed text-ink-3">
-        {syncing ? (
-          el('alignSyncing')
-        ) : (
-          <>
-            {el('alignHint')}
-            {hasAnnotations && el('alignHintAnnotations')}
-            {group && el('alignHintGroup')}
-          </>
-        )}
+        {syncing ? el('alignSyncing') : el(hasAnnotations ? 'alignHintAnnotations' : 'alignHint')}
       </p>
       <ul className="mt-2 flex flex-col gap-0.5">
         {items.map((it, i) => (

@@ -307,7 +307,7 @@ function ProblemCard({
             {pr('cardFix', { count: fixable.length })}
           </Button>
         ) : manual ? (
-          <span className="pointer-events-auto px-1.5 text-xs text-ink-3" title={pr('cardManualTip')}>
+          <span className="pointer-events-auto px-1.5 text-xs text-ink-3">
             {pr('cardManual')}
           </span>
         ) : null}
