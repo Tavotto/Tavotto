@@ -449,9 +449,9 @@ def _count_fetches(monkeypatch) -> list[str]:
     calls: list[str] = []
     real = privatepython._fetch
 
-    def _counting(source, part, job):
-        calls.append(source.url)
-        return real(source, part, job)
+    def _counting(source, url, part, job, **kw):
+        calls.append(url)
+        return real(source, url, part, job, **kw)
 
     monkeypatch.setattr(privatepython, "_fetch", _counting)
     return calls

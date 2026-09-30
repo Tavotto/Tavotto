@@ -466,9 +466,7 @@ def _write_ledger(data: dict) -> None:
         LOG.warning("私有 Python 账写入失败: %s", exc)
 
 
-def _record(
-    source: PythonSource, probe: dict, origin: str = "", downloaded_from: str = ""
-) -> None:
+def _record(source: PythonSource, probe: dict, origin: str = "", downloaded_from: str = "") -> None:
     with _lock:
         data = read_ledger()
         data["runtimes"][source.id] = {
