@@ -160,11 +160,11 @@ jobs:
     # 提交还要再验一遍——组合出来的树没有任何单个 PR 检查过）。push main 不跑，
     # 那棵树就是 merge_group 上刚验过的。
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
       # 版本**从 pyproject 的 dev extra 里读**，不在这里抄一份字面量。
@@ -290,7 +290,7 @@ jobs:
     name: Contributor licence (CLA)
     # 与其它快线一致；**merge_group 必须在内**（见上面第 1 条）。
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
@@ -429,11 +429,11 @@ jobs:
     # 刚验过的那棵，main 侧只留 main-landing-audit 与非门禁的 cache-seed
     # （见文件抬头的分工表）。
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
       # 科学栈按锁文件钉版本：不变式里有几条是**按实测写死的例外**
@@ -507,7 +507,7 @@ jobs:
             --report-dir "$RUNNER_TEMP/foundation/report"
       - name: 首开 / 输出 harness 证据（JSON + JUnit + 摘要，只作证据不作判定输入）
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: foundation-harness-pr-${{ github.run_id }}
           path: |
@@ -556,7 +556,7 @@ jobs:
     strategy:
       fail-fast: false
       # 写成轴（GitHub 对 `include` 里的条目不做笛卡尔积，所以 shard 不能塞进 include）。
-      # os 固定 ubuntu-latest，写在 runs-on 上，不再是 matrix 的一维。
+      # os 固定 ubuntu-24.04，写在 runs-on 上，不再是 matrix 的一维。
       matrix:
         python: ["3.10", "3.13", "3.14"]
         shard: [1, 2]
@@ -567,10 +567,10 @@ jobs:
     # ——上限抬到 60 止血；按 runner 实测重算权重 / 拆片见 #636，做完再收回。没有上限的
     # job 在 merge_group 上会把队列堵死，而队列堵死时**所有** PR 都落不了地。
     timeout-minutes: 60
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
       # matplotlib 单独装：pyproject 的主依赖刻意不含科学栈（Flask 父进程的
@@ -611,7 +611,7 @@ jobs:
       # **只作证据与日后重平衡的数据，不作任何判定输入**——Gate 读的是 needs 结论。
       - name: 分片证据
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: pytest-backend-fast-ubuntu-latest-${{ matrix.python }}-shard${{ matrix.shard }}
           path: |
@@ -659,8 +659,8 @@ jobs:
     # 平衡要等这次 3 片跑完的 junit artifact。
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
       - name: 安装依赖
@@ -696,7 +696,7 @@ jobs:
       # 分片证据（同 backend-fast）：只作证据与重平衡数据，不作判定输入。
       - name: 分片证据
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: pytest-backend-platforms-${{ matrix.os }}-3.13-shard${{ matrix.shard }}
           path: |
@@ -720,10 +720,10 @@ jobs:
   compat-smoke:
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     timeout-minutes: 20  # 实测 2.4 分钟；没有上限的 job 会堵死合并队列
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
       # 科学栈版本取自 packaging/runtime-lock.json，不用 `pip install matplotlib`：
@@ -755,7 +755,7 @@ jobs:
             --gate pr --out "$RUNNER_TEMP/compat"
       - name: 失败诊断
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: compat-smoke-${{ github.run_id }}
           path: ${{ runner.temp }}/compat/**
@@ -767,16 +767,16 @@ jobs:
     # 实测中位 4.2 分钟（CI00 的 29 个合并组，CI_BASELINE.md §12；合入后三个合并组
     # 166–276s）；没有上限的 job 会堵死合并队列
     timeout-minutes: 20
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: web
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v6
         with:
           version: 11.27.1
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: pnpm
@@ -846,7 +846,7 @@ jobs:
           cp "$STAGE/plugin-build.json" "$RUNNER_TEMP/plugin/plugin-build.json"
       # 只传**一个已验证的归档** + 它的清单，不传目录：目录经 artifact 传输会丢
       # dotfiles 与模式（.codex-plugin/plugin.json、.mcp.json 正是 dotfiles）。
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: codex-plugin-candidate
           path: |
@@ -874,15 +874,15 @@ jobs:
   plugin-candidate:
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     needs: [frontend]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       # 全历史：候选用例要把本次 checkout 推成一个临时 bare 仓库的 main（发行分支投影 +
       # 稀疏克隆回读那一条），浅克隆推不出去（"shallow update not allowed"，2026-09-05 首跑实测）。
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
       - name: 安装引擎（server 要在 engine 模式下才声明画布资源）
@@ -903,17 +903,17 @@ jobs:
           python scripts/fetch_fonts.py
           python scripts/fetch_fonts.py --check
       # 核心验收要真跑一次 vite（见下面最后一步），所以这个 job 也装 Node
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 11.27.1
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
         working-directory: web
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: codex-plugin-candidate
           path: ${{ runner.temp }}/candidate
@@ -985,12 +985,12 @@ jobs:
   workerd:
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     timeout-minutes: 25  # 实测 1.2 分钟（cargo 三件 0.3 + 装科学栈 + 12 条 workerd 等价用例 0.9，#409 首跑）；没有上限的 job 会堵死合并队列
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: workerd
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
@@ -1012,7 +1012,7 @@ jobs:
       # 「三路逐字节等价」。所以在这个 job 里装上科学栈对着刚建的二进制真跑一次。
       # `-k workerd` 选的就是那 12 条（用例名里都带 workerd）；`-rs` 把仍 skip 的理由打出来——
       # 这一步的判据是「它们真跑了」，全 skip 也算失败（同一步末尾按 junit 核对）。
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with: { python-version: "3.13" }
       - name: 校验 workerd 三路等价（对着刚建的二进制跑 12 条）
         working-directory: ${{ github.workspace }}
@@ -1080,10 +1080,10 @@ jobs:
       # 掐掉就又回到「那一支没有执行位置」。
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-24.04, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
@@ -1162,19 +1162,19 @@ jobs:
         # requires-python 放到 `<3.15` 之后，wheel 在 3.14 上「装得进干净
         # 环境并起得来」也得有人真跑（issue #33 的完成定义之一）。
         include:
-          - { os: ubuntu-latest,  python: "3.13" }
-          - { os: ubuntu-latest,  python: "3.14" }
+          - { os: ubuntu-24.04,  python: "3.13" }
+          - { os: ubuntu-24.04,  python: "3.14" }
           - { os: macos-latest,   python: "3.13" }
           - { os: windows-latest, python: "3.13" }
     timeout-minutes: 60  # 与 windows-exe-smoke / macos-app-smoke 同档；没有上限的 job 会堵死合并队列
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with: { python-version: "${{ matrix.python }}" }
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with: { version: 11.27.1 }
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with: { node-version: 22 }
       - name: 构建前端进包
         run: python scripts/build_frontend.py
@@ -1290,7 +1290,7 @@ jobs:
             -p no:cacheprovider -q -rs
       - name: 上传冒烟日志（失败时）
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: package-smoke-logs-${{ matrix.os }}-${{ matrix.python }}
           # 只收结果与服务日志。attempt-*/data 里有本实例的会话凭据（port-<P>.json，
@@ -1361,12 +1361,12 @@ jobs:
     # 35073686963）；分片前中位 23.5 分钟（1411s，CI00）。60 是防挂死，不是性能预算。
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with: { python-version: "3.13" }
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with: { version: 11.27.1 }
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: pnpm
@@ -1401,7 +1401,7 @@ jobs:
         # 每次真从 PyPI 装一遍，才能发现「锁文件里的版本被 yank 了」这类问题。
         # key 带上 runner 的平台/架构：不同目标下的是不同的归档，共用一个 key
         # 会让 macOS 那条腿命中 Windows 的缓存（然后 sha256 对不上、白下一次）。
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: build/runtime-cache
           key: cpython-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('packaging/runtime-lock.json') }}
@@ -1661,7 +1661,7 @@ jobs:
       - name: 上传分片自验证据
         # 两份 `--list` 清单 + check.json：日后重平衡与复核用，不是判定输入
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: playwright-shard-check-windows-shard${{ matrix.shard }}
           path: ${{ runner.temp }}/playwright-shard/**
@@ -1706,7 +1706,7 @@ jobs:
       - name: 上传内存基准
         if: always()
         continue-on-error: true
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           # 按片唯一：upload-artifact v4 同名会失败。两片都出一份（基准本来就只出数据、
           # 不阻塞；仓库里没有它的消费者，grep 过）。
@@ -1717,7 +1717,7 @@ jobs:
 
       - name: 失败时收集日志与操作轨迹
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: windows-smoke-logs-shard${{ matrix.shard }}
           path: |
@@ -1760,12 +1760,12 @@ jobs:
     runs-on: macos-latest        # 只有 Apple Silicon 一档；Intel 在发行链的 desktop-tauri 上构建（ADR 0076）
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with: { python-version: "3.13" }
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with: { version: 11.27.1 }
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: pnpm
@@ -1787,7 +1787,7 @@ jobs:
         run: cargo build --release --manifest-path workerd/Cargo.toml
 
       - name: 缓存 CPython 归档下载
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: build/runtime-cache
           key: cpython-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('packaging/runtime-lock.json') }}
@@ -1904,7 +1904,7 @@ jobs:
 
       - name: 失败时收集日志
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: macos-smoke-logs
           path: |
@@ -1942,16 +1942,16 @@ jobs:
           && contains(github.event.pull_request.labels.*.name, 'full-ci'))
     # 只 needs frontend（短预筛），不等 backend-fast——理由与数字见 `package` 那一段（CI01）。
     needs: [frontend]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         id: py
         with: { python-version: "3.13" }
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with: { version: 11.27.1 }
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: pnpm
@@ -2015,7 +2015,7 @@ jobs:
 
       - name: 失败时收集 trace 与操作轨迹
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: posix-e2e-report
           path: |
@@ -2042,10 +2042,10 @@ jobs:
     # 上快线不跑，Gate 也不跑（required contexts 只在 PR / merge_group 上有意义）。
     if: ${{ always() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') }}
     needs: [python-lint, cla-check, invariants, backend-fast, frontend, plugin-candidate, workerd, desktop-shell, compat-smoke]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       # **判定器必须来自默认分支，不是本次 checkout**（#119 评审 P1）：
       # switch-to-gates 之后 Gate 是唯一的 required check，而 checkout 的是
       # PR / 队列候选的 revision——从它执行判定逻辑，恶意改动（比如塞一个
@@ -2085,10 +2085,10 @@ jobs:
     name: CI integration gate
     if: ${{ always() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') }}
     needs: [backend-platforms, package, windows-exe-smoke, macos-app-smoke, posix-e2e]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       # 与 fast gate 同一条纪律：判定器取默认分支（理由见上面那段注释）
       - name: 取默认分支上的可信判定器
         env:
@@ -2154,11 +2154,11 @@ jobs:
   main-landing-audit:
     name: main landing audit
     if: github.event_name == 'push'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
       - name: 落地信息（写进 summary，作为这个 commit 的审计记录）
@@ -2275,23 +2275,23 @@ jobs:
         # rust-cache 输入逐字相同、`profile` 决定跑消费者的哪一组 cargo 命令；`pnpm` / `cpython`
         # 标出这条腿还顺带种哪一类（合同测试按这些字段与消费者的 os 集合对拍）。值里不能有逗号。
         include:
-          - { os: ubuntu-latest,  rust: workerd,         workspace: workerd,   profile: dev,     pnpm: true,  cpython: false }
-          - { os: ubuntu-latest,  rust: desktop-shell,   workspace: src-tauri, profile: dev,     pnpm: false, cpython: false }
+          - { os: ubuntu-24.04,  rust: workerd,         workspace: workerd,   profile: dev,     pnpm: true,  cpython: false }
+          - { os: ubuntu-24.04,  rust: desktop-shell,   workspace: src-tauri, profile: dev,     pnpm: false, cpython: false }
           - { os: macos-latest,   rust: desktop-shell,   workspace: src-tauri, profile: dev,     pnpm: false, cpython: false }
           - { os: macos-latest,   rust: workerd-release, workspace: workerd,   profile: release, pnpm: true,  cpython: true }
           - { os: windows-latest, rust: workerd-release, workspace: workerd,   profile: release, pnpm: true,  cpython: true }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # ── pnpm store（第一类：下载 bytes）。与 frontend / plugin-candidate / posix-e2e /
       #    windows-exe-smoke / macos-app-smoke 的 setup-node 同形：key 由 action 按
       #    os / arch / web/pnpm-lock.yaml 的 hash 生成。install 真跑一次 store 里才有东西可存。
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         if: matrix.pnpm == true
         with: { version: 11.27.1 }
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         if: matrix.pnpm == true
         with:
           node-version: 22
@@ -2341,12 +2341,12 @@ jobs:
 
       # ── CPython 归档（第一类）。path / key 与 windows-exe-smoke / macos-app-smoke 逐字相同
       #    （合同钉字符串相等）；恢复步在构建 runtime 之前，与消费者同序。
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         if: matrix.cpython == true
         with: { python-version: "3.13" }
       - name: 缓存 CPython 归档下载
         if: matrix.cpython == true
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: build/runtime-cache
           key: cpython-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('packaging/runtime-lock.json') }}
