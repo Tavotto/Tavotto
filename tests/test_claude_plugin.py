@@ -53,7 +53,7 @@ def test_server_names_cover_the_codex_mcp_json(manifest):
     """**每个** Codex `.mcp.json` 里的 server 名都要在 Claude 清单里有同名一条。
 
     Claude Code 先读插件根的 `.mcp.json`，再合并 plugin.json 的 `mcpServers`，同名才替换。
-    名字一旦对不上，Codex 那条（相对路径 `./mcp/launch.cmd`、没有 Claude 认的 cwd）会
+    名字一旦对不上，Codex 那条（相对路径 `./mcp/launch`、没有 Claude 认的 cwd）会
     作为第二个 server 被 Claude Code 起一遍并失败——2.1.283 实测：
     `plugin:tavotto:tavotto: ./mcp/launch.cmd ./mcp/server.py - ✘ Failed to connect`。
     """
@@ -83,6 +83,9 @@ def test_server_entry_is_the_codex_launcher_in_claude_form(manifest, codex_entry
     assert set(entry) == {"type", "command", "args", "timeout"}
     for value in (entry["command"], *entry["args"]):
         assert (PLUGIN / value.removeprefix(f"{ROOT_VAR}/")).is_file(), value
+    # Windows 上 cross-spawn 按 PATHEXT 把 command 解析成同目录的 `.cmd` 半边（#720）
+    command = PLUGIN / entry["command"].removeprefix(f"{ROOT_VAR}/")
+    assert command.with_name(command.name + ".cmd").is_file()
 
 
 def test_skills_load_from_the_default_location(manifest):
@@ -104,6 +107,8 @@ def test_marketplace_points_at_the_release_branch():
         "path": brand.CODEX_PLUGIN_SUBDIR,
         "ref": brand.CODEX_PLUGIN_STABLE_BRANCH,
     }
+    # 市场与条目上给人看的仓库地址也只有一个出处
+    assert data["owner"]["url"] == entry["homepage"] == brand.REPO_URL
     # 版本只在 plugin.json 里：两处都写时 plugin.json 赢，validate 还要警告
     assert "version" not in entry
     assert (ROOT / brand.CLAUDE_SPARSE_PATHS[0] / "marketplace.json") == MARKETPLACE

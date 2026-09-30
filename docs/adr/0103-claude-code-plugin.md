@@ -26,6 +26,10 @@ Claude Code 早已能用 Tavotto：`integrations/configure.py --host claude-code
    ENOENT——2.1.283 实测，名字对不上时两条都在、Codex 那条失败。所以 Claude 条目是同一个启动器
    换成 `${CLAUDE_PLUGIN_ROOT}/` 绝对路径、超时由 `tool_timeout_sec` 换算成毫秒，不带任何
    Codex 专有字段。**一份启动器、一个 server.py、一份技能**，两个宿主只差清单。
+   #720 把启动器拆成 `mcp/launch`（sh）+ `mcp/launch.cmd`（纯批处理）后，Claude 条目随 Codex 写成
+   `${CLAUDE_PLUGIN_ROOT}/mcp/launch`：macOS / Linux 直接执行它（100755）；Windows 上 Claude Code
+   经 cross-spawn 起 stdio server，按 PATHEXT 找到同目录的 `launch.cmd` 再交给 `cmd /d /s /c`——与
+   Codex 在 Windows 上的解析是同一条路。
 3. **授权走 MCP roots。** Claude Code 回 `roots/list`（启动目录 + `/add-dir` 加的目录）并发
    `list_changed`，`RootAuthority` 原样接住，不需要 `TAVOTTO_MCP_ROOTS`。实测 `source: mcp_roots`。
 4. **不做**：远程 HTTPS 服务 / connector 上架（桌面聊天与 claude.ai 会忽略插件里的本地 MCP，内嵌画布
@@ -54,5 +58,7 @@ README 的 Claude Code 章节标「(Beta)」，由 `docs/support-matrix.json` �
   PDF 落在项目 `tavottofile/export/`，`verdict: accepted`。
 - 隔离的 `CLAUDE_CONFIG_DIR`：本地 git 仓库模拟 `plugin-stable`，`marketplace add` →
   `install tavotto@tavotto` 成功，缓存里 `launch.cmd` 保留 755，`mcp list` 为 Connected。
+- #720 之后（2026-09-30，Claude Code 2.1.285，macOS）：隔离 `HOME` / `CLAUDE_CONFIG_DIR`，
+  `claude --plugin-dir codex-plugin mcp list` → `plugin:tavotto:tavotto: <插件>/mcp/launch <插件>/mcp/server.py - ✔ Connected`。
 - 尚未做：真正从 GitHub 的 `plugin-stable` 安装（要等本 PR 合入、下一次 promote 把清单带上去）、
   Windows、IDE 扩展与桌面 Code 标签页。

@@ -23,7 +23,7 @@
   "mcpServers": {
     "tavotto": {
       "type": "stdio",
-      "command": "${CLAUDE_PLUGIN_ROOT}/mcp/launch.cmd",
+      "command": "${CLAUDE_PLUGIN_ROOT}/mcp/launch",
       "args": ["${CLAUDE_PLUGIN_ROOT}/mcp/server.py"],
       "timeout": 1800000
     }
