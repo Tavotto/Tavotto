@@ -3091,6 +3091,7 @@ export default interface Resources {
       "colorSourceTitle": "颜色来源",
       "colorSourceUnknown": "{{colorbar}}的颜色来源没有登记成图内对象；组只管归属与布局。",
       "layoutHint": "拖组里任一成员可整组移动；拖组框的手柄可整组缩放。子图、色条保持相对位置。",
+      "layoutIncomplete": "组里有成员这一版拿不到位置，暂时不能整组移动或缩放。",
       "layoutLocked": "组里有成员的位置由 matplotlib 自动决定，不能整组移动或缩放。",
       "layoutMemberLocked": "组里有锁定的成员，整组不能移动或缩放。先在元素树里解锁它。",
       "layoutSyncing": "正在同步图内布局，稍候即可整组缩放。",
@@ -4450,8 +4451,12 @@ export default interface Resources {
       "elementHidden": "已隐藏「{{label}}」，可在「已隐藏元素」里恢复",
       "elementLocked": "已锁定「{{label}}」，画布点击将跳过它",
       "elementsHidden_other": "已隐藏 {{count}} 个元素，可在「已隐藏元素」里恢复",
-      "figureGroupLocked": "组里有锁定的成员，先解锁才能整组移动或缩放",
       "geometrySyncing": "正在同步图形几何，请稍候再试",
+      "groupBlocked": {
+        "incomplete": "组里有成员这一版拿不到位置，暂时不能整组移动或缩放",
+        "locked": "组里有锁定的成员，先解锁才能整组移动或缩放",
+        "notResizable": "组里有成员的位置由 matplotlib 自动决定，不能整组移动或缩放"
+      },
       "grouped_other": "已成组 {{count}} 个对象，点任一成员会整组选中",
       "inserted": "已插入{{name}}（{{undo}} 可撤销）",
       "layoutAutoReflowed": "布局组已自动重排（{{undo}} 可撤销）",

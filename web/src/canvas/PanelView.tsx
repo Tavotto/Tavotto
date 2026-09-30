@@ -9,9 +9,9 @@ import { useRetryingSrc } from '@/lib/imgRetry'
 import { engineTransport } from '@/lib/engineTransport'
 import {
   alignEntries,
+  blockedGroupsIn,
   entryUnder,
   geomGid,
-  lockedGroupsIn,
   segIntersectsRect,
   selectionHasGroup,
 } from '@/lib/elementGeom'
@@ -67,7 +67,7 @@ import {
   guardStale,
   isElementHidden,
   pickElement,
-  explainLockedGroupDrag,
+  explainBlockedGroupDrag,
   startElementGroupMove,
   startInFigureDrag,
   trackPointer,
@@ -731,11 +731,16 @@ function ElementHitLayer({
     // 组的「任一成员」含成员子图里的东西（线、标题、图例…，`entryUnder` 沿真实父级找）；
     // 普通多选仍只认点到的正是选中的那一个
     const groupSelected = selectionHasGroup(manifest, ui.selectedGids)
-    // 选中的组有锁定成员（整组不动，`groupHasLocked`）而按在组里：点一下照常钻进去，
-    // 拖起来只说为什么——不落到下面的单选分派、把没锁的那个成员单独拖走
-    const locked = groupSelected ? lockedGroupsIn(manifest, ui.selectedGids, obj.lockedGids) : []
-    if (hit && manifest && locked.length && entryUnder(manifest, locked.flatMap((g) => g.members), hit)) {
-      explainLockedGroupDrag(e, () => useUiStore.getState().setSelectedGid(hit.gid))
+    // 选中的组不能整体变换（`groupTransformBlocked`：锁定 / 落位不归 Tavotto 管 / 成员不全）
+    // 而按在组里：点一下照常钻进去，拖起来按原因说一句——不落到下面的单选分派、把能动的
+    // 那个成员单独拖走
+    const blocked = groupSelected ? blockedGroupsIn(obj, manifest, ui.selectedGids) : []
+    const blockedHit =
+      hit && manifest
+        ? blocked.find((b) => entryUnder(manifest, b.group.members, hit) !== null)
+        : undefined
+    if (hit && blockedHit) {
+      explainBlockedGroupDrag(e, blockedHit.reason, () => useUiStore.getState().setSelectedGid(hit.gid))
       return
     }
     if (hit && manifest && (ui.selectedGids.length > 1 || groupSelected)) {

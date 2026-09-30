@@ -164,7 +164,7 @@ export function geomTarget(
 }
 
 /** 元素当前的 axes position（优先取尚未渲染回来的 override） */
-export function positionOf(panel: PanelObject, el: ManifestElement): Rect4 | null {
+export function positionOf(panel: Pick<PanelObject, 'overrides'>, el: ManifestElement): Rect4 | null {
   const ov = effectiveOverride(panel.overrides, el.gid, 'position')
   if (ov && Array.isArray(ov.value)) return (ov.value as number[]).slice(0, 4) as Rect4
   const f = el.editable.find((x) => x.prop === 'position')
@@ -248,45 +248,67 @@ export interface AlignEntry extends AlignItem {
 }
 
 /**
- * 组里有被锁定的成员（成员本身，或共享的那条色条元素——锁的是它、几何在色条轴上）。
- * 这样的组**整组不变换**：共享色条组的意义就是成员一起动，只挪没锁的那几个会把色条与
- * 子图拆开；与画布对象的组「组内有锁定成员整组不动」（`store/actions.movableTargets`）同一条规则。
+ * 组**不能整体变换**的原因（`groupTransformBlocked`）。整组不动、不拆开：共享色条组的意义就是
+ * 成员一起动，只挪能动的那几个会把色条与子图拆开——与画布对象的组「组内有锁定成员整组不动」
+ * （`store/actions.movableTargets`）同一条规则。新的原因只往这里加，调用方按 reason 说话。
+ *
+ * - `not_resizable`：有成员落位不归 Tavotto 管（插图、寄生轴；引擎的 `group.resizable`）；
+ * - `locked`：有成员被元素树锁住（成员本身，或共享的那条色条元素——锁的是它、几何在色条轴上）；
+ * - `incomplete`：有成员在这一版里拿不到可写的落位（不在元素表里、不可对齐、没有 position）——
+ *   `alignEntries` 会静默跳过它，剩下的照样成组平移，组就被拆开了。
  */
-export const groupHasLocked = (group: ManifestGroup, locked: readonly string[] = []): boolean =>
-  locked.length > 0 && [...group.members, group.colorbar_gid].some((g) => locked.includes(g))
+export type GroupBlockReason = 'not_resizable' | 'locked' | 'incomplete'
 
-/** 选区里因为有锁定成员而整组不动的组（调用方据此说出来） */
-export const lockedGroupsIn = (
+export function groupTransformBlocked(
+  panel: Pick<PanelObject, 'lockedGids' | 'overrides'>,
+  manifest: Manifest,
+  group: ManifestGroup,
+): GroupBlockReason | null {
+  if (!group.resizable) return 'not_resizable'
+  const locked = panel.lockedGids ?? []
+  if ([...group.members, group.colorbar_gid].some((g) => locked.includes(g))) return 'locked'
+  for (const gid of group.members) {
+    const el = manifest.elements.find((e) => e.gid === gid)
+    if (!el || !isAlignable(el) || !el.resizable) return 'incomplete'
+    if (!positionOf(panel, geomTarget(manifest, el))) return 'incomplete'
+  }
+  return null
+}
+
+/** 选区里不能整体变换的组与原因（调用方据此说出来） */
+export const blockedGroupsIn = (
+  panel: Pick<PanelObject, 'lockedGids' | 'overrides'> | null | undefined,
   manifest: Manifest | null | undefined,
   gids: readonly string[],
-  locked: readonly string[] = [],
-): ManifestGroup[] =>
-  (manifest?.groups ?? []).filter((g) => gids.includes(g.gid) && groupHasLocked(g, locked))
+): { group: ManifestGroup; reason: GroupBlockReason }[] =>
+  !panel || !manifest
+    ? []
+    : (manifest.groups ?? []).flatMap((group) => {
+        if (!gids.includes(group.gid)) return []
+        const reason = groupTransformBlocked(panel, manifest, group)
+        return reason ? [{ group, reason }] : []
+      })
 
 /**
  * 选区里的组展开成它的成员（`Manifest.groups`）。组自己没有几何属性：整组平移 / 缩放
  * 就是成员（子图 + 共享的色条轴）按同一个参照框一起变换，每个成员写自己那条 position。
- * 两种组不展开（展开为空 = 整组不动）：有成员落位不归 Tavotto 管（`resizable: false`）——
- * 只挪一部分会拆散它；有成员被锁定（`groupHasLocked`）。
+ * 不能整体变换的组（`groupTransformBlocked` 有原因）展开为空 = 整组不动。
  *
- * **锁定只在这里判一次**：拖动（PanelView → `alignEntries`）、组框手柄（OverlaySvg →
+ * **判据只在这里用一次**：拖动（PanelView → `alignEntries`）、组框手柄（OverlaySvg →
  * `resolveGroup`）、属性页的整组缩放（GroupPage / ElementInspector → `resolveGroup` /
- * `alignEntries`）、方向键微调（`nudge.moverFor`）都经这一个出口，输入方式不同、锁定语义相同。
+ * `alignEntries`）、方向键微调（`nudge.moverFor`）都经这一个出口；要说出原因的（拖起来、
+ * 按方向键、组页）用同一个判据的 `blockedGroupsIn`。
  */
 export function expandGroups(
+  panel: Pick<PanelObject, 'lockedGids' | 'overrides'>,
   manifest: Manifest,
   gids: readonly string[],
-  locked: readonly string[] = [],
 ): string[] {
   if (!manifest.groups?.length) return [...gids]
   const out: string[] = []
   for (const gid of gids) {
     const group = manifest.groups.find((g) => g.gid === gid)
-    const parts = group
-      ? group.resizable && !groupHasLocked(group, locked)
-        ? group.members
-        : []
-      : [gid]
+    const parts = group ? (groupTransformBlocked(panel, manifest, group) ? [] : group.members) : [gid]
     for (const g of parts) if (!out.includes(g)) out.push(g)
   }
   return out
@@ -335,7 +357,7 @@ export function alignEntries(
   const out: AlignEntry[] = []
   const seen = new Set<string>()
 
-  for (const gid of expandGroups(manifest, gids, panel.lockedGids ?? [])) {
+  for (const gid of expandGroups(panel, manifest, gids)) {
     const el = manifest.elements.find((e) => e.gid === gid)
     if (!el || !isAlignable(el)) continue
     const key = geomGid(el)

@@ -196,17 +196,41 @@ describe('选中组 → 组页', () => {
     expect(document.querySelector('[data-group-page] [data-scale-apply]')).not.toBeNull()
   })
 
-  it.each([['axes_2'], ['axes_3.colorbar']])(
-    '组里锁住了 %s：整组缩放不摆，说清楚先解锁（与拖动 / 组框手柄 / 方向键同一条规则）',
-    async (locked) => {
+  /** 组不能整体变换的几种来路（`groupTransformBlocked`）：manifest 变体 + 面板上锁住的元素 */
+  const blockedCases = [
+    ['锁住子图 3', 'locked', 'layoutMemberLocked', manifest, ['axes_2']],
+    ['锁住共享的色条元素', 'locked', 'layoutMemberLocked', manifest, ['axes_3.colorbar']],
+    [
+      '成员落位不归 Tavotto 管（resizable: false）',
+      'not_resizable',
+      'layoutLocked',
+      { ...manifest, groups: [{ ...manifest.groups![0], resizable: false }] },
+      [],
+    ],
+    [
+      '成员这一版没有 position',
+      'incomplete',
+      'layoutIncomplete',
+      {
+        ...manifest,
+        elements: manifest.elements.map((e) => (e.gid === 'axes_2' ? { ...e, editable: [] } : e)),
+      },
+      [],
+    ],
+  ] as const
+
+  it.each(blockedCases)(
+    '%s：整组缩放不摆，按原因说清楚（与拖动 / 组框手柄 / 方向键同一个判据）',
+    async (_name, reason, key, m, locked) => {
       useDocumentStore.getState().commit(literal('锁定'), (d) => {
-        ;(d.objects[0] as PanelObject).lockedGids = [locked]
+        ;(d.objects[0] as PanelObject).lockedGids = [...locked]
       })
+      seedExactRender(useDocumentStore.getState().doc.objects[0] as PanelObject, m as never)
       await mount(GROUP)
       expect(document.querySelector('[data-group-page] [data-scale-apply]')).toBeNull()
-      expect(document.querySelector('[data-group-member-locked]')?.textContent).toBe(
-        t('modelGroup.layoutMemberLocked', { ns: 'inspector' }),
-      )
+      const note = document.querySelector('[data-group-blocked]') as HTMLElement | null
+      expect(note?.dataset.groupBlocked).toBe(reason)
+      expect(note?.textContent).toBe(t(`modelGroup.${key}`, { ns: 'inspector' }))
     },
   )
 })

@@ -634,7 +634,8 @@
     "membersTitle_other": "Members ({{count}})",
     "selectColorSource": "Select “{{label}}”",
     "sharedColorbar": "Shared colorbar group ({{members}})",
-    "layoutMemberLocked": "A member of this group is locked, so the group can't be moved or scaled. Unlock it in the element tree first."
+    "layoutMemberLocked": "A member of this group is locked, so the group can't be moved or scaled. Unlock it in the element tree first.",
+    "layoutIncomplete": "Some members have no position in this render, so the group can't be moved or scaled right now."
   },
   "objectActions": "Object actions",
   "overlay": "Overlay",

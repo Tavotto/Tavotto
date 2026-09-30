@@ -293,7 +293,7 @@ describe('组展开成成员：几何只写成员自己的 position', () => {
   })
 
   it('有成员落位不归 Tavotto 管的组不展开（只挪一部分会拆散它）', () => {
-    expect(expandGroups(manifest({ resizable: false }), [GROUP])).toEqual([])
+    expect(expandGroups(panel(), manifest({ resizable: false }), [GROUP])).toEqual([])
     expect(resolveGroup(panel(), manifest({ resizable: false }), [GROUP])).toBeNull()
   })
 })
@@ -409,50 +409,74 @@ describe('组框手柄 = 整组缩放', () => {
   })
 })
 
-describe('组里有锁定成员 = 整组不动（拖动 / 组框手柄 / 属性页缩放 / 方向键同一条规则）', () => {
-  // 锁子图（C）或锁共享的色条元素（几何在色条轴上）都算
-  it.each([['axes_2'], ['axes_3.colorbar']])(
-    '锁住 %s：拖组里没锁的成员不写任何 position，说出是锁定挡住的；选区仍是组',
-    async (locked) => {
-      lock([locked])
+/**
+ * 组不能整体变换的全部来路（`groupTransformBlocked`）：锁住子图 / 锁住共享的色条元素、成员落位
+ * 不归 Tavotto 管（`resizable: false`）、成员这一版没有 position（`alignEntries` 会静默跳过它、
+ * 剩下的照样成组走——组被拆开）。每一种都要：拖不动并按原因说、只点照常钻进去、没有组框手柄。
+ */
+const incomplete = (): Manifest => {
+  const m = manifest()
+  return { ...m, elements: m.elements.map((e) => (e.gid === 'axes_2' ? { ...e, editable: [] } : e)) }
+}
+const BLOCKED = [
+  ['锁住子图 3', 'groupBlocked.locked', manifest, ['axes_2']],
+  ['锁住共享的色条元素', 'groupBlocked.locked', manifest, ['axes_3.colorbar']],
+  ['成员落位不归 Tavotto 管', 'groupBlocked.notResizable', () => manifest({ resizable: false }), []],
+  ['成员这一版没有 position', 'groupBlocked.incomplete', incomplete, []],
+] as const
+
+describe('组不能整体变换 = 整组不动（拖动 / 组框手柄 / 属性页缩放 / 方向键同一个判据）', () => {
+  it.each(BLOCKED)(
+    '%s：拖组里能动的成员不写任何 position，按原因说；选区仍是组',
+    async (_name, key, m, locked) => {
+      await setup(m())
+      lock([...locked])
       await mount()
       act(() => useUiStore.getState().setSelectedGid(GROUP))
       await drag(ON_B, 40)
       expect(livePanel().overrides).toEqual([])
       expect(useDocumentStore.getState().past).toHaveLength(0)
-      expect(statusText()).toContain('figureGroupLocked')
+      expect(statusText()).toContain(key)
       expect(useUiStore.getState().selectedGids).toEqual([GROUP])
     },
   )
 
-  it('锁住一个成员时点组里的东西不拖：照常钻进去选中它，不提示', async () => {
-    lock(['axes_2'])
+  it.each(BLOCKED)('%s：点组里的东西不拖 = 照常钻进去选中它，不提示', async (_name, key, m, locked) => {
+    await setup(m())
+    lock([...locked])
     await mount()
     act(() => useUiStore.getState().setSelectedGid(GROUP))
     useUiStore.setState({ status: null })
     await drag(ON_C_LINE, 0)
     expect(useUiStore.getState().selectedGids).toEqual(['axes_2.lines_0'])
-    expect(statusText()).not.toContain('figureGroupLocked')
+    expect(statusText()).not.toContain(key)
   })
 
-  it('组框手柄：没锁时 8 个，锁住一个成员后一个都不给；组的参照框也不再解析', async () => {
-    const handles = async () => {
-      const box = document.createElement('div')
-      document.body.appendChild(box)
-      const r = createRoot(box)
-      await act(async () => r.render(<OverlaySvg />))
-      const n = box.querySelectorAll('[data-element-handle]').length
-      await act(async () => r.unmount())
-      box.remove()
-      return n
-    }
+  const handles = async () => {
+    const box = document.createElement('div')
+    document.body.appendChild(box)
+    const r = createRoot(box)
+    await act(async () => r.render(<OverlaySvg />))
+    const n = box.querySelectorAll('[data-element-handle]').length
+    await act(async () => r.unmount())
+    box.remove()
+    return n
+  }
+
+  it('对照：能整体变换的组有 8 个组框手柄', async () => {
     // 手柄只画在已经挂上画面的那一版上（`useDisplayedExactManifest`）：先把面板挂上
     await mount()
     act(() => useUiStore.getState().setSelectedGid(GROUP))
     expect(await handles()).toBe(8)
-    lock(['axes_1'])
+  })
+
+  it.each(BLOCKED)('%s：组框手柄一个都不给，组的参照框也不再解析', async (_name, _key, m, locked) => {
+    await setup(m())
+    lock([...locked])
+    await mount()
+    act(() => useUiStore.getState().setSelectedGid(GROUP))
     expect(await handles()).toBe(0)
-    expect(resolveGroup(livePanel(), manifest(), [GROUP])).toBeNull()
-    expect(alignEntries(livePanel(), manifest(), [GROUP])).toEqual([])
+    expect(resolveGroup(livePanel(), m(), [GROUP])).toBeNull()
+    expect(alignEntries(livePanel(), m(), [GROUP])).toEqual([])
   })
 })

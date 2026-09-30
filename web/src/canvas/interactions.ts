@@ -38,6 +38,7 @@ import {
   type AlignEntry,
   type CarriedItem,
   type Group,
+  type GroupBlockReason,
 } from '@/lib/elementGeom'
 import { newId } from '@/lib/id'
 import {
@@ -1445,18 +1446,32 @@ export function immovableMessage(el: ManifestElement): UiMessage {
   )
 }
 
+/** 组不能整体变换时说的那句（按原因；拖动、方向键共用） */
+const GROUP_BLOCKED_STATUS: Record<GroupBlockReason, string> = {
+  not_resizable: 'status.groupBlocked.notResizable',
+  locked: 'status.groupBlocked.locked',
+  incomplete: 'status.groupBlocked.incomplete',
+}
+export const groupBlockedMessage = (reason: GroupBlockReason): UiMessage =>
+  msg(GROUP_BLOCKED_STATUS[reason], undefined, 'workspace')
+
 /**
- * 选中的组因为有锁定成员整组不动（`elementGeom.groupHasLocked`），又在组里按下：点一下
- * 照常钻进去选中点到的那个（`onTap`）；**真的拖起来**才说一句为什么，一次手势只说一次。
- * 不写文档、不进历史——与 `explainImmovableDrag` 同一个形状，方向键微调说的是同一句。
+ * 选中的组不能整体变换（`elementGeom.groupTransformBlocked`），又在组里按下：点一下照常钻进去
+ * 选中点到的那个（`onTap`）；**真的拖起来**才按原因说一句，一次手势只说一次。不写文档、不进
+ * 历史，也不落到单选分派把能动的那个成员单独拖走——与 `explainImmovableDrag` 同一个形状，
+ * 方向键微调说的是同一句。
  */
-export function explainLockedGroupDrag(e: ReactPointerEvent, onTap: () => void) {
+export function explainBlockedGroupDrag(
+  e: ReactPointerEvent,
+  reason: GroupBlockReason,
+  onTap: () => void,
+) {
   let told = false
   trackPointer(e, {
     onMove: () => {
       if (told) return
       told = true
-      useUiStore.getState().setStatus(msg('status.figureGroupLocked', undefined, 'workspace'))
+      useUiStore.getState().setStatus(groupBlockedMessage(reason))
     },
     onEnd: (moved, _ev, end) => {
       if (!moved && !end.cancelled) onTap()

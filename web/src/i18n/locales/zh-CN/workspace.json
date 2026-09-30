@@ -685,7 +685,11 @@
     "panelRebuilt": "已按源脚本重新构建",
     "panelRerenderedNoRerun": "已按当前修改重新渲染；源脚本没有重跑",
     "rebuildFailed": "无法重新构建。{{error}}",
-    "figureGroupLocked": "组里有锁定的成员，先解锁才能整组移动或缩放"
+    "groupBlocked": {
+      "notResizable": "组里有成员的位置由 matplotlib 自动决定，不能整组移动或缩放",
+      "locked": "组里有锁定的成员，先解锁才能整组移动或缩放",
+      "incomplete": "组里有成员这一版拿不到位置，暂时不能整组移动或缩放"
+    }
   },
   "tabs": {
     "allCanvases": "全部画布",

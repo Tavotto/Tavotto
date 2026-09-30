@@ -3,7 +3,7 @@ import { ChevronRight } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import type { Manifest, ManifestGroup } from '@/lib/api'
-import { groupHasLocked, resolveGroup } from '@/lib/elementGeom'
+import { groupTransformBlocked, resolveGroup, type GroupBlockReason } from '@/lib/elementGeom'
 import { useExactPanelManifest, usePanelRender } from '@/store/renderStore'
 import { useUiStore } from '@/store/uiStore'
 import type { PanelObject } from '@/types/document'
@@ -15,6 +15,13 @@ import { roleIcon } from './roles/roleIcons'
 import { engineLabel } from './roles/registry'
 
 /** 本文件的文案在 inspector:modelGroup.* 下 */
+/** 组页布局一节按「不能整体变换」的原因说的话 */
+const GROUP_BLOCKED_LAYOUT: Record<GroupBlockReason, string> = {
+  not_resizable: 'layoutLocked',
+  locked: 'layoutMemberLocked',
+  incomplete: 'layoutIncomplete',
+}
+
 const gt = (key: string, values?: Record<string, unknown>) =>
   translate(`modelGroup.${key}`, { ns: 'inspector', ...(values ?? {}) })
 
@@ -60,6 +67,10 @@ export function GroupPage({
   useTranslation('inspector')
   const exactManifest = useExactPanelManifest(panel)
   const layout = exactManifest ? resolveGroup(panel, exactManifest, [group.gid]) : null
+  // 不能整体变换的原因：与拖动 / 组框手柄 / 方向键同一个判据。「成员不全」只按权威那一份判，
+  // 权威没到时先说同步中（非权威的元素表可能正缺着成员）
+  const reason = groupTransformBlocked(panel, exactManifest ?? manifest, group)
+  const blocked = !exactManifest && reason === 'incomplete' ? null : reason
   const select = (gid: string) => useUiStore.getState().setSelectedGid(gid)
   const colorbar = manifest.elements.find((e) => e.gid === group.colorbar_gid)
   const mappable = group.mappable_gid
@@ -125,12 +136,10 @@ export function GroupPage({
       )}
 
       <Section plainTitle title={translate('group.layout', { ns: 'inspector' })}>
-        {!group.resizable ? (
-          <p className="text-xs leading-relaxed text-ink-3">{gt('layoutLocked')}</p>
-        ) : groupHasLocked(group, panel.lockedGids) ? (
-          // 有锁定成员整组不动（`elementGeom.groupHasLocked`）：缩放控件不摆，说清楚要先解锁
-          <p className="text-xs leading-relaxed text-ink-3" data-group-member-locked>
-            {gt('layoutMemberLocked')}
+        {blocked ? (
+          // 整组不能变换：缩放控件不摆，按原因说清楚
+          <p className="text-xs leading-relaxed text-ink-3" data-group-blocked={blocked}>
+            {gt(GROUP_BLOCKED_LAYOUT[blocked])}
           </p>
         ) : !layout ? (
           <p className="text-xs leading-relaxed text-ink-3">{gt('layoutSyncing')}</p>

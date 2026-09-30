@@ -589,15 +589,35 @@ describe('图内元素：与拖动同一套移动规则', () => {
     expect(past()).toHaveLength(1)
   })
 
-  it('选中的组里有锁定成员：整组不动（不是只挪没锁的那几个），说出是锁定挡住的', async () => {
-    await setup({ manifest: groupManifest, panel: { lockedGids: ['axes_1'] } as Partial<PanelObject> })
-    editFigure([GROUP])
-    tap('ArrowRight', { shiftKey: true })
-    settle()
-    expect(livePanel().overrides).toHaveLength(0)
-    expect(past()).toHaveLength(0)
-    expect(status()).toContain('figureGroupLocked')
-  })
+  it.each([
+    ['锁住一个成员', 'groupBlocked.locked', groupManifest, ['axes_1']],
+    [
+      '成员落位不归 Tavotto 管',
+      'groupBlocked.notResizable',
+      { ...groupManifest, groups: [{ ...groupManifest.groups![0], resizable: false }] },
+      [],
+    ],
+    [
+      '成员这一版没有 position',
+      'groupBlocked.incomplete',
+      {
+        ...groupManifest,
+        elements: groupManifest.elements.map((e) => (e.gid === 'axes_1' ? { ...e, editable: [] } : e)),
+      },
+      [],
+    ],
+  ] as [string, string, Manifest, string[]][])(
+    '选中的组不能整体变换（%s）：整组不动（不是只挪能动的那几个），按原因说',
+    async (_name, key, m, locked) => {
+      await setup({ manifest: m, panel: { lockedGids: locked } as Partial<PanelObject> })
+      editFigure([GROUP])
+      tap('ArrowRight', { shiftKey: true })
+      settle()
+      expect(livePanel().overrides).toHaveLength(0)
+      expect(past()).toHaveLength(0)
+      expect(status()).toContain(key)
+    },
+  )
 
   it('锁定的图内元素、不能拖的元素：不动，并说出来', async () => {
     await setup({ panel: { lockedGids: [title.gid] } as Partial<PanelObject> })
