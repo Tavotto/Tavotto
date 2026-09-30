@@ -124,9 +124,20 @@ def test_new_staging_must_carry_the_claude_manifest():
     assert ".claude-plugin/plugin.json" not in pluginmanifest.REQUIRED
 
 
-def test_readme_install_lines_come_from_brand():
-    """README 的两条安装命令整行等于由常量拼出来的那两行（整行相等，不是包含）。"""
-    lines = [ln.strip() for ln in (ROOT / "README.md").read_text(encoding="utf-8").splitlines()]
+def _claude_code_status() -> str:
+    matrix = json.loads((ROOT / "docs" / "support-matrix.json").read_text(encoding="utf-8"))
+    (host,) = [h for h in matrix["mcp_hosts"]["hosts"] if h["id"] == "claude-code"]
+    return host["status"]
+
+
+def test_install_lines_are_published_where_the_matrix_says():
+    """两条安装命令整行等于由常量拼出来的那两行，放在哪由支持矩阵的这一档决定（2026-09-30 用户决定）。
+
+    * `beta`：plugin-stable 已带清单，README 给出这两行（整行相等，不是包含）；
+    * 其它：plugin-stable 还没带 `.claude-plugin/`，照 README 装会坏，所以 README **一行都不许有**，
+      两行只在待发说明 `UNRELEASED.md` 里等发版。发版时把 README 一节加回、矩阵改回 beta——
+      漏了哪一步，这里或 `test_beta_label_follows_the_matrix_and_its_evidence` 就红。
+    """
     expected = [
         " ".join(
             [
@@ -137,8 +148,16 @@ def test_readme_install_lines_come_from_brand():
         ),
         f"claude plugin install {brand.CLAUDE_PLUGIN_REF}",
     ]
+    lines = [ln.strip() for ln in (ROOT / "README.md").read_text(encoding="utf-8").splitlines()]
     found = [ln for ln in lines if re.match(r"claude plugin (marketplace add|install) ", ln)]
-    assert found == expected
+    if _claude_code_status() == "beta":
+        assert found == expected
+        return
+    assert found == []
+    pending = (ROOT / "docs" / "release-notes" / "UNRELEASED.md").read_text(encoding="utf-8")
+    pending = re.sub(r"\s+", " ", pending)
+    for line in expected:
+        assert f"`{line}`" in pending, f"待发说明里没有 {line!r}：发版时 README 拿什么加回去"
 
 
 @pytest.mark.skipif(shutil.which("claude") is None, reason="本机没有 Claude Code CLI")

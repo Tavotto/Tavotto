@@ -83,8 +83,7 @@
       },
       {
         "id": "claude-code",
-        "status": "beta",
-        "channel": "claude-plugin"
+        "status": "experimental"
       },
       {
         "id": "claude-desktop",

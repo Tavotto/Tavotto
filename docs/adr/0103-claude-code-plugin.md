@@ -43,11 +43,18 @@ README 的 Claude Code 章节标「(Beta)」，由 `docs/support-matrix.json` �
 `local_smoke`；`tests/test_mcp_host_profiles.py::test_beta_label_follows_the_matrix_and_its_evidence` 三向对拍。
 配置生成器那条路仍是实验。
 
+**2026-09-30 用户改为先合代码、README 暂不给安装方式**：plugin-stable 在下一次 promote 之前没有
+`.claude-plugin/`，main 上的 README 若先给出命令，照着装会坏。所以合入时 README 不含这一节、矩阵里
+`claude-code` 仍是 `experimental`（beta 档说的是「这条渠道能装」，此刻它还不能）；两条命令完整留在
+`docs/release-notes/UNRELEASED.md` 那一段，发版时随段落搬走的同时把 README 一节加回、矩阵改回 `beta` +
+`channel: claude-plugin`。`tests/test_claude_plugin.py::test_install_lines_are_published_where_the_matrix_says`
+按矩阵这一档判命令该在 README 还是在待发说明，两边都钉。
+
 ## 看护
 
 `tests/test_claude_plugin.py`：身份与版本随 Codex 清单与产品；server 名覆盖 `.mcp.json`；条目是
 启动器的 Claude 写法（毫秒超时、无 Codex 字段、文件真在）；技能用默认位置；市场指向发行分支；
-`STAGE_REQUIRED`；README 两条命令由 `brand.CLAUDE_*` 拼出；本机有 `claude` 时跑
+`STAGE_REQUIRED`；两条安装命令由 `brand.CLAUDE_*` 拼出（矩阵 beta 时在 README，此前只在待发说明）；本机有 `claude` 时跑
 `claude plugin validate --strict`。九条变异（改名、秒当毫秒、加 `cwd`、相对 command、版本漂、
 摘掉 staging 要求、ref 改 main、README 少 `--sparse`、写 `skills` 键）各自打红。
 
