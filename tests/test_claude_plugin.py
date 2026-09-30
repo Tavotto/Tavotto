@@ -202,9 +202,23 @@ def test_install_lines_are_published_where_the_matrix_says():
 
 def test_workbuddy_section_installs_the_same_plugin_from_brand():
     """WorkBuddy 章节（ADR 0109）：「添加市场」那一格填的整行就是 `brand.WORKBUDDY_MARKETPLACE`，装的是
-    `brand.CLAUDE_PLUGIN_REF`——同一份市场、同一个插件，不另起名字。"""
-    text = (ROOT / "README.md").read_text(encoding="utf-8")
-    section = text.split("### Using Tavotto with WorkBuddy (Beta)", 1)[1].split("\n### ", 1)[0]
+    `brand.CLAUDE_PLUGIN_REF`——同一份市场、同一个插件，不另起名字。
+
+    这一节在哪由支持矩阵 workbuddy 这一档决定（2026-09-30 用户决定，与 Claude Code / DSH 同一条）：`beta` 时在
+    README；此前 plugin-stable 还没带清单，README 里不许有，原文在待发说明里等发版——两处用同一套检查。
+    """
+    heading = "### Using Tavotto with WorkBuddy (Beta)"
+    matrix = json.loads((ROOT / "docs" / "support-matrix.json").read_text(encoding="utf-8"))
+    (host,) = [h for h in matrix["mcp_hosts"]["hosts"] if h["id"] == "workbuddy"]
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    if host["status"] == "beta":
+        text = readme
+    else:
+        assert "### Using Tavotto with WorkBuddy" not in readme
+        text = (ROOT / "docs" / "release-notes" / "UNRELEASED.md").read_text(encoding="utf-8")
+    # 按整行找标题：待发说明的恢复步骤里也会提到这个标题
+    assert f"\n{heading}\n" in text, "这一节既不在 README 也不在待发说明里"
+    section = text.split(f"\n{heading}\n", 1)[1].split("\n### ", 1)[0].split("\n-->", 1)[0]
     blocks = re.findall(r"```text\n(.*?)\n```", section, flags=re.S)
     assert blocks == [brand.WORKBUDDY_MARKETPLACE]
     assert f"`{brand.CLAUDE_PLUGIN_REF}`" in section

@@ -79,8 +79,7 @@
       },
       {
         "id": "workbuddy",
-        "status": "beta",
-        "channel": "claude-plugin"
+        "status": "experimental"
       },
       {
         "id": "claude-code",

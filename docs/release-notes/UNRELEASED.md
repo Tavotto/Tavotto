@@ -112,6 +112,41 @@ If the `tavotto` engine installed with pip or pipx was too old for the plugin, t
 
 ## WorkBuddy plugin (Beta), and more hosts
 
+<!-- 发版时（2026-09-30 用户决定）：WorkBuddy 与 Claude Code / DSH 一样，README 在 plugin-stable 带上
+`.claude-plugin/` 之前不给装法。09-28 用户定的「只有 WorkBuddy 标 Beta（ZCode 缺登录后的实测，仍是实验）」不推翻，
+只是推迟到发版生效。搬这一段的同时：
+1. 把下面「### Using Tavotto with WorkBuddy (Beta)」一节加回 README（Claude Code、DSH 两节之后，「### Using Tavotto
+   from other AI editors and clients (experimental)」之前；「添加市场」那格整行是 `brand.WORKBUDDY_MARKETPLACE`）；
+2. docs/support-matrix.json 的 workbuddy 改回 `status: beta` + `channel: claude-plugin`；
+3. codex-plugin/integrations/configure.py 里 workbuddy 的 target 那句改回「更省事的是装插件（README「Using Tavotto
+   with WorkBuddy」的两条命令），就不需要这段配置；」；
+4. 技能 codex-plugin/skills/tavotto-figure/references/other-hosts.md 加回「**WorkBuddy 优先走插件**」一段（插件市场
+   「添加市场」填 `Tavotto/Tavotto`，装 `tavotto@tavotto`，没装引擎再 `pipx install "tavotto[worker]"`，新开对话；
+   授权目录是对话的工作目录，别在 HOME 里用）与「**ZCode** 也能从自己的插件市场装同一份插件……但还没在登录后的真
+   会话里跑过；把这一点告诉用户」一段，「其余宿主」那句加上 WorkBuddy；Skill 表把「WorkBuddy / ZCode」拆成
+   「WorkBuddy（插件版）| 新开对话，让它调用 `tavotto_health` | 插件自带，不用复制」与「WorkBuddy / ZCode（配置版）」，
+   DSH 拆成「DSH（bundle）| … | bundle 自带，不用复制」与「DSH（YAML patch）」。原文见 PR #712；
+5. README experimental 段末「Per-host sources … hosts.md`.」之后加回一句：「ZCode can also install the Claude Code
+   plugin above from its own plugin marketplace; that route hasn't been run in a signed-in ZCode session yet.」
+tests/test_claude_plugin.py::test_workbuddy_section_installs_the_same_plugin_from_brand 按矩阵这一档判这一节该在
+README 还是在这里。README 一节的原文：
+
+### Using Tavotto with WorkBuddy (Beta)
+
+WorkBuddy installs the same plugin as Claude Code. In WorkBuddy open the plugin marketplace, choose **Add
+marketplace**, and enter:
+
+```text
+Tavotto/Tavotto
+```
+
+Install `tavotto@tavotto` from the new marketplace, then run `pipx install "tavotto[worker]"` in a terminal. Start a
+new conversation and ask WorkBuddy to call `tavotto_health` to confirm the engine is found. Tavotto may only open and
+write inside the conversation's working folder (WorkBuddy doesn't report MCP roots), so work in your project folder,
+not your home folder. The embedded canvas hasn't been checked in WorkBuddy yet; the tools work without it. If you
+added Tavotto by hand with the config generator below, remove that entry, or you will have two Tavotto servers.
+-->
+
 WorkBuddy installs the same plugin as Claude Code: in WorkBuddy's plugin marketplace choose **Add marketplace**,
 enter `Tavotto/Tavotto`, then install `tavotto@tavotto`. The conversation's working folder is the authorized
 project. If you had added Tavotto to WorkBuddy by hand with the config generator, remove that entry after

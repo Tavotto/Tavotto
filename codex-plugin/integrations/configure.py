@@ -220,7 +220,7 @@ HOSTS: "dict[str, dict]" = {
         "target": [
             "WorkBuddy：插件 → MCP Server → 配置 MCP（编辑 mcp.json），只合并 tavotto 这一项",
             "（不要改 CodeBuddy 的 ~/.codebuddy/mcp.json——那是另一个产品）",
-            "更省事的是装插件（README「Using Tavotto with WorkBuddy」的两条命令），就不需要这段配置；"
+            "已装 Tavotto 的 Claude 插件（WorkBuddy 装的是同一份）就不需要这段配置；"
             "二选一——两样都装会出现两个 Tavotto server",
         ],
         "verify": ["WorkBuddy 的 MCP 列表里 tavotto 为已连接，对话里调用 tavotto_health"],

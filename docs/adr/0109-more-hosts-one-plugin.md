@@ -81,3 +81,11 @@ Trae env 超时 / 一键链接往返 / 空格拒绝、WorkBuddy beta 三向对�
   connected、`toolCount: 10`；`skills list` 有 `tavotto:tavotto-figure`。
 - 都**不是发行件**、不是 GUI 窗口，不算 host_verified；真正从 GitHub 的 `plugin-stable` 安装要等本 PR 与
   #692 / #694 一起合入并 promote。
+
+## 2026-09-30 补记：README 推迟到发版
+
+用户决定 Claude Code / DSH / WorkBuddy 三条一键安装在 plugin-stable promote 之前都不上 README（照着装会坏）。
+WorkBuddy 标 Beta 的决定不变，只是推迟到发版生效：合入时 README 无 WorkBuddy 一节、experimental 段不提 ZCode
+的插件路线、矩阵里 workbuddy 暂为 `experimental`、技能与生成器提示不教装法；原文与恢复步骤在
+`docs/release-notes/UNRELEASED.md` 那一段的注释里。`test_workbuddy_section_installs_the_same_plugin_from_brand`
+按矩阵这一档判这一节该在 README 还是在待发说明。

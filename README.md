@@ -415,21 +415,6 @@ Send Codex this message, in full:
 > plugin and the Tavotto engine it needs, then run the health check; when a new
 > session is required, tell me so explicitly and stop.
 
-### Using Tavotto with WorkBuddy (Beta)
-
-WorkBuddy installs the same plugin as Claude Code. In WorkBuddy open the plugin marketplace, choose **Add
-marketplace**, and enter:
-
-```text
-Tavotto/Tavotto
-```
-
-Install `tavotto@tavotto` from the new marketplace, then run `pipx install "tavotto[worker]"` in a terminal. Start a
-new conversation and ask WorkBuddy to call `tavotto_health` to confirm the engine is found. Tavotto may only open and
-write inside the conversation's working folder (WorkBuddy doesn't report MCP roots), so work in your project folder,
-not your home folder. The embedded canvas hasn't been checked in WorkBuddy yet; the tools work without it. If you
-added Tavotto by hand with the config generator below, remove that entry, or you will have two Tavotto servers.
-
 ### Using Tavotto from other AI editors and clients (experimental)
 
 Cursor, Claude Code, Claude Desktop (local chat), VS Code (GitHub Copilot agent), Trae, DeepSeek Harness,
@@ -466,8 +451,7 @@ is in `docs/implementation/multi-host-mcp/acceptance.md`).
 Only the `--project-root` folder is authorized; your whole home folder or a drive root is refused. To upgrade, unzip
 the new version into a new folder, regenerate the config, and refresh the skill: copy the new `tavotto-figure/`
 over the old copy, or rerun `--emit instructions` and replace the text you pasted before. To roll back, point the config at the old folder again.
-Per-host sources and differences are in `docs/implementation/multi-host-mcp/hosts.md`. ZCode can also install the
-Claude Code plugin above from its own plugin marketplace; that route hasn't been run in a signed-in ZCode session yet.
+Per-host sources and differences are in `docs/implementation/multi-host-mcp/hosts.md`.
 
 ### Desktop
 
