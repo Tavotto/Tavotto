@@ -79,7 +79,7 @@
   问不出再问 `tavotto doctor --json`；「不知道」各是独立一档，不许并进相邻取值。这两格的恢复
   是**升级引擎**（`upgrade_commands`：`pipx upgrade tavotto` / `pipx install --force
   "tavotto[worker]==<版本>"`），不给 `--provision`。pip 的 index-url 指向镜像时
-  （`pip_index`：`PIP_INDEX_URL` + pip 配置文件，只读，地址里的口令抹掉；配置文件的位置（按平台）、
+  （`pip_index`：`PIP_INDEX_URL` + pip 配置文件，只读；说出口的地址只有协议与主机——口令、路径、查询串一律抹掉；配置文件的位置（按平台）、
   编码（本地首选编码）与覆盖顺序照 pip 自己的 `Configuration`；Windows 商店版 Python
   的配置被虚拟化在 `%LOCALAPPDATA%\Packages\PythonSoftwareFoundation.Python.*\LocalCache\Roaming\pip\pip.ini`，
   那几份任一指向非 PyPI 即判镜像；启动器解释器 ≠ 装引擎的解释器时，`effective_pip_index` 再在

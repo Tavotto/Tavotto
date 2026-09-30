@@ -744,23 +744,12 @@ def _pip_config_files(environ) -> "list[tuple[str, str]]":
     return files
 
 
-#: 索引路径里可以原样说出口的段（常见索引路径的固定词）；其余每一段都换成 `***`——私有索引
-#: 常把令牌放在路径里（`https://mirror.example/<token>/simple`，Codex #724 P1）。按白名单留、
-#: 不按「像不像令牌」猜：猜错一次就是泄漏。
-_INDEX_PATH_WORDS = frozenset(
-    {
-        "pypi", "simple", "repository", "repositories", "api", "packages", "package",
-        "index", "pip", "python", "mirrors", "mirror", "web", "artifactory", "nexus",
-        "root", "pub", "public", "org", "pkg", "pkgs", "wheels", "devpi", "legacy",
-    }
-)  # fmt: skip
-
-
 def _redact_url(url: str) -> str:
     """索引地址里可能带凭据：账号口令（`https://user:token@host/simple`）、签名查询串
-    （`https://mirror/simple?token=…`）或路径里的令牌（`https://mirror/<token>/simple`，Codex #724 P1）。
-    说出口之前抹掉——口令换成 `***@`，查询串整段换成 `?***`，路径里不在 `_INDEX_PATH_WORDS` 的段
-    换成 `***`，片段去掉。解析不了的地址不原样交出，只报 `***`。"""
+    （`https://mirror/simple?token=…`）或路径里的令牌（`https://mirror/<token>/simple`）。说出口的只有
+    协议与主机（口令换成 `***@`），路径整段换成 `/***`、查询串换成 `?***`、片段去掉——路径段没有类型，
+    按词判「像不像令牌」总有漏（令牌恰好叫 `api` 也是令牌，Codex #724 P1 两轮）。判镜像只看主机，
+    说哪个镜像也只需要主机。解析不了的地址不原样交出，只报 `***`。"""
     from urllib.parse import urlsplit, urlunsplit  # noqa: PLC0415
 
     try:
@@ -773,10 +762,7 @@ def _redact_url(url: str) -> str:
     netloc = parts.netloc
     if "@" in netloc:
         netloc = "***@" + netloc.rsplit("@", 1)[1]
-    path = "/".join(
-        seg if (not seg or seg.lower() in _INDEX_PATH_WORDS) else "***"
-        for seg in parts.path.split("/")
-    )
+    path = "/***" if parts.path.strip("/") else parts.path
     return urlunsplit(
         parts._replace(netloc=netloc, path=path, query="***" if parts.query else "", fragment="")
     )
@@ -862,7 +848,7 @@ def _is_mirror(url: str) -> bool:
 def pip_index(environ=None) -> "dict | None":
     """pip 现在从哪个索引装包（**只读**：环境变量 + pip 配置文件，不起 pip）。
 
-    回 `{"url": 地址（口令已抹）, "source": 来自哪个文件或 PIP_INDEX_URL, "mirror": bool}`；
+    回 `{"url": 地址（只剩协议与主机，口令 / 路径 / 查询串已抹）, "source": 来自哪个文件或 PIP_INDEX_URL, "mirror": bool}`；
     没有任何配置（= 用 PyPI 默认值）回 None。镜像滞后是 #721 的现场：阿里云镜像上只有
     0.15.0，`pipx install "tavotto[worker]"` 就装到 0.15.0，照常 `pipx upgrade` 也升不上去。
 

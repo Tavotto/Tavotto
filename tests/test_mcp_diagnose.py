@@ -366,6 +366,8 @@ def test_the_version_comparison_import_resolves_in_a_fresh_interpreter(tmp_path)
 #: 落回最宽的那一格 `desktop_only`——对着 pipx 用户说「装的是桌面版」。
 OLD = "0.15.0"
 ALIYUN = "https://mirrors.aliyun.com/pypi/simple/"
+#: 体检里说出口的样子：只有协议与主机，路径整段抹掉（`_redact_url`）
+ALIYUN_SAID = "https://mirrors.aliyun.com/***"
 
 
 def _bin(venv_dir: Path) -> Path:
@@ -568,7 +570,7 @@ def test_health_names_the_old_engine_end_to_end(old_engine, tmp_path):
     report = health()
     assert report["code"] == "engine_too_old", report
     assert report["engine_version"] == OLD and report["min_tavotto_version"] == "0.17.0"
-    assert report["pip_index"] == {"url": ALIYUN, "source": "PIP_CONFIG_FILE", "mirror": True}
+    assert report["pip_index"] == {"url": ALIYUN_SAID, "source": "PIP_CONFIG_FILE", "mirror": True}
     assert "--index-url https://pypi.org/simple" in report["error"]
     assert "--index-url https://pypi.org/simple" in " ".join(report["recovery"])
 
@@ -585,12 +587,12 @@ def test_pip_index_reads_the_env_var_and_config_files(tmp_path):
     base = {"HOME": str(tmp_path), "USERPROFILE": str(tmp_path), "XDG_CONFIG_DIRS": str(tmp_path)}
 
     got = launcher.pip_index({**base, "PIP_CONFIG_FILE": str(conf)})
-    assert got == {"url": ALIYUN, "source": "PIP_CONFIG_FILE", "mirror": True}
+    assert got == {"url": ALIYUN_SAID, "source": "PIP_CONFIG_FILE", "mirror": True}
 
     got = launcher.pip_index(
         {**base, "PIP_CONFIG_FILE": str(conf), "PIP_INDEX_URL": "https://pypi.org/simple"}
     )
-    assert got == {"url": "https://pypi.org/simple", "source": "PIP_INDEX_URL", "mirror": False}
+    assert got == {"url": "https://pypi.org/***", "source": "PIP_INDEX_URL", "mirror": False}
 
     assert launcher.pip_index({**base, "PIP_CONFIG_FILE": os.devnull}) is None
 
@@ -605,7 +607,7 @@ def test_pip_index_never_repeats_credentials(tmp_path):
     )
     assert got["mirror"] is True
     assert "s3cret" not in got["url"] and "alice" not in got["url"]
-    assert got["url"] == "https://***@pypi.corp.example/simple"
+    assert got["url"] == "https://***@pypi.corp.example/***"
 
 
 def test_pip_index_never_repeats_query_credentials(tmp_path):
@@ -619,19 +621,22 @@ def test_pip_index_never_repeats_query_credentials(tmp_path):
     )
     assert got["mirror"] is True
     assert "s3cret" not in got["url"] and "abc" not in got["url"] and "frag" not in got["url"]
-    assert got["url"] == "https://mirror.example/simple?***"
-    assert launcher._redact_url("https://pypi.org/simple") == "https://pypi.org/simple"
+    assert got["url"] == "https://mirror.example/***?***"
+    assert launcher._redact_url("https://pypi.org/simple") == "https://pypi.org/***"
 
 
 def test_pip_index_never_repeats_path_credentials():
-    """私有索引常把令牌放在路径里：只留常见索引路径的固定词，其余每段换成 `***`（Codex #724 P1）。"""
-    got = launcher._redact_url("https://mirror.example/s3cret-t0ken/simple/")
-    assert "s3cret" not in got and got == "https://mirror.example/***/simple/"
-    assert launcher._redact_url(ALIYUN) == ALIYUN, "常见索引路径照原样说出口"
-    assert (
-        launcher._redact_url("https://nexus.corp/repository/pypi-proxy/simple")
-        == "https://nexus.corp/repository/***/simple"
-    )
+    """私有索引常把令牌放在路径里，而路径段没有类型——令牌恰好叫 `api` 也分不出来。所以路径整段抹掉，
+    只说协议与主机（Codex #724 P1 两轮）。"""
+    for url in (
+        "https://mirror.example/s3cret-t0ken/simple/",
+        "https://mirror.example/api/simple",  # `api` 本身就是令牌
+        "https://nexus.corp/repository/pypi-proxy/simple",
+    ):
+        said = launcher._redact_url(url)
+        assert said == url.split("/", 3)[0] + "//" + url.split("/")[2] + "/***", said
+    assert launcher._redact_url("https://mirror.example") == "https://mirror.example"
+    assert launcher._redact_url(ALIYUN) == ALIYUN_SAID
 
 
 def test_pip_index_reads_the_interpreters_site_config(tmp_path, monkeypatch):
@@ -645,7 +650,7 @@ def test_pip_index_reads_the_interpreters_site_config(tmp_path, monkeypatch):
     home.mkdir()
     base = {"HOME": str(home), "USERPROFILE": str(home), "XDG_CONFIG_DIRS": str(home)}
     got = launcher.pip_index(base)
-    assert got == {"url": ALIYUN, "source": "site", "mirror": True}
+    assert got == {"url": ALIYUN_SAID, "source": "site", "mirror": True}
 
 
 def test_an_existing_pip_config_file_suppresses_user_level_configs(tmp_path):
@@ -749,7 +754,7 @@ def test_pip_sections_are_ordered_after_merging_files(tmp_path, monkeypatch):
         pytest.skip("POSIX 的全局配置位置")
     monkeypatch.setattr(launcher.sys, "platform", "linux")  # XDG_CONFIG_DIRS 只属于非 macOS 的 Unix
     got = launcher.pip_index(base)
-    assert got == {"url": ALIYUN, "source": "global", "mirror": True}
+    assert got == {"url": ALIYUN_SAID, "source": "global", "mirror": True}
 
 
 def test_upgrade_commands_follow_the_mirror_verdict():
@@ -793,7 +798,7 @@ def test_pip_index_reads_the_store_pythons_virtualized_config(tmp_path):
     _store_pip_ini(local, "PythonSoftwareFoundation.Python.3.11_x", "https://pypi.org/simple")
     _store_pip_ini(local, "PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0", ALIYUN)
     got = launcher.pip_index(base)
-    assert got == {"url": ALIYUN, "source": "store_python", "mirror": True}
+    assert got == {"url": ALIYUN_SAID, "source": "store_python", "mirror": True}
 
     # 普通（用户级）配置说 PyPI、商店版那份说镜像 → 仍报镜像（宁可多给一个 --index-url）
     conf = tmp_path / ("pip/pip.ini" if os.name == "nt" else ".config/pip/pip.conf")
@@ -806,7 +811,7 @@ def test_pip_index_reads_the_store_pythons_virtualized_config(tmp_path):
     assert launcher.pip_index({**base, "PIP_CONFIG_FILE": str(explicit)})["mirror"] is False
 
     got = launcher.pip_index({**base, "PIP_INDEX_URL": "https://pypi.org/simple"})
-    assert got == {"url": "https://pypi.org/simple", "source": "PIP_INDEX_URL", "mirror": False}
+    assert got == {"url": "https://pypi.org/***", "source": "PIP_INDEX_URL", "mirror": False}
     assert launcher.pip_index({**base, "PIP_CONFIG_FILE": os.devnull}) is None
 
 
@@ -820,7 +825,7 @@ def test_the_engine_interpreters_view_of_pip_wins(monkeypatch):
     )
     monkeypatch.setenv("PIP_INDEX_URL", ALIYUN)  # 只有子进程里那份真的 pip_index 读得到
     there = launcher.pip_index_of(sys.executable)
-    assert there == {"url": ALIYUN, "source": "PIP_INDEX_URL", "mirror": True}
+    assert there == {"url": ALIYUN_SAID, "source": "PIP_INDEX_URL", "mirror": True}
     assert launcher.effective_pip_index(sys.executable)["mirror"] is True
     assert launcher.pip_index_of(None) is None
     assert launcher.effective_pip_index(None)["mirror"] is False
@@ -834,7 +839,7 @@ def test_diagnosis_takes_the_index_from_the_engines_interpreter(old_engine, monk
     monkeypatch.delenv("PYTHONPATH", raising=False)
     code, hint = launcher.diagnose_resolved(old_engine["found"], NOTHING_IMPORTABLE)
     assert code == "engine_too_old"
-    assert "--index-url https://pypi.org/simple" in hint and ALIYUN in hint
+    assert "--index-url https://pypi.org/simple" in hint and ALIYUN_SAID in hint
 
 
 def test_the_degraded_payload_names_the_found_engine_without_its_path():
