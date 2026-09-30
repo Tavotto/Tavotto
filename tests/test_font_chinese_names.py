@@ -164,6 +164,56 @@ try:
     assert NEW_ZH in manifest.installed_font_families()
 finally:
     fm.fontManager = old_fm
+
+# 6) 字体集（.ttc）里两张脸，中文名各不相同：每张脸读**自己的** name 表——别名、显示名
+#    各归各的，不许都读成第 0 张（Noto CJK 的 SC / TC / HK 就在同一个集合里）。
+#    matplotlib ≥ 3.11 才给字体集的每张脸各登记一条，这段真跑只在那些版本上；更早的
+#    版本只核 `entry_face_index` 认得 `FontPath` 式的 fname（str 子类模拟）
+from fontTools.ttLib import TTCollection
+
+
+def collection(out, faces):
+    coll = TTCollection()
+    coll.fonts = [TTFont(make_font(os.path.join(tmp, f"{os.path.basename(out)}-{i}.ttf"), names))
+                  for i, names in enumerate(faces)]
+    coll.save(out)
+    return out
+
+
+ZH_A, ZH_B = "集合甲體", "集合乙體"
+only_zh_ttc = collection(os.path.join(tmp, "only-zh.ttc"), [
+    [(1, 3, 1, 0x0404, ZH_A), (2, 3, 1, 0x0404, "Regular"), (6, 3, 1, 0x0409, "TavottoCollA")],
+    [(1, 3, 1, 0x0404, ZH_B), (2, 3, 1, 0x0404, "Regular"), (6, 3, 1, 0x0409, "TavottoCollB")],
+])
+EN_A, EN_B = "Tavotto Coll Name A", "Tavotto Coll Name B"
+both_ttc = collection(os.path.join(tmp, "both.ttc"), [
+    [(1, 3, 1, 0x0409, EN_A), (1, 3, 1, 0x0804, "集合名甲"), (2, 3, 1, 0x0409, "Regular"),
+     (6, 3, 1, 0x0409, "TavottoCollNameA")],
+    [(1, 3, 1, 0x0409, EN_B), (1, 3, 1, 0x0804, "集合名乙"), (2, 3, 1, 0x0409, "Regular"),
+     (6, 3, 1, 0x0409, "TavottoCollNameB")],
+])
+fm.fontManager.addfont(only_zh_ttc)
+fm.fontManager.addfont(both_ttc)
+overrides.register_font_name_aliases()
+if hasattr(fm, "FontPath"):
+    for index, name in ((0, ZH_A), (1, ZH_B)):
+        hit = fm.fontManager.findfont(fm.FontProperties(family=[name]), fallback_to_default=False)
+        assert os.path.samefile(hit, only_zh_ttc), (name, hit)
+        assert overrides.font_face_index(hit) == index, (name, index, hit)
+    shown = overrides.font_display_names([EN_A, EN_B])
+    assert shown == {EN_A: "集合名甲", EN_B: "集合名乙"}, shown
+
+
+class FakePath(str):  # 旧版没有 FontPath：只核索引挂在 fname 上时也认得
+    face_index = 1
+
+
+class FakeEntry:
+    fname = FakePath(only_zh_ttc)
+    index = 0
+
+
+assert overrides.entry_face_index(FakeEntry) == 1
 print("OK")
 """
 )

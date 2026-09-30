@@ -708,9 +708,21 @@ def _zh_rank(plat: int, lang: int) -> int | None:
     return None
 
 
+def entry_face_index(entry) -> int:
+    """注册表一条登记（`FontEntry`）指的是字体集里第几张脸——读登记的**唯一**出处。
+
+    matplotlib 3.11+ 的 `FontEntry` 有 `index` 字段（`ttfFontProperty` 从
+    `FT2Font.face_index` 抄进来，`addfont` 给字体集的每张脸各登记一条）；登记的
+    `fname` 若是 `FontPath`，索引也可能挂在它身上（`font_face_index`）。两处都认，
+    先认字段。3.10 及以前两处都没有，恒为 0。漏掉它，同一个 `.ttc` 的每张脸都会
+    被当成第 0 张：名字张冠李戴、别名互相覆盖。
+    """
+    return int(getattr(entry, "index", 0) or 0) or font_face_index(entry.fname)
+
+
 def _font_face(entry):
     """注册表里这一条登记对应的那张脸（打开字体只经 `open_font_face` 一处）。"""
-    return open_font_face(entry.fname, int(getattr(entry, "index", 0) or 0))
+    return open_font_face(str(entry.fname), entry_face_index(entry))
 
 
 def _true_name(registered: str, records) -> str | None:
@@ -772,7 +784,7 @@ def register_font_name_aliases() -> int:
     added = []
 
     def key_of(e) -> tuple[str, int]:
-        return (str(e.fname), int(getattr(e, "index", 0) or 0))
+        return (str(e.fname), entry_face_index(e))
 
     registered: dict[tuple[str, int], set[str]] = {}
     for entry in fm.ttflist:
