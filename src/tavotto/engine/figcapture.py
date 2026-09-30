@@ -1569,6 +1569,10 @@ def install_input_remap(
         rel = os.path.relpath(real, real_base)
         if rel.startswith("..") or rel == ".":
             return name
+        # `os.path.relpath` 在 Windows 上回反斜杠：记账 / 弹窗展示的名字与 `remap_target` 的匹配
+        # 一样按正斜杠算（`remap_parts` 本就把反斜杠当分隔符），不随运行的 OS 变出两种拼法
+        # （Codex 评 #716 Windows full-ci：同一个 chdir 场景，Windows 腿记下的是 `sub\x.csv`）。
+        rel = rel.replace("\\", "/")
         return rel if _proven_relative(name, rel) else name
 
     def _alt(file) -> tuple[str | None, str | None]:

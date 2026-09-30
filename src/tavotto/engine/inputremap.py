@@ -315,7 +315,7 @@ def derive(requested: str, chosen: str, *, chosen_is_dir: bool) -> dict:
             rule = {
                 "kind": figcapture.REMAP_PREFIX,
                 "from": _join(rparts[: len(rparts) - k]),
-                "to": _join(cparts[: len(cparts) - k]),
+                "to": _ancestor(chosen, k),
             }
     target = figcapture.remap_target([rule], requested)
     if target is None or not os.path.isfile(target):  # pragma: no cover — 上面已逐支保证
@@ -327,6 +327,20 @@ def derive(requested: str, chosen: str, *, chosen_is_dir: bool) -> dict:
 
 def _join(parts: tuple[str, ...]) -> str:
     return figcapture._join_parts(tuple(parts))
+
+
+def _ancestor(path: str, levels: int, *, dirname=os.path.dirname) -> str:
+    """`path`（用户指认的那个绝对路径，原生分隔符 / 原样大小写）上溯 `levels` 层。
+
+    `to` 是本机真实存在的目录，必须原样保留用户指认那一刻的分隔符与大小写——不能像 `from`
+    （`_join`）那样经 `remap_parts` 按路径段重拼：那条路径只用于内部匹配，天生就该规范成正斜杠、
+    盘符小写；`to` 用于 `os.path.isfile` / 展示给用户，重拼会把 Windows 路径 `C:\\Users\\…\\moved`
+    变成 `c:/Users/…/moved`，与用户真正选中的路径对不上（Codex 评 #716 Windows full-ci 红）。
+    `dirname` 只在测试里替换成别的实现（如 `ntpath.dirname`），验证在别的 OS 分隔符下同样成立。
+    """
+    for _ in range(levels):
+        path = dirname(path)
+    return path
 
 
 # ---------------------------------------------------------------- 弹窗载荷

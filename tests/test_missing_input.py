@@ -148,6 +148,19 @@ def test_derive_from_a_file_with_the_same_tail(tmp_path):
     assert rule == {"kind": P, "from": "/Users/a/proj/data/run1", "to": str(tmp_path / "elsewhere")}
 
 
+def test_derive_to_keeps_the_native_separator_and_case_on_windows_shaped_paths():
+    """`derive()` 的 `to` 是用户真正指认的那个目录：不能经 `remap_parts` 按路径段重拼——重拼
+    会把 Windows 路径按内部匹配的规范（正斜杠、盘符小写）改写，与用户选中的路径对不上
+    （Codex 评 #716 Windows full-ci 红：真实场景是 `C:\\Users\\…\\moved` 变成了
+    `c:/Users/…/moved`）。这台机器跑不了 Windows，直接喂 `ntpath.dirname` 验证纯字符串函数。"""
+    import ntpath
+
+    to = inputremap._ancestor(r"C:\Users\a\proj\moved\data\run1\x.csv", 3, dirname=ntpath.dirname)
+    assert to == r"C:\Users\a\proj\moved"
+    to = inputremap._ancestor(r"C:\Users\a\proj\elsewhere\x.csv", 1, dirname=ntpath.dirname)
+    assert to == r"C:\Users\a\proj\elsewhere"
+
+
 def test_derive_from_a_renamed_file_moves_only_that_file(tmp_path):
     chosen = _touch(tmp_path / "y.csv")
     rule = inputremap.derive("/Users/a/x.csv", str(chosen), chosen_is_dir=False)
@@ -395,6 +408,27 @@ def test_a_miss_normalized_against_the_base_is_matched_after_a_chdir(
     fact = figcapture.missing_input_of(err.value, misses)
     assert fact is not None and fact["requested"] == "y.csv"
     assert os.path.realpath(fact["cwd"]) == os.path.realpath(box / "sub")
+
+
+def test_a_relpath_computed_with_backslashes_is_shown_with_forward_slashes(
+    remapped, tmp_path, monkeypatch
+):
+    """`os.path.relpath` 在 Windows 上回反斜杠分隔的字符串；记账 / 弹窗展示的名字统一按正斜杠算，
+    不随运行的 OS 变出两种拼法（Codex 评 #716 Windows full-ci 红：
+    test_a_miss_normalized_against_the_base_is_matched_after_a_chdir 在 Windows 腿上得到
+    `'sub\\x.csv'`，和其余平台的 `'sub/x.csv'` 不一致）。这台机器跑不了 Windows，直接把
+    `os.path.relpath` 换成一个回反斜杠的版本来模拟。"""
+    misses = remapped([])
+    real_relpath = os.path.relpath
+    monkeypatch.setattr(
+        os.path, "relpath", lambda *a, **kw: real_relpath(*a, **kw).replace("/", "\\")
+    )
+    box = pathlib.Path.cwd()
+    (box / "sub").mkdir()
+    with pytest.raises(FileNotFoundError) as err:
+        open(str(box / "sub" / "x.csv"))
+    fact = figcapture.missing_input_of(err.value, misses)
+    assert fact is not None and fact["requested"] == "sub/x.csv"
 
 
 def test_an_absolute_path_the_script_wrote_keeps_its_absolute_identity(remapped, tmp_path):
