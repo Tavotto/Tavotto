@@ -511,6 +511,7 @@
       "private_python_launch_failed": "The prepared Python won’t start; the reason is under Details.",
       "private_python_not_offered": "{{product}} can’t prepare Python on this computer yet; install one from python.org first.",
       "private_python_offline": "Downloading Python failed; check your connection, then click Retry.",
+      "private_python_source_changed": "Where Python comes from changed after you confirmed; click Retry to confirm again with the current source.",
       "private_python_source_unavailable": "This Python isn’t available for download; update {{product}}, then try again.",
       "private_python_tls": "The download site’s certificate couldn’t be verified; update the system or ask your network admin, then try again.",
       "private_python_write_failed": "{{product}}’s data folder can’t be written; free space or check permissions, then click Retry.",

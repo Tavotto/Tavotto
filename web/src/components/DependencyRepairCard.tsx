@@ -721,7 +721,7 @@ function rejectionText(r: SystemInterpreterRejection, pkg: string): string {
 /**
  * 失败后可以就地「重试」的 code：都是**这一次**没做成、换个时刻再来一次就可能成的——
  * 断网 / 超时 / 环境正忙 / 被取消 / 磁盘满（腾出空间后）/ 下载的私有 Python 损坏（重新下载会重新校验）/
- * 确认期间环境变了（重试会重新形成计划，超出卡片说过的就停在确认页）。
+ * 确认期间环境变了 / 私有 Python 的来源变了（重试会重新形成计划，超出卡片说过的就停在确认页）。
  *
  * **不在表里的不给重试**，各有理由：`dependency_hash_mismatch`（声明里的哈希与包不符——重下一遍还是那个包，
  * 要用户核对锁文件）、`dependency_not_found` / `dependency_requires_build` / `dependency_conflict`
@@ -740,6 +740,9 @@ export const RETRYABLE_REPAIR_CODES: ReadonlySet<string> = new Set([
   'package_disk_low',
   'managed_env_write_failed',
   'repair_plan_stale',
+  // 计划里说的 Python 来源（安装包自带 / 缓存 / 下载）在确认之后变了（#743）：与 repair_plan_stale 同类——重试会按
+  // 此刻的来源重新形成计划，超出卡片说过的就停在确认页把新的来源 / 大小说出口
+  'private_python_source_changed',
   'private_python_offline',
   'private_python_cancelled',
   'private_python_hash_mismatch',

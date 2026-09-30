@@ -511,6 +511,7 @@
       "private_python_launch_failed": "准备好的 Python 启动不了，原因在详情里。",
       "private_python_not_offered": "这台电脑上 {{product}} 还不能自动准备 Python，请先从 python.org 安装。",
       "private_python_offline": "下载 Python 没成功，检查网络后点重试。",
+      "private_python_source_changed": "准备 Python 的来源在确认之后变了，点重试按现在的情况重新确认。",
       "private_python_source_unavailable": "下载地址上没有这份 Python，升级 {{product}} 后再试。",
       "private_python_tls": "下载地址的证书验证不过，更新系统或问网络管理员后再试。",
       "private_python_write_failed": "{{product}} 的数据目录写不进去，腾出空间或检查权限后点重试。",

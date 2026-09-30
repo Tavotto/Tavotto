@@ -1058,6 +1058,15 @@ describe('失败 / 取消之后就地重试', () => {
     expect(installMock).toHaveBeenLastCalledWith('plan-again')
   })
 
+  it('私有 Python 的来源在确认之后变了（#743 private_python_source_changed）：与计划过期同类，给「重试」', async () => {
+    await startManaged()
+    await finish('failed', 'private_python_source_changed')
+    expect(document.querySelector('[data-repair-failure]')!.textContent).toBe(
+      en('repairErrorShort.private_python_source_changed'),
+    )
+    expect(retryButton()).toBeTruthy()
+  })
+
   it('取消之后同样可以重试', async () => {
     await startManaged()
     await finish('cancelled', 'dependency_install_cancelled')
