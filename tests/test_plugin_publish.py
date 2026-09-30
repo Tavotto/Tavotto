@@ -23,6 +23,83 @@ pub = kit.load_script("plugin_publish")
 BR = "plugin-stable"
 
 
+#: 本文件每一条 git（夹具 `kit.git`、发布器 `pub.git` / `_git_env`、本文件的 `_git_proc`）
+#: 都跑在一台「空白宿主」上：这几个键由 `_isolated_git_host` 统一写进 `os.environ`，三条路
+#: 都以 `os.environ` 为底，所以一处隔离全文件生效。宿主的 global / system 配置、
+#: `init.templateDir` 模板、`~/.gitconfig` 都读不到（#766 评审：宿主里关了维护会让对照组失真，
+#: 模板里的 config 会被 `git init` 抄进仓库本地配置）。
+_GIT_ISOLATION_KEYS = (
+    "HOME",
+    "XDG_CONFIG_HOME",
+    "GIT_CONFIG_GLOBAL",
+    "GIT_CONFIG_NOSYSTEM",
+    "GIT_TEMPLATE_DIR",
+)
+#: 宿主可能漏进来、会改变 git 行为的环境变量：一律拿掉（`GIT_CONFIG_KEY_n` / `VALUE_n` 另按前缀清）。
+_GIT_HOST_LEAKS = (
+    "GIT_CONFIG_COUNT",
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_CONFIG",
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_COMMON_DIR",
+)
+
+
+@pytest.fixture(autouse=True)
+def _isolated_git_host(tmp_path_factory, monkeypatch):
+    """全文件唯一的 git 隔离入口（autouse）：空 HOME / XDG、空 global 配置、不读 system 配置、
+    空模板目录、固定身份。global 用一个空文件而不是 `os.devnull`——Git for Windows 对 `nul`
+    作 `GIT_CONFIG_GLOBAL` 的支持不必去赌。"""
+    root = tmp_path_factory.mktemp("git-host")
+    home = root / "home"
+    (home / ".config").mkdir(parents=True)
+    templates = root / "templates"
+    templates.mkdir()
+    empty = root / "empty-gitconfig"
+    empty.write_text("", encoding="utf-8")
+    for key in [k for k in os.environ if k.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"))]:
+        monkeypatch.delenv(key)
+    for key in _GIT_HOST_LEAKS:
+        monkeypatch.delenv(key, raising=False)
+    values = {
+        "HOME": str(home),
+        "XDG_CONFIG_HOME": str(home / ".config"),
+        "GIT_CONFIG_GLOBAL": str(empty),
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_TEMPLATE_DIR": str(templates),
+    }
+    assert set(values) == set(_GIT_ISOLATION_KEYS)
+    for key, value in values.items():
+        monkeypatch.setenv(key, value)
+    for key, value in (
+        ("GIT_AUTHOR_NAME", "t"),
+        ("GIT_AUTHOR_EMAIL", "t@example.invalid"),
+        ("GIT_COMMITTER_NAME", "t"),
+        ("GIT_COMMITTER_EMAIL", "t@example.invalid"),
+    ):
+        monkeypatch.setenv(key, value)
+    return values
+
+
+def _git_proc(
+    *args: str, env: dict[str, str] | None = None, text: bool = True
+) -> subprocess.CompletedProcess:
+    """本文件里**唯一**直接起 git 子进程的地方（`test_every_git_call_in_this_file_is_isolated`
+    用 AST 钉住）。`env` 可以加键、可以去掉 `GIT_CONFIG_COUNT/KEY/VALUE`，但隔离那几个键必须
+    与 `os.environ`（autouse 夹具写的）一致，否则当场红。"""
+    effective = dict(os.environ if env is None else env)
+    for key in _GIT_ISOLATION_KEYS:
+        assert key in os.environ and effective.get(key) == os.environ[key], (
+            f"git 调用没带隔离的 {key}"
+        )
+    kw = {"text": True, "encoding": "utf-8", "errors": "replace"} if text else {}
+    return subprocess.run(["git", *args], capture_output=True, env=effective, **kw)
+
+
 @pytest.fixture()
 def remote(tmp_path):
     return kit.bare_remote_with_main(tmp_path)
@@ -867,12 +944,9 @@ def test_legacy_bootstrap_keeps_the_zip_bytes_and_records_the_external_checksum(
         for info in zf.infolist():
             if info.is_dir():
                 continue
-            blob = subprocess.run(
-                ["git", "-C", str(r), "show", f"{tip}:{info.filename}"],
-                capture_output=True,
-                check=True,
-            ).stdout
-            assert blob == zf.read(info), info.filename
+            proc = _git_proc("-C", str(r), "show", f"{tip}:{info.filename}", text=False)
+            assert proc.returncode == 0, proc.stderr
+            assert proc.stdout == zf.read(info), info.filename
 
 
 # ================================================================ 两种分发是同一份内容
@@ -911,11 +985,9 @@ def test_an_autocrlf_checkout_still_matches_the_zip(remote, tmp_path):
     # 分支里的 blob 也必须与 staging 逐字节相同：提交时没被 autocrlf 改写，检出时也没被
     # 改写（staging 在 Windows runner 上本身就是 CRLF 检出的，所以这里不断言「没有 CRLF」，
     # 断言的是三处同一份字节）
-    blob = subprocess.run(
-        ["git", "-C", str(r), "show", f"{tip}:codex-plugin/.mcp.json"],
-        capture_output=True,
-        check=True,
-    ).stdout
+    proc = _git_proc("-C", str(r), "show", f"{tip}:codex-plugin/.mcp.json", text=False)
+    assert proc.returncode == 0, proc.stderr
+    blob = proc.stdout
     assert blob == (d / ".mcp.json").read_bytes() == (checkout / ".mcp.json").read_bytes()
 
 
@@ -1059,30 +1131,23 @@ def test_fixture_git_mirrors_the_publisher_maintenance_settings():
     assert _env_config(kit.no_auto_maintenance_env()) == authority
 
 
-def _isolated_from_host_config(env: dict[str, str], tmp_path: Path) -> dict[str, str]:
-    """把 git 的 global / system 配置换成空：对照组读到的只能是 git 的内建默认值。
-
-    否则跑用例的机器全局里已经写了 `maintenance.auto=false`（或关了 gc）时，对照组也不起
-    后台维护，用例在实现正确时也红（Codex 在 #766 上实测过）。用一个空文件而不是
-    `os.devnull`：Git for Windows 对 `nul` 作 `GIT_CONFIG_GLOBAL` 的支持不必去赌。"""
-    empty = tmp_path / "empty-gitconfig"
-    empty.write_text("", encoding="utf-8")
-    return {**env, "GIT_CONFIG_GLOBAL": str(empty), "GIT_CONFIG_NOSYSTEM": "1"}
-
-
 def _spawned_maintenance(env: dict[str, str], tmp_path: Path, name: str) -> list[str]:
-    """在一个新仓库里 fetch 一次，回 GIT_TRACE 里「起了后台维护 / gc」的那几行。"""
+    """在一个新仓库里 fetch 一次，回 GIT_TRACE 里「起了后台维护 / gc」的那几行。
+
+    建库、fetch 都在 `_isolated_git_host` 的空白宿主上：宿主 global 里关了维护、或
+    `init.templateDir` 模板把 `maintenance.auto=false` 抄进仓库本地配置，都到不了这里。"""
     (tmp_path / name).mkdir()
     remote, _sha = kit.bare_remote_with_main(tmp_path / name)
     repo = tmp_path / name / "repo"
     kit.git("init", "--quiet", str(repo))
-    proc = subprocess.run(
-        ["git", "-C", str(repo), "fetch", "--quiet", str(remote), "refs/heads/main"],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        env={**_isolated_from_host_config(env, tmp_path), "GIT_TRACE": "1"},
+    proc = _git_proc(
+        "-C",
+        str(repo),
+        "fetch",
+        "--quiet",
+        str(remote),
+        "refs/heads/main",
+        env={**env, "GIT_TRACE": "1"},
     )
     assert proc.returncode == 0, proc.stderr
     return [
@@ -1097,15 +1162,87 @@ def test_publisher_fetch_spawns_no_background_maintenance(tmp_path):
 
     先对照：同一次 fetch 去掉 `GIT_CONFIG_*`，trace 里**必须**看得到那条 run_command——否则
     这台机器的 git 本来就不起后台维护，「没看到」证明不了任何事，用例直接红而不是假绿。
-    两组都隔离了宿主的 global / system 配置，两组之间唯一的差别就是 `GIT_CONFIG_*`。
+    两组都跑在 `_isolated_git_host` 的空白宿主上，两组之间唯一的差别就是
+    `GIT_CONFIG_COUNT/KEY_n/VALUE_n`（隔离用的 `GIT_CONFIG_GLOBAL` / `NOSYSTEM` 两组都保留）。
 
     盲点（写在判据旁）：本用例证明的是「不再起那个后台进程」，**没有**复现 ENOTEMPTY 本身——
     2026-09-30 在 macOS / git 2.54 上去掉这两项、8～16 线程并发「fetch 后立刻删临时仓库」
     共 2200 轮，一次都没撞上（CI runner 上撞车的概率远高于本机）。赛跑的一方被整个拿掉，
     所以主语落在「有没有起那个进程」，不去赌时序。"""
     env = pub._git_env()
-    control = {k: v for k, v in env.items() if not k.startswith("GIT_CONFIG_")}
+    control = {
+        k: v
+        for k, v in env.items()
+        if k != "GIT_CONFIG_COUNT" and not k.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"))
+    }
     assert _spawned_maintenance(control, tmp_path, "control"), (
         "对照组没起后台维护：这台 git 的 trace 里看不到 run_command，本用例无从判定"
     )
     assert _spawned_maintenance(env, tmp_path, "publisher") == []
+
+
+def test_every_git_route_in_this_file_sees_only_the_blank_host():
+    """隔离的行为侧：三条起 git 的路（夹具 `kit.git`、发布器 `pub.git`、本文件 `_git_proc`）
+    问 git 自己「配置从哪几个作用域来」，一条 global / system 都不许有。
+
+    盲点：若跑用例的机器本来就没有任何 global / system 配置，这条在隔离失效时也是绿的；
+    `test_every_git_call_in_this_file_is_isolated` 的结构判据不依赖宿主，两条互补。"""
+    outputs = {
+        "kit.git": kit.git("config", "--list", "--show-scope"),
+        "pub.git": pub.git(None, "config", "--list", "--show-scope").stdout,
+        "_git_proc": _git_proc("config", "--list", "--show-scope").stdout,
+    }
+    for route, out in outputs.items():
+        leaked = [ln for ln in out.splitlines() if ln.split("\t", 1)[0] in {"global", "system"}]
+        assert leaked == [], f"{route} 读到了宿主配置：{leaked}"
+
+
+def test_every_git_call_in_this_file_is_isolated():
+    """结构侧（AST，不看子串）：本文件里直接起子进程的调用只许出现在 `_git_proc` 里；
+    其余 git 一律走 `kit.git` / `pub.*`——两者都以 `os.environ` 为底，由 autouse 的
+    `_isolated_git_host` 统一隔离。另核 `kit.git` 与 `pub._git_env` 确实以 `os.environ` 为底。"""
+    import ast
+    import inspect
+
+    tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+    spawners = {"run", "Popen", "call", "check_call", "check_output"}
+    offenders = []
+
+    def visit(node: ast.AST, owner: str) -> None:
+        for child in ast.iter_child_nodes(node):
+            name = child.name if isinstance(child, ast.FunctionDef) else owner
+            if (
+                isinstance(child, ast.Call)
+                and isinstance(child.func, ast.Attribute)
+                and child.func.attr in spawners
+                and isinstance(child.func.value, ast.Name)
+                and child.func.value.id in {"subprocess", "os"}
+                and owner != "_git_proc"
+            ):
+                offenders.append(f"{owner}:{child.lineno}")
+            visit(child, name)
+
+    visit(tree, "<module>")
+    assert offenders == [], f"绕过 _git_proc 直接起子进程：{offenders}"
+    fixture = next(
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.FunctionDef) and n.name == "_isolated_git_host"
+    )
+    assert any(
+        isinstance(d, ast.Call)
+        and getattr(d.func, "attr", None) == "fixture"
+        and any(
+            kw.arg == "autouse" and getattr(kw.value, "value", None) is True for kw in d.keywords
+        )
+        for d in fixture.decorator_list
+    ), "_isolated_git_host 必须是 autouse"
+    for fn in (kit.git, pub._git_env):
+        src = ast.parse(inspect.getsource(fn).lstrip())
+        assert any(
+            isinstance(n, ast.Attribute)
+            and n.attr == "environ"
+            and isinstance(n.value, ast.Name)
+            and n.value.id == "os"
+            for n in ast.walk(src)
+        ), f"{fn.__qualname__} 不再以 os.environ 为底，autouse 隔离够不到它"
