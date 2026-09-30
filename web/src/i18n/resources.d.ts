@@ -440,7 +440,6 @@ export default interface Resources {
       },
       "resolvedContinue": "问题已解决，继续",
       "skipStep": "跳过此步",
-      "start": "开始",
       "steps": {
         "add_to_layout": {
           "body": "两张图都已经在画布上。点「添加到画布」回到版面查看它们。",
@@ -499,20 +498,16 @@ export default interface Resources {
           "title": "Shift 多选"
         },
         "open_fast_edit": {
-          "body": "在左侧「素材」里双击 Fig2_correlation 进入图内编辑。",
+          "body": "在左侧「素材」里双击 Fig2_correlation 进入图内编辑。这是教程副本，随便改，不影响你的项目。",
           "canvas": {
-            "body": "双击画布上的 Fig2_correlation 进入图内编辑。左侧「素材」里它的卡片也可以。",
-            "title": "打开一张图"
+            "body": "双击画布上的 Fig2_correlation 进入图内编辑。左侧「素材」里它的卡片也可以。这是教程副本，随便改，不影响你的项目。",
+            "title": "双击这张图"
           },
-          "title": "打开一张图"
+          "title": "双击这张图"
         },
         "select_text": {
           "body": "点击图里的标题或坐标轴标签，把它选中。",
           "title": "选中文字"
-        },
-        "welcome": {
-          "body": "离线教程副本，可随意修改、随时重开，不会影响你的项目。接下来走两条核心流程。",
-          "title": "用示例了解 Tavotto"
         }
       },
       "targetMissing": "找不到这一步的目标。",

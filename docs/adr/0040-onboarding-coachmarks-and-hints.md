@@ -92,11 +92,10 @@ resetHints()
 
 ### 4. 步骤表：完成条件来自真实状态与真实信号（`lib/onboarding/steps.ts`）
 
-十个 id（`stepIds.ts`，持久化格式的一部分，改内容升 `flowVersion` 不改 id）：
+九个 id（`stepIds.ts`，持久化格式的一部分，改内容升 `flowVersion` 不改 id；2026-09-30 起没有 `welcome`，见文末修订）：
 
 | 步骤 | 完成条件 | coachmark 挂哪 |
 | --- | --- | --- |
-| `welcome` | 手动：点「开始」 | 居中 |
 | `open_fast_edit` | `ui.elementPanelId === 要编辑那张图.id`（只有 `enterElementEdit` 能产生这个状态） | 素材抽屉开着 → `[data-card=<file>]`；否则画布上 `[data-object-id]`；再否则 `[data-rail=assets]` |
 | `select_text` | 主选 gid 的 role ∈ 文字类 ∩ `editable_roles` | manifest bbox 映射到 `[data-element-svg]` 的那一块（title 优先） |
 | `change_typography` | 信号 `element.property_changed`（prop ∈ figureText 排版路径）**且** `history.pushed`（事务落进撤销栈） | `[data-prop="fontsize"]`；右栏没开就临时露出（不写偏好） |
@@ -114,7 +113,7 @@ resetHints()
 * 信号按步骤**消费**（`StepDef.consumes`）：一条重放的 `history.pushed` 只能完成它该完成
   的那一步；不在教程里（切走了项目 / 文档）发生的信号不累计。
 * 状态可说清的条件天然覆盖「用户提前做完了」：状态在那儿，步骤一到就完成
-  （`flow.test`：`welcome` 之前就进了图内编辑 → 点「开始」后 `open_fast_edit` 立刻完成）。
+  （`flow.test`：教程开始前就进了图内编辑 → `open_fast_edit` 立刻完成）。
 * 「Step 3 把问题修掉了」的情形：Step 3 改的是标题、问题在那条 7 pt 说明上，正常不会；
   用户真去改了 7 pt（或按了「修复」）就走替代出口——**不造假问题**。
 * `add_to_layout` 在画布模式下直接完成：教程画布本来就摆好两张（ADR 0039 为多选对齐准备
@@ -181,3 +180,20 @@ resetHints()
 `tavotto.onboarding` 留在前端（它是这台机器上这个人的进度，不进项目数据）。它能不能活过重启取决于 origin 稳定：
 桌面版此前每次启动换端口，进度与「提示看过没有」其实每次都被重置；PR-A 起桌面端口尽量稳定，端口被占的那一次
 仍会读不到（已知残余，不迁后端）。
+
+## 修订（2026-09-30，界面重设计 E3）：教程从「双击这张图」开始
+
+* **取消 `welcome` 步骤**：教程第一步就是 `open_fast_edit`（标题「双击这张图」），不再有盖在图上的欢迎卡。
+  步骤 id 从十个变九个，真实步骤仍是八个，「第 n 步，共 8 步」的总数不变，第一步显示「第 1 步」。
+* **欢迎卡里唯一「不看会做错」的信息**——这是教程副本、随便改、不影响你的项目——压成一句，
+  放进 `open_fast_edit` 的正文（素材抽屉与画布两个变体各一句）。「离线」「接下来走两条核心流程」不留。
+* **第一步没有「返回」**（前面没有上一步）；「跳过此步」、主操作、`×` 暂停（Esc）、
+  「找不到目标 / 等待目标出现」、「重置教程项目」确认全部照旧。
+* **落位**：coachmark 落位规则不变（`placeCoachmark` 首选锚点下方），锚点是素材卡 / 画布上那张图，
+  所以气泡在图下方；下方放不下才按原顺序退到上 / 右 / 左。
+* **迁移（`migratePersisted`，不升 `flowVersion`）**：`welcome` 不再是合法 id，`completedSteps` /
+  `skippedSteps` 里的它被滤掉；进行中 / 暂停且 `currentStep === 'welcome'` 的落到 `STEP_IDS[0]`
+  （`open_fast_edit`）；停在别的步骤的、已完成 / 已跳过的一律原样，不重新打扰。
+  不升 `flowVersion` 是为了不把「停在第 4 步」的用户拽回第一个未完成步骤。
+* **遥测**：`tutorial_step_completed.step_id` 的枚举与 `stepIds.ts` 逐字同源，三处（前端、
+  `engine/telemetry.py`、`services/telemetry_proxy` 契约）同步去掉 `welcome`。

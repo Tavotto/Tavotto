@@ -205,7 +205,10 @@ export function migratePersisted(raw: unknown): OnboardingPersisted {
   }
   const flowVersion = numOrNull(v.flowVersion) ?? 0
   const done = new Set<string>(completedSteps)
-  let currentStep: StepId | null = isStepId(v.currentStep) ? v.currentStep : null
+  // 「欢迎」步骤已于 2026-09-30 取消（教程直接从 open_fast_edit 开始）：停在它上面的
+  // 进行中 / 暂停用户落到新的第一步；它在 completedSteps 里的记录已被 isStepId 滤掉
+  let currentStep: StepId | null =
+    v.currentStep === 'welcome' ? STEP_IDS[0] : isStepId(v.currentStep) ? v.currentStep : null
   const inFlow = status === 'active' || status === 'paused'
   if (inFlow) {
     // 步骤内容升了版，或记的步骤已经不存在：回到第一个未完成的步骤。

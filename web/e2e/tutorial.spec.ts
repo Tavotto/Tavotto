@@ -28,9 +28,9 @@ async function openTutorialFromPicker(page: Page, baseURL: string) {
   const entry = page.locator('[data-onboarding-anchor="tutorial-entry"]')
   await expect(entry).toHaveText(/用示例体验一次/)
   await entry.click()
-  // 工作台起来 + 欢迎页
+  // 工作台起来：第一步直接是「双击这张图」（没有欢迎卡）
   await expect(coachmark(page)).toBeVisible({ timeout: 60_000 })
-  await expect(coachmark(page)).toContainText('用示例了解 Tavotto')
+  await expect(coachmark(page)).toContainText('双击这张图')
 }
 
 test('完整走完教程：每一步都由真实动作完成', async ({ app, page }) => {
@@ -41,10 +41,9 @@ test('完整走完教程：每一步都由真实动作完成', async ({ app, pag
 
   // 没有全屏遮罩：coachmark 后面的界面照常可点
   expect(await page.locator('[data-onboarding-mask]').count()).toBe(0)
-  await coachmark(page).getByRole('button', { name: '开始' }).click()
 
-  // ---- Step 1：打开一张图（左侧素材抽屉默认开着 → 锚点是那张卡片） ----
-  await expect(coachmark(page)).toContainText('打开一张图')
+  // ---- Step 1：双击这张图（左侧素材抽屉默认开着 → 锚点是那张卡片） ----
+  await expect(coachmark(page)).toContainText('双击这张图')
   await expect(page.locator('[data-onboarding-ring]')).toBeVisible()
   await page.locator('[data-card="Fig2_correlation.pdf"]').dblclick()
   // 两条分开判，超时报文才说得出**停在哪一步**（issue #267）：
@@ -166,13 +165,11 @@ test('刷新回到同一步；Esc 暂停后刷新不出现；「更多」菜单�
   await openTutorialFromPicker(page, a.baseURL)
   // 读屏：进度 / 标题在 aria-live 区里；coachmark 是非模态 dialog
   await expect(coachmark(page)).toHaveAttribute('aria-modal', 'false')
-  await coachmark(page).getByRole('button', { name: '开始' }).click()
-  await expect(coachmark(page)).toContainText('打开一张图')
+  await expect(coachmark(page)).toContainText('双击这张图')
 
-  // 键盘：Tab 顺序能到返回 / 跳过 / 暂停
+  // 键盘：Tab 顺序能到跳过 / 暂停（第一步没有「返回」）
   await coachmark(page).focus()
-  await page.keyboard.press('Tab')
-  expect(await page.evaluate(() => 'onboardingBack' in (document.activeElement as HTMLElement).dataset)).toBe(true)
+  expect(await coachmark(page).locator('[data-onboarding-back]').count()).toBe(0)
   await page.keyboard.press('Tab')
   expect(await page.evaluate(() => 'onboardingSkip' in (document.activeElement as HTMLElement).dataset)).toBe(true)
   await page.keyboard.press('Tab')
@@ -193,7 +190,7 @@ test('刷新回到同一步；Esc 暂停后刷新不出现；「更多」菜单�
   // 重启（刷新）：仍在第一步
   await page.reload()
   await expect(coachmark(page)).toBeVisible({ timeout: 60_000 })
-  await expect(coachmark(page)).toContainText('打开一张图')
+  await expect(coachmark(page)).toContainText('双击这张图')
 
   // Esc（焦点在 coachmark 里）= 暂停；刷新后不再出现
   await coachmark(page).focus()
@@ -207,7 +204,7 @@ test('刷新回到同一步；Esc 暂停后刷新不出现；「更多」菜单�
   // 「更多」→ 继续教程
   await page.getByRole('button', { name: '更多', exact: true }).click()
   await page.getByRole('menuitem', { name: '继续教程' }).click()
-  await expect(coachmark(page)).toContainText('打开一张图')
+  await expect(coachmark(page)).toContainText('双击这张图')
 })
 
 test('重置教程项目：画布恢复原样、onboarding 从头；最近列表里带「教程项目」标记', async ({
@@ -218,7 +215,6 @@ test('重置教程项目：画布恢复原样、onboarding 从头；最近列表
   const a = await app({ noProject: true })
   await page.setViewportSize({ width: 1400, height: 900 })
   await openTutorialFromPicker(page, a.baseURL)
-  await coachmark(page).getByRole('button', { name: '开始' }).click()
   // 先动一下画布：把第一张图拖走。判据是**图在页面上的相对位置**（与缩放 / 平移无关），
   // 不是屏幕像素：重置前后视口会重新适配
   const fracX = async () => {
@@ -245,16 +241,18 @@ test('重置教程项目：画布恢复原样、onboarding 从头；最近列表
   const confirm = page.getByRole('dialog').filter({ hasText: '重置教程项目？' })
   await expect(confirm).toBeVisible()
   await confirm.getByRole('button', { name: '重置并重新开始' }).click()
-  await expect(coachmark(page)).toContainText('用示例了解 Tavotto', { timeout: 60_000 })
-  await page.waitForTimeout(500)
-  expect(Math.abs((await fracX()) - frac0)).toBeLessThan(0.01)
+  // 重置前后第一步都是「双击这张图」，coachmark 的文字不再能当「重置做完了」的信号；
+  // 拖走的那张图回到原位才是（判据本身：位置与重置前一致）
+  await expect
+    .poll(async () => Math.abs((await fracX()) - frac0), { timeout: 60_000 })
+    .toBeLessThan(0.01)
+  await expect(coachmark(page)).toContainText('双击这张图')
 
   // 用户反馈 01：重开之后装回的是随包分发的干净 Tutorial.json，它的面板没有 `script`。
   // 工作台此刻早已挂载，挂载那一次对账不会再来——换文档之后必须再对一次，否则
   // **双击画布上的图**落进裁剪而不是图内编辑（第一次从选择器进教程反而是好的，
   // 所以只测第一次的用例看不见它）。这里走的是 coachmark 自己说的那条路：双击画布上的图。
-  await coachmark(page).getByRole('button', { name: '开始' }).click()
-  await expect(coachmark(page)).toContainText('打开一张图')
+  await expect(coachmark(page)).toContainText('双击这张图')
   await page.getByRole('button', { name: '适应画布' }).click()
   await page.waitForTimeout(400)
   await page.locator('[data-object-id="p2"]').dblclick()
@@ -291,7 +289,6 @@ test('教程刚打开就拖：工作台挂载时的启动恢复晚到，也不�
   const a = await app({ noProject: true })
   await page.setViewportSize({ width: 1400, height: 900 })
   await openTutorialFromPicker(page, a.baseURL)
-  await coachmark(page).locator('[data-onboarding-primary]').click()
   const fracX = async () => {
     const sheet = (await page.locator('[data-page-sheet]').boundingBox())!
     const box = (await page.locator('[data-object-id="p1"]').boundingBox())!
@@ -348,8 +345,7 @@ test('coachmark 落位时不从锚点上扫过：双击素材卡的第二下不�
     }
     requestAnimationFrame(tick)
   })
-  await coachmark(page).getByRole('button', { name: '开始' }).click()
-  await expect(coachmark(page)).toContainText('打开一张图')
+  await expect(coachmark(page)).toContainText('双击这张图')
   await page.waitForTimeout(4000)
   const { covered, frames } = await page.evaluate(() => {
     const w = window as unknown as { __covered: string[]; __frames: number }
@@ -405,8 +401,7 @@ test('coachmark 落位途中锚点被挤动也不压上去：素材区顶上冒�
     }
     requestAnimationFrame(tick)
   })
-  await coachmark(page).getByRole('button', { name: '开始' }).click()
-  await expect(coachmark(page)).toContainText('打开一张图')
+  await expect(coachmark(page)).toContainText('双击这张图')
   // 滑行放慢后约 2.4 秒；等它停稳再把刷新行派出来——停着的那种最稳：挤动之后到下一次兜底重测之间
   // （最长 300 ms）它一直压着卡片。滑行途中的那种只在最后四分之一段才压得上，时机太窄
   await page.waitForTimeout(3000)
@@ -474,8 +469,7 @@ test('切到别的项目自动暂停，切回来自动继续', async ({ app, pag
   await page.getByRole('button', { name: '更多', exact: true }).click()
   await page.getByRole('menuitem', { name: '开始教程' }).click()
   await expect(coachmark(page)).toBeVisible({ timeout: 60_000 })
-  await coachmark(page).getByRole('button', { name: '开始' }).click()
-  await expect(coachmark(page)).toContainText('打开一张图')
+  await expect(coachmark(page)).toContainText('双击这张图')
 
   // 切回原来的项目 → coachmark 消失（系统暂停）
   await switchProjectVia(page, { path: a.figures })
@@ -483,5 +477,5 @@ test('切到别的项目自动暂停，切回来自动继续', async ({ app, pag
   await expect(coachmark(page)).toHaveCount(0)
   // 再切回教程 → 自动继续
   await switchProjectVia(page, { tutorial: true })
-  await expect(coachmark(page)).toContainText('打开一张图', { timeout: 60_000 })
+  await expect(coachmark(page)).toContainText('双击这张图', { timeout: 60_000 })
 })

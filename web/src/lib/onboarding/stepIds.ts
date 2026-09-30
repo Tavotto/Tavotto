@@ -10,7 +10,6 @@
  * 就升 `ONBOARDING_FLOW_VERSION`，不要换 id。
  */
 export const STEP_IDS = [
-  'welcome',
   'open_fast_edit',
   'select_text',
   'change_typography',
@@ -35,8 +34,8 @@ export function firstIncomplete(done: ReadonlySet<string>): StepId {
   return 'done'
 }
 
-/** 真正要用户做事的步骤：去掉欢迎页与结束页。进度「第 n 步，共 N 步」与结束页的计数都按它 */
-export const REAL_STEP_IDS: readonly StepId[] = STEP_IDS.filter((id) => id !== 'welcome' && id !== 'done')
+/** 真正要用户做事的步骤：去掉结束页。进度「第 n 步，共 N 步」与结束页的计数都按它 */
+export const REAL_STEP_IDS: readonly StepId[] = STEP_IDS.filter((id) => id !== 'done')
 
 export interface StepOutcomes {
   /** 真的做完的 */

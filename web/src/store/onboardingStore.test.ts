@@ -40,11 +40,11 @@ describe('状态机', () => {
     expect(s().tutorialProjectId).toBe('p1')
     expect(s().tutorialDocumentId).toBe('tavotto-tutorial')
     expect(s().startedAt).toBeTypeOf('number')
-    s().markStep('welcome')
-    s().goTo('open_fast_edit')
+    s().markStep('open_fast_edit')
+    s().goTo('select_text')
     s().start({ projectId: 'p1', documentId: 'tavotto-tutorial' })
     expect(s().completedSteps).toEqual([])
-    expect(s().currentStep).toBe('welcome')
+    expect(s().currentStep).toBe('open_fast_edit')
     expect(hintSeen('multi_select')).toBe(true)
   })
 
@@ -87,21 +87,20 @@ describe('状态机', () => {
   it('markStep 去重；back 只挪指针不撤完成；第一步 back 是 no-op', () => {
     s().start({ projectId: 'p1', documentId: 'd' })
     s().back()
-    expect(s().currentStep).toBe('welcome')
-    s().markStep('welcome')
-    s().markStep('welcome')
-    s().goTo('select_text')
-    s().back()
     expect(s().currentStep).toBe('open_fast_edit')
-    expect(s().completedSteps).toEqual(['welcome'])
+    s().markStep('open_fast_edit')
+    s().markStep('open_fast_edit')
+    s().goTo('change_typography')
+    s().back()
+    expect(s().currentStep).toBe('select_text')
+    expect(s().completedSteps).toEqual(['open_fast_edit'])
   })
 
   it('完成与跳过分两本账：跳过进 skippedSteps，返回再真做完就移出；complete 保留那本账', () => {
     s().start({ projectId: 'p1', documentId: 'd' })
-    s().markStep('welcome')
     s().markStep('open_fast_edit', 'skipped')
     s().markStep('select_text', 'skipped')
-    expect(s().completedSteps).toEqual(['welcome', 'open_fast_edit', 'select_text'])
+    expect(s().completedSteps).toEqual(['open_fast_edit', 'select_text'])
     expect(s().skippedSteps).toEqual(['open_fast_edit', 'select_text'])
     expect(stored().skippedSteps).toEqual(['open_fast_edit', 'select_text'])
     // 再跳一次不重复记
@@ -109,7 +108,7 @@ describe('状态机', () => {
     expect(s().skippedSteps).toEqual(['open_fast_edit', 'select_text'])
     // 返回之后真的做完：从跳过那本账里移出，走过那本账不变
     s().markStep('open_fast_edit')
-    expect(s().completedSteps).toEqual(['welcome', 'open_fast_edit', 'select_text'])
+    expect(s().completedSteps).toEqual(['open_fast_edit', 'select_text'])
     expect(s().skippedSteps).toEqual(['select_text'])
     expect(tallyOutcomes(s().completedSteps, s().skippedSteps)).toEqual({
       done: 1,
@@ -123,11 +122,10 @@ describe('状态机', () => {
     expect(tallyOutcomes(s().completedSteps, s().skippedSteps).skipped).toBe(1)
   })
 
-  it('tallyOutcomes 只数真实步骤：welcome / done 不进账，跳过优先于完成', () => {
-    expect(REAL_STEP_IDS).not.toContain('welcome')
+  it('tallyOutcomes 只数真实步骤：done 不进账，跳过优先于完成', () => {
     expect(REAL_STEP_IDS).not.toContain('done')
-    expect(REAL_STEP_IDS.length).toBe(STEP_IDS.length - 2)
-    expect(tallyOutcomes(['welcome', 'done'], [])).toEqual({ done: 0, skipped: 0, total: REAL_STEP_IDS.length })
+    expect(REAL_STEP_IDS.length).toBe(STEP_IDS.length - 1)
+    expect(tallyOutcomes(['done'], [])).toEqual({ done: 0, skipped: 0, total: REAL_STEP_IDS.length })
     expect(tallyOutcomes([...STEP_IDS], [...REAL_STEP_IDS])).toEqual({
       done: 0,
       skipped: REAL_STEP_IDS.length,
@@ -201,7 +199,8 @@ describe('持久化与迁移', () => {
       tutorialDocumentId: 'tavotto-tutorial',
     })
     expect(m.status).toBe('active')
-    expect(m.completedSteps).toEqual(['welcome', 'open_fast_edit'])
+    // 旧存盘里的 welcome 已不是步骤 id：滤掉
+    expect(m.completedSteps).toEqual(['open_fast_edit'])
     // 记的步骤不存在 → 第一个未完成的
     expect(m.currentStep).toBe('select_text')
     expect(m.hintSeen).toEqual({ multi_select: 123 })
@@ -225,12 +224,54 @@ describe('持久化与迁移', () => {
       flowVersion: ONBOARDING_FLOW_VERSION,
       status: 'active',
       currentStep: 'locate_problem',
-      completedSteps: ['welcome', 'open_fast_edit', 'select_text'],
+      completedSteps: ['open_fast_edit', 'select_text'],
       skippedSteps: ['select_text', 'export_canvas', 'bogus', 3],
     })
     // export_canvas 没走过却记成跳过、bogus 不是步骤：都丢
     expect(mixed.skippedSteps).toEqual(['select_text'])
-    expect(mixed.completedSteps).toEqual(['welcome', 'open_fast_edit', 'select_text'])
+    expect(mixed.completedSteps).toEqual(['open_fast_edit', 'select_text'])
+  })
+
+  it('欢迎步骤取消：停在 welcome 的进行中 / 暂停用户落到新的第一步，已完成 / 已跳过原样', () => {
+    for (const status of ['active', 'paused'] as const) {
+      const m = migratePersisted({
+        schemaVersion: 1,
+        flowVersion: ONBOARDING_FLOW_VERSION,
+        status,
+        currentStep: 'welcome',
+        completedSteps: [],
+        tutorialDocumentId: 'tavotto-tutorial',
+      })
+      expect(m.status).toBe(status)
+      expect(m.currentStep).toBe('open_fast_edit')
+    }
+    // 老存盘里 welcome 记成走过、当前在别的步骤：进度不动
+    const mid = migratePersisted({
+      schemaVersion: 1,
+      flowVersion: ONBOARDING_FLOW_VERSION,
+      status: 'paused',
+      pausedBy: 'system',
+      currentStep: 'change_typography',
+      completedSteps: ['welcome', 'open_fast_edit', 'select_text'],
+      skippedSteps: ['welcome', 'select_text'],
+    })
+    expect(mid.currentStep).toBe('change_typography')
+    expect(mid.completedSteps).toEqual(['open_fast_edit', 'select_text'])
+    expect(mid.skippedSteps).toEqual(['select_text'])
+    expect(mid.pausedBy).toBe('system')
+    for (const status of ['completed', 'skipped'] as const) {
+      const m = migratePersisted({
+        schemaVersion: 1,
+        flowVersion: ONBOARDING_FLOW_VERSION,
+        status,
+        currentStep: 'welcome',
+        completedSteps: ['welcome', 'open_fast_edit'],
+        completedAt: 9,
+      })
+      expect(m.status).toBe(status)
+      expect(m.currentStep).toBeNull()
+      expect(m.completedAt).toBe(9)
+    }
   })
 
   it('flowVersion 升级：进行中的回到第一个未完成步骤、历史不抹；已完成的不被打扰', () => {
@@ -240,12 +281,12 @@ describe('持久化与迁移', () => {
       status: 'paused',
       pausedBy: 'user',
       currentStep: 'export_canvas',
-      completedSteps: ['welcome', 'open_fast_edit'],
+      completedSteps: ['open_fast_edit'],
     })
     expect(active.status).toBe('paused')
     expect(active.pausedBy).toBe('user')
     expect(active.currentStep).toBe('select_text')
-    expect(active.completedSteps).toEqual(['welcome', 'open_fast_edit'])
+    expect(active.completedSteps).toEqual(['open_fast_edit'])
     expect(active.flowVersion).toBe(ONBOARDING_FLOW_VERSION)
 
     const done = migratePersisted({

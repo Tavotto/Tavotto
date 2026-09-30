@@ -218,7 +218,7 @@ describe('startTutorial', () => {
     expect(useDocumentStore.getState().doc.objects.map((o) => o.id)).toEqual(['p1'])
     const ob = useOnboardingStore.getState()
     expect(ob.status).toBe('active')
-    expect(ob.currentStep).toBe('welcome')
+    expect(ob.currentStep).toBe('open_fast_edit')
     expect(ob.tutorialProjectId).toBe('p_tut')
     expect(ob.tutorialDocumentId).toBe('tavotto-tutorial')
     expect(useTutorialStore.getState().meta).toEqual(META)
@@ -376,7 +376,7 @@ describe('startTutorial', () => {
     expect(tutorialEntry()).toBe('restart')
     const out = await startTutorial()
     expect(out).toEqual({ ok: true, kind: 'started' })
-    expect(useOnboardingStore.getState().currentStep).toBe('welcome')
+    expect(useOnboardingStore.getState().currentStep).toBe('open_fast_edit')
     expect(calls.filter((c) => c.url === '/api/tutorial/reset')).toEqual([])
   })
 
@@ -476,7 +476,7 @@ describe('resetTutorial', () => {
     expect(calls.some((c) => c.url === '/api/tutorial/reset' && c.method === 'POST')).toBe(true)
     expect(useDocumentStore.getState().documentId).toBe('tavotto-tutorial')
     expect(useDocumentStore.getState().doc.objects.map((o) => o.id)).toEqual(['p1'])
-    expect(useOnboardingStore.getState().currentStep).toBe('welcome')
+    expect(useOnboardingStore.getState().currentStep).toBe('open_fast_edit')
     // 教程那格本机 autosave 被忘掉（不然旧进度会被推回刚重置的磁盘槽位）；
     // 之前那份文档仍在最近文档索引里——别的文档一个没动
     // （切进干净画布时会重新落一次快照——那是新的，不是旧进度）

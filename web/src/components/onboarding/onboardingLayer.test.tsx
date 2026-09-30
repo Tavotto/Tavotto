@@ -162,8 +162,8 @@ const mountTracked = async (onCommit: () => void) => {
   await flush()
 }
 
-describe('出现与欢迎页', () => {
-  it('不在教程里什么都不画；开始后欢迎页居中、有「开始」、没有遮罩', async () => {
+describe('出现与第一步', () => {
+  it('不在教程里什么都不画；开始后第一步就是「双击这张图」：没有欢迎卡、没有遮罩、返回不显示', async () => {
     await mount()
     expect(card()).toBeNull()
     await act(async () => {
@@ -174,18 +174,18 @@ describe('出现与欢迎页', () => {
     expect(c).not.toBeNull()
     expect(c.getAttribute('role')).toBe('dialog')
     expect(c.getAttribute('aria-modal')).toBe('false')
-    expect(c.dataset.side).toBe('center')
-    expect(document.querySelector('[data-onboarding-mask]')).toBeNull()
-    expect(document.querySelector('[data-onboarding-ring]')).toBeNull()
-    // 标题 / 正文经 aria 关联；读屏区常驻
-    expect(document.getElementById(c.getAttribute('aria-labelledby')!)?.textContent).toBe('用示例了解 Tavotto')
-    expect(document.querySelector('[aria-live="polite"]')?.textContent).toContain('用示例了解 Tavotto')
-    // 「开始」是真动作：完成 welcome、进入第一步
-    await act(async () => {
-      c.querySelector<HTMLButtonElement>('[data-onboarding-primary]')!.click()
-    })
-    expect(ob().completedSteps).toEqual(['welcome'])
     expect(ob().currentStep).toBe('open_fast_edit')
+    expect(document.querySelector('[data-onboarding-mask]')).toBeNull()
+    // 标题 / 正文经 aria 关联；读屏区常驻
+    expect(document.getElementById(c.getAttribute('aria-labelledby')!)?.textContent).toBe('双击这张图')
+    expect(document.querySelector('[aria-live="polite"]')?.textContent).toContain('双击这张图')
+    // 「教程副本、不影响你的项目」压成一句留在第一步；步数不变（8 步，第一步是「第 1 步」）
+    expect(c.textContent).toContain('教程副本')
+    expect(c.querySelector('[data-onboarding-progress]')?.textContent).toBe('第 1 步，共 8 步')
+    // 第一步之前没有别的步骤：没有「返回」，「跳过此步」与「×」都在
+    expect(c.querySelector('[data-onboarding-back]')).toBeNull()
+    expect(c.querySelector('[data-onboarding-skip]')).not.toBeNull()
+    expect(c.querySelector('[data-onboarding-primary]')).toBeNull()
   })
 
   it('关闭键与 Esc 都是暂停，不是完成', async () => {
@@ -220,7 +220,6 @@ describe('锚点', () => {
     await mount()
     await act(async () => {
       ob().start({ projectId: 'p_tut', documentId: META.document_id })
-      ob().markStep('welcome')
       ob().goTo('open_fast_edit')
     })
     await flush()
@@ -232,8 +231,9 @@ describe('锚点', () => {
     const ring = document.querySelector<HTMLElement>('[data-onboarding-ring]')!
     expect(ring.style.left).toBe('196px')
     expect(ring.style.width).toBe('88px')
-    expect(c.querySelector('[data-onboarding-progress]')?.textContent).toBe(`第 1 步，共 ${STEP_IDS.length - 2} 步`)
-    expect(c.querySelector('[data-onboarding-back]')).not.toBeNull()
+    expect(c.querySelector('[data-onboarding-progress]')?.textContent).toBe(`第 1 步，共 ${STEP_IDS.length - 1} 步`)
+    // 第一步没有上一步：不摆「返回」
+    expect(c.querySelector('[data-onboarding-back]')).toBeNull()
     expect(c.querySelector('[data-onboarding-skip]')).not.toBeNull()
     // 跳过此步 = 当完成处理，前进一步
     await act(async () => {
@@ -248,7 +248,6 @@ describe('锚点', () => {
     await mount()
     await act(async () => {
       ob().start({ projectId: 'p_tut', documentId: META.document_id })
-      ob().markStep('welcome')
       ob().goTo('open_fast_edit')
     })
     await flush()
@@ -260,18 +259,18 @@ describe('锚点', () => {
     })
     await flush()
     expect(card()!.textContent).toContain('找不到这一步的目标')
-    // 返回真的回到上一步
+    // 出口还在：第一步没有「返回」，「跳过此步」照常往前走
+    expect(card()!.querySelector('[data-onboarding-back]')).toBeNull()
     await act(async () => {
-      card()!.querySelector<HTMLButtonElement>('[data-onboarding-back]')!.click()
+      card()!.querySelector<HTMLButtonElement>('[data-onboarding-skip]')!.click()
     })
-    expect(ob().currentStep).toBe('welcome')
+    expect(ob().currentStep).toBe('select_text')
   })
 
   it('前置缺（跳过第 1 步到了「选一个文字」）：不「等待」，说清要先进图内编辑，按钮就是打开那张图', async () => {
     await mount()
     await act(async () => {
       ob().start({ projectId: 'p_tut', documentId: META.document_id })
-      ob().markStep('welcome')
       ob().markStep('open_fast_edit', 'skipped')
       ob().goTo('select_text')
     })
@@ -292,7 +291,15 @@ describe('锚点', () => {
     await flush()
     expect(card()!.textContent).not.toContain('正在等待目标出现')
     expect(card()!.textContent).not.toContain('找不到这一步的目标')
-    // 跳过仍然可用；主按钮是真实动作
+    // 第二步起「返回」在，真的回到第一步；跳过仍然可用；主按钮是真实动作
+    await act(async () => {
+      card()!.querySelector<HTMLButtonElement>('[data-onboarding-back]')!.click()
+    })
+    expect(ob().currentStep).toBe('open_fast_edit')
+    await act(async () => {
+      ob().goTo('select_text')
+    })
+    await flush()
     expect(card()!.querySelector('[data-onboarding-skip]')).not.toBeNull()
     const primary = card()!.querySelector<HTMLButtonElement>('[data-onboarding-primary]')!
     expect(primary.textContent).toBe('打开 Fig2_correlation')
@@ -342,7 +349,6 @@ describe('锚点', () => {
     await mount()
     await act(async () => {
       ob().start({ projectId: 'p_tut', documentId: META.document_id })
-      ob().markStep('welcome')
       ob().goTo('add_to_layout')
     })
     await flush()
@@ -374,7 +380,6 @@ describe('锚点', () => {
     await mount()
     await act(async () => {
       ob().start({ projectId: 'p_tut', documentId: META.document_id })
-      ob().markStep('welcome')
       for (const id of REAL_STEP_IDS) ob().markStep(id, 'skipped')
       ob().goTo('done')
     })

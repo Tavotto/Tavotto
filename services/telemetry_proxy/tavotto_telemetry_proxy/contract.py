@@ -81,7 +81,6 @@ EVENTS: dict[str, dict[str, dict]] = {
     },
     "tutorial_step_completed": {
         "step_id": enum(
-            "welcome",
             "open_fast_edit",
             "select_text",
             "change_typography",

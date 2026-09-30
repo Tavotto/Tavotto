@@ -1405,7 +1405,6 @@
     "pause": "暂停教程",
     "back": "返回",
     "skipStep": "跳过此步",
-    "start": "开始",
     "explore": "继续探索",
     "openOwnProject": "打开自己的项目",
     "resolvedContinue": "问题已解决，继续",
@@ -1448,16 +1447,12 @@
       "confirm": "重置并重新开始"
     },
     "steps": {
-      "welcome": {
-        "title": "用示例了解 Tavotto",
-        "body": "离线教程副本，可随意修改、随时重开，不会影响你的项目。接下来走两条核心流程。"
-      },
       "open_fast_edit": {
-        "title": "打开一张图",
-        "body": "在左侧「素材」里双击 Fig2_correlation 进入图内编辑。",
+        "title": "双击这张图",
+        "body": "在左侧「素材」里双击 Fig2_correlation 进入图内编辑。这是教程副本，随便改，不影响你的项目。",
         "canvas": {
-          "title": "打开一张图",
-          "body": "双击画布上的 Fig2_correlation 进入图内编辑。左侧「素材」里它的卡片也可以。"
+          "title": "双击这张图",
+          "body": "双击画布上的 Fig2_correlation 进入图内编辑。左侧「素材」里它的卡片也可以。这是教程副本，随便改，不影响你的项目。"
         }
       },
       "select_text": {
