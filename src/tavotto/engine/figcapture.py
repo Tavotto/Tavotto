@@ -139,6 +139,7 @@ from __future__ import annotations
 
 import builtins
 import dataclasses
+import gc
 import hashlib
 import io
 import json
@@ -146,6 +147,7 @@ import os
 import pathlib
 import re
 import sys
+import weakref
 
 __all__ = [
     "savefig_stem",
@@ -169,7 +171,7 @@ __all__ = [
     "INPUT_OBSERVER_MAX_FILES",
     "OBSERVATION_PARTIAL",
     "MAX_PYPLOT_FALLBACK",
-    "note_buffer_save",
+    "BufferSaves",
     "SOURCE_SAVEFIG",
     "SOURCE_PYPLOT",
     "PROFILE_SAFE",
@@ -813,23 +815,64 @@ def fallback_stems(taken, script_stem: str, count: int) -> list[str]:
     return out
 
 
-def note_buffer_save(retained: list, fig, limit: int = MAX_PYPLOT_FALLBACK) -> bool:
-    """一次写进文件对象（BytesIO 等）的 savefig 把这张图记进 `retained`（按 identity 去重、保序）。
+class BufferSaves:
+    """写进文件对象（BytesIO 等）、没有 stem 可认领的 savefig 记在这里，脚本跑完交给 pyplot 兜底。
 
     `savefig(buf); Image.open(buf).save("x.tiff"); plt.close(fig)` 这种脚本里，缓冲区那次是这张图
-    **唯一**的一次存盘：它没有 stem 可认领，脚本随后又把图关了，跑完时 pyplot 里已经没有它——不记下来
-    就一张图都捕获不到（#739 Codex P2）。`collect_pyplot_figures(retained=...)` 把它按兜底规则补回来。
+    **唯一**的一次存盘：没有 stem 可认领，脚本随后又把图关了，跑完时 pyplot 里已经没有它——不记下来
+    就一张图都捕获不到（#739 Codex P2）。
 
-    **有上限**（默认就是兜底的张数上限）：名单里的是强引用，循环「建图 → 存缓冲区 → 关图」的批量脚本
-    不设上限会把每张关掉的图都留到脚本结束（内存涨、查重变平方）。兜底本来最多补 `limit` 张，多留无用。
-    返回 False = 这张是新的、但名单已满没留下——调用方要把这件事说出来（它若被关掉就捕获不到），不许静默。
+    三条约束（#739 Codex 各一条 P2）：
+
+    * **强引用有上限**（`limit`，就是兜底的张数上限）：循环「建图 → 存缓冲区 → 关图」的批量脚本不设
+      上限会把每张关掉的图都留到脚本结束。超出的只挂**弱引用**——不拖住内存，但仍活着的还补得回来。
+    * **被路径 savefig 认领了就让出名额**（`claim`）：已经有 stem 的图不需要兜底，占着名额会让后面
+      真正只存缓冲区的图没地方放。
+    * **真丢了要进结构化计数**（`lost`）：超出上限、又被脚本关掉并回收的图是实实在在丢了，
+      调用方把它并进 `dropped_figures` / `truncated_figures`，不是只写一行日志。
+    收集前 `figures()` 先 `gc.collect()`：matplotlib 的 Figure 有引用环，回收时机不定；不先回收，
+    「活着的补回来、死了的算丢」就会随 GC 时机漂移，同一个脚本两次跑出不同的 stem。
     """
-    if any(f is fig for f in retained):
-        return True
-    if len(retained) >= max(0, int(limit)):
-        return False
-    retained.append(fig)
-    return True
+
+    def __init__(self, limit: int = MAX_PYPLOT_FALLBACK):
+        self.limit = max(0, int(limit))
+        self._strong: list = []
+        self._weak: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()  # fig -> 先后序号
+        self._seq = 0
+        self._overflowed = 0  # 进过弱引用区、且没被认领的张数
+
+    def note(self, fig) -> None:
+        if any(f is fig for f in self._strong) or fig in self._weak:
+            return
+        if len(self._strong) < self.limit:
+            self._strong.append(fig)
+            return
+        self._seq += 1
+        self._weak[fig] = self._seq
+        self._overflowed += 1
+
+    def claim(self, fig) -> None:
+        """这张图被路径 savefig 认领了（有了 stem）：让出名额 / 不再算作可能丢失。"""
+        for i, f in enumerate(self._strong):
+            if f is fig:
+                del self._strong[i]
+                return
+        if fig in self._weak:
+            del self._weak[fig]
+            self._overflowed -= 1
+
+    def __bool__(self) -> bool:
+        return bool(self._strong) or self._overflowed > 0
+
+    def figures(self) -> list:
+        """交给兜底的图：强引用的（按存盘先后），再接上弱引用区里仍活着的（按存盘先后）。"""
+        gc.collect()
+        alive = sorted(self._weak.items(), key=lambda kv: kv[1])
+        return list(self._strong) + [f for f, _ in alive]
+
+    def lost(self) -> int:
+        """超出上限、没被认领、已被回收的张数（在 `figures()` 之后问才准）。"""
+        return max(0, self._overflowed - len(self._weak))
 
 
 def collect_pyplot_figures(
@@ -852,7 +895,7 @@ def collect_pyplot_figures(
     `plt.get_fignums()` 的顺序即产出顺序（pyplot 的 Gcf 按创建先后维护），
     stem 的序号只由「本次捕获里的第几张」决定，与 figure 号无关。
 
-    `retained`：存进过缓冲区的图（`note_buffer_save`）。还活着的照常按 `get_fignums()` 的位置补；
+    `retained`：存进过缓冲区的图（`BufferSaves.figures()`）。还活着的照常按 `get_fignums()` 的位置补；
     脚本已经关掉的排在活着的后面、按存盘先后补——没有 `retained` 时行为与以前逐字节相同。
     `plt` 可以是 None（脚本只用 `Figure()` 这套面向对象 API、从没 import pyplot）：那时只补 `retained`。
     """

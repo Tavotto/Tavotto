@@ -411,6 +411,30 @@ assert buf.getvalue()[:8] == b"\\x89PNG\\r\\n\\x1a\\n"
 """
 
 
+CLAIMED_THEN_BUFFER_ONLY = """\
+import io
+import matplotlib.pyplot as plt
+
+for i in range(8):  # 前 8 张：先存缓冲区、再按路径存盘（被认领）
+    fig, ax = plt.subplots(figsize=(1, 1))
+    fig.savefig(io.BytesIO(), format="png", dpi=20)
+    fig.savefig(f"F{i}.pdf")
+    plt.close(fig)
+fig, ax = plt.subplots(figsize=(1, 1))  # 第 9 张：只存缓冲区、随后关掉
+fig.savefig(io.BytesIO(), format="png", dpi=20)
+plt.close(fig)
+"""
+MANY_BUFFER_ONLY = """\
+import io
+import matplotlib.pyplot as plt
+
+for i in range(11):
+    fig, ax = plt.subplots(figsize=(1, 1))
+    fig.savefig(io.BytesIO(), format="png", dpi=20)
+    plt.close(fig)
+"""
+
+
 @needs_worker
 class TestFileObjectTargetsPassThrough:
     def test_desktop_script_can_read_back_what_it_saved(self, tmp_path):
@@ -449,6 +473,28 @@ class TestFileObjectTargetsPassThrough:
         stems = desktop_build(figs, "oo_only.py").get("stems") or {}
         assert list(stems) == ["oo_only"], stems
 
+    def test_claimed_figures_do_not_crowd_out_a_buffer_only_one(self, tmp_path):
+        """前 8 张先存缓冲区、再按路径被认领；第 9 张只存缓冲区又被关掉——它照样补回来（#739 Codex P2）。"""
+        figs = tmp_path / "figs"
+        write(figs, "claimed.py", CLAIMED_THEN_BUFFER_ONLY)
+        resp = desktop_build(figs, "claimed.py")
+        assert list(resp.get("stems") or {}) == [*(f"F{i}" for i in range(8)), "claimed"]
+        assert not resp.get("dropped_figures")
+
+    def test_buffer_only_figures_beyond_the_limit_are_reported_as_dropped(self, tmp_path):
+        """11 张只存缓冲区、各自关掉：补回上限那 8 张，丢的 3 张进结构化计数，不只是写一行日志（#739 Codex P2）。"""
+        figs = tmp_path / "figs"
+        write(figs, "many.py", MANY_BUFFER_ONLY)
+        resp = desktop_build(figs, "many.py")
+        assert len(resp.get("stems") or {}) == figcapture.MAX_PYPLOT_FALLBACK
+        assert resp.get("dropped_figures") == 11 - figcapture.MAX_PYPLOT_FALLBACK
+
+    def test_browser_reports_the_same_loss(self, tmp_path):
+        resp = browser_load(MANY_BUFFER_ONLY, "many.py", tmp_path / "ws")
+        assert resp.get("ok"), resp
+        assert len(resp["descriptors"]) == figcapture.MAX_PYPLOT_FALLBACK
+        assert resp.get("truncated_figures") == 11 - figcapture.MAX_PYPLOT_FALLBACK
+
     def test_browser_captures_the_buffer_only_figure_too(self, tmp_path):
         resp = browser_load(BUFFER_ONLY_THEN_CLOSE, "buffer_only.py", tmp_path / "ws")
         assert resp.get("ok"), resp
@@ -479,16 +525,40 @@ def test_bytes_filenames_are_paths_too(fake_mpl):
     assert figcapture.savefig_call(b"out/Fig1.pdf", {})["format"] == "pdf"
 
 
-def test_the_buffer_save_list_is_bounded():
+class _Fig:
+    """可弱引用的替身（`object()` 不支持弱引用）。"""
+
+
+def test_buffer_saves_keeps_at_most_limit_strong_references():
     """循环「建图 → 存缓冲区 → 关图」的批量脚本不能把每张关掉的图都留到脚本结束（#739 Codex P2）：
-    名单最多留兜底上限那么多张，满了回 False（调用方据此如实说一句），同一张图重复存不占位。"""
-    retained: list = []
-    figs = [object() for _ in range(figcapture.MAX_PYPLOT_FALLBACK + 5)]
-    kept = [figcapture.note_buffer_save(retained, f) for f in figs]
-    assert len(retained) == figcapture.MAX_PYPLOT_FALLBACK
-    assert kept == [True] * figcapture.MAX_PYPLOT_FALLBACK + [False] * 5
-    assert figcapture.note_buffer_save(retained, figs[0]) is True  # 已在名单里：不算溢出
-    assert len(retained) == figcapture.MAX_PYPLOT_FALLBACK
+    强引用最多 `limit` 张，超出的只挂弱引用；被回收了的计入 `lost()`。"""
+    saves = figcapture.BufferSaves(limit=3)
+    figs = [_Fig() for _ in range(5)]
+    for i in range(5):  # 不用 `for f in figs`：循环变量会一直引用最后一张，它就回收不掉
+        saves.note(figs[i])
+    saves.note(figs[0])  # 同一张重复存：不占位、不算溢出
+    assert len(saves._strong) == 3
+    assert saves.figures() == figs  # 超出的两张还活着：照样补回来
+    assert saves.lost() == 0
+    del figs[3:]  # 超出的两张被脚本关掉、不再有人引用
+    assert saves.figures() == figs[:3]
+    assert saves.lost() == 2
+
+
+def test_claimed_figures_give_back_their_slot():
+    """被路径 savefig 认领了（有了 stem）的图让出名额，也不算作可能丢失（#739 Codex P2）。"""
+    saves = figcapture.BufferSaves(limit=2)
+    a, b, c = _Fig(), _Fig(), _Fig()
+    saves.note(a)
+    saves.note(b)
+    saves.claim(a)
+    saves.note(c)
+    assert saves.figures() == [b, c]
+    d = _Fig()
+    saves.note(d)  # 满了：进弱引用区
+    saves.claim(d)  # 又被认领：不算丢
+    del d
+    assert saves.lost() == 0 and saves.figures() == [b, c]
 
 
 def test_retained_figures_are_collected_without_pyplot():

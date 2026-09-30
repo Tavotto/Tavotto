@@ -175,9 +175,9 @@ def _patched_savefig(self, fname, *args, **kwargs):
     to_path = figcapture.savefig_targets_path(fname)
     stem = _SAVE_AS or figcapture.savefig_stem(fname)  # 不是路径时 savefig_stem 是空串
     if not stem and not to_path and SESSION is not None:
-        if not figcapture.note_buffer_save(SESSION.buffer_saved, self):
-            SESSION.buffer_saved_overflow += 1
+        SESSION.buffer_saves.note(self)
     if stem and SESSION is not None:
+        SESSION.buffer_saves.claim(self)
         SESSION.add_figure(stem, self, figcapture.SOURCE_SAVEFIG)
         SESSION.note_savefig(
             stem,
@@ -598,10 +598,14 @@ class Worker(wireproto.V1Handler):
         # 凭空建一个 figure 管理器）。
         _plt = sys.modules.get("matplotlib.pyplot")
         # 只用 `Figure()` 的脚本从不 import pyplot，但存进缓冲区的图照样要补（#739 Codex P2）
-        if _plt is not None or self.session.buffer_saved:
+        if _plt is not None or self.session.buffer_saves:
             fallback, dropped = figcapture.collect_pyplot_figures(
-                self.session.capture, self.script.stem, _plt, retained=self.session.buffer_saved
+                self.session.capture,
+                self.script.stem,
+                _plt,
+                retained=self.session.buffer_saves.figures(),
             )
+            dropped += self.session.buffer_saves.lost()
             for stem in fallback:
                 self.session.capture_source[stem] = figcapture.SOURCE_PYPLOT
             if dropped:
@@ -613,13 +617,6 @@ class Worker(wireproto.V1Handler):
                     file=sys.stderr,
                 )
                 self.dropped_figures = dropped
-        if self.session.buffer_saved_overflow:
-            print(
-                f"[capture] 只存进缓冲区（BytesIO 等）的图超过 {figcapture.MAX_PYPLOT_FALLBACK} 张，"
-                f"之后的 {self.session.buffer_saved_overflow} 次没有保留：脚本关掉的那些不会出现在素材里",
-                file=sys.stderr,
-            )
-
         self.session.instrument_all()
         self._descriptor_cache = self._build_descriptors()
         # 回执的 `inputs` 在**这一刻**定格：脚本已经跑完，之后进程里再读什么（导出时的字体缓存）都不是它的输入
