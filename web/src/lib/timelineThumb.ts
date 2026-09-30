@@ -146,12 +146,23 @@ function layerIsBlank(layer: HTMLCanvasElement): boolean {
   }
 }
 
+/**
+ * 一个面板缩略图最终**实际画出来**用的是哪一路图源：
+ * - `'svg'`——写回前就已经冻结在手里的那份（renderStore 里的，不含标注写回烙进去的内容）；
+ * - `'live'`——合成这一刻才现取的兜底（素材图 / render URL），`'svg'` 没能用上时才会退到这里；
+ * - `'none'`——两路都没画上（无来源、载入失败、白画）。
+ *
+ * 「有没有 SVG 字段」判断不出这个结局——手里有 SVG 字段但解析 / 解码失败，一样会退到
+ * `'live'`（Codex #679 P1 追加，见 `composeTimelineThumb` 的 `bakedInto`）。
+ */
+export type PanelDrawOutcome = 'svg' | 'live' | 'none'
+
 async function drawObject(
   ctx: CanvasRenderingContext2D,
   o: CanvasObject,
   scale: number,
   source: PanelSource,
-): Promise<void> {
+): Promise<PanelDrawOutcome | undefined> {
   const x = o.x * scale
   const y = o.y * scale
   const w = o.w * scale
@@ -167,9 +178,10 @@ async function drawObject(
     const fullH = ch / (crop?.h ?? 1)
     if (!source) {
       trace({ panel: o.id, result: 'no-source' })
-      return
+      return 'none'
     }
     const steps: string[] = []
+    let outcome: PanelDrawOutcome = 'none'
     // SVG → 素材图 → 素材图再取一次（绕开内存缓存里那张画不上的，新发一个请求）
     const attempts = [['svg', false], ['url', false], ['url', true]] as const
     for (const [kind, retry] of attempts) {
@@ -216,10 +228,13 @@ async function drawObject(
       ctx.drawImage(layer, 0, 0)
       ctx.restore()
       steps.push(`${kind}${retry ? '-retry' : ''}:ok`)
+      // 只有冻结在手里的 SVG 算 `'svg'`；素材图 / render 兜底一律 `'live'`——哪怕
+      // `source.svg` 本来就有，这一路是从「svg 解析 / 解码失败之后落到这里」的
+      outcome = kind === 'svg' ? 'svg' : 'live'
       break
     }
     trace({ panel: o.id, steps })
-    return
+    return outcome
   }
   if (o.type === 'text') {
     const px = Math.max(1, o.sizePt * MM_PER_PT * scale)
@@ -301,14 +316,27 @@ export function captureThumbSources(doc: FigureDocument): ThumbSources {
 }
 
 /**
+ * 标注对象 id → 被写回烙进的面板 id：这条标注的内容这次写回已经烙进了那张图（Codex #679 P1
+ * 追加）。只登记「这次写回带着标注」的那些标注，普通画布标注不在里面。
+ *
+ * 画不画由合成器**这一刻实际选中的图源**判定，不能在拍节点那一刻靠「此刻有没有 SVG」猜——
+ * SVG 可能到合成器手里才发现解析 / 解码失败，退到合成时才现取的 render，那张图已经烙好了。
+ */
+export type BakedAnnotations = ReadonlyMap<string, string>
+
+/**
  * 合成一张画布缩略图；任何失败都是 `null`。
  *
  * 图源：给了 `sources` 就用它（发起那一刻取好的）；没给就在**同一个同步段里**现取
  * （见 `panelSource`）——这个函数在第一个 await 之前就把各面板的图源取完了。
+ *
+ * `bakedInto` 给的话，登记在里面的标注对象**推迟到所有面板都画完之后**再按各自面板的
+ * 结局补画（见下面的 `deferred`）；不给或标注不在里面的，行为不变——按文档原顺序画。
  */
 export async function composeTimelineThumb(
   doc: FigureDocument,
   given?: ThumbSources,
+  bakedInto?: BakedAnnotations,
 ): Promise<TimelineThumb | null> {
   const sources = given === undefined ? captureThumbSources(doc) : given
   if (!sources) return null
@@ -326,9 +354,32 @@ export async function composeTimelineThumb(
       ctx.fillStyle = doc.page.bg || '#FFFFFF'
       ctx.fillRect(0, 0, canvas.width, canvas.height)
     }
-    // 按文档里的顺序画（= 叠放次序），一个一个等：面板图的加载顺序不能改变叠放
+    // 按文档里的顺序画（= 叠放次序），一个一个等：面板图的加载顺序不能改变叠放。
+    //
+    // `bakedInto` 里的标注是例外：它画不画要等**它所属面板这一刻实际选中的图源**才能判定
+    // （面板此刻手里的 SVG 可能解析 / 解码失败、退到合成时才现取的 render——那张图已经烙进
+    // 标注了），而面板的结局只有画完才知道。做法是**只推迟这几条标注**，别的一切（含全部
+    // 面板）仍按原顺序画——先把不在 `bakedInto` 里的对象按原顺序画完（这一遍面板的结局也就
+    // 全齐了），再按原来的相对顺序补画应该画的那几条标注。对绝大多数场景零影响（`bakedInto`
+    // 通常是空的）；只有当被写回的标注与它自己面板之外的东西发生空间重叠时，画面才可能与
+    // 原顺序略有出入——这本身就是缩略图「近似」的一部分（Codex #679 P1 追加）。
+    const deferred: CanvasObject[] = []
+    const panelOutcome = new Map<string, PanelDrawOutcome>()
     for (const o of doc.objects) {
       if (o.hidden) continue
+      if (bakedInto?.has(o.id)) {
+        deferred.push(o)
+        continue
+      }
+      const outcome = await drawObject(ctx, o, scale, sources.get(o.id) ?? null)
+      if (o.type === 'panel') panelOutcome.set(o.id, outcome ?? 'none')
+    }
+    for (const o of deferred) {
+      const panelId = bakedInto!.get(o.id)
+      const outcome = panelId ? panelOutcome.get(panelId) : undefined
+      // 面板结局明确、且不是冻结的 SVG：这张图已经烙进了这条标注，不再叠一遍；
+      // 查不到结局（面板被隐藏、或不在这份文档里）按「照画」兜底，不能因为查不到就悄悄丢一条
+      if (outcome && outcome !== 'svg') continue
       await drawObject(ctx, o, scale, sources.get(o.id) ?? null)
     }
     return await encode(canvas)

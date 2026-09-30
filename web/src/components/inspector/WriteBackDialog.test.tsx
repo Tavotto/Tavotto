@@ -22,7 +22,6 @@ import { useProjectStore } from '@/store/projectStore'
 import { emptyProject, type PanelObject, type TextObject } from '@/types/document'
 import { currentTimelineCtx } from '@/lib/timelineContext'
 import { setMomentSink, type MomentSnapshot } from '@/lib/timelineCheckpoint'
-import { renderKeyOf, useRenderStore } from '@/store/renderStore'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -84,9 +83,6 @@ beforeEach(async () => {
   if (i18n.language !== 'zh-CN') await i18n.changeLanguage('zh-CN')
   await useDocumentStore.getState().switchDocument(emptyProject(), 'd_writeback')
   useAssetStore.setState({ byId: { 'Fig1.pdf': { mtime: 1755000000 } } } as never)
-  // renderStore 是模块级的：不清的话「面板有 SVG」那条用例塞进去的渲染态会漏给下一条
-  // （默认没有 SVG，面板此刻只有 /api/render 的 URL——Codex #679 P1 那条要覆盖的正是这个默认档）
-  useRenderStore.setState({ byKey: {}, latest: {} } as never)
   // 备份目录是**每项目**设置：上一条用例塞进去的绝对路径不能漏给下一条
   useProjectStore.setState({ project: null } as never)
   container = document.createElement('div')
@@ -268,7 +264,14 @@ describe('写回的时间线节点（ADR 0101；Codex #679）', () => {
 
   const ids = (snap: MomentSnapshot) => snap.identity.doc.objects.map((o) => o.id)
 
-  it('带标注写回、面板没有 SVG（只有 render URL）：缩略图配写回后的文档，标注只来自烙好的图，不再叠一遍原件（Codex #679 P1）', async () => {
+  /**
+   * 「面板此刻有没有冻结的 SVG」不再在这一层判断（Codex #679 P1 追加）：手里有 SVG 字段，
+   * 到合成器手里也可能才发现解析 / 解码失败、退到合成时才现取的 render——这一层猜不出
+   * 合成器最终会走哪一路。所以这里不管 renderStore 是什么状态，`thumbDoc` 都整份保留全部
+   * 标注原件；「这条标注最终画不画」的归属只交给 `bakedInto`（`objectId → panelId`），
+   * 真正的判定挪到了 `composeTimelineThumb`（见 `timelineThumbCompose.test.ts`）。
+   */
+  it('带标注写回：标注的面板归属交给合成器判断（bakedInto），thumbDoc 不预先摘除任何标注', async () => {
     const at = currentTimelineCtx()
     stubFetch(200, OK_BODY)
     render()
@@ -278,40 +281,15 @@ describe('写回的时间线节点（ADR 0101；Codex #679）', () => {
     await confirm()
     expect(useDocumentStore.getState().doc.objects.map((o) => o.id)).toEqual(['p1']) // 原件确实删了
     expect(snaps).toHaveLength(1)
-    expect(ids(snaps[0])).toEqual(['p1'])
+    expect(ids(snaps[0])).toEqual(['p1']) // 节点记的文档去掉了标注原件
     expect(snaps[0].ctx).toBe(at)
-    // p1 此刻没有冻结的 SVG，缩略图合成时才去取 `/api/render` 的 URL——那次取图落在写回
-    // 之后，取回的已经是烙进标注的新文件。thumbDoc 要跟着摘掉标注原件（与 identity.doc 一致），
-    // 否则合成时旧文档配新图，同一个标注会画两遍（真正的 bug：面板没有 SVG 时，此前 thumbDoc
-    // 仍然整份沿用写回前的旧文档，标注原件叠在已经烙好标注的图上）
-    expect(snaps[0].thumbDoc?.objects.map((o) => o.id)).toEqual(['p1'])
-  })
-
-  it('带标注写回、面板有 SVG：缩略图仍叠写回前那份 SVG，标注原件留在 thumbDoc 里，只出现一次', async () => {
-    // renderStore 里已经有这个面板写回前的 SVG（用户在编辑器里看到的那份，不含标注）
-    useRenderStore.getState().patch(renderKeyOf(panel), {
-      fileId: 'Fig1.pdf',
-      manifest: {} as never,
-      svg: '<svg><rect/></svg>',
-      rev: 1,
-      status: 'ready',
-      lastPatches: '[]',
-    })
-    useRenderStore.setState({ latest: { 'Fig1.pdf': renderKeyOf(panel) } })
-    stubFetch(200, OK_BODY)
-    render()
-    const toggle = document.body.querySelector<HTMLElement>('[aria-label*="标注"][aria-checked]')
-    expect(toggle, '找不到「同时写入标注」开关').toBeTruthy()
-    await act(async () => toggle!.click())
-    await confirm()
-    expect(snaps).toHaveLength(1)
-    expect(ids(snaps[0])).toEqual(['p1']) // 节点记的文档仍然去掉了标注原件
-    // 面板此刻手里有冻结的 SVG（写回前的，不含标注）：thumbDoc 保留标注原件叠上去，
-    // 与上一轮（Codex #679 第一次修复）的行为一致，不因这次修复而回归
+    // thumbDoc 整份保留（不再按「此刻有没有 SVG」预先摘除）
     expect(snaps[0].thumbDoc?.objects.map((o) => o.id)).toEqual(['p1', 't_note'])
+    // 归属：t_note 是被写回烙进 p1 的（按 collectPanelAnnotations 的重叠面积判据）
+    expect(snaps[0].bakedInto?.get('t_note')).toBe('p1')
   })
 
-  it('同一次写回混着两种面板：p1 没有 SVG（活图）、p2 有 SVG（冻结），各自的标注原件按各自的档处理（不能一律按 thumbDoc）', async () => {
+  it('同一次写回混着两个面板：各自的标注按重叠面积各归各的面板，thumbDoc 整份保留', async () => {
     // p2 与 p1 不重叠，各自的标注原件按重叠面积归属到各自的面板
     const second: PanelObject = {
       ...panel,
@@ -331,17 +309,6 @@ describe('写回的时间线节点（ADR 0101；Codex #679）', () => {
     useAssetStore.setState({
       byId: { 'Fig1.pdf': { mtime: 1755000000 }, 'Fig2.pdf': { mtime: 1755000001 } },
     } as never)
-    // 只给 p2 冻结一份写回前的 SVG；p1 保持默认（没有 SVG，只有 render URL，见 beforeEach 的
-    // renderStore 重置）
-    useRenderStore.getState().patch(renderKeyOf(second), {
-      fileId: 'Fig2.pdf',
-      manifest: {} as never,
-      svg: '<svg><rect/></svg>',
-      rev: 1,
-      status: 'ready',
-      lastPatches: '[]',
-    })
-    useRenderStore.setState({ latest: { 'Fig2.pdf': renderKeyOf(second) } })
     stubFetch(200, OK_BODY)
     act(() =>
       root.render(
@@ -357,9 +324,11 @@ describe('写回的时间线节点（ADR 0101；Codex #679）', () => {
     // 节点记的文档：两个面板各自烙进去的标注原件都删了
     expect(snaps).toHaveLength(1)
     expect(ids(snaps[0])).toEqual(['p1', 'p2'])
-    // thumbDoc：p1 是活图（此刻没有冻结 SVG），它的标注原件摘掉；p2 是冻结的 SVG（写回前，
-    // 不含标注），它的标注原件留着叠一遍——一律按 thumbDoc 或一律按节点 doc 都会算错其中一个
-    expect(snaps[0].thumbDoc?.objects.map((o) => o.id)).toEqual(['p1', 'p2', 't_note2'])
+    // thumbDoc：整份保留，两条标注原件都还在（原顺序）
+    expect(snaps[0].thumbDoc?.objects.map((o) => o.id)).toEqual(['p1', 't_note', 'p2', 't_note2'])
+    // 归属各归各的面板，不会串
+    expect(snaps[0].bakedInto?.get('t_note')).toBe('p1')
+    expect(snaps[0].bakedInto?.get('t_note2')).toBe('p2')
   })
 
   it('对照：不带标注写回，文档没变，节点就是发起时那份（标注还在）', async () => {

@@ -1,7 +1,12 @@
 import { createVersion, putVersionThumb, type LayoutMoment, type LayoutVersionMeta } from '@/lib/api'
 import { currentProjectId } from '@/lib/session'
 import { currentTimelineCtx } from '@/lib/timelineContext'
-import { captureThumbSources, composeTimelineThumb, type ThumbSources } from '@/lib/timelineThumb'
+import {
+  captureThumbSources,
+  composeTimelineThumb,
+  type BakedAnnotations,
+  type ThumbSources,
+} from '@/lib/timelineThumb'
 import { documentDigest, recordDiagnosticEvent, versionHash } from '@/diagnostics'
 import { useDocumentStore } from '@/store/documentStore'
 import { useTimelineStore } from '@/store/timelineStore'
@@ -59,6 +64,13 @@ export interface MomentSnapshot {
    * 不给 = `identity.doc`。
    */
   readonly thumbDoc?: FigureDocument
+  /**
+   * 写回带标注时，这次写回把哪些标注对象烙进了哪个面板（`objectId → panelId`）。这些标注
+   * 最终画不画由合成器按面板**实际选中的图源**判定（Codex #679 P1 追加，见
+   * `timelineThumb.composeTimelineThumb` 的 `bakedInto` 参数）——不能在这里靠「此刻有没有
+   * SVG」猜，SVG 到合成器手里可能才发现解析 / 解码失败。不给 = 空，普通写回没有这个顾虑。
+   */
+  readonly bakedInto?: BakedAnnotations
 }
 
 /**
@@ -76,26 +88,23 @@ export function captureMoment(doc?: FigureDocument): MomentSnapshot {
  * 给「操作本身会改文档」的时刻用——写回带标注时，写成之后画布上的标注原件会被删掉，
  * 节点要记删掉之后的样子，否则从它恢复标注会出现两份（Codex #679）。
  *
- * **缩略图默认不跟着换**（`thumbDoc` 省略时取发起那一刻的旧文档）：面板此刻**已经拿在
- * 手里**的图源（renderStore 里的 SVG）是写回前的、还没有标注，只和发起那一刻的旧文档
- * 配得上——旧图叠上标注原件，正是这次写回烙进原图的样子。
- *
- * **有的面板此刻拿不到 SVG，缩略图合成时才去取 `/api/render` 的 URL**（预览预算裁掉了它，
- * 或解码失败）——那次取图发生在写回**之后**，`/api/render` 不认请求里旧的 `m` 值，按磁盘
- * 现状回应，取回的已经是烙进标注的新文件。这类面板要显式传 `thumbDoc`：调用方按每个面板
- * 此刻有没有 SVG 分别决定要不要把它的标注原件也从 `thumbDoc` 里摘掉——摘掉的话缩略图与
- * 「拍时才现取的图」是同一个时刻（都是写回后），标注只来自那张现取的图，不再叠一遍原件；
- * 不摘的话跟旧文档一样叠一遍。不传就整份沿用旧文档（向后兼容，见 `UpdateSourceButton.tsx`
- * 的 `liveIds` 那一段，Codex #679 P1 追加）。
+ * **缩略图不跟着换**：`thumbDoc` 省略时取发起那一刻的旧文档（含标注原件），整份**照原样
+ * 保留**——不再在这里靠「面板此刻有没有 SVG」猜要不要把某个标注也摘掉：手里有 SVG 字段，
+ * 到合成器手里也可能才发现解析 / 解码失败，退到合成时才现取的 render（那张图已经烙进标注），
+ * 猜错了要么漏画（面板真用了冻结的 SVG，标注被错误摘除）要么重影（面板退到现取的图，标注
+ * 却没摘）。这个「画不画」的判断挪到了合成器：调用方只把「这次写回把哪些标注烙进了哪个
+ * 面板」的归属交给 `bakedInto`（`objectId → panelId`），合成器按面板**实际选中的图源**决定
+ * （Codex #679 P1 追加，见 `timelineThumb.composeTimelineThumb`）。
  */
 export function momentWithDoc(
   snapshot: MomentSnapshot,
   doc: FigureDocument,
-  thumbDoc?: FigureDocument,
+  bakedInto?: BakedAnnotations,
 ): MomentSnapshot {
   return {
     ...snapshot,
-    thumbDoc: snapshot.thumbDoc ?? thumbDoc ?? snapshot.identity.doc,
+    thumbDoc: snapshot.thumbDoc ?? snapshot.identity.doc,
+    bakedInto: snapshot.bakedInto ?? bakedInto,
     identity: { ...snapshot.identity, doc },
   }
 }
@@ -125,7 +134,7 @@ export async function takeCheckpoint(
   const name = opts.name?.trim() || undefined
   // 缩略图的图源在这里、在任何 await 之前取（见 `composeTimelineThumb`）；快照带着的用快照的
   const thumbP = snapshot
-    ? composeTimelineThumb(snapshot.thumbDoc ?? id.doc, snapshot.thumb)
+    ? composeTimelineThumb(snapshot.thumbDoc ?? id.doc, snapshot.thumb, snapshot.bakedInto)
     : composeTimelineThumb(id.doc)
   const res = await createVersion(
     id.documentId,

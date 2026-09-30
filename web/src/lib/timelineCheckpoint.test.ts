@@ -217,7 +217,9 @@ describe('关键时刻拍发起那一刻的内容（快照；Codex #679）', () 
     stop()
     const node = posts.find((p) => p.body.moment)!
     expect(ids(node)).toEqual(['t1'])
-    expect(vi.mocked(composeTimelineThumb)).toHaveBeenLastCalledWith(snap.identity.doc, snap.thumb)
+    // 第三个参数是 `bakedInto`（Codex #679 P1 追加）：这个快照没有走 `momentWithDoc`，
+    // 恒为 `undefined`
+    expect(vi.mocked(composeTimelineThumb)).toHaveBeenLastCalledWith(snap.identity.doc, snap.thumb, undefined)
   })
 
   it('写回换了文档（momentWithDoc）：节点记新文档，缩略图仍按图源取自的那份合成（Codex #679 P1）', async () => {

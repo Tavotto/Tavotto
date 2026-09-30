@@ -264,23 +264,16 @@ export function WriteBackDialog({
         // 节点记**写回完成后**的文档：发起那一刻的那份去掉烙进原图的标注原件（不带途中的
         // 其它编辑）；上下文仍是发起那一刻的。记删之前的话，从它恢复标注会出现两份（Codex #679）
         const doc = moment.identity.doc
-        // 缩略图要配「同一时刻」的图源（Codex #679 P1）：面板此刻手里**已经有** SVG
-        // （renderStore 里写回前那份，不含标注）的话，缩略图叠的是旧图，标注原件仍要
-        // 留在 thumbDoc 里叠一遍；面板此刻**没有** SVG、缩略图合成时才去取
-        // `/api/render` 的 URL 的话，那次取图落在写回之后，取回的已经是烙进标注的
-        // 新文件——这类面板的标注原件要跟着从 thumbDoc 摘掉，否则同一个标注画两遍
-        // （`/api/render` 不认请求里旧的 `m` 值，按磁盘现状回应）。
-        const liveIds = [...annMap.entries()]
-          .filter(([panelId]) => {
-            const src = moment.thumb?.get(panelId)
-            return !src?.svg && !!src?.url
-          })
-          .flatMap(([, a]) => a.objectIds)
-        const thumbDoc = { ...doc, objects: doc.objects.filter((o) => !liveIds.includes(o.id)) }
+        // 这些标注对象被这次写回烙进了哪个面板——只登记归属，画不画留给合成器按面板**实际
+        // 选中的图源**判定（Codex #679 P1 追加）：不能在这里靠「此刻有没有 SVG」猜，SVG 到
+        // 合成器手里也可能才发现解析 / 解码失败，退到合成时才现取的 render（那张图已经烙好）。
+        // 归属复用 annMap 按重叠面积算出来的那套，不另写一遍。
+        const bakedInto = new Map<string, string>()
+        for (const [panelId, ann] of annMap) for (const oid of ann.objectIds) bakedInto.set(oid, panelId)
         written = momentWithDoc(
           moment,
           { ...doc, objects: doc.objects.filter((o) => !ids.includes(o.id)) },
-          thumbDoc,
+          bakedInto,
         )
       }
       // 排版时间线的关键时刻（ADR 0101）：写回成功，原图已经变了
