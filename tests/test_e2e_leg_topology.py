@@ -251,11 +251,12 @@ class TestDesktopWindowLeg:
         assert re.search(r'(?m)^\s+TAVOTTO_DESKTOP_WINDOW_REQUIRED: "1"\s*$', step), (
             "那条腿没带 TAVOTTO_DESKTOP_WINDOW_REQUIRED=1：缺前提时整目录 skip、而 step 照样绿"
         )
-        # skip 不是绿：pytest 退 0 不够，junit 里除 xfail 之外的 skip 要判红、执行条数要钉住
-        # 判的是**会抛的那一行**，不是变量名出没出现（报错文案里也有它）
-        assert "type -ne 'pytest.xfail'" in step, (
-            "那一步数 skip 时没把 xfail 排除出去（或根本没数）"
-        )
+        # skip 不是绿：pytest 退 0 不够，junit 里每一条 skip（xfail 也记成 <skipped>）都要判红、
+        # 执行条数要钉住。#715 的两条 xfail 随 #751 去掉后豁免一并收回：再挂 xfail 就是红
+        assert re.search(
+            r"(?m)^\s*\$skipped = @\(\$cases \| Where-Object \{ \$_\.skipped \}\)\s*$", step
+        ), "那一步数 skip 时仍在排除某一类（例如 xfail），或根本没数"
+        assert "pytest.xfail" not in step, "那一步还留着给 xfail 的豁免"
         assert re.search(r"(?m)^\s*if \(\$skipped\.Count\) \{ throw ", step), (
             "数出来的 skip 不进控制流"
         )
