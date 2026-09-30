@@ -7,10 +7,12 @@
 安装目录里的引擎源码，QA 在 0.16.0 的 `/Applications/Tavotto.app` 里数出 17 个多出来的
 `engine/__pycache__/*.pyc`。
 
-为什么不给非内置解释器加 `-B`：那是用户环境的地盘。`-B` 关的是**整个进程**的字节码写入——
-uv 建的 venv 默认不预编译，加了它，numpy / matplotlib 每次冷启动都要从源码重编
-（`test_bundled_runtime.test_only_the_bundled_runtime_gets_b_flag` 钉着这条）；native bridge
-更是明令解释器不加任何标志（`execspec.bridge_argv`）。所以挡的位置在**装载引擎代码的那一段**：
+为什么不给非内置解释器一路 `-B`：那是用户环境的地盘。`-B` 关的是**整个进程**的字节码写入——
+uv 建的 venv 默认不预编译，一路开着，numpy / matplotlib 每次冷启动都要从源码重编
+（`test_bundled_runtime.test_only_the_bundled_runtime_gets_b_flag` 钉着这条）。safe worker 只在
+**解释器启动期** `-B`（#736：挡住 site 初始化时 import 的项目代码），worker.py 第一段装好项目守卫
+就放开（`runtime.worker_args` / `worker._startup_bytecode_guard`）；native bridge 明令解释器不加任何
+标志（`execspec.bridge_argv`）。所以挡的位置在**装载引擎代码的那一段**：
 `sys.dont_write_bytecode` 只在 Tavotto 自己的模块装载窗口里打开，装完还原——
 项目外的用户模块照常缓存（下面每条都带这一侧的对照断言，两条边一起钉）。safe worker 另外
 不往**用户项目目录**里写字节码（2026-09-28 Windows 实测，`worker._suppress_project_bytecode`），
@@ -40,7 +42,7 @@ from pathlib import Path
 import pytest
 
 from support import bridgekit
-from tavotto.engine import discover, execspec, pool, projectenv
+from tavotto.engine import discover, execspec, pool, projectenv, runtime
 
 SRC_PKG = Path(projectenv.__file__).resolve().parents[1]  # …/src/tavotto
 
@@ -107,7 +109,8 @@ def _assert_user_side_still_cached(proj: Path) -> None:
 
 
 def _run_safe_worker(python, install: Path, proj: Path, entry: str, tmp_path, env) -> None:
-    """以产品自己的 argv 形状（`worker_argv`，非内置解释器不带 `-B`）真 build 一次 `fig_data.py`。"""
+    """以产品自己的 argv 形状（`worker_argv` + `runtime.worker_args`：非内置解释器只在启动期 `-B`，
+    带 `-X` 标记让 worker 装好项目守卫后放开，#736）真 build 一次 `fig_data.py`。"""
     out_dir, sandbox = tmp_path / f"out-{entry}", tmp_path / f"sandbox-{entry}"
     out_dir.mkdir()
     sandbox.mkdir()
@@ -115,9 +118,11 @@ def _run_safe_worker(python, install: Path, proj: Path, entry: str, tmp_path, en
         "fig_data.py", str(proj), entry, interpreter=python, sandbox=str(sandbox)
     )
     argv = execspec.worker_argv(
-        spec, worker_py=install / "tavotto" / "engine" / "worker.py", out_dir=out_dir
+        spec,
+        worker_py=install / "tavotto" / "engine" / "worker.py",
+        out_dir=out_dir,
+        runtime_args=runtime.worker_args(bundled=False),
     )
-    assert "-B" not in argv, "前提：非内置解释器的 argv 不带 -B（用户环境的地盘）"
     proc = subprocess.run(
         argv,
         input='{"cmd": "build"}\n{"cmd": "shutdown"}\n',
@@ -176,6 +181,68 @@ def test_safe_worker_writes_no_bytecode_into_the_install_dir_or_the_project(
     assert list((site / "__pycache__").glob("sitehelper.*.pyc")), (
         "项目外的模块也不缓存了（整个进程的字节码写入被关掉）"
     )
+
+
+def test_project_code_imported_at_interpreter_startup_writes_no_bytecode(install, tmp_path):
+    """#736：项目目录本来就在 PYTHONPATH 上、项目里有 `sitecustomize.py`（它再 import 一个项目模块）——
+    这些代码在解释器启动、site 初始化阶段就被 import，早于 worker 的任何一行。项目里照样一个 .pyc
+    都没有；项目外的模块照常缓存（放开字节码写入的那一步没有漏）。
+
+    sitecustomize 还挂一个 import 钩子：worker import matplotlib 时（worker.py 放开字节码之后、`build()`
+    之前）再 import 项目里的 `lateproj`——量的是守卫在放开的那一刻就已经装好，不是等到 `build()`。
+
+    对照先证明传感器是活的：同一个解释器、同样的环境、不带 `-B` 跑一句 `import matplotlib`，项目里
+    就会出现三个模块的 .pyc——量「没有」之前先证明「会有」。"""
+    site = tmp_path / "site"
+    site.mkdir()
+    (site / "sitehelper.py").write_text("OFFSET = 1\n", encoding="utf-8")
+    proj = _data_project(tmp_path / "proj", extra_import="sitehelper")
+    (proj / "startuphelper.py").write_text("READY = True\n", encoding="utf-8")
+    (proj / "lateproj.py").write_text("LATE = True\n", encoding="utf-8")
+    (proj / "sitecustomize.py").write_text(
+        "import sys\n"
+        "import startuphelper\n"
+        "class _Late:\n"
+        "    def find_spec(self, name, path=None, target=None):\n"
+        "        if name == 'matplotlib' and 'lateproj' not in sys.modules:\n"
+        "            import lateproj\n"
+        "        return None\n"
+        "sys.meta_path.insert(0, _Late())\n",
+        encoding="utf-8",
+    )
+    env = {**_env(), "PYTHONPATH": os.pathsep.join([str(proj), str(site)])}
+
+    subprocess.run([USER_PYTHON, "-c", "import matplotlib"], env=env, check=True, timeout=120)
+    control = _pycs(proj)
+    for name in ("sitecustomize", "startuphelper", "lateproj"):
+        assert [p for p in control if name in p], f"传感器 {name} 没生效：{control}"
+    shutil.rmtree(proj / "__pycache__")
+
+    _run_safe_worker(USER_PYTHON, install, proj, "main", tmp_path, env)
+    assert _pycs(proj) == [], "解释器启动期 import 的项目代码在项目里写了字节码"
+    assert _pycs(install) == []
+    assert list((site / "__pycache__").glob("sitehelper.*.pyc")), (
+        "项目外的模块也不缓存了（启动期的 -B 没有放开）"
+    )
+
+
+def test_the_startup_marker_is_one_name_on_both_sides():
+    """`runtime.WORKER_BYTECODE_XOPTION`（spawn 侧加的 `-X` 标记）与 worker.py 认的那个名字相同——worker 只在
+    子进程里跑、不 import runtime，名字是抄过去的。读 AST 里的赋值，不数子串。"""
+    import ast
+
+    tree = ast.parse((SRC_PKG / "engine" / "worker.py").read_text(encoding="utf-8"))
+    values = [
+        node.value.value
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and any(getattr(t, "id", None) == "_STARTUP_BYTECODE_XOPTION" for t in node.targets)
+        and isinstance(node.value, ast.Constant)
+    ]
+    assert values == [runtime.WORKER_BYTECODE_XOPTION]
+    assert runtime.worker_args(bundled=False) == ["-B", "-X", runtime.WORKER_BYTECODE_XOPTION]
+    assert runtime.worker_args(bundled=True) == runtime.child_args()
+    assert runtime.WORKER_BYTECODE_XOPTION not in runtime.child_args()
 
 
 def _capture(argv: list[str]) -> str:

@@ -1331,7 +1331,14 @@ def worker_self_test(python: str) -> dict:
         spec = execspec.safe_spec(
             _SELFTEST_NAME, str(root), "__main__", interpreter=str(python), sandbox=str(sandbox)
         )
-        argv = execspec.worker_argv(spec, worker_py=pool.WORKER_PY, out_dir=out_dir)
+        argv = execspec.worker_argv(
+            spec,
+            worker_py=pool.WORKER_PY,
+            out_dir=out_dir,
+            runtime_args=runtime.worker_args(
+                bundled=pool.same_python(python, runtime.bundled_python())
+            ),
+        )
         proc = subprocess.Popen(
             argv,
             stdin=subprocess.PIPE,

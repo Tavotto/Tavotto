@@ -527,6 +527,28 @@ def child_args() -> list[str]:
     return ["-B"]
 
 
+#: 非内置解释器起 safe worker 时加的 `-X` 标记（`worker._STARTUP_BYTECODE_XOPTION` 的镜像）。
+WORKER_BYTECODE_XOPTION = "tavotto_project_bytecode"
+
+
+def worker_args(*, bundled: bool) -> list[str]:
+    """起 **safe worker** 时加在解释器后面的参数——Python 池、workerd 规格、`deprepair.worker_self_test`
+    三条 spawn 路径的唯一出处（再交给 `execspec.worker_argv` 的 `runtime_args`）。
+
+    * 内置 runtime：`child_args()`（`-B`，整个进程都不写，安装目录一个字节都不动）。
+    * 其余解释器：`-B -X tavotto_project_bytecode`（#736）。`-B` 只管到 worker.py 的第一段：解释器启动、
+      site 初始化阶段就 import 的项目代码（PYTHONPATH 上的 `sitecustomize.py`、`.pth` import 的项目模块）
+      早于任何 Tavotto 代码，只有命令行参数挡得住；worker 看到标记就先装「项目目录不写字节码」的守卫、
+      再把字节码写入还给用户（`worker._startup_bytecode_guard`）——之后 import 的 numpy / matplotlib
+      照常缓存，不是给用户环境整个关掉字节码（没预编译的环境那样每次冷启动都要重编科学栈）。
+      用 `-B` 不用 `PYTHONDONTWRITEBYTECODE`：环境变量在 `-E` / `-I` / `._pth` 下不算数，还会传给
+      用户脚本起的子进程（`child_args` 同一条理由）。
+    """
+    if bundled:
+        return child_args()
+    return ["-B", "-X", WORKER_BYTECODE_XOPTION]
+
+
 #: 会把内置 runtime 带跑偏的环境变量，起子进程前一律摘掉。
 #:
 #: Windows 上 `._pth` 的隔离模式顺手挡住了它们，**macOS 上没有任何东西挡**：
@@ -606,7 +628,8 @@ def probe_args(*, bundled: bool = False) -> list[str]:
     代价：没预编译过的环境（uv 建的 venv 默认不编）每次体检都在内存里现编一遍
     matplotlib——只是读得慢，一个字节都不写。**worker 不在此列**：那是替用户跑他的
     脚本，用户自己的包照常缓存（`test_only_the_bundled_runtime_gets_b_flag`）；
-    worker 只对项目目录里的源码不写字节码（`worker._suppress_project_bytecode`）。
+    worker 只对项目目录里的源码不写字节码（`worker._suppress_project_bytecode`；启动期的 `-B` 在守卫装好后
+    就放开，`worker_args`）。
     """
     return child_args() if bundled else ["-B"]
 
