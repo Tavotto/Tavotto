@@ -404,12 +404,12 @@ export const useEnvStore = create<EnvState>((set, get) => ({
     // 换代**排在清空与重取之前**：之前发出的请求作废，下面这次 refresh 属于新项目
     projectEpoch += 1
     const env = get().env
-    // 已见代次属于旧项目：新项目的第一次刷新重新记起点
-    set({ inputRemapSeen: null })
-    // 首开确认框属于旧项目：A 项目问的问题不能由 B 项目回答
+    // 首开确认框属于旧项目：A 项目问的问题不能由 B 项目回答；已见的改指表代次也是旧项目的——
+    // 新项目的第一次刷新重新记起点
     if (env)
       set({
         env: { ...env, project: { open: false } },
+        inputRemapSeen: null,
         workdirConfirmation: null,
         dependencyPreparation: null,
         missingInput: null,
@@ -417,6 +417,7 @@ export const useEnvStore = create<EnvState>((set, get) => ({
       })
     else
       set({
+        inputRemapSeen: null,
         workdirConfirmation: null,
         dependencyPreparation: null,
         missingInput: null,
