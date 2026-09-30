@@ -708,22 +708,23 @@ def _fold_requested(
     imports = [m["import_name"] for m in joint.missing]
     if requirement.import_name and requirement.import_name not in imports:
         imports.append(requirement.import_name)
+    # 账目里用户点的那个包沿用单包修复原来的写法（distribution / specifier 取自它自己的 requirement），其余取自联合计划
     record = [
+        {
+            "import_name": requirement.import_name,
+            "distribution": requirement.distribution,
+            "specifier": requirement.specifier,
+        }
+    ]
+    record += [
         {
             "import_name": m["import_name"],
             "distribution": m["distribution"],
             "specifier": ",".join(m["specifiers"]),
         }
         for m in joint.missing
+        if depresolve.normalize_distribution(m["distribution"]) != wanted
     ]
-    if all(depresolve.normalize_distribution(r["distribution"]) != wanted for r in record):
-        record.append(
-            {
-                "import_name": requirement.import_name,
-                "distribution": requirement.distribution,
-                "specifier": requirement.specifier,
-            }
-        )
     return _Widened(
         requirements=tuple(delta),
         constraints=tuple(joint.constraints),

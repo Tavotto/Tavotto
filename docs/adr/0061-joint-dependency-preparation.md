@@ -271,6 +271,23 @@ ADR 0056 的 spike 用了独立的 `active.json`，这里刻意不设第二个�
 **用户的 venv 没有代**（我们不能克隆它）：仍是 ADR 0019 §八的原地安装——明确确认、只进不退、取消后如实说「可能已部分修改」。
 这条不对称写在计划里（`modifies_user_environment`），界面上说出来。
 
+**2026-09-30 修订（§五）：单包修复新建第一代时，装的是脚本开跑所需的全部第三方依赖，不只是缺的那一个。**
+干净 macOS 虚拟机实测（冻结包，私有 Python 开关打开）：脚本同时 import pandas 与 openpyxl，内置 runtime 有 pandas、
+没有 openpyxl。点「一键修复」→ `create_plan` 只把 openpyxl 放进 delta，新一代是空 venv（不带 `--system-site-packages`），
+没有 pandas；装完自动重跑撞上跑前门「缺 pandas」，用户卡死。开发机 / CI 没暴露，是因为那里选中的是用户 / 系统 Python，
+从来没走到「从空 venv 起第一代」。修法是**复用联合准备的求解，不另写一套**：受管目标要新建第一代（没有 active 代）时，
+`create_plan` 按 `create_joint_plan` 同一条取事实的路（缺什么按此刻会跑脚本的解释器量、装什么按将要新建的那一代量：
+`_facts_for` / `private_python_target` → `depplan.plan(install_facts=…)`）算出联合集合，把用户点的那一个包并进去
+（同名以联合集合里带声明的那条为准，没有就补上），存进 `RepairPlan.widened`；`to_payload()` 如实给 `requirements`
+（全部要装的）与 `joint`（是否多于一个）。执行仍是同一个 `_GenerationJob` 事务，只是 delta / 约束 / 关键 import / 账目
+取自 `widened`；计划带着私有 Python 下载（事实是替身）时 `replan` 打开，`_replan_on_base` 在真解释器上重算并把用户点的
+那一个并回去。**不改的**：原地往已有一代加包（已有 active 代）仍是 delta 只有一条；项目 venv 目标不变；联合计划 blocked
+或 hash 模式（锁就是闭包，多补一条没有 hash 的会被 pip 拒）时退回单包，行为与修订前一致。选「入口直接改走联合准备」
+而不是加一份新载荷，是因为单包入口的调用方（画布修复卡、脚本行修复卡、MCP）都认 `RepairPlan` 的形状与
+`dependency_already_attempted` 的防循环，改走联合端点会让它们各自适配一份新协议；把求解并进同一份计划则协议只多两个
+可选字段。已知的旧局限（不在本次修订内）：账目（`environment.json` 的 installed）只记「缺的」，内置 runtime 里本来就有的
+那几个包随本代装进去但不进账，重建时不会自动带回，重建后再跑会再问一次跑前门。
+
 ### 六、计划绑定与有界重计划；取消的接受时刻（D11）（落地：PR B / PR C）
 
 联合计划绑定：项目 / 脚本 / 完整需求集合（规范串）/ 约束 / hash / 目标类型 / 目标解释器指纹 / 目标事实 digest /
