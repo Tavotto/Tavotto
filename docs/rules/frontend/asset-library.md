@@ -75,7 +75,9 @@
   字节数读 `result.download`、**只在 state 仍是
   `downloading_python` 时读**（后端的 result 沿用上一条）；换用 PyPI 镜像（进度记录顶层的 `pypi_mirror`，后端 #743 `deprepair._note_mirror` 给出；没有这个键时一个字都不说）
   只在「详情」里说（修复卡与跑前授权框的进行中都一样：#743 的联合准备两条路与单包修复同一个字段）。一键修复改用了电脑上已有的环境、或清掉了全局固定之后，停在缺这个包上的脚本行（这一行与同样缺它的）
-  立刻重跑（`rerunAfterEnvironmentChange`，与装好之后同一件事）。跑前授权框
+  立刻重跑（`rerunAfterEnvironmentChange`，与装好之后同一件事）；发请求那一刻记项目代际，回来时已切项目的话这些
+  副作用一个都不在新项目上做，重跑按所属项目停放（`pendingReruns`）、切回来 `clear()` 续上（「恢复自动检测」因此挪进
+  store：`clearPinnedInterpreter`）。看护 `projectSwitchDepRepair.test.ts`「环境改动的回调按项目代际判」。跑前授权框
   （`DependencyPrepareDialog`）同一套：没有装齐的用户环境、默认目标是受管环境时，标题就是那一句（干净机器上什么包都
   不缺时换成「需要先准备运行环境」那一句；私有 Python 的披露只跟**此刻选中的**目标走，选了项目 venv 就不提），底部只有「稍后」「一键修复」，
   其余（含「不准备，直接运行」）进「详情」；默认目标是项目 venv（会改用户环境）时目标单选留在外面，每个选项的说明压成一句
