@@ -176,7 +176,7 @@ async function openLargePanel(
   // 一出现」，只有按钮真在时才点它——无条件点会红在「找不到按钮」的超时上，
   // 而那个红长得跟「大图把浏览器打死了」一模一样。
   const inElementEdit = page.locator("[data-element-svg], [data-display]").first();
-  const enterElementEdit = page.getByRole("button", { name: "编辑图内元素" });
+  const enterElementEdit = page.getByRole("button", { name: "改图里的内容" });
   await expect
     .poll(
       async () => (await inElementEdit.count()) > 0 || (await enterElementEdit.count()) > 0,

@@ -122,7 +122,7 @@ export function UpdateNoticeDialog() {
             href={notice.notesUrl}
             target="_blank"
             rel="noreferrer"
-            className="self-start text-xs text-accent hover:underline"
+            className="self-start text-xs text-ink-2 underline-offset-2 hover:text-ink hover:underline"
           >
             {tt('releaseNotes')}
           </a>

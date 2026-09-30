@@ -705,7 +705,8 @@ function ElementEditEntry({ panel }: { panel: PanelObject }) {
         <Button
           variant="secondary"
           size="sm"
-          className="min-w-0 shrink"
+          // 整行宽（2026-09-30 重设计）：选中一张图时，属性栏第一件事就是「进去改」
+          className="min-w-0 flex-1 justify-center"
           active={editing}
           onClick={() => {
             if (editing) {

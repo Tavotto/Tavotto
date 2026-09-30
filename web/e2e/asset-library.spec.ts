@@ -230,7 +230,7 @@ test('完整链：保存 → 关闭 → 重开 → 重放 → 预检 → 导出 
   // **这一条走的是画布上的对象**（重开项目后从版上点进去），不是素材卡——
   // 那条路径 Prompt 09 一个字没改，右栏入口照旧。
   await obj.click()
-  await page.getByRole('button', { name: '编辑图内元素' }).first().click()
+  await page.getByRole('button', { name: '改图里的内容' }).first().click()
   await expect(page.locator('[data-element-svg] svg').first()).toBeVisible({ timeout: 120_000 })
   await openElementsTab(page)
   await (await expandTreeUntil(page, /^标题/)).click()

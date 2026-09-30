@@ -223,17 +223,17 @@ describe('右栏的壳（2026-09-15 全面打磨 S2 / S3 / S4）', () => {
    * 对象页与图内元素页是**两个**身份头（`Inspector.tsx` 里各写一份）：只量一个的话，
    * 另一个退回 11px 时判据照样绿。两个都要点名。
    */
-  it('身份头的标题与分区标题同一档：不比它下面的组标题小一号（S2 · 对象页）', async () => {
+  it('身份头的标题比分区标题大一档：不比它下面的组标题小（S2 · 对象页）', async () => {
     await seed([panel], ['p1'])
     await mount()
     const h2 = document.querySelector('h2')!
-    // `type-section` = 12/500/ink，与「位置与尺寸」那一档同一个角色；
-    // 此前它是 text-xs（11）+ font-medium，对象名比它下面的分区标题还小
-    expect(h2.className).toContain('type-section')
+    // 身份块的名字是 15/500（2026-09-30 重设计），比它下面的分区标题（type-section 12/500）大一档；
+    // 2026-09-15 之前它是 text-xs（11），对象名比分区标题还小
+    expect(h2.className).toContain('text-xl')
     expect(h2.className).not.toContain('text-xs')
   })
 
-  it('身份头的标题与分区标题同一档（S2 · 图内元素页）', async () => {
+  it('身份头的标题比分区标题大一档（S2 · 图内元素页）', async () => {
     await seed([panel], ['p1'])
     seedExactRender(panel, manifest as never)
     useUiStore.getState().setElementPanel('p1')
@@ -241,7 +241,7 @@ describe('右栏的壳（2026-09-15 全面打磨 S2 / S3 / S4）', () => {
     await mount()
     const h2 = document.querySelector('h2')!
     expect(h2.textContent).toBeTruthy()
-    expect(h2.className).toContain('type-section')
+    expect(h2.className).toContain('text-xl')
     expect(h2.className).not.toContain('text-xs')
   })
 
@@ -282,13 +282,14 @@ describe('图内元素的头部图标按角色（2026-09-12 critique P3）', () 
     useUiStore.getState().setElementPanel('p1')
     useUiStore.setState({ selectedGids: ['axes_0.title'] })
     await mount()
-    const icon = document.querySelector('header svg')!
+    // 身份块里第一颗 svg 可能是路径行的分隔箭头，角色图标由 data-identity-icon 指名
+    const icon = document.querySelector('header [data-identity-icon] svg')!
     expect(icon.getAttribute('class')).toContain('icon-type')
     expect(icon.getAttribute('class')).not.toContain('icon-image')
     // 与元素树同一张表：树里标题也是 Type
     useUiStore.setState({ selectedGids: [] })
     await act(async () => {})
-    expect(document.querySelector('header svg')!.getAttribute('class')).toContain('icon-fullscreen')
+    expect(document.querySelector('header [data-identity-icon] svg')!.getAttribute('class')).toContain('icon-fullscreen')
   })
 })
 

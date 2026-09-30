@@ -22,7 +22,7 @@ import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
 import { useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
-import { useUiStore } from '@/store/uiStore'
+import { RAIL_W, useUiStore } from '@/store/uiStore'
 import { useViewportStore } from '@/store/viewportStore'
 import { emptyProject, type CanvasObject, type PanelObject, type TextObject } from '@/types/document'
 import { useQuickEdit } from '../quickEditStore'
@@ -472,7 +472,7 @@ describe('落位', () => {
     await select(['t1', 't2'])
     await act(async () => useViewportStore.setState({ panX: -400 }))
     await act(async () => useUiStore.setState({ leftOpen: true, leftWidth: 300 }))
-    expect(left()).toBe(44 + 300 + 8)
+    expect(left()).toBe(RAIL_W + 300 + 8)
     await act(async () => useUiStore.setState({ leftOpen: false }))
     expect(left()).toBe(8)
   })

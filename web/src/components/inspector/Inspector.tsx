@@ -1,6 +1,7 @@
 import { useTranslation } from 'react-i18next'
 import { perfCount } from '@/perf/core'
 import {
+  ChevronRight,
   Copy,
   Eye,
   EyeOff,
@@ -119,8 +120,10 @@ export function Inspector({
       )}
     >
       <div className="flex h-full flex-col" style={{ width }}>
-      <div className="flex h-9 shrink-0 items-center gap-3 px-3">
-        <TabList label={t('tabsLabel')} className="min-w-0">
+      {/* 页签条（2026-09-30 重设计，学 OpenBitFun 的面板头）：与左边画布标签行同高 44、底边同一条
+          hairline，两条线在工作面板里连成一条 */}
+      <div className="flex h-11 shrink-0 items-center gap-3 border-b border-border px-3">
+        <TabList label={t('tabsLabel')} className="min-w-0 self-stretch">
           {TABS.map((id) => (
             <Tab
               key={id}
@@ -379,20 +382,44 @@ function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: P
       : panel.overrides.length
     const RoleIcon = roleIcon(el?.role ?? 'figure')
 
+    // 身份块（2026-09-30 重设计）：上面一行灰色路径（只有祖先，不重复名字；每级可点），
+    // 下面一行大号名字 + 角色图标 + 隐藏。「n 项已修改」挂在路径行右端
+    const ancestors = crumbs.slice(0, -1)
     return (
-      <header className="shrink-0 pl-3 pr-2 pb-2">
-        <div className="flex items-center gap-1.5">
-          {/* 图标按角色查树里那张表（roles/roleIcons）：标题是 T、曲线是折线、图例是列表，
-              与左栏元素树同一张脸；以前不管选了什么都是同一个图片图标 */}
-          <RoleIcon size={ICON_SIZE.sm} className="shrink-0 text-ink-3" aria-hidden />
-          {/* 没选元素时标题是面板名：标出「整张图」这一层，免得与画布上的面板混淆（审计 T01） */}
-          {!el && (
-            <span data-object-kind className="shrink-0 rounded-sm bg-surface-active px-1 text-xs text-ink-2">
-              {roleName('figure')}
+      <header data-identity className="mx-3 mb-3 flex shrink-0 flex-col gap-2 border-b border-border pb-3 pt-3">
+        {(ancestors.length > 0 || modified > 0 || !el) && (
+          <p className="flex min-h-4 items-center gap-1.5 text-xs text-ink-3">
+            <span className="flex min-w-0 items-center gap-1 truncate" title={crumbs.join(' / ')}>
+              {/* 没选元素时这一行写「整张图」：标出这一层，免得与画布上的面板混淆（审计 T01） */}
+              {!el && <span data-object-kind className="shrink-0">{roleName('figure')}</span>}
+              {ancestors.map((c, i) => (
+                <span key={`${i}-${c}`} className="flex min-w-0 items-center gap-1">
+                  {i > 0 && <ChevronRight size={ICON_SIZE.xs} aria-hidden className="shrink-0" />}
+                  <button
+                    type="button"
+                    data-crumb={crumbTargets[i]}
+                    onClick={() => useUiStore.getState().setSelectedGid(crumbTargets[i])}
+                    className="min-w-0 truncate rounded-xs text-ink-3 outline-none hover:text-ink focus-visible:focus-ring"
+                  >
+                    {c}
+                  </button>
+                </span>
+              ))}
             </span>
-          )}
-          {/* 对象名不该比它下面的「位置与尺寸」小一号（打磨 S2）：面板标题 12/500 */}
-          <h2 className="min-w-0 truncate type-section">
+            {/* 「n 项已修改」徽标本身就是恢复菜单（恢复此元素 / 恢复整张图）：
+                改了几项与怎么撤回是同一个问题的两半，不另起一行 */}
+            <span className="ml-auto shrink-0">
+              <RestoreMenu panel={panel} gid={el?.gid} count={modified} />
+            </span>
+          </p>
+        )}
+        <div className="flex min-h-7 items-center gap-2">
+          {/* 图标按角色查树里那张表（roles/roleIcons）：标题是 T、曲线是折线、图例是列表，
+              与左栏元素树同一张脸 */}
+          <span data-identity-icon className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm bg-surface-hover text-ink-2">
+            <RoleIcon size={ICON_SIZE.sm} aria-hidden />
+          </span>
+          <h2 className="min-w-0 truncate text-xl font-medium">
             {crumbs.at(-1) ?? t('elementFallback')}
           </h2>
           <span className="ml-auto flex shrink-0 items-center">
@@ -412,30 +439,6 @@ function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: P
             )}
           </span>
         </div>
-        {(crumbs.length > 1 || modified > 0) && (
-          <p className="mt-0.5 flex items-center gap-1.5 pr-1 text-xs text-ink-3">
-            {crumbs.length > 1 && (
-              <span className="flex min-w-0 items-center gap-1 truncate" title={crumbs.join(' / ')}>
-                {crumbs.slice(0, -1).map((c, i) => (
-                  <span key={`${i}-${c}`} className="flex min-w-0 items-center gap-1">
-                    {i > 0 && <span aria-hidden>/</span>}
-                    <button
-                      type="button"
-                      data-crumb={crumbTargets[i]}
-                      onClick={() => useUiStore.getState().setSelectedGid(crumbTargets[i])}
-                      className="min-w-0 truncate rounded-xs text-ink-3 outline-none hover:text-ink hover:underline underline-offset-2 focus-visible:focus-ring"
-                    >
-                      {c}
-                    </button>
-                  </span>
-                ))}
-              </span>
-            )}
-            {/* 「n 项已修改」徽标本身就是恢复菜单（恢复此元素 / 恢复整张图）：
-                改了几项与怎么撤回是同一个问题的两半，不另起一行 */}
-            <RestoreMenu panel={panel} gid={el?.gid} count={modified} />
-          </p>
-        )}
       </header>
     )
   }
@@ -469,20 +472,29 @@ function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: P
   const ids = objs.map((o) => o.id)
 
   return (
-    <header className="shrink-0 pl-3 pr-2 pb-2">
-      <div className="flex items-center gap-1.5">
-        <Icon size={ICON_SIZE.sm} className="shrink-0 text-ink-3" />
-        {/* 对象类型与名字分开写：名字是用户内容（文件名 / 文字），类型才回答
-            「我在改的是文字、面板还是标注」（审计 T01）。这颗徽标同时是**类型
-            切换**的入口——标注能换成同族的另一种时它就是下拉，换不了时还是那颗
-            静态徽标（cap-shape-switch；判据在 lib/shapeSwitch，这里不判） */}
-        <ObjectKindSwitch objs={objs} />
-        {title != null && (
-          <h2 className="min-w-0 truncate type-section">{title}</h2>
+    <header data-identity className="mx-3 mb-3 flex shrink-0 flex-col gap-2 border-b border-border pb-3 pt-3">
+      {/* 对象类型与名字分开写：名字是用户内容（文件名 / 文字），类型才回答
+          「我在改的是文字、面板还是标注」（审计 T01）。类型写在上面那行灰字里（与图内元素的路径行
+          同一个位置，2026-09-30 重设计）；它同时是**类型切换**的入口——标注能换成同族的另一种时
+          它就是下拉，换不了时是静态的字（cap-shape-switch；判据在 lib/shapeSwitch，这里不判）。
+          名字与类型说的是同一个词时（没起名的标注）不出上面这行，类型直接当大标题 */}
+      {title != null && (
+        <p className="flex min-h-4 items-center gap-1.5 text-xs text-ink-3">
+          <ObjectKindSwitch objs={objs} />
+          {!one && <span className="min-w-0 truncate">{summarize(objs)}</span>}
+        </p>
+      )}
+      <div className="flex min-h-7 items-center gap-2">
+        <span data-identity-icon className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm bg-surface-hover text-ink-2">
+          <Icon size={ICON_SIZE.sm} />
+        </span>
+        {title != null ? (
+          <h2 className="min-w-0 truncate text-xl font-medium">{title}</h2>
+        ) : (
+          <ObjectKindSwitch objs={objs} />
         )}
         {locked && <Lock size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-label={t('locked')} />}
         {hidden && <EyeOff size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-label={t('hiddenState')} />}
-        {!one && <span className="shrink-0 text-xs text-ink-3">{summarize(objs)}</span>}
         <Menu
           width={172}
           align="end"

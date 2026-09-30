@@ -40,6 +40,15 @@ const ITEMS: { id: LeftTab; icon: typeof Images }[] = [
 ]
 
 /**
+ * 轨钮（2026-09-30 重设计，参照 OpenBitFun）：图标下面写一个短名（`rail.short.*`，两个字 / 一个
+ * 英文词），小白不用悬停去猜图标；选中 = 白底 + 卡片投影 + 实心图标，落在灰色桌面上。
+ * 可达名仍是完整名（`rail.<id>`），短名 aria-hidden，读屏不会念两遍。
+ */
+const RAIL_BUTTON =
+  'relative flex w-14 flex-col items-center gap-1 rounded-md pb-1.5 pt-2 outline-none transition-colors focus-visible:focus-ring'
+const RAIL_IDLE = 'text-ink-2 hover:bg-surface-hover hover:text-ink'
+
+/**
  * 常驻图标轨道：每个上下文各占一格，点击打开对应抽屉，再点一次收起。
  * 选中态用浅灰底色标记（比 hover 深一档），不用品牌蓝；状态语义靠 aria-expanded。
  *
@@ -60,7 +69,7 @@ export function LeftRail() {
       style={{ width: RAIL_W }}
       // 轨与抽屉之间不画线：两个同色面之间的 hairline 只是第三条竖线（抽屉右缘已有一条）；
       // 抽屉关着时轨对着纸色画布，明度差已经够（左栏审计 L16）
-      className="flex shrink-0 flex-col items-center gap-1 bg-surface pb-2 pt-2"
+      className="flex shrink-0 flex-col items-center gap-1 pb-2 pt-1"
     >
       {ITEMS.map(({ id, icon: Icon }) => {
         const active = open && tab === id
@@ -76,15 +85,12 @@ export function LeftRail() {
             data-rail={id}
             aria-label={label}
             aria-expanded={active}
-            className={cn(
-              'relative flex h-7 w-7 items-center justify-center rounded-sm outline-none',
-              'transition-colors focus-visible:focus-ring',
-              active
-                ? 'bg-selected text-ink'
-                : 'text-ink-2 hover:bg-surface-hover hover:text-ink',
-            )}
+            className={cn(RAIL_BUTTON, active ? 'bg-surface text-ink shadow-card' : RAIL_IDLE)}
           >
             <Icon size={ICON_SIZE.md} filled={active} />
+            <span aria-hidden className="max-w-full truncate px-0.5 text-xs leading-none">
+              {t(`rail.short.${id}`)}
+            </span>
             {id === 'problems' && blocking && (
               /* 折叠时唯一的提示，而且**只为阻断项亮**（2026-09-28 用户反馈：红底数字
                  角标一直在余光里报警，数字随每次编辑跳，却不说该做什么）。现在是一颗
@@ -94,7 +100,7 @@ export function LeftRail() {
               <span
                 aria-hidden
                 data-rail-blocking
-                className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-ink-2 ring-2 ring-surface"
+                className="absolute right-3 top-1 h-1.5 w-1.5 rounded-full bg-ink-2 ring-2 ring-bg"
               />
             )}
           </button>
@@ -123,13 +129,12 @@ export function LeftRail() {
           data-rail="readiness"
           onClick={() => useProjectReadinessStore.getState().openCenter({ source: 'panel' })}
           aria-label={t('rail.readiness')}
-          className={cn(
-            'mt-auto flex h-7 w-7 items-center justify-center rounded-sm outline-none',
-            'text-ink-2 transition-colors hover:bg-surface-hover hover:text-ink',
-            'focus-visible:focus-ring',
-          )}
+          className={cn(RAIL_BUTTON, RAIL_IDLE, 'mt-auto')}
         >
           <ClipboardList size={ICON_SIZE.md} />
+          <span aria-hidden className="max-w-full truncate px-0.5 text-xs leading-none">
+            {t('rail.short.readiness')}
+          </span>
         </button>
       </Tip>
       <Tip label={t('rail.settings')} side="right">
@@ -137,13 +142,12 @@ export function LeftRail() {
           data-rail="settings"
           onClick={() => useUiStore.getState().setSettingsOpen(true)}
           aria-label={t('rail.settings')}
-          className={cn(
-            'flex h-7 w-7 items-center justify-center rounded-sm outline-none',
-            'text-ink-2 transition-colors hover:bg-surface-hover hover:text-ink',
-            'focus-visible:focus-ring',
-          )}
+          className={cn(RAIL_BUTTON, RAIL_IDLE)}
         >
           <Settings size={ICON_SIZE.md} />
+          <span aria-hidden className="max-w-full truncate px-0.5 text-xs leading-none">
+            {t('rail.short.settings')}
+          </span>
         </button>
       </Tip>
     </nav>

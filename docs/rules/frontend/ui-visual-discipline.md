@@ -9,16 +9,20 @@ Consolidation Session 1 定稿），值在 `src/index.css` 的 `@theme`，门禁
 数字时长 / 手拼大写小标题 / 预设投影 / 第二套复选框与开关 / `variant="outline"`）。
 这里只留一段速记：
 
-暖灰白 `#F2F2EF` 底 + 白色 surface；层级靠留白 / 字号 / 轻微背景差，
+**2026-09-30 重设计（宪法第二十五节）**：灰色桌面 `bg` 上放顶栏 / 左轨 / 停靠抽屉，作品在一块白色圆角工作面板
+（`data-work-panel`：画布标签 + 画布 + 属性栏）里；画布灰铺到面板边缘。左轨写短名（`rail.short.*`）。带字的按钮与分段控件是胶囊，
+次按钮灰底无边；链接是灰字；品牌蓝 #5A92E5 压深两档当 accent / sel。下面是此前的速记，与第二十五节冲突处以第二十五节为准。
+
+白色 surface；层级靠留白 / 字号 / 轻微背景差，
 边框只给区域边界、选择状态与浮层；可编辑框是 `field` 底、静态无边（聚焦 accent 边）。**持久表面里只有
 「真的是一张卡」的东西有投影（`--shadow-card`：素材卡 / 会话卡 / 任务行 / 诊断卡），浮层用 `--shadow-pop` /
 `--shadow-dialog`；改图助手输入框是浮在对话流上的玻璃（`--color-glass` + `backdrop-blur-lg` + `--shadow-composer`）**
 （宪法第二十二节，2026-09-15）。
-radius 四档：`xs` 3（≤16px 小片）、`sm` 6（控件）、`md` 8（浮层 / 卡片）、`lg` 12（对话框）；
+radius：`xs` 3（≤16px 小片）、`sm` 6（小控件）、`md` 10（输入框 / 图标钮 / 浮层 / 卡片）、`lg` 14（对话框）、`panel` 16（工作面板）、`full`（带字的按钮 / 分段）；
 Tailwind 自带的 xl 以上已清空。UI 字号 11-14px（`xs/sm/base/lg`）、六个 `type-*` 字体角色；
 控件高 28px、树行高 28px、图标点击区 ≥28px。交互面三档 token：`surface-hover` <
 `surface-active` ≈ `selected`（#e6e6e0，轻 tint + 字重，不靠深灰块）。主按钮近黑色
-（`bg-ink`）；按钮四档 primary / secondary / ghost / danger；蓝色只用于选择 / 焦点 / 链接；
+（`bg-ink`）；按钮四档 primary / secondary / ghost / danger；蓝色只用于选择 / 焦点（链接是灰字，2026-09-30）；
 每个上下文最多一个填色主动作（顶栏=导出、助手=发送、弹窗=确认）。禁用态一档 `opacity-40 +
 cursor-not-allowed`；未选中复选框 / 单选边框与关态开关轨道 `border-control`（≥3:1）；焦点环
 `focus-ring` 不透明。**跟着选中项走的指示物只有一份实现**（2026-09-14 二审 E2 / E3）：Tabs 的下划线与 Segmented 的选中底

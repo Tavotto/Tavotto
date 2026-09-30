@@ -164,7 +164,7 @@ export function EngineEnvironmentCard({ compact }: { compact?: boolean }) {
             href="https://www.python.org/downloads/"
             target="_blank"
             rel="noreferrer"
-            className="text-accent hover:underline"
+            className="text-ink-2 underline-offset-2 hover:text-ink hover:underline"
           >
             {en('noPythonLink')}
           </a>

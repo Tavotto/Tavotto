@@ -410,7 +410,8 @@ describe('左轨入口', () => {
     const dot = entry.querySelector('[data-rail-blocking]')
     expect(dot, '有阻断项时要有提示').toBeTruthy()
     expect(dot!.className).not.toContain('danger')
-    expect(entry.textContent?.trim(), '轨道上不再写数字').toBe('')
+    // 轨钮下面写的是短名（2026-09-30 重设计），不是数字
+    expect(entry.textContent?.trim(), '轨道上不再写数字').not.toMatch(/\d/)
     expect(entry.getAttribute('aria-label')).toContain(String(n))
   })
 
@@ -431,7 +432,7 @@ describe('左轨入口', () => {
     const entry = container.querySelector('[data-rail="problems"]')!
     expect(entry).toBeTruthy()
     expect(entry.querySelector('[data-rail-blocking]')).toBeNull()
-    expect(entry.textContent?.trim()).toBe('')
+    expect(entry.textContent?.trim()).not.toMatch(/\d/)
   })
 })
 
