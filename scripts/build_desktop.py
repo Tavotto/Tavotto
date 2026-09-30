@@ -171,6 +171,28 @@ def build_runtime(skip: bool, force: bool) -> None:
     run([sys.executable, str(ROOT / "scripts" / "build_worker_runtime.py"), "--clean"])
 
 
+#: 与 `scripts/stage_private_python.BUNDLE_DIR` 同一个目录（`tests/test_private_python_bundle.py` 钉着）：
+#: 不 import 那个脚本——它会把 `tavotto` 包拉进构建脚本的进程。
+PRIVATE_PYTHON_BUNDLE = ROOT / "build" / "private-python-bundle"
+
+
+def stage_private_python(skip: bool) -> None:
+    """私有 Python 归档（ADR 0111）：本目标那份 pbs install_only，sha256 按锁校验后备进
+    `build/private-python-bundle/`，tavotto.spec 收进 `_internal/private-python/`。
+
+    `--skip-private-python` 要**删掉**上一次备好的那份：spec 只看目录在不在（`check_bundle()`），
+    光不调备料脚本的话，旧归档照样被收进包里——或者是另一个目标的那份、让打包当场失败（Codex #743 P2）。
+    """
+    if skip:
+        if PRIVATE_PYTHON_BUNDLE.exists():
+            shutil.rmtree(PRIVATE_PYTHON_BUNDLE)
+        print(
+            "* --skip-private-python：不附带私有 Python 归档（无 Python 的机器上一键修复会联网下载）"
+        )
+        return
+    run([sys.executable, str(ROOT / "scripts" / "stage_private_python.py")])
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--skip-tauri", action="store_true", help="只构建前端与 sidecar，不打 Tauri 壳")
@@ -207,14 +229,7 @@ def main() -> None:
     # tavotto.spec 的 `resources/` datas 整棵带走；spec 自己还会再核一遍，缺了拒绝打包。
     run([sys.executable, str(ROOT / "scripts" / "fetch_fonts.py")])
     run([sys.executable, str(ROOT / "scripts" / "fetch_fonts.py"), "--check"])
-    # 私有 Python 归档（ADR 0111）：本目标那份 pbs install_only，sha256 按锁校验后备进
-    # build/private-python-bundle/，tavotto.spec 收进 _internal/private-python/。
-    if args.skip_private_python:
-        print(
-            "* --skip-private-python：不附带私有 Python 归档（无 Python 的机器上一键修复会联网下载）"
-        )
-    else:
-        run([sys.executable, str(ROOT / "scripts" / "stage_private_python.py")])
+    stage_private_python(args.skip_private_python)
     run(
         [
             sys.executable,

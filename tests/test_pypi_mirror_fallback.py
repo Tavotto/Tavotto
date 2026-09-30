@@ -130,6 +130,31 @@ def test_the_mirror_is_tried_at_most_once(tmp_path, monkeypatch):
     assert len(_runs(runs)) == 2
 
 
+def test_a_cancellation_during_the_config_probe_never_claims_the_mirror(tmp_path, monkeypatch):
+    """Codex #743 P2：第一次网络失败后问配置（一个子进程）期间到达的取消——镜像不会被请求，所以既不许
+    `on_mirror`（进度的 `pypi_mirror`）也不许在日志里写「改用镜像」；如实回 cancelled，镜像那次不起。"""
+    runs = tmp_path / "runs.jsonl"
+    ev = threading.Event()
+
+    def _probe_then_cancel(python):
+        ev.set()
+        return False
+
+    monkeypatch.setattr(deprepair, "user_package_source", _probe_then_cancel)
+    logs: list[str] = []
+    mirrors: list[str] = []
+    code, out = deprepair._run_pip_install(
+        _script_argv(runs, default=(1, NETWORK_OUT), mirror=(0, "")),
+        sys.executable,
+        ev,
+        logs.append,
+        on_mirror=mirrors.append,
+    )
+    assert code == deprepair.ERROR_CANCELLED
+    assert mirrors == [] and len(_runs(runs)) == 1
+    assert not any(MIRROR in line for line in logs) and MIRROR not in out
+
+
 @pytest.mark.parametrize("env", SOURCE_ENV)
 def test_a_user_configured_source_is_never_bypassed(tmp_path, monkeypatch, env):
     """用户配过源（index / extra-index / 离线 wheelhouse）：网络失败也如实报失败，不去镜像。"""

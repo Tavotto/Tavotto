@@ -1254,6 +1254,10 @@ def _run_pip_install(
     user_source = user_package_source(python) if code == ERROR_NETWORK else None
     if not mirror_retry_warranted(code, user_source):
         return code, out
+    if cancel_ev.is_set():
+        # 问配置那一下（一个子进程）期间到达的取消：镜像根本不会被请求，就不许先把「用了镜像」记进进度 /
+        # 日志——终态会谎称用过镜像（Codex #743 P2）。与 `_run_pip` 起进程前看一眼事件同一条纪律
+        return ERROR_CANCELLED, out
     note = f"\n连不上默认的 Python 包源，改用 PyPI 镜像 {PYPI_MIRROR_URL} 重试一次\n"
     LOG.warning("pip 网络类失败且未自配包源：改用 PyPI 镜像 %s 重试一次", PYPI_MIRROR_URL)
     if on_log is not None:

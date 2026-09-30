@@ -114,17 +114,57 @@ def test_spec_ships_the_archive_where_the_runtime_looks_for_it():
 
 
 def test_build_desktop_stages_the_archive_before_pyinstaller():
+    """`main()` 里备料那一步（`stage_private_python(...)` 的调用）在 PyInstaller 之前。判 AST。"""
     src = (REPO / "scripts" / "build_desktop.py").read_text(encoding="utf-8")
     tree = ast.parse(src)
     main = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "main")
-    lines = {
-        node.value: node.lineno
-        for node in ast.walk(main)
-        if isinstance(node, ast.Constant)
-        and node.value in ("stage_private_python.py", "PyInstaller")
-    }
-    assert set(lines) == {"stage_private_python.py", "PyInstaller"}, lines
-    assert lines["stage_private_python.py"] < lines["PyInstaller"]
+    stage_calls = [
+        n.lineno
+        for n in ast.walk(main)
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Name)
+        and n.func.id == "stage_private_python"
+    ]
+    pyinstaller = [
+        n.lineno for n in ast.walk(main) if isinstance(n, ast.Constant) and n.value == "PyInstaller"
+    ]
+    assert len(stage_calls) == 1 and len(pyinstaller) == 1, (stage_calls, pyinstaller)
+    assert stage_calls[0] < pyinstaller[0]
+
+
+def _build_desktop(monkeypatch, bundle: Path):
+    import build_desktop as bd
+
+    runs: list[list[str]] = []
+    monkeypatch.setattr(bd, "PRIVATE_PYTHON_BUNDLE", bundle)
+    monkeypatch.setattr(bd, "run", lambda cmd, **kw: runs.append(cmd))
+    return bd, runs
+
+
+def test_build_desktop_bundle_dir_is_the_staging_dir():
+    import build_desktop as bd
+
+    assert bd.PRIVATE_PYTHON_BUNDLE == spp.BUNDLE_DIR
+
+
+def test_skipping_private_python_removes_a_previously_staged_archive(tmp_path, monkeypatch):
+    """Codex #743 P2：spec 只看目录在不在——`--skip-private-python` 光不调备料脚本的话，上一次备好的（甚至
+    另一个目标的）归档照样被收进包里。跳过就得把目录删掉，且不起备料脚本。"""
+    bundle = tmp_path / "private-python-bundle"
+    bundle.mkdir()
+    (bundle / "cpython-old-target.tar.gz").write_bytes(b"stale")
+    bd, runs = _build_desktop(monkeypatch, bundle)
+    bd.stage_private_python(True)
+    assert not bundle.exists()
+    assert runs == []
+    assert spp.check_bundle(bundle) is None  # spec 那把尺此后看到的是「没备」
+    bd.stage_private_python(True)  # 目录本来就不在：照样不出错
+
+
+def test_not_skipping_runs_the_staging_script(tmp_path, monkeypatch):
+    bd, runs = _build_desktop(monkeypatch, tmp_path / "private-python-bundle")
+    bd.stage_private_python(False)
+    assert len(runs) == 1 and Path(runs[0][-1]).name == "stage_private_python.py"
 
 
 def test_the_release_workflow_requires_the_archive():
