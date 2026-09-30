@@ -193,7 +193,8 @@ def _dump_evidence(app, name: str) -> None:
         (d / "window.png").write_bytes(base64.b64decode(png))
         state = app.driver.js(
             "return {url: location.href, text: document.body.innerText.slice(0, 4000),"
-            " ls: Object.keys(localStorage)}"
+            " ls: Object.fromEntries(Object.keys(localStorage).map(k => [k, String(localStorage.getItem(k)).slice(0, 300)])),"
+            " leftDrawer: !!document.querySelector('[data-left-drawer]')}"
         )
         (d / "page.txt").write_text(repr(state), encoding="utf-8")
     except Exception as e:  # noqa: BLE001 - 取证失败不该盖住真正的失败
