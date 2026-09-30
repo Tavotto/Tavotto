@@ -184,7 +184,10 @@ function ReadinessBody() {
           gated.current.delete(script)
           // 素材库那一行可能也停在这道门上、此刻正被 `rerunGated` 重跑：同一脚本后端只许一个在跑，
           // 等它跑完再跑这一行的，别撞成 probe_in_progress 当场报失败
-          void whenScriptIdle(script).then(() => probeRef.current(script))
+          // 等待期间换了项目（换代会清掉素材库的记账、等待随之 resolve）：这一行属于发起时的项目，不重跑
+          void whenScriptIdle(script).then(() => {
+            if (currentProjectId() === g.project) probeRef.current(script)
+          })
         }
       }),
     [],
