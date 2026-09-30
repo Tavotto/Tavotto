@@ -58,6 +58,10 @@ interface ViewportState {
    * 是「按键被吃了」。这里以补间终点为基准，连按几下就是几下。
    */
   zoomBy: (factor: number) => void
+  /** 适应取景要给底部浮动工具条让出的高度（px；0 = 不让）。取景算法只有 `fitTarget` 一处，各入口都走它 */
+  setFitBottomClear: (px: number) => void
+  /** 此刻的让位高度 */
+  fitBottomClear: number
   /** 瞬时 fit：初始化、切画布、载入文档这类「不是用户在看着的一步」 */
   fit: (pageW: number, pageH: number, padding?: number) => void
   /** 带缓动的 fit（prefers-reduced-motion 时瞬时完成）；用户点「适应画布」时用 */
@@ -208,7 +212,7 @@ function fitInstant(set: Setter, get: Getter, frame: NonNullable<typeof lastFit>
     return
   }
   const { x, y, pageW, pageH, padding } = frame
-  const target = fitTarget(viewW, viewH, pageW, pageH, padding, x, y)
+  const target = fitTarget(viewW, viewH, pageW, pageH, padding, x, y, get().fitBottomClear)
   set({ ...target, fitted: true, readoutZoom: target.zoom, readoutRolls: false })
 }
 
@@ -222,10 +226,17 @@ function fitTweened(set: Setter, get: Getter, frame: NonNullable<typeof lastFit>
   }
   set({ fitted: true })
   const { x, y, pageW, pageH, padding } = frame
-  animateTo(set, get, fitTarget(s.viewW, s.viewH, pageW, pageH, padding, x, y))
+  animateTo(set, get, fitTarget(s.viewW, s.viewH, pageW, pageH, padding, x, y, s.fitBottomClear))
 }
 
-/** 按取景框算落点；调用方保证视口已量到尺寸 */
+/**
+ * 画布底部浮动工具条（`CanvasToolbar`）的顶边离舞台底边 52px，再留 8px 的缝：显示时适应取景的
+ * 下边距不小于它，取景框的底边落在工具条顶边之上（#770 评审 P2：竖版页高度受限时底部只留
+ * `padding / 2` = 36px，页面底 16px 压在工具条下面、点击被截走）。工具条隐藏时为 0，回到对称留白。
+ */
+export const TOOLBAR_FIT_CLEARANCE = 60
+
+/** 按取景框算落点；调用方保证视口已量到尺寸。`bottomClear`：底部要让出的高度（px），只抬高下边距 */
 function fitTarget(
   viewW: number,
   viewH: number,
@@ -234,14 +245,17 @@ function fitTarget(
   padding: number,
   x = 0,
   y = 0,
+  bottomClear = 0,
 ): ViewTarget {
   const wPx = mmToWorld(pageW)
   const hPx = mmToWorld(pageH)
-  const zoom = clamp(Math.min((viewW - padding) / wPx, (viewH - padding) / hPx), MIN_ZOOM, MAX_ZOOM)
+  const top = padding / 2
+  const bottom = Math.max(padding / 2, bottomClear)
+  const zoom = clamp(Math.min((viewW - padding) / wPx, (viewH - top - bottom) / hPx), MIN_ZOOM, MAX_ZOOM)
   return {
     zoom,
     panX: (viewW - wPx * zoom) / 2 - mmToWorld(x) * zoom,
-    panY: (viewH - hPx * zoom) / 2 - mmToWorld(y) * zoom,
+    panY: top + (viewH - top - bottom - hPx * zoom) / 2 - mmToWorld(y) * zoom,
   }
 }
 
@@ -255,6 +269,7 @@ export const useViewportStore = create<ViewportState>((set, get) => ({
   originY: 0,
   spaceDown: false,
   fitted: false,
+  fitBottomClear: 0,
   readoutZoom: 1,
   readoutRolls: false,
   tweening: false,
@@ -272,7 +287,19 @@ export const useViewportStore = create<ViewportState>((set, get) => ({
     // 模式里，这里一个字不碰。
     if (resized && s.fitted && lastFit && width && height) {
       const { x, y, pageW, pageH, padding } = lastFit
-      const target = fitTarget(width, height, pageW, pageH, padding, x, y)
+      const target = fitTarget(width, height, pageW, pageH, padding, x, y, s.fitBottomClear)
+      stopAnim()
+      set({ ...target, readoutZoom: target.zoom, readoutRolls: false })
+    }
+  },
+  setFitBottomClear: (px) => {
+    if (get().fitBottomClear === px) return
+    set({ fitBottomClear: px })
+    // 适应模式里：让位高度变了（工具条出现 / 消失）就按同一个取景框重算
+    const { fitted, viewW, viewH } = get()
+    if (fitted && lastFit && viewW && viewH) {
+      const { x, y, pageW, pageH, padding } = lastFit
+      const target = fitTarget(viewW, viewH, pageW, pageH, padding, x, y, px)
       stopAnim()
       set({ ...target, readoutZoom: target.zoom, readoutRolls: false })
     }

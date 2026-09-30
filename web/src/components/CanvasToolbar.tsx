@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   ArrowUpRight,
@@ -18,7 +18,7 @@ import { insertShape } from '@/lib/presets'
 import { MOD } from '@/lib/utils'
 import { useDocumentStore } from '@/store/documentStore'
 import { useUiStore } from '@/store/uiStore'
-import { useViewportStore } from '@/store/viewportStore'
+import { TOOLBAR_FIT_CLEARANCE, useViewportStore } from '@/store/viewportStore'
 import { useWorkspaceStore } from '@/store/workspace'
 import { PresetsDialog } from './PresetsDialog'
 import { Button } from './ui/Button'
@@ -73,6 +73,11 @@ const INSERT_SHAPES = ['triangle', 'diamond', 'polygon', 'brace'] as const
 
 export function CanvasToolbar() {
   const visible = useCanvasToolbarVisible()
+  // 适应取景据此给底部让位：与显示判据是同一个值，不另判
+  useEffect(() => {
+    useViewportStore.getState().setFitBottomClear(visible ? TOOLBAR_FIT_CLEARANCE : 0)
+    return () => useViewportStore.getState().setFitBottomClear(0)
+  }, [visible])
   return visible ? <Bar /> : null
 }
 

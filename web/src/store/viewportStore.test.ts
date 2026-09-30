@@ -12,7 +12,7 @@
  */
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 
-import { MAX_ZOOM, useViewportStore } from './viewportStore'
+import { MAX_ZOOM, TOOLBAR_FIT_CLEARANCE, useViewportStore } from './viewportStore'
 import { BASE_PX_PER_MM } from '@/lib/units'
 import { emptyProject } from '@/types/document'
 import { activateCanvas, createCanvasAndActivate } from './canvasSession'
@@ -421,5 +421,55 @@ describe('fitRectAnimated', () => {
     want = expected(1100, VIEW.height, { x: 0, y: 0, w, h })
     expect(useViewportStore.getState().zoom).toBeCloseTo(want.zoom)
     expect(useViewportStore.getState().panX).toBeCloseTo(want.panX)
+  })
+})
+
+/**
+ * 适应取景给底部浮动工具条让位（#770 评审 P2）：竖版页高度受限时，页面底边必须落在工具条顶边
+ * （舞台底边上方 52px）之上、再留 ≥ 8px 的缝；工具条隐藏（让位 0）时回到上下对称的留白。
+ */
+describe('适应取景：底部让位', () => {
+  const TOOLBAR_TOP_FROM_BOTTOM = 52
+  const GAP = 8
+  const pageBottomPx = () => {
+    const s = useViewportStore.getState()
+    return s.panY + 280 * BASE_PX_PER_MM * s.zoom // 竖版页：150 × 280 mm
+  }
+
+  beforeEach(() => {
+    useViewportStore.getState().setViewRect(VIEW)
+  })
+  afterEach(() => {
+    useViewportStore.getState().setFitBottomClear(0)
+  })
+
+  it('有工具条：页面底边在工具条顶边之上，留 ≥ 间隙', () => {
+    useViewportStore.getState().setFitBottomClear(TOOLBAR_FIT_CLEARANCE)
+    useViewportStore.getState().fit(150, 280)
+    expect(pageBottomPx()).toBeLessThanOrEqual(VIEW.height - TOOLBAR_TOP_FROM_BOTTOM - GAP + 0.01)
+  })
+
+  it('没有工具条：上下留白对称', () => {
+    useViewportStore.getState().setFitBottomClear(0)
+    useViewportStore.getState().fit(150, 280)
+    const s = useViewportStore.getState()
+    expect(VIEW.height - pageBottomPx()).toBeCloseTo(s.panY, 6)
+  })
+
+  it('适应模式里工具条出现 / 消失会按同一取景框重算', () => {
+    useViewportStore.getState().fit(150, 280)
+    const before = useViewportStore.getState().zoom
+    useViewportStore.getState().setFitBottomClear(TOOLBAR_FIT_CLEARANCE)
+    expect(useViewportStore.getState().zoom).toBeLessThan(before)
+    expect(pageBottomPx()).toBeLessThanOrEqual(VIEW.height - TOOLBAR_TOP_FROM_BOTTOM - GAP + 0.01)
+    useViewportStore.getState().setFitBottomClear(0)
+    expect(useViewportStore.getState().zoom).toBeCloseTo(before, 9)
+  })
+
+  it('animated 与 fitRect 入口同样让位（同一个 fitTarget）', async () => {
+    useViewportStore.getState().setFitBottomClear(TOOLBAR_FIT_CLEARANCE)
+    useViewportStore.getState().fitAnimated(150, 280)
+    await settle()
+    expect(pageBottomPx()).toBeLessThanOrEqual(VIEW.height - TOOLBAR_TOP_FROM_BOTTOM - GAP + 0.01)
   })
 })

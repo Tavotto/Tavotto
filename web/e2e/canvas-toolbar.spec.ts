@@ -97,3 +97,28 @@ test('工具条上的文字工具与适应钮真的生效（钩子随元素搬�
   await expect(page.locator('[data-zoom-menu]')).toHaveCount(1)
   await page.locator('[data-canvas-toolbar] [data-fit-canvas]').click()
 })
+
+test('高度受限时 ⌘1 适应画布：页面底边在工具条顶边之上（不压在工具条下面）', async ({ app, page }) => {
+  // 宽而矮的窗口：舞台比页面更「扁」，缩放由高度决定，下边距就是底部那一点留白
+  await page.setViewportSize({ width: 1200, height: 520 })
+  const a = await app()
+  await toLayout(page, a.baseURL)
+  const close = page.locator('[data-inspector-close]')
+  if (await close.count()) await close.first().click()
+  await page.locator('[data-canvas-stage]').click({ position: { x: 5, y: 5 } })
+  await page.keyboard.press('ControlOrMeta+1')
+  // 适应带补间：等页面盒子停稳再量
+  await expect
+    .poll(async () => {
+      const b1 = await box(page, '[data-page-sheet]')
+      await page.waitForTimeout(250)
+      const b2 = await box(page, '[data-page-sheet]')
+      return b1 && b2 ? Math.abs(b1.bottom - b2.bottom) < 0.5 : false
+    })
+    .toBe(true)
+  const sheet = await box(page, '[data-page-sheet]')
+  const bar = await box(page, '[data-canvas-toolbar]')
+  expect(sheet).not.toBeNull()
+  expect(bar).not.toBeNull()
+  expect(sheet!.bottom, JSON.stringify({ sheet, bar })).toBeLessThanOrEqual(bar!.top - 8 + 0.5)
+})

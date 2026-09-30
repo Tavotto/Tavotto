@@ -86,7 +86,10 @@
   画布各自的**：`canvasSession` 的会话记 `fitted`，切回来时是 → 按此刻的舞台重新
   `fit`，否 → `setView` 瞬时落回并退出模式；直写 `zoom / pan` 会把上一张画布的
   `fitted` / `lastFit` 原样留下，下一次侧栏开合就按别的画布的取景框把还原出来的视口
-  重算掉。空画布的起步提示按 `lib/emptyStateAnchor` 落在**纸面可见部分**的中心并
+  重算掉。**取景算法只有 `fitTarget` 一处，所有入口（⌘1 / 打开画布 / 换页面尺寸 / 加图取景）都走它**；
+  画布底部的浮动工具条显示时，下边距不小于 `TOOLBAR_FIT_CLEARANCE`（取景框底边落在工具条顶边
+  之上，#770 评审 P2；`setFitBottomClear` 由 `CanvasToolbar` 随它的显示判据设，隐藏即 0、回到
+  上下对称留白，适应模式里变化会按同一取景框重算）。空画布的起步提示按 `lib/emptyStateAnchor` 落在**纸面可见部分**的中心并
   钳进视口，永远不出屏。**e2e 量取景几何要等补间落定**：`viewportStore.tweening` 挂在
   舞台的 `data-world-transform` 上（`data-view-tweening`），等它消失再量；补间途中 zoom /
   pan 与刚变的页面尺寸对不上（页面尺寸是瞬间变的），量出来的「居中」是半路上的值，
