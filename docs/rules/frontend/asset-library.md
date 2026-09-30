@@ -123,6 +123,13 @@
   重跑结束（`whenScriptIdle`；后端同一脚本只许一个在跑）。抛出来的错误（门以 409 回来）两边都经 `probeErrorOf` 解析。**新写一个调试运行端点的入口，先认这两个 code。**
   看护 `scriptRunStore.test.ts`「试运行撞上起会话之前的门」、`ScriptLibrary.test.tsx` 同名 describe、
   `RegistryDialog.test.tsx`、`e2e/asset-library.spec.ts`「试运行撞上依赖门」。
+  **例外（用户 2026-09-30，#760）：依赖门（`needs_preparation`）在素材库脚本行 ▶ 上行内呈现，不弹授权框**——一句话 + 「一键修复」
+  （`ScriptPreparation`，句子 / 进度行 / 「详情」首段列计划里真正要装的全部包），点一次走联合准备（`depRepairStore.prepare(target, offer)`），
+  装好后仍由 `rerunGated` 重跑那一行。脚本行发起的运行带 `inlineGate`（`run(script, {inlineGate:true})`，重跑沿用），此时依赖门不交给
+  `envStore`；图卡 / 接入中心 / 画布渲染仍弹授权框，运行目录门（`needs_workdir`）不变。授权对账：联合准备绑定回来的计划超出 offer 里的清单
+  不执行、重新披露；授权框采用装齐的用户环境成功后经 `settleEnvChange` 与 `rerunGated` 重跑发起的行；脚本行发起的联合准备归属
+  （`jointScript`）随切项目停放。看护 `ScriptPreparationRow.test.tsx`、`ScriptLibrary.test.tsx` 同名 describe、`e2e/asset-library.spec.ts`、
+  `e2e/dependency-one-click.spec.ts`。
 - **运行/取消是同一个按钮**（busy 态翻转）：取消后焦点天然留在原脚本行，
   不做焦点搬运。状态行 aria-live=polite，只随相位变化播报。
 - **多 Figure 结果进 Dialog**（自带 focus trap），每张各有「添加到画布」，
