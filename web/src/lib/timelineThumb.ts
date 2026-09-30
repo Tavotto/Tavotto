@@ -157,85 +157,93 @@ function layerIsBlank(layer: HTMLCanvasElement): boolean {
  */
 export type PanelDrawOutcome = 'svg' | 'live' | 'none'
 
-async function drawObject(
-  ctx: CanvasRenderingContext2D,
-  o: CanvasObject,
+/**
+ * 把一个面板预渲染到一张与缩略图同尺寸的透明图层上（不透明度留到合成时再乘），并报告
+ * 实际用了哪一路图源。这一步**不碰主画布**：合成器先把全部面板预渲染完（结局全齐），
+ * 再按 `doc.objects` 的原顺序把图层 / 标注 / 形状叠上去（Codex #679 P1 第三轮）。
+ */
+async function renderPanelLayer(
+  o: PanelObject,
+  canvas: HTMLCanvasElement,
   scale: number,
   source: PanelSource,
-): Promise<PanelDrawOutcome | undefined> {
+): Promise<{ layer: HTMLCanvasElement | null; outcome: PanelDrawOutcome }> {
   const x = o.x * scale
   const y = o.y * scale
   const w = o.w * scale
   const h = o.h * scale
-  if (o.type === 'panel') {
-    // 旋转 / 翻转与画布同一份（`lib/panelTransform`）：先在内容空间翻转，再旋转落位
-    const transform = panelContentTransform(o)
-    const rot = transform.rotate
-    // 旋转 90/270 时内容的显示尺寸与落位包围盒互换
-    const [cw, ch] = rot === 90 || rot === 270 ? [h, w] : [w, h]
-    const crop = o.crop
-    const fullW = cw / (crop?.w ?? 1)
-    const fullH = ch / (crop?.h ?? 1)
-    if (!source) {
-      trace({ panel: o.id, result: 'no-source' })
-      return 'none'
+  // 旋转 / 翻转与画布同一份（`lib/panelTransform`）：先在内容空间翻转，再旋转落位
+  const transform = panelContentTransform(o)
+  const rot = transform.rotate
+  // 旋转 90/270 时内容的显示尺寸与落位包围盒互换
+  const [cw, ch] = rot === 90 || rot === 270 ? [h, w] : [w, h]
+  const crop = o.crop
+  const fullW = cw / (crop?.w ?? 1)
+  const fullH = ch / (crop?.h ?? 1)
+  if (!source) {
+    trace({ panel: o.id, result: 'no-source' })
+    return { layer: null, outcome: 'none' }
+  }
+  const steps: string[] = []
+  let outcome: PanelDrawOutcome = 'none'
+  let result: HTMLCanvasElement | null = null
+  // SVG → 素材图 → 素材图再取一次（绕开内存缓存里那张画不上的，新发一个请求）
+  const attempts = [['svg', false], ['url', false], ['url', true]] as const
+  for (const [kind, retry] of attempts) {
+    // 再取一次只在素材图那一路没画上（白画了 / 载入失败）时
+    if (retry && !steps.some((st) => st === 'url:blank' || st === 'url:load-failed')) break
+    const got = await loadFrom(kind, source, fullW * 2, fullH * 2, retry)
+    if (!got) {
+      if (source[kind]) steps.push(`${kind}${retry ? '-retry' : ''}:load-failed`)
+      continue
     }
-    const steps: string[] = []
-    let outcome: PanelDrawOutcome = 'none'
-    // SVG → 素材图 → 素材图再取一次（绕开内存缓存里那张画不上的，新发一个请求）
-    const attempts = [['svg', false], ['url', false], ['url', true]] as const
-    for (const [kind, retry] of attempts) {
-      // 再取一次只在素材图那一路没画上（白画了 / 载入失败）时
-      if (retry && !steps.some((st) => st === 'url:blank' || st === 'url:load-failed')) break
-      const got = await loadFrom(kind, source, fullW * 2, fullH * 2, retry)
-      if (!got) {
-        if (source[kind]) steps.push(`${kind}${retry ? '-retry' : ''}:load-failed`)
-        continue
-      }
-      const { img, revoke } = got
-      const nw = img.naturalWidth || fullW
-      const nh = img.naturalHeight || fullH
-      // 先画在一张与缩略图同尺寸的透明图层上（不透明度留到合成时再乘），量过有东西才合成上去
-      const layer = document.createElement('canvas')
-      layer.width = ctx.canvas.width
-      layer.height = ctx.canvas.height
-      const lctx = layer.getContext('2d')
-      if (!lctx) {
-        if (revoke) URL.revokeObjectURL(revoke)
-        break
-      }
-      lctx.translate(x + w / 2, y + h / 2)
-      applyPanelTransform(lctx, transform)
-      lctx.drawImage(
-        img,
-        (crop?.x ?? 0) * nw,
-        (crop?.y ?? 0) * nh,
-        (crop?.w ?? 1) * nw,
-        (crop?.h ?? 1) * nh,
-        -cw / 2,
-        -ch / 2,
-        cw,
-        ch,
-      )
+    const { img, revoke } = got
+    const nw = img.naturalWidth || fullW
+    const nh = img.naturalHeight || fullH
+    const layer = document.createElement('canvas')
+    layer.width = canvas.width
+    layer.height = canvas.height
+    const lctx = layer.getContext('2d')
+    if (!lctx) {
       if (revoke) URL.revokeObjectURL(revoke)
-      // 这一层一个不透明像素都没有 = 这一路白画了（解码出了一张空图）：换下一路
-      if (layerIsBlank(layer)) {
-        steps.push(`${kind}${retry ? '-retry' : ''}:blank`)
-        continue
-      }
-      ctx.save()
-      ctx.globalAlpha = o.opacity ?? 1
-      ctx.drawImage(layer, 0, 0)
-      ctx.restore()
-      steps.push(`${kind}${retry ? '-retry' : ''}:ok`)
-      // 只有冻结在手里的 SVG 算 `'svg'`；素材图 / render 兜底一律 `'live'`——哪怕
-      // `source.svg` 本来就有，这一路是从「svg 解析 / 解码失败之后落到这里」的
-      outcome = kind === 'svg' ? 'svg' : 'live'
       break
     }
-    trace({ panel: o.id, steps })
-    return outcome
+    lctx.translate(x + w / 2, y + h / 2)
+    applyPanelTransform(lctx, transform)
+    lctx.drawImage(
+      img,
+      (crop?.x ?? 0) * nw,
+      (crop?.y ?? 0) * nh,
+      (crop?.w ?? 1) * nw,
+      (crop?.h ?? 1) * nh,
+      -cw / 2,
+      -ch / 2,
+      cw,
+      ch,
+    )
+    if (revoke) URL.revokeObjectURL(revoke)
+    // 这一层一个不透明像素都没有 = 这一路白画了（解码出了一张空图）：换下一路
+    if (layerIsBlank(layer)) {
+      steps.push(`${kind}${retry ? '-retry' : ''}:blank`)
+      continue
+    }
+    steps.push(`${kind}${retry ? '-retry' : ''}:ok`)
+    // 只有冻结在手里的 SVG 算 `'svg'`；素材图 / render 兜底一律 `'live'`——哪怕
+    // `source.svg` 本来就有，这一路是从「svg 解析 / 解码失败之后落到这里」的
+    outcome = kind === 'svg' ? 'svg' : 'live'
+    result = layer
+    break
   }
+  trace({ panel: o.id, steps })
+  return { layer: result, outcome }
+}
+
+/** 画一个非面板对象（文字 / 形状 / 箭头）到主画布；面板走 `renderPanelLayer` */
+function drawObject(ctx: CanvasRenderingContext2D, o: Exclude<CanvasObject, PanelObject>, scale: number): void {
+  const x = o.x * scale
+  const y = o.y * scale
+  const w = o.w * scale
+  const h = o.h * scale
   if (o.type === 'text') {
     const px = Math.max(1, o.sizePt * MM_PER_PT * scale)
     ctx.save()
@@ -330,8 +338,8 @@ export type BakedAnnotations = ReadonlyMap<string, string>
  * 图源：给了 `sources` 就用它（发起那一刻取好的）；没给就在**同一个同步段里**现取
  * （见 `panelSource`）——这个函数在第一个 await 之前就把各面板的图源取完了。
  *
- * `bakedInto` 给的话，登记在里面的标注对象**推迟到所有面板都画完之后**再按各自面板的
- * 结局补画（见下面的 `deferred`）；不给或标注不在里面的，行为不变——按文档原顺序画。
+ * `bakedInto` 给的话，登记在里面的标注对象按各自面板的结局决定画不画（只有冻结 SVG 才画），
+ * 但**始终留在文档原来的叠放位置**（先预渲染全部面板、再按原顺序叠，见函数体）。
  */
 export async function composeTimelineThumb(
   doc: FigureDocument,
@@ -354,33 +362,39 @@ export async function composeTimelineThumb(
       ctx.fillStyle = doc.page.bg || '#FFFFFF'
       ctx.fillRect(0, 0, canvas.width, canvas.height)
     }
-    // 按文档里的顺序画（= 叠放次序），一个一个等：面板图的加载顺序不能改变叠放。
+    // 两遍：先把**全部面板**预渲染成图层（面板图的加载一个一个等；结局全齐），再**按文档里的
+    // 顺序**（= 叠放次序）把图层 / 标注 / 形状叠到主画布上。
     //
-    // `bakedInto` 里的标注是例外：它画不画要等**它所属面板这一刻实际选中的图源**才能判定
-    // （面板此刻手里的 SVG 可能解析 / 解码失败、退到合成时才现取的 render——那张图已经烙进
-    // 标注了），而面板的结局只有画完才知道。做法是**只推迟这几条标注**，别的一切（含全部
-    // 面板）仍按原顺序画——先把不在 `bakedInto` 里的对象按原顺序画完（这一遍面板的结局也就
-    // 全齐了），再按原来的相对顺序补画应该画的那几条标注。对绝大多数场景零影响（`bakedInto`
-    // 通常是空的）；只有当被写回的标注与它自己面板之外的东西发生空间重叠时，画面才可能与
-    // 原顺序略有出入——这本身就是缩略图「近似」的一部分（Codex #679 P1 追加）。
-    const deferred: CanvasObject[] = []
+    // `bakedInto` 里的标注画不画，要等**它所属面板这一刻实际选中的图源**才能判定（面板手里的
+    // SVG 可能解析 / 解码失败、退到合成时才现取的 render——那张图已经烙进标注了），而结局只有
+    // 预渲染完才知道。预渲染与叠放分开之后，标注留在自己原来的叠放位置上：只决定画不画，
+    // 不挪位置——挪到最上面会盖住写回后画布里本来盖住它的重叠面板（Codex #679 P1 第三轮）。
+    const layers = new Map<string, HTMLCanvasElement | null>()
     const panelOutcome = new Map<string, PanelDrawOutcome>()
     for (const o of doc.objects) {
+      if (o.hidden || o.type !== 'panel') continue
+      const { layer, outcome } = await renderPanelLayer(o, canvas, scale, sources.get(o.id) ?? null)
+      layers.set(o.id, layer)
+      panelOutcome.set(o.id, outcome)
+    }
+    for (const o of doc.objects) {
       if (o.hidden) continue
-      if (bakedInto?.has(o.id)) {
-        deferred.push(o)
+      if (o.type === 'panel') {
+        const layer = layers.get(o.id)
+        if (!layer) continue
+        ctx.save()
+        ctx.globalAlpha = o.opacity ?? 1
+        ctx.drawImage(layer, 0, 0)
+        ctx.restore()
         continue
       }
-      const outcome = await drawObject(ctx, o, scale, sources.get(o.id) ?? null)
-      if (o.type === 'panel') panelOutcome.set(o.id, outcome ?? 'none')
-    }
-    for (const o of deferred) {
-      const panelId = bakedInto!.get(o.id)
-      const outcome = panelId ? panelOutcome.get(panelId) : undefined
-      // 面板结局明确、且不是冻结的 SVG：这张图已经烙进了这条标注，不再叠一遍；
-      // 查不到结局（面板被隐藏、或不在这份文档里）按「照画」兜底，不能因为查不到就悄悄丢一条
-      if (outcome && outcome !== 'svg') continue
-      await drawObject(ctx, o, scale, sources.get(o.id) ?? null)
+      if (bakedInto?.has(o.id)) {
+        const outcome = panelOutcome.get(bakedInto.get(o.id) ?? '')
+        // 面板结局明确、且不是冻结的 SVG：这张图已经烙进了这条标注，不再叠一遍；
+        // 查不到结局（面板被隐藏、或不在这份文档里）按「照画」兜底，不能因为查不到就悄悄丢一条
+        if (outcome && outcome !== 'svg') continue
+      }
+      drawObject(ctx, o, scale)
     }
     return await encode(canvas)
   } catch {
