@@ -1233,7 +1233,7 @@ class TestGate:
 
 # ===========================================================================
 # ④ 联合准备里的 PyPI 镜像回退（ADR 0111；Codex #743）：跑前准备那条路与单包修复**同一个字段、同一层**——
-#    进度记录顶层的 `pypi_mirror`，而且改用镜像的那一刻就推一次快照（`installing`），不等到验证。
+#    进度记录顶层的 `pypi_mirror`，与日志里那句说明同一个快照到达（`installing`），不等到验证。
 # ===========================================================================
 _NETWORK_OUT = (
     "WARNING: Retrying (Retry(total=4)) after connection broken by 'NewConnectionError'\n"
@@ -1266,6 +1266,9 @@ def _assert_mirror_surfaced(plan, events: list[dict], rec: dict, calls: list[lis
     assert len(installs) == 2 and installs[1][installs[1].index("--index-url") + 1] == url
     states = [e.get("state") for e in events]
     first_mirror = next(i for i, e in enumerate(events) if e.get("pypi_mirror") == url)
+    first_note = next(i for i, e in enumerate(events) if url in (e.get("log") or ""))
+    # 字段与日志那句同一刻到达：带说明的第一个快照就带着顶层 `pypi_mirror`（界面不必解析日志）
+    assert first_mirror <= first_note
     assert events[first_mirror]["state"] == deprepair.STATE_INSTALLING
     assert (
         events[first_mirror]["flow"] == "joint" and events[first_mirror]["plan_id"] == plan.plan_id

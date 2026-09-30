@@ -1266,10 +1266,12 @@ def _run_pip_install(
     def _mirror_started() -> None:
         started.append(True)
         LOG.warning("pip 网络类失败且未自配包源：改用 PyPI 镜像 %s 重试一次", PYPI_MIRROR_URL)
-        if on_log is not None:
-            on_log(note)
+        # 先记字段、再写日志那句：每条路的 `on_log` 都经 `_append_log` 推一次快照，这样带着那句说明的第一个
+        # 快照就已经带着顶层 `pypi_mirror`——四条路（含联合准备的原地 / 换代）同一个字段、同一层、同一刻到达
         if on_mirror is not None:
             on_mirror(PYPI_MIRROR_URL)
+        if on_log is not None:
+            on_log(note)
 
     code, retry_out = _run_pip(
         build_argv(PYPI_MIRROR_URL), cancel_ev, on_log, on_started=_mirror_started
@@ -1549,14 +1551,6 @@ def _note_mirror(progress_id: str, url: str, on_event) -> None:
         snapshot = dict(rec)
     if on_event is not None:
         on_event(snapshot)
-
-
-def _note_generation_mirror(job: "_GenerationJob", url: str) -> None:
-    """代事务（联合准备 / 单包修复 / 重建 / 包管理首装）里改用了镜像：记进同一条进度记录的顶层 `pypi_mirror`
-    （与单包修复原地安装、包管理同一个字段、同一层），并**立即**经这一路自己的通道推一次快照——`installing`
-    状态不变，界面当场就能说出口，不等到下一个状态（Codex #743：跑前准备那条路原来要等到验证才看得见）。"""
-    _note_mirror(job.progress_id, url, None)
-    job.emit(STATE_INSTALLING)
 
 
 def _emit(
@@ -3317,7 +3311,7 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
         python,
         cancel_ev,
         job.on_log,
-        on_mirror=lambda url: _note_generation_mirror(job, url),
+        on_mirror=lambda url: _note_mirror(job.progress_id, url, None),
     )
     if code == ERROR_CANCELLED:
         managedenv.mark_generation(
