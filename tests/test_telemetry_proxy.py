@@ -516,7 +516,17 @@ def test_client_and_proxy_contracts_match():
             for name, props in table.items()
         }
 
-    assert shape(client.EVENTS) == shape(proxy_contract.EVENTS)
+    # 代理 = 客户端 ∪ 显式的 LEGACY（只收不发的旧值，服务已发布的旧客户端）。清单本身写死在这里：
+    # 它不能悄悄变成「任意超集」——多一个 LEGACY 以外的值、或清单被改，都要红
+    assert proxy_contract.LEGACY_ENUM_VALUES == {"tutorial_step_completed": {"step_id": ("welcome",)}}
+    proxy_shape = shape(proxy_contract.EVENTS)
+    for event, props in proxy_contract.LEGACY_ENUM_VALUES.items():
+        for prop, legacy in props.items():
+            kind, values, cap = proxy_shape[event][prop]
+            assert set(legacy) <= set(values), "LEGACY 里的值必须真在代理白名单里"
+            assert not (set(legacy) & set(client.EVENTS[event][prop]["values"])), "LEGACY 不该是客户端仍会发的值"
+            proxy_shape[event][prop] = (kind, tuple(v for v in values if v not in legacy), cap)
+    assert shape(client.EVENTS) == proxy_shape
     assert shape({"auto": client.AUTO_PROPS}) == shape({"auto": proxy_contract.AUTO_PROPS})
     # 指标事件是代理独有的：客户端**不该**认识它们（桌面应用发不出发行量快照）
     assert not (set(proxy_contract.METRICS_EVENTS) & set(client.EVENTS))

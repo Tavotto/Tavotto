@@ -196,4 +196,6 @@ resetHints()
   （`open_fast_edit`）；停在别的步骤的、已完成 / 已跳过的一律原样，不重新打扰。
   不升 `flowVersion` 是为了不把「停在第 4 步」的用户拽回第一个未完成步骤。
 * **遥测**：`tutorial_step_completed.step_id` 的枚举与 `stepIds.ts` 逐字同源，三处（前端、
-  `engine/telemetry.py`、`services/telemetry_proxy` 契约）同步去掉 `welcome`。
+  `engine/telemetry.py`、`services/telemetry_proxy` 契约）同步去掉 `welcome`——**代理契约除外**：代理独立部署、要服务已发布的旧客户端（0.17.0 等，它们仍发 `step_id=welcome`），
+  所以 `contract.py` 保留 `welcome` 作只收不发的旧值，登记在 `LEGACY_ENUM_VALUES`；跨侧对拍测试认「代理 = 客户端 ∪ 该清单」，
+  清单写死在测试里，多出清单以外的值仍红。
