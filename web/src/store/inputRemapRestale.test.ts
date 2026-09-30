@@ -14,7 +14,9 @@ let assetListCalls = 0
 let inflightInvalidations = 0
 const probed: string[] = []
 
-const STATE = { path: '/p/.tavotto/input-remap.json', rules: [], errors: [] }
+/** 后端此刻的代次：改指 / 删指各 +1，环境刷新里带着它（重连 / 页面恢复的补拉） */
+let serverGeneration = 100
+const state = () => ({ rules: [], generation: serverGeneration })
 
 globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
   if (String(url).includes('/api/runtime/assets')) {
@@ -27,8 +29,12 @@ globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
   }
   if (String(url).includes('/api/engine/input-remap')) {
     const rule = { kind: 'prefix', from: '/old/data', to: '/new/data' }
-    const body = init?.method === 'POST' ? { ok: true, rule, input_remap: STATE } : { ok: true, input_remap: STATE }
+    if (init?.method === 'POST' || init?.method === 'DELETE') serverGeneration += 1
+    const body = init?.method === 'POST' ? { ok: true, rule, input_remap: state() } : { ok: true, input_remap: state() }
     return new Response(JSON.stringify(body), { status: 200 })
+  }
+  if (String(url).includes('/api/engine/environment')) {
+    return new Response(JSON.stringify({ project: { open: true, input_remap: state() } }), { status: 200 })
   }
   return new Response('{}', { status: 404 })
 }) as typeof fetch
@@ -80,20 +86,55 @@ const staleOf = (fileId: string) => useRenderStore.getState().byKey[fileId]?.sta
 describe('改指表变了：成功画过的面板同样重画', () => {
   beforeEach(() => {
     seed()
-    useEnvStore.setState({ missingInput: null })
+    serverGeneration = 100
+    useEnvStore.setState({ missingInput: null, inputRemapSeen: 100 })
   })
 
-  it('发起的窗口也只认事件：pointAtData 自己不作废任何东西（一条路径，ADR 0106 §五）', async () => {
+  it('发起的窗口收到响应就本地作废：事件丢了也不漏；随后到的同代事件不再作废第二次', async () => {
     expect(await useEnvStore.getState().pointAtData('/old/data/x.csv', '/new/data/x.csv', 'file')).toBeNull()
-    expect(await useEnvStore.getState().forgetInputRemap({ kind: 'prefix', from: '/old/data', to: '/new/data' } as never)).toBeNull()
+    // 没有任何事件送进来：响应带回的代次 101 就够了
+    await vi.waitFor(() => expect(inflightInvalidations).toBe(1))
+    expect(staleOf('ok.py')).toBe(true)
+    await vi.waitFor(() => expect(probed).toEqual(['nofig.py']))
+    // 事件流照旧广播同一代：按代次去重
+    useEnvStore.getState().onInputRemapChanged(101, 'added')
     await new Promise((r) => setTimeout(r, 0))
-    expect(staleOf('ok.py')).toBe(false)
+    expect(inflightInvalidations).toBe(1)
+    // 删指同理：响应带回 102，本地作废一次
+    expect(await useEnvStore.getState().forgetInputRemap({ kind: 'prefix', from: '/old/data', to: '/new/data' } as never)).toBeNull()
+    await vi.waitFor(() => expect(inflightInvalidations).toBe(2))
+    expect(useEnvStore.getState().inputRemapSeen).toBe(102)
+  })
+
+  it('同一代通知两次只作废一次；更早的代次不理', async () => {
+    useEnvStore.getState().onInputRemapChanged(103, 'added')
+    useEnvStore.getState().onInputRemapChanged(103, 'added')
+    useEnvStore.getState().onInputRemapChanged(102, 'removed')
+    await vi.waitFor(() => expect(inflightInvalidations).toBe(1))
+    await new Promise((r) => setTimeout(r, 0))
+    expect(inflightInvalidations).toBe(1)
+  })
+
+  it('重连 / 页面恢复补拉：代次落后就补一次作废，再拉一次不重复；从没见过代次的窗口只记起点', async () => {
+    serverGeneration = 104 // 断线期间别的窗口改了两次表，两条事件都丢了
+    await useEnvStore.getState().refresh()
+    await vi.waitFor(() => expect(inflightInvalidations).toBe(1))
+    expect(staleOf('ok.py')).toBe(true)
+    expect(useEnvStore.getState().inputRemapSeen).toBe(104)
+    await useEnvStore.getState().refresh()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(inflightInvalidations).toBe(1)
+    // 刚开项目（换项目清空了已见代次）：第一次拉到的只是起点，不作废
+    seed()
+    useEnvStore.setState({ inputRemapSeen: null })
+    await useEnvStore.getState().refresh()
+    await new Promise((r) => setTimeout(r, 0))
     expect(inflightInvalidations).toBe(0)
-    expect(probed).toEqual([])
+    expect(useEnvStore.getState().inputRemapSeen).toBe(104)
   })
 
   it('新增 / 替换一条规则（事件 reason=added）：失败的与成功的面板都标 stale', async () => {
-    useEnvStore.getState().onInputRemapChanged('added')
+    useEnvStore.getState().onInputRemapChanged(101, 'added')
     await vi.waitFor(() => expect(inflightInvalidations).toBe(1))
     expect(staleOf('missing.py')).toBe(true)
     expect(staleOf('ok.py')).toBe(true)
@@ -107,7 +148,7 @@ describe('改指表变了：成功画过的面板同样重画', () => {
   })
 
   it('删一条规则（事件 reason=removed）：经它画成功的面板标 stale（回到「找不到就报错」）', async () => {
-    useEnvStore.getState().onInputRemapChanged('removed')
+    useEnvStore.getState().onInputRemapChanged(101, 'removed')
     await vi.waitFor(() => expect(inflightInvalidations).toBe(1))
     expect(staleOf('ok.py')).toBe(true)
     expect(staleOf('missing.py')).toBe(true)

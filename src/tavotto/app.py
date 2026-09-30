@@ -13,6 +13,7 @@ Tavotto — 论文多面板图可视化排版工具
 from __future__ import annotations
 
 import argparse
+import contextlib
 import errno
 import hashlib
 import json
@@ -1482,7 +1483,20 @@ def _classify_export_error(exc: BaseException):
     （Codex #539）。判据归契约层（`pdfbackend.is_backend_unavailable`），这里只翻译。"""
     if pdfbackend.is_backend_unavailable(exc):
         return "backend_unavailable", {"reason": str(exc)[:300]}
+    if isinstance(exc, engine_inputremap.RemapChanged):
+        # 导出途中改了指认（ADR 0106 §五）：与同步渲染的 409 同一个稳定码，界面按「可重试」提示
+        return engine_inputremap.ERROR_CHANGED, {}
     return None
+
+
+def _export_commit_guard(root):
+    """导出作业的提交守卫（ADR 0106 §五）：作业开始时记下改指表代次，一路带到发布那一步——`exportjob.run`
+    在提交点之前进这个守卫，持项目读锁**再核一次**、一直持到最后一个文件发布完。开始之后改了指认，
+    这次导出按旧位置的数据画 → 一个文件都不发布（`input_remap_changed`，可重试）。没有项目的导出不拦。"""
+    if not root:
+        return None
+    start = engine_inputremap.generation(root)
+    return lambda: engine_inputremap.landing(root, start)
 
 
 def _prepare_export_job(spec: dict):
@@ -1529,6 +1543,7 @@ def api_export():
         report=_style_check_report(spec),
         inspect=_export_inspect,
         classify_error=_classify_export_error,
+        commit_guard=_export_commit_guard(getattr(_request_ctx(), "path", None)),
     )
     LOG.info(
         "导出[%s]: %s（scope=%s, %s, %.0fms，%d 条警告）",
@@ -1588,6 +1603,7 @@ def api_export_start():
         report=report,
         inspect=inspect,
         classify_error=_classify_export_error,
+        commit_guard=_export_commit_guard(ctx.path),
     )
     return jsonify(job.to_payload())
 
@@ -3876,12 +3892,15 @@ def _materialize_runtime(
     if not script or not entry:
         return
     root = require_project()
+    # 取会话在锁外：取不到现成的会起一条新的、跑脚本——持锁执行脚本会把改指堵在一次 build 后面
     try:
-        with engine_inputremap.landing(root, remap_generation):
-            try:
-                worker = _safe_worker(script, entry)
-            except engine_pool.WorkerError:
-                return
+        worker = _safe_worker(script, entry)
+    except engine_pool.WorkerError:
+        return
+    try:
+        with engine_inputremap.landing(
+            root, remap_generation, getattr(worker, "remap_generation", None)
+        ):
             for desc in descriptors or []:
                 if not isinstance(desc, dict):
                     continue
@@ -5231,31 +5250,35 @@ def _write_source_files(
     # 冒出去成了 500，`.updating` 留在图库里。备份与 staging 在任何一个原件被动之前
     # 全部拷完并 fsync（ADR 0023 §3.1，issue #252），失败时原件一个都还没碰过。
     # 热态与重放必须是同一代改指表画的、且落地前表没变（ADR 0106 §五）：否则两边读的不是同一份数据，
-    # 像素门过了也不说明什么——不写（409 可重试），staging 清掉
+    # 像素门过了也不说明什么——不写（409 可重试），staging 清掉。核对之后**一直持项目读锁到最后一个
+    # replace 完成**：改指等这次提交落完才能换代，核对与提交之间没有空隙（Codex 评 #716 P1）
+    remap_guard = (
+        engine_inputremap.landing(
+            worker.figures_dir,
+            getattr(worker, "remap_generation", None),
+            getattr(fresh, "remap_generation", None),
+        )
+        if getattr(worker, "figures_dir", None)
+        else contextlib.nullcontext()
+    )
+    updated: list[str] = []
+    done: list[Path] = []
     try:
-        if getattr(worker, "figures_dir", None):
-            with engine_inputremap.landing(
-                worker.figures_dir,
-                getattr(worker, "remap_generation", None),
-                getattr(fresh, "remap_generation", None),
-            ):
-                pass
+        with remap_guard:
+            backup_dir = _backup_targets(tmps, project_backup_dir(), stem)
+            for target, tmp in tmps:
+                try:
+                    tmp.replace(target)
+                except OSError as exc:
+                    _discard_updating(tmps)  # 不给图库留下半成品
+                    LOG.warning("写回原图失败（文件被占用？）: %s: %s", target.name, exc)
+                    rolled, failed = _rollback(done, backup_dir)
+                    raise FileLockedError(target.name, str(exc), failed, rolled, failed) from exc
+                done.append(target)
+                updated.append(target.name)
     except engine_inputremap.RemapChanged:
         _discard_updating(tmps)
         raise
-    backup_dir = _backup_targets(tmps, project_backup_dir(), stem)
-    updated: list[str] = []
-    done: list[Path] = []
-    for target, tmp in tmps:
-        try:
-            tmp.replace(target)
-        except OSError as exc:
-            _discard_updating(tmps)  # 不给图库留下半成品
-            LOG.warning("写回原图失败（文件被占用？）: %s: %s", target.name, exc)
-            rolled, failed = _rollback(done, backup_dir)
-            raise FileLockedError(target.name, str(exc), failed, rolled, failed) from exc
-        done.append(target)
-        updated.append(target.name)
     # 目录项落盘放在整个替换循环**之后**、且只尽力而为：此刻各 replace 都已
     # 成功，新内容对任何读者已可见。失败只记 ERROR、不回滚——若塞进上面的
     # `except OSError`，就会回滚别的目标、独独留下刚换好的这一个，还对用户
@@ -5854,7 +5877,11 @@ def _resync_registration(ctx, worker) -> bool:
     落地在改指表的锁里核对这个会话的代次；没 build 出任何图、不是按此刻的表 build 的，都不动。回有没有改。"""
     script = getattr(worker, "script_name", "") or ""
     root = getattr(worker, "figures_dir", None)
-    if not script or not root or not engine_inputremap.registration_stale(root, script):
+    registry = getattr(ctx, "registry", None)
+    # 只对账**已登记**的脚本：没登记过的不在这里替它登记（那是试运行 / 发现的事）
+    if not script or not root or registry is None or script not in registry.all_scripts():
+        return False
+    if not engine_inputremap.registration_stale(root, script):
         return False
     stems = sorted(
         {
@@ -5877,14 +5904,15 @@ def _resync_registration(ctx, worker) -> bool:
     return True
 
 
-def _publish_remap_changed(root: str, reason: str) -> None:
-    """改指表换代了：经项目事件流告诉**所有**开着这个项目的窗口（发起的那个也一样只认这条事件）——
-    它们据此作废按旧表画的渲染 / 素材判定 / 试运行结果（ADR 0106 §五，Codex 评 #716 P1）。"""
+def _publish_remap_changed(root: str, reason: str, generation: int) -> None:
+    """改指表换代了：经项目事件流告诉**所有**开着这个项目的窗口，带上这次的代次——它们据此作废按旧表画的
+    渲染 / 素材判定 / 试运行结果（ADR 0106 §五，Codex 评 #716 P1）。发起的窗口收到接口响应时已按同一代作废过，
+    前端按代次去重。"""
     sse_publish(
         "input_remap_changed",
         {
             "pj": current_ctx().id,
-            "generation": engine_inputremap.generation(root),
+            "generation": generation,
             "reason": reason,
         },
     )
@@ -5932,7 +5960,7 @@ def api_engine_input_remap_add():
     except engine_inputremap.RemapError as exc:
         return _input_remap_error(exc)
     _stop_remap_dependent_work(root)
-    _publish_remap_changed(root, "added")
+    _publish_remap_changed(root, "added", state["generation"])
     LOG.info("数据改指: 新增一条 %s 规则（%s）", rule["kind"], root)
     return jsonify({"ok": True, "rule": rule, "input_remap": state})
 
@@ -5951,7 +5979,7 @@ def api_engine_input_remap_delete():
     except engine_inputremap.RemapError as exc:
         return _input_remap_error(exc)
     _stop_remap_dependent_work(root)
-    _publish_remap_changed(root, "removed")
+    _publish_remap_changed(root, "removed", state["generation"])
     return jsonify({"ok": True, "input_remap": state})
 
 

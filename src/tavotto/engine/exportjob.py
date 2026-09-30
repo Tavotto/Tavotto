@@ -35,6 +35,7 @@ progress(job_id)  → 断线之后补拉当前状态
 
 from __future__ import annotations
 
+import contextlib
 import shutil
 import threading
 import time
@@ -42,7 +43,7 @@ import urllib.parse
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, ContextManager
 
 from . import atomicio, exportreq, trace as tracemod
 from .exportreq import ExportRequest, ExportRequestError
@@ -88,6 +89,8 @@ ERROR_CODES = (
     "artifact_rejected",
     # 渲染后端此刻不可用（依赖包 / 批准字体不在）：由调用方的 `classify_error` 认出来（ADR 0072）
     "backend_unavailable",
+    # 作业开始之后改了数据指认（ADR 0106 §五）：提交守卫里再核一次代次对不上，一个文件都不发布；可重试
+    "input_remap_changed",
 )
 
 #: 作业保留多久（秒）。界面拿 job_id 补拉状态要在这个窗口内。
@@ -550,6 +553,7 @@ def run(
     report: Callable[[ExportJob, list[Output]], bytes | None] | None = None,
     inspect: Callable[[ExportJob, list[Produced]], list[Produced]] | None = None,
     classify_error: Callable[[BaseException], tuple[str, dict] | None] | None = None,
+    commit_guard: Callable[[], ContextManager] | None = None,
 ) -> dict:
     """执行一个作业。同步；`run_async` 是它的线程包装。
 
@@ -569,6 +573,10 @@ def run(
     `classify_error(exc)`：作业里冒出的未分类异常先问它，回 `(code, params)` 就用那个稳定码代替
     `export_failed`（比如渲染后端此刻不可用 → `backend_unavailable`，Codex #539）；回 None 照旧。
     这个模块不认识渲染后端，判据由调用方给。
+
+    `commit_guard()`：提交点之前进入、**一直持到最后一个文件发布完**的上下文（ADR 0106 §五：持改指表的
+    项目读锁、核对作业开始时的代次）。进入时抛出的异常照常走 `classify_error`，一个文件都不发布。
+    这个模块不认识改指表，守卫由调用方给。
     """
     req = job.request
     job.status = STATUS_RUNNING
@@ -623,6 +631,7 @@ def run(
     # `status` 之前可见。`to_payload()` 的三元本来就对，只要写者顺序对读者就一致。
     # 初值是此刻的 `running`：只有 BaseException 逃出 try 时才会原样写回，与改动前一样。
     terminal = job.status
+    guard = contextlib.ExitStack()
     try:
         job.phase = "rendering"
         # 渲染从「拿源」开始（旧路解析面板原件 / 现画，候选路冻结源）；候选路自己再记 compile / compose / raster
@@ -640,6 +649,8 @@ def run(
             if rejected:
                 job.trace.fail("inspect", "artifact_rejected", formats=",".join(rejected))
 
+        if commit_guard is not None:
+            guard.enter_context(commit_guard())
         # 落盘之前**最后一次**问取消，并在**同一把锁里**置提交点：
         # 分开做的话，两者之间那一瞬进来的 `cancel()` 会拿到一个 True，
         # 而作业已经越过检查点、照常跑完
@@ -699,6 +710,7 @@ def run(
             _emit(job, publish)
 
         job.outputs = outputs
+        guard.close()
 
         if req.include_report:
             job.phase = "report"
@@ -762,6 +774,7 @@ def run(
         job.error_params = params
         job.trace.fail(_last_phase(job), code)
     finally:
+        guard.close()
         _drop_tmp(job)
         _release(reserved, job.id)
         # 顺序是判据的一部分：`finished_at` → `phase` → `status`，最后才广播
@@ -859,6 +872,7 @@ def run_async(
     report: Callable[[ExportJob, list[Output]], bytes | None] | None = None,
     inspect: Callable[[ExportJob, list[Produced]], list[Produced]] | None = None,
     classify_error: Callable[[BaseException], tuple[str, dict] | None] | None = None,
+    commit_guard: Callable[[], ContextManager] | None = None,
 ) -> None:
     """在后台线程里跑。**关掉对话框不取消它**——那是 §九 明写的行为。"""
     t = threading.Thread(
@@ -869,6 +883,7 @@ def run_async(
             "report": report,
             "inspect": inspect,
             "classify_error": classify_error,
+            "commit_guard": commit_guard,
         },
         name=f"export-{job.id}",
         daemon=True,

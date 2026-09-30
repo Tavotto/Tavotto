@@ -129,42 +129,60 @@ ovito `import_file`、h5py / netCDF 的原生打开、`exists` / `glob` / `listd
 （shutdown 会话、前端标 stale、runtime 指纹……）挡不住在飞的那一次，Codex 在 #716 上连着报了四轮同族
 问题（在飞渲染、在飞试运行被物化成新鲜、两个窗口并发改表吞规则）。收口成一个机制：
 
-- **唯一的代次**：`inputremap` 按项目在本进程里维护一个整数（`generation()`），每次**成功的**增 / 换 / 删
-  +1。读表、合并 / 删除、写回、换代整段在同一把锁里（`_LOCK`），并发改表不丢规则；「同一处」按
-  `remap_parts` 规范化后的 `from` 认（`data` / `./data` / 反斜杠写法），最新的那条胜出。
+- **唯一的代次**：`inputremap` 按项目维护一个整数（`generation()`），每次**成功的**增 / 换 / 删 +1。起点是
+  进程启动时刻的毫秒数：代次只增不减、**跨重启也单调**（前端按「≤ 已见就忽略」去重，重启归零会骗过它）。
+  「同一处」按 `remap_parts` 规范化后的 `from` 认（`data` / `./data` / 反斜杠写法），最新的那条胜出。
+- **项目级读写锁（真正的互斥）**：依赖映射、会落地的操作，从**核对代次开始一直到提交完成**持这个项目的
+  **读锁**（`landing()` 的整个块）；改指 / 删指持**写锁**——等在途的提交全部落完，才读表、合并 / 删除、
+  写表、换代（并发改表不丢规则）。于是「核对」与「提交」之间没有空隙：核对通过的提交一定整个落在换代之前，
+  换代之后开始的核对一定看得见新代次（#716 第五轮四条 P1 都是「核对之后、提交之前」的窗口）。读者之间不互斥、
+  可重入；有写者在等时新读者排在它后面（不饿死改指）；持读锁的线程改表当场报错（否则自锁）。**不持锁执行
+  脚本本身**：锁只覆盖落地和提交那一段——物化先在锁外取会话（取不到会起一条、跑脚本），再进锁核对会话的代次。
+  `snapshot()` 不拿读锁、只拿「改表 + 换代」那一小段的叶子锁（`_TABLE`）：它在池锁里被调（起会话），持读锁
+  的落地可能正等池锁，拿读锁就是「读者 → 池锁 → 等写者 → 等读者」的环。
 - **开始时记下**：起 worker 的三条路径用 `snapshot()` 同一刻取「代次 + 规则」，会话带着 `remap_generation`；
   workerd 重开会话沿用会话自己那份规则（不现取另一代）。池复用会话前核对代次（`pool._remap_current`），
   旧代次的会话按「改指表已变」重建——`shutdown_all` 摘掉之后仍在起、改动之后才登记进池的那条也挡得住。
-- **落地前在锁里核对**（`landing()`）：代次对不上就丢弃，报 `input_remap_changed`（409，**可重试**）。
+- **落地前在锁里核对、持锁到提交完**（`landing()`）：代次对不上就丢弃，报 `input_remap_changed`（409，
+  **可重试**）。导出作业把**开始时**的代次一路带到发布那一步（`exportjob.run(commit_guard=)`），在提交点之前
+  进锁再核一次、持到最后一个文件发布完。
 - **能停的顺手停**：改表之后收掉项目的会话，并对在跑的试运行置取消 + 硬杀。停只是尽早——正确性只靠代次。
-- **跨窗口通知**：改表成功后后端经项目事件流（SSE `/api/events`）广播 `input_remap_changed{pj, generation,
-  reason}`。同项目开着的**每个**窗口——包括发起的那个——都只按这条事件走 `envStore.onInputRemapChanged`
-  （→ `restaleProjectRenders`：`invalidateInflight` + 面板 stale + runtime 判定重查 / 清单重取 + 试运行结果
-  作废，`added` 时再重跑因「找不到数据」失败的脚本，并重取设置里的规则列表）。发起的窗口不再本地另调一遍。
+- **前端作废按代次幂等**：统一入口 `envStore.onInputRemapChanged(generation, reason)`——`generation` ≤ 这个
+  窗口已见的代次就忽略，同一代不论从哪条路来只执行一次（→ `restaleProjectRenders`：`invalidateInflight` +
+  面板 stale + runtime 判定重查 / 清单重取 + 试运行结果作废，删除之外再重跑因「找不到数据」失败的脚本，并重取
+  设置里的规则列表）。三条路径都调它：① 改指 / 删指接口的响应带回新代次（`input_remap.generation`），
+  **发起的窗口收到响应就本地作废**，不依赖事件；② 后端经项目事件流（SSE `/api/events`）广播
+  `input_remap_changed{pj, generation, reason}`，同项目的其它窗口据此作废；③ 事件流重连、页面恢复可见时
+  拉一次环境（里面带当前代次，`noteInputRemapGeneration`），落后就补一次作废——事件丢了也不漏。刚开项目
+  （已见代次为空）拉到的只记作起点。
 - **前端**：后端代次是唯一权威。渲染回包 `input_remap_changed` 当 stale 重排、试运行重跑一次，不报失败；
   `renderStore.invalidateInflight()`（与换项目同一个代际）只是收到事件时提前 abort 在途请求，不是第二套判据。
-- **持久化的派生物**：进程内的代次重启归零，能跨重启对账的是**改指表指纹**（`inputremap.fingerprint`）。
+- **持久化的派生物**：进程内的代次只在本进程有意义，能跨重启对账的是**改指表指纹**（`inputremap.fingerprint`）。
   runtime 物化 cache 与试运行登记各记一份：cache 在 metadata 里（`possibly_stale` 判据）；试运行登记记在
   **本机项目设置**（`input_remap_registered: {脚本: 指纹}`）——注册表 `tavotto_registry.json` 随项目走、
   不放本机派生物。登记的 stems 可能由数据决定（改指之前是 `group_A`、之后只有 `group_B`）：指纹对不上时，
   下一次这个脚本的会话**按新表 build 之后**（渲染成功或 `unknown_stem` 都一样）按这次 build 的真实产出
   重新登记（`app._resync_registration`，锁内核对代次，不多跑一次脚本），`registry.changed` 让所有窗口看到。
   选它而不是改表时立刻重跑全部试运行：不替用户执行没在用的脚本，也不在改表那一刻串行跑 N 个脚本。
+  **没有指纹标记的已登记脚本**（这个机制之前登记的、静态发现的）按保守对账处理：项目里有任何改指规则就算
+  过期，下一次 build 时重新登记；没有规则的维持原样（它只可能是在「无表」下登记的）。
 
 以映射为输入的工作点与派生物（全仓枚举；新增一处先接到这个机制上）：
 
-| 工作点 / 派生物 | 开始时的代次 | 落地点（锁内核对） | 对不上 | 别的窗口怎么得知 |
-|---|---|---|---|---|
-| 画布渲染 `/api/engine/render` | 会话 `remap_generation` | 回包之前 | 409，前端标 stale 重排 | `input_remap_changed` → 面板 stale |
-| runtime 物化 cache `_materialize_runtime`（渲染 / 试运行两处） | 产出那次 build 的代次；metadata 记指纹 | 写 cache 整段在锁里 | 丢弃，不写；指纹不符判 `possibly_stale` | 事件 → runtime 判定重查、清单重取 |
-| 试运行登记 `probe.probe_and_register` | `probe()` 用的会话 | 登记 + 记指纹整段在锁里 | `registered: false` + 码，前端重跑 | 事件 → 试运行结果作废；登记变了发 `registry.changed` |
-| 注册表里试运行登记的 stems（持久化） | 本机项目设置里的指纹 | 下一次按新表 build 后，锁内核对代次再重新登记 | 按真实产出重新登记 | `registry.changed` |
-| 写回原图 `_write_source_files` | 热态会话与全量重放会话各一 | 两者都等于此刻才进 commit | 409，staging 清掉，原件不动 | 事件 → 面板 stale（写回前先重画） |
-| 导出 `_serialize_figure_with_worker` | 会话 | 导出文件交出去之前 | 409 | 事件 → 面板 stale |
-| 准备接口 / 预热（U01） | 会话 | 复用前（池） | 重建会话 | —— |
-| 前端缓存（渲染 / runtime 判定 / 试运行结果） | —— | —— | —— | 只按 `input_remap_changed`（发起的窗口同样） |
-| `tavotto open` 的本地试运行（`handoff._local_probe`） | —— | —— | 不适用：只在没有在跑的实例时于 CLI 进程里跑，改表只发生在服务进程 | —— |
-| 弹窗载荷 / `static_missing` / `native_miss` | —— | 只读、当场算 | 不适用 | —— |
+| 工作点 / 派生物 | 开始时的代次 | 落地点（锁内核对） | 持锁区间（项目读锁） | 对不上 | 别的窗口怎么得知 |
+|---|---|---|---|---|---|
+| 画布渲染 `/api/engine/render` | 会话 `remap_generation` | 回包之前 | 只核对（回包不写盘；晚到的由前端按代次作废） | 409，前端标 stale 重排 | `input_remap_changed` → 面板 stale |
+| runtime 物化 cache `_materialize_runtime`（渲染 / 试运行两处） | 产出那次 build 的代次 + 取到的会话的代次；metadata 记指纹 | 写 cache 之前 | 核对 → 每个描述符的物化写完（取会话在锁外） | 丢弃，不写；指纹不符判 `possibly_stale` | 事件 → runtime 判定重查、清单重取 |
+| 试运行登记 `probe.probe_and_register` | `probe()` 用的会话 | 登记之前 | 核对 → 注册表写完、重载、记指纹 | `registered: false` + 码，前端重跑 | 事件 → 试运行结果作废；登记变了发 `registry.changed` |
+| 注册表里试运行登记的 stems（持久化）`_resync_registration` | 本机项目设置里的指纹（无标记 + 有规则 = 过期） | 下一次按新表 build 后 | 核对 → 重新登记、记指纹 | 按真实产出重新登记 | `registry.changed` |
+| 写回原图 `_write_source_files` | 热态会话与全量重放会话各一 | 两者都等于此刻才进 commit | 核对 → `_backup_targets` → 整个 replace 循环（含失败回滚） | 409，staging 清掉，原件不动 | 事件 → 面板 stale（写回前先重画） |
+| 导出面板 `_serialize_figure_with_worker` | 会话 | 导出文件交出去之前 | 只核对（交给作业的是临时文件） | 409 / 作业失败 | 事件 → 面板 stale |
+| 导出作业的发布 `exportjob.run(commit_guard=)`（同步 / 后台两条） | 作业开始时 `generation(项目)` | 提交点之前 | 核对 → 提交点 → 最后一个文件发布完 | 作业 `input_remap_changed`（可重试），一个文件都不发布 | 事件 → 面板 stale |
+| 准备接口 / 预热（U01） | 会话 | 复用前（池） | 不持（`_remap_current` 只读代次） | 重建会话 | —— |
+| 改指 / 删指 `add_rule` / `remove_rule` | —— | —— | **写锁**：等在途提交落完 → 读表、写表、换代 | —— | 响应带新代次 + 事件 |
+| 前端缓存（渲染 / runtime 判定 / 试运行结果） | —— | —— | —— | —— | `onInputRemapChanged(代次)`：接口响应 / 事件 / 重连补拉，按代次去重 |
+| `tavotto open` 的本地试运行（`handoff._local_probe`） | —— | —— | —— | 不适用：只在没有在跑的实例时于 CLI 进程里跑，改表只发生在服务进程 | —— |
+| 弹窗载荷 / `static_missing` / `native_miss` | —— | 只读、当场算 | —— | 不适用 | —— |
 
 ## 用户拍板（2026-09-28）
 
@@ -211,7 +229,11 @@ ovito `import_file`、h5py / netCDF 的原生打开、`exists` / `glob` / `listd
   `missing_input` → 指认后输出等于那份数据的真值、项目里放同名诱饵不影响（FO08 的反例）、原件回来读原件、
   脚本目录模式同样生效、「先 exists 再退出」只给静态列表、普通 `ValueError` 仍是 `script_error`、试运行两条路、
   三条 spawn 路径同源；HTTP 增 / 查 / 删与稳定码；§五 的代次——并发改表两条都保留且各换一代、`landing()`
-  拒旧代次、试运行途中改表不登记、旧代次的物化被丢弃、池不复用旧代次的会话。每条落地时做过变异反证。
+  拒旧代次、试运行途中改表不登记、旧代次的物化被丢弃、池不复用旧代次的会话；读写锁——写回替换中途、导出发布
+  中途的改指都等提交落完（barrier 钉住中途）、作业开始后改指则一个文件都不发布、读者并存可重入、持读锁改表报错；
+  无标记的旧登记在有规则时重新登记。每条落地时做过变异反证。
+- `web/src/store/inputRemapRestale.test.ts`：发起窗口按接口响应本地作废（没有事件也不漏）、同一代两次只作废
+  一次、重连补拉落后就补一次、刚开项目只记起点。
 - `tests/test_mcp_server.py`：载荷进 `structuredContent`、`recovery` 说得出下一步。
 - `tests/test_error_codes.py` / `tests/test_script_probe.py`：新码两种语言都有文案、占位符对得上。
 - `web/src/components/MissingInputDialog.test.tsx`：主条目与其余列表、文件 / 文件夹各发一次且重排、取消不发、

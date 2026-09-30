@@ -26,6 +26,7 @@ vi.mock('@/lib/desktop', async (importOriginal) => ({
 import {
   addInputRemap,
   ApiError,
+  fetchEngineEnvironment,
   MISSING_INPUT_CODE,
   type EngineEnvironment,
   type MissingInputOffer,
@@ -62,7 +63,7 @@ const env = (): EngineEnvironment =>
     project: {
       open: true,
       workdir: { mode: 'sandbox', modes: ['sandbox', 'project', 'project_root'] },
-      input_remap: { rules: [] },
+      input_remap: { rules: [], generation: 1 },
     },
   }) as never
 
@@ -102,7 +103,9 @@ beforeEach(() => {
   fileMock.mockReset()
   dirMock.mockReset()
   desktopMock.mockReturnValue(true)
-  useEnvStore.setState({ env: env(), missingInput: null })
+  // 作废之后会刷新一次环境：这里不关心它的内容，失败就是保持原样
+  vi.mocked(fetchEngineEnvironment).mockRejectedValue(new Error('offline'))
+  useEnvStore.setState({ env: env(), missingInput: null, inputRemapSeen: null })
 })
 afterEach(async () => {
   await act(async () => root.unmount())
@@ -148,7 +151,7 @@ describe('MissingInputDialog', () => {
     addMock.mockResolvedValue({
       ok: true,
       rule: { kind: 'prefix', from: '', to: '/Volumes/B/proj' },
-      input_remap: { rules: [{ kind: 'prefix', from: '', to: '/Volumes/B/proj', target_exists: true }] },
+      input_remap: { rules: [{ kind: 'prefix', from: '', to: '/Volumes/B/proj', target_exists: true }], generation: 2 },
     })
     useRenderStore.setState({
       byKey: {
@@ -168,17 +171,15 @@ describe('MissingInputDialog', () => {
     expect(addMock).toHaveBeenCalledWith('data/values.txt', '/Volumes/B/proj/data/values.txt', 'file')
     expect(useEnvStore.getState().missingInput).toBeNull()
     expect(dialog()).toBeNull()
-    // 重排只经后端广播的 `input_remap_changed`（ADR 0106 §五）：这里替事件流把它送进来。
+    // 发起的窗口按响应带回的代次本地重排，不等事件（ADR 0106 §五）。
     // 重排在两个动态 import 之后：首次加载模块是真异步，不止一个微任务
     expect(useEnvStore.getState().env?.project?.input_remap?.rules).toHaveLength(1)
-    expect(useRenderStore.getState().byKey.k.stale, '没等事件就自己重排了').toBe(false)
-    useEnvStore.getState().onInputRemapChanged('added')
     await vi.waitFor(() => expect(useRenderStore.getState().byKey.k.stale, '没重新排上').toBe(true))
   })
 
   it('指认文件夹按 dir 发；取消选择器什么都不发', async () => {
     dirMock.mockResolvedValueOnce(null).mockResolvedValueOnce('/Volumes/B/proj')
-    addMock.mockResolvedValue({ ok: true, rule: {} as never, input_remap: { rules: [] } })
+    addMock.mockResolvedValue({ ok: true, rule: {} as never, input_remap: { rules: [], generation: 2 } })
     await render(<MissingInputDialog />)
     await act(async () => useEnvStore.getState().requestMissingInput(relative()))
     await act(async () => byTestId('missing-input-pick-dir')!.click())
@@ -220,7 +221,7 @@ describe('MissingInputDialog', () => {
 
   it('浏览器模式：粘贴路径后才可点，按 auto 发', async () => {
     desktopMock.mockReturnValue(false)
-    addMock.mockResolvedValue({ ok: true, rule: {} as never, input_remap: { rules: [] } })
+    addMock.mockResolvedValue({ ok: true, rule: {} as never, input_remap: { rules: [], generation: 2 } })
     await render(<MissingInputDialog />)
     await act(async () => useEnvStore.getState().requestMissingInput(relative()))
     expect(byTestId('missing-input-pick-file')).toBeNull()
@@ -269,7 +270,7 @@ describe('MissingInputDialog', () => {
         ...env(),
         project: {
           ...env().project!,
-          input_remap: { rules: [{ kind: 'prefix', from: '', to: '/Volumes/B', target_exists: false }] },
+          input_remap: { rules: [{ kind: 'prefix', from: '', to: '/Volumes/B', target_exists: false }], generation: 1 },
         },
       } as never,
     })

@@ -217,16 +217,18 @@ describe('panel.file_changed', () => {
 
 describe('input_remap_changed（ADR 0106 §五）', () => {
   it('同项目的另一个窗口收到改指表换代：走同一个作废入口；别的项目的事件不理', () => {
-    const calls: string[] = []
+    const calls: [number, string][] = []
     const real = useEnvStore.getState().onInputRemapChanged
-    useEnvStore.setState({ onInputRemapChanged: (reason: string) => void calls.push(reason) } as never)
+    useEnvStore.setState({
+      onInputRemapChanged: (generation: number, reason: string) => void calls.push([generation, reason]),
+    } as never)
     try {
       handleServerEvent(ev({ kind: 'input_remap_changed', pj: 'p1', generation: 3, reason: 'added' }))
       handleServerEvent(ev({ kind: 'input_remap_changed', pj: 'p-other', generation: 1, reason: 'removed' }))
     } finally {
       useEnvStore.setState({ onInputRemapChanged: real })
     }
-    expect(calls).toEqual(['added'])
+    expect(calls).toEqual([[3, 'added']])
   })
 })
 
