@@ -1,4 +1,5 @@
 import { panelSrc } from '@/lib/api'
+import { applyPanelTransform, panelContentTransform } from '@/lib/panelTransform'
 import { useAssetStore } from '@/store/assetStore'
 import { panelRender, useRenderStore } from '@/store/renderStore'
 import type { CanvasObject, FigureDocument, PanelObject } from '@/types/document'
@@ -156,7 +157,9 @@ async function drawObject(
   const w = o.w * scale
   const h = o.h * scale
   if (o.type === 'panel') {
-    const rot = o.rotation ?? 0
+    // 旋转 / 翻转与画布同一份（`lib/panelTransform`）：先在内容空间翻转，再旋转落位
+    const transform = panelContentTransform(o)
+    const rot = transform.rotate
     // 旋转 90/270 时内容的显示尺寸与落位包围盒互换
     const [cw, ch] = rot === 90 || rot === 270 ? [h, w] : [w, h]
     const crop = o.crop
@@ -190,7 +193,7 @@ async function drawObject(
         break
       }
       lctx.translate(x + w / 2, y + h / 2)
-      if (rot) lctx.rotate((rot * Math.PI) / 180)
+      applyPanelTransform(lctx, transform)
       lctx.drawImage(
         img,
         (crop?.x ?? 0) * nw,

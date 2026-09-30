@@ -332,3 +332,79 @@ test('带 overrides 的面板：缩略图走 SVG 那一路画上（不因重复�
   const withSvg = (await trace()).filter((e) => e.steps?.some((st) => st.startsWith('svg')))
   for (const e of withSvg) expect(e.steps, JSON.stringify(withSvg)).toEqual(['svg:ok'])
 })
+
+test('只差水平翻转的两个节点：缩略图不一样，而且是左右镜像（缩略图带翻转，Codex #679）', async ({
+  app,
+  page,
+}) => {
+  test.setTimeout(240_000)
+  await page.setViewportSize({ width: 1440, height: 900 })
+  const a = await app()
+  await page.goto(a.baseURL)
+  // 放一张图（按页面居中落位：整张缩略图左右镜像时，面板映到它自己身上）
+  await placeFigureAndBack(page)
+  const nameNow = async (name: string) => {
+    await (await only(page.locator('[data-timeline-name-button]'))).click()
+    const quick = await only(page.locator('[data-timeline-quick-name-input]'))
+    await quick.fill(name)
+    await quick.press('Enter')
+    await expect(quick).toHaveCount(0)
+  }
+  await nameNow('原样')
+  // 属性页「更多」里的「水平翻转」（面板放上来之后是选中的）
+  const more = await only(page.locator('[data-panel-more]'))
+  if ((await more.getAttribute('aria-expanded')) !== 'true') await more.click()
+  await (await only(page.locator('[data-panel-flip="h"]'))).click()
+  await nameNow('翻转')
+  await page.keyboard.press('ControlOrMeta+Shift+H')
+  const drawer = await only(page.locator('[data-timeline-drawer]'))
+  const thumbOf = (name: string) =>
+    drawer.locator('[data-timeline-node][data-timeline-named]', {
+      has: page.locator('[data-timeline-name]', { hasText: name }),
+    }).locator('img[data-timeline-thumb]')
+  await expect(await only(thumbOf('原样'), 30_000)).toBeVisible({ timeout: 30_000 })
+  await expect(await only(thumbOf('翻转'), 30_000)).toBeVisible({ timeout: 30_000 })
+  const [plainSrc, flippedSrc] = [
+    await thumbOf('原样').getAttribute('src'),
+    await thumbOf('翻转').getAttribute('src'),
+  ]
+  // 两张图逐像素比：原样 vs 翻转差得多；把「原样」左右镜像之后再比，差得少得多——方向对
+  const m = await page.evaluate(
+    async ([p, f]) => {
+      const load = async (src: string) => {
+        const img = new Image()
+        img.src = src
+        await img.decode()
+        const c = document.createElement('canvas')
+        c.width = img.naturalWidth
+        c.height = img.naturalHeight
+        const ctx = c.getContext('2d')!
+        return { ctx, w: c.width, h: c.height, img }
+      }
+      const A = await load(p!)
+      const B = await load(f!)
+      A.ctx.drawImage(A.img, 0, 0)
+      const a = A.ctx.getImageData(0, 0, A.w, A.h).data
+      B.ctx.drawImage(B.img, 0, 0)
+      const b = B.ctx.getImageData(0, 0, B.w, B.h).data
+      const M = await load(p!)
+      M.ctx.translate(M.w, 0)
+      M.ctx.scale(-1, 1)
+      M.ctx.drawImage(M.img, 0, 0)
+      const mirrored = M.ctx.getImageData(0, 0, M.w, M.h).data
+      let plain = 0
+      let mirror = 0
+      for (let i = 0; i < a.length; i += 4) {
+        for (let k = 0; k < 3; k++) {
+          plain += Math.abs(a[i + k] - b[i + k])
+          mirror += Math.abs(mirrored[i + k] - b[i + k])
+        }
+      }
+      return { plain, mirror, size: [A.w, A.h, B.w, B.h] }
+    },
+    [plainSrc, flippedSrc],
+  )
+  expect(m.size[0], JSON.stringify(m)).toBe(m.size[2])
+  expect(m.plain, JSON.stringify(m)).toBeGreaterThan(50_000) // 两张确实不一样
+  expect(m.mirror, JSON.stringify(m)).toBeLessThan(m.plain * 0.4) // 而且是左右镜像
+})

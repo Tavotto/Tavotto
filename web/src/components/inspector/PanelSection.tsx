@@ -357,6 +357,8 @@ function PanelMoreSection({ objs }: { objs: PanelObject[] }) {
         open={open}
         onToggle={() => setOpen('panel', !open)}
         summary={summaryBits.length ? summaryBits.join(' · ') : undefined}
+        // e2e 的稳定锚点：旋转 / 翻转 / 不透明度收在这一组里
+        data-panel-more
       >
         {translate('element.more', { ns: 'inspector' })}
       </GroupToggle>
@@ -389,6 +391,8 @@ function PanelMoreSection({ objs }: { objs: PanelObject[] }) {
               variant="secondary"
               size="sm"
               active={sharedPanel(objs, (o) => o.flipH === true) === true}
+              // e2e 的稳定锚点（不认文案）
+              data-panel-flip="h"
               onClick={() =>
                 setEach(hist('flipH'), (o) => {
                   o.flipH = o.flipH ? undefined : true
@@ -402,6 +406,7 @@ function PanelMoreSection({ objs }: { objs: PanelObject[] }) {
               variant="secondary"
               size="sm"
               active={sharedPanel(objs, (o) => o.flipV === true) === true}
+              data-panel-flip="v"
               onClick={() =>
                 setEach(hist('flipV'), (o) => {
                   o.flipV = o.flipV ? undefined : true
