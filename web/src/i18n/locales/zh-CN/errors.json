@@ -519,7 +519,8 @@
     "repairErrorCode": "错误码：{{code}}",
     "repairFactEnvDownload": "需下载 {{product}} 自己的 Python {{version}}（约 {{mb}} MB）。",
     "repairFactEnvBundled": "使用安装包自带的 {{product}} Python {{version}}，不用联网。",
-    "repairFactEnvCached": "使用已准备好的 {{product}} Python {{version}}，不用联网。"
+    "repairFactEnvCached": "使用已准备好的 {{product}} Python {{version}}，不用联网。",
+    "repairAlternatives": "其他方式（备选）"
   },
   "preflight": {
     "axisLabelFormat": "坐标轴标题「{{label}}」不是规范的「{{want}}」形式",

@@ -642,6 +642,56 @@ describe('预读、披露、「检查中」只跟着主按钮指向的那个目�
   })
 })
 
+describe('「详情」首段只说主按钮真正要做的事，别的路放在「其他方式（备选）」（Codex #742）', () => {
+  const SYSTEM_READY = {
+    kind: 'system_interpreter' as const, venv: '', python: '/usr/local/bin/python3', modifies_user_environment: false,
+    creates_environment: false, available: true, reason: '', python_version: '3.12.4', support: 'verified',
+  }
+  const MANAGED_WITH_PY = { ...OFFER.targets[1], private_python: PRIVATE_PYTHON }
+  const facts = () => document.querySelector('[data-repair-advanced] [data-repair-primary-facts]')
+  const alternatives = () => document.querySelector('[data-repair-advanced] [data-repair-alternatives]')!
+  const willInstall = () => en('repairWillInstall', { requirement: 'lmfit>=1.3' })
+  const download = () => en('repairFactDownload', { version: '3.13.15', mb: 45, product: PRODUCT_NAME })
+
+  it('主按钮是改用已有 Python：首段说改用哪一个、不装不下；「将安装」「需下载」只出现在备选里', async () => {
+    await render({ ...OFFER, targets: [SYSTEM_READY, MANAGED_WITH_PY, OFFER.targets[0]] })
+    const lead = facts()!.textContent!
+    expect(lead).toContain('/usr/local/bin/python3')
+    expect(lead).toContain(en('repairFactUntouched'))
+    for (const wrong of [willInstall(), download(), 'MB', en('repairFactNetwork')]) expect(lead).not.toContain(wrong)
+    // 受管环境的要素仍在，但在备选这一节、带着「其他方式（备选）」的标题
+    const alt = alternatives()
+    expect(alt.querySelector('.type-meta')!.textContent).toBe(en('repairAlternatives'))
+    expect(alt.querySelector('[data-alternative-managed-disclosure]')!.textContent).toContain(willInstall())
+    expect(alt.querySelector('[data-alternative-managed-disclosure]')!.textContent).toContain(download())
+    // 首段在备选之前
+    expect(facts()!.compareDocumentPosition(alt) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('主按钮是受管环境：首段就是它的三条事实（装什么 / 下载什么多大 / 不改动什么）', async () => {
+    await render({ ...OFFER, targets: [MANAGED_WITH_PY, OFFER.targets[0]] })
+    const lead = facts()!
+    expect(lead.querySelectorAll('p')).toHaveLength(3)
+    expect(lead.textContent).toContain(willInstall())
+    expect(lead.textContent).toContain(download())
+    expect(alternatives().querySelector('[data-alternative-managed-disclosure]')).toBeNull()
+  })
+
+  it('主目标是项目环境（受管用不了）：首段说装什么、会改动哪个环境，不说下载', async () => {
+    await render({ ...OFFER, targets: [OFFER.targets[0], { ...OFFER.targets[1], available: false, reason: 'managed_env_unavailable' }] })
+    const lead = facts()!.textContent!
+    expect(lead).toContain(willInstall())
+    expect(lead).toContain(en('dependencyTargetHint_project_venv', { venv: '.venv' }))
+    for (const wrong of ['MB', en('repairFactNetwork'), en('repairFactUntouched')]) expect(lead).not.toContain(wrong)
+  })
+
+  it('主动作是恢复自动检测：卡片不说要装 / 要下载任何东西', async () => {
+    await render({ ...OFFER, targets: [MANAGED_WITH_PY], pinned: { python: '/opt/venv/bin/python', source: 'configured' } })
+    expect(facts()).toBeNull()
+    for (const wrong of [willInstall(), download(), 'MB']) expect(text()).not.toContain(wrong)
+  })
+})
+
 describe('无障碍与窄栏', () => {
   it('所有动作都是真的 button / input，键盘到得了', async () => {
     await render({ ...OFFER, requirement: null, targets: [OFFER.targets[1]] })

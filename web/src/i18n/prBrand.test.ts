@@ -23,6 +23,7 @@ const PR_KEYS: Record<'errors' | 'workspace', string[]> = {
     'engine.oneClickSentenceEnvDownload',
     'engine.oneClickSentenceSystem',
     'engine.repairAdvanced',
+    'engine.repairAlternatives',
     'engine.repairCancelledManaged',
     'engine.repairCancelledProjectEnv',
     'engine.repairDetails',

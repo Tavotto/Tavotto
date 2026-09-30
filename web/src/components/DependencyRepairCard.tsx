@@ -262,28 +262,43 @@ export function DependencyRepairCard({
   )
   const managed = primary?.kind === 'tavotto_managed'
   const failing = !!(errorCode || errorText)
+  // 「详情」首段只说**主按钮真正要做的事**（Codex #742）：改用已有 Python 时不许说「将安装 / 需下载」；受管环境等别的
+  // 路另起一小节「其他方式（备选）」，明确是备选
+  const lead = primary ?? (targets[0]?.kind === 'project_venv' ? targets[0] : null)
+  const managedFacts = (
+    <>
+      <p>{en('repairWillInstall', { requirement: offer.requirement?.requirement ?? pkg })}</p>
+      <p data-one-click-cost {...(disclosed ? { 'data-dependency-private-python': '' } : {})}>
+        {checking ? en('oneClickChecking') : downloadFact(disclosed)}
+      </p>
+      <p>{en('repairFactUntouched')}</p>
+    </>
+  )
+  const primaryFacts =
+    lead?.kind === 'tavotto_managed' && managedReady && offer.requirement ? (
+      // 一次授权的披露，最多三条、各说一件事（2026-09-29 用户：「详情」不许重复啰嗦）：装什么 / 下载什么多大 / 不改动什么
+      <div className="flex flex-col gap-1 text-xs leading-relaxed text-ink-3" data-repair-primary-facts data-dependency-disclosure>
+        {managedFacts}
+      </div>
+    ) : lead?.kind === 'system_interpreter' ? (
+      // 改用已有的 Python：改用哪一个（路径与版本给想核对的人）、不装也不下、不改动什么
+      <div className="flex flex-col gap-1 text-xs leading-relaxed text-ink-3" data-repair-primary-facts>
+        <p data-one-click-system>{hint(lead)}</p>
+        <p>{en('repairFactUntouched')}</p>
+      </div>
+    ) : lead?.kind === 'project_venv' && offer.requirement ? (
+      // 装进项目自己的环境：装什么、会改动哪个环境（这一条要用户看清，所以它先到确认页）
+      <div className="flex flex-col gap-1 text-xs leading-relaxed text-ink-3" data-repair-primary-facts>
+        <p>{en('repairWillInstall', { requirement: offer.requirement.requirement })}</p>
+        <p>{en('dependencyTargetHint_project_venv', { venv: lead.venv || '.venv' })}</p>
+      </div>
+    ) : null
+  const alternatives = primary ? rest : []
+  const managedAlternative = alternatives.some((tg) => tg.kind === 'tavotto_managed') && managedReady && offer.requirement
   const advanced = (
     <Advanced>
       {failing && <FailureDetail code={errorCode} text={errorText} />}
-      {managedReady && offer.requirement && (
-        // 点之前的披露（一次授权），最多三条、各说一件事（2026-09-29 用户：「详情」不许重复啰嗦）：
-        // 要装什么 / 要下载什么（多大）/ 不改动什么
-        <div className="flex flex-col gap-1 text-xs leading-relaxed text-ink-3" data-dependency-disclosure>
-          <p>{en('repairWillInstall', { requirement: offer.requirement.requirement })}</p>
-          <p data-one-click-cost {...(disclosed ? { 'data-dependency-private-python': '' } : {})}>
-            {checking ? en('oneClickChecking') : downloadFact(disclosed)}
-          </p>
-          <p>{en('repairFactUntouched')}</p>
-        </div>
-      )}
-      {primary?.kind === 'system_interpreter' && (
-        // 一键修复要改用的是哪一个：路径与版本给想核对的人（默认可见的那句话里不出现路径）
-        <p className="text-xs leading-relaxed text-ink-3" data-one-click-system>
-          {hint(primary)}
-        </p>
-      )}
-      {primary && rest.length > 0 && <TargetList targets={rest} first={null} pkg={pkg} act={act} />}
-      {primary && specify}
+      {primaryFacts}
       {!primary && managedUnavailable && (
         // 无路可走时那一句只说「先装 Python」；要装哪一段版本、装过了怎么指定，给展开的人
         <p className="text-xs leading-relaxed text-ink-3" data-managed-env-unavailable-hint>
@@ -294,8 +309,20 @@ export function DependencyRepairCard({
         </p>
       )}
       {rejected.length > 0 && <Rejections rejected={rejected} pkg={pkg} />}
-      <OtherPython />
-      <OpenEnvironment />
+      {/* 其他方式：不是主按钮做的事，明确标成备选 */}
+      <div className="flex flex-col gap-2.5" data-repair-alternatives>
+        <p className="type-meta">{en('repairAlternatives')}</p>
+        {alternatives.length > 0 && <TargetList targets={alternatives} first={null} pkg={pkg} act={act} />}
+        {managedAlternative && (
+          // 备选里的受管环境点下去同样是一次授权：它的要素照样说出口，只是放在备选这一节里
+          <div className="flex flex-col gap-1 text-xs leading-relaxed text-ink-3" data-alternative-managed-disclosure>
+            {managedFacts}
+          </div>
+        )}
+        {primary && specify}
+        <OtherPython />
+        <OpenEnvironment />
+      </div>
     </Advanced>
   )
 

@@ -2016,6 +2016,7 @@ export default interface Resources {
       "projectEnvWhySystemAuto": "内置环境没有 {{module}}，已自动改用这台机器上装着它的 Python。",
       "projectEnvWorkerImport": "项目环境 {{venv}} 能导入 matplotlib，但 Tavotto 的渲染代码在它里面起不来（多半是 Conda 与 pip 混装后某个 DLL 或 numpy 版本对不上）。诊断里有断在哪一句。",
       "repairAdvanced": "详情",
+      "repairAlternatives": "其他方式（备选）",
       "repairBack": "返回",
       "repairBody": "当前渲染环境缺少这个包。请选择下面可用的方式继续。",
       "repairCancel": "取消",
