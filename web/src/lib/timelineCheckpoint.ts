@@ -65,6 +65,15 @@ export function captureMoment(doc?: FigureDocument): MomentSnapshot {
   return { ctx: currentTimelineCtx(), identity, thumb: captureThumbSources(identity.doc) }
 }
 
+/**
+ * 同一个时刻、换一份**操作完成后**的文档：上下文、画布身份、面板图源仍是发起那一刻的。
+ * 给「操作本身会改文档」的时刻用——写回带标注时，写成之后画布上的标注原件会被删掉，
+ * 节点要记删掉之后的样子，否则从它恢复标注会出现两份（Codex #679）。
+ */
+export function momentWithDoc(snapshot: MomentSnapshot, doc: FigureDocument): MomentSnapshot {
+  return { ...snapshot, identity: { ...snapshot.identity, doc } }
+}
+
 export interface CheckpointOptions {
   auto: boolean
   moment?: LayoutMoment
@@ -157,10 +166,14 @@ export async function saveNamedNode(name: string): Promise<void> {
  * - 带快照（内容 = 发起时那份）：导出（`runExport` 用导出请求里的那份文档取，记进
  *   exportStore，终局时带上）；保存（⌘S 本机与另存为在 `captureSaveContext()` 里取、
  *   ⌘S 写回项目文件在 `buildProject()` 那一刻取——那才是写出去的那份；经
- *   `emitLayoutSaved` 的事件带过来）；写回（两处按钮在发起时取）；
- * - 同步、不带：打开（`adoptNow` 换完代之后、`markWorkspaceOpened`）、离开（`adoptNow`
- *   认领新项目之前、`showPicker`）——调的那一刻就是那件事发生的上下文与内容。
+ *   `emitLayoutSaved` 的事件带过来）；写回（两处按钮在发起时取；带标注写回的那一处在
+ *   删掉画布上的标注原件之后换成删之后的文档——`momentWithDoc`，上下文不变）；
+ * - 同步、不带：打开（`adoptNow` 换完代之后、`markWorkspaceOpenedAfter` 核过项目代际）、
+ *   离开（`settleAndMarkLeaving`：**先收手势再打点**，`adoptNow` 认领新项目之前与 `showPicker`
+ *   共用这一份顺序）——调的那一刻就是那件事发生的上下文与内容。
  * 没有「拿不到快照、只能按编辑代次丢弃」的路径：三处都在发起时拿得到送出去的那份文档。
+ * 三件事逐个核过（Codex #679）：拍之前手势 / 事务落定了没有、拍的是不是操作完成后的文档、
+ * 上下文是不是发起那一刻的；新增调用点照这三问再核一遍。
  */
 let momentSink: ((moment: LayoutMoment, snapshot?: MomentSnapshot) => Promise<unknown>) | null = null
 

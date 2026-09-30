@@ -186,6 +186,7 @@
     "unsupported_format": "Exporting {{format}} is not supported yet.",
     "unsupported_script_type": "Can’t run {{script}}: not a .py script",
     "versions_unreadable": "Couldn’t read the version history, so this checkpoint wasn’t saved. The history on disk is untouched.",
+    "version_name_too_long": "Point names can be at most {{max}} characters, so this wasn’t saved.",
     "named_budget_exceeded": "Named points already use {{used}} MB, over the timeline’s {{limit}} MB limit, so this one wasn’t named. Delete a few named points you no longer need first.",
     "version_moment_invalid": "Unknown key moment: {{moment}}",
     "version_thumb_invalid": "The point’s thumbnail was the wrong format or too large, so it wasn’t saved.",

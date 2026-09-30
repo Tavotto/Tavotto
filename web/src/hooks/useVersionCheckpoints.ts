@@ -1,4 +1,5 @@
 import { useDocumentStore } from '@/store/documentStore'
+import { hasActiveGesture } from '@/store/gestureCoordinator'
 import { setMomentSink, takeCheckpoint, markMoment } from '@/lib/timelineCheckpoint'
 import { onLayoutSaved } from '@/lib/layoutSaved'
 import { currentTimelineCtx } from '@/lib/timelineContext'
@@ -84,6 +85,13 @@ export function startVersionCheckpoints(): () => void {
       return
     }
     if (!useDocumentStore.getState().doc.objects.length) return
+    // 手势 / 连续编辑还开着（按住拖、属性框的安静计时器）：不拍中间态，也不替用户把它收掉——
+    // 等它落定再说（落定那一笔改动会让文档再变一次、重新计停顿）；以防万一没有后续改动，
+    // 也按停顿间隔再来看一次（Codex #679 关键时刻自查）
+    if (hasActiveGesture()) {
+      timer = window.setTimeout(fire, debounceMs)
+      return
+    }
     if (inFlight.has(ctx)) return // 这份排版上一个自动节点还在路上：它回来之前不再发第二个
     inFlight.add(ctx)
     void takeCheckpoint({ auto: true })

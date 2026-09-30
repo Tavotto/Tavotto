@@ -316,6 +316,41 @@ describe('关键时刻挂在各自的成功点上', () => {
   })
 })
 
+describe('离开项目：先收手势、再打 close（两条路同一份顺序，Codex #679）', () => {
+  const closeIds = () =>
+    posts
+      .filter((p) => p.body.moment === 'close')
+      .map((p) => (p.body.doc as { objects: { id: string }[] }).objects.map((o) => o.id))
+
+  it.each([
+    ['编辑器开着直接切项目（adoptNow）', async () => {
+      const { useProjectStore } = await import('@/store/projectStore')
+      void useProjectStore
+        .getState()
+        .adoptOpenedProject({ open: true, id: 'p_B', name: 'B' } as never)
+        .catch(() => {})
+    }],
+    ['回主页（showPicker）', async () => {
+      const { useProjectStore } = await import('@/store/projectStore')
+      useProjectStore.getState().showPicker()
+    }],
+  ] as const)('%s：close 节点拍的是手势落定之后的内容', async (_name, leave) => {
+    const { useProjectStore } = await import('@/store/projectStore')
+    const { registerGesture } = await import('@/store/gestureCoordinator')
+    const stop = startVersionCheckpoints()
+    setCurrentProjectId('p_A')
+    edit('t1')
+    // 一轮还开着的连续编辑：收尾时才落定最后那一笔
+    registerGesture(() => edit('t_settled'))
+    useProjectStore.setState({ phase: 'open', switching: false, project: { open: true, id: 'p_A' } } as never)
+    await leave()
+    await vi.waitFor(() => expect(closeIds()).toHaveLength(1))
+    stop()
+    expect(closeIds()[0]).toEqual(['t1', 't_settled'])
+    expect(posts.find((p) => p.body.moment === 'close')!.headers['X-Tavotto-Project']).toBe('p_A')
+  })
+})
+
 describe('自动节点的间隔（2 分钟）', () => {
   it('停顿 15 s 拍第一个；2 分钟内的第二段编辑等到满 2 分钟才拍', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
@@ -372,6 +407,20 @@ describe('自动节点的间隔（2 分钟）', () => {
     await vi.advanceTimersByTimeAsync(DEBOUNCE_MS + 10)
     stop()
     expect(createAttempts).toBe(1) // 还没满 2 分钟
+  })
+
+  it('手势还开着时不拍自动节点（不拍中间态）；落定之后照常拍（Codex #679）', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    const { registerGesture } = await import('@/store/gestureCoordinator')
+    const stop = startVersionCheckpoints()
+    const done = registerGesture(() => {})
+    edit('t1')
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS * 2 + 10)
+    expect(posts).toHaveLength(0)
+    done() // 手势结束（松手）
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS + 10)
+    stop()
+    expect(posts).toHaveLength(1)
   })
 
   it('对照：同一份排版里 2 分钟的间隔照旧', async () => {

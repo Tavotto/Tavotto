@@ -24,7 +24,7 @@ import { Dialog } from '../ui/Dialog'
 import { CopyButton } from '../settings/CopyButton'
 import { Toggle } from '../ui/Toggle'
 import { Tip } from '../ui/Tooltip'
-import { captureMoment, markMoment } from '@/lib/timelineCheckpoint'
+import { captureMoment, markMoment, momentWithDoc } from '@/lib/timelineCheckpoint'
 
 const stemOf = (fileId: string) => fileId.split('/').pop()?.replace(/\.[^.]+$/, '') ?? fileId
 
@@ -251,8 +251,7 @@ export function WriteBackDialog({
         useAnn ? annMap : undefined,
       )
       setResult(res)
-      // 排版时间线的关键时刻（ADR 0101）：写回成功，原图已经变了
-      void markMoment('writeback', moment)
+      let written = moment
       if (useAnn) {
         // 标注已经烙进原图：画布上的原件移除（可撤销），否则成图里会出现两份
         const ids = [...annMap.values()].flatMap((a) => a.objectIds)
@@ -262,7 +261,13 @@ export function WriteBackDialog({
             d.objects = d.objects.filter((o) => !ids.includes(o.id))
           })
         useSelectionStore.getState().clear()
+        // 节点记**写回完成后**的文档：发起那一刻的那份去掉烙进原图的标注原件（不带途中的
+        // 其它编辑）；上下文仍是发起那一刻的。记删之前的话，从它恢复标注会出现两份（Codex #679）
+        const doc = moment.identity.doc
+        written = momentWithDoc(moment, { ...doc, objects: doc.objects.filter((o) => !ids.includes(o.id)) })
       }
+      // 排版时间线的关键时刻（ADR 0101）：写回成功，原图已经变了
+      void markMoment('writeback', written)
       // 重拉面板列表拿到新 mtime；所有图片 URL 带 m 参数，缩略图与画布面板都会自动重取
       await useAssetStore.getState().load()
       useUiStore

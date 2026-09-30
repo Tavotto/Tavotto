@@ -7737,6 +7737,25 @@ def _versions_budget(versions: list[dict], file_size: int | None = None) -> dict
     }
 
 
+#: 节点名字的长度上限（字符）。与前端 `VERSION_NAME_MAX`（`web/src/lib/api.ts`）严格同源，
+#: 看护在 `tests/test_layout_timeline.py`。没有上限的话，命名节点之间反复改名能把受保护的
+#: 字节一直撑大（Codex #679）；上限之内的增长由 `_named_budget_refusal` 管。
+VERSION_NAME_MAX = 100
+
+
+def _version_name_refusal(name: str):
+    """名字超长回 400（写之前判、磁盘零改动）；放行回 `None`。"""
+    if len(name) <= VERSION_NAME_MAX:
+        return None
+    return jsonify(
+        {
+            "error": f"节点名字最长 {VERSION_NAME_MAX} 个字",
+            "code": "version_name_too_long",
+            "params": {"max": VERSION_NAME_MAX},
+        }
+    ), 400
+
+
 def _named_budget_refusal(versions: list[dict]):
     """假如这次操作成功，命名节点会不会超出字节上限；超了回 409，放行回 `None`。
 
@@ -8025,6 +8044,9 @@ def api_versions_create(doc_id):
     # 命名节点（ADR 0101）= 调用方明确说 `named` 且真给了名字。只给名字不说
     # named 的（「恢复前 10:32」这类程序起的名字）不算：名字是谁起的才是判据。
     named = bool(body.get("named")) and bool(given)
+    refusal = _version_name_refusal(given)
+    if refusal is not None:
+        return refusal
     moment = body.get("moment")
     if moment is not None and moment not in VERSION_MOMENTS:
         return jsonify(
@@ -8090,9 +8112,14 @@ def api_versions_rename(doc_id, vid):
         for v in versions:
             if v["id"] == vid:
                 was_named = _is_named(v)
+                # 这一条原来占了多少**受保护**字节：命名节点之间改名 / 改说明也会让它变大
+                protected_before = len(engine_atomicio.dumps_json(v)) if was_named else 0
                 if "name" in body:
                     # 起名 / 改名 = 命名节点（ADR 0101）。空名字不改名
                     name = str(body["name"]).strip()
+                    refusal = _version_name_refusal(name)
+                    if refusal is not None:
+                        return refusal
                     if name:
                         v["name"] = name
                         v["named"] = True
@@ -8105,7 +8132,10 @@ def api_versions_rename(doc_id, vid):
                     v["description"] = str(body["description"])
                 if "auto" in body:  # 「保留此检查点」= 转正为手动版本
                     v["auto"] = bool(body["auto"])
-                if _is_named(v) and not was_named:
+                # **任何让受保护字节变多的改动**都过预算（Codex #679）：新起名、命名节点之间
+                # 改成更长的名字、加长说明都算；变少或不变（删名字、改短）永远放行。拒绝发生在
+                # 写之前，改动只在内存里，磁盘零改动
+                if _is_named(v) and len(engine_atomicio.dumps_json(v)) > protected_before:
                     refusal = _named_budget_refusal(versions)
                     if refusal is not None:
                         return refusal
@@ -8124,7 +8154,8 @@ def api_versions_duplicate(doc_id, vid):
                 copy = {
                     **v,
                     "id": _new_version_id(),
-                    "name": f"{v.get('name', '')} 副本",
+                    # 副本的名字同样守长度上限（反复复制不能把名字越拼越长）
+                    "name": f"{v.get('name', '')[: VERSION_NAME_MAX - 3]} 副本",
                     "ts": int(time.time() * 1000),
                     "auto": False,
                     "named": _is_named(v),

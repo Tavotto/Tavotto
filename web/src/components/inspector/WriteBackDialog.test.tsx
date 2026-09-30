@@ -19,7 +19,9 @@ import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useProjectStore } from '@/store/projectStore'
-import { emptyProject, type PanelObject } from '@/types/document'
+import { emptyProject, type PanelObject, type TextObject } from '@/types/document'
+import { currentTimelineCtx } from '@/lib/timelineContext'
+import { setMomentSink, type MomentSnapshot } from '@/lib/timelineCheckpoint'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -239,6 +241,49 @@ describe('写回成功的回执', () => {
     await confirm()
     expect(text()).toContain('页面尺寸与重放结果对不上')
     expect(text()).toContain('备份')
+  })
+})
+
+describe('写回的时间线节点（ADR 0101；Codex #679）', () => {
+  const note: TextObject = {
+    id: 't_note', type: 'text', text: '标注', sizePt: 9, bold: false,
+    color: '#000', align: 'left', x: 10, y: 10, w: 20, h: 8,
+  }
+  let snaps: MomentSnapshot[] = []
+  beforeEach(async () => {
+    snaps = []
+    setMomentSink(async (_m, snap) => {
+      if (snap) snaps.push(snap)
+      return null
+    })
+    const pd = emptyProject()
+    pd.canvases[0].objects = [panel, note]
+    await useDocumentStore.getState().switchDocument(pd, 'd_writeback_ann')
+  })
+  afterEach(() => setMomentSink(null))
+
+  const ids = (snap: MomentSnapshot) => snap.identity.doc.objects.map((o) => o.id)
+
+  it('带标注写回：节点记的是删掉标注原件之后的文档，上下文是发起那一刻的', async () => {
+    const at = currentTimelineCtx()
+    stubFetch(200, OK_BODY)
+    render()
+    const toggle = document.body.querySelector<HTMLElement>('[aria-label*="标注"][aria-checked]')
+    expect(toggle, '找不到「同时写入标注」开关').toBeTruthy()
+    await act(async () => toggle!.click())
+    await confirm()
+    expect(useDocumentStore.getState().doc.objects.map((o) => o.id)).toEqual(['p1']) // 原件确实删了
+    expect(snaps).toHaveLength(1)
+    expect(ids(snaps[0])).toEqual(['p1'])
+    expect(snaps[0].ctx).toBe(at)
+  })
+
+  it('对照：不带标注写回，文档没变，节点就是发起时那份（标注还在）', async () => {
+    stubFetch(200, OK_BODY)
+    render()
+    await confirm()
+    expect(snaps).toHaveLength(1)
+    expect(ids(snaps[0])).toEqual(['p1', 't_note'])
   })
 })
 

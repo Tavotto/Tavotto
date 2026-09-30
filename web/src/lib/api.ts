@@ -854,6 +854,11 @@ export const putExportDefaultsRemote = (value: unknown) =>
 export type LayoutVersionKind = 'named' | 'moment' | 'auto' | 'manual'
 /** 关键时刻的闭集，与后端 `VERSION_MOMENTS` 严格同源（`tests/test_layout_timeline.py`）。 */
 export const LAYOUT_MOMENTS = ['export', 'writeback', 'open', 'close', 'before_restore', 'save'] as const
+/**
+ * 节点名字的长度上限（字符）：与后端 `app.VERSION_NAME_MAX` 严格同源（`tests/test_layout_timeline.py`
+ * 对拍）。名字输入框按它截，后端超长回 `version_name_too_long`（Codex #679）。
+ */
+export const VERSION_NAME_MAX = 100
 export type LayoutMoment = (typeof LAYOUT_MOMENTS)[number]
 
 export interface LayoutVersionMeta {

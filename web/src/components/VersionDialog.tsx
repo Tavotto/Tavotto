@@ -12,6 +12,7 @@ import {
   fetchVersionDoc,
   panelSrc,
   updateVersion,
+  VERSION_NAME_MAX,
   versionThumbUrl,
   type LayoutVersionMeta,
   type TimelineBudget,
@@ -326,6 +327,7 @@ export function VersionDrawer() {
           ref={nameRef}
           value={saveName}
           data-timeline-name-input
+          maxLength={VERSION_NAME_MAX}
           aria-label={vd('versionName')}
           onChange={(e) => setSaveName(e.target.value)}
           onKeyDown={(e) => {
@@ -671,6 +673,7 @@ function TimelineRow({
             aria-label={vd('versionName')}
             placeholder={vd('namePlaceholder')}
             data-timeline-rename
+            maxLength={VERSION_NAME_MAX}
             onChange={(e) => setDraft(e.target.value)}
             onBlur={() => void commitName()}
             onKeyDown={(e) => {

@@ -291,6 +291,74 @@ def test_renaming_past_the_byte_cap_is_refused_too(client, monkeypatch):
     assert _file().read_bytes() == before
 
 
+def test_renaming_a_named_node_to_a_longer_name_past_the_cap_is_refused(client, monkeypatch):
+    """命名节点之间改名也过预算（Codex #679）：受保护字节变多、超了上限就 409，磁盘零改动。"""
+    one = len(json.dumps(_doc("n", pad=2000), ensure_ascii=False).encode())
+    a = _create(client, doc=_doc("n0", pad=2000), name="一", named=True)
+    # 上限卡在「现在正好装得下」：再长一点就超
+    monkeypatch.setattr(m, "VERSION_KEEP_BYTES", int(one * 1.05))
+    before = _file().read_bytes()
+    resp = client.patch(f"/api/versions/d1/{a['id']}", json={"name": "一" * 90})
+    assert resp.status_code == 409 and resp.get_json()["code"] == "named_budget_exceeded"
+    assert _file().read_bytes() == before
+
+
+def test_renaming_a_named_node_to_a_shorter_name_is_allowed_even_over_the_cap(client, monkeypatch):
+    """变少或不变的改动永远放行——那正是超限时腾地方的出口之一。"""
+    a = _create(client, doc=_doc("n0", pad=2000), name="很长的名字" * 10, named=True)
+    monkeypatch.setattr(m, "VERSION_KEEP_BYTES", 100)  # 早就超了
+    resp = client.patch(f"/api/versions/d1/{a['id']}", json={"name": "短"})
+    assert resp.status_code == 200 and resp.get_json()["version"]["name"] == "短"
+
+
+def test_growing_the_description_of_a_named_node_past_the_cap_is_refused(client, monkeypatch):
+    one = len(json.dumps(_doc("n", pad=2000), ensure_ascii=False).encode())
+    a = _create(client, doc=_doc("n0", pad=2000), name="一", named=True)
+    monkeypatch.setattr(m, "VERSION_KEEP_BYTES", int(one * 1.05))
+    resp = client.patch(f"/api/versions/d1/{a['id']}", json={"description": "说明" * 500})
+    assert resp.status_code == 409 and resp.get_json()["code"] == "named_budget_exceeded"
+
+
+@pytest.mark.parametrize("how", ["create", "rename"])
+def test_names_longer_than_the_limit_are_refused(client, how):
+    too_long = "名" * (m.VERSION_NAME_MAX + 1)
+    if how == "create":
+        resp = client.post(
+            "/api/versions/d1", json={"doc": _doc(), "name": too_long, "named": True}
+        )
+    else:
+        v = _create(client, name="原名", named=True)
+        resp = client.patch(f"/api/versions/d1/{v['id']}", json={"name": too_long})
+    assert resp.status_code == 400
+    body = resp.get_json()
+    assert body["code"] == "version_name_too_long" and body["params"] == {"max": m.VERSION_NAME_MAX}
+    # 正好上限：放行
+    ok = "名" * m.VERSION_NAME_MAX
+    if how == "create":
+        assert (
+            client.post(
+                "/api/versions/d1", json={"doc": _doc("x"), "name": ok, "named": True}
+            ).status_code
+            == 200
+        )
+    else:
+        assert client.patch(f"/api/versions/d1/{v['id']}", json={"name": ok}).status_code == 200
+
+
+def test_duplicating_keeps_the_name_within_the_limit(client):
+    v = _create(client, name="名" * m.VERSION_NAME_MAX, named=True)
+    dup = client.post(f"/api/versions/d1/{v['id']}/duplicate").get_json()["version"]
+    assert len(dup["name"]) <= m.VERSION_NAME_MAX and dup["name"].endswith("副本")
+
+
+def test_the_name_limit_is_the_same_on_both_sides():
+    """节点名字长度上限：后端 `VERSION_NAME_MAX` ↔ 前端 `VERSION_NAME_MAX`（严格同源）。"""
+    src = (Path(__file__).resolve().parents[1] / "web/src/lib/api.ts").read_text(encoding="utf-8")
+    hit = re.search(r"export const VERSION_NAME_MAX = (\d+)", src)
+    assert hit, "api.ts 里找不到 VERSION_NAME_MAX"
+    assert int(hit.group(1)) == m.VERSION_NAME_MAX
+
+
 def test_the_list_reports_when_named_nodes_are_over_the_cap(client, monkeypatch):
     """上限被调小（或旧版本升级上来）时命名节点已经超了：**不删**，列表说出来。"""
     _create(client, doc=_doc("n0", pad=2000), name="一", named=True)

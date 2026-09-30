@@ -1968,6 +1968,7 @@ export default interface Resources {
       "user_environment_incomplete": "这个 Python 环境里还缺 {{packages}}，请重新检查",
       "user_environment_unverifiable": "现在算不出这个脚本需要哪些包，没法确认这个环境装齐了，请重新检查",
       "version_moment_invalid": "不认识的关键时刻：{{moment}}",
+      "version_name_too_long": "节点名字最长 {{max}} 个字，这次没有保存。",
       "version_thumb_invalid": "节点缩略图格式不对或太大，没有保存。",
       "versions_unreadable": "无法读取版本历史，这次检查点没有写入。磁盘上的历史没有改动。",
       "workdir_confirmation_required": "要先选择脚本的运行目录",

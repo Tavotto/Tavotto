@@ -28,7 +28,7 @@ import {
 } from '@/store/actions'
 import { requestRelinkMissing } from '@/lib/clipboard'
 import { runUndoRedo } from '@/hooks/useKeyboard'
-import { backendErrorText, createPackage, openPackage } from '@/lib/api'
+import { backendErrorText, createPackage, openPackage, VERSION_NAME_MAX } from '@/lib/api'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { foreignProjectLabel } from '@/lib/projectLabel'
 import { currentProjectId } from '@/lib/session'
@@ -440,6 +440,7 @@ export function NamedNodeButton() {
             aria-label={t('versions.versionName', { ns: 'dialogs' })}
             placeholder={t('versions.namePlaceholder', { ns: 'dialogs' })}
             data-timeline-quick-name-input
+            maxLength={VERSION_NAME_MAX}
             onChange={(e) => setName(e.target.value)}
             className="min-w-0 flex-1"
           />

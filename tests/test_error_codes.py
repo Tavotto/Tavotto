@@ -313,6 +313,7 @@ USER_VISIBLE_CODES = {
     # --- ADR 0101：排版时间线。命名节点超出字节上限时拒绝再命名（已有的一条不删）；
     #     关键时刻是闭集；缩略图只收小的 webp / png ---
     "named_budget_exceeded": {"used", "limit"},
+    "version_name_too_long": {"max"},
     "version_moment_invalid": {"moment"},
     "version_thumb_invalid": set(),
     # --- issue #534：TIFF 素材。范围之外的 TIFF 在 `/api/panels` 的 `unsupported`、`safe_resolve`
