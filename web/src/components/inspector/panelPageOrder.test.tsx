@@ -127,7 +127,7 @@ describe('对象页的版式（2026-09-15 全面打磨）', () => {
     expect(toggleByText('源文件与高级')!.querySelector('svg')).toBeTruthy()
   })
 
-  it('源文件与高级：写回的那句常驻说明删了，动作收成一行（L7 / O2）', async () => {
+  it('源文件与高级：写回的那句常驻说明删了，动作收成一行三颗（L7 / O2）', async () => {
     const fold = toggleByText('源文件与高级')!
     await act(async () => fold.click())
     // L7：确认框里已经把「会覆盖原件、留有备份」讲全，这里不再常驻一遍

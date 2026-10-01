@@ -70,8 +70,8 @@ test('真写回一次：写回之前窗口没有页签；写回之后冒出「�
   // 属性栏「源文件」里的入口：选中这张图，展开，「写回记录」出现（写回之前它不存在）
   const p2 = await panelBox(page)
   await page.mouse.click(p2.x + p2.w / 2, p2.y + p2.h / 2)
-  const toggle = page.locator('[data-panel-source] button[aria-expanded]')
-  await toggle.click()
+  // 折叠头没有 data-* 锚点：按它的名字开头认（「源文件…」），不碰 PanelSection 的结构
+  await page.locator('button[aria-expanded]', { hasText: /^源文件/ }).first().click()
   const entry = page.locator('[data-write-back="records"][data-write-back-entry="inspector"]')
   await expect(entry).toHaveCount(1, { timeout: 30_000 })
   await entry.click()
