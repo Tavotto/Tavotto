@@ -32,7 +32,7 @@
 * 不可用的项用 `MenuItem.reason` 常驻原因，不用 tooltip（禁用项收不到指针）。
 * 看护：`canvas/objectContextMenu.test.tsx` / `store/quickEditActions.test.ts` /
   `components/inspector/syncOverrides.test.tsx` / `components/inspector/writeBackRecords.test.tsx` /
-  `tests/test_engine_invalidate.py` / `e2e/quick-menu.spec.ts`。
+  `e2e/sync-overrides.spec.ts` / `tests/test_engine_invalidate.py` / `e2e/quick-menu.spec.ts`。
 
 ## 速查表原要点（2026-09-25 迁入，#608）
 
