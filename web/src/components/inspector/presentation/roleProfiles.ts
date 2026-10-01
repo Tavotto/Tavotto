@@ -191,6 +191,13 @@ export const ROLE_PROFILES: Record<string, RoleProfile> = {
     },
   },
   axes: {
+    // 低频项收成摘要行（2026-10-01，设计稿 A6）：网格的颜色 / 线型 / 线宽 / 不透明度、
+    // 背景色与显示、占比（`position`）与堆叠层级。网格的**开关**（grid_x / grid_y）在
+    // 四边状态图上，不在这里
+    folds: [
+      { id: 'grid', labelKey: 'foldGrid', props: ['grid_color', 'grid_linestyle', 'grid_linewidth', 'grid_alpha'] },
+      { id: 'background', labelKey: 'foldBackground', props: ['facecolor', 'visible', 'position', 'zorder'] },
+    ],
     // 子图页按任务分三段（审计 T12），各由一张卡承接、从通用列表里让出来：
     //   范围 / 坐标变换  —— ElementInspector 的 AxesRangeCard
     //                      （xlim / ylim / xscale / yscale / invert_* / aspect）
@@ -225,10 +232,18 @@ export const ROLE_PROFILES: Record<string, RoleProfile> = {
   // 「文字」段的顺序与文本角色同一套：字体 → 字号 → 颜色（2026-09-14 审计 A2：此前 fontfamily
   // 没进这张表，靠注册表兜底排到最末，同一组属性在刻度页与标题页顺序相反）
   ticks: {
-    primary: ['major_mode', 'major_step', 'major_values', 'fontfamily', 'fontsize', 'color'],
+    // 摘要行（2026-10-01，设计稿 A5）：刻度放在哪 / 小刻度 / 数字格式 / 字体和颜色。
+    // 方向、长度、宽度由刻度任务卡承接；显示、字号、旋转留在面上。小刻度的开关与
+    // 长宽在卡里（`TickMinorBlock`），这里认领的是它从属的方式 / 间距 / 格式
+    folds: [
+      { id: 'placement', labelKey: 'foldTickPlacement', props: ['major_mode', 'major_step', 'major_values'] },
+      { id: 'minor', labelKey: 'foldTickMinor', props: ['minor_mode', 'minor_step', 'minor_format'] },
+      { id: 'numformat', labelKey: 'foldTickFormat', props: ['format'] },
+      { id: 'fontcolor', labelKey: 'foldTickFont', props: ['fontfamily', 'color'] },
+    ],
+    primary: ['fontsize'],
     more: [
-      'format', 'direction', 'length', 'width', 'minor_length', 'minor_width',
-      'minor_visible', 'minor_mode', 'minor_step', 'minor_format',
+      'direction', 'length', 'width', 'minor_visible', 'minor_length', 'minor_width',
       'rotation', 'visible',
     ],
     visibleWhen: {

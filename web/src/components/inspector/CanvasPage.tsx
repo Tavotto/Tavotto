@@ -9,7 +9,8 @@ import { clearGuides, removeGuide, setPageSetup, setPageSize } from '@/store/act
 import { useDocumentStore } from '@/store/documentStore'
 import { useUiStore } from '@/store/uiStore'
 import { Button, IconButton } from '../ui/Button'
-import { Disclosure, Row, Section } from '../ui/Field'
+import { Row, Section } from '../ui/Field'
+import { SummaryRow } from '../ui/SummaryRow'
 import { ColorField, NumberField } from '../ui/Input'
 import { Toggle } from '../ui/Toggle'
 import { Tip } from '../ui/Tooltip'
@@ -158,11 +159,11 @@ export function CanvasPage() {
         </div>
       </Section>
 
-      <Disclosure
-        title={cv('background')}
+      <SummaryRow
+        label={cv('background')}
         open={open('bg')}
         onToggle={() => toggle('bg')}
-        summary={page.transparent ? cv('transparent') : (page.bg ?? '#FFFFFF').toUpperCase()}
+        value={page.transparent ? cv('transparent') : (page.bg ?? '#FFFFFF').toUpperCase()}
       >
         <div className="flex flex-col gap-1.5">
           <ToggleRow label={cv('transparentBg')}>
@@ -181,13 +182,13 @@ export function CanvasPage() {
             />
           </Row>
         </div>
-      </Disclosure>
+      </SummaryRow>
 
-      <Disclosure
-        title={cv('viewAids')}
+      <SummaryRow
+        label={cv('viewAids')}
         open={open('aids')}
         onToggle={() => toggle('aids')}
-        summary={aidsSummary}
+        value={aidsSummary}
       >
         <div className="flex flex-col gap-1.5">
           <ToggleRow label={cv('rulers')}>
@@ -210,13 +211,13 @@ export function CanvasPage() {
             </Row>
           )}
         </div>
-      </Disclosure>
+      </SummaryRow>
 
-      <Disclosure
-        title={cv('snap')}
+      <SummaryRow
+        label={cv('snap')}
         open={open('snap')}
         onToggle={() => toggle('snap')}
-        summary={snapSummary}
+        value={snapSummary}
       >
         <div className="flex flex-col gap-1.5">
           <ToggleRow label={cv('snapEnable')}>
@@ -256,13 +257,13 @@ export function CanvasPage() {
             </>
           )}
         </div>
-      </Disclosure>
+      </SummaryRow>
 
-      <Disclosure
-        title={cv('guides')}
+      <SummaryRow
+        label={cv('guides')}
         open={open('guides')}
         onToggle={() => toggle('guides')}
-        summary={
+        value={
           guides.length
             ? cv('guideCount', { count: guides.length }) +
               (ui.guidesLocked ? cv('guidesLockedSuffix') : '')
@@ -312,13 +313,13 @@ export function CanvasPage() {
             </Button>
           </div>
         </div>
-      </Disclosure>
+      </SummaryRow>
 
-      <Disclosure
-        title={cv('safeArea')}
+      <SummaryRow
+        label={cv('safeArea')}
         open={open('safe')}
         onToggle={() => toggle('safe')}
-        summary={
+        value={
           ui.showSafeArea ? cv('marginSummary', { margin: page.margin ?? 0 }) : cv('safeAreaOff')
         }
       >
@@ -346,7 +347,7 @@ export function CanvasPage() {
             />
           </Row>
         </div>
-      </Disclosure>
+      </SummaryRow>
     </>
   )
 }

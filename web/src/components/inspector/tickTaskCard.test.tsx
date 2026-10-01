@@ -182,12 +182,25 @@ const DIR_NAME = { in: '朝内', out: '朝外', inout: '内外' } as const
 const dirBtn = (dir: keyof typeof DIR_NAME) => byAria(DIR_NAME[dir])!
 /** 展开「更多」折叠区 */
 async function openMore() {
-  const btn = buttons().find((b) => b.textContent?.trim() === '更多')
+  const btn = buttons().find((b) => b.textContent?.trim().split(', ')[0] === '更多')
   if (btn && btn.getAttribute('aria-expanded') !== 'true') {
     await act(async () => {
       btn.click()
     })
   }
+}
+/** 摘要行（刻度放在哪 / 小刻度 / 数字格式 / 字体和颜色，2026-10-01 设计稿 A5）默认收起；要量里面的控件先点开 */
+const foldBtn = (id: string) => host.querySelector<HTMLButtonElement>(`[data-fold="${id}"] > button`)
+async function openFold(id: string) {
+  const btn = foldBtn(id)
+  if (btn && btn.getAttribute('aria-expanded') !== 'true') {
+    await act(async () => {
+      btn.click()
+    })
+  }
+}
+async function openAllFolds() {
+  for (const id of ['placement', 'minor', 'numformat', 'fontcolor']) await openFold(id)
 }
 /** 某个行标签在整页出现几次（只数叶子 span，labeledWithState 是两层嵌套） */
 const countLabel = (text: string) =>
@@ -658,6 +671,10 @@ describe('刻度组元素页', () => {
   it('只给它自己那个轴，不出 X/Y 切换', async () => {
     await mount('axes_0.xticks')
     expect(textOf()).toContain('方向')
+    // 次刻度收在摘要行「小刻度」里：默认收着，点开才有开关
+    expect(foldBtn('minor')).toBeTruthy()
+    expect(textOf()).not.toContain('次刻度')
+    await openFold('minor')
     expect(textOf()).toContain('次刻度')
     // 没有「Y 刻度」这个切换项——切过去会写到另一个元素
     expect(tabs().some((b) => b.textContent?.includes('Y 刻度'))).toBe(false)
@@ -678,6 +695,7 @@ describe('刻度组元素页', () => {
     // **必须展开「更多」再查一遍**：direction / length / width / minor_visible
     // 本来就住在折叠区里，只查首屏的话即使 consumed 完全失效也照样绿（空门禁）
     await openMore()
+    await openAllFolds()
     expect(host.querySelectorAll('[role="radiogroup"][aria-label="方向"]')).toHaveLength(1)
     expect(host.querySelectorAll('[role="combobox"][aria-label="方向"]')).toHaveLength(0)
     expect(host.querySelectorAll('[role="switch"][aria-label="X 轴的次刻度"]')).toHaveLength(1)
@@ -686,19 +704,20 @@ describe('刻度组元素页', () => {
     expect(countLabel('宽度')).toBe(1)
   })
 
-  it('没被承接的能力仍然可达：主刻度方式在「刻度」段；次刻度方式随次刻度开关条件出现', async () => {
+  it('没被承接的能力仍然可达：主刻度方式在摘要行「刻度放在哪」；次刻度方式随次刻度开关条件出现', async () => {
     await mount('axes_0.xticks')
-    const marks = host.querySelector('[data-tick-section="marks"]')!
-    expect(marks.textContent).toContain('主刻度方式')
+    await openFold('placement')
+    await openFold('minor')
+    expect(foldBtn('placement')!.parentElement!.textContent).toContain('主刻度方式')
     // 次刻度关着：方式 / 格式收起
     expect(textOf()).not.toContain('次刻度方式')
     await act(async () => {
       byAria('X 轴的次刻度')!.click()
     })
-    expect(host.querySelector('[data-tick-section="marks"]')!.textContent).toContain('次刻度方式')
+    expect(foldBtn('minor')!.parentElement!.textContent).toContain('次刻度方式')
   })
 
-  it('页面分「刻度 / 文字」两段，刻度在前；字号 / 颜色在「文字」段，方向 / 长度在「刻度」段', async () => {
+  it('页面分「刻度线 / 刻度数字」两段 + 一组摘要行；字号在数字段，颜色在摘要行，方向 / 长度在刻度线段', async () => {
     await mount('axes_0.yticks')
     const sections = Array.from(host.querySelectorAll('[data-tick-section]')).map((s) =>
       s.getAttribute('data-tick-section'),
@@ -709,10 +728,16 @@ describe('刻度组元素页', () => {
     expect(marks.querySelector('[data-prop="direction"]')).toBeTruthy()
     expect(marks.querySelector('[data-prop="length"]')).toBeTruthy()
     expect(labels.querySelector('[data-prop="fontsize"]')).toBeTruthy()
-    expect(labels.querySelector('[data-prop="color"]')).toBeTruthy()
     expect(labels.querySelector('[data-prop="direction"]')).toBeNull()
-    // 没有「更多」折叠：两段之外没有第三处
-    expect(buttons().some((b) => b.textContent?.trim() === '更多')).toBe(false)
+    // 颜色不在面上：它与字体收进摘要行「字体和颜色」，收着时不在 DOM 里
+    expect(host.querySelector('[data-prop="color"]')).toBeNull()
+    await openFold('fontcolor')
+    expect(foldBtn('fontcolor')!.parentElement!.querySelector('[data-prop="color"]')).toBeTruthy()
+    // 没有「更多」折叠：摘要行就是那四条，没有第三处
+    expect(buttons().some((b) => b.textContent?.trim().split(', ')[0] === '更多')).toBe(false)
+    expect(
+      Array.from(host.querySelectorAll('[data-summary-rows] > [data-fold]')).map((e) => e.getAttribute('data-fold')),
+    ).toEqual(['placement', 'minor', 'numformat', 'fontcolor'])
   })
 
   it('「文字」段的「显示」排在段首，关掉后其余行退到禁用一档而不是消失（二审 A6）', async () => {
@@ -737,7 +762,21 @@ describe('刻度组元素页', () => {
       if (p?.type === 'panel') p.overrides.push({ gid: 'axes_0.xticks', prop: 'minor_mode', value: 'step' })
     })
     await act(async () => {})
-    expect(host.querySelector('[data-tick-section="marks"]')!.textContent).toContain('次刻度方式')
+    // 摘要行「小刻度」仍收着，但认领的字段在场——点开就看得到（不因折叠而不可发现）
+    await openFold('minor')
+    expect(foldBtn('minor')!.parentElement!.textContent).toContain('次刻度方式')
+  })
+
+  it('摘要行右边只写当前值，不写内容清单；展开后右值收起（2026-10-01 设计稿 A5）', async () => {
+    await mount('axes_0.xticks')
+    const value = (id: string) =>
+      host.querySelector(`[data-fold="${id}"] [data-summary-value]`)?.textContent
+    // 次刻度关着 → 「不显示」；主刻度方式 → 引擎给的选项名
+    expect(value('minor')).toBe('不显示')
+    expect(value('placement')).toBeTruthy()
+    expect(value('placement')).not.toContain('间隔')
+    await openFold('minor')
+    expect(value('minor')).toBeUndefined()
   })
 
   it('逐字段恢复到脚本仍在：改过方向后出现恢复按钮，点掉即回退', async () => {
@@ -822,10 +861,13 @@ describe('3D 图的 Z 刻度', () => {
     expect(card).toBeTruthy()
     expect(countLabel('长度')).toBe(1)
     expect(countLabel('宽度')).toBe(1)
+    // 次刻度收在摘要行「小刻度」里，点开才有开关
+    await openFold('minor')
     expect(textOf()).toContain('次刻度')
-    // 二维那套的完整属性名不再在这里出现（同一件事两个名字）
-    expect(textOf()).not.toContain('刻度长度')
-    expect(textOf()).not.toContain('刻度粗细')
+    // 二维那套的完整属性名不再在这里出现（同一件事两个名字）。按叶子标签数，别按整页文字
+    // 子串找：分区头「刻度」与下一行的「长度」相邻时拼起来也含「刻度长度」
+    expect(countLabel('刻度长度')).toBe(0)
+    expect(countLabel('刻度粗细')).toBe(0)
     // 3D 没有 direction / minor_length：不摆
     expect(host.querySelector('[data-prop="direction"]')).toBeNull()
     expect(host.querySelector('[data-prop="minor_length"]')).toBeNull()

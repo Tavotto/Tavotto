@@ -94,6 +94,21 @@
   只有中文名的字体（FreeType 读成 `??????SC`）由引擎按真名补登记
   （`overrides.register_font_name_aliases`），真名本身就是族名、没有显示名。
   看护 `figureFontFamilies.test.tsx` 的「字体的中文显示名」一组与 `tests/test_font_chinese_names.py`。
+* **低频项一律是摘要行**（2026-10-01，ADR 0010 修订）：`components/ui/SummaryRow` 是属性栏里
+  「名字 + 当前值 + ›」的唯一形状——通用的「更多」、角色模板点名的 `folds`、「源文件」、层级 / 旋转翻转透明度 /
+  换一张图、多选的分布 / 间距成组 / 复制样式、图例间距、画布页的各分区全走它；同类的第二套（带 chevron 的
+  分区头、不带 chevron 的文字链接）已删。`GroupToggle`（文字链接）只留给**嵌在某张卡里的小尾巴**
+  （分别设置各边 / 技术详情 / 隐藏元素 / 同角色多选里的分组）。
+  * 右边**只写当前值或项数**，不写内容清单、不写括号清单；展开后右值收起；没有值就不画。值的说法只在
+    `presentation/foldSummary.ts`，行本身不认识任何属性。
+  * `RoleProfile.folds`（`FoldSpec`）点名的字段由摘要行**认领**，先于 primary / more / advanced——同一个字段只在
+    一处出现。认领不是裁能力：`visibleWhen` 先判、改过的字段照样在；一条字段都没有的行不出现
+    （「计数为 0 的节不显示」）。新增一条摘要行 = 在角色模板里加一项 + `inspector:element.<labelKey>`
+    两份文案 + 在 `foldSummary.foldValue` 里点名右值（没有可说的当前值就留空，别编一个）。
+  * 摘要行默认收起、收起时内容不挂载：量里面控件的测试要先点开（`[data-fold="<id>"] > button`；
+    `data-fold` 是它的稳定锚点）。展开状态是模块级 store，`src/test/setup.ts` 每条用例前清掉 `foldOpen`。
+  * 刻度组页的「小刻度」一行不全是注册表认领的：开关与长 / 宽在刻度卡里（`TickMinorBlock`，同一份控件换了
+    地方），方式 / 间距 / 格式才是认领来的字段；Z 轴一条次刻度能力都没发时整行不出现。
 * 看护：`presentation/registry.test.ts`、`legendCard.test.tsx`、
   `legendSpacingCard.test.tsx`、`colorScalePanels.test.tsx`、
   `axes3dPanel.test.tsx`、`tickTaskCard.test.tsx`、`lib/viewAngle.test.ts`
@@ -112,3 +127,4 @@
 - 色阶共用关系只认 `mappable_gid` / `scale_gids`（谓词 `colorbarCovers` 一处）
 - 本机字体并表只在 `withMachineFamilies` 一处；字体选项文字只经 `fontFamilyOptionLabel`
 - 多选事实全体一致才给
+- 低频项一律是摘要行（`ui/SummaryRow`），右边只写当前值或项数；认领走角色模板的 `folds`

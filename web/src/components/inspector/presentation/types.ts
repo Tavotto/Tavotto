@@ -55,11 +55,33 @@ export interface PresentedField {
   order: number
 }
 
-/** presentFields 的产出：三个桶，各自已按 order 排好 */
+/**
+ * 摘要行（2026-10-01 属性栏重设计）：一组低频字段收成「名字 + 当前值 + ›」一行，
+ * 点开在原地展开成原来的控件。角色模板里点名的字段**从 primary / more / advanced
+ * 里被它认领走**——同一个字段只在一处出现，字段进来多少出去多少。
+ */
+export interface FoldSpec {
+  /** 折叠行 id：展开状态按「角色:id」记在 `inspectorPrefs.foldOpen`，也是 e2e 的稳定锚点 */
+  id: string
+  /** 行名：`inspector:element.<labelKey>` */
+  labelKey: string
+  /** 认领的字段（可以只有一部分在场；一条都不在场则这一行不出现） */
+  props: string[]
+}
+
+/** 一条被认领、已按模板 `props` 顺序排好的摘要行 */
+export interface PresentedFold {
+  spec: FoldSpec
+  fields: PresentedField[]
+}
+
+/** presentFields 的产出：三个桶 + 摘要行，各自已按 order 排好 */
 export interface PresentedBuckets {
   primary: PresentedField[]
   more: PresentedField[]
   advanced: PresentedField[]
+  /** 模板点名的摘要行；一条字段都没有的不在这里（计数为 0 的节不显示） */
+  folds: PresentedFold[]
 }
 
 /**
@@ -91,4 +113,10 @@ export interface RoleProfile {
    * 组名是 `inspector:element.<labelKey>`。
    */
   primaryGroups?: { labelKey: string; props: string[] }[]
+  /**
+   * 摘要行：模板点名的字段不进 primary / more / advanced，改收成一行摘要
+   * （设计稿 A 章 map 里标「收进折叠」的那些）。没点名的低频字段仍走通用的
+   * 「更多」摘要行。`visibleWhen` 照旧先判：被条件收起的字段不进摘要行。
+   */
+  folds?: FoldSpec[]
 }

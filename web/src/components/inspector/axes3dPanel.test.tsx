@@ -138,7 +138,7 @@ async function mount(opts: { manifest?: Manifest; overrides?: PanelObject['overr
 }
 
 const buttons = () => Array.from(host.querySelectorAll('button'))
-const byText = (text: string) => buttons().find((b) => b.textContent?.trim() === text)
+const byText = (text: string) => buttons().find((b) => b.textContent?.trim().split(', ')[0] === text)
 const rowOf = (prop: string) => host.querySelector(`[data-prop="${prop}"]`) as HTMLElement | null
 const openMore = async () => {
   const more = byText('更多')
