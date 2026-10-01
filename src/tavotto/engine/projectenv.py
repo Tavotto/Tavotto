@@ -213,7 +213,7 @@ def contained_path(root: str | Path, candidate: str | Path) -> str | None:
     real = os.path.normpath(real)
     if real == real_root:
         return real_root
-    if not real.startswith(real_root + os.sep):
+    if not real.startswith(real_root.rstrip(os.sep) + os.sep):
         return None
     return real
 

@@ -11,8 +11,10 @@ Agent 那一侧的代码里不许出现提交 / 复原端点。
 from __future__ import annotations
 
 import ast
+import contextlib
 import errno
 import json
+import ntpath
 import os
 import stat
 from pathlib import Path
@@ -284,7 +286,7 @@ def test_a_renamed_file_rule_does_not_rewrite_the_directory_constant(tmp_path):
 
 
 def test_windows_targets_are_written_with_forward_slashes(tmp_path, monkeypatch):
-    monkeypatch.setattr(inputremap, "location_exists", lambda p: p.startswith("C:"))
+    monkeypatch.setattr(inputremap, "location_exists", lambda p, **kw: p.startswith("C:"))
     rule = {"kind": P, "from": OLD, "to": "C:\\Data\\new"}
     plan = _plan(tmp_path, f'F = open("{OLD}/x.csv")\n', rule=rule, missing=[f"{OLD}/x.csv"])
     assert plan.edits[0]["value_after"] == "C:/Data/new/x.csv"
@@ -390,6 +392,194 @@ def test_undo_finds_two_rewrites_on_one_line_after_the_first_changed_length(tmp_
 
 
 # --------------------------------------------------------------- 推规则：文件夹与 glob
+
+
+@pytest.mark.parametrize("chosen", ["relative.csv", "../outside", "/invalid\x00"])
+def test_auto_choice_is_rejected_before_any_disk_probe(tmp_path, monkeypatch, chosen):
+    from tavotto import app as app_module
+
+    def unexpected_probe(path):
+        raise AssertionError(f"invalid choice reached the filesystem: {path!r}")
+
+    monkeypatch.setattr(app_module.os.path, "isdir", unexpected_probe)
+    with pytest.raises(inputremap.RemapError) as err:
+        app_module._input_path_plan(tmp_path, "fig.py", tmp_path / "fig.py", "x", chosen, "auto")
+    assert err.value.code == inputremap.ERROR_CHOSEN_INVALID
+
+
+@pytest.mark.parametrize(
+    "chosen", [r"C:relative.csv", r"\rootrelative.csv", "/rootrelative.csv", r"\\NAS"]
+)
+def test_windows_choices_need_a_drive_or_unc_share(chosen, monkeypatch):
+    with monkeypatch.context() as patch:
+        patch.setattr(inputremap.os, "path", ntpath)
+        with pytest.raises(inputremap.RemapError):
+            inputremap.chosen_path(chosen)
+
+
+@pytest.mark.parametrize(
+    "chosen", ["C:\\", r"C:\Data\Case.csv", r"\\NAS\Share", r"\\NAS\Share\Case.csv"]
+)
+def test_windows_choices_keep_native_case_and_unc_spelling(chosen, monkeypatch):
+    with monkeypatch.context() as patch:
+        patch.setattr(inputremap.os, "path", ntpath)
+        assert inputremap.chosen_path(chosen) == chosen
+
+
+def test_parent_suffix_cannot_probe_outside_the_selected_folder(tmp_path, monkeypatch):
+    chosen = tmp_path / "chosen"
+    chosen.mkdir()
+    _touch(tmp_path / "outside" / "x.csv")
+    original_isfile = inputremap.os.path.isfile
+    probed = []
+
+    def isfile(path):
+        probed.append(Path(path).resolve())
+        return original_isfile(path)
+
+    monkeypatch.setattr(inputremap.os.path, "isfile", isfile)
+    with pytest.raises(inputremap.RemapError):
+        inputremap.derive("../outside/x.csv", str(chosen), chosen_is_dir=True)
+    assert probed and all(p.is_relative_to(chosen.resolve()) for p in probed)
+    # 原串的 .. 可以被规则前缀消耗；选定目录内的短后缀仍然可用。
+    _touch(chosen / "outside" / "x.csv")
+    rule = inputremap.derive("../outside/x.csv", str(chosen), chosen_is_dir=True)
+    assert rule == {"kind": P, "from": "..", "to": str(chosen)}
+    assert Path(figcapture.remap_target([rule], "../outside/x.csv")).is_file()
+    directory_rule = inputremap._derive_dir("../outside", str(chosen))
+    assert directory_rule == {"kind": P, "from": "..", "to": str(chosen)}
+
+
+def test_directory_suffix_does_not_claim_a_sibling_outside_the_choice(tmp_path, monkeypatch):
+    chosen = tmp_path / "chosen"
+    chosen.mkdir()
+    (tmp_path / "outside").mkdir()
+    original_isdir = inputremap.os.path.isdir
+    probed = []
+
+    def isdir(path):
+        probed.append(Path(path).resolve())
+        return original_isdir(path)
+
+    monkeypatch.setattr(inputremap.os.path, "isdir", isdir)
+    rule = inputremap._derive_dir("../outside", str(chosen))
+    assert rule == {"kind": P, "from": "../outside", "to": str(chosen)}
+    assert probed and all(p.is_relative_to(chosen.resolve()) for p in probed)
+
+
+def test_glob_and_file_probes_do_not_follow_descendant_links_outside_the_choice(
+    tmp_path, monkeypatch
+):
+    chosen = tmp_path / "chosen"
+    chosen.mkdir()
+    outside = tmp_path / "outside"
+    _touch(outside / "x.csv")
+    try:
+        (chosen / "linked").symlink_to(outside, target_is_directory=True)
+        (chosen / "x.csv").symlink_to(outside / "x.csv")
+    except (OSError, NotImplementedError):
+        pytest.skip("这个平台建不了软链接")
+    from tavotto.engine import databinding
+
+    scanned = []
+    original_scan = databinding._scandir
+
+    def scan(path):
+        scanned.append(Path(path).resolve())
+        return original_scan(path)
+
+    monkeypatch.setattr(databinding, "_scandir", scan)
+    for pattern in ["*.csv", "*/x.csv", "**/x.csv", "../outside/*.csv"]:
+        assert not inputremap.glob_has_match(str(chosen / pattern), root=str(chosen))
+    assert scanned and all(p.is_relative_to(chosen.resolve()) for p in scanned)
+    assert not inputremap.location_exists(str(chosen / "x.csv"), root=str(chosen))
+    with pytest.raises(inputremap.RemapError):
+        inputremap.derive("x.csv", str(chosen), chosen_is_dir=True)
+    # 直接选中的链接指向哪里，就是这次用户选择的根；不是派生后缀自己逃出去。
+    linked_choice = chosen / "linked"
+    rule = inputremap.derive_location("old/*.csv", str(linked_choice), chosen_is_dir=True)
+    assert rule["to"] == str(linked_choice)
+
+
+def test_script_rewrite_rejects_a_mapped_target_outside_its_rule_root(tmp_path):
+    chosen = tmp_path / "chosen"
+    chosen.mkdir()
+    _touch(tmp_path / "outside" / "x.csv")
+    with pytest.raises(scriptbackup.ScriptEditError):
+        _plan(
+            tmp_path,
+            'open("gone/../outside/x.csv")\n',
+            rule={"kind": P, "from": "gone", "to": str(chosen)},
+            missing=["gone/../outside/x.csv"],
+        )
+
+
+@pytest.mark.parametrize("escape", ["parent", "symlink"])
+def test_one_valid_target_cannot_authorize_a_shared_constant_with_an_escaping_target(
+    tmp_path, escape
+):
+    chosen = tmp_path / "chosen"
+    _touch(chosen / "x.csv")
+    outside = tmp_path / "outside"
+    _touch(outside / "y.csv")
+    suffix = "/../outside/y.csv"
+    if escape == "symlink":
+        try:
+            (chosen / "linked").symlink_to(outside, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            pytest.skip("这个平台建不了软链接")
+        suffix = "/linked/y.csv"
+    source = f'DATA = "data"\nopen(DATA + "/x.csv")\nopen(DATA + "{suffix}")\n'
+    with pytest.raises(scriptbackup.ScriptEditError):
+        _plan(
+            tmp_path,
+            source,
+            rule={"kind": P, "from": "data", "to": str(chosen)},
+            missing=["data/x.csv", "data" + suffix],
+        )
+    assert not inputremap.location_exists("", root=str(chosen))
+
+
+@pytest.mark.parametrize("requested", ["x.csv", "old/x.csv", "renamed.csv"])
+def test_explicit_file_link_choice_is_narrowed_to_that_file(tmp_path, requested):
+    chosen = tmp_path / "chosen" / "x.csv"
+    chosen.parent.mkdir()
+    outside = _touch(tmp_path / "outside" / "x.csv")
+    try:
+        chosen.symlink_to(outside)
+    except (OSError, NotImplementedError):
+        pytest.skip("这个平台建不了软链接")
+    rule = inputremap.derive_location(requested, str(chosen), chosen_is_dir=False)
+    assert rule == {"kind": figcapture.REMAP_FILE, "from": requested, "to": str(chosen)}
+    assert inputremap.location_exists(str(chosen), root=rule["to"])
+
+
+def test_confined_globs_keep_literal_parent_segments_and_empty_recursive_matches(
+    tmp_path, monkeypatch
+):
+    from tavotto.engine import databinding
+
+    original_scan = databinding._scandir
+
+    @contextlib.contextmanager
+    def files_first(path):
+        with original_scan(path) as entries:
+            yield iter(sorted(entries, key=lambda e: e.is_dir()))
+
+    monkeypatch.setattr(databinding, "_scandir", files_first)
+    chosen = tmp_path / "chosen"
+    _touch(chosen / "x.csv")
+    for pattern in ["*/../x.csv", "**/../x.csv", "missing/../*.csv"]:
+        assert not inputremap.glob_has_match(str(chosen / pattern), root=str(chosen))
+    assert not inputremap.glob_has_match(str(chosen / "*") + "/", root=str(chosen))
+    assert not inputremap.glob_has_match(str(chosen / "*.csv") + "/", root=str(chosen))
+    (chosen / "empty").mkdir()
+    for pattern in ["*/**", "**", "*.csv", "*/../x.csv"]:
+        assert inputremap.glob_has_match(str(chosen / pattern), root=str(chosen))
+    assert inputremap.glob_has_match(str(chosen / "*") + "/", root=str(chosen))
+    assert not inputremap.glob_has_match(str(chosen / "*.csv") + "/", root=str(chosen))
+    (chosen / "directory.csv").mkdir()
+    assert inputremap.glob_has_match(str(chosen / "*.csv") + "/", root=str(chosen))
 
 
 def test_folder_entries_derive_from_the_parent_or_a_renamed_folder(tmp_path):

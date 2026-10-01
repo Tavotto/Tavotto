@@ -1381,7 +1381,7 @@ def remap_target(rules, name: str, *, whole: bool = False) -> str | None:
     if parsed is None:
         return None
     absolute, parts = parsed
-    best: tuple[int, str] | None = None
+    best: tuple[int, str | None] | None = None
     for r in clean_remap_rules(rules):
         src = remap_parts(r["from"]) if r["from"] else (False, ())
         if src is None or src[0] != absolute:
@@ -1394,9 +1394,21 @@ def remap_target(rules, name: str, *, whole: bool = False) -> str | None:
         if parts[:n] != src[1] or (n == len(parts) and not whole):
             continue  # 前缀要严格短于路径本身：`from` 本身是目录，不是这个文件
         if best is None or n > best[0]:
+            best = (n, None)  # 最长前缀即使拒绝越界，也不能退到另一条规则悄悄换一份数据
             rest = parts[n:]
-            to = r["to"].replace("\\", "/").rstrip("/")
-            best = (n, to + "/" + "/".join(rest) if rest else to)
+            # 原串的 `..` 可以被 from 消耗；剩下那段不能越过用户指认的 to。
+            # 只判层数、不改写字符串（glob 的 `*/../` 不能当作普通路径折叠）。
+            depth = 0
+            for part in rest:
+                depth += -1 if part == ".." else 1
+                if depth < 0:
+                    break
+            else:
+                to = r["to"].replace("\\", "/")
+                target = to.rstrip("/") + "/" + "/".join(rest) if rest else to
+                if name.endswith(("/", "\\")) and not target.endswith("/"):
+                    target += "/"  # glob 的末尾分隔符表示只匹配目录，不能丢
+                best = (n, target)
     return best[1] if best else None
 
 

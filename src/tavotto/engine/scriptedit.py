@@ -473,11 +473,17 @@ def plan(
             skip(node, value, SKIP_RULE_MISMATCH)
             continue
         new_value = new_value.replace("\\", "/")
-        if not any(
+        targets = [figcapture.remap_target([rule], m, whole=True) for m in matched]
+        if any(target is None for target in targets):
+            skip(node, value, SKIP_RULE_MISMATCH)
+            continue
+        # 同一个目录常量可能喂给多处读取：其中一处越界 / 不存在，不能靠另一处成立来批准全局替换。
+        if not all(
             inputremap.location_exists(
-                (figcapture.remap_target([rule], m, whole=True) or "").replace("\\", "/")
+                target.replace("\\", "/"),
+                root=rule["to"],
             )
-            for m in matched
+            for target in targets
         ):
             skip(node, value, SKIP_TARGET_MISSING)
             continue

@@ -23,6 +23,12 @@
 - **改写数据路径 `engine/scriptedit.py`**（ADR 0110 §二–§四）：
   * 规则来自 `inputremap.derive_location`（`derive` 扩到文件夹与 glob）；缺失路径集合 = 对话框那一条 +
     `inputremap.static_missing` 全部（**含 `via = open` 的**：半新半旧的脚本在终端里仍读旧位置）。
+  * 指认的数据位置可以在项目外，但必须是本机完整绝对路径（Windows 不接受依赖当前盘的根相对路径）、
+    不含 NUL，自动判断文件 / 文件夹之前就校验。原串的 `..` 可以被规则的 `from` 消耗，剩下的后缀
+    不许越过目标根；派生文件 / 文件夹先经 `projectenv.contained_path` 按 realpath 核对，才探测它回的路径。
+    派生 glob 复用 `databinding._glob_hit`，进目录之前挡住指向范围外的软链接，沿用其单次扫描预算。
+    直接选中的软链接以用户选中的实体为根；不把原生 UNC / 盘符大小写改写进规则。
+    共享目录常量只有每条匹配的缺失路径都能落到范围内存在的目标才改；拒绝的映射不拿空串代替。
   * 每条缺失路径带 `probe_kind`（`inputremap.PROBE_KIND_OF`：键恰好是 databinding 三张探路表的并集，
     `test_every_probe_function_is_labelled_file_or_dir` 对账）：`dir`（`listdir` / `scandir` / `walk` /
     `iterdir` / `isdir`、glob）只许指认文件夹——界面只给「选择文件夹」，`_input_path_plan` 再拒文件

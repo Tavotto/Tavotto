@@ -607,6 +607,7 @@ def _glob_hit(
       没有匹配的 `**` 也走不远；
     * 同一个真实目录只进一次（`**` 碰到软链接环不会打转）。
     """
+    directory_only = target.endswith("/")
     parts = [p for p in target.split("/") if p not in ("", ".")]
     if not parts:
         return "found" if projectenv.within(root, base) and base.is_dir() else "missing"
@@ -617,7 +618,7 @@ def _glob_hit(
     rest = parts[len(fixed) :]
     if not rest:
         try:
-            return "found" if start.exists() else "missing"
+            return "found" if (start.is_dir() if directory_only else start.exists()) else "missing"
         except OSError:
             return "missing"
     listings: dict[str, _Listing] = {}
@@ -672,17 +673,14 @@ def _glob_hit(
                 return False
             try:
                 if last:
-                    return nxt.exists()
+                    return nxt.is_dir() if directory_only else nxt.exists()
                 return nxt.is_dir() and walk(nxt, i + 1)
             except OSError:
                 return False
         if segment == "**" and recursive:
-            # 零层：`**` 什么都不吃，直接看下一段（`**` 在末尾时匹配这个目录下的任何东西）
+            # 零层：`**` 什么都不吃，直接看下一段；末尾的 `**` 也匹配当前目录（即使为空）。
             if last:
-                return any(
-                    visible(e.name, "") and projectenv.within(root, Path(e.path))
-                    for e in entries(directory)
-                )
+                return projectenv.within(root, directory) and directory.is_dir()
             # 同一个真实目录在同一段上只展开一次：软链接环不会打转
             key = (os.path.realpath(directory), i)
             if key in expanded:
@@ -702,7 +700,9 @@ def _glob_hit(
             if not projectenv.within(root, path):
                 continue  # 匹配到的软链接指向项目外：不算，也不进去列
             if last:
-                return True
+                if not directory_only or is_dir(entry):
+                    return True
+                continue
             if is_dir(entry) and walk(path, i + 1):
                 return True
         return False

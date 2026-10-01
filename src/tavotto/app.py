@@ -6060,6 +6060,7 @@ def _input_path_plan(root: Path, script: str, path: Path, entry, chosen, chosen_
         raise engine_inputremap.RemapError(
             engine_inputremap.ERROR_REQUESTED_INVALID, "需要 entry 与 chosen"
         )
+    chosen = engine_inputremap.chosen_path(chosen)
     if chosen_kind == "auto":
         chosen_kind = "dir" if os.path.isdir(chosen) else "file"
     if chosen_kind not in ("file", "dir"):
@@ -6080,6 +6081,9 @@ def _input_path_plan(root: Path, script: str, path: Path, entry, chosen, chosen_
     # 再弹（Codex 评 #730 P2）；反过来同理。判据是改写后的目标本身
     if wanted in (engine_inputremap.PROBE_FILE, engine_inputremap.PROBE_DIR):
         target = engine_figcapture.remap_target([rule], entry, whole=True)
+        target = (
+            engine_projectenv.contained_path(rule["to"], target) if target is not None else None
+        )
         ok = target is not None and (
             os.path.isfile(target)
             if wanted == engine_inputremap.PROBE_FILE

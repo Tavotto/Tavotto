@@ -305,6 +305,22 @@ def remove_rule(root: str | os.PathLike, kind: str, src: str) -> dict:
 # ---------------------------------------------------------------- 推规则
 
 
+def chosen_path(chosen: str) -> str:
+    """用户亲手选的位置：只接受本机绝对路径；任何磁盘探测之前先判，不改原生大小写 / UNC 写法。"""
+    if (
+        not isinstance(chosen, str)
+        or "\x00" in chosen
+        or not os.path.isabs(chosen)
+        or (os.path.sep == "\\" and not os.path.splitdrive(chosen)[0])
+    ):
+        raise RemapError(ERROR_CHOSEN_INVALID, "指认的位置必须是本机的绝对路径", path=str(chosen))
+    drive = os.path.splitdrive(chosen)[0]
+    if os.path.sep == "\\" and drive.startswith(("\\\\", "//")):
+        if len(drive.replace("\\", "/").strip("/").split("/")) < 2:
+            raise RemapError(ERROR_CHOSEN_INVALID, "UNC 路径需要指明共享目录", path=chosen)
+    return os.path.abspath(chosen)
+
+
 def derive(requested: str, chosen: str, *, chosen_is_dir: bool) -> dict:
     """「脚本要的那串」+「用户指认的位置」→ 一条规则。推不出来抛 `RemapError`。
 
@@ -324,15 +340,14 @@ def derive(requested: str, chosen: str, *, chosen_is_dir: bool) -> dict:
     body = rparts[1:] if absolute else rparts
     if not body:
         raise RemapError(ERROR_REQUESTED_INVALID, f"说不清脚本要的路径: {requested!r}")
-    if not isinstance(chosen, str) or not os.path.isabs(chosen):
-        raise RemapError(ERROR_CHOSEN_INVALID, "指认的位置必须是本机的绝对路径", path=str(chosen))
-    chosen = os.path.abspath(chosen)
+    chosen = chosen_path(chosen)
     if chosen_is_dir:
         if not os.path.isdir(chosen):
             raise RemapError(ERROR_CHOSEN_INVALID, f"不是文件夹: {chosen}", path=chosen)
         rule = None
         for k in range(len(body), 0, -1):
-            if os.path.isfile(os.path.join(chosen, *body[-k:])):
+            candidate = projectenv.contained_path(chosen, os.path.join(chosen, *body[-k:]))
+            if candidate is not None and os.path.isfile(candidate):
                 head = rparts[: len(rparts) - k]
                 rule = {"kind": figcapture.REMAP_PREFIX, "from": _join(head), "to": chosen}
                 break
@@ -361,7 +376,13 @@ def derive(requested: str, chosen: str, *, chosen_is_dir: bool) -> dict:
                 "to": _ancestor(chosen, k),
             }
     target = figcapture.remap_target([rule], requested)
-    if target is None or not os.path.isfile(target):  # pragma: no cover — 上面已逐支保证
+    target = projectenv.contained_path(rule["to"], target) if target is not None else None
+    if target is None and not chosen_is_dir:
+        # 用户直接选中了指向别处的文件链接：许可的是这个文件，不是它字面上的父目录。
+        # 推不出包含实体的目录规则时收窄成精确文件规则，不拒掉这次明确选择。
+        rule = {"kind": figcapture.REMAP_FILE, "from": requested, "to": chosen}
+        target = projectenv.contained_path(chosen, chosen)
+    if target is None or not os.path.isfile(target):
         raise RemapError(
             ERROR_NOT_FOUND_IN_DIR, "推出的规则落不到这个文件上", name=body[-1], path=chosen
         )
@@ -376,19 +397,41 @@ def _looks_like_file(last: str) -> bool:
     return "." in last.strip(".")
 
 
-def glob_has_match(pattern: str) -> bool:
-    """模式至少匹配一个（`**` 才递归）；见到一个就停。"""
+def glob_has_match(pattern: str, *, root: str | None = None) -> bool:
+    """模式至少匹配一个（`**` 才递归）；改指后的模式只在规则目标内走，进目录前挡软链接逃逸。"""
     try:
+        if root is not None:
+            base = Path(root).resolve()
+            relative = Path(pattern).relative_to(root).as_posix()
+            if pattern.endswith(("/", os.sep)):
+                relative += "/"
+            return (
+                databinding._glob_hit(
+                    base,
+                    relative,
+                    base,
+                    recursive="**" in pattern,
+                    hidden=False,
+                    budget=[databinding.MAX_GLOB_SCAN],
+                )
+                == "found"
+            )
         return next(glob.iglob(pattern, recursive="**" in pattern), None) is not None
     except (OSError, ValueError):
         return False
 
 
-def location_exists(path: str) -> bool:
+def location_exists(path: str, *, root: str | None = None) -> bool:
     """改写后的目标在不在：glob 至少匹配一个，其余 `os.path.exists`（文件或文件夹都算）。"""
+    if not path:
+        return False
     if _has_glob(path):
-        return glob_has_match(path)
+        return glob_has_match(path, root=root)
     try:
+        if root is not None:
+            path = projectenv.contained_path(root, path)
+            if path is None:
+                return False
         return os.path.exists(path)
     except (OSError, ValueError):
         return False
@@ -412,7 +455,10 @@ def _derive_dir(requested: str, chosen: str) -> dict:
             ERROR_NOT_FOUND_IN_DIR, f"这个文件夹里没有 {requested}", name=requested, path=chosen
         )
     for k in range(len(body), 0, -1):
-        if os.path.isdir(os.path.join(chosen, *body[-k:])):
+        # 脚本原串里的 `..` 是匹配前缀的一部分，不是准许越过用户选的文件夹；软链接同样按实体判。
+        # 只探测 contained_path 回的那个路径，逃出去的后缀继续试更短的一段。
+        candidate = projectenv.contained_path(chosen, os.path.join(chosen, *body[-k:]))
+        if candidate is not None and os.path.isdir(candidate):
             return {
                 "kind": figcapture.REMAP_PREFIX,
                 "from": _join(rparts[: len(rparts) - k]),
@@ -435,9 +481,7 @@ def derive_location(requested: str, chosen: str, *, chosen_is_dir: bool) -> dict
     * 其余就是 `derive`。
     推出的规则一律自检：`remap_target(..., whole=True)` 落到一个存在的位置上。
     """
-    if not isinstance(chosen, str) or not os.path.isabs(chosen):
-        raise RemapError(ERROR_CHOSEN_INVALID, "指认的位置必须是本机的绝对路径", path=str(chosen))
-    chosen = os.path.abspath(chosen)
+    chosen = chosen_path(chosen)
     if _has_glob(requested):
         parsed = figcapture.remap_parts(requested)
         if parsed is None or not parsed[1]:
@@ -455,7 +499,7 @@ def derive_location(requested: str, chosen: str, *, chosen_is_dir: bool) -> dict
         else:  # `glob("*.csv")`：相对 cwd 的模式——「相对路径都到这里找」
             rule = {"kind": figcapture.REMAP_PREFIX, "from": "", "to": folder}
         target = figcapture.remap_target([rule], requested)
-        if target is None or not glob_has_match(target):
+        if target is None or not glob_has_match(target, root=rule["to"]):
             name = "/".join(parts[i:])
             raise RemapError(
                 ERROR_NOT_FOUND_IN_DIR, f"这个文件夹里没有 {name}", name=name, path=folder
@@ -472,7 +516,8 @@ def derive_location(requested: str, chosen: str, *, chosen_is_dir: bool) -> dict
             raise
         rule = _derive_dir(requested, chosen)
     target = figcapture.remap_target([rule], requested, whole=True)
-    if target is None or not os.path.isdir(target):  # pragma: no cover — `_derive_dir` 已逐支保证
+    target = projectenv.contained_path(rule["to"], target) if target is not None else None
+    if target is None or not os.path.isdir(target):
         raise RemapError(ERROR_NOT_FOUND_IN_DIR, "推出的规则落不到这个文件夹上", path=chosen)
     return rule
 
