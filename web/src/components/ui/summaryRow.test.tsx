@@ -77,8 +77,16 @@ describe('SummaryRow', () => {
     expect(button().textContent).toBe('小刻度, 不显示')
   })
 
-  it('额外属性落在行的外壳上（e2e 的稳定锚点 data-fold）', async () => {
+  it('额外属性落在行的外壳上（e2e 的稳定锚点 data-fold）；triggerProps 的 data-* 落在开关按钮上', async () => {
     await act(async () => root.render(<Demo />))
     expect(host.querySelector('[data-fold="minor"] > button')).toBe(button())
+    await act(async () =>
+      root.render(
+        <SummaryRow label="x" open={false} onToggle={() => {}} triggerProps={{ 'data-anchor': '' }}>
+          y
+        </SummaryRow>,
+      ),
+    )
+    expect(host.querySelector('[data-anchor]')).toBe(button())
   })
 })

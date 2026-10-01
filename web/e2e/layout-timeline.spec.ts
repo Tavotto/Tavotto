@@ -355,9 +355,8 @@ test('只差水平翻转的两个节点：缩略图不一样，而且是左右�
     await expect(quick).toHaveCount(0)
   }
   await nameNow('原样')
-  // 属性页摘要行「旋转、翻转、透明度」里的「水平翻转」（面板放上来之后是选中的）。
-  // `data-panel-more` 在摘要行的外壳上，开关是它里面的那颗按钮
-  const more = await only(page.locator('[data-panel-more] > button'))
+  // 属性页「更多」里的「水平翻转」（面板放上来之后是选中的）
+  const more = await only(page.locator('[data-panel-more]'))
   if ((await more.getAttribute('aria-expanded')) !== 'true') await more.click()
   await (await only(page.locator('[data-panel-flip="h"]'))).click()
   await nameNow('翻转')

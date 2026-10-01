@@ -1,4 +1,7 @@
 import type { HTMLAttributes, ReactNode } from 'react'
+
+/** 只放 `data-*` 稳定锚点（选择器认它们，不认文案 / class） */
+type DataAttrs = { [K: `data-${string}`]: string | undefined }
 import { ChevronRight } from './icons'
 import { ICON_SIZE } from './Icon'
 import { Reveal } from './Field'
@@ -25,6 +28,7 @@ export function SummaryRow({
   onToggle,
   children,
   className,
+  triggerProps,
   ...rest
 }: {
   label: ReactNode
@@ -33,6 +37,8 @@ export function SummaryRow({
   open: boolean
   onToggle: () => void
   children: ReactNode
+  /** 落在开关按钮上的 `data-*` 锚点（e2e 要点的是按钮、不是外壳；外壳的锚点走普通 `data-*` 属性） */
+  triggerProps?: DataAttrs
 } & Omit<HTMLAttributes<HTMLDivElement>, 'children' | 'className'> & { className?: string }) {
   const showValue = !open && value != null && value !== ''
   return (
@@ -43,6 +49,7 @@ export function SummaryRow({
     >
       <button
         type="button"
+        {...triggerProps}
         onClick={onToggle}
         aria-expanded={open}
         className="flex h-10 w-full items-center gap-2 rounded-sm text-left text-sm text-ink outline-none focus-visible:focus-ring"

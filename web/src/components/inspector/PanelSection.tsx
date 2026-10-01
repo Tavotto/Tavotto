@@ -360,8 +360,8 @@ function PanelMoreSection({ objs }: { objs: PanelObject[] }) {
         onToggle={() => setOpen('panel', !open)}
         label={pn('rotateFlipOpacity')}
         value={summaryBits.join(' · ')}
-        // e2e 的稳定锚点：旋转 / 翻转 / 不透明度收在这一行里
-        data-panel-more
+        // e2e 的稳定锚点（开关按钮上）：旋转 / 翻转 / 不透明度收在这一行里
+        triggerProps={{ 'data-panel-more': '' }}
       >
         <div className="flex flex-col gap-1.5">
           {/* 只有一个数字框（2026-09-11 用户反馈）：面板只能转 0 / 90 / 180 / 270，

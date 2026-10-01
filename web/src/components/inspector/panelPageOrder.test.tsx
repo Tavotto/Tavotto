@@ -112,7 +112,7 @@ describe('单选面板：变换 → 内容适配 → 排列 → 源文件', () =
   })
 
   it('低频项各是一行摘要：右边只写当前值，点开才有控件（旋转 / 翻转 / 透明度、换一张图）', async () => {
-    const rot = host.querySelector<HTMLElement>('[data-panel-more]')!
+    const rot = host.querySelector<HTMLElement>('[data-panel-more]')!.closest<HTMLElement>('[data-summary-row]')!
     expect(rot.querySelector('[data-summary-value]')!.textContent).toBe('0° · 不透明')
     expect(rot.querySelector('[data-panel-flip]')).toBeNull()
     await act(async () => toggleByText('旋转、翻转、透明度')!.click())
