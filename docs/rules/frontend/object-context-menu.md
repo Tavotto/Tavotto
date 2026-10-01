@@ -26,8 +26,12 @@
   之间有微任务检查点，Radix 关掉菜单后 React 已把节点卸掉，冒泡层的 `onKeyDown` 跑不到；
   **jsdom 没有这个检查点，删掉捕获层守卫照样全绿**——这类判据只有真浏览器抓得到
   （`e2e/quick-menu.spec.ts`）。
+* **「把这些修改用到同脚本的其他图…」**（2026-10-01，ADR 0037 末节）：`panel` 形态，只在「这张图有图内修改且有同脚本
+  兄弟图」时摆（不做 disabled）；点它只调 `openSyncOverrides`，窗口是画布舞台上常驻的 `SyncOverridesHost`。
+  目标图不在画布上时「同步并写回」走标准 `WriteBackDialog`（`detached`），不许在这里再长出第二条写回路径。
 * 不可用的项用 `MenuItem.reason` 常驻原因，不用 tooltip（禁用项收不到指针）。
 * 看护：`canvas/objectContextMenu.test.tsx` / `store/quickEditActions.test.ts` /
+  `components/inspector/syncOverrides.test.tsx` / `components/inspector/writeBackRecords.test.tsx` /
   `tests/test_engine_invalidate.py` / `e2e/quick-menu.spec.ts`。
 
 ## 速查表原要点（2026-09-25 迁入，#608）

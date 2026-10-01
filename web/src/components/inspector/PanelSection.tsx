@@ -772,6 +772,8 @@ export function SourceSection({
   const runtime = panel?.fileKind === 'runtime'
   if (!panel?.script && !objs.length) return null
   return (
+    // data-panel-source：e2e 展开这一节的稳定锚点（折叠头本身没有 data-*，不认文案）
+    <div data-panel-source>
     <Disclosure
       title={pn('sourceAdvanced')}
       open={open}
@@ -793,6 +795,7 @@ export function SourceSection({
       )}
       <PanelQuality objs={objs} />
     </Disclosure>
+    </div>
   )
 }
 

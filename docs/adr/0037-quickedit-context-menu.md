@@ -88,3 +88,18 @@ src/tavotto/app.py                  POST /api/engine/invalidate
 稳定锚点补三个（Prompt 21 的引导按 `data-quick-item` 挂钩，别改名）：`change-kind` /
 `change-to-<类型>`；属性栏那颗徽标是 `data-object-kind` 上加 `data-kind-switch`，
 每一格 `data-kind-target="<类型>"`。
+
+## 2026-10-01 修订：菜单里多一个「把这些修改用到同脚本的其他图…」（设计稿 C5 / C11）
+
+界面重设计把属性栏「源文件与高级」里的「同步修改到…」搬进右键菜单，同一批还把「历史」收成写回窗口里的
+「写回记录」页。本 ADR 的动作集合因此多一项，其余裁决不动。
+
+| 问题 | 裁决 |
+|---|---|
+| 菜单里多了什么 | `panel`（可编辑图）形态多一项 **「把这些修改用到同脚本的其他图…」**（`data-quick-item="sync-overrides"`），排在「恢复图内修改」之后、「打开全部属性」之前。**出现条件两个缺一不可**：这张图有图内修改（`overrides.length > 0`）、素材库里有同脚本（`script` 相同）的另一张图。仅排版的图、文字、标注、多选都不出现。不做 disabled + 原因——没有可搬的修改或没有可去的兄弟图时，这件事对用户就不存在 |
+| 它是不是第二套动作 | **不是**。点它只调 `openSyncOverrides(panelId)`（`store/syncOverridesStore.ts`），窗口 `SyncOverridesHost` 常驻在画布舞台上（菜单一合上菜单项就卸载，窗口不能挂在菜单里）；映射仍是 `POST /api/engine/sync_overrides`，兄弟图分组（直系 / 其它）与「合并到画布上的图」的行为（`setOverrides`，一条历史，标签「同步自 …」）一字未改 |
+| 「同步并写回」 | 目标图**不在画布上**时，原来窗口自己拼「目标基线 + 同步来的」再直接调 `updateSourceFiles`。现在改成打开**标准写回窗口**（`WriteBackDialog`，`detached` 模式：`panels` 是临时拼出来的一张 `PanelObject`，`overrides` = 目标自己的 `baked_overrides` 打底、同名 gid+prop 同步来的覆盖——合并规则逐行未变）。**后端不动**：两条路原本就是同一个端点 `POST /api/engine/update_source`、同一个 prepare → verify → commit 事务（ADR 0049），改的只是前端少了一个自带的确认 / 回执界面，现在用标准窗口的「将覆盖哪些文件 / 备份在哪 / 校验结果」。`detached` 不收画布标注（目标图不在画布上）、不提供写回记录页。写回成功整条流程结束；在写回窗口里取消则回到映射结果那一步 |
+| 写回窗口的「写回记录」页 | 原来属性栏「历史」是个弹层，现在是 `WriteBackDialog` 的第二页（页签「写回 / 写回记录」）。**没有记录时页签与这一页都不出现**（窗口就是原来那一页）；读取记录失败时页签照样在、进去如实报错（入口悄悄消失会让人以为从没写回过）。属性栏「源文件」里的入口改名「写回记录」，同样只在有记录时出现，点开就是同一个窗口、预先选好这张图、落在记录页。恢复（`restoreHistory` → `restorePanelOverrides`）的逻辑与确认框一字未改；恢复成功后窗口关闭。原来「暂无写回记录」的空弹层随之取消 |
+| 命名 | ADR 0094 的「写回脚本」（改用户脚本源码）是另一件事：界面里「写回」永远指「写回原始文件」，「写回记录」永远指图的原始文件的写回历史，两者不混 |
+| 磁盘格式 / 后端 | **不升版**，不新增文档字段、端点、错误码 |
+| 看护 | `canvas/objectContextMenu.test.tsx` 末节（出现条件与位置）、`components/inspector/syncOverrides.test.tsx`（合并 / 走标准窗口 / 基线合并 / 取消）、`components/inspector/writeBackRecords.test.tsx`（页何时出现 / 恢复仍是原路）、`components/inspector/panelPageOrder.test.tsx` 与 `sourceAdvanced.test.tsx`（属性栏不再有「历史」「同步修改」） |
