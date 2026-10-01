@@ -113,7 +113,7 @@ def test_derive_accepts_a_file_chosen_through_a_unc_share(tmp_path):
         pytest.skip("本机管理共享不可用")
     rule = inputremap.derive("C:/Users/a/proj/data/x.csv", unc, chosen_is_dir=False)
     assert rule["from"] == "c:/Users/a/proj"
-    assert rule["to"].lower().startswith("//localhost/")
+    assert rule["to"] == str(Path(unc).parents[1])
     assert os.path.isfile(figcapture.remap_target([rule], "C:/Users/a/proj/data/x.csv"))
 
 
