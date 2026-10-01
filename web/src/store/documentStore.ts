@@ -773,6 +773,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     set((s) => ({ projectMeta: { ...s.projectMeta, name: clean } }))
     // 排版名写在项目文件里：改名之后项目里那份就旧了
     if (changed) markProjectFileDirty()
+    // 改名是用户的编辑：显式打开的别的项目的排版，改了名就归到这个项目（#773 Codex 复核 P2）
+    if (changed) claimDocumentOnEdit()
     // 项目名不进撤销历史，但要立即落快照（最近文档列表显示它）
     flushAutosave()
   },
@@ -902,9 +904,33 @@ function ownerProjectForWrite(docId: string): string | null {
 
 /** 用户真改了一笔：显式打开的别的项目的排版，从这一刻起属于打开它的那个项目 */
 function claimDocumentOnEdit(): void {
-  if (!pendingClaim) return
-  docProject = pendingClaim
+  const claim = pendingClaim
+  if (!claim) return
+  docProject = claim
   pendingClaim = null
+  // 本机索引当场改记（不等下一次冲刷）：「记上次开着哪份」的判据读的就是它。只改了一笔就离开的话
+  // 后面不会再有变化去触发记录（#773 Codex 复核 P2）
+  const id = useDocumentStore.getState().documentId
+  const index = readIndex()
+  if (claim.id && index.some((e) => e.id === id)) {
+    const owner = claim.id
+    const kept = writeIndex(
+      index.map((e): RecentDoc => {
+        if (e.id !== id) return e
+        const { projectName: _previous, ...rest } = e
+        return { ...rest, projectId: owner, ...(claim.name ? { projectName: claim.name } : {}) }
+      }),
+    )
+    useDocumentStore.setState({ recentDocs: kept })
+  }
+  claimListener?.()
+}
+
+/** 归属刚转到当前项目时要做的事（`projectStore` 登记：把它记成这个项目「上次开着的」） */
+let claimListener: (() => void) | null = null
+
+export function onDocumentClaimed(fn: (() => void) | null): void {
+  claimListener = fn
 }
 
 /**

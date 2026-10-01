@@ -302,6 +302,20 @@ describe('纵深：两侧任何一道拦下都算数', () => {
     await g.doc.saveNow()
     await settle()
     expect(owners.get('d_f')).toBe('p_g')
+    expect(lastByProject.get('p_g')?.doc_id).toBe('d_f')
+  })
+
+  it('看一眼之后只改了名：改名是用户的编辑，归到这个项目并记成它的「上次开着的」', async () => {
+    const f = await boot('p_f')
+    await makeContentDoc(f, 'd_f', 'F 的排版', 'F')
+    const g = await boot('p_g')
+    await g.doc.restoreSession()
+    await g.actions.openRecentDocument('d_f')
+    await settle()
+    g.doc.useDocumentStore.getState().renameProject('在 G 里改的名')
+    await settle()
+    expect(owners.get('d_f')).toBe('p_g')
+    expect(lastByProject.get('p_g')).toMatchObject({ doc_id: 'd_f', name: '在 G 里改的名' })
   })
 
   it('应用里直接切项目 A → B → A（后端做归属检查）：离开 A 时那次冲刷记在 A 名下，回到 A 照常恢复', async () => {
@@ -335,11 +349,9 @@ describe('纵深：两侧任何一道拦下都算数', () => {
     expect(JSON.parse(localStorage.getItem('tavotto.docIndex')!).find((e: { id: string }) => e.id === 'd_f').projectId).toBe('p_f')
     // 在 G 里改过并落了盘 = 用户把它带进了 G（本机索引与后端归属都改记成 G）：之后的变化照常记。
     // 「改过」由自动保存的订阅认（工作台挂着时才有），这里挂上它
+    // 只改**一笔**就离开：后面不会再有变化去触发记录（#773 Codex 复核 P2）
     const stop = g.doc.startAutosave()
     editCurrent(g, 'G')
-    g.doc.flushAutosave()
-    await settle()
-    editCurrent(g, 'G2')
     g.doc.flushAutosave()
     await settle()
     stop()
