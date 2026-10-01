@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ArrowLeftRight, Trash2 } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
@@ -7,6 +7,7 @@ import { msg, t as translate, type UiMessage } from '@/i18n'
 import { cn, MOD } from '@/lib/utils'
 import { clearGuides, removeGuide, setPageSetup, setPageSize } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
+import { useInspectorPrefs } from '@/store/inspectorPrefs'
 import { useUiStore } from '@/store/uiStore'
 import { Button, IconButton } from '../ui/Button'
 import { Row, Section } from '../ui/Field'
@@ -42,6 +43,9 @@ const cv = (key: string, values?: Record<string, unknown>) =>
   translate(`canvas.${key}`, { ns: 'inspector', ...(values ?? {}) })
 const hist = (key: string): UiMessage => msg(`history.${key}`, undefined, 'inspector')
 
+/** 本页五个摘要行的键（一次只展开一个） */
+const FOLD_KEYS = ['bg', 'aids', 'snap', 'guides', 'safe'] as const
+
 /**
  * 预设缩略图：**四档共用同一个 mm→px 比例**，所以「单栏比双栏窄一半」
  * 这件事在图形上是真的。各自撑满格子的话四个方块一样大，形状还在、
@@ -60,10 +64,16 @@ export function CanvasPage() {
   const guides = useDocumentStore((s) => s.doc.guides)
   const ui = useUiStore()
   const active = PRESETS.find((p) => p.w === page.w && p.h === page.h)
-  // 一次只展开一组（审计 T31：多组同时展开显得冗长）；再点同一组就收起
-  const [openKey, setOpenKey] = useState<string | null>(null)
-  const open = (k: string) => openKey === k
-  const toggle = (k: string) => setOpenKey((cur) => (cur === k ? null : k))
+  // 一次只展开一组（审计 T31：多组同时展开显得冗长）；再点同一组就收起。
+  // 展开状态记在会话级 `inspectorPrefs.foldOpen`（键 `canvas:<组>`），不放局部 state：
+  // 切到「属性 / 改图助手」页签再回来时本页被卸载，局部 state 会让展开的行合上
+  const foldOpen = useInspectorPrefs((s) => s.foldOpen)
+  const setFoldOpen = useInspectorPrefs((s) => s.setFoldOpen)
+  const open = (k: string) => foldOpen[`canvas:${k}`] ?? false
+  const toggle = (k: string) => {
+    const wasOpen = open(k)
+    for (const other of FOLD_KEYS) setFoldOpen(`canvas:${other}`, !wasOpen && other === k)
+  }
 
   // 收起时也得看得出网格状态（审计 T31 验收）：开着就把间距一起报出来，
   // 只报「网格」的话用户还得展开才知道它多密

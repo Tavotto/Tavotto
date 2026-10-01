@@ -73,6 +73,24 @@ describe('CanvasPage', () => {
     expect(disclosure('自动对齐').getAttribute('aria-expanded')).toBe('false')
   })
 
+  it('展开状态记在会话里：展开背景 → 切走（本页卸载）→ 切回，背景仍展开；展开另一行时前一行收起', () => {
+    act(() => disclosure('背景').click())
+    expect(disclosure('背景').getAttribute('aria-expanded')).toBe('true')
+    // 切到「属性 / 改图助手」页签：CanvasPage 被卸载，再回来是一个新挂载
+    act(() => root.render(<TooltipProvider><div /></TooltipProvider>))
+    act(() =>
+      root.render(
+        <TooltipProvider>
+          <CanvasPage />
+        </TooltipProvider>,
+      ),
+    )
+    expect(disclosure('背景').getAttribute('aria-expanded')).toBe('true')
+    act(() => disclosure('安全边距').click())
+    expect(disclosure('安全边距').getAttribute('aria-expanded')).toBe('true')
+    expect(disclosure('背景').getAttribute('aria-expanded')).toBe('false')
+  })
+
   it('收起时也报得出网格状态；页面尺寸的组头不再复述下面那两个框', () => {
     // 「辅助显示」收着：摘要里要带网格间距，不能只说一个「网格」
     expect(disclosure('辅助显示').getAttribute('aria-expanded')).toBe('false')
