@@ -1141,7 +1141,7 @@ def _resolved(path: Path) -> Path:
 def _pin_plan(plugin_dir: Path, command: str) -> list[tuple[Path, bytes, bytes, str]]:
     """算出要落的两份内容——**全在内存里**，这一步失败磁盘一个字节都没碰过。"""
     plan: list[tuple[Path, bytes, bytes, str]] = []
-    mcp_path = plugin_dir / ".mcp.json"
+    mcp_path = plugin_dir / pluginmanifest.mcp_config_rel(plugin_dir)
     old = mcp_path.read_bytes()
     data = json.loads(old.decode("utf-8"))
     for entry in data.get("mcpServers", {}).values():
@@ -1600,17 +1600,25 @@ def _interpreter_step(plugin_dir: Path | None, py: str | None, *, apply: bool) -
         return _step(
             "interpreter", ok=False, code=ERR_INTERPRETER, detail="插件还没装好，无从检查启动命令"
         )
-    mcp_path = plugin_dir / ".mcp.json"
     server = plugin_dir / "mcp" / "server.py"
     try:
+        # 新版叫 codex.mcp.json、已装旧版叫 .mcp.json：由 Codex 清单指向决定（ADR 0109）
+        mcp_path = plugin_dir / pluginmanifest.mcp_config_rel(plugin_dir)
         data = json.loads(mcp_path.read_text(encoding="utf-8"))
         command = next(iter(data["mcpServers"].values()))["command"]
-    except (OSError, ValueError, KeyError, TypeError, StopIteration):
+    except (
+        OSError,
+        ValueError,
+        KeyError,
+        TypeError,
+        StopIteration,
+        pluginmanifest.PluginManifestError,
+    ):
         return _step(
             "interpreter",
             ok=False,
             code=ERR_INTERPRETER,
-            detail=f"读不出 {mcp_path} 里的 mcpServers[...].command",
+            detail=f"读不出 {plugin_dir} 的 Codex MCP 配置里的 mcpServers[...].command",
         )
     # 发行件的 command 是插件自带的 `./mcp/launch`（#266）：Codex 按 `.mcp.json` 的
     # `cwd`（插件根）解析它、Windows 上再按 PATHEXT 落到 `launch.cmd`，这里照同一条路解析——

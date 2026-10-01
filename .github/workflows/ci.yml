@@ -1995,11 +1995,15 @@ jobs:
           TAVOTTO_PYTHON: ${{ steps.py.outputs.python-path }}
           # 多写一份 JSON 报告给下一步的功能登记表核对（web/playwright.config.ts 见到它才加 json reporter）
           TAVOTTO_E2E_JSON: ${{ runner.temp }}/e2e-results.json
-        # **step 级上限 20 分钟**（job 级 45 不动）：CI00 实测这一步 7.4 分钟。理由与
+        # **step 级上限 35 分钟**（job 级 45 不动，step 必须严格小于 job 级，留 10 分钟给
+        # 收集 / 上传 / Post 步骤）：CI00 实测这一步 7.4 分钟，现在 209 条用例（180 通过、
+        # 29 跳过）单 worker 约 19.7 分钟，run 36734896556（#679 的 full-ci）被旧的 20 分钟
+        # 上限杀掉、没有任何用例失败。当初「不分片：7 分钟，不在关键路径上」的前提已不成立；
+        # 35 只是止血的余量，分片是后续动作（见 issue，不在这个 PR 里做）。理由与
         # windows-exe-smoke 那一步相同——job 级上限硬杀时 step 停在 in_progress、
         # `if: failure()` 的收集步骤不跑、日志 blob 与 artifact 都没有（PR #373 attempt 1）；
-        # step 级超时把挂起变成带日志的失败。这条腿不分片：7 分钟，不在关键路径上。
-        timeout-minutes: 20
+        # step 级超时把挂起变成带日志的失败。
+        timeout-minutes: 35
         run: |
           pnpm install --frozen-lockfile
           pnpm exec playwright install --with-deps chromium

@@ -101,6 +101,18 @@
   `softCap` 平滑压到最多 `OVERSIZE_CAP`（1.15，用户拍板）倍，比页面小的保持 100%；
   **不用阈值**——「130% 以内不缩、以上缩进页面」在阈值处必然跳变（大一点的原图放上去
   反而小一截），单调 + 连续 + 「稍大不缩、很大不超出多少」只能是一条逼近上限的曲线。
+  **新图自动避开已有对象（2026-09-30，设计稿 C9）**：不是拖放落点时，`placePanelInPage`
+  收当前画布上所有没隐藏对象的包围盒（`lib/geometry.visualBounds`：text / arrow / shape 的
+  `rotationDeg` 转出外接矩形，面板的盒本身已是旋转后的），先在安全边距内找空位——候选是
+  「某个已有对象的右边（同顶）」与「它的下方（贴左边距 / 同列）」，按阅读顺序取第一个装得下
+  的（一行放得下排右边、放不下换到下一行），与已有对象、与彼此之间留 `PLACE_GAP`（3 mm）；
+  右边与下方都不行才退到同行左侧 / 页面左上；**都放不下、页面空着、或图本身比页面大**
+  退回下面的旧行为（居中 + 钳进页面）。**有拖放落点不避让**——那是用户在屏幕上挑的位置。
+  判据只在 `placePanelInPage` 一处，`addPanel` / `addRuntimePanel` 两个 action 各传一次
+  `occupiedBoxes()`，于是素材栏 / 快编栏 / 教程（`addFigureToLayout`）、选图对话框、脚本库、
+  接入状态对话框、`tavotto run` 交接（`addPanelToCanvas` / `addRuntimePanelToCanvas`）全经
+  同一处；新增加图入口不许自己算位置。看护 `lib/panelPlacement.test.ts`（算法边界）、
+  `store/addPanelAvoid.test.ts`（入口一侧）。
   装得下的那一维钳进页面，比页面大的那一维在页面上居中、两边均匀伸出。这推翻了此前
   「按原始尺寸放、比页面宽也不缩」的做法；缩小后的等效字号由问题面板照常报，不在放置时
   另判。伸出去的那截由 `canvas/PageOutsideMask` 画淡（导出时 PDF 页框本来就裁掉它），

@@ -25,6 +25,8 @@ import {
 import { currentProjectId, setCurrentProjectId } from '@/lib/session'
 import { pushPickerEntry } from '@/lib/pickerHistory'
 import { cancelActivePointerGesture, finishActiveGesture } from '@/store/gestureCoordinator'
+import { markMoment } from '@/lib/timelineCheckpoint'
+import { useTimelineStore } from '@/store/timelineStore'
 import { openRecentDocument } from '@/store/actions'
 import { useAssetBrowseStore } from '@/store/assetBrowseStore'
 import { flushAutosave, loadAutosavedDocument, useDocumentStore } from '@/store/documentStore'
@@ -170,6 +172,16 @@ function settleGesturesBeforeLeaving(): void {
   finishActiveGesture()
 }
 
+/**
+ * 「离开这份排版」的顺序只有这一份（回主页 `showPicker`、编辑器开着时直接切项目 `adoptNow`
+ * 共用）：**先把开着的手势收掉，再打「离开」点**——拍的是落定之后的内容，不是拖到一半 /
+ * 连续编辑中间的样子（Codex #679）。打点在认领新项目之前、同步取走节点的项目与文档。
+ */
+function settleAndMarkLeaving(leaving: boolean): void {
+  settleGesturesBeforeLeaving()
+  if (leaving) void markMoment('close')
+}
+
 /** 换项目时把属于旧项目的前端会话状态全部丢掉。 */
 async function resetForNewProject() {
   // 1. 冲刷当前文档的自动保存（切走的文档可从「最近文档」取回）；手势先收掉，
@@ -184,6 +196,8 @@ async function resetForNewProject() {
   ui.setCropTarget(null)
   useRenderStore.getState().clear()
   useRuntimeAssetStore.getState().clear()
+  // 时间线的预览属于旧项目的排版（ADR 0101）
+  useTimelineStore.getState().clear()
   // 素材库的搜索词与筛选说的是旧项目的目录与素材，跟着清
   useAssetBrowseStore.getState().clear()
   // 素材清单本身也属于旧项目：面板、「无法使用」清单与由它们派生的来源目录。不清的话，
@@ -296,6 +310,12 @@ let listSeq = 0
 export const useProjectStore = create<ProjectState>((set, get) => {
   /** 切项目的前端换代本体；对外的两个入口都经 `switchQueue` 串行地调它 */
   const adoptNow: ProjectState['adoptOpenedProject'] = async (status, opts) => {
+    // 排版时间线（ADR 0101）：从一个开着的项目**直接**切到另一个，是在关掉前一个。
+    // 必须在认领新项目之前打：节点的项目、文档、缩略图图源都在这一刻同步取走；
+    // 手势先收掉再打（`settleAndMarkLeaving`，与回主页同一份顺序）
+    settleAndMarkLeaving(
+      get().phase === 'open' && !!get().project?.id && get().project?.id !== status.id,
+    )
     // 先认领项目，再做任何会发请求的事：素材/渲染都必须落到新项目上。
     // 从认领到换代完成这段时间里内存里还是**上一个项目**的文档，而下面要 await 一次后端
     // （`loadProjectDocument`）：这期间用户改一笔 / 派生更新落地，「记上次开着哪份」的订阅会
@@ -347,6 +367,10 @@ export const useProjectStore = create<ProjectState>((set, get) => {
       useViewportStore.getState().fit(page.w, page.h)
     }
     set({ project: status, phase: 'open', lastDocumentIssue: issue })
+    // 排版时间线的关键时刻（ADR 0101 §3）：只管「编辑器开着时直接切到另一个项目」
+    // ——Workspace 不重挂、时间线一直在跑。从 Picker 打开 / 启动恢复时 Workspace 还没
+    // 挂上，这一下是空的，那两条路由 Workspace 在文档恢复完之后调 `markWorkspaceOpened()`
+    void markMoment('open')
     void get().refreshRecent()
     emitActivity({ kind: 'project.opened', tutorial: status.tutorial === true })
     return status
@@ -498,7 +522,8 @@ export const useProjectStore = create<ProjectState>((set, get) => {
     // 开着的手势（拖动、改字号的安静计时器）不会自己收尾。所以离开之前先把它们收干净、
     // 再立刻冲刷一次——防抖窗口里的最后一下改动，不能等到用户在 Picker 上关掉窗口才发现没了。
     // 与切项目（`resetForNewProject`）、`dropProject` 是同一句 `flushAutosave()`。
-    settleGesturesBeforeLeaving()
+    // 排版时间线的关键时刻（ADR 0101）：回主页 = 离开这份排版（先收手势、再打点）
+    settleAndMarkLeaving(get().phase === 'open')
     flushAutosave()
     set({ phase: 'none' })
     pushPickerEntry()

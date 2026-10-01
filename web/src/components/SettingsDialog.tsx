@@ -8,12 +8,10 @@ import { CodingAgentsSection } from './settings/CodingAgentsSection'
 import { DiagnosticsSettings } from './settings/DiagnosticsSettings'
 import { ExportSettings } from './settings/ExportSettings'
 import { GeneralSettings } from './settings/GeneralSettings'
-import { InterfaceSettings } from './settings/InterfaceSettings'
 import { PackagesSettings } from './settings/PackagesSettings'
 import { PrivacyAboutSettings } from './settings/PrivacyAboutSettings'
 import { ProfilesSettings } from './settings/ProfilesSettings'
 import { ProjectSettings } from './settings/ProjectSettings'
-import { UpdateSettings } from './settings/UpdateSettings'
 
 /**
  * 设置对话框的**外壳**：导航 + 分区分派，仅此而已（ADR 0038）。
@@ -25,7 +23,7 @@ import { UpdateSettings } from './settings/UpdateSettings'
  *   * **内容有最大宽度**：普通分区的有效内容宽 `CONTENT_MAX_WIDTH`，不铺满整个
  *     窗口；要放预览 / 清单 / 表格的分区声明 `wide`（`CONTENT_MODE`），不由每一页
  *     自己决定；
- *   * **导航分组**：十一个分区按 `NAV_GROUPS` 分四组（通用 / 工作流 / 集成 / 系统），
+ *   * **导航分组**：九个分区按 `NAV_GROUPS` 分四组（通用 / 工作流 / 集成 / 系统），
  *     信息架构与顺序不变，只是视觉上用间距与一行极低权重的组名分层；
  *   * **小窗口 / 大缩放**：<640px 时导航从左栏变成顶部一行可横滚的分区条，
  *     内容区仍独立滚动，绝不横向溢出；
@@ -39,7 +37,6 @@ import { UpdateSettings } from './settings/UpdateSettings'
 
 export type SectionId =
   | 'general'
-  | 'interface'
   | 'project'
   | 'style'
   | 'spec'
@@ -48,12 +45,10 @@ export type SectionId =
   | 'ai'
   | 'packages'
   | 'diagnostics'
-  | 'update'
   | 'about'
 
 export const SECTIONS: SectionId[] = [
   'general',
-  'interface',
   'project',
   'style',
   'spec',
@@ -61,19 +56,21 @@ export const SECTIONS: SectionId[] = [
   'ai',
   'packages',
   'diagnostics',
-  'update',
   'about',
 ]
 
 /**
  * 旧分区 id → 新分区。深链的调用方（导出面板 / 素材库 / AiPanel）与用户的
- * 肌肉记忆都可能还带着旧名字；不认识的一律回到「常规」而不是白屏。
+ * 肌肉记忆都可能还带着旧名字；不认识的一律回到「通用」而不是白屏。
  */
 const ALIASES: Record<string, SectionId> = {
   profiles: 'spec',
-  canvas: 'interface',
-  sidebars: 'interface',
+  // 十一页并九页（2026-09-30）：「界面」并进「通用」、「更新」并进「关于与更新」
+  interface: 'general',
+  canvas: 'general',
+  sidebars: 'general',
   shortcuts: 'general',
+  update: 'about',
 }
 
 export function resolveSection(requested: string | null | undefined): SectionId | null {
@@ -98,10 +95,10 @@ export const CONTENT_MAX_WIDTH = 640
  * 键盘遍历顺序不变。组名文案 `settings.navGroup.*`。
  */
 export const NAV_GROUPS: { id: 'general' | 'workflow' | 'integrations' | 'system'; sections: SectionId[] }[] = [
-  { id: 'general', sections: ['general', 'interface', 'project'] },
+  { id: 'general', sections: ['general', 'project'] },
   { id: 'workflow', sections: ['style', 'spec', 'export'] },
   { id: 'integrations', sections: ['ai', 'packages'] },
-  { id: 'system', sections: ['diagnostics', 'update', 'about'] },
+  { id: 'system', sections: ['diagnostics', 'about'] },
 ]
 
 /**
@@ -110,7 +107,6 @@ export const NAV_GROUPS: { id: 'general' | 'workflow' | 'integrations' | 'system
  */
 export const CONTENT_MODE: Record<SectionId, 'normal' | 'wide'> = {
   general: 'normal',
-  interface: 'normal',
   project: 'normal',
   // 样式 / 规范：库收成一行之后不再需要左清单右编辑器的宽页（2026-09-15 打磨批次 B）
   style: 'normal',
@@ -119,7 +115,6 @@ export const CONTENT_MODE: Record<SectionId, 'normal' | 'wide'> = {
   ai: 'normal',
   packages: 'wide',
   diagnostics: 'normal',
-  update: 'normal',
   about: 'normal',
 }
 
@@ -239,7 +234,6 @@ export function SettingsDialog() {
             className="flex flex-col gap-7"
           >
             {section === 'general' && <GeneralSettings close={close} />}
-            {section === 'interface' && <InterfaceSettings close={close} />}
             {section === 'project' && <ProjectSettings />}
             {section === 'style' && <ProfilesSettings kind="style" />}
             {section === 'spec' && <ProfilesSettings kind="spec" />}
@@ -247,7 +241,6 @@ export function SettingsDialog() {
             {section === 'ai' && <CodingAgentsSection />}
             {section === 'packages' && <PackagesSettings />}
             {section === 'diagnostics' && <DiagnosticsSettings />}
-            {section === 'update' && <UpdateSettings />}
             {section === 'about' && <PrivacyAboutSettings />}
           </div>
         </div>

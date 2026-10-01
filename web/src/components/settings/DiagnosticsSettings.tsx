@@ -43,12 +43,12 @@ interface Check {
 const DUPLICATED_ELSEWHERE = /^cli_/
 
 /**
- * 设置 → 诊断（ADR 0038）。
+ * 设置 → 帮助与诊断（原「诊断」，ADR 0038）。
  *
  * 首屏只有三件事：**健康状态**、**复制诊断**（先预览脱敏后的文本，再复制）、
  * **导出诊断包**。渲染环境不正常时恢复卡片常驻（那是缺件，不许折叠）。
- * 解释器绝对路径、切换解释器的入口全在「技术详情」折叠区——用户不必懂
- * Python 环境路径也能知道能不能用。内置包版本在「包管理」，这里不重复。
+ * 「记录拖动性能」与技术详情收在「给开发者」折叠区；用哪个 Python、脚本运行目录
+ * 等运行设置在「项目」页（2026-09-30）——用户不必懂 Python 环境路径也能知道能不能用。内置包版本在「包管理」，这里不重复。
  *
  * 审计 T47 改了三件事：
  *
@@ -153,10 +153,10 @@ export function DiagnosticsSettings() {
 
       <DiagnosticsReportSection />
 
-      <PerfProbeSection />
-
-      {/* 技术详情：来源 / 版本 / 完整路径 / 换解释器。默认折叠 */}
-      <DiagnosticDisclosure title={st('techDetails')}>
+      {/* 给开发者：记录拖动性能 + 技术详情（来源 / 版本 / 检查明细）。默认折叠；
+          运行设置（用哪个 Python、运行目录……）已搬到「项目」页 */}
+      <DiagnosticDisclosure title={st('diagnostics.devTitle')} data-diagnostics-dev>
+        <PerfProbeRow />
         {env?.ok && (
           <>
             <DiagnosticItem
@@ -185,12 +185,6 @@ export function DiagnosticsSettings() {
               }
             />
           ))}
-        {/* 解释器绝对路径、「使用其他 Python 环境…」都在这张卡里，**只在这里出现一次** */}
-        {env?.ok && (
-          <div className="pt-1">
-            <EngineEnvironmentCard />
-          </div>
-        )}
       </DiagnosticDisclosure>
     </div>
   )
@@ -272,19 +266,17 @@ function CheckLine({ check: c, repairCard }: { check: Check; repairCard: boolean
  * 性能分析（ADR 0075）：点「开始」关掉设置、在画布上挂出探针面板。报告只含
  * 数字，由用户自己保存、自己决定发给谁。
  */
-function PerfProbeSection() {
+function PerfProbeRow() {
   useTranslation('dialogs')
   const start = () => {
     if (usePerfProbeStore.getState().start()) useUiStore.getState().setSettingsOpen(false)
   }
   return (
-    <SettingSection title={st('diagnostics.perfTitle')}>
-      <SettingRow label={st('diagnostics.perfRow')}>
-        <Button variant="secondary" size="sm" onClick={start} data-perf-probe-start>
-          {st('diagnostics.perfStart')}
-        </Button>
-      </SettingRow>
-    </SettingSection>
+    <SettingRow label={st('diagnostics.perfRow')}>
+      <Button variant="secondary" size="sm" onClick={start} data-perf-probe-start>
+        {st('diagnostics.perfStart')}
+      </Button>
+    </SettingRow>
   )
 }
 

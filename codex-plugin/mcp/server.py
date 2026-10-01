@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Codex 起 MCP server 的那一跳：**先找到装着 tavotto 引擎的解释器，再交棒**。
 
-Codex 用 `python3 ./mcp/server.py` 启动本文件（见 `.mcp.json`），而那个 `python3`
+Codex 用 `python3 ./mcp/server.py` 启动本文件（见 `codex.mcp.json`），而那个 `python3`
 不一定是装了 Tavotto 的那个——用户多半是 `pipx install tavotto` 或装的桌面版。
 所以本文件的全部职责就是**运行时解析（resolver）**：
 

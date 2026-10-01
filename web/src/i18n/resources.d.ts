@@ -75,10 +75,10 @@ export default interface Resources {
       "effort": "推理强度",
       "effortRaw": "强度原始值：{{value}}",
       "emptyHint": "助手会直接修改脚本，改动可回滚。",
-      "noCli": "没有可用的编码 Agent。",
+      "noCli": "没有可用的改图助手。",
       "noPanelTitle": "选中一张可编辑的图",
       "none": "—",
-      "openAiSettings": "打开编码 Agent 设置",
+      "openAiSettings": "打开改图助手设置",
       "placeholder": "例如：把图例移到左上角",
       "placeholderNoPanel": "先选中一张可编辑的图",
       "probing": "正在查找本机 CLI…",
@@ -601,6 +601,10 @@ export default interface Resources {
           "keywords": "save as layout lcw lingcunwei bc baocun pb paiban",
           "label": "另存为新排版…"
         },
+        "save-named-version": {
+          "keywords": "named version bookmark snapshot mingming jiedian mmjd",
+          "label": "把现在存为命名节点…"
+        },
         "select-all": {
           "keywords": "select all qx quanxuan",
           "label": "全选"
@@ -634,8 +638,8 @@ export default interface Resources {
           "label": "取消成组"
         },
         "versions": {
-          "keywords": "version history timeline bb sjx banben",
-          "label": "排版版本…"
+          "keywords": "version history timeline banben shijianxian sjx lishi",
+          "label": "排版时间线…"
         }
       },
       "listLabel": "命令",
@@ -1124,11 +1128,11 @@ export default interface Resources {
       },
       "agents": {
         "announce": {
-          "done": "编码 Agent 检测完成。",
+          "done": "改图助手检测完成。",
           "failed": "检测失败。显示上次结果。"
         },
-        "backAria": "返回编码 Agent 列表",
-        "backToList": "编码 Agent",
+        "backAria": "返回改图助手列表",
+        "backToList": "改图助手",
         "codexInstall": {
           "action": "安装 Codex 集成",
           "announce": {
@@ -1184,7 +1188,7 @@ export default interface Resources {
           }
         },
         "codexIntegrationName": "{{product}} for Codex",
-        "currentDefaultAria": "{{name}} 是当前默认的编码 Agent",
+        "currentDefaultAria": "{{name}} 是当前默认的改图助手",
         "defaultButton": "默认",
         "detail": {
           "addEndpoint": "添加服务…",
@@ -1271,7 +1275,7 @@ export default interface Resources {
           "running": "正在安装…"
         },
         "lastChecked": "最近检测 {{time}}",
-        "noUsableAgent": "没有可用的编码 Agent。装好后点「重新检测」。",
+        "noUsableAgent": "没有可用的改图助手。装好后点「重新检测」。",
         "readiness": {
           "needs_auth": "需要登录",
           "ready": "已登录",
@@ -1280,7 +1284,7 @@ export default interface Resources {
         "refreshFailed": "重新检测失败。下面仍是上次结果。",
         "rescan": "重新检测",
         "rowAria": "{{name}} 的详情",
-        "setDefaultAria": "把 {{name}} 设为默认编码 Agent",
+        "setDefaultAria": "把 {{name}} 设为默认改图助手",
         "source": {
           "chatgpt_bundle": "ChatGPT 应用内置",
           "common_location": "常见安装位置",
@@ -1305,7 +1309,7 @@ export default interface Resources {
           "broken": "已找到安装，但无法启动。",
           "notInstalled": "安装后 {{product}} 会自动检测"
         },
-        "title": "编码 Agent",
+        "title": "改图助手",
         "toggleAria": "在 {{product}} 中启用 {{name}}",
         "useFromAgents": "连接外部工具",
         "useInProduct": "配置改图助手",
@@ -1323,6 +1327,7 @@ export default interface Resources {
       "copy": "复制",
       "diagnostics": {
         "copyReport": "复制诊断",
+        "devTitle": "给开发者",
         "envNote": "「{{product}} 自带的渲染环境」随安装包附带，只读。装包会另建「本项目的 {{product}} 环境」，两者状态各自独立。",
         "fetchedAt": "本页数据取自 {{time}}",
         "healthTitle": "健康状态",
@@ -1336,7 +1341,6 @@ export default interface Resources {
         "okDetails": "各项检查结果",
         "perfRow": "记录拖动性能",
         "perfStart": "开始",
-        "perfTitle": "性能分析",
         "prepareFailed": "无法生成诊断报告。请重试。",
         "preparing": "正在生成…",
         "previewNote": "以下是将要复制的内容，密钥与个人路径已脱敏。确认后再复制。",
@@ -1354,13 +1358,13 @@ export default interface Resources {
       },
       "general": {
         "language": "界面语言",
-        "layout": "界面布局",
+        "layout": "界面乱了？",
         "layoutReset": "界面布局已重置，刷新页面后生效",
-        "resetLayout": "恢复界面默认布局"
+        "resetLayout": "恢复默认"
       },
       "helpAbout": "关于{{label}}",
       "navGroup": {
-        "general": "通用",
+        "general": "应用",
         "integrations": "集成",
         "system": "系统",
         "workflow": "工作流"
@@ -1494,27 +1498,26 @@ export default interface Resources {
         "scripts": "可编辑来源",
         "sectionLocations": "位置",
         "sectionProject": "项目",
+        "sectionRuntime": "运行",
         "sectionWriteBack": "写回源图",
         "showFullPath": "显示 {{name}} 的完整路径",
         "switch": "切换项目…",
         "useDefault": "恢复默认",
-        "writeBackDesc": "写回会覆盖原始 PDF / PNG 与脚本；执行前先将原文件备份到上面的位置。",
-        "writeBackOffHint": "写回已关闭。源图与脚本不会被覆盖，「写回原始文件」已停用。"
+        "writeBackDesc": "写回会覆盖原始 PDF / PNG；执行前先将原文件备份到上面的位置。",
+        "writeBackOffHint": "写回已关闭。原始文件不会被覆盖，「写回原始文件」已停用。"
       },
       "section": {
-        "about": "关于与隐私",
-        "ai": "编码 Agent",
+        "about": "关于与更新",
+        "ai": "改图助手",
         "canvas": "画布与编辑",
-        "diagnostics": "诊断",
+        "diagnostics": "帮助与诊断",
         "export": "导出",
-        "general": "常规",
-        "interface": "界面",
-        "packages": "包管理",
+        "general": "通用",
+        "packages": "Python 库",
         "project": "项目",
-        "sidebars": "侧栏",
-        "spec": "规范",
-        "style": "样式",
-        "update": "更新"
+        "sidebars": "一直开着",
+        "spec": "期刊规范",
+        "style": "样式"
       },
       "shortcuts": {
         "label": "快捷键",
@@ -1547,7 +1550,6 @@ export default interface Resources {
         "checkNow": "立即检查",
         "checking": "检查中…",
         "currentIs": "当前 {{version}}",
-        "currentVersion": "当前版本",
         "downloadAndInstall": "下载并安装",
         "downloadAndUpgrade": "下载并升级",
         "downloadProgressAria": "下载更新",
@@ -1664,16 +1666,13 @@ export default interface Resources {
       "upgrading": "正在升级…"
     },
     "versions": {
-      "autoBadge": "自动",
       "beforeRestore": "恢复前（{{time}}）",
-      "close": "关闭排版版本",
-      "compareAria": "叠加对比",
-      "compareDescription": "底图 = 该版本；半透明描边 = 当前画布",
-      "compareTip": "大尺寸叠加对比（底图 = 该版本，描边 = 当前）",
-      "compareTitle": "叠加对比",
-      "delete": "删除版本",
+      "budgetOver": "命名节点已占用 {{used}} MB，超过 {{limit}} MB 的上限。它们不会被自动删除，但删掉几个之前不能再命名新节点。",
+      "close": "关闭排版时间线",
+      "closePreview": "关闭",
+      "delete": "删除节点",
       "deleteBody": "删除后无法找回，当前排版不受影响。",
-      "deleteTitle": "删除版本「{{name}}」？",
+      "deleteTitle": "删除节点「{{name}}」？",
       "diff": {
         "added": "当前新增：{{name}}",
         "assetReplaced": "{{name}}：素材已替换",
@@ -1697,30 +1696,58 @@ export default interface Resources {
         "unlocked": "{{name}}：已解锁",
         "zorder": "对象层级顺序不同"
       },
-      "drawerLabel": "排版版本",
-      "duplicate": "复制版本",
-      "emptyTitle": "还没有版本",
+      "diffTitle": "与当前画布相比",
+      "drawerLabel": "排版时间线",
+      "duplicate": "复制节点",
+      "emptyBody": "编辑停顿后，最多每 2 分钟会自动留一个节点；导出、写回、保存、打开和离开项目时也会留一个。",
+      "emptyTitle": "还没有节点",
+      "filterAll": "全部",
+      "filterLabel": "显示哪些节点",
+      "filterNamed": "命名",
       "fromCanvas": "来自画布「{{name}}」",
-      "fromUnknownCanvas": "旧检查点，画布未知",
-      "keep": "保留",
-      "keepTitle": "自动检查点会随时间清理；保留后按手动版本留存。",
-      "listLabel": "版本列表",
-      "loadingSnapshot": "正在载入快照…",
-      "namePlaceholder": "版本名称（可留空）",
+      "fromUnknownCanvas": "旧节点，画布未知",
+      "kind": {
+        "auto": "自动",
+        "manual": "手动",
+        "named": "命名"
+      },
+      "listLabel": "时间线节点",
+      "loadingList": "正在读取这份排版的时间线…",
+      "loadingSnapshot": "正在载入这一刻的排版…",
+      "moment": {
+        "before_restore": "恢复前",
+        "close": "离开项目",
+        "export": "导出",
+        "open": "打开项目",
+        "save": "保存",
+        "writeback": "写回"
+      },
+      "more": "节点操作",
+      "name": "命名…",
+      "namePlaceholder": "给现在起个名字，如「投稿前」",
       "noDiff": "与当前画布没有差异",
-      "previewApproximate": "图内修改预览不可用，下方缩略图是磁盘原图。",
-      "rename": "重命名版本",
-      "restore": "恢复为新版本",
-      "restoreHistory": "恢复排版版本「{{name}}」",
-      "restoreMissingCanvasBody": "这个检查点来自已删除的画布「{{from}}」。继续会写进当前画布「{{to}}」，覆盖现有内容。",
+      "noNamed": "还没有命名节点。给任意节点起个名字，它就不会被自动清理。",
+      "overlayHint": "底图 = 那一刻；描边 = 当前画布",
+      "preview": "预览",
+      "previewApproximate": "图内修改预览不可用，面板显示的是磁盘上的原图。",
+      "previewTitle": "预览：{{time}} {{name}}",
+      "quickSave": "保存",
+      "quickTitle": "给现在的排版起个名字，它就不会被自动清理。",
+      "rename": "改名…",
+      "restore": "恢复到这里",
+      "restoreFailed": "恢复前没能先存下当前排版，这次没有恢复：{{error}}",
+      "restoreHistory": "恢复排版节点「{{name}}」",
+      "restoreMissingCanvasBody": "这个节点来自已删除的画布「{{from}}」。继续会写进当前画布「{{to}}」，覆盖现有内容。",
       "restoreMissingCanvasTitle": "原画布已不存在",
-      "restoreOtherCanvasBody": "这个检查点拍自画布「{{from}}」，你当前在「{{to}}」。恢复会切到「{{from}}」写入，不动当前画布。",
+      "restoreOtherCanvasBody": "这个节点拍自画布「{{from}}」，你当前在「{{to}}」。恢复会切到「{{from}}」写入，不动当前画布。",
       "restoreOtherCanvasTitle": "恢复到画布「{{name}}」？",
-      "restoreUnknownCanvasBody": "它由旧版本留下，未记录来自哪张画布。继续会写进当前画布「{{to}}」，覆盖现有内容。",
-      "restoreUnknownCanvasTitle": "这个检查点没有来源画布",
-      "restored": "已恢复排版版本「{{name}}」，可撤销，未改动源文件。",
-      "save": "存版本",
-      "saved": "已把当前排版存成新版本",
+      "restoreUnknownCanvasBody": "它由旧版本留下，没有记录来自哪张画布。继续会写进当前画布「{{to}}」，覆盖现有内容。",
+      "restoreUnknownCanvasTitle": "这个节点没有来源画布",
+      "restored": "已恢复到「{{name}}」。恢复前的排版已存成节点，也可以按 {{undo}} 撤销。",
+      "save": "存为命名节点",
+      "saved": "已把现在存为命名节点「{{name}}」",
+      "sideCurrent": "当前",
+      "sideMoment": "那一刻",
       "summary": {
         "added_other": "新增 {{count}} 个对象",
         "baseline_other": "{{count}} 个对象",
@@ -1729,23 +1756,30 @@ export default interface Resources {
         "resized": "图幅 {{fromW}} × {{fromH}} → {{toW}} × {{toH}} mm",
         "sameMetrics": "对象数与图幅未变"
       },
-      "title": "排版版本",
-      "versionName": "版本名称",
-      "viewCurrent": "当前",
-      "viewLabel": "预览哪一版",
-      "viewVersion": "该版本"
+      "title": "排版时间线",
+      "today": "今天",
+      "unname": "删除名字",
+      "versionName": "节点名称",
+      "viewLabel": "怎么看",
+      "viewMoment": "这一刻",
+      "viewOverlay": "叠加对比",
+      "viewSide": "并排对比",
+      "yesterday": "昨天",
+      "zoomFit": "适配",
+      "zoomIn": "放大",
+      "zoomOut": "缩小"
     }
   },
   "errors": {
     "backend": {
-      "ai_agent_disabled": "{{agent}} 已在设置中关闭。在「编码 Agent」里打开后再试。",
+      "ai_agent_disabled": "{{agent}} 已在设置中关闭。在「改图助手」里打开后再试。",
       "ai_agent_executable_invalid": "无法用作该 Agent 的可执行文件：{{path}}。原设置不变。",
       "ai_agent_install_unsupported": "{{agent}} 不支持一键安装，请按官方文档安装。",
       "ai_agent_needs_auth": "{{agent}} 还没有登录。在它自己的命令行里登录，或在设置里改用自定义模型服务。",
       "ai_agent_not_installed": "本机没有检测到可用的 {{agent}}。",
-      "ai_agent_not_usable": "{{agent}} 暂时不可用。在「编码 Agent」里查看状态。",
+      "ai_agent_not_usable": "{{agent}} 暂时不可用。在「改图助手」里查看状态。",
       "ai_agent_probe_timeout": "验证 {{path}} 超时。可以再试，原设置不变。",
-      "ai_agent_unknown": "无法识别该编码 Agent：{{agent}}。",
+      "ai_agent_unknown": "无法识别该改图助手：{{agent}}。",
       "ai_revert_conflict": "{{script}} 在这次 AI 修改之后又改过，回滚会覆盖后来的改动，已取消。",
       "ai_revert_failed": "无法撤销 AI 修改：{{reason}}",
       "ai_start_failed": "无法启动 AI 任务：{{reason}}",
@@ -1813,6 +1847,7 @@ export default interface Resources {
       "multiple_stem_conflict": "产出的图名已属于其它脚本：{{detail}}。请在「项目接入状态」里指定用哪个，再重试。",
       "name_exhausted": "同名文件太多。换个文件名再导出。",
       "name_missing": "缺少名称",
+      "named_budget_exceeded": "命名节点已占用 {{used}} MB，超过时间线 {{limit}} MB 的上限，这次没有命名。先在时间线里删掉几个用不到的命名节点。",
       "native_asset_conflict": "该图已绑定另一个 Tavotto Run 会话。等它结束后再试。",
       "native_attach_cancelled": "已取消。脚本没有运行。",
       "native_attach_failed": "Tavotto 桌面没能连上这次运行。",
@@ -1930,6 +1965,9 @@ export default interface Resources {
       "user_environment_gone": "这个 Python 环境已经找不到了，请重新检查",
       "user_environment_incomplete": "这个 Python 环境里还缺 {{packages}}，请重新检查",
       "user_environment_unverifiable": "现在算不出这个脚本需要哪些包，没法确认这个环境装齐了，请重新检查",
+      "version_moment_invalid": "不认识的关键时刻：{{moment}}",
+      "version_name_too_long": "节点名字最长 {{max}} 个字，这次没有保存。",
+      "version_thumb_invalid": "节点缩略图格式不对或太大，没有保存。",
       "versions_unreadable": "无法读取版本历史，这次检查点没有写入。磁盘上的历史没有改动。",
       "workdir_confirmation_required": "要先选择脚本的运行目录",
       "workdir_mode_invalid": "不认识的工作目录模式：{{mode}}",
@@ -3884,8 +3922,10 @@ export default interface Resources {
       "quickEdit": "按对象打开快捷编辑菜单",
       "saveDocument": "保存排版",
       "saveLayout": "另存为新排版",
+      "saveNamed": "把现在存为命名节点",
       "script": "上标 / 下标（属性面板文字框内）",
       "selectAll": "全选",
+      "timeline": "打开 / 关闭排版时间线",
       "tools": "选择 / 文字 / 箭头 / 矩形 / 椭圆 / 直线",
       "tutorialPause": "暂停教程（教程卡片有焦点时）",
       "undoRedo": "撤销 / 重做",
@@ -4670,6 +4710,7 @@ export default interface Resources {
       "saveTitleProjectPending": "项目里的 {{file}} 有未保存的改动（改动已暂存在本机）。{{mod}}S 保存到这个文件",
       "shortcutHelp": "快捷键帮助",
       "subLabelsTip": "按阅读顺序添加 (a)(b)(c) 标签",
+      "timelineButton": "排版时间线",
       "tutorial": {
         "restart": "再看一遍教程",
         "resume": "继续教程",
@@ -4678,7 +4719,7 @@ export default interface Resources {
       "undo": "撤销",
       "undoWith": "撤销 {{label}}",
       "updateAvailable": "有新版本 {{version}}",
-      "versionTimeline": "排版版本…",
+      "versionTimeline": "排版时间线…",
       "zoomIn": "放大",
       "zoomOut": "缩小",
       "zoomValue": "缩放 {{percent}}%"

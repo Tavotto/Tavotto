@@ -6,9 +6,11 @@
 
 ## 启动器对（原「首次使用契约」一节的「双语启动器」）
 
-- **`.mcp.json` 的 `command` 是插件自带的 `./mcp/launch`**（#172 → #266：2026-09-24 先做成
+- **Codex MCP 配置的 `command` 是插件自带的 `./mcp/launch`**（#172 → #266：2026-09-24 先做成
   sh / cmd 同一文件的双语启动器 `./mcp/launch.cmd`；2026-09-29 真 Windows 实测它零工具，拆成
-  一对文件）。Codex 的 `.mcp.json` 没有按平台分支的字段、没有候选链，`command` 也**不过 shell**
+  一对文件）。配置文件自 ADR 0109（2026-09-28）起叫 `codex.mcp.json`、由 Codex 清单 `mcpServers` 指向（已装的
+  旧版仍是 `.mcp.json`，体检与钉 command 都按清单指向找，`pluginmanifest.mcp_config_rel`）。
+  Codex 的 MCP 配置没有按平台分支的字段、没有候选链，`command` 也**不过 shell**
   （实测：`command` 与 `args` 分开传，相对路径按 `cwd` 解析），一个裸名字盖不住 POSIX 与
   Windows（`python3` 在 Windows 上常是商店别名：命令存在、9009、零输出，连降级 server
   都起不来）。所以 command 指向一对启动器：
@@ -42,7 +44,7 @@
   按 Codex 的解析法解析相对 command（`codexinstall.plugin_relative_command`：按**插件根**、
   Windows 上按 PATHEXT；`launcher_starts` 要求 stdout 里除体检 JSON 外一行都没有——只看「最后
   一行是 JSON」会把 0.17.0 那种回显 shebang 的启动器判成起得来），起不来才把**已装副本**的
-  command 钉成解释器绝对路径，**`.mcp.json`
+  command 钉成解释器绝对路径，**MCP 配置
   与 `openai.yaml` 两侧一起换**（stdio 依赖按 command 匹配）。发行件里只许裸名字或这个 `./`
   相对、真在插件里的启动器（`pluginmanifest._is_bundled_launcher`：`mcp/launch` 须 100755，且
   Windows 半边 `mcp/launch.cmd` 同在），机器相关的绝对路径只属于已装副本。插件升级会把钉过的

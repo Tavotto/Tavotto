@@ -12,7 +12,7 @@ import type { Page } from '@playwright/test'
  *   * 英文界面同样不溢出（英文更长）；
  *   * axe 无 critical / serious。
  */
-const SECTION_LABELS = ['常规', '界面', '项目', '样式', '规范', '导出', '编码 Agent', '包管理', '诊断', '更新', '关于与隐私']
+const SECTION_LABELS = ['通用', '项目', '样式', '期刊规范', '导出', '改图助手', 'Python 库', '帮助与诊断', '关于与更新']
 
 /** 与 uiStore.MEDIUM 同值：<1024 时侧栏是盖在画布上的抽屉（e2e 不 import src，手抄一份） */
 const DRAWER_BELOW = 1024
@@ -70,7 +70,7 @@ test('设置：1024×640 小窗口整个外框在视口内且不横向溢出', a
   expect(box.y).toBeGreaterThanOrEqual(0)
   expect(box.x + box.width).toBeLessThanOrEqual(1024)
   expect(box.y + box.height).toBeLessThanOrEqual(640)
-  for (const label of ['包管理', '编码 Agent', '诊断']) {
+  for (const label of ['Python 库', '改图助手', '帮助与诊断']) {
     await dialog.getByRole('navigation').getByRole('button', { name: label, exact: true }).click()
     await page.waitForTimeout(150)
     expect(await horizontalOffenders(page, '[role="dialog"]'), label).toEqual([])
@@ -85,7 +85,7 @@ test('设置：窄窗口（<640 CSS px，等价于高缩放）导航变成顶部
   const navBox = (await nav.boundingBox())!
   const contentBox = (await dialog.locator('[data-settings-content]').boundingBox())!
   expect(navBox.y + navBox.height).toBeLessThanOrEqual(contentBox.y + 1) // 导航在内容上方
-  await nav.getByRole('button', { name: '包管理', exact: true }).click()
+  await nav.getByRole('button', { name: 'Python 库', exact: true }).click()
   await expect(dialog.getByText('内置包')).toBeVisible()
   const box = (await dialog.boundingBox())!
   expect(box.x + box.width).toBeLessThanOrEqual(600)
@@ -100,7 +100,7 @@ test('设置：英文界面同样不溢出', async ({ app, page }) => {
   await page.getByRole('button', { name: 'Settings', exact: true }).first().click()
   const dialog = page.getByRole('dialog', { name: 'Settings' })
   await expect(dialog).toBeVisible({ timeout: 30_000 })
-  for (const label of ['Packages', 'Coding Agents', 'Diagnostics', 'Specs']) {
+  for (const label of ['Python libraries', 'Figure assistants', 'Help & diagnostics', 'Journal specs']) {
     await dialog.getByRole('navigation').getByRole('button', { name: label, exact: true }).click()
     await page.waitForTimeout(150)
     expect(await horizontalOffenders(page, '[role="dialog"]'), label).toEqual([])
@@ -111,25 +111,25 @@ test('设置：方向键在导航里走，Enter 不需要——落地即切页',
   const a = await app()
   const dialog = await openSettings(page, a.baseURL)
   const nav = dialog.getByRole('navigation')
-  await nav.getByRole('button', { name: '常规', exact: true }).focus()
+  await nav.getByRole('button', { name: '通用', exact: true }).focus()
   await page.keyboard.press('ArrowDown')
-  await expect(nav.getByRole('button', { name: '界面', exact: true })).toHaveAttribute('aria-current', 'true')
-  await expect(nav.getByRole('button', { name: '界面', exact: true })).toBeFocused()
+  await expect(nav.getByRole('button', { name: '项目', exact: true })).toHaveAttribute('aria-current', 'true')
+  await expect(nav.getByRole('button', { name: '项目', exact: true })).toBeFocused()
   await page.keyboard.press('End')
-  await expect(nav.getByRole('button', { name: '关于与隐私', exact: true })).toHaveAttribute('aria-current', 'true')
+  await expect(nav.getByRole('button', { name: '关于与更新', exact: true })).toHaveAttribute('aria-current', 'true')
 })
 
 /**
  * axe 覆盖的分区清单。
  *
- * 「更新」「关于与隐私」是 2026-09-06 补进来的：它们此前从没被 axe 跑过，而
+ * 「更新」「关于」（现已并成「关于与更新」）是 2026-09-06 补进来的：它们此前从没被 axe 跑过，而
  * 关于页正好挂着一条 serious（句子里的链接只靠颜色区分）——**没被跑过的门禁
  * 不会保持正确，它只是没说话**。剩下的分区留给后续，别把这条用例拉成十一页
  * 串行的慢用例。
  */
-const AXE_SECTIONS = ['包管理', '诊断', '编码 Agent', '更新', '关于与隐私']
+const AXE_SECTIONS = ['Python 库', '帮助与诊断', '改图助手', '关于与更新']
 
-test('设置：五个分区 axe 无 critical/serious', async ({ app, page }) => {
+test('设置：四个分区 axe 无 critical/serious', async ({ app, page }) => {
   const a = await app()
   const dialog = await openSettings(page, a.baseURL)
   for (const label of AXE_SECTIONS) {

@@ -30,7 +30,8 @@ DSH 以前只能靠配置生成器打印一段 Cordis YAML，用户手工合并�
    `StdioClientTransport` 用 cross-spawn 起进程，它对非 `.exe` 文件自己拼 `cmd.exe /d /s /c "<整条>"`、`^` 转义全部
    元字符并逐字交给 CreateProcess。把 `cmd.exe` 当 command 传参数不行：参数由 libuv 按 MSVCRT 规则加引号，
    `\"` cmd 不认，路径一带空格就切错，怎么包载荷都修不了。cross-spawn 先读首行找 shebang，所以
-   `launch.cmd` 首行不能是 `#!`（#720 起是 `@echo off`）。超时读 `.mcp.json` 的 `tool_timeout_sec` 换成毫秒。
+   `launch.cmd` 首行不能是 `#!`（#720 起是 `@echo off`）。超时读 `.mcp.json` 的 `tool_timeout_sec` 换成毫秒（[ADR 0109](0109-more-hosts-one-plugin.md) 起那份文件叫
+   `codex.mcp.json`，胶水按 Codex 清单的 `mcpServers` 找它）。
    serverName 与 `.mcp.json` 同名，工具暴露为 `mcp__tavotto__<原名>`。
 4. **技能靠第二个本地技能提供者。** base 里那行 `skill-filesystem` 不动（补丁会整条替换 config，改它等于抹掉
    用户的设置）；另插一行 `providerName: tavotto`、`includeDefaultRoots: false`、`customSkillDirs` 只指包内

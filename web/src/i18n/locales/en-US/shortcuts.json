@@ -46,7 +46,9 @@
     "multiSelect": "Add / remove objects or figure elements from the selection",
     "quickEdit": "Open the quick-edit menu for the object",
     "tutorialPause": "Pause the tutorial (tutorial card focused)",
-    "cycleOverlap": "Cycle the selection through overlapping figure elements"
+    "cycleOverlap": "Cycle the selection through overlapping figure elements",
+    "timeline": "Open / close the layout timeline",
+    "saveNamed": "Save now as a named point"
   },
   "title": "Keyboard shortcuts",
   "search": "Search shortcuts…",

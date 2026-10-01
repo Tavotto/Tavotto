@@ -410,7 +410,8 @@ def test_no_engine_anywhere_still_yields_a_config_with_real_recovery_steps(
     bare = _bare_python(tmp_path)
     proc = _run_configure(
         unpacked,
-        ["--host", "trae", "--project-root", str(project), "--python", bare],
+        # 解释器路径带空格（bare venv）：Trae 会拒它（command 里不许有空格），这里用不受限的 cursor
+        ["--host", "cursor", "--project-root", str(project), "--python", bare],
         tmp_path,
     )
     assert proc.returncode == 0, proc.stderr
@@ -449,7 +450,16 @@ def test_an_explicit_engine_python_that_cannot_import_the_engine_is_refused(
 
 #: 输出 JSON 的全部 profile（DSH 是 Cordis YAML，没有独立的解析器消费它，不在此列——
 #: 验收矩阵里它的工具流程因此是 not_run，Codex 在 #560 上指出不能靠「同一份启动描述」推定）
-JSON_HOSTS = ["cursor", "zcode", "workbuddy", "claude-code", "claude-desktop", "trae", "vscode"]
+JSON_HOSTS = [
+    "cursor",
+    "zcode",
+    "workbuddy",
+    "claude-code",
+    "claude-desktop",
+    "trae",
+    "vscode",
+    "minimax-code",
+]
 
 
 @pytest.mark.parametrize("host", JSON_HOSTS)

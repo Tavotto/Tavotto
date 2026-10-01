@@ -24,6 +24,7 @@ import { Dialog } from '../ui/Dialog'
 import { CopyButton } from '../settings/CopyButton'
 import { Toggle } from '../ui/Toggle'
 import { Tip } from '../ui/Tooltip'
+import { captureMoment, markMoment, momentWithDoc } from '@/lib/timelineCheckpoint'
 
 const stemOf = (fileId: string) => fileId.split('/').pop()?.replace(/\.[^.]+$/, '') ?? fileId
 
@@ -238,6 +239,8 @@ export function WriteBackDialog({
   }, [panels, objects])
 
   const run = async () => {
+    // 写回完成时可能已经换了排版、或接着改了：「写回」点只打给这一份、拍的是发起时的内容
+    const moment = captureMoment()
     setBusy(true)
     setError(null)
     try {
@@ -248,6 +251,7 @@ export function WriteBackDialog({
         useAnn ? annMap : undefined,
       )
       setResult(res)
+      let written = moment
       if (useAnn) {
         // 标注已经烙进原图：画布上的原件移除（可撤销），否则成图里会出现两份
         const ids = [...annMap.values()].flatMap((a) => a.objectIds)
@@ -257,7 +261,23 @@ export function WriteBackDialog({
             d.objects = d.objects.filter((o) => !ids.includes(o.id))
           })
         useSelectionStore.getState().clear()
+        // 节点记**写回完成后**的文档：发起那一刻的那份去掉烙进原图的标注原件（不带途中的
+        // 其它编辑）；上下文仍是发起那一刻的。记删之前的话，从它恢复标注会出现两份（Codex #679）
+        const doc = moment.identity.doc
+        // 这些标注对象被这次写回烙进了哪个面板——只登记归属，画不画留给合成器按面板**实际
+        // 选中的图源**判定（Codex #679 P1 追加）：不能在这里靠「此刻有没有 SVG」猜，SVG 到
+        // 合成器手里也可能才发现解析 / 解码失败，退到合成时才现取的 render（那张图已经烙好）。
+        // 归属复用 annMap 按重叠面积算出来的那套，不另写一遍。
+        const bakedInto = new Map<string, string>()
+        for (const [panelId, ann] of annMap) for (const oid of ann.objectIds) bakedInto.set(oid, panelId)
+        written = momentWithDoc(
+          moment,
+          { ...doc, objects: doc.objects.filter((o) => !ids.includes(o.id)) },
+          bakedInto,
+        )
       }
+      // 排版时间线的关键时刻（ADR 0101）：写回成功，原图已经变了
+      void markMoment('writeback', written)
       // 重拉面板列表拿到新 mtime；所有图片 URL 带 m 参数，缩略图与画布面板都会自动重取
       await useAssetStore.getState().load()
       useUiStore
@@ -495,7 +515,10 @@ export function WriteBackTopBarButton() {
           onClick={() => setOpen(true)}
         >
           <FileUp size={ICON_SIZE.md} />
-          {targets.length > 1 ? wb('topBarShortCount', { count: targets.length }) : wb('topBarShort')}
+          {/* 窄于 900 只留图标（顶栏三段放不下时不许互相压住；aria-label 照旧） */}
+          <span className="max-[899px]:sr-only">
+            {targets.length > 1 ? wb('topBarShortCount', { count: targets.length }) : wb('topBarShort')}
+          </span>
         </Button>
       </Tip>
       <WriteBackDialog panels={targets} open={open} onOpenChange={setOpen} />
