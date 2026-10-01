@@ -13,6 +13,7 @@ from __future__ import annotations
 import ast
 import contextlib
 import errno
+import glob
 import json
 import ntpath
 import os
@@ -48,7 +49,7 @@ OLD = "/nonexistent-tavotto/a/proj"
 
 def _touch(path: Path, text: str = "1\n") -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
+    path.write_bytes(text.encode("utf-8"))
     return path
 
 
@@ -106,8 +107,9 @@ def test_paths_that_exist_are_never_touched(tmp_path, moved):
     here = tmp_path / "here"
     _touch(here / "data" / "y.csv")
     rule = {"kind": P, "from": str(here), "to": str(new)}
-    src = f'D = "{here}"\nF = "{here}/data/x.h5"\nopen(D)\nopen(F)\n'  # 目录在，缺的是更深那一段
-    plan = _plan(tmp_path, src, rule=rule, missing=[f"{here}/data/x.h5"])
+    missing = str(here / "data" / "x.h5")
+    src = f"D = {str(here)!r}\nF = {missing!r}\nopen(D)\nopen(F)\n"  # 目录在，缺的是更深那一段
+    plan = _plan(tmp_path, src, rule=rule, missing=[missing])
     assert [e["line"] for e in plan.edits] == [2]
 
 
@@ -286,7 +288,11 @@ def test_a_renamed_file_rule_does_not_rewrite_the_directory_constant(tmp_path):
 
 
 def test_windows_targets_are_written_with_forward_slashes(tmp_path, monkeypatch):
-    monkeypatch.setattr(inputremap, "location_exists", lambda p, **kw: p.startswith("C:"))
+    monkeypatch.setattr(
+        inputremap,
+        "location_exists",
+        lambda p, **kw: p.replace("\\", "/").startswith("C:/Data/new/"),
+    )
     rule = {"kind": P, "from": OLD, "to": "C:\\Data\\new"}
     plan = _plan(tmp_path, f'F = open("{OLD}/x.csv")\n', rule=rule, missing=[f"{OLD}/x.csv"])
     assert plan.edits[0]["value_after"] == "C:/Data/new/x.csv"
@@ -569,8 +575,12 @@ def test_confined_globs_keep_literal_parent_segments_and_empty_recursive_matches
     monkeypatch.setattr(databinding, "_scandir", files_first)
     chosen = tmp_path / "chosen"
     _touch(chosen / "x.csv")
-    for pattern in ["*/../x.csv", "**/../x.csv", "missing/../*.csv"]:
+    for pattern in ["*/../x.csv", "**/../x.csv"]:
         assert not inputremap.glob_has_match(str(chosen / pattern), root=str(chosen))
+    # 固定前缀里的 `..` 由本机文件系统处理（Windows 会先折叠 missing/..）；
+    # 比本机 glob，不把 POSIX 的「missing 必须存在」误当成跨平台契约。
+    pattern = str(chosen / "missing/../*.csv")
+    assert inputremap.glob_has_match(pattern, root=str(chosen)) == bool(glob.glob(pattern))
     assert not inputremap.glob_has_match(str(chosen / "*") + "/", root=str(chosen))
     assert not inputremap.glob_has_match(str(chosen / "*.csv") + "/", root=str(chosen))
     (chosen / "empty").mkdir()
@@ -590,7 +600,7 @@ def test_folder_entries_derive_from_the_parent_or_a_renamed_folder(tmp_path):
     renamed.mkdir()
     rule = inputremap.derive_location("data/runs", str(renamed), chosen_is_dir=True)
     assert rule == {"kind": P, "from": "data/runs", "to": str(renamed)}
-    assert figcapture.remap_target([rule], "data/runs", whole=True) == str(renamed)
+    assert figcapture.remap_target([rule], "data/runs", whole=True) == renamed.as_posix()
     assert figcapture.remap_target([rule], "data/runs") is None  # worker 改道从不用 whole
 
 
@@ -601,7 +611,7 @@ def test_dotted_folder_entries_are_folders_when_the_disk_says_so(tmp_path):
     moved.mkdir(parents=True)
     rule = inputremap.derive_location(f"{OLD}/runs.v1", str(moved), chosen_is_dir=True)
     assert rule == {"kind": P, "from": f"{OLD}/runs.v1", "to": str(moved)}
-    assert figcapture.remap_target([rule], f"{OLD}/runs.v1", whole=True) == str(moved)
+    assert figcapture.remap_target([rule], f"{OLD}/runs.v1", whole=True) == moved.as_posix()
     rule = inputremap.derive_location(f"{OLD}/runs.v1", str(moved.parent), chosen_is_dir=True)
     assert rule == {"kind": P, "from": OLD, "to": str(moved.parent)}
     renamed = tmp_path / "runs-2026"
@@ -707,7 +717,7 @@ def test_native_miss_keeps_the_absolute_form_when_the_script_wrote_it_absolute(t
     身份」同一个口径，Codex 评 #730 P2）。"""
     abs_path = tmp_path / "run" / "x.h5"
     (tmp_path / "fig.py").write_text(
-        f'import h5py\nh5py.File("{abs_path}")\n',
+        f"import h5py\nh5py.File({str(abs_path)!r})\n",
         encoding="utf-8",
     )
     cwd = str(tmp_path)
@@ -749,10 +759,11 @@ def test_replace_backs_up_twice_then_swaps_and_keeps_the_mode(store):
     script = store.root / "fig.py"
     script.write_bytes(b"A = 1\n")
     os.chmod(script, 0o755)
+    original_mode = stat.S_IMODE(script.stat().st_mode)  # Windows 只有只读位，没有 POSIX 可执行位
     before = scriptbackup.sha256(b"A = 1\n")
     rec = scriptbackup.replace(store, "fig.py", b"A = 2\n", kind="t", expect_before=before)
     assert script.read_bytes() == b"A = 2\n"
-    assert stat.S_IMODE(script.stat().st_mode) == 0o755
+    assert stat.S_IMODE(script.stat().st_mode) == original_mode
     for base in (store.project_dir, store.mirror_dir):
         d = base / rec["id"]
         assert (d / "original.py").read_bytes() == b"A = 1\n"
