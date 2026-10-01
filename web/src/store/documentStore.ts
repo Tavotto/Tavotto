@@ -3,7 +3,7 @@ import { perfSpan } from '@/perf/core'
 import { enablePatches, produceWithPatches, type Patch } from 'immer'
 import * as history from '@/lib/history'
 import { rebaseToCurrentNative, sizeBasisOf, type SizeBasis } from '@/lib/panelNativeSize'
-import { fetchAutosave, fetchAutosaveSummary, putAutosave } from '@/lib/api'
+import { fetchAutosave, fetchAutosaveSummary, fetchLayoutOwner, putAutosave } from '@/lib/api'
 import { loadProjectDocument } from '@/lib/projectDocs'
 import { DOC_INDEX_KEY, isForeignDocument, recordedProjectOf } from '@/lib/docOwnership'
 import {
@@ -1717,9 +1717,7 @@ export async function restoreSession(): Promise<boolean> {
   // 往 G 的目录里写。没开项目时只认没记在任何项目名下的那份。
   const pj = currentProjectId()
   const own = pj ? await loadProjectDocument(pj) : null
-  const localOwned =
-    localId !== null && (pj ? recordedProjectOf(localId) === pj : !isForeignDocument(localId, null))
-  const id = own?.id ?? (localOwned ? localId : null)
+  const id = own?.id ?? (localId !== null && (await currentDocBelongsHere(localId, pj)) ? localId : null)
   if (!id) return false
   if (useDocumentStore.getState().documentId === id) return false
   // 问后端的这段路上别处换过文档或改过它：那份更新，这次恢复让位（与下面读盘那段同一条判据）
@@ -1735,14 +1733,51 @@ export async function restoreSession(): Promise<boolean> {
     return false
   }
   applyProject(pd, id, { dirty: false })
-  // 恢复出来的只会是这个项目自己的排版（上面的判据）：归属钉在这个项目上
+  // 恢复出来的只会是这个项目自己的排版（上面的判据）：归属钉在这个项目上，本机索引里不知道归属的
+  // 那条（升级前的）当场补上（#773）
   docProject = { id: pj, name: currentProjectLabel() }
   pendingClaim = null
+  if (pj) backfillIndexOwner(id, pd, pj)
   useDocumentStore.setState({ lastPersisted: index.find((e) => e.id === id)?.savedAt ?? null })
   setSaveState('clean')
   setDocNotice(notice)
   announceDocOpen(id)
   return true
+}
+
+/**
+ * 全局 `currentDoc` 能不能当成当前项目的排版恢复（#715 验收 P1 / #773）。
+ *
+ * - 本机索引**记着**归属：就按它（别的项目的一律不认）；
+ * - 记着「不知道」（升级前 / T04 之前的条目没有 projectId，或索引里根本没有这条）：**问后端要证据**
+ *   （`GET /api/layout-session/owner`：槽位归属 → 当前项目的时间线节点 → 面板素材全在当前项目里），
+ *   有证据才认，没有或问不到就不恢复；后端没有这个端点（404：playground / 旧后端）时照旧认——那里
+ *   没有跨项目共用的稳定 origin，也没有别处可问；
+ * - 没开项目：只认没记在任何项目名下的那份。
+ */
+async function currentDocBelongsHere(docId: string, pj: string | null): Promise<boolean> {
+  const recorded = recordedProjectOf(docId)
+  if (!pj) return !isForeignDocument(docId, null)
+  if (typeof recorded === 'string') return recorded === pj
+  const verdict = await fetchLayoutOwner(docId, pj)
+  return verdict === 'this' || verdict === undefined
+}
+
+/** 本机索引里这份排版的归属补成 `pj`（没有这条就补一条）；记着别的项目的不动 */
+function backfillIndexOwner(docId: string, pd: ProjectDocument, pj: string): void {
+  const index = readIndex()
+  const hit = index.find((e) => e.id === docId)
+  if (hit && typeof hit.projectId === 'string') return
+  const name = currentProjectLabel()
+  const entry: RecentDoc = {
+    ...(hit ?? { id: docId, name: pd.project.name, savedAt: Date.now() }),
+    objects: hit?.objects ?? countObjects(pd),
+    canvases: hit?.canvases ?? pd.canvases.length,
+    projectId: pj,
+    ...(name ? { projectName: name } : {}),
+  }
+  const kept = writeIndex(hit ? index.map((e) => (e.id === docId ? entry : e)) : [entry, ...index])
+  useDocumentStore.setState({ recentDocs: kept })
 }
 
 /** 防抖中的那次自动保存（手动保存要先把它取消，否则会多写一遍） */

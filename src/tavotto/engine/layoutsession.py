@@ -188,6 +188,15 @@ def owner_conflict(state: dict, doc_id: str, key: str | None) -> bool:
     return doc_id in owners_ and owners_[doc_id] != key
 
 
+def owner_verdict(doc_id: str, key: str | None) -> str | None:
+    """owners 对「槽位 `doc_id` 是不是 `key` 的」怎么说：`"this"` / `"other"` / `None`（没有记录 = 不知道）。"""
+    with _LOCK:
+        owners_ = _read()["owners"]
+    if doc_id not in owners_:
+        return None
+    return "this" if owners_[doc_id] == key else "other"
+
+
 # ------------------------------- last --------------------------------------
 
 

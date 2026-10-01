@@ -15,7 +15,8 @@
  *  - `undefined`：索引里没有这份（换了 origin、被 12 条上限挤掉）。
  *
  * 「不知道」**不折成**「属于当前项目」，也不折成「属于别的项目」：`isForeignDocument` 只在**确知**
- * 属于别的项目时为真；需要正面证据的地方（全局 `currentDoc` 的退路）自己判 `=== pj`。
+ * 属于别的项目时为真；需要正面证据的地方（全局 `currentDoc` 的退路）自己判 `=== pj`，「不知道」时
+ * 问后端要证据（`GET /api/layout-session/owner`，`documentStore.currentDocBelongsHere`，#773）。
  * 后端那一侧的同一条判据是 `engine/layoutsession.owner_conflict`（槽位归属 `owners`），两侧互为纵深，
  * 谁先拦下都算数。
  */

@@ -184,13 +184,17 @@
     「没记过」**：`undefined` 时退回本机的旧逻辑。`tavotto.projectDoc.<pj>` 只当缓存；后端 `null` 而本机有
     = 同一个 origin 升级上来的旧记录，拿它当迁移源并推一份上去。
   - 取哪一份：`restoreSession` = `loadProjectDocument(pj)`（当前项目的 last：后端 → 本机按项目的缓存）→ 旧的
-    `tavotto.currentDoc`（**只在本机索引确知它属于当前项目时**）；`adoptNow` = `loadProjectDocument(pj)`。
+    `tavotto.currentDoc`（**只在确知属于当前项目时**：本机索引记着，或后端给得出证据）；`adoptNow` = `loadProjectDocument(pj)`。
     `lastDocumentIssue` / `DocumentBanner` 机制不变。
   - **一个项目的排版不许漏进另一个项目（2026-10-01，#715 Windows 真机验收 P1）**：稳定端口之后先后打开的项目共用
     一个 origin，`currentDoc` / `docIndex` 这类全局键跨项目存活。改造前「后端没记过」（`null`）时 `restoreSession`
     退回全局 `currentDoc`，关掉 F 再打开新项目 G，G 一打开就是 F 的排版，随后记成 G 的 last、往 G 的目录打时间线节点。
     判据唯一出处 `lib/docOwnership.ts`（`isForeignDocument` / `recordedProjectOf`，按本机「最近文档」索引里写下那一刻的
-    `projectId`；「不知道」不折成任何一边）。消费方：`restoreSession` 的 `currentDoc` 退路要正面证据（`=== pj`）；
+    `projectId`；「不知道」不折成任何一边）。消费方：`restoreSession` 的 `currentDoc` 退路要正面证据（本机索引记着 `=== pj`，或下面的后端证据）；
+    **本机索引不知道归属**（T04 之前的条目没有 projectId / 索引里没有这条，升级上来的用户都是这样）时
+    `restoreSession` 不猜，问后端要证据（`GET /api/layout-session/owner`：槽位归属是定论 → 当前项目的
+    `tavottofile/versions/<id>.json` → 面板素材全在当前项目里），有证据才恢复并当场把归属补进本机索引，
+    没有或问不到就不恢复；后端没有这个端点（404：playground / 旧后端）时照旧认（#773）。
     `projectDocs` 的本机缓存（含待确认那条、迁移源）与后端回的 last 确知属于别的项目就不认、并作废缓存；迁移推送
     **等后端裁决**，后端回 `409 layout_foreign`（`engine/layoutsession.owner_conflict`，纵深那一道）就不恢复、不重推；
     「记上次开着哪份」的订阅不记别的项目的排版。`currentDoc` 不改成按项目分键：按项目的那一份就是 `projectDoc.<pj>`，

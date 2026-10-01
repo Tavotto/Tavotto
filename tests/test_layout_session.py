@@ -366,6 +366,71 @@ def test_viewing_a_layout_from_another_project_keeps_its_owner_until_edited(clie
     assert layoutsession.last_for(kf) is None
 
 
+# ---------------- 归属证据：本机不知道归属的升级前排版（#773） ----------------
+
+
+def _slot_with_panels(doc_id: str, *file_ids: str) -> None:
+    doc = json.loads(json.dumps(PD))
+    doc["canvases"][0]["objects"] = [
+        {"id": f"p{i}", "type": "panel", "fileId": f, "x": 0, "y": 0, "w": 1, "h": 1}
+        for i, f in enumerate(file_ids)
+    ]
+    m.AUTOSAVE_DIR.mkdir(parents=True, exist_ok=True)
+    (m.AUTOSAVE_DIR / f"{doc_id}.json").write_text(json.dumps(doc), encoding="utf-8")
+
+
+def _owner(client, pid: str, doc_id: str) -> dict:
+    r = client.get(f"/api/layout-session/owner?doc_id={doc_id}", headers=_pj(pid))
+    assert r.status_code == 200, r.get_json()
+    return r.get_json()
+
+
+def test_owner_evidence_owners_record_is_decisive(client, tmp_path):
+    f = _project(client, tmp_path, "projF", default=True)
+    g = _project(client, tmp_path, "projG")
+    (Path(g["figures_dir"]) / "a.pdf").write_bytes(b"%PDF-1.4")
+    _slot_with_panels("d_f", "a.pdf")
+    layoutsession.record_owner("d_f", layoutsession.project_key(f["figures_dir"]))
+    # 素材在 G 里也有，但 owners 记着 F：别的项目的就是别的项目的（projF → projG 的形状）
+    assert _owner(client, g["id"], "d_f") == {"owner": "other", "evidence": "owners"}
+    assert _owner(client, f["id"], "d_f") == {"owner": "this", "evidence": "owners"}
+
+
+def test_owner_evidence_from_the_projects_timeline(client, tmp_path):
+    g = _project(client, tmp_path, "projG", default=True)
+    versions = Path(g["figures_dir"]) / "tavottofile" / "versions"
+    versions.mkdir(parents=True)
+    (versions / "d_old.json").write_text("{}", encoding="utf-8")
+    assert _owner(client, g["id"], "d_old") == {"owner": "this", "evidence": "versions"}
+
+
+def test_owner_evidence_from_assets_all_in_the_project(client, tmp_path):
+    g = _project(client, tmp_path, "projG", default=True)
+    root = Path(g["figures_dir"])
+    (root / "a.pdf").write_bytes(b"%PDF-1.4")
+    (root / "sub").mkdir()
+    (root / "sub" / "b.png").write_bytes(b"x")
+    _slot_with_panels("d_all", "a.pdf", "sub/b.png", "runtime:abc")
+    assert _owner(client, g["id"], "d_all") == {"owner": "this", "evidence": "assets"}
+    # 有一张不在这个项目里：不算证据
+    _slot_with_panels("d_some", "a.pdf", "missing.pdf")
+    assert _owner(client, g["id"], "d_some")["owner"] == "unknown"
+    # 越出项目目录的路径不算（文件真的在，只是不在这个项目里）
+    (root.parent / "outside.pdf").write_bytes(b"%PDF-1.4")
+    _slot_with_panels("d_escape", "a.pdf", "../outside.pdf")
+    assert _owner(client, g["id"], "d_escape")["owner"] == "unknown"
+    # 只有 runtime 面板 / 没有面板：没有可以比的东西
+    _slot_with_panels("d_runtime", "runtime:abc")
+    assert _owner(client, g["id"], "d_runtime")["owner"] == "unknown"
+    # 槽位不在
+    assert _owner(client, g["id"], "d_nothing") == {"owner": "unknown", "evidence": None}
+
+
+def test_owner_evidence_rejects_bad_ids(client):
+    r = client.get("/api/layout-session/owner?doc_id=../x")
+    assert r.status_code == 400 and r.get_json()["code"] == "bad_request"
+
+
 def _legacy_slot(doc_id: str, mtime_s: int) -> Path:
     p = m.AUTOSAVE_DIR / f"{doc_id}.json"
     p.parent.mkdir(parents=True, exist_ok=True)

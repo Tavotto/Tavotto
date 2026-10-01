@@ -28,6 +28,8 @@ const lastByProject = new Map<string, { doc_id: string; name: string; at: number
 const owners = new Map<string, string>()
 /** 每一次自动保存 PUT：[doc_id, pj] */
 const autosavePuts: [string, string][] = []
+/** `${pj}:${doc_id}`：后端在这个项目里找得到这份排版的证据（时间线节点 / 素材全在） */
+const evidenceHere = new Set<string>()
 /** true = 后端做归属检查（`layout_foreign`，本 PR 的后端那一道）；false = 修复前的后端 */
 let ownerChecks = false
 let serverClock = 1
@@ -73,6 +75,13 @@ globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
     const last = { doc_id: body.doc_id, name: body.name, at: serverClock }
     lastByProject.set(pj, last)
     return json({ ok: true, last })
+  }
+  if (u.pathname === '/api/layout-session/owner' && method === 'GET') {
+    // 与 `app._layout_owner_evidence` 同形：owners 是定论；没有记录时看「当前项目里的证据」
+    const id = u.searchParams.get('doc_id') ?? ''
+    const pj = pjOf(u, init)
+    if (owners.has(id)) return json({ owner: owners.get(id) === pj ? 'this' : 'other', evidence: 'owners' })
+    return json(evidenceHere.has(`${pj}:${id}`) ? { owner: 'this', evidence: 'assets' } : { owner: 'unknown', evidence: null })
   }
   if (u.pathname.startsWith('/api/preferences/')) return json({ defaults: null })
   if (u.pathname.startsWith('/api/projects')) return json({ recent: [], pinned: [], projects: [] })
@@ -127,6 +136,7 @@ beforeEach(() => {
   slots.clear()
   lastByProject.clear()
   owners.clear()
+  evidenceHere.clear()
   autosavePuts.length = 0
   ownerChecks = false
   serverClock = 1
@@ -212,6 +222,59 @@ describe('同一个 origin 先后打开两个项目', () => {
     expect(f2.doc.useDocumentStore.getState().documentId).toBe('d_f')
     expect(texts(f2)).toEqual(['F'])
     expect(JSON.parse(slots.get('d_f')!).canvases[0].objects.map((o: TextObject) => o.text)).toEqual(['F'])
+  })
+})
+
+/** 升级前留下的状态：磁盘上一份槽位（没有归属记录）、本机 currentDoc 指着它、最近文档索引里没有归属 */
+function legacyCurrentDoc(id: string, label: string, entry: 'none' | 'unlabelled') {
+  const pd = { ...emptyProject(), project: { id: 'x', name: '升级前的排版' } }
+  pd.canvases[0].objects.push(text(`t_${label}`, label))
+  slots.set(id, JSON.stringify(pd))
+  localStorage.setItem('tavotto.currentDoc', id)
+  if (entry === 'unlabelled') {
+    localStorage.setItem('tavotto.docIndex', JSON.stringify([{ id, name: '升级前的排版', savedAt: 1, objects: 1 }]))
+  }
+}
+const indexOwner = (id: string) =>
+  (JSON.parse(localStorage.getItem('tavotto.docIndex') ?? '[]') as { id: string; projectId?: string }[]).find(
+    (e) => e.id === id,
+  )?.projectId
+
+describe('升级上来、本机不知道归属的排版（#773）：问后端要证据', () => {
+  it('当前项目里有证据（素材全在 / 时间线节点）：恢复，并当场把归属补进本机索引', async () => {
+    legacyCurrentDoc('d_old', '旧', 'unlabelled')
+    evidenceHere.add('p_g:d_old')
+    const g = await boot('p_g')
+    expect(await g.doc.restoreSession()).toBe(true)
+    expect(g.doc.useDocumentStore.getState().documentId).toBe('d_old')
+    expect(texts(g)).toEqual(['旧'])
+    expect(indexOwner('d_old')).toBe('p_g')
+  })
+
+  it('索引里根本没有这条、后端的槽位归属记着当前项目：恢复并补一条带归属的索引', async () => {
+    legacyCurrentDoc('d_old', '旧', 'none')
+    owners.set('d_old', 'p_g')
+    const g = await boot('p_g')
+    expect(await g.doc.restoreSession()).toBe(true)
+    expect(g.doc.useDocumentStore.getState().documentId).toBe('d_old')
+    expect(indexOwner('d_old')).toBe('p_g')
+  })
+
+  it('只有别的项目有记录（projF → projG 的形状，本机索引已不知道归属）：不恢复', async () => {
+    legacyCurrentDoc('d_f', 'F', 'unlabelled')
+    owners.set('d_f', 'p_f')
+    const g = await boot('p_g')
+    expect(await g.doc.restoreSession()).toBe(false)
+    expect(g.doc.useDocumentStore.getState().documentId).not.toBe('d_f')
+    expect(g.doc.useDocumentStore.getState().doc.objects).toEqual([])
+    expect(indexOwner('d_f')).toBeUndefined()
+  })
+
+  it('哪儿都没有证据：不恢复', async () => {
+    legacyCurrentDoc('d_old', '旧', 'unlabelled')
+    const g = await boot('p_g')
+    expect(await g.doc.restoreSession()).toBe(false)
+    expect(g.doc.useDocumentStore.getState().doc.objects).toEqual([])
   })
 })
 

@@ -7452,6 +7452,63 @@ def api_layout_session_put_last():
     return jsonify({"ok": True, "last": last})
 
 
+def _layout_owner_evidence(doc_id: str, ctx) -> tuple[str, str | None]:
+    """槽位 `doc_id` 与当前项目的关系：(`this` / `other` / `unknown`, 证据)。
+
+    只给**前端本机索引不知道归属**的那一档用（升级前、T04 之前的 docIndex 条目没有 projectId；
+    #715 验收 P1 之后这类排版要正面证据才恢复）。证据按可信度依次看：
+
+    1. `owners`（#719 起每次自动保存按 pj 记）：有记录就是定论，别的项目的一律 `other`；
+    2. 当前项目的 `tavottofile/versions/<doc_id>.json`（ADR 0101 起时间线节点按项目写）；
+    3. 槽位里的面板引用的素材**全部**在当前项目里、且至少有一个（升级前的槽位没有任何归属记录，
+       只剩内容本身：它放的就是这个项目的图）。runtime 面板（`runtime:` 前缀）不计。
+
+    都没有就是 `unknown`——前端据此不恢复。
+    """
+    key = engine_layoutsession.project_key(ctx.path) if ctx is not None else None
+    verdict = engine_layoutsession.owner_verdict(doc_id, key)
+    if verdict is not None:
+        return verdict, "owners"
+    if ctx is None:
+        return "unknown", None
+    store = project_store_dir(ctx)
+    if store is not None and (store / "versions" / f"{doc_id}.json").is_file():
+        return "this", "versions"
+    try:
+        doc = engine_documents.loads_document(_autosave_path(doc_id).read_bytes())
+    except (OSError, ValueError):
+        return "unknown", None
+    if not isinstance(doc, dict):
+        return "unknown", None
+    root = Path(ctx.path).resolve()
+    files = [
+        o.get("fileId")
+        for o in _doc_objects(doc)
+        if o.get("type") == "panel"
+        and isinstance(o.get("fileId"), str)
+        and not o["fileId"].startswith("runtime:")
+    ]
+    if not files:
+        return "unknown", None
+    for rel in files:
+        p = (root / rel).resolve()
+        if not p.is_relative_to(root) or not p.is_file():
+            return "unknown", None
+    return "this", "assets"
+
+
+@app.get("/api/layout-session/owner")
+def api_layout_session_owner():
+    """前端不知道归属的那份排版，后端有没有证据说它属于当前项目（#715 验收 P1 / #773）。"""
+    doc_id = request.args.get("doc_id")
+    if not engine_layoutsession.valid_doc_id(doc_id):
+        return jsonify({"error": "doc_id 不合法", "code": "bad_request"}), 400
+    owner, evidence = _layout_owner_evidence(doc_id, _request_ctx())
+    resp = jsonify({"owner": owner, "evidence": evidence})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
 @app.get("/api/preferences/export-defaults")
 def api_export_defaults_get():
     """导出默认值（按用户一份，数据目录）。没存过是 `{"defaults": null}`，不是 404。"""

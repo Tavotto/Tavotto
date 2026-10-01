@@ -16,7 +16,8 @@ const REPO = path.resolve(import.meta.dirname, '..', '..')
  * 复现「关掉、再打开另一个项目」：F 的标签页关掉，后端把默认项目换成 G，开一个新标签页
  * （sessionStorage 是空的，与一次新启动同一处境）。修复前 G 落在 F 的排版上，这条红。
  */
-test('同一个 origin 先后打开两个项目：B 不显示 A 的排版，B 的目录里没有 A 的排版', async ({ app, browser }) => {
+for (const legacyIndex of [false, true]) {
+test(`同一个 origin 先后打开两个项目：B 不显示 A 的排版，B 的目录里没有 A 的排版${legacyIndex ? '（本机索引不知道归属：靠后端证据）' : ''}`, async ({ app, browser }) => {
   const a = await app()
   const projG = mkdtempSync(path.join(os.tmpdir(), 'tavotto-e2e-projG-'))
   cpSync(path.join(REPO, 'examples', 'figures'), projG, { recursive: true })
@@ -57,6 +58,18 @@ test('同一个 origin 先后打开两个项目：B 不显示 A 的排版，B �
     const pjG = ((await opened.json()) as { id: string }).id
 
     const tabG = await ctx.newPage()
+    if (legacyIndex) {
+      // 升级前的形状（#773）：本机最近文档索引里没有归属。前端判不出，只能问后端；后端的槽位归属
+      // 记着 F（它在 F 里自动保存过），而 G 里素材一张不差——素材证据不能压过归属记录。
+      // 在 G 的页面脚本跑之前抹（F 关标签页时的兜底冲刷会把归属写回去）
+      await tabG.addInitScript(() => {
+        const raw = JSON.parse(localStorage.getItem('tavotto.docIndex') ?? '[]') as Record<string, unknown>[]
+        localStorage.setItem(
+          'tavotto.docIndex',
+          JSON.stringify(raw.map(({ projectId: _p, projectName: _n, ...rest }) => rest)),
+        )
+      })
+    }
     const askedG = tabG.waitForResponse(
       (r) => r.request().method() === 'GET' && r.url().includes('/api/layout-session') && ok(r),
       { timeout: 30_000 },
@@ -70,6 +83,14 @@ test('同一个 origin 先后打开两个项目：B 不显示 A 的排版，B �
     // 恢复在问完后端之后还要读盘、装文档：给它时间。修复前这里出现的是 F 的那一个对象
     await tabG.waitForTimeout(2_000)
     await expect(tabG.locator('[data-object-id]')).toHaveCount(0)
+    if (legacyIndex) {
+      // 前提：G 看到的本机索引里，F 那份确实不知道归属（量的是「问后端」那条路）
+      const owner = await tabG.evaluate((id) => {
+        const raw = JSON.parse(localStorage.getItem('tavotto.docIndex') ?? '[]') as { id: string; projectId?: string }[]
+        return raw.find((e) => e.id === id)?.projectId ?? null
+      }, docF)
+      expect(owner).toBeNull()
+    }
     expect(await tabG.evaluate((pj) => localStorage.getItem(`tavotto.projectDoc.${pj}`), pjG)).toBeNull()
     const lastG = (await (await fetch(`${a.baseURL}/api/layout-session?pj=${pjG}`)).json()) as {
       last: { doc_id: string } | null
@@ -84,3 +105,4 @@ test('同一个 origin 先后打开两个项目：B 不显示 A 的排版，B �
     rmSync(projG, { recursive: true, force: true })
   }
 })
+}
