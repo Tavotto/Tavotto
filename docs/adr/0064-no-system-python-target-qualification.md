@@ -30,10 +30,10 @@
 | 目标 | 机制 | 工程 ① 产品链 | 工程 ② 空镜像 | 工程 ③ 注册表 | 目标（资格） | `enabled` |
 |---|---|---|---|---|---|---|
 | macos-arm64 | pr lane | 周腿 + 本机（evidence/u05） | 不适用（macOS 没有空镜像） | 不适用 | **已取得（2026-09-30）**：tart 全新 macOS 26.6.2 VM + 冻结 .app，冻结 sidecar + 浏览器界面驱动（非桌面壳窗口本身）；证据 `evidence/u05/target-macos-arm64-2026-09-30.md` | true |
-| macos-x86_64 | 同上（不分架构） | 无 Intel runner | 不适用 | 不适用 | **未取得**：没有 Intel 机器；与 arm64 同一归档族但不是同一目标，§四 不许拿另一目标的证据替代 | false |
-| linux-x86_64 | pr lane | 周腿 | 周腿 | 不适用 | 无桌面产物：以 ② 为该平台的最高档 | false |
-| linux-arm64 | 同上 | 无 arm64 runner | 本机 docker（evidence/u05/empty-image-linux-arm64.json） | 不适用 | 同上 | false |
-| windows-x86_64 | pr lane | 周腿 | 不适用（Windows 容器另议） | 周腿 | **待阿里云目标档证据**（tavotto-51 负责，贴在翻开关的 PR 评论）；证据到位前该 PR 不入队 | true（随该 PR，证据到位前不合） |
+| macos-x86_64 | 同上（不分架构） | 无 Intel runner | 不适用 | 不适用 | **未取得，维护者拍板例外开启（2026-10-01）**：没有 Intel 机器；与 arm64 同一归档族但不是同一目标。§四 的例外，见修订记录 | true（例外） |
+| linux-x86_64 | pr lane | 周腿 | 周腿（2026-09-30 本分支 dispatch run 36772138253 绿） | 不适用 | 无桌面产物：以 ② 为该平台的最高档 | true |
+| linux-arm64 | 同上 | 无 arm64 runner | 本机 docker（evidence/u05/empty-image-linux-arm64.json，2026-10-01 重跑） | 不适用 | 同上 | true |
+| windows-x86_64 | pr lane | 周腿 | 不适用（Windows 容器另议） | 周腿 | **已取得（2026-10-01）**：阿里云干净 VM + nightly 冻结 NSIS（run 36771293696），经界面一键修复出图、包内归档零下载；证据贴在翻开关的 PR 评论（tavotto-51） | true |
 
 「不适用」是事前支持矩阵里的真实不适用，不是 skip（03 §5）。
 
@@ -61,15 +61,21 @@ FO24 / FO25 / FO26 的机制面用例在 pr lane 已有（ADR 0063），经真�
 
 ## 修订记录
 
-### 2026-10-01：翻 `enabled` 的 PR 与 macOS 目标档
+### 2026-10-01：翻 `enabled` 的 PR——五个目标全开，其中 macos-x86_64 是例外
 
 * `macos-arm64` 取得第三档证据（见 §二 矩阵与 `evidence/u05/target-macos-arm64-2026-09-30.md`），FO23 台账记该目标实例 `pass`，
   当天手动 dispatch `private-python-targets.yml`（run 36772138253，2026-09-30 20:22Z = 北京时间 10-01 04:22，三条腿绿，与取证同一晚）的结论记在翻开关的 PR 里。**限度**：驱动的是冻结 sidecar +
   浏览器界面，不是 Tauri 桌面壳窗口；这一格不因本次取得而关闭。
-* `macos-x86_64` **不翻**：没有 Intel 机器。「与 arm64 同一归档族」不是证据——§四「不允许拿另一平台的证据替代」按目标
-  （os + arch）读，Intel 的 dyld / 签名 / Rosetta 面都没有量过。锁里保持 `enabled: false`，取得 Intel 证据后另开 PR。
-* `windows-x86_64` 随同一 PR 翻 true，但目标档证据（阿里云干净 VM + NSIS）尚未取得，由 tavotto-51 补在 PR 评论里；
-  **证据贴出前该 PR 不入队**（§四：没有第三档证据不得翻）。若证据失败或迟迟不到，把该目标翻回 false 再合 macOS 部分。
+* `windows-x86_64` 取得第三档证据：阿里云干净 VM（无 Python、无代理、不开逃生门）装 nightly 冻结 NSIS（run 36771293696），
+  全程经界面：脚本行「还缺 adjusttext」+ 一键修复 → 3 分钟出图，私有 Python 来自包内归档、GitHub 零下载，缺 ISRG / USERTrust
+  根证书不影响；用户已有 3.12 + adjustText 时 5 秒内自动切换、无弹窗。完整证据由 tavotto-51 贴在翻开关的 PR 评论。
+* Linux 两个目标按 §二 以第二档（空镜像）为最高档翻 true：`linux-x86_64` 用上面同一次 dispatch 的 ubuntu 腿；`linux-arm64`
+  2026-10-01 在本机 docker 的 `ubuntu:24.04` arm64 空镜像里重跑（`--network none`，锁里同一归档 sha256 303efcce…，venv +
+  离线装 matplotlib 3.11.2 / numpy 2.5.3 出图，`evidence/u05/empty-image-linux-arm64.json`）。
+* **例外：`macos-x86_64` 没有任何目标档证据，由维护者 2026-10-01 拍板照开。** 这是 §四「不许拿另一目标的证据替代」的明示例外，
+  不是取得资格：手上没有 Intel 机器（Apple 芯片上的虚拟机跑不了 Intel 版 macOS），Intel 的 dyld / 签名 / Rosetta / 包内归档
+  面都没有量过；理由是它与 arm64 同一归档族、同一份产品代码，且关掉的代价（Intel 用户没有合格 Python 时仍是死路）被判断为大于
+  风险。FO23 台账该目标记 `not_run`（不是 `pass`）。取得 Intel 目标档证据后补在本节；出问题按下一条回退。
 * 回退：把某目标 `enabled` 翻回 false，不需要证据。已供应到用户机器上的私有 Python 不主动删：关闭后探测链末级不再把它当
   base（`tests/test_private_python.py::TestBaseChain` 钉着），磁盘上那份留着；已经以它为 base 的受管环境世代继续可用
   （venv 挪不走 base，ADR 0063 §七：`retire_unused` 只删「任一世代都没记着、也没有会话租用」的旧 runtime，不会把在用的一份删掉）。

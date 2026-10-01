@@ -6033,13 +6033,29 @@
         },
         {
           "target": "windows-x86_64",
-          "result": "pending",
-          "note": "待阿里云目标档证据（tavotto-51），贴在翻开关的 PR 评论"
+          "result": "pass",
+          "date": "2026-10-01",
+          "artifact_run": "36771293696",
+          "note": "阿里云干净 VM + nightly 冻结 NSIS，经界面一键修复出图、包内归档零下载；证据贴在翻开关的 PR 评论（tavotto-51）"
+        },
+        {
+          "target": "linux-x86_64",
+          "result": "engineering_empty_image_pass",
+          "date": "2026-09-30",
+          "artifact_run": "36772138253",
+          "note": "Linux 无桌面产物，ADR 0064 §二 以空镜像档为最高档"
+        },
+        {
+          "target": "linux-arm64",
+          "result": "engineering_empty_image_pass",
+          "date": "2026-10-01",
+          "file": "docs/implementation/tavotto-foundation/evidence/u05/empty-image-linux-arm64.json",
+          "note": "本机 docker ubuntu:24.04 arm64 空镜像；Linux 无桌面产物，ADR 0064 §二 以空镜像档为最高档"
         },
         {
           "target": "macos-x86_64",
           "result": "not_run",
-          "note": "没有 Intel 机器；enabled 保持 false"
+          "note": "没有 Intel 机器；维护者 2026-10-01 拍板例外开启（ADR 0064 2026-10-01 修订），不是取得资格"
         }
       ],
       "expected_outcome_rule": "保持原合同；复合contractual用例须事前展开明确预期，不能运行后改成容易通过的结果。",
