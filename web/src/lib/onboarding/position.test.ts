@@ -76,7 +76,7 @@ describe('其余纯函数', () => {
     expect(shouldGlide({ x: 550, y: 388, w: 300, h: 124 }, below, anchor)).toBe(true)
     // 贴边不算碰：卡片上沿正好等于锚点下沿
     expect(shouldGlide({ x: 198, y: 312, w: 300, h: 124 }, below, anchor)).toBe(true)
-    // 没有锚点（居中的欢迎页 / 等待目标）→ 没有要护着的东西
+    // 没有锚点（居中的完成页 / 等待目标）→ 没有要护着的东西
     expect(shouldGlide(below, { x: 550, y: 388, w: 300, h: 124 }, null)).toBe(true)
   })
 })

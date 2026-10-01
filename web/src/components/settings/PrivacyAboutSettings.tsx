@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
-import { postDiagnosticsBundle, type TelemetrySettings } from '@/lib/api'
+import { fetchBuildVersion, postDiagnosticsBundle, type TelemetrySettings } from '@/lib/api'
 import { buildDiagnosticPayload } from '@/diagnostics'
 import { PRIVACY_DOC_URL, PRODUCT_NAME, REPO_URL } from '@/lib/brand'
 import { TELEMETRY_DISCLOSED_EVENTS } from '@/lib/telemetryDisclosure'
@@ -11,6 +11,7 @@ import { BrandMark } from '../ui/BrandMark'
 import { Button } from '../ui/Button'
 import { Toggle } from '../ui/Toggle'
 import { DiagnosticDisclosure, SettingRow, SettingSection } from './SettingRow'
+import { UpdateSettings } from './UpdateSettings'
 
 const st = (key: string, values?: Record<string, unknown>) =>
   translate(`settings.${key}`, { ns: 'dialogs', ...(values ?? {}) })
@@ -34,11 +35,27 @@ const st = (key: string, values?: Record<string, unknown>) =>
  */
 export function PrivacyAboutSettings() {
   useTranslation('dialogs')
-  const version = useUpdateStore((s) => s.status?.current)
+  const statusVersion = useUpdateStore((s) => s.status?.current)
+  // 更新接口失败时 status 取不到——那时恰恰最需要看到版本号（排错、报 bug）。
+  // 退回 `/api/version`（后端同一个 `current_version()`），status 取到之后仍以它为准
+  const [fallbackVersion, setFallbackVersion] = useState<string | undefined>()
+  useEffect(() => {
+    if (statusVersion) return
+    let live = true
+    fetchBuildVersion()
+      .then((r) => live && setFallbackVersion(r.version))
+      .catch(() => {})
+    return () => {
+      live = false
+    }
+  }, [statusVersion])
+  const version = statusVersion ?? fallbackVersion
   // 分区之间的间距由外壳统一给（`display: contents`）
   return (
     <div className="contents">
       <ProductBlock version={version} />
+      {/* 「更新」并进这一页（2026-09-30）：版本在上、检查更新紧随其后，再是隐私 */}
+      <UpdateSettings />
       <PrivacyBlock />
     </div>
   )
@@ -64,7 +81,7 @@ function ProductBlock({ version }: { version?: string }) {
             // 正文句子里的链接必须**不靠颜色**也能认出来（axe
             // link-in-text-block，serious）——只在悬停时下划线等于对色觉障碍
             // 与灰度打印一律无效。这一页此前从没被 axe 跑过，所以一直没人看见
-            className="text-accent underline underline-offset-2"
+            className="text-ink-2 underline underline-offset-2 hover:text-ink"
           >
             {st('about.source')}
           </a>
@@ -143,7 +160,7 @@ function PrivacyBlock() {
         href={PRIVACY_DOC_URL}
         target="_blank"
         rel="noreferrer"
-        className="self-start text-xs text-accent underline underline-offset-2"
+        className="self-start text-xs text-ink-2 underline underline-offset-2 hover:text-ink"
       >
         {st('about.telemetry.policy')}
       </a>

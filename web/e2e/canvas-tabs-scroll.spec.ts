@@ -16,6 +16,19 @@ import type { Locator } from '@playwright/test'
  * 几何只有真布局量得出，jsdom 恒真，所以这里用真浏览器；webkit 腿是用户那台引擎。
  */
 
+/**
+ * 窄窗口（<1024）里左抽屉是覆盖式的，首开时素材抽屉开着。2026-09-30 重设计后画布标签行在白色工作面板
+ * 里（不再横跨整个窗口顶上），覆盖式抽屉与它的遮罩会盖住标签行的开头——与盖住画布同一个语义，
+ * 点遮罩就收起。这组用例量的是标签条本身，先把覆盖着的抽屉收掉
+ */
+async function closeOverlayDrawer(page: import('@playwright/test').Page) {
+  const scrim = page.locator('[data-scrim]')
+  if (await scrim.count()) {
+    await scrim.click({ position: { x: 5, y: 5 } })
+    await expect(scrim).toHaveCount(0)
+  }
+}
+
 async function verticalOverflow(strip: Locator) {
   return strip.evaluate((el) => ({
     scrollHeight: el.scrollHeight,
@@ -79,6 +92,7 @@ test('画布页签条没有纵向溢出、不画滚动条，页签多了仍能�
   const a = await app()
   await page.goto(a.baseURL)
   await page.locator('[data-canvas-stage]').waitFor({ timeout: 60_000 })
+  await closeOverlayDrawer(page)
 
   const strip = page.locator('[data-canvas-tabs]')
   await expect(strip).toHaveCount(1)
@@ -96,7 +110,7 @@ test('画布页签条没有纵向溢出、不画滚动条，页签多了仍能�
   const created = await activeTabInView(strip)
   expect(created.inView, JSON.stringify(created)).toBe(true)
 
-  // 滚动条不占高度：条的内容盒仍是 35（36 减 border-b），每个页签都是这么高。
+  // 滚动条不占高度：条的内容盒仍是 43（44 减 border-b），每个页签都是这么高。
   // 画出 10px 横滚条时 WebKit 里这里是 25
   const box = await strip.evaluate((el) => ({
     clientHeight: el.clientHeight,
@@ -108,8 +122,9 @@ test('画布页签条没有纵向溢出、不画滚动条，页签多了仍能�
       ),
     ],
   }))
-  expect(box.clientHeight, JSON.stringify(box)).toBe(35)
-  expect(box.tabHeights, JSON.stringify(box)).toEqual([35])
+  // 条 44（2026-09-30 与属性栏页签条同高）减 border-b = 内容盒 43，页签正好填满
+  expect(box.clientHeight, JSON.stringify(box)).toBe(43)
+  expect(box.tabHeights, JSON.stringify(box)).toEqual([43])
 
   // 横向：放不下时仍然能滚——scrollWidth 超出，scrollLeft 真的改得动。
   // 光看 scrollLeft 不够：overflow-x: hidden 的盒子脚本照样能改 scrollLeft，用户却滚不动，
@@ -159,6 +174,7 @@ test('页签少但放不下时也给「全部画布」菜单，能切到条外�
   const a = await app()
   await page.goto(a.baseURL)
   await page.locator('[data-canvas-stage]').waitFor({ timeout: 60_000 })
+  await closeOverlayDrawer(page)
 
   const strip = page.locator('[data-canvas-tabs]')
   const menu = page.locator('[data-all-canvases]')
@@ -221,7 +237,13 @@ async function fitsWithoutMenu(strip: Locator) {
     const plus = row.querySelector('[data-new-canvas-tab]') as HTMLElement
     const pad = parseFloat(getComputedStyle(row).paddingRight)
     const plusRight = plus.getBoundingClientRect().right - el.clientWidth + el.scrollWidth
-    const rowRight = row.getBoundingClientRect().right - pad
+    // 行最右是缩放菜单（2026-09-30 搬进标签行）：它占着行的右端，页签 +「+」能用的右缘是它的左缘
+    // 再退一道 gap，不是行的内容盒右缘
+    const zoom = row.lastElementChild as HTMLElement
+    const gap = parseFloat(getComputedStyle(row).columnGap)
+    const rowRight = zoom.querySelector('[data-zoom-menu]')
+      ? zoom.getBoundingClientRect().left - gap
+      : row.getBoundingClientRect().right - pad
     return { fits: plusRight <= rowRight + 0.5, slack: rowRight - plusRight }
   })
 }
@@ -231,6 +253,7 @@ test('「条放不下」出现的菜单：窗口拉宽到不带菜单放得下�
   const a = await app()
   await page.goto(a.baseURL)
   await page.locator('[data-canvas-stage]').waitFor({ timeout: 60_000 })
+  await closeOverlayDrawer(page)
 
   const strip = page.locator('[data-canvas-tabs]')
   const menu = page.locator('[data-all-canvases]')

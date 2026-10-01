@@ -122,6 +122,31 @@
   补上同一批随行改动（已在选区里的 (gid, prop) 不重复写），预览期色条这类平级 `<g>`
   单独跟手。缩放（单个 / 成组）仍然不带随行元素——该缩到哪里没有可信答案（原有取舍，
   `axesCompanionDrag.test` 钉着）。看护：`canvas/axesCompanionDrag.test.tsx`。
+- **真实的组展开成成员（ADR 0102）**：选区里的组（共享色条，`Manifest.groups`）经
+  `elementGeom.expandGroups` 展开成成员（子图 + 色条轴），整组平移 / 成组缩放 / 缩放控件全部
+  复用多选子图那一套，不另造变换；`resizable: false` 的组不展开。组在画布上点不中，选中组后
+  拖任一成员 = 整组平移、只点不拖 = 选中那个成员（`startElementGroupMove` 的 `onTap`）。「任一成员」
+  含成员子图里的东西（线、标题、图例、注释）：`elementGeom.entryUnder` 沿真实父级
+  （`structuralParent`）找所属成员，不只比 `geomGid(hit)`——否则点到一条线就把选区换成那条线
+  （Codex #691）。普通多选仍只认点到的正是选中的那一个。
+  **组不能整体变换 = 整组不动**：判据只有 `elementGeom.groupTransformBlocked(panel, manifest, group)`
+  一份，回原因——`not_resizable`（成员落位不归 Tavotto 管）、`locked`（成员或共享的色条元素被
+  元素树锁住）、`incomplete`（有成员这一版拿不到可写的 position，`alignEntries` 会静默跳过它、剩下的
+  照样成组走）。`expandGroups` 用它把这样的组展开为空，拖动、组框手柄（`resolveGroup` 为空就不给）、
+  属性页整组缩放、方向键微调（`nudge.moverFor`）同一个出口；要说原因的（拖起来 `explainBlockedGroupDrag`、
+  方向键 `announceUnmovable`、组页）用同一判据的 `blockedGroupsIn`，按原因说 `status.groupBlocked.*` /
+  组页那一句，只点不拖照常钻进去。不做「跳过不能动的、挪其余的」：共享色条组的意义就是一起动，与画布
+  对象组的 `movableTargets` 同一条规则。**新原因只往 `groupTransformBlocked` 里加**（Codex #691 同形状
+  出现第二次后收成一处）。
+  **不变式：组的变换只有全员刚性与零两种结果**——`expandGroups` 之后的出口不许再逐个过滤成员（方向键
+  曾按隐藏过滤、把隐藏成员丢掉）；对齐 / 分布把组当一个单位（`alignUnits`），单位按选区原来的顺序排——
+  等宽 / 等高以末位（最后选中的那一个）为基准，组的位置按它或它的成员最先出现处算。看护：`sharedColorbarGroup.test`
+  「写下的成员 = expandGroups 的结果」，每个写几何的出口一条。
+  **组认领同时点名的成员**（`elementGeom.claimedBySelectedGroups`：成员本身与几何落在成员上的色条 / 位图），
+  与组能不能整体变换无关：被挡住的组展开为空，它的成员也不许退回成散选被单独挪走（拖动经
+  `expandGroups`、方向键 `moverFor` 同一个判据）；对齐遇到被挡住的组整次不做、按原因说（`group-blocked`）。多宿主
+  色条不在任何宿主的 `follow_gids` 里：单拖 B 时 C 与色条都不动。看护：
+  `canvas/sharedColorbarGroup.test.tsx`。
 
 - **方向键微调与拖动同一套移动规则**（ADR 0093，2026-09-26，用户：「按上下左右键可以微调位置」——
   实测图内编辑态里选中图例按方向键挪的是整张图，快速编辑里什么都不动）。图内平移的规则只有

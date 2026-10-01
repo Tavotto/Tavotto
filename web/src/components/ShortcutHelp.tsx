@@ -4,7 +4,7 @@ import { t as translate } from '@/i18n'
 import { ALT, MOD } from '@/lib/utils'
 import { useUiStore } from '@/store/uiStore'
 import { Dialog } from './ui/Dialog'
-import { Kbd } from './ui/Kbd'
+import { KeyCaps } from './ui/Kbd'
 import { SearchInput } from './ui/SearchInput'
 
 /**
@@ -14,8 +14,8 @@ import { SearchInput } from './ui/SearchInput'
  * `shortcuts:key.*`。有几行的「键位」本身含自然语言（方向键 / Space+拖动），
  * 那几条另走 `shortcuts:combo.*`。
  *
- * 分组按用户的任务分（文件 / 选择 / 编辑 / 排列 / 视图 / 工具 / 教程），
- * 说明整句显示、可换行、可搜索——此前一列 40px 宽的键位加一行只能截断的
+ * 分组按用户的任务分（文件 / 选择 / 编辑 / 排列 / 视图 / 工具，共 6 张卡；原先单列的
+ * 「教程」只有一行 Esc，并进「工具」），说明整句显示、可换行、可搜索——此前一列 40px 宽的键位加一行只能截断的
  * 说明，一半的句子都读不到结尾（审计 T50）。
  */
 const sc = (key: string, values?: Record<string, unknown>) =>
@@ -37,6 +37,8 @@ export const GROUPS: { id: string; rows: Row[] }[] = [
     rows: [
       { keys: `${MOD}S`, desc: 'saveDocument' },
       { keys: `⇧${MOD}S`, desc: 'saveLayout' },
+      { keys: `⇧${MOD}H`, desc: 'timeline' },
+      { keys: `${ALT}${MOD}S`, desc: 'saveNamed' },
       { keys: `${MOD}E`, desc: 'export' },
       { keys: `${MOD}K`, desc: 'palette' },
       { keys: '?', desc: 'help' },
@@ -88,11 +90,8 @@ export const GROUPS: { id: string; rows: Row[] }[] = [
     rows: [
       { comboKey: 'tools', desc: 'tools' },
       { comboKey: 'altDrag', comboValues: { alt: ALT }, desc: 'freeResize' },
+      { keys: 'Esc', desc: 'tutorialPause' },
     ],
-  },
-  {
-    id: 'tutorial',
-    rows: [{ keys: 'Esc', desc: 'tutorialPause' }],
   },
 ]
 
@@ -127,7 +126,7 @@ export function ShortcutHelp() {
     if (!open) setQuery('')
   }, [open])
   return (
-    <Dialog open={open} onOpenChange={setOpen} title={sc('title')} size="md">
+    <Dialog open={open} onOpenChange={setOpen} title={sc('title')} width={960} anchor="shortcut-help">
       <div className="flex flex-col gap-4">
         {/* 搜索框只有一种（`SearchInput`，宪法第五节）：28 高、fieldBox 的边、16px 放大镜、
             有内容才出清除钮。此前这里自己定了高 36 / 圆角 10 / surface-2 底 / 13 号字，
@@ -139,42 +138,45 @@ export function ShortcutHelp() {
           placeholder={sc('search')}
           aria-label={sc('searchAria')}
         />
-        <div className="flex max-h-[22rem] min-h-0 flex-col gap-5 overflow-y-auto overscroll-contain">
+        <div className="flex max-h-[32rem] min-h-0 flex-col overflow-y-auto overscroll-contain">
           {shown.length === 0 && (
             <p className="type-body flex min-h-40 items-center justify-center py-7 text-center text-ink-3">
               {sc('noMatch')}
             </p>
           )}
-          {shown.map((g) => (
-            <div key={g.id} data-shortcut-group={g.id}>
-              {/* 组头 = `type-section`（12/500/ink，宪法第六节）：此前是 11/500/ink-3 外加
-                  一根延伸到行尾的线，是这一页自造的第三种分区头（2026-09-15 打磨 K5） */}
-              <h3 className="type-section mb-2">
-                {sc(`group.${g.id}`)}
-              </h3>
-              <ul className="flex flex-col">
-                {g.rows.map((r) => (
-                  <li
-                    key={r.desc}
-                    data-shortcut-row={r.desc}
-                    className="flex min-h-8 items-center justify-between gap-5 py-1.5"
-                  >
-                    {/* DOM 里键位在前（测试与读屏按「键 → 说明」读），视觉上靠右 */}
-                    <span data-shortcut-keys className="order-last shrink-0">
-                      <Kbd size="md">{keyText(r)}</Kbd>
-                    </span>
-                    {/* 整句显示、可换行：说明是要读的字，截断掉的那半正是它的意思 */}
-                    <span
-                      data-shortcut-desc
-                      className="type-body min-w-0 flex-1 whitespace-normal break-words text-ink-2"
+          {/* 6 张卡：宽屏三列、窄窗两列 / 一列；卡内一行 = 说明 + 键帽（键帽多到放不下时换到说明下一行） */}
+          <div className="columns-1 gap-3 sm:columns-2 lg:columns-3">
+            {shown.map((g) => (
+              <section
+                key={g.id}
+                data-shortcut-group={g.id}
+                className="mb-3 break-inside-avoid rounded-md bg-surface-2 px-3.5 py-3"
+              >
+                <h3 className="type-section mb-1.5">{sc(`group.${g.id}`)}</h3>
+                <ul className="flex flex-col">
+                  {g.rows.map((r) => (
+                    <li
+                      key={r.desc}
+                      data-shortcut-row={r.desc}
+                      className="flex min-h-8 flex-wrap items-center justify-between gap-x-3 gap-y-1 py-1"
                     >
-                      {sc(`key.${r.desc}`)}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ))}
+                      {/* DOM 里键位在前（测试与读屏按「键 → 说明」读），视觉上靠右 */}
+                      <span data-shortcut-keys className="order-last shrink-0">
+                        <KeyCaps keys={keyText(r)} />
+                      </span>
+                      {/* 整句显示、可换行：说明是要读的字，截断掉的那半正是它的意思 */}
+                      <span
+                        data-shortcut-desc
+                        className="type-body min-w-[9rem] flex-1 whitespace-normal break-words text-ink-2"
+                      >
+                        {sc(`key.${r.desc}`)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ))}
+          </div>
         </div>
       </div>
     </Dialog>

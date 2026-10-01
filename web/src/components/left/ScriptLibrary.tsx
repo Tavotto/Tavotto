@@ -13,17 +13,30 @@ import { useScriptInputStore } from '@/store/scriptInputStore'
 import { useScriptLibraryStore } from '@/store/scriptLibraryStore'
 import {
   isBusyPhase,
+  isGatePhase,
   needsNative,
   useScriptRunStore,
   type ScriptRunState,
 } from '@/store/scriptRunStore'
-import { useEnvStore } from '@/store/envStore'
 import { useUiStore } from '@/store/uiStore'
 import { Button, IconButton } from '../ui/Button'
 import { Dialog } from '../ui/Dialog'
 import { EmptyState } from '../ui/EmptyState'
-import { DependencyRepairCard } from '../DependencyRepairCard'
-import { useDepRepairStore, type ScriptRepairOffer } from '@/store/depRepairStore'
+import {
+  DependencyRepairCard,
+  downloadFact,
+  jointProgressText,
+  oneClickEnvironmentSentence,
+  oneClickSentence,
+  packagesPhrase,
+  repairShortMessage,
+} from '../DependencyRepairCard'
+import { oneClickShape, STATE_TEXT } from '../DependencyPrepareDialog'
+import { RepairProgressLine } from '../RepairProgressLine'
+import { isRepairRunning, useDepRepairStore, type ScriptRepairOffer } from '@/store/depRepairStore'
+import { useEnvStore } from '@/store/envStore'
+import { listJoin } from '@/i18n/format'
+import { WorkdirChooseButton } from '../WorkdirRow'
 
 /**
  * 素材库「脚本」区（Session 5，普通入口）：项目里每个合理 .py 一行，
@@ -45,7 +58,8 @@ const GROUP_ORDER: Group[] = ['needsFix', 'linked', 'notRun', 'runtimeNames', 'n
 function groupOf(entry: ScriptInventoryEntry, run: ScriptRunState | undefined): Group {
   // 缺包是能一键修好的那一类：单独一组「需要修复」、排在最前（2026-09-29：「可能需要原环境」对不懂 Python 的
   // 用户是术语）。超时与一般失败仍在下面那组——它们真的可能与原来的环境 / 运行方式有关
-  if (run?.phase === 'missing_dependency') return 'needsFix'
+  // 「开跑前要先准备依赖」（联合准备的授权）同样能一键修好：与缺包同一组
+  if (run?.phase === 'missing_dependency' || run?.phase === 'needs_preparation') return 'needsFix'
   // 本会话 safe 运行失败且形状像环境问题的，收进「可能需要原环境」——
   // 恢复路径文案（总纲 §四）挂在组上，一眼看全
   if (needsNative(run)) return 'needsEnv'
@@ -187,7 +201,7 @@ function ScriptRow({
   const onRunOrCancel = () => {
     const store = useScriptRunStore.getState()
     if (busy) store.cancel(entry.script)
-    else void store.run(entry.script)
+    else void store.run(entry.script, { inlineGate: true })
   }
 
   return (
@@ -234,6 +248,8 @@ function ScriptRow({
       </div>
 
       {repairCard && <ScriptDependencyRepair script={entry.script} run={run} />}
+      <ScriptPreparation script={entry.script} run={run} />
+      <GateReopen run={run} />
       <FailureRecovery script={entry.script} run={run} />
       <MissingInputRecovery run={run} />
 
@@ -275,6 +291,119 @@ function ScriptDependencyRepair({ script, run }: { script: string; run: ScriptRu
   )
 }
 
+/**
+ * 开跑前要先准备依赖（`dependency_preparation_required`，U04）时这一行的一句话 + 一个主按钮（2026-09-29 干净虚拟机
+ * 实测：单包修复装完，自动重跑撞上跑前门，这一行只剩一行红字与「选择渲染环境」，小白卡死）。与画布渲染那条路上弹的
+ * 授权框（`DependencyPrepareDialog`）是同一份联合计划、同一个 `prepare`、同一套句子：授权只有一句人话时直接执行，
+ * 进度就是这一行下面的一行；要在目标 / 用户环境之间选的时候，主按钮打开授权框。装好后 `depRepairStore` 把这一行重跑
+ * （`rerunScriptAfterRepair`）。完整的需求串、下载与联网说明、「选择渲染环境」都收在默认折叠的「详情」里。
+ */
+function ScriptPreparation({ script, run }: { script: string; run: ScriptRunState | undefined }) {
+  useTranslation('workspace')
+  useTranslation('errors')
+  const en = (key: string, values?: Record<string, unknown>) => translate(key, { ns: 'errors', ...(values ?? {}) })
+  const progress = useDepRepairStore((s) => s.progress)
+  const busy = useDepRepairStore((s) => s.busy)
+  const errorCode = useDepRepairStore((s) => s.errorCode)
+  const jointScript = useDepRepairStore((s) => s.jointScript)
+  const jointOffer = useDepRepairStore((s) => s.jointOffer)
+  const mine = jointScript === script
+  // 载荷：这一行那次运行留下的；切项目再切回后运行记录已清空，就用随作业停放 / 放回的那份（进度、取消、重试不需要再点运行）
+  const offer = (run?.phase === 'needs_preparation' ? run.error?.dependency_preparation : undefined) ?? (mine && progress?.flow === 'joint' && progress.state !== 'done' ? jointOffer : null)
+  if (!offer) return null
+  const joint = mine && progress?.flow === 'joint' ? progress : null
+  const running = !!joint && isRepairRunning(joint)
+  const code = mine ? errorCode || (joint && (joint.state === 'failed' || joint.state === 'cancelled') ? joint.code : '') : ''
+  const { simple, privatePython } = oneClickShape(offer)
+  const requirements = offer.plan.requirements
+  const packages = packagesPhrase(requirements)
+  const sentence = code
+    ? repairShortMessage(code)
+    : requirements.length
+      ? oneClickSentence(packages, privatePython)
+      : oneClickEnvironmentSentence(privatePython)
+  const cost = downloadFact(privatePython, { packages: requirements.length > 0 })
+  const onFix = () => {
+    if (simple) void useDepRepairStore.getState().prepare('tavotto_managed', offer)
+    else useEnvStore.getState().requestDependencyPreparation(offer)
+  }
+  return (
+    // 与恢复说明同一列缩进：它是这一行的延续，不是另一块区域
+    <div className="mb-1.5 mt-0.5 flex flex-col gap-1.5 pl-8 pr-2" data-script-preparation>
+      {running && joint ? (
+        <>
+          <RepairProgressLine progress={joint} text={jointProgressText(joint, (state) => en(STATE_TEXT[state] ?? 'engine.dependencyPrepareState_preparing'))} />
+          <Button
+            variant="secondary"
+            size="sm"
+            className="self-start"
+            onClick={() => void useDepRepairStore.getState().cancelPreparation()}
+          >
+            {en('engine.dependencyPrepareCancel')}
+          </Button>
+        </>
+      ) : (
+        <>
+          <p className="type-caption" data-script-preparation-sentence>
+            {sentence}
+          </p>
+          <Button
+            variant="primary"
+            size="sm"
+            className="self-start"
+            disabled={busy || isRepairRunning(progress)}
+            data-script-preparation-fix
+            onClick={onFix}
+          >
+            {code ? en('engine.dependencyPrepareRetry') : en('engine.oneClickRepair')}
+          </Button>
+        </>
+      )}
+      {!running && (
+        <Details data-script-preparation-details>
+          <Summary className="type-meta cursor-pointer">{sc('recoveryDetails')}</Summary>
+          <div className="mt-1.5 flex flex-col gap-1.5">
+            {requirements.length > 0 && (
+              <p className="type-caption" data-script-preparation-will-install>
+                {en('engine.repairWillInstall', { requirement: listJoin(requirements) })}
+              </p>
+            )}
+            {requirements.length > 0 && (
+              <ul className="flex flex-col gap-0.5 font-mono text-xs text-ink-2">
+                {requirements.map((req) => (
+                  <li key={req}>{req}</li>
+                ))}
+              </ul>
+            )}
+            {cost && <p className="type-caption">{cost}</p>}
+            {/* 「其他方式（备选）」：#740 授权框里就有的「不准备，直接运行」（同一个 skip 接口，之后 `rerunGated` 重跑这一行） */}
+            <p className="type-meta">{en('engine.repairAlternatives')}</p>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="self-start"
+              disabled={busy}
+              data-script-preparation-skip
+              onClick={() => void useDepRepairStore.getState().skipPreparation(offer)}
+            >
+              {en('engine.dependencyPrepareSkip')}
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              className="self-start"
+              onClick={() => useUiStore.getState().setEngineEnvOpen(true)}
+            >
+              <Settings size={ICON_SIZE.sm} />
+              {sc('openEnvSettings')}
+            </Button>
+          </div>
+        </Details>
+      )}
+    </div>
+  )
+}
+
 /** 修复状态里「这张卡属于谁」的那几样（全局一份）；列表与每一行用同一份判据 `rowRepairOffer` */
 interface RepairOwner {
   owner: string
@@ -310,13 +439,33 @@ function rowRepairOffer(
 }
 
 /**
+ * 起会话之前那两道门（U03 运行目录 / U04 依赖准备）的「再打开」：试运行撞上门时 `scriptRunStore` 已经把
+ * 载荷交给 `envStore` 弹了框；用户点了「稍后」，这一行不能停在一句话上无路可走——与画布错误块同一颗按钮
+ * （`DependencyPrepareButton` / `WorkdirChooseButton`），载荷就是这一行那次运行留下的。作答之后由作答的
+ * 那一方重跑这一行（`scriptRunStore.rerunGated`）。
+ */
+function GateReopen({ run }: { run: ScriptRunState | undefined }) {
+  // 依赖门（needs_preparation）在行内直接一句话 + 一键修复（`ScriptPreparation`，用户 2026-09-30 的决定），不弹框、不再放
+  // 「再打开」的按钮；这里只剩运行目录门
+  if (run?.phase === 'needs_workdir' && run.error?.confirmation) {
+    return (
+      <div className="mb-1.5 pl-8 pr-2" data-script-workdir-choose>
+        <WorkdirChooseButton confirmation={run.error.confirmation} />
+      </div>
+    )
+  }
+  return null
+}
+
+/**
  * 行首的状态点（6px，坐在 16px 列里）：实心 = 已关联；空心 = 还没跑过；
  * 呼吸 = 正在跑；红 = 这次失败。纯装饰——状态本身由旁边那句话与可达名说出。
  */
 function StatusDot({ entry, run }: { entry: ScriptInventoryEntry; run: ScriptRunState | undefined }) {
   const phase = run?.phase ?? 'idle'
   const running = phase === 'starting_runtime' || phase === 'running'
-  const failed = !running && !!run?.error
+  // 停在门上不是失败（缺的是一个决定），不标红
+  const failed = !running && !!run?.error && !isGatePhase(phase)
   return (
     <span className="flex h-4 w-4 shrink-0 items-center justify-center" aria-hidden>
       <span
@@ -374,7 +523,8 @@ function StatusLine({
   } else if (run?.error) {
     const text = formatMessage(backendCodeMsg(run.error.code, run.error.params, run.error.message))
     title = text
-    body = <span className="text-danger">{text}</span>
+    // 门上的那句是「还差一个决定」，不是错误：不用危险色
+    body = <span className={isGatePhase(phase) ? 'text-ink-2' : 'text-danger'}>{text}</span>
   } else if (entry.registered) {
     body = sc('linkedCount', { count: stems.length })
   } else if (entry.reason === 'dynamic_stems' || entry.reason === 'unparseable') {

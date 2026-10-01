@@ -1,11 +1,11 @@
 import { useState } from 'react'
-import { Reveal, Row } from '../../ui/Field'
+import { Row } from '../../ui/Field'
+import { SummaryRow } from '../../ui/SummaryRow'
 import { t as translate } from '@/i18n'
 import type { ManifestElement } from '@/lib/api'
 import { clearOverride } from '@/store/actions'
 import type { PanelObject } from '@/types/document'
 import { NumberField } from '../../ui/Input'
-import { GroupToggle } from '../GroupToggle'
 import { INSPECTOR_LABEL_W } from '../layout'
 import { useElementWriter } from '../elementWrite'
 import { fieldVisible } from '../presentation/registry'
@@ -15,14 +15,14 @@ import { ResetChip, labeledWithState } from './textRows'
 /**
  * 图例的「排版详情」（审计 T17）：示意线长度、线与文字间距、行距、列距、内边距。
  *
- * 这五条是 matplotlib 按**字号的倍数**（em）计的，引擎发 `unit: "em"`。小节
- * **默认展开**（2026-09-26 用户反馈：默认折叠时找不到列距 / 间距在哪改——
- * 「排版详情」这个小字链接不像入口）；仍可收起，收起只在这次选中里有效，
- * 不存偏好：换个图例再选中又是展开的（调用方按图例 gid 取 key，组件不跨图例
- * 复用）。段里标签独占一列、**不截断**——「线与文字间距」在 72px 的标签列里
- * 只剩「线与文字间…」，正是审计点名的那一条。
+ * 这五条是 matplotlib 按**字号的倍数**（em）计的，引擎发 `unit: "em"`。
+ * 收成一行摘要行「间距」（2026-10-01，设计稿 A4）：右边只写当前值（默认 / 已调整），
+ * 点开是原来的几行。**默认收起**——2026-09-26 那次「默认展开」是因为旧的小字链接
+ * 不像入口，摘要行是整行可点的入口，这个理由不再成立；收起只在这次选中里有效，不存
+ * 偏好：调用方按图例 gid 取 key，组件不跨图例复用。段里标签独占一列、**不截断**——
+ * 「线与文字间距」在 72px 的标签列里只剩「线与文字间…」，正是审计点名的那一条。
  *
- * 用户改过任何一条时小节必定展开（override 不因折叠而不可发现，与「更多」
+ * 用户改过任何一条时，收起的右值说「已调整」（override 不因折叠而不可发现，与「更多」
  * 同一条纪律）。列距只在多列时出现（`fieldVisible`，与通用列表同一份判据）。
  */
 /**
@@ -53,26 +53,22 @@ export function LegendSpacingCard({ panel, element }: { panel: PanelObject; elem
     fieldVisible(element.role, p, { isOverridden: overridden, read: w.read }),
   )
   const modified = props.filter(overridden).length
-  const [openPref, setOpenPref] = useState(true)
-  const open = openPref || modified > 0
+  const [openPref, setOpenPref] = useState(false)
+  const open = openPref
 
   if (!props.length) return null
 
   return (
-    /* 组内折叠 = 文字链接，上方不画 hairline（打磨 L4：组间靠留白分层） */
-    <div data-legend-spacing>
-      <GroupToggle
+    /* 摘要行「间距」（设计稿 A4）：右边只写当前值——默认 / 已调整 */
+    <div data-legend-spacing className="mt-3">
+      <SummaryRow
+        className="mx-0"
+        data-fold="spacing"
+        label={lg('layoutDetails')}
+        value={modified > 0 ? lg('spacingAdjusted') : lg('spacingDefault')}
         open={open}
         onToggle={() => setOpenPref(!open)}
-        summary={
-          modified > 0
-            ? translate('element.modifiedCount', { ns: 'inspector', count: modified })
-            : undefined
-        }
       >
-        {lg('layoutDetails')}
-      </GroupToggle>
-      <Reveal open={open}>
         <div className="mt-1.5 flex flex-col gap-1.5">
           {/* 「1 em = 一个图例字号」那句删了（打磨 L8）：单位 em 已经在框里，
               解释放 NumberField 的 title，不常驻 */}
@@ -109,7 +105,7 @@ export function LegendSpacingCard({ panel, element }: { panel: PanelObject; elem
             )
           })}
         </div>
-      </Reveal>
+      </SummaryRow>
     </div>
   )
 }

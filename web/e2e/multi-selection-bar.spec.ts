@@ -13,8 +13,8 @@ import type { Page, Request } from '@playwright/test'
  *   * 两侧之间放不下完整栏时（压缩档）：整条栏都在窗口里，右半截的控件够得着（Codex #666 P1）。
  *
  * 定位一律认稳定的 `data-*`（素材卡 `data-card`、返回 `data-context-back`、文字工具
- * `data-tool`、字号 `data-inspector-prop`、右栏关闭 `data-inspector-close`、适应画布
- * `data-fit-canvas`），不认界面文案 / 可达名。
+ * `data-tool`、字号 `data-inspector-prop`、右栏关闭 `data-inspector-close`、窄宽度下的缩放菜单
+ * `data-zoom-menu` 与其中的适应画布 `data-fit-canvas-item`），不认界面文案 / 可达名。
  *
  * 判据的主语：图内那条量的是后端渲染响应里的 manifest（引擎按 override 重画的结果），
  * 不是前端 store，也不是控件显示的数。
@@ -203,7 +203,11 @@ test('图内多选在两侧之间放不下完整栏时：压缩档，整条栏�
   await page.setViewportSize({ width: 560, height: 860 })
   // 窄断点下右栏成了盖在画布上的抽屉：先收起，再适应画布把图放回眼前
   await page.locator('[data-inspector-close]').click()
-  await page.locator('[data-fit-canvas]').click()
+  // 适应画布：从缩放菜单里点（菜单在画布标签行里，任何宽度都在；图标钮在浮动工具条里）
+  await expect(page.locator('[data-zoom-menu]')).toHaveCount(1)
+  await page.locator('[data-zoom-menu]').click()
+  await expect(page.locator('[data-fit-canvas-item]')).toHaveCount(1)
+  await page.locator('[data-fit-canvas-item]').click()
   // 适应画布带过渡：等图停稳再量点击位置
   await expect
     .poll(async () => {

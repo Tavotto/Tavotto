@@ -77,6 +77,7 @@ from .engine import (
     handoff as engine_handoff,
     inputbroker as engine_inputbroker,
     inputremap as engine_inputremap,
+    layoutsession as engine_layoutsession,
     locate as engine_locate,
     logsafe as engine_logsafe,
     managedenv as engine_managedenv,
@@ -2470,6 +2471,29 @@ def api_diagnostics_bundle_post():
     return _diagnostics_bundle_response(frontend=frontend, frontend_dropped=dropped)
 
 
+def _read_body_capped(limit: int) -> bytes:
+    """从请求流**最多读 `limit + 1` 字节**——收请求体的端点共用这一份有界读取。
+
+    **上限卡在读取本身，不卡 `Content-Length`**：chunked transfer encoding 的请求根本
+    没有那个头，`request.content_length` 是 None；`get_data()` / `get_json()` 会把任意大
+    的 body 先整份缓冲再交出来，出了错的客户端就能把内存吃满。调用方拿到的字节数
+    `> limit` 就是「超了」的判据，无论有没有 Content-Length 都成立。
+
+    循环读到够数或 EOF：流的一次 `read(n)` 可以少给（分块到达的 chunked 输入），
+    只读一次的话「超了」会被判成「没超」、截断的数据会被当成完整的收下。
+    """
+    want = limit + 1
+    chunks: list[bytes] = []
+    got = 0
+    while got < want:
+        chunk = request.stream.read(want - got)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        got += len(chunk)
+    return b"".join(chunks)
+
+
 def _read_frontend_payload() -> tuple[dict | None, bool]:
     """请求体 → (载荷, 是不是被整份丢掉了)。**不抛异常**。
 
@@ -2481,7 +2505,7 @@ def _read_frontend_payload() -> tuple[dict | None, bool]:
     """
     limit = engine_diagnostics_frontend.MAX_REQUEST_BYTES
     try:
-        raw = request.stream.read(limit + 1)
+        raw = _read_body_capped(limit)
     except Exception:  # noqa: BLE001 — 读流失败不该 500
         return None, False
     if not raw:
@@ -2520,9 +2544,9 @@ def api_perf_report():
     文件名由后端生成；请求体只校验形状（schema 字面量 + 片段列表 + 大小上限），
     不参与拼路径。不上传、不进遥测。
     """
-    # 上限卡在读取本身（chunked 请求没有 Content-Length，理由同诊断包的
-    # `_read_frontend_payload`）：多读一个字节就是「超了」的判据
-    raw = request.stream.read(engine_perfprobe.MAX_REPORT_BYTES + 1)
+    # 上限卡在读取本身（chunked 请求没有 Content-Length，见 `_read_body_capped`）：
+    # 多读一个字节就是「超了」的判据
+    raw = _read_body_capped(engine_perfprobe.MAX_REPORT_BYTES)
     try:
         dest = engine_perfprobe.save_report(raw)
     except engine_perfprobe.ReportRejected as exc:
@@ -2872,7 +2896,11 @@ def api_tutorial_open():
     # 里的排版——页面尺寸、面板摆放都可能已经不是这份资源的了（2026-09-13 把
     # 教程图幅从 80 mm 改到 65 mm 时抓到：旧槽位把面板按 1.19 倍摆回来，线宽
     # 检查全红）。副本目录都换了，进度本来就随目录走；槽位一并清掉，与重置同一处
-    cleared = _clear_tutorial_local_state(_project_id(tp.path), tp.metadata) if tp.created else []
+    cleared = (
+        _clear_tutorial_local_state(_project_id(tp.path), tp.metadata, tp.path)
+        if tp.created
+        else []
+    )
     try:
         status = open_project(str(tp.path), make_default=bool(body.get("default", True)))
     except engine_tutorial.TutorialError as exc:
@@ -2893,7 +2921,9 @@ def api_tutorial_open():
     )
 
 
-def _clear_tutorial_local_state(pid: str, meta: dict) -> list[str]:
+def _clear_tutorial_local_state(
+    pid: str, meta: dict, project_path: Path | None = None
+) -> list[str]:
     """重置时清掉数据目录里**只属于教程**的两样东西；别的项目一个字节不碰。
 
     * 教程画布的自动保存槽位（`document_id` 是元数据里定死的）；
@@ -2901,8 +2931,19 @@ def _clear_tutorial_local_state(pid: str, meta: dict) -> list[str]:
       旧基线描述的是已经不存在的写回结果。
     项目内的 `tavottofile/`（画布、导出、版本历史）随目录整个换掉。
     全局 recent 不动（路径没变），遥测同意与 onboarding 状态不属于这里。
+    另外（#715 PR-B，给了 `project_path` 时）：数据目录会话状态里教程项目的「上次开着的排版」
+    与教程画布槽位的归属（`engine/layoutsession.py`）；不进返回的 `cleared`（那是文件名清单）。
     """
     removed: list[str] = []
+    # 会话状态（#715 PR-B）：教程项目「上次开着的排版」与教程画布槽位的归属一并清掉——
+    # 槽位删了，指向它的记录留着的话下次打开教程会报一份不存在的「找不到上次排版」
+    if project_path is not None:
+        try:
+            engine_layoutsession.forget_project(
+                engine_layoutsession.project_key(project_path), [str(meta["document_id"])]
+            )
+        except OSError as exc:
+            LOG.warning("重置教程：会话状态清不掉（%s）", exc)
     for target in (_autosave_path(str(meta["document_id"])), _baked_store().path_for(pid)):
         try:
             target.unlink()
@@ -2940,7 +2981,7 @@ def api_tutorial_reset():
                 pass
         return _tutorial_error(exc)
     pid = _project_id(tp.path)
-    cleared = _clear_tutorial_local_state(pid, meta)
+    cleared = _clear_tutorial_local_state(pid, meta, tp.path)
     try:
         status = open_project(
             str(tp.path), make_default=bool(body.get("default", was_default or ctx is None))
@@ -7727,14 +7768,48 @@ def api_autosave_put(doc_id):
         # **在锁里读**：放到锁外读的话，返回给 A 的可能是 B 刚写下的那份内容的
         # hash，于是 A 的下一次写会带着一个「不是我写的」基线过来。
         revision = engine_atomicio.content_revision(p)
+    # 槽位归属（#715 PR-B）：这一份属于发请求那一刻的项目（前端按**排队那一刻**的 pj 发，
+    # `session.apiUrlFor`）。记不下只少一条归属，绝不让这次保存失败——内容已经落盘了。
+    _record_autosave_owner(p.stem)
     # 清理放在锁**外**：`_document_lock` 不可重入，而清理要去锁别的路径。
     _prune_autosave_slots(p)
     return jsonify({"ok": True, "saved_at": int(time.time() * 1000), "revision": revision})
 
 
-#: 自动保存槽位的磁盘上限。**这是一道兜底，不是主清理路径。**
+_OWNER_UNKNOWN = object()
+
+
+def _layout_session_owner():
+    """这次请求的槽位属于哪个项目：项目键 / `None`（没开项目）/ `_OWNER_UNKNOWN`。
+
+    与 `_request_ctx()` 同一套认法，只差一处：**指名了一个已经不在的项目时不抛**。自动保存
+    从来不因 pj 失效而拒写（那份内容是用户的工作），归属在这时是「不知道」，不记。
+    """
+    try:
+        ctx = _request_ctx()
+    except NoProjectError:
+        return _OWNER_UNKNOWN
+    return engine_layoutsession.project_key(ctx.path) if ctx is not None else None
+
+
+def _record_autosave_owner(doc_id: str) -> None:
+    owner = _layout_session_owner()
+    if owner is _OWNER_UNKNOWN:
+        return
+    try:
+        engine_layoutsession.record_owner(doc_id, owner)
+    except OSError as exc:
+        LOG.warning("自动保存槽位归属记不下（%s）", exc)
+
+
+#: 自动保存槽位的磁盘上限。
 #:
-#: 主清理在前端：`documentStore.flushAutosave` 每次落盘都会把被 `tavotto.docIndex`
+#: **2026-09-29 起（#715 PR-B）这是唯一的清理路径**：前端不再按本机 `tavotto.docIndex` 发
+#: DELETE（换了 origin 的前端索引是空的，按它删会删错；而它挤掉的槽位本来也只是「本机列表里
+#: 放不下了」，不是「用户不要了」）。参与清理的只有 `engine/layoutsession.py` 里**记着归属**的
+#: 槽位，且各项目「上次开着的」那一份永不删；没有归属的旧槽位在找回入口（PR-C）上线前不动。
+#:
+#: 下面是 PR-B 之前的原文（历史）：主清理在前端：`documentStore.flushAutosave` 每次落盘都会把被 `tavotto.docIndex`
 #: （`MAX_SLOTS = 12`）挤出去的文档的磁盘槽位一并 `DELETE` 掉。但那条路只在
 #: 「同一个浏览器 profile 的索引还在」时有效——清过站点数据、换个浏览器、换台
 #: 机器共用同一个数据目录、或者那次 DELETE 恰好失败（前端 `.catch(() => {})`），
@@ -7788,6 +7863,19 @@ def _prune_autosave_slots(keep: Path) -> list[str]:
     except OSError:
         # 目录还不存在 / 读不动：没什么可裁的，也绝不能因此让这次保存失败。
         return []
+    # 归属（#715 PR-B）：只有**记着归属**的槽位参与这道兜底。没有归属的旧槽位是 PR-B 之前
+    # 留下的（多半正是 #715 里换了 origin 之后界面上找不回来的那些），在找回入口（PR-C）
+    # 上线之前一个都不删——删了就再也找不回来了。各项目「上次开着的」那一份同样不删。
+    try:
+        owned = engine_layoutsession.owners()
+        protected = engine_layoutsession.protected_doc_ids()
+        engine_layoutsession.drop_owners_not_in(
+            {path.stem for _m, _s, path in rows},
+            lambda doc_id: (AUTOSAVE_DIR / f"{doc_id}.json").is_file(),
+        )
+    except OSError:
+        return []
+    rows = [r for r in rows if r[2].stem in owned and r[2].stem not in protected]
     rows.sort(key=lambda r: r[0], reverse=True)  # 新的在前
     total = 0
     victims: list[tuple[int, Path]] = []
@@ -7798,14 +7886,22 @@ def _prune_autosave_slots(keep: Path) -> list[str]:
             victims.append((mtime_ns, path))
     removed: list[str] = []
     for mtime_ns, path in victims:
-        with _document_lock(path):
+
+        def _unlink(path: Path = path, mtime_ns: int = mtime_ns) -> bool:
             try:
                 if path.stat().st_mtime_ns != mtime_ns:
-                    continue
+                    return False
                 path.unlink()
             except OSError:
-                continue
-        removed.append(path.name)
+                return False
+            return True
+
+        # 上面的 `protected` 只是快照：删之前在会话状态锁里重判一次（并发的「记成上次开着的」
+        # 插不进判与删之间），删了当场忘掉它的归属——见 `remove_slot_unless_protected`
+        with _document_lock(path):
+            gone = engine_layoutsession.remove_slot_unless_protected(path.stem, _unlink)
+        if gone:
+            removed.append(path.name)
     if removed:
         LOG.info("自动保存槽位清理：删掉 %d 份无人认领的旧槽位", len(removed))
     return removed
@@ -7828,7 +7924,145 @@ def api_autosave_delete(doc_id):
             p.unlink()
         except OSError:
             pass
+    if not p.exists():
+        try:
+            engine_layoutsession.forget_documents([p.stem])
+        except OSError as exc:
+            LOG.warning("删除槽位后会话状态没跟上（%s）", exc)
     return jsonify({"ok": True})
+
+
+# ------------------------- 会话状态（#715 PR-B） -----------------------------
+# 「这个项目上次开着哪份排版」以数据目录为准（`engine/layoutsession.py`），前端 localStorage
+# 只当缓存：桌面版换了端口 = 换了 origin = 一份空的 localStorage。两个端点都在 ADR 0008 的
+# 认证之下（不进 `security._PUBLIC_PATHS`）；项目按 `_request_ctx()` 认，没开项目是单独一组。
+# 回给前端的只有 doc_id / 名字 / 时间，不带项目路径。
+
+
+@app.get("/api/layout-session")
+def api_layout_session_get():
+    ctx = _request_ctx()
+    key = engine_layoutsession.project_key(ctx.path) if ctx is not None else None
+    resp = jsonify({"last": engine_layoutsession.last_for(key)})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.put("/api/layout-session/last")
+def api_layout_session_put_last():
+    body = request.get_json(silent=True)
+    doc_id = body.get("doc_id") if isinstance(body, dict) else None
+    name = body.get("name", "") if isinstance(body, dict) else None
+    if not engine_layoutsession.valid_doc_id(doc_id) or not isinstance(name, str):
+        return jsonify({"error": "doc_id / name 不合法", "code": "bad_request"}), 400
+    ctx = _request_ctx()
+    key = engine_layoutsession.project_key(ctx.path) if ctx is not None else None
+    try:
+        last = engine_layoutsession.set_last(key, doc_id, name)
+    except engine_layoutsession.ForeignLayoutError:
+        # 这份排版的槽位记在别的项目名下（#715 验收 P1）：不记成这个项目「上次开着的」。
+        # 前端认这个 code，作废本机缓存里的这一条、不重推（`lib/projectDocs.LAYOUT_FOREIGN_CODE`）
+        return jsonify(
+            {
+                "error": "这份排版属于另一个项目，不能记成这个项目上次打开的排版",
+                "code": "layout_foreign",
+            }
+        ), 409
+    return jsonify({"ok": True, "last": last})
+
+
+def _file_named(directory: Path, doc_id: str) -> Path | None:
+    """`directory` 里名为 `<doc_id>.json` 的文件（按目录列表匹配）；没有 / 目录不在回 None。"""
+    try:
+        return next(
+            (
+                p
+                for p in directory.iterdir()
+                if p.suffix == ".json" and p.stem == doc_id and p.is_file()
+            ),
+            None,
+        )
+    except OSError:
+        return None
+
+
+def _layout_owner_evidence(doc_id: str, ctx) -> tuple[str, str | None]:
+    """槽位 `doc_id` 与当前项目的关系：(`this` / `other` / `unknown`, 证据)。
+
+    只给**前端本机索引不知道归属**的那一档用（升级前、T04 之前的 docIndex 条目没有 projectId；
+    #715 验收 P1 之后这类排版要正面证据才恢复）。证据按可信度依次看：
+
+    1. `owners`（#719 起每次自动保存按 pj 记）：有记录就是定论，别的项目的一律 `other`；
+    2. 当前项目的 `tavottofile/versions/<doc_id>.json`（ADR 0101 起时间线节点按项目写）；
+    3. 槽位里的面板引用的素材**全部**在当前项目里、且至少有一个（升级前的槽位没有任何归属记录，
+       只剩内容本身：它放的就是这个项目的图）。runtime 面板（`runtime:` 前缀）不计。
+
+    都没有就是 `unknown`——前端据此不恢复。
+    """
+    key = engine_layoutsession.project_key(ctx.path) if ctx is not None else None
+    verdict = engine_layoutsession.owner_verdict(doc_id, key)
+    if verdict is not None:
+        return verdict, "owners"
+    if ctx is None:
+        return "unknown", None
+    # 两处都按**目录里已有的文件名**去找，不拿请求里的 doc_id 拼路径（它虽然已过 `valid_doc_id`，
+    # 只读端点也不给路径注入留口子）
+    store = project_store_dir(ctx)
+    if store is not None and _file_named(store / "versions", doc_id) is not None:
+        return "this", "versions"
+    slot = _file_named(AUTOSAVE_DIR, doc_id)
+    if slot is None:
+        return "unknown", None
+    try:
+        doc = engine_documents.loads_document(slot.read_bytes())
+    except (OSError, ValueError):
+        return "unknown", None
+    if not isinstance(doc, dict):
+        return "unknown", None
+    root = Path(ctx.path).resolve()
+    files = [
+        o.get("fileId")
+        for o in _doc_objects(doc)
+        if o.get("type") == "panel"
+        and isinstance(o.get("fileId"), str)
+        and not o["fileId"].startswith("runtime:")
+    ]
+    if not files:
+        return "unknown", None
+    for rel in files:
+        p = (root / rel).resolve()
+        if not p.is_relative_to(root) or not p.is_file():
+            return "unknown", None
+    return "this", "assets"
+
+
+@app.get("/api/layout-session/owner")
+def api_layout_session_owner():
+    """前端不知道归属的那份排版，后端有没有证据说它属于当前项目（#715 验收 P1 / #773）。"""
+    doc_id = request.args.get("doc_id")
+    if not engine_layoutsession.valid_doc_id(doc_id):
+        return jsonify({"error": "doc_id 不合法", "code": "bad_request"}), 400
+    owner, evidence = _layout_owner_evidence(doc_id, _request_ctx())
+    resp = jsonify({"owner": owner, "evidence": evidence})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.get("/api/preferences/export-defaults")
+def api_export_defaults_get():
+    """导出默认值（按用户一份，数据目录）。没存过是 `{"defaults": null}`，不是 404。"""
+    resp = jsonify({"defaults": engine_layoutsession.read_export_defaults()})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.put("/api/preferences/export-defaults")
+def api_export_defaults_put():
+    try:
+        value = engine_layoutsession.write_export_defaults(request.get_json(silent=True))
+    except ValueError:
+        return jsonify({"error": "导出默认值不合法", "code": "bad_request"}), 400
+    return jsonify({"ok": True, "defaults": value})
 
 
 # ------------------------- 布局版本时间线 -----------------------------------
@@ -7839,8 +8073,13 @@ VERSIONS_DIR = (
     LAYOUT_DIR / engine_documents.VERSIONS_DIRNAME
 )  # 旧位置：只读兼容（新写入进项目 tavottofile/versions/）
 _VERSIONS_LOCK = threading.Lock()
-VERSION_KEEP_AUTO = 40  # 自动检查点保留数
-VERSION_KEEP_TOTAL = 120  # 单文档版本总数上限（先裁自动、再裁最旧）
+#: 未命名的普通自动检查点保留数。间隔从 5 分钟调到 2 分钟（ADR 0101）之后，
+#: 40 条只盖得住约 80 分钟的连续编辑，所以提到 60（约 2 小时）；大排版照旧先被
+#: 下面的字节上限咬住。
+VERSION_KEEP_AUTO = 60
+#: 单排版**未命名**节点的总数上限（先裁自动、再裁关键时刻、再裁手动）。
+#: 命名节点不计入、不参与裁剪（ADR 0101）——它们只受 `_named_budget_refusal` 管。
+VERSION_KEEP_TOTAL = 120
 #: 单文档版本时间线的**字节上限**（见 `_save_versions`）。
 #:
 #: 条数上限单独用不住体积：条目里存的是整份文档，于是文件大小 = 条数 × 文档
@@ -7961,8 +8200,13 @@ def _refuse_blind_full_overwrite(doc_id: str):
     ), 409
 
 
-def _save_versions(doc_id: str, versions: list[dict]) -> None:
-    """整份写回版本时间线，**从新往旧留到字节预算为止**。
+def _save_versions(doc_id: str, versions: list[dict], keep: dict | None = None) -> None:
+    """整份写回版本时间线：先过两条条数上限，再**从新往旧留到字节预算为止**。
+
+    **每一次写入都过裁剪**，不由调用方记得调 `_prune_versions`：改节点类别的
+    路（取消命名把命名节点变回未命名、「保留此检查点」的 `auto` 开关）和新增
+    节点一样会让某一档的条数越过上限，Codex #679 抓到的就是取消命名没裁。
+    `keep` 是这次调用要交回给调用方的那一条（见 `_sacrifice_order`）。
 
     条数上限（`VERSION_KEEP_TOTAL`）管不住体积：每条版本条目里塞的是**整份
     文档**，1.16 MB 的文档塞满 120 条就是约 140 MB 一个文件，而每一次追加都要
@@ -7978,6 +8222,7 @@ def _save_versions(doc_id: str, versions: list[dict]) -> None:
     **至少留一条**：单条就超预算时仍然留下最新那条，否则
     `api_versions_create` 会交回一个磁盘上根本不存在的版本。
     """
+    versions = _prune_versions(versions, keep)
     head, sep, tail = b'{"versions": [', b", ", b"]}"
     blobs = [engine_atomicio.dumps_json(v) for v in versions]
     # **算的是文件的字节数，不是条目的字节数。** 外壳与分隔符也占地方；不把它们
@@ -7985,16 +8230,20 @@ def _save_versions(doc_id: str, versions: list[dict]) -> None:
     # （每多一条多两个字节）——判据的主语与常量的说明会悄悄地对不上。
     size = len(head) + len(tail) + sum(len(b) for b in blobs) + len(sep) * max(len(blobs) - 1, 0)
     dropped: set[int] = set()
-    for i in _sacrifice_order(versions):  # 与条数上限**同一套优先级**
+    for i in _sacrifice_order(versions, keep):  # 与条数上限**同一套优先级**
         if size <= VERSION_KEEP_BYTES:
             break
         dropped.add(i)
         size -= len(blobs[i]) + len(sep)
+    # 裁完仍超上限，只可能是命名节点本身占满了预算：**命名节点一条都不删**
+    # （ADR 0101），文件照写；再命名新的节点由 `_named_budget_refusal` 拒绝，
+    # 界面从列表的 `budget` 读到超限并请用户自己删。
     chunks = [b for i, b in enumerate(blobs) if i not in dropped]
     engine_atomicio.write_bytes(_versions_path(doc_id), head + sep.join(chunks) + tail)
+    _sweep_version_thumbs(doc_id, {v.get("id") for i, v in enumerate(versions) if i not in dropped})
 
 
-def _sacrifice_order(versions: list[dict]) -> list[int]:
+def _sacrifice_order(versions: list[dict], keep: dict | None = None) -> list[int]:
     """再腾一条地方的话，**先牺牲谁** —— 时间线上所有裁剪路径的唯一优先级。
 
     「先裁自动、再裁最旧」（见 `VERSION_KEEP_TOTAL` 上的注释）：自动检查点是
@@ -8003,27 +8252,206 @@ def _sacrifice_order(versions: list[dict]) -> list[int]:
 
     **最新那条不参与牺牲**：它是这次调用刚交回给调用方的那一版，裁掉它等于
     `api_versions_create` 交回一个磁盘上不存在的版本。于是「至少留一条」不再是
-    一条要单独记得的规矩，而是这个顺序本身的性质。
+    一条要单独记得的规矩，而是这个顺序本身的性质。`keep`（按对象身份）是同一条
+    性质推到不追加的写入上：取消命名交回的是那个旧节点，它刚变成未命名、可能是
+    最旧的一条，不护着的话同一次请求就把它裁掉。
 
     条数上限与字节上限**共用这一个顺序**。改造中途它们各有一套：条数那边按
     自动/手动分档，字节那边是纯粹的「留最新一段」——同一份契约在同一个文件里
     有两个答案，而字节那条会把手工检查点交给自动检查点去顶。
+
+    **命名节点也不参与牺牲**（ADR 0101）：名字是用户说「这一版我要留着」的唯一
+    方式，按时间或体积把它挤掉就等于没有这个功能。它们只受
+    `_named_budget_refusal` 管——超预算时拒绝**再命名**，已有的一条不动。
+    未命名的三档：普通自动 → 关键时刻（导出 / 写回 / 打开…，自动打的点但记着
+    「这里发生过一件事」）→ 手动。
     """
     keep_newest = len(versions) - 1
-    autos = [i for i, v in enumerate(versions) if v.get("auto") and i != keep_newest]
-    manual = [i for i, v in enumerate(versions) if not v.get("auto") and i != keep_newest]
-    return autos + manual  # 各自已按下标（= 时间）升序
+    tiers: dict[str, list[int]] = {"auto": [], "moment": [], "manual": []}
+    for i, v in enumerate(versions):
+        kind = _version_kind(v)
+        if i != keep_newest and v is not keep and kind in tiers:
+            tiers[kind].append(i)
+    return tiers["auto"] + tiers["moment"] + tiers["manual"]  # 各自已按下标（= 时间）升序
 
 
-def _prune_versions(versions: list[dict]) -> list[dict]:
-    autos = [v for v in versions if v.get("auto")]
-    if len(autos) > VERSION_KEEP_AUTO:
-        drop = {id(v) for v in autos[: len(autos) - VERSION_KEEP_AUTO]}
-        versions = [v for v in versions if id(v) not in drop]
-    if len(versions) > VERSION_KEEP_TOTAL:
-        drop_idx = set(_sacrifice_order(versions)[: len(versions) - VERSION_KEEP_TOTAL])
+def _prune_versions(versions: list[dict], keep: dict | None = None) -> list[dict]:
+    """两条条数上限；**谁先被裁**只看 `_sacrifice_order`（只由 `_save_versions` 调）。"""
+    excess = sum(1 for v in versions if _version_kind(v) == "auto") - VERSION_KEEP_AUTO
+    if excess > 0:
+        # 牺牲顺序的「普通自动」那一档就是从旧到新的自动节点，护着的两条不在里面
+        autos = [
+            i for i in _sacrifice_order(versions, keep) if _version_kind(versions[i]) == "auto"
+        ]
+        drop_idx = set(autos[:excess])
+        versions = [v for i, v in enumerate(versions) if i not in drop_idx]
+    # 条数上限数的是**未命名**节点：命名节点不计入（ADR 0101）
+    unnamed = sum(1 for v in versions if not _is_named(v))
+    if unnamed > VERSION_KEEP_TOTAL:
+        drop_idx = set(_sacrifice_order(versions, keep)[: unnamed - VERSION_KEEP_TOTAL])
         versions = [v for i, v in enumerate(versions) if i not in drop_idx]
     return versions
+
+
+#: 关键时刻的闭集（ADR 0101）。不认识的值 400，不静默当成普通自动节点——
+#: 那样一个拼错的 moment 会在时间线上没有标记、还跟普通自动节点一起先被裁。
+VERSION_MOMENTS = frozenset({"export", "writeback", "open", "close", "before_restore", "save"})
+
+#: 后端给未命名节点起的名字（`api_versions_create` 的 `strftime`）。只在读**旧**
+#: 条目时用：`named` 字段出现之前，手动存的那一版名字要么是用户敲的、要么是这个
+#: 时间串——用户敲过名字的旧节点认作命名节点，升级不让它们变得可以被裁。
+_DEFAULT_VERSION_NAME = re.compile(r"^\d{2}-\d{2} \d{2}:\d{2}$")
+
+
+def _is_named(v: dict) -> bool:
+    """这一条是不是**命名节点**：用户亲手起了名字、永不被自动清理。"""
+    if "named" in v:
+        return bool(v["named"])
+    # 旧条目（ADR 0101 之前）没有这个字段。自动检查点（含旧的「恢复前」）的名字
+    # 是程序起的，不算；手动的看名字是不是默认时间串。
+    if v.get("auto"):
+        return False
+    name = str(v.get("name") or "").strip()
+    return bool(name) and not _DEFAULT_VERSION_NAME.match(name)
+
+
+def _version_kind(v: dict) -> str:
+    """named / moment / auto / manual —— 类型标记与裁剪档位的唯一出处。"""
+    if _is_named(v):
+        return "named"
+    if v.get("moment") in VERSION_MOMENTS:
+        return "moment"
+    return "auto" if v.get("auto") else "manual"
+
+
+def _versions_budget(versions: list[dict], file_size: int | None = None) -> dict:
+    """这份时间线里**命名节点**占了多少字节——超限提示与拒绝再命名的事实来源。
+
+    量的是 `_save_versions` 会写出的同一种字节（逐条 `dumps_json`），不另估。
+
+    `file_size` 是列表端点的捷径：整个文件都没超上限，命名节点就不可能超，
+    不必把它们再序列化一遍（实测 24 MB、百来个命名节点时这一遍约 150 ms，
+    而列表每打开一次抽屉就调一次）。此时 `namedBytes` 缺席——「没量」不冒充「0」。
+    """
+    if file_size is not None and file_size <= VERSION_KEEP_BYTES:
+        return {"limit": VERSION_KEEP_BYTES, "namedOver": False}
+    named = sum(len(engine_atomicio.dumps_json(v)) for v in versions if _is_named(v))
+    return {
+        "namedBytes": named,
+        "limit": VERSION_KEEP_BYTES,
+        "namedOver": named > VERSION_KEEP_BYTES,
+    }
+
+
+#: 节点名字的长度上限（字符）。与前端 `VERSION_NAME_MAX`（`web/src/lib/api.ts`）严格同源，
+#: 看护在 `tests/test_layout_timeline.py`。没有上限的话，命名节点之间反复改名能把受保护的
+#: 字节一直撑大（Codex #679）；上限之内的增长由 `_named_budget_refusal` 管。
+VERSION_NAME_MAX = 100
+
+
+def _version_name_refusal(name: str):
+    """名字超长回 400（写之前判、磁盘零改动）；放行回 `None`。"""
+    if len(name) <= VERSION_NAME_MAX:
+        return None
+    return jsonify(
+        {
+            "error": f"节点名字最长 {VERSION_NAME_MAX} 个字",
+            "code": "version_name_too_long",
+            "params": {"max": VERSION_NAME_MAX},
+        }
+    ), 400
+
+
+def _named_budget_refusal(versions: list[dict]):
+    """假如这次操作成功，命名节点会不会超出字节上限；超了回 409，放行回 `None`。
+
+    只在操作会**新增**命名节点时调用（命名 / 存为命名 / 复制一个命名节点）；删名字、
+    删节点永远放行——那正是用户腾地方的出口。拒绝发生在写之前：磁盘零改动。
+    """
+    budget = _versions_budget(versions)
+    if not budget["namedOver"]:
+        return None
+    return jsonify(
+        {
+            "error": "命名节点已经占满了这份排版的时间线空间，这次没有命名——"
+            "先删掉几个用不到的命名节点。",
+            "code": "named_budget_exceeded",
+            "params": {
+                "used": f"{budget['namedBytes'] / 1048576:.1f}",
+                "limit": f"{budget['limit'] / 1048576:.0f}",
+            },
+            "budget": budget,
+        }
+    ), 409
+
+
+# ---- 节点缩略图（ADR 0101）：一个节点一张小图，单独存，随节点一起裁剪 ----
+#: 单张缩略图的上限。前端合成的是 ~200 px 宽的小图（几 KB 到几十 KB）；这里只挡误传。
+VERSION_THUMB_MAX_BYTES = 256 * 1024
+#: 允许的格式 → 扩展名。WKWebView 编不出 webp 时前端退回 png。
+_VERSION_THUMB_TYPES = {"image/webp": "webp", "image/png": "png"}
+_VERSION_ID_RE = re.compile(r"^v[0-9a-f]+-[0-9a-f]+$")
+
+
+def _version_thumbs_dir(doc_id: str) -> Path:
+    """`<versions>/thumbs/<排版 id>/`：按排版分目录，清理时只扫这一份的。"""
+    p = _versions_path(doc_id)
+    return p.parent / "thumbs" / p.stem
+
+
+def _version_thumb_path(doc_id: str, vid: object) -> Path | None:
+    """这个节点**此刻磁盘上**的缩略图；没有就 `None`。
+
+    有没有缩略图是**文件在不在**，不记进时间线 JSON：记进去的话每挂一张图都要把
+    整份时间线（大排版十几 MB）再整写一遍，自动节点的写入代价就翻了一倍
+    （实测见 ADR 0101）。
+
+    两种格式都看，**同时都在时取较新的那张**（按 mtime；PUT 先写新的、再删另一种，删不掉
+    时两张会同时在，Codex #679）——写入顺序保证新图更新，于是新图胜出，不会一张删不掉的
+    旧格式图把刚换上的顶回去。
+    """
+    if not isinstance(vid, str) or not _VERSION_ID_RE.match(vid):
+        return None
+    d = _version_thumbs_dir(doc_id)
+    found: list[tuple[int, Path]] = []
+    for ext in _VERSION_THUMB_TYPES.values():
+        p = d / f"{vid}.{ext}"
+        try:
+            if p.is_file():
+                found.append((p.stat().st_mtime_ns, p))
+        except OSError:
+            continue
+    if not found:
+        return None
+    return max(found, key=lambda t: t[0])[1]
+
+
+def _sweep_version_thumbs(doc_id: str, kept_ids: set) -> None:
+    """删掉**不属于任何留下来的节点**的缩略图（裁剪 / 删除之后）。
+
+    按目录扫而不是按「这次删了谁」：进程在写完 JSON、删图之前被杀留下的孤儿图，
+    下一次任何写入都会顺手清掉。失败只记日志——缩略图是附属物，删不掉不能让这次
+    保存报错（JSON 已经原子写完了）。只认 `_VERSION_ID_RE` 的名字，别的文件不碰。
+
+    **连目录都列不出来也一样**（Codex #679）：`_save_versions` 在时间线 JSON 原子
+    提交**之后**才调这里，此时抛出去就是「操作已经成功、接口却回 500」，而前端一重试
+    就多建一个节点。瞬时的文件系统错误 / 没有读权限只记日志，下一次写入再扫。
+    """
+    d = _version_thumbs_dir(doc_id)
+    try:
+        if not d.is_dir():
+            return
+        entries = list(d.iterdir())
+    except OSError as exc:
+        LOG.warning("版本缩略图目录列不出来（下次再清）: %s: %s", d, exc)
+        return
+    for f in entries:
+        if f.stem in kept_ids or not _VERSION_ID_RE.match(f.stem):
+            continue
+        try:
+            f.unlink()
+        except OSError as exc:
+            LOG.warning("版本缩略图删不掉（下次再试）: %s: %s", f, exc)
 
 
 def _version_meta(v: dict) -> dict:
@@ -8033,10 +8461,16 @@ def _version_meta(v: dict) -> dict:
         "name": v.get("name", ""),
         "ts": v.get("ts", 0),
         "auto": bool(v.get("auto")),
+        # 时间线的类型标记（ADR 0101）：named / moment / auto / manual，判据只在
+        # `_version_kind`；前端不再从 auto + name 自己猜。
+        "kind": _version_kind(v),
+        "named": _is_named(v),
         "description": v.get("description", ""),
         "objects": len(_doc_objects(doc)),
         "page": doc.get("page"),
     }
+    if v.get("moment") in VERSION_MOMENTS:
+        meta["moment"] = v["moment"]
     # 检查点存的是**某一张画布**的内容，却按 documentId（= 整个项目）归档。
     # 不记下是哪一张，恢复时就只能往「当前激活的那张」上盖——在画布 B 上产生
     # 的检查点会把 B 的内容和名字盖到 A 头上（R-03）。
@@ -8179,8 +8613,12 @@ def _sketch_limits() -> tuple[int, int]:
 def api_versions_list(doc_id):
     max_objects, max_text = _sketch_limits()
     out = []
-    for v in _load_versions(doc_id):
+    versions = _load_versions(doc_id)
+    for v in versions:
         meta = _version_meta(v)
+        thumb = _version_thumb_path(doc_id, v.get("id"))
+        if thumb is not None:
+            meta["thumb"] = thumb.suffix[1:]
         if max_objects > 0:
             sketch = _version_sketch(v, max_objects, max_text)
             # 画不出来就**不带这个键**，不发一份空草图：空草图与「这一版真的
@@ -8188,7 +8626,12 @@ def api_versions_list(doc_id):
             if sketch is not None:
                 meta["sketch"] = sketch
         out.append(meta)
-    return jsonify({"versions": out})
+    src = _versions_source_path(doc_id)
+    try:
+        size = src.stat().st_size if src is not None else 0
+    except OSError:
+        size = None
+    return jsonify({"versions": out, "budget": _versions_budget(versions, size)})
 
 
 @app.get("/api/versions/<doc_id>/<vid>")
@@ -8203,14 +8646,33 @@ def api_versions_get(doc_id, vid):
 def api_versions_create(doc_id):
     body = request.get_json(force=True)
     doc = engine_documents.validate_document(body.get("doc"))
+    given = str(body.get("name") or "").strip()
+    # 命名节点（ADR 0101）= 调用方明确说 `named` 且真给了名字。只给名字不说
+    # named 的（「恢复前 10:32」这类程序起的名字）不算：名字是谁起的才是判据。
+    named = bool(body.get("named")) and bool(given)
+    refusal = _version_name_refusal(given)
+    if refusal is not None:
+        return refusal
+    moment = body.get("moment")
+    if moment is not None and moment not in VERSION_MOMENTS:
+        return jsonify(
+            {
+                "error": f"未知的关键时刻: {moment}",
+                "code": "version_moment_invalid",
+                "params": {"moment": str(moment)[:40]},
+            }
+        ), 400
     ver = {
         "id": _new_version_id(),
-        "name": str(body.get("name") or "").strip() or time.strftime("%m-%d %H:%M"),
+        "name": given or time.strftime("%m-%d %H:%M"),
         "ts": int(time.time() * 1000),
         "auto": bool(body.get("auto")),
+        "named": named,
         "description": str(body.get("description") or ""),
         "doc": doc,
     }
+    if moment is not None:
+        ver["moment"] = moment
     # 画布身份（R-03）：只在调用方真的给了的时候记；给了空串等于没给。
     if body.get("canvasId"):
         ver["canvasId"] = str(body["canvasId"])
@@ -8226,8 +8688,10 @@ def api_versions_create(doc_id):
             refusal = _refuse_blind_full_overwrite(doc_id)
             if refusal is not None:
                 return refusal
-        # 自动检查点若与最近一版内容相同则跳过（刷新/空转不该刷版本）
-        if ver["auto"] and versions:
+        # 自动检查点若与最近一版内容相同则跳过（刷新/空转不该刷版本）。
+        # 关键时刻**不跳过**：「导出成功」那一刻内容没变也是一件发生过的事，
+        # 它的标记正是用户要找的东西（ADR 0101）。
+        if ver["auto"] and moment is None and versions:
             last = versions[-1]
             # 画布身份也参与去重判据：两张画布内容恰好相同（复制一张画布之后
             # 很常见）时，只比 doc 会把**另一张画布**的检查点判成重复而跳过，
@@ -8238,7 +8702,10 @@ def api_versions_create(doc_id):
             ):
                 return jsonify({"skipped": True, "version": _version_meta(last)})
         versions.append(ver)
-        versions = _prune_versions(versions)
+        if named:
+            refusal = _named_budget_refusal(versions)
+            if refusal is not None:
+                return refusal
         _save_versions(doc_id, versions)
     return jsonify({"version": _version_meta(ver)})
 
@@ -8250,13 +8717,36 @@ def api_versions_rename(doc_id, vid):
         versions = _load_versions(doc_id)
         for v in versions:
             if v["id"] == vid:
+                was_named = _is_named(v)
+                # 这一条原来占了多少**受保护**字节：命名节点之间改名 / 改说明也会让它变大
+                protected_before = len(engine_atomicio.dumps_json(v)) if was_named else 0
                 if "name" in body:
-                    v["name"] = str(body["name"]).strip() or v["name"]
+                    # 起名 / 改名 = 命名节点（ADR 0101）。空名字不改名
+                    name = str(body["name"]).strip()
+                    refusal = _version_name_refusal(name)
+                    if refusal is not None:
+                        return refusal
+                    if name:
+                        v["name"] = name
+                        v["named"] = True
+                if body.get("named") is False:
+                    # 删掉名字：变回普通节点，名字回到它自己时刻的时间串（不是
+                    # 「现在」——那会让一个旧节点看起来像刚拍的）
+                    v["named"] = False
+                    v["name"] = time.strftime("%m-%d %H:%M", time.localtime(v.get("ts", 0) / 1000))
                 if "description" in body:
                     v["description"] = str(body["description"])
                 if "auto" in body:  # 「保留此检查点」= 转正为手动版本
                     v["auto"] = bool(body["auto"])
-                _save_versions(doc_id, versions)
+                # **任何让受保护字节变多的改动**都过预算（Codex #679）：新起名、命名节点之间
+                # 改成更长的名字、加长说明都算；变少或不变（删名字、改短）永远放行。拒绝发生在
+                # 写之前，改动只在内存里，磁盘零改动
+                if _is_named(v) and len(engine_atomicio.dumps_json(v)) > protected_before:
+                    refusal = _named_budget_refusal(versions)
+                    if refusal is not None:
+                        return refusal
+                # 取消命名 / `auto` 开关会让某一档越过条数上限：照样裁，但不裁这一条
+                _save_versions(doc_id, versions, keep=v)
                 return jsonify({"version": _version_meta(v)})
     abort(404)
 
@@ -8270,12 +8760,19 @@ def api_versions_duplicate(doc_id, vid):
                 copy = {
                     **v,
                     "id": _new_version_id(),
-                    "name": f"{v.get('name', '')} 副本",
+                    # 副本的名字同样守长度上限（反复复制不能把名字越拼越长）
+                    "name": f"{v.get('name', '')[: VERSION_NAME_MAX - 3]} 副本",
                     "ts": int(time.time() * 1000),
                     "auto": False,
+                    "named": _is_named(v),
                 }
+                copy.pop("moment", None)  # 副本不是那个时刻本身（缩略图按 id 存，副本也没有）
                 versions.append(copy)
-                _save_versions(doc_id, _prune_versions(versions))
+                if copy["named"]:
+                    refusal = _named_budget_refusal(versions)
+                    if refusal is not None:
+                        return refusal
+                _save_versions(doc_id, versions)
                 return jsonify({"version": _version_meta(copy)})
     abort(404)
 
@@ -8289,6 +8786,63 @@ def api_versions_delete(doc_id, vid):
             abort(404)
         _save_versions(doc_id, kept)
     return jsonify({"ok": True})
+
+
+@app.put("/api/versions/<doc_id>/<vid>/thumb")
+def api_versions_thumb_put(doc_id, vid):
+    """给一个节点挂缩略图（ADR 0101）。只写图文件（atomicio），时间线 JSON 不动。
+
+    节点必须还在（拍图与裁剪赛跑时它可能已经被裁掉了：404，图不落盘）——判据与
+    写图在同一把锁里，裁剪不会在两者之间把节点拿走、留下一张孤儿图。
+    """
+    ext = _VERSION_THUMB_TYPES.get((request.mimetype or "").lower())
+    if ext is None:
+        return jsonify({"error": "缩略图只收 webp / png", "code": "version_thumb_invalid"}), 400
+    # 上限卡在读取本身（Codex #679）：`get_data()` 先把整个 body 读进内存才轮到这里判大小，
+    # chunked 请求没有 Content-Length，出错的客户端可以把内存吃满
+    data = _read_body_capped(VERSION_THUMB_MAX_BYTES)
+    if not data or len(data) > VERSION_THUMB_MAX_BYTES:
+        return jsonify({"error": "缩略图为空或太大", "code": "version_thumb_invalid"}), 400
+    if not _VERSION_ID_RE.match(vid):
+        abort(404)
+    with _VERSIONS_LOCK:
+        ids = {v.get("id") for v in _load_versions(doc_id)}
+        if vid not in ids:
+            abort(404)
+        # 顺手清孤儿（已经读出节点清单了，扫一遍目录不另花什么）
+        _sweep_version_thumbs(doc_id, ids)
+        d = _version_thumbs_dir(doc_id)
+        # **先原子写新图、落地之后再删另一种格式的旧图**（Codex #679）：新图写失败时旧图
+        # 还在，接口报失败也就是真话（什么都没换）；先删后写的话，写失败时旧图已经没了。
+        # 写成之后删旧图是尽力清理：删不掉只记日志、不算失败——两张同时在时
+        # `_version_thumb_path` 取较新的那张，刚写上的新图胜出。
+        engine_atomicio.write_bytes(d / f"{vid}.{ext}", data)
+        for other in _VERSION_THUMB_TYPES.values():
+            if other != ext:
+                try:
+                    (d / f"{vid}.{other}").unlink()
+                except FileNotFoundError:
+                    pass
+                except OSError as exc:
+                    LOG.warning("旧格式的版本缩略图删不掉（新图已写上，它胜出）: %s: %s", d, exc)
+    return jsonify({"ok": True, "thumb": ext})
+
+
+@app.get("/api/versions/<doc_id>/<vid>/thumb")
+def api_versions_thumb_get(doc_id, vid):
+    path = _version_thumb_path(doc_id, vid)
+    if path is None:
+        abort(404)
+    try:
+        data = path.read_bytes()
+    except OSError:
+        abort(404)
+    # 读一次、发这一份：`send_file` 留下的句柄在 Windows 上会挡住下一次
+    # `os.replace` / 删除（与 GET /api/layouts 同一条教训）
+    resp = Response(data, mimetype=f"image/{path.suffix[1:]}")
+    # 同一个 vid 的图可能被重拍（换格式），不做长缓存
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp
 
 
 # ------------------------- Style / Spec profile ------------------------------

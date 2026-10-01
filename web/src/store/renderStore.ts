@@ -188,7 +188,9 @@ export function renderKeyOf(panel: PanelObject): string {
  */
 function prepareSvg(text: string): string {
   return text.replace(/<svg([^>]*)>/, (_m, attrs: string) => {
-    const cleaned = attrs.replace(/\s(?:width|height)="[^"]*"/g, '')
+    // 要写的三个属性先全部拿掉再写：原文已经带着其中哪个的话，拼上去就是重复属性，
+    // 整份 SVG 在 XML 解析里是错的（Codex #679：时间线缩略图就栽在这上面）
+    const cleaned = attrs.replace(/\s(?:width|height|preserveAspectRatio|style)="[^"]*"/g, '')
     return `<svg${cleaned} preserveAspectRatio="none" style="width:100%;height:100%;display:block">`
   })
 }

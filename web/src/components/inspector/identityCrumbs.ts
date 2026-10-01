@@ -3,7 +3,7 @@ import { t } from '@/i18n'
 import { engineLabel } from './roles/registry'
 
 /**
- * 属性页顶部那条面包屑：「面板 / 子图 / 元素」。
+ * 属性页顶部那条面包屑：「面板 / [组] / 子图 / 元素」。
  *
  * 引擎发来的 `label` 是**中文散文**（`子图 1` / `标题 “…”`），一律过
  * `engineLabel` 换成当前语言——元素树那边一直这么做，这条面包屑曾经漏了：
@@ -27,9 +27,15 @@ export function identityCrumbs(
    * 归属放进面包屑，一眼读出「图例 / Catalyst」「X 轴刻度 / 10」
    */
   containerLabel?: string,
+  /**
+   * 整张图与子图之间的**组**（共享色条的几个子图，`Manifest.groups`）。组名是界面
+   * 自己拼的（`roles/registry.groupName`，已是当前语言），不再过 `engineLabel`。
+   */
+  groupLabel?: string,
 ): string[] {
   return [
     panelName,
+    groupLabel ?? null,
     axesLabel ? engineLabel(axesLabel) : null,
     containerLabel ? engineLabel(containerLabel) : null,
     elementLabel

@@ -72,6 +72,7 @@ CODE_ROOTS_ERROR = "workspace_roots_error"
 CODE_NO_WORKSPACE_ROOT = "no_workspace_root"
 CODE_PATH_OUT_OF_SCOPE = "path_out_of_scope"
 CODE_AMBIGUOUS_ROOT = "ambiguous_workspace_root"
+CODE_ROOT_TOO_BROAD = "workspace_root_too_broad"
 
 
 @dataclass(frozen=True)
@@ -177,6 +178,13 @@ WORKSPACE_FAILURES: dict[str, WorkspaceFailure] = {
             f"{ROOTS_ENV} 设成它们（{os.pathsep} 分隔）后{RESTART_HOST}。",
         ),
         _failure(
+            CODE_ROOT_TOO_BROAD,
+            CONFIGURE_ROOTS,
+            "给出的工作区是整个用户主目录（或它的上级目录），Tavotto 不接受这么宽的授权范围。",
+            "在具体的项目目录里启动宿主（或在宿主里打开项目目录），或把 "
+            f"{ROOTS_ENV} 设成项目目录后{RESTART_HOST}。",
+        ),
+        _failure(
             CODE_AMBIGUOUS_ROOT,
             SEND_ABSOLUTE_PATH,
             "同时有多个可信工作区根，相对路径没有唯一解释。",
@@ -193,6 +201,8 @@ _CONFIRMATION_FAILURE_CODES = {
     "cancelled": CODE_CONFIRMATION_CANCELLED,
     "no_response": CODE_CONFIRMATION_NO_RESPONSE,
     "auto_declined": CODE_CONFIRMATION_AUTO_DECLINED,
+    # 调用方明确给了绝对路径，只是它是主目录（或上级）：不是「还没确认」，重试同一个路径没用
+    "too_broad": CODE_ROOT_TOO_BROAD,
     "error": CODE_CONFIRMATION_ERROR,
     "stale": CODE_CONFIRMATION_STALE,
 }
@@ -260,6 +270,53 @@ def canonical_path(path: str) -> str:
         if not callable(resolver):
             raise
         return _windows_absolute_realpath(raw, resolver)
+
+
+#: 授权根里拒绝主目录时的说明。`failure()` 靠它认出「被拒是因为太宽」这一档。
+HOME_REJECTED = "是用户主目录或它的上级目录，范围太宽"
+
+
+def home_dirs() -> tuple[str, ...]:
+    """当前账户的主目录（规范路径）。
+
+    与 `integrations/configure.py` 的 `_home_dirs` 同一判据（`tests/test_mcp_roots.py` 对拍）：
+    不只信环境变量——`env -i` 或服务启动器下 HOME / USERPROFILE 可能不在，所以再问 POSIX 的
+    账户数据库与 `expanduser`，几处都收。
+    """
+    found: list[str] = []
+    cands = [os.environ.get("HOME"), os.environ.get("USERPROFILE")]
+    drive, path = os.environ.get("HOMEDRIVE"), os.environ.get("HOMEPATH")
+    if drive and path:
+        cands.append(drive + path)
+    try:
+        import pwd  # noqa: PLC0415 — Windows 上没有
+
+        cands.append(pwd.getpwuid(os.getuid()).pw_dir)
+    except (ImportError, KeyError, AttributeError):
+        pass
+    expanded = os.path.expanduser("~")
+    if expanded != "~":
+        cands.append(expanded)
+    for cand in cands:
+        if cand and os.path.isdir(cand):
+            try:
+                real = canonical_path(cand)
+            except OSError:
+                continue
+            if real not in found:
+                found.append(real)
+    return tuple(found)
+
+
+def contains_home(path: str) -> bool:
+    """``path`` 是主目录本身或它的上级（主目录的子目录不算）。
+
+    主语是**授权根**：任何一个入口（``TAVOTTO_MCP_ROOTS``、``roots/list``、用户确认、
+    宿主工作区变量、cwd 兜底）交来的目录。MiniMax Code 走插件时 ``roots/list`` 回的就是
+    home，WorkBuddy / MiniMax 的插件进程 cwd 也可能是 home——「用户级配置」≠「允许读整个
+    用户目录」（ADR 0109，与配置生成器 ``validate_project_root`` 同一条线）。
+    """
+    return any(_within(home, path) for home in home_dirs())
 
 
 def is_filesystem_root(path: str) -> bool:
@@ -376,6 +433,10 @@ class RootAuthority:
         with self._lock:
             if not self._client_elicitation or self._protocol_supported:
                 return None
+            if self._user_binding_state == "too_broad":
+                # 上一次给的是主目录；这一次换了路径，就按新路径重新判
+                self._user_binding_state = "available"
+                self._user_binding_error = None
         # 显式服务器配置是管理员边界，不允许一次交互把它扩宽。
         if (os.environ.get(ROOTS_ENV) or "").strip():
             return None
@@ -385,6 +446,14 @@ class RootAuthority:
                 return None
             candidate = real if os.path.isdir(real) else os.path.dirname(real)
             candidate = self._normalise_dir(candidate)
+            if contains_home(candidate):
+                # 记下原因：否则下游只看到「还没确认」，让调用方「改传绝对路径重试」，而它给的
+                # 本来就是绝对路径（ADR 0109）。已绑定的目录不受影响。
+                with self._lock:
+                    if self._user_root is None:
+                        self._user_binding_state = "too_broad"
+                        self._user_binding_error = f"{candidate} {HOME_REJECTED}"
+                return None
             if is_filesystem_root(candidate) or _within(candidate, self.plugin_dir):
                 return None
         except (OSError, ValueError):
@@ -400,6 +469,8 @@ class RootAuthority:
             real = self._normalise_dir(candidate)
             if is_filesystem_root(real):
                 raise ValueError("不接受文件系统根目录")
+            if contains_home(real):
+                raise ValueError(f"{real} {HOME_REJECTED}")
             if _within(real, self.plugin_dir):
                 raise ValueError("指向插件缓存目录，不是用户工作区")
         except (OSError, ValueError) as exc:
@@ -439,6 +510,8 @@ class RootAuthority:
                 real = self._normalise_dir(path)
                 if is_filesystem_root(real):
                     raise ValueError("不接受文件系统根目录")
+                if contains_home(real):
+                    raise ValueError(f"{real} {HOME_REJECTED}")
                 if _within(real, self.plugin_dir):
                     raise ValueError("指向插件缓存目录，不是用户工作区")
             except (OSError, ValueError) as exc:
@@ -482,7 +555,15 @@ class RootAuthority:
         回应时再让用户点一次是白点，用户拒绝时去查宿主接线是白查。判据的主语
         是**这条连接此刻的授权来源**，不是模型传了什么路径。
         """
-        source = self.snapshot().source
+        snap = self.snapshot()
+        source = snap.source
+        if any(HOME_REJECTED in w for w in snap.warnings):
+            # 有目录、只是太宽：与「宿主什么都没给」处置不同（换个目录启动，而不是去配置）。
+            # 支持确认框的宿主在 cwd 兜底上被拒时，下一步仍是走确认框，不在这里截走。
+            with self._lock:
+                state = self._user_binding_state
+            if source != "none" or state in {"unsupported", "unavailable"}:
+                return WORKSPACE_FAILURES[CODE_ROOT_TOO_BROAD]
         if source == "mcp_roots_no_response":
             return WORKSPACE_FAILURES[CODE_ROOTS_NO_RESPONSE]
         if source == "mcp_roots_error":
@@ -564,6 +645,8 @@ class RootAuthority:
             return (), "none", ("进程 cwd 是插件目录，不作为用户工作区",)
         if is_filesystem_root(cwd):
             return (), "none", ("进程 cwd 是文件系统根目录，不作为工作区",)
+        if contains_home(cwd):
+            return (), "none", (f"进程 cwd {cwd} {HOME_REJECTED}，不作为工作区",)
         return (cwd,), "cwd", ()
 
     def _paths_from_config(
@@ -578,6 +661,8 @@ class RootAuthority:
                 real = self._normalise_dir(item)
                 if reject_fs_root and is_filesystem_root(real):
                     raise ValueError("不接受文件系统根目录")
+                if contains_home(real):
+                    raise ValueError(HOME_REJECTED)
                 if reject_plugin and _within(real, self.plugin_dir):
                     raise ValueError("指向插件目录")
             except (OSError, ValueError) as exc:

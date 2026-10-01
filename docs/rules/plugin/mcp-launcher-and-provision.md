@@ -6,9 +6,11 @@
 
 ## 启动器对（原「首次使用契约」一节的「双语启动器」）
 
-- **`.mcp.json` 的 `command` 是插件自带的 `./mcp/launch`**（#172 → #266：2026-09-24 先做成
+- **Codex MCP 配置的 `command` 是插件自带的 `./mcp/launch`**（#172 → #266：2026-09-24 先做成
   sh / cmd 同一文件的双语启动器 `./mcp/launch.cmd`；2026-09-29 真 Windows 实测它零工具，拆成
-  一对文件）。Codex 的 `.mcp.json` 没有按平台分支的字段、没有候选链，`command` 也**不过 shell**
+  一对文件）。配置文件自 ADR 0109（2026-09-28）起叫 `codex.mcp.json`、由 Codex 清单 `mcpServers` 指向（已装的
+  旧版仍是 `.mcp.json`，体检与钉 command 都按清单指向找，`pluginmanifest.mcp_config_rel`）。
+  Codex 的 MCP 配置没有按平台分支的字段、没有候选链，`command` 也**不过 shell**
   （实测：`command` 与 `args` 分开传，相对路径按 `cwd` 解析），一个裸名字盖不住 POSIX 与
   Windows（`python3` 在 Windows 上常是商店别名：命令存在、9009、零输出，连降级 server
   都起不来）。所以 command 指向一对启动器：
@@ -42,7 +44,7 @@
   按 Codex 的解析法解析相对 command（`codexinstall.plugin_relative_command`：按**插件根**、
   Windows 上按 PATHEXT；`launcher_starts` 要求 stdout 里除体检 JSON 外一行都没有——只看「最后
   一行是 JSON」会把 0.17.0 那种回显 shebang 的启动器判成起得来），起不来才把**已装副本**的
-  command 钉成解释器绝对路径，**`.mcp.json`
+  command 钉成解释器绝对路径，**MCP 配置
   与 `openai.yaml` 两侧一起换**（stdio 依赖按 command 匹配）。发行件里只许裸名字或这个 `./`
   相对、真在插件里的启动器（`pluginmanifest._is_bundled_launcher`：`mcp/launch` 须 100755，且
   Windows 半边 `mcp/launch.cmd` 同在），机器相关的绝对路径只属于已装副本。插件升级会把钉过的
@@ -71,6 +73,26 @@
   `canvas_ui: {available: false, code: "widget_missing"}` 并在文字里说出口，
   `resources/read` 对缺失产物报「缺失 + 修法」而不是回空 HTML。
   看护 `tests/test_mcp_resolver.py` + `tests/test_mcp_stdio.py`。
+- **降级诊断窄的先判、宽的兜底（#285、#721）**：`found["cmd"]` 有东西时依次判
+  `engine_too_old`（清单有下限、版本低于它）→ `engine_incompatible`（CLI 背后**有**装着 tavotto
+  的解释器，桥却 import 不全，而说不出是不是太旧：插件没带 `plugin-build.json`，或版本够了却
+  装残了）→ `desktop_only`（只剩 CLI 背后没有解释器的 frozen `tavotto-cli`）。版本先问 CLI 背后
+  那个解释器的 `importlib.metadata`（`engine_behind_cli`，只读分发元数据、不 import tavotto），
+  问不出再问 `tavotto doctor --json`；「不知道」各是独立一档，不许并进相邻取值。这两格的恢复
+  是**升级引擎**（`upgrade_commands`：`pipx upgrade tavotto` / `pipx install --force
+  "tavotto[worker]==<版本>"`），不给 `--provision`。pip 的 index-url 指向镜像时
+  （`pip_index` / `pip_index_of`：**让 pip 自己解析**——在目标解释器里 `python -B -c _PIP_OPTIONS_PROBE`（`PYTHONDONTWRITEBYTECODE=1`），探测脚本调 pip 的 `create_command('install').parse_args([])`，与真装包同一条路、不联网，回 JSON `{index_url, extra_index_urls, no_index, find_links, pip_version}`；不复刻 pip 的配置发现（位置、编码、覆盖顺序、site、商店版虚拟化、`PIP_CONFIG_FILE`、`PIP_*` 都由 pip 自己读，#737）。
+  不再读 `pip config list` / `config get`：前者的打印顺序不是覆盖顺序，后者不认 `PIP_CONFIG_FILE`、有 site 文件时只看 site（pip 25.3 实测，#767 两轮 Codex P1）。
+  **只在** index-url 不是 `https://pypi.org/simple`、或有 extra-index-url 时才算「配了自定义包源」；index-url 与每个 extra-index-url 里**任一个**是镜像就算「指向镜像」（pip 在它们之间一起挑版本），说出口的是那个镜像、`source` 跟着它来自哪（`PIP_INDEX_URL` / `PIP_EXTRA_INDEX_URL` / `pip_config`）；探测脚本与这条判据和引擎 `deprepair.PIP_OPTIONS_PROBE` / `options_name_a_custom_index` 是严格同源对（`tests/test_pip_config_pair.py`，真 pip 当前版 + 23.x 三方对拍）；导入失败 / pip 太旧 / 超时报 unknown，不猜；
+  目标解释器没有 pip（pipx 的 venv 默认如此）时把 pipx 共享库里 pip 所在目录（`PIPX_SHARED_LIBS` 或 `<PIPX_HOME>/venvs` 旁边的 `shared`）放上 `PYTHONPATH`、仍在**目标解释器**里跑同一段探测（与 `pip --python` 同一个做法），再问不到就报 `source: "unknown"`、不猜，话里说「不知道」并给出绕开镜像的写法；
+  说出口的地址只有协议与主机——口令、路径、查询串一律抹掉；
+  `source` 只报 `pip_config` / `PIP_INDEX_URL` / `PIP_EXTRA_INDEX_URL`；
+  两跳都带 `-B` 且设 `PYTHONDONTWRITEBYTECODE=1`；
+  启动器解释器 ≠ 装引擎的解释器时，`effective_pip_index` 两边都问，任一侧是镜像就按镜像报，引擎那边问不到才用启动器这边的）文案说镜像可能滞后、
+  每条命令带 `--index-url https://pypi.org/simple`、不给裸的 `pipx upgrade`。`--health` 带
+  `engine_version` / `min_tavotto_version` / `pip_index`；`tavotto codex doctor` 原样转述插件
+  这份话术（`codexinstall._health_step`），不写第二份。看护 `tests/test_mcp_diagnose.py`、
+  `tests/test_pip_config_pair.py`。
 - **`--provision` 建 venv 之前先验基础解释器的版本**（2026-09-20）：启动器允许在很老的
   `python3` 上跑（纯标准库），但 venv 继承它的版本——macOS 上 `python3` 常是 Xcode CLT
   的 3.9，而引擎的 `requires-python` 是 `>=3.10,<3.15`，区间外的解释器上 pip 只会说一句
@@ -81,6 +103,12 @@
   在区间外建出来的 venv 用 `venv --clear` 重建；一个都没有就以 `no_supported_python`
   失败并逐个说出版本，**不在区间外的解释器上起 pip**；`--python` 显式指定时只认那一个——
   先验它、已有的 venv 也换到它上面（已有环境在区间内不是跳过它的理由，#453 评审 P2）。
+  **自管环境的缓存在它旁边**（#733）：`--provision` 起的子进程（建 venv、pip install）带 `PIP_CACHE_DIR` →
+  `mcp-runtime/cache/pip`（`provision_env()`，只改位置、用户 pip 配置照常生效）；从这个解释器起的 worker /
+  探测由引擎 `runtime.owned_env` 认出它（`PLUGIN_RUNTIME_DIRNAME`），pip 与 matplotlib 缓存同落 `mcp-runtime/cache`。
+  不落数据目录：本文件在引擎不可用时拿不到 `config.data_dir()`，放在旁边则删 `mcp-runtime` 即卸载干净、
+  `venv --clear` 重建时缓存照样复用。看护 `tests/test_mcp_resolver.py::test_provision_keeps_the_pip_cache_beside_the_managed_runtime`
+  与 `tests/test_probe_leaves_no_trace.py` 末节。
   区间常量 `PYTHON_MIN` / `PYTHON_MAX_EXCLUSIVE` 是 `engine/projectenv.py` 的镜像
   （`test_provision_python_range_mirrors_the_engine` 对拍），改 `requires-python` 要一起改。
   **装完插件/引擎必须新开 Codex 会话**——已开的会话不重载工具，

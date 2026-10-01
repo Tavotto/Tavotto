@@ -17,16 +17,26 @@ import {
 } from '@/lib/api'
 import {
   documentHasContent,
+  loadProjectDocument,
   readProjectDocument,
   rememberProjectDocument,
   type ProjectDocumentRef,
 } from '@/lib/projectDocs'
+import { isForeignDocument } from '@/lib/docOwnership'
 import { currentProjectId, setCurrentProjectId } from '@/lib/session'
 import { pushPickerEntry } from '@/lib/pickerHistory'
 import { cancelActivePointerGesture, finishActiveGesture } from '@/store/gestureCoordinator'
+import { markMoment } from '@/lib/timelineCheckpoint'
+import { useTimelineStore } from '@/store/timelineStore'
 import { openRecentDocument } from '@/store/actions'
 import { useAssetBrowseStore } from '@/store/assetBrowseStore'
-import { flushAutosave, loadAutosavedDocument, useDocumentStore } from '@/store/documentStore'
+import {
+  flushAutosave,
+  loadAutosavedDocument,
+  onDocumentClaimed,
+  pinDocumentOwner,
+  useDocumentStore,
+} from '@/store/documentStore'
 import { useAiStore } from '@/store/aiStore'
 import { useAssetStore } from '@/store/assetStore'
 import { clearVariantPngCache } from '@/hooks/useVariantPng'
@@ -169,6 +179,16 @@ function settleGesturesBeforeLeaving(): void {
   finishActiveGesture()
 }
 
+/**
+ * 「离开这份排版」的顺序只有这一份（回主页 `showPicker`、编辑器开着时直接切项目 `adoptNow`
+ * 共用）：**先把开着的手势收掉，再打「离开」点**——拍的是落定之后的内容，不是拖到一半 /
+ * 连续编辑中间的样子（Codex #679）。打点在认领新项目之前、同步取走节点的项目与文档。
+ */
+function settleAndMarkLeaving(leaving: boolean): void {
+  settleGesturesBeforeLeaving()
+  if (leaving) void markMoment('close')
+}
+
 /** 换项目时把属于旧项目的前端会话状态全部丢掉。 */
 async function resetForNewProject() {
   // 1. 冲刷当前文档的自动保存（切走的文档可从「最近文档」取回）；手势先收掉，
@@ -183,6 +203,8 @@ async function resetForNewProject() {
   ui.setCropTarget(null)
   useRenderStore.getState().clear()
   useRuntimeAssetStore.getState().clear()
+  // 时间线的预览属于旧项目的排版（ADR 0101）
+  useTimelineStore.getState().clear()
   // 素材库的搜索词与筛选说的是旧项目的目录与素材，跟着清
   useAssetBrowseStore.getState().clear()
   // 素材清单本身也属于旧项目：面板、「无法使用」清单与由它们派生的来源目录。不清的话，
@@ -295,7 +317,38 @@ let listSeq = 0
 export const useProjectStore = create<ProjectState>((set, get) => {
   /** 切项目的前端换代本体；对外的两个入口都经 `switchQueue` 串行地调它 */
   const adoptNow: ProjectState['adoptOpenedProject'] = async (status, opts) => {
-    // 先认领项目，再做任何会发请求的事：素材/渲染都必须落到新项目上
+    // 排版时间线（ADR 0101）：从一个开着的项目**直接**切到另一个，是在关掉前一个。
+    // 必须在认领新项目之前打：节点的项目、文档、缩略图图源都在这一刻同步取走；
+    // 手势先收掉再打（`settleAndMarkLeaving`，与回主页同一份顺序）
+    settleAndMarkLeaving(
+      get().phase === 'open' && !!get().project?.id && get().project?.id !== status.id,
+    )
+    // 先认领项目，再做任何会发请求的事：素材/渲染都必须落到新项目上。
+    // 从认领到换代完成这段时间里内存里还是**上一个项目**的文档，而下面要 await 一次后端
+    // （`loadProjectDocument`）：这期间用户改一笔 / 派生更新落地，「记上次开着哪份」的订阅会
+    // 按新 pj 把旧项目的文档记到新项目名下（#719 Codex P1）。这段时间让它停记
+    // 停到换代完成为止（`resume`），之后恢复出来的那份照常记
+    let held = true
+    rememberSuspended += 1
+    const resume = () => {
+      if (!held) return
+      held = false
+      rememberSuspended -= 1
+    }
+    try {
+      return await adoptSteps(status, opts, resume)
+    } finally {
+      resume()
+    }
+  }
+
+  const adoptSteps = async (
+    status: ProjectStatus,
+    opts: Parameters<ProjectState['adoptOpenedProject']>[1],
+    resume: () => void,
+  ): Promise<ProjectStatus> => {
+    // 认领新项目之前把内存里这份排版的归属钉在旧项目上：下面换代时那次冲刷写的是旧项目的排版
+    pinDocumentOwner()
     if (status.id) setCurrentProjectId(status.id)
     // 「最近文档」要在条目上标出所属项目（审计 T04）；名字的权威在这里，
     // documentStore 只读那份投影（否则两个 store 互相 import 成环）
@@ -305,8 +358,11 @@ export const useProjectStore = create<ProjectState>((set, get) => {
     // 「这个项目上次开着哪份」要在换代**之前**读：换代会先换上一份空白文档，
     // 而那一档记的是「最近一份有内容的文档」，空白不会盖掉它——但读在前面
     // 才不依赖这条细节。
-    const last = status.id ? readProjectDocument(status.id) : null
+    // 读的是**后端**的记录（#715 PR-B）：桌面版换了端口就是换了 origin，本机那份缓存是空的；
+    // 后端没有这组端点（404）时 `loadProjectDocument` 退回本机缓存，即改造前的行为。
+    const last = status.id ? await loadProjectDocument(status.id) : null
     await resetForNewProject()
+    resume()
     // 空白文档已经就位、`currentDoc` 已经指向它；要换成别的文档就在这里换，
     // 必须赶在 `phase: 'open'` 之前（见接口注释）
     let issue: ProjectDocumentRef | null = null
@@ -320,6 +376,10 @@ export const useProjectStore = create<ProjectState>((set, get) => {
       useViewportStore.getState().fit(page.w, page.h)
     }
     set({ project: status, phase: 'open', lastDocumentIssue: issue })
+    // 排版时间线的关键时刻（ADR 0101 §3）：只管「编辑器开着时直接切到另一个项目」
+    // ——Workspace 不重挂、时间线一直在跑。从 Picker 打开 / 启动恢复时 Workspace 还没
+    // 挂上，这一下是空的，那两条路由 Workspace 在文档恢复完之后调 `markWorkspaceOpened()`
+    void markMoment('open')
     void get().refreshRecent()
     emitActivity({ kind: 'project.opened', tutorial: status.tutorial === true })
     return status
@@ -471,7 +531,8 @@ export const useProjectStore = create<ProjectState>((set, get) => {
     // 开着的手势（拖动、改字号的安静计时器）不会自己收尾。所以离开之前先把它们收干净、
     // 再立刻冲刷一次——防抖窗口里的最后一下改动，不能等到用户在 Picker 上关掉窗口才发现没了。
     // 与切项目（`resetForNewProject`）、`dropProject` 是同一句 `flushAutosave()`。
-    settleGesturesBeforeLeaving()
+    // 排版时间线的关键时刻（ADR 0101）：回主页 = 离开这份排版（先收手势、再打点）
+    settleAndMarkLeaving(get().phase === 'open')
     flushAutosave()
     set({ phase: 'none' })
     pushPickerEntry()
@@ -517,8 +578,14 @@ setNoProjectHandler(() => useProjectStore.getState().dropProject())
  *
  * 只记有内容的文档（理由见 `projectDocs.ts`）；已经记着同一份 (id, 名字) 就
  * 不再写——文档 store 每次拖动都会变，不能每帧写一次 localStorage。
+ * `rememberProjectDocument` 同时推给后端（#715 PR-B，后端为准），所以「同值不写」也挡住了
+ * 每帧一个 PUT。
  */
+/** 大于 0 = 正在切项目、内存里还是上一个项目的文档：下面的订阅不记（见 `adoptNow`） */
+let rememberSuspended = 0
+
 useDocumentStore.subscribe((s, prev) => {
+  if (rememberSuspended > 0) return
   if (
     s.documentId === prev.documentId &&
     s.doc === prev.doc &&
@@ -527,6 +594,18 @@ useDocumentStore.subscribe((s, prev) => {
   ) {
     return
   }
+  rememberOpenDocument(s)
+})
+
+// 显式打开的别的项目的排版刚因用户的编辑 / ⌘S / 改名归到这个项目：当场记成「上次开着的」。
+// 那一笔的变化在上面的订阅里已经被判成别的项目的（归属是在它之后才转的），只改一笔就离开的话
+// 不会再有下一次变化（#773 Codex 复核 P2）
+onDocumentClaimed(() => {
+  if (rememberSuspended > 0) return
+  rememberOpenDocument(useDocumentStore.getState())
+})
+
+function rememberOpenDocument(s: ReturnType<typeof useDocumentStore.getState>): void {
   const pj = currentProjectId()
   if (!pj || !documentHasContent(s)) return
   const name = s.projectMeta.name
@@ -534,5 +613,9 @@ useDocumentStore.subscribe((s, prev) => {
   // 继续说「已经记过了」，而一次 getItem 比一帧拖动便宜得多
   const cur = readProjectDocument(pj)
   if (cur && cur.id === s.documentId && cur.name === name) return
+  // 确知属于别的项目的排版不记到这个项目名下（#715 验收 P1，判据唯一出处 `lib/docOwnership`）。
+  // 排在「同值不写」之后：拖动的每一帧走不到这里。从「最近文档」里显式打开别的项目的排版，只有
+  // 用户改过 / ⌘S / 改名之后归属才转到这里（`documentStore.claimDocumentOnEdit`，当场改记本机索引）
+  if (isForeignDocument(s.documentId, pj)) return
   rememberProjectDocument(pj, { id: s.documentId, name })
-})
+}

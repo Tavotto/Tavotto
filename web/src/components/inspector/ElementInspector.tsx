@@ -40,6 +40,7 @@ import {
   annotationAlignEntries,
   GEOMETRY_WRITE_PROPS,
   geomTarget,
+  groupBlockedMessage,
   groupOf,
   groupPatches,
   type Group,
@@ -102,7 +103,8 @@ import { GroupHead } from './GroupHead'
 import { GroupToggle } from './GroupToggle'
 import { INSPECTOR_LABEL_W } from './layout'
 import { OriginalFileActions } from './OriginalFileActions'
-import { Disclosure, Grid2, Reveal, Row, Section } from '../ui/Field'
+import { Grid2, Reveal, Row, Section } from '../ui/Field'
+import { SummaryRow } from '../ui/SummaryRow'
 import { ColorField, NumberField, TextArea, TextInput } from '../ui/Input'
 import { Select } from '../ui/Select'
 import { Toggle } from '../ui/Toggle'
@@ -117,7 +119,8 @@ import {
   presentFields,
   primaryGroupHeads,
 } from './presentation/registry'
-import type { PresentedField } from './presentation/types'
+import { foldValue, moreValue, valueText, type FoldReader } from './presentation/foldSummary'
+import type { PresentedField, PresentedFold } from './presentation/types'
 import { ArrowStylePicker } from './controls/ArrowPickers'
 import { ColormapPicker } from './controls/ColormapPicker'
 import { colormapAliasGids } from '@/lib/colormapAlias'
@@ -136,8 +139,8 @@ import {
   TickAndSpineDiagram,
   type TickSpineAdapter,
 } from './controls/TickAndSpineDiagram'
-import { TICK_CARD_PROPS, TickTaskCard } from './controls/TickTaskCard'
-import { AspectControl } from './controls/AspectControl'
+import { TICK_CARD_PROPS, TickMinorBlock, TickTaskCard } from './controls/TickTaskCard'
+import { AspectControl, aspectModeOf } from './controls/AspectControl'
 import {
   ErrorBarDiagram,
   isErrorBarSegment,
@@ -893,7 +896,7 @@ function ErrorBarPage({
   panel: PanelObject
   element: ManifestElement
   warnings: string[]
-  buckets: { primary: PresentedField[]; more: PresentedField[] }
+  buckets: { primary: PresentedField[]; more: PresentedField[]; folds: PresentedFold[] }
 }) {
   const [active, setActive] = useState<ErrorBarSegment | null>(null)
   const segAt = (target: EventTarget | null): ErrorBarSegment | null => {
@@ -984,7 +987,7 @@ function FieldList({
   panel: PanelObject
   element: ManifestElement
   warnings: string[]
-  buckets: { primary: PresentedField[]; more: PresentedField[] }
+  buckets: { primary: PresentedField[]; more: PresentedField[]; folds: PresentedFold[] }
   /** 首屏里的复合控件（四边状态图等），排在 primary 行之后、「更多」之前 */
   primaryExtra?: ReactNode
 }) {
@@ -994,6 +997,15 @@ function FieldList({
   const role = element.role
   const moreOpen = useInspectorPrefs((s) => s.moreOpen[role] ?? false)
   const setMoreOpen = useInspectorPrefs((s) => s.setMoreOpen)
+  const foldOpen = useInspectorPrefs((s) => s.foldOpen)
+  const setFoldOpen = useInspectorPrefs((s) => s.setFoldOpen)
+  const reader: FoldReader = {
+    fieldOf: (prop) => element.editable.find((f) => f.prop === prop),
+    read: (prop) => {
+      const f = element.editable.find((x) => x.prop === prop)
+      return f ? currentValue(panel, element.gid, f) : undefined
+    },
+  }
 
   const rows = (fields: PresentedField[], heads?: Map<string, string>) => {
     // 并排成一行的字段对（模板的 `pairRows`，如色阶下限 / 上限）：**两条都在
@@ -1062,32 +1074,45 @@ function FieldList({
       <UnsupportedProps elements={[element]} />
       {/* 引擎压根没发的外观属性（柱形的纹理）：同一种说法，另一个来源 */}
       <AbsentAppearanceNote element={element} />
-      {buckets.more.length > 0 && (
-        <div className="mt-1.5">
-          <GroupToggle
-            open={moreOpen}
-            onToggle={() => setMoreOpen(role, !moreOpen)}
-            summary={
-              modifiedInMore > 0 ? el('modifiedCount', { count: modifiedInMore }) : undefined
-            }
-          >
-            {el('more')}
-          </GroupToggle>
-          <Reveal open={moreOpen}>
-            <div className="mt-1.5 flex flex-col gap-1.5">
-              {rows(named)}
-              {restGroups.map(([group, fields], i) => (
-                <div key={group ?? `flat-${i}`}>
-                  {group && (
-                    <p className="mb-1 mt-1 type-section">
-                      {groupLabel(group)}
-                    </p>
-                  )}
-                  {rows(fields)}
-                </div>
-              ))}
-            </div>
-          </Reveal>
+      {(buckets.folds?.length > 0 || buckets.more.length > 0) && (
+        <div className="mt-3" data-summary-rows>
+          {buckets.folds?.map((fold) => (
+            <SummaryRow
+              key={fold.spec.id}
+              className="mx-0"
+              data-fold={fold.spec.id}
+              label={el(fold.spec.labelKey)}
+              value={foldValue(fold, reader)}
+              open={foldOpen[`${role}:${fold.spec.id}`] ?? false}
+              onToggle={() => setFoldOpen(`${role}:${fold.spec.id}`, !(foldOpen[`${role}:${fold.spec.id}`] ?? false))}
+            >
+              {rows(fold.fields)}
+            </SummaryRow>
+          ))}
+          {buckets.more.length > 0 && (
+            <SummaryRow
+              className="mx-0"
+              data-fold="more"
+              label={el('more')}
+              value={moreValue(buckets.more.length, modifiedInMore)}
+              open={moreOpen}
+              onToggle={() => setMoreOpen(role, !moreOpen)}
+            >
+              <div className="flex flex-col gap-1.5">
+                {rows(named)}
+                {restGroups.map(([group, fields], i) => (
+                  <div key={group ?? `flat-${i}`}>
+                    {group && (
+                      <p className="mb-1 mt-1 type-section">
+                        {groupLabel(group)}
+                      </p>
+                    )}
+                    {rows(fields)}
+                  </div>
+                ))}
+              </div>
+            </SummaryRow>
+          )}
         </div>
       )}
     </>
@@ -1172,7 +1197,7 @@ function TickControl({
   }
   return (
     <div className="flex flex-col gap-4">
-      <TickAndSpineDiagram adapter={adapter} labelWidth={LABEL_W} />
+      <TickAndSpineDiagram adapter={adapter} />
       {axes.length > 0 && (
         <TickTaskCard axes={axes} labelWidth={LABEL_W} model={model} applyPlan={applyPlan} />
       )}
@@ -1223,7 +1248,17 @@ function AxesRangeCard({
   const invert = AXES_INVERT_PROPS.filter((p) => !!fieldOf(p))
   const aspect = fieldOf('aspect')
   const overridden = (p: string) => panel.overrides.some((o) => o.gid === element.gid && o.prop === p)
+  const foldOpen = useInspectorPrefs((s) => s.foldOpen)
+  const setFoldOpen = useInspectorPrefs((s) => s.setFoldOpen)
   if (!range.length && !scale.length && !invert.length && !aspect) return null
+  // 右边只写当前值：X 轴的缩放方式 · 纵横比（反转了就说「反转」）
+  const coordsValue = [
+    scale[0] ? valueText(scale[0], currentValue(panel, element.gid, scale[0])) : undefined,
+    aspect ? aspectValueText(currentValue(panel, element.gid, aspect)) : undefined,
+    invert.some((p) => w.read(p) === true) ? el('invert') : undefined,
+  ]
+    .filter(Boolean)
+    .join(' · ')
   const block = (f: EditableField) => (
     <FieldBlock key={f.prop} panel={panel} element={element} field={f} warnings={warnings} />
   )
@@ -1235,47 +1270,68 @@ function AxesRangeCard({
       <div className="flex flex-col gap-1.5" data-axes-section="range-transform">
         <GroupHead>{el('groupRangeTransform')}</GroupHead>
         {range.map(block)}
-        {scale.map(block)}
-          {invert.length > 0 && (
-            <Row
-              label={labeledWithStateNode(invertLabel, invert.some(overridden))}
-              labelWidth={LABEL_W}
-            >
-              <div className="flex items-center gap-3" role="group" aria-label={el('invertAria')}>
-                {invert.map((p) => (
-                  <span
-                    key={p}
-                    data-prop={p}
-                    data-gid={element.gid}
-                    className="flex items-center gap-1.5 text-xs text-ink-2"
-                  >
-                    <Toggle
-                      checked={w.read(p) === true}
-                      onChange={(v) => w.writeOnce(p, v)}
-                      aria-label={propLabel(p, element.role)}
-                    />
-                    {el(p === 'invert_x' ? 'axis.x' : 'axis.y')}
-                    {overridden(p) && (
-                      <Tip label={resetHint(p)} side="left">
-                        <Button
-                          size="icon-sm"
-                          className="shrink-0"
-                          aria-label={el('resetProp', { label: propLabel(p, element.role) })}
-                          onClick={() => clearOverride(panel.id, element.gid, p)}
-                        >
-                          <RotateCcw size={ICON_SIZE.xs} className="text-ink-3" />
-                        </Button>
-                      </Tip>
-                    )}
-                  </span>
-                ))}
-              </div>
-            </Row>
-          )}
-        {aspect && block(aspect)}
+        {/* 缩放方式 / 反转 / 纵横比是低频的「坐标怎么映射」：收成摘要行（设计稿 A6），
+            范围（最小 / 最大）留在面上 */}
+        {(scale.length > 0 || invert.length > 0 || aspect) && (
+          <SummaryRow
+            className="mx-0"
+            data-fold="coords"
+            label={el('foldCoords')}
+            value={coordsValue}
+            open={foldOpen['axes:coords'] ?? false}
+            onToggle={() => setFoldOpen('axes:coords', !(foldOpen['axes:coords'] ?? false))}
+          >
+            <div className="flex flex-col gap-1.5">
+              {scale.map(block)}
+              {invert.length > 0 && (
+                <Row
+                  label={labeledWithStateNode(invertLabel, invert.some(overridden))}
+                  labelWidth={LABEL_W}
+                >
+                  <div className="flex items-center gap-3" role="group" aria-label={el('invertAria')}>
+                    {invert.map((p) => (
+                      <span
+                        key={p}
+                        data-prop={p}
+                        data-gid={element.gid}
+                        className="flex items-center gap-1.5 text-xs text-ink-2"
+                      >
+                        <Toggle
+                          checked={w.read(p) === true}
+                          onChange={(v) => w.writeOnce(p, v)}
+                          aria-label={propLabel(p, element.role)}
+                        />
+                        {el(p === 'invert_x' ? 'axis.x' : 'axis.y')}
+                        {overridden(p) && (
+                          <Tip label={resetHint(p)} side="left">
+                            <Button
+                              size="icon-sm"
+                              className="shrink-0"
+                              aria-label={el('resetProp', { label: propLabel(p, element.role) })}
+                              onClick={() => clearOverride(panel.id, element.gid, p)}
+                            >
+                              <RotateCcw size={ICON_SIZE.xs} className="text-ink-3" />
+                            </Button>
+                          </Tip>
+                        )}
+                      </span>
+                    ))}
+                  </div>
+                </Row>
+              )}
+              {aspect && block(aspect)}
+            </div>
+          </SummaryRow>
+        )}
       </div>
     </div>
   )
+}
+
+/** 纵横比此刻的说法：自动 / 等比例 / 自定义的那个比值 */
+function aspectValueText(value: unknown): string {
+  const { mode, ratio } = aspectModeOf(value)
+  return mode === 'custom' ? String(ratio) : translate(`control.aspect.${mode}`, { ns: 'inspector' })
 }
 
 /** 与 FieldRow 的标签同一套「已修改」表达（点 + sr-only 文案） */
@@ -1295,26 +1351,23 @@ function labeledWithStateNode(label: string, overridden: boolean): ReactNode {
 
 /* ------------------------------ 刻度组页：刻度 / 文字 ---------------------- */
 
-/** 主刻度的位置字段：跟刻度线一起（它们决定短线落在哪） */
-const TICK_PLACEMENT_PROPS = new Set(['major_mode', 'major_step', 'major_values'])
-/** 次刻度的从属字段：跟在次刻度开关后面（开没开由展示注册表的 visibleWhen 决定） */
-const TICK_MINOR_PROPS = new Set(['minor_mode', 'minor_step', 'minor_format'])
-
 /**
  * 刻度组页（审计 T13 / T25）：**「刻度」（线与位置）与「文字」（标签）两段**。
  *
  * 修改前标题叫「Y 刻度文字」，主体却大篇幅在编辑刻度线；状态图、方向分段、
  * 左右开关与恢复标签把同一组设置说了四遍。现在：
  *
- *   刻度 —— 示意图（在哪几条边显示）→ 方向 / 长度 / 宽度 → 主刻度方式（间距 /
- *           固定值随方式条件出现）→ 次刻度开关（长度 / 宽度 / 方式 / 间距 /
- *           格式随开关条件出现）
- *   文字 —— 字号 / 颜色 / 数值格式 / 旋转 / 显示
+ *   刻度线   —— 方向 / 长度 / 宽度（刻度任务卡）
+ *   刻度数字 —— 显示 / 字号 / 旋转
+ *   摘要行   —— 刻度放在哪 / 小刻度 / 数字格式 / 字体和颜色（2026-10-01，设计稿 A5）：
+ *               低频项收成「名字 + 当前值 + ›」，点开是原来的控件；主刻度间距 / 固定值
+ *               随方式条件出现、次刻度的长宽方式间距格式随开关条件出现（判据不变）
+ *   最后一句 —— 去子图页改四边刻度与边框
  *
  * X / Y / Z 同一套：Z（3D）没有的字段由 `has()` 自然少掉——判据是 manifest
  * 发没发这个字段，不是「3D 就隐藏」。字段的可见性（模式从属、已改过的必须
- * 可见）仍由展示注册表算（`buckets`），这里只决定落在哪一段；两段都没点名的
- * 字段跟在「文字」后面，绝不丢失。
+ * 可见）仍由展示注册表算（`buckets`），这里只决定落在哪一段；没被摘要行认领的
+ * 字段跟在「刻度数字」后面，绝不丢失。
  */
 function TickPage({
   panel,
@@ -1331,7 +1384,7 @@ function TickPage({
   /** 选中的刻度组 */
   element: ManifestElement
   warnings: string[]
-  buckets: { primary: PresentedField[]; more: PresentedField[] }
+  buckets: { primary: PresentedField[]; more: PresentedField[]; folds: PresentedFold[] }
 }) {
   useTranslation('inspector')
   const selfAxis: TickAxis = tickHostOf(element.gid)?.axis ?? 'x'
@@ -1345,11 +1398,11 @@ function TickPage({
   const applyPlan = (plan: SidePlan) => applyTickSidePlan(panel.id, plan)
 
   // 桶里的字段已经过展示注册表的 visibleWhen（次刻度关着时方式 / 间距 / 格式
-  // 不在桶里；用户改过的仍在）——这里只决定落在哪一段，不再判一遍开关
-  const fields = [...buckets.primary, ...buckets.more].map((pf) => pf.field)
-  const placement = fields.filter((f) => TICK_PLACEMENT_PROPS.has(f.prop))
-  const minor = fields.filter((f) => TICK_MINOR_PROPS.has(f.prop))
-  const labelFields = fields.filter((f) => !TICK_PLACEMENT_PROPS.has(f.prop) && !TICK_MINOR_PROPS.has(f.prop))
+  // 不在桶里；用户改过的仍在）——这里只决定落在哪一段，不再判一遍开关。
+  // 摘要行（设计稿 A5）：刻度放在哪 / 小刻度 / 数字格式 / 字体和颜色由注册表认领，
+  // 面上只剩刻度线（方向 / 长 / 宽，卡里）与刻度数字（显示 / 字号 / 旋转）
+  const labelFields = [...buckets.primary, ...buckets.more].map((pf) => pf.field)
+  const foldFields = (id: string) => buckets.folds.find((f) => f.spec.id === id)?.fields.map((pf) => pf.field) ?? []
   // 「显示」管着整段：排在段首（二审 A6），关着时下面的行退到禁用那一档而不是消失——
   // 此前它排在最后，用户从上往下改完字体字号才发现整段是关的
   const labelSwitch = labelFields.find((f) => f.prop === 'visible')
@@ -1364,38 +1417,50 @@ function TickPage({
       </div>
     ) : null
 
+  const reader: FoldReader = {
+    fieldOf: (prop) => element.editable.find((f) => f.prop === prop),
+    read: (prop) => {
+      const f = element.editable.find((x) => x.prop === prop)
+      return f ? currentValue(panel, element.gid, f) : undefined
+    },
+  }
+  const foldOpen = useInspectorPrefs((s) => s.foldOpen)
+  const setFoldOpen = useInspectorPrefs((s) => s.setFoldOpen)
+  const fold = (id: string, children: ReactNode, fieldsIn: PresentedFold | undefined) => {
+    const key = `ticks:${id}`
+    const spec = fieldsIn?.spec ?? { id, labelKey: '', props: [] }
+    return (
+      <SummaryRow
+        key={id}
+        className="mx-0"
+        data-fold={id}
+        label={el(FOLD_LABEL[id])}
+        value={foldValue({ spec, fields: fieldsIn?.fields ?? [] }, reader)}
+        open={foldOpen[key] ?? false}
+        onToggle={() => setFoldOpen(key, !(foldOpen[key] ?? false))}
+      >
+        {children}
+      </SummaryRow>
+    )
+  }
+  const foldOf = (id: string) => buckets.folds.find((f) => f.spec.id === id)
+  const minorFields = foldFields('minor')
+  // 小刻度：开关 + 长 / 宽在卡里（`TickMinorBlock`），方式 / 间距 / 格式是认领来的字段。
+  // 引擎一条次刻度能力都没发（Z 轴）时整行不出现——计数为 0 的节不显示
+  const hasMinor = (!!self && self.has('minor_visible')) || minorFields.length > 0
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-1.5" data-tick-section="marks">
         <GroupHead>{translate('tick.sectionMarks', { ns: 'inspector' })}</GroupHead>
-        {/* 四边刻度线 / 边框 / 网格的示意图只在子图页（2026-09-14 审计 A5，用户拍板）：同一份
-            状态两处可编辑、示意图占掉刻度页五分之一——这里只留一条去那边的路。
-            -ml-2 与「原始比例」「全部清除」那些 ghost 文字键同一写法：钮内文字与上面的分区头
-            对齐，不比它缩进 8px；顺带把这颗 shrink-0 的钮收回 296 的栏内——按钮字 12 之后
-            英文整句在 320px 的 DejaVu Sans 下是 297.88，超 1.88px（e2e/inspector-overflow 刻度屏） */}
-        <Button
-          size="sm"
-          data-tick-spines-link
-          className="-ml-2 w-fit text-ink-2"
-          onClick={() => useUiStore.getState().setSelectedGid(host.gid)}
-        >
-          {translate('tick.editSpinesOnAxes', { ns: 'inspector' })}
-          <ChevronRight size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-hidden />
-        </Button>
-        {self ? (
+        {self && (
           <TickTaskCard
             axes={[self]}
             labelWidth={LABEL_W}
             model={model}
             applyPlan={applyPlan}
-            placement={rows(placement)}
-            minorExtra={rows(minor)}
+            hideMinor
           />
-        ) : (
-          <>
-            {rows(placement)}
-            {rows(minor)}
-          </>
         )}
       </div>
       {labels.length > 0 && (
@@ -1417,8 +1482,49 @@ function TickPage({
       <UnsupportedProps elements={[element]} />
       {/* 引擎压根没发的外观属性（柱形的纹理）：同一种说法，另一个来源 */}
       <AbsentAppearanceNote element={element} />
+      {(foldOf('placement') || hasMinor || foldOf('numformat') || foldOf('fontcolor')) && (
+        <div data-summary-rows>
+          {foldOf('placement') && fold('placement', rows(foldFields('placement')), foldOf('placement'))}
+          {hasMinor &&
+            fold(
+              'minor',
+              self ? (
+                <div className="flex flex-col gap-1.5">
+                  <TickMinorBlock axis={self} labelWidth={LABEL_W} extra={rows(minorFields)} />
+                </div>
+              ) : (
+                rows(minorFields)
+              ),
+              foldOf('minor'),
+            )}
+          {foldOf('numformat') && fold('numformat', rows(foldFields('numformat')), foldOf('numformat'))}
+          {foldOf('fontcolor') && fold('fontcolor', rows(foldFields('fontcolor')), foldOf('fontcolor'))}
+        </div>
+      )}
+      {/* 四边刻度线 / 边框 / 网格的示意图只在子图页（2026-09-14 审计 A5，用户拍板）：同一份
+          状态两处可编辑、示意图占掉刻度页五分之一——这里只留一条去那边的路，放最后
+          （设计稿 A5：写成一句话）。-ml-2 与「原始比例」「全部清除」那些 ghost 文字键同一写法：
+          钮内文字与上面的分区头对齐；按钮字 12 之后英文整句在 320px 的 DejaVu Sans 下是
+          297.88，超 1.88px（e2e/inspector-overflow 刻度屏）所以仍收在栏内 */}
+      <Button
+        size="sm"
+        data-tick-spines-link
+        className="-ml-2 w-fit text-ink-2"
+        onClick={() => useUiStore.getState().setSelectedGid(host.gid)}
+      >
+        {translate('tick.editSpinesOnAxes', { ns: 'inspector' })}
+        <ChevronRight size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-hidden />
+      </Button>
     </div>
   )
+}
+
+/** 刻度页摘要行的名字（`inspector:element.<key>`）：与 `ROLE_PROFILES.ticks.folds` 的 `labelKey` 同源 */
+const FOLD_LABEL: Record<string, string> = {
+  placement: 'foldTickPlacement',
+  minor: 'foldTickMinor',
+  numformat: 'foldTickFormat',
+  fontcolor: 'foldTickFont',
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1473,11 +1579,9 @@ function TextStyleBatchSection({
         <p className="text-xs text-ink-3">{el('batchNoCommon')}</p>
       ) : (
         <>
-          <p className="mb-1.5 text-xs text-ink-3">
-            {roles.length > 1
-              ? el('textBatchHintMixed', { count: elements.length })
-              : el('batchHint', { count: elements.length })}
-          </p>
+          {roles.length > 1 && (
+            <p className="mb-1.5 text-xs text-ink-3">{el('textBatchHintMixed', { count: elements.length })}</p>
+          )}
           <TypographyControls adapter={adapter} labelWidth={LABEL_W} />
         </>
       )}
@@ -1535,24 +1639,21 @@ function BatchSection({
         <p className="text-xs text-ink-3">{el('batchNoCommon')}</p>
       ) : (
         <>
-          <p className="mb-1.5 text-xs text-ink-3">
-            {el('batchHint', { count: elements.length })}
-          </p>
           {rows(flat)}
           {ordered.map(([name, list]) => {
             const open = openGroups[name] ?? false
             return (
-              <div key={name} className="mt-1.5 border-t border-border pt-1.5">
-                <GroupToggle
-                  open={open}
-                  onToggle={() => setOpenGroups((s) => ({ ...s, [name]: !s[name] }))}
-                >
-                  {groupLabel(name)}
-                </GroupToggle>
-                <Reveal open={open}>
-                  <div className="mt-1.5">{rows(list)}</div>
-                </Reveal>
-              </div>
+              <SummaryRow
+                key={name}
+                className="mx-0 mt-1.5"
+                data-fold={name}
+                label={groupLabel(name)}
+                value={el('foldCount', { count: list.length })}
+                open={open}
+                onToggle={() => setOpenGroups((s) => ({ ...s, [name]: !s[name] }))}
+              >
+                {rows(list)}
+              </SummaryRow>
             )
           })}
         </>
@@ -2539,7 +2640,7 @@ const ALIGN_BUTTONS: {
  * 会以为没生效（审计 T12）；一颗明确的按钮把「缩放一次」说清楚，
  * 也不用再配一句解释文字。
  */
-function ScaleField({ panel, group, meta }: { panel: PanelObject; group: Group; meta?: ReactNode }) {
+export function ScaleField({ panel, group, meta }: { panel: PanelObject; group: Group; meta?: ReactNode }) {
   const [pct, setPct] = useState(100)
   const ready = Number.isFinite(pct) && pct !== 100
   const apply = () => {
@@ -2565,7 +2666,6 @@ function ScaleField({ panel, group, meta }: { panel: PanelObject; group: Group; 
         max={400}
         step={5}
         unit="%"
-        title={el('scaleTitle')}
         onChange={setPct}
       />
       <Button size="sm" variant="secondary" disabled={!ready} onClick={apply} data-scale-apply>
@@ -2617,7 +2717,8 @@ function AlignSection({
     const res = alignSelectedPanelElements(panel.id, mode)
     if (res.ok) return
     // 拒绝必须说得出原因：什么都不发生而界面一声不吭，用户只会再点几下
-    if (res.reason === 'syncing') setStatus(elMsg('alignSyncing'))
+    if (res.reason === 'group-blocked' && res.group) setStatus(groupBlockedMessage(res.group))
+    else if (res.reason === 'syncing') setStatus(elMsg('alignSyncing'))
     else if (res.reason === 'noop') setStatus(elMsg('alignNoop'))
     else if (res.reason === 'invalid') setStatus(elMsg('alignInvalid'), 'error')
   }
@@ -2663,15 +2764,7 @@ function AlignSection({
       </div>
       {group && <ScaleField panel={panel} group={group} />}
       <p className="mt-2 text-xs leading-relaxed text-ink-3">
-        {syncing ? (
-          el('alignSyncing')
-        ) : (
-          <>
-            {el('alignHint')}
-            {hasAnnotations && el('alignHintAnnotations')}
-            {group && el('alignHintGroup')}
-          </>
-        )}
+        {syncing ? el('alignSyncing') : el(hasAnnotations ? 'alignHintAnnotations' : 'alignHint')}
       </p>
       <ul className="mt-2 flex flex-col gap-0.5">
         {items.map((it, i) => (
@@ -2713,6 +2806,8 @@ function AxesSizeMm({
   /** 作为页首的「几何」段出现：不带上方的 hairline 与间距 */
   first?: boolean
 }) {
+  const foldOpen = useInspectorPrefs((s) => s.foldOpen)
+  const setFoldOpen = useInspectorPrefs((s) => s.setFoldOpen)
   const rect = positionOf(panel, element)
   if (!rect) return null
   const [figW, figH] = sizeMm
@@ -2786,34 +2881,46 @@ function AxesSizeMm({
           }
         />
       </Grid2>
-      {group && <ScaleField panel={panel} group={group} meta={figureMeta} />}
-      {/* 「居中」是两个一次性命令，不是这一页最重的两颗钮（打磨 E2）：与对象页的
-          「原始比例 / 原始尺寸」同形——标签列 + 两颗 ghost sm，第一颗 -ml-2 让图标
-          压回控件竖线上 */}
-      <Row label={el('centerRow')} labelWidth={LABEL_W}>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="-ml-2"
-          aria-label={el('centerH')}
-          onClick={() => write(centerInFigure(rect, 'x'), 'centerAxesH')}
-        >
-          <AlignCenterVertical size={ICON_SIZE.sm} className="text-ink-3" />
-          {el('centerHShort')}
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          aria-label={el('centerV')}
-          onClick={() => write(centerInFigure(rect, 'y'), 'centerAxesV')}
-        >
-          <AlignCenterHorizontal size={ICON_SIZE.sm} className="text-ink-3" />
-          {el('centerVShort')}
-        </Button>
-        {/* 没有成组缩放那一行（子图不可改尺寸）时，整图尺寸落在这一行的行尾——
-            位置换了，格式还是同一个：type-meta、靠右 */}
-        {!group && figureMeta}
-      </Row>
+      {/* 成组缩放与居中是低频的一次性命令：收成摘要行「按比例缩放、居中」（设计稿 A6），
+          点开是原来的两行。右边没有「当前值」可说（缩放框每次应用后归 100），留空 */}
+      <SummaryRow
+        className="mx-0"
+        data-fold="scaleCenter"
+        label={el('foldScaleCenter')}
+        open={foldOpen['axes:scaleCenter'] ?? false}
+        onToggle={() => setFoldOpen('axes:scaleCenter', !(foldOpen['axes:scaleCenter'] ?? false))}
+      >
+        <div className="flex flex-col gap-1.5">
+        {group && <ScaleField panel={panel} group={group} meta={figureMeta} />}
+        {/* 「居中」是两个一次性命令，不是这一页最重的两颗钮（打磨 E2）：与对象页的
+            「原始比例 / 原始尺寸」同形——标签列 + 两颗 ghost sm，第一颗 -ml-2 让图标
+            压回控件竖线上 */}
+        <Row label={el('centerRow')} labelWidth={LABEL_W}>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="-ml-2"
+            aria-label={el('centerH')}
+            onClick={() => write(centerInFigure(rect, 'x'), 'centerAxesH')}
+          >
+            <AlignCenterVertical size={ICON_SIZE.sm} className="text-ink-3" />
+            {el('centerHShort')}
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-label={el('centerV')}
+            onClick={() => write(centerInFigure(rect, 'y'), 'centerAxesV')}
+          >
+            <AlignCenterHorizontal size={ICON_SIZE.sm} className="text-ink-3" />
+            {el('centerVShort')}
+          </Button>
+          {/* 没有成组缩放那一行（子图不可改尺寸）时，整图尺寸落在这一行的行尾——
+              位置换了，格式还是同一个：type-meta、靠右 */}
+          {!group && figureMeta}
+        </Row>
+        </div>
+      </SummaryRow>
     </div>
   )
 }
@@ -2847,8 +2954,8 @@ function SourceAdvancedSection({
     /* `data-source-advanced` 是能力提示那个按钮的滚动落点——它要把用户
        送到「在哪儿改」，而不只是把折叠区打开在视口外 */
     <div data-source-advanced>
-    <Disclosure
-      title={el('sourceAdvanced')}
+    <SummaryRow
+      label={el('sourceAdvanced')}
       open={open}
       onToggle={() => setOpen(role, !open)}
     >
@@ -2868,7 +2975,7 @@ function SourceAdvancedSection({
 
         {gid && <TechDetails gid={gid} />}
       </div>
-    </Disclosure>
+    </SummaryRow>
     </div>
   )
 }

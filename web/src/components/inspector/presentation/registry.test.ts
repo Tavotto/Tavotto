@@ -82,16 +82,20 @@ describe('presentFields：角色模板分桶', () => {
   })
 
   it('ticks：major_step 只在 step 模式显示；改过的即使模式不符也显示', () => {
+    // 主刻度的三条住在摘要行「刻度放在哪」（2026-10-01）：条件显示仍是同一条判据
     const fields = [f('major_mode', 'enum'), f('major_step'), f('major_values', 'number_list')]
+    const placement = (b: ReturnType<typeof presentFields>) =>
+      b.folds.find((x) => x.spec.id === 'placement')?.fields.map((x) => x.field.prop)
     const auto = presentFields('ticks', fields, opts([], { major_mode: 'auto' }))
-    expect(auto.primary.map((x) => x.field.prop)).toEqual(['major_mode'])
+    expect(placement(auto)).toEqual(['major_mode'])
+    expect(auto.primary).toEqual([])
 
     const step = presentFields('ticks', fields, opts([], { major_mode: 'step' }))
-    expect(step.primary.map((x) => x.field.prop)).toEqual(['major_mode', 'major_step'])
+    expect(placement(step)).toEqual(['major_mode', 'major_step'])
 
     // override 存在时条件让路：不能因隐藏而不可发现
     const orphan = presentFields('ticks', fields, opts(['major_values'], { major_mode: 'auto' }))
-    expect(orphan.primary.map((x) => x.field.prop)).toContain('major_values')
+    expect(placement(orphan)).toContain('major_values')
   })
 
   it('ticks：次刻度关着时长度 / 线宽 / 方式 / 间距 / 格式都收起；开了才出；改过的照样在（审计 T13）', () => {
@@ -99,18 +103,24 @@ describe('presentFields：角色模板分桶', () => {
       f('minor_visible', 'bool'), f('minor_length'), f('minor_width'),
       f('minor_mode', 'enum'), f('minor_step'), f('minor_format', 'enum'),
     ]
+    // 方式 / 间距 / 格式住在摘要行「小刻度」，长度 / 线宽在 more（刻度卡不在场时的兜底）
+    const all = (b: ReturnType<typeof presentFields>) =>
+      [...b.primary, ...b.more, ...b.folds.flatMap((x) => x.fields)].map((x) => x.field.prop)
     const off = presentFields('ticks', fields, opts([], { minor_visible: false, minor_mode: 'step' }))
-    expect([...off.primary, ...off.more].map((x) => x.field.prop)).toEqual(['minor_visible'])
+    expect(all(off)).toEqual(['minor_visible'])
     const on = presentFields('ticks', fields, opts([], { minor_visible: true, minor_mode: 'step' }))
-    expect([...on.primary, ...on.more].map((x) => x.field.prop)).toEqual(
+    expect(all(on)).toEqual(
       expect.arrayContaining(['minor_length', 'minor_width', 'minor_mode', 'minor_step', 'minor_format']),
     )
+    expect(on.folds.find((x) => x.spec.id === 'minor')?.fields.map((x) => x.field.prop)).toEqual([
+      'minor_mode', 'minor_step', 'minor_format',
+    ])
     // 次刻度开着但方式不是 step：间距仍收起
     const auto = presentFields('ticks', fields, opts([], { minor_visible: true, minor_mode: 'auto' }))
-    expect([...auto.primary, ...auto.more].map((x) => x.field.prop)).not.toContain('minor_step')
+    expect(all(auto)).not.toContain('minor_step')
     // 改过的必须能看到
     const kept = presentFields('ticks', fields, opts(['minor_length'], { minor_visible: false }))
-    expect([...kept.primary, ...kept.more].map((x) => x.field.prop)).toContain('minor_length')
+    expect(all(kept)).toContain('minor_length')
   })
 
   it('fieldVisible 与 presentFields 是同一条判据（刻度卡不走桶也问它）', () => {
@@ -124,11 +134,27 @@ describe('presentFields：角色模板分桶', () => {
     expect(fieldVisible('some_role', 'anything', o)).toBe(true)
   })
 
-  it('axes：裸 position rect 进高级（manifest-first 泄漏，审计 P6）', () => {
-    const fields = [f('position', 'rect'), f('xlim', 'pair'), f('grid_x', 'bool')]
+  it('axes：裸 position rect 与堆叠层级收进摘要行「背景和其他」（设计稿 A6；此前在高级）', () => {
+    const fields = [f('position', 'rect'), f('xlim', 'pair'), f('grid_x', 'bool'), f('zorder'), f('facecolor', 'color')]
     const b = presentFields('axes', fields, opts())
-    expect(b.advanced.map((x) => x.field.prop)).toEqual(['position'])
-    expect(b.primary.map((x) => x.field.prop)).toEqual(['xlim', 'grid_x'])
+    expect(b.advanced).toEqual([])
+    expect(b.primary.map((x) => x.field.prop)).toEqual(['xlim'])
+    // 网格开关与网格样式一起收进「网格线」（2026-10-01 用户拍板）
+    expect(b.folds.find((x) => x.spec.id === 'grid')?.fields.map((x) => x.field.prop)).toEqual(['grid_x'])
+    expect(b.folds.find((x) => x.spec.id === 'background')?.fields.map((x) => x.field.prop)).toEqual([
+      'facecolor', 'position', 'zorder',
+    ])
+  })
+
+  it('摘要行认领的字段只在摘要行出现一次（字段进多少出多少），没有字段的行不出现', () => {
+    const fields = [f('grid_color', 'color'), f('grid_alpha'), f('spine_color', 'color')]
+    const b = presentFields('axes', fields, opts())
+    expect(b.folds.map((x) => x.spec.id)).toEqual(['grid'])
+    const everything = [...b.primary, ...b.more, ...b.advanced, ...b.folds.flatMap((x) => x.fields)]
+    expect(everything.map((x) => x.field.prop).sort()).toEqual(fields.map((x) => x.prop).sort())
+    // 角色没有模板摘要行 / 一条都没发：folds 是空数组，不是缺席
+    expect(presentFields('line', [f('color', 'color')], opts()).folds).toEqual([])
+    expect(presentFields('axes', [f('xlim', 'pair')], opts()).folds).toEqual([])
   })
 })
 
@@ -235,5 +261,58 @@ describe('controlKindOf：透明度按百分比（审计 T16 / T20）', () => {
     expect(controlKindOf('line', f('linewidth'))).toBe('number')
     expect(controlKindOf('legend', { ...f('handlelength'), min: 0, max: 1 })).toBe('number')
     expect(controlKindOf('line', f('alpha', 'text'))).toBe('text')
+  })
+})
+
+describe('各角色面上留几项、收进摘要行几项（设计稿 A 章）', () => {
+  /** 每个角色的字段表取模板点名的全部字段 + 兜底的一条，证明字段进多少出多少 */
+  const all = (b: ReturnType<typeof presentFields>) =>
+    [...b.primary, ...b.more, ...b.advanced, ...b.folds.flatMap((x) => x.fields)].map((x) => x.field.prop)
+
+  it('标题 / 文字：面上是内容与字体，旋转 / 行距 / 描边等收进「更多」', () => {
+    const fields = [
+      f('text', 'text'), f('fontfamily', 'enum'), f('fontsize'), f('color', 'color'),
+      f('va', 'enum'), f('rotation'), f('linespacing'), f('alpha'), f('visible', 'bool'),
+    ]
+    const b = presentFields('title', fields, opts())
+    expect(b.primary.map((x) => x.field.prop)).toEqual(['text', 'fontfamily', 'fontsize', 'color'])
+    expect(b.more.map((x) => x.field.prop)).toEqual(['va', 'rotation', 'linespacing', 'alpha', 'visible'])
+    expect(b.folds).toEqual([])
+    expect(all(b).sort()).toEqual(fields.map((x) => x.prop).sort())
+  })
+
+  it('图例：位置 / 列数 / 边框在面上；标题、标题字号、边框不透明度、显示收进「更多」', () => {
+    const fields = [
+      f('loc', 'enum'), f('ncol'), f('frameon', 'bool'),
+      f('title', 'text'), f('title_fontsize'), f('framealpha'), f('visible', 'bool'),
+    ]
+    const b = presentFields('legend', fields, opts([], { frameon: true }))
+    expect(b.primary.map((x) => x.field.prop)).toEqual(['loc', 'ncol', 'frameon'])
+    expect(b.more.map((x) => x.field.prop)).toEqual(['title', 'title_fontsize', 'framealpha', 'visible'])
+  })
+
+  it('刻度：四条摘要行按「刻度放在哪 / 小刻度 / 数字格式 / 字体和颜色」排序，各认领自己的字段', () => {
+    const fields = [
+      f('fontsize'), f('rotation'), f('visible', 'bool'),
+      f('major_mode', 'enum'), f('format', 'enum'), f('fontfamily', 'enum'), f('color', 'color'),
+    ]
+    const b = presentFields('ticks', fields, opts([], { major_mode: 'auto' }))
+    expect(b.folds.map((x) => x.spec.id)).toEqual(['placement', 'numformat', 'fontcolor'])
+    expect(b.folds.find((x) => x.spec.id === 'fontcolor')!.fields.map((x) => x.field.prop)).toEqual([
+      'fontfamily', 'color',
+    ])
+    expect(b.primary.map((x) => x.field.prop)).toEqual(['fontsize'])
+    expect(b.more.map((x) => x.field.prop).sort()).toEqual(['rotation', 'visible'])
+    expect(all(b).sort()).toEqual(fields.map((x) => x.prop).sort())
+  })
+
+  it('摘要行的名字 key 都是 `inspector:element.*` 下真有的文案（i18n 键一致性另有门禁）', async () => {
+    const { ROLE_PROFILES } = await import('./roleProfiles')
+    const zh = (await import('@/i18n/locales/zh-CN/inspector.json')).default as unknown as { element: Record<string, string> }
+    for (const [role, profile] of Object.entries(ROLE_PROFILES)) {
+      for (const fold of profile.folds ?? []) {
+        expect(zh.element[fold.labelKey], `${role}.${fold.id}`).toBeTruthy()
+      }
+    }
   })
 })

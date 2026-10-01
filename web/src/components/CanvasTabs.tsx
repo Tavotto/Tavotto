@@ -8,6 +8,7 @@ import { activateCanvas, createCanvasAndActivate } from '@/store/canvasSession'
 import { useDocumentStore } from '@/store/documentStore'
 import { Button } from './ui/Button'
 import { TextInput } from './ui/Input'
+import { ZoomControls } from './ZoomControls'
 import { Menu, MenuItem, MenuSeparator } from './ui/Menu'
 import { TAB_UNDERLINE, tabClass } from './ui/tabClass'
 import { useBoldWidthLock } from './ui/useBoldWidthLock'
@@ -100,7 +101,7 @@ export function CanvasTabs() {
   return (
     /* px-3 与顶栏同值：品牌标 12 / 页签盒 8 / 页签文字 18 三条竖线收成一条（2026-09-15 打磨 T8）。
        条高 36 与右栏页签同档（B1）；顶栏那条 border-b 已删，整屏的那一条 hairline 就是这里 */
-    <div className="flex h-9 shrink-0 items-center gap-1 border-b border-border bg-surface px-3">
+    <div className="flex h-11 shrink-0 items-center gap-1 border-b border-border bg-surface px-3">
       {/* tablist 只许直接拥有 tab 子项（ARIA 硬性要求，axe critical）：
           role 挂在真正装着 TabItem 的滚动条上；「+」与画布菜单在 tablist 外 */}
       <div
@@ -152,6 +153,8 @@ export function CanvasTabs() {
       {menuPinned || overflowing ? (
         <AllCanvasesMenu activate={activate} />
       ) : null}
+      {/* 缩放菜单住在标签行最右（2026-09-30 重设计 A1；此前在顶栏右段） */}
+      <ZoomControls />
     </div>
   )
 }

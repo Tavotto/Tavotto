@@ -1,5 +1,5 @@
 @echo off
-rem Tavotto MCP launcher, Windows half (issue #266). `.mcp.json` says `command: ./mcp/launch`;
+rem Tavotto MCP launcher, Windows half (issue #266). `codex.mcp.json` says `command: ./mcp/launch`;
 rem Codex's program resolver on Windows appends PATHEXT and runs this file (measured on a real
 rem Windows 11 + Codex Desktop, codex-cli 0.158). mcp/launch is the POSIX half.
 rem `python3` on Windows is often the Microsoft Store alias (exit 9009, no output), so this file

@@ -28,3 +28,8 @@
   ——「stem ↔ 产出它的脚本」是图能不能双击进去改的全部依据。自检不靠祈祷：
   `scripts/handoff.py` 读 `tavotto open --json` 的 `registry.parameterizable`，
   为 false 时**退出码 4**。图出来了但只是死图，那不是成功。
+- **`handoff.py` 跑脚本不丢用户的 matplotlib 配置**（`script_env`，#733 同 PR）：`MPLCONFIGDIR` 按
+  `mplconfigdir_for` 定，是引擎 `runtime._owned_mplconfigdir`（#735）的镜像——用户已有 matplotlib 目录就沿用
+  （他的 matplotlibrc / stylelib 决定图长什么样，交接跑出来的必须与终端里一样），没有才指到配置目录下的
+  `mpl-cache`；Linux 上配置与缓存两个 XDG 目录分别判断，只有配置目录时用 `mpl-userconfig`（符号链接指回他的配置）。
+  `tests/test_codex_plugin.py::test_script_env_mpl_rule_mirrors_the_engine` 逐格对拍两侧。

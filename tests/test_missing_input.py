@@ -113,7 +113,7 @@ def test_derive_accepts_a_file_chosen_through_a_unc_share(tmp_path):
         pytest.skip("本机管理共享不可用")
     rule = inputremap.derive("C:/Users/a/proj/data/x.csv", unc, chosen_is_dir=False)
     assert rule["from"] == "c:/Users/a/proj"
-    assert rule["to"].lower().startswith("//localhost/")
+    assert rule["to"] == str(Path(unc).parents[1])
     assert os.path.isfile(figcapture.remap_target([rule], "C:/Users/a/proj/data/x.csv"))
 
 
@@ -546,6 +546,44 @@ def test_path_literals_excludes_fragments_behind_an_assigned_anchor():
     abs_lits, rel_lits = figcapture.path_literals(
         "import os\nbase = os.path.dirname(__file__)\np = os.path.join(base, 'data', 'x.csv')\n"
     )
+    assert abs_lits == [] and rel_lits == []
+
+
+def test_a_compound_operand_behind_an_absolute_anchor_keeps_its_absolute_identity(
+    remapped, tmp_path
+):
+    """`root / Path("data") / "x.csv"`：绝对锚点后面跟复合操作数，`Path("data")` 里嵌套的字面量
+    不是「脚本写过相对路径 data」——整个操作数子树都不算证据（Codex 评 #716 P1
+    "Suppress nested literals under unresolved join operands"）。"""
+    _touch(tmp_path / "moved" / "data" / "x.csv", "moved")
+    box = pathlib.Path.cwd()
+    absolute = str(box / "data" / "x.csv")
+    rules = [{"kind": P, "from": "", "to": str(tmp_path / "moved")}]
+    source = (
+        "from pathlib import Path\nroot = Path(__file__).parent\n"
+        "p = root / Path('data') / 'x.csv'\n"
+    )
+    misses = remapped(rules, script_source=source)
+    with pytest.raises(FileNotFoundError) as err:
+        open(absolute)
+    fact = figcapture.missing_input_of(err.value, misses)
+    assert fact is not None and fact["requested"] == absolute
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from pathlib import Path\nroot = Path(__file__).parent\np = root / Path('data') / 'x.csv'\n",
+        "from pathlib import Path\nroot = Path(__file__).parent\np = root / str('data') / 'x.csv'\n",
+        "from pathlib import Path\nroot = Path(__file__).parent\np = root / ('da' + 'ta') / 'x.csv'\n",
+        "from pathlib import Path\nroot = Path(__file__).parent\np = root / f'data{1}' / 'x.csv'\n",
+        "import os\nbase = os.path.dirname(__file__)\np = os.path.join(base, os.path.join('data'), 'x.csv')\n",
+        "import os\np = os.path.join(os.path.dirname(__file__), str('data'), 'x.csv')\n",
+    ],
+)
+def test_path_literals_excludes_nested_literals_under_a_non_constant_operand(source):
+    """锚点后面的操作数是调用 / 拼接 / f-string 时，嵌套在里面的字符串常量一样不进证据。"""
+    abs_lits, rel_lits = figcapture.path_literals(source)
     assert abs_lits == [] and rel_lits == []
 
 

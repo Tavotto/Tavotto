@@ -21,9 +21,9 @@ import { useUiStore } from '@/store/uiStore'
 import { panelFullSize, type PanelObject, type TextObject } from '@/types/document'
 import { useInspectorPrefs } from '@/store/inspectorPrefs'
 import { Button } from '../ui/Button'
-import { Reveal, Row, Section } from '../ui/Field'
+import { Row, Section } from '../ui/Field'
+import { SummaryRow } from '../ui/SummaryRow'
 import { INSPECTOR_LABEL_W } from './layout'
-import { GroupToggle } from './GroupToggle'
 import { ColorField, NumberField, TextArea } from '../ui/Input'
 import { Menu, MenuItem } from '../ui/Menu'
 import { Segmented } from '../ui/Segmented'
@@ -232,17 +232,17 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
         )}
       </div>
 
-      {/* 与图内元素同一个「更多」模型：按角色记忆，折叠给现状摘要 */}
-      <div className="mt-1.5">
-        <GroupToggle
+      {/* 与图内元素同一个「更多」模型：按角色记忆，收起时右边写现状（设计稿：摘要行） */}
+      <div className="mt-3">
+        <SummaryRow
+          className="mx-0"
+          data-fold="more"
+          label={translate('element.more', { ns: 'inspector' })}
+          value={moreSummary || undefined}
           open={moreOpen}
           onToggle={() => setMoreOpen('text-object', !moreOpen)}
-          summary={moreSummary || undefined}
         >
-          {translate('element.more', { ns: 'inspector' })}
-        </GroupToggle>
-        <Reveal open={moreOpen}>
-          <div className="mt-1.5 flex flex-col gap-1.5">
+          <div className="flex flex-col gap-1.5">
             <Row label={tx('case')} labelWidth={INSPECTOR_LABEL_W}>
               <Menu
                 width={200}
@@ -356,7 +356,7 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
               </Row>
             )}
           </div>
-        </Reveal>
+        </SummaryRow>
       </div>
     </Section>
   )
@@ -413,7 +413,7 @@ function MatchFigureSize({
       {tx('matchHint', { eff })}
       <button
         onClick={() => onMatch(eff)}
-        className="ml-1.5 text-accent underline-offset-2 hover:underline"
+        className="ml-1.5 text-ink-2 underline-offset-2 hover:text-ink hover:underline"
       >
         {tx('matchAction')}
       </button>

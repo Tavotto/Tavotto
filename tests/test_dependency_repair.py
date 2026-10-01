@@ -881,7 +881,10 @@ def test_managed_base_python_must_be_in_the_support_range(project, monkeypatch):
 
 
 def test_managed_environment_is_not_offered_without_a_base_python(project, monkeypatch):
-    """没有基础 Python 就没有受管环境这条路——如实说，不假装能修。"""
+    """没有基础 Python、私有 Python 也不提供，就没有受管环境这条路——如实说，不假装能修。
+
+    锁文件里各目标的私有 Python 已开（ADR 0064），「不提供」用工程逃生门钉住，不靠锁里本机目标碰巧关着。"""
+    monkeypatch.setenv("TAVOTTO_PRIVATE_PYTHON", "0")
     monkeypatch.setattr(deprepair, "_base_python", None)
     monkeypatch.setattr(deprepair, "_base_python_known", True)
     with pytest.raises(deprepair.RepairError) as err:
@@ -1383,12 +1386,21 @@ def _stub_generation_until_pip(monkeypatch, *, pip_code: str) -> list[str]:
     monkeypatch.setattr(
         deprepair.managedenv, "create_generation_venv", lambda project, gen, base: (True, "")
     )
-    monkeypatch.setattr(deprepair, "_run", lambda argv, timeout: (0, "pip 24.0"))
+    # 只读探测：`pip --version` 回版本；问包源（`PIP_OPTIONS_PROBE`）回「什么源都没配」（PyPI 默认）
+    no_source = (
+        '{"pip_version": "24.0", "index_url": "https://pypi.org/simple", "extra_index_urls": [],'
+        ' "no_index": false, "find_links": []}'
+    )
+    monkeypatch.setattr(
+        deprepair,
+        "_run",
+        lambda argv, timeout: (0, no_source if deprepair.PIP_OPTIONS_PROBE in argv else "pip 24.0"),
+    )
     monkeypatch.setattr(
         deprepair,
         "_run_pip",
         # 桩代表「pip 进程起来了」：照真 `_run_pip` 的约定调 `on_started`
-        lambda argv, ev, log, on_started=None: (
+        lambda argv, ev, log, on_started=None, **_kw: (
             runs.append("pip"),
             on_started and on_started(),
             (pip_code, "out"),
@@ -1446,7 +1458,7 @@ def test_a_failed_managed_pip_run_leaves_the_requirement_retryable(
         with pytest.raises(deprepair.RepairError) as err:
             deprepair.install(plan.plan_id)
         assert err.value.code == pip_code
-    # 断网那条按 ADR 0111 再走一次镜像（桩里的 `pip config list` 什么源都没配），仍断网就如实失败；取消不换源
+    # 断网那条按 ADR 0111 再走一次镜像（桩里问包源回「什么源都没配」），仍断网就如实失败；取消不换源
     assert runs == (["pip", "pip"] if pip_code == deprepair.ERROR_NETWORK else ["pip"])
     again = deprepair.create_plan(
         str(project), "figure.py", FIXTURE_IMPORT, target_kind=deprepair.TARGET_MANAGED
@@ -1461,7 +1473,7 @@ def test_the_managed_generation_records_the_mirror_on_its_progress(project, monk
     _stub_generation_until_pip(monkeypatch, pip_code="")
     seen: list[list[str]] = []
 
-    def _fake_run_pip(argv, ev, log, on_started=None):
+    def _fake_run_pip(argv, ev, log, on_started=None, **_kw):
         seen.append(argv)
         if on_started is not None:
             on_started()  # 桩代表 pip 进程已起来（真 `_run_pip` 在 Popen 之后调它）
@@ -1480,6 +1492,34 @@ def test_the_managed_generation_records_the_mirror_on_its_progress(project, monk
     rec = deprepair.progress(plan.plan_id)
     assert rec.get("pypi_mirror") == deprepair.PYPI_MIRROR_URL
     assert deprepair.PYPI_MIRROR_URL in rec.get("log", "")
+
+
+@pytest.mark.parametrize("switch", [False, True], ids=["official", "switched"])
+def test_the_managed_generation_names_its_pypi_source_on_the_progress(
+    project, monkeypatch, tmp_path, switch
+):
+    """ADR 0112 §二：进度顶层 `pypi_source` 说出这次装包此刻用的是哪个源（闭集、不含地址）——没换就是官方
+    `pypi`，换了就是 `tuna`。失败日志（`_log_repair_failure`）也按它说来源。"""
+    plan = _managed_plan(project, monkeypatch, tmp_path, private=False)
+    _stub_generation_until_pip(monkeypatch, pip_code="")
+    seen: list[list[str]] = []
+
+    def _fake_run_pip(argv, ev, log, on_started=None, **_kw):
+        seen.append(argv)
+        if on_started is not None:
+            on_started()  # 桩代表 pip 进程已起来（真 `_run_pip` 在 Popen 之后调它；换源只在这之后记）
+        if switch and len(seen) == 1:
+            return deprepair.ERROR_NETWORK, "Retrying (Retry(total=4))"
+        return "", ""
+
+    monkeypatch.setattr(deprepair, "_run_pip", _fake_run_pip)
+    try:
+        deprepair.install(plan.plan_id)
+    except deprepair.RepairError:
+        pass
+    assert len(seen) == (2 if switch else 1)
+    expected = deprepair.PIP_SOURCE_MIRROR if switch else deprepair.PIP_SOURCE_PYPI
+    assert deprepair.progress(plan.plan_id).get("pypi_source") == expected
 
 
 @pytest.mark.parametrize(

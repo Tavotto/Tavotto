@@ -7,8 +7,8 @@
 
 * **外壳尺寸是合同**：`SettingsDialog` 固定 `SHELL_WIDTH = 760` / `SHELL_HEIGHT = 600px`
   （`ui/Dialog` 的 `height`），内容区 `[data-settings-content]` 独立滚、切页滚回顶部；<640px 导航变
-  顶部一条。**新分区再长也不许让外框撑高。** 十一个分区在 `SECTIONS`；旧 id 走 `resolveSection()`
-  的别名表（`profiles → spec` 等），深链的调用方**不要**再写旧 id。
+  顶部一条。**新分区再长也不许让外框撑高。** 九个分区在 `SECTIONS`（2026-09-30 由十一个并成，ADR 0038 修订）；旧 id 走 `resolveSection()`
+  的别名表（`profiles → spec`、`interface / canvas / sidebars / shortcuts → general`、`update → about`），深链的调用方**不要**再写旧 id。
 * **深链带返回**：`setSettingsOpen(true, section, { returnTo: 'export' })`；`settingsReturnTo` 是闭集
   （`'export' | null`），每次打开重置。要加新的返回目标先扩闭集。
 * **编码 Agent 一级列表只有名称 · 版本号 · 状态**：版本号经 `agentVersionLabel` 只取数字，抽不出
@@ -104,7 +104,7 @@
   现在它是**状态 + 动作**：一枚常驻徽标（`profiles.readOnlyBuiltinBadge` / `readOnlyBadge`）
   加旁边一颗「复制一份再修改」（接的还是原来那个 `duplicate`，原先摆在所有字段下面、要滚很远）。
   信息一个字没丢，锚点 `data-profile-readonly`。
-* **诊断页不显示 `cli_*` 检查**（Agent 页已有），渲染环境卡只在技术详情里一张，内置包清单归包管理页。
+* **诊断页不显示 `cli_*` 检查**（Agent 页已有），渲染环境卡在「项目」页常驻一张（诊断页只在环境异常时另挂），内置包清单归包管理页。
   「复制诊断」的文本来自 `fetchDiagnosticsSummary()`（后端同一份采集），前端不另拼。
 * **更新页只说得出「上一次检查的回答」**（2026-09-06 审计 T48）：界面上没有无条件的「已是最新
   版本」——`LastCheckVerdict` 按**真实存在的时间戳**二选一（没查过 → 「无法判断」，查过 →

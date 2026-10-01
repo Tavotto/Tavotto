@@ -27,7 +27,7 @@ JSON 的 profile **各自**生成的配置原样起 server、握手、列工具�
 
 | id | 宿主 / surface | 配置 | 工具完整流程 | Skill | 内嵌画布 | 桌面交接 | 备注 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `codex` | Codex（回归基线） | config_tested | protocol_tested | native_skill: not_run | not_run | not_run | 未改 Codex 路径；既有 `tests/test_codex_plugin.py` / `test_codex_install_cli.py` / `test_plugin_candidate.py` 全绿。真宿主画布验收仍按 `docs/acceptance/codex-desktop-canvas.md`，本次没有重跑 |
+| `codex` | Codex（回归基线） | config_tested | protocol_tested | native_skill: not_run | not_run | not_run | 2026-09-28 Codex 的 MCP 配置改名 `codex.mcp.json`（ADR 0109）：codex-cli 0.157.1 隔离 `CODEX_HOME` 装本地市场，`codex mcp list` 列出 tavotto；清单指向不存在的文件时列表为空（对照）。既有 `tests/test_codex_plugin.py` / `test_codex_install_cli.py` / `test_plugin_candidate.py` 全绿。真宿主画布验收仍按 `docs/acceptance/codex-desktop-canvas.md`，本次没有重跑 |
 | `cursor` | Cursor 本地 Agent | config_tested | protocol_tested | native_skill: not_run | not_run | not_run | schema 证据 search_snippet |
 | `zcode` | ZCode 本地 MCP | config_tested | protocol_tested | instruction_fallback: config_tested | not_run | not_run | schema 证据 search_snippet；不做插件 manifest / 市场 |
 | `dsh` | DeepSeek Harness（dsh-mcp-client stdio） | config_tested | not_run | native_skill: not_run | not_run | not_run | YAML patch；toolCallTimeoutMs 换算自 1800 s |
@@ -36,12 +36,16 @@ JSON 的 profile **各自**生成的配置原样起 server、握手、列工具�
 | `claude-desktop` | Claude Desktop 本地聊天 | config_tested | protocol_tested | instruction_fallback: config_tested | not_run | not_run | 没有本机文件写入：出图脚本由用户保存；`.mcpb` 不做 |
 | `trae` | Trae / TraeCode 本地 IDE | config_tested | protocol_tested | instruction_fallback: config_tested | not_run | not_run | 登记与「智能体已启用」分开记；CN / 国际版、IDE / SOLO 均未跑 |
 | `vscode` | VS Code GitHub Copilot Agent | config_tested | protocol_tested | native_skill: not_run | not_run | not_run | `chat.mcp.apps.enabled` 与组织策略只记录、不替用户开 |
+| `minimax-code` | MiniMax Code（mcode）CLI | config_tested | protocol_tested | native_skill: not_run | not_applicable | not_run | 项目 `.mcp.json`（2026-09-28 加入，ADR 0109）；0.5.8 隔离安装 + 自定义 provider 跑到 `mcode exec`，被「Sign in to MiniMax to use Agent features」挡住——没有账户，工具流程停在协议级 |
 
 子行（已测的其他 surface 在这里加行，不替代上面的主行）：
 
 | id | 宿主 / surface | 配置 | 工具完整流程 | Skill | 内嵌画布 | 桌面交接 | 备注 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `claude-code` · 插件 | Claude Code CLI 2.1.283，macOS，`.claude-plugin/`（ADR 0103） | config_tested | local_smoke | plugin_skill: not_run | not_applicable | not_run | 工作副本 `--plugin-dir` + 隔离 `CLAUDE_CONFIG_DIR` 下的本地 git-subdir 安装；**不是发行件**，不算 host_verified。证据在 ADR 0103 |
+| `workbuddy` · 插件 | WorkBuddy 5.6.2 自带的 CodeBuddy CLI 2.147.0（headless），macOS，同一份 `.claude-plugin/`（ADR 0109） | config_tested | local_smoke | plugin_skill: local_smoke | not_run | not_run | 隔离 `CODEBUDDY_CONFIG_DIR` / `HOME` + 本地 git 仓库模拟 `plugin-stable`：`plugin marketplace add` → `install tavotto@tavotto`；`models.json` 指向假的 OpenAI 兼容模型，`-p` 经 ToolSearch → DeferExecuteTool 真调 `mcp__tavotto__tavotto_health`（引擎就绪、根来源 cwd = 会话目录）；日志 `Loaded 1 skill(s) … [tavotto-figure]`。改名前的布局同法实测 `spawn ./mcp/launch.cmd ENOENT`。**不是发行件、不是 GUI 窗口**，不算 host_verified |
+| `zcode` · 插件 | ZCode 3.14.3 桌面包里的 CLI 0.16.9，macOS，同一份 `.claude-plugin/`（ADR 0109） | config_tested | not_run | plugin_skill: local_smoke | not_run | not_run | 隔离 `ZCODE_STORAGE_DIR` / `HOME`：本地市场 → git-subdir 安装成功，清单取 `.claude-plugin/plugin.json`、诊断为空；app-server `mcp/list` 报 `plugin:tavotto:tavotto` connected、10 个工具；`skills list` 有 `tavotto:tavotto-figure`。**工具调用没跑**：`-p` 与会话都要 Z.AI 登录，没有账户——所以不标 beta |
+| `dsh` · bundle | DSH 0.1.7-rc.2（npm），macOS，`tavotto-dsh`（ADR 0104） | config_tested | local_smoke | native_skill: local_smoke | not_run | not_run | 隔离 `DSH_HOME` / `DSH_AGENTS_HOME` + 假 Messages 模型：headless 真调 `tavotto_health`、目录里有 `tavotto-figure`；git+path 规格从本地仓库装、`update` 取到新提交；`dsh web` 带 bundle 启动。**不是发行件**，证据在 ADR 0104 |
 
 每条变成 `host_verified` 时，在下面补一段证据：宿主品牌、surface / harness、CN / 国际版（适用时）、
 客户端版本、OS、是否本地会话、完整包版本与 `content_digest`、安装方式、配置来源（生成命令）、

@@ -44,7 +44,7 @@ test('首次启动：用户目录为空时进项目选择器，而不是白屏',
   await expect(page.getByRole('main', { name: '选择项目' })).toBeVisible()
   // 第一次来：新手版主页，两个主动作都在
   await expect(page.locator('main[data-home-variant="newcomer"]')).toBeVisible()
-  await expect(page.getByRole('button', { name: '用示例体验一次' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '用示例学一遍（带引导）' })).toBeVisible()
   await expect(page.getByRole('button', { name: '导入我的脚本' })).toBeVisible()
   // 空目录时不该报错
   await expect(page.getByRole('alert')).toHaveCount(0)

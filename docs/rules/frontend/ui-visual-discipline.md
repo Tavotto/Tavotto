@@ -9,16 +9,20 @@ Consolidation Session 1 定稿），值在 `src/index.css` 的 `@theme`，门禁
 数字时长 / 手拼大写小标题 / 预设投影 / 第二套复选框与开关 / `variant="outline"`）。
 这里只留一段速记：
 
-暖灰白 `#F2F2EF` 底 + 白色 surface；层级靠留白 / 字号 / 轻微背景差，
+**2026-09-30 重设计（宪法第二十五节）**：灰色桌面 `bg` 上放顶栏 / 左轨 / 停靠抽屉，作品在一块白色圆角工作面板
+（`data-work-panel`：画布标签 + 画布 + 属性栏）里；画布灰铺到面板边缘。左轨写短名（`rail.short.*`）。带字的按钮与分段控件是胶囊，
+次按钮灰底无边；链接是灰字；品牌蓝 #5A92E5 压深两档当 accent / sel。下面是此前的速记，与第二十五节冲突处以第二十五节为准。
+
+白色 surface；层级靠留白 / 字号 / 轻微背景差，
 边框只给区域边界、选择状态与浮层；可编辑框是 `field` 底、静态无边（聚焦 accent 边）。**持久表面里只有
 「真的是一张卡」的东西有投影（`--shadow-card`：素材卡 / 会话卡 / 任务行 / 诊断卡），浮层用 `--shadow-pop` /
 `--shadow-dialog`；改图助手输入框是浮在对话流上的玻璃（`--color-glass` + `backdrop-blur-lg` + `--shadow-composer`）**
 （宪法第二十二节，2026-09-15）。
-radius 四档：`xs` 3（≤16px 小片）、`sm` 6（控件）、`md` 8（浮层 / 卡片）、`lg` 12（对话框）；
+radius：`xs` 3（≤16px 小片）、`sm` 6（小控件）、`md` 10（输入框 / 图标钮 / 浮层 / 卡片）、`lg` 14（对话框）、`panel` 16（工作面板）、`full`（带字的按钮 / 分段）；
 Tailwind 自带的 xl 以上已清空。UI 字号 11-14px（`xs/sm/base/lg`）、六个 `type-*` 字体角色；
 控件高 28px、树行高 28px、图标点击区 ≥28px。交互面三档 token：`surface-hover` <
 `surface-active` ≈ `selected`（#e6e6e0，轻 tint + 字重，不靠深灰块）。主按钮近黑色
-（`bg-ink`）；按钮四档 primary / secondary / ghost / danger；蓝色只用于选择 / 焦点 / 链接；
+（`bg-ink`）；按钮四档 primary / secondary / ghost / danger；蓝色只用于选择 / 焦点（链接是灰字，2026-09-30）；
 每个上下文最多一个填色主动作（顶栏=导出、助手=发送、弹窗=确认）。禁用态一档 `opacity-40 +
 cursor-not-allowed`；未选中复选框 / 单选边框与关态开关轨道 `border-control`（≥3:1）；焦点环
 `focus-ring` 不透明。**跟着选中项走的指示物只有一份实现**（2026-09-14 二审 E2 / E3）：Tabs 的下划线与 Segmented 的选中底
@@ -35,7 +39,7 @@ SearchInput / `inspector/controls/PickerTrigger` 共用；批次 2，形态 2026
 `ink-2`/`ink-3` 均 ≥4.5:1，`ink-faint` 仅装饰 / 禁用——装饰记号（`当前 → 要求` 的箭头、
 `状态 · 时间` 的间隔点）必须 `aria-hidden`：e2e 的自算对比度尺子（`e2e/contrast.ts`）只放过
 「aria-hidden **且**自己的文字里没有字母数字」的元素，其余用 `ink-faint` 的字照样量、照样红
-（未选中的分段标签、折叠 summary 都是要读的字，用 `ink-3`）。选中态不只靠颜色（字重 / check /
+（折叠 summary 是要读的字，用 `ink-3`；未选中的分段标签用 `ink-2`——2026-09-30 起分段槽叠在灰桌面上，ink-3 不到 4.5:1）。选中态不只靠颜色（字重 / check /
 形状变化）。下拉的记号只有 chevron-down。支持 `prefers-reduced-motion`。
 Document 字体（Times）与 UI 字体严格分离。
 
@@ -62,8 +66,17 @@ EmptyState。**同类控件出现第二套实现先删第二套，不给新写�
 标题由 `RoleProfile.primaryGroups` 声明（曲线 = 线条 / 数据点），不在组件里手排
 （2026-09-13 审计 P1 第二批，细则在宪法第十六节）。
 
-工作台结构：顶栏 44px（左=品牌/文档名/autosave，中=撤销重做+工具，
-右=缩放/导出/更多）；左侧 44px 常驻图标轨道（素材/结构/图内元素）+
+工作台结构：顶栏 44px（左=品牌/文档名/autosave，中=撤销重做，右=导出/更多）；
+画布工具（选择 / 文字 / 标注 ▾ / 序号 | 适应）在画布底部居中的**浮动工具条**
+（`CanvasToolbar`，`data-canvas-toolbar`，只在排版模式出现、快速编辑时整条不在），缩放菜单在画布
+标签行最右（快速编辑没有标签行，悬在画布右上角），写回是「⋯」菜单第一项
+（`useWriteBackMenuEntry`，计数 n 在项右侧，属性栏「源文件」里那一颗不动）。工具条占掉画布
+底边约 64px：底部居中的 toast 列与左下 HUD 在它显示时抬到 `bottom-16`（`useCanvasToolbarVisible`
+一处判据），`fixed` 的选中浮动栏 / 右键快编落位时给窗口底边留 `BOTTOM_SAFE`
+（`canvas/context-bar/position.ts`），三者都不许盖住工具条上的按钮；
+`data-tool` / `data-fit-canvas` / `data-zoom-menu` / `data-write-back` 钩子跟着元素搬，
+写回在菜单里，e2e 要先开 `data-more-menu`；
+左侧 44px 常驻图标轨道（素材/结构/图内元素）+
 280–360px 上下文抽屉（再点收起）；右栏 296–320px 三模式（属性/改图助手/
 画布），无选择且未钉住时不占位；断点 ≥1440 双栏可钉住、1024–1439 左右
 互斥、<1024 覆盖式抽屉。底部无常驻状态栏：坐标/选区尺寸只在拖动中出现（HUD，左下），

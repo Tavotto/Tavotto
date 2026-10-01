@@ -31,17 +31,16 @@ async function asReturningUser(page: Page) {
 }
 
 for (const width of [900, 1440]) {
-  test(`新手版 ${width}px：三步卡片与两个主动作都在，不横向溢出`, async ({ app, page }) => {
+  test(`新手版 ${width}px：拖放区与两个主动作都在、没有三步说明卡，不横向溢出`, async ({ app, page }) => {
     await page.setViewportSize({ width, height: 800 })
     const a = await app({ noProject: true })
     await page.goto(a.baseURL)
     const main = page.locator('main[data-home-variant="newcomer"]')
     await expect(main).toBeVisible()
-    await expect(main.locator('ol > li')).toHaveCount(3)
-    await expect(page.getByRole('button', { name: '用示例体验一次' })).toBeVisible()
+    await expect(main.locator('ol > li')).toHaveCount(0)
+    await expect(main.locator('[data-home-dropzone]')).toBeVisible()
+    await expect(page.getByRole('button', { name: '用示例学一遍（带引导）' })).toBeVisible()
     await expect(page.getByRole('button', { name: '导入我的脚本' })).toBeVisible()
-    // 资源验过才说「已内置」：源码 / wheel / 桌面包里 resources/tutorial_project 都在
-    await expect(page.getByText('已随安装包内置示例脚本')).toBeVisible()
     expect(await horizontalOffenders(page, 'main')).toEqual([])
   })
 

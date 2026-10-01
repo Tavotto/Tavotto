@@ -444,20 +444,140 @@ def _load_plugin_handoff():
     return mod
 
 
+def _empty_home(tmp_path, monkeypatch) -> Path:
+    """空的假家目录：HOME / USERPROFILE / LOCALAPPDATA 指这里，XDG 与 MPLCONFIGDIR 摘掉——
+    「用户有没有自己的 matplotlib 目录」由用例自己摆。"""
+    home = tmp_path / "home"
+    (home / "AppData" / "Local").mkdir(parents=True)
+    for key in ("MPLCONFIGDIR", "XDG_CONFIG_HOME", "XDG_CACHE_HOME"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.setenv("LOCALAPPDATA", str(home / "AppData" / "Local"))
+    monkeypatch.setenv("TAVOTTO_CONFIG_DIR", str(tmp_path / "cfg"))
+    return home
+
+
 def test_script_env_is_headless_with_a_stable_mpl_cache(tmp_path, monkeypatch):
-    """跑用户脚本的环境必须无头（Agg）且字体缓存目录固定——沙箱里默认 GUI
-    backend 会崩在 AppKit 初始化上，HOME 只读时 matplotlib 每次重建字体缓存
+    """跑用户脚本的环境必须无头（Agg）；用户一个 matplotlib 目录都没有时字体缓存目录固定——
+    沙箱里默认 GUI backend 会崩在 AppKit 初始化上，HOME 只读时 matplotlib 每次重建字体缓存
     白付十来秒（2026-08-20 实测的两条慢因）。"""
     mod = _load_plugin_handoff()
-    monkeypatch.setenv("TAVOTTO_CONFIG_DIR", str(tmp_path / "cfg"))
+    _empty_home(tmp_path, monkeypatch)
     monkeypatch.delenv("MPLBACKEND", raising=False)
-    monkeypatch.delenv("MPLCONFIGDIR", raising=False)
     env = mod.script_env()
     assert env["MPLBACKEND"] == "Agg"
-    assert env["MPLCONFIGDIR"].startswith(str(tmp_path / "cfg"))
+    assert env["MPLCONFIGDIR"] == os.path.join(str(tmp_path / "cfg"), mod.MPL_CACHE_DIRNAME)
     assert os.path.isdir(env["MPLCONFIGDIR"]), "缓存目录要建好，matplotlib 不会自己建"
     # 第二次拿到同一个目录——缓存才能复用
     assert mod.script_env()["MPLCONFIGDIR"] == env["MPLCONFIGDIR"]
+
+
+def _matplotlib_python():
+    from tavotto.engine import pool
+
+    try:
+        return pool.find_worker_python()
+    except pool.WorkerError:  # pragma: no cover - 取决于开发机
+        pytest.skip("找不到装有 matplotlib 的解释器（TAVOTTO_WORKER_PYTHON）")
+
+
+_LINEWIDTH_SCRIPT = (
+    "import matplotlib, pathlib\n"
+    "pathlib.Path('lw.txt').write_text(str(matplotlib.rcParams['lines.linewidth']))\n"
+)
+
+
+def test_script_env_keeps_the_users_matplotlib_config(tmp_path, monkeypatch):
+    """用户已有自己的 matplotlib 目录（里面有 matplotlibrc）：交接时跑脚本不改道，他的 rc 照样
+    生效——否则交接出来的图与他在终端里 `python fig.py` 的不一样（#733 同 PR：与引擎 #735 的
+    判据对齐）。量的是真跑出来的 rcParams，不是 env 里有没有某个键。"""
+    from tavotto.engine import runtime
+
+    python = _matplotlib_python()
+    mod = _load_plugin_handoff()
+    home = _empty_home(tmp_path, monkeypatch)
+    dirs = [Path(d) for d in runtime._user_matplotlib_dirs()]  # 平台上 matplotlib 真读的位置
+    assert all(str(d).startswith(str(home)) for d in dirs), "前提：假家目录生效"
+    for d in dirs:
+        d.mkdir(parents=True, exist_ok=True)
+    (dirs[0] / "matplotlibrc").write_text("lines.linewidth: 7\n", encoding="utf-8")
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    script = proj / "fig.py"
+    script.write_text(_LINEWIDTH_SCRIPT, encoding="utf-8")
+    ok, err = mod.run_script(python, str(script))
+    assert ok, err
+    assert (proj / "lw.txt").read_text(encoding="utf-8") == "7.0", "用户的 matplotlibrc 没生效"
+    assert not (tmp_path / "cfg" / mod.MPL_CACHE_DIRNAME).exists()
+
+
+@pytest.mark.skipif(
+    not sys.platform.startswith(("linux", "freebsd")),
+    reason="只有 Linux / FreeBSD 上 matplotlib 的配置与缓存是两个 XDG 目录",
+)
+def test_script_env_linux_config_only_keeps_the_config_and_caches_in_tavotto(tmp_path, monkeypatch):
+    """Linux 上用户只有配置目录（`~/.config/matplotlib/matplotlibrc`）、没有缓存目录：rc 生效，
+    字体缓存落在 Tavotto 配置目录下的 `mpl-userconfig`，不在他的 XDG 缓存位置新建。"""
+    python = _matplotlib_python()
+    mod = _load_plugin_handoff()
+    home = _empty_home(tmp_path, monkeypatch)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / "xdg-config"))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(home / "xdg-cache"))
+    mine = home / "xdg-config" / "matplotlib"
+    mine.mkdir(parents=True)
+    (mine / "matplotlibrc").write_text("lines.linewidth: 7\n", encoding="utf-8")
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    script = proj / "fig.py"
+    script.write_text(_LINEWIDTH_SCRIPT + "import matplotlib.font_manager\n", encoding="utf-8")
+    ok, err = mod.run_script(python, str(script))
+    assert ok, err
+    assert (proj / "lw.txt").read_text(encoding="utf-8") == "7.0", "用户的 matplotlibrc 没生效"
+    linked = tmp_path / "cfg" / mod.MPL_LINKED_CONFIG_DIRNAME
+    assert list(linked.glob("fontlist-*.json")), "字体缓存不在 Tavotto 目录里"
+    assert not (home / "xdg-cache" / "matplotlib").exists(), "在用户的 XDG 缓存位置新建了目录"
+
+
+@pytest.mark.parametrize("platform", ["linux", "darwin", "win32"])
+@pytest.mark.parametrize(
+    "has",
+    [(), ("mine",), ("local",), ("config",), ("cache",), ("config", "cache")],
+    ids=lambda has: "+".join(has) or "none",
+)
+@pytest.mark.parametrize("user_set", [False, True], ids=["unset", "user-set"])
+def test_script_env_mpl_rule_mirrors_the_engine(platform, has, user_set, tmp_path, monkeypatch):
+    """插件的 `mplconfigdir_for` 是引擎 `runtime._owned_mplconfigdir` 的镜像：平台 × 用户哪几个
+    matplotlib 目录在 × 他设没设 MPLCONFIGDIR，逐格比两侧的结论（同一个缓存根、同一个默认名）。"""
+    from tavotto.engine import runtime
+
+    mod = _load_plugin_handoff()
+    home = _empty_home(tmp_path, monkeypatch)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / "xdg-config"))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(home / "xdg-cache"))
+    wanted = {
+        "mine": home / ".matplotlib",
+        "local": home / "AppData" / "Local" / "matplotlib",
+        "config": home / "xdg-config" / "matplotlib",
+        "cache": home / "xdg-cache" / "matplotlib",
+    }
+    for key in has:
+        wanted[key].mkdir(parents=True)
+    if user_set:
+        monkeypatch.setenv("MPLCONFIGDIR", str(tmp_path / "theirs"))
+    cache = str(tmp_path / "cache")
+    monkeypatch.setattr(sys, "platform", platform)
+    engine = runtime._owned_mplconfigdir(cache)
+    plugin = mod.mplconfigdir_for(cache, "mpl", system=platform)
+    monkeypatch.undo()
+    assert plugin == engine
+    assert plugin in (
+        None,
+        os.path.join(cache, "mpl"),
+        os.path.join(cache, mod.MPL_LINKED_CONFIG_DIRNAME),
+    )
+    assert mod.MPL_CONFIG_ENTRIES == runtime._MPL_CONFIG_ENTRIES
+    assert mod.MPL_LINKED_CONFIG_DIRNAME == runtime.MPL_LINKED_CONFIG_DIRNAME
 
 
 def test_script_env_never_overrides_the_users_choice(monkeypatch):
@@ -1094,7 +1214,7 @@ def test_plugin_zip_contains_the_skill(tmp_path):
         "codex-plugin/.codex-plugin/plugin.json",
         "codex-plugin/skills/tavotto-figure/SKILL.md",
         "codex-plugin/skills/tavotto-figure/scripts/handoff.py",
-        "codex-plugin/.mcp.json",
+        "codex-plugin/codex.mcp.json",
         "codex-plugin/mcp/server.py",
         "codex-plugin/mcp/widget/canvas.html",
     ):
@@ -1135,12 +1255,12 @@ def test_release_workflow_publishes_the_plugin_channel():
 # 这几条盯的是「Codex 装上了、但一个工具都看不见」——清单字段错一个字，
 # 症状就是插件安安静静地只剩技能。字段形状取自官方插件（`codex plugin` 装出来的
 # `~/.codex/plugins/cache/**/.codex-plugin/plugin.json` 与它们的 `.mcp.json`）。
-MCP_JSON = PLUGIN / ".mcp.json"
+MCP_JSON = PLUGIN / "codex.mcp.json"
 
 
 def test_manifest_declares_the_mcp_server(manifest):
-    """`mcpServers` 指向一个**存在的** .mcp.json，且技能仍在。"""
-    assert manifest["mcpServers"] == "./.mcp.json"
+    """`mcpServers` 指向一个**存在的** Codex MCP 配置（codex.mcp.json，ADR 0109），且技能仍在。"""
+    assert manifest["mcpServers"] == "./codex.mcp.json"
     assert MCP_JSON.is_file()
     assert manifest["skills"] == "./skills/", "加 MCP 不能把技能挤掉"
 
@@ -1411,6 +1531,9 @@ def test_launcher_is_stdlib_only_and_parses():
         # 重装锁用内核文件锁（进程退出即释放）：POSIX / Windows 各一个标准库
         "fcntl",
         "msvcrt",
+        # 只读探测 pip 的 index-url（问 `pip config list`、按 repr 解值、抹掉地址里的口令），#721 / #737
+        "ast",
+        "urllib",
         "__future__",
         "tavotto",
         "tavotto_mcp",
@@ -1435,8 +1558,33 @@ def test_launcher_reuses_the_plugin_locator_instead_of_a_third_copy():
     """
     src = (PLUGIN / "mcp" / "server.py").read_text(encoding="utf-8")
     assert "find_tavotto" in src, "启动器没有复用插件自带的定位器"
+    # 判据的主语是「Tavotto 装在哪」这条路径规则。LOCALAPPDATA 是它的输入之一；别的用途（#724 曾为商店版
+    # Python 的虚拟化 pip.ini 读它，#737 改成直接问 pip 后已删）要在这里登记理由。按 AST 判（不按行里的
+    # 字样——拆成两行就能绕过）：代码里出现 "LOCALAPPDATA" 这个字符串常量的地方，只许在登记过的函数里。
+    allowed: dict[str, str] = {}
+    uses: list[str] = []
+
+    def walk(node, owner):
+        for child in ast.iter_child_nodes(node):
+            inner = (
+                child.name if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) else owner
+            )
+            if isinstance(child, ast.Constant) and child.value == "LOCALAPPDATA":
+                uses.append(owner)
+            walk(child, inner)
+
+    # 尺子自证：函数里的 "LOCALAPPDATA" 常量看得见、归到那个函数（现在的启动器里一处都没有）
+    walk(ast.parse('def probe():\n    return os.environ.get("LOCALAPPDATA")\n'), "<module>")
+    assert uses == ["probe"], uses
+    uses.clear()
+    walk(ast.parse(src), "<module>")
+    stray = sorted({u for u in uses if u not in allowed})
+    assert not stray, (
+        f"启动器在 {stray} 里用了 LOCALAPPDATA——Tavotto 装在哪由定位器说了算；"
+        "别的用途请在 allowed 里登记理由"
+    )
     for owned_by_the_locator in (
-        "LOCALAPPDATA",
+        "PROGRAMFILES",
         "install.json",
         "SIDECAR_REL",
         "UNINSTALL_KEY",
@@ -1445,6 +1593,31 @@ def test_launcher_reuses_the_plugin_locator_instead_of_a_third_copy():
         assert owned_by_the_locator not in src, (
             f"启动器里出现了 {owned_by_the_locator}——路径规则该由定位器说了算"
         )
+
+
+def test_every_read_only_interpreter_probe_in_the_launcher_passes_b():
+    """启动器里每一个「起解释器跑一句 `-c`」的只读探测都带 `-B`（Codex #717 / #724 连着几轮各抓到一处：
+    逐处补不如一把尺子）。判据按 AST：`subprocess.*` 的第一个参数是列表字面量、里面有 `"-c"` 的，必须
+    也有 `"-B"`。provision / 交棒那几处跑的不是 `-c`，不在此列。"""
+    src = (PLUGIN / "mcp" / "server.py").read_text(encoding="utf-8")
+    probes, missing = 0, []
+    for node in ast.walk(ast.parse(src)):
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "subprocess"
+            and node.args
+            and isinstance(node.args[0], ast.List)
+        ):
+            continue
+        consts = [e.value for e in node.args[0].elts if isinstance(e, ast.Constant)]
+        if "-c" in consts:
+            probes += 1
+            if "-B" not in consts:
+                missing.append(node.lineno)
+    assert probes >= 4, f"前提：尺子数得到那几处探测（{probes}）"
+    assert not missing, f"server.py 第 {missing} 行的只读探测没带 -B"
 
 
 def test_launcher_tells_desktop_only_users_the_truth():
@@ -1846,7 +2019,7 @@ def test_openai_yaml_declares_the_mcp_dependency():
     安装提示。测试不引第三方 yaml 库（.venv 纯净），按受控文件形状做行级断言。
     """
     yaml_text = (SKILL_DIR / "agents" / "openai.yaml").read_text(encoding="utf-8")
-    mcp = json.loads((PLUGIN / ".mcp.json").read_text(encoding="utf-8"))
+    mcp = json.loads((PLUGIN / "codex.mcp.json").read_text(encoding="utf-8"))
     (server_key,) = mcp["mcpServers"].keys()
     command = mcp["mcpServers"][server_key]["command"]
 
@@ -1944,12 +2117,18 @@ def test_real_codex_installs_the_plugin_from_a_local_marketplace(tmp_path):
     assert "tavotto@tavotto-dev" in proc.stdout
 
     # CODEX_HOME 里能找到插件本体的关键文件（缓存布局是实现细节，按内容找）
-    found = {name: False for name in ("plugin.json", "SKILL.md", ".mcp.json", "openai.yaml")}
+    found = {name: False for name in ("plugin.json", "SKILL.md", "codex.mcp.json", "openai.yaml")}
     for path in home.rglob("*"):
         if path.name in found:
             found[path.name] = True
     missing = [name for name, ok in found.items() if not ok]
     assert not missing, f"CODEX_HOME 的插件 checkout 里缺 {missing}"
+
+    # Codex 按清单 `mcpServers` 指的路径读 MCP 配置（ADR 0109 把它从 `.mcp.json` 改了名）：
+    # 装完的插件必须真的带出 tavotto 这个 server，而不只是文件躺在缓存里
+    proc = _codex(["mcp", "list"], home)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert re.search(r"^tavotto\s+\./mcp/launch\s", proc.stdout, re.M), proc.stdout
 
 
 @needs_codex_cli

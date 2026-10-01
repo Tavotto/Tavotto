@@ -11,12 +11,16 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "codex-plugin" / "mcp"))
 
 from tavotto_mcp.roots import (  # noqa: E402
+    CODE_ROOT_TOO_BROAD,
     DISPOSITIONS,
+    HOME_REJECTED,
     ROOTS_ENV,
     WORKSPACE_ENVS,
     WORKSPACE_FAILURES,
     RootAuthority,
     _windows_absolute_realpath,
+    contains_home,
+    home_dirs,
 )
 
 
@@ -373,3 +377,114 @@ def test_diagnostics_expose_the_bucket_without_failing_a_call_first(authority, t
     candidate = authority.user_binding_candidate(str(project))
     assert candidate and authority.accept_user_binding(candidate)
     assert authority.diagnostics()["authorization"] is None
+
+
+# ------------------ ADR 0109：主目录本身（及其上级）不是工作区 ------------------
+@pytest.fixture
+def fake_home(tmp_path, monkeypatch):
+    """把「当前账户的主目录」换成 tmp 里的一个目录；真实账户目录（pwd 那一格）照样在集合里。"""
+    home = tmp_path / "home"
+    (home / "paper" / "figures").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    for name in ("USERPROFILE", "HOMEDRIVE", "HOMEPATH"):
+        monkeypatch.delenv(name, raising=False)
+    return home
+
+
+def _home_case(fake_home, which):
+    return {
+        "home": fake_home,
+        "parent": fake_home.parent,
+        "project": fake_home / "paper" / "figures",
+    }[which]
+
+
+@pytest.mark.parametrize("which,accepted", [("home", False), ("parent", False), ("project", True)])
+@pytest.mark.parametrize("entry", ["roots_list", "explicit_env", "workspace_env", "cwd"])
+def test_every_entry_refuses_home_but_not_a_project_inside_it(
+    authority, fake_home, monkeypatch, entry, which, accepted
+):
+    """五个入口同一把尺（fix the predicate, sweep the consumers）：主目录与它的上级拒，里面的项目收。
+
+    MiniMax Code 走插件时 `roots/list` 回 home、插件进程 cwd 也是 home——拒掉它，授权才不会
+    悄悄变成「整个用户目录」。"""
+    target = _home_case(fake_home, which)
+    if entry == "roots_list":
+        authority.observe_client("2025-11-25", {"roots": {}}, {"name": "h", "version": "1"})
+        authority.accept_protocol_result({"roots": [{"uri": target.as_uri()}]})
+    elif entry == "explicit_env":
+        monkeypatch.setenv(ROOTS_ENV, str(target))
+    elif entry == "workspace_env":
+        monkeypatch.setenv(WORKSPACE_ENVS[0], str(target))
+    else:
+        monkeypatch.chdir(target)
+    snap = authority.snapshot()
+    assert (snap.roots == (str(target.resolve()),)) is accepted, snap
+    if not accepted:
+        assert any(HOME_REJECTED in w for w in snap.warnings), snap
+
+
+@pytest.mark.parametrize("which,accepted", [("home", False), ("parent", False), ("project", True)])
+def test_user_confirmation_cannot_bind_home_either(authority, fake_home, which, accepted):
+    target = _home_case(fake_home, which)
+    authority.observe_client("2026-07-28", {"elicitation": {}}, {"name": "h", "version": "1"})
+    candidate = authority.user_binding_candidate(str(target))
+    assert (candidate == str(target.resolve())) is accepted
+    # 就算调用方绕过候选这一步，落地那一步也要拒
+    assert authority.accept_user_binding(str(target.resolve())) is accepted
+
+
+def test_a_home_root_from_the_host_is_its_own_failure_bucket(authority, fake_home):
+    """「宿主给了目录、只是太宽」与「宿主什么都没给」处置不同：换个目录启动，而不是去配置。"""
+    authority.observe_client("2025-11-25", {"roots": {}}, {"name": "h", "version": "1"})
+    authority.accept_protocol_result({"roots": [{"uri": fake_home.as_uri()}]})
+    failure = authority.failure()
+    assert failure.code == CODE_ROOT_TOO_BROAD
+    assert failure.code != WORKSPACE_FAILURES["no_workspace_root"].code
+    assert authority.diagnostics()["authorization"]["code"] == CODE_ROOT_TOO_BROAD
+
+
+def test_an_explicit_home_candidate_is_too_broad_not_unconfirmed(authority, fake_home, monkeypatch):
+    """确认框宿主上调用方给了主目录的绝对路径：候选被拒要记下原因，失败档是「太宽」而不是「还没确认」；
+    换成项目目录再来一次，就按新路径重新判，不残留上一次的「太宽」。已绑定的目录不受影响。"""
+    authority.observe_client("2026-07-28", {"elicitation": {}}, {"name": "h", "version": "1"})
+    monkeypatch.chdir(authority.plugin_dir)
+    assert authority.user_binding_candidate(str(fake_home)) is None
+    assert authority.failure().code == CODE_ROOT_TOO_BROAD
+    assert authority.diagnostics()["workspace_confirmation"]["state"] == "too_broad"
+    project = fake_home / "paper" / "figures"
+    assert authority.user_binding_candidate(str(project)) == str(project.resolve())
+    assert authority.failure().code == "workspace_confirmation_required"
+    assert authority.accept_user_binding(str(project.resolve()))
+    assert authority.user_binding_candidate(str(fake_home)) is None
+    assert authority.snapshot().roots == (str(project.resolve()),)
+
+
+def test_a_home_cwd_on_a_confirmation_host_still_asks_for_confirmation(
+    authority, fake_home, monkeypatch
+):
+    """支持确认框的宿主：cwd 兜底被拒之后，下一步仍是「传绝对路径让用户批」，不截成太宽。"""
+    authority.observe_client("2026-07-28", {"elicitation": {}}, {"name": "h", "version": "1"})
+    monkeypatch.chdir(fake_home)
+    assert authority.failure().code == "workspace_confirmation_required"
+
+
+def test_home_predicate_is_the_same_as_the_config_generators(fake_home, tmp_path):
+    """与 `integrations/configure.py` 同一判据：主目录集合相同，判「太宽」的结论相同。"""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "_tavotto_configure_for_roots", ROOT / "codex-plugin" / "integrations" / "configure.py"
+    )
+    configure = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(configure)
+    assert set(home_dirs()) == set(configure._home_dirs())
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    for d in (fake_home, fake_home.parent, fake_home / "paper" / "figures", outside):
+        try:
+            configure.validate_project_root(str(d))
+            refused = False
+        except configure.ConfigureError:
+            refused = True
+        assert refused is contains_home(str(d.resolve())), d

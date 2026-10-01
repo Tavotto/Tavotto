@@ -1,6 +1,6 @@
 # 各宿主的官方依据与生成的配置形状
 
-查证日期 **2026-09-24**。证据等级（`HOSTS[...]["evidence"]` 与本表一致，测试对拍）：
+查证日期 **2026-09-24**；ZCode / WorkBuddy / Trae 于 **2026-09-28** 重查到官方全文或客户端源码，并新增 MiniMax Code（ADR 0109）。证据等级（`HOSTS[...]["evidence"]` 与本表一致，测试对拍）：
 
 - `official_source`：读到了官方文档全文（直接抓取官方站点页面，或官方文档仓库的源文件）；
 - `search_snippet`：本次执行环境的出网代理拦了该站点（HTTP 403），只拿到同一官方域名下的
@@ -15,16 +15,19 @@
 | profile | 证据 | 配置落点（stdout 合并到哪） | 顶层 / 条目字段 | 超时 | Skill |
 | --- | --- | --- | --- | --- | --- |
 | `cursor` | search_snippet | `<项目>/.cursor/mcp.json`（或 `~/.cursor/mcp.json`） | `mcpServers` / `command` `args` `env` | 未核实，不写 | native：`.cursor/skills/` 或 `.agents/skills/` |
-| `zcode` | search_snippet | `<项目>/.agents/mcp.json`，或 MCP 设置界面 | `mcpServers` / `command` `args` `env` | 未核实，不写 | instruction_fallback |
+| `zcode` | official_source | `<项目>/.agents/mcp.json`，或 MCP 设置界面 | `mcpServers` / `command` `args` `env` | `timeoutMs`（毫秒） | instruction_fallback |
 | `dsh` | official_source | Cordis patch：`dsh web --patch <文件>`，或 `$DSH_HOME/profiles/<名>/cordis.patch.yml` | `insert` → `@deepseek-ai/dsh-mcp-client` → `serverName` `transport: stdio` `command` `args` `env` | `toolCallTimeoutMs`（毫秒） | native：`.dsh/skills/` 或 `.agents/skills/` |
-| `workbuddy` | search_snippet | WorkBuddy：插件 → MCP Server → 配置 MCP | `mcpServers` / `command` `args` `env` | 未核实，不写 | instruction_fallback |
+| `workbuddy` | official_source | WorkBuddy：插件 → MCP Server → 配置 MCP | `mcpServers` / `command` `args` `env` | 无按服务器字段（CLI 用 `MCP_TOOL_TIMEOUT`），不写 | instruction_fallback |
 | `claude-code` | official_source | `<项目>/.mcp.json`（project 作用域） | `mcpServers` / `type: stdio` `command` `args` `env` | `timeout`（毫秒，≥1000） | native：`.claude/skills/` 或 `~/.claude/skills/` |
 | `claude-desktop` | official_source | `claude_desktop_config.json`（macOS `~/Library/Application Support/Claude/`，Windows `%APPDATA%\Claude\`） | `mcpServers` / `command` `args` `env`（Windows 另加展开后的 `APPDATA`） | 无该字段 | instruction_fallback |
-| `trae` | search_snippet | MCP 窗口 → 添加 → 手动添加；或 `<项目>/.trae/mcp.json` | `mcpServers` / `command` `args` `env` | 未核实，不写 | instruction_fallback |
+| `trae` | official_source | 一键链接 `trae://` / `trae-cn://`；MCP 窗口 → 手动添加；或 `<项目>/.trae/mcp.json` | `mcpServers` / `command` `args` `env` | `env` 里的 `START_MCP_TIMEOUT_MS` / `RUN_MCP_TIMEOUT_MS`（毫秒，字符串） | native：`.trae/skills/`（全局 `~/.trae` / `~/.trae-cn`） |
 | `vscode` | official_source | `<项目>/.vscode/mcp.json` | **`servers`** / `type: stdio` `command` `args` `env` | 无该字段 | native：`.github/skills/` 或 `.agents/skills/` |
+| `minimax-code` | official_source | `<项目>/.mcp.json`（mcode 会话主目录，不向上找） | `mcpServers` / `type: stdio` `command` `args` `env` | `timeout`（毫秒） | native：`.agents/skills/` `.claude/skills/` `.minimax/skills/` |
 
-工具超时的唯一出处是包里 Codex `.mcp.json` 的 `tool_timeout_sec`（1800 秒）；有经核实字段的
-宿主按单位换算（DSH / Claude Code 都是毫秒 → 1 800 000）。Codex 的字段名（`tool_timeout_sec`、
+工具超时的唯一出处是包里 Codex 配置的 `tool_timeout_sec`（1800 秒）；有经核实字段的
+宿主按单位换算（DSH / Claude Code / ZCode / MiniMax Code 都是毫秒 → 1 800 000；Trae 写进 `env`，启动超时同样由
+`startup_timeout_sec` 换算）。Codex 的这份配置自 ADR 0109 起叫 `codex.mcp.json`（由 Codex 清单的
+`mcpServers` 指向）——插件根不再有 `.mcp.json`，因为 Claude Code / ZCode / WorkBuddy / MiniMax Code 都会自动读那个名字。Codex 的字段名（`tool_timeout_sec`、
 `startup_timeout_sec`、`env_vars`、`cwd`）不抄给任何别的宿主。
 
 ## 逐家说明
@@ -37,14 +40,23 @@
 - Skill：项目 `.agents/skills/`、`.cursor/skills/`，兼容读取 `.claude/skills/`、`.codex/skills/`。
 - MCP Apps：未核实，画布一栏 `not_run`。
 
-### ZCode（search_snippet）
+### ZCode（official_source，2026-09-28 重查）
 
-- 来源：<https://zcode.z.ai/en/docs/plugin>、`/mcp-services`、`/skill`（摘要）。
+- 来源：<https://zcode.z.ai/en/docs/plugin>、`/mcp-services`、`/skill`、`/configuration`（全文），以及官方 dmg
+  3.14.3 里的 CLI 0.16.9（`Contents/Resources/glm/zcode.cjs`）源码。
 - 项目 MCP 配置 `.zcode/config.json`（形状未核实，本工具不生成它）；`.agents/mcp.json` 用
-  `mcpServers`，**只在同作用域的 `.zcode` 配置没有定义任何 MCP 服务时才读**（不合并）。
-- 插件 manifest `.zcode-plugin/plugin.json`（也认 `.claude-plugin/plugin.json`），插件根变量
-  `ZCODE_PLUGIN_ROOT`；MCP 超时字段未核实。**本轮不做 ZCode 插件 manifest**：包里的 `.mcp.json` 是
-  Codex 形状（相对 `python3`、Codex 专有字段），不能直接给 ZCode 用；另写一份就是第二份清单。
+  `mcpServers`，**只在同作用域的 `.zcode` 配置没有定义任何 MCP 服务时才读**（不合并）。条目的超时字段
+  **只认 `timeoutMs`**（毫秒；连接与工具调用共用，默认 30 s）——`timeout` 被静默忽略。
+- **插件**：清单按 `.zcode-plugin/plugin.json` → `.claude-plugin/plugin.json` → `.codex-plugin/plugin.json`
+  找第一个；`${CLAUDE_PLUGIN_ROOT}` 与 `${ZCODE_PLUGIN_ROOT}` 都在 command / args / cwd / env 里替换。
+  插件根 `.mcp.json` 会被读，再被清单同名条目**整条替换**（与 Claude Code 同方向）。市场：界面
+  Settings → Plugins → Add marketplace，或 `zcode plugins marketplace add <owner/repo|git url|目录> [--sparse <路径>]`
+  + `zcode plugins install tavotto@tavotto`；先读 `.claude-plugin/marketplace.json`，`git-subdir` 支持。
+  **同一份 Claude 清单直接可装**（ADR 0109），清单里为它加了 `timeoutMs`。市场条目不写 `version`
+  （Claude Code 要求版本只在 plugin.json）——ZCode 按条目 `version` 判更新，所以**不会提示有新版**，
+  更新要手动 `zcode plugins update tavotto@tavotto`。
+- 客户端能力：**不回 `roots/list`**、不声明 elicitation、不渲染 MCP Apps；server 进程的 cwd 是工作区目录，
+  授权落到 `RootAuthority` 的 cwd 兜底（主目录本身会被拒）。工具结果超过约 50 KB 截断后交给模型。
 - 打开项目会连接项目配置里的全部 MCP 服务——不可信仓库里先看 `.zcode/config.json`。
 
 ### DeepSeek Harness（official_source）
@@ -64,18 +76,37 @@
   （pnpm 转发，也收绝对路径 / git 地址 / tarball）或 Web 的 Plugins 页安装；**不读** `.claude-plugin/`、
   `.codex-plugin/` 或任何 marketplace.json，也不从插件里发现 Skill。bundle 的 `dsh-mcp-client` 行没有
   「本包目录」变量（`${CLAUDE_PLUGIN_ROOT}` 只在 `hooks-claude-code` 里替换 hooks 命令），指向包内
-  `mcp/server.py` 要靠 `!!js`——本工具不生成宿主执行的代码，所以**不做 DSH bundle**，仍是 YAML patch。
+  `mcp/server.py` 要靠 `!!js`——**配置生成器**不生成宿主执行的代码，所以它仍打印 YAML patch。
+- **Bundle 形态（ADR 0104，2026-09-28）**：同一份插件目录兼作 npm 包 `tavotto-dsh`（`package.json` 的
+  `dsh.bundle.patch` → `dsh/cordis.patch.yml`），装法 `dsh plugin --profile web add
+  "git+https://github.com/Tavotto/Tavotto.git#plugin-stable&path:/codex-plugin"`。缺的「包目录」由胶水插件
+  `dsh/index.js` 按 `import.meta.url` 算出，作为服务 `tavotto` 提供——与 dsh-web-app 的 `webStartup` 同一个
+  做法，补丁里的 `!!js` 只读 `ctx.tavotto` 的字段、没有用户代码。POSIX 上经 `/bin/sh mcp/launch`
+  起，不依赖执行位；Windows 上 command 就是 `mcp/launch.cmd`，由 MCP SDK 的 cross-spawn 拼 `cmd /d /s /c`；超时由 Codex 配置（`codex.mcp.json`）的 `tool_timeout_sec` 换算；技能靠第二个 `dsh-skill-filesystem`
+  提供者（`providerName: tavotto`、`includeDefaultRoots: false`）进目录；`cwd: !!js process.cwd()` 与 DSH 官方
+  MCP 指南同一写法，授权目录 = dsh 启动目录。与 YAML patch 二选一（同名 serverName 后者加载失败）。
   客户端能力：`capabilities: {}`（**不回 roots**，授权只能靠 `TAVOTTO_MCP_ROOTS`，生成器已这样做）、
   不支持 elicitation、不渲染 MCP Apps（只投影文本与图片）；未知字段静默忽略；同名 server 后者加载失败；
   结果超过约 12 500 token 落盘成预览 + 路径；server instructions 上限 32 KiB。
 
-### WorkBuddy（search_snippet，有冲突）
+### WorkBuddy（official_source，2026-09-28 重查）
 
-- 来源：<https://www.codebuddy.cn/docs/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/MCP-Guide>（摘要）。
-- 摘要只给出 CodeBuddy 的路径（`~/.codebuddy/mcp.json`、项目 `.mcp.json`），**没有找到 `.workbuddy/`
-  路径**——所以本工具只指向 WorkBuddy 自己的界面（插件 → MCP Server → 配置 MCP），不写
-  `.codebuddy` 或猜一个 `.workbuddy` 路径。形状 `mcpServers` / `type`（可省，按 `command` 推断 stdio）。
-- 已知宿主行为：WorkBuddy 5.6.2 一轮后回收 CLI 进程（ADR 0078 已处理会话接力）。
+- 来源：<https://www.codebuddy.cn/docs/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/MCP-Guide>，以及
+  WorkBuddy 5.6.2 自带的 agent 运行时（`app.asar.unpacked/cli`，即 CodeBuddy CLI 2.147.0）与 GUI 主进程源码。
+- 手贴配置：WorkBuddy 自己的界面（插件 → MCP Server → 配置 MCP）；不写 `.codebuddy`（另一个产品）或猜一个
+  `.workbuddy` 路径。形状 `mcpServers` / `type`（可省，按 `command` 推断 stdio）。不读按服务器的超时字段。
+- **插件**：清单按 `.codebuddy-plugin` → `.workbuddy-plugin` → `.claude-plugin` 找第一个（市场清单同序）；
+  `${CLAUDE_PLUGIN_ROOT}` / `${CODEBUDDY_PLUGIN_ROOT}` 都替换。**合并方向与 Claude Code 相反**：先清单
+  `mcpServers`，再用插件根 `.mcp.json` 与 `mcp/*.json` 按名覆盖——所以插件根有 Codex 形状的 `.mcp.json`
+  时，Tavotto 按 `./mcp/launch.cmd` 在会话目录里起、ENOENT（隔离实测）；加 `.codebuddy-plugin/` 清单也盖不掉。
+  ADR 0109 因此把 Codex 的配置改名 `codex.mcp.json`，插件根不留任何自动读取的 MCP 配置。市场来源支持
+  `owner/repo`、git、https、zip、目录；插件来源支持 `git-subdir`（字段与 Claude Code 相同，要本机有 git）。
+  界面入口：插件市场 → 添加市场（`Tavotto/Tavotto`）→ 安装 tavotto；没有一键 deep link。
+- 客户端能力：**不回 `roots/list`**、不声明 elicitation；server 进程的 cwd 是会话工作目录，授权落到 cwd 兜底
+  （实测根来源 `cwd`）。**支持 MCP Apps**（`_meta.ui.resourceUri`、`text/html;profile=mcp-app`，与 `widget.py`
+  的键一致），但画布渲染没有实机验过。
+- 已知宿主行为：WorkBuddy 5.6.2 一轮后回收 CLI 进程（ADR 0078 已处理会话接力）。GUI 里 CLI 带
+  `--strict-mcp-config` 起、插件 MCP 由 GUI 读出再投给 CLI，合并规则与 CLI 相同。
 - 连接器商店审核与完整 Buddy 应用不在范围内。
 
 ### Claude Code（official_source）
@@ -100,8 +131,10 @@
 - **插件形态（ADR 0103，2026-09-28）**：`codex-plugin/.claude-plugin/plugin.json` + 仓库根
   `.claude-plugin/marketplace.json`（`git-subdir → plugin-stable`），装法
   `claude plugin marketplace add Tavotto/Tavotto --sparse .claude-plugin` 与
-  `claude plugin install tavotto@tavotto`。插件的 MCP 条目写在 plugin.json 里、与 `.mcp.json` **同名**
-  （Claude Code 先读插件根 `.mcp.json` 再按名替换；名字不同会把 Codex 那条也起一遍并 ENOENT）。
+  `claude plugin install tavotto@tavotto`。插件的 MCP 条目写在 plugin.json 里、与 Codex 配置**同名**。
+  （ADR 0103 时 Codex 配置就是插件根 `.mcp.json`，Claude Code 先读它再按名替换；ADR 0109 起它改名
+  `codex.mcp.json`，插件根没有 `.mcp.json` 了，Claude Code 只看到清单这一条——2.1.283 `mcp list` 实测只有
+  `plugin:tavotto:tavotto` 一个、Connected。）条目同时带 `timeoutMs`（给 ZCode），Claude Code 忽略它。
   授权走 `roots/list`（启动目录 + `/add-dir`），不写 `TAVOTTO_MCP_ROOTS`。插件版不需要上面这段配置。
 - 桌面 **Code 标签页**读 `claude_desktop_config.json` + `~/.claude.json` + `.mcp.json`，同名时桌面
   配置优先、stdio 的 user 作用域优先于 `.mcp.json`（与 CLI 的优先级不同）；独立 CLI **不读**
@@ -120,15 +153,38 @@
 - Linux 没有官方 Claude Desktop；`.mcpb` 扩展是可选包装，本轮不做。
 - 宿主内置的 Node / 云端代码执行环境不是本机 Python，路径也不是本机文件系统——不能传给本地 Tavotto。
 
-### Trae / TraeCode（search_snippet）
+### Trae / TraeCode（official_source，2026-09-28 重查）
 
-- 来源：<https://docs.trae.cn/ide_model-context-protocol>、<https://docs.trae.cn/ide_tutorial-mcp-amap>、
-  <https://docs.trae.ai/ide/model-context-protocol>（摘要；CN 与国际版分别查过，内容一致的部分才用）。
-- 手动添加：MCP 窗口 → 添加 → 手动添加，粘贴 `mcpServers` JSON；项目级 `.trae/mcp.json`。
-- **登记 ≠ 智能体能调用**：要把 tavotto 加进所用的自定义智能体（MCP 一栏），或用 Builder with MCP。
-- Skill：官方有 Skills 功能，但 Skill 目录路径未核实 → `instruction_fallback`（`--emit instructions`
-  的输出放进 `.trae/rules/` 或自定义智能体提示词）。**不照抄** `.cursor/skills` / `.claude/skills`。
+- 来源（CN 与国际版分别读全文）：<https://docs.trae.ai/ide/add-mcp-servers>、`/mcp-server-install-links`、
+  `/model-context-protocol`、`/use-mcp-servers-in-agents`、`/skills`；<https://docs.trae.cn/ide_add-mcp-servers>、
+  `ide_mcp-server-install-links`、`ide_skills`、`ide_marketplace`。
+- 添加：**一键链接** `trae://trae.ai-ide/mcp-import?type=stdio&name=tavotto&config=<…>`（国内版 `trae-cn://`），
+  `config` 是单个条目的 JSON → Base64 → URL 编码，点开后 Trae 弹「手动配置」由用户确认；或 MCP 窗口 → 手动添加，
+  粘贴 `mcpServers` JSON；或项目级 `.trae/mcp.json`（设置里要打开「启用项目级 MCP」）。链接里是本机绝对路径，
+  只能在本机由生成器给出。
+- stdio 条目只有 `command` `args` `env`：**没有 `cwd`**，**`command` 里不能有空格**（生成器遇到就报错叫人换解释器）；
+  超时写在 `env` 里 `START_MCP_TIMEOUT_MS` / `RUN_MCP_TIMEOUT_MS`（毫秒）。变量只有 `${workspaceFolder}`（我们不用）。
+- **登记 ≠ 智能体能调用**：内置智能体自动带上全部 MCP；自定义智能体要在 MCP 一栏勾上 tavotto。
+- 客户端能力（文档列出的）：tools、日志、超时；**没有 roots、elicitation、MCP Apps**——授权只靠 `TAVOTTO_MCP_ROOTS`。
+- Skill：项目 `.trae/skills/<名>/SKILL.md`；全局国际版 `~/.trae/skills`、国内版 `~/.trae-cn/skills`；项目
+  `.agents/skills` 要在设置里开开关才认。**不照抄** `.cursor/skills` / `.claude/skills`（文档没说认）。
+- 插件：国内版 IDE 的「插件市场」是官方货架（清单格式、上架与从 GitHub 安装都没有文档），国际版没有；
+  企业版 TraeCode CLI 2.0 的安装包里有 `.claude-plugin` / `.codex-plugin` 清单的字样，但要企业账号，未验证。
 - CN / 国际版、IDE / SOLO 不互相推定。
+
+### MiniMax Code（official_source，2026-09-28 新增）
+
+- 来源：开源仓库 <https://github.com/MiniMax-AI/minimax-code>（`c593d3d5`）的 `packages/local-runtime-v2/docs/project-mcp.md`、
+  `src/service/mcp/project-config.ts`、`plugin-system/`；npm `@minimax-ai/code` 0.5.8（命令 `mcode`）。
+- 项目 MCP：只读会话主目录下的 `.mcp.json`（不向上找，免批准自动加载），形状与 Claude Code 相同：`mcpServers` /
+  `type` `command` `args` `env` `timeout`（毫秒）。同名条目 ACP > 项目 > 用户。走项目文件时 server 的 cwd 与
+  `roots/list` 都是项目目录——生成器仍写 `TAVOTTO_MCP_ROOTS`。
+- **不走插件**：它认 `.claude-plugin/plugin.json` 与 `${CLAUDE_PLUGIN_ROOT}`，但兼容模式遇到未知字段整条丢弃——
+  Claude 清单里给 ZCode 的 `timeoutMs` 会让 tavotto 被丢掉；插件进程的 cwd 与 roots 都是用户主目录（Tavotto 拒绝，
+  ADR 0109）；CLI 也不收 GitHub / 第三方市场。所以只给项目 `.mcp.json` 这条路。
+- Skill：工作区 `.agents/skills`、`.claude/skills`、`.minimax/skills`。
+- 客户端能力：声明 `roots`（不 listChanged），不声明 elicitation，不渲染 MCP Apps。
+- `mcode exec` 即使配了自定义 provider 也要先登录 MiniMax 账户（0.5.8 实测），真宿主工具流程没跑。
 
 ### VS Code（GitHub Copilot Agent，official_source）
 
@@ -151,7 +207,7 @@
 | --- | --- | --- | --- |
 | 宿主 MCP 列表里 tavotto 红 / 起不来 | 服务器没启动 | 宿主日志；`<python> <包>/mcp/server.py --health` 在终端跑不跑得起来 | 重新生成配置（`--python` 指一个真能跑的解释器）；包目录挪过就重新生成 |
 | 列表里是绿的，但对话里没有工具 | 工具没发现 / 当前智能体未启用 | VS Code Configure Tools、Trae 智能体 MCP 栏、DSH 等 `mcp__tavotto__*` 出现 | 在所用智能体里启用；重开对话 |
-| 只有 `tavotto_health` 一个工具 | 引擎不可用（降级 server） | health 的 `code`：`desktop_only` / `tavotto_missing` / `engine_too_old` / `engine_unavailable` | 按 code 只修那一项（provision / pipx / 升级引擎） |
+| 只有 `tavotto_health` 一个工具 | 引擎不可用（降级 server） | health 的 `code`：`desktop_only` / `tavotto_missing` / `engine_too_old` / `engine_incompatible` / `engine_unavailable` | 按 code 只修那一项（provision / pipx / 升级引擎） |
 | 工具在，但打开图报 `path_out_of_scope` / `no_workspace_root` | 项目未授权 | health 的 `roots` / `root_authority.source` | 用正确的 `--project-root` 重新生成；不要放宽到 HOME |
 | 工具正常、没有画布 | UI 没显示 | `checks.canvas_resource.ok` 为真但宿主不渲染 MCP Apps | 这是宿主能力 / 设置；工具流程照常走完，不要把外部窗口叫「内嵌画布」 |
 | 宿主提示被管理员 / 策略禁止 | 组织策略 | 宿主的策略提示 | 找管理员；**不要**把「全部工具自动批准 / 关闭安全策略」当通用修复 |

@@ -14,6 +14,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
 import sys
 import threading
 from pathlib import Path
@@ -78,7 +80,9 @@ def _runs(path: Path) -> list[list[str]]:
         (deprepair.ERROR_NETWORK, None, False),  # 问不出来：宁可不换
         ("", False, False),  # 成功
         (deprepair.ERROR_CANCELLED, False, False),
-        (deprepair.ERROR_TIMEOUT, False, False),
+        # ADR 0112 §二：没自配源时第一次尝试带测速，太慢 / 用完第一次的预算以 ERROR_TIMEOUT 收场——换源能解决
+        (deprepair.ERROR_TIMEOUT, False, True),
+        (deprepair.ERROR_TIMEOUT, True, False),  # 配过源：不测速、用满预算，超时就是终局
         (deprepair.ERROR_CONFLICT, False, False),
         (deprepair.ERROR_NOT_FOUND, False, False),
         (deprepair.ERROR_REQUIRES_BUILD, False, False),
@@ -135,8 +139,9 @@ def test_the_mirror_is_tried_at_most_once(tmp_path, monkeypatch):
 
 
 def test_a_cancellation_during_the_config_probe_never_claims_the_mirror(tmp_path, monkeypatch):
-    """Codex #743 P2：第一次网络失败后问配置（一个子进程）期间到达的取消——镜像不会被请求，所以既不许
-    `on_mirror`（进度的 `pypi_mirror`）也不许在日志里写「改用镜像」；如实回 cancelled，镜像那次不起。"""
+    """Codex #743 P2：问配置（一个子进程）期间到达的取消——镜像不会被请求，所以既不许 `on_mirror`（进度的
+    `pypi_mirror`）也不许在日志里写「改用镜像」；如实回 cancelled。ADR 0112 §二 起配置在**第一次之前**问
+    （要先定包源与测速），所以这时一次 pip 都还没起：取消之后第一次也不起。"""
     runs = tmp_path / "runs.jsonl"
     ev = threading.Event()
 
@@ -155,7 +160,7 @@ def test_a_cancellation_during_the_config_probe_never_claims_the_mirror(tmp_path
         on_mirror=mirrors.append,
     )
     assert code == deprepair.ERROR_CANCELLED
-    assert mirrors == [] and len(_runs(runs)) == 1
+    assert mirrors == [] and len(_runs(runs)) == 0
     assert not any(MIRROR in line for line in logs) and MIRROR not in out
 
 
@@ -176,11 +181,11 @@ def test_a_user_configured_source_is_never_bypassed(tmp_path, monkeypatch, env):
     assert len(_runs(runs)) == 1 and mirrors == []
 
 
-def test_a_non_network_failure_is_not_retried_and_does_not_probe_the_config(tmp_path, monkeypatch):
+def test_a_non_network_failure_is_not_retried(tmp_path, monkeypatch):
+    """非网络类失败不换源。（ADR 0112 §二 起配置在开始之前就问一次——要说出这次用的是哪个源、决定第一次
+    带不带测速——所以这里不再断言「没去问配置」。）"""
     runs = tmp_path / "runs.jsonl"
-    monkeypatch.setattr(
-        deprepair, "user_package_source", lambda python: pytest.fail("非网络失败不该去问配置")
-    )
+    monkeypatch.setattr(deprepair, "user_package_source", lambda python: False)
     code, _out = deprepair._run_pip_install(
         _script_argv(runs, default=(1, "ERROR: ResolutionImpossible\n"), mirror=(0, "")),
         sys.executable,
@@ -190,20 +195,50 @@ def test_a_non_network_failure_is_not_retried_and_does_not_probe_the_config(tmp_
     assert code == deprepair.ERROR_CONFLICT and len(_runs(runs)) == 1
 
 
+def _probe_out(**opts) -> str:
+    """`PIP_OPTIONS_PROBE` 在目标解释器里的输出形状（JSON 一行）。"""
+    base = {
+        "pip_version": "25.3",
+        "index_url": "https://pypi.org/simple",
+        "extra_index_urls": [],
+        "no_index": False,
+        "find_links": [],
+    }
+    return json.dumps({**base, **opts}) + "\n"
+
+
 @pytest.mark.parametrize(
     "rc,out,expected",
     [
-        (0, "global.index-url='https://pypi.corp/simple'\n", True),
-        (0, "global.find-links='/wheels'\n", True),
-        (0, "global.no-index='true'\n", True),
-        (0, "global.timeout='60'\n", False),
-        (0, "", False),
+        (0, _probe_out(index_url="https://pypi.corp/simple"), True),
+        (0, _probe_out(find_links=["/wheels"]), True),
+        (0, _probe_out(no_index=True), True),
+        (0, _probe_out(extra_index_urls=["https://pypi.corp/simple"]), True),
+        (0, _probe_out(), False),
+        # 用户显式写了 PyPI（大小写 / 末尾斜杠不同）：不是自定义源
+        (0, _probe_out(index_url="https://PyPI.org/simple/"), False),
+        # pip 太旧 / 配置解析失败 / 认不出形状：不知道（None），镜像回退按「配过」处理
+        (0, json.dumps({"error": "ImportError"}) + "\n", None),
+        (0, "garbage\n", None),
         (1, "pip: error", None),
     ],
 )
-def test_user_package_source_reads_the_pip_config(monkeypatch, rc, out, expected):
-    monkeypatch.setattr(deprepair, "_run", lambda argv, timeout: (rc, out))
+def test_user_package_source_reads_pips_own_parse(monkeypatch, rc, out, expected):
+    """「用户配没配源」= pip 在目标解释器里解析出的 install 选项（`PIP_OPTIONS_PROBE`，#767）：节的覆盖、
+    键名规范化、`PIP_CONFIG_FILE` / 环境变量都由 pip 自己做；这里只判它解析出的结果。"""
+    seen: list = []
+
+    def run(argv, timeout):
+        seen.append(argv)
+        return rc, out
+
+    monkeypatch.setattr(deprepair, "_run", run)
     assert deprepair.user_package_source("/env/bin/python") is expected
+    assert (
+        seen
+        and seen[0][:2] == ["/env/bin/python", "-c"]
+        and seen[0][2] == deprepair.PIP_OPTIONS_PROBE
+    )
 
 
 # ---------------------------------------------------------------- 两条 argv 出处
@@ -223,7 +258,7 @@ def test_the_single_package_install_goes_through_the_mirror_fallback(monkeypatch
     """`_pip_install`（单包修复 / 包管理）走 `_run_pip_install`：第二次的 argv 出自 `pip_install_argv(index_url=镜像)`。"""
     seen: list[list[str]] = []
 
-    def _fake_run_pip(argv, ev, log, on_started=None):
+    def _fake_run_pip(argv, ev, log, on_started=None, **_kw):
         seen.append(argv)
         if on_started is not None:
             on_started()  # 桩代表 pip 进程已起来（真 `_run_pip` 在 Popen 之后调它）
@@ -243,14 +278,51 @@ def test_the_single_package_install_goes_through_the_mirror_fallback(monkeypatch
     assert mirrors == [MIRROR]
 
 
+@pytest.mark.parametrize(
+    "first_code", [deprepair.ERROR_NETWORK, deprepair.ERROR_TIMEOUT], ids=["network", "timeout"]
+)
+def test_both_attempts_log_their_outcome_when_the_mirror_is_used(monkeypatch, caplog, first_code):
+    """换源时 app.log 里两次尝试**各一条**结局：官方源那次的失败 code + 包源在换源之前就写下，镜像那次的
+    结局随后——只记镜像那次的话，事后看不出第一次是断网还是太慢（#745 Codex P2）。"""
+    seen: list[list[str]] = []
+
+    def _fake_run_pip(argv, ev, log, on_started=None, **_kw):
+        seen.append(argv)
+        if on_started is not None:
+            on_started()
+        return (first_code, NETWORK_OUT) if len(seen) == 1 else ("", "ok")
+
+    monkeypatch.setattr(deprepair, "_run_pip", _fake_run_pip)
+    monkeypatch.setattr(deprepair, "user_package_source", lambda python: False)
+    caplog.set_level(logging.INFO, logger="tavotto.deprepair")
+    code, _ = deprepair._pip_install("/env/bin/python", "lmfit>=1.3", threading.Event(), None)
+    assert code == "" and len(seen) == 2
+    lines = [r.getMessage() for r in caplog.records if r.name == "tavotto.deprepair"]
+    first = next(i for i, m in enumerate(lines) if m.startswith("pip install 失败："))
+    switch = next(i for i, m in enumerate(lines) if m.startswith("pip install 换源："))
+    done = next(i for i, m in enumerate(lines) if m.startswith("pip install 完成："))
+    assert first_code in lines[first] and deprepair.PIP_SOURCE_PYPI in lines[first]
+    assert deprepair.PIP_SOURCE_MIRROR in lines[done]
+    assert first < switch < done
+
+
 @pytest.mark.parametrize("env", SOURCE_ENV)
-def test_the_environment_variables_alone_count_as_a_user_source(monkeypatch, env):
-    """环境变量一层不依赖 `pip config list` 会不会把 `PIP_*` 列出来（各版本 pip 不一）：配置那一问什么都没说，
-    环境变量设了照样算「用户配过源」。"""
-    monkeypatch.setattr(deprepair, "_run", lambda argv, timeout: (0, ""))
-    assert deprepair.user_package_source("/env/bin/python") is False
-    monkeypatch.setenv(env, "1" if env == "PIP_NO_INDEX" else "https://pypi.corp/simple")
-    assert deprepair.user_package_source("/env/bin/python") is True
+def test_the_environment_variables_alone_count_as_a_user_source(monkeypatch, tmp_path, env):
+    """真 pip：只设一个 `PIP_*` 环境变量（配置文件一个都不读，`PIP_CONFIG_FILE=os.devnull`），pip 解析出的
+    install 选项照样带上它——「用户配过源」。不设时是 False（对照）。"""
+    monkeypatch.setenv("PIP_CONFIG_FILE", os.devnull)
+    for name in SOURCE_ENV:
+        monkeypatch.delenv(name, raising=False)
+    assert deprepair.user_package_source(sys.executable) is False
+    monkeypatch.setenv(
+        env,
+        "1"
+        if env == "PIP_NO_INDEX"
+        else str(tmp_path)
+        if env == "PIP_FIND_LINKS"
+        else "https://pypi.corp/simple",
+    )
+    assert deprepair.user_package_source(sys.executable) is True
 
 
 # ---------------------------------------------------------------- 「用了镜像」只在镜像那次 pip 真起来之后才记

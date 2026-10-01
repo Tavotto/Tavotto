@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type DragEvent, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type DragEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   ArrowLeft,
@@ -8,7 +8,6 @@ import {
   Folder,
   FolderOpen,
   Play,
-  Zap,
 } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import type { RecentProject } from '@/lib/api'
@@ -46,13 +45,13 @@ import { BrandMark } from '../ui/BrandMark'
 import { Button, IconButton } from '../ui/Button'
 import { Menu, MenuItem } from '../ui/Menu'
 import { DirBrowser, TailPath } from '../DirBrowser'
-import { FoundFiguresArt, LayoutCanvasArt, ScriptFileArt } from './StepIllustrations'
 
 /**
  * 主页：还没有打开项目时的整屏（`App` 在 `phase === 'none'` 时显示 `ProjectPicker`，
  * 它的默认视图就是这里）。两版：
  *
- *   * **新手版**——三步说明 + 「用示例体验一次」（= 教程入口，`runTutorialEntry`）+ 「导入我的脚本」；
+ *   * **新手版**——一句大问题 + 拖放区 + 黑色主按钮「导入我的脚本」；次按钮「用示例学一遍（带引导）」
+ *     （= 教程入口，`runTutorialEntry`）+ 最近项目（没有三步说明卡与提示条：拖放区标题本身就是说明）；
  *   * **老手版**——拖放区 + 「使用示例脚本试试看」（只打开示例项目、不带引导）+ 最近项目列表。
  *
  * 哪一版只由 `lib/onboarding/tutorial.homeVariant()` 判（onboarding 状态），这里不判。
@@ -79,7 +78,7 @@ export function HomeView({
   const currentOpen = useProjectStore((s) => s.project?.open === true)
   const switching = useProjectStore((s) => s.switching)
 
-  // 整页都收拖放（新手版没有画出来的拖放区，放下来一样能导入）；只认带文件的拖动
+  // 整页都收拖放（两版都画着拖放区）；只认带文件的拖动
   const dropHandlers = {
     onDragEnter: (e: DragEvent) => {
       if (dragHasFiles(e.dataTransfer.types)) setDragging(true)
@@ -110,11 +109,11 @@ export function HomeView({
     >
       <div className="mx-auto flex w-full max-w-[1000px] flex-col px-6 pb-10 pt-4">
         {/* 从设置 / 菜单「切换项目」进来时后端仍有打开的项目——允许原路返回 */}
-        <div className="flex h-7 shrink-0 items-center">
+        <div className="flex h-7 shrink-0 items-center justify-end">
           {currentOpen && (
             <Button
               size="md"
-              className="-ml-2.5 text-ink-2"
+              className="-mr-2.5 text-ink-2"
               disabled={switching}
               onClick={() => useProjectStore.getState().returnToCurrent()}
             >
@@ -124,7 +123,7 @@ export function HomeView({
           )}
         </div>
         {variant === 'newcomer' ? (
-          <Newcomer importer={importer} />
+          <Newcomer importer={importer} dragging={dragging} />
         ) : (
           <Returning importer={importer} dragging={dragging} />
         )}
@@ -331,73 +330,79 @@ function SampleFailure({ failure }: { failure: ReturnType<typeof useSampleAvaila
 /** 首屏的大号 CTA：版式同一档 primary / secondary，只是高一档（主页是落地页，不是工具栏） */
 const HERO_BUTTON = 'h-9 min-w-[200px] px-5 text-base'
 
+/**
+ * 拖放区本身是一颗按钮：点它 / Enter / 空格 = 选择文件（键盘与读屏的等价操作）。
+ * 真正收拖放的是整页（HomeView 的 dropHandlers），这里只负责「拖到这里」的高亮。
+ * 两版共用：标题本身就是说明，不再另配步骤说明。
+ */
+function DropZone({ importer, dragging }: { importer: Importer; dragging: boolean }) {
+  const { t } = useTranslation('project')
+  const switching = useProjectStore((s) => s.switching)
+  return (
+    <button
+      type="button"
+      data-home-dropzone
+      data-dragging={dragging || undefined}
+      disabled={switching}
+      onClick={importer.start}
+      aria-describedby="home-dropzone-hint"
+      className={cn(
+        'mx-auto mt-8 flex w-full max-w-[720px] flex-col items-center rounded-md border border-dashed px-6 py-10',
+        'border-border-strong bg-surface-2 outline-none transition-colors',
+        'hover:border-ink-3 hover:bg-surface focus-visible:focus-ring',
+        'disabled:cursor-not-allowed disabled:opacity-40',
+        dragging && 'border-accent bg-accent-subtle',
+      )}
+    >
+      <span className="flex size-14 items-center justify-center rounded-md border border-border bg-surface text-ink-2">
+        <FileCodeCorner size={ICON_SIZE.lg} aria-hidden />
+      </span>
+      <span className="mt-4 text-[20px] font-medium leading-tight text-ink">
+        {dragging ? t('home.returning.dropRelease') : t('home.returning.dropTitle')}
+      </span>
+      <span id="home-dropzone-hint" className="mt-2 flex flex-col items-center gap-0.5 text-base text-ink-2">
+        {/* 拿得到真实路径（macOS 桌面壳）才说「拖进来就开」；否则如实说还要再选一次 */}
+        <span>{t(importer.native ? 'home.returning.dropHint' : 'home.returning.dropHintPicker')}</span>
+        <span>
+          {t('home.returning.dropOr')}
+          <span className="underline underline-offset-2">{t('home.returning.dropChoose')}</span>
+        </span>
+      </span>
+    </button>
+  )
+}
+
 /* --------------------------------- 新手版 ---------------------------------- */
 
-function Newcomer({ importer }: { importer: Importer }) {
+function Newcomer({ importer, dragging }: { importer: Importer; dragging: boolean }) {
   const { t } = useTranslation('project')
   const sample = useSampleAvailability()
   const entry = useOnboardingStore((s) => tutorialEntry(s.status))
   const switching = useProjectStore((s) => s.switching)
-  const steps: { title: string; body: string; art: ReactNode }[] = [
-    { title: t('home.newcomer.step1Title'), body: t('home.newcomer.step1Body', { product: PRODUCT_NAME }), art: <ScriptFileArt /> },
-    { title: t('home.newcomer.step2Title'), body: t('home.newcomer.step2Body', { product: PRODUCT_NAME }), art: <FoundFiguresArt /> },
-    { title: t('home.newcomer.step3Title'), body: t('home.newcomer.step3Body'), art: <LayoutCanvasArt /> },
-  ]
   return (
     <>
       <header className="flex flex-col items-center pt-4 text-center">
         <Wordmark />
         <h1 className="mt-6 text-[24px] font-medium leading-tight text-ink">{t('home.newcomer.title')}</h1>
-        <p className="mt-3 max-w-[34em] text-base leading-relaxed text-ink-2">{t('home.newcomer.lead')}</p>
       </header>
 
-      <div className="relative mt-8">
-        <ol aria-label={t('home.newcomer.stepsLabel')} className="grid grid-cols-1 gap-8 md:grid-cols-3">
-          {steps.map((s, i) => (
-            <li key={i} className="flex flex-col rounded-md border border-border bg-surface p-4">
-              <div className="flex items-start gap-3">
-                <span
-                  aria-hidden
-                  className="flex size-8 shrink-0 items-center justify-center rounded-full bg-field text-lg font-medium text-ink"
-                >
-                  {i + 1}
-                </span>
-                <div className="min-w-0">
-                  <h2 className="text-lg font-medium text-ink">{s.title}</h2>
-                  <p className="mt-1 text-sm leading-relaxed text-ink-2">{s.body}</p>
-                </div>
-              </div>
-              <div className="mt-4 h-[120px] rounded-sm bg-bg">{s.art}</div>
-            </li>
-          ))}
-        </ol>
-        {/* 卡片之间的「→」：挂在列表外、落在两道 2rem 间隙的正中（列宽 = (100% − 4rem) / 3）。
-            挂在卡片里往外探的话卡片自己的滚动宽度会被撑大（e2e/overflow.ts 量得到）；
-            铺一整层透明容器来放它们又会盖住卡片里的字，axe 就算不出那些字的背景色 */}
-        <ChevronRight
-          size={ICON_SIZE.lg}
-          aria-hidden
-          className="pointer-events-none absolute left-[calc((100%-4rem)/3+1rem)] top-1/2 hidden -translate-x-1/2 -translate-y-1/2 text-ink-faint md:block"
-        />
-        <ChevronRight
-          size={ICON_SIZE.lg}
-          aria-hidden
-          className="pointer-events-none absolute left-[calc((100%-4rem)*2/3+3rem)] top-1/2 hidden -translate-x-1/2 -translate-y-1/2 text-ink-faint md:block"
-        />
-      </div>
-
-      <div className="mt-4 rounded-md bg-field px-6 py-4 text-center">
-        <p className="flex items-center justify-center gap-1.5 text-lg font-medium text-ink">
-          <Zap size={ICON_SIZE.md} aria-hidden />
-          {t('home.newcomer.tipTitle')}
-        </p>
-        <p className="mt-1 text-sm leading-relaxed text-ink-2">{t('home.newcomer.tipBody')}</p>
-      </div>
+      <DropZone importer={importer} dragging={dragging} />
+      {importer.noticeView}
 
       <div className="mt-6 flex flex-wrap justify-center gap-3">
+        <Button
+          variant="primary"
+          className={HERO_BUTTON}
+          disabled={switching}
+          data-home-import
+          onClick={importer.start}
+        >
+          <FolderOpen size={ICON_SIZE.md} />
+          {t('home.newcomer.import')}
+        </Button>
         {!sample.hidden && (
           <Button
-            variant="primary"
+            variant="secondary"
             className={HERO_BUTTON}
             disabled={sample.disabled}
             loading={sample.opening}
@@ -409,27 +414,14 @@ function Newcomer({ importer }: { importer: Importer }) {
             {t(entry === 'resume' ? 'home.newcomer.tryResume' : 'home.newcomer.tryStart')}
           </Button>
         )}
-        <Button
-          variant="secondary"
-          className={HERO_BUTTON}
-          disabled={switching}
-          data-home-import
-          onClick={importer.start}
-        >
-          <FolderOpen size={ICON_SIZE.md} />
-          {t('home.newcomer.import')}
-        </Button>
       </div>
-      {!sample.hidden && (sample.available || sample.unavailable) && (
-        <p
-          className="mt-3 text-center text-sm text-ink-3"
-          data-home-sample-note={sample.unavailable ? 'unavailable' : 'bundled'}
-        >
-          {sample.unavailable ? t('picker.tutorialUnavailable') : t('home.newcomer.bundled')}
+      {/* 只在示例用不了（要重新安装）时说话：正常时那句「已内置」不影响任何决定 */}
+      {!sample.hidden && sample.unavailable && (
+        <p className="mt-3 text-center text-sm text-ink-3" data-home-sample-note="unavailable">
+          {t('picker.tutorialUnavailable')}
         </p>
       )}
       <SampleFailure failure={sample.failure} />
-      {importer.noticeView}
     </>
   )
 }
@@ -439,7 +431,6 @@ function Newcomer({ importer }: { importer: Importer }) {
 function Returning({ importer, dragging }: { importer: Importer; dragging: boolean }) {
   const { t } = useTranslation('project')
   const sample = useSampleAvailability()
-  const switching = useProjectStore((s) => s.switching)
   return (
     <>
       <header className="flex flex-col items-center pt-6 text-center">
@@ -449,44 +440,13 @@ function Returning({ importer, dragging }: { importer: Importer; dragging: boole
         <p className="mt-3 text-base text-ink-2">{t('home.returning.lead')}</p>
       </header>
 
-      {/* 拖放区本身是一颗按钮：点它 / Enter / 空格 = 选择文件（键盘与读屏的等价操作）。
-          真正收拖放的是整页（HomeView 的 dropHandlers），这里只负责「拖到这里」的高亮 */}
-      <button
-        type="button"
-        data-home-dropzone
-        data-dragging={dragging || undefined}
-        disabled={switching}
-        onClick={importer.start}
-        aria-describedby="home-dropzone-hint"
-        className={cn(
-          'mx-auto mt-8 flex w-full max-w-[720px] flex-col items-center rounded-md border border-dashed px-6 py-10',
-          'border-border-strong bg-surface-2 outline-none transition-colors',
-          'hover:border-ink-3 hover:bg-surface focus-visible:focus-ring',
-          'disabled:cursor-not-allowed disabled:opacity-40',
-          dragging && 'border-accent bg-accent-subtle',
-        )}
-      >
-        <span className="flex size-14 items-center justify-center rounded-md border border-border bg-surface text-ink-2">
-          <FileCodeCorner size={ICON_SIZE.lg} aria-hidden />
-        </span>
-        <span className="mt-4 text-[20px] font-medium leading-tight text-ink">
-          {dragging ? t('home.returning.dropRelease') : t('home.returning.dropTitle')}
-        </span>
-        <span id="home-dropzone-hint" className="mt-2 flex flex-col items-center gap-0.5 text-base text-ink-2">
-          {/* 拿得到真实路径（macOS 桌面壳）才说「拖进来就开」；否则如实说还要再选一次 */}
-          <span>{t(importer.native ? 'home.returning.dropHint' : 'home.returning.dropHintPicker')}</span>
-          <span>
-            {t('home.returning.dropOr')}
-            <span className="underline underline-offset-2">{t('home.returning.dropChoose')}</span>
-          </span>
-        </span>
-      </button>
+      <DropZone importer={importer} dragging={dragging} />
       {importer.noticeView}
 
       {!sample.hidden && (
         <div className="mt-6 flex flex-col items-center">
           <Button
-            variant="primary"
+            variant="secondary"
             className={HERO_BUTTON}
             disabled={sample.disabled}
             loading={sample.opening}

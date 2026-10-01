@@ -53,11 +53,11 @@ import {
 } from '@/types/document'
 import { Button, IconButton } from '../ui/Button'
 import { Dialog } from '../ui/Dialog'
-import { Disclosure, Reveal, Row, Section } from '../ui/Field'
+import { Row, Section } from '../ui/Field'
+import { SummaryRow } from '../ui/SummaryRow'
 import { NumberField, TextInput } from '../ui/Input'
 import { Tip } from '../ui/Tooltip'
 import { ArrangeSection } from './ArrangeSection'
-import { GroupToggle } from './GroupToggle'
 import { INSPECTOR_LABEL_W } from './layout'
 import { OriginalFileActions } from './OriginalFileActions'
 import { GeometryGrid, GeometrySpacer, MmField } from './MmField'
@@ -343,107 +343,115 @@ function PanelMoreSection({ objs }: { objs: PanelObject[] }) {
       if (o.type === 'panel') fn(o)
     })
 
+  // 右边只写当前值（设计稿 A1「0° · 不透明」）：旋转角、透明度（100 = 不透明）、翻转了才补一句
   const summaryBits = [
-    rot ? `${rot}°` : null,
+    rot === undefined ? pn('rotationMixed') : `${rot}°`,
+    opacity === undefined ? pn('opacityMixed') : opacity < 100 ? `${opacity}%` : pn('opaque'),
     flipped ? pn('flipped') : null,
-    opacity !== undefined && opacity < 100 ? `${opacity}%` : null,
   ].filter(Boolean)
+  const replaceKey = 'panel:replace'
+  const replaceOpen = useInspectorPrefs((s) => s.foldOpen[replaceKey] ?? false)
+  const setFoldOpen = useInspectorPrefs((s) => s.setFoldOpen)
 
   return (
-    /* 组内的「更多」是文字链接（打磨 O3 / L4）：此前对象页这一处是 `Disclosure`
-       （带 chevron），元素页同一个词是文字链接——同一个词两种字形 */
-    <Section>
-      <GroupToggle
+    <>
+      <SummaryRow
         open={open}
         onToggle={() => setOpen('panel', !open)}
-        summary={summaryBits.length ? summaryBits.join(' · ') : undefined}
+        label={pn('rotateFlipOpacity')}
+        value={summaryBits.join(' · ')}
+        // e2e 的稳定锚点（开关按钮上）：旋转 / 翻转 / 不透明度收在这一行里
+        triggerProps={{ 'data-panel-more': '' }}
       >
-        {translate('element.more', { ns: 'inspector' })}
-      </GroupToggle>
-      <Reveal open={open}>
-      <div className="mt-1.5 flex flex-col gap-1.5">
-        {/* 只有一个数字框（2026-09-11 用户反馈）：面板只能转 0 / 90 / 180 / 270，
-            步进 90、写回前吸附到这四档 */}
-        <Row label={translate('transform.rotation', { ns: 'inspector' })} labelWidth={INSPECTOR_LABEL_W}>
-          <NumberField
-            value={rot ?? 0}
-            mixed={rot === undefined}
-            min={-360}
-            max={360}
-            step={90}
-            precision={0}
-            unit="°"
-            ariaLabel={translate('transform.rotation', { ns: 'inspector' })}
-            title={pn('rotationTip')}
-            onChange={(v) => {
-              const snapped = ((Math.round(v / 90) * 90) % 360 + 360) % 360
-              rotatePanels(ids, snapped as PanelRotation)
-            }}
-          />
-        </Row>
+        <div className="flex flex-col gap-1.5">
+          {/* 只有一个数字框（2026-09-11 用户反馈）：面板只能转 0 / 90 / 180 / 270，
+              步进 90、写回前吸附到这四档 */}
+          <Row label={translate('transform.rotation', { ns: 'inspector' })} labelWidth={INSPECTOR_LABEL_W}>
+            <NumberField
+              value={rot ?? 0}
+              mixed={rot === undefined}
+              min={-360}
+              max={360}
+              step={90}
+              precision={0}
+              unit="°"
+              ariaLabel={translate('transform.rotation', { ns: 'inspector' })}
+              title={pn('rotationTip')}
+              onChange={(v) => {
+                const snapped = ((Math.round(v / 90) * 90) % 360 + 360) % 360
+                rotatePanels(ids, snapped as PanelRotation)
+              }}
+            />
+          </Row>
 
-        <Row label={pn('flip')} labelWidth={INSPECTOR_LABEL_W}>
-          {/* 两颗同高同档的开关键（secondary + active），不撑满整行 */}
-          <div className="flex min-w-0 gap-1">
-            <Button
-              variant="secondary"
-              size="sm"
-              active={sharedPanel(objs, (o) => o.flipH === true) === true}
-              onClick={() =>
-                setEach(hist('flipH'), (o) => {
-                  o.flipH = o.flipH ? undefined : true
-                })
-              }
-            >
-              <FlipHorizontal2 size={ICON_SIZE.sm} />
-              {pn('flipHorizontal')}
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              active={sharedPanel(objs, (o) => o.flipV === true) === true}
-              onClick={() =>
-                setEach(hist('flipV'), (o) => {
-                  o.flipV = o.flipV ? undefined : true
-                })
-              }
-            >
-              <FlipVertical2 size={ICON_SIZE.sm} />
-              {pn('flipVertical')}
-            </Button>
-          </div>
-        </Row>
+          <Row label={pn('flip')} labelWidth={INSPECTOR_LABEL_W}>
+            {/* 两颗同高同档的开关键（secondary + active），不撑满整行 */}
+            <div className="flex min-w-0 gap-1">
+              <Button
+                variant="secondary"
+                size="sm"
+                active={sharedPanel(objs, (o) => o.flipH === true) === true}
+                // e2e 的稳定锚点（不认文案）
+                data-panel-flip="h"
+                onClick={() =>
+                  setEach(hist('flipH'), (o) => {
+                    o.flipH = o.flipH ? undefined : true
+                  })
+                }
+              >
+                <FlipHorizontal2 size={ICON_SIZE.sm} />
+                {pn('flipHorizontal')}
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                active={sharedPanel(objs, (o) => o.flipV === true) === true}
+                data-panel-flip="v"
+                onClick={() =>
+                  setEach(hist('flipV'), (o) => {
+                    o.flipV = o.flipV ? undefined : true
+                  })
+                }
+              >
+                <FlipVertical2 size={ICON_SIZE.sm} />
+                {pn('flipVertical')}
+              </Button>
+            </div>
+          </Row>
 
-        {/* 只有数字框，不再配滑杆（2026-09-11 用户反馈） */}
-        <Row label={pn('opacity')} labelWidth={INSPECTOR_LABEL_W}>
-          <NumberField
-            ariaLabel={pn('opacity')}
-            value={opacity ?? 100}
-            mixed={opacity === undefined}
-            min={0}
-            max={100}
-            step={1}
-            precision={0}
-            unit="%"
-            onChange={(v) => setPanelOpacity(ids, v / 100)}
-          />
-        </Row>
+          {/* 只有数字框，不再配滑杆（2026-09-11 用户反馈） */}
+          <Row label={pn('opacity')} labelWidth={INSPECTOR_LABEL_W}>
+            <NumberField
+              ariaLabel={pn('opacity')}
+              value={opacity ?? 100}
+              mixed={opacity === undefined}
+              min={0}
+              max={100}
+              step={1}
+              precision={0}
+              unit="%"
+              onChange={(v) => setPanelOpacity(ids, v / 100)}
+            />
+          </Row>
+        </div>
+      </SummaryRow>
 
-        {/* 替换素材是设置行里的一个动作，不是整行 CTA */}
+      {/* 替换素材单独一行（设计稿 A1「换一张图」）：设置行里的一个动作，不是整行 CTA */}
+      <SummaryRow
+        data-fold="replace"
+        open={replaceOpen}
+        onToggle={() => setFoldOpen(replaceKey, !replaceOpen)}
+        label={pn('replacePicture')}
+      >
         <Row label={pn('replace')} labelWidth={INSPECTOR_LABEL_W}>
-          <Tip label={pn('replaceTip')}>
-            <Button variant="secondary" size="sm" disabled={!one} onClick={() => setReplacing(true)}>
-              <Replace size={ICON_SIZE.sm} className="text-ink-3" />
-              {pn('replaceAction')}
-            </Button>
-          </Tip>
+          <Button variant="secondary" size="sm" disabled={!one} onClick={() => setReplacing(true)}>
+            <Replace size={ICON_SIZE.sm} className="text-ink-3" />
+            {pn('replaceAction')}
+          </Button>
         </Row>
-        {one && (
-          <ReplaceAssetDialog panel={one} open={replacing} onOpenChange={setReplacing} />
-        )}
-      </div>
-      </Reveal>
-    </Section>
+      </SummaryRow>
+      {one && <ReplaceAssetDialog panel={one} open={replacing} onOpenChange={setReplacing} />}
+    </>
   )
 }
 
@@ -705,7 +713,8 @@ function ElementEditEntry({ panel }: { panel: PanelObject }) {
         <Button
           variant="secondary"
           size="sm"
-          className="min-w-0 shrink"
+          // 整行宽（2026-09-30 重设计）：选中一张图时，属性栏第一件事就是「进去改」
+          className="min-w-0 flex-1 justify-center"
           active={editing}
           onClick={() => {
             if (editing) {
@@ -768,8 +777,8 @@ export function SourceSection({
   const runtime = panel?.fileKind === 'runtime'
   if (!panel?.script && !objs.length) return null
   return (
-    <Disclosure
-      title={pn('sourceAdvanced')}
+    <SummaryRow
+      label={pn('sourceAdvanced')}
       open={open}
       onToggle={() => setOpen('panel', !open)}
     >
@@ -788,7 +797,7 @@ export function SourceSection({
         </>
       )}
       <PanelQuality objs={objs} />
-    </Disclosure>
+    </SummaryRow>
   )
 }
 

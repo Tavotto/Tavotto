@@ -12,6 +12,6 @@
   Playwright 自己的 `--list`，主语是 (project, file:line:col, title) 集合，不是条数；不完整 rc 1、清单读不懂 rc 2）→ matrix 语义 + Gate
   闭集（不动）。**job id 不变**，显示名 `windows-exe-smoke (1)` / `(2)`（显式 `name:`；不写的话 include 形状会把四个字段全排进显示名），
   required contexts 仍只有三个 Gate。artifact 名一律带 `${{ matrix.shard }}`（upload-artifact v4 同名失败）。加 / 删 / 改名一个 project
-  就要回去改那张 matrix，合同测试会红。两条 Playwright 步都有 **step 级** `timeout-minutes`（30 / 20，job 级 60 / 45 不动）：job 级硬杀时 step
+  就要回去改那张 matrix，合同测试会红。两条 Playwright 步都有 **step 级** `timeout-minutes`（30 / 35，job 级 60 / 45 不动；posix-e2e 单 worker 约 19.7 分钟、209 条，20 分钟上限在 run 36734896556 上误杀过，所以放到 35）：job 级硬杀时 step
   停在 in_progress、`if: failure()` 的收集步骤不跑、日志 blob 与 artifact 都没有（PR #373 attempt 1 实测），step 级超时把挂起变成带日志的失败。
   设计、本机实测、负例与已知边界：`docs/implementation/ci-foundation/CI03C_PLAYWRIGHT_SHARDS.md`。

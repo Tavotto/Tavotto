@@ -2,7 +2,7 @@
   "combo": {
     "altDrag": "{{alt}}+drag a corner",
     "arrowKeys": "Arrow keys / ⇧+arrow keys / {{alt}}+arrow keys",
-    "newline": "{{alt}}⏎ or {{mod}}⏎ (while editing text)",
+    "newline": "{{alt}}⏎ / {{mod}}⏎",
     "spaceDrag": "Space+drag",
     "tools": "V / T / A / R / O / L",
     "wheelZoom": "{{mod}}+wheel",
@@ -16,8 +16,7 @@
     "editing": "Editing",
     "arrange": "Arrange and stacking",
     "view": "View",
-    "tools": "Tools",
-    "tutorial": "Tutorial"
+    "tools": "Tools"
   },
   "key": {
     "copyPaste": "Copy / paste objects across layouts",
@@ -28,7 +27,7 @@
     "export": "Export",
     "freeResize": "Free resize (aspect ratio unlocked)",
     "help": "This help",
-    "newline": "Insert a line break; plain ⏎ commits",
+    "newline": "While editing text, insert a line break; plain ⏎ commits",
     "nudge": "Nudge the selection or in-figure elements by 0.5 mm / 5 mm / 0.1 mm on the page; a run of presses undoes as one step",
     "palette": "Command palette",
     "pan": "Pan the canvas",
@@ -46,8 +45,11 @@
     "multiSelect": "Add / remove objects or figure elements from the selection",
     "quickEdit": "Open the quick-edit menu for the object",
     "tutorialPause": "Pause the tutorial (tutorial card focused)",
-    "cycleOverlap": "Cycle the selection through overlapping figure elements"
+    "cycleOverlap": "Cycle the selection through overlapping figure elements",
+    "timeline": "Open / close the layout timeline",
+    "saveNamed": "Save now as a named point"
   },
+  "or": "or",
   "title": "Keyboard shortcuts",
   "search": "Search shortcuts…",
   "searchAria": "Search shortcuts",

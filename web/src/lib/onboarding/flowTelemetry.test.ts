@@ -27,10 +27,10 @@ beforeEach(() => {
 
 describe('tutorial_step_completed', () => {
   it('完成一步 = 一条，只带 step_id 与 tutorial_version', () => {
-    completeStep('welcome')
+    completeStep('open_fast_edit')
     expect(post).toHaveBeenCalledTimes(1)
     expect(post).toHaveBeenCalledWith('tutorial_step_completed', {
-      step_id: 'welcome',
+      step_id: 'open_fast_edit',
       tutorial_version: ONBOARDING_FLOW_VERSION,
     })
     expect(JSON.stringify(post.mock.calls)).not.toContain('p_tut')
@@ -38,8 +38,8 @@ describe('tutorial_step_completed', () => {
 
   it('跳过一步：状态机照样前进，遥测不记', () => {
     skipStep()
-    expect(useOnboardingStore.getState().completedSteps).toContain('welcome')
-    expect(useOnboardingStore.getState().currentStep).toBe('open_fast_edit')
+    expect(useOnboardingStore.getState().completedSteps).toContain('open_fast_edit')
+    expect(useOnboardingStore.getState().currentStep).toBe('select_text')
     expect(post).not.toHaveBeenCalled()
   })
 
@@ -54,10 +54,9 @@ describe('tutorial_step_completed', () => {
     })
   })
 
-  it('每个 step_id 都是后端白名单认识的那十个之一（闭集同源）', () => {
+  it('每个 step_id 都是后端白名单认识的那九个之一（闭集同源）', () => {
     // 后端枚举在 tests/test_telemetry_integrations.py 里对着这份文件比；这里守前端那半
     expect([...STEP_IDS]).toEqual([
-      'welcome',
       'open_fast_edit',
       'select_text',
       'change_typography',
@@ -72,8 +71,8 @@ describe('tutorial_step_completed', () => {
 
   it('没同意：完成再多步也一个字节不发', () => {
     setTelemetryEnabled(false)
-    completeStep('welcome')
     completeStep('open_fast_edit')
+    completeStep('select_text')
     expect(post).not.toHaveBeenCalled()
   })
 })

@@ -11,8 +11,13 @@ import { mmToPx, mmToViewX, mmToViewY, type ViewTransform } from '@/store/viewpo
  */
 
 export const MARGIN = 8
-/** 顶栏 + 标签条的高度：工具条不该盖到它们上面 */
-export const TOP_SAFE = 76
+/** 顶栏 + 标签条的高度：工具条不该盖到它们上面（2026-09-30 标签条改成与属性栏页签条同高 44：44 + 44） */
+export const TOP_SAFE = 88
+/**
+ * 窗口底边留给画布底部浮动工具条（`CanvasToolbar`）的高度：工具条顶边离窗口底边约 64，再留 8 的缝。
+ * 浮动栏翻到下方 / 夹在窗口底边时不许落进这一带，否则盖住工具条上的按钮。
+ */
+export const BOTTOM_SAFE = 72
 /**
  * 完整多选栏（计数 + 参照 + 六向对齐 + 分布 / 尺寸 + 成组 + 更多）需要的最小可用宽度；
  * 侧栏之间比它窄时压缩成「对齐 / 分布 / 尺寸」三个弹层入口，不让它越界或压住侧栏
@@ -85,9 +90,14 @@ export function placeToolbar(
   let y = anchor.top - size.h - MARGIN
   let placement: Placement['placement'] = 'above'
   if (y < TOP_SAFE) {
-    y = Math.min(anchor.top + anchor.height + MARGIN, viewport.height - size.h - MARGIN)
+    y = Math.min(
+      anchor.top + anchor.height + MARGIN,
+      viewport.height - BOTTOM_SAFE - size.h - MARGIN,
+    )
     placement = 'below'
   }
+  // 锚点本身落在底部浮动工具条那一带时，「上方」也会压到工具条：整体夹回去
+  y = Math.min(y, viewport.height - BOTTOM_SAFE - size.h - MARGIN)
   return { x, y, placement }
 }
 
@@ -133,7 +143,7 @@ export function placeToolbarAvoiding(
   const minX = insets.left + MARGIN
   const maxX = viewport.width - insets.right - size.w - MARGIN
   const x = Math.max(minX, Math.min(anchor.left + anchor.width / 2 - size.w / 2, maxX))
-  const maxY = viewport.height - size.h - MARGIN
+  const maxY = viewport.height - BOTTOM_SAFE - size.h - MARGIN
   const zone = avoid.zone ?? null
   const candidates: { y: number; placement: Placement['placement'] }[] = [
     { y: anchor.top - size.h - MARGIN, placement: 'above' },

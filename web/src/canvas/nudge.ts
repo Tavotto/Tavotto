@@ -19,7 +19,15 @@
  *
  * 不吸附：步长固定的移动一吸就被拽回参考线上，离不开、也走不到想要的那一格。
  */
-import { alignEntries, isElementHidden, panelFullRect } from '@/lib/elementGeom'
+import {
+  alignEntries,
+  blockedGroupsIn,
+  claimedBySelectedGroups,
+  expandGroups,
+  groupBlockedMessage,
+  isElementHidden,
+  panelFullRect,
+} from '@/lib/elementGeom'
 import { msg } from '@/i18n'
 import type { Manifest } from '@/lib/api'
 import { useDocumentStore } from '@/store/documentStore'
@@ -120,6 +128,12 @@ const status = (key: string) =>
 function announceUnmovable(b: FigureBurst): void {
   const panel = findPanel(b.panelId)
   const manifest = panel ? displayedExactManifest(panel) : null
+  // 选中的组不能整体变换：按原因说，与拖它时同一句（`explainBlockedGroupDrag`）
+  const [blocked] = blockedGroupsIn(panel, manifest, b.gids)
+  if (blocked) {
+    useUiStore.getState().setStatus(groupBlockedMessage(blocked.reason))
+    return
+  }
   const el = b.gids.length === 1 ? manifest?.elements.find((e) => e.gid === b.gids[0]) : undefined
   // 锁定 / 隐藏的不动是另一回事（用户自己锁的），不按「按设计」解释
   const own =
@@ -277,14 +291,29 @@ function startMover(b: FigureBurst): InFigureMove | null | 'unmovable' {
 /**
  * 与鼠标拖动同一套分派：两个以上可对齐的成员 = 整组平移（`groupMove`），否则按主选
  * （选区末位）那一个走 `inFigureMoveOf`。锁定的（命中层本来就点不中它们，元素树里
- * 仍选得到）与隐藏的不动。
+ * 仍选得到）与隐藏的不动。选中的组（ADR 0102，不在元素表里）先展开成成员——与拖组里
+ * 任一成员时 `alignEntries` 的展开同一处；不能整体变换的组（`groupTransformBlocked`）展开为空，
+ * 照旧「不能移动」，并按原因说出来（`announceUnmovable`）。
  */
 function moverFor(panel: PanelObject, manifest: Manifest, gids: string[]): InFigureMove | null {
   const locked = new Set(panel.lockedGids ?? [])
-  const els = gids
-    .filter((g) => !locked.has(g))
+  const isGroup = (g: string) => !!manifest.groups?.some((x) => x.gid === g)
+  // 组的成员整组来、整组走：`expandGroups` 给的就是全员或零（能不能整体变换它已经判过），
+  // 下游**不再逐个过滤**——隐藏的成员照样跟着组走（与拖动一致），否则剩下的被平移、组被拆开
+  // （Codex #691）。锁定 / 隐藏的逐个过滤只对散选的元素
+  const members = expandGroups(panel, manifest, gids.filter(isGroup))
+  // 散选 = 不是组、也不被选区里任何一个组认领（被挡住的组也认领：它的成员不能被单独挪走）
+  const claimed = claimedBySelectedGroups(manifest, gids)
+  const loose = gids
+    .filter((g) => !isGroup(g) && !claimed(g) && !locked.has(g))
     .map((g) => manifest.elements.find((el) => el.gid === g))
     .filter((el): el is NonNullable<typeof el> => !!el && el.gid !== 'figure' && !isElementHidden(el))
+  const els = [
+    ...members
+      .map((g) => manifest.elements.find((el) => el.gid === g))
+      .filter((el): el is NonNullable<typeof el> => !!el),
+    ...loose,
+  ]
   if (els.length > 1) {
     const entries = alignEntries(panel, manifest, els.map((el) => el.gid))
     if (entries.length > 1) return groupMove(panel, entries)

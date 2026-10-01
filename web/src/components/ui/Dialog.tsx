@@ -2,7 +2,7 @@ import * as RD from '@radix-ui/react-dialog'
 import { t } from '@/i18n'
 import { X } from './icons'
 import { ICON_SIZE } from './Icon'
-import { useRef, type ReactNode } from 'react'
+import { useRef, type ReactNode, type RefObject } from 'react'
 import { cn } from '@/lib/utils'
 import { IconButton } from './Button'
 
@@ -55,6 +55,12 @@ interface DialogProps {
    * 自己决定哪一列滚。
    */
   chrome?: 'default' | 'shell'
+  /**
+   * 打开时焦点落在哪个控件上。**默认落在容器上**（第一下 Tab 进正文第一个控件，
+   * 2026-09-14 审计 S1）；只给「默认动作必须是安全的那一个」的对话框用——排版
+   * 时间线的预览（ADR 0101）默认焦点在「关闭」上，回车不会误触恢复。
+   */
+  initialFocusRef?: RefObject<HTMLElement | null>
 }
 
 export function Dialog({
@@ -72,6 +78,7 @@ export function Dialog({
   covered = false,
   anchor,
   chrome = 'default',
+  initialFocusRef,
 }: DialogProps) {
   const shell = chrome === 'shell'
   const locked = busy || blockDismiss
@@ -108,7 +115,7 @@ export function Dialog({
             if (document.activeElement instanceof HTMLElement)
               restoreTo.current = document.activeElement
             e.preventDefault()
-            contentRef.current?.focus({ preventScroll: true })
+            ;(initialFocusRef?.current ?? contentRef.current)?.focus({ preventScroll: true })
           }}
           onCloseAutoFocus={(e) => {
             const el = restoreTo.current
@@ -162,14 +169,17 @@ export function Dialog({
               )}
             </div>
           </div>
-          <div
-            className={cn(
-              'min-h-0 flex-1',
-              shell ? 'flex flex-col overflow-hidden' : 'overflow-y-auto px-5 py-3',
-            )}
-          >
-            {children}
-          </div>
+          {/* 没有正文（标题已说完）就不摆这块留白 */}
+          {children != null && children !== false && (
+            <div
+              className={cn(
+                'min-h-0 flex-1',
+                shell ? 'flex flex-col overflow-hidden' : 'overflow-y-auto px-5 py-3',
+              )}
+            >
+              {children}
+            </div>
+          )}
           {footer && (
             <div className="flex items-center justify-end gap-2 px-5 pb-4 pt-1">
               {footer}

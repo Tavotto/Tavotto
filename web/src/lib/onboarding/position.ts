@@ -64,7 +64,7 @@ export function placeCoachmark(
   }
 }
 
-/** 没有锚点的步骤（欢迎 / 完成）：卡片居中 */
+/** 没有锚点的步骤（完成）：卡片居中 */
 export function placeCentered(
   size: { w: number; h: number },
   viewport: { w: number; h: number },

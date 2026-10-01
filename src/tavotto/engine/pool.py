@@ -1485,7 +1485,8 @@ class EngineWorker:
         env = worker_env(python, self.python_source)
         # `-B`：内置 runtime 装在安装目录里（可能是 Program Files），
         # 一个 .pyc 都不往那儿写。.pyc 已在构建期编好随包发出，`-B` 只禁写不禁读。
-        args = runtime.child_args() if bundled else []
+        # 别的解释器只在启动期 `-B`，worker 装好项目字节码守卫后放开（`runtime.worker_args`，#736）。
+        args = runtime.worker_args(bundled=bundled)
         # 改指表的代次与规则同一刻取（ADR 0106 §五）：代次跟着会话走，落地前核对、复用前核对
         self.remap_generation, remap_rules = inputremap.snapshot(figures_dir)
         # 执行语义收进唯一模型（ADR 0014 §0）：argv 由 `execspec.worker_argv`
@@ -2081,7 +2082,7 @@ def _spawn_spec(
     继续钉着「交给 workerd 的 argv == Python 池自己 Popen 的」。
     """
     bundled = source == SOURCE_BUNDLED
-    args = runtime.child_args() if bundled else []
+    args = runtime.worker_args(bundled=bundled)
     spec = execspec.safe_spec(
         script_name,
         str(figures_dir),

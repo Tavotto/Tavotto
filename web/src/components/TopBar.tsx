@@ -1,28 +1,20 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
-  ArrowUpRight,
   ChevronDown,
-  Circle,
   Download,
-  Maximize2,
   Ellipsis,
   Redo2,
-  Slash,
-  Square,
-  Shapes,
-  Tags,
-  Type,
   Undo2,
   RotateCcwClock,
 } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import {
-  addSubLabels,
   newBlankDocument,
   openLayoutDocument,
   openRecentDocument,
   setDocumentName,
+  toggleTimeline,
 } from '@/store/actions'
 import { requestRelinkMissing } from '@/lib/clipboard'
 import { runUndoRedo } from '@/hooks/useKeyboard'
@@ -32,10 +24,8 @@ import { foreignProjectLabel } from '@/lib/projectLabel'
 import { currentProjectId } from '@/lib/session'
 import { bindingForProject } from '@/lib/projectFile'
 import { useProjectStore } from '@/store/projectStore'
-import { insertShape } from '@/lib/presets'
-import { PresetsDialog } from './PresetsDialog'
 import { HomeButton, ProjectSwitcher } from './ProjectSwitcher'
-import { WriteBackTopBarButton } from './inspector/UpdateSourceButton'
+import { useWriteBackMenuEntry } from './inspector/UpdateSourceButton'
 import { usePalette } from '@/components/CommandPalette'
 import { runTutorialEntry, tutorialEntry } from '@/lib/onboarding/tutorial'
 import { refreshProjectNow } from '@/store/liveSync'
@@ -43,13 +33,10 @@ import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { discardLocalCopy, recoverLocalCopy, useDocumentStore } from '@/store/documentStore'
 import { useOnboardingStore } from '@/store/onboardingStore'
 import { useUiStore } from '@/store/uiStore'
-import { useWorkspaceStore } from '@/store/workspace'
 import { useUpdateStore } from '@/store/updateStore'
-import { useViewportStore } from '@/store/viewportStore'
-import { Numbers } from '@sfinterface/numbers'
 import { BrandMark } from './ui/BrandMark'
-import { Button } from './ui/Button'
-import { Menu, MenuItem, MenuLabel, MenuRadioGroup, MenuRadioItem, MenuSeparator } from './ui/Menu'
+import { Button, IconButton } from './ui/Button'
+import { Menu, MenuItem, MenuLabel, MenuSeparator } from './ui/Menu'
 import { TextInput } from './ui/Input'
 import { Tip } from './ui/Tooltip'
 import { MOD, cn } from '@/lib/utils'
@@ -57,43 +44,19 @@ import { msg } from '@/i18n'
 import { formatTime } from '@/i18n/format'
 import { useFormatMessage } from '@/i18n/react'
 
-/**
- * 标注形状收进一个菜单：顶栏留给「文字」和真正高频的动作。
- * 名字走 common:objectType / common:shape，这里只留图标与快捷键。
- * 「文字」有自己的按钮，不在这张表里。
- */
-type MarkTool = 'arrow' | 'rect' | 'ellipse' | 'line'
-
-const MARK_TOOLS: { tool: MarkTool; icon: typeof Type; key: string }[] = [
-  { tool: 'arrow', icon: ArrowUpRight, key: 'A' },
-  { tool: 'rect', icon: Square, key: 'R' },
-  { tool: 'ellipse', icon: Circle, key: 'O' },
-  { tool: 'line', icon: Slash, key: 'L' },
-]
-
-/**
- * 画布工具的显示名：箭头是对象类型，其余是形状。
- *
- * 两个分支各自收窄成自己的字面量联合——模板 key 的静态展开按参数类型走，
- * 混在一个 `Exclude<Tool,'select'>` 里会让提取器要求 `shape.arrow`、
- * `objectType.rect` 这类不存在的条目。
- */
-const markToolKey = (tool: MarkTool): string =>
-  tool === 'arrow' ? objectTypeKey(tool) : shapeKey(tool)
-
-const objectTypeKey = (tool: 'arrow') => `common:objectType.${tool}`
-const shapeKey = (tool: 'rect' | 'ellipse' | 'line') => `common:shape.${tool}`
-
-/** 顶栏里插入的形状（非工具，点一下直接落一个） */
-const INSERT_SHAPES = ['triangle', 'diamond', 'polygon', 'brace'] as const
-
-const ZOOM_PRESETS = [0.5, 0.75, 1, 1.5, 2, 4]
-
 export function TopBar() {
-  const fastEdit = useWorkspaceStore((s) => s.mode === 'fast_edit')
+  // 写回原始文件住在「⋯」第一项；它的窗口挂在菜单外面（菜单一合上，项就卸载）
+  const writeBack = useWriteBackMenuEntry()
   return (
-    <header className="flex h-11 shrink-0 items-center justify-between gap-3 bg-surface px-3">
-      <div className="flex min-w-0 flex-1 items-center gap-1.5">
+    // `data-topbar`：顶栏的稳定机器标识（e2e 量它里面的按钮，不认 <header> 标签）
+    // 窄于 900：三段之间的空隙与两侧内边距收紧（12 → 6、12 → 8），左 / 右段内部的按钮间距也收到 4。界面外观换新（#756）之后按钮
+    // 与图标钮的内边距变大，600 宽下三段合起来溢出十几 px（时钟 / 书签钮压到撤销、标注钮压到缩放），
+    // 空隙是唯一不改控件尺寸就能让出来的量（e2e/topbar-narrow.spec.ts）
+    <header
+      data-topbar
+      className="flex h-11 shrink-0 items-center justify-between gap-3 bg-surface px-3 max-[899px]:gap-1.5 max-[899px]:px-2"
+    >
+      <div className="flex min-w-0 flex-1 items-center gap-1.5 max-[899px]:gap-1">
         {/* 回到项目列表：左上角是「离开这里」的位置（桌面壳用系统标题栏，红绿灯不在网页里） */}
         <HomeButton />
         <Brand />
@@ -105,17 +68,18 @@ export function TopBar() {
         </span>
         <DocumentMenu />
         <SaveStateLabel />
+        <TimelineButton />
         <RecoveryNotice />
       </div>
 
-      <ToolCluster layoutTools={!fastEdit} />
+      <ToolCluster />
 
-      <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
-        <ZoomControls />
-        {/* 写回原始文件是高频动作，常驻导出左侧；导出仍是顶栏唯一填色主动作 */}
-        <WriteBackTopBarButton />
+      <div className="flex min-w-0 flex-1 items-center justify-end gap-2 max-[899px]:gap-1">
+        {/* 缩放进了画布标签行、画布工具进了画布底部的浮动工具条（2026-09-30 重设计 A1）；
+            导出是顶栏唯一填色主动作 */}
         <ExportButton />
-        <MoreMenu />
+        <MoreMenu writeBackItem={writeBack.item} />
+        {writeBack.dialog}
       </div>
     </header>
   )
@@ -194,7 +158,8 @@ function Brand() {
   return (
     <span className="flex shrink-0 items-center gap-2 text-sm font-medium tracking-tight text-ink">
       <BrandMark size={20} />
-      {PRODUCT_NAME}
+      {/* 窄于 900 只留标志：顶栏左段要给面包屑与时间线两颗钮让地方（ADR 0101 §8） */}
+      <span className="max-[899px]:sr-only">{PRODUCT_NAME}</span>
     </span>
   )
 }
@@ -293,18 +258,53 @@ export function SaveStateLabel() {
       })
     : t(projectOpen ? 'topbar.saveTitleLocalInProject' : 'topbar.saveTitleLocal', { mod: MOD })
 
+  // 窄于 900 时文字收成一个状态点（文字仍在，只是只给读屏；悬停气泡照旧）：
+  // 顶栏左段放不下「新文档 · 已自动保存 14:03」再加时间线两颗钮，文字不收的话
+  // 会被右边的按钮压住（#677 集成时 600 宽下实测重叠，ADR 0101 §8）
+  // 项目文件落后于这份排版（ADR 0096）也算「还没落定」
+  const pending = saveState === 'dirty' || saveState === 'saving' || !!bound?.dirty
   return (
     <span
       aria-live="polite"
+      data-save-state
       data-save-destination={bound ? 'project' : 'local'}
-      className={cn(
-        'hidden shrink-0 text-xs min-[900px]:inline',
-        bad ? 'text-danger' : 'text-ink-3',
-      )}
-      title={title}
+      className={cn('flex min-w-0 shrink items-center text-xs', bad ? 'text-danger' : 'text-ink-3')}
+      // 窄时文字只给读屏，悬停气泡要连状态一起说
+      title={`${text} · ${title}`}
     >
-      {text}
+      <span
+        aria-hidden
+        className={cn(
+          'size-1.5 shrink-0 rounded-full min-[900px]:hidden',
+          bad ? 'bg-danger' : pending ? 'bg-ink-3' : 'bg-ok',
+        )}
+      />
+      <span className="sr-only min-[900px]:not-sr-only min-[900px]:truncate">{text}</span>
     </span>
+  )
+}
+
+/**
+ * 排版时间线的常驻入口（ADR 0101）：保存状态旁一颗时钟钮。
+ *
+ * 用户反馈「不知道有这个功能」——它此前只在排版菜单的第六项里。放在保存状态旁边，
+ * 是因为两者回答的是同一件事的两半：「存到哪一步了」与「能回到哪一步」。
+ * 抽屉开着时按下态（`aria-pressed`），再点一下收起。
+ */
+function TimelineButton() {
+  const { t } = useTranslation('workspace')
+  const open = useUiStore((s) => s.versionsOpen)
+  return (
+    <IconButton
+      label={t('topbar.timelineButton')}
+      shortcut={`⇧${MOD}H`}
+      aria-pressed={open}
+      data-timeline-button
+      className={cn('shrink-0', open && 'bg-selected')}
+      onClick={toggleTimeline}
+    >
+      <RotateCcwClock size={ICON_SIZE.md} className="text-ink-2" />
+    </IconButton>
   )
 }
 
@@ -353,7 +353,7 @@ export function DocumentMenu() {
   return (
     <Menu
       trigger={
-        <Button size="md" className="max-w-52 text-ink-2" aria-label={t('topbar.documentLabel', { name })}>
+        <Button size="md" className="min-w-0 max-w-52 shrink text-ink-2" aria-label={t('topbar.documentLabel', { name })}>
           <span className="truncate">{name}</span>
           {/* 项目里的文件落后于这份排版（ADR 0096）：与画布页签的「未保存」同一颗圆点 */}
           {projectFile?.dirty && (
@@ -382,7 +382,7 @@ export function DocumentMenu() {
       <MenuItem onSelect={() => useUiStore.getState().setLayoutOpen(true, 'load')}>
         {t('topbar.openDocument')}
       </MenuItem>
-      <MenuItem onSelect={() => useUiStore.getState().setVersionsOpen(true)}>
+      <MenuItem onSelect={() => useUiStore.getState().setVersionsOpen(true)} shortcut={`⇧${MOD}H`}>
         {t('topbar.versionTimeline')}
       </MenuItem>
       <MenuItem onSelect={() => void exportPackage()}>{t('topbar.exportPackage')}</MenuItem>
@@ -422,7 +422,7 @@ export function DocumentMenu() {
   )
 }
 
-function ToolCluster({ layoutTools }: { layoutTools: boolean }) {
+function ToolCluster() {
   const { t } = useTranslation(['workspace', 'common'])
   const fmt = useFormatMessage()
   const canUndo = useDocumentStore((s) => s.past.length > 0)
@@ -471,163 +471,6 @@ function ToolCluster({ layoutTools }: { layoutTools: boolean }) {
           <Redo2 size={ICON_SIZE.md} />
         </Button>
       </Tip>
-
-      {layoutTools && <MarkTools />}
-    </div>
-  )
-}
-
-/**
- * 画布标注工具（文字 / 形状 / 子图标签）。**只在画布排版模式出现**：
- * 它们画的是画布对象，而快速编辑那一屏只有一张图，画下去看不见。
- */
-function MarkTools() {
-  const { t } = useTranslation(['workspace', 'common'])
-  const tool = useUiStore((s) => s.tool)
-  const setTool = useUiStore((s) => s.setTool)
-  const [presetsOpen, setPresetsOpen] = useState(false)
-  const activeMark = MARK_TOOLS.find((m) => m.tool === tool)
-  const markActive = !!activeMark
-  const ActiveMark = activeMark?.icon
-
-  return (
-    <>
-      <span className="mx-1.5 h-5 w-px bg-border" />
-
-      <Tip label={t('common:objectType.text')} shortcut="T">
-        <Button
-          size="icon"
-          active={tool === 'text'}
-          // 稳定定位（e2e / 引导）：不认 aria-label 文案
-          data-tool="text"
-          onClick={() => setTool(tool === 'text' ? 'select' : 'text')}
-          aria-label={t('common:objectType.text')}
-        >
-          <Type size={ICON_SIZE.md} />
-        </Button>
-      </Tip>
-
-      <Menu
-        width={188}
-        align="center"
-        trigger={
-          <Button size="md" active={markActive} aria-label={t('workspace:topbar.annotate')}>
-            {ActiveMark ? <ActiveMark size={ICON_SIZE.md} filled /> : <Shapes size={ICON_SIZE.md} />}
-            {t('workspace:topbar.annotate')}
-            <ChevronDown size={ICON_SIZE.xs} className="text-ink-3" />
-          </Button>
-        }
-      >
-        {/* 四把工具是一组互斥取值：当前那把带勾（MenuRadioGroup），不再靠图标换个颜色
-            说「选中的是我」——同一张菜单里图标的深浅还要兼职表示别的（2026-09-15 打磨 T6）。
-            图标走 `MenuItem.icon` 这个唯一出处，不手写 span + 自定色 */}
-        <MenuRadioGroup
-          value={activeMark?.tool ?? ''}
-          onValueChange={(v) => setTool(tool === v ? 'select' : (v as MarkTool))}
-        >
-          {MARK_TOOLS.map(({ tool: mark, icon: Icon, key }) => (
-            <MenuRadioItem key={mark} value={mark} icon={Icon} shortcut={key}>
-              {t(markToolKey(mark))}
-            </MenuRadioItem>
-          ))}
-        </MenuRadioGroup>
-        <MenuSeparator />
-        <MenuLabel>{t('workspace:topbar.insertShape')}</MenuLabel>
-        {INSERT_SHAPES.map((kind) => (
-          <MenuItem key={kind} onSelect={() => insertShape(kind)}>
-            {t(`common:shape.${kind}`)}
-          </MenuItem>
-        ))}
-        <MenuSeparator />
-        <MenuItem onSelect={() => setPresetsOpen(true)}>{t('workspace:topbar.presets')}</MenuItem>
-      </Menu>
-      <PresetsDialog open={presetsOpen} onClose={() => setPresetsOpen(false)} />
-
-      <Tip label={t('workspace:topbar.subLabelsTip')}>
-        <Button size="icon" onClick={addSubLabels} aria-label={t('workspace:topbar.addSubLabels')}>
-          <Tags size={ICON_SIZE.md} />
-        </Button>
-      </Tip>
-    </>
-  )
-}
-
-function ZoomControls() {
-  const { t, i18n } = useTranslation('workspace')
-  const zoom = useViewportStore((s) => s.zoom)
-  // 读数显示的是「用户要去的那一档」（补间的终点），不是补间中的每一帧；见 viewportStore
-  const readoutZoom = useViewportStore((s) => s.readoutZoom)
-  const readoutRolls = useViewportStore((s) => s.readoutRolls)
-  const page = useDocumentStore((s) => s.doc.page)
-  // 预设那一组是**互斥取值**：当前档带勾。缩放不是整数档时一个都不勾（「不知道是哪一档」
-  // 有自己的取值，不能就近归到相邻那一档）
-  const preset = ZOOM_PRESETS.find((z) => Math.abs(z - zoom) < 1e-6)
-
-  return (
-    /* 缩放是一颗文本钮「114% ⌄」+ 一颗适应画布图标钮（2026-09-15 打磨批次 F，L3）：
-       此前是四格边框组，与旁边的边框钮、黑钮三种壳相邻。放大 / 缩小进了菜单，快捷键照旧。
-       弹层本身从 Popover + 九行手写 button 换成 `Menu`（2026-09-15 打磨 M1）：全产品的菜单
-       只有一份实现——role=menu、方向键 / 首字母跳转、内边距 4 都跟着来，不再是第二种菜单 */
-    <div className="flex items-center gap-0.5">
-      <Menu
-        width={168}
-        align="end"
-        trigger={
-          <Button size="md" aria-label={t('topbar.zoomValue', { percent: Math.round(zoom * 100) })} className="type-number">
-            {/* 会滚的数字（@sfinterface/numbers，2026-09-15 调研后只上这一处）：一步到位的缩放
-                （± / 预设 / 适应）只有变了的位滚过去，说的是「变了多少、往哪变」；滚轮 / 捏合是
-                连续输入，读数即时换（duration 0），柱子不会永远在半路。静止时与普通文字像素一致。
-                时长接 --duration-slow（index.css 的 --sfi-resolve），分组关掉——Tavotto 的读数不分组。
-                可达名在按钮的 aria-label 上，组件自己那份读屏文本由 label 保持同一句 */}
-            <Numbers
-              value={Math.round(readoutZoom * 100)}
-              suffix="%"
-              duration={readoutRolls ? undefined : 0}
-              format={{ useGrouping: false }}
-              locale={i18n.language}
-              label={t('topbar.zoomValue', { percent: Math.round(readoutZoom * 100) })}
-              data-zoom-readout
-            />
-            <ChevronDown size={ICON_SIZE.xs} className="text-ink-3" />
-          </Button>
-        }
-      >
-        <MenuItem shortcut={`${MOD}+`} onSelect={() => useViewportStore.getState().zoomBy(1.25)}>
-          {t('topbar.zoomIn')}
-        </MenuItem>
-        <MenuItem shortcut={`${MOD}−`} onSelect={() => useViewportStore.getState().zoomBy(1 / 1.25)}>
-          {t('topbar.zoomOut')}
-        </MenuItem>
-        <MenuSeparator />
-        <MenuRadioGroup
-          value={preset != null ? String(preset) : undefined}
-          onValueChange={(v) => useViewportStore.getState().setZoomCentered(Number(v))}
-        >
-          {ZOOM_PRESETS.map((z) => (
-            <MenuRadioItem key={z} value={String(z)} shortcut={z === 1 ? `${MOD}0` : undefined}>
-              {`${z * 100}%`}
-            </MenuRadioItem>
-          ))}
-        </MenuRadioGroup>
-        <MenuSeparator />
-        <MenuItem
-          shortcut={`${MOD}1`}
-          onSelect={() => useViewportStore.getState().fitAnimated(page.w, page.h)}
-        >
-          {t('topbar.fitCanvas')}
-        </MenuItem>
-      </Menu>
-      <Tip label={t('topbar.fitCanvas')} shortcut={`${MOD}1`}>
-        <Button
-          size="icon"
-          onClick={() => useViewportStore.getState().fitAnimated(page.w, page.h)}
-          aria-label={t('topbar.fitCanvas')}
-          // e2e 的稳定锚点（选择器不认 aria-label / 文案，web/AGENTS.md）
-          data-fit-canvas
-        >
-          <Maximize2 size={ICON_SIZE.md} />
-        </Button>
-      </Tip>
     </div>
   )
 }
@@ -643,14 +486,15 @@ function ExportButton() {
         onClick={() => useUiStore.getState().setExportOpen(true)}
       >
         <Download size={ICON_SIZE.md} />
-        {t('topbar.export')}
+        {/* 窄于 900 只留图标：文字进读屏（sr-only），按钮的可达名不变 */}
+        <span className="max-[899px]:sr-only">{t('topbar.export')}</span>
       </Button>
     </Tip>
   )
 }
 
 /** 低频全局动作收进「更多」：样式 / 版本 / 画布设置 / 帮助 */
-function MoreMenu() {
+function MoreMenu({ writeBackItem }: { writeBackItem: ReactNode }) {
   const { t } = useTranslation('workspace')
   const ui = () => useUiStore.getState()
   // 打招呼的是启动时那个 UpdateNoticeDialog（「稍后」按版本记住）；这里只在
@@ -667,7 +511,8 @@ function MoreMenu() {
       // 会把整块贴到窗口边上，与顶栏 12 的内边距不齐（2026-09-15 打磨 T3）
       align="end"
       trigger={
-        <Button size="icon" aria-label={t(hasUpdate ? 'topbar.moreWithUpdate' : 'topbar.more')}>
+        // data-more-menu：e2e 的稳定锚点，写回入口住在这个菜单里、要先打开它
+        <Button size="icon" data-more-menu aria-label={t(hasUpdate ? 'topbar.moreWithUpdate' : 'topbar.more')}>
           <span className="relative">
             <Ellipsis size={ICON_SIZE.md} />
             {hasUpdate && (
@@ -680,9 +525,11 @@ function MoreMenu() {
         </Button>
       }
     >
+      {writeBackItem}
+      <MenuSeparator />
       {hasUpdate && (
         <>
-          <MenuItem onSelect={() => ui().setSettingsOpen(true, 'update')}>
+          <MenuItem onSelect={() => ui().setSettingsOpen(true, 'about')}>
             <span className="flex items-center gap-2">
               <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-ink" aria-hidden />
               {t('topbar.updateAvailable', { version: latest })}

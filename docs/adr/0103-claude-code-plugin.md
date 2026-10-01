@@ -20,7 +20,8 @@ Claude Code 早已能用 Tavotto：`integrations/configure.py --host claude-code
    `codex-plugin`，与 Codex 市场指向同一个提交。发行链（`plugin_stage.py` / `plugin_publish.py`）
    一行不改：它按 `git ls-files` 取插件目录，新清单自然进 staging；`STAGE_REQUIRED` 多记它一条
    （不进 `REQUIRED`，理由同 #559：`REQUIRED` 也体检已装的旧版 Codex 插件）。
-2. **MCP 条目写在 plugin.json 里，名字必须与 `.mcp.json` 相同。** Claude Code 先读插件根的
+2. **MCP 条目写在 plugin.json 里，名字必须与 `.mcp.json` 相同。**（2026-09-28 由 [ADR 0109](0109-more-hosts-one-plugin.md)
+   接着改：Codex 的配置改名 `codex.mcp.json`，插件根不再有 `.mcp.json`；同名仍保留，理由换成技能与恢复话术按名找工具。） Claude Code 先读插件根的
    `.mcp.json`，再按名字合并 plugin.json 的 `mcpServers`，同名整条替换。`.mcp.json` 是 Codex
    形状（`./` 相对 command、`cwd`、`tool_timeout_sec`），Claude Code 不认 `cwd`，照原样起会
    ENOENT——2.1.283 实测，名字对不上时两条都在、Codex 那条失败。所以 Claude 条目是同一个启动器

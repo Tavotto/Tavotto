@@ -293,7 +293,7 @@ describe('高频样式是带可见标签的行', () => {
   it('背景 / 描边 / 行距经「更多」可达（展示注册表接管，不再是齿轮弹层）', async () => {
     await mount('axes_0.title')
     const more = Array.from(host.querySelectorAll('button')).find(
-      (b) => b.textContent?.trim() === '更多',
+      (b) => b.textContent?.trim().split(', ')[0] === '更多',
     )!
     await act(async () => {
       more.click()

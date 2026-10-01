@@ -6,6 +6,7 @@ import type {
   ControlKind,
   InspectorPriority,
   PresentedBuckets,
+  PresentedField,
 } from './types'
 
 /**
@@ -190,11 +191,27 @@ export function presentFields(
   opts: PresentOptions,
 ): PresentedBuckets {
   const profile = ROLE_PROFILES[role]
-  const out: PresentedBuckets = { primary: [], more: [], advanced: [] }
+  const out: PresentedBuckets = { primary: [], more: [], advanced: [], folds: [] }
+  const foldSpecs = profile?.folds ?? []
+  const foldOf = new Map<string, number>()
+  foldSpecs.forEach((spec, i) => spec.props.forEach((p) => foldOf.set(p, i)))
+  const foldFields: PresentedField[][] = foldSpecs.map(() => [])
 
   fields.forEach((field, engineIndex) => {
     // 条件显示：模式从属字段只在对应模式下渲染；用户改过的必须能看到
     if (!fieldVisible(role, field.prop, opts)) return
+
+    // 摘要行认领：先于分桶，同一个字段只在一处出现
+    const fi = foldOf.get(field.prop)
+    if (fi !== undefined) {
+      foldFields[fi].push({
+        field,
+        priority: 'more',
+        control: controlKindOf(role, field),
+        order: foldSpecs[fi].props.indexOf(field.prop),
+      })
+      return
+    }
 
     let priority: InspectorPriority
     let order: number
@@ -239,5 +256,9 @@ export function presentFields(
   for (const bucket of [out.primary, out.more, out.advanced]) {
     bucket.sort((a, b) => a.order - b.order)
   }
+  foldSpecs.forEach((spec, i) => {
+    foldFields[i].sort((a, b) => a.order - b.order)
+    if (foldFields[i].length) out.folds.push({ spec, fields: foldFields[i] })
+  })
   return out
 }

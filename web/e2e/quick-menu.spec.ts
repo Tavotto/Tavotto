@@ -33,7 +33,7 @@ test('右键菜单：Esc 不清空选区 / 越界翻转 / 重新构建真跑脚�
   await expect(menu).toHaveCount(0)
   // 选区还在：单选浮动栏回来、属性页仍是这张图
   await expect(page.locator('[data-context-bar]')).toBeVisible()
-  await expect(page.getByRole('button', { name: '编辑图内元素' }).first()).toBeVisible()
+  await expect(page.getByRole('button', { name: '改图里的内容' }).first()).toBeVisible()
 
   // ---- 重新构建：真的重跑脚本 ----
   await panel.click({ button: 'right' })

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Tavotto MCP launcher, POSIX half (issue #266). `.mcp.json` says `command: ./mcp/launch`:
+# Tavotto MCP launcher, POSIX half (issue #266). `codex.mcp.json` says `command: ./mcp/launch`:
 # on macOS / Linux Codex executes this file; on Windows Codex's program resolver appends
 # PATHEXT and runs the sibling mcp/launch.cmd instead (measured on a real Windows 11 +
 # Codex Desktop). Behaviour here is exactly what `command: python3` did before #266.

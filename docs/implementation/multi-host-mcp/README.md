@@ -1,4 +1,7 @@
-# 多宿主本地 MCP 接入（Cursor / ZCode / DSH / WorkBuddy / Claude Code / Claude Desktop / Trae / VS Code）
+# 多宿主本地 MCP 接入（Cursor / ZCode / DSH / WorkBuddy / Claude Code / Claude Desktop / Trae / VS Code / MiniMax Code）
+
+> 2026-09-28 追加（ADR 0109）：MiniMax Code profile；WorkBuddy 装 Claude 插件（Beta）；ZCode 的插件路线与 Trae 一键链接；
+> Codex 的 MCP 配置改名 `codex.mcp.json`；授权根拒绝主目录。字段依据在 `hosts.md`，证据在 `acceptance.md`。
 
 > 这是一项**兼容性**改造，不是按宿主数新建产品：同一份版本化完整包、同一个 MCP
 > 启动器与 server、同一套引擎、同一份核心 Skill。宿主之间的差异只在配置 schema、
@@ -53,7 +56,7 @@ python3 <完整包>/integrations/configure.py --host <profile> --project-root <�
         [--diagnose | --emit config|instructions]
 ```
 
-- `--host`：`cursor` `zcode` `dsh` `workbuddy` `claude-code` `claude-desktop` `trae` `vscode`。
+- `--host`：`cursor` `zcode` `dsh` `workbuddy` `claude-code` `claude-desktop` `trae` `vscode` `minimax-code`。
   profile 名只是本工具的选择参数，不是各家 CLI 的原生命令。
 - stdout：那一家可合并的配置片段（DSH 是 Cordis YAML patch，其余 JSON）；stderr：合并到哪、
   授权目录、引擎状态与恢复步骤、怎样确认宿主真的加载了、Skill 怎么装。失败非零、stdout 为空。

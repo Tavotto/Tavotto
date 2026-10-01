@@ -104,7 +104,8 @@ argv 出处 `pip_install_argv` / `pip_install_joint_argv` 各多一个只在这�
 **「用户自配了源」**：`user_package_source(python)`——环境变量 `PIP_INDEX_URL` / `PIP_EXTRA_INDEX_URL` / `PIP_NO_INDEX` /
 `PIP_FIND_LINKS`，或这个解释器的 `pip config list` 里有 `index-url` / `extra-index-url` / `no-index` / `find-links`。
 它是诊断用的 `custom_package_index`（只问 index）的超集：离线 wheelhouse 同样是「用户说过从哪装」，绕开它去联网违背
-意思表示。问不出来（`pip config list` 失败）按「配过」处理——宁可不换源。受管环境里跑的 pip 用的是用户自己的 pip 配置
+意思表示。问不出来（`pip config list` 失败）按「配过」处理——宁可不换源。（2026-10-01 起改为让 pip 在目标解释器里解析 install
+选项、不再读 `pip config list`——见 ADR 0112 §二的修订，#767。）受管环境里跑的 pip 用的是用户自己的 pip 配置
 （`runtime.owned_env` 只改缓存位置，ADR 0019 §八），所以这一问对四条路径量的是同一个东西。
 
 **镜像的信任面**：固定一个——清华 TUNA `https://pypi.tuna.tsinghua.edu.cn/simple`（PyPI 全量镜像，HTTPS，证书由 pip
@@ -122,6 +123,8 @@ Python 包源，改用 PyPI 镜像 … 重试一次」，进度记录顶层 `pyp
 锁文件每个目标的 `enabled` 仍是 false（ADR 0063 §九）：随包附带与镜像回退都是「供应得出来」的前提，不是资格。翻开关是
 后续单独的 PR，按 ADR 0064 §四 带第三档证据（干净目标 + 冻结产物 + 正常入口）；那份证据从此应当包括「包内归档命中、
 零下载」这一格。
+
+（2026-10-01 更新：翻开关的 PR 已按此另开，五个目标全开；「包内归档命中、零下载」在 `macos-arm64` 与 `windows-x86_64` 的目标档上都实测过，`macos-x86_64` 是没有证据的例外，见 ADR 0064 2026-10-01 修订。）
 
 ## 看护
 
@@ -144,3 +147,20 @@ Python 包源，改用 PyPI 镜像 … 重试一次」，进度记录顶层 `pyp
 * 改了：ADR 0063 §一（来源多了包内一处）、§六（「联网只有一条路」仍成立，但不再是唯一来源）、§十（「私有镜像不在本轮」
   对 PyPI 不再成立；私有 Python 归档本身仍只有锁里那一个下载地址，不做镜像）。
 * 没验证到：冻结产物真打包（PyInstaller / Tauri / NSIS / 公证）；以产品入口在国内网络上的端到端。
+
+## 修订（2026-09-29，ADR 0112 §二 / §三，随 #744 合入）
+
+阿里云华东 Windows 实测：files.pythonhosted.org 约 20 KB/s，pip 不报网络错、只是慢，15 分钟撞 `dependency_install_timeout`，
+而本 ADR 的回退只认 `dependency_network_unavailable`——那台机器上它从不触发；失败也只落在 environment.json，app.log 里没有。
+按用户 2026-09-29 的「自动测速选源」裁决补四处（决策全文在 ADR 0112 §二，这里只记对本 ADR 的改动）：
+
+1. **慢与超时也换源**：没有自配源时第一次尝试带测速（`_PipWatch`：某个文件被证明慢于 `PIP_SLOW_BPS` / 联网阶段卡住
+   `PIP_STALL_S` / 用完第一次的预算），判出来即以 `dependency_install_timeout` 收场，`mirror_retry_warranted` 对它放行。
+   「为什么只在网络失败时启用而不是默认用镜像」那一段的理由不变：仍然先走官方源，只是「走不下去」的判据多了「慢到预算里装不完」。
+2. **预算共用**：`INSTALL_TIMEOUT_S`（15 分钟）是两次尝试共用的总预算；第一次最多用到「总预算 − `PIP_MIRROR_RESERVE_S`（5 分钟）」。
+   此前镜像那一次另起 15 分钟，最坏 30 分钟。
+3. **配置问 pip、按节判**（#737 的结构性结论落在引擎这一侧）：`pip config list` 的输出只收 `global` / `install` / `:env:`，
+   键按 pip 的规范化比较；并且改在**开始之前**问一次——要说出这次用的是哪个源、决定第一次带不带测速（本 ADR 原来「非网络失败连
+   配置都不问」那条看护随之改成「非网络失败不换源」）。
+4. **结局进 app.log**：每次尝试一条（code + 包源闭集 `PIP_SOURCES`），换源一条，四个线程入口的失败终态各一条；进度顶层多
+   `pypi_source`。

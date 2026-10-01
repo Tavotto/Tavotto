@@ -22,6 +22,7 @@ import { OverlaySvg } from './OverlaySvg'
 import { PageSheet } from './PageSheet'
 import { ContextBar } from './context-bar/ContextBar'
 import { QuickEdit } from './QuickEdit'
+import { SyncOverridesHost } from '@/components/inspector/SyncOverridesDialog'
 import { PageOutsideMask } from './PageOutsideMask'
 import { Rulers, RULER_SIZE } from './Rulers'
 import { startDraw, startMarquee, startPan } from './interactions'
@@ -268,6 +269,8 @@ export function CanvasStage() {
 
       {/* 右键快捷编辑：自己 portal 到 body，不受世界变换影响 */}
       <QuickEdit />
+      {/* 「把这些修改用到同脚本的其他图…」的窗口：入口在上面那个右键菜单里 */}
+      <SyncOverridesHost />
 
       {/* 单选时贴着选择框的上下文工具条（Quick Edit 的可发现入口） */}
       <ContextBar />

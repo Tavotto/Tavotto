@@ -48,6 +48,18 @@ CODEX_PLUGIN_SUBDIR = "codex-plugin"
 CODEX_PLUGIN_STABLE_BRANCH = "plugin-stable"
 #: `git-subdir` 来源里的仓库地址（Codex 对 https://github.com/… 会自动补 .git，这里直接写全）
 CODEX_PLUGIN_SOURCE_URL = f"{REPO_URL}.git"
+#: 没有 git 的机器（只装了 Codex 桌面版的 Windows 最常见，#722）装插件的来源：发行分支的
+#: GitHub 源码压缩包。分支本身就是一个本地市场（根上 `.agents/plugins/marketplace.json` →
+#: `local ./codex-plugin`），解压后 `codex plugin marketplace add <目录>` 不需要 git。
+#: GitHub 把这个地址 302 到 codeload，zip 注释里是那个提交的 SHA。
+CODEX_PLUGIN_STABLE_ARCHIVE_URL = f"{REPO_URL}/archive/refs/heads/{CODEX_PLUGIN_STABLE_BRANCH}.zip"
+#: 解压后顶层目录名（GitHub 源码压缩包的固定形状 `<仓库名>-<分支名>`）。`tavotto codex install`
+#: 与 README 手动步骤（`Expand-Archive`）落到同一个名字，两条路装出来的是同一份本地市场。
+CODEX_PLUGIN_STABLE_ARCHIVE_DIR = f"{REPO_NAME}-{CODEX_PLUGIN_STABLE_BRANCH}"
+#: 每个 release 附带的插件构建清单（`.github/workflows/release.yml` 把 staging 的
+#: `plugin-build.json` 拷成这个名字）。压缩包的 content_digest 要与它对上——发行分支与
+#: release 附件由两道不同的工序写出，两边一致才算这份压缩包是那次发行的产物。
+CODEX_PLUGIN_BUILD_ASSET = "codex-plugin-build.json"
 
 #: Claude Code 插件的安装参数（ADR 0103）。**同一份插件目录、同一条发行分支**：
 #: 仓库根 `.claude-plugin/marketplace.json` 的 `git-subdir` 指向
@@ -59,6 +71,21 @@ CLAUDE_SPARSE_PATHS = (".claude-plugin",)
 #: `claude plugin install` 的目标（插件名@marketplace 名）；两个名字各自的唯一出处是
 #: `.claude-plugin/marketplace.json` 的 `plugins[0].name` 与 `name`
 CLAUDE_PLUGIN_REF = "tavotto@tavotto"
+#: WorkBuddy 装的是**同一份** Claude 插件（ADR 0109）：它的「插件市场 → 添加市场」收 `owner/repo`，
+#: 读仓库根 `.claude-plugin/marketplace.json`，装 `CLAUDE_PLUGIN_REF`。界面里没有稀疏检出选项。
+#: 看护：`tests/test_claude_plugin.py`
+WORKBUDDY_MARKETPLACE = CODEX_MARKETPLACE
+
+#: DeepSeek Harness 的 bundle（ADR 0104）。同一份插件目录兼作 npm 包：`package.json`
+#: 声明 `dsh.bundle.patch`，由 `dsh plugin --profile <名> add <规格>` 经 pnpm 装进 profile。
+#: 规格是 pnpm 的 git 子目录写法，与两个市场指向同一条发行分支、同一个目录。
+#: 看护：`tests/test_dsh_bundle.py`
+DSH_BUNDLE_NAME = "tavotto-dsh"
+DSH_PLUGIN_SPEC = (
+    f"git+{CODEX_PLUGIN_SOURCE_URL}#{CODEX_PLUGIN_STABLE_BRANCH}&path:/{CODEX_PLUGIN_SUBDIR}"
+)
+#: README 里示范的 profile（`dsh web` 用的那个）；换 profile 只换这个名字
+DSH_DEFAULT_PROFILE = "web"
 
 # 桌面壳的 bundle 标识，与 src-tauri/tauri.conf.json 的 identifier 严格同源。
 # 桌面日志目录（tauri 的 app_log_dir）按它推导：macOS 是

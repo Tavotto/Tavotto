@@ -201,6 +201,19 @@ class RepairError(RuntimeError):
 # 计划
 # ---------------------------------------------------------------------------
 @dataclasses.dataclass(frozen=True)
+class _Widened:
+    """单包修复要新建一代时的联合求解结果（字段与 `JointRepairPlan` 里同名字段同义）。"""
+
+    requirements: tuple[str, ...]
+    constraints: tuple[str, ...]
+    hashes: dict
+    needed_imports: tuple[str, ...]
+    record: tuple[dict, ...]
+    groups: tuple[str, ...]
+    inputs_digest: str
+
+
+@dataclasses.dataclass(frozen=True)
 class RepairPlan:
     """一次修复的完整描述——**执行端只认它，不读请求体里的任何别的字段**。
 
@@ -226,10 +239,22 @@ class RepairPlan:
     #: 的载荷（版本 / 目标 / `download_bytes`），没有基础解释器又提供这条路时才有值。
     #: 界面必须把 `download_bytes` 说出口；执行端据它决定要不要在建 venv 之前先供应。
     private_python: dict | None = None
+    #: 受管目标要**新建一代**时，这一代装的是脚本开跑所需的全部第三方依赖（ADR 0061 §五 2026-09-30 修订）：
+    #: 联合计划的求解结果，而不只是缺的那一个包。原地往已有一代加包 / 项目 venv 目标为 None（行为不变）。
+    widened: "_Widened | None" = None
+
+    @property
+    def requirements(self) -> tuple[str, ...]:
+        """这份授权要装的全部需求（规范串）：单包 = 只有那一条；联合 = 整个 delta（不含 adapter）。"""
+        if self.widened is not None:
+            return self.widened.requirements
+        return (self.requirement.requirement(),)
 
     def to_payload(self) -> dict:
         """交给前端的形态。**不出绝对路径**（项目内的出项目相对）。"""
         return {
+            "requirements": list(self.requirements),
+            "joint": self.widened is not None and len(self.widened.requirements) > 1,
             "plan_id": self.plan_id,
             "target_kind": self.target_kind,
             "python": projectenv.project_relative(self.project, self.python)
@@ -500,6 +525,8 @@ def offer(project: str | Path, script: str, module: str, project_env: dict | Non
     private = privatepython.offer_payload() if available is False else None
     if private is not None:
         available = True
+    # 这一代要装的全部包**不在 offer 里算**：联合求解要量解释器事实（起子进程），而 offer 在渲染失败的响应路径上
+    # 不起任何解释器。要装什么由形成计划（`create_plan`）时算、随计划载荷说出口，卡片按预读的计划写那一句话
     out["targets"].append(
         {
             "kind": TARGET_MANAGED,
@@ -583,6 +610,7 @@ def create_plan(
     python = ""
     creates = False
     private: dict | None = None
+    widened: _Widened | None = None
     if target_kind == TARGET_PROJECT_VENV:
         python = _pick_project_venv(root, script, module)
         health = projectenv.probe_environment(python, module)
@@ -600,6 +628,11 @@ def create_plan(
         # 受管目标**每一次**都建新的一代（U04 §五），有没有 active 代都要基础解释器：已有环境的机器上
         # 系统 Python 被删掉之后，单包修复同样要走私有 Python（Codex #464 第二轮 P2）
         private = _private_python_offer()
+        if creates:
+            # 从空 venv 起的第一代：脚本开跑要的**全部**第三方依赖一次装齐，不只是缺的这一个——
+            # 新一代没有内置 runtime 里的 pandas 等，只装一个包，自动重跑必然又撞跑前门
+            # （2026-09-29 干净 macOS 虚拟机实测：装完 openpyxl 后卡在「缺 pandas」）
+            widened = _widen_for_fresh_generation(root, script, requirement)
 
     key = _env_key(target_kind, python, root)
     with _lock:
@@ -621,17 +654,95 @@ def create_plan(
         created_at=now,
         expires_at=now + PLAN_TTL_S,
         private_python=private,
+        widened=widened,
     )
     _prune_plans()
     with _lock:
         _plans[plan.plan_id] = plan
     LOG.info(
         "依赖修复计划: %s → %s（%s）",
-        plan.requirement.requirement(),
+        ", ".join(plan.requirements),
         logsafe.known(target_kind, TARGETS),
         script,
     )
     return plan
+
+
+def _fresh_generation_joint(project: str, script: str) -> depplan.JointPlan | None:
+    """受管目标要新建一代时，这个脚本的联合计划——与 `create_joint_plan` 同一条取事实的路（`_facts_for` /
+    `private_python_target`）：缺什么按此刻会跑脚本的解释器量，装什么按将要新建的那一代量。
+    量不出来（没有解释器 / 事实取不到）回 None，由调用方退回单包。"""
+    standin = private_python_target(project, script)
+    install = None
+    if standin is not None:
+        facts = standin[2]
+    else:
+        try:
+            python = pool.resolve_worker_python(project, script=script)[0]
+        except pool.WorkerError:
+            python = ""
+        run, install, _measured = _facts_for(TARGET_MANAGED, python, project)
+        facts = run if run is not None else install
+        install = install if run is not None else None
+    if facts is None:
+        return None
+    return depplan.plan(
+        project,
+        script,
+        facts=facts,
+        target_kind=TARGET_MANAGED,
+        groups=depplan.selected_groups_setting(project),
+        install_facts=install,
+    )
+
+
+def _fold_requested(
+    requirement: depresolve.DependencyRequirement, joint: depplan.JointPlan
+) -> _Widened | None:
+    """把用户点的那一个包并进联合计划：联合集合里已有同名的用它（带声明的 extras / 版本），没有就补上。
+    联合计划 blocked / hash 模式（锁就是闭包，多补一条没有 hash 的会被 pip 拒）回 None——退回单包。"""
+    if joint.status == depplan.STATUS_BLOCKED or joint.require_hashes:
+        return None
+    wanted = depresolve.normalize_distribution(requirement.distribution)
+    delta = list(joint.requirements)
+    if all(depresolve.normalize_distribution(_name_of(r)) != wanted for r in delta):
+        delta.append(requirement.requirement())
+    imports = [m["import_name"] for m in joint.missing]
+    if requirement.import_name and requirement.import_name not in imports:
+        imports.append(requirement.import_name)
+    # 账目里用户点的那个包沿用单包修复原来的写法（distribution / specifier 取自它自己的 requirement），其余取自联合计划
+    record = [
+        {
+            "import_name": requirement.import_name,
+            "distribution": requirement.distribution,
+            "specifier": requirement.specifier,
+        }
+    ]
+    record += [
+        {
+            "import_name": m["import_name"],
+            "distribution": m["distribution"],
+            "specifier": ",".join(m["specifiers"]),
+        }
+        for m in joint.missing
+        if depresolve.normalize_distribution(m["distribution"]) != wanted
+    ]
+    return _Widened(
+        requirements=tuple(delta),
+        constraints=tuple(joint.constraints),
+        hashes={},
+        needed_imports=tuple(imports),
+        record=tuple(record),
+        groups=tuple(joint.selection.get("selected_groups") or ()),
+        inputs_digest=joint.inputs_digest,
+    )
+
+
+def _widen_for_fresh_generation(
+    project: str, script: str, requirement: depresolve.DependencyRequirement
+) -> _Widened | None:
+    joint = _fresh_generation_joint(project, script)
+    return _fold_requested(requirement, joint) if joint is not None else None
 
 
 def _private_python_offer() -> dict | None:
@@ -699,6 +810,7 @@ def _install_guarded(plan_id: str, on_event) -> dict:
     try:
         return install(plan_id, on_event)
     except RepairError as exc:
+        _log_repair_failure("依赖修复", plan_id, exc.code)
         pinned = (exc.extra or {}).get("pinned")
         return _emit(
             plan_id,
@@ -778,18 +890,24 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
 
     python = plan.python
     if plan.target_kind == TARGET_MANAGED:
-        # 受管环境按代（U04，ADR 0061 §五）：单包修复是 delta 只有一条的联合准备——建新的
-        # 一代、装完整集合、验完再切 active。这里不再往 active 那一代原地 pip。
+        # 受管环境按代（U04，ADR 0061 §五）：单包修复是联合准备的特例——建新的一代、装完整集合、
+        # 验完再切 active。这里不再往 active 那一代原地 pip。从空 venv 新建第一代时集合是脚本开跑
+        # 要的全部（`plan.widened`）；往已有账上加一个包时 delta 只有那一条。
+        wide = plan.widened
         job = _GenerationJob(
             progress_id=plan.plan_id,
             project=project,
             script=script,
-            delta=(req.requirement(),),
-            constraints=(),
+            delta=plan.requirements,
+            constraints=wide.constraints if wide else (),
             hashes={},
             require_hashes=False,
-            needed_imports=(req.import_name,) if req.import_name else (),
-            record=(
+            needed_imports=wide.needed_imports
+            if wide
+            else ((req.import_name,) if req.import_name else ()),
+            record=wide.record
+            if wide
+            else (
                 {
                     "import_name": req.import_name,
                     "distribution": req.distribution,
@@ -810,6 +928,11 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
             # 界面说「检查网络后重试」，重试撞到的却是 `dependency_already_attempted`，只能重启应用
             # （2026-09-28 Windows Server 2025 冻结包实测）。
             attempted=(plan.project_id, env_key, req.requirement()),
+            # 计划里带着下载 = 事实来自替身：供应之后按真解释器重算，那时仍要把用户点的这一个并进去
+            groups=wide.groups if wide else (),
+            replan=bool(wide and plan.private_python is not None),
+            inputs_digest=wide.inputs_digest if wide else "",
+            requested=req if wide else None,
         )
         outcome = _run_generation_locked(job, cancel_ev, env_key)
         if not outcome.get("ok"):
@@ -863,6 +986,7 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
         cancel_ev,
         lambda text: _append_log(plan.plan_id, text, on_event),
         on_mirror=lambda url: _note_mirror(plan.plan_id, url, on_event),
+        on_source=lambda src: _note_source(plan.plan_id, src, on_event),
     )
     if code == ERROR_CANCELLED:
         return _finish_cancelled(plan, on_event, python)
@@ -1002,6 +1126,7 @@ def _rebuild_guarded(project, on_event, progress_id: str) -> dict:
     try:
         return rebuild_managed(project, on_event, progress_id=progress_id)
     except RepairError as exc:
+        _log_repair_failure("受管环境重建", progress_id, exc.code)
         return _emit(progress_id, STATE_FAILED, on_event, code=exc.code, error=str(exc))
     except Exception as exc:  # noqa: BLE001
         LOG.exception("受管环境重建异常")
@@ -1187,8 +1312,9 @@ def _pip_install(
     *,
     upgrade: bool = False,
     on_mirror=None,
+    on_source=None,
 ) -> tuple[str, str]:
-    """跑一次 pip install（网络类失败时按 `_run_pip_install` 的规则至多再走一次镜像）。
+    """跑一次 pip install（网络类失败 / 官方源太慢时按 `_run_pip_install` 的规则至多再走一次镜像）。
     回 `("", 输出)` 表示成功，否则 `(错误码, 输出)`。"""
     if depresolve.parse_requirement(requirement) is None:
         # 第二道门：真正拼进 argv 之前再验一次形状。第一道在解析处，
@@ -1203,11 +1329,12 @@ def _pip_install(
         cancel_ev,
         on_log,
         on_mirror=on_mirror,
+        on_source=on_source,
     )
 
 
 # ---------------------------------------------------------------------------
-# PyPI 镜像回退（ADR 0111）
+# PyPI 镜像回退（ADR 0111；慢 / 超时与预算：ADR 0112 §二）
 #
 # 国内网络直连 PyPI 常常连不上 / 读超时。先用官方 / 用户自己的配置装；**仅当**失败是网络类的、
 # 且用户没有自配任何包源时，改用一个固定的镜像重试**一次**。用户配过源（index / extra-index /
@@ -1215,23 +1342,170 @@ def _pip_install(
 # ---------------------------------------------------------------------------
 #: 固定的一个镜像（清华 TUNA，PyPI 全量镜像，HTTPS）。不做镜像列表、不测速、不轮换。
 PYPI_MIRROR_URL = "https://pypi.tuna.tsinghua.edu.cn/simple"
-#: 「用户自配了包源」的 pip 环境变量与配置键：index 两个 + 离线 wheelhouse 两个。后两个不算
-#: `custom_package_index`（诊断只问 index），但同样是「用户说过从哪装」：绕开它去联网是违背意思表示。
-_PIP_SOURCE_ENV = ("PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL", "PIP_NO_INDEX", "PIP_FIND_LINKS")
-_PIP_SOURCE_KEYS = ("index-url", "extra-index-url", "no-index", "find-links")
+#: pip 的默认索引（没配任何源时 `pip install` 用的就是它）。判「用户配了自定义源」时与它比。
+PYPI_DEFAULT_INDEX = "https://pypi.org/simple"
+
+#: 在**目标解释器**里让 pip 自己把 `pip install` 的选项解析一遍，回生效的包源（JSON 一行）。不联网、不装东西。
+#: 走的就是 `pip install` 的选项解析：配置文件按 pip 的覆盖顺序合并、`[install]` 压过 `[global]`、
+#: `PIP_CONFIG_FILE` / `PIP_*` 环境变量都算——`pip config list` 的打印顺序不是覆盖顺序、`config get`
+#: 不认 `PIP_CONFIG_FILE`（#767 实测，两轮 Codex P1 同一个根因），所以不再自己读配置。入口是 pip 的内部
+#: `create_command`（19.3 起一直在）；导入 / 解析失败（pip 太旧、配置坏了）输出 `{"error": 类型名}`，
+#: 调用方按「不知道」处理、不猜。**插件 `codex-plugin/mcp/server.py::_PIP_OPTIONS_PROBE` 是它的逐字镜像**
+#: （插件 import 不到引擎；严格同源对，看护 `tests/test_pip_config_pair.py`）。
+PIP_OPTIONS_PROBE = """\
+import json
+try:
+    import pip
+    from pip._internal.commands import create_command
+    o, _ = create_command("install").parse_args([])
+    print(json.dumps({
+        "pip_version": pip.__version__,
+        "index_url": o.index_url or "",
+        "extra_index_urls": list(o.extra_index_urls or []),
+        "no_index": bool(o.no_index),
+        "find_links": list(o.find_links or []),
+    }))
+except BaseException as e:
+    print(json.dumps({"error": type(e).__name__}))
+"""
+
+
+def parse_pip_options(text: str) -> dict | None:
+    """`PIP_OPTIONS_PROBE` 的输出 → 选项字典；出错 / 认不出形状回 None（= 不知道）。"""
+    for line in reversed((text or "").strip().splitlines()):
+        try:
+            data = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(data, dict) or "error" in data or "index_url" not in data:
+            return None
+        return data
+    return None
+
+
+def _same_index(a: str, b: str) -> bool:
+    return (a or "").strip().rstrip("/").lower() == b.rstrip("/").lower()
+
+
+def options_name_a_custom_index(opts: dict) -> bool:
+    """pip 解析出的 install 选项是不是指向**自定义索引**：index-url 不是 PyPI 默认、或有 extra-index-url。
+    插件 `server.options_name_a_custom_index` 是它的镜像（同源对）。"""
+    return not _same_index(str(opts.get("index_url") or ""), PYPI_DEFAULT_INDEX) or bool(
+        opts.get("extra_index_urls")
+    )
+
+
+def options_name_a_user_source(opts: dict) -> bool:
+    """「用户说过从哪装」：自定义索引，或离线 wheelhouse（`no-index` / `find-links`）。绕开它去联网是违背意思表示。"""
+    return (
+        options_name_a_custom_index(opts)
+        or bool(opts.get("no_index"))
+        or bool(opts.get("find_links"))
+    )
+
+
+def pip_install_options(python: str) -> dict | None:
+    """那个解释器的 `pip install` 此刻生效的包源选项（`PIP_OPTIONS_PROBE`）；问不到回 None。"""
+    rc, out = _run([str(python), "-c", PIP_OPTIONS_PROBE], 30)
+    if rc != 0:
+        return None
+    return parse_pip_options(out)
 
 
 def user_package_source(python: str) -> bool | None:
-    """这个环境的 pip 是不是配了**用户自己的包源**（`_PIP_SOURCE_ENV` / `_PIP_SOURCE_KEYS`）。
+    """这个环境的 pip 是不是配了**用户自己的包源**（`options_name_a_user_source`）。只回真假、不回地址。
+    问不出来回 None——镜像回退把 None 当「配过」处理（宁可不换源）。环境变量与配置文件都由 pip 自己解析。"""
+    opts = pip_install_options(python)
+    return None if opts is None else options_name_a_user_source(opts)
 
-    `custom_package_index` 的超集（多认 no-index / find-links）；只回真假、不回地址。问不出来回 None
-    ——镜像回退把 None 当「配过」处理（宁可不换源）。"""
-    if any(os.environ.get(name) for name in _PIP_SOURCE_ENV):
-        return True
-    rc, out = _run([str(python), "-m", "pip", "config", "list"], 30)
-    if rc != 0:
-        return None
-    return any(k in out for k in _PIP_SOURCE_KEYS)
+
+#: 这次 pip install 用的是哪个包源（进日志、进进度 `pypi_source`）。闭集；不含地址——用户配的源只说「用户配置」。
+PIP_SOURCE_PYPI = "pypi"  # 没有任何自配：pip 默认的官方 PyPI
+PIP_SOURCE_USER = (
+    "user_config"  # 用户配过（index / extra-index / no-index / find-links，环境变量或配置文件）
+)
+PIP_SOURCE_UNKNOWN = "unknown"  # 问不出来（按「配过」处理，不换源）
+PIP_SOURCE_MIRROR = "tuna"  # 回退到 PYPI_MIRROR_URL 的那一次
+PIP_SOURCES = (PIP_SOURCE_PYPI, PIP_SOURCE_USER, PIP_SOURCE_UNKNOWN, PIP_SOURCE_MIRROR)
+
+#: 官方源「太慢」的判据（ADR 0112 §二；只在没有自配源、换得了源的第一次尝试上测）。取值理由：
+#:   * 阿里云华东 Windows 实测 files.pythonhosted.org 约 20 KB/s，TUNA 13 MB/s；matplotlib + numpy + 依赖的
+#:     wheel 合计约 30 MB——20 KB/s 要 25 分钟，15 分钟的总预算必然撞超时。
+#:   * `PIP_SLOW_BPS` = 100 kB/s：官方源第一次尝试最多能用的 10 分钟（总预算 − `PIP_MIRROR_RESERVE_S`）在这个
+#:     速度下约 60 MB，够装常见科学栈；比它慢就几乎注定在预算里装不完。正常宽带比它高一两个数量级，不会误换。
+#:   * 判法：pip 每下一个文件先打一行 `Downloading <名字> (<大小>)`，下完才打下一行。这一行出现后过了
+#:     `PIP_SLOW_GRACE_S`、且已经超过「大小 / PIP_SLOW_BPS」还没有下一行 → 这个文件的实际速度**一定**低于
+#:     阈值（没下完就是证据，不是估计）。小文件（元数据几十 kB）在宽限期内下完，不参与判定。
+#:   * 联网阶段（`Collecting` / `Downloading` / `Looking in indexes` / `Obtaining` 之后、`Installing collected
+#:     packages` 之前）连续 `PIP_STALL_S` 没有新的一行也算太慢（索引页慢到这个份上，后面的 wheel 更等不起）；
+#:     安装阶段不测（Windows 上杀软扫大 wheel 可以几分钟没输出，那不是网络）。
+PIP_SLOW_BPS = 100_000
+PIP_SLOW_GRACE_S = 30.0
+PIP_STALL_S = 90.0
+#: 预算（ADR 0112 §二）：`INSTALL_TIMEOUT_S` 是**这次安装**的总预算，两次尝试共用。换得了源时第一次最多用到
+#: 「总预算 − 这个保底」为止，保证镜像那一次至少还有 5 分钟（TUNA 13 MB/s 下 30 MB 十几秒）；不换源时第一次用满。
+PIP_MIRROR_RESERVE_S = 300.0
+
+_PIP_DOWNLOADING_RE = re.compile(
+    r"^\s*Downloading\s+\S+\s+\((\d+(?:\.\d+)?)\s*(bytes|B|kB|KB|MB|GB)\)", re.IGNORECASE
+)
+_PIP_UNIT = {"bytes": 1, "b": 1, "kb": 1000, "mb": 1000**2, "gb": 1000**3}
+_PIP_NETWORK_PHASE = ("collecting", "downloading", "looking in indexes", "obtaining")
+_PIP_INSTALL_PHASE = ("installing collected packages",)
+
+#: `_PipWatch.reason` 的闭集（进日志）。
+PIP_SLOW_DOWNLOAD = "slow_download"
+PIP_STALLED = "stalled"
+PIP_FIRST_BUDGET = "first_attempt_budget"
+PIP_SLOW_REASONS = (PIP_SLOW_DOWNLOAD, PIP_STALLED, PIP_FIRST_BUDGET)
+#: 换源理由的闭集（进日志）：三种「太慢」+ 网络类失败 + 超时。
+PIP_SWITCH_REASONS = (
+    *PIP_SLOW_REASONS,
+    ERROR_NETWORK,
+    ERROR_TIMEOUT,
+)
+
+
+class _PipWatch:
+    """官方源第一次尝试的测速（`_run_pip` 每 0.25 s 问一次 `verdict`）。判出来就是这次尝试的结局：
+    `_run_pip` 杀掉 pip、回 `ERROR_TIMEOUT`，`reason` 说为什么（`PIP_SLOW_REASONS`）。"""
+
+    def __init__(self, started: float, first_deadline: float):
+        self.first_deadline = first_deadline
+        self.last_line = started
+        self.download: tuple[float, float] | None = None  # (这一行出现的时刻, 字节数)
+        self.network_phase = True  # pip 起来先解析 / 下载
+        self.reason = ""
+        self.detail = ""
+
+    def feed(self, line: str, now: float) -> None:
+        self.last_line = now
+        low = line.strip().lower()
+        m = _PIP_DOWNLOADING_RE.match(line)
+        if m:
+            size = float(m.group(1)) * _PIP_UNIT[m.group(2).lower()]
+            self.download = (now, size)
+            self.network_phase = True
+            return
+        self.download = None
+        if low.startswith(_PIP_INSTALL_PHASE):
+            self.network_phase = False
+        elif low.startswith(_PIP_NETWORK_PHASE):
+            self.network_phase = True
+
+    def verdict(self, now: float) -> str:
+        if now >= self.first_deadline:
+            self.reason = PIP_FIRST_BUDGET
+        elif self.download is not None:
+            since, size = self.download
+            elapsed = now - since
+            if elapsed >= PIP_SLOW_GRACE_S and elapsed > size / PIP_SLOW_BPS:
+                self.reason = PIP_SLOW_DOWNLOAD
+                self.detail = f"{size / 1e6:.1f} MB 的文件 {elapsed:.0f} s 没下完"
+        elif self.network_phase and now - self.last_line >= PIP_STALL_S:
+            self.reason = PIP_STALLED
+            self.detail = f"联网阶段 {now - self.last_line:.0f} s 没有进展"
+        return self.reason
 
 
 def mirror_retry_warranted(code: str, user_source: bool | None) -> bool:
@@ -1240,43 +1514,96 @@ def mirror_retry_warranted(code: str, user_source: bool | None) -> bool:
     判据的主语：**这一次** pip 进程的结局（`_run_pip` 给的 code）与**这个环境**的 pip 配置。
     `ERROR_NETWORK` 只在 pip **退出码非零**且输出带网络特征（`_NETWORK_MARKERS`：DNS 失败 / 连不上 /
     读超时 / 代理错误 / pip 自己的 Retrying）时才会出现（`_run_pip` → `classify_pip_failure`）；退出码 0
-    哪怕输出里有过 Retrying 也是成功，不重试。取消 / 超时 / 冲突 / 找不到 / hash 不符都不是换源能解决的。
-    用户配过源（True）或问不出来（None）都不换。"""
-    return code == ERROR_NETWORK and user_source is False
+    哪怕输出里有过 Retrying 也是成功，不重试。`ERROR_TIMEOUT`（ADR 0112 §二）：没有自配源时第一次尝试
+    带着测速（`_PipWatch`）跑，太慢 / 用完第一次的预算就以它收场——那正是换源能解决的（实测 20 KB/s →
+    13 MB/s）；配过源时不测速、第一次用满总预算，超时就是终局。取消 / 冲突 / 找不到 / hash 不符都不是换源
+    能解决的。用户配过源（True）或问不出来（None）都不换。"""
+    return code in (ERROR_NETWORK, ERROR_TIMEOUT) and user_source is False
 
 
 def _run_pip_install(
-    build_argv, python: str, cancel_ev: threading.Event, on_log, *, on_mirror=None
+    build_argv, python: str, cancel_ev: threading.Event, on_log, *, on_mirror=None, on_source=None
 ) -> tuple[str, str]:
-    """装包的执行器：先按 `build_argv(None)`（官方 / 用户配置）跑；网络类失败且用户没自配源时，
-    按 `build_argv(PYPI_MIRROR_URL)` **再跑一次**，日志里写明用了镜像、`on_mirror(url)` 通知调用方记进
-    进度 / 结果。两条 argv 出处（`pip_install_argv` / `pip_install_joint_argv`）都经这里。
+    """装包的执行器：先按 `build_argv(None)`（官方 / 用户配置）跑；网络类失败、或（没有自配源时）官方源
+    太慢 / 用完第一次的预算，按 `build_argv(PYPI_MIRROR_URL)` **再跑一次**，日志里写明用了镜像、
+    `on_mirror(url)` 通知调用方记进进度 / 结果。两条 argv 出处（`pip_install_argv` / `pip_install_joint_argv`）
+    都经这里。
+
+    ADR 0112 §二：**先问 pip 配没配源**（在目标解释器里让 pip 解析一遍 install 选项，`PIP_OPTIONS_PROBE`，约 1 s），因为要在开始之前决定两件事——
+    这次用的是哪个源（`on_source(PIP_SOURCES 之一)`、进日志）、第一次要不要带测速与分段预算。
+    `INSTALL_TIMEOUT_S` 是两次尝试**共用**的总预算：换得了源时第一次最多用到「总预算 −
+    `PIP_MIRROR_RESERVE_S`」，镜像那一次拿剩下的；换不了源时第一次用满。每次尝试的结局进 app.log。
 
     「用了镜像」的判据主语是**镜像那次 pip 进程**：只在它 `Popen` 成功之后（`_run_pip` 的 `on_started`）
-    才写日志、记 `pypi_mirror`。起之前取消（问配置期间、或那之后到 `Popen` 之前——`_run_pip` 起进程前
-    看一眼事件）/ 起不来（`OSError`）都不记，如实回 cancelled / failed；起来之后被取消照记——那次请求
-    确实发往了镜像（Codex #743 两轮 P2）。"""
-    code, out = _run_pip(build_argv(None), cancel_ev, on_log)
-    user_source = user_package_source(python) if code == ERROR_NETWORK else None
+    才写换源日志、记 `pypi_mirror` / 包源、写那句说明。起之前取消 / 起不来（`OSError`）都不记，如实回
+    cancelled / failed；起来之后被取消照记——那次请求确实发往了镜像（Codex #743 两轮 P2）。"""
+    started = time.time()
+    deadline = started + INSTALL_TIMEOUT_S
+    user_source = user_package_source(python)
+    if user_source is False:
+        source = PIP_SOURCE_PYPI
+    elif user_source:
+        source = PIP_SOURCE_USER
+    else:
+        source = PIP_SOURCE_UNKNOWN
+    LOG.info("pip install：包源 %s", logsafe.known(source, PIP_SOURCES))
+    if on_source is not None:
+        on_source(source)
+    watch = (
+        _PipWatch(started, deadline - PIP_MIRROR_RESERVE_S) if source == PIP_SOURCE_PYPI else None
+    )
+    code, out = _run_pip(build_argv(None), cancel_ev, on_log, deadline=deadline, watch=watch)
+    # 第一次的结局**先**进 app.log，再决定换不换源：换源的话两次尝试各一条结局（#745 Codex P2）
+    _log_pip_outcome(code, source)
     if not mirror_retry_warranted(code, user_source):
         return code, out
-    note = f"\n连不上默认的 Python 包源，改用 PyPI 镜像 {PYPI_MIRROR_URL} 重试一次\n"
-    started: list[bool] = []
+    reason = (watch.reason if watch is not None else "") or code
+    detail = watch.detail if watch is not None else ""
+    if reason in PIP_SLOW_REASONS:
+        note = f"\n默认的 Python 包源太慢（{detail or reason}），改用 PyPI 镜像 {PYPI_MIRROR_URL} 重试一次\n"
+    else:
+        note = f"\n连不上默认的 Python 包源，改用 PyPI 镜像 {PYPI_MIRROR_URL} 重试一次\n"
+    mirror_started: list[bool] = []
 
     def _mirror_started() -> None:
-        started.append(True)
-        LOG.warning("pip 网络类失败且未自配包源：改用 PyPI 镜像 %s 重试一次", PYPI_MIRROR_URL)
+        mirror_started.append(True)
+        LOG.warning(
+            "pip install 换源：官方 PyPI %s（%s）且未自配包源，改用 %s 重试一次（预算还剩 %.0f s）",
+            logsafe.known(reason, PIP_SWITCH_REASONS),
+            detail or "-",
+            PYPI_MIRROR_URL,
+            max(0.0, deadline - time.time()),
+        )
         # 先记字段、再写日志那句：每条路的 `on_log` 都经 `_append_log` 推一次快照，这样带着那句说明的第一个
-        # 快照就已经带着顶层 `pypi_mirror`——四条路（含联合准备的原地 / 换代）同一个字段、同一层、同一刻到达
+        # 快照就已经带着顶层 `pypi_mirror` / 包源——四条路（含联合准备的原地 / 换代）同一个字段、同一刻到达
         if on_mirror is not None:
             on_mirror(PYPI_MIRROR_URL)
+        if on_source is not None:
+            on_source(PIP_SOURCE_MIRROR)
         if on_log is not None:
             on_log(note)
 
     code, retry_out = _run_pip(
-        build_argv(PYPI_MIRROR_URL), cancel_ev, on_log, on_started=_mirror_started
+        build_argv(PYPI_MIRROR_URL),
+        cancel_ev,
+        on_log,
+        deadline=deadline,
+        on_started=_mirror_started,
     )
-    return code, out + (note if started else "") + retry_out
+    _log_pip_outcome(code, PIP_SOURCE_MIRROR if mirror_started else source)
+    return code, out + (note if mirror_started else "") + retry_out
+
+
+def _log_pip_outcome(code: str, source: str) -> None:
+    """一次 pip install 尝试的结局进 app.log：成功 INFO、失败 WARNING，都带稳定 code 与包源（闭集明文）。"""
+    if not code:
+        LOG.info("pip install 完成：包源 %s", logsafe.known(source, PIP_SOURCES))
+        return
+    LOG.warning(
+        "pip install 失败：%s（包源 %s）",
+        logsafe.known(code, LOGGED_ERROR_CODES),
+        logsafe.known(source, PIP_SOURCES),
+    )
 
 
 def _pip_uninstall(
@@ -1291,7 +1618,13 @@ def _pip_uninstall(
 
 
 def _run_pip(
-    argv: list[str], cancel_ev: threading.Event, on_log, *, on_started=None
+    argv: list[str],
+    cancel_ev: threading.Event,
+    on_log,
+    *,
+    deadline: float | None = None,
+    watch: "_PipWatch | None" = None,
+    on_started=None,
 ) -> tuple[str, str]:
     """流式跑一条 pip 命令（install / uninstall 共用的唯一执行器）。
 
@@ -1299,6 +1632,8 @@ def _run_pip(
     这里不再碰它的形状。起 pip 之前先看一眼取消：已经取消的不起（起了再杀，包可能已经写了一半）。
     `on_started()` 只在子进程**真起来之后**、读它的输出之前调一次（镜像回退据此才记「用了镜像」）；
     它抛异常不影响这次 pip。
+    `deadline`（绝对时刻）缺省为现在 + `INSTALL_TIMEOUT_S`；`_run_pip_install` 传进来的是两次尝试共用的那一个。
+    `watch` 判出「太慢」时同样杀掉、回 `ERROR_TIMEOUT`，理由在 `watch.reason`（ADR 0112 §二）。
     """
     if cancel_ev.is_set():
         return ERROR_CANCELLED, ""
@@ -1325,11 +1660,14 @@ def _run_pip(
             LOG.warning("pip 启动回调异常", exc_info=True)
 
     chunks: list[str] = []
-    deadline = time.time() + INSTALL_TIMEOUT_S
+    if deadline is None:
+        deadline = time.time() + INSTALL_TIMEOUT_S
 
     def _pump() -> None:
         for line in proc.stdout or ():
             chunks.append(line)
+            if watch is not None:
+                watch.feed(line, time.time())
             if on_log is not None:
                 on_log(line)
 
@@ -1345,7 +1683,7 @@ def _run_pip(
             _kill(proc)
             reader.join(timeout=2.0)
             return ERROR_CANCELLED, "".join(chunks)
-        if time.time() > deadline:
+        if time.time() > deadline or (watch is not None and watch.verdict(time.time())):
             _kill(proc)
             reader.join(timeout=2.0)
             return ERROR_TIMEOUT, "".join(chunks)
@@ -1440,7 +1778,14 @@ def worker_self_test(python: str) -> dict:
         spec = execspec.safe_spec(
             _SELFTEST_NAME, str(root), "__main__", interpreter=str(python), sandbox=str(sandbox)
         )
-        argv = execspec.worker_argv(spec, worker_py=pool.WORKER_PY, out_dir=out_dir)
+        argv = execspec.worker_argv(
+            spec,
+            worker_py=pool.WORKER_PY,
+            out_dir=out_dir,
+            runtime_args=runtime.worker_args(
+                bundled=pool.same_python(python, runtime.bundled_python())
+            ),
+        )
         proc = subprocess.Popen(
             argv,
             stdin=subprocess.PIPE,
@@ -1515,15 +1860,10 @@ def custom_package_index(python: str) -> bool | None:
     """这个环境是不是配了自定义 index。**只回真假，绝不回地址**。
 
     诊断里有用（「装不上」经常就是内网 index 不通），而地址本身可能带凭据、
-    也会泄漏用户所在机构。问不出来回 None。
+    也会泄漏用户所在机构。问不出来回 None。判据由 pip 自己解析（`pip_install_options`）。
     """
-    for name in ("PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL"):
-        if os.environ.get(name):
-            return True
-    rc, out = _run([str(python), "-m", "pip", "config", "list"], 30)
-    if rc != 0:
-        return None
-    return any(k in out for k in ("index-url", "extra-index-url"))
+    opts = pip_install_options(python)
+    return None if opts is None else options_name_a_custom_index(opts)
 
 
 _LOG_MAX = 20_000
@@ -1553,6 +1893,33 @@ def _note_mirror(progress_id: str, url: str, on_event) -> None:
         on_event(snapshot)
 
 
+def _note_source(progress_id: str, source: str, on_event) -> None:
+    """这次安装此刻用的是哪个包源（`PIP_SOURCES`；ADR 0112 §二）：记在进度记录的 `pypi_source` 上，之后每个
+    快照（含终态）都带着它，失败日志也按它说出来源。不含地址。"""
+    with _lock:
+        rec = _progress.get(progress_id)
+        if rec is None:
+            return
+        rec["pypi_source"] = source
+        snapshot = dict(rec)
+    if on_event is not None:
+        on_event(snapshot)
+
+
+def _log_repair_failure(entry: str, progress_id: str, code: str) -> None:
+    """四个线程入口的失败终态进 app.log（ADR 0112 §三）：稳定 code + 最后用的包源。2026-09-29 那台机器上
+    `dependency_install_timeout` 只落在 environment.json，日志里一个字都没有。"""
+    with _lock:
+        rec = _progress.get(progress_id) or {}
+        source = str(rec.get("pypi_source") or "-")
+    LOG.warning(
+        "%s失败：%s（包源 %s）",
+        entry,
+        logsafe.known(code, LOGGED_ERROR_CODES),
+        logsafe.known(source, PIP_SOURCES),
+    )
+
+
 def _emit(
     plan_id: str,
     state: str,
@@ -1580,6 +1947,8 @@ def _emit(
                 distribution=plan.requirement.distribution,
                 target_kind=plan.target_kind,
                 script=plan.script,
+                # 这一代真正要装的全部包（单包修复新建第一代时多于一个）：进度行按它说，不只说用户点的那个
+                requirements=list(plan.requirements),
             )
             if state in (STATE_FAILED, STATE_CANCELLED):
                 # 终态上说清「同一个需求这一轮还能不能再装」：pip 跑成之后（验证 / 自检期间取消、验证没过）
@@ -2381,6 +2750,7 @@ def _run_package_job_guarded(job_id: str, on_event) -> dict:
     try:
         return run_package_job(job_id, on_event)
     except RepairError as exc:
+        _log_repair_failure("包操作", job_id, exc.code)
         return _emit_job(job_id, STATE_FAILED, on_event, code=exc.code, error=str(exc))
     except Exception as exc:  # noqa: BLE001
         LOG.exception("包操作线程异常")
@@ -2489,6 +2859,7 @@ def _run_package_job(job: PackageJob, env_key: str, on_event, cancel_ev: threadi
             log,
             upgrade=job.op == OP_UPDATE,
             on_mirror=lambda url: _note_mirror(job.job_id, url, on_event),
+            on_source=lambda src: _note_source(job.job_id, src, on_event),
         )
     if code == ERROR_CANCELLED:
         # 装 / 卸到一半：这个环境不再假装是干净的（我们自己的东西，重建即可）
@@ -2996,6 +3367,7 @@ def _prepare_guarded(plan_id: str, on_event, *, claimed: bool = False) -> dict:
     try:
         return prepare(plan_id, on_event, claimed=claimed)
     except RepairError as exc:
+        _log_repair_failure("联合依赖准备", plan_id, exc.code)
         return _emit(plan_id, STATE_FAILED, on_event, code=exc.code, error=str(exc))
     except Exception as exc:  # noqa: BLE001
         LOG.exception("联合准备线程异常")
@@ -3097,6 +3469,7 @@ def _run_joint_in_place(plan: JointRepairPlan, on_event, cancel_ev: threading.Ev
             cancel_ev,
             lambda text: _append_log(plan.plan_id, text, on_event),
             on_mirror=lambda url: _note_mirror(plan.plan_id, url, on_event),
+            on_source=lambda src: _note_source(plan.plan_id, src, on_event),
         )
     if code == ERROR_CANCELLED:
         health = projectenv.probe_environment(python)
@@ -3174,6 +3547,8 @@ class _GenerationJob:
     #: （#466 的纪律；下载私有 Python 失败 / 取消 / pip 没跑成都不算「装过」）；其余三条路为空。
     attempted: tuple = ()
     groups: tuple[str, ...] = ()
+    #: 单包修复并入联合集合的那一个包（`DependencyRequirement`）：替身重算（`_replan_on_base`）时要把它并回去。
+    requested: object = None
     #: 用户确认的那份计划是按哪些输入算的（`JointRepairPlan.inputs_digest`）：重算时输入变了就停。
     inputs_digest: str = ""
 
@@ -3312,6 +3687,7 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
         cancel_ev,
         job.on_log,
         on_mirror=lambda url: _note_mirror(job.progress_id, url, None),
+        on_source=lambda src: _note_source(job.progress_id, src, None),
     )
     if code == ERROR_CANCELLED:
         managedenv.mark_generation(
@@ -3493,6 +3869,22 @@ def _replan_on_base(job: _GenerationJob, base: str) -> _GenerationJob:
         raise RepairError(ERROR_PLAN_STALE, "下载期间脚本或依赖声明发生了变化")
     if plan.status == depplan.STATUS_BLOCKED:
         raise RepairError(ERROR_PLAN_BLOCKED, "联合计划不可执行", joint=plan.to_payload())
+    if job.requested is not None:
+        # 单包修复：用户点的那个包始终在集合里（联合计划量不出它时也不丢）
+        wide = _fold_requested(job.requested, plan)
+        if wide is None:
+            raise RepairError(ERROR_PLAN_BLOCKED, "联合计划不可执行", joint=plan.to_payload())
+        return dataclasses.replace(
+            job,
+            delta=wide.requirements,
+            constraints=wide.constraints,
+            hashes={},
+            require_hashes=False,
+            needed_imports=wide.needed_imports,
+            record=wide.record,
+            identity="",
+            replan=False,
+        )
     return dataclasses.replace(
         job,
         delta=tuple(plan.requirements),
@@ -3544,7 +3936,11 @@ def _provision_private_base(job: _GenerationJob, cancel_ev: threading.Event) -> 
             STATE_DOWNLOADING_PYTHON,
             result={
                 "download": {"stage": stage, "done_bytes": int(done), "total_bytes": int(total)},
-                "private_python": payload,
+                # 换了镜像（ADR 0063 修订 2026-09-29 / ADR 0112）时进度说出此刻真在下的那个主机
+                "private_python": {
+                    **payload,
+                    "source_host": privatepython.downloading_from(source) or payload["source_host"],
+                },
             },
         )
 
@@ -4092,3 +4488,10 @@ def _spawn_gate(figures_dir: str, script_name: str) -> None:
 
 pool.register_spawn_gate(_spawn_gate)
 pool.register_environment_decider(decide_environment)
+
+
+#: 日志里按闭集明文放行的失败码：本模块全部 `ERROR_*` 的值 + 私有 Python 的（`_log_repair_failure` /
+#: `_log_pip_outcome`）。在模块末尾算一次——`ERROR_*` 分散在全文件各处，放在这里才收得全。
+LOGGED_ERROR_CODES = frozenset(
+    v for k, v in dict(globals()).items() if k.startswith("ERROR_") and isinstance(v, str)
+) | frozenset(privatepython.ERROR_CODES)

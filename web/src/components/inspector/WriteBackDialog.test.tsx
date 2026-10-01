@@ -19,7 +19,9 @@ import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useProjectStore } from '@/store/projectStore'
-import { emptyProject, type PanelObject } from '@/types/document'
+import { emptyProject, type PanelObject, type TextObject } from '@/types/document'
+import { currentTimelineCtx } from '@/lib/timelineContext'
+import { setMomentSink, type MomentSnapshot } from '@/lib/timelineCheckpoint'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -242,6 +244,103 @@ describe('写回成功的回执', () => {
   })
 })
 
+describe('写回的时间线节点（ADR 0101；Codex #679）', () => {
+  const note: TextObject = {
+    id: 't_note', type: 'text', text: '标注', sizePt: 9, bold: false,
+    color: '#000', align: 'left', x: 10, y: 10, w: 20, h: 8,
+  }
+  let snaps: MomentSnapshot[] = []
+  beforeEach(async () => {
+    snaps = []
+    setMomentSink(async (_m, snap) => {
+      if (snap) snaps.push(snap)
+      return null
+    })
+    const pd = emptyProject()
+    pd.canvases[0].objects = [panel, note]
+    await useDocumentStore.getState().switchDocument(pd, 'd_writeback_ann')
+  })
+  afterEach(() => setMomentSink(null))
+
+  const ids = (snap: MomentSnapshot) => snap.identity.doc.objects.map((o) => o.id)
+
+  /**
+   * 「面板此刻有没有冻结的 SVG」不再在这一层判断（Codex #679 P1 追加）：手里有 SVG 字段，
+   * 到合成器手里也可能才发现解析 / 解码失败、退到合成时才现取的 render——这一层猜不出
+   * 合成器最终会走哪一路。所以这里不管 renderStore 是什么状态，`thumbDoc` 都整份保留全部
+   * 标注原件；「这条标注最终画不画」的归属只交给 `bakedInto`（`objectId → panelId`），
+   * 真正的判定挪到了 `composeTimelineThumb`（见 `timelineThumbCompose.test.ts`）。
+   */
+  it('带标注写回：标注的面板归属交给合成器判断（bakedInto），thumbDoc 不预先摘除任何标注', async () => {
+    const at = currentTimelineCtx()
+    stubFetch(200, OK_BODY)
+    render()
+    const toggle = document.body.querySelector<HTMLElement>('[aria-label*="标注"][aria-checked]')
+    expect(toggle, '找不到「同时写入标注」开关').toBeTruthy()
+    await act(async () => toggle!.click())
+    await confirm()
+    expect(useDocumentStore.getState().doc.objects.map((o) => o.id)).toEqual(['p1']) // 原件确实删了
+    expect(snaps).toHaveLength(1)
+    expect(ids(snaps[0])).toEqual(['p1']) // 节点记的文档去掉了标注原件
+    expect(snaps[0].ctx).toBe(at)
+    // thumbDoc 整份保留（不再按「此刻有没有 SVG」预先摘除）
+    expect(snaps[0].thumbDoc?.objects.map((o) => o.id)).toEqual(['p1', 't_note'])
+    // 归属：t_note 是被写回烙进 p1 的（按 collectPanelAnnotations 的重叠面积判据）
+    expect(snaps[0].bakedInto?.get('t_note')).toBe('p1')
+  })
+
+  it('同一次写回混着两个面板：各自的标注按重叠面积各归各的面板，thumbDoc 整份保留', async () => {
+    // p2 与 p1 不重叠，各自的标注原件按重叠面积归属到各自的面板
+    const second: PanelObject = {
+      ...panel,
+      id: 'p2',
+      fileId: 'Fig2.pdf',
+      x: 100,
+      y: 0,
+      overrides: [{ gid: 'axes_0.title', prop: 'text', value: '改过 2' }],
+    }
+    const note2: TextObject = {
+      id: 't_note2', type: 'text', text: '标注2', sizePt: 9, bold: false,
+      color: '#000', align: 'left', x: 110, y: 10, w: 20, h: 8,
+    }
+    const pd = emptyProject()
+    pd.canvases[0].objects = [panel, note, second, note2]
+    await useDocumentStore.getState().switchDocument(pd, 'd_writeback_ann_mixed')
+    useAssetStore.setState({
+      byId: { 'Fig1.pdf': { mtime: 1755000000 }, 'Fig2.pdf': { mtime: 1755000001 } },
+    } as never)
+    stubFetch(200, OK_BODY)
+    act(() =>
+      root.render(
+        <TooltipProvider>
+          <WriteBackDialog panels={[panel, second]} open onOpenChange={() => {}} />
+        </TooltipProvider>,
+      ),
+    )
+    const toggle = document.body.querySelector<HTMLElement>('[aria-label*="标注"][aria-checked]')
+    expect(toggle, '找不到「同时写入标注」开关').toBeTruthy()
+    await act(async () => toggle!.click())
+    await confirm()
+    // 节点记的文档：两个面板各自烙进去的标注原件都删了
+    expect(snaps).toHaveLength(1)
+    expect(ids(snaps[0])).toEqual(['p1', 'p2'])
+    // thumbDoc：整份保留，两条标注原件都还在（原顺序）
+    expect(snaps[0].thumbDoc?.objects.map((o) => o.id)).toEqual(['p1', 't_note', 'p2', 't_note2'])
+    // 归属各归各的面板，不会串
+    expect(snaps[0].bakedInto?.get('t_note')).toBe('p1')
+    expect(snaps[0].bakedInto?.get('t_note2')).toBe('p2')
+  })
+
+  it('对照：不带标注写回，文档没变，节点就是发起时那份（标注还在）', async () => {
+    stubFetch(200, OK_BODY)
+    render()
+    await confirm()
+    expect(snaps).toHaveLength(1)
+    expect(ids(snaps[0])).toEqual(['p1', 't_note'])
+    expect(snaps[0].thumbDoc ?? snaps[0].identity.doc).toBe(snaps[0].identity.doc)
+  })
+})
+
 describe('前置校验的入参', () => {
   it('请求带上素材当前的 mtime（后端据此判 source_changed）', async () => {
     const bodies: string[] = []
@@ -343,8 +442,8 @@ describe('确认页的信息结构', () => {
     const body = d.textContent ?? ''
     expect(body).toContain('/Users/somebody/Library/Application Support/Tavotto/cache/original_backups')
     expect(body).toContain('复制')
-    // 恢复路径仍然完整可查：历史 + 备份目录 + 脚本不受影响
-    expect(body).toContain('历史')
+    // 恢复路径仍然完整可查：写回记录 + 备份目录 + 脚本不受影响
+    expect(body).toContain('写回记录')
     expect(body).toContain('备份目录')
     expect(body).toContain('脚本不会改动')
   })

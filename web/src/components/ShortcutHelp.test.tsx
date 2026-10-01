@@ -12,6 +12,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { setLocale, t } from '@/i18n'
+import { MOD } from '@/lib/utils'
 import { GROUPS, ShortcutHelp, filterGroups } from './ShortcutHelp'
 import { useUiStore } from '@/store/uiStore'
 
@@ -68,7 +69,6 @@ describe('快捷键帮助的分组', () => {
       'arrange',
       'view',
       'tools',
-      'tutorial',
     ])
   })
 
@@ -192,5 +192,22 @@ describe('filterGroups 这条判据本身', () => {
 
   it('空组不留下来', () => {
     for (const g of filterGroups(GROUPS, 'Delete')) expect(g.rows.length).toBeGreaterThan(0)
+  })
+})
+
+describe('键帽与卡片（2026-10-01）', () => {
+  it('六张卡；键位按键帽拆开：⇧⌘S 是三颗，「或」之间留斜杠', async () => {
+    await open()
+    expect(groups()).toHaveLength(6)
+    const row = (id: string) => document.querySelector(`[data-shortcut-row="${id}"]`)!
+    expect([...row('saveLayout').querySelectorAll('kbd')].map((k) => k.textContent)).toEqual(['⇧', MOD, 'S'])
+    expect([...row('zoom').querySelectorAll('kbd')].map((k) => k.textContent)).toEqual([MOD, '+', MOD, '−'])
+    expect([...row('wheelZoom').querySelectorAll('kbd')].map((k) => k.textContent)).toEqual([MOD, '滚轮'])
+  })
+
+  it('「教程」并进「工具」：暂停教程那一行还在', async () => {
+    await open()
+    const tools = document.querySelector('[data-shortcut-group="tools"]')!
+    expect(tools.querySelector('[data-shortcut-row="tutorialPause"]')).not.toBeNull()
   })
 })

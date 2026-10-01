@@ -36,7 +36,7 @@ export interface CoachmarkProps {
   /** 「第 n 步，共 N 步」；欢迎 / 完成页不显示 */
   progress?: string | null
   side?: CoachmarkSide | 'center'
-  /** 主动作（欢迎页的「开始」、完成页的两颗、Step 4 的「已解决，继续」） */
+  /** 主动作（完成页的两颗、Step 4 的「已解决，继续」） */
   primary?: { label: string; onClick: () => void; autoFocus?: boolean } | null
   secondary?: { label: string; onClick: () => void } | null
   onBack?: (() => void) | null

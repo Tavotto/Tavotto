@@ -124,11 +124,12 @@
   保存链不许只读持久副本；await 之后的落账（修订号缓存、绑定、冲突岔口）一律记在
   **发请求那一刻**的 pj 名下（`rememberLayoutRevision(name, rev, pj)`），切走之后不开冲突岔口。
 - **启动恢复不覆盖已经装好的文档（2026-09-26）**：工作台挂载时 `restoreSession()` 读
-  `tavotto.currentDoc` 那一份——但教程 / 切项目的 `prepareDocument` 往往**挂载前**就把它装好了，
+  「当前项目的 last（后端）→ `tavotto.currentDoc`」那一份（2026-09-29 起，见下条「会话状态以后端为准」）——但教程 / 切项目的 `prepareDocument` 往往**挂载前**就把它装好了，
   这时再读盘整份替换，读到的是用户第一次编辑还没落盘时的旧一版（慢机器上教程一打开就拖，拖动被盖回去，
-  windows-exe-smoke 撞到过）。两道判断：`documentId` 已经是它就不读盘；读盘在路上时
+  windows-exe-smoke 撞到过）。两道判断：`documentId` 已经是它就不读盘（本机 `currentDoc` 就指着内存里这份时
+  连后端都不问）；问后端 / 读盘在路上时
   `persistedIdentity()`（`buildProject` 读的每一片 + `documentId` / `loadSeq`，**它多读一片这里就多加一片**）
-  任一变了就让位。启动时的 `documentId` 是随机新 id，刷新后恢复不受影响。
+  任一变了就让位——身份在**第一个 await 之前**取。启动时的 `documentId` 是随机新 id，刷新后恢复不受影响。
   **读盘带回来的待裁决事项（恢复副本 / schema 太新）每条路径恰好说一次**：`readAutosaveDoc` 的调用方只有
   `loadAutosavedDocument`（教程装文档、切项目接回上次文档，切换之后挂 `docNotice`——`switchDocument` 会清掉它）、
   `restoreSession`、`openRecentDocument` 三个，都把 `notice` 挂上。看护 `store/documentStore.test.ts`、
@@ -166,13 +167,70 @@
   manifest / 渲染缓存（`renderStore.reset`）——只置 `script = null` 是不够的，
   留着的 manifest 会让元素树与检查器继续按"可参数化"办事。
 - **切项目回到那个项目上次开着的文档（2026-09-06，审计 T02）**：`lib/projectDocs.ts`
-  按项目 id 在本机记最近一份**有内容**的 documentId（`tavotto.projectDoc.<pj>`，
+  按项目 id 记最近一份**有内容**的 documentId（2026-09-29 起权威在后端、`tavotto.projectDoc.<pj>` 只当缓存，见上条「会话状态以后端为准」；
   空白文档不记——它从不落盘），`projectStore.adoptOpenedProject` 在换代之后按记录
   读自动保存槽位换回去；读不回来时 `lastDocumentIssue` → `DocumentBanner` 指名那份
   文档并给「打开上次文档」重试，**不静默留一份空白**。带 `prepareDocument` 的入口
   （教程）不走这条。记录的键取 `currentProjectId()` 而不是 `project` 字段：换代期间
   后者还是旧项目。Project Picker 的同名区分 / 失效分组 / 筛选判据只在
   `lib/recentProjects.ts` 一份，顶栏项目切换器共用。
+- **会话状态以后端为准（2026-09-29，#715 PR-B，ADR 0108（`docs/adr/0108-desktop-stable-origin-and-backend-session-state.md`）§二—§三）**：桌面版每次启动 sidecar 可能换端口，
+  localStorage 按 origin 隔离——换了端口就是一份空存储，「上次打开的排版」与导出默认值随之丢失（#715）。
+  - **「这个项目上次开着哪份排版」的权威在后端**：`GET /api/layout-session`（按 pj 认项目，回 `{last}`）、
+    `PUT /api/layout-session/last`（`{doc_id, name}`），数据目录 `state/layout-sessions.json`
+    （`engine/layoutsession.py`，后端细则见 `layout-versions-and-documents.md`）。前端入口只在
+    `lib/projectDocs.ts`：`fetchRemoteProjectDocument(pj)` 三种结局分开——记着的那份 / `null`（后端有这组端点、
+    这个项目没记过）/ `undefined`（404：playground、嵌入画布、旧后端，或此刻不可达）。**「不知道」不折成
+    「没记过」**：`undefined` 时退回本机的旧逻辑。`tavotto.projectDoc.<pj>` 只当缓存；后端 `null` 而本机有
+    = 同一个 origin 升级上来的旧记录，拿它当迁移源并推一份上去。
+  - 取哪一份：`restoreSession` = `loadProjectDocument(pj)`（当前项目的 last：后端 → 本机按项目的缓存）→ 旧的
+    `tavotto.currentDoc`（**只在确知属于当前项目时**：本机索引记着，或后端给得出证据）；`adoptNow` = `loadProjectDocument(pj)`。
+    `lastDocumentIssue` / `DocumentBanner` 机制不变。
+  - **一个项目的排版不许漏进另一个项目（2026-10-01，#715 Windows 真机验收 P1）**：稳定端口之后先后打开的项目共用
+    一个 origin，`currentDoc` / `docIndex` 这类全局键跨项目存活。改造前「后端没记过」（`null`）时 `restoreSession`
+    退回全局 `currentDoc`，关掉 F 再打开新项目 G，G 一打开就是 F 的排版，随后记成 G 的 last、往 G 的目录打时间线节点。
+    判据唯一出处 `lib/docOwnership.ts`（`isForeignDocument` / `recordedProjectOf`，按本机「最近文档」索引里写下那一刻的
+    `projectId`；「不知道」不折成任何一边）。消费方：`restoreSession` 的 `currentDoc` 退路要正面证据（本机索引记着 `=== pj`，或下面的后端证据）；
+    **本机索引不知道归属**（T04 之前的条目没有 projectId / 索引里没有这条，升级上来的用户都是这样）时
+    `restoreSession` 不猜，问后端要证据（`GET /api/layout-session/owner`：槽位归属是定论 → 当前项目的
+    `tavottofile/versions/<id>.json` → 面板素材全在当前项目里），有证据才恢复并当场把归属补进本机索引，
+    没有或问不到就不恢复；后端没有这个端点（404：playground / 旧后端）时照旧认（#773）。
+    `projectDocs` 的本机缓存（含待确认那条、迁移源）与后端回的 last 确知属于别的项目就不认、并作废缓存；迁移推送
+    **等后端裁决**，后端回 `409 layout_foreign`（`engine/layoutsession.owner_conflict`，纵深那一道）就不恢复、不重推；
+    「记上次开着哪份」的订阅不记别的项目的排版。`currentDoc` 不改成按项目分键：按项目的那一份就是 `projectDoc.<pj>`，
+    `currentDoc` 只剩「没开项目」与旧数据的退路，给它加归属判据比再造一套键、再迁一遍旧数据省事也更不容易漏。
+    **归属只随用户的动作转移**（#773 Codex P2）：显式从「最近文档」打开别的项目的排版仍然允许（列表里标着所属项目，
+    审计 T04），但「打开 = 冲刷一次」不算带进当前项目——`switchDocument` 换进来时归属（`docProject`）保留在原项目，
+    真改一笔（自动保存订阅的用户编辑档，派生同步不算）、⌘S 或改名才转到**打开时**所在的项目（`pendingClaim`）；
+    转的那一刻当场改记本机索引并经 `onDocumentClaimed` 记成这个项目「上次开着的」（只改一笔就离开，后面没有
+    下一次变化去触发记录）。
+    写盘（`PUT /api/autosave`）一律按**这份排版所属的项目**发 pj（后端按它记槽位归属），不现问 `currentProjectId()`；
+    读盘时把本机副本推回磁盘同理（`ownerProjectForWrite`）。切项目先认领新项目、再冲刷旧文档：认领之前
+    `pinDocumentOwner()` 把还没换过的初始文档钉在旧项目上，否则离开那一下会把旧项目的排版记成新项目的。
+  - **记录时机不变**：`projectStore` 的那个订阅（documentId 或名字变、且排版有内容才记，与缓存同值不写），
+    `rememberProjectDocument` 同时写缓存与后端；推给后端的写入串行（后发的必须后到），读之前先等它排空；
+    回过 404 就在本模块实例里不再推。没认领项目（pj 为空）时不记。**切项目期间停记**：`adoptNow` 从认领新 pj
+    到 `resetForNewProject()` 完成之间要 await 一次后端，内存里还是上一个项目的文档，这段时间订阅不记（否则会把
+    旧项目的文档记到新项目名下）。
+  - **推失败的写入不丢**：记录时本机缓存先带 `pendingBase`（写下那一刻本机见过的**后端**最新 `last.at`，即缓存里的
+    `seenAt`）与 `pendingGen`（这次写入的唯一标识，只用来认「后端确认的是不是这一次」），后端确认后才摘掉；推失败（非 404）
+    就留着。下次读时后端那条 `last.at` 不晚于 `pendingBase`（写下之后后端没收过别的写；或后端没记过）→ 本机为准并重推，
+    否则后端为准。**只比后端自己的钟**：连着远程实例时浏览器与服务器是两台机器，不拿本机 `Date.now()` 去比服务器时刻。
+    本标签页更早的一次写入在待确认之后才被确认时，把待确认的基准抬到它（那是自己的旧写，不比待确认的新）。**读在路上时本机缓存原文变了**（本标签页或同 origin 别的标签页又记了一次，哪怕已确认）→ 回包作废、
+    以本机为准；导出默认值的取回同理（缓存原文 + 待确认标记在 GET 前后不一致就不覆盖）。升级迁移（后端 `null`、
+    本机有旧记录）推之前同样先标待确认。已知未覆盖：同 origin 多标签页并发写时后端按到达顺序落地（#738）。
+    导出默认值同理（`tavotto.export.defaults.pending` 存唯一标识，有它就本机为准重推）。换了 origin 时本机缓存本来
+    就是空的，这条只护同一个 origin。
+  - **磁盘槽位的清理只由后端做**：`flushAutosave` 不再按本机 12 条 `docIndex` 发 DELETE——那只是本机「最近文档」
+    放不下了，不是用户不要了；换了 origin 的索引是空的，按它删会删错。`docIndex` 仍只管本机列表与本机兜底副本。
+  - **导出默认值**同理：`GET/PUT /api/preferences/export-defaults`（按用户一份），字段语义只在
+    `lib/exportDefaults.ts`；`readExportDefaults()` 仍同步读本机缓存，`App` 挂载时 `hydrateExportDefaults()` 用后端那份
+    覆盖它，写入两边都写。导出对话框在 `App` 里常驻挂载、初值只在挂载时读一次缓存：取回之后经
+    `onExportDefaultsHydrated` 通知它与设置页重读；对话框开着时不当面换掉，记下、关上时再重读。
+  - 看护：`store/projectDocOwnership.test.ts` + `e2e/layout-project-isolation.spec.ts` + `tests/desktop_windows/test_restart_restore.py`
+    （跨项目不漏，同一个 origin）；`store/layoutSession.restart.test.ts`（有状态的假后端跨两次「启动」存活，中间 `localStorage.clear()` +
+    `vi.resetModules()`；外加 404 退回旧逻辑、不再发 DELETE）、`e2e/layout-session.spec.ts`（同一服务新开空存储的
+    浏览器 context → 恢复上次的排版），两者在改造前的 main 上都红。
 - **新文档的默认名跟界面语言走**（`types/document.defaultDocumentName()`）：
   只在创建那一刻取一次，之后是用户内容（不翻、不追认）。它同时是「另存为」的
   默认文件名，所以取值必须磁盘安全。
@@ -182,6 +240,17 @@
   新项目再换空白文档，而换文档第一句就是把旧文档冲刷落盘。当前项目名的投影在
   `lib/projectLabel.ts`（由 `projectStore` 写、`documentStore` 读，避免两个 store
   互相 import 成环）。旧条目没有这两个字段 = **不知道**，什么都不标。
+- **排版时间线（ADR 0101，2026-09-27）**：打节点只有一个入口
+  `lib/timelineCheckpoint.takeCheckpoint()`——自动节点、关键时刻（`markMoment()`）、命名节点、
+  「恢复前」全走它，它在**第一个 await 之前**同步取走 pj / 文档 / 画布身份 / 缩略图图源（离开
+  项目那一刻紧跟着就是换 pj、清 renderStore）。`markMoment()` 只在 `startVersionCheckpoints`
+  挂上时才发请求。「保存」时刻由保存侧发 `lib/layoutSaved.emitLayoutSaved()`、时间线订阅——
+  新增一条写排版文件的路，在它的成功分支 emit 一次，不 import 时间线。恢复只有 `VersionDialog.restoreNode()` 一处：先 await「恢复前」节点，存不下来
+  就不恢复，再一次 `restoreLayoutVersion` commit（⌘Z 一步退回；布局组跟着对象恢复）。
+  预览是 `timelineStore.preview` 上的模态对话框（`TimelinePreviewDialog`，默认焦点在「关闭」），
+  不进 documentStore、换项目时 `clear()`；「存为命名节点」只有 `saveNamedNode()` 一份（抽屉里「给现在存个名字…」
+  点开展开输入；⌥⌘S / 命令面板在工作面板顶部就地弹 `NamedNodeQuickBox`、不开抽屉，顶栏没有书签钮）。自动间隔 15 s 停顿 / 2 分钟，e2e 只经
+  `window.__TAVOTTO_TIMELINE_TIMING__` 注入，产品默认值不动。
 
 ## 速查表原要点（2026-09-25 迁入，#608）
 

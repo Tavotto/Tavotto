@@ -2,6 +2,8 @@ import { useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { CanvasStage } from '@/canvas/CanvasStage'
 import { CanvasTabs } from '@/components/CanvasTabs'
+import { CanvasToolbar } from '@/components/CanvasToolbar'
+import { ZoomControls } from '@/components/ZoomControls'
 import { CloseGuardDialog } from '@/components/CloseGuardDialog'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { ExportDialog } from '@/components/ExportDialog'
@@ -22,6 +24,7 @@ import { StyleDialog } from '@/components/StyleDialog'
 import { DocumentBanner } from '@/components/DocumentBanner'
 import { ProjectReadinessBanner } from '@/components/ProjectReadinessBanner'
 import { VersionDrawer } from '@/components/VersionDialog'
+import { NamedNodeQuickBox } from '@/components/NamedNodeQuickBox'
 import { LeftPanel } from '@/components/left/LeftPanel'
 import { LeftRail } from '@/components/left/LeftRail'
 import { CanvasHud, NotificationRail } from '@/components/StatusBar'
@@ -61,7 +64,7 @@ import { restoreSession, startAutosave, useDocumentStore } from '@/store/documen
 import { useViewportStore } from '@/store/viewportStore'
 import { startLayoutAutoReflow } from '@/store/actions'
 import { startPageSizeFit } from '@/store/pageFit'
-import { startVersionCheckpoints } from '@/hooks/useVersionCheckpoints'
+import { markWorkspaceOpenedAfter, startVersionCheckpoints } from '@/hooks/useVersionCheckpoints'
 import { installDiagnosticsWiring } from '@/diagnostics/wiring'
 import { installDiagnosticsDevHook } from '@/diagnostics'
 import { useSelectionStore } from '@/store/selectionStore'
@@ -72,6 +75,7 @@ import { onDesktopMenu, onDesktopOpen } from '@/lib/desktop'
 import { DURATION, usePresence } from '@/lib/motion'
 import { applyOpenRequest, readOpenRequestFromUrl, type OpenRequest } from '@/lib/openRequest'
 import { msg } from '@/i18n'
+import { hydrateExportDefaults } from '@/lib/exportDefaults'
 
 export function App() {
   const phase = useProjectStore((s) => s.phase)
@@ -87,6 +91,9 @@ export function App() {
     // 连 install_id 都不会生成；同意态还是 unset 时由 TelemetryConsentDialog
     // 问一次（问之前同样什么都没发）。
     void useTelemetryStore.getState().load()
+    // 导出默认值以后端为准（#715 PR-B）：换了 origin 的本机缓存是空的，先从数据目录取回来。
+    // 导出对话框 / 设置页同步读本机缓存，这一步在它们打开之前就落地了
+    void hydrateExportDefaults()
   }, [])
   useDesktopMenu()
   useHandoff()
@@ -145,7 +152,7 @@ function Workspace() {
     // 启动那次静默：探测失败不该在用户还没进设置页时弹东西
     void useAiStore.getState().loadCaps().catch(() => {})
     // 磁盘恢复是异步的：恢复到文档后重新适配视口
-    void Promise.all([assets, restoreSession()]).then(([, restored]) => {
+    const loaded = Promise.all([assets, restoreSession()]).then(([, restored]) => {
       if (restored) {
         const page = useDocumentStore.getState().doc.page
         useViewportStore.getState().fit(page.w, page.h)
@@ -154,6 +161,9 @@ function Workspace() {
       // 只挂在其中一个上就会有一半的时候拿着空清单去同步（= 什么都没做）
       syncLoadedDocument()
     })
+    // 排版时间线的「打开项目」时刻：文档此刻才就位，时间线也已经在跑（ADR 0101 §3）；
+    // 只打给启动时那个项目——回来之前切走了就丢（`markWorkspaceOpenedAfter`）
+    const stopOpenMark = markWorkspaceOpenedAfter(loaded)
     const stopAutosave = startAutosave()
     // 挂载之后再换进来的文档（教程重开 / 载入画布文件 / 最近文档 …）同样要对账
     const stopLoadSync = startDocumentLoadSync()
@@ -208,6 +218,7 @@ function Workspace() {
     window.addEventListener('tavotto:autosave-error', onAutosaveError)
     window.addEventListener('tavotto:doc-conflict', onDocConflict)
     return () => {
+      stopOpenMark()
       stopAutosave()
       stopLoadSync()
       stopPrune()
@@ -228,9 +239,10 @@ function Workspace() {
 
   return (
     <TooltipProvider>
-      <div className="flex h-full flex-col overflow-hidden bg-bg text-ink">
+      {/* 顶栏坐在灰色桌面上（2026-09-30 重设计）：它自己的 bg-surface 在这里按桌面色覆盖——
+          不去改 TopBar 那一行，免得和在飞的 #679（给同一行加 data-topbar）撞车 */}
+      <div className="flex h-full flex-col overflow-hidden bg-bg text-ink [&>header]:bg-bg">
         <TopBar />
-        {!fastEdit && <CanvasTabs />}
         {outdated && <UpdateBanner />}
         <DocumentBanner />
         <ProjectReadinessBanner />
@@ -238,14 +250,34 @@ function Workspace() {
           <LeftRail />
           {/* 窄屏时抽屉盖在画布上（绝对定位在轨道右侧），画布宽度不被侵占 */}
           {left.mounted && <LeftPanel overlay={overlay} state={left.state} />}
-          <div className="relative flex min-w-0 flex-1 flex-col">
-            <CanvasStage />
-            <CanvasHud />
-            <NativeSessionCards />
-            <NotificationRail />
-            <PerfProbeHud />
+          {/* 工作面板（2026-09-30 重设计，参照 OpenBitFun）：灰色桌面上放导航，作品放进这一块
+              白色圆角面板——画布标签行 + 画布 + 属性栏。画布灰直接铺到面板边缘、由面板圆角裁切，
+              不留一圈白边；标签行与属性栏页签条同高 44，底边 hairline 连成一条 */}
+          <div
+            data-work-panel
+            className="relative mb-2 mr-2 flex min-w-0 flex-1 overflow-hidden rounded-panel bg-surface shadow-card"
+          >
+            <div className="relative flex min-w-0 flex-1 flex-col">
+              {!fastEdit && <CanvasTabs />}
+              <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+                <CanvasStage />
+                {/* 画布工具：底部浮动工具条（排版模式）；快速编辑没有标签行，缩放菜单悬在右上角 */}
+                <CanvasToolbar />
+                {fastEdit && (
+                  <div className="absolute right-3 top-3 z-20 rounded-full bg-surface shadow-pop">
+                    <ZoomControls />
+                  </div>
+                )}
+                <CanvasHud />
+                <NativeSessionCards />
+                <NotificationRail />
+                <PerfProbeHud />
+              </div>
+            </div>
+            {right.mounted && <Inspector overlay={overlay} state={right.state} />}
+            {/* ⌥⌘S 命名小框：挂在工作面板里，居中于面板自己（不是整行，左栏 / 属性栏开合都不偏） */}
+            <NamedNodeQuickBox />
           </div>
-          {right.mounted && <Inspector overlay={overlay} state={right.state} />}
           {scrim.mounted && (
             <button
               // `data-scrim` 是「左抽屉此刻是覆盖式的、盖住了它下面的东西」这件事

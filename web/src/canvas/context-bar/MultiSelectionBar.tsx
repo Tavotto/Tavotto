@@ -85,7 +85,7 @@ export function MultiSelectionBar({
       data-selection-count={count}
       /* 参照的控件让给了右栏，但当前值不能跟着消失：计数上常驻一句，
          每颗对齐按钮的提示里也各报一次 */
-      title={qb('countTitle', { hint: qb('primaryHint'), ref: alignRefLabel(ref) })}
+      title={qb('countTitle', { ref: alignRefLabel(ref) })}
       className="whitespace-nowrap px-1 text-ink-2"
     >
       {qb('selectedCount', { count })}
@@ -270,7 +270,7 @@ function AlignRow({
 function GroupButtons({ grouped }: { grouped: boolean }) {
   return (
     <>
-      <Tip label={ar('groupTip')} side="bottom">
+      <Tip label={ar('group')} side="bottom">
         <Button
           size="icon-sm"
           data-group-action="group"
@@ -299,7 +299,7 @@ function GroupButtons({ grouped }: { grouped: boolean }) {
 /** 「更多」：到属性页的排列组去（间距 / 布局组 / 样式搬运都在那里） */
 function MoreButton({ count }: { count: number }) {
   return (
-    <Tip label={qb('moreArrangeTip')} side="bottom">
+    <Tip label={qb('moreArrange')} side="bottom">
       <Button
         size="icon-sm"
         data-multi-more

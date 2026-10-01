@@ -1,5 +1,5 @@
 import type { CanvasObject, PanelRotation } from '@/types/document'
-import { isLinear, rotateVec } from '@/types/document'
+import { isLinear, objectRotation, rotateVec } from '@/types/document'
 
 export interface Rect {
   x: number
@@ -9,6 +9,21 @@ export interface Rect {
 }
 
 export const rectOf = (o: CanvasObject): Rect => ({ x: o.x, y: o.y, w: o.w, h: o.h })
+
+/**
+ * 对象在页面上实际占的轴对齐包围盒：面板的 x/y/w/h 已是旋转后的盒；text/arrow/shape 的
+ * x/y/w/h 是未旋转的盒，任意角度 `rotationDeg` 要绕中心转出来再取外接矩形。
+ */
+export function visualBounds(o: CanvasObject): Rect {
+  const deg = objectRotation(o)
+  if (!deg) return rectOf(o)
+  const rad = (deg * Math.PI) / 180
+  const c = Math.abs(Math.cos(rad))
+  const s = Math.abs(Math.sin(rad))
+  const w = o.w * c + o.h * s
+  const h = o.w * s + o.h * c
+  return { x: o.x + o.w / 2 - w / 2, y: o.y + o.h / 2 - h / 2, w, h }
+}
 
 export function boundsOf(objs: CanvasObject[]): Rect | null {
   if (!objs.length) return null

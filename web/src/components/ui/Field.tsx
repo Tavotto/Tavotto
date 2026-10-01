@@ -1,10 +1,8 @@
 import { useEffect, useState, type HTMLAttributes, type ReactNode } from 'react'
-import { ChevronRight } from './icons'
-import { ICON_SIZE } from './Icon'
 import { DURATION, usePresence } from '@/lib/motion'
 import { cn } from '@/lib/utils'
 
-/** Inspector 分组：标题 + 内容。组间靠留白分层，不再画分隔线 */
+/** Inspector 分组：标题 + 内容。属性栏里组与组之间一条内缩的 hairline（2026-09-30 重设计，index.css 的 `[data-section]` 规则）；别处靠留白 */
 export function Section({
   title,
   action,
@@ -23,7 +21,7 @@ export function Section({
   // 分区头「上宽下紧」（上 16 / 下 4，Claude 分区头 padding 16 6 4）：标题贴着自己的内容，
   // 不是均匀地悬在两组之间（2026-09-15 审计 B14）
   return (
-    <section {...rest} className={cn('px-3 pb-4 pt-4 [&+&]:pt-0', className)}>
+    <section data-section {...rest} className={cn('px-3 pb-4 pt-4 [&+&]:pt-0', className)}>
       {title && (
         <header className="mb-1 flex h-4 items-center justify-between">
           <h3
@@ -72,52 +70,6 @@ export function Reveal({ open, className, children }: { open: boolean; className
     >
       <div className={cn('min-h-0', !settled && 'overflow-hidden')}>{children}</div>
     </div>
-  )
-}
-
-/** 折叠分组：低频内容默认收起，标题行即开关 */
-export function Disclosure({
-  title,
-  open,
-  onToggle,
-  children,
-  summary,
-}: {
-  title: ReactNode
-  open: boolean
-  onToggle: () => void
-  children: ReactNode
-  /** 折叠时跟在标题后的一句现状摘要 */
-  summary?: ReactNode
-}) {
-  return (
-    // pb-4：与 Section 同一个节拍（分区之间 16），画布页五组折叠行与「源文件与高级」不再各走一套 40 / 44（2026-09-15 检查器批次 L5）
-    <section className="px-3 pb-4">
-      <button
-        onClick={onToggle}
-        aria-expanded={open}
-        // 分区级折叠头 = 分区标题那一档（12/500/ink，type-section）：「浅 + 重」两头都不占（2026-09-15 审计 B06）
-        className="flex h-7 w-full items-center gap-1 rounded-sm text-left text-sm text-ink outline-none focus-visible:focus-ring"
-      >
-        <ChevronRight
-          size={ICON_SIZE.xs}
-          aria-hidden
-          className={cn('shrink-0 transition-transform', open && 'rotate-90')}
-        />
-        <span className="font-medium">{title}</span>
-        {!open && summary != null && (
-          <>
-            {/* 名字按内容取：标题与摘要之间没有分隔时读屏念成「背景#FFFFFF」「GuidesNone」
-                （2026-09-12 critique 的可访问名清单）。只给辅助技术加一个停顿，视觉不变 */}
-            <span className="sr-only">, </span>
-            <span className="ml-auto min-w-0 truncate text-right text-xs text-ink-3">{summary}</span>
-          </>
-        )}
-      </button>
-      <Reveal open={open}>
-        <div className="mt-1.5">{children}</div>
-      </Reveal>
-    </section>
   )
 }
 

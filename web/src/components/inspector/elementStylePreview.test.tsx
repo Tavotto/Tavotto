@@ -217,7 +217,7 @@ const toggle = (label: string): HTMLElement =>
 /** 展开「更多」折叠区（显隐等中频属性住在里面；IA 见 ADR 0010） */
 async function openMore() {
   const btn = Array.from(host.querySelectorAll('button')).find(
-    (b) => b.textContent?.trim() === '更多',
+    (b) => b.textContent?.trim().split(', ')[0] === '更多',
   )
   if (btn && btn.getAttribute('aria-expanded') !== 'true') {
     await act(async () => {

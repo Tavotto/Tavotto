@@ -108,7 +108,15 @@ export function versionSummaryText(s: VersionSummary): UiMessage[] {
 const GENERATED_NAME = /^\d{2}-\d{2} \d{2}:\d{2}$/
 
 export function versionDisplayName(v: LayoutVersionMeta): string | null {
+  // 后端给了类型（ADR 0101）：只有**命名节点**的名字是用户起的；关键时刻 /
+  // 自动节点的名字（「恢复前（10:32）」、时间串）是程序起的，行上已经有时间与
+  // 类型标记，再显示一遍就是同一件事说两次
+  if (v.kind && v.kind !== 'named') return null
   const name = v.name.trim()
+  // **kind 是权威**（Codex #679）：命名节点的名字就是用户起的，哪怕长得像「09-30 10:32」
+  // 这种时间串——用户真的会按时间给节点起名，按格式猜会把它藏掉。格式启发式只留给
+  // 不带 kind 的旧响应（ADR 0101 之前的后端）
+  if (v.kind === 'named') return name || null
   if (!name || GENERATED_NAME.test(name)) return null
   return name
 }

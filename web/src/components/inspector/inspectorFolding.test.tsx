@@ -2,7 +2,7 @@
  * 三层信息架构的折叠契约（ADR 0010）：
  *   1. primary 永远展开——选中曲线，颜色/线宽/线型不点任何折叠就能看到；
  *   2. 「更多」按角色记忆，**换面板不重置**；
- *   3. 「源文件与高级」默认关闭；
+ *   3. 「源文件」默认关闭；
  *   4. 折叠着的「更多」里有已修改项时，标题右侧给出数量摘要。
  */
 import { literal } from '@/i18n'
@@ -178,9 +178,9 @@ describe('三层折叠契约', () => {
     expect(saved.moreOpen?.line).toBe(true)
   })
 
-  it('「源文件与高级」默认关闭，zorder 收在里面', async () => {
+  it('「源文件」默认关闭，zorder 收在里面', async () => {
     await mount('p1', 'axes_0.lines_0')
-    const adv = buttonByText('源文件与高级')!
+    const adv = buttonByText('源文件')!
     expect(adv.getAttribute('aria-expanded')).toBe('false')
     expect(rowLabel('堆叠层级')).toBe(false)
     await act(async () => {
@@ -200,6 +200,24 @@ describe('三层折叠契约', () => {
     const more = buttonByText('更多')!
     expect(more.getAttribute('aria-expanded')).toBe('false')
     expect(more.textContent).toContain('1 项已修改')
+    // 改过的优先报：不再写总项数
+    expect(more.textContent).not.toContain('2 项')
+  })
+
+  it('曲线的低频项收成摘要行「更多」：右边只写项数，点开才有控件（设计稿 A3）', async () => {
+    await mount('p1', 'axes_0.lines_0')
+    const row = host.querySelector('[data-fold="more"]')!
+    // 面上：颜色 / 线宽 / 线型三项常驻；透明度 / 显示在摘要行里
+    expect(['颜色', '线宽', '线型'].every(rowLabel)).toBe(true)
+    expect(row.querySelector('[data-summary-value]')!.textContent).toBe('2 项')
+    expect(row.querySelector('input')).toBeNull()
+    expect(rowLabel('不透明度')).toBe(false)
+    await act(async () => {
+      row.querySelector('button')!.click()
+    })
+    expect(rowLabel('不透明度')).toBe(true)
+    // 展开后右值收起
+    expect(row.querySelector('[data-summary-value]')).toBeNull()
   })
 
   it('头部显示当前元素的已修改数量', async () => {

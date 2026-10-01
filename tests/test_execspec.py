@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from tavotto.engine import execspec, figcapture, pool
+from tavotto.engine import execspec, figcapture, pool, runtime
 
 
 def _spec(**overrides):
@@ -176,7 +176,10 @@ class TestWorkerArgv:
         assert w.spec.target == "fig.py"
         assert w.spec.entry == "draw"
         assert box["argv"] == execspec.worker_argv(
-            w.spec, worker_py=pool.WORKER_PY, out_dir=w.out_dir
+            w.spec,
+            worker_py=pool.WORKER_PY,
+            out_dir=w.out_dir,
+            runtime_args=runtime.worker_args(bundled=False),  # 非内置：启动期 -B（#736）
         )
 
     def test_native_is_not_served_yet(self):

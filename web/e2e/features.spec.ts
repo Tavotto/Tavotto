@@ -176,7 +176,7 @@ test(
     await expect(bar).toHaveCount(1)
     await expectInViewport(page, bar, '单选浮动栏')
     // 产品没给这颗按钮 data 锚点：按可达名认，收在浮动栏里（不取全页第一个）
-    const editBtn = bar.getByRole('button', { name: /图内元素/ })
+    const editBtn = bar.getByRole('button', { name: /改图里的内容|Edit figure elements/ })
     await expect(editBtn).toHaveCount(1)
     await expectHittable(editBtn, '「编辑图内元素」')
 
@@ -412,7 +412,9 @@ test(
     )
     await expectInViewport(page, sheet, '页面')
     expect(Math.abs(s0.x + s0.width / 2 - (g0.x + g0.width / 2)), '页面应当水平居中').toBeLessThan(2)
-    expect(Math.abs(s0.y + s0.height / 2 - (g0.y + g0.height / 2)), '页面应当垂直居中').toBeLessThan(2)
+    // 垂直方向居中于「工具条之上的可用区」：上边距 36、下边距让到工具条顶边之上（60），
+    // 所以页面中心比舞台中心高 (60 − 36) / 2 = 12 px（`TOOLBAR_FIT_CLEARANCE`，#770）
+    expect(Math.abs(s0.y + s0.height / 2 - (g0.y + g0.height / 2 - 12)), '页面应当垂直居中（让出底部工具条）').toBeLessThan(2)
     expect(s0.width / s0.height).toBeCloseTo(40 / 30, 2)
 
     // 素材卡选中后 Shift+Enter = 「添加到画布」（与卡上那颗就近入口同一个动作）

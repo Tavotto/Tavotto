@@ -1,0 +1,45 @@
+import { panelRotation, type PanelObject, type PanelRotation } from '@/types/document'
+
+/**
+ * 面板内容的变换（绕内容中心）：**先在内容空间翻转，再旋转落位**。
+ *
+ * 画布（`canvas/PanelView` 的 CSS transform）与时间线缩略图（`lib/timelineThumb` 的 canvas 2D）
+ * 都从这一份取——各写一遍的话，新加一种变换总会只改到一边：缩略图就漏过翻转，两个只差翻转的
+ * 节点画出来一模一样（Codex #679）。旋转按 `panelRotation` 归一到 90° 步进，与画布同一口径。
+ */
+export interface PanelContentTransform {
+  rotate: PanelRotation
+  scaleX: 1 | -1
+  scaleY: 1 | -1
+}
+
+export function panelContentTransform(
+  o: Pick<PanelObject, 'rotation' | 'flipH' | 'flipV'>,
+): PanelContentTransform {
+  return {
+    rotate: panelRotation(o as PanelObject),
+    scaleX: o.flipH ? -1 : 1,
+    scaleY: o.flipV ? -1 : 1,
+  }
+}
+
+/** CSS transform（从右往左应用：先 scale 翻转、再 rotate）；恒等时 `undefined` */
+export function panelTransformCss(t: PanelContentTransform): string | undefined {
+  return (
+    [
+      t.rotate ? `rotate(${t.rotate}deg)` : '',
+      t.scaleX < 0 || t.scaleY < 0 ? `scale(${t.scaleX}, ${t.scaleY})` : '',
+    ]
+      .filter(Boolean)
+      .join(' ') || undefined
+  )
+}
+
+/**
+ * 同一变换作用到 canvas 2D 上（原点已经平移到内容中心）。canvas 的变换按调用顺序右乘，
+ * 与 CSS 的「从右往左」同一个结果：先 rotate 再 scale 的调用 = 先翻转、再旋转。
+ */
+export function applyPanelTransform(ctx: CanvasRenderingContext2D, t: PanelContentTransform): void {
+  if (t.rotate) ctx.rotate((t.rotate * Math.PI) / 180)
+  if (t.scaleX < 0 || t.scaleY < 0) ctx.scale(t.scaleX, t.scaleY)
+}

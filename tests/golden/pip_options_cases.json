@@ -1,0 +1,72 @@
+{
+  "_doc": "「pip install 从哪个包源装」的真 pip 用例（#767）：每条按 `files` 在隔离的 HOME / XDG_CONFIG_HOME / venv 里摆好配置文件、按 `env` 设环境变量，然后同一个目标解释器上三方对拍——引擎 `deprepair.pip_install_options`、插件 `server.pip_index_of`（两侧共用逐字相同的 `PIP_OPTIONS_PROBE`，让 pip 自己解析 install 选项）、以及真装包时 pip 打印的 `Looking in indexes:`（`pip install --dry-run -v`）。`where`：`legacy_user` = `~/.pip/pip.conf`，`user` = `$XDG_CONFIG_HOME/pip/pip.conf`，`site` = venv 的 `pip.conf`，`config_file` = `PIP_CONFIG_FILE` 指向的文件。`custom` = index-url 不是 PyPI 默认或有 extra-index-url。前五条是 2026-10-01 维护者用 pip 25.3 实测的五种情形，后两条是同一节重复键与同一文件 [install] 压过 [global]。",
+  "cases": [
+    {
+      "name": "只有配置文件：旧 / 新用户位置 + site，生效的是 site",
+      "files": [
+        {"where": "legacy_user", "text": "[global]\nindex-url = https://legacy-user.example/simple\n"},
+        {"where": "user", "text": "[global]\nindex-url = https://current-user.example/simple\n"},
+        {"where": "site", "text": "[global]\nindex-url = https://site.example/simple\n"}
+      ],
+      "env": {},
+      "index_url": "https://site.example/simple",
+      "custom": true
+    },
+    {
+      "name": "PIP_CONFIG_FILE 里的 [install] 生效（site 与用户位置都写了 [global]）",
+      "files": [
+        {"where": "user", "text": "[global]\nindex-url = https://current-user.example/simple\n"},
+        {"where": "site", "text": "[global]\nindex-url = https://site.example/simple\n"},
+        {"where": "config_file", "text": "[install]\nindex-url = https://envfile-install.example/simple\n"}
+      ],
+      "env": {},
+      "index_url": "https://envfile-install.example/simple",
+      "custom": true
+    },
+    {
+      "name": "PIP_INDEX_URL 压过所有配置文件",
+      "files": [
+        {"where": "site", "text": "[global]\nindex-url = https://site.example/simple\n"},
+        {"where": "config_file", "text": "[install]\nindex-url = https://envfile-install.example/simple\n"}
+      ],
+      "env": {"PIP_INDEX_URL": "https://envvar.example/simple"},
+      "index_url": "https://envvar.example/simple",
+      "custom": true
+    },
+    {
+      "name": "只有 [download] 节：不作用于 pip install，仍是 PyPI 默认",
+      "files": [
+        {"where": "user", "text": "[download]\nindex-url = https://download-only.example/simple\n"}
+      ],
+      "env": {},
+      "index_url": "https://pypi.org/simple",
+      "custom": false
+    },
+    {
+      "name": "什么都没配：PyPI 默认",
+      "files": [],
+      "env": {},
+      "index_url": "https://pypi.org/simple",
+      "custom": false
+    },
+    {
+      "name": "同一节重复键：旧位置写 aa、新位置写 zz（config list 的打印顺序既不是覆盖顺序也不按值排序），新位置生效",
+      "files": [
+        {"where": "legacy_user", "text": "[global]\nindex-url = https://aa-legacy.example/simple\n"},
+        {"where": "user", "text": "[global]\nindex-url = https://zz-current.example/simple\n"}
+      ],
+      "env": {},
+      "index_url": "https://zz-current.example/simple",
+      "custom": true
+    },
+    {
+      "name": "同一文件 [install] 压过 [global]；extra-index-url 也算自定义",
+      "files": [
+        {"where": "user", "text": "[global]\nindex-url = https://zz-global.example/simple\n[install]\nindex-url = https://aa-install.example/simple\nextra-index-url = https://extra.example/simple\n"}
+      ],
+      "env": {},
+      "index_url": "https://aa-install.example/simple",
+      "custom": true
+    }
+  ]
+}

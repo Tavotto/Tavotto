@@ -60,6 +60,21 @@ tavotto codex install     # 修：把已装副本的启动命令钉到一个验�
   区间的 Python——把它 `error` 里逐个列出的版本和 `recovery` 转达给用户（装一个再重跑，
   或 `--python <路径>` 指定），**不要**把它读成「这一版 tavotto 还没发」，也不要在
   老 Python 上手动 `pip install`。
+* `engine_too_old` / `engine_incompatible` —— 机器上**装着** pip / pipx 形态的引擎，只是
+  插件驱动不了它：`engine_too_old` 是版本低于插件要求的下限（`engine_version` 与
+  `min_tavotto_version` 两个版本号都在结果里）；`engine_incompatible` 是说不出下限（插件没带
+  构建清单）或版本够了却 import 不全（装残了）。**不要说「只装了桌面版」，也不要给
+  `--provision`**（那只会在旁边再建一个环境，原来那个照样旧）。把 `error` / `recovery` 里的
+  升级命令原样转达，形如：
+
+  ```sh
+  pipx upgrade tavotto
+  pipx install --force "tavotto[worker]==<要求的版本>"
+  ```
+
+  结果里的 `pip_index.mirror` 为真时，pip 指向镜像，镜像可能还没同步到新版，照常升级只会
+  再装回旧版——这时 `recovery` 里的命令都带着 `--index-url https://pypi.org/simple`，照抄它，
+  别自己换回不带它的写法。装完**新开会话**。
 * `tavotto_missing` —— 机器上确实没有 Tavotto。按用户的需求引导：只要桌面收尾
   就装桌面版（<https://github.com/Tavotto/Tavotto/releases>），要 Codex 内嵌
   工具就 `pipx install "tavotto[worker]"`。
@@ -87,7 +102,9 @@ codex plugin marketplace upgrade tavotto
 升级后同样要新开会话。升级会把插件目录整个换掉，之前 `tavotto codex install` 钉进
 已装副本的解释器绝对路径会被换回自带的 `./mcp/launch`——它自己找 Python，多数
 机器上不用再做什么；**Windows 上升级后若又一个工具都没有，再跑一次
-`tavotto codex install`**。
+`tavotto codex install`**。若这条命令报 `not configured as a Git marketplace`：这台机器
+没有 git，插件是 `tavotto codex install` 从发行分支压缩包装成本地市场的，改为提醒
+`tavotto codex upgrade`（它重新下载、核对、让 Codex 重装）。
 不自动升级、不反复提醒、不为此打断手里的活。`update`
 里若还有 `tavotto` 字段，那是说本机 Tavotto 版本低于新插件的要求——让用户去
 Releases 更新 Tavotto（**跟插件是两码事，别混着说**）。
@@ -119,6 +136,7 @@ clone 源码或本地构建**。已经画好的图和脚本都在磁盘上，联
 | `workspace_roots_no_response` / `workspace_roots_error` | `fix_host_wiring` | 宿主声明了 roots 却没给出目录：查宿主接线 |
 | `path_out_of_scope` | `narrow_the_path` | 路径越界：改用 `roots` 里列出的目录 |
 | `no_workspace_root` | `configure_roots` | 宿主什么都没给：让用户设 `TAVOTTO_MCP_ROOTS` 后重启 |
+| `workspace_root_too_broad` | `configure_roots` | 给出的目录是整个用户主目录（或它的上级）：请用户在具体项目目录里启动宿主，或把 `TAVOTTO_MCP_ROOTS` 设成项目目录后重启 |
 
 **`fix_host_wiring` 那几档不是用户拒绝**：再让用户点多少次都不会有提示，只能
 去查宿主，或退回 `TAVOTTO_MCP_ROOTS`。这两件事的处置相反，别混着说。

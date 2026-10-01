@@ -1500,9 +1500,11 @@ def path_literals(source: str | None) -> tuple[list[tuple[str, ...]], list[tuple
         # 拼接里只要有一个操作数不是「已知的相对常量」，整条拼接的字符串片段都不独立算数
         # （也不认领绝对证据）：追不清哪一段才是「脚本写的相对路径」时，宁可不算证据，保留绝对身份。
         anchored = any(not _is_known_relative_literal(op) for op in operands)
+        if anchored:
+            # 整个操作数子树都不看：`root / Path("data")`、`root / ("a" + "b")`、`root / f"{x}/d"`
+            # 里嵌套的字面量一样不是「脚本写过的相对路径」（Codex 评 #716 P1）
+            return
         for op in operands:
-            if anchored and isinstance(op, ast.Constant):
-                continue
             _visit(op)
 
     def _visit(node: ast.AST) -> None:

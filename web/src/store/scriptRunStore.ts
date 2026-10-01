@@ -2,10 +2,14 @@ import { create } from 'zustand'
 import {
   ApiError,
   cancelProbe,
+  DEPENDENCY_PREPARATION_CODE,
   INPUT_REMAP_CHANGED_CODE,
   probeScript,
+  WORKDIR_CONFIRMATION_CODE,
   type CapturedFigureDescriptor,
+  type DependencyPreparationOffer,
   type ProbeError,
+  type WorkdirConfirmation,
 } from '@/lib/api'
 import { currentProjectId } from '@/lib/session'
 import { useAssetStore } from '@/store/assetStore'
@@ -31,6 +35,12 @@ import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
  *
  * 错误存**原始 code + params**（`ProbeError`），显示那一刻才按当前语言翻
  * （i18n 纪律：活得比一次渲染长的文本不存成品字符串）。
+ *
+ * **起会话之前的两道门不是失败**（U03 运行目录 / U04 依赖准备，ADR 0057 / 0061 §六）：试运行以
+ * `workdir_confirmation_required` / `dependency_preparation_required` 回来时，载荷交给 `envStore`——与渲染
+ * 那条路（`renderStore`）同一个确认框 / 授权框、同一次作答；相位是 `needs_workdir` / `needs_preparation`，
+ * **不进「可能需要原环境」**（那组的出口只有换环境 / 复制诊断，新脚本的图还没上画布时就再也走不到安装，
+ * Windows 真机验收 main 493a1310）。作答之后由作答的那一方调 `rerunGated` 重跑停在门上的那一行。
  */
 export type ScriptRunPhase =
   | 'idle'
@@ -40,6 +50,8 @@ export type ScriptRunPhase =
   | 'captured_many'
   | 'no_figure'
   | 'missing_dependency'
+  | 'needs_workdir' // 起会话之前要先选运行目录（U03）：载荷在 error.confirmation
+  | 'needs_preparation' // 起会话之前要先准备依赖（U04）：载荷在 error.dependency_preparation
   | 'missing_input'
   | 'timeout'
   | 'cancelled'
@@ -55,6 +67,8 @@ export interface ScriptRunState {
   /** 用户已点取消、原请求尚未落地 */
   cancelRequested: boolean
   gen: number
+  /** 素材库脚本行发起的：依赖门在行内一句话 + 一键修复，不弹授权框（用户 2026-09-30，#760）；重跑沿用 */
+  inlineGate?: boolean
 }
 
 const IDLE: ScriptRunState = {
@@ -87,18 +101,129 @@ const PHASE_BY_CODE: Record<string, ScriptRunPhase> = {
   execution_timeout: 'timeout',
   execution_cancelled: 'cancelled',
   script_no_figure: 'no_figure',
+  [WORKDIR_CONFIRMATION_CODE]: 'needs_workdir',
+  [DEPENDENCY_PREPARATION_CODE]: 'needs_preparation',
+}
+
+/**
+ * 错误 → 相位。门的 code 没带载荷（老后端 / 投影缺了）时没有框可弹、行上也没有再打开的东西——按失败落，
+ * 至少留在「可能需要原环境」里有出口，而不是停在一句话上无路可走。
+ */
+const phaseOf = (error: ProbeError): ScriptRunPhase => {
+  const phase = PHASE_BY_CODE[error.code] ?? 'failed'
+  if (phase === 'needs_preparation' && !error.dependency_preparation) return 'failed'
+  if (phase === 'needs_workdir' && !error.confirmation) return 'failed'
+  return phase
+}
+
+/** 停在起会话之前那两道门上的相位（不是失败：缺的是用户的一个决定） */
+export const isGatePhase = (phase: ScriptRunPhase | undefined): boolean =>
+  phase === 'needs_workdir' || phase === 'needs_preparation'
+
+/**
+ * 试运行撞上起会话之前的门：载荷交给 `envStore`，弹与渲染那条路同一个框（同一时刻只开一份、换了项目的
+ * 旧载荷不弹——判据在 `envStore` 那一侧）。`projectId` 是发这次试运行时的项目。回 true = 是门、已交出。
+ * 素材库脚本行（经 `run`）与接入中心的试运行共用这一处，别的试运行入口也走这里。
+ */
+/**
+ * 试运行请求**抛出来**的错误（非 2xx：门的两个 code 就是以 409 回来的）→ `ProbeError`，载荷一并带上。
+ * 素材库脚本行与接入中心共用这一处：各自解析的话，一边认得门、一边把它当成普通失败（#740 Codex P2）。
+ */
+export function probeErrorOf(e: unknown): ProbeError {
+  const api = e instanceof ApiError ? e : null
+  const body = (api?.body ?? {}) as {
+    code?: string
+    params?: Record<string, unknown>
+    dependency_preparation?: DependencyPreparationOffer
+    confirmation?: WorkdirConfirmation
+  }
+  const code = body.code ?? ''
+  return {
+    code: code || 'internal_error',
+    message: e instanceof Error ? e.message : String(e),
+    params: body.params,
+    dependency_preparation: body.dependency_preparation,
+    confirmation: body.confirmation,
+  }
+}
+
+/**
+ * 这个脚本在本 store 里没有正在跑的试运行时 resolve。门放行后本 store 与接入中心会各自重跑同一个脚本，
+ * 后端同一脚本只许一个在跑（另一个回 `probe_in_progress`）——接入中心先等本 store 那一次跑完再跑自己的
+ * （#740 Codex P2）。
+ */
+export function whenScriptIdle(script: string): Promise<void> {
+  const busy = () => {
+    const e = useScriptRunStore.getState().byScript[script]
+    return !!e && isBusyPhase(e.phase)
+  }
+  if (!busy()) return Promise.resolve()
+  return new Promise((resolve) => {
+    const unsub = useScriptRunStore.subscribe(() => {
+      if (busy()) return
+      unsub()
+      resolve()
+    })
+  })
+}
+
+/**
+ * 项目代际：每次换项目 `clear()` 都 +1（A → B → A 回到同一个项目 id，代际也已经变了）。跨 await 的
+ * 副作用（门放行后的重跑）按它判「还是不是发起时的那一代」，不按项目 id 判（#740 Codex P2）。
+ */
+export const scriptRunEpoch = (): number => useScriptRunStore.getState().epoch
+
+/** 门的 code → 它对应的相位（不是门回 null） */
+export function gatePhaseOf(error: ProbeError | null | undefined): 'needs_workdir' | 'needs_preparation' | null {
+  if (!error) return null
+  if (error.code === DEPENDENCY_PREPARATION_CODE && error.dependency_preparation) return 'needs_preparation'
+  if (error.code === WORKDIR_CONFIRMATION_CODE && error.confirmation) return 'needs_workdir'
+  return null
+}
+
+type GateResolved = (phase: 'needs_workdir' | 'needs_preparation', script?: string) => void
+const gateListeners = new Set<GateResolved>()
+
+/**
+ * 门有了答案时通知：不在本 store 里记账的试运行入口（接入中心的逐行试运行）靠它重跑自己停在门上的那一行
+ * ——否则作答之后那一行停在「还差一步」上、要用户再点一次（#740 Codex P2）。回退订函数。
+ */
+export function onGateResolved(cb: GateResolved): () => void {
+  gateListeners.add(cb)
+  return () => {
+    gateListeners.delete(cb)
+  }
+}
+
+export function handOffProbeGate(error: ProbeError | null | undefined, projectId: string | null): boolean {
+  if (!error) return false
+  if (error.code === DEPENDENCY_PREPARATION_CODE && error.dependency_preparation) {
+    useEnvStore.getState().requestDependencyPreparation(error.dependency_preparation, projectId)
+    return true
+  }
+  if (error.code === WORKDIR_CONFIRMATION_CODE && error.confirmation) {
+    useEnvStore.getState().requestWorkdirConfirmation(error.confirmation, projectId)
+    return true
+  }
+  return false
 }
 
 interface ScriptRunStore {
   /** 项目代际：clear() 递增，在途响应据此作废 */
   epoch: number
   byScript: Record<string, ScriptRunState>
-  run: (script: string) => Promise<void>
+  run: (script: string, opts?: { inlineGate?: boolean }) => Promise<void>
   cancel: (script: string) => void
   /** SSE probe.started：starting_runtime → running（其余状态不动） */
   markRunning: (script: string) => void
   /** 收起结果 / 关闭错误：回 idle */
   reset: (script: string) => void
+  /**
+   * 门有了答案（准备成功 / 明确跳过 / 改用了用户环境 / 选定了运行目录）：把停在这道门上的那一行重跑。
+   * 给了 `script` 只重跑那一个（依赖的决定按脚本记）；不给就重跑停在这一相位上的全部（运行目录是项目级的）。
+   * 用户已经重跑 / 收起过的（相位不再是这道门）不动。
+   */
+  rerunGated: (phase: 'needs_workdir' | 'needs_preparation', script?: string) => void
   /**
    * 此刻因「找不到数据」失败、指认了数据位置之后要重跑的脚本（ADR 0106）——带 `missing_input` 载荷的
    * 错误（`missing_input` 与「跑通了但没出图」两种）都算。只读；重跑由 envStore 代际订阅发起。
@@ -117,15 +242,17 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
   epoch: 0,
   byScript: {},
 
-  run: async (script) => {
+  run: async (script, opts) => {
     const prev = get().byScript[script]
+    const inlineGate = opts?.inlineGate ?? prev?.inlineGate ?? false
     if (prev && isBusyPhase(prev.phase)) return // 同脚本防并发
     const epoch = get().epoch
+    const projectAtStart = currentProjectId()
     const gen = (prev?.gen ?? 0) + 1
     set((s) => ({
       byScript: {
         ...s.byScript,
-        [script]: { ...IDLE, phase: 'starting_runtime', gen },
+        [script]: { ...IDLE, phase: 'starting_runtime', gen, inlineGate },
       },
     }))
 
@@ -142,7 +269,6 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
       }))
     }
 
-    const projectAtStart = currentProjectId()
     try {
       const res = await probeScript(script)
       if (stale()) return
@@ -162,10 +288,13 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
       }
       if (res.error) {
         settle({
-          phase: PHASE_BY_CODE[res.error.code] ?? 'failed',
+          phase: phaseOf(res.error),
           error: res.error,
           descriptors: [],
         })
+        // 起会话之前的门：弹与渲染那条路同一个框；行上留着载荷，「稍后」之后能再开
+        // 行内呈现的依赖门（inlineGate）不弹授权框；运行目录门与其他入口（图卡 / 接入中心）照旧
+        if (!(inlineGate && res.error.code === DEPENDENCY_PREPARATION_CODE)) handOffProbeGate(res.error, projectAtStart)
         return
       }
       settle({
@@ -194,18 +323,9 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
       }
     } catch (e) {
       if (stale()) return
-      const api = e instanceof ApiError ? e : null
-      const body = (api?.body ?? {}) as { code?: string; params?: Record<string, unknown> }
-      const code = body.code ?? ''
-      settle({
-        phase: PHASE_BY_CODE[code] ?? 'failed',
-        error: {
-          code: code || 'internal_error',
-          message: e instanceof Error ? e.message : String(e),
-          params: body.params,
-        },
-        descriptors: [],
-      })
+      const error = probeErrorOf(e)
+      settle({ phase: phaseOf(error), error, descriptors: [] })
+      if (!(inlineGate && error.code === DEPENDENCY_PREPARATION_CODE)) handOffProbeGate(error, projectAtStart)
     }
   },
 
@@ -260,6 +380,14 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
       delete byScript[script]
       return { byScript }
     })
+  },
+
+  rerunGated: (phase, script) => {
+    const scripts = script ? [script] : Object.keys(get().byScript)
+    for (const name of scripts) {
+      if (get().byScript[name]?.phase === phase) void get().run(name)
+    }
+    for (const cb of [...gateListeners]) cb(phase, script)
   },
 
   clear: () => set((s) => ({ byScript: {}, epoch: s.epoch + 1 })),
