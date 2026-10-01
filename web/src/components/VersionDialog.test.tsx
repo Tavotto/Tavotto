@@ -575,6 +575,31 @@ describe('命名与改名', () => {
       expect($('[data-timeline-quick-name]')).toBeNull()
     })
 
+    it('关闭后焦点回到打开前的元素（Esc、保存成功两条路径）', async () => {
+      mockCreate.mockResolvedValueOnce({ version: meta({ id: 'v_named' }) })
+      await mount([meta()], undefined, false)
+      const before = document.createElement('button')
+      document.body.appendChild(before)
+      before.focus()
+      await openQuick()
+      expect(document.activeElement).toBe($('[data-timeline-quick-name-input]'))
+      await act(async () => {
+        $('[data-timeline-quick-name-input]')!.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+        )
+      })
+      expect(document.activeElement).toBe(before)
+      await act(async () => startNamedNode())
+      await flush()
+      const input = await typeName('投稿前')
+      await act(async () => {
+        input.form!.requestSubmit()
+      })
+      await flush()
+      expect($('[data-timeline-quick-name]')).toBeNull()
+      expect(document.activeElement).toBe(before)
+    })
+
     it('点小框里面不关', async () => {
       await mount([meta()], undefined, false)
       await openQuick()

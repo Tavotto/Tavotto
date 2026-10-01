@@ -137,7 +137,6 @@ test('排版时间线：自动节点 → 命名 → 预览不改排版 → 恢�
   const vp = page.viewportSize()!
   expect(bb.x).toBeGreaterThanOrEqual(0)
   expect(bb.x + bb.width).toBeLessThanOrEqual(vp.width)
-  expect(Math.abs(bb.x + bb.width / 2 - vp.width / 2)).toBeLessThan(2)
   await quick.fill('投稿前')
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'timeline-quick-name.png') })
   await quick.press('Enter')
@@ -147,6 +146,31 @@ test('排版时间线：自动节点 → 命名 → 预览不改排版 → 恢�
   await expect(page.locator('[data-timeline-quick-name-input]')).toBeFocused()
   await page.keyboard.press('Escape')
   await expect(box).toHaveCount(0)
+  // 居中于工作面板自己（不是整行）：只开左栏、只开属性栏两种布局下水平中心差 ≤ 2px
+  const panel = await only(page.locator('[data-work-panel]'))
+  const centerGap = async () => {
+    await page.keyboard.press('ControlOrMeta+Alt+S')
+    const q = await only(page.locator('[data-timeline-quick-name]'))
+    await expect(page.locator('[data-timeline-quick-name-input]')).toBeFocused()
+    const [b, p] = [(await q.boundingBox())!, (await panel.boundingBox())!]
+    await page.keyboard.press('Escape')
+    await expect(q).toHaveCount(0)
+    return Math.abs(b.x + b.width / 2 - (p.x + p.width / 2))
+  }
+  const leftOpen = page.locator('[data-rail][aria-expanded="true"]')
+  const inspectorClose = page.locator('[data-inspector-close]')
+  // 只开左栏：收起属性栏
+  if ((await leftOpen.count()) === 0) await (await only(page.locator('[data-rail="elements"]'))).click()
+  await expect(leftOpen.first()).toBeVisible()
+  if ((await inspectorClose.count()) > 0) await inspectorClose.click()
+  await expect(inspectorClose).toHaveCount(0)
+  expect(await centerGap()).toBeLessThanOrEqual(2)
+  // 只开属性栏：选中文字打开属性栏，收起左栏
+  await canvasText(page, '甲版标注').click()
+  await expect(inspectorClose).toHaveCount(1)
+  await leftOpen.first().click()
+  await expect(leftOpen).toHaveCount(0)
+  expect(await centerGap()).toBeLessThanOrEqual(2)
   // 抽屉里的按钮照旧：点开展开，Esc 只收输入
   await clock.click()
   await expect(drawer).toBeVisible()

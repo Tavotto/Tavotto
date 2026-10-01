@@ -11,7 +11,7 @@ import { useTimelineStore } from '@/store/timelineStore'
 
 /**
  * ⌥⌘S / 命令面板「把现在存为命名节点…」的就地小框（ADR 0101 修订，2026-10-01）：
- * 浮在工作面板顶部居中，**不打开时间线抽屉**。名字框 + 「存为命名节点」，回车保存、
+ * 浮在工作面板顶部居中（挂在 `[data-work-panel]` 内部，居中于面板自己），**不打开时间线抽屉**。名字框 + 「存为命名节点」，回车保存、
  * Esc / 点外面关闭；成功后关闭（`saveNamedNode` 自带状态条提示），失败（命名节点超上限
  * 的 409）那句话留在小框里、名字不丢。开关是 `timelineStore.namingOpen`。
  *
@@ -39,6 +39,20 @@ function QuickBox() {
   const busyRef = useRef(false)
   busyRef.current = busy
   const close = () => useTimelineStore.getState().setNamingOpen(false)
+
+  // 关闭（Esc / 点外面 / 保存成功）后把焦点还给打开前的元素，键盘用户不落到 body。
+  // 不用 `ui/Popover`：它必须有触发器、焦点还给触发器，而这个小框由快捷键 / 命令面板打开，
+  // 没有触发器；`ui/Dialog` 是模态，盖住画布不合适。所以在这里记下打开前的 activeElement。
+  // render 阶段读：此刻 `autoFocus` 还没发生（命令面板自己关闭后元素已不在文档里则不还）
+  const prevFocus = useRef<Element | null>(null)
+  if (prevFocus.current === null) prevFocus.current = document.activeElement
+  useEffect(
+    () => () => {
+      const el = prevFocus.current
+      if (el instanceof HTMLElement && el.isConnected) el.focus()
+    },
+    [],
+  )
 
   // 点外面关闭（在途时不关：名字还没落盘）
   useEffect(() => {
