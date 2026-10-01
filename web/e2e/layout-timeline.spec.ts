@@ -166,6 +166,7 @@ test('排版时间线：自动节点 → 命名 → 预览不改排版 → 恢�
   await expect(inspectorClose).toHaveCount(0)
   expect(await centerGap()).toBeLessThanOrEqual(2)
   // 只开属性栏：选中文字打开属性栏，收起左栏
+  await page.keyboard.press('Escape') // 先取消选择，再点文字才会重新打开属性栏
   await canvasText(page, '甲版标注').click()
   await expect(inspectorClose).toHaveCount(1)
   await leftOpen.first().click()
