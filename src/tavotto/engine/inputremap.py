@@ -307,15 +307,14 @@ def remove_rule(root: str | os.PathLike, kind: str, src: str) -> dict:
 
 def chosen_path(chosen: str) -> str:
     """用户亲手选的位置：只接受本机绝对路径；任何磁盘探测之前先判，不改原生大小写 / UNC 写法。"""
-    if (
-        not isinstance(chosen, str)
-        or "\x00" in chosen
-        or not os.path.isabs(chosen)
-        or (os.path.sep == "\\" and not os.path.splitdrive(chosen)[0])
-    ):
+    if not isinstance(chosen, str) or "\x00" in chosen:
         raise RemapError(ERROR_CHOSEN_INVALID, "指认的位置必须是本机的绝对路径", path=str(chosen))
     drive = os.path.splitdrive(chosen)[0]
-    if os.path.sep == "\\" and drive.startswith(("\\\\", "//")):
+    unc = os.path.sep == "\\" and drive.startswith(("\\\\", "//"))
+    # Python 3.10 的 ntpath.isabs 把无尾分隔符的 UNC 共享根判成 False；完整 server/share 仍是绝对位置。
+    if (not os.path.isabs(chosen) and not unc) or (os.path.sep == "\\" and not drive):
+        raise RemapError(ERROR_CHOSEN_INVALID, "指认的位置必须是本机的绝对路径", path=chosen)
+    if unc:
         if len(drive.replace("\\", "/").strip("/").split("/")) < 2:
             raise RemapError(ERROR_CHOSEN_INVALID, "UNC 路径需要指明共享目录", path=chosen)
     return os.path.abspath(chosen)
