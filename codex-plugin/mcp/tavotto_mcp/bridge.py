@@ -378,6 +378,20 @@ def _bridge_error_from_worker(exc: engine_pool.WorkerError) -> BridgeError:
             )
             + "）。这个决定按项目记住，只问这一次。"
         )
+    # 数据找不到（ADR 0106）：缺的是哪一串、脚本里还有哪些也找不到——原样进 `structuredContent`。
+    # 指认位置要用户在本机的选择器里点（改指规则是本机路径、按项目记住），插件不替用户选：
+    # `recovery` 请用户回 Tavotto 窗口里指认，或把数据放回脚本写的位置。
+    missing_input = getattr(exc, "missing_input", None)
+    if isinstance(missing_input, dict):
+        extra["missing_input"] = missing_input
+        first = missing_input.get("requested") or next(
+            (o.get("path") for o in missing_input.get("others") or [] if o.get("path")), ""
+        )
+        extra["recovery"] = (
+            f"脚本要读的数据找不到：{first}。请用户在 Tavotto 窗口里打开这张图，在弹出的「找不到脚本要读的"
+            "数据」里指认文件或它所在的文件夹（只影响读取、按项目记住），或把数据放回脚本写的位置；"
+            "之后再调一次 tavotto_open_figure。不要改用户的脚本。"
+        )
     explicit = getattr(exc, "explicit", None)
     if isinstance(explicit, dict):
         extra["explicit"] = {

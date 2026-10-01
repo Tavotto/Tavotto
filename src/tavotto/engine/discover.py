@@ -39,7 +39,7 @@ import threading
 import tokenize
 from pathlib import Path, PurePosixPath
 
-from . import atomicio, figcapture, projectenv, registry, runtime
+from . import atomicio, figcapture, inputremap, projectenv, registry, runtime
 
 #: 「什么算一份图产物」的唯一出处在 `figcapture.ARTIFACT_EXTS`（捕获描述符
 #: 判原件、handoff 找产物、这里的静态扫描必须是同一张表）；旧名保留作镜像。
@@ -1288,7 +1288,15 @@ def register(
     整条替换会让同一个脚本的其它图当场失去编辑入口。并集在**这里**算而不是
     让调用方先读一遍再传全集：调用方手里那份可能是旧的，而这里读的就是马上
     要写回去的那份文件。
+
+    整段读改写在**项目锁**里（`inputremap.project_mutex`，ADR 0106 §五）：两个脚本同时重新登记时，后写的一方
+    不许整值覆盖掉先写的那份（Codex 评 #716 P1）。调用方已持锁（登记落地在 `landing()` 里）时可重入。
     """
+    with inputremap.project_mutex(figures_dir):
+        return _register_locked(figures_dir, script, stems, entry, cost, notes, append=append)
+
+
+def _register_locked(figures_dir, script, stems, entry, cost, notes, *, append: bool) -> dict:
     path = registry.existing_registry_path(figures_dir)
     try:
         cfg = json.loads(path.read_text(encoding="utf-8")) if path else {}

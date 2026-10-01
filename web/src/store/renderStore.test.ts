@@ -363,6 +363,58 @@ describe('native 图与文档不一致（Codex #549 第八轮）：文件级，�
   })
 })
 
+describe('渲染条件在途中变了（改指表，ADR 0106）：invalidateInflight 之前发出的回包丢弃', () => {
+  it('旧条件的回包晚到：不清 stale、不当权威；请求被 abort；随后的同键渲染立刻发出', async () => {
+    const p = panel('a', 'fig1.pdf')
+    engineRender.mockResolvedValueOnce({ rev: 1, manifest: manifest('old'), svg: '<svg>old</svg>' })
+    await useRenderStore.getState().render('fig1.pdf', [])
+    let release: (v: unknown) => void = () => {}
+    let signal: AbortSignal | undefined
+    engineRender.mockImplementationOnce(
+      (_id: string, _p: unknown[], opts?: EngineRenderOptions) =>
+        new Promise((res) => {
+          signal = opts?.signal
+          release = res
+        }),
+    )
+    const inFlight = useRenderStore.getState().render('fig1.pdf', [])
+    await Promise.resolve()
+
+    useRenderStore.getState().invalidateInflight()
+    useRenderStore.getState().markStale(['fig1.pdf'])
+    expect(signal?.aborted).toBe(true)
+    release({ rev: 2, manifest: manifest('stale-rule'), svg: '<svg>stale-rule</svg>' })
+    await inFlight
+
+    const after = useRenderStore.getState().get(renderKeyOf(p))
+    expect(after.stale).toBe(true)
+    expect(after.svg ?? '').not.toContain('stale-rule')
+    expect(exactPanelManifest(useRenderStore.getState(), p)).toBeNull()
+
+    // 同步器按新条件重排：同键的新请求不排在死掉的旧槽位后面，当场发出
+    engineRender.mockResolvedValueOnce({ rev: 3, manifest: manifest('new'), svg: '<svg>new</svg>' })
+    await useRenderStore.getState().render('fig1.pdf', [])
+    expect(engineRender).toHaveBeenCalledTimes(3)
+    const fresh = useRenderStore.getState().get(renderKeyOf(p))
+    expect(fresh.stale).toBe(false)
+    expect(fresh.svg).toContain('new')
+  })
+})
+
+describe('后端说这一版按旧改指表画的（input_remap_changed，ADR 0106 §五）', () => {
+  it('不留错误块：标 stale，同步器按新表重排', async () => {
+    const { EngineError } = await import('@/lib/api')
+    const p = panel('a', 'fig1.pdf')
+    engineRender.mockRejectedValueOnce(new EngineError('改指表已变', '', 'input_remap_changed'))
+    await useRenderStore.getState().render('fig1.pdf', [])
+    const entry = useRenderStore.getState().get(renderKeyOf(p))
+    expect(entry.status).not.toBe('error')
+    expect(entry.error).toBeNull()
+    expect(entry.stale).toBe(true)
+    expect(entry.lastPatches).toBeNull()
+  })
+})
+
 describe('项目代际（STATE-06）：clear() 之前发出的渲染，回包不落进换过之后的项目', () => {
   /** 挂起下一次 engineRender，返回它的 resolve / reject 两个把手 */
   const holdNextRender = () => {

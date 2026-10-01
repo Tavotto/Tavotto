@@ -267,6 +267,33 @@ class TestStaleStatus:
         st = runtimeasset.stale_status(figs, asset_id, reg, worker_python="python3")
         assert st["status"] == runtimeasset.STALE_POSSIBLY
 
+    def test_possibly_stale_after_the_input_remap_table_changes(self, figs, tmp_path):
+        """改指表增 / 换 / 删（ADR 0106）：素材库里试运行成功、还没上画布的图读的可能是旧位置的数据
+        （Codex 评 #716 P1）。没有规则时指纹是空串，已有的 cache 不因此变 stale。"""
+        from tavotto.engine import inputremap
+
+        asset_id, reg = self._materialized(figs, tmp_path)
+
+        def status():
+            return runtimeasset.stale_status(figs, asset_id, reg, worker_python="python3")["status"]
+
+        def rematerialize():
+            svg = tmp_path / "p.svg"
+            runtimeasset.materialize(figs, _descriptor(), svg)
+            assert status() == runtimeasset.STALE_FRESH
+
+        assert status() == runtimeasset.STALE_FRESH
+        (tmp_path / "old").mkdir()
+        (tmp_path / "new").mkdir()
+        inputremap.add_rule(figs, {"kind": "prefix", "from": "data", "to": str(tmp_path / "old")})
+        assert status() == runtimeasset.STALE_POSSIBLY  # 新增
+        rematerialize()
+        inputremap.add_rule(figs, {"kind": "prefix", "from": "data", "to": str(tmp_path / "new")})
+        assert status() == runtimeasset.STALE_POSSIBLY  # 同 kind / from 被替换
+        rematerialize()
+        inputremap.remove_rule(figs, "prefix", "data")
+        assert status() == runtimeasset.STALE_POSSIBLY  # 删掉
+
     def test_missing_source_when_the_script_is_gone(self, figs, tmp_path):
         asset_id, reg = self._materialized(figs, tmp_path)
         (figs / "show_only.py").unlink()

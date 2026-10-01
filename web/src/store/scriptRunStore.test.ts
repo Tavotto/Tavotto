@@ -28,6 +28,7 @@ vi.mock('@/lib/api', () => ({
   fetchRuntimeStatus: vi.fn(),
   engineRender: vi.fn(),
   EngineError: class EngineError extends Error {},
+  INPUT_REMAP_CHANGED_CODE: 'input_remap_changed',
 }))
 
 const mockProbe = vi.mocked(probeScript)
@@ -345,5 +346,18 @@ describe('试运行撞上起会话之前的门', () => {
     // 已经不在门上：再来一次不重复跑
     useScriptRunStore.getState().rerunGated('needs_preparation', 'fig.py')
     expect(mockProbe).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('试运行途中改了指认（ADR 0106 §五）', () => {
+  it('后端按代次丢弃了结果（input_remap_changed）：不报失败，按新表重跑一次', async () => {
+    useScriptRunStore.getState().clear()
+    mockProbe.mockReset()
+    mockProbe
+      .mockResolvedValueOnce({ ...failed('input_remap_changed'), registered: false })
+      .mockResolvedValueOnce(ok([desc('fig')]))
+    await useScriptRunStore.getState().run('fig.py')
+    await vi.waitFor(() => expect(useScriptRunStore.getState().byScript['fig.py']?.phase).toBe('captured_one'))
+    expect(mockProbe).toHaveBeenCalledTimes(2)
   })
 })

@@ -41,6 +41,7 @@ cwd、argv、env——继续散着拼，就是把同一个语义写第 N 份。�
 from __future__ import annotations
 
 import dataclasses
+import json
 import os
 from pathlib import Path
 
@@ -155,6 +156,11 @@ class ExecutionSpec:
     #: 相同；`project` 时 cwd 是脚本目录，而写入边界的目录仍要交给 worker
     #: （`--sandbox`）。空串 = 与 `cwd` 相同（老 payload 的形态）。
     sandbox: str = ""
+    #: safe 档：用户指认过的只读改指表（ADR 0106，`figcapture.clean_remap_rules` 的形状）。
+    #: 规则里全是本机绝对路径——**机器相关，不进 `stable_payload()`**；写回的重放与热态读
+    #: 同一份数据，靠的是三条 spawn 路径都从 `inputremap.rules_for()` 取（与 `cwd_mode` 同一条纪律）。
+    #: 空元组 = 没有规则，argv 逐字节不变。native 恒空（那是用户自己的 `python fig.py`）。
+    input_remap: tuple = ()
 
     def __post_init__(self) -> None:
         if self.profile not in PROFILES:
@@ -183,9 +189,15 @@ class ExecutionSpec:
             raise ValueError(f"cwd_mode 非法: {self.cwd_mode!r}（可选 {CWD_MODES}）")
         if not isinstance(self.sandbox, str):
             raise ValueError("sandbox 必须是字符串")
+        if not isinstance(self.input_remap, tuple) or figcapture.clean_remap_rules(
+            list(self.input_remap)
+        ) != list(self.input_remap):
+            raise ValueError(f"input_remap 必须是校验过的规则元组: {self.input_remap!r}")
         if self.profile == PROFILE_NATIVE:
             if self.cwd_mode != CWD_SANDBOX:
                 raise ValueError("native profile 没有 cwd_mode 这个维度（cwd 是用户的）")
+            if self.input_remap:
+                raise ValueError("native profile 不改指输入（ADR 0106：那是用户自己的 python）")
             if self.entry is not None:
                 raise ValueError("native profile 没有 entry 概念（恒 None）")
             if not self.passthrough_savefig:
@@ -199,6 +211,7 @@ class ExecutionSpec:
         out = dataclasses.asdict(self)
         out["argv"] = list(self.argv)
         out["env"] = dict(self.env) if self.env is not None else None
+        out["input_remap"] = [dict(r) for r in self.input_remap]
         out["spec_version"] = SPEC_VERSION
         return out
 
@@ -279,6 +292,7 @@ def spec_from_payload(data: dict) -> ExecutionSpec:
         raw_target=data.get("raw_target", "") or "",
         cwd_mode=data.get("cwd_mode", CWD_SANDBOX) or CWD_SANDBOX,
         sandbox=data.get("sandbox", "") or "",
+        input_remap=tuple(figcapture.clean_remap_rules(data.get("input_remap") or [])),
     )
 
 
@@ -291,6 +305,7 @@ def safe_spec(
     sandbox: str,
     env: dict[str, str] | None = None,
     cwd_mode: str = CWD_SANDBOX,
+    input_remap=(),
 ) -> ExecutionSpec:
     """safe 档的**唯一权威构造函数**——运行时默认值只写在这里。
 
@@ -326,6 +341,8 @@ def safe_spec(
         passthrough_savefig=False,
         cwd_mode=cwd_mode,
         sandbox=sandbox,
+        # ADR 0106：用户指认过的只读改指表（`inputremap.rules_for`），空 = 没有
+        input_remap=tuple(figcapture.clean_remap_rules(list(input_remap or ()))),
     )
 
 
@@ -460,4 +477,10 @@ def worker_argv(
         # `project`（脚本目录）与 `project_root`（项目根）都走这两个 token——worker 只
         # 认「cwd 换到哪」，模式的名字是控制面的事。
         out += ["--cwd", spec.cwd]
+    if spec.input_remap:
+        # ADR 0106：只在有规则时多两个 token——没有规则的 argv 逐字节不变（golden）
+        out += [
+            "--input-remap",
+            json.dumps(list(spec.input_remap), ensure_ascii=False, separators=(",", ":")),
+        ]
     return out

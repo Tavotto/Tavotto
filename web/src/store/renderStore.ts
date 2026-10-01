@@ -12,8 +12,11 @@ import {
   type DependencyPreparationOffer,
   type DependencyRepairOffer,
   type Manifest,
+  MISSING_INPUT_CODE,
+  type MissingInputOffer,
   type ProjectEnvFailure,
   type WorkdirConfirmation,
+  INPUT_REMAP_CHANGED_CODE,
 } from '@/lib/api'
 import { engineTransport } from '@/lib/engineTransport'
 import { currentProjectId } from '@/lib/session'
@@ -111,6 +114,8 @@ export interface PanelRender {
   confirmation: WorkdirConfirmation | null
   /** `dependency_preparation_required`（U04）时后端给的联合计划载荷（同上：留着能再开） */
   dependencyPreparation: DependencyPreparationOffer | null
+  /** 数据找不到（ADR 0106）时「指认数据位置」的载荷（同上：留着，关了对话框还能从错误块再开） */
+  missingInput: MissingInputOffer | null
   traceback: string
   warnings: string[]
   /** 最近一次成功渲染的阶段计时（毫秒，键见 api.ts）；暂不做 UI */
@@ -146,6 +151,7 @@ const EMPTY: PanelRender = {
   dependencyRepair: null,
   confirmation: null,
   dependencyPreparation: null,
+  missingInput: null,
   traceback: '',
   warnings: [],
   timings: {},
@@ -313,6 +319,13 @@ interface RenderState {
    */
   evictSvgBudget: () => void
   /** 换项目：渲染态、跟踪表、在途账本一起归零 */
+  /**
+   * 在途的渲染整批作废（不清缓存）：渲染条件在请求飞行途中变了（改指表增 / 换 / 删，ADR 0106）——
+   * 按旧条件画出来的回包晚到时会把刚标上的 stale 清掉、把旧图当权威。与换项目共用同一个代际：
+   * 换代 + abort 在途请求 + 丢掉在途槽位，回包（成功 / 失败两支）对不上代际就整个丢弃。
+   * 调用方随后 `markStale`，同步器按新条件重排。
+   */
+  invalidateInflight: () => void
   clear: () => void
 }
 
@@ -322,7 +335,12 @@ export const NATIVE_FIGURE_INCONSISTENT = 'native_figure_inconsistent'
 /** 每个变体一份在途状态：busy 时只记最后一次待办，避免连发把 worker 淹没 */
 const inflight = new Map<
   string,
-  { busy: boolean; queued: { patches: unknown[]; previewDpi?: number; seq: number } | null }
+  {
+    busy: boolean
+    queued: { patches: unknown[]; previewDpi?: number; seq: number } | null
+    /** 此刻那次尝试的 abort（`invalidateInflight` 用；看门狗用的是同一个） */
+    abort?: () => void
+  }
 >()
 
 /**
@@ -481,7 +499,8 @@ function dropSvgPayload(v: PanelRender): PanelRender {
 let requestSeq = 0
 
 /**
- * 项目代际（web/AGENTS.md「会在项目之间存活的 store 都有项目代际」）：`clear()` 换代，
+ * 项目代际（web/AGENTS.md「会在项目之间存活的 store 都有项目代际」）：`clear()` 换代（渲染条件在途中变了的
+ * `invalidateInflight()` 也换这一代），
  * `render()` 在请求进来那一刻记下它，回包（成功与失败两支）先对代际——换过就整个丢弃：
  * 不写 byKey、不挪 latest、不弹 toast / 确认框。只对 pj 不够：同名文件在两个项目里键完全
  * 相同，而 A → B → A 来回切时 pj 又对上了，旧回包照样会落进「新的」A。
@@ -599,6 +618,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
         })
         let perfHandle = -1
         const ctrl = new AbortController()
+        slot.abort = () => ctrl.abort()
         const timeoutMs = watchdogMs(fileId)
         let timedOut = false
         const watchdog = window.setTimeout(() => {
@@ -642,6 +662,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
             dependencyRepair: null,
             confirmation: null,
             dependencyPreparation: null,
+            missingInput: null,
             traceback: '',
             warnings: res.warnings ?? [],
             timings: res.timings ?? {},
@@ -729,6 +750,12 @@ export const useRenderStore = create<RenderState>((set, get) => ({
           })
           // 换过项目：旧项目的失败同样不落进当前项目（条目、确认框、排队的重试都不要）
           if (epochAtStart !== projectEpoch) return
+          // 后端说这一版是按旧改指表画的、表已经变了（ADR 0106 §五；别的窗口改的也算）：不是失败，
+          // 不留错误块——标 stale，同步器按新表重排（本窗口自己改的表，`invalidateInflight` 通常已先丢掉它）
+          if (err instanceof EngineError && err.code === INPUT_REMAP_CHANGED_CODE && slot.queued == null) {
+            get().markStale([fileId])
+            return
+          }
           // 在途期间又排了新请求：直接跑最新那次，别停在旧请求的错误上
           // （否则 wantPatches 已等于新改动，同步器会永远跳过它）
           if (slot.queued != null) {
@@ -754,6 +781,13 @@ export const useRenderStore = create<RenderState>((set, get) => ({
               .getState()
               .requestDependencyPreparation(dependencyPreparation, projectAtStart)
           }
+          // 数据找不到（ADR 0106）：同样不是错误块，是请用户指认一次——载荷交给 envStore，
+          // `MissingInputDialog` 渲染它；条目上也留一份，关掉之后错误块里还能再开
+          const missingInput =
+            err instanceof EngineError ? (err.missingInput ?? null) : null
+          if (missingInput) {
+            useEnvStore.getState().requestMissingInput(missingInput, projectAtStart)
+          }
           if (err instanceof EngineError && err.code === NATIVE_FIGURE_INCONSISTENT) {
             set((s) => ({ inconsistent: { ...s.inconsistent, [fileId]: true } }))
           }
@@ -768,6 +802,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
               err instanceof EngineError ? (err.dependencyRepair ?? null) : null,
             confirmation,
             dependencyPreparation,
+            missingInput,
             error: timedOut
               ? msg('render.timeout',
                     { minutes: Math.round(timeoutMs / 60_000) }, 'errors')
@@ -813,7 +848,9 @@ export const useRenderStore = create<RenderState>((set, get) => ({
           // 「脚本跑完没出图」在换了工作目录模式之后同样值得重跑（ADR 0047）
           (WORKDIR_CODES as readonly string[]).includes(v.code) ||
           // 跑前的依赖门（U04）：准备完成之后那次「需要先准备」也要重排
-          v.code === DEPENDENCY_PREPARATION_CODE)
+          v.code === DEPENDENCY_PREPARATION_CODE ||
+          // 指认了数据位置之后（ADR 0106）：「找不到数据」那些面板重排
+          v.code === MISSING_INPUT_CODE)
       ) {
         ids.add(v.fileId)
       }
@@ -939,6 +976,12 @@ export const useRenderStore = create<RenderState>((set, get) => ({
     // **没驱逐就一个 set 都不发**：这个动作跟在每一次渲染成功后面，
     // 每次都写一遍 store 等于给同步 effect 造一轮空转
     if (byKey !== s.byKey) set({ byKey })
+  },
+
+  invalidateInflight: () => {
+    projectEpoch += 1
+    for (const slot of inflight.values()) slot.abort?.()
+    inflight.clear()
   },
 
   clear: () => {

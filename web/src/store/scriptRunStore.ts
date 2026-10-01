@@ -3,6 +3,7 @@ import {
   ApiError,
   cancelProbe,
   DEPENDENCY_PREPARATION_CODE,
+  INPUT_REMAP_CHANGED_CODE,
   probeScript,
   WORKDIR_CONFIRMATION_CODE,
   type CapturedFigureDescriptor,
@@ -51,6 +52,7 @@ export type ScriptRunPhase =
   | 'missing_dependency'
   | 'needs_workdir' // 起会话之前要先选运行目录（U03）：载荷在 error.confirmation
   | 'needs_preparation' // 起会话之前要先准备依赖（U04）：载荷在 error.dependency_preparation
+  | 'missing_input'
   | 'timeout'
   | 'cancelled'
   | 'failed'
@@ -94,6 +96,8 @@ export const needsNative = (state: ScriptRunState | undefined): boolean =>
 
 const PHASE_BY_CODE: Record<string, ScriptRunPhase> = {
   missing_dependency: 'missing_dependency',
+  // 数据找不到（ADR 0106）：不是环境问题，不进「可能需要原环境」那一组——出路是指认数据位置
+  missing_input: 'missing_input',
   execution_timeout: 'timeout',
   execution_cancelled: 'cancelled',
   script_no_figure: 'no_figure',
@@ -220,6 +224,17 @@ interface ScriptRunStore {
    * 用户已经重跑 / 收起过的（相位不再是这道门）不动。
    */
   rerunGated: (phase: 'needs_workdir' | 'needs_preparation', script?: string) => void
+  /**
+   * 此刻因「找不到数据」失败、指认了数据位置之后要重跑的脚本（ADR 0106）——带 `missing_input` 载荷的
+   * 错误（`missing_input` 与「跑通了但没出图」两种）都算。只读；重跑由 envStore 代际订阅发起。
+   */
+  missingInputScripts: () => string[]
+  /**
+   * 改指表变了（ADR 0106）：按旧映射跑出来的结果作废——已捕获的描述符（尺寸、指纹、「添加到画布」
+   * 用的就是它们）与「跑通了但没出图」回 idle；在飞的那次按迟到响应丢掉（它读的是旧位置）。
+   * 失败态不动：因「找不到数据」失败的由代际订阅重跑（先收集、再作废、再重跑），其余与数据位置无关。
+   */
+  invalidateCaptured: () => void
   clear: () => void
 }
 
@@ -257,6 +272,20 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
     try {
       const res = await probeScript(script)
       if (stale()) return
+      if (res.error?.code === INPUT_REMAP_CHANGED_CODE) {
+        // 试运行途中改了指认，后端按代次丢弃了这次结果（ADR 0106 §五）：按新表重跑一次，不报失败
+        set((s) => {
+          const byScript = { ...s.byScript }
+          delete byScript[script]
+          return { byScript }
+        })
+        void get().run(script)
+        return
+      }
+      if (res.error?.missing_input) {
+        // 与画布同一个对话框：请用户指认数据位置（换了项目的旧载荷由 envStore 丢掉）
+        useEnvStore.getState().requestMissingInput(res.error.missing_input, projectAtStart)
+      }
       if (res.error) {
         settle({
           phase: phaseOf(res.error),
@@ -315,6 +344,26 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
     void cancelProbe(script).catch(() => {})
   },
 
+  missingInputScripts: () =>
+    Object.entries(get().byScript)
+      .filter(([, st]) => !isBusyPhase(st.phase) && st.error?.missing_input)
+      .map(([script]) => script),
+
+  invalidateCaptured: () =>
+    set((s) => {
+      const byScript: Record<string, ScriptRunState> = {}
+      for (const [script, st] of Object.entries(s.byScript)) {
+        const derived =
+          isBusyPhase(st.phase) ||
+          st.phase === 'captured_one' ||
+          st.phase === 'captured_many' ||
+          st.phase === 'no_figure'
+        // 删掉这一行 = 回 idle；在飞的那次落地时 `gen` 对不上，按迟到响应丢弃
+        if (!derived) byScript[script] = st
+      }
+      return { byScript }
+    }),
+
   markRunning: (script) => {
     const st = get().byScript[script]
     if (!st || st.phase !== 'starting_runtime') return
@@ -343,3 +392,13 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
 
   clear: () => set((s) => ({ byScript: {}, epoch: s.epoch + 1 })),
 }))
+
+// 改指表 / 环境变了（ADR 0106）：envStore 的两个代际——作废按旧条件捕获的结果、重跑因「找不到数据」失败的脚本
+useEnvStore.subscribe((state, prev) => {
+  const store = useScriptRunStore.getState()
+  // 顺序是判据：**先收集**要重跑的（带「找不到数据」载荷的，含「没出图」那种），**再作废**旧条件下的
+  // 结果（它会删掉「没出图」那一行），**最后重跑**收集到的——不依赖作废时留哪些行（Codex 评 #716 P2）
+  const retry = state.inputRemapGeneration !== prev.inputRemapGeneration ? store.missingInputScripts() : []
+  if (state.probeResultsGeneration !== prev.probeResultsGeneration) store.invalidateCaptured()
+  for (const script of retry) void useScriptRunStore.getState().run(script)
+})

@@ -69,12 +69,18 @@ import { useSelectionStore } from '@/store/selectionStore'
 import { useExactPanelManifest, usePanelRender } from '@/store/renderStore'
 import { useUiStore } from '@/store/uiStore'
 import { DependencyRepairCard } from '@/components/DependencyRepairCard'
-import { DependencyPrepareButton, WorkdirChooseButton, WorkdirSuggestion } from '@/components/WorkdirRow'
+import {
+  DependencyPrepareButton,
+  MissingInputButton,
+  WorkdirChooseButton,
+  WorkdirSuggestion,
+} from '@/components/WorkdirRow'
 import {
   DEPENDENCY_PREPARATION_CODE,
   WORKDIR_CODES,
   WORKDIR_CONFIRMATION_CODE,
   type DependencyPreparationOffer,
+  type MissingInputOffer,
   type WorkdirConfirmation,
 } from '@/lib/api'
 import {
@@ -370,6 +376,7 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
             code={render.code}
             confirmation={render.confirmation}
             dependencyPreparation={render.dependencyPreparation}
+            missingInput={render.missingInput}
             onRetry={() => requestRender(panel, true)}
           />
         )
@@ -615,6 +622,7 @@ function ErrorBlock({
   code,
   confirmation,
   dependencyPreparation,
+  missingInput,
   onRetry,
 }: {
   error: UiMessage
@@ -622,6 +630,7 @@ function ErrorBlock({
   code?: string
   confirmation?: WorkdirConfirmation | null
   dependencyPreparation?: DependencyPreparationOffer | null
+  missingInput?: MissingInputOffer | null
   onRetry?: () => void
 }) {
   const [open, setOpen] = useState(false)
@@ -639,6 +648,8 @@ function ErrorBlock({
         ) : (
           code && (WORKDIR_CODES as readonly string[]).includes(code) && <WorkdirSuggestion />
         )}
+        {/* 数据找不到（ADR 0106）：指认对话框被关掉之后从这里再开 */}
+        <MissingInputButton offer={missingInput ?? null} />
         <div className="mt-0.5 flex items-center gap-2">
           <p className="text-xs text-danger/70">{el('keptPrevious')}</p>
           {onRetry && (

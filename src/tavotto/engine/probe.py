@@ -31,7 +31,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from . import discover, pool, projectenv, registry
+from . import discover, inputremap, pool, projectenv, registry
 
 LOG = logging.getLogger("tavotto.probe")
 
@@ -64,6 +64,9 @@ ERROR_SCRIPT_EXITED = "script_exited"
 #: 脚本 `input()`（ADR 0099）：没人能答 / 等到超时脚本没接住 EOF。worker 原样透传。
 ERROR_NEEDS_INPUT = "script_needs_input"
 ERROR_INPUT_TIMEOUT = "script_input_timeout"
+#: 脚本要读的数据找不到（ADR 0106）：worker 说得出缺的是哪一串。载荷 `missing_input` 原样带出，
+#: 素材库这条入口弹的是与画布同一个「指认数据位置」对话框。
+ERROR_MISSING_INPUT = pool.MISSING_INPUT_CODE
 
 #: traceback 进诊断详情的截断上限（完整日志仍在 worker.log）。
 _TRACEBACK_LIMIT = 4000
@@ -124,12 +127,30 @@ def _error_from_worker(
         # 文案由前端按 code 翻；`error` 给 `script_exited` 的占位符（`SystemExit: 2`
         # 那一行），`script_needs_arguments` 的 usage 在 traceback 里（pool 已接上）。
         lines = [ln for ln in (exc.traceback_text or "").splitlines() if ln.strip()]
-        return _err(
+        out = _err(
             exc.code,
             str(exc),
             params={"error": (lines[-1].strip() if lines else str(exc))[:200]},
             traceback_text=exc.traceback_text,
         )
+        # 先 `exists()` 判空再 exit（ADR 0106）：脚本里写着、此刻哪儿都找不到的路径随错误带出
+        offer = getattr(exc, "missing_input", None)
+        if isinstance(offer, dict):
+            out["missing_input"] = offer
+        return out
+    if exc.code == ERROR_MISSING_INPUT:
+        offer = getattr(exc, "missing_input", None)
+        # 占位符与渲染入口同一个：`{{error}}` 是 traceback 的最后一行（`FileNotFoundError: …`）
+        lines = [ln for ln in (exc.traceback_text or "").splitlines() if ln.strip()]
+        out = _err(
+            ERROR_MISSING_INPUT,
+            str(exc),
+            params={"error": (lines[-1].strip() if lines else str(exc))[:200]},
+            traceback_text=exc.traceback_text,
+        )
+        if isinstance(offer, dict):
+            out["missing_input"] = offer
+        return out
     # 起会话之前的两道门（U03 的运行目录 / U04 的依赖准备）：它们是「需要输入」，不是失败——
     # code 原样带出、载荷原样带出（与渲染端点 `_worker_error_payload` 同一形状），素材库这条
     # 入口才能弹同一个确认框，而不是一句「试运行失败」。
@@ -303,6 +324,8 @@ def probe(
                 "error": None,
                 "timings": dict(resp.get("timings") or {}),
                 "dropped_figures": int(resp.get("dropped_figures") or 0),
+                # 这次试运行按哪一代改指表跑的（ADR 0106 §五）：登记 / 物化落地前核对
+                "remap_generation": getattr(_worker, "remap_generation", None),
             }
         # 跑通了但一张图都没产出：这个 entry 大概率不是出图入口，换下一个
         if first_error is None:
@@ -311,6 +334,11 @@ def probe(
                 f"脚本跑通了，但没有捕获到任何 Figure（入口 {entry} 可能不出图）",
                 params={"entry": entry},
             )
+            # 多半是先 `exists()` 判空再自己退出（ADR 0106）：脚本里写着、此刻哪儿都找不到的路径
+            # 一并带上，界面据此弹「指认数据位置」——与渲染入口的「没出图」同一份载荷
+            offer = pool.missing_input_offer(script, figures_dir)
+            if offer is not None:
+                first_error["missing_input"] = offer
         pool.invalidate(script, figures_dir)
 
     return {
@@ -383,8 +411,23 @@ def probe_and_register(
                 params={"detail": detail},
             ),
         }
-    discover.register(figures_dir, script, result["stems"], entry=result["entry"], cost=cost)
-    registry.load(figures_dir)
+    # 登记在改指表的锁里、核对过代次才落地（ADR 0106 §五）：试运行途中改了指认，产出的图名 / 描述
+    # 是按旧位置的数据来的——丢弃、可重试，注册表零改动
+    try:
+        with inputremap.landing(figures_dir, result.get("remap_generation")):
+            discover.register(
+                figures_dir, script, result["stems"], entry=result["entry"], cost=cost
+            )
+            registry.load(figures_dir)
+            # stems 可能由数据决定：记下是在哪张改指表下登记的，表变了渲染时据此重新登记
+            inputremap.record_registration(figures_dir, script)
+    except inputremap.RemapChanged as exc:
+        LOG.info("试运行结果作废（%s）: %s", exc, script)
+        return {
+            **result,
+            "registered": False,
+            "error": _err(inputremap.ERROR_CHANGED, str(exc)),
+        }
     return {**result, "registered": True}
 
 

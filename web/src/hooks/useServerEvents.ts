@@ -148,6 +148,10 @@ export function handleServerEvent(ev: ServerEvent) {
       // 能答题的事件流连上了：记下流 id，报一次在看哪个项目（后端只把在看那个项目的流算作答题方）
       useScriptInputStore.getState().onStreamHello(ev.stream_id)
       break
+    case 'input_remap_changed':
+      // 改指表换代（ADR 0106 §五）：按代次去重——发起的窗口收到接口响应时已经作废过这一代
+      useEnvStore.getState().onInputRemapChanged(ev.generation, ev.reason)
+      break
     case 'script.input_closed':
       useScriptInputStore.getState().onClosed(ev.id)
       break
@@ -309,7 +313,23 @@ export function useServerEvents() {
         recoverAfterReconnect()
         // 还在等作答的脚本输入（ADR 0099）也要接回来；顺带取记住的答案（脚本行的入口靠它）
         void useScriptInputStore.getState().loadAnswers()
+        // 断线期间可能丢了 `input_remap_changed`：拉一次此刻的代次，落后就补一次作废（ADR 0106 §五）
+        catchUpInputRemap()
       }),
     [],
   )
+  // 页面恢复（切回标签页 / 唤醒）同理：休眠期间事件流可能断过而没触发重连
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') catchUpInputRemap()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [])
+}
+
+/** 补拉改指表代次：环境刷新里带着它，`envStore.refresh` 交给 `noteInputRemapGeneration` 去重 / 补作废 */
+export function catchUpInputRemap(): void {
+  if (useProjectStore.getState().phase !== 'open') return
+  void useEnvStore.getState().refresh()
 }

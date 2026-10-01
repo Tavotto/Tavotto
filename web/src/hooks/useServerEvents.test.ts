@@ -43,6 +43,7 @@ import {
 } from '@/store/liveSync'
 import { useProjectStore } from '@/store/projectStore'
 import { useAiStore } from '@/store/aiStore'
+import { useEnvStore } from '@/store/envStore'
 import { renderKey, settleRenderFailureToast, useRenderStore } from '@/store/renderStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useSelectionStore } from '@/store/selectionStore'
@@ -211,6 +212,23 @@ describe('panel.file_changed', () => {
     await tick()
     expect(useUiStore.getState().statusTone).toBe('info')
     expect(mockPanels).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('input_remap_changed（ADR 0106 §五）', () => {
+  it('同项目的另一个窗口收到改指表换代：走同一个作废入口；别的项目的事件不理', () => {
+    const calls: [number, string][] = []
+    const real = useEnvStore.getState().onInputRemapChanged
+    useEnvStore.setState({
+      onInputRemapChanged: (generation: number, reason: string) => void calls.push([generation, reason]),
+    } as never)
+    try {
+      handleServerEvent(ev({ kind: 'input_remap_changed', pj: 'p1', generation: 3, reason: 'added' }))
+      handleServerEvent(ev({ kind: 'input_remap_changed', pj: 'p-other', generation: 1, reason: 'removed' }))
+    } finally {
+      useEnvStore.setState({ onInputRemapChanged: real })
+    }
+    expect(calls).toEqual([[3, 'added']])
   })
 })
 
@@ -737,7 +755,6 @@ describe('assets.changed → runtime 素材清单', () => {
 
 describe('engine.environment_adopted', () => {
   it('本项目的：记下改用了哪个（通知轨据此说一句）；别的项目的不认', async () => {
-    const { useEnvStore } = await import('@/store/envStore')
     useEnvStore.getState().dismissAdoptedEnvironment()
     handleServerEvent({ kind: 'engine.environment_adopted', pj: 'other', id: 'x', source: 'conda', label: 'lab', python_version: '3.12.4' })
     expect(useEnvStore.getState().adoptedEnvironment).toBeNull()

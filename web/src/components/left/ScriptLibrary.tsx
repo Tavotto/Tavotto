@@ -250,6 +250,7 @@ function ScriptRow({
       <ScriptPreparation script={entry.script} run={run} />
       <GateReopen run={run} />
       <FailureRecovery script={entry.script} run={run} />
+      <MissingInputRecovery run={run} />
 
       {run && run.descriptors.length > 0 && (
         <ProbeResultsDialog
@@ -541,6 +542,27 @@ function StatusLine({
     >
       {body}
     </span>
+  )
+}
+
+/**
+ * 「找不到数据」的出路（ADR 0106）：对话框被「稍后」关掉之后，从这一行再打开。
+ */
+function MissingInputRecovery({ run }: { run: ScriptRunState | undefined }) {
+  useTranslation('workspace')
+  const offer = run?.error?.missing_input
+  if (!offer || isBusyPhase(run!.phase)) return null
+  return (
+    <div className="mb-1.5 mt-0.5 flex flex-wrap items-center gap-1.5 pl-8 pr-2">
+      <Button
+        variant="secondary"
+        size="sm"
+        data-testid="script-missing-input-open"
+        onClick={() => useEnvStore.getState().requestMissingInput(offer)}
+      >
+        {translate('engine.missingInputOpen', { ns: 'errors' })}
+      </Button>
+    </div>
   )
 }
 

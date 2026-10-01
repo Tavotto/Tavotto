@@ -22,7 +22,8 @@
     `pd.read_csv("data.csv")` 在 `python figure.py` 下天经地义。只有「只读
     模式 + 相对路径（或**指向沙盒内部的**绝对路径）+ 按真正的 open 会用的那条
     路径判确实不存在 + 换算后仍在图库内」四条同时成立才改指到脚本目录；
-    写 / 改 / 删 / 重命名一个字节都不经过它。沙盒**之外**的绝对路径一个都不碰。
+    写 / 改 / 删 / 重命名一个字节都不经过它。沙盒**之外**的绝对路径回退一个都不碰
+    （用户亲手指认的只读改指表是另一回事，见下一条「数据改指」）。
     **`builtins.open` 与 `io.open` 两个都要 patch**——它们指向同一个 C 函数
     却是两个独立绑定，`pathlib.Path.read_text` 走的是后者，只补前者会让
     `open("x")` 好使而 `Path("x").read_text()` 报 FileNotFoundError；
@@ -70,6 +71,34 @@
     两条控制面都在启动前记；目录跨代复用、append 模式，不记的话读到的是上一代
     的尾巴）、按字节读再 **UTF-8** 解码（cp936 的 Windows 上 `read_text()` 会
     把中文与 `µ` 读成乱码）。
+  * **数据改指（ADR 0106，2026-09-28）**：脚本要读的数据不在它写的位置（脚本被单独复制出来、
+    数据被挪走、换了电脑）时，界面请用户**亲手指认**那个文件或它所在的文件夹，按项目记一张只读
+    改指表（本机项目设置 `input_remap`，唯一出处 `engine/inputremap.py` 的 `rules_for`）。三件事：
+    ① **认出来**：worker 在四个打开入口外面再包一层（`figcapture.install_input_remap`，装在观察器外、
+    只读回退内），只读打开落空时记下脚本写的那串（`InputMisses`）；build 失败且异常链里有「文件不存在」、
+    又对得上一次落空的只读打开时报 **`missing_input`**（`figcapture.missing_input_of`，写模式的「目录
+    不存在」与对不上的一律仍是 `script_error`）；pool 两条控制面与试运行给错误挂上弹窗载荷
+    （`inputremap.payload_for`：缺的那串 + 脚本里其余此刻哪儿都找不到的路径，含常量绝对路径——只
+    `exists`，不读不列；「其余」只收**真进了读取调用**的常量——`READ_FUNCS` / `read_*` 的路径实参整条是
+    常量或只赋值一次的名字、拼路径打头的那一段、读模式的打开，外加探路调用问的；标签、写出目标、输出目录、`.py` 不算）；「没出图」（`no_figures_captured*` / 试运行的 `script_no_figure`）只挂静态那部分。
+    ② **推规则**：`inputremap.derive` 按路径段求最长公共后缀，推出 `prefix`（相对 `""` = 所有相对路径）
+    或 `file`（改了名只改这一个）；推完自检落到存在的文件上。**不搜同名、不预选**（FO08）。
+    ③ **改道**：只在**原路径打开抛 `FileNotFoundError` 之后**查表（原路径存在永远读原件、成功的打开零
+    开销），只读、目标是文件才改；判据 `figcapture.remap_target` 父进程与 worker 共用一份。改指表进
+    `ExecutionSpec.input_remap`（本机路径，**不进** `stable_payload`），`worker_argv` 只在非空时多
+    `--input-remap <json>`，三条 spawn 路径都从 `inputremap.rules_for` 取。**探路调用（exists / glob /
+    listdir）与 C++ 读取器救不回**——载荷里 `via` 标 `probe` / `glob`，对话框如实说、不给按钮。
+    native 不改指。④ **代次 + 按项目的一把互斥锁**（ADR 0106 §五，`inputremap.project_mutex`，可重入）：改指表按项目一个代次（跨重启单调）。
+    同一把锁里：改表与换代、`state()` / `snapshot()` 的「表 + 代次」、注册表整段读改写（`discover.register`）与登记标记、
+    所有落地提交（渲染回包的核对、runtime 物化、试运行登记与重新登记、写回的备份 + 整个 replace 循环、导出作业
+    经 `exportjob.run(commit_guard=)` 的整个发布循环）。对不上报 `input_remap_changed`（409 可重试）。**锁序：池锁 →
+    项目锁**，持项目锁时不取池锁、不起会话、不跑脚本。前端作废按代次幂等（`envStore.onInputRemapChanged(generation)`）：
+    接口响应、事件流、重连 / 页面恢复补拉三条路都调，同一代只执行一次。试运行登记的 stems 在本机项目设置里记指纹
+    （无标记 + 有规则 = 过期），下一次按新表 build 后按真实产出重新登记（一张没出也算）。落在 cwd 里的绝对路径
+    证得出是相对路径规范化来的才按相对处理（`figcapture.path_literals`），否则保留绝对身份。新增依赖映射的工作点先接到这里，清单与各自的持锁区间在 ADR 0106 §五。
+    看护 `tests/test_missing_input.py`（真 worker 相对 / 绝对 / 脚本目录模式 / 原件回来 /
+    同名诱饵 / 试运行 / 三条 spawn 路径）、`web/src/components/MissingInputDialog.test.tsx`、
+    `web/e2e/missing-input.spec.ts`。
   * 浏览器侧**刻意没有**这条回退：playground 是单文件的，相对读报
     `missing_file` 才是对的。桌面的 `entry` 机制同样是超集（浏览器按
     `python figure.py` 跑，只有 `def main():` 而没人调用的脚本在原生 Python

@@ -148,14 +148,31 @@ test('排版时间线：自动节点 → 命名 → 预览不改排版 → 恢�
   await expect(box).toHaveCount(0)
   // 居中于工作面板自己（不是整行）：只开左栏、只开属性栏两种布局下水平中心差 ≤ 2px
   const panel = await only(page.locator('[data-work-panel]'))
-  const centerGap = async () => {
+  const expectCentered = async () => {
     await page.keyboard.press('ControlOrMeta+Alt+S')
     const q = await only(page.locator('[data-timeline-quick-name]'))
     await expect(page.locator('[data-timeline-quick-name-input]')).toBeFocused()
-    const [b, p] = [(await q.boundingBox())!, (await panel.boundingBox())!]
+    // aria-expanded 已切换时，侧栏的宽度动画仍可能在跑。两次 boundingBox
+    // 跨帧会把不同布局相减：同一次求值读两份几何，并等连续两次采样落定。
+    let previous = ''
+    await expect
+      .poll(async () => {
+        const geometry = await panel.evaluate((el) => {
+          const quick = document.querySelector('[data-timeline-quick-name]')
+          if (!quick) return null
+          const b = quick.getBoundingClientRect()
+          const p = el.getBoundingClientRect()
+          return { boxX: b.x, boxWidth: b.width, panelX: p.x, panelWidth: p.width }
+        })
+        const current = JSON.stringify(geometry)
+        const settled = current === previous
+        previous = current
+        if (!geometry || !settled) return Infinity
+        return Math.abs(geometry.boxX + geometry.boxWidth / 2 - (geometry.panelX + geometry.panelWidth / 2))
+      })
+      .toBeLessThanOrEqual(2)
     await page.keyboard.press('Escape')
     await expect(q).toHaveCount(0)
-    return Math.abs(b.x + b.width / 2 - (p.x + p.width / 2))
   }
   const leftOpen = page.locator('[data-rail][aria-expanded="true"]')
   const inspectorClose = page.locator('[data-inspector-close]')
@@ -164,14 +181,14 @@ test('排版时间线：自动节点 → 命名 → 预览不改排版 → 恢�
   await expect(leftOpen.first()).toBeVisible()
   if ((await inspectorClose.count()) > 0) await inspectorClose.click()
   await expect(inspectorClose).toHaveCount(0)
-  expect(await centerGap()).toBeLessThanOrEqual(2)
+  await expectCentered()
   // 只开属性栏：选中文字打开属性栏，收起左栏
   await page.keyboard.press('Escape') // 先取消选择，再点文字才会重新打开属性栏
   await canvasText(page, '甲版标注').click()
   await expect(inspectorClose).toHaveCount(1)
   await leftOpen.first().click()
   await expect(leftOpen).toHaveCount(0)
-  expect(await centerGap()).toBeLessThanOrEqual(2)
+  await expectCentered()
   // 抽屉里的按钮照旧：点开展开，Esc 只收输入
   await clock.click()
   await expect(drawer).toBeVisible()

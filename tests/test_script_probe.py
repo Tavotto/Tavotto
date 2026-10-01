@@ -531,6 +531,7 @@ class TestErrorModel:
             engine_probe.ERROR_STEM_CONFLICT: {"detail"},
             engine_probe.ERROR_NEEDS_ARGUMENTS: set(),
             engine_probe.ERROR_SCRIPT_EXITED: {"error"},
+            engine_probe.ERROR_MISSING_INPUT: {"error"},
         }
         for locale in ("zh-CN", "en-US"):
             table = json.loads((locales / locale / "errors.json").read_text(encoding="utf-8"))[
