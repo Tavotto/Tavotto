@@ -816,6 +816,23 @@ def pip_config_index_url(text: str) -> "tuple[str | None, str | None]":
     return None, None
 
 
+def pip_config_index_url_ambiguous(text: str) -> "str | None":
+    """生效的那一节里 index-url 出现了不止一个**不同**的值时回那一节的名字，否则 None。
+
+    同一节的同一个键可以来自好几个文件（Linux 上 `~/.pip/pip.conf` 与 `~/.config/pip/pip.conf`、site 与
+    user……）。`pip config list` 把每个文件里的那一条都打印出来，而且按 `sorted(items())` 排——**是给人看的
+    顺序，不是覆盖顺序**（pip 25.3 实测：生效的那个先打印，旧位置的后打印）。这时谁生效不能从行序推，
+    要再问 pip 一次（`pip config get`，#767 Codex P1）。"""
+    found: "dict[str, set[str]]" = {}
+    for section, key, value in pip_config_items(text):
+        if key == "index-url":
+            found.setdefault(section, set()).add(value.strip())
+    for section in reversed(_PIP_INSTALL_SECTIONS):
+        if section in found:
+            return section if len(found[section]) > 1 else None
+    return None
+
+
 def _pipx_shared_python(python: str, environ) -> "str | None":
     """pipx 共享库（`PIPX_SHARED_LIBS`，默认 `<PIPX_HOME>/shared`）里的解释器：pipx 建的 venv 默认**不带
     pip**，它装包用的是这份共享的 pip。先认环境变量，再按 pipx 的目录形状（`<PIPX_HOME>/venvs/<名>/bin/python`
@@ -866,16 +883,24 @@ def pip_index_of(python: "str | None", environ=None, timeout: float = 15.0) -> "
     if not python:
         return None
     env = os.environ if environ is None else environ
-    text = _run_pip_config_list([python, "-B", "-m", "pip", "config", "list"], env, timeout)
+    pip = [python, "-B", "-m", "pip"]
+    text = _run_pip_config_list([*pip, "config", "list"], env, timeout)
     if text is None:
         shared = _pipx_shared_python(python, env)
         if shared:
-            text = _run_pip_config_list(
-                [shared, "-B", "-m", "pip", "--python", python, "config", "list"], env, timeout
-            )
+            pip = [shared, "-B", "-m", "pip", "--python", python]
+            text = _run_pip_config_list([*pip, "config", "list"], env, timeout)
     if text is None:
         return dict(PIP_INDEX_UNKNOWN)
     url, section = pip_config_index_url(text)
+    ambiguous = pip_config_index_url_ambiguous(text)
+    if ambiguous:
+        # 同一节里有好几个文件各写了一个 index-url：生效的那个由 pip 说（`config get` 回的就是合并后的值）；
+        # 问不到就是不知道，不从打印顺序猜
+        got = _run_pip_config_list([*pip, "config", "get", f"{ambiguous}.index-url"], env, timeout)
+        if got is None:
+            return dict(PIP_INDEX_UNKNOWN)
+        url, section = got.strip(), ambiguous
     if not url:
         return None
     source = "PIP_INDEX_URL" if section == ":env:" else "pip_config"

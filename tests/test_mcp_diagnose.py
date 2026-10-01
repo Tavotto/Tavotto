@@ -707,6 +707,66 @@ def _pipx_shared_libs(where: Path) -> Path:
     return where
 
 
+def test_duplicate_index_urls_in_one_section_ask_pip_which_one_wins(monkeypatch):
+    """同一节的 index-url 来自好几个文件时，`pip config list` 把每一条都打印、按值排序（给人看的顺序，不是
+    覆盖顺序）：谁生效再问一次 `pip config get`，不从行序推；`get` 也问不到就是不知道（#767 Codex P1）。"""
+    listed = (
+        f"global.index-url='{ALIYUN}'\n"  # 生效的那个按值排在前面
+        "global.index-url='https://pypi.org/simple'\n"
+    )
+    asked: list = []
+
+    def fake(argv, environ, timeout, *, answer_get=ALIYUN):
+        asked.append(argv[argv.index("config") + 1 :])
+        if argv[-2:] == ["config", "list"]:
+            return listed
+        return None if answer_get is None else answer_get + "\n"
+
+    monkeypatch.setattr(launcher, "_run_pip_config_list", fake)
+    got = launcher.pip_index_of("/env/bin/python", {})
+    assert got == {"url": ALIYUN_SAID, "source": "pip_config", "mirror": True}, got
+    assert asked == [["list"], ["get", "global.index-url"]]
+    # `get` 问不到：不知道，不按行序挑一个
+    monkeypatch.setattr(
+        launcher,
+        "_run_pip_config_list",
+        lambda argv, environ, timeout: fake(argv, environ, timeout, answer_get=None),
+    )
+    assert launcher.pip_index_of("/env/bin/python", {}) == launcher.PIP_INDEX_UNKNOWN
+    # 只有一个值时不多问
+    asked.clear()
+    monkeypatch.setattr(
+        launcher,
+        "_run_pip_config_list",
+        lambda argv, environ, timeout: (asked.append(argv), listed.splitlines()[0])[1],
+    )
+    assert launcher.pip_index_of("/env/bin/python", {})["mirror"] is True
+    assert len(asked) == 1
+
+
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="旧 / 新两个用户配置位置是 POSIX 的形状（~/.pip 与 $XDG_CONFIG_HOME/pip）；逻辑由上一条覆盖",
+)
+def test_real_pip_with_a_legacy_and_a_current_user_config_reports_the_effective_one(tmp_path):
+    """真 pip：旧位置 `~/.pip/pip.conf` 写 PyPI、新位置 `$XDG_CONFIG_HOME/pip/pip.conf` 写镜像——新位置生效，
+    而 `pip config list` 两条都打印、生效的那条（按值排序）在前；只认最后一行会把它判成「没配镜像」。"""
+    env = _pip_env(tmp_path)
+    home = Path(env["HOME"])
+    (home / ".pip").mkdir()
+    (home / ".pip" / "pip.conf").write_text(
+        "[global]\nindex-url = https://pypi.org/simple\n", "utf-8"
+    )
+    (home / ".config" / "pip").mkdir(parents=True)
+    (home / ".config" / "pip" / "pip.conf").write_text(f"[global]\nindex-url = {ALIYUN}\n", "utf-8")
+    listed = subprocess.run(
+        [sys.executable, "-m", "pip", "config", "list"], env=env, capture_output=True, text=True
+    ).stdout
+    assert listed.count("global.index-url=") == 2, f"前提：两个位置都被 pip 读到并打印：{listed!r}"
+    got = launcher.pip_index_of(sys.executable, env)
+    assert got == {"url": ALIYUN_SAID, "source": "pip_config", "mirror": True}, (got, listed)
+
+
 def test_a_pipx_venv_without_pip_is_asked_through_pipxs_shared_pip(tmp_path):
     """pipx 建的 venv 默认不带 pip：先试 pipx 共享库里的 pip（`--python` 按目标解释器求值，所以目标 venv 的
     site 配置——`pip config --site` 写的那份——照样读到）；共享库也没有就是**不知道**，不猜（#737）。"""
