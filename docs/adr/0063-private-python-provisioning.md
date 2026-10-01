@@ -133,7 +133,7 @@ spike 里「一条 resolver」的选择；产品里再下载一个 37 MB 的 uv 
 用例在、能力不默认开；那时没有合格 Python 的机器看到的仍是 `managed_env_unavailable`。`TAVOTTO_PRIVATE_PYTHON=1|0`
 是工程 / CI 目标腿的逃生门（与 `TAVOTTO_RUNTIME_HOST_ARCH` 同一档），不是产品设置、不写进设置界面。取得某目标的
 资格 = 那一条 `enabled` 改 true 的 PR（带 ADR 0064 的证据）。
-（2026-09-30 更新：`macos-arm64` / `macos-x86_64` / `windows-x86_64` 已翻 true，Linux 两个目标仍 false。）
+（2026-10-01 更新：`macos-arm64` 与 `windows-x86_64` 翻 true，`macos-x86_64` 与 Linux 两个目标仍 false；依据与待补证据见 ADR 0064 §二 与 2026-10-01 修订。）
 
 ### 九之二、干净机器上的第一份计划：替身事实，供应后重算（PR B）
 

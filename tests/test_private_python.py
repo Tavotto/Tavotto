@@ -118,8 +118,10 @@ class TestLock:
         }
         for name, t in lock["targets"].items():
             assert len(t["sha256"]) == 64 and t["url"].startswith("https://"), name
-            # ADR 0064 §四：三个已取得资格的目标开着，linux 两个仍关
-            assert t["size"] > 0 and t["enabled"] is (t["os"] != "linux"), name
+            # ADR 0064 §四：取得目标档证据（或该 PR 待 Windows 证据）的两个目标开着，其余仍关
+            assert t["size"] > 0 and t["enabled"] is (name in {"macos-arm64", "windows-x86_64"}), (
+                name
+            )
             # 来源钉的是 install_only 归档，文件名里带版本 + release + 三元组
             assert t["url"].endswith(f"-{t['triple']}-install_only.tar.gz"), name
             assert f"cpython-{lock['python']['version']}%2B{lock['python']['release']}-" in t["url"]
@@ -202,7 +204,7 @@ class TestLock:
         monkeypatch.setenv("TAVOTTO_PRIVATE_PYTHON", "0")
         enabled = privatepython.PythonSource(**{**src.__dict__, "enabled": True})
         assert privatepython.offered(enabled) is False  # 0 压过锁文件的 true
-        for name in ("macos-arm64", "macos-x86_64", "windows-x86_64"):
+        for name in ("macos-arm64", "windows-x86_64"):
             monkeypatch.delenv("TAVOTTO_PRIVATE_PYTHON", raising=False)
             qualified = privatepython.source_for(name)
             assert qualified is not None and privatepython.offered(qualified) is True, name
