@@ -15,6 +15,7 @@ import { restorePanelOverrides } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
 import { finishActiveGesture } from '@/store/gestureCoordinator'
 import { useRenderStore } from '@/store/renderStore'
+import { useProjectStore } from '@/store/projectStore'
 import { useUiStore } from '@/store/uiStore'
 import type { PanelObject } from '@/types/document'
 import { Button } from '../ui/Button'
@@ -168,6 +169,9 @@ function VersionRow({
   onRestore: () => void
 }) {
   useTranslation('inspector')
+  // 恢复会重写原图：项目关了「允许写回原始文件」时与写回同一条规矩，禁用并把原因写在项里
+  // （2026-10-01 用户拍板；此前的「历史」弹层没有这道守卫）
+  const readOnly = useProjectStore((s) => s.project?.settings?.allow_write_back === false)
   const isOrigin = version.n < 0
   // 横向排：缩略图窄一点，四五个版本也能一屏看完
   return (
@@ -191,7 +195,22 @@ function VersionRow({
         {!isOrigin && version.ts && (
           <p className="truncate text-xs tabular-nums text-ink-3">{shortTs(version.ts)}</p>
         )}
-        {!isCurrent && (
+        {!isCurrent && readOnly && (
+          <>
+            <Button
+              size="sm"
+              data-write-back="restore"
+              className="-ml-1 self-start text-ink-2"
+              disabled
+            >
+              {vh('restore')}
+            </Button>
+            <p data-write-back="restore-reason" className="text-xs text-ink-3">
+              {vh('readOnlyReason')}
+            </p>
+          </>
+        )}
+        {!isCurrent && !readOnly && (
           <Tip label={vh('restoreTip')} side="left">
             <Button
               size="sm"

@@ -1105,6 +1105,7 @@
     "originDescription": "The script's original output",
     "originWarn": "“Script original” re-renders from the script’s <b>current</b> output and doesn’t restore the original bytes; get the original file from the backup folder.",
     "pickFigure": "Choose a figure",
+    "readOnlyReason": "Write-back is turned off for this project, so this can’t be restored.",
     "restore": "Restore",
     "restoreFailed": "Couldn’t restore: {{error}}",
     "restoreTip": "Rewrite the original file from this version",

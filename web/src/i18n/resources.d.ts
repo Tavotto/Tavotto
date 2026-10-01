@@ -3666,6 +3666,7 @@ export default interface Resources {
       "originDescription": "脚本原始状态",
       "originWarn": "「脚本原始」按脚本<b>当前</b>输出重新渲染，不还原原文件的字节；原文件只能从备份目录取回。",
       "pickFigure": "选择图",
+      "readOnlyReason": "项目已关闭写回，不能恢复",
       "restore": "恢复",
       "restoreFailed": "无法恢复：{{error}}",
       "restoreTip": "用此版本重写原图文件",

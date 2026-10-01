@@ -185,6 +185,36 @@ describe('属性栏「写回记录」入口', () => {
   })
 })
 
+describe('项目关了写回：恢复禁用并写明原因（2026-10-01 用户拍板）', () => {
+  const setReadOnly = (off: boolean) =>
+    useProjectStore.setState({ project: { settings: { allow_write_back: !off } } } as never)
+
+  it('关着：每个「恢复」都是 disabled，项内写着原因，点不出确认框', async () => {
+    setReadOnly(true)
+    vi.mocked(fetchHistory).mockResolvedValue({ versions: [version(0), version(1)] } as never)
+    await mount(<WriteBackDialog panels={[panel()]} open initialPage="records" onOpenChange={() => {}} />)
+    const btns = [...document.body.querySelectorAll<HTMLButtonElement>('[data-write-back="restore"]')]
+    expect(btns).toHaveLength(2)
+    expect(btns.every((b) => b.disabled)).toBe(true)
+    const reasons = document.body.querySelectorAll('[data-write-back="restore-reason"]')
+    expect(reasons).toHaveLength(2)
+    expect(reasons[0].textContent).toBe(vh('readOnlyReason'))
+    await click(btns[0])
+    expect(text()).not.toContain(vh('restoreTitle'))
+  })
+
+  it('开着：可点、没有原因行', async () => {
+    setReadOnly(false)
+    vi.mocked(fetchHistory).mockResolvedValue({ versions: [version(0), version(1)] } as never)
+    await mount(<WriteBackDialog panels={[panel()]} open initialPage="records" onOpenChange={() => {}} />)
+    const btns = [...document.body.querySelectorAll<HTMLButtonElement>('[data-write-back="restore"]')]
+    expect(btns.every((b) => !b.disabled)).toBe(true)
+    expect(document.body.querySelector('[data-write-back="restore-reason"]')).toBeNull()
+    await click(btns[0])
+    expect(text()).toContain(vh('restoreTitle'))
+  })
+})
+
 describe('恢复仍是原来那条路', () => {
   it('恢复到某一版：重写原图（restoreHistory）并把那一版的修改放回面板', async () => {
     vi.mocked(fetchHistory).mockResolvedValue({ versions: [version(0), version(1)] } as never)
