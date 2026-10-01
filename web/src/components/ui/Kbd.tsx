@@ -1,4 +1,6 @@
 import type { HTMLAttributes } from 'react'
+import { Fragment } from 'react'
+import { keyCaps } from '@/lib/keyCaps'
 import { cn } from '@/lib/utils'
 
 /**
@@ -26,5 +28,33 @@ export function Kbd({
         className,
       )}
     />
+  )
+}
+
+/**
+ * 一串键位画成一个个键帽（`⇧⌘S` → ⇧ ⌘ S；` / ` 隔开的「或」之间留一个斜杠）。
+ * 命令面板与快捷键速查表共用；文本照旧是键位表里那一串，拆法在 `lib/keyCaps`。
+ */
+export function KeyCaps({ keys, className }: { keys: string; className?: string }) {
+  const groups = keyCaps(keys)
+  return (
+    <span className={cn('inline-flex flex-wrap items-center justify-end gap-x-1 gap-y-1', className)}>
+      {groups.map((caps, gi) => (
+        <Fragment key={gi}>
+          {gi > 0 && (
+            <span aria-hidden className="text-xs text-ink-3">
+              /
+            </span>
+          )}
+          <span className="inline-flex items-center gap-0.5">
+            {caps.map((k, ki) => (
+              <Kbd key={ki} size="md">
+                {k}
+              </Kbd>
+            ))}
+          </span>
+        </Fragment>
+      ))}
+    </span>
   )
 }
