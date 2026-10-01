@@ -7438,7 +7438,17 @@ def api_layout_session_put_last():
         return jsonify({"error": "doc_id / name 不合法", "code": "bad_request"}), 400
     ctx = _request_ctx()
     key = engine_layoutsession.project_key(ctx.path) if ctx is not None else None
-    last = engine_layoutsession.set_last(key, doc_id, name)
+    try:
+        last = engine_layoutsession.set_last(key, doc_id, name)
+    except engine_layoutsession.ForeignLayoutError:
+        # 这份排版的槽位记在别的项目名下（#715 验收 P1）：不记成这个项目「上次开着的」。
+        # 前端认这个 code，作废本机缓存里的这一条、不重推（`lib/projectDocs.LAYOUT_FOREIGN_CODE`）
+        return jsonify(
+            {
+                "error": "这份排版属于另一个项目，不能记成这个项目上次打开的排版",
+                "code": "layout_foreign",
+            }
+        ), 409
     return jsonify({"ok": True, "last": last})
 
 

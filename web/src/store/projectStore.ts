@@ -22,6 +22,7 @@ import {
   rememberProjectDocument,
   type ProjectDocumentRef,
 } from '@/lib/projectDocs'
+import { isForeignDocument } from '@/lib/docOwnership'
 import { currentProjectId, setCurrentProjectId } from '@/lib/session'
 import { pushPickerEntry } from '@/lib/pickerHistory'
 import { cancelActivePointerGesture, finishActiveGesture } from '@/store/gestureCoordinator'
@@ -592,5 +593,9 @@ useDocumentStore.subscribe((s, prev) => {
   // 继续说「已经记过了」，而一次 getItem 比一帧拖动便宜得多
   const cur = readProjectDocument(pj)
   if (cur && cur.id === s.documentId && cur.name === name) return
+  // 确知属于别的项目的排版不记到这个项目名下（#715 验收 P1，判据唯一出处 `lib/docOwnership`）。
+  // 排在「同值不写」之后：拖动的每一帧走不到这里。从「最近文档」里显式打开别的项目的排版并改过
+  // 之后，自动保存按这个项目重新记它的归属（本机索引与后端 owners 都是），那之后的下一次变化照常记
+  if (isForeignDocument(s.documentId, pj)) return
   rememberProjectDocument(pj, { id: s.documentId, name })
 })

@@ -15,6 +15,7 @@ origin 的一部分——「上次打开的排版」与崩溃兜底副本都只�
 from __future__ import annotations
 
 import json
+import shutil
 import time
 
 from _canvas import object_ids, place_figure, wait_on_disk
@@ -97,3 +98,42 @@ def test_control_same_origin_reload_restores_the_layout(desktop_app, project_dir
     desktop_app.ready("project")
     assert desktop_app.origin() == origin0
     _assert_restored(d, before, "同源刷新", (origin0, desktop_app.origin()))
+
+
+def test_opening_another_project_does_not_inherit_the_layout(desktop_app, project_dir, tmp_path):
+    """#715 Windows 真机验收 P1（2026-10-01，nightly 36771293696）：关掉项目 F、打开新项目 G，
+    G 一打开就是 F 的排版，G 的目录里写出了同一个 doc_id 的时间线节点。
+
+    稳定端口（#718）之后两次启动是同一个 origin、同一份 localStorage；启动恢复在「G 后端没记过」时
+    退回全局 `tavotto.currentDoc`（F 最后开着的那份）而不问它属于哪个项目。改之前这条红在第一个断言上。
+    """
+    _d, before, _origin = _prepare(desktop_app, project_dir)
+    slot = wait_on_disk(desktop_app.data_dir, before[0])
+    doc_f = slot.stem
+    code = desktop_app.close_window()
+    assert code == 0, f"WM_CLOSE 之后壳的退出码是 {code}"
+
+    proj_g = tmp_path / "另一个 项目"
+    proj_g.mkdir()
+    for p in sorted(project_dir.glob("*.pdf")):
+        shutil.copy2(p, proj_g / p.name)
+    d = desktop_app.launch("--open", str(proj_g))
+    # 恢复是异步的（先起项目、问后端、再读盘）：给它与「关掉再开」同样的时间，期间一直不许出现对象
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline:
+        leaked = object_ids(d)
+        assert not leaked, (
+            f"新项目一打开画布上就有对象 {sorted(leaked)}（项目 F 的排版 {doc_f} 漏进了项目 G；"
+            f"F 里是 {sorted(before)}）"
+        )
+        time.sleep(0.5)
+    versions = proj_g / "tavottofile" / "versions"
+    copies = sorted(p.name for p in versions.glob(f"{doc_f}.*")) if versions.is_dir() else []
+    assert copies == [], f"项目 G 的目录里出现了 F 那份排版的副本：{copies}"
+    session = json.loads(
+        (desktop_app.data_dir / "state" / "layout-sessions.json").read_text(encoding="utf-8")
+    )
+    lasts = {k: (g.get("last") or {}).get("doc_id") for k, g in session.get("projects", {}).items()}
+    assert sum(1 for v in lasts.values() if v == doc_f) <= 1, (
+        f"F 的排版 {doc_f} 被记成了不止一个项目的「上次开着的」：{lasts}"
+    )

@@ -169,22 +169,48 @@ def snapshot() -> dict:
         return _read()
 
 
+# ------------------------------- 归属判据 ----------------------------------
+
+
+class ForeignLayoutError(Exception):
+    """这份排版的槽位记在**别的项目**名下，不能记成这个项目「上次开着的」。"""
+
+
+def owner_conflict(state: dict, doc_id: str, key: str | None) -> bool:
+    """槽位 `doc_id` **确知**属于别的项目（`key` 为 `None` = 没开项目那一组）。
+
+    「确知」= owners 里有这条记录且不是 `key`；没有记录是「不知道」，不算冲突（第一次自动保存
+    之前就会先记 last）。前端的同一条判据是 `web/src/lib/docOwnership.isForeignDocument`（按本机
+    「最近文档」索引），两侧互为纵深（#715 验收 P1：稳定端口之后两个项目共用一个 origin，前端把
+    项目 F 的排版当成新项目 G 的「上次开着的」装进来并记下，而这里的 owners 明明记着它属于 F）。
+    """
+    owners_ = state["owners"]
+    return doc_id in owners_ and owners_[doc_id] != key
+
+
 # ------------------------------- last --------------------------------------
 
 
 def last_for(key: str | None) -> dict | None:
-    """这个项目（`None` = 没开项目）上次开着的排版 `{doc_id, name, at}`；没记过回 `None`。"""
+    """这个项目（`None` = 没开项目）上次开着的排版 `{doc_id, name, at}`；没记过回 `None`。
+
+    记着的那份槽位**确知属于别的项目**时同样回 `None`：修复之前的版本可能已经把别的项目的
+    排版记到这个项目名下（#715 验收 P1），这类旧记录读出来就不认，不等它被覆盖。
+    """
     with _LOCK:
         state = _read()
         group = state["no_project"] if key is None else state["projects"].get(key, {})
         last = group.get("last")
-        return dict(last) if last else None
+        if not last or owner_conflict(state, last["doc_id"], key):
+            return None
+        return dict(last)
 
 
 def set_last(key: str | None, doc_id: str, name: str) -> dict:
     """记「这个项目现在开着这份排版」。同一份 (doc_id, name) 不重写文件。
 
-    `ValueError`：doc_id 形状不对 / name 不是字符串。`atomicio.AtomicWriteError`：写不进去。
+    `ValueError`：doc_id 形状不对 / name 不是字符串。`ForeignLayoutError`：槽位确知属于别的项目
+    （`owner_conflict`），一个字节都不写。`atomicio.AtomicWriteError`：写不进去。
     """
     if not valid_doc_id(doc_id):
         raise ValueError("doc_id 形状不对")
@@ -193,6 +219,8 @@ def set_last(key: str | None, doc_id: str, name: str) -> dict:
     name = name[:MAX_NAME_CHARS]
     with _LOCK:
         state = _read()
+        if owner_conflict(state, doc_id, key):
+            raise ForeignLayoutError(doc_id)
         group = _group(state, key)
         cur = group.get("last")
         if cur and cur["doc_id"] == doc_id and cur["name"] == name:

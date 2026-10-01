@@ -497,6 +497,9 @@ NON_UI_CODES = {
     "npm_failed",
     "installed_but_not_found",
     "spawn_failed",
+    # #715 验收 P1：「上次开着的排版」记到了别的项目的槽位上。只在后台推送里出现，前端认它作废
+    # 本机缓存（`lib/projectDocs.LAYOUT_FOREIGN_CODE`），从不显示给用户
+    "layout_foreign",
 }
 
 

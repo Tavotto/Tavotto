@@ -4,7 +4,8 @@ import { enablePatches, produceWithPatches, type Patch } from 'immer'
 import * as history from '@/lib/history'
 import { rebaseToCurrentNative, sizeBasisOf, type SizeBasis } from '@/lib/panelNativeSize'
 import { fetchAutosave, fetchAutosaveSummary, putAutosave } from '@/lib/api'
-import { fetchRemoteProjectDocument } from '@/lib/projectDocs'
+import { loadProjectDocument } from '@/lib/projectDocs'
+import { DOC_INDEX_KEY, isForeignDocument, recordedProjectOf } from '@/lib/docOwnership'
 import {
   blocksDiskWrite,
   createDiskWriter,
@@ -842,7 +843,7 @@ function nextCanvasName(canvases: CanvasData[]): string {
  * 后者是写到服务器 layouts 的命名文件。保存布局文件不会改变文档身份。
  */
 const SLOT_PREFIX = 'tavotto.autosave.'
-const INDEX_KEY = 'tavotto.docIndex'
+const INDEX_KEY = DOC_INDEX_KEY
 const CURRENT_KEY = 'tavotto.currentDoc'
 const MAX_SLOTS = 12
 const DEBOUNCE_MS = 1000
@@ -1632,12 +1633,19 @@ export async function restoreSession(): Promise<boolean> {
   const localId = readCurrentId()
   // 本机记录就指着内存里这份（装它的那一方刚写过）：一个请求都不发
   if (localId && before.documentId === localId) return false
-  // 取哪一份：**当前项目的 last（后端为准，#715 PR-B）→ 旧的本机 currentDoc**。桌面版换了
-  // 端口 = 换了 origin = 本机存储是空的，只有后端还记得。后端没有这组端点（404：playground、
-  // 嵌入画布、旧后端）或不可达时 `undefined`，退回本机那一条——即改造前的行为。
+  // 取哪一份：**当前项目的 last（后端为准，#715 PR-B；后端没记过时是本机按项目的缓存，
+  // `loadProjectDocument`）→ 旧的本机 currentDoc**。桌面版换了端口 = 换了 origin = 本机存储是空的，
+  // 只有后端还记得。后端没有这组端点（404：playground、嵌入画布、旧后端）或不可达时退回本机。
+  //
+  // **全局的 `currentDoc` 只在确知属于当前项目时才认**（#715 验收 P1）：稳定端口之后不同项目共用
+  // 一个 origin，`currentDoc` 是上一个项目最后开着的那份。改造前「这个项目后端没记过」（`null`）
+  // 就退回它，于是关掉 F 再打开新项目 G，G 一打开就是 F 的排版，随后按 G 记成「G 上次开着的」、
+  // 往 G 的目录里写。没开项目时只认没记在任何项目名下的那份。
   const pj = currentProjectId()
-  const remote = pj ? await fetchRemoteProjectDocument(pj) : undefined
-  const id = remote?.id ?? localId
+  const own = pj ? await loadProjectDocument(pj) : null
+  const localOwned =
+    localId !== null && (pj ? recordedProjectOf(localId) === pj : !isForeignDocument(localId, null))
+  const id = own?.id ?? (localOwned ? localId : null)
   if (!id) return false
   if (useDocumentStore.getState().documentId === id) return false
   // 问后端的这段路上别处换过文档或改过它：那份更新，这次恢复让位（与下面读盘那段同一条判据）

@@ -86,7 +86,7 @@
   | 6 | 中文 / 英文 IME | **不覆盖** | IME 组字（TSF / IMM32 候选窗、上屏）只有真键盘 + 真输入法才有；CDP 的 `imeSetComposition` 是渲染进程里的合成事件，不是输入法，拿它判「IME 能用」是冒充。靠人工清单 |
   | 7 | 剪贴板跨应用 | `test_clipboard.py`：⌃C 后系统剪贴板里是对象载荷、所有者在本实例进程树里；别的应用改写载荷后 ⌃V 粘出改写后的样子；普通文字 ⌃V 不产生对象（没有内存兜底） | 图片 / 富文本格式没有用例（产品只收 `text/plain` 载荷） |
   | 8 | 真 WebView 拖动与 undo/redo | `test_drag_undo.py`：CDP 指针拖动、⌃Z 逐像素回原位、⌃⇧Z 回拖后 | 触控板 / 高 DPI 缩放下的指针换算 |
-  | 9 | 关掉再开恢复 | `test_restart_restore.py`：`WM_CLOSE` → 无参重开；必绿（#718 稳定端口合入后转绿，#751 去掉了 xfail），同源 `location.reload()` 对照为绿 | — |
+  | 9 | 关掉再开恢复 | `test_restart_restore.py`：`WM_CLOSE` → 无参重开；必绿（#718 稳定端口合入后转绿，#751 去掉了 xfail），同源 `location.reload()` 对照为绿；关掉项目 F 再打开新项目 G（同一个 origin），G 不出现 F 的排版、G 的目录里没有它的副本（#715 验收 P1） | — |
   | 12 | 强杀后恢复 | 同上，`TerminateProcess` 壳、断言子进程跟着退；必绿（同上） | 「改动还没落盘就被杀」那一刻的崩溃副本：时序抢不稳，没有稳定的被测状态 |
   | 13 | 菜单 / 快捷键 / 焦点 | `test_menu_keyboard_focus.py`：真菜单栏上加速键逐条在位；菜单撤销 / 重做、⌃D 在输入框里让位、「设置」开关后焦点；纯键盘 Tab 到素材卡 → 放图 → 撤销 / 重做（#37 真机那一段） | 加速键表的**查表**（真按键 → 哪条命令）要真按键；这里投的是查表之后那条 `WM_COMMAND`，菜单栏上的加速键文字是它的镜像。#37 的完整键盘闭环仍在 `keyboard-golden-path.spec.ts`（chromium 与 WebView2 同引擎） |
 

@@ -132,6 +132,12 @@
     丢「磁盘上已不在的槽位」的归属同理：扫描快照只挑候选，`drop_owners_not_in` 在锁里当场再看文件
     （快照之后并发保存刚建出的槽位不丢归属，否则它永远不进配额）。
   - 教程重置 / 资源升级换副本（`_clear_tutorial_local_state`）一并清教程项目的 last 与教程画布槽位的归属（ADR 0039 §5）。
+  - **别的项目的排版不认（2026-10-01，#715 Windows 真机验收 P1）**：判据只有 `owner_conflict(state, doc_id, key)`
+    （owners 里**确知**是别的项目 / 别的组；没有记录 = 不知道，不算）。`set_last` 撞上它抛 `ForeignLayoutError`、
+    一个字节不写，端点回 `409 layout_foreign`（不显示给用户，前端据此作废本机缓存那一条、不重推）；`last_for`
+    读到指着别的项目槽位的旧记录（修复前写下的）回 `None`。前端的同一条判据是 `web/src/lib/docOwnership.ts`
+    （按本机「最近文档」索引），两侧互为纵深。自动保存 PUT 照旧按 pj 改记归属：从「最近文档」显式打开别的项目的
+    排版并改过，就是把它带进了这个项目。
   - 看护 `tests/test_layout_session.py`。
 - 前端文档模型的对应字段（lockedGids / layoutGroups 等）见 `web/AGENTS.md`。
 
