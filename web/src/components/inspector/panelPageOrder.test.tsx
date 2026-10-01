@@ -1,8 +1,9 @@
 /**
  * 单选面板的属性页顺序（2026-09-13 审计 B09）：
  *   1. 头部之下是进图内编辑的**紧凑入口**——没有「图内元素」小标题再说一遍；
- *   2. 正文固定为 位置与尺寸 → 图片适配 → 排列 → 更多 → 源文件与高级；
- *   3. 「排列」一组里同时有对齐到画布（六颗）与层级（四颗），位置组里不再夹一行对齐。
+ *   2. 正文固定为 位置与尺寸 → 图片适配 → 对齐到画布 → 摘要行（层级 / 旋转、翻转、透明度 /
+ *      换一张图 / 源文件，2026-10-01 设计稿 A1）；
+ *   3. 「对齐到画布」常驻六颗，层级收成摘要行（点开四颗），位置组里不再夹一行对齐。
  */
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -42,9 +43,9 @@ let root: Root
 let host: HTMLDivElement
 
 const all = (sel: string) => [...host.querySelectorAll(sel)]
-/** 分组标题（h3）与折叠区标题（aria-expanded 的按钮）按出现顺序 */
+/** 分组标题（h3）与摘要行（`[data-summary-row]` 里的按钮，只取名字不取右值）按出现顺序 */
 const headings = () =>
-  all('section > header h3, section > button[aria-expanded]').map((el) =>
+  all('section > header h3, [data-summary-row] > button[aria-expanded]').map((el) =>
     (el.querySelector('span') ?? el).textContent?.trim() ?? '',
   )
 const section = (title: string) =>
@@ -77,7 +78,15 @@ afterEach(async () => {
 
 describe('单选面板：变换 → 内容适配 → 排列 → 源文件', () => {
   it('分组顺序固定，「图内元素」不再是一个分组标题', () => {
-    expect(headings()).toEqual(['位置与尺寸', '图片', '排列', '更多', '源文件与高级'])
+    expect(headings()).toEqual([
+      '位置与尺寸',
+      '图片',
+      '对齐到画布',
+      '层级',
+      '旋转、翻转、透明度',
+      '换一张图',
+      '源文件',
+    ])
   })
 
   it('进图内编辑的入口还在，是头部之下的一颗整行宽的按钮（2026-09-30 重设计：选中一张图时第一件事就是进去改）', () => {
@@ -91,13 +100,31 @@ describe('单选面板：变换 → 内容适配 → 排列 → 源文件', () =
     expect(btn!.compareDocumentPosition(firstTitled) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
-  it('「排列」里同时有对齐到画布六颗与层级四颗；位置组里没有对齐', () => {
-    const arrange = section('排列')
+  it('「对齐到画布」常驻六颗；层级是摘要行，点开才有四颗；位置组里没有对齐', async () => {
+    const arrange = section('对齐到画布')
     expect(arrange.querySelector('[data-single-align]')!.querySelectorAll('button')).toHaveLength(6)
+    expect(host.querySelector('[aria-label="层级"][role="toolbar"]')).toBeNull()
+    await act(async () => toggleByText('层级')!.click())
     expect(
-      arrange.querySelector('[aria-label="层级"][role="toolbar"]')!.querySelectorAll('button'),
+      host.querySelector('[aria-label="层级"][role="toolbar"]')!.querySelectorAll('button'),
     ).toHaveLength(4)
     expect(section('位置与尺寸').querySelector('[role="toolbar"]')).toBeNull()
+  })
+
+  it('低频项各是一行摘要：右边只写当前值，点开才有控件（旋转 / 翻转 / 透明度、换一张图）', async () => {
+    const rot = host.querySelector<HTMLElement>('[data-panel-more]')!.closest<HTMLElement>('[data-summary-row]')!
+    expect(rot.querySelector('[data-summary-value]')!.textContent).toBe('0° · 不透明')
+    expect(rot.querySelector('[data-panel-flip]')).toBeNull()
+    await act(async () => toggleByText('旋转、翻转、透明度')!.click())
+    expect(host.querySelectorAll('[data-panel-flip]')).toHaveLength(2)
+    // 展开后右值收起（控件本身说得更准）
+    expect(rot.querySelector('[data-summary-value]')).toBeNull()
+
+    const replace = host.querySelector<HTMLElement>('[data-fold="replace"]')!
+    expect(replace.querySelector('[data-summary-value]')).toBeNull()
+    expect(replace.textContent).not.toContain('选择…')
+    await act(async () => toggleByText('换一张图')!.click())
+    expect(replace.textContent).toContain('选择…')
   })
 })
 
@@ -119,32 +146,40 @@ describe('对象页的版式（2026-09-15 全面打磨）', () => {
     expect(widths).toEqual(new Set(['88px']))
   })
 
-  it('组内的「更多」是文字链接，不带 chevron（O3 / L4）', () => {
-    const more = toggleByText('更多')!
-    expect(more, '找不到「更多」').toBeTruthy()
-    expect(more.querySelector('svg'), '组的尾巴不该用分区的字形').toBeNull()
-    // 分区级的折叠（源文件与高级）仍然带 chevron：两种角色靠字形分开
-    expect(toggleByText('源文件与高级')!.querySelector('svg')).toBeTruthy()
+  it('低频项统一是摘要行（名字 + 当前值 + ›）：同一个形状，名字是字重 500 的一行（2026-10-01）', () => {
+    // 此前对象页的「更多」是不带 chevron 的文字链接、「源文件与高级」是带 chevron 的分区头
+    // 两种形状；现在所有低频项只有摘要行这一种，一律带 ›
+    for (const name of ['层级', '旋转、翻转、透明度', '换一张图', '源文件']) {
+      const row = toggleByText(name)!
+      expect(row, `找不到「${name}」`).toBeTruthy()
+      expect(row.querySelector('svg'), `${name} 缺 ›`).toBeTruthy()
+      expect(row.closest('[data-summary-row]'), `${name} 不是摘要行`).toBeTruthy()
+    }
   })
 
-  it('源文件与高级：写回的那句常驻说明删了，动作收成一行三颗（L7 / O2）', async () => {
-    const fold = toggleByText('源文件与高级')!
+  it('源文件：写回的那句常驻说明删了，动作收成一行三颗（L7 / O2）', async () => {
+    const fold = toggleByText('源文件')!
     await act(async () => fold.click())
     // L7：确认框里已经把「会覆盖原件、留有备份」讲全，这里不再常驻一遍
     expect(host.textContent ?? '').not.toContain('写回会覆盖原始')
     const names = all('button').map((b) => b.textContent?.trim() ?? '')
-    for (const want of ['写回原始文件', '历史', '同步修改到']) {
-      expect(names.some((n) => n.startsWith(want)), `少了「${want}」`).toBe(true)
+    expect(names.some((n) => n.startsWith('写回原始文件')), '少了「写回原始文件」').toBe(true)
+    // 2026-10-01（设计稿 C5 / C11）：「历史」改名「写回记录」且只在写回过之后出现（这里没有记录）；
+    // 「同步修改到…」搬进了右键菜单
+    for (const gone of ['历史', '写回记录', '同步修改到']) {
+      expect(
+        names.some((n) => n.startsWith(gone)),
+        `不该还有「${gone}」`,
+      ).toBe(false)
     }
-    // 三颗在同一行（同一个父元素），不是三种宽度叠三行
     const row = all('button')
       .filter((b) => b.textContent?.trim().startsWith('写回原始文件'))
       .map((b) => b.parentElement)[0]!
-    expect(row.querySelectorAll('button')).toHaveLength(3)
+    expect(row.querySelectorAll('button')).toHaveLength(1)
   })
 
   it('诊断是只读的一行，不是 surface-2 / danger 填充的小卡（O1）', async () => {
-    const fold = toggleByText('源文件与高级')!
+    const fold = toggleByText('源文件')!
     await act(async () => fold.click())
     const value = all('span').find((el) => /pt$|dpi$/.test(el.textContent?.trim() ?? ''))!
     expect(value, '找不到诊断读数').toBeTruthy()

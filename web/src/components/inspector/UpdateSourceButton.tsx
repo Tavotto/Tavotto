@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { FileUp, ShieldAlert, TriangleAlert } from '@/components/ui/icons'
+import { FileUp, RotateCcwClock, ShieldAlert, TriangleAlert } from '@/components/ui/icons'
 import { Details, Summary } from '../ui/Details'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { ApiError, backendErrorMsg, updateSourceFiles, type WriteBackDiff } from '@/lib/api'
@@ -22,11 +22,17 @@ import type { PanelObject } from '@/types/document'
 import { Button } from '../ui/Button'
 import { Dialog } from '../ui/Dialog'
 import { CopyButton } from '../settings/CopyButton'
+import { Tab, TabList, TabPanel } from '../ui/Tabs'
 import { Toggle } from '../ui/Toggle'
 import { MenuItem } from '../ui/Menu'
 import { captureMoment, markMoment, momentWithDoc } from '@/lib/timelineCheckpoint'
+import { fileIdsWithRecords, useWriteBackRecords, WriteBackRecordsPage } from './WriteBackRecords'
 
 const stemOf = (fileId: string) => fileId.split('/').pop()?.replace(/\.[^.]+$/, '') ?? fileId
+
+/** 写回记录那一页的文案在 inspector:versionHistory.* 下 */
+const vh = (key: string, values?: Record<string, unknown>) =>
+  translate(`versionHistory.${key}`, { ns: 'inspector', ...(values ?? {}) })
 
 /** 本组文案在 inspector:writeBack.* 下 */
 const wb = (key: string, values?: Record<string, unknown>) =>
@@ -37,9 +43,14 @@ const wb = (key: string, values?: Record<string, unknown>) =>
  * 这是本工具里唯一会改动磁盘原始文件的动作，所以名字直说「写回原始文件」，
  * 并在确认框里把「覆盖什么 / 备份在哪 / 怎么恢复」三件事讲全。
  *
- * 两个入口共用同一个确认对话框：
+ * 三个入口共用同一个窗口：
  * - 属性页里的 UpdateSourceButton（单面板，随选中面板出现）
  * - 「⋯」菜单第一项 useWriteBackMenuEntry（可一次写回多个面板）
+ * - 同步修改到别的图之后「同步并写回」（`detached`：目标图不在画布上，没有面板可言）
+ *
+ * 窗口有两页：「写回」与「写回记录」（原属性栏的「历史」，2026-10-01 设计稿 C11）。
+ * 没有记录时不出现页签，窗口就是原来那一页。
+ * 注意：ADR 0094 的「写回脚本」是另一件事（改用户脚本源码），本文件的「写回」只动图的原始文件。
  */
 
 interface WriteBackResult {
@@ -194,12 +205,25 @@ export function WriteBackDialog({
   panels,
   open,
   onOpenChange,
+  initialPage = 'write',
+  detached = false,
+  onWritten,
 }: {
   panels: PanelObject[]
   open: boolean
   onOpenChange: (v: boolean) => void
+  /** 打开时落在哪一页；没有写回记录时只有「写回」页，这个值不起作用 */
+  initialPage?: 'write' | 'records'
+  /**
+   * `panels` 是临时拼出来的（同步修改的目标图不在画布上）：没有画布上的面板，
+   * 所以不收画布标注、不提供写回记录页（恢复要改的是画布上那个面板的修改）。
+   */
+  detached?: boolean
+  /** 写回成功之后（素材列表已重拉）；同步流程用它把目标图标成过期 */
+  onWritten?: (result: { updated: string[] }) => void
 }) {
   useTranslation('inspector')
+  const [page, setPage] = useState<'write' | 'records'>(initialPage)
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState<WriteBackResult | null>(null)
   const [error, setError] = useState<WriteBackFailure | null>(null)
@@ -208,6 +232,11 @@ export function WriteBackDialog({
   const objects = useDocumentStore((s) => s.doc.objects)
   const assets = useAssetStore((s) => s.byId)
   const stems = panels.map((p) => stemOf(p.fileId))
+  const readOnly = useProjectStore((s) => s.project?.settings?.allow_write_back === false)
+  const fileIds = [...new Set(panels.map((p) => p.fileId))]
+  const recordsByFile = useWriteBackRecords(fileIds, open && !detached)
+  const hasRecords = fileIdsWithRecords(fileIds, recordsByFile).length > 0
+  const shownPage = hasRecords ? page : 'write'
   // 短摘要的两个数字（审计 T34）：改了多少项、写进几张图。
   // **数的是图不是磁盘文件**——后端只覆盖 `<stem>.pdf` / `<stem>.png` 里
   // 真实存在的那些（`_write_source_files` 的 targets），而前端拿不到「同名
@@ -219,13 +248,16 @@ export function WriteBackDialog({
 
   // 与写回目标重叠的画布标注（按重叠面积归属，一条只进一张图）
   const annMap = useMemo(
-    () => (open ? collectPanelAnnotations(panels, objects) : new Map<string, PanelAnnotations>()),
-    [open, panels, objects],
+    () =>
+      open && !detached
+        ? collectPanelAnnotations(panels, objects)
+        : new Map<string, PanelAnnotations>(),
+    [open, detached, panels, objects],
   )
   const annCount = [...annMap.values()].reduce((n, a) => n + a.objectIds.length, 0)
   // 「有标注压着面板却带不走」才值得说一句；面板上本来就没标注不用提
   const blockedReason = useMemo(() => {
-    if (panels.length !== 1) return null
+    if (detached || panels.length !== 1) return null
     const reason = annotationsBlocked(panels[0])
     if (!reason) return null
     const p = panels[0]
@@ -236,7 +268,7 @@ export function WriteBackDialog({
         o.x < p.x + p.w && o.x + o.w > p.x && o.y < p.y + p.h && o.y + o.h > p.y,
     )
     return touching ? reason : null
-  }, [panels, objects])
+  }, [detached, panels, objects])
 
   const run = async () => {
     // 写回完成时可能已经换了排版、或接着改了：「写回」点只打给这一份、拍的是发起时的内容
@@ -280,6 +312,7 @@ export function WriteBackDialog({
       void markMoment('writeback', written)
       // 重拉面板列表拿到新 mtime；所有图片 URL 带 m 参数，缩略图与画布面板都会自动重取
       await useAssetStore.getState().load()
+      onWritten?.({ updated: res.updated })
       useUiStore
         .getState()
         .setStatus(
@@ -306,51 +339,8 @@ export function WriteBackDialog({
     }
   }
 
-  return (
-    <Dialog
-      open={open}
-      onOpenChange={(v) => {
-        onOpenChange(v)
-        if (!v) {
-          setResult(null)
-          setError(null)
-          setWithAnnotations(false)
-        }
-      }}
-      title={wb('title')}
-      description={
-        panels.length === 1
-          ? wb('summaryOne', { count: editCount, stem: stems[0] ?? '' })
-          : wb('summaryMany', { count: editCount, panels: panels.length })
-      }
-      size="md"
-      busy={busy}
-      footer={
-        result ? (
-          <Button variant="secondary" size="md" onClick={() => onOpenChange(false)}>
-            {wb('done')}
-          </Button>
-        ) : (
-          <>
-            <Button variant="secondary" size="md" disabled={busy} onClick={() => onOpenChange(false)}>
-              {translate('actions.cancel')}
-            </Button>
-            <Button
-              data-write-back="confirm"
-              variant="primary"
-              size="md"
-              loading={busy}
-              loadingLabel={wb('rewriting')}
-              onClick={run}
-            >
-              <FileUp size={ICON_SIZE.md} />
-              {wb('confirm')}
-            </Button>
-          </>
-        )
-      }
-    >
-      {result ? (
+  const writeBody = (
+result ? (
         <div className="flex flex-col gap-2">
           <p className="text-xs text-ink-2">{wb('updatedIntro')}</p>
           <ul className="flex flex-col gap-0.5 rounded-sm border border-border bg-surface-2 p-2">
@@ -409,6 +399,93 @@ export function WriteBackDialog({
           )}
           {error && <BlockedNotice error={error} />}
         </div>
+      )
+  )
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(v) => {
+        onOpenChange(v)
+        if (!v) {
+          setResult(null)
+          setError(null)
+          setWithAnnotations(false)
+          setPage(initialPage)
+        }
+      }}
+      title={wb('title')}
+      description={
+        shownPage === 'records'
+          ? undefined
+          : editCount === 0
+            ? wb('noOverridesTitle')
+            : panels.length === 1
+              ? wb('summaryOne', { count: editCount, stem: stems[0] ?? '' })
+              : wb('summaryMany', { count: editCount, panels: panels.length })
+      }
+      size="md"
+      busy={busy}
+      footer={
+        result || shownPage === 'records' ? (
+          <Button variant="secondary" size="md" onClick={() => onOpenChange(false)}>
+            {wb('done')}
+          </Button>
+        ) : (
+          <>
+            <Button variant="secondary" size="md" disabled={busy} onClick={() => onOpenChange(false)}>
+              {translate('actions.cancel')}
+            </Button>
+            <Button
+              data-write-back="confirm"
+              variant="primary"
+              size="md"
+              disabled={editCount === 0 || readOnly}
+              title={readOnly ? wb('readOnlyTitle') : undefined}
+              loading={busy}
+              loadingLabel={wb('rewriting')}
+              onClick={run}
+            >
+              <FileUp size={ICON_SIZE.md} />
+              {wb('confirm')}
+            </Button>
+          </>
+        )
+      }
+    >
+      {hasRecords && (
+        <TabList label={wb('pagesLabel')} className="-mt-1 mb-2 h-8 shrink-0">
+          <Tab
+            active={shownPage === 'write'}
+            panelId="wb-write"
+            data-write-back-tab="write"
+            onClick={() => setPage('write')}
+          >
+            {wb('pageWrite')}
+          </Tab>
+          <Tab
+            active={shownPage === 'records'}
+            panelId="wb-records"
+            data-write-back-tab="records"
+            onClick={() => setPage('records')}
+          >
+            {vh('trigger')}
+          </Tab>
+        </TabList>
+      )}
+      {shownPage === 'records' ? (
+        <TabPanel id="wb-records">
+          <WriteBackRecordsPage
+            panels={panels}
+            byFile={recordsByFile}
+            focusFileId={panels[0]?.fileId}
+            onDone={() => onOpenChange(false)}
+          />
+        </TabPanel>
+      ) : hasRecords ? (
+        <TabPanel id="wb-write">{writeBody}</TabPanel>
+      ) : (
+        writeBody
       )}
     </Dialog>
   )
@@ -446,6 +523,36 @@ export function UpdateSourceButton({ panel }: { panel: PanelObject }) {
         {wb('buttonLabel')}
       </Button>
       <WriteBackDialog panels={[panel]} open={open} onOpenChange={setOpen} />
+    </>
+  )
+}
+
+/**
+ * 属性页的「写回记录」入口：打开同一个写回窗口，预先选好这张图、落在写回记录页。
+ * 这张图没有写回记录时不渲染（记录页也不会出现）；读取记录失败时照样渲染，进去能看到原因。
+ */
+export function WriteBackRecordsButton({ panel }: { panel: PanelObject }) {
+  useTranslation('inspector')
+  const [open, setOpen] = useState(false)
+  const records = useWriteBackRecords([panel.fileId], panel.fileKind !== 'runtime')
+  if (panel.fileKind === 'runtime' || !fileIdsWithRecords([panel.fileId], records).length) {
+    return null
+  }
+  return (
+    <>
+      {/* 恢复会重写原图，但不动磁盘以外的东西：与「写回」分档，ghost（打磨 O2） */}
+      <Button
+        variant="ghost"
+        size="sm"
+        className="text-ink-2"
+        data-write-back="records"
+        data-write-back-entry="inspector"
+        onClick={() => setOpen(true)}
+      >
+        <RotateCcwClock size={ICON_SIZE.sm} />
+        {vh('trigger')}
+      </Button>
+      <WriteBackDialog panels={[panel]} open={open} onOpenChange={setOpen} initialPage="records" />
     </>
   )
 }

@@ -460,7 +460,7 @@ export function LegendPositionPicker({
       </div>
 
       {showRefine && (
-        // 折叠开关左起排，与检查器里其它 Disclosure 同一条竖线（2026-09-14 审计 A7：此前推到右缘）
+        // 折叠开关左起排，与检查器里其它折叠行同一条竖线（2026-09-14 审计 A7：此前推到右缘）
         <div className="flex min-h-7 items-center gap-2">
           <button
             type="button"

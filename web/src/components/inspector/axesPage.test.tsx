@@ -16,6 +16,7 @@ import { MATPLOTLIB_SVG } from '@/lib/__fixtures__/matplotlibSvg'
 import type { EditableField, EngineRenderOptions, Manifest, ManifestElement } from '@/lib/api'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useDocumentStore } from '@/store/documentStore'
+import { useInspectorPrefs } from '@/store/inspectorPrefs'
 import { renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
@@ -174,7 +175,11 @@ function seedRender(m: Manifest) {
   useRenderStore.setState({ latest: { 'Fig1.pdf': renderKeyOf(panelOf()) } })
 }
 
-async function mount(gid = 'axes_0') {
+/**
+ * 摘要行默认收起（设计稿 A6，2026-10-01）：旧用例量的是里面的控件，所以默认把本页两条
+ * 低频行点开再量；「默认收起」本身由下面「摘要行」一组用 `open: []` 单独钉住。
+ */
+async function mount(gid = 'axes_0', open: string[] = ['coords', 'scaleCenter']) {
   useUiStore.setState({ elementPanelId: 'p1', selectedGids: [gid] })
   host = document.createElement('div')
   document.body.appendChild(host)
@@ -186,12 +191,20 @@ async function mount(gid = 'axes_0') {
   await act(async () => {
     root.render(<Harness />)
   })
+  for (const id of open) {
+    const btn = host.querySelector<HTMLButtonElement>(`[data-fold="${id}"] > button`)
+    if (btn?.getAttribute('aria-expanded') === 'false') {
+      await act(async () => {
+        btn.click()
+      })
+    }
+  }
 }
 
 const textOf = () => host.textContent ?? ''
 const buttons = () => Array.from(host.querySelectorAll('button'))
 const byAria = (name: string) => buttons().find((b) => b.getAttribute('aria-label') === name)
-const byText = (text: string) => buttons().find((b) => b.textContent?.trim() === text)
+const byText = (text: string) => buttons().find((b) => b.textContent?.trim().split(', ')[0] === text)
 
 async function typeNumber(input: HTMLInputElement, text: string) {
   await act(async () => {
@@ -211,6 +224,7 @@ beforeEach(async () => {
   resetPreview()
   setHistoryMode('gesture')
   localStorage.clear()
+  useInspectorPrefs.setState({ foldOpen: {}, moreOpen: {}, advancedOpen: {} })
   document.body.innerHTML = ''
   useSelectionStore.getState().clear()
   useRenderStore.getState().clear()
@@ -533,5 +547,76 @@ describe('按比例缩放是一次性动作', () => {
     expect((host.querySelector('[data-scale-apply]') as HTMLButtonElement).disabled).toBe(true)
     // 那句「相对当前大小；应用后回到 100%」的解释不再需要
     expect(textOf()).not.toContain('应用后回到')
+  })
+})
+
+/* ------------------------- 摘要行（2026-10-01，设计稿 A6） ------------------------- */
+
+describe('子图页的低频项收成摘要行', () => {
+  const foldBtn = (id: string) => host.querySelector<HTMLButtonElement>(`[data-fold="${id}"] > button`)
+  const foldValue = (id: string) => host.querySelector(`[data-fold="${id}"] [data-summary-value]`)?.textContent
+
+  it('默认收起：面上只有大小、坐标范围、边框和刻度；低频控件不在 DOM 里', async () => {
+    await mount('axes_0', [])
+    // 摘要行都在，且收着
+    for (const id of ['scaleCenter', 'coords', 'grid', 'background']) {
+      expect(foldBtn(id), id).toBeTruthy()
+      expect(foldBtn(id)!.getAttribute('aria-expanded'), id).toBe('false')
+    }
+    // 面上的：宽高、范围
+    expect(host.querySelector('[data-axes-size-block]')).toBeTruthy()
+    expect(host.querySelector('[data-prop="xlim"]')).toBeTruthy()
+    // 收起的：缩放 / 居中、坐标变换、网格样式、背景
+    for (const prop of ['aspect', 'xscale', 'invert_x', 'grid_color', 'facecolor']) {
+      expect(host.querySelector(`[data-prop="${prop}"]`), prop).toBeNull()
+    }
+    expect(host.querySelector('[data-scale-apply]')).toBeNull()
+  })
+
+  it('右边只写当前值：缩放方式 · 纵横比；点开就是原来的控件', async () => {
+    seedRender(makeManifest({ aspect: 'equal' }))
+    await mount('axes_0', [])
+    expect(foldValue('coords')).toContain('等比例')
+    expect(foldValue('coords')).not.toContain('X')
+    await act(async () => {
+      foldBtn('coords')!.click()
+    })
+    expect(foldBtn('coords')!.getAttribute('aria-expanded')).toBe('true')
+    expect(host.querySelector('[data-prop="aspect"]')).toBeTruthy()
+    expect(host.querySelector('[data-prop="xscale"]')).toBeTruthy()
+    // 展开后右值不再重复一遍
+    expect(foldValue('coords')).toBeUndefined()
+  })
+
+  it('网格线与背景的右值是当前值，展开后是原来的字段（每个字段只出现一次）', async () => {
+    await mount('axes_0', [])
+    expect(foldValue('grid')).toBe('关')
+    expect(foldValue('background')).toMatch(/^#[0-9A-F]{6}$/)
+    for (const id of ['grid', 'background']) {
+      await act(async () => {
+        foldBtn(id)!.click()
+      })
+    }
+    for (const prop of ['grid_x', 'grid_y', 'grid_color', 'facecolor']) {
+      expect(host.querySelectorAll(`[data-prop="${prop}"]`), prop).toHaveLength(1)
+    }
+  })
+
+  it('网格开关在「网格线」摘要行里，四边示意图下面不再有第二套；开一个方向右值说「X 开」', async () => {
+    await mount('axes_0', [])
+    // 收着时开关不在 DOM；示意图只管边框和刻度
+    expect(host.querySelector('[data-prop="grid_x"]')).toBeNull()
+    await act(async () => {
+      foldBtn('grid')!.click()
+    })
+    const sw = host.querySelector('[data-fold="grid"] [data-prop="grid_x"] [role="switch"]') as HTMLButtonElement
+    expect(sw).toBeTruthy()
+    expect(host.querySelector('[aria-label="刻度与边框状态图"]')!.closest('div')!.parentElement!.querySelector('[role="group"][aria-label="网格"]')).toBeNull()
+    await act(async () => sw.click())
+    expect(overrideOf('axes_0', 'grid_x')).toBe(true)
+    await act(async () => {
+      foldBtn('grid')!.click()
+    })
+    expect(foldValue('grid')).toBe('X 开')
   })
 })

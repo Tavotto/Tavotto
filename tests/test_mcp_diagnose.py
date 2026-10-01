@@ -423,7 +423,7 @@ def _mirror(monkeypatch):
     monkeypatch.setattr(
         launcher,
         "pip_index",
-        lambda environ=None: {"url": ALIYUN, "source": "/etc/pip.conf", "mirror": True},
+        lambda environ=None: {"url": ALIYUN, "source": "pip_config", "mirror": True},
     )
     monkeypatch.setattr(launcher, "pip_index_of", lambda python, **kw: None)
 
@@ -506,7 +506,8 @@ def test_a_frozen_desktop_cli_is_still_desktop_only(tmp_path, monkeypatch):
 def test_health_names_the_old_engine_end_to_end(old_engine, tmp_path):
     """真跑一次 `--health`（用那个 import 不到桥的旧 venv 当启动器解释器，发现环境清空），
     插件带清单（下限 0.17.0）+ pip 配了镜像：体检回 `engine_too_old`，带引擎版本、下限与
-    镜像，且话术里是绕开镜像的命令。换成「没清单」则是 `engine_incompatible`。"""
+    镜像，且话术里是绕开镜像的命令。换成「没清单」则是 `engine_incompatible`。那个旧 venv 与 pipx 建的
+    一样不带 pip：索引经 `PIPX_SHARED_LIBS` 里的共享 pip 问出来（#737）。"""
     from tavotto.engine import pluginmanifest
 
     plugin = tmp_path / "codex-plugin"
@@ -524,6 +525,7 @@ def test_health_names_the_old_engine_end_to_end(old_engine, tmp_path):
         "PROGRAMFILES": str(tmp_path / "pf"),
         "TAVOTTO_CLI": old_engine["cli"],
         "PIP_CONFIG_FILE": str(pip_conf),
+        "PIPX_SHARED_LIBS": str(_pipx_shared_libs(tmp_path / "pipx-shared")),
         "PYTHONDONTWRITEBYTECODE": "1",
     }
     for name in (
@@ -570,40 +572,92 @@ def test_health_names_the_old_engine_end_to_end(old_engine, tmp_path):
     report = health()
     assert report["code"] == "engine_too_old", report
     assert report["engine_version"] == OLD and report["min_tavotto_version"] == "0.17.0"
-    assert report["pip_index"] == {"url": ALIYUN_SAID, "source": "PIP_CONFIG_FILE", "mirror": True}
+    assert report["pip_index"] == {"url": ALIYUN_SAID, "source": "pip_config", "mirror": True}
     assert "--index-url https://pypi.org/simple" in report["error"]
     assert "--index-url https://pypi.org/simple" in " ".join(report["recovery"])
 
 
 # ------------------------------ pip 的索引探测 --------------------------------
-def test_pip_index_reads_the_env_var_and_config_files(tmp_path):
-    """只读：`PIP_INDEX_URL` 压过配置文件；配置文件里 `[install]` 压过 `[global]`；
-    `PIP_CONFIG_FILE=os.devnull` 是 pip 约定的「一个配置文件都不读」。"""
-    conf = tmp_path / "pip.conf"
-    conf.write_text(
-        "[global]\nindex-url = https://pypi.org/simple\n[install]\nindex-url = " + ALIYUN + "\n",
-        encoding="utf-8",
+# #737 起直接问 pip（`python -m pip config list`），配置发现（平台位置、编码、覆盖顺序、PIP_CONFIG_FILE、
+# site、商店版虚拟化）全归 pip 自己；这里的用例都起真的 pip。读法（按节筛 + 键名规范化）的判据在
+# `tests/test_pip_config_pair.py`，与引擎对拍同一份向量。
+def _pip_env(tmp_path: Path, **extra: str) -> dict:
+    """真 pip 的子进程环境：继承本进程（Windows 要 SYSTEMROOT 等），去掉外面的 PIP_* 与用户目录。"""
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("PIP_", "PIPX_"))}
+    home = tmp_path / "home"
+    home.mkdir(exist_ok=True)
+    env.update(
+        HOME=str(home),
+        USERPROFILE=str(home),
+        APPDATA=str(home / "AppData"),
+        XDG_CONFIG_HOME=str(home / ".config"),
     )
-    base = {"HOME": str(tmp_path), "USERPROFILE": str(tmp_path), "XDG_CONFIG_DIRS": str(tmp_path)}
+    env.update(extra)
+    return env
 
-    got = launcher.pip_index({**base, "PIP_CONFIG_FILE": str(conf)})
-    assert got == {"url": ALIYUN_SAID, "source": "PIP_CONFIG_FILE", "mirror": True}
+
+def _pip_conf(tmp_path: Path, body: str) -> str:
+    conf = tmp_path / "pip.conf"
+    conf.write_text(body, encoding="utf-8")
+    return str(conf)
+
+
+def test_pip_index_asks_pip_for_the_install_sections(tmp_path):
+    """真 pip：`[install]` 压过 `[global]`，`[download]` 不作用于安装；`PIP_INDEX_URL` 压过配置文件；
+    `PIP_CONFIG_FILE=os.devnull` 是 pip 约定的「一个配置文件都不读」→ 没配（None）。"""
+    conf = _pip_conf(
+        tmp_path,
+        "[global]\nindex-url = https://pypi.org/simple\n"
+        f"[install]\nindex-url = {ALIYUN}\n"
+        "[download]\nindex-url = https://download-only.example/simple\n",
+    )
+    got = launcher.pip_index(_pip_env(tmp_path, PIP_CONFIG_FILE=conf))
+    assert got == {"url": ALIYUN_SAID, "source": "pip_config", "mirror": True}
+
+    # `PIP_INDEX_URL` 压过配置文件；它指回 PyPI 默认 = 没有自定义索引（#767：只在 index-url 不是 PyPI
+    # 默认、或有 extra-index-url 时才算「配了自定义包源」）
+    got = launcher.pip_index(
+        _pip_env(tmp_path, PIP_CONFIG_FILE=conf, PIP_INDEX_URL="https://pypi.org/simple")
+    )
+    assert got is None
+
+    assert launcher.pip_index(_pip_env(tmp_path, PIP_CONFIG_FILE=os.devnull)) is None
+
+
+def test_pip_index_ignores_download_only_and_normalizes_keys(tmp_path):
+    """只有 `[download] index-url` 时 pip install 仍走 PyPI → None；`--index-url` 写法照 pip 规范化后认得
+    （#724 第 8 轮 Codex P2）。"""
+    only_download = _pip_conf(tmp_path, f"[download]\nindex-url = {ALIYUN}\n")
+    assert launcher.pip_index(_pip_env(tmp_path, PIP_CONFIG_FILE=only_download)) is None
+    dashed = _pip_conf(tmp_path, f"[global]\n--index-url = {ALIYUN}\n")
+    got = launcher.pip_index(_pip_env(tmp_path, PIP_CONFIG_FILE=dashed))
+    assert got == {"url": ALIYUN_SAID, "source": "pip_config", "mirror": True}
+
+
+def test_a_mirror_in_extra_index_urls_still_counts_as_a_mirror(tmp_path):
+    """真 pip：index-url 是 PyPI、镜像只在 extra-index-url 里——pip 在两者间一起挑版本，PyPI 不通时照样装回
+    镜像上的旧版，所以照样是「指向镜像」：说出口的是那个镜像，升级命令不给裸的 `pipx upgrade`（Codex #767 P2）。"""
+    conf = _pip_conf(
+        tmp_path, f"[global]\nindex-url = https://pypi.org/simple\nextra-index-url = {ALIYUN}\n"
+    )
+    got = launcher.pip_index(_pip_env(tmp_path, PIP_CONFIG_FILE=conf))
+    assert got == {"url": ALIYUN_SAID, "source": "pip_config", "mirror": True}, got
+    assert "pipx upgrade tavotto" not in launcher.upgrade_commands("0.18.0", got)
 
     got = launcher.pip_index(
-        {**base, "PIP_CONFIG_FILE": str(conf), "PIP_INDEX_URL": "https://pypi.org/simple"}
+        _pip_env(tmp_path, PIP_CONFIG_FILE=os.devnull, PIP_EXTRA_INDEX_URL=ALIYUN)
     )
-    assert got == {"url": "https://pypi.org/***", "source": "PIP_INDEX_URL", "mirror": False}
-
-    assert launcher.pip_index({**base, "PIP_CONFIG_FILE": os.devnull}) is None
+    assert got == {"url": ALIYUN_SAID, "source": "PIP_EXTRA_INDEX_URL", "mirror": True}, got
+    assert "PIP_EXTRA_INDEX_URL" in launcher.mirror_note("0.18.0", got)
 
 
 def test_pip_index_never_repeats_credentials(tmp_path):
     got = launcher.pip_index(
-        {
-            "HOME": str(tmp_path),
-            "PIP_CONFIG_FILE": os.devnull,
-            "PIP_INDEX_URL": "https://alice:s3cret@pypi.corp.example/simple",
-        }
+        _pip_env(
+            tmp_path,
+            PIP_CONFIG_FILE=os.devnull,
+            PIP_INDEX_URL="https://alice:s3cret@pypi.corp.example/simple",
+        )
     )
     assert got["mirror"] is True
     assert "s3cret" not in got["url"] and "alice" not in got["url"]
@@ -613,11 +667,11 @@ def test_pip_index_never_repeats_credentials(tmp_path):
 def test_pip_index_never_repeats_query_credentials(tmp_path):
     """签名查询串也是凭据（Codex #724 P1）：`?token=…` 整段抹掉，片段去掉，地址本身照报。"""
     got = launcher.pip_index(
-        {
-            "HOME": str(tmp_path),
-            "PIP_CONFIG_FILE": os.devnull,
-            "PIP_INDEX_URL": "https://mirror.example/simple?token=s3cret&sig=abc#frag",
-        }
+        _pip_env(
+            tmp_path,
+            PIP_CONFIG_FILE=os.devnull,
+            PIP_INDEX_URL="https://mirror.example/simple?token=s3cret&sig=abc#frag",
+        )
     )
     assert got["mirror"] is True
     assert "s3cret" not in got["url"] and "abc" not in got["url"] and "frag" not in got["url"]
@@ -639,122 +693,133 @@ def test_pip_index_never_repeats_path_credentials():
     assert launcher._redact_url(ALIYUN) == ALIYUN_SAID
 
 
-def test_pip_index_reads_the_interpreters_site_config(tmp_path, monkeypatch):
-    """`pip config --site` 写在本解释器 `sys.prefix` 下（venv 里配的镜像，Codex #724 P2）。"""
-    prefix = tmp_path / "venv"
-    prefix.mkdir()
-    site = prefix / ("pip.ini" if os.name == "nt" else "pip.conf")
-    site.write_text("[global]\nindex-url = " + ALIYUN + "\n", encoding="utf-8")
-    monkeypatch.setattr(launcher.sys, "prefix", str(prefix))
-    home = tmp_path / "home"
-    home.mkdir()
-    base = {"HOME": str(home), "USERPROFILE": str(home), "XDG_CONFIG_DIRS": str(home)}
-    got = launcher.pip_index(base)
-    assert got == {"url": ALIYUN_SAID, "source": "site", "mirror": True}
-
-
-def test_an_existing_pip_config_file_suppresses_user_level_configs(tmp_path):
-    """照 pip：`PIP_CONFIG_FILE` 指向存在的文件时不读用户级配置（Codex #724）——用户目录里旧的镜像
-    配置不许让我们报「镜像」、把 `pipx upgrade` 从恢复步骤里拿掉。文件不存在时用户级照读。"""
-    home = tmp_path / "home"
-    user_conf = home / ("pip/pip.ini" if os.name == "nt" else ".config/pip/pip.conf")
-    user_conf.parent.mkdir(parents=True)
-    user_conf.write_text("[global]\nindex-url = " + ALIYUN + "\n", encoding="utf-8")
-    explicit = tmp_path / "explicit.conf"
-    explicit.write_text("[global]\ntimeout = 30\n", encoding="utf-8")
-    base = {
-        "HOME": str(home),
-        "USERPROFILE": str(home),
-        "XDG_CONFIG_DIRS": str(tmp_path / "nowhere"),
-        "XDG_CONFIG_HOME": str(home / ".config"),
-    }
-    assert launcher.pip_index({**base, "PIP_CONFIG_FILE": str(explicit)}) is None
-    missing = tmp_path / "missing.conf"
-    got = launcher.pip_index({**base, "PIP_CONFIG_FILE": str(missing)})
-    assert got and got["mirror"] is True and got["source"] == "user"
-
-
-@pytest.mark.skipif(sys.platform != "darwin", reason="macOS 的用户配置二选一")
-def test_macos_reads_only_the_user_config_pip_selects(tmp_path):
-    """macOS：`~/Library/Application Support/pip` 在就只读它，XDG 那份不读（Codex #724）。"""
-    home = tmp_path / "home"
-    lib = home / "Library" / "Application Support" / "pip"
-    lib.mkdir(parents=True)
-    (lib / "pip.conf").write_text("[global]\nindex-url = " + ALIYUN + "\n", encoding="utf-8")
-    xdg = home / ".config" / "pip"
-    xdg.mkdir(parents=True)
-    (xdg / "pip.conf").write_text(
-        "[global]\nindex-url = https://pypi.org/simple\n", encoding="utf-8"
-    )
-    base = {"HOME": str(home), "XDG_CONFIG_DIRS": str(tmp_path / "none")}
-    got = launcher.pip_index(base)
-    assert got and got["mirror"] is True and got["source"] == "user", got
-
-
-@pytest.mark.skipif(os.name == "nt", reason="POSIX 的全局配置位置")
-def test_macos_global_pip_configs_are_the_ones_pip_reads(monkeypatch):
-    """pip `site_config_dirs` 的 darwin 分支只有 `/Library/Application Support/pip`：XDG_CONFIG_DIRS
-    与 `/etc` 只属于其它 Unix（Codex #724）——那里的旧 pip.conf 在 macOS 上不许翻转结论。"""
-    env = {"HOME": "/h", "XDG_CONFIG_DIRS": "/xdg-dirs"}
-    monkeypatch.setattr(launcher.sys, "platform", "darwin")
-    darwin = [p for p, kind in launcher._pip_config_files(env) if kind == "global"]
-    assert darwin == ["/Library/Application Support/pip/pip.conf"], darwin
-    monkeypatch.setattr(launcher.sys, "platform", "linux")
-    linux = [p for p, kind in launcher._pip_config_files(env) if kind == "global"]
-    assert linux == ["/xdg-dirs/pip/pip.conf", "/etc/pip.conf"], linux
-
-
-def test_pip_configs_are_decoded_with_the_locale_encoding_like_pip(tmp_path, monkeypatch):
-    """pip 按 `locale.getpreferredencoding(False)` 读配置：中文 Windows 上 GBK 写的 pip.ini（带中文注释）
-    pip 读得出镜像，这里也要读得出，不能因为不是 UTF-8 就当成空文件（Codex #724）。"""
-    import locale
-
-    conf = tmp_path / "gbk.conf"
-    conf.write_bytes(("[global]\n# 阿里云镜像\nindex-url = " + ALIYUN + "\n").encode("gbk"))
-    monkeypatch.setattr(locale, "getpreferredencoding", lambda do_setlocale=True: "gbk")
-    assert launcher._index_urls_in(str(conf)) == {"global": ALIYUN}
-
-
 def test_pip_index_never_reports_local_paths(tmp_path):
     """体检结果进模型看得见的 `tavotto_health`：`source` 只报类别，`file://` 索引的路径也抹掉（Codex #724 P1）。"""
-    home = tmp_path / "alice"
-    conf = home / ("pip/pip.ini" if os.name == "nt" else ".config/pip/pip.conf")
-    conf.parent.mkdir(parents=True)
-    conf.write_text("[global]\nindex-url = file:///home/alice/wheels\n", encoding="utf-8")
-    base = {
-        "HOME": str(home),
-        "USERPROFILE": str(home),
-        "XDG_CONFIG_DIRS": str(tmp_path / "none"),
-        "XDG_CONFIG_HOME": str(home / ".config"),
-    }
-    got = launcher.pip_index(base)
-    assert got["source"] == "user"
+    conf = _pip_conf(tmp_path, "[global]\nindex-url = file:///home/alice/wheels\n")
+    got = launcher.pip_index(_pip_env(tmp_path, PIP_CONFIG_FILE=conf))
+    assert got["source"] == "pip_config"
     assert "alice" not in json.dumps(got) and got["url"] == "file://***", got
 
 
-def test_pip_sections_are_ordered_after_merging_files(tmp_path, monkeypatch):
-    """照 pip：先合并所有文件、再按节排——全局配置里的 `[install]` 压过用户配置里的 `[global]`（Codex #724）。"""
-    global_dir = tmp_path / "xdg-global"
-    (global_dir / "pip").mkdir(parents=True)
-    (global_dir / "pip" / "pip.conf").write_text(
-        "[install]\nindex-url = " + ALIYUN + "\n", encoding="utf-8"
+def _venv_without_pip(where: Path) -> str:
+    import venv
+
+    venv.EnvBuilder(with_pip=False).create(str(where))
+    return str(_py(where))
+
+
+def _pipx_shared_libs(where: Path) -> Path:
+    """pipx 共享库的形状：一个 venv，pip 在它的 site-packages 里看得见（这里用 .pth 指向测试进程的 pip）。"""
+    import pip
+
+    py = _venv_without_pip(where)
+    purelib = subprocess.run(
+        [py, "-c", "import sysconfig; print(sysconfig.get_paths()['purelib'])"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
+    ).stdout.strip()
+    (Path(purelib) / "test_shared_pip.pth").write_text(
+        str(Path(pip.__file__).resolve().parents[1]) + "\n", encoding="utf-8"
     )
-    home = tmp_path / "home"
-    user = home / ".config" / "pip"
-    user.mkdir(parents=True)
-    (user / "pip.conf").write_text(
-        "[global]\nindex-url = https://pypi.org/simple\n", encoding="utf-8"
+    return where
+
+
+def test_real_pip_config_file_beats_a_site_file_that_config_get_would_read(tmp_path):
+    """真 pip（pip 25.3 实测的形状）：venv 的 site 文件写 PyPI、`PIP_CONFIG_FILE` 写镜像——`pip install`
+    用镜像，而 `pip config get global.index-url` 回的是 site 的 PyPI。"""
+    venv = tmp_path / "venv"
+    subprocess.run(
+        [sys.executable, "-m", "venv", str(venv)], check=True, capture_output=True, encoding="utf-8"
     )
-    base = {
-        "HOME": str(home),
-        "XDG_CONFIG_DIRS": str(global_dir),
-        "XDG_CONFIG_HOME": str(home / ".config"),
-    }
-    if os.name == "nt":
-        pytest.skip("POSIX 的全局配置位置")
-    monkeypatch.setattr(launcher.sys, "platform", "linux")  # XDG_CONFIG_DIRS 只属于非 macOS 的 Unix
-    got = launcher.pip_index(base)
-    assert got == {"url": ALIYUN_SAID, "source": "global", "mirror": True}
+    py = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    (venv / ("pip.ini" if os.name == "nt" else "pip.conf")).write_text(
+        "[global]\nindex-url = https://pypi.org/simple\n", "utf-8"
+    )
+    env = _pip_env(
+        tmp_path, PIP_CONFIG_FILE=_pip_conf(tmp_path, f"[global]\nindex-url = {ALIYUN}\n")
+    )
+    got_get = subprocess.run(
+        [str(py), "-m", "pip", "config", "get", "global.index-url"],
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    ).stdout.strip()
+    assert got_get == "https://pypi.org/simple", f"前提：config get 只看 site 那一个：{got_get!r}"
+    got = launcher.pip_index_of(str(py), env)
+    assert got == {"url": ALIYUN_SAID, "source": "pip_config", "mirror": True}, got
+
+
+def test_a_pipx_venv_without_pip_is_asked_through_pipxs_shared_pip(tmp_path):
+    """pipx 建的 venv 默认不带 pip：先试 pipx 共享库里的 pip（`--python` 按目标解释器求值，所以目标 venv 的
+    site 配置——`pip config --site` 写的那份——照样读到）；共享库也没有就是**不知道**，不猜（#737）。"""
+    pipx_home = tmp_path / "pipx"
+    target = _venv_without_pip(pipx_home / "venvs" / "tavotto")
+    site = pipx_home / "venvs" / "tavotto" / ("pip.ini" if os.name == "nt" else "pip.conf")
+    site.write_text(f"[global]\nindex-url = {ALIYUN}\n", encoding="utf-8")
+    env = _pip_env(tmp_path)
+
+    assert launcher.pip_index_of(target, env) == launcher.PIP_INDEX_UNKNOWN, "前提：它自己没有 pip"
+
+    _pipx_shared_libs(pipx_home / "shared")  # pipx 的目录形状：<PIPX_HOME>/venvs/<名> 旁边的 shared
+    got = launcher.pip_index_of(target, env)
+    assert got == {"url": ALIYUN_SAID, "source": "pip_config", "mirror": True}
+
+    # 目录形状对不上时认 PIPX_SHARED_LIBS
+    elsewhere = _venv_without_pip(tmp_path / "loose-venv")
+    assert launcher.pip_index_of(elsewhere, env) == launcher.PIP_INDEX_UNKNOWN
+    got = launcher.pip_index_of(
+        elsewhere, {**env, "PIPX_SHARED_LIBS": str(pipx_home / "shared"), "PIP_INDEX_URL": ALIYUN}
+    )
+    assert got == {"url": ALIYUN_SAID, "source": "PIP_INDEX_URL", "mirror": True}
+
+
+def test_every_pip_config_probe_is_read_only(monkeypatch, tmp_path):
+    """两跳都是只读体检：起的解释器带 `-B`；`pip --python` 再起的目标解释器拿不到命令行，靠
+    `PYTHONDONTWRITEBYTECODE=1` 管住（被探的解释器与 pipx 目录都不许留 .pyc，同 Codex #724 那条）。"""
+    pipx_home = tmp_path / "pipx"
+    target = pipx_home / "venvs" / "tavotto" / "bin" / "python"
+    shared = pipx_home / "shared" / "bin" / "python"
+    for p in (target, shared):
+        p.parent.mkdir(parents=True)
+        p.write_text("", encoding="utf-8")
+    calls: list = []
+
+    def run(argv, **kw):
+        calls.append((argv, kw.get("env") or {}))
+        return subprocess.CompletedProcess(argv, 1, b"", b"")
+
+    monkeypatch.setattr(launcher.subprocess, "run", run)
+    assert launcher.pip_index_of(str(target), {}) == launcher.PIP_INDEX_UNKNOWN
+    assert [a[0] for a, _env in calls] == [str(target), str(shared)], calls
+    for argv, env in calls:
+        assert argv[1] == "-B" and env.get("PYTHONDONTWRITEBYTECODE") == "1", (argv, env)
+
+
+def test_an_unknown_index_is_said_not_guessed(monkeypatch):
+    """问不到 pip：升级命令照常（不凭空加 `--index-url`），但话里说「不知道」并给出镜像滞后时的绕法；
+    引擎那边问不到时用启动器这边问到的结论。"""
+    unknown = dict(launcher.PIP_INDEX_UNKNOWN)
+    assert launcher.upgrade_commands("0.17.0", unknown) == launcher.upgrade_commands("0.17.0", None)
+    note = launcher.mirror_note("0.17.0", unknown)
+    assert "问不到" in note and f"--index-url {launcher.PYPI_SIMPLE}" in note
+    assert launcher.mirror_note("0.17.0", None) == ""
+
+    mirror = {"url": ALIYUN_SAID, "source": "pip_config", "mirror": True}
+    pypi = {"url": "https://pypi.org/***", "source": "pip_config", "mirror": False}
+    for here, there, want in (
+        (pypi, unknown, pypi),
+        (None, unknown, None),
+        (unknown, pypi, pypi),
+        (pypi, mirror, mirror),
+        (mirror, unknown, mirror),
+        (unknown, unknown, unknown),
+    ):
+        monkeypatch.setattr(launcher, "pip_index", lambda environ=None, _h=here: _h)
+        monkeypatch.setattr(launcher, "pip_index_of", lambda python, _t=there, **kw: _t)
+        assert launcher.effective_pip_index("/engine/python") == want, (here, there)
 
 
 def test_upgrade_commands_follow_the_mirror_verdict():
@@ -771,50 +836,7 @@ def test_upgrade_commands_follow_the_mirror_verdict():
     assert not any(c.startswith("pipx upgrade") for c in mirrored)
 
 
-# --------------- 商店版 Python 的虚拟化 pip 配置 / 以引擎那边为准（#721 真机） ---------------
-def _store_pip_ini(local: Path, package: str, url: str) -> Path:
-    ini = local / "Packages" / package / "LocalCache" / "Roaming" / "pip" / "pip.ini"
-    ini.parent.mkdir(parents=True)
-    ini.write_text(f"[global]\nindex-url = {url}\n", encoding="utf-8")
-    return ini
-
-
-def test_pip_index_reads_the_store_pythons_virtualized_config(tmp_path):
-    """#721 真机：商店版 Python 的 pip.ini 实际在 `%LOCALAPPDATA%\\Packages\\PythonSoftwareFoundation.
-    Python.*\\LocalCache\\Roaming\\pip\\pip.ini`，别的进程在 `%APPDATA%\\pip\\pip.ini` 看不到它。
-    多份都读，任一指向非 PyPI 就按镜像报；别的包名不算；`PIP_INDEX_URL` 仍压过一切。"""
-    local = tmp_path / "LocalAppData"
-    base = {
-        "HOME": str(tmp_path),
-        "USERPROFILE": str(tmp_path),
-        "XDG_CONFIG_DIRS": str(tmp_path / "none"),
-        "LOCALAPPDATA": str(local),
-    }
-    assert launcher.pip_index(base) is None, "前提：没有任何 pip 配置"
-
-    _store_pip_ini(local, "SomeVendor.Python.3.12_abc", ALIYUN)
-    assert launcher.pip_index(base) is None, "不是商店版 Python 的包不算"
-
-    _store_pip_ini(local, "PythonSoftwareFoundation.Python.3.11_x", "https://pypi.org/simple")
-    _store_pip_ini(local, "PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0", ALIYUN)
-    got = launcher.pip_index(base)
-    assert got == {"url": ALIYUN_SAID, "source": "store_python", "mirror": True}
-
-    # 普通（用户级）配置说 PyPI、商店版那份说镜像 → 仍报镜像（宁可多给一个 --index-url）
-    conf = tmp_path / ("pip/pip.ini" if os.name == "nt" else ".config/pip/pip.conf")
-    conf.parent.mkdir(parents=True, exist_ok=True)
-    conf.write_text("[global]\nindex-url = https://pypi.org/simple\n", encoding="utf-8")
-    assert launcher.pip_index(base)["mirror"] is True
-    # PIP_CONFIG_FILE 指着存在的文件时 pip 不读用户级配置——商店版那份也是用户级的，同样不算
-    explicit = tmp_path / "explicit.conf"
-    explicit.write_text("[global]\nindex-url = https://pypi.org/simple\n", encoding="utf-8")
-    assert launcher.pip_index({**base, "PIP_CONFIG_FILE": str(explicit)})["mirror"] is False
-
-    got = launcher.pip_index({**base, "PIP_INDEX_URL": "https://pypi.org/simple"})
-    assert got == {"url": "https://pypi.org/***", "source": "PIP_INDEX_URL", "mirror": False}
-    assert launcher.pip_index({**base, "PIP_CONFIG_FILE": os.devnull}) is None
-
-
+# ------------------------ 以引擎那边的解释器为准（#721 真机） ------------------------
 def test_the_engine_interpreters_view_of_pip_wins(monkeypatch):
     """启动器解释器 ≠ 装引擎的解释器时，以引擎背后那个解释器看到的 pip 配置为准：
     这边读到 PyPI，那边（真起一个子进程跑本文件的 `pip_index()`）读到镜像 → 报镜像。"""
@@ -831,11 +853,13 @@ def test_the_engine_interpreters_view_of_pip_wins(monkeypatch):
     assert launcher.effective_pip_index(None)["mirror"] is False
 
 
-def test_diagnosis_takes_the_index_from_the_engines_interpreter(old_engine, monkeypatch):
-    """接线：诊断的升级命令用的是引擎 venv 那边看到的镜像，即使启动器这边看到的是 PyPI。"""
+def test_diagnosis_takes_the_index_from_the_engines_interpreter(old_engine, monkeypatch, tmp_path):
+    """接线：诊断的升级命令用的是引擎 venv 那边看到的镜像，即使启动器这边看到的是 PyPI。那个 venv
+    与 pipx 建的一样不带 pip，经共享的 pip 问（#737）。"""
     monkeypatch.setattr(launcher, "required_tavotto_version", lambda: "0.16.0")
     monkeypatch.setattr(launcher, "pip_index", lambda environ=None: None)
     monkeypatch.setenv("PIP_INDEX_URL", ALIYUN)
+    monkeypatch.setenv("PIPX_SHARED_LIBS", str(_pipx_shared_libs(tmp_path / "pipx-shared")))
     monkeypatch.delenv("PYTHONPATH", raising=False)
     code, hint = launcher.diagnose_resolved(old_engine["found"], NOTHING_IMPORTABLE)
     assert code == "engine_too_old"

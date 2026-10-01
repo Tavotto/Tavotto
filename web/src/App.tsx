@@ -24,6 +24,7 @@ import { StyleDialog } from '@/components/StyleDialog'
 import { DocumentBanner } from '@/components/DocumentBanner'
 import { ProjectReadinessBanner } from '@/components/ProjectReadinessBanner'
 import { VersionDrawer } from '@/components/VersionDialog'
+import { NamedNodeQuickBox } from '@/components/NamedNodeQuickBox'
 import { LeftPanel } from '@/components/left/LeftPanel'
 import { LeftRail } from '@/components/left/LeftRail'
 import { CanvasHud, NotificationRail } from '@/components/StatusBar'
@@ -274,6 +275,8 @@ function Workspace() {
               </div>
             </div>
             {right.mounted && <Inspector overlay={overlay} state={right.state} />}
+            {/* ⌥⌘S 命名小框：挂在工作面板里，居中于面板自己（不是整行，左栏 / 属性栏开合都不偏） */}
+            <NamedNodeQuickBox />
           </div>
           {scrim.mounted && (
             <button

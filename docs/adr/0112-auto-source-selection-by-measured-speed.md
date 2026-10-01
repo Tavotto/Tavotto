@@ -64,6 +64,10 @@ PR #743 / ADR 0111（桌面安装包附带私有 Python 归档、PyPI 网络类�
 * **用户配没配源，问 pip，不复刻 pip 的配置发现**（#737 的结构性结论）：在目标解释器里跑 `python -m pip config list`，只看会作用于
   `pip install` 的节（`global` / `install` / `:env:`），键按 pip 的规范化（去掉开头的 `--`、`_` 转 `-`）比较；`index-url` /
   `extra-index-url` / `no-index` / `find-links` 任一出现即「配过」。问不出来按「配过」处理（宁可不换源）。
+  **2026-10-01 修订（#767，维护者裁决）**：不再读 `pip config list`——它把每条都打印、打印顺序不是覆盖顺序，`config get`
+  又不认 `PIP_CONFIG_FILE`，自己从中推「生效的是哪个」两轮都推错。改为在目标解释器里跑一段探测（`PIP_OPTIONS_PROBE`，与
+  插件逐字相同、严格同源对），让 pip 自己把 `pip install` 的选项解析一遍（`create_command('install').parse_args([])`），
+  index-url 不是 PyPI 默认、或有 extra-index-url / no-index / find-links 即「配过」；导入失败 / pip 太旧 / 超时 = 问不出来。
 * 配过：一个字节不改，照旧按用户的源装。没配：官方源**太慢**（测速判据在 PR B 里写明）或网络类失败 / 超时 → 用
   `--index-url https://pypi.tuna.tsinghua.edu.cn/simple` 重试**一次**；不写用户的 pip 配置；mirrors.aliyun.com 不当默认（实测同样慢）。
 * **预算**：15 分钟总超时（`INSTALL_TIMEOUT_S`）不变，**两次尝试共用**；第一次（官方源）最多用到给 TUNA 留出保底的那一刻为止，

@@ -20,6 +20,7 @@ import { afterEach, beforeEach } from 'vitest'
 import { DEFAULT_LOCALE, i18n, initI18n } from '@/i18n'
 import { cancelFocusRescues } from '@/lib/focusRescue'
 import { forgetProjectFilesInSession } from '@/lib/projectFile'
+import { useInspectorPrefs } from '@/store/inspectorPrefs'
 
 const pinNavigator = () => {
   Object.defineProperty(navigator, 'language', {
@@ -39,6 +40,9 @@ beforeEach(async () => {
   // 项目文件绑定的会话层（`lib/projectFile.ts`）是模块级的：不清的话上一条用例的绑定会
   // 盖住这一条用例自己往 localStorage 里摆的（或清掉的）那一份
   forgetProjectFilesInSession()
+  // 属性栏摘要行的展开状态是会话内的模块级 store：上一条用例点开的行不该带到这一条
+  // 的「默认收起」断言里（`moreOpen` 的持久化是被测行为，不在这里动）
+  useInspectorPrefs.setState({ foldOpen: {} })
   pinNavigator()
   if (i18n.language !== DEFAULT_LOCALE) await i18n.changeLanguage(DEFAULT_LOCALE)
 })

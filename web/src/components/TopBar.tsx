@@ -7,7 +7,6 @@ import {
   Redo2,
   Undo2,
   RotateCcwClock,
-  Bookmark,
 } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import {
@@ -19,7 +18,7 @@ import {
 } from '@/store/actions'
 import { requestRelinkMissing } from '@/lib/clipboard'
 import { runUndoRedo } from '@/hooks/useKeyboard'
-import { backendErrorText, createPackage, openPackage, VERSION_NAME_MAX } from '@/lib/api'
+import { createPackage, openPackage } from '@/lib/api'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { foreignProjectLabel } from '@/lib/projectLabel'
 import { currentProjectId } from '@/lib/session'
@@ -39,13 +38,8 @@ import { BrandMark } from './ui/BrandMark'
 import { Button, IconButton } from './ui/Button'
 import { Menu, MenuItem, MenuLabel, MenuSeparator } from './ui/Menu'
 import { TextInput } from './ui/Input'
-import { Popover } from './ui/Popover'
-import { saveNamedNode } from '@/lib/timelineCheckpoint'
-import { useTimelineStore } from '@/store/timelineStore'
-import { afterAwait, timelineCtxKey } from '@/lib/timelineContext'
-import { useInFlight } from '@/hooks/useInFlight'
 import { Tip } from './ui/Tooltip'
-import { ALT, MOD, cn } from '@/lib/utils'
+import { MOD, cn } from '@/lib/utils'
 import { msg } from '@/i18n'
 import { formatTime } from '@/i18n/format'
 import { useFormatMessage } from '@/i18n/react'
@@ -75,7 +69,6 @@ export function TopBar() {
         <DocumentMenu />
         <SaveStateLabel />
         <TimelineButton />
-        <NamedNodeButton />
         <RecoveryNotice />
       </div>
 
@@ -312,110 +305,6 @@ function TimelineButton() {
     >
       <RotateCcwClock size={ICON_SIZE.md} className="text-ink-2" />
     </IconButton>
-  )
-}
-
-/**
- * 「存为命名节点」（ADR 0101；用户 2026-09-27 反馈：命名很重要，要有自己的按钮）。
- *
- * 书签钮 → 小浮层：名字框 + 保存；回车保存、Esc 取消，**不用先打开时间线抽屉**。
- * ⌥⌘S 与命令面板开的是同一个浮层（`timelineStore.namingOpen`）。保存失败（例如
- * 命名节点超出上限的 409）那句话留在浮层里，名字不丢。
- */
-export function NamedNodeButton() {
-  const { t } = useTranslation('dialogs')
-  const open = useTimelineStore((s) => s.namingOpen)
-  // 失败那句话记在它所属的上下文（项目代际 + 排版 id）名下：A 排版的「命名节点已满」
-  // 不挂到换上来的 B 下面（Codex #679 同形状扫查，与时间线抽屉同一套记账）
-  const gen = useTimelineStore((s) => s.gen)
-  const docId = useDocumentStore((s) => s.documentId)
-  const ctx = timelineCtxKey(gen, docId)
-  // 草稿同样按上下文记账：浮层开着换了排版，A 的名字不留到 B 里被存进 B（Codex #679）
-  const [draft, setDraft] = useState<{ ctx: string; text: string } | null>(null)
-  const name = draft?.ctx === ctx ? draft.text : ''
-  const setName = (text: string) => setDraft({ ctx, text })
-  const [failure, setFailure] = useState<{ ctx: string; text: string } | null>(null)
-  const error = failure?.ctx === ctx ? failure.text : null
-  const [busyCtx, setBusyCtx] = useState<string | null>(null)
-  const busy = busyCtx === ctx
-  const submitOnce = useInFlight()
-  useEffect(() => {
-    if (open) {
-      setName('')
-      setFailure(null)
-    }
-  }, [open])
-  const save = async () => {
-    if (!name.trim() || busy) return
-    // await 之后的状态一律经 `afterAwait`（清单在 `lib/timelineContext.ts`）：换走之后才
-    // 回来的，不关 B 里开着的浮层
-    const at = ctx
-    // 在途时回车 / 再点一次都不再发（`useInFlight`：同步标记，与时间线抽屉同一份）
-    await submitOnce(at, async () => {
-      const after = afterAwait(at)
-      setBusyCtx(at)
-      try {
-        await saveNamedNode(name)
-        after(() => useTimelineStore.getState().setNamingOpen(false))
-      } catch (e) {
-        // 旧上下文的失败不碰错误槽：槽只有一个，写进来会顶掉 B 自己的错误
-        after(() => setFailure({ ctx: at, text: backendErrorText(e) }))
-      } finally {
-        // 只摘自己挂的忙标记（A → B → A 回来时 A 不该一直在忙）
-        setBusyCtx((c) => (c === at ? null : c))
-      }
-    })
-  }
-  return (
-    <Popover
-      open={open}
-      onOpenChange={(v) => useTimelineStore.getState().setNamingOpen(v)}
-      align="start"
-      width={300}
-      ariaLabel={t('versions.save', { ns: 'dialogs' })}
-      trigger={
-        <IconButton
-          label={t('versions.save', { ns: 'dialogs' })}
-          shortcut={`${ALT}${MOD}S`}
-          aria-pressed={open}
-          data-timeline-name-button
-          className={cn('shrink-0', open && 'bg-selected')}
-        >
-          <Bookmark size={ICON_SIZE.md} className="text-ink-2" />
-        </IconButton>
-      }
-    >
-      <form
-        className="flex flex-col gap-2"
-        data-timeline-quick-name
-        onSubmit={(e) => {
-          e.preventDefault()
-          void save()
-        }}
-      >
-        <p className="text-xs text-ink-2">{t('versions.quickTitle', { ns: 'dialogs' })}</p>
-        <div className="flex gap-1.5">
-          <TextInput
-            autoFocus
-            value={name}
-            aria-label={t('versions.versionName', { ns: 'dialogs' })}
-            placeholder={t('versions.namePlaceholder', { ns: 'dialogs' })}
-            data-timeline-quick-name-input
-            maxLength={VERSION_NAME_MAX}
-            onChange={(e) => setName(e.target.value)}
-            className="min-w-0 flex-1"
-          />
-          <Button type="submit" variant="primary" size="sm" loading={busy} disabled={!name.trim()} data-timeline-quick-name-save>
-            {t('versions.quickSave', { ns: 'dialogs' })}
-          </Button>
-        </div>
-        {error && (
-          <p role="alert" className="text-xs leading-relaxed text-danger">
-            {error}
-          </p>
-        )}
-      </form>
-    </Popover>
   )
 }
 

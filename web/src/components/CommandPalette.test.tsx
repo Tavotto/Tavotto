@@ -3,6 +3,7 @@
  * 与关键词、项目命令只在项目打开时出现、动作复用真实 helper。
  */
 import { act } from 'react'
+import { MOD } from '@/lib/utils'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -127,7 +128,7 @@ describe('命令集', () => {
     spy.mockRestore()
   })
 
-  it('排版时间线（ADR 0101）：「排版时间线…」打开抽屉；「把现在存为命名节点…」打开顶栏命名浮层（不开抽屉）', async () => {
+  it('排版时间线（ADR 0101）：「排版时间线…」打开抽屉；「把现在存为命名节点…」就地弹出命名小框（不开抽屉）', async () => {
     const { useTimelineStore } = await import('@/store/timelineStore')
     useUiStore.setState({ versionsOpen: false })
     useTimelineStore.setState({ namingOpen: false })
@@ -239,13 +240,12 @@ describe('高亮行按身份记，不按位置记', () => {
 })
 
 describe('外壳（2026-09-15 打磨 K1 / K3）', () => {
-  it('输入行右端不再常驻「Esc」：已表达过的不重复', () => {
+  it('输入行右端有一颗 Esc 键帽（2026-09-30 设计稿 C10 要的；2026-09-15 曾删，现以设计稿为准），只是装饰、不进读屏', () => {
     mount()
     const box = document.querySelector('[role=listbox]')!.parentElement!
-    expect(
-      [...box.querySelectorAll('span')].some((sp) => sp.textContent?.trim() === 'Esc'),
-      'Esc 那段提示删掉了',
-    ).toBe(false)
+    const esc = [...box.querySelectorAll('kbd')].find((k) => k.textContent?.trim() === 'Esc')
+    expect(esc, 'Esc 键帽在').toBeTruthy()
+    expect(esc!.closest('[aria-hidden]'), '装饰性：aria-hidden').not.toBeNull()
   })
 
   it('选中行用 selected（ink 10%），不是 surface-2（对白 1.05:1，几乎看不见）', () => {
@@ -253,9 +253,9 @@ describe('外壳（2026-09-15 打磨 K1 / K3）', () => {
     const active = document.querySelector('[role=option][aria-selected=true] button')!
     expect(active.className).toContain('bg-selected')
     expect(active.className).not.toContain('bg-surface-2')
-    // 行 32 / 12 号：与菜单项同档
-    expect(active.className).toContain('h-8')
-    expect(active.className).toContain('text-sm')
+    // 行 36 / 13 号（2026-10-01 外观换新：带图标与键帽，行高与字号各升一档）
+    expect(active.className).toContain('h-9')
+    expect(active.className).toContain('text-base')
   })
 })
 
@@ -330,5 +330,17 @@ describe('空查询时的顺序（审计 T50）', () => {
     })
     expect(sectionIds()).toEqual([])
     expect(cmdIds().length).toBeGreaterThan(0)
+  })
+})
+
+describe('外观：图标与键帽（2026-10-01）', () => {
+  it('有快捷键的命令画成一个个键帽，图标只来自图标集（没有 emoji / 手写 svg）', () => {
+    mount()
+    const exp = document.querySelector('[data-cmd-id="export"] button')!
+    expect([...exp.querySelectorAll('kbd')].map((k) => k.textContent)).toEqual([MOD, 'E'])
+    expect(exp.querySelector('svg'), '导出有图标').not.toBeNull()
+    // 没有合适图标的命令不硬凑：行仍在、图标槽留空对齐
+    const all = document.querySelector('[data-cmd-id="select-all"] button')!
+    expect(all.querySelector('svg')).toBeNull()
   })
 })

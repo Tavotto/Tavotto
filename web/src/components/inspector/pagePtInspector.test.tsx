@@ -419,7 +419,7 @@ describe('属性页的各个入口都按页面值进出', () => {
     )
     await seed(0.5, m)
     await mount(['axes_1'])
-    const more = [...region('inspector').querySelectorAll('button')].find((b) => b.textContent?.trim() === '更多')
+    const more = [...region('inspector').querySelectorAll('button')].find((b) => b.textContent?.trim().split(', ')[0] === '更多')
     if (more?.getAttribute('aria-expanded') === 'false') {
       await act(async () => more.dispatchEvent(new MouseEvent('click', { bubbles: true })))
     }

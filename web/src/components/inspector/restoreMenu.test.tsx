@@ -7,7 +7,7 @@
  *   1. 徽标写的是修改数，点开是「恢复此元素 · n 项」「恢复整张图 · m 项」——各说各的
  *      对象与数量，数字来自同一份 overrides，按下去清掉的正是标签上写的那批（审计 T32）；
  *   2. 一条修改都没有时整颗徽标不出现（没有「禁用的恢复钮」）；
- *   3. 「源文件与高级」折叠区里**不再有**恢复按钮——只剩会动磁盘的那一组；
+ *   3. 「源文件」折叠区里**不再有**恢复按钮——只剩会动磁盘的那一组；
  *   4. 头部没有脚本行、没有 matplotlib 类名徽标（回退第一版）。
  */
 import { act } from 'react'
@@ -238,11 +238,11 @@ describe('计数徽标就是恢复菜单', () => {
     expect(menuItems().map((m) => m.textContent?.trim())).toEqual(['恢复整张图 · 3 项'])
   })
 
-  it('「源文件与高级」里不再有恢复按钮，只剩「原始文件」那一组', async () => {
+  it('「源文件」里不再有恢复按钮，只剩「原始文件」那一组', async () => {
     await seed(panelOf(), 'axes_0.title')
     await mount()
     await act(async () => {
-      buttonByText('源文件与高级')!.click()
+      buttonByText('源文件')!.click()
     })
     const fold = host.querySelector('[data-source-advanced]')!
     const foldButtons = Array.from(fold.querySelectorAll('button')).map((b) => b.textContent?.trim() ?? '')

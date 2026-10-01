@@ -1342,55 +1342,81 @@ def _pip_install(
 # ---------------------------------------------------------------------------
 #: 固定的一个镜像（清华 TUNA，PyPI 全量镜像，HTTPS）。不做镜像列表、不测速、不轮换。
 PYPI_MIRROR_URL = "https://pypi.tuna.tsinghua.edu.cn/simple"
-#: 「用户自配了包源」的 pip 环境变量与配置键：index 两个 + 离线 wheelhouse 两个。后两个不算
-#: `custom_package_index`（诊断只问 index），但同样是「用户说过从哪装」：绕开它去联网是违背意思表示。
-_PIP_SOURCE_ENV = ("PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL", "PIP_NO_INDEX", "PIP_FIND_LINKS")
-_PIP_SOURCE_KEYS = ("index-url", "extra-index-url", "no-index", "find-links")
+#: pip 的默认索引（没配任何源时 `pip install` 用的就是它）。判「用户配了自定义源」时与它比。
+PYPI_DEFAULT_INDEX = "https://pypi.org/simple"
+
+#: 在**目标解释器**里让 pip 自己把 `pip install` 的选项解析一遍，回生效的包源（JSON 一行）。不联网、不装东西。
+#: 走的就是 `pip install` 的选项解析：配置文件按 pip 的覆盖顺序合并、`[install]` 压过 `[global]`、
+#: `PIP_CONFIG_FILE` / `PIP_*` 环境变量都算——`pip config list` 的打印顺序不是覆盖顺序、`config get`
+#: 不认 `PIP_CONFIG_FILE`（#767 实测，两轮 Codex P1 同一个根因），所以不再自己读配置。入口是 pip 的内部
+#: `create_command`（19.3 起一直在）；导入 / 解析失败（pip 太旧、配置坏了）输出 `{"error": 类型名}`，
+#: 调用方按「不知道」处理、不猜。**插件 `codex-plugin/mcp/server.py::_PIP_OPTIONS_PROBE` 是它的逐字镜像**
+#: （插件 import 不到引擎；严格同源对，看护 `tests/test_pip_config_pair.py`）。
+PIP_OPTIONS_PROBE = """\
+import json
+try:
+    import pip
+    from pip._internal.commands import create_command
+    o, _ = create_command("install").parse_args([])
+    print(json.dumps({
+        "pip_version": pip.__version__,
+        "index_url": o.index_url or "",
+        "extra_index_urls": list(o.extra_index_urls or []),
+        "no_index": bool(o.no_index),
+        "find_links": list(o.find_links or []),
+    }))
+except BaseException as e:
+    print(json.dumps({"error": type(e).__name__}))
+"""
 
 
-#: 会作用于 `pip install` 的配置节：`global`、命令自己的 `install`、环境变量（`pip config list` 把
-#: `PIP_*` 列成 `:env:.<键>`）。`download` / `index` 等别的命令的节不影响安装。
-_PIP_INSTALL_SECTIONS = ("global", "install", ":env:")
-
-
-def _normalize_pip_key(key: str) -> str:
-    """pip 自己的键名规范化（`Configuration._normalized_keys` → `_normalize_name`）：小写、`_` 转 `-`、
-    去掉开头的 `--`。`--index-url` / `index_url` / `index-url` 是同一个键（#724 第 8 轮 Codex P2，并入 #737）。"""
-    key = key.strip().lower().replace("_", "-")
-    while key.startswith("-"):
-        key = key[1:]
-    return key
-
-
-def pip_config_keys(text: str) -> set[str]:
-    """`pip config list` 的输出 → 作用于 `pip install` 的已设键（规范化后）。**只收键、不收值**（值可能带凭据）。
-
-    判据的主语是 **pip 自己**合并好的结果（它按平台位置、编码、文件覆盖顺序与环境变量读完才打印）——
-    这里不复刻 pip 的配置发现（#737），只把它打印的 `<节>.<键>=<值>` 按节筛一遍。认不出形状的行跳过。"""
-    keys: set[str] = set()
-    for line in (text or "").splitlines():
-        name, sep, _value = line.partition("=")
-        if not sep:
+def parse_pip_options(text: str) -> dict | None:
+    """`PIP_OPTIONS_PROBE` 的输出 → 选项字典；出错 / 认不出形状回 None（= 不知道）。"""
+    for line in reversed((text or "").strip().splitlines()):
+        try:
+            data = json.loads(line)
+        except ValueError:
             continue
-        section, dot, key = name.strip().partition(".")
-        if not dot or section.lower() not in _PIP_INSTALL_SECTIONS:
-            continue
-        keys.add(_normalize_pip_key(key))
-    return keys
+        if not isinstance(data, dict) or "error" in data or "index_url" not in data:
+            return None
+        return data
+    return None
+
+
+def _same_index(a: str, b: str) -> bool:
+    return (a or "").strip().rstrip("/").lower() == b.rstrip("/").lower()
+
+
+def options_name_a_custom_index(opts: dict) -> bool:
+    """pip 解析出的 install 选项是不是指向**自定义索引**：index-url 不是 PyPI 默认、或有 extra-index-url。
+    插件 `server.options_name_a_custom_index` 是它的镜像（同源对）。"""
+    return not _same_index(str(opts.get("index_url") or ""), PYPI_DEFAULT_INDEX) or bool(
+        opts.get("extra_index_urls")
+    )
+
+
+def options_name_a_user_source(opts: dict) -> bool:
+    """「用户说过从哪装」：自定义索引，或离线 wheelhouse（`no-index` / `find-links`）。绕开它去联网是违背意思表示。"""
+    return (
+        options_name_a_custom_index(opts)
+        or bool(opts.get("no_index"))
+        or bool(opts.get("find_links"))
+    )
+
+
+def pip_install_options(python: str) -> dict | None:
+    """那个解释器的 `pip install` 此刻生效的包源选项（`PIP_OPTIONS_PROBE`）；问不到回 None。"""
+    rc, out = _run([str(python), "-c", PIP_OPTIONS_PROBE], 30)
+    if rc != 0:
+        return None
+    return parse_pip_options(out)
 
 
 def user_package_source(python: str) -> bool | None:
-    """这个环境的 pip 是不是配了**用户自己的包源**（`_PIP_SOURCE_ENV` / `_PIP_SOURCE_KEYS`）。
-
-    `custom_package_index` 的超集（多认 no-index / find-links）；只回真假、不回地址。问不出来回 None
-    ——镜像回退把 None 当「配过」处理（宁可不换源）。配置那一层**问 pip**（`pip config list`，在目标解释器里），
-    按节筛、按 pip 的规范化比键（`pip_config_keys`），不按子串猜。"""
-    if any(os.environ.get(name) for name in _PIP_SOURCE_ENV):
-        return True
-    rc, out = _run([str(python), "-m", "pip", "config", "list"], 30)
-    if rc != 0:
-        return None
-    return bool(pip_config_keys(out) & set(_PIP_SOURCE_KEYS))
+    """这个环境的 pip 是不是配了**用户自己的包源**（`options_name_a_user_source`）。只回真假、不回地址。
+    问不出来回 None——镜像回退把 None 当「配过」处理（宁可不换源）。环境变量与配置文件都由 pip 自己解析。"""
+    opts = pip_install_options(python)
+    return None if opts is None else options_name_a_user_source(opts)
 
 
 #: 这次 pip install 用的是哪个包源（进日志、进进度 `pypi_source`）。闭集；不含地址——用户配的源只说「用户配置」。
@@ -1503,7 +1529,7 @@ def _run_pip_install(
     `on_mirror(url)` 通知调用方记进进度 / 结果。两条 argv 出处（`pip_install_argv` / `pip_install_joint_argv`）
     都经这里。
 
-    ADR 0112 §二：**先问 pip 配没配源**（一次 `pip config list`，约 1 s），因为要在开始之前决定两件事——
+    ADR 0112 §二：**先问 pip 配没配源**（在目标解释器里让 pip 解析一遍 install 选项，`PIP_OPTIONS_PROBE`，约 1 s），因为要在开始之前决定两件事——
     这次用的是哪个源（`on_source(PIP_SOURCES 之一)`、进日志）、第一次要不要带测速与分段预算。
     `INSTALL_TIMEOUT_S` 是两次尝试**共用**的总预算：换得了源时第一次最多用到「总预算 −
     `PIP_MIRROR_RESERVE_S`」，镜像那一次拿剩下的；换不了源时第一次用满。每次尝试的结局进 app.log。
@@ -1834,15 +1860,10 @@ def custom_package_index(python: str) -> bool | None:
     """这个环境是不是配了自定义 index。**只回真假，绝不回地址**。
 
     诊断里有用（「装不上」经常就是内网 index 不通），而地址本身可能带凭据、
-    也会泄漏用户所在机构。问不出来回 None。
+    也会泄漏用户所在机构。问不出来回 None。判据由 pip 自己解析（`pip_install_options`）。
     """
-    for name in ("PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL"):
-        if os.environ.get(name):
-            return True
-    rc, out = _run([str(python), "-m", "pip", "config", "list"], 30)
-    if rc != 0:
-        return None
-    return bool(pip_config_keys(out) & {"index-url", "extra-index-url"})
+    opts = pip_install_options(python)
+    return None if opts is None else options_name_a_custom_index(opts)
 
 
 _LOG_MAX = 20_000
