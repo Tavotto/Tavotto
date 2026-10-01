@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   ArrowDownToLine,
+  ArrowLeftRight,
   ArrowUpToLine,
   ChevronDown,
   ChevronUp,
@@ -43,6 +44,7 @@ import {
   PointMenu,
 } from '@/components/ui/Menu'
 import { KIND_SWITCH_ICON } from '@/components/inspector/kindSwitchIcons'
+import { useHasSyncSiblings } from '@/components/inspector/SyncOverridesDialog'
 import {
   alignModeLabel,
   alignRefLabel,
@@ -74,6 +76,7 @@ import {
 } from '@/lib/shapeSwitch'
 import { useArrangeStore } from '@/store/arrangeStore'
 import { useAssetStore } from '@/store/assetStore'
+import { openSyncOverrides } from '@/store/syncOverridesStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { useSelectionStore } from '@/store/selectionStore'
@@ -93,6 +96,7 @@ import { objectLabel, panelRotation } from '@/types/document'
  *   排列 / 成组   alignSelectedTo / groupSelected / ungroupSelected（ADR 0036，T-91）
  *   重新构建      rebuildPanel（作废热会话 + 按当前 overrides 重画；不进历史）
  *   恢复图内修改  resetOverridesConfirmed（同属性页「重置到脚本原始」；先问一句）
+ *   同步修改      openSyncOverrides（打开 `SyncOverridesHost` 那扇窗；有修改且有同脚本兄弟图才摆）
  *   为什么不能编辑 / 连接源脚本   projectReadinessStore.focusPanel（接入中心才是动作面）
  *   锁定 / 隐藏   单个走既有 toggle；多选走批量 action（一条历史）
  *
@@ -230,6 +234,7 @@ function EditablePanelItems({
 }) {
   const rotated = panelRotation(panel) !== 0
   const edits = panel.overrides.length
+  const hasSiblings = useHasSyncSiblings(panel)
   return (
     <>
       <MenuItem icon={Pencil} data-quick-item="edit-elements" onSelect={run(() => enterElementEdit(panel.id))}>
@@ -247,6 +252,17 @@ function EditablePanelItems({
           onSelect={runAsync(() => resetOverridesConfirmed(panel.id))}
         >
           {qe('resetOverridesCount', { count: edits })}
+        </MenuItem>
+      )}
+      {/* 同步修改（2026-10-01 设计稿 C5 / C11：原在属性栏「源文件与高级」里）：
+          既要有同脚本的兄弟图可去，也要这张图有修改可搬，两个条件缺一就不摆 */}
+      {edits > 0 && hasSiblings && (
+        <MenuItem
+          icon={ArrowLeftRight}
+          data-quick-item="sync-overrides"
+          onSelect={run(() => openSyncOverrides(panel.id))}
+        >
+          {ins('sync.menuItem')}
         </MenuItem>
       )}
     </>

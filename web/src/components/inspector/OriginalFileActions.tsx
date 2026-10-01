@@ -1,29 +1,21 @@
 import type { PanelObject } from '@/types/document'
-import { HistoryPanel } from './HistoryPanel'
-import { SyncOverridesButton } from './SyncOverridesButton'
-import { UpdateSourceButton } from './UpdateSourceButton'
+import { UpdateSourceButton, WriteBackRecordsButton } from './UpdateSourceButton'
 
 /**
- * 「原始文件」组的三个动作：**一行三颗，对象页与元素页同一份**
- * （2026-09-15 全面打磨 O2）。
+ * 「原始文件」组的动作：**一行，对象页与元素页同一份**（2026-09-15 全面打磨 O2）。
  *
- * 此前元素页是三颗 secondary、三种宽（102 / 228 / 336）叠成三行，对象页是两颗等宽
- * 铺满的 Grid2——同一组动作两种格式，而且三颗同权重看不出哪个才是主动作。
- * 现在权重按后果分：会覆盖磁盘原件的「写回」是 secondary，只读历史与把修改复制去
- * 兄弟图的两颗是 ghost；宽度一律按内容取，不撑满。
+ * 权重按后果分：会覆盖磁盘原件的「写回」是 secondary，「写回记录」（只在写回过之后出现）
+ * 是 ghost；宽度一律按内容取，不撑满。
+ * 2026-10-01（设计稿 C5 / C11）：「历史」改名「写回记录」，打开的是写回窗口的记录页；
+ * 「同步修改到…」搬到画布对象的右键菜单（`canvas/ObjectContextMenu`），这一行不再有它。
  */
 export function OriginalFileActions({ panel }: { panel: PanelObject }) {
+  // 写回与写回记录读的都是「脚本产出的那张原件」：没有脚本时它们无从谈起，不渲染
+  if (!panel.script) return null
   return (
     <div className="flex flex-wrap items-center gap-1">
-      {/* 写回与历史读的都是「脚本产出的那张原件」：没有脚本时它们无从谈起，
-          不渲染（沿用改前两页各自的守卫，只是收到了一处） */}
-      {panel.script && (
-        <>
-          <UpdateSourceButton panel={panel} />
-          <HistoryPanel panel={panel} />
-        </>
-      )}
-      <SyncOverridesButton panel={panel} />
+      <UpdateSourceButton panel={panel} />
+      <WriteBackRecordsButton panel={panel} />
     </div>
   )
 }

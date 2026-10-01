@@ -163,14 +163,19 @@ describe('对象页的版式（2026-09-15 全面打磨）', () => {
     // L7：确认框里已经把「会覆盖原件、留有备份」讲全，这里不再常驻一遍
     expect(host.textContent ?? '').not.toContain('写回会覆盖原始')
     const names = all('button').map((b) => b.textContent?.trim() ?? '')
-    for (const want of ['写回原始文件', '历史', '同步修改到']) {
-      expect(names.some((n) => n.startsWith(want)), `少了「${want}」`).toBe(true)
+    expect(names.some((n) => n.startsWith('写回原始文件')), '少了「写回原始文件」').toBe(true)
+    // 2026-10-01（设计稿 C5 / C11）：「历史」改名「写回记录」且只在写回过之后出现（这里没有记录）；
+    // 「同步修改到…」搬进了右键菜单
+    for (const gone of ['历史', '写回记录', '同步修改到']) {
+      expect(
+        names.some((n) => n.startsWith(gone)),
+        `不该还有「${gone}」`,
+      ).toBe(false)
     }
-    // 三颗在同一行（同一个父元素），不是三种宽度叠三行
     const row = all('button')
       .filter((b) => b.textContent?.trim().startsWith('写回原始文件'))
       .map((b) => b.parentElement)[0]!
-    expect(row.querySelectorAll('button')).toHaveLength(3)
+    expect(row.querySelectorAll('button')).toHaveLength(1)
   })
 
   it('诊断是只读的一行，不是 surface-2 / danger 填充的小卡（O1）', async () => {
