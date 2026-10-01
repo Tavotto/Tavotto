@@ -1,5 +1,6 @@
 import type { HTMLAttributes } from 'react'
 import { Fragment } from 'react'
+import { useTranslation } from 'react-i18next'
 import { keyCaps } from '@/lib/keyCaps'
 import { cn } from '@/lib/utils'
 
@@ -36,15 +37,20 @@ export function Kbd({
  * 命令面板与快捷键速查表共用；文本照旧是键位表里那一串，拆法在 `lib/keyCaps`。
  */
 export function KeyCaps({ keys, className }: { keys: string; className?: string }) {
+  const { t } = useTranslation('shortcuts')
   const groups = keyCaps(keys)
   return (
     <span className={cn('inline-flex flex-wrap items-center justify-end gap-x-1 gap-y-1', className)}>
       {groups.map((caps, gi) => (
         <Fragment key={gi}>
           {gi > 0 && (
-            <span aria-hidden className="text-xs text-ink-3">
-              /
-            </span>
+            <>
+              {/* 视觉是「/」，读屏读「或」：两组键帽之间是替代关系，不是一串连着按的键 */}
+              <span aria-hidden className="text-xs text-ink-3">
+                /
+              </span>
+              <span className="sr-only">{t('or')}</span>
+            </>
           )}
           <span className="inline-flex items-center gap-0.5">
             {caps.map((k, ki) => (

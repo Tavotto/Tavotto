@@ -3933,6 +3933,7 @@ export default interface Resources {
       "zoomPresets": "100% / 适应画布"
     },
     "noMatch": "没有匹配的快捷键",
+    "or": "或",
     "search": "搜索快捷键…",
     "searchAria": "搜索快捷键",
     "title": "快捷键"
