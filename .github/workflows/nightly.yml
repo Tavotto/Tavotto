@@ -1055,7 +1055,7 @@ jobs:
           $skipped = @($cases | Where-Object { $_.skipped })
           if ($skipped.Count) { throw "真窗口用例里有 $($skipped.Count) 条被 skip / xfail：$(($skipped | ForEach-Object name) -join ', ')" }
           Write-Host "执行 $($cases.Count) 条"
-          if ($cases.Count -ne 12) { throw "真窗口用例执行了 $($cases.Count) 条，预期 12 条（加减用例时同步这里）" }
+          if ($cases.Count -ne 13) { throw "真窗口用例执行了 $($cases.Count) 条，预期 13 条（加减用例时同步这里）" }
 
       - name: 真窗口用例的取证（失败时）
         if: failure() && matrix.python == 'none'

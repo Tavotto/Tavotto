@@ -132,6 +132,15 @@
     丢「磁盘上已不在的槽位」的归属同理：扫描快照只挑候选，`drop_owners_not_in` 在锁里当场再看文件
     （快照之后并发保存刚建出的槽位不丢归属，否则它永远不进配额）。
   - 教程重置 / 资源升级换副本（`_clear_tutorial_local_state`）一并清教程项目的 last 与教程画布槽位的归属（ADR 0039 §5）。
+  - **别的项目的排版不认（2026-10-01，#715 Windows 真机验收 P1）**：判据只有 `owner_conflict(state, doc_id, key)`
+    （owners 里**确知**是别的项目 / 别的组；没有记录 = 不知道，不算）。`set_last` 撞上它抛 `ForeignLayoutError`、
+    一个字节不写，端点回 `409 layout_foreign`（不显示给用户，前端据此作废本机缓存那一条、不重推）；`last_for`
+    读到指着别的项目槽位的旧记录（修复前写下的）回 `None`。前端的同一条判据是 `web/src/lib/docOwnership.ts`
+    （按本机「最近文档」索引），两侧互为纵深。自动保存 PUT 照旧按 pj 改记归属，前端负责只在用户真改过 / ⌘S 之后
+    才以当前项目的 pj 写（只打开不算，#773 Codex P2）；失效的 pj 记成「不知道」，不覆盖已有归属。
+    前端本机不知道归属时的证据端点 `GET /api/layout-session/owner?doc_id=`（`_layout_owner_evidence`）：owners 有记录
+    即定论（别的项目 = `other`，素材再像也不翻案）→ 当前项目 `tavottofile/versions/<id>.json` → 槽位里非 runtime 面板的
+    素材**全部**在当前项目目录内且至少一张；都没有回 `unknown`。只读、不改任何记录。
   - 看护 `tests/test_layout_session.py`。
 - 前端文档模型的对应字段（lockedGids / layoutGroups 等）见 `web/AGENTS.md`。
 

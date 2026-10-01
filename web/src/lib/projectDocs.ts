@@ -20,6 +20,7 @@
  * 的「找不到上次文档」。
  */
 import { ApiError, fetchLayoutSession, putLayoutSessionLast } from '@/lib/api'
+import { isForeignDocument } from '@/lib/docOwnership'
 import type { CanvasData, FigureDocument } from '@/types/document'
 
 const PREFIX = 'tavotto.projectDoc.'
@@ -126,11 +127,20 @@ let remoteMissing = false
  */
 let remoteTail: Promise<void> = Promise.resolve()
 
-function pushRemote(projectId: string, ref: ProjectDocumentRef, gen: string | null): void {
-  if (remoteMissing) return
-  remoteTail = remoteTail.then(() =>
+/**
+ * 后端拒绝：这份排版的槽位记在**别的项目**名下（`409 layout_foreign`，`engine/layoutsession.py`
+ * 的 `owner_conflict`）。与前端 `isForeignDocument` 是同一条判据的两侧，这里是后端那一道。
+ */
+export const LAYOUT_FOREIGN_CODE = 'layout_foreign'
+
+/** 一次推送的结局：`refused` = 后端确知它属于别的项目（不重推、本机缓存里这条作废） */
+type PushOutcome = 'ok' | 'refused' | 'failed' | 'missing'
+
+function pushRemote(projectId: string, ref: ProjectDocumentRef, gen: string | null): Promise<PushOutcome> {
+  if (remoteMissing) return Promise.resolve('missing')
+  const done = remoteTail.then(() =>
     putLayoutSessionLast({ doc_id: ref.id, name: ref.name }, projectId).then(
-      (res) => {
+      (res): PushOutcome => {
         // 后端确认了：记下它给的时刻（后端的钟）；本机这条还是这次推的那条就摘掉「待确认」
         // （期间又记了新的就只更新时刻、不动它的待确认）
         const at = finite(res?.last?.at) ? Math.max(res.last.at, readSeen(projectId)) : readSeen(projectId)
@@ -140,20 +150,46 @@ function pushRemote(projectId: string, ref: ProjectDocumentRef, gen: string | nu
         // 确认的是更早的一次（本标签页的写入串行，后记的那条还在排队 / 失败）：后端此刻那条就是
         // 我们自己更早的写，不比待确认的新——把待确认的基准抬到它，免得下次读时被自己的旧写盖掉
         else if (cur) writeCache(projectId, cur, pending ? { base: Math.max(pending.base, at), gen: pending.gen } : undefined, at)
+        return 'ok'
       },
-      (e: unknown) => {
-        if (e instanceof ApiError && e.status === 404) remoteMissing = true
+      (e: unknown): PushOutcome => {
+        if (e instanceof ApiError && e.status === 404) {
+          remoteMissing = true
+          return 'missing'
+        }
+        if (e instanceof ApiError && e.status === 409 && e.body?.code === LAYOUT_FOREIGN_CODE) {
+          // 后端确知这份属于别的项目：本机缓存里还是这一条就作废——留着「待确认」的话，下次读会
+          // 以本机为准重推、再把别的项目的排版换进来
+          if (readProjectDocument(projectId)?.id === ref.id) forgetProjectDocument(projectId)
+          return 'refused'
+        }
         /* 其余失败：本机缓存带着 pendingAt 记着，下次读的时候与后端比新旧、需要就重推 */
+        return 'failed'
       },
     ),
   )
+  remoteTail = done.then(() => undefined)
+  return done
+}
+
+/**
+ * 本机缓存里记着的这个项目的排版——**确知属于别的项目的不算**，并顺手作废（#715 验收 P1：
+ * 修复之前的版本会把别的项目的排版记到这个项目名下，同一个 origin 升级上来的缓存里可能就留着一条）。
+ */
+function ownCachedDocument(projectId: string): ProjectDocumentRef | null {
+  const ref = readProjectDocument(projectId)
+  if (ref && isForeignDocument(ref.id, projectId)) {
+    forgetProjectDocument(projectId)
+    return null
+  }
+  return ref
 }
 
 /** 记「这个项目现在开着这份排版」：本机缓存（先标「待确认」）+ 后端（权威）。 */
 export function rememberProjectDocument(projectId: string, ref: ProjectDocumentRef): void {
   const pending = { base: readSeen(projectId), gen: newGen() }
   writeCache(projectId, ref, pending)
-  pushRemote(projectId, ref, pending.gen)
+  void pushRemote(projectId, ref, pending.gen)
 }
 
 /**
@@ -171,17 +207,19 @@ export async function fetchRemoteProjectDocument(
   const before = rawCache(projectId)
   const remote = await fetchLayoutSession(projectId)
   if (remote === undefined) return undefined
-  if (rawCache(projectId) !== before) return readProjectDocument(projectId)
+  if (rawCache(projectId) !== before) return ownCachedDocument(projectId)
   // 本机有一条后端还没确认的记录，而且写下它之后后端没收过别的写（后端那条的 `at` 不晚于写下时
-  // 见过的 `base`；或后端还没记过）：本机为准，重推一次。两边比的都是后端的钟
+  // 见过的 `base`；或后端还没记过）：本机为准，重推一次。两边比的都是后端的钟。
+  // 确知属于别的项目的那条不算（`ownCachedDocument` 当场作废）；后端拒收的同样作废，退回后端那条
   const pending = readPending(projectId)
-  const local = pending === null ? null : readProjectDocument(projectId)
+  const local = pending === null ? null : ownCachedDocument(projectId)
   if (pending !== null && local && (!remote.last || remote.last.at <= pending.base)) {
-    pushRemote(projectId, local, pending.gen)
-    return local
+    if ((await pushRemote(projectId, local, pending.gen)) !== 'refused') return local
   }
   if (!remote.last) return null
   const ref = { id: remote.last.doc_id, name: remote.last.name }
+  // 后端记着、本机索引却确知它属于别的项目（后端还没记过这个槽位的归属）：不认，也不写进缓存
+  if (isForeignDocument(ref.id, projectId)) return null
   writeCache(projectId, ref, undefined, Math.max(remote.last.at, readSeen(projectId)))
   return ref
 }
@@ -193,13 +231,14 @@ export async function fetchRemoteProjectDocument(
 export async function loadProjectDocument(projectId: string): Promise<ProjectDocumentRef | null> {
   const remote = await fetchRemoteProjectDocument(projectId)
   if (remote) return remote
-  const local = readProjectDocument(projectId)
+  const local = ownCachedDocument(projectId)
   if (remote === null && local) {
     // 迁移也是一次写：先标待确认再推。推失败时这条仍带着待确认，下次读（同一个 origin）会重推；
-    // 不标的话失败即丢，后端一直是 null（#719 Codex P2）
+    // 不标的话失败即丢，后端一直是 null（#719 Codex P2）。
+    // **等后端的裁决**：后端确知这份属于别的项目（本机索引不知道时，比如条目已被挤掉）就不恢复它
     const pending = readPending(projectId) ?? { base: readSeen(projectId), gen: newGen() }
     writeCache(projectId, local, pending)
-    pushRemote(projectId, local, pending.gen)
+    if ((await pushRemote(projectId, local, pending.gen)) === 'refused') return null
   }
   return local
 }

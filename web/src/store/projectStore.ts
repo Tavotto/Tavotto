@@ -22,6 +22,7 @@ import {
   rememberProjectDocument,
   type ProjectDocumentRef,
 } from '@/lib/projectDocs'
+import { isForeignDocument } from '@/lib/docOwnership'
 import { currentProjectId, setCurrentProjectId } from '@/lib/session'
 import { pushPickerEntry } from '@/lib/pickerHistory'
 import { cancelActivePointerGesture, finishActiveGesture } from '@/store/gestureCoordinator'
@@ -29,7 +30,13 @@ import { markMoment } from '@/lib/timelineCheckpoint'
 import { useTimelineStore } from '@/store/timelineStore'
 import { openRecentDocument } from '@/store/actions'
 import { useAssetBrowseStore } from '@/store/assetBrowseStore'
-import { flushAutosave, loadAutosavedDocument, useDocumentStore } from '@/store/documentStore'
+import {
+  flushAutosave,
+  loadAutosavedDocument,
+  onDocumentClaimed,
+  pinDocumentOwner,
+  useDocumentStore,
+} from '@/store/documentStore'
 import { useAiStore } from '@/store/aiStore'
 import { useAssetStore } from '@/store/assetStore'
 import { clearVariantPngCache } from '@/hooks/useVariantPng'
@@ -340,6 +347,8 @@ export const useProjectStore = create<ProjectState>((set, get) => {
     opts: Parameters<ProjectState['adoptOpenedProject']>[1],
     resume: () => void,
   ): Promise<ProjectStatus> => {
+    // 认领新项目之前把内存里这份排版的归属钉在旧项目上：下面换代时那次冲刷写的是旧项目的排版
+    pinDocumentOwner()
     if (status.id) setCurrentProjectId(status.id)
     // 「最近文档」要在条目上标出所属项目（审计 T04）；名字的权威在这里，
     // documentStore 只读那份投影（否则两个 store 互相 import 成环）
@@ -585,6 +594,18 @@ useDocumentStore.subscribe((s, prev) => {
   ) {
     return
   }
+  rememberOpenDocument(s)
+})
+
+// 显式打开的别的项目的排版刚因用户的编辑 / ⌘S / 改名归到这个项目：当场记成「上次开着的」。
+// 那一笔的变化在上面的订阅里已经被判成别的项目的（归属是在它之后才转的），只改一笔就离开的话
+// 不会再有下一次变化（#773 Codex 复核 P2）
+onDocumentClaimed(() => {
+  if (rememberSuspended > 0) return
+  rememberOpenDocument(useDocumentStore.getState())
+})
+
+function rememberOpenDocument(s: ReturnType<typeof useDocumentStore.getState>): void {
   const pj = currentProjectId()
   if (!pj || !documentHasContent(s)) return
   const name = s.projectMeta.name
@@ -592,5 +613,9 @@ useDocumentStore.subscribe((s, prev) => {
   // 继续说「已经记过了」，而一次 getItem 比一帧拖动便宜得多
   const cur = readProjectDocument(pj)
   if (cur && cur.id === s.documentId && cur.name === name) return
+  // 确知属于别的项目的排版不记到这个项目名下（#715 验收 P1，判据唯一出处 `lib/docOwnership`）。
+  // 排在「同值不写」之后：拖动的每一帧走不到这里。从「最近文档」里显式打开别的项目的排版，只有
+  // 用户改过 / ⌘S / 改名之后归属才转到这里（`documentStore.claimDocumentOnEdit`，当场改记本机索引）
+  if (isForeignDocument(s.documentId, pj)) return
   rememberProjectDocument(pj, { id: s.documentId, name })
-})
+}

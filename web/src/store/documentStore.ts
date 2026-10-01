@@ -3,8 +3,9 @@ import { perfSpan } from '@/perf/core'
 import { enablePatches, produceWithPatches, type Patch } from 'immer'
 import * as history from '@/lib/history'
 import { rebaseToCurrentNative, sizeBasisOf, type SizeBasis } from '@/lib/panelNativeSize'
-import { fetchAutosave, fetchAutosaveSummary, putAutosave } from '@/lib/api'
-import { fetchRemoteProjectDocument } from '@/lib/projectDocs'
+import { fetchAutosave, fetchAutosaveSummary, fetchLayoutOwner, putAutosave } from '@/lib/api'
+import { loadProjectDocument } from '@/lib/projectDocs'
+import { DOC_INDEX_KEY, isForeignDocument, recordedProjectOf } from '@/lib/docOwnership'
 import {
   blocksDiskWrite,
   createDiskWriter,
@@ -772,6 +773,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     set((s) => ({ projectMeta: { ...s.projectMeta, name: clean } }))
     // 排版名写在项目文件里：改名之后项目里那份就旧了
     if (changed) markProjectFileDirty()
+    // 改名是用户的编辑：显式打开的别的项目的排版，改了名就归到这个项目（#773 Codex 复核 P2）
+    if (changed) claimDocumentOnEdit()
     // 项目名不进撤销历史，但要立即落快照（最近文档列表显示它）
     flushAutosave()
   },
@@ -787,7 +790,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     autosaveSuspendedFor = null
     // 归属在**换进来那一刻**定，不在落盘那一刻现问（见 `docProject`）。
     // 必须排在上面那次 flush 之后：那一次写的是**旧**文档，它属于旧项目。
-    docProject = { id: currentProjectId(), name: currentProjectLabel() }
+    adoptDocumentOwner(nextId)
     const active = pd.canvases.find((c) => c.id === pd.activeCanvasId) ?? pd.canvases[0]
     set({
       doc: canvasToDoc(active),
@@ -842,7 +845,7 @@ function nextCanvasName(canvases: CanvasData[]): string {
  * 后者是写到服务器 layouts 的命名文件。保存布局文件不会改变文档身份。
  */
 const SLOT_PREFIX = 'tavotto.autosave.'
-const INDEX_KEY = 'tavotto.docIndex'
+const INDEX_KEY = DOC_INDEX_KEY
 const CURRENT_KEY = 'tavotto.currentDoc'
 const MAX_SLOTS = 12
 const DEBOUNCE_MS = 1000
@@ -873,6 +876,73 @@ let docProject: { id: string | null; name: string | null } | null = null
  * 「Cannot access 'project' before initialization」整文件失败。
  */
 const projectOfDoc = () => docProject ?? { id: currentProjectId(), name: currentProjectLabel() }
+
+/**
+ * 从「最近文档」显式打开的**别的项目**的排版：打开时归属**不变**，用户在这个项目里真改了一笔
+ * 才转到这里（#715 验收 P1 / #773 Codex P2）。`null` = 没有待转的归属。
+ *
+ * 打开那一下 `switchDocument` 会立刻冲刷一次（为了进「最近文档」）；那次冲刷若按当前项目记
+ * 归属，只是看一眼就把排版从原项目拿走了——原项目的「上次开着的」随之被后端判成别人的、
+ * 这个项目又没记它，两边都恢复不出来。转去的项目是**打开时**所在的那个，不是改的那一刻
+ * 现问：切项目的窗口里（先认领新项目、再冲刷旧文档）改的一笔不该把它送进下一个项目。
+ */
+let pendingClaim: { id: string | null; name: string | null } | null = null
+
+/** 换进一份排版时定它的归属：确知属于别的项目就保留那个项目，等真改了才转（见 `pendingClaim`） */
+function adoptDocumentOwner(docId: string): void {
+  const here = { id: currentProjectId(), name: currentProjectLabel() }
+  const entry = isForeignDocument(docId, here.id) ? readIndex().find((e) => e.id === docId) : undefined
+  docProject = entry?.projectId ? { id: entry.projectId, name: entry.projectName ?? null } : here
+  pendingClaim = entry?.projectId ? here : null
+}
+
+/** 还没换进来的排版（读盘那一刻）该记在哪个项目名下：确知属于别的项目就是那个项目，否则是当前项目 */
+function ownerProjectForWrite(docId: string): string | null {
+  const owner = recordedProjectOf(docId)
+  return typeof owner === 'string' ? owner : currentProjectId()
+}
+
+/** 用户真改了一笔：显式打开的别的项目的排版，从这一刻起属于打开它的那个项目 */
+function claimDocumentOnEdit(): void {
+  const claim = pendingClaim
+  if (!claim) return
+  docProject = claim
+  pendingClaim = null
+  // 本机索引当场改记（不等下一次冲刷）：「记上次开着哪份」的判据读的就是它。只改了一笔就离开的话
+  // 后面不会再有变化去触发记录（#773 Codex 复核 P2）
+  const id = useDocumentStore.getState().documentId
+  const index = readIndex()
+  if (claim.id && index.some((e) => e.id === id)) {
+    const owner = claim.id
+    const kept = writeIndex(
+      index.map((e): RecentDoc => {
+        if (e.id !== id) return e
+        const { projectName: _previous, ...rest } = e
+        return { ...rest, projectId: owner, ...(claim.name ? { projectName: claim.name } : {}) }
+      }),
+    )
+    useDocumentStore.setState({ recentDocs: kept })
+  }
+  claimListener?.()
+}
+
+/** 归属刚转到当前项目时要做的事（`projectStore` 登记：把它记成这个项目「上次开着的」） */
+let claimListener: (() => void) | null = null
+
+export function onDocumentClaimed(fn: (() => void) | null): void {
+  claimListener = fn
+}
+
+/**
+ * 切项目**认领新项目之前**调：把内存里这份排版的归属钉在此刻的项目上。
+ *
+ * 应用刚起、从没换过文档时归属是 `null`（= 现问 `currentProjectId()`）；切项目先认领新项目、
+ * 再冲刷旧文档，那次冲刷现问的话会把旧项目的排版按新项目写进后端的槽位归属——#715 验收 P1
+ * 之后后端按归属拒认别的项目的排版，回到旧项目时它上次开着的那份就被判成别人的了。
+ */
+export function pinDocumentOwner(): void {
+  docProject ??= { id: currentProjectId(), name: currentProjectLabel() }
+}
 
 const slotKey = (id: string) => SLOT_PREFIX + id
 const TABS_PREFIX = 'tavotto.tabs.'
@@ -1124,7 +1194,9 @@ function flushAutosaveNow(): FlushResult {
     useDocumentStore.setState({ dirty: false })
     return localOk ? 'saved' : 'error'
   }
-  disk.schedule(state.documentId, pd, currentProjectId())
+  // 写盘记在**这份排版所属的项目**名下（后端按它记槽位归属）：切项目时离开那一下的冲刷发生在认领
+  // 新项目之后，现问 `currentProjectId()` 会把旧项目的排版记成新项目的（#715 验收 P1）
+  disk.schedule(state.documentId, pd, projectOfDoc().id ?? currentProjectId())
   if (!localOk) return 'error'
   const pj = projectOfDoc()
   const entry: RecentDoc = {
@@ -1169,6 +1241,8 @@ export async function saveNow(): Promise<SaveState> {
  * 「排版写成了」（时间线的「保存」点）跟 `wrote` 走，不跟 `state` 走（Codex #679）。
  */
 export async function saveNowWithResult(): Promise<{ state: SaveState; wrote: boolean }> {
+  // 手动保存是用户的动作：显式打开的别的项目的排版，存一下就归到这个项目（与真改一笔同一档）
+  claimDocumentOnEdit()
   const id = useDocumentStore.getState().documentId
   const before = diskWrites.get(id) ?? 0
   cancelPendingAutosave()
@@ -1434,7 +1508,8 @@ export async function readAutosaveDoc(id: string): Promise<LoadedDoc> {
     if (!local) dropRecovery(id) // 恢复槽位转正，别再问一遍
     // 确认过磁盘上真的没有（404）才推上去。读盘失败时**不推**：那时我们
     // 不知道磁盘上有什么，一次整份 PUT 就可能盖掉一份从没读过的文档。
-    if (reachable) disk.schedule(id, doc, currentProjectId())
+    // 记在这份排版**原本**属于的项目名下：只是打开（显式从「最近文档」打开别的项目的）不算带进当前项目
+    if (reachable) disk.schedule(id, doc, ownerProjectForWrite(id))
     return { doc, notice: null }
   }
   // 上一轮没裁决完的恢复副本优先：它一直有效，直到用户处置它
@@ -1632,12 +1707,17 @@ export async function restoreSession(): Promise<boolean> {
   const localId = readCurrentId()
   // 本机记录就指着内存里这份（装它的那一方刚写过）：一个请求都不发
   if (localId && before.documentId === localId) return false
-  // 取哪一份：**当前项目的 last（后端为准，#715 PR-B）→ 旧的本机 currentDoc**。桌面版换了
-  // 端口 = 换了 origin = 本机存储是空的，只有后端还记得。后端没有这组端点（404：playground、
-  // 嵌入画布、旧后端）或不可达时 `undefined`，退回本机那一条——即改造前的行为。
+  // 取哪一份：**当前项目的 last（后端为准，#715 PR-B；后端没记过时是本机按项目的缓存，
+  // `loadProjectDocument`）→ 旧的本机 currentDoc**。桌面版换了端口 = 换了 origin = 本机存储是空的，
+  // 只有后端还记得。后端没有这组端点（404：playground、嵌入画布、旧后端）或不可达时退回本机。
+  //
+  // **全局的 `currentDoc` 只在确知属于当前项目时才认**（#715 验收 P1）：稳定端口之后不同项目共用
+  // 一个 origin，`currentDoc` 是上一个项目最后开着的那份。改造前「这个项目后端没记过」（`null`）
+  // 就退回它，于是关掉 F 再打开新项目 G，G 一打开就是 F 的排版，随后按 G 记成「G 上次开着的」、
+  // 往 G 的目录里写。没开项目时只认没记在任何项目名下的那份。
   const pj = currentProjectId()
-  const remote = pj ? await fetchRemoteProjectDocument(pj) : undefined
-  const id = remote?.id ?? localId
+  const own = pj ? await loadProjectDocument(pj) : null
+  const id = own?.id ?? (localId !== null && (await currentDocBelongsHere(localId, pj)) ? localId : null)
   if (!id) return false
   if (useDocumentStore.getState().documentId === id) return false
   // 问后端的这段路上别处换过文档或改过它：那份更新，这次恢复让位（与下面读盘那段同一条判据）
@@ -1653,11 +1733,51 @@ export async function restoreSession(): Promise<boolean> {
     return false
   }
   applyProject(pd, id, { dirty: false })
+  // 恢复出来的只会是这个项目自己的排版（上面的判据）：归属钉在这个项目上，本机索引里不知道归属的
+  // 那条（升级前的）当场补上（#773）
+  docProject = { id: pj, name: currentProjectLabel() }
+  pendingClaim = null
+  if (pj) backfillIndexOwner(id, pd, pj)
   useDocumentStore.setState({ lastPersisted: index.find((e) => e.id === id)?.savedAt ?? null })
   setSaveState('clean')
   setDocNotice(notice)
   announceDocOpen(id)
   return true
+}
+
+/**
+ * 全局 `currentDoc` 能不能当成当前项目的排版恢复（#715 验收 P1 / #773）。
+ *
+ * - 本机索引**记着**归属：就按它（别的项目的一律不认）；
+ * - 记着「不知道」（升级前 / T04 之前的条目没有 projectId，或索引里根本没有这条）：**问后端要证据**
+ *   （`GET /api/layout-session/owner`：槽位归属 → 当前项目的时间线节点 → 面板素材全在当前项目里），
+ *   有证据才认，没有或问不到就不恢复；后端没有这个端点（404：playground / 旧后端）时照旧认——那里
+ *   没有跨项目共用的稳定 origin，也没有别处可问；
+ * - 没开项目：只认没记在任何项目名下的那份。
+ */
+async function currentDocBelongsHere(docId: string, pj: string | null): Promise<boolean> {
+  const recorded = recordedProjectOf(docId)
+  if (!pj) return !isForeignDocument(docId, null)
+  if (typeof recorded === 'string') return recorded === pj
+  const verdict = await fetchLayoutOwner(docId, pj)
+  return verdict === 'this' || verdict === undefined
+}
+
+/** 本机索引里这份排版的归属补成 `pj`（没有这条就补一条）；记着别的项目的不动 */
+function backfillIndexOwner(docId: string, pd: ProjectDocument, pj: string): void {
+  const index = readIndex()
+  const hit = index.find((e) => e.id === docId)
+  if (hit && typeof hit.projectId === 'string') return
+  const name = currentProjectLabel()
+  const entry: RecentDoc = {
+    ...(hit ?? { id: docId, name: pd.project.name, savedAt: Date.now() }),
+    objects: hit?.objects ?? countObjects(pd),
+    canvases: hit?.canvases ?? pd.canvases.length,
+    projectId: pj,
+    ...(name ? { projectName: name } : {}),
+  }
+  const kept = writeIndex(hit ? index.map((e) => (e.id === docId ? entry : e)) : [entry, ...index])
+  useDocumentStore.setState({ recentDocs: kept })
 }
 
 /** 防抖中的那次自动保存（手动保存要先把它取消，否则会多写一遍） */
@@ -1733,6 +1853,8 @@ export function startAutosave(): () => void {
     if (!derived && !blocksDiskWrite(state.saveState)) setSaveState('dirty')
     // 项目文件那根轴只跟用户编辑：派生同步不是用户做的事，圆点不该因它亮起
     if (!derived) markProjectFileDirty()
+    // 显式打开的别的项目的排版：真改了一笔才归到这个项目（派生同步不算）
+    if (!derived) claimDocumentOnEdit()
     cancelPendingAutosave()
     autosaveTimer = window.setTimeout(flushAutosave, DEBOUNCE_MS)
   })

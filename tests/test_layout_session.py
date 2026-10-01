@@ -281,6 +281,156 @@ def test_delete_forgets_the_owner_and_any_last_pointing_at_it(client):
     assert layoutsession.last_for(None) is None
 
 
+# ---------------------- 归属判据：别的项目的排版不认（#715 验收 P1） ----------------------
+# 稳定端口之后两个项目共用一个 origin：前端曾把项目 F 的排版当成新项目 G「上次开着的」装进来、
+# 往后端记 G.last = F 的槽位，而 owners 明明记着它属于 F。后端这一道是纵深：拒记、读出来不认。
+
+
+def test_put_last_refuses_a_layout_owned_by_another_project(client, tmp_path):
+    f = _project(client, tmp_path, "projF", default=True)
+    g = _project(client, tmp_path, "projG")
+    # 槽位在 F 里自动保存过：owners 记着它属于 F
+    assert client.put("/api/autosave/d_f", json=PD, headers=_pj(f["id"])).status_code == 200
+    r = client.put(
+        "/api/layout-session/last", json={"doc_id": "d_f", "name": "F"}, headers=_pj(g["id"])
+    )
+    assert r.status_code == 409 and r.get_json()["code"] == "layout_foreign"
+    # 没记成 G 的 last（文件里也没有），G 也读不到它
+    assert client.get("/api/layout-session", headers=_pj(g["id"])).get_json() == {"last": None}
+    assert layoutsession.project_key(g["figures_dir"]) not in layoutsession.snapshot()["projects"]
+    # F 自己记它照常
+    r = client.put(
+        "/api/layout-session/last", json={"doc_id": "d_f", "name": "F"}, headers=_pj(f["id"])
+    )
+    assert r.status_code == 200
+    # 不知道归属的槽位（还没自动保存过）不算冲突：第一次自动保存之前就会先记 last
+    r = client.put(
+        "/api/layout-session/last", json={"doc_id": "d_new", "name": "G"}, headers=_pj(g["id"])
+    )
+    assert r.status_code == 200
+
+
+def test_put_last_refuses_a_project_layout_for_the_no_project_group(client, tmp_path):
+    f = _project(client, tmp_path, "projF")
+    client.put("/api/autosave/d_f", json=PD, headers=_pj(f["id"]))
+    with pytest.raises(layoutsession.ForeignLayoutError):
+        layoutsession.set_last(None, "d_f", "F")
+    assert layoutsession.last_for(None) is None
+
+
+def test_a_polluted_last_owned_by_another_project_reads_as_none(client, tmp_path):
+    """修复之前已经写下的 G.last = F 的槽位：读出来就不认（不等它被覆盖），F 那条不受影响。"""
+    f = _project(client, tmp_path, "projF", default=True)
+    g = _project(client, tmp_path, "projG")
+    kf = layoutsession.project_key(f["figures_dir"])
+    kg = layoutsession.project_key(g["figures_dir"])
+    layoutsession.set_last(kf, "d_f", "F")
+    layoutsession.set_last(kg, "d_f", "F")  # 归属还不知道时记下（与验收机器上的状态同形）
+    layoutsession.record_owner("d_f", kf)
+    assert client.get("/api/layout-session", headers=_pj(g["id"])).get_json() == {"last": None}
+    assert (
+        client.get("/api/layout-session", headers=_pj(f["id"])).get_json()["last"]["doc_id"]
+        == "d_f"
+    )
+
+
+def test_viewing_a_layout_from_another_project_keeps_its_owner_until_edited(client, tmp_path):
+    """#773 Codex P2：在 G 里从「最近文档」看一眼 F 的排版——打开那一下的冲刷按 F 的 pj 写
+    （前端 `documentStore.adoptDocumentOwner`），归属不动，F 照常恢复它；在 G 里改过再存
+    （pj = G）才转到 G，此后它是 G 的、F 不再认。"""
+    f = _project(client, tmp_path, "projF", default=True)
+    g = _project(client, tmp_path, "projG")
+    kf = layoutsession.project_key(f["figures_dir"])
+    kg = layoutsession.project_key(g["figures_dir"])
+    client.put("/api/autosave/d_f", json=PD, headers=_pj(f["id"]))
+    client.put(
+        "/api/layout-session/last", json={"doc_id": "d_f", "name": "F"}, headers=_pj(f["id"])
+    )
+    # 只看：G 开着，冲刷按 F 的 pj 写——归属与 F 的 last 都不动
+    assert client.put("/api/autosave/d_f", json=PD, headers=_pj(f["id"])).status_code == 200
+    assert layoutsession.owners()["d_f"] == kf
+    assert (
+        client.get("/api/layout-session", headers=_pj(f["id"])).get_json()["last"]["doc_id"]
+        == "d_f"
+    )
+    # 打开那一下的 pj 已经失效（F 在后端关了）时同样不改归属：失效的 pj 记成「不知道」，不覆盖
+    assert client.put("/api/autosave/d_f", json=PD, headers=_pj("gone")).status_code == 200
+    assert layoutsession.owners()["d_f"] == kf
+    # 改过再存：pj = G，归属转到 G；G 可以记它，F 不再认
+    assert client.put("/api/autosave/d_f", json=PD, headers=_pj(g["id"])).status_code == 200
+    assert layoutsession.owners()["d_f"] == kg
+    r = client.put(
+        "/api/layout-session/last", json={"doc_id": "d_f", "name": "F"}, headers=_pj(g["id"])
+    )
+    assert r.status_code == 200
+    assert layoutsession.last_for(kf) is None
+
+
+# ---------------- 归属证据：本机不知道归属的升级前排版（#773） ----------------
+
+
+def _slot_with_panels(doc_id: str, *file_ids: str) -> None:
+    doc = json.loads(json.dumps(PD))
+    doc["canvases"][0]["objects"] = [
+        {"id": f"p{i}", "type": "panel", "fileId": f, "x": 0, "y": 0, "w": 1, "h": 1}
+        for i, f in enumerate(file_ids)
+    ]
+    m.AUTOSAVE_DIR.mkdir(parents=True, exist_ok=True)
+    (m.AUTOSAVE_DIR / f"{doc_id}.json").write_text(json.dumps(doc), encoding="utf-8")
+
+
+def _owner(client, pid: str, doc_id: str) -> dict:
+    r = client.get(f"/api/layout-session/owner?doc_id={doc_id}", headers=_pj(pid))
+    assert r.status_code == 200, r.get_json()
+    return r.get_json()
+
+
+def test_owner_evidence_owners_record_is_decisive(client, tmp_path):
+    f = _project(client, tmp_path, "projF", default=True)
+    g = _project(client, tmp_path, "projG")
+    (Path(g["figures_dir"]) / "a.pdf").write_bytes(b"%PDF-1.4")
+    _slot_with_panels("d_f", "a.pdf")
+    layoutsession.record_owner("d_f", layoutsession.project_key(f["figures_dir"]))
+    # 素材在 G 里也有，但 owners 记着 F：别的项目的就是别的项目的（projF → projG 的形状）
+    assert _owner(client, g["id"], "d_f") == {"owner": "other", "evidence": "owners"}
+    assert _owner(client, f["id"], "d_f") == {"owner": "this", "evidence": "owners"}
+
+
+def test_owner_evidence_from_the_projects_timeline(client, tmp_path):
+    g = _project(client, tmp_path, "projG", default=True)
+    versions = Path(g["figures_dir"]) / "tavottofile" / "versions"
+    versions.mkdir(parents=True)
+    (versions / "d_old.json").write_text("{}", encoding="utf-8")
+    assert _owner(client, g["id"], "d_old") == {"owner": "this", "evidence": "versions"}
+
+
+def test_owner_evidence_from_assets_all_in_the_project(client, tmp_path):
+    g = _project(client, tmp_path, "projG", default=True)
+    root = Path(g["figures_dir"])
+    (root / "a.pdf").write_bytes(b"%PDF-1.4")
+    (root / "sub").mkdir()
+    (root / "sub" / "b.png").write_bytes(b"x")
+    _slot_with_panels("d_all", "a.pdf", "sub/b.png", "runtime:abc")
+    assert _owner(client, g["id"], "d_all") == {"owner": "this", "evidence": "assets"}
+    # 有一张不在这个项目里：不算证据
+    _slot_with_panels("d_some", "a.pdf", "missing.pdf")
+    assert _owner(client, g["id"], "d_some")["owner"] == "unknown"
+    # 越出项目目录的路径不算（文件真的在，只是不在这个项目里）
+    (root.parent / "outside.pdf").write_bytes(b"%PDF-1.4")
+    _slot_with_panels("d_escape", "a.pdf", "../outside.pdf")
+    assert _owner(client, g["id"], "d_escape")["owner"] == "unknown"
+    # 只有 runtime 面板 / 没有面板：没有可以比的东西
+    _slot_with_panels("d_runtime", "runtime:abc")
+    assert _owner(client, g["id"], "d_runtime")["owner"] == "unknown"
+    # 槽位不在
+    assert _owner(client, g["id"], "d_nothing") == {"owner": "unknown", "evidence": None}
+
+
+def test_owner_evidence_rejects_bad_ids(client):
+    r = client.get("/api/layout-session/owner?doc_id=../x")
+    assert r.status_code == 400 and r.get_json()["code"] == "bad_request"
+
+
 def _legacy_slot(doc_id: str, mtime_s: int) -> Path:
     p = m.AUTOSAVE_DIR / f"{doc_id}.json"
     p.parent.mkdir(parents=True, exist_ok=True)

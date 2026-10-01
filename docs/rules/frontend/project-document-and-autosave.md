@@ -183,8 +183,30 @@
     这个项目没记过）/ `undefined`（404：playground、嵌入画布、旧后端，或此刻不可达）。**「不知道」不折成
     「没记过」**：`undefined` 时退回本机的旧逻辑。`tavotto.projectDoc.<pj>` 只当缓存；后端 `null` 而本机有
     = 同一个 origin 升级上来的旧记录，拿它当迁移源并推一份上去。
-  - 取哪一份：`restoreSession` = 当前项目的 last → 旧的 `tavotto.currentDoc`；`adoptNow` =
-    `loadProjectDocument(pj)`（后端 → 本机缓存）。`lastDocumentIssue` / `DocumentBanner` 机制不变。
+  - 取哪一份：`restoreSession` = `loadProjectDocument(pj)`（当前项目的 last：后端 → 本机按项目的缓存）→ 旧的
+    `tavotto.currentDoc`（**只在确知属于当前项目时**：本机索引记着，或后端给得出证据）；`adoptNow` = `loadProjectDocument(pj)`。
+    `lastDocumentIssue` / `DocumentBanner` 机制不变。
+  - **一个项目的排版不许漏进另一个项目（2026-10-01，#715 Windows 真机验收 P1）**：稳定端口之后先后打开的项目共用
+    一个 origin，`currentDoc` / `docIndex` 这类全局键跨项目存活。改造前「后端没记过」（`null`）时 `restoreSession`
+    退回全局 `currentDoc`，关掉 F 再打开新项目 G，G 一打开就是 F 的排版，随后记成 G 的 last、往 G 的目录打时间线节点。
+    判据唯一出处 `lib/docOwnership.ts`（`isForeignDocument` / `recordedProjectOf`，按本机「最近文档」索引里写下那一刻的
+    `projectId`；「不知道」不折成任何一边）。消费方：`restoreSession` 的 `currentDoc` 退路要正面证据（本机索引记着 `=== pj`，或下面的后端证据）；
+    **本机索引不知道归属**（T04 之前的条目没有 projectId / 索引里没有这条，升级上来的用户都是这样）时
+    `restoreSession` 不猜，问后端要证据（`GET /api/layout-session/owner`：槽位归属是定论 → 当前项目的
+    `tavottofile/versions/<id>.json` → 面板素材全在当前项目里），有证据才恢复并当场把归属补进本机索引，
+    没有或问不到就不恢复；后端没有这个端点（404：playground / 旧后端）时照旧认（#773）。
+    `projectDocs` 的本机缓存（含待确认那条、迁移源）与后端回的 last 确知属于别的项目就不认、并作废缓存；迁移推送
+    **等后端裁决**，后端回 `409 layout_foreign`（`engine/layoutsession.owner_conflict`，纵深那一道）就不恢复、不重推；
+    「记上次开着哪份」的订阅不记别的项目的排版。`currentDoc` 不改成按项目分键：按项目的那一份就是 `projectDoc.<pj>`，
+    `currentDoc` 只剩「没开项目」与旧数据的退路，给它加归属判据比再造一套键、再迁一遍旧数据省事也更不容易漏。
+    **归属只随用户的动作转移**（#773 Codex P2）：显式从「最近文档」打开别的项目的排版仍然允许（列表里标着所属项目，
+    审计 T04），但「打开 = 冲刷一次」不算带进当前项目——`switchDocument` 换进来时归属（`docProject`）保留在原项目，
+    真改一笔（自动保存订阅的用户编辑档，派生同步不算）、⌘S 或改名才转到**打开时**所在的项目（`pendingClaim`）；
+    转的那一刻当场改记本机索引并经 `onDocumentClaimed` 记成这个项目「上次开着的」（只改一笔就离开，后面没有
+    下一次变化去触发记录）。
+    写盘（`PUT /api/autosave`）一律按**这份排版所属的项目**发 pj（后端按它记槽位归属），不现问 `currentProjectId()`；
+    读盘时把本机副本推回磁盘同理（`ownerProjectForWrite`）。切项目先认领新项目、再冲刷旧文档：认领之前
+    `pinDocumentOwner()` 把还没换过的初始文档钉在旧项目上，否则离开那一下会把旧项目的排版记成新项目的。
   - **记录时机不变**：`projectStore` 的那个订阅（documentId 或名字变、且排版有内容才记，与缓存同值不写），
     `rememberProjectDocument` 同时写缓存与后端；推给后端的写入串行（后发的必须后到），读之前先等它排空；
     回过 404 就在本模块实例里不再推。没认领项目（pj 为空）时不记。**切项目期间停记**：`adoptNow` 从认领新 pj
@@ -205,7 +227,8 @@
     `lib/exportDefaults.ts`；`readExportDefaults()` 仍同步读本机缓存，`App` 挂载时 `hydrateExportDefaults()` 用后端那份
     覆盖它，写入两边都写。导出对话框在 `App` 里常驻挂载、初值只在挂载时读一次缓存：取回之后经
     `onExportDefaultsHydrated` 通知它与设置页重读；对话框开着时不当面换掉，记下、关上时再重读。
-  - 看护：`store/layoutSession.restart.test.ts`（有状态的假后端跨两次「启动」存活，中间 `localStorage.clear()` +
+  - 看护：`store/projectDocOwnership.test.ts` + `e2e/layout-project-isolation.spec.ts` + `tests/desktop_windows/test_restart_restore.py`
+    （跨项目不漏，同一个 origin）；`store/layoutSession.restart.test.ts`（有状态的假后端跨两次「启动」存活，中间 `localStorage.clear()` +
     `vi.resetModules()`；外加 404 退回旧逻辑、不再发 DELETE）、`e2e/layout-session.spec.ts`（同一服务新开空存储的
     浏览器 context → 恢复上次的排版），两者在改造前的 main 上都红。
 - **新文档的默认名跟界面语言走**（`types/document.defaultDocumentName()`）：

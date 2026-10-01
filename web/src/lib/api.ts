@@ -822,6 +822,27 @@ export const putLayoutSessionLast = (ref: { doc_id: string; name: string }, pj?:
     pj,
   )
 
+/**
+ * 后端对「这份排版是不是当前项目的」的证据（#715 验收 P1 / #773）：`this` / `other` / `unknown`；
+ * `undefined` = 后端没有这个端点（旧后端 / playground，404）；`null` = 此刻问不到（网络 / 5xx）。
+ */
+export async function fetchLayoutOwner(
+  docId: string,
+  pj?: string | null,
+): Promise<'this' | 'other' | 'unknown' | null | undefined> {
+  try {
+    const body = await jsonFetch<{ owner?: unknown }>(
+      `/api/layout-session/owner?doc_id=${encodeURIComponent(docId)}`,
+      undefined,
+      pj,
+    )
+    const o = body?.owner
+    return o === 'this' || o === 'other' ? o : 'unknown'
+  } catch (e) {
+    return e instanceof ApiError && e.status === 404 ? undefined : null
+  }
+}
+
 /** 导出默认值（按用户一份，数据目录）。`undefined` = 后端没有这组端点 / 不可达。 */
 export async function fetchExportDefaultsRemote(): Promise<{ defaults: unknown } | undefined> {
   try {

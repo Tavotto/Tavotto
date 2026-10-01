@@ -7438,8 +7438,95 @@ def api_layout_session_put_last():
         return jsonify({"error": "doc_id / name 不合法", "code": "bad_request"}), 400
     ctx = _request_ctx()
     key = engine_layoutsession.project_key(ctx.path) if ctx is not None else None
-    last = engine_layoutsession.set_last(key, doc_id, name)
+    try:
+        last = engine_layoutsession.set_last(key, doc_id, name)
+    except engine_layoutsession.ForeignLayoutError:
+        # 这份排版的槽位记在别的项目名下（#715 验收 P1）：不记成这个项目「上次开着的」。
+        # 前端认这个 code，作废本机缓存里的这一条、不重推（`lib/projectDocs.LAYOUT_FOREIGN_CODE`）
+        return jsonify(
+            {
+                "error": "这份排版属于另一个项目，不能记成这个项目上次打开的排版",
+                "code": "layout_foreign",
+            }
+        ), 409
     return jsonify({"ok": True, "last": last})
+
+
+def _file_named(directory: Path, doc_id: str) -> Path | None:
+    """`directory` 里名为 `<doc_id>.json` 的文件（按目录列表匹配）；没有 / 目录不在回 None。"""
+    try:
+        return next(
+            (
+                p
+                for p in directory.iterdir()
+                if p.suffix == ".json" and p.stem == doc_id and p.is_file()
+            ),
+            None,
+        )
+    except OSError:
+        return None
+
+
+def _layout_owner_evidence(doc_id: str, ctx) -> tuple[str, str | None]:
+    """槽位 `doc_id` 与当前项目的关系：(`this` / `other` / `unknown`, 证据)。
+
+    只给**前端本机索引不知道归属**的那一档用（升级前、T04 之前的 docIndex 条目没有 projectId；
+    #715 验收 P1 之后这类排版要正面证据才恢复）。证据按可信度依次看：
+
+    1. `owners`（#719 起每次自动保存按 pj 记）：有记录就是定论，别的项目的一律 `other`；
+    2. 当前项目的 `tavottofile/versions/<doc_id>.json`（ADR 0101 起时间线节点按项目写）；
+    3. 槽位里的面板引用的素材**全部**在当前项目里、且至少有一个（升级前的槽位没有任何归属记录，
+       只剩内容本身：它放的就是这个项目的图）。runtime 面板（`runtime:` 前缀）不计。
+
+    都没有就是 `unknown`——前端据此不恢复。
+    """
+    key = engine_layoutsession.project_key(ctx.path) if ctx is not None else None
+    verdict = engine_layoutsession.owner_verdict(doc_id, key)
+    if verdict is not None:
+        return verdict, "owners"
+    if ctx is None:
+        return "unknown", None
+    # 两处都按**目录里已有的文件名**去找，不拿请求里的 doc_id 拼路径（它虽然已过 `valid_doc_id`，
+    # 只读端点也不给路径注入留口子）
+    store = project_store_dir(ctx)
+    if store is not None and _file_named(store / "versions", doc_id) is not None:
+        return "this", "versions"
+    slot = _file_named(AUTOSAVE_DIR, doc_id)
+    if slot is None:
+        return "unknown", None
+    try:
+        doc = engine_documents.loads_document(slot.read_bytes())
+    except (OSError, ValueError):
+        return "unknown", None
+    if not isinstance(doc, dict):
+        return "unknown", None
+    root = Path(ctx.path).resolve()
+    files = [
+        o.get("fileId")
+        for o in _doc_objects(doc)
+        if o.get("type") == "panel"
+        and isinstance(o.get("fileId"), str)
+        and not o["fileId"].startswith("runtime:")
+    ]
+    if not files:
+        return "unknown", None
+    for rel in files:
+        p = (root / rel).resolve()
+        if not p.is_relative_to(root) or not p.is_file():
+            return "unknown", None
+    return "this", "assets"
+
+
+@app.get("/api/layout-session/owner")
+def api_layout_session_owner():
+    """前端不知道归属的那份排版，后端有没有证据说它属于当前项目（#715 验收 P1 / #773）。"""
+    doc_id = request.args.get("doc_id")
+    if not engine_layoutsession.valid_doc_id(doc_id):
+        return jsonify({"error": "doc_id 不合法", "code": "bad_request"}), 400
+    owner, evidence = _layout_owner_evidence(doc_id, _request_ctx())
+    resp = jsonify({"owner": owner, "evidence": evidence})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 @app.get("/api/preferences/export-defaults")
