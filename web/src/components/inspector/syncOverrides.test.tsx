@@ -147,6 +147,60 @@ describe('选目标图', () => {
   })
 })
 
+describe('映射请求的竞态：返回后换目标，旧响应不许记到新目标名下', () => {
+  const dfd = <T,>() => {
+    let resolve!: (v: T) => void
+    const promise = new Promise<T>((r) => (resolve = r))
+    return { promise, resolve }
+  }
+
+  it('A 慢、B 快、A 后到：结果仍是 B 的，「同步并写回」写进 B 的文件用的是 B 的映射', async () => {
+    const A = dfd<never>()
+    vi.mocked(syncOverrides).mockImplementation(((_from: string, to: string) =>
+      to === 'Fig2.pdf'
+        ? A.promise
+        : Promise.resolve({
+            mapped: [{ gid: 'axes_0.title', prop: 'text', value: 'B的映射' }],
+            skipped: [],
+            unmatched: [],
+          })) as never)
+    await start([])
+    await click(target('Fig2.pdf')) // A：一直不回
+    await click([...document.body.querySelectorAll('button')].find((b) => b.textContent?.trim() === '返回'))
+    await click(target('Fig3.pdf')) // B：立刻回
+    expect(text()).toContain('可映射')
+    // A 这时才到
+    await act(async () => {
+      A.resolve({
+        mapped: [{ gid: 'axes_0.title', prop: 'text', value: 'A的映射' }],
+        skipped: [],
+        unmatched: [],
+      } as never)
+      await new Promise<void>((r) => setTimeout(r, 0))
+    })
+    await click(document.body.querySelector('[data-sync="write-back"]'))
+    await click(document.body.querySelector('[data-write-back="confirm"]'))
+    expect(updateSourceFiles).toHaveBeenCalledTimes(1)
+    const [id, patches] = vi.mocked(updateSourceFiles).mock.calls[0]
+    expect(id).toBe('Fig3.pdf')
+    expect(patches).toEqual([{ gid: 'axes_0.title', prop: 'text', value: 'B的映射' }])
+  })
+
+  it('A 在途时点返回、不再选别的：A 后到也不会冒出结果', async () => {
+    const A = dfd<never>()
+    vi.mocked(syncOverrides).mockReturnValue(A.promise as never)
+    await start([])
+    await click(target('Fig2.pdf'))
+    await click([...document.body.querySelectorAll('button')].find((b) => b.textContent?.trim() === '返回'))
+    await act(async () => {
+      A.resolve({ mapped: MAPPED, skipped: [], unmatched: [] } as never)
+      await new Promise<void>((r) => setTimeout(r, 0))
+    })
+    expect(target('Fig2.pdf')).toBeTruthy() // 仍在选目标那一步
+    expect(text()).not.toContain('可映射')
+  })
+})
+
 describe('目标图在画布上：合并，不碰磁盘', () => {
   it('「合并到画布上的图」→ 目标面板的修改被同步来的覆盖，一条历史，窗口关掉', async () => {
     await start([panel('p3', 'Fig3.pdf')])

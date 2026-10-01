@@ -84,7 +84,10 @@ export function SyncOverridesHost() {
 function SyncOverridesDialog({ panel, onClose }: { panel: PanelObject; onClose: () => void }) {
   useTranslation('inspector')
   const [target, setTarget] = useState<PanelInfo | null>(null)
-  const [result, setResult] = useState<SyncResult | null>(null)
+  // 映射结果连同它是替哪张目标图算的一起存：用的时候核对身份，对不上就当没有
+  const [resultOf, setResultOf] = useState<{ id: string; data: SyncResult } | null>(null)
+  // 请求序号：返回 / 换目标会作废在途请求，慢回来的旧响应不许记到新目标名下
+  const reqSeq = useRef(0)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [writing, setWriting] = useState(false)
@@ -97,27 +100,32 @@ function SyncOverridesDialog({ panel, onClose }: { panel: PanelObject; onClose: 
     s.doc.objects.find((o) => o.type === 'panel' && o.fileId === target?.id),
   ) as PanelObject | undefined
 
+  const result = target && resultOf?.id === target.id ? resultOf.data : null
   const mapped = result?.mapped ?? []
   const clamped = mapped.filter((p) => p.clamped).length
 
   const pick = async (info: PanelInfo) => {
+    const seq = ++reqSeq.current
     setTarget(info)
-    setResult(null)
+    setResultOf(null)
     setError(null)
     setBusy(true)
     try {
-      setResult(await syncOverrides(panel.fileId, info.id, panel.overrides))
+      const data = await syncOverrides(panel.fileId, info.id, panel.overrides)
+      if (seq === reqSeq.current) setResultOf({ id: info.id, data })
     } catch (e) {
-      setError(backendErrorText(e))
+      if (seq === reqSeq.current) setError(backendErrorText(e))
     } finally {
-      setBusy(false)
+      if (seq === reqSeq.current) setBusy(false)
     }
   }
 
   const back = () => {
+    reqSeq.current++
     setTarget(null)
-    setResult(null)
+    setResultOf(null)
     setError(null)
+    setBusy(false)
   }
 
   const applyToCanvas = () => {
