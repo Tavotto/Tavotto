@@ -248,6 +248,77 @@ describe('纵深：两侧任何一道拦下都算数', () => {
     expect(cached('p_g')).toBeNull()
   })
 
+  it('应用刚起、没换过文档就直接切项目：离开那一下的冲刷仍记在原项目名下', async () => {
+    const f = await boot('p_f')
+    const first = f.doc.useDocumentStore.getState().documentId
+    editCurrent(f, 'F')
+    f.doc.flushAutosave()
+    await settle()
+    expect(owners.get(first)).toBe('p_f')
+    editCurrent(f, 'F2') // 离开之前还有一笔没落盘：换代时那次冲刷写它
+    await f.proj.useProjectStore.getState().adoptOpenedProject(statusOf('p_g'))
+    await settle()
+    expect(autosavePuts.filter(([id, pj]) => id === first && pj === 'p_g')).toEqual([])
+    expect(owners.get(first)).toBe('p_f')
+  })
+
+  it('在 B 里从「最近文档」看一眼 A 的排版、没改就回到 A（后端做归属检查）：A 照常恢复它', async () => {
+    ownerChecks = true
+    const f = await boot('p_f')
+    await makeContentDoc(f, 'd_f', 'F 的排版', 'F')
+    const g = await boot('p_g')
+    await g.doc.restoreSession()
+    await g.actions.openRecentDocument('d_f')
+    await settle()
+    const f2 = await boot('p_f')
+    expect(await f2.doc.restoreSession()).toBe(true)
+    expect(f2.doc.useDocumentStore.getState().documentId).toBe('d_f')
+  })
+
+  it('看一眼时磁盘槽位不在、本机副本推回磁盘：仍记在原项目名下', async () => {
+    const f = await boot('p_f')
+    await makeContentDoc(f, 'd_f', 'F 的排版', 'F')
+    // 磁盘那一份没了，本机兜底副本还在（readAutosaveDoc 会把它推回磁盘）
+    slots.delete('d_f')
+    owners.delete('d_f')
+    localStorage.setItem('tavotto.autosave.d_f', JSON.stringify({ ...emptyProject(), project: { id: 'x', name: 'F 的排版' } }))
+    const g = await boot('p_g')
+    await g.doc.restoreSession()
+    await g.actions.openRecentDocument('d_f')
+    await settle()
+    expect(slots.has('d_f')).toBe(true)
+    expect(autosavePuts.filter(([id, pj]) => id === 'd_f' && pj === 'p_g')).toEqual([])
+    expect(owners.get('d_f')).toBe('p_f')
+  })
+
+  it('看一眼之后按 ⌘S：手动保存是用户的动作，归到这个项目', async () => {
+    const f = await boot('p_f')
+    await makeContentDoc(f, 'd_f', 'F 的排版', 'F')
+    const g = await boot('p_g')
+    await g.doc.restoreSession()
+    await g.actions.openRecentDocument('d_f')
+    await settle()
+    expect(owners.get('d_f')).toBe('p_f')
+    await g.doc.saveNow()
+    await settle()
+    expect(owners.get('d_f')).toBe('p_g')
+  })
+
+  it('应用里直接切项目 A → B → A（后端做归属检查）：离开 A 时那次冲刷记在 A 名下，回到 A 照常恢复', async () => {
+    ownerChecks = true
+    const a = await boot('p_f')
+    await a.proj.useProjectStore.getState().adoptOpenedProject(statusOf('p_f'))
+    await makeContentDoc(a, 'd_f', 'F 的排版', 'F')
+    // 切项目先认领新项目、再冲刷旧文档：那一次 PUT 必须记在旧项目名下，否则后端把 F 的排版改记成 G 的
+    await a.proj.useProjectStore.getState().adoptOpenedProject(statusOf('p_g'))
+    await settle()
+    expect(owners.get('d_f')).toBe('p_f')
+    expect(autosavePuts.filter(([id, pj]) => id === 'd_f' && pj === 'p_g')).toEqual([])
+    await a.proj.useProjectStore.getState().adoptOpenedProject(statusOf('p_f'))
+    expect(a.doc.useDocumentStore.getState().documentId).toBe('d_f')
+    expect(texts(a)).toEqual(['F'])
+  })
+
   it('显式从「最近文档」打开别的项目的排版：打开那一下不记成这个项目「上次开着的」', async () => {
     const f = await boot('p_f')
     await makeContentDoc(f, 'd_f', 'F 的排版', 'F')
@@ -258,12 +329,21 @@ describe('纵深：两侧任何一道拦下都算数', () => {
     await settle()
     expect(lastByProject.get('p_g')).toBeUndefined()
     expect(cached('p_g')).toBeNull()
-    // 在 G 里改过并落了盘 = 用户把它带进了 G（本机索引与后端归属都改记成 G）：之后的变化照常记
+    // 只是看一眼：归属不动（#773 Codex P2）——打开那一下的冲刷仍记在 F 名下，本机索引仍标 F
+    expect(owners.get('d_f')).toBe('p_f')
+    expect(autosavePuts.filter(([id, pj]) => id === 'd_f' && pj === 'p_g')).toEqual([])
+    expect(JSON.parse(localStorage.getItem('tavotto.docIndex')!).find((e: { id: string }) => e.id === 'd_f').projectId).toBe('p_f')
+    // 在 G 里改过并落了盘 = 用户把它带进了 G（本机索引与后端归属都改记成 G）：之后的变化照常记。
+    // 「改过」由自动保存的订阅认（工作台挂着时才有），这里挂上它
+    const stop = g.doc.startAutosave()
     editCurrent(g, 'G')
     g.doc.flushAutosave()
     await settle()
     editCurrent(g, 'G2')
+    g.doc.flushAutosave()
     await settle()
+    stop()
+    expect(owners.get('d_f')).toBe('p_g')
     expect(lastByProject.get('p_g')?.doc_id).toBe('d_f')
   })
 })

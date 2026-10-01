@@ -136,8 +136,8 @@
     （owners 里**确知**是别的项目 / 别的组；没有记录 = 不知道，不算）。`set_last` 撞上它抛 `ForeignLayoutError`、
     一个字节不写，端点回 `409 layout_foreign`（不显示给用户，前端据此作废本机缓存那一条、不重推）；`last_for`
     读到指着别的项目槽位的旧记录（修复前写下的）回 `None`。前端的同一条判据是 `web/src/lib/docOwnership.ts`
-    （按本机「最近文档」索引），两侧互为纵深。自动保存 PUT 照旧按 pj 改记归属：从「最近文档」显式打开别的项目的
-    排版并改过，就是把它带进了这个项目。
+    （按本机「最近文档」索引），两侧互为纵深。自动保存 PUT 照旧按 pj 改记归属，前端负责只在用户真改过 / ⌘S 之后
+    才以当前项目的 pj 写（只打开不算，#773 Codex P2）；失效的 pj 记成「不知道」，不覆盖已有归属。
   - 看护 `tests/test_layout_session.py`。
 - 前端文档模型的对应字段（lockedGids / layoutGroups 等）见 `web/AGENTS.md`。
 

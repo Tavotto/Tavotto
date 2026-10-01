@@ -30,7 +30,7 @@ import { markMoment } from '@/lib/timelineCheckpoint'
 import { useTimelineStore } from '@/store/timelineStore'
 import { openRecentDocument } from '@/store/actions'
 import { useAssetBrowseStore } from '@/store/assetBrowseStore'
-import { flushAutosave, loadAutosavedDocument, useDocumentStore } from '@/store/documentStore'
+import { flushAutosave, loadAutosavedDocument, pinDocumentOwner, useDocumentStore } from '@/store/documentStore'
 import { useAiStore } from '@/store/aiStore'
 import { useAssetStore } from '@/store/assetStore'
 import { clearVariantPngCache } from '@/hooks/useVariantPng'
@@ -341,6 +341,8 @@ export const useProjectStore = create<ProjectState>((set, get) => {
     opts: Parameters<ProjectState['adoptOpenedProject']>[1],
     resume: () => void,
   ): Promise<ProjectStatus> => {
+    // 认领新项目之前把内存里这份排版的归属钉在旧项目上：下面换代时那次冲刷写的是旧项目的排版
+    pinDocumentOwner()
     if (status.id) setCurrentProjectId(status.id)
     // 「最近文档」要在条目上标出所属项目（审计 T04）；名字的权威在这里，
     // documentStore 只读那份投影（否则两个 store 互相 import 成环）

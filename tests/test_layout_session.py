@@ -334,6 +334,38 @@ def test_a_polluted_last_owned_by_another_project_reads_as_none(client, tmp_path
     )
 
 
+def test_viewing_a_layout_from_another_project_keeps_its_owner_until_edited(client, tmp_path):
+    """#773 Codex P2：在 G 里从「最近文档」看一眼 F 的排版——打开那一下的冲刷按 F 的 pj 写
+    （前端 `documentStore.adoptDocumentOwner`），归属不动，F 照常恢复它；在 G 里改过再存
+    （pj = G）才转到 G，此后它是 G 的、F 不再认。"""
+    f = _project(client, tmp_path, "projF", default=True)
+    g = _project(client, tmp_path, "projG")
+    kf = layoutsession.project_key(f["figures_dir"])
+    kg = layoutsession.project_key(g["figures_dir"])
+    client.put("/api/autosave/d_f", json=PD, headers=_pj(f["id"]))
+    client.put(
+        "/api/layout-session/last", json={"doc_id": "d_f", "name": "F"}, headers=_pj(f["id"])
+    )
+    # 只看：G 开着，冲刷按 F 的 pj 写——归属与 F 的 last 都不动
+    assert client.put("/api/autosave/d_f", json=PD, headers=_pj(f["id"])).status_code == 200
+    assert layoutsession.owners()["d_f"] == kf
+    assert (
+        client.get("/api/layout-session", headers=_pj(f["id"])).get_json()["last"]["doc_id"]
+        == "d_f"
+    )
+    # 打开那一下的 pj 已经失效（F 在后端关了）时同样不改归属：失效的 pj 记成「不知道」，不覆盖
+    assert client.put("/api/autosave/d_f", json=PD, headers=_pj("gone")).status_code == 200
+    assert layoutsession.owners()["d_f"] == kf
+    # 改过再存：pj = G，归属转到 G；G 可以记它，F 不再认
+    assert client.put("/api/autosave/d_f", json=PD, headers=_pj(g["id"])).status_code == 200
+    assert layoutsession.owners()["d_f"] == kg
+    r = client.put(
+        "/api/layout-session/last", json={"doc_id": "d_f", "name": "F"}, headers=_pj(g["id"])
+    )
+    assert r.status_code == 200
+    assert layoutsession.last_for(kf) is None
+
+
 def _legacy_slot(doc_id: str, mtime_s: int) -> Path:
     p = m.AUTOSAVE_DIR / f"{doc_id}.json"
     p.parent.mkdir(parents=True, exist_ok=True)
