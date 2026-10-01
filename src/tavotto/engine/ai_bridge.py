@@ -21,6 +21,7 @@ import json
 import logging
 import os
 import shutil
+import signal
 import stat
 import subprocess
 import threading
@@ -28,7 +29,7 @@ import time
 import uuid
 from pathlib import Path
 
-from . import ai_agents, ai_history, ai_providers, atomicio, config, projectenv
+from . import ai_agents, ai_history, ai_providers, config, projectenv, scriptlock
 from .ai_agents import spawn_env as _spawn_env  # noqa: F401 — run() 与旧调用方仍认这个名字
 from .runtime import CREATE_NO_WINDOW  # noqa: F401 — 重导出，历史调用方仍认这个名字
 
@@ -360,6 +361,89 @@ def install_status(agent_id: str) -> dict:
     return {k: st[k] for k in ("status", "code", "log") if k in st}
 
 
+#: 按脚本的锁（ADR 0110 §五）：持有者清单与唯一写入口在 `scriptlock`
+script_guard = scriptlock.script_guard
+
+
+def _terminate(sess: dict) -> None:
+    """杀掉会话的整个进程组（POSIX `killpg`；Windows `taskkill /T`，要趁组长还活着）。只是发出终止——
+    「已经退出」由 `_await_exit` 观察到才算（`script_busy` 看的是它）。"""
+    proc = sess.get("proc")
+    if proc is None:
+        return
+    pid = getattr(proc, "pid", None)
+    try:
+        if not isinstance(pid, int):
+            pass  # 没有 pid 的替身：只剩下面的 kill()
+        elif os.name == "nt":
+            subprocess.run(
+                ["taskkill", "/T", "/F", "/PID", str(pid)],
+                stdin=subprocess.DEVNULL,  # 桌面 sidecar 的 stdin 是父进程死亡信号管道，不外传
+                capture_output=True,
+                timeout=10,
+                creationflags=CREATE_NO_WINDOW,
+            )
+        else:
+            os.killpg(pid, signal.SIGKILL)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    try:
+        proc.kill()
+    except OSError:
+        pass
+
+
+#: 组长退出之后，等组里剩下的子进程被收掉的上限
+_GROUP_REAP_S = 5.0
+
+
+def _await_exit(sess: dict) -> None:
+    """等会话进程退出，再把组里剩下的子进程收掉、确认一个不剩，最后才置 `exited`（幂等）。
+
+    取消 / 超时的状态在 `kill()` 那一刻就变了，但进程可能还在把一次写入写完、它起的子进程也可能还活着——
+    这之前 `script_busy` 一律算忙，确认过的改写 / 复原不会和 Agent 的迟到写入竞争（Codex 评 #730 P1）。
+    POSIX 按进程组确认（`killpg(pgid, 0)` 报「没有这个组」才算）；Windows 只能确认组长退出（`taskkill /T` 在
+    `_terminate` 里趁组长活着收掉子树）。"""
+    proc = sess.get("proc")
+    exited = sess.get("exited")
+    try:
+        if proc is not None:
+            proc.wait()
+            if os.name != "nt" and isinstance(getattr(proc, "pid", None), int):
+                deadline = time.monotonic() + _GROUP_REAP_S
+                while time.monotonic() < deadline:
+                    try:
+                        os.killpg(proc.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        break  # 组里一个都不剩
+                    except OSError:
+                        break
+                    time.sleep(0.02)
+    finally:
+        if exited is not None:
+            exited.set()
+
+
+def script_busy(script_path: str | Path) -> bool:
+    """这份脚本此刻有没有编码 Agent 会话还没**真正结束**（改写脚本要让路，ADR 0110 §五）：状态还在跑，
+    或者状态已经是取消 / 超时 / 中断、但还没观察到进程（连同进程组）退出（`_await_exit`，Codex 评 #730 P1）。
+
+    要当作「之后一直成立」来用，必须在 `script_guard` 里判、并在同一段锁里把事做完。
+    """
+    target = scriptlock.script_key(script_path)
+    for sess in list(SESSIONS.values()):
+        exited = sess.get("exited")
+        still_alive = exited is not None and not exited.is_set()
+        if sess.get("status") != "running" and not still_alive:
+            continue
+        try:
+            if os.path.normcase(os.path.realpath(sess.get("script_path") or "")) == target:
+                return True
+        except (OSError, ValueError):
+            continue
+    return False
+
+
 def start_install(agent_id: str) -> dict:
     """后台 `npm install -g <包>`；结束后**重新真探测**才定成败。
 
@@ -546,87 +630,97 @@ def run(
     """
     require_usable(agent)
     script_path = Path(figures_dir) / script
-    if not script_path.is_file():
-        raise RuntimeError(f"脚本不存在: {script}")
-    sid = uuid.uuid4().hex[:12]
-    SNAP_DIR.mkdir(parents=True, exist_ok=True)
-    _prune_snapshots()
-    # 快照名只取文件名：`script` 是相对项目根的登记路径，可以带子目录
-    # （`a/b/fig.py`），整串拼进来会在 SNAP_DIR 下隐式要求一串不存在的父目录，
-    # copy2 当场 FileNotFoundError（#502）。sid 已保证唯一；回滚只认 sidecar
-    # 里记的 `snapshot` 绝对路径，`_prune_snapshots` 按 `{sid}*` 收，都不依赖这里带路径。
-    snap = SNAP_DIR / f"{sid}__{script_path.name}"
-    shutil.copy2(script_path, snap)
-    # sidecar：进程重启后 revert 仍可从磁盘找回（SESSIONS 只在内存）
-    (SNAP_DIR / f"{sid}.json").write_text(
-        json.dumps(
-            {
-                "id": sid,
-                "agent": agent,
-                "script": script,
-                "script_path": str(script_path),
-                # 回滚要判「resolve 之后还在不在项目内」，得知道根在哪。
-                # 与 `ai_history.record_start` 的 project 同一个表达式。
-                "project": str(Path(figures_dir).resolve()),
-                "snapshot": str(snap),
-                "prompt": user_prompt,
-                "started": time.time(),
-                "model": model,
-                "effort": effort,
-            },
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
-    )
+    # 从「脚本在不在」到登记进 SESSIONS 整段持脚本锁：改写 / 复原的事务要么在这之前落地（这里快照的
+    # 就是改后的脚本），要么在这之后看到 running 的会话而让路
+    with script_guard(script_path):
+        if not script_path.is_file():
+            raise RuntimeError(f"脚本不存在: {script}")
+        sid = uuid.uuid4().hex[:12]
+        SNAP_DIR.mkdir(parents=True, exist_ok=True)
+        _prune_snapshots()
+        # 快照名只取文件名：`script` 是相对项目根的登记路径，可以带子目录
+        # （`a/b/fig.py`），整串拼进来会在 SNAP_DIR 下隐式要求一串不存在的父目录，
+        # copy2 当场 FileNotFoundError（#502）。sid 已保证唯一；回滚只认 sidecar
+        # 里记的 `snapshot` 绝对路径，`_prune_snapshots` 按 `{sid}*` 收，都不依赖这里带路径。
+        snap = SNAP_DIR / f"{sid}__{script_path.name}"
+        shutil.copy2(script_path, snap)
+        # sidecar：进程重启后 revert 仍可从磁盘找回（SESSIONS 只在内存）
+        (SNAP_DIR / f"{sid}.json").write_text(
+            json.dumps(
+                {
+                    "id": sid,
+                    "agent": agent,
+                    "script": script,
+                    "script_path": str(script_path),
+                    # 回滚要判「resolve 之后还在不在项目内」，得知道根在哪。
+                    # 与 `ai_history.record_start` 的 project 同一个表达式。
+                    "project": str(Path(figures_dir).resolve()),
+                    "snapshot": str(snap),
+                    "prompt": user_prompt,
+                    "started": time.time(),
+                    "model": model,
+                    "effort": effort,
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
 
-    prompt = _build_prompt(script, user_prompt, context, figures_dir)
-    stderr_log = open(SNAP_DIR / f"{sid}.stderr.log", "wb", buffering=0)
-    endpoint = ai_providers.resolve(agent, endpoint_id)
-    cmd, extra_env = _cmd(agent, prompt, figures_dir, model=model, effort=effort, endpoint=endpoint)
-    # 提示词按**值**从日志里摘掉（它在命令行里的位置各家不同：codex 在末尾、
-    # claude 在 `-p` 后面）。按 agent 写死下标那种做法，加第三个 Agent 时
-    # 会静默把用户的提示词整条写进日志。
-    LOG.info(
-        "AI 任务命令: %s（接口: %s）",
-        " ".join("<prompt>" if part == prompt else part for part in cmd),
-        endpoint["label"] if endpoint else "CLI 默认",
-    )
-    # cmd[0] 是 CLI 可执行（或 node），末尾是提示词——PATH 增强按 cmd[0] 算
-    env = _spawn_env(cmd[0], extra_env)
-    proc = subprocess.Popen(
-        cmd,
-        cwd=figures_dir,
-        env=env,
-        stdin=subprocess.DEVNULL,  # 桌面 sidecar 的 stdin 是父进程死亡信号管道，不外传
-        stdout=subprocess.PIPE,
-        stderr=stderr_log,  # CLI 的 hook/统计噪音不进对话
-        text=True,
-        bufsize=1,
-        # 显式 UTF-8：Windows 上 text=True 跟随系统区域编码（cp936），
-        # CLI 回来的中文/JSON 一解码就炸，表现为「任务刚起就结束」
-        encoding="utf-8",
-        errors="replace",
-        creationflags=CREATE_NO_WINDOW,
-    )
-    sess = {
-        "id": sid,
-        "agent": agent,
-        "script": script,
-        "prompt": user_prompt,
-        "script_path": str(script_path),
-        "status": "running",
-        "transcript": [],
-        "diff": "",
-        "changed": False,
-        "refresh": {"status": "pending"},
-        "model": model,
-        "effort": effort,
-        "snapshot": str(snap),
-        "project": str(Path(figures_dir).resolve()),
-        "proc": proc,
-        "started": time.time(),
-    }
-    SESSIONS[sid] = sess
+        prompt = _build_prompt(script, user_prompt, context, figures_dir)
+        stderr_log = open(SNAP_DIR / f"{sid}.stderr.log", "wb", buffering=0)
+        endpoint = ai_providers.resolve(agent, endpoint_id)
+        cmd, extra_env = _cmd(
+            agent, prompt, figures_dir, model=model, effort=effort, endpoint=endpoint
+        )
+        # 提示词按**值**从日志里摘掉（它在命令行里的位置各家不同：codex 在末尾、
+        # claude 在 `-p` 后面）。按 agent 写死下标那种做法，加第三个 Agent 时
+        # 会静默把用户的提示词整条写进日志。
+        LOG.info(
+            "AI 任务命令: %s（接口: %s）",
+            " ".join("<prompt>" if part == prompt else part for part in cmd),
+            endpoint["label"] if endpoint else "CLI 默认",
+        )
+        # cmd[0] 是 CLI 可执行（或 node），末尾是提示词——PATH 增强按 cmd[0] 算
+        env = _spawn_env(cmd[0], extra_env)
+        proc = subprocess.Popen(
+            cmd,
+            cwd=figures_dir,
+            env=env,
+            stdin=subprocess.DEVNULL,  # 桌面 sidecar 的 stdin 是父进程死亡信号管道，不外传
+            stdout=subprocess.PIPE,
+            stderr=stderr_log,  # CLI 的 hook/统计噪音不进对话
+            text=True,
+            bufsize=1,
+            # 显式 UTF-8：Windows 上 text=True 跟随系统区域编码（cp936），
+            # CLI 回来的中文/JSON 一解码就炸，表现为「任务刚起就结束」
+            encoding="utf-8",
+            errors="replace",
+            creationflags=CREATE_NO_WINDOW,
+            # POSIX 上自成一个进程组：取消 / 超时时连它起的子进程一起收掉（`_terminate` / `_await_exit`）；
+            # Windows 的 `taskkill /T` 按 pid 找子树，不需要单独的组
+            start_new_session=os.name != "nt",
+        )
+        sess = {
+            "id": sid,
+            "agent": agent,
+            "script": script,
+            "prompt": user_prompt,
+            "script_path": str(script_path),
+            "status": "running",
+            "transcript": [],
+            "diff": "",
+            "changed": False,
+            "refresh": {"status": "pending"},
+            "model": model,
+            "effort": effort,
+            "snapshot": str(snap),
+            "project": str(Path(figures_dir).resolve()),
+            "proc": proc,
+            #: 观察到进程（连同进程组）确实退出之后才置位；之前 `script_busy` 一律算忙
+            "exited": threading.Event(),
+            "started": time.time(),
+        }
+        SESSIONS[sid] = sess
     ctx = context or {}
     ai_history.record_start(
         {
@@ -661,9 +755,9 @@ def run(
                         sess["transcript"].append({"kind": kind, "text": text})
                     emit("ai.delta", {"session": sid, "kind": kind, "text": text})
                 if time.time() - sess["started"] > TIMEOUT_S:
-                    proc.kill()
+                    _terminate(sess)
                     sess["status"] = "timeout"
-            proc.wait()
+            _await_exit(sess)
             stderr_log.close()
             # 「这次 AI 改完的那一版」：回滚只认它（STATE-09）。在 `ai.done` 之前记下，
             # 前端收到完成事件后立刻点回滚也有据可查；sidecar 一并记，重启后照样认。
@@ -714,6 +808,8 @@ def run(
                 },
             )
         except Exception as exc:  # noqa: BLE001
+            _terminate(sess)
+            _await_exit(sess)
             sess["status"] = "failed"
             sess["refresh"] = sess.get("refresh") or {"status": "skipped"}
             ai_history.record_end(
@@ -880,12 +976,15 @@ def revert(sid: str) -> dict:
     if target is None:
         raise AgentError("script_path_outside_project", {"script": sess["script"]})
     script_path = Path(target)  # 已 realpath：脚本是符号链接时写的是它指向的真文件
-    _refuse_stale_revert(sess, script_path, data)
-    atomicio.write_bytes(script_path, data)  # 失败抛 AtomicWriteError（app.py 已有映射）
-    try:
-        os.chmod(script_path, mode)
-    except OSError as exc:  # 权限没跟上，不该让一次成功的回滚显示为失败
-        LOG.warning("回滚后未能还原权限位（%s）: %s", sess["script"], exc)
+    # 「是不是 AI 那一版」判到写回整段持脚本锁：中间插进一次确认过的改写 / 复原的话，判过的结论
+    # 在写的那一刻已经不成立，快照会盖掉用户较新的版本（Codex 评 #730 P1）
+    with script_guard(script_path):
+        _refuse_stale_revert(sess, script_path, data)
+        scriptlock.write_script(script_path, data)  # 失败抛 AtomicWriteError（app.py 已有映射）
+        try:
+            os.chmod(script_path, mode)
+        except OSError as exc:  # 权限没跟上，不该让一次成功的回滚显示为失败
+            LOG.warning("回滚后未能还原权限位（%s）: %s", sess["script"], exc)
     LOG.info("AI 修改已回滚: %s（session %s）", sess["script"], sid)
     if sid in SESSIONS:
         SESSIONS[sid]["status"] = "reverted"
@@ -908,7 +1007,8 @@ def _refuse_stale_revert(sess: dict, script_path: Path, snapshot: bytes) -> None
       sidecar）——判不出之后有没有别的改动。「不知道」是独立一档，不并进「冲突」：
       那是用户撤掉一次中断的 AI 改动的唯一出口，保持原来的行为。
 
-    判与写之间仍有一个毫秒级窗口（与 watcher 同一类竞态），这里不加锁去消它。
+    判与写在调用方持有的 `script_guard` 里（`revert`）：Tavotto 自己的写（改写 / 复原 / 另一次回滚）插不进来；
+    Tavotto 之外的编辑器写入仍有毫秒级窗口（与 watcher 同一类竞态）。
     """
     expected = sess.get("after_sha256")
     if not expected:
@@ -955,8 +1055,8 @@ def get(sid: str) -> dict | None:
 def cancel(sid: str) -> bool:
     sess = SESSIONS.get(sid)
     if sess and sess["status"] == "running":
-        sess["proc"].kill()
-        sess["status"] = "cancelled"
+        _terminate(sess)
+        sess["status"] = "cancelled"  # 界面立刻显示取消；脚本仍算忙，直到 `_await_exit` 观察到退出
         ai_history.update_status(sid, "cancelled")
         return True
     return False
@@ -968,10 +1068,7 @@ def interrupt_all() -> int:
     n = 0
     for sess in SESSIONS.values():
         if sess["status"] == "running":
-            try:
-                sess["proc"].kill()
-            except OSError:
-                pass
+            _terminate(sess)
             sess["status"] = "interrupted"
             ai_history.update_status(sess["id"], "interrupted")
             n += 1

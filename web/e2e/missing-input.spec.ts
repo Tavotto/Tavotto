@@ -52,8 +52,8 @@ test(
     const a = await app({ figures: dir })
     await page.goto(a.baseURL)
 
-    await expect(page.getByText('fig.py').first()).toBeVisible({ timeout: 30_000 })
-    await page.getByRole('button', { name: '运行 fig.py 并发现图' }).click()
+    await expect(page.locator('[data-script-row="fig.py"]')).toBeVisible({ timeout: 30_000 })
+    await page.locator('[data-script-run="fig.py"]').click()
 
     // 1) 弹框：说出脚本要的那一串
     const dialog = page.locator('[data-dialog="missing-input"]')
@@ -63,7 +63,7 @@ test(
     // 2) 浏览器模式：粘贴数据所在的文件夹，确认
     const use = dialog.locator('[data-testid="missing-input-use-path"]')
     await expect(use).toBeDisabled()
-    await dialog.getByRole('textbox').fill(dataRoot)
+    await dialog.locator('[data-testid="missing-input-path-input"]').fill(dataRoot)
     await use.click()
     await expect(dialog).toHaveCount(0)
 

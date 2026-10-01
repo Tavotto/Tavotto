@@ -56,6 +56,49 @@ MAX_OTHERS = 20
 VIA_OPEN = "open"  # 经四个打开入口读：改指救得回来
 VIA_PROBE = "probe"  # exists / listdir / stat / import_file：改指救不回来（ADR 0106 §四）
 VIA_GLOB = "glob"  # glob 模式：同上，而且不是一个文件
+#: C++ 读取器（h5py / netCDF4 / xarray）的 ENOENT 对上了脚本里的一串常量（ADR 0110 §一）：同样救不回
+VIA_NATIVE = "native"
+#: 改指表救不回、只能改写脚本里那串常量的几档（ADR 0110 §八：对话框只给它们「改写脚本」）
+VIAS_NEED_REWRITE = (VIA_PROBE, VIA_GLOB, VIA_NATIVE)
+
+#: 那条路径**要的是什么**（载荷的 `probe_kind`，ADR 0110 §三）：`dir` 只能指认文件夹（`listdir` 问的
+#: 换成一个文件，改写后重跑就是 `NotADirectoryError`）；`file` 是文件；`any` 两者都行。
+PROBE_DIR = "dir"
+PROBE_FILE = "file"
+PROBE_ANY = "any"
+#: 探路调用 → 它问的那条路径要是什么。键**恰好**是 databinding 三张探路表的并集
+#: （`PATH_PROBE_FUNCS` / `DIR_PROBE_FUNCS` / `PATH_METHOD_PROBES`，同名的语义相同），用例对账——
+#: 那边加一个探路函数、这里忘了标，就红。
+PROBE_KIND_OF = {
+    # os.path.* / os.*：问的路径本身
+    "exists": PROBE_ANY,
+    "lexists": PROBE_ANY,
+    "stat": PROBE_ANY,
+    "lstat": PROBE_ANY,
+    "getsize": PROBE_ANY,
+    "getmtime": PROBE_ANY,
+    "isfile": PROBE_FILE,
+    "isdir": PROBE_DIR,
+    "import_file": PROBE_FILE,  # ovito：读一个数据文件
+    # 列目录
+    "listdir": PROBE_DIR,
+    "scandir": PROBE_DIR,
+    "walk": PROBE_DIR,
+    # Path(<常量>) 上的方法
+    "is_file": PROBE_FILE,
+    "is_dir": PROBE_DIR,
+    "iterdir": PROBE_DIR,
+}
+
+
+def _merged_kind(kinds) -> str:
+    """同一串被几处问过：只要文件夹 / 只要文件的那一边说了算；两边都有或都没说就是 `any`。"""
+    kinds = set(kinds or ())
+    if PROBE_DIR in kinds and PROBE_FILE not in kinds:
+        return PROBE_DIR
+    if PROBE_FILE in kinds and PROBE_DIR not in kinds:
+        return PROBE_FILE
+    return PROBE_ANY
 
 
 class RemapError(ValueError):
@@ -262,6 +305,21 @@ def remove_rule(root: str | os.PathLike, kind: str, src: str) -> dict:
 # ---------------------------------------------------------------- 推规则
 
 
+def chosen_path(chosen: str) -> str:
+    """用户亲手选的位置：只接受本机绝对路径；任何磁盘探测之前先判，不改原生大小写 / UNC 写法。"""
+    if not isinstance(chosen, str) or "\x00" in chosen:
+        raise RemapError(ERROR_CHOSEN_INVALID, "指认的位置必须是本机的绝对路径", path=str(chosen))
+    drive = os.path.splitdrive(chosen)[0]
+    unc = os.path.sep == "\\" and drive.startswith(("\\\\", "//"))
+    # Python 3.10 的 ntpath.isabs 把无尾分隔符的 UNC 共享根判成 False；完整 server/share 仍是绝对位置。
+    if (not os.path.isabs(chosen) and not unc) or (os.path.sep == "\\" and not drive):
+        raise RemapError(ERROR_CHOSEN_INVALID, "指认的位置必须是本机的绝对路径", path=chosen)
+    if unc:
+        if len(drive.replace("\\", "/").strip("/").split("/")) < 2:
+            raise RemapError(ERROR_CHOSEN_INVALID, "UNC 路径需要指明共享目录", path=chosen)
+    return os.path.abspath(chosen)
+
+
 def derive(requested: str, chosen: str, *, chosen_is_dir: bool) -> dict:
     """「脚本要的那串」+「用户指认的位置」→ 一条规则。推不出来抛 `RemapError`。
 
@@ -281,15 +339,14 @@ def derive(requested: str, chosen: str, *, chosen_is_dir: bool) -> dict:
     body = rparts[1:] if absolute else rparts
     if not body:
         raise RemapError(ERROR_REQUESTED_INVALID, f"说不清脚本要的路径: {requested!r}")
-    if not isinstance(chosen, str) or not os.path.isabs(chosen):
-        raise RemapError(ERROR_CHOSEN_INVALID, "指认的位置必须是本机的绝对路径", path=str(chosen))
-    chosen = os.path.abspath(chosen)
+    chosen = chosen_path(chosen)
     if chosen_is_dir:
         if not os.path.isdir(chosen):
             raise RemapError(ERROR_CHOSEN_INVALID, f"不是文件夹: {chosen}", path=chosen)
         rule = None
         for k in range(len(body), 0, -1):
-            if os.path.isfile(os.path.join(chosen, *body[-k:])):
+            candidate = projectenv.contained_path(chosen, os.path.join(chosen, *body[-k:]))
+            if candidate is not None and os.path.isfile(candidate):
                 head = rparts[: len(rparts) - k]
                 rule = {"kind": figcapture.REMAP_PREFIX, "from": _join(head), "to": chosen}
                 break
@@ -318,10 +375,149 @@ def derive(requested: str, chosen: str, *, chosen_is_dir: bool) -> dict:
                 "to": _ancestor(chosen, k),
             }
     target = figcapture.remap_target([rule], requested)
-    if target is None or not os.path.isfile(target):  # pragma: no cover — 上面已逐支保证
+    target = projectenv.contained_path(rule["to"], target) if target is not None else None
+    if target is None and not chosen_is_dir:
+        # 用户直接选中了指向别处的文件链接：许可的是这个文件，不是它字面上的父目录。
+        # 推不出包含实体的目录规则时收窄成精确文件规则，不拒掉这次明确选择。
+        rule = {"kind": figcapture.REMAP_FILE, "from": requested, "to": chosen}
+        target = projectenv.contained_path(chosen, chosen)
+    if target is None or not os.path.isfile(target):
         raise RemapError(
             ERROR_NOT_FOUND_IN_DIR, "推出的规则落不到这个文件上", name=body[-1], path=chosen
         )
+    return rule
+
+
+def _has_glob(text: str) -> bool:
+    return any(ch in text for ch in "*?[")
+
+
+def _looks_like_file(last: str) -> bool:
+    return "." in last.strip(".")
+
+
+def glob_has_match(pattern: str, *, root: str | None = None) -> bool:
+    """模式至少匹配一个（`**` 才递归）；改指后的模式只在规则目标内走，进目录前挡软链接逃逸。"""
+    try:
+        if root is not None:
+            base = Path(root).resolve()
+            relative = Path(pattern).relative_to(root).as_posix()
+            if pattern.endswith(("/", os.sep)):
+                relative += "/"
+            return (
+                databinding._glob_hit(
+                    base,
+                    relative,
+                    base,
+                    recursive="**" in pattern,
+                    hidden=False,
+                    budget=[databinding.MAX_GLOB_SCAN],
+                )
+                == "found"
+            )
+        return next(glob.iglob(pattern, recursive="**" in pattern), None) is not None
+    except (OSError, ValueError):
+        return False
+
+
+def location_exists(path: str, *, root: str | None = None) -> bool:
+    """改写后的目标在不在：glob 至少匹配一个，其余 `os.path.exists`（文件或文件夹都算）。"""
+    if not path:
+        return False
+    if _has_glob(path):
+        return glob_has_match(path, root=root)
+    try:
+        if root is not None:
+            path = projectenv.contained_path(root, path)
+            if path is None:
+                return False
+        return os.path.exists(path)
+    except (OSError, ValueError):
+        return False
+
+
+def _derive_dir(requested: str, chosen: str) -> dict:
+    """条目是个**文件夹**（`listdir("data")` / `exists("data/runs")`），用户指认了文件夹 `chosen`。
+
+    从最长的后缀试起：`chosen/<后缀>` 是文件夹就定规则；都不是 → `chosen` 本身就是那个文件夹。
+    带点的名字（`runs.v1`）照样是文件夹：磁盘上**真有**同名文件夹（某个后缀、或 `chosen` 自己就叫这个
+    名字）就不看扩展名（Codex 评 #730 P2）。只有要拿一个**改了名**的文件夹去顶替一个像文件名的条目时
+    才拒——那多半是文件，文件夹顶替不了文件。
+    """
+    parsed = figcapture.remap_parts(requested)
+    if parsed is None or not parsed[1] or parsed[1][-1] == "..":
+        raise RemapError(ERROR_REQUESTED_INVALID, f"说不清脚本要的路径: {requested!r}")
+    absolute, rparts = parsed
+    body = rparts[1:] if absolute else rparts
+    if not body:
+        raise RemapError(
+            ERROR_NOT_FOUND_IN_DIR, f"这个文件夹里没有 {requested}", name=requested, path=chosen
+        )
+    for k in range(len(body), 0, -1):
+        # 脚本原串里的 `..` 是匹配前缀的一部分，不是准许越过用户选的文件夹；软链接同样按实体判。
+        # 只探测 contained_path 回的那个路径，逃出去的后缀继续试更短的一段。
+        candidate = projectenv.contained_path(chosen, os.path.join(chosen, *body[-k:]))
+        if candidate is not None and os.path.isdir(candidate):
+            return {
+                "kind": figcapture.REMAP_PREFIX,
+                "from": _join(rparts[: len(rparts) - k]),
+                "to": chosen,
+            }
+    same_name = os.path.normcase(os.path.basename(chosen)) == os.path.normcase(body[-1])
+    if _looks_like_file(body[-1]) and not same_name:
+        raise RemapError(
+            ERROR_NOT_FOUND_IN_DIR, f"这个文件夹里没有 {body[-1]}", name=body[-1], path=chosen
+        )
+    return {"kind": figcapture.REMAP_PREFIX, "from": _join(rparts), "to": chosen}
+
+
+def derive_location(requested: str, chosen: str, *, chosen_is_dir: bool) -> dict:
+    """`derive` 的扩展（ADR 0110 §三）：条目还可能是文件夹或 glob 模式——改写脚本要用。
+
+    * glob（`data/*.csv`）：取不含通配符的目录前缀当「文件夹条目」推（指认的是其中一个文件时取
+      它所在的文件夹），推完要求新模式**至少匹配一个**；
+    * 文件夹：先按文件推（文件夹里找得到那个文件就是它），找不到再按文件夹推（`_derive_dir`）；
+    * 其余就是 `derive`。
+    推出的规则一律自检：`remap_target(..., whole=True)` 落到一个存在的位置上。
+    """
+    chosen = chosen_path(chosen)
+    if _has_glob(requested):
+        parsed = figcapture.remap_parts(requested)
+        if parsed is None or not parsed[1]:
+            raise RemapError(ERROR_REQUESTED_INVALID, f"说不清脚本要的路径: {requested!r}")
+        absolute, parts = parsed
+        i = next(n for n, p in enumerate(parts) if _has_glob(p))
+        head = parts[:i]
+        if absolute and len(head) < 2:
+            raise RemapError(ERROR_REQUESTED_INVALID, f"说不清脚本要的路径: {requested!r}")
+        folder = chosen if chosen_is_dir else os.path.dirname(chosen)
+        if not os.path.isdir(folder):
+            raise RemapError(ERROR_CHOSEN_INVALID, f"不是文件夹: {folder}", path=folder)
+        if head:
+            rule = _derive_dir(_join(head), folder)
+        else:  # `glob("*.csv")`：相对 cwd 的模式——「相对路径都到这里找」
+            rule = {"kind": figcapture.REMAP_PREFIX, "from": "", "to": folder}
+        target = figcapture.remap_target([rule], requested)
+        if target is None or not glob_has_match(target, root=rule["to"]):
+            name = "/".join(parts[i:])
+            raise RemapError(
+                ERROR_NOT_FOUND_IN_DIR, f"这个文件夹里没有 {name}", name=name, path=folder
+            )
+        return rule
+    if not chosen_is_dir:
+        return derive(requested, chosen, chosen_is_dir=False)
+    if not os.path.isdir(chosen):
+        raise RemapError(ERROR_CHOSEN_INVALID, f"不是文件夹: {chosen}", path=chosen)
+    try:
+        return derive(requested, chosen, chosen_is_dir=True)
+    except RemapError as exc:
+        if exc.code != ERROR_NOT_FOUND_IN_DIR:
+            raise
+        rule = _derive_dir(requested, chosen)
+    target = figcapture.remap_target([rule], requested, whole=True)
+    target = projectenv.contained_path(rule["to"], target) if target is not None else None
+    if target is None or not os.path.isdir(target):
+        raise RemapError(ERROR_NOT_FOUND_IN_DIR, "推出的规则落不到这个文件夹上", path=chosen)
     return rule
 
 
@@ -346,14 +542,21 @@ def _ancestor(path: str, levels: int, *, dirname=os.path.dirname) -> str:
 # ---------------------------------------------------------------- 弹窗载荷
 
 
-def _probe_via_of_constants(tree: ast.AST) -> dict[int, str]:
+def _probe_via_of_constants(tree: ast.AST, kinds: dict[int, set] | None = None) -> dict[int, str]:
     """`id(Constant)` → `probe` / `glob`：这个常量是探路调用问的那条路径（绝对的也算）。
 
     与 `databinding.probe_literals` 同一张表（`PATH_PROBE_FUNCS` / `DIR_PROBE_FUNCS` /
     `GLOB_FUNCS` / `Path(<常量>)` 上的 `PATH_METHOD_PROBES` / `PATH_METHOD_GLOBS`）。那边只收相对
     目标；这里要的是**反过来**的事实——一个绝对常量若是被 `exists()` 问的，改指表救不回它，
     对话框不能给它选择器（否则指认 → 重跑 → `exists()` 照样 False → 同一个框再弹）。
+
+    给了 `kinds` 就顺带记下每个常量被问成什么（`PROBE_KIND_OF`；glob 的目标与 `root_dir` 是文件夹）。
     """
+    kinds = kinds if kinds is not None else {}
+
+    def _kind(node_id: int, kind: str) -> None:
+        kinds.setdefault(node_id, set()).add(kind)
+
     # 只赋值过一次的名字 → 它的常量（`DATA = "/abs/x.csv"` 再 `exists(DATA)` 是最常见的写法）。
     # 赋值不止一次的不跟：说不清探的是哪一个值
     stores: dict[str, int] = {}
@@ -391,8 +594,10 @@ def _probe_via_of_constants(tree: ast.AST) -> dict[int, str]:
             if databinding._func_name(ctor.func) in aliases.path_ctors and inner is not None:
                 if name in databinding.PATH_METHOD_PROBES:
                     out[id(inner)] = VIA_PROBE
+                    _kind(id(inner), PROBE_KIND_OF.get(name, PROBE_ANY))
                 elif name in databinding.PATH_METHOD_GLOBS:
                     out[id(inner)] = VIA_GLOB
+                    _kind(id(inner), PROBE_DIR)
         if aliases.glob_call(node.func) is not None:
             # `glob("*.csv", root_dir="/moved/data")`：起算目录同样是 glob 在问，改指表救不回它
             root_dir = _const_of(
@@ -400,6 +605,7 @@ def _probe_via_of_constants(tree: ast.AST) -> dict[int, str]:
             )
             if root_dir is not None:
                 out[id(root_dir)] = VIA_GLOB
+                _kind(id(root_dir), PROBE_DIR)
         target = first
         if target is None:
             target = next(
@@ -410,9 +616,25 @@ def _probe_via_of_constants(tree: ast.AST) -> dict[int, str]:
             continue
         if name in databinding.PATH_PROBE_FUNCS or name in databinding.DIR_PROBE_FUNCS:
             out[id(target)] = VIA_PROBE
+            _kind(id(target), PROBE_KIND_OF.get(name, PROBE_ANY))
         elif aliases.glob_call(node.func) is not None:
             out[id(target)] = VIA_GLOB
     return out
+
+
+def _probe_kinds_by_text(source: str) -> dict[str, str]:
+    """脚本里被探路调用问到的字符串常量 → 它要的是什么（`PROBE_KIND_OF`；同一串几处合并）。"""
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError):
+        return {}
+    kinds: dict[int, set] = {}
+    _probe_via_of_constants(tree, kinds)
+    by_text: dict[str, set] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) in kinds:
+            by_text.setdefault(node.value, set()).update(kinds[id(node)])
+    return {text: _merged_kind(k) for text, k in by_text.items()}
 
 
 #: 读数据的调用（取末段名）：它们实参里的字符串常量才算「脚本要读的数据」（`static_missing` 的来源）。
@@ -440,6 +662,54 @@ READ_FUNCS = frozenset(
 #: `open` / `File` / `Dataset` 这几个带「模式」：写 / 追加 / 新建 / 读写的打开不是输入
 _MODAL_READS = {"open": 1, "File": 1, "Dataset": 1}
 _WRITE_MODE_CHARS = "wax+"
+
+
+#: 写出 / 建输出目录的调用（取末段名）：它们实参里的路径是**输出**，不是要找的数据，也不许被改写。
+#: 存图调用的唯一出处是 `databinding.SAVE_FUNCS`；这里补上写数据文件与建目录的，外加写模式的 `open` 类。
+WRITE_FUNCS = frozenset(
+    {
+        "savetxt",
+        "savez",
+        "savez_compressed",
+        "tofile",
+        "to_csv",
+        "to_excel",
+        "to_parquet",
+        "to_json",
+        "to_pickle",
+        "to_hdf",
+        "to_netcdf",
+        "to_feather",
+        "write_text",
+        "write_bytes",
+        "makedirs",
+        "mkdir",
+    }
+)
+
+
+def is_write_call(node: ast.Call) -> bool:
+    """存图 / 写出 / 建输出目录，或写 / 追加 / 读写模式的打开——与 `_is_read_call` 同一套模式判据。"""
+    name = databinding._func_name(node.func)
+    if name in databinding.SAVE_FUNCS or name in WRITE_FUNCS:
+        return True
+    pos = _MODAL_READS.get(name)
+    if pos is None:
+        return False
+    mode = node.args[pos] if len(node.args) > pos else None
+    if mode is None:
+        mode = next((k.value for k in node.keywords if k.arg == "mode"), None)
+    return (
+        isinstance(mode, ast.Constant)
+        and isinstance(mode.value, str)
+        and any(c in mode.value for c in _WRITE_MODE_CHARS)
+    )
+
+
+def is_read_call(node: ast.Call) -> bool:
+    """读取调用（`READ_FUNCS` / `read_*`，带模式的只认读模式）——脚本改写追值的去向时，值进了读取调用就成了数据、
+    不再是路径（`scriptedit._Flow`）。与 `static_missing` 同一个判据。"""
+    return _is_read_call(node)
 
 
 def _is_read_call(node: ast.Call) -> bool:
@@ -544,7 +814,7 @@ def _input_constant_ids(tree: ast.AST) -> set[int]:
     return out
 
 
-def _absolute_literals(source: str) -> list[tuple[str, str]]:
+def _absolute_literals(source: str, *, reads_only: bool = True) -> list[tuple[str, str]]:
     """脚本里**以字符串常量出现**的绝对数据路径（存图调用的实参除外）→ `[(路径, via)]`。只认常量，不求值。
 
     `via` 按常量所在的调用判：被探路调用问的是 `probe` / `glob`，其余是 `open`；同一串在几处出现、
@@ -573,7 +843,7 @@ def _absolute_literals(source: str) -> list[tuple[str, str]]:
         if text in outputs:
             continue
         # 只有进了读取调用（或被探路调用问）的常量才是「脚本要读的数据」；代码文件不是
-        if (id(node) not in inputs and id(node) not in probed) or _is_code(text):
+        if (reads_only and id(node) not in inputs and id(node) not in probed) or _is_code(text):
             continue
         via = probed.get(id(node), VIA_OPEN)
         if text in out:
@@ -631,9 +901,14 @@ def _resolved(rules: list[dict], text: str) -> bool:
 
 
 def static_missing(
-    script: str, root: str | os.PathLike, rules: list[dict] | None = None
+    script: str,
+    root: str | os.PathLike,
+    rules: list[dict] | None = None,
+    *,
+    reads_only: bool = True,
 ) -> list[dict]:
-    """脚本里写着、此刻哪里都找不到的路径：`[{path, absolute, via}]`（按出现顺序，最多 `MAX_OTHERS`）。
+    """脚本里写着、此刻哪里都找不到的路径：`[{path, absolute, via, probe_kind}]`（按出现顺序，最多
+    `MAX_OTHERS`）。`reads_only=False` 只给 C++ 读取器的归因（`native_miss`）用：候选不要求进了已知的读取调用。
 
     相对的看 `databinding.evidence`：脚本目录与项目根**两处都** `missing`（项目外的 `outside` 不算，
     那里不看）；探路目标同理，`via` 标成 `probe` / `glob`。绝对的只 `os.path.exists`（不读、不列目录）。
@@ -648,6 +923,9 @@ def static_missing(
     top = cands.get(databinding.CANDIDATE_PROJECT_ROOT) or {}
     out: list[dict] = []
 
+    source = _script_source(root_path, script_path)
+    kinds = _probe_kinds_by_text(source)
+
     def _add(path: str, absolute: bool, via: str) -> None:
         if len(out) >= MAX_OTHERS or any(o["path"] == path for o in out):
             return
@@ -655,15 +933,21 @@ def static_missing(
         # 那一串，脚本照样走「不存在」那一支，这一条要留着按「改指救不回」说（Codex 评 #716 P2）
         if via == VIA_OPEN and _resolved(rules, path):
             return
-        out.append({"path": path, "absolute": absolute, "via": via})
+        if via == VIA_GLOB:
+            probe_kind = PROBE_DIR  # 指认的是模式所在的文件夹
+        elif via == VIA_PROBE:
+            # `listdir()` 不带实参列的是 cwd（目标记成 `.`）
+            probe_kind = PROBE_DIR if path == "." else kinds.get(path, PROBE_ANY)
+        else:
+            probe_kind = PROBE_ANY  # open：文件，或它所在的文件夹（derive 在里面找）
+        out.append({"path": path, "absolute": absolute, "via": via, "probe_kind": probe_kind})
 
     probe_targets = set(ev.get("probes") or [])
-    source = _script_source(root_path, script_path)
     read_texts = _input_texts(source)
     for lit in ev.get("reads") or []:
         # `evidence` 的 reads 是「像数据路径的常量」（首开判运行目录用，宁多勿漏）；这里要的是**真进了
         # 读取调用**的那些——标签、写出目标、输出目录、`.py` 都不是缺的数据
-        if lit not in read_texts and lit not in probe_targets:
+        if reads_only and lit not in read_texts and lit not in probe_targets:
             continue
         if lit in (parent.get("missing") or []) and lit in (top.get("missing") or []):
             # 同一串也被 exists / listdir 问过：脚本多半先判再读，改指救不回那一问——按探路算
@@ -674,7 +958,7 @@ def static_missing(
         if target in p_probes and target in t_probes:
             via = VIA_GLOB if any(c in target for c in "*?[") else VIA_PROBE
             _add(target, False, via)
-    for text, via in _absolute_literals(source):
+    for text, via in _absolute_literals(source, reads_only=reads_only):
         try:
             if via == VIA_GLOB:
                 # 父进程里同步判：`**` 递归可能扫整棵树，判不出就不列；其余非递归、见到一个就停
@@ -689,26 +973,35 @@ def static_missing(
 
 
 def payload_for(
-    script: str, root: str | os.PathLike, missing: dict | None, *, rules: list[dict] | None = None
+    script: str,
+    root: str | os.PathLike,
+    missing: dict | None,
+    *,
+    rules: list[dict] | None = None,
+    via: str = VIA_OPEN,
 ) -> dict | None:
     """弹窗载荷。`missing` 是 worker 报的 `missing_input` 事实（没有就是「没出图」路径，只剩静态的）。
 
-    `{script, requested, absolute, via, others: [{path, absolute, via}]}`——`requested` 为 None 时
-    界面以 `others` 的第一条为主。两样都没有回 None（没什么可问的）。
+    `{script, requested, absolute, via, probe_kind, others: [{path, absolute, via, probe_kind}]}`——
+    `probe_kind` 是那条路径要的是什么（`dir` 只能指认文件夹）；`requested` 为 None 时
+    界面以 `others` 的第一条为主。两样都没有回 None（没什么可问的）。`via` 是主条目的：worker 报的
+    `missing_input` 是 `open`；C++ 读取器对上的（`native_miss`）是 `native`。
     """
     rules = rules if rules is not None else rules_for(root)
     others = static_missing(script, root, rules)
     requested = None
     absolute = False
-    via = VIA_OPEN
+    probe_kind = PROBE_ANY
     if isinstance(missing, dict) and isinstance(missing.get("requested"), str):
         requested = missing["requested"]
         absolute = bool(missing.get("absolute"))
         same = [o for o in others if o["path"] == requested]
         others = [o for o in others if o["path"] != requested]
+        probe_kind = _merged_kind(o.get("probe_kind") for o in same if o["via"] != VIA_OPEN)
         # 同一串在脚本里也被 exists / glob 问过：分类跟着静态那一条走（口径同 `static_missing`）——
         # 改指只救得回 open，探路照样落空，给选择器就是「指认 → 重跑 → 照样退出」（Codex 评 #716 P2）
-        via = next((o["via"] for o in same if o["via"] != VIA_OPEN), VIA_OPEN)
+        # （调用方给的 `native` 等主条目分类不被 open 覆盖：只在静态那一条是探路时才换）
+        via = next((o["via"] for o in same if o["via"] != VIA_OPEN), via)
     if requested is None and not others:
         return None
     return {
@@ -716,5 +1009,71 @@ def payload_for(
         "requested": requested,
         "absolute": absolute,
         "via": via,
+        "probe_kind": probe_kind,
         "others": others,
+    }
+
+
+def _as_written(filename: str, cwd: str) -> str:
+    """异常里的路径 → 脚本写法那一侧：cwd 之内的绝对路径换回相对那段（xarray 先 abspath 再报）。"""
+    if cwd and os.path.isabs(filename):
+        try:
+            rel = os.path.relpath(filename, cwd)
+        except ValueError:  # Windows 跨盘
+            return filename
+        if not rel.startswith(".."):
+            return rel.replace("\\", "/")
+    return filename
+
+
+def native_miss(
+    script: str, root: str | os.PathLike, enoent: dict | None, *, rules: list[dict] | None = None
+) -> dict | None:
+    """`script_error` 里的 ENOENT 事实（`figcapture.enoent_fact`）→ `missing_input` 事实，对不上回 None。
+
+    ADR 0110 §一：C++ 读取器不经四个打开入口，worker 说不出是哪串常量；这里拿脚本的静态证据对。
+    候选只来自 `static_missing`（脚本里以常量出现、此刻哪儿都找不到的）。异常里的路径（`filename`，
+    没有就是消息里引号括着的 `named`）与候选按路径段比：整串相等优先，其次候选是它的前缀（目录常量
+    拼出来的）、路径段最长的那条。cwd 之内的绝对路径按脚本写法那一侧（换回相对）**与**原样的绝对
+    写法两种都试——脚本写的到底是绝对还是 cwd 相对，异常本身说不清（xarray 先 abspath 再报），
+    `native_miss` 要求候选与报告的路径同为绝对或同为相对，选错一种就永远对不上脚本自己写的绝对路径
+    （与 #716「绝对路径保留绝对身份」同一个口径，Codex 评 #730 P2）；两种写法都对不上任何一条候选——
+    不判，调用方照旧是 `script_error`（判不出就别判）。
+    """
+    if not isinstance(enoent, dict):
+        return None
+    raw = enoent.get("filename") or enoent.get("named")
+    if not isinstance(raw, str) or not raw:
+        return None
+    cwd = enoent.get("cwd") if isinstance(enoent.get("cwd"), str) else ""
+    written = _as_written(raw, cwd)
+    forms = [written] if written == raw else [written, raw]
+    parsed_forms = [(w, figcapture.remap_parts(w)) for w in forms]
+    parsed_forms = [(w, p) for w, p in parsed_forms if p is not None and p[1]]
+    if not parsed_forms:
+        return None
+    rules = rules if rules is not None else rules_for(root)
+    best: tuple[int, str, str, bool] | None = None  # (段数, 候选原文, 匹配用的写法, 是否绝对)
+    # 归因的候选放宽到「像数据路径的常量」（不要求进了已知的读取调用）：C++ 读取器常包在用户自己的函数里，
+    # 而 ENOENT 与常量逐段对上本身就是强证据；弹窗的「一并修好」仍只列读取调用的实参
+    for cand in static_missing(script, root, rules, reads_only=False):
+        cparsed = figcapture.remap_parts(cand["path"])
+        if cparsed is None or not cparsed[1]:
+            continue
+        for w, parsed in parsed_forms:
+            if cparsed[0] != parsed[0]:
+                continue  # 一份是绝对一份是相对，说的不是同一种写法，不比
+            n = len(cparsed[1])
+            if parsed[1][:n] != cparsed[1]:
+                continue
+            if best is None or n > best[0]:
+                best = (n, cand["path"], w, parsed[0])
+    if best is None:
+        return None
+    _, literal, matched_written, absolute = best
+    return {
+        "requested": matched_written,
+        "absolute": absolute,
+        "cwd": cwd,
+        "literal": literal,
     }
