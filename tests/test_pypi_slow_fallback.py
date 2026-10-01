@@ -276,19 +276,20 @@ def test_the_watch_counts_stalls_only_in_the_network_phase(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "text,expected",
+    "opts,user,custom",
     [
-        ("global.index-url='x'\n", {"index-url"}),
-        ("install.index_url='x'\n", {"index-url"}),
-        ("global.--extra-index-url='x'\n", {"extra-index-url"}),
-        (":env:.no-index='1'\n", {"no-index"}),
-        ("download.index-url='x'\nindex.index-url='y'\n", set()),
-        ("GLOBAL.Index-Url='x'\n", {"index-url"}),
-        ("garbage line\n\n", set()),
+        ({"index_url": "https://pypi.org/simple", "extra_index_urls": []}, False, False),
+        ({"index_url": "https://pypi.org/simple/", "extra_index_urls": []}, False, False),
+        ({"index_url": "https://pypi.corp/simple", "extra_index_urls": []}, True, True),
+        ({"index_url": "https://pypi.org/simple", "extra_index_urls": ["https://x"]}, True, True),
+        ({"index_url": "https://pypi.org/simple", "no_index": True}, True, False),
+        ({"index_url": "https://pypi.org/simple", "find_links": ["/w"]}, True, False),
     ],
 )
-def test_pip_config_keys_filters_by_section_and_normalizes_like_pip(text, expected):
-    assert deprepair.pip_config_keys(text) == expected
+def test_the_options_verdicts(opts, user, custom):
+    """pip 解析出的 install 选项 → 「用户说过从哪装」（含离线 wheelhouse）/「自定义索引」（诊断只问 index）。"""
+    assert deprepair.options_name_a_user_source(opts) is user
+    assert deprepair.options_name_a_custom_index(opts) is custom
 
 
 # ---------------------------------------------------------------- 失败进 app.log（四个线程入口）

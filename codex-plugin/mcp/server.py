@@ -753,110 +753,54 @@ def _is_mirror(url: str) -> bool:
     return host not in _PYPI_HOSTS
 
 
-#: 作用于 `pip install` 的配置节：`global`、命令自己的 `install`、环境变量（`pip config list` 把 `PIP_*`
-#: 列成 `:env:.<键>`）。`download` / `index` 等别的命令的节不影响安装。**引擎 `deprepair._PIP_INSTALL_SECTIONS`
-#: 的镜像**（插件 import 不到引擎；同源对，看护 `tests/test_pip_config_pair.py`）。元组顺序就是 pip 的覆盖
-#: 顺序（`ConfigOptionParser._get_ordered_configuration_items`：global → 命令名 → :env:，后者生效）。
-_PIP_INSTALL_SECTIONS = ("global", "install", ":env:")
-
 #: `pip_index()` 问不到 pip 时的结论：**不知道**，不猜（#737）。与「没配置」（None = 用 PyPI 默认）是两档。
 PIP_INDEX_UNKNOWN = {"url": None, "source": "unknown", "mirror": None}
 
+#: 在**目标解释器**里让 pip 自己把 `pip install` 的选项解析一遍（与真装包同一条路，不联网、不装东西），
+#: 回生效的包源（JSON 一行）。不再自己读 `pip config list`：它的打印顺序不是覆盖顺序、`config get` 不认
+#: `PIP_CONFIG_FILE`（#767 实测，两轮 Codex P1 同一个根因）。**引擎 `deprepair.PIP_OPTIONS_PROBE` 的逐字镜像**
+#: （插件 import 不到引擎；严格同源对，看护 `tests/test_pip_config_pair.py`）。
+_PIP_OPTIONS_PROBE = """\
+import json
+try:
+    import pip
+    from pip._internal.commands import create_command
+    o, _ = create_command("install").parse_args([])
+    print(json.dumps({
+        "pip_version": pip.__version__,
+        "index_url": o.index_url or "",
+        "extra_index_urls": list(o.extra_index_urls or []),
+        "no_index": bool(o.no_index),
+        "find_links": list(o.find_links or []),
+    }))
+except BaseException as e:
+    print(json.dumps({"error": type(e).__name__}))
+"""
 
-def _normalize_pip_key(key: str) -> str:
-    """pip 的键名规范化：小写、`_` 转 `-`、去掉开头的 `-`（`--index-url` / `index_url` / `index-url` 是同一个
-    键，#724 第 8 轮 Codex P2，并入 #737）。**引擎 `deprepair._normalize_pip_key` 的镜像**。"""
-    key = key.strip().lower().replace("_", "-")
-    while key.startswith("-"):
-        key = key[1:]
-    return key
+#: pip 的默认索引（引擎 `deprepair.PYPI_DEFAULT_INDEX` 的镜像）
+_PYPI_DEFAULT_INDEX = "https://pypi.org/simple"
 
 
-def _pip_config_value(raw: str) -> str:
-    """`pip config list` 按 `repr` 打印值（`global.index-url='https://…'`）；解不出 repr 就去掉外层引号。"""
-    import ast  # noqa: PLC0415 — 只有体检路径用得到
+def parse_pip_options(text: str) -> "dict | None":
+    """`_PIP_OPTIONS_PROBE` 的输出 → 选项字典；出错 / 认不出形状回 None（= 不知道）。引擎同名函数的镜像。"""
+    import json  # noqa: PLC0415 — 只有体检路径用得到
 
-    raw = raw.strip()
-    try:
-        value = ast.literal_eval(raw)
-    except (ValueError, SyntaxError):
-        value = raw.strip("'\"")
-    return value if isinstance(value, str) else str(value)
-
-
-def pip_config_items(text: str) -> "list[tuple[str, str, str]]":
-    """`pip config list` 的输出 → 作用于 `pip install` 的 `(节, 规范化后的键, 值)`，按出现顺序。
-
-    判据的主语是 **pip 自己**合并好的结果（它按平台位置、编码、文件覆盖顺序与环境变量读完才打印）——
-    这里不复刻 pip 的配置发现（#737），只把它打印的 `<节>.<键>=<值>` 按节筛一遍。认不出形状的行跳过。
-    按节筛、键名规范化与引擎 `deprepair.pip_config_keys` 同源（插件多收一个值：要判是不是镜像）。"""
-    items: "list[tuple[str, str, str]]" = []
-    for line in (text or "").splitlines():
-        name, sep, value = line.partition("=")
-        if not sep:
+    for line in reversed((text or "").strip().splitlines()):
+        try:
+            data = json.loads(line)
+        except ValueError:
             continue
-        section, dot, key = name.strip().partition(".")
-        if not dot or section.lower() not in _PIP_INSTALL_SECTIONS:
-            continue
-        items.append((section.lower(), _normalize_pip_key(key), _pip_config_value(value)))
-    return items
-
-
-def pip_config_index_url(text: str) -> "tuple[str | None, str | None]":
-    """`pip config list` 的输出里 `pip install` 的 index-url 配在哪一节、写的是什么：节按 pip 的覆盖顺序
-    （`:env:` 压过 `install` 压过 `global`）。没写回 (None, None)；写了空值回 ("", 节)——「设没设」与引擎
-    `pip_config_keys` 逐条一致。**生效那一节里出现不止一个不同的值**（同一节的键来自好几个文件）时值回
-    None、节照回：`config list` 每条都打印，顺序不是覆盖顺序（#767 实测），从行序推不出谁生效——值由
-    `_pip_effective_index_url` 让 pip 自己解析。"""
-    found: "dict[str, list[str]]" = {}
-    for section, key, value in pip_config_items(text):
-        if key == "index-url":
-            found.setdefault(section, []).append(value.strip())
-    for section in reversed(_PIP_INSTALL_SECTIONS):
-        if section in found:
-            values = found[section]
-            return (values[0] if len(set(values)) == 1 else None), section
-    return None, None
-
-
-#: 在目标解释器里让 **pip 自己**把 `pip install` 的选项解析一遍（与真装包同一条路：配置文件按 pip 的覆盖顺序
-#: 合并、`[install]` 压过 `[global]`、`PIP_CONFIG_FILE` / `PIP_*` 环境变量），只打印生效的 index-url。
-#: 不联网、不装东西。`config list` 的打印顺序**不是**覆盖顺序、`config get` 也不认 `PIP_CONFIG_FILE`
-#: （#767 实测，见 PR），所以「是哪个值」只信这一处。用的是 pip 的内部入口 `create_command`（pip 19.3 起
-#: 一直在）；解析不了就是不知道。
-_PIP_EFFECTIVE_INDEX_CODE = (
-    "from pip._internal.commands import create_command\n"
-    "o, _ = create_command('install').parse_args([])\n"
-    "print(o.index_url or '')\n"
-)
-
-
-def _pip_effective_index_url(
-    python: str, environ, timeout: float, shared: "str | None" = None
-) -> "str | None":
-    """那个解释器的 `pip install` 此刻真会用的 index-url；问不到回 None。`shared`：目标自己没有 pip 时
-    pipx 共享库那个解释器——把它的 pip 所在目录放上 `PYTHONPATH`，仍在**目标解释器**里解析（site 配置
-    跟着目标走，与 `pip --python` 一致）。"""
-    env = dict(environ)
-    if shared is not None:
-        where = _run_pip_config_list(
-            [
-                shared,
-                "-B",
-                "-c",
-                "import os, pip; print(os.path.dirname(os.path.dirname(os.path.abspath(pip.__file__))))",
-            ],
-            environ,
-            timeout,
-        )
-        if not where or not where.strip():
+        if not isinstance(data, dict) or "error" in data or "index_url" not in data:
             return None
-        env["PYTHONPATH"] = where.strip()
-    out = _run_pip_config_list([python, "-B", "-c", _PIP_EFFECTIVE_INDEX_CODE], env, timeout)
-    if out is None:
-        return None
-    lines = out.strip().splitlines()
-    return lines[-1].strip() if lines else ""
+        return data
+    return None
+
+
+def options_name_a_custom_index(opts: dict) -> bool:
+    """pip 解析出的 install 选项是不是指向自定义索引：index-url 不是 PyPI 默认、或有 extra-index-url。
+    **引擎 `deprepair.options_name_a_custom_index` 的镜像**（同源对）。"""
+    index = str(opts.get("index_url") or "").strip().rstrip("/").lower()
+    return index != _PYPI_DEFAULT_INDEX.rstrip("/").lower() or bool(opts.get("extra_index_urls"))
 
 
 def _pipx_shared_python(python: str, environ) -> "str | None":
@@ -877,7 +821,7 @@ def _pipx_shared_python(python: str, environ) -> "str | None":
     return None
 
 
-def _run_pip_config_list(argv: "list[str]", environ, timeout: float) -> "str | None":
+def _run_probe(argv: "list[str]", environ, timeout: float) -> "str | None":
     # 只读体检：`-B` 管住起的这个解释器，`PYTHONDONTWRITEBYTECODE` 管住 `pip --python` 再起的那个
     env = {**environ, "PYTHONDONTWRITEBYTECODE": "1"}
     try:
@@ -897,42 +841,49 @@ def _run_pip_config_list(argv: "list[str]", environ, timeout: float) -> "str | N
 
 
 def pip_index_of(python: "str | None", environ=None, timeout: float = 15.0) -> "dict | None":
-    """**那个解释器**的 pip 从哪个索引装包——直接问 pip（`python -m pip config list` 判配没配、在哪一节；
-    生效的值由 pip 解析 install 选项给出，#737 / #767），不复刻 pip 的
-    配置发现：平台位置、编码、文件覆盖顺序、`PIP_CONFIG_FILE`、site 配置、Windows 商店版 Python 的虚拟化
-    配置，都由 pip 自己在那个解释器里按它的规则读完。
+    """**那个解释器**的 pip 从哪个索引装包——让 pip 自己在那个解释器里把 install 选项解析一遍
+    （`_PIP_OPTIONS_PROBE`，#737 / #767），不复刻 pip 的配置发现：平台位置、编码、文件覆盖顺序、
+    `PIP_CONFIG_FILE`、site 配置、Windows 商店版 Python 的虚拟化配置、`PIP_*` 环境变量，都由 pip 按它装包时的
+    规则读完。
 
     回 `{"url": 地址（只剩协议与主机，口令 / 路径 / 查询串已抹）, "source": "PIP_INDEX_URL" | "pip_config",
-    "mirror": bool}`；pip 说没配 index-url（= 用 PyPI 默认值）回 None；**问不到**回 `PIP_INDEX_UNKNOWN`
-    ——不猜。那个解释器没有 pip 时（pipx 的 venv 默认如此）先试 pipx 共享库里的 pip，用 `--python`
-    让它按目标解释器求值（site 配置与装包时一致）；再不行就是不知道。`python` 为空回 None（没有可问的）。
+    "mirror": bool}`；没配自定义索引（index-url 是 PyPI 默认、没有 extra-index-url）回 None；**问不到**
+    （没有 pip、pip 太旧、配置解析失败、超时）回 `PIP_INDEX_UNKNOWN`——不猜。那个解释器没有 pip 时（pipx 的
+    venv 默认如此）借 pipx 共享库里的 pip：把它所在目录放上 `PYTHONPATH`、仍在**目标解释器**里解析（与
+    `pip --python` 同一个做法，site 配置跟着目标走）；再不行就是不知道。`python` 为空回 None（没有可问的）。
     镜像滞后是 #721 的现场：阿里云镜像上只有 0.15.0，`pipx upgrade` 也升不上去。"""
     if not python:
         return None
-    env = os.environ if environ is None else environ
-    shared = None
-    text = _run_pip_config_list([python, "-B", "-m", "pip", "config", "list"], env, timeout)
-    if text is None:
+    env = dict(os.environ if environ is None else environ)
+    out = _run_probe([python, "-B", "-c", _PIP_OPTIONS_PROBE], env, timeout)
+    opts = parse_pip_options(out) if out is not None else None
+    if opts is None:
         shared = _pipx_shared_python(python, env)
+        where = None
         if shared:
-            text = _run_pip_config_list(
-                [shared, "-B", "-m", "pip", "--python", python, "config", "list"], env, timeout
+            where = _run_probe(
+                [
+                    shared,
+                    "-B",
+                    "-c",
+                    "import os, pip; print(os.path.dirname(os.path.dirname(os.path.abspath(pip.__file__))))",
+                ],
+                env,
+                timeout,
             )
-    if text is None:
+        if where and where.strip():
+            out = _run_probe(
+                [python, "-B", "-c", _PIP_OPTIONS_PROBE],
+                {**env, "PYTHONPATH": where.strip().splitlines()[-1]},
+                timeout,
+            )
+            opts = parse_pip_options(out) if out is not None else None
+    if opts is None:
         return dict(PIP_INDEX_UNKNOWN)
-    # 配没配、配在哪一节：按 `config list` 的节判（与引擎 `pip_config_keys` 同源）
-    _value, section = pip_config_index_url(text)
-    if section is None:
+    if not options_name_a_custom_index(opts):
         return None
-    # 生效的是**哪个值**：同一节的键可以来自好几个文件，`config list` 每条都打印且顺序不是覆盖顺序——
-    # 让 pip 自己把 install 的选项解析一遍（#767 Codex P1）。问不到就是不知道，不从行序猜
-    effective = _pip_effective_index_url(python, env, timeout, shared)
-    if effective is None:
-        return dict(PIP_INDEX_UNKNOWN)
-    url = effective.strip()
-    if not url:
-        return None
-    source = "PIP_INDEX_URL" if section == ":env:" else "pip_config"
+    url = str(opts.get("index_url") or "")
+    source = "PIP_INDEX_URL" if (env.get("PIP_INDEX_URL") or "").strip() else "pip_config"
     return {"url": _redact_url(url), "source": source, "mirror": _is_mirror(url)}
 
 
@@ -978,7 +929,7 @@ def upgrade_commands(target: "str | None", index: "dict | None") -> "list[str]":
 
 #: `pip_index()` 的 `source` 是类别，不是路径（路径会进模型看得见的体检结果）；这里是给人看的说法。
 _SOURCE_LABELS = {
-    "pip_config": "pip 的配置（pip config list）",
+    "pip_config": "pip 的配置（pip 自己解析的 install 选项）",
     "PIP_INDEX_URL": "环境变量 PIP_INDEX_URL",
 }
 

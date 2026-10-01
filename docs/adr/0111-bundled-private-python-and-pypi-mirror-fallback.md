@@ -104,7 +104,8 @@ argv 出处 `pip_install_argv` / `pip_install_joint_argv` 各多一个只在这�
 **「用户自配了源」**：`user_package_source(python)`——环境变量 `PIP_INDEX_URL` / `PIP_EXTRA_INDEX_URL` / `PIP_NO_INDEX` /
 `PIP_FIND_LINKS`，或这个解释器的 `pip config list` 里有 `index-url` / `extra-index-url` / `no-index` / `find-links`。
 它是诊断用的 `custom_package_index`（只问 index）的超集：离线 wheelhouse 同样是「用户说过从哪装」，绕开它去联网违背
-意思表示。问不出来（`pip config list` 失败）按「配过」处理——宁可不换源。受管环境里跑的 pip 用的是用户自己的 pip 配置
+意思表示。问不出来（`pip config list` 失败）按「配过」处理——宁可不换源。（2026-10-01 起改为让 pip 在目标解释器里解析 install
+选项、不再读 `pip config list`——见 ADR 0112 §二的修订，#767。）受管环境里跑的 pip 用的是用户自己的 pip 配置
 （`runtime.owned_env` 只改缓存位置，ADR 0019 §八），所以这一问对四条路径量的是同一个东西。
 
 **镜像的信任面**：固定一个——清华 TUNA `https://pypi.tuna.tsinghua.edu.cn/simple`（PyPI 全量镜像，HTTPS，证书由 pip

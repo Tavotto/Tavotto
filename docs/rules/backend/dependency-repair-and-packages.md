@@ -179,14 +179,15 @@
   `pip_install_argv` / `pip_install_joint_argv` 各多一个只在这里传的 `index_url`，默认 argv 一个字节不变）。
   先按官方 / 用户配置跑；**仅当** `mirror_retry_warranted(code, user_package_source(python))`——code 是
   `dependency_network_unavailable`（pip 退出码非零 + 网络特征；退出码 0 不算）且这个环境没有用户自配源
-  （四个 `PIP_*` 环境变量 / `pip config list` 的 index-url · extra-index-url · no-index · find-links；问不出来按
+  （pip 自己解析出的 install 选项里有自定义 index-url〔不是 PyPI 默认〕· extra-index-url · no-index · find-links；问不出来按
   「配过」）——才带 `--index-url PYPI_MIRROR_URL`（清华 TUNA，固定一个）**再跑一次**，不再换。日志一行写明、
   进度记录顶层 `pypi_mirror`——**只在镜像那次 pip 真起来之后**（`_run_pip(on_started=)`）才记，起之前取消 / 起不来都不记。联合准备（跑前准备弹窗那条路，原地 / 换代两种）与单包修复、包管理**同一个字段、同一层**（进度记录顶层），先记字段再写日志那句，带说明的第一个快照（`installing`）就已带着它。`custom_package_index` 仍只服务诊断（只问 index、只回真假）。看护
   `tests/test_pypi_mirror_fallback.py` + `tests/test_dependency_repair.py::test_the_managed_generation_records_the_mirror_on_its_progress`。
   包查找（`pip index versions`）不在回退范围内。
 - **慢 / 超时也换源、预算共用、结局进日志（ADR 0111 的 2026-09-29 修订；决策全文在 #744 带来的 ADR「自动测速选源」§二 / §三）**：`_run_pip_install`
-  **开始之前**问一次 pip（`user_package_source`：`pip config list` 的输出按 `pip_config_keys` 只收 `global` / `install` /
-  `:env:` 三节、键按 pip 的规范化——小写、`_` 转 `-`、去开头 `--`——比较；不按子串猜，`download.index-url` 不算），定下这次的
+  **开始之前**问一次 pip（`user_package_source`：在目标解释器里跑 `PIP_OPTIONS_PROBE`，让 pip 自己把 `pip install` 的
+  选项解析一遍——配置文件覆盖顺序、`[install]` 压 `[global]`、`PIP_CONFIG_FILE`、`PIP_*` 都由 pip 按装包时的规则算，
+  `download.index-url` 自然不算；不再读 `pip config list`，它的打印顺序不是覆盖顺序，#767），定下这次的
   包源（闭集 `PIP_SOURCES`：pypi / user_config / unknown / tuna，进 app.log 与进度顶层 `pypi_source`，不含地址）。只有 `pypi`
   时第一次尝试带 `_PipWatch`：pip 的 `Downloading <x> (<大小>)` 那一行出现后过了 `PIP_SLOW_GRACE_S` 且超过「大小 /
   `PIP_SLOW_BPS`」还没下一行（这个文件的速度**一定**低于阈值）、或联网阶段连续 `PIP_STALL_S` 没有新行（装的阶段不测）、或用到

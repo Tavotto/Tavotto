@@ -614,10 +614,12 @@ def test_pip_index_asks_pip_for_the_install_sections(tmp_path):
     got = launcher.pip_index(_pip_env(tmp_path, PIP_CONFIG_FILE=conf))
     assert got == {"url": ALIYUN_SAID, "source": "pip_config", "mirror": True}
 
+    # `PIP_INDEX_URL` 压过配置文件；它指回 PyPI 默认 = 没有自定义索引（#767：只在 index-url 不是 PyPI
+    # 默认、或有 extra-index-url 时才算「配了自定义包源」）
     got = launcher.pip_index(
         _pip_env(tmp_path, PIP_CONFIG_FILE=conf, PIP_INDEX_URL="https://pypi.org/simple")
     )
-    assert got == {"url": "https://pypi.org/***", "source": "PIP_INDEX_URL", "mirror": False}
+    assert got is None
 
     assert launcher.pip_index(_pip_env(tmp_path, PIP_CONFIG_FILE=os.devnull)) is None
 
@@ -707,37 +709,13 @@ def _pipx_shared_libs(where: Path) -> Path:
     return where
 
 
-def test_duplicate_index_urls_take_pips_own_parse_not_the_print_order(monkeypatch):
-    """同一节的 index-url 来自好几个文件时，值不从 `config list` 的行序推（打印顺序不是覆盖顺序），也不信
-    `config get`（不认 `PIP_CONFIG_FILE`、有 site 文件时只看 site 那一个）：让 pip 在目标解释器里把 install
-    选项解析一遍，回的就是真装包会用的那个；解析不了就是不知道（#767 Codex P1 两轮）。"""
-    listed = f"global.index-url='https://pypi.org/simple'\nglobal.index-url='{ALIYUN}'\n"
-    asked: list = []
-
-    def fake(argv, environ, timeout, *, parsed=ALIYUN):
-        asked.append(argv)
-        if argv[-2:] == ["config", "list"]:
-            return listed
-        assert argv[1:3] == ["-B", "-c"] and "create_command('install')" in argv[3], argv
-        return None if parsed is None else parsed + "\n"
-
-    monkeypatch.setattr(launcher, "_run_pip_config_list", fake)
-    got = launcher.pip_index_of("/env/bin/python", {})
-    assert got == {"url": ALIYUN_SAID, "source": "pip_config", "mirror": True}, got
-    assert not any("get" in a for a in asked), "不许再用 config get"
-    monkeypatch.setattr(
-        launcher,
-        "_run_pip_config_list",
-        lambda argv, environ, timeout: fake(argv, environ, timeout, parsed=None),
-    )
-    assert launcher.pip_index_of("/env/bin/python", {}) == launcher.PIP_INDEX_UNKNOWN
-
-
 def test_real_pip_config_file_beats_a_site_file_that_config_get_would_read(tmp_path):
     """真 pip（pip 25.3 实测的形状）：venv 的 site 文件写 PyPI、`PIP_CONFIG_FILE` 写镜像——`pip install`
     用镜像，而 `pip config get global.index-url` 回的是 site 的 PyPI。"""
     venv = tmp_path / "venv"
-    subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True, capture_output=True)
+    subprocess.run(
+        [sys.executable, "-m", "venv", str(venv)], check=True, capture_output=True, encoding="utf-8"
+    )
     py = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
     (venv / ("pip.ini" if os.name == "nt" else "pip.conf")).write_text(
         "[global]\nindex-url = https://pypi.org/simple\n", "utf-8"
@@ -750,33 +728,11 @@ def test_real_pip_config_file_beats_a_site_file_that_config_get_would_read(tmp_p
         env=env,
         capture_output=True,
         text=True,
+        encoding="utf-8",
     ).stdout.strip()
     assert got_get == "https://pypi.org/simple", f"前提：config get 只看 site 那一个：{got_get!r}"
     got = launcher.pip_index_of(str(py), env)
     assert got == {"url": ALIYUN_SAID, "source": "pip_config", "mirror": True}, got
-
-
-@pytest.mark.skipif(
-    os.name == "nt",
-    reason="旧 / 新两个用户配置位置是 POSIX 的形状（~/.pip 与 $XDG_CONFIG_HOME/pip）；逻辑由上一条覆盖",
-)
-def test_real_pip_with_a_legacy_and_a_current_user_config_reports_the_effective_one(tmp_path):
-    """真 pip：旧位置 `~/.pip/pip.conf` 写 PyPI、新位置 `$XDG_CONFIG_HOME/pip/pip.conf` 写镜像——新位置生效，
-    而 `pip config list` 两条都打印、生效的那条（按值排序）在前；只认最后一行会把它判成「没配镜像」。"""
-    env = _pip_env(tmp_path)
-    home = Path(env["HOME"])
-    (home / ".pip").mkdir()
-    (home / ".pip" / "pip.conf").write_text(
-        "[global]\nindex-url = https://pypi.org/simple\n", "utf-8"
-    )
-    (home / ".config" / "pip").mkdir(parents=True)
-    (home / ".config" / "pip" / "pip.conf").write_text(f"[global]\nindex-url = {ALIYUN}\n", "utf-8")
-    listed = subprocess.run(
-        [sys.executable, "-m", "pip", "config", "list"], env=env, capture_output=True, text=True
-    ).stdout
-    assert listed.count("global.index-url=") == 2, f"前提：两个位置都被 pip 读到并打印：{listed!r}"
-    got = launcher.pip_index_of(sys.executable, env)
-    assert got == {"url": ALIYUN_SAID, "source": "pip_config", "mirror": True}, (got, listed)
 
 
 def test_a_pipx_venv_without_pip_is_asked_through_pipxs_shared_pip(tmp_path):

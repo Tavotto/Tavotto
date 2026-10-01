@@ -1383,7 +1383,16 @@ def _stub_generation_until_pip(monkeypatch, *, pip_code: str) -> list[str]:
     monkeypatch.setattr(
         deprepair.managedenv, "create_generation_venv", lambda project, gen, base: (True, "")
     )
-    monkeypatch.setattr(deprepair, "_run", lambda argv, timeout: (0, "pip 24.0"))
+    # 只读探测：`pip --version` 回版本；问包源（`PIP_OPTIONS_PROBE`）回「什么源都没配」（PyPI 默认）
+    no_source = (
+        '{"pip_version": "24.0", "index_url": "https://pypi.org/simple", "extra_index_urls": [],'
+        ' "no_index": false, "find_links": []}'
+    )
+    monkeypatch.setattr(
+        deprepair,
+        "_run",
+        lambda argv, timeout: (0, no_source if deprepair.PIP_OPTIONS_PROBE in argv else "pip 24.0"),
+    )
     monkeypatch.setattr(
         deprepair,
         "_run_pip",
@@ -1446,7 +1455,7 @@ def test_a_failed_managed_pip_run_leaves_the_requirement_retryable(
         with pytest.raises(deprepair.RepairError) as err:
             deprepair.install(plan.plan_id)
         assert err.value.code == pip_code
-    # 断网那条按 ADR 0111 再走一次镜像（桩里的 `pip config list` 什么源都没配），仍断网就如实失败；取消不换源
+    # 断网那条按 ADR 0111 再走一次镜像（桩里问包源回「什么源都没配」），仍断网就如实失败；取消不换源
     assert runs == (["pip", "pip"] if pip_code == deprepair.ERROR_NETWORK else ["pip"])
     again = deprepair.create_plan(
         str(project), "figure.py", FIXTURE_IMPORT, target_kind=deprepair.TARGET_MANAGED
