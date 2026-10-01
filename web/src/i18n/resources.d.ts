@@ -3886,7 +3886,7 @@ export default interface Resources {
       "altClick": "{{alt}}+点击",
       "altDrag": "{{alt}}+拖角点",
       "arrowKeys": "方向键 / ⇧+方向键 / {{alt}}+方向键",
-      "newline": "{{alt}}⏎ 或 {{mod}}⏎（文字编辑中）",
+      "newline": "{{alt}}⏎ / {{mod}}⏎",
       "rightClick": "右键",
       "shiftClick": "⇧+点击",
       "spaceDrag": "Space+拖动",
@@ -3899,7 +3899,6 @@ export default interface Resources {
       "file": "文件",
       "selection": "选择",
       "tools": "工具",
-      "tutorial": "教程",
       "view": "视图"
     },
     "key": {
@@ -3913,7 +3912,7 @@ export default interface Resources {
       "freeResize": "自由缩放（不锁定宽高比）",
       "help": "本帮助",
       "multiSelect": "加选 / 减选对象或图内元素",
-      "newline": "插入换行；单按 ⏎ 提交",
+      "newline": "文字编辑中插入换行；单按 ⏎ 提交",
       "nudge": "微移选中对象或图内元素：0.5 mm / 5 mm / 0.1 mm（页面上的距离）；连按算一步撤销",
       "palette": "命令面板",
       "pan": "平移画布",
@@ -3934,6 +3933,7 @@ export default interface Resources {
       "zoomPresets": "100% / 适应画布"
     },
     "noMatch": "没有匹配的快捷键",
+    "or": "或",
     "search": "搜索快捷键…",
     "searchAria": "搜索快捷键",
     "title": "快捷键"

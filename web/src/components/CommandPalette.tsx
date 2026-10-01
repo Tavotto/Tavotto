@@ -2,7 +2,40 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { create } from 'zustand'
 import { msg } from '@/i18n'
-import { Search } from '@/components/ui/icons'
+import {
+  AlignHorizontalDistributeCenter,
+  AlignVerticalDistributeCenter,
+  Bookmark,
+  CircleQuestionMark,
+  ClipboardList,
+  Download,
+  FolderOpen,
+  FolderPlus,
+  Fullscreen,
+  Group,
+  Images,
+  Layers,
+  Layers2,
+  LayoutGrid,
+  LayoutList,
+  Lightbulb,
+  Paintbrush,
+  Play,
+  Plus,
+  RefreshCw,
+  RotateCcw,
+  RotateCcwClock,
+  Ruler,
+  Save,
+  Search,
+  SlidersHorizontal,
+  SquareMousePointer,
+  Tags,
+  Type,
+  Ungroup,
+} from '@/components/ui/icons'
+import type { ComponentType } from 'react'
+import { KeyCaps } from '@/components/ui/Kbd'
 import { rankCommands, type PaletteSection } from '@/lib/commandRanking'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { ALT, cn, MOD } from '@/lib/utils'
@@ -164,6 +197,43 @@ const COMMANDS: Command[] = [
 ]
 
 /**
+ * 命令前的图标：只从 `components/ui/icons` 里挑；没有合适图标的命令（全选、网格）不放，
+ * 不新造。**只是外观**，命令清单与顺序仍由上面的 COMMANDS 与 `rankCommands` 决定。
+ */
+const COMMAND_ICONS: Record<string, ComponentType<{ size?: number; className?: string }>> = {
+  'refresh-project': RefreshCw,
+  readiness: ClipboardList,
+  'tutorial-start': Play,
+  'tutorial-resume': Play,
+  'tutorial-reset': RotateCcw,
+  'hints-reset': Lightbulb,
+  export: Download,
+  'save-document': Save,
+  'save-layout': FolderPlus,
+  'load-layout': FolderOpen,
+  versions: RotateCcwClock,
+  'save-named-version': Bookmark,
+  styles: Paintbrush,
+  'new-doc': Plus,
+  'add-text': Type,
+  'sub-labels': Tags,
+  group: Group,
+  ungroup: Ungroup,
+  'layout-row': AlignHorizontalDistributeCenter,
+  'layout-col': AlignVerticalDistributeCenter,
+  'layout-grid': LayoutGrid,
+  'edit-elements': SquareMousePointer,
+  'cycle-overlap': Layers2,
+  fit: Fullscreen,
+  rulers: Ruler,
+  'canvas-settings': SlidersHorizontal,
+  'left-assets': Images,
+  'left-elements': LayoutList,
+  'left-layers': Layers,
+  'shortcut-help': CircleQuestionMark,
+}
+
+/**
  * 命令名与搜索用的关键词。**收 t 而不是直接用模块级 translate**：这份列表
  * 在 useMemo 里算，只有把组件的 t 传进去，切语言时 memo 才会失效重算——
  * 否则搜索框里输入的中文关键词在英文界面下继续命中，反过来也一样。
@@ -276,7 +346,7 @@ export function CommandPalette() {
       }}
     >
       <div className="w-[520px] max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg bg-surface shadow-dialog animate-pop-in">
-        <div className="flex items-center gap-2 border-b border-border px-3 py-2">
+        <div className="flex h-12 items-center gap-2.5 border-b border-border px-4">
           <Search size={ICON_SIZE.md} className="shrink-0 text-ink-3" />
           <input
             ref={inputRef}
@@ -298,8 +368,11 @@ export function CommandPalette() {
             }}
             placeholder={t('palette.placeholder')}
             aria-label={t('palette.searchLabel')}
-            className="h-6 min-w-0 flex-1 bg-transparent text-sm text-ink outline-none placeholder:text-ink-3"
+            className="h-6 min-w-0 flex-1 bg-transparent text-lg text-ink outline-none placeholder:text-ink-3"
           />
+          <span aria-hidden>
+            <KeyCaps keys="Esc" />
+          </span>
         </div>
         <ul
           ref={listRef}
@@ -319,13 +392,14 @@ export function CommandPalette() {
                   role="presentation"
                   data-palette-section={section.section}
                   // 组头与菜单的 `MenuLabel` 同一格：12 / 400 / ink-3（比项淡一档，审计 M3）
-                  className="px-3 pb-0.5 pt-1.5 text-sm text-ink-3"
+                  className="px-4 pb-1 pt-2.5 text-sm text-ink-3"
                 >
                   {sectionLabel(section.section)}
                 </li>
               ) : null,
               ...section.items.map((c, j) => {
                 const i = offset + j
+                const CmdIcon = COMMAND_ICONS[c.id]
                 return (
                   <li
                     key={c.id}
@@ -341,14 +415,16 @@ export function CommandPalette() {
                       // 选中行用 `selected`（ink 10%）：`surface-2` 对白底只有 1.05:1，
                       // 「现在会执行哪一条」几乎看不出来。行 32 / 12 号与菜单项同档（打磨 K1）
                       className={cn(
-                        'flex h-8 w-full items-center gap-2 rounded-sm px-2 text-left text-sm text-ink',
+                        'flex h-9 w-full items-center gap-3 rounded-md px-2.5 text-left text-base text-ink',
                         i === active && 'bg-selected',
                       )}
                     >
+                      {/* 图标槽定宽：没图标的命令（全选 / 网格）文字仍与别的行对齐 */}
+                      <span className="flex w-4 shrink-0 justify-center text-ink-2" aria-hidden>
+                        {CmdIcon && <CmdIcon size={ICON_SIZE.md} />}
+                      </span>
                       <span className="min-w-0 flex-1 truncate">{c.label}</span>
-                      {c.shortcut && (
-                        <span className="shrink-0 text-xs tabular-nums text-ink-3">{c.shortcut}</span>
-                      )}
+                      {c.shortcut && <KeyCaps keys={c.shortcut} className="shrink-0 flex-nowrap" />}
                     </button>
                   </li>
                 )
