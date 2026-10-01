@@ -3399,8 +3399,10 @@ def _axes_fields(ax, el: dict | None = None) -> list[dict]:
                 {
                     "prop": "position",
                     "type": "rect",
+                    # Dragging feeds this rectangle back to the setter. Rounding
+                    # width/height independently can change a fixed aspect ratio.
                     "value": [
-                        round(float(v), 4)
+                        float(v)
                         for v in pathgeom.axes_rect_to_frame(ax.figure, ax.get_position().bounds)
                     ],
                 }
@@ -3638,8 +3640,7 @@ def _axes3d_fields(ax) -> list[dict]:
             "prop": "position",
             "type": "rect",
             "value": [
-                round(float(v), 4)
-                for v in pathgeom.axes_rect_to_frame(ax.figure, ax.get_position().bounds)
+                float(v) for v in pathgeom.axes_rect_to_frame(ax.figure, ax.get_position().bounds)
             ],
         },
         {"prop": "visible", "type": "bool", "value": bool(ax.get_visible())},
@@ -4080,10 +4081,10 @@ def _text_ink_extent(t: Text, bb, renderer):
     return Bbox.union([base, pb])
 
 
-def _padded_bbox(bb, W: float, H: float) -> list[float]:
+def _padded_bbox(bb, W: float, H: float, min_hit: float = _MIN_HIT_PX) -> list[float]:
     """display Bbox → figure 分数（top-origin），零厚度的边垫到可点中。"""
-    w = max(float(bb.width), _MIN_HIT_PX)
-    h = max(float(bb.height), _MIN_HIT_PX)
+    w = max(float(bb.width), min_hit)
+    h = max(float(bb.height), min_hit)
     x0 = float(bb.x0) - (w - float(bb.width)) / 2
     y1 = float(bb.y1) + (h - float(bb.height)) / 2
     return [x0 / W, 1.0 - y1 / H, w / W, h / H]
@@ -4528,11 +4529,13 @@ def capture_preview_manifest(state: FigState, stem: str):
         if not drawn:
             raise RuntimeError("preview did not report its completed draw")
         renderer, dpi = drawn[0]
+        # Keep the existing four-document-pixel hit target when SVG uses points.
+        min_hit = _MIN_HIT_PX * dpi / fig.dpi
         # savefig has restored document DPI and any output frame. Re-enter only
         # their coordinate transforms; the actual layout/artist positions remain
         # those of the completed SVG. No layout engine is disabled persistently.
         with ticklabel_memo(), fig._cm_set(dpi=dpi), pathgeom.in_frame(fig, renderer):  # noqa: SLF001
-            return _measure_manifest(state, stem, lambda _r: None, fig, renderer)
+            return _measure_manifest(state, stem, lambda _r: None, fig, renderer, min_hit)
 
     cid = fig.canvas.mpl_connect("draw_event", observe)
     try:
@@ -4567,7 +4570,7 @@ def _build_manifest(state: FigState, stem: str, arm) -> dict:
         return _measure_manifest(state, stem, arm, fig, renderer)
 
 
-def _measure_manifest(state: FigState, stem: str, arm, fig, renderer) -> dict:
+def _measure_manifest(state: FigState, stem: str, arm, fig, renderer, min_hit=_MIN_HIT_PX) -> dict:
     # Agg 准备阶段换成矢量度量；最终 SVG renderer 本来就是那把尺，arm 是 no-op。
     arm(renderer)
     W, H = float(fig.bbox.width), float(fig.bbox.height)
@@ -4851,7 +4854,7 @@ def _measure_manifest(state: FigState, stem: str, arm, fig, renderer) -> dict:
             if bb is None:
                 _drop(el, "no_geometry")
                 continue
-            entry["bbox"] = _padded_bbox(bb, W, H)
+            entry["bbox"] = _padded_bbox(bb, W, H, min_hit)
         else:
             try:
                 bb = artist.get_window_extent(renderer)
@@ -4864,7 +4867,7 @@ def _measure_manifest(state: FigState, stem: str, arm, fig, renderer) -> dict:
                     _drop(el, "no_geometry")
                     continue
                 # 水平 / 垂直的扁平线（基线、参考线）单边为 0，垫成可点中的窄条
-                entry["bbox"] = _padded_bbox(bb, W, H)
+                entry["bbox"] = _padded_bbox(bb, W, H, min_hit)
             except Exception:
                 _drop(el, "no_geometry")
                 continue

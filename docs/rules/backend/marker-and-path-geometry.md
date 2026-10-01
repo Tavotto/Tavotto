@@ -140,5 +140,7 @@
   `manifest.capture_preview_manifest` 按最终 SVG draw 的 renderer / dpi 重测：临时
   rasterize 必须已经还原，只恢复测量坐标，不再 draw / 排版，不永久关掉自动布局。
   软闸升档时取最后一遍 draw，成功 / 异常都摘回调、还原 dpi 与 frame。
+  最小命中厚度仍按文档像素换算，不能把 SVG 的 pt 当 px；会回写 setter 的 axes.position
+  保留几何精度，不分别舍入宽高破坏固定长宽比（普通数值字段的显示精度不变）。
   看护 `tests/test_preview_layout_geometry.py`：直接读冷 build 的 SVG，比真实位移、
   改图幅后的图例框与坐标清单；不能先空渲染一次把首轮错位暖掉，也不能只比 patch 与 manifest。

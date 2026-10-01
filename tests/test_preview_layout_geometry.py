@@ -202,6 +202,7 @@ print(json.dumps({'restored': True}))
         cwd=tmp_path,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=True,
     )
     assert json.loads(result.stdout.strip().splitlines()[-1]) == {"restored": True}
@@ -252,6 +253,67 @@ with probe.tempfile.TemporaryDirectory() as out:
         cwd=tmp_path,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=True,
     )
     assert json.loads(result.stdout.strip().splitlines()[-1])["saves"] == 2
+
+
+@pytest.mark.parametrize("dpi", [72, 100, 144, 200])
+def test_svg_measurement_preserves_hit_padding_and_axes_precision(tmp_path, dpi):
+    """SVG points must not enlarge pixel hit targets or quantize an axes drag."""
+    import subprocess
+
+    script = r"""
+import json
+import sys
+sys.path.insert(0, sys.argv[1])
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import numpy as np
+import figcapture
+from figsession import LiveFigureSession
+fig, (a, b, c) = plt.subplots(1, 3, figsize=(9, 3), dpi=int(sys.argv[2]), layout='constrained')
+line, = a.plot([0, 1], [.5, .5])
+scatter = a.scatter([.3, .5], [.2, .200001])
+im = b.imshow(np.arange(64).reshape(8, 8))
+c.imshow(np.arange(64).reshape(8, 8).T, norm=im.norm)
+fig.colorbar(im, ax=[b, c])
+seen = []
+def observe(event):
+    if type(getattr(event.renderer, '_renderer', event.renderer)).__name__ == 'RendererSVG':
+        bb = b.bbox
+        seen.append([bb.x0 / fig.bbox.width, bb.y0 / fig.bbox.height,
+                     bb.width / fig.bbox.width, bb.height / fig.bbox.height])
+fig.canvas.mpl_connect('draw_event', observe)
+session = LiveFigureSession(sys.argv[3])
+session.add_figure('F', fig, figcapture.SOURCE_SAVEFIG)
+session.instrument_all()
+base = session.do_render('F', [])['manifest']
+def element(man, gid):
+    return next(e for e in man['elements'] if e['gid'] == gid)
+def position(man):
+    return next(f['value'] for f in element(man, 'axes_1')['editable'] if f['prop'] == 'position')
+for artist in (line, scatter):
+    height = element(base, artist.get_gid())['bbox'][3]
+    assert abs(height - 4 / (3 * int(sys.argv[2]))) < 1e-12, (artist.get_gid(), height)
+initial = position(base)
+assert max(abs(x-y) for x,y in zip(initial, seen[-1])) < 1e-12, (initial, seen[-1])
+target = [initial[0] - .05, initial[1] + .05, initial[2], initial[3]]
+result = session.do_render('F', [{'gid': 'axes_1', 'prop': 'position', 'value': target}])
+assert not result['warnings'], result['warnings']
+assert max(abs(x-y) for x,y in zip(seen[-1], target)) < 1e-12, (seen[-1], target)
+assert max(abs(x-y) for x,y in zip(position(result['manifest']), seen[-1])) < 1e-12
+print(json.dumps({'geometry_consistent': True}))
+"""
+    engine = Path(__file__).resolve().parents[1] / "src" / "tavotto" / "engine"
+    result = subprocess.run(
+        [WORKER_PY, "-c", script, str(engine), str(dpi), str(tmp_path)],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
+    )
+    assert json.loads(result.stdout.strip().splitlines()[-1]) == {"geometry_consistent": True}
