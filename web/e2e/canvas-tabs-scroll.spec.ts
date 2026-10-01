@@ -237,7 +237,13 @@ async function fitsWithoutMenu(strip: Locator) {
     const plus = row.querySelector('[data-new-canvas-tab]') as HTMLElement
     const pad = parseFloat(getComputedStyle(row).paddingRight)
     const plusRight = plus.getBoundingClientRect().right - el.clientWidth + el.scrollWidth
-    const rowRight = row.getBoundingClientRect().right - pad
+    // 行最右是缩放菜单（2026-09-30 搬进标签行）：它占着行的右端，页签 +「+」能用的右缘是它的左缘
+    // 再退一道 gap，不是行的内容盒右缘
+    const zoom = row.lastElementChild as HTMLElement
+    const gap = parseFloat(getComputedStyle(row).columnGap)
+    const rowRight = zoom.querySelector('[data-zoom-menu]')
+      ? zoom.getBoundingClientRect().left - gap
+      : row.getBoundingClientRect().right - pad
     return { fits: plusRight <= rowRight + 0.5, slack: rowRight - plusRight }
   })
 }

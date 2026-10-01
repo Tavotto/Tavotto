@@ -2,6 +2,8 @@ import { useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { CanvasStage } from '@/canvas/CanvasStage'
 import { CanvasTabs } from '@/components/CanvasTabs'
+import { CanvasToolbar } from '@/components/CanvasToolbar'
+import { ZoomControls } from '@/components/ZoomControls'
 import { CloseGuardDialog } from '@/components/CloseGuardDialog'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { ExportDialog } from '@/components/ExportDialog'
@@ -257,6 +259,13 @@ function Workspace() {
               {!fastEdit && <CanvasTabs />}
               <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
                 <CanvasStage />
+                {/* 画布工具：底部浮动工具条（排版模式）；快速编辑没有标签行，缩放菜单悬在右上角 */}
+                <CanvasToolbar />
+                {fastEdit && (
+                  <div className="absolute right-3 top-3 z-20 rounded-full bg-surface shadow-pop">
+                    <ZoomControls />
+                  </div>
+                )}
                 <CanvasHud />
                 <NativeSessionCards />
                 <NotificationRail />

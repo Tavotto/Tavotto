@@ -8,6 +8,7 @@ import { activateCanvas, createCanvasAndActivate } from '@/store/canvasSession'
 import { useDocumentStore } from '@/store/documentStore'
 import { Button } from './ui/Button'
 import { TextInput } from './ui/Input'
+import { ZoomControls } from './ZoomControls'
 import { Menu, MenuItem, MenuSeparator } from './ui/Menu'
 import { TAB_UNDERLINE, tabClass } from './ui/tabClass'
 import { useBoldWidthLock } from './ui/useBoldWidthLock'
@@ -152,6 +153,8 @@ export function CanvasTabs() {
       {menuPinned || overflowing ? (
         <AllCanvasesMenu activate={activate} />
       ) : null}
+      {/* 缩放菜单住在标签行最右（2026-09-30 重设计 A1；此前在顶栏右段） */}
+      <ZoomControls />
     </div>
   )
 }

@@ -372,8 +372,10 @@ test('图内各类可拖对象都能用方向键微调：挪 N 步 = N × 页面
   await page.keyboard.press('Escape')
   await page.keyboard.press('Escape')
   const mtime0 = statSync(pdf).mtimeMs
-  // 顶栏那一颗（属性页里也有一颗 data-write-back="open"，按入口钩子分开，各断言恰有一个）
-  const open = page.locator('[data-write-back="open"][data-write-back-entry="topbar"]')
+  // 「⋯」菜单第一项（属性页里也有一颗 data-write-back="open"，按入口钩子分开，各断言恰有一个）：
+  // 菜单项只在菜单打开时才在 DOM 里，先开菜单
+  await page.locator('[data-more-menu]').click()
+  const open = page.locator('[data-write-back="open"][data-write-back-entry="menu"]')
   await expect(open).toHaveCount(1)
   await open.click()
   const confirm = page.locator('[data-write-back="confirm"]')

@@ -3698,6 +3698,7 @@ export default interface Resources {
       "failed": "无法写回 {{stem}}：{{error}}",
       "failedPartial": "无法写回 {{stem}}。{{error}}（已完成 {{done}}）",
       "hasOverridesTitle": "用当前图内修改覆盖 figures 里的原始 PDF/PNG",
+      "menuItem": "写回原始文件…",
       "moreDiffs_other": "另有 {{count}} 处…",
       "noOverridesTitle": "还没有可写回的图内修改",
       "readOnlyTitle": "项目已关闭「允许写回原始文件」，可在项目设置里打开。",
@@ -3712,11 +3713,7 @@ export default interface Resources {
       "summaryOne_other": "把 {{count}} 项修改写回「{{stem}}」的原始文件",
       "targetsLabel": "将覆盖 figures 目录里的这些文件",
       "title": "写回原始文件",
-      "topBarMany_other": "写回原始文件：{{count}} 张图",
-      "topBarOne": "写回原始文件：{{stem}}",
       "topBarReadOnly": "项目已关闭「允许写回原始文件」，可在项目设置里打开。",
-      "topBarShort": "写回",
-      "topBarShortCount": "写回 {{count}}",
       "updateFailed": "无法更新：{{error}}",
       "updatedIntro": "已更新以下文件：",
       "verified_other": "已通过干净重放校验，{{count}} 个元素一致。",
@@ -4040,6 +4037,12 @@ export default interface Resources {
       "rowActions": "画布 {{name}} 的操作",
       "search": "搜索画布…",
       "searchAria": "搜索画布"
+    },
+    "canvasTools": {
+      "fit": "适应",
+      "label": "画布工具",
+      "select": "选择",
+      "subLabels": "序号"
     },
     "confirm": {
       "docLossBody": "浏览器存储不可用或已满，切换后无法从「本机最近的排版」取回。仍要继续吗？",

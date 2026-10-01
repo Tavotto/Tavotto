@@ -104,6 +104,12 @@
     "moveUp": "Move up",
     "moveDown": "Move down"
   },
+  "canvasTools": {
+    "fit": "Fit",
+    "label": "Canvas tools",
+    "select": "Select",
+    "subLabels": "Labels"
+  },
   "confirm": {
     "docLossBody": "Browser storage is unavailable or full, so you won’t be able to get this layout back from “Recent layouts on this computer” after switching. Continue anyway?",
     "docLossConfirm": "Switch anyway",

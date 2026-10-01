@@ -99,6 +99,12 @@
     "moveUp": "上移",
     "moveDown": "下移"
   },
+  "canvasTools": {
+    "fit": "适应",
+    "label": "画布工具",
+    "select": "选择",
+    "subLabels": "序号"
+  },
   "confirm": {
     "docLossBody": "浏览器存储不可用或已满，切换后无法从「本机最近的排版」取回。仍要继续吗？",
     "docLossConfirm": "仍要切换",

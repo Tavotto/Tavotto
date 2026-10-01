@@ -325,7 +325,9 @@ test('原图被独占占用（file_locked）：英文报错说清该关掉谁，
     // 改成了「Write back to the original files」，`/^Write back$/` 当场匹配不到，
     // 这条用例在 Windows 腿上等满 180 秒（#299）。**这条腿是它唯一的家**
     // ——posix 上它是 skip，本机全绿证明不了它。
-    await page.locator('[data-write-back="open"]').first().click()
+    // 写回入口在「⋯」菜单第一项（按入口钩子认，不认菜单项文案）
+    await page.locator('[data-more-menu]').click()
+    await page.locator('[data-write-back="open"][data-write-back-entry="menu"]').click()
     const dialog = page.getByRole('dialog').first()
     await expect(dialog).toBeVisible()
     await dialog.locator('[data-write-back="confirm"]').click()

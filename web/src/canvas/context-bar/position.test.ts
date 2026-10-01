@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest'
 import { RAIL_W } from '@/store/uiStore'
 import { mmToWorld } from '@/store/viewportStore'
 import {
+  BOTTOM_SAFE,
   COVER_SENSITIVE_ROLES,
   FULL_BAR_MIN_WIDTH,
   MARGIN,
@@ -42,10 +43,26 @@ describe('placeToolbar', () => {
     expect(placeToolbar({ left: 0, top: top - 1, width: 10, height: 10 }, size, vp, none).placement).toBe('below')
   })
 
-  it('下方也放不下时贴窗口底边', () => {
+  it('下方也放不下时贴窗口底边（让开底部浮动工具条那一带）', () => {
     const p = placeToolbar({ left: 0, top: 40, width: 10, height: 900 }, size, vp, none)
     expect(p.placement).toBe('below')
-    expect(p.y).toBe(vp.height - size.h - MARGIN)
+    expect(p.y).toBe(vp.height - BOTTOM_SAFE - size.h - MARGIN)
+  })
+
+  it('锚点落在底部工具条那一带时，上方的栏也夹回安全区之上，不压工具条', () => {
+    const p = placeToolbar({ left: 400, top: vp.height - 40, width: 100, height: 30 }, size, vp, none)
+    expect(p.y + size.h).toBeLessThanOrEqual(vp.height - BOTTOM_SAFE - MARGIN)
+  })
+
+  it('避让版：候选位落进底部安全区的一律不取', () => {
+    const p = placeToolbarAvoiding(
+      { left: 400, top: 300, width: 100, height: vp.height - 300 },
+      size,
+      vp,
+      none,
+      { obstacles: [] },
+    )
+    expect(p.y + size.h).toBeLessThanOrEqual(vp.height - BOTTOM_SAFE - MARGIN)
   })
 
   it('左右不越界：靠左贴 MARGIN、靠右贴右边缘', () => {
