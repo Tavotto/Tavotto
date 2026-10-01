@@ -4266,8 +4266,9 @@ def _measure_like_vector(renderer) -> None:
     0.121（figure 分数，#576）。锚在预设位置的图例、tight 布局这类**位置取决于文字
     尺寸**的东西因此在 manifest 里落在别处——拖一下写成绝对位置就跳。
 
-    换成与 SVG 同一个 `TextToPath` 度量后，全图文字包围盒与 SVG 逐位一致。usetex 的
-    文字两边本来就同走 dvi，不动。
+    换成与 SVG 同一个 `TextToPath` 度量后，同一布局 / 锚点下文字的宽高与 SVG 一致。
+    这不保证随后的 SVG draw 不会重排布局；最终预览几何还须经 `capture_preview_manifest`
+    按实际 draw 量。usetex 的文字两边本来就同走 dvi，不动。
     """
     agg = renderer.get_text_width_height_descent
 
@@ -4288,10 +4289,11 @@ def vector_text_metrics():
     **布局那一次 draw 不换尺**：`constrained_layout` 这类布局的结果在 ulp 级依赖上一次
     draw 留下的位置，Agg 的 26.6 定点度量把这种末位噪声吸收掉了；换成连续的矢量度量后，
     「上一张预览是 hybrid 还是纯矢量」会让 manifest 末位不同（`test_preview_hybrid` 的
-    逐字节不变量在 3.10 上抓到）。而用户看得见的偏差不在布局里：图例的位置是
-    `get_window_extent` 时现算的（`OffsetBox.get_offset`），文字框也是现量的——测量阶段
-    换尺就够。图例子项的偏移是 draw 时写死的，由 `_layout_legends_for_measure` 在一次性
-    渲染器上按同一把尺补排版。
+    逐字节不变量在 3.10 上抓到）。图例的位置在 `get_window_extent` 时现算
+    （`OffsetBox.get_offset`），文字框也是现量的，测量阶段换尺可修正它们的宽高；
+    但自动布局 / 自动轴标签定位仍可能在 SVG draw 时改变，预览交付须再按那一遍的
+    几何量（`capture_preview_manifest`）。图例子项的偏移是 draw 时写死的，由
+    `_layout_legends_for_measure` 在一次性渲染器上按同一把尺补排版。
 
     **只挂在这一段**：预览位图 / 导出 PNG 仍是 Agg 自己的度量。两件事缺一不可：
 
@@ -4506,12 +4508,44 @@ def _colorbar_structure(state: FigState, elements: list[dict]) -> list[dict]:
     return groups
 
 
-def build_manifest(state: FigState, stem: str) -> dict:
-    """一份 manifest。**刻度记忆表只在这里开**（`overrides.ticklabel_memo`）。
+@contextmanager
+def capture_preview_manifest(state: FigState, stem: str):
+    """Measure the final SVG draw, after temporary preview state is restored.
 
-    开在这一层而不是 `_build_manifest` 里面，是因为记忆表成立的前提正是这条
-    调用边界：进来先 draw、出去之前不动图。谁把它挪到别处，得先重新证明那个
-    前提在新位置还成立。
+    Agg layout and the following SVG layout need not agree: automatic tick counts
+    can change, and their font metrics differ. Remember the final draw's renderer
+    and DPI; measure that geometry without another draw or layout pass. Saving may
+    draw twice (or retry as hybrid), so the last draw is the one we need.
+    """
+    fig = state.fig
+    drawn = []
+
+    def observe(event):
+        if event.canvas.figure is fig:
+            drawn[:] = [(event.renderer, float(fig.dpi))]
+
+    def measured():
+        if not drawn:
+            raise RuntimeError("preview did not report its completed draw")
+        renderer, dpi = drawn[0]
+        # savefig has restored document DPI and any output frame. Re-enter only
+        # their coordinate transforms; the actual layout/artist positions remain
+        # those of the completed SVG. No layout engine is disabled persistently.
+        with ticklabel_memo(), fig._cm_set(dpi=dpi), pathgeom.in_frame(fig, renderer):  # noqa: SLF001
+            return _measure_manifest(state, stem, lambda _r: None, fig, renderer)
+
+    cid = fig.canvas.mpl_connect("draw_event", observe)
+    try:
+        yield measured
+    finally:
+        fig.canvas.mpl_disconnect(cid)
+
+
+def build_manifest(state: FigState, stem: str) -> dict:
+    """准备布局并测量一份 manifest（`overrides.ticklabel_memo` 只包本次测量）。
+
+    普通调用先 draw；预览交付则经 `capture_preview_manifest` 在最终 SVG draw
+    之后重测。两条路各开一次刻度记忆表，绝不把它跨过两次 draw。
     """
     with ticklabel_memo(), vector_text_metrics() as arm:
         return _build_manifest(state, stem, arm)
@@ -4534,7 +4568,7 @@ def _build_manifest(state: FigState, stem: str, arm) -> dict:
 
 
 def _measure_manifest(state: FigState, stem: str, arm, fig, renderer) -> dict:
-    # 布局 draw 之后才换尺：之后的全部测量与画布上的矢量 SVG 同一把尺（`vector_text_metrics`）
+    # Agg 准备阶段换成矢量度量；最终 SVG renderer 本来就是那把尺，arm 是 no-op。
     arm(renderer)
     W, H = float(fig.bbox.width), float(fig.bbox.height)
     # draw 跳过的图例（隐藏 / 住在隐藏的 axes 里）按文档 dpi 补排一次版，否则它的

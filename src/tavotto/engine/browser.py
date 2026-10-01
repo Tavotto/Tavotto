@@ -518,8 +518,8 @@ class BrowserSession:
         入口里预览表示法不一样。
         """
         man = manifest_mod.build_manifest(state, stem)
-        # **manifest 先建完再 rasterize**——语义保真（不变量 1）靠的是这个顺序，
-        # 与桌面那条入口逐字相同（`figsession.render`）。
+        # 先按原样准备；预览结束、临时 rasterize 还原后，按最终 SVG 的坐标重测。
+        # 与桌面同一份 capture_preview_manifest，不在临时表示法里读语义。
         buf = io.BytesIO()
 
         def _save(_plan) -> int:
@@ -535,7 +535,9 @@ class BrowserSession:
                 )
             return buf.tell()
 
-        plan, svg_bytes = preview_hybrid.save_preview_svg(state, _save)
+        with manifest_mod.capture_preview_manifest(state, stem) as measured:
+            plan, svg_bytes = preview_hybrid.save_preview_svg(state, _save)
+            man = measured()
         # manifest 走一遍 JSON 序列化再解回来：worker 是「落盘再读」，这里
         # 等价地把 numpy 标量在**这一层**就规约成纯 JSON 值——交给 JS 的
         # 结构里绝不能混着 numpy 类型
