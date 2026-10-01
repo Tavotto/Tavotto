@@ -831,11 +831,15 @@ class Worker(wireproto.V1Handler):
                     traceback_text=traceback.format_exc(),
                     extra={"missing_input": missing},
                 ) from exc
+            # 不是一次落空的只读打开、但异常链里确实有「文件不存在」（C++ 读取器）：码仍是
+            # script_error，只多带一份事实；对不对得上脚本里哪串常量由父进程判（ADR 0110 §一）
+            enoent = figcapture.enoent_fact(exc)
             raise ProtocolError(
                 "script_error",
                 f"脚本执行失败: {exc}",
                 retryable=False,
                 traceback_text=traceback.format_exc(),
+                extra={"enoent": enoent} if enoent else None,
             ) from exc
 
     def build_result(self, timings: dict) -> dict:

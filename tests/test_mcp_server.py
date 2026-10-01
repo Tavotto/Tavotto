@@ -3047,6 +3047,36 @@ def test_open_carries_the_missing_input_offer_and_points_back_to_tavotto(project
     assert "data/values.txt" in human and "Tavotto" in human
 
 
+def test_a_probe_or_native_miss_points_to_the_confirmed_rewrite_in_tavotto(project, monkeypatch):
+    """exists / glob / C++ 读取器（ADR 0110）：recovery 指向 Tavotto 窗口里经确认的改写，不叫 Agent 改脚本。"""
+    offer = {
+        "script": "fig1.py",
+        "requested": "/Users/a/proj/run/x.h5",
+        "absolute": True,
+        "via": "native",
+        "others": [],
+    }
+
+    def fail(*a, **k):
+        err = bridge.engine_pool.WorkerError("脚本执行失败", code="script_error")
+        err.missing_input = offer
+        raise err
+
+    monkeypatch.setattr(bridge.engine_pool, "get", fail)
+    result = _call("tavotto_open_figure", {"project_path": str(project)})
+    body = _body(result)
+    assert body["missing_input"] == offer
+    assert "勾选确认后才改写脚本" in body["recovery"] and "不要自己改用户的脚本" in body["recovery"]
+    assert "token" not in json.dumps(body)
+
+
+def test_the_rewrite_vias_mirror_the_engine():
+    """插件不 import `inputremap`（最低版本兼容），它那份镜像必须与引擎逐项相等。"""
+    from tavotto.engine import inputremap
+
+    assert tuple(bridge.VIAS_NEED_REWRITE) == tuple(inputremap.VIAS_NEED_REWRITE)
+
+
 # --------------------- U03：首开的「需要输入」与它的回答 -----------------------
 #
 # 桌面确认框、HTTP 的 `PATCH /api/engine/workdir`、MCP 的 `workdir=` 参数是**同一份**决定

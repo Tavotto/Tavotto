@@ -47,6 +47,28 @@ def test_relative_root_rule_serves_every_relative_path():
     assert figcapture.remap_target(rules, "/A/data/x.csv") is None
 
 
+def test_rule_remainder_cannot_walk_above_the_selected_target():
+    rules = [{"kind": P, "from": "data", "to": "/chosen"}]
+    assert figcapture.remap_target(rules, "data/../outside.csv") is None
+    assert figcapture.remap_target(rules, "data/sub/../../outside.csv") is None
+    assert figcapture.remap_target(rules, "data/sub/../inside.csv") == "/chosen/sub/../inside.csv"
+    rules = [{"kind": P, "from": "../data", "to": "/chosen"}]
+    assert figcapture.remap_target(rules, "../data/x.csv") == "/chosen/x.csv"
+    # 最长前缀拒绝了，不能换另一条更短的规则继续读。
+    more_specific = {"kind": P, "from": "data", "to": "/most-specific"}
+    fallback = {"kind": P, "from": "", "to": "/other-project"}
+    for rules in [[more_specific, fallback], [fallback, more_specific]]:
+        assert figcapture.remap_target(rules, "data/../x.csv") is None
+
+
+def test_whole_root_targets_stay_absolute():
+    for target in ["/", "C:/", "//server/share/"]:
+        rule = {"kind": P, "from": "data", "to": target}
+        assert figcapture.remap_target([rule], "data", whole=True) == target
+    rule = {"kind": P, "from": "data", "to": "/chosen"}
+    assert figcapture.remap_target([rule], "data/*.csv/") == "/chosen/*.csv/"
+
+
 def test_absolute_prefix_rule_and_the_longest_prefix_wins():
     rules = [
         {"kind": P, "from": "/Users/a/proj", "to": "/Volumes/B/proj"},
@@ -736,7 +758,12 @@ def test_a_script_that_checks_first_gets_the_static_list(figs):
     assert err is not None and err.code == engine_pool.NO_FIGURES_CODE
     assert err.missing_input is not None and err.missing_input["requested"] is None
     assert err.missing_input["others"] == [
-        {"path": "data/values.txt", "absolute": False, "via": inputremap.VIA_PROBE}
+        {
+            "path": "data/values.txt",
+            "absolute": False,
+            "via": inputremap.VIA_PROBE,
+            "probe_kind": inputremap.PROBE_ANY,
+        }
     ]
 
 
@@ -753,7 +780,12 @@ def test_a_script_that_checks_then_exits_gets_the_static_list(figs):
     assert err.value.code == engine_pool.SCRIPT_EXITED_CODE
     assert err.value.missing_input is not None
     assert err.value.missing_input["others"] == [
-        {"path": "data/values.txt", "absolute": False, "via": inputremap.VIA_PROBE}
+        {
+            "path": "data/values.txt",
+            "absolute": False,
+            "via": inputremap.VIA_PROBE,
+            "probe_kind": inputremap.PROBE_ANY,
+        }
     ]
 
 

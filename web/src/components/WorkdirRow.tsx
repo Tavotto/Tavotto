@@ -1,12 +1,14 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
-import type {
-  DependencyPreparationOffer,
-  InputRemapRule,
-  MissingInputOffer,
-  WorkdirConfirmation,
-  WorkdirMode,
+import {
+  type DependencyPreparationOffer,
+  type InputRemapRule,
+  listScriptBackups,
+  type MissingInputOffer,
+  type ScriptBackup,
+  type WorkdirConfirmation,
+  type WorkdirMode,
 } from '@/lib/api'
 import { useEnvStore } from '@/store/envStore'
 import { SettingRow } from './settings/SettingRow'
@@ -195,6 +197,89 @@ export function InputRemapRows() {
             <Button size="sm" variant="secondary" disabled={busy} onClick={() => void forget(r)}>
               {en('inputRemapForget')}
             </Button>
+          </li>
+        ))}
+      </ul>
+      {error && <p className="text-xs text-danger">{error}</p>}
+    </div>
+  )
+}
+
+//: 备份此刻的状态：键写成字面量（i18n 死键门禁按「源码里出现过这个串」判活）
+const BACKUP_STATE_TEXT = {
+  current: 'engine.scriptBackupState.current',
+  before: 'engine.scriptBackupState.before',
+  changed: 'engine.scriptBackupState.changed',
+} as const
+
+/**
+ * 设置 › 渲染环境：改写脚本之前留下的备份（ADR 0110 §七）。每条一行「哪份脚本、什么时候、此刻是什么状态」：
+ * 此刻就是改后那份 → 「恢复原脚本」；之后又被改过 → 「只撤销那几处路径」（其余修改保留）或「整份恢复」
+ * （当前版本先另存一份）；此刻已是改前那份 → 没有按钮。状态是后端对着磁盘现算的，前端只翻译。
+ */
+export function ScriptBackupRows() {
+  const { t } = useTranslation('errors')
+  const open = useEnvStore((s) => Boolean(s.env?.project?.open))
+  const generation = useEnvStore((s) => s.scriptBackupGeneration)
+  const restoreBackup = useEnvStore((s) => s.restoreScriptBackup)
+  const [items, setItems] = useState<ScriptBackup[]>([])
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  useEffect(() => {
+    if (!open) {
+      setItems([])
+      return
+    }
+    let live = true
+    listScriptBackups()
+      .then((r) => live && setItems(r.backups))
+      .catch(() => live && setItems([]))
+    return () => {
+      live = false
+    }
+  }, [open, generation])
+  const shown = items.filter((b) => b.kind === 'input_path')
+  if (!shown.length) return null
+  const restore = async (b: ScriptBackup, mode: 'full' | 'undo_edits') => {
+    setBusy(true)
+    setError(null)
+    // 换了项目时 store 那侧把 A 的副作用全丢掉（回 null）；这里只剩本行自己的忙 / 错
+    const failure = await restoreBackup(b, mode)
+    setBusy(false)
+    setError(failure)
+  }
+  return (
+    <div className="mt-1.5 border-t border-border pt-1.5" data-testid="script-backup-rows">
+      <p className="text-xs text-ink-2">{en('scriptBackupLabel')}</p>
+      <ul className="mt-1 flex flex-col gap-1">
+        {shown.map((b) => (
+          <li key={b.id} className="flex flex-wrap items-start gap-2" data-script-backup={b.id}>
+            <span className="min-w-0 flex-1 text-xs text-ink-2">
+              {/* 脚本名是用户自己的路径，不翻译 */}
+              <span className="break-all font-mono">{b.script}</span>
+              {' · '}
+              {new Date(b.created * 1000).toLocaleString()}
+              {' · '}
+              {t(BACKUP_STATE_TEXT[b.state] ?? BACKUP_STATE_TEXT.changed)}
+            </span>
+            {b.state === 'current' && (
+              <Button size="sm" variant="secondary" disabled={busy} onClick={() => void restore(b, 'full')}>
+                {en('scriptBackupRestore')}
+              </Button>
+            )}
+            {b.state === 'changed' && (
+              <>
+                {/* 那几处字面量之后又被改了：只撤销做不到，只给整份恢复（判据在后端，与复原同一个） */}
+                {b.undoable && (
+                  <Button size="sm" variant="secondary" disabled={busy} onClick={() => void restore(b, 'undo_edits')}>
+                    {en('scriptBackupUndoEdits')}
+                  </Button>
+                )}
+                <Button size="sm" variant="secondary" disabled={busy} onClick={() => void restore(b, 'full')}>
+                  {en('scriptBackupRestoreFull')}
+                </Button>
+              </>
+            )}
           </li>
         ))}
       </ul>

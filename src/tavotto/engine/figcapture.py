@@ -1366,18 +1366,22 @@ def clean_remap_rules(rules) -> list[dict]:
     return out
 
 
-def remap_target(rules, name: str) -> str | None:
+def remap_target(rules, name: str, *, whole: bool = False) -> str | None:
     """脚本写的路径串 `name` → 改指后的路径（本机真实路径串）；没有规则命中回 None。
 
     **只做字符串换算，不看磁盘**——「目标在不在」由调用方判（worker 在改道前判是文件，
     父进程筛弹窗列表时判存在）。命中顺序：`file` 规则整串相等优先；其次 `prefix` 规则里
     `from` 路径段最长的那条（更具体的赢）。相对路径只配相对的 `from`，绝对只配绝对的。
+
+    `whole=True`：`name` 可以**就是** `prefix` 的 `from` 本身（换算成 `to`）——改写脚本里的
+    目录常量（`DATA = "/Users/a/proj"`，ADR 0110 §二）要这一档；worker 改道永远不用它（打开的
+    是文件，`from` 是目录）。
     """
     parsed = remap_parts(name)
     if parsed is None:
         return None
     absolute, parts = parsed
-    best: tuple[int, str] | None = None
+    best: tuple[int, str | None] | None = None
     for r in clean_remap_rules(rules):
         src = remap_parts(r["from"]) if r["from"] else (False, ())
         if src is None or src[0] != absolute:
@@ -1387,12 +1391,24 @@ def remap_target(rules, name: str) -> str | None:
                 return r["to"]
             continue
         n = len(src[1])
-        if parts[:n] != src[1] or n == len(parts):
+        if parts[:n] != src[1] or (n == len(parts) and not whole):
             continue  # 前缀要严格短于路径本身：`from` 本身是目录，不是这个文件
         if best is None or n > best[0]:
+            best = (n, None)  # 最长前缀即使拒绝越界，也不能退到另一条规则悄悄换一份数据
             rest = parts[n:]
-            to = r["to"].replace("\\", "/").rstrip("/")
-            best = (n, to + "/" + "/".join(rest))
+            # 原串的 `..` 可以被 from 消耗；剩下那段不能越过用户指认的 to。
+            # 只判层数、不改写字符串（glob 的 `*/../` 不能当作普通路径折叠）。
+            depth = 0
+            for part in rest:
+                depth += -1 if part == ".." else 1
+                if depth < 0:
+                    break
+            else:
+                to = r["to"].replace("\\", "/")
+                target = to.rstrip("/") + "/" + "/".join(rest) if rest else to
+                if name.endswith(("/", "\\")) and not target.endswith("/"):
+                    target += "/"  # glob 的末尾分隔符表示只匹配目录，不能丢
+                best = (n, target)
     return best[1] if best else None
 
 
@@ -1680,6 +1696,50 @@ def _file_not_found_in(exc: BaseException | None) -> BaseException | None:
     return None
 
 
+#: C 层读取器消息里的路径：h5py 是 `unable to open file: name = '<路径>'`；其余取第一个单引号串。
+_NAME_EQ_RE = re.compile(r"\bname = '([^'\n]+)'")
+_QUOTED_RE = re.compile(r"'([^'\n]+)'")
+
+
+def quoted_name_in(exc: BaseException) -> str | None:
+    """异常消息里引号括着的那条路径（`exc.filename` 为 None 的读取器）；取不出回 None。"""
+    try:
+        text = str(exc)
+    except Exception:  # noqa: BLE001 —— 消息都拿不到就是说不出
+        return None
+    m = _NAME_EQ_RE.search(text) or _QUOTED_RE.search(text)
+    return m.group(1) if m else None
+
+
+def enoent_fact(exc: BaseException) -> dict | None:
+    """build 失败、**不是**一次落空的只读打开（`missing_input_of` 说不出）时，异常链里的「文件不存在」
+    → `{filename, named, cwd}`，没有回 None（ADR 0110 §一）。
+
+    只报事实、不归因：C++ 读取器（h5py / netCDF4 / xarray / ovito）不经四个打开入口，worker 不知道
+    脚本里哪串常量对应它；归因在父进程（`inputremap.native_miss`，拿脚本的静态证据对）。
+    """
+    fnf = _file_not_found_in(exc)
+    if fnf is None:
+        return None
+    filename = getattr(fnf, "filename", None)
+    if isinstance(filename, (bytes, os.PathLike)):
+        try:
+            filename = os.fsdecode(filename)
+        except (TypeError, ValueError):
+            filename = None
+    if not isinstance(filename, str) or not filename:
+        filename = None
+    try:
+        cwd = os.getcwd()
+    except OSError:
+        cwd = ""
+    return {
+        "filename": filename,
+        "named": None if filename else quoted_name_in(fnf),
+        "cwd": cwd,
+    }
+
+
 def missing_input_of(exc: BaseException, misses: InputMisses) -> dict | None:
     """build 失败的异常 → `missing_input` 的事实（缺的是哪个），说不出回 None。
 
@@ -1693,6 +1753,10 @@ def missing_input_of(exc: BaseException, misses: InputMisses) -> dict | None:
         return None
     names = misses.names()
     filename = getattr(fnf, "filename", None)
+    if not isinstance(filename, (str, os.PathLike)):
+        # h5py 这类 C 层读取器不带 `filename`、只把路径写进消息：说得出就按它对账——否则一次被
+        # `try` 吞掉的可选读（`open("local.cfg")`）会被当成「最近一次落空」指错文件（ADR 0110 §一）
+        filename = quoted_name_in(fnf)
     requested: str | None = None
     if isinstance(filename, (str, os.PathLike)):
         filename = os.fspath(filename)

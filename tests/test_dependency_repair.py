@@ -811,6 +811,12 @@ def test_contained_path_pins_candidates_inside_the_root(tmp_path):
     assert projectenv.contained_path(root, "linked") is None
 
 
+def test_contained_path_accepts_descendants_of_a_filesystem_root(tmp_path):
+    root = Path(tmp_path.anchor)
+    assert projectenv.contained_path(root, tmp_path) == os.path.realpath(tmp_path)
+    assert projectenv.contained_path(root, root) == os.path.realpath(root)
+
+
 def test_reset_state_really_forgets_attempted_repairs(project, monkeypatch):
     """**负向反证（Codex 评审 P2）**：`reset_state(project)` 说「丢弃已试过」，
     就必须真的丢。

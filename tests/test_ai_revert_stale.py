@@ -85,6 +85,34 @@ def test_a_later_human_edit_makes_the_revert_a_conflict(env, monkeypatch):
     assert ai_bridge.SESSIONS[sid]["status"] != "reverted"
 
 
+def test_a_rewrite_landing_while_the_revert_waits_makes_it_a_conflict(env, monkeypatch):
+    """回滚的「是不是 AI 那一版」判到写回整段持脚本锁（Codex 评 #730 P1）：一次确认过的改写持着锁
+    正在落地时，回滚等它；落地之后再判，脚本已经不是 AI 那一版——409，改写的结果一个字节不丢。
+    没有锁时回滚先判（通过）、改写后落地、快照再盖上去，用户较新的版本就没了。"""
+    from tavotto.engine import scriptlock
+
+    sid = _ai_session(env, monkeypatch, AFTER_AI)
+    outcome: list[object] = []
+
+    def revert():
+        try:
+            outcome.append(ai_bridge.revert(sid))
+        except ai_bridge.AgentError as exc:
+            outcome.append(exc)
+
+    with scriptlock.script_guard(env["script"]):
+        t = threading.Thread(target=revert, daemon=True)
+        t.start()
+        t.join(0.3)
+        assert t.is_alive()  # 在等锁：还没判、没写
+        scriptlock.write_script(env["script"], HUMAN_LATER)  # 改写 / 复原在锁里落地
+    t.join(10)
+    assert not t.is_alive()
+    assert isinstance(outcome[0], ai_bridge.AgentError)
+    assert outcome[0].code == "ai_revert_conflict"
+    assert env["script"].read_bytes() == HUMAN_LATER
+
+
 def test_a_second_ai_session_makes_reverting_the_first_one_a_conflict(env, monkeypatch):
     first = _ai_session(env, monkeypatch, AFTER_AI)
     second = _ai_session(env, monkeypatch, SECOND_AI)

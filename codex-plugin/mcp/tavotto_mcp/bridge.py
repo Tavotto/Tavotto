@@ -352,6 +352,12 @@ def _answer_prepare_dependencies(project: str, script: str, target: str) -> dict
     }
 
 
+#: 改指表救不回、只能经确认改写脚本的几档（ADR 0110）。`engine.inputremap.VIAS_NEED_REWRITE` 的镜像：
+#: 插件要能配更早的 Tavotto，不为一个常量多 import 一个新模块（那会抬高 MIN_TAVOTTO_VERSION）；
+#: `tests/test_mcp_server.py` 钉住两侧相等。
+VIAS_NEED_REWRITE = ("probe", "glob", "native")
+
+
 def _bridge_error_from_worker(exc: engine_pool.WorkerError) -> BridgeError:
     """worker 错误 → 带稳定 code 的 BridgeError；U03 的两种结构化载荷原样带出去。
 
@@ -384,14 +390,28 @@ def _bridge_error_from_worker(exc: engine_pool.WorkerError) -> BridgeError:
     missing_input = getattr(exc, "missing_input", None)
     if isinstance(missing_input, dict):
         extra["missing_input"] = missing_input
-        first = missing_input.get("requested") or next(
-            (o.get("path") for o in missing_input.get("others") or [] if o.get("path")), ""
+        primary = (
+            {"path": missing_input.get("requested"), "via": missing_input.get("via")}
+            if missing_input.get("requested")
+            else next((o for o in missing_input.get("others") or [] if o.get("path")), {})
         )
-        extra["recovery"] = (
-            f"脚本要读的数据找不到：{first}。请用户在 Tavotto 窗口里打开这张图，在弹出的「找不到脚本要读的"
-            "数据」里指认文件或它所在的文件夹（只影响读取、按项目记住），或把数据放回脚本写的位置；"
-            "之后再调一次 tavotto_open_figure。不要改用户的脚本。"
-        )
+        first = primary.get("path") or ""
+        if primary.get("via") in VIAS_NEED_REWRITE:
+            # exists / glob / C++ 读取器（ADR 0110）：只读改指救不回，出路是改写脚本里那串——
+            # 那必须由用户在 Tavotto 窗口里看过逐行改动、勾选确认；插件与 Agent 都不替用户改
+            extra["recovery"] = (
+                f"脚本要的数据找不到：{first}。脚本是用 exists / glob / C++ 读取器去找它的，只读改指救不回。"
+                "请用户在 Tavotto 窗口里打开这张图，在「找不到脚本要读的数据」里选择数据现在的位置，"
+                "Tavotto 会列出脚本里要改的每一行，用户勾选确认后才改写脚本（改之前先备份，可一键复原）；"
+                "或把数据放回脚本写的位置；"
+                "之后再调一次 tavotto_open_figure。不要自己改用户的脚本。"
+            )
+        else:
+            extra["recovery"] = (
+                f"脚本要读的数据找不到：{first}。请用户在 Tavotto 窗口里打开这张图，在弹出的「找不到脚本要读的"
+                "数据」里指认文件或它所在的文件夹（只影响读取、按项目记住），或把数据放回脚本写的位置；"
+                "之后再调一次 tavotto_open_figure。不要改用户的脚本。"
+            )
     explicit = getattr(exc, "explicit", None)
     if isinstance(explicit, dict):
         extra["explicit"] = {

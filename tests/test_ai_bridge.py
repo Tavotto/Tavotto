@@ -249,6 +249,43 @@ def test_run_snapshots_a_script_registered_under_subdirectories(tmp_path, monkey
     assert meta["script"] == script
 
 
+def test_run_registers_under_the_script_lock(tmp_path, monkeypatch):
+    """改写 / 复原脚本持着脚本锁时（ADR 0110 §五），Agent 的「快照 + 登记」要等它落地：否则快照的是
+    旧脚本，Agent 之后把确认过的改写覆盖掉（Codex 评 #730 P1）。"""
+    import threading
+
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "fig.py").write_bytes(b"print('old')\n")
+    snap_dir = tmp_path / "snapshots"
+    monkeypatch.setattr(ai_bridge, "SNAP_DIR", snap_dir)
+    monkeypatch.setattr(ai_bridge, "require_usable", lambda agent: None)
+
+    def _stop(*a, **k):
+        raise _StopAfterSnapshot
+
+    monkeypatch.setattr(ai_bridge, "_build_prompt", _stop)
+    outcome: list[BaseException] = []
+
+    def start():
+        try:
+            ai_bridge.run("codex", "fig.py", "prompt", str(project))
+        except BaseException as exc:  # noqa: BLE001 —— 结论交回主线程判
+            outcome.append(exc)
+
+    with ai_bridge.script_guard(project / "fig.py"):
+        t = threading.Thread(target=start, daemon=True)
+        t.start()
+        t.join(0.3)
+        assert t.is_alive()  # 在等锁：还没快照
+        assert not list(snap_dir.glob("*__fig.py"))
+        (project / "fig.py").write_bytes(b"print('rewritten')\n")
+    t.join(10)
+    assert not t.is_alive() and isinstance(outcome[0], _StopAfterSnapshot)
+    (snap,) = snap_dir.glob("*__fig.py")
+    assert snap.read_bytes() == b"print('rewritten')\n"  # 快照的是落地之后的那份
+
+
 def test_a_probe_started_before_invalidate_does_not_overwrite_the_cache(monkeypatch):
     """诊断超预算留在后台的探测（#512）跑完时，设置已经改过、缓存已经刷新：
     它读的是旧快照，不许把旧结论写回共享缓存。"""

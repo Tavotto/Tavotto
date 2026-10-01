@@ -180,6 +180,9 @@ export function handleServerEvent(ev: ServerEvent) {
       // stale 判定一并作废，下次查询按新脚本重新判
       render.markStale([...new Set(affected)])
       useRuntimeAssetStore.getState().invalidate([...new Set(affected)])
+      // 设置里的改写备份：状态（「恢复原脚本」还是「只撤销那几处」）是按磁盘现算的，脚本一变就重读——
+      // 挂着旧状态点下去是整份覆盖（Codex 评 #730 P1；后端另有锁内哈希核对）
+      useEnvStore.getState().bumpScriptBackups()
       // 重建**不等**素材刷新：脚本变了而它产出的 PDF 还没重新生成时，
       // /api/panels 里的 mtime 一动不动，等它等不来。派生元数据的同步照常
       // 跟在刷新后面（走合并入口，与同一批里的其它事件共用一个请求）。
