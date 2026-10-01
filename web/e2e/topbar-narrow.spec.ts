@@ -50,10 +50,10 @@ for (const width of [600, 780, 920, 1024]) {
     await expect(back).toHaveCount(1)
     await back.click()
     await expect(page.locator('[data-topbar] [data-save-state]')).toHaveCount(1)
-    for (const hook of ['[data-timeline-button]', '[data-timeline-name-button]']) {
-      await expect(page.locator(`[data-topbar] ${hook}`)).toHaveCount(1)
-      await expect(page.locator(`[data-topbar] ${hook}`)).toBeVisible()
-    }
+    await expect(page.locator('[data-topbar] [data-timeline-button]')).toHaveCount(1)
+    await expect(page.locator('[data-topbar] [data-timeline-button]')).toBeVisible()
+    // 书签钮已并入时间线抽屉（2026-10-01）：顶栏不再有它
+    await expect(page.locator('[data-topbar] [data-timeline-name-button]')).toHaveCount(0)
     const m = await overlaps(page)
     expect(m.count, JSON.stringify(m)).toBeGreaterThan(8)
     expect(m.hits, JSON.stringify(m)).toEqual([])

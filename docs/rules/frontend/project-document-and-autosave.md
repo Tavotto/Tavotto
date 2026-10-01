@@ -225,8 +225,8 @@
   新增一条写排版文件的路，在它的成功分支 emit 一次，不 import 时间线。恢复只有 `VersionDialog.restoreNode()` 一处：先 await「恢复前」节点，存不下来
   就不恢复，再一次 `restoreLayoutVersion` commit（⌘Z 一步退回；布局组跟着对象恢复）。
   预览是 `timelineStore.preview` 上的模态对话框（`TimelinePreviewDialog`，默认焦点在「关闭」），
-  不进 documentStore、换项目时 `clear()`；「存为命名节点」只有 `saveNamedNode()` 一份（顶栏
-  书签钮浮层与抽屉输入框共用，⌥⌘S / 命令面板开的是浮层）。自动间隔 15 s 停顿 / 2 分钟，e2e 只经
+  不进 documentStore、换项目时 `clear()`；「存为命名节点」只有 `saveNamedNode()` 一份（只在抽屉里：
+  「给现在存个名字…」展开输入；⌥⌘S / 命令面板打开抽屉并展开它，顶栏没有书签钮）。自动间隔 15 s 停顿 / 2 分钟，e2e 只经
   `window.__TAVOTTO_TIMELINE_TIMING__` 注入，产品默认值不动。
 
 ## 速查表原要点（2026-09-25 迁入，#608）

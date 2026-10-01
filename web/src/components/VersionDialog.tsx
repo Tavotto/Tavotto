@@ -17,7 +17,7 @@ import {
   type LayoutVersionMeta,
   type TimelineBudget,
 } from '@/lib/api'
-import { modKey, cn } from '@/lib/utils'
+import { modKey, cn, ALT, MOD } from '@/lib/utils'
 import { currentProjectId } from '@/lib/session'
 import {
   afterAwait,
@@ -64,6 +64,7 @@ import { TextInput } from './ui/Input'
 import { Menu, MenuItem, MenuSeparator } from './ui/Menu'
 import { Dialog } from './ui/Dialog'
 import { Segmented } from './ui/Segmented'
+import { Tip } from './ui/Tooltip'
 
 /**
  * 排版时间线（ADR 0101）—— 右侧抽屉形态，画布保持可见；点一个节点打开**模态**
@@ -90,6 +91,9 @@ export function VersionDrawer() {
   const rev = useTimelineStore((s) => s.rev)
   const gen = useTimelineStore((s) => s.gen)
   const preview = useTimelineStore((s) => s.preview)
+  // 命名输入是否展开：⌥⌘S / 命令面板 / 抽屉里的「给现在存个名字…」都只拨这一个开关
+  const naming = useTimelineStore((s) => s.namingOpen)
+  const setNaming = useTimelineStore((s) => s.setNamingOpen)
 
   /**
    * 本地列表、预算与错误都**记着自己属于哪个上下文**（项目代际 + 排版 id，Codex #679）：
@@ -210,16 +214,22 @@ export function VersionDrawer() {
     setRenaming(null)
     // 打开时记住触发点，关闭后把焦点还回去
     restoreFocus.current = document.activeElement as HTMLElement | null
-    // 焦点进名字框：它是抽屉里第一件能做的事；落在关闭钮上的话，关闭钮的气泡
-    // 会一直挂在抽屉头上
-    const id = requestAnimationFrame(() => nameRef.current?.focus())
     return () => {
-      cancelAnimationFrame(id)
+      // 抽屉关了，命名输入跟着收起：下次打开是「给现在存个名字…」按钮，不是一直开着的输入框
+      useTimelineStore.getState().setNamingOpen(false)
       // 抽屉关了，预览跟着退出：没有抽屉的只读大图没有出口
       useTimelineStore.getState().setPreview(null)
       restoreFocus.current?.focus?.()
     }
   }, [open])
+
+  // 命名输入展开（按钮、⌥⌘S、命令面板）就把焦点交给它；落在别处的话，关闭钮的气泡
+  // 会一直挂在抽屉头上
+  useEffect(() => {
+    if (!open || !naming) return
+    const id = requestAnimationFrame(() => nameRef.current?.focus())
+    return () => cancelAnimationFrame(id)
+  }, [open, naming])
 
   // 打开、换排版 / 换项目、节点有变（新拍 / 改名 / 删除 / 挂上缩略图）时重取
   useEffect(() => {
@@ -269,7 +279,10 @@ export function VersionDrawer() {
       try {
         await saveNamedNode(name)
         // 换走之后才回来：名字框里已经是 B 的名字了，不清
-        after(() => setSaveName(''))
+        after(() => {
+          setSaveName('')
+          setNaming(false)
+        })
         setError(null)
       } catch (e) {
         // 错误按上下文记账（`setError` 记的是这次渲染的上下文），换走之后不显示
@@ -323,33 +336,54 @@ export function VersionDrawer() {
         </IconButton>
       </div>
       <div className="flex shrink-0 gap-1.5 px-3 pb-2">
-        <TextInput
-          ref={nameRef}
-          value={saveName}
-          data-timeline-name-input
-          maxLength={VERSION_NAME_MAX}
-          aria-label={vd('versionName')}
-          onChange={(e) => setSaveName(e.target.value)}
-          onKeyDown={(e) => {
-            e.stopPropagation()
-            if (e.key === 'Enter') void saveNamed()
-            if (e.key === 'Escape' && saveName) setSaveName('')
-          }}
-          placeholder={vd('namePlaceholder')}
-          className="min-w-0 flex-1"
-        />
-        <Button
-          variant="secondary"
-          size="sm"
-          loading={busy}
-          disabled={!saveName.trim()}
-          data-timeline-save-named
-          // 不把 promise 交给按钮：按钮自己的忙态会跟着 A 的请求挂到 B 上
-          onClick={() => void saveNamed()}
-        >
-          <Bookmark size={ICON_SIZE.sm} />
-          {vd('save')}
-        </Button>
+        {naming ? (
+          <>
+            <TextInput
+              ref={nameRef}
+              value={saveName}
+              data-timeline-name-input
+              maxLength={VERSION_NAME_MAX}
+              aria-label={vd('versionName')}
+              onChange={(e) => setSaveName(e.target.value)}
+              onKeyDown={(e) => {
+                e.stopPropagation()
+                if (e.key === 'Enter') void saveNamed()
+                // Esc 收起输入（不关抽屉）；在途时不收，名字不丢
+                if (e.key === 'Escape' && !busy) {
+                  setSaveName('')
+                  setNaming(false)
+                }
+              }}
+              placeholder={vd('namePlaceholder')}
+              className="min-w-0 flex-1"
+            />
+            <Button
+              variant="secondary"
+              size="sm"
+              loading={busy}
+              disabled={!saveName.trim()}
+              data-timeline-save-named
+              // 不把 promise 交给按钮：按钮自己的忙态会跟着 A 的请求挂到 B 上
+              onClick={() => void saveNamed()}
+            >
+              <Bookmark size={ICON_SIZE.sm} />
+              {vd('save')}
+            </Button>
+          </>
+        ) : (
+          <Tip label={vd('nameNow')} shortcut={`${ALT}${MOD}S`}>
+            <Button
+              variant="secondary"
+              size="sm"
+              className="w-full justify-start"
+              data-timeline-name-open
+              onClick={() => setNaming(true)}
+            >
+              <Bookmark size={ICON_SIZE.sm} />
+              {vd('nameNow')}
+            </Button>
+          </Tip>
+        )}
       </div>
       <div className="flex shrink-0 px-3 pb-1.5">
         <Segmented

@@ -127,7 +127,7 @@ describe('命令集', () => {
     spy.mockRestore()
   })
 
-  it('排版时间线（ADR 0101）：「排版时间线…」打开抽屉；「把现在存为命名节点…」打开顶栏命名浮层（不开抽屉）', async () => {
+  it('排版时间线（ADR 0101）：「排版时间线…」打开抽屉；「把现在存为命名节点…」打开抽屉并展开命名输入', async () => {
     const { useTimelineStore } = await import('@/store/timelineStore')
     useUiStore.setState({ versionsOpen: false })
     useTimelineStore.setState({ namingOpen: false })
@@ -138,7 +138,7 @@ describe('命令集', () => {
       ) as HTMLButtonElement
     act(() => find('把现在存为命名节点').click())
     expect(useTimelineStore.getState().namingOpen).toBe(true)
-    expect(useUiStore.getState().versionsOpen).toBe(false)
+    expect(useUiStore.getState().versionsOpen).toBe(true)
     useUiStore.setState({ versionsOpen: false })
     act(() => root?.unmount())
     usePalette.setState({ open: true })
