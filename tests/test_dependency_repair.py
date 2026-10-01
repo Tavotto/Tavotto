@@ -881,7 +881,10 @@ def test_managed_base_python_must_be_in_the_support_range(project, monkeypatch):
 
 
 def test_managed_environment_is_not_offered_without_a_base_python(project, monkeypatch):
-    """没有基础 Python 就没有受管环境这条路——如实说，不假装能修。"""
+    """没有基础 Python、私有 Python 也不提供，就没有受管环境这条路——如实说，不假装能修。
+
+    锁文件里各目标的私有 Python 已开（ADR 0064），「不提供」用工程逃生门钉住，不靠锁里本机目标碰巧关着。"""
+    monkeypatch.setenv("TAVOTTO_PRIVATE_PYTHON", "0")
     monkeypatch.setattr(deprepair, "_base_python", None)
     monkeypatch.setattr(deprepair, "_base_python_known", True)
     with pytest.raises(deprepair.RepairError) as err:

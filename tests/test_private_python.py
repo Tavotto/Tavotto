@@ -118,7 +118,8 @@ class TestLock:
         }
         for name, t in lock["targets"].items():
             assert len(t["sha256"]) == 64 and t["url"].startswith("https://"), name
-            assert t["size"] > 0 and t["enabled"] is False, name
+            # ADR 0064 §二 / 2026-10-01 修订：五个目标全开（macos-x86_64 是维护者拍板的例外）
+            assert t["size"] > 0 and t["enabled"] is True, name
             # 来源钉的是 install_only 归档，文件名里带版本 + release + 三元组
             assert t["url"].endswith(f"-{t['triple']}-install_only.tar.gz"), name
             assert f"cpython-{lock['python']['version']}%2B{lock['python']['release']}-" in t["url"]
@@ -192,8 +193,10 @@ class TestLock:
             privatepython.validate_lock(lock)
 
     def test_offered_follows_the_lock_then_the_engineering_override(self, monkeypatch):
-        src = privatepython.source_for("macos-arm64")
-        assert src is not None and src.enabled is False
+        # 锁里五个目标都开着：取一份真实条目、把 enabled 改成 false，量「没取得资格」那一支
+        real = privatepython.source_for("linux-x86_64")
+        assert real is not None
+        src = privatepython.PythonSource(**{**real.__dict__, "enabled": False})
         monkeypatch.delenv("TAVOTTO_PRIVATE_PYTHON", raising=False)
         assert privatepython.offered(src) is False  # 资格未取得：产品默认不提供
         monkeypatch.setenv("TAVOTTO_PRIVATE_PYTHON", "1")
@@ -201,6 +204,16 @@ class TestLock:
         monkeypatch.setenv("TAVOTTO_PRIVATE_PYTHON", "0")
         enabled = privatepython.PythonSource(**{**src.__dict__, "enabled": True})
         assert privatepython.offered(enabled) is False  # 0 压过锁文件的 true
+        for name in (
+            "macos-arm64",
+            "macos-x86_64",
+            "linux-x86_64",
+            "linux-arm64",
+            "windows-x86_64",
+        ):
+            monkeypatch.delenv("TAVOTTO_PRIVATE_PYTHON", raising=False)
+            qualified = privatepython.source_for(name)
+            assert qualified is not None and privatepython.offered(qualified) is True, name
 
     def test_error_codes_registry_is_closed(self):
         declared = {

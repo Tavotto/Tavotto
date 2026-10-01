@@ -6021,7 +6021,43 @@
       "recommended_deep_lane": "release",
       "enrollment": "observing",
       "execution_status": "not_run",
-      "evidence": [],
+      "evidence": [
+        {
+          "target": "macos-arm64",
+          "result": "pass",
+          "date": "2026-09-30",
+          "artifact_sha256": "38019988d2f3420ef67dbddf879f9c0ca9aa1514338ad6cee8f81babfda116a8",
+          "bundled_archive_sha256": "7d50bb42813a5644db7c40d3ad79361d0b724bb29d25a91fab1048c2c5c6a8c5",
+          "note": "冻结 sidecar + 浏览器界面驱动，非桌面壳窗口本身",
+          "file": "docs/implementation/tavotto-foundation/evidence/u05/target-macos-arm64-2026-09-30.md"
+        },
+        {
+          "target": "windows-x86_64",
+          "result": "pass",
+          "date": "2026-10-01",
+          "artifact_run": "36771293696",
+          "note": "阿里云干净 VM + nightly 冻结 NSIS，经界面一键修复出图、包内归档零下载；证据贴在翻开关的 PR 评论（tavotto-51）"
+        },
+        {
+          "target": "linux-x86_64",
+          "result": "engineering_empty_image_pass",
+          "date": "2026-09-30",
+          "artifact_run": "36772138253",
+          "note": "Linux 无桌面产物，ADR 0064 §二 以空镜像档为最高档"
+        },
+        {
+          "target": "linux-arm64",
+          "result": "engineering_empty_image_pass",
+          "date": "2026-10-01",
+          "file": "docs/implementation/tavotto-foundation/evidence/u05/empty-image-linux-arm64.json",
+          "note": "本机 docker ubuntu:24.04 arm64 空镜像；Linux 无桌面产物，ADR 0064 §二 以空镜像档为最高档"
+        },
+        {
+          "target": "macos-x86_64",
+          "result": "not_run",
+          "note": "没有 Intel 机器；维护者 2026-10-01 拍板例外开启（ADR 0064 2026-10-01 修订），不是取得资格"
+        }
+      ],
       "expected_outcome_rule": "保持原合同；复合contractual用例须事前展开明确预期，不能运行后改成容易通过的结果。",
       "merge_rule": "仅在显式激活到当次lane后阻断；目录中的未实现case不直接挂全局required。",
       "qualification_rule": "该场景适用新能力默认启用/发行前，正常产品路径必须有对应真实资格。"

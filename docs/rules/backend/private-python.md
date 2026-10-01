@@ -85,7 +85,8 @@
 - **隔离**：写入只在 `data_dir/private-python/` 之下；不改 PATH、shell、注册表、默认 Python、用户 `.python-version`
   （用例：HOME 指空目录跑完仍为空、`os.environ` / cwd 前后相同、新文件全在私有目录下）；真起时摘掉 `PYTHON*` /
   `VIRTUAL_ENV` / `CONDA_PREFIX`。Windows 注册表前后快照由目标验证腿（PR C）取。
-- **能力默认关**：锁文件每个目标的 `enabled` 在无系统 Python 的资格取得前保持 `false`（06 §2）；
+- **能力按目标开**：锁文件每个目标的 `enabled` 在无系统 Python 的资格取得前保持 `false`（06 §2）；2026-10-01 起五个目标
+  全开（依据与 `macos-x86_64` 的例外见 ADR 0064 2026-10-01 修订）。测「能力关」的用例用逃生门 `=0` 钉住，别靠锁里本机目标碰巧关着；
   `TAVOTTO_PRIVATE_PYTHON=1|0` 是工程 / CI 目标腿的逃生门（与 `TAVOTTO_RUNTIME_HOST_ARCH` 同一档），不是产品设置。
   换版本 = 改锁（新 sha256 → 新 id → 新目录）+ 每个目标重新取得资格，不自动追最新。
 - **错误码闭集** `privatepython.ERROR_CODES`（十一条 `private_python_*`，`private_python_tls` 2026-09-28 加、`private_python_source_changed` 2026-09-30 加），文案在 `web/src/i18n/locales/*/errors.json` 的
@@ -118,4 +119,4 @@
 - 授权绑在计划的 `private_python` 载荷上、重建 / 首装不下载
 - 取消按消费者、提交点后无效
 - 旧 runtime 有代记着（`referenced_base_runtimes`）就不退役
-- `enabled` 全 false 直到目标资格取得，`TAVOTTO_PRIVATE_PYTHON` 只是工程逃生门
+- `enabled` 按 ADR 0064 §四 逐目标翻（例外写进 ADR），`TAVOTTO_PRIVATE_PYTHON` 只是工程逃生门
