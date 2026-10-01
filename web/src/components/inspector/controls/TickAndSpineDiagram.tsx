@@ -11,8 +11,6 @@ import {
   type TickDirection,
 } from '@/lib/tickSides'
 import { cn } from '@/lib/utils'
-import { INSPECTOR_LABEL_W } from '../layout'
-import { Toggle } from '../../ui/Toggle'
 import { Tip } from '../../ui/Tooltip'
 
 /**
@@ -32,8 +30,8 @@ import { Tip } from '../../ui/Tooltip'
  * 计划函数，三处永远同源。方向在 matplotlib 里是整条轴的，所以 tooltip 会
  * 说出连带改到的同轴另一边。
  *
- * 网格（grid_x / grid_y）是图下方的两个开关，状态同时预览在图内。开关状态
- * 用「实线 vs 虚线 + 透明度」表达，不只靠颜色。
+ * 网格（grid_x / grid_y）的**开关**在属性页的「网格线」摘要行里（2026-10-01 用户拍板），
+ * 这里只把它们此刻的状态预览在图内：「实线 vs 虚线 + 透明度」，不只靠颜色。
  *
  * 纯展示 + 回调组件：字段在不在、当前值、写入全部由调用方（manifest 与
  * ElementWriter）决定；manifest 没有的部分整块不画。`model` 里没有的边
@@ -78,7 +76,6 @@ export interface TickSpineAdapter {
 export const TICK_SPINE_PROPS = [
   'ticks_bottom', 'ticks_top', 'ticks_left', 'ticks_right',
   'spine_bottom', 'spine_top', 'spine_left', 'spine_right',
-  'grid_x', 'grid_y',
 ] as const
 
 type Side = 'top' | 'bottom' | 'left' | 'right'
@@ -393,14 +390,7 @@ function ZoneSwitch({
   )
 }
 
-export function TickAndSpineDiagram({
-  adapter,
-  labelWidth = INSPECTOR_LABEL_W,
-}: {
-  adapter: TickSpineAdapter
-  /** 网格行标签列的宽度：与同页其它 `Row` 的 `LABEL_W` 同一条竖线 */
-  labelWidth?: number
-}) {
+export function TickAndSpineDiagram({ adapter }: { adapter: TickSpineAdapter }) {
   const hintId = useId()
   const sideProps = SIDES.flatMap((s) => [`spine_${s}`, `ticks_${s}`])
   if (!sideProps.some((p) => adapter.has(p))) return null
@@ -417,7 +407,6 @@ export function TickAndSpineDiagram({
   const zoned = (side: Side): side is SpineSide =>
     !!model && !!model.sides[side] && !!adapter.applyPlan
 
-  const gridLabel = translate('canvas.grid', { ns: 'inspector' })
   const resetLabel = ctl('resetDiagram', { count: modified.length })
 
   return (
@@ -565,31 +554,6 @@ export function TickAndSpineDiagram({
         {ctl('tickSpineDiagramHint')}
       </p>
 
-      {(adapter.has('grid_x') || adapter.has('grid_y')) && (
-        // 网格开关是标准的 `Row + Toggle`（与「反转 X / Y」同一形态），不再是一对推到右缘、
-        // 关态长得像文字的 role=switch 按钮，也不再画分隔线（2026-09-14 审计 S6；宪法第五节
-        // 「Toggle 唯一的滑动开关」、第八节「组间靠留白不画线」）
-        <div role="group" aria-label={gridLabel} className="flex min-h-7 items-center gap-2 pt-1">
-          {/* 标签列宽与同页其它行（`LABEL_W`）同一条竖线 */}
-          <span style={{ width: labelWidth }} className="shrink-0 text-xs text-ink-2">
-            {gridLabel}
-          </span>
-          <div className="flex min-w-0 flex-1 items-center gap-4">
-            {(['grid_x', 'grid_y'] as const).map((p) =>
-              adapter.has(p) ? (
-                <label key={p} className="flex items-center gap-1.5 text-xs text-ink-2">
-                  <Toggle
-                    checked={on(p)}
-                    onChange={(v) => adapter.toggle(p, v)}
-                    aria-label={adapter.labelOf(p)}
-                  />
-                  {translate(p === 'grid_x' ? 'tick.axisX' : 'tick.axisY', { ns: 'inspector' })}
-                </label>
-              ) : null,
-            )}
-          </div>
-        </div>
-      )}
     </div>
   )
 }

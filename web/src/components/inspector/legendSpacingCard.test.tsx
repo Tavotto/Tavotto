@@ -210,6 +210,20 @@ describe('图例的间距（摘要行；审计 T17 的排版详情）', () => {
     }
   })
 
+  it('用户找得到（2026-10-01 拍板）：收起且值为默认时，「间距」标题行照样在、可见、可点，右值写当前值', async () => {
+    await mount()
+    const t = cardToggle()!
+    expect(t).toBeTruthy()
+    expect(t.disabled).toBe(false)
+    expect(t.hidden).toBe(false)
+    expect(t.closest('[hidden]')).toBeNull()
+    expect(t.textContent).toContain('间距')
+    expect(cardValue()).toBe('默认')
+    // 它不藏在「更多」里：「更多」没展开，间距标题也在
+    expect(moreToggle()?.getAttribute('aria-expanded')).toBe('false')
+    expect(moreToggle()?.parentElement?.contains(t)).toBe(false)
+  })
+
   it('点开：四条间距就在卡里，右值收起', async () => {
     await mount()
     await openCard()

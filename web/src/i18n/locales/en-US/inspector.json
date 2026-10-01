@@ -255,6 +255,9 @@
     "foldCount_one": "{{count}} item",
     "foldCount_other": "{{count}} items",
     "foldGrid": "Grid lines",
+    "foldGridOff": "Off",
+    "foldGridOn": "{{axes}} on",
+    "foldGridSep": ", ",
     "foldOff": "Off",
     "foldOn": "On",
     "foldScaleCenter": "Scale & center",
@@ -1101,7 +1104,7 @@
     "axisZ": "Z axis",
     "zTicks": "Z ticks",
     "sectionMarks": "Tick marks",
-    "sectionLabels": "Labels",
+    "sectionLabels": "Tick labels",
     "editSpinesOnAxes": "Edit tick marks and spines on the axes page"
   },
   "transform": {

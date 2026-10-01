@@ -31,11 +31,13 @@ export function valueText(field: EditableField | undefined, value: unknown): str
 
 const lead = (r: FoldReader, prop: string) => valueText(r.fieldOf(prop), r.read(prop))
 
-/** 子图的网格：两个方向都没开 = 不显示，否则写开着的方向 */
+/** 子图的网格：两个方向都没开 = 「关」，否则写开着的方向（「X、Y 开」） */
 function gridValue(r: FoldReader): string {
   const on = (['grid_x', 'grid_y'] as const).filter((p) => r.read(p) === true)
-  if (!on.length) return el('foldOff')
-  return on.map((p) => el(p === 'grid_x' ? 'axis.x' : 'axis.y')).join(' · ')
+  if (!on.length) return el('foldGridOff')
+  return el('foldGridOn', {
+    axes: on.map((p) => el(p === 'grid_x' ? 'axis.x' : 'axis.y')).join(el('foldGridSep')),
+  })
 }
 
 /**

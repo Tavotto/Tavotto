@@ -723,6 +723,9 @@ describe('刻度组元素页', () => {
       s.getAttribute('data-tick-section'),
     )
     expect(sections).toEqual(['marks', 'labels'])
+    // 分段名（2026-10-01 用户拍板）：刻度线 / 刻度数字
+    expect(host.querySelector('[data-tick-section="marks"] h3, [data-tick-section="marks"] p')?.textContent).toBe('刻度线')
+    expect(host.querySelector('[data-tick-section="labels"] h3, [data-tick-section="labels"] p')?.textContent).toBe('刻度数字')
     const marks = host.querySelector('[data-tick-section="marks"]')!
     const labels = host.querySelector('[data-tick-section="labels"]')!
     expect(marks.querySelector('[data-prop="direction"]')).toBeTruthy()

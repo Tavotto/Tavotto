@@ -191,22 +191,22 @@ export const ROLE_PROFILES: Record<string, RoleProfile> = {
     },
   },
   axes: {
-    // 低频项收成摘要行（2026-10-01，设计稿 A6）：网格的颜色 / 线型 / 线宽 / 不透明度、
-    // 背景色与显示、占比（`position`）与堆叠层级。网格的**开关**（grid_x / grid_y）在
-    // 四边状态图上，不在这里
+    // 低频项收成摘要行（2026-10-01，设计稿 A6）：网格的两个开关与颜色 / 线型 / 线宽 /
+    // 不透明度（用户拍板：开关也收进来，四边示意图只管边框和刻度）；背景色与显示、
+    // 占比（`position`）与堆叠层级
     folds: [
-      { id: 'grid', labelKey: 'foldGrid', props: ['grid_color', 'grid_linestyle', 'grid_linewidth', 'grid_alpha'] },
+      { id: 'grid', labelKey: 'foldGrid', props: ['grid_x', 'grid_y', 'grid_color', 'grid_linestyle', 'grid_linewidth', 'grid_alpha'] },
       { id: 'background', labelKey: 'foldBackground', props: ['facecolor', 'visible', 'position', 'zorder'] },
     ],
     // 子图页按任务分三段（审计 T12），各由一张卡承接、从通用列表里让出来：
     //   范围 / 坐标变换  —— ElementInspector 的 AxesRangeCard
     //                      （xlim / ylim / xscale / yscale / invert_* / aspect）
-    //   刻度与网格      —— TickAndSpineDiagram（ticks_* / spine_<side> / grid_x / grid_y）
+    //   刻度与网格      —— TickAndSpineDiagram（ticks_* / spine_<side>；网格开关在「网格线」摘要行）
     //   边框            —— SpineFrameCard（spine_color / spine_linewidth / 逐边）
     // 这里点名的顺序只对**没被卡承接**的场合生效（卡不渲染时字段仍不丢）。
     // 尺寸（mm）由 AxesSizeMm 组件承接；裸 position rect 是 figure 分数
     // 坐标的诊断视图，进 advanced（manifest-first 泄漏，见审计 P6）。
-    primary: ['xlim', 'ylim', 'xscale', 'yscale', 'invert_x', 'invert_y', 'aspect', 'grid_x', 'grid_y'],
+    primary: ['xlim', 'ylim', 'xscale', 'yscale', 'invert_x', 'invert_y', 'aspect'],
     more: [
       'grid_color', 'grid_linestyle', 'grid_linewidth', 'grid_alpha',
       'spine_color', 'spine_linewidth', 'facecolor', 'visible',

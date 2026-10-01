@@ -107,6 +107,8 @@
     两份文案 + 在 `foldSummary.foldValue` 里点名右值（没有可说的当前值就留空，别编一个）。
   * 摘要行默认收起、收起时内容不挂载：量里面控件的测试要先点开（`[data-fold="<id>"] > button`；
     `data-fold` 是它的稳定锚点）。展开状态是模块级 store，`src/test/setup.ts` 每条用例前清掉 `foldOpen`。
+  * 子图的网格 X / Y 开关（`grid_x` / `grid_y`）属于「网格线」摘要行，**不在**四边状态图下面（图只预览它们的状态）；
+    刻度组页两段叫「刻度线 / 刻度数字」。
   * 刻度组页的「小刻度」一行不全是注册表认领的：开关与长 / 宽在刻度卡里（`TickMinorBlock`，同一份控件换了
     地方），方式 / 间距 / 格式才是认领来的字段；Z 轴一条次刻度能力都没发时整行不出现。
 * 看护：`presentation/registry.test.ts`、`legendCard.test.tsx`、

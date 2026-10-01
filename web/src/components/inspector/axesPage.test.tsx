@@ -590,15 +590,33 @@ describe('子图页的低频项收成摘要行', () => {
 
   it('网格线与背景的右值是当前值，展开后是原来的字段（每个字段只出现一次）', async () => {
     await mount('axes_0', [])
-    expect(foldValue('grid')).toBe('不显示')
+    expect(foldValue('grid')).toBe('关')
     expect(foldValue('background')).toMatch(/^#[0-9A-F]{6}$/)
     for (const id of ['grid', 'background']) {
       await act(async () => {
         foldBtn(id)!.click()
       })
     }
-    for (const prop of ['grid_color', 'facecolor']) {
+    for (const prop of ['grid_x', 'grid_y', 'grid_color', 'facecolor']) {
       expect(host.querySelectorAll(`[data-prop="${prop}"]`), prop).toHaveLength(1)
     }
+  })
+
+  it('网格开关在「网格线」摘要行里，四边示意图下面不再有第二套；开一个方向右值说「X 开」', async () => {
+    await mount('axes_0', [])
+    // 收着时开关不在 DOM；示意图只管边框和刻度
+    expect(host.querySelector('[data-prop="grid_x"]')).toBeNull()
+    await act(async () => {
+      foldBtn('grid')!.click()
+    })
+    const sw = host.querySelector('[data-fold="grid"] [data-prop="grid_x"] [role="switch"]') as HTMLButtonElement
+    expect(sw).toBeTruthy()
+    expect(host.querySelector('[aria-label="刻度与边框状态图"]')!.closest('div')!.parentElement!.querySelector('[role="group"][aria-label="网格"]')).toBeNull()
+    await act(async () => sw.click())
+    expect(overrideOf('axes_0', 'grid_x')).toBe(true)
+    await act(async () => {
+      foldBtn('grid')!.click()
+    })
+    expect(foldValue('grid')).toBe('X 开')
   })
 })

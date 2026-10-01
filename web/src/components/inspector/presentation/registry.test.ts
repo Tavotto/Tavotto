@@ -138,7 +138,9 @@ describe('presentFields：角色模板分桶', () => {
     const fields = [f('position', 'rect'), f('xlim', 'pair'), f('grid_x', 'bool'), f('zorder'), f('facecolor', 'color')]
     const b = presentFields('axes', fields, opts())
     expect(b.advanced).toEqual([])
-    expect(b.primary.map((x) => x.field.prop)).toEqual(['xlim', 'grid_x'])
+    expect(b.primary.map((x) => x.field.prop)).toEqual(['xlim'])
+    // 网格开关与网格样式一起收进「网格线」（2026-10-01 用户拍板）
+    expect(b.folds.find((x) => x.spec.id === 'grid')?.fields.map((x) => x.field.prop)).toEqual(['grid_x'])
     expect(b.folds.find((x) => x.spec.id === 'background')?.fields.map((x) => x.field.prop)).toEqual([
       'facecolor', 'position', 'zorder',
     ])

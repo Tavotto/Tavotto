@@ -247,6 +247,9 @@
     "foldCoords": "坐标轴、翻转、长宽比",
     "foldCount_other": "{{count}} 项",
     "foldGrid": "网格线",
+    "foldGridOff": "关",
+    "foldGridOn": "{{axes}} 开",
+    "foldGridSep": "、",
     "foldOff": "不显示",
     "foldOn": "显示",
     "foldScaleCenter": "按比例缩放、居中",
@@ -1077,8 +1080,8 @@
     "yTicks": "Y 刻度",
     "axisZ": "Z 轴",
     "zTicks": "Z 刻度",
-    "sectionMarks": "刻度",
-    "sectionLabels": "文字",
+    "sectionMarks": "刻度线",
+    "sectionLabels": "刻度数字",
     "editSpinesOnAxes": "在子图页编辑刻度线与边框"
   },
   "transform": {

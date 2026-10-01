@@ -1186,7 +1186,7 @@ function TickControl({
   }
   return (
     <div className="flex flex-col gap-4">
-      <TickAndSpineDiagram adapter={adapter} labelWidth={LABEL_W} />
+      <TickAndSpineDiagram adapter={adapter} />
       {axes.length > 0 && (
         <TickTaskCard axes={axes} labelWidth={LABEL_W} model={model} applyPlan={applyPlan} />
       )}
