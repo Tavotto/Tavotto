@@ -180,6 +180,7 @@ USER_VISIBLE_CODES = {
     "specfix_native_unsupported": {"product"},
     "invalid_patches": set(),
     "invalid_width": {"value"},
+    "invalid_preview_options": set(),
     "not_parameterizable": set(),
     "sync_different_scripts": set(),
     "python_missing": set(),
@@ -741,8 +742,9 @@ def test_every_worker_error_response_carries_a_failure_status():
     # 2026-09-25（QA SCI-04-B1）：update_source / history/restore 两处 `, 500` 收进
     # `_write_back_error_response` 的一处 `, 409`（写回 verify 段挂了，原件零改动），11 → 10；
     # ADR 0080 的 /api/engine/specfix 渲染半路死了那一处 `, 500`，10 → 11。
-    assert len(seen) == 11, (
-        f"`_worker_error_payload` 的调用点从 11 变成了 {len(seen)}：{seen}\n"
+    # #779: paired PNG snapshot adds one explicit HTTP 500 error response, 11 → 12.
+    assert len(seen) == 12, (
+        f"`_worker_error_payload` 的调用点从 12 变成了 {len(seen)}：{seen}\n"
         "  新增出口 → 把这个数改成新的实测值，并确认它带了状态码；\n"
         "  变少了 → 确认那处是真的删了，而不是搬到了别的文件里。"
     )
