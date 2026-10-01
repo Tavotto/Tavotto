@@ -1,5 +1,5 @@
 {
-  "_doc": "`pip config list` 的输出 → 作用于 `pip install` 的键（节只认 global / install / :env:，键名按 pip 规范化）与生效的 index-url。严格同源对：引擎 `deprepair.pip_config_keys` ↔ 插件 `server.pip_config_items` / `pip_config_index_url`（#737），两侧各读本文件，不读对方源码。`keys` 排好序；`index_section` 为 null 表示没有作用于安装的 index-url。",
+  "_doc": "`pip config list` 的输出 → 作用于 `pip install` 的键（节只认 global / install / :env:，键名按 pip 规范化）与生效的 index-url。严格同源对：引擎 `deprepair.pip_config_keys` ↔ 插件 `server.pip_config_items` / `pip_config_index_url`（#737），两侧各读本文件，不读对方源码。`keys` 排好序；`index_section` 为 null 表示没有作用于安装的 index-url；`index_url` 为 null 而节不为 null 表示生效那一节有不止一个不同的值（来自多个文件，`config list` 的打印顺序不是覆盖顺序），值只能由 pip 解析给出（#767）。",
   "vectors": [
     {
       "name": "pip 25 的真实输出：download 节不算，:env: 压过 install 压过 global",
@@ -30,10 +30,10 @@
       "index_section": "install"
     },
     {
-      "name": "键名规范化：--index-url / INDEX_URL / index_url 是同一个键，同一节后出现的生效",
+      "name": "键名规范化：--index-url / INDEX_URL / index_url 是同一个键；同一节出现几个不同的值时谁生效从行序推不出（原写「后出现的生效」，#767 实测不成立），值交给 pip 解析",
       "text": "global.--index-url='https://first.example/simple'\nglobal.INDEX_URL='https://second.example/simple'\nglobal.index_url='https://third.example/simple'\n",
       "keys": ["index-url"],
-      "index_url": "https://third.example/simple",
+      "index_url": null,
       "index_section": "global"
     },
     {
@@ -77,6 +77,20 @@
       "keys": [],
       "index_url": null,
       "index_section": null
+    },
+    {
+      "name": "同一节的 index-url 来自两个文件（pip 25.3 实测：~/.pip 与 $XDG_CONFIG_HOME/pip 各一条，生效的新位置那条打印在前）：键照算「配了」，值从行序推不出、交给 pip 解析",
+      "text": "global.index-url='https://zz-current.example/simple'\nglobal.index-url='https://aa-legacy.example/simple'\n",
+      "keys": ["index-url"],
+      "index_url": null,
+      "index_section": "global"
+    },
+    {
+      "name": "PIP_CONFIG_FILE 与 site 各写一条 global.index-url（pip 25.3 实测：生效的是 PIP_CONFIG_FILE 那条，config get 却回 site 的）",
+      "text": "global.index-url='https://envfile.example/simple'\nglobal.index-url='https://site.example/simple'\n:env:.config-file='/tmp/envfile.conf'\n",
+      "keys": ["config-file", "index-url"],
+      "index_url": null,
+      "index_section": "global"
     }
   ]
 }

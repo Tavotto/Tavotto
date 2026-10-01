@@ -40,6 +40,8 @@ def test_the_vectors_cover_the_cases_that_matter():
     assert any(v["index_section"] == "install" for v in VECTORS)
     assert any("--index-url" in t for t in texts)
     assert any(t == "" for t in texts)
+    # 同一节的同一个键来自多个文件（#767）：键照算、值不从行序推
+    assert any(v["index_url"] is None and v["index_section"] for v in VECTORS)
 
 
 @pytest.mark.parametrize("vec", VECTORS, ids=IDS)

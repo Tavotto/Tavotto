@@ -707,41 +707,53 @@ def _pipx_shared_libs(where: Path) -> Path:
     return where
 
 
-def test_duplicate_index_urls_in_one_section_ask_pip_which_one_wins(monkeypatch):
-    """同一节的 index-url 来自好几个文件时，`pip config list` 把每一条都打印、按值排序（给人看的顺序，不是
-    覆盖顺序）：谁生效再问一次 `pip config get`，不从行序推；`get` 也问不到就是不知道（#767 Codex P1）。"""
-    listed = (
-        f"global.index-url='{ALIYUN}'\n"  # 生效的那个按值排在前面
-        "global.index-url='https://pypi.org/simple'\n"
-    )
+def test_duplicate_index_urls_take_pips_own_parse_not_the_print_order(monkeypatch):
+    """同一节的 index-url 来自好几个文件时，值不从 `config list` 的行序推（打印顺序不是覆盖顺序），也不信
+    `config get`（不认 `PIP_CONFIG_FILE`、有 site 文件时只看 site 那一个）：让 pip 在目标解释器里把 install
+    选项解析一遍，回的就是真装包会用的那个；解析不了就是不知道（#767 Codex P1 两轮）。"""
+    listed = f"global.index-url='https://pypi.org/simple'\nglobal.index-url='{ALIYUN}'\n"
     asked: list = []
 
-    def fake(argv, environ, timeout, *, answer_get=ALIYUN):
-        asked.append(argv[argv.index("config") + 1 :])
+    def fake(argv, environ, timeout, *, parsed=ALIYUN):
+        asked.append(argv)
         if argv[-2:] == ["config", "list"]:
             return listed
-        return None if answer_get is None else answer_get + "\n"
+        assert argv[1:3] == ["-B", "-c"] and "create_command('install')" in argv[3], argv
+        return None if parsed is None else parsed + "\n"
 
     monkeypatch.setattr(launcher, "_run_pip_config_list", fake)
     got = launcher.pip_index_of("/env/bin/python", {})
     assert got == {"url": ALIYUN_SAID, "source": "pip_config", "mirror": True}, got
-    assert asked == [["list"], ["get", "global.index-url"]]
-    # `get` 问不到：不知道，不按行序挑一个
+    assert not any("get" in a for a in asked), "不许再用 config get"
     monkeypatch.setattr(
         launcher,
         "_run_pip_config_list",
-        lambda argv, environ, timeout: fake(argv, environ, timeout, answer_get=None),
+        lambda argv, environ, timeout: fake(argv, environ, timeout, parsed=None),
     )
     assert launcher.pip_index_of("/env/bin/python", {}) == launcher.PIP_INDEX_UNKNOWN
-    # 只有一个值时不多问
-    asked.clear()
-    monkeypatch.setattr(
-        launcher,
-        "_run_pip_config_list",
-        lambda argv, environ, timeout: (asked.append(argv), listed.splitlines()[0])[1],
+
+
+def test_real_pip_config_file_beats_a_site_file_that_config_get_would_read(tmp_path):
+    """真 pip（pip 25.3 实测的形状）：venv 的 site 文件写 PyPI、`PIP_CONFIG_FILE` 写镜像——`pip install`
+    用镜像，而 `pip config get global.index-url` 回的是 site 的 PyPI。"""
+    venv = tmp_path / "venv"
+    subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True, capture_output=True)
+    py = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    (venv / ("pip.ini" if os.name == "nt" else "pip.conf")).write_text(
+        "[global]\nindex-url = https://pypi.org/simple\n", "utf-8"
     )
-    assert launcher.pip_index_of("/env/bin/python", {})["mirror"] is True
-    assert len(asked) == 1
+    env = _pip_env(
+        tmp_path, PIP_CONFIG_FILE=_pip_conf(tmp_path, f"[global]\nindex-url = {ALIYUN}\n")
+    )
+    got_get = subprocess.run(
+        [str(py), "-m", "pip", "config", "get", "global.index-url"],
+        env=env,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert got_get == "https://pypi.org/simple", f"前提：config get 只看 site 那一个：{got_get!r}"
+    got = launcher.pip_index_of(str(py), env)
+    assert got == {"url": ALIYUN_SAID, "source": "pip_config", "mirror": True}, got
 
 
 @pytest.mark.skipif(

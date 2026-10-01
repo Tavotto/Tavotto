@@ -803,34 +803,60 @@ def pip_config_items(text: str) -> "list[tuple[str, str, str]]":
 
 
 def pip_config_index_url(text: str) -> "tuple[str | None, str | None]":
-    """`pip config list` 的输出里 `pip install` 实际用的 index-url 与它来自哪一节：节按 pip 的覆盖顺序
-    （`:env:` 压过 `install` 压过 `global`），同一节里后出现的生效。没写回 (None, None)；写了空值回 ("", 节)
-    ——「设没设」与引擎 `pip_config_keys` 逐条一致，空地址当没配由调用方判。"""
-    found: "dict[str, str]" = {}
+    """`pip config list` 的输出里 `pip install` 的 index-url 配在哪一节、写的是什么：节按 pip 的覆盖顺序
+    （`:env:` 压过 `install` 压过 `global`）。没写回 (None, None)；写了空值回 ("", 节)——「设没设」与引擎
+    `pip_config_keys` 逐条一致。**生效那一节里出现不止一个不同的值**（同一节的键来自好几个文件）时值回
+    None、节照回：`config list` 每条都打印，顺序不是覆盖顺序（#767 实测），从行序推不出谁生效——值由
+    `_pip_effective_index_url` 让 pip 自己解析。"""
+    found: "dict[str, list[str]]" = {}
     for section, key, value in pip_config_items(text):
         if key == "index-url":
-            found[section] = value.strip()
+            found.setdefault(section, []).append(value.strip())
     for section in reversed(_PIP_INSTALL_SECTIONS):
         if section in found:
-            return found[section], section
+            values = found[section]
+            return (values[0] if len(set(values)) == 1 else None), section
     return None, None
 
 
-def pip_config_index_url_ambiguous(text: str) -> "str | None":
-    """生效的那一节里 index-url 出现了不止一个**不同**的值时回那一节的名字，否则 None。
+#: 在目标解释器里让 **pip 自己**把 `pip install` 的选项解析一遍（与真装包同一条路：配置文件按 pip 的覆盖顺序
+#: 合并、`[install]` 压过 `[global]`、`PIP_CONFIG_FILE` / `PIP_*` 环境变量），只打印生效的 index-url。
+#: 不联网、不装东西。`config list` 的打印顺序**不是**覆盖顺序、`config get` 也不认 `PIP_CONFIG_FILE`
+#: （#767 实测，见 PR），所以「是哪个值」只信这一处。用的是 pip 的内部入口 `create_command`（pip 19.3 起
+#: 一直在）；解析不了就是不知道。
+_PIP_EFFECTIVE_INDEX_CODE = (
+    "from pip._internal.commands import create_command\n"
+    "o, _ = create_command('install').parse_args([])\n"
+    "print(o.index_url or '')\n"
+)
 
-    同一节的同一个键可以来自好几个文件（Linux 上 `~/.pip/pip.conf` 与 `~/.config/pip/pip.conf`、site 与
-    user……）。`pip config list` 把每个文件里的那一条都打印出来，而且按 `sorted(items())` 排——**是给人看的
-    顺序，不是覆盖顺序**（pip 25.3 实测：生效的那个先打印，旧位置的后打印）。这时谁生效不能从行序推，
-    要再问 pip 一次（`pip config get`，#767 Codex P1）。"""
-    found: "dict[str, set[str]]" = {}
-    for section, key, value in pip_config_items(text):
-        if key == "index-url":
-            found.setdefault(section, set()).add(value.strip())
-    for section in reversed(_PIP_INSTALL_SECTIONS):
-        if section in found:
-            return section if len(found[section]) > 1 else None
-    return None
+
+def _pip_effective_index_url(
+    python: str, environ, timeout: float, shared: "str | None" = None
+) -> "str | None":
+    """那个解释器的 `pip install` 此刻真会用的 index-url；问不到回 None。`shared`：目标自己没有 pip 时
+    pipx 共享库那个解释器——把它的 pip 所在目录放上 `PYTHONPATH`，仍在**目标解释器**里解析（site 配置
+    跟着目标走，与 `pip --python` 一致）。"""
+    env = dict(environ)
+    if shared is not None:
+        where = _run_pip_config_list(
+            [
+                shared,
+                "-B",
+                "-c",
+                "import os, pip; print(os.path.dirname(os.path.dirname(os.path.abspath(pip.__file__))))",
+            ],
+            environ,
+            timeout,
+        )
+        if not where or not where.strip():
+            return None
+        env["PYTHONPATH"] = where.strip()
+    out = _run_pip_config_list([python, "-B", "-c", _PIP_EFFECTIVE_INDEX_CODE], env, timeout)
+    if out is None:
+        return None
+    lines = out.strip().splitlines()
+    return lines[-1].strip() if lines else ""
 
 
 def _pipx_shared_python(python: str, environ) -> "str | None":
@@ -871,7 +897,8 @@ def _run_pip_config_list(argv: "list[str]", environ, timeout: float) -> "str | N
 
 
 def pip_index_of(python: "str | None", environ=None, timeout: float = 15.0) -> "dict | None":
-    """**那个解释器**的 pip 从哪个索引装包——直接问 pip（`python -m pip config list`，#737），不复刻 pip 的
+    """**那个解释器**的 pip 从哪个索引装包——直接问 pip（`python -m pip config list` 判配没配、在哪一节；
+    生效的值由 pip 解析 install 选项给出，#737 / #767），不复刻 pip 的
     配置发现：平台位置、编码、文件覆盖顺序、`PIP_CONFIG_FILE`、site 配置、Windows 商店版 Python 的虚拟化
     配置，都由 pip 自己在那个解释器里按它的规则读完。
 
@@ -883,24 +910,26 @@ def pip_index_of(python: "str | None", environ=None, timeout: float = 15.0) -> "
     if not python:
         return None
     env = os.environ if environ is None else environ
-    pip = [python, "-B", "-m", "pip"]
-    text = _run_pip_config_list([*pip, "config", "list"], env, timeout)
+    shared = None
+    text = _run_pip_config_list([python, "-B", "-m", "pip", "config", "list"], env, timeout)
     if text is None:
         shared = _pipx_shared_python(python, env)
         if shared:
-            pip = [shared, "-B", "-m", "pip", "--python", python]
-            text = _run_pip_config_list([*pip, "config", "list"], env, timeout)
+            text = _run_pip_config_list(
+                [shared, "-B", "-m", "pip", "--python", python, "config", "list"], env, timeout
+            )
     if text is None:
         return dict(PIP_INDEX_UNKNOWN)
-    url, section = pip_config_index_url(text)
-    ambiguous = pip_config_index_url_ambiguous(text)
-    if ambiguous:
-        # 同一节里有好几个文件各写了一个 index-url：生效的那个由 pip 说（`config get` 回的就是合并后的值）；
-        # 问不到就是不知道，不从打印顺序猜
-        got = _run_pip_config_list([*pip, "config", "get", f"{ambiguous}.index-url"], env, timeout)
-        if got is None:
-            return dict(PIP_INDEX_UNKNOWN)
-        url, section = got.strip(), ambiguous
+    # 配没配、配在哪一节：按 `config list` 的节判（与引擎 `pip_config_keys` 同源）
+    _value, section = pip_config_index_url(text)
+    if section is None:
+        return None
+    # 生效的是**哪个值**：同一节的键可以来自好几个文件，`config list` 每条都打印且顺序不是覆盖顺序——
+    # 让 pip 自己把 install 的选项解析一遍（#767 Codex P1）。问不到就是不知道，不从行序猜
+    effective = _pip_effective_index_url(python, env, timeout, shared)
+    if effective is None:
+        return dict(PIP_INDEX_UNKNOWN)
+    url = effective.strip()
     if not url:
         return None
     source = "PIP_INDEX_URL" if section == ":env:" else "pip_config"
