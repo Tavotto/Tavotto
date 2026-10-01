@@ -7452,6 +7452,21 @@ def api_layout_session_put_last():
     return jsonify({"ok": True, "last": last})
 
 
+def _file_named(directory: Path, doc_id: str) -> Path | None:
+    """`directory` 里名为 `<doc_id>.json` 的文件（按目录列表匹配）；没有 / 目录不在回 None。"""
+    try:
+        return next(
+            (
+                p
+                for p in directory.iterdir()
+                if p.suffix == ".json" and p.stem == doc_id and p.is_file()
+            ),
+            None,
+        )
+    except OSError:
+        return None
+
+
 def _layout_owner_evidence(doc_id: str, ctx) -> tuple[str, str | None]:
     """槽位 `doc_id` 与当前项目的关系：(`this` / `other` / `unknown`, 证据)。
 
@@ -7471,11 +7486,16 @@ def _layout_owner_evidence(doc_id: str, ctx) -> tuple[str, str | None]:
         return verdict, "owners"
     if ctx is None:
         return "unknown", None
+    # 两处都按**目录里已有的文件名**去找，不拿请求里的 doc_id 拼路径（它虽然已过 `valid_doc_id`，
+    # 只读端点也不给路径注入留口子）
     store = project_store_dir(ctx)
-    if store is not None and (store / "versions" / f"{doc_id}.json").is_file():
+    if store is not None and _file_named(store / "versions", doc_id) is not None:
         return "this", "versions"
+    slot = _file_named(AUTOSAVE_DIR, doc_id)
+    if slot is None:
+        return "unknown", None
     try:
-        doc = engine_documents.loads_document(_autosave_path(doc_id).read_bytes())
+        doc = engine_documents.loads_document(slot.read_bytes())
     except (OSError, ValueError):
         return "unknown", None
     if not isinstance(doc, dict):
