@@ -4,7 +4,7 @@ import type { FigureDocument } from '@/types/document'
 
 /**
  * 排版时间线的界面状态（ADR 0101）：列表的换代计数、「正在预览哪个节点」、
- * 时间线抽屉里命名输入展开没有。
+ * 顶部「存为命名节点」小框开没开。
  *
  * **不是第二份文档**：预览的那份快照只拿来在预览对话框里画只读的大图，
  * 从不进 documentStore、不 commit、不进历史、不发后端。恢复是另一件事，走
@@ -28,7 +28,7 @@ interface TimelineState {
   /** 项目代际：每次 `clear()`（换项目）+1 */
   gen: number
   preview: TimelinePreview | null
-  /** 时间线抽屉里命名输入是否展开（「给现在存个名字…」、⌥⌘S、命令面板共用这一个开关） */
+  /** 工作面板顶部「存为命名节点」小框开没开（⌥⌘S、命令面板共用这一个开关；抽屉里的按钮有自己的展开态） */
   namingOpen: boolean
   bump: () => void
   setPreview: (p: TimelinePreview | null) => void

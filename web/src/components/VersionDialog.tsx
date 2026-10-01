@@ -91,9 +91,9 @@ export function VersionDrawer() {
   const rev = useTimelineStore((s) => s.rev)
   const gen = useTimelineStore((s) => s.gen)
   const preview = useTimelineStore((s) => s.preview)
-  // 命名输入是否展开：⌥⌘S / 命令面板 / 抽屉里的「给现在存个名字…」都只拨这一个开关
-  const naming = useTimelineStore((s) => s.namingOpen)
-  const setNaming = useTimelineStore((s) => s.setNamingOpen)
+  // 命名输入是否展开：抽屉里「给现在存个名字…」点开才展开，抽屉关闭复位
+  // （⌥⌘S / 命令面板走顶部小框 `NamedNodeQuickBox`，与这里无关）
+  const [naming, setNaming] = useState(false)
 
   /**
    * 本地列表、预算与错误都**记着自己属于哪个上下文**（项目代际 + 排版 id，Codex #679）：
@@ -216,14 +216,14 @@ export function VersionDrawer() {
     restoreFocus.current = document.activeElement as HTMLElement | null
     return () => {
       // 抽屉关了，命名输入跟着收起：下次打开是「给现在存个名字…」按钮，不是一直开着的输入框
-      useTimelineStore.getState().setNamingOpen(false)
+      setNaming(false)
       // 抽屉关了，预览跟着退出：没有抽屉的只读大图没有出口
       useTimelineStore.getState().setPreview(null)
       restoreFocus.current?.focus?.()
     }
   }, [open])
 
-  // 命名输入展开（按钮、⌥⌘S、命令面板）就把焦点交给它；落在别处的话，关闭钮的气泡
+  // 命名输入展开就把焦点交给它；落在别处的话，关闭钮的气泡
   // 会一直挂在抽屉头上
   useEffect(() => {
     if (!open || !naming) return
@@ -385,6 +385,7 @@ export function VersionDrawer() {
           </Tip>
         )}
       </div>
+      {naming && <p className="shrink-0 px-3 pb-2 text-xs text-ink-3">{vd('nameHint')}</p>}
       <div className="flex shrink-0 px-3 pb-1.5">
         <Segmented
           value={filter}

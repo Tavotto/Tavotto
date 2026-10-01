@@ -577,13 +577,12 @@ export function toggleTimeline(): void {
 }
 
 /**
- * 「把现在存为命名节点」（⌥⌘S、命令面板；ADR 0101，2026-10-01 修订：顶栏书签并进时间线）：
- * 打开时间线抽屉并直接展开命名输入、聚焦。名字要用户自己起——命名节点的全部
+ * 「把现在存为命名节点」（⌥⌘S、命令面板；ADR 0101，2026-10-01 修订：顶栏书签钮移除）：
+ * 在工作面板顶部就地弹一个小输入框（`NamedNodeQuickBox`），**不打开抽屉**。名字要用户自己起——命名节点的全部
  * 意义就是「这个名字是我起的」，所以不替他编一个。
  */
 export function startNamedNode(): void {
   finishActiveGesture()
-  useUiStore.getState().setVersionsOpen(true)
   useTimelineStore.getState().setNamingOpen(true)
 }
 

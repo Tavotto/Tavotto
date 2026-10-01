@@ -1725,6 +1725,7 @@ export default interface Resources {
       },
       "more": "节点操作",
       "name": "命名…",
+      "nameHint": "给现在的排版起个名字，它就不会被自动清理。",
       "nameNow": "给现在存个名字…",
       "namePlaceholder": "给现在起个名字，如「投稿前」",
       "noDiff": "与当前画布没有差异",

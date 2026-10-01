@@ -24,6 +24,7 @@ import { StyleDialog } from '@/components/StyleDialog'
 import { DocumentBanner } from '@/components/DocumentBanner'
 import { ProjectReadinessBanner } from '@/components/ProjectReadinessBanner'
 import { VersionDrawer } from '@/components/VersionDialog'
+import { NamedNodeQuickBox } from '@/components/NamedNodeQuickBox'
 import { LeftPanel } from '@/components/left/LeftPanel'
 import { LeftRail } from '@/components/left/LeftRail'
 import { CanvasHud, NotificationRail } from '@/components/StatusBar'
@@ -291,6 +292,7 @@ function Workspace() {
             />
           )}
           <VersionDrawer />
+          <NamedNodeQuickBox />
         </div>
         <ExportDialog />
         <SettingsDialog />

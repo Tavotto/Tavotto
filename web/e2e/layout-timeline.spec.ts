@@ -44,18 +44,15 @@ const canvasText = (page: Page, text: string) =>
   page.locator('[data-canvas-stage]').getByText(text, { exact: true })
 
 /**
- * ⌥⌘S 命名当下：时间线抽屉打开、命名输入展开并聚焦；回车存完输入收起，
- * 然后把抽屉收回去（调用方之后各自用 ⇧⌘H / 时钟钮打开它，不该撞上开着的状态）
+ * ⌥⌘S 命名当下：顶部就地小框出现并聚焦（不开抽屉）；回车存完小框关闭
  */
 async function nameNow(page: Page, name: string) {
   await page.keyboard.press('ControlOrMeta+Alt+S')
-  const quick = await only(page.locator('[data-timeline-name-input]'))
+  const quick = await only(page.locator('[data-timeline-quick-name-input]'))
   await expect(quick).toBeFocused()
   await quick.fill(name)
   await quick.press('Enter')
   await expect(quick).toHaveCount(0)
-  await (await only(page.locator('[data-timeline-button]'))).click()
-  await expect(page.locator('[data-timeline-drawer]')).toHaveCount(0)
 }
 
 async function addText(page: Page, text: string, x: number, y: number) {
@@ -127,22 +124,33 @@ test('排版时间线：自动节点 → 命名 → 预览不改排版 → 恢�
   await expect.poll(() => nodes.count(), { timeout: 30_000 }).toBeGreaterThan(0)
   await expect(drawer.locator('[data-timeline-kind="auto"]')).not.toHaveCount(0)
 
-  // ── ⌥⌘S 命名「投稿前」：抽屉关着也会打开，命名输入展开并聚焦 ──────────
+  // ── ⌥⌘S 命名「投稿前」：就地小框，不打开抽屉 ──────────────────────
   await clock.click() // 先收起抽屉：命名不该依赖它先开着
   await expect(drawer).toHaveCount(0)
   await page.keyboard.press('ControlOrMeta+Alt+S')
-  await expect(drawer).toBeVisible()
-  // 抽屉一打开只有「给现在存个名字…」按钮；⌥⌘S 直接展开了输入
-  await expect(drawer.locator('[data-timeline-name-open]')).toHaveCount(0)
-  const quick = await only(drawer.locator('[data-timeline-name-input]'))
+  const quick = await only(page.locator('[data-timeline-quick-name-input]'))
   await expect(quick).toBeFocused()
+  await expect(drawer).toHaveCount(0)
+  // 小框在视口里、在顶部居中，不出屏
+  const box = await only(page.locator('[data-timeline-quick-name]'))
+  const bb = (await box.boundingBox())!
+  const vp = page.viewportSize()!
+  expect(bb.x).toBeGreaterThanOrEqual(0)
+  expect(bb.x + bb.width).toBeLessThanOrEqual(vp.width)
+  expect(Math.abs(bb.x + bb.width / 2 - vp.width / 2)).toBeLessThan(2)
   await quick.fill('投稿前')
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'timeline-quick-name.png') })
   await quick.press('Enter')
-  await expect(quick).toHaveCount(0)
-  // 输入收回成按钮；点它再展开，Esc 只收输入、不关抽屉
-  const nameOpen = await only(drawer.locator('[data-timeline-name-open]'))
-  await nameOpen.click()
+  await expect(box).toHaveCount(0)
+  // Esc 关闭、点外面关闭
+  await page.keyboard.press('ControlOrMeta+Alt+S')
+  await expect(page.locator('[data-timeline-quick-name-input]')).toBeFocused()
+  await page.keyboard.press('Escape')
+  await expect(box).toHaveCount(0)
+  // 抽屉里的按钮照旧：点开展开，Esc 只收输入
+  await clock.click()
+  await expect(drawer).toBeVisible()
+  await (await only(drawer.locator('[data-timeline-name-open]'))).click()
   const again = await only(drawer.locator('[data-timeline-name-input]'))
   await expect(again).toBeFocused()
   await again.press('Escape')

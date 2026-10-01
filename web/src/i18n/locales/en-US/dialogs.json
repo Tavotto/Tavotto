@@ -1366,6 +1366,7 @@
     "listLabel": "Timeline points",
     "loadingSnapshot": "Loading the layout at this moment…",
     "namePlaceholder": "Name this moment, e.g. “Before submission”",
+    "nameHint": "Name the layout as it is now, and it will never be cleaned up automatically.",
     "nameNow": "Name this moment…",
     "noDiff": "No differences from the current canvas",
     "preview": "Preview",
