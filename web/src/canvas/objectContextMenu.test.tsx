@@ -31,6 +31,7 @@ import {
 import { ContextBar } from './context-bar/ContextBar'
 import { ObjectView } from './ObjectView'
 import { QuickEdit } from './QuickEdit'
+import { SyncOverridesHost } from '@/components/inspector/SyncOverridesDialog'
 import { useQuickEdit } from './quickEditStore'
 
 declare global {
@@ -1212,5 +1213,72 @@ describe('图内元素的弹层（dialog）外壳不回归', () => {
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     })
     expect(document.querySelector('[role="dialog"]')).toBeNull()
+  })
+})
+
+/* -------------------------------------------------------------------------- */
+/*  同步修改（2026-10-01，设计稿 C5 / C11：原在属性栏「源文件与高级」）            */
+/* -------------------------------------------------------------------------- */
+
+describe('「把这些修改用到同脚本的其他图…」', () => {
+  const edits = [{ gid: 'axes_0.title', prop: 'text', value: 'A' }]
+  const sibs = [asset('Fig1.pdf', { script: 'fig.py' }), asset('Fig2.pdf', { script: 'fig.py' })]
+  const setPanels = (panels: PanelInfo[]) => useAssetStore.setState({ panels })
+
+  afterEach(() => setPanels([]))
+
+  it('有图内修改 + 有同脚本兄弟图：出现，排在「恢复图内修改」之后、「全部属性」之前', async () => {
+    await seed([panel('p1', { overrides: edits })])
+    setPanels(sibs)
+    await mount()
+    await openOn('p1')
+    const keys = itemKeys()
+    expect(keys).toContain('sync-overrides')
+    expect(keys.indexOf('sync-overrides')).toBe(keys.indexOf('reset-overrides') + 1)
+    expect(keys.indexOf('sync-overrides')).toBeLessThan(keys.indexOf('open-inspector'))
+    expect(item('sync-overrides')?.textContent).toContain('把这些修改用到同脚本的其他图')
+  })
+
+  it('没有同脚本兄弟图：不摆', async () => {
+    await seed([panel('p1', { overrides: edits })])
+    setPanels([asset('Fig1.pdf', { script: 'fig.py' }), asset('Other.pdf', { script: 'other.py' })])
+    await mount()
+    await openOn('p1')
+    expect(item('sync-overrides')).toBeNull()
+  })
+
+  it('这张图没有图内修改：不摆', async () => {
+    await seed([panel('p1')])
+    setPanels(sibs)
+    await mount()
+    await openOn('p1')
+    expect(item('sync-overrides')).toBeNull()
+  })
+
+  it('仅排版的图 / 文字 / 多选：不摆', async () => {
+    await seed([panel('lo', { script: null, overrides: edits }), text('t1'), panel('p1', { overrides: edits })])
+    setPanels(sibs)
+    await mount()
+    await openOn('lo')
+    expect(item('sync-overrides')).toBeNull()
+    await act(async () => useQuickEdit.getState().close())
+    await openOn('t1')
+    expect(item('sync-overrides')).toBeNull()
+    await act(async () => useQuickEdit.getState().close())
+    await openOn('p1', ['p1', 't1'])
+    expect(item('sync-overrides')).toBeNull()
+  })
+
+  it('点它：菜单关掉，打开同步窗口并以这张图出发', async () => {
+    await seed([panel('p1', { overrides: edits })])
+    setPanels(sibs)
+    await mount(<SyncOverridesHost />)
+    await openOn('p1')
+    await click(item('sync-overrides'))
+    expect(menu()).toBeNull()
+    expect(document.querySelector('[data-dialog="sync-overrides"]')).not.toBeNull()
+    // 只列兄弟图，不含它自己
+    const targets = [...document.querySelectorAll<HTMLElement>('[data-sync-target]')].map((e) => e.dataset.syncTarget)
+    expect(targets).toEqual(['Fig2.pdf'])
   })
 })

@@ -3,7 +3,7 @@
  *
  * 恢复动作（「恢复此元素 · n 项」「恢复整张图 · m 项」）2026-09-12 起是身份头那颗
  * 「n 项已修改」徽标的菜单，由 `restoreMenu.test.tsx` 看护。这里剩下的：
- *   1. 折叠区里**只有**会动磁盘的那一组（「原始文件」：写回 / 历史 / 同步），
+ *   1. 折叠区里**只有**会动磁盘的那一组（「原始文件」：写回 / 写回记录；同步修改 2026-10-01 起在画布对象的右键菜单里），
  *      没有恢复按钮——「只改文档」与「会动磁盘」的边界现在是两个位置，不是两个组头；
  *   2. 精确名词（gid）不再常驻，收在「技术详情」里——它与同组其它折叠行同一副样子
  *      （2026-09-15 打磨 L4：组内折叠只剩「28px 文字链接」一种，原生 `<details>` 是第六种）；
@@ -158,6 +158,12 @@ describe('源文件与高级：只剩会动磁盘的那一组', () => {
     const fileHead = Array.from(fold.querySelectorAll('p')).find((p) => p.textContent === '原始文件')!
     const writeBack = buttonByText('写回原始文件')!
     expect(fileHead.compareDocumentPosition(writeBack) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('同步修改的入口不在这里了（搬到右键菜单，设计稿 C5 / C11）', async () => {
+    await mount()
+    const fold = host.querySelector('[data-source-advanced]')!
+    expect(fold.textContent).not.toContain('同步修改')
   })
 
   it('gid 不常驻：收在「技术详情」里，默认收起，且不是原生 details', async () => {

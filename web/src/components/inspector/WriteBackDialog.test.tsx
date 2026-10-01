@@ -442,8 +442,8 @@ describe('确认页的信息结构', () => {
     const body = d.textContent ?? ''
     expect(body).toContain('/Users/somebody/Library/Application Support/Tavotto/cache/original_backups')
     expect(body).toContain('复制')
-    // 恢复路径仍然完整可查：历史 + 备份目录 + 脚本不受影响
-    expect(body).toContain('历史')
+    // 恢复路径仍然完整可查：写回记录 + 备份目录 + 脚本不受影响
+    expect(body).toContain('写回记录')
     expect(body).toContain('备份目录')
     expect(body).toContain('脚本不会改动')
   })
