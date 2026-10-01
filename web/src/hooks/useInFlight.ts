@@ -8,7 +8,7 @@ import { useCallback, useRef } from 'react'
  * 两个都是受保护的命名节点，还吃掉字节预算）。ref 在调用的那一刻就改，挡得住。
  *
  * 按 `key` 记（调用方传时间线上下文）：A 那一次还在路上时换到 B，B 自己的那一次照常
- * 能发——在途的是 A 的请求，不该把 B 锁住。抽屉的「存为命名节点」与顶栏命名浮层共用这一份。
+ * 能发——在途的是 A 的请求，不该把 B 锁住。抽屉的「存为命名节点」用这一份。
  */
 export function useInFlight() {
   const keys = useRef(new Set<string>())

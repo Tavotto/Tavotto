@@ -4,7 +4,7 @@ import { expect, test } from './fixtures'
 /**
  * 排版时间线（ADR 0101）的真浏览器闭环：
  *
- *   编辑 → 等自动节点 → 用顶栏书签钮命名「投稿前」→ 在「命名」视图里找到它 → 继续改 →
+ *   编辑 → 等自动节点 → 用 ⌥⌘S 命名「投稿前」→ 在「命名」视图里找到它 → 继续改 →
  *   打开预览对话框（画布不动、默认焦点在「关闭」、并排对比）→ 在对话框里恢复 →
  *   时间线里出现「恢复前」节点 → 用它恢复回来 → ⌘Z。
  *
@@ -42,6 +42,18 @@ async function placeFigureAndBack(page: Page) {
 /** 画布上的文字对象（不含时间线预览里画的那一份） */
 const canvasText = (page: Page, text: string) =>
   page.locator('[data-canvas-stage]').getByText(text, { exact: true })
+
+/**
+ * ⌥⌘S 命名当下：顶部就地小框出现并聚焦（不开抽屉）；回车存完小框关闭
+ */
+async function nameNow(page: Page, name: string) {
+  await page.keyboard.press('ControlOrMeta+Alt+S')
+  const quick = await only(page.locator('[data-timeline-quick-name-input]'))
+  await expect(quick).toBeFocused()
+  await quick.fill(name)
+  await quick.press('Enter')
+  await expect(quick).toHaveCount(0)
+}
 
 async function addText(page: Page, text: string, x: number, y: number) {
   await (await only(page.locator('[data-tool="text"]'))).click()
@@ -112,19 +124,66 @@ test('排版时间线：自动节点 → 命名 → 预览不改排版 → 恢�
   await expect.poll(() => nodes.count(), { timeout: 30_000 }).toBeGreaterThan(0)
   await expect(drawer.locator('[data-timeline-kind="auto"]')).not.toHaveCount(0)
 
-  // ── 顶栏书签钮命名「投稿前」（不经抽屉）──────────────────────────
-  await clock.click() // 先收起抽屉：命名不该依赖它
+  // ── ⌥⌘S 命名「投稿前」：就地小框，不打开抽屉 ──────────────────────
+  await clock.click() // 先收起抽屉：命名不该依赖它先开着
   await expect(drawer).toHaveCount(0)
-  await (await only(page.locator('[data-timeline-name-button]'))).click()
+  await page.keyboard.press('ControlOrMeta+Alt+S')
   const quick = await only(page.locator('[data-timeline-quick-name-input]'))
   await expect(quick).toBeFocused()
+  await expect(drawer).toHaveCount(0)
+  // 小框在视口里、在顶部居中，不出屏
+  const box = await only(page.locator('[data-timeline-quick-name]'))
+  const bb = (await box.boundingBox())!
+  const vp = page.viewportSize()!
+  expect(bb.x).toBeGreaterThanOrEqual(0)
+  expect(bb.x + bb.width).toBeLessThanOrEqual(vp.width)
   await quick.fill('投稿前')
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'timeline-quick-name.png') })
   await quick.press('Enter')
-  await expect(quick).toHaveCount(0)
-
-  // ── 「命名」视图里找得到它 ─────────────────────────────────────────
+  await expect(box).toHaveCount(0)
+  // Esc 关闭、点外面关闭
+  await page.keyboard.press('ControlOrMeta+Alt+S')
+  await expect(page.locator('[data-timeline-quick-name-input]')).toBeFocused()
+  await page.keyboard.press('Escape')
+  await expect(box).toHaveCount(0)
+  // 居中于工作面板自己（不是整行）：只开左栏、只开属性栏两种布局下水平中心差 ≤ 2px
+  const panel = await only(page.locator('[data-work-panel]'))
+  const centerGap = async () => {
+    await page.keyboard.press('ControlOrMeta+Alt+S')
+    const q = await only(page.locator('[data-timeline-quick-name]'))
+    await expect(page.locator('[data-timeline-quick-name-input]')).toBeFocused()
+    const [b, p] = [(await q.boundingBox())!, (await panel.boundingBox())!]
+    await page.keyboard.press('Escape')
+    await expect(q).toHaveCount(0)
+    return Math.abs(b.x + b.width / 2 - (p.x + p.width / 2))
+  }
+  const leftOpen = page.locator('[data-rail][aria-expanded="true"]')
+  const inspectorClose = page.locator('[data-inspector-close]')
+  // 只开左栏：收起属性栏
+  if ((await leftOpen.count()) === 0) await (await only(page.locator('[data-rail="elements"]'))).click()
+  await expect(leftOpen.first()).toBeVisible()
+  if ((await inspectorClose.count()) > 0) await inspectorClose.click()
+  await expect(inspectorClose).toHaveCount(0)
+  expect(await centerGap()).toBeLessThanOrEqual(2)
+  // 只开属性栏：选中文字打开属性栏，收起左栏
+  await page.keyboard.press('Escape') // 先取消选择，再点文字才会重新打开属性栏
+  await canvasText(page, '甲版标注').click()
+  await expect(inspectorClose).toHaveCount(1)
+  await leftOpen.first().click()
+  await expect(leftOpen).toHaveCount(0)
+  expect(await centerGap()).toBeLessThanOrEqual(2)
+  // 抽屉里的按钮照旧：点开展开，Esc 只收输入
   await clock.click()
+  await expect(drawer).toBeVisible()
+  await (await only(drawer.locator('[data-timeline-name-open]'))).click()
+  const again = await only(drawer.locator('[data-timeline-name-input]'))
+  await expect(again).toBeFocused()
+  await again.press('Escape')
+  await expect(again).toHaveCount(0)
+  await expect(drawer).toBeVisible()
+  if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'timeline-name-collapsed.png') })
+
+  // ── 「命名」视图里找得到它（抽屉一直开着）──────────────────────────
   await (await only(drawer.locator('[data-timeline-filter] [data-value="named"]'))).click()
   // 命名节点只有这一个；名字是用户起的，按名字核对的是数据，不是定位
   const named = await only(drawer.locator('[data-timeline-node][data-timeline-named]'))
@@ -257,11 +316,7 @@ test('两张不透明、内容相同的面板完全重叠：上层不被误判�
     })
     .toBe(true) // 前提：真的完全重叠（判据的主语）
   // 存一个命名节点：合成它的缩略图
-  await (await only(page.locator('[data-timeline-name-button]'))).click()
-  const quick = await only(page.locator('[data-timeline-quick-name-input]'))
-  await quick.fill('重叠')
-  await quick.press('Enter')
-  await expect(quick).toHaveCount(0)
+  await nameNow(page, '重叠')
   // 每一次面板合成都画上了（没有一步是 blank——上层画上去主画布不变，旧判据会判成白画）
   await expect
     .poll(async () => {
@@ -314,11 +369,7 @@ test('带 overrides 的面板：缩略图走 SVG 那一路画上（不因重复�
   await expect(page.locator('[data-authority="ready"]').first()).toBeVisible({ timeout: 60_000 })
   await (await only(page.locator('[data-context-back]'))).click()
   // 存一个命名节点：它的缩略图要画带改动的那份 SVG
-  await (await only(page.locator('[data-timeline-name-button]'))).click()
-  const quick = await only(page.locator('[data-timeline-quick-name-input]'))
-  await quick.fill('改过字号')
-  await quick.press('Enter')
-  await expect(quick).toHaveCount(0)
+  await nameNow(page, '改过字号')
   const trace = async () =>
     (await page.evaluate(() => (window as unknown as Record<string, unknown>).__TAVOTTO_THUMB_TRACE__)) as {
       steps?: string[]
@@ -347,19 +398,12 @@ test('只差水平翻转的两个节点：缩略图不一样，而且是左右�
   await page.goto(a.baseURL)
   // 放一张图（按页面居中落位：整张缩略图左右镜像时，面板映到它自己身上）
   await placeFigureAndBack(page)
-  const nameNow = async (name: string) => {
-    await (await only(page.locator('[data-timeline-name-button]'))).click()
-    const quick = await only(page.locator('[data-timeline-quick-name-input]'))
-    await quick.fill(name)
-    await quick.press('Enter')
-    await expect(quick).toHaveCount(0)
-  }
-  await nameNow('原样')
+  await nameNow(page, '原样')
   // 属性页「更多」里的「水平翻转」（面板放上来之后是选中的）
   const more = await only(page.locator('[data-panel-more]'))
   if ((await more.getAttribute('aria-expanded')) !== 'true') await more.click()
   await (await only(page.locator('[data-panel-flip="h"]'))).click()
-  await nameNow('翻转')
+  await nameNow(page, '翻转')
   await page.keyboard.press('ControlOrMeta+Shift+H')
   const drawer = await only(page.locator('[data-timeline-drawer]'))
   const thumbOf = (name: string) =>

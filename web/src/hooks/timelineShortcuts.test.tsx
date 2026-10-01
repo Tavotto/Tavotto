@@ -2,7 +2,7 @@
  * 排版时间线的快捷键与命令面板入口（ADR 0101）。
  *
  * * ⇧⌘H 开 / 关时间线——⌥⌘H 是 macOS「隐藏其他」，⇧⌘Y 会落进 ⌘Y 的重做分支；
- * * ⌥⌘S 打开顶栏的命名浮层（不开抽屉）——必须排在 ⌘S 前面：Windows 上 Ctrl+Alt+S
+ * * ⌥⌘S 打开顶部的命名小框（不开抽屉）——必须排在 ⌘S 前面：Windows 上 Ctrl+Alt+S
  *   的 `key` 仍是 s，落进 ⌘S 那条就成了「保存」；macOS 上 ⌥ 把 `key` 变成 ß；
  *   在输入框里让位（与其余快捷键同一条 `yieldsCanvasShortcuts`），Windows 的 AltGr
  *   （报成 Ctrl+Alt）是在打字，不算（Codex #679）；
@@ -95,7 +95,7 @@ describe('⇧⌘H：开 / 关排版时间线', () => {
 })
 
 describe('⌥⌘S：把现在存为命名节点', () => {
-  it('macOS：key 是 ß，按 code 认出来；打开顶栏命名浮层（不开抽屉），不触发保存', () => {
+  it('macOS：key 是 ß，按 code 认出来；打开顶部命名小框（不开抽屉），不触发保存', () => {
     press({ key: 'ß', code: 'KeyS', metaKey: true, altKey: true })
     expect(useTimelineStore.getState().namingOpen).toBe(true)
     expect(useUiStore.getState().versionsOpen).toBe(false)

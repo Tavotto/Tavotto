@@ -128,7 +128,7 @@ describe('命令集', () => {
     spy.mockRestore()
   })
 
-  it('排版时间线（ADR 0101）：「排版时间线…」打开抽屉；「把现在存为命名节点…」打开顶栏命名浮层（不开抽屉）', async () => {
+  it('排版时间线（ADR 0101）：「排版时间线…」打开抽屉；「把现在存为命名节点…」就地弹出命名小框（不开抽屉）', async () => {
     const { useTimelineStore } = await import('@/store/timelineStore')
     useUiStore.setState({ versionsOpen: false })
     useTimelineStore.setState({ namingOpen: false })

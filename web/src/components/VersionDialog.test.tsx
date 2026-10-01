@@ -46,7 +46,8 @@ import {
   type TimelineBudget,
 } from '@/lib/api'
 import { VersionDrawer } from '@/components/VersionDialog'
-import { NamedNodeButton } from '@/components/TopBar'
+import { startNamedNode } from '@/store/actions'
+import { NamedNodeQuickBox } from '@/components/NamedNodeQuickBox'
 import { THUMB_OBJECT_LIMIT, THUMB_TEXT_CHARS } from '@/components/CanvasThumb'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useDocumentStore } from '@/store/documentStore'
@@ -102,22 +103,29 @@ const snapshot = (): FigureDocument => ({
 let root: Root
 
 /** `fetchTimeline` 的返回按时间升序（抽屉自己 reverse 成最新在上） */
-async function mount(list: LayoutVersionMeta[], budget?: TimelineBudget) {
+async function mount(
+  list: LayoutVersionMeta[],
+  budget?: TimelineBudget,
+  // 默认把命名输入展开（多数用例要敲名字）；`false` = 抽屉刚打开时的样子：只有「给现在存个名字…」按钮
+  naming = true,
+) {
   mockList.mockResolvedValue({ versions: list, budget })
   useUiStore.setState({ versionsOpen: true })
+  useTimelineStore.setState({ namingOpen: false })
   const el = document.createElement('div')
   document.body.appendChild(el)
   root = createRoot(el)
   await act(async () => {
     root.render(
       <TooltipProvider>
-        <NamedNodeButton />
         <VersionDrawer />
+        <NamedNodeQuickBox />
       </TooltipProvider>,
     )
   })
   await flush()
-  // 抽屉打开后下一帧把焦点送进名字框：等它落定，否则它会在用例中途抢走焦点
+  if (naming) await act(async () => $<HTMLButtonElement>('[data-timeline-name-open]')!.click())
+  // 命名输入展开后下一帧把焦点送进名字框：等它落定，否则它会在用例中途抢走焦点
   // （比如正在行内改名的输入框被 blur，改名在空草稿上提交）
   await act(async () => {
     await new Promise((r) => requestAnimationFrame(() => r(null)))
@@ -453,46 +461,185 @@ describe('按天分组、类型标记、只看命名', () => {
 /* ------------------------------ 命名 -------------------------------------- */
 
 describe('命名与改名', () => {
-  it('顶栏书签钮 → 浮层：输入名字回车就存成命名节点，不用先开抽屉', async () => {
-    mockCreate.mockResolvedValueOnce({ version: meta({ id: 'v_named' }) })
+  it('抽屉刚打开：只有「给现在存个名字…」按钮，没有一直开着的输入框；点开才展开，并带说明', async () => {
+    await mount([meta()], undefined, false)
+    expect($('[data-timeline-name-input]')).toBeNull()
+    const open = $<HTMLButtonElement>('[data-timeline-name-open]')!
+    expect(open.textContent).toContain('给现在存个名字')
+    await act(async () => open.click())
+    await flush()
+    await act(async () => {
+      await new Promise((r) => requestAnimationFrame(() => r(null)))
+    })
+    expect($('[data-timeline-name-open]')).toBeNull()
+    expect(document.activeElement).toBe($('[data-timeline-name-input]'))
+    expect(document.querySelector('[data-timeline-drawer]')?.textContent).toContain('不会被自动清理')
+  })
+
+  it('Esc 只收起命名输入、不关抽屉', async () => {
+    await mount([meta()])
+    const input = $<HTMLInputElement>('[data-timeline-name-input]')!
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+    expect($('[data-timeline-name-input]')).toBeNull()
+    expect($('[data-timeline-name-open]')).not.toBeNull()
+    expect(useUiStore.getState().versionsOpen).toBe(true)
+  })
+
+  it('抽屉关掉再打开：命名输入不记得上次展开', async () => {
     await mount([meta()])
     await act(async () => useUiStore.setState({ versionsOpen: false }))
-    await act(async () => useTimelineStore.getState().setNamingOpen(true))
+    await act(async () => useUiStore.setState({ versionsOpen: true }))
     await flush()
-    const input = $<HTMLInputElement>('[data-timeline-quick-name-input]')!
-    expect(input).not.toBeNull()
+    expect($('[data-timeline-name-input]')).toBeNull()
+  })
+
+  it('保存成功：输入收起', async () => {
+    mockCreate.mockResolvedValueOnce({ version: meta({ id: 'v_named' }) })
+    await mount([meta()])
+    const input = $<HTMLInputElement>('[data-timeline-name-input]')!
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
     await act(async () => {
       setter.call(input, '投稿前')
       input.dispatchEvent(new Event('input', { bubbles: true }))
     })
-    await act(async () => {
-      input.form!.requestSubmit()
-    })
+    await act(async () => $<HTMLButtonElement>('[data-timeline-save-named]')!.click())
     await flush()
-    expect(mockCreate).toHaveBeenCalledTimes(1)
-    expect(mockCreate.mock.calls[0][1]).toMatchObject({ auto: false, named: true, name: '投稿前' })
-    expect(useTimelineStore.getState().namingOpen).toBe(false)
-    expect(useUiStore.getState().versionsOpen).toBe(false)
+    expect($('[data-timeline-name-input]')).toBeNull()
   })
 
-  it('浮层里存失败（超上限）：话留在浮层里，浮层不关', async () => {
+  describe('⌥⌘S / 命令面板：顶部就地小框（不开抽屉）', () => {
+    const typeName = async (text: string) => {
+      const input = $<HTMLInputElement>('[data-timeline-quick-name-input]')!
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+      await act(async () => {
+        setter.call(input, text)
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+      return input
+    }
+    const openQuick = async () => {
+      await act(async () => useUiStore.setState({ versionsOpen: false }))
+      await act(async () => startNamedNode())
+      await flush()
+    }
+
+    it('小框出现并聚焦、带说明；抽屉不打开；回车保存后关闭', async () => {
+      mockCreate.mockResolvedValueOnce({ version: meta({ id: 'v_named' }) })
+      await mount([meta()], undefined, false)
+      await openQuick()
+      expect(useUiStore.getState().versionsOpen).toBe(false)
+      expect($('[data-timeline-drawer]')).toBeNull()
+      const input = $<HTMLInputElement>('[data-timeline-quick-name-input]')!
+      expect(document.activeElement).toBe(input)
+      expect($('[data-timeline-quick-name]')?.textContent).toContain('不会被自动清理')
+      await typeName('投稿前')
+      await act(async () => {
+        input.form!.requestSubmit()
+      })
+      await flush()
+      expect(mockCreate.mock.calls[0][1]).toMatchObject({ auto: false, named: true, name: '投稿前' })
+      expect($('[data-timeline-quick-name]')).toBeNull()
+      expect(useTimelineStore.getState().namingOpen).toBe(false)
+      expect(useUiStore.getState().versionsOpen).toBe(false)
+    })
+
+    it('失败（超上限）：话写在小框里，小框不关、名字不丢', async () => {
+      mockCreate.mockRejectedValueOnce(new Error('命名节点已经占满了'))
+      await mount([meta()], undefined, false)
+      await openQuick()
+      const input = await typeName('再一个')
+      await act(async () => {
+        input.form!.requestSubmit()
+      })
+      await flush()
+      expect(useTimelineStore.getState().namingOpen).toBe(true)
+      expect($<HTMLInputElement>('[data-timeline-quick-name-input]')!.value).toBe('再一个')
+      expect($('[data-timeline-quick-name] [role="alert"]')?.textContent).toContain('占满')
+    })
+
+    it('Esc 关闭；点外面关闭', async () => {
+      await mount([meta()], undefined, false)
+      await openQuick()
+      await act(async () => {
+        $('[data-timeline-quick-name-input]')!.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+        )
+      })
+      expect($('[data-timeline-quick-name]')).toBeNull()
+      await openQuick()
+      await act(async () => {
+        document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+      })
+      expect($('[data-timeline-quick-name]')).toBeNull()
+    })
+
+    it('关闭后焦点回到打开前的元素（Esc、保存成功两条路径）', async () => {
+      mockCreate.mockResolvedValueOnce({ version: meta({ id: 'v_named' }) })
+      await mount([meta()], undefined, false)
+      const before = document.createElement('button')
+      document.body.appendChild(before)
+      before.focus()
+      await openQuick()
+      expect(document.activeElement).toBe($('[data-timeline-quick-name-input]'))
+      await act(async () => {
+        $('[data-timeline-quick-name-input]')!.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+        )
+      })
+      expect(document.activeElement).toBe(before)
+      await act(async () => startNamedNode())
+      await flush()
+      const input = await typeName('投稿前')
+      await act(async () => {
+        input.form!.requestSubmit()
+      })
+      await flush()
+      expect($('[data-timeline-quick-name]')).toBeNull()
+      expect(document.activeElement).toBe(before)
+    })
+
+    it('点小框里面不关', async () => {
+      await mount([meta()], undefined, false)
+      await openQuick()
+      await act(async () => {
+        $('[data-timeline-quick-name-input]')!.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+      })
+      expect($('[data-timeline-quick-name]')).not.toBeNull()
+    })
+
+    it('A 里存失败的那句话，换到 B 就不再挂着', async () => {
+      mockCreate.mockRejectedValueOnce(new Error('命名节点已经占满了'))
+      await mount([meta()], undefined, false)
+      await openQuick()
+      const input = await typeName('再一个')
+      await act(async () => {
+        input.form!.requestSubmit()
+      })
+      await flush()
+      expect($('[data-timeline-quick-name] [role="alert"]')?.textContent).toContain('占满')
+      await act(async () => {
+        await useDocumentStore.getState().switchDocument(emptyProject(), 'd_other')
+      })
+      await flush()
+      expect($('[data-timeline-quick-name] [role="alert"]')).toBeNull()
+    })
+  })
+
+  it('存失败（超上限）：话留在抽屉里，输入不收、名字不丢', async () => {
     mockCreate.mockRejectedValueOnce(new Error('命名节点已经占满了'))
     await mount([meta()])
-    await act(async () => useTimelineStore.getState().setNamingOpen(true))
-    await flush()
-    const input = $<HTMLInputElement>('[data-timeline-quick-name-input]')!
+    const input = $<HTMLInputElement>('[data-timeline-name-input]')!
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
     await act(async () => {
       setter.call(input, '再一个')
       input.dispatchEvent(new Event('input', { bubbles: true }))
     })
-    await act(async () => {
-      input.form!.requestSubmit()
-    })
+    await act(async () => $<HTMLButtonElement>('[data-timeline-save-named]')!.click())
     await flush()
-    expect(useTimelineStore.getState().namingOpen).toBe(true)
-    expect($('[data-timeline-quick-name] [role="alert"]')?.textContent).toContain('占满')
+    expect($<HTMLInputElement>('[data-timeline-name-input]')!.value).toBe('再一个')
+    expect($('[data-timeline-error-kind="action"]')?.textContent).toContain('占满')
   })
 
   it('「存为命名节点」：带 named 与用户起的名字，拍的是当前画布', async () => {
@@ -746,25 +893,21 @@ describe('换项目 / 换排版：旧上下文的列表当场不再显示', () =
     expect(deleteVersion).not.toHaveBeenCalled()
   })
 
-  it('顶栏命名浮层：A 里存失败的那句话，换到 B 就不再挂着', async () => {
+  it('命名输入：A 里存失败的那句话，换到 B 就不再挂着', async () => {
     mockCreate.mockRejectedValueOnce(new Error('命名节点已经占满了'))
     await mount([meta()])
-    await act(async () => useTimelineStore.getState().setNamingOpen(true))
-    await flush()
-    const input = $<HTMLInputElement>('[data-timeline-quick-name-input]')!
+    const input = $<HTMLInputElement>('[data-timeline-name-input]')!
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
     await act(async () => {
       setter.call(input, '再一个')
       input.dispatchEvent(new Event('input', { bubbles: true }))
     })
-    await act(async () => {
-      input.form!.requestSubmit()
-    })
+    await act(async () => $<HTMLButtonElement>('[data-timeline-save-named]')!.click())
     await flush()
-    expect($('[data-timeline-quick-name] [role="alert"]')?.textContent).toContain('占满')
+    expect($('[data-timeline-error-kind="action"]')?.textContent).toContain('占满')
     await switchDoc()
     await flush()
-    expect($('[data-timeline-quick-name] [role="alert"]')).toBeNull()
+    expect($('[data-timeline-error-kind="action"]')).toBeNull()
   })
 })
 
@@ -809,17 +952,6 @@ describe('A 里发起、换到 B 之后才完成：不改 B 的任何本地状�
     await act(async () => $<HTMLButtonElement>('[data-timeline-preview-restore]')!.click())
     await flush()
   }
-  const quickSave = async () => {
-    await act(async () => useTimelineStore.getState().setNamingOpen(true))
-    await flush()
-    const input = $<HTMLInputElement>('[data-timeline-quick-name-input]')!
-    await setValue(input, 'A 的名字')
-    await act(async () => {
-      input.form!.requestSubmit()
-    })
-    await flush()
-  }
-
   const cases: {
     name: string
     nodes?: LayoutVersionMeta[]
@@ -936,30 +1068,18 @@ describe('A 里发起、换到 B 之后才完成：不改 B 的任何本地状�
       },
     },
     {
-      name: '顶栏命名浮层保存成功：不关掉 B 里开着的浮层，B 不显示在忙',
+      name: '抽屉「存为命名节点」成功：不收起 B 里开着的命名输入',
       start: async () => {
         const create = pending<{ version: LayoutVersionMeta }>()
         mockCreate.mockImplementationOnce(() => create.promise)
-        await quickSave()
+        await setValue(drawerName(), 'A 的名字')
+        await act(async () => $<HTMLButtonElement>('[data-timeline-save-named]')!.click())
+        await flush()
         return async () => act(async () => create.resolve({ version: meta({ id: 'a2' }) }))
       },
-      during: async () => {
-        expect(spinning('[data-timeline-quick-name-save]')).toBe(false)
-      },
       check: () => {
-        expect(useTimelineStore.getState().namingOpen).toBe(true)
-        expect(spinning('[data-timeline-quick-name-save]')).toBe(false)
+        expect($('[data-timeline-name-input]')).not.toBeNull()
       },
-    },
-    {
-      name: '顶栏命名浮层保存失败：错误不挂到 B',
-      start: async () => {
-        const create = pending<{ version: LayoutVersionMeta }>()
-        mockCreate.mockImplementationOnce(() => create.promise)
-        await quickSave()
-        return async () => act(async () => create.reject(new Error('命名节点已经占满了')))
-      },
-      check: () => expect($('[data-timeline-quick-name] [role="alert"]')).toBeNull(),
     },
   ]
 
@@ -1088,29 +1208,24 @@ describe('A 在飞 → B 自己出错 → A 才完成：B 的错误留着', () =
     expect($('[data-timeline-loading]')).toBeNull()
   })
 
-  it('顶栏命名浮层：A 的保存晚失败，不顶掉 B 里那一次保存的错误', async () => {
+  it('命名输入：A 的保存晚失败，不顶掉 B 里那一次保存的错误', async () => {
     await mount([meta({ id: 'a1' })])
     const createA = pending<{ version: LayoutVersionMeta }>()
     mockCreate.mockImplementationOnce(() => createA.promise)
-    await act(async () => useTimelineStore.getState().setNamingOpen(true))
-    await flush()
-    const quick = () => $<HTMLInputElement>('[data-timeline-quick-name-input]')!
-    await setValue(quick(), 'A 的名字')
-    await act(async () => {
-      quick().form!.requestSubmit()
-    })
+    const name = () => $<HTMLInputElement>('[data-timeline-name-input]')!
+    const save = () => act(async () => $<HTMLButtonElement>('[data-timeline-save-named]')!.click())
+    await setValue(name(), 'A 的名字')
+    await save()
     await flush()
     await act(async () => {
       await useDocumentStore.getState().switchDocument(emptyProject(), 'd_other')
     })
     await flush()
     mockCreate.mockRejectedValueOnce(new Error('B 的命名失败'))
-    await setValue(quick(), 'B 的名字')
-    await act(async () => {
-      quick().form!.requestSubmit()
-    })
+    await setValue(name(), 'B 的名字')
+    await save()
     await flush()
-    const alert = () => $('[data-timeline-quick-name] [role="alert"]')?.textContent
+    const alert = () => $('[data-timeline-error-kind="action"]')?.textContent
     expect(alert()).toContain('B 的命名失败')
     await act(async () => createA.reject(new Error('A 的命名失败')))
     await flush()
@@ -1166,20 +1281,6 @@ describe('换项目 / 换排版：用户正在编辑的草稿与确认框当场�
         expect(document.querySelector('[data-timeline-node="a1"]')).not.toBeNull()
         expect($('[data-timeline-rename]')).toBeNull()
         expect(mockUpdate).not.toHaveBeenCalled()
-      },
-    },
-    {
-      name: '顶栏命名浮层的名字框',
-      start: async () => {
-        await act(async () => useTimelineStore.getState().setNamingOpen(true))
-        await flush()
-        await setValue($<HTMLInputElement>('[data-timeline-quick-name-input]')!, 'A 的草稿')
-      },
-      check: async () => {
-        // 换项目会收起浮层：重新打开再看
-        await act(async () => useTimelineStore.getState().setNamingOpen(true))
-        await flush()
-        expect($<HTMLInputElement>('[data-timeline-quick-name-input]')!.value).toBe('')
       },
     },
     {
@@ -1436,24 +1537,6 @@ describe('存为命名节点：第一次请求还没回来，再回车 / 再提�
       input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
     })
     await act(async () => $<HTMLButtonElement>('[data-timeline-save-named]')!.click())
-    expect(mockCreate).toHaveBeenCalledTimes(1)
-    await act(async () => release({ version: meta({ id: 'n1' }) }))
-    await flush()
-    expect(mockCreate).toHaveBeenCalledTimes(1)
-  })
-
-  it('顶栏命名浮层：连着提交两次只发一次 POST', async () => {
-    await mount([meta({ id: 'a1' })])
-    let release!: (v: { version: LayoutVersionMeta }) => void
-    mockCreate.mockImplementationOnce(() => new Promise((r) => (release = r)))
-    await act(async () => useTimelineStore.getState().setNamingOpen(true))
-    await flush()
-    const input = $<HTMLInputElement>('[data-timeline-quick-name-input]')!
-    await setValue(input, '投稿前')
-    await act(async () => {
-      input.form!.requestSubmit()
-      input.form!.requestSubmit()
-    })
     expect(mockCreate).toHaveBeenCalledTimes(1)
     await act(async () => release({ version: meta({ id: 'n1' }) }))
     await flush()

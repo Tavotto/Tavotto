@@ -4,7 +4,7 @@ import { askConfirm, useUiStore } from '@/store/uiStore'
 
 /**
  * 时间线的**上下文**：项目代际（`timelineStore.gen`，每次换项目 +1）+ 排版 id。
- * 时间线抽屉与顶栏命名浮层里一切本地状态都属于某一个上下文（Codex #679）。
+ * 时间线抽屉（含命名输入）里一切本地状态都属于某一个上下文（Codex #679）。
  */
 export const timelineCtxKey = (gen: number, docId: string) => `${gen}:${docId}`
 
@@ -28,9 +28,9 @@ export const currentTimelineCtx = () =>
  * - 行 `remove`：确认框回答之后清预览、发删除；
  * - `restoreNode`：确认框之后切画布、「恢复前」节点之后写入排版 / 清预览 / 状态条
  *   （这两处改的是全局文档：换了排版才回来的话，A 的节点会被写进 B）；
- * - 顶栏命名浮层 `save`：关浮层。
+ * - 命名输入 `save`：收起输入。
  *
- * 用户正在编辑的输入（抽屉名字框、行内改名、顶栏浮层名字框）也按上下文记账：草稿记着
+ * 用户正在编辑的输入（抽屉名字框、行内改名）也按上下文记账：草稿记着
  * 它属于哪个上下文，换了就当作空的——提交发生在切换**之后**，这个守卫管不到。时间线的
  * 确认框经 `askTimelineConfirm`，换了上下文当场收起。
  *
