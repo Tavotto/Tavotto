@@ -233,7 +233,7 @@ export async function mount(gids: string[]) {
 
 const textOf = () => host.textContent ?? ''
 const buttons = () => Array.from(host.querySelectorAll('button'))
-const byText = (text: string) => buttons().find((b) => b.textContent?.trim() === text)
+const byText = (text: string) => buttons().find((b) => b.textContent?.trim().split(', ')[0] === text)
 const row = (prop: string) => host.querySelector<HTMLElement>(`[data-prop="${prop}"]`)
 const inputIn = (prop: string) => row(prop)?.querySelector<HTMLInputElement>('input') ?? null
 

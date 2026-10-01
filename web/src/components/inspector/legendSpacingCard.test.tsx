@@ -165,7 +165,7 @@ const cardRow = (prop: string) => card()?.querySelector(`[data-prop="${prop}"]`)
 const allRows = (prop: string) => Array.from(host.querySelectorAll(`[data-prop="${prop}"]`))
 /** 通用列表的「更多」折叠区——重复的控件最容易藏在这里，判据必须把它打开 */
 const moreToggle = () =>
-  Array.from(host.querySelectorAll('button')).find((b) => b.textContent?.trim() === '更多')
+  Array.from(host.querySelectorAll('button')).find((b) => b.textContent?.trim().split(', ')[0] === '更多')
 const click = async (el: Element | null | undefined) => {
   if (!el) throw new Error('没有这个按钮')
   await act(async () => {
@@ -192,18 +192,51 @@ afterEach(async () => {
 
 /* --------------------------------- 用例 ---------------------------------- */
 
-describe('图例的排版详情（审计 T17）', () => {
-  it('默认展开：一次都没点过，四条间距就在卡里（用户找得到）', async () => {
+/** 摘要行默认收起（2026-10-01，设计稿 A4）：要量里面的行，先点开 */
+const openCard = async () => {
+  if (cardToggle()?.getAttribute('aria-expanded') === 'false') await click(cardToggle())
+}
+const cardValue = () => card()?.querySelector('[data-summary-value]')?.textContent
+
+describe('图例的间距（摘要行；审计 T17 的排版详情）', () => {
+  it('默认收起：一行「间距」，右边写「默认」，五条间距都不在 DOM 里', async () => {
     await mount()
     expect(card()).not.toBeNull()
+    expect(cardToggle()?.getAttribute('aria-expanded')).toBe('false')
+    expect(cardToggle()?.textContent?.trim().split(', ')[0]).toBe('间距')
+    expect(cardValue()).toBe('默认')
+    for (const prop of ['handlelength', 'handletextpad', 'labelspacing', 'borderpad']) {
+      expect(allRows(prop)).toHaveLength(0)
+    }
+  })
+
+  it('用户找得到（2026-10-01 拍板）：收起且值为默认时，「间距」标题行照样在、可见、可点，右值写当前值', async () => {
+    await mount()
+    const t = cardToggle()!
+    expect(t).toBeTruthy()
+    expect(t.disabled).toBe(false)
+    expect(t.hidden).toBe(false)
+    expect(t.closest('[hidden]')).toBeNull()
+    expect(t.textContent).toContain('间距')
+    expect(cardValue()).toBe('默认')
+    // 它不藏在「更多」里：「更多」没展开，间距标题也在
+    expect(moreToggle()?.getAttribute('aria-expanded')).toBe('false')
+    expect(moreToggle()?.parentElement?.contains(t)).toBe(false)
+  })
+
+  it('点开：四条间距就在卡里，右值收起', async () => {
+    await mount()
+    await openCard()
     expect(cardToggle()?.getAttribute('aria-expanded')).toBe('true')
     for (const prop of ['handlelength', 'handletextpad', 'labelspacing', 'borderpad']) {
       expect(cardRow(prop)).not.toBeNull()
     }
+    expect(cardValue()).toBeUndefined()
   })
 
-  it('仍可收起：收起后五条都不在 DOM 里，入口还在', async () => {
+  it('再点一下收起：收起后五条都不在 DOM 里，入口还在', async () => {
     await mount()
+    await openCard()
     await click(cardToggle())
     expect(cardToggle()?.getAttribute('aria-expanded')).toBe('false')
     // 收起有一段退场动画（`Reveal` 在 DURATION.exit 之后才卸载内容），等它走完再数
@@ -215,15 +248,16 @@ describe('图例的排版详情（审计 T17）', () => {
     }
   })
 
-  it('收起后直接选中另一个图例：新图例又是展开的（收起不跨图例带过去）', async () => {
+  it('展开后直接选中另一个图例：新图例又是收起的（展开状态不跨图例带过去）', async () => {
     await mount()
-    await click(cardToggle())
-    expect(cardToggle()?.getAttribute('aria-expanded')).toBe('false')
+    await openCard()
+    expect(cardToggle()?.getAttribute('aria-expanded')).toBe('true')
     await act(async () => {
       useUiStore.setState({ selectedGids: ['axes_1.legend'] })
     })
+    expect(cardToggle()?.getAttribute('aria-expanded')).toBe('false')
+    await openCard()
     expect(cardRow('handlelength')?.getAttribute('data-gid')).toBe('axes_1.legend')
-    expect(cardToggle()?.getAttribute('aria-expanded')).toBe('true')
   })
 
   it('五条都在，且通用列表里没有第二套控件（「更多」也打开着数）', async () => {
@@ -232,6 +266,7 @@ describe('图例的排版详情（审计 T17）', () => {
     // 只数首屏的话「有没有第二套控件」这条判据在折叠状态下恒真
     await click(moreToggle())
     expect(moreToggle()?.getAttribute('aria-expanded')).toBe('true')
+    await openCard()
     for (const prop of ['handlelength', 'handletextpad', 'labelspacing', 'borderpad', 'columnspacing']) {
       // 恰好一行：卡里那一行。多于一行 = 别处又铺了一遍
       expect(allRows(prop)).toHaveLength(1)
@@ -241,6 +276,7 @@ describe('图例的排版详情（审计 T17）', () => {
 
   it('这一行与全检查器同一条控件竖线：标签列 88，「线与文字间距」完整', async () => {
     await mount()
+    await openCard()
     const row = cardRow('handletextpad') as HTMLElement
     const labelSpan = row.querySelector('span') as HTMLElement
     // 打磨 E4 / L1：此前标签是 flex-1、112 宽的框贴右缘，是页内第三种行语法。
@@ -251,6 +287,7 @@ describe('图例的排版详情（审计 T17）', () => {
 
   it('数值带真实单位 em；「1 em = 一个图例字号」不常驻，只在框的 title 里', async () => {
     await mount()
+    await openCard()
     const row = cardRow('labelspacing') as HTMLElement
     expect(row.textContent).toContain('em')
     // 打磨 L8：常驻说明删掉——单位 em 已经在框里，解释进 title
@@ -259,18 +296,19 @@ describe('图例的排版详情（审计 T17）', () => {
     expect(titles.some((t) => t.includes('1 em'))).toBe(true)
   })
 
-  it('改过一条时收不起来：override 不因折叠而不可发现', async () => {
+  it('改过一条：收起时右值说「已调整」，override 不因折叠而不可发现；点开就是那一条', async () => {
     await mount({
       overrides: [{ gid: 'axes_0.legend', prop: 'handlelength', value: 3.2 }],
     })
-    expect(cardToggle()?.getAttribute('aria-expanded')).toBe('true')
-    await click(cardToggle())
-    expect(cardToggle()?.getAttribute('aria-expanded')).toBe('true')
+    expect(cardToggle()?.getAttribute('aria-expanded')).toBe('false')
+    expect(cardValue()).toBe('已调整')
+    await openCard()
     expect(cardRow('handlelength')).not.toBeNull()
   })
 
   it('列距只在多列时出现（与通用列表共用 fieldVisible 一条判据）', async () => {
     await mount({ ncol: 1 })
+    await openCard()
     expect(cardRow('columnspacing')).toBeNull()
     expect(cardRow('labelspacing')).not.toBeNull()
   })

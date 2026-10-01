@@ -62,22 +62,40 @@ describe('CanvasPage', () => {
     expect([after.w, after.h]).toEqual([before.h, before.w])
   })
 
-  it('一次只展开一组：打开吸附时背景收起', () => {
+  it('一次只展开一组：打开自动对齐时背景收起', () => {
     act(() => disclosure('背景').click())
     expect(disclosure('背景').getAttribute('aria-expanded')).toBe('true')
-    act(() => disclosure('吸附').click())
-    expect(disclosure('吸附').getAttribute('aria-expanded')).toBe('true')
+    act(() => disclosure('自动对齐').click())
+    expect(disclosure('自动对齐').getAttribute('aria-expanded')).toBe('true')
     expect(disclosure('背景').getAttribute('aria-expanded')).toBe('false')
     // 再点同一组就收起
-    act(() => disclosure('吸附').click())
-    expect(disclosure('吸附').getAttribute('aria-expanded')).toBe('false')
+    act(() => disclosure('自动对齐').click())
+    expect(disclosure('自动对齐').getAttribute('aria-expanded')).toBe('false')
+  })
+
+  it('展开状态记在会话里：展开背景 → 切走（本页卸载）→ 切回，背景仍展开；展开另一行时前一行收起', () => {
+    act(() => disclosure('背景').click())
+    expect(disclosure('背景').getAttribute('aria-expanded')).toBe('true')
+    // 切到「属性 / 改图助手」页签：CanvasPage 被卸载，再回来是一个新挂载
+    act(() => root.render(<TooltipProvider><div /></TooltipProvider>))
+    act(() =>
+      root.render(
+        <TooltipProvider>
+          <CanvasPage />
+        </TooltipProvider>,
+      ),
+    )
+    expect(disclosure('背景').getAttribute('aria-expanded')).toBe('true')
+    act(() => disclosure('安全边距').click())
+    expect(disclosure('安全边距').getAttribute('aria-expanded')).toBe('true')
+    expect(disclosure('背景').getAttribute('aria-expanded')).toBe('false')
   })
 
   it('收起时也报得出网格状态；页面尺寸的组头不再复述下面那两个框', () => {
-    // 「查看辅助」收着：摘要里要带网格间距，不能只说一个「网格」
-    expect(disclosure('查看辅助').getAttribute('aria-expanded')).toBe('false')
+    // 「辅助显示」收着：摘要里要带网格间距，不能只说一个「网格」
+    expect(disclosure('辅助显示').getAttribute('aria-expanded')).toBe('false')
     const gridSize = useUiStore.getState().gridSize
-    expect(disclosure('查看辅助').textContent).toContain(`网格 ${gridSize} mm`)
+    expect(disclosure('辅助显示').textContent).toContain(`网格 ${gridSize} mm`)
     // 页面尺寸的组头右侧原来挂着「150.0 × 100.0 mm」——与 24px 下面的 W / H 框
     // 是同一对数，还是两种格式（打磨 L9 删掉）。判据钉住「组头里不再有那个数」，
     // 同时确认它并没有连着从可编辑的框里一起消失
@@ -91,7 +109,7 @@ describe('CanvasPage', () => {
   })
 
   it('开关行：标签列与数值行同宽（控件从同一条竖线起排），整行可点', () => {
-    act(() => disclosure('吸附').click())
+    act(() => disclosure('自动对齐').click())
     const rows = [...container.querySelectorAll<HTMLLabelElement>('[data-toggle-row]')]
     const guides = rows.find((r) => r.textContent?.includes('对齐参考线'))
     expect(guides).toBeDefined()

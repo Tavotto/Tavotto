@@ -162,17 +162,22 @@ describe('高频属性排在前面', () => {
   })
 })
 
-describe('单选：一张「排列」组 = 对齐一行 + 层级一行（审计 B09，标注与面板同一形状）', () => {
-  it('对齐到画布六颗与层级四颗都常驻，标题是「排列」', async () => {
+describe('单选：对齐到画布常驻，层级是一行摘要（审计 B09；2026-10-01 设计稿 A1）', () => {
+  it('对齐到画布六颗常驻，标题是「对齐到画布」；层级收成摘要行，点开才有四颗键', async () => {
     await mount(arrowOf())
-    expect(headings()).toContain('排列')
-    // 此前（审计 T28）层级单独成组、对齐收在「更多排列」里；现在没有那层折叠
-    expect(headings()).not.toContain('层级')
+    expect(headings()).toContain('对齐到画布')
+    // 此前（审计 T28）对齐收在「更多排列」里；现在没有那层折叠
     expect(disclosure('更多排列')).toBeUndefined()
-    const zbar = host.querySelector('[aria-label="层级"][role="toolbar"]')!
-    expect(zbar.querySelectorAll('button')).toHaveLength(4)
     const align = host.querySelector('[data-single-align]')!
     expect(align.querySelectorAll('button')).toHaveLength(6)
+    // 层级：摘要行，默认收起，里面的四颗键不在 DOM 里
+    const fold = host.querySelector<HTMLButtonElement>('[data-fold="zorder"] > button')!
+    expect(fold.textContent?.trim()).toBe('层级')
+    expect(fold.getAttribute('aria-expanded')).toBe('false')
+    expect(host.querySelector('[aria-label="层级"][role="toolbar"]')).toBeNull()
+    await act(async () => fold.click())
+    const zbar = host.querySelector('[aria-label="层级"][role="toolbar"]')!
+    expect(zbar.querySelectorAll('button')).toHaveLength(4)
   })
 })
 

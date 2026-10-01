@@ -729,10 +729,13 @@ describe('分布与等宽等高分成两组（审计 T29）', () => {
     expect(dist.nextElementSibling).not.toBe(size)
   })
 
-  it('属性页：分布与统一尺寸是两条各自带名字的工具带', async () => {
+  it('属性页：统一尺寸在面上，分布收成摘要行「分布」，点开是各自带名字的工具带', async () => {
     await act(async () => root.unmount())
     await mount(<ArrangeSection count={3} multi />)
     await select(['t1', 't2', 't3'])
+    // 分布是低频的：摘要行（设计稿 A9），默认收起
+    expect(mountEl.querySelector('[role="toolbar"][aria-label="分布"]')).toBeNull()
+    await click(mountEl.querySelector<HTMLButtonElement>('[data-fold="distribute"] > button')!)
     const labels = [...mountEl.querySelectorAll('[role="toolbar"]')].map((t) =>
       t.getAttribute('aria-label'),
     )
@@ -748,15 +751,58 @@ describe('分布与等宽等高分成两组（审计 T29）', () => {
     await act(async () => root.unmount())
     await mount(<ArrangeSection count={3} multi />)
     await select(['t1', 't2', 't3'])
-    const more = [...mountEl.querySelectorAll<HTMLButtonElement>('button[aria-expanded]')].find(
-      (b) => b.textContent?.startsWith('更多排列'),
-    )!
+    const more = mountEl.querySelector<HTMLButtonElement>('[data-fold="spacingGroup"] > button')!
+    expect(more.textContent).toContain('间距、成组')
     await click(more)
     const names = [...mountEl.querySelectorAll('input')].map((i) => i.getAttribute('aria-label'))
     expect(names).toContain('水平间距')
     expect(names).toContain('垂直间距')
     expect(names).not.toContain('H (mm)')
     expect(names).not.toContain('V (mm)')
+  })
+})
+
+describe('多选属性页：低频项各是一行摘要（设计稿 A9，2026-10-01）', () => {
+  const folds = () =>
+    [...mountEl.querySelectorAll('[data-summary-row]')].map((r) => r.getAttribute('data-fold'))
+
+  it('面上是对齐与统一尺寸；分布 / 层级 / 间距成组布局 / 复制粘贴样式收成四行摘要，默认收起', async () => {
+    await act(async () => root.unmount())
+    await mount(<ArrangeSection count={2} multi />)
+    await select(['t1', 't2'])
+    expect(folds()).toEqual(['distribute', 'zorder', 'spacingGroup', 'style'])
+    // 面上：对齐 + 统一尺寸两条工具带；其余不在 DOM 里
+    const labels = [...mountEl.querySelectorAll('[role="toolbar"]')].map((t) => t.getAttribute('aria-label'))
+    expect(labels).toContain('统一尺寸')
+    expect(labels).not.toContain('分布')
+    expect(labels).not.toContain('层级')
+    expect(mountEl.querySelector('input[aria-label="水平间距"]')).toBeNull()
+    for (const r of mountEl.querySelectorAll('[data-summary-row] > button')) {
+      expect(r.getAttribute('aria-expanded')).toBe('false')
+    }
+  })
+
+  it('分布的右值写「需 3 个以上」：只有两个对象时分布用不了，原因就在行上；够 3 个就不写', async () => {
+    await act(async () => root.unmount())
+    await mount(<ArrangeSection count={2} multi />)
+    await select(['t1', 't2'])
+    expect(mountEl.querySelector('[data-fold="distribute"] [data-summary-value]')?.textContent).toBe('需 3 个以上')
+    await act(async () => root.unmount())
+    await mount(<ArrangeSection count={3} multi />)
+    await select(['t1', 't2', 't3'])
+    expect(mountEl.querySelector('[data-fold="distribute"] [data-summary-value]')).toBeNull()
+  })
+
+  it('点开层级与复制 / 粘贴样式：原来的控件都在', async () => {
+    await act(async () => root.unmount())
+    await mount(<ArrangeSection count={3} multi />)
+    await select(['t1', 't2', 't3'])
+    await click(mountEl.querySelector<HTMLButtonElement>('[data-fold="zorder"] > button')!)
+    expect(mountEl.querySelector('[role="toolbar"][aria-label="层级"]')!.querySelectorAll('button')).toHaveLength(4)
+    await click(mountEl.querySelector<HTMLButtonElement>('[data-fold="style"] > button')!)
+    const names = [...mountEl.querySelectorAll('button')].map((b) => b.textContent?.trim())
+    expect(names).toContain('复制样式')
+    expect(names).toContain('粘贴样式')
   })
 })
 

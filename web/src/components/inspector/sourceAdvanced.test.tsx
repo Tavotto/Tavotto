@@ -1,5 +1,5 @@
 /**
- * 「源文件与高级」折叠区（审计 T32 的后半段）。
+ * 「源文件」折叠区（审计 T32 的后半段）。
  *
  * 恢复动作（「恢复此元素 · n 项」「恢复整张图 · m 项」）2026-09-12 起是身份头那颗
  * 「n 项已修改」徽标的菜单，由 `restoreMenu.test.tsx` 看护。这里剩下的：
@@ -102,9 +102,9 @@ async function mount() {
   await act(async () => {
     root.render(<Harness />)
   })
-  // 「源文件与高级」默认收起：先展开
+  // 「源文件」默认收起：先展开
   await act(async () => {
-    buttons().find((b) => b.textContent?.includes('源文件与高级'))!.click()
+    buttons().find((b) => b.textContent?.includes('源文件'))!.click()
   })
 }
 
@@ -146,7 +146,7 @@ afterEach(async () => {
   document.body.innerHTML = ''
 })
 
-describe('源文件与高级：只剩会动磁盘的那一组', () => {
+describe('源文件：只剩会动磁盘的那一组', () => {
   it('折叠区里没有恢复按钮；「原始文件」组头之下是写回按钮', async () => {
     await mount()
     const fold = host.querySelector('[data-source-advanced]')!

@@ -96,6 +96,7 @@ export function TickTaskCard({
   applyPlan,
   placement,
   minorExtra,
+  hideMinor = false,
 }: {
   /** 一个或多个轴；给多个时顶部出 X / Y 切换 */
   axes: TickAxisAdapter[]
@@ -110,6 +111,11 @@ export function TickTaskCard({
   placement?: ReactNode
   /** 次刻度的从属字段（方式 / 间距 / 格式）：跟在次刻度的长宽后面 */
   minorExtra?: ReactNode
+  /**
+   * 次刻度那一段不在卡里画：刻度组页把它收成一行摘要「小刻度」（设计稿 A5），
+   * 由调用方用 `TickMinorBlock` 摆在摘要行里。**同一份控件换了地方，不是两套**
+   */
+  hideMinor?: boolean
 }) {
   useTranslation('inspector')
   const [active, setActive] = useState<TickAxis>(axes[0]?.axis ?? 'x')
@@ -127,9 +133,6 @@ export function TickTaskCard({
   )
   const length = cur.fieldOf('length')
   const width = cur.fieldOf('width')
-  const minorLength = cur.fieldOf('minor_length')
-  const minorWidth = cur.fieldOf('minor_width')
-  const minorOn = cur.read('minor_visible') === true
   // 四边模型在、且这条轴在模型里：方向档带「隐藏」，写入走计划（一次 commit
   // 可能同时动方向与两边显隐）；不在（Z 轴、没发 spines 的轴）：退回只写 direction 的三档
   const modelSides =
@@ -217,6 +220,32 @@ export function TickTaskCard({
 
       {placement}
 
+      {!hideMinor && <TickMinorBlock axis={cur} labelWidth={labelWidth} extra={minorExtra} />}
+      </Body>
+    </div>
+  )
+}
+
+/**
+ * 次刻度那一段：开关 + 长度 / 线宽 + 从属字段（方式 / 间距 / 格式）。
+ * 卡里默认接在长宽后面；刻度组页用 `hideMinor` 把它挪进「小刻度」摘要行。
+ * 这个轴一条次刻度能力都没有就整段不画（Z 轴）。
+ */
+export function TickMinorBlock({
+  axis: cur,
+  labelWidth = INSPECTOR_LABEL_W,
+  extra,
+}: {
+  axis: TickAxisAdapter
+  labelWidth?: number
+  extra?: ReactNode
+}) {
+  useTranslation('inspector')
+  const minorLength = cur.fieldOf('minor_length')
+  const minorWidth = cur.fieldOf('minor_width')
+  const minorOn = cur.read('minor_visible') === true
+  return (
+    <>
       {cur.has('minor_visible') && (
         <div data-prop="minor_visible" data-gid={cur.gid}>
           <Row
@@ -251,9 +280,8 @@ export function TickTaskCard({
           labelWidth={labelWidth}
         />
       )}
-      {minorExtra}
-      </Body>
-    </div>
+      {extra}
+    </>
   )
 }
 

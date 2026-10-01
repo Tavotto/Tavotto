@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ArrowLeftRight, Trash2 } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
@@ -7,9 +7,11 @@ import { msg, t as translate, type UiMessage } from '@/i18n'
 import { cn, MOD } from '@/lib/utils'
 import { clearGuides, removeGuide, setPageSetup, setPageSize } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
+import { useInspectorPrefs } from '@/store/inspectorPrefs'
 import { useUiStore } from '@/store/uiStore'
 import { Button, IconButton } from '../ui/Button'
-import { Disclosure, Row, Section } from '../ui/Field'
+import { Row, Section } from '../ui/Field'
+import { SummaryRow } from '../ui/SummaryRow'
 import { ColorField, NumberField } from '../ui/Input'
 import { Toggle } from '../ui/Toggle'
 import { Tip } from '../ui/Tooltip'
@@ -41,6 +43,9 @@ const cv = (key: string, values?: Record<string, unknown>) =>
   translate(`canvas.${key}`, { ns: 'inspector', ...(values ?? {}) })
 const hist = (key: string): UiMessage => msg(`history.${key}`, undefined, 'inspector')
 
+/** 本页五个摘要行的键（一次只展开一个） */
+const FOLD_KEYS = ['bg', 'aids', 'snap', 'guides', 'safe'] as const
+
 /**
  * 预设缩略图：**四档共用同一个 mm→px 比例**，所以「单栏比双栏窄一半」
  * 这件事在图形上是真的。各自撑满格子的话四个方块一样大，形状还在、
@@ -59,10 +64,16 @@ export function CanvasPage() {
   const guides = useDocumentStore((s) => s.doc.guides)
   const ui = useUiStore()
   const active = PRESETS.find((p) => p.w === page.w && p.h === page.h)
-  // 一次只展开一组（审计 T31：多组同时展开显得冗长）；再点同一组就收起
-  const [openKey, setOpenKey] = useState<string | null>(null)
-  const open = (k: string) => openKey === k
-  const toggle = (k: string) => setOpenKey((cur) => (cur === k ? null : k))
+  // 一次只展开一组（审计 T31：多组同时展开显得冗长）；再点同一组就收起。
+  // 展开状态记在会话级 `inspectorPrefs.foldOpen`（键 `canvas:<组>`），不放局部 state：
+  // 切到「属性 / 改图助手」页签再回来时本页被卸载，局部 state 会让展开的行合上
+  const foldOpen = useInspectorPrefs((s) => s.foldOpen)
+  const setFoldOpen = useInspectorPrefs((s) => s.setFoldOpen)
+  const open = (k: string) => foldOpen[`canvas:${k}`] ?? false
+  const toggle = (k: string) => {
+    const wasOpen = open(k)
+    for (const other of FOLD_KEYS) setFoldOpen(`canvas:${other}`, !wasOpen && other === k)
+  }
 
   // 收起时也得看得出网格状态（审计 T31 验收）：开着就把间距一起报出来，
   // 只报「网格」的话用户还得展开才知道它多密
@@ -158,11 +169,11 @@ export function CanvasPage() {
         </div>
       </Section>
 
-      <Disclosure
-        title={cv('background')}
+      <SummaryRow
+        label={cv('background')}
         open={open('bg')}
         onToggle={() => toggle('bg')}
-        summary={page.transparent ? cv('transparent') : (page.bg ?? '#FFFFFF').toUpperCase()}
+        value={page.transparent ? cv('transparent') : (page.bg ?? '#FFFFFF').toUpperCase()}
       >
         <div className="flex flex-col gap-1.5">
           <ToggleRow label={cv('transparentBg')}>
@@ -181,13 +192,13 @@ export function CanvasPage() {
             />
           </Row>
         </div>
-      </Disclosure>
+      </SummaryRow>
 
-      <Disclosure
-        title={cv('viewAids')}
+      <SummaryRow
+        label={cv('viewAids')}
         open={open('aids')}
         onToggle={() => toggle('aids')}
-        summary={aidsSummary}
+        value={aidsSummary}
       >
         <div className="flex flex-col gap-1.5">
           <ToggleRow label={cv('rulers')}>
@@ -210,13 +221,13 @@ export function CanvasPage() {
             </Row>
           )}
         </div>
-      </Disclosure>
+      </SummaryRow>
 
-      <Disclosure
-        title={cv('snap')}
+      <SummaryRow
+        label={cv('snap')}
         open={open('snap')}
         onToggle={() => toggle('snap')}
-        summary={snapSummary}
+        value={snapSummary}
       >
         <div className="flex flex-col gap-1.5">
           <ToggleRow label={cv('snapEnable')}>
@@ -256,13 +267,13 @@ export function CanvasPage() {
             </>
           )}
         </div>
-      </Disclosure>
+      </SummaryRow>
 
-      <Disclosure
-        title={cv('guides')}
+      <SummaryRow
+        label={cv('guides')}
         open={open('guides')}
         onToggle={() => toggle('guides')}
-        summary={
+        value={
           guides.length
             ? cv('guideCount', { count: guides.length }) +
               (ui.guidesLocked ? cv('guidesLockedSuffix') : '')
@@ -312,13 +323,13 @@ export function CanvasPage() {
             </Button>
           </div>
         </div>
-      </Disclosure>
+      </SummaryRow>
 
-      <Disclosure
-        title={cv('safeArea')}
+      <SummaryRow
+        label={cv('safeArea')}
         open={open('safe')}
         onToggle={() => toggle('safe')}
-        summary={
+        value={
           ui.showSafeArea ? cv('marginSummary', { margin: page.margin ?? 0 }) : cv('safeAreaOff')
         }
       >
@@ -346,7 +357,7 @@ export function CanvasPage() {
             />
           </Row>
         </div>
-      </Disclosure>
+      </SummaryRow>
     </>
   )
 }

@@ -38,10 +38,12 @@ import {
 } from '@/store/actions'
 import { useArrangeStore } from '@/store/arrangeStore'
 import { useDocumentStore } from '@/store/documentStore'
+import { useInspectorPrefs } from '@/store/inspectorPrefs'
 import { useSelectionStore } from '@/store/selectionStore'
 import type { CanvasObject, LayoutGroup } from '@/types/document'
 import { Button, IconButton } from '../ui/Button'
-import { Disclosure, Row, Section } from '../ui/Field'
+import { Row, Section } from '../ui/Field'
+import { SummaryRow } from '../ui/SummaryRow'
 import { INSPECTOR_LABEL_W } from './layout'
 import { NumberField } from '../ui/Input'
 import { Segmented } from '../ui/Segmented'
@@ -201,23 +203,36 @@ export function ArrangeSection({
   multi?: boolean
 }) {
   useTranslation('inspector')
-  const [moreOpen, setMoreOpen] = useState(false)
+  const foldOpen = useInspectorPrefs((s) => s.foldOpen)
+  const setFoldOpen = useInspectorPrefs((s) => s.setFoldOpen)
+  /** 摘要行（设计稿 A1 / A9）：展开状态按「arrange:id」记在会话里，单选与多选各自一份 */
+  const fold = (id: string, label: string, children: ReactNode, value?: string) => {
+    const key = `arrange:${multi ? 'multi' : 'single'}:${id}`
+    return (
+      <SummaryRow
+        data-fold={id}
+        label={label}
+        value={value}
+        open={foldOpen[key] ?? false}
+        onToggle={() => setFoldOpen(key, !(foldOpen[key] ?? false))}
+      >
+        {children}
+      </SummaryRow>
+    )
+  }
 
   if (!multi) {
     return (
-      /* `data-arrange-section`：浮动栏「更多」滚到这里；属性页没有 section 路由 */
-      <Section title={ar('title')} className="scroll-mt-2" data-arrange-section="">
-        <ArrangeGrid>
-          <ArrangeRow label={ar('align')}>
-            <div data-single-align>
-              <AlignToCanvasRow />
-            </div>
-          </ArrangeRow>
-          <ArrangeRow label={ar('zorderLabel')}>
-            <ZOrderToolbar />
-          </ArrangeRow>
-        </ArrangeGrid>
-      </Section>
+      <>
+        {/* `data-arrange-section`：浮动栏「更多」滚到这里；属性页没有 section 路由 */}
+        <Section title={ar('title')} className="scroll-mt-2" data-arrange-section="">
+          <div data-single-align>
+            <AlignToCanvasRow />
+          </div>
+        </Section>
+        {/* 层级是低频的：收成摘要行（设计稿 A1），点开是原来的四个键 */}
+        {fold('zorder', ar('zorderLabel'), <ZOrderToolbar />)}
+      </>
     )
   }
 
@@ -230,14 +245,18 @@ export function ArrangeSection({
       >
         <ArrangeGrid>
           <MultiAlignRows count={count} />
-          <ArrangeRow label={ar('zorderLabel')}>
-            <ZOrderToolbar />
-          </ArrangeRow>
         </ArrangeGrid>
       </Section>
-      <Disclosure title={ar('more')} open={moreOpen} onToggle={() => setMoreOpen((v) => !v)}>
-        <MultiArrangeExtras />
-      </Disclosure>
+      {/* 低频的四件事各是一行摘要（设计稿 A9）：等距分布、层级、间距 / 成组 / 布局、复制 / 粘贴样式 */}
+      {fold(
+        'distribute',
+        ar('distributeToolbar'),
+        <DistributeRow count={count} />,
+        count < DISTRIBUTE_MIN ? ar('distributeNeed', { count: DISTRIBUTE_MIN }) : undefined,
+      )}
+      {fold('zorder', ar('zorderLabel'), <ZOrderToolbar />)}
+      {fold('spacingGroup', ar('foldSpacingGroup'), <MultiSpacingGroupLayout />)}
+      {fold('style', ar('foldStyle'), <MultiStyleRow />)}
     </>
   )
 }
@@ -277,17 +296,9 @@ function MultiAlignRows({ count }: { count: number }) {
       </ArrangeRow>
 
       {/*
-        均匀分布与等宽等高是两件事（审计 T29）：前者动位置、后者动尺寸，
-        挤在同一条工具带里只能靠猜图标分辨。拆成两条各自带名字的行。
+        均匀分布与等宽等高是两件事（审计 T29）：前者动位置、后者动尺寸。统一尺寸
+        留在面上，分布是低频的、收成摘要行（`DistributeRow`，设计稿 A9）。
       */}
-      <ArrangeRow label={ar('distributeToolbar')}>
-        <ArrangeToolbar
-          label={ar('distributeToolbar')}
-          buttons={DISTRIBUTE_BUTTONS}
-          refName={ref}
-          count={count}
-        />
-      </ArrangeRow>
       <ArrangeRow label={ar('sizeToolbar')}>
         <ArrangeToolbar
           label={ar('sizeToolbar')}
@@ -297,6 +308,27 @@ function MultiAlignRows({ count }: { count: number }) {
         />
       </ArrangeRow>
     </>
+  )
+}
+
+/** 分布至少要这么多个对象（水平 / 垂直等距都一样）：摘要行右边提示它 */
+const DISTRIBUTE_MIN = Math.min(...DISTRIBUTE_BUTTONS.map((b) => b.min))
+
+/** 摘要行「分布」展开后的一行：水平 / 垂直等距，参照取当前对齐参照（只看选区，提示里不报参照） */
+function DistributeRow({ count }: { count: number }) {
+  useTranslation('inspector')
+  const ref = useArrangeStore((s) => s.alignRef)
+  return (
+    <ArrangeGrid>
+      <ArrangeRow label={ar('distributeToolbar')}>
+        <ArrangeToolbar
+          label={ar('distributeToolbar')}
+          buttons={DISTRIBUTE_BUTTONS}
+          refName={ref}
+          count={count}
+        />
+      </ArrangeRow>
+    </ArrangeGrid>
   )
 }
 
@@ -337,12 +369,10 @@ function ArrangeToolbar({
   )
 }
 
-function MultiArrangeExtras() {
+/** 摘要行「间距、成组、排成行 / 列 / 网格」展开后的内容 */
+function MultiSpacingGroupLayout() {
   useTranslation('inspector')
   const objs = useSelectedObjects()
-  // 样式剪贴板不在 store 里（不属于文档），复制后自己触发一次重渲染
-  const [, bump] = useState(0)
-  const clip = styleClipKind()
   const grouped = selectionHasGroup()
 
   return (
@@ -396,8 +426,20 @@ function MultiArrangeExtras() {
       </ArrangeRow>
 
       <LayoutGroupControls />
+    </ArrangeGrid>
+  )
+}
 
-      {/* 样式搬运暂留在这里（不跨面板迁移），放最底、同样轻量 */}
+/** 摘要行「复制 / 粘贴样式」展开后的内容 */
+function MultiStyleRow() {
+  useTranslation('inspector')
+  // 样式剪贴板不在 store 里（不属于文档），复制后自己触发一次重渲染
+  const [, bump] = useState(0)
+  const clip = styleClipKind()
+
+  return (
+    <ArrangeGrid>
+      {/* 样式搬运暂留在这里（不跨面板迁移）、同样轻量 */}
       <ArrangeRow label={translate('group.style', { ns: 'inspector' })}>
         <div className="flex flex-wrap gap-0.5">
           <Tip label={ar('copyStyleTip')}>

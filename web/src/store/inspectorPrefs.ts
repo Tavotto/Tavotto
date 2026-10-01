@@ -18,7 +18,10 @@ interface InspectorPrefsState {
   moreOpen: Record<string, boolean>
   /** role → 「源文件与高级」是否展开（会话内） */
   advancedOpen: Record<string, boolean>
+  /** `角色:折叠行 id` → 摘要行是否展开（会话内；「更多」之外的各摘要行） */
+  foldOpen: Record<string, boolean>
   setMoreOpen: (role: string, open: boolean) => void
+  setFoldOpen: (key: string, open: boolean) => void
   setAdvancedOpen: (role: string, open: boolean) => void
 }
 
@@ -36,6 +39,8 @@ function readPersisted(): Record<string, boolean> {
 export const useInspectorPrefs = create<InspectorPrefsState>((set, get) => ({
   moreOpen: readPersisted(),
   advancedOpen: {},
+  foldOpen: {},
+  setFoldOpen: (key, open) => set((s) => ({ foldOpen: { ...s.foldOpen, [key]: open } })),
   setMoreOpen: (role, open) => {
     set((s) => ({ moreOpen: { ...s.moreOpen, [role]: open } }))
     try {

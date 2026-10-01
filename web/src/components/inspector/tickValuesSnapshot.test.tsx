@@ -144,6 +144,10 @@ beforeEach(async () => {
   await act(async () => {
     root.render(<Harness />)
   })
+  // 固定刻度值住在摘要行「刻度放在哪」里（2026-10-01 设计稿 A5），默认收着，先点开
+  await act(async () => {
+    host.querySelector<HTMLButtonElement>('[data-fold="placement"] > button')!.click()
+  })
 })
 
 afterEach(async () => {

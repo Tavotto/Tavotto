@@ -91,7 +91,7 @@ test('弹窗 / 菜单 / toast 的进出场都在播，且弹窗播放期间保�
 
   // ---- 菜单：从触发器那个角展开
   // Radix 的菜单认的是 pointerdown，evaluate 里的 .click() 打不开它
-  await page.getByRole('button', { name: '更多' }).click()
+  await page.getByRole('button', { name: '更多', exact: true }).click()
   const menu = await page.evaluate(async () => {
     for (let i = 0; i < 3; i++) await new Promise((r) => requestAnimationFrame(r))
     const m = document.querySelector('[role=menu]') as HTMLElement | null

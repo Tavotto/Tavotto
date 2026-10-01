@@ -182,7 +182,7 @@ async function mount(
 
 const buttons = () => Array.from(host.querySelectorAll('button'))
 const byAria = (name: string) => buttons().find((b) => b.getAttribute('aria-label') === name)
-const byText = (text: string) => buttons().find((b) => b.textContent?.trim() === text)
+const byText = (text: string) => buttons().find((b) => b.textContent?.trim().split(', ')[0] === text)
 const input = (prop: string) =>
   host.querySelector(`[data-prop="${prop}"] input`) as HTMLInputElement | null
 const rowOf = (prop: string) => host.querySelector(`[data-prop="${prop}"]`) as HTMLElement | null
@@ -395,7 +395,7 @@ describe('颜色条（审计 T23）', () => {
     const nameRow = rowOf('label')
     expect(nameRow).not.toBeNull()
     // 「更多」还折叠着的时候它就在——说明它在首屏，不是在折叠区里
-    const more = buttons().find((b) => b.textContent?.trim() === '更多')
+    const more = buttons().find((b) => b.textContent?.trim().split(', ')[0] === '更多')
     expect(more?.getAttribute('aria-expanded')).toBe('false')
     const box = nameRow!.querySelector('textarea') as HTMLTextAreaElement
     expect(box.value).toBe('Intensity (a.u.)')

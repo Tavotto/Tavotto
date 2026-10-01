@@ -256,7 +256,7 @@ describe('与图内文字一致的界面结构（ADR 0010）', () => {
     expect(text).not.toContain('行距')
     expect(text).not.toContain('大小写')
     const more = Array.from(container.querySelectorAll('button')).find(
-      (b) => b.textContent?.trim() === '更多',
+      (b) => b.textContent?.trim().split(', ')[0] === '更多',
     )!
     act(() => more.click())
     const after = container.textContent ?? ''

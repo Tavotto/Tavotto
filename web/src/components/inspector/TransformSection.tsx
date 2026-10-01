@@ -5,7 +5,8 @@ import { formatMm } from '@/lib/units'
 import { updateObjects } from '@/store/actions'
 import { useInspectorPrefs } from '@/store/inspectorPrefs'
 import type { CanvasObject } from '@/types/document'
-import { Disclosure, Row, Section } from '../ui/Field'
+import { Row, Section } from '../ui/Field'
+import { SummaryRow } from '../ui/SummaryRow'
 import { INSPECTOR_LABEL_W } from './layout'
 import { NumberField } from '../ui/Input'
 import { GeometryGrid, GeometrySpacer, MmField } from './MmField'
@@ -165,13 +166,13 @@ function FoldedTransform({
   })
 
   return (
-    <Disclosure
-      title={title}
+    <SummaryRow
+      label={title}
       open={open}
       onToggle={() => setOpen(foldKey, !open)}
-      summary={summary}
+      value={summary}
     >
       <div data-transform-folded>{children}</div>
-    </Disclosure>
+    </SummaryRow>
   )
 }
