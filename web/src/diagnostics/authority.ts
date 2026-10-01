@@ -16,7 +16,7 @@
  * 所以这里不只记一笔，它**当场拒绝这次写入**。诊断告诉我们「为什么错」，
  * 护栏让这一类根本不再伤到用户。
  */
-import { exactPanelRender, panelDisplayView, renderKeyOf, useRenderStore } from '@/store/renderStore'
+import { exactPanelManifest, panelDisplayView, renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { useDocumentStore } from '@/store/documentStore'
 import type { PanelObject } from '@/types/document'
 import { fileHash, panelHash, variantHash, variantHashOrNull } from './hash'
@@ -36,7 +36,7 @@ export interface AuthorityView {
 /**
  * 现读一个面板的三个身份。纯读，不触发渲染。
  *
- * **权威判据委托给 `exactPanelRender`（ADR 0017）**，这里不另立一份。它比
+ * **权威判据委托给 `exactPanelManifest`（ADR 0017）**，这里不另立一份。它比
  * 「manifest 来自哪个键」更严：还要求 `lastPatches` 与当前 overrides 逐字相等、
  * 且没被 `markStale` 标记过——脚本变了的时候，键相同但旧墨迹框已经不作数。
  * 诊断报的必须就是**护栏实际用的那个判据**，否则诊断会说「权威就绪」而写路径
@@ -46,7 +46,7 @@ export function readAuthority(panel: PanelObject): AuthorityView {
   const rs = useRenderStore.getState()
   const documentVariant = renderKeyOf(panel)
   const view = panelDisplayView(rs, panel)
-  const exact = exactPanelRender(rs, panel)
+  const exact = exactPanelManifest(rs, panel)
   return {
     panelId: panel.id,
     documentVariant,

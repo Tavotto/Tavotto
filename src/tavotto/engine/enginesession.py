@@ -62,6 +62,7 @@ WORKER_LIKE = (
     "export",
     "render_png",
     "preview_png",
+    "preview_png_snapshot",
     "svg_path",
     "shutdown",
 )

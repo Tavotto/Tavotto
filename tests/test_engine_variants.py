@@ -252,3 +252,34 @@ def test_preview_png_reports_worker_errors_as_such(client, tmp_path, monkeypatch
     resp = client.post("/api/engine/preview_png", json={"id": "p1.pdf", "patches": []})
     assert resp.status_code == 500
     assert resp.get_json()["code"] == "script_error"
+
+
+def test_preview_png_snapshot_keeps_pixels_and_geometry_in_one_response(
+    client, tmp_path, monkeypatch
+):
+    _open(client, tmp_path, "paired")
+
+    class Paired(_FakeWorker):
+        def preview_png_snapshot(self, stem, patches, width_px):
+            self.previews.append({"patches": patches, "width": width_px})
+            return {"png": "cG5n", "manifest": {"size_mm": [80, 60], "elements": []}}
+
+    worker = Paired()
+    _stub_engine(monkeypatch, worker)
+    patches = [{"gid": "title", "prop": "fontsize", "value": 11}]
+    resp = client.post(
+        "/api/engine/preview_png",
+        json={
+            "id": "p1.pdf",
+            "patches": patches,
+            "w": 500,
+            "with_manifest": True,
+        },
+    )
+    assert resp.status_code == 200 and resp.is_json
+    assert resp.get_json() == {"png": "cG5n", "manifest": {"size_mm": [80, 60], "elements": []}}
+    assert resp.headers["Cache-Control"] == "no-store"
+    assert worker.previews == [{"patches": patches, "width": 800}]
+    bad = client.post("/api/engine/preview_png", json={"id": "p1.pdf", "with_manifest": "yes"})
+    assert bad.status_code == 400
+    assert bad.get_json()["code"] == "invalid_preview_options"

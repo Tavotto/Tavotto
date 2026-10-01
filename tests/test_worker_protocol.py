@@ -415,3 +415,12 @@ def test_inline_svg_is_only_sent_when_asked(tmp_path):
     assert w.proc.stdin.sent[-1]["payload"] == {"patches": [], "inline_svg": True}
     # 结果字段整体透传（控制面不解释 svg，只是把它带上来）
     assert resp["svg"] == "<svg/>"
+
+
+def test_png_snapshot_uses_existing_command_with_paired_response(tmp_path):
+    w = _worker(lambda env: _echo(env, png="cG5n", manifest={"elements": []}, stems={}), tmp_path)
+    result = w.preview_png_snapshot("Fig1", [], 800)
+    assert result["png"] == "cG5n" and result["manifest"] == {"elements": []}
+    env = w.proc.stdin.sent[-1]
+    assert env["cmd"] == "preview_png"
+    assert env["payload"] == {"patches": [], "width": 800, "with_manifest": True}

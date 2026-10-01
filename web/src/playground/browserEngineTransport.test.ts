@@ -11,7 +11,7 @@ import { PlaygroundClient, PlaygroundError } from './pyodideClient'
 
 const manifest = { stem: 'F', size_mm: [80, 60], elements: [] } as unknown as Manifest
 
-function fakeClient(overrides: Partial<Record<'render' | 'previewPng', unknown>> = {}) {
+function fakeClient(overrides: Partial<Record<'render' | 'previewPng' | 'previewPngSnapshot', unknown>> = {}) {
   return {
     render: vi.fn(async () => ({
       manifest,
@@ -21,6 +21,7 @@ function fakeClient(overrides: Partial<Record<'render' | 'previewPng', unknown>>
       render_revision: 7,
     })),
     previewPng: vi.fn(async () => 'QkFTRTY0'),
+    previewPngSnapshot: vi.fn(async () => ({ png: 'UEFJUkVE', manifest })),
     ...overrides,
   } as unknown as PlaygroundClient
 }
@@ -74,4 +75,14 @@ describe('installBrowserTransport', () => {
     undo()
     expect(engineTransport()).toBeNull()
   })
+})
+
+
+it('PNG snapshot forwards the bucket and preserves its measured manifest', async () => {
+  const client = fakeClient()
+  installBrowserTransport(client)
+  const signal = new AbortController().signal
+  const frame = await engineTransport()!.previewPngSnapshot!('F.pdf', [], 1600, signal)
+  expect(client.previewPngSnapshot).toHaveBeenCalledWith('F', [], 1600, signal)
+  expect(frame).toEqual({ url: 'data:image/png;base64,UEFJUkVE', manifest })
 })

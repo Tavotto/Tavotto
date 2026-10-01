@@ -34,7 +34,7 @@ import { msg } from '@/i18n'
 import { applyMixedAlign } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
 import { finishActiveGesture } from '@/store/gestureCoordinator'
-import { exactPanelRender, renderKey, renderKeyOf, useRenderStore } from '@/store/renderStore'
+import { exactPanelManifest, exactPanelRender, renderKey, renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import {
@@ -102,7 +102,8 @@ export function alignSelectedPanelElements(panelId: string, mode: AlignMode): Al
     exact_authority: view.exact,
   })
   const exact = exactPanelRender(useRenderStore.getState(), panel)
-  if (!exact?.manifest) {
+  const manifest = exactPanelManifest(useRenderStore.getState(), panel)
+  if (!exact || !manifest) {
     recordDiagnosticEvent({
       type: 'authority.unavailable',
       panel: panelHash(panelId),
@@ -111,7 +112,6 @@ export function alignSelectedPanelElements(panelId: string, mode: AlignMode): Al
     })
     return blocked(panelId, mode, 'syncing', view)
   }
-  const manifest = exact.manifest
   // 开发态不变式：动手那一刻的权威键必须**就是**当前面板的变体键。
   // `exactPanelRender` 已经保证了这件事，这里是第二道——将来有人给它加一条
   // 「找不到就退回上一版」的好心分支时，红的是这里而不是用户的图。
@@ -275,5 +275,5 @@ function blocked(
  */
 export function alignAuthorityReady(panel: PanelObject | null | undefined): boolean {
   if (!panel) return false
-  return !!exactPanelRender(useRenderStore.getState(), panel)
+  return !!exactPanelManifest(useRenderStore.getState(), panel)
 }

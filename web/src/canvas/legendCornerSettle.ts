@@ -3,7 +3,8 @@ import { round4 } from '@/lib/axesLayout'
 import { fixedCornerOf, type LegendCorner } from '@/lib/legendScale'
 import { amendOverrides } from '@/store/actions'
 import { useDocumentStore, type HistoryEntry } from '@/store/documentStore'
-import { exactPanelRender, renderKeyOf, useRenderStore } from '@/store/renderStore'
+import { exactPanelManifest, renderKeyOf, useRenderStore } from '@/store/renderStore'
+import { useMountedPngStore } from '@/store/mountedPngStore'
 import { retargetPreview } from '@/store/svgPreviewStore'
 import type { PanelObject } from '@/types/document'
 import { effectiveOverride } from '@/lib/effectiveOverride'
@@ -66,16 +67,16 @@ export function settleLegendCorner(opts: {
     const panel = livePanel(panelId)
     // 等待期间文档又变了：那一版已经不是用户要的样子，补正无从谈起
     if (!panel || renderKeyOf(panel) !== firstKey) return stop()
-    const render = exactPanelRender(useRenderStore.getState(), panel)
-    if (!render?.manifest) return
+    const manifest = exactPanelManifest(useRenderStore.getState(), panel)
+    if (!manifest) return
     stop()
-    const el = render.manifest.elements.find((e) => e.gid === gid)
+    const el = manifest.elements.find((e) => e.gid === gid)
     const loc = effectiveOverride(panel.overrides, gid, 'loc_frac')?.value
     if (!el || !Array.isArray(loc) || loc.length !== 2) return
     const actual = fixedCornerOf(el.bbox as Rect4, corner)
     const dx = fixed[0] - actual[0]
     const dy = fixed[1] - actual[1]
-    const [wMm, hMm] = render.manifest.size_mm ?? [0, 0]
+    const [wMm, hMm] = manifest.size_mm ?? [0, 0]
     if (Math.abs(dx * wMm) < CORNER_SETTLE_TOL_MM && Math.abs(dy * hMm) < CORNER_SETTLE_TOL_MM) return
     // 先确认补得进同一条历史，再改挂预览：补不进去却改挂了，画面会停在一个文档里没有的位置
     const doc = useDocumentStore.getState()
@@ -90,7 +91,9 @@ export function settleLegendCorner(opts: {
     retargetPreview(panelId, firstKey, { [gid]: [dx, dy] }, renderKeyOf(nextPanel))
     amendOverrides(panelId, entry, [{ gid, prop: 'loc_frac', value: next }])
   }
-  unsub = useRenderStore.subscribe(check)
+  const unsubRender = useRenderStore.subscribe(check)
+  const unsubPng = useMountedPngStore.subscribe(check)
+  unsub = () => { unsubRender(); unsubPng() }
   const timer = window.setTimeout(stop, SETTLE_TIMEOUT_MS)
   // 那一版可能已经在缓存里（同一个变体刚画过）
   check()

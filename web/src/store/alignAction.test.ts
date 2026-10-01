@@ -21,6 +21,7 @@ import { alignSelectedPanelElements } from '@/store/alignAction'
 import { finishActiveGesture, registerGesture } from '@/store/gestureCoordinator'
 import { useDocumentStore } from '@/store/documentStore'
 import { renderKeyOf, useRenderStore } from '@/store/renderStore'
+import { useMountedPngStore } from '@/store/mountedPngStore'
 import { useUiStore } from '@/store/uiStore'
 import { emptyProject, type PanelObject } from '@/types/document'
 
@@ -92,6 +93,7 @@ const overrideOf = (gid: string, prop: string) =>
   livePanel().overrides.find((o) => o.gid === gid && o.prop === prop)?.value
 
 beforeEach(async () => {
+  useMountedPngStore.setState({ byPanel: {} })
   localStorage.clear()
   renderSpy.mockReset()
   useRenderStore.getState().clear()
@@ -364,4 +366,19 @@ describe('GEOMETRY_WRITE_PROPS：几何字段的初值来自 manifest，权威�
       expect(GEOMETRY_WRITE_PROPS.has(p)).toBe(false)
     }
   })
+})
+
+
+it('alignment waits for a loaded PNG and uses its measured boxes', () => {
+  scene()
+  const p = livePanel()
+  const key = renderKeyOf(p)
+  const canonical = useRenderStore.getState().byKey[key].manifest
+  const png = manifest([text('t1', [.2, .1, .2, .05]), ...THREE.slice(1)])
+  const store = useMountedPngStore.getState()
+  store.show(p.id, key, 1, canonical, 'data:png')
+  expect(alignSelectedPanelElements('p1', 'left')).toMatchObject({ ok: false, reason: 'syncing' })
+  store.loaded(p.id, { key, rev: 1, source: canonical, url: 'data:png', manifest: png })
+  expect(alignSelectedPanelElements('p1', 'left').ok).toBe(true)
+  expect(overrideOf('t2', 'pos_frac')).toEqual([.2, .3])
 })

@@ -1,4 +1,10 @@
-import type { EngineRenderOptions, EngineRenderResponse } from './api'
+import type { EngineRenderOptions, EngineRenderResponse, Manifest } from './api'
+
+export interface EnginePngSnapshot {
+  url: string
+  /** null only for older transports that cannot report a paired PNG draw. */
+  manifest: Manifest | null
+}
 
 /**
  * 引擎往来的**可选替换传输层**。
@@ -35,6 +41,13 @@ export interface EngineTransport {
     bucket: number,
     signal?: AbortSignal,
   ): Promise<string>
+  /** Pixels and geometry from one PNG draw; used by interactive bitmap panels. */
+  previewPngSnapshot?(
+    id: string,
+    patches: unknown[],
+    bucket: number,
+    signal?: AbortSignal,
+  ): Promise<EnginePngSnapshot>
   /**
    * 素材/原图的显示地址。iframe 里没有可寻址的 HTTP 资源时返回 null，
    * 调用方退回 SVG 显示——绝不留一个连不上的 URL 让画布挂个碎图标。

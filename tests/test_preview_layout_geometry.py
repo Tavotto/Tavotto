@@ -140,8 +140,9 @@ def test_resize_manifest_legend_matches_actual_svg(worker):
     assert expected == pytest.approx(actual, abs=TOL_PT)
 
 
+@pytest.mark.parametrize("fmt", ["svg", "png"])
 @pytest.mark.parametrize("fail_measurement", [False, True])
-def test_capture_restores_transient_state_and_disconnects_on_error(tmp_path, fail_measurement):
+def test_capture_restores_transient_state_and_disconnects_on_error(tmp_path, fail_measurement, fmt):
     """The snapshot must not leave DPI/frame changes, disable layout, or leak callbacks."""
     import subprocess
 
@@ -174,8 +175,8 @@ def snapshot():
 def fail(*args, **kwargs):
     raise ValueError('measurement failed intentionally')
 
-with manifest.capture_preview_manifest(state, 'f') as measured:
-    fig.savefig(io.BytesIO(), format='svg', **pathgeom.output_kwargs(fig))
+with manifest.capture_preview_manifest(state, 'f', vector_metrics=sys.argv[3] == 'svg') as measured:
+    fig.savefig(io.BytesIO(), format=sys.argv[3], **pathgeom.output_kwargs(fig))
     before = snapshot()
     if sys.argv[2] == 'True':
         manifest._measure_manifest = fail
@@ -198,7 +199,7 @@ print(json.dumps({'restored': True}))
 """
     engine = Path(__file__).resolve().parents[1] / "src" / "tavotto" / "engine"
     result = subprocess.run(
-        [WORKER_PY, "-c", script, str(engine), str(fail_measurement)],
+        [WORKER_PY, "-c", script, str(engine), str(fail_measurement), fmt],
         cwd=tmp_path,
         capture_output=True,
         text=True,

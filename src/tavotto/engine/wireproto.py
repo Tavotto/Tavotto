@@ -276,6 +276,9 @@ class V1Handler:
         inline_svg = payload.get("inline_svg", False)
         if not isinstance(inline_svg, bool):
             raise ProtocolError("bad_request", f"payload.inline_svg 必须是布尔值: {inline_svg!r}")
+        with_manifest = payload.get("with_manifest", False)
+        if not isinstance(with_manifest, bool):
+            raise ProtocolError("bad_request", "payload.with_manifest 必须是布尔值")
 
         try:
             if cmd == "render":
@@ -283,7 +286,13 @@ class V1Handler:
             elif cmd == "render_png":
                 result = fig.do_render_png(stem, width)
             elif cmd == "preview_png":
-                result = fig.do_preview_png(stem, patches, width, str(payload.get("tag", "p")))
+                result = fig.do_preview_png(
+                    stem,
+                    patches,
+                    width,
+                    str(payload.get("tag", "p")),
+                    **({"with_manifest": True} if with_manifest else {}),
+                )
             elif cmd == "export":
                 result = fig.do_export(
                     stem, patches, payload["path"], str(payload.get("format", "pdf")), dpi, timings

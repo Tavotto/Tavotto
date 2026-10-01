@@ -4604,6 +4604,24 @@ def api_engine_preview_png():
             }
         ), 400
     w = next((b for b in RENDER_BUCKETS if b >= want_w), RENDER_BUCKETS[-1])
+    with_manifest = body.get("with_manifest", False)
+    if not isinstance(with_manifest, bool):
+        return jsonify(
+            {"error": "with_manifest 必须是布尔值", "code": "invalid_preview_options"}
+        ), 400
+    if with_manifest:
+        try:
+            _, _, snapshot = _engine_attempt(
+                body.get("id", ""),
+                worker,
+                stem,
+                lambda wk, st: wk.preview_png_snapshot(st, patches, w),
+            )
+        except engine_pool.WorkerError as exc:
+            return jsonify(_worker_error_payload(exc)), 500
+        resp = jsonify(png=snapshot["png"], manifest=snapshot["manifest"])
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
     tag = "v" + engine_patchspec.patch_hash(patches).split(":")[-1][:12]
     try:
         worker, stem, path = _engine_attempt(

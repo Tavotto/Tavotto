@@ -94,6 +94,9 @@ def test_export_and_history_preview_refuse_the_live_figure_while_inconsistent(tm
         runcodes.NATIVE_FIGURE_INCONSISTENT
     )
     assert _code(lambda: s.preview_png("Fig1", A, 400, "v1")) == runcodes.NATIVE_FIGURE_INCONSISTENT
+    assert (
+        _code(lambda: s.preview_png_snapshot("Fig1", A, 400)) == runcodes.NATIVE_FIGURE_INCONSISTENT
+    )
     assert len(s.sent) == n, "拦在发出去之前，不是发了再说"
     s.unrestored = 0
     s.override("Fig1", A)
@@ -411,7 +414,7 @@ def test_a_dropped_desktop_does_not_hand_an_unrestorable_figure_back_to_the_scri
 # ---- 叠栈 PR：Codex #549 第九轮的两条 P1 ----
 
 
-@pytest.mark.parametrize("cmd", ["export", "preview_png"])
+@pytest.mark.parametrize("cmd", ["export", "preview_png", "preview_png_snapshot"])
 def test_an_export_or_preview_that_cannot_restore_marks_the_figure(tmp_path, cmd):
     """r4105547311：export / 历史预览**临时套用**一份列表再还原回会话列表；那次还原失败时，
     会话里的 live 图就停在半改状态。结果里的 `unrestored` 要在锁里记下，与 override 同一条路：
@@ -428,6 +431,8 @@ def test_an_export_or_preview_that_cannot_restore_marks_the_figure(tmp_path, cmd
     s._request = reply  # type: ignore[method-assign]
     if cmd == "export":
         s.export("Fig1", B, str(tmp_path / "x.pdf"))
+    elif cmd == "preview_png_snapshot":
+        s.preview_png_snapshot("Fig1", B, 400)
     else:
         s.preview_png("Fig1", B, 400, "v1")
     assert "Fig1" in s.inconsistent

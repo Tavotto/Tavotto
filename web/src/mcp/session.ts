@@ -39,6 +39,7 @@ export interface OpenFigureResult {
   preview?: PreviewMetadata
   /** `preview.mode === 'raster'` 时**同一次响应**里带回的受控尺寸位图。 */
   preview_png_base64?: string
+  preview_png_manifest?: Manifest
   patch_hash: string
   render_revision?: number
   warnings?: string[]
@@ -161,7 +162,7 @@ const sessionOf = new Map<string, string>()
  *
  * 一个会话只留最近一版：这是画布**此刻**要显示的东西，不是缓存。
  */
-const rasterPngOf = new Map<string, { variant: string; url: string }>()
+const rasterPngOf = new Map<string, { variant: string; url: string; manifest: Manifest | null }>()
 
 /** 拿到的是不是这一组 patches 自己的位图；不是就宁可没有。 */
 function rasterPngFor(sessionId: string, patches: unknown[]): string | null {
@@ -169,7 +170,9 @@ function rasterPngFor(sessionId: string, patches: unknown[]): string | null {
   return hit && hit.variant === JSON.stringify(patches) ? hit.url : null
 }
 
-function rememberRasterPng(sessionId: string, patches: unknown[], base64: unknown): void {
+function rememberRasterPng(
+  sessionId: string, patches: unknown[], base64: unknown, manifest: Manifest | null,
+): void {
   if (typeof base64 !== 'string' || !base64) {
     rasterPngOf.delete(sessionId)
     return
@@ -179,6 +182,7 @@ function rememberRasterPng(sessionId: string, patches: unknown[], base64: unknow
     // data: URL 而不是 blob:——base64 是从 JSON-RPC 里拿的，转成 blob 只是
     // 多复制一份，还多一条要人记得 revoke 的生命周期。
     url: `data:image/png;base64,${base64}`,
+    manifest,
   })
 }
 
@@ -251,7 +255,7 @@ export function installMcpTransport(bridge: AppsBridge): () => void {
       const body = unwrap(res)
       // raster 档的位图与 manifest 在**同一次响应**里（bridge `_render`）：
       // 另开一跳去取，取回来的可能已经是另一组 patches 的像素。
-      rememberRasterPng(sid, patches, body.preview_png_base64)
+      rememberRasterPng(sid, patches, body.preview_png_base64, (body.preview_png_manifest as Manifest) ?? null)
       return {
         rev: Number(body.render_revision ?? 0),
         manifest: body.manifest as Manifest,
@@ -268,6 +272,13 @@ export function installMcpTransport(bridge: AppsBridge): () => void {
       const sid = sessionIdFor(id)
       const url = sid ? rasterPngFor(sid, patches) : null
       if (url) return url
+      throw new EngineError(
+        'MCP 画布这一版没有位图预览（矢量图显示走引擎 SVG）', '', 'not_supported', '')
+    },
+    async previewPngSnapshot(id, patches) {
+      const sid = sessionIdFor(id)
+      const frame = sid ? rasterPngOf.get(sid) : undefined
+      if (frame?.variant === JSON.stringify(patches)) return frame
       throw new EngineError(
         'MCP 画布这一版没有位图预览（矢量图显示走引擎 SVG）', '', 'not_supported', '')
     },
@@ -288,7 +299,7 @@ export function seedSession(open: OpenFigureResult): { panelId: string; fileId: 
   const overrides = open.patches ?? []
   // 打开就是 raster 的图（#181 那一类）：第一帧的位图也在这次响应里。
   // 不记下来的话画布要等到用户改第一个值才有东西可显示。
-  rememberRasterPng(open.session_id, overrides, open.preview_png_base64)
+  rememberRasterPng(open.session_id, overrides, open.preview_png_base64, open.preview_png_manifest ?? null)
   return seedEmbeddedSession(
     {
       stem: open.stem,

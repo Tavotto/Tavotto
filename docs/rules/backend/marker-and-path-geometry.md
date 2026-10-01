@@ -144,3 +144,12 @@
   保留几何精度，不分别舍入宽高破坏固定长宽比（普通数值字段的显示精度不变）。
   看护 `tests/test_preview_layout_geometry.py`：直接读冷 build 的 SVG，比真实位移、
   改图幅后的图例框与坐标清单；不能先空渲染一次把首轮错位暖掉，也不能只比 patch 与 manifest。
+
+- **PNG 编辑预览也必须像素与几何同源**（#779）：`preview_png(with_manifest=True)`
+  返回同一次 Agg draw 的 PNG 与 manifest，使用该次 bucket DPI 和 Agg 文字度量；
+  只取缩略图的旧 Path / Blob 接口不变。临时 patches 仍须还原，不能覆盖 canonical
+  SVG manifest（MCP 的 replay / preflight 仍依赖它）。桌面、playground、MCP 三端
+  都传递这个配对；前端等对应面板、变体、响应身份、URL 的图片加载后才授予几何权威，
+  新 bucket 待解码、旧请求晚到、同 rev 的 worker 重建都不能混用。MCP 旧引擎缺少此
+  能力时保留位图显示并给升级提示，不伪造 PNG 几何。看护 `tests/test_preview_png_geometry.py`
+  的实际 PNG 像素、30 组布局 / bucket / frame、位移与还原，以及前端的图片加载用例。

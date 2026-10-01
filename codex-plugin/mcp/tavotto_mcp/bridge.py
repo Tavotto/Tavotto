@@ -267,6 +267,7 @@ class Session:
     #: 非 raster 档恒为 None。留着它是为了 `session_state()` 不必再画一遍：
     #: 位图与 manifest 的配对纪律（ADR 0022）要求它来自同一次渲染。
     preview_png_base64: str | None = None
+    preview_png_manifest: dict | None = None
     #: 最近一次**默认参数**的预检结果（`run_preflight` 不带 profile / journal /
     #: 导出参数那一档），连同它算出时的 `patch_hash` 与 profile 印章。
     #: `session_state()` 只在两者都还对得上时复用；否则重算——预检是 manifest
@@ -1309,6 +1310,7 @@ def _render(session: Session, patches: list, *, preview_dpi: int | None) -> dict
     session.warnings = list(resp.get("warnings", []) or [])
     # 上一版的位图属于上一组 patches；这一次不是 raster 档就没有位图可配对。
     session.preview_png_base64 = None
+    session.preview_png_manifest = None
     # 预检是 manifest 的函数，而 manifest 刚换了一份——哪怕 patches 没变（脚本改了、
     # worker 重建、重开沿用会话），键对得上也不代表结论还对。缓存只活在两次渲染之间。
     session.preflight_cache = None
@@ -1337,11 +1339,21 @@ def _render(session: Session, patches: list, *, preview_dpi: int | None) -> dict
     # 塞回来，那只是把同一个 payload 换个编码再放大三分之一。
     if (session.preview or {}).get("mode") == previewbudget.MODE_RASTER:
         try:
-            out["preview_png_base64"] = preview_png(
-                session, list(patches), previewbudget.RASTER_PREVIEW_WIDTH_PX
-            )
+            snapshot = getattr(worker, "preview_png_snapshot", None)
+            if snapshot is None:
+                # The plugin can run with older installed engines. Keep their
+                # pixels viewable, but do not label SVG geometry as a PNG pair.
+                out["preview_png_base64"] = preview_png(
+                    session, list(patches), previewbudget.RASTER_PREVIEW_WIDTH_PX
+                )
+                out["preview_png_error"] = "preview_geometry_unavailable"
+                session.warnings.append("升级 Tavotto 后可编辑此位图预览中的元素位置。")
+            else:
+                frame = snapshot(session.stem, list(patches), previewbudget.RASTER_PREVIEW_WIDTH_PX)
+                out["preview_png_base64"] = frame["png"]
+                out["preview_png_manifest"] = session.preview_png_manifest = frame["manifest"]
             session.preview_png_base64 = out["preview_png_base64"]
-        except BridgeError as exc:
+        except (BridgeError, engine_pool.WorkerError) as exc:
             # 位图失败不该把这次**成功的渲染**变成一条错误：manifest 是对的、
             # 编辑语义是完整的，缺的只是画面。如实回一个 code，别静默。
             out["preview_png_error"] = exc.code or "preview_failed"
@@ -1488,6 +1500,7 @@ def session_state(session_id: str) -> dict:
         out["preview"] = session.preview
     if session.preview_png_base64 is not None:
         out["preview_png_base64"] = session.preview_png_base64
+        out["preview_png_manifest"] = session.preview_png_manifest
     return out
 
 

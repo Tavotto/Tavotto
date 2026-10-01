@@ -255,10 +255,15 @@ describe('raster 档：内嵌画布不能变成空白（ADR 0022）', () => {
       svg: null,
       preview: RASTER,
       preview_png_base64: PNG,
+      preview_png_manifest: manifest(17),
     }
     const { fileId } = seedSession(open)
     restore = installMcpTransport(fakeBridge(() => okResult({})))
 
+    await expect(engineTransport()!.previewPngSnapshot!(fileId, [], 400)).resolves.toMatchObject({
+      url: `data:image/png;base64,${PNG}`, manifest: manifest(17),
+    })
+    expect(useRenderStore.getState().get(renderKey(fileId, [])).manifest).toBe(open.manifest)
     // 种进 store 的表示法就是引擎给的那一档——画布据此走位图
     expect(useRenderStore.getState().get(renderKey(fileId, [])).preview.mode).toBe('raster')
     await expect(engineTransport()!.previewPngUrl(fileId, [], 800)).resolves.toBe(
@@ -288,6 +293,7 @@ describe('raster 档：内嵌画布不能变成空白（ADR 0022）', () => {
           svg: null,
           preview: RASTER,
           preview_png_base64: PNG,
+          preview_png_manifest: manifest(19),
           render_revision: 2,
         }),
       ),
@@ -296,6 +302,11 @@ describe('raster 档：内嵌画布不能变成空白（ADR 0022）', () => {
     const res = await engineTransport()!.render(fileId, patches)
     expect(res.svg).toBeUndefined()
     expect(res.preview?.mode).toBe('raster')
+    expect(res.manifest).toEqual(manifest(11))
+    await expect(engineTransport()!.previewPngSnapshot!(fileId, patches, 1600)).resolves.toMatchObject({
+      manifest: manifest(19),
+    })
+    await expect(engineTransport()!.previewPngSnapshot!(fileId, [], 800)).rejects.toThrowError(EngineError)
     await expect(engineTransport()!.previewPngUrl(fileId, patches, 800)).resolves.toBe(
       `data:image/png;base64,${PNG}`,
     )

@@ -762,6 +762,7 @@ class Worker(wireproto.V1Handler):
                     req.get("patches", []),
                     int(req.get("width", 400)),
                     str(req.get("tag", "p")),
+                    req.get("with_manifest", False),
                 ),
             }
         if cmd == "render_png":

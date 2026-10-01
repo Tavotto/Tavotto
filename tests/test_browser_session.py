@@ -388,7 +388,8 @@ fig.savefig("F.pdf")
     assert "line 19999" in load["log"]  # 留的是尾部
 
 
-def test_preview_png_is_state_neutral(tmp_path):
+@pytest.mark.parametrize("paired", [False, True])
+def test_preview_png_is_state_neutral(tmp_path, paired):
     src = """
 import matplotlib.pyplot as plt
 fig, ax = plt.subplots(figsize=(2.4, 2))
@@ -405,12 +406,17 @@ fig.savefig("N.pdf")
                 "stem": "N",
                 "patches": [{"gid": "axes_0.title", "prop": "fontsize", "value": 30}],
                 "width": 300,
+                "with_manifest": paired,
             },
             {"cmd": "render", "stem": "N", "patches": []},
         ],
         tmp_path,
     )
     assert png["ok"] and png["png"], png
+    if paired:
+        assert field_value(png["manifest"], "axes_0.title", "fontsize") == 30
+    else:
+        assert "manifest" not in png
     # preview 用的 patches 不许留在常驻 figure 上
     assert field_value(after["manifest"], "axes_0.title", "fontsize") == field_value(
         opened["manifest"], "axes_0.title", "fontsize"

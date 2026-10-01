@@ -4339,7 +4339,7 @@ def _ensure_agg_canvas(fig):
     return fig.canvas.get_renderer()
 
 
-def _layout_legends_for_measure(state: FigState, fig) -> None:
+def _layout_legends_for_measure(state: FigState, fig, vector_metrics: bool = True) -> None:
     """把每个图例的子项按**文档 dpi + 测量用的矢量度量**重新排一次版，manifest 才能量它的文字。
 
     两个理由，同一个做法：
@@ -4371,7 +4371,8 @@ def _layout_legends_for_measure(state: FigState, fig) -> None:
 
             scratch = RendererAgg(int(fig.bbox.width), int(fig.bbox.height), fig.dpi)
             # 与 manifest 其余部分同一把尺（`vector_text_metrics`）；一次性的，用完即弃
-            _measure_like_vector(scratch)
+            if vector_metrics:
+                _measure_like_vector(scratch)
         el["artist"]._legend_box.draw(scratch)  # noqa: SLF001
 
 
@@ -4512,8 +4513,8 @@ def _colorbar_structure(state: FigState, elements: list[dict]) -> list[dict]:
 
 
 @contextmanager
-def capture_preview_manifest(state: FigState, stem: str):
-    """Measure the final SVG draw, after temporary preview state is restored.
+def capture_preview_manifest(state: FigState, stem: str, *, vector_metrics: bool = True):
+    """Measure the final preview draw, after temporary preview state is restored.
 
     Agg layout and the following SVG layout need not agree: automatic tick counts
     can change, and their font metrics differ. Remember the final draw's renderer
@@ -4531,13 +4532,15 @@ def capture_preview_manifest(state: FigState, stem: str):
         if not drawn:
             raise RuntimeError("preview did not report its completed draw")
         renderer, dpi = drawn[0]
-        # Keep the existing four-document-pixel hit target when SVG uses points.
+        # Keep the four-document-pixel hit target across SVG points and PNG DPI.
         min_hit = _MIN_HIT_PX * dpi / fig.dpi
         # savefig has restored document DPI and any output frame. Re-enter only
         # their coordinate transforms; the actual layout/artist positions remain
-        # those of the completed SVG. No layout engine is disabled persistently.
+        # those of the completed preview. No layout engine is disabled persistently.
         with ticklabel_memo(), fig._cm_set(dpi=dpi), pathgeom.in_frame(fig, renderer):  # noqa: SLF001
-            return _measure_manifest(state, stem, lambda _r: None, fig, renderer, min_hit)
+            return _measure_manifest(
+                state, stem, lambda _r: None, fig, renderer, min_hit, vector_metrics
+            )
 
     cid = fig.canvas.mpl_connect("draw_event", observe)
     try:
@@ -4572,13 +4575,15 @@ def _build_manifest(state: FigState, stem: str, arm) -> dict:
         return _measure_manifest(state, stem, arm, fig, renderer)
 
 
-def _measure_manifest(state: FigState, stem: str, arm, fig, renderer, min_hit=_MIN_HIT_PX) -> dict:
+def _measure_manifest(
+    state: FigState, stem: str, arm, fig, renderer, min_hit=_MIN_HIT_PX, vector_metrics=True
+) -> dict:
     # Agg 准备阶段换成矢量度量；最终 SVG renderer 本来就是那把尺，arm 是 no-op。
     arm(renderer)
     W, H = float(fig.bbox.width), float(fig.bbox.height)
     # draw 跳过的图例（隐藏 / 住在隐藏的 axes 里）按文档 dpi 补排一次版，否则它的
     # 文字几何是上一次画它那回的像素（#413）
-    _layout_legends_for_measure(state, fig)
+    _layout_legends_for_measure(state, fig, vector_metrics)
     # 刻度伪元素按**当前**刻度状态对齐（必须在 draw 之后：标签的文字是 draw
     # 那一刻由 Formatter 填进去的）
     sync_tick_elements(state)

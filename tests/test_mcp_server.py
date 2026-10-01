@@ -2053,6 +2053,13 @@ class RasterWorker(FakeWorker):
         path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"fake-pixels")
         return path
 
+    def preview_png_snapshot(self, stem, patches, width):
+        path = self.preview_png(stem, patches, width, "paired")
+        return {
+            "png": base64.b64encode(path.read_bytes()).decode("ascii"),
+            "manifest": {"elements": [], "size_mm": [123, 456]},
+        }
+
 
 @pytest.fixture
 def raster_pool(monkeypatch, tmp_path):
@@ -2069,6 +2076,10 @@ def test_raster_open_carries_a_bounded_png_instead_of_the_svg(project, raster_po
     assert out["preview"]["mode"] == "raster"
     # **同一次响应**里就有画面，不必再跳一次
     assert out["preview_png_base64"]
+    assert out["preview_png_manifest"] == {"elements": [], "size_mm": [123, 456]}
+    state = bridge.session_state(out["session_id"])
+    assert state["manifest"] == out["manifest"] != out["preview_png_manifest"]
+    assert state["preview_png_manifest"] == out["preview_png_manifest"]
     assert base64.b64decode(out["preview_png_base64"]).startswith(b"\x89PNG")
     # 尺寸受控：绝不把 giant SVG 转成 base64 塞回来
     assert raster_pool.png_calls[-1][2] == previewbudget.RASTER_PREVIEW_WIDTH_PX
@@ -3420,3 +3431,23 @@ def test_prepare_dependencies_target_is_a_closed_set_and_failures_are_structured
                 "prepare_dependencies": "tavotto_managed",
             },
         )
+
+
+def test_raster_old_worker_remains_viewable_without_fabricating_geometry(project, raster_pool):
+    raster_pool.preview_png_snapshot = None
+    out = bridge.open_figure(str(project))
+    assert base64.b64decode(out["preview_png_base64"]).startswith(b"\x89PNG")
+    assert "preview_png_manifest" not in out
+    assert out["preview_png_error"] == "preview_geometry_unavailable"
+    assert any("升级 Tavotto" in warning for warning in out["warnings"])
+    applied = bridge.apply_overrides(out["session_id"], [])
+    state = bridge.session_state(out["session_id"])
+    assert state["preview_png_base64"] == applied["preview_png_base64"]
+    assert state["preview_png_manifest"] is None
+
+
+def test_raster_replay_compares_canonical_manifests(project, raster_pool, monkeypatch):
+    out = bridge.open_figure(str(project))
+    monkeypatch.setattr(bridge.engine_pool, "one_shot", lambda *a, **k: FakeWorker())
+    monkeypatch.setattr(bridge.engine_pool, "discard", lambda *a, **k: None)
+    assert bridge.verify_replay(out["session_id"])["ok"]

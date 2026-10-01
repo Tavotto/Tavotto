@@ -475,8 +475,12 @@ class BrowserSession:
             "render_revision": self.revision,
         }
 
-    def preview_png(self, stem: str, patches: list, width: int) -> dict:
+    def preview_png(
+        self, stem: str, patches: list, width: int, with_manifest: bool = False
+    ) -> dict:
         """按 patches 出高清位图——**状态中立**，与 worker._do_preview_png 同纪律。"""
+        if not isinstance(with_manifest, bool):
+            return _err("bad_request", "with_manifest 必须是布尔值")
         try:
             state = self._state(stem)
         except KeyError:
@@ -488,7 +492,12 @@ class BrowserSession:
             overrides_mod.apply(state, patches)
             w_in = pathgeom.frame_size_inches(state.fig)[0] or 1.0
             buf = io.BytesIO()
-            with _real_output():
+            capture = (
+                manifest_mod.capture_preview_manifest(state, stem, vector_metrics=False)
+                if with_manifest
+                else contextlib.nullcontext()
+            )
+            with _real_output(), capture as measured:
                 _REAL_SAVEFIG(
                     state.fig,
                     buf,
@@ -496,12 +505,16 @@ class BrowserSession:
                     dpi=max(50, int(width) / w_in),
                     **pathgeom.output_kwargs(state.fig),
                 )
+                man = measured() if with_manifest else None
         except Exception:  # noqa: BLE001
             return _err("render_error", "位图预览失败", traceback=self._trim_tb())
         finally:
             with contextlib.suppress(Exception):
                 overrides_mod.apply(state, prev)
-        return {"ok": True, "png": base64.b64encode(buf.getvalue()).decode("ascii")}
+        result = {"ok": True, "png": base64.b64encode(buf.getvalue()).decode("ascii")}
+        if with_manifest:
+            result["manifest"] = man
+        return result
 
     def _render(self, state, stem: str, preview_dpi: int | None = None):
         """→ `(manifest, svg_or_None, preview)`。
@@ -631,7 +644,10 @@ def handle(request_json: str) -> str:
                 out = _ACTIVE.render(req["stem"], req.get("patches", []), req.get("preview_dpi"))
             else:
                 out = _ACTIVE.preview_png(
-                    req["stem"], req.get("patches", []), int(req.get("width", 800))
+                    req["stem"],
+                    req.get("patches", []),
+                    int(req.get("width", 800)),
+                    req.get("with_manifest", False),
                 )
         elif cmd == "reset":
             _ACTIVE = None

@@ -40,7 +40,9 @@ safe worker 本来就是单线程串行读 stdin，这条断言对它恒真（�
 
 from __future__ import annotations
 
+import base64
 import importlib.metadata
+import io
 import json
 import os
 import platform
@@ -559,9 +561,13 @@ class LiveFigureSession:
             )
         return {"path": str(path)}
 
-    def do_preview_png(self, stem: str, patches: list, width: int, tag: str) -> dict:
+    def do_preview_png(
+        self, stem: str, patches: list, width: int, tag: str, with_manifest: bool = False
+    ) -> dict:
         """历史版本预览：临时应用指定 patches 出图，随后还原当前会话状态。"""
         self._own()
+        if not isinstance(with_manifest, bool):
+            raise ValueError("with_manifest must be a boolean")
         state = self.states[stem]
         prev = self.snapshot(stem)
         # `try` 必须从 apply 之前起：apply 自己会抛（属性不认、值越界），
@@ -572,16 +578,29 @@ class LiveFigureSession:
             w_in = pathgeom.frame_size_inches(state.fig)[0]
             path = self.out_dir / f"{stem}__{tag}.png"
             self.out_dir.mkdir(parents=True, exist_ok=True)
-            with self.real_output():
+            # Paired requests stay in memory: another bucket/revision cannot
+            # overwrite a path between the image and geometry being consumed.
+            target = io.BytesIO() if with_manifest else path
+            capture = (
+                manifest_mod.capture_preview_manifest(state, stem, vector_metrics=False)
+                if with_manifest
+                else _NULL_CTX
+            )
+            with self.real_output(), capture as measured:
                 state.fig.savefig(
-                    path,
+                    target,
                     format="png",
                     dpi=max(50, int(width) / w_in),
                     **pathgeom.output_kwargs(state.fig),
                 )
+                if with_manifest:
+                    result = {
+                        "png": base64.b64encode(target.getvalue()).decode("ascii"),
+                        "manifest": measured(),
+                    }
         finally:
             overrides_mod.apply(state, prev)
-        return {"path": str(path)}
+        return result if with_manifest else {"path": str(path)}
 
     def do_export(
         self,

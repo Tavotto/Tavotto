@@ -2167,10 +2167,24 @@ export async function enginePreviewPng(
   bucket: number,
   signal?: AbortSignal,
 ): Promise<Blob> {
+  return (await previewPngResponse(id, patches, bucket, signal)).blob()
+}
+
+export async function enginePreviewPngSnapshot(
+  id: string, patches: unknown[], bucket: number, signal?: AbortSignal,
+): Promise<{ url: string; manifest: Manifest }> {
+  const res = await previewPngResponse(id, patches, bucket, signal, true)
+  const frame = await res.json() as { png: string; manifest: Manifest }
+  return { url: `data:image/png;base64,${frame.png}`, manifest: frame.manifest }
+}
+
+async function previewPngResponse(
+  id: string, patches: unknown[], bucket: number, signal?: AbortSignal, withManifest = false,
+): Promise<Response> {
   const res = await fetch(apiUrl('/api/engine/preview_png'), withProject({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id, patches, w: bucket }),
+    body: JSON.stringify({ id, patches, w: bucket, ...(withManifest ? { with_manifest: true } : {}) }),
     signal,
   }))
   if (!res.ok) {
@@ -2185,7 +2199,7 @@ export async function enginePreviewPng(
       body.dependency_repair as DependencyRepairOffer | undefined,
     )
   }
-  return res.blob()
+  return res
 }
 
 /**
