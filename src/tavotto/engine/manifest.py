@@ -3400,9 +3400,10 @@ def _axes_fields(ax, el: dict | None = None) -> list[dict]:
                     "prop": "position",
                     "type": "rect",
                     # Dragging feeds this rectangle back to the setter. Rounding
-                    # width/height independently can change a fixed aspect ratio.
+                    # to four places can change a fixed aspect ratio; retain
+                    # geometry precision while removing binary subtraction noise.
                     "value": [
-                        float(v)
+                        round(float(v), 15)
                         for v in pathgeom.axes_rect_to_frame(ax.figure, ax.get_position().bounds)
                     ],
                 }
@@ -3640,7 +3641,8 @@ def _axes3d_fields(ax) -> list[dict]:
             "prop": "position",
             "type": "rect",
             "value": [
-                float(v) for v in pathgeom.axes_rect_to_frame(ax.figure, ax.get_position().bounds)
+                round(float(v), 15)
+                for v in pathgeom.axes_rect_to_frame(ax.figure, ax.get_position().bounds)
             ],
         },
         {"prop": "visible", "type": "bool", "value": bool(ax.get_visible())},
