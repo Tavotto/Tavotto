@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
 import threading
 from pathlib import Path
@@ -194,29 +195,50 @@ def test_a_non_network_failure_is_not_retried(tmp_path, monkeypatch):
     assert code == deprepair.ERROR_CONFLICT and len(_runs(runs)) == 1
 
 
+def _probe_out(**opts) -> str:
+    """`PIP_OPTIONS_PROBE` 在目标解释器里的输出形状（JSON 一行）。"""
+    base = {
+        "pip_version": "25.3",
+        "index_url": "https://pypi.org/simple",
+        "extra_index_urls": [],
+        "no_index": False,
+        "find_links": [],
+    }
+    return json.dumps({**base, **opts}) + "\n"
+
+
 @pytest.mark.parametrize(
     "rc,out,expected",
     [
-        (0, "global.index-url='https://pypi.corp/simple'\n", True),
-        (0, "global.find-links='/wheels'\n", True),
-        (0, "global.no-index='true'\n", True),
-        (0, "global.timeout='60'\n", False),
-        # 按节筛（ADR 0112 §二 / #737）：`download` / `index` 节不作用于 `pip install`
-        (0, "download.index-url='https://pypi.corp/simple'\n", False),
-        (0, "index.index-url='https://pypi.corp/simple'\n", False),
-        (0, "install.index-url='https://pypi.corp/simple'\n", True),
-        (0, ":env:.index-url='https://pypi.corp/simple'\n", True),
-        # pip 的规范化：`_` 与开头的 `--` 都是同一个键（#724 第 8 轮 Codex P2）
-        (0, "global.index_url='https://pypi.corp/simple'\n", True),
-        (0, "global.--index-url='https://pypi.corp/simple'\n", True),
-        (0, "global.no_index='true'\n", True),
-        (0, "", False),
+        (0, _probe_out(index_url="https://pypi.corp/simple"), True),
+        (0, _probe_out(find_links=["/wheels"]), True),
+        (0, _probe_out(no_index=True), True),
+        (0, _probe_out(extra_index_urls=["https://pypi.corp/simple"]), True),
+        (0, _probe_out(), False),
+        # 用户显式写了 PyPI（大小写 / 末尾斜杠不同）：不是自定义源
+        (0, _probe_out(index_url="https://PyPI.org/simple/"), False),
+        # pip 太旧 / 配置解析失败 / 认不出形状：不知道（None），镜像回退按「配过」处理
+        (0, json.dumps({"error": "ImportError"}) + "\n", None),
+        (0, "garbage\n", None),
         (1, "pip: error", None),
     ],
 )
-def test_user_package_source_reads_the_pip_config(monkeypatch, rc, out, expected):
-    monkeypatch.setattr(deprepair, "_run", lambda argv, timeout: (rc, out))
+def test_user_package_source_reads_pips_own_parse(monkeypatch, rc, out, expected):
+    """「用户配没配源」= pip 在目标解释器里解析出的 install 选项（`PIP_OPTIONS_PROBE`，#767）：节的覆盖、
+    键名规范化、`PIP_CONFIG_FILE` / 环境变量都由 pip 自己做；这里只判它解析出的结果。"""
+    seen: list = []
+
+    def run(argv, timeout):
+        seen.append(argv)
+        return rc, out
+
+    monkeypatch.setattr(deprepair, "_run", run)
     assert deprepair.user_package_source("/env/bin/python") is expected
+    assert (
+        seen
+        and seen[0][:2] == ["/env/bin/python", "-c"]
+        and seen[0][2] == deprepair.PIP_OPTIONS_PROBE
+    )
 
 
 # ---------------------------------------------------------------- 两条 argv 出处
@@ -285,13 +307,22 @@ def test_both_attempts_log_their_outcome_when_the_mirror_is_used(monkeypatch, ca
 
 
 @pytest.mark.parametrize("env", SOURCE_ENV)
-def test_the_environment_variables_alone_count_as_a_user_source(monkeypatch, env):
-    """环境变量一层不依赖 `pip config list` 会不会把 `PIP_*` 列出来（各版本 pip 不一）：配置那一问什么都没说，
-    环境变量设了照样算「用户配过源」。"""
-    monkeypatch.setattr(deprepair, "_run", lambda argv, timeout: (0, ""))
-    assert deprepair.user_package_source("/env/bin/python") is False
-    monkeypatch.setenv(env, "1" if env == "PIP_NO_INDEX" else "https://pypi.corp/simple")
-    assert deprepair.user_package_source("/env/bin/python") is True
+def test_the_environment_variables_alone_count_as_a_user_source(monkeypatch, tmp_path, env):
+    """真 pip：只设一个 `PIP_*` 环境变量（配置文件一个都不读，`PIP_CONFIG_FILE=os.devnull`），pip 解析出的
+    install 选项照样带上它——「用户配过源」。不设时是 False（对照）。"""
+    monkeypatch.setenv("PIP_CONFIG_FILE", os.devnull)
+    for name in SOURCE_ENV:
+        monkeypatch.delenv(name, raising=False)
+    assert deprepair.user_package_source(sys.executable) is False
+    monkeypatch.setenv(
+        env,
+        "1"
+        if env == "PIP_NO_INDEX"
+        else str(tmp_path)
+        if env == "PIP_FIND_LINKS"
+        else "https://pypi.corp/simple",
+    )
+    assert deprepair.user_package_source(sys.executable) is True
 
 
 # ---------------------------------------------------------------- 「用了镜像」只在镜像那次 pip 真起来之后才记
