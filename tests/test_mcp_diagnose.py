@@ -634,6 +634,23 @@ def test_pip_index_ignores_download_only_and_normalizes_keys(tmp_path):
     assert got == {"url": ALIYUN_SAID, "source": "pip_config", "mirror": True}
 
 
+def test_a_mirror_in_extra_index_urls_still_counts_as_a_mirror(tmp_path):
+    """真 pip：index-url 是 PyPI、镜像只在 extra-index-url 里——pip 在两者间一起挑版本，PyPI 不通时照样装回
+    镜像上的旧版，所以照样是「指向镜像」：说出口的是那个镜像，升级命令不给裸的 `pipx upgrade`（Codex #767 P2）。"""
+    conf = _pip_conf(
+        tmp_path, f"[global]\nindex-url = https://pypi.org/simple\nextra-index-url = {ALIYUN}\n"
+    )
+    got = launcher.pip_index(_pip_env(tmp_path, PIP_CONFIG_FILE=conf))
+    assert got == {"url": ALIYUN_SAID, "source": "pip_config", "mirror": True}, got
+    assert "pipx upgrade tavotto" not in launcher.upgrade_commands("0.18.0", got)
+
+    got = launcher.pip_index(
+        _pip_env(tmp_path, PIP_CONFIG_FILE=os.devnull, PIP_EXTRA_INDEX_URL=ALIYUN)
+    )
+    assert got == {"url": ALIYUN_SAID, "source": "PIP_EXTRA_INDEX_URL", "mirror": True}, got
+    assert "PIP_EXTRA_INDEX_URL" in launcher.mirror_note("0.18.0", got)
+
+
 def test_pip_index_never_repeats_credentials(tmp_path):
     got = launcher.pip_index(
         _pip_env(

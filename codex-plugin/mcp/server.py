@@ -882,9 +882,21 @@ def pip_index_of(python: "str | None", environ=None, timeout: float = 15.0) -> "
         return dict(PIP_INDEX_UNKNOWN)
     if not options_name_a_custom_index(opts):
         return None
-    url = str(opts.get("index_url") or "")
-    source = "PIP_INDEX_URL" if (env.get("PIP_INDEX_URL") or "").strip() else "pip_config"
-    return {"url": _redact_url(url), "source": source, "mirror": _is_mirror(url)}
+    # pip 在 index-url 与每个 extra-index-url 里一起挑版本：哪个是镜像都算「指向镜像」，说出口的是那个镜像
+    # （PyPI 不通、extra 里的镜像又滞后时，照样会装回旧版——Codex #767 P2）
+    primary = str(opts.get("index_url") or "")
+    extras = [str(u) for u in (opts.get("extra_index_urls") or []) if u]
+    mirrors = [u for u in [primary, *extras] if _is_mirror(u)]
+    url = mirrors[0] if mirrors else primary
+    if url == primary:
+        source = "PIP_INDEX_URL" if (env.get("PIP_INDEX_URL") or "").strip() else "pip_config"
+    else:
+        source = (
+            "PIP_EXTRA_INDEX_URL"
+            if (env.get("PIP_EXTRA_INDEX_URL") or "").strip()
+            else "pip_config"
+        )
+    return {"url": _redact_url(url), "source": source, "mirror": bool(mirrors)}
 
 
 def pip_index(environ=None) -> "dict | None":
@@ -931,6 +943,7 @@ def upgrade_commands(target: "str | None", index: "dict | None") -> "list[str]":
 _SOURCE_LABELS = {
     "pip_config": "pip 的配置（pip 自己解析的 install 选项）",
     "PIP_INDEX_URL": "环境变量 PIP_INDEX_URL",
+    "PIP_EXTRA_INDEX_URL": "环境变量 PIP_EXTRA_INDEX_URL",
 }
 
 
@@ -946,7 +959,7 @@ def mirror_note(target: "str | None", index: "dict | None") -> str:
         return ""
     # 版本号两侧留空格（中文里数字紧贴汉字会读成一个词）；没有版本号时说「新版」
     return (
-        f"注意：pip 的 index-url 指向镜像 {index['url']}（来自 {_SOURCE_LABELS.get(index['source'], index['source'])}），"
+        f"注意：pip 的索引指向镜像 {index['url']}（来自 {_SOURCE_LABELS.get(index['source'], index['source'])}），"
         f"镜像可能还没同步{want}，照常升级只会再装回镜像上那一版——命令里的 "
         f"`--index-url {PYPI_SIMPLE}` 就是为此绕开镜像直连 PyPI。"
     )

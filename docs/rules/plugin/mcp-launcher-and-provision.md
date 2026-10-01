@@ -83,10 +83,10 @@
   "tavotto[worker]==<版本>"`），不给 `--provision`。pip 的 index-url 指向镜像时
   （`pip_index` / `pip_index_of`：**让 pip 自己解析**——在目标解释器里 `python -B -c _PIP_OPTIONS_PROBE`（`PYTHONDONTWRITEBYTECODE=1`），探测脚本调 pip 的 `create_command('install').parse_args([])`，与真装包同一条路、不联网，回 JSON `{index_url, extra_index_urls, no_index, find_links, pip_version}`；不复刻 pip 的配置发现（位置、编码、覆盖顺序、site、商店版虚拟化、`PIP_CONFIG_FILE`、`PIP_*` 都由 pip 自己读，#737）。
   不再读 `pip config list` / `config get`：前者的打印顺序不是覆盖顺序，后者不认 `PIP_CONFIG_FILE`、有 site 文件时只看 site（pip 25.3 实测，#767 两轮 Codex P1）。
-  **只在** index-url 不是 `https://pypi.org/simple`、或有 extra-index-url 时才算「配了自定义包源」；探测脚本与这条判据和引擎 `deprepair.PIP_OPTIONS_PROBE` / `options_name_a_custom_index` 是严格同源对（`tests/test_pip_config_pair.py`，真 pip 当前版 + 23.x 三方对拍）；导入失败 / pip 太旧 / 超时报 unknown，不猜；
+  **只在** index-url 不是 `https://pypi.org/simple`、或有 extra-index-url 时才算「配了自定义包源」；index-url 与每个 extra-index-url 里**任一个**是镜像就算「指向镜像」（pip 在它们之间一起挑版本），说出口的是那个镜像、`source` 跟着它来自哪（`PIP_INDEX_URL` / `PIP_EXTRA_INDEX_URL` / `pip_config`）；探测脚本与这条判据和引擎 `deprepair.PIP_OPTIONS_PROBE` / `options_name_a_custom_index` 是严格同源对（`tests/test_pip_config_pair.py`，真 pip 当前版 + 23.x 三方对拍）；导入失败 / pip 太旧 / 超时报 unknown，不猜；
   目标解释器没有 pip（pipx 的 venv 默认如此）时把 pipx 共享库里 pip 所在目录（`PIPX_SHARED_LIBS` 或 `<PIPX_HOME>/venvs` 旁边的 `shared`）放上 `PYTHONPATH`、仍在**目标解释器**里跑同一段探测（与 `pip --python` 同一个做法），再问不到就报 `source: "unknown"`、不猜，话里说「不知道」并给出绕开镜像的写法；
   说出口的地址只有协议与主机——口令、路径、查询串一律抹掉；
-  `source` 只报 `pip_config` / `PIP_INDEX_URL`；
+  `source` 只报 `pip_config` / `PIP_INDEX_URL` / `PIP_EXTRA_INDEX_URL`；
   两跳都带 `-B` 且设 `PYTHONDONTWRITEBYTECODE=1`；
   启动器解释器 ≠ 装引擎的解释器时，`effective_pip_index` 两边都问，任一侧是镜像就按镜像报，引擎那边问不到才用启动器这边的）文案说镜像可能滞后、
   每条命令带 `--index-url https://pypi.org/simple`、不给裸的 `pipx upgrade`。`--health` 带
