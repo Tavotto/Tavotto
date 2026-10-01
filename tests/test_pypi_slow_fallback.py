@@ -212,15 +212,29 @@ def test_both_attempts_share_one_budget(tmp_path, wheel, monkeypatch, caplog):
     monkeypatch.setattr(deprepair, "PIP_MIRROR_RESERVE_S", 3.0)
     monkeypatch.setattr(deprepair, "PIP_SLOW_BPS", 1)  # 速度判据关掉：只剩预算这一条
     monkeypatch.setattr(deprepair, "PIP_STALL_S", 60.0)
+    # 前提只钉「两个 pip 进程都真起来了、按先官方后镜像的顺序」：`_run_pip` 在 `Popen` 成功之后才调
+    # `on_started`，这里包一层记下每次起来的是哪个索引。**不**要求哪一次走到 /files/——每次只有约 3 s，
+    # 慢 runner 上 pip 光启动 + 取索引页就可能用完（镜像那次 226c2080 windows-latest、官方那次 #727 的
+    # run 36790556401 windows-latest 各实测 0 次）；下没下到文件不是「两次共用一个预算」的主语。
+    real_run_pip = deprepair._run_pip
+    started: list[str] = []
+
+    def _spy(argv, ev, log, *, on_started=None, **kw):
+        url = argv[argv.index("--index-url") + 1]
+
+        def _started():
+            started.append(url)
+            if on_started is not None:
+                on_started()
+
+        return real_run_pip(argv, ev, log, on_started=_started, **kw)
+
+    monkeypatch.setattr(deprepair, "_run_pip", _spy)
     dest = tmp_path / "dest"
     with SimpleIndex(wheel) as official, SimpleIndex(wheel) as mirror:
-        official.throttle_bps = mirror.throttle_bps = 16 * 1024  # 各要约 25 s
+        official.throttle_bps = mirror.throttle_bps = 16 * 1024  # 各要约 25 s：哪一次都不会自己下完
         code, _out, sources, _m, elapsed = _install(_builder(official, mirror, dest))
-        # 前提：第一次确实在官方源上下着（被「第一次的预算」截断，不是起不来）。镜像那一次只要求
-        # **pip 进程真起来了**（`sources` 里的 tuna 只在 `on_started` 里记）——它拿到的只剩约 3 s，
-        # Windows runner 上 pip 光启动 + 取索引页就可能用掉，未必走得到 /files/（backend-platforms
-        # windows-latest 226c2080 实测 0 次）。这条量的是「两次共用一个预算」，镜像下没下到文件不是它的主语
-        assert _files(official) == 1
+        assert started == [official.url, mirror.url], started
     assert code == deprepair.ERROR_TIMEOUT
     assert elapsed < 6.0 + 1.5, f"两次尝试共用 6 s 的预算，实际 {elapsed:.1f} s"
     assert sources == [deprepair.PIP_SOURCE_PYPI, deprepair.PIP_SOURCE_MIRROR]
