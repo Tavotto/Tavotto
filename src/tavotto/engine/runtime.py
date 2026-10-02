@@ -848,18 +848,19 @@ def _owned_fontconfig_env(cache: str, env: dict[str, str]) -> None:
 
     from . import atomicio
 
-    original = env.get("FONTCONFIG_FILE", os.environ.get("FONTCONFIG_FILE")) or "fonts.conf"
+    # An explicitly empty value disables normal config loading; only absence uses fonts.conf.
+    original = env.get("FONTCONFIG_FILE", os.environ.get("FONTCONFIG_FILE", "fonts.conf"))
     # FONTCONFIG_FILE is searched via fontconfig's config path, not the child's cwd.
     # data_dir() permits relative overrides; the wrapper and its cachedir must be absolute.
     root = Path(os.path.abspath(cache)) / "fontconfig"
     # A nested spawn may already inherit this wrapper. Do not grow an include chain.
     if Path(original).parent == root and Path(original).name.startswith("tavotto-"):
         return
+    include = f"  <include>{escape(original)}</include>\n" if original else ""
     content = (
         '<?xml version="1.0"?>\n<fontconfig>\n'
         f"  <cachedir>{escape(str(root))}</cachedir>\n"
-        f"  <include>{escape(original)}</include>\n"
-        "</fontconfig>\n"
+        f"{include}</fontconfig>\n"
     ).encode("utf-8")
     target = root / f"tavotto-{hashlib.sha256(content).hexdigest()[:16]}.conf"
     try:

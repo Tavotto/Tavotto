@@ -74,7 +74,7 @@
   改到 `<data_dir>/cache/mpl-userconfig`（符号链接指回他的 matplotlibrc / stylelib），只有缓存目录时 `cache/mpl`；
   不改 `XDG_CACHE_HOME`（会搬走用户脚本里其它库的缓存）。Linux 的 `fc-list` 不读 `MPLCONFIGDIR`，
   `runtime._owned_fontconfig_env` 给 owned / bundled 子进程单独设 `FONTCONFIG_FILE`：先放
-  `<cache>/fontconfig` 缓存候选，再 include 原配置（默认 `fonts.conf`），字体目录、别名与 XDG 配置仍由
+  `<cache>/fontconfig` 缓存候选，再 include 原配置（未设置时为 `fonts.conf`；显式空值只加缓存、不加载配置），字体目录、别名与 XDG 配置仍由
   fontconfig 原样读取；Windows / macOS / 用户解释器不变，自定义 `FONTCONFIG_SYSROOT` 原样保留。
   缓存不可写时不覆盖原配置、不中断字体发现。看护 `tests/test_fontconfig_cache.py` 用私有配置强制冷缓存，
   与真实 `fc-list` 对照、验证用户字体 / 别名与跨平台不变。Codex 插件自管运行时的 venv（`<配置目录>/mcp-runtime/venv`，

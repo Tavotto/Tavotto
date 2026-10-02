@@ -205,3 +205,34 @@ def test_real_cold_fontconfig_caches_inside_owned_data_and_preserves_user_fonts(
     assert "DejaVu Sans Mono" in alias.split(",")
     assert "DejaVu Sans" not in alias.split(",")
     assert sorted(str(p) for p in (tmp_path / "home").rglob("*")) == before
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux fontconfig subprocess")
+@pytest.mark.parametrize("bundled", [False, True])
+def test_explicitly_empty_fontconfig_file_keeps_font_discovery_empty(
+    bundled, owned, tmp_path, monkeypatch
+):
+    """Empty FONTCONFIG_FILE opts out of normal config loading; unset uses fonts.conf."""
+    fc_list = shutil.which("fc-list")
+    if not fc_list:
+        pytest.skip("fontconfig tools are not installed")
+    monkeypatch.setenv("FONTCONFIG_FILE", "")
+    original = dict(os.environ)
+
+    def fonts(env):
+        return subprocess.check_output(
+            [fc_list, "--format=%{file}\\n"], env=env, text=True, encoding="utf-8", timeout=30
+        )
+
+    expected = fonts(original)
+    assert expected == "", "the real empty-config control must discover no fonts"
+    before = sorted(str(p) for p in (tmp_path / "home").rglob("*"))
+    call = runtime.child_env if bundled else lambda **kw: runtime.owned_env(owned, **kw)
+    # Complete env, workerd delta, and an explicit base overriding a non-empty parent.
+    envs = [call(), {**os.environ, **call(base={})}]
+    monkeypatch.setenv("FONTCONFIG_FILE", str(tmp_path / "a-different-parent.conf"))
+    envs.append({**os.environ, **call(base={"FONTCONFIG_FILE": ""})})
+    for env in envs:
+        assert fonts(env) == expected
+        assert "<include>" not in Path(env["FONTCONFIG_FILE"]).read_text(encoding="utf-8")
+    assert sorted(str(p) for p in (tmp_path / "home").rglob("*")) == before
