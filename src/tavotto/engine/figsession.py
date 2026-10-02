@@ -57,6 +57,7 @@ import overrides as overrides_mod
 import pathgeom
 import preview_hybrid
 import previewbudget
+from axestraversal import ordered_axes
 
 __all__ = [
     "LiveFigureSession",
@@ -292,7 +293,7 @@ class LiveFigureSession:
         fresh = [(stem, fig) for stem, fig in self.capture.items() if stem not in self.states]
         if suppressed_savefig:
             pathgeom.stabilize_captured_tight_layouts(
-                dict(fresh), self.savefig_calls, self.passthrough_figures
+                dict(fresh), self.savefig_calls, self.passthrough_figures, ordered_axes=ordered_axes
             )
         if fresh:
             # 字体回退尾巴（ADR 0045）：**脚本跑完之后、采 baseline 之前**给图上

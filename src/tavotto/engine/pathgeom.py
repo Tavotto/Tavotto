@@ -61,8 +61,6 @@ from matplotlib.patches import FancyArrowPatch, Patch
 from matplotlib.path import Path
 from matplotlib.transforms import Affine2D, Bbox
 
-from axestraversal import ordered_axes
-
 #: RDP 抽稀容差（display 像素）。0.4px 在任何缩放下都看不出偏差，
 #: 而一条 5000 点的谱线通常能掉到两三百点。
 _TOL_PX = 0.4
@@ -91,7 +89,9 @@ MAX_MARKERS = 500
 _ND = 5
 
 
-def stabilize_captured_tight_layouts(capture, savefig_calls, passthrough_figures=()) -> None:
+def stabilize_captured_tight_layouts(
+    capture, savefig_calls, passthrough_figures=(), *, ordered_axes
+) -> None:
     """Replay a supported, suppressed save's tight layout from its script seed.
 
     A first save can change tick density. Feeding its resulting subplot parameters
@@ -103,6 +103,9 @@ def stabilize_captured_tight_layouts(capture, savefig_calls, passthrough_figures
     tight engine. Multiple outputs, passthrough saves, native sessions, custom layout
     engines and figures without an observed save retain their existing semantics.
     PDF/PNG/SVG renderer metrics are not made identical by this policy.
+
+    The session supplies the shared axes traversal authority. Keeping it injected
+    preserves pathgeom's lower-layer boundary without duplicating that traversal.
     """
     by_figure = {}
     for stem, fig in capture.items():
@@ -113,7 +116,7 @@ def stabilize_captured_tight_layouts(capture, savefig_calls, passthrough_figures
             continue
         if calls[0] is None or len(calls[0]) != 1:
             continue
-        _stabilize_tight_layout(fig)
+        _stabilize_tight_layout(fig, ordered_axes)
 
 
 def _subplot_parameters(fig):
@@ -123,7 +126,7 @@ def _subplot_parameters(fig):
     }
 
 
-def _stabilize_tight_layout(fig) -> None:
+def _stabilize_tight_layout(fig, ordered_axes) -> None:
     engine = fig.get_layout_engine()
     # A subclass can carry state or override execute. Replaying subplot parameters
     # cannot reproduce that arbitrary state; leave the original engine untouched.

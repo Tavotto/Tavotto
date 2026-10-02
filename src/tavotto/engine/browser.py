@@ -63,6 +63,7 @@ import patchspec  # noqa: E402
 import pathgeom  # noqa: E402
 import preview_hybrid  # noqa: E402
 import previewbudget  # noqa: E402
+from axestraversal import ordered_axes  # noqa: E402
 
 #: 源文件上限。JS 侧在读文件时就拦，这里再守一道——两侧都必须拦：
 #: 只有 JS 拦的话，绕过页面直接 postMessage 的调用就没人管。
@@ -296,7 +297,7 @@ class BrowserSession:
                 self.capture_source.pop(stem, None)
 
         pathgeom.stabilize_captured_tight_layouts(
-            self.capture, self.savefig_calls, self.passthrough_figures
+            self.capture, self.savefig_calls, self.passthrough_figures, ordered_axes=ordered_axes
         )
         # 图幅（ADR 0098）：与桌面同一段逻辑（`pathgeom.establish_frame`）；虚拟 FS 里没有
         # 原件，定义图幅的是第一次调用。算不出就按 figsize，与以前一样。

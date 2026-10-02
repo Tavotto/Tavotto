@@ -297,9 +297,9 @@ plt.close(fig)
 original_stabilize = pathgeom.stabilize_captured_tight_layouts
 original_engine = fig.get_layout_engine()
 original_execute = original_engine.execute
-def checked_stabilize(capture, calls, passthrough=()):
+def checked_stabilize(capture, calls, passthrough=(), *, ordered_axes):
     assert id(fig) in passthrough, 'The actual file-object save was not recorded'
-    result = original_stabilize(capture, calls, passthrough)
+    result = original_stabilize(capture, calls, passthrough, ordered_axes=ordered_axes)
     assert fig.get_layout_engine() is original_engine
     assert original_engine.execute == original_execute
     return result
@@ -337,6 +337,7 @@ def test_external_subplot_adjustment_becomes_the_new_seed(tmp_path, warm):
 import io, json, sys
 sys.path.insert(0, sys.argv[1])
 import pathgeom
+from axestraversal import ordered_axes
 source = json.load(sys.stdin)
 
 def make():
@@ -352,9 +353,9 @@ def save(fig):
 fig, reference = make(), make()
 engine = fig.get_layout_engine()
 settings = engine.get().copy()
-pathgeom.stabilize_captured_tight_layouts({'f': fig}, {'f': [{}]})
+pathgeom.stabilize_captured_tight_layouts({'f': fig}, {'f': [{}]}, ordered_axes=ordered_axes)
 hook = engine.execute
-pathgeom.stabilize_captured_tight_layouts({'f': fig}, {'f': [{}]})
+pathgeom.stabilize_captured_tight_layouts({'f': fig}, {'f': [{}]}, ordered_axes=ordered_axes)
 assert fig.get_layout_engine() is engine and engine.execute is hook
 assert engine.get() == settings
 before = save(make())
@@ -397,6 +398,7 @@ def test_unsupported_capture_retains_its_native_layout_behavior(tmp_path, case):
 import io, json, sys
 sys.path.insert(0, sys.argv[1])
 import pathgeom
+from axestraversal import ordered_axes
 from matplotlib.layout_engine import TightLayoutEngine
 source = json.load(sys.stdin)
 case = sys.argv[2]
@@ -440,7 +442,7 @@ if case == 'pyplot': calls['f'] = []
 if case == 'multiple-calls': calls['f'] = [{}, {}]
 if case == 'multiple-stems': capture['other'] = fig; calls['other'] = [{}]
 if case == 'passthrough': passthrough = (id(fig),)
-pathgeom.stabilize_captured_tight_layouts(capture, calls, passthrough)
+pathgeom.stabilize_captured_tight_layouts(capture, calls, passthrough, ordered_axes=ordered_axes)
 assert fig.get_layout_engine() is engine
 assert (engine.execute if engine is not None else None) == execute
 for _ in range(3):
@@ -476,6 +478,7 @@ def test_failed_layout_restores_prepass_axes_and_subplot_parameters(tmp_path, fa
 import io, json, sys, warnings
 sys.path.insert(0, sys.argv[1])
 import pathgeom
+from axestraversal import ordered_axes
 import matplotlib.layout_engine as layout_engine
 source = json.load(sys.stdin)
 ns = {}
@@ -483,7 +486,7 @@ exec(source, ns)
 fig, ax = ns['fig'], ns['ax']
 engine = fig.get_layout_engine()
 native_execute = engine.execute
-pathgeom.stabilize_captured_tight_layouts({'f': fig}, {'f': [{}]})
+pathgeom.stabilize_captured_tight_layouts({'f': fig}, {'f': [{}]}, ordered_axes=ordered_axes)
 assert engine.execute != native_execute, 'Fixture must exercise an eligible, installed hook'
 
 def save():
