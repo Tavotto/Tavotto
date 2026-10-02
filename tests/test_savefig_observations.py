@@ -351,6 +351,7 @@ assert calls == []
         [WORKER_PY, "-c", body, str(Path(figcapture.__file__).parent)],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=60,
     )
     assert result.returncode == 0, result.stderr
