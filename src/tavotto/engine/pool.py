@@ -1929,6 +1929,21 @@ class EngineWorker:
         )
         return Path(resp["path"])
 
+    def preview_png_snapshot(self, stem: str, patches: list, width_px: int) -> dict:
+        """PNG pixels and geometry from the same draw, without a mutable file handoff."""
+        if not self.built:
+            self.ensure_built()
+        return self.request(
+            {
+                "cmd": "preview_png",
+                "stem": stem,
+                "patches": patches,
+                "width": width_px,
+                "with_manifest": True,
+            },
+            REQUEST_TIMEOUT,
+        )
+
     def _wait_until_exited(self, timeout: float) -> bool:
         """有界地等子进程真正退出（被 reap）；返回它现在是否已经退出。
 
@@ -2453,6 +2468,16 @@ class WorkerdWorker:
             payload={"patches": patches, "width": width_px, "tag": tag},
         )
         return Path(resp["path"])
+
+    def preview_png_snapshot(self, stem: str, patches: list, width_px: int) -> dict:
+        if not self.built:
+            self.ensure_built()
+        return self._call(
+            "preview_png",
+            REQUEST_TIMEOUT,
+            stem=stem,
+            payload={"patches": patches, "width": width_px, "with_manifest": True},
+        )
 
     def shutdown(self) -> None:
         """优雅关会话；workerd 收不到就当它已经没了（不许把退出流程挂住）。"""

@@ -12,7 +12,7 @@ import { useDocumentStore } from '@/store/documentStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import {
-  exactPanelRender,
+  exactPanelManifest,
   panelDisplayView,
   panelRender,
   renderKeyOf,
@@ -59,9 +59,9 @@ export function panelSnapshot(panel: PanelObject): PanelSnapshot {
   const documentVariant = renderKeyOf(panel)
   const view = panelDisplayView(rs, panel)
   const displayVariant = view.sourceKey
-  // **权威判据委托给 exactPanelRender**（ADR 0017），诊断不另立一份：
+  // **权威判据委托给 exactPanelManifest**（ADR 0017），诊断不另立一份：
   // 报的必须就是护栏实际用的那个判据
-  const exact = exactPanelRender(rs, panel)
+  const exact = exactPanelManifest(rs, panel)
   return {
     panel: panelHash(panel.id),
     file: fileHash(panel.fileId),

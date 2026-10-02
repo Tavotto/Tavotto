@@ -23,12 +23,14 @@ import {
   SVG_RECENT_BUDGET_GLOBAL,
   SVG_RECENT_BUDGET_PER_FILE,
   exactPanelManifest,
+  exactPanelRender,
   panelDisplayView,
   renderKey,
   renderKeyOf,
   residentSvgBytes,
   useRenderStore,
 } from './renderStore'
+import { useMountedPngStore } from './mountedPngStore'
 import { clearDiagnosticTrace, readDiagnosticTrace } from '@/diagnostics'
 import type { PanelObject } from '@/types/document'
 
@@ -89,6 +91,7 @@ const store = () => useRenderStore.getState()
 const resident = () => residentSvgBytes(useRenderStore.getState())
 
 beforeEach(() => {
+  useMountedPngStore.setState({ byPanel: {} })
   engineRender.mockReset()
   useRenderStore.getState().clear()
 })
@@ -294,10 +297,17 @@ describe('被清掉 payload 的那一版：诚实的显示，不丢语义', () =
     await store().render('Fig1.pdf', v(2))
 
     const back = panel('p1', 'Fig1.pdf', v(1))
-    const m = exactPanelManifest(useRenderStore.getState(), back)
-    expect(m).not.toBeNull()
-    // 是**第一版**的 manifest，不是显示退路那一版的
-    expect(m?.stem).toBe(`Fig1.pdf#${JSON.stringify(v(1))}`)
+    const exact = exactPanelRender(useRenderStore.getState(), back)!
+    // Canonical semantics survive eviction; geometry waits for this version's PNG.
+    expect(exact.manifest?.stem).toBe(`Fig1.pdf#${JSON.stringify(v(1))}`)
+    expect(exactPanelManifest(useRenderStore.getState(), back)).toBeNull()
+    const png = { ...exact.manifest!, size_mm: [100, 80] } as Manifest
+    const key = renderKeyOf(back)
+    useMountedPngStore.getState().show(back.id, key, exact.rev, exact.manifest, 'data:png')
+    useMountedPngStore.getState().loaded(back.id, {
+      key, rev: exact.rev, source: exact.manifest, url: 'data:png', manifest: png,
+    })
+    expect(exactPanelManifest(useRenderStore.getState(), back)).toBe(png)
   })
 
   it('脚本变了的那一版不许自称 evicted——它连几何权威都不是', async () => {

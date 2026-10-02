@@ -40,7 +40,9 @@ safe worker 本来就是单线程串行读 stdin，这条断言对它恒真（�
 
 from __future__ import annotations
 
+import base64
 import importlib.metadata
+import io
 import json
 import os
 import platform
@@ -387,16 +389,17 @@ class LiveFigureSession:
         （dpi 72→300 耗时与体积一模一样），含 imshow 的图上 200→100 能让
         savefig 从 ~29ms 降到 ~17ms、SVG 从 827KB 降到 196KB。
 
-        计时口径（`timings` 非空时填）：`manifest_ms` 是 `build_manifest`
-        （其中包含一次 `fig.canvas.draw()`——量每个元素的包围盒必须有
-        renderer）；`preview_plan_ms` 是复杂度分析；`canvas_draw_ms` 是
+        计时口径（`timings` 非空时填）：`manifest_ms` 是前置 `build_manifest`
+        （含布局 draw）与最终 SVG 几何的测量之和；后一次不再 draw / 排版。
+        `preview_plan_ms` 是复杂度分析；`canvas_draw_ms` 是
         `savefig(svg)`（升档时是**两遍之和**——用户等的就是两遍）。**SVG
         序列化与 draw 在 matplotlib 里分不开**（`print_svg` 是「边画边写」的
         一趟），所以不单出 `svg_ms`，见 ADR 0003 §9。
 
         `preview` 是**出参**（与 `timings` 同一条纪律，ADR 0003 §1）：给一个
-        dict 就往里填这一版的表示法元数据。**manifest 在 rasterize 之前就建完
-        了**——语义保真（不变量 1）不是靠谁记得，是靠这个顺序。
+        dict 就往里填这一版的表示法元数据。先按原样准备 manifest，再出预览；
+        **rasterize 的临时状态还原后**，按最终 SVG 的 renderer / 坐标重测，不再
+        排版。语义读取不落在临时表示法里，几何则与真正交出去的那张图同源。
         """
         self._own()
         state = self.states[stem]
@@ -437,9 +440,13 @@ class LiveFigureSession:
 
         # `preview_plan_ms` / `canvas_draw_ms` 由 `save_preview_svg` 自己填——
         # 只有它知道那两段各自从哪到哪（升档时 savefig 跑两遍）。
-        plan, svg_bytes = preview_hybrid.save_preview_svg(state, _save, timings)
+        with manifest_mod.capture_preview_manifest(state, stem) as measured:
+            plan, svg_bytes = preview_hybrid.save_preview_svg(state, _save, timings)
+            # Rasterization has been restored before reading semantic fields.
+            t2 = time.perf_counter()
+            man = measured()
         if timings is not None:
-            timings["manifest_ms"] = round((t1 - t0) * 1000.0, 3)
+            timings["manifest_ms"] = round((t1 - t0 + time.perf_counter() - t2) * 1000.0, 3)
         if preview is not None:
             mode, reason = previewbudget.resolve_mode(
                 svg_bytes=svg_bytes,
@@ -554,9 +561,13 @@ class LiveFigureSession:
             )
         return {"path": str(path)}
 
-    def do_preview_png(self, stem: str, patches: list, width: int, tag: str) -> dict:
+    def do_preview_png(
+        self, stem: str, patches: list, width: int, tag: str, with_manifest: bool = False
+    ) -> dict:
         """历史版本预览：临时应用指定 patches 出图，随后还原当前会话状态。"""
         self._own()
+        if not isinstance(with_manifest, bool):
+            raise ValueError("with_manifest must be a boolean")
         state = self.states[stem]
         prev = self.snapshot(stem)
         # `try` 必须从 apply 之前起：apply 自己会抛（属性不认、值越界），
@@ -567,16 +578,29 @@ class LiveFigureSession:
             w_in = pathgeom.frame_size_inches(state.fig)[0]
             path = self.out_dir / f"{stem}__{tag}.png"
             self.out_dir.mkdir(parents=True, exist_ok=True)
-            with self.real_output():
+            # Paired requests stay in memory: another bucket/revision cannot
+            # overwrite a path between the image and geometry being consumed.
+            target = io.BytesIO() if with_manifest else path
+            capture = (
+                manifest_mod.capture_preview_manifest(state, stem, vector_metrics=False)
+                if with_manifest
+                else _NULL_CTX
+            )
+            with self.real_output(), capture as measured:
                 state.fig.savefig(
-                    path,
+                    target,
                     format="png",
                     dpi=max(50, int(width) / w_in),
                     **pathgeom.output_kwargs(state.fig),
                 )
+                if with_manifest:
+                    result = {
+                        "png": base64.b64encode(target.getvalue()).decode("ascii"),
+                        "manifest": measured(),
+                    }
         finally:
             overrides_mod.apply(state, prev)
-        return {"path": str(path)}
+        return result if with_manifest else {"path": str(path)}
 
     def do_export(
         self,

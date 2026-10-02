@@ -22,7 +22,7 @@ import type { PanelObject } from '@/types/document'
 
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
-  enginePreviewPng: () => Promise.resolve(new Blob(['png'])),
+  enginePreviewPngSnapshot: async () => ({ url: URL.createObjectURL(new Blob(['png'])), manifest }),
 }))
 
 const manifest = { stem: 'Fig1', size_mm: [100, 80], elements: [] } as unknown as Manifest

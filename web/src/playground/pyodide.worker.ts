@@ -231,6 +231,7 @@ async function dispatch(req: WorkerRequest): Promise<unknown> {
         stem: req.stem,
         patches: req.patches,
         width: req.width,
+        ...(req.withManifest ? { with_manifest: true } : {}),
       })
     case 'sourceStatus': {
       // 每次都真的从虚拟 FS 读文件重算——缓存一个「上次算过的」哈希就等于

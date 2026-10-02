@@ -570,6 +570,22 @@ class NativeSession:
             self._note_temporary(stem, resp)
         return self.out_dir / f"{stem}__{tag}.png"
 
+    def preview_png_snapshot(self, stem: str, patches: list, width_px: int) -> dict:
+        with self._figure_lock:
+            self._require_consistent(stem)
+            resp = self._request(
+                {
+                    "cmd": "preview_png",
+                    "stem": stem,
+                    "patches": patches,
+                    "width": int(width_px),
+                    "with_manifest": True,
+                },
+                REQUEST_TIMEOUT,
+            )
+            self._note_temporary(stem, resp)
+            return resp
+
     def svg_path(self, stem: str) -> Path:
         return self.out_dir / f"{stem}.svg"
 

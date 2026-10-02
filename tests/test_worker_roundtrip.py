@@ -2969,13 +2969,20 @@ def _figs3_patches(client) -> tuple[list, str]:
     ], title_gid
 
 
-def _run_write_back(client, figs):
+def _run_write_back(client, figs, paired_preview=False):
     """热会话应用 patches → 写回；返回 (响应体, patches)。"""
     from tavotto.engine import patchspec as ps
 
     patches, _gid = _figs3_patches(client)
     r = client.post("/api/engine/render", json={"id": "TestFig_a.pdf", "patches": patches})
     assert r.status_code == 200, r.get_json()
+
+    if paired_preview:
+        preview = client.post(
+            "/api/engine/preview_png",
+            json={"id": "TestFig_a.pdf", "patches": patches, "w": 400, "with_manifest": True},
+        )
+        assert preview.status_code == 200, preview.get_json()
 
     resp = client.post(
         "/api/engine/update_source",
@@ -2991,10 +2998,13 @@ def _run_write_back(client, figs):
     return body, patches
 
 
-def test_write_back_verifies_a_clean_replay_and_keeps_vector_text(write_back, replay_bases):
+@pytest.mark.parametrize("paired_preview", [False, True])
+def test_write_back_verifies_a_clean_replay_and_keeps_vector_text(
+    write_back, replay_bases, paired_preview
+):
     """真链路：热态拖过文字、挪过子图 → 写回通过干净重放校验，产物仍是矢量。"""
     m, client, figs = write_back
-    body, patches = _run_write_back(client, figs)
+    body, patches = _run_write_back(client, figs, paired_preview)
 
     assert body["verification"]["replay"] == "ok", body["verification"]
     assert body["verification"]["elements"] > 0
@@ -3124,7 +3134,10 @@ def test_write_back_with_attribute_patches_passes_the_pixel_gate(write_back):
 
 
 @needs_workerd
-def test_workerd_write_back_replays_without_leaking_a_session(tmp_path, monkeypatch, replay_bases):
+@pytest.mark.parametrize("paired_preview", [False, True])
+def test_workerd_write_back_replays_without_leaking_a_session(
+    tmp_path, monkeypatch, replay_bases, paired_preview
+):
     """workerd 路径同语义，且**一次性会话不泄漏**。
 
     workerd 按 spawn 规格哈希复用会话（引用计数，ADR 0004）：重放会话靠独立的
@@ -3141,7 +3154,7 @@ def test_workerd_write_back_replays_without_leaking_a_session(tmp_path, monkeypa
         worker = pool.get("fig_test.py", str(figs), "main")
         assert isinstance(worker, pool.WorkerdWorker), "应当走 workerd 控制面"
 
-        body, _patches = _run_write_back(client, figs)
+        body, _patches = _run_write_back(client, figs, paired_preview)
         assert body["verification"]["replay"] == "ok", body["verification"]
         with pymupdf.open(figs / "TestFig_a.pdf") as doc:
             assert "Vector Title" in doc[0].get_text()

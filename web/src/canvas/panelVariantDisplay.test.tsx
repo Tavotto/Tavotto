@@ -10,7 +10,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { PanelView } from './PanelView'
-import { renderKeyOf, useRenderStore } from '@/store/renderStore'
+import { exactPanelManifest, renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { useUiStore } from '@/store/uiStore'
 import type { Manifest } from '@/lib/api'
 import type { PanelObject } from '@/types/document'
@@ -19,9 +19,10 @@ const previewPng = vi.fn()
 
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
-  enginePreviewPng: (id: string, patches: unknown[], bucket: number) => {
+  enginePreviewPngSnapshot: (id: string, patches: unknown[], bucket: number) => {
     previewPng(id, patches, bucket)
-    return Promise.resolve(new Blob(['png']))
+    return Promise.resolve({ url: URL.createObjectURL(new Blob(['png'])),
+      manifest: { ...manifest, stem: JSON.stringify(patches) } })
   },
 }))
 
@@ -106,6 +107,14 @@ describe('PanelView：引擎位图按自己的 overrides 取', () => {
     expect(srcs).toHaveLength(2)
     expect(new Set(srcs).size).toBe(2)          // 不是同一张图
     expect(srcs.every((s) => s?.startsWith('blob:'))).toBe(true)
+    expect(exactPanelManifest(useRenderStore.getState(), a)).toBeNull()
+    expect(exactPanelManifest(useRenderStore.getState(), b)).toBeNull()
+    const imgs = [...container.querySelectorAll('img:not([aria-hidden])')]
+    await act(async () => { imgs[0].dispatchEvent(new Event('load')) })
+    expect(exactPanelManifest(useRenderStore.getState(), a)?.stem).toBe(JSON.stringify(a.overrides))
+    expect(exactPanelManifest(useRenderStore.getState(), b)).toBeNull()
+    await act(async () => { imgs[1].dispatchEvent(new Event('load')) })
+    expect(exactPanelManifest(useRenderStore.getState(), b)?.stem).toBe(JSON.stringify(b.overrides))
   })
 
   it('没有图内修改的面板照旧走 /api/render，不惊动引擎', async () => {

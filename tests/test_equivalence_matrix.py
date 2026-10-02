@@ -1096,7 +1096,8 @@ def test_workerd_render_without_inline_svg_has_no_svg_key(workerd, project):
 
 
 @needs_workerd
-def test_workerd_preview_png_is_state_neutral_across_variants(workerd, project):
+@pytest.mark.parametrize("paired", [False, True])
+def test_workerd_preview_png_is_state_neutral_across_variants(workerd, project, paired):
     """`preview_png` 按给定 patches 出图，与热会话当前是哪个变体无关。"""
     _m, client, figs = project
     assert isinstance(pool.get(SCRIPT_NAME, str(figs), ENTRY), pool.WorkerdWorker)
@@ -1105,9 +1106,14 @@ def test_workerd_preview_png_is_state_neutral_across_variants(workerd, project):
 
     def png(patches):
         resp = client.post(
-            "/api/engine/preview_png", json={"id": "EqvMulti.pdf", "patches": patches, "w": 400}
+            "/api/engine/preview_png",
+            json={"id": "EqvMulti.pdf", "patches": patches, "w": 400, "with_manifest": paired},
         )
         assert resp.status_code == 200, resp.get_json()
+        if paired:
+            body = resp.get_json()
+            assert _field(body["manifest"], "axes_0.title", "text") == patches[0]["value"]
+            return body["png"]
         return resp.data
 
     _render(client, "EqvMulti", a)

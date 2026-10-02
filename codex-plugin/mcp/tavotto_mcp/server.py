@@ -80,7 +80,7 @@ CANVAS_INLINE_BUDGET_BYTES = 768 * 1024
 INLINE_ELISION_STEPS = (
     ("svg",),
     ("manifest",),
-    ("preview_png_base64",),
+    ("preview_png_base64", "preview_png_manifest"),
     ("preflight.warnings", "preflight.suggestions", "preflight.not_verifiable"),
     ("preflight.errors",),
 )

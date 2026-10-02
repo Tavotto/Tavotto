@@ -37,7 +37,7 @@ export type WorkerRequest =
     }
   | { id: number; type: 'open'; stem: string }
   | { id: number; type: 'render'; stem: string; patches: unknown[]; previewDpi?: number }
-  | { id: number; type: 'previewPng'; stem: string; patches: unknown[]; width: number }
+  | { id: number; type: 'previewPng'; stem: string; patches: unknown[]; width: number; withManifest?: boolean }
   | { id: number; type: 'sourceStatus' }
 
 /** 联合类型上的分配式 Omit（普通 Omit 会把联合坍成公共字段） */

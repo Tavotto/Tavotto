@@ -111,8 +111,8 @@
   **布局那一次 draw 不换尺**：`constrained_layout` 的结果在 ulp 级依赖上一次 draw 留下的位置，
   Agg 的 26.6 定点度量把末位噪声吸收掉；布局也换成连续的矢量度量后，「上一张预览是 hybrid 还是
   纯矢量」会让 manifest 末位不同（`test_preview_hybrid` 的逐字节不变量在 3.10 上抓到；把矢量度量
-  量化到 1/64 px 反而更糟）。用户看得见的偏差不在布局里：图例位置是测量时现算的
-  （`OffsetBox.get_offset`）。图例子项的偏移是 draw 时写死的，`_layout_legends_for_measure` 在一次性
+  量化到 1/64 px 反而更糟）。图例位置在测量时现算（`OffsetBox.get_offset`），但自动布局仍可能
+  在 SVG draw 时改变，最终预览须按下面的同源规则重测。图例子项的偏移是 draw 时写死的，`_layout_legends_for_measure` 在一次性
   渲染器上按同一把尺给**每个**图例补排版（隐藏图例 #413 的那条路扩到全部）。
   **度量缓存挂上 / 撤掉各清一次**：缓存键有渲染器实例、没有度量方式。两代实现都认：3.11 起每个
   渲染器一份（`_get_text_metrics_function(r).cache_clear()`），3.8 / 3.10 一份全局 lru
@@ -133,3 +133,23 @@
 - 散点 / 纯 marker 线 / 柱逐个描，超过 `MAX_MARKERS` 整组退回 bbox
 - 彩色网格只描外轮廓 + 裁剪框，不逐 cell
 - 误差棒 / 茎叶出成员几何的并，一个成员给不出整组退回；Patch 全家族描路径；注释文字框不含箭头（ADR 0086）
+
+- **预览几何与最终 SVG 同源（2026-10-01，柱顶数字首拖少走）**：初始 Agg 排版与
+  随后的 SVG 排版可能因为自动刻度数量、字体度量而改变子图框。`figsession.render` 与
+  `browser._render` 保留前置准备，但交付的 manifest 由同一份
+  `manifest.capture_preview_manifest` 按最终 SVG draw 的 renderer / dpi 重测：临时
+  rasterize 必须已经还原，只恢复测量坐标，不再 draw / 排版，不永久关掉自动布局。
+  软闸升档时取最后一遍 draw，成功 / 异常都摘回调、还原 dpi 与 frame。
+  最小命中厚度仍按文档像素换算，不能把 SVG 的 pt 当 px；会回写 setter 的 axes.position
+  保留几何精度，不分别舍入宽高破坏固定长宽比（普通数值字段的显示精度不变）。
+  看护 `tests/test_preview_layout_geometry.py`：直接读冷 build 的 SVG，比真实位移、
+  改图幅后的图例框与坐标清单；不能先空渲染一次把首轮错位暖掉，也不能只比 patch 与 manifest。
+
+- **PNG 编辑预览也必须像素与几何同源**（#779）：`preview_png(with_manifest=True)`
+  返回同一次 Agg draw 的 PNG 与 manifest，使用该次 bucket DPI 和 Agg 文字度量；
+  只取缩略图的旧 Path / Blob 接口不变。临时 patches 仍须还原，不能覆盖 canonical
+  SVG manifest（MCP 的 replay / preflight 仍依赖它）。桌面、playground、MCP 三端
+  都传递这个配对；前端等对应面板、变体、响应身份、URL 的图片加载后才授予几何权威，
+  新 bucket 待解码、旧请求晚到、同 rev 的 worker 重建都不能混用。MCP 旧引擎缺少此
+  能力时保留位图显示并给升级提示，不伪造 PNG 几何。看护 `tests/test_preview_png_geometry.py`
+  的实际 PNG 像素、30 组布局 / bucket / frame、位移与还原，以及前端的图片加载用例。

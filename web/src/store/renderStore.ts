@@ -19,6 +19,7 @@ import {
   INPUT_REMAP_CHANGED_CODE,
 } from '@/lib/api'
 import { engineTransport } from '@/lib/engineTransport'
+import { pngManifestOf, useMountedPngStore } from '@/store/mountedPngStore'
 import { currentProjectId } from '@/lib/session'
 import { resolvePreview, VECTOR_PREVIEW, type PreviewMetadata } from '@/lib/previewBudget'
 import { useAssetStore } from '@/store/assetStore'
@@ -1082,7 +1083,13 @@ export function exactPanelManifest(
   state: Pick<RenderState, 'byKey'>,
   panel: PanelObject,
 ): Manifest | null {
-  return exactPanelRender(state, panel)?.manifest ?? null
+  const render = exactPanelRender(state, panel)
+  if (!render) return null
+  return pngManifestOf(
+    render.preview?.mode === 'raster' || render.svgEvicted ? null : render.manifest,
+    renderKeyOf(panel), render.rev, render.manifest,
+    useMountedPngStore.getState().byPanel[panel.id],
+  )
 }
 
 /**
@@ -1235,7 +1242,10 @@ export function usePanelRender(panel: PanelObject | null | undefined): PanelRend
  * 要写几何（对齐、拖动、缩放、命中后改文档）一律用 `useExactPanelManifest`。
  */
 export function usePanelDisplayManifest(panel: PanelObject | null | undefined): Manifest | null {
-  return usePanelRender(panel)?.manifest ?? null
+  const render = usePanelRender(panel)
+  const png = useMountedPngStore((s) => panel ? s.byPanel[panel.id] : undefined)
+  if (!render?.manifest || !panel) return null
+  return pngManifestOf(null, renderKeyOf(panel), render.rev, render.manifest, png) ?? render.manifest
 }
 
 /**
@@ -1256,7 +1266,7 @@ export function usePanelDisplayView(panel: PanelObject | null | undefined): Pane
   )
 }
 
-/** 几何权威的渲染态；null = 现在不许做几何写操作 */
+/** 当前变体的 canonical 渲染态；几何写入还须经 useExactPanelManifest 选择已上屏的 PNG。 */
 export function useExactPanelRender(panel: PanelObject | null | undefined): PanelRender | null {
   const own = useRenderStore((s) => (panel ? s.byKey[renderKeyOf(panel)] : undefined))
   const variant = panel ? JSON.stringify(panel.overrides) : ''
@@ -1268,5 +1278,11 @@ export function useExactPanelRender(panel: PanelObject | null | undefined): Pane
 
 /** 几何权威的 manifest；null = 正在同步，几何交互一律禁用 */
 export function useExactPanelManifest(panel: PanelObject | null | undefined): Manifest | null {
-  return useExactPanelRender(panel)?.manifest ?? null
+  const render = useExactPanelRender(panel)
+  const png = useMountedPngStore((s) => panel ? s.byPanel[panel.id] : undefined)
+  if (!render || !panel) return null
+  return pngManifestOf(
+    render.preview?.mode === 'raster' || render.svgEvicted ? null : render.manifest,
+    renderKeyOf(panel), render.rev, render.manifest, png,
+  )
 }

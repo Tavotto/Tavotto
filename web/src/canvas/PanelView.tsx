@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { perfCount, perfRenderPainted } from '@/perf/core'
 import { t as translate } from '@/i18n'
 import { listJoin } from '@/i18n/format'
-import { enginePreviewPng, panelSrc, type ManifestElement } from '@/lib/api'
+import { enginePreviewPngSnapshot, panelSrc, type Manifest, type ManifestElement } from '@/lib/api'
 import { useDecodedSvg } from '@/lib/useDecodedSvg'
 import { useHtmlMarkup } from '@/lib/useHtmlMarkup'
 import { useRetryingSrc } from '@/lib/imgRetry'
@@ -52,6 +52,7 @@ import {
 import { frameSwitchAvailable, frameSwitchPatch } from '@/lib/figureFrame'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useDisplayedExactManifest, useMountedSvgStore } from '@/store/mountedSvgStore'
+import { useMountedPngStore } from '@/store/mountedPngStore'
 import { reattachPreview, settleFailedAuthority, settleUnbackedCommit } from '@/store/svgPreviewStore'
 import { useUiStore } from '@/store/uiStore'
 import { mmToWorld, useViewportStore } from '@/store/viewportStore'
@@ -182,20 +183,23 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   // 不另写第二套。
   const useEnginePng = (bitmapOnly ? editing || needsEngine : !editing && needsEngine) &&
     (render?.rev ?? 0) > 0
-  const pngBlob = useEnginePngBlob(obj, bucket, useEnginePng, render?.rev ?? 0)
+  const renderRev = render?.rev ?? 0
+  const pngSource = render?.manifest ?? null
+  const pngBlob = useEnginePngBlob(obj, bucket, useEnginePng, renderRev, pngSource)
   const variantNow = JSON.stringify(obj.overrides)
+  const pngIsCurrent = pngBlob.source === pngSource && pngBlob.fileId === obj.fileId &&
+    pngBlob.variant === variantNow && pngBlob.rev === renderRev
   // 位图这一格挂什么：当前变体的那张最好；**上一变体的那张只在新图还在路上时
   // 暂挂**（与 Phase F 的 latest 显示退路同一条纪律）。取图一旦失败，就不能再
   // 拿上一变体的位图冒充当前变体——那正是「预览 ≠ 当前 overrides 且不吵」。
   const enginePng =
-    pngBlob.url && (pngBlob.variant === variantNow || !pngBlob.failed) ? pngBlob.url : null
+    pngBlob.url && (pngIsCurrent || !pngBlob.failed) ? pngBlob.url : null
   // 性能探针（ADR 0075）：位图这一格（raster / evicted / 非编辑态的引擎位图）没有
   // 「SVG 换进 DOM」那一刻，松手 → 图落定要一直量到**这一版自己的位图**加载完
   // （onLoad：取图、解码都已结束）。暂挂的上一变体 / 上一 rev 的那张不算——那是
   // 新图还在路上时的替身，拿它收口就把取图与解码整段漏掉了。
-  const renderRev = render?.rev ?? 0
   const pngPaintKey =
-    useEnginePng && enginePng && pngBlob.variant === variantNow && pngBlob.rev === renderRev
+    useEnginePng && enginePng && pngIsCurrent
       ? renderKeyOf(obj)
       : null
   // runtime 面板的 stale / cache 状态（只查询，绝不触发脚本执行）
@@ -247,6 +251,27 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   const inlineSvg =
     svgHtml ?? engineSvgStandby ?? (src || bitmapOnly ? null : (render?.svg ?? null))
   const showSvg = inlineSvg != null
+  const loadedPngUrl = useRef<string | null>(null)
+  const currentPngUrl = pngIsCurrent ? pngBlob.url : null
+  useLayoutEffect(() => {
+    const store = useMountedPngStore.getState()
+    if (showSvg || !useEnginePng) {
+      loadedPngUrl.current = null
+      store.clear(panelId)
+    } else {
+      store.show(panelId, docKey, renderRev, pngSource, currentPngUrl)
+    }
+    return () => store.clear(panelId)
+  }, [showSvg, useEnginePng, panelId, docKey, renderRev, pngSource, currentPngUrl])
+  const pngManifest = pngIsCurrent ? pngBlob.manifest : null
+  useLayoutEffect(() => {
+    // A cached data URL can stay identical across revisions: it is already decoded.
+    if (!showSvg && pngIsCurrent && pngBlob.url && loadedPngUrl.current === pngBlob.url) {
+      useMountedPngStore.getState().loaded(panelId, {
+        key: docKey, rev: renderRev, source: pngSource, url: pngBlob.url, manifest: pngManifest,
+      })
+    }
+  }, [showSvg, pngIsCurrent, pngBlob.url, pngManifest, panelId, docKey, renderRev, pngSource])
   // 同一份字符串 = 同一个 `{__html}` 对象：否则每次重渲都会原样重写 innerHTML，把挂在节点上的
   // 拖动预览抹掉（松手弹回原位，见 `lib/useHtmlMarkup`）。hook 必须在任何提前 return 之前调用
   // 换一版时先把新图里的位图解码好再换（松手后「整张图糊一下」，见 `lib/useDecodedSvg`）
@@ -320,8 +345,20 @@ export function PanelView({ obj }: { obj: PanelObject }) {
         ) : src ? (
           <CrossfadeImage
             src={retry.src}
-            onError={retry.onError}
-            onLoad={pngPaintKey != null ? () => perfRenderPainted(pngPaintKey, 'png') : undefined}
+            onError={() => {
+              loadedPngUrl.current = null
+              if (useEnginePng) useMountedPngStore.getState().show(panelId, docKey, renderRev, pngSource, null)
+              retry.onError()
+            }}
+            onLoad={(url) => {
+              loadedPngUrl.current = url
+              if (pngIsCurrent && url === pngBlob.url) {
+                useMountedPngStore.getState().loaded(panelId, {
+                  key: docKey, rev: renderRev, source: pngSource, url, manifest: pngManifest,
+                })
+              }
+              if (pngPaintKey != null) perfRenderPainted(pngPaintKey, 'png')
+            }}
             alt={obj.name ?? obj.fileId}
             className="absolute select-none"
             style={{ ...layout, maxWidth: 'none' }}
@@ -355,7 +392,8 @@ function useEnginePngBlob(
   bucket: number,
   enabled: boolean,
   rev: number,
-): { url: string | null; variant: string | null; rev: number; failed: boolean } {
+  source: Manifest | null,
+): { url: string | null; manifest: Manifest | null; source: Manifest | null; fileId: string | null; variant: string | null; rev: number; failed: boolean } {
   // `variant` 记的是 `url` 那张图**按哪组 overrides**出的：消费方靠它分辨
   // 「暂挂的上一张」与「就是当前这版」。`failed` = 最近一次取图以失败告终
   // （被新请求顶掉的中断不算）——此后上一张不再冒充当前变体，退位给 SVG /
@@ -363,10 +401,13 @@ function useEnginePngBlob(
   // 渲染出的（性能探针认「这一版自己的图」要它）。
   const [state, setState] = useState<{
     url: string | null
+    manifest: Manifest | null
+    source: Manifest | null
+    fileId: string | null
     variant: string | null
     rev: number
     failed: boolean
-  }>({ url: null, variant: null, rev: 0, failed: false })
+  }>({ url: null, manifest: null, source: null, fileId: null, variant: null, rev: 0, failed: false })
   const urlRef = useRef<string | null>(null)
   // 依赖用变体串而不是 overrides 数组：数组每次 commit 都是新引用
   const variant = JSON.stringify(obj.overrides)
@@ -378,16 +419,21 @@ function useEnginePngBlob(
     let landed = false
     const transport = engineTransport()
     const pending = transport
-      ? transport.previewPngUrl(fileId, overrides, bucket, ctrl.signal)
-      : enginePreviewPng(fileId, overrides, bucket, ctrl.signal).then((blob) =>
-          URL.createObjectURL(blob),
-        )
+      ? transport.previewPngSnapshot
+        ? transport.previewPngSnapshot(fileId, overrides, bucket, ctrl.signal)
+        : transport.previewPngUrl(fileId, overrides, bucket, ctrl.signal)
+            .then((url) => ({ url, manifest: null }))
+      : enginePreviewPngSnapshot(fileId, overrides, bucket, ctrl.signal)
     void pending
       .then((next) => {
+        if (ctrl.signal.aborted) {
+          URL.revokeObjectURL(next.url)
+          return
+        }
         landed = true
         if (urlRef.current) URL.revokeObjectURL(urlRef.current)
-        urlRef.current = next
-        setState({ url: next, variant, rev, failed: false })
+        urlRef.current = next.url
+        setState({ ...next, source, fileId, variant, rev, failed: false })
       })
       .catch(() => {
         // 失败保留上一张（画布别空掉），但要记下「失败」：中断（deps 变了 /
@@ -399,7 +445,7 @@ function useEnginePngBlob(
     }
     // overrides 的内容变化由 variant 表达（数组引用每次 commit 都变）
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, fileId, variant, bucket, rev])
+  }, [enabled, fileId, variant, bucket, rev, source])
 
   // 卸载时把最后一张还回去，否则每个被删/被切走的面板都留一块 blob
   useEffect(() => () => {
@@ -442,7 +488,7 @@ function CrossfadeImage({
   /** 当前层加载失败时（淡出层的失败不关心：它本来就要被换掉） */
   onError?: () => void
   /** 当前层加载完成时（同上，只认当前层） */
-  onLoad?: () => void
+  onLoad?: (src: string) => void
   alt: string
   className?: string
   style?: React.CSSProperties
@@ -484,7 +530,7 @@ function CrossfadeImage({
             alt={isCur ? alt : ''}
             aria-hidden={isCur ? undefined : true}
             onError={isCur ? onError : undefined}
-            onLoad={isCur ? onLoad : undefined}
+            onLoad={isCur ? () => onLoad?.(layerSrc) : undefined}
             draggable={false}
             className={cn(
               className,

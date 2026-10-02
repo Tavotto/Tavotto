@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type { Manifest } from '@/lib/api'
-import { exactPanelRender, useExactPanelRender, useRenderStore, type PanelRender } from '@/store/renderStore'
+import { exactPanelManifest, exactPanelRender, useExactPanelManifest, useExactPanelRender, useRenderStore, type PanelRender } from '@/store/renderStore'
 import type { PanelObject } from '@/types/document'
 
 /**
@@ -41,8 +41,9 @@ export const useMountedSvgStore = create<MountedSvgState>((set) => ({
  */
 export function useDisplayedExactManifest(panel: PanelObject | null | undefined): Manifest | null {
   const render = useExactPanelRender(panel)
+  const manifest = useExactPanelManifest(panel)
   const mounted = useMountedSvgStore((s) => (panel ? s.byPanel[panel.id] : undefined))
-  return displayedOf(render, mounted)
+  return displayedOf(render, mounted, manifest)
 }
 
 /** 同一判据的非 hook 版：键盘动作（方向键微调）在事件里现取 */
@@ -50,11 +51,14 @@ export function displayedExactManifest(panel: PanelObject): Manifest | null {
   return displayedOf(
     exactPanelRender(useRenderStore.getState(), panel),
     useMountedSvgStore.getState().byPanel[panel.id],
+    exactPanelManifest(useRenderStore.getState(), panel),
   )
 }
 
-function displayedOf(render: PanelRender | null, mounted: string | undefined): Manifest | null {
+function displayedOf(
+  render: PanelRender | null, mounted: string | undefined, manifest: Manifest | null,
+): Manifest | null {
   if (!render?.manifest) return null
   if (mounted !== undefined && render.svg != null && render.svg !== mounted) return null
-  return render.manifest
+  return manifest
 }

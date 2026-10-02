@@ -43,6 +43,10 @@ export function installBrowserTransport(client: PlaygroundClient): () => void {
       if (!b64) throw new EngineError('位图预览为空', '', 'render_error', '')
       return `data:image/png;base64,${b64}`
     },
+    async previewPngSnapshot(id, patches, bucket, signal) {
+      const frame = await client.previewPngSnapshot(stemOf(id), patches, bucket, signal).catch(rethrow)
+      return { url: `data:image/png;base64,${frame.png}`, manifest: frame.manifest }
+    },
     // Worker 里没有可寻址的 HTTP 资源：回 null，PanelView 退回 SVG 显示
     panelSrc: () => null,
   }

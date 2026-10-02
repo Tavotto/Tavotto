@@ -9,7 +9,7 @@
  * 都正常），用户脚本执行才是要掐死的那段。Worker 每进一个阶段发一条 progress，
  * 客户端据此重置计时器并换上该阶段的限额。
  */
-import { EngineError } from '@/lib/api'
+import { EngineError, type Manifest } from '@/lib/api'
 import {
   isWorkerResponse,
   type DistributiveOmit,
@@ -159,6 +159,14 @@ export class PlaygroundClient {
       png?: string
     }
     return typeof r.png === 'string' ? r.png : ''
+  }
+
+  async previewPngSnapshot(
+    stem: string, patches: unknown[], width: number, signal?: AbortSignal,
+  ): Promise<{ png: string; manifest: Manifest }> {
+    return await this.request(
+      { type: 'previewPng', stem, patches, width, withManifest: true }, false, signal,
+    ) as { png: string; manifest: Manifest }
   }
 
   /** 主动收尾（换文件 / 组件卸载）。幂等。 */

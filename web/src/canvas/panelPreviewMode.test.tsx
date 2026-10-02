@@ -12,7 +12,9 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { PanelView } from './PanelView'
-import { renderKeyOf, useRenderStore, type PanelRender } from '@/store/renderStore'
+import { exactPanelManifest, usePanelDisplayManifest, renderKeyOf, useRenderStore, type PanelRender } from '@/store/renderStore'
+import { useMountedPngStore } from '@/store/mountedPngStore'
+import { useViewportStore } from '@/store/viewportStore'
 import { useNativeSessionStore } from '@/store/nativeSessionStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useUiStore } from '@/store/uiStore'
@@ -34,9 +36,10 @@ let previewPngImpl: () => Promise<Blob> = () => Promise.resolve(new Blob(['png']
 
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
-  enginePreviewPng: (id: string, patches: unknown[], bucket: number) => {
+  enginePreviewPngSnapshot: async (id: string, patches: unknown[], bucket: number) => {
     previewPng(id, patches, bucket)
-    return previewPngImpl()
+    const blob = await previewPngImpl()
+    return { url: URL.createObjectURL(blob), manifest: pngManifest }
   },
 }))
 
@@ -72,6 +75,8 @@ const MANIFEST = {
   ],
 } as unknown as Manifest
 
+let pngManifest = MANIFEST
+
 const RASTER: PreviewMetadata = {
   mode: 'raster',
   reason: 'svg_hard_limit',
@@ -90,6 +95,9 @@ let container: HTMLDivElement
 let root: Root
 
 beforeEach(() => {
+  pngManifest = MANIFEST
+  useMountedPngStore.setState({ byPanel: {} })
+  useViewportStore.setState({ zoom: 1 })
   previewPng.mockClear()
   previewPngImpl = () => Promise.resolve(new Blob(['png']))
   URL.createObjectURL = vi.fn(() => 'blob:mock/1')
@@ -128,6 +136,12 @@ async function mount() {
 }
 
 const inlineSvg = () => container.querySelector('[data-element-svg]')
+async function loadCurrentPng() {
+  await act(async () => {
+    container.querySelector('img:not([aria-hidden])')!.dispatchEvent(new Event('load'))
+  })
+}
+
 const hitLayer = () => container.querySelector('[data-authority="ready"]')
 
 describe('PanelView：三档预览表示法', () => {
@@ -159,6 +173,7 @@ describe('PanelView：三档预览表示法', () => {
     // 位图按**这个面板自己的 patches** 出（状态中立的既有链路）
     expect(previewPng).toHaveBeenCalledWith('Fig1.pdf', PANEL.overrides, expect.any(Number))
 
+    await loadCurrentPng()
     // 「显示降级 ≠ 关闭语义编辑」：命中层在、且拿得到几何权威
     expect(hitLayer()).not.toBeNull()
     expect(container.querySelector('[data-authority="syncing"]')).toBeNull()
@@ -174,6 +189,7 @@ describe('PanelView：三档预览表示法', () => {
     expect(inlineSvg()).toBeNull()
     expect(container.querySelector('img')?.getAttribute('src')).toBe('blob:mock/1')
     expect(previewPng).toHaveBeenCalledWith('Fig1.pdf', PANEL.overrides, expect.any(Number))
+    await loadCurrentPng()
     // 几何权威一个字都不放松（不变量 4）
     expect(hitLayer()).not.toBeNull()
     // 诊断上诚实地说「挂的就是这一版」，而不是 fallback 到别的变体
@@ -630,4 +646,151 @@ describe('性能探针：位图这一格的「图落定」', () => {
     await fireLoad(container.querySelector('img')!)
     expect(perfStop()!.renders[0].painted).toBeNull()
   })
+})
+
+
+describe('PNG geometry is paired with the image that loaded', () => {
+  const exact = (panel = PANEL) => exactPanelManifest(useRenderStore.getState(), panel)
+  const alternate = () => ({ ...MANIFEST, elements: MANIFEST.elements.map((e) => ({
+    ...e, anchor: [0.6, 0.2], bbox: [0.4, 0.1, 0.4, 0.08],
+  })) } as Manifest)
+
+  it.each(['raster', 'evicted'] as const)('%s waits for the paired image, then uses its geometry', async (mode) => {
+    pngManifest = alternate()
+    seed({ svg: null, preview: mode === 'raster' ? RASTER : VECTOR_PREVIEW, svgEvicted: mode === 'evicted' })
+    await mount()
+    expect(exact()).toBeNull()
+    expect(hitLayer()).toBeNull()
+    await loadCurrentPng()
+    expect(exact()).toBe(pngManifest)
+    expect(exact()).not.toBe(MANIFEST)
+    expect(hitLayer()).not.toBeNull()
+  })
+
+  it('a higher bucket replaces geometry only when that new bitmap loads', async () => {
+    let serial = 0
+    URL.createObjectURL = vi.fn(() => `blob:mock/${++serial}`)
+    seed({ svg: null, preview: RASTER })
+    await mount()
+    await loadCurrentPng()
+    expect(exact()).toBe(MANIFEST)
+    const initialBucket = previewPng.mock.calls[0][2]
+    pngManifest = alternate()
+    await act(async () => { useViewportStore.setState({ zoom: 4 }) })
+    expect(previewPng.mock.calls.at(-1)![2]).toBeGreaterThan(initialBucket)
+    expect(exact()).toBeNull()
+    await loadCurrentPng()
+    expect(exact()).toBe(pngManifest)
+  })
+
+  it('same patches with a new revision cannot use the previous bitmap geometry', async () => {
+    seed({ svg: null, preview: RASTER })
+    await mount()
+    await loadCurrentPng()
+    previewPngImpl = () => new Promise<Blob>(() => {})
+    await act(async () => { seed({ svg: null, preview: RASTER, rev: 4 }) })
+    expect(exact()).toBeNull()
+    await loadCurrentPng()
+    expect(exact()).toBeNull()
+  })
+
+  it('a cached identical URL is re-paired with the new revision manifest', async () => {
+    seed({ svg: null, preview: RASTER })
+    await mount()
+    await loadCurrentPng()
+    pngManifest = alternate()
+    await act(async () => { seed({ svg: null, preview: RASTER, rev: 4 }) })
+    expect(exact()).toBe(pngManifest)
+    expect(useMountedPngStore.getState().byPanel[PANEL.id].rev).toBe(4)
+  })
+
+  it('eviction recovery restores SVG geometry and removes the bitmap authority', async () => {
+    pngManifest = alternate()
+    seed({ svg: null, preview: VECTOR_PREVIEW, svgEvicted: true })
+    await mount()
+    await loadCurrentPng()
+    expect(exact()).toBe(pngManifest)
+    await act(async () => { seed({ svg: '<svg id="recovered"/>', svgEvicted: false }) })
+    expect(inlineSvg()?.innerHTML).toContain('recovered')
+    expect(exact()).toBe(MANIFEST)
+    expect(useMountedPngStore.getState().byPanel[PANEL.id]).toBeUndefined()
+  })
+  it('replacing a file under the same panel/revision cannot pair the old bitmap', async () => {
+    seed({ svg: null, preview: RASTER })
+    await mount()
+    await loadCurrentPng()
+    previewPngImpl = () => new Promise<Blob>(() => {})
+    const other = { ...PANEL, fileId: 'Other.pdf' }
+    useRenderStore.getState().patch(renderKeyOf(other), {
+      fileId: other.fileId, manifest: MANIFEST, rev: 3, status: 'ready',
+      lastPatches: JSON.stringify(other.overrides), preview: RASTER,
+    })
+    await act(async () => { root.render(<PanelView obj={other} />) })
+    expect(exact(other)).toBeNull()
+    await loadCurrentPng()
+    expect(exact(other)).toBeNull()
+  })
+
+  it('a rebuilt worker reusing key/revision must fetch and load the new response', async () => {
+    seed({ svg: null, preview: RASTER })
+    await mount()
+    await loadCurrentPng()
+    previewPngImpl = () => new Promise<Blob>(() => {})
+    await act(async () => { seed({ svg: null, preview: RASTER, manifest: { ...MANIFEST } }) })
+    expect(previewPng).toHaveBeenCalledTimes(2)
+    expect(exact()).toBeNull()
+    await loadCurrentPng()
+    expect(exact()).toBeNull()
+  })
+
+  it('failed decoding cannot keep geometry for the unavailable bitmap', async () => {
+    seed({ svg: null, preview: RASTER })
+    await mount()
+    await loadCurrentPng()
+    await act(async () => {
+      container.querySelector('img')!.dispatchEvent(new Event('error'))
+    })
+    expect(exact()).toBeNull()
+  })
+
+  it('element lists use the loaded PNG tick set without replacing the canonical render', async () => {
+    pngManifest = alternate()
+    const Display = () => {
+      const m = usePanelDisplayManifest(PANEL)
+      return <output>{JSON.stringify(m?.elements[1].anchor)}</output>
+    }
+    seed({ svg: null, preview: RASTER })
+    await act(async () => { root.render(<><PanelView obj={PANEL} /><Display /></>) })
+    await loadCurrentPng()
+    expect(container.querySelector('output')?.textContent).toBe('[0.6,0.2]')
+    expect(useRenderStore.getState().byKey[renderKeyOf(PANEL)].manifest).toBe(MANIFEST)
+  })
+
+  it('returning from SVG to the same URL waits for the newly mounted image to load', async () => {
+    seed({ svg: null, preview: RASTER })
+    await mount()
+    await loadCurrentPng()
+    await act(async () => { seed({ svg: '<svg/>', preview: VECTOR_PREVIEW }) })
+    expect(exact()).toBe(MANIFEST)
+    await act(async () => { seed({ svg: null, preview: RASTER }) })
+    expect(exact()).toBeNull()
+    await loadCurrentPng()
+    expect(exact()).toBe(MANIFEST)
+  })
+
+  it('an aborted old response cannot replace a newer revision image or geometry', async () => {
+    let finishOld!: (blob: Blob) => void
+    previewPngImpl = () => new Promise<Blob>((resolve) => { finishOld = resolve })
+    seed({ svg: null, preview: RASTER })
+    await mount()
+    previewPngImpl = () => Promise.resolve(new Blob(['new']))
+    pngManifest = alternate()
+    await act(async () => { seed({ svg: null, preview: RASTER, rev: 4 }) })
+    await loadCurrentPng()
+    const current = exact()
+    await act(async () => { finishOld(new Blob(['old'])) })
+    expect(exact()).toBe(current)
+    expect(useMountedPngStore.getState().byPanel[PANEL.id].rev).toBe(4)
+  })
+
 })
