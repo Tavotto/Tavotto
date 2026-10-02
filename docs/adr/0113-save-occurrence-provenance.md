@@ -45,7 +45,8 @@ v1 build / playground load 响应增加 `savefig_observations`：
 - `"execution"`：只证得落在执行根内，`path` 为执行根相对路径；沙盒相对路径不冒充项目路径
 - `"unresolved"`：根外或自定义 PathLike 无法无副作用地解析，`path=null`
 
-没有机器绝对路径进入新记录；含绝对路径的别名 stem 同样不发。路径解析只是观察，
+没有机器绝对路径进入新记录；含绝对路径的别名 stem 同样不发。目的地 unresolved 时
+stem 也为 null，不能从调用方已提取的 basename 泄露根外文件名。路径解析只是观察，
 不放松沙盒、写入守卫或认证，不把相对路径映射到「看起来同名」的原件。
 
 `result` 分 `intercepted`（safe / playground 吞掉写盘）、`saved`（native 原调用正常返回）、

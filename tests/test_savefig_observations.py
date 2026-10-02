@@ -267,6 +267,47 @@ def test_absolute_capture_alias_is_not_disclosed(tmp_path):
     assert str(tmp_path) not in json.dumps(report)
 
 
+@pytest.mark.parametrize("kind", ["str", "bytes", "path", "relative"])
+def test_unresolved_destination_does_not_publish_its_derived_stem(tmp_path, monkeypatch, kind):
+    project = tmp_path / "project"
+    project.mkdir()
+    monkeypatch.chdir(project)
+    destination = tmp_path / "private-outside-file.pdf"
+    names = {
+        "str": str(destination),
+        "bytes": bytes(destination),
+        "path": destination,
+        "relative": "../private-outside-file.pdf",
+    }
+    fname = names[kind]
+    ledger = observations(project_root=project)
+    ledger.record(Figure(), fname, figcapture.savefig_stem(fname), {"format": "pdf"})
+    (row,) = ledger.report()["records"]
+    assert row["destination"] == {"scope": "unresolved", "path": None}
+    assert row["stem"] is None
+    assert "private-outside-file" not in json.dumps(ledger.report())
+
+
+@needs_worker
+def test_safe_and_browser_hooks_hide_unresolved_destination_stems(tmp_path):
+    outside = tmp_path / "private-outside-file.pdf"
+    outside.write_bytes(b"original outside source")
+    source = f"import matplotlib.pyplot as plt\nplt.figure().savefig({str(outside)!r})\n"
+    project = tmp_path / "project"
+    write(project, "figure.py", source)
+    for result in (
+        desktop_build(project, "figure.py"),
+        browser_load(source, "figure.py", tmp_path / "browser"),
+    ):
+        (row,) = result["savefig_observations"]["records"]
+        assert row["destination"] == {"scope": "unresolved", "path": None}
+        assert row["stem"] is None
+        assert row["result"] == "intercepted"
+        # This additive observer must not change the old capture contract.
+        assert result["descriptors"][0]["stem"] == "private-outside-file"
+    assert outside.read_bytes() == b"original outside source"
+
+
 @needs_worker
 def test_empty_filename_is_counted_without_changing_legacy_capture(tmp_path):
     source = "import matplotlib.pyplot as plt\nplt.figure().savefig('')\n"

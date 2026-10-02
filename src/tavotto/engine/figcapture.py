@@ -910,13 +910,16 @@ class SavefigObservations:
             if figure_ordinal is None:
                 figure_ordinal = len(self._figures) + 1
                 self._figures.append(weakref.ref(fig))
+            destination = self._destination(fname, options, explicit_format)
             record = {
                 "occurrence": self._observed_count,
                 "figure_ordinal": figure_ordinal,
                 "stem": None
-                if os.path.isabs(stem) or pathlib.PureWindowsPath(stem).is_absolute()
+                if destination["scope"] == "unresolved"
+                or os.path.isabs(stem)
+                or pathlib.PureWindowsPath(stem).is_absolute()
                 else stem,
-                "destination": self._destination(fname, options, explicit_format),
+                "destination": destination,
                 "options": options,
                 "figure_size_inches": size,
                 "figure_dpi": dpi,

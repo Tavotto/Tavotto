@@ -107,6 +107,32 @@ agg.savefig(b'bytes_suffix.pdf')
     ]
 
 
+def test_native_hook_hides_unresolved_stem_without_changing_the_save(user_python, tmp_path):
+    outside = tmp_path / "private-outside-file.pdf"
+    project = tmp_path / "project"
+    script = write(
+        project / "figure.py",
+        f"import matplotlib.pyplot as plt\nplt.figure().savefig({str(outside)!r})\n",
+    )
+    report_path = tmp_path / "report.json"
+    result = run_runner(
+        user_python,
+        bridge.RUNNER_PY,
+        target=script,
+        cwd=str(project),
+        report=report_path,
+        out_dir=tmp_path / "out",
+    )
+    assert result.returncode == 0, result.stderr
+    assert outside.read_bytes().startswith(b"%PDF-")
+    ledger = json.loads(report_path.read_text(encoding="utf-8"))["savefig_observations"]
+    (row,) = ledger["records"]
+    assert row["destination"] == {"scope": "unresolved", "path": None}
+    assert row["stem"] is None
+    assert row["result"] == "saved"
+    assert "private-outside-file" not in json.dumps(ledger)
+
+
 def test_observation_never_adds_native_custom_metadata_getter_calls(user_python, tmp_path):
     body = """\
 import json
