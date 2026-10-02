@@ -1545,6 +1545,9 @@ export default interface Resources {
       "update": {
         "applyFailedRetry": "升级未完成，当前版本未变。可以再点一次「下载并升级」，或查看下方日志排查。",
         "autoCheck": "每天自动检查",
+        "autoCheckRetry": "重新保存",
+        "autoCheckSaveFailed": "未能确认设置已保存。开关仍显示上次确认的值，请重试。",
+        "autoCheckSaving": "正在保存…",
         "available": "有新版本",
         "channelNote": "只查 GitHub Releases 的最新正式版。关掉自动检查就不会联网。",
         "check": "检查更新",

@@ -1,7 +1,14 @@
 import { create } from 'zustand'
-import { t } from '@/i18n'
+import { t, type UiMessage } from '@/i18n'
 import { captureTelemetry } from '@/lib/telemetry'
-import { ApiError, applyUpdate, checkUpdate, patchUpdateSettings, type UpdateStatus } from '@/lib/api'
+import {
+  ApiError,
+  applyUpdate,
+  backendErrorMsg,
+  checkUpdate,
+  patchUpdateSettings,
+  type UpdateStatus,
+} from '@/lib/api'
 import {
   checkDesktopUpdate,
   installDesktopUpdate,
@@ -30,6 +37,10 @@ import { readDismissedUpdate, writeDismissedUpdate } from '@/lib/updateNotice'
 /** 桌面更新走到哪一步；下载是唯一会持续一段时间的阶段，要给进度 */
 export type DesktopPhase = 'idle' | 'checking' | 'downloading' | 'installed'
 
+// A check overlapping a preference write may carry the old auto_check snapshot.
+// Only that field is protected; version/check results still settle normally.
+let autoCheckWriteVersion = 0
+
 interface UpdateState {
   status: UpdateStatus | null
   checking: boolean
@@ -54,6 +65,8 @@ interface UpdateState {
   checkError: string | null
   check: (force?: boolean) => Promise<void>
   apply: () => Promise<void>
+  autoCheckSaving: boolean
+  autoCheckFailure: { value: boolean; message: UiMessage } | null
   setAutoCheck: (v: boolean) => Promise<void>
   /** 对这个版本说「稍后」 */
   dismiss: (version: string) => void
@@ -75,6 +88,8 @@ interface UpdateState {
   desktopCheckedAtMs: number | null
   checkDesktop: () => Promise<void>
   installDesktop: () => Promise<void>
+  relaunching: boolean
+  relaunchFailed: boolean
   relaunch: () => Promise<void>
 }
 
@@ -87,19 +102,32 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
   applyFailed: false,
   dismissedVersion: readDismissedUpdate(),
   checkError: null,
+  autoCheckSaving: false,
+  autoCheckFailure: null,
   desktopPhase: 'idle',
   desktopUpdate: null,
   desktopProgress: null,
   desktopError: null,
   desktopChecked: false,
   desktopCheckedAtMs: null,
+  relaunching: false,
+  relaunchFailed: false,
 
   check: async (force = false) => {
     if (get().checking) return
+    const writeVersion = autoCheckWriteVersion
     set({ checking: true, ...(force ? { checkError: null } : {}) })
     try {
       const status = await checkUpdate(force)
-      set({ status, checkError: null })
+      const current = get()
+      const overlapsWrite = writeVersion !== autoCheckWriteVersion || current.autoCheckSaving
+      set({
+        status:
+          overlapsWrite && current.status
+            ? { ...status, auto_check: current.status.auto_check }
+            : status,
+        checkError: null,
+      })
     } catch (e) {
       // 自动检查失败保持安静（离线是常态，顶栏什么都不显示即可）；
       // 手动点「立即检查」必须有下文——无声无息的按钮和坏掉没有区别。
@@ -138,9 +166,21 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
   },
 
   setAutoCheck: async (v) => {
-    await patchUpdateSettings({ auto_check: v })
-    const status = get().status
-    if (status) set({ status: { ...status, auto_check: v } })
+    if (get().autoCheckSaving || !get().status) return
+    autoCheckWriteVersion++
+    set({ autoCheckSaving: true, autoCheckFailure: null })
+    try {
+      const saved = await patchUpdateSettings({ auto_check: v })
+      const status = get().status
+      if (status) set({ status: { ...status, auto_check: saved.auto_check } })
+    } catch (e) {
+      // Retain the last acknowledged value, not an optimistic toggle. Keep the
+      // requested choice for retry and the descriptor for live language changes.
+      set({ autoCheckFailure: { value: v, message: backendErrorMsg(e) } })
+    } finally {
+      autoCheckWriteVersion++
+      set({ autoCheckSaving: false })
+    }
   },
 
   dismiss: (version) => {
@@ -196,12 +236,19 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
   },
 
   relaunch: async () => {
+    if (get().relaunching || get().desktopPhase !== 'installed') return
+    set({ relaunching: true, relaunchFailed: false, desktopError: null })
     try {
       await relaunchDesktop()
     } catch (e) {
       set({
-        desktopError: e instanceof Error ? e.message : t('update.relaunchFailed', { ns: 'errors' }),
+        relaunchFailed: true,
+        // Native IPC can reject with a string. Diagnostics stay literal; the
+        // recovery instruction is translated by both installed-state surfaces.
+        desktopError: e instanceof Error ? e.message : typeof e === 'string' ? e : null,
       })
+    } finally {
+      set({ relaunching: false })
     }
   },
 }))
