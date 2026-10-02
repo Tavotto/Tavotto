@@ -145,6 +145,13 @@
 - **live-figure 会话**：worker 跑一次脚本（拦截 `Figure.savefig` + `paper_style.save`，
   不写真实文件），Figure 常驻内存；override 直接 mutate artist 再导出带 gid 的
   SVG（dpi≈120 预览）——冷启动秒到分钟级，热态 ~40ms。
+  * **逐次保存的来源观察（ADR 0113）**：三条入口共用 `figcapture.SavefigObservations`，
+    在旧 stem 去重之前记录每次路径保存的执行内序号、Figure 序号、相对目的地与调用时的
+    参数 / 尺寸 / DPI。它不是 Figure 快照，不参与图幅选择；`savefig_calls` 与旧编辑语义不变。
+    每次执行最多 128 条、每条 8192 字节；漏记即 `complete=false`，不许把最后留下的记录
+    当成最后保存。沙盒相对路径不冒充项目路径，根外 / 自定义 PathLike 不猜、不发绝对路径。
+    native 原调用结果分 saved / failed，safe 分 intercepted，stream 不算路径产物。
+    看护 `tests/test_savefig_observations.py`、`tests/bridge/test_bridge_savefig_observations.py`。
   * **savefig 的参数记进捕获描述符（`savefig_calls`，PR #675）**：以前拦截只取
     stem，`bbox_inches` / `pad_inches` / `dpi` / `transparent` 一个都没记。后果（审计
     T14 / T33 实测，教程 Fig1_kinetics）：脚本 `savefig(bbox_inches="tight", pad_inches=0.02)`
@@ -221,3 +228,8 @@
 - 首开由 `workdir.resolve_mode` 按 `databinding` 静态证据决定问不问，问就 `workdir_confirmation_required`，不猜不就近不自动切
 - `import paper_style` 留在 try 里、排在 argv 换好之后且在 SystemExit 保护内
 - `sys.argv` 换成脚本自己的
+
+保存观察的 size/DPI 只经脚本运行前捕获的标准类型/描述符和原始数字存储；不得额外调用
+用户 Figure getter/数值转换。自定义或无法确定的元数据为 null、账本 incomplete，仍保留
+occurrence/figure ordinal/result。看护：`tests/bridge/test_bridge_savefig_observations.py` 的
+真实 subclass/实例方法/类属性 getter 次数、PNG 字节与异常行为对拍。

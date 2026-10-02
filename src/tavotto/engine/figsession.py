@@ -211,6 +211,7 @@ class LiveFigureSession:
         #: stem -> 认领它的 savefig 调用（`figcapture.record_savefig_call` 记账；None =
         #: 存过盘但参数没观察到）。只记不用：渲染与几何一概不读它（tight 图幅的决定之前）。
         self.savefig_calls: dict[str, list | None] = {}
+        self.savefig_observations = figcapture.SavefigObservations()
         #: stem -> 与 `savefig_calls[stem]` 逐项对齐的 `bbox_extra_artists` **对象**（进不了 JSON，
         #: 只活在这个进程里；算图幅时要把同一批 artist 交回 savefig，ADR 0098 §一）
         self.savefig_extras: dict[str, list] = {}

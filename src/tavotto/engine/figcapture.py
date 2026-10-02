@@ -144,18 +144,23 @@ from __future__ import annotations
 import builtins
 import dataclasses
 import hashlib
+import inspect
 import io
 import json
+import math
 import os
 import pathlib
 import re
 import sys
+import weakref
 
 __all__ = [
     "savefig_stem",
     "savefig_call",
     "record_savefig_call",
     "savefig_calls_of",
+    "SavefigObservations",
+    "savefig_metadata_reader",
     "frame_call",
     "frame_extra_artists",
     "FRAME_ATTR",
@@ -224,6 +229,11 @@ _SOURCES = (SOURCE_SAVEFIG, SOURCE_PYPLOT)
 #: 这类例外本身也有上限：总数最多 `MAX_SAVEFIG_CALLS_HARD`。
 MAX_SAVEFIG_CALLS = 8
 MAX_SAVEFIG_CALLS_HARD = 2 * MAX_SAVEFIG_CALLS
+
+#: 每次执行的观察预算，独立于旧的逐 stem 调用表。超限必须说历史不完整，
+#: 不能把「最后一条留下的记录」当成「磁盘上最后一次保存」。不保留 Figure 强引用。
+MAX_SAVEFIG_OBSERVATIONS = 128
+MAX_SAVEFIG_OBSERVATION_BYTES = 8192
 
 #: 根 Figure 上挂图幅（frame，ADR 0098）四边外伸的属性名。唯一的写入方是
 #: `pathgeom.set_frame`（它那边的 `FRAME_ATTR` 与这里是同一个字面量，用例钉住）。
@@ -793,6 +803,188 @@ def savefig_calls_of(calls: dict, stem: str, capture_source: str):
         return []
     seq = calls.get(stem)
     return None if seq is None else list(seq)
+
+
+def savefig_metadata_reader(mfigure):
+    """Capture trusted storage/types before script code; never invoke Figure getters."""
+    try:
+        module = object.__getattribute__(mfigure, "__dict__")
+        figure_type, bbox_type = module["Figure"], module["Bbox"]
+        array_type = object.__getattribute__(module["np"], "__dict__")["ndarray"]
+        figure_fields, bbox_fields = ("get_size_inches", "dpi"), ("p1", "get_points")
+        figure_access = figure_fields + (
+            "bbox_inches",
+            "_dpi",
+            "_original_dpi",
+            "__getattribute__",
+            "__getattr__",
+        )
+        bbox_access = bbox_fields + ("_points", "__getattribute__", "__getattr__")
+        missing = object()
+        figure_methods = [
+            inspect.getattr_static(figure_type, key, missing) for key in figure_access
+        ]
+        bbox_methods = [inspect.getattr_static(bbox_type, key, missing) for key in bbox_access]
+
+        if any(method is missing for method in figure_methods[:2] + bbox_methods[:2]):
+            return None
+    except Exception:  # noqa: BLE001 - unavailable observation setup must not stop a script
+        return None
+
+    def read(fig):
+        if type(fig) is not figure_type:
+            return None
+        attrs = object.__getattribute__(fig, "__dict__")
+        if any(key in attrs for key in figure_fields) or any(
+            inspect.getattr_static(figure_type, key, missing) is not original
+            for key, original in zip(figure_access, figure_methods)
+        ):
+            return None
+        bbox = attrs.get("bbox_inches")
+        if type(bbox) is not bbox_type:
+            return None
+        box_attrs = object.__getattribute__(bbox, "__dict__")
+        if any(key in box_attrs for key in bbox_fields) or any(
+            inspect.getattr_static(bbox_type, key, missing) is not original
+            for key, original in zip(bbox_access, bbox_methods)
+        ):
+            return None
+        points = box_attrs.get("_points")
+        if type(points) is not array_type or points.shape != (2, 2) or points.dtype.kind != "f":
+            return None
+        # Figure.get_size_inches returns bbox_inches.p1, not the bbox width/height.
+        return points[1].tolist(), attrs.get("_dpi"), attrs.get("_original_dpi", attrs.get("_dpi"))
+
+    return read
+
+
+class SavefigObservations:
+    """按保存发生次序记事实，不参与 stem 捕获、图幅选择或编辑。
+
+    occurrence / figure_ordinal 只在**这次执行**内有意义，不是跨重放身份，更不是
+    Figure 快照。旧的 savefig_calls 保持原样；这里在其去重之前观察，所以另一张
+    同名图与同一张图的后续保存都不会消失。没有额外 draw，也不复制 artist。
+    """
+
+    def __init__(self, *, project_root=None, execution_root=None, metadata=None):
+        self._roots = [
+            (scope, os.path.realpath(root))
+            for scope, root in (("project", project_root), ("execution", execution_root))
+            if root is not None
+        ]
+        self.metadata = metadata
+        self._records: list[dict] = []
+        self._figures: list = []
+        self._observed_count = 0
+        self._complete = True
+
+    def record(self, fig, fname, stem, call, *, explicit_format=False, backend=None):
+        """返回待完成记录的下标。失败只标不完整，不改变原 savefig 的返回 / 异常。
+
+        call 是已有 savefig_call 生成的 JSON 值；不再次解析用户参数或调用 repr。
+        stream 不算磁盘产物。native 调用后再 complete，safe 拦截后标 intercepted。
+        """
+        if not savefig_targets_path(fname):
+            return None
+        self._observed_count += 1
+        if self._observed_count > MAX_SAVEFIG_OBSERVATIONS:
+            self._complete = False
+            return None
+        if call is None:
+            self._complete = False  # 旧入口没有解析参数；不为观察而新增任意 repr / 用户代码调用
+        try:
+            options = dict(call or {})  # 下方 JSON 往返复制嵌套值；目的地判据只修正这份格式事实
+            try:
+                values = self.metadata(fig) if self.metadata is not None else None
+                if values is None:
+                    raise ValueError("unknown figure metadata")
+                size = [self._number(value) for value in values[0]]
+                dpi, original_dpi = (self._number(value) for value in values[1:])
+            except Exception:  # noqa: BLE001 - custom metadata must not affect a native save
+                size = dpi = original_dpi = None
+                self._complete = False
+            resolved_dpi = original_dpi if options.get("dpi") == "figure" else options.get("dpi")
+            figure_ordinal = next(
+                (i + 1 for i, ref in enumerate(self._figures) if ref() is fig), None
+            )
+            if figure_ordinal is None:
+                figure_ordinal = len(self._figures) + 1
+                self._figures.append(weakref.ref(fig))
+            record = {
+                "occurrence": self._observed_count,
+                "figure_ordinal": figure_ordinal,
+                "stem": None
+                if os.path.isabs(stem) or pathlib.PureWindowsPath(stem).is_absolute()
+                else stem,
+                "destination": self._destination(fname, options, explicit_format),
+                "options": options,
+                "figure_size_inches": size,
+                "figure_dpi": dpi,
+                "resolved_dpi": resolved_dpi,
+                "backend": "default" if backend is None else "custom",
+                "result": "pending",
+            }
+            # 只复制已知 JSON 值；没有 default=str，未知值不能执行任意 repr。
+            encoded = json.dumps(record, ensure_ascii=False, allow_nan=False).encode("utf-8")
+            # 完成时 pending → intercepted 最多增加 4 字节，预算连这一步一起算。
+            if len(encoded) + 4 > MAX_SAVEFIG_OBSERVATION_BYTES:
+                self._complete = False
+                return None
+            self._records.append(json.loads(encoded))
+            return len(self._records) - 1
+        except Exception:  # noqa: BLE001 - 观察失败不能改变用户保存的行为，也不记录用户对象 / 路径
+            self._complete = False
+            return None
+
+    @staticmethod
+    def _number(value):
+        if type(value) not in (int, float):
+            raise ValueError("unknown numeric metadata")
+        number = float(value)
+        if not math.isfinite(number):
+            raise ValueError("non-finite save observation")
+        return number
+
+    def _destination(self, fname, call, explicit_format):
+        unknown = {"scope": "unresolved", "path": None}
+        # 自定义 PathLike 的 __fspath__ 可能有副作用；观察器不多调用它一次。
+        if type(fname) not in (str, bytes, pathlib.PosixPath, pathlib.WindowsPath):
+            if not explicit_format:
+                call["format"] = None
+            return unknown
+        name = os.fsdecode(fname)
+        if not explicit_format:
+            if type(fname) is bytes:
+                # print_figure 只对 str 推后缀 / 补后缀，bytes 目的地原样、格式问 canvas。
+                call["format"] = None
+            elif not os.path.splitext(name)[1].lstrip("."):
+                # 缺省格式由 canvas.get_default_filetype 决定，不一定是 savefig.format；
+                # 不额外调用用户可重载的方法，也不把 rc 的提示当成已确定的文件名。
+                call["format"] = None
+                return unknown
+        target = os.path.realpath(name)  # 必须是调用那一刻的 cwd；不推测原脚本的运行目录
+        for scope, root in self._roots:
+            try:
+                if os.path.commonpath((target, root)) == root:
+                    return {
+                        "scope": scope,
+                        "path": os.path.relpath(target, root).replace(os.sep, "/"),
+                    }
+            except ValueError:  # Windows 不同盘符
+                continue
+        return unknown  # 根外路径不发给调用方，不把 basename 当成项目文件身份
+
+    def complete(self, index, result):
+        if index is not None:
+            self._records[index]["result"] = result
+
+    def report(self):
+        return {
+            "version": 1,
+            "complete": self._complete,
+            "observed_count": self._observed_count,
+            "records": json.loads(json.dumps(self._records)),
+        }
 
 
 def fallback_stems(taken, script_stem: str, count: int) -> list[str]:
