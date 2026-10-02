@@ -4738,7 +4738,18 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
                 # ② 刻度定位与刻度文字（它们按当前状态重算，见 `_must_replay`）；
                 # ③ 别名组里被同组其他成员盖掉的（见 ALIAS_GROUPS / dirty_groups）
                 if (
-                    not (geometry_moved and prop in _FRAC_ANCHORED)
+                    not (
+                        geometry_moved
+                        and (
+                            prop in _FRAC_ANCHORED
+                            # 裁切框的外伸固定为英寸：改 size_mm（含还原）后，F→G
+                            # 的比例变了，旧 axes.position 的 G 分数必须重新换算。
+                            # figsize / 无 frame 的换算是恒等，保留原来的跳过路径。
+                            or (
+                                prop == "position" and pathgeom.frame_outsets(state.fig) is not None
+                            )
+                        )
+                    )
                     and not (frame_toggled and prop in _FRAME_RELATIVE)
                     and not _must_replay(prop, artist, state)
                     and key not in dirty_groups
