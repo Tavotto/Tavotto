@@ -94,7 +94,11 @@ _REAL_SAVEFIG = mfigure.Figure.savefig
 
 def _patched_savefig(self, fname, *args, **kwargs):
     """与 worker._patched_savefig 同语义：按 stem 捕获，不写用户的输出文件；写进文件对象的透传。"""
-    if not _intercept or not figcapture.savefig_targets_path(fname):
+    if not _intercept:
+        return _REAL_SAVEFIG(self, fname, *args, **kwargs)
+    if not figcapture.savefig_targets_path(fname):
+        if _ACTIVE is not None:
+            _ACTIVE.passthrough_figures.add(id(self))
         return _REAL_SAVEFIG(self, fname, *args, **kwargs)
     stem = figcapture.savefig_stem(fname)
     if stem:
@@ -192,6 +196,7 @@ class BrowserSession:
         self.capture_source: dict[str, str] = {}  # stem → figcapture.SOURCE_*
         #: stem → 认领它的 savefig 调用（与 worker 同一条记账：`figcapture.record_savefig_call`）
         self.savefig_calls: dict[str, list | None] = {}
+        self.passthrough_figures: set[int] = set()
         #: stem → 与 `savefig_calls[stem]` 逐项对齐的 `bbox_extra_artists` 对象（算图幅用，ADR 0098）
         self.savefig_extras: dict[str, list] = {}
         self.states: dict[str, overrides_mod.FigState] = {}
@@ -290,6 +295,9 @@ class BrowserSession:
                 del self.capture[stem]
                 self.capture_source.pop(stem, None)
 
+        pathgeom.stabilize_captured_tight_layouts(
+            self.capture, self.savefig_calls, self.passthrough_figures
+        )
         # 图幅（ADR 0098）：与桌面同一段逻辑（`pathgeom.establish_frame`）；虚拟 FS 里没有
         # 原件，定义图幅的是第一次调用。算不出就按 figsize，与以前一样。
         for stem, fig in self.capture.items():

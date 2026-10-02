@@ -95,6 +95,8 @@
   **与寄生轴（#217）不冲突**：布局引擎在 `Figure.draw` 最前面跑（钉住宿主），
   宿主的 `draw()` 随后把自己的 rect 推给寄生轴（寄生跟着走）；寄生轴自己的
   position 照旧是死开关（reason `parasite_host_rect`）。
+  单次被拦截保存的标准 tight 引擎另有首轮种子重放，范围与边界只见
+  `figure-capture-and-execution.md`；它不替代本节的用户位置 pin。
 - **拖过的文字（`("text", "pos_frac")`）落在写下的 figure 分数上（2026-09-25，QA GEO-B1 / GEO-B2）**：
   ① 注释文字的换算按它自己的 `anncoords` **现算**（`_get_xy_transform`），不许用 `get_transform()`——
   那是上一次 draw 冻下来的快照，预览 SVG 按 72 dpi 画、manifest 按 figure dpi 画，拿快照逆算会按

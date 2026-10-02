@@ -171,6 +171,18 @@
     脚本这几处都回到原来那一行，逐字节不变。算不出来的原因挂在 Figure 上、manifest 报
     `frame_unavailable`（与「本来就不裁」分得开）。native 里屏障之后才第一次存盘的图，在下一个
     屏障 `rebase()` 重放之前补上图幅。看护 `tests/test_savefig_frame.py`。
+  * **单次被拦截的持久 tight 布局**：`pathgeom.stabilize_captured_tight_layouts`
+    在 safe worker / browser 的脚本结束后、图幅与缩略图的第一次绘制前，记下
+    subplot 参数。标准 `TightLayoutEngine` 的每次执行都从这份种子开始，再委派给
+    **原引擎实例**；不删除 manifest 准备绘制，也不关闭后续自动布局。第一次布局
+    会改变自动刻度密度，拿它的结果再做一轮会缩短刻度文字、重算边距，因而「未编辑」
+    也挪图。字号、文字、locator、图幅大小仍取当前值；外部明确改了 subplot 参数，
+    以区别于上一次引擎结果的新参数更新种子；用户的 axes 位置 pin 仍最后落回。
+    **范围窄且明示**：只处理同一 Figure 恰好一次已观察、被拦截的 savefig；多次保存、
+    多 stem、文件对象透传、native、手动摆位或不能用 subplot 参数表达的轴、未知/自定义
+    布局引擎都保持旧行为。排不下时还原临时种子，不覆盖原引擎本会保留的落位。它消除的是多余
+    布局轮次，不承诺旧磁盘图与当前脚本、字体环境或 PDF/PNG/SVG 渲染器逐像素相同。
+    看护 `tests/test_initial_tight_layout.py`。
   * **`paper_style.save` 捷径执行用户那份 `save`（ADR 0098 §四；也是 #667「写回原脚本」设计里点名的前置修正）**：
     以前整个换成只登记 stem 的 lambda，里面的 savefig 从没执行。现在先按 `stem` 认领，再调用
     原来的 `save`，其间每一次 savefig 被拦截、不落盘、记到这个 `stem` 名下（worker 的

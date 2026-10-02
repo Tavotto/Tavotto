@@ -47,16 +47,21 @@ Peucker 抽稀，超过 `_MAX_POINTS` 就按 `_TOL_GROWTH` 逐档放大容差重
 from __future__ import annotations
 
 import sys
+import weakref
 
 import numpy as np
+from matplotlib import cbook
 from matplotlib.collections import Collection, PathCollection, PolyCollection, QuadMesh
 from matplotlib.colors import to_rgba
 from matplotlib.figure import SubFigure
+from matplotlib.layout_engine import TightLayoutEngine
 from matplotlib.lines import Line2D, _mark_every_path
 from matplotlib.markers import MarkerStyle
 from matplotlib.patches import FancyArrowPatch, Patch
 from matplotlib.path import Path
 from matplotlib.transforms import Affine2D, Bbox
+
+from axestraversal import ordered_axes
 
 #: RDP 抽稀容差（display 像素）。0.4px 在任何缩放下都看不出偏差，
 #: 而一条 5000 点的谱线通常能掉到两三百点。
@@ -84,6 +89,115 @@ TOTAL_BUDGET = 8000
 MAX_MARKERS = 500
 #: 坐标保留位数（figure 分数）。5 位 ≈ 600px 图上 0.006px，远细于抽稀容差。
 _ND = 5
+
+
+def stabilize_captured_tight_layouts(capture, savefig_calls, passthrough_figures=()) -> None:
+    """Replay a supported, suppressed save's tight layout from its script seed.
+
+    A first save can change tick density. Feeding its resulting subplot parameters
+    into the next layout pass then changes margins, even with no edits. Manifest
+    preparation, SVG output and later previews must not add those layout iterations.
+
+    This is deliberately narrower than disk-artifact equivalence: exactly one
+    observed, suppressed save for this Figure, and Matplotlib's standard persistent
+    tight engine. Multiple outputs, passthrough saves, native sessions, custom layout
+    engines and figures without an observed save retain their existing semantics.
+    PDF/PNG/SVG renderer metrics are not made identical by this policy.
+    """
+    by_figure = {}
+    for stem, fig in capture.items():
+        item = by_figure.setdefault(id(fig), (fig, []))
+        item[1].append(savefig_calls.get(stem))
+    for fig, calls in by_figure.values():
+        if id(fig) in passthrough_figures or len(calls) != 1:
+            continue
+        if calls[0] is None or len(calls[0]) != 1:
+            continue
+        _stabilize_tight_layout(fig)
+
+
+def _subplot_parameters(fig):
+    return {
+        name: getattr(fig.subplotpars, name)
+        for name in ("left", "bottom", "right", "top", "wspace", "hspace")
+    }
+
+
+def _stabilize_tight_layout(fig) -> None:
+    engine = fig.get_layout_engine()
+    # A subclass can carry state or override execute. Replaying subplot parameters
+    # cannot reproduce that arbitrary state; leave the original engine untouched.
+    if type(engine) is not TightLayoutEngine:
+        return
+    axes, _, _ = ordered_axes(fig)
+    for ax in axes:
+        ss = getattr(ax, "get_subplotspec", lambda: None)()
+        if ss is None or ax.get_figure() is not fig:
+            return
+        if not np.allclose(
+            ax.get_position(original=True).bounds,
+            ss.get_position(fig).bounds,
+            rtol=0,
+            atol=1e-10,
+        ):
+            return  # A manually placed source axis is not a subplot-parameter seed.
+    try:
+        hash(fig)
+    except TypeError:  # A custom Figure can be unhashable; do not change its semantics.
+        return
+    seeds = engine.__dict__.get("_mm_tight_layout_seeds")
+    if seeds is None:
+        if getattr(engine.execute, "__func__", None) is not TightLayoutEngine.execute:
+            return  # An instance-level custom execute is not the standard engine either.
+        seeds = weakref.WeakKeyDictionary()
+        engine._mm_tight_layout_seeds = seeds  # noqa: SLF001
+        native_execute = engine.execute
+
+        def execute(f):
+            state = seeds.get(f)
+            if state is None:
+                return native_execute(f)
+            current = _subplot_parameters(f)
+            # A caller can deliberately change subplot parameters between renders.
+            # Only our own last result is reset; an external change becomes the new
+            # seed. Figure size, labels, fonts and locators are always read live by
+            # the same original layout engine, so legitimate edits still reflow.
+            previous = state[0] if state[1] is None else state[1]
+            if current != previous:
+                state[0] = current
+            positions = [
+                (ax, ax.get_position(original=True), ax._position.frozen())  # noqa: SLF001
+                for ax in ordered_axes(f)[0]
+            ]
+            native_adjust = f.subplots_adjust
+            applied = completed = False
+
+            def adjusted(*args, **kwargs):
+                nonlocal applied
+                result = native_adjust(*args, **kwargs)
+                applied = True
+                return result
+
+            try:
+                native_adjust(**state[0])
+                with cbook._setattr_cm(f, subplots_adjust=adjusted):
+                    result = native_execute(f)
+                completed = True
+                return result
+            finally:
+                if not completed or not applied:
+                    # Tight layout can legitimately decline an impossible layout.
+                    # Our temporary seed must not replace the previous visible axes
+                    # in that case; native execute would have left them untouched.
+                    f.subplotpars.update(**current)
+                    for ax, original, active in positions:
+                        ax._set_position(original, which="original")  # noqa: SLF001
+                        ax._set_position(active, which="active")  # noqa: SLF001
+                state[1] = _subplot_parameters(f)
+
+        engine.execute = execute
+    if fig not in seeds:
+        seeds[fig] = [_subplot_parameters(fig), None]
 
 
 class Budget:
