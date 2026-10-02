@@ -490,10 +490,21 @@ class LiveFigureSession:
         row = self.savefig_observations.observation(observation)
         if row is None or row["destination"]["scope"] not in ("project", "execution"):
             return
-        if os.path.normcase(row["destination"]["path"]) != os.path.normcase(
-            self.artifact_source["source_id"]
-        ):
-            return
+        destination = row["destination"]["path"]
+        selected = self.artifact_source["source_id"]
+        if destination != selected:
+            if self.frame_project_root is None:
+                return
+            try:
+                root = Path(self.frame_project_root).resolve()
+                candidate = (root / destination).resolve()
+                candidate.relative_to(root)
+                # Darwin normcase does not fold case; Windows may have case-sensitive
+                # directories. Only actual in-project file identity admits an alias.
+                if not candidate.samefile(root / selected):
+                    return
+            except (OSError, ValueError, RuntimeError):
+                return
         self._artifact_matches += 1
         if self._artifact_matches == 1:
             extras = tuple(extra_artists) if type(extra_artists) in (list, tuple) else extra_artists

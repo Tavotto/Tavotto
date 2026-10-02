@@ -385,3 +385,127 @@ def test_real_selected_api_preserves_other_registration_and_refuses_writeback(
     finally:
         for project_id in list(app_module.PROJECTS):
             app_module.close_project(project_id, wait=True)
+
+
+@needs_worker
+@pytest.mark.parametrize("cwd_mode", ["sandbox", "project"])
+@pytest.mark.parametrize("repeat", [False, True])
+def test_selected_directory_case_alias_uses_filesystem_identity(
+    tmp_path, monkeypatch, cwd_mode, repeat
+):
+    root = project(tmp_path)
+    directory = root / "Figures"
+    directory.mkdir()
+    selected = directory / "same.png"
+    (root / "same.png").rename(selected)
+    original = selected.read_bytes()
+    alias = root / "figures"
+    if not alias.exists():
+        # On case-sensitive hosts exercise the same-file branch using a real alias.
+        # Default macOS/Windows volumes already resolve the case-only spelling.
+        try:
+            alias.symlink_to(directory, target_is_directory=True)
+        except OSError as exc:
+            pytest.skip(f"Directory aliases unavailable: {exc}")
+    assert alias.samefile(directory)
+    source = SOURCE.replace("LAYOUT", "").replace("'same.png'", "'figures/same.png'")
+    if repeat:
+        source = source.replace(
+            "plt.close('all')", "fig.savefig('Figures/same.png', dpi=100)\nplt.close('all')"
+        )
+    (root / "figure.py").write_text(source, encoding="utf-8")
+    monkeypatch.setattr(pool.workdir, "mode_for", lambda _: cwd_mode)
+    worker = pool.one_shot(
+        "figure.py", str(root), "__main__", artifact_source=context(root, "Figures/same.png")
+    )
+    try:
+        if repeat:
+            with pytest.raises(pool.WorkerError) as error:
+                worker.ensure_built()
+            assert error.value.code == "artifact_source_unavailable"
+            assert error.value.extra["reason"] == "save_ambiguous"
+        else:
+            result = worker.ensure_built()
+            probe = result["artifact_probe"]
+            artifactcontext.validate_candidate(
+                selected, Path(probe["initialized"]), probe["context"]
+            )
+            assert worker.override("same", [], inline_svg=True)["manifest"]["size_mm"] == [
+                101.6,
+                76.2,
+            ]
+        assert selected.read_bytes() == original
+    finally:
+        pool.discard(worker)
+
+
+@needs_worker
+@pytest.mark.parametrize("other_exists", [False, True])
+def test_selected_case_spelling_never_guesses_missing_or_distinct_files(
+    tmp_path, monkeypatch, other_exists
+):
+    root = project(tmp_path)
+    directory = root / "Figures"
+    directory.mkdir()
+    selected = directory / "same.png"
+    (root / "same.png").rename(selected)
+    original = selected.read_bytes()
+    other = root / "figures"
+    if other.exists():
+        pytest.skip("This volume identifies the two directory spellings as one directory")
+    if other_exists:
+        other.mkdir()
+        # Even identical source pixels do not make distinct case-sensitive paths one file.
+        (other / "same.png").write_bytes(original)
+        assert not (other / "same.png").samefile(selected)
+    (root / "figure.py").write_text(
+        SOURCE.replace("LAYOUT", "").replace("'same.png'", "'figures/same.png'"),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(pool.workdir, "mode_for", lambda _: "sandbox")
+    worker = pool.one_shot(
+        "figure.py", str(root), "__main__", artifact_source=context(root, "Figures/same.png")
+    )
+    try:
+        with pytest.raises(pool.WorkerError) as error:
+            worker.ensure_built()
+        assert error.value.code == "artifact_source_unavailable"
+        assert error.value.extra["reason"] == "destination_unresolved"
+        assert selected.read_bytes() == original
+        if other_exists:
+            assert (other / "same.png").read_bytes() == original
+    finally:
+        pool.discard(worker)
+
+
+@needs_worker
+def test_selected_execution_alias_cannot_resolve_outside_project(tmp_path, monkeypatch):
+    root = tmp_path / "project"
+    root.mkdir()
+    project(root)
+    selected = root / "same.png"
+    original = selected.read_bytes()
+    external = tmp_path / "external"
+    external.mkdir()
+    try:
+        (external / "same.png").hardlink_to(selected)
+        (root / "alias").symlink_to(external, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"Filesystem aliases unavailable: {exc}")
+    assert (root / "alias" / "same.png").samefile(selected)
+    (root / "figure.py").write_text(
+        SOURCE.replace("LAYOUT", "").replace("'same.png'", "'alias/same.png'"),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(pool.workdir, "mode_for", lambda _: "sandbox")
+    worker = pool.one_shot(
+        "figure.py", str(root), "__main__", artifact_source=context(root, "same.png")
+    )
+    try:
+        with pytest.raises(pool.WorkerError) as error:
+            worker.ensure_built()
+        assert error.value.code == "artifact_source_unavailable"
+        assert error.value.extra["reason"] == "destination_unresolved"
+        assert selected.read_bytes() == original
+    finally:
+        pool.discard(worker)

@@ -245,7 +245,8 @@ occurrence/figure ordinal/result。看护：`tests/bridge/test_bridge_savefig_ob
   活跃布局、脚本留下的 Python 线程、额外 bbox artists、自定义渲染钩子、locale/TeX/
   外部字体、其它 artist 家族拒绝；不序列化 Figure，不重放保存历史。
 - 完整保存账本里必须有唯一的完整路径匹配，且属于已捕获 Figure。执行目录相对路径
-  只是候选，不能按 stem/basename 猜。重复覆盖、未知目的地/格式/backend 拒绝。
+  只是候选，不能按 stem/basename 猜。拼写不同只在解析后仍位于项目内、且文件系统确认
+  是同一个文件时视为别名；不按平台或统一小写猜测卷的大小写语义。重复覆盖、未知目的地/格式/backend 拒绝。
 - 先按该次保存的 DPI/crop 定图幅，再由**初始化后、任何 patch 之前**的源格式候选验证
   实际文件的像素/图幅；不另画 pre-instrument 探针。PDF 经父进程 pdfbackend，科学 worker
   不新增 PDF 库。32 MiB、1600 万像素、单页 PDF 与既有 worker/renderer 超时是硬界。
