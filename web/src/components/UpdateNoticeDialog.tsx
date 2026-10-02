@@ -6,6 +6,7 @@ import { useNativeSessionStore } from '@/store/nativeSessionStore'
 import { useTelemetryStore } from '@/store/telemetryStore'
 import { useUpdateStore } from '@/store/updateStore'
 import { InlineWarning } from './settings/SettingRow'
+import { UpdateRestartError } from './UpdateRestartError'
 import { Button } from './ui/Button'
 import { Dialog } from './ui/Dialog'
 
@@ -39,20 +40,30 @@ export function UpdateNoticeDialog() {
 
   const { version, kind } = notice
   const later = () => store.dismiss(version)
-  const busy = store.desktopPhase === 'downloading' || store.applying
+  const busy = store.desktopPhase === 'downloading' || store.applying || store.relaunching
 
   /* ------------------------------ 内容 ------------------------------ */
   let body: React.ReactNode
   let footer: React.ReactNode
 
   if (kind === 'desktop' && store.desktopPhase === 'installed') {
-    body = <p className="text-xs leading-relaxed text-ink-2">{tt('installed', { version })}</p>
+    body = (
+      <div className="flex flex-col gap-2">
+        <p className="text-xs leading-relaxed text-ink-2">{tt('installed', { version })}</p>
+        {store.relaunchFailed && <UpdateRestartError detail={store.desktopError} />}
+      </div>
+    )
     footer = (
       <>
-        <Button variant="secondary" onClick={later}>
+        <Button data-update-dismiss variant="secondary" onClick={later} disabled={store.relaunching}>
           {tt('relaunchLater')}
         </Button>
-        <Button variant="primary" onClick={() => void store.relaunch()}>
+        <Button
+          data-update-relaunch
+          variant="primary"
+          onClick={() => void store.relaunch()}
+          loading={store.relaunching}
+        >
           {tt('relaunch')}
         </Button>
       </>

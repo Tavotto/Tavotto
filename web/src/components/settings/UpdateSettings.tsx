@@ -1,10 +1,11 @@
 import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
-import { t as translate } from '@/i18n'
+import { formatMessage, t as translate } from '@/i18n'
 import { formatDateTime } from '@/i18n/format'
 import type { UpdateStatus } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { useUpdateStore } from '@/store/updateStore'
+import { UpdateRestartError } from '../UpdateRestartError'
 import { Button } from '../ui/Button'
 import { Toggle } from '../ui/Toggle'
 import {
@@ -73,6 +74,8 @@ export function UpdateSettings() {
     check,
     apply,
     setAutoCheck,
+    autoCheckSaving,
+    autoCheckFailure,
   } = useUpdateStore()
   useEffect(() => {
     if (!status) void check(false)
@@ -85,14 +88,37 @@ export function UpdateSettings() {
     <SettingSection>
       {/* 标签自己就是那句说明（「每天自动检查」），不在下面再复述一遍（全面打磨 D35）；
           开关的名字用渲染那行可见文字的同一份，不另写一句同义的 */}
-      <SettingRow label={st('update.autoCheck')} controlId="setting-update-auto">
+      <SettingRow
+        data-update-auto
+        label={st('update.autoCheck')}
+        controlId="setting-update-auto"
+        status={autoCheckSaving ? st('update.autoCheckSaving') : undefined}
+      >
         <Toggle
           id="setting-update-auto"
           aria-labelledby={settingRowLabelId('setting-update-auto')}
           checked={status?.auto_check ?? true}
+          disabled={autoCheckSaving || !status}
           onChange={(v) => void setAutoCheck(v)}
         />
       </SettingRow>
+
+      {autoCheckFailure && (
+        <div data-update-auto-error className="flex flex-col items-start gap-1.5">
+          <InlineWarning tone="danger">
+            {st('update.autoCheckSaveFailed')} {formatMessage(autoCheckFailure.message)}
+          </InlineWarning>
+          <Button
+            data-update-auto-retry
+            variant="secondary"
+            size="sm"
+            onClick={() => void setAutoCheck(autoCheckFailure.value)}
+            disabled={autoCheckSaving}
+          >
+            {st('update.autoCheckRetry')}
+          </Button>
+        </div>
+      )}
 
       <SettingRow
         label={st('update.check')}
@@ -212,6 +238,8 @@ function DesktopUpdateSettings({ status }: { status: UpdateStatus }) {
     checkDesktop,
     installDesktop,
     relaunch,
+    relaunching,
+    relaunchFailed,
   } = useUpdateStore()
   useEffect(() => {
     if (!desktopChecked) void checkDesktop()
@@ -239,7 +267,7 @@ function DesktopUpdateSettings({ status }: { status: UpdateStatus }) {
         </Button>
       </SettingRow>
 
-      {desktopError && (
+      {desktopError && !relaunchFailed && (
         <div className="flex flex-col gap-1">
           <InlineWarning tone="danger">{desktopError}</InlineWarning>
           <a
@@ -267,11 +295,19 @@ function DesktopUpdateSettings({ status }: { status: UpdateStatus }) {
           )}
 
           {desktopPhase === 'installed' ? (
-            <div className="flex items-center gap-2">
-              <Button variant="primary" onClick={() => void relaunch()}>
-                {st('update.relaunch')}
-              </Button>
-              <span className="text-xs text-ink-2">{st('update.installedHint')}</span>
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center gap-2">
+                <Button
+                  data-update-relaunch
+                  variant="primary"
+                  onClick={() => void relaunch()}
+                  loading={relaunching}
+                >
+                  {st('update.relaunch')}
+                </Button>
+                <span className="text-xs text-ink-2">{st('update.installedHint')}</span>
+              </div>
+              {relaunchFailed && <UpdateRestartError detail={desktopError} />}
             </div>
           ) : desktopPhase === 'downloading' ? (
             <div className="flex flex-col gap-1">

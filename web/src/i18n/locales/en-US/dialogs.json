@@ -1199,6 +1199,9 @@
     "update": {
       "applyFailedRetry": "The upgrade didn’t finish, so your current version is unchanged. You can press “Download and upgrade” again, or read the log below.",
       "autoCheck": "Check daily",
+      "autoCheckRetry": "Retry saving",
+      "autoCheckSaveFailed": "Couldn’t confirm this setting was saved. The switch shows the last confirmed value. Try again.",
+      "autoCheckSaving": "Saving…",
       "available": "Update available",
       "channelNote": "Checks the latest stable GitHub release only. With automatic checks off, nothing goes online.",
       "check": "Check for updates",
