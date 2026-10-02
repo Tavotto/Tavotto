@@ -64,7 +64,7 @@ import {
   type ExportOutput,
   type PanelInfo,
 } from "@/lib/api";
-import { msg, t as translate } from "@/i18n";
+import { formatMessage, msg, t as translate } from "@/i18n";
 import { emitActivity } from "@/lib/activity";
 import { useHtmlMarkup } from "@/lib/useHtmlMarkup";
 import {
@@ -132,6 +132,7 @@ import { useRuntimeAssetStore } from "@/store/runtimeAssetStore";
 import { useSelectionStore } from "@/store/selectionStore";
 import {
   cancelCurrentExport,
+  refreshExportStatus,
   prepareExport,
   runExport,
   useExportStore,
@@ -229,6 +230,10 @@ export function ExportDialog() {
   const job = useExportStore((s) => s.job);
   const running = useExportStore((s) => s.running);
   const startError = useExportStore((s) => s.startError);
+  const pollError = useExportStore((s) => s.pollError);
+  const refreshing = useExportStore((s) => s.refreshing);
+  const cancelError = useExportStore((s) => s.cancelError);
+  const cancelState = useExportStore((s) => s.cancelState);
   const editedDuringExport = useExportStore((s) => s.editedDuringExport);
 
   const [formats, setFormats] = useState<string[]>(
@@ -912,10 +917,12 @@ export function ExportDialog() {
             <Button
               variant="secondary"
               size="md"
+              data-export-cancel
+              disabled={!job || cancelState !== "idle"}
               onClick={() => void cancelCurrentExport()}
             >
               <X size={ICON_SIZE.md} />
-              {ex("cancelExport")}
+              {cancelState === "pending" ? ex("cancelPending") : cancelState === "requested" ? ex("cancelRequested") : ex("cancelExport")}
             </Button>
           ) : (
             <Button
@@ -1315,11 +1322,24 @@ export function ExportDialog() {
             />
           )}
           {startError && (
-            <p className="text-xs text-danger">
+            <p data-export-start-error role="alert" className="text-xs text-danger">
               {startError.code === "bad_filename"
                 ? ex(`filenameError.${startError.message}`)
-                : ex("operationFailed", { error: startError.message })}
+                : ex("operationFailed", { error: formatMessage(startError.message) })}
             </p>
+          )}
+          {cancelError && (
+            <p data-export-cancel-error role="alert" className="text-xs text-danger">
+              {ex("cancelFailed", { error: formatMessage(cancelError) })}
+            </p>
+          )}
+          {pollError && (
+            <div data-export-poll-error role="alert" className="flex flex-col gap-2 text-xs text-danger">
+              <p>{ex("statusFailed", { error: formatMessage(pollError) })}</p>
+              <Button data-export-status-retry variant="secondary" disabled={refreshing} onClick={() => void refreshExportStatus()}>
+                {ex("retryStatus")}
+              </Button>
+            </div>
           )}
           {job && !busy && job.status !== "conflict" && (
             <ResultBlock

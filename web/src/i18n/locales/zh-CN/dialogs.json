@@ -140,7 +140,14 @@
         "dpi_tag": "分辨率标签",
         "raster_density": "像素密度"
       }
-    }
+    },
+    "cancelPending": "正在请求取消…",
+    "cancelRequested": "已请求取消",
+    "cancelFailed": "尚未确认取消，导出可能仍在继续。{{error}}",
+    "cancelNotAccepted": "服务器未接受取消请求。请先检查导出状态和输出文件夹，再重试。",
+    "statusFailed": "暂时无法获取导出状态，作业仍可能完成。{{error}}",
+    "retryStatus": "重试获取状态",
+    "connectionFailed": "无法连接导出服务。请检查连接并确认 {{app}} 正在运行，再重试。重新导出前请先检查输出文件夹。"
   },
   "layout": {
     "conflict": "磁盘上已存在名为「{{name}}」的排版，由其他窗口或外部工具写入。",

@@ -142,7 +142,14 @@
         "dpi_tag": "resolution tag",
         "raster_density": "pixel density"
       }
-    }
+    },
+    "cancelPending": "Requesting cancellation…",
+    "cancelRequested": "Cancellation requested",
+    "cancelFailed": "Cancellation was not confirmed. The export may still be running. {{error}}",
+    "cancelNotAccepted": "The server did not accept cancellation. Check the export status and output folder before retrying.",
+    "statusFailed": "Export status is unavailable; the job may still finish. {{error}}",
+    "retryStatus": "Retry status check",
+    "connectionFailed": "Couldn’t reach the export service. Check the connection and that {{app}} is running, then retry. Check the output folder before starting another export."
   },
   "layout": {
     "conflict": "A layout named “{{name}}” already exists on disk, written by another window or tool.",
