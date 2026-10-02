@@ -1931,7 +1931,8 @@ class EngineWorker:
 
     def preview_png_snapshot(self, stem: str, patches: list, width_px: int) -> dict:
         """PNG pixels and geometry from the same draw, without a mutable file handoff."""
-        self.ensure_built()
+        if not self.built:
+            self.ensure_built()
         return self.request(
             {
                 "cmd": "preview_png",
@@ -2469,7 +2470,8 @@ class WorkerdWorker:
         return Path(resp["path"])
 
     def preview_png_snapshot(self, stem: str, patches: list, width_px: int) -> dict:
-        self.ensure_built()
+        if not self.built:
+            self.ensure_built()
         return self._call(
             "preview_png",
             REQUEST_TIMEOUT,

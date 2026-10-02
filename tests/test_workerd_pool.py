@@ -426,6 +426,27 @@ def test_the_pool_method_names_map_to_the_v1_command_names(monkeypatch, tmp_path
     assert w.rev == 1  # render 之后前端缓存穿透用的版本 +1
 
 
+@pytest.mark.parametrize("edited", [False, True])
+def test_png_snapshot_preserves_the_edit_ledger(monkeypatch, tmp_path, edited):
+    replies = [{"ok": True, "session_id": "s-1"}, {"ok": True, "stems": {}}]
+    if edited:
+        replies += [{"ok": True, "manifest": {}, "warnings": []}] * 2
+    replies += [{"ok": True, "png": "cG5n", "manifest": {"elements": []}}]
+    w, client = _worker(monkeypatch, tmp_path, replies)
+    if edited:
+        w.override("Fig1", [{"gid": "title", "prop": "text", "value": "first"}])
+        w.override("Fig2", [{"gid": "title", "prop": "text", "value": "second"}])
+    before = w.rev, dict(w.last_patch_hash_by_stem)
+    result = w.preview_png_snapshot("Fig1", [], 800)
+    assert [op for op, _ in client.calls] == ["open_session", "build"] + (
+        ["render", "render"] if edited else []
+    ) + ["preview_png"]
+    assert w.built
+    assert (w.rev, w.last_patch_hash_by_stem) == before
+    assert result["png"] == "cG5n" and result["manifest"] == {"elements": []}
+    assert client.calls[-1][1]["payload"] == {"patches": [], "width": 800, "with_manifest": True}
+
+
 def test_the_cache_layout_is_identical_to_the_python_pool(monkeypatch, tmp_path):
     """两条控制面共用同一套会话目录：`prune_engine_cache` 按 base 豁免正在用的
     会话，落点不一致的话清理会把正在写的 out/sandbox 删掉。"""

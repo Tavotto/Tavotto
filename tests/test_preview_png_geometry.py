@@ -163,6 +163,7 @@ def test_worker_png_snapshot_is_variant_local_and_preserves_vector_artifacts(tmp
         svg = w.svg_path("F").read_bytes()
         canonical = (Path(w.out_dir) / "F.json").read_bytes()
         revision = w.rev
+        patch_hash = pool.stem_patch_hash(w, "F")
         first = w.preview_png_snapshot("F", b, 400)
         high = w.preview_png_snapshot("F", b, 1600)
         again = w.preview_png_snapshot("F", b, 400)
@@ -171,6 +172,7 @@ def test_worker_png_snapshot_is_variant_local_and_preserves_vector_artifacts(tmp
         title = next(e for e in first["manifest"]["elements"] if e["gid"] == "axes_0.title")
         assert next(f["value"] for f in title["editable"] if f["prop"] == "text") == "Variant B"
         assert w.rev == revision
+        assert pool.stem_patch_hash(w, "F") == patch_hash
         assert w.svg_path("F").read_bytes() == svg
         assert (Path(w.out_dir) / "F.json").read_bytes() == canonical
         # A temporary preview did not become the editable session's variant.

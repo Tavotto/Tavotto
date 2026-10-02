@@ -417,9 +417,20 @@ def test_inline_svg_is_only_sent_when_asked(tmp_path):
     assert resp["svg"] == "<svg/>"
 
 
-def test_png_snapshot_uses_existing_command_with_paired_response(tmp_path):
+@pytest.mark.parametrize("edited", [False, True])
+def test_png_snapshot_uses_existing_command_with_paired_response(tmp_path, edited):
     w = _worker(lambda env: _echo(env, png="cG5n", manifest={"elements": []}, stems={}), tmp_path)
+    w.built = False
+    if edited:
+        w.override("Fig1", [{"gid": "title", "prop": "text", "value": "first"}])
+        w.override("Fig2", [{"gid": "title", "prop": "text", "value": "second"}])
+    before = w.rev, dict(w.last_patch_hash_by_stem)
     result = w.preview_png_snapshot("Fig1", [], 800)
+    assert [e["cmd"] for e in w.proc.stdin.sent] == ["build"] + (
+        ["render", "render"] if edited else []
+    ) + ["preview_png"]
+    assert w.built
+    assert (w.rev, w.last_patch_hash_by_stem) == before
     assert result["png"] == "cG5n" and result["manifest"] == {"elements": []}
     env = w.proc.stdin.sent[-1]
     assert env["cmd"] == "preview_png"
