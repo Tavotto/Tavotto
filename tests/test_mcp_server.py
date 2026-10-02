@@ -3107,6 +3107,59 @@ def test_legacy_app_apply_keeps_its_full_response(project, big_pool, widget_pres
     assert res["_meta"] == widget.resource_meta()
 
 
+@pytest.mark.parametrize("legacy_args", [{}, {"summary": False}])
+@pytest.mark.parametrize(
+    "fragment, reason_elided",
+    [
+        ("x" * 64, False),
+        ("x" * 7000, False),
+        ("x" * 8000, True),
+        ("x" * 20_000, True),
+        ("图" * 5000, True),
+        ('\\"\n' * 5000, True),
+    ],
+    ids=["short", "below-budget", "near-budget", "ascii-long", "utf8-long", "escaped-long"],
+)
+def test_apply_summary_bounds_real_missing_widget_reason_and_keeps_legacy_full(
+    project, fake_pool, monkeypatch, fragment, reason_elided, legacy_args
+):
+    """真实 widget 缺失说明；量 content + body，含 UTF-8 / JSON 转义及预算两侧。"""
+    monkeypatch.setenv(widget.WIDGET_ENV, "/tmp/" + fragment)
+    assert widget.available() is False
+    reason = widget.missing_reason()
+    sid = _body(_call("tavotto_open_figure", {"project_path": str(project)}))["session_id"]
+    res = _call("tavotto_apply_overrides", {"session_id": sid, "patches": [], "summary": True})
+    body = _body(res)
+    size = _wire_bytes(res)
+    print({"reason_utf8_bytes": len(reason.encode("utf-8")), "summary_bytes": size})
+    assert not res.get("isError") and size <= 16 * 1024
+    assert body["canvas_ui"]["available"] is False and body["canvas_ui"]["code"] == "widget_missing"
+    if reason_elided:
+        assert "reason" not in body["canvas_ui"]
+        assert "canvas_ui.reason" in body["elided"]["fields"]
+    else:
+        assert body["canvas_ui"]["reason"] == reason
+    if body["elided"]["reason"] == "inline_budget":
+        assert body["elided"]["final_bytes"] == size
+    assert body["applied"] == body["canonical_patch_count"] == 0
+    assert body["warning_count"] == body["rejected_count"] == 0
+    assert body["worker_generation"] == fake_pool.generation
+    assert body["restored"] is False and body["contract_released"] is False
+    state = _body(_call("tavotto_session_state", {"session_id": sid}))
+    assert (
+        state["patch_hash"] == body["patch_hash"]
+        and state["render_revision"] == body["render_revision"]
+    )
+    legacy = _call("tavotto_apply_overrides", {"session_id": sid, "patches": [], **legacy_args})
+    assert not legacy.get("isError")
+    assert _body(legacy)["canvas_ui"] == {
+        "available": False,
+        "code": "widget_missing",
+        "reason": reason,
+    }
+    assert _body(legacy)["manifest"] == state["manifest"] and _body(legacy)["svg"] == state["svg"]
+
+
 def test_apply_summary_bounds_the_envelope_and_keeps_diagnostics_on_demand(
     project, fake_pool, widget_present, monkeypatch
 ):

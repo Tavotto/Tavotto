@@ -1420,6 +1420,14 @@ def call_tool(name: str, args: dict) -> dict:
                 result["content"] = _text(note)
     if name == "tavotto_apply_overrides" and args.get("summary") is True:
         # 在资源元数据 / 无画布说明加完之后量整个结果；只省响应副本，不能改会话快照。
+        body = result["structuredContent"]
+        if (
+            "canvas_ui" in body
+            and _serialized_bytes(result) > APPLY_SUMMARY_BUDGET_BYTES
+            and _elide(body, "canvas_ui.reason")
+        ):
+            # 配置路径可以任意长；摘要保留 available / code，避免把手本身越过预算。
+            body["elided"]["fields"].append("canvas_ui.reason")
         fit_inline_budget(result, APPLY_SUMMARY_BUDGET_BYTES)
     return result
 
