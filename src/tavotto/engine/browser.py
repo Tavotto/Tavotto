@@ -91,6 +91,7 @@ THUMB_PX = 420
 
 _intercept = True
 _REAL_SAVEFIG = mfigure.Figure.savefig
+_SAVEFIG_METADATA = figcapture.savefig_metadata_reader(mfigure)
 
 
 def _patched_savefig(self, fname, *args, **kwargs):
@@ -102,6 +103,17 @@ def _patched_savefig(self, fname, *args, **kwargs):
             _ACTIVE.passthrough_figures.add(id(self))
         return _REAL_SAVEFIG(self, fname, *args, **kwargs)
     stem = figcapture.savefig_stem(fname)
+    call = figcapture.savefig_call(fname, kwargs) if stem else None
+    if _ACTIVE is not None:
+        observation = _ACTIVE.savefig_observations.record(
+            self,
+            fname,
+            stem,
+            call,
+            explicit_format=kwargs.get("format") is not None,
+            backend=kwargs.get("backend"),
+        )
+        _ACTIVE.savefig_observations.complete(observation, "intercepted")
     if stem:
         _session_capture().setdefault(stem, self)
         # 来源记账与 worker.CAPTURE_SOURCE 同语义：savefig 认领的 stem
@@ -112,7 +124,7 @@ def _patched_savefig(self, fname, *args, **kwargs):
             _ACTIVE.capture,
             stem,
             self,
-            figcapture.savefig_call(fname, kwargs),
+            call,
         ):
             _ACTIVE.savefig_extras.setdefault(stem, []).append(kwargs.get("bbox_extra_artists"))
     return None
@@ -198,6 +210,9 @@ class BrowserSession:
         #: stem → 认领它的 savefig 调用（与 worker 同一条记账：`figcapture.record_savefig_call`）
         self.savefig_calls: dict[str, list | None] = {}
         self.passthrough_figures: set[int] = set()
+        self.savefig_observations = figcapture.SavefigObservations(
+            execution_root=workspace, metadata=_SAVEFIG_METADATA
+        )
         #: stem → 与 `savefig_calls[stem]` 逐项对齐的 `bbox_extra_artists` 对象（算图幅用，ADR 0098）
         self.savefig_extras: dict[str, list] = {}
         self.states: dict[str, overrides_mod.FigState] = {}
@@ -333,6 +348,7 @@ class BrowserSession:
             "figures": figures,
             "log": log.text(),
             "descriptors": self._descriptors(source.encode("utf-8")),
+            "savefig_observations": self.savefig_observations.report(),
             "truncated_figures": truncated,
             "script": self.script_name,
             "source_sha256": status.get("sha256", ""),

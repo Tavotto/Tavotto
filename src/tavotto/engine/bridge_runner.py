@@ -128,6 +128,7 @@ _CAPTURE_SOURCE: dict = {}
 _CAPTURE_SAVEFIG: dict = {}
 #: stem -> 与 `_CAPTURE_SAVEFIG[stem]` 逐项对齐的 `bbox_extra_artists` 对象（算图幅用，ADR 0098）
 _CAPTURE_EXTRAS: dict = {}
+_SAVEFIG_OBSERVATIONS = figcapture.SavefigObservations()
 #: pyplot 兜底因上限丢掉的张数
 _DROPPED = 0
 #: 引擎自己写盘（预览 / 导出）时暂停捕获——否则 export 到任意路径会被
@@ -163,10 +164,21 @@ def _install_savefig_hook(mfigure) -> None:
     if _REAL_SAVEFIG is not None:
         return
     _REAL_SAVEFIG = mfigure.Figure.savefig
+    _SAVEFIG_OBSERVATIONS.metadata = figcapture.savefig_metadata_reader(mfigure)
 
     def _patched_savefig(self, fname, *args, **kwargs):
+        observation = None
         if _CAPTURING:
             stem = figcapture.savefig_stem(fname)
+            call = figcapture.savefig_call(fname, kwargs)
+            observation = _SAVEFIG_OBSERVATIONS.record(
+                self,
+                fname,
+                stem,
+                call,
+                explicit_format=kwargs.get("format") is not None,
+                backend=kwargs.get("backend"),
+            )
             if stem and stem not in _CAPTURE:
                 _CAPTURE[stem] = self
                 _CAPTURE_SOURCE[stem] = figcapture.SOURCE_SAVEFIG
@@ -175,11 +187,15 @@ def _install_savefig_hook(mfigure) -> None:
                 # stem 存了盘：它从此是显式存过盘的图（来源升级为 savefig，调用照记）。只在
                 # native 发生——safe worker 与浏览器的 pyplot 兜底在脚本跑完之后才收
                 _CAPTURE_SOURCE[stem] = figcapture.SOURCE_SAVEFIG
-            if figcapture.record_savefig_call(
-                _CAPTURE_SAVEFIG, _CAPTURE, stem, self, figcapture.savefig_call(fname, kwargs)
-            ):
+            if figcapture.record_savefig_call(_CAPTURE_SAVEFIG, _CAPTURE, stem, self, call):
                 _CAPTURE_EXTRAS.setdefault(stem, []).append(kwargs.get("bbox_extra_artists"))
-        return _REAL_SAVEFIG(self, fname, *args, **kwargs)
+        try:
+            result = _REAL_SAVEFIG(self, fname, *args, **kwargs)
+        except BaseException:
+            _SAVEFIG_OBSERVATIONS.complete(observation, "failed")
+            raise
+        _SAVEFIG_OBSERVATIONS.complete(observation, "saved")
+        return result
 
     mfigure.Figure.savefig = _patched_savefig
 
@@ -481,6 +497,10 @@ class BridgeRun:
     """一次 native bridge 运行的全部可变状态。"""
 
     def __init__(self, args):
+        global _SAVEFIG_OBSERVATIONS
+        _SAVEFIG_OBSERVATIONS = figcapture.SavefigObservations(
+            project_root=args.project_root or None, execution_root=os.getcwd()
+        )
         self.args = args
         self.control: Control | None = None
         self.session = None  # figsession.LiveFigureSession（第二阶段才有）
@@ -614,6 +634,7 @@ class BridgeRun:
         self._ensure_session()
         _resolve_module_source(self.args)
         out = self.session.stems_summary(_DROPPED)
+        out["savefig_observations"] = _SAVEFIG_OBSERVATIONS.report()
         out["descriptors"] = self.session.descriptors(
             script=self.args.rel_target,
             entry=self.args.entry,
@@ -998,6 +1019,7 @@ def _write_report(run, args, exit_code: int) -> None:
         "rel_target": args.rel_target,
         "figures": [{"stem": s, "capture_source": _CAPTURE_SOURCE[s]} for s in _CAPTURE],
         "dropped_figures": _DROPPED,
+        "savefig_observations": _SAVEFIG_OBSERVATIONS.report(),
         "script_error": run.script_error,
         "engine_dir_was_on_sys_path": _ENGINE_DIR_WAS_ON_PATH,
         "engine_dir_on_sys_path_now": _HERE in [os.path.abspath(p) for p in sys.path],

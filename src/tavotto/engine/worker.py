@@ -241,6 +241,7 @@ SESSION: "SafeSession | None" = None
 
 _intercept = True
 _REAL_SAVEFIG = mfigure.Figure.savefig
+_SAVEFIG_METADATA = figcapture.savefig_metadata_reader(mfigure)
 #: 正在用户的 `paper_style.save(fig, stem)` 里：其间的 savefig 一律记到这个 stem 名下
 #: （`save` 里存成 `f"{stem}_final.pdf"` 的图库，按文件名取 stem 会让已有 override 挂空）
 _SAVE_AS: "str | None" = None
@@ -277,12 +278,23 @@ def _patched_savefig(self, fname, *args, **kwargs):
         return _REAL_SAVEFIG(self, fname, *args, **kwargs)
     to_path = figcapture.savefig_targets_path(fname)
     stem = _SAVE_AS or figcapture.savefig_stem(fname)  # 不是路径时 savefig_stem 是空串
+    if SESSION is not None:
+        call = figcapture.savefig_call(fname, kwargs) if stem else None
+        observation = SESSION.savefig_observations.record(
+            self,
+            fname,
+            stem,
+            call,
+            explicit_format=kwargs.get("format") is not None,
+            backend=kwargs.get("backend"),
+        )
+        SESSION.savefig_observations.complete(observation, "intercepted")
     if stem and SESSION is not None:
         SESSION.add_figure(stem, self, figcapture.SOURCE_SAVEFIG)
         SESSION.note_savefig(
             stem,
             self,
-            figcapture.savefig_call(fname, kwargs),
+            call,
             kwargs.get("bbox_extra_artists"),
         )
     if not to_path:
@@ -459,6 +471,9 @@ class Worker(wireproto.V1Handler):
         self._input_misses = figcapture.InputMisses()
         SESSION = SafeSession(self.out_dir, self.preview_dpi)
         SESSION.frame_project_root = str(self.figures_dir)
+        SESSION.savefig_observations = figcapture.SavefigObservations(
+            project_root=self.figures_dir, execution_root=self.sandbox, metadata=_SAVEFIG_METADATA
+        )
         super().__init__(SESSION)
 
     # ---------------- build ----------------
@@ -856,6 +871,7 @@ class Worker(wireproto.V1Handler):
         return {
             **self._stems_summary(),
             "descriptors": self._descriptor_cache,
+            "savefig_observations": self.session.savefig_observations.report(),
             "runtime": figsession.runtime_report(inputs=self._inputs_report),
             # 本次 build 实际用到的每一问（ADR 0099 §二）：写回的一次性重放按它严格重放
             "script_inputs": [
