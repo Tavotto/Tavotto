@@ -22,7 +22,7 @@ name: CI
 #                   合进来的树就是 merge_group 上刚验过的那棵（squash 由队列
 #                   执行，无 bypass actor，没有第二条进 main 的路）。
 #                   外加缓存种子（cache-seed，**非门禁**）：在 main 上把 pnpm store /
-#                   CPython 归档 / rust-cache 各种一份，合并组候选与 PR 首跑才有
+#                   CPython / 批准字体归档 / rust-cache 各种一份，合并组候选与 PR 首跑才有
 #                   缓存可命中（缓存作用域只有「当前 ref + 默认分支」，见该 job 注释）。
 #   nightly / lab   深度持续验证（nightly.yml + lab-ci.yml）：全量 CompatBench
 #                   × 多运行时、视觉回归、真实安装链路、soak 与 mutation。
@@ -452,8 +452,13 @@ jobs:
           python -c "import matplotlib;print('matplotlib', matplotlib.__version__)"
       # 批准字体（U10，ADR 0060 / 0072）：RenderCore 是默认后端，字体不进 git——按 allowlist 的 sha256 取到
       # 包内目录（hash 不符当场失败、不重试）。少了这一步：rendercore 用例 skip（skip 不是绿）、真渲染 /
-      # 导出的用例报 fonts_dir_missing。**不上 actions/cache**：一共 ~12 MiB 两个文件，而 CI02 把 actions/cache
-      # 钉成「只缓存 CPython 归档」的闭集（tests/test_merge_queue_workflows.py），为它开第二类不值。
+      # 导出的用例报 fonts_dir_missing。缓存只复用归档下载，不能跳过下面的取出与逐项校验。
+      # 只缓存下载归档；命中后仍重核 tarball、各字体与许可证，不缓存包内字体目录。
+      - name: 缓存批准字体归档（恢复后仍逐项验 SHA-256）
+        uses: actions/cache@v5
+        with:
+          path: build/fonts-cache/*.tar.gz
+          key: approved-font-archives-v1-${{ runner.os }}-${{ hashFiles('src/tavotto/rendercore/fonts_allowlist.json', 'scripts/fetch_fonts.py') }}
       - name: 批准字体（按 allowlist 的 sha256 取到包内目录）
         shell: bash
         run: |
@@ -585,8 +590,13 @@ jobs:
           pip install --only-binary=matplotlib matplotlib
       # 批准字体（U10，ADR 0060 / 0072）：RenderCore 是默认后端，字体不进 git——按 allowlist 的 sha256 取到
       # 包内目录（hash 不符当场失败、不重试）。少了这一步：rendercore 用例 skip（skip 不是绿）、真渲染 /
-      # 导出的用例报 fonts_dir_missing。**不上 actions/cache**：一共 ~12 MiB 两个文件，而 CI02 把 actions/cache
-      # 钉成「只缓存 CPython 归档」的闭集（tests/test_merge_queue_workflows.py），为它开第二类不值。
+      # 导出的用例报 fonts_dir_missing。缓存只复用归档下载，不能跳过下面的取出与逐项校验。
+      # 只缓存下载归档；命中后仍重核 tarball、各字体与许可证，不缓存包内字体目录。
+      - name: 缓存批准字体归档（恢复后仍逐项验 SHA-256）
+        uses: actions/cache@v5
+        with:
+          path: build/fonts-cache/*.tar.gz
+          key: approved-font-archives-v1-${{ runner.os }}-${{ hashFiles('src/tavotto/rendercore/fonts_allowlist.json', 'scripts/fetch_fonts.py') }}
       - name: 批准字体（按 allowlist 的 sha256 取到包内目录）
         shell: bash
         run: |
@@ -673,8 +683,13 @@ jobs:
           pip install --only-binary=matplotlib matplotlib
       # 批准字体（U10，ADR 0060 / 0072）：RenderCore 是默认后端，字体不进 git——按 allowlist 的 sha256 取到
       # 包内目录（hash 不符当场失败、不重试）。少了这一步：rendercore 用例 skip（skip 不是绿）、真渲染 /
-      # 导出的用例报 fonts_dir_missing。**不上 actions/cache**：一共 ~12 MiB 两个文件，而 CI02 把 actions/cache
-      # 钉成「只缓存 CPython 归档」的闭集（tests/test_merge_queue_workflows.py），为它开第二类不值。
+      # 导出的用例报 fonts_dir_missing。缓存只复用归档下载，不能跳过下面的取出与逐项校验。
+      # 只缓存下载归档；命中后仍重核 tarball、各字体与许可证，不缓存包内字体目录。
+      - name: 缓存批准字体归档（恢复后仍逐项验 SHA-256）
+        uses: actions/cache@v5
+        with:
+          path: build/fonts-cache/*.tar.gz
+          key: approved-font-archives-v1-${{ runner.os }}-${{ hashFiles('src/tavotto/rendercore/fonts_allowlist.json', 'scripts/fetch_fonts.py') }}
       - name: 批准字体（按 allowlist 的 sha256 取到包内目录）
         shell: bash
         run: |
@@ -742,8 +757,13 @@ jobs:
           python -c "import matplotlib;print('matplotlib', matplotlib.__version__)"
       # 批准字体（U10，ADR 0060 / 0072）：RenderCore 是默认后端，字体不进 git——按 allowlist 的 sha256 取到
       # 包内目录（hash 不符当场失败、不重试）。少了这一步：rendercore 用例 skip（skip 不是绿）、真渲染 /
-      # 导出的用例报 fonts_dir_missing。**不上 actions/cache**：一共 ~12 MiB 两个文件，而 CI02 把 actions/cache
-      # 钉成「只缓存 CPython 归档」的闭集（tests/test_merge_queue_workflows.py），为它开第二类不值。
+      # 导出的用例报 fonts_dir_missing。缓存只复用归档下载，不能跳过下面的取出与逐项校验。
+      # 只缓存下载归档；命中后仍重核 tarball、各字体与许可证，不缓存包内字体目录。
+      - name: 缓存批准字体归档（恢复后仍逐项验 SHA-256）
+        uses: actions/cache@v5
+        with:
+          path: build/fonts-cache/*.tar.gz
+          key: approved-font-archives-v1-${{ runner.os }}-${{ hashFiles('src/tavotto/rendercore/fonts_allowlist.json', 'scripts/fetch_fonts.py') }}
       - name: 批准字体（按 allowlist 的 sha256 取到包内目录）
         shell: bash
         run: |
@@ -895,8 +915,13 @@ jobs:
           pip install --only-binary=matplotlib matplotlib
       # 批准字体（U10，ADR 0060 / 0072）：RenderCore 是默认后端，字体不进 git——按 allowlist 的 sha256 取到
       # 包内目录（hash 不符当场失败、不重试）。少了这一步：rendercore 用例 skip（skip 不是绿）、真渲染 /
-      # 导出的用例报 fonts_dir_missing。**不上 actions/cache**：一共 ~12 MiB 两个文件，而 CI02 把 actions/cache
-      # 钉成「只缓存 CPython 归档」的闭集（tests/test_merge_queue_workflows.py），为它开第二类不值。
+      # 导出的用例报 fonts_dir_missing。缓存只复用归档下载，不能跳过下面的取出与逐项校验。
+      # 只缓存下载归档；命中后仍重核 tarball、各字体与许可证，不缓存包内字体目录。
+      - name: 缓存批准字体归档（恢复后仍逐项验 SHA-256）
+        uses: actions/cache@v5
+        with:
+          path: build/fonts-cache/*.tar.gz
+          key: approved-font-archives-v1-${{ runner.os }}-${{ hashFiles('src/tavotto/rendercore/fonts_allowlist.json', 'scripts/fetch_fonts.py') }}
       - name: 批准字体（按 allowlist 的 sha256 取到包内目录）
         shell: bash
         run: |
@@ -1014,6 +1039,12 @@ jobs:
       # 这一步的判据是「它们真跑了」，全 skip 也算失败（同一步末尾按 junit 核对）。
       - uses: actions/setup-python@v6
         with: { python-version: "3.13" }
+      # 只缓存下载归档；命中后仍重核 tarball、各字体与许可证，不缓存包内字体目录。
+      - name: 缓存批准字体归档（恢复后仍逐项验 SHA-256）
+        uses: actions/cache@v5
+        with:
+          path: build/fonts-cache/*.tar.gz
+          key: approved-font-archives-v1-${{ runner.os }}-${{ hashFiles('src/tavotto/rendercore/fonts_allowlist.json', 'scripts/fetch_fonts.py') }}
       - name: 校验 workerd 三路等价（对着刚建的二进制跑 12 条）
         working-directory: ${{ github.workspace }}
         timeout-minutes: 10
@@ -1180,8 +1211,13 @@ jobs:
         run: python scripts/build_frontend.py
       # 批准字体（U10，ADR 0060 / 0072）：RenderCore 是默认后端，字体不进 git——按 allowlist 的 sha256 取到
       # 包内目录（hash 不符当场失败、不重试）。少了这一步：rendercore 用例 skip（skip 不是绿）、真渲染 /
-      # 导出的用例报 fonts_dir_missing。**不上 actions/cache**：一共 ~12 MiB 两个文件，而 CI02 把 actions/cache
-      # 钉成「只缓存 CPython 归档」的闭集（tests/test_merge_queue_workflows.py），为它开第二类不值。
+      # 导出的用例报 fonts_dir_missing。缓存只复用归档下载，不能跳过下面的取出与逐项校验。
+      # 只缓存下载归档；命中后仍重核 tarball、各字体与许可证，不缓存包内字体目录。
+      - name: 缓存批准字体归档（恢复后仍逐项验 SHA-256）
+        uses: actions/cache@v5
+        with:
+          path: build/fonts-cache/*.tar.gz
+          key: approved-font-archives-v1-${{ runner.os }}-${{ hashFiles('src/tavotto/rendercore/fonts_allowlist.json', 'scripts/fetch_fonts.py') }}
       - name: 批准字体（按 allowlist 的 sha256 取到包内目录）
         shell: bash
         run: |
@@ -1427,8 +1463,13 @@ jobs:
 
       # 批准字体（U10，ADR 0060 / 0072）：RenderCore 是默认后端，字体不进 git——按 allowlist 的 sha256 取到
       # 包内目录（hash 不符当场失败、不重试）。少了这一步：rendercore 用例 skip（skip 不是绿）、真渲染 /
-      # 导出的用例报 fonts_dir_missing。**不上 actions/cache**：一共 ~12 MiB 两个文件，而 CI02 把 actions/cache
-      # 钉成「只缓存 CPython 归档」的闭集（tests/test_merge_queue_workflows.py），为它开第二类不值。
+      # 导出的用例报 fonts_dir_missing。缓存只复用归档下载，不能跳过下面的取出与逐项校验。
+      # 只缓存下载归档；命中后仍重核 tarball、各字体与许可证，不缓存包内字体目录。
+      - name: 缓存批准字体归档（恢复后仍逐项验 SHA-256）
+        uses: actions/cache@v5
+        with:
+          path: build/fonts-cache/*.tar.gz
+          key: approved-font-archives-v1-${{ runner.os }}-${{ hashFiles('src/tavotto/rendercore/fonts_allowlist.json', 'scripts/fetch_fonts.py') }}
       - name: 批准字体（按 allowlist 的 sha256 取到包内目录）
         shell: bash
         run: |
@@ -1813,8 +1854,13 @@ jobs:
 
       # 批准字体（U10，ADR 0060 / 0072）：RenderCore 是默认后端，字体不进 git——按 allowlist 的 sha256 取到
       # 包内目录（hash 不符当场失败、不重试）。少了这一步：rendercore 用例 skip（skip 不是绿）、真渲染 /
-      # 导出的用例报 fonts_dir_missing。**不上 actions/cache**：一共 ~12 MiB 两个文件，而 CI02 把 actions/cache
-      # 钉成「只缓存 CPython 归档」的闭集（tests/test_merge_queue_workflows.py），为它开第二类不值。
+      # 导出的用例报 fonts_dir_missing。缓存只复用归档下载，不能跳过下面的取出与逐项校验。
+      # 只缓存下载归档；命中后仍重核 tarball、各字体与许可证，不缓存包内字体目录。
+      - name: 缓存批准字体归档（恢复后仍逐项验 SHA-256）
+        uses: actions/cache@v5
+        with:
+          path: build/fonts-cache/*.tar.gz
+          key: approved-font-archives-v1-${{ runner.os }}-${{ hashFiles('src/tavotto/rendercore/fonts_allowlist.json', 'scripts/fetch_fonts.py') }}
       - name: 批准字体（按 allowlist 的 sha256 取到包内目录）
         shell: bash
         run: |
@@ -1969,8 +2015,13 @@ jobs:
 
       # 批准字体（U10，ADR 0060 / 0072）：RenderCore 是默认后端，字体不进 git——按 allowlist 的 sha256 取到
       # 包内目录（hash 不符当场失败、不重试）。少了这一步：rendercore 用例 skip（skip 不是绿）、真渲染 /
-      # 导出的用例报 fonts_dir_missing。**不上 actions/cache**：一共 ~12 MiB 两个文件，而 CI02 把 actions/cache
-      # 钉成「只缓存 CPython 归档」的闭集（tests/test_merge_queue_workflows.py），为它开第二类不值。
+      # 导出的用例报 fonts_dir_missing。缓存只复用归档下载，不能跳过下面的取出与逐项校验。
+      # 只缓存下载归档；命中后仍重核 tarball、各字体与许可证，不缓存包内字体目录。
+      - name: 缓存批准字体归档（恢复后仍逐项验 SHA-256）
+        uses: actions/cache@v5
+        with:
+          path: build/fonts-cache/*.tar.gz
+          key: approved-font-archives-v1-${{ runner.os }}-${{ hashFiles('src/tavotto/rendercore/fonts_allowlist.json', 'scripts/fetch_fonts.py') }}
       - name: 批准字体（按 allowlist 的 sha256 取到包内目录）
         shell: bash
         run: |
@@ -2276,14 +2327,14 @@ jobs:
       fail-fast: false
       matrix:
         # 每条 = 一个 (os, shared-key)。`rust` 是 shared-key 的值、`workspace` 与消费者的
-        # rust-cache 输入逐字相同、`profile` 决定跑消费者的哪一组 cargo 命令；`pnpm` / `cpython`
+        # rust-cache 输入逐字相同、`profile` 决定跑消费者的哪一组 cargo 命令；`pnpm` / `cpython` / `fonts`
         # 标出这条腿还顺带种哪一类（合同测试按这些字段与消费者的 os 集合对拍）。值里不能有逗号。
         include:
-          - { os: ubuntu-24.04,  rust: workerd,         workspace: workerd,   profile: dev,     pnpm: true,  cpython: false }
-          - { os: ubuntu-24.04,  rust: desktop-shell,   workspace: src-tauri, profile: dev,     pnpm: false, cpython: false }
-          - { os: macos-latest,   rust: desktop-shell,   workspace: src-tauri, profile: dev,     pnpm: false, cpython: false }
-          - { os: macos-latest,   rust: workerd-release, workspace: workerd,   profile: release, pnpm: true,  cpython: true }
-          - { os: windows-latest, rust: workerd-release, workspace: workerd,   profile: release, pnpm: true,  cpython: true }
+          - { os: ubuntu-24.04,  rust: workerd,         workspace: workerd,   profile: dev,     pnpm: true,  cpython: false, fonts: true }
+          - { os: ubuntu-24.04,  rust: desktop-shell,   workspace: src-tauri, profile: dev,     pnpm: false, cpython: false, fonts: false }
+          - { os: macos-latest,   rust: desktop-shell,   workspace: src-tauri, profile: dev,     pnpm: false, cpython: false, fonts: false }
+          - { os: macos-latest,   rust: workerd-release, workspace: workerd,   profile: release, pnpm: true,  cpython: true, fonts: true }
+          - { os: windows-latest, rust: workerd-release, workspace: workerd,   profile: release, pnpm: true,  cpython: true, fonts: true }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
@@ -2360,3 +2411,21 @@ jobs:
           PIP_DEFAULT_TIMEOUT: "30"
           PIP_RETRIES: "5"
         run: python scripts/build_worker_runtime.py --clean
+
+      # 批准字体归档每个 OS 种一次；消费者与 nightly 使用完全相同的 path / key。
+      # Windows/macOS 上面已准备 Python；Linux 这条腿只为标准库下载器准备解释器。
+      - uses: actions/setup-python@v6
+        if: matrix.fonts == true && matrix.cpython == false
+        with: { python-version: "3.13" }
+      - name: 缓存批准字体归档（恢复后仍逐项验 SHA-256）
+        if: matrix.fonts == true
+        uses: actions/cache@v5
+        with:
+          path: build/fonts-cache/*.tar.gz
+          key: approved-font-archives-v1-${{ runner.os }}-${{ hashFiles('src/tavotto/rendercore/fonts_allowlist.json', 'scripts/fetch_fonts.py') }}
+      - name: 种批准字体归档（取出并核验全部字体与许可证）
+        if: matrix.fonts == true
+        shell: bash
+        run: |
+          python scripts/fetch_fonts.py
+          python scripts/fetch_fonts.py --check

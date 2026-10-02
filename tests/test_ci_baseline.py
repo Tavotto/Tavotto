@@ -204,14 +204,21 @@ def test_every_named_step_in_the_live_workflow_has_an_execution_category(live_wo
     assert CB.classify_step("某个没登记过的步骤") == "other"
 
 
-#: `cache-seed`（push main 的缓存种子）三个步骤名 → 类别。它们是「让消费者的准备步骤真跑一次」，
+#: `cache-seed`（push main 的缓存种子）准备步骤名 → 类别。它们是「让消费者的准备步骤真跑一次」，
 #: 账记在消费者同一类下：pnpm install → install；cargo 编译 / runtime 构建 → build（它们的产出是
 #: target/ 与 build/runtime-cache，不是结论）。**枚举**：种子加一步就要回到这里登记一次。
 _CACHE_SEED_STEPS = {
     "种 pnpm store（pnpm install 真跑一次）": "install",
     "让消费者那组 cargo 命令真跑一次（种 target/）": "build",
     "种 CPython 归档（构建内置渲染 runtime 真跑一次）": "build",
+    "种批准字体归档（取出并核验全部字体与许可证）": "install",
 }
+
+
+def test_font_archive_restore_is_setup_and_its_save_is_post():
+    name = "缓存批准字体归档（恢复后仍逐项验 SHA-256）"
+    assert CB.classify_step(name) == "setup"
+    assert CB.classify_step("Post " + name) == "post"
 
 
 def test_cache_seed_steps_are_booked_under_install_and_build(live_workflow):
