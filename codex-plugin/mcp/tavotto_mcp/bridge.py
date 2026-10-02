@@ -71,6 +71,26 @@ from .roots import (
     canonical_path,
 )
 
+# 这些负载只在完整渲染响应与按需快照里返回；摘要与诊断账本共用这一份字段表。
+RENDER_PAYLOAD_KEYS = ("manifest", "svg", "preview_png_base64", "preview_png_manifest")
+# 额外保留的 apply 诊断按紧凑 UTF-8 JSON 限额；warnings / preview 已在 Session，不再保存。
+APPLY_RECEIPT_BUDGET_BYTES = 64 * 1024
+APPLY_RECEIPT_KEYS = (
+    "ok",
+    "session_id",
+    "stem",
+    "restored",
+    "applied",
+    "rejected",
+    "canonical_patch_count",
+    "contract_released",
+    "patch_hash",
+    "worker_generation",
+    "render_revision",
+    "timings",
+    "preview_png_error",
+)
+
 #: 工作区提示：装好的插件里 Codex MCP 配置（`codex.mcp.json`）的 `cwd` 指向**插件自己的目录**
 #: （`./mcp/server.py` 要靠它解析），于是「不给就用进程 cwd」在真实安装下
 #: 等于把用户工作区里的每一张图都判成 `path_out_of_scope`——默认流程根本
@@ -274,6 +294,9 @@ class Session:
     #: 与规范的纯函数，键对得上就没有第二个答案。每次 `_render` 都把它清掉：
     #: manifest 换了一份，键没变也不算数。
     preflight_cache: dict | None = None
+    #: 最近一次成功 apply 的有界诊断与版本；不复制渲染负载、不落盘，重渲染后失效。
+    #: warnings 只在上面的既有字段保留；超限诊断显式标记，不另留一份无限大的响应。
+    apply_receipt: dict | None = None
     #: 这个会话是不是**这一次调用里**从落盘记录重建的（ADR 0078）。调用方读一次就清掉，
     #: 让 apply / session_state 的结果如实带一句 `restored: true`，而不是假装它一直开着。
     restored: bool = False
@@ -611,6 +634,7 @@ def get_session(session_id: str) -> Session:
         or not any(_within(current_project, root) for root in roots)
     ):
         _SESSIONS.pop(session_id, None)
+        s.apply_receipt = None
         raise BridgeError(
             f"会话 {session_id} 的项目已不在当前工作区根内，请重新打开。",
             code="workspace_root_changed",
@@ -633,6 +657,7 @@ def close_session(session_id: str) -> dict:
             "closed": False,
             "note": f"会话 {session_id} 已经不在了（重复关闭不算错）",
         }
+    s.apply_receipt = None
     # worker 归 pool 管（同一个脚本可能还有别的用户）：这里只丢引用与会话账本。
     # 用户的项目数据一个字节都不动。
     return {
@@ -654,6 +679,7 @@ def _evict_if_needed() -> list[str]:
     while len(_SESSIONS) > MAX_SESSIONS:
         oldest = min(_SESSIONS.values(), key=lambda s: s.last_used)
         _SESSIONS.pop(oldest.id, None)
+        oldest.apply_receipt = None
         # 淘汰也是明确的释放（open 的文字里会点名）：不许在下一次调用里悄悄复活
         _forget(oldest.id)
         evicted.append(oldest.id)
@@ -682,6 +708,8 @@ def _live_session_for(project: str, stem: str) -> Session | None:
 
 def shutdown_all() -> None:
     """进程退出前收摊：会话账本清空 + 关掉 worker 子进程（不留孤儿）。"""
+    for session in _SESSIONS.values():
+        session.apply_receipt = None
     _SESSIONS.clear()
     try:
         engine_pool.shutdown_all(wait=True)
@@ -1334,6 +1362,7 @@ def _render(session: Session, patches: list, *, preview_dpi: int | None) -> dict
     # 预检是 manifest 的函数，而 manifest 刚换了一份——哪怕 patches 没变（脚本改了、
     # worker 重建、重开沿用会话），键对得上也不代表结论还对。缓存只活在两次渲染之间。
     session.preflight_cache = None
+    session.apply_receipt = None
     session.rev = getattr(worker, "rev", session.rev + 1)
     session.last_used = time.time()
     out = {
@@ -1378,6 +1407,27 @@ def _render(session: Session, patches: list, *, preview_dpi: int | None) -> dict
             # 编辑语义是完整的，缺的只是画面。如实回一个 code，别静默。
             out["preview_png_error"] = exc.code or "preview_failed"
     return out
+
+
+def _bounded_apply_receipt(out: dict) -> dict:
+    """只保存小份诊断；极端 rejected / timings 超限时保留计数并说清缺项。"""
+    receipt = {k: out[k] for k in APPLY_RECEIPT_KEYS if k in out}
+    receipt.update(warning_count=len(out["warnings"]), rejected_count=len(out["rejected"]))
+    encoder = json.JSONEncoder(ensure_ascii=False, separators=(",", ":"))
+    # 流式量字节，避免为了测巨大 rejected 另造一个完整 JSON 字符串。
+    for key in ("rejected", "timings", "preview_png_error", None):
+        size = 0
+        for chunk in encoder.iterencode(receipt):
+            size += len(chunk.encode("utf-8"))
+            if size > APPLY_RECEIPT_BUDGET_BYTES:
+                break
+        if size <= APPLY_RECEIPT_BUDGET_BYTES:
+            return receipt
+        if key is not None and key in receipt:
+            del receipt[key]
+            receipt.setdefault("diagnostics_unavailable", []).append(key)
+    # 固定把手来自会话/worker，不含图中文字与无界诊断。
+    raise AssertionError("apply receipt handle exceeded its budget")
 
 
 def apply_overrides(
@@ -1449,6 +1499,7 @@ def apply_overrides(
             "contract_released": released,
         }
     )
+    session.apply_receipt = _bounded_apply_receipt(out)
     return out
 
 
@@ -1516,6 +1567,8 @@ def session_state(session_id: str) -> dict:
         "warnings": list(session.warnings),
         "restored": _take_restored(session),
     }
+    if session.apply_receipt is not None:
+        out["last_apply"] = session.apply_receipt
     if session.preview is not None:
         out["preview"] = session.preview
     if session.preview_png_base64 is not None:
