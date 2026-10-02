@@ -22,7 +22,9 @@
   超限的 rejected / timings / 预览错误依次不保留，用 `last_apply.diagnostics_unavailable`
   明示缺项，计数与同一 hash / revision 留着。这些极端诊断清单无法再完整取回，完整图态
   不受影响。下次成功 `_render` 清除旧回执；关闭 / 淘汰 / 出界 / 退出释放，进程重建
-  不保留旧诊断。失败继续沿用原错误契约，不把失败压成成功。
+  不保留旧诊断。失败仍回 `isError=true`、`ok=false` 与原错误码；显式摘要的超大错误也守
+  16 KiB，保留有界错误 / recovery 与诊断样本，列表带原计数，`elided` 明示完整错误诊断
+  未保留（不能冒称 `tavotto_session_state` 能取回它）。预算内错误逐字段不变，不把失败压成成功。
   **省略 summary 或 false 保留旧 apply 完整响应**（画布靠同一次响应拿 manifest / 预览；
   另跳取件可能取到另一组 patches，不能代替原子响应）。工具说明与技能引导新模型传 true；
   旧客户端仍可能超过宿主事件上限，这是兼容性保留的边界。

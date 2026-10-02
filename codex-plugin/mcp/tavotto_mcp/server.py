@@ -1348,6 +1348,61 @@ def _human_error(payload: dict) -> str:
     return text
 
 
+def _bounded_error_text(value: str, keep: int = 256) -> str:
+    encoded = value.encode("utf-8")
+    return (
+        encoded[:keep].decode("utf-8", errors="ignore")
+        + "…（诊断已截断）…"
+        + encoded[-keep:].decode("utf-8", errors="ignore")
+    )
+
+
+def _fit_apply_error_budget(result: dict) -> dict:
+    """只限显式摘要的超大错误；不假称被截诊断能从成功状态取回。"""
+    if _serialized_bytes(result) <= APPLY_SUMMARY_BUDGET_BYTES:
+        return result
+    body = result["structuredContent"]
+    fields: list[str] = []
+    counts: dict[str, int] = {}
+    for key, value in list(body.items()):
+        # 稳定错误码与失败标志不能省；其余字段保留小份诊断或列表样本。
+        if key in {"ok", "code"} or _serialized_bytes(value) <= 1024:
+            continue
+        fields.append(key)
+        if isinstance(value, str):
+            body[key] = _bounded_error_text(value)
+        elif isinstance(value, (list, tuple)):
+            counts[key] = len(value)
+            sample = [
+                _bounded_error_text(item, 64)
+                if isinstance(item, str) and _serialized_bytes(item) > 1024
+                else item
+                for item in value[:3]
+            ]
+            while sample and _serialized_bytes(sample) > 1024:
+                sample.pop()
+            body[key] = sample
+        else:
+            del body[key]
+    body["elided"] = {
+        "fields": fields,
+        "counts": counts,
+        "reason": "summary_error_budget",
+        "budget_bytes": APPLY_SUMMARY_BUDGET_BYTES,
+        "diagnostics_unavailable": True,
+    }
+    note = "! 错误诊断已截断或省略，完整错误诊断未保留；已有会话的当前图态仍用 tavotto_session_state 读取。"
+    result["content"] = _text(_human_error(body), note)
+    if _serialized_bytes(result) > APPLY_SUMMARY_BUDGET_BYTES:
+        # 单项虽小、合计仍大的扩展诊断也不能突破整个回执的预算。
+        for key in list(body):
+            if key not in {"ok", "code", "error", "recovery", "elided"}:
+                del body[key]
+                if key not in fields:
+                    fields.append(key)
+    return result
+
+
 def call_tool(name: str, args: dict) -> dict:
     handler = HANDLERS.get(name)
     if handler is None:
@@ -1363,11 +1418,14 @@ def call_tool(name: str, args: dict) -> dict:
         # 把机器码摆在最前面，模型多半会连着念出去——用户听到
         # 「workspace_confirmation_no_response」等于什么都没听到。同 ADR 0021
         # 的「code 稳定，文案随时可改」：稳定的是 code，给人看的是文案与下一步。
-        return {
+        result = {
             "isError": True,
             "content": _text(_human_error(payload)),
             "structuredContent": payload,
         }
+        if name == "tavotto_apply_overrides" and args.get("summary") is True:
+            _fit_apply_error_budget(result)
+        return result
     if name in UI_TOOLS:
         if (result.get("structuredContent") or {}).get("mode") == bridge.BATCH_MODE:
             # **批量结果不挂画布，而且要把这件事说出口。**一次 tools/call 只带
