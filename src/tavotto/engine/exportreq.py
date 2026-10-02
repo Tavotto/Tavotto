@@ -30,6 +30,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from . import figcapture
+
 # ------------------------------- 枚举 ---------------------------------------
 
 #: 导出范围。**两个取值，不许有第三个**——"按原图" 与 "按画布" 是两套不同的
@@ -287,6 +289,8 @@ class OriginalSource:
     #: 源的形态：`figure`（引擎可重渲染）/ `vector` / `raster` / `unknown`
     source_kind: str = "unknown"
     ignored: tuple[str, ...] = ()
+    source_policy: str | None = None
+    expected_source: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -347,6 +351,16 @@ class ExportRequest:
             "document_revision": self.document_revision,
             "figure_id": self.original.figure_id if self.original else None,
             "inspection": self.inspection.to_payload(),
+            **(
+                {"expected_source": self.original.expected_source}
+                if self.original and self.original.expected_source is not None
+                else {}
+            ),
+            **(
+                {"source_policy": self.original.source_policy}
+                if self.original and self.original.source_policy is not None
+                else {}
+            ),
         }
 
 
@@ -414,6 +428,16 @@ def render_plan_ref(req: ExportRequest, resources: list[dict]) -> dict:
             "px_w": req.original.px_w,
             "px_h": req.original.px_h,
             "source_kind": req.original.source_kind,
+            **(
+                {"expected_source": req.original.expected_source}
+                if req.original.expected_source is not None
+                else {}
+            ),
+            **(
+                {"source_policy": req.original.source_policy}
+                if req.original.source_policy is not None
+                else {}
+            ),
         }
     canon = json.dumps(
         {
@@ -506,6 +530,17 @@ def _float(raw: Any, name: str) -> float:
     return value
 
 
+def _source_basis(source, patches=()):
+    try:
+        return figcapture.artifact_request(
+            source.get("source_policy"), source.get("expected_source"), patches
+        )
+    except figcapture.ArtifactContextError as exc:
+        raise ExportRequestError(
+            exc.code, str(exc), {"reason": exc.reason, "retryable": exc.retryable}
+        ) from exc
+
+
 def normalize(spec: dict, *, allowed_formats: tuple[str, ...] = FORMATS) -> ExportRequest:
     """任意 JSON → `ExportRequest`。**缺省值只有这一处**。
 
@@ -519,6 +554,12 @@ def normalize(spec: dict, *, allowed_formats: tuple[str, ...] = FORMATS) -> Expo
     if not isinstance(spec, dict):
         raise ExportRequestError("bad_request", "请求体不是一个对象", {})
 
+    if spec.get("source_policy") is not None:
+        raise ExportRequestError(
+            "artifact_source_unavailable",
+            "Source policy belongs to each source.",
+            {"reason": "unsupported_render_state", "retryable": False},
+        )
     legacy = "filename" not in spec
     scope = _one_of(spec.get("scope"), SCOPES, SCOPE_CANVAS, "bad_scope")
     formats = _formats(spec.get("formats"), allowed_formats)
@@ -577,6 +618,9 @@ def normalize(spec: dict, *, allowed_formats: tuple[str, ...] = FORMATS) -> Expo
             ]
         if not isinstance(objects, list):
             raise ExportRequestError("bad_objects", "objects 必须是一个列表", {})
+        for obj in objects:
+            if isinstance(obj, dict):
+                _source_basis(obj, obj.get("overrides"))
         canvas = CanvasSource(
             page_w_mm=_float(source.get("page_w_mm"), "page_w_mm"),
             page_h_mm=_float(source.get("page_h_mm"), "page_h_mm"),
@@ -594,6 +638,8 @@ def normalize(spec: dict, *, allowed_formats: tuple[str, ...] = FORMATS) -> Expo
             raise ExportRequestError("bad_overrides", "overrides 必须是一个列表", {})
         original = OriginalSource(
             figure_id=figure_id,
+            source_policy=source.get("source_policy"),
+            expected_source=_source_basis(source, overrides),
             overrides=[o for o in overrides if isinstance(o, dict)],
             w_mm=float(source["w_mm"]) if source.get("w_mm") else None,
             h_mm=float(source["h_mm"]) if source.get("h_mm") else None,

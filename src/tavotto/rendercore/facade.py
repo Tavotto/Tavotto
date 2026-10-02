@@ -257,15 +257,19 @@ def coverage_ranges() -> dict:
 _kind_of = rasterio.kind_of
 
 
-def probe_asset(path: Path, kind: str) -> dict:
+def probe_asset(path: Path, kind: str, *, include_pages: bool = False) -> dict:
     """同旧后端的返回结构。PDF 的尺寸经 render child 的 `size`（PDFium 可见框，含 /Rotate，**乘 /UserUnit**；
-    不加载页）。文件没动（`sources.file_fingerprint` 相同）就复用上一次的结果，每次回一份新 dict。"""
+    不加载页）。文件没动（`sources.file_fingerprint` 相同）就复用上一次的结果，每次回一份新 dict。
+    `include_pages=True` 另带 PDF 页数，让单页验收在加载/渲染页前拒绝；默认返回形状不变。"""
     path = Path(path)
     if kind == "pdf":
 
         def measure() -> dict:
             r = host().size(path)
-            return {"kind": "pdf", "w_pt": float(r["width_pt"]), "h_pt": float(r["height_pt"])}
+            out = {"kind": "pdf", "w_pt": float(r["width_pt"]), "h_pt": float(r["height_pt"])}
+            if include_pages:
+                out["pages"] = int(r["pages"])
+            return out
 
     else:
 
@@ -278,7 +282,7 @@ def probe_asset(path: Path, kind: str) -> dict:
                 "alpha": bool(info["alpha"]),
             }
 
-    return dict(_PROBES.get_or_compute(path, measure, key=kind))
+    return dict(_PROBES.get_or_compute(path, measure, key=(kind, include_pages)))
 
 
 def _strip_subset(base: str) -> str:

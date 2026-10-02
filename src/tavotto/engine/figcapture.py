@@ -511,16 +511,91 @@ SOURCE_ARTIFACT_VERSION = 1
 ORIGIN_EXECUTION = "execution"
 ORIGIN_STATIC = "static"
 _ORIGINS = (ORIGIN_EXECUTION, ORIGIN_STATIC)
+SELECTED_ARTIFACT_POLICY = "selected-artifact-v1"
+ARTIFACT_VALIDATION_MAX_BYTES = 32 * 1024 * 1024
+ARTIFACT_VALIDATION_MAX_PIXELS = 16_000_000
 
 
-def hash_file(path) -> tuple[str, int]:
-    """文件的 sha256 十六进制 + 字节数。分块读，大 PDF 不整个进内存。"""
+class ArtifactContextError(ValueError):
+    code = "artifact_source_unavailable"
+
+    def __init__(self, reason: str, message: str, *, retryable: bool | None = None):
+        super().__init__(message)
+        self.reason = reason
+        self.retryable = reason == "source_changed" if retryable is None else retryable
+
+
+def artifact_request(policy, expected_source=None, patches=()):
+    """Validate the opt-in and durable byte basis; execution tokens are never accepted."""
+    if policy is None and expected_source is None:
+        return None
+    if policy != SELECTED_ARTIFACT_POLICY:
+        raise ArtifactContextError("unsupported_render_state", "Unsupported source policy.")
+    if expected_source is None:
+        if patches:
+            raise ArtifactContextError(
+                "source_changed",
+                "Edited sources require their saved byte identity.",
+                retryable=False,
+            )
+        return None
+    if (
+        not isinstance(expected_source, dict)
+        or set(expected_source) != {"bytes_sha256", "size_bytes"}
+        or not isinstance(expected_source["bytes_sha256"], str)
+        or not re.fullmatch(r"[0-9a-f]{64}", expected_source["bytes_sha256"])
+        or type(expected_source["size_bytes"]) is not int
+        or expected_source["size_bytes"] <= 0
+    ):
+        raise ArtifactContextError("source_changed", "Invalid source basis.", retryable=False)
+    return dict(expected_source)
+
+
+def selected_artifact_context(value):
+    """Validate the controller-owned static source identity; None preserves legacy rendering."""
+    if value is None:
+        return None
+    if not isinstance(value, dict) or value.get("render_policy") != SELECTED_ARTIFACT_POLICY:
+        raise ValueError("unsupported artifact render policy")
+    source_id = normalize_relative_script(value.get("source_id"))
+    if ".." in pathlib.PurePosixPath(source_id).parts:
+        raise ValueError("artifact source must remain inside its project")
+    artifact = SourceArtifact(
+        source_id=pathlib.PurePosixPath(source_id).as_posix(),
+        origin=ORIGIN_STATIC,
+        kind=value.get("kind"),
+        bytes_sha256=value.get("bytes_sha256"),
+        size_bytes=value.get("size_bytes"),
+    )
+    if artifact.kind not in ("pdf", "png"):
+        raise ValueError("selected artifact rendering supports PDF and PNG")
+    return {**artifact.to_payload(), "render_policy": SELECTED_ARTIFACT_POLICY}
+
+
+def selected_artifact_key(value) -> str:
+    """A rendering context includes the actual bytes, unlike SourceArtifact's semantic ID."""
+    context = selected_artifact_context(value)
+    if context is None:
+        return ""
+    return hashlib.sha256(
+        json.dumps(context, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+class FileHashBudgetExceeded(ValueError):
+    """The byte budget was exceeded while reading, including a growing source."""
+
+
+def hash_file(path, *, max_bytes: int | None = None) -> tuple[str, int]:
+    """SHA256 + byte count; an optional budget stops after at most one excess chunk."""
     h = hashlib.sha256()
     size = 0
     with open(os.fspath(path), "rb") as f:
         for chunk in iter(lambda: f.read(1 << 16), b""):
-            h.update(chunk)
             size += len(chunk)
+            if max_bytes is not None and size > max_bytes:
+                raise FileHashBudgetExceeded("File exceeds the hashing byte budget.")
+            h.update(chunk)
     return h.hexdigest(), size
 
 
@@ -980,6 +1055,9 @@ class SavefigObservations:
     def complete(self, index, result):
         if index is not None:
             self._records[index]["result"] = result
+
+    def observation(self, index):
+        return None if index is None else json.loads(json.dumps(self._records[index]))
 
     def report(self):
         return {

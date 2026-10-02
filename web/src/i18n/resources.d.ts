@@ -1796,6 +1796,7 @@ export default interface Resources {
       "ai_start_failed": "无法启动 AI 任务：{{reason}}",
       "annotations_need_pdf": "该素材没有矢量 PDF，标注暂时无法写回原图。",
       "artifact_rejected": "导出文件没有通过 {{policy}} 检查（{{failed}}），未发布到导出目录。",
+      "artifact_source_unavailable": "当前操作无法使用所选源图模式，未应用本次修改。请保留原图显示。",
       "backend_retired": "环境变量 TAVOTTO_RENDER_BACKEND={{value}} 指向已退役的 PyMuPDF 渲染后端。去掉这个变量即用默认渲染后端。",
       "backend_unavailable": "渲染后端不可用（依赖或字体缺失）：{{reason}}。请重新安装。",
       "backend_unknown": "环境变量 TAVOTTO_RENDER_BACKEND={{value}} 不是可用的渲染后端。去掉这个变量即用默认渲染后端。",
