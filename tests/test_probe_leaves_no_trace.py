@@ -59,6 +59,9 @@ _OUTSIDE_ENV = (
     "PIP_CONFIG_FILE",
     "XDG_CONFIG_HOME",
     "XDG_CACHE_HOME",
+    "FONTCONFIG_FILE",
+    "FONTCONFIG_PATH",
+    "FONTCONFIG_SYSROOT",
 )
 
 
@@ -422,10 +425,13 @@ def test_every_worker_spawn_path_gets_the_owned_env(fake_home, tmp_path, monkeyp
     环境带上缓存目录，用户的环境原样继承。"""
     py = _owned_python(tmp_path)
     delta = pool.worker_env(py, pool.SOURCE_MANAGED_PROJECT, base={})
-    assert delta == {
+    expected = {
         "PIP_CACHE_DIR": str(tmp_path / "data" / "cache" / "pip"),
         "MPLCONFIGDIR": str(tmp_path / "data" / "cache" / "mpl"),
     }
+    if sys.platform.startswith("linux"):
+        expected["FONTCONFIG_FILE"] = runtime.owned_env(py, base={})["FONTCONFIG_FILE"]
+    assert delta == expected
     assert pool.worker_env(USER_PYTHON, pool.SOURCE_SYSTEM) is None
 
     seen: dict = {}
@@ -603,10 +609,10 @@ def test_workers_from_the_plugin_runtime_cache_beside_it(plugin_runtime, fake_ho
     py = managed  # venv 的 bin/ 里 python 与 python3 都在；用插件真交棒的那一个
     assert os.path.isfile(py), "前提：建在插件算出的那个位置"
     cache = Path(launcher.managed_cache_dir())
-    assert pool.worker_env(py, pool.SOURCE_CURRENT, base={}) == {
-        "PIP_CACHE_DIR": str(cache / "pip"),
-        "MPLCONFIGDIR": str(cache / "mpl"),
-    }
+    expected = {"PIP_CACHE_DIR": str(cache / "pip"), "MPLCONFIGDIR": str(cache / "mpl")}
+    if sys.platform.startswith("linux"):
+        expected["FONTCONFIG_FILE"] = runtime.owned_env(py, base={})["FONTCONFIG_FILE"]
+    assert pool.worker_env(py, pool.SOURCE_CURRENT, base={}) == expected
     info = projectenv.probe_environment(py)
     assert info.get("tavotto_worker_ok") is True, info
     assert list((cache / "mpl").glob("fontlist-*.json")), "字体缓存不在 mcp-runtime/cache 里"
