@@ -102,7 +102,8 @@ def _new_process() -> None:
 
 
 # ------------------------------- 能恢复 -----------------------------------
-def test_a_session_survives_a_process_switch(project, worker):
+@pytest.mark.parametrize("summary", [False, True])
+def test_a_session_survives_a_process_switch(project, worker, summary):
     opened = _body(server.call_tool("tavotto_open_figure", {"project_path": str(project)}))
     sid = opened["session_id"]
     server.call_tool("tavotto_apply_overrides", {"session_id": sid, "patches": [PATCH]})
@@ -111,7 +112,11 @@ def test_a_session_survives_a_process_switch(project, worker):
 
     res = server.call_tool(
         "tavotto_apply_overrides",
-        {"session_id": sid, "patches": [PATCH, {**PATCH, "prop": "fontsize", "value": 8.0}]},
+        {
+            "session_id": sid,
+            "patches": [PATCH, {**PATCH, "prop": "fontsize", "value": 8.0}],
+            "summary": summary,
+        },
     )
     body = _body(res)
     assert not res.get("isError"), body
@@ -124,6 +129,13 @@ def test_a_session_survives_a_process_switch(project, worker):
     # 标记只报一次
     state = _body(server.call_tool("tavotto_session_state", {"session_id": sid}))
     assert state["restored"] is False
+    assert state["last_apply"]["restored"] is True
+    assert state["last_apply"]["patch_hash"] == body["patch_hash"] == state["patch_hash"]
+    assert (
+        state["last_apply"]["render_revision"]
+        == body["render_revision"]
+        == state["render_revision"]
+    )
 
 
 def test_the_canvas_fetch_path_restores_too(project, worker):
