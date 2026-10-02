@@ -1872,11 +1872,11 @@ def _with_block(step: str) -> dict[str, str]:
     return out
 
 
-def _uses_steps(action_prefix: str) -> list[tuple[str, str]]:
+def _uses_steps(action_prefix: str, text: str = CI) -> list[tuple[str, str]]:
     """全部 job 里 `uses: <action_prefix>@…` 的步骤：[(job id, 步骤正文)]。"""
     found: list[tuple[str, str]] = []
-    for job_id in TestHeavyLaneDependencies._job_ids():
-        for step in _steps(_job(CI, job_id)):
+    for job_id in _jobs_of(text):
+        for step in _steps(_job(text, job_id)):
             if re.search(rf"(?m)^\s*uses: {re.escape(action_prefix)}@", step):
                 found.append((job_id, step))
     return found
@@ -1892,8 +1892,8 @@ class TestBuildReuseAndCaches:
       * TypeScript 的类型检查只有一个执行位置——`pnpm build` 的第一条命令 `tsc -b`，而
         `tsc -b` 检查的是 `web/tsconfig.json` 的 references **集合**（e2e 在里面；本机反证：
         把它从 references 里拿掉，e2e 里的类型错误 `pnpm build` 退 0）；
-      * `actions/cache` 的清单是**枚举**（三个 step，全是 CPython 归档：两处消费者 + push main 上
-        cache-seed 的种子步，后者展开成 windows / macos 两条腿），key 含 os / arch / 锁 hash；
+      * `actions/cache` 的清单是**枚举**：三个 CPython 归档 step，key 含 os / arch / 锁 hash；
+        十一个批准字体归档 step，key 含 os / allowlist + 下载器 hash（含三 OS 的种子）；
         setup-node 的 pnpm 缓存按锁文件；rust-cache 各自点名 workspace，并带一个
         **(workspace, profile) 命名的 `shared-key`**——同键的只有「种子腿」与「跑同一组 cargo 命令
         的消费者」，无关 job 之间仍不共享可写 target（种子与消费者的对拍在 `TestCacheSeed`）；
@@ -1955,19 +1955,36 @@ class TestBuildReuseAndCaches:
     # ── D：缓存四类 ─────────────────────────────────────────────────────────
     #: `actions/cache` 的完整清单（job, path, key）——枚举不是白名单：多一条就红，作者得先回
     #: CI02 文档把新缓存归到 04 §5 的四类里、写上 key 的维度与命中作用域，再来改这里。
-    #: 三个 step 都是同一把 CPython key：两处消费者，加 push main 上 cache-seed 的种子步
-    #: （CI02 §4.1 (a)，2026-09-16；它在 matrix 里展开成 windows / macos 两条腿——与消费者的
-    #: os 集合逐个对拍在 `TestCacheSeed`）。
+    #: CPython 与批准字体归档均属于下载 bytes，分别钉住完整消费者集合与 key。
+    #: 字体成员/许可证每次重建并核验，不能把 cache-hit 当作通过。
     CPYTHON_KEY = "cpython-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('packaging/runtime-lock.json') }}"
-    ACTIONS_CACHE = {
+    FONT_KEY = (
+        "approved-font-archives-v1-${{ runner.os }}-${{ "
+        "hashFiles('src/tavotto/rendercore/fonts_allowlist.json', 'scripts/fetch_fonts.py') }}"
+    )
+    FONT_PATH = "build/fonts-cache/*.tar.gz"
+    FONT_JOBS = {
+        "invariants",
+        "backend-fast",
+        "backend-platforms",
+        "compat-smoke",
+        "plugin-candidate",
+        "workerd",
+        "package",
+        "windows-exe-smoke",
+        "macos-app-smoke",
+        "posix-e2e",
+        "cache-seed",
+    }
+    CPYTHON_CACHE = {
         ("windows-exe-smoke", "build/runtime-cache", CPYTHON_KEY),
         ("macos-app-smoke", "build/runtime-cache", CPYTHON_KEY),
         ("cache-seed", "build/runtime-cache", CPYTHON_KEY),
     }
 
-    def test_actions_cache_steps_are_exactly_the_cpython_archive_downloads(self):
-        """第一类（下载 bytes）只有两处：path 是脚本的下载缓存目录，key 含 runner.os / runner.arch /
-        锁文件 hash，恢复步在「构建内置渲染 runtime」之前。path 里不许出现 venv / site-packages /
+    def test_actions_cache_steps_are_exactly_the_enumerated_archive_downloads(self):
+        """第一类（下载 bytes）只有 CPython 与批准字体归档，恢复步在各自消费者之前。
+        CPython 的 key 维度不变，字体的精确 key / 逐项验证另有看护。path 不许出现 venv / site-packages /
         用户目录 / 测试结果 / 浏览器目录（第四类不能当缓存；浏览器不缓存是 CI02 的决定）。"""
         found = set()
         for job_id, step in _uses_steps("actions/cache"):
@@ -1976,16 +1993,23 @@ class TestBuildReuseAndCaches:
             found.add((job_id, w["path"], w["key"]))
             steps = _steps(_job(CI, job_id))
             me = next(i for i, s in enumerate(steps) if s == step)
-            use = [i for i, s in enumerate(steps) if "scripts/build_worker_runtime.py" in s]
-            assert len(use) == 1 and me < use[0], f"{job_id}：缓存恢复步不在 runtime 构建之前"
-        assert found == self.ACTIONS_CACHE, f"actions/cache 的清单变了：{sorted(found)}"
-        for _job_id, path, key in found:
+            command = (
+                "scripts/fetch_fonts.py"
+                if w["path"] == self.FONT_PATH
+                else "scripts/build_worker_runtime.py"
+            )
+            use = [i for i, s in enumerate(steps) if command in s and "run:" in s]
+            assert len(use) == 1 and me < use[0], f"{job_id}：缓存恢复步不在 {command} 之前"
+        fonts = {(job, self.FONT_PATH, self.FONT_KEY) for job in self.FONT_JOBS}
+        assert found == self.CPYTHON_CACHE | fonts, f"actions/cache 的清单变了：{sorted(found)}"
+        for _job_id, path, key in self.CPYTHON_CACHE:
             for dim in (
                 "${{ runner.os }}",
                 "${{ runner.arch }}",
                 "hashFiles('packaging/runtime-lock.json')",
             ):
                 assert dim in key, (key, dim)
+        for _job_id, path, _key in found:
             for bad in (
                 "venv",
                 "site-packages",
@@ -2449,9 +2473,12 @@ class TestCacheSeed:
     def _legs(cls) -> list[dict[str, str]]:
         legs = _matrix_include(_job(CI, cls.SEED))
         for leg in legs:
-            assert set(leg) == {"os", "rust", "workspace", "profile", "pnpm", "cpython"}, leg
+            assert set(leg) == {"os", "rust", "workspace", "profile", "pnpm", "cpython", "fonts"}, (
+                leg
+            )
             assert leg["os"] in _HOSTED_RUNNERS, leg
             assert leg["pnpm"] in {"true", "false"} and leg["cpython"] in {"true", "false"}, leg
+            assert leg["fonts"] in {"true", "false"}, leg
             assert cls.PROFILES.get(leg["rust"]) == leg["profile"], (
                 f"种子腿 {leg} 的 profile 与 PROFILES 枚举不一致——同一把 shared-key 只能对应一种"
             )
@@ -2539,14 +2566,20 @@ class TestCacheSeed:
         """`actions/cache` 的 path / key 逐字相同（主语是字符串相等，不是「都含 runner.os」）；
         `cpython: true` 的腿的 os 集合 == 两条冒烟腿的 os 集合；三步都由同一个字段开关。"""
         seed_steps = _steps(_job(CI, self.SEED))
-        cache = [st for st in seed_steps if re.search(r"(?m)^\s*uses: actions/cache@", st)]
-        assert len(cache) == 1, "种子里应恰好一步 actions/cache"
+        cache = [
+            st
+            for st in seed_steps
+            if re.search(r"(?m)^\s*uses: actions/cache@", st)
+            and _with_block(st).get("path") == "build/runtime-cache"
+        ]
+        assert len(cache) == 1, "种子里应恰好一步 CPython actions/cache"
         want = {("build/runtime-cache", TestBuildReuseAndCaches.CPYTHON_KEY)}
         consumers = {
             (w["path"], w["key"])
             for j, st in _uses_steps("actions/cache")
             if j != self.SEED
             for w in [_with_block(st)]
+            if w["path"] == "build/runtime-cache"
         }
         assert consumers == want, consumers
         w = _with_block(cache[0])
@@ -2562,7 +2595,11 @@ class TestCacheSeed:
             "runtime 构建要用与消费者同版的 setup-python"
         )
         consumer_oses = set().union(
-            *(_job_oses(j) for j, _ in _uses_steps("actions/cache") if j != self.SEED)
+            *(
+                _job_oses(j)
+                for j, st in _uses_steps("actions/cache")
+                if j != self.SEED and _with_block(st)["path"] == "build/runtime-cache"
+            )
         )
         seed_oses = {leg["os"] for leg in self._legs() if leg["cpython"] == "true"}
         assert consumer_oses == seed_oses == {"windows-latest", "macos-latest"}, (
@@ -3020,3 +3057,81 @@ class TestApprovedFontsAndRetirementScan:
             for line in path.read_text(encoding="utf-8").splitlines():
                 if "pip install" in line and "pymupdf" in line.lower():
                     raise AssertionError(f"{path.name}: {line.strip()}")
+
+
+class TestApprovedFontArchiveCaches:
+    """恢复的下载字节不是可信产物；逐项校验在每个消费者上真跑，种子只扩大 bytes 枚举。"""
+
+    def test_font_caches_have_exact_keys_paths_and_no_skip_on_hit(self):
+        ci_fonts = TestBuildReuseAndCaches.FONT_JOBS
+        assert ci_fonts == set(TestApprovedFontsAndRetirementScan.FONTS_BEFORE) | {"cache-seed"}
+        nightly = (WF / "nightly.yml").read_text(encoding="utf-8")
+        for text, jobs in ((CI, ci_fonts), (nightly, {"windows-install"})):
+            caches = [
+                (job, step)
+                for job, step in _uses_steps("actions/cache", text)
+                if _with_block(step).get("path") != "build/runtime-cache"
+            ]
+            assert len(caches) == len(jobs) and {job for job, _ in caches} == jobs
+            for job, step in caches:
+                assert _with_block(step) == {
+                    "path": TestBuildReuseAndCaches.FONT_PATH,
+                    "key": TestBuildReuseAndCaches.FONT_KEY,
+                }, (job, step)  # 不许 restore-keys / lookup-only / 缓存整个包内目录。
+                assert "uses: actions/cache@v5" in step
+                expected_if = "matrix.fonts == true" if job == "cache-seed" else ""
+                assert _if_of_step(step) == expected_if
+                steps = _steps(_job(text, job))
+                fetches = [st for st in steps if "run:" in st and "scripts/fetch_fonts.py" in st]
+                assert len(fetches) == 1, (job, fetches)
+                fetch = fetches[0]
+                assert steps.index(step) < steps.index(fetch)
+                assert _if_of_step(fetch) == expected_if
+                assert re.search(r"python scripts/fetch_fonts\.py(?:\s*&&|\s*\n)", fetch)
+                assert "python scripts/fetch_fonts.py --check" in fetch
+                assert "cache-hit" not in fetch and "continue-on-error" not in fetch
+
+    def test_font_seed_runs_once_per_consumer_os_after_python_setup(self):
+        legs = [leg for leg in TestCacheSeed._legs() if leg["fonts"] == "true"]
+        consumers = set().union(
+            *(_job_oses(job) for job in TestBuildReuseAndCaches.FONT_JOBS - {"cache-seed"})
+        )
+        assert len(legs) == len(consumers) == 3
+        assert {leg["os"] for leg in legs} == consumers == set(_RUNNER_OS_LABEL.values())
+        steps = _steps(_job(CI, "cache-seed"))
+        gated = [st for st in steps if _if_of_step(st) == "matrix.fonts == true"]
+        assert len(gated) == 2
+        assert "actions/cache@v5" in gated[0] and "fetch_fonts.py --check" in gated[1]
+        setups = [st for st in steps if "actions/setup-python@" in st]
+        assert {_if_of_step(st) for st in setups} == {
+            "matrix.cpython == true",
+            "matrix.fonts == true && matrix.cpython == false",
+        }
+        assert all(steps.index(st) < steps.index(gated[0]) for st in setups)
+        assert all(_with_block(st) == {"python-version": "3.13"} for st in setups)
+
+    def test_archive_glob_excludes_extracted_fonts_licenses_and_partial_downloads(self, tmp_path):
+        # 用实际 allowlist 的来源名与文件布局量 glob，不能只检查 path 里没有 resources 这个词。
+        data = json.loads(
+            (ROOT / "src/tavotto/rendercore/fonts_allowlist.json").read_text(encoding="utf-8")
+        )
+        archives = {
+            Path(spec["source"]["url"]).name
+            for spec in data["faces"].values()
+            if spec["source"]["kind"] == "tarball-member"
+        }
+        assert archives
+        for name in archives:
+            archive = tmp_path / "build/fonts-cache" / name
+            archive.parent.mkdir(parents=True, exist_ok=True)
+            archive.write_bytes(b"archive")
+            archive.with_name(name + ".part").write_bytes(b"incomplete")
+        for rel in [*(spec["file"] for spec in data["faces"].values()), *data["license_files"]]:
+            path = tmp_path / "src/tavotto/resources/fonts" / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"extracted")
+        cached = {
+            str(path.relative_to(tmp_path)).replace("\\", "/")
+            for path in tmp_path.glob(TestBuildReuseAndCaches.FONT_PATH)
+        }
+        assert cached == {f"build/fonts-cache/{name}" for name in archives}

@@ -262,6 +262,12 @@ jobs:
           PIP_RETRIES: "5"
         run: python scripts/build_worker_runtime.py --clean
 
+      # 只缓存下载归档；命中后仍重核 tarball、各字体与许可证，不缓存包内字体目录。
+      - name: 缓存批准字体归档（恢复后仍逐项验 SHA-256）
+        uses: actions/cache@v5
+        with:
+          path: build/fonts-cache/*.tar.gz
+          key: approved-font-archives-v1-${{ runner.os }}-${{ hashFiles('src/tavotto/rendercore/fonts_allowlist.json', 'scripts/fetch_fonts.py') }}
       - name: 打包（内置 runtime 必须进包）
         # 装 requirements.txt 那份钉死的运行时闭包（U10 起含 RenderCore 的五个包，ADR 0072）；批准字体在
         # PyInstaller 之前按 allowlist 取到包内目录（tavotto.spec 缺了就拒绝打包）
