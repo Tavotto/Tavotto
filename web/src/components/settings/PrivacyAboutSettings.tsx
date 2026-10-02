@@ -198,7 +198,7 @@ function consentStatus(settings: TelemetrySettings | null): string | undefined {
 function TelemetryDataDisclosure() {
   useTranslation('dialogs')
   return (
-    <DiagnosticDisclosure title={st('about.telemetry.detailsTitle')}>
+    <DiagnosticDisclosure data-privacy-disclosure title={st('about.telemetry.detailsTitle')}>
       <p className="type-caption">{st('about.telemetry.autoProps')}</p>
       <p className="type-caption">
         {st('about.telemetry.sendsBefore')}
@@ -220,7 +220,7 @@ function TelemetryDataDisclosure() {
         {st('about.telemetry.never')}
       </p>
       {/* 「本机优先」这条完整承诺 */}
-      <p className="type-caption">{st('about.privacy')}</p>
+      <p data-privacy-network-summary className="type-caption">{st('about.privacy')}</p>
     </DiagnosticDisclosure>
   )
 }

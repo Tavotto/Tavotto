@@ -744,7 +744,7 @@
       "exporting": "Building…",
       "licenseAfter": ".",
       "licenseBefore": "Free software, released under AGPL-3.0-only —",
-      "privacy": "Everything stays on this machine, and the assistant runs the Codex / Claude tools installed locally. Only two requests leave it: the update check, which you can turn off under “Updates”, and the anonymous statistics below, off until you opt in.",
+      "privacy": "Rendering and editing use the machine running the engine: your computer by default, or the server when you connect to a remote instance. Network activity includes update checks, downloads when you choose to update, and usage statistics only after you opt in. Package lookups, environment preparation and dependency installation can contact package indexes and download packages. The Codex / Claude tools you invoke may contact their own services under their own privacy settings. In browser mode, “Check daily” controls automatic update checks; the desktop app checks at startup and has no in-app switch to disable those checks.",
       "privacyTitle": "Privacy and data",
       "source": "get the source",
       "tagline": "Figure layout and parameterized chart editing for papers",

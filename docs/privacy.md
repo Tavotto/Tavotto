@@ -1,14 +1,19 @@
 # Privacy policy
 
-Last updated: 2026-09-02
+Last updated: 2026-10-02
 
-Tavotto is a local-first scientific-figure editor. Rendering, composition, project
-files, scripts, figures and exports stay on the user's machine unless the user
-explicitly chooses another tool or destination.
+Tavotto is a local-first scientific-figure editor. Rendering, composition and
+project writes happen on the machine running the engine: the user's computer by
+default, or the connected server when the user chooses a remote instance. In that
+remote mode, the interface communicates with the server through the user's tunnel;
+project files, scripts and generated exports are handled there. Other tools or
+export destinations are used when the user chooses them.
 
-Tavotto makes exactly three kinds of outbound request, all described below:
-the update check, the optional AI assistant the user invokes, and — only after
-an explicit opt-in — anonymous usage statistics.
+Network activity includes update checks and user-approved update downloads,
+package lookups and downloads for environment preparation or dependency
+installation, the optional AI assistant the user invokes, and — only after
+an explicit opt-in — usage statistics. The sections below distinguish these
+operations; local rendering does not mean that every feature is offline.
 
 ## Data Tavotto does not upload
 
@@ -45,12 +50,33 @@ list is in [`docs/analytics/telemetry-events.md`](analytics/telemetry-events.md)
 When enabled, Tavotto checks GitHub Releases for the newest public version. The
 request contains the public repository endpoint and standard network metadata
 handled by GitHub; it does not intentionally include the user's project files,
-figures, scripts, exports, or account credentials. Automatic checks can be
-disabled in the application settings, and `TAVOTTO_NO_UPDATE_CHECK=1` disables
-them completely.
+figures, scripts, exports, or account credentials. In browser mode, the **Check
+daily** toggle controls automatic checks; a manual check can still be requested. `TAVOTTO_NO_UPDATE_CHECK=1` suppresses the Python
+backend's startup background check, not every update request.
 
-In the desktop application the in-app updater additionally downloads the signed
-installer when the user accepts an update.
+The desktop application uses a separate updater, checks at startup, and currently
+has no in-app switch to disable those checks. The browser preference and Python
+backend environment variable do not control this desktop channel. The desktop
+updater downloads the signed installer when the user accepts an update.
+
+## Package lookup and environment preparation
+
+When the user requests a package lookup, Tavotto runs `pip index versions` against
+the package index configured for the selected environment. Typing in the package
+search field only filters installed packages locally; choosing the lookup action
+sends the package name to that index.
+
+Environment preparation, dependency repair and package installation or updates
+can download packages and their dependencies. These requests go to the effective
+package index and distribution hosts. Existing pip configuration is respected;
+when no custom index is configured, an eligible failed or stalled install can
+retry against the supported PyPI mirror. The package service receives the package
+names and ordinary request metadata. This is separate from opt-in telemetry:
+turning statistics off does not disable requested package operations. Package
+names, private index URLs and package-manager logs are not telemetry properties.
+
+The installed desktop rendering runtime is bundled; describing package downloads
+does not mean that every desktop startup downloads that runtime.
 
 ## Optional AI assistant
 
