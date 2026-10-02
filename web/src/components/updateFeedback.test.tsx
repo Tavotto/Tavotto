@@ -167,6 +167,79 @@ describe('browser update preference feedback', () => {
     expect(useUpdateStore.getState().autoCheckFailure?.value).toBe(false)
   })
 
+  it.each([false, true])('a fresh check confirming saved value %s removes the stale failure and retry', async (savedValue) => {
+    useUpdateStore.setState({ status: status(!savedValue) })
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError('Response lost after save'))
+      .mockResolvedValueOnce(response(status(savedValue)))
+    vi.stubGlobal('fetch', fetchMock)
+    await mount(<UpdateSettings />)
+    await act(async () => toggle().click())
+    expect(settingError().textContent).toContain('Response lost after save')
+    expect(query<HTMLButtonElement>('[data-update-auto-retry]').disabled).toBe(false)
+    expect(toggle().getAttribute('aria-checked')).toBe(String(!savedValue))
+    await act(async () => { await useUpdateStore.getState().check(true) })
+    expect(toggle().getAttribute('aria-checked')).toBe(String(savedValue))
+    expect(useUpdateStore.getState().autoCheckFailure).toBeNull()
+    expect(document.querySelector('[data-update-auto-error]')).toBeNull()
+    expect(document.querySelector('[data-update-auto-retry]')).toBeNull()
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('a fresh check that disagrees with the requested value preserves the failure and retry', async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError('Response lost after save'))
+      .mockResolvedValueOnce(response(status(true)))
+    vi.stubGlobal('fetch', fetchMock)
+    await mount(<UpdateSettings />)
+    await act(async () => toggle().click())
+    const failure = useUpdateStore.getState().autoCheckFailure
+    expect(failure?.value).toBe(false)
+    await act(async () => { await useUpdateStore.getState().check(true) })
+    expect(useUpdateStore.getState().autoCheckFailure).toBe(failure)
+    expect(toggle().getAttribute('aria-checked')).toBe('true')
+    expect(settingError().textContent).toContain('Response lost after save')
+    expect(query<HTMLButtonElement>('[data-update-auto-retry]').disabled).toBe(false)
+  })
+
+  it('a failed fresh check cannot clear an unresolved preference failure', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Offline')))
+    await useUpdateStore.getState().setAutoCheck(false)
+    const failure = useUpdateStore.getState().autoCheckFailure
+    expect(failure?.value).toBe(false)
+    await useUpdateStore.getState().check(true)
+    expect(useUpdateStore.getState().autoCheckFailure).toBe(failure)
+    expect(useUpdateStore.getState().status?.auto_check).toBe(true)
+  })
+
+  it.each(['before', 'during'] as const)('a check started %s a failed write cannot acknowledge its preference; a fresh check can', async (timing) => {
+    const read = deferred<Response>()
+    const write = deferred<Response>()
+    vi.stubGlobal('fetch', vi.fn((url) => String(url).includes('/settings') ? write.promise : read.promise))
+    let checking: Promise<void>
+    let saving: Promise<void>
+    if (timing === 'before') {
+      checking = useUpdateStore.getState().check(true)
+      saving = useUpdateStore.getState().setAutoCheck(false)
+    } else {
+      saving = useUpdateStore.getState().setAutoCheck(false)
+      checking = useUpdateStore.getState().check(true)
+    }
+    write.reject(new TypeError('Response lost after save'))
+    await saving
+    const failure = useUpdateStore.getState().autoCheckFailure
+    expect(failure?.value).toBe(false)
+    read.resolve(response(status(false)))
+    await checking
+    // Even a matching value from this overlapping read is not confirmation.
+    expect(useUpdateStore.getState().status?.auto_check).toBe(true)
+    expect(useUpdateStore.getState().autoCheckFailure).toBe(failure)
+    vi.stubGlobal('fetch', vi.fn(async () => response(status(false))))
+    await useUpdateStore.getState().check(true)
+    expect(useUpdateStore.getState().status?.auto_check).toBe(false)
+    expect(useUpdateStore.getState().autoCheckFailure).toBeNull()
+  })
+
   it('disables unknown preferences while initial status loads', async () => {
     const read = deferred<Response>(); const fetchMock = vi.fn(() => read.promise)
     vi.stubGlobal('fetch', fetchMock); useUpdateStore.setState({ status: null })

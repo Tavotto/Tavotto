@@ -126,6 +126,12 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
           overlapsWrite && current.status
             ? { ...status, auto_check: current.status.auto_check }
             : status,
+        // A write can commit even when its response is lost. Only a fresh,
+        // matching read confirms that choice and resolves its save failure.
+        autoCheckFailure:
+          !overlapsWrite && status.auto_check === current.autoCheckFailure?.value
+            ? null
+            : current.autoCheckFailure,
         checkError: null,
       })
     } catch (e) {
