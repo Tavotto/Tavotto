@@ -9,7 +9,7 @@
  * 4. **PPI 只在位图输出时出现**；文件名非法时就地报错并挡住导出。
  */
 import { act } from 'react'
-import { literal } from '@/i18n'
+import { initI18n, literal } from '@/i18n'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -35,7 +35,7 @@ import { useUiStore } from '@/store/uiStore'
 import { runValidation, useValidationStore } from '@/store/validationStore'
 import { bindingFor } from '@/lib/specBinding'
 import { toCatalog, useProfileStore } from '@/store/profileStore'
-import { resetExportState } from '@/store/exportStore'
+import { applyExportJob, cancelCurrentExport, refreshExportStatus, resetExportState, runExport, useExportStore } from '@/store/exportStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useWorkspaceStore } from '@/store/workspace'
 import { emptyProject, type PanelObject } from '@/types/document'
@@ -1920,5 +1920,67 @@ describe('EPS 与 TIFF（ADR 0046）', () => {
     await click(formatBox('PDF'))
     await click(formatBox('PNG'))
     expect((button('开始导出') as HTMLButtonElement).disabled).toBe(true)
+  })
+})
+
+
+describe('visible export recovery', () => {
+  afterEach(() => { resetExportState(); initI18n('zh-CN') })
+  const input = () => ({ scope: 'canvas' as const, formats: ['pdf', 'png', 'tiff'], filename: 'Keep name', ppi: 600, documentId: 'd_export', doc: useDocumentStore.getState().doc })
+  const response = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
+  const runningJob = { job_id: 'feedback-job', status: 'running' as const, outputs: [], warnings: [], conflicts: [], error: null }
+
+  it('renders expired-session recovery and retranslates it without replacing user settings', async () => {
+    initI18n('en-US')
+    await setup(9)
+    const doc = useDocumentStore.getState().doc
+    globalThis.fetch = vi.fn(async () => response({ code: 'session_auth_required', error: '会话未建立或已失效' }, 401)) as typeof fetch
+    await act(async () => { await runExport(input()) })
+    const error = () => document.querySelector('[data-export-start-error]')?.textContent
+    expect(error()).toContain('Relaunch Tavotto')
+    expect(error()).not.toContain('Error:')
+    await act(async () => { initI18n('zh-CN') })
+    expect(error()).toContain('会话')
+    expect(useDocumentStore.getState().doc).toBe(doc)
+  })
+
+  it('shows cancel and status failures, keeps dialog/job on dismissal, and retries status', async () => {
+    initI18n('en-US')
+    await setup(9)
+    globalThis.fetch = vi.fn(async () => response(runningJob)) as typeof fetch
+    await act(async () => { await runExport(input()) })
+    globalThis.fetch = vi.fn(async () => { throw new TypeError('Failed to fetch') }) as typeof fetch
+    await act(async () => { await cancelCurrentExport(); await refreshExportStatus() })
+    expect(document.querySelector('[data-export-cancel-error]')?.textContent).toContain('not confirmed')
+    expect(document.querySelector('[data-export-poll-error]')?.textContent).toContain('job may still finish')
+    expect(document.querySelector('[data-export-poll-error]')?.textContent).toContain('Check the connection')
+    await act(async () => { useUiStore.getState().setExportOpen(false) })
+    expect(useExportStore.getState().ownedJobId).toBe('feedback-job')
+    await act(async () => { useUiStore.getState().setExportOpen(true) })
+    expect(document.querySelector('[data-export-cancel-error]')).toBeTruthy()
+    globalThis.fetch = vi.fn(async () => response({ ...runningJob, status: 'done' })) as typeof fetch
+    await act(async () => { (document.querySelector('[data-export-status-retry]') as HTMLButtonElement).click() })
+    expect(document.querySelector('[data-export-poll-error]')).toBeNull()
+    expect(document.querySelector('[data-export-cancel-error]')).toBeNull()
+  })
+
+  it('disables repeated cancellation before and after acknowledgement without claiming completion', async () => {
+    initI18n('en-US')
+    await setup(9)
+    globalThis.fetch = vi.fn(async () => response(runningJob)) as typeof fetch
+    await act(async () => { await runExport(input()) })
+    let resolve!: (r: Response) => void
+    globalThis.fetch = vi.fn(() => new Promise<Response>((r) => { resolve = r })) as typeof fetch
+    const button = () => document.querySelector('[data-export-cancel]') as HTMLButtonElement
+    act(() => { button().click(); button().click() })
+    expect(button().disabled).toBe(true)
+    expect(button().textContent).toContain('Requesting cancellation')
+    expect(fetch).toHaveBeenCalledTimes(1)
+    await act(async () => { resolve(response({ cancelling: true })) })
+    expect(button().disabled).toBe(true)
+    expect(button().textContent).toContain('Cancellation requested')
+    expect(useExportStore.getState().running).toBe(true)
+    await act(async () => { applyExportJob({ ...runningJob, status: 'cancelled' }) })
+    expect(document.querySelector('[data-export-cancel]')).toBeNull()
   })
 })

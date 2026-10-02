@@ -12,12 +12,13 @@ import {
   liveRevision,
   prepareExport,
   resetExportState,
+  refreshExportStatus,
   runExport,
   useExportStore,
 } from './exportStore'
 import { useDocumentStore } from './documentStore'
 import { emptyProject, type PanelObject } from '@/types/document'
-import { literal } from '@/i18n'
+import { formatMessage, initI18n, literal } from '@/i18n'
 import type { ExportRequestInput } from '@/lib/exportRequest'
 import { setMomentSink, type MomentSnapshot } from '@/lib/timelineCheckpoint'
 import { useTimelineStore } from './timelineStore'
@@ -280,6 +281,7 @@ describe('陈旧的轮询不许改排当下的轮询', () => {
     expect(polled).toEqual(['jA'])
 
     // 用户又起了一次导出：代次 +1，归属换成 jB，jB 自己排了一轮
+    resetExportState() // A deliberate context switch permits a new export; repeated clicks do not.
     startId = 'jB'
     await runExport(inputOf())
     expect(useExportStore.getState().ownedJobId).toBe('jB')
@@ -402,5 +404,121 @@ describe('「导出」时刻属于被导出的那份排版（ADR 0101；Codex #6
     expect(moments).toEqual([])
     // 作业本身照常进终局：丢的只是时间线上的那一个点
     expect(useExportStore.getState().job?.status).toBe('done')
+  })
+})
+
+
+describe('export failure recovery', () => {
+  const response = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
+    status, headers: { 'Content-Type': 'application/json' },
+  })
+  const expired = () => response({ code: 'session_auth_required', error: '会话未建立或已失效' }, 401)
+  const startRunning = async () => {
+    globalThis.fetch = vi.fn(async () => response(job())) as typeof fetch
+    await runExport(inputOf({ filename: 'Keep my name', formats: ['pdf', 'png', 'tiff'] }))
+  }
+  afterEach(() => { initI18n('zh-CN'); vi.useRealTimers() })
+
+  it('preserves the real 401 code as a live localized descriptor and keeps input for retry', async () => {
+    initI18n('en-US')
+    globalThis.fetch = vi.fn(async () => expired()) as typeof fetch
+    const input = inputOf({ filename: 'Keep my name', formats: ['pdf', 'png', 'tiff'] })
+    await runExport(input)
+    const state = useExportStore.getState()
+    expect(state.startError?.code).toBe('start_failed')
+    if (state.startError?.code !== 'start_failed') throw new Error('missing start error')
+    expect(state.startError.message.key).toBe('backend.session_auth_required')
+    expect(formatMessage(state.startError.message)).toContain('Relaunch Tavotto')
+    expect(formatMessage(state.startError.message)).not.toContain('会话未建立')
+    initI18n('zh-CN')
+    expect(formatMessage(state.startError.message)).toContain('会话')
+    expect(state.lastInput).toBe(input)
+    globalThis.fetch = vi.fn(async () => response(job({ status: 'done' }))) as typeof fetch
+    await runExport(input)
+    expect(useExportStore.getState().startError).toBeNull()
+    expect(useExportStore.getState().job?.status).toBe('done')
+  })
+
+  it('does not start duplicate jobs while the initial acknowledgement or job is pending', async () => {
+    let resolve!: (r: Response) => void
+    globalThis.fetch = vi.fn(() => new Promise<Response>((r) => { resolve = r })) as typeof fetch
+    const first = runExport(inputOf())
+    expect(await runExport(inputOf())).toBeNull()
+    expect(fetch).toHaveBeenCalledTimes(1)
+    resolve(response(job()))
+    await first
+    expect(await runExport(inputOf())).toBeNull()
+    expect(fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows polling failure, pauses repeated requests, and retries the same job without losing edits', async () => {
+    vi.useFakeTimers()
+    await startRunning()
+    const snapshot = useExportStore.getState().momentSnapshot
+    const input = useExportStore.getState().lastInput
+    useDocumentStore.getState().commit(literal('move'), (d) => { d.objects[0].x = 42 })
+    globalThis.fetch = vi.fn(async () => expired()) as typeof fetch
+    await vi.advanceTimersByTimeAsync(600)
+    expect(useExportStore.getState().pollError?.key).toBe('backend.session_auth_required')
+    expect(useExportStore.getState()).toMatchObject({ running: true, ownedJobId: 'j1', job: { status: 'running' } })
+    expect(useExportStore.getState().momentSnapshot).toBe(snapshot)
+    expect(useExportStore.getState().lastInput).toBe(input)
+    expect(useDocumentStore.getState().doc.objects[0].x).toBe(42)
+    applyExportJob(job({ status: 'running' })) // SSE is an accelerator, not proof polling recovered.
+    expect(useExportStore.getState().pollError?.key).toBe('backend.session_auth_required')
+    await vi.advanceTimersByTimeAsync(6000)
+    expect(fetch).toHaveBeenCalledTimes(1)
+    globalThis.fetch = vi.fn(async () => response(job({ status: 'done' }))) as typeof fetch
+    await refreshExportStatus()
+    expect(String(vi.mocked(fetch).mock.calls[0][0])).toContain('job_id=j1')
+    expect(useExportStore.getState()).toMatchObject({ pollError: null, running: false, editedDuringExport: true })
+  })
+
+  it('deduplicates status retries and ignores a rejection after an SSE terminal result', async () => {
+    await startRunning()
+    let reject!: (error: unknown) => void
+    globalThis.fetch = vi.fn(() => new Promise<Response>((_, r) => { reject = r })) as typeof fetch
+    const pending = refreshExportStatus()
+    await refreshExportStatus()
+    expect(fetch).toHaveBeenCalledTimes(1)
+    applyExportJob(job({ status: 'done' }))
+    reject(new TypeError('Failed to fetch'))
+    await pending
+    expect(useExportStore.getState()).toMatchObject({ pollError: null, running: false, refreshing: false })
+  })
+
+  it('keeps cancellation failures visible and distinguishes acknowledgement from completion', async () => {
+    await startRunning()
+    globalThis.fetch = vi.fn(async () => expired()) as typeof fetch
+    expect(await cancelCurrentExport()).toBe(false)
+    expect(useExportStore.getState()).toMatchObject({ cancelState: 'idle', running: true, ownedJobId: 'j1', cancelError: { key: 'backend.session_auth_required' } })
+    globalThis.fetch = vi.fn(async () => response({ cancelling: false })) as typeof fetch
+    expect(await cancelCurrentExport()).toBe(false)
+    expect(useExportStore.getState().cancelError?.key).toBe('export.cancelNotAccepted')
+    let resolve!: (r: Response) => void
+    globalThis.fetch = vi.fn(() => new Promise<Response>((r) => { resolve = r })) as typeof fetch
+    const cancel = cancelCurrentExport()
+    expect(useExportStore.getState().cancelState).toBe('pending')
+    expect(await cancelCurrentExport()).toBe(false)
+    expect(fetch).toHaveBeenCalledTimes(1)
+    resolve(response({ cancelling: true }))
+    expect(await cancel).toBe(true)
+    expect(useExportStore.getState()).toMatchObject({ cancelState: 'requested', cancelError: null, running: true, job: { status: 'running' } })
+    expect(await cancelCurrentExport()).toBe(false)
+    expect(fetch).toHaveBeenCalledTimes(1)
+    applyExportJob(job({ status: 'cancelled' }))
+    expect(useExportStore.getState()).toMatchObject({ cancelState: 'idle', running: false })
+  })
+
+  it.each(['terminal', 'reset'] as const)('late cancel rejection cannot overwrite %s', async (mode) => {
+    await startRunning()
+    let reject!: (error: unknown) => void
+    globalThis.fetch = vi.fn(() => new Promise<Response>((_, r) => { reject = r })) as typeof fetch
+    const pending = cancelCurrentExport()
+    if (mode === 'terminal') applyExportJob(job({ status: 'done' }))
+    else resetExportState()
+    reject(new TypeError('Failed to fetch'))
+    expect(await pending).toBe(false)
+    expect(useExportStore.getState()).toMatchObject({ cancelError: null, cancelState: 'idle', running: false })
   })
 })

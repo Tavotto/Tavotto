@@ -22,7 +22,11 @@
  * 格式、PPI 重新填一遍（§九）。
  */
 import { create } from 'zustand'
+import { msg, type UiMessage } from '@/i18n'
+import { PRODUCT_NAME } from '@/lib/brand'
 import {
+  ApiError,
+  backendErrorMsg,
   cancelExport as apiCancel,
   exportState,
   startExport,
@@ -65,7 +69,14 @@ interface ExportState {
   /** 有没有作业在飞 */
   running: boolean
   /** 起作业本身失败了（网络 / 请求不合法）；作业内部的失败在 `job.error` 里 */
-  startError: { code: string; message: string } | null
+  startError:
+    | { code: 'bad_filename'; message: FilenameReason }
+    | { code: 'start_failed'; message: UiMessage }
+    | null
+  pollError: UiMessage | null
+  refreshing: boolean
+  cancelError: UiMessage | null
+  cancelState: 'idle' | 'pending' | 'requested'
   /** 上一次的输入。失败之后重试用它，用户不必重填 */
   lastInput: ExportRequestInput | null
   /**
@@ -103,6 +114,10 @@ export const useExportStore = create<ExportState>(() => ({
   job: null,
   running: false,
   startError: null,
+  pollError: null,
+  refreshing: false,
+  cancelError: null,
+  cancelState: 'idle',
   lastInput: null,
   startedRevision: null,
   editedDuringExport: false,
@@ -172,6 +187,8 @@ export function applyExportJob(job: ExportJob): void {
   useExportStore.setState({
     job,
     running: !terminal,
+    pollError: terminal ? null : s.pollError,
+    ...(terminal ? { cancelError: null, cancelState: 'idle' as const, refreshing: false } : {}),
     // 终局之后快照再没有用处（同一作业只进一次终局）：立刻放掉
     momentSnapshot: terminal ? null : s.momentSnapshot,
     editedDuringExport:
@@ -211,6 +228,7 @@ export function liveRevision(input: ExportRequestInput | null): string | null {
  * 这不是绕弯：关掉对话框之后作业继续跑，那时已经没有一个 await 在等它了。
  */
 export async function runExport(input: ExportRequestInput): Promise<ExportJob | null> {
+  if (useExportStore.getState().running) return null
   const prepared = prepareExport(input)
   if (prepared.filenameProblem) {
     useExportStore.setState({
@@ -224,6 +242,10 @@ export async function runExport(input: ExportRequestInput): Promise<ExportJob | 
     job: null,
     running: true,
     startError: null,
+    pollError: null,
+    refreshing: false,
+    cancelError: null,
+    cancelState: 'idle',
     lastInput: input,
     startedRevision: prepared.revision,
     editedDuringExport: false,
@@ -239,7 +261,7 @@ export async function runExport(input: ExportRequestInput): Promise<ExportJob | 
     if (mine !== generation) return null
     useExportStore.setState({
       running: false,
-      startError: { code: 'start_failed', message: String(err) },
+      startError: { code: 'start_failed', message: exportFailure(err) },
       momentSnapshot: null, // 作业没起来：这一刻不会有终局，快照放掉
     })
     return null
@@ -271,33 +293,64 @@ export async function runExport(input: ExportRequestInput): Promise<ExportJob | 
  * 了一次"，归属管"这个 id 还是不是我认领的那个"。拒收路径同样要问——那条路
  * 恰恰是陈旧快照必经的路。
  */
-function schedulePoll(jobId: string): void {
-  stopPolling()
-  const mine = generation
-  const stillMine = () => mine === generation && useExportStore.getState().ownedJobId === jobId
-  pollTimer = setTimeout(() => {
-    void exportState(jobId)
-      .then((fresh) => {
-        applyExportJob(fresh)
-        if (stillMine() && !TERMINAL.has(fresh.status)) schedulePoll(jobId)
-      })
-      .catch(() => {
-        // 一次拉不到不等于作业没了（后端重启、网络抖动）。继续拉；
-        // 真的没了的话下一次会回 `status: 'unknown'`，那才是结论。
-        // **但也只在这一轮仍属于当下作业时才继续**
-        if (stillMine()) schedulePoll(jobId)
-      })
-  }, POLL_MS)
+function exportFailure(error: unknown): UiMessage {
+  return error instanceof ApiError
+    ? backendErrorMsg(error)
+    : msg('export.connectionFailed', { app: PRODUCT_NAME }, 'dialogs')
 }
 
-/** 取消当前作业。回「有没有东西可取消」。 */
+function currentJob(jobId: string, mine: number): boolean {
+  const s = useExportStore.getState()
+  return mine === generation && s.ownedJobId === jobId && s.running
+}
+
+function schedulePoll(jobId: string): void {
+  stopPolling()
+  pollTimer = setTimeout(() => void refreshExportStatus(jobId), POLL_MS)
+}
+
+/** Retry the existing job, never start a second export to recover its status. */
+export async function refreshExportStatus(jobId = useExportStore.getState().ownedJobId): Promise<void> {
+  const mine = generation
+  if (!jobId || !currentJob(jobId, mine) || useExportStore.getState().refreshing) return
+  stopPolling()
+  useExportStore.setState({ refreshing: true })
+  try {
+    const fresh = await exportState(jobId)
+    if (!currentJob(jobId, mine)) return
+    applyExportJob(fresh)
+    if (fresh.job_id === jobId) useExportStore.setState({ pollError: null })
+    if (currentJob(jobId, mine)) schedulePoll(jobId)
+  } catch (error) {
+    // A failed request is not a failed/cancelled job. Keep its identity and input;
+    // pause polling until retry instead of hiding a persistent expired session.
+    if (currentJob(jobId, mine)) useExportStore.setState({ pollError: exportFailure(error) })
+  } finally {
+    if (mine === generation && useExportStore.getState().ownedJobId === jobId) {
+      useExportStore.setState({ refreshing: false })
+    }
+  }
+}
+
+/** An acknowledgement means cancellation was requested, not that files were removed. */
 export async function cancelCurrentExport(): Promise<boolean> {
-  const job = useExportStore.getState().job
-  if (!job || TERMINAL.has(job.status)) return false
+  const s = useExportStore.getState()
+  const job = s.job
+  const mine = generation
+  if (!job || !currentJob(job.job_id, mine) || s.cancelState !== 'idle') return false
+  useExportStore.setState({ cancelState: 'pending', cancelError: null })
   try {
     const res = await apiCancel(job.job_id)
+    if (!currentJob(job.job_id, mine)) return false
+    useExportStore.setState({
+      cancelState: res.cancelling ? 'requested' : 'idle',
+      cancelError: res.cancelling ? null : msg('export.cancelNotAccepted', undefined, 'dialogs'),
+    })
     return res.cancelling
-  } catch {
+  } catch (error) {
+    if (currentJob(job.job_id, mine)) {
+      useExportStore.setState({ cancelState: 'idle', cancelError: exportFailure(error) })
+    }
     return false
   }
 }
@@ -316,6 +369,10 @@ export function resetExportState(): void {
     job: null,
     running: false,
     startError: null,
+    pollError: null,
+    refreshing: false,
+    cancelError: null,
+    cancelState: 'idle',
     lastInput: null,
     startedRevision: null,
     editedDuringExport: false,
