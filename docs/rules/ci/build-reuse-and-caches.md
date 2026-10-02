@@ -57,6 +57,8 @@
   同时冷启动的 hosted job 各有下载目录，action 负责不可变缓存的保存竞争；不引入共享可写 `.part`。
   远端缓存不可原地覆盖：坏的 exact-hit 会在本 job 安全重取，但后续 job 仍会再次遇到该条目；
   需维护者删除坏条目或改变键才能修复远端。这里不增加自动删除缓存或写权限。
+  基线采集器把归档恢复记为 setup、fetch/check 种子记为 install、Post 保存记为 post；
+  新步骤必须登记，不允许落进 other（`tests/test_ci_baseline.py`）。
   合同：`TestApprovedFontArchiveCaches`、原缓存枚举与 `tests/test_fetch_fonts_cache.py`；
   首验看 full-ci 三 OS 的 restore/save，再看后续同 ref run 的 hit；默认分支复用只能在合入后的种子 / 消费者上验。
   变异反证与来源记录见 `docs/implementation/ci-foundation/CI02_BUILD_REUSE.md` §4.2。

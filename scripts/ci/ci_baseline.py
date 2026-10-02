@@ -311,7 +311,8 @@ _STEP_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
         "setup",
         re.compile(
             r"^Run (actions/setup-python@|actions/setup-node@|pnpm/action-setup@|"
-            r"dtolnay/rust-toolchain@|Swatinem/rust-cache@|actions/cache@)|^缓存 CPython|^缓存字体"
+            r"dtolnay/rust-toolchain@|Swatinem/rust-cache@|actions/cache@)|^缓存 CPython|^缓存字体|"
+            r"^缓存批准字体归档"
         ),
     ),
     (
@@ -325,7 +326,7 @@ _STEP_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
         "install",
         re.compile(
             r"^Run pnpm install|^安装|^装 |^装打包依赖|^装进干净环境|^准备渲染环境|^装 Tauri|"
-            r"^种 pnpm store|^批准字体"
+            r"^种 pnpm store|^批准字体|^种批准字体归档"
         ),
     ),
     (
