@@ -128,6 +128,7 @@ def test_real_cold_fontconfig_caches_inside_owned_data_and_preserves_user_fonts(
                 "import importlib.util,pathlib; print(pathlib.Path(importlib.util.find_spec('matplotlib').origin).parent / 'mpl-data/fonts/ttf')",
             ],
             text=True,
+            encoding="utf-8",
             timeout=30,
         ).strip()
     )
@@ -160,7 +161,13 @@ def test_real_cold_fontconfig_caches_inside_owned_data_and_preserves_user_fonts(
 
     def run(executable, args, env):
         return subprocess.run(
-            [executable, *args], env=env, capture_output=True, text=True, check=True, timeout=30
+            [executable, *args],
+            env=env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=True,
+            timeout=30,
         ).stdout
 
     control = dict(os.environ, XDG_CACHE_HOME=str(tmp_path / "control-cache"))
