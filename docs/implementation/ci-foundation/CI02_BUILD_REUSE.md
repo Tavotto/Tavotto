@@ -227,6 +227,37 @@ rust-cache 从「不许 shared-key」翻成「必须 shared-key」。变异反�
 种子会被待定取代（与 landing audit 同形，CI01 §4 ②），只影响那一次；③ 每次 push main 多 5 条腿（暖时各 1–2 分钟；windows / macos 那两条里 runtime 构建的
 一分钟暖也省不掉）；④ 已合入候选留在死 ref 上的条目不会因此消失，7 天过期。
 
+### 4.2 批准字体归档缓存：重复 504 改变了原先的成本判断（2026-10-02）
+
+原先 U10 字体步认定总量约 12 MiB、不值得扩充 CPython-only 枚举。#782、精确 main nightly、
+#784 的官方 Liberation 归档在测试之前多次 HTTP 504，重跑未改代码即可通过，因此增加可靠的下载字节复用。
+代表日志：[#784 plugin-candidate](https://github.com/Tavotto/Tavotto/actions/runs/36982224641/job/110761143165)。
+当前归档 **2,385,008 bytes**，SHA-256 `7191c669bf38899f73a2094ed00f7b800553364f90e2637010a69c0e268f25d0`。
+实现与不变量的唯一全文见 `docs/rules/ci/build-reuse-and-caches.md` 的「批准字体只缓存下载归档」。
+
+它属于第一类「下载 bytes」，不是跨 job 产物边：ci.yml 的 `actions/cache` 从 3 步变为 **14 步**，
+其中字体 11 步；nightly 新增字体 1 步。每 OS 的字体缓存约 2.3 MiB，不缓存 12,699,215 bytes 的解包字体 / 许可证树。
+[GitHub 缓存作用域](https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching#restrictions-for-accessing-a-cache)
+沿用默认分支种子；PR 首验不能证明 main 已种好。恢复字节无论来源都须重哈希，不执行缓存中的代码。
+
+本地验证覆盖冷 / 暖缓存、无效 / 陈旧 / 截断 / 空归档、`.part`、拒绝错误下载与符号链接成员、
+字体和许可证各自的 hash、四消费者并发及精确 path / key / seed 条件 / 无条件 fetch + check。
+不承诺解决冷缓存时的官方服务不可用；Noto 直链、发行 / lab workflow、超时与重试政策不在本改动内。
+真实 GitHub restore/save/hit 和 Windows/macOS 平台验收待 PR full-ci；此阶段不把本地模拟当成线上命中。
+
+本地结果：Ruff 两条、工作流 / Gate / 源码卫生 / 指导文档索引 / 字体来源与篡改 / 安装腿拓扑等 **302 条通过**；
+真实批准归档重新核 SHA、提取 12 张 Liberation 与许可证，全部 13 张字体 + 两份许可证 `--check` 通过。
+反证 **12/12 killed**，各单独变异、确认目标存在、退出码均为 **1**，每次随后还原：
+
+| 变异 | 看护 |
+|---|---|
+| key 去掉 allowlist；去掉 downloader（各一次） | `TestApprovedFontArchiveCaches` |
+| path 换成包内字体树；添加 `restore-keys`（各一次） | 同上 |
+| cache-hit 时跳过 fetch；删 `--check`（各一次） | 同上 |
+| Windows 不种字体；Linux 不准备 Python（各一次） | 同上 |
+| 复用归档不核 hash；新下载不核 hash（各一次） | `tests/test_fetch_fonts_cache.py` |
+| 不核单字体；不核许可证成员 hash（各一次） | 同上 |
+
 ## 5. 产物身份与不混同目标（E）
 
 唯一的数据边 `frontend ══▶ plugin-candidate`：

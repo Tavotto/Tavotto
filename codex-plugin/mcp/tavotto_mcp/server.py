@@ -74,6 +74,9 @@ HOST_EVENT_RESULT_CAP_BYTES = 1024 * 1024
 #: 与这里不逐字节相同，贴着 1 MiB 量的是序列化差异而不是负载。超预算时按
 #: `INLINE_ELISION_STEPS` 的顺序省略字段，画布改经 `tavotto_session_state` 取。
 CANVAS_INLINE_BUDGET_BYTES = 768 * 1024
+#: 模型显式请求的 apply 摘要：整个 CallToolResult（包括资源元数据）最多 16 KiB。
+#: 旧调用与画布默认仍拿同一次渲染的完整负载，不能把另跳取件当作原子响应。
+APPLY_SUMMARY_BUDGET_BYTES = 16 * 1024
 #: 超预算时省略的顺序：先省对模型没用的（SVG 它读不了），再省画布反正要另取的
 #: （manifest / 位图），最后才是预检的逐条清单（计数与阻断布尔永远留着）。
 #: 每省一步量一次，够了就停——能留给模型的尽量留。
@@ -90,9 +93,7 @@ INLINE_ELISION_RESERVE_BYTES = 2 * 1024
 #: 结构化字段都省到底了还超，剩下能占体积的只有 `content` 文本（`preflight=true` 把整份
 #: 预检报告放在那里）：截到能装下为止，尾巴加这一句。**不能不截**——宿主量的是整个
 #: 结果，文字把它顶过上限的话，structuredContent 一样被清空（Codex 评审 P2）。
-CONTENT_TRUNCATED_MARKER = (
-    "…（文字已截断：结果超过宿主体积上限；完整预检报告用 tavotto_preflight 取）"
-)
+CONTENT_TRUNCATED_MARKER = "…（文字已截断：结果超过回执预算；当前状态用 tavotto_session_state、预检报告用 tavotto_preflight 取）"
 #: 最后一道：省略表与文字都到底了还超（没列进表的字段自己就很大——几千个 stem 的
 #: `registry.stems`、成堆的 worker `warnings`），就把 structuredContent 退到**只剩把手**：
 #: 画布认会话、模型认结局所需的那几个键。这些键都是定长小字段，把手永远装得下。
@@ -110,6 +111,14 @@ HANDLE_ONLY_KEYS = frozenset(
         "profile",
         "patch_hash",
         "render_revision",
+        "worker_generation",
+        "restored",
+        "applied",
+        "canonical_patch_count",
+        "contract_released",
+        "warning_count",
+        "rejected_count",
+        "preview_png_error",
         "canvas_ui",
         "elided",
         "preflight",  # 只留计数与布尔（见 fit_inline_budget），清单早在省略表那几步没了
@@ -256,6 +265,8 @@ def _tools() -> list[dict]:
                 "**patches 是全量列表语义**：列表里没有的 (gid, prop) 会自动恢复成脚本"
                 "原始值，所以每次都要发完整的一份，不要发增量。"
                 "返回新的 manifest、SVG、patch hash、warnings 与被拒条目。"
+                "模型调用请带 summary=true：只返回有界变更摘要，完整状态与有界的最近诊断"
+                "按需用 tavotto_session_state 读取；省略或 false 保留旧客户端的完整响应。"
                 "不会改用户的 Python 源码。"
             ),
             "inputSchema": {
@@ -281,6 +292,14 @@ def _tools() -> list[dict]:
                     "preview_dpi": {
                         "type": "integer",
                         "description": "预览 SVG 里内嵌位图的 dpi（含 imshow 的图才有意义）",
+                    },
+                    "summary": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": (
+                            "模型调用传 true：只回有界变更摘要；完整状态用 tavotto_session_state 读取。"
+                            "省略或 false 保留画布与旧客户端的完整响应。"
+                        ),
                     },
                     "user_authorized": {
                         "type": "boolean",
@@ -477,7 +496,9 @@ def _tools() -> list[dict]:
             "description": (
                 "取回一个已打开会话此刻的完整状态：manifest、SVG（raster 档是位图）、"
                 "当前 patches、patch_hash、预检结果。只读，不重跑脚本、不重渲染。"
-                "内嵌画布用它拉取负载；模型只在 tavotto_open_figure 的返回里标了 "
+                "最近成功 apply 的诊断在 last_apply（64 KiB；超限项在 diagnostics_unavailable "
+                "列明，warnings 在顶层；重渲染或进程重建后不保留）。"
+                "内嵌画布用它拉取负载；模型只在 open 或 apply 的返回里标了 "
                 "`elided`（图太大，manifest 没随结果返回）而又确实需要逐元素 gid 时才调它。"
             ),
             "inputSchema": {
@@ -817,7 +838,7 @@ def _elide(container: dict, dotted: str) -> bool:
 
 
 def fit_inline_budget(result: dict, budget: int = CANVAS_INLINE_BUDGET_BYTES) -> dict:
-    """把单图 open 的结果压进宿主事件上限之内。**原地改，返回同一个对象。**
+    """把单图 open 或显式 apply 摘要压进预算。**原地改，返回同一个对象。**
 
     量的是整个 `CallToolResult`（content + structuredContent + _meta），与宿主
     `truncate_mcp_tool_result_for_event` 量的是同一个东西。超预算就按
@@ -831,7 +852,7 @@ def fit_inline_budget(result: dict, budget: int = CANVAS_INLINE_BUDGET_BYTES) ->
     before = _serialized_bytes(result)
     if before <= budget:
         return result
-    elided: list[str] = []
+    elided: list[str] = list((body.get("elided") or {}).get("fields") or [])
     for step in INLINE_ELISION_STEPS:
         for dotted in step:
             if _elide(body, dotted):
@@ -850,7 +871,7 @@ def fit_inline_budget(result: dict, budget: int = CANVAS_INLINE_BUDGET_BYTES) ->
         "final_bytes": budget,
     }
     note = (
-        f"! 结果 {before / 1024:.0f} KiB 超过宿主对工具结果的体积上限（{budget // 1024} KiB），"
+        f"! 结果 {before / 1024:.0f} KiB 超过本次回执预算（{budget // 1024} KiB），"
         f"已省略 {'、'.join(elided) or '（无可省字段）'}；内嵌画布会自己经 tavotto_session_state "
         "取全量，模型要逐元素 gid 时也调它。"
     )
@@ -907,6 +928,9 @@ RESTORED_NOTE = "会话已在新的 server 进程里按落盘记录恢复（上�
 
 
 def _call_apply(args: dict) -> dict:
+    summary = args.get("summary", False)
+    if not isinstance(summary, bool):
+        raise RpcError(INVALID_PARAMS, "summary 必须是 boolean")
     out = bridge.apply_overrides(
         str(args.get("session_id") or ""),
         args.get("patches"),
@@ -928,6 +952,15 @@ def _call_apply(args: dict) -> dict:
         )
     if out["warnings"]:
         lines.append("worker 警告: " + "; ".join(out["warnings"][:5]))
+    if summary:
+        fields = [k for k in bridge.RENDER_PAYLOAD_KEYS if k in out]
+        out = {k: v for k, v in out.items() if k not in bridge.RENDER_PAYLOAD_KEYS}
+        out.update(
+            warning_count=len(out["warnings"]),
+            rejected_count=len(out["rejected"]),
+            elided={"fields": fields, "reason": "summary", "fetch_with": "tavotto_session_state"},
+        )
+        lines.append("完整状态与有界的最近 apply 诊断按需用 tavotto_session_state 读取。")
     return {"content": _text(*lines), "structuredContent": out}
 
 
@@ -1315,6 +1348,61 @@ def _human_error(payload: dict) -> str:
     return text
 
 
+def _bounded_error_text(value: str, keep: int = 256) -> str:
+    encoded = value.encode("utf-8")
+    return (
+        encoded[:keep].decode("utf-8", errors="ignore")
+        + "…（诊断已截断）…"
+        + encoded[-keep:].decode("utf-8", errors="ignore")
+    )
+
+
+def _fit_apply_error_budget(result: dict) -> dict:
+    """只限显式摘要的超大错误；不假称被截诊断能从成功状态取回。"""
+    if _serialized_bytes(result) <= APPLY_SUMMARY_BUDGET_BYTES:
+        return result
+    body = result["structuredContent"]
+    fields: list[str] = []
+    counts: dict[str, int] = {}
+    for key, value in list(body.items()):
+        # 稳定错误码与失败标志不能省；其余字段保留小份诊断或列表样本。
+        if key in {"ok", "code"} or _serialized_bytes(value) <= 1024:
+            continue
+        fields.append(key)
+        if isinstance(value, str):
+            body[key] = _bounded_error_text(value)
+        elif isinstance(value, (list, tuple)):
+            counts[key] = len(value)
+            sample = [
+                _bounded_error_text(item, 64)
+                if isinstance(item, str) and _serialized_bytes(item) > 1024
+                else item
+                for item in value[:3]
+            ]
+            while sample and _serialized_bytes(sample) > 1024:
+                sample.pop()
+            body[key] = sample
+        else:
+            del body[key]
+    body["elided"] = {
+        "fields": fields,
+        "counts": counts,
+        "reason": "summary_error_budget",
+        "budget_bytes": APPLY_SUMMARY_BUDGET_BYTES,
+        "diagnostics_unavailable": True,
+    }
+    note = "! 错误诊断已截断或省略，完整错误诊断未保留；已有会话的当前图态仍用 tavotto_session_state 读取。"
+    result["content"] = _text(_human_error(body), note)
+    if _serialized_bytes(result) > APPLY_SUMMARY_BUDGET_BYTES:
+        # 单项虽小、合计仍大的扩展诊断也不能突破整个回执的预算。
+        for key in list(body):
+            if key not in {"ok", "code", "error", "recovery", "elided"}:
+                del body[key]
+                if key not in fields:
+                    fields.append(key)
+    return result
+
+
 def call_tool(name: str, args: dict) -> dict:
     handler = HANDLERS.get(name)
     if handler is None:
@@ -1330,11 +1418,14 @@ def call_tool(name: str, args: dict) -> dict:
         # 把机器码摆在最前面，模型多半会连着念出去——用户听到
         # 「workspace_confirmation_no_response」等于什么都没听到。同 ADR 0021
         # 的「code 稳定，文案随时可改」：稳定的是 code，给人看的是文案与下一步。
-        return {
+        result = {
             "isError": True,
             "content": _text(_human_error(payload)),
             "structuredContent": payload,
         }
+        if name == "tavotto_apply_overrides" and args.get("summary") is True:
+            _fit_apply_error_budget(result)
+        return result
     if name in UI_TOOLS:
         if (result.get("structuredContent") or {}).get("mode") == bridge.BATCH_MODE:
             # **批量结果不挂画布，而且要把这件事说出口。**一次 tools/call 只带
@@ -1385,6 +1476,17 @@ def call_tool(name: str, args: dict) -> dict:
                 content[0]["text"] += "\n" + note
             else:
                 result["content"] = _text(note)
+    if name == "tavotto_apply_overrides" and args.get("summary") is True:
+        # 在资源元数据 / 无画布说明加完之后量整个结果；只省响应副本，不能改会话快照。
+        body = result["structuredContent"]
+        if (
+            "canvas_ui" in body
+            and _serialized_bytes(result) > APPLY_SUMMARY_BUDGET_BYTES
+            and _elide(body, "canvas_ui.reason")
+        ):
+            # 配置路径可以任意长；摘要保留 available / code，避免把手本身越过预算。
+            body["elided"]["fields"].append("canvas_ui.reason")
+        fit_inline_budget(result, APPLY_SUMMARY_BUDGET_BYTES)
     return result
 
 
@@ -1627,6 +1729,7 @@ class Server:
                 "Tavotto 负责结构化图表编辑：改的是 override（gid + prop + value），"
                 "**不会动用户的 Python 源码**。流程：tavotto_open_figure 打开 → "
                 "tavotto_apply_overrides 改（patches 永远发全量列表）→ "
+                "模型改图时传 summary=true，只读必要回执；完整状态按需 tavotto_session_state 取。"
                 "tavotto_preflight 体检 → tavotto_export 出图。"
                 "数据本身、坐标范围、加删曲线/子图、colorbar 方向这些必须回代码改；"
                 "改完 .py 之后调 tavotto_refresh_project（不是重跑脚本），Tavotto 界面会自己更新。"

@@ -292,6 +292,14 @@ def probe(
                 ),
             }
 
+    def before_build(worker):
+        # Cancellation may arrive while get() discovers an interpreter, before the
+        # worker exists in the pool. Check again after every acquisition, including fallback.
+        if cancelled():
+            if not pool.force_cancel(script, figures_dir, expected_worker=worker):
+                worker.force_kill()  # Already detached: never retire its replacement.
+            raise pool.WorkerError("试运行已取消", code=ERROR_CANCELLED)
+
     tried: list[str] = []
     first_error: dict | None = None
     for entry in entries or entry_candidates(figures_dir, script):
@@ -306,14 +314,14 @@ def probe(
             # （内置 runtime 缺依赖 → 项目自己的 .venv 接手，ADR 0018）。
             # 探测是「跑一次用户脚本」最主要的入口，自动接手必须覆盖它——
             # 否则素材库里能打开的项目，`tavotto open` 打不开。
-            _worker, resp = pool.build(script, figures_dir, entry)
+            _worker, resp = pool.build(script, figures_dir, entry, before_build=before_build)
         except pool.WorkerError as exc:
-            pool.invalidate(script, figures_dir)
             if cancelled():
                 # worker 是被 cancel 硬杀的：报「进程崩溃」是把用户的取消
                 # 说成脚本的错。不再试下一个 entry——取消就是取消。
                 LOG.info("探测被取消 %s [entry=%s]", script, entry)
                 return {**empty, "tried": tried, "error": _cancel_err()}
+            pool.invalidate(script, figures_dir)
             LOG.info("探测失败 %s [entry=%s]: %s", script, entry, exc)
             if first_error is None:
                 first_error = _error_from_worker(exc, entry, figures_dir=figures_dir, script=script)

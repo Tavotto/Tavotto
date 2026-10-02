@@ -134,7 +134,10 @@ tavotto_open_figure { "project_path": "/absolute/path/to/figures",
 
 之后按序：
 
-* **改图** `tavotto_apply_overrides { session_id, patches }`。
+* **改图** `tavotto_apply_overrides { session_id, patches, summary: true }`。
+  当前工具 schema 声明 `summary` 时，模型传 true，只读有界变更摘要；完整状态和有界的
+  最近 apply 诊断按需用 `tavotto_session_state { session_id }` 取，别为了读回执再 apply 一次。
+  旧 server 未声明这个参数时省略它；画布和旧程序化调用方仍取同一次渲染的完整响应。
   `patches` 是 `{gid, prop, value}` 的**全量列表**——列表里没有的 `(gid, prop)`
   会自动恢复成脚本原始值，所以**每次都要发完整的一份，不要发增量**。
   gid 与 prop 从 manifest 的 `elements[].editable` 里取，别猜。

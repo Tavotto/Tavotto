@@ -3215,7 +3215,14 @@ def user_interpreter_in_effect(figures_dir: str | Path) -> bool:
 workdir.register_user_interpreter_probe(user_interpreter_in_effect)
 
 
-def build(script_name: str, figures_dir: str, entry: str, *, allow_project_env: bool = True):
+def build(
+    script_name: str,
+    figures_dir: str,
+    entry: str,
+    *,
+    allow_project_env: bool = True,
+    before_build=None,
+):
     """取会话并确保脚本已 build——**带一次项目环境自动 fallback**。
 
     回 `(worker, build 响应)`。所有会真正跑用户脚本的入口都该走这里，而不是
@@ -3230,6 +3237,9 @@ def build(script_name: str, figures_dir: str, entry: str, *, allow_project_env: 
     上层据此渲染恢复引导（找不到 venv / venv 也缺这个包 / 没有 matplotlib /
     Python 版本不支持），而不是干甩一段 traceback。
 
+    `before_build(worker)` 在每次取到会话后、执行前调用（包括自动 fallback）；
+    调用方可据此拒绝在会话取得期间已取消的作业。
+
     会话经 **`get()`** 取（不是 `acquire()`）：老调用方与用例只认这一个名字来
     替换会话（monkeypatch `pool.get`），改走别的入口它们会静默拿到真池。
     """
@@ -3238,6 +3248,7 @@ def build(script_name: str, figures_dir: str, entry: str, *, allow_project_env: 
         script_name,
         figures_dir,
         allow_project_env=allow_project_env,
+        before_build=before_build,
     )
     return worker, resp
 
@@ -3269,7 +3280,13 @@ def build_owned(
 
 
 def _build_with(
-    take, script_name: str, figures_dir: str, *, allow_project_env: bool, before_retry=None
+    take,
+    script_name: str,
+    figures_dir: str,
+    *,
+    allow_project_env: bool,
+    before_retry=None,
+    before_build=None,
 ):
     """`build` / `build_owned` 共用的编排：`take()` 回 `(worker, created)`。
 
@@ -3277,6 +3294,8 @@ def _build_with(
     脚本目录，ADR 0107 §二）——之后、第二次执行之前调一次。按计划执行的调用方（准备接口）在这里核
     计划记下的授权还成不成立，不成立就抛出：不在计划没写过的 cwd 里重跑（Codex #713 P1）。"""
     worker, created = take()
+    if before_build is not None:
+        before_build(worker)
     try:
         return worker, worker.ensure_built(), created
     except WorkerError as exc:
@@ -3289,6 +3308,8 @@ def _build_with(
     if before_retry is not None:
         before_retry()
     worker, created_again = take()
+    if before_build is not None:
+        before_build(worker)
     return worker, worker.ensure_built(), created or created_again
 
 

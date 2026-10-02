@@ -1,6 +1,7 @@
 # ADR 0069：内嵌画布的负载不走工具结果——open 结果守宿主 1 MiB 事件上限，画布经 `tavotto_session_state` 取件
 
 日期：2026-09-21 · 状态：**Accepted**（issue #457）
+2026-10-02 补充：显式 apply 摘要回执，保留旧默认完整响应（见末节）。
 相关：[0006 Codex 里的 MCP server / MCP App 画布](0006-codex-mcp-app-and-publication-profile.md)
 第 4 节、[0022 复杂度感知的编辑预览](0022-complexity-aware-editor-preview.md)（不变量 5：manifest 与 SVG /
 位图同一次响应）。
@@ -99,3 +100,42 @@ rollout 的**事件副本**封顶在 1 MiB（`core/src/mcp_tool_call.rs` 的
   失效、未知会话结构化报错；`tests/test_mcp_resolver.py` 降级名单镜像真 server 工具表。
 * `web/src/mcp/boot.test.ts`：三种来货的分类与解析；`web/src/mcp/session.test.ts`：
   带 patches 的 seed；`web/e2e/mcp-canvas.spec.ts`：真 iframe 里把手取件与空壳报错。
+
+## 2026-10-02：模型显式请求 apply 摘要，旧画布的原子响应保持完整
+
+安装版 0.17.0 的一张 444 元素图实测：open 省略后的回执 4515 字节，apply 完整回执
+1147020 字节，超过 1 MiB。执行侧 session / hash / manifest / SVG 完整且状态一致；
+这次探针没有观察宿主完成事件或 iframe，不能声称重新复现了空白画布。
+
+模型与画布现有的 apply arguments 可以完全相同，没有可靠来源标记。画布直接消费 apply
+返回的 manifest / SVG / 位图；另跳 session_state 在交错编辑时可能已是另一组 patches。
+因此不能把所有 apply 默认改为省略负载，也不按宿主名称或参数形状猜调用来源。
+
+新增可选 boolean `summary`，缺省 false 保留现有调用方的完整形状；工具说明、initialize
+指引与技能让新模型显式传 true。摘要省 manifest / SVG / 位图，保留结果身份、hash /
+revision / worker generation、应用数量、拒绝与警告计数、恢复和合同解除标志。
+`elided` 指向只读的 `tavotto_session_state`，现有画布启动的把手取件路径已经支持它。
+
+显式摘要的**整个** CallToolResult 在 `_meta` / 无画布说明加入之后守 16 KiB，复用既有
+紧凑 UTF-8 fitter；超大 warnings / rejected 可省，计数与提交状态不可省。当前 Session
+只额外保留 ≤ 64 KiB 紧凑 UTF-8 JSON 的诊断账本 `apply_receipt`，按需状态多一个
+`last_apply`（同一 patch_hash / render_revision）。渲染负载不进账本，warnings 复用原有
+字段、在状态顶层完整提供。超限 rejected / timings / 预览错误依次不保留，缺项以
+`diagnostics_unavailable` 明示；极端诊断清单不能完整取回，完整图态不受影响。
+这不是历史：下次成功渲染清掉，失败渲染保留上一成功状态；关闭、淘汰、出界与退出释放；
+进程恢复重渲染时不保留旧诊断。没有新增渲染、执行、权限、落盘或引擎 import 路径。
+
+失败也量整个显式摘要，仍保留 `isError=true`、`ok=false` 与原错误码。预算内错误原样；
+超大错误 / recovery 保留首尾文字，诊断列表保留有界样本与原计数，其余扩展可省。
+`elided` 明示完整错误诊断未保留；失败不写入成功诊断账本，不能宣称状态工具能取回
+这些被截的错误。默认与 false 的错误响应保持完整。
+
+兼容性的代价是旧模型省略新参数时回执仍可能超限；本次修复不声称消除了所有旧调用的
+宿主截断。真实 Codex Desktop 的事件 / iframe 验收仍须独立进行，协议测试不可替代。
+
+长期分流可利用 MCP Apps 的 `ui.visibility`（工具分别暴露给 model / app），但会涉及旧画布
+工具名与迁移。已核对标准 SDK 的 `McpUiClientCapabilities` 只报告资源 MIME，
+`App.callServerTool` 透传普通 `CallToolRequest.params`，没有自动插入逐次调用来源；
+初始化支持 UI 不等于本次调用来自 UI，所以不能仅按这份能力将旧 apply 默认省略。
+依据：[`ext-apps` 2.0.3 的能力与可见性定义](https://github.com/modelcontextprotocol/ext-apps/blob/82221c0c8ce7661efa6771c9d461511b1650495f/src/spec.types.ts#L762-L857)、
+[`callServerTool` 透传](https://github.com/modelcontextprotocol/ext-apps/blob/82221c0c8ce7661efa6771c9d461511b1650495f/src/app.ts#L1306-L1327)。

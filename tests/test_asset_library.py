@@ -56,6 +56,7 @@ import time
 import matplotlib.pyplot as plt
 
 plt.plot([1, 2, 3])
+print("TAVOTTO_TEST_PROBE_STARTED", flush=True)
 time.sleep(120)
 """
 
@@ -134,6 +135,73 @@ class TestCancelSemantics:
         assert result["error"]["code"] == engine_probe.ERROR_CANCELLED
         assert calls == ["build"]  # 第二个 entry 没有被试
 
+    @pytest.mark.parametrize("fallback", [False, True], ids=["initial", "fallback"])
+    @pytest.mark.parametrize("replaced", [False, True], ids=["current", "replacement"])
+    def test_cancel_during_acquisition_never_builds_or_retires_a_replacement(
+        self, tmp_path, monkeypatch, fallback, replaced
+    ):
+        """Cancel can find an empty pool while acquisition is still discovering Python.
+
+        The returned worker must be checked before either initial or fallback execution;
+        a replacement installed meanwhile is another owner's session and must survive.
+        """
+        figs = _make_project(tmp_path)
+        write(figs, "show_only.py", SHOW_ONLY)
+        key = (engine_pool._norm_dir(str(figs)), "show_only.py")
+        monkeypatch.setattr(engine_pool, "_workers", {})
+        monkeypatch.setattr(engine_probe, "entry_candidates", lambda *a: ["__main__"])
+        cancelled = threading.Event()
+        events = []
+
+        class Worker:
+            def __init__(self, name):
+                self.name = name
+
+            def ensure_built(self):
+                events.append(f"build:{self.name}")
+                if self.name == "initial":
+                    raise engine_pool.WorkerError(
+                        "missing fixture", code="missing_dependency", module="fixture"
+                    )
+                pytest.fail("A worker acquired after cancellation must never execute")
+
+            def force_kill(self):
+                events.append(f"kill:{self.name}")
+
+            def shutdown(self):
+                events.append(f"shutdown:{self.name}")
+
+        initial, acquired, replacement = (Worker(name) for name in ("initial", "acquired", "other"))
+        takes = []
+
+        def take(*a, **k):
+            takes.append(True)
+            if fallback and len(takes) == 1:
+                engine_pool._workers[key] = initial
+                return initial
+            # The cancel endpoint has set its event and attempted a kill before registration.
+            cancelled.set()
+            assert engine_pool.force_cancel("show_only.py", str(figs)) is False
+            engine_pool._workers[key] = replacement if replaced else acquired
+            return acquired
+
+        def adopt(*a):
+            assert engine_pool._workers.pop(key) is initial
+            events.append("adopt")
+            return {"ok": True}
+
+        monkeypatch.setattr(engine_pool, "get", take)
+        monkeypatch.setattr(engine_pool, "try_project_env", adopt)
+        result = engine_probe.probe_and_register(
+            figs, "show_only.py", should_cancel=cancelled.is_set
+        )
+        assert result["error"]["code"] == engine_probe.ERROR_CANCELLED
+        assert result["registered"] is False
+        assert not (figs / "tavotto_registry.json").exists()
+        assert len(takes) == (2 if fallback else 1)
+        assert events == (["build:initial", "adopt"] if fallback else []) + ["kill:acquired"]
+        assert engine_pool._workers == ({key: replacement} if replaced else {})
+
     @needs_worker
     def test_cancel_kills_the_running_probe(self, client, tmp_path):
         """负向反证 #3 的 sentinel：cancel 之后，阻塞中的 probe 请求必须
@@ -161,7 +229,18 @@ class TestCancelSemantics:
         assert second.status_code == 409
         assert second.get_json()["code"] == "probe_in_progress"
 
-        time.sleep(1.0)  # 让 worker 进入 build（睡在用户脚本里）
+        # _PROBES only proves admission; cold interpreter discovery may take over a second.
+        # Wait for evidence from inside this script, separately from the early-cancel tests.
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            worker = engine_pool.peek("slow.py", figs)
+            if worker and "TAVOTTO_TEST_PROBE_STARTED" in worker.log_path.read_text(
+                encoding="utf-8", errors="replace"
+            ):
+                break
+            time.sleep(0.05)
+        else:
+            pytest.fail("The slow script never reached its execution sentinel")
         resp = client.post("/api/registry/probe/cancel", json={"script": "slow.py"})
         assert resp.get_json()["cancelling"] is True
 

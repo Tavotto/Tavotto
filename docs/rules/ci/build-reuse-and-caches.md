@@ -3,10 +3,10 @@
 > 原文出自 `.github/AGENTS.md`「门禁纪律」（2026-09-18 指导文档治理时按主题拆出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`.github/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 
-- **构建产物不跨 job 抽取、缓存只有两类（CI02，2026-09-16）**：九种 recipe（web 应用 / MCP 画布 / 插件候选 / playground /
+- **构建产物不跨 job 抽取、缓存按下载 / 编译分类（CI02，2026-09-16；字体归档补充见下）**：九种 recipe（web 应用 / MCP 画布 / 插件候选 / playground /
   wheel / workerd / 内置 runtime / PyInstaller / .app）逐行量过——0 行值得新抽取，唯一的数据边仍是 `frontend → plugin-candidate`
   （消费者用 **checkout 的 HEAD** + **清单里的 content_digest** 核，不信 artifact 的名字）。ci.yml 里的缓存是**枚举**：
-  `actions/cache` 只有 CPython 归档（两处消费者 + `cache-seed` 的种子步，key 含 `runner.os` / `runner.arch` / 锁 hash，恢复在
+  `actions/cache` 的 CPython 归档保持三处（两处消费者 + `cache-seed` 的种子步，key 含 `runner.os` / `runner.arch` / 锁 hash，恢复在
   `build_worker_runtime.py` 之前）、setup-node 的 pnpm store 按 `web/pnpm-lock.yaml`、rust-cache 各自点名 `workspaces` **并带一个
   以 (workspace, profile) 命名的 `shared-key`**（`workerd` / `desktop-shell` / `workerd-release`，见下一段）；venv / site-packages /
   用户目录 / 测试结果 / **Playwright 浏览器目录**一律不缓存（`tests/test_merge_queue_workflows.py::TestBuildReuseAndCaches`，
@@ -40,3 +40,25 @@
   `macos-app-smoke` 日志有没有 `Restored from cache key "v0-rust-…" full match: true`（rust-cache）、`Cache restored from key:
   cpython-…`（actions/cache）、`Cache restored from key: node-cache-…`（setup-node）——不能看 PR 的第二次 run，那本来就暖。
   数字、变异反证与已知边界：`docs/implementation/ci-foundation/CI02_BUILD_REUSE.md` §4.1。
+
+- **批准字体只缓存下载归档（2026-10-02）**：原先按「约 12 MiB、不值得扩大枚举」每腿重下；
+  #782、精确 main nightly、#784 在测试前反复遇到官方 Liberation 归档 GET 504 后，重新裁定这项可靠性成本。
+  CI 只新增 **11 个** `actions/cache` step（10 个原字体消费者 + `cache-seed`），nightly 的 `windows-install`
+  新增 1 个。路径严格为 `build/fonts-cache/*.tar.gz`：当前唯一归档 2,385,008 bytes；`.part`、解包后的
+  字体 / 许可证、可执行代码、构建产物一概不缓存，Noto 原始文件仍按原来源每次下载。ADR 0060、URL、
+  allowlist、许可证、下载器、重试 / 超时与 safe extraction 均不改；这仍是 CI02 第一类「下载 bytes」。
+  key = `approved-font-archives-v1-` + `runner.os` + `hashFiles(fonts_allowlist.json, fetch_fonts.py)`，
+  无 `restore-keys`、无跨 OS 归档开关；字体字节与架构无关，OS 用于 action 压缩格式的兼容。
+  **缓存不是信任来源**：每次无条件执行原 `fetch_fonts.py` + `--check`；读取归档先重算批准 SHA，
+  坏 / 旧 / 半截归档从同一官方 URL 重取，网络返回 hash 不符当场失败不重试；提取后逐张字体与许可证再核
+  各自的 hash，cache-hit 永不作为绕过依据。仓库里仍零字体二进制、每 job 独立重建包内字体树。
+  `cache-seed` 既有五腿中以 `fonts` 字段选择三个 OS 各一腿，真跑同一套 fetch/check；沿用原 push main /
+  full-ci PR 条件与非门禁身份，不加 job / needs / 权限。消费者可读默认分支种子，PR ref 的缓存不进入 main。
+  同时冷启动的 hosted job 各有下载目录，action 负责不可变缓存的保存竞争；不引入共享可写 `.part`。
+  远端缓存不可原地覆盖：坏的 exact-hit 会在本 job 安全重取，但后续 job 仍会再次遇到该条目；
+  需维护者删除坏条目或改变键才能修复远端。这里不增加自动删除缓存或写权限。
+  基线采集器把归档恢复记为 setup、fetch/check 种子记为 install、Post 保存记为 post；
+  新步骤必须登记，不允许落进 other（`tests/test_ci_baseline.py`）。
+  合同：`TestApprovedFontArchiveCaches`、原缓存枚举与 `tests/test_fetch_fonts_cache.py`；
+  首验看 full-ci 三 OS 的 restore/save，再看后续同 ref run 的 hit；默认分支复用只能在合入后的种子 / 消费者上验。
+  变异反证与来源记录见 `docs/implementation/ci-foundation/CI02_BUILD_REUSE.md` §4.2。
