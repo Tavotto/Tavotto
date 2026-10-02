@@ -6,6 +6,7 @@ workerd 全链路的用例在 `test_worker_roundtrip.py` 末节（要 matplotlib
 """
 
 import subprocess
+import sys
 
 import pytest
 
@@ -143,7 +144,10 @@ def test_the_bundled_runtime_still_gets_its_args_and_env(monkeypatch, tmp_path):
     assert spec["argv"] == box["argv"]
     assert spec["argv"][1] == "-B"
     assert set(runtime.child_args()).issubset(spec["argv"])
-    assert set(spec["env"]) == {"MPLCONFIGDIR", "PYTHONNOUSERSITE"}
+    expected_env = {"MPLCONFIGDIR", "PYTHONNOUSERSITE"}
+    if sys.platform.startswith("linux"):
+        expected_env.add("FONTCONFIG_FILE")
+    assert set(spec["env"]) == expected_env
     # env 只给增量：workerd 继承的本来就是 Flask 的环境
     assert "PATH" not in spec["env"]
 

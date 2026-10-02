@@ -630,6 +630,7 @@ def child_env(base: dict[str, str] | None = None) -> dict[str, str]:
         os.makedirs(env["MPLCONFIGDIR"], exist_ok=True)
     except OSError:
         pass
+    _owned_fontconfig_env(cache, env)
     return env
 
 
@@ -828,13 +829,55 @@ def _owned_mplconfigdir(cache: str) -> str | None:
     return _linked_mpl_config_dir(cache, config)
 
 
+def _owned_fontconfig_env(cache: str, env: dict[str, str]) -> None:
+    """Linux fontconfig caches belong to this owned child, without moving XDG caches.
+
+    Matplotlib asks ``fc-list`` for system fonts; MPLCONFIGDIR does not apply to it.
+    Fontconfig writes to the first writable <cachedir>, but still reads the later
+    caches. Prepend ours, then include the original configuration so system/user
+    font directories, aliases and XDG settings remain live. Never change the parent
+    environment. A custom sysroot remaps absolute paths too; leave that setup alone.
+    """
+    if not sys.platform.startswith("linux") or env.get(
+        "FONTCONFIG_SYSROOT", os.environ.get("FONTCONFIG_SYSROOT")
+    ):
+        return
+    import hashlib
+    from pathlib import Path
+    from xml.sax.saxutils import escape
+
+    from . import atomicio
+
+    original = env.get("FONTCONFIG_FILE", os.environ.get("FONTCONFIG_FILE")) or "fonts.conf"
+    # FONTCONFIG_FILE is searched via fontconfig's config path, not the child's cwd.
+    # data_dir() permits relative overrides; the wrapper and its cachedir must be absolute.
+    root = Path(os.path.abspath(cache)) / "fontconfig"
+    # A nested spawn may already inherit this wrapper. Do not grow an include chain.
+    if Path(original).parent == root and Path(original).name.startswith("tavotto-"):
+        return
+    content = (
+        '<?xml version="1.0"?>\n<fontconfig>\n'
+        f"  <cachedir>{escape(str(root))}</cachedir>\n"
+        f"  <include>{escape(original)}</include>\n"
+        "</fontconfig>\n"
+    ).encode("utf-8")
+    target = root / f"tavotto-{hashlib.sha256(content).hexdigest()[:16]}.conf"
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+        if not target.is_file() or target.read_bytes() != content:
+            atomicio.write_bytes(target, content)
+    except OSError:
+        return  # As with matplotlib config links, an unwritable cache must not break fonts.
+    env["FONTCONFIG_FILE"] = str(target)
+
+
 def owned_env(
     python: str | os.PathLike | None, base: dict[str, str] | None = None
 ) -> dict[str, str] | None:
     """起 **Tavotto 自己的环境**（`is_owned_python`）时的环境变量；别人的环境回 None（原样继承）。
 
     base 给 `{}` 时回的就是**增量**（workerd 的 spawn 规格只收增量，`pool._spawn_spec`）。
-    两个缓存落回这个环境的缓存根（`_owned_cache_root`：数据目录里的环境是 `<data_dir>/cache/<名字>`，与
+    缓存落回这个环境的缓存根（`_owned_cache_root`：数据目录里的环境是 `<data_dir>/cache/<名字>`，与
     `child_env()` 的 `mpl` 同一个约定；Codex 插件自管运行时是 `<配置目录>/mcp-runtime/cache/<名字>`，#733）：
 
     * `PIP_CACHE_DIR` → `cache/pip`：受管环境里跑的 pip（装包 / 查找 / 包管理）默认把
@@ -846,6 +889,9 @@ def owned_env(
     * `MPLCONFIGDIR`：matplotlib 3.11 在 Windows 上默认建 `%LOCALAPPDATA%\\matplotlib`
       写字体缓存。改不改道、改到哪见 `_owned_mplconfigdir`：用户已有的配置照样生效
       （受管环境跑的是他的脚本，`plt.style.use("我的样式")` 得认得），缓存不在数据目录外新建。
+
+    * Linux 的 fontconfig：`fc-list` 不读 MPLCONFIGDIR；`_owned_fontconfig_env` 只给子进程
+      包一层配置，把 `cache/fontconfig` 排在缓存候选之首，再加载原配置。不改 XDG 变量、字体与匹配规则。
 
     清理：都在环境自己的归宿旁边——数据目录里的环境随数据目录一并删掉（与受管环境 `envs/`、
     私有 Python 同一个归宿），插件自管运行时随 `mcp-runtime` 目录一并删掉；不在这两处之外留任何东西。
@@ -862,6 +908,7 @@ def owned_env(
             os.makedirs(mpl, exist_ok=True)
         except OSError:
             pass
+    _owned_fontconfig_env(cache, env)
     return env
 
 
