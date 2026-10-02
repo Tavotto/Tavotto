@@ -446,6 +446,100 @@ def test_switching_the_frame_mid_session_equals_a_fresh_replay(tmp_path, session
     assert diffs == []
 
 
+@pytest.mark.parametrize(
+    "frame", ["tight", "explicit", "tight-layout", "constrained-layout", "figsize", "none"]
+)
+@pytest.mark.parametrize("history", ["add-change-undo-redo", "remove-on-open"])
+def test_unchanged_axes_position_replays_after_frame_resize(tmp_path, frame, history):
+    """Same frame-relative axes position, changed size: hot == full replay.
+
+    The existing hot/fresh test adds position *after* size, so it never exercises
+    a cached F→G conversion. Removing size must also re-evaluate that conversion:
+    returning to the size where position was first applied can hide this bug.
+    """
+    from PIL import Image
+
+    from tavotto import app as m, pdfbackend
+
+    name = "resize"
+    layout = frame.removesuffix("-layout") if frame.endswith("-layout") else None
+    bbox = (
+        "None"
+        if frame == "none"
+        else "Bbox.from_extents(-.2, -.3, 4.8, 3.4)"
+        if frame == "explicit"
+        else "'tight'"
+    )
+    # 5 × 3.2 inches round-trips exactly through the existing size_mm restore.
+    # A 3-inch source has a separate baseline roundoff (3 → 2.9999999999999996),
+    # which can move a tick glyph across Agg's pixel-snapping boundary on undo.
+    body = f"""\
+from matplotlib.transforms import Bbox
+fig, ax = plt.subplots(figsize=(5.0, 3.2), layout={layout!r})
+ax.plot([0, 1, 2], [2, 0, 3])
+ax.set(xlabel="Time", ylabel="Response", title="Frame-relative axes")
+fig.savefig("{name}.pdf", bbox_inches={bbox}, pad_inches=0.04)
+"""
+    figs = _project(tmp_path, name, body)
+    original = {p.name: p.read_bytes() for p in figs.iterdir()}
+    position = {"gid": "axes_0", "prop": "position", "value": [0.18, 0.22, 0.67, 0.64]}
+    size = {"gid": "figure", "prop": "size_mm", "value": [140.0, 95.0]}
+    size2 = {**size, "value": [160.0, 105.0]}
+    steps = (
+        [[position], [position, size], [position, size2], [position], [position, size]]
+        if history == "add-change-undo-redo"
+        else [[position, size], [position]]
+    )
+    prefix = [LEGACY] if frame == "figsize" else []
+    hot = _Session(figs, f"{name}.py")
+    try:
+        for step, patches in enumerate(steps):
+            patches = prefix + patches
+            fresh = _Session(figs, f"{name}.py")
+            try:
+                hot_result = hot.w.override(name, patches)
+                fresh_result = fresh.w.override(name, patches)
+                assert hot_result["warnings"] == fresh_result["warnings"] == []
+                hot_man, fresh_man = hot_result["manifest"], fresh_result["manifest"]
+                if frame == "none":
+                    assert "frame" not in hot_man
+                else:
+                    assert hot_man["frame"]["active"] is (frame != "figsize")
+                hot_position = next(
+                    field["value"]
+                    for field in _el(hot_man, "axes_0")["editable"]
+                    if field["prop"] == "position"
+                )
+                # Read the actual geometry, not state.applied or the request list.
+                assert hot_position == pytest.approx(position["value"], abs=1e-9), step
+                diffs, compared = m._compare_manifests(hot_man, fresh_man)
+                assert compared > 0
+                assert diffs == [], (step, diffs)
+                for label, worker in (("hot", hot.w), ("fresh", fresh.w)):
+                    worker.export(name, patches, str(tmp_path / f"{label}.png"), "png", 100)
+                with Image.open(tmp_path / "hot.png") as h, Image.open(tmp_path / "fresh.png") as f:
+                    assert h.size == f.size
+                    assert h.convert("RGBA").tobytes() == f.convert("RGBA").tobytes(), step
+                # The two-step primary regression also checks real PDF pixels.
+                if frame == "tight" and history == "add-change-undo-redo" and step == 1:
+                    for label, worker in (("hot", hot.w), ("fresh", fresh.w)):
+                        pdf = tmp_path / f"{label}.pdf"
+                        worker.export(name, patches, str(pdf), "pdf", 100)
+                        assert _mediabox_mm(pdf) == pytest.approx(size["value"], abs=0.02)
+                        pdfbackend.render_preview_png(pdf, 600, tmp_path / f"{label}-pdf.png")
+                    with (
+                        Image.open(tmp_path / "hot-pdf.png") as h,
+                        Image.open(tmp_path / "fresh-pdf.png") as f,
+                    ):
+                        assert h.size == f.size
+                        assert h.convert("RGBA").tobytes() == f.convert("RGBA").tobytes()
+            finally:
+                fresh.close()
+    finally:
+        hot.close()
+    assert {p.name: p.read_bytes() for p in figs.iterdir()} == original
+
+
 # ===========================================================================
 # paper_style.save 捷径（ADR 0098 §四 = ADR 0094 §五.4 的前置修正）
 # ===========================================================================
