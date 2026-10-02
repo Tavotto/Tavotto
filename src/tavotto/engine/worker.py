@@ -286,6 +286,8 @@ def _patched_savefig(self, fname, *args, **kwargs):
             kwargs.get("bbox_extra_artists"),
         )
     if not to_path:
+        if SESSION is not None:
+            SESSION.passthrough_figures.add(id(self))
         return _REAL_SAVEFIG(self, fname, *args, **kwargs)
     return None
 
@@ -676,7 +678,7 @@ class Worker(wireproto.V1Handler):
                 )
                 self.dropped_figures = dropped
 
-        self.session.instrument_all()
+        self.session.instrument_all(suppressed_savefig=True)
         self._descriptor_cache = self._build_descriptors()
         # 回执的 `inputs` 在**这一刻**定格：脚本已经跑完，之后进程里再读什么（导出时的字体缓存）都不是它的输入
         self._inputs_report = self._input_observer.report(

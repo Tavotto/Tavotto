@@ -57,6 +57,7 @@ import overrides as overrides_mod
 import pathgeom
 import preview_hybrid
 import previewbudget
+from axestraversal import ordered_axes
 
 __all__ = [
     "LiveFigureSession",
@@ -213,6 +214,9 @@ class LiveFigureSession:
         #: stem -> 与 `savefig_calls[stem]` 逐项对齐的 `bbox_extra_artists` **对象**（进不了 JSON，
         #: 只活在这个进程里；算图幅时要把同一批 artist 交回 savefig，ADR 0098 §一）
         self.savefig_extras: dict[str, list] = {}
+        # Safe capture normally suppresses savefig. File-object saves really draw
+        # during the script; do not treat their later state as an undrawn seed.
+        self.passthrough_figures: set[int] = set()
         #: 项目根：定义图幅的那次调用按「与原件同格式」挑（`figcapture.frame_call`）；
         #: None = 这条入口不谈原件（native bridge），取第一次调用
         self.frame_project_root: str | None = None
@@ -278,7 +282,7 @@ class LiveFigureSession:
                 file=sys.stderr,
             )
 
-    def instrument_all(self) -> None:
+    def instrument_all(self, *, suppressed_savefig: bool = False) -> None:
         """给捕获表里还没有 FigState 的图建状态并出一次预览。
 
         可重入：native bridge 在每次 `plt.show()` 屏障处都会再调一次，
@@ -287,6 +291,10 @@ class LiveFigureSession:
         """
         self._own()
         fresh = [(stem, fig) for stem, fig in self.capture.items() if stem not in self.states]
+        if suppressed_savefig:
+            pathgeom.stabilize_captured_tight_layouts(
+                dict(fresh), self.savefig_calls, self.passthrough_figures, ordered_axes=ordered_axes
+            )
         if fresh:
             # 字体回退尾巴（ADR 0045）：**脚本跑完之后、采 baseline 之前**给图上
             # 已有的每一段文字补上 DejaVu Sans + 本机中日韩脸（逐 Text 那一步
