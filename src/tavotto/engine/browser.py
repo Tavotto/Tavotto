@@ -256,6 +256,7 @@ class BrowserSession:
         global _ACTIVE
         _ACTIVE = self
         mfigure.Figure.savefig = _patched_savefig
+        figcapture.install_colorbar_capture(mfigure)
         # Agg 的 show() 只会发一条 UserWarning，patch 成 no-op 让日志干净
         plt.show = lambda *a, **k: None
 

@@ -24,8 +24,20 @@ import pytest
 
 from support.bridgekit import child_env, write
 from tavotto.engine import bridge
+from test_colorbar_groups import LIBRARY as COLORBAR_LIBRARY
 
 pytestmark = pytest.mark.usefixtures("clean_env")
+
+
+def test_native_records_explicit_manual_cax_layout_owners(tmp_path, bridge_session):
+    script = write(tmp_path / "manual.py", COLORBAR_LIBRARY + '\n_manual("Manual")\nplt.show()\n')
+    with bridge_session(script, cwd=str(tmp_path)) as sess:
+        sess.wait_event("barrier")
+        sess.ensure_built()
+        man = sess.override("Manual", [])["manifest"]
+        assert man["groups"][0]["members"] == ["axes_2", "axes_3", "axes_4"]
+        assert next(e for e in man["elements"] if e["gid"] == "axes_1")["parent_gid"] == "axes_0"
+
 
 PAPER = """\
 import matplotlib

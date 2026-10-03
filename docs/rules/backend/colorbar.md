@@ -109,8 +109,8 @@
   颜色**——查表不会失败，配对了就一定重着色得出来。换图用 `_show` 换引用、清重采样缓存，
   不走整份拷贝的 `set_data`。钩在 `make_image` 而不是 `draw`（多图合成时 `Axes.draw` 绕过 draw）。
   宿主回退：`colorbar_maps._host_of` 在 `mappable.axes` 与 `parents` 之后认绑定位图 / 共用
-  norm 的图元所在的子图——`host_gid`、`axes_follow`、方向翻转的落位参照都有了。
-  **认领范围（#527 评审 P1）**：①② 都只在色条声明的宿主（`_colorbar_info["parents"]`）
+  norm 的图元所在的子图——供 `host_gid`、颜色身份与方向翻转落位使用，不证明布局归属或随行。
+  **认领范围（#527 评审 P1）**：①② 都只在原生色条声明的宿主（`declared_parents(include_capture=False)`）
   里找，`cax=` 建的没有声明才在全图找、且排在声明过宿主的色条之后（`_orphan_scopes`）；
   一个图元只归一条色条；「作用域里有图元被**脚本**交了这个 norm 就不再认领 / 配对」
   （`_shares_norm_by_script`）只看本作用域、且认领来的（`_mm_adopted`）不算（#538 评审第七 /
@@ -122,13 +122,19 @@
   （含热会话 == 全量重放逐字节、噪声 / BoundaryNorm / 贴端点的平图三个反例、嵌照片的图、
   900 万像素的图、内存随像素的斜率 < 6 B、极宽图的块内峰值）。
 - **结构归属（ADR 0102，2026-09-28）**：色条挂在谁下面只认它**声明的**宿主
-  `colorbarmodel.declared_parents`（`_colorbar_info["parents"]`，`fig.colorbar(..., ax=...)` 那一刻
-  记下的 ax 列表），出处 `manifest._colorbar_structure`：1 个宿主 → 色条轴 `parent_gid` = 宿主；
+  `colorbarmodel.declared_parents`：自动色条读 `_colorbar_info["parents"]`，手动 `cax=` 读三条入口
+  经 `figcapture.install_colorbar_capture` 原样调用后记录的显式 `ax`。不伪造 matplotlib 布局元数据。
+  出处 `manifest._colorbar_structure`：1 个宿主 → 色条轴 `parent_gid` = 宿主；
   ≥2 个 → manifest `groups` 里一个 `group:<色条轴 gid>`（成员 = 宿主 + 色条轴，成员 `parent_gid`
-  = 组），色条元素报 `owner_gids`。`cax=`（没有声明）、宿主不在元素表、跨 SubFigure、两组重叠
+  = 组），色条元素报 `owner_gids`。缺少声明、宿主不在元素表、跨 SubFigure、两组重叠
   → 不成组、不改归属，**不按位置 / 颜色 / norm 猜**。组是派生结构、不进文档，颜色来源仍只是
-  `mappable_gid`。多宿主色条不进任何宿主的 `axes_follow`（`follow_map`）：拖 B 不带走共享色条。
-  看护 `tests/test_colorbar_groups.py`。
+  `host_gid` / `mappable_gid` / `scale_gids`，保留旧 `colorbar_key`。缺声明时报 `owner_status=undeclared`，
+  前端给出 `cax=cax, ax=ax` / `ax=[b, c]` 关联方式。单宿主随行只认同一（子）图的声明；
+  多宿主不进任何宿主的 `axes_follow`（`follow_map`）：拖 B 不带走共享色条。子图显示编号排除色条轴，gid 不变。
+  颜色认领与 key 不消费新增布局记录；方向落位单独读有效声明与该宿主 pending position。
+  同 SubFigure 组保留归属但 `resizable=false`（ADR 0100 的局部坐标限制），逐组检查坐标空间。
+  旧手动共享 cax 的 orientation + 明确 position 可重放；其他共享翻转仍 warning，不开放控件。
+  看护 `tests/test_colorbar_groups.py`、`tests/test_colorbar_capture.py`（像素、布局、数组与调用形态）。
 
 ## 速查表原要点（2026-09-25 迁入，#608）
 
