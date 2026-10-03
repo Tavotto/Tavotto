@@ -73,4 +73,7 @@ fileId，写**文件级** `building` 表，绝不盖任何变体条目（盖了�
 自己的精确变体，不从文件级 latest/recent 借几何或像素；旧请求不变。guard 问题先于 cache、
 调度、native-size 同步与配对位图检查。服务器在 render/preview/export 首次发现源变更时，
 `rejectArtifactRenders` 撤销相同源字节的缓存权威并中断其在途请求，保存的 edits 不动。
+`background_visibility_required` 是变体的背景选择，不是源文件变更：仅撤销发起请求的完整键；
+导出须匹配后端携带的文件和字节身份，再定位缺少显式透明度的提交变体。用户选择写普通
+`figure.transparent`，取消不改文档；仅恢复透明度且背景色仍在时保留精确 manifest 的原始布尔值。
 看护：`store/artifactEntry.test.ts`、`canvas/artifactPreview.test.tsx`。

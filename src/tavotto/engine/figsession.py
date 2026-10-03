@@ -76,10 +76,9 @@ import previewbudget
 from axestraversal import ordered_axes
 
 
-class ArtifactSourceUnavailable(ValueError):
+class ArtifactSourceUnavailable(figcapture.ArtifactContextError):
     def __init__(self, reason):
-        super().__init__("The selected file cannot be verified against the current figure.")
-        self.reason = reason
+        super().__init__(reason, "The selected file cannot be verified against the current figure.")
 
 
 _ARTIST_METHODS = (
@@ -269,6 +268,41 @@ def _require_static_artifact_figure(fig):
         pending.extend(art.get_children())
 
 
+def _materialize_artifact_background(fig, options):
+    """Make the selected save's background editable before originals are recorded."""
+    hidden = False
+    try:
+        if options["transparent"]:
+            axes, _, _ = ordered_axes(fig)
+            for ax in axes:
+                ax.patch.set_facecolor("none")
+                ax.patch.set_edgecolor("none")
+        if (
+            options["transparent"]
+            and options["facecolor"] == "none"
+            and options["edgecolor"] == "none"
+        ):
+            # Keep latent Figure colors for the existing transparency toggle.
+            hidden = bool(fig.patch.get_visible())
+            fig.patch.set_visible(False)
+        else:
+            for name in ("facecolor", "edgecolor"):
+                if options[name] != "auto":
+                    getattr(fig.patch, "set_" + name)(options[name])
+    except (TypeError, ValueError) as exc:
+        raise ArtifactSourceUnavailable("unsupported_render_state") from exc
+    # This selected-only worker now renders the editable scene, including its frame.
+    matplotlib.rcParams.update(
+        {
+            "savefig.transparent": False,
+            "savefig.facecolor": "auto",
+            "savefig.edgecolor": "auto",
+            "savefig.bbox": None,
+        }
+    )
+    return hidden
+
+
 class _BoundedArtifactFile:
     def __init__(self, file):
         self.file = file
@@ -436,6 +470,7 @@ class LiveFigureSession:
         self.savefig_calls: dict[str, list | None] = {}
         self.savefig_observations = figcapture.SavefigObservations()
         self.artifact_source = None
+        self._artifact_background_hidden = False
         self.artifact_probe = None
         self._artifact_matches = 0
         self._artifact_save = None
@@ -536,6 +571,7 @@ class LiveFigureSession:
         if extras is not None and (type(extras) is not tuple or len(extras)):
             raise ArtifactSourceUnavailable("unsupported_render_state")
         _require_static_artifact_figure(fig)
+        self._artifact_background_hidden = _materialize_artifact_background(fig, row["options"])
         if type(fig.canvas) is FigureCanvasBase:
             # Matplotlib 3.11 close() detaches Agg; bind it without another draw.
             FigureCanvasAgg(fig)
@@ -847,6 +883,32 @@ class LiveFigureSession:
         return _NULL_CTX
 
     # ---------------- 命令原语（两套信封 / 两条入口共用同一份实现） ----------------
+    def _require_background_choice(self, stem, patches):
+        if self.artifact_source is None or not self._artifact_background_hidden:
+            return
+        rows = {
+            p["prop"]: p
+            for p in patches
+            if isinstance(p, dict)
+            and p.get("gid") == "figure"
+            and p.get("prop") in ("facecolor", "transparent")
+        }
+        if "facecolor" not in rows:
+            return
+        visibility = rows.get("transparent", {})
+        identity = visibility.get("identity")
+        if "identity" in visibility and (
+            not isinstance(identity, str)
+            or not identity
+            or (
+                identity.startswith(overrides_mod.IDENTITY_SCHEME)
+                and self.states[stem].identity.get("figure") != identity
+            )
+        ):
+            raise ArtifactSourceUnavailable("unsupported_render_state")
+        if type(visibility.get("value")) is not bool:
+            raise ArtifactSourceUnavailable("background_visibility_required")
+
     def snapshot(self, stem: str) -> list[dict]:
         """当前会话已应用的 override，作为「全量列表」形状的快照。
 
@@ -890,6 +952,7 @@ class LiveFigureSession:
         只是把理由说出来。
         """
         self._own()
+        self._require_background_choice(stem, patches)
         t0 = time.perf_counter()
         warnings = overrides_mod.apply(self.states[stem], patches)
         if timings is not None:
@@ -930,6 +993,7 @@ class LiveFigureSession:
     ) -> dict:
         """历史版本预览：临时应用指定 patches 出图，随后还原当前会话状态。"""
         self._own()
+        self._require_background_choice(stem, patches)
         if not isinstance(with_manifest, bool):
             raise ValueError("with_manifest must be a boolean")
         state = self.states[stem]
@@ -984,6 +1048,7 @@ class LiveFigureSession:
         会拿着错的 applied 表去做还原。
         """
         self._own()
+        self._require_background_choice(stem, patches)
         state = self.states[stem]
         prev = self.snapshot(stem)
         out = Path(path)

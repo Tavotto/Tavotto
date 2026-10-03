@@ -319,6 +319,8 @@ class V1Handler:
                 )
         except ProtocolError:
             raise
+        except figcapture.ArtifactContextError as exc:
+            raise ProtocolError(exc.code, str(exc), extra=exc.params) from exc
         except Exception as exc:  # noqa: BLE001
             # 我们也不知道为什么——supervisor 重启后重试一次是合理的
             raise ProtocolError(

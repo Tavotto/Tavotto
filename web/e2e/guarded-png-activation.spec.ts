@@ -73,9 +73,10 @@ function sourceProject(root: string, tightLayout: boolean) {
     '',
   ].join('\n')
   writeFileSync(path.join(figures, 'figure.py'), script)
+  // Match the project's canonical serializer so the byte check measures content changes.
   writeFileSync(path.join(figures, 'tavotto_registry.json'), JSON.stringify({
     scripts: { 'figure.py': { entry: 'main', cost: 'light', stems: ['same'] } },
-  }))
+  }, null, 1))
   // Generate both originals with the scientific worker, never the Flask-only interpreter.
   execFileSync(workerPython(), ['-c', 'import figure; figure.main()'], {
     cwd: figures, timeout: 120_000,

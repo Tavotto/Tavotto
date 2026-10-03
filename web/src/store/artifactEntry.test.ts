@@ -1,3 +1,5 @@
+import { seedExactRender } from '@/test/renderFixtures'
+import { EngineError, type Manifest } from '@/lib/api'
 import { materializeRelink } from '@/lib/clipboard'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { literal } from '@/i18n'
@@ -5,7 +7,7 @@ import { emptyProject, type PanelObject } from '@/types/document'
 import { useDocumentStore } from './documentStore'
 import { useUiStore } from './uiStore'
 import { useAssetStore } from './assetStore'
-import { enterElementEdit, resetOverrides, clearOverrides, setOverrides } from './actions'
+import { enterElementEdit, resetOverrides, clearOverride, clearOverrides, setOverrides, resolveArtifactBackground } from './actions'
 import { useRenderStore, renderKeyOf, exactPanelRender, panelRender, rejectArtifactRenders } from './renderStore'
 import { requestRender, hasScheduledRender } from './renderScheduler'
 import { syncEngine } from '@/hooks/useEngineSync'
@@ -131,5 +133,62 @@ describe('guard refusal before cached authority',()=>{
   rejectArtifactRenders(p.fileId,guard,new ArtifactValidationError('source_changed'))
   expect(exactPanelRender(useRenderStore.getState(),p)).toBeNull()
   expect(useRenderStore.getState().byKey[renderKeyOf(p)]).toMatchObject({status:'error',svg:null,manifest:null})
+ })
+})
+
+describe('explicit selected background recovery', () => {
+ const color = {gid:'figure',prop:'facecolor',value:'red'}
+ const title = {gid:'title',prop:'text',value:'kept'}
+ const transparency = (value:boolean) => ({gid:'figure',prop:'transparent',value})
+ const ambiguous = () => ({...panel(),overrides:[FRAME,color,title],artifactValidation:guard})
+ const refusal = () => new EngineError('choose background','','artifact_source_unavailable','',undefined,undefined,{params:{reason:'background_visibility_required'}})
+ const baseline = (value:boolean) => ({...response().manifest,elements:[{gid:'figure',role:'figure',editable:[{prop:'transparent',type:'bool',value:!value,value_original:value}]}]}) as unknown as Manifest
+ it.each([true,false])('explicit %s preserves other edits in one undoable commit and rerenders',async value=>{
+  await seed(ambiguous());render.mockRejectedValueOnce(refusal())
+  await useRenderStore.getState().render(P().fileId,P().overrides,undefined,undefined,undefined,guard)
+  const before=structuredClone(P()),key=renderKeyOf(P());render.mockClear()
+  resolveArtifactBackground(P().id,key,value);await flush()
+  expect(P().overrides).toEqual([...before.overrides,transparency(value)]);expect(P().artifactValidation).toEqual(guard)
+  expect(S().past).toHaveLength(1);expect(render).toHaveBeenCalledTimes(1);expect(exactPanelRender(useRenderStore.getState(),P())).not.toBeNull()
+  S().undo();expect(P()).toEqual(before)
+ })
+ it('stale choices cannot write to a newer variant',async()=>{
+  await seed(ambiguous());render.mockRejectedValueOnce(refusal())
+  await useRenderStore.getState().render(P().fileId,P().overrides,undefined,undefined,undefined,guard)
+  const key=renderKeyOf(P());setOverrides('p',literal('independent edit'),[{gid:'line',prop:'color',value:'blue'}],false)
+  const before=structuredClone(P()),history=S().past.length
+  resolveArtifactBackground('p',key,true);expect(P()).toEqual(before);expect(S().past).toHaveLength(history)
+ })
+ it.each([true,false])('transparency reset retains exact original %s while color survives; repeated reset is no-op',async original=>{
+  await seed({...ambiguous(),overrides:[FRAME,transparency(!original),color,title]})
+  seedExactRender(P(),baseline(original));render.mockResolvedValue({...response(),manifest:baseline(original)})
+  const before=structuredClone(P())
+  clearOverride('p','figure','transparent');await flush()
+  expect(P().overrides).toEqual([FRAME,transparency(original),color,title]);expect(S().past).toHaveLength(1)
+  render.mockClear();clearOverride('p','figure','transparent');await flush()
+  expect(S().past).toHaveLength(1);expect(render).not.toHaveBeenCalled()
+  S().undo();expect(P()).toEqual(before)
+ })
+ it('resetting both background edits removes both; full discard follows existing guard rules',async()=>{
+  await seed({...ambiguous(),overrides:[FRAME,color,transparency(false),title]});seedExactRender(P(),baseline(true))
+  clearOverrides('p',literal('background reset'),[{gid:'figure',prop:'facecolor'},{gid:'figure',prop:'transparent'}])
+  expect(P().overrides).toEqual([FRAME,title]);expect(P().artifactValidation).toEqual(guard)
+  resetOverrides('p');expect(P().overrides).toEqual([]);expect(P().artifactValidation).toBeUndefined()
+ })
+ it('no exact original value is guessed from another variant',async()=>{
+  await seed({...ambiguous(),overrides:[FRAME,color,transparency(false),title]})
+  seedExactRender({...P(),overrides:[FRAME]},baseline(true))
+  clearOverride('p','figure','transparent');expect(P().overrides).toEqual([FRAME,color,title])
+ })
+ it('render refusal leaves good same-source variants and their geometry intact',async()=>{
+  const good={...ambiguous(),overrides:[FRAME,color,transparency(false),title]}
+  await useRenderStore.getState().render(good.fileId,good.overrides,undefined,undefined,undefined,guard)
+  const goodRender=exactPanelRender(useRenderStore.getState(),good)
+  render.mockRejectedValueOnce(refusal())
+  const bad=ambiguous();await useRenderStore.getState().render(bad.fileId,bad.overrides,undefined,undefined,undefined,guard)
+  expect(exactPanelRender(useRenderStore.getState(),good)).toBe(goodRender)
+  expect(useRenderStore.getState().byKey[renderKeyOf(bad)].error?.key).toBe('artifact.backgroundVisibilityRequired')
+  rejectArtifactRenders(good.fileId,guard,new ArtifactValidationError('source_changed'),renderKeyOf(bad))
+  expect(exactPanelRender(useRenderStore.getState(),good)).toBeNull()
  })
 })

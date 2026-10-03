@@ -1784,8 +1784,12 @@ export default interface Resources {
   "errors": {
     "artifact": {
       "adoptFrame": "采用 PNG 原图图幅",
+      "backgroundVisibilityRequired": "请选择保留透明背景，还是显示背景颜色。现有修改已保留。",
+      "chooseBackground": "选择背景",
       "frameChanged": "保存的图幅标记不匹配，已保留修改与位置。请使用兼容的历史版本；不会自动换算。",
+      "keepTransparent": "保留透明背景",
       "legacyEdits": "这张图已有编辑或写回基线，暂不能自动改用所选 PNG 图幅。现有修改保持原样。",
+      "showBackground": "显示背景颜色",
       "sourceChanged": "源文件已变化，已保留你的修改。请恢复匹配的源文件或选择兼容的历史版本。",
       "unsupported": "这张 PNG 暂不能安全进入编辑。已保留原图；当前支持固定或已完成一次排版的完整 figsize 图幅。",
       "writebackUnsupported": "这张图暂不支持重新构建、写回或同步源图。可以继续编辑并导出新文件。"

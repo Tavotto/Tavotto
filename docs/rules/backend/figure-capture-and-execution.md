@@ -251,6 +251,14 @@ occurrence/figure ordinal/result。看护：`tests/bridge/test_bridge_savefig_ob
   实际文件的像素/图幅；不另画 pre-instrument 探针。PDF 经父进程 pdfbackend，科学 worker
   不新增 PDF 库。32 MiB、1600 万像素、单页 PDF 与既有 worker/renderer 超时是硬界。
   PNG pHYs 只容许一个整数像素/米量化步，色彩管理块拒绝，不拿宽松阈值掩盖差异。
+- 所选保存的背景在采集 FigState originals 前落到该 worker 私有 Figure/axes 的既有属性：
+  默认透明背景用 Figure patch 可见性与 axes 的 none 填充/边线，保留 Figure 潜在颜色供切回不透明。
+  显式 facecolor/edgecolor 按保存记录应用，auto 保留当前属性；随后仅此 selected worker 把
+  savefig 的透明、底色、边色、bbox 默认值归一为 False/auto/auto/None，避免后续 rc 覆盖编辑或重裁图幅。
+  witness、manifest、所有预览/导出共用这个可编辑基线；native 与无 source context 的旧路径不变。
+  若这一步把脚本里可见的 Figure 背景隐藏，而保存的 edits 只有 facecolor、没有明确布尔 transparent，
+  不能猜旧版本的可见性意图：render/preview/export 在应用前以 background_visibility_required 拒绝。
+  保留所有 edits，由既有控件让用户明确选择透明或显示底色；导出错误携带请求源身份，只撤销对应变体。
 - 复用现有 FigState 与全量 overrides 语义；worker/输出目录按源上下文隔离，仍受池的
   3 个热 worker / 1 GiB 缓存治理。不是每个面板永久保存一个图；同一源的变体独立传完整 edits。
   新上下文会额外执行脚本一次。首次准入按 worker 锁串行；workerd 重启不能绕过重新准入。

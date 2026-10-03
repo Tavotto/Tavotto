@@ -34,7 +34,7 @@ import {
   unhideElement,
 } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
-import { usePanelDisplayManifest, usePanelRender } from '@/store/renderStore'
+import { renderKeyOf, usePanelDisplayManifest, usePanelRender } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import type { PanelObject } from '@/types/document'
@@ -42,6 +42,7 @@ import { untruncatedLabel } from '../inspector/identityCrumbs'
 import { engineLabel, groupName, roleName, unsupportedOf } from '../inspector/roles/registry'
 import { Button, IconButton } from '../ui/Button'
 import { EmptyState } from '../ui/EmptyState'
+import { BackgroundChoice } from '../inspector/ElementInspector'
 import { Menu, MenuItem } from '../ui/Menu'
 import { Tip } from '../ui/Tooltip'
 import { isEffectiveOverrideAt } from '@/lib/effectiveOverride'
@@ -258,7 +259,8 @@ export function ElementTree() {
   }, [objects, elementPanelId, selectedIds])
 
   const manifest = usePanelDisplayManifest(panel)
-  const rendering = usePanelRender(panel)?.status === 'rendering'
+  const render = usePanelRender(panel)
+  const rendering = render?.status === 'rendering'
 
   if (!panel) {
     /**
@@ -289,6 +291,10 @@ export function ElementTree() {
         }}
       />
     )
+  }
+
+  if (render?.error?.key === 'artifact.backgroundVisibilityRequired') {
+    return <BackgroundChoice key={`${panel.id} ${renderKeyOf(panel)}`} panel={panel} />
   }
 
   // 「需要渲染一次」也是一种空态：全站只有 EmptyState 一种形态（宪法第五节；左栏审计 L34）。

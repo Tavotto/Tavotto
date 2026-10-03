@@ -1,4 +1,4 @@
-import { artifactRequestFields, artifactValidationIssue, ArtifactValidationError, FIGSIZE_SOURCE_POLICY, validationFromSource, beginArtifactEntry, artifactEntryCurrent, cancelArtifactEntry, refuseArtifactOperation, rememberArtifactEdit } from '@/lib/artifactValidation'
+import { artifactBackgroundOriginal, artifactRequestFields, artifactValidationIssue, ArtifactValidationError, FIGSIZE_SOURCE_POLICY, validationFromSource, beginArtifactEntry, artifactEntryCurrent, cancelArtifactEntry, refuseArtifactOperation, rememberArtifactEdit } from '@/lib/artifactValidation'
 import { currentProjectId } from '@/lib/session'
 import { requestRender, type RenderPolicy } from '@/store/renderScheduler'
 import { isJustBakedBaselineOf } from '@/lib/bakedBaseline'
@@ -968,15 +968,7 @@ export function unhideElement(panelId: string, gid: string) {
  * 本质就是移除覆盖、让引擎回到脚本自己算的值，不是写一个新值。
  */
 export function clearOverride(panelId: string, gid: string, prop: string) {
-  const panel = findObject(panelId)
-  if (panel?.type !== 'panel') return
-  if (panel.artifactValidation && gid === 'figure' && prop === 'frame') return
-  if (!panel.overrides.some((p) => p.gid === gid && p.prop === prop)) return
-  updateObject<PanelObject>(panelId, hist('clearProp', { prop: propLabel(prop) }), (o) => {
-    o.overrides = o.overrides.filter((p) => !(p.gid === gid && p.prop === prop))
-  })
-  const next = findObject(panelId)
-  if (next?.type === 'panel') requestRender(next, true)
+  clearOverrides(panelId, hist('clearProp', { prop: propLabel(prop) }), [{ gid, prop }])
 }
 
 /**
@@ -998,10 +990,21 @@ export function clearOverrides(
     panel.overrides.some((p) => p.gid === t.gid && p.prop === t.prop),
   )
   if (!hit.length) return
+  const remaining = panel.overrides.filter(p => !hit.some(t => t.gid === p.gid && t.prop === p.prop))
+  const original = hit.some(t => t.gid === 'figure' && t.prop === 'transparent')
+    ? artifactBackgroundOriginal({ ...panel, overrides: remaining }, exactPanelManifest(useRenderStore.getState(), panel)) : undefined
+  if (original !== undefined) {
+    const i = effectiveOverrideIndex(panel.overrides, 'figure', 'transparent')
+    // Preserve order so resetting an already-original visibility is a true no-op.
+    remaining.splice(Math.min(i, remaining.length), 0, { gid: 'figure', prop: 'transparent', value: original })
+  }
+  if (JSON.stringify(remaining) === JSON.stringify(panel.overrides)) return
   updateObject<PanelObject>(panelId, label, (o) => {
-    o.overrides = o.overrides.filter(
-      (p) => !hit.some((t) => t.gid === p.gid && t.prop === p.prop),
-    )
+    // Keep the draft identities of independent edits for style ownership release.
+    o.overrides = o.overrides.filter(p => !hit.some(t => t.gid === p.gid && t.prop === p.prop))
+    if (original !== undefined) o.overrides.splice(
+      Math.min(effectiveOverrideIndex(panel.overrides, 'figure', 'transparent'), o.overrides.length),
+      0, { gid: 'figure', prop: 'transparent', value: original })
   })
   const next = findObject(panelId)
   if (next?.type === 'panel') requestRender(next, true)
@@ -1112,6 +1115,15 @@ export function applyTickSidePlan(panelId: string, plan: SidePlan | null) {
   })
   const next = findObject(panelId)
   if (next?.type === 'panel') requestRender(next, true)
+}
+
+/** Resolve only the still-current refusal; independent edits remain in the same document. */
+export function resolveArtifactBackground(panelId: string, key: string, transparent: boolean) {
+  finishActiveGesture()
+  const panel = findObject(panelId)
+  if (panel?.type !== 'panel' || renderKeyOf(panel) !== key ||
+      useRenderStore.getState().byKey[key]?.error?.key !== 'artifact.backgroundVisibilityRequired') return
+  setOverride(panelId, 'figure', 'transparent', transparent, true)
 }
 
 export function resetOverrides(panelId: string) {

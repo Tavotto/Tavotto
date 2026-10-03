@@ -445,7 +445,7 @@ function useEnginePngBlob(
       .catch((error) => {
         if (!ctrl.signal.aborted && obj.artifactValidation &&
             (error instanceof ArtifactValidationError || (error instanceof EngineError && error.code === 'artifact_source_unavailable'))) {
-          rejectArtifactRenders(fileId, obj.artifactValidation, error)
+          rejectArtifactRenders(fileId, obj.artifactValidation, error, variant)
           useMountedPngStore.getState().clear(obj.id)
           setState(s => ({...s,url:null,manifest:null,failed:true}))
           return

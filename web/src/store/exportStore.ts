@@ -1,5 +1,6 @@
+import { effectiveOverride } from '@/lib/effectiveOverride'
 import { ArtifactValidationError } from '@/lib/artifactValidation'
-import { rejectArtifactRenders } from './renderStore'
+import { rejectArtifactRenders, renderKeyOf } from './renderStore'
 import type { PanelObject } from '@/types/document'
 /**
  * 导出作业的编排 —— **全产品只有这一条链**（ADR 0031）。
@@ -181,10 +182,17 @@ function stopPolling() {
  * **晚到的旧快照挡掉**：同一个作业已经进终局之后，一条在网络上多绕了两圈的
  * "running" 会把界面倒回进行中，用户于是看着一个永远转不完的圈。
  */
-function rejectExportSources(input: ExportRequestInput | null, reason: string): void {
+function rejectExportSources(input: ExportRequestInput | null, reason: string, params?: Record<string, unknown>): void {
   if (!input) return
   const panels = input.scope === 'original' ? (input.panel ? [input.panel] : []) : input.doc.objects.filter((o): o is PanelObject=>o.type==='panel')
-  for (const p of panels) if (p.artifactValidation) rejectArtifactRenders(p.fileId,p.artifactValidation,new ArtifactValidationError(reason))
+  for (const p of panels) {
+    const guard = p.artifactValidation
+    if (!guard) continue
+    if (reason === 'background_visibility_required' &&
+        (params?.file_id !== p.fileId || params?.bytes_sha256 !== guard.bytesSha256 || params?.size_bytes !== guard.sizeBytes ||
+         !effectiveOverride(p.overrides, 'figure', 'facecolor') || typeof effectiveOverride(p.overrides, 'figure', 'transparent')?.value === 'boolean')) continue
+    rejectArtifactRenders(p.fileId, guard, new ArtifactValidationError(reason), renderKeyOf(p))
+  }
 }
 
 export function applyExportJob(job: ExportJob): void {
@@ -194,9 +202,10 @@ export function applyExportJob(job: ExportJob): void {
   // 迟到的轮询，把这里的状态填回去
   if (s.ownedJobId == null || job.job_id !== s.ownedJobId) return
   if (s.job && s.job.job_id === job.job_id && TERMINAL.has(s.job.status)) return
-  const sourceError = [job.error, ...job.outputs.map((output) => output.error)]
-    .find((error) => error?.code === 'artifact_source_unavailable')
-  if (sourceError) rejectExportSources(s.lastInput, String(sourceError.params?.reason ?? 'source_changed'))
+  for (const error of [job.error, ...job.outputs.map((output) => output.error)]) {
+    if (error?.code === 'artifact_source_unavailable')
+      rejectExportSources(s.lastInput, String(error.params?.reason ?? 'source_changed'), error.params)
+  }
   const terminal = TERMINAL.has(job.status)
   if (terminal) stopPolling()
   // 排版时间线的关键时刻（ADR 0101）：导出**交付了文件**的那一刻打一个点。
@@ -289,7 +298,8 @@ export async function runExport(input: ExportRequestInput): Promise<ExportJob | 
   } catch (err) {
     if (mine !== generation) return null
     if (err instanceof ArtifactValidationError || (err instanceof ApiError && err.body?.code === 'artifact_source_unavailable')) {
-      rejectExportSources(input,err instanceof ArtifactValidationError ? err.reason : String((err.body.params as Record<string,unknown> | undefined)?.reason ?? 'source_changed'))
+      const params = err instanceof ApiError ? err.body.params as Record<string, unknown> | undefined : undefined
+      rejectExportSources(input, err instanceof ArtifactValidationError ? err.reason : String(params?.reason ?? 'source_changed'), params)
     }
     if (mine !== generation) return null
     useExportStore.setState({

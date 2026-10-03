@@ -526,10 +526,15 @@ ARTIFACT_VALIDATION_MAX_PIXELS = 16_000_000
 class ArtifactContextError(ValueError):
     code = "artifact_source_unavailable"
 
-    def __init__(self, reason: str, message: str, *, retryable: bool | None = None):
+    def __init__(self, reason: str, message: str, *, retryable: bool | None = None, owner=None):
         super().__init__(message)
         self.reason = reason
         self.retryable = reason == "source_changed" if retryable is None else retryable
+        self.params = {"reason": reason}
+        if owner is not None:
+            self.params.update(
+                {key: owner[key] for key in ("file_id", "bytes_sha256", "size_bytes")}
+            )
 
 
 def artifact_request(policy, expected_source=None, patches=()):

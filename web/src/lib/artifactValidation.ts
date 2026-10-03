@@ -1,5 +1,6 @@
 /** Validation only: coordinates are defined by the existing effective figure.frame. */
 import { effectiveOverride } from './effectiveOverride'
+import type { Manifest } from './api'
 import type { PanelObject, PanelOverride } from '@/types/document'
 
 export const FIGSIZE_SOURCE_POLICY = 'selected-figsize-v1' as const
@@ -118,4 +119,12 @@ export function rememberArtifactEdit(panel: PanelObject, stillOwner: () => boole
 export function artifactEditIntentChanged(panel: PanelObject | undefined): boolean {
   return !!editIntent && (!panel || panel.id !== editIntent.id ||
     artifactKeySuffix(panel.artifactValidation) !== editIntent.guard || !editIntent.stillOwner())
+}
+
+/** A color-only edit still needs the selected source's explicit visibility on reset. */
+export function artifactBackgroundOriginal(panel: Subject, manifest: Manifest | null): boolean | undefined {
+  if (!panel.artifactValidation || !effectiveOverride(panel.overrides, 'figure', 'facecolor')) return
+  const original = manifest?.elements.find(e => e.gid === 'figure')?.editable
+    .find(f => f.prop === 'transparent')?.value_original
+  return typeof original === 'boolean' ? original : undefined
 }

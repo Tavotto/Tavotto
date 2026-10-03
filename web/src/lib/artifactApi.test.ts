@@ -1,6 +1,6 @@
-import { formatMessage } from '@/i18n'
+import { formatMessage, i18n } from '@/i18n'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { engineRender, enginePreviewPngSnapshot, exportFigure, startExport, ApiError, backendErrorMsg, type ExportRequest } from './api'
+import { engineRender, enginePreviewPngSnapshot, exportFigure, startExport, ApiError, EngineError, engineErrorMsg, backendErrorMsg, type ExportRequest } from './api'
 import { FIGSIZE_SOURCE_POLICY } from './artifactValidation'
 import { setCurrentProjectId } from './session'
 const expected={bytes_sha256:'a'.repeat(64),size_bytes:10}
@@ -44,4 +44,14 @@ describe('selected API negotiation',()=>{
   await startExport({...req,original:{figure_id:'plot.png'}})
   expect(fetch).toHaveBeenCalledTimes(1);expect(String(fetch.mock.calls[0][0])).toContain('/api/export/start')
  })
+})
+
+it('background visibility reason stays translated across engine/API and language changes',async()=>{
+ const params={reason:'background_visibility_required'}
+ const messages=[backendErrorMsg(new ApiError('untranslated',409,{code:'artifact_source_unavailable',params})),engineErrorMsg(new EngineError('untranslated','','artifact_source_unavailable','',undefined,undefined,{params}))]
+ const previous=i18n.language
+ try {
+  await i18n.changeLanguage('en-US');for(const message of messages)expect(formatMessage(message)).toContain('Choose whether')
+  await i18n.changeLanguage('zh-CN');for(const message of messages)expect(formatMessage(message)).toContain('请选择')
+ } finally { await i18n.changeLanguage(previous) }
 })

@@ -1,4 +1,4 @@
-import { rejectArtifactRenders } from '@/store/renderStore'
+import { rejectArtifactRenders, renderKey } from '@/store/renderStore'
 import { artifactRequestFields, artifactKeySuffix, artifactValidationIssue, ArtifactValidationError, type ArtifactValidation } from '@/lib/artifactValidation'
 import type { PanelOverride } from '@/types/document'
 /**
@@ -131,7 +131,7 @@ export function useVariantPng(
       .catch((error) => {
         if (live && epoch === cacheEpoch && artifactValidation &&
             (error instanceof ArtifactValidationError || (error instanceof EngineError && error.code === 'artifact_source_unavailable'))) {
-          rejectArtifactRenders(fileId, artifactValidation, error)
+          rejectArtifactRenders(fileId, artifactValidation, error, renderKey(fileId, overrides, artifactValidation))
         }
         // 失败不是「空白」：退回磁盘图，但必须标成近似
         if (live) setState({ key, url: null, loading: false, approximate: true })

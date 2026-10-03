@@ -85,3 +85,16 @@ describe('selected timeline keys own their pixels',()=>{
   expect(el.textContent).toContain('"approximate":true');expect(preview).not.toHaveBeenCalled()
  })
 })
+
+describe('background refusals are owned by the full preview variant',()=>{
+ it.each(['paired','timeline'])('%s refusal preserves a good same-source variant',async mode=>{
+  seed()
+  const good={...p,overrides:[FRAME,{gid:'figure',prop:'transparent',value:false}]}
+  useRenderStore.getState().patch(renderKeyOf(good),{fileId:p.fileId,artifactValidation:guard,rev:1,manifest,status:'ready',lastPatches:JSON.stringify(good.overrides),preview:VECTOR_PREVIEW})
+  const exact=exactPanelManifest(useRenderStore.getState(),good)
+  preview.mockRejectedValue(new EngineError('choose','','artifact_source_unavailable','',undefined,undefined,{params:{reason:'background_visibility_required'}}))
+  await act(async()=>root.render(mode==='paired'?<PanelView obj={p}/>:<Thumb/>))
+  expect(exactPanelManifest(useRenderStore.getState(),p)).toBeNull()
+  expect(exactPanelManifest(useRenderStore.getState(),good)).toBe(exact)
+ })
+})

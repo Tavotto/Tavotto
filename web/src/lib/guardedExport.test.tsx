@@ -360,3 +360,32 @@ describe('exact original export variant', () => {
     expect(exactPanelRender(useRenderStore.getState(), currentPanel('b'))).toBeNull()
   })
 })
+
+describe('background export failures identify only unresolved submitted variants',()=>{
+ const color={gid:'figure',prop:'facecolor',value:'red'}
+ const owner={file_id:'plot.png',bytes_sha256:guard.bytesSha256,size_bytes:guard.sizeBytes}
+ it.each(['sync','background'])('%s refusal preserves an explicit same-source variant',async mode=>{
+  const ambiguous=panel('ambiguous',[frame,color])
+  const good=panel('good',[frame,color,{gid:'figure',prop:'transparent',value:false} as never])
+  put([ambiguous,good]);seed(ambiguous,[50.8,25.4]);seed(good,[50.8,25.4])
+  const before=state().doc, exact=exactPanelRender(useRenderStore.getState(),good)
+  const error={code:'artifact_source_unavailable',params:{reason:'background_visibility_required',...owner},recoverable:false}
+  if(mode==='sync') {
+   vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify(error),{status:409,headers:{'Content-Type':'application/json'}}))
+   await runExport(inputOf())
+  } else {
+   useExportStore.setState({ownedJobId:'export-job',lastInput:inputOf()})
+   applyExportJob(doneJob({status:'failed',error}))
+  }
+  expect(exactPanelRender(useRenderStore.getState(),ambiguous)).toBeNull()
+  expect(exactPanelRender(useRenderStore.getState(),good)).toBe(exact);expect(state().doc).toBe(before)
+ })
+ it.each([{}, {...owner,file_id:'other.png'}, {...owner,bytes_sha256:'b'.repeat(64)}])('missing or mismatched owner does not guess cache invalidation: %j',params=>{
+  const ambiguous=panel('ambiguous',[frame,color]);put([ambiguous]);seed(ambiguous,[50.8,25.4])
+  const exact=exactPanelRender(useRenderStore.getState(),ambiguous)
+  useExportStore.setState({ownedJobId:'export-job',lastInput:inputOf()})
+  applyExportJob(doneJob({status:'failed',error:{code:'artifact_source_unavailable',params:{reason:'background_visibility_required',...params},recoverable:false}}))
+  expect(exactPanelRender(useRenderStore.getState(),ambiguous)).toBe(exact)
+  expect(useExportStore.getState().job?.error?.params?.reason).toBe('background_visibility_required')
+ })
+})

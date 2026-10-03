@@ -234,6 +234,7 @@ export function backendErrorText(e: unknown): string {
  * code 照旧原文透出。两条控制面（Python 池 / workerd）走的都是同一形状。
  */
 function artifactErrorMsg(reason: unknown): UiMessage {
+  if (reason === 'background_visibility_required') return msg('artifact.backgroundVisibilityRequired', undefined, 'errors')
   if (reason === 'source_changed') return msg('artifact.sourceChanged', undefined, 'errors')
   if (reason === 'frame_changed' || reason === 'invalid_guard') return msg('artifact.frameChanged', undefined, 'errors')
   if (reason === 'writeback_not_supported') return msg('artifact.writebackUnsupported', undefined, 'errors')

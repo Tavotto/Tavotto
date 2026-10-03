@@ -5,7 +5,11 @@
     "frameChanged": "The saved frame marker does not match. Edits and placement are preserved. Use a compatible history version; no automatic conversion was applied.",
     "writebackUnsupported": "Rebuilding, source writeback and synchronization are not yet supported for this figure. You can edit and export a new file.",
     "legacyEdits": "This figure already has edits or a baked baseline, so its PNG frame cannot be adopted automatically. Existing edits are unchanged.",
-    "unsupported": "This PNG cannot safely enter editing yet. The original is preserved. Fixed or completed one-shot layouts with the full figsize frame are currently supported."
+    "unsupported": "This PNG cannot safely enter editing yet. The original is preserved. Fixed or completed one-shot layouts with the full figsize frame are currently supported.",
+    "backgroundVisibilityRequired": "Choose whether to keep this figure transparent or show its background color. Your edits are preserved.",
+    "chooseBackground": "Choose background",
+    "keepTransparent": "Keep transparent",
+    "showBackground": "Show background"
   },
   "backend": {
     "artifact_source_unavailable": "Selected-source mode cannot complete this operation. No edit was applied; keep the original view.",

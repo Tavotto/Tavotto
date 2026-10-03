@@ -802,7 +802,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
             set((s) => ({ inconsistent: { ...s.inconsistent, [fileId]: true } }))
           }
           if (artifactValidation && (err instanceof ArtifactValidationError || (err instanceof EngineError && err.code === 'artifact_source_unavailable'))) {
-            rejectArtifactRenders(fileId, artifactValidation, err)
+            rejectArtifactRenders(fileId, artifactValidation, err, key)
           }
           // 失败时保留旧 SVG，用户还能看到上一版
           patch(key, {
@@ -1017,14 +1017,17 @@ export const useRenderStore = create<RenderState>((set, get) => ({
   },
 }))
 
-/** A server-discovered source refusal revokes every exact variant using those saved bytes. */
-export function rejectArtifactRenders(fileId: string, guard: ArtifactValidation, error: unknown): void {
+/** Source failures revoke saved bytes; a visibility choice belongs only to its full variant key. */
+export function rejectArtifactRenders(fileId: string, guard: ArtifactValidation, error: unknown, ownerKey?: string): void {
   const store = useRenderStore.getState()
+  const message = engineErrorMsg(error)
+  const variantOnly = message.key === 'artifact.backgroundVisibilityRequired'
   for (const [key, r] of Object.entries(store.byKey)) {
     if (r.fileId !== fileId || r.artifactValidation?.bytesSha256 !== guard.bytesSha256 || r.artifactValidation?.sizeBytes !== guard.sizeBytes) continue
+    if (variantOnly && key !== ownerKey) continue
     const slot = inflight.get(key)
     if (slot) { slot.queued = null; slot.abort?.() }
-    store.patch(key, {status:'error',code:'artifact_source_unavailable',error:engineErrorMsg(error),
+    store.patch(key, {status:'error',code:'artifact_source_unavailable',error:message,
       stale:true,manifest:null,svg:null,svgBytes:0,svgSeq:0})
     for (const [id, png] of Object.entries(useMountedPngStore.getState().byPanel)) {
       if (png.key === key) useMountedPngStore.getState().clear(id)

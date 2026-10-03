@@ -1578,7 +1578,7 @@ def _classify_export_error(exc: BaseException):
     """导出作业里冒出的「渲染后端此刻不可用」→ 稳定码 `backend_unavailable`，不再笼统地记 `export_failed`
     （Codex #539）。判据归契约层（`pdfbackend.is_backend_unavailable`），这里只翻译。"""
     if isinstance(exc, engine_artifactcontext.ArtifactContextError):
-        return exc.code, {"reason": exc.reason, "retryable": exc.retryable}
+        return exc.code, {**exc.params, "retryable": exc.retryable}
     if pdfbackend.is_backend_unavailable(exc):
         return "backend_unavailable", {"reason": str(exc)[:300]}
     if isinstance(exc, engine_inputremap.RemapChanged):
@@ -4152,9 +4152,7 @@ def _assert_artifact_current(context):
 
 @app.errorhandler(engine_artifactcontext.ArtifactContextError)
 def _artifact_error(exc):
-    return jsonify(
-        error=str(exc), code=exc.code, params={"reason": exc.reason}, retryable=exc.retryable
-    ), 409
+    return jsonify(error=str(exc), code=exc.code, params=exc.params, retryable=exc.retryable), 409
 
 
 def _admit_artifact(worker, stem, context):
@@ -4220,9 +4218,19 @@ def _engine_attempt(
             if isinstance(exc, engine_artifactcontext.ArtifactContextError):
                 raise
             if artifact_source is not None and exc.code == "artifact_source_unavailable":
+                reason = exc.extra.get("reason", "unsupported_render_state")
                 raise engine_artifactcontext.ArtifactContextError(
-                    exc.extra.get("reason", "unsupported_render_state"),
+                    reason,
                     "The selected source cannot be reproduced; no edit was applied.",
+                    owner=(
+                        {
+                            "file_id": rel_id,
+                            "bytes_sha256": artifact_source["bytes_sha256"],
+                            "size_bytes": artifact_source["size_bytes"],
+                        }
+                        if reason == "background_visibility_required"
+                        else None
+                    ),
                 ) from exc
             if attempt or not _switched_to_project_env(worker, exc):
                 raise
