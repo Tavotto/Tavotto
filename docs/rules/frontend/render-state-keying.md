@@ -68,3 +68,9 @@ fileId，写**文件级** `building` 表，绝不盖任何变体条目（盖了�
 - 同步器的渲染态一侧只挂叶子 `<EngineRenderSync />`，Workspace 不订阅渲染态
 - 磁盘原图冒充不了 overrides 渲染结果（必须出「近似预览」角标）
 - `baked_current` 失效时重新裁决
+
+选择完整 PNG 的 guard 是渲染键的一部分（`renderKeyOf` 仍是唯一入口），选中上下文只消费
+自己的精确变体，不从文件级 latest/recent 借几何或像素；旧请求不变。guard 问题先于 cache、
+调度、native-size 同步与配对位图检查。服务器在 render/preview/export 首次发现源变更时，
+`rejectArtifactRenders` 撤销相同源字节的缓存权威并中断其在途请求，保存的 edits 不动。
+看护：`store/artifactEntry.test.ts`、`canvas/artifactPreview.test.tsx`。

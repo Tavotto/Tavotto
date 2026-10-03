@@ -216,6 +216,7 @@ export function materializeRelink(resolved: MissingAsset[]): void {
       if (o.type !== 'panel') continue
       const info = byFileId.get(o.fileId)
       if (!info) continue
+      delete o.artifactValidation
       o.fileId = info.id
       o.fileKind = info.kind
       o.nativeW = info.native_w_mm
@@ -339,6 +340,7 @@ export function materializePaste(payload: ClipPayload, resolved: MissingAsset[])
       if (target) {
         const info = assets[target]
         if (info) {
+          delete copy.artifactValidation
           copy.fileId = info.id
           copy.fileKind = info.kind
           copy.nativeW = info.native_w_mm

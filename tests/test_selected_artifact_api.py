@@ -485,7 +485,8 @@ def test_selected_binary_preview_refuses_before_worker(api):
     assert not api.resolutions
 
 
-def test_repeated_canvas_source_cannot_replace_an_earlier_frozen_basis(api, monkeypatch):
+@pytest.mark.parametrize("route", ["/api/export", "/api/export/validate"])
+def test_repeated_canvas_source_cannot_replace_an_earlier_frozen_basis(api, monkeypatch, route):
     spec = export_spec(api, edited=True, canvas=True)
     first = spec["canvas"]["objects"][0]
     changed = b"a different persisted source"
@@ -502,7 +503,7 @@ def test_repeated_canvas_source_cannot_replace_an_earlier_frozen_basis(api, monk
         return context
 
     monkeypatch.setattr(m, "_artifact_source", mutate_after_first)
-    refused(api.client.post("/api/export", json=spec), "source_changed")
+    refused(api.client.post(route, json=spec), "source_changed")
     assert len(calls) == 2 and not api.resolutions
 
 
@@ -624,3 +625,103 @@ def test_selected_source_aliases_share_canonical_identity(api, alias):
     assert response.status_code == 200, response.get_json()
     assert response.get_json()["artifact_source"] == canonical
     assert len(api.workers) == 1 and len(api.validations) == 1
+
+
+@pytest.mark.parametrize("policy", figcapture.SELECTED_ARTIFACT_POLICIES)
+@pytest.mark.parametrize("canvas", [False, True])
+@pytest.mark.parametrize("edited", [False, True])
+def test_export_validate_acknowledges_policy_and_disk_identity_without_worker(
+    api, policy, canvas, edited
+):
+    spec = export_spec(api, canvas=canvas)
+    source = spec["canvas"]["objects"][0] if canvas else spec["original"]
+    source.update(source_policy=policy, expected_source=basis(api, "plot.png"))
+    if edited:
+        source["overrides"] = [{"gid": "figure", "prop": "frame", "value": "figsize"}]
+    before = (api.root / "plot.png").read_bytes()
+    response = api.client.post("/api/export/validate", json=spec)
+    assert response.status_code == 200
+    assert response.get_json()["ok"] is True
+    assert response.get_json()["artifact_sources"] == {
+        "plot.png": {
+            **ac.create_context(api.root / "plot.png", "plot.png"),
+            "render_policy": policy,
+        }
+    }
+    assert not api.resolutions and not api.validations
+    assert (api.root / "plot.png").read_bytes() == before
+    assert not list((api.root.parent / "exports").iterdir())
+
+
+def test_export_validate_acknowledges_all_visible_guarded_sources(api):
+    spec = export_spec(api, canvas=True)
+    first = spec["canvas"]["objects"][0]
+    spec["canvas"]["objects"].extend(
+        [
+            dict(first),  # One canonical acknowledgment suffices for an identical repeated ID.
+            {**first, "id": "plot.pdf", "expected_source": basis(api, "plot.pdf")},
+            {**first, "id": "missing.png", "hidden": True},
+            {"type": "panel", "id": "plain.png", "x_mm": 0, "y_mm": 0, "w_mm": 10, "h_mm": 10},
+        ]
+    )
+    response = api.client.post("/api/export/validate", json=spec)
+    assert response.status_code == 200
+    assert response.get_json()["artifact_sources"] == {
+        name: {**ac.create_context(api.root / name, name), "render_policy": POLICY}
+        for name in ("plot.png", "plot.pdf")
+    }
+    assert not api.resolutions
+
+
+@pytest.mark.parametrize("canvas", [False, True])
+def test_export_validate_plain_response_remains_unchanged(api, canvas):
+    spec = export_spec(api, canvas=canvas)
+    source = spec["canvas"]["objects"][0] if canvas else spec["original"]
+    source.pop("source_policy")
+    response = api.client.post("/api/export/validate", json=spec)
+    assert response.status_code == 200
+    assert response.get_json() == {
+        "ok": True,
+        "conflicts": [],
+        "writable": True,
+        "ppi_applies": True,
+        "names": {"png": "result.png"},
+    }
+    assert not api.resolutions
+
+
+@pytest.mark.parametrize("change", ["bytes_sha256", "size_bytes", "disk"])
+def test_export_validate_refuses_stale_identity_before_work(api, change):
+    spec = export_spec(api, edited=True)
+    if change == "disk":
+        (api.root / "plot.png").write_bytes(b"changed source")
+    else:
+        spec["original"]["expected_source"][change] = "0" * 64 if change == "bytes_sha256" else 999
+    response = api.client.post("/api/export/validate", json=spec)
+    assert refused(response, "source_changed")["retryable"] is False
+    assert not api.resolutions
+    assert not (api.root.parent / "exports").exists()
+
+
+@pytest.mark.parametrize(
+    ("updates", "reason"),
+    [
+        ({"source_policy": "future-policy"}, "unsupported_render_state"),
+        ({"source_policy": None}, "unsupported_render_state"),
+        ({"expected_source": {"bytes_sha256": "bad", "size_bytes": 1}}, "source_changed"),
+        ({"expected_source": None}, "source_changed"),
+        ({"source_policy": figcapture.SELECTED_FIGSIZE_POLICY}, "unsupported_render_state"),
+    ],
+)
+def test_export_validate_never_acknowledges_invalid_guarded_request(api, updates, reason):
+    spec = export_spec(api, edited=True)
+    spec["original"].update(updates)
+    response = api.client.post("/api/export/validate", json=spec)
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["ok"] is False
+    assert body["error"]["code"] == "artifact_source_unavailable"
+    assert body["error"]["params"]["reason"] == reason
+    assert "artifact_sources" not in body
+    assert not api.resolutions
+    assert not (api.root.parent / "exports").exists()

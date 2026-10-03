@@ -259,7 +259,14 @@ occurrence/figure ordinal/result。看护：`tests/bridge/test_bridge_savefig_ob
   SVG/PNG、binary preview、specfix/sync、写回及历史恢复明确拒绝，不能退回旧坐标。
   空 overrides 原图导出仍保留磁盘像素；正常导出的字体/PPI政策独立于源图上下文。
 - 这不是任意用户脚本的无写入沙盒：现有通用 open/原生扩展边界不扩张；新验证/导出路径
-  不写原图，并在发布前复核字节。活跃布局/历史场景、产物级 baked/writeback 与前端采用仍是后续门。
+  不写原图，并在发布前复核字节。活跃布局/历史场景、产物级 baked/writeback 与非完整 PNG 的采用仍是后续门。
 
 看护：`tests/test_selected_artifact_worker.py`、`tests/test_selected_artifact_api.py`、
 `tests/test_artifact_context.py`。
+
+`selected-figsize-v1` 是上述机制的窄子集：只接 PNG、已解析的 bbox_inches=None，非空编辑
+必须保留有效 `figure.frame="figsize"`。后端直接检查当前 baked 基线，非空即拒绝；不能依赖
+首选 PDF 可能隐藏 PNG 的素材清单，也不扫描更早的历史版本。它复用同一准入、预算与上下文键，供 ADR 0098 的
+旧坐标兼容采用。`/api/export/validate` 在已验证的选中源请求上附 `artifact_sources`；
+它只确认策略和磁盘字节、不启动 worker，也不宣称场景已经准入。看护：
+`tests/test_selected_figsize_policy.py`、`tests/test_selected_artifact_api.py`。

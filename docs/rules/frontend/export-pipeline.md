@@ -87,3 +87,12 @@ cancelCurrentExport()  取消（清临时文件；最终目录一个字节没动
 - 严格核验只在勾了时带 `inspection` 段
 - `/api/render` 失败按 `imgRetry` 有界重试
 - `manifest.identity / provenance` 与作业 `trace`（U09）只是类型上接住，界面不画、不解读
+
+带完整 PNG guard 的导出先经既有 `/api/export/validate` 确认 `artifact_sources`，再发同步/
+后台导出；不认识策略的旧服务端不能靠忽略字段发布 legacy 输出。两次请求绑定发起项目。
+确认只表示策略/磁盘字节，不冒充 Figure 准入；有编辑的输出仍由 worker 做初始化验证。
+FRAME 是唯一有效 override 时原图导出保持静态复制语义。畸形 guard 必须变成 prepared
+refusal，不能在常驻导出对话框的 React render 中抛出并弄坏文档。每个变体用自己的 guard。
+同 stem PDF 可让仍存在的 PNG 不出现在素材清单；合法且匹配的 PNG guard 可进入既有导出
+预检，由后端校验文件/策略/字节，不能把清单去重当成原件丢失。无 guard 的旧路径不放宽。
+清单缺席时保留文档像素网格、derived 密度与未知透明度，不冒充新读到的磁盘元数据。

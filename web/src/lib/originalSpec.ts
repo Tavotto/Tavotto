@@ -36,7 +36,8 @@ import type { PanelInfo, AssetOriginalSpec } from '@/lib/api'
 import type { PanelObject } from '@/types/document'
 import { panelFullSize } from '@/types/document'
 import { useAssetStore } from '@/store/assetStore'
-import { useRenderStore, renderKeyOf } from '@/store/renderStore'
+import { useRenderStore, renderKeyOf, exactPanelRender } from '@/store/renderStore'
+import { artifactValidationIssue, originalArtifactOverrides } from './artifactValidation'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { findFigurePanel } from '@/store/workspace'
 
@@ -95,7 +96,7 @@ const EPS = 0.05
 
 export interface SpecInputs {
   figureId: string
-  /** 文档里代表这张图的面板对象（同 fileId 的第一个）；没有就是还没进文档 */
+  /** 这次选定的面板对象；没有就是还没进文档 */
   panel?: PanelObject | null
   /** 这一变体渲染回来的图幅（mm）——可编辑 Figure 的真实尺寸 */
   renderSizeMm?: readonly [number, number] | null
@@ -275,17 +276,26 @@ export function ignoredTransforms(panel: PanelObject | null): IgnoredTransform[]
  *
  * Prompt 12 的导出面板、Prompt 11 的定位、快速编辑工作区的规格行都调它。
  */
-export function getOriginalOutputSpec(figureId: string): OriginalOutputSpec | null {
-  const panel = findFigurePanel(figureId)?.panel ?? null
+export function getOriginalOutputSpec(
+  figureId: string,
+  panel: PanelObject | null = findFigurePanel(figureId)?.panel ?? null,
+): OriginalOutputSpec | null {
   const info: PanelInfo | undefined = useAssetStore.getState().byId[figureId]
   const runtime = isRuntime(figureId)
     ? (useRuntimeAssetStore.getState().assets ?? []).find((a) => a.id === figureId)
     : undefined
   if (!panel && !info && !runtime) return null
 
-  const renderSizeMm = panel
-    ? (useRenderStore.getState().byKey[renderKeyOf(panel)]?.manifest?.size_mm ?? null)
+  const renders = useRenderStore.getState()
+  // Guarded metadata must belong to this exact, still-valid variant. FRAME alone
+  // still exports the original PNG, whose pixel grid and density remain authoritative.
+  const guarded = panel != null && Object.hasOwn(panel, 'artifactValidation')
+  const originalPng = guarded && !artifactValidationIssue(panel) &&
+    originalArtifactOverrides(panel).length === 0
+  const render = panel && !originalPng
+    ? (guarded ? exactPanelRender(renders, panel) : renders.byKey[renderKeyOf(panel)])
     : null
+  const renderSizeMm = render?.manifest?.size_mm ?? null
   // runtime 素材从来不在 `/api/panels` 里；它的图幅在清单里，描述符是兜底
   // （还没跑出过描述符的那一档 `size_mm` 也可能是 null —— 那时就退到文档里
   // 那份，再没有就是明确 fallback，绝不编一个数）

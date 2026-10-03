@@ -245,7 +245,7 @@ function EditablePanelItems({
       </MenuItem>
       <CropItem panelId={panel.id} rotated={rotated} run={run} />
       <FitItem panelId={panel.id} run={run} />
-      {edits > 0 && (
+      {(edits > 0 || Object.hasOwn(panel, 'artifactValidation')) && (
         <MenuItem
           icon={RotateCcw}
           data-quick-item="reset-overrides"

@@ -35,7 +35,7 @@ import { pageUnion } from '@/lib/panelPlacement'
 import { addPanel, addRuntimePanel, enterElementEdit } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
 import { activateCanvas } from '@/store/canvasSession'
-import { useDocumentStore } from '@/store/documentStore'
+import { findFigurePanel, useDocumentStore } from '@/store/documentStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
@@ -281,30 +281,7 @@ export function activeFigurePanel(): PanelObject | null {
  * 「找对象 / 没有就添加 / 切画布 / 选中」，那正是同一件事有两份判据的开头。
  */
 
-/**
- * 找文档里代表这张素材的面板：激活画布优先，其次别的画布。
- *
- * **这是"文档里有没有这张图"的唯一判据**——交接（`lib/openRequest.ts`）、
- * 原图规格（`lib/originalSpec.ts`）、这里的三个动作用的都是它。各写一遍的
- * 后果是"已经在画布上了"这句话在几个入口给出不同答案。
- */
-export function findFigurePanel(
-  figureId: string,
-): { panel: PanelObject; canvasId: string } | null {
-  const s = useDocumentStore.getState()
-  const here = s.doc.objects.find(
-    (o): o is PanelObject => o.type === 'panel' && o.fileId === figureId,
-  )
-  if (here) return { panel: here, canvasId: s.activeCanvasId }
-  for (const c of s.canvases) {
-    if (c.id === s.activeCanvasId) continue
-    const o = c.objects.find(
-      (x): x is PanelObject => x.type === 'panel' && x.fileId === figureId,
-    )
-    if (o) return { panel: o, canvasId: c.id }
-  }
-  return null
-}
+export { findFigurePanel } from './documentStore'
 
 /** 素材 id → 能加进画布的来源：磁盘图的 `PanelInfo`，或带描述符的 runtime 图 */
 type FigureSource = { kind: 'file'; info: PanelInfo } | { kind: 'runtime'; desc: CapturedFigureDescriptor }

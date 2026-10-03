@@ -527,6 +527,12 @@ class LiveFigureSession:
             or row["options"].get("format") != self.artifact_source["kind"]
         ):
             raise ArtifactSourceUnavailable("unsupported_render_state")
+        if self.artifact_source["render_policy"] == figcapture.SELECTED_FIGSIZE_POLICY and (
+            self.artifact_source["kind"] != "png"
+            or "bbox_inches" not in row["options"]
+            or row["options"]["bbox_inches"] is not None
+        ):
+            raise ArtifactSourceUnavailable("unsupported_render_state")
         if extras is not None and (type(extras) is not tuple or len(extras)):
             raise ArtifactSourceUnavailable("unsupported_render_state")
         _require_static_artifact_figure(fig)

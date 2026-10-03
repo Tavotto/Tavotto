@@ -1,4 +1,5 @@
-import { apiUrl, apiUrlFor, withProject, withProjectFor } from '@/lib/session'
+import { ArtifactValidationError, validationFromSource, type ArtifactRequestFields } from '@/lib/artifactValidation'
+import { apiUrl, apiUrlFor, currentProjectId, withProject, withProjectFor } from '@/lib/session'
 import { formatMessage, i18n, literal, msg, t, type UiMessage } from '@/i18n'
 import type { FigureDocument, ProjectDocument } from '@/types/document'
 import type { ManifestFrame } from '@/lib/figureFrame'
@@ -232,7 +233,18 @@ export function backendErrorText(e: unknown): string {
  * 原文，按 i18n 纪律不翻，也不依赖后端消息的中文前缀格式）；没有文案的
  * code 照旧原文透出。两条控制面（Python 池 / workerd）走的都是同一形状。
  */
+function artifactErrorMsg(reason: unknown): UiMessage {
+  if (reason === 'source_changed') return msg('artifact.sourceChanged', undefined, 'errors')
+  if (reason === 'frame_changed' || reason === 'invalid_guard') return msg('artifact.frameChanged', undefined, 'errors')
+  if (reason === 'writeback_not_supported') return msg('artifact.writebackUnsupported', undefined, 'errors')
+  if (reason === 'not_untouched') return msg('artifact.legacyEdits', undefined, 'errors')
+  return msg('artifact.unsupported', undefined, 'errors')
+}
+
 export function engineErrorMsg(err: unknown): UiMessage {
+  if (err instanceof ArtifactValidationError || (err instanceof EngineError && err.code === 'artifact_source_unavailable')) {
+    return artifactErrorMsg(err instanceof ArtifactValidationError ? err.reason : err.params?.reason)
+  }
   if (err instanceof EngineError && err.code && i18n.exists(`backend.${err.code}`, { ns: 'errors' })) {
     const detail = err.traceback.trim().split('\n').at(-1)?.trim() ?? ''
     // 文案要 {{error}} 却拿不到 traceback（老 server / 精简错误体）时退回
@@ -249,6 +261,7 @@ export function engineErrorMsg(err: unknown): UiMessage {
 }
 
 export function backendErrorMsg(e: unknown): UiMessage {
+  if (e instanceof ArtifactValidationError) return engineErrorMsg(e)
   if (e instanceof ApiError) {
     const code = typeof e.body?.code === 'string' ? e.body.code : ''
     return backendCodeMsg(code, (e.body?.params ?? {}) as Record<string, unknown>, e.message)
@@ -270,6 +283,7 @@ export function backendCodeMsg(
   // 用 exists 而不是 defaultValue 判「有没有这条」：i18n 那边的
   // parseMissingKeyHandler 会把缺失的 key 原样吐回来（界面上看得见是哪条），
   // 那样 defaultValue 永远轮不到，缺文案时用户看到的就是 `backend.xxx`。
+  if (code === 'artifact_source_unavailable') return artifactErrorMsg(params?.reason)
   if (code && i18n.exists(`backend.${code}`, { ns: 'errors' })) {
     return msg(`backend.${code}`, params ?? {}, 'errors')
   }
@@ -1165,7 +1179,7 @@ interface ExportBox {
 }
 
 export type ExportObject =
-  | (ExportBox & {
+  | (ExportBox & ArtifactRequestFields & {
       type: 'panel'
       id: string
       overrides?: { gid: string; prop: string; value: unknown }[]
@@ -1251,7 +1265,7 @@ export interface ExportRequest {
   /** `scope=canvas`：页面 + z 序对象（底 → 顶） */
   canvas?: { page_w_mm: number; page_h_mm: number; objects: ExportObject[] }
   /** `scope=original`：那一张图自己。**没有 x/y/w/h，也没有页面尺寸** */
-  original?: {
+  original?: ArtifactRequestFields & {
     figure_id: string
     overrides?: { gid: string; prop: string; value: unknown }[]
     w_mm?: number | null
@@ -1407,21 +1421,40 @@ export interface ExportJob {
   files?: { name: string; url: string }[]
 }
 
+async function requireExportArtifactAck(req: ExportRequest, pj: string | null): Promise<void> {
+  const sources = req.scope === 'original'
+    ? req.original ? [{...req.original,id:req.original.figure_id}] : []
+    : req.canvas?.objects.filter(o=>o.type==='panel') ?? []
+  const guarded = sources.filter(o=>o.source_policy !== undefined || o.expected_source !== undefined)
+  if (!guarded.length) return
+  const checked = await validateExport(req, pj)
+  for (const s of guarded) {
+    const context = validationFromSource(checked.artifact_sources?.[s.id],s.id)
+    if (!s.expected_source || context.bytesSha256 !== s.expected_source.bytes_sha256 || context.sizeBytes !== s.expected_source.size_bytes) throw new ArtifactValidationError('source_changed')
+  }
+}
+
 /** 同步导出（一次请求出完）。桌面/浏览器/内嵌三条路都发同一个结构。 */
-export const exportFigure = (req: ExportRequest) =>
-  jsonFetch<ExportJob>('/api/export', {
+export const exportFigure = async (req: ExportRequest) => {
+  const pj = currentProjectId()
+  await requireExportArtifactAck(req, pj)
+  return jsonFetch<ExportJob>('/api/export', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(req),
-  })
+  }, pj)
+}
 
 /** 起一个后台导出作业，立刻回 job_id；进度经 SSE `export.progress`。 */
-export const startExport = (req: ExportRequest) =>
-  jsonFetch<ExportJob>('/api/export/start', {
+export const startExport = async (req: ExportRequest) => {
+  const pj = currentProjectId()
+  await requireExportArtifactAck(req, pj)
+  return jsonFetch<ExportJob>('/api/export/start', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(req),
-  })
+  }, pj)
+}
 
 /** 作业当前状态（SSE 断了之后的补拉）。 */
 export const exportState = (jobId: string) =>
@@ -1436,6 +1469,7 @@ export const cancelExport = (jobId: string) =>
   })
 
 export interface ExportValidation {
+  artifact_sources?: Record<string, unknown>
   ok: boolean
   /** 会撞上的已有文件名 */
   conflicts?: string[]
@@ -1446,12 +1480,12 @@ export interface ExportValidation {
 }
 
 /** 真的开始之前能看出来的问题：重名、目录写不写得了、PPI 有没有意义。 */
-export const validateExport = (req: ExportRequest) =>
+export const validateExport = (req: ExportRequest, pj?: string | null) =>
   jsonFetch<ExportValidation>('/api/export/validate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(req),
-  })
+  }, pj)
 
 /* --------------------------- 可复现项目包 ---------------------------------- */
 
@@ -1880,6 +1914,7 @@ export interface Manifest {
 }
 
 export interface EngineRenderResponse {
+  artifact_source?: unknown
   rev: number
   manifest: Manifest
   warnings?: string[]
@@ -1925,6 +1960,8 @@ export interface EngineRenderResponse {
 }
 
 export class EngineError extends Error {
+  params?: Record<string, unknown>
+  retryable?: boolean
   traceback: string
   /**
    * 机器可读的原因，界面据此换成对应的出口而不是甩错误文字：
@@ -1972,6 +2009,8 @@ export class EngineError extends Error {
     projectEnv?: ProjectEnvFailure,
     dependencyRepair?: DependencyRepairOffer,
     extra?: {
+      params?: Record<string, unknown>
+      retryable?: boolean
       confirmation?: WorkdirConfirmation
       explicit?: ExplicitInterpreterFailure
       dependencyPreparation?: DependencyPreparationOffer
@@ -1979,6 +2018,8 @@ export class EngineError extends Error {
     },
   ) {
     super(message)
+    this.params = extra?.params
+    this.retryable = extra?.retryable
     this.traceback = traceback
     this.code = code
     this.module = module
@@ -1999,7 +2040,7 @@ export const ENVIRONMENT_CODES = [
   'missing_dependency',
 ] as const
 
-export interface EngineRenderOptions {
+export interface EngineRenderOptions extends ArtifactRequestFields {
   signal?: AbortSignal
   /**
    * 这一次预览 SVG 里**嵌入位图**的 dpi（不给 = worker 的默认）。
@@ -2022,6 +2063,8 @@ export async function engineRender(
       id,
       patches,
       inline_svg: true,
+      source_policy: opts.source_policy,
+      expected_source: opts.expected_source,
       ...(opts.previewDpi ? { preview_dpi: opts.previewDpi } : {}),
     }),
     signal: opts.signal,
@@ -2037,6 +2080,8 @@ export async function engineRender(
       body.project_env as ProjectEnvFailure | undefined,
       body.dependency_repair as DependencyRepairOffer | undefined,
       {
+        params: body.params as Record<string, unknown> | undefined,
+        retryable: body.retryable as boolean | undefined,
         confirmation: body.confirmation as WorkdirConfirmation | undefined,
         explicit: body.explicit as ExplicitInterpreterFailure | undefined,
         dependencyPreparation: body.dependency_preparation as
@@ -2045,6 +2090,10 @@ export async function engineRender(
         missingInput: body.missing_input as MissingInputOffer | undefined,
       },
     )
+  }
+  if (opts.source_policy) {
+    const g = validationFromSource(body.artifact_source, id)
+    if (opts.expected_source && (g.bytesSha256 !== opts.expected_source.bytes_sha256 || g.sizeBytes !== opts.expected_source.size_bytes)) throw new ArtifactValidationError('source_changed')
   }
   return body as EngineRenderResponse
 }
@@ -2171,20 +2220,24 @@ export async function enginePreviewPng(
 }
 
 export async function enginePreviewPngSnapshot(
-  id: string, patches: unknown[], bucket: number, signal?: AbortSignal,
+  id: string, patches: unknown[], bucket: number, signal?: AbortSignal, source: ArtifactRequestFields = {},
 ): Promise<{ url: string; manifest: Manifest }> {
-  const res = await previewPngResponse(id, patches, bucket, signal, true)
-  const frame = await res.json() as { png: string; manifest: Manifest }
+  const res = await previewPngResponse(id, patches, bucket, signal, true, source)
+  const frame = await res.json() as { png: string; manifest: Manifest; artifact_source?: unknown }
+  if (source.source_policy) {
+    const g = validationFromSource(frame.artifact_source, id)
+    if (!source.expected_source || g.bytesSha256 !== source.expected_source.bytes_sha256 || g.sizeBytes !== source.expected_source.size_bytes) throw new ArtifactValidationError('source_changed')
+  }
   return { url: `data:image/png;base64,${frame.png}`, manifest: frame.manifest }
 }
 
 async function previewPngResponse(
-  id: string, patches: unknown[], bucket: number, signal?: AbortSignal, withManifest = false,
+  id: string, patches: unknown[], bucket: number, signal?: AbortSignal, withManifest = false, source: ArtifactRequestFields = {},
 ): Promise<Response> {
   const res = await fetch(apiUrl('/api/engine/preview_png'), withProject({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id, patches, w: bucket, ...(withManifest ? { with_manifest: true } : {}) }),
+    body: JSON.stringify({ id, patches, w: bucket, ...source, ...(withManifest ? { with_manifest: true } : {}) }),
     signal,
   }))
   if (!res.ok) {
@@ -2197,6 +2250,7 @@ async function previewPngResponse(
       (body.module as string) || '',
       body.project_env as ProjectEnvFailure | undefined,
       body.dependency_repair as DependencyRepairOffer | undefined,
+      { params: body.params as Record<string, unknown> | undefined, retryable: body.retryable as boolean | undefined },
     )
   }
   return res

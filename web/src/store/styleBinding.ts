@@ -81,6 +81,7 @@ import { useProfileStore } from './profileStore'
 import { exactPanelManifest, renderKeyOf, useRenderStore } from './renderStore'
 import { requestRender } from './renderScheduler'
 import { useUiStore } from './uiStore'
+import { styleWork } from './styleWork'
 
 const hist = (key: string, values?: Record<string, unknown>): UiMessage =>
   msg(`history.${key}`, values, 'workspace')
@@ -263,7 +264,7 @@ function markSeen(doc: FigureDocument, ids: Iterable<string>) {
  * 欠账按 **代次 · 绑定 · 图** 记在会话里，它第一次拿到 manifest 时补上（`alignNewFigures`）。
  * 键里带绑定：A 的欠账不会在画布跟随 B 之后写下去；明确绑上 A 时才清 A 的（`forgetDebts`）。
  */
-const pending = new Map<string, Map<string, StyleProfileData>>()
+const pending = styleWork.pending
 
 /** 两笔变化量合成一笔（后来的覆盖先来的；图内角色按 role × prop 合） */
 function mergeDelta(a: StyleProfileData | undefined, b: StyleProfileData): StyleProfileData {
@@ -341,20 +342,18 @@ function forgetDebts(styleId: string) {
 
 /** 队列尾巴：下一个任务接在它后面跑 */
 let tail: Promise<unknown> = Promise.resolve()
-/** 排着 / 跑着的库写入个数。非零时同步器不动手；归零的那一刻补跑一次 */
-let inflight = 0
 
 function enqueue<T>(job: () => Promise<T>): Promise<T> {
-  inflight += 1
+  styleWork.inflight += 1
   const run = tail.then(job, job)
   tail = run.then(
     () => undefined,
     () => undefined,
   )
   return run.finally(() => {
-    inflight -= 1
+    styleWork.inflight -= 1
     // 排空了：期间被「队列非空」挡下的跟随 / 对齐补跑一次（Codex #547 P2）
-    if (inflight === 0) {
+    if (styleWork.inflight === 0) {
       // 改绑的「转发」只对还排着的任务有意义：排空就作废（用户之后自己绑回 A，不该被转到 B）
       redirects.clear()
       syncNow()
@@ -431,7 +430,7 @@ export function resetStyleBindingSession(): void {
   pending.clear()
   redirects.clear()
   queuedBinds.clear()
-  inflight = 0
+  styleWork.inflight = 0
   tail = Promise.resolve()
 }
 
@@ -473,7 +472,7 @@ export function bindCanvasStyle(recordId: string | null): void {
   // 而一次还在飞的存库会在稍后改写库——先绑、后被改写的话，画布与库就分叉了。串进队列后，
   // 绑定读到的永远是前面所有写入落定之后的库，从结构上没有「在飞时改绑」这回事。
   // 队列空着时当场绑（界面上立刻看到结果）
-  if (inflight === 0) {
+  if (styleWork.inflight === 0) {
     bindNow(recordId)
     return
   }
@@ -767,7 +766,7 @@ function awaitingManifest(p: PanelObject): boolean {
 const blocked = () => {
   const d = useDocumentStore.getState()
   return (
-    inflight > 0 || d.txn != null || d.future.length > 0 || useInteractionStore.getState().kind !== 'none'
+    styleWork.inflight > 0 || d.txn != null || d.future.length > 0 || useInteractionStore.getState().kind !== 'none'
   )
 }
 

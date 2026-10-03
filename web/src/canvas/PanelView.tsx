@@ -1,8 +1,9 @@
+import { artifactRequestFields, artifactValidationIssue, ArtifactValidationError } from '@/lib/artifactValidation'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { perfCount, perfRenderPainted } from '@/perf/core'
-import { t as translate } from '@/i18n'
+import { formatMessage, t as translate } from '@/i18n'
 import { listJoin } from '@/i18n/format'
-import { enginePreviewPngSnapshot, panelSrc, type Manifest, type ManifestElement } from '@/lib/api'
+import { enginePreviewPngSnapshot, EngineError, panelSrc, type Manifest, type ManifestElement } from '@/lib/api'
 import { useDecodedSvg } from '@/lib/useDecodedSvg'
 import { useHtmlMarkup } from '@/lib/useHtmlMarkup'
 import { useRetryingSrc } from '@/lib/imgRetry'
@@ -44,6 +45,8 @@ import {
 } from '@/store/nativeSessionStore'
 import {
   renderKeyOf,
+  activeRenderKey,
+  rejectArtifactRenders,
   useExactPanelManifest,
   usePanelDisplayView,
   usePanelRender,
@@ -181,19 +184,20 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   // raster 档下**编辑态也要位图**——否则画布上什么都没有。复用的是同一条
   // PNG 链路（按 patches 出图、状态中立、AbortController + objectURL 生命周期），
   // 不另写第二套。
-  const useEnginePng = (bitmapOnly ? editing || needsEngine : !editing && needsEngine) &&
-    (render?.rev ?? 0) > 0
+  const useEnginePng = !artifactValidationIssue(obj) &&
+    (!obj.artifactValidation || (render?.status !== 'error' && !render?.stale && !!render?.manifest)) &&
+    (bitmapOnly ? editing || needsEngine : !editing && needsEngine) && (render?.rev ?? 0) > 0
   const renderRev = render?.rev ?? 0
   const pngSource = render?.manifest ?? null
   const pngBlob = useEnginePngBlob(obj, bucket, useEnginePng, renderRev, pngSource)
-  const variantNow = JSON.stringify(obj.overrides)
+  const variantNow = renderKeyOf(obj)
   const pngIsCurrent = pngBlob.source === pngSource && pngBlob.fileId === obj.fileId &&
     pngBlob.variant === variantNow && pngBlob.rev === renderRev
   // 位图这一格挂什么：当前变体的那张最好；**上一变体的那张只在新图还在路上时
   // 暂挂**（与 Phase F 的 latest 显示退路同一条纪律）。取图一旦失败，就不能再
   // 拿上一变体的位图冒充当前变体——那正是「预览 ≠ 当前 overrides 且不吵」。
   const enginePng =
-    pngBlob.url && (pngIsCurrent || !pngBlob.failed) ? pngBlob.url : null
+    pngBlob.url && !(obj.artifactValidation && pngBlob.failed) && !artifactValidationIssue(obj) && (pngIsCurrent || (!obj.artifactValidation && !pngBlob.failed)) ? pngBlob.url : null
   // 性能探针（ADR 0075）：位图这一格（raster / evicted / 非编辑态的引擎位图）没有
   // 「SVG 换进 DOM」那一刻，松手 → 图落定要一直量到**这一版自己的位图**加载完
   // （onLoad：取图、解码都已结束）。暂挂的上一变体 / 上一 rev 的那张不算——那是
@@ -300,7 +304,7 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   useLayoutEffect(() => {
     if (mountedEditSvg == null) return
     const st = useRenderStore.getState()
-    const cur = st.byKey[renderKeyOf(obj)]?.svg ? renderKeyOf(obj) : (st.latest[obj.fileId] ?? '')
+    const cur = activeRenderKey(st, obj)
     reattachPreview(panelId, cur)
     // 性能探针（ADR 0075）：这一版 SVG 已经进了 DOM
     perfRenderPainted(cur)
@@ -410,7 +414,7 @@ function useEnginePngBlob(
   }>({ url: null, manifest: null, source: null, fileId: null, variant: null, rev: 0, failed: false })
   const urlRef = useRef<string | null>(null)
   // 依赖用变体串而不是 overrides 数组：数组每次 commit 都是新引用
-  const variant = JSON.stringify(obj.overrides)
+  const variant = renderKeyOf(obj)
   const { fileId, overrides } = obj
 
   useEffect(() => {
@@ -418,12 +422,15 @@ function useEnginePngBlob(
     const ctrl = new AbortController()
     let landed = false
     const transport = engineTransport()
-    const pending = transport
+    const issue = artifactValidationIssue(obj)
+    const pending = issue || (obj.artifactValidation && transport)
+      ? Promise.reject(new ArtifactValidationError(issue ?? 'unsupported_render_state'))
+      : transport
       ? transport.previewPngSnapshot
         ? transport.previewPngSnapshot(fileId, overrides, bucket, ctrl.signal)
         : transport.previewPngUrl(fileId, overrides, bucket, ctrl.signal)
             .then((url) => ({ url, manifest: null }))
-      : enginePreviewPngSnapshot(fileId, overrides, bucket, ctrl.signal)
+      : enginePreviewPngSnapshot(fileId, overrides, bucket, ctrl.signal, artifactRequestFields(obj))
     void pending
       .then((next) => {
         if (ctrl.signal.aborted) {
@@ -435,7 +442,14 @@ function useEnginePngBlob(
         urlRef.current = next.url
         setState({ ...next, source, fileId, variant, rev, failed: false })
       })
-      .catch(() => {
+      .catch((error) => {
+        if (!ctrl.signal.aborted && obj.artifactValidation &&
+            (error instanceof ArtifactValidationError || (error instanceof EngineError && error.code === 'artifact_source_unavailable'))) {
+          rejectArtifactRenders(fileId, obj.artifactValidation, error)
+          useMountedPngStore.getState().clear(obj.id)
+          setState(s => ({...s,url:null,manifest:null,failed:true}))
+          return
+        }
         // 失败保留上一张（画布别空掉），但要记下「失败」：中断（deps 变了 /
         // 卸载，signal.aborted）不是失败，真失败才置位
         if (!ctrl.signal.aborted) setState((s) => ({ ...s, failed: true }))
@@ -1160,7 +1174,8 @@ function RenderStatusBadge({ obj, approx = false }: { obj: PanelObject; approx?:
       }
     }
     if (render?.status === 'error') {
-      return { tone: 'error', cold: false, text: badge('error') }
+      return { tone: 'error', cold: false, text: badge('error'),
+        hint: render.code === 'artifact_source_unavailable' && render.error ? formatMessage(render.error) : undefined }
     }
     // **阻塞性的压过信息性的。** native 的两句说的是「现在不能编辑」，而
     // `stale`（脚本已更新）/ runtime 的 stale 语义说的是「内容可能不是最新」

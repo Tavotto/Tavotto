@@ -1777,8 +1777,17 @@ def api_export_validate():
         return jsonify(
             {"ok": False, "error": {"code": exc.code, "params": exc.params, "message": exc.message}}
         ), 200
+    # Acknowledge recognized policies and current disk identities, not Figure admission.
+    # Reuse export's authority without a worker, including untouched original copies.
+    artifact_sources = _export_artifact_sources(req)
     probe = engine_exportjob.ExportJob(id="probe", request=req, export_dir=out_dir)
-    return jsonify({"ok": True, **engine_exportjob.validate(probe)})
+    return jsonify(
+        {
+            "ok": True,
+            **engine_exportjob.validate(probe),
+            **({"artifact_sources": artifact_sources} if artifact_sources else {}),
+        }
+    )
 
 
 @app.get("/exports/<path:name>")
@@ -4101,13 +4110,19 @@ def _artifact_source(rel_id: str, policy, expected=None, patches=()):
             "unsupported_render_state", "Selected artifacts require a safe disk source."
         )
     path = _artifact_path(rel_id)
+    if policy == engine_figcapture.SELECTED_FIGSIZE_POLICY and _baseline_patches(
+        path.stem, load_baked()
+    ):
+        raise engine_artifactcontext.ArtifactContextError(
+            "not_untouched", "This source has a saved edit baseline."
+        )
     source_id = path.relative_to(require_project().resolve()).as_posix()
     context = engine_artifactcontext.create_context(path, source_id)
     if expected is not None and any(context[k] != v for k, v in expected.items()):
         raise engine_artifactcontext.ArtifactContextError(
             "source_changed", "The selected source changed; reopen it.", retryable=False
         )
-    return {**context, "render_policy": policy}
+    return engine_figcapture.selected_artifact_context({**context, "render_policy": policy})
 
 
 def _artifact_path(rel_id):

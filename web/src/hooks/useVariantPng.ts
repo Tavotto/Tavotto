@@ -1,3 +1,6 @@
+import { rejectArtifactRenders } from '@/store/renderStore'
+import { artifactRequestFields, artifactKeySuffix, artifactValidationIssue, ArtifactValidationError, type ArtifactValidation } from '@/lib/artifactValidation'
+import type { PanelOverride } from '@/types/document'
 /**
  * 「按 overrides 出一张缩略图」的可复用 hook（issue #131）。
  *
@@ -16,7 +19,7 @@
  *     就是几十次 matplotlib 往返。
  */
 import { useEffect, useState } from 'react'
-import { enginePreviewPng } from '@/lib/api'
+import { EngineError, enginePreviewPng, enginePreviewPngSnapshot } from '@/lib/api'
 import { engineTransport } from '@/lib/engineTransport'
 import { currentProjectId } from '@/lib/session'
 
@@ -25,6 +28,7 @@ const CACHE_MAX = 24
 
 /** 变体键 → blob URL。Map 的插入序天然就是 LRU 需要的顺序 */
 const cache = new Map<string, string>()
+let cacheEpoch = 0
 
 /**
  * 缓存键**必须带项目与素材版本**。
@@ -55,6 +59,7 @@ export function clearVariantPngCache(): void {
     if (url.startsWith('blob:')) URL.revokeObjectURL(url)
   }
   cache.clear()
+  cacheEpoch++
 }
 
 export interface VariantPng {
@@ -76,46 +81,60 @@ export function useVariantPng(
   enabled: boolean,
   /** 素材版本（mtime）：磁盘上那份被改过时旧缩略图必须作废 */
   rev = 0,
+  artifactValidation?: ArtifactValidation | null,
 ): VariantPng {
-  const key = keyOf(fileId, overrides, bucket, rev)
-  const [state, setState] = useState<VariantPng>(() => ({
-    url: cache.get(key) ?? null,
+  const key = keyOf(fileId, overrides, bucket, rev) + artifactKeySuffix(artifactValidation)
+  const [state, setState] = useState<VariantPng & {key?: string}>(() => ({
+    key,
+    url: artifactValidation !== undefined ? null : cache.get(key) ?? null,
     loading: false,
     approximate: false,
   }))
 
   useEffect(() => {
     if (!enabled) {
-      setState({ url: null, loading: false, approximate: false })
+      setState({ key, url: null, loading: false, approximate: false })
       return
     }
+    const subject = {fileId,overrides:overrides as PanelOverride[],...(artifactValidation !== undefined ? {artifactValidation: artifactValidation as ArtifactValidation} : {})}
+    const issue = artifactValidationIssue(subject)
+    if (issue) { setState({ key,url:null,loading:false,approximate:true}); return }
     // 没有 override 的面板与磁盘图一模一样，白跑一次引擎没有意义
     if (!overrides.length) {
-      setState({ url: null, loading: false, approximate: false })
+      setState({ key, url: null, loading: false, approximate: false })
       return
     }
-    const hit = cache.get(key)
+    const hit = artifactValidation !== undefined ? undefined : cache.get(key)
     if (hit) {
-      setState({ url: hit, loading: false, approximate: false })
+      setState({ key, url: hit, loading: false, approximate: false })
       return
     }
     const ctrl = new AbortController()
     let live = true
-    setState((s) => ({ url: s.url, loading: true, approximate: false }))
+    const epoch = cacheEpoch
+    setState((s) => ({ key, url: artifactValidation ? null : s.url, loading: true, approximate: false }))
     const transport = engineTransport()
-    const pending = transport
+    const pending = artifactValidation
+      ? transport ? Promise.reject(new ArtifactValidationError('unsupported_render_state'))
+        : enginePreviewPngSnapshot(fileId, overrides, bucket, ctrl.signal, artifactRequestFields(subject)).then(s=>s.url)
+      : transport
       ? transport.previewPngUrl(fileId, overrides, bucket, ctrl.signal)
       : enginePreviewPng(fileId, overrides, bucket, ctrl.signal).then((b) =>
           URL.createObjectURL(b),
         )
     void pending
       .then((url) => {
-        remember(key, url)
-        if (live) setState({ url, loading: false, approximate: false })
+        if (!live || epoch !== cacheEpoch) { if (url.startsWith('blob:')) URL.revokeObjectURL(url); return }
+        if (artifactValidation === undefined) remember(key, url)
+        if (live) setState({ key, url, loading: false, approximate: false })
       })
-      .catch(() => {
+      .catch((error) => {
+        if (live && epoch === cacheEpoch && artifactValidation &&
+            (error instanceof ArtifactValidationError || (error instanceof EngineError && error.code === 'artifact_source_unavailable'))) {
+          rejectArtifactRenders(fileId, artifactValidation, error)
+        }
         // 失败不是「空白」：退回磁盘图，但必须标成近似
-        if (live) setState({ url: null, loading: false, approximate: true })
+        if (live) setState({ key, url: null, loading: false, approximate: true })
       })
     return () => {
       live = false
@@ -125,5 +144,6 @@ export function useVariantPng(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, enabled])
 
-  return state
+  return artifactValidation !== undefined && state.key !== key
+    ? {url:null,loading:enabled,approximate:true} : state
 }

@@ -59,6 +59,7 @@ import { Segmented } from "./ui/Segmented";
 import { Details, Summary } from "@/components/ui/Details";
 import {
   panelSrc,
+  engineErrorMsg,
   type AssetOriginalSpec,
   type ExportJob,
   type ExportOutput,
@@ -72,10 +73,13 @@ import {
   readExportDefaults,
   writeExportDefaults,
 } from "@/lib/exportDefaults";
+import { artifactValidationIssue, originalArtifactOverrides } from "@/lib/artifactValidation";
 import { inspectionState } from "@/lib/artifactInspection";
 import { RetryImg } from "@/components/ui/RetryImg";
 import {
   contextFigureId,
+  findExportPanel,
+  figureOfPanel,
   figureThumbSrc,
   listExportableFigures,
   type ExportableFigure,
@@ -141,7 +145,7 @@ import { useProfileStore } from "@/store/profileStore";
 import { useProjectStore } from "@/store/projectStore";
 import { useDocumentStore } from "@/store/documentStore";
 import { dialogCovered, useUiStore } from "@/store/uiStore";
-import { findFigurePanel, useWorkspaceStore } from "@/store/workspace";
+import { useWorkspaceStore } from "@/store/workspace";
 import type { FigureDocument, PanelObject } from "@/types/document";
 import {
   getValidationSummary,
@@ -325,23 +329,19 @@ export function ExportDialog() {
    * 75.3 × 58.7 对 80 × 57.6）。快速编辑条用的是同一个 hook，两处不可能再各挂
    * 各的依赖。`anyFigures` 仍要给：**「没选」与「没得选」是两句不同的话**。
    */
-  const availability = useOriginalAvailability(figureId, {
-    anyFigures: figures.length > 0,
-  });
-  // 只给缩略图换代用（runtime 素材重跑后换 src）；规格与可用性都从上面那个 hook 来
-  const runtimePreviewNonce = useRuntimeAssetStore((s) => s.previewNonce);
-  /**
-   * 那张图与**它所在的画布**。`findFigurePanel()` 会跨画布找——图不在当前画布上时，
-   * 检查与报告都得按它自己那张画布算（Codex 评审 #596 P2）：拿当前画布去裁，
-   * 摘要里一条都剩不下，报告的 `objects` 也是空的。
-   */
   const target = useMemo(
-    () => (figureId ? findFigurePanel(figureId) : null),
-    // 同上：`findFigurePanel()` 问的是 documentStore 的当前快照
+    () => (figureId ? findExportPanel(figureId) : null),
+    // Selection and workspace choose the same-file instance, not just the file.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [figureId, doc.objects, canvases],
+    [figureId, doc.objects, canvases, activePanelId, selectedIds],
   );
   const panel = target?.panel ?? null;
+  const availability = useOriginalAvailability(figureId, {
+    anyFigures: figures.length > 0,
+    panel,
+  });
+  // 只给缩略图换代用；规格与可用性都从上面那个 hook 来
+  const runtimePreviewNonce = useRuntimeAssetStore((s) => s.previewNonce);
   /**
    * 这次的检查、留档与严格核验**按哪张画布算**：原图 = 那张图所在的画布（它可能不是
    * 当前画布），画布 = 当前画布。下面的规范、摘要、导出上下文检查、报告的条目与规范戳、
@@ -567,7 +567,7 @@ export function ExportDialog() {
   const copiesSourceVerbatim =
     scope === "original" &&
     availability.spec?.sourceKind === "raster" &&
-    !(panel?.overrides?.length ?? 0);
+    (!panel || (!artifactValidationIssue(panel) && !originalArtifactOverrides(panel).length));
 
   /** 透明背景这次起不起作用：要有位图格式，且不是「照抄源位图」那条路 */
   const transparentApplies = raster && !copiesSourceVerbatim;
@@ -597,13 +597,6 @@ export function ExportDialog() {
     () => epsAvailability(scope, figureId),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [scope, figureId, assets, runtimeAssets],
-  );
-
-  /* ------------------------------ 文件名校验 ------------------------------ */
-  const filenameIssue = useMemo(
-    () => prepareExport(inputOf()).filenameProblem,
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [filename, formats, scope, ppi, doc, figureId],
   );
 
   function inputOf(over?: Partial<ExportRequestInput>): ExportRequestInput {
@@ -637,15 +630,14 @@ export function ExportDialog() {
    * `start()` 没有"，第五轮又抓到"两边都有，但 `start()` 那份少了一条"。
    * 一份判断、两个消费点，就没有"少写一条"这回事了。
    */
-  const names = useMemo(
-    () => prepareExport(inputOf()).names,
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [filename, formats, scope, figureId, eps.ok],
-  );
+  const prepared = prepareExport(inputOf());
+  const filenameIssue = prepared.filenameProblem;
+  const names = prepared.names;
 
   // 数的是**这次真会发出去的**格式（`names` 由 `buildExportRequest` 来，画布范围下
   // 勾着的 EPS 不在其中）：只勾 EPS 又切到画布，按钮得灰，不能发一个空格式列表
   const canStart =
+    !prepared.error &&
     names.length > 0 &&
     !blocked &&
     !filenameIssue &&
@@ -837,7 +829,7 @@ export function ExportDialog() {
    * 的判据是 `figureId`，不是「文档里有没有它的面板」。
    */
   const figure = figureId
-    ? (figures.find((f) => f.figureId === figureId) ?? null)
+    ? (panel ? figureOfPanel(panel) : (figures.find((f) => f.figureId === figureId) ?? null))
     : null;
   const figureName = figure?.name;
 
@@ -928,6 +920,7 @@ export function ExportDialog() {
             <Button
               variant="primary"
               size="md"
+              data-export-start
               disabled={!canStart}
               onClick={() => void start("ask")}
               title={blocked ? ex("blockedTitle") : undefined}
@@ -1321,7 +1314,12 @@ export function ExportDialog() {
               onRename={() => void start("rename")}
             />
           )}
-          {startError && (
+          {prepared.error && (
+            <p data-export-refusal role="alert" className="text-xs text-danger">
+              {formatMessage(engineErrorMsg(prepared.error))}
+            </p>
+          )}
+          {startError && !prepared.error && (
             <p data-export-start-error role="alert" className="text-xs text-danger">
               {startError.code === "bad_filename"
                 ? ex(`filenameError.${startError.message}`)

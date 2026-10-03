@@ -1782,6 +1782,14 @@ export default interface Resources {
     }
   },
   "errors": {
+    "artifact": {
+      "adoptFrame": "采用 PNG 原图图幅",
+      "frameChanged": "保存的图幅标记不匹配，已保留修改与位置。请使用兼容的历史版本；不会自动换算。",
+      "legacyEdits": "这张图已有编辑或写回基线，暂不能自动改用所选 PNG 图幅。现有修改保持原样。",
+      "sourceChanged": "源文件已变化，已保留你的修改。请恢复匹配的源文件或选择兼容的历史版本。",
+      "unsupported": "这张 PNG 暂不能安全进入编辑。已保留原图；当前支持固定或已完成一次排版的完整 figsize 图幅。",
+      "writebackUnsupported": "这张图暂不支持重新构建、写回或同步源图。可以继续编辑并导出新文件。"
+    },
     "backend": {
       "ai_agent_disabled": "{{agent}} 已在设置中关闭。在「改图助手」里打开后再试。",
       "ai_agent_executable_invalid": "无法用作该 Agent 的可执行文件：{{path}}。原设置不变。",
@@ -2498,6 +2506,7 @@ export default interface Resources {
       "fixCategory": "修复此类",
       "fixChoose": "修复…",
       "fixFailed": {
+        "artifact_unsupported": "所选源图暂不支持自动修复；现有修改保持原样，可手动编辑并导出新文件。",
         "busy": "上一次修复还在进行，稍后再试。",
         "canvas_missing": "找不到这条问题所在的画布，请刷新问题列表。",
         "engine_failed": "修复时渲染出错，图没有改动。",

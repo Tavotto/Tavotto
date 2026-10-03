@@ -1216,8 +1216,9 @@ function SnapshotPanel({
     panel.fileId,
     panel.overrides,
     200,
-    renderOverrides && panel.overrides.length > 0,
+    renderOverrides && (panel.overrides.length > 0 || Object.hasOwn(panel, 'artifactValidation')),
     mtime ?? 0,
+    Object.hasOwn(panel, 'artifactValidation') ? panel.artifactValidation ?? null : undefined,
   )
   useEffect(() => {
     if (renderOverrides) onApproximate?.(variant.approximate)

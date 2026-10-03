@@ -1,3 +1,4 @@
+import { refuseArtifactOperation } from '@/lib/artifactValidation'
 import { useEffect, useMemo, useState } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
 import { RotateCcw, TriangleAlert } from '@/components/ui/icons'
@@ -251,6 +252,7 @@ function RestoreDialog({
     setError(null)
     try {
       // 与写回同一条前置校验：素材被工具之外改过就别按旧状态覆盖（409 source_changed）
+      refuseArtifactOperation(panel)
       const mtime = useAssetStore.getState().byId[panel.fileId]?.mtime
       const res = await restoreHistory(panel.fileId, version.n, mtime)
       // 文件、基线、当前面板的 overrides 三者对齐，否则下次进编辑态又会打架

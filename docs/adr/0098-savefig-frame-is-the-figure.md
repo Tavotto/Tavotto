@@ -234,3 +234,25 @@ worker 以前把 `paper_style.save` 整个换成一个只登记 stem 的 lambda�
   旋转 / 翻转 / 非等比 / 裁剪、分数类 override 的换算）、`store/figureFrameSwitch.test.ts`
   （打开老排版 → 切换 → 渲染回来同步器不再挪它 → ⌘Z）、`e2e/savefig-frame-migration.spec.ts`
   （真浏览器 + 真 matplotlib：老排版原样打开 → 切换后标题在屏幕上不动、外框变 → 撤销还原）。
+
+## 完整 PNG 的受限采用（2026-10-02）
+
+同脚本 PDF tight / PNG plain 的普通固定布局可按所选 PNG 进入编辑，而不引入另一套保存坐标。
+后端 `selected-figsize-v1` 只接受完整 figsize PNG：完整路径/保存记录唯一、固定或已完成一次布局，
+初始化后的零编辑源格式候选与原件像素/图幅一致。裁过的 PNG、活跃布局和历史场景仍拒绝。
+
+显式进入编辑时，当前原图显示、空 overrides、无隐藏 baked/待应用样式的面板一次提交
+既有 `figure.frame="figsize"`、nativeW/H 与 `artifactValidation`，不改页面 x/y/w/h/crop。
+既有 FRAME 是唯一坐标含义；guard 只核对版本、源文件选择器/hash/字节数与所需 FRAME。
+缺失/畸形/未知 guard 或 FRAME 不匹配只拒绝，保存的 edits、位置与历史不自动修复/换基。
+撤销采用退出图内编辑；普通编辑撤销不退出。重做/重开重新验证。
+
+普通 JSON/剪贴板/时间线仍用原 schema。实际覆盖的旧读取器为 v0.17.0 源码与 #779 源码：
+后者理解 FRAME；v0.17 保留但不理解 FRAME，默认本来就是 figsize，普通编辑保持原义。
+旧版图级重置可能删 FRAME 留子元素 edits，旧版 relink 可能留过时 guard；新版本均保留并拒绝。
+不自动补 FRAME，不猜是旧版盲删还是合法换基。只允许明确丢弃全部编辑或选择兼容历史来恢复。
+只删 guard 而保留 FRAME 不改坐标；两者都被外部工具剥掉无法与真正 legacy 数据区分，
+不承诺任意旧版本/工具都安全。无数据格式或公开发行版本升级。
+
+所选上下文只开放编辑、配对预览和导出新文件，写回/历史写回/跨图同步/自动修复保持明确拒绝。
+原图导出只有结构性 FRAME 时仍复制原像素，真实编辑仍按既有输出 PPI/字体/背景政策。

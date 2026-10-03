@@ -19,7 +19,7 @@ import type { ProfileRecord } from '@/lib/api'
 import { stampOverrideIdentities } from '@/lib/overrideIdentity'
 import { seedExactRender } from '@/test/renderFixtures'
 import { emptyProject, type PanelObject, type ProjectDocument } from '@/types/document'
-import { clearOverride, setOverride, setOverrides, startLayoutAutoReflow } from './actions'
+import { clearOverride, enterElementEdit, setOverride, setOverrides, startLayoutAutoReflow } from './actions'
 import { useAssetStore } from './assetStore'
 import { registerOverrideStamper, useDocumentStore } from './documentStore'
 import { useInteractionStore } from './interactionStore'
@@ -38,6 +38,7 @@ import {
   whenLibraryIdle,
 } from './styleBinding'
 import { useUiStore } from './uiStore'
+import { hasPendingStyleWork } from './styleWork'
 
 // 渲染请求**永远不回来**（中止时才落定）：这里的 manifest 一律由用例自己挂（`seedExactRender`）。
 // 回一个空的 `{}` 的话，那次渲染会以「就绪、没有 manifest」落地，把用例刚挂好的精确 manifest 冲掉——
@@ -1982,5 +1983,58 @@ describe('撤销只退画布、不推回样式库（ADR 0081 §十二，用户 2
     rerenderAll()
     followLibrary()
     expect(ov('a', 'axes_0.xlabel', 'fontsize')).toBe(10)
+  })
+})
+
+
+describe('artifact admission reads the style writer’s own work state', () => {
+  it('latent debt survives unbinding, stays instance-specific, and blocks PNG admission', async () => {
+    const p = { ...panel('a', 'plot.png'), fileKind: 'raster' as const }
+    await seed([p])
+    useRenderStore.getState().clear()
+    expect(hasPendingStyleWork(p)).toBe(false)
+    bindCanvasStyle('s1')
+    expect(hasPendingStyleWork(p)).toBe(true)
+    bindCanvasStyle(null)
+    expect(s().doc.style).toBeUndefined()
+    expect(panelById('a').overrides).toEqual([])
+    expect(hasPendingStyleWork(p)).toBe(true)
+    expect(hasPendingStyleWork({ ...p, id: 'other' })).toBe(false)
+    expect(hasPendingStyleWork({ ...p, fileId: 'other.png' })).toBe(false)
+    const before = s().past
+    expect(await enterElementEdit('a')).toBe(false)
+    expect(s().past).toBe(before)
+    expect(panelById('a').artifactValidation).toBeUndefined()
+    resetStyleBindingSession()
+    expect(hasPendingStyleWork(p)).toBe(false)
+  })
+
+  it('counts both queued and running writers until the final writer settles', async () => {
+    await seed([panel('a', 'FigA')])
+    bindCanvasStyle('s1')
+    rerenderAll()
+    const unrelated = panel('other', 'other.png')
+    const real = useProfileStore.getState().save
+    let releaseFirst!: () => void
+    let releaseSecond!: () => void
+    const firstGate = new Promise<void>(resolve => { releaseFirst = resolve })
+    const secondGate = new Promise<void>(resolve => { releaseSecond = resolve })
+    let writes = 0
+    useProfileStore.setState({ save: async (...args) => {
+      await (writes++ === 0 ? firstGate : secondGate)
+      return real(...args)
+    } })
+    expect(hasPendingStyleWork(unrelated)).toBe(false)
+    const first = editBoundStyle({ kind: 'element', role: 'axis_label', prop: 'fontsize', value: 11 })
+    const second = editBoundStyle({ kind: 'element', role: 'axis_label', prop: 'fontsize', value: 12 })
+    expect(writes).toBe(0)
+    expect(hasPendingStyleWork(unrelated)).toBe(true)
+    releaseFirst()
+    expect(await first).toBe(true)
+    expect(hasPendingStyleWork(unrelated)).toBe(true)
+    releaseSecond()
+    expect(await second).toBe(true)
+    expect(writes).toBe(2)
+    expect(hasPendingStyleWork(unrelated)).toBe(false)
   })
 })

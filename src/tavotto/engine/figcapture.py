@@ -154,6 +154,11 @@ import re
 import sys
 import weakref
 
+if __package__:
+    from . import patchspec
+else:
+    import patchspec
+
 __all__ = [
     "savefig_stem",
     "savefig_call",
@@ -512,6 +517,8 @@ ORIGIN_EXECUTION = "execution"
 ORIGIN_STATIC = "static"
 _ORIGINS = (ORIGIN_EXECUTION, ORIGIN_STATIC)
 SELECTED_ARTIFACT_POLICY = "selected-artifact-v1"
+SELECTED_FIGSIZE_POLICY = "selected-figsize-v1"
+SELECTED_ARTIFACT_POLICIES = (SELECTED_ARTIFACT_POLICY, SELECTED_FIGSIZE_POLICY)
 ARTIFACT_VALIDATION_MAX_BYTES = 32 * 1024 * 1024
 ARTIFACT_VALIDATION_MAX_PIXELS = 16_000_000
 
@@ -529,8 +536,21 @@ def artifact_request(policy, expected_source=None, patches=()):
     """Validate the opt-in and durable byte basis; execution tokens are never accepted."""
     if policy is None and expected_source is None:
         return None
-    if policy != SELECTED_ARTIFACT_POLICY:
+    if policy not in SELECTED_ARTIFACT_POLICIES:
         raise ArtifactContextError("unsupported_render_state", "Unsupported source policy.")
+    if policy == SELECTED_FIGSIZE_POLICY and patches:
+        frame = next(
+            (
+                p["value"]
+                for p in patchspec.canonicalize(patches)
+                if (p["gid"], p["prop"]) == ("figure", "frame")
+            ),
+            None,
+        )
+        if frame != "figsize":
+            raise ArtifactContextError(
+                "unsupported_render_state", "Selected figsize edits require the figsize frame."
+            )
     if expected_source is None:
         if patches:
             raise ArtifactContextError(
@@ -555,7 +575,7 @@ def selected_artifact_context(value):
     """Validate the controller-owned static source identity; None preserves legacy rendering."""
     if value is None:
         return None
-    if not isinstance(value, dict) or value.get("render_policy") != SELECTED_ARTIFACT_POLICY:
+    if not isinstance(value, dict) or value.get("render_policy") not in SELECTED_ARTIFACT_POLICIES:
         raise ValueError("unsupported artifact render policy")
     source_id = normalize_relative_script(value.get("source_id"))
     if ".." in pathlib.PurePosixPath(source_id).parts:
@@ -569,7 +589,12 @@ def selected_artifact_context(value):
     )
     if artifact.kind not in ("pdf", "png"):
         raise ValueError("selected artifact rendering supports PDF and PNG")
-    return {**artifact.to_payload(), "render_policy": SELECTED_ARTIFACT_POLICY}
+    policy = value["render_policy"]
+    if policy == SELECTED_FIGSIZE_POLICY and artifact.kind != "png":
+        raise ArtifactContextError(
+            "unsupported_render_state", "Selected figsize requires a PNG source."
+        )
+    return {**artifact.to_payload(), "render_policy": policy}
 
 
 def selected_artifact_key(value) -> str:

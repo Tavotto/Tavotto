@@ -29,7 +29,7 @@ function renderedByEngine(panel: PanelObject): boolean {
 export function migrateFigureFrames(objects: CanvasObject[]): CanvasObject[] {
   let changed = false
   const out = objects.map((o) => {
-    if (o.type !== 'panel' || o.figureFrame === FIGURE_FRAME_VERSION) return o
+    if (o.type !== 'panel' || Object.hasOwn(o, 'artifactValidation') || o.figureFrame === FIGURE_FRAME_VERSION) return o
     changed = true
     const next: PanelObject = { ...o, figureFrame: FIGURE_FRAME_VERSION }
     if (renderedByEngine(o) && !hasLegacyFrame(o)) {

@@ -1,3 +1,4 @@
+import { refuseArtifactOperation } from '@/lib/artifactValidation'
 import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { TriangleAlert } from '@/components/ui/icons'
@@ -111,6 +112,10 @@ function SyncOverridesDialog({ panel, onClose }: { panel: PanelObject; onClose: 
     setError(null)
     setBusy(true)
     try {
+      refuseArtifactOperation(panel)
+      for (const targetPanel of useDocumentStore.getState().doc.objects) {
+        if (targetPanel.type === 'panel' && targetPanel.fileId === info.id) refuseArtifactOperation(targetPanel)
+      }
       const data = await syncOverrides(panel.fileId, info.id, panel.overrides)
       if (seq === reqSeq.current) setResultOf({ id: info.id, data })
     } catch (e) {
@@ -130,6 +135,8 @@ function SyncOverridesDialog({ panel, onClose }: { panel: PanelObject; onClose: 
 
   const applyToCanvas = () => {
     if (!onCanvas) return
+    try { refuseArtifactOperation(panel); refuseArtifactOperation(onCanvas) }
+    catch (e) { setError(backendErrorText(e)); return }
     setOverrides(
       onCanvas.id,
       msg('sync.historyLabel', { name: panel.name ?? sy('sourceFallback') }, 'inspector'),

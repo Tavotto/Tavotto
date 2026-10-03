@@ -1,3 +1,4 @@
+import { artifactRequestFields, artifactValidationIssue, originalArtifactOverrides } from './artifactValidation'
 /**
  * 统一导出请求的构造 —— **全产品只有这一份**（ADR 0031）。
  *
@@ -99,16 +100,16 @@ export interface OriginalAvailability {
  */
 export function originalAvailability(
   figureId: string | null,
-  opts: { anyFigures?: boolean } = {},
+  opts: { anyFigures?: boolean; panel?: PanelObject | null } = {},
 ): OriginalAvailability {
   // 「没选」与「没得选」是两句不同的话：前者让用户去点一张，后者点无可点
   if (!figureId) {
     return { ok: false, reason: opts.anyFigures === false ? 'no_figures' : 'no_figure', spec: null }
   }
-  const spec = getOriginalOutputSpec(figureId)
+  const spec = getOriginalOutputSpec(figureId, opts.panel)
   if (!spec) return { ok: false, reason: 'unknown_figure', spec: null }
   /*
-   * 源文件够不够得着。**判据是"素材清单里还有没有它"，不是 `spec.stale`。**
+   * 未带 guard 的源文件够不够得着，仍看素材清单而不是 `spec.stale`。
    *
    * 后端解析面板源的第一步就是 `safe_resolve()`，文件不在就 404 —— 它排在
    * "去注册表找脚本重渲染"之前，所以"引擎能重新画一张"这个指望在这条路上
@@ -121,16 +122,21 @@ export function originalAvailability(
    *
    * runtime 素材（ADR 0013）从来不在 `/api/panels` 里，它走 worker 那条路，
    * 不需要磁盘原件——所以单独放行。
+   * 合法 guard 的 PNG 可能只是被同 stem PDF 从清单里遮住；让它进入既有
+   * 导出预检，发布前仍须校验策略和磁盘字节，不把旧 guard 当成当前文件在场。
    */
-  if (!sourceReachable(figureId)) return { ok: false, reason: 'source_stale', spec }
+  if (!canValidateOriginalSource(figureId, opts.panel)) return { ok: false, reason: 'source_stale', spec }
   return { ok: true, reason: 'none', spec }
 }
 
-/** 这张图此刻够不够得着（与后端 `_resolve_panel_source` 的前提逐条对应）。 */
-function sourceReachable(figureId: string): boolean {
+/** Guarded hidden PNGs still require the exact-source export preflight before publication. */
+function canValidateOriginalSource(figureId: string, panel?: PanelObject | null): boolean {
   if (figureId.startsWith('runtime:')) {
     return (useRuntimeAssetStore.getState().assets ?? []).some((a) => a.id === figureId)
   }
+  // /panels prefers a same-stem PDF; absence is not proof that this PNG is missing.
+  // This permits validation, not a source-existence or fresh-metadata claim.
+  if (panel?.fileId === figureId && panel.artifactValidation && !artifactValidationIssue(panel)) return true
   return useAssetStore.getState().byId[figureId] != null
 }
 
@@ -239,9 +245,11 @@ export function buildExportRequest(input: ExportRequestInput): BuiltRequest {
     }
   } else {
     const spec = input.spec ?? null
+    const patches = input.panel ? originalArtifactOverrides(input.panel) : []
     request.original = {
       figure_id: input.figureId ?? '',
-      overrides: input.panel?.overrides?.length ? input.panel.overrides : undefined,
+      ...(input.panel ? artifactRequestFields(input.panel) : {}),
+      overrides: patches.length ? patches : undefined,
       w_mm: spec?.widthMm ?? null,
       h_mm: spec?.heightMm ?? null,
       px_w: spec?.pixelWidth ?? null,

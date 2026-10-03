@@ -1,3 +1,4 @@
+import { artifactKeySuffix, artifactRequestFields, artifactValidationIssue, ArtifactValidationError, validationFromSource, type ArtifactValidation } from '@/lib/artifactValidation'
 import { useMemo } from 'react'
 import { perfRenderApplied, perfRenderBegin, perfRenderResponse } from '@/perf/core'
 import { msg, type UiMessage } from '@/i18n'
@@ -33,6 +34,7 @@ export type RenderStatus = 'idle' | 'rendering' | 'ready' | 'error'
 export interface PanelRender {
   /** 这份渲染态属于哪个素材文件（文件级操作靠它反查，见 markStale / reset） */
   fileId: string
+  artifactValidation?: ArtifactValidation
   rev: number
   manifest: Manifest | null
   /** 已处理好的 SVG 文本（去掉 width/height，铺满容器） */
@@ -174,13 +176,13 @@ const EMPTY: PanelRender = {
  * 分隔符用空格是安全的：变体串是 `JSON.stringify(数组)`，必然以 `[` 开头，
  * 拼出来的键不可能与另一个「文件名里带空格」的组合撞上。
  */
-export function renderKey(fileId: string, patches: unknown[]): string {
-  return `${fileId} ${JSON.stringify(patches)}`
+export function renderKey(fileId: string, patches: unknown[], guard?: unknown): string {
+  return `${fileId} ${JSON.stringify(patches)}${artifactKeySuffix(guard)}`
 }
 
 /** 面板 → 它自己那份渲染态的键（唯一出处，消费方一律用它取状态） */
 export function renderKeyOf(panel: PanelObject): string {
-  return renderKey(panel.fileId, panel.overrides)
+  return renderKey(panel.fileId, panel.overrides, Object.hasOwn(panel, 'artifactValidation') ? panel.artifactValidation ?? null : undefined)
 }
 
 /**
@@ -287,6 +289,7 @@ interface RenderState {
     previewDpi?: number,
     policy?: RenderRequestPolicy,
     epoch?: number,
+    artifactValidation?: ArtifactValidation,
   ) => Promise<void>
   /** 脚本变更：转入引擎跟踪并清掉该文件**全部变体**的 lastPatches */
   markStale: (fileIds: string[]) => void
@@ -571,11 +574,11 @@ export const useRenderStore = create<RenderState>((set, get) => ({
       return { building: { ...s.building, [fileId]: info } }
     }),
 
-  render: async (fileId, patches, previewDpi, policy, epoch) => {
+  render: async (fileId, patches, previewDpi, policy, epoch, artifactValidation) => {
     // 排渲染时的项目已经不是当前项目：连请求都不发（发出去 pj 是新项目的，
     // 渲染的却是旧项目的 fileId 与 patches）
     if (epoch !== undefined && epoch !== projectEpoch) return
-    const key = renderKey(fileId, patches)
+    const key = renderKey(fileId, patches, artifactValidation)
     // 序号在**请求进来的那一刻**取，不是发出的那一刻：忙时排队的那次要带着
     // 自己的序号走完全程，否则一个早就该被覆盖的旧变体会因为「重试发得晚」
     // 而显得最新，把 latest 拽回去（撤销之后画面弹回对齐后的样子）。
@@ -601,6 +604,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
       for (;;) {
         patch(key, {
           fileId,
+          artifactValidation,
           status: 'rendering',
           error: null,
           traceback: '',
@@ -613,7 +617,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
         recordDiagnosticEvent({
           type: 'render.request',
           file: fileHash(fileId),
-          variant: variantHash(renderKey(fileId, current)),
+          variant: variantHash(key),
           policy: policy ?? 'immediate',
           preview_dpi: dpi ?? null,
         })
@@ -632,17 +636,20 @@ export const useRenderStore = create<RenderState>((set, get) => ({
           // 装了替代传输就走它（Codex 内嵌画布 → MCP 的 tools/call），
           // 否则还是原来那条 HTTP。两侧最终落到同一个 worker.override，
           // 这里以下的逻辑一行都不分叉
-          const opts = { signal: ctrl.signal, previewDpi: dpi }
+          const source = artifactValidation === undefined ? {} : artifactRequestFields({ fileId, overrides: current as PanelObject['overrides'], artifactValidation })
+          const opts = { signal: ctrl.signal, previewDpi: dpi, ...source }
           const transport = engineTransport()
+          if (artifactValidation && transport) throw new ArtifactValidationError('unsupported_render_state')
           // 性能探针（ADR 0075）：松手 → 图落定那段时间的第一个时刻
           perfHandle = perfRenderBegin(key, current.length)
           const res = transport
             ? await transport.render(fileId, current, opts)
             : await engineRender(fileId, current, opts)
+          if (artifactValidation) validationFromSource(res.artifact_source, fileId, artifactValidation)
           perfRenderResponse(perfHandle, true, res.timings, res.svg?.length)
           // 在途期间换过项目：这份图属于旧项目，一个字都不落进当前项目（STATE-06）。
           // 性能探针照记「回包到了」，`applied` 留空——它确实没上屏
-          if (epochAtStart !== projectEpoch) return
+          if (epochAtStart !== projectEpoch || ctrl.signal.aborted) return
           if (res.environment_switched) {
             // 内置环境缺包，Tavotto 自己找到并换用了项目的 .venv（ADR 0018）。
             // 一条轻量 toast 就够——**不弹阻断式对话框**：用户点的是「渲染」，
@@ -655,6 +662,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
           }
           const next: Partial<PanelRender> = {
             fileId,
+            artifactValidation,
             rev: res.rev,
             manifest: res.manifest,
             status: 'ready',
@@ -698,6 +706,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
           // 已经上屏，旧变体的响应再回来不该把画面拽回去（同文件的另一个副本
           // 仍可能在等这份结果，所以不能整个丢掉）。
           set((s) => {
+            if (artifactValidation) return { byKey: { ...s.byKey, [key]: { ...(s.byKey[key] ?? EMPTY), ...next } } }
             const fresher = seq >= (s.latestSeq[fileId] ?? 0)
             const recent = [
               key,
@@ -727,7 +736,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
           recordDiagnosticEvent({
             type: 'render.success',
             file: fileHash(fileId),
-            variant: variantHash(renderKey(fileId, current)),
+            variant: variantHash(key),
             duration_ms: Date.now() - startedAt,
             // manifest 摘要**只有计数与图幅**：元素的 label 是图内文字
             element_count: res.manifest?.elements.length ?? 0,
@@ -743,7 +752,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
           recordDiagnosticEvent({
             type: 'render.error',
             file: fileHash(fileId),
-            variant: variantHash(renderKey(fileId, current)),
+            variant: variantHash(key),
             duration_ms: Date.now() - startedAt,
             // **机器可读的 code**，不是 traceback、不是报错原文——
             // 那两样里装着用户的脚本与路径
@@ -792,11 +801,15 @@ export const useRenderStore = create<RenderState>((set, get) => ({
           if (err instanceof EngineError && err.code === NATIVE_FIGURE_INCONSISTENT) {
             set((s) => ({ inconsistent: { ...s.inconsistent, [fileId]: true } }))
           }
+          if (artifactValidation && (err instanceof ArtifactValidationError || (err instanceof EngineError && err.code === 'artifact_source_unavailable'))) {
+            rejectArtifactRenders(fileId, artifactValidation, err)
+          }
           // 失败时保留旧 SVG，用户还能看到上一版
           patch(key, {
             fileId,
             status: 'error',
-            code: err instanceof EngineError ? err.code : '',
+            ...(artifactValidation ? { stale: true, manifest: null, svg: null, svgBytes: 0, svgSeq: 0 } : {}),
+            code: err instanceof EngineError || err instanceof ArtifactValidationError ? err.code : '',
             module: err instanceof EngineError ? err.module : '',
             projectEnv: err instanceof EngineError ? (err.projectEnv ?? null) : null,
             dependencyRepair:
@@ -880,7 +893,8 @@ export const useRenderStore = create<RenderState>((set, get) => ({
         let touched = 0
         for (const [k, v] of Object.entries(byKey)) {
           if (v.fileId !== id) continue
-          byKey[k] = { ...v, stale: true, lastPatches: null, wantPatches: null }
+          byKey[k] = { ...v, stale: true, lastPatches: null, wantPatches: null,
+            ...(v.artifactValidation ? { manifest: null, svg: null, svgBytes: 0, svgSeq: 0 } : {}) }
           touched++
         }
         recordDiagnosticEvent({
@@ -1003,6 +1017,21 @@ export const useRenderStore = create<RenderState>((set, get) => ({
   },
 }))
 
+/** A server-discovered source refusal revokes every exact variant using those saved bytes. */
+export function rejectArtifactRenders(fileId: string, guard: ArtifactValidation, error: unknown): void {
+  const store = useRenderStore.getState()
+  for (const [key, r] of Object.entries(store.byKey)) {
+    if (r.fileId !== fileId || r.artifactValidation?.bytesSha256 !== guard.bytesSha256 || r.artifactValidation?.sizeBytes !== guard.sizeBytes) continue
+    const slot = inflight.get(key)
+    if (slot) { slot.queued = null; slot.abort?.() }
+    store.patch(key, {status:'error',code:'artifact_source_unavailable',error:engineErrorMsg(error),
+      stale:true,manifest:null,svg:null,svgBytes:0,svgSeq:0})
+    for (const [id, png] of Object.entries(useMountedPngStore.getState().byPanel)) {
+      if (png.key === key) useMountedPngStore.getState().clear(id)
+    }
+  }
+}
+
 export const emptyRender = EMPTY
 
 /* -------------------------------------------------------------------------- */
@@ -1022,11 +1051,19 @@ export const emptyRender = EMPTY
  * `exactPanelRender` / `exactPanelManifest`。issue #131 就是这么来的：
  * 对齐拿上一版的墨迹 bbox 配当前版的锚点算落点，算出来的位置不属于任何一版。
  */
+function invalidArtifactRender(issue: string, own: PanelRender | undefined): PanelRender {
+  return { ...(own ?? EMPTY), status: 'error', stale: true, manifest: null, svg: null, svgBytes: 0,
+    code: 'artifact_source_unavailable', error: engineErrorMsg(new ArtifactValidationError(issue)) }
+}
+
 export function panelRender(
   state: Pick<RenderState, 'byKey' | 'latest'>,
   panel: PanelObject,
 ): PanelRender | undefined {
   const own = state.byKey[renderKeyOf(panel)]
+  const issue = artifactValidationIssue(panel)
+  if (issue) return invalidArtifactRender(issue, own)
+  if (panel.artifactValidation) return own
   if (own?.manifest) return own
   const prev = state.byKey[state.latest[panel.fileId] ?? '']
   return mergeRender(own, prev)
@@ -1073,7 +1110,7 @@ export function exactPanelRender(
 }
 
 function exactOf(own: PanelRender | undefined, panel: PanelObject): PanelRender | null {
-  if (!own?.manifest || own.stale) return null
+  if (artifactValidationIssue(panel) || !own?.manifest || own.stale) return null
   if (own.lastPatches !== JSON.stringify(panel.overrides)) return null
   return own
 }
@@ -1202,6 +1239,7 @@ export function panelDisplayView(
       render: exact,
     }
   }
+  if (Object.hasOwn(panel, 'artifactValidation')) return { kind: 'empty', currentKey, sourceKey: null, svg: null, render: own }
   const sourceKey = own?.svg ? currentKey : (state.latest[panel.fileId] ?? '')
   const prev = state.byKey[sourceKey]
   if (prev?.svg) {
@@ -1230,9 +1268,10 @@ export function activeRenderKey(
 export function usePanelRender(panel: PanelObject | null | undefined): PanelRender | undefined {
   const own = useRenderStore((s) => (panel ? s.byKey[renderKeyOf(panel)] : undefined))
   const prev = useRenderStore((s) =>
-    panel ? s.byKey[s.latest[panel.fileId] ?? ''] : undefined,
+    panel && !Object.hasOwn(panel, 'artifactValidation') ? s.byKey[s.latest[panel.fileId] ?? ''] : undefined,
   )
-  return useMemo(() => (own?.manifest ? own : mergeRender(own, prev)), [own, prev])
+  const issue = panel ? artifactValidationIssue(panel) : null
+  return useMemo(() => issue ? invalidArtifactRender(issue, own) : (own?.manifest ? own : mergeRender(own, prev)), [own, prev, issue])
 }
 
 /**
@@ -1257,22 +1296,21 @@ export function usePanelDisplayManifest(panel: PanelObject | null | undefined): 
 export function usePanelDisplayView(panel: PanelObject | null | undefined): PanelDisplayView | null {
   const byKey = useRenderStore((s) => s.byKey)
   const latest = useRenderStore((s) => s.latest)
-  const variant = panel ? JSON.stringify(panel.overrides) : ''
+  const variant = panel ? renderKeyOf(panel) : ''
   return useMemo(
     () => (panel ? panelDisplayView({ byKey, latest }, panel) : null),
     // variant 表达 overrides 的内容变化（panel 每次 commit 都是新引用）
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [byKey, latest, panel?.id, panel?.fileId, variant],
+    [byKey, latest, panel?.id, panel?.fileId, panel?.artifactValidation, variant],
   )
 }
 
 /** 当前变体的 canonical 渲染态；几何写入还须经 useExactPanelManifest 选择已上屏的 PNG。 */
 export function useExactPanelRender(panel: PanelObject | null | undefined): PanelRender | null {
   const own = useRenderStore((s) => (panel ? s.byKey[renderKeyOf(panel)] : undefined))
-  const variant = panel ? JSON.stringify(panel.overrides) : ''
   return useMemo(
-    () => (own?.manifest && !own.stale && own.lastPatches === variant ? own : null),
-    [own, variant],
+    () => panel ? exactOf(own, panel) : null,
+    [own, panel],
   )
 }
 

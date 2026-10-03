@@ -395,9 +395,16 @@ function TreeView({ panel, manifest }: { panel: PanelObject; manifest: Manifest 
   const selectGid = useCallback(
     (gid: string, additive: boolean) => {
       const ui = useUiStore.getState()
-      if (ui.elementPanelId !== panelId) enterElementEdit(panelId)
-      if (additive && gid !== 'figure') ui.toggleSelectedGid(gid)
-      else ui.setSelectedGid(gid)
+      const select = () => {
+        if (additive && gid !== 'figure') ui.toggleSelectedGid(gid)
+        else ui.setSelectedGid(gid)
+      }
+      if (ui.elementPanelId === panelId) select()
+      else {
+        const entered = enterElementEdit(panelId)
+        if (entered instanceof Promise) void entered.then(ok => { if (ok) select() })
+        else if (entered) select()
+      }
     },
     [panelId],
   )

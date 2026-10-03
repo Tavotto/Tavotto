@@ -1,3 +1,6 @@
+import { ArtifactValidationError } from '@/lib/artifactValidation'
+import { rejectArtifactRenders } from './renderStore'
+import type { PanelObject } from '@/types/document'
 /**
  * 导出作业的编排 —— **全产品只有这一条链**（ADR 0031）。
  *
@@ -28,6 +31,7 @@ import {
   ApiError,
   backendErrorMsg,
   cancelExport as apiCancel,
+  engineErrorMsg,
   exportState,
   startExport,
   validateExport as apiValidate,
@@ -36,8 +40,7 @@ import {
 } from '@/lib/api'
 import { buildExportRequest, type ExportRequestInput } from '@/lib/exportRequest'
 import { getOriginalOutputSpec } from '@/lib/originalSpec'
-import { useDocumentStore } from '@/store/documentStore'
-import { findFigurePanel } from '@/store/workspace'
+import { findFigurePanel, useDocumentStore } from '@/store/documentStore'
 import type { FilenameReason } from '@/lib/exportName'
 import { filenameProblem } from '@/lib/exportRequest'
 import { captureMoment, markMoment, type MomentSnapshot } from '@/lib/timelineCheckpoint'
@@ -55,10 +58,10 @@ const POLL_MS = 600
  */
 const TERMINAL = new Set(['done', 'partial', 'failed', 'cancelled', 'conflict', 'unknown'])
 
-export interface PreparedExport {
-  request: ReturnType<typeof buildExportRequest>['request']
-  names: string[]
-  revision: string
+export type PreparedExport = (
+  | (ReturnType<typeof buildExportRequest> & { error: null })
+  | { request: null; names: []; revision: null; error: ArtifactValidationError }
+) & {
   /** 文件名不合法的原因；合法为 null。**在输入的那一刻就知道**（§六） */
   filenameProblem: FilenameReason | null
 }
@@ -127,8 +130,13 @@ export const useExportStore = create<ExportState>(() => ({
 
 /** 请求成形 + 就地校验。**不发网络**，输入框每敲一个字都可以调。 */
 export function prepareExport(input: ExportRequestInput): PreparedExport {
-  const built = buildExportRequest(input)
-  return { ...built, filenameProblem: filenameProblem(input.filename, input.formats) }
+  const problem = filenameProblem(input.filename, input.formats)
+  try {
+    return { ...buildExportRequest(input), error: null, filenameProblem: problem }
+  } catch (error) {
+    if (!(error instanceof ArtifactValidationError)) throw error
+    return { request: null, names: [], revision: null, error, filenameProblem: problem }
+  }
 }
 
 /** 真的开始之前能看出来的问题（重名、目录写不写得了、PPI 有没有意义）。 */
@@ -136,7 +144,8 @@ export async function validateExportRequest(
   input: ExportRequestInput,
 ): Promise<ExportValidation | null> {
   try {
-    return await apiValidate(prepareExport(input).request)
+    const prepared = prepareExport(input)
+    return prepared.error ? null : await apiValidate(prepared.request)
   } catch {
     // 校验拿不到答案 ≠ 没有问题。回 null，界面据此**不说**"一切正常"
     return null
@@ -172,6 +181,12 @@ function stopPolling() {
  * **晚到的旧快照挡掉**：同一个作业已经进终局之后，一条在网络上多绕了两圈的
  * "running" 会把界面倒回进行中，用户于是看着一个永远转不完的圈。
  */
+function rejectExportSources(input: ExportRequestInput | null, reason: string): void {
+  if (!input) return
+  const panels = input.scope === 'original' ? (input.panel ? [input.panel] : []) : input.doc.objects.filter((o): o is PanelObject=>o.type==='panel')
+  for (const p of panels) if (p.artifactValidation) rejectArtifactRenders(p.fileId,p.artifactValidation,new ArtifactValidationError(reason))
+}
+
 export function applyExportJob(job: ExportJob): void {
   const s = useExportStore.getState()
   // **只收自己那个作业的快照。** 判据是归属（job_id 对不对得上），不是
@@ -179,6 +194,9 @@ export function applyExportJob(job: ExportJob): void {
   // 迟到的轮询，把这里的状态填回去
   if (s.ownedJobId == null || job.job_id !== s.ownedJobId) return
   if (s.job && s.job.job_id === job.job_id && TERMINAL.has(s.job.status)) return
+  const sourceError = [job.error, ...job.outputs.map((output) => output.error)]
+    .find((error) => error?.code === 'artifact_source_unavailable')
+  if (sourceError) rejectExportSources(s.lastInput, String(sourceError.params?.reason ?? 'source_changed'))
   const terminal = TERMINAL.has(job.status)
   if (terminal) stopPolling()
   // 排版时间线的关键时刻（ADR 0101）：导出**交付了文件**的那一刻打一个点。
@@ -213,8 +231,11 @@ export function liveRevision(input: ExportRequestInput | null): string | null {
   try {
     const doc = useDocumentStore.getState().doc
     const figureId = input.figureId ?? null
-    const panel = figureId ? (findFigurePanel(figureId)?.panel ?? null) : null
-    const spec = figureId ? getOriginalOutputSpec(figureId) : null
+    const panel = figureId && input.panel
+      ? (findFigurePanel(figureId, input.panel.id)?.panel ?? null)
+      : null
+    if (input.scope === 'original' && input.panel && !panel) return null
+    const spec = figureId ? getOriginalOutputSpec(figureId, panel) : null
     return buildExportRequest({ ...input, doc, panel, spec }).revision
   } catch {
     return null
@@ -230,6 +251,14 @@ export function liveRevision(input: ExportRequestInput | null): string | null {
 export async function runExport(input: ExportRequestInput): Promise<ExportJob | null> {
   if (useExportStore.getState().running) return null
   const prepared = prepareExport(input)
+  if (prepared.error) {
+    rejectExportSources(input, prepared.error.reason)
+    useExportStore.setState({
+      startError: { code: 'start_failed', message: engineErrorMsg(prepared.error) },
+      lastInput: input,
+    })
+    return null
+  }
   if (prepared.filenameProblem) {
     useExportStore.setState({
       startError: { code: 'bad_filename', message: prepared.filenameProblem },
@@ -258,6 +287,10 @@ export async function runExport(input: ExportRequestInput): Promise<ExportJob | 
   try {
     job = await startExport(prepared.request)
   } catch (err) {
+    if (mine !== generation) return null
+    if (err instanceof ArtifactValidationError || (err instanceof ApiError && err.body?.code === 'artifact_source_unavailable')) {
+      rejectExportSources(input,err instanceof ArtifactValidationError ? err.reason : String((err.body.params as Record<string,unknown> | undefined)?.reason ?? 'source_changed'))
+    }
     if (mine !== generation) return null
     useExportStore.setState({
       running: false,
@@ -294,6 +327,7 @@ export async function runExport(input: ExportRequestInput): Promise<ExportJob | 
  * 恰恰是陈旧快照必经的路。
  */
 function exportFailure(error: unknown): UiMessage {
+  if (error instanceof ArtifactValidationError) return engineErrorMsg(error)
   return error instanceof ApiError
     ? backendErrorMsg(error)
     : msg('export.connectionFailed', { app: PRODUCT_NAME }, 'dialogs')
