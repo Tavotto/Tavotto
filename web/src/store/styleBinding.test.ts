@@ -13,9 +13,10 @@
  * 9. 脚本重跑后脚本赢（2026-09-25 裁决，§十三）：不自动对齐，给「不一致」+「对齐」；样式写的 override 在脚本
  *    改了那一项之后让位，用户手改的永远保留。
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { literal } from '@/i18n'
 import type { ProfileRecord } from '@/lib/api'
+import { FIGSIZE_SOURCE_POLICY } from '@/lib/artifactValidation'
 import { stampOverrideIdentities } from '@/lib/overrideIdentity'
 import { seedExactRender } from '@/test/renderFixtures'
 import { emptyProject, type PanelObject, type ProjectDocument } from '@/types/document'
@@ -38,7 +39,7 @@ import {
   whenLibraryIdle,
 } from './styleBinding'
 import { useUiStore } from './uiStore'
-import { hasPendingStyleWork } from './styleWork'
+import { hasPendingStyleWork, styleWork } from './styleWork'
 
 // 渲染请求**永远不回来**（中止时才落定）：这里的 manifest 一律由用例自己挂（`seedExactRender`）。
 // 回一个空的 `{}` 的话，那次渲染会以「就绪、没有 manifest」落地，把用例刚挂好的精确 manifest 冲掉——
@@ -1988,6 +1989,49 @@ describe('撤销只退画布、不推回样式库（ADR 0081 §十二，用户 2
 
 
 describe('artifact admission reads the style writer’s own work state', () => {
+  it('reloading the same document, canvas, panel and file IDs leaves old debt unreachable and admits PNG entry', async () => {
+    const p = { ...panel('a', 'plot.png'), fileKind: 'raster' as const }
+    await seed([p])
+    useRenderStore.getState().clear()
+    useUiStore.getState().setElementPanel(null)
+    bindCanvasStyle('s1')
+    bindCanvasStyle(null)
+    expect(hasPendingStyleWork(p)).toBe(true)
+    const debts = [...styleWork.pending]
+    const { documentId, activeCanvasId, loadSeq } = s()
+    const saved = s().buildProject()
+
+    expect(await s().switchDocument(saved, documentId)).toBe(true)
+    expect(s()).toMatchObject({ documentId, activeCanvasId, loadSeq: loadSeq + 1 })
+    expect(panelById('a')).toEqual(p)
+    expect([...styleWork.pending]).toEqual(debts)
+    expect(hasPendingStyleWork(panelById('a'))).toBe(false)
+    const source = {
+      render_policy: FIGSIZE_SOURCE_POLICY,
+      source_id: p.fileId,
+      origin: 'static',
+      kind: 'png',
+      bytes_sha256: 'a'.repeat(64),
+      size_bytes: 10,
+    }
+    const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(JSON.stringify({
+      rev: 1,
+      svg: '<svg/>',
+      manifest: manifest(p.fileId),
+      artifact_source: source,
+    }), { status: 200 }))
+    try {
+      expect(await enterElementEdit('a')).toBe(true)
+      expect(panelById('a').artifactValidation).toMatchObject({ sourceId: p.fileId, bytesSha256: source.bytes_sha256 })
+      expect(panelById('a').overrides).toEqual([{ gid: 'figure', prop: 'frame', value: 'figsize' }])
+      expect(s().past).toHaveLength(1)
+      expect(useUiStore.getState().elementPanelId).toBe('a')
+      expect([...styleWork.pending]).toEqual(debts)
+    } finally {
+      fetch.mockRestore()
+    }
+  })
+
   it('latent debt survives unbinding, stays instance-specific, and blocks PNG admission', async () => {
     const p = { ...panel('a', 'plot.png'), fileKind: 'raster' as const }
     await seed([p])

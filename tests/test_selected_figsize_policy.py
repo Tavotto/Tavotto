@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from tavotto import app as m
-from tavotto.engine import artifactcontext, exportreq, figcapture, pool
+from tavotto.engine import artifactcontext, atomicio, exportreq, figcapture, pool
 from test_savefig_capture_params import WORKER_PY, needs_worker
 from test_selected_artifact_api import api as api, basis, refused
 
@@ -522,11 +522,11 @@ def _background_project(root, mode="transparent", *, multiple=False):
     )
     (root / "figure.py").write_text(script, encoding="utf-8")
     subprocess.run([WORKER_PY, "figure.py"], cwd=root, check=True, capture_output=True, timeout=60)
-    (root / "tavotto_registry.json").write_text(
-        json.dumps(
-            {"scripts": {"figure.py": {"entry": "__main__", "cost": "light", "stems": ["same"]}}},
-            indent=1,
-        )
+    # Match the real registry writer's UTF-8/LF bytes on Windows as well as POSIX.
+    atomicio.write_json(
+        root / "tavotto_registry.json",
+        {"scripts": {"figure.py": {"entry": "__main__", "cost": "light", "stems": ["same"]}}},
+        indent=1,
     )
     return script
 

@@ -14,6 +14,10 @@ import { syncEngine } from '@/hooks/useEngineSync'
 import { artifactValidationIssue, FIGSIZE_SOURCE_POLICY, ArtifactValidationError } from '@/lib/artifactValidation'
 import { setCurrentProjectId } from '@/lib/session'
 import { migrateFigureFrames } from '@/lib/figureFrameMigration'
+import { focusObject } from '@/lib/issueFocus'
+import { useSelectionStore } from './selectionStore'
+import { useWorkspaceStore } from './workspace'
+import { useMountedPngStore } from './mountedPngStore'
 const render = vi.fn()
 const pendingStyle = vi.fn(()=>false)
 vi.mock('@/lib/api',async original=>({...await original<typeof import('@/lib/api')>(),engineRender:(...args:unknown[])=>render(...args)}))
@@ -35,6 +39,7 @@ async function seed(p=panel()) {
 beforeEach(async()=>{
  render.mockReset().mockResolvedValue(response());pendingStyle.mockReturnValue(false)
  useRenderStore.getState().clear();useUiStore.getState().setElementPanel(null)
+ useSelectionStore.getState().clear();useWorkspaceStore.getState().clear();useMountedPngStore.setState({byPanel:{}})
  useAssetStore.setState({byId:{}});setCurrentProjectId('A');await seed()
 })
 describe('atomic source entry and old-compatible history',()=>{
@@ -75,6 +80,31 @@ describe('atomic source entry and old-compatible history',()=>{
   const before=structuredClone(P());expect(await enterElementEdit('p')).toBe(false)
   expect(render).not.toHaveBeenCalled();expect(P()).toEqual(before);expect(S().past).toHaveLength(0)
  })
+ it.each(['select-other','select-return','clear-selection','page-problem','other-fast-edit','workspace-clear'])('navigation %s cancels pending adoption without history',async action=>{
+  S().commit(literal('second panel'),d=>{d.objects.push({...panel(),id:'q',fileId:'other.png'})})
+  useSelectionStore.getState().set(['p'])
+  let release!:(v:unknown)=>void;render.mockImplementationOnce(()=>new Promise(r=>{release=r}))
+  const entering=enterElementEdit('p');await vi.waitFor(()=>expect(render).toHaveBeenCalledTimes(1))
+  if(action==='select-other'||action==='select-return')useSelectionStore.getState().set(['q'])
+  if(action==='select-return')useSelectionStore.getState().set(['p'])
+  if(action==='clear-selection')useSelectionStore.getState().clear()
+  if(action==='page-problem')expect(focusObject({documentId:S().documentId!,canvasId:S().activeCanvasId,objectId:null,gid:null})).toMatchObject({ok:true,mode:'layout'})
+  if(action==='other-fast-edit')useWorkspaceStore.getState().enterFastEdit('q')
+  if(action==='workspace-clear')useWorkspaceStore.getState().clear()
+  const before=structuredClone(S().doc),history=S().past.length
+  const selected=useSelectionStore.getState().ids,workspace=useWorkspaceStore.getState()
+  release(response());expect(await entering).toBe(false)
+  expect(S().doc).toEqual(before);expect(S().past).toHaveLength(history)
+  expect(useSelectionStore.getState().ids).toBe(selected);expect(useWorkspaceStore.getState()).toBe(workspace)
+  expect(useUiStore.getState().elementPanelId).toBeNull()
+ })
+ it('a no-op selection does not discard the current admission',async()=>{
+  useSelectionStore.getState().set(['p'])
+  let release!:(v:unknown)=>void;render.mockImplementationOnce(()=>new Promise(r=>{release=r}))
+  const entering=enterElementEdit('p');await vi.waitFor(()=>expect(render).toHaveBeenCalledTimes(1))
+  useSelectionStore.getState().set(['p'])
+  release(response());expect(await entering).toBe(true)
+ })
  it('missing source acknowledgement refuses without history; normal edit undo retains intent',async()=>{
   render.mockResolvedValueOnce({...response(),artifact_source:undefined});expect(await enterElementEdit('p')).toBe(false);expect(S().past).toHaveLength(0)
   expect(await enterElementEdit('p')).toBe(true)
@@ -107,6 +137,50 @@ describe('atomic source entry and old-compatible history',()=>{
  })
 })
 describe('guard refusal before cached authority',()=>{
+ it.each(['current','selection-away','new-project','new-render-epoch'])('re-entry source refusal invalidates only its project render epoch: %s',async scenario=>{
+  const p={...panel(),overrides:[FRAME,{gid:'line',prop:'color',value:'blue'}],artifactValidation:guard};await seed(p)
+  await useRenderStore.getState().render(p.fileId,p.overrides,undefined,undefined,undefined,guard)
+  const key=renderKeyOf(p),cached=exactPanelRender(useRenderStore.getState(),p)!
+  useMountedPngStore.getState().show(p.id,key,cached.rev,cached.manifest,'blob:old')
+  useMountedPngStore.getState().loaded(p.id,{key,rev:cached.rev,source:cached.manifest,url:'blob:old',manifest:cached.manifest})
+  expect(exactPanelRender(useRenderStore.getState(),p)).not.toBeNull()
+  useSelectionStore.getState().set(['p'])
+  let reject!:(e:unknown)=>void;render.mockImplementationOnce(()=>new Promise((_resolve,r)=>{reject=r}))
+  const entering=enterElementEdit(p.id);await flush()
+  if(scenario==='selection-away')useSelectionStore.getState().clear()
+  if(scenario==='new-project'||scenario==='new-render-epoch'){
+   if(scenario==='new-project')setCurrentProjectId('B')
+   else useRenderStore.getState().clear()
+   await useRenderStore.getState().render(p.fileId,p.overrides,undefined,undefined,undefined,guard)
+  }
+  const navigationStatus=literal('New navigation')
+  if(scenario!=='current')useUiStore.getState().setStatus(navigationStatus,'error')
+  const before=structuredClone(P()),history=S().past.length
+  reject(new EngineError('changed','','artifact_source_unavailable','',undefined,undefined,{params:{reason:'source_changed'}}))
+  expect(await entering).toBe(false);expect(P()).toEqual(before);expect(S().past).toHaveLength(history)
+  if(scenario==='new-project'||scenario==='new-render-epoch')expect(exactPanelRender(useRenderStore.getState(),p)).not.toBeNull()
+  else {
+   expect(exactPanelRender(useRenderStore.getState(),p)).toBeNull()
+   expect(useRenderStore.getState().byKey[key]).toMatchObject({status:'error',manifest:null,svg:null})
+   expect(useMountedPngStore.getState().byPanel[p.id]).toBeUndefined()
+  }
+  if(scenario!=='current')expect(useUiStore.getState().status).toEqual(navigationStatus)
+ })
+ it('a re-entry response without the source acknowledgement revokes cached authority',async()=>{
+  const p={...panel(),overrides:[FRAME],artifactValidation:guard};await seed(p)
+  await useRenderStore.getState().render(p.fileId,p.overrides,undefined,undefined,undefined,guard)
+  render.mockResolvedValueOnce({...response(),artifact_source:undefined})
+  expect(await enterElementEdit(p.id)).toBe(false)
+  expect(exactPanelRender(useRenderStore.getState(),p)).toBeNull()
+ })
+ it('a non-source re-entry failure does not revoke an exact source cache',async()=>{
+  const p={...panel(),overrides:[FRAME],artifactValidation:guard};await seed(p)
+  await useRenderStore.getState().render(p.fileId,p.overrides,undefined,undefined,undefined,guard)
+  const cached=exactPanelRender(useRenderStore.getState(),p)
+  render.mockRejectedValueOnce(new EngineError('busy','','worker_timeout'))
+  expect(await enterElementEdit(p.id)).toBe(false)
+  expect(exactPanelRender(useRenderStore.getState(),p)).toBe(cached)
+ })
  it('invalid guard shares no geometry, shows error, cancels old debounce and never repairs migration',async()=>{
   const p={...panel(),overrides:[FRAME],artifactValidation:guard};await seed(p)
   await useRenderStore.getState().render(p.fileId,p.overrides,undefined,undefined,undefined,guard)

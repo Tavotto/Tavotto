@@ -27,6 +27,7 @@
  * ——指着一个已经被删掉的对象的"快速编辑"是一个打不开的界面。
  */
 import { create } from 'zustand'
+import { cancelArtifactEntry } from '@/lib/artifactValidation'
 import { msg } from '@/i18n'
 import { emitActivity } from '@/lib/activity'
 import { rescueFocus } from '@/lib/focusRescue'
@@ -102,6 +103,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   addedForEdit: null,
   addedForEditDepth: 0,
   enterFastEdit: (panelId) => {
+    cancelArtifactEntry()
     const changed = get().mode !== 'fast_edit' || get().activePanelId !== panelId
     // 记下排版视口**在这里**，不在 `openFastEdit` 里：问题面板的定位
     // （`lib/issueFocus.ts`）也是从排版进快速编辑的，它调的是这个 action
@@ -112,6 +114,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
   setPendingElementEdit: (panelId) => set({ pendingElementEdit: panelId }),
   exitToLayout: () => {
+    cancelArtifactEntry()
     const changed = get().mode !== 'layout'
     // 回排版 = 用户改了主意，那个待办跟着作废（迟到的关联不该把他拽回去）
     set({ mode: 'layout', activePanelId: null, pendingElementEdit: null, addedForEdit: null })
@@ -119,6 +122,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
   // 换文档 / 换项目的清理**不发信号**：那不是用户在表达「我要回排版」
   clear: () => {
+    cancelArtifactEntry()
     // 第二道保险，**没有用例杀得掉它**：新文档的画布 id 是新生成的，
     // `takeParkedLayoutView()` 的画布判据已经把跨文档还原挡住了（变异反证过）。
     // 留着是为了不让模块变量一直挂着上一份文档的状态；别把它当成被看住的保证。

@@ -54,7 +54,6 @@ import { msg, t, type UiMessage } from '@/i18n'
 import type { Manifest, ProfileRecord } from '@/lib/api'
 import { profileName } from '@/lib/profileText'
 import { figKey, ownedLive } from '@/lib/styleOwned'
-import { currentProjectId } from '@/lib/session'
 import { sameRules } from '@/lib/specBinding'
 import {
   effectiveChanges,
@@ -81,7 +80,9 @@ import { useProfileStore } from './profileStore'
 import { exactPanelManifest, renderKeyOf, useRenderStore } from './renderStore'
 import { requestRender } from './renderScheduler'
 import { useUiStore } from './uiStore'
-import { styleWork } from './styleWork'
+import { documentGeneration, styleLedgerKey, styleWork } from './styleWork'
+
+export { documentGeneration } from './styleWork'
 
 const hist = (key: string, values?: Record<string, unknown>): UiMessage =>
   msg(`history.${key}`, values, 'workspace')
@@ -224,19 +225,8 @@ const styleWith = (id: string, snapshot: Record<string, unknown>, owned: OwnedMa
 
 /* ------------------------------- 代次 -------------------------------------- */
 
-/**
- * 「此刻是哪一份文档的哪一张画布」（样式面板按它给行重挂，`StylePanel` 复用这一份，不写第二份）：项目 · 文档 · 载入代次 · 画布。`loadSeq` 在每一次整份替换
- * 文档时都会前进，**即使 id 全都一样**（版面恢复、崩溃恢复重载同一份文档）——只比 id 的话，
- * 旧编辑会写进新载入的那一份（Codex #547 P1）。
- */
-export function documentGeneration(
-  s: Pick<ReturnType<typeof useDocumentStore.getState>, 'documentId' | 'loadSeq' | 'activeCanvasId'>,
-): string {
-  return JSON.stringify([currentProjectId(), s.documentId, s.loadSeq, s.activeCanvasId])
-}
 const generation = (): string => documentGeneration(useDocumentStore.getState())
-/** 会话记账的键：代次 + 绑的是哪一条（换绑定 = 换一本账） */
-const ledgerKey = (doc: FigureDocument = docNow()) => `${generation()}|${doc.style?.id ?? ''}`
+const ledgerKey = (doc: FigureDocument = docNow()) => styleLedgerKey(doc.style?.id)
 
 /* --------------------------- 会话记账：看过的图 / 欠账 ----------------------- */
 
@@ -335,7 +325,7 @@ function owe(doc: FigureDocument, delta: StyleProfileData, missingIds: string[],
  * 还没对齐的图仍然要补（Codex #547 P1）。欠账按绑定记（`ledgerKey`），不绑着它时不会被结算
  */
 function forgetDebts(styleId: string) {
-  pending.delete(`${generation()}|${styleId}`)
+  pending.delete(styleLedgerKey(styleId))
 }
 
 /* --------------------------- 样式库写入队列 -------------------------------- */

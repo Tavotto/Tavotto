@@ -25,6 +25,7 @@ import {
   engineInvalidate,
   engineRender,
   engineErrorMsg,
+  EngineError,
   type CapturedFigureDescriptor,
   type ManifestElement,
   type PanelInfo,
@@ -67,7 +68,7 @@ import { finishActiveGesture } from './gestureCoordinator'
 import { writeBoundProjectFile } from './projectSave'
 import { captureSaveContext, reportSaveSkipped, stillCurrent } from './saveContext'
 import { useInteractionStore } from './interactionStore'
-import { exactPanelManifest, renderEpoch, renderKeyOf, useRenderStore } from './renderStore'
+import { exactPanelManifest, rejectArtifactRenders, renderEpoch, renderKeyOf, useRenderStore } from './renderStore'
 import { useSelectionStore } from './selectionStore'
 import { askConfirm, useUiStore } from './uiStore'
 import { useViewportStore } from './viewportStore'
@@ -1393,10 +1394,12 @@ async function admitPngEntry(panel: PanelObject, leftTab: 'elements' | 'keep'): 
   const epoch = renderEpoch()
   const pj = currentProjectId()
   const snapshot = JSON.stringify(panel)
+  const selection = useSelectionStore.getState().ids
   const attempt = beginArtifactEntry(panel.id)
+  const ownsRenderContext = () => renderEpoch() === epoch && currentProjectId() === pj
   const current = () => {
     const now = useDocumentStore.getState()
-    return artifactEntryCurrent(attempt) && renderEpoch() === epoch && currentProjectId() === pj &&
+    return artifactEntryCurrent(attempt) && ownsRenderContext() && useSelectionStore.getState().ids === selection &&
       now.documentId === initial.documentId && now.loadSeq === initial.loadSeq &&
       now.activeCanvasId === initial.activeCanvasId && now.doc === initial.doc &&
       now.past === initial.past && now.future === initial.future && !now.txn &&
@@ -1433,6 +1436,10 @@ async function admitPngEntry(panel: PanelObject, leftTab: 'elements' | 'keep'): 
     }
     return finishElementEntry(panel.id, leftTab)
   } catch (error) {
+    if (ownsRenderContext() && panel.artifactValidation &&
+        (error instanceof ArtifactValidationError || (error instanceof EngineError && error.code === 'artifact_source_unavailable'))) {
+      rejectArtifactRenders(panel.fileId, panel.artifactValidation, error, renderKeyOf(panel))
+    }
     if (current()) status(engineErrorMsg(error), 'error')
     return false
   } finally {
