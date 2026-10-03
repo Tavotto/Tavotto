@@ -1,5 +1,5 @@
 import { seedExactRender } from '@/test/renderFixtures'
-import { EngineError, type Manifest } from '@/lib/api'
+import { EngineError, type Manifest, type DependencyPreparationOffer, type WorkdirConfirmation, type MissingInputOffer } from '@/lib/api'
 import { materializeRelink } from '@/lib/clipboard'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { literal } from '@/i18n'
@@ -18,9 +18,11 @@ import { focusObject } from '@/lib/issueFocus'
 import { useSelectionStore } from './selectionStore'
 import { useWorkspaceStore } from './workspace'
 import { useMountedPngStore } from './mountedPngStore'
+import { useEnvStore } from './envStore'
 const render = vi.fn()
+const addRemap = vi.fn()
 const pendingStyle = vi.fn(()=>false)
-vi.mock('@/lib/api',async original=>({...await original<typeof import('@/lib/api')>(),engineRender:(...args:unknown[])=>render(...args)}))
+vi.mock('@/lib/api',async original=>({...await original<typeof import('@/lib/api')>(),engineRender:(...args:unknown[])=>render(...args),addInputRemap:(...args:unknown[])=>addRemap(...args)}))
 vi.mock('./styleWork',()=>({hasPendingStyleWork:(...args:unknown[])=>pendingStyle(...args as [])}))
 const FRAME={gid:'figure',prop:'frame',value:'figsize'}
 const guard={version:1 as const,requiredFrame:'figsize' as const,sourceId:'plot.png',bytesSha256:'a'.repeat(64),sizeBytes:10}
@@ -38,9 +40,192 @@ async function seed(p=panel()) {
 }
 beforeEach(async()=>{
  render.mockReset().mockResolvedValue(response());pendingStyle.mockReturnValue(false)
+ addRemap.mockReset().mockResolvedValue({ok:true,input_remap:{generation:1,rules:[]}})
  useRenderStore.getState().clear();useUiStore.getState().setElementPanel(null)
  useSelectionStore.getState().clear();useWorkspaceStore.getState().clear();useMountedPngStore.setState({byPanel:{}})
  useAssetStore.setState({byId:{}});setCurrentProjectId('A');await seed()
+ useEnvStore.getState().resetProject()
+})
+
+const preparation: DependencyPreparationOffer = {
+ code: 'dependency_preparation_required', script: 'figure.py', target_kind: 'tavotto_managed',
+ targets: [{kind:'tavotto_managed',venv:'',python:'',modifies_user_environment:false,creates_environment:true,available:true,reason:''}],
+ rounds_remaining: 3, skipped: false, user_environments: [],
+ plan: {
+  plan_version:1,status:'ready',target_kind:'tavotto_managed',script:'figure.py',
+  needed:[],missing:[],satisfied:[],unknown:[],possible:[],requirements:['ovito'],
+  constraints:[],require_hashes:false,adapter:[],blocked:[],identity:'entry-test',
+  selection:{selected_groups:[],available_groups:[],unselected_groups:[],skipped_marker:[]},
+ },
+}
+const workdir: WorkdirConfirmation = {
+ kind:'workdir',code:'workdir_confirmation_required',script:'figure.py',reason:'project_root_evidence',
+ recommended:'project_root',options:[],conflicts:[],reads:['data.csv'],
+}
+const input: MissingInputOffer = {script:'figure.py',requested:'data.csv',absolute:false,via:'open',others:[]}
+const entryGates = [
+ {code:preparation.code,extra:{dependencyPreparation:preparation},field:'dependencyPreparation',payload:preparation},
+ {code:workdir.code,extra:{confirmation:workdir},field:'workdirConfirmation',payload:workdir},
+ {code:'missing_input',extra:{missingInput:input},field:'missingInput',payload:input},
+] as const
+const gatedError = (gate = entryGates[0]) => new EngineError('needs an answer','',gate.code,'',undefined,undefined,gate.extra)
+
+describe('selected PNG environment gates', () => {
+ it.each(entryGates)('$code opens its existing dialog and resumes source validation after the answer', async gate => {
+  render.mockRejectedValueOnce(new EngineError('needs an answer','',gate.code,'',undefined,undefined,gate.extra))
+  const before = structuredClone(P())
+  const status = useUiStore.getState().status
+  expect(await enterElementEdit('p')).toBe(false)
+  expect(useEnvStore.getState()[gate.field]).toBe(gate.payload)
+  expect(useUiStore.getState().status).toBe(status)
+  expect(P()).toEqual(before)
+  expect(S().past).toHaveLength(0)
+  expect(useRenderStore.getState().tracked['plot.png']).toBeUndefined()
+  if (gate.code === 'missing_input') {
+   expect(await useEnvStore.getState().pointAtData('data.csv', '/new/data.csv', 'file')).toBeNull()
+   expect(addRemap).toHaveBeenCalledWith('data.csv', '/new/data.csv', 'file')
+  } else useRenderStore.getState().retryEnvironmentFailures()
+  await vi.waitFor(() => expect(useUiStore.getState().elementPanelId).toBe('p'))
+  expect(render.mock.calls.map(c => c[1])).toEqual([[], [], [FRAME]])
+  expect(render.mock.calls[1][2]).toEqual({source_policy:FIGSIZE_SOURCE_POLICY})
+  expect(P().artifactValidation).toEqual(guard)
+  expect(P().overrides).toEqual([FRAME])
+  expect(visual(P())).toEqual(visual(before))
+  expect(S().past).toHaveLength(1)
+  useRenderStore.getState().retryEnvironmentFailures()
+  expect(render).toHaveBeenCalledTimes(3)
+  expect(exactPanelRender(useRenderStore.getState(),P())).not.toBeNull()
+ })
+ it('an input-remap event before the response resumes PNG admission only once', async () => {
+  render.mockRejectedValueOnce(new EngineError('missing data','','missing_input','',undefined,undefined,{missingInput:input}))
+  expect(await enterElementEdit('p')).toBe(false)
+  let complete!: (value: unknown) => void
+  addRemap.mockImplementationOnce(() => new Promise(resolve => { complete = resolve }))
+  const pointing = useEnvStore.getState().pointAtData('data.csv', '/new/data.csv', 'file')
+  useEnvStore.getState().onInputRemapChanged(1, 'added')
+  await vi.waitFor(() => expect(useUiStore.getState().elementPanelId).toBe('p'))
+  complete({ok:true,input_remap:{generation:1,rules:[]}})
+  expect(await pointing).toBeNull()
+  useEnvStore.getState().onInputRemapChanged(1, 'added')
+  await flush()
+  expect(render.mock.calls.map(c => c[1])).toEqual([[], [], [FRAME]])
+  expect(P().artifactValidation).toEqual(guard)
+  expect(S().past).toHaveLength(1)
+ })
+ it('a second missing-input gate survives the first remap response arriving after its event', async () => {
+  const second = {...input, requested:'second.csv'}
+  render.mockRejectedValueOnce(new EngineError('missing data','','missing_input','',undefined,undefined,{missingInput:input}))
+  render.mockRejectedValueOnce(new EngineError('more missing data','','missing_input','',undefined,undefined,{missingInput:second}))
+  expect(await enterElementEdit('p')).toBe(false)
+  let complete!: (value: unknown) => void
+  addRemap.mockImplementationOnce(() => new Promise(resolve => { complete = resolve }))
+  const pointing = useEnvStore.getState().pointAtData('data.csv', '/new/data.csv', 'file')
+  useEnvStore.getState().onInputRemapChanged(1, 'added')
+  await vi.waitFor(() => expect(render).toHaveBeenCalledTimes(2))
+  expect(useEnvStore.getState().missingInput).toBe(second)
+  complete({ok:true,input_remap:{generation:1,rules:[]}})
+  expect(await pointing).toBeNull()
+  expect(useEnvStore.getState().missingInput).toBe(second)
+  expect(S().past).toHaveLength(0)
+  addRemap.mockResolvedValueOnce({ok:true,input_remap:{generation:2,rules:[]}})
+  expect(await useEnvStore.getState().pointAtData('second.csv', '/new/second.csv', 'file')).toBeNull()
+  await vi.waitFor(() => expect(useUiStore.getState().elementPanelId).toBe('p'))
+  expect(render.mock.calls.map(c => c[1])).toEqual([[], [], [], [FRAME]])
+  expect(P().artifactValidation).toEqual(guard)
+  expect(S().past).toHaveLength(1)
+ })
+ it.each(['project-away-return','render-epoch','selection-away-return','document'])('input-remap completion after %s cannot revive obsolete PNG entry', async action => {
+  useSelectionStore.getState().set(['p'])
+  render.mockRejectedValueOnce(new EngineError('missing data','','missing_input','',undefined,undefined,{missingInput:input}))
+  expect(await enterElementEdit('p')).toBe(false)
+  let complete!: (value: unknown) => void
+  addRemap.mockImplementationOnce(() => new Promise(resolve => { complete = resolve }))
+  const pointing = useEnvStore.getState().pointAtData('data.csv', '/new/data.csv', 'file')
+  if (action === 'project-away-return') {
+   setCurrentProjectId('B');useEnvStore.getState().resetProject();useRenderStore.getState().clear()
+   setCurrentProjectId('A');useEnvStore.getState().resetProject()
+  }
+  if (action === 'render-epoch') useRenderStore.getState().invalidateInflight()
+  if (action === 'selection-away-return') { useSelectionStore.getState().clear();useSelectionStore.getState().set(['p']) }
+  if (action === 'document') S().commit(literal('rename'), d => { d.name = 'changed' })
+  const before = structuredClone(P()), history = S().past.length
+  complete({ok:true,input_remap:{generation:1,rules:[]}})
+  expect(await pointing).toBeNull()
+  await flush()
+  expect(render).toHaveBeenCalledTimes(1)
+  expect(P()).toEqual(before)
+  expect(S().past).toHaveLength(history)
+  expect(useUiStore.getState().elementPanelId).toBeNull()
+ })
+ it('a failed input remap does not resume PNG admission', async () => {
+  render.mockRejectedValueOnce(new EngineError('missing data','','missing_input','',undefined,undefined,{missingInput:input}))
+  expect(await enterElementEdit('p')).toBe(false)
+  addRemap.mockRejectedValueOnce(new Error('cannot map input'))
+  expect(await useEnvStore.getState().pointAtData('data.csv', '/new/data.csv', 'file')).toBe('cannot map input')
+  await flush()
+  expect(render).toHaveBeenCalledTimes(1)
+  expect(useEnvStore.getState().missingInput).toBe(input)
+  expect(P().artifactValidation).toBeUndefined()
+  expect(S().past).toHaveLength(0)
+ })
+ it.each(['project','render-epoch','selection','workspace'])('a late gate after %s does not open a dialog', async action => {
+  useSelectionStore.getState().set(['p'])
+  let reject!: (error: unknown) => void
+  render.mockImplementationOnce(() => new Promise((_resolve, r) => { reject = r }))
+  const entering = enterElementEdit('p')
+  if (action === 'project') setCurrentProjectId('B')
+  if (action === 'render-epoch') useRenderStore.getState().clear()
+  if (action === 'selection') useSelectionStore.getState().clear()
+  if (action === 'workspace') useWorkspaceStore.getState().clear()
+  const before = structuredClone(P())
+  reject(gatedError())
+  expect(await entering).toBe(false)
+  expect(useEnvStore.getState().dependencyPreparation).toBeNull()
+  useRenderStore.getState().retryEnvironmentFailures()
+  expect(render).toHaveBeenCalledTimes(1)
+  expect(P()).toEqual(before)
+  expect(S().past).toHaveLength(0)
+ })
+ it.each(['selection-away-return','project-away-return','render-epoch','workspace','document','undo','gesture'])('repair completion after %s cannot resume obsolete edit intent', async action => {
+  useSelectionStore.getState().set(['p'])
+  render.mockRejectedValueOnce(gatedError())
+  expect(await enterElementEdit('p')).toBe(false)
+  expect(useEnvStore.getState().dependencyPreparation).toBe(preparation)
+  if (action === 'selection-away-return') {
+   useSelectionStore.getState().clear()
+   useSelectionStore.getState().set(['p'])
+  }
+  if (action === 'project-away-return') {
+   setCurrentProjectId('B')
+   useRenderStore.getState().clear()
+   setCurrentProjectId('A')
+  }
+  if (action === 'render-epoch') useRenderStore.getState().clear()
+  if (action === 'workspace') useWorkspaceStore.getState().clear()
+  if (action === 'document' || action === 'undo') S().commit(literal('rename'), d => { d.name = 'changed' })
+  if (action === 'undo') S().undo()
+  if (action === 'gesture') S().beginTxn(literal('drag'))
+  const before = structuredClone(P()), history = S().past.length
+  useRenderStore.getState().retryEnvironmentFailures()
+  await flush()
+  expect(render).toHaveBeenCalledTimes(1)
+  expect(P()).toEqual(before)
+  expect(S().past).toHaveLength(history)
+  expect(useUiStore.getState().elementPanelId).toBeNull()
+  if (S().txn) S().endTxn({discard:true})
+ })
+ it('after preparation, an unacknowledged source still refuses adoption without history', async () => {
+  render.mockRejectedValueOnce(gatedError())
+  expect(await enterElementEdit('p')).toBe(false)
+  const before = structuredClone(P())
+  render.mockResolvedValueOnce({...response(),artifact_source:undefined})
+  useRenderStore.getState().retryEnvironmentFailures()
+  await vi.waitFor(() => expect(render).toHaveBeenCalledTimes(2))
+  await flush()
+  expect(P()).toEqual(before)
+  expect(S().past).toHaveLength(0)
+  expect(useUiStore.getState().elementPanelId).toBeNull()
+ })
 })
 describe('atomic source entry and old-compatible history',()=>{
  it('keeps original while pending; commits FRAME/guard/native only, then guarded render',async()=>{
