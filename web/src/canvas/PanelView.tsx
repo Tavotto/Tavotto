@@ -123,7 +123,7 @@ export function PanelView({ obj }: { obj: PanelObject }) {
     ? {
         width: contentW / crop.w,
         height: contentH / crop.h,
-        left: -(crop.x / crop.w) * contentW,
+        left: -(crop.x / crop.w) * contentW + (obj.artifactValidation ? 10 : 0),
         top: -(crop.y / crop.h) * contentH,
       }
     : { width: contentW, height: contentH, left: 0, top: 0 }
