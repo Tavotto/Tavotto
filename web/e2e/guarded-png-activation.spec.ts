@@ -451,10 +451,14 @@ test('guarded PNG: hidden companion, stable adoption, undo, re-entry, and exact 
     result = await r.json()
     return result!.status
   }, { timeout: 120_000 }).toBe('done')
-  expect(result!.outputs).toHaveLength(1)
-  expect(result!.outputs[0]).toMatchObject({ status: 'done', format: 'png' })
-  await expect(dialog).toContainText(result!.outputs[0].name)
-  expect(readFileSync(path.join(job.export_dir, result!.outputs[0].name))).toEqual(source.png)
+  expect(result!.outputs.map(o => o.format).sort()).toEqual(
+    start.request().postDataJSON().include_style_check_report ? ['png', 'report'] : ['png'],
+  )
+  expect(result!.outputs.every(o => o.status === 'done')).toBe(true)
+  const pngOutputs = result!.outputs.filter(o => o.format === 'png')
+  expect(pngOutputs).toHaveLength(1)
+  await expect(dialog).toContainText(pngOutputs[0].name)
+  expect(readFileSync(path.join(job.export_dir, pngOutputs[0].name))).toEqual(source.png)
   source.expectUnchanged()
 })
 
