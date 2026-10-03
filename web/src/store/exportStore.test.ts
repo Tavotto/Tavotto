@@ -231,7 +231,7 @@ describe('取消', () => {
 describe('prepareExport 不发网络', () => {
   it('输入框每敲一个字都可以调它', () => {
     const p = prepareExport(inputOf({ filename: 'Fig 1.pdf' }))
-    expect(p.request.filename).toBe('Fig 1')
+    expect(p.request?.filename).toBe('Fig 1')
     expect(p.names).toEqual(['Fig 1.pdf'])
     expect(p.filenameProblem).toBeNull()
     expect(bodies).toHaveLength(0)

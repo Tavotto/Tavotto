@@ -24,7 +24,7 @@ import { panelSrc } from './api'
 import { engineTransport } from './engineTransport'
 import { stemOf } from './openRequest'
 import { useAssetStore } from '@/store/assetStore'
-import { useDocumentStore } from '@/store/documentStore'
+import { findFigurePanel, useDocumentStore } from '@/store/documentStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useWorkspaceStore } from '@/store/workspace'
@@ -154,20 +154,35 @@ export function listExportableFigures(): ExportableFigure[] {
  *    用户的意思八成是那张图；
  * 3. 上面都没有，而整个项目只有一张图：就是它。一张图的项目不该被要求「先选」。
  */
-export function contextFigureId(figures: readonly ExportableFigure[]): string | null {
+function contextPanel(): PanelObject | null {
   const objects = useDocumentStore.getState().doc.objects
   const active = useWorkspaceStore.getState().activePanelId
   if (active) {
     const o = objects.find((x) => x.id === active)
-    if (o && isPanel(o)) return o.fileId
+    if (o && isPanel(o)) return o
   }
   const ids = useSelectionStore.getState().ids
   const primary = objects.find((x) => x.id === ids.at(-1))
-  if (primary && isPanel(primary)) return primary.fileId
+  if (primary && isPanel(primary)) return primary
   const firstPanel = ids
     .map((id) => objects.find((x) => x.id === id))
     .find((o): o is PanelObject => !!o && isPanel(o))
-  if (firstPanel) return firstPanel.fileId
-  if (figures.length === 1) return figures[0].figureId
-  return null
+  return firstPanel ?? null
+}
+
+export function contextFigureId(figures: readonly ExportableFigure[]): string | null {
+  return contextPanel()?.fileId ?? (figures.length === 1 ? figures[0].figureId : null)
+}
+
+/** Export keeps the chosen instance; a pinned id never falls back after removal/relink. */
+export function findExportPanel(
+  figureId: string,
+  panelId?: string,
+): { panel: PanelObject; canvasId: string } | null {
+  const chosen = panelId ?? contextPanel()?.id
+  if (chosen) {
+    const found = findFigurePanel(figureId, chosen)
+    if (found || panelId !== undefined) return found
+  }
+  return findFigurePanel(figureId)
 }

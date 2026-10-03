@@ -1,3 +1,4 @@
+import { refuseArtifactOperation } from '@/lib/artifactValidation'
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { FileUp, RotateCcwClock, ShieldAlert, TriangleAlert } from '@/components/ui/icons'
@@ -83,6 +84,7 @@ async function runWriteBack(
   let sizeMismatch = false
   for (const p of panels) {
     try {
+      refuseArtifactOperation(p)
       const res = await updateSourceFiles(
         p.fileId,
         p.overrides,

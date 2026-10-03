@@ -131,8 +131,9 @@ function focusObjectInner(ref: ObjectRef, propertyPath?: string | null): FocusOu
     reveal(obj)
     // 左栏**留在原地**：定位来自问题清单时，那份清单就是用户此刻的导航——
     // 被元素树顶掉的话，连续处理五条同类问题要五次重开问题面板（审计 T09）
-    enterElementEdit(obj.id, { leftTab: 'keep' })
-    useUiStore.getState().setSelectedGid(ref.gid)
+    const entered = enterElementEdit(obj.id, { leftTab: 'keep' })
+    if (entered instanceof Promise) void entered.then(ok => { if (ok) useUiStore.getState().setSelectedGid(ref.gid!) })
+    else if (entered) useUiStore.getState().setSelectedGid(ref.gid)
     useUiStore.getState().setRightTab('properties')
     flash(ref)
     return { ok: true, mode: 'fast_edit', field: focusField(propertyPath) }

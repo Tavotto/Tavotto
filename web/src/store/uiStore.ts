@@ -1,3 +1,4 @@
+import { cancelArtifactEntry, clearArtifactEditIntent } from '@/lib/artifactValidation'
 import { create } from 'zustand'
 import { pushRecent } from '@/lib/commandRanking'
 import type { UiMessage } from '@/i18n'
@@ -695,8 +696,11 @@ export const useUiStore = create<UiState>((set, get) => ({
   setFixing: (fixing) => set({ fixing }),
   setEditingText: (editingTextId) => set({ editingTextId }),
   setCropTarget: (cropTargetId, cropBaseline = null) => set({ cropTargetId, cropBaseline }),
-  setElementPanel: (elementPanelId) =>
-    set({ elementPanelId, selectedGids: [], cropTargetId: null, cropBaseline: null }),
+  setElementPanel: (elementPanelId) => {
+    cancelArtifactEntry()
+    clearArtifactEditIntent()
+    set({ elementPanelId, selectedGids: [], cropTargetId: null, cropBaseline: null })
+  },
   setSelectedGid: (gid) => {
     const before = get().selectedGids
     set({ selectedGids: gid ? [gid] : [] })

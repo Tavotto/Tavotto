@@ -1,4 +1,16 @@
 {
+  "artifact": {
+    "adoptFrame": "Adopt PNG source frame",
+    "sourceChanged": "The source file changed. Your edits are preserved. Restore the matching source or choose a compatible history version.",
+    "frameChanged": "The saved frame marker does not match. Edits and placement are preserved. Use a compatible history version; no automatic conversion was applied.",
+    "writebackUnsupported": "Rebuilding, source writeback and synchronization are not yet supported for this figure. You can edit and export a new file.",
+    "legacyEdits": "This figure already has edits or a baked baseline, so its PNG frame cannot be adopted automatically. Existing edits are unchanged.",
+    "unsupported": "This PNG cannot safely enter editing yet. The original is preserved. Fixed or completed one-shot layouts with the full figsize frame are currently supported.",
+    "backgroundVisibilityRequired": "Choose whether to keep this figure transparent or show its background color. Your edits are preserved.",
+    "chooseBackground": "Choose background",
+    "keepTransparent": "Keep transparent",
+    "showBackground": "Show background"
+  },
   "backend": {
     "artifact_source_unavailable": "Selected-source mode cannot complete this operation. No edit was applied; keep the original view.",
     "ai_agent_disabled": "{{agent}} is turned off in settings. Turn it back on under Figure assistants.",
@@ -694,6 +706,7 @@
     "fixNativeUnsupported": "Figures opened with {{product}} Run can’t be fixed automatically yet",
     "fixChoose": "Fix…",
     "fixFailed": {
+      "artifact_unsupported": "Automatic fixes are not yet supported for this selected source. Existing edits are unchanged; edit manually and export a new file.",
       "busy": "The previous fix is still running. Try again in a moment.",
       "canvas_missing": "The canvas this problem lives on couldn’t be found — refresh the list",
       "engine_failed": "Rendering failed while fixing. The figure was not changed.",

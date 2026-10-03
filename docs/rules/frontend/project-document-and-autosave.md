@@ -265,3 +265,13 @@
 - 素材不在清单 ≠ 脚本关系失效
 - 切项目回到上次文档、旧条目「不知道」不标
 - ⌘S 写回绑定的项目文件（基线是绑定里的修订号）、自动保存只写本机、项目文件的 dirty 只跟用户编辑
+
+## 完整 PNG 的原图采用
+
+`artifactValidation` 是非坐标 guard，形状与唯一判据在 `lib/artifactValidation.ts`；
+坐标仍由既有有效 `figure.frame="figsize"` 定义，last-wins 不变。显式 enter-edit 的成功采用
+把 FRAME/guard/native 元数据写成一条历史，页面位置/尺寸/裁剪不变；迟到、撤销、切项目/画布
+的响应没有提交权。旧读取器 roundtrip 的范围与拒绝恢复边界见 ADR 0098 最后一节。
+已带 guard 的记录不再过 legacy FRAME 自动迁移。畸形/未知/不匹配 guard 原样保存并拒绝，
+不能把它删掉来获得 legacy 退路。完整重置/确认换素材才按既有丢弃语义原子移除 guard。
+看护：`store/artifactEntry.test.ts`、`lib/artifactValidation.test.ts`、`lib/artifactApi.test.ts`。

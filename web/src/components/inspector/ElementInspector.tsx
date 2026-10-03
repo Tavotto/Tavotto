@@ -1,3 +1,7 @@
+import { Dialog } from '../ui/Dialog'
+import { EmptyState } from '../ui/EmptyState'
+import { EditableFigureIcon } from '../ui/semanticIcons'
+import { artifactBackgroundOriginal } from '@/lib/artifactValidation'
 import { Fragment, useCallback, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
@@ -51,6 +55,7 @@ import {
 } from '@/lib/elementGeom'
 import {
   applyTickSidePlan,
+  resolveArtifactBackground,
   clearOverride,
   clearOverrides,
   detachLegendEntry,
@@ -66,7 +71,7 @@ import { previewStyle } from '@/store/svgPreviewStore'
 import { pagePtLens } from '@/lib/stylePresets'
 import { canPreviewStyle } from '@/lib/svgStyle'
 import { useSelectionStore } from '@/store/selectionStore'
-import { useExactPanelManifest, usePanelRender } from '@/store/renderStore'
+import { renderKeyOf, useExactPanelManifest, usePanelRender } from '@/store/renderStore'
 import { useUiStore } from '@/store/uiStore'
 import { DependencyRepairCard } from '@/components/DependencyRepairCard'
 import {
@@ -347,6 +352,9 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
           : undefined
       : undefined
 
+  if (render?.error?.key === 'artifact.backgroundVisibilityRequired')
+    return <BackgroundChoice key={`${panel.id} ${renderKeyOf(panel)}`} panel={panel} />
+
   return (
     <>
       {/* 缺渲染环境不是「出错」而是缺件，给能点的出口；脚本真报错才显示 traceback */}
@@ -614,6 +622,27 @@ function RelatedRow({ manifest, element }: { manifest: Manifest; element: Manife
       ))}
     </div>
   )
+}
+
+export function BackgroundChoice({ panel }: { panel: PanelObject }) {
+  const { t } = useTranslation('errors')
+  const [open, setOpen] = useState(false)
+  const choose = (transparent: boolean) => {
+    resolveArtifactBackground(panel.id, renderKeyOf(panel), transparent)
+    setOpen(false)
+  }
+  return <>
+    <EmptyState icon={EditableFigureIcon} title={t('artifact.backgroundVisibilityRequired', { ns: 'errors' })}
+      action={{ label: t('artifact.chooseBackground', { ns: 'errors' }), onClick: () => setOpen(true) }} />
+    <Dialog open={open} onOpenChange={setOpen} anchor="artifact-background" size="sm"
+      title={t('artifact.chooseBackground', { ns: 'errors' })} description={t('artifact.backgroundVisibilityRequired', { ns: 'errors' })}
+      footer={<Button variant="secondary" data-background-cancel onClick={() => setOpen(false)}>{translate('actions.cancel')}</Button>}>
+      <div className="flex flex-wrap gap-2">
+        <Button variant="secondary" data-background-choice="transparent" onClick={() => choose(true)}>{t('artifact.keepTransparent', { ns: 'errors' })}</Button>
+        <Button variant="secondary" data-background-choice="visible" onClick={() => choose(false)}>{t('artifact.showBackground', { ns: 'errors' })}</Button>
+      </div>
+    </Dialog>
+  </>
 }
 
 function ErrorBlock({
@@ -2023,6 +2052,7 @@ function FieldRow({
   const siblingCmapFacts = () => element.editable.find((x) => x.prop === 'cmap')?.cmap_current
   // 只有图例项的绑定控件要看别的元素（源对象的名字）；显示用，上一版也行
   const rowManifest = usePanelRender(panel)?.manifest
+  const backgroundOriginal = artifactBackgroundOriginal(panel, useExactPanelManifest(panel))
   const gidRef = useRef<string>('')
   const taRef = useRef<HTMLTextAreaElement | null>(null)
   const autoFocus = useCallback(
@@ -2066,6 +2096,8 @@ function FieldRow({
     panel.overrides.some((o) => o.gid === element.gid && o.prop === prop),
   )
   /** 恢复到脚本：这个控件拥有的**全部** override 进同一次修改（一条历史、一次渲染） */
+  const resettable = !(element.gid === 'figure' && field.prop === 'transparent' &&
+    backgroundOriginal !== undefined && value === backgroundOriginal)
   const resetOwned = () => {
     if (ownedProps.length === 1) return clearOverride(panel.id, element.gid, field.prop)
     clearOverrides(
@@ -2131,7 +2163,7 @@ function FieldRow({
   const wrap = (children: ReactNode, align: 'center' | 'start' = 'center') => (
     <Row label={labelNode} labelWidth={LABEL_W} align={align}>
       {children}
-      {overridden && (
+      {overridden && resettable && (
         <Tip label={resetHint(field.prop)} side="left">
           <Button
             size="icon-sm"

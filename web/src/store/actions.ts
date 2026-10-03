@@ -1,3 +1,5 @@
+import { artifactBackgroundOriginal, artifactRequestFields, artifactValidationIssue, ArtifactValidationError, FIGSIZE_SOURCE_POLICY, validationFromSource, beginArtifactEntry, artifactEntryCurrent, cancelArtifactEntry, refuseArtifactOperation, rememberArtifactEdit } from '@/lib/artifactValidation'
+import { currentProjectId } from '@/lib/session'
 import { requestRender, type RenderPolicy } from '@/store/renderScheduler'
 import { isJustBakedBaselineOf } from '@/lib/bakedBaseline'
 import { engineTransport } from '@/lib/engineTransport'
@@ -14,12 +16,16 @@ import {
   FIGURE_FRAME_VERSION,
   frameSwitchAvailable,
   frameSwitchPatch,
+  LEGACY_FRAME_OVERRIDE,
   migrateFigureFrames,
 } from '@/lib/figureFrame'
 import { modKey } from '@/lib/utils'
 import { captureTelemetry } from '@/lib/telemetry'
 import {
   engineInvalidate,
+  engineRender,
+  engineErrorMsg,
+  EngineError,
   type CapturedFigureDescriptor,
   type ManifestElement,
   type PanelInfo,
@@ -62,7 +68,7 @@ import { finishActiveGesture } from './gestureCoordinator'
 import { writeBoundProjectFile } from './projectSave'
 import { captureSaveContext, reportSaveSkipped, stillCurrent } from './saveContext'
 import { useInteractionStore } from './interactionStore'
-import { exactPanelManifest, renderKeyOf, useRenderStore } from './renderStore'
+import { exactPanelManifest, rejectArtifactRenders, renderEpoch, renderKeyOf, useRenderStore } from './renderStore'
 import { useSelectionStore } from './selectionStore'
 import { askConfirm, useUiStore } from './uiStore'
 import { useViewportStore } from './viewportStore'
@@ -77,6 +83,7 @@ import {
 } from '@/types/document'
 import { emitLayoutSaved } from '@/lib/layoutSaved'
 import { useTimelineStore } from './timelineStore'
+import { hasPendingStyleWork } from './styleWork'
 
 /** 本文件的历史标签与状态提示都在 workspace 命名空间下 */
 const hist = (key: string, values?: Record<string, unknown>): UiMessage =>
@@ -342,6 +349,8 @@ export function updateObject<T extends CanvasObject>(
 
 /** 写回历史恢复：面板的 overrides 整份换成那一版存下的（身份原样）。 */
 export function restorePanelOverrides(panelId: string, label: UiMessage, patches: readonly PanelOverride[]) {
+  const panel = findObject(panelId)
+  if (panel?.type === 'panel') refuseArtifactOperation(panel)
   updateObject<PanelObject>(
     panelId,
     label,
@@ -960,14 +969,7 @@ export function unhideElement(panelId: string, gid: string) {
  * 本质就是移除覆盖、让引擎回到脚本自己算的值，不是写一个新值。
  */
 export function clearOverride(panelId: string, gid: string, prop: string) {
-  const panel = findObject(panelId)
-  if (panel?.type !== 'panel') return
-  if (!panel.overrides.some((p) => p.gid === gid && p.prop === prop)) return
-  updateObject<PanelObject>(panelId, hist('clearProp', { prop: propLabel(prop) }), (o) => {
-    o.overrides = o.overrides.filter((p) => !(p.gid === gid && p.prop === prop))
-  })
-  const next = findObject(panelId)
-  if (next?.type === 'panel') requestRender(next, true)
+  clearOverrides(panelId, hist('clearProp', { prop: propLabel(prop) }), [{ gid, prop }])
 }
 
 /**
@@ -985,13 +987,25 @@ export function clearOverrides(
   const panel = findObject(panelId)
   if (panel?.type !== 'panel') return
   const hit = targets.filter((t) =>
+    !(panel.artifactValidation && t.gid === 'figure' && t.prop === 'frame') &&
     panel.overrides.some((p) => p.gid === t.gid && p.prop === t.prop),
   )
   if (!hit.length) return
+  const remaining = panel.overrides.filter(p => !hit.some(t => t.gid === p.gid && t.prop === p.prop))
+  const original = hit.some(t => t.gid === 'figure' && t.prop === 'transparent')
+    ? artifactBackgroundOriginal({ ...panel, overrides: remaining }, exactPanelManifest(useRenderStore.getState(), panel)) : undefined
+  if (original !== undefined) {
+    const i = effectiveOverrideIndex(panel.overrides, 'figure', 'transparent')
+    // Preserve order so resetting an already-original visibility is a true no-op.
+    remaining.splice(Math.min(i, remaining.length), 0, { gid: 'figure', prop: 'transparent', value: original })
+  }
+  if (JSON.stringify(remaining) === JSON.stringify(panel.overrides)) return
   updateObject<PanelObject>(panelId, label, (o) => {
-    o.overrides = o.overrides.filter(
-      (p) => !hit.some((t) => t.gid === p.gid && t.prop === p.prop),
-    )
+    // Keep the draft identities of independent edits for style ownership release.
+    o.overrides = o.overrides.filter(p => !hit.some(t => t.gid === p.gid && t.prop === p.prop))
+    if (original !== undefined) o.overrides.splice(
+      Math.min(effectiveOverrideIndex(panel.overrides, 'figure', 'transparent'), o.overrides.length),
+      0, { gid: 'figure', prop: 'transparent', value: original })
   })
   const next = findObject(panelId)
   if (next?.type === 'panel') requestRender(next, true)
@@ -1104,13 +1118,28 @@ export function applyTickSidePlan(panelId: string, plan: SidePlan | null) {
   if (next?.type === 'panel') requestRender(next, true)
 }
 
+/** Resolve only the still-current refusal; independent edits remain in the same document. */
+export function resolveArtifactBackground(panelId: string, key: string, transparent: boolean) {
+  finishActiveGesture()
+  const panel = findObject(panelId)
+  if (panel?.type !== 'panel' || renderKeyOf(panel) !== key ||
+      useRenderStore.getState().byKey[key]?.error?.key !== 'artifact.backgroundVisibilityRequired') return
+  setOverride(panelId, 'figure', 'transparent', transparent, true)
+}
+
 export function resetOverrides(panelId: string) {
   finishActiveGesture()
   const panel = findObject(panelId)
-  if (panel?.type !== 'panel' || !panel.overrides.length) return
+  if (panel?.type !== 'panel' || (!panel.overrides.length && !Object.hasOwn(panel, 'artifactValidation'))) return
   updateObject<PanelObject>(panelId, hist('resetOverrides'), (o) => {
     o.overrides = []
+    delete o.artifactValidation
   })
+  if (Object.hasOwn(panel, 'artifactValidation')) {
+    useUiStore.getState().setElementPanel(null)
+    status(note('overridesCleared'))
+    return
+  }
   // 清空之后的那个面板才是要渲染的变体（overrides 已经是空表）
   const cleared = findObject(panelId)
   if (cleared?.type === 'panel') requestRender(cleared, true)
@@ -1130,7 +1159,7 @@ export function resetOverrides(panelId: string) {
  */
 export async function resetOverridesConfirmed(panelId: string): Promise<boolean> {
   const panel = findObject(panelId)
-  if (panel?.type !== 'panel' || !panel.overrides.length) return false
+  if (panel?.type !== 'panel' || (!panel.overrides.length && !Object.hasOwn(panel, 'artifactValidation'))) return false
   const baked = isJustBakedBaseline(panel)
   const ok = await askConfirm({
     title: msg('confirm.resetOverridesTitle', undefined, 'workspace'),
@@ -1194,6 +1223,7 @@ async function settledRender(key: string): Promise<void> {
 export async function rebuildPanel(panelId: string): Promise<RebuildOutcome> {
   const panel = findObject(panelId)
   if (panel?.type !== 'panel' || !panel.script) return 'skipped'
+  try { refuseArtifactOperation(panel) } catch (e) { status(engineErrorMsg(e), 'error'); return 'failed' }
   // 字号还在安静计时里时点「重新构建」：先把那次编辑收进历史，重画的才是定稿的 overrides
   finishActiveGesture()
   const fileId = panel.fileId
@@ -1217,7 +1247,7 @@ export async function rebuildPanel(panelId: string): Promise<RebuildOutcome> {
   // 登记 wantPatches、清掉挂着的防抖计时器；真正的发送在下一行，要等它的结果
   requestRender(fresh, 'none')
   const key = renderKeyOf(fresh)
-  await store.render(fileId, fresh.overrides, undefined, 'immediate')
+  await store.render(fileId, fresh.overrides, undefined, 'immediate', undefined, fresh.artifactValidation)
   await settledRender(key)
   if (useRenderStore.getState().get(key).status !== 'ready') return 'failed'
   status(note(invalidated ? 'panelRebuilt' : 'panelRerenderedNoRerun'))
@@ -1358,13 +1388,106 @@ export function seedBakedOverrides(panelId: string): number {
  * 进来时传 `'keep'`——那份清单就是用户此刻的导航，切走它等于每定位一条都要
  * 重新打开问题面板（审计 T09）。
  */
+async function admitPngEntry(panel: PanelObject, leftTab: 'elements' | 'keep'): Promise<boolean> {
+  finishActiveGesture()
+  const initial = useDocumentStore.getState()
+  const epoch = renderEpoch()
+  const pj = currentProjectId()
+  const snapshot = JSON.stringify(panel)
+  const selection = useSelectionStore.getState().ids
+  const attempt = beginArtifactEntry(panel.id)
+  const ownsRenderContext = () => renderEpoch() === epoch && currentProjectId() === pj
+  const current = () => {
+    const now = useDocumentStore.getState()
+    return artifactEntryCurrent(attempt) && ownsRenderContext() && useSelectionStore.getState().ids === selection &&
+      now.documentId === initial.documentId && now.loadSeq === initial.loadSeq &&
+      now.activeCanvasId === initial.activeCanvasId && now.doc === initial.doc &&
+      now.past === initial.past && now.future === initial.future && !now.txn &&
+      JSON.stringify(findObject(panel.id)) === snapshot
+  }
+  try {
+    const eligible = () => {
+      const style = useDocumentStore.getState().doc.style
+      return (!style || style.detached) && !hasPendingStyleWork(panel) &&
+        !useRenderStore.getState().tracked[panel.fileId] &&
+        !(useAssetStore.getState().byId[panel.fileId]?.baked_overrides?.length) && !engineTransport()
+    }
+    if (!current()) return false
+    const fields = artifactRequestFields(panel)
+    if (!panel.artifactValidation && (!eligible() || panel.overrides.length)) {
+      throw new ArtifactValidationError('not_untouched')
+    }
+    if (engineTransport()) throw new ArtifactValidationError('unsupported_render_state')
+    const res = await engineRender(panel.fileId, [],
+      panel.artifactValidation ? fields : { source_policy: FIGSIZE_SOURCE_POLICY })
+    if (!current()) return false
+    if (!panel.artifactValidation && !eligible()) return false
+    const guard = validationFromSource(res.artifact_source, panel.fileId, panel.artifactValidation)
+    const [w, h] = res.manifest.size_mm
+    if (![w, h].every(n => Number.isFinite(n) && n > 0)) throw new ArtifactValidationError('unsupported_response')
+    if (!panel.artifactValidation) {
+      commit(msg('artifact.adoptFrame', undefined, 'errors'), d => {
+        const p = d.objects.find(o => o.id === panel.id) as PanelObject
+        p.overrides = [structuredClone(LEGACY_FRAME_OVERRIDE)]
+        p.artifactValidation = guard
+        p.nativeW = w
+        p.nativeH = h
+      })
+    }
+    return finishElementEntry(panel.id, leftTab)
+  } catch (error) {
+    if (ownsRenderContext() && panel.artifactValidation &&
+        (error instanceof ArtifactValidationError || (error instanceof EngineError && error.code === 'artifact_source_unavailable'))) {
+      rejectArtifactRenders(panel.fileId, panel.artifactValidation, error, renderKeyOf(panel))
+    }
+    if (current()) status(engineErrorMsg(error), 'error')
+    return false
+  } finally {
+    if (artifactEntryCurrent(attempt)) cancelArtifactEntry()
+  }
+}
+
 export function enterElementEdit(
   panelId: string,
   { leftTab = 'elements' }: { leftTab?: 'elements' | 'keep' } = {},
 ) {
-  const seeded = seedBakedOverrides(panelId)
+  finishActiveGesture()
+  const panel = findObject(panelId)
+  if (panel?.type !== 'panel') return false
+  const issue = artifactValidationIssue(panel)
+  if (issue) {
+    status(engineErrorMsg(new ArtifactValidationError(issue)), 'error')
+    return false
+  }
+  // Existing edited/baked PNG panels keep their established legacy semantics.
+  const sourceEntry = Object.hasOwn(panel, 'artifactValidation') ||
+    (panel.fileKind === 'raster' && /\.png$/i.test(panel.fileId) && !!panel.script && panel.overrides.length === 0)
+  if (sourceEntry) return admitPngEntry(panel, leftTab)
+  const entered = finishElementEntry(panelId, leftTab)
+  if (panel.fileKind === 'raster' && /\.png$/i.test(panel.fileId) && panel.overrides.length) {
+    status(engineErrorMsg(new ArtifactValidationError('not_untouched')))
+  }
+  return entered
+}
+
+function finishElementEntry(panelId: string, leftTab: 'elements' | 'keep'): boolean {
+  const panel = findObject(panelId)
+  if (panel?.type !== 'panel') return false
+  const seeded = panel.artifactValidation ? 0 : seedBakedOverrides(panelId)
   const ui = useUiStore.getState()
   ui.setElementPanel(panelId)
+  if (panel.artifactValidation) {
+    const owner = useDocumentStore.getState()
+    const epoch = renderEpoch()
+    const pj = currentProjectId()
+    rememberArtifactEdit(panel, () => {
+      const now = useDocumentStore.getState()
+      return renderEpoch() === epoch && currentProjectId() === pj && now.documentId === owner.documentId &&
+        now.activeCanvasId === owner.activeCanvasId && now.loadSeq === owner.loadSeq
+    })
+    // Explicit re-entry also restores full-patch authority after a previous refusal.
+    requestRender(panel, true)
+  }
   // 匿名用量统计：**真的进了图内编辑流程**才算「打开一张图」，不是每次预览图
   // 请求。只发载体类型与「可不可参数化」——面板 id、文件名、stem、脚本名
   // 一个都不发（白名单里根本没有这些属性）。
@@ -1392,6 +1515,7 @@ export function enterElementEdit(
   // 交给左轨的「图内元素」入口——它一直在，而且正是键盘用户接下来要去的地方
   // （#37 要求的等价路径）。详见 `lib/focusRescue.ts` 的实测记录。
   rescueFocus(() => document.querySelector<HTMLElement>(`[data-rail="${rail}"]`))
+  return true
 }
 
 /* ------------------------------ 论文样式应用 -------------------------------- */
@@ -2222,6 +2346,7 @@ export function adoptScriptFrame(panelId: string): boolean {
     const o = d.objects.find((x) => x.id === panelId)
     if (o?.type !== 'panel') return
     o.overrides = patch.overrides
+    delete o.artifactValidation
     o.x = patch.x
     o.y = patch.y
     o.w = patch.w
@@ -2263,6 +2388,7 @@ export async function replacePanelAsset(panelId: string, info: PanelInfo): Promi
     useUiStore.getState().setElementPanel(null)
   }
   updateObject<PanelObject>(panelId, hist('replaceAsset', { name: info.name }), (o) => {
+    delete o.artifactValidation
     o.fileId = info.id
     o.fileKind = info.kind
     o.nativeW = info.native_w_mm

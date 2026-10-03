@@ -54,7 +54,6 @@ import { msg, t, type UiMessage } from '@/i18n'
 import type { Manifest, ProfileRecord } from '@/lib/api'
 import { profileName } from '@/lib/profileText'
 import { figKey, ownedLive } from '@/lib/styleOwned'
-import { currentProjectId } from '@/lib/session'
 import { sameRules } from '@/lib/specBinding'
 import {
   effectiveChanges,
@@ -81,6 +80,9 @@ import { useProfileStore } from './profileStore'
 import { exactPanelManifest, renderKeyOf, useRenderStore } from './renderStore'
 import { requestRender } from './renderScheduler'
 import { useUiStore } from './uiStore'
+import { documentGeneration, styleLedgerKey, styleWork } from './styleWork'
+
+export { documentGeneration } from './styleWork'
 
 const hist = (key: string, values?: Record<string, unknown>): UiMessage =>
   msg(`history.${key}`, values, 'workspace')
@@ -223,19 +225,8 @@ const styleWith = (id: string, snapshot: Record<string, unknown>, owned: OwnedMa
 
 /* ------------------------------- 代次 -------------------------------------- */
 
-/**
- * 「此刻是哪一份文档的哪一张画布」（样式面板按它给行重挂，`StylePanel` 复用这一份，不写第二份）：项目 · 文档 · 载入代次 · 画布。`loadSeq` 在每一次整份替换
- * 文档时都会前进，**即使 id 全都一样**（版面恢复、崩溃恢复重载同一份文档）——只比 id 的话，
- * 旧编辑会写进新载入的那一份（Codex #547 P1）。
- */
-export function documentGeneration(
-  s: Pick<ReturnType<typeof useDocumentStore.getState>, 'documentId' | 'loadSeq' | 'activeCanvasId'>,
-): string {
-  return JSON.stringify([currentProjectId(), s.documentId, s.loadSeq, s.activeCanvasId])
-}
 const generation = (): string => documentGeneration(useDocumentStore.getState())
-/** 会话记账的键：代次 + 绑的是哪一条（换绑定 = 换一本账） */
-const ledgerKey = (doc: FigureDocument = docNow()) => `${generation()}|${doc.style?.id ?? ''}`
+const ledgerKey = (doc: FigureDocument = docNow()) => styleLedgerKey(doc.style?.id)
 
 /* --------------------------- 会话记账：看过的图 / 欠账 ----------------------- */
 
@@ -263,7 +254,7 @@ function markSeen(doc: FigureDocument, ids: Iterable<string>) {
  * 欠账按 **代次 · 绑定 · 图** 记在会话里，它第一次拿到 manifest 时补上（`alignNewFigures`）。
  * 键里带绑定：A 的欠账不会在画布跟随 B 之后写下去；明确绑上 A 时才清 A 的（`forgetDebts`）。
  */
-const pending = new Map<string, Map<string, StyleProfileData>>()
+const pending = styleWork.pending
 
 /** 两笔变化量合成一笔（后来的覆盖先来的；图内角色按 role × prop 合） */
 function mergeDelta(a: StyleProfileData | undefined, b: StyleProfileData): StyleProfileData {
@@ -334,27 +325,25 @@ function owe(doc: FigureDocument, delta: StyleProfileData, missingIds: string[],
  * 还没对齐的图仍然要补（Codex #547 P1）。欠账按绑定记（`ledgerKey`），不绑着它时不会被结算
  */
 function forgetDebts(styleId: string) {
-  pending.delete(`${generation()}|${styleId}`)
+  pending.delete(styleLedgerKey(styleId))
 }
 
 /* --------------------------- 样式库写入队列 -------------------------------- */
 
 /** 队列尾巴：下一个任务接在它后面跑 */
 let tail: Promise<unknown> = Promise.resolve()
-/** 排着 / 跑着的库写入个数。非零时同步器不动手；归零的那一刻补跑一次 */
-let inflight = 0
 
 function enqueue<T>(job: () => Promise<T>): Promise<T> {
-  inflight += 1
+  styleWork.inflight += 1
   const run = tail.then(job, job)
   tail = run.then(
     () => undefined,
     () => undefined,
   )
   return run.finally(() => {
-    inflight -= 1
+    styleWork.inflight -= 1
     // 排空了：期间被「队列非空」挡下的跟随 / 对齐补跑一次（Codex #547 P2）
-    if (inflight === 0) {
+    if (styleWork.inflight === 0) {
       // 改绑的「转发」只对还排着的任务有意义：排空就作废（用户之后自己绑回 A，不该被转到 B）
       redirects.clear()
       syncNow()
@@ -431,7 +420,7 @@ export function resetStyleBindingSession(): void {
   pending.clear()
   redirects.clear()
   queuedBinds.clear()
-  inflight = 0
+  styleWork.inflight = 0
   tail = Promise.resolve()
 }
 
@@ -473,7 +462,7 @@ export function bindCanvasStyle(recordId: string | null): void {
   // 而一次还在飞的存库会在稍后改写库——先绑、后被改写的话，画布与库就分叉了。串进队列后，
   // 绑定读到的永远是前面所有写入落定之后的库，从结构上没有「在飞时改绑」这回事。
   // 队列空着时当场绑（界面上立刻看到结果）
-  if (inflight === 0) {
+  if (styleWork.inflight === 0) {
     bindNow(recordId)
     return
   }
@@ -767,7 +756,7 @@ function awaitingManifest(p: PanelObject): boolean {
 const blocked = () => {
   const d = useDocumentStore.getState()
   return (
-    inflight > 0 || d.txn != null || d.future.length > 0 || useInteractionStore.getState().kind !== 'none'
+    styleWork.inflight > 0 || d.txn != null || d.future.length > 0 || useInteractionStore.getState().kind !== 'none'
   )
 }
 

@@ -251,6 +251,14 @@ occurrence/figure ordinal/result。看护：`tests/bridge/test_bridge_savefig_ob
   实际文件的像素/图幅；不另画 pre-instrument 探针。PDF 经父进程 pdfbackend，科学 worker
   不新增 PDF 库。32 MiB、1600 万像素、单页 PDF 与既有 worker/renderer 超时是硬界。
   PNG pHYs 只容许一个整数像素/米量化步，色彩管理块拒绝，不拿宽松阈值掩盖差异。
+- 所选保存的背景在采集 FigState originals 前落到该 worker 私有 Figure/axes 的既有属性：
+  默认透明背景用 Figure patch 可见性与 axes 的 none 填充/边线，保留 Figure 潜在颜色供切回不透明。
+  显式 facecolor/edgecolor 按保存记录应用，auto 保留当前属性；随后仅此 selected worker 把
+  savefig 的透明、底色、边色、bbox 默认值归一为 False/auto/auto/None，避免后续 rc 覆盖编辑或重裁图幅。
+  witness、manifest、所有预览/导出共用这个可编辑基线；native 与无 source context 的旧路径不变。
+  若这一步把脚本里可见的 Figure 背景隐藏，而保存的 edits 只有 facecolor、没有明确布尔 transparent，
+  不能猜旧版本的可见性意图：render/preview/export 在应用前以 background_visibility_required 拒绝。
+  保留所有 edits，由既有控件让用户明确选择透明或显示底色；导出错误携带请求源身份，只撤销对应变体。
 - 复用现有 FigState 与全量 overrides 语义；worker/输出目录按源上下文隔离，仍受池的
   3 个热 worker / 1 GiB 缓存治理。不是每个面板永久保存一个图；同一源的变体独立传完整 edits。
   新上下文会额外执行脚本一次。首次准入按 worker 锁串行；workerd 重启不能绕过重新准入。
@@ -259,7 +267,14 @@ occurrence/figure ordinal/result。看护：`tests/bridge/test_bridge_savefig_ob
   SVG/PNG、binary preview、specfix/sync、写回及历史恢复明确拒绝，不能退回旧坐标。
   空 overrides 原图导出仍保留磁盘像素；正常导出的字体/PPI政策独立于源图上下文。
 - 这不是任意用户脚本的无写入沙盒：现有通用 open/原生扩展边界不扩张；新验证/导出路径
-  不写原图，并在发布前复核字节。活跃布局/历史场景、产物级 baked/writeback 与前端采用仍是后续门。
+  不写原图，并在发布前复核字节。活跃布局/历史场景、产物级 baked/writeback 与非完整 PNG 的采用仍是后续门。
 
 看护：`tests/test_selected_artifact_worker.py`、`tests/test_selected_artifact_api.py`、
 `tests/test_artifact_context.py`。
+
+`selected-figsize-v1` 是上述机制的窄子集：只接 PNG、已解析的 bbox_inches=None，非空编辑
+必须保留有效 `figure.frame="figsize"`。后端直接检查当前 baked 基线，非空即拒绝；不能依赖
+首选 PDF 可能隐藏 PNG 的素材清单，也不扫描更早的历史版本。它复用同一准入、预算与上下文键，供 ADR 0098 的
+旧坐标兼容采用。`/api/export/validate` 在已验证的选中源请求上附 `artifact_sources`；
+它只确认策略和磁盘字节、不启动 worker，也不宣称场景已经准入。看护：
+`tests/test_selected_figsize_policy.py`、`tests/test_selected_artifact_api.py`。

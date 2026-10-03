@@ -1,3 +1,4 @@
+import { refuseArtifactOperation, ArtifactValidationError } from '@/lib/artifactValidation'
 /**
  * 安全自动修复的**落地**（ADR 0030 / 0080）。画布层的计划在 `lib/issueFix.ts`，
  * 面板内部的计划、真实渲染与裁决在后端（`/api/engine/specfix`）。
@@ -59,6 +60,7 @@ export type FixFailureReason =
   | 'unavailable'
   /** 用 `tavotto run` 打开的图（native，ADR 0080）：暂不支持自动修复，图没有改动 */
   | 'native_unsupported'
+  | 'artifact_unsupported'
 
 export interface FixFailure {
   reason: FixFailureReason
@@ -279,6 +281,7 @@ async function runLocked(
     let res: SpecFixResponse
     let out: ReturnType<typeof settle>
     try {
+      refuseArtifactOperation(panel)
       res = await engineSpecfix(
         panel.fileId,
         panel.overrides,
@@ -290,6 +293,10 @@ async function runLocked(
       // 读到一半炸了的响应同样是「不知道」，要走下面的重放，不许把整轮修复抛出去
       out = settle(res, list)
     } catch (err) {
+      if (err instanceof ArtifactValidationError) {
+        addFailure(failed, 'artifact_unsupported', list.length)
+        continue
+      }
       if (err instanceof EngineError && err.code === SPECFIX_NATIVE_UNSUPPORTED) {
         // 后端在任何渲染之前就拒绝了（界面判据漏掉的那一刻）：live 图没被碰过，不用重放
         addFailure(failed, 'native_unsupported', list.length)

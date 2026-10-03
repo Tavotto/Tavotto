@@ -25,14 +25,17 @@ import { literal, t } from '@/i18n'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { EngineRenderSync, useEngineDocumentSync } from '@/hooks/useEngineSync'
 import { handleServerEvent } from '@/hooks/useServerEvents'
+import * as api from '@/lib/api'
 import type { Manifest } from '@/lib/api'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
-import { renderKeyOf, useRenderStore } from '@/store/renderStore'
+import { rejectArtifactRenders, renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { seedExactRender } from '@/test/renderFixtures'
 import { emptyProject, type CanvasObject, type PanelObject } from '@/types/document'
+import { ElementInspector } from '../inspector/ElementInspector'
+import { ArtifactValidationError } from '@/lib/artifactValidation'
 import { ElementTree } from './ElementTree'
 
 declare global {
@@ -460,4 +463,34 @@ describe('A4 的前提：App 的 Workspace 就是替身那个形状', () => {
     expect(f.calls.has('useEngineSync')).toBe(false)
     expect(f.calls.has('useRenderStore')).toBe(false)
   })
+})
+
+describe('background choice recovery uses existing controls',()=>{
+ const guard={version:1 as const,requiredFrame:'figsize' as const,sourceId:'plot.png',bytesSha256:'a'.repeat(64),sizeBytes:10}
+ async function blocked(inspector=false) {
+  await commit(p=>{p.fileId='plot.png';p.artifactValidation=guard;p.overrides=[{gid:'figure',prop:'frame',value:'figsize'},{gid:'figure',prop:'facecolor',value:'red'},{gid:'title',prop:'text',value:'kept'}]})
+  seedExactRender(cur(),manifest());useRenderStore.getState().patch(renderKeyOf(cur()),{artifactValidation:guard})
+  rejectArtifactRenders(cur().fileId,guard,new ArtifactValidationError('background_visibility_required'),renderKeyOf(cur()))
+  useDocumentStore.setState({past:[],future:[]})
+  await mount(inspector ? <ElementInspector panel={cur()}/> : <ElementTree/>)
+ }
+ it.each([false,true])('cancel closes the choice without changing edits, history, or retrying the refusal (inspector=%s)',async inspector=>{
+  await blocked(inspector);const before=structuredClone(cur())
+  const render=vi.spyOn(api,'engineRender');const buttons=host.querySelectorAll('button');expect(buttons).toHaveLength(1);const button=buttons[0]
+  await act(async()=>button.click())
+  expect(document.querySelector('[data-dialog="artifact-background"]')).not.toBeNull()
+  await act(async()=>(document.querySelector('[data-background-cancel]') as HTMLButtonElement).click())
+  expect(document.querySelector('[data-dialog="artifact-background"]')).toBeNull()
+  expect(cur()).toEqual(before);expect(useDocumentStore.getState().past).toHaveLength(0);expect(render).not.toHaveBeenCalled();render.mockRestore()
+ })
+ it.each([['transparent',true],['visible',false]] as const)('choosing %s writes an explicit bool, preserves edits, and can be undone',async(choice,value)=>{
+  await blocked();const before=structuredClone(cur())
+  const render=vi.spyOn(api,'engineRender').mockResolvedValue({rev:1,svg:'<svg/>',manifest:manifest(),artifact_source:{render_policy:'selected-figsize-v1',source_id:'plot.png',origin:'static',kind:'png',bytes_sha256:guard.bytesSha256,size_bytes:10}} as never)
+  const buttons=host.querySelectorAll('button');expect(buttons).toHaveLength(1)
+  await act(async()=>buttons[0].click())
+  await act(async()=>(document.querySelector(`[data-background-choice="${choice}"]`) as HTMLButtonElement).click())
+  expect(cur().overrides).toEqual([...before.overrides,{gid:'figure',prop:'transparent',value}])
+  expect(useDocumentStore.getState().past).toHaveLength(1);expect(render).toHaveBeenCalledTimes(1)
+  await act(async()=>useDocumentStore.getState().undo());expect(cur()).toEqual(before);render.mockRestore()
+ })
 })

@@ -1,5 +1,6 @@
 /** 文档模型 —— 单位一律 mm，数组顺序即 z 序（末尾在最上）。 */
 import { t } from '@/i18n'
+import type { ArtifactValidation } from '@/lib/artifactValidation'
 import { newId } from '@/lib/id'
 import { migrateFigureFrames } from '@/lib/figureFrameMigration'
 
@@ -132,6 +133,8 @@ export interface PanelObject extends ObjectBase {
   /** 仅 fileKind === 'runtime'：捕获来源的持久化描述（见 RuntimePanelSource） */
   source?: RuntimePanelSource
   overrides: PanelOverride[]
+  /** Nonsemantic source/frame guard. Never changes the meaning of overrides. */
+  artifactValidation?: ArtifactValidation
   /**
    * 锁定的图内元素 gid：画布命中测试跳过它们，避免误选误拖。
    * 只影响交互，不影响渲染与导出；元素树里仍可选中（用于解锁）。

@@ -1578,7 +1578,7 @@ def _classify_export_error(exc: BaseException):
     """导出作业里冒出的「渲染后端此刻不可用」→ 稳定码 `backend_unavailable`，不再笼统地记 `export_failed`
     （Codex #539）。判据归契约层（`pdfbackend.is_backend_unavailable`），这里只翻译。"""
     if isinstance(exc, engine_artifactcontext.ArtifactContextError):
-        return exc.code, {"reason": exc.reason, "retryable": exc.retryable}
+        return exc.code, {**exc.params, "retryable": exc.retryable}
     if pdfbackend.is_backend_unavailable(exc):
         return "backend_unavailable", {"reason": str(exc)[:300]}
     if isinstance(exc, engine_inputremap.RemapChanged):
@@ -1777,8 +1777,17 @@ def api_export_validate():
         return jsonify(
             {"ok": False, "error": {"code": exc.code, "params": exc.params, "message": exc.message}}
         ), 200
+    # Acknowledge recognized policies and current disk identities, not Figure admission.
+    # Reuse export's authority without a worker, including untouched original copies.
+    artifact_sources = _export_artifact_sources(req)
     probe = engine_exportjob.ExportJob(id="probe", request=req, export_dir=out_dir)
-    return jsonify({"ok": True, **engine_exportjob.validate(probe)})
+    return jsonify(
+        {
+            "ok": True,
+            **engine_exportjob.validate(probe),
+            **({"artifact_sources": artifact_sources} if artifact_sources else {}),
+        }
+    )
 
 
 @app.get("/exports/<path:name>")
@@ -4101,13 +4110,19 @@ def _artifact_source(rel_id: str, policy, expected=None, patches=()):
             "unsupported_render_state", "Selected artifacts require a safe disk source."
         )
     path = _artifact_path(rel_id)
+    if policy == engine_figcapture.SELECTED_FIGSIZE_POLICY and _baseline_patches(
+        path.stem, load_baked()
+    ):
+        raise engine_artifactcontext.ArtifactContextError(
+            "not_untouched", "This source has a saved edit baseline."
+        )
     source_id = path.relative_to(require_project().resolve()).as_posix()
     context = engine_artifactcontext.create_context(path, source_id)
     if expected is not None and any(context[k] != v for k, v in expected.items()):
         raise engine_artifactcontext.ArtifactContextError(
             "source_changed", "The selected source changed; reopen it.", retryable=False
         )
-    return {**context, "render_policy": policy}
+    return engine_figcapture.selected_artifact_context({**context, "render_policy": policy})
 
 
 def _artifact_path(rel_id):
@@ -4137,9 +4152,7 @@ def _assert_artifact_current(context):
 
 @app.errorhandler(engine_artifactcontext.ArtifactContextError)
 def _artifact_error(exc):
-    return jsonify(
-        error=str(exc), code=exc.code, params={"reason": exc.reason}, retryable=exc.retryable
-    ), 409
+    return jsonify(error=str(exc), code=exc.code, params=exc.params, retryable=exc.retryable), 409
 
 
 def _admit_artifact(worker, stem, context):
@@ -4205,9 +4218,19 @@ def _engine_attempt(
             if isinstance(exc, engine_artifactcontext.ArtifactContextError):
                 raise
             if artifact_source is not None and exc.code == "artifact_source_unavailable":
+                reason = exc.extra.get("reason", "unsupported_render_state")
                 raise engine_artifactcontext.ArtifactContextError(
-                    exc.extra.get("reason", "unsupported_render_state"),
+                    reason,
                     "The selected source cannot be reproduced; no edit was applied.",
+                    owner=(
+                        {
+                            "file_id": rel_id,
+                            "bytes_sha256": artifact_source["bytes_sha256"],
+                            "size_bytes": artifact_source["size_bytes"],
+                        }
+                        if reason == "background_visibility_required"
+                        else None
+                    ),
                 ) from exc
             if attempt or not _switched_to_project_env(worker, exc):
                 raise

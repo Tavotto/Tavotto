@@ -34,7 +34,7 @@ writer、第二份对象模型：一张图在文档里只有**一个**面板对�
   复用它们，别在界面里重新拼一遍"找对象 / 没有就添加 / 切画布 / 选中"）：
   `openFastEdit(figureId)` / `addFigureToLayout(figureId)` / `returnToLayout()`
   / `focusLayoutPanel(panelId)`。「文档里有没有这张图」的判据也只有一处：
-  `findFigurePanel()`。
+  `documentStore.findFigurePanel()`（工作区重导出）；指定对象 id 时不退到同素材的另一个实例。
 - **「添加到画布」不复制对象**：已经在文档里就只是聚焦它（`focused`），
   重复点不会叠出第二个面板，overrides 一直在同一个对象 id 上。
 - **能不能进图内编辑用既有判据**（`panel.script`，与 `ObjectView` 双击、

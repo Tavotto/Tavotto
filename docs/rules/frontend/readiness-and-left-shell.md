@@ -119,7 +119,7 @@
   行尾的等级记号去掉，字号被阻断这类情况样式页不提示，问题只在左侧图标栏带计数角标的「问题」面板里看）。数字是**页面上
   的 pt**（× `panelScale`，写入 ÷ 回去，与样式应用同一个换算）；图内元素经 `useTextStyleAdapter`、画布标注经
   `useCanvasTypography` 写（Inspector 同一条路，一次改动一次 commit）；多个值是「多个值」不压扁。底部是**画布跟随
-  样式**（ADR 0081，唯一实现 `store/styleBinding.ts`）：选一套 = 绑定并立刻对齐整张画布（一次 commit）；已绑定时各格
+  样式**（ADR 0081，唯一编排 `store/styleBinding.ts`；在途计数与欠账唯一持有者是叶子 `store/styleWork.ts`，原图准入直接读同一份）：选一套 = 绑定并立刻对齐整张画布（一次 commit）；已绑定时各格
   的改动改的是**这套样式本身**（先存库、存成功再一次 commit 对齐改了的那一项，内置样式先复制一份再改绑）；「不跟随
   样式」只解绑；「恢复原样」清整张画布样式管得到的 override 并解绑。写入前一律过 `effectiveChanges`，已合样式的图零
   commit。设置 › 样式页的「用于当前画布」调同一个 `bindCanvasStyle`；样式对话框只编辑、不应用。
