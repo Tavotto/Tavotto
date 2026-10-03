@@ -1,5 +1,6 @@
 {
   "backend": {
+    "artifact_source_unavailable": "Selected-source mode cannot complete this operation. No edit was applied; keep the original view.",
     "ai_agent_disabled": "{{agent}} is turned off in settings. Turn it back on under Figure assistants.",
     "ai_agent_executable_invalid": "Can’t use that file as this agent’s executable: {{path}}. Your previous setting is unchanged.",
     "ai_agent_install_unsupported": "{{agent}} has no one-click install. Follow its own docs.",

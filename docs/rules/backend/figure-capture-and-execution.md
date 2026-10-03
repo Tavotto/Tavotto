@@ -233,3 +233,33 @@
 用户 Figure getter/数值转换。自定义或无法确定的元数据为 null、账本 incomplete，仍保留
 occurrence/figure ordinal/result。看护：`tests/bridge/test_bridge_savefig_observations.py` 的
 真实 subclass/实例方法/类属性 getter 次数、PNG 字节与异常行为对拍。
+
+## 选择具体产物的受限源图上下文
+
+`source_policy=selected-artifact-v1` 是显式选择，不改变省略它的旧请求，也不迁移存量布局。
+控制面从安全解析后的 PDF/PNG 文件生成 `SourceArtifact` 字节身份；有 edits 的请求必须带
+`expected_source`（原始 hash/字节数），变了回 409 `artifact_source_unavailable`，不能把旧坐标
+静默绑到新文件。首次无编辑采用会返回实际身份。对象身份仍遵守 ADR 0083 的既有边界。
+
+- 只支持 safe 档、固定/已完成一次性布局的标准 rectilinear line/bar/text 图。
+  活跃布局、脚本留下的 Python 线程、额外 bbox artists、自定义渲染钩子、locale/TeX/
+  外部字体、其它 artist 家族拒绝；不序列化 Figure，不重放保存历史。
+- 完整保存账本里必须有唯一的完整路径匹配，且属于已捕获 Figure。执行目录相对路径
+  只是候选，不能按 stem/basename 猜。拼写不同只在解析后仍位于项目内、且文件系统确认
+  是同一个文件时视为别名；不按平台或统一小写猜测卷的大小写语义。重复覆盖、未知目的地/格式/backend 拒绝。
+- 先按该次保存的 DPI/crop 定图幅，再由**初始化后、任何 patch 之前**的源格式候选验证
+  实际文件的像素/图幅；不另画 pre-instrument 探针。PDF 经父进程 pdfbackend，科学 worker
+  不新增 PDF 库。32 MiB、1600 万像素、单页 PDF 与既有 worker/renderer 超时是硬界。
+  PNG pHYs 只容许一个整数像素/米量化步，色彩管理块拒绝，不拿宽松阈值掩盖差异。
+- 复用现有 FigState 与全量 overrides 语义；worker/输出目录按源上下文隔离，仍受池的
+  3 个热 worker / 1 GiB 缓存治理。不是每个面板永久保存一个图；同一源的变体独立传完整 edits。
+  新上下文会额外执行脚本一次。首次准入按 worker 锁串行；workerd 重启不能绕过重新准入。
+  失败退役只针对那一条 worker 实例；选择子集不能重写整份脚本登记。
+- 当前 API 切片只开放 render、带 manifest 的 paired preview、导出新文件；selected GET
+  SVG/PNG、binary preview、specfix/sync、写回及历史恢复明确拒绝，不能退回旧坐标。
+  空 overrides 原图导出仍保留磁盘像素；正常导出的字体/PPI政策独立于源图上下文。
+- 这不是任意用户脚本的无写入沙盒：现有通用 open/原生扩展边界不扩张；新验证/导出路径
+  不写原图，并在发布前复核字节。活跃布局/历史场景、产物级 baked/writeback 与前端采用仍是后续门。
+
+看护：`tests/test_selected_artifact_worker.py`、`tests/test_selected_artifact_api.py`、
+`tests/test_artifact_context.py`。

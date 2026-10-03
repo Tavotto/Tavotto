@@ -1,5 +1,6 @@
 {
   "backend": {
+    "artifact_source_unavailable": "当前操作无法使用所选源图模式，未应用本次修改。请保留原图显示。",
     "ai_agent_disabled": "{{agent}} 已在设置中关闭。在「改图助手」里打开后再试。",
     "ai_agent_executable_invalid": "无法用作该 Agent 的可执行文件：{{path}}。原设置不变。",
     "ai_agent_install_unsupported": "{{agent}} 不支持一键安装，请按官方文档安装。",

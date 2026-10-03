@@ -26,6 +26,7 @@ from . import (
     config,
     envlease,
     execspec,
+    figcapture,
     inputbroker,
     inputremap,
     logsafe,
@@ -304,7 +305,7 @@ def build_envelope(obj: dict, *, generation: int = 0, revision: int = 0) -> dict
 #: (项目, 脚本) → 已经起过第几代 worker。supervisor 靠 generation 分辨
 #: 「这条响应属于哪一代」：会话被超时 kill 后重建，晚到的旧响应必须能被认出来
 #: 丢弃，否则新会话会被上一代的 manifest 污染。
-_generations: dict[tuple[str, str], int] = {}
+_generations: dict[tuple[str, ...], int] = {}
 #: 单独一把锁：`EngineWorker.__init__` 是在 `get()` 持着 `_lock` 时调用的，
 #: 在里面再抢 `_lock` 会直接自锁死（threading.Lock 不可重入）。
 _gen_lock = threading.Lock()
@@ -370,7 +371,21 @@ SOURCE_LABELS = {
 
 _worker_python: str | None = None
 _worker_source: str = ""
-_workers: dict[tuple[str, str], "EngineWorker"] = {}
+_workers: dict[tuple[str, ...], "EngineWorker"] = {}
+
+
+def _worker_key(figures_dir, script_name, artifact_source=None):
+    key = (_norm_dir(figures_dir), script_name)
+    identity = figcapture.selected_artifact_key(artifact_source)
+    return (*key, identity) if identity else key
+
+
+def _worker_base(figures_dir, script_name, artifact_source=None):
+    slug = _cache_slug(_norm_dir(figures_dir), script_name)
+    identity = figcapture.selected_artifact_key(artifact_source)
+    return ENGINE_CACHE / (f"{slug}-artifact-{identity}" if identity else slug)
+
+
 #: 一次性 worker（`one_shot()`）正在用的缓存目录。它们**不在池里**，
 #: `prune_engine_cache()` 却按 ENGINE_CACHE 的顶层目录清理——不登记的话，
 #: 一次写回的干净重放正跑到一半，目录可能被后台清理线程整个删掉。
@@ -508,7 +523,7 @@ def _norm_dir(figures_dir: str | Path) -> str:
 norm_dir = _norm_dir
 
 
-def _next_generation(key: tuple[str, str]) -> int:
+def _next_generation(key: tuple[str, ...]) -> int:
     """该池键的下一代序号（从 1 开始，每重建一次 +1，进程内单调）。"""
     with _gen_lock:
         gen = _generations.get(key, 0) + 1
@@ -1429,15 +1444,23 @@ def reset_worker_python() -> None:
 
 class EngineWorker:
     def __init__(
-        self, script_name: str, figures_dir: str, entry: str, base_dir: Path | None = None
+        self,
+        script_name: str,
+        figures_dir: str,
+        entry: str,
+        base_dir: Path | None = None,
+        *,
+        artifact_source=None,
     ):
         self.script_name = script_name
         self.figures_dir = figures_dir
         self.entry = entry
+        self.artifact_source = figcapture.selected_artifact_context(artifact_source)
+        self.artifact_admission_lock = threading.Lock()
         # `base_dir` 只给一次性 worker（`one_shot()`）用：与热会话共用 out/
         # 会让重放的 manifest/SVG 盖掉用户正在看的那份。池里的会话永远走
         # `_cache_slug`，落点一个字节都没变。
-        base = base_dir or ENGINE_CACHE / _cache_slug(_norm_dir(figures_dir), script_name)
+        base = base_dir or _worker_base(figures_dir, script_name, self.artifact_source)
         self.base = base
         self.out_dir = base / "out"
         self.sandbox = base / "sandbox"
@@ -1449,7 +1472,9 @@ class EngineWorker:
         self.rev = 0  # 每次 override 递增，用于前端缓存穿透
         # 这一代的序号：同一 (项目, 脚本) 每重建一次 +1，随每个请求发给 worker
         # 并原样回显（worker 不理解它，校验归调用方/未来的 supervisor）。
-        self.generation = _next_generation((_norm_dir(figures_dir), script_name))
+        self.generation = _next_generation(
+            _worker_key(figures_dir, script_name, self.artifact_source)
+        )
         # spawn 那一刻脚本文件的内容指纹（写回前的「脚本变更防线」比对基准）
         self.script_sha1 = script_sha1(figures_dir, script_name)
         #: 这条会话上最后一次 `override()` 的规范 patch 哈希（build 之后是空列表）。
@@ -1776,6 +1801,8 @@ class EngineWorker:
         )
 
     def request(self, obj: dict, timeout: float | None = None) -> dict:
+        if getattr(self, "artifact_source", None) is not None:
+            obj = {**obj, "artifact_source": self.artifact_source}
         # None → 取模块常量的**当前**值（默认参数会在 def 时定死，测试改不动）
         timeout = REQUEST_TIMEOUT if timeout is None else timeout
         self.last_used = time.time()
@@ -1875,6 +1902,7 @@ class EngineWorker:
         self.built = True
         self.last_build_descriptors = list(resp.get("descriptors") or [])
         self.last_build_runtime = _runtime_of(resp)
+        self.last_build_artifact_probe = resp.get("artifact_probe")
         self.last_build_script_inputs = _script_inputs_of(resp)
         self.last_patch_hash = _EMPTY_PATCH_HASH
         self.last_patch_hash_by_stem.clear()  # 每个 stem 都回到脚本原样
@@ -2171,15 +2199,18 @@ class WorkerdWorker:
         client=None,
         base_dir: Path | None = None,
         extra_env: dict | None = None,
+        artifact_source=None,
     ):
         from . import workerd_client
 
         self.script_name = script_name
         self.figures_dir = figures_dir
         self.entry = entry
+        self.artifact_source = figcapture.selected_artifact_context(artifact_source)
+        self.artifact_admission_lock = threading.Lock()
         # 目录布局与 EngineWorker 完全一致：prune_engine_cache 按 base 走，
         # 换个控制面就换个落点的话，清理会把正在用的会话目录当成垃圾删掉。
-        base = base_dir or ENGINE_CACHE / _cache_slug(_norm_dir(figures_dir), script_name)
+        base = base_dir or _worker_base(figures_dir, script_name, self.artifact_source)
         self.base = base
         self._extra_env = dict(extra_env or {})
         self.out_dir = base / "out"
@@ -2191,7 +2222,9 @@ class WorkerdWorker:
         self._touched = 0.0
         self._touch()
         self.rev = 0
-        self.generation = _next_generation((_norm_dir(figures_dir), script_name))
+        self.generation = _next_generation(
+            _worker_key(figures_dir, script_name, self.artifact_source)
+        )
         # 与 EngineWorker 同源：spawn 时的脚本指纹 + 最后应用的 patch 哈希
         self.script_sha1 = script_sha1(figures_dir, script_name)
         self.last_patch_hash = ""
@@ -2347,6 +2380,8 @@ class WorkerdWorker:
     ) -> dict:
         from . import workerd_client
 
+        if getattr(self, "artifact_source", None) is not None:
+            payload = {**(payload or {}), "artifact_source": self.artifact_source}
         self.last_used = time.time()
         self._touch()
         t_req = time.perf_counter()
@@ -2364,6 +2399,16 @@ class WorkerdWorker:
             except workerd_client.WorkerdError as exc:
                 # workerd 重启过 → session_id 作废。这条**透明重开一次**：
                 # 对上层来说这只是一次稍慢的渲染，没有任何语义变化。
+                if exc.code == "unknown_session" and self.artifact_source is not None:
+                    # A new child has no parent-validated selected baseline. Never
+                    # transparently apply edits before admission runs again.
+                    self._dead = True
+                    error = WorkerError(
+                        "The selected source session expired; reopen it.",
+                        code="artifact_source_unavailable",
+                    )
+                    error.extra = {"reason": "source_changed", "retryable": True}
+                    raise error from exc
                 if exc.code == "unknown_session" and attempt == 0:
                     LOG.warning("workerd 会话已失效，重开: %s", self.script_name)
                     self._open()
@@ -2419,6 +2464,7 @@ class WorkerdWorker:
         self.built = True
         self.last_build_descriptors = list(resp.get("descriptors") or [])
         self.last_build_runtime = _runtime_of(resp)
+        self.last_build_artifact_probe = resp.get("artifact_probe")
         self.last_build_script_inputs = _script_inputs_of(resp)
         self.last_patch_hash = _EMPTY_PATCH_HASH
         self.last_patch_hash_by_stem.clear()  # 每个 stem 都回到脚本原样
@@ -2578,7 +2624,7 @@ def _workdir_gate(figures_dir: str, script_name: str) -> None:
         raise err from None
 
 
-def _new_worker(script_name: str, figures_dir: str, entry: str):
+def _new_worker(script_name: str, figures_dir: str, entry: str, *, artifact_source=None):
     """按可用性挑控制面。**任何失败都回退 Python 池**——渲染不能因为一个
     可选的加速件起不来就整个不可用。
 
@@ -2595,15 +2641,18 @@ def _new_worker(script_name: str, figures_dir: str, entry: str):
     # `dependency_preparation` 载荷的 WorkerError；放行就什么都不做。
     for spawn_gate in SPAWN_GATES:
         spawn_gate(figures_dir, script_name)
+    context = {"artifact_source": artifact_source} if artifact_source is not None else {}
     if workerd_client.find_workerd():
         try:
-            return WorkerdWorker(script_name, figures_dir, entry)
+            return WorkerdWorker(script_name, figures_dir, entry, **context)
         except (WorkerdUnavailable, WorkerError, OSError) as exc:
             LOG.warning("workerd 会话建立失败，回退到 Python 渲染池: %s", exc)
-    return EngineWorker(script_name, figures_dir, entry)
+    return EngineWorker(script_name, figures_dir, entry, **context)
 
 
-def one_shot(script_name: str, figures_dir: str, entry: str, *, script_inputs=None):
+def one_shot(
+    script_name: str, figures_dir: str, entry: str, *, script_inputs=None, artifact_source=None
+):
     """一次性 worker：**不进池、目录独立、用完即毁**。写回前的干净重放用。
 
     热会话是长期活着的：build 之后经历过任意多次 override / 还原，applied 与
@@ -2636,6 +2685,7 @@ def one_shot(script_name: str, figures_dir: str, entry: str, *, script_inputs=No
         _oneshot_bases.add(str(base))
     try:
         policy = inputbroker.ReplayAnswers.of(script_inputs)
+        context = {"artifact_source": artifact_source} if artifact_source is not None else {}
         worker = None
         if workerd_client.find_workerd():
             try:
@@ -2645,11 +2695,12 @@ def one_shot(script_name: str, figures_dir: str, entry: str, *, script_inputs=No
                     entry,
                     base_dir=base,
                     extra_env={"TAVOTTO_REPLAY_NONCE": nonce},
+                    **context,
                 )
             except (WorkerdUnavailable, WorkerError, OSError) as exc:
                 LOG.warning("workerd 一次性会话建立失败，回退到 Python 渲染池: %s", exc)
         if worker is None:
-            worker = EngineWorker(script_name, figures_dir, entry, base_dir=base)
+            worker = EngineWorker(script_name, figures_dir, entry, base_dir=base, **context)
         worker.script_input_policy = policy
         return worker
     except BaseException:
@@ -2868,19 +2919,23 @@ def safe_workers_using(python: str) -> int:
         return sum(1 for w in _workers.values() if same_python(w.python, python))
 
 
-def get(script_name: str, figures_dir: str, entry: str) -> EngineWorker:
+def get(script_name: str, figures_dir: str, entry: str, *, artifact_source=None) -> EngineWorker:
     """取（或重建）某脚本的 worker；崩溃的自动换新；超出 MAX_ALIVE 按 LRU 淘汰。"""
-    return acquire(script_name, figures_dir, entry)[0]
+    context = {"artifact_source": artifact_source} if artifact_source is not None else {}
+    return acquire(script_name, figures_dir, entry, **context)[0]
 
 
-def acquire(script_name: str, figures_dir: str, entry: str) -> tuple[EngineWorker, bool]:
+def acquire(
+    script_name: str, figures_dir: str, entry: str, *, artifact_source=None
+) -> tuple[EngineWorker, bool]:
     """`get()` + 「这条会话是不是**这次调用**建的」——所有权在 `_lock` 里一并给出。
 
     调用方要判「谁拥有这条会话」时不许拿 `peek()` 的快照去猜：两个调用方都在建
     会话之前看到「没有」，都会以为自己是主人，而池里只建了一条（Codex #451 P1）。
     `created` 只有一次调用拿到 True。
     """
-    key = (_norm_dir(figures_dir), script_name)
+    artifact_source = figcapture.selected_artifact_context(artifact_source)
+    key = _worker_key(figures_dir, script_name, artifact_source)
     created = False
     # 「换不换解释器」要在锁外、查租约之前决定（见下）；锁外那次「能不能复用」只是窥视——窥视说能复用、
     # 进锁时它却死了 / 换了入口，就得出锁把决定补上再来一遍（Codex #562 P2），否则锁内重建走到只读的
@@ -2942,7 +2997,10 @@ def acquire(script_name: str, figures_dir: str, entry: str) -> tuple[EngineWorke
                 # 它先拿到 → 这里看得见；这里先登记 → 它的 `shutdown_workers_using()` 要等这把锁，
                 # 然后收掉这条会话，pip 在那之后才开始。锁序 `_lock` → envlease 内部锁，没有反向嵌套。
                 _refuse_if_mutating(want_python)
-                w = _new_worker(script_name, figures_dir, entry)
+                context = (
+                    {"artifact_source": artifact_source} if artifact_source is not None else {}
+                )
+                w = _new_worker(script_name, figures_dir, entry, **context)
                 _workers[key] = w
                 created = True
             w.last_used = time.time()
@@ -2967,7 +3025,7 @@ def _refuse_if_mutating(python: str) -> None:
         raise WorkerError("这个 Python 环境正在安装依赖，请稍候再试。", code=ENVIRONMENT_MUTATING)
 
 
-def _reusable(key: tuple[str, str], entry: str, want_python: str) -> bool:
+def _reusable(key: tuple[str, ...], entry: str, want_python: str) -> bool:
     """池里这条会话此刻能不能直接复用（与 `acquire()` 锁内的重建判据同一组条件）。只是一次窥视：
     复用的会话不需要重新决定环境；判错了（窥视之后它死了）`acquire()` 在锁内发现，出锁补上决定再来一遍。"""
     with _lock:
@@ -3157,7 +3215,14 @@ def user_interpreter_in_effect(figures_dir: str | Path) -> bool:
 workdir.register_user_interpreter_probe(user_interpreter_in_effect)
 
 
-def build(script_name: str, figures_dir: str, entry: str, *, allow_project_env: bool = True):
+def build(
+    script_name: str,
+    figures_dir: str,
+    entry: str,
+    *,
+    allow_project_env: bool = True,
+    before_build=None,
+):
     """取会话并确保脚本已 build——**带一次项目环境自动 fallback**。
 
     回 `(worker, build 响应)`。所有会真正跑用户脚本的入口都该走这里，而不是
@@ -3172,6 +3237,9 @@ def build(script_name: str, figures_dir: str, entry: str, *, allow_project_env: 
     上层据此渲染恢复引导（找不到 venv / venv 也缺这个包 / 没有 matplotlib /
     Python 版本不支持），而不是干甩一段 traceback。
 
+    `before_build(worker)` 在每次取到会话后、执行前调用（包括自动 fallback）；
+    调用方可据此拒绝在会话取得期间已取消的作业。
+
     会话经 **`get()`** 取（不是 `acquire()`）：老调用方与用例只认这一个名字来
     替换会话（monkeypatch `pool.get`），改走别的入口它们会静默拿到真池。
     """
@@ -3180,6 +3248,7 @@ def build(script_name: str, figures_dir: str, entry: str, *, allow_project_env: 
         script_name,
         figures_dir,
         allow_project_env=allow_project_env,
+        before_build=before_build,
     )
     return worker, resp
 
@@ -3211,7 +3280,13 @@ def build_owned(
 
 
 def _build_with(
-    take, script_name: str, figures_dir: str, *, allow_project_env: bool, before_retry=None
+    take,
+    script_name: str,
+    figures_dir: str,
+    *,
+    allow_project_env: bool,
+    before_retry=None,
+    before_build=None,
 ):
     """`build` / `build_owned` 共用的编排：`take()` 回 `(worker, created)`。
 
@@ -3219,6 +3294,8 @@ def _build_with(
     脚本目录，ADR 0107 §二）——之后、第二次执行之前调一次。按计划执行的调用方（准备接口）在这里核
     计划记下的授权还成不成立，不成立就抛出：不在计划没写过的 cwd 里重跑（Codex #713 P1）。"""
     worker, created = take()
+    if before_build is not None:
+        before_build(worker)
     try:
         return worker, worker.ensure_built(), created
     except WorkerError as exc:
@@ -3231,6 +3308,8 @@ def _build_with(
     if before_retry is not None:
         before_retry()
     worker, created_again = take()
+    if before_build is not None:
+        before_build(worker)
     return worker, worker.ensure_built(), created or created_again
 
 
@@ -3244,7 +3323,7 @@ def invalidate(script_name: str, figures_dir: str | None = None) -> None:
         if figures_dir is None:
             keys = [k for k in _workers if k[1] == script_name]
         else:
-            keys = [k for k in ((_norm_dir(figures_dir), script_name),) if k in _workers]
+            keys = [k for k in _workers if k[:2] == (_norm_dir(figures_dir), script_name)]
         victims = [_workers.pop(k) for k in keys]
     for w in victims:
         threading.Thread(target=w.shutdown, daemon=True).start()
@@ -3268,7 +3347,9 @@ def invalidate_project(figures_dir: str | Path) -> None:
         threading.Thread(target=w.shutdown, daemon=True).start()
 
 
-def force_cancel(script_name: str, figures_dir: str) -> bool:
+def force_cancel(
+    script_name: str, figures_dir: str, *, artifact_source=None, expected_worker=None
+) -> bool:
     """当场硬杀该脚本的在跑会话（探测取消的机制面）；返回是否真的杀了。
 
     与 `invalidate` 的差别：invalidate 的 shutdown 是优雅关停，要抢
@@ -3278,13 +3359,37 @@ def force_cancel(script_name: str, figures_dir: str) -> bool:
     调用方立刻收到 EOF → WorkerError；worker 先从表里摘掉，别的线程不会
     再复用一个正在死的会话。
     """
-    key = (_norm_dir(figures_dir), script_name)
+    key = _worker_key(figures_dir, script_name, artifact_source)
     with _lock:
-        w = _workers.pop(key, None)
+        w = _workers.get(key)
+        if expected_worker is not None and w is not expected_worker:
+            return False
+        _workers.pop(key, None)
     if w is None:
         return False
     LOG.info("强制取消 worker 会话: %s", script_name)
     w.force_kill()
+    return True
+
+
+def force_cancel_input(directory, figures_dir: str) -> bool:
+    """Stop only the worker that owns this script-input rendezvous directory."""
+    from .scriptinput import DIRNAME
+
+    target, root = _norm_dir(str(directory)), _norm_dir(figures_dir)
+    with _lock:
+        key = next(
+            (
+                key
+                for key, worker in _workers.items()
+                if key[0] == root and _norm_dir(str(worker.out_dir / DIRNAME)) == target
+            ),
+            None,
+        )
+        worker = _workers.pop(key, None)
+    if worker is None:
+        return False
+    worker.force_kill()
     return True
 
 

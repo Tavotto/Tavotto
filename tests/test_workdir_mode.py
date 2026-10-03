@@ -477,3 +477,45 @@ def test_the_users_own_python_runs_the_script_where_it_lives_until_they_pick_the
         assert not (figs / "cache" / "impact.txt").exists()
     finally:
         projectenv.forget(figs)
+
+
+@pytest.mark.parametrize("created", [(False, True), (True, False), (False, False)])
+def test_build_admission_preserves_retry_order_and_ownership(monkeypatch, created):
+    """Admission is after each acquisition; the existing retry grant and ownership survive."""
+    events = []
+
+    class Worker:
+        def __init__(self, n):
+            self.n = n
+
+        def ensure_built(self):
+            events.append(f"build{self.n}")
+            if self.n == 1:
+                raise engine_pool.WorkerError(
+                    "missing fixture", code="missing_dependency", module="fixture"
+                )
+            return {"ok": True}
+
+    workers = [Worker(1), Worker(2)]
+    takes = iter(zip(workers, created))
+
+    def take():
+        worker, owned = next(takes)
+        events.append(f"take{worker.n}")
+        return worker, owned
+
+    monkeypatch.setattr(
+        engine_pool, "try_project_env", lambda *a: events.append("adopt") or {"ok": True}
+    )
+    worker, resp, owned = engine_pool._build_with(
+        take,
+        "fig.py",
+        "/p",
+        allow_project_env=True,
+        before_retry=lambda: events.append("retry"),
+        before_build=lambda w: events.append(f"admit{w.n}"),
+    )
+    assert events == ["take1", "admit1", "build1", "adopt", "retry", "take2", "admit2", "build2"]
+    assert worker is workers[1]
+    assert resp == {"ok": True}
+    assert owned is any(created)

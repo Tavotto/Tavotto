@@ -172,7 +172,9 @@ def warm() -> str:
 # --------------------------------------------------------------------------
 # 契约函数：显式委托（可 grep、可 monkeypatch、codegraph 看得见）
 # --------------------------------------------------------------------------
-def probe_asset(path, kind):
+def probe_asset(path, kind, *, include_pages=False):
+    if include_pages:
+        return _impl().probe_asset(path, kind, include_pages=True)
     return _impl().probe_asset(path, kind)
 
 

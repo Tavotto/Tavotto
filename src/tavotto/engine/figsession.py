@@ -44,12 +44,28 @@ import base64
 import importlib.metadata
 import io
 import json
+import math
 import os
 import platform
 import sys
 import threading
 import time
 from pathlib import Path
+
+import matplotlib
+from matplotlib import _tight_bbox, artist as martist, figure as mfigure, ticker, transforms
+from matplotlib.axes import Axes
+from matplotlib.axis import XAxis, XTick, YAxis, YTick
+from matplotlib.backend_bases import FigureCanvasBase
+from matplotlib.backends.backend_agg import FigureCanvasAgg
+from matplotlib.figure import Figure
+from matplotlib.layout_engine import PlaceHolderLayoutEngine
+from matplotlib.lines import Line2D
+from matplotlib.patches import Rectangle
+from matplotlib.scale import LinearScale
+from matplotlib.spines import Spine
+from matplotlib.text import Text
+from matplotlib.ticker import ScalarFormatter
 
 import figcapture
 import manifest as manifest_mod
@@ -58,6 +74,213 @@ import pathgeom
 import preview_hybrid
 import previewbudget
 from axestraversal import ordered_axes
+
+
+class ArtifactSourceUnavailable(ValueError):
+    def __init__(self, reason):
+        super().__init__("The selected file cannot be verified against the current figure.")
+        self.reason = reason
+
+
+_ARTIST_METHODS = (
+    "draw",
+    "get_children",
+    "get_tightbbox",
+    "get_transform",
+    "get_clip_box",
+    "get_clip_path",
+)
+
+
+# A deliberately small fixed-layout profile, not arbitrary Matplotlib graphs.
+# Existing instrumentation/edit semantics still decide which elements are editable.
+_ARTIFACT_ARTISTS = {
+    cls: tuple(getattr(cls, name, None) for name in _ARTIST_METHODS)
+    for cls in (
+        Figure,
+        Axes,
+        XAxis,
+        YAxis,
+        XTick,
+        YTick,
+        Text,
+        Line2D,
+        Rectangle,
+        Spine,
+    )
+}
+_CANVAS_METHODS = ("draw", "get_renderer", "print_figure")
+_STATIC_CANVASES = {
+    cls: tuple(getattr(cls, name, None) for name in _CANVAS_METHODS)
+    for cls in (FigureCanvasBase, FigureCanvasAgg)
+}
+_TICK_TYPES = (
+    ticker.AutoLocator,
+    ticker.MaxNLocator,
+    ticker.MultipleLocator,
+    ticker.LinearLocator,
+    ticker.FixedLocator,
+    ticker.NullLocator,
+    ticker.ScalarFormatter,
+    ticker.NullFormatter,
+    ticker.FixedFormatter,
+    ticker.FormatStrFormatter,
+    ticker.StrMethodFormatter,
+)
+_TICK_METHODS = ("__call__", "tick_values", "format_ticks", "set_locs", "get_offset")
+_STATIC_TICKS = {
+    cls: tuple(getattr(cls, name, None) for name in _TICK_METHODS) for cls in _TICK_TYPES
+}
+_SCALE_METHODS = ("get_transform", "limit_range_for_scale", "set_default_locators_and_formatters")
+_STATIC_SCALES = {LinearScale: tuple(getattr(LinearScale, name) for name in _SCALE_METHODS)}
+_TRANSFORM_METHODS = ("transform", "transform_non_affine", "get_affine", "inverted", "get_points")
+_STATIC_TRANSFORMS = {
+    cls: tuple(getattr(cls, name, None) for name in _TRANSFORM_METHODS)
+    for cls in (
+        transforms.Bbox,
+        transforms.TransformedBbox,
+        transforms.BboxTransformTo,
+        transforms.BboxTransformFrom,
+        transforms.Affine2D,
+        transforms.IdentityTransform,
+        transforms.CompositeGenericTransform,
+        transforms.CompositeAffine2D,
+        transforms.BlendedGenericTransform,
+        transforms.BlendedAffine2D,
+        transforms.ScaledTranslation,
+        transforms.TransformWrapper,
+        transforms.TransformedPath,
+        transforms.TransformedPatchPath,
+    )
+}
+_STALE_CALLBACKS = (None, martist._stale_axes_callback, mfigure._stale_figure_callback)
+
+
+def _standard_methods(value, known, names):
+    cls = type(value)
+    return (
+        cls in known
+        and not any(name in vars(value) for name in names)
+        and all(method is getattr(cls, name, None) for method, name in zip(known[cls], names))
+    )
+
+
+def _static_transform(transform):
+    pending, seen = [transform], set()
+    while pending:
+        item = pending.pop()
+        if item is None or id(item) in seen:
+            continue
+        seen.add(id(item))
+        if type(item) is transforms.TransformWrapper:
+            child = item._child
+            if any(
+                getattr(item, name, None) != getattr(child, name, None)
+                for name in _TRANSFORM_METHODS
+                if name in vars(item)
+            ):
+                return False
+            pending.append(child)
+        elif not _standard_methods(item, _STATIC_TRANSFORMS, _TRANSFORM_METHODS):
+            return False
+        # Only standard transform children, never parent weakrefs/arbitrary graphs.
+        pending.extend(v for v in vars(item).values() if isinstance(v, transforms.TransformNode))
+    return True
+
+
+def _standard_stale_callback(callback):
+    if any(callback is native for native in _STALE_CALLBACKS):
+        return True
+    pyplot = sys.modules.get("matplotlib.pyplot")
+    native = getattr(pyplot, "_auto_draw_if_interactive", None)
+    return (
+        callback is native
+        and native is not None
+        and getattr(getattr(native, "__code__", None), "co_filename", None)
+        == getattr(pyplot, "__file__", None)
+    )
+
+
+def _require_static_artifact_figure(fig):
+    if type(fig) is not Figure or not _standard_methods(
+        fig.canvas, _STATIC_CANVASES, _CANVAS_METHODS
+    ):
+        raise ArtifactSourceUnavailable("unsupported_render_state")
+    layout = fig.get_layout_engine()
+    if layout is not None and type(layout) is not PlaceHolderLayoutEngine:
+        raise ArtifactSourceUnavailable("layout_history_required")
+    if fig.canvas.callbacks.callbacks.get("draw_event"):
+        raise ArtifactSourceUnavailable("unsupported_render_state")
+    axes, children, parasites = ordered_axes(fig)
+    if children or parasites:
+        raise ArtifactSourceUnavailable("unsupported_render_state")
+    for ax in axes:
+        if type(ax) is not Axes or ax.name != "rectilinear" or ax.get_axes_locator() is not None:
+            raise ArtifactSourceUnavailable("unsupported_render_state")
+        if ax.callbacks.callbacks:
+            raise ArtifactSourceUnavailable("unsupported_render_state")
+        for axis in (ax.xaxis, ax.yaxis):
+            if type(axis) not in (XAxis, YAxis):
+                raise ArtifactSourceUnavailable("unsupported_render_state")
+            converter = axis.get_converter() if hasattr(axis, "get_converter") else axis.converter
+            if converter is not None or not _standard_methods(
+                axis._scale, _STATIC_SCALES, _SCALE_METHODS
+            ):
+                raise ArtifactSourceUnavailable("unsupported_render_state")
+            for item in (
+                axis.get_major_formatter(),
+                axis.get_minor_formatter(),
+                axis.get_major_locator(),
+                axis.get_minor_locator(),
+            ):
+                if not _standard_methods(item, _STATIC_TICKS, _TICK_METHODS) or (
+                    isinstance(item, ScalarFormatter) and item.get_useLocale()
+                ):
+                    raise ArtifactSourceUnavailable("unsupported_render_state")
+    pending, seen = [fig], set()
+    while pending:
+        art = pending.pop()
+        if id(art) in seen:
+            continue
+        seen.add(id(art))
+        names = _ARTIST_METHODS
+        methods = _ARTIFACT_ARTISTS.get(type(art))
+        if (
+            methods is None
+            or any(name in vars(art) for name in names)
+            or methods != tuple(getattr(type(art), name, None) for name in names)
+        ):
+            raise ArtifactSourceUnavailable("unsupported_render_state")
+        if art.get_agg_filter() is not None or art.get_path_effects():
+            raise ArtifactSourceUnavailable("unsupported_render_state")
+        if not _standard_stale_callback(art.stale_callback) or art._callbacks.callbacks:
+            raise ArtifactSourceUnavailable("unsupported_render_state")
+        if not all(
+            _static_transform(value)
+            for value in (
+                art.get_transform(),
+                art.get_clip_box(),
+                art.get_clip_path(),
+            )
+        ):
+            raise ArtifactSourceUnavailable("unsupported_render_state")
+        if isinstance(art, Text) and (art.get_usetex() or art.get_fontproperties().get_file()):
+            raise ArtifactSourceUnavailable("unsupported_render_state")
+        pending.extend(art.get_children())
+
+
+class _BoundedArtifactFile:
+    def __init__(self, file):
+        self.file = file
+
+    def write(self, data):
+        if self.file.tell() + len(data) > figcapture.ARTIFACT_VALIDATION_MAX_BYTES:
+            raise ArtifactSourceUnavailable("validation_budget_exceeded")
+        return self.file.write(data)
+
+    def __getattr__(self, name):
+        return getattr(self.file, name)
+
 
 __all__ = [
     "LiveFigureSession",
@@ -212,6 +435,10 @@ class LiveFigureSession:
         #: 存过盘但参数没观察到）。只记不用：渲染与几何一概不读它（tight 图幅的决定之前）。
         self.savefig_calls: dict[str, list | None] = {}
         self.savefig_observations = figcapture.SavefigObservations()
+        self.artifact_source = None
+        self.artifact_probe = None
+        self._artifact_matches = 0
+        self._artifact_save = None
         #: stem -> 与 `savefig_calls[stem]` 逐项对齐的 `bbox_extra_artists` **对象**（进不了 JSON，
         #: 只活在这个进程里；算图幅时要把同一批 artist 交回 savefig，ADR 0098 §一）
         self.savefig_extras: dict[str, list] = {}
@@ -257,6 +484,120 @@ class LiveFigureSession:
         if figcapture.record_savefig_call(self.savefig_calls, self.capture, stem, fig, call):
             self.savefig_extras.setdefault(stem, []).append(extra_artists)
 
+    def note_artifact(self, observation, stem, fig, extra_artists):
+        if self.artifact_source is None:
+            return
+        row = self.savefig_observations.observation(observation)
+        if row is None or row["destination"]["scope"] not in ("project", "execution"):
+            return
+        destination = row["destination"]["path"]
+        selected = self.artifact_source["source_id"]
+        if destination != selected:
+            if self.frame_project_root is None:
+                return
+            try:
+                root = Path(self.frame_project_root).resolve()
+                candidate = (root / destination).resolve()
+                candidate.relative_to(root)
+                # Darwin normcase does not fold case; Windows may have case-sensitive
+                # directories. Only actual in-project file identity admits an alias.
+                if not candidate.samefile(root / selected):
+                    return
+            except (OSError, ValueError, RuntimeError):
+                return
+        self._artifact_matches += 1
+        if self._artifact_matches == 1:
+            extras = tuple(extra_artists) if type(extra_artists) in (list, tuple) else extra_artists
+            self._artifact_save = (row, stem, fig, extras)
+
+    def prepare_artifact(self):
+        if self.artifact_source is None:
+            return
+        if not self.savefig_observations.report()["complete"]:
+            raise ArtifactSourceUnavailable("capture_incomplete")
+        if self._artifact_matches != 1:
+            raise ArtifactSourceUnavailable(
+                "save_ambiguous" if self._artifact_matches else "destination_unresolved"
+            )
+        row, stem, fig, extras = self._artifact_save
+        if self.capture.get(stem) is not fig:
+            raise ArtifactSourceUnavailable("save_ambiguous")
+        if (
+            row["backend"] != "default"
+            or row["options"].get("format") != self.artifact_source["kind"]
+        ):
+            raise ArtifactSourceUnavailable("unsupported_render_state")
+        if extras is not None and (type(extras) is not tuple or len(extras)):
+            raise ArtifactSourceUnavailable("unsupported_render_state")
+        _require_static_artifact_figure(fig)
+        if type(fig.canvas) is FigureCanvasBase:
+            # Matplotlib 3.11 close() detaches Agg; bind it without another draw.
+            FigureCanvasAgg(fig)
+        # Only the selected source is instrumented in this context-scoped worker.
+        self.capture = {stem: fig}
+        self.capture_source = {stem: figcapture.SOURCE_SAVEFIG}
+        self._check_artifact_size(fig, *fig.get_size_inches())
+        bbox = row["options"].get("bbox_inches")
+        if isinstance(bbox, list):
+            self._check_artifact_size(fig, bbox[2] - bbox[0], bbox[3] - bbox[1])
+
+    def finish_artifact(self):
+        if self.artifact_source is None:
+            return
+        row, stem, _, _ = self._artifact_save
+        if self.states[stem].unregistered or self.manifest(stem).get("unsupported"):
+            raise ArtifactSourceUnavailable("unsupported_render_state")
+        self._write_artifact_probe()
+        self.artifact_probe.update(
+            occurrence=row["occurrence"], stem=stem, context=self.artifact_source
+        )
+
+    def _check_artifact_size(self, fig, width, height):
+        dpi = self._artifact_save[0]["resolved_dpi"]
+        if not isinstance(dpi, (int, float)) or not math.isfinite(dpi) or dpi <= 0:
+            raise ArtifactSourceUnavailable("unsupported_render_state")
+        scale = max(float(fig.dpi), dpi, self.preview_dpi, 300)
+        if (
+            not all(math.isfinite(v) and v > 0 for v in (width, height))
+            or math.ceil(width * scale) * math.ceil(height * scale)
+            > figcapture.ARTIFACT_VALIDATION_MAX_PIXELS
+        ):
+            raise ArtifactSourceUnavailable("validation_budget_exceeded")
+
+    def _artifact_savefig(self, fig, destination, **kwargs):
+        # Frame establishment and the initialized witness share the same limits.
+        native_adjust = _tight_bbox.adjust_bbox
+
+        def adjust(target, bbox, *args, **kw):
+            if target is fig:
+                self._check_artifact_size(fig, bbox.width, bbox.height)
+            return native_adjust(target, bbox, *args, **kw)
+
+        try:
+            _tight_bbox.adjust_bbox = adjust
+            return fig.savefig(_BoundedArtifactFile(destination), **kwargs)
+        finally:
+            _tight_bbox.adjust_bbox = native_adjust
+
+    def _write_artifact_probe(self):
+        row, _, fig, _ = self._artifact_save
+        fmt = self.artifact_source["kind"]
+        path = self.out_dir / f"artifact-initialized.{fmt}"
+        try:
+            with (
+                self.real_output(),
+                matplotlib.rc_context({"savefig.bbox": None}),
+                open(path, "wb") as out,
+            ):
+                self._artifact_savefig(
+                    fig, out, format=fmt, dpi=row["resolved_dpi"], **pathgeom.output_kwargs(fig)
+                )
+        except ArtifactSourceUnavailable:
+            raise
+        except Exception as exc:
+            raise ArtifactSourceUnavailable("source_mismatch") from exc
+        self.artifact_probe = {"initialized": str(path)}
+
     def establish_frame(self, stem: str, fig) -> None:
         """给这张图挂上图幅（ADR 0098）：定义它的那次 savefig 会裁到的框。
 
@@ -273,10 +614,18 @@ class LiveFigureSession:
         calls = self.savefig_calls.get(stem)
         call = figcapture.frame_call(calls, artifact)
         extra = figcapture.frame_extra_artists(calls, self.savefig_extras.get(stem), call)
+        if self.artifact_source is not None:
+            row, _, _, extra = self._artifact_save
+            call = {**row["options"], "dpi": row["resolved_dpi"]}
         with self.real_output():
-            error = pathgeom.establish_frame(
-                fig, call, extra, lambda f, *a, **k: f.savefig(*a, **k)
+            save = (
+                self._artifact_savefig
+                if self.artifact_source is not None
+                else (lambda f, *a, **k: f.savefig(*a, **k))
             )
+            error = pathgeom.establish_frame(fig, call, extra, save)
+        if error is not None and self.artifact_source is not None:
+            raise ArtifactSourceUnavailable("source_mismatch")
         if error is not None:
             print(
                 f"[frame] {stem}: 算不出 savefig 的裁切框，按 figsize 显示（{error}）",

@@ -94,6 +94,7 @@ def resolve(
     stem: str,
     execution_profile: str = PROFILE_SAFE,
     registry=None,
+    artifact_source=None,
 ):
     """按 profile 给出一个 **Worker-like** 的东西。
 
@@ -103,6 +104,11 @@ def resolve(
     """
     del registry  # 预留：将来按注册表校验归属；现在解析已经在调用方做完了
     if execution_profile == PROFILE_NATIVE:
+        if artifact_source is not None:
+            raise pool.WorkerError(
+                "A live native session cannot select a disk artifact.",
+                code="artifact_source_unavailable",
+            )
         session = nativesession.REGISTRY.route_for(project_root, script, stem)
         if session is None:
             # **不 fallback。** 这张图是用户自己那个 Python 画的，safe worker
@@ -112,7 +118,8 @@ def resolve(
         return session
     # safe 侧：**即使**这个 (script, stem) 上正好挂着一条 native route 也不切
     # 过去。profile 是面板的属性，不是"现在哪条路通"。
-    return pool.get(script, str(project_root), entry)
+    context = {"artifact_source": artifact_source} if artifact_source is not None else {}
+    return pool.get(script, str(project_root), entry, **context)
 
 
 def is_native(worker_like) -> bool:

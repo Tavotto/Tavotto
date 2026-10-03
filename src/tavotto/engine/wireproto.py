@@ -181,6 +181,14 @@ class V1Handler:
     def build_result(self, timings: dict) -> dict:
         raise NotImplementedError
 
+    def select_artifact(self, context) -> None:
+        if context is not None:
+            raise ProtocolError(
+                "artifact_source_unavailable",
+                "This execution mode cannot select a disk artifact.",
+                extra={"reason": "unsupported_render_state"},
+            )
+
     def handle_extra(self, cmd: str, req: dict, payload: dict) -> dict:
         raise ProtocolError("unknown_cmd", f"未知指令: {cmd}")
 
@@ -236,6 +244,7 @@ class V1Handler:
         #: 这一版的预览表示法（ADR 0022）。与 `timings` 同一条纪律：**只在 v1
         #: 出现**，出参形态传下去，legacy 的 `{ok, manifest, warnings}` 一字不动。
         preview: dict = {}
+        self.select_artifact(payload.get("artifact_source"))
         self.ensure_built(timings)
         if cmd == "build":
             return {**self.build_result(timings), "timings": timings}

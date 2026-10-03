@@ -46,6 +46,7 @@ import os
 import shutil
 import sys
 import sysconfig  # 模块层：项目目录进 sys.path 之前就拿住标准库这一份（见 `_INTERPRETER_PACKAGE_DIRS`）
+import threading
 import time
 import traceback
 from pathlib import Path
@@ -289,6 +290,7 @@ def _patched_savefig(self, fname, *args, **kwargs):
             backend=kwargs.get("backend"),
         )
         SESSION.savefig_observations.complete(observation, "intercepted")
+        SESSION.note_artifact(observation, stem, self, kwargs.get("bbox_extra_artists"))
     if stem and SESSION is not None:
         SESSION.add_figure(stem, self, figcapture.SOURCE_SAVEFIG)
         SESSION.note_savefig(
@@ -476,6 +478,21 @@ class Worker(wireproto.V1Handler):
         )
         super().__init__(SESSION)
 
+    def select_artifact(self, context):
+        try:
+            selected = figcapture.selected_artifact_context(context)
+        except ValueError as exc:
+            raise ProtocolError(
+                "artifact_source_unavailable", str(exc), extra={"reason": "destination_unresolved"}
+            ) from exc
+        if self.built and selected != self.session.artifact_source:
+            raise ProtocolError(
+                "artifact_source_unavailable",
+                "Artifact context cannot change inside a built worker.",
+                extra={"reason": "source_changed"},
+            )
+        self.session.artifact_source = selected
+
     # ---------------- build ----------------
     def build(self, timings: dict | None = None) -> dict:
         """跑一次用户脚本，把产出的 Figure 全部收进内存。
@@ -633,6 +650,7 @@ class Worker(wireproto.V1Handler):
         self._input_channel = channel
         scriptinput.install(channel)
 
+        capture_threads = set(threading.enumerate())
         t_script = time.perf_counter()
         # `SystemExit` 不是 `Exception`：脚本末尾的 `sys.exit(main())` / `exit()` /
         # `quit()` 会一路穿过 `ensure_built` 的 `except Exception`，落到主循环
@@ -693,7 +711,19 @@ class Worker(wireproto.V1Handler):
                 )
                 self.dropped_figures = dropped
 
-        self.session.instrument_all(suppressed_savefig=True)
+        try:
+            if (
+                self.session.artifact_source is not None
+                and set(threading.enumerate()) - capture_threads
+            ):
+                raise figsession.ArtifactSourceUnavailable("unsupported_render_state")
+            self.session.prepare_artifact()
+            self.session.instrument_all(suppressed_savefig=True)
+            self.session.finish_artifact()
+        except figsession.ArtifactSourceUnavailable as exc:
+            raise ProtocolError(
+                "artifact_source_unavailable", str(exc), extra={"reason": exc.reason}
+            ) from exc
         self._descriptor_cache = self._build_descriptors()
         # 回执的 `inputs` 在**这一刻**定格：脚本已经跑完，之后进程里再读什么（导出时的字体缓存）都不是它的输入
         self._inputs_report = self._input_observer.report(
@@ -759,6 +789,13 @@ class Worker(wireproto.V1Handler):
             return {"ok": True}
         if cmd == "shutdown":
             raise SystemExit(0)
+        if req.get("artifact_source") is not None or self.session.artifact_source is not None:
+            return {
+                "ok": False,
+                "code": "artifact_source_unavailable",
+                "error": "Selected artifacts require protocol v1.",
+                "reason": "unsupported_render_state",
+            }
         if cmd == "build":
             return {"ok": True, **self.build()}
         if not self.built:
@@ -872,6 +909,11 @@ class Worker(wireproto.V1Handler):
             **self._stems_summary(),
             "descriptors": self._descriptor_cache,
             "savefig_observations": self.session.savefig_observations.report(),
+            **(
+                {"artifact_probe": self.session.artifact_probe}
+                if self.session.artifact_source is not None
+                else {}
+            ),
             "runtime": figsession.runtime_report(inputs=self._inputs_report),
             # 本次 build 实际用到的每一问（ADR 0099 §二）：写回的一次性重放按它严格重放
             "script_inputs": [

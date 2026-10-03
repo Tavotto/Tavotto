@@ -62,6 +62,8 @@
     要抢被 build 占着的 `w.lock`，等到超时的取消不叫取消）。
     `probe(should_cancel=...)` 一旦判取消**不再尝试下一个 entry**，被杀
     worker 的失败如实归类 `execution_cancelled`（不报「脚本坏了」）；
+    取消可能先于 worker 入池：共享 build 编排在初次 / 环境 fallback 每次取得会话后、
+    执行前再检查作业的取消 Event，只收掉当次取得的实例，不连带收掉后来替换的会话。
     取消输给成功——脚本在取消前跑完就照常登记。SSE `probe.started` 在
     执行开始前发出（前端状态机 starting_runtime → running 的边界）。
     看护 `tests/test_asset_library.py`（cancel sentinel：30s 内返回 +
