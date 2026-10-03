@@ -1392,7 +1392,7 @@ export function seedBakedOverrides(panelId: string): number {
 async function admitPngEntry(panel: PanelObject, leftTab: 'elements' | 'keep'): Promise<boolean> {
   finishActiveGesture()
   const initial = useDocumentStore.getState()
-  const epoch = renderEpoch()
+  let epoch = renderEpoch()
   const pj = currentProjectId()
   const snapshot = JSON.stringify(panel)
   const selection = useSelectionStore.getState().ids
@@ -1443,8 +1443,17 @@ async function admitPngEntry(panel: PanelObject, leftTab: 'elements' | 'keep'): 
       // PNG admission runs before there is a render-store error entry. Hand its gates to the
       // same dialogs, then revalidate the source after the answer without tracking a legacy render.
       awaitingEnvironment = true
-      deferArtifactEntry(attempt, () => {
-        if (current()) void admitPngEntry(panel, leftTab)
+      deferArtifactEntry(attempt, (renderEpochChange) => {
+        // Remapping data invalidates existing renders before retrying. Accept only that exact
+        // transition; a prior project/render change must still discard this edit intent.
+        if (renderEpochChange?.from === epoch) epoch = renderEpochChange.to
+        if (current()) {
+          // An SSE may arrive before pointAtData returns. Retire only this answered gate so
+          // validation can ask about another missing file without its offer being dropped.
+          const env = useEnvStore.getState()
+          if (error.missingInput && env.missingInput === error.missingInput) env.dismissMissingInput()
+          void admitPngEntry(panel, leftTab)
+        }
       })
       const env = useEnvStore.getState()
       if (error.confirmation) env.requestWorkdirConfirmation(error.confirmation, pj)

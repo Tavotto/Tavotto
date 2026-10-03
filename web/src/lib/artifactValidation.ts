@@ -94,7 +94,8 @@ export function refuseArtifactOperation(panel: Subject): void {
 // These two transient intents own no document state and are never serialized.
 let entryEpoch = 0
 let entryPanel: string | null = null
-let entryRetry: (() => void) | null = null
+type EntryRenderEpochChange = { from: number; to: number }
+let entryRetry: ((renderEpochChange?: EntryRenderEpochChange) => void) | null = null
 export function beginArtifactEntry(panelId: string): number {
   entryRetry = null
   entryPanel = panelId
@@ -109,15 +110,16 @@ export const artifactEntryCurrent = (epoch: number): boolean => epoch === entryE
 export const artifactEntryPending = (panelId: string): boolean => entryPanel === panelId
 
 /** Keep the explicit edit intent while the existing environment dialog awaits an answer. */
-export function deferArtifactEntry(epoch: number, retry: () => void): void {
+export function deferArtifactEntry(epoch: number, retry: NonNullable<typeof entryRetry>): void {
   if (!artifactEntryCurrent(epoch)) return
   entryPanel = null
   entryRetry = retry
 }
-export function retryArtifactEntry(): void {
+/** A successful input remap may transfer only its own render invalidation to the waiting intent. */
+export function retryArtifactEntry(renderEpochChange?: EntryRenderEpochChange): void {
   const retry = entryRetry
   entryRetry = null
-  retry?.()
+  retry?.(renderEpochChange)
 }
 
 let editIntent: { id: string; guard: string; stillOwner: () => boolean } | null = null
