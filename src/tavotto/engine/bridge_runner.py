@@ -164,6 +164,7 @@ def _install_savefig_hook(mfigure) -> None:
     if _REAL_SAVEFIG is not None:
         return
     _REAL_SAVEFIG = mfigure.Figure.savefig
+    figcapture.install_colorbar_capture(mfigure)
     _SAVEFIG_OBSERVATIONS.metadata = figcapture.savefig_metadata_reader(mfigure)
 
     def _patched_savefig(self, fname, *args, **kwargs):

@@ -17,9 +17,12 @@ import type { Page } from '@playwright/test'
  */
 
 /** `titleB`：给 B 加个标题（成员子图里的东西，拖它起手的用例用；别的用例不带，几何不变） */
-function writeSharedProject({ titleB = false } = {}): string {
+function writeSharedProject({ titleB = false, cax = false, owner = 'shared' }:
+  { titleB?: boolean; cax?: boolean; owner?: 'shared' | 'single' | 'unknown' } = {}): string {
   const dir = path.join(mkdtempSync(path.join(os.tmpdir(), 'tavotto-cbar-group-')), 'figures')
   mkdirSync(dir, { recursive: true })
+  const colorbarArgs = [cax ? 'cax=cax' : '', owner === 'unknown' ? '' : `ax=${owner === 'single' ? 'b' : '[b, c]'}`]
+    .filter(Boolean).join(', ')
   const script = [
     'import matplotlib',
     'matplotlib.use("Agg")',
@@ -36,7 +39,8 @@ function writeSharedProject({ titleB = false } = {}): string {
     '    im = b.imshow(z, cmap="viridis")',
     ...(titleB ? ['    b.set_title("B")'] : []),
     '    c.imshow(z.T, cmap="viridis", norm=im.norm)',
-    '    fig.colorbar(im, ax=[b, c])',
+    ...(cax ? ['    cax = fig.add_axes([.92, .2, .025, .6])'] : []),
+    `    fig.colorbar(im, ${colorbarArgs})`,
     '    fig.savefig(Path(__file__).with_name("Fig_shared.pdf"))',
     '    plt.close(fig)',
     '',
@@ -156,8 +160,9 @@ async function grabPoint(page: Page, b: { x: number; y: number; w: number; h: nu
   return p!
 }
 
+for (const manualCax of [false, true]) {
 test(
-  '共享色条成组：树、整组平移、撤销重做、钻进成员、单拖不带色条、重开还在',
+  `${manualCax ? '手动 cax' : '自动色条轴'}成组：树、平移缩放、撤销重做、钻进成员、单拖不带色条、重开还在`,
   { tag: '@feature:figure.shared-colorbar-group' },
   async ({ app, page }) => {
   // 关吸附：位移要是一个确定的数
@@ -172,7 +177,7 @@ test(
       }
     }
   })
-  const a = await app({ figures: writeSharedProject() })
+  const a = await app({ figures: writeSharedProject({ cax: manualCax }) })
   await page.goto(a.baseURL)
   await page.getByText('Fig_shared.pdf').dblclick({ timeout: 30_000 })
   await expect(page.locator('[data-element-svg] svg').first()).toBeVisible({ timeout: 60_000 })
@@ -192,6 +197,8 @@ test(
     expect(await indent(m), `${m} 应当是组的直接子节点`).toBeGreaterThan(gIndent)
   }
   expect(await indent('axes_0'), '子图 A 不在组里').toBe(gIndent)
+  await pickRow(page, 'axes_3.colorbar')
+  await expect(page.locator(`[data-crumb="${GROUP}"]`)).toBeVisible()
 
   // 2) 选中组 → 拖 B = 整组平移（选中之后右栏打开、画布挪位，量要在那之后）
   await pickRow(page, GROUP)
@@ -216,6 +223,22 @@ test(
   await settleAfter(page, () => page.keyboard.press('Shift+ControlOrMeta+z'))
   const b3 = await boxes(page)
   expect(Math.abs(b3.rel.axes_3 - b1.rel.axes_3), '重做后色条再过去').toBeLessThan(1)
+
+  // 缩放同样写到全部成员；撤销逐像素回到缩放前，再重做用于保存重开。
+  const scale = page.getByRole('textbox', { name: '按比例缩放' })
+  await scale.fill('80')
+  await scale.press('Tab')
+  await settleAfter(page, () => page.locator('[data-scale-apply]').click())
+  const scaled = await boxes(page)
+  for (const gid of ['axes_1', 'axes_2', 'axes_3']) {
+    // 整个 SVG 组含固定字号的色条刻度；厚度很窄的色条不以它量宽度。
+    if (gid !== 'axes_3') expect(scaled.abs[gid].w / b3.abs[gid].w, `${gid} 宽度缩为 80%`).toBeCloseTo(.8, 1)
+    expect(scaled.abs[gid].h / b3.abs[gid].h, `${gid} 高度缩为 80%`).toBeCloseTo(.8, 1)
+  }
+  expect(scaled.abs.axes_0.w).toBeCloseTo(b3.abs.axes_0.w, 0)
+  await settleAfter(page, () => page.keyboard.press('ControlOrMeta+z'))
+  expect((await boxes(page)).abs.axes_3.w).toBeCloseTo(b3.abs.axes_3.w, 0)
+  await settleAfter(page, () => page.keyboard.press('Shift+ControlOrMeta+z'))
 
   // 4) 选中组时只点不拖 = 钻进去选中点到的那个成员（B 的图像：点子图内部与平时一样
   //    选中点下去的那个元素）。C 可能被右栏盖着，点 B 左边五分之一处
@@ -268,8 +291,44 @@ test(
   expect(Math.abs(b5.unit.axes_1 - b4.unit.axes_1), '重开后 B 仍在单拖之后的位置').toBeLessThan(0.01)
   // 反证这把尺子量得到位移：重开后的落点与最初（没挪过）明显不同
   expect(Math.abs(b5.unit.axes_3 - b0.unit.axes_3), '重开后的色条应当不在最初的位置').toBeGreaterThan(0.1)
+  expect(b5.abs.axes_3.w / b5.abs.axes_0.w, '重开保留色条的缩放').toBeCloseTo(b4.abs.axes_3.w / b4.abs.axes_0.w, 2)
   },
 )
+}
+
+for (const owner of ['single', 'unknown'] as const) {
+  test(`手动 cax ${owner}：树与面包屑按声明，缺声明时给出可执行关联方式`,
+    { tag: '@feature:figure.shared-colorbar-group' }, async ({ app, page }) => {
+      const a = await app({ figures: writeSharedProject({ cax: true, owner }) })
+      await page.goto(a.baseURL)
+      await page.getByText('Fig_shared.pdf').dblclick({ timeout: 30_000 })
+      await expect(page.locator('[data-display="exact"]').first()).toBeVisible({ timeout: 60_000 })
+      await openTree(page)
+      await expect(page.locator(`[role="tree"] [data-el="${GROUP}"]`)).toHaveCount(0)
+      const indent = (gid: string) => page.locator(`[role="tree"] [data-el="${gid}"]`)
+        .evaluate(n => parseFloat((n as HTMLElement).style.paddingLeft))
+      if (owner === 'single') expect(await indent('axes_3')).toBeGreaterThan(await indent('axes_1'))
+      else expect(await indent('axes_3')).toBe(await indent('axes_1'))
+      await pickRow(page, 'axes_3.colorbar')
+      if (owner === 'single') {
+        await expect(page.locator('[data-crumb="axes_1"]')).toBeVisible()
+        await expect(page.locator('[data-colorbar-ownership]')).toHaveCount(0)
+        await pickRow(page, 'axes_1')
+        await page.waitForTimeout(500)
+        const before = await boxes(page)
+        await settleAfter(page, async () => dragBy(page, await grabPoint(page, before.abs.axes_1), -40))
+        const after = await boxes(page)
+        expect(before.rel.axes_1 - after.rel.axes_1).toBeGreaterThan(25)
+        expect(after.rel.axes_3 - before.rel.axes_3).toBeCloseTo(after.rel.axes_1 - before.rel.axes_1, 0)
+        expect(after.rel.axes_2).toBeCloseTo(before.rel.axes_2, 0)
+      } else {
+        await expect(page.locator('[data-crumb="axes_1"]')).toHaveCount(0)
+        await page.locator('[data-colorbar-ownership] summary').click()
+        await expect(page.getByText('fig.colorbar(mappable, cax=cax, ax=ax)', { exact: true })).toBeVisible()
+        await expect(page.getByText('fig.colorbar(mappable, cax=cax, ax=[b, c])', { exact: true })).toBeVisible()
+      }
+    })
+}
 
 test(
   '选中组后从成员子图里的标题起手拖 = 整组平移（不是只挪标题）',

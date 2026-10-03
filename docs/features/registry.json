@@ -369,7 +369,7 @@
       "e2e": [
         {
           "spec": "shared-colorbar-group.spec.ts",
-          "title": "共享色条成组：树、整组平移、撤销重做、钻进成员、单拖不带色条、重开还在"
+          "title": "自动色条轴成组：树、平移缩放、撤销重做、钻进成员、单拖不带色条、重开还在"
         },
         {
           "spec": "shared-colorbar-group.spec.ts",
@@ -378,6 +378,18 @@
         {
           "spec": "shared-colorbar-group.spec.ts",
           "title": "选区 = 组 + 组外的子图一起选中：从组外子图里的东西起手拖，只挪那样东西，组不跟着走（Codex #691 P2）"
+        },
+        {
+          "spec": "shared-colorbar-group.spec.ts",
+          "title": "手动 cax成组：树、平移缩放、撤销重做、钻进成员、单拖不带色条、重开还在"
+        },
+        {
+          "spec": "shared-colorbar-group.spec.ts",
+          "title": "手动 cax single：树与面包屑按声明，缺声明时给出可执行关联方式"
+        },
+        {
+          "spec": "shared-colorbar-group.spec.ts",
+          "title": "手动 cax unknown：树与面包屑按声明，缺声明时给出可执行关联方式"
         }
       ]
     },

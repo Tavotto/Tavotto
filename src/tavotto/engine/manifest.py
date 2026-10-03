@@ -257,7 +257,9 @@ def _is_secondary_axis(ax) -> bool:
 _TWIN_SIDE_NAMES = {"left": "左轴", "right": "右轴", "top": "上轴", "bottom": "下轴"}
 
 
-def _twin_axes_labels(all_axes: list, child_ids: set, cbar_of_ax: dict) -> dict[int, str]:
+def _twin_axes_labels(
+    all_axes: list, child_ids: set, cbar_of_ax: dict, subplot_numbers: dict[int, int]
+) -> dict[int, str]:
     """id(twin Axes) → 可区分标签（「子图 N（右轴）」）。
 
     twinx/twiny 的 twin 是 `fig.axes` 里一个**独立的** Axes，与宿主逐像素
@@ -328,7 +330,7 @@ def _twin_axes_labels(all_axes: list, child_ids: set, cbar_of_ax: dict) -> dict[
             n = side_count.get(side, 0) + 1
             side_count[side] = n
             suffix = name if n == 1 else f"{name} {n}"
-            out[id(twin)] = f"子图 {pos[id(base)] + 1}（{suffix}）"
+            out[id(twin)] = f"子图 {subplot_numbers[id(base)]}（{suffix}）"
     return out
 
 
@@ -529,7 +531,10 @@ def instrument(state: FigState) -> None:
     # 上出现「次坐标轴 2」，因为前面那个 1 被插图占掉了。
     child_ordinal: dict[str, int] = {"inset": 0, "secondary": 0}
     # twinx/twiny 的 twin 轴 → 「子图 N（右轴）」这类可区分标签，整轮算一次
-    twin_labels = _twin_axes_labels(all_axes, child_ids, cbar_of_ax)
+    subplot_numbers = {
+        id(ax): n for n, ax in enumerate((a for a in all_axes if a not in cbar_of_ax), 1)
+    }
+    twin_labels = _twin_axes_labels(all_axes, child_ids, cbar_of_ax, subplot_numbers)
     # 插图 → 它的宿主轴：宿主被拖时，**被挪过**的插图要一起走（前端 `axesCompanions`；
     # 没挪过的由定位器带着走，本来就跟着）
     parent_of = {id(c): p for p in all_axes for c in getattr(p, "child_axes", ()) or ()}
@@ -573,7 +578,11 @@ def instrument(state: FigState) -> None:
                 else f"插图 {child_ordinal['inset']}"
             )
         else:
-            label = "色条轴" if ax in cbar_of_ax else twin_labels.get(id(ax)) or f"子图 {i + 1}"
+            label = (
+                "色条轴"
+                if ax in cbar_of_ax
+                else twin_labels.get(id(ax)) or f"子图 {subplot_numbers[id(ax)]}"
+            )
         # **脚本原样的轴方向要在这一刻采**：`ax.invert_yaxis()` 不关自动缩放，
         # 所以 lim 的 originals 里只会是 `_AUTOSCALE` 哨兵，方向那一半信息
         # 端点序里根本没有。晚一步采到的就是某次 override 之后的方向了。
@@ -4433,9 +4442,9 @@ def _colorbar_structure(state: FigState, elements: list[dict]) -> list[dict]:
 
     三件事分开说（归属 ≠ 分类 ≠ 颜色来源）：
 
-    * **归属**只认色条自己声明的宿主 `colorbarmodel.declared_parents`——matplotlib 在
-      `fig.colorbar(..., ax=...)` 那一刻记下的 ax 列表。`cax=` 建的没有这份记录，
-      归属保持原样（色条轴挂在整张图下），**不按位置、相邻、颜色去猜**；
+    * **归属**只认色条自己声明的宿主 `colorbarmodel.declared_parents`——matplotlib 或
+      执行入口在 `fig.colorbar(..., ax=...)` 那一刻记下的 ax 列表。缺少声明时
+      报 `owner_status=undeclared`、保持顶层，**不按位置、相邻、颜色去猜**；
     * 声明了 1 个宿主：色条轴的 `parent_gid` = 那个子图；
     * 声明了 ≥2 个宿主：生成一个组 `group:<色条轴 gid>`，成员 = 这几个子图 + 色条轴，
       它们的 `parent_gid` = 组。组只是结构与布局（前端把组展开成成员一起平移 / 缩放），
@@ -4457,7 +4466,10 @@ def _colorbar_structure(state: FigState, elements: list[dict]) -> list[dict]:
         cb_entry = by_gid.get(el["gid"])
         cax_entry = by_gid.get(proxy.cbax_gid)
         parents = declared_parents(proxy.cb)
-        if cb_entry is None or cax_entry is None or not parents:
+        if cb_entry is None or cax_entry is None:
+            continue
+        if not parents:
+            cb_entry["owner_status"] = "undeclared"
             continue
         owners: list[str] = []
         for p in parents:
@@ -4470,11 +4482,11 @@ def _colorbar_structure(state: FigState, elements: list[dict]) -> list[dict]:
         if not owners:
             continue
         cb_entry["owner_gids"] = owners
-        if len(owners) == 1:
-            cax_entry["parent_gid"] = owners[0]
-            continue
         cax_fig = getattr(proxy.cb.ax, "figure", None)
         if any(getattr(p, "figure", None) is not cax_fig for p in parents):
+            continue
+        if len(owners) == 1:
+            cax_entry["parent_gid"] = owners[0]
             continue
         shared.append((proxy, cb_entry, owners))
 
@@ -4502,7 +4514,9 @@ def _colorbar_structure(state: FigState, elements: list[dict]) -> list[dict]:
             "colorbar_gid": cb_entry["gid"],
             "bbox": [x0, y0, x1 - x0, y1 - y0],
             # 能整组平移 / 缩放 = 每个成员自己都能改落位（插图、寄生轴不行）
-            "resizable": all(by_gid[g].get("resizable", False) for g in members),
+            # SubFigure 的 position 仍是局部坐标，前端组变换按根图算（ADR 0100）。
+            "resizable": getattr(proxy.cb.ax, "figure", None) is state.fig
+            and all(by_gid[g].get("resizable", False) for g in members),
         }
         if cb_entry.get("mappable_gid"):
             group["mappable_gid"] = cb_entry["mappable_gid"]

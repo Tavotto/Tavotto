@@ -134,11 +134,11 @@ def test_inset_host_proxy_is_claimed(facts, gid):
 # ============================================================ 色条 ↔ 位图
 def test_standalone_colorbar_finds_the_raster_it_describes(facts):
     """独立 mappable 的色条：`mappable_gid` 指向那张已成色的位图，宿主是位图所在的子图
-    （拖它时色条跟着走）。"""
+    （颜色关联；布局随行需由 ax 明确声明）。"""
     s = facts["raster_fields"]["summary"]
     assert s["axes_1.colorbar"]["mappable_gid"] == "axes_0.images_0"
     assert s["axes_1.colorbar"]["host_gid"] == "axes_0"
-    assert s["axes_0"]["follow_gids"] == ["axes_1"]
+    assert s["axes_0"]["follow_gids"] is None
 
 
 def test_raster_follows_the_colorbar_and_keeps_its_overlays(facts):

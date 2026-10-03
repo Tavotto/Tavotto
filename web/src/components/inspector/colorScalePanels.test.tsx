@@ -230,6 +230,21 @@ afterEach(async () => {
 /* ------------------------------ 共用的那份色阶 ----------------------------- */
 
 describe('色阶共用关系（审计 T22 / T23）', () => {
+  it.each([true, false])('未声明布局宿主时给出明确关联写法（有颜色对家：%s）', async (mappable) => {
+    const cb = { ...colorbarEl({ mappable }), owner_status: 'undeclared' as const }
+    await mount(cb.gid, { manifest: manifestOf(cb) })
+    const note = host.querySelector('[data-colorbar-ownership]')
+    expect(note?.textContent).toContain('归属未确定')
+    expect(note?.textContent).toContain('fig.colorbar(mappable, cax=cax, ax=ax)')
+    expect(note?.textContent).toContain('fig.colorbar(mappable, cax=cax, ax=[b, c])')
+    expect(Boolean(host.querySelector('[data-color-scale-link]'))).toBe(mappable)
+  })
+
+  it('旧引擎没有归属状态字段时保留原有属性页', async () => {
+    await mount('axes_1.colorbar')
+    expect(host.querySelector('[data-colorbar-ownership]')).toBeNull()
+  })
+
   it('两个方向都认得出对家，判据是 mappable_gid', () => {
     const m = manifestOf()
     expect(colorScalePartner(m, colorbarEl())?.gid).toBe('axes_0.images_0')

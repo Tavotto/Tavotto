@@ -14,7 +14,7 @@ worker 能让症状消失，但两份代码迟早分叉，而分叉的表现正�
 入口里产出**不同的 stem**（前端按 stem 索引一切，那是数据级的错位）。所以
 策略收在这里，两边各调一次。
 
-三件事这里是唯一出处：
+共享捕获语义的唯一出处：
 
 * `savefig_stem()` —— `savefig(路径)` 里那个 stem 怎么取；
 * `savefig_call()` —— 一次 savefig 调用决定产物长相的那几个参数（`bbox_inches` /
@@ -22,6 +22,7 @@ worker 能让症状消失，但两份代码迟早分叉，而分叉的表现正�
   记成 JSON（`savefig_calls` 进描述符，见函数 docstring）；
 * `collect_pyplot_figures()` —— 脚本跑完之后还活着的 pyplot Figure 怎么补进
   捕获表（去重、命名、保序）；
+* `install_colorbar_capture()` —— 原样调用 matplotlib，记下手动 `cax=` 的显式 `ax` 宿主；
 * `install_relative_read_fallback()` —— 相对路径**只读**回退（见下）；
 * `remap_target()` / `install_input_remap()` / `missing_input_of()` —— 数据找不到时用户指认的
   只读改指表与「缺的是哪个」的判据（ADR 0106；父进程推规则也用 `remap_target`）；
@@ -174,6 +175,7 @@ __all__ = [
     "collect_pyplot_figures",
     "fallback_stems",
     "install_relative_read_fallback",
+    "install_colorbar_capture",
     "unused_imports",
     "reaches_main",
     "install_unused_import_placeholders",
@@ -234,6 +236,38 @@ _SOURCES = (SOURCE_SAVEFIG, SOURCE_PYPLOT)
 #: 这类例外本身也有上限：总数最多 `MAX_SAVEFIG_CALLS_HARD`。
 MAX_SAVEFIG_CALLS = 8
 MAX_SAVEFIG_CALLS_HARD = 2 * MAX_SAVEFIG_CALLS
+
+
+def install_colorbar_capture(mfigure) -> None:
+    """Record explicit `cax=…, ax=…` owners without giving matplotlib layout metadata.
+
+    Figure and SubFigure inherit this method. Forward the call unchanged; only
+    standard Axes / lists / tuples / ndarray declarations are observed. In
+    particular, do not consume iterators which matplotlib ignores with cax.
+    """
+    from functools import wraps
+
+    original = mfigure.FigureBase.colorbar
+    if getattr(original, "_tavotto_colorbar_capture", False):
+        return
+    axes_type, array_type = mfigure.Axes, mfigure.np.ndarray
+
+    @wraps(original)
+    def colorbar(self, *args, **kwargs):
+        cb = original(self, *args, **kwargs)
+        cax = kwargs.get("cax", args[1] if len(args) > 1 else None)
+        ax = kwargs.get("ax", args[2] if len(args) > 2 else None)
+        if cax is not None and ax is not None:
+            parents = list(ax.flat) if type(ax) is array_type else ax
+            if type(parents) not in (list, tuple):
+                parents = [parents]
+            if parents and all(isinstance(p, axes_type) for p in parents):
+                cb._tavotto_colorbar_parents = tuple(parents)  # noqa: SLF001
+        return cb
+
+    colorbar._tavotto_colorbar_capture = True  # noqa: SLF001
+    mfigure.FigureBase.colorbar = colorbar
+
 
 #: 每次执行的观察预算，独立于旧的逐 stem 调用表。超限必须说历史不完整，
 #: 不能把「最后一条留下的记录」当成「磁盘上最后一次保存」。不保留 Figure 强引用。

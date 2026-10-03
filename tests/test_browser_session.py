@@ -24,6 +24,7 @@ from pathlib import Path
 import pytest
 
 from tavotto.engine import patchspec, pool
+from test_colorbar_groups import LIBRARY as COLORBAR_LIBRARY
 
 try:
     WORKER_PY = pool.find_worker_python()
@@ -40,6 +41,25 @@ RUNTIME_LOCK = json.loads(
     (ROOT / "packaging" / "playground-runtime.json").read_text(encoding="utf-8")
 )
 SUPPORTED_ROOTS = RUNTIME_LOCK["import_roots"]
+
+
+def test_browser_records_explicit_manual_cax_layout_owners(tmp_path):
+    loaded, opened = drive(
+        [
+            {
+                "cmd": "load",
+                "filename": "manual.py",
+                "source": COLORBAR_LIBRARY + '\n_manual("Manual")\n',
+            },
+            {"cmd": "open", "stem": "Manual"},
+        ],
+        tmp_path,
+    )
+    assert loaded["ok"] and opened["ok"]
+    man = opened["manifest"]
+    assert man["groups"][0]["members"] == ["axes_2", "axes_3", "axes_4"]
+    assert next(e for e in man["elements"] if e["gid"] == "axes_1")["parent_gid"] == "axes_0"
+
 
 #: 子进程驱动：stdin 收 JSON 请求列表，stdout 末行吐 JSON 响应列表。
 #: 只经 `browser.handle`——测试走的就是 JS 侧唯一会走的那扇门。

@@ -5,6 +5,7 @@ import type { Manifest, ManifestElement } from '@/lib/api'
 import { colorbarCovers } from '@/lib/colormapAlias'
 import { useUiStore } from '@/store/uiStore'
 import { Button } from '../ui/Button'
+import { Details, Summary } from '../ui/Details'
 import { Tip } from '../ui/Tooltip'
 import { engineLabel } from './roles/registry'
 
@@ -54,28 +55,45 @@ export function ColorScaleLink({
   element: ManifestElement
 }) {
   const partner = colorScalePartner(manifest, element)
-  if (!partner) return null
-  const label = engineLabel(partner.label)
+  const unowned = element.role === 'colorbar' && element.owner_status === 'undeclared'
+  if (!partner && !unowned) return null
+  const label = partner ? engineLabel(partner.label) : ''
   return (
-    <div
-      data-color-scale-link={partner.gid}
-      className="mb-2 flex min-w-0 items-center gap-1.5 rounded-sm border border-border px-2 py-1"
-    >
-      <Link2 size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-hidden />
-      <span className="min-w-0 flex-1 truncate text-xs text-ink-2" title={el('colorScaleTip')}>
-        {el('colorScaleLinked', { label })}
-      </span>
-      <Tip label={el('colorScaleTip')}>
-        <Button
-          size="sm"
-          className="shrink-0 text-ink-2"
-          onClick={() => useUiStore.getState().setSelectedGid(partner.gid)}
-          aria-label={el('selectScalePartner', { label })}
+    <>
+      {partner && (
+        <div
+          data-color-scale-link={partner.gid}
+          className="mb-2 flex min-w-0 items-center gap-1.5 rounded-sm border border-border px-2 py-1"
         >
-          {el('selectScalePartnerShort')}
-          <ChevronRight size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-hidden />
-        </Button>
-      </Tip>
-    </div>
+          <Link2 size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-hidden />
+          <span className="min-w-0 flex-1 truncate text-xs text-ink-2" title={el('colorScaleTip')}>
+            {el('colorScaleLinked', { label })}
+          </span>
+          <Tip label={el('colorScaleTip')}>
+            <Button
+              size="sm"
+              className="shrink-0 text-ink-2"
+              onClick={() => useUiStore.getState().setSelectedGid(partner.gid)}
+              aria-label={el('selectScalePartner', { label })}
+            >
+              {el('selectScalePartnerShort')}
+              <ChevronRight size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-hidden />
+            </Button>
+          </Tip>
+        </div>
+      )}
+      {unowned && (
+        <Details
+          data-colorbar-ownership
+          className="mb-2 rounded-sm border border-border px-2 py-1 text-xs text-ink-2"
+        >
+          <Summary className="cursor-pointer">{el('colorbarOwnershipUnknown')}</Summary>
+          <p className="mt-2">{el('colorbarOwnershipHelp')}</p>
+          <code className="mt-1 block break-all">fig.colorbar(mappable, cax=cax, ax=ax)</code>
+          <p className="mt-2">{el('colorbarOwnershipShared')}</p>
+          <code className="mt-1 block break-all">fig.colorbar(mappable, cax=cax, ax=[b, c])</code>
+        </Details>
+      )}
+    </>
   )
 }
