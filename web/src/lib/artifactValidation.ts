@@ -94,16 +94,31 @@ export function refuseArtifactOperation(panel: Subject): void {
 // These two transient intents own no document state and are never serialized.
 let entryEpoch = 0
 let entryPanel: string | null = null
+let entryRetry: (() => void) | null = null
 export function beginArtifactEntry(panelId: string): number {
+  entryRetry = null
   entryPanel = panelId
   return ++entryEpoch
 }
 export function cancelArtifactEntry(): void {
+  entryRetry = null
   entryPanel = null
   entryEpoch++
 }
 export const artifactEntryCurrent = (epoch: number): boolean => epoch === entryEpoch
 export const artifactEntryPending = (panelId: string): boolean => entryPanel === panelId
+
+/** Keep the explicit edit intent while the existing environment dialog awaits an answer. */
+export function deferArtifactEntry(epoch: number, retry: () => void): void {
+  if (!artifactEntryCurrent(epoch)) return
+  entryPanel = null
+  entryRetry = retry
+}
+export function retryArtifactEntry(): void {
+  const retry = entryRetry
+  entryRetry = null
+  retry?.()
+}
 
 let editIntent: { id: string; guard: string; stillOwner: () => boolean } | null = null
 export function clearArtifactEditIntent(): void {

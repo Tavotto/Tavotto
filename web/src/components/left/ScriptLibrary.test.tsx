@@ -906,7 +906,7 @@ describe('试运行撞上起会话之前的门', () => {
     setCurrentProjectId(null)
   })
 
-  it('依赖门（脚本行 ▶）：行内一句话 + 一键修复，不弹授权框、不进「可能需要原环境」；点一次走联合准备，装好后自动再试运行、出图（用户 2026-09-30 的决定）', async () => {
+  it('依赖门（脚本行 ▶）：直接弹一键修复框、不进「可能需要原环境」；点一次走联合准备，装好后自动再试运行、出图', async () => {
     mockProbe.mockResolvedValueOnce(gateProbe())
     vi.mocked(createJointDependencyPlan).mockResolvedValue({
       plan: {
@@ -919,15 +919,16 @@ describe('试运行撞上起会话之前的门', () => {
     await mount()
     await act(async () => runButton().click())
     await flush()
-    // ① 行内直接给：不弹框，载荷不交给 envStore
-    expect(prepDialog(), '行内呈现时不该弹授权框').toBeNull()
-    expect(useEnvStore.getState().dependencyPreparation).toBeNull()
-    expect(host.querySelector('[data-script-preparation-sentence]')!.textContent).toBe('这个脚本还缺 adjusttext，点一下自动装好。')
+    // ① 不用找素材库的修复按钮：缺依赖的响应直接弹框。
+    expect(prepDialog(), '缺依赖后没有弹授权框').toBeTruthy()
+    expect(useEnvStore.getState().dependencyPreparation).toEqual(prepOffer)
+    expect(prepDialog()!.textContent).toContain('这个脚本还缺 adjusttext，点一下自动装好。')
+    expect(host.querySelector('[data-script-preparation-sentence]')).toBeNull()
     // ② 不是失败：不进「可能需要原环境」，没有那两颗无关的出口
     expect(host.textContent).not.toContain('可能需要原环境')
     expect([...host.querySelectorAll('[data-script-preparation] button')].filter((b) => !b.closest('details')).map((b) => b.textContent)).toEqual(['一键修复'])
     // ③ 点一次：先绑定计划再只发 plan_id
-    await act(async () => buttonByText('一键修复').click())
+    await act(async () => prepDialog()!.querySelector<HTMLButtonElement>('[data-dependency-prepare-start]')!.click())
     await flush()
     expect(createJointDependencyPlan).toHaveBeenCalledWith({ script: 'fig_labels.py', target: 'tavotto_managed' })
     expect(prepareJointDependencies).toHaveBeenCalledWith('jp-row')
@@ -945,7 +946,7 @@ describe('试运行撞上起会话之前的门', () => {
     expect(useScriptRunStore.getState().byScript['fig_labels.py']?.phase).toBe('captured_one')
   })
 
-  it('其他入口（图卡 / 修复后重跑不带行内标记）撞上依赖门仍弹授权框；「稍后」「不准备，直接运行」的 #740 行为不变', async () => {
+  it('其他入口撞上依赖门同样弹授权框；「不准备，直接运行」之后重跑', async () => {
     mockProbe.mockResolvedValueOnce(gateProbe())
     vi.mocked(skipDependencyPreparation).mockResolvedValue({ skipped: true } as never)
     await mount()

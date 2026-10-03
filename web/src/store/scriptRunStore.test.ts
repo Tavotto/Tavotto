@@ -263,22 +263,23 @@ describe('试运行撞上起会话之前的门', () => {
     useEnvStore.setState({ dependencyPreparation: null, workdirConfirmation: null })
   })
 
-  it('脚本行 ▶（inlineGate）：依赖门在行内呈现，不交给 envStore（不弹框）；运行目录门照旧交；重跑沿用行内标记', async () => {
+  it('脚本行与修复后重跑都直接弹依赖授权框；运行目录门照旧交', async () => {
     mockProbe.mockResolvedValueOnce(gated('dependency_preparation_required', { dependency_preparation: offer }))
-    await useScriptRunStore.getState().run('fig.py', { inlineGate: true })
+    await useScriptRunStore.getState().run('fig.py')
     expect(state().phase).toBe('needs_preparation')
     expect(state().error?.dependency_preparation).toEqual(offer)
-    expect(useEnvStore.getState().dependencyPreparation).toBeNull()
-    // 门放行后重跑（`rerunGated`，不带 opts）：仍是行内，再撞上门也不弹框
+    expect(useEnvStore.getState().dependencyPreparation).toEqual(offer)
+    useEnvStore.getState().dismissDependencyPreparation()
+    // 门放行后重跑：仍需要准备时重新弹框。
     mockProbe.mockResolvedValueOnce(gated('dependency_preparation_required', { dependency_preparation: offer }))
     useScriptRunStore.getState().rerunGated('needs_preparation', 'fig.py')
     await Promise.resolve()
     await new Promise((r) => setTimeout(r, 0))
-    expect(useEnvStore.getState().dependencyPreparation).toBeNull()
+    expect(useEnvStore.getState().dependencyPreparation).toEqual(offer)
     // 运行目录门不受影响
     useScriptRunStore.getState().clear()
     mockProbe.mockResolvedValueOnce(gated('workdir_confirmation_required', { confirmation }))
-    await useScriptRunStore.getState().run('fig.py', { inlineGate: true })
+    await useScriptRunStore.getState().run('fig.py')
     expect(useEnvStore.getState().workdirConfirmation).toEqual(confirmation)
   })
 

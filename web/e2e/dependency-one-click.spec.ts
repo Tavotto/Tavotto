@@ -280,9 +280,9 @@ test(
  * 后端把整份脚本要的包一次装齐的一半由 `tests/test_dependency_transaction.py` 的真事务用例守着。
  */
 test(
-  '一键修复：开跑前要准备依赖的脚本行同样只有一句话 + 一个主按钮，点一次走联合准备，装好后自动重跑出图',
+  '一键修复：脚本跑前缺依赖直接弹框，进度留在弹窗，装好后自动重跑出图',
   { tag: ['@feature:assets.dependency-one-click-repair'] },
-  async ({ app, page }) => {
+  async ({ app, page }, testInfo) => {
     const dir = path.join(os.tmpdir(), `tavotto-e2e-oneclick-joint-${Date.now()}`)
     writeProject(dir)
     const a = await app({ figures: dir })
@@ -398,42 +398,43 @@ test(
     })
 
     await page.goto(a.baseURL)
-    await expect(page.getByText(SCRIPT).first()).toBeVisible({ timeout: 30_000 })
-    await page.getByRole('button', { name: `运行 ${SCRIPT} 并发现图` }).click()
+    const row = page.locator(`[data-script-row="${SCRIPT}"]`)
+    await expect(row).toBeVisible({ timeout: 30_000 })
+    await row.locator('[data-script-run]').click()
 
-    // ① 一句话 + 一个主按钮（其余收在折叠的「详情」里），归「需要修复」，没有老的「可能依赖原来的 Python 环境」
-    const card = page.locator('[data-script-preparation]')
-    await expect(card).toBeVisible({ timeout: 30_000 })
-    await expect(page.getByRole('list', { name: '需要修复' })).toContainText(SCRIPT)
-    await expect(page.getByText('可能需要原环境')).toHaveCount(0)
-    await expect(page.getByText('可能依赖原来的 Python 环境')).toHaveCount(0)
-    const button = card.locator('[data-script-preparation-fix]')
+    // ① 缺依赖响应直接弹框，无需进入素材库找修复入口；未授权前不绑定、不安装。
+    const dialog = page.locator('[data-dialog="dependency-prepare"]')
+    await expect(dialog).toBeVisible({ timeout: 30_000 })
+    await expect(dialog).toContainText('这个脚本还缺 pandas 和 openpyxl，点一下自动装好。')
+    expect(planBodies).toHaveLength(0)
+    expect(prepareBodies).toHaveLength(0)
+    const button = dialog.locator('[data-dependency-prepare-start]')
     await expectReachable(page, button, '一键修复按钮')
-    expect(await renderedBlocks(card)).toEqual([
-      'p:这个脚本还缺 pandas 和 openpyxl，点一下自动装好。',
-      'button:一键修复',
-      'summary:详情',
-    ])
+    await expect(button).toHaveText('一键修复')
+    await expect(dialog.locator('[data-repair-advanced]')).not.toHaveAttribute('open')
+    await page.screenshot({ path: testInfo.outputPath('script-environment-repair-dialog.png') })
 
-    // ② 点一次：绑定联合计划、只发 plan_id 执行；没有弹授权框
+    // ② 点一次：绑定联合计划、只发 plan_id 执行；弹窗承载进度。
     await button.click()
     await expect.poll(() => prepareBodies.length).toBe(1)
     expect(planBodies).toEqual([{ script: SCRIPT, target: 'tavotto_managed' }])
     expect(prepareBodies[0]).toEqual({ plan_id: JOINT_PLAN_ID })
-    await expect(page.locator('[data-dialog="dependency-prepare"]')).toHaveCount(0)
+    await expect(dialog).toBeVisible()
 
     // ③ 进度一行，跟着换
     events.push(jointProgress('creating_env'))
-    const line = card.locator('[data-repair-line]')
+    const line = dialog.locator('[data-repair-line]')
     await expect(line).toHaveText('正在创建 Python 环境…（2/4）', { timeout: 15_000 })
     await expectReachable(page, line, '进度')
     events.push(jointProgress('installing'))
     await expect(line).toHaveText('正在安装 pandas 和 openpyxl…（3/4）', { timeout: 15_000 })
+    await expect(row.locator('[data-repair-line]')).toHaveCount(0)
 
     // ④ 装好：这一行自动重跑（真后端、真 worker），图出来，卡片收起
     events.push(jointProgress('done', { result: { ok: true } }))
     await expect(page.getByText('已发现 1 张图')).toBeVisible({ timeout: 120_000 })
     expect(probes).toBe(2)
+    await expect(dialog).toHaveCount(0)
     await expect(page.locator('[data-script-preparation]')).toHaveCount(0)
   },
 )

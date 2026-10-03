@@ -569,3 +569,90 @@ test('guarded PNG: independent A→B→A variants survive empty-context reopen a
     await second?.close()
   }
 })
+
+test('guarded PNG: a dependency gate opens one-click repair and completion resumes real source validation', { tag: '@feature:assets.dependency-one-click-repair' }, async ({ app, page }, testInfo) => {
+  const source = sourceProject(testInfo.outputPath('source'), false)
+  const a = await app({ figures: source.figures })
+  const data = await seed(page.request, a.baseURL, ['a'], 'guarded-png-dependency-repair')
+  const traffic = watchRenders(page)
+  const planId = 'png-entry-repair'
+  const requirements = ['ovito']
+  const joint = {
+    plan_version: 1, status: 'ready', target_kind: 'tavotto_managed', script: 'figure.py',
+    needed: [], missing: [], satisfied: [], unknown: [], possible: [], requirements,
+    constraints: [], require_hashes: false, adapter: [], blocked: [], identity: planId,
+    selection: { selected_groups: [], available_groups: [], unselected_groups: [], skipped_marker: [] },
+  }
+  const offer = {
+    code: 'dependency_preparation_required', script: 'figure.py', plan: joint,
+    target_kind: 'tavotto_managed', rounds_remaining: 3, skipped: false, user_environments: [],
+    targets: [{ kind: 'tavotto_managed', venv: '', python: '', modifies_user_environment: false,
+      creates_environment: true, available: true, reason: '' }],
+  }
+  // Only the missing-package gate and installation are served by the fixture. After the user's
+  // single click and the real SSE handler, selected-source validation/render use the real worker.
+  let repaired = false
+  const events: string[] = []
+  await page.route('**/api/events**', async route => {
+    await route.fulfill({
+      status: 200, headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' },
+      body: `retry: 150\n\n${events.splice(0).join('')}`,
+    })
+  })
+  await page.route(/\/api\/engine\/render(\?|$)/, async route => {
+    if (repaired) return route.fallback()
+    await route.fulfill({status: 500, json: {
+      code: offer.code, error: 'Needs ovito', dependency_preparation: offer,
+    }})
+  })
+  const plans: unknown[] = [], starts: unknown[] = []
+  await page.route(/\/api\/engine\/dependencies\/plan(\?|$)/, async route => {
+    plans.push(route.request().postDataJSON())
+    await route.fulfill({json: {plan: {
+      plan_id: planId, script: 'figure.py', target_kind: 'tavotto_managed', python: '',
+      requirements, constraints: [], require_hashes: false, adapter: [], identity: planId,
+      needed_imports: ['ovito'], groups: [], modifies_user_environment: false,
+      creates_environment: true, network_required: true, expires_at: Date.now() / 1000 + 600, joint,
+    }}})
+  })
+  await page.route(/\/api\/engine\/dependencies\/prepare(\?|$)/, async route => {
+    starts.push(route.request().postDataJSON())
+    repaired = true
+    events.push(`event: engine.dependency\ndata: ${JSON.stringify({
+      plan_id: planId, state: 'done', log: '', error: null, code: '', flow: 'joint',
+      requirements, target_kind: 'tavotto_managed', script: 'figure.py',
+    })}\n\n`)
+    await route.fulfill({json: {ok: true}})
+  })
+  await page.goto(`${a.baseURL}/${data.query}`)
+  await paintedOriginal(page, 'a', source.png)
+  await revealCompanion(page, source)
+  const stopped = await enter(page, 'a')
+  expect(stopped.status()).toBe(500)
+  expect(await stopped.json()).toMatchObject({code: offer.code})
+  const dialog = page.locator('[data-dialog="dependency-prepare"]')
+  await expect(dialog).toHaveCount(1)
+  await expect(dialog).toBeVisible()
+  await expect(dialog).toContainText('ovito')
+  await expect(page.locator('[data-element-svg]')).toHaveCount(0)
+  expect((await data.savedPanel('a')).artifactValidation).toBeUndefined()
+  const repair = dialog.locator('[data-dependency-prepare-start]')
+  await expect(repair).toHaveText('Fix it')
+  await expect(repair).toBeEnabled()
+  await page.screenshot({path: testInfo.outputPath('png-dependency-repair-dialog.png')})
+  await repair.click()
+  await expect(dialog).toHaveCount(0)
+  await exact(page, 'a')
+  await expect.poll(async () => (await data.savedPanel('a')).artifactValidation, {timeout: 30_000}).toEqual(source.guard)
+  const adopted = await data.savedPanel('a')
+  expect(adopted.artifactValidation).toEqual(source.guard)
+  expect(adopted.overrides).toEqual([FRAME])
+  expect(placement(adopted)).toEqual(placement(data.objects[0]))
+  expect(plans).toEqual([{script: 'figure.py', target: 'tavotto_managed'}])
+  expect(starts).toEqual([{plan_id: planId}])
+  const admissions = traffic.requests.filter(r => r.request.patches.length === 0)
+  expect(admissions).toHaveLength(2)
+  expect(admissions.every(r => r.request.source_policy === POLICY)).toBe(true)
+  await fullRender(traffic.records, [FRAME], source.guard)
+  source.expectUnchanged()
+})

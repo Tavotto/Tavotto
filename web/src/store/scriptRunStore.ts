@@ -67,8 +67,6 @@ export interface ScriptRunState {
   /** 用户已点取消、原请求尚未落地 */
   cancelRequested: boolean
   gen: number
-  /** 素材库脚本行发起的：依赖门在行内一句话 + 一键修复，不弹授权框（用户 2026-09-30，#760）；重跑沿用 */
-  inlineGate?: boolean
 }
 
 const IDLE: ScriptRunState = {
@@ -212,7 +210,7 @@ interface ScriptRunStore {
   /** 项目代际：clear() 递增，在途响应据此作废 */
   epoch: number
   byScript: Record<string, ScriptRunState>
-  run: (script: string, opts?: { inlineGate?: boolean }) => Promise<void>
+  run: (script: string) => Promise<void>
   cancel: (script: string) => void
   /** SSE probe.started：starting_runtime → running（其余状态不动） */
   markRunning: (script: string) => void
@@ -242,9 +240,8 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
   epoch: 0,
   byScript: {},
 
-  run: async (script, opts) => {
+  run: async (script) => {
     const prev = get().byScript[script]
-    const inlineGate = opts?.inlineGate ?? prev?.inlineGate ?? false
     if (prev && isBusyPhase(prev.phase)) return // 同脚本防并发
     const epoch = get().epoch
     const projectAtStart = currentProjectId()
@@ -252,7 +249,7 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
     set((s) => ({
       byScript: {
         ...s.byScript,
-        [script]: { ...IDLE, phase: 'starting_runtime', gen, inlineGate },
+        [script]: { ...IDLE, phase: 'starting_runtime', gen },
       },
     }))
 
@@ -293,8 +290,7 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
           descriptors: [],
         })
         // 起会话之前的门：弹与渲染那条路同一个框；行上留着载荷，「稍后」之后能再开
-        // 行内呈现的依赖门（inlineGate）不弹授权框；运行目录门与其他入口（图卡 / 接入中心）照旧
-        if (!(inlineGate && res.error.code === DEPENDENCY_PREPARATION_CODE)) handOffProbeGate(res.error, projectAtStart)
+        handOffProbeGate(res.error, projectAtStart)
         return
       }
       settle({
@@ -325,7 +321,7 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
       if (stale()) return
       const error = probeErrorOf(e)
       settle({ phase: phaseOf(error), error, descriptors: [] })
-      if (!(inlineGate && error.code === DEPENDENCY_PREPARATION_CODE)) handOffProbeGate(error, projectAtStart)
+      handOffProbeGate(error, projectAtStart)
     }
   },
 

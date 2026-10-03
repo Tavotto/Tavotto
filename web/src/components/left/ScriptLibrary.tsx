@@ -22,20 +22,9 @@ import { useUiStore } from '@/store/uiStore'
 import { Button, IconButton } from '../ui/Button'
 import { Dialog } from '../ui/Dialog'
 import { EmptyState } from '../ui/EmptyState'
-import {
-  DependencyRepairCard,
-  downloadFact,
-  jointProgressText,
-  oneClickEnvironmentSentence,
-  oneClickSentence,
-  packagesPhrase,
-  repairShortMessage,
-} from '../DependencyRepairCard'
-import { oneClickShape, STATE_TEXT } from '../DependencyPrepareDialog'
-import { RepairProgressLine } from '../RepairProgressLine'
-import { isRepairRunning, useDepRepairStore, type ScriptRepairOffer } from '@/store/depRepairStore'
+import { DependencyRepairCard } from '../DependencyRepairCard'
+import { useDepRepairStore, type ScriptRepairOffer } from '@/store/depRepairStore'
 import { useEnvStore } from '@/store/envStore'
-import { listJoin } from '@/i18n/format'
 import { WorkdirChooseButton } from '../WorkdirRow'
 
 /**
@@ -201,7 +190,7 @@ function ScriptRow({
   const onRunOrCancel = () => {
     const store = useScriptRunStore.getState()
     if (busy) store.cancel(entry.script)
-    else void store.run(entry.script, { inlineGate: true })
+    else void store.run(entry.script)
   }
 
   return (
@@ -292,114 +281,28 @@ function ScriptDependencyRepair({ script, run }: { script: string; run: ScriptRu
 }
 
 /**
- * 开跑前要先准备依赖（`dependency_preparation_required`，U04）时这一行的一句话 + 一个主按钮（2026-09-29 干净虚拟机
- * 实测：单包修复装完，自动重跑撞上跑前门，这一行只剩一行红字与「选择渲染环境」，小白卡死）。与画布渲染那条路上弹的
- * 授权框（`DependencyPrepareDialog`）是同一份联合计划、同一个 `prepare`、同一套句子：授权只有一句人话时直接执行，
- * 进度就是这一行下面的一行；要在目标 / 用户环境之间选的时候，主按钮打开授权框。装好后 `depRepairStore` 把这一行重跑
- * （`rerunScriptAfterRepair`）。完整的需求串、下载与联网说明、「选择渲染环境」都收在默认折叠的「详情」里。
+ * 跑前缺环境直接弹 `DependencyPrepareDialog`（用户 2026-10-03）：授权、进度、取消与重试都只在框里。
+ * 「稍后」之后这一行保留再打开的入口；切项目后载荷随作业停放，切回仍能打开同一份进度。
  */
 function ScriptPreparation({ script, run }: { script: string; run: ScriptRunState | undefined }) {
-  useTranslation('workspace')
   useTranslation('errors')
-  const en = (key: string, values?: Record<string, unknown>) => translate(key, { ns: 'errors', ...(values ?? {}) })
   const progress = useDepRepairStore((s) => s.progress)
-  const busy = useDepRepairStore((s) => s.busy)
-  const errorCode = useDepRepairStore((s) => s.errorCode)
   const jointScript = useDepRepairStore((s) => s.jointScript)
   const jointOffer = useDepRepairStore((s) => s.jointOffer)
   const mine = jointScript === script
   // 载荷：这一行那次运行留下的；切项目再切回后运行记录已清空，就用随作业停放 / 放回的那份（进度、取消、重试不需要再点运行）
   const offer = (run?.phase === 'needs_preparation' ? run.error?.dependency_preparation : undefined) ?? (mine && progress?.flow === 'joint' && progress.state !== 'done' ? jointOffer : null)
   if (!offer) return null
-  const joint = mine && progress?.flow === 'joint' ? progress : null
-  const running = !!joint && isRepairRunning(joint)
-  const code = mine ? errorCode || (joint && (joint.state === 'failed' || joint.state === 'cancelled') ? joint.code : '') : ''
-  const { simple, privatePython } = oneClickShape(offer)
-  const requirements = offer.plan.requirements
-  const packages = packagesPhrase(requirements)
-  const sentence = code
-    ? repairShortMessage(code)
-    : requirements.length
-      ? oneClickSentence(packages, privatePython)
-      : oneClickEnvironmentSentence(privatePython)
-  const cost = downloadFact(privatePython, { packages: requirements.length > 0 })
-  const onFix = () => {
-    if (simple) void useDepRepairStore.getState().prepare('tavotto_managed', offer)
-    else useEnvStore.getState().requestDependencyPreparation(offer)
-  }
   return (
-    // 与恢复说明同一列缩进：它是这一行的延续，不是另一块区域
-    <div className="mb-1.5 mt-0.5 flex flex-col gap-1.5 pl-8 pr-2" data-script-preparation>
-      {running && joint ? (
-        <>
-          <RepairProgressLine progress={joint} text={jointProgressText(joint, (state) => en(STATE_TEXT[state] ?? 'engine.dependencyPrepareState_preparing'))} />
-          <Button
-            variant="secondary"
-            size="sm"
-            className="self-start"
-            onClick={() => void useDepRepairStore.getState().cancelPreparation()}
-          >
-            {en('engine.dependencyPrepareCancel')}
-          </Button>
-        </>
-      ) : (
-        <>
-          <p className="type-caption" data-script-preparation-sentence>
-            {sentence}
-          </p>
-          <Button
-            variant="primary"
-            size="sm"
-            className="self-start"
-            disabled={busy || isRepairRunning(progress)}
-            data-script-preparation-fix
-            onClick={onFix}
-          >
-            {code ? en('engine.dependencyPrepareRetry') : en('engine.oneClickRepair')}
-          </Button>
-        </>
-      )}
-      {!running && (
-        <Details data-script-preparation-details>
-          <Summary className="type-meta cursor-pointer">{sc('recoveryDetails')}</Summary>
-          <div className="mt-1.5 flex flex-col gap-1.5">
-            {requirements.length > 0 && (
-              <p className="type-caption" data-script-preparation-will-install>
-                {en('engine.repairWillInstall', { requirement: listJoin(requirements) })}
-              </p>
-            )}
-            {requirements.length > 0 && (
-              <ul className="flex flex-col gap-0.5 font-mono text-xs text-ink-2">
-                {requirements.map((req) => (
-                  <li key={req}>{req}</li>
-                ))}
-              </ul>
-            )}
-            {cost && <p className="type-caption">{cost}</p>}
-            {/* 「其他方式（备选）」：#740 授权框里就有的「不准备，直接运行」（同一个 skip 接口，之后 `rerunGated` 重跑这一行） */}
-            <p className="type-meta">{en('engine.repairAlternatives')}</p>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="self-start"
-              disabled={busy}
-              data-script-preparation-skip
-              onClick={() => void useDepRepairStore.getState().skipPreparation(offer)}
-            >
-              {en('engine.dependencyPrepareSkip')}
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              className="self-start"
-              onClick={() => useUiStore.getState().setEngineEnvOpen(true)}
-            >
-              <Settings size={ICON_SIZE.sm} />
-              {sc('openEnvSettings')}
-            </Button>
-          </div>
-        </Details>
-      )}
+    <div className="mb-1.5 mt-0.5 pl-8 pr-2" data-script-preparation>
+      <Button
+        variant="secondary"
+        size="sm"
+        data-script-preparation-fix
+        onClick={() => useEnvStore.getState().requestDependencyPreparation(offer)}
+      >
+        {translate('engine.oneClickRepair', { ns: 'errors' })}
+      </Button>
     </div>
   )
 }
@@ -445,8 +348,7 @@ function rowRepairOffer(
  * 那一方重跑这一行（`scriptRunStore.rerunGated`）。
  */
 function GateReopen({ run }: { run: ScriptRunState | undefined }) {
-  // 依赖门（needs_preparation）在行内直接一句话 + 一键修复（`ScriptPreparation`，用户 2026-09-30 的决定），不弹框、不再放
-  // 「再打开」的按钮；这里只剩运行目录门
+  // 依赖门的再打开入口在 `ScriptPreparation`，这里是运行目录门。
   if (run?.phase === 'needs_workdir' && run.error?.confirmation) {
     return (
       <div className="mb-1.5 pl-8 pr-2" data-script-workdir-choose>
