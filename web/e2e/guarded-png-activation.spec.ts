@@ -262,7 +262,13 @@ async function openOriginalExport(page: Page, id: string) {
   const dialog = await only(page.locator('[data-dialog="export"]'))
   await expect(dialog).toBeVisible()
   await (await only(dialog.locator('[data-onboarding-anchor="export-scope"] [data-value="original"]'))).click()
-  await expect(await only(dialog.locator('[data-export-target]'))).toContainText(FILE)
+  // The displayed name is a stem; identity belongs to the actual source thumbnail and request.
+  const target = await only(dialog.locator('[data-export-target]'))
+  const thumb = await only(target.locator('img'))
+  await expect.poll(async () => {
+    const src = await thumb.getAttribute('src')
+    return src ? new URL(src, page.url()).searchParams.get('id') : null
+  }).toBe(FILE)
   const confirm = dialog.locator('input[data-export-confirm]')
   if (await confirm.count()) await (await only(confirm)).check()
   // Deliberately stays red on the old asset-list-only sourceReachable predicate.
