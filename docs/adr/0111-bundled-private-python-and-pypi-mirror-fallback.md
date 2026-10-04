@@ -164,3 +164,39 @@ Python 包源，改用 PyPI 镜像 … 重试一次」，进度记录顶层 `pyp
    配置都不问」那条看护随之改成「非网络失败不换源」）。
 4. **结局进 app.log**：每次尝试一条（code + 包源闭集 `PIP_SOURCES`），换源一条，四个线程入口的失败终态各一条；进度顶层多
    `pypi_source`。
+
+
+## 修订（2026-10-04，0.18 发布阻塞：macOS 归档内代码签名）
+
+公证会展开附带的 tar.gz；只签外面的 `_internal/runtime` 会漏掉私有 Python 归档里的 Mach-O。
+最终 `codesign_macos.py sign` 先以原产品锁的完整 SHA / size 验证原料（重试只从经过同样验证的
+`build/private-python-bundle` 原料重做），逐成员安全解包、逐个 Developer ID + timestamp + hardened runtime
+签名，解释器保留既有 entitlements（含 disable-library-validation）。保留目录、模式和符号链接重打包，
+再展开最终归档，逐个验证签名、与已签 sidecar 相同的证书 Team ID、架构和最低系统要求。
+只有这一步完成才写构建生成的 `tavotto/resources/private_python_bundle.json`，最后才签外层 .app。
+独立 `verify` 步骤再检查包里最终归档；不把派生 hash 写回产品锁、不提交生成 manifest。
+
+原锁仍是**来源身份**，`PythonSource.id`、受管代引用、GC 键和账里的 sha256 均不改变；manifest 记的是
+此次签名后**传输字节**的 sha256 / size，同时绑定原完整 sha256 / size、target、version、release、
+source_id、archive_name、archive_root、python_rel。它不是第二份来源锁，也不能自己声明可信的 Team ID。
+
+运行时只有 frozen macOS、无非空 bundle override、归档与固定 manifest 均真实位于执行 sidecar 的同一个
+.app 时才接受这个派生摘要。每次以 `/usr/bin/codesign` 验证 sidecar 的 Apple Developer ID 证书要求，
+从已验证签名取 TeamIdentifier，再用 certificate leaf subject.OU 要求验证 sidecar 和整个 .app 的严格封条。
+不靠 Authority 子串、不硬编码未知 Team ID、不缓存正面信任结果。原始上游 SHA 路径照常服务 unsigned / adhoc
+私有构建、Windows、Linux 和显式 override；缓存及下载始终只认原锁 SHA。
+
+供应前把包内归档复制到 data_dir 内随关闭即删除的临时快照，对**实际交给 tarfile 的同一快照**重新校验摘要，
+之后仍走原成员校验 / staging / 真起 / 原子提交事务；不留下第二份下载缓存、不写 .app。计划中的 bundled
+来源失效仍是 source_changed，不偷偷换成联网下载。代价是每次派生归档探测的系统签名验证，以及供应时一份
+临时归档空间；不以未验证缓存优化安全边界。
+
+最终 .app 中文路径冒烟额外从 frozen sidecar 的 `--private-python-smoke` 入口调用真实 provision(required_origin=bundled)，
+以空数据目录和父进程 socket 审计拒绝下载网络，要求 downloads 仍空；随后调用真实 managedenv.create_generation_venv，
+运行 venv 的 ensurepip / pip / ssl / sqlite3 / zlib，并比较 .app 全文件摘要和签名。父进程审计不声称覆盖
+子进程或系统 trustd 的网络；venv 内置 ensurepip 本身使用离线 wheel，不从 index 装包。
+Linux 单测使用合成 Mach-O 和系统签名响应替身，只证明判据，不冒充 macOS 签名、Gatekeeper 或真实公证结果。
+两条原生 macOS release 腿与完整 dry-run 才给后者证据；既有门禁、timeout、凭据不变。
+
+看护：`tests/test_private_python_signed_bundle.py`（信任谓词、原始路径兼容、归档签名闭包、最终再解包验证、
+成员逃逸 / 重复拒绝、快照 check/use、真供应零下载、frozen 冒烟接线）；先证明原实现两条失败，再逐条变异核心判据。

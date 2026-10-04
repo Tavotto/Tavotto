@@ -31,13 +31,23 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import copy
+import hashlib
+import json
 import os
 import platform
 import plistlib
+import re
 import struct
 import subprocess
 import sys
+import tarfile
+import tempfile
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "src"))
+from tavotto.engine import privatepython, privatepython_bundle, runtime  # noqa: E402
 
 # Windows 上 stdout 一旦不是真控制台（被 CI 捕获 / 管道 / 重定向）就退回系统区域
 # 编码（cp1252/cp936），第一句中文或 ✓ 的输出就 UnicodeEncodeError——脚本明明
@@ -275,9 +285,202 @@ def check_min_os(
 
 def _codesign(args: list[str]) -> tuple[int, str]:
     proc = subprocess.run(
-        ["codesign", *args], capture_output=True, text=True, encoding="utf-8", errors="replace"
+        ["/usr/bin/codesign", *args],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
+
+
+def _sign_one(mo: MachO, identity: str, entitlements: Path | None) -> None:
+    args = ["--force", "--timestamp", "--options", "runtime", "--sign", identity]
+    if entitlements and mo.is_executable:
+        args += ["--entitlements", str(entitlements)]
+    rc, out = _codesign([*args, str(mo.path)])
+    if rc != 0:
+        raise SignError(f"签名失败 {mo.path}\n{out}")
+
+
+def _unpack_private(archive: Path, destination: Path, source) -> list[tarfile.TarInfo]:
+    """Reuse production member validation plus graph-aware data_filter, no duplicates.
+
+    Signing needs Python with data_filter (the release runners use 3.13). The
+    original TarInfo records are retained so repacking preserves modes and links.
+    """
+    if not hasattr(tarfile, "data_filter"):
+        raise SignError("private Python signing requires tarfile.data_filter")
+    with tarfile.open(archive, "r:gz") as tar:
+        members = tar.getmembers()
+        names = set()
+        for member in members:
+            privatepython._validate_member(member, source.archive_root)
+            name = str(Path(member.name))
+            if name in names:
+                raise SignError(f"duplicate private Python archive member: {name}")
+            names.add(name)
+
+        def confined(member, dest):
+            filtered = tarfile.data_filter(member, dest)
+            root = (Path(dest) / source.archive_root).resolve()
+            path = Path(dest) / member.name
+            path.resolve().relative_to(root)
+            if member.issym():
+                (path.parent / member.linkname).resolve().relative_to(root)
+            return filtered
+
+        tar.extractall(destination, members=members, filter=confined)
+    return members
+
+
+def _private_requirement(sidecar: Path) -> str:
+    rc, out = _codesign(
+        ["--verify", "--strict", "-R", privatepython_bundle.DEVELOPER_ID_REQUIREMENT, str(sidecar)]
+    )
+    if rc:
+        raise SignError(f"private Python signing anchor invalid: {out}")
+    rc, out = _codesign(["-d", "--verbose=4", str(sidecar)])
+    team = re.search(r"^TeamIdentifier=([A-Z0-9]{10})$", out, re.MULTILINE)
+    if rc or not team:
+        raise SignError("private Python signing anchor lacks TeamIdentifier")
+    requirement = (
+        privatepython_bundle.DEVELOPER_ID_REQUIREMENT
+        + f' and certificate leaf[subject.OU] = "{team[1]}"'
+    )
+    rc, out = _codesign(["--verify", "--strict", "-R", requirement, str(sidecar)])
+    if rc:
+        raise SignError(f"private Python signing anchor TeamIdentifier mismatch: {out}")
+    return requirement
+
+
+def _verify_private(app: Path, tree: Path, source, requirement: str) -> int:
+    items = scan(tree)
+    if not items:
+        raise SignError("private Python archive contains no Mach-O")
+    arch = source.target.removeprefix("macos-")
+    check_arch(tree, items, arch)
+    declared = plistlib.loads((app / "Contents/Info.plist").read_bytes())["LSMinimumSystemVersion"]
+    for mo in items:
+        minimum = minos(mo.path, arch)
+        if minimum is None or minimum > _parse_version(declared):
+            raise SignError(f"private Python minimum OS mismatch: {mo.path}: {minimum}")
+        rc, out = _codesign(
+            [
+                "--verify",
+                "--strict",
+                "-R",
+                requirement,
+                str(mo.path),
+            ]
+        )
+        if rc:
+            raise SignError(f"private Python signature invalid: {mo.path}\n{out}")
+        rc, out = _codesign(["-d", "--verbose=4", str(mo.path)])
+        if rc or not any(line.startswith("Timestamp=") for line in out.splitlines()):
+            raise SignError(f"private Python signature lacks secure timestamp: {mo.path}")
+        if mo.is_executable and "(runtime)" not in out:
+            raise SignError(f"private Python executable lacks hardened runtime: {mo.path}")
+    return len(items)
+
+
+def sign_private_python(app: Path, identity: str, entitlements: Path | None) -> int:
+    """Sign archive members, verify the repacked bytes, then generate sealed metadata.
+
+    A retry uses only the pristine upstream-verified build input, never a receipt
+    as provenance. Outer .app signing must happen after this transaction finishes.
+    """
+    if identity == "-":
+        return 0  # Unsigned/adhoc private builds retain the original upstream archive.
+    source = privatepython.source_for("macos-" + runtime.normalize_arch(platform.machine()))
+    if source is None:
+        raise SignError("no private Python source for signing target")
+    folders = list(app.rglob("_internal/" + runtime.PRIVATE_PYTHON_BUNDLE_DIR_NAME))
+    count = 0
+    for folder in folders:
+        folder.resolve(strict=True).relative_to(app.resolve(strict=True))
+        archive = folder / source.archive_name
+        archive.resolve(strict=True).relative_to(app.resolve(strict=True))
+        pristine = archive
+        if privatepython._sha256_file(pristine) != source.sha256:
+            pristine = ROOT / "build/private-python-bundle" / source.archive_name
+        if (
+            not pristine.is_file()
+            or privatepython._sha256_file(pristine) != source.sha256
+            or pristine.stat().st_size != source.size
+        ):
+            raise SignError("private Python signing input differs from upstream lock")
+        with tempfile.TemporaryDirectory(prefix="tavotto-private-sign-") as work:
+            work = Path(work)
+            unpacked = work / "unpacked"
+            unpacked.mkdir()
+            original = pristine.read_bytes()
+            if (
+                hashlib.sha256(original).hexdigest() != source.sha256
+                or len(original) != source.size
+            ):
+                raise SignError("private Python signing input changed after upstream verification")
+            snapshot = work / "upstream.tar.gz"
+            snapshot.write_bytes(original)
+            members = _unpack_private(snapshot, unpacked, source)
+            for mo in scan(unpacked):
+                _sign_one(mo, identity, entitlements)
+            packed = work / source.archive_name
+            with tarfile.open(packed, "w:gz") as tar:
+                for original in members:
+                    member = copy.copy(original)
+                    if member.isfile():
+                        path = unpacked / member.name
+                        member.size = path.stat().st_size
+                        with path.open("rb") as contents:
+                            tar.addfile(member, contents)
+                    else:
+                        tar.addfile(member)
+            checked = work / "checked"
+            checked.mkdir()
+            _unpack_private(packed, checked, source)
+            sidecar = folder.parent.parent / folder.parent.parent.name
+            count += _verify_private(app, checked, source, _private_requirement(sidecar))
+            manifest = folder.parent.joinpath(*privatepython_bundle.MANIFEST_PARTS)
+            manifest.resolve().relative_to(app.resolve(strict=True))
+            metadata = {
+                **privatepython_bundle.source_identity(source),
+                "sha256": privatepython._sha256_file(packed),
+                "size": packed.stat().st_size,
+            }
+            # Copy across filesystems into the bundle only after final verification.
+            archive.write_bytes(packed.read_bytes())
+            manifest.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+    return count
+
+
+def verify_private_python(app: Path, *, allow_unsigned: bool = False) -> None:
+    """The final on-disk archive is also covered by the release verification step."""
+    source = privatepython.source_for("macos-" + runtime.normalize_arch(platform.machine()))
+    if source is None:
+        raise SignError("no private Python source for verification target")
+    for folder in app.rglob("_internal/" + runtime.PRIVATE_PYTHON_BUNDLE_DIR_NAME):
+        archive = folder / source.archive_name
+        manifest = folder.parent.joinpath(*privatepython_bundle.MANIFEST_PARTS)
+        if (
+            allow_unsigned
+            and not manifest.exists()
+            and privatepython._sha256_file(archive) == source.sha256
+        ):
+            continue
+        data = json.loads(manifest.read_bytes())
+        expected = {
+            **privatepython_bundle.source_identity(source),
+            "sha256": privatepython._sha256_file(archive),
+            "size": archive.stat().st_size,
+        }
+        if data != expected:
+            raise SignError("private Python signed manifest mismatch")
+        with tempfile.TemporaryDirectory(prefix="tavotto-private-verify-") as work:
+            _unpack_private(archive, Path(work), source)
+            sidecar = folder.parent.parent / folder.parent.parent.name
+            count = _verify_private(app, Path(work), source, _private_requirement(sidecar))
+        print(f"✓ signed private Python archive: {count} Mach-O verified")
 
 
 def sign(app: Path, identity: str, entitlements: Path | None) -> int:
@@ -290,14 +493,8 @@ def sign(app: Path, identity: str, entitlements: Path | None) -> int:
     )
 
     for mo in items:
-        args = ["--force", "--timestamp", "--options", "runtime", "--sign", identity]
-        # entitlements 只对可执行文件有意义：内置解释器要靠
-        # disable-library-validation 才能加载 numpy/scipy 自带的 .dylib
-        if entitlements and mo.is_executable:
-            args += ["--entitlements", str(entitlements)]
-        rc, out = _codesign([*args, str(mo.path)])
-        if rc != 0:
-            raise SignError(f"签名失败 {mo.path}\n{out}")
+        _sign_one(mo, identity, entitlements)
+    archived = sign_private_python(app, identity, entitlements)
 
     # 最后签 .app 本体（必须在所有嵌套项之后，否则外层签名当场作废）
     args = ["--force", "--timestamp", "--options", "runtime", "--sign", identity]
@@ -307,7 +504,7 @@ def sign(app: Path, identity: str, entitlements: Path | None) -> int:
     if rc != 0:
         raise SignError(f"签名 .app 失败\n{out}")
     print(f"✓ 已签名 {len(items)} 个嵌套 Mach-O + .app 本体")
-    return len(items)
+    return len(items) + archived
 
 
 def check_arch(app: Path, items: list[MachO], expect_arch: str | None) -> None:
@@ -368,6 +565,7 @@ def verify(app: Path, expect_arch: str | None, expect_identity: str | None, jobs
     if rc != 0:
         raise SignError(f".app 整体签名校验不过：\n{out}")
     print("✓ codesign --verify --deep --strict 通过")
+    verify_private_python(app, allow_unsigned=not expect_identity)
 
     if expect_identity:
         rc, out = _codesign(["-dvvv", str(app)])
@@ -458,7 +656,7 @@ def main(argv: list[str] | None = None) -> int:
                 raise SignError(f"{app} 里一个 Mach-O 都没扫到——路径给错了？")
             check_arch(app, items, args.expect_arch)
             check_min_os(app, items, args.expect_min_os, args.expect_arch)
-    except SignError as exc:
+    except (SignError, privatepython.ProvisionError, OSError, ValueError, tarfile.TarError) as exc:
         print(f"::error::{exc}", file=sys.stderr)
         return 1
     return 0

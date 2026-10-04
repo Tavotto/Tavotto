@@ -109,7 +109,10 @@ Python，首次渲染也不联网：
   `Contents/Resources` 下——**`codesign --deep` 既签不到也验不出**（它们被当作
   *资源*封进签名，封条本身合法）。签名与验收统一走 `scripts/codesign_macos.py`
   （读魔数找 Mach-O、深度降序自内向外、只给可执行文件挂 entitlements、
-  最后逐个 `--verify` 并核对架构）。
+  最后逐个 `--verify` 并核对架构）。私有 Python tar.gz 同样要展开签里面的 Mach-O、保留模式/链接重打包，
+  最终再展开验同 sidecar Team ID、timestamp/runtime、架构/minOS；生成固定资源 manifest 后才能封 .app
+  （ADR 0111 2026-10-04 修订）。原产品锁不改，重试原料仍核原 SHA / size。最终 .app 冒烟还必须从 frozen
+  sidecar 真供应这份归档并建 managed venv / ensurepip，不能拿内置渲染 runtime 的冒烟替它交差。
 - **CLI 双入口**：`packaging/tavotto.spec` 从同一个 Analysis 产出 GUI 的
   `Tavotto` 与 `console=True` 的 `tavotto-cli`（共用 `_internal/`）。GUI exe
   不能当 CLI 调（无终端时 stdout 落日志），交接与安装清单都指 `tavotto-cli`
