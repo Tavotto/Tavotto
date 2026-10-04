@@ -1,4 +1,4 @@
-import { artifactBackgroundOriginal, artifactRequestFields, artifactValidationIssue, ArtifactValidationError, FIGSIZE_SOURCE_POLICY, validationFromSource, beginArtifactEntry, artifactEntryCurrent, cancelArtifactEntry, refuseArtifactOperation, rememberArtifactEdit } from '@/lib/artifactValidation'
+import { artifactBackgroundOriginal, artifactRequestFields, artifactValidationIssue, ArtifactValidationError, FIGSIZE_SOURCE_POLICY, validationFromSource, beginArtifactEntry, artifactEntryCurrent, cancelArtifactEntry, deferArtifactEntry, refuseArtifactOperation, rememberArtifactEdit } from '@/lib/artifactValidation'
 import { currentProjectId } from '@/lib/session'
 import { requestRender, type RenderPolicy } from '@/store/renderScheduler'
 import { isJustBakedBaselineOf } from '@/lib/bakedBaseline'
@@ -56,6 +56,7 @@ import type {
 import { emptyProject, objectLabel, type ProjectDocument } from '@/types/document'
 import type { ProjectFileBinding } from '@/lib/projectFile'
 import { useAssetStore } from './assetStore'
+import { useEnvStore } from './envStore'
 import {
   readAutosaveDoc,
   saveNowWithResult,
@@ -1391,11 +1392,12 @@ export function seedBakedOverrides(panelId: string): number {
 async function admitPngEntry(panel: PanelObject, leftTab: 'elements' | 'keep'): Promise<boolean> {
   finishActiveGesture()
   const initial = useDocumentStore.getState()
-  const epoch = renderEpoch()
+  let epoch = renderEpoch()
   const pj = currentProjectId()
   const snapshot = JSON.stringify(panel)
   const selection = useSelectionStore.getState().ids
   const attempt = beginArtifactEntry(panel.id)
+  let awaitingEnvironment = false
   const ownsRenderContext = () => renderEpoch() === epoch && currentProjectId() === pj
   const current = () => {
     const now = useDocumentStore.getState()
@@ -1436,6 +1438,29 @@ async function admitPngEntry(panel: PanelObject, leftTab: 'elements' | 'keep'): 
     }
     return finishElementEntry(panel.id, leftTab)
   } catch (error) {
+    if (current() && error instanceof EngineError &&
+        (error.confirmation || error.dependencyPreparation || error.missingInput)) {
+      // PNG admission runs before there is a render-store error entry. Hand its gates to the
+      // same dialogs, then revalidate the source after the answer without tracking a legacy render.
+      awaitingEnvironment = true
+      deferArtifactEntry(attempt, (renderEpochChange) => {
+        // Remapping data invalidates existing renders before retrying. Accept only that exact
+        // transition; a prior project/render change must still discard this edit intent.
+        if (renderEpochChange?.from === epoch) epoch = renderEpochChange.to
+        if (current()) {
+          // An SSE may arrive before pointAtData returns. Retire only this answered gate so
+          // validation can ask about another missing file without its offer being dropped.
+          const env = useEnvStore.getState()
+          if (error.missingInput && env.missingInput === error.missingInput) env.dismissMissingInput()
+          void admitPngEntry(panel, leftTab)
+        }
+      })
+      const env = useEnvStore.getState()
+      if (error.confirmation) env.requestWorkdirConfirmation(error.confirmation, pj)
+      if (error.dependencyPreparation) env.requestDependencyPreparation(error.dependencyPreparation, pj)
+      if (error.missingInput) env.requestMissingInput(error.missingInput, pj)
+      return false
+    }
     if (ownsRenderContext() && panel.artifactValidation &&
         (error instanceof ArtifactValidationError || (error instanceof EngineError && error.code === 'artifact_source_unavailable'))) {
       rejectArtifactRenders(panel.fileId, panel.artifactValidation, error, renderKeyOf(panel))
@@ -1443,7 +1468,7 @@ async function admitPngEntry(panel: PanelObject, leftTab: 'elements' | 'keep'): 
     if (current()) status(engineErrorMsg(error), 'error')
     return false
   } finally {
-    if (artifactEntryCurrent(attempt)) cancelArtifactEntry()
+    if (artifactEntryCurrent(attempt) && !awaitingEnvironment) cancelArtifactEntry()
   }
 }
 

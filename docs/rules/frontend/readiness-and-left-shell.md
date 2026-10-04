@@ -68,6 +68,11 @@
   `scriptRunStore.handOffProbeGate` 交同一份载荷、准备成功后重跑那一行（全文在 `asset-library.md`）。**目标与状态的文案键写成
   字面量**（`TARGET_LABEL` / `STATE_TEXT` / `BLOCKED_TEXT` 表）。MCP 那一面是同一份决定：
   `tavotto_open_figure(prepare_dependencies=…)`。
+  **完整 PNG 的编辑准入**同样交出工作目录 / 依赖准备 / 缺数据的结构化载荷；准入发生在加入渲染态之前，
+  不把未采用的 PNG 标成待重建。作答经 `retryEnvironmentFailures`（数据改指经 `restaleProjectRenders`）接回显式编辑意图，
+  重新校验所选源字节才提交 FRAME / guard 与进入编辑。改指只交接它自己造成的那次渲染作废；等待期间先发生的
+  换项目 / 渲染代际、选择或工作区变化、文档或历史变化仍不接回。真实 `pointAtData` 响应与同代 SSE 只恢复一次。
+  看护 `store/artifactEntry.test.ts`「selected PNG environment gates」、`e2e/guarded-png-activation.spec.ts`。
   **用户自己的环境（ADR 0079）**：载荷的 `user_environments` 里装齐的排在安装目标前面、同一组单选，
   后端排第一的预选；「改用这个环境」= `depRepairStore.adoptUserEnvironment(id, script)`（只交 id，不认路径），
   成功关框 + `retryEnvironmentFailures`；没装齐的收在 `ui/Details` 里只说还缺什么（不可选）；一个都没装齐

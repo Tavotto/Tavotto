@@ -24,6 +24,7 @@ import {
   restoreScriptBackup as restoreScriptBackupRequest,
 } from '@/lib/api'
 import { createDismissTimer } from '@/lib/dismissTimer'
+import { retryArtifactEntry } from '@/lib/artifactValidation'
 import { currentProjectId } from '@/lib/session'
 import { askConfirm, useUiStore } from '@/store/uiStore'
 import { msg } from '@/i18n'
@@ -190,7 +191,7 @@ let projectEpoch = 0
  * 回 false = 等 store 加载期间换了项目（B 的面板与素材一个都不动）。
  */
 async function restaleProjectRenders(epoch: number, retryMissingInput = false): Promise<boolean> {
-  const [{ useRenderStore }, { useRuntimeAssetStore }] = await Promise.all([
+  const [{ useRenderStore, renderEpoch }, { useRuntimeAssetStore }] = await Promise.all([
     import('@/store/renderStore'),
     import('@/store/runtimeAssetStore'),
   ])
@@ -205,12 +206,16 @@ async function restaleProjectRenders(epoch: number, retryMissingInput = false): 
   }))
   const render = useRenderStore.getState()
   // 在途的那几次是按旧条件画的：先作废（换代 + abort），晚到的回包不会把 stale 清掉、把旧图当权威
+  const previousRenderEpoch = renderEpoch()
   render.invalidateInflight()
+  const nextRenderEpoch = renderEpoch()
   const ids = [...new Set(Object.values(render.byKey).map((v) => v.fileId))]
   if (ids.length) render.markStale(ids)
   const runtime = useRuntimeAssetStore.getState()
   runtime.invalidate(Object.keys(runtime.byId))
   if (runtime.assets !== null) void runtime.loadAssets()
+  // PNG 准入尚未加入 renderStore，也要在真实改指完成后重新校验源；只放行本次作废。
+  if (retryMissingInput) retryArtifactEntry({ from: previousRenderEpoch, to: nextRenderEpoch })
   return true
 }
 
@@ -324,13 +329,15 @@ export const useEnvStore = create<EnvState>((set, get) => ({
   },
   pointAtData: async (requested, chosen, kind) => {
     const epoch = projectEpoch
+    const offer = get().missingInput
     try {
       const res = await addInputRemap(requested, chosen, kind)
       // 规则记在 A 上；B 的设置、确认框、渲染重排一个都不动
       if (epoch !== projectEpoch) return null
       const env = get().env
       if (env?.project) set({ env: { ...env, project: { ...env.project, input_remap: res.input_remap } } })
-      set({ missingInput: null })
+      // SSE may already have resumed PNG validation and opened the next missing-data gate.
+      if (get().missingInput === offer) set({ missingInput: null })
       // 响应带回新代次：本地就作废，不等事件（事件丢了也不漏）；事件随后到时按代次去重，不再作废第二次
       get().onInputRemapChanged(res.input_remap.generation, 'added')
       useUiStore.getState().setStatus(msg('engine.missingInputRemembered', undefined, 'errors'))

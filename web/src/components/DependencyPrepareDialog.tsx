@@ -71,9 +71,9 @@ const BLOCKED_TEXT: Record<string, string> = {
 }
 
 /**
- * 一键修复的形态按**载荷**定（授权框与素材库脚本行共用这一份判据）：没有装齐的用户环境、后端默认装进 Tavotto
+ * 一键修复的形态按**载荷**定：没有装齐的用户环境、后端默认装进 Tavotto
  * 自己的环境、这个环境又能建——授权只有一句人话和一个主按钮。`privatePython` 是默认目标（受管环境）上要不要先准备
- * 私有 Python 的披露。不满足时脚本行退回打开授权框（那里有目标 / 用户环境的选择）
+ * 私有 Python 的披露。不满足时框里展开目标 / 用户环境的选择。
  */
 export function oneClickShape(offer: DependencyPreparationOffer): {
   simple: boolean
@@ -299,19 +299,20 @@ export function DependencyPrepareDialog() {
       footer={
         running ? (
           <>
-            <Button variant="secondary" size="md" onClick={() => void cancel()}>
+            <Button variant="secondary" size="md" data-dependency-prepare-cancel onClick={() => void cancel()}>
               {en('engine.dependencyPrepareCancel')}
             </Button>
           </>
         ) : (
           <>
-            <Button variant="secondary" size="md" disabled={busy} onClick={dismiss}>
+            <Button variant="secondary" size="md" data-dependency-prepare-later disabled={busy} onClick={dismiss}>
               {en('engine.dependencyPrepareLater')}
             </Button>
             {envChosen ? (
               <Button
                 variant="primary"
                 size="md"
+                data-dependency-prepare-start
                 disabled={busy}
                 onClick={() => void adoptEnv(envChosen, offer.script)}
               >
@@ -321,6 +322,7 @@ export function DependencyPrepareDialog() {
               <Button
                 variant="primary"
                 size="md"
+                data-dependency-prepare-start
                 disabled={busy || !chosen || chosen.available === false}
                 onClick={() => void prepare(target)}
               >

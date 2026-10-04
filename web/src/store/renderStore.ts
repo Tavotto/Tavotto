@@ -1,4 +1,4 @@
-import { artifactKeySuffix, artifactRequestFields, artifactValidationIssue, ArtifactValidationError, validationFromSource, type ArtifactValidation } from '@/lib/artifactValidation'
+import { artifactKeySuffix, artifactRequestFields, artifactValidationIssue, ArtifactValidationError, validationFromSource, retryArtifactEntry, type ArtifactValidation } from '@/lib/artifactValidation'
 import { useMemo } from 'react'
 import { perfRenderApplied, perfRenderBegin, perfRenderResponse } from '@/perf/core'
 import { msg, type UiMessage } from '@/i18n'
@@ -875,6 +875,8 @@ export const useRenderStore = create<RenderState>((set, get) => ({
     // 同步器跳过）、置 stale、把文件级跟踪位打开（该文件可能一个变体都还
     // 没成功渲染过——冷启动就缺包的面板正是这种）。
     if (ids.size) get().markStale([...ids])
+    // An untouched PNG may have stopped at an environment gate before joining the render store.
+    retryArtifactEntry()
   },
 
   markStale: (fileIds) =>
