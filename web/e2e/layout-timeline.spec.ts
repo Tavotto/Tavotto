@@ -442,7 +442,7 @@ test('只差水平翻转的两个节点：缩略图不一样，而且是左右�
   let afterControls: Awaited<ReturnType<typeof controls>>
   try {
     await held!.continue()
-    await expect(page.locator('[data-canvas-stage] [data-element-svg] svg')).toHaveCount(1, { timeout: 60_000 })
+    await expect(page.locator('[data-canvas-stage] [data-display="exact"]')).toHaveCount(1, { timeout: 60_000 })
     // React 的派生尺寸与提示一并落地后再松手，量实际按钮 / 输入框位置，不量 class。
     await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
     afterControls = await controls()
