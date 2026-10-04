@@ -100,8 +100,10 @@
   不进面包屑、不参与几何）；组下不加抽屉。抽屉按元素**是什么**分（`clusterOf(el)`：色条轴与
   图例同进「图例与色条」），与它挂在谁下面无关。面包屑走 `ancestorsOf` 的真实祖先链，色条轴
   那一级不单列。选中组时属性区是组页（`inspector/GroupPage.tsx` 的 `PanelElementPage` 分流）。
+  手动色条缺显式宿主时保持顶层；属性页消费 `owner_status=undeclared` 显示「归属未确定」与
+  保留 cax 的可执行 `ax` 关联方式，不由颜色关系推父级（#792）。
   看护：`components/left/elementTreeGroups.test.tsx`、`inspector/groupInspector.test.tsx`、
-  `roles/hierarchy.test.ts`。
+  `roles/hierarchy.test.ts`、`inspector/colorScalePanels.test.tsx`、`e2e/shared-colorbar-group.spec.ts`。
 - **左栏「工作区」抽屉（2026-09-24）**：切项目的列表**只有一份**，住在
   `components/left/WorkspaceList.tsx`（当前 · 收藏 · 最近，最近不截断）。顶栏项目名
   （`ProjectSwitcher`）只做 `railClick('workspace')`，不再自己弹菜单——两处各列一遍

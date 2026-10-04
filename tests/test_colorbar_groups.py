@@ -90,6 +90,93 @@ def _dup(stem):
     fig.savefig(stem + ".pdf")
 
 
+def _manual(stem, *, declared=True, standalone=False):
+    # #792：GridSpec 色条轴夹在子图间；无关的 d 也共用 norm，但不属于布局组。
+    from matplotlib.cm import ScalarMappable
+    fig = plt.figure(figsize=(7.0, 6.0))
+    grid = fig.add_gridspec(2, 3, width_ratios=[1, 1, .08])
+    a = fig.add_subplot(grid[0, :2])
+    ca = fig.add_subplot(grid[0, 2])
+    b = fig.add_subplot(grid[1, 0])
+    c = fig.add_subplot(grid[1, 1])
+    bc = fig.add_subplot(grid[1, 2])
+    d = fig.add_axes([.03, .9, .06, .06])
+    im = a.imshow(Z, aspect="auto")
+    mesh = b.pcolormesh(Z, cmap="magma")
+    c.pcolormesh(Z.T, cmap="magma", norm=mesh.norm)
+    d.imshow(Z, cmap="magma", norm=mesh.norm)
+    scalar = ScalarMappable(norm=im.norm, cmap=im.cmap) if standalone else im
+    fig.colorbar(scalar, cax=ca, **({"ax": a} if declared else {}))
+    fig.colorbar(mesh, cax=bc, **({"ax": np.array([[b, c]])} if declared else {}))
+    fig.savefig(stem + ".pdf")
+
+
+def _cross_subfigure(standalone=False):
+    from matplotlib.cm import ScalarMappable
+    from matplotlib.colors import Normalize
+    fig = plt.figure(figsize=(7, 3))
+    left, right = fig.subfigures(1, 2)
+    ax = right.subplots()
+    if standalone:
+        ax.plot([0, 1])
+        im = ScalarMappable(norm=Normalize(0, 1), cmap="viridis")
+    else:
+        im = ax.imshow(Z)
+    cax = left.add_axes([.8, .1, .05, .8])
+    left.colorbar(im, cax=cax, ax=ax)
+    fig.savefig(("CrossScalar" if standalone else "CrossSubFigure") + ".pdf")
+
+
+def _shared_subfigure(stem, *, manual=False, mixed=False):
+    fig = plt.figure(figsize=(8, 3))
+    left, right = fig.subfigures(1, 2)
+    a, b = right.subplots(1, 2)
+    im = a.imshow(Z)
+    b.imshow(Z.T, norm=im.norm)
+    kw = {"cax": right.add_axes([.9, .1, .03, .8])} if manual else {}
+    right.colorbar(im, ax=[a, b], **kw)
+    if mixed:
+        a, b = [fig.add_axes([x, .1, .12, .6]) for x in (.05, .25)]
+        im = a.imshow(Z)
+        b.imshow(Z.T, norm=im.norm)
+        fig.colorbar(im, cax=fig.add_axes([.4, .1, .02, .6]), ax=[a, b])
+    fig.savefig(stem + ".pdf")
+
+
+def _scalar_layout_host(kind):
+    from matplotlib.cm import ScalarMappable
+    from matplotlib.colors import Normalize
+    fig, (a, b) = plt.subplots(1, 2)
+    norm = Normalize(0, 63)
+    if kind == "shared":
+        a.imshow(Z, norm=norm, cmap="viridis")
+    elif kind == "equal":
+        a.imshow(Z, norm=Normalize(0, 63), cmap="viridis")
+    elif kind == "raster":
+        a.imshow(plt.get_cmap("viridis")(norm(Z)))
+    else:
+        a.plot([0, 1])
+    b.plot([0, 1])
+    cax = fig.add_axes([.92, .2, .025, .6])
+    fig.colorbar(ScalarMappable(norm=norm, cmap="viridis"), cax=cax, ax=b)
+    fig.savefig("ScalarHost_" + kind + ".pdf")
+
+
+def _different_color_host(*, manual=False):
+    fig, (a, b) = plt.subplots(1, 2)
+    im = a.imshow(Z)
+    b.plot([0, 1])
+    kw = {"cax": fig.add_axes([.92, .2, .025, .6])} if manual else {}
+    fig.colorbar(im, ax=b, **kw)
+    fig.savefig("DifferentManualHost.pdf" if manual else "DifferentHost.pdf")
+    if manual:
+        return
+    other, ax = plt.subplots()
+    cax = other.add_axes([.9, .1, .03, .8])
+    other.colorbar(im, cax=cax, ax=ax)
+    other.savefig("ForeignMappable.pdf")
+
+
 def main():
     _dup("DupHost")
     _shared("Shared")
@@ -98,6 +185,18 @@ def main():
     _plain("Plain")
     _cax("CaxShared")
     _overlap("Overlap")
+    _manual("ManualCax")
+    _manual("ManualScalar", standalone=True)
+    _manual("ManualUnknown", declared=False)
+    _cross_subfigure()
+    _cross_subfigure(standalone=True)
+    _different_color_host()
+    _different_color_host(manual=True)
+    _shared_subfigure("SharedSubFigure")
+    _shared_subfigure("ManualSubFigure", manual=True)
+    _shared_subfigure("MixedSubFigure", manual=True, mixed=True)
+    for kind in ("empty", "shared", "equal", "raster"):
+        _scalar_layout_host(kind)
 """
 
 
@@ -209,6 +308,229 @@ def test_cax_colorbar_without_declared_hosts_keeps_its_old_ownership(library):
     assert "groups" not in man
     assert "owner_gids" not in cb
     assert "parent_gid" not in _el(man, cb["geom_gid"])
+
+
+@pytest.mark.parametrize("stem", ["ManualCax", "ManualScalar"])
+def test_manual_cax_uses_explicit_hosts_not_color_scale_associations(library, stem):
+    man = _render(library, stem)
+    single, shared = _by_role(man, "colorbar")
+    assert single["owner_gids"] == ["axes_0"]
+    assert _el(man, "axes_1")["parent_gid"] == "axes_0"
+    assert "axes_1" in _el(man, "axes_0")["follow_gids"]
+    assert shared["owner_gids"] == ["axes_2", "axes_3"]
+    (group,) = man["groups"]
+    assert group["members"] == ["axes_2", "axes_3", "axes_4"]
+    for gid in group["members"]:
+        assert _el(man, gid)["parent_gid"] == group["gid"]
+    for gid in group["subplot_gids"]:
+        assert "axes_4" not in _el(man, gid).get("follow_gids", [])
+    assert "parent_gid" not in _el(man, "axes_5")
+    assert "axes_5.images_0" in shared["scale_gids"]  # 颜色关联存在，布局归属不扩大
+
+
+def test_colorbar_axes_do_not_consume_subplot_display_numbers(library):
+    man = _render(library, "ManualUnknown")
+    assert [_el(man, g)["label"] for g in ("axes_0", "axes_2", "axes_3", "axes_5")] == [
+        "子图 1",
+        "子图 2",
+        "子图 3",
+        "子图 4",
+    ]
+
+
+def test_undeclared_manual_cax_reports_unknown_ownership_and_does_not_follow(library):
+    man = _render(library, "ManualUnknown")
+    assert "groups" not in man
+    for cb in _by_role(man, "colorbar"):
+        assert cb["owner_status"] == "undeclared"
+        assert "owner_gids" not in cb
+        assert "parent_gid" not in _el(man, cb["geom_gid"])
+        for g in ("axes_0", "axes_2", "axes_3", "axes_5"):
+            assert cb["geom_gid"] not in _el(man, g).get("follow_gids", [])
+
+
+def test_cax_single_host_cannot_cross_subfigure_coordinate_spaces(library):
+    man = _render(library, "CrossSubFigure")
+    (cb,) = _by_role(man, "colorbar")
+    assert "parent_gid" not in _el(man, cb["geom_gid"])
+    assert "groups" not in man
+    assert all(cb["geom_gid"] not in e.get("follow_gids", []) for e in _by_role(man, "axes"))
+
+
+def test_cross_subfigure_scalar_declaration_does_not_change_orientation_placement(library):
+    base = _render(library, "CrossScalar")
+    (cb,) = _by_role(base, "colorbar")
+    changed = _render(
+        library, "CrossScalar", [{"gid": cb["gid"], "prop": "orientation", "value": "horizontal"}]
+    )
+    assert _position(changed, cb["geom_gid"]) == _position(base, cb["geom_gid"])
+
+
+@pytest.mark.parametrize("stem", ["SharedSubFigure", "ManualSubFigure"])
+def test_subfigure_group_keeps_ownership_but_does_not_offer_root_coordinate_transforms(
+    library, stem
+):
+    man = _render(library, stem)
+    (group,) = man["groups"]
+    assert group["members"] == ["axes_0", "axes_1", "axes_2"]
+    assert group["resizable"] is False
+    assert all(_el(man, gid)["parent_gid"] == group["gid"] for gid in group["members"])
+
+
+def test_mixed_root_and_subfigure_groups_check_each_own_coordinate_space(library):
+    groups = _render(library, "MixedSubFigure")["groups"]
+    assert len(groups) == 2
+    assert sorted(g["resizable"] for g in groups) == [False, True]
+
+
+def test_cax_orientation_uses_declared_layout_host_and_its_pending_position(library):
+    patches = [
+        {"gid": "axes_1", "prop": "position", "value": [0.5, 0.2, 0.3, 0.6]},
+        {"gid": "cbar:axes_0:0", "prop": "orientation", "value": "horizontal"},
+    ]
+    hot = pool.one_shot(SCRIPT_NAME, str(library), ENTRY)
+    try:
+        hot.override("DifferentManualHost", patches[:1])
+        moved = hot.override("DifferentManualHost", patches)["manifest"]
+        (cb,) = _by_role(moved, "colorbar")
+        assert cb["colorbar_key"] == "cbar:axes_0:0"
+        assert cb["owner_gids"] == ["axes_1"]
+        x, _, width, _ = _position(moved, cb["geom_gid"])
+        assert (x, width) == pytest.approx((0.5, 0.3), abs=1e-4)
+        assert _position(
+            _render(library, "DifferentManualHost", patches), cb["geom_gid"]
+        ) == _position(moved, cb["geom_gid"])
+    finally:
+        pool.discard(hot)
+
+
+@pytest.mark.parametrize("kind", ["empty", "shared", "equal", "raster"])
+def test_scalar_layout_declaration_preserves_old_color_associations_and_aliases(library, kind):
+    key = "cbar:?:0" if kind == "empty" else "cbar:axes_0:0"
+    man = _render(library, "ScalarHost_" + kind, [{"gid": key, "prop": "label", "value": "Saved"}])
+    (cb,) = _by_role(man, "colorbar")
+    assert cb["colorbar_key"] == key
+    assert _field(man, cb["gid"], "label") == "Saved"
+    assert cb["owner_gids"] == ["axes_1"]
+    assert _el(man, cb["geom_gid"])["parent_gid"] == "axes_1"
+    assert cb["geom_gid"] in _el(man, "axes_1")["follow_gids"]
+
+
+def test_layout_owners_do_not_change_saved_colorbar_semantic_aliases(library):
+    man = _render(
+        library, "DifferentHost", [{"gid": "cbar:axes_0:0", "prop": "label", "value": "Saved"}]
+    )
+    (cb,) = _by_role(man, "colorbar")
+    assert cb["colorbar_key"] == "cbar:axes_0:0"
+    assert _field(man, cb["gid"], "label") == "Saved"
+    assert cb["owner_gids"] == ["axes_1"]
+    assert cb["geom_gid"] in _el(man, "axes_1")["follow_gids"]
+    assert cb["geom_gid"] not in _el(man, "axes_0").get("follow_gids", [])
+
+
+def test_valid_cax_owner_follows_even_when_color_source_is_in_another_figure(library):
+    man = _render(library, "ForeignMappable")
+    (cb,) = _by_role(man, "colorbar")
+    assert _el(man, cb["geom_gid"])["parent_gid"] == "axes_0"
+    assert cb["geom_gid"] in _el(man, "axes_0")["follow_gids"]
+
+
+@pytest.mark.parametrize("stem", ["ManualCax", "ManualScalar"])
+def test_manual_group_move_scale_undo_redo_and_fresh_replay_are_pixel_exact(library, stem):
+    from tavotto.app import _compare_manifests
+
+    hot = pool.one_shot(SCRIPT_NAME, str(library), ENTRY)
+    fresh = pool.one_shot(SCRIPT_NAME, str(library), ENTRY)
+    try:
+        base = hot.override(stem, [])["manifest"]
+        pixels0 = hot.preview_png(stem, [], 480, "base").read_bytes()
+        (group,) = base["groups"]
+        members = group["members"]
+        moved = []
+        for gid in members:
+            x, y, w, h = _position(base, gid)
+            moved.append({"gid": gid, "prop": "position", "value": [x - 0.04, y + 0.02, w, h]})
+        hot.override(stem, moved)
+        # 挪动之后缩放，钉住左下角：复用前端写成员 position 的协议。
+        x0 = min(p["value"][0] for p in moved)
+        y0 = min(p["value"][1] for p in moved)
+        scaled = []
+        for p in moved:
+            x, y, w, h = p["value"]
+            scaled.append(
+                dict(p, value=[x0 + (x - x0) * 0.8, y0 + (y - y0) * 0.8, w * 0.8, h * 0.8])
+            )
+        after = hot.override(stem, scaled)["manifest"]
+        pixels1 = hot.preview_png(stem, scaled, 480, "scaled").read_bytes()
+        assert pixels1 != pixels0  # 反证尺子量到真实变换
+        for p in scaled:
+            assert _position(after, p["gid"]) == pytest.approx(p["value"], abs=1e-4)
+        for gid in ("axes_0", "axes_1", "axes_5"):
+            assert _position(after, gid) == _position(base, gid)
+        undone = hot.override(stem, [])["manifest"]
+        assert _compare_manifests(base, undone)[0] == []
+        assert hot.preview_png(stem, [], 480, "undo").read_bytes() == pixels0
+        redone = hot.override(stem, scaled)["manifest"]
+        replayed = fresh.override(stem, scaled)["manifest"]
+        diffs, compared = _compare_manifests(redone, replayed)
+        assert diffs == [] and compared > 0
+        assert redone["groups"] == replayed["groups"]
+        assert fresh.preview_png(stem, scaled, 480, "fresh").read_bytes() == pixels1
+    finally:
+        pool.discard(hot)
+        pool.discard(fresh)
+
+
+def test_old_manual_shared_orientation_with_explicit_position_replays_and_undoes(library):
+    hot = pool.one_shot(SCRIPT_NAME, str(library), ENTRY)
+    fresh = pool.one_shot(SCRIPT_NAME, str(library), ENTRY)
+    patches = [
+        {"gid": "axes_4", "prop": "position", "value": [0.12, 0.05, 0.6, 0.04]},
+        {"gid": "axes_4.colorbar", "prop": "orientation", "value": "horizontal"},
+    ]
+    try:
+        before = hot.preview_png("ManualCax", [], 480, "base").read_bytes()
+        changed = hot.override("ManualCax", patches)
+        assert not changed.get("warnings"), changed.get("warnings")
+        man = changed["manifest"]
+        (group,) = man["groups"]
+        assert group["members"] == ["axes_2", "axes_3", "axes_4"]
+        assert _position(man, "axes_4") == pytest.approx(patches[0]["value"], abs=1e-4)
+        assert any(
+            e["role"] == "ticklabel" and e["gid"].startswith("axes_4.xtick")
+            for e in man["elements"]
+        )
+        assert not any(
+            e["role"] == "ticklabel" and e["gid"].startswith("axes_4.ytick")
+            for e in man["elements"]
+        )
+        pixels = hot.preview_png("ManualCax", patches, 480, "horizontal").read_bytes()
+        assert pixels != before
+        assert fresh.preview_png("ManualCax", patches, 480, "fresh").read_bytes() == pixels
+        assert hot.preview_png("ManualCax", [], 480, "undo").read_bytes() == before
+    finally:
+        pool.discard(hot)
+        pool.discard(fresh)
+
+
+@pytest.mark.parametrize(
+    ("stem", "cax", "positioned"), [("ManualCax", "axes_4", False), ("Shared", "axes_3", True)]
+)
+def test_shared_orientation_without_safe_manual_position_still_warns(
+    library, stem, cax, positioned
+):
+    w = pool.one_shot(SCRIPT_NAME, str(library), ENTRY)
+    try:
+        man = w.override(stem, [])["manifest"]
+        cb = _el(man, cax + ".colorbar")
+        assert "orientation" not in {f["prop"] for f in cb["editable"]}
+        patches = [{"gid": cb["gid"], "prop": "orientation", "value": "horizontal"}]
+        if positioned:
+            patches.append({"gid": cax, "prop": "position", "value": [0.12, 0.05, 0.6, 0.04]})
+        resp = w.override(stem, patches)
+        assert any("multi_host_colorbar" in str(warning) for warning in resp.get("warnings", []))
+    finally:
+        pool.discard(w)
 
 
 def test_overlapping_shared_colorbars_stay_ungrouped(library):

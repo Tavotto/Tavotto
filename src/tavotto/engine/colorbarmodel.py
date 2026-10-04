@@ -25,7 +25,7 @@ from axestraversal import ordered_axes
 class FollowState(Protocol):
     """色条族对 `overrides.FigState` 的全部要求，族模块不 import 它。
 
-    前四样是方向翻转要的；`elements` / `originals` 是**共用色阶组**要的
+    前四样及 `elements` 是方向翻转要的；`elements` / `originals` 也供**共用色阶组**使用
     （`scale_siblings` 只在登记表里找兄弟、`_restore_cb_cmap` 按各自的原样放回）。
     """
 
@@ -316,14 +316,21 @@ def _cb_target_rect(p: "ColorbarProxy", to: str, state: FollowState):
     pending = state.pending or {}
     if (p.cbax_gid, "position") in pending:
         return None
-    host_rect = pending.get((p.host_gid, "position"))
+    host, host_gid = p.host, p.host_gid
+    parents = declared_parents(p.cb)
+    if parents:
+        if len(parents) != 1 or parents[0].figure is not p.cb.ax.figure:
+            return None
+        host = parents[0]
+        host_gid = next((e["gid"] for e in state.elements if e["artist"] is host), None)
+    host_rect = pending.get((host_gid, "position"))
     if isinstance(host_rect, (list, tuple)) and len(host_rect) == 4:
         # pending 里的是 patch 值：图幅（frame，ADR 0098）里的分数，与 setter 同一道换算
         host_rect = pathgeom.axes_rect_to_figsize(p.cb.ax.get_figure(), host_rect)
     else:
-        if p.host is None:
+        if host is None:
             return None
-        host_rect = p.host.get_position().bounds
+        host_rect = host.get_position().bounds
     # 这里要的是**画出来**的那个矩形（厚度、与宿主之间的缝），不是分配到的整格
     # ——`original` 还没经过 box_aspect 收缩，拿它反解厚度会粗好几倍。
     # extend 的收缩只发生在长轴上，而 `_cb_place` 读的恰好是短边与短轴方向的
@@ -462,7 +469,12 @@ def _set_cb_orientation(p: "ColorbarProxy", v, state: FollowState) -> None:
     # 而不是「写回成功了，但图和屏幕上不一样」。判据与 manifest 共用
     # `colorbar_host_count` 这一份实现。
     hosts = colorbar_host_count(p.cb)
-    if hosts > 1:
+    # 旧手动 cax 文档曾能保存方向；已有明确矩形时不自动落位，可原样重放。
+    positioned_cax = getattr(p.cb, "_tavotto_colorbar_parents", None) and (
+        p.cbax_gid,
+        "position",
+    ) in (state.pending or {})
+    if hosts > 1 and not positioned_cax:
         raise ValueError(
             f"multi_host_colorbar: 这条色条横跨 {hosts} 个子图，"
             f"方向切换在 1.0 里不支持（落位只按第一个宿主算，翻转后会被缩到"
@@ -1041,12 +1053,13 @@ def _field_fit(arr, tube: "_ColourTube") -> float:
     return float(len(got)) / float(n_opaque)
 
 
-def declared_parents(cb):
+def declared_parents(cb, *, include_capture=True):
     """色条自己声明的宿主（`fig.colorbar(..., ax=...)` 记在 `_colorbar_info["parents"]`）；
-    `cax=` 建的没有这份记录，回 None。
+    `cax=` 的显式 `ax` 由执行入口记录在 Colorbar 上；缺少声明才回 None。
+    颜色认领与稳定 key 用 `include_capture=False` 保持已有颜色语义。
 
-    这是 matplotlib 在**建色条那一刻**按调用参数记下的 `ax` 列表（`make_axes` /
-    `make_axes_gridspec` 写、constrained layout 读），不是从渲染结果反推的——共享色条
+    这是 matplotlib 或执行入口在**建色条那一刻**按调用参数记下的 `ax` 列表（自动色条由
+    `make_axes` / `make_axes_gridspec` 写、constrained layout 读），不是从渲染结果反推的——共享色条
     成组（manifest 的 `groups`）与色条的结构归属都只认它。没有它就不下结论。
 
     **按对象身份去重、保序**：`fig.colorbar(im, ax=[ax, ax])` 是合法写法，matplotlib 照记
@@ -1054,7 +1067,10 @@ def declared_parents(cb):
     随行表、方向能力）与「挂在谁下面 / 成不成组」（`manifest._colorbar_structure`）都从这一份
     去重后的集合取——各数各的话，树里挂在 ax 下、拖 ax 色条却不跟（Codex #691）。"""
     info = getattr(getattr(cb, "ax", None), "_colorbar_info", None)
-    parents = info.get("parents") if isinstance(info, dict) else None
+    # 颜色认领 / 稳定 key 保留原生来源；新捕获只补布局归属，不重解释旧颜色关联。
+    parents = getattr(cb, "_tavotto_colorbar_parents", None) if include_capture else None
+    if parents is None:
+        parents = info.get("parents") if isinstance(info, dict) else None
     if not parents:
         return None
     distinct: list = []
@@ -1077,7 +1093,7 @@ def _orphan_scopes(cbar_of_ax: dict, axes) -> list[tuple]:
     for cb in cbar_of_ax.values():
         if not _orphan_mappable(getattr(cb, "mappable", None)):
             continue
-        parents = declared_parents(cb)
+        parents = declared_parents(cb, include_capture=False)
         scope = [ax for ax in free if ax in parents] if parents else free
         out.append((parents is None, cb, scope))
     out.sort(key=lambda t: t[0])  # 稳定排序：有宿主的在前，各组内保持原序
@@ -1244,22 +1260,21 @@ def field_image_of(cb, axes):
 def colorbar_host_count(cb) -> int:
     """这条色条**声明了几个宿主**。1 = 常规；>1 = 横跨多个子图。
 
-    唯一判据是 matplotlib 自己记的 `cax._colorbar_info["parents"]`。
+    唯一判据是 `declared_parents`：matplotlib 记录，或执行入口捕获的显式 ax。
     实测（3.10.8，六种建法逐个量过，见
     `tests/test_colorbar_orientation.py::test_the_multi_host_predicate_matches_matplotlib`）::
 
         ax=ax                    parents=1
         ax=[a1, a2]              parents=2
         ax=[a, b, c]             parents=3
-        cax=<用户自己建的轴>       没有 _colorbar_info      → 按 1 算
+        cax=<用户自己建的轴>       有显式 ax 才记宿主      → 缺声明按 1 算
         ScalarMappable + ax=ax   parents=1（mappable.axes 是 None）
         ScalarMappable + ax=[..] parents=2
 
-    `cax=` 那条按 1 算是对的、不是兜底：用户自己建了色条轴、自己摆好了位置，
-    「宿主是谁」这个问题在那条路上根本不存在，落位也不归我们算。
+    `cax=` 缺声明时仍按 1 算；有显式 `ax=[…]` 时按声明数，避免开放多宿主翻转。
 
-    **为什么要有这个函数**：`_cb_target_rect()` 反解新矩形时只拿得到
-    `cb.mappable.axes`，也就是**第一个**宿主。多宿主色条翻转方向之后会被缩到
+    **为什么要有这个函数**：`_cb_target_rect()` 的自动落位只适用于单宿主。
+    多宿主无法选取唯一的布局宿主；套单宿主翻转会被缩到
     一图宽（实测 3.10.8 / 3.11.1：应当 0.620 宽，实际 0.282）。
     真修法要把宿主从一个 axes 改成一组、`_cb_place` / `_cb_target_rect` /
     `axes_follow` 三处按并集算——那是落位模型的改动，1.0 稳定期不做（issue #69）。
@@ -1328,8 +1343,7 @@ def colorbar_maps(fig, axes) -> tuple[dict, dict]:
         if host is not None:
             return host
         # 独立 mappable（`ScalarMappable(...)` 不挂在任何 axes 上）走这条。
-        info = getattr(cax, "_colorbar_info", None)
-        parents = info.get("parents") if isinstance(info, dict) else None
+        parents = declared_parents(cb, include_capture=False)
         if parents:
             return parents[0]
         # `cax=` 显式建的独立 mappable 色条两条都落空：它描述的对象所在的子图就是
@@ -1401,14 +1415,17 @@ def follow_map(fig, cbar_of_ax: dict, host_of_cbax: dict, axes) -> dict[str, lis
         if o not in bucket:
             bucket.append(o)
 
-    for cbax, host in host_of_cbax.items():
+    for cbax, cb in cbar_of_ax.items():
         # 横跨多个子图的色条（`fig.colorbar(im, ax=[b, c])`）不归任何**一个**宿主：
         # 挂到第一个宿主名下的话，单独拖 B 会把整条共享色条拖走、C 留在原地。
         # 它随整组走（manifest 的 `groups`，前端把组展开成成员一起平移 / 缩放）。
-        cb = cbar_of_ax.get(cbax)
-        if cb is not None and colorbar_host_count(cb) > 1:
+        # 颜色宿主表不能证明布局归属，也不能否定有效的 ax 声明。
+        parents = declared_parents(cb)
+        if not parents or len(parents) > 1:
             continue
-        link(host, cbax)
+        parent = parents[0]
+        if getattr(parent, "figure", None) is getattr(cbax, "figure", None):
+            link(parent, cbax)
 
     for ax, other in coincident_shared_axes_pairs(ordered, cbar_of_ax):
         link(ax, other)

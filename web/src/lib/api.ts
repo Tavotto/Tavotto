@@ -1786,9 +1786,11 @@ export interface ManifestElement {
   /**
    * 色条**声明的宿主**（`fig.colorbar(..., ax=[…])` 的 ax 列表，matplotlib 建色条时
    * 记下的，引擎 `colorbarmodel.declared_parents`）。结构归属的证据，与颜色来源
-   * （`mappable_gid`）是两件事。`cax=` 建的色条没有声明，缺席。
+   * （`mappable_gid`）是两件事。手动 `cax` 的显式 `ax` 由执行入口记录。
    */
   owner_gids?: string[]
+  /** 明确未声明布局宿主；缺席兼容旧引擎，不从颜色关联补出归属。 */
+  owner_status?: 'undeclared'
   /**
    * **显式结构父级**（引擎 `manifest._colorbar_structure`）：共享色条的成员子图与色条轴
    * 指向它们的组（`Manifest.groups`），单宿主色条的色条轴指向宿主子图。元素树与面包屑

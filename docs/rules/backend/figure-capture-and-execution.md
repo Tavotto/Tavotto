@@ -142,6 +142,12 @@
   * 「什么算一份图产物」唯一出处 `figcapture.ARTIFACT_EXTS`
     （`discover.OUT_EXTS` / `handoff.OUT_EXTS` 是镜像别名）；「stem 的原始
     产物在哪」唯一判据 `figcapture.find_original_artifact`。
+- **手动色条的宿主记录（#792 / ADR 0102）**：safe worker、native bridge 与浏览器 playground
+  都在脚本执行前调用 `figcapture.install_colorbar_capture`。它幂等地包装 `FigureBase.colorbar`，
+  原样委托 matplotlib，只在手动 `cax=` 带显式 `ax` 时记录标准 Axes / list / tuple / ndarray，
+  不消费被原调用忽略的迭代器，不写 `_colorbar_info`。结构、随行、宿主数统一读 `declared_parents`；
+  颜色关系不能补布局声明。看护 `tests/test_colorbar_capture.py`、`tests/test_browser_session.py`、
+  `tests/bridge/test_bridge_e2e.py`。
 - **live-figure 会话**：worker 跑一次脚本（拦截 `Figure.savefig` + `paper_style.save`，
   不写真实文件），Figure 常驻内存；override 直接 mutate artist 再导出带 gid 的
   SVG（dpi≈120 预览）——冷启动秒到分钟级，热态 ~40ms。
