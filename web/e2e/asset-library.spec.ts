@@ -350,11 +350,12 @@ test('多 Figure：?pick= 打开选择器，选第二张加的就是第二张', 
  * 「选择渲染环境 / 复制诊断」，新用户走不到安装。
  *
  * 门的那一次响应用 `page.route` 造（真后端要触发它得先让受管环境缺一个可装的包、授权后还要联网装），其余全走
- * 真后端：行内是一句话 + 一键修复（不弹授权框，用户 2026-09-30 的决定，见 #760）；「详情」里的「不准备，直接运行」（真 `POST /api/engine/dependencies/skip`）
+ * 真后端：依赖门直接弹一键修复框（用户 2026-10-03 的决定，#793）；「稍后」后从脚本行重开，
+ * 框内「详情」里的「不准备，直接运行」（真 `POST /api/engine/dependencies/skip`）
  * 放行后自动重跑 → 真 worker → 发现图、运行时图卡片出现。授权准备成功后的重跑由 `ScriptLibrary.test.tsx` 与
  * `dependency-one-click.spec.ts` 看护（SSE 在这里造不了）。
  */
-test('试运行撞上依赖门：行内一句话 + 一键修复（不弹框、不进「可能需要原环境」）；放行后再跑出图', async ({
+test('试运行撞上依赖门：直接弹一键修复框，稍后可重开；明确跳过后自动跑出图', async ({
   app,
   page,
 }) => {
@@ -362,8 +363,10 @@ test('试运行撞上依赖门：行内一句话 + 一键修复（不弹框、�
   writeShowOnlyProject(dir)
   const a = await app({ figures: dir })
   let gated = 0
+  let probes = 0
   // 请求带 `?pj=` 查询串：用正则认路径（不认 `/probe/cancel`）
   await page.route(/\/api\/registry\/probe(\?|$)/, async (route) => {
+    probes += 1
     if (gated > 0) return route.continue()
     gated += 1
     const plan = {
@@ -393,26 +396,41 @@ test('试运行撞上依赖门：行内一句话 + 一键修复（不弹框、�
   })
 
   await page.goto(a.baseURL)
-  await expect(page.getByRole('heading', { name: '脚本' })).toBeVisible({ timeout: 30_000 })
-  await page.getByRole('button', { name: '运行 show_only.py 并发现图' }).click()
+  const row = page.locator('[data-script-row="show_only.py"]')
+  await expect(row).toBeVisible({ timeout: 30_000 })
+  await row.locator('[data-script-run]').click()
 
-  // 行内一句话 + 一键修复（用户 2026-09-30 的决定，#760；此前 #740 是弹授权框）：不弹框、不进「可能需要原环境」
-  const card = page.locator('[data-script-preparation]')
-  await expect(card).toBeVisible()
-  await expect(page.locator('[data-dialog="dependency-prepare"]')).toHaveCount(0)
-  await expect(card.locator('[data-script-preparation-sentence]')).toHaveText('这个脚本还缺 adjusttext，点一下自动装好。')
-  await expect(card.locator('[data-script-preparation-fix]')).toHaveText('一键修复')
+  // 跑前缺依赖直接弹框；行只保留「稍后」后的再打开入口，不再执行另一套行内准备。
+  const dialog = page.locator('[data-dialog="dependency-prepare"]')
+  await expect(dialog).toBeVisible()
+  await expect(dialog).toBeInViewport()
+  await expect(dialog).toContainText('这个脚本还缺 adjusttext，点一下自动装好。')
+  await expect(dialog.locator('[data-dependency-prepare-start]')).toHaveText('一键修复')
   await expect(page.getByText('可能需要原环境')).toHaveCount(0)
-  await expect(page.getByRole('list', { name: '需要修复' })).toContainText('show_only.py')
+  expect(probes).toBe(1)
+  await dialog.locator('[data-dependency-prepare-later]').click()
+  await expect(dialog).toHaveCount(0)
+  await expect(row.locator('..')).toHaveAttribute('aria-label', '需要修复')
+  const reopen = row.locator('[data-script-preparation-fix]')
+  await expect(reopen).toBeVisible()
+  await reopen.click()
+  await expect(dialog).toBeVisible()
+  await expect(dialog).toContainText('这个脚本还缺 adjusttext，点一下自动装好。')
+  expect(probes).toBe(1)
 
   // 「详情」里「其他方式（备选）」的「不准备，直接运行」：真 `POST /api/engine/dependencies/skip`，然后这一行自动再试运行
   // （真 worker）→ 发现图（授权准备成功后的重跑由 `ScriptLibrary.test.tsx` 与 `dependency-one-click.spec.ts` 看护：SSE 在这里造不了）
-  await card.locator('details > summary').click()
-  await card.locator('[data-script-preparation-skip]').click()
+  await dialog.locator('[data-repair-advanced] > summary').click()
+  const skipping = page.waitForResponse(response =>
+    /\/api\/engine\/dependencies\/skip(\?|$)/.test(response.url()) && response.request().method() === 'POST')
+  await dialog.locator('[data-dependency-skip]').click()
+  expect((await skipping).ok()).toBe(true)
   await expect(page.getByText('已发现 1 张图')).toBeVisible({ timeout: 120_000 })
   await expect(page.locator('[data-card="runtime:show_only.py#show_only"]')).toBeVisible({ timeout: 30_000 })
+  await expect(dialog).toHaveCount(0)
   await expect(page.locator('[data-script-preparation]')).toHaveCount(0)
   expect(gated).toBe(1)
+  expect(probes).toBe(2)
 })
 
 test('窄视口：脚本行的「运行并发现图」仍可见可点', async ({ app, page }) => {
