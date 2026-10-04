@@ -75,18 +75,15 @@
       },
       {
         "id": "dsh",
-        "status": "beta",
-        "channel": "dsh-bundle"
+        "status": "experimental"
       },
       {
         "id": "workbuddy",
-        "status": "beta",
-        "channel": "claude-plugin"
+        "status": "experimental"
       },
       {
         "id": "claude-code",
-        "status": "beta",
-        "channel": "claude-plugin"
+        "status": "experimental"
       },
       {
         "id": "claude-desktop",

@@ -344,55 +344,11 @@ python3 <插件目录>/skills/tavotto-figure/scripts/handoff.py path/to/figure.p
 > install。只安装 Codex 插件和所需的 Tavotto 引擎，运行健康检查；需要新会话时
 > 明确告诉我并停止。
 
-### 在 Claude Code 中使用 Tavotto（Beta）
-
-同一份插件可装到 Claude Code 的终端、IDE 扩展和桌面应用的 Code 标签页。在终端逐条运行：
-
-```sh
-claude plugin marketplace add Tavotto/Tavotto --sparse .claude-plugin
-claude plugin install tavotto@tavotto
-pipx install "tavotto[worker]"
-```
-
-然后新开 Claude Code 会话，或在当前会话运行 `/reload-plugins`。`/mcp` 应显示
-`plugin:tavotto:tavotto` 已连接；让 Claude 调用 `tavotto_health`，确认找到引擎。
-授权范围是启动 Claude Code 的项目目录与 `/add-dir` 添加的目录。Claude Code 没有内嵌画布，
-可通过同一组工具打开、调整、预检和导出，需要手动编辑时交给桌面版。
-升级用 `claude plugin update tavotto@tavotto`。以前手配过 `.mcp.json` 的，安装插件后移除旧条目，避免两个服务。
-Claude Desktop 的聊天和 claude.ai 不会从插件启动本地 MCP 服务；Claude Desktop 请用下面的配置生成器。
-
-### 在 DeepSeek Harness 中使用 Tavotto（Beta）
-
-同一份插件也是 DeepSeek Harness bundle。添加到实际使用的 profile（这里的 `web` 对应 `dsh web`）：
-
-```sh
-dsh plugin --profile web add "git+https://github.com/Tavotto/Tavotto.git#plugin-stable&path:/codex-plugin"
-pipx install "tavotto[worker]"
-```
-
-新开会话（`dsh web`），发现完成后工具名为 `mcp__tavotto__*`，技能目录中有 `tavotto-figure`。
-授权范围是启动 `dsh` 的目录，请在项目目录里启动，不要在主目录里启动。DSH 没有内嵌画布，通过工具编辑。
-升级用 `dsh plugin --profile web update tavotto-dsh`。以前手动合并过 `cordis.patch.yml` 的，移除 Tavotto
-那一行，bundle 与手动配置二选一；同名 `tavotto` 服务会让第二行加载失败。
-
-### 在 WorkBuddy 中使用 Tavotto（Beta）
-
-WorkBuddy 安装与 Claude Code 相同的插件。在 WorkBuddy 的插件市场选「添加市场」，填写：
-
-```text
-Tavotto/Tavotto
-```
-
-从新市场安装 `tavotto@tavotto`，再在终端运行 `pipx install "tavotto[worker]"`。
-新开对话，让 WorkBuddy 调用 `tavotto_health`，确认找到引擎。授权范围是对话的工作目录
-（WorkBuddy 不回报 MCP roots），请用项目目录，不要用整个主目录。WorkBuddy 内嵌画布尚未验收，工具可以独立使用。
-如果以前用配置生成器手动添加了 Tavotto，安装插件后移除那个条目，避免两个服务。
-
 ### 在其他 AI 编辑器 / 客户端中使用（实验）
 
 Cursor、Claude Code、Claude Desktop（本地聊天）、VS Code（GitHub Copilot Agent）、Trae、
-DeepSeek Harness、WorkBuddy、ZCode、MiniMax Code 用的是**同一份** MCP 服务和技能，不需要装 Codex，也不需要 clone
-仓库或构建前端。目前的状态是**可接入（实验）**：配置生成已通过测试，除 DSH 外都做了协议级测试，配置生成器这条接入路线还没有逐家完成真实客户端验收
+DeepSeek Harness、WorkBuddy、ZCode 用的是**同一份** MCP 服务和技能，不需要装 Codex，也不需要 clone
+仓库或构建前端。目前的状态是**可接入（实验）**：配置生成已通过测试，除 DSH 外都做了协议级测试，真实客户端还没有逐家验收
 （口径见 `docs/support-matrix.json` 的 `mcp_hosts`，证据见
 `docs/implementation/multi-host-mcp/acceptance.md`）。
 
@@ -413,14 +369,13 @@ DeepSeek Harness、WorkBuddy、ZCode、MiniMax Code 用的是**同一份** MCP �
    py -3 '<完整包>\integrations\configure.py' --host vscode --project-root 'D:\你的项目'
    ```
 
-   `--host` 可选 `cursor` `zcode` `dsh` `workbuddy` `claude-code` `claude-desktop` `trae` `vscode` `minimax-code`。Trae 的说明也给出国际版 `trae://` 与国内版 `trae-cn://` 一键安装链接。stdout 是要合并的配置，
+   `--host` 可选 `cursor` `zcode` `dsh` `workbuddy` `claude-code` `claude-desktop` `trae` `vscode`。stdout 是要合并的配置，
    stderr 写明合并到哪个文件或界面、授权的是哪个目录、引擎是否就绪、如何确认宿主已经加载、技能怎么装。
 4. 在对话里调用 `tavotto_health`，确认它回报的 `server.package_dir` 就是刚解压的那份包。
 
 授权范围只有 `--project-root` 指定的目录，不接受整个主目录或磁盘根目录。升级时解压新版到新目录，重新生成配置，并刷新技能：把新的 `tavotto-figure/` 覆盖复制到原来的位置，
 或者重新运行 `--emit instructions`、替换之前粘贴的说明；
 回退就是把配置改回指向旧目录。各宿主的依据与差异见 `docs/implementation/multi-host-mcp/hosts.md`。
-ZCode 也可以从自己的插件市场安装上面的 Claude Code 插件；这条路线还没有在登录后的 ZCode 真实会话中跑过，仍属实验。
 
 ### 桌面版
 

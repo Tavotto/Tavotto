@@ -415,65 +415,12 @@ Send Codex this message, in full:
 > plugin and the Tavotto engine it needs, then run the health check; when a new
 > session is required, tell me so explicitly and stop.
 
-### Using Tavotto with Claude Code (Beta)
-
-The same plugin installs into Claude Code (terminal, IDE extensions and the desktop app's Code tab).
-Run these in a terminal, one at a time:
-
-```sh
-claude plugin marketplace add Tavotto/Tavotto --sparse .claude-plugin
-claude plugin install tavotto@tavotto
-pipx install "tavotto[worker]"
-```
-
-Then start a new Claude Code session, or run `/reload-plugins` in the one you have open. `/mcp` should list
-`plugin:tavotto:tavotto` as connected; ask Claude to call `tavotto_health` to confirm the engine is found.
-Tavotto may only open and write inside the folder Claude Code was started in (Claude Code reports it
-through MCP roots; `/add-dir` adds more). Claude Code shows no embedded canvas, so you work through the
-same tools: open, adjust, preflight, export. To keep editing by hand, hand the figure off to the desktop
-app. Update with `claude plugin update tavotto@tavotto`.
-
-Claude Desktop's chat and claude.ai don't start local MCP servers from plugins. For Claude Desktop, use the
-config generator below.
-
-### Using Tavotto with DeepSeek Harness (Beta)
-
-The same plugin is also a DeepSeek Harness bundle. Add it to the profile you use (`web` here, the one
-`dsh web` starts):
-
-```sh
-dsh plugin --profile web add "git+https://github.com/Tavotto/Tavotto.git#plugin-stable&path:/codex-plugin"
-pipx install "tavotto[worker]"
-```
-
-Start a new session (`dsh web`). The tools show up as `mcp__tavotto__*` once discovery finishes, and the
-`tavotto-figure` skill is in the skill catalog. Tavotto may only open and write inside the folder you started
-`dsh` in, so start it in your project, not in your home folder. DSH shows no embedded canvas; you work through the
-tools. To update, run `dsh plugin --profile web update tavotto-dsh`. The bundle replaces the hand-merged
-`cordis.patch.yml` from the config generator below: use one or the other, not both (two rows would claim the
-same `tavotto` server name).
-
-### Using Tavotto with WorkBuddy (Beta)
-
-WorkBuddy installs the same plugin as Claude Code. In WorkBuddy open the plugin marketplace, choose **Add
-marketplace**, and enter:
-
-```text
-Tavotto/Tavotto
-```
-
-Install `tavotto@tavotto` from the new marketplace, then run `pipx install "tavotto[worker]"` in a terminal. Start a
-new conversation and ask WorkBuddy to call `tavotto_health` to confirm the engine is found. Tavotto may only open and
-write inside the conversation's working folder (WorkBuddy doesn't report MCP roots), so work in your project folder,
-not your home folder. The embedded canvas hasn't been checked in WorkBuddy yet; the tools work without it. If you
-added Tavotto by hand with the config generator below, remove that entry, or you will have two Tavotto servers.
-
 ### Using Tavotto from other AI editors and clients (experimental)
 
 Cursor, Claude Code, Claude Desktop (local chat), VS Code (GitHub Copilot agent), Trae, DeepSeek Harness,
 WorkBuddy, ZCode and MiniMax Code use **the same** MCP server and skill as Codex. You don't need Codex, a clone of this repository,
 or a frontend build. Status: **experimental**. Config generation passes its tests and every host except DSH has
-protocol-level tests, but these configuration-based routes have not completed real-client acceptance (the claim lives in `mcp_hosts` in `docs/support-matrix.json`; the evidence
+protocol-level tests, but none of these clients has been verified hands-on yet (the claim lives in `mcp_hosts` in `docs/support-matrix.json`; the evidence
 is in `docs/implementation/multi-host-mcp/acceptance.md`).
 
 1. Download `codex-plugin-<version>.zip` from [Releases](https://github.com/Tavotto/Tavotto/releases) and unzip it into
@@ -505,7 +452,6 @@ Only the `--project-root` folder is authorized; your whole home folder or a driv
 the new version into a new folder, regenerate the config, and refresh the skill: copy the new `tavotto-figure/`
 over the old copy, or rerun `--emit instructions` and replace the text you pasted before. To roll back, point the config at the old folder again.
 Per-host sources and differences are in `docs/implementation/multi-host-mcp/hosts.md`.
-ZCode can also install the Claude Code plugin above from its own plugin marketplace; that route has not been run in a signed-in ZCode session yet.
 
 ### Desktop
 
