@@ -556,3 +556,85 @@ test('只差水平翻转的两个节点：缩略图不一样，而且是左右�
   expect(m.mirrored, why).toBeGreaterThan(0.85) // 翻转那张的左右分布 = 原样的倒过来
   expect(m.mirrored - m.unmirrored, why).toBeGreaterThan(0.3) // 而不是原样本身
 })
+
+// 协议驱动状态，真实浏览器量布局：同一段文案的中英文换行、两档合法栏宽都要量。
+// 只替换 SSE 的时序，不碰 documentStore / renderStore，也不注入第二份状态判据。
+for (const locale of ['zh-CN', 'en-US']) {
+  for (const width of [360, 320]) {
+    test(`属性栏引擎提示不挪动控件：冷 / 热 / stale / ready (${locale}, ${width}px)`, async ({ app, page }) => {
+      test.setTimeout(180_000)
+      await page.setViewportSize({ width: 1440, height: 1000 })
+      await page.addInitScript(({ locale, width }) => {
+        localStorage.setItem('tavotto.locale', locale)
+        localStorage.setItem('tavotto.ui', JSON.stringify({ prefsVersion: 2, rightWidth: width }))
+        const sources: EventTarget[] = []
+        class TestEvents extends EventTarget {
+          readonly url: string
+          readyState = 1
+          constructor(url: string) { super(); this.url = url; sources.push(this) }
+          close() { this.readyState = 2 }
+        }
+        window.EventSource = TestEvents as unknown as typeof EventSource
+        ;(window as unknown as Record<string, unknown>).__TAVOTTO_TEST_EVENT__ = (kind: string, data: unknown) => {
+          for (const source of sources) source.dispatchEvent(new MessageEvent(kind, { data: JSON.stringify(data) }))
+        }
+      }, { locale, width })
+      const held: import('@playwright/test').Route[] = []
+      await page.route('**/api/engine/render**', (route) => { held.push(route) })
+      const emit = (kind: string, data: Record<string, unknown>) => page.evaluate(({ kind, data }) => {
+        const send = (window as unknown as { __TAVOTTO_TEST_EVENT__: (kind: string, data: unknown) => void }).__TAVOTTO_TEST_EVENT__
+        send(kind, data)
+      }, { kind, data })
+      const a = await app()
+      await page.goto(a.baseURL)
+      await placeFigureAndBack(page)
+      await expect.poll(() => held.length).toBe(1)
+      const more = await only(page.locator('[data-panel-more]'))
+      if ((await more.getAttribute('aria-expanded')) !== 'true') await more.click()
+      await (await only(page.locator('[data-panel-flip="h"]'))).click({ trial: true })
+      await settleInspectorMotion(page)
+      const inspector = await only(page.locator('[data-inspector-panel]'))
+      expect((await inspector.boundingBox())!.width).toBe(width)
+      const measure = () => inspector.evaluate((root) => {
+        const rect = (el: Element) => {
+          const r = el.getBoundingClientRect()
+          return { x: r.x, y: r.y, w: r.width, h: r.height }
+        }
+        const status = root.querySelector('[data-panel-engine-status]')!
+        return { status: rect(status), controls: [...root.querySelectorAll('button, input')].map(rect) }
+      })
+      const baseline = await measure()
+      const measurements: { state: string; geometry: Awaited<ReturnType<typeof measure>> }[] = []
+      const check = async (state: string, visible: string[]) => {
+        await expect.poll(() => inspector.locator('[data-panel-engine-message]:visible').evaluateAll((nodes) =>
+          nodes.map((el) => (el as HTMLElement).dataset.panelEngineMessage),
+        )).toEqual(visible)
+        const geometry = await measure()
+        expect(geometry, state).toEqual(baseline)
+        measurements.push({ state, geometry })
+      }
+      await check('warm', ['building'])
+      await emit('render.started', { id: 'Fig1_kinetics.pdf', cold: true, cost: 'light' })
+      await check('cold', ['cold'])
+      await emit('render.started', { id: 'Fig1_kinetics.pdf', cold: false, cost: 'light' })
+      await check('warm again', ['building'])
+      await held[0].continue()
+      await expect(page.locator('[data-canvas-stage] [data-display="exact"]')).toHaveCount(1, { timeout: 60_000 })
+      await emit('render.done', { id: 'Fig1_kinetics.pdf' })
+      await check('ready', [])
+      await emit('panel.file_changed', { stems: ['Fig1_kinetics'], reason: 'watcher' })
+      await expect.poll(() => held.length).toBe(2)
+      await check('stale while rebuilding', ['building', 'stale'])
+      await emit('render.started', { id: 'Fig1_kinetics.pdf', cold: true, cost: 'light' })
+      await check('cold and stale', ['cold', 'stale'])
+      await held[1].continue()
+      await expect(page.locator('[data-canvas-stage] [data-display="exact"]')).toHaveCount(1, { timeout: 60_000 })
+      await emit('render.done', { id: 'Fig1_kinetics.pdf' })
+      await check('rebuilt', [])
+      // 留下真实高度而不是把预测值写成通过；CI 日志在成功时也能取回这些数字。
+      console.log(`inspector-engine-layout ${locale} ${width}px ${JSON.stringify(measurements)}`)
+      const { horizontalOffenders } = await import('./overflow')
+      expect(await horizontalOffenders(page, '[data-inspector-panel]')).toEqual([])
+    })
+  }
+}
