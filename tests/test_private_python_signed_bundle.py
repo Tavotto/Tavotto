@@ -371,9 +371,7 @@ def test_repackage_requires_pristine_upstream_bytes(bundle, tmp_path, monkeypatc
         cs.sign_private_python(app, "identity", None)
 
 
-@pytest.mark.parametrize(
-    "bad", ["duplicate", "type-change", "escape", "chain-escape", "no-data-filter"]
-)
+@pytest.mark.parametrize("bad", ["duplicate", "type-change", "escape", "no-data-filter"])
 def test_signing_rejects_unsafe_archive_before_codesign(bundle, tmp_path, monkeypatch, bad):
     _, _, archive, source = bundle
     if bad == "no-data-filter":
@@ -388,19 +386,85 @@ def test_signing_rejects_unsafe_archive_before_codesign(bundle, tmp_path, monkey
                 "../../outside" if bad == "escape" else "bin",
             )
         make_archive(archive, extra=info)
-        if bad == "chain-escape":
-            # Each lexical target remains under python/, but the first link
-            # changes how '..' in the second one resolves on disk.
-            with tarfile.open(tmp_path / "chain.tar", "w") as tar:
-                for name, target in (("python/link", "."), ("python/out", "link/../outside")):
-                    info = tarfile.TarInfo(name)
-                    info.type, info.linkname = tarfile.SYMTYPE, target
-                    tar.addfile(info)
-            import gzip
-
-            archive.write_bytes(gzip.compress((tmp_path / "chain.tar").read_bytes()))
     with pytest.raises((cs.SignError, privatepython.ProvisionError, tarfile.TarError, ValueError)):
         cs._unpack_private(archive, tmp_path / "unpack", source)
+
+
+@pytest.mark.parametrize("reverse", [False, True], ids=["backward-links", "forward-links"])
+@pytest.mark.parametrize(
+    "links,reason",
+    [
+        pytest.param(
+            [("python/link", "."), ("python/out", "link/../outside")],
+            "escapes root",
+            id="chain-escape",
+        ),
+        pytest.param(
+            [
+                ("python/link", "."),
+                ("python/alias", "link"),
+                ("python/out", "alias/../outside"),
+            ],
+            "escapes root",
+            id="nested-chain-escape",
+        ),
+        pytest.param([("python/link", "link")], "cyclic", id="self-cycle"),
+        pytest.param(
+            [("python/link", "other"), ("python/other", "link")],
+            "cyclic",
+            id="indirect-cycle",
+        ),
+        pytest.param(
+            [("python/link", "bin"), ("python/link/child", ".")],
+            "symlink ancestor",
+            id="alias-installed-member",
+        ),
+    ],
+)
+def test_signing_checks_original_posix_link_graph_before_extraction(
+    bundle, tmp_path, monkeypatch, reverse, links, reason
+):
+    _, _, archive, source = bundle
+    with tarfile.open(archive, "w:gz") as tar:
+        for name, target in reversed(links) if reverse else links:
+            info = tarfile.TarInfo(name)
+            info.type, info.linkname = tarfile.SYMTYPE, target
+            tar.addfile(info)
+    # The subject is the original graph that repacking preserves, before the
+    # host can create links or data_filter can normalize their meaning away.
+    monkeypatch.setattr(
+        tarfile.TarFile, "extractall", lambda *a, **kw: pytest.fail("unsafe extraction started")
+    )
+    with pytest.raises(cs.SignError, match=reason):
+        cs._unpack_private(archive, tmp_path / "unpack", source)
+
+
+@pytest.mark.parametrize("reverse", [False, True], ids=["backward-links", "forward-links"])
+def test_signing_accepts_contained_pbs_style_link_graph(bundle, tmp_path, monkeypatch, reverse):
+    _, _, archive, source = bundle
+    links = [
+        ("python/bin/python3", "python3.13"),
+        ("python/bin/python", "python3"),
+        ("python/lib/libpython3.dylib", "libpython3.13.dylib"),
+        ("python/lib/pkgconfig/python3.pc", "python-3.13.pc"),
+        ("python/config", "lib/pkgconfig"),
+        ("python/library", "config/../libpython3.dylib"),
+        ("python/bin/python-config", "../lib/python3.13/config/python-config.py"),
+        ("python/current", "."),
+        ("python/repeated", "current/current/bin/python3"),
+    ]
+    with tarfile.open(archive, "w:gz") as tar:
+        for name, target in reversed(links) if reverse else links:
+            info = tarfile.TarInfo(name)
+            info.type, info.linkname = tarfile.SYMTYPE, target
+            tar.addfile(info)
+    extracted = []
+    monkeypatch.setattr(
+        tarfile.TarFile, "extractall", lambda *a, **kw: extracted.extend(kw["members"])
+    )
+    members = cs._unpack_private(archive, tmp_path / "unpack", source)
+    assert extracted == members
+    assert {m.name: m.linkname for m in members} == dict(links)
 
 
 @pytest.mark.skipif(
@@ -431,7 +495,7 @@ def test_transformed_bundle_provisions_offline_with_zero_cache_and_requests(
     assert Path(result).is_file()
     assert privatepython.read_ledger()["runtimes"][source.id]["origin"] == "bundled"
     assert list(privatepython.downloads_dir().iterdir()) == []
-    assert (tmp_path / "launches").read_text().splitlines() == ["x"]
+    assert (tmp_path / "launches").read_text(encoding="utf-8").splitlines() == ["x"]
 
 
 def test_repacking_preserves_modes_directories_links_and_verifies_final_archive(
@@ -464,7 +528,7 @@ def test_repacking_preserves_modes_directories_links_and_verifies_final_archive(
     assert len(verified) == 2
     assert all(f'subject.OU] = "{TEAM}"' in c[c.index("-R") + 1] for c in verified)
     cs.verify_private_python(app)
-    assert json.loads((internal / MANIFEST).read_text())["source_id"] == source.id
+    assert json.loads((internal / MANIFEST).read_text(encoding="utf-8"))["source_id"] == source.id
 
 
 @pytest.mark.parametrize(
@@ -533,13 +597,20 @@ def test_snapshot_disk_error_is_structured(bundle, monkeypatch):
     assert error.value.code == privatepython.ERROR_WRITE_FAILED
 
 
-def test_smoke_is_frozen_entry_and_added_to_final_app_gate():
+def test_smoke_is_frozen_entry_and_added_to_final_app_gate(monkeypatch):
     import ast
 
     from tavotto.engine import privatepython_smoke
     from test_release_workflow_contract import _Workflow
 
-    entry = ast.parse((ROOT / "packaging/entry.py").read_text())
+    # Emulate the Windows locale default on every host; source is UTF-8.
+    original_read_text = Path.read_text
+
+    def locale_read_text(path, encoding=None, **kwargs):
+        return original_read_text(path, encoding=encoding or "cp1252", **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", locale_read_text)
+    entry = ast.parse((ROOT / "packaging/entry.py").read_text(encoding="utf-8"))
     branches = [
         n
         for n in ast.walk(entry)
@@ -554,7 +625,7 @@ def test_smoke_is_frozen_entry_and_added_to_final_app_gate():
         isinstance(n, ast.ImportFrom) and any(a.name == "privatepython_smoke" for a in n.names)
         for n in ast.walk(branches[0])
     )
-    tree = ast.parse(Path(privatepython_smoke.__file__).read_text())
+    tree = ast.parse(Path(privatepython_smoke.__file__).read_text(encoding="utf-8"))
     calls = [
         n for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
     ]

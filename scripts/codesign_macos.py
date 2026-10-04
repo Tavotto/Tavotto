@@ -43,7 +43,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
@@ -303,8 +303,52 @@ def _sign_one(mo: MachO, identity: str, entitlements: Path | None) -> None:
         raise SignError(f"签名失败 {mo.path}\n{out}")
 
 
+def _validate_private_links(members: list[tarfile.TarInfo], root: str) -> None:
+    """Check the original POSIX graph, including forward links, before extraction.
+
+    Called after production member validation. No member may be installed under
+    a link alias. Expand links before '..': host realpath/data_filter behavior
+    differs, and repacking preserves original linknames, not filtered ones.
+    """
+    links = {PurePosixPath(m.name).parts: m.linkname.split("/") for m in members if m.issym()}
+    root_depth = len(PurePosixPath(root).parts)
+    resolved_links = {}
+    for member in members:
+        parts = PurePosixPath(member.name).parts
+        if any(parts[:i] in links for i in range(1, len(parts))):
+            raise SignError(f"private Python archive member has symlink ancestor: {member.name}")
+        resolved, pending, active = [], list(reversed(parts)), set()
+        while pending:
+            part = pending.pop()
+            if isinstance(part, tuple):
+                # A completion marker scopes cycle detection to this expansion.
+                active.remove(part)
+                resolved_links[part] = tuple(resolved)
+                continue
+            if part in ("", "."):
+                continue
+            if part == "..":
+                if len(resolved) <= root_depth:
+                    raise SignError(f"private Python archive link escapes root: {member.name}")
+                resolved.pop()
+                continue
+            resolved.append(part)
+            name = tuple(resolved)
+            if name not in links:
+                continue
+            if name in active:
+                raise SignError(f"cyclic private Python archive link: {member.name}")
+            if name in resolved_links:
+                resolved = list(resolved_links[name])
+                continue
+            active.add(name)
+            resolved.pop()
+            pending.append(name)
+            pending.extend(reversed(links[name]))
+
+
 def _unpack_private(archive: Path, destination: Path, source) -> list[tarfile.TarInfo]:
-    """Reuse production member validation plus graph-aware data_filter, no duplicates.
+    """Reuse production validation with POSIX graph and native filesystem checks.
 
     Signing needs Python with data_filter (the release runners use 3.13). The
     original TarInfo records are retained so repacking preserves modes and links.
@@ -316,10 +360,11 @@ def _unpack_private(archive: Path, destination: Path, source) -> list[tarfile.Ta
         names = set()
         for member in members:
             privatepython._validate_member(member, source.archive_root)
-            name = str(Path(member.name))
+            name = str(PurePosixPath(member.name))
             if name in names:
                 raise SignError(f"duplicate private Python archive member: {name}")
             names.add(name)
+        _validate_private_links(members, source.archive_root)
 
         def confined(member, dest):
             filtered = tarfile.data_filter(member, dest)
