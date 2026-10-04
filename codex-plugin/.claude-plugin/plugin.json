@@ -1,7 +1,7 @@
 {
   "name": "tavotto",
   "displayName": "Tavotto",
-  "version": "0.17.0",
+  "version": "0.18.0",
   "description": "画论文级 matplotlib 图，并用 Tavotto 的 MCP 工具微调：改图例位置、字号线宽、刻度，跑出版规范预检，导出真矢量 PDF。所有改动都是 override，不动你的 Python 源码。",
   "author": {
     "name": "erwanjun",
