@@ -53,6 +53,7 @@ def _codesign(*args: str) -> str:
         errors="replace",
         timeout=60,
         check=True,
+        creationflags=runtime.CREATE_NO_WINDOW,
     )
     return proc.stdout + proc.stderr
 

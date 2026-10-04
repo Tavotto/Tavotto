@@ -70,8 +70,11 @@ def main() -> int:
         check=True,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=60,
         env=privatepython._probe_env(),
+        creationflags=runtime.CREATE_NO_WINDOW,
     )
     ledger = privatepython.read_ledger()["runtimes"][source.id]
     if ledger["origin"] != privatepython.ORIGIN_BUNDLED or network_attempts:
