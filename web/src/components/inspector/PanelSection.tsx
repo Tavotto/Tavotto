@@ -746,7 +746,7 @@ function ElementEditEntry({ panel }: { panel: PanelObject }) {
       </div>
 
       {!editing && building && (
-        <p className="mt-1.5 flex items-center gap-1.5 text-xs text-ink-2">
+        <p data-panel-engine-progress className="mt-1.5 flex items-center gap-1.5 text-xs text-ink-2">
           <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-ink-faint" />
           {pn(cold ? 'coldBuilding' : 'building')}
         </p>

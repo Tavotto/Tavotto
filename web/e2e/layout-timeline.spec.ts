@@ -33,6 +33,16 @@ async function only(loc: Locator, timeout?: number): Promise<Locator> {
   return loc
 }
 
+/** 单个按钮稳定不代表展开行下面的控件也稳定；只等有限动效，不等进度脉冲。 */
+async function settleInspectorMotion(page: Page) {
+  await (await only(page.locator('[data-inspector-panel]'))).evaluate(async (root) => {
+    const finite = root.getAnimations({ subtree: true }).filter((a) =>
+      Number.isFinite(a.effect?.getComputedTiming().iterations ?? Infinity),
+    )
+    await Promise.all(finite.map((a) => a.finished.catch(() => undefined)))
+  })
+}
+
 /** 素材卡上画布，再回到排版 */
 async function placeFigureAndBack(page: Page) {
   await (await only(page.locator('[data-card="Fig1_kinetics.pdf"]'), 30_000)).dblclick()
@@ -428,13 +438,15 @@ test('只差水平翻转的两个节点：缩略图不一样，而且是左右�
   const more = await only(page.locator('[data-panel-more]'))
   if ((await more.getAttribute('aria-expanded')) !== 'true') await more.click()
   const flip = await only(page.locator('[data-panel-flip="h"]'))
-  await flip.click({ trial: true }) // 等展开动画落定；不发 pointerdown / click
+  await flip.click({ trial: true }) // 滚到可操作位置；不发 pointerdown / click
+  await settleInspectorMotion(page)
   const controls = () => page.locator('[data-inspector-panel]').evaluate((root) =>
     [...root.querySelectorAll('button, input')].map((el) => {
       const r = el.getBoundingClientRect()
       return { tag: el.tagName, x: r.x, y: r.y, w: r.width, h: r.height }
     }),
   )
+  await expect(page.locator('[data-panel-engine-progress]:visible')).toHaveCount(1)
   const beforeControls = await controls()
   const box = (await flip.boundingBox())!
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
@@ -443,6 +455,8 @@ test('只差水平翻转的两个节点：缩略图不一样，而且是左右�
   try {
     await held!.continue()
     await expect(page.locator('[data-canvas-stage] [data-display="exact"]')).toHaveCount(1, { timeout: 60_000 })
+    // SSE 的 building[fileId] 与 HTTP 渲染响应分开抵达；两者都落定才真的撤下提示。
+    await expect(page.locator('[data-panel-engine-progress]:visible')).toHaveCount(0)
     // React 的派生尺寸与提示一并落地后再松手，量实际按钮 / 输入框位置，不量 class。
     await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
     afterControls = await controls()
