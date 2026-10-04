@@ -411,16 +411,53 @@ test('只差水平翻转的两个节点：缩略图不一样，而且是左右�
   await page.addInitScript(() => {
     ;(window as unknown as Record<string, unknown>).__TAVOTTO_THUMB_TRACE__ = []
   })
+  // 首次渲染的回包精确夹在按下与松开之间：原来冷启动提示消失会把下方控件
+  // 上移 21px，mouseup 落到透明度行，原生 click 根本没有提交水平翻转。
+  let held: import('@playwright/test').Route | undefined
+  await page.route('**/api/engine/render**', async (route) => {
+    if (!held) held = route
+    else await route.continue()
+  })
   const a = await app()
   await page.goto(a.baseURL)
   // 放一张图（按页面居中落位：整张缩略图左右镜像时，面板映到它自己身上）
   await placeFigureAndBack(page)
+  await expect.poll(() => !!held).toBe(true)
   await nameNow(page, '原样')
   // 属性页「更多」里的「水平翻转」（面板放上来之后是选中的）
   const more = await only(page.locator('[data-panel-more]'))
   if ((await more.getAttribute('aria-expanded')) !== 'true') await more.click()
-  await (await only(page.locator('[data-panel-flip="h"]'))).click()
+  const flip = await only(page.locator('[data-panel-flip="h"]'))
+  await flip.click({ trial: true }) // 等展开动画落定；不发 pointerdown / click
+  const controls = () => page.locator('[data-inspector-panel]').evaluate((root) =>
+    [...root.querySelectorAll('button, input')].map((el) => {
+      const r = el.getBoundingClientRect()
+      return { tag: el.tagName, x: r.x, y: r.y, w: r.width, h: r.height }
+    }),
+  )
+  const beforeControls = await controls()
+  const box = (await flip.boundingBox())!
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+  await page.mouse.down()
+  let afterControls: Awaited<ReturnType<typeof controls>>
+  try {
+    await held!.continue()
+    await expect(page.locator('[data-canvas-stage] [data-element-svg] svg')).toHaveCount(1, { timeout: 60_000 })
+    // React 的派生尺寸与提示一并落地后再松手，量实际按钮 / 输入框位置，不量 class。
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+    afterControls = await controls()
+  } finally {
+    await page.mouse.up()
+  }
+  expect.soft(afterControls!, '渲染就绪不应把正在操作的属性控件挪走').toEqual(beforeControls)
+  const saved = page.waitForRequest((r) =>
+    r.method() === 'POST' && new URL(r.url()).pathname.startsWith('/api/versions/') &&
+    r.postDataJSON()?.name === '翻转',
+  )
   await nameNow(page, '翻转')
+  const savedPanel = (await saved).postDataJSON().doc.objects[0]
+  expect(savedPanel.flipH, '原生点击必须真正写进命名节点的文档').toBe(true)
+  await expect(flip).toHaveAttribute('data-active', 'true')
   await page.keyboard.press('ControlOrMeta+Shift+H')
   const drawer = await only(page.locator('[data-timeline-drawer]'))
   const thumbOf = (name: string) =>
