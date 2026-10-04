@@ -11,6 +11,39 @@ Tavotto 在所有宿主里是**同一份完整包、同一个 MCP 服务、同�
 
 按用户**当前所在的宿主**只给那一家的步骤，给完就停，不在旧会话里假装工具可用：
 
+**Claude Code（终端 / IDE 扩展 / 桌面 Code 标签页）优先走插件**：
+
+```sh
+claude plugin marketplace add Tavotto/Tavotto --sparse .claude-plugin
+claude plugin install tavotto@tavotto
+pipx install "tavotto[worker]"
+```
+
+已经装了引擎就跳过第三行。新开会话或 `/reload-plugins`，用 `/mcp` 确认
+`plugin:tavotto:tavotto` connected，再调用 `tavotto_health`。授权目录是启动目录与 `/add-dir`
+加的目录；如果以前手配过 `.mcp.json`，移除那一项，避免两个 Tavotto server。
+
+**DeepSeek Harness 优先走 bundle**（`web` 换成所用 profile）：
+
+```sh
+dsh plugin --profile web add "git+https://github.com/Tavotto/Tavotto.git#plugin-stable&path:/codex-plugin"
+pipx install "tavotto[worker]"
+```
+
+新开 DSH 会话，等 `mcp__tavotto__*` 工具出现。授权目录是启动 `dsh` 的目录，在项目目录里启动，
+不要在 HOME 里启动。技能随 bundle 带上，不用复制。以前合并过配置生成器的 YAML 时，移除那一行，
+同名 `tavotto` server 不许配置两次。
+
+**WorkBuddy 优先走插件**：插件市场「添加市场」填 `Tavotto/Tavotto`，安装 `tavotto@tavotto`，
+没装引擎再运行 `pipx install "tavotto[worker]"`。新开对话，让它调用 `tavotto_health`。
+授权目录是对话的工作目录，在项目里用，不要用 HOME。插件自带技能；删除以前手配的 Tavotto
+MCP 条目，避免重复。内嵌画布尚未在 WorkBuddy 中验收，不把工具可用当成画布已显示。
+
+**ZCode** 也能从自己的插件市场装同一份插件，但还没在登录后的真实会话里跑过；把这一点告诉用户，
+仍按实验接入处理。
+
+其余宿主（以及不想装插件 / bundle 的 Claude Code、DSH、WorkBuddy 用户）：
+
 1. 下载 GitHub Releases 里的 `codex-plugin-<版本>.zip`，解压到一个会长期保留的目录
    （名字带 codex 是历史原因，内容对所有宿主都一样）。
 2. 在终端运行（路径换成真实的绝对路径）：
@@ -41,13 +74,16 @@ Tavotto 在所有宿主里是**同一份完整包、同一个 MCP 服务、同�
 | 宿主 | 让已开的会话拿到工具 | Skill 入口 |
 | --- | --- | --- |
 | Cursor | 在 MCP 设置里确认已连接后，新开 Agent 对话 | 复制整个 `tavotto-figure/` 到 `.cursor/skills/` |
-| Claude Code（CLI） | 重开会话，用 `/mcp` 确认 connected（项目 `.mcp.json` 第一次要批准） | 复制到 `.claude/skills/` |
+| Claude Code（插件版） | 新开会话或 `/reload-plugins`，用 `/mcp` 确认 connected | 插件自带技能，不用复制 |
+| Claude Code（配置版） | 重开会话，用 `/mcp` 确认 connected（项目 `.mcp.json` 第一次要批准） | 复制到 `.claude/skills/` |
 | Claude Desktop（聊天） | **完全退出**再打开 | 没有原生入口：`--emit instructions` 放进项目说明 |
 | VS Code（Copilot Agent） | MCP: List Servers → 启动 tavotto；在 Configure Tools 里勾选 | 复制到 `.github/skills/` |
 | Trae | MCP 列表确认已连接，**并把 tavotto 加进所用智能体** | 复制到 `.trae/skills/`（全局：国际版 `~/.trae/skills/`、国内版 `~/.trae-cn/skills/`） |
 | MiniMax Code | 在项目目录里重开 `mcode`（项目 `.mcp.json` 免批准自动加载） | 复制到 `.agents/skills/` 或 `.minimax/skills/` |
-| DSH | 新开会话，等 `mcp__tavotto__*` 工具出现 | 复制到 `.dsh/skills/` 或 `.agents/skills/` |
-| WorkBuddy / ZCode | 在 MCP 设置里确认已连接，重开对话 | `--emit instructions` |
+| DSH（bundle） | 新开会话，等 `mcp__tavotto__*` 工具出现 | bundle 自带，不用复制 |
+| DSH（YAML patch） | 新开会话，等 `mcp__tavotto__*` 工具出现 | 复制到 `.dsh/skills/` 或 `.agents/skills/` |
+| WorkBuddy（插件版） | 新开对话，让它调用 `tavotto_health` | 插件自带，不用复制 |
+| WorkBuddy / ZCode（配置版） | 在 MCP 设置里确认已连接，重开对话 | `--emit instructions` |
 
 ## 引擎不可用（只有 `tavotto_health`，或它回 `ok: false`）
 
@@ -63,8 +99,8 @@ health 结果里 `recovery` 给的原文**，那里是这台机器上的真实�
   `chat.mcp.apps.enabled`，是否开启由用户或组织决定）。没有画布时，同一组工具照样能走完
   打开 → 修改 → 预检 → 导出。`tavotto_health` 里的 `checks.host_ui_rendered` 永远是
   `unknown_to_server`：服务器无法知道画布有没有显示出来，要问用户或看界面。
-- **授权**：只有配置里的项目目录。用户要处理别的目录，就重新生成配置；不要让用户把 HOME
-  或磁盘根加进来。
+- **授权**：配置版只有配置里的项目目录；插件 / bundle 版按上面的宿主规则。要换项目就切到那个项目
+  或重新生成配置；不要让用户把 HOME 或磁盘根加进来。
 - **没有本机终端或文件写入能力的宿主**（Claude Desktop 聊天）：不能运行 `scripts/*.py`，也
   不能把新脚本保存到本机。这种情况下直接问偏好；已有的本地图照常用 MCP 工具打开和修改；
   新的出图脚本交给用户保存并运行。
