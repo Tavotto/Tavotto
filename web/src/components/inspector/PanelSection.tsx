@@ -305,19 +305,21 @@ function GeometrySection({ objs }: { objs: PanelObject[] }) {
         （审计 T26 验收：不混淆裁剪、原图尺寸和画布缩放）。两颗都是次级操作：
         ghost 文字键、不撑满、同高同图标档——不是两个 CTA。
       */}
-      <Row className="mt-1.5" label={pn('restore')} labelWidth={INSPECTOR_LABEL_W}>
-        <Tip label={pn('aspectTip')}>
-          <Button variant="ghost" size="sm" className="-ml-2" onClick={() => restorePanelAspect(ids)}>
-            <Ratio size={ICON_SIZE.sm} className="text-ink-3" />
-            {pn('aspect')}
-          </Button>
-        </Tip>
-        <Tip label={pn('nativeSizeTip')}>
-          <Button variant="ghost" size="sm" onClick={() => restorePanelNativeSize(ids)}>
-            <Scaling size={ICON_SIZE.sm} className="text-ink-3" />
-            {pn('nativeSize')}
-          </Button>
-        </Tip>
+      <Row className="mt-1.5" label={pn('restore')} labelWidth={INSPECTOR_LABEL_W} align="start">
+        <div className="flex w-full min-w-0 flex-wrap gap-1.5">
+          <Tip label={pn('aspectTip')}>
+            <Button data-panel-restore="aspect" variant="ghost" size="sm" className="-ml-2" onClick={() => restorePanelAspect(ids)}>
+              <Ratio size={ICON_SIZE.sm} className="text-ink-3" />
+              {pn('aspect')}
+            </Button>
+          </Tip>
+          <Tip label={pn('nativeSizeTip')}>
+            <Button data-panel-restore="size" variant="ghost" size="sm" onClick={() => restorePanelNativeSize(ids)}>
+              <Scaling size={ICON_SIZE.sm} className="text-ink-3" />
+              {pn('nativeSize')}
+            </Button>
+          </Tip>
+        </div>
       </Row>
     </Section>
   )
@@ -745,16 +747,38 @@ function ElementEditEntry({ panel }: { panel: PanelObject }) {
         )}
       </div>
 
-      {!editing && building && (
-        <p className="mt-1.5 flex items-center gap-1.5 text-xs text-ink-2">
-          <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-ink-faint" />
-          {pn(cold ? 'coldBuilding' : 'building')}
+      {/* 两条提示的布局足迹常驻，隐藏只改可见性：首次渲染在 pointerdown / up
+          之间完成时，撤掉提示会把翻转 / 数值框等控件上移，原生 click 随之丢失。
+          冷 / 热文案同格量最大高度，stale 独立一格；翻译换行也不靠写死像素猜。 */}
+      <div data-panel-engine-status className="mt-1.5">
+        <div className="grid">
+          {(['cold', 'building'] as const).map((kind) => {
+            const shown = !editing && building && (kind === 'cold' ? cold : !cold)
+            return (
+              <p
+                key={kind}
+                data-panel-engine-message={kind}
+                data-panel-engine-progress
+                aria-hidden={!shown}
+                className={cn(
+                  'col-start-1 row-start-1 flex items-center gap-1.5 text-xs text-ink-2',
+                  !shown && 'invisible',
+                )}
+              >
+                <span aria-hidden className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-ink-faint" />
+                {pn(kind === 'cold' ? 'coldBuilding' : 'building')}
+              </p>
+            )
+          })}
+        </div>
+        <p
+          data-panel-engine-message="stale"
+          aria-hidden={!render?.stale}
+          className={cn('mt-1.5 text-xs text-danger', !render?.stale && 'invisible')}
+        >
+          {pn('staleScript')}
         </p>
-      )}
-
-      {render?.stale && (
-        <p className="mt-1.5 text-xs text-danger">{pn('staleScript')}</p>
-      )}
+      </div>
     </Section>
   )
 }
