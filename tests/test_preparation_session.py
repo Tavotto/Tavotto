@@ -93,8 +93,8 @@ def test_phase_derivation_matches_the_golden_vectors(vector):
 
 def test_the_vector_file_covers_every_phase_this_stage_can_produce():
     produced = {v["expect"]["phase"] for v in json.loads(VECTORS.read_text("utf-8"))["vectors"]}
-    # scanning（T02 的有界扫描）与 preparing_environment（T06 的联合安装）本阶段不产生，词汇已收进闭集
-    assert produced == set(prepsession.PHASES) - {"scanning", "preparing_environment"}
+    # scanning（T02 的有界扫描）不由 derive 产生；preparing_environment 自 T06 起由依赖作业的事实产生
+    assert produced == set(prepsession.PHASES) - {"scanning"}
     assert set(prepsession.PHASES) >= produced
 
 

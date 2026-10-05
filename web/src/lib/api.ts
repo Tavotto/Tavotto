@@ -4088,8 +4088,8 @@ export interface JointDependencyPlan {
   require_hashes: boolean
   /** 受管环境才有：matplotlib / numpy 的支持区间 */
   adapter: string[]
-  /** blocked 的理由闭集（dependency_declaration_unsupported / dependency_conflict / dependency_hashes_incomplete / dependency_target_unavailable） */
-  blocked: { code: string; declarations?: { raw: string; reason: string; source: string }[]; conflicts?: { name: string; specifiers: string[]; reasons: string[] }[]; lines?: string[]; count?: number }[]
+  /** blocked 的理由闭集（dependency_declaration_unsupported / dependency_conflict / dependency_hashes_incomplete / dependency_target_unavailable / dependency_scope_conflict） */
+  blocked: { code: string; declarations?: { raw: string; reason: string; source: string }[]; conflicts?: ({ name: string; specifiers: string[]; reasons: string[] } | { name: string; installed_version: string; installed_for: string; wanted: string; wanted_for: string; via: string })[]; lines?: string[]; count?: number; options?: string[] }[]
   selection: { selected_groups: string[]; available_groups: string[]; unselected_groups: string[]; skipped_marker: { raw: string; marker: string }[] }
   identity: string
 }
@@ -4113,6 +4113,42 @@ export interface DependencyPreparationOffer {
    * （ADR 0053 §二），采用时把 `id` 交回 `setProjectUserEnvironment`。老后端没有这个字段
    */
   user_environments?: UserEnvironment[]
+  /**
+   * 这次授权的实际影响（T06，ADR 0115）：安装集合 / 目标环境与代（不透明引用）/ 写入范围 / 回滚性质。
+   * `impact_digest` 是它的摘要——用户确认的是这一份，执行前后端按它核对；blocked / 没缺的计划为 null / 空串。老后端没有
+   */
+  impact?: DependencyImpact | null
+  impact_digest?: string
+  /** 作用域互斥（`dependency_scope_conflict`）时的"换成本作用域"出路及它自己更大的影响 */
+  scope_switch?: {
+    impact: DependencyImpact
+    impact_digest: string
+    requirements: string[]
+    drops: string[]
+    changes: string[]
+  } | null
+}
+
+/** `deprepair.impact_of` 的公开形态：没有机器路径 */
+export interface DependencyImpact {
+  impact_version: number
+  target_kind: 'project_venv' | 'tavotto_managed'
+  scope: 'managed_generation' | 'project_venv_in_place'
+  installs: string[]
+  constraints: string[]
+  adapter: string[]
+  require_hashes: boolean
+  groups: string[]
+  creates_environment: boolean
+  modifies_user_environment: boolean
+  private_python: { id: string; version: string; origin: string; download_bytes: number } | null
+  network_required: boolean
+  writes: string[]
+  rollback: 'generation_atomic' | 'none_partial_changes_possible'
+  scope_policy: '' | 'switch'
+  drops: string[]
+  changes: string[]
+  environment_ref: string
 }
 
 /** 用户环境从哪发现的（`engine/userenvs.py` 的来源闭集） */
