@@ -307,13 +307,13 @@ function GeometrySection({ objs }: { objs: PanelObject[] }) {
       */}
       <Row className="mt-1.5" label={pn('restore')} labelWidth={INSPECTOR_LABEL_W}>
         <Tip label={pn('aspectTip')}>
-          <Button variant="ghost" size="sm" className="-ml-2" onClick={() => restorePanelAspect(ids)}>
+          <Button data-panel-restore="aspect" variant="ghost" size="sm" className="-ml-2" onClick={() => restorePanelAspect(ids)}>
             <Ratio size={ICON_SIZE.sm} className="text-ink-3" />
             {pn('aspect')}
           </Button>
         </Tip>
         <Tip label={pn('nativeSizeTip')}>
-          <Button variant="ghost" size="sm" onClick={() => restorePanelNativeSize(ids)}>
+          <Button data-panel-restore="size" variant="ghost" size="sm" onClick={() => restorePanelNativeSize(ids)}>
             <Scaling size={ICON_SIZE.sm} className="text-ink-3" />
             {pn('nativeSize')}
           </Button>

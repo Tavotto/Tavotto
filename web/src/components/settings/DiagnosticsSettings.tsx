@@ -104,13 +104,14 @@ export function DiagnosticsSettings() {
     <div className="contents" data-diagnostics-page>
       <SettingSection title={st('diagnostics.healthTitle')}>
         {checks === null ? (
-          <p className="type-meta">{st('about.detecting')}</p>
+          <p data-diagnostics-loading className="type-meta">{st('about.detecting')}</p>
         ) : (
           <>
             {/* 结论一行（全面打磨 D13）：结论是标签、取自何时是现状、「重新获取」在控件列
                 贴右——此前是一句 12px 正文 + 一段 11px meta + 一颗 ghost 挤在一条左对齐的
                 横排里，是这一页唯一不走行语法的东西 */}
             <SettingRow
+              data-diagnostics-summary
               label={
                 failing.length
                   ? st('diagnostics.summaryFailing', { count: failing.length })
@@ -122,7 +123,7 @@ export function DiagnosticsSettings() {
                   : undefined
               }
             >
-              <Button variant="ghost" size="sm" loading={busy} onClick={() => void load()}>
+              <Button data-diagnostics-refetch variant="ghost" size="sm" loading={busy} onClick={() => void load()}>
                 <RefreshCw size={ICON_SIZE.sm} aria-hidden />
                 {st('diagnostics.refetch')}
               </Button>
@@ -130,7 +131,7 @@ export function DiagnosticsSettings() {
             {/* 异常项常驻首屏；正常项折叠——它们在「技术详情」里还有一份带
                 取值的，铺在首屏等于同一件事说两遍。 */}
             {failing.length > 0 && (
-              <ul className="flex flex-col gap-1">
+              <ul data-diagnostics-failures className="flex flex-col gap-1">
                 {failing.map((c) => (
                   <CheckLine key={c.id} check={c} repairCard={repairCard} />
                 ))}
