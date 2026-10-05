@@ -1272,6 +1272,35 @@ def resolve_worker_python(
     return select_worker_python()
 
 
+def peek_worker_python(figures_dir: str | Path) -> tuple[str, str] | None:
+    """项目**此刻已经定下来**的解释器，回 (路径, 来源)；没有回 None。**纯读：不起任何进程。**
+
+    `resolve_worker_python(discover=False)` 名字里的 `discover=False` 只关掉了「发现 venv」，**没关掉**
+    对「记住的解释器」的复检——`_has_matplotlib(remembered)` 会 `python -c "import matplotlib"`（每进程
+    每条解释器一次），也会在体检不过时作废记录（写配置）。要的只是「此刻有哪条路径」的读者
+    （静态扫描的目标解析器、脚本清单、导入即扫描）不该背这笔账：它们回答的是线索，不是「能不能用」。
+
+    规则与 `resolve_worker_python` 的前三档同序，但只**读**：
+
+    1. 全局显式（环境变量 / 设置里指定的）还在 → 它；
+    2. 项目记住的（`projectenv.remembered_record`，纯 `stat`）：文件在就是它，不体检、不作废；
+       `mode=default`（用户明确选回默认链条）= 没有项目级解释器；
+    3. 否则 None——**不**落到 `select_worker_python()`（那条链会为选内置 runtime 起子进程体检）。
+
+    回来的路径是**未核验的线索**：能不能用、装没装齐，是 T05 的明确检查动作，不是这里。
+    """
+    explicit = explicit_worker_python()
+    if explicit is not None:
+        return explicit
+    record = projectenv.remembered_record(figures_dir)
+    if record is None or record.get("mode") == projectenv.MODE_DEFAULT_CHAIN:
+        return None
+    if not record.get("exists"):
+        return None
+    path = record["path"]
+    return path, remembered_source(figures_dir, path)
+
+
 def explicit_worker_python() -> tuple[str, str] | None:
     """正在生效的**全局显式**解释器：回 (路径, 来源)，没有回 None。
 

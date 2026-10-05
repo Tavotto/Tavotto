@@ -97,6 +97,7 @@ from .engine import (
     project_refresh as engine_refresh,
     project_watch as engine_watch,
     projectenv as engine_projectenv,
+    projscan as engine_projscan,
     readiness as engine_readiness,
     receipt as engine_receipt,
     registry as engine_registry,
@@ -2276,6 +2277,8 @@ def close_project(pid: str, wait: bool = False) -> bool:
             engine_watch.stop(str(ctx.path))
     if ctx is None:
         return False
+    # 导入即扫描：取消在跑的扫描并忘掉它的账（只此一件——没有执行 / 安装归它所有）
+    engine_projscan.SCANS.drop(pid)
     engine_pool.shutdown_all(str(ctx.path), wait=wait)
     LOG.info("项目已关闭: %s", ctx.path)
     return True
@@ -7043,6 +7046,79 @@ def api_engine_preparation_session_action(session_id: str):
     resp.status_code = 202 if claimed and kind == engine_prepsession.ACTION_RUN else 200
     resp.headers["Cache-Control"] = "no-store"
     return resp
+
+
+_SCAN_BODY_KEYS = frozenset({"force", "reason"})
+_SCAN_REASONS = ("claim", "restore", "manual", "refresh")
+
+
+def _scan_json(snapshot: dict, status: int = 200):
+    resp = jsonify(snapshot)
+    resp.status_code = status
+    # 扫描快照靠 `evidence_revision` / `observation_seq` 判"变了没有"，别再让 HTTP 缓存插一脚
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.post("/api/project/scan")
+def api_project_scan_start():
+    """开始（或复用）当前项目的**导入即扫描**：有界、只读、零执行（`engine/projscan.py`）。
+
+    项目认领完成 / 启动恢复时由前端调一次；同一项目已有一次在跑就返回它（单飞），刚完成不久的报告被
+    重复认领直接复用（A→B→A、两个标签页）。回 202（起了新的一轮）或 200（复用）+ 快照；
+    `{"force": true}` 是用户点「重新检查」。**不执行任何用户代码、不起解释器 / 登录 shell、不写用户项目。**
+    """
+    ctx = current_ctx()
+    body = request.get_json(silent=True) or {}
+    force = body.get("force", False)
+    reason = body.get("reason", "claim")
+    extra = sorted(set(body) - _SCAN_BODY_KEYS)
+    if extra or not isinstance(force, bool) or reason not in _SCAN_REASONS:
+        return jsonify(
+            {
+                "error": "只接受 force（布尔）与 reason（claim / restore / manual / refresh）",
+                "code": "bad_request",
+                "params": {"unexpected": extra},
+            }
+        ), 400
+    before = engine_projscan.SCANS.get(ctx.id)
+    snap = engine_projscan.SCANS.ensure(
+        ctx.id, ctx.path, reason=reason, force=force, publish=sse_publish
+    )
+    started = before is None or before["scan_id"] != snap["scan_id"]
+    return _scan_json(snap, 202 if started else 200)
+
+
+@app.get("/api/project/scan")
+def api_project_scan_state():
+    """读当前项目的扫描快照（断线 / 刷新后的补拉；**不会**开始扫描）。"""
+    ctx = current_ctx()
+    snap = engine_projscan.SCANS.get(ctx.id)
+    if snap is None:
+        return jsonify(
+            {
+                "error": "这个项目还没有开始扫描",
+                "code": "project_scan_not_started",
+                "params": {"reason": "unknown_or_restarted"},
+            }
+        ), 404
+    return _scan_json(snap)
+
+
+@app.post("/api/project/scan/cancel")
+def api_project_scan_cancel():
+    """取消**扫描**（只此一件事）：不碰执行、安装与任何 worker。已经终局就原样返回。"""
+    ctx = current_ctx()
+    snap = engine_projscan.SCANS.cancel(ctx.id)
+    if snap is None:
+        return jsonify(
+            {
+                "error": "这个项目还没有开始扫描",
+                "code": "project_scan_not_started",
+                "params": {"reason": "unknown_or_restarted"},
+            }
+        ), 404
+    return _scan_json(snap)
 
 
 @app.post("/api/engine/environment/install")

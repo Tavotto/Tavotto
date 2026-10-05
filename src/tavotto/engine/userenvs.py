@@ -351,8 +351,15 @@ def _key(python: str) -> tuple[str, str]:
     return os.path.normcase(os.path.dirname(path)), os.path.normcase(real)
 
 
-def discover(figures_dir: str | Path, script: str | None = None) -> list[dict]:
-    """按优先级排好的候选表（去重、只含存在的文件）。不起任何 Python；可能问一次登录 shell。"""
+def discover(
+    figures_dir: str | Path, script: str | None = None, *, ask_login_shell: bool = True
+) -> list[dict]:
+    """按优先级排好的候选表（去重、只含存在的文件）。不起任何 Python；默认可能问一次登录 shell。
+
+    **线索与体检分开**（T02）：`ask_login_shell=False` 时只读磁盘上的记录（项目里的线索、Conda 的
+    `environments.txt` 与常见安装根、pyenv 的 versions），**不启动登录 shell**——登录 shell 要读用户的
+    rc 文件（可能是任何东西）才答得出，那是 T05 的明确检查动作，不是导入时的读线索。导入即扫描永远
+    传 False；默认值保持老行为（准备 / 依赖门里的 `deprepair` 仍问）。"""
     # `script` 可能来自请求体：先钉在项目内，下游一律用净化器回的那一条；越界就当没给脚本
     root_real = os.path.realpath(os.fspath(figures_dir))
     script_path = projectenv.contained_path(root_real, script) if script else None
@@ -364,7 +371,8 @@ def discover(figures_dir: str | Path, script: str | None = None) -> list[dict]:
     shebang = _shebang_python(script_path)
     if shebang:
         raw.append((shebang, SOURCE_SHEBANG, ""))
-    raw += [(p, SOURCE_LOGIN_SHELL, "") for p in login_shell_pythons()]
+    if ask_login_shell:
+        raw += [(p, SOURCE_LOGIN_SHELL, "") for p in login_shell_pythons()]
     raw += [
         (p, SOURCE_CONDA, _conda_label(pre))
         for pre in _conda_prefixes()
