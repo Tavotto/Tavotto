@@ -19,12 +19,12 @@
  * `tests/test_e2e_leg_topology.py` 看住：**每条 skip 都必须点得出一条会执行
  * 它的腿**，配不上当场红——收得到不等于跑得过（issue #30）。
  */
-import { spawn } from 'node:child_process'
 import { copyFileSync, chmodSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import type { Locator, Page } from '@playwright/test'
 import { expect, showAllProjects, test } from './fixtures'
+import { withWindowsFileLock } from './file-lock'
 
 const REPO = path.resolve(import.meta.dirname, '..', '..')
 
@@ -303,24 +303,10 @@ test('原图被独占占用（file_locked）：英文报错说清该关掉谁，
    * PDF——**允许别人读、不允许改名/删除**，这正是 Acrobat / 看图工具打开一个
    * 文件时的形状，于是写回最后那步 `os.replace` 抛 PermissionError
    * （后端把它转成 409 `file_locked`，见 app.py 的 _write_back_error）。
-   * 用 `-Command` 起一个常驻进程，断言跑完再杀掉；`finally` 保证不留句柄。
+   * 句柄打开后才发 READY；断言跑完关 stdin，等进程退出，保证不留句柄。
    */
   const target = path.join(dir, 'Fig1_kinetics.pdf')
-  const holder = spawn(
-    'powershell',
-    [
-      '-NoProfile',
-      '-Command',
-      `$f=[System.IO.File]::Open('${target.replace(/'/g, "''")}',` +
-        `[System.IO.FileMode]::Open,[System.IO.FileAccess]::Read,[System.IO.FileShare]::Read);` +
-        `Start-Sleep -Seconds 300;$f.Close()`,
-    ],
-    { stdio: 'ignore' },
-  )
-  try {
-    // 句柄真的开出来再动手（起 PowerShell 比点一次按钮慢得多）
-    await page.waitForTimeout(3_000)
-
+  await withWindowsFileLock(target, async () => {
     // 锚点是稳定 `data-*`，不是英文按钮名：审计 T34 把确认按钮从「Write back」
     // 改成了「Write back to the original files」，`/^Write back$/` 当场匹配不到，
     // 这条用例在 Windows 腿上等满 180 秒（#299）。**这条腿是它唯一的家**
@@ -339,9 +325,7 @@ test('原图被独占占用（file_locked）：英文报错说清该关掉谁，
     // 可执行的下一步：告诉用户去关掉谁
     await expect(dialog.getByText(/Close whatever has it open/i).first()).toBeVisible()
     await expectNoCjk(dialog, 'file_locked 错误面')
-  } finally {
-    holder.kill()
-  }
+  })
 
   // 失败之后改动仍在（写回是事务，原文件与热态都不该被动过）
   await page.keyboard.press('Escape')
