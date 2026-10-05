@@ -111,6 +111,7 @@ from .engine import (
     scriptlock as engine_scriptlock,
     session_client as engine_session_client,
     specfix as engine_specfix,
+    taskdiag as engine_taskdiag,
     telemetry as engine_telemetry,
     tutorial as engine_tutorial,
     updater as engine_updater,
@@ -1654,7 +1655,9 @@ def _prepare_export_job(spec: dict):
     pdfbackend.selected()
     out_dir = project_export_dir()
     try:
-        job = engine_exportjob.prepare(spec, out_dir)
+        job = engine_exportjob.prepare(
+            spec, out_dir, project_id=getattr(_request_ctx(), "id", None)
+        )
     except engine_exportreq.ExportRequestError as exc:
         return None, (
             jsonify({"error": exc.message, "code": exc.code, "params": exc.params}),
@@ -1762,9 +1765,20 @@ def api_export_start():
 @app.get("/api/export/state")
 def api_export_state():
     """某个作业的当前状态（SSE 断了之后的补拉）。"""
-    resp = jsonify(engine_exportjob.progress(request.args.get("job_id", "")))
+    job_id = request.args.get("job_id", "")
+    job = engine_exportjob.get(job_id)
+    if job is not None and not _export_job_is_mine(job):
+        # 别的项目的作业对本项目就是不存在：回得和真不存在的 id 一模一样（不泄露它存在，也不泄露它的请求与导出目录）
+        job = None
+    resp = jsonify(job.to_payload() if job is not None else {"job_id": job_id, "status": "unknown"})
     resp.headers["Cache-Control"] = "no-store"
     return resp
+
+
+def _export_job_is_mine(job) -> bool:
+    """作业属于发起请求的这个项目（T04）。没记项目的作业（测试 / 内部探针）不设防，与旧行为一致。"""
+    owner = getattr(job, "project_id", None)
+    return owner is None or owner == getattr(_request_ctx(), "id", None)
 
 
 @app.post("/api/export/cancel")
@@ -1772,7 +1786,9 @@ def api_export_cancel():
     """取消一个作业。回的是「有没有这个作业可取消」，**不是「已经取消了」**
     ——真正的清理发生在执行线程回到检查点的那一刻。"""
     body = request.get_json(force=True) or {}
-    ok = engine_exportjob.cancel(str(body.get("job_id") or ""))
+    job_id = str(body.get("job_id") or "")
+    job = engine_exportjob.get(job_id)
+    ok = engine_exportjob.cancel(job_id) if job is None or _export_job_is_mine(job) else False
     return jsonify({"cancelling": bool(ok)})
 
 
@@ -2630,6 +2646,42 @@ def api_diagnostics_bundle_post():
     return _diagnostics_bundle_response(frontend=frontend, frontend_dropped=dropped)
 
 
+@app.get("/api/diagnostics/task")
+def api_diagnostics_task():
+    """某一次失败尝试的诊断（T04）：`?kind=export|preparation|script_run&ref=<作业/尝试 id>`。
+
+    **只读一份终局时冻结的快照**，不采集、不探测：没有解释器体检、没有安装、没有联网、不重跑脚本，也不拿
+    此刻的环境冒充当时的环境（`engine/taskdiag.py`）。不带 `ref` = 本项目这一类里最近一次失败。
+    记录按项目认领：别的项目的 id、已被清理的 id、从未有过的 id 都回 404 + `available:false`，其中
+    「过期」只有本项目自己记过的才说得出，别的项目的 id 一律读作「没有」。
+    """
+    ctx = _request_ctx()
+    pid = getattr(ctx, "id", None)
+    kind = request.args.get("kind") or None
+    ref = request.args.get("ref") or None
+    if kind is not None and kind not in engine_taskdiag.KINDS:
+        return jsonify({"error": "kind 不认识", "code": "bad_request"}), 400
+    store = engine_taskdiag.STORE
+    reason = engine_taskdiag.REASON_NOT_FOUND
+    entry = None
+    if pid is not None:
+        if ref is None:
+            entry = store.latest_failure(pid, kind)
+        elif kind is not None:
+            found = store.get(pid, kind, ref)
+            entry, reason = found.entry, found.reason or reason
+    if entry is None:
+        resp = jsonify(engine_taskdiag.unavailable(reason, kind=kind))
+        resp.status_code = 404
+    else:
+        resp = jsonify(engine_taskdiag.document(store, entry))
+        resp.headers["Content-Disposition"] = (
+            f'attachment; filename="tavotto-task-diagnostic-{time.strftime("%Y%m%d-%H%M%S")}.json"'
+        )
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
 def _read_body_capped(limit: int) -> bytes:
     """从请求流**最多读 `limit + 1` 字节**——收请求体的端点共用这一份有界读取。
 
@@ -2778,11 +2830,14 @@ def _diagnostics_project_status() -> dict:
 
 def _diagnostics_bundle_response(frontend: dict | None = None, frontend_dropped: bool = False):
     status = _diagnostics_project_status()
+    pid = getattr(_request_ctx(), "id", None)
     data = engine_diagnostics.build_bundle(
         project=status,
         port=request.host.rsplit(":", 1)[-1],
         frontend=frontend,
         frontend_dropped=frontend_dropped,
+        # 本项目最近几次任务的冻结快照（失败在前）；只读登记表，不采集（T04）
+        task_snapshots=engine_taskdiag.bundle_section(engine_taskdiag.STORE, pid) if pid else None,
     )
     name = f"tavotto-diagnostics-{time.strftime('%Y%m%d-%H%M%S')}.zip"
     return Response(
@@ -3479,6 +3534,8 @@ def api_registry_probe():
         _PROBES[key] = cancel_ev
         _PROBE_RUNS[key] = run
     sse_publish("probe.started", {"pj": ctx.id, "script": script})
+    attempt_id = f"run-{uuid.uuid4().hex}"
+    started = time.monotonic()
     try:
         result = engine_probe.probe_and_register(
             ctx.path,
@@ -3509,7 +3566,25 @@ def api_registry_probe():
         # 这里只要重装 + 发事件：再跑一遍静态扫描既慢，又会把刚刚按**真实产出**
         # 裁决好的归属重新掀一遍。
         refresh_project(ctx, reason="probe", allow_static_merge=False)
-    return jsonify(result)
+    # 失败（和成功）那一次的现场冻结成一份小快照（T04）：界面凭 `diagnostic.ref` 一键取回，之后的重试是新的 attempt
+    engine_taskdiag.STORE.record(
+        ctx.id,
+        engine_taskdiag.KIND_SCRIPT_RUN,
+        attempt_id,
+        engine_probe.diagnostic_projection(
+            result,
+            attempt_id=attempt_id,
+            argv_count=len(run.argv) if run is not None else 0,
+            run_config=run.config_id if run is not None else None,
+            elapsed_ms=round((time.monotonic() - started) * 1000),
+        ),
+        outcome=engine_probe.outcome_of(result),
+        failed=engine_probe.outcome_of(result) == engine_probe.OUTCOME_ERROR,
+        subject={("script", script)},
+    )
+    return jsonify(
+        {**result, "diagnostic": {"kind": engine_taskdiag.KIND_SCRIPT_RUN, "ref": attempt_id}}
+    )
 
 
 @app.post("/api/registry/probe/cancel")

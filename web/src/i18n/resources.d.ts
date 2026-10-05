@@ -1652,6 +1652,16 @@ export default interface Resources {
       "unmappableEntry": "{{label}}：无「{{prop}}」",
       "willAffect": "将影响"
     },
+    "taskDiagnostic": {
+      "busy": "正在生成…",
+      "done": "已下载",
+      "download": "下载这一次的诊断",
+      "expired": "这次的记录已被清理，没法再生成当时的诊断了。",
+      "failed": "没能生成，请稍后再试",
+      "hint": "只含这一次的步骤、阶段和错误码，不含文件名、路径或参数。",
+      "notFound": "找不到这次的记录（应用可能重启过），没法生成当时的诊断。",
+      "title": "本次问题的诊断"
+    },
     "telemetry": {
       "allow": "分享匿名用量",
       "decline": "暂不",
