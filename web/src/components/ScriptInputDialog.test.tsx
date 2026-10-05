@@ -20,6 +20,11 @@ vi.mock('@/lib/api', async (orig) => {
 
 import { ApiError, answerScriptInput, stopScriptInput, type ScriptInputRequest } from '@/lib/api'
 import { ScriptInputDialog } from '@/components/ScriptInputDialog'
+import {
+  ScriptInputActions,
+  ScriptInputFields,
+  useScriptInputAnswer,
+} from '@/components/ScriptInputForm'
 import { useScriptInputStore } from '@/store/scriptInputStore'
 
 declare global {
@@ -166,10 +171,60 @@ describe('ScriptInputDialog', () => {
     expect(document.body.textContent).toContain('第 2 个问题')
   })
 
-  it('getpass 那一问说清楚：明文显示、不会被记住', () => {
-    useScriptInputStore.getState().onRequested(req({ input_kind: 'getpass', prompt: 'Password: ' }))
+  it('getpass 那一问用密码框：输入被遮住、不自动补全，并说清 Tavotto 不保存它', () => {
+    useScriptInputStore.getState().onRequested(
+      req({ input_kind: 'getpass', prompt: 'Password: ', secret: true }),
+    )
     render()
-    expect(document.body.textContent).toContain('不会被记住')
+    expect(answerBox().type).toBe('password')
+    expect(answerBox().getAttribute('autocomplete')).toBe('off')
+    expect(document.body.textContent).toContain('不保存它')
+  })
+
+  it('口令交出去就从输入框里清掉，也不进 store', async () => {
+    useScriptInputStore.getState().onRequested(
+      req({ input_kind: 'getpass', prompt: 'Password: ', secret: true }),
+    )
+    let release!: () => void
+    mockAnswer.mockReturnValue(new Promise((r) => (release = () => r({ ok: true }))))
+    render()
+    await type('hunter2')
+    await click(buttonWith('提交'))
+    expect(mockAnswer).toHaveBeenCalledWith('q1', 'hunter2')
+    // 请求还在路上：框还开着，但里面已经没有口令了
+    expect(answerBox().value).toBe('')
+    expect(JSON.stringify(useScriptInputStore.getState())).not.toContain('hunter2')
+    await act(async () => release())
+  })
+
+  it('普通问题的答案在请求失败时留在框里，改好再交', async () => {
+    mockAnswer.mockRejectedValue(new ApiError('too long', 400, { code: 'script_input_invalid' }))
+    useScriptInputStore.getState().onRequested(req())
+    render()
+    await type('1,2')
+    await click(buttonWith('提交'))
+    expect(answerBox().value).toBe('1,2')
+  })
+
+  it('上次的回答只是建议：说给人看，不预填、不自动交', () => {
+    useScriptInputStore.getState().onRequested(
+      req({ suggestion: '2', recheck: 'context_changed' }),
+    )
+    render()
+    expect(document.body.querySelector('[data-script-input-suggestion]')!.textContent).toContain(
+      '「2」',
+    )
+    expect(answerBox().value).toBe('')
+    expect(mockAnswer).not.toHaveBeenCalled()
+  })
+
+  it('口令永远不显示建议', () => {
+    useScriptInputStore.getState().onRequested(
+      req({ input_kind: 'getpass', secret: true, suggestion: 'leak' }),
+    )
+    render()
+    expect(document.body.querySelector('[data-script-input-suggestion]')).toBeNull()
+    expect(document.body.textContent).not.toContain('leak')
   })
 
   it('换项目之后旧项目的问不再显示', () => {
@@ -177,5 +232,60 @@ describe('ScriptInputDialog', () => {
     useScriptInputStore.getState().clear()
     render()
     expect(dialog()).toBeNull()
+  })
+})
+
+/**
+ * 同一问只有一个展示面（T08）：准备面板认领展示时原对话框让开；面板关掉（放手）时对话框接着显示**同一问**，
+ * 不取消脚本、不丢掉唯一的答题入口。面板用的是同一份 `ScriptInputForm`，答的是同一个请求 id。
+ */
+describe('ScriptInputDialog 与其它展示面', () => {
+  function Panel() {
+    const answer = useScriptInputAnswer()
+    return (
+      <div data-panel="">
+        <ScriptInputFields answer={answer} />
+        <ScriptInputActions answer={answer} />
+      </div>
+    )
+  }
+  let panelRoot: Root
+  let panelHost: HTMLDivElement
+  beforeEach(() => {
+    panelHost = document.createElement('div')
+    document.body.appendChild(panelHost)
+    panelRoot = createRoot(panelHost)
+  })
+  afterEach(() => {
+    act(() => panelRoot.unmount())
+    panelHost.remove()
+    for (const p of useScriptInputStore.getState().presenters) {
+      useScriptInputStore.getState().releasePresentation(p)
+    }
+  })
+
+  it('面板认领时对话框不出现，面板里答的就是这一问', async () => {
+    useScriptInputStore.getState().onRequested(req())
+    useScriptInputStore.getState().claimPresentation('prep-panel')
+    render()
+    act(() => panelRoot.render(<Panel />))
+    expect(dialog()).toBeNull()
+    expect(panelHost.querySelector('[data-script-input-prompt]')!.textContent).toBe('numbers: ')
+    await type('2')
+    await click(buttonWith('提交'))
+    expect(mockAnswer).toHaveBeenCalledWith('q1', '2')
+  })
+
+  it('面板关掉（放手）后对话框接着显示同一问，脚本没被停', () => {
+    useScriptInputStore.getState().onRequested(req())
+    useScriptInputStore.getState().claimPresentation('prep-panel')
+    render()
+    expect(dialog()).toBeNull()
+    act(() => useScriptInputStore.getState().releasePresentation('prep-panel'))
+    render()
+    expect(dialog()).not.toBeNull()
+    expect(document.body.querySelector('[data-script-input-prompt]')!.textContent).toBe('numbers: ')
+    expect(mockStop).not.toHaveBeenCalled()
+    expect(useScriptInputStore.getState().queue.map((q) => q.id)).toEqual(['q1'])
   })
 })

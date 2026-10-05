@@ -31,7 +31,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from . import discover, inputremap, pool, projectenv, registry, taskdiag
+from . import discover, inputbroker, inputremap, pool, projectenv, registry, taskdiag
 
 LOG = logging.getLogger("tavotto.probe")
 
@@ -266,12 +266,35 @@ def entry_candidates(figures_dir: str | Path, script: str) -> list[str]:
     return out
 
 
+#: 结果里这次运行每一问去向的键（T08，`inputbroker.InputFacts.payload()`）：只有计数与闭集理由。
+#: HTTP 端点在落任务诊断之后把它从响应体里摘掉（响应形状不变）。
+INPUT_FACTS_KEY = "input_facts"
+
+
 def probe(
     figures_dir: str | Path,
     script: str,
     entries: list[str] | None = None,
     should_cancel=None,
     run=None,
+) -> dict:
+    """`_probe()` + 这次运行的输入去向（T08）：成功取 worker 的 `last_input_facts`，失败取第一处错误那次
+    build 挂在异常上的 `input_facts`——与 `error` 说的是同一次尝试。"""
+    box: dict = {}
+    result = _probe(figures_dir, script, entries, should_cancel, run, facts=box)
+    if box.get("facts") is not None:
+        result[INPUT_FACTS_KEY] = box["facts"]
+    return result
+
+
+def _probe(
+    figures_dir: str | Path,
+    script: str,
+    entries: list[str] | None = None,
+    should_cancel=None,
+    run=None,
+    *,
+    facts: dict,
 ) -> dict:
     """跑一次脚本，返回它真实产出的 stem 与每张图的结构化描述。
 
@@ -368,15 +391,18 @@ def probe(
                 # worker 是被 cancel 硬杀的：报「进程崩溃」是把用户的取消
                 # 说成脚本的错。不再试下一个 entry——取消就是取消。
                 LOG.info("探测被取消 %s [entry=%s]", script, entry)
+                facts["facts"] = getattr(exc, "input_facts", None)  # 在等输入时被停：诊断里看得到
                 return {**empty, "tried": tried, "error": _cancel_err()}
             pool.invalidate(script, figures_dir, run, only_run=True)
             LOG.info("探测失败 %s [entry=%s]: %s", script, entry, exc)
             if first_error is None:
                 first_error = _error_from_worker(exc, entry, figures_dir=figures_dir, script=script)
+                facts["facts"] = getattr(exc, "input_facts", None)
             if not entry_retry_allowed(exc):
                 break  # 与入口无关的失败：再换入口只会把顶层代码重跑一遍
             continue
         stems = sorted(resp.get("stems") or {})
+        facts["facts"] = getattr(_worker, "last_input_facts", None)
         if stems:
             LOG.info("探测成功 %s [entry=%s] → %s", script, entry, stems)
             return {
@@ -545,6 +571,7 @@ def diagnostic_projection(
     argv_count: int,
     run_config: str | None,
     elapsed_ms: int | None,
+    input_facts: dict | None = None,
 ) -> dict:
     """一次试运行的**白名单**投影。逐字段挑，不读 `result` 的其余部分：`error.message` / `params` /
     `traceback` 是脚本自己的异常文字，`descriptors` / `stems` 有图名与路径，`entry` 是用户的函数名，
@@ -564,6 +591,7 @@ def diagnostic_projection(
                 "stem_conflict_count": len(result.get("stem_conflicts") or {}),
             },
             "error": {"code": taskdiag.code(err.get("code"))} if err else None,
+            "input": inputbroker.facts_projection(input_facts),
             "timing": {"elapsed_ms": taskdiag.count(elapsed_ms)},
         }
     )

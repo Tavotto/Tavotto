@@ -1,7 +1,8 @@
 # ADR 0099：脚本里的 input() 在界面上作答，答案按项目记住
 
 日期：2026-09-26 · 状态：**Accepted**（通道形态、超时语义、答案存放位置（§四 A）均由用户 2026-09-26 拍板；
-位置只收在 `scriptanswers.answers_path()` 一个函数里）
+位置只收在 `scriptanswers.answers_path()` 一个函数里）· **2026-10-06 修订（§九，T08）**：复用键加上下文、执行转录供冷重放、
+getpass 改为掩码且不进记账
 相关：[0003 worker 协议 v1](0003-worker-protocol-v1.md)（本 ADR **不**改协议信封，只给 build 响应加一个字段）、
 [0004 workerd supervisor](0004-workerd-supervisor.md)（Rust 一行不动）、[0008 会话认证](0008-unified-local-session-auth.md)、
 [0014 执行语义](0014-safe-native-execution-profiles.md) / [0020 native bridge](0020-native-matplotlib-bridge.md)（native 不桥接）、
@@ -149,6 +150,43 @@ safe worker 的 `sys.stdin` **就是协议管道**（`worker.main()` 从它逐�
 - 界面上的提示与 stdout 片段一律纯文本渲染（React 文本节点，不用 `dangerouslySetInnerHTML`）。
 - stdout 片段有上限：最近 `TAIL_LINES = 40` 行、`TAIL_CHARS = 4000` 字符；提示本身截到 `PROMPT_CHARS = 2000`。
 - 会话认证不开旁路：新端点全在 guard 之内；会合目录只在 Tavotto 自己的缓存里；worker 沙盒与删除守卫原样。
+
+### 九、修订（T08，2026-10-06）：上下文匹配、执行转录、口令掩码
+
+本节**修订** §一 的 getpass 行、§四 的「键」、§五 的策略表与非交互场景表；其余条款不变（通道、超时、claim 竞争、
+无答题方快速失败、native 不桥接、子进程 input 不覆盖）。
+
+1. **答案复用键加上下文**（修订 §四「键」）。worker 每一问附一个上下文摘要 `context`
+   （`scriptinput.context_digest`：读取方式 + 提示 + **上一问之后**脚本打印的那段输出（有界）+ 本次运行里前面每一问的
+   回答；口令只按占位进摘要，不哈希它）。记住的答案按 (脚本, 运行配置引用, 序号, 读取方式, 提示, 上下文) 存
+   （`_script_inputs.json` 版本 2，条目多可选 `context` / `run_config`；旧读者忽略它们）。**只有全部对上才原样复用**；
+   提示相同而上下文 / 运行配置不同、或版本 1 留下的没有上下文的条目，**最多是建议**：重新问，事件里带
+   `suggestion`（旧答案，不预填、不自动交）与 `recheck`（`context_changed` / `config_changed` / `legacy_answer`）。
+   没有能答题的界面时就是 `script_needs_input`——菜单换了序（T00 F2 实测：提示一字不差、清单重排，旧「2」静默选错列）
+   不再画一张错图。任意 stdout 不保证语义识别：输出里有时间戳之类的易变内容会让每次都重问——这是安全方向的代价。
+2. **执行转录与冷重放**（修订 §五「非交互场景」）。build **成功**后，这一次实际用到的问答（build 响应的
+   `script_inputs`）成为不可变的执行转录，绑到 (项目, 脚本, 运行配置引用)——也就是这批 runtime 产物的身份
+   （`engine/inputtranscript.py`，存 Tavotto 数据目录，不写用户项目、不进项目包）。池会话在 `serving()` 进门时冻结策略：
+   这批产物有转录就**按转录重放**（`ReplayAnswers.transcript`），不读之后被同步 / 手改的项目答案文件；上下文对不上
+   就重新问（有界面）或 `script_needs_input`（`reason=transcript_mismatch`）。没有转录（T08 之前的产物、超出上限）
+   回到上下文匹配的项目答案。新的成功执行整条替换转录；失败的执行不动它。答案管理里改 / 删答案 = 明确要用新答案
+   重算：作废该脚本的转录（`_after_script_answers_changed`）。写回 verify 的一次性重放不写转录。
+3. **口令**（修订 §一 getpass 行与 §四 隐私）。界面用密码框（`type=password`、不自动补全），交出去就清空输入框；
+   答案不进 store、不进事件、不进 worker.log（原有）、**不进 worker 记账**：build 响应 / `last_build_script_inputs` /
+   执行转录里那一问只有 `secret: true`、没有值。重放到它（冷重放或写回 verify）时**重新问**；没有能答题的界面就
+   `script_needs_input`（`reason=secret_required`），绝不拿空串或 EOF 继续。这只证明 Tavotto 自己不记录口令：
+   用户脚本自己 `print` 出来、写进文件，不在这个保证里。
+4. **展示面**。同一问只有一个 id；准备会话报告在 `phase=awaiting_runtime_input` 时带 `runtime_input`
+   （`Pending.public()`：id / 序号 / 读取方式 / 是否口令，**没有**提示与答案），回答仍走 `/api/script_input/answer`。
+   前端 `scriptInputStore.claimPresentation()` / `releasePresentation()`：准备面板认领时原对话框让开，面板关掉就放手、
+   对话框接着显示同一问——关面板只换展示，不取消脚本。多标签页抢答沿用 claim 竞争。
+5. **任务诊断**。每次 build 的问答去向记成计数（`inputbroker.InputFacts`：asked / shown / answered / eof / autofilled /
+   replayed / timed_out / stopped / secret + 闭集 `no_answer`），经 `inputbroker.facts_projection` 进试运行与准备尝试的
+   T04 白名单快照（`input` 段）；提示、答案、输出片段、上下文摘要都不进。
+
+看护：`tests/test_script_input_context.py`（真 worker：F2 菜单换序重问、冷重放用转录、口令不进记账 / 落盘、重放重问口令）、
+`tests/test_script_input_transcript_api.py`（第二问依赖第一问、准备会话 `runtime_input`、HTTP / SSE / 诊断 / 项目包 /
+日志的口令哨兵、超时与停止进诊断）、`tests/test_input_transcript.py`（单元）、`web/src/components/ScriptInputDialog.test.tsx`。
 
 ## 用例的等待上限
 

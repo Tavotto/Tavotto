@@ -65,6 +65,7 @@ from . import (
     envadvice,
     execspec,
     figcapture,
+    inputbroker,
     pool,
     projectenv,
     receipt,
@@ -485,6 +486,9 @@ class PreparationResult:
     #: T07：准备会话把它当一项待答的需求（回答走既有的 `/api/engine/input-remap`）。**不进 `to_payload()`**：
     #: 里面是脚本里写的路径串，诊断快照与回执都不带它。
     missing_input: dict | None = None
+    #: 这次执行里每一问 input 的去向（T08，`inputbroker.InputFacts.payload()`）：只有计数与闭集理由，只给
+    #: 诊断快照的白名单投影。**不进 `to_payload()`**。
+    input_facts: dict | None = None
 
     def to_payload(self) -> dict:
         return {
@@ -696,6 +700,7 @@ class PreparationService:
             missing_input = getattr(exc, "missing_input", None)
             if isinstance(missing_input, dict):
                 result.missing_input = dict(missing_input)
+            result.input_facts = getattr(exc, "input_facts", None)
             result.error = error
             # 脚本自己炸 / 缺依赖是「执行」那一步坏的；起不来（解释器 / 沙盒）是「起会话」坏的
             tr.fail("execute" if getattr(exc, "traceback_text", None) else "spawn", error["code"])
@@ -708,6 +713,7 @@ class PreparationService:
             return
         tr.mark("execute", created=bool(created))
         result.created_runtime = bool(created)
+        result.input_facts = getattr(worker, "last_input_facts", None)
         rcpt = receipt.from_worker(
             worker,
             resp,
@@ -967,6 +973,7 @@ def diagnostic_projection(plan: PreparationPlan, result: PreparationResult) -> d
                 "error_code": taskdiag.code((env.get("error") or {}).get("code")),
             },
             "stages": taskdiag.stages(result.trace.to_payload(), tracemod.PHASES),
+            "input": inputbroker.facts_projection(result.input_facts),
             "execution": {
                 "created_runtime": taskdiag.flag(result.created_runtime),
                 "reused_runtime": result.existing_runtime is not None,
