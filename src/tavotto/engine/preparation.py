@@ -67,6 +67,7 @@ from . import (
     pool,
     projectenv,
     receipt,
+    taskdiag,
     trace as tracemod,
     workdir,
 )
@@ -825,6 +826,7 @@ class PreparationService:
             if note:
                 entry.result.note = note
             entry.result.status = status  # 终局 status 最后写
+        _record_terminal(entry.plan, entry.result)
 
     # ---- 查询 / 取消 ----
     def _entry(self, plan_id: str) -> _Entry | None:
@@ -883,6 +885,111 @@ class PreparationService:
         for entry in entries:
             if entry.thread is not None and entry.thread.is_alive():
                 entry.thread.join(join_timeout)
+
+
+def _record_terminal(plan: PreparationPlan, result: PreparationResult) -> None:
+    """终局那一刻冻结一份诊断快照（T04）。只收这一次尝试自己的事实；记录失败不影响准备本身。"""
+    if result.status not in (STATUS_READY, STATUS_ERROR, STATUS_CANCELLED, STATUS_NEEDS_INPUT):
+        return
+    try:
+        taskdiag.STORE.record(
+            plan.project_id,
+            taskdiag.KIND_PREPARATION,
+            plan.plan_id,
+            diagnostic_projection(plan, result),
+            outcome=result.status,
+            failed=result.status == STATUS_ERROR,
+            subject={("script", plan.script)} if plan.script else {("asset", plan.asset_id)},
+        )
+    except Exception:  # noqa: BLE001 —— 诊断登记不是准备的一部分
+        LOG.debug("准备诊断快照登记失败", exc_info=True)
+
+
+def diagnostic_projection(plan: PreparationPlan, result: PreparationResult) -> dict:
+    """这一次尝试的**白名单**投影（T04）。逐字段挑，不读 `plan.to_payload()` / `result.to_payload()`。
+
+    环境、依赖、运行配置都是**计划那一刻**的事实（计划不可变），不是此刻再去问的；
+    不进来的：脚本路径与入口名、argv 原文（只有个数与本机不透明引用）、解释器与项目路径、`error.message`
+    （脚本自己的异常文字）、`note`、`required_input` 的内容、回执的输入文件表。"""
+    env = plan.environment or {}
+    receipt_ = result.receipt
+    rt = (receipt_.runtime if receipt_ is not None else None) or {}
+    err = result.error or {}
+    dep = plan.dependency_preparation or {}
+    return taskdiag.clean(
+        {
+            "snapshot_version": taskdiag.SNAPSHOT_VERSION,
+            "kind": taskdiag.KIND_PREPARATION,
+            "attempt_id": taskdiag.ident(plan.plan_id),
+            "outcome": taskdiag.closed(result.status, STATUSES),
+            "target": {
+                "category": taskdiag.closed(plan.target, (TARGET_ASSET, TARGET_SCRIPT)),
+                "has_script": plan.script is not None,
+                "has_entry": plan.entry is not None,
+                "has_static_source": plan.static_source is not None,
+            },
+            "config": {
+                "argv_count": len(plan.run.argv) if plan.run is not None else 0,
+                "run_config": taskdiag.ident(plan.run.config_id) if plan.run is not None else None,
+                "workdir_mode": taskdiag.closed(
+                    (plan.workdir_decision or {}).get("mode"), workdir.MODES
+                ),
+                "dependency_intents": len(plan.dependency_intents),
+                "dependency_conflicts": len(plan.dependency_conflicts),
+                "dependency_preparation": bool(plan.dependency_preparation),
+                "dependency_blocked": taskdiag.flag(bool(dep.get("blocked"))) if dep else None,
+            },
+            "environment_at_plan": {
+                "source": taskdiag.closed(env.get("source"), pool.SOURCE_LABELS),
+                "automatic": taskdiag.flag(env.get("automatic")),
+                "python_version": taskdiag.version(env.get("python_version")),
+                "matplotlib_version": taskdiag.version(env.get("matplotlib_version")),
+                "support": taskdiag.code(env.get("support")),
+                "error_code": taskdiag.code((env.get("error") or {}).get("code")),
+            },
+            "stages": taskdiag.stages(result.trace.to_payload(), tracemod.PHASES),
+            "execution": {
+                "created_runtime": taskdiag.flag(result.created_runtime),
+                "reused_runtime": result.existing_runtime is not None,
+                "control_plane": taskdiag.closed(
+                    (receipt_.control_plane if receipt_ is not None else None),
+                    ("workerd", "python_pool"),
+                ),
+                "python_source": taskdiag.closed(
+                    (receipt_.python_source if receipt_ is not None else None), pool.SOURCE_LABELS
+                ),
+                "python_version": taskdiag.version(rt.get("python_version")),
+                "completeness": taskdiag.closed(
+                    (receipt_.completeness if receipt_ is not None else None), receipt.COMPLETENESS
+                ),
+                "runtime_rejected": taskdiag.code(
+                    receipt_.runtime_rejected if receipt_ is not None else None
+                ),
+                "captured_count": len((result.captured or {}).get("stems") or [])
+                if result.captured
+                else None,
+            },
+            "error": (
+                {
+                    "code": taskdiag.code(err.get("code")),
+                    "reason": taskdiag.closed(err.get("reason"), STALE_REASONS),
+                    "executed": taskdiag.flag(err.get("executed")),
+                }
+                if err
+                else None
+            ),
+            "required_input": (
+                {"code": taskdiag.code(result.required_input.get("code"))}
+                if result.required_input
+                else None
+            ),
+            "cancel_requested": result.cancel_requested_at is not None,
+            "timing": {
+                "started_at": taskdiag.number(result.started_at),
+                "finished_at": taskdiag.number(result.finished_at),
+            },
+        }
+    )
 
 
 def stale_reason(plan: PreparationPlan) -> tuple[str, dict] | None:

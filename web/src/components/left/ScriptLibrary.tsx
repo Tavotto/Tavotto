@@ -22,6 +22,7 @@ import { useUiStore } from '@/store/uiStore'
 import { Button, IconButton } from '../ui/Button'
 import { Dialog } from '../ui/Dialog'
 import { ScriptArgvEditor } from '../ScriptArgvEditor'
+import { TaskDiagnostic } from '../TaskDiagnostic'
 import { EmptyState } from '../ui/EmptyState'
 import { DependencyRepairCard } from '../DependencyRepairCard'
 import { useDepRepairStore, type ScriptRepairOffer } from '@/store/depRepairStore'
@@ -540,6 +541,15 @@ function FailureRecovery({ script, run }: { script: string; run: ScriptRunState 
             {sc(copied ? 'copied' : 'copyDiagnostics')}
           </Button>
         </div>
+        {/* 那一次的诊断（T04）：已经在折叠的「详情」里，只出按钮；没有引用（老后端）就不出现 */}
+        {run?.diagnostic && (
+          <TaskDiagnostic
+            key={run.diagnostic.ref}
+            kind="script_run"
+            refId={run.diagnostic.ref}
+            folded={false}
+          />
+        )}
         {error?.traceback && (
           <pre className="max-h-32 overflow-auto whitespace-pre-wrap font-mono text-xs leading-snug text-ink-2">
             {error.traceback}

@@ -24,6 +24,9 @@
     的话读者会拿到 `done` + `elapsed_ms: None`——Windows 上删临时目录慢到 20ms
     的轮询都踩得中。判据的主语是**读者看到的快照**，不是写者的顺序；看护用例
     `test_a_terminal_status_is_never_visible_before_its_timing` 把窗口撑开量它。
+  * **作业记得是哪个项目发起的**（T04）：`ExportJob.project_id`（私有，不进 `to_payload()`）。`/api/export/state` 与
+    `/cancel` 对别的项目的 job_id 读作 `unknown` / 不可取消；终局时 `_emit` 冻结一份白名单诊断快照（见 `diagnostics.md`
+    「任务绑定诊断」）。**不读 `to_payload()`**：完整请求（含文件名、导出目录）留在既有私有执行层。
   * **旧契约一个字节不变**：没有 `filename` 的请求（`stem`/`dpi`，或
     `items[]`+`texts[]`）抬成同一个作业，文件名照旧带时间戳，回执照旧有
     `files[]`/`export_dir`/`warnings`，报告照旧叫 `_proof.json`。

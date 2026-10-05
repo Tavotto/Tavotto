@@ -65,6 +65,8 @@ export interface ScriptRunState {
   /** pyplot 兜底超上限被丢弃的张数（如实报，不静默） */
   droppedFigures: number
   error: ProbeError | null
+  /** 这一次失败的诊断引用（T04）：只在带错误落地时有；老后端没有 */
+  diagnostic?: { kind: 'script_run'; ref: string } | null
   /** 用户已点取消、原请求尚未落地 */
   cancelRequested: boolean
   gen: number
@@ -75,6 +77,7 @@ const IDLE: ScriptRunState = {
   descriptors: [],
   droppedFigures: 0,
   error: null,
+  diagnostic: null,
   cancelRequested: false,
   gen: 0,
 }
@@ -289,6 +292,7 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
         settle({
           phase: phaseOf(res.error),
           error: res.error,
+          diagnostic: res.diagnostic ?? null,
           descriptors: [],
         })
         // 起会话之前的门：弹与渲染那条路同一个框；行上留着载荷，「稍后」之后能再开

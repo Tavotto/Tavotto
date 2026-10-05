@@ -96,6 +96,20 @@ describe('scriptRunStore 状态机', () => {
     expect(state().descriptors).toHaveLength(1)
   })
 
+  it('T04：失败带上那一次的诊断引用，下一次成功把它清掉（旧失败的引用不挂在新结果上）', async () => {
+    mockProbe.mockResolvedValue({
+      ...failed('script_probe_failed'),
+      diagnostic: { kind: 'script_run', ref: 'run-abc' },
+    })
+    await useScriptRunStore.getState().run('fig.py')
+    expect(state().phase).toBe('failed')
+    expect(state().diagnostic).toEqual({ kind: 'script_run', ref: 'run-abc' })
+    mockProbe.mockResolvedValue(ok([desc('fig')]))
+    await useScriptRunStore.getState().run('fig.py')
+    expect(state().phase).toBe('captured_one')
+    expect(state().diagnostic ?? null).toBeNull()
+  })
+
   it('run → captured_many：多张图**全部**保留（负向反证 #4：只留第一张这里红）', async () => {
     mockProbe.mockResolvedValue(ok([desc('a'), desc('b'), desc('c')], 2))
     await useScriptRunStore.getState().run('fig.py')

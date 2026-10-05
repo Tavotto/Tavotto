@@ -1626,5 +1626,15 @@
     "manageForget": "Remove",
     "manageForgetAria": "Remove the answer to question {{index}}",
     "manageSaved": "Saved; rerunning {{script}}"
+  },
+  "taskDiagnostic": {
+    "busy": "Preparing…",
+    "done": "Downloaded",
+    "download": "Download diagnostics for this attempt",
+    "expired": "This attempt's record has been cleared, so its diagnostics can no longer be produced.",
+    "failed": "Couldn't prepare it. Please try again later.",
+    "hint": "Only this attempt's steps, stages and error codes — no file names, paths or arguments.",
+    "notFound": "This attempt's record can't be found (the app may have restarted), so its diagnostics can't be produced.",
+    "title": "Diagnostics for this problem"
   }
 }

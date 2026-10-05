@@ -1102,6 +1102,34 @@ export async function postDiagnosticsBundle(payload: unknown): Promise<Blob> {
 }
 
 /**
+ * 某一次失败尝试的诊断（T04）：`kind` + `ref` 指定那一次（导出作业 id / 准备尝试 id / 试运行 `diagnostic.ref`）。
+ *
+ * 后端只读一份**终局时冻结**的快照，不采集、不探测；记录没有 / 过期时答 404 + 原因，这里原样交回——
+ * 调用方必须如实说「当时的诊断已经没有了」，**不许**退而去拿一份当前状态的诊断包冒充。
+ * `pj` 默认取调用这一刻的项目；失败提示可能比项目切换活得久，组件应传它出现时的项目。
+ */
+export type TaskDiagnosticKind = 'export' | 'preparation' | 'script_run'
+export type TaskDiagnosticResult =
+  | { available: true; blob: Blob; filename: string }
+  | { available: false; reason: 'not_found' | 'expired' }
+
+export async function fetchTaskDiagnostic(
+  kind: TaskDiagnosticKind,
+  ref: string,
+  pj: string | null = currentProjectId(),
+): Promise<TaskDiagnosticResult> {
+  const qs = `kind=${encodeURIComponent(kind)}&ref=${encodeURIComponent(ref)}`
+  const res = await fetch(apiUrlFor(`/api/diagnostics/task?${qs}`, pj), withProjectFor(undefined, pj))
+  if (res.status === 404) {
+    const body = (await res.json().catch(() => ({}))) as { reason?: string }
+    return { available: false, reason: body.reason === 'expired' ? 'expired' : 'not_found' }
+  }
+  if (!res.ok) throw new ApiError(`task_diagnostic_${res.status}`, res.status, {})
+  const match = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') ?? '')
+  return { available: true, blob: await res.blob(), filename: match?.[1] ?? 'tavotto-task-diagnostic.json' }
+}
+
+/**
  * 版本列表。`sketch` 给了才带草图 —— **默认不带**。
  *
  * 「一行缩略图画几个对象 / 几个字」是缩略图组件自己的事，所以取值随请求给
@@ -4342,6 +4370,8 @@ export interface ProbeResult {
   stem_conflicts?: Record<string, string>
   /** 给了参数的那次运行：它的运行配置引用（T03；不含参数值） */
   run_config?: string
+  /** 这一次的诊断引用（T04）：`fetchTaskDiagnostic('script_run', ref)` 取回终局时冻结的快照；老后端没有 */
+  diagnostic?: { kind: 'script_run'; ref: string }
 }
 
 /**
