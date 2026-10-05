@@ -1,6 +1,39 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
+import type { Locator, Page, Route } from '@playwright/test'
 import { expect, test } from './fixtures'
+
+const DIAGNOSTICS = /\/api\/diagnostics(?:\?|$)/
+const developerButton = (page: Page) => page.locator('[data-diagnostics-dev] > div > button')
+
+/** 回包夹在真实按下 / 松开之间；检查按钮几何与原生 click，不用等待 loaded 避开竞态。 */
+async function clickAcrossUpdate(page: Page, button: Locator, update: () => Promise<void>) {
+  await expect(button).toHaveCount(1)
+  const wasOpen = await button.getAttribute('aria-expanded')
+  expect(['true', 'false']).toContain(wasOpen)
+  await button.click({ trial: true })
+  await page.locator('[data-dialog]:has([data-settings-shell])').evaluate(async (root) => {
+    const finite = root.getAnimations({ subtree: true }).filter((a) =>
+      Number.isFinite(a.effect?.getComputedTiming().iterations ?? Infinity),
+    )
+    await Promise.all(finite.map((a) => a.finished.catch(() => undefined)))
+  })
+  const before = (await button.boundingBox())!
+  await page.mouse.move(before.x + before.width / 2, before.y + before.height / 2)
+  await page.mouse.down()
+  let after: Awaited<ReturnType<Locator['boundingBox']>> = null
+  try {
+    await update()
+    await page.evaluate(() => new Promise<void>((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+    ))
+    after = await button.boundingBox()
+  } finally {
+    await page.mouse.up()
+  }
+  expect.soft(after, '异步诊断结果不应挪动正在按的入口').toEqual(before)
+  await expect(button, '松手后的原生 click 必须切换开发者区').toHaveAttribute('aria-expanded', String(wasOpen !== 'true'))
+}
 
 /**
  * 性能探针（ADR 0075）：**真浏览器里**走一遍用户会走的整条路。
@@ -29,9 +62,16 @@ test('性能探针：录制真实拖动 + 自动测试 + 保存报告', async ({
   await page.waitForTimeout(1500)
 
   // 设置 → 帮助与诊断 → 给开发者（折叠）→ 记录拖动性能 → 开始：设置关掉、探针面板挂出来
+  const held: Route[] = []
+  await page.route(DIAGNOSTICS, (route) => { held.push(route) })
   await page.locator('[data-rail="settings"]').click()
   await page.locator('[data-section="diagnostics"]').click()
-  await page.locator('[data-diagnostics-dev] button[aria-expanded]').first().click()
+  await expect.poll(() => held.length).toBe(1)
+  await expect(page.locator('[data-diagnostics-loading]')).toBeVisible()
+  await clickAcrossUpdate(page, developerButton(page), async () => {
+    await held[0].continue()
+    await expect(page.locator('[data-diagnostics-summary]')).toHaveCount(1)
+  })
   await page.locator('[data-perf-probe-start]').click()
   const hud = page.locator('[data-perf-probe]')
   await expect(hud).toHaveAttribute('data-phase', 'recording')
@@ -141,3 +181,61 @@ test('性能探针：录制真实拖动 + 自动测试 + 保存报告', async ({
     writeFileSync(process.env.TAVOTTO_PERF_REPORT_OUT, raw)
   }
 })
+
+// 失败原因与晚到的环境恢复卡也会改变高度；中英文都用协议回包，不改前端 store。
+for (const locale of ['zh-CN', 'en-US']) {
+  test(`诊断入口在失败 / 环境回包 / 重新获取时不丢点击 (${locale})`, async ({ app, page }) => {
+    await page.addInitScript((value) => localStorage.setItem('tavotto.locale', value), locale)
+    const diagnostics: Route[] = []
+    const environments: Route[] = []
+    const missingEnvironment = {
+      ok: false, python: null, source: 'unknown', matplotlib: null, managed: false,
+      bundled: false, runtime: { expected: true }, state: 'idle', code: 'bundled_runtime_missing',
+    }
+    let releaseEnvironment = false
+    await page.route(DIAGNOSTICS, (route) => { diagnostics.push(route) })
+    await page.route(/\/api\/engine\/environment(?:\?|$)/, async (route) => {
+      if (releaseEnvironment) await route.fulfill({ json: missingEnvironment })
+      else environments.push(route)
+    })
+    const a = await app()
+    await page.goto(a.baseURL)
+    await page.locator('[data-rail="settings"]').click()
+    await page.locator('[data-section="diagnostics"]').click()
+    await expect.poll(() => diagnostics.length).toBe(1)
+    await expect(page.locator('[data-diagnostics-loading]')).toBeVisible()
+    const button = developerButton(page)
+    const failures = page.locator('[data-diagnostics-failures]')
+    await clickAcrossUpdate(page, button, async () => {
+      await diagnostics[0].fulfill({ json: { checks: [
+        { id: 'matplotlib', ok: false, label: 'matplotlib', detail: 'diagnostic-test-import-failed' },
+        { id: 'registry_conflicts', ok: false, label: 'registry', detail: 'diagnostic-test-registry-conflict' },
+      ] } })
+      await expect(failures).toBeVisible()
+      await expect(failures).toContainText('diagnostic-test-import-failed')
+      await expect(failures).toContainText('diagnostic-test-registry-conflict')
+    })
+    await expect(page.locator('[data-perf-probe-start]')).toBeVisible()
+    await button.click()
+    await expect(button).toHaveAttribute('aria-expanded', 'false')
+    await expect.poll(() => environments.length).toBeGreaterThan(0)
+    await clickAcrossUpdate(page, button, async () => {
+      releaseEnvironment = true
+      await Promise.all(environments.map((route) => route.fulfill({ json: missingEnvironment })))
+      await expect(page.locator('[data-diagnostics-page] [data-engine-env-card]')).toBeVisible()
+    })
+    await expect(failures).toBeVisible()
+    await page.locator('[data-diagnostics-refetch]').click()
+    await expect.poll(() => diagnostics.length).toBe(2)
+    await clickAcrossUpdate(page, button, async () => {
+      await diagnostics[1].fulfill({ json: { checks: [
+        { id: 'matplotlib', ok: true, label: 'matplotlib', detail: 'diagnostic-test-import-ready' },
+      ] } })
+      await expect(failures).toHaveCount(0)
+      await expect(page.locator('[data-diagnostics-refetch]')).toBeEnabled()
+    })
+    await expect(page.locator('[data-diagnostics-page] [data-engine-env-card]')).toBeVisible()
+    await button.click()
+    await expect(page.locator('[data-perf-probe-start]')).toBeVisible()
+  })
+}

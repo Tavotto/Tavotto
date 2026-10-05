@@ -33,6 +33,16 @@ async function only(loc: Locator, timeout?: number): Promise<Locator> {
   return loc
 }
 
+/** 单个按钮稳定不代表展开行下面的控件也稳定；只等有限动效，不等进度脉冲。 */
+async function settleInspectorMotion(page: Page) {
+  await (await only(page.locator('[data-inspector-panel]'))).evaluate(async (root) => {
+    const finite = root.getAnimations({ subtree: true }).filter((a) =>
+      Number.isFinite(a.effect?.getComputedTiming().iterations ?? Infinity),
+    )
+    await Promise.all(finite.map((a) => a.finished.catch(() => undefined)))
+  })
+}
+
 /** 素材卡上画布，再回到排版 */
 async function placeFigureAndBack(page: Page) {
   await (await only(page.locator('[data-card="Fig1_kinetics.pdf"]'), 30_000)).dblclick()
@@ -53,6 +63,131 @@ async function nameNow(page: Page, name: string) {
   await quick.fill(name)
   await quick.press('Enter')
   await expect(quick).toHaveCount(0)
+}
+
+/** 保存后通过同一项目的版本读取端点核对落盘内容，不只看发出的 POST。 */
+async function nameAndReadNow(page: Page, name: string): Promise<{
+  page: { w: number; h: number }
+  objects: Record<string, unknown>[]
+}> {
+  const saving = page.waitForResponse((response) => {
+    const request = response.request()
+    return request.method() === 'POST' && new URL(request.url()).pathname.startsWith('/api/versions/') &&
+      request.postDataJSON()?.name === name
+  })
+  await nameNow(page, name)
+  const response = await saving
+  expect(response.ok()).toBe(true)
+  const result = await response.json()
+  expect(typeof result.version?.id).toBe('string')
+  const url = new URL(response.url())
+  url.pathname += `/${encodeURIComponent(result.version.id)}`
+  const saved = await page.request.get(url.toString())
+  expect(saved.ok()).toBe(true)
+  return (await saved.json()).doc
+}
+
+/** 窄栏仍容得下完整恢复按钮，且键盘动作确实改变保存的面板几何。 */
+async function checkPanelRestoreActions(page: Page) {
+  const inspector = await only(page.locator('[data-inspector-panel]'))
+  const aspect = await only(inspector.locator('[data-panel-restore="aspect"]'))
+  const size = await only(inspector.locator('[data-panel-restore="size"]'))
+  await expect(inspector.locator('[data-panel-restore]')).toHaveCount(2)
+  for (const button of [aspect, size]) {
+    await expect(button).toBeVisible()
+    await expect(button).toBeEnabled()
+    await button.scrollIntoViewIfNeeded()
+  }
+  const layout = await inspector.evaluate((root) => {
+    const panel = root.getBoundingClientRect()
+    const buttons = [...root.querySelectorAll<HTMLElement>('[data-panel-restore]')].map((el) => {
+      const r = el.getBoundingClientRect()
+      const inside = (box: DOMRect) => box.left >= r.left - 1 && box.right <= r.right + 1 &&
+        box.top >= r.top - 1 && box.bottom <= r.bottom + 1
+      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
+      let textFits = true
+      for (let text = walker.nextNode(); text; text = walker.nextNode()) {
+        if (!text.textContent?.trim()) continue
+        const range = document.createRange()
+        range.selectNodeContents(text)
+        if ([...range.getClientRects()].some((box) => !inside(box))) textFits = false
+      }
+      // 在中点与四边中点核真实命中；不拿圆角外面的矩形角点作假反例。
+      const points = [
+        [r.left + r.width / 2, r.top + r.height / 2],
+        [r.left + 2, r.top + r.height / 2], [r.right - 2, r.top + r.height / 2],
+        [r.left + r.width / 2, r.top + 2], [r.left + r.width / 2, r.bottom - 2],
+      ]
+      return {
+        mode: el.dataset.panelRestore,
+        x: r.x, y: r.y, w: r.width, h: r.height,
+        inPanel: r.left >= panel.left && r.right <= panel.right && r.top >= panel.top && r.bottom <= panel.bottom,
+        textFits,
+        hittable: points.every(([x, y]) => el.contains(document.elementFromPoint(x, y))),
+        tabIndex: el.tabIndex,
+      }
+    })
+    return buttons
+  })
+  expect(layout.map((button) => button.mode)).toEqual(['aspect', 'size'])
+  for (const button of layout) {
+    expect(button.inPanel, JSON.stringify(layout)).toBe(true)
+    expect(button.textFits, JSON.stringify(layout)).toBe(true)
+    expect(button.hittable, JSON.stringify(layout)).toBe(true)
+    expect(button.tabIndex).toBeGreaterThanOrEqual(0)
+  }
+  const [a, b] = layout
+  const overlaps = Math.min(a.x + a.w, b.x + b.w) > Math.max(a.x, b.x) &&
+    Math.min(a.y + a.h, b.y + b.h) > Math.max(a.y, b.y)
+  expect(overlaps, JSON.stringify(layout)).toBe(false)
+
+  // 边柄默认只改宽（角柄才跟宽高比锁），先把两个恢复动作的非空前提摆出来。
+  const east = await only(page.locator('[data-canvas-stage] [data-handle="e"]'))
+  const handle = (await east.boundingBox())!
+  const x = handle.x + handle.width / 2
+  const y = handle.y + handle.height / 2
+  await page.mouse.move(x, y)
+  await page.mouse.down()
+  try {
+    await page.mouse.move(x + 36, y, { steps: 6 })
+  } finally {
+    await page.mouse.up()
+  }
+  const distorted = await nameAndReadNow(page, 'restore-before')
+  expect(distorted.objects).toHaveLength(1)
+  const before = distorted.objects[0]
+  expect(before.type).toBe('panel')
+  expect(before.crop).toBeUndefined()
+  expect(before.rotation ?? 0).toBe(0)
+  const nw = Number(before.nativeW)
+  const nh = Number(before.nativeH)
+  expect(Math.abs(Number(before.w) / Number(before.h) - nw / nh)).toBeGreaterThan(0.05)
+  expect(Math.abs(Number(before.w) - nw)).toBeGreaterThan(1)
+
+  // focus 只设 Tab 流的起点，目标按钮必须由真正的键盘导航到达并执行。
+  await size.focus()
+  await page.keyboard.press('Shift+Tab')
+  await expect(aspect).toBeFocused()
+  await page.keyboard.press('Enter')
+  const aspectDoc = await nameAndReadNow(page, 'restore-aspect')
+  expect(aspectDoc.objects).toHaveLength(1)
+  const restoredAspect = aspectDoc.objects[0]
+  expect(restoredAspect.id).toBe(before.id)
+  expect(Number(restoredAspect.w)).toBeCloseTo(Number(before.w), 8)
+  expect(Number(restoredAspect.h)).toBeCloseTo(Number(before.w) * nh / nw, 8)
+  expect(Math.abs(Number(restoredAspect.w) - nw)).toBeGreaterThan(1)
+
+  await aspect.focus()
+  await page.keyboard.press('Tab')
+  await expect(size).toBeFocused()
+  await page.keyboard.press('Enter')
+  const sizeDoc = await nameAndReadNow(page, 'restore-size')
+  expect(sizeDoc.objects).toHaveLength(1)
+  const restoredSize = sizeDoc.objects[0]
+  expect(restoredSize.id).toBe(before.id)
+  expect(Number(restoredSize.w)).toBeCloseTo(nw, 8)
+  expect(Number(restoredSize.h)).toBeCloseTo(nh, 8)
+  console.log(`inspector-restore-actions ${JSON.stringify({ layout, before, restoredAspect, restoredSize })}`)
 }
 
 async function addText(page: Page, text: string, x: number, y: number) {
@@ -401,26 +536,103 @@ test('带 overrides 的面板：缩略图走 SVG 那一路画上（不因重复�
   for (const e of withSvg) expect(e.steps, JSON.stringify(withSvg)).toEqual(['svg:ok'])
 })
 
-test('只差水平翻转的两个节点：缩略图不一样，而且是左右镜像（缩略图带翻转，Codex #679）', async ({
+test('首次渲染在水平翻转按下与松开间完成：控件不挪动，保存保留翻转', async ({
   app,
   page,
 }) => {
   test.setTimeout(240_000)
   await page.setViewportSize({ width: 1440, height: 900 })
-  // 缩略图合成走了哪一路图源（失败信息里带上）
-  await page.addInitScript(() => {
-    ;(window as unknown as Record<string, unknown>).__TAVOTTO_THUMB_TRACE__ = []
+  // 首次渲染的回包精确夹在按下与松开之间：原来冷启动提示消失会把下方控件
+  // 上移 21px，mouseup 落到透明度行，原生 click 根本没有提交水平翻转。
+  let held: import('@playwright/test').Route | undefined
+  await page.route('**/api/engine/render**', async (route) => {
+    if (!held) held = route
+    else await route.continue()
   })
   const a = await app()
   await page.goto(a.baseURL)
-  // 放一张图（按页面居中落位：整张缩略图左右镜像时，面板映到它自己身上）
+  // 首次渲染仍在途时回到排版：这条只量原生点击和保存状态。
   await placeFigureAndBack(page)
-  await nameNow(page, '原样')
+  await expect.poll(() => !!held).toBe(true)
+  await nameNow(page, '冷启动中')
   // 属性页「更多」里的「水平翻转」（面板放上来之后是选中的）
   const more = await only(page.locator('[data-panel-more]'))
   if ((await more.getAttribute('aria-expanded')) !== 'true') await more.click()
-  await (await only(page.locator('[data-panel-flip="h"]'))).click()
-  await nameNow(page, '翻转')
+  const flip = await only(page.locator('[data-panel-flip="h"]'))
+  await flip.click({ trial: true }) // 滚到可操作位置；不发 pointerdown / click
+  await settleInspectorMotion(page)
+  const controls = () => page.locator('[data-inspector-panel]').evaluate((root) =>
+    [...root.querySelectorAll('button, input')].map((el) => {
+      const r = el.getBoundingClientRect()
+      return { tag: el.tagName, x: r.x, y: r.y, w: r.width, h: r.height }
+    }),
+  )
+  await expect(page.locator('[data-panel-engine-progress]:visible')).toHaveCount(1)
+  const beforeControls = await controls()
+  const box = (await flip.boundingBox())!
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+  await page.mouse.down()
+  let afterControls: Awaited<ReturnType<typeof controls>>
+  try {
+    await held!.continue()
+    await expect(page.locator('[data-canvas-stage] [data-display="exact"]')).toHaveCount(1, { timeout: 60_000 })
+    // SSE 的 building[fileId] 与 HTTP 渲染响应分开抵达；两者都落定才真的撤下提示。
+    await expect(page.locator('[data-panel-engine-progress]:visible')).toHaveCount(0)
+    // React 的派生尺寸与提示一并落地后再松手，量实际按钮 / 输入框位置，不量 class。
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+    afterControls = await controls()
+  } finally {
+    await page.mouse.up()
+  }
+  expect.soft(afterControls!, '渲染就绪不应把正在操作的属性控件挪走').toEqual(beforeControls)
+  const savedDoc = await nameAndReadNow(page, '翻转')
+  expect(savedDoc.objects).toHaveLength(1)
+  expect(savedDoc.objects[0].flipH, '原生点击必须真正写进命名节点的文档').toBe(true)
+  await expect(flip).toHaveAttribute('data-active', 'true')
+})
+
+test('同一 SVG、同一几何只差水平翻转：节点缩略图是左右镜像', async ({ app, page }) => {
+  test.setTimeout(240_000)
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.addInitScript(() => {
+    ;(window as unknown as Record<string, unknown>).__TAVOTTO_THUMB_TRACE__ = []
+  })
+  let renderRequests = 0
+  page.on('request', (request) => {
+    if (request.method() === 'POST' && new URL(request.url()).pathname === '/api/engine/render') renderRequests++
+  })
+  const a = await app()
+  await page.goto(a.baseURL)
+  await placeFigureAndBack(page)
+  const display = await only(page.locator('[data-canvas-stage] [data-display]'))
+  await expect(display).toHaveAttribute('data-display', 'exact', { timeout: 60_000 })
+  await expect(page.locator('[data-panel-engine-progress]:visible')).toHaveCount(0)
+  await settleInspectorMotion(page)
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+  // 素材 PDF 与本机重建 SVG 的字体 / tight 图幅可能不同。先完成原生尺寸同步，
+  // 再通过真正的「相对画布水平居中」动作落位，两次快照才只差 flipH。
+  await (await only(page.locator('[data-single-align] [data-inspector-align-mode="hcenter"]'))).click()
+  await page.evaluate(() => {
+    ;(window as unknown as Record<string, unknown>).__TAVOTTO_THUMB_TRACE__ = []
+  })
+  const sourceRequests = renderRequests
+  const sourceKey = await display.getAttribute('data-display-key')
+  expect(sourceKey).not.toBeNull()
+  const plainDoc = await nameAndReadNow(page, '原样')
+  expect(plainDoc.objects).toHaveLength(1)
+  const plainPanel = plainDoc.objects[0]
+  expect(plainPanel.flipH ?? false).toBe(false)
+  expect(Number(plainPanel.x) + Number(plainPanel.w) / 2).toBeCloseTo(plainDoc.page.w / 2, 8)
+  const more = await only(page.locator('[data-panel-more]'))
+  if ((await more.getAttribute('aria-expanded')) !== 'true') await more.click()
+  await settleInspectorMotion(page)
+  const flip = await only(page.locator('[data-panel-flip="h"]'))
+  await flip.click()
+  const flippedDoc = await nameAndReadNow(page, '翻转')
+  expect(flippedDoc.page).toEqual(plainDoc.page)
+  expect(flippedDoc.objects).toEqual([{ ...plainPanel, flipH: true }])
+  await expect(flip).toHaveAttribute('data-active', 'true')
+  await expect(display).toHaveAttribute('data-display-key', sourceKey!)
   await page.keyboard.press('ControlOrMeta+Shift+H')
   const drawer = await only(page.locator('[data-timeline-drawer]'))
   const thumbOf = (name: string) =>
@@ -433,12 +645,15 @@ test('只差水平翻转的两个节点：缩略图不一样，而且是左右�
     await thumbOf('原样').getAttribute('src'),
     await thumbOf('翻转').getAttribute('src'),
   ]
-  // 判据量的是**面板内容的左右分布**，不是逐像素相等：两个节点的缩略图可能取自不同的图源
-  // （先拍的那张还是素材图、后拍的那张已经换成引擎 SVG——笔画粗细、抗锯齿、字形都不一样），
-  // 逐像素镜像差在 Windows 的 WebKit 上量到过 0.51（CI run 36654291346），而两张图明明互为
-  // 镜像。按列统计「墨量」（每一列暗了多少）得到一条横向分布曲线：翻转之后的曲线应当与原样
-  // 的曲线**倒过来**高度相关、与原样本身明显不相关。面板按页面居中落位，整张缩略图的左右
-  // 镜像就是面板自己的镜像（前提在下面断言）。
+  // 判据只量同一图源、同一居中几何的翻转。冷启动前素材 PDF → 本机 SVG 的
+  // 比较还同时改变字形与原生图幅，不满足这条相关性门槛的前提。
+  expect(renderRequests, '两个命名节点之间不应有另一份引擎产物').toBe(sourceRequests)
+  const trace = (await page.evaluate(
+    () => (window as unknown as Record<string, unknown>).__TAVOTTO_THUMB_TRACE__,
+  )) as { steps?: string[] }[]
+  const composed = trace.filter((entry) => entry.steps)
+  expect(composed.length).toBeGreaterThanOrEqual(2)
+  for (const entry of composed) expect(entry.steps, JSON.stringify(trace)).toEqual(['svg:ok'])
   const m = await page.evaluate(
     async ([p, f]) => {
       const load = async (src: string) => {
@@ -505,3 +720,87 @@ test('只差水平翻转的两个节点：缩略图不一样，而且是左右�
   expect(m.mirrored, why).toBeGreaterThan(0.85) // 翻转那张的左右分布 = 原样的倒过来
   expect(m.mirrored - m.unmirrored, why).toBeGreaterThan(0.3) // 而不是原样本身
 })
+
+// 协议驱动状态，真实浏览器量布局：同一段文案的中英文换行、两档合法栏宽都要量。
+// 只替换 SSE 的时序，不碰 documentStore / renderStore，也不注入第二份状态判据。
+for (const locale of ['zh-CN', 'en-US']) {
+  for (const width of [360, 320]) {
+    test(`属性栏引擎提示不挪动控件：冷 / 热 / stale / ready (${locale}, ${width}px)`, async ({ app, page }) => {
+      test.setTimeout(180_000)
+      await page.setViewportSize({ width: 1440, height: 1000 })
+      await page.addInitScript(({ locale, width }) => {
+        localStorage.setItem('tavotto.locale', locale)
+        localStorage.setItem('tavotto.ui', JSON.stringify({ prefsVersion: 2, rightWidth: width }))
+        const sources: EventTarget[] = []
+        class TestEvents extends EventTarget {
+          readonly url: string
+          readyState = 1
+          constructor(url: string) { super(); this.url = url; sources.push(this) }
+          close() { this.readyState = 2 }
+        }
+        window.EventSource = TestEvents as unknown as typeof EventSource
+        ;(window as unknown as Record<string, unknown>).__TAVOTTO_TEST_EVENT__ = (kind: string, data: unknown) => {
+          for (const source of sources) source.dispatchEvent(new MessageEvent(kind, { data: JSON.stringify(data) }))
+        }
+      }, { locale, width })
+      const held: import('@playwright/test').Route[] = []
+      await page.route('**/api/engine/render**', (route) => { held.push(route) })
+      const emit = (kind: string, data: Record<string, unknown>) => page.evaluate(({ kind, data }) => {
+        const send = (window as unknown as { __TAVOTTO_TEST_EVENT__: (kind: string, data: unknown) => void }).__TAVOTTO_TEST_EVENT__
+        send(kind, data)
+      }, { kind, data })
+      const a = await app()
+      await page.goto(a.baseURL)
+      await placeFigureAndBack(page)
+      await expect.poll(() => held.length).toBe(1)
+      const more = await only(page.locator('[data-panel-more]'))
+      if ((await more.getAttribute('aria-expanded')) !== 'true') await more.click()
+      await (await only(page.locator('[data-panel-flip="h"]'))).click({ trial: true })
+      await settleInspectorMotion(page)
+      const inspector = await only(page.locator('[data-inspector-panel]'))
+      expect((await inspector.boundingBox())!.width).toBe(width)
+      const measure = () => inspector.evaluate((root) => {
+        const rect = (el: Element) => {
+          const r = el.getBoundingClientRect()
+          return { x: r.x, y: r.y, w: r.width, h: r.height }
+        }
+        const status = root.querySelector('[data-panel-engine-status]')!
+        return { status: rect(status), controls: [...root.querySelectorAll('button, input')].map(rect) }
+      })
+      const baseline = await measure()
+      const measurements: { state: string; geometry: Awaited<ReturnType<typeof measure>> }[] = []
+      const check = async (state: string, visible: string[]) => {
+        await expect.poll(() => inspector.locator('[data-panel-engine-message]:visible').evaluateAll((nodes) =>
+          nodes.map((el) => (el as HTMLElement).dataset.panelEngineMessage),
+        )).toEqual(visible)
+        const geometry = await measure()
+        expect(geometry, state).toEqual(baseline)
+        measurements.push({ state, geometry })
+      }
+      await check('warm', ['building'])
+      await emit('render.started', { id: 'Fig1_kinetics.pdf', cold: true, cost: 'light' })
+      await check('cold', ['cold'])
+      await emit('render.started', { id: 'Fig1_kinetics.pdf', cold: false, cost: 'light' })
+      await check('warm again', ['building'])
+      await held[0].continue()
+      await expect(page.locator('[data-canvas-stage] [data-display="exact"]')).toHaveCount(1, { timeout: 60_000 })
+      await emit('render.done', { id: 'Fig1_kinetics.pdf' })
+      await check('ready', [])
+      await emit('panel.file_changed', { stems: ['Fig1_kinetics'], reason: 'watcher' })
+      await expect.poll(() => held.length).toBe(2)
+      await check('stale while rebuilding', ['building', 'stale'])
+      await emit('render.started', { id: 'Fig1_kinetics.pdf', cold: true, cost: 'light' })
+      await check('cold and stale', ['cold', 'stale'])
+      await held[1].continue()
+      await expect(page.locator('[data-canvas-stage] [data-display="exact"]')).toHaveCount(1, { timeout: 60_000 })
+      await emit('render.done', { id: 'Fig1_kinetics.pdf' })
+      await check('rebuilt', [])
+      // 留下真实高度而不是把预测值写成通过；CI 日志在成功时也能取回这些数字。
+      console.log(`inspector-engine-layout ${locale} ${width}px ${JSON.stringify(measurements)}`)
+      const { horizontalOffenders } = await import('./overflow')
+      expect(await horizontalOffenders(page, '[data-inspector-panel]')).toEqual([])
+      await checkPanelRestoreActions(page)
+      expect(await horizontalOffenders(page, '[data-inspector-panel]')).toEqual([])
+    })
+  }
+}
