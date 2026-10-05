@@ -320,7 +320,7 @@ def test_concurrent_answers_only_the_winner_is_remembered(tmp_path, monkeypatch)
     a_in_remember = threading.Event()
     release_a = threading.Event()
 
-    def remember(root, script, index, prompt, text, kind):
+    def remember(root, script, index, prompt, text, kind, **_context):
         saved.append(text)
         if text == "A":
             a_in_remember.set()

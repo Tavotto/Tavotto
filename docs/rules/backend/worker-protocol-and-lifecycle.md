@@ -122,6 +122,14 @@
   没人能答 → `ScriptNeedsInput`（**BaseException**，脚本的 `except Exception` 吞不掉）→ `script_needs_input`；超时后脚本没接住
   EOF → `script_input_timeout`。写回的 `one_shot(script_inputs=热态 last_build_script_inputs)` 严格重放、从不问人。
   看护：`tests/test_script_input.py`（两条控制面）、`tests/test_script_input_api.py`。
+- **答案复用要上下文全对上；冷重放用执行转录；口令不进记账（ADR 0099 §九，T08）**。每一问带 `context` 摘要
+  （上一问之后的输出 + 前面的回答，口令只记占位）；`scriptanswers.recall()` 只有 (运行配置, 序号, 读取方式, 提示, 上下文)
+  全对上才回填，否则只给建议、重新问（没有界面 = `script_needs_input`）。build 成功后 `inputbroker.finished()` 把问答绑成
+  执行转录（`inputtranscript`，数据目录，按 (脚本, 运行配置) 绑这批产物）；`serving()` 进门冻结策略：有转录就按转录重放、
+  不读之后改过的项目答案文件；答案管理改 / 删答案作废转录（明确重算）。getpass 那一问在 worker 记账里只有
+  `secret: true`：build 响应、热会话、转录都没有值，重放时重新问，没人答 → `reason=secret_required`，绝不填空。
+  问答去向计数（`InputFacts`）经 `facts_projection` 进 T04 任务诊断。不向协议 stdin 写答案；native / 子进程 input 不变。
+  看护：`tests/test_script_input_context.py`、`tests/test_script_input_transcript_api.py`、`tests/test_input_transcript.py`。
 
 ## 速查表原要点（2026-09-25 迁入，#608）
 

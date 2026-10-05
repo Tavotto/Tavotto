@@ -14,7 +14,7 @@ import time
 
 import pytest
 
-from tavotto.engine import inputbroker, pool, scriptanswers, scriptinput
+from tavotto.engine import inputbroker, inputtranscript, pool, scriptanswers, scriptinput
 
 try:
     WORKER_PY = pool.find_worker_python()
@@ -198,12 +198,14 @@ def test_all_four_entry_points_are_bridged_on_both_planes(plane, figs, tmp_path,
     ]
     # 用户要看到脚本列出的编号清单才能选
     assert "1. alpha" in asked[0]["stdout_tail"] and "2. beta" in asked[0]["stdout_tail"]
+    # 口令只交给脚本：记账里只有 `secret: true`，没有值（ADR 0099 §九）
     assert [r["answer"] for r in resp["script_inputs"]] == [
         "1,2",
         "line-answer",
-        "s3cret",
+        None,
         "line-answer",
     ]
+    assert [bool(r.get("secret")) for r in resp["script_inputs"]] == [False, False, True, False]
     assert worker.last_build_script_inputs == resp["script_inputs"]
     # 按项目记住——口令除外
     kept = scriptanswers.entries(figs, "all.py")
@@ -241,13 +243,31 @@ def test_a_getpass_answer_leaves_no_trace_on_disk_or_in_the_log(tmp_path, capsys
 
 @needs_worker
 def test_remembered_answers_are_filled_in_without_asking(plane, figs, tmp_path, frontend):
+    """答过一次（记下了上下文）：同样的输出、同样的提示，下次运行直接用，不再弹框。走的是项目答案文件这条路
+    （执行转录先作废，见 `test_script_input_context.py` 的冷重放用例）。"""
+    (figs / "one.py").write_text(ONE_INPUT, encoding="utf-8")
+    fe = frontend({"which: ": "2"})
+    pool.build("one.py", str(figs), "__main__")
+    inputtranscript.forget(figs, "one.py")
+    pool.invalidate("one.py", str(figs))
+    fe.answers.clear()
+    pool.build("one.py", str(figs), "__main__")
+    assert (tmp_path / "result.json").read_text(encoding="utf-8").splitlines() == ['"2"', '"2"']
+    assert len(fe.of("script.input_requested")) == 1
+    assert [(a["index"], a["answer"]) for a in fe.of("script.input_autofilled")] == [(1, "2")]
+
+
+@needs_worker
+def test_an_answer_without_context_is_only_a_suggestion(plane, figs, tmp_path, frontend):
+    """T08 之前记下的答案（没有上下文摘要）：不确定是不是同一份菜单——重新问，旧答案只当建议（ADR 0099 §九）。"""
     (figs / "one.py").write_text(ONE_INPUT, encoding="utf-8")
     scriptanswers.remember(figs, "one.py", 1, "which: ", "2")
-    fe = frontend(present=True)
+    fe = frontend({"which: ": "1"})
     pool.build("one.py", str(figs), "__main__")
-    assert (tmp_path / "result.json").read_text(encoding="utf-8").splitlines() == ['"2"']
-    assert fe.of("script.input_requested") == []
-    assert [(a["index"], a["answer"]) for a in fe.of("script.input_autofilled")] == [(1, "2")]
+    assert (tmp_path / "result.json").read_text(encoding="utf-8").splitlines() == ['"1"']
+    (asked,) = fe.of("script.input_requested")
+    assert asked["suggestion"] == "2" and asked["recheck"] == "legacy_answer"
+    assert fe.of("script.input_autofilled") == []
 
 
 @needs_worker

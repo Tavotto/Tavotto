@@ -21,6 +21,9 @@ import { currentProjectId } from '@/lib/session'
  * - **项目代际**：`clear()` 换代并清空；在途响应、旧项目的事件都不落进新项目。事件那道闸由
  *   `handleServerEvent` 按 `pj` 先挡一次，这里按发请求那一刻的代际再挡一次。
  * - 提示与 stdout 片段是用户脚本的文字，组件里**只当纯文本**渲染。
+ * - **同一问只有一个展示面**（T08）：准备面板挂着时认领展示（`claimPresentation`），原对话框让开；面板关掉就放手
+ *   （`releasePresentation`），对话框接着显示同一问——只换展示，不取消脚本。答案本身不进 store（口令尤其）：
+ *   输入框的值只在组件里，`submit` 拿到就发。
  */
 
 export const AUTOFILL_NOTICE_MS = 12_000
@@ -52,6 +55,8 @@ interface ScriptInputState {
   managing: string | null
   /** 本页那条能答题事件流的 id（`stream.hello`）。**不随项目换代清掉**：事件流跨项目存活 */
   streamId: string | null
+  /** 此刻认领了「展示正在等的那一问」的展示面（如准备面板）；空 = 原对话框展示。挂载状态，不随项目换代清 */
+  presenters: string[]
 
   onRequested: (req: ScriptInputRequest) => void
   onClosed: (id: string) => void
@@ -68,6 +73,10 @@ interface ScriptInputState {
   onStreamHello: (streamId: string) => void
   /** 报「这条事件流此刻在看 `pj`」；没有流 / 没有项目时什么都不做 */
   announce: (pj: string | null | undefined) => void
+  /** 某个展示面（准备面板）挂载时认领展示；同名重复认领无效 */
+  claimPresentation: (surface: string) => void
+  /** 展示面卸载 / 关掉时放手：没有别的展示面了，原对话框接着显示同一问 */
+  releasePresentation: (surface: string) => void
   clear: () => void
 }
 
@@ -127,6 +136,7 @@ export const useScriptInputStore = create<ScriptInputState>((set, get) => ({
   location: '',
   managing: null,
   streamId: null,
+  presenters: [],
 
   onRequested: (req) => {
     if (get().queue.some((q) => q.id === req.id)) return
@@ -218,6 +228,15 @@ export const useScriptInputStore = create<ScriptInputState>((set, get) => ({
     if (!streamId || !pj) return
     if (listenInFlight) listenNext = { streamId, pj }
     else sendListen(streamId, pj)
+  },
+
+  claimPresentation: (surface) => {
+    if (get().presenters.includes(surface)) return
+    set((s) => ({ presenters: [...s.presenters, surface] }))
+  },
+
+  releasePresentation: (surface) => {
+    set((s) => ({ presenters: s.presenters.filter((p) => p !== surface) }))
   },
 
   clear: () => {

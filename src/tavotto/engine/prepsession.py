@@ -1160,7 +1160,9 @@ class SessionService:
         return True
 
     # ---- 报告 ----
-    def report(self, sess: Session, *, awaiting_input: bool = False) -> dict:
+    def report(
+        self, sess: Session, *, awaiting_input: bool = False, runtime_input: dict | None = None
+    ) -> dict:
         """会话的投影：目标 / 修订 / 观察序号 / phase / outcome / checks / requirements / actions / provider
         引用。读它会补齐当前该有的动作，并在可观察状态变了时推进 `observation_seq`。"""
         with sess.lock:
@@ -1256,6 +1258,14 @@ class SessionService:
                 },
                 # 上一次依赖准备之后按新环境重新算出的差额；None = 没有
                 "dependency_delta": dict(sess.dependency_delta) if sess.dependency_delta else None,
+                # 正在等的那一问（T08）：`inputbroker.Pending.public()`——id / 序号 / 读取方式 / 要不要掩码，
+                # 没有提示与答案。回答走既有 `/api/script_input/answer`，与原对话框是同一个请求
+                "runtime_input": (
+                    dict(runtime_input)
+                    if runtime_input is not None
+                    and derived["phase"] == PHASE_AWAITING_RUNTIME_INPUT
+                    else None
+                ),
                 "plan": sess.plan.to_payload(),
                 "result": result.to_payload() if result else None,
             }

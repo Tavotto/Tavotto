@@ -79,6 +79,7 @@ from .engine import (
     handoff as engine_handoff,
     inputbroker as engine_inputbroker,
     inputremap as engine_inputremap,
+    inputtranscript as engine_inputtranscript,
     layoutsession as engine_layoutsession,
     locate as engine_locate,
     logsafe as engine_logsafe,
@@ -622,6 +623,9 @@ def _worker_error_payload(exc, stage: str = "") -> dict:
         # 脚本要输入（ADR 0099）：界面按 code 翻译，提示原文走 params
         extra = getattr(exc, "extra", None) or {}
         body["params"] = {"prompt": str(extra.get("prompt") or "")}
+        # 为什么没人能答（闭集，T08）：口令要重新提供 / 冷重放的上下文对不上——界面据此说清下一步
+        if extra.get("reason") in engine_inputbroker.REASONS:
+            body["params"]["reason"] = extra["reason"]
     if getattr(exc, "module", ""):
         body["module"] = exc.module
     # 项目环境自动接手失败时的结构化原因（ADR 0018）：找不到 venv / venv 里
@@ -3557,6 +3561,8 @@ def api_registry_probe():
         with _PROBES_LOCK:
             _PROBES.pop(key, None)
             _PROBE_RUNS.pop(key, None)
+    # 这次运行里每一问的去向（T08）：只给任务诊断的白名单投影，不进响应体（响应形状不变）
+    input_facts = result.pop(engine_probe.INPUT_FACTS_KEY, None)
     if result.get("registered"):
         # 每张捕获图当场物化进 runtime cache（复制热 worker 已写好的预览
         # SVG + 描述符——不触发第二次执行）。重开文档时的首帧占位靠它。
@@ -3586,6 +3592,7 @@ def api_registry_probe():
             argv_count=len(run.argv) if run is not None else 0,
             run_config=run.config_id if run is not None else None,
             elapsed_ms=round((time.monotonic() - started) * 1000),
+            input_facts=input_facts,
         ),
         outcome=engine_probe.outcome_of(result),
         failed=engine_probe.outcome_of(result) == engine_probe.OUTCOME_ERROR,
@@ -3710,7 +3717,9 @@ def api_script_input_answers():
 
 
 def _after_script_answers_changed(ctx: "ProjectCtx", script: str) -> None:
-    """答案变了必须重跑（ADR 0099 §七）：作废热会话 + `panel.file_changed`（reason=script_input）。"""
+    """答案变了必须重跑（ADR 0099 §七）：作废热会话 + `panel.file_changed`（reason=script_input）。
+    改答案是「明确要用新答案重算」：这个脚本的执行转录一并作废（T08），否则冷重放仍按旧转录作答。"""
+    engine_inputtranscript.forget(ctx.path, script)
     engine_pool.invalidate(script, str(ctx.path))
     _script_change_handler(ctx, "script_input")([script])
 
@@ -7039,20 +7048,28 @@ def _session_target(ctx: "ProjectCtx", body: dict):
     }, None
 
 
-def _session_awaiting_input(ctx: "ProjectCtx", sess) -> bool:
-    """这个会话的脚本此刻有没有在等一个 `input()` 的回答（回答本身走既有的 `/api/script_input/*`）。"""
+def _session_runtime_input(ctx: "ProjectCtx", sess) -> dict | None:
+    """这个会话的脚本（同一份运行配置）此刻在等的那一问的公开投影；没有 = None。回答本身走既有的
+    `/api/script_input/*`，同一问只有一个 id：准备面板与原对话框答的是同一个请求（T08）。"""
     script = sess.plan.script
     if not script:
-        return False
-    return any(
-        p.script == script and _script_input_pending_of(ctx, p.id) is not None
-        for p in engine_inputbroker.pending()
-    )
+        return None
+    run = getattr(sess.plan, "run", None)
+    config_id = run.config_id if run is not None else None
+    for p in engine_inputbroker.pending():
+        if (
+            p.script == script
+            and p.run_config == config_id
+            and _script_input_pending_of(ctx, p.id) is not None
+        ):
+            return p.public()
+    return None
 
 
 def _session_report(ctx: "ProjectCtx", sess) -> dict:
+    waiting = _session_runtime_input(ctx, sess)
     return engine_prepsession.SESSIONS.report(
-        sess, awaiting_input=_session_awaiting_input(ctx, sess)
+        sess, awaiting_input=waiting is not None, runtime_input=waiting
     )
 
 

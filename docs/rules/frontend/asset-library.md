@@ -184,7 +184,10 @@
 - **脚本 `input()` 的作答（ADR 0099）**：`scriptInputStore` 有项目代际（`clear()` 换代；后端那一问不取消，切回来经
   `loadAnswers()` 的 `pending` 接回对话框）；`ScriptInputDialog` 是闸（`blockDismiss`，出口只有提交 / 结束输入 / 停止脚本），
   脚本的提示与输出片段只当纯文本；事件流以 `/api/events?answers=1` 声明「能答题」（同一道会话认证），收到 `stream.hello` 与每次认领新项目时（`onCurrentProjectChange`，与事件过滤同一时刻，不等 `project` 赋值）经 `announce()` 报在看哪个项目（后端按项目认答题方）；改 / 删答案的结果换了项目就是 `stale`，调用方不许接着重跑；「记住的输入」入口只在
-  这个脚本真有答案时出现在脚本行上；zustand 选择器的空值用模块级常量（每次新建 `[]` = React #185 无限重渲染）。看护：
+  这个脚本真有答案时出现在脚本行上；zustand 选择器的空值用模块级常量（每次新建 `[]` = React #185 无限重渲染）。
+  作答内容在 `ScriptInputForm`（`useScriptInputAnswer` + 字段 + 按钮），原对话框与准备面板共用；同一问只有一个展示面：
+  面板挂载时 `claimPresentation`、卸载时 `releasePresentation`，对话框只在没有展示面认领时出现（关面板 = 换展示，不停脚本）。
+  口令（`secret` / getpass）用密码框、交出去就清空、不进 store；`suggestion` 只说给人看，不预填（ADR 0099 §九）。看护：
   `scriptInputStore.test.tsx`、`ScriptInputDialog.test.tsx`、`ScriptAnswersDialog.test.tsx`、`e2e/script-input.spec.ts`。
 - 看护：`scriptRunStore.test.ts` / `ScriptLibrary.test.tsx` /
   `AssetBrowser.runtime.test.tsx` / `runtimeSourceSection.test.tsx` / `projectSwitchDepRepair.test.ts` /

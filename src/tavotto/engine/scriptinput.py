@@ -9,6 +9,11 @@ safe worker 的 `sys.stdin` 就是协议管道：脚本一 `input()` 就阻塞�
 * 定案：人答上与等到超时只能有一方算数——谁先用 `O_EXCL` 建成 `claim-<n>.json` 谁赢（`claim()`）。
   超时赢了，迟到的答案既不回给脚本也不记住，父进程据此收起那一问；答题方赢了，worker 等它把回复写完；
 * 回复三种形状：`{"answer": "…"}` / `{"eof": true}` / `{"no_answer": true, "reason": "…"}`。
+* 上下文（T08）：每一问带一个 `context` 摘要——提示、读取方式、**上一问之后**脚本打印的那段输出（编号清单
+  就在这里）与本次运行里前面每一问的回答（口令只记占位，不记值也不哈希它）。父进程按它判断旧答案还能不能
+  原样用：菜单换了序、前一问答得不一样，摘要就不同，旧答案只能当建议、要重新问。
+* 口令（`getpass`）只交给脚本：记账里只留 `secret: true`，**没有答案**——build 响应、热会话、执行转录都
+  拿不到它；重放需要时重新问。
 
 会合目录是 worker 的 `out_dir/script-input/`——Tavotto 自己的会话缓存，**不是用户目录**。
 写请求文件没有走 `atomicio`：worker 的装载闭包刻意不含它，而这里写的是一次性的进程间信号，
@@ -22,6 +27,7 @@ from __future__ import annotations
 
 import builtins
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -46,6 +52,32 @@ TAIL_CHARS = 4000
 PROMPT_CHARS = 2000
 #: 读取方式（进请求与 `script_inputs` 记录）。
 KINDS = ("input", "readline", "read", "getpass")
+#: 上下文摘要的格式版本：算法变了旧摘要一律对不上（= 重新问），不会被误当成同一问。
+CONTEXT_VERSION = 1
+#: 前一问的回答在上下文里的占位：口令不进摘要（低熵值的哈希可猜），EOF 与真答案区分开。
+SECRET_MARK = "<secret>"
+EOF_MARK = "<eof>"
+
+
+def context_digest(kind: str, prompt: str, segment: str, earlier: list[dict]) -> str:
+    """一问的上下文摘要（T08）：读取方式 + 提示 + 上一问之后的输出 + 前面每一问的回答。
+
+    只在本机比对「是不是同一问」用：父进程拿它决定旧答案能不能原样复用。**不进**界面事件、诊断、遥测。"""
+    answers = [
+        [
+            r.get("kind"),
+            SECRET_MARK
+            if r.get("secret")
+            else (EOF_MARK if r.get("answer") is None else r["answer"]),
+        ]
+        for r in earlier
+    ]
+    canon = json.dumps(
+        [CONTEXT_VERSION, kind, prompt, segment[-TAIL_CHARS:], answers],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return "ctx1:" + hashlib.sha256(canon.encode("utf-8")).hexdigest()
 
 
 def request_name(index: int) -> str:
@@ -138,6 +170,8 @@ class StdoutTail(io.TextIOBase):
     def __init__(self, target):
         self._target = target
         self._buf = ""
+        #: 上一问之后打印的那段（有界）：上下文摘要用它，编号清单就在这里
+        self._since = ""
 
     def writable(self) -> bool:
         return True
@@ -146,6 +180,7 @@ class StdoutTail(io.TextIOBase):
         text = str(text)
         self._target.write(text)
         self._buf = (self._buf + text)[-TAIL_CHARS * 2 :]
+        self._since = (self._since + text)[-TAIL_CHARS:]
         return len(text)
 
     def flush(self) -> None:
@@ -168,6 +203,13 @@ class StdoutTail(io.TextIOBase):
         lines = self._buf.splitlines()[-TAIL_LINES:]
         text = "\n".join(lines)
         return text[-TAIL_CHARS:]
+
+    def segment(self) -> str:
+        """上一问（或 build 开始）之后打印的输出，有界；`mark()` 之后从空开始。"""
+        return self._since
+
+    def mark(self) -> None:
+        self._since = ""
 
 
 class Channel:
@@ -221,6 +263,9 @@ class Channel:
         self.count += 1
         index = self.count
         prompt = clip_prompt(prompt)
+        context = context_digest(
+            kind, prompt, self.tail.segment() if self.tail is not None else "", self.record
+        )
         self._write_request(
             index,
             {
@@ -229,8 +274,11 @@ class Channel:
                 "prompt": prompt,
                 "script": self.script,
                 "stdout_tail": self.tail.tail() if self.tail is not None else "",
+                "context": context,
             },
         )
+        if self.tail is not None:
+            self.tail.mark()  # 下一问的上下文只看这一问之后打印的
         self._log(f"[input] 第 {index} 问等待作答\n")
         reply_path = self.dir / reply_name(index)
         deadline = time.monotonic() + wait_timeout()
@@ -251,30 +299,31 @@ class Channel:
                 reply = None
                 break
             time.sleep(WORKER_POLL)
+        base = {"index": index, "kind": kind, "prompt": prompt, "context": context}
         if not isinstance(reply, dict):
             self._log(f"[input] 第 {index} 问等待超时，按 EOF 处理\n")
-            self.record.append(
-                {"index": index, "kind": kind, "prompt": prompt, "answer": None, "timed_out": True}
-            )
+            self.record.append({**base, "answer": None, "timed_out": True})
             return None
         if reply.get("no_answer"):
             self._log(f"[input] 第 {index} 问没有可用的答案\n")
             raise ScriptNeedsInput(prompt, str(reply.get("reason") or ""))
         if reply.get("eof") or not isinstance(reply.get("answer"), str):
             self._log(f"[input] 第 {index} 问：EOF\n")
-            self.record.append({"index": index, "kind": kind, "prompt": prompt, "answer": None})
+            self.record.append({**base, "answer": None})
             return None
         answer = reply["answer"]
         if kind == "getpass":
             # 口令绝不落盘：worker.log 活得比会合目录久，还会进诊断包与错误里的日志尾巴（Codex #680 P1）。
-            # 只写一行固定的标记——看门狗照样在作答这一点清零；回复文件读完当场删掉
+            # 只写一行固定的标记——看门狗照样在作答这一点清零；回复文件读完当场删掉。
+            # 记账里也**没有**它（T08）：build 响应、热会话、执行转录都拿不到，重放需要时重新问
             self._log(f"[input] 第 {index} 问已作答（口令不转录）\n")
             with contextlib.suppress(OSError):
                 reply_path.unlink()
-        else:
-            # 转录「提示 → 答案」：和终端里看到的一样
-            self._log(f"{answer}\n")
-        self.record.append({"index": index, "kind": kind, "prompt": prompt, "answer": answer})
+            self.record.append({**base, "answer": None, "secret": True})
+            return answer
+        # 转录「提示 → 答案」：和终端里看到的一样
+        self._log(f"{answer}\n")
+        self.record.append({**base, "answer": answer})
         return answer
 
 
@@ -347,7 +396,7 @@ def install(channel: Channel) -> None:
 
     def bridged_getpass(prompt="Password: ", stream=None) -> str:
         text = str(prompt)
-        # 只转发提示、不掩码：界面上那个框是明文（ADR 0099 §一）
+        # 只转发提示；界面用密码框作答（ADR 0099 §九），答案不进记账
         answer = channel.ask(text, "getpass")
         if answer is None:
             raise EOFError("EOF when reading a line")

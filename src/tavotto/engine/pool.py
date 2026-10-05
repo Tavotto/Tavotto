@@ -1650,8 +1650,11 @@ class EngineWorker:
     #: 脚本 `input()` 怎么答（ADR 0099 §五）：None = 池会话（记住的答案 / 问界面 / 立即报错）；
     #: `inputbroker.ReplayAnswers` = 写回的一次性重放，只按热态用过的答案严格重放。
     script_input_policy = None
-    #: 最近一次 build 实际用到的每一问（build 响应的 `script_inputs`）。
+    #: 最近一次 build 实际用到的每一问（build 响应的 `script_inputs`；口令那一问没有值，T08）。
     last_build_script_inputs: list = []
+    #: 最近一次 build 每一问的去向计数（`inputbroker.InputFacts`）与它绑定的执行转录（只有 id 与计数）。
+    last_input_facts: dict | None = None
+    last_input_transcript: dict | None = None
 
     def alive(self) -> bool:
         return not self._dead and self.proc.poll() is None
@@ -1989,6 +1992,7 @@ class EngineWorker:
         self.last_build_runtime = _runtime_of(resp)
         self.last_build_artifact_probe = resp.get("artifact_probe")
         self.last_build_script_inputs = _script_inputs_of(resp)
+        inputbroker.finished(self, self.last_build_script_inputs)  # 执行转录（T08）
         self.last_patch_hash = _EMPTY_PATCH_HASH
         self.last_patch_hash_by_stem.clear()  # 每个 stem 都回到脚本原样
         return resp
@@ -2277,6 +2281,8 @@ class WorkerdWorker:
     #: 与 EngineWorker 同形（ADR 0099）。
     script_input_policy = None
     last_build_script_inputs: list = []
+    last_input_facts: dict | None = None
+    last_input_transcript: dict | None = None
 
     def __init__(
         self,
@@ -2557,6 +2563,7 @@ class WorkerdWorker:
         self.last_build_runtime = _runtime_of(resp)
         self.last_build_artifact_probe = resp.get("artifact_probe")
         self.last_build_script_inputs = _script_inputs_of(resp)
+        inputbroker.finished(self, self.last_build_script_inputs)  # 执行转录（T08）
         self.last_patch_hash = _EMPTY_PATCH_HASH
         self.last_patch_hash_by_stem.clear()  # 每个 stem 都回到脚本原样
         return resp
@@ -2773,7 +2780,7 @@ def one_shot(
 
     `script_inputs`：脚本 `input()` 的答案（ADR 0099 §五）——传热态会话 build 时实际用到的那一组
     （`last_build_script_inputs`）。重放只按它严格作答、从不问人；不传 = 一问都答不上，脚本要输入就
-    `script_needs_input`。热态 == 重放因此成立。
+    `script_needs_input`。热态 == 重放因此成立。口令那一问热态没有留值（T08）：重新问界面，没人能答就失败。
     """
     from . import workerd_client
 

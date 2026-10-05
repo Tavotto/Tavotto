@@ -1116,7 +1116,7 @@ export default interface Resources {
       "eof": "结束输入",
       "eofTip": "告诉脚本输入已结束（相当于 Ctrl-D）",
       "failed": "提交失败：{{error}}",
-      "getpassNote": "脚本用 getpass 读取这一项：这里显示的是明文，这个答案不会被记住。",
+      "getpassNote": "这一项由 getpass 读取：输入会被遮住，Tavotto 不保存它、不写进日志，下次需要时会再问。",
       "manageAria": "查看和修改 {{script}} 记住的输入",
       "manageEmpty": "这个脚本没有记住的输入。",
       "manageForget": "删除",
@@ -1136,6 +1136,7 @@ export default interface Resources {
       "rememberNote": "答案会按项目记住，下次运行自动使用。",
       "stop": "停止脚本",
       "submit": "提交",
+      "suggestion": "上次的回答是「{{answer}}」，但这次脚本的输出或前面的回答与上次不同，请对照上面的内容确认后再答。",
       "title": "脚本需要输入"
     },
     "settings": {

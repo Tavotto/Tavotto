@@ -4600,6 +4600,12 @@ export interface ScriptInputRequest {
   input_kind: 'input' | 'readline' | 'read' | 'getpass'
   prompt: string
   stdout_tail: string
+  /** 口令（getpass）：密码框作答、不记住、不预填（T08） */
+  secret?: boolean
+  /** 上次的回答——**只是建议**：这次的输出 / 前面的回答 / 运行参数与上次不同，要人确认（口令永远没有） */
+  suggestion?: string | null
+  /** 为什么要重新确认：`context_changed` / `config_changed` / `legacy_answer` */
+  recheck?: string | null
 }
 
 export interface RememberedAnswer {
