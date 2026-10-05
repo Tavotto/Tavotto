@@ -76,6 +76,9 @@ LOG = logging.getLogger("tavotto.preparation")
 #: 计划形态的版本。加可选字段不升；改语义 / 删字段才升。
 PLAN_VERSION = 1
 
+TARGET_ASSET = "asset"
+TARGET_SCRIPT = "script"
+
 STATUS_PENDING = "pending"
 STATUS_RUNNING = "running"
 STATUS_READY = "ready"
@@ -172,10 +175,14 @@ class PreparationPlan:
     #: （`databinding.binding_for()`：相对项目根的路径 → sha256、修订摘要）。没有脚本时 None。
     #: 执行线程起会话之前再算一次，不同就是 `preparation_plan_stale` / `data_binding_changed`。
     binding: dict | None = None
+    #: 准备的主语（T01）：`asset` = 已知的一张图（`asset_id` / `stem` 有值）；`script` = 只有一份脚本、
+    #: 还没有 `asset_id`（`stem` 为空，「成功」= 至少捕获到一张图，不是某一张）。旧计划没有这个键 = `asset`。
+    target: str = TARGET_ASSET
 
     def to_payload(self) -> dict:
         return {
             "plan_version": PLAN_VERSION,
+            "target": self.target,
             "plan_id": self.plan_id,
             "project_id": self.project_id,
             "asset_id": self.asset_id,
@@ -210,6 +217,7 @@ def plan_for(
     entry: str | None,
     original_artifact: str | None,
     original_path: str | None = None,
+    target: str = TARGET_ASSET,
 ) -> PreparationPlan:
     """按产品**自己的**决定拼一份计划——这里不做任何选择，只读。
 
@@ -372,6 +380,7 @@ def plan_for(
         required_input=required,
         dependency_preparation=dependency,
         binding=binding,
+        target=target,
     )
 
 
@@ -387,6 +396,19 @@ def _captured_stems(build_resp) -> list[str] | None:
     if isinstance(descriptors, list):
         return [str(d.get("stem")) for d in descriptors if isinstance(d, dict) and d.get("stem")]
     return None
+
+
+def _captured_of(worker, build_resp) -> dict | None:
+    """build 响应里捕获到的图（stem 表 + 描述符 + 这次按哪一代改指表跑的），私有，不进公开投影。"""
+    stems = _captured_stems(build_resp)
+    if stems is None:
+        return None
+    descriptors = build_resp.get("descriptors") if isinstance(build_resp, dict) else None
+    return {
+        "stems": sorted(stems),
+        "descriptors": list(descriptors) if isinstance(descriptors, list) else [],
+        "remap_generation": getattr(worker, "remap_generation", None),
+    }
 
 
 def _project_relative(root: str, path: str) -> str | None:
@@ -436,6 +458,9 @@ class PreparationResult:
     note: str = ""
     #: 阶段轨迹（U09，ADR 0071）：plan → check → spawn → execute → receipt，坏在哪一步就停在哪一步。
     trace: tracemod.Trace = dataclasses.field(default_factory=tracemod.Trace)
+    #: 这次 build 捕获到的东西（T01）：`{"stems", "descriptors", "remap_generation"}`——执行之后要登记 /
+    #: 物化的调用方（`prepsession`）从这里拿，不必再问 worker。**不进 `to_payload()`**（描述符里有路径）。
+    captured: dict | None = None
 
     def to_payload(self) -> dict:
         return {
@@ -496,9 +521,12 @@ class PreparationService:
             self._entries[plan.plan_id] = _Entry(plan=plan, result=result)
         return result
 
-    def start(self, plan_id: str, *, runner, bind=None) -> None:
+    def start(self, plan_id: str, *, runner, bind=None, on_done=None) -> None:
         """起执行线程。`runner(plan, before_retry=…) -> (worker, build_resp, created)`（app 注入
-        `pool.build_owned`），`bind()` 是项目绑定上下文（app 注入 `bound_project(ctx)`）。"""
+        `pool.build_owned`），`bind()` 是项目绑定上下文（app 注入 `bound_project(ctx)`）。
+
+        `on_done(plan, result)`：执行线程在终局 `status` 写完之后、**项目绑定仍在**的时候调一次（T01：准备会话
+        在这里登记捕获到的图并发事件）。它抛出的异常只记日志，不改本计划的终局。"""
         entry = self._entry(plan_id)
         if entry is None:
             raise KeyError(plan_id)
@@ -508,6 +536,11 @@ class PreparationService:
         def _run() -> None:
             with bind() if bind is not None else contextlib.nullcontext():
                 self._execute(entry, runner)
+                if on_done is not None:
+                    try:
+                        on_done(entry.plan, entry.result)
+                    except Exception:  # noqa: BLE001 — 线程里不许静默死掉，如实记
+                        LOG.exception("准备完成回调失败 %s", plan_id)
 
         entry.thread = threading.Thread(
             target=_run, name=f"tavotto-prep-{plan_id[-8:]}", daemon=True
@@ -562,6 +595,7 @@ class PreparationService:
                 binding=plan.binding,
             )
             result.receipt = rcpt
+            result.captured = _captured_of(existing, reusable)
             check = rcpt.binding_check()
             tr.mark(
                 "receipt", reused=True, completeness=rcpt.completeness, binding=check["matched"]
@@ -653,6 +687,7 @@ class PreparationService:
             binding=plan.binding,
         )
         result.receipt = rcpt
+        result.captured = _captured_of(worker, resp)
         tr.mark(
             "receipt",
             completeness=rcpt.completeness,
@@ -681,6 +716,10 @@ class PreparationService:
         （`no_figures_captured` / `no_figures_captured_silent` / `unknown_stem`，`pool.missing_stem_error` 是
         同一条换码路）。`ready` 是「这张面板可以编辑」的证据，不能在渲染入口会报错的时候给（PATH-B1）。
         回执照样留着：脚本确实跑过，它读了什么、在哪个解释器里跑的都是事实。"""
+        if entry.plan.target == TARGET_SCRIPT and (
+            not isinstance(known, (list, tuple)) or len(known) > 0
+        ):
+            return False  # 脚本目标没有「要找的那一张」：捕获到至少一张就够，说不出也不判
         err = pool.missing_stem_error(worker, entry.plan.stem, known)
         if err is None:
             return False
@@ -827,6 +866,12 @@ class PreparationService:
         for entry in entries:
             if entry.thread is not None and entry.thread.is_alive():
                 entry.thread.join(join_timeout)
+
+
+def stale_reason(plan: PreparationPlan) -> tuple[str, dict] | None:
+    """计划此刻还成不成立（授权 / 解释器决策 / 数据绑定各比一次）；`None` = 成立。准备会话在认领动作之前
+    用它核「检查那一刻的世界」还在不在——与执行线程起会话之前是同一份判据。"""
+    return PreparationService._stale_reason(plan)
 
 
 #: 进程内唯一登记表（app.py 用它）。

@@ -106,6 +106,50 @@
   `tests/test_foundation_harness.py`、`tests/test_foundation_first_open.py`、`tests/test_trace.py`、
   `tests/test_foundation_join.py`、`tests/test_export_identity.py`。
 
+## 准备会话：script-first 的共同生命周期（T01，onboarding 收敛）
+
+`engine/prepsession.py` 是 `preparation.py` 之上的**用户操作层**，不是新的任务系统：一个项目里一个目标（一份只有脚本的
+`script` 目标，或一张已知素材）对应一个会话，会话里有多轮不可变计划与尝试。检查复用 `plan_for`，执行复用
+`PreparationService.start` → `pool.build_owned`，登记复用 `probe.register_probed`；没有第二个 resolver / 安装器 / worker /
+input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/preparation-sessions`（创建 / 复用检查会话）·
+`GET …/<session_id>`（补拉，不重新执行）· `POST …/<session_id>/actions`（只认 `action_id` 与 `expected_config_revision`）。
+
+- **身份层次**：`session_id`（可恢复的用户体验）· `config_revision`（语义修订：目标 / 解释器 / 工作目录档 / 授权 / 数据绑定 /
+  门的结论变了才 +1，判据是私有指纹，不对外）· `observation_seq`（读报告时可观察状态变了才推进；进度变化只动它，所以用户
+  正在填的配置、手里的动作 id 不会每秒过期）· `attempt_id`（= 这次执行的 `PreparationPlan.plan_id`，旧 `plan_id` 语义不变）。
+  `PreparationPlan.target ∈ {asset, script}`（缺省 asset）：`script` 目标没有 `asset_id` / `stem`，「成功」= 至少捕获到一张图。
+- **phase 是纯派生**（`prepsession.derive(facts)`，黄金向量 `tests/golden/preparation_session_vectors.json`）：只吃检查 / 尝试 /
+  失效 / 是否在等 `input()` 这几件已观察的事实。**`unknown` 不当通过**（有一项判不出就不是 `ready_to_run`，给 `recheck`）；
+  provider 状态保留原权威，旧终局 `needs_input` 投影成 `awaiting_configuration` / `awaiting_confirmation`；失败事实永远单列在
+  `outcome{kind,code,reason}`。「脚本跑完了但没有图」是 `partial` + `execution_finished_no_figure`，不算首图成功。
+  `scanning`（T02）与 `preparing_environment`（T06）词汇已进闭集，本阶段不产生。前端只存这份投影，不另算。
+- **检查不执行用户代码、不写用户项目**（`plan_for` 不跑脚本；e2e 用项目外的计数文件与目录树比对钉着）；执行只在认领后端生成的 `run`
+  动作之后发生。注意 `plan_for` **不是**零副作用：它仍会做解释器体检与「记住」（`decide_environment` / `resolve_worker_python`，
+  写的是 Tavotto 自己的数据目录配置）——这是 T00 登记的既有行为，T01 没有新增，由 T02（只读扫描）/ T05（推荐与采用分离）拆开；
+  会话层不得借「检查」之名再加新的执行或对用户项目的写。动作是不透明 id，
+  绑定会话 / `config_revision` / 影响摘要（`executes_user_script` / `writes_to_project` …），kind 闭集 `run` / `cancel` /
+  `recheck`，请求体多一个字段就 400。已知素材的 provenance / frame / selected-source 拒绝逻辑在原路径里，原样生效。
+- **check-use 窗口**：「比对修订 → `preparation.stale_reason`（授权 / 解释器 / 数据绑定）→ 认领 → 提交 provider」整段在会话锁内；
+  失效就 409 `preparation_plan_stale`、一行不跑、会话标失效等 `recheck`；同一个动作重复认领（重复点击 / 两个标签页）回当初那次
+  尝试（`claimed=false`，200），不重复起 worker；新的 `run` 动作（终局之后才有）才是用户明确的重跑，产生新的 attempt。
+  池层 `build_owned` 的原子 `created` 仍是 worker 去重与取消所有权的唯一判据。
+- **脚本目标执行成功之后**由 app 注入的 `finalize` 在执行线程、项目绑定里做 `probe.register_probed` + 物化 + 刷新（与
+  `/api/registry/probe` 成功之后同一串）；登记没做完时会话仍是 `running`，所以读到 `completed` 就意味着编辑请求（
+  `/api/engine/render`）已经找得到这张图。登记写 `tavotto_registry.json` 是执行**之后**、用户确认过的动作，列在 `run` 的
+  `impact.writes_to_project`；扫描 / 检查永远不写。
+- **入口循环**：`probe.entry_retry_allowed` 是「值不值得换入口」的唯一判据——缺参 / 要输入 / 读不到数据 / 缺包 / 超时 / 取消 /
+  起会话前的两道门都**不**换（换了只是把顶层代码再跑一遍）；`script` 目标只选一个入口（显式 `entry` > 注册表 > 静态候选第一个）。
+- **内存会话，如实失忆**：应用重启后旧 `session_id` 得 404 `preparation_session_not_found`（`params.reason=unknown_or_restarted`），
+  客户端重新创建检查会话由当时的真实状态重判，**不自动重跑**。尝试的 `PreparationService` 记录过期 → `action_required` +
+  `outcome.unknown/attempt_expired`。登记表有界（64 会话，闲置 30 min 回收）：有尝试在跑或登记没完成的会话**永不**被 TTL 回收，
+  满了且全部活跃就 429 `preparation_sessions_full`，不驱逐。
+- **取消**只经 `PreparationService.cancel`：本会话新起的会话才关，别人的不碰；关闭面板 / 切项目是展示层的事，不取消。
+- **SSE**：`preparation.session`（`pj` / `session_id` / `target` / `config_revision`）只是「重新读报告」的提示，不带 phase 与序号。
+- 看护：`tests/test_preparation_session.py`（假 pool：合同、并发认领、修订、失效、取消所有权、回收、项目绑定）、
+  `tests/test_preparation_session_e2e.py`（真 worker、真服务：只有脚本的项目 → 一次执行 → 进编辑请求不重跑）、
+  `tests/test_script_probe.py::TestEntryLoopStopsOnNonEntryFailures`。尚未接入的旧入口（GUI 素材库的 `/api/registry/probe`、
+  MCP / CLI）由 T09 / T10 接续，它们是暂存的薄兼容 wrapper。
+
 ## 速查表原要点（2026-09-25 迁入，#608）
 
 `src/tavotto/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。

@@ -75,6 +75,12 @@
     失败 entry 各自新建 worker（看护 `tests/test_script_probe.py` 的
     execution-count 用例）。
 
+- **换入口只在「入口猜错」时**（T01，准备会话收敛）：`probe.entry_retry_allowed(exc)` 是唯一判据；缺参
+  （`script_needs_arguments`）/ 要输入 / 读不到数据 / 缺包 / 超时 / 取消 / 起会话前的两道门都停在第一个入口，不再把
+  顶层代码按入口数重跑一遍。登记（冲突判据 + 改指代次 + `discover.register`）的唯一实现是 `probe.register_probed`——试运行
+  与准备会话的 `script` 目标执行成功之后都走它。`/api/registry/probe` 与 `script` 目标共用 app 里的
+  `_resolve_project_script`（越界 / 非 .py / 不存在三种拒绝各有稳定 code）。看护 `tests/test_script_probe.py::TestEntryLoopStopsOnNonEntryFailures`。
+
 ## 速查表原要点（2026-09-25 迁入，#608）
 
 `src/tavotto/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
