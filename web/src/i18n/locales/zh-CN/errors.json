@@ -147,6 +147,7 @@
     "project_env_unusable": "项目环境无法启动。",
     "project_env_worker_import_failed": "项目环境能导入 matplotlib，但 Tavotto 的渲染代码在它里面起不来。",
     "project_python_unusable": "为这个项目指定的解释器用不了；Tavotto 不会自动换成别的环境。请在渲染环境设置里重新指定，或清除它回到自动选择。",
+    "project_scan_not_started": "这个项目还没有开始检查（或应用重启过）。重新检查即可。",
     "publish_failed": "文件已写入，但无法移入导出目录：{{error}}。",
     "python_missing": "本机没有可用的 Python。请安装 Python 3.10 或更高版本后重试。",
     "read_failed": "无法读取：{{reason}}",

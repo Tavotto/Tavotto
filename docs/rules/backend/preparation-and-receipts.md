@@ -114,6 +114,12 @@
 input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/preparation-sessions`（创建 / 复用检查会话）·
 `GET …/<session_id>`（补拉，不重新执行）· `POST …/<session_id>/actions`（只认 `action_id` 与 `expected_config_revision`）。
 
+**会话与导入即扫描（T02）的关系**：会话的「检查」要走 `plan_for`（环境决策，有解释器体检与写配置的副作用），是用户选定目标之后的
+明确动作；项目被认领 / 恢复时自动发生的是**只读零执行**的结构扫描（`engine/projscan.py`，规则全文在
+`registry-discovery-and-probe.md`「导入即扫描」），它列出候选目标并给每个目标一份 `session_target`（= 本端点的创建请求体）。
+扫描**不得**调用 `plan_for` / `decide_environment` / `gate` / `resolve_worker_python`；两者共用 `probe.inventory_entry` 的脚本分类，
+不是两套关系判定器。
+
 - **身份层次**：`session_id`（可恢复的用户体验）· `config_revision`（语义修订：目标 / 解释器 / 工作目录档 / 授权 / 数据绑定 /
   门的结论变了才 +1，判据是私有指纹，不对外）· `observation_seq`（读报告时可观察状态变了才推进；进度变化只动它，所以用户
   正在填的配置、手里的动作 id 不会每秒过期）· `attempt_id`（= 这次执行的 `PreparationPlan.plan_id`，旧 `plan_id` 语义不变）。

@@ -523,47 +523,56 @@ def script_inventory(figures_dir: str | Path, registered: set[str] | None = None
         except (FileNotFoundError, RuntimeError):
             registered = set()
     # 目标解析器（U03 / FO12）：宿主 AST 不认识的合法语法交给项目自己的解释器再解析一遍。
-    # 只读此刻的决策，不发现、不体检（`discover=False`）；决策不成立就没有目标解析器。
-    try:
-        target_python = pool.resolve_worker_python(str(figures_dir), discover=False)[0]
-    except pool.WorkerError:
-        target_python = None
-    out: list[dict] = []
-    for path in discover.iter_all_scripts(figures_dir):
-        rel = discover.rel_key(path, figures_dir)
-        seen = discover.inspect_script(path, figures_dir, target_python=target_python)
-        info, problem, static = seen["info"], seen["problem"], seen["entry_candidates"]
-        candidates: list[str] = []
-        if info:
-            candidates.append(info["entry"])
-        for e in static if static is not None else FALLBACK_ENTRIES:
-            if e not in candidates:
-                candidates.append(e)
-        if rel in registered:
-            reason = REASON_REGISTERED
-        elif discover.is_infrastructure_name(path.name):
-            reason = REASON_INFRASTRUCTURE
-        elif problem is not None:
-            # 读不动 / 解码不了 / 两边都判语法错误：`problem` 说清是哪一种（U03）。
-            # 文件**照样在清单里**，可以试运行——运行期会给出真正的报错。
-            reason = REASON_UNPARSEABLE
-        elif info is None:
-            reason = REASON_NO_STATIC_OUTPUT  # 确认不产图（工具 / 样式模块）
-        elif info["dynamic_names"]:
-            reason = REASON_DYNAMIC
-        else:
-            reason = REASON_STATIC
-        out.append(
-            {
-                "script": rel,
-                "registered": rel in registered,
-                "static_stems": list(info["stems"]) if info else [],
-                "entry_candidates": candidates,
-                "reason": reason,
-                "can_probe": True,
-                # 加字段（老前端忽略）：解析不了时是哪一种问题；由目标解释器解析的标 parser
-                "problem": problem,
-                "parser": seen.get("parser"),
-            }
+    # 只读此刻定下来的路径（`pool.peek_worker_python`，T02：不复检、不起进程）；没有就没有目标解析器。
+    found = pool.peek_worker_python(figures_dir)
+    target_python = found[0] if found else None
+    return [
+        inventory_entry(
+            path,
+            figures_dir,
+            registered,
+            discover.inspect_script(path, figures_dir, target_python=target_python),
         )
-    return out
+        for path in discover.iter_all_scripts(figures_dir)
+    ]
+
+
+def inventory_entry(path: Path, figures_dir: Path, registered: set[str], seen: dict) -> dict:
+    """一个脚本的清单条目：`seen` 是 `discover.inspect_script()` 的结果——**分类只有这一份**。
+
+    `script_inventory`（用户主动打开清单）与导入即扫描（`projscan`，T02，带预算、不传目标解析器）
+    各自负责「读不读、怎么读」，读出来之后的 reason / entry 候选判据共用这里，不分叉成两套脚本分类。
+    纯函数：不碰文件系统、不起进程。"""
+    rel = discover.rel_key(path, figures_dir)
+    info, problem, static = seen["info"], seen["problem"], seen["entry_candidates"]
+    candidates: list[str] = []
+    if info:
+        candidates.append(info["entry"])
+    for e in static if static is not None else FALLBACK_ENTRIES:
+        if e not in candidates:
+            candidates.append(e)
+    if rel in registered:
+        reason = REASON_REGISTERED
+    elif discover.is_infrastructure_name(path.name):
+        reason = REASON_INFRASTRUCTURE
+    elif problem is not None:
+        # 读不动 / 解码不了 / 两边都判语法错误：`problem` 说清是哪一种（U03）。
+        # 文件**照样在清单里**，可以试运行——运行期会给出真正的报错。
+        reason = REASON_UNPARSEABLE
+    elif info is None:
+        reason = REASON_NO_STATIC_OUTPUT  # 确认不产图（工具 / 样式模块）
+    elif info["dynamic_names"]:
+        reason = REASON_DYNAMIC
+    else:
+        reason = REASON_STATIC
+    return {
+        "script": rel,
+        "registered": rel in registered,
+        "static_stems": list(info["stems"]) if info else [],
+        "entry_candidates": candidates,
+        "reason": reason,
+        "can_probe": True,
+        # 加字段（老前端忽略）：解析不了时是哪一种问题；由目标解释器解析的标 parser
+        "problem": problem,
+        "parser": seen.get("parser"),
+    }

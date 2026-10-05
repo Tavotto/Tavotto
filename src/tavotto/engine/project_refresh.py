@@ -31,17 +31,20 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import atomicio, discover, pool, registry
+from . import atomicio, discover, pool, registry, scanbudget
 
 
 def _target_parser(root) -> str | None:
-    """静态 merge 的目标解析器（U03 / FO12）：这个项目此刻决定用的解释器——宿主 AST 不认识的
-    合法语法交给它再解析一遍。只读决策、不发现、不体检；决策不成立（显式选择失效 / 没有
-    解释器）就没有目标解析器，静态扫描照常只用宿主。"""
-    try:
-        return pool.resolve_worker_python(str(root), discover=False)[0]
-    except pool.WorkerError:
-        return None
+    """静态 merge 的目标解析器（U03 / FO12）：这个项目此刻定下来的解释器——宿主 AST 不认识的
+    合法语法交给它再解析一遍。
+
+    **只读 `pool.peek_worker_python`，不复检**（T02）：原先走 `resolve_worker_python(discover=False)`，
+    项目记住过解释器时它每个进程每条解释器会 `import matplotlib` 一次——也就是每次打开 / 刷新
+    都可能因此起项目的解释器（T00 F6 实测）。现在读出路径就算数；只有宿主 `ast.parse` 真的判了
+    语法错误，`discover.inspect_script` 才会用它做一次**静态**再解析（`-I -B`，不 import 用户模块，
+    FO12），那是既有的、已登记的唯一例外；导入即扫描（`projscan`）从不传目标解析器。"""
+    found = pool.peek_worker_python(root)
+    return found[0] if found else None
 
 
 # ---------------------------------------------------------------------------
@@ -189,7 +192,9 @@ def _reraise(exc: OSError) -> None:
     raise exc
 
 
-def iter_assets(root: Path, *, strict: bool = False) -> list[tuple[Path, str]]:
+def iter_assets(
+    root: Path, *, strict: bool = False, budget: scanbudget.Budget | None = None
+) -> list[tuple[Path, str]]:
     """项目里的素材文件与它们的 kind —— `/api/panels` 与刷新共用这一份判据。
 
     * 隐藏目录与 `EXCLUDE_DIRS` **当场剪枝，不下探**：图库里常有 .venv、.git、
@@ -199,11 +204,48 @@ def iter_assets(root: Path, *, strict: bool = False) -> list[tuple[Path, str]]:
     `strict=True` 时中途读不动就抛（`_reraise`），**不返回半张表**。
     `/api/panels` 与刷新照旧宽容：一个读不动的子目录不该让素材面板整个空掉；
     watcher 则必须严格——半张表与「用户删了这些文件」在 diff 里没有区别。
+
+    `budget`（T02 导入即扫描）：给了就**有界且留痕**——目录项数 / 素材数 / 层级 / 时间 / 取消，读不动的
+    目录与没跟进的符号链接目录进账本（`strict` 与 `budget` 同时给时读不动仍然抛，账本只管宽容路径）。
+    判据（哪些算素材、怎么剪枝）与不带预算时是同一份。
     """
     root = Path(root)
     files: list[Path] = []
-    for dirpath, dirnames, filenames in os.walk(root, onerror=_reraise if strict else None):
+
+    def on_error(exc: OSError) -> None:
+        if strict:
+            raise exc
+        if budget is not None:
+            where = getattr(exc, "filename", None)
+            try:
+                rel = Path(where).relative_to(root).as_posix() if where else "."
+            except (ValueError, TypeError):
+                rel = "."
+            budget.note(scanbudget.ISSUE_UNREADABLE_DIR, path=rel or ".")
+
+    for dirpath, dirnames, filenames in os.walk(
+        root, onerror=on_error if (strict or budget is not None) else None
+    ):
         dirnames[:] = [d for d in dirnames if d not in EXCLUDE_DIRS and not d.startswith(".")]
+        if budget is not None:
+            here = Path(dirpath)
+            for d in list(dirnames):
+                rel_d = (here / d).relative_to(root).as_posix()
+                if os.path.islink(here / d):
+                    budget.note(scanbudget.ISSUE_SYMLINK_DIR, path=rel_d)
+                    dirnames.remove(d)
+                elif len(Path(rel_d).parts) > budget.limits.max_asset_depth:
+                    budget.note(
+                        scanbudget.ISSUE_DEPTH, severity=scanbudget.SEVERITY_NOTE, path=rel_d
+                    )
+                    dirnames.remove(d)
+            stopped = False
+            for _ in range(len(filenames) + len(dirnames)):
+                if not budget.charge_entry():
+                    stopped = True
+                    break
+            if stopped:
+                break
         files += [Path(dirpath) / fn for fn in filenames if not fn.startswith(".")]
     files.sort()
     pdf_stems = {(p.parent, p.stem) for p in files if p.suffix.lower() in PDF_EXT}
@@ -212,9 +254,17 @@ def iter_assets(root: Path, *, strict: bool = False) -> list[tuple[Path, str]]:
     for p in files:
         ext = p.suffix.lower()
         if ext in PDF_EXT:
-            out.append((p, "pdf"))
+            kind = "pdf"
         elif ext in IMG_EXT and (p.parent, p.stem) not in pdf_stems:
-            out.append((p, "raster"))
+            kind = "raster"
+        else:
+            continue
+        if budget is not None:
+            if len(out) >= budget.limits.max_assets:
+                budget.note(scanbudget.ISSUE_ASSETS, scope="walk")
+                break
+            budget.assets = len(out) + 1
+        out.append((p, kind))
     return out
 
 

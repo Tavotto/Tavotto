@@ -347,6 +347,10 @@
         "label": "Show project readiness",
         "keywords": "readiness status editable layout only why not editable"
       },
+      "project-scan": {
+        "label": "Show project check",
+        "keywords": "scan check structure scripts target"
+      },
       "hints-reset": {
         "label": "Show action hints again",
         "keywords": "hints tips reset onboarding"
