@@ -173,6 +173,7 @@ security.install(app)
 # `_request_ctx`）。没有任何项目时前端显示 Project Picker。
 # 不再内置任何默认路径——项目由 --figures、最近项目或 Picker 决定。
 PROJECTS: dict[str, "ProjectCtx"] = {}
+_OPENING_PROJECTS: dict[str, tuple["ProjectCtx", threading.Event]] = {}
 DEFAULT_PROJECT: str | None = None  # 不带 pj 的请求落到这里
 _PROJECT_LOCK = threading.Lock()
 CACHE_DIR = DATA_ROOT / "cache"
@@ -2196,12 +2197,38 @@ def open_project(path_str: str, make_default: bool = True) -> dict:
     with _PROJECT_LOCK:
         existing = PROJECTS.get(pid)
         if existing is None:
-            PROJECTS[pid] = ctx
-        if make_default or DEFAULT_PROJECT is None:
+            initializing, ready = _OPENING_PROJECTS.setdefault(pid, (ctx, threading.Event()))
+        elif make_default or DEFAULT_PROJECT is None:
             DEFAULT_PROJECT = pid
     if existing is not None:
         return {**project_status(existing), "drafted": False, "conflicts": [], "reused": True}
-    engine_watch.start(ctx, sink=_watch_sink(ctx))
+    if initializing is not ctx:
+        # 同一次首开的输家等赢家完成快照；不持全局锁，否则别的项目也会被慢盘挡住。
+        ready.wait()
+        with _PROJECT_LOCK:
+            if PROJECTS.get(pid) is not initializing:
+                raise RuntimeError("项目打开失败或已关闭，请重新打开")
+            if make_default or DEFAULT_PROJECT is None:
+                DEFAULT_PROJECT = pid
+        return {**project_status(initializing), "drafted": False, "conflicts": [], "reused": True}
+    try:
+        try:
+            engine_watch.start(ctx, sink=_watch_sink(ctx))
+        except BaseException:
+            # start 在注册 watcher 之后才起线程；线程启动失败也必须清掉半成品。
+            engine_watch.stop(str(ctx.path))
+            raise
+        with _PROJECT_LOCK:
+            PROJECTS[pid] = ctx
+            if make_default or DEFAULT_PROJECT is None:
+                DEFAULT_PROJECT = pid
+            _OPENING_PROJECTS.pop(pid)
+            ready.set()
+    finally:
+        with _PROJECT_LOCK:
+            if _OPENING_PROJECTS.get(pid) == (ctx, ready):
+                _OPENING_PROJECTS.pop(pid)
+                ready.set()  # 失败也唤醒；不许清掉关闭后重新打开的另一代初始化。
     LOG.info(
         "项目已打开: %s（%d 个脚本%s）",
         path,
@@ -2226,9 +2253,10 @@ def close_project(pid: str, wait: bool = False) -> bool:
         ctx = PROJECTS.pop(pid, None)
         if ctx is not None and DEFAULT_PROJECT == pid:
             DEFAULT_PROJECT = next(iter(PROJECTS), None)
+        if ctx is not None:
+            engine_watch.stop(str(ctx.path))
     if ctx is None:
         return False
-    engine_watch.stop(str(ctx.path))
     engine_pool.shutdown_all(str(ctx.path), wait=wait)
     LOG.info("项目已关闭: %s", ctx.path)
     return True
