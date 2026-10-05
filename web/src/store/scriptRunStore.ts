@@ -16,6 +16,7 @@ import { useAssetStore } from '@/store/assetStore'
 import { useEnvStore } from '@/store/envStore'
 import { useRenderStore } from '@/store/renderStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
+import { probeWithDraft, useScriptArgvStore } from '@/store/scriptArgvStore'
 
 /**
  * 「运行并发现图」的状态机（Session 5 素材库普通入口）。
@@ -267,7 +268,8 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
     }
 
     try {
-      const res = await probeScript(script)
+      // T03：参数草稿在**运行开始那一刻**取一份拷贝；此后再编辑不影响这一次
+      const res = await probeWithDraft(probeScript, script)
       if (stale()) return
       if (res.error?.code === INPUT_REMAP_CHANGED_CODE) {
         // 试运行途中改了指认，后端按代次丢弃了这次结果（ADR 0106 §五）：按新表重跑一次，不报失败
@@ -386,7 +388,11 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
     for (const cb of [...gateListeners]) cb(phase, script)
   },
 
-  clear: () => set((s) => ({ byScript: {}, epoch: s.epoch + 1 })),
+  clear: () => {
+    // 换项目：参数草稿（可能含令牌）属于上一个项目的脚本，一并丢掉
+    useScriptArgvStore.getState().clear()
+    set((s) => ({ byScript: {}, epoch: s.epoch + 1 }))
+  },
 }))
 
 // 改指表 / 环境变了（ADR 0106）：envStore 的两个代际——作废按旧条件捕获的结果、重跑因「找不到数据」失败的脚本

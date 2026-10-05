@@ -41,8 +41,11 @@ cwd、argv、env——继续散着拼，就是把同一个语义写第 N 份。�
 from __future__ import annotations
 
 import dataclasses
+import hashlib
+import hmac
 import json
 import os
+import secrets
 from pathlib import Path
 
 from . import figcapture
@@ -102,6 +105,20 @@ WRITE_MODES = (WRITE_MODE_SANDBOXED, WRITE_MODE_PROJECT_DIR, WRITE_MODE_UNRESTRI
 #: `launch_context()` 形态的版本。加可选字段不升；改语义 / 删字段才升。
 LAUNCH_CONTEXT_VERSION = 1
 
+#: 用户给的脚本 argv 的上限（T03）。操作系统命令行装不下无限长的参数，更重要的是别让一个粘错的
+#: 超长文本进 worker 命令行 / workerd 的 spec 哈希。超限在边界上拒绝，不截断（截断 = 静默丢参数）。
+MAX_ARGV_TOKENS = 256
+MAX_ARGV_CHARS = 32 * 1024
+#: 上线的 JSON 载荷长度上限（字符）。Windows 整条命令行只有 32,767 个字符，而中文会被转义成 6 个字符的
+#: `\\uXXXX`——只限原文长度挡不住，所以单独量**实际放进命令行的那一串**。
+MAX_ARGV_WIRE_CHARS = 16 * 1024
+
+
+def argv_wire(argv) -> str:
+    """argv 在 worker 命令行上的样子（`worker_argv` 的唯一序列化）：ASCII 转义的紧凑 JSON 数组。"""
+    return json.dumps(list(argv), ensure_ascii=True, separators=(",", ":"))
+
+
 #: `stable_payload()` 覆盖的字段——**跨机器稳定**的那部分执行语义。
 #: `cwd_mode` 在列：它改变脚本看到的世界（相对路径指到哪），是语义不是路径。
 STABLE_FIELDS = (
@@ -113,6 +130,29 @@ STABLE_FIELDS = (
     "passthrough_savefig",
     "cwd_mode",
 )
+
+
+#: 本进程的随机密钥：池键 / 缓存目录里 argv 的区分用它做 HMAC。**不落盘、不出进程**——argv 常常
+#: 低熵（`--seed 1`），裸 sha256 可以被穷举反推；带随机密钥的摘要只在本进程内有意义。
+_PROCESS_KEY = secrets.token_bytes(32)
+
+
+@dataclasses.dataclass(frozen=True)
+class RunSelection:
+    """一次执行选中的运行配置：本机引用 + 它冻结的 argv。池 / worker / 一次性重放都吃这一个对象。"""
+
+    config_id: str
+    argv: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if not self.config_id or not isinstance(self.argv, tuple) or not self.argv:
+            raise ValueError("RunSelection 需要配置引用与非空 argv（空 argv = 不选配置）")
+
+    @property
+    def key(self) -> str:
+        """池键 / 缓存目录的区分段：不同 argv（或同 argv 的不同配置引用）永不共用会话。"""
+        payload = json.dumps([self.config_id, list(self.argv)], ensure_ascii=True)
+        return hmac.new(_PROCESS_KEY, payload.encode("utf-8"), hashlib.sha256).hexdigest()[:16]
 
 
 def _normalize_target(target: str, target_kind: str) -> str:
@@ -137,7 +177,7 @@ class ExecutionSpec:
     target_kind: str  # TARGET_SCRIPT | TARGET_MODULE
     target: str  # script: 项目相对路径（POSIX）；module: 模块名
     entry: str | None  # safe 的入口函数；native 恒 None
-    argv: tuple[str, ...]  # 脚本看到的 sys.argv[1:]（safe 恒空）
+    argv: tuple[str, ...]  # 脚本看到的 sys.argv[1:]（safe 缺省空；T03 起可以是用户给的精确 token）
     cwd: str  # safe: 会话沙盒；native: 用户 cwd（机器相关）
     env: dict[str, str] | None  # None = 原样继承；dict = 注入增量（见模块头）
     project_root: str  # 项目根（机器相关；safe 即 figures_dir 原串）
@@ -161,6 +201,11 @@ class ExecutionSpec:
     #: 同一份数据，靠的是三条 spawn 路径都从 `inputremap.rules_for()` 取（与 `cwd_mode` 同一条纪律）。
     #: 空元组 = 没有规则，argv 逐字节不变。native 恒空（那是用户自己的 `python fig.py`）。
     input_remap: tuple = ()
+    #: 这次执行的**运行配置引用**（T03，`engine/runconfig.py`）：本机不透明 id（`rc_…`），空串 =
+    #: 没有（旧行为：argv 为空）。argv 非空时它必须有值——`argv` 的原文只活在 `to_payload()`
+    #: 与 worker 命令行里，**公开投影（`stable_payload` / `launch_context` / 回执）只带数量与这个 id**，
+    #: 参数值可能是路径 / 令牌 / 患者编号，低熵摘要也不行。
+    run_config: str = ""
 
     def __post_init__(self) -> None:
         if self.profile not in PROFILES:
@@ -176,6 +221,18 @@ class ExecutionSpec:
             raise ValueError("safe profile 必须指定 entry（内联脚本用 '__main__'）")
         if not isinstance(self.argv, tuple) or not all(isinstance(a, str) for a in self.argv):
             raise ValueError(f"argv 必须是字符串元组: {self.argv!r}")
+        if len(self.argv) > MAX_ARGV_TOKENS or sum(len(a) for a in self.argv) > MAX_ARGV_CHARS:
+            raise ValueError("argv 超出上限（token 数或总字符数）")
+        if any("\x00" in a for a in self.argv):
+            raise ValueError("argv 的 token 不能含 NUL（操作系统的 argv 装不下）")
+        if len(argv_wire(self.argv)) > MAX_ARGV_WIRE_CHARS:
+            raise ValueError("argv 序列化后超出命令行长度上限")
+        if not isinstance(self.run_config, str):
+            raise ValueError("run_config 必须是字符串")
+        if self.profile == PROFILE_SAFE and self.argv and not self.run_config:
+            raise ValueError("safe 的 argv 非空时 run_config 必须非空（产物要绑定到它的配置）")
+        if self.profile == PROFILE_NATIVE and self.run_config:
+            raise ValueError("native profile 没有运行配置引用（argv 是用户自己的命令行）")
         if self.env is not None and (
             not isinstance(self.env, dict)
             or not all(isinstance(k, str) and isinstance(v, str) for k, v in self.env.items())
@@ -222,7 +279,14 @@ class ExecutionSpec:
         （增量里有 MPLCONFIGDIR 这类本机路径）。
         """
         out = {k: getattr(self, k) for k in STABLE_FIELDS}
-        out["argv"] = list(self.argv)
+        # 空 argv 的形状逐字节不变（golden）；非空时**原文不出门**：公开身份只带数量与本机不透明引用。
+        if self.profile == PROFILE_NATIVE:  # native 的 argv 是用户自己的命令行：沿用旧形状
+            out["argv"] = list(self.argv)
+        else:
+            out["argv"] = []
+            if self.argv:
+                out["argv_count"] = len(self.argv)
+                out["run_config"] = self.run_config
         out["spec_version"] = SPEC_VERSION
         return out
 
@@ -259,12 +323,18 @@ def launch_context(spec: ExecutionSpec, *, grant: dict | None = None) -> dict:
         "target_kind": spec.target_kind,
         "target": spec.target,
         "entry": spec.entry,
-        "argv": list(spec.argv),
+        # 原文不进 LaunchContext（它会随计划 / 回执公开）：native 的 argv 是用户自己的命令行，同样只带数量
+        "argv": list(spec.argv) if spec.profile == PROFILE_NATIVE else [],
         "cwd_mode": spec.cwd_mode,
         "cwd_origin": origin,
         "write_mode": write_mode,
         "passthrough_savefig": spec.passthrough_savefig,
         "grant": dict(grant) if grant is not None else None,
+        **(
+            {"argv_count": len(spec.argv), "run_config": spec.run_config}
+            if spec.argv and spec.profile == PROFILE_SAFE
+            else {}
+        ),
     }
 
 
@@ -293,6 +363,7 @@ def spec_from_payload(data: dict) -> ExecutionSpec:
         cwd_mode=data.get("cwd_mode", CWD_SANDBOX) or CWD_SANDBOX,
         sandbox=data.get("sandbox", "") or "",
         input_remap=tuple(figcapture.clean_remap_rules(data.get("input_remap") or [])),
+        run_config=data.get("run_config", "") or "",
     )
 
 
@@ -306,11 +377,14 @@ def safe_spec(
     env: dict[str, str] | None = None,
     cwd_mode: str = CWD_SANDBOX,
     input_remap=(),
+    argv: tuple[str, ...] | list[str] = (),
+    run_config: str = "",
 ) -> ExecutionSpec:
     """safe 档的**唯一权威构造函数**——运行时默认值只写在这里。
 
     safe 的语义（与 ADR 0014 §2 逐条对应）：target 是项目内脚本、argv 只有
-    脚本自身（`sys.argv[1:]` 为空，由 worker 落实）、cwd 是会话沙盒（写入
+    脚本自身（`sys.argv[1:]` 缺省为空，由 worker 落实；T03 起用户可以给**精确的 token 列表**——
+    `argv` + 它的本机运行配置引用 `run_config`，缺省空 = 旧行为逐字节不变）、cwd 是会话沙盒（写入
     边界）、savefig 吞掉捕获（passthrough=False）。`env` 只接受增量
     （bundled runtime 时传 `runtime.child_env(base={})`，其余场合 None）。
 
@@ -334,7 +408,7 @@ def safe_spec(
         target_kind=TARGET_SCRIPT,
         target=script,
         entry=entry,
-        argv=(),
+        argv=tuple(argv),
         cwd=cwd,
         env=env,
         project_root=str(figures_dir),
@@ -343,6 +417,7 @@ def safe_spec(
         sandbox=sandbox,
         # ADR 0106：用户指认过的只读改指表（`inputremap.rules_for`），空 = 没有
         input_remap=tuple(figcapture.clean_remap_rules(list(input_remap or ()))),
+        run_config=run_config,
     )
 
 
@@ -482,5 +557,16 @@ def worker_argv(
         out += [
             "--input-remap",
             json.dumps(list(spec.input_remap), ensure_ascii=False, separators=(",", ":")),
+        ]
+    if spec.argv:
+        # T03：脚本的 `sys.argv[1:]`——**一个 JSON 字符串数组，一个 flag**。不把 token 直接摊在命令行上：
+        # 空串 / 以 `-` 开头 / `--` / 中文都会被 worker 自己的 argparse 或 Windows 的命令行重组弄坏；
+        # JSON 是无歧义载荷，且 ASCII 转义后与控制面的编码无关（workerd 的 spec 哈希也按它分会话）。
+        # 只在非空时多两个 token（golden）；`--run-config` 是产物身份的本机引用，worker 把它编进描述符。
+        out += [
+            "--script-argv-json",
+            argv_wire(spec.argv),
+            "--run-config",
+            spec.run_config,
         ]
     return out

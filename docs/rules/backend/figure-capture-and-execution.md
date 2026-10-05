@@ -220,6 +220,34 @@
   会拿到 worker 的 `--script/--out-dir/--entry`，存出一堆叫 `--entry` 的图
   （试运行探测时当场撞见过，`test_script_sees_its_own_argv_not_the_workers` 看护）。
 
+## 运行参数（T03，ADR 0014 §2 修订）
+
+用户手动给的**精确 argv** 贯通 探测 → 热编辑 → 冷重放 → 导出 → 重开；自动 argparse 表单是 T07，不在这里。
+
+- **载荷**：`safe_spec(argv=, run_config=)` 是唯一构造入口（缺省空 = 旧行为逐字节不变）。`worker_argv` 只在 argv 非空时
+  多两个 flag：`--script-argv-json <JSON 字符串数组，ASCII 转义>` 与 `--run-config <rc_…>`；token 不直接摊在命令行上
+  （空串 / `-` 开头 / `--` / 中文会被 worker 自己的 argparse 或 Windows 命令行重组弄坏）。worker 在 `sys.argv` 处设
+  `[script, *argv]`——仍在 `paper_style` / `runpy` / 导入期 `parse_args()` 之前；载荷坏了 worker **拒绝启动**（不回落空 argv）。
+  `MAX_ARGV_TOKENS` / `MAX_ARGV_CHARS` 超限和含 NUL 在边界上拒绝，不截断。
+- **身份**：池键 = `(项目, 脚本[, selected-artifact][, run:<RunSelection.key>])`，key 是带**进程随机密钥**的 HMAC（不是裸 hash，
+  不出进程）；`invalidate(script)` 按 `k[:2]` 前缀作废全部变体，`invalidate(script, run=…)` / `only_run=True` 只动那一份。
+  资产 id 末尾拼 `~rc_…`（`figcapture.runtime_asset_id(script, stem, run_config)`，空串时与旧 id 相同），描述符多一个可选
+  `run_config`（空时 payload 里**没有**这个键）。同脚本同 stem 不同 argv = 两张素材、两条热会话、两份 cache。
+- **公开投影不带参数值**：`ExecutionSpec.stable_payload()` / `launch_context()` / `PreparationPlan.to_payload()` / 会话
+  `public_target()` 与 `impact` 只有 `argv_count` 与 `run_config`；`script_needs_arguments` 的 params 只有 `argv_count` 与
+  （有 argparse 实际证据时）`parse_kind`（`missing_required` / `invalid_value` / `unknown`），普通 `sys.exit(2)` 不猜。
+- **登记**（`engine/runconfig.py`）：本机 Tavotto 数据目录 `runconfigs/<项目摘要>.json`，不写用户项目（只读项目照样能用）。
+  同 (脚本, argv, 敏感标记) 复用引用，改任一 token = 新引用（"编辑 = 新修订"，在途 spec 与旧产物不变）。`sensitive=True` 只活在进程内存，
+  文件里只有占位；格式版本高于本读者 → `run_config_unsupported`。错误码：`invalid_argv`(400) / `run_config_missing` /
+  `run_config_secret_missing` / `run_config_unsupported`(409)。
+- **谁读哪份配置**：`runtime:` 素材读资产 id 里冻结的引用（`runtimeasset.run_selection`）；热会话 / 写回重放读 `worker.run`
+  （`pool.one_shot(run=)`）；磁盘面板（用户脚本自己写出的 `fig.pdf`）没有 Tavotto 的执行产物可绑，读脚本最近一次**明确运行**的配置
+  （`runconfig.set_default`，无参数运行会清掉它）。**不存在**"项目最新配置"这个读取点。
+- **注册表**：带配置的执行并进脚本的 stems（`discover.register(append=True)`），无参数执行仍是整条替换（权威）。
+- **未覆盖**（显式）：MCP / CLI 没有 argv 入口（T10），仍总是无参数；workerd 的 Rust 控制面对 argv 不透明且 spec 哈希含 argv，
+  本机无产物，行为未执行；运行时才产生的答案（getpass / 动态 input）的冻结转录是 T08。
+- 看护：`tests/test_run_argv.py`（模型 + 真 worker 对拍）、`tests/test_run_argv_e2e.py`（HTTP 全链路）。
+
 ## 速查表原要点（2026-09-25 迁入，#608）
 
 `src/tavotto/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。

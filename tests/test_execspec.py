@@ -263,13 +263,17 @@ class TestAssetId:
         )
 
     def test_the_id_has_no_project_path_dimension(self):
-        """id 只由 (脚本相对路径, stem) 决定——**没有任何参数能把绝对项目
+        """id 只由 (脚本相对路径, stem[, 运行配置引用]) 决定——**没有任何参数能把绝对项目
         路径混进来**。跨机器/跨挂载点的稳定性由这条签名保证；真 worker 在
-        两个不同项目根下产出同一 id 的对拍在 parity 测试里。"""
+        两个不同项目根下产出同一 id 的对拍在 parity 测试里。
+
+        T03 加的第三个维度 `run_config` 是本机运行配置的**不透明引用**（不是 argv 摘要，更不是路径），
+        缺省空串时 id 与之前逐字节相同。"""
         import inspect
 
         params = inspect.signature(figcapture.runtime_asset_id).parameters
-        assert list(params) == ["script", "stem"]
+        assert list(params) == ["script", "stem", "run_config"]
+        assert params["run_config"].default == ""
 
     def test_absolute_script_paths_are_rejected(self):
         with pytest.raises(ValueError, match="相对"):

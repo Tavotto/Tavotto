@@ -617,6 +617,7 @@
     "viewResults": "View captured figures",
     "groupInfraName": "Tools and config scripts",
     "recoveryDetails": "Details",
+    "rerunWithArgs": "Try again with these arguments",
     "group_needsFix": "Needs fixing"
   },
   "spineZone": {

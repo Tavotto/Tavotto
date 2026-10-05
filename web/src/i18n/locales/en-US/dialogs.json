@@ -701,7 +701,18 @@
     },
     "title": "Project readiness",
     "useScript": "Use {{script}}",
-    "write": "Write"
+    "write": "Write",
+    "argv": {
+      "title": "Run arguments",
+      "none": "none",
+      "count": "{{n}}",
+      "hint": "One argument per entry, passed to the script exactly in this order (nothing is split on spaces; an empty entry counts). Leave empty to run without arguments.",
+      "tokenAria": "Argument {{n}} for {{script}}",
+      "upAria": "Move argument {{n}} of {{script}} up",
+      "removeAria": "Remove argument {{n}} of {{script}}",
+      "add": "Add argument",
+      "sensitive": "Contains a password or token (kept in memory only; re-enter after a restart)"
+    }
   },
   "registry": {
     "addToCanvas": "Add {{stem}} to the canvas",

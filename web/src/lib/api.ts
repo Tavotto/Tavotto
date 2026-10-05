@@ -285,6 +285,10 @@ export function backendCodeMsg(
   // parseMissingKeyHandler 会把缺失的 key 原样吐回来（界面上看得见是哪条），
   // 那样 defaultValue 永远轮不到，缺文案时用户看到的就是 `backend.xxx`。
   if (code === 'artifact_source_unavailable') return artifactErrorMsg(params?.reason)
+  // T03：用户给了精确参数、脚本自己的解析器仍然拒绝——同一个稳定码，文案不能再说"没带参数"
+  if (code === 'script_needs_arguments' && Number(params?.argv_count) > 0) {
+    return msg('backend.script_rejected_arguments', params ?? {}, 'errors')
+  }
   if (code && i18n.exists(`backend.${code}`, { ns: 'errors' })) {
     return msg(`backend.${code}`, params ?? {}, 'errors')
   }
@@ -4279,6 +4283,11 @@ export interface CapturedFigureDescriptor {
    * `paper_style.save` 捷径）；`[]` = pyplot 捕获、从没存过盘。只记不用（tight 图幅的决定之前）。
    */
   savefig_calls?: SavefigCall[] | null
+  /**
+   * 产出这张图的运行配置引用（T03；本机不透明 id `rc_…`，**不是参数值**）。缺席 = 没给参数，
+   * 此时 `asset_id` 与之前逐字节相同。同一脚本不同参数跑出的同名图靠它分成两张素材。
+   */
+  run_config?: string
 }
 
 /** 一次 savefig 调用的实效参数（`figcapture.savefig_call` 的形态） */
@@ -4331,15 +4340,41 @@ export interface ProbeResult {
   dropped_figures?: number
   /** multiple_stem_conflict 时：stem → 现登记的归属脚本 */
   stem_conflicts?: Record<string, string>
+  /** 给了参数的那次运行：它的运行配置引用（T03；不含参数值） */
+  run_config?: string
+}
+
+/**
+ * 试运行给脚本的**精确 token 列表**（T03）：一项一个参数，空串、空格、中文、重复、`--` 原样保留，
+ * 不按空格拆、不去重、不排序。缺省 / 空 = 不带参数（请求体里**没有** `argv` 字段，与旧版逐字节相同）。
+ * `sensitive`：含密码 / 令牌——后端只在内存里保留，不落盘，重启后需要重新输入。
+ */
+export interface ScriptArgs {
+  argv?: readonly string[]
+  sensitive?: boolean
 }
 
 /** 试运行：真的跑一遍脚本，按它**实际产出**的文件名登记（冷启动可能要几分钟） */
-export const probeScript = (script: string, cost?: string) =>
+export const probeScript = (script: string, cost?: string, args?: ScriptArgs) =>
   jsonFetch<ProbeResult>('/api/registry/probe', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ script, cost }),
+    body: JSON.stringify({
+      script,
+      cost,
+      ...(args?.argv && args.argv.length > 0
+        ? { argv: [...args.argv], ...(args.sensitive ? { argv_sensitive: true } : {}) }
+        : {}),
+    }),
   })
+
+/** 运行参数（T03）的稳定错误码：界面按它们翻文案（`errors:backend.*`） */
+export const RUN_ARGV_ERROR_CODES = [
+  'invalid_argv',
+  'run_config_missing',
+  'run_config_secret_missing',
+  'run_config_unsupported',
+] as const
 
 /**
  * 取消一个在跑的试运行。后端置取消标志并**硬杀**该脚本的 worker 会话——
@@ -4489,7 +4524,7 @@ export interface RuntimeStatus {
  */
 export const fetchRuntimeStatus = (
   id: string,
-  source?: { script: string; stem: string },
+  source?: { script: string; stem: string; run_config?: string },
 ) =>
   jsonFetch<RuntimeStatus>('/api/runtime/status', {
     method: 'POST',
