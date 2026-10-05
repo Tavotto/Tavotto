@@ -372,7 +372,33 @@ def _raised_by_cli_parser(exc: BaseException) -> bool:
     return module.split(".")[0] in _CLI_PARSER_MODULES
 
 
-def _script_exit_error(exc: SystemExit) -> ProtocolError:
+def _argparse_failure_kind(exc: BaseException) -> str | None:
+    """argparse 自己报的错是哪一类——**只在有实际解析证据时才分**，否则 None（普通 `sys.exit(2)` 不猜）。
+
+    证据 = 栈上真有 `argparse.ArgumentParser.error` 那一帧，且它的 `message` 局部变量是 argparse 自己的
+    固定句式。不读 stderr、不重跑解析器、不调 `--help`。argparse 被翻译成别的语言时句式对不上 → None。
+    返回值只是类别（`missing_required` / `invalid_value` / `unknown`），不含参数值。"""
+    tb = exc.__traceback__
+    while tb is not None:
+        frame = tb.tb_frame
+        if (
+            frame.f_code.co_name == "error"
+            and str(frame.f_globals.get("__name__") or "") == "argparse"
+        ):
+            message = frame.f_locals.get("message")
+            if isinstance(message, str):
+                if message.startswith("the following arguments are required"):
+                    return "missing_required"
+                if message.startswith("unrecognized arguments"):
+                    return "unknown"
+                if "invalid choice" in message or " invalid " in message or "expected " in message:
+                    return "invalid_value"
+            return None
+        tb = tb.tb_next
+    return None
+
+
+def _script_exit_error(exc: SystemExit, *, argv_count: int = 0) -> ProtocolError:
     """用户脚本以非零 `sys.exit` 结束 → 结构化错误（进程不退出）。
 
     `SystemExit` 不是 `Exception`：不接住的话它会穿过 `ensure_built`，落到主循环
@@ -386,6 +412,22 @@ def _script_exit_error(exc: SystemExit) -> ProtocolError:
     status = _exit_status(exc.code)
     call = f"sys.exit({exc.code})" if isinstance(exc.code, int) else "sys.exit(<一段文字>)"
     if _raised_by_cli_parser(exc):
+        extra = {"exit_code": status}
+        kind = _argparse_failure_kind(exc)
+        if kind is not None:
+            extra["parse_kind"] = kind
+        if argv_count:
+            # T03：用户给了精确 token，脚本自己的解析器仍然拒绝——这是"你给的参数不对"，不是"没给参数"。
+            # 码不变（旧客户端照旧当"需要参数"处理），message / extra 如实说；参数值不进 message。
+            extra["argv_count"] = argv_count
+            return ProtocolError(
+                SCRIPT_NEEDS_ARGUMENTS,
+                f"脚本自己的参数解析器拒绝了 Tavotto 传给它的 {argv_count} 个参数，解析以 {call} 结束。"
+                "检查参数是否与脚本要求一致（Tavotto 按你给的 token 原样传入，没有改动）。",
+                retryable=False,
+                traceback_text=traceback.format_exc(),
+                extra=extra,
+            )
         return ProtocolError(
             SCRIPT_NEEDS_ARGUMENTS,
             f"脚本要求命令行参数，而 Tavotto 运行脚本时不带任何参数（sys.argv 只有脚本"
@@ -393,7 +435,7 @@ def _script_exit_error(exc: SystemExit) -> ProtocolError:
             "或用 `tavotto run -- python 脚本.py 参数…` 让 Tavotto 跟着你自己的命令跑。",
             retryable=False,
             traceback_text=traceback.format_exc(),
-            extra={"exit_code": status},
+            extra=extra,
         )
     return ProtocolError(
         SCRIPT_EXITED,
@@ -470,6 +512,9 @@ class Worker(wireproto.V1Handler):
         #: 数据改指（ADR 0106）：用户指认过的只读改指表（`--input-remap`，父进程按项目给），
         #: 与本次 build 里落空的只读打开——`missing_input` 靠它说出缺的是哪个。
         self.input_remap = _parse_remap(getattr(args, "input_remap", None))
+        #: T03：用户给的脚本 argv（`--script-argv-json`，父进程按运行配置给）与它的本机引用。没有 = 旧行为（空）。
+        self.script_argv = _parse_script_argv(getattr(args, "script_argv_json", None))
+        self.run_config = str(getattr(args, "run_config", "") or "")
         self._input_misses = figcapture.InputMisses()
         SESSION = SafeSession(self.out_dir, self.preview_dpi)
         SESSION.frame_project_root = str(self.figures_dir)
@@ -623,7 +668,9 @@ class Worker(wireproto.V1Handler):
         # 当场撞见过）。真跑 `python fig.py` 时 argv 就只有脚本自己。
         # **排在 paper_style 之前**：那份私有模块也是用户代码，import 期间就可能
         # 解析参数（评审 #443）。
-        sys.argv = [str(self.script)]
+        # T03：用户给了精确 token 时跟在脚本后面，一个不改（空串 / 空格 / 中文 / `--` 原样）。仍排在
+        # paper_style 与 `runpy` 之前——导入期 `parse_args()` 的脚本在第一行用户代码之前就看得到。
+        sys.argv = [str(self.script), *self.script_argv]
 
         # 脚本 import 了却从未用到、又没装的包不挡图（ADR 0061 §二 2026-09-24 修订）：判据与
         # 父进程的联合计划同一份（`figcapture.unused_imports`）——计划没要求装它，这里就得让
@@ -680,7 +727,7 @@ class Worker(wireproto.V1Handler):
                     getattr(module, self.entry)()
             except SystemExit as exc:
                 if exc.code not in (None, 0):
-                    raise _script_exit_error(exc) from exc
+                    raise _script_exit_error(exc, argv_count=len(self.script_argv)) from exc
             except scriptinput.ScriptNeedsInput as exc:
                 raise _needs_input_error(exc) from None
             finally:
@@ -770,6 +817,7 @@ class Worker(wireproto.V1Handler):
             execution_profile=figcapture.PROFILE_SAFE,
             source_fingerprint=fingerprint,
             project_root=str(self.figures_dir),
+            run_config=self.run_config,
         )
 
     def _stems_summary(self) -> dict:
@@ -941,6 +989,20 @@ def _parse_remap(raw) -> list[dict]:
         return []
 
 
+def _parse_script_argv(raw) -> list[str]:
+    """`--script-argv-json` → token 列表。**坏了就启动失败**（不像改指表那样当没有）：丢掉参数去跑，
+    会用错参数产出一张看似正常的图。父进程只会给 `json.dumps(list[str])`。"""
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except ValueError as exc:
+        raise SystemExit(f"worker: --script-argv-json 不是合法 JSON: {exc}") from exc
+    if not isinstance(data, list) or not all(isinstance(a, str) for a in data):
+        raise SystemExit("worker: --script-argv-json 必须是字符串数组")
+    return data
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--script", required=True)
@@ -951,6 +1013,9 @@ def main() -> None:
     ap.add_argument("--cwd", default=None)
     # ADR 0106：用户指认过的只读改指表（JSON 数组）；没有规则时不出现
     ap.add_argument("--input-remap", default=None)
+    # T03：脚本的 `sys.argv[1:]`（JSON 字符串数组）与产物身份用的本机运行配置引用；都只在用户给了参数时出现
+    ap.add_argument("--script-argv-json", default=None)
+    ap.add_argument("--run-config", default="")
     ap.add_argument("--entry", default="main")
     ap.add_argument("--preview-dpi", type=int, default=200)
 

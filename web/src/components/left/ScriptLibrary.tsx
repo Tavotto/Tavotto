@@ -21,6 +21,7 @@ import {
 import { useUiStore } from '@/store/uiStore'
 import { Button, IconButton } from '../ui/Button'
 import { Dialog } from '../ui/Dialog'
+import { ScriptArgvEditor } from '../ScriptArgvEditor'
 import { EmptyState } from '../ui/EmptyState'
 import { DependencyRepairCard } from '../DependencyRepairCard'
 import { useDepRepairStore, type ScriptRepairOffer } from '@/store/depRepairStore'
@@ -507,6 +508,22 @@ function FailureRecovery({ script, run }: { script: string; run: ScriptRunState 
       <Summary className="type-meta cursor-pointer">{sc('recoveryDetails')}</Summary>
       <div className="mt-1.5 flex flex-col gap-1.5">
         <p className="type-caption">{sc('recoveryBody')}</p>
+        {/* 脚本要命令行参数（T03）：出口就在这里——一项一个 token 填进去，再试一次。其余失败形状不出现 */}
+        {error?.code === 'script_needs_arguments' && (
+          <div className="flex flex-col gap-1.5" data-script-argv-recovery>
+            <ScriptArgvEditor script={script} />
+            <div>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => void useScriptRunStore.getState().run(script)}
+              >
+                <Play size={ICON_SIZE.sm} />
+                {sc('rerunWithArgs')}
+              </Button>
+            </div>
+          </div>
+        )}
         <div className="flex flex-wrap items-center gap-1.5">
           <Button
             variant="secondary"

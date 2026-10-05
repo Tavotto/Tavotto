@@ -191,3 +191,12 @@
   `projectSwitchAssets.test.ts` +
   `e2e/asset-library.spec.ts`（show-only 项目真实后端黄金路径 + 窄视口 +
   保存/关闭/重开/重放/预检/导出完整链 + 多 Figure 选择器）。
+
+## 运行参数（T03）
+
+「全部脚本」里每个可试运行的脚本行有一个默认收起的「运行参数」折叠段（`ScriptArgvEditor`）：**一项一个 token**，可增 / 删 / 上移，
+空串是合法 token，永远不 `split(' ')` / `join(' ')`；勾"敏感"时输入框变密码框，值只在内存里（`scriptArgvStore` 不持久化，换项目
+`scriptRunStore.clear()` 一并清掉）。试运行在**开始那一刻**取草稿拷贝（`probeWithDraft`）交给 `probeScript`，空草稿时请求体里没有
+`argv` 字段、调用形状与此前相同。后端错误码 `invalid_argv` / `run_config_*` 走 `errors:backend.*`。界面不另判"能不能跑"。
+看护：`store/scriptArgv.test.ts`、`store/scriptRunArgv.test.ts`、`components/ScriptArgvEditor.test.tsx`。
+

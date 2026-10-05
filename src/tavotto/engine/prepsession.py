@@ -402,12 +402,20 @@ class Session:
             "entry": t.get("entry"),
             "asset_id": t.get("asset_id") or None,
             "stem": t.get("stem") or None,
+            # T03：运行配置只露不透明引用与个数，不露参数值
+            **(
+                {"run_config": t["run"].config_id, "argv_count": len(t["run"].argv)}
+                if t.get("run") is not None
+                else {}
+            ),
         }
 
 
 def target_key(target: dict) -> str:
     if target["kind"] == TARGET_SCRIPT:
-        return f"script:{target['script']}"
+        # T03：同一脚本、不同 argv 是不同的执行意图——各有各的会话（互斥键含运行配置引用，不含 argv 原文）
+        run = target.get("run")
+        return f"script:{target['script']}" + (f"~{run.config_id}" if run is not None else "")
     return f"asset:{target['asset_id']}"
 
 
@@ -428,6 +436,8 @@ def _fingerprint(plan: preparation.PreparationPlan) -> str:
         "grant": plan.grant,
         "binding": (plan.binding or {}).get("revision"),
         "required": (plan.required_input or {}).get("code"),
+        # T03：运行配置引用（不透明 id，换任何一个 token 都是新引用）——不放 argv 原文
+        "run": plan.run.config_id if plan.run is not None else None,
         "env_error": ((plan.environment or {}).get("error") or {}).get("code"),
         "deps": ((plan.dependency_preparation or {}).get("plan") or {}).get("status"),
     }
@@ -483,6 +493,7 @@ class SessionService:
             original_artifact=target.get("original_artifact"),
             original_path=target.get("original_path"),
             target=target["kind"],
+            **({"run": target["run"]} if target.get("run") is not None else {}),
         )
         fingerprint = _fingerprint(plan)
         now = self._clock()
@@ -843,6 +854,12 @@ class SessionService:
                 "executes_user_script": True,
                 "installs_packages": False,
                 "changes_environment": False,
+                # T03：只说"带了几个参数"，不说是什么（授权绑定影响摘要，参数值不进公开投影）
+                **(
+                    {"script_arguments": len(sess.plan.run.argv)}
+                    if sess.plan.run is not None
+                    else {}
+                ),
                 # 脚本目标成功后要把捕获到的图名登记进项目的注册表文件（与 /api/registry/probe 同一件事）
                 "writes_to_project": (
                     [registry.REGISTRY_NAME] if sess.plan.target == TARGET_SCRIPT else []

@@ -53,6 +53,8 @@ import {
   useScriptRunStore,
   whenScriptIdle,
 } from '@/store/scriptRunStore'
+import { probeWithDraft } from '@/store/scriptArgvStore'
+import { ScriptArgvEditor } from './ScriptArgvEditor'
 import { currentProjectId } from '@/lib/session'
 import { useUiStore } from '@/store/uiStore'
 import { DependencyPrepareButton, WorkdirChooseButton } from './WorkdirRow'
@@ -228,7 +230,7 @@ function ReadinessBody() {
       const project = currentProjectId()
       const epoch = scriptRunEpoch()
       // 门的两个 code 可能以非 2xx 回来（请求直接抛）：与素材库同一个解析器，抛出来的也认得门
-      const res = await probeScript(script).catch((e: unknown) => {
+      const res = await probeWithDraft(probeScript, script).catch((e: unknown) => {
         const error = probeErrorOf(e)
         if (!gatePhaseOf(error)) throw e
         return { script, entry: null, stems: [], descriptors: [], tried: [], error } as Awaited<
@@ -949,6 +951,7 @@ function AllScriptsSection({
                 onWrite={(stems) => onWriteStems(s.script, stems)}
               />
             )}
+            {s.can_probe && <ScriptArgvEditor script={s.script} disabled={busy !== null} />}
             <ProbeNoteView note={probed[s.script]} />
           </li>
         ))}

@@ -178,6 +178,9 @@ class PreparationPlan:
     #: 准备的主语（T01）：`asset` = 已知的一张图（`asset_id` / `stem` 有值）；`script` = 只有一份脚本、
     #: 还没有 `asset_id`（`stem` 为空，「成功」= 至少捕获到一张图，不是某一张）。旧计划没有这个键 = `asset`。
     target: str = TARGET_ASSET
+    #: 用户给的精确 argv 的运行配置（T03，`execspec.RunSelection`）。**私有**：argv 原文只在这里和 worker
+    #: 命令行里，`to_payload()` / 回执 / LaunchContext 只带数量与本机不透明引用 `run_config`。None = 没给参数。
+    run: object | None = None
 
     def to_payload(self) -> dict:
         return {
@@ -204,6 +207,11 @@ class PreparationPlan:
                 dict(self.dependency_preparation) if self.dependency_preparation else None
             ),
             "binding": dict(self.binding) if self.binding else None,
+            **(
+                {"run_config": self.run.config_id, "argv_count": len(self.run.argv)}
+                if self.run is not None
+                else {}
+            ),
         }
 
 
@@ -218,6 +226,7 @@ def plan_for(
     original_artifact: str | None,
     original_path: str | None = None,
     target: str = TARGET_ASSET,
+    run=None,
 ) -> PreparationPlan:
     """按产品**自己的**决定拼一份计划——这里不做任何选择，只读。
 
@@ -326,6 +335,7 @@ def plan_for(
             interpreter=python,
             sandbox="",
             cwd_mode=decision["mode"] if decision else workdir.mode_for(root),
+            **({"argv": run.argv, "run_config": run.config_id} if run is not None else {}),
         )
         launch_context = execspec.launch_context(spec, grant=grant)
     intents = depresolve.declared_intents(root, script) if script else []
@@ -381,6 +391,7 @@ def plan_for(
         dependency_preparation=dependency,
         binding=binding,
         target=target,
+        run=run,
     )
 
 
@@ -552,7 +563,9 @@ class PreparationService:
         tr = result.trace
         result.started_at = time.time()
         tr.mark("plan", plan_id=plan.plan_id)
-        existing = pool.peek(plan.script, plan.project_root)
+        existing = pool.peek(
+            plan.script, plan.project_root, **({"run": plan.run} if plan.run is not None else {})
+        )
         if existing is not None:
             result.existing_runtime = {
                 "generation": int(existing.generation),
@@ -698,7 +711,11 @@ class PreparationService:
         # 本来就在的（别的消费者的）一根手指都不碰（FO-009）。
         if entry.cancel.is_set():
             if result.created_runtime:
-                pool.force_cancel(plan.script, plan.project_root)
+                pool.force_cancel(
+                    plan.script,
+                    plan.project_root,
+                    **({"run": plan.run} if plan.run is not None else {}),
+                )
                 note = "build 期间取消：本计划新起的会话已关闭；脚本已经产生的外部副作用不撤销"
             else:
                 note = "build 期间取消：会话属于别的消费者，未关闭；本计划不再等它"

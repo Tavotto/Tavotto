@@ -182,6 +182,7 @@ export function addRuntimePanel(desc: CapturedFigureDescriptor, atX?: number, at
       captureSource: desc.capture_source,
       fingerprint: desc.source_fingerprint,
       sizeMm: [w, h],
+      ...(desc.run_config ? { runConfig: desc.run_config } : {}),
     },
     overrides: [],
     name: desc.stem,

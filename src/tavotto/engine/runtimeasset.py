@@ -47,10 +47,11 @@ import hashlib
 import json
 import logging
 import os
+import re
 import shutil
 from pathlib import Path
 
-from . import config, figcapture, inputremap
+from . import config, figcapture, inputremap, runconfig
 
 LOG = logging.getLogger("tavotto.runtimeasset")
 
@@ -102,16 +103,42 @@ def resolve(asset_id: str, registry) -> dict | None:
     for script, info in registry.entries().items():
         for stem in info.get("stems", ()):
             try:
-                if figcapture.runtime_asset_id(script, stem) == asset_id:
-                    return {
-                        "script": script,
-                        "stem": stem,
-                        "entry": info.get("entry", "main"),
-                        "cost": info.get("cost", "medium"),
-                    }
+                base = figcapture.runtime_asset_id(script, stem)
             except ValueError:
                 continue  # 注册表里的坏条目不该让整个解析炸掉
+            if asset_id == base:
+                run_config = ""
+            elif asset_id.startswith(
+                base + figcapture.RUN_CONFIG_SEP
+            ) and _RUN_CONFIG_TAIL.fullmatch(asset_id[len(base) + 1 :]):
+                # T03：`<base>~rc_…`——同一 (script, stem) 的另一份运行配置。仍是"拿现登记的对重算比对"，
+                # 不是反解：后缀只能是 `rc_` + 12 位十六进制，别的形状一律不认。
+                run_config = asset_id[len(base) + 1 :]
+            else:
+                continue
+            return {
+                "script": script,
+                "stem": stem,
+                "entry": info.get("entry", "main"),
+                "cost": info.get("cost", "medium"),
+                # 没给参数的素材，返回形状与 T03 之前逐键相同（键只在有配置时才出现）
+                **({"run_config": run_config} if run_config else {}),
+            }
     return None
+
+
+_RUN_CONFIG_TAIL = re.compile(re.escape(runconfig.ID_PREFIX) + r"[0-9a-f]{12}")
+
+
+def run_selection(project_root: str | Path, info: dict):
+    """`resolve()` 的结果 → 这张图当初用的运行配置（`RunSelection`；没给过参数 → None）。
+
+    本机没有这条配置 / 敏感值不在了 / 登记来自更新版本 → 抛 `runconfig.RunConfigError` 子类，由 app 层回
+    稳定码。**绝不回落成空 argv**：那会拿错误的参数画出一张看起来正常的图。"""
+    run_config = (info or {}).get("run_config") or ""
+    if not run_config:
+        return None
+    return runconfig.selection(project_root, run_config, script=info.get("script"))
 
 
 # ---------------------------------------------------------------------------
@@ -330,9 +357,16 @@ def stale_status(
             if (
                 isinstance(script, str)
                 and isinstance(stem, str)
-                and figcapture.runtime_asset_id(script, stem) == asset_id
+                and figcapture.runtime_asset_id(script, stem, source.get("run_config") or "")
+                == asset_id
             ):
-                info = {"script": script, "stem": stem, "entry": None, "cost": "medium"}
+                info = {
+                    "script": script,
+                    "stem": stem,
+                    "entry": None,
+                    "cost": "medium",
+                    **({"run_config": source["run_config"]} if source.get("run_config") else {}),
+                }
         except ValueError:
             info = None
     if info is None:
@@ -402,16 +436,25 @@ def list_assets(project_root: str | Path, registry, *, worker_python: object = N
                 asset_id = figcapture.runtime_asset_id(script, stem)
             except ValueError:
                 continue  # 坏条目不该炸掉整张清单
-            meta = load_metadata(project_root, asset_id)
-            desc = (meta or {}).get("descriptor") or None
-            if figcapture.find_original_artifact(root, stem) is not None and not is_pyplot_capture(
-                desc
-            ):
-                continue  # 磁盘有原件 → FileAsset 的地盘
-            size = desc.get("size_mm") if isinstance(desc, dict) else None
-            out.append(
-                {
-                    "id": asset_id,
+            variants = [("", asset_id)]
+            # T03：同一脚本用不同参数跑出的同名图各是一张素材。只列**真跑过、cache 里有**的配置变体
+            # （登记里的配置不等于跑过）；参数值不进清单，只带不透明引用。
+            for cfg in runconfig.configs_of(project_root, script):
+                variant_id = figcapture.runtime_asset_id(script, stem, cfg.id)
+                if load_metadata(project_root, variant_id) is not None:
+                    variants.append((cfg.id, variant_id))
+            for run_config, variant_id in variants:
+                meta = load_metadata(project_root, variant_id)
+                desc = (meta or {}).get("descriptor") or None
+                if (
+                    not run_config
+                    and figcapture.find_original_artifact(root, stem) is not None
+                    and not is_pyplot_capture(desc)
+                ):
+                    continue  # 磁盘有原件 → FileAsset 的地盘
+                size = desc.get("size_mm") if isinstance(desc, dict) else None
+                row = {
+                    "id": variant_id,
                     "script": script,
                     "stem": stem,
                     "entry": entry,
@@ -429,7 +472,9 @@ def list_assets(project_root: str | Path, registry, *, worker_python: object = N
                     ),
                     "descriptor": desc,
                 }
-            )
+                if run_config:
+                    row["run_config"] = run_config
+                out.append(row)
     return out
 
 

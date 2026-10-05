@@ -53,6 +53,13 @@
     刻意未动（Session 6）。素材库普通入口已落地（Session 5，前端规则见
     `web/AGENTS.md`）。
 
+## 运行配置维度（T03）
+
+`runtime:<script>#<stem>` 是无参数运行的身份，**逐字节不变**。给了精确 argv 的运行是同一脚本的另一份配置：id 末尾多 `~rc_<12 位十六进制>`
+（本机不透明引用，不是 argv 摘要）。`resolve()` 仍是正向重算——对注册表里每对 (script, stem) 算 base id 比对，再认 `base + "~rc_…"`
+这一种后缀，别的形状一律不认；无配置时返回的字典键与此前相同。引用在本机登记里找不到时 `run_selection()` 抛 `run_config_*`
+（409），渲染 / 导出 / 重开**不回落成空参数**。`list_assets` 把"真跑过、cache 里有"的配置变体各列一条（带 `run_config`，无参数值）。
+
 ## 速查表原要点（2026-09-25 迁入，#608）
 
 `src/tavotto/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
