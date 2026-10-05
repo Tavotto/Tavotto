@@ -29,6 +29,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import threading
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 import pymupdf
@@ -36,7 +37,14 @@ import pytest
 
 from support.pipedrain import StderrDrain
 from tavotto import app as m
-from tavotto.engine import ai_agents, ai_bridge, pool, project_watch, workerd_client
+from tavotto.engine import (
+    ai_agents,
+    ai_bridge,
+    config as engine_config,
+    pool,
+    project_watch,
+    workerd_client,
+)
 
 
 @pytest.fixture
@@ -1628,6 +1636,613 @@ def test_a_replace_that_never_succeeds_still_fails_loudly(tmp_path, monkeypatch)
     finally:
         facade.reset_for_tests()
         renderhost.shutdown_shared()
+
+
+# ---------------- 项目切换时 config.json 正被普通读句柄占着 ----------------
+
+
+_CONFIG_READER_MODES = [
+    "synthetic",
+    pytest.param(
+        "native",
+        marks=pytest.mark.skipif(os.name != "nt", reason="真实 Windows 文件共享语义"),
+    ),
+]
+
+
+def _config_replace_observer(monkeypatch, reader, mode, failures, on_denied=lambda: None):
+    """native 只观察真正的 replace；synthetic 只在普通读句柄还开着时注入 WinError 32。
+
+    不在观察器里重试或假造成功：释放句柄之后能否重新发布，只由产品代码决定。
+    """
+    target = engine_config.config_path()
+    original_replace = Path.replace
+
+    def observed(source, destination):
+        if Path(destination) != target:
+            return original_replace(source, destination)
+        try:
+            if mode == "synthetic" and not reader.closed:
+                error = PermissionError(errno.EACCES, "config reader denies replacement")
+                error.winerror = 32
+                raise error
+            return original_replace(source, destination)
+        except PermissionError as error:
+            failures.append(error)
+            on_denied()
+            raise
+
+    monkeypatch.setattr(Path, "replace", observed)
+
+
+def _seed_project_open_settings(target, other):
+    with engine_config.transaction() as cfg:
+        cfg["pinned_projects"] = [{"path": str(other), "name": "Keep this pin"}]
+        cfg["projects"][str(target)] = {"allow_write_back": False}
+        cfg["updates"] = {"auto_check": False}
+        cfg["telemetry"] = {"consent": "denied"}
+
+
+@pytest.mark.parametrize("mode", _CONFIG_READER_MODES)
+@pytest.mark.parametrize("close_while_waiting", [False, True], ids=["still-open", "closed"])
+def test_project_reopen_waits_for_config_reader(
+    client, tmp_path, monkeypatch, mode, close_while_waiting
+):
+    """已打开项目的真实 HTTP 请求遇到短暂读句柄，应在同一次请求中完成落盘。
+
+    native 必须先量到操作系统自己的共享拒绝；屏障控制释放时刻，不靠睡眠碰运气。
+    baseline 在释放后仍回 400，修复必须自己重试并真正写入最近列表。
+    """
+    target, other = _figs(tmp_path).resolve(), _figs(tmp_path, "other").resolve()
+    target_id = client.post("/api/projects/open", json={"path": str(target)}).json["id"]
+    other_id = client.post("/api/projects/open", json={"path": str(other)}).json["id"]
+    _seed_project_open_settings(target, other)
+    path = engine_config.config_path()
+    before = path.read_bytes()
+    failures, responses = [], []
+    denied, released = threading.Event(), threading.Event()
+
+    def on_denied():
+        denied.set()
+        if not released.wait(10):
+            raise TimeoutError("test did not release the config reader")
+
+    def reopen():
+        with m.app.test_client() as request_client:
+            responses.append(
+                request_client.post(
+                    "/api/projects/open", query_string={"pj": other_id}, json={"path": str(target)}
+                )
+            )
+
+    thread = threading.Thread(target=reopen, daemon=True)
+    reader = path.open("rb")  # Windows: ordinary CPython read handle, no FILE_SHARE_DELETE.
+    try:
+        _config_replace_observer(monkeypatch, reader, mode, failures, on_denied)
+        thread.start()
+        assert denied.wait(10), "the first real/synthetic replace never met the held reader"
+        assert path.read_bytes() == before, "failed replacement changed the old JSON"
+        if close_while_waiting:
+            # 另一个标签页在配置写入屏障处关掉目标；恢复后不许把已关闭 pid 发布成默认。
+            assert client.post("/api/projects/close", json={"id": target_id}).json["ok"] is True
+    finally:
+        reader.close()
+        released.set()
+        thread.join(10)
+    assert not thread.is_alive(), "project open failed to finish after the reader closed"
+    assert len(failures) == 1
+    assert failures[0].winerror in (5, 32, 33), repr(failures[0])
+    response = responses[0]
+    if close_while_waiting:
+        assert response.status_code == 400, response.json
+        assert response.json["code"] == "open_project_failed"
+        assert "项目已关闭" in response.json["params"]["reason"]
+        assert target_id not in m.PROJECTS
+        assert m.DEFAULT_PROJECT == other_id
+        assert client.get("/api/project").json["id"] == other_id
+    else:
+        assert response.status_code == 200, response.json
+        assert response.json["id"] == target_id and response.json["reused"] is True
+        assert m.DEFAULT_PROJECT == target_id
+    after = json.loads(path.read_bytes())
+    assert after.pop("recent_projects")[0]["path"] == str(target)
+    previous = json.loads(before)
+    previous.pop("recent_projects")
+    assert after == previous, "retry lost unrelated settings"
+    assert not list(path.parent.glob("*.tmp"))
+
+
+@pytest.mark.parametrize("mode", _CONFIG_READER_MODES)
+@pytest.mark.parametrize("reused", [True, False], ids=["reopen", "first-open"])
+def test_project_open_config_denial_preserves_identity(client, tmp_path, monkeypatch, mode, reused):
+    """句柄一直不释放：必须有限次失败，旧 JSON / 默认项目 / 已打开 ctx 都原样保留。"""
+    target, other = _figs(tmp_path).resolve(), _figs(tmp_path, "other").resolve()
+    if reused:
+        client.post("/api/projects/open", json={"path": str(target)})
+    other_id = client.post("/api/projects/open", json={"path": str(other)}).json["id"]
+    _seed_project_open_settings(target, other)
+    path = engine_config.config_path()
+    before, contexts = path.read_bytes(), dict(m.PROJECTS)
+    failures = []
+    with path.open("rb") as reader:
+        _config_replace_observer(monkeypatch, reader, mode, failures)
+        response = client.post(
+            "/api/projects/open", query_string={"pj": other_id}, json={"path": str(target)}
+        )
+    assert response.status_code == 400, response.json
+    assert response.json["code"] == "open_project_failed"
+    assert response.json["params"]["reason"] == str(failures[-1])
+    assert path.read_bytes() == before, "persistent denial must preserve every config byte"
+    assert not list(path.parent.glob("*.tmp")), "failed config save leaked a temporary file"
+    assert m.DEFAULT_PROJECT == other_id, "failed open switched the backend default project"
+    assert m.PROJECTS == contexts, "failed first open published a project context"
+    for query in ({}, {"pj": other_id}):
+        assert client.get("/api/project", query_string=query).json["id"] == other_id
+    assert len(failures) == 5, "sharing denial must exhaust the bounded replace attempts"
+
+
+@pytest.mark.parametrize("mode", _CONFIG_READER_MODES)
+def test_concurrent_first_open_keeps_watcher_on_published_context(
+    client, tmp_path, monkeypatch, mode
+):
+    """A 等配置读句柄时 B 也打开同一项目；倒序启动不能把 watcher 绑到被覆盖的 ctx。"""
+    target, other = _figs(tmp_path).resolve(), _figs(tmp_path, "other").resolve()
+    client.post("/api/projects/open", json={"path": str(other)})
+    target_id = m._project_id(target)
+    contexts, started, failures, responses = [], [], [], {}
+    denied, released = threading.Event(), threading.Event()
+    second_touch, first_start, release_start = (threading.Event() for _ in range(3))
+    original_seed = m.engine_refresh.seed_state
+    original_touch = engine_config.touch_recent
+    original_start = project_watch.start
+
+    def seed(ctx):
+        result = original_seed(ctx)
+        if ctx.id == target_id:
+            contexts.append(ctx)
+        return result
+
+    def touch(path, name=None):
+        if threading.current_thread() is second:
+            second_touch.set()
+            # 钉住 A 先发布、B 后到；否则二者竞争配置锁后的项目锁，B 也可合法先赢。
+            if len(contexts) == 2 and not first_start.wait(10):
+                raise TimeoutError("first open did not publish before second config save")
+        return original_touch(path, name)
+
+    def start(ctx, **kwargs):
+        if ctx.id == target_id:
+            if ctx is contexts[0] and denied.is_set():
+                first_start.set()
+                if not release_start.wait(10):
+                    raise TimeoutError("test did not release the first watcher start")
+            started.append(ctx)
+        return original_start(ctx, **kwargs)
+
+    def on_denied():
+        denied.set()
+        if not released.wait(10):
+            raise TimeoutError("test did not release the config reader")
+
+    def open_target(name):
+        with m.app.test_client() as request_client:
+            responses[name] = request_client.post("/api/projects/open", json={"path": str(target)})
+
+    first = threading.Thread(target=open_target, args=("first",), daemon=True)
+    second = threading.Thread(target=open_target, args=("second",), daemon=True)
+    reader = engine_config.config_path().open("rb")
+    try:
+        monkeypatch.setattr(m.engine_refresh, "seed_state", seed)
+        monkeypatch.setattr(engine_config, "touch_recent", touch)
+        monkeypatch.setattr(project_watch, "start", start)
+        _config_replace_observer(monkeypatch, reader, mode, failures, on_denied)
+        first.start()
+        assert denied.wait(10), "first open did not meet the config reader"
+        second.start()
+        assert second_touch.wait(10), "second open did not reach config persistence"
+        reader.close()
+        released.set()
+        # 旧的「先注册后保存」只会构造一个 ctx；新的等待窗口可能构造两个。
+        # 两种顺序都要求同一结果：复用赢家，只有赢家启动 watcher。
+        if len(contexts) == 2:
+            assert first_start.wait(10), "first publication did not reach watcher start"
+    finally:
+        reader.close()
+        released.set()
+        release_start.set()
+        for thread in (first, second):
+            if thread.ident is not None:
+                thread.join(10)
+    assert not first.is_alive() and not second.is_alive()
+    assert failures and failures[0].winerror in (5, 32, 33)
+    assert responses["first"].status_code == responses["second"].status_code == 200, responses
+    registered = m.PROJECTS[target_id]
+    assert registered is contexts[0], "second first-open replaced the published winner"
+    assert project_watch.watcher_of(target).ctx is registered
+    assert started == [registered], "only the publishing request may start the watcher"
+    assert responses["first"].json["reused"] is False
+    assert responses["second"].json["reused"] is True
+    assert client.get("/api/project").json["id"] == target_id
+
+
+@pytest.mark.parametrize("after_open", ["edit", "close", "close-reopen"])
+@pytest.mark.parametrize("make_default", [False, True])
+def test_concurrent_open_waits_for_watcher_baseline(
+    client, tmp_path, monkeypatch, after_open, make_default
+):
+    """赢家 prime 尚未完成时，复用者不能回 200 后改文件 / 关闭项目（PR #799）。
+
+    两条请求与真 prime 用屏障交错；观察复用者实际等待初始化或完成请求的时刻，
+    不靠 sleep 猜它有没有机会运行。线程循环不参与：最后手动 poll 验证那次编辑。
+    """
+    target, other = _figs(tmp_path).resolve(), _figs(tmp_path, "other").resolve()
+    other_id = client.post("/api/projects/open", json={"path": str(other)}).json["id"]
+    target_id = m._project_id(target)
+    priming, release_prime, second_progress = (threading.Event() for _ in range(3))
+    responses, changes = {}, []
+    original_prime = project_watch.ProjectWatcher.prime
+    original_wait = threading.Event.wait
+    original_change_handler = m._script_change_handler
+
+    def prime(watcher):
+        if watcher.ctx.id == target_id and threading.current_thread() is first:
+            priming.set()
+            assert release_prime.wait(10), "test did not release the initial snapshot"
+        return original_prime(watcher)
+
+    def wait(event, timeout=None):
+        if threading.current_thread() is second:
+            second_progress.set()
+        return original_wait(event, timeout)
+
+    def change_handler(ctx, reason="watcher"):
+        original = original_change_handler(ctx, reason)
+
+        def changed(scripts):
+            changes.append((ctx, scripts))
+            return original(scripts)
+
+        return changed
+
+    def open_target(name):
+        with m.app.test_client() as request_client:
+            responses[name] = request_client.post(
+                "/api/projects/open", json={"path": str(target), "default": make_default}
+            )
+            if name == "second" and responses[name].status_code == 200:
+                if after_open == "edit":
+                    (target / "fig1.py").write_text(
+                        "def main():\n    print('changed')\n", encoding="utf-8"
+                    )
+                else:
+                    responses["close"] = request_client.post(
+                        "/api/projects/close", json={"id": target_id}
+                    )
+                    if after_open == "close-reopen":
+                        responses["reopen"] = request_client.post(
+                            "/api/projects/open",
+                            json={"path": str(target), "default": make_default},
+                        )
+            if name == "second":
+                second_progress.set()
+
+    first = threading.Thread(target=open_target, args=("first",), daemon=True)
+    second = threading.Thread(target=open_target, args=("second",), daemon=True)
+    monkeypatch.setattr(project_watch.ProjectWatcher, "prime", prime)
+    monkeypatch.setattr(
+        project_watch.ProjectWatcher, "run", lambda watcher: watcher.stop_event.wait(10)
+    )
+    monkeypatch.setattr(threading.Event, "wait", wait)
+    monkeypatch.setattr(m, "_script_change_handler", change_handler)
+    try:
+        first.start()
+        assert priming.wait(10)
+        published_during_prime = target_id in m.PROJECTS
+        default_during_prime = m.DEFAULT_PROJECT
+        second.start()
+        assert second_progress.wait(10), "contender neither waited for readiness nor returned"
+        returned_before_prime = "second" in responses
+    finally:
+        release_prime.set()
+        for thread in (first, second):
+            if thread.ident is not None:
+                thread.join(10)
+    assert not first.is_alive() and not second.is_alive()
+    assert responses["first"].status_code == responses["second"].status_code == 200
+    watcher = project_watch.watcher_of(target)
+    if after_open == "edit":
+        watcher.debounce = 0
+        watcher.poll()
+        assert changes == [(m.PROJECTS[target_id], ["fig1.py"])], (
+            "edit after successful open was swallowed by prime"
+        )
+    elif after_open == "close":
+        assert target_id not in m.PROJECTS
+        assert watcher is None, "initializer installed a watcher after the project was closed"
+    else:
+        assert responses["reopen"].status_code == 200
+        assert watcher.ctx is m.PROJECTS[target_id], (
+            "old initializer replaced the reopened project's watcher"
+        )
+    assert not returned_before_prime, "open returned before its watcher baseline existed"
+    assert not published_during_prime and default_during_prime == other_id
+    assert m.DEFAULT_PROJECT == (target_id if make_default and after_open != "close" else other_id)
+
+
+@pytest.mark.parametrize("failure_at", ["prime", "thread-start"])
+def test_failed_watcher_initialization_releases_open_waiters(
+    client, tmp_path, monkeypatch, failure_at
+):
+    """初始化失败不发布身份，收掉部分安装，唤醒复用者；别的项目仍能开，随后可重试。"""
+    target, other = _figs(tmp_path).resolve(), _figs(tmp_path, "other").resolve()
+    target_id = m._project_id(target)
+    priming, release_prime, waiting = (threading.Event() for _ in range(3))
+    responses, candidates = {}, []
+    original_prime = project_watch.ProjectWatcher.prime
+    original_start = threading.Thread.start
+    original_wait = threading.Event.wait
+
+    def prime(watcher):
+        if threading.current_thread() is first:
+            candidates.append(watcher)
+            priming.set()
+            assert release_prime.wait(10)
+            if failure_at == "prime":
+                raise RuntimeError("injected snapshot failure")
+        return original_prime(watcher)
+
+    def start(thread):
+        if threading.current_thread() is first and failure_at == "thread-start":
+            assert project_watch.watcher_of(target) is candidates[0]
+            raise RuntimeError("injected thread startup failure")
+        return original_start(thread)
+
+    def wait(event, timeout=None):
+        if threading.current_thread() is second:
+            waiting.set()
+        return original_wait(event, timeout)
+
+    def open_target(name):
+        with m.app.test_client() as request_client:
+            responses[name] = request_client.post("/api/projects/open", json={"path": str(target)})
+
+    first = threading.Thread(target=open_target, args=("first",), daemon=True)
+    second = threading.Thread(target=open_target, args=("second",), daemon=True)
+    monkeypatch.setattr(project_watch.ProjectWatcher, "prime", prime)
+    monkeypatch.setattr(threading.Thread, "start", start)
+    monkeypatch.setattr(threading.Event, "wait", wait)
+    try:
+        first.start()
+        assert priming.wait(10)
+        second.start()
+        assert waiting.wait(10), "contender did not wait for the initializing owner"
+        # 真请求证明全局锁没被慢扫描 / 等待者占着；失败也不能回滚掉这个新的默认项目。
+        other_response = client.post("/api/projects/open", json={"path": str(other)})
+        assert other_response.status_code == 200
+    finally:
+        release_prime.set()
+        for thread in (first, second):
+            if thread.ident is not None:
+                thread.join(10)
+    assert not first.is_alive() and not second.is_alive()
+    assert responses["first"].status_code == responses["second"].status_code == 400
+    assert target_id not in m.PROJECTS and target_id not in m._OPENING_PROJECTS
+    assert m.DEFAULT_PROJECT == other_response.json["id"]
+    assert project_watch.watcher_of(target) is None
+    assert project_watch.watcher_of(other).ctx is m.PROJECTS[m.DEFAULT_PROJECT]
+    if failure_at == "thread-start":
+        assert candidates[0].stop_event.is_set(), "partially registered watcher was not stopped"
+    retried = client.post("/api/projects/open", json={"path": str(target), "default": False})
+    assert retried.status_code == 200
+    assert project_watch.watcher_of(target).ctx is m.PROJECTS[target_id]
+    assert m.DEFAULT_PROJECT == other_response.json["id"]
+
+
+@pytest.mark.parametrize("reopen", [False, True], ids=["closed", "reopened"])
+def test_open_waiter_rechecks_initialized_context_identity(client, tmp_path, monkeypatch, reopen):
+    """等初始化的标签页被唤醒前，赢家已关掉；同 pid 重开也不能让旧等待者切回它。"""
+    target, other = _figs(tmp_path).resolve(), _figs(tmp_path, "other").resolve()
+    other_id = client.post("/api/projects/open", json={"path": str(other)}).json["id"]
+    target_id = m._project_id(target)
+    priming, release_prime, waiting, awakened, release_waiter = (
+        threading.Event() for _ in range(5)
+    )
+    responses = {}
+    original_prime = project_watch.ProjectWatcher.prime
+    original_wait = threading.Event.wait
+
+    def prime(watcher):
+        if threading.current_thread() is first:
+            priming.set()
+            assert release_prime.wait(10)
+        return original_prime(watcher)
+
+    def wait(event, timeout=None):
+        if threading.current_thread() is second:
+            waiting.set()
+            result = original_wait(event, timeout)
+            awakened.set()
+            assert original_wait(release_waiter, 10)
+            return result
+        return original_wait(event, timeout)
+
+    def open_target(name):
+        with m.app.test_client() as request_client:
+            responses[name] = request_client.post("/api/projects/open", json={"path": str(target)})
+
+    first = threading.Thread(target=open_target, args=("first",), daemon=True)
+    second = threading.Thread(target=open_target, args=("second",), daemon=True)
+    monkeypatch.setattr(project_watch.ProjectWatcher, "prime", prime)
+    monkeypatch.setattr(threading.Event, "wait", wait)
+    try:
+        first.start()
+        assert priming.wait(10)
+        second.start()
+        assert waiting.wait(10)
+        release_prime.set()
+        assert awakened.wait(10)
+        first.join(10)
+        assert responses["first"].status_code == 200
+        closed_ctx = m.PROJECTS[target_id]
+        assert client.post("/api/projects/close", json={"id": target_id}).json["ok"]
+        if reopen:
+            assert (
+                client.post(
+                    "/api/projects/open", json={"path": str(target), "default": False}
+                ).status_code
+                == 200
+            )
+            assert m.PROJECTS[target_id] is not closed_ctx
+    finally:
+        release_prime.set()
+        release_waiter.set()
+        for thread in (first, second):
+            if thread.ident is not None:
+                thread.join(10)
+    assert not first.is_alive() and not second.is_alive()
+    assert responses["second"].status_code == 400, (
+        "old initialization waiter reused a closed generation"
+    )
+    assert responses["second"].json["code"] == "open_project_failed"
+    assert m.DEFAULT_PROJECT == other_id
+    if reopen:
+        assert project_watch.watcher_of(target).ctx is m.PROJECTS[target_id]
+    else:
+        assert target_id not in m.PROJECTS and project_watch.watcher_of(target) is None
+
+
+def test_project_publication_releases_only_its_own_initialization(client, tmp_path, monkeypatch):
+    """发布后立即关 / 重开：成功发布必须一起释放预留；旧 finally 不能清掉新一代。"""
+    target = _figs(tmp_path).resolve()
+    target_id = m._project_id(target)
+    published, release_owner, reopening, release_reopen = (threading.Event() for _ in range(4))
+    responses, candidates = {}, []
+    original_lock = m._PROJECT_LOCK
+    original_prime = project_watch.ProjectWatcher.prime
+    original_wait = threading.Event.wait
+
+    class PublicationLock:
+        def __enter__(self):
+            return original_lock.__enter__()
+
+        def __exit__(self, *args):
+            result = original_lock.__exit__(*args)
+            if (
+                threading.current_thread() is first
+                and target_id in m.PROJECTS
+                and not published.is_set()
+            ):
+                published.set()
+                assert release_owner.wait(10)
+            return result
+
+    def prime(watcher):
+        if threading.current_thread() is second:
+            candidates.append(watcher.ctx)
+            reopening.set()
+            assert original_wait(release_reopen, 10)
+        return original_prime(watcher)
+
+    def wait(event, timeout=None):
+        if threading.current_thread() is second:
+            reopening.set()  # 旧代码误等旧 owner 时也给主线程一个确定的观测点。
+        return original_wait(event, timeout)
+
+    def open_target(name):
+        with m.app.test_client() as request_client:
+            responses[name] = request_client.post("/api/projects/open", json={"path": str(target)})
+
+    first = threading.Thread(target=open_target, args=("first",), daemon=True)
+    second = threading.Thread(target=open_target, args=("second",), daemon=True)
+    monkeypatch.setattr(m, "_PROJECT_LOCK", PublicationLock())
+    monkeypatch.setattr(project_watch.ProjectWatcher, "prime", prime)
+    monkeypatch.setattr(threading.Event, "wait", wait)
+    try:
+        first.start()
+        assert published.wait(10)
+        assert client.post("/api/projects/close", json={"id": target_id}).json["ok"]
+        second.start()
+        assert reopening.wait(10)
+        assert len(candidates) == 1, (
+            "reopen attached to an already-published generation's reservation"
+        )
+        release_owner.set()
+        first.join(10)
+        assert not first.is_alive()
+        assert m._OPENING_PROJECTS[target_id][0] is candidates[0]
+    finally:
+        release_owner.set()
+        release_reopen.set()
+        for thread in (first, second):
+            if thread.ident is not None:
+                thread.join(10)
+    assert not first.is_alive() and not second.is_alive()
+    assert responses["first"].status_code == responses["second"].status_code == 200
+    assert m.PROJECTS[target_id] is candidates[0]
+    assert project_watch.watcher_of(target).ctx is candidates[0]
+    assert target_id not in m._OPENING_PROJECTS
+
+
+def test_close_stops_watcher_before_reopen_can_install_one(client, tmp_path, monkeypatch):
+    """旧 close 暂停在 stop 时，新 open 不得先装好 watcher 再被按路径误停。"""
+    target = _figs(tmp_path).resolve()
+    target_id = client.post("/api/projects/open", json={"path": str(target)}).json["id"]
+    old_watcher = project_watch.watcher_of(target)
+    stopping, release_stop, reopen_progress = (threading.Event() for _ in range(3))
+    responses = {}
+    original_lock = m._PROJECT_LOCK
+    original_stop = project_watch.stop
+
+    class ContentionLock:
+        def __enter__(self):
+            if threading.current_thread() is opener:
+                if original_lock.acquire(blocking=False):
+                    return self
+                reopen_progress.set()  # 确实被 close 持的锁挡住，不靠定时猜测。
+            original_lock.acquire()
+            return self
+
+        def __exit__(self, *_args):
+            original_lock.release()
+
+    def stop(path=None):
+        if threading.current_thread() is closer:
+            stopping.set()
+            assert release_stop.wait(10)
+        return original_stop(path)
+
+    def close():
+        with m.app.test_client() as request_client:
+            responses["close"] = request_client.post("/api/projects/close", json={"id": target_id})
+
+    def reopen():
+        with m.app.test_client() as request_client:
+            responses["reopen"] = request_client.post(
+                "/api/projects/open", json={"path": str(target)}
+            )
+        reopen_progress.set()
+
+    closer = threading.Thread(target=close, daemon=True)
+    opener = threading.Thread(target=reopen, daemon=True)
+    monkeypatch.setattr(m, "_PROJECT_LOCK", ContentionLock())
+    monkeypatch.setattr(project_watch, "stop", stop)
+    try:
+        closer.start()
+        assert stopping.wait(10)
+        opener.start()
+        assert reopen_progress.wait(10)
+    finally:
+        release_stop.set()
+        for thread in (closer, opener):
+            if thread.ident is not None:
+                thread.join(10)
+    assert not closer.is_alive() and not opener.is_alive()
+    assert responses["close"].json["ok"] and responses["reopen"].status_code == 200
+    assert old_watcher.stop_event.is_set()
+    watcher = project_watch.watcher_of(target)
+    assert watcher is not None, "old close stopped the reopened generation's watcher"
+    assert watcher.ctx is m.PROJECTS[target_id] and watcher is not old_watcher
+    assert not watcher.stop_event.is_set()
 
 
 # ---------------- 关进程慢：poll() 还说活着，握手其实早就失败了 --------------

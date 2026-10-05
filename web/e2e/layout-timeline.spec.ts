@@ -744,7 +744,40 @@ for (const locale of ['zh-CN', 'en-US']) {
         }
       }, { locale, width })
       const held: import('@playwright/test').Route[] = []
-      await page.route('**/api/engine/render**', (route) => { held.push(route) })
+      const started = Date.now()
+      const requests = new Map<import('@playwright/test').Request, {
+        heldAt: number; releasedAt?: number; status?: number; failed?: string
+      }>()
+      await page.route('**/api/engine/render**', (route) => {
+        held.push(route)
+        requests.set(route.request(), { heldAt: Date.now() - started })
+      })
+      page.on('requestfailed', (request) => {
+        const record = requests.get(request)
+        const reason = request.failure()?.errorText ?? ''
+        if (record) record.failed = /^net::[A-Z_]+$/.test(reason) ? reason : 'requestfailed'
+      })
+      page.on('response', (response) => {
+        const record = requests.get(response.request())
+        if (record) record.status = response.status()
+      })
+      const releaseRender = async (index: number) => {
+        requests.get(held[index].request())!.releasedAt = Date.now() - started
+        await held[index].continue()
+      }
+      const expectExact = async () => {
+        try {
+          await expect(page.locator('[data-canvas-stage] [data-display="exact"]')).toHaveCount(1, { timeout: 60_000 })
+        } catch (error) {
+          const displays = await page.locator('[data-canvas-stage] [data-display]').evaluateAll((nodes) =>
+            nodes.map((node) => node.getAttribute('data-display')),
+          ).catch(() => [])
+          console.error('inspector-render-readiness', JSON.stringify({
+            locale, width, held: held.length, requests: [...requests.values()].slice(-16), displays,
+          }))
+          throw error
+        }
+      }
       const emit = (kind: string, data: Record<string, unknown>) => page.evaluate(({ kind, data }) => {
         const send = (window as unknown as { __TAVOTTO_TEST_EVENT__: (kind: string, data: unknown) => void }).__TAVOTTO_TEST_EVENT__
         send(kind, data)
@@ -782,8 +815,8 @@ for (const locale of ['zh-CN', 'en-US']) {
       await check('cold', ['cold'])
       await emit('render.started', { id: 'Fig1_kinetics.pdf', cold: false, cost: 'light' })
       await check('warm again', ['building'])
-      await held[0].continue()
-      await expect(page.locator('[data-canvas-stage] [data-display="exact"]')).toHaveCount(1, { timeout: 60_000 })
+      await releaseRender(0)
+      await expectExact()
       await emit('render.done', { id: 'Fig1_kinetics.pdf' })
       await check('ready', [])
       await emit('panel.file_changed', { stems: ['Fig1_kinetics'], reason: 'watcher' })
@@ -791,8 +824,8 @@ for (const locale of ['zh-CN', 'en-US']) {
       await check('stale while rebuilding', ['building', 'stale'])
       await emit('render.started', { id: 'Fig1_kinetics.pdf', cold: true, cost: 'light' })
       await check('cold and stale', ['cold', 'stale'])
-      await held[1].continue()
-      await expect(page.locator('[data-canvas-stage] [data-display="exact"]')).toHaveCount(1, { timeout: 60_000 })
+      await releaseRender(1)
+      await expectExact()
       await emit('render.done', { id: 'Fig1_kinetics.pdf' })
       await check('rebuilt', [])
       // 留下真实高度而不是把预测值写成通过；CI 日志在成功时也能取回这些数字。
