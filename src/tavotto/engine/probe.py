@@ -68,6 +68,33 @@ ERROR_INPUT_TIMEOUT = "script_input_timeout"
 #: 素材库这条入口弹的是与画布同一个「指认数据位置」对话框。
 ERROR_MISSING_INPUT = pool.MISSING_INPUT_CODE
 
+#: 与「入口猜没猜对」无关的失败码：换一个入口只是把顶层代码再跑一遍，得到同一个失败（T01，F7：缺参脚本的
+#: 顶层代码曾跑满 3 个入口）。缺参 / 要输入 / 读不到数据 / 缺包 / 超时 / 取消都在里面。
+_ENTRY_INDEPENDENT_CODES = frozenset(
+    {
+        ERROR_NEEDS_ARGUMENTS,
+        ERROR_NEEDS_INPUT,
+        ERROR_INPUT_TIMEOUT,
+        ERROR_MISSING_INPUT,
+        ERROR_MISSING_DEPENDENCY,
+        ERROR_CANCELLED,
+        "worker_timeout",
+        pool.BUILD_TIMEOUT_CODE,
+    }
+)
+
+
+def entry_retry_allowed(exc: pool.WorkerError) -> bool:
+    """这次失败之后值不值得换下一个入口再试一次。只有「入口猜错」一类（找不到函数 / 脚本没出图）才换；
+    起会话之前的两道门（运行目录 / 依赖准备）是「要用户先答」，同样不换。判据只此一份，探测的入口循环用它。"""
+    if getattr(exc, "code", "") in _ENTRY_INDEPENDENT_CODES:
+        return False
+    return not (
+        isinstance(getattr(exc, "confirmation", None), dict)
+        or isinstance(getattr(exc, "dependency_preparation", None), dict)
+    )
+
+
 #: traceback 进诊断详情的截断上限（完整日志仍在 worker.log）。
 _TRACEBACK_LIMIT = 4000
 
@@ -325,6 +352,8 @@ def probe(
             LOG.info("探测失败 %s [entry=%s]: %s", script, entry, exc)
             if first_error is None:
                 first_error = _error_from_worker(exc, entry, figures_dir=figures_dir, script=script)
+            if not entry_retry_allowed(exc):
+                break  # 与入口无关的失败：再换入口只会把顶层代码重跑一遍
             continue
         stems = sorted(resp.get("stems") or {})
         if stems:
@@ -412,6 +441,18 @@ def probe_and_register(
     result = probe(figures_dir, script, should_cancel=should_cancel)
     if not result["stems"]:
         return {**result, "registered": False}
+    return register_probed(figures_dir, script, result, cost=cost)
+
+
+def register_probed(
+    figures_dir: str | Path, script: str, result: dict, cost: str = "medium"
+) -> dict:
+    """把一次**已经成功**的执行（`stems` 非空）按真实产出登记进注册表：冲突 / 改指代次的判据只此一份。
+
+    试运行（`probe_and_register`）与准备会话（`prepsession`，T01）的执行结束后都走这里——登记不是
+    探测的私事，是「捕获到的图要能被编辑请求按 stem 找到」的那一步。`result` 至少带 `stems` /
+    `entry` / `remap_generation`；原样展开回去，加 `registered`（与可能的 `error` / `stem_conflicts`）。
+    """
     conflicts = _live_stem_conflicts(figures_dir, script, result["stems"])
     if conflicts:
         detail = "；".join(f"{stem} → {owner}" for stem, owner in sorted(conflicts.items()))
