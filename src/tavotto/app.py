@@ -2170,9 +2170,13 @@ def open_project(path_str: str, make_default: bool = True) -> dict:
     with _PROJECT_LOCK:
         existing = PROJECTS.get(pid)
     if existing is not None:
-        if make_default:
-            DEFAULT_PROJECT = pid
+        # 配置落盘失败时前端仍留在旧项目；成功后才发布后端的默认身份。
         engine_config.touch_recent(str(path))
+        with _PROJECT_LOCK:
+            if PROJECTS.get(pid) is not existing:
+                raise RuntimeError("项目已关闭，请重新打开")
+            if make_default:
+                DEFAULT_PROJECT = pid
         return {**project_status(existing), "drafted": False, "conflicts": [], "reused": True}
 
     drafted, conflicts = False, []
@@ -2188,12 +2192,16 @@ def open_project(path_str: str, make_default: bool = True) -> dict:
     # 第一次刷新只能报「什么都没变」——而用户按刷新正是因为他刚在外面加了
     # 一张图（`engine/project_refresh.seed_state`）。
     engine_refresh.seed_state(ctx)
+    engine_config.touch_recent(str(path))
     with _PROJECT_LOCK:
-        PROJECTS[pid] = ctx
+        existing = PROJECTS.get(pid)
+        if existing is None:
+            PROJECTS[pid] = ctx
         if make_default or DEFAULT_PROJECT is None:
             DEFAULT_PROJECT = pid
+    if existing is not None:
+        return {**project_status(existing), "drafted": False, "conflicts": [], "reused": True}
     engine_watch.start(ctx, sink=_watch_sink(ctx))
-    engine_config.touch_recent(str(path))
     LOG.info(
         "项目已打开: %s（%d 个脚本%s）",
         path,
