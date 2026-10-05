@@ -111,6 +111,7 @@ export function EngineEnvironmentCard({ compact }: { compact?: boolean }) {
             <p className="mt-1 break-all font-mono text-xs text-ink-3">{env.python}</p>
           )}
           <ProjectEnvironmentLine compact={compact} />
+          {!compact && <EnvironmentAdviceRow />}
           {/* safe worker 在哪个目录里跑（ADR 0047）：项目级开关，设置页才显示 */}
           {!compact && <WorkdirRow />}
           {!compact && <InputRemapRows />}
@@ -181,6 +182,55 @@ export function EngineEnvironmentCard({ compact }: { compact?: boolean }) {
       )}
 
       {!compact && advancedBlock}
+    </div>
+  )
+}
+
+/**
+ * 项目里有自己的 Python 环境、而用户还没决定用哪个时的一句话 + 一个主按钮（ADR 0114）。
+ *
+ * 一切都是后端 `project.recommendation` 的投影：要不要问（`decision.needs_decision`）、问哪一个
+ * （`recommended_id`）、谁锁着（`decision.locked_by`）。这里**不自写「能不能跑」的判据**——点「使用它」时后端
+ * 现场检查所选的环境，环境起不来 / 在这期间被重建会带着稳定 code 回来，原样翻成一句话。
+ */
+function EnvironmentAdviceRow() {
+  useTranslation('errors')
+  const { env, adoptCandidate, setProjectPython } = useEnvStore()
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const rec = env?.project?.recommendation
+  if (!rec) return null
+  const hasProjectEnv = rec.candidates.some((c) => c.scope === 'project')
+  if (rec.decision.locked_by && hasProjectEnv) {
+    return (
+      <p className="mt-1.5 border-t border-border pt-1.5 text-xs leading-relaxed text-ink-3" data-env-advice-locked>
+        {en('envAdviceLocked')}
+      </p>
+    )
+  }
+  if (!rec.decision.needs_decision) return null
+  const pick = rec.candidates.find((c) => c.id === rec.recommended_id)
+  if (!pick) return null
+  const run = async (task: () => Promise<string | null>) => {
+    setBusy(true)
+    setError(await task())
+    setBusy(false)
+  }
+  return (
+    <div className="mt-1.5 flex flex-col gap-1.5 border-t border-border pt-1.5" data-env-advice>
+      <span className="text-xs text-ink-2">
+        {/* 项目内的环境给项目相对路径；没有就用线索里的名字 */}
+        {en('envAdviceAsk', { name: pick.python_relative || pick.name || pick.id })}
+      </span>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <Button variant="primary" size="sm" disabled={busy} onClick={() => void run(() => adoptCandidate(pick))}>
+          {en('envAdviceUse')}
+        </Button>
+        <Button variant="ghost" size="sm" disabled={busy} onClick={() => void run(() => setProjectPython(null))}>
+          {en('envAdviceBuiltIn')}
+        </Button>
+      </div>
+      {error && <p className="text-xs text-danger">{error}</p>}
     </div>
   )
 }
@@ -286,6 +336,9 @@ export function MissingDependencyCard({
         return en('projectEnvWorkerImport', { venv: projectEnv.venv || '.venv' })
       case 'project_env_not_found':
         return en('projectEnvNotFound', { module: pkg })
+      case 'environment_confirmation_required':
+        // 项目环境体检通过、缺的包也在里面：这是建议，下面的候选按钮就是「使用」（ADR 0114）
+        return en('projectEnvRecommended', { venv: projectEnv.recommended?.venv || '.venv', module: pkg })
       default:
         return null
     }

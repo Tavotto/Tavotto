@@ -152,6 +152,11 @@ USER_VISIBLE_CODES = {
     "perf_report_write_failed": set(),
     # ADR 0079：依赖弹窗交回的用户环境 id 在本机的发现结果里找不到了
     "user_environment_gone": set(),
+    # 环境建议 / 检查 / 采用（T05，ADR 0114）
+    "environment_changed": set(),
+    "environment_candidate_gone": set(),
+    "environment_locked": set(),
+    "environment_check_running": set(),
     # 交回的环境按此刻的计划复核仍缺包（Codex #522 P2）
     "user_environment_incomplete": {"packages"},
     # 复核时联合计划算不出来：不知道脚本要什么，不拿空集合判「装齐」（Codex #562 P2）

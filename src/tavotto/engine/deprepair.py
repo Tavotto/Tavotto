@@ -460,6 +460,31 @@ def offer(project: str | Path, script: str, module: str, project_env: dict | Non
     # `system_rejected`：用户手边那套环境为什么没被采用，界面要说出来。
     detail = project_env or {}
     system = detail.get("system") if isinstance(detail, dict) else None
+    recommended = (
+        detail.get("recommended")
+        if isinstance(detail, dict) and detail.get("code") == projectenv.ERROR_CONFIRMATION_REQUIRED
+        else None
+    )
+    if recommended:
+        # 确认模式（ADR 0114）：项目自己的 venv 体检通过、缺的包也在里面——不再无提示接手，列成一个
+        # 「改用」目标，用户点一次才记进项目设置（与系统解释器同一个采用端点、同一次现场体检）。项目内的
+        # 解释器给项目相对路径：采用端点把它钉回项目根之内
+        health = recommended.get("health") or {}
+        python = str(recommended.get("python") or "")
+        out["targets"].append(
+            {
+                "kind": TARGET_SYSTEM,
+                "venv": projectenv.project_relative(root, recommended.get("venv") or "") or "",
+                "python": projectenv.project_relative(root, python) or python,
+                "modifies_user_environment": False,
+                "creates_environment": False,
+                "available": True,
+                "reason": "",
+                "python_version": health.get("python_version", ""),
+                "matplotlib_version": health.get("matplotlib_version", ""),
+                "support": health.get("support", ""),
+            }
+        )
     found = projectenv.healthy_system_candidate(system)
     if found:
         out["targets"].append(
@@ -4220,7 +4245,23 @@ def user_environment_candidates(
 ) -> list[dict]:
     """发现到的用户环境 + 老链条里的系统解释器（同一张表，去重、保序），去掉 `exclude`（正缺包的那个）。"""
     root = str(Path(project))
-    out = list(userenvs.discover(root, script))
+    out: list[dict] = []
+    silent = projectenv.silent_adoption_enabled()
+    if not silent:
+        # 确认模式（ADR 0114）：项目自己的 venv 是第一个候选，用户在这张表里点「改用」才算采用。静默采用时代
+        # 它归 `pool` 第 4 档管、不进这张表（`_auto_adopt_allowed` 不碰项目 venv）
+        for venv in projectenv.discover(root, script):
+            py = projectenv.interpreter_of(venv, root=root)
+            if py:
+                out.append(
+                    {"python": py, "source": userenvs.SOURCE_PROJECT_VENV, "label": Path(venv).name}
+                )
+    # 登录 shell 只在静默采用的旧行为下现问；确认模式只用明确检查动作已经问出来的答案
+    out += (
+        userenvs.discover(root, script)
+        if silent
+        else userenvs.discover(root, script, ask_login_shell=None)
+    )
     out += [
         {"python": py, "source": userenvs.SOURCE_SYSTEM, "label": ""}
         for py, _src in pool.system_python_candidates()
@@ -4311,8 +4352,11 @@ def user_environment_offer(project: str | Path, script: str, plan: dict, python:
     needed, unknown = _plan_imports(plan)
     if not needed and not unknown:
         return []
+    # 确认模式（ADR 0114）：门不为了「显示推荐」去起候选解释器——只给已有的检查结论，没检查过的列成
+    # `checked=False`，用户点「检查并使用」时才由采用端点（`recheck_user_environment`）现场体检
+    extra = {} if projectenv.silent_adoption_enabled() else {"cache_only": True}
     entries = userenvs.evaluate(
-        user_environment_candidates(root, script, exclude=python), needed, unknown
+        user_environment_candidates(root, script, exclude=python), needed, unknown, **extra
     )
     name = Path(root).name
     return sorted(entries, key=lambda e: (not e["satisfies"], userenvs.rank(e, name)))
@@ -4433,6 +4477,11 @@ def decide_environment(project: str | Path, script: str) -> dict | None:
     `gate()` 里、门又跑在快照与租约检查之后——两条 Codex #522 P1 是同一个顺序错误。
 
     工作目录还要先问时不决定：那道门排在依赖门前面，没答之前不起会话，也就轮不到换环境。"""
+    if not projectenv.silent_adoption_enabled():
+        # 确认模式（ADR 0114）：「换不换解释器」不再由机器决定。候选环境的体检结果仍随跑前的门 / 修复
+        # 卡片的载荷（`user_environments`）交给用户，采用是他点的那一下——这里连门都不必问（不去量一遍
+        # 只为了发现自己不该做这个决定）
+        return None
     root = str(Path(project))
     if not _gate_open(root, script):
         return None

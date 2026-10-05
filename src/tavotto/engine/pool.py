@@ -1254,6 +1254,12 @@ def resolve_worker_python(
             if explicit_for_project:
                 raise _project_python_unusable(remembered, "missing", record)
             _invalidate_remembered(figures_dir, remembered, "missing", record)
+        elif projectenv.generation_changed(record):
+            # 采用时量到的环境代与路径上此刻的不是同一代（同一路径被删了重建）：授权给的是上一代环境，
+            # 不是路径这个名字（ADR 0114 §四）。用户选的 → 停下来请他重新确认，不降级、不换别的；机器记的 → 作废
+            if explicit_for_project:
+                raise _project_python_unusable(remembered, "rebuilt", record)
+            _invalidate_remembered(figures_dir, remembered, "rebuilt", record)
         else:
             ok = _cached_verdict(remembered)
             if ok is None:
@@ -1267,7 +1273,9 @@ def resolve_worker_python(
             if explicit_for_project:
                 raise _project_python_unusable(remembered, "no_matplotlib", record)
             _invalidate_remembered(figures_dir, remembered, "no_matplotlib", record)
-    if discover:
+    if discover and projectenv.silent_adoption_enabled():
+        # 兼容开关（ADR 0114 §五）：默认的确认模式不在解析解释器时体检候选、更不替用户采用——项目 venv 是
+        # `envadvice.recommend()` 的线索，采用是用户的明确动作
         outcome = projectenv.first_open_candidate(figures_dir, script)
         if outcome.get("ok"):
             python = outcome["python"]
@@ -1313,6 +1321,36 @@ def peek_worker_python(figures_dir: str | Path) -> tuple[str, str] | None:
     return path, remembered_source(figures_dir, path)
 
 
+def peek_project_resolution(figures_dir: str | Path) -> tuple[str, str] | None:
+    """项目级决定此刻给出的 (路径, 来源)，与 `resolve_worker_python` 第 3 档同判据，但**只 stat、不体检**
+    （T05：环境状态 API 打开项目就调，它回答的是线索，不是「能不能用」——能不能用是明确的核验）。
+
+    * 没有项目级决定（含全局显式选择压过它、用户选回默认链条）→ None，调用方落到默认链条的读法；
+    * 用户为本项目挑的（`automatic=False`）已不在 / 被重建成另一代 → 抛 `project_python_unusable`
+      （与解析时同一个错、同一个 reason），**不降级**；
+    * 机器记的（`automatic=True`）失效 → None（真正解析时会作废并回到默认链条；这里不写任何东西）。
+    """
+    if explicit_worker_python():
+        return None
+    configured = config.worker_python()
+    if configured and _configured_source(configured) != SOURCE_MANAGED:
+        return None
+    record = projectenv.remembered_record(figures_dir)
+    if record is None or record.get("mode") == projectenv.MODE_DEFAULT_CHAIN:
+        return None
+    remembered = record["path"]
+    explicit_for_project = not record.get("automatic", False)
+    if not record.get("exists"):
+        if explicit_for_project:
+            raise _project_python_unusable(remembered, "missing", record)
+        return None
+    if projectenv.generation_changed(record):
+        if explicit_for_project:
+            raise _project_python_unusable(remembered, "rebuilt", record)
+        return None
+    return remembered, remembered_source(figures_dir, remembered)
+
+
 def explicit_worker_python() -> tuple[str, str] | None:
     """正在生效的**全局显式**解释器：回 (路径, 来源)，没有回 None。
 
@@ -1354,6 +1392,7 @@ def _project_python_unusable(python: str, reason: str, record: dict) -> "WorkerE
     why = {
         "missing": "这条路径已经不存在",
         "no_matplotlib": "它 import 不到 matplotlib（或起不来）",
+        "rebuilt": "这条路径上的环境被重建过，已经不是你当时确认的那一个",
     }.get(reason, reason)
     err = WorkerError(
         f"为这个项目指定的解释器用不了：{why}（{python}）。"
@@ -3178,6 +3217,20 @@ def try_project_env(figures_dir: str, script_name: str, module: str) -> dict:
         )
         return outcome
     python = outcome["python"]
+    if not projectenv.silent_adoption_enabled():
+        # 确认模式（ADR 0114）：项目 venv 体检通过、缺的包也在里面——这是**建议**，不是决定。体检是这次
+        # 运行缺包触发的有界检查（上面的 `mark_attempted` 一次一对），采用是用户在修复卡片上点的那一下
+        # （`PATCH /api/engine/environment`），之后才进项目设置
+        return {
+            **outcome,
+            "ok": False,
+            "code": projectenv.ERROR_CONFIRMATION_REQUIRED,
+            "recommended": {
+                "python": python,
+                "venv": outcome.get("venv", ""),
+                "health": outcome.get("health"),
+            },
+        }
     projectenv.remember(
         figures_dir,
         python,
@@ -3212,7 +3265,7 @@ def _adopt_system_interpreter(
     5. 那个环境此刻没有正在被改动（`is_mutating`：体检读的可能是装了一半的 site-packages）；
     6. 现场再体检一次仍合格（`projectenv.reprobe_system_candidate`：体检表可能是进程内缓存里的旧观测）。
     """
-    if projectenv.auto_adoption_off():
+    if projectenv.auto_adoption_off() or not projectenv.silent_adoption_enabled():
         return None
     if outcome.get("code") != projectenv.ERROR_NOT_FOUND:
         return None

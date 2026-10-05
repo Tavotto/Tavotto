@@ -248,7 +248,11 @@
     "script_edit_preview_stale": "预览之后数据的位置变了，脚本没有被修改。请重新预览。",
     "script_edit_needs_ui": "改写脚本只能在 Tavotto 窗口里确认。",
     "script_restore_stale": "{{script}} 在列出这份备份之后又被改过，列表已刷新。请按现在的状态重新选择复原方式（可以只撤销那几处路径）。",
-    "script_restore_conflict": "那几处路径之后又被改过，没法只撤销它们。可以选择整份恢复（当前版本会先另存一份）。"
+    "script_restore_conflict": "那几处路径之后又被改过，没法只撤销它们。可以选择整份恢复（当前版本会先另存一份）。",
+    "environment_changed": "这个环境在你确认之前被重建过，请重新查看再确认",
+    "environment_candidate_gone": "这个环境已经找不到了，请重新检查",
+    "environment_locked": "全局指定的 Python 正在生效，项目里的选择不会被使用。请先解除全局指定",
+    "environment_check_running": "这个项目的环境检查正在进行"
   },
   "engine": {
     "apply": "应用",
@@ -632,7 +636,15 @@
     "inputRemapLabel": "记住的数据位置",
     "inputRemapAnyRelative": "（相对路径）",
     "inputRemapTargetGone": "（这个位置现在不存在）",
-    "inputRemapForget": "删除"
+    "inputRemapForget": "删除",
+    "envAdviceAsk": "这个项目里有一个 Python 环境（{{name}}）。用它来运行脚本吗？",
+    "envAdviceUse": "使用它",
+    "envAdviceBuiltIn": "用 Tavotto 内置环境",
+    "envAdviceLocked": "全局指定的 Python 正在生效，项目里的环境不会被使用。先在设置里解除全局指定。",
+    "projectEnvRecommended": "项目环境 {{venv}} 已经装着 {{module}}，可以用它来运行。要改用吗？",
+    "userEnvSource_project_venv": "项目里的 {{label}} 环境",
+    "userEnvUnchecked": "还没检查：点「检查并使用」时会先检查，装齐了才改用",
+    "userEnvCheckUse": "检查并使用"
   },
   "preflight": {
     "axisLabelFormat": "坐标轴标题「{{label}}」不是规范的「{{want}}」形式",

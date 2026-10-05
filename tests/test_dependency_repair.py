@@ -1669,6 +1669,10 @@ def test_cancel_right_after_the_acknowledgement_is_honoured(tmp_path, wheelhouse
     (project / "figure.py").write_text(f"import {FIXTURE_IMPORT}\n", encoding="utf-8")
     venv = real_venv(project)
     python = projectenv.interpreter_of(venv)
+    # ADR 0114：项目 venv 不再被静默采用——这条的前提是用户已经采用了它（目标 = 他的 venv）
+    assert projectenv.remember(
+        project, python, automatic=False, trigger=projectenv.TRIGGER_RECOMMENDED
+    )
     plan = deprepair.create_joint_plan(project, "figure.py")
     assert plan.target_kind == deprepair.TARGET_PROJECT_VENV
     # 把执行线程按在**入口**（还没跑到 `prepare()` 的第一行）：登记若在线程里做——不管在哪一行——

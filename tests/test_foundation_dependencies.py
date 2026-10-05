@@ -263,6 +263,7 @@ def test_fo20_markers_extras_and_selected_groups_prepare_only_what_applies(tmp_p
     before = _freeze(python)
     evidence: list[str] = []
     with fa.running_app(proj, tmp_path / "work") as app:
+        app.adopt_project_environment()  # ADR 0114：用户采用了项目 venv——目标环境由他定，不是机器替他挑
         panel = _panel(app, truth["expected_output"])
         assert panel["capability"]["status"] == "editable"
         state = app.prepare(panel["id"])
@@ -349,6 +350,7 @@ def test_fo31_first_second_open_and_restart_do_not_prepare_again(tmp_path, house
     evidence: list[str] = []
     installs = 0
     with fa.running_app(proj, tmp_path / "work") as app:
+        app.adopt_project_environment()  # ADR 0114：用户采用了项目 venv——目标环境由他定，不是机器替他挑
         panel = _panel(app, truth["expected_output"])
         assert app.prepare(panel["id"])["result"]["status"] == "needs_input"
         done = _authorize(app, "figure.py", "project_venv")
@@ -411,6 +413,7 @@ def test_fo21_conflicting_declarations_stop_and_keep_the_environment(tmp_path, h
     decl_bytes = {p.name: p.read_bytes() for p in proj.glob("*.txt")}
     evidence: list[str] = []
     with fa.running_app(proj, tmp_path / "work") as app:
+        app.adopt_project_environment()  # ADR 0114：用户采用了项目 venv——目标环境由他定，不是机器替他挑
         panel = _panel(app, "figure.pdf")
         state = app.prepare(panel["id"])
         plan, result = state["plan"], state["result"]
@@ -463,6 +466,7 @@ def test_fo22_installed_but_unimportable_is_caught_by_verification(tmp_path, hou
     _native_reference(proj, tmp_path, modules=(BROKEN[1],))  # 参考用一个能 import 的替身出原件
     evidence: list[str] = []
     with fa.running_app(proj, tmp_path / "work") as app:
+        app.adopt_project_environment()  # ADR 0114：用户采用了项目 venv——目标环境由他定，不是机器替他挑
         panel = _panel(app, "figure.pdf")
         state = app.prepare(panel["id"])
         assert state["result"]["status"] == "needs_input"
@@ -541,6 +545,7 @@ def test_fo27_cancel_during_install_is_a_clean_terminal_state(tmp_path, slow_hou
     before = _freeze(python)
     evidence: list[str] = []
     with fa.running_app(proj, tmp_path / "work") as app:
+        app.adopt_project_environment()  # ADR 0114：用户采用了项目 venv——目标环境由他定，不是机器替他挑
         panel = _panel(app, truth["expected_output"])
         assert app.prepare(panel["id"])["result"]["status"] == "needs_input"
         _, planned = app.call(

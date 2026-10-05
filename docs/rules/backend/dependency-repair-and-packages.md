@@ -20,7 +20,8 @@
   失败结构的 `system` 键上；`deprepair.offer()` 把健康的列成 `system_interpreter`
   目标排在最前，**采用一个字节都不装**，走项目环境 PATCH（`scope=project` +
   `module`，采用时连缺的那个包再验一次）。它刻意不进 `TARGETS`，`create_plan`
-  对它一律拒绝。**缺包时无提示自动采用（ADR 0107，2026-09-28 推翻原「不无感切换」）**：项目里没有 venv、
+  对它一律拒绝。**缺包时无提示自动采用（ADR 0107，2026-09-28 推翻原「不无感切换」；ADR 0114 起默认收回为「只建议」，
+  下面这段是 `TAVOTTO_ENV_ADOPTION=auto` 兼容开关下的行为）**：项目里没有 venv、
   第一个健康者 `projectenv.auto_adoptable_system_candidate`（支持档 `AUTO_ADOPT_SUPPORT` = verified /
   unverified_but_compatible、`requested_module_ok is True`）、此刻的解释器是机器替用户挑的
   （`pool.machine_chosen_interpreter`，与跑前的门共用；项目记录那一半 `projectenv.record_allows_auto_adopt` 在
@@ -30,7 +31,8 @@
   不合格的（包有、Python 版本不支持 / 没 matplotlib / 起不来）单列
   `system_rejected`，界面要说出原因。offer 在渲染失败的响应路径上**不起任何
   解释器**——结论只读接手那一步的体检表。
-- **跑前的门先找用户自己的环境（ADR 0079）**：联合计划 `ready` 时，`deprepair.user_environment_offer()`
+- **跑前的门先找用户自己的环境（ADR 0079；ADR 0114 起「直接改用」收回为只建议，候选仍随载荷交给用户点，下面的
+  `decide_environment` / `_auto_adopt` 是兼容开关下的行为）**：联合计划 `ready` 时，`deprepair.user_environment_offer()`
   拿 `engine/userenvs.discover()`（项目线索 / 登录 shell / Conda 全部环境 / pyenv 全部版本，只读磁盘记录）
   + 老链条系统解释器，逐个 `probe_environment(python, modules=缺的 import)`——**装齐按 import 判**，
   「环境健康」与「装没装齐」分开报；正缺包的解释器不体检。装齐的里按 `userenvs.rank()` 挑最好的
@@ -373,6 +375,37 @@
 - 看护：`tests/test_foundation_dependencies.py`、`tests/test_preparation_api.py`（门的两种终局）、
   `tests/test_dependency_repair_e2e.py`（门之后 skip 再走运行后那条路）、`tests/test_mcp_server.py`（投影 /
   `prepare_dependencies` 闭集 / 批量拒绝）、`web/src/components/DependencyPrepareDialog.test.tsx`。
+
+## 环境建议 / 检查 / 采用（T05，ADR 0114，2026-10-05）
+
+> 推荐与采用曾是同一步（ADR 0057 第 4 档首开采用、0079 门里直接改用、0107 缺包后无提示采用）。ADR 0114 拆成三个动作、三种授权。
+
+- **建议 `engine/envadvice.py::recommend()` 纯读**：候选来自 `projscan.environment_evidence(private=True)`（T02 同一个候选证据入口，
+  不另写 onboarding resolver）+ 项目记录 + 检查留下的结论；不起进程、不问登录 shell、不写任何东西。标签闭集 / 排序
+  `selected > remembered_legacy > project_hint > checked_compatible > machine_hint > bundled`，**只看证据层次，不看 Python 新旧**；
+  `unchecked` 如实写。`decision.needs_decision` = 有项目范围线索、没有项目级决定、没有全局锁。公开形态不带机器路径（项目内给相对路径，
+  项目外只有不透明 id）。
+- **检查 `envadvice.check()` 是起候选解释器的唯一入口**：`POST /api/engine/environment/check`（范围 `candidates` / `scope`，
+  `include_login_shell` 才问登录 shell），候选数 / 总时限 / 每个候选超时都有上限，`DELETE` 取消，同一项目单飞（`CheckBusy`）。
+  结论缓存键 = (解释器路径, 环境代)。**不写项目设置**。
+- **采用 = `PATCH /api/engine/environment {scope: project, candidate, expected_generation}`**：id 只换本机自己枚举出来的路径；
+  环境代对不上 409 `environment_changed`；全局显式选择压着 409 `environment_locked`（是谁锁的在建议里的 `decision.locked_by`）；现场再体检仍是
+  `probe_environment`，通过才 `remember(automatic=False, trigger=recommended)` 并存 `generation`。采用不带安装授权：没有 pip，
+  内置 runtime 只读。
+- **环境代 `projectenv.environment_generation`**：解释器路径 `lstat` + `pyvenv.cfg` 各自的 (inode, mtime_ns, size) 摘要（不含 ctime / 权限位）；重建换代，装包 / chmod / 扩展属性不换。
+  `pool.resolve_worker_python` 第 3 档：用户选的记录环境代变了 → `project_python_unusable(reason=rebuilt)`（不降级）；机器记的 → 作废。
+  `preparation.plan_for` 记 `environment.generation`，`_stale_reason` 起会话前再比。
+- **确认模式下的三个自动采用点只产出建议**：`pool` 第 4 档不发现 / 不体检 / 不记；`deprepair.decide_environment` 直接回 None；
+  `pool.try_project_env` 项目 venv 体检通过时回 `environment_confirmation_required` + `recommended`，`deprepair.offer()` 把它列成
+  `system_interpreter` 目标（项目相对路径）等用户点；`_adopt_system_interpreter` 不采用。依赖门的候选表在确认模式下多一个
+  `project_venv` 来源（`userenvs.SOURCE_PROJECT_VENV`），登录 shell 只读检查动作已问出的答案。**唯一开关**
+  `projectenv.silent_adoption_enabled()`（`TAVOTTO_ENV_ADOPTION=auto`，保留一版，退出条件见 ADR 0114 §五）。
+- **GET `/api/engine/environment` 不起解释器**：`pool.peek_project_resolution` 只 `stat`；`project.consent`（`confirmed` / `legacy_auto` /
+  `none`）与 `project.recommendation` 是后端投影，`envStore` 原样保存。
+- **迁移**：`automatic=False` 记录 = 已确认，不重新询问；`automatic=True` 的历史记录照用但只是 `legacy_auto`，不当显式确认；没有环境代的
+  老记录不追溯。
+- **会话**：`prepsession.checks_of` 的 `environment` 检查项在 `needs_decision` 时 `needs_action`（`environment_choice_required`），
+  `requirements[].kind = environment_choice`，载荷是 `recommendation`；回答走采用端点 / 选回内置，再 `recheck`。
 
 ## 速查表原要点（2026-09-25 迁入，#608）
 

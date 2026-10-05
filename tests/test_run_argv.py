@@ -645,6 +645,7 @@ def test_a_bad_argv_payload_makes_the_worker_refuse_to_start(figs):
             input="",
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=120,
         )
         assert done.returncode != 0 and "script-argv-json" in done.stderr

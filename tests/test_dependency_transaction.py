@@ -75,6 +75,17 @@ def house(tmp_path, monkeypatch) -> Path:
     return dest
 
 
+def _adopt(project: Path) -> None:
+    """用户采用了项目自己的 `.venv`（ADR 0114：不再被静默采用）。这些用例的前提是「目标环境就是他的项目 venv」，
+    由采用这一步显式建立，而不是靠机器替他挑。"""
+    assert projectenv.remember(
+        project,
+        projectenv.interpreter_of(project / ".venv"),
+        automatic=False,
+        trigger=projectenv.TRIGGER_RECOMMENDED,
+    )
+
+
 def _project(tmp_path, *, requirements: str, script: str, name: str = "paper", **files) -> Path:
     proj = tmp_path / name
     proj.mkdir()
@@ -804,6 +815,7 @@ class TestJointTransaction:
             script=f"import {ALPHA[1]}\nimport {BETA[1]}\n",
         )
         venv = real_venv(project)
+        _adopt(project)
         vpy = str(venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python"))
         subprocess.run(
             [vpy, "-m", "pip", "install", "-q", BETA[0]],
@@ -1014,6 +1026,7 @@ class TestJointTransaction:
             script=f"import {ALPHA[1]}\nimport {BETA[1]}\n",
         )
         venv = real_venv(project)
+        _adopt(project)
         vpy = str(venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python"))
         subprocess.run(
             [vpy, "-m", "pip", "install", "-q", ALPHA[0]],
@@ -1068,6 +1081,7 @@ class TestProjectVenvTarget:
             tmp_path, requirements=f"{ALPHA[0]}\n{GAMMA[0]}\n", script=f"import {ALPHA[1]}\n"
         )
         real_venv(project)
+        _adopt(project)
         python, source = engine_pool.resolve_worker_python(str(project), script="figure.py")
         assert source == engine_pool.SOURCE_PROJECT_VENV
         plan = deprepair.create_joint_plan(project, "figure.py")
@@ -1103,6 +1117,7 @@ class TestProjectVenvTarget:
         不 remember、不算提交（Codex #461 P2）。"""
         project = _project(tmp_path, requirements=f"{ALPHA[0]}\n", script=f"import {ALPHA[1]}\n")
         real_venv(project)
+        _adopt(project)
         plan = deprepair.create_joint_plan(project, "figure.py")
         assert plan.target_kind == deprepair.TARGET_PROJECT_VENV
         real_selftest = deprepair.worker_self_test
@@ -1390,6 +1405,7 @@ class TestJointMirrorProgress:
     ):
         project = _project(tmp_path, requirements=f"{ALPHA[0]}\n", script=f"import {ALPHA[1]}\n")
         real_venv(project)
+        _adopt(project)
         plan = deprepair.create_joint_plan(project, "figure.py")
         assert plan.target_kind == deprepair.TARGET_PROJECT_VENV
         calls = _first_install_offline(monkeypatch)

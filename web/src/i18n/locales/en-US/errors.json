@@ -248,7 +248,11 @@
     "script_edit_preview_stale": "The data location changed after the preview. The script was not modified. Preview again.",
     "script_edit_needs_ui": "Rewriting a script can only be confirmed in the Tavotto window.",
     "script_restore_stale": "{{script}} changed after this backup was listed, so the list has been refreshed. Choose how to restore again based on its current state (you can undo just those paths).",
-    "script_restore_conflict": "Those paths were changed again afterwards, so they can't be undone on their own. You can restore the whole file instead (the current version is saved first)."
+    "script_restore_conflict": "Those paths were changed again afterwards, so they can't be undone on their own. You can restore the whole file instead (the current version is saved first).",
+    "environment_changed": "That environment was rebuilt before you confirmed. Review it again, then confirm.",
+    "environment_candidate_gone": "That environment can no longer be found. Check again.",
+    "environment_locked": "A globally chosen Python is in effect, so a project-level choice would not be used. Clear the global choice first.",
+    "environment_check_running": "An environment check is already running for this project."
   },
   "engine": {
     "apply": "Apply",
@@ -632,7 +636,15 @@
     "inputRemapLabel": "Remembered data locations",
     "inputRemapAnyRelative": "(relative paths)",
     "inputRemapTargetGone": "(this location no longer exists)",
-    "inputRemapForget": "Remove"
+    "inputRemapForget": "Remove",
+    "envAdviceAsk": "This project has a Python environment ({{name}}). Run scripts with it?",
+    "envAdviceUse": "Use it",
+    "envAdviceBuiltIn": "Use Tavotto’s bundled environment",
+    "envAdviceLocked": "A globally chosen Python is in effect, so the project’s environment will not be used. Clear the global choice in Settings first.",
+    "projectEnvRecommended": "The project environment {{venv}} already has {{module}} and can run this. Switch to it?",
+    "userEnvSource_project_venv": "the project’s {{label}} environment",
+    "userEnvUnchecked": "Not checked yet. “Check and use” checks it first and switches only if everything is there.",
+    "userEnvCheckUse": "Check and use"
   },
   "preflight": {
     "axisLabelFormat": "The axis title “{{label}}” isn't in the profile's “{{want}}” form.",
