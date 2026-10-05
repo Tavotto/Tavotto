@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import shutil
@@ -645,6 +646,231 @@ def test_reset_before_open_creates_and_opens(client, monkeypatch):
     body = client.post("/api/tutorial/reset", json={}).get_json()
     assert body["reset"] is True and body["project"]["tutorial"] is True
     assert client.get("/api/project").get_json()["id"] == body["project"]["id"]
+
+
+def _customized_tutorial():
+    """一份合法的旧进度：函数和注册表一起改名，重置必须把两者一起恢复。"""
+    tp = tutorial.ensure_tutorial_copy()
+    config = tp.path / "tavotto_registry.json"
+    data = json.loads(config.read_text(encoding="utf-8"))
+    data["scripts"]["fig1_kinetics.py"]["entry"] = "before_reset"
+    config.write_text(json.dumps(data), encoding="utf-8")
+    script = tp.path / "fig1_kinetics.py"
+    source = script.read_text(encoding="utf-8")
+    assert "def main():" in source
+    script.write_text(source.replace("main()", "before_reset()"), encoding="utf-8")
+    return tp
+
+
+def _observe_tutorial_lock(monkeypatch, contended):
+    """只观察真实锁竞争；无锁的旧实现仍走完实际请求，由状态断言判红。"""
+    lock = getattr(m, "_TUTORIAL_LOCK", threading.RLock())
+
+    class ObservedLock:
+        def __enter__(self):
+            if not lock.acquire(blocking=False):
+                contended.set()
+                lock.acquire()
+            return self
+
+        def __exit__(self, *_args):
+            lock.release()
+
+    monkeypatch.setattr(m, "_TUTORIAL_LOCK", ObservedLock(), raising=False)
+
+
+@pytest.mark.parametrize("open_route", ["/api/tutorial/open", "/api/projects/open"])
+def test_reset_waits_for_tutorial_initialization(client, data_dir, monkeypatch, open_route):
+    """首开还在 prime 时重置，200 必须对应恢复后的热态；普通项目入口同样受保护。"""
+    tp = _customized_tutorial()
+    pid = m._project_id(tp.path)
+    priming, release_prime, reset_progress = (threading.Event() for _ in range(3))
+    responses = {}
+    original_prime = engine_watch.ProjectWatcher.prime
+    original_wait = threading.Event.wait
+
+    def prime(watcher):
+        if threading.current_thread() is opener:
+            priming.set()
+            assert release_prime.wait(10)
+        return original_prime(watcher)
+
+    def wait(event, timeout=None):
+        pending = m._OPENING_PROJECTS.get(pid)
+        if threading.current_thread() is resetter and pending and event is pending[1]:
+            reset_progress.set()  # 旧实现换完目录后才等旧 ctx，确定地暴露那个交错。
+        return original_wait(event, timeout)
+
+    def post(name, route):
+        with m.app.test_client() as request_client:
+            responses[name] = request_client.post(route, json={"path": str(tp.path)})
+        if name == "reset":
+            reset_progress.set()
+
+    opener = threading.Thread(target=post, args=("open", open_route), daemon=True)
+    resetter = threading.Thread(target=post, args=("reset", "/api/tutorial/reset"), daemon=True)
+    _observe_tutorial_lock(monkeypatch, reset_progress)
+    monkeypatch.setattr(engine_watch.ProjectWatcher, "prime", prime)
+    monkeypatch.setattr(
+        engine_watch.ProjectWatcher, "run", lambda watcher: watcher.stop_event.wait(10)
+    )
+    monkeypatch.setattr(threading.Event, "wait", wait)
+    try:
+        opener.start()
+        assert priming.wait(10)
+        assert client.post("/api/projects/close", json={"id": pid}).get_json()["ok"] is False
+        other = _make_user_project(data_dir.parent)
+        other_status = client.post("/api/projects/open", json={"path": str(other)}).get_json()
+        assert client.post("/api/projects/close", json={"id": other_status["id"]}).get_json()["ok"]
+        resetter.start()
+        assert reset_progress.wait(10)
+    finally:
+        release_prime.set()
+        for thread in (opener, resetter):
+            if thread.ident is not None:
+                thread.join(10)
+    assert not opener.is_alive() and not resetter.is_alive()
+    assert responses["open"].status_code == responses["reset"].status_code == 200
+    disk = m.engine_registry.open_registry(tp.path).entries()
+    assert disk["fig1_kinetics.py"]["entry"] == "main"
+    functions = {
+        node.name
+        for node in ast.parse((tp.path / "fig1_kinetics.py").read_text()).body
+        if isinstance(node, ast.FunctionDef)
+    }
+    assert "main" in functions and "before_reset" not in functions
+    watcher = engine_watch.watcher_of(tp.path)
+    hot = client.get("/api/registry", query_string={"pj": pid}).get_json()["scripts"]
+    assert hot == disk, "reset returned 200 with a registry entry absent from the restored script"
+    watcher.debounce = 0
+    watcher.poll()
+    watcher.poll()
+    hot = client.get("/api/registry", query_string={"pj": pid}).get_json()["scripts"]
+    assert hot == disk, "polling changed the registry away from the completed reset"
+    assert watcher.ctx is m.PROJECTS[pid]
+    assert responses["reset"].get_json()["project"]["reused"] is False
+
+
+@pytest.mark.parametrize(
+    "contender", ["/api/projects/open", "/api/tutorial/open", "/api/tutorial/reset", "create"]
+)
+@pytest.mark.parametrize("locked", [False, True], ids=["replaced", "locked"])
+def test_tutorial_operations_wait_for_reset_copy(client, data_dir, monkeypatch, contender, locked):
+    """重置换目录的缺口不能被别的入口读到；换名失败后，排队请求仍能读取保留下来的进度。"""
+    tp = _customized_tutorial()
+    pid = m.open_project(str(tp.path))["id"]
+    user = _make_user_project(data_dir.parent)
+    user_id = m.open_project(str(user))["id"]
+    user_ctx = m.PROJECTS[user_id]
+    replacing, release_copy, contender_progress = (threading.Event() for _ in range(3))
+    responses = {}
+    original_rename = tutorial.os.rename
+
+    def rename(source, destination, *args, **kwargs):
+        if threading.current_thread() is resetter and Path(source) == tp.path:
+            if not locked:
+                original_rename(source, destination, *args, **kwargs)
+            replacing.set()
+            assert release_copy.wait(10)
+            if locked:
+                raise PermissionError(13, "test keeps the old tutorial directory locked")
+            return None
+        return original_rename(source, destination, *args, **kwargs)
+
+    def post(name, route):
+        with m.app.test_client() as request_client:
+            responses[name] = request_client.post(
+                "/api/projects/open" if route == "create" else route,
+                json={"path": str(tp.path), "default": False, "create": route == "create"},
+            )
+        if name == "contender":
+            contender_progress.set()
+
+    resetter = threading.Thread(target=post, args=("reset", "/api/tutorial/reset"), daemon=True)
+    waiting = threading.Thread(target=post, args=("contender", contender), daemon=True)
+    _observe_tutorial_lock(monkeypatch, contender_progress)
+    monkeypatch.setattr(tutorial.os, "rename", rename)
+    try:
+        resetter.start()
+        assert replacing.wait(10)
+        assert tp.path.is_dir() is locked
+        # 复制 / worker 关停都不许占全局项目锁，另一个项目仍能开、关。
+        other = _make_user_project(data_dir.parent, "other")
+        other_id = m.open_project(str(other), make_default=False)["id"]
+        assert m.close_project(other_id)
+        waiting.start()
+        assert contender_progress.wait(10)
+        assert tp.path.is_dir() is locked, "contender recreated the tutorial directory during reset"
+        returned_during_copy = "contender" in responses
+    finally:
+        release_copy.set()
+        for thread in (resetter, waiting):
+            if thread.ident is not None:
+                thread.join(10)
+    assert not resetter.is_alive() and not waiting.is_alive()
+    assert responses["reset"].status_code == (409 if locked else 200)
+    if locked:
+        assert responses["reset"].get_json()["code"] == "tutorial_locked"
+    assert responses["contender"].status_code == 200, responses["contender"].get_json()
+    expected = "before_reset" if locked and contender != "/api/tutorial/reset" else "main"
+    disk = m.engine_registry.open_registry(tp.path).entries()
+    assert disk["fig1_kinetics.py"]["entry"] == expected
+    assert m.PROJECTS[pid].registry.entries() == disk
+    assert engine_watch.watcher_of(tp.path).ctx is m.PROJECTS[pid]
+    assert not returned_during_copy, "tutorial request observed an incomplete reset"
+    assert m.PROJECTS[user_id] is user_ctx and m.DEFAULT_PROJECT == user_id
+
+
+def test_tutorial_reopen_closed_during_config_save_does_not_block_reset(
+    client, data_dir, monkeypatch
+):
+    """既有 ctx 重开仍保留 close 的身份复查；失败退出必须释放教程门，让后续 reset 完成。"""
+    tp = _customized_tutorial()
+    pid = m.open_project(str(tp.path))["id"]
+    user = _make_user_project(data_dir.parent)
+    user_id = m.open_project(str(user))["id"]
+    saving, release_save, reset_progress = (threading.Event() for _ in range(3))
+    responses = {}
+    original_touch = engine_config.touch_recent
+
+    def touch(path, name=None):
+        if threading.current_thread() is opener:
+            saving.set()
+            assert release_save.wait(10)
+        return original_touch(path, name)
+
+    def post(name, route):
+        with m.app.test_client() as request_client:
+            responses[name] = request_client.post(
+                route, json={"path": str(tp.path), "default": False}
+            )
+        if name == "reset":
+            reset_progress.set()
+
+    opener = threading.Thread(target=post, args=("open", "/api/projects/open"), daemon=True)
+    resetter = threading.Thread(target=post, args=("reset", "/api/tutorial/reset"), daemon=True)
+    _observe_tutorial_lock(monkeypatch, reset_progress)
+    monkeypatch.setattr(engine_config, "touch_recent", touch)
+    try:
+        opener.start()
+        assert saving.wait(10)
+        assert client.post("/api/projects/close", json={"id": pid}).get_json()["ok"]
+        resetter.start()
+        assert reset_progress.wait(10)
+    finally:
+        release_save.set()
+        for thread in (opener, resetter):
+            if thread.ident is not None:
+                thread.join(10)
+    assert not opener.is_alive() and not resetter.is_alive()
+    assert responses["open"].status_code == 400
+    assert responses["open"].get_json()["code"] == "open_project_failed"
+    assert responses["reset"].status_code == 200
+    disk = m.engine_registry.open_registry(tp.path).entries()
+    assert disk["fig1_kinetics.py"]["entry"] == "main"
+    assert m.PROJECTS[pid].registry.entries() == disk
+    assert engine_watch.watcher_of(tp.path).ctx is m.PROJECTS[pid]
+    assert m.DEFAULT_PROJECT == user_id
 
 
 def test_reset_keeps_tutorial_as_default_only_if_it_was(client, tmp_path):

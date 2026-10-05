@@ -176,6 +176,7 @@ PROJECTS: dict[str, "ProjectCtx"] = {}
 _OPENING_PROJECTS: dict[str, tuple["ProjectCtx", threading.Event]] = {}
 DEFAULT_PROJECT: str | None = None  # 不带 pj 的请求落到这里
 _PROJECT_LOCK = threading.Lock()
+_TUTORIAL_LOCK = threading.RLock()
 CACHE_DIR = DATA_ROOT / "cache"
 EXPORT_DIR = DATA_ROOT / "exports"
 LAYOUT_DIR = DATA_ROOT / "layouts"
@@ -2153,6 +2154,18 @@ def project_status(ctx: "ProjectCtx | None") -> dict:
     }
 
 
+@contextmanager
+def _tutorial_operation(path: Path | None = None):
+    # 复制 / 重置与读取注册表属于同一代；普通项目不拿这把锁。
+    # reset 与 tutorial/open 内部还会调用 open_project，所以必须可重入。
+    with (
+        _TUTORIAL_LOCK
+        if path is None or engine_tutorial.is_tutorial_path(path)
+        else contextlib.nullcontext()
+    ):
+        yield
+
+
 def open_project(path_str: str, make_default: bool = True) -> dict:
     """打开一个项目（已打开就直接复用），可选把它设为默认项目。
 
@@ -2162,8 +2175,13 @@ def open_project(path_str: str, make_default: bool = True) -> dict:
 
     失败（目录不存在 / 注册表损坏）抛 RuntimeError，已打开的项目不受影响。
     """
-    global DEFAULT_PROJECT
     path = Path(path_str).expanduser().resolve()
+    with _tutorial_operation(path):
+        return _open_project(path, make_default)
+
+
+def _open_project(path: Path, make_default: bool) -> dict:
+    global DEFAULT_PROJECT
     if not path.is_dir():
         raise RuntimeError(f"目录不存在: {path}")
     pid = _project_id(path)
@@ -2993,7 +3011,8 @@ def api_projects_open():
                 }
             ), 400
         try:
-            p.mkdir(parents=True, exist_ok=True)
+            with _tutorial_operation(p):
+                p.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
             return jsonify(
                 {
@@ -3066,6 +3085,7 @@ def api_tutorial():
 
 
 @app.post("/api/tutorial/open")
+@_tutorial_operation()
 def api_tutorial_open():
     """确保可写副本（缺文件就补）→ 走普通 `open_project()` → 回状态 + 元数据。"""
     body = request.get_json(silent=True) or {}
@@ -3139,6 +3159,7 @@ def _clear_tutorial_local_state(
 
 
 @app.post("/api/tutorial/reset")
+@_tutorial_operation()
 def api_tutorial_reset():
     """重新开始教程：关掉打开着的教程项目 → 原子换成干净副本 → 重新打开。"""
     body = request.get_json(silent=True) or {}
