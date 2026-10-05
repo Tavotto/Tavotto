@@ -285,7 +285,7 @@
 - **交给安装器的字符串一律 `requirement_string()` 重新序列化**（名字 PEP 503、extras PEP 685、specifier 规范串）；
   原文不进 argv / 需求文件。
 - 状态闭集 `nothing_needed` / `ready` / `blocked`，**blocked 优先于 nothing_needed**（不完整的计划什么都不缺也是
-  blocked）；blocked 理由闭集 `BLOCK_REASONS`（四条）。`identity` 只由意图
+  blocked）；blocked 理由闭集 `BLOCK_REASONS`（五条，第五条 `dependency_scope_conflict` 由 `deprepair` 对着账加，见下「授权影响摘要」）。`identity` 只由意图
   决定、不含路径（受管环境代目录按它命名，PR B）。
 - 看护：`tests/test_dependency_plan.py`（语法 / include 边界 / PEP 723 / PEP 735 / Poetry / 3.10 无 tomllib 的分支 /
   上下文 × 桶 / 选择 / 计划的每一条「不装」）+ `tests/test_execution_receipt.py::TestDependencyIntent`。
@@ -406,6 +406,33 @@
   老记录不追溯。
 - **会话**：`prepsession.checks_of` 的 `environment` 检查项在 `needs_decision` 时 `needs_action`（`environment_choice_required`），
   `requirements[].kind = environment_choice`，载荷是 `recommendation`；回答走采用端点 / 选回内置，再 `recheck`。
+
+## 授权影响摘要 / 认领 / 采用互斥 / 多作用域互斥（T06，ADR 0115，2026-10-05）
+
+> 用户确认的是**这次安装的实际影响**，不是某个 plan_id。全文与取舍见 ADR 0115；这里是规则。
+
+- **摘要只有一处算**：`deprepair.impact_of`（目标与作用域、具体安装集合 / 约束 / hash 模式 / adapter / 组、是否新建环境、私有 Python 下载、
+  写入范围、回滚性质、目标环境与代〔不透明引用〕、`IMPACT_VERSION`）；`impact_digest` 是它的摘要。**不在里面**：进度 / 文案 / 计划 id / 有效期 /
+  事实 digest / 规划输入指纹。门显示的（`offer_impact`）与绑定出的计划（`JointRepairPlan.impact` / `RepairPlan.impact`）共用 `_managed_scope`，逐字相同。
+  新增一类影响要升 `IMPACT_VERSION`。
+- **对不上就是 `dependency_impact_changed`，认领之前、零副作用**：`prepare_async(confirmed_impact=)` / `start_confirmed(digest)`；响应带此刻的实际影响。
+  会改用户自己环境的动作必须回显摘要（会话 400 `preparation_impact_unconfirmed`）；使用（采用）环境不含修改权限。
+- **认领幂等**：`_claim` 在起线程之前、锁内，联合准备与单包修复（`install_async` / `install`）一样；`start_confirmed` 在 `_lock` 里比较 + 认领，同一份摘要的在途作业
+  （`_joined`）被另一个标签页 / 会话确认时认领原作业（`started=False, joined=True`，`add_listener` 追加监听），不起第二个 pip；不同摘要撞同一环境由 `envlease` 报忙。
+- **采用与安装互斥**：`unless_installing(project, action)`（与 `_claim` 同一把锁）包住项目范围的采用 / 选回默认；候选环境本身在被改动时也拒；计划记
+  `selection_signature`，执行前再比（`repair_plan_stale`）；`trigger=dependency_repair` 的记录不算用户的决定。
+- **准备会话**：动作 `prepare_dependencies` 引用 `deprepair.start_confirmed`，phase `preparing_environment` 由依赖作业事实派生；终态 `done` 后同一会话按新环境重新检查，
+  只重算差额（`dependency_delta`）；失败 / 取消在报告里带码并给**新的**授权动作；运行时缺包 = 新的一次尝试（outcome `needs_dependencies`）。认领了别人先起的作业不拥有它（不提供取消）。
+- **多作用域互斥（D04）**：账的每一笔记 `scope`（脚本所在目录）；`_with_scope_check` 对着账核：已装但不满足本作用域声明的 / 需求 / 约束与别的作用域装的版本互斥 → `blocked`
+  `dependency_scope_conflict`（带冲突项与出路）。老账无归属、同作用域改声明都不算。出路：`scope_policy=switch`（只对受管环境；新一代装本作用域全集、账换掉、`drops` / `changes` 进摘要、
+  失败不动 active 与账）/ 子目录当独立项目。
+- **全局显式解释器压着（E05）**：联合准备与单包修复一样不形成计划（`create_joint_plan` 先 `_refuse_if_pinned`）、门放行（`gate` 见 `offer.pinned` 回 None，不先让用户确认一次必败的安装）、
+  offer 的 `impact` 为空并只带 `pinned = {source, variable}`（不带路径）、准备会话的 `dependencies` 检查项 `blocked`/`dependency_interpreter_pinned` 且不给授权动作；租约在手之后再复查一次
+  （`_GenerationJob.refuse_pinned` / 原地路径 / 单包受管分支），确认窗口里被钉上也一个字节不装。
+- **计划 / 作业 id 带前缀 `dp-`**（`new_plan_id`）：裸 `token_urlsafe` 约 1/32 以 `-` / `_` 开头，而 `taskdiag.ident` 要求首字符字母数字——那些作业的终局快照会悄悄存不进去。
+- **终局进任务诊断**：`taskdiag.KIND_DEPENDENCY`，`deprepair.diagnostic_projection` 白名单（计数 / 闭集 / 稳定码 / 不透明摘要；包名、路径、pip 原文、镜像地址不进）。
+- 看护：`tests/test_dependency_impact.py`、`tests/test_dependency_scope.py`、`tests/test_preparation_session_dependencies.py`、黄金向量
+  `tests/golden/preparation_session_vectors.json`（新增依赖事实 8 条）。
 
 ## 速查表原要点（2026-09-25 迁入，#608）
 

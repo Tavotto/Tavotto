@@ -67,6 +67,7 @@ const BLOCKED_TEXT: Record<string, string> = {
   dependency_declaration_unsupported: 'engine.dependencyBlocked_dependency_declaration_unsupported',
   dependency_conflict: 'engine.dependencyBlocked_dependency_conflict',
   dependency_hashes_incomplete: 'engine.dependencyBlocked_dependency_hashes_incomplete',
+  dependency_scope_conflict: 'engine.dependencyBlocked_dependency_scope_conflict',
   dependency_target_unavailable: 'engine.dependencyBlocked_dependency_target_unavailable',
 }
 

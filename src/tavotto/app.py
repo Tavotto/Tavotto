@@ -7148,6 +7148,42 @@ def _publish_preparation_session(payload: dict) -> None:
 engine_prepsession.SESSIONS.notifier = _publish_preparation_session
 
 
+def _dependency_event_sink(ctx: "ProjectCtx", extra=None):
+    """依赖作业的进度出口（旧的 `/dependencies/prepare`、`/dependency/install` 与准备会话共用）：转发 SSE
+    `engine.dependency`；到终局把现场冻结成任务诊断快照（T06，按项目 id 认领）；会话想听进度时 `extra` 也收一份。"""
+
+    def sink(snapshot: dict) -> None:
+        sse_publish("engine.dependency", snapshot)
+        if snapshot.get("state") in (
+            engine_deprepair.STATE_DONE,
+            engine_deprepair.STATE_FAILED,
+            engine_deprepair.STATE_CANCELLED,
+        ):
+            engine_deprepair.record_task_diagnostic(ctx.id, snapshot)
+        if extra is not None:
+            extra(snapshot)
+
+    return sink
+
+
+def _session_dependency_starter(ctx: "ProjectCtx"):
+    """准备会话的 `prepare_dependencies` 动作怎么起依赖作业：一律走 `deprepair.start_confirmed`（按已确认的影响
+    摘要现算计划 → 比摘要 → 认领 → 起线程），不另写安装逻辑。"""
+
+    def start(*, project_root, script, digest, target_kind, module, scope_policy, on_event) -> dict:
+        return engine_deprepair.start_confirmed(
+            project_root,
+            script,
+            digest,
+            target_kind=target_kind,
+            module=module,
+            scope_policy=scope_policy,
+            on_event=_dependency_event_sink(ctx, on_event),
+        )
+
+    return start
+
+
 @app.post("/api/engine/preparation-sessions")
 def api_engine_preparation_session_create():
     """为一个目标（`{script, entry?}` 一份只有脚本的目标，或 `{id}` 一张已知素材）创建 / 复用检查会话。
@@ -7194,16 +7230,18 @@ def api_engine_preparation_session_action(session_id: str):
     """
     ctx = current_ctx()
     body = request.get_json(force=True) or {}
-    extra = sorted(set(body) - {"action_id", "expected_config_revision"})
+    extra = sorted(set(body) - {"action_id", "expected_config_revision", "impact_digest"})
     revision = body.get("expected_config_revision")
+    echoed = body.get("impact_digest")
     if (
         extra
         or not isinstance(body.get("action_id"), str)
         or (revision is not None and (not isinstance(revision, int) or isinstance(revision, bool)))
+        or (echoed is not None and not isinstance(echoed, str))
     ):
         return jsonify(
             {
-                "error": "只接受 action_id（字符串）与 expected_config_revision（整数）",
+                "error": "只接受 action_id（字符串）、expected_config_revision（整数）与 impact_digest（字符串）",
                 "code": "bad_request",
                 "params": {"unexpected": extra},
             }
@@ -7216,13 +7254,19 @@ def api_engine_preparation_session_action(session_id: str):
             revision,
             launch=lambda plan, on_done: _launch_preparation(ctx, plan, on_done),
             finalize=lambda plan, result: _finalize_script_attempt(ctx, plan, result),
+            impact_digest=echoed,
+            prepare=_session_dependency_starter(ctx),
         )
     except engine_prepsession.SessionError as exc:
         return _session_error(exc)
     report = _session_report(ctx, sess)
     resp = jsonify({"claimed": claimed, "report": report})
     # 202 = 这次请求起了一次新的执行；其余（重复认领 / 取消 / 重新检查）都是 200
-    resp.status_code = 202 if claimed and kind == engine_prepsession.ACTION_RUN else 200
+    resp.status_code = (
+        202
+        if claimed and kind in (engine_prepsession.ACTION_RUN, engine_prepsession.ACTION_PREPARE)
+        else 200
+    )
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
@@ -7563,7 +7607,12 @@ def _set_project_environment(
     if not raw:
         # 清掉 = 用户明确选回默认链条（U03，FO-013）：记成一条决定，而不是「忘了」——
         # 忘了的话下一次首开又会把项目 venv 发现出来、盖掉这次的选择。
-        engine_projectenv.remember_default(root)
+        try:
+            engine_deprepair.unless_installing(
+                root, lambda: engine_projectenv.remember_default(root)
+            )
+        except engine_envlease.EnvironmentBusy as exc:
+            return _environment_busy(exc)
         engine_pool.reset_worker_python()
         engine_pool.shutdown_all(root)
         return jsonify({"ok": True, "project": _project_environment_state()})
@@ -7604,26 +7653,43 @@ def _set_project_environment(
                 },
             }
         ), 400
-    engine_projectenv.remember(
-        root,
-        str(candidate),
-        automatic=False,
-        trigger=(
-            adopted_from
-            or (
-                engine_deprepair.TRIGGER_USER_ENVIRONMENT
-                if user_environment
-                else "missing_dependency"
-                if module
-                else "user_selected"
-            )
-        ),
-        module=module,
-        health=health,
-    )
+    # 采用与依赖安装互斥（T06）：安装结束会把结果记成项目的环境，与这里的写入交错，后写的静默盖掉先写的。
+    # 目标环境本身正被改动（别的项目的原地安装）时它的体检也是瞬时的，一并拒绝
+    if engine_envlease.is_mutating(str(candidate)):
+        return _environment_busy(
+            engine_envlease.EnvironmentBusy("这个环境正在安装依赖，请等它结束再采用。")
+        )
+    try:
+        engine_deprepair.unless_installing(
+            root,
+            lambda: engine_projectenv.remember(
+                root,
+                str(candidate),
+                automatic=False,
+                trigger=(
+                    adopted_from
+                    or (
+                        engine_deprepair.TRIGGER_USER_ENVIRONMENT
+                        if user_environment
+                        else "missing_dependency"
+                        if module
+                        else "user_selected"
+                    )
+                ),
+                module=module,
+                health=health,
+            ),
+        )
+    except engine_envlease.EnvironmentBusy as exc:
+        return _environment_busy(exc)
     engine_pool.reset_worker_python()
     engine_pool.shutdown_all(root)
     return jsonify({"ok": True, "health": health, "project": _project_environment_state()})
+
+
+def _environment_busy(exc: "engine_envlease.EnvironmentBusy"):
+    """环境正被依赖安装占着：采用 / 选回默认被拒（409，稳定 code），让用户等安装结束。"""
+    return jsonify({"error": str(exc), "code": exc.code}), 409
 
 
 def _project_env_message(health: dict) -> str:
@@ -7666,6 +7732,11 @@ def _repair_error(exc: "engine_deprepair.RepairError", status: int = 400):
         # 全局显式解释器压住了项目级决策（#465）：与 `offer()` 同一形状，界面据此
         # 给「恢复自动检测」或「清掉环境变量后重启」
         body["pinned"] = pinned
+    impact = (exc.extra or {}).get("impact")
+    if isinstance(impact, dict):
+        # 影响摘要对不上（T06）：把此刻的实际影响交回去，界面让用户对着它重新确认
+        body["impact"] = impact
+        body["impact_digest"] = (exc.extra or {}).get("impact_digest", "")
     joint = (exc.extra or {}).get("joint")
     if isinstance(joint, dict):
         # 联合计划不可执行（blocked / 什么都不缺）：把计划原样交回去，界面按 blocked 的
@@ -7726,8 +7797,9 @@ def api_dependency_install():
         return jsonify(
             {"error": "这个修复计划不属于当前项目。", "code": engine_deprepair.ERROR_NOT_ALLOWED}
         ), 409
-    engine_deprepair.install_async(plan_id, lambda p: sse_publish("engine.dependency", p))
-    return jsonify({"started": True, **engine_deprepair.progress(plan_id)})
+    # 同一份计划只认领一次：另一个标签页先点了，这里得到的是在途的进度（`started: false`），不起第二个 pip
+    started = engine_deprepair.install_async(plan_id, _dependency_event_sink(current_ctx()))
+    return jsonify({"started": started, **engine_deprepair.progress(plan_id)})
 
 
 @app.post("/api/engine/dependency/cancel")
@@ -7854,7 +7926,16 @@ def api_dependencies_prepare():
         ), 409
     # 认领与取消句柄都在 `prepare_async` 里、起线程**之前**：202 一回去用户就能取消，哪怕线程还在
     # 重算事实、还没拿锁；第一次完成前重复提交不起第二个线程，只把在途的进度交回去（Codex #470 P1）
-    started = engine_deprepair.prepare_async(plan_id, lambda p: sse_publish("engine.dependency", p))
+    # `impact_digest`（可选，T06）：调用方回显它看到的影响摘要；给了就必须与计划此刻的实际影响一致
+    echoed = body.get("impact_digest")
+    try:
+        started = engine_deprepair.prepare_async(
+            plan_id,
+            _dependency_event_sink(current_ctx()),
+            confirmed_impact=echoed if isinstance(echoed, str) else None,
+        )
+    except engine_deprepair.RepairError as exc:
+        return _repair_error(exc, 409)
     return jsonify({"started": started, **engine_deprepair.progress(plan_id)})
 
 
