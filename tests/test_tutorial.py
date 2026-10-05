@@ -735,7 +735,7 @@ def test_reset_waits_for_tutorial_initialization(client, data_dir, monkeypatch, 
     assert disk["fig1_kinetics.py"]["entry"] == "main"
     functions = {
         node.name
-        for node in ast.parse((tp.path / "fig1_kinetics.py").read_text()).body
+        for node in ast.parse((tp.path / "fig1_kinetics.py").read_text(encoding="utf-8")).body
         if isinstance(node, ast.FunctionDef)
     }
     assert "main" in functions and "before_reset" not in functions
