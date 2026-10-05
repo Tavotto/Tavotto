@@ -200,3 +200,11 @@
 `argv` 字段、调用形状与此前相同。后端错误码 `invalid_argv` / `run_config_*` 走 `errors:backend.*`。界面不另判"能不能跑"。
 看护：`store/scriptArgv.test.ts`、`store/scriptRunArgv.test.ts`、`components/ScriptArgvEditor.test.tsx`。
 
+**参数表单与粘贴命令（T07）**：展开时取一次静态 schema（`fetchScriptArguments`，后端只读源码）；有参数就在列表上方多一个表单
+（`ScriptArgsForm`）。表单**不另存意图**：每次从草稿 token 读出字段视图（`readTokens`），编辑 = 只改这个参数自己那几个 token
+（`applyEdit`，`scriptArgvStore.setTokens`），认不出的 token 原样留在原位并列出来；默认值只当占位符，删光输入 = 空字符串、× = 不提供，
+BooleanOptional 三态；编辑被拒时输入框保留原值与焦点、token 不变、说出原因；缺必填 / 互斥冲突只提示不拦。粘贴命令（`lib/argvPaste.ts`）
+只接受一条简单 POSIX sh 调用（拒绝管道 / 重定向 / 变量 / 通配符 / 多行 / 前置赋值，失败提示改用逐项填写），被接受的分词与
+`shlex.split` 逐项相同。两份 golden：`tests/golden/script_args_form_vectors.json`、`argv_paste_vectors.json`。
+看护：`lib/scriptArgsForm.golden.test.ts`、`lib/argvPaste.golden.test.ts`、`components/ScriptArgsForm.test.tsx`。
+

@@ -203,6 +203,22 @@ input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/pr
 = 新 `config_revision`），`impact.script_arguments` 只给个数。请求体：`{script, entry?, argv?, argv_sensitive?}`，已知素材（`id`）
 不接受另给 argv（它的配置冻结在资产 id 里）。执行线程取消 / 复用 / 回执都带 `run`，所以取消 A 配置不会杀 B 配置的会话。
 
+## 参数、数据与输出在同一个会话里（T07）
+
+- **参数**：脚本有 argparse 字面量证据（`scriptargs.analyze_file`，只读源码、按 mtime 缓存）时才多一项检查 `arguments`
+  （**永远 `ok`**，`detail` 只有计数：`schema` / `arguments` / `required` / `output_files` / `form_enabled`）和一项
+  `requirements[kind=script_arguments, blocking=False]`（`payload.schema` + 本次配置的 `argv_count` / `run_config`）。它是表单建议，
+  不改 phase、不撤 `run`：静态看缺必填照样能跑（真 parser 说缺参仍是既有的 `script_needs_arguments`），识别不全标 `partial`。
+  没有 argparse 证据的脚本报告形状与 T06 一字不差；已知素材目标（`asset`）不提议表单。
+- **数据缺失**：执行线程把 `WorkerError.missing_input`（ADR 0106 的指认载荷）存进 `PreparationResult.missing_input`（**不进**
+  `to_payload()`、回执与诊断快照）；当前修订的尝试以错误收场且带它时，报告多 `requirements[kind=input_location, origin=last_attempt,
+  blocking=False]`。回答走既有 `POST /api/engine/input-remap`（用户亲手指认，同名不同内容不就近猜），之后 `recheck`：
+  `_fingerprint` 含 `inputremap.generation`，改指表变了 = 新 `config_revision`，旧失败不再是当前的。
+- **输出参数**（P03）：schema 里 `role=output_file`（只来自 `FileType('w'|'a'|'x'|…)`）的个数进 `run` 动作的
+  `impact.script_writes = {declared_output_arguments, cwd_mode}`（不含参数名与路径）。Tavotto 从不替用户加 overwrite / force 一类 token。
+- 看护：`tests/test_script_args_session.py`（假 pool）、`tests/test_script_args_e2e.py`（真 worker：A01 表单路径 = 原始 token 路径、
+  A05 输出参数只执行一次不覆盖、数据指认后同一会话出图）。
+
 ## 终局诊断快照（T04）
 
 `PreparationService._finish` 在每个终局（`ready` / `error` / `cancelled`；`needs_input` 在执行线程里同走 `_finish`）之后调

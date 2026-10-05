@@ -481,6 +481,10 @@ class PreparationResult:
     #: 这次 build 捕获到的东西（T01）：`{"stems", "descriptors", "remap_generation"}`——执行之后要登记 /
     #: 物化的调用方（`prepsession`）从这里拿，不必再问 worker。**不进 `to_payload()`**（描述符里有路径）。
     captured: dict | None = None
+    #: 数据找不到时的指认载荷（ADR 0106，`pool._offer_missing_input` 挂在 `WorkerError.missing_input` 上的那份）。
+    #: T07：准备会话把它当一项待答的需求（回答走既有的 `/api/engine/input-remap`）。**不进 `to_payload()`**：
+    #: 里面是脚本里写的路径串，诊断快照与回执都不带它。
+    missing_input: dict | None = None
 
     def to_payload(self) -> dict:
         return {
@@ -689,6 +693,9 @@ class PreparationService:
             project_env = getattr(exc, "project_env", None)
             if isinstance(project_env, dict):
                 error["project_env"] = _public_project_env(project_env)
+            missing_input = getattr(exc, "missing_input", None)
+            if isinstance(missing_input, dict):
+                result.missing_input = dict(missing_input)
             result.error = error
             # 脚本自己炸 / 缺依赖是「执行」那一步坏的；起不来（解释器 / 沙盒）是「起会话」坏的
             tr.fail("execute" if getattr(exc, "traceback_text", None) else "spawn", error["code"])

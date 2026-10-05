@@ -21,6 +21,8 @@ export interface ScriptArgvDraft {
 interface ScriptArgvStore {
   drafts: Record<string, ScriptArgvDraft>
   setToken: (script: string, index: number, value: string) => void
+  /** 整串换掉（T07：表单编辑 / 粘贴命令算出的新 token 列表；表单不另存一份意图） */
+  setTokens: (script: string, tokens: readonly string[]) => void
   addToken: (script: string, value?: string) => void
   removeToken: (script: string, index: number) => void
   moveToken: (script: string, index: number, delta: -1 | 1) => void
@@ -49,6 +51,7 @@ export const useScriptArgvStore = create<ScriptArgvStore>((set) => ({
           : { ...d, tokens: d.tokens.map((t, i) => (i === index ? value : t)) },
       ),
     ),
+  setTokens: (script, tokens) => set((s) => update(s, script, (d) => ({ ...d, tokens: [...tokens] }))),
   addToken: (script, value = '') =>
     set((s) => update(s, script, (d) => ({ ...d, tokens: [...d.tokens, value] }))),
   removeToken: (script, index) =>

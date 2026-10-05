@@ -1,0 +1,269 @@
+{
+ "version": 1,
+ "note": "T07 粘贴命令 → token：accepted 的 words 必须等于 Python shlex.split（tests/test_script_args.py）；TS 实现 web/src/lib/argvPaste.ts 逐条对拍（argvPaste.golden.test.ts）",
+ "accepted": [
+  {
+   "text": "python plot.py --freq 3 --tag \"a b\"",
+   "script": "plot.py",
+   "words": [
+    "python",
+    "plot.py",
+    "--freq",
+    "3",
+    "--tag",
+    "a b"
+   ],
+   "argv": [
+    "--freq",
+    "3",
+    "--tag",
+    "a b"
+   ]
+  },
+  {
+   "text": "python3 scripts/plot.py --name '中文 名' ''",
+   "script": "scripts/plot.py",
+   "words": [
+    "python3",
+    "scripts/plot.py",
+    "--name",
+    "中文 名",
+    ""
+   ],
+   "argv": [
+    "--name",
+    "中文 名",
+    ""
+   ]
+  },
+  {
+   "text": "/usr/bin/python3.12 ./plot.py -3 -- -x",
+   "script": "plot.py",
+   "words": [
+    "/usr/bin/python3.12",
+    "./plot.py",
+    "-3",
+    "--",
+    "-x"
+   ],
+   "argv": [
+    "-3",
+    "--",
+    "-x"
+   ]
+  },
+  {
+   "text": "plot.py --k=v -k5",
+   "script": "plot.py",
+   "words": [
+    "plot.py",
+    "--k=v",
+    "-k5"
+   ],
+   "argv": [
+    "--k=v",
+    "-k5"
+   ]
+  },
+  {
+   "text": "./plot.py a\\ b c",
+   "script": "plot.py",
+   "words": [
+    "./plot.py",
+    "a b",
+    "c"
+   ],
+   "argv": [
+    "a b",
+    "c"
+   ]
+  },
+  {
+   "text": "--freq 3 --mode sin",
+   "script": "plot.py",
+   "words": [
+    "--freq",
+    "3",
+    "--mode",
+    "sin"
+   ],
+   "argv": [
+    "--freq",
+    "3",
+    "--mode",
+    "sin"
+   ]
+  },
+  {
+   "text": "python plot.py --path \"C:\\data\\x.csv\" --q 'it\"s'",
+   "script": "plot.py",
+   "words": [
+    "python",
+    "plot.py",
+    "--path",
+    "C:\\data\\x.csv",
+    "--q",
+    "it\"s"
+   ],
+   "argv": [
+    "--path",
+    "C:\\data\\x.csv",
+    "--q",
+    "it\"s"
+   ]
+  },
+  {
+   "text": "py.exe plot.py train --lr 0.1",
+   "script": "plot.py",
+   "words": [
+    "py.exe",
+    "plot.py",
+    "train",
+    "--lr",
+    "0.1"
+   ],
+   "argv": [
+    "train",
+    "--lr",
+    "0.1"
+   ]
+  },
+  {
+   "text": "python plot.py a\"b c\"d \"say \\\"hi\\\"\"",
+   "script": "plot.py",
+   "words": [
+    "python",
+    "plot.py",
+    "ab cd",
+    "say \"hi\""
+   ],
+   "argv": [
+    "ab cd",
+    "say \"hi\""
+   ]
+  },
+  {
+   "text": "python plot.py --x=a#b",
+   "script": "plot.py",
+   "words": [
+    "python",
+    "plot.py",
+    "--x=a#b"
+   ],
+   "argv": [
+    "--x=a#b"
+   ]
+  },
+  {
+   "text": "python plot.py\n",
+   "script": "plot.py",
+   "words": [
+    "python",
+    "plot.py"
+   ],
+   "argv": []
+  }
+ ],
+ "rejected": [
+  {
+   "text": "python plot.py | tee log",
+   "script": "plot.py",
+   "error": "unsupported_syntax"
+  },
+  {
+   "text": "python plot.py > out.txt",
+   "script": "plot.py",
+   "error": "unsupported_syntax"
+  },
+  {
+   "text": "python plot.py --n $(nproc)",
+   "script": "plot.py",
+   "error": "unsupported_syntax"
+  },
+  {
+   "text": "python plot.py --home $HOME",
+   "script": "plot.py",
+   "error": "unsupported_syntax"
+  },
+  {
+   "text": "python plot.py --x \"$HOME\"",
+   "script": "plot.py",
+   "error": "unsupported_syntax"
+  },
+  {
+   "text": "python plot.py; rm -rf x",
+   "script": "plot.py",
+   "error": "unsupported_syntax"
+  },
+  {
+   "text": "python plot.py && echo ok",
+   "script": "plot.py",
+   "error": "unsupported_syntax"
+  },
+  {
+   "text": "python plot.py *.csv",
+   "script": "plot.py",
+   "error": "unsupported_syntax"
+  },
+  {
+   "text": "python plot.py ~/data",
+   "script": "plot.py",
+   "error": "unsupported_syntax"
+  },
+  {
+   "text": "python plot.py # comment",
+   "script": "plot.py",
+   "error": "unsupported_syntax"
+  },
+  {
+   "text": "python plot.py `date`",
+   "script": "plot.py",
+   "error": "unsupported_syntax"
+  },
+  {
+   "text": "python plot.py --a 1 \\\n --b 2",
+   "script": "plot.py",
+   "error": "multiline"
+  },
+  {
+   "text": "python plot.py --a 1\npython plot.py --b 2",
+   "script": "plot.py",
+   "error": "multiline"
+  },
+  {
+   "text": "python plot.py --tag 'open",
+   "script": "plot.py",
+   "error": "unbalanced_quote"
+  },
+  {
+   "text": "MPLBACKEND=Agg python plot.py",
+   "script": "plot.py",
+   "error": "env_assignment"
+  },
+  {
+   "text": "python -u plot.py",
+   "script": "plot.py",
+   "error": "interpreter_options"
+  },
+  {
+   "text": "python -m mypkg.plot",
+   "script": "plot.py",
+   "error": "interpreter_options"
+  },
+  {
+   "text": "python other.py --a 1",
+   "script": "plot.py",
+   "error": "different_script"
+  },
+  {
+   "text": "uv run plot.py --a 1",
+   "script": "plot.py",
+   "error": "unrecognized_launcher"
+  },
+  {
+   "text": "   ",
+   "script": "plot.py",
+   "error": "empty"
+  }
+ ]
+}
