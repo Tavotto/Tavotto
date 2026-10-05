@@ -102,6 +102,43 @@ export function DiagnosticsSettings() {
   // 分区之间的间距由外壳统一给：`display: contents` 让三块直接成为内容容器的子项
   return (
     <div className="contents" data-diagnostics-page>
+      <DiagnosticsReportSection />
+
+      {/* 给开发者：记录拖动性能 + 技术详情（来源 / 版本 / 检查明细）。默认折叠；
+          运行设置（用哪个 Python、运行目录……）已搬到「项目」页 */}
+      <DiagnosticDisclosure title={st('diagnostics.devTitle')} data-diagnostics-dev>
+        <PerfProbeRow />
+        {env?.ok && (
+          <>
+            <DiagnosticItem
+              name={st('about.engineStatus')}
+              value={en(`sourceLabel.${env.source || 'unknown'}`, { product: PRODUCT_NAME })}
+            />
+            <DiagnosticItem name="matplotlib" value={env.matplotlib ?? '—'} />
+            {/* 两个环境曾经同名，于是两页的状态看起来对不上（审计 T47） */}
+            <p className="type-caption">
+              {st('diagnostics.envNote', { product: PRODUCT_NAME })}
+            </p>
+          </>
+        )}
+        {(checks ?? [])
+          .filter((c) => c.ok && c.detail)
+          .map((c) => (
+            <DiagnosticItem
+              key={c.id}
+              name={checkLabel(c)}
+              value={
+                DIR_DETAIL_CHECKS.has(c.id) ? (
+                  <PathValue path={c.detail} name={checkLabel(c)} />
+                ) : (
+                  c.detail
+                )
+              }
+            />
+          ))}
+      </DiagnosticDisclosure>
+
+      {/* 自动回包的高度不可预知：健康结果与恢复卡放在稳定入口之后，错误照旧常驻。 */}
       <SettingSection title={st('diagnostics.healthTitle')}>
         {checks === null ? (
           <p data-diagnostics-loading className="type-meta">{st('about.detecting')}</p>
@@ -151,42 +188,6 @@ export function DiagnosticsSettings() {
         {/* 缺件 / 损坏：恢复入口整张常驻（那时它给的是「自动安装 / 换解释器」） */}
         {env && !env.ok && <EngineEnvironmentCard />}
       </SettingSection>
-
-      <DiagnosticsReportSection />
-
-      {/* 给开发者：记录拖动性能 + 技术详情（来源 / 版本 / 检查明细）。默认折叠；
-          运行设置（用哪个 Python、运行目录……）已搬到「项目」页 */}
-      <DiagnosticDisclosure title={st('diagnostics.devTitle')} data-diagnostics-dev>
-        <PerfProbeRow />
-        {env?.ok && (
-          <>
-            <DiagnosticItem
-              name={st('about.engineStatus')}
-              value={en(`sourceLabel.${env.source || 'unknown'}`, { product: PRODUCT_NAME })}
-            />
-            <DiagnosticItem name="matplotlib" value={env.matplotlib ?? '—'} />
-            {/* 两个环境曾经同名，于是两页的状态看起来对不上（审计 T47） */}
-            <p className="type-caption">
-              {st('diagnostics.envNote', { product: PRODUCT_NAME })}
-            </p>
-          </>
-        )}
-        {(checks ?? [])
-          .filter((c) => c.ok && c.detail)
-          .map((c) => (
-            <DiagnosticItem
-              key={c.id}
-              name={checkLabel(c)}
-              value={
-                DIR_DETAIL_CHECKS.has(c.id) ? (
-                  <PathValue path={c.detail} name={checkLabel(c)} />
-                ) : (
-                  c.detail
-                )
-              }
-            />
-          ))}
-      </DiagnosticDisclosure>
     </div>
   )
 }

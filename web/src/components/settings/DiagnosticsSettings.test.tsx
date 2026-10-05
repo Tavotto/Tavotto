@@ -49,10 +49,10 @@ const CHECKS = [
 let host: HTMLDivElement
 let root: Root
 
-async function mount(checks = CHECKS) {
+async function mount(checks = CHECKS, response?: Promise<Response>) {
   vi.stubGlobal(
     'fetch',
-    vi.fn(() => Promise.resolve({ json: () => Promise.resolve({ checks }), ok: true } as Response)),
+    vi.fn(() => response ?? Promise.resolve({ json: () => Promise.resolve({ checks }), ok: true } as Response)),
   )
   useEnvStore.setState({
     env: {
@@ -96,6 +96,39 @@ afterEach(() => {
 })
 
 describe('首屏', () => {
+  it('健康结果与恢复卡只在操作区之后增长，加载与失败信息照旧可见', async () => {
+    let resolve!: (value: Response) => void
+    const pending = new Promise<Response>((done) => { resolve = done })
+    await mount(CHECKS, pending)
+    const page = document.querySelector('[data-diagnostics-page]')!
+    const dev = page.querySelector('[data-diagnostics-dev]')!
+    const toggle = dev.querySelector('button')!
+    const health = [...page.querySelectorAll('section')].find((s) =>
+      s.querySelector('h3')?.textContent === st('diagnostics.healthTitle'),
+    )!
+    expect(page.querySelector('[data-diagnostics-loading]')?.textContent).toBe(st('about.detecting'))
+    expect(dev.compareDocumentPosition(health) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    await act(async () => { toggle.click() })
+    const start = page.querySelector('[data-perf-probe-start]')!
+    expect(start).not.toBeNull()
+    await act(async () => {
+      resolve({ json: () => Promise.resolve({ checks: CHECKS }), ok: true } as Response)
+    })
+    expect(page.querySelector('[data-diagnostics-loading]')).toBeNull()
+    expect(page.querySelector('[data-diagnostics-summary]')?.textContent)
+      .toContain(st('diagnostics.summaryFailing', { count: 1 }))
+    expect(page.querySelector('[data-diagnostics-failures]')?.textContent)
+      .toContain(st('about.check.project_writable'))
+    await act(async () => {
+      useEnvStore.setState({ env: { ...useEnvStore.getState().env!, ok: false } })
+    })
+    expect(health.querySelector('[data-engine-env-card]')).not.toBeNull()
+    expect(page.querySelector('[data-diagnostics-dev] > div > button')).toBe(toggle)
+    expect(page.querySelector('[data-perf-probe-start]')).toBe(start)
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    expect(health.closest('[data-diagnostics-dev]')).toBeNull() // 错误与恢复卡不藏进技术详情
+  })
+
   it('异常项在首屏并说原因；正常项默认折叠（审计 T47）', async () => {
     await mount()
     expect(text()).toContain(st('diagnostics.summaryFailing', { count: 1 }))

@@ -305,19 +305,21 @@ function GeometrySection({ objs }: { objs: PanelObject[] }) {
         （审计 T26 验收：不混淆裁剪、原图尺寸和画布缩放）。两颗都是次级操作：
         ghost 文字键、不撑满、同高同图标档——不是两个 CTA。
       */}
-      <Row className="mt-1.5" label={pn('restore')} labelWidth={INSPECTOR_LABEL_W}>
-        <Tip label={pn('aspectTip')}>
-          <Button data-panel-restore="aspect" variant="ghost" size="sm" className="-ml-2" onClick={() => restorePanelAspect(ids)}>
-            <Ratio size={ICON_SIZE.sm} className="text-ink-3" />
-            {pn('aspect')}
-          </Button>
-        </Tip>
-        <Tip label={pn('nativeSizeTip')}>
-          <Button data-panel-restore="size" variant="ghost" size="sm" onClick={() => restorePanelNativeSize(ids)}>
-            <Scaling size={ICON_SIZE.sm} className="text-ink-3" />
-            {pn('nativeSize')}
-          </Button>
-        </Tip>
+      <Row className="mt-1.5" label={pn('restore')} labelWidth={INSPECTOR_LABEL_W} align="start">
+        <div className="flex w-full min-w-0 flex-wrap gap-1.5">
+          <Tip label={pn('aspectTip')}>
+            <Button data-panel-restore="aspect" variant="ghost" size="sm" className="-ml-2" onClick={() => restorePanelAspect(ids)}>
+              <Ratio size={ICON_SIZE.sm} className="text-ink-3" />
+              {pn('aspect')}
+            </Button>
+          </Tip>
+          <Tip label={pn('nativeSizeTip')}>
+            <Button data-panel-restore="size" variant="ghost" size="sm" onClick={() => restorePanelNativeSize(ids)}>
+              <Scaling size={ICON_SIZE.sm} className="text-ink-3" />
+              {pn('nativeSize')}
+            </Button>
+          </Tip>
+        </div>
       </Row>
     </Section>
   )
