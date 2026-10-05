@@ -102,7 +102,7 @@ jobs:
   # ────────────────────────────────────────────────────────────────
   trust:
     timeout-minutes: 60  # 上限是防挂死、不是性能预算：把损失从「无限」变成「有界」
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # 顶层是 contents: read；这里加 issues: read 是给 release-blocker 门禁
     # 查 label 用的。job 级 permissions 会整个替换默认，contents 要重申。
     permissions:
@@ -115,7 +115,7 @@ jobs:
       publish: ${{ steps.resolve.outputs.publish }}
       pypi_target: ${{ steps.resolve.outputs.pypi_target }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -252,17 +252,17 @@ jobs:
   build:
     needs: trust
     timeout-minutes: 60  # 上限是防挂死、不是性能预算：把损失从「无限」变成「有界」
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ needs.trust.outputs.sha }}
 
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+      - uses: actions/setup-python@v6
         with: { python-version: "3.13" }
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: pnpm/action-setup@v6
         with: { version: 11.27.1 }
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: pnpm
@@ -365,13 +365,13 @@ jobs:
             --add "codex-plugin-manifest:dist/codex-plugin.json:any" \
             --add "codex-plugin-build:dist/codex-plugin-build.json:any"
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@v6
         with:
           name: dist
           path: dist/
           if-no-files-found: error
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@v6
         with:
           name: artifact-manifest-python
           path: dist/artifact-manifest-python.json
@@ -441,7 +441,7 @@ jobs:
     # lab 绿了才派发它——产物没齐就派 lab，第二段可能在产物还没上传时被派发。
     needs: [build, desktop, trust]
     timeout-minutes: 10  # 一次 API 调用加一次列表查询；到 10 分钟只可能是 gh 挂了
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       # fine-grained PAT，只对 Tavotto/ci-infra 有 `actions: write`。不是 GITHUB_TOKEN：
       # 本 workflow 的 GITHUB_TOKEN 只有 contents: read，也不该拿到跨仓库的派发权。

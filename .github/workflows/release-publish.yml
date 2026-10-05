@@ -106,7 +106,7 @@ jobs:
   # ────────────────────────────────────────────────────────────────
   trust2:
     timeout-minutes: 60  # 上限是防挂死、不是性能预算：把损失从「无限」变成「有界」
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # 顶层是 contents: read；issues: read 给 release-blocker 门禁查 label，
     # statuses: read 给读 `lab/release`。job 级 permissions 会整个替换默认，contents 要重申。
     permissions:
@@ -120,7 +120,7 @@ jobs:
       publish: ${{ steps.resolve.outputs.publish }}
       pypi_target: ${{ steps.resolve.outputs.pypi_target }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -337,7 +337,7 @@ jobs:
   validate_artifacts:
     needs: trust2
     timeout-minutes: 60  # 上限是防挂死、不是性能预算：把损失从「无限」变成「有界」
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       # has_notes = 有没有手写正文；release body（支持段 + 签名披露）两种情况都有
       has_notes: ${{ steps.notes.outputs.has_notes }}
@@ -347,19 +347,19 @@ jobs:
       id-token: write          # provenance 签发
       attestations: write
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ needs.trust2.outputs.sha }}
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+      - uses: actions/setup-python@v6
         with: { python-version: "3.13" }
 
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@v7
         with:
           name: dist
           path: dist
           run-id: ${{ inputs.source_run_id }}
           github-token: ${{ github.token }}
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@v7
         with:
           path: desktop
           pattern: desktop-tauri-*
@@ -383,7 +383,7 @@ jobs:
           done
           ls -laR desktop || true
           exit "$missing"
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@v7
         with:
           path: manifests
           pattern: artifact-manifest-*
@@ -409,7 +409,7 @@ jobs:
       # 那是 P1-07 有意的硬失败）。允许这一步失败，等于把一次 artifact 传输
       # 或改名故障变成「发了一个没有 latest.json 的 Release」——而那意味着
       # 桌面用户永远查不到新版本，且整条链全绿。v0.7.0 就是这么发出去的。
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@v7
         with:
           name: updater-manifest
           path: out
@@ -636,7 +636,7 @@ jobs:
           cp LICENSE out/LICENSE
 
       - name: 上传全部发行资产
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@v6
         with:
           name: release-assets
           path: |
@@ -653,16 +653,16 @@ jobs:
     needs: [trust2, validate_artifacts]
     if: needs.trust2.outputs.publish == 'true'
     timeout-minutes: 60  # 上限是防挂死、不是性能预算：把损失从「无限」变成「有界」
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ needs.trust2.outputs.sha }}
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+      - uses: actions/setup-python@v6
         with: { python-version: "3.13" }
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@v7
         with: { name: release-assets, path: assets }
 
       - name: 校验要挂上去的就是验过的那一份
@@ -680,7 +680,7 @@ jobs:
             --require wheel,sdist,windows-installer,macos-installer,macos-intel-installer \
             --version "$VER" --source-sha "$SOURCE_SHA"
 
-      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+      - uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.trust2.outputs.tag }}
           # **tag 不存在时，action 会替我们建一个 —— 必须钉在受信 SHA 上。**
@@ -769,10 +769,10 @@ jobs:
       NEW_TAG: ${{ needs.trust2.outputs.tag }}
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ needs.trust2.outputs.sha }}
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+      - uses: actions/setup-python@v6
         with: { python-version: "3.13" }
 
       - name: 找上一个正式版本（N-1）并下载官方安装包
@@ -1042,7 +1042,7 @@ jobs:
 
       - name: 失败时收集日志
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@v6
         with:
           name: n1-update-windows-logs
           path: |
@@ -1069,7 +1069,7 @@ jobs:
     # 不一致没人会发现。
     if: needs.trust2.outputs.publish == 'true' && needs.trust2.outputs.pypi_target != 'none'
     timeout-minutes: 60  # 上限是防挂死、不是性能预算：把损失从「无限」变成「有界」
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # PyPI 上的项目名一旦被占用就再也拿不回来，同名文件也永远不能重传。
     # environment 让正式发布可以卡一道人工确认（给它加 required reviewers 即可）。
     environment:
@@ -1079,12 +1079,12 @@ jobs:
       id-token: write     # OIDC 签发，Trusted Publishing 的必需权限
     steps:
       # 要跑 `artifact_manifest.py`，所以这个 job 也得有仓库
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ needs.trust2.outputs.sha }}
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+      - uses: actions/setup-python@v6
         with: { python-version: "3.13" }
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@v7
         with: { name: release-assets, path: assets }
 
       - name: 只把 wheel 与 sdist 交给 PyPI
@@ -1159,13 +1159,13 @@ jobs:
             && (needs.pypi.result == 'success' || needs.pypi.result == 'skipped'))
       )
     timeout-minutes: 30
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     env:
       GIT_TERMINAL_PROMPT: "0"
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ needs.trust2.outputs.sha }}
           # 与 plugin-stable.yml 同理：凭据只留 job 自己配的全局那一份，否则发布器在
@@ -1180,9 +1180,9 @@ jobs:
           # 发布器本身不需要历史（plugin-stable.yml 就是浅克隆跑成的 bootstrap），
           # 需要历史的只有这行脚手架。
           fetch-depth: 0
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+      - uses: actions/setup-python@v6
         with: { python-version: "3.13" }
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@v7
         with: { name: release-assets, path: assets }
 
       - name: 取出 validate 验过的那份插件并再验一次
@@ -1296,7 +1296,7 @@ jobs:
 
       - name: 留下收据
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@v6
         with:
           name: plugin-stable-receipt
           path: |
