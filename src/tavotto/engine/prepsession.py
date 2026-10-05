@@ -119,6 +119,8 @@ _NO_FIGURE_CODES = frozenset({"no_figures_captured", "no_figures_captured_silent
 #: 旧协议终局 `needs_input` 里 `required_input.code` → phase。
 _WORKDIR_CODE = "workdir_confirmation_required"
 _DEPENDENCY_CODE = "dependency_preparation_required"
+#: 环境检查项的 needs_action code（T05）：项目有自己的环境线索，用户还没选
+_ENVIRONMENT_CODE = "environment_choice_required"
 
 #: 数量 / 生命周期预算。活跃的（有没跑完 / 没登记完的尝试）永远不被这里回收。
 MAX_SESSIONS = 64
@@ -158,8 +160,13 @@ def checks_of(plan: preparation.PreparationPlan) -> list[dict]:
     env = plan.environment or {}
     env_error = env.get("error")
     checks: list[dict] = [_check("target", CHECK_OK)]
+    decision = ((env.get("recommendation") or {}).get("decision")) or {}
     if env_error:
         checks.append(_check("environment", CHECK_BLOCKED, str(env_error.get("code") or "")))
+    elif decision.get("needs_decision"):
+        # T05：项目里有自己的环境线索而用户还没决定用哪个——这不是机器的决定。建议在 requirements 里，
+        # 回答走既有的采用端点（`PATCH /api/engine/environment`）或选回内置，答完 `recheck`
+        checks.append(_check("environment", CHECK_NEEDS_ACTION, _ENVIRONMENT_CODE))
     elif plan.interpreter:
         checks.append(_check("environment", CHECK_OK, source=str(env.get("source") or "")))
     else:
@@ -194,6 +201,18 @@ def requirements_of(plan: preparation.PreparationPlan, checks: list[dict]) -> li
     out = []
     for c in checks:
         if c["status"] != CHECK_NEEDS_ACTION:
+            continue
+        if c["id"] == "environment":
+            # T05：载荷是只读的环境建议（候选 id + 环境代 + 证据标签）；回答绑定候选身份与环境代，
+            # 过期的回答由采用端点的 `expected_generation` 拒绝
+            out.append(
+                {
+                    "id": c["id"],
+                    "kind": "environment_choice",
+                    "code": c.get("code", ""),
+                    "payload": dict((plan.environment or {}).get("recommendation") or {}),
+                }
+            )
             continue
         out.append(
             {
@@ -431,6 +450,13 @@ def _fingerprint(plan: preparation.PreparationPlan) -> str:
         "asset": plan.asset_id,
         "stem": plan.stem,
         "interpreter": plan.interpreter,
+        # T05：同一路径上被重建的环境是另一代；「需要用户先选环境」也是执行意图的一部分
+        "env_generation": (plan.environment or {}).get("generation"),
+        "env_needs_decision": bool(
+            (((plan.environment or {}).get("recommendation") or {}).get("decision") or {}).get(
+                "needs_decision"
+            )
+        ),
         "cwd_mode": decision.get("mode"),
         "cwd_decided": decision.get("decided"),
         "grant": plan.grant,

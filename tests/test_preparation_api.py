@@ -1086,6 +1086,8 @@ def test_auto_adopting_a_user_environment_does_not_stale_the_first_preparation(
     解释器回（还是旧的就缺包 + 候选表，换过了就什么都不缺）；门、决定、快照、过期检查都是真的。"""
     from tavotto.engine import deprepair, projectenv, userenvs
 
+    # ADR 0114：静默采用收进兼容开关；本用例测的是这条路径上「决定先于快照」的顺序（Codex #522 P1）
+    monkeypatch.setenv("TAVOTTO_ENV_ADOPTION", "auto")
     deprepair.reset_state()
     root = _project(tmp_path, "p")
     _open(client, root)

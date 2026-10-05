@@ -708,6 +708,42 @@ describe('DependencyPrepareDialog：用户自己的环境', () => {
     expect(useRenderStore.getState().byKey.k.stale, '没重新排上').toBe(true)
   })
 
+  it('没检查过的环境（ADR 0114）：单列、不冒充装齐也不冒充没装齐；选它 = 「检查并使用」，只交 id 与脚本', async () => {
+    adoptMock.mockResolvedValue({ ok: true, project: { open: true } } as never)
+    await render(<DependencyPrepareDialog />)
+    await act(async () =>
+      useEnvStore.getState().requestDependencyPreparation(
+        offer({
+          user_environments: [
+            userEnv({
+              id: 'venv1',
+              source: 'project_venv',
+              label: '.venv',
+              checked: false,
+              ok: null,
+              satisfies: null,
+              support: '',
+              python_version: '',
+              matplotlib_version: '',
+            }),
+          ],
+        }),
+      ),
+    )
+    // 没有「装齐」的：默认还是安装目标（一键修复形态不变）；「没有装齐这些包的环境」那句不说——它没被检查过
+    expect(radio('tavotto_managed')!.checked).toBe(true)
+    expect(text()).not.toContain(en('userEnvNone'))
+    expect(text()).toContain(en('userEnvSource_project_venv', { label: '.venv' }))
+    expect(text()).toContain(en('userEnvUnchecked'))
+    expect(text()).not.toContain(en('userEnvComplete'))
+    await act(async () => envRadio('project_venv')!.click())
+    expect(button(en('userEnvUse'))).toBeUndefined()
+    await act(async () => button(en('userEnvCheckUse'))!.click())
+    await act(async () => {})
+    expect(adoptMock).toHaveBeenCalledWith('venv1', 'figure.py')
+    expect(planMock).not.toHaveBeenCalled()
+  })
+
   it('一个都没装齐：说出口、安装目标预选；没装齐的收在折叠里只说还缺什么（不可选）', async () => {
     await render(<DependencyPrepareDialog />)
     await act(async () =>

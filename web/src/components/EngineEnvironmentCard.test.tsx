@@ -9,9 +9,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
   fetchEngineEnvironment: vi.fn(),
+  adoptEnvironmentCandidate: vi.fn(),
 }))
 
-import type { EngineEnvironment } from '@/lib/api'
+import { adoptEnvironmentCandidate, type EngineEnvironment, type EnvRecommendation } from '@/lib/api'
 import { EngineEnvironmentCard } from '@/components/EngineEnvironmentCard'
 import { t } from '@/i18n'
 import { useEnvStore } from '@/store/envStore'
@@ -80,5 +81,83 @@ describe('项目改用的系统 Python：缘由按 automatic 分', () => {
     expect(text()).toContain(en('projectEnvWhySystem', { module: 'adjustText' }))
     expect(text()).not.toContain(en('projectEnvWhySystemAuto', { module: 'adjustText' }))
     expect(text()).toContain(en('projectEnvUseBuiltIn'))
+  })
+})
+
+// ---------------------------------------------------------------- 环境建议（ADR 0114）
+const adviceEnv = (rec: Partial<EnvRecommendation['decision']> & { recommended?: boolean }): EngineEnvironment =>
+  ({
+    ok: true,
+    python: '/x/python',
+    source: 'bundled',
+    matplotlib: '3.11.2',
+    managed: false,
+    bundled: true,
+    runtime: {} as never,
+    state: 'idle',
+    project: {
+      open: true,
+      source: 'bundled',
+      recommendation: {
+        version: 1,
+        decision: {
+          consent: 'none',
+          locked_by: rec.locked_by ?? null,
+          needs_decision: rec.needs_decision ?? true,
+          current_id: null,
+        },
+        recommended_id: rec.recommended === false ? null : 'cand-1',
+        candidates: [
+          {
+            id: 'cand-1',
+            label: 'project_hint',
+            name: '.venv',
+            sources: ['project_venv'],
+            scope: 'project',
+            python_relative: '.venv/bin/python',
+            generation: 'gen-1',
+            status: 'unchecked',
+            checked: false,
+            health: null,
+            current: false,
+          },
+          { id: 'builtin', label: 'bundled', name: '', sources: [], scope: 'machine', python_relative: null, generation: '', status: 'unchecked', checked: false, health: null, current: false, read_only: true },
+        ],
+        python_requirement: { supported: { min: '3.10', max_exclusive: '3.15' }, declared: null, status: 'unknown' },
+        check: { executes_candidates: true, max_candidates: 6, deadline_s: 180, per_candidate_timeout_s: 120, scopes: [] },
+      },
+    },
+  }) as never
+
+describe('环境建议：一句话 + 一个主按钮', () => {
+  it('项目有自己的环境、用户还没决定：问一句，主按钮「使用它」把候选与环境代交回后端', async () => {
+    vi.mocked(adoptEnvironmentCandidate).mockResolvedValue({
+      ok: true,
+      project: { open: true } as never,
+    })
+    useEnvStore.setState({ env: adviceEnv({}) })
+    await render(<EngineEnvironmentCard />)
+
+    expect(text()).toContain(en('envAdviceAsk', { name: '.venv/bin/python' }))
+    const use = Array.from(document.querySelectorAll('button')).find((b) => b.textContent === en('envAdviceUse'))!
+    await act(async () => use.click())
+
+    expect(adoptEnvironmentCandidate).toHaveBeenCalledTimes(1)
+    const [cand] = vi.mocked(adoptEnvironmentCandidate).mock.calls[0]
+    expect(cand.id).toBe('cand-1')
+    expect(cand.generation).toBe('gen-1')
+  })
+
+  it('已经决定过（needs_decision=false）：不再问', async () => {
+    useEnvStore.setState({ env: adviceEnv({ needs_decision: false }) })
+    await render(<EngineEnvironmentCard />)
+    expect(text()).not.toContain(en('envAdviceUse'))
+  })
+
+  it('全局解释器压着：不给采用按钮，如实说为什么', async () => {
+    useEnvStore.setState({ env: adviceEnv({ locked_by: { source: 'env_override' }, needs_decision: false }) })
+    await render(<EngineEnvironmentCard />)
+    expect(text()).toContain(en('envAdviceLocked'))
+    expect(text()).not.toContain(en('envAdviceUse'))
   })
 })

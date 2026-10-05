@@ -359,14 +359,16 @@ def dependency_evidence(root: Path, script: str | None) -> dict:
 
 
 # ---------------------------------------------------------------- 环境线索
-def environment_evidence(root: Path, script: str | None) -> dict:
+def environment_evidence(root: Path, script: str | None, *, private: bool = False) -> dict:
     """环境**候选线索**（只读磁盘记录）：项目 venv、记住的决策、`.vscode` / `.python-version` /
     `environment.yml` / shebang、Conda / pyenv 的落盘记录。
 
     * 每条 `status` 都是 `unchecked`（记住的是 `remembered_unverified`，文件没了是 `missing`）——**没有
       任何一条被体检过**，`verified` 恒为 False；"推荐"与"采用"是 T05 的事，这里不给推荐；
     * 项目内的解释器给项目相对路径，项目外的只给不透明 `id`（`userenvs.env_id`）与来源 / 标签，不出机器路径；
-    * 不问登录 shell（`ask_login_shell=False`）、不 `import`、不 `stat` 以外的东西。"""
+    * 不问登录 shell、不 `import`、不 `stat` 以外的东西。登录 shell 的答案只在**已经被明确问过**时才并进来
+      （`userenvs.discover(ask_login_shell=None)` 只读缓存，T05 的检查动作才会去问）；
+    * `private=True`（T05 的 `envadvice` 用）：每行多带一个 `_python`（解释器绝对路径）。公开形态永远不带。"""
     root = Path(root)
     by_key: dict[str, dict] = {}
     order: list[str] = []
@@ -385,6 +387,7 @@ def environment_evidence(root: Path, script: str | None) -> dict:
                 "python_relative": rel or None,
                 "status": STATUS_UNCHECKED,
                 "fingerprint": _digest(projectenv.interpreter_fingerprint(python)),
+                "_python": python,
             }
             by_key[key] = row
             order.append(key)
@@ -426,15 +429,18 @@ def environment_evidence(root: Path, script: str | None) -> dict:
             )
             remembered["id"] = row["id"]
 
-    for entry in userenvs.discover(root, script, ask_login_shell=False):
+    for entry in userenvs.discover(root, script, ask_login_shell=None):
         add(entry["python"], entry["source"], entry.get("label") or "")
 
     candidates = [by_key[k] for k in order]
     truncated = len(candidates) > MAX_ENV_CANDIDATES
+    candidates = candidates[:MAX_ENV_CANDIDATES]
+    if not private:
+        candidates = [{k: v for k, v in c.items() if k != "_python"} for c in candidates]
     return {
         "verified": False,
         "remembered": remembered,
-        "candidates": candidates[:MAX_ENV_CANDIDATES],
+        "candidates": candidates,
         "truncated": truncated,
     }
 

@@ -64,7 +64,11 @@ _IS_WINDOWS = {"windows-latest": True, "ubuntu-24.04": False, "macos-latest": Fa
 
 #: 带 `test.skip(process.platform …)` 的 spec 与条数。这是**枚举**不是白名单：
 #: 新增一条按平台跳过的用例就必须回到这里，顺便被问一句「哪条腿会执行它」。
-PLATFORM_SKIPS = {"error-recovery-en.spec.ts": 3}
+PLATFORM_SKIPS = {
+    "environment-advice.spec.ts": 1,  # T05：假解释器是 POSIX shell 脚本 → posix-e2e 腿执行
+    "error-recovery-en.spec.ts": 3,
+    "project-scan.spec.ts": 1,  # T02：权限位用例 → posix-e2e 腿执行
+}
 
 
 def _code(text: str) -> str:

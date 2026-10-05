@@ -3393,8 +3393,84 @@ export const WORKDIR_CODES = [
   WORKDIR_CONFIRMATION_CODE,
 ] as const
 
+/**
+ * 环境建议里一个候选的证据层次（后端 `envadvice.LABELS`，顺序即推荐顺序，ADR 0114）。
+ * 前端只读它做展示，不据此自算「能不能跑」。
+ */
+export type EnvCandidateLabel =
+  | 'selected'
+  | 'remembered_legacy'
+  | 'project_hint'
+  | 'checked_compatible'
+  | 'machine_hint'
+  | 'bundled'
+
+export type EnvCandidateStatus =
+  | 'unchecked'
+  | 'healthy'
+  | 'unsupported_python'
+  | 'no_matplotlib'
+  | 'worker_import_failed'
+  | 'unusable'
+  | 'missing'
+  | 'changed'
+
+export interface EnvCandidate {
+  /** 不透明身份（`userenvs.env_id`）；内置 / 默认链条固定为 `builtin` */
+  id: string
+  label: EnvCandidateLabel
+  name: string
+  sources: string[]
+  scope: 'project' | 'machine'
+  /** 项目内的解释器给相对路径；项目外的永远是 null（机器路径不出后端） */
+  python_relative: string | null
+  /** 环境代：采用时原样交回 `expected_generation`，环境在这期间被重建就会被拒 */
+  generation: string
+  status: EnvCandidateStatus
+  checked: boolean
+  health: {
+    ok: boolean
+    code: string
+    support: string
+    python_version: string
+    matplotlib_version: string
+    checked_at: number
+  } | null
+  current: boolean
+  read_only?: boolean
+}
+
+/** 后端 `envadvice.recommend()` 的公开投影：纯读线索，没被明确检查过的候选一律 `unchecked` */
+export interface EnvRecommendation {
+  version: number
+  decision: {
+    consent: 'none' | 'confirmed' | 'legacy_auto' | 'builtin'
+    /** 全局显式解释器压着时：谁锁的（采用不会生效，后端会 409 `environment_locked`） */
+    locked_by: { source: string } | null
+    needs_decision: boolean
+    current_id: string | null
+  }
+  recommended_id: string | null
+  candidates: EnvCandidate[]
+  python_requirement: {
+    supported: { min: string; max_exclusive: string }
+    declared: { source: string; value: string } | null
+    status: 'unknown'
+  }
+  check: {
+    executes_candidates: boolean
+    max_candidates: number
+    deadline_s: number
+    per_candidate_timeout_s: number
+    scopes: string[]
+  }
+}
+
 export interface ProjectEnvironment {
   open: boolean
+  /** 项目级决定的授权来源（后端 `projectenv.consent_of`）：用户明确采用 = confirmed；历史自动记录 = legacy_auto */
+  consent?: 'none' | 'confirmed' | 'legacy_auto'
+  recommendation?: EnvRecommendation
   /** 稳定枚举，与全局那份同一套（`project_venv` / `bundled` / …） */
   source?: EngineSource
   source_label?: string
@@ -3441,7 +3517,8 @@ export interface ManagedEnvironment {
 export interface ProjectEnvFailure {
   /** project_env_not_found / project_env_module_missing /
    *  project_env_no_matplotlib / project_env_unsupported_python /
-   *  project_env_unusable / project_env_already_attempted */
+   *  project_env_unusable / project_env_already_attempted /
+   *  environment_confirmation_required */
   code: string
   module: string
   venv: string
@@ -3449,6 +3526,11 @@ export interface ProjectEnvFailure {
   python_version: string
   /** 第二层的体检表（ADR 0044）：这台机器上已有的解释器各是什么结论 */
   system?: SystemInterpreterProbe[]
+  /**
+   * `code === 'environment_confirmation_required'`（ADR 0114）：项目自己的环境体检通过、缺的包也在里面——
+   * 这是建议不是决定，用户点一次才采用（候选按钮用 `candidates`）。路径不在公开投影里。
+   */
+  recommended?: { venv: string }
 }
 
 /** 一个系统解释器的体检结论（只有结论字段，没有体检脚本的原始输出） */
@@ -3527,6 +3609,52 @@ export const setProjectEnvironment = (python: string | null, module?: string) =>
  * 为当前项目改用依赖弹窗里列出的用户环境（ADR 0079）：只交 id，路径由后端自己的发现结果换回，
  * 之后与手填路径走同一次体检。`script` 让后端按同一份发现（含项目线索）找这个 id。
  */
+/**
+ * 明确的环境检查（ADR 0114 §一）：只对被点名范围里的候选运行健康探测。**检查 ≠ 采用**——这里不写项目设置。
+ * 回更新后的建议；`checked` / `skipped` 是这一次的账（候选数 / 总时限 / 取消）。
+ */
+export const checkProjectEnvironment = (opts?: {
+  script?: string
+  candidates?: string[]
+  scope?: 'project' | 'machine' | 'all'
+  includeLoginShell?: boolean
+}) =>
+  jsonFetch<{
+    checked: string[]
+    skipped: { id: string; reason: 'limit' | 'deadline' | 'cancelled' }[]
+    cancelled: boolean
+    recommendation: EnvRecommendation
+  }>('/api/engine/environment/check', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      ...(opts?.script ? { script: opts.script } : {}),
+      ...(opts?.candidates ? { candidates: opts.candidates } : {}),
+      ...(opts?.scope ? { scope: opts.scope } : {}),
+      ...(opts?.includeLoginShell ? { include_login_shell: true } : {}),
+    }),
+  })
+
+export const cancelProjectEnvironmentCheck = () =>
+  jsonFetch<{ cancelled: boolean }>('/api/engine/environment/check', { method: 'DELETE' })
+
+/**
+ * 在环境建议上点「使用」（ADR 0114 §四）：交回候选 id 与看到建议那一刻的环境代，后端用自己的枚举换回路径、
+ * 现场再体检、通过才记成用户的明确决定。环境在这期间被重建 → 409 `environment_changed`；全局解释器压着 → 409
+ * `environment_locked`。
+ */
+export const adoptEnvironmentCandidate = (candidate: EnvCandidate, script?: string) =>
+  jsonFetch<{ ok: boolean; project: ProjectEnvironment }>('/api/engine/environment', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      scope: 'project',
+      candidate: candidate.id,
+      expected_generation: candidate.generation,
+      ...(script ? { script } : {}),
+    }),
+  })
+
 export const setProjectUserEnvironment = (id: string, script: string) =>
   jsonFetch<{ ok: boolean; project: ProjectEnvironment }>('/api/engine/environment', {
     method: 'PATCH',
@@ -3989,6 +4117,7 @@ export interface DependencyPreparationOffer {
 
 /** 用户环境从哪发现的（`engine/userenvs.py` 的来源闭集） */
 export type UserEnvironmentSource =
+  | 'project_venv'
   | 'vscode'
   | 'python_version_file'
   | 'environment_yml'
@@ -4004,16 +4133,21 @@ export interface UserEnvironment {
   source: UserEnvironmentSource
   /** Conda 环境名 / pyenv 版本名；其余来源为空 */
   label: string
-  /** 环境本身健康（Python 版本受支持、matplotlib 与 worker 起得来） */
-  ok: boolean
+  /**
+   * false = 还没有被检查过（ADR 0114：候选解释器不在没有用户动作的情况下被起）：`ok` / `satisfies` 此时是 null，
+   * 不冒充装齐也不冒充没装齐；用户点「检查并使用」时后端现场体检、装齐才采用。老后端没有这个字段 = 检查过。
+   */
+  checked?: boolean
+  /** 环境本身健康（Python 版本受支持、matplotlib 与 worker 起得来）；未检查时 null */
+  ok: boolean | null
   code: string
   support: string
   python_version: string
   matplotlib_version: string
   /** 还缺的包（distribution 名；映射不到的按 import 名） */
   missing: string[]
-  /** 健康且什么都不缺 */
-  satisfies: boolean
+  /** 健康且什么都不缺；未检查时 null */
+  satisfies: boolean | null
 }
 
 /** 绑定好的联合计划（`plan_id` 是这次授权的凭据，一次性、有有效期） */

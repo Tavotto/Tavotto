@@ -106,7 +106,7 @@
   逐字不变（符号链接目录照旧会被下探，既有行为）。
 - **零执行（可证明）**：`projscan.py` 不 import `pool` / `preparation` / `deprepair` / `subprocess` 等（AST 门禁）；解析
   永远 `target_python=None`（宿主判语法错误 = `syntax_error` + `parser=None`，**未核验**）；环境线索只读磁盘记录
-  （`userenvs.discover(ask_login_shell=False)`、`projectenv.discover`、`remembered_record`——记住的解释器只 `stat`），
+  （`userenvs.discover(ask_login_shell=None)`——只读登录 shell **已被明确问过**的缓存答案（T05 的检查动作才会去问）、`projectenv.discover`、`remembered_record`——记住的解释器只 `stat`），
   不问登录 shell、不体检；扫描期间 `Popen` / `os.exec*` / `posix_spawn*` / `socket.connect` 被换成会炸的桩仍通过。
   **有副作用、扫描路径不得调用**：`pool.resolve_worker_python`（任何形态，含 `discover=False`——有记住的解释器时它仍会
   `import matplotlib`）、`preparation.plan_for`、`deprepair.decide_environment` / `gate` / `joint_plan_for`、

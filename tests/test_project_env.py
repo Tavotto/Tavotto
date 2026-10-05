@@ -90,6 +90,14 @@ def add_fixture_module(venv: Path) -> Path:
 
 
 @pytest.fixture(autouse=True)
+def _legacy_silent_adoption(monkeypatch):
+    """本文件的主体是 Session 7 / ADR 0107 的**自动接手**机制——ADR 0114 把静默采用收进兼容开关保留一版
+    （`TAVOTTO_ENV_ADOPTION=auto`）。默认的确认模式（只给建议、用户点一次才采用）见
+    `test_environment_adoption.py`。"""
+    monkeypatch.setenv("TAVOTTO_ENV_ADOPTION", "auto")
+
+
+@pytest.fixture(autouse=True)
 def _clean_env_state():
     """每个用例前后都把项目环境的进程缓存清干净。
 
