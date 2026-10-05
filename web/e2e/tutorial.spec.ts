@@ -372,7 +372,7 @@ test('coachmark 落位途中锚点被挤动也不压上去：素材区顶上冒�
   await openTutorialFromPicker(page, a.baseURL)
   let release!: () => void
   const held = new Promise<void>((r) => (release = r))
-  await page.route('**/api/project/refresh', async (route) => {
+  await page.route(/^https?:\/\/[^/]+\/api\/project\/refresh(?:\?[^#]*)?$/, async (route) => {
     await held
     await route.continue()
   })

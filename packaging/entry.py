@@ -103,6 +103,11 @@ def main() -> None:
         from tavotto.rendercore import renderchild
 
         sys.exit(renderchild.child_main(sys.argv[2:]))
+    if sys.argv[1:2] == ["--private-python-smoke"]:
+        _reopen_child_pipes()
+        from tavotto.engine import privatepython_smoke
+
+        sys.exit(privatepython_smoke.main())
     _redirect_streams()
     # HTTPS 之前把 OpenSSL 指到系统证书（#541）；render child 不发网络请求，所以放在它的分派之后
     _ensure_ca_bundle()
