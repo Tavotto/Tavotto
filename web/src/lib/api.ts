@@ -4,6 +4,7 @@ import { formatMessage, i18n, literal, msg, t, type UiMessage } from '@/i18n'
 import type { FigureDocument, ProjectDocument } from '@/types/document'
 import type { ManifestFrame } from '@/lib/figureFrame'
 import type { PreviewMetadata } from '@/lib/previewBudget'
+import type { ScriptArgsSchema } from '@/lib/scriptArgsForm'
 import type { ThumbObject } from '@/types/thumb'
 
 export interface PanelInfo {
@@ -4567,6 +4568,15 @@ export const probeScript = (script: string, cost?: string, args?: ScriptArgs) =>
         : {}),
     }),
   })
+
+/**
+ * 脚本参数的静态 schema（T07，`engine/scriptargs.py`）：后端只读源码，不执行、不 import、不调 `--help`。
+ * 给「运行参数」编辑器的表单视图当**建议**；要发出去的永远是草稿里的 token 列表。
+ */
+export const fetchScriptArguments = (script: string) =>
+  jsonFetch<{ ok: boolean; script: string; arguments: ScriptArgsSchema }>(
+    `/api/engine/script-arguments?script=${encodeURIComponent(script)}`,
+  )
 
 /** 运行参数（T03）的稳定错误码：界面按它们翻文案（`errors:backend.*`） */
 export const RUN_ARGV_ERROR_CODES = [

@@ -1,0 +1,1493 @@
+{
+ "version": 1,
+ "note": "T07：表单编辑 → token（TS：web/src/lib/scriptArgsForm.golden.test.ts）与 token → 真 argparse（Python：tests/test_script_args.py）共用；schema 是 engine/scriptargs.analyze 的快照，改分析器后用 scripts/dev/gen_script_args_vectors.py 重生成并逐条核对期望",
+ "scripts": {
+  "fft6": "import argparse\np = argparse.ArgumentParser(description=\"FFT\")\np.add_argument(\"--freq\", type=float, required=True, help=\"Hz\")\np.add_argument(\"--amp\", type=float, required=True)\np.add_argument(\"--phase\", type=float, required=True)\np.add_argument(\"--n\", type=int, required=True)\np.add_argument(\"--tag\", required=True)\np.add_argument(\"--mode\", choices=[\"sin\", \"cos\"], required=True)\nargs = p.parse_args()\n\ndef _dump(ns):\n    import json\n    out = {}\n    for k, v in sorted(vars(ns).items()):\n        out[k] = getattr(v, \"name\", v) if not isinstance(v, (str, int, float, bool, type(None), list)) else v\n    print(json.dumps(out, ensure_ascii=False))\n_dump(args)\n",
+  "mixed": "import argparse\nparser = argparse.ArgumentParser()\nparser.add_argument(\"src\", help=\"input csv\")\nparser.add_argument(\"count\", type=int)\nparser.add_argument(\"--scale\", type=float, default=1.0)\nparser.add_argument(\"-k\", \"--k-value\", default=\"none\")\nparser.add_argument(\"--verbose\", action=\"store_true\")\nparser.add_argument(\"--color\", action=argparse.BooleanOptionalAction)\nparser.add_argument(\"--level\", type=int, choices=[1, 2, 3], default=2)\nspeed = parser.add_mutually_exclusive_group()\nspeed.add_argument(\"--fast\", action=\"store_true\")\nspeed.add_argument(\"--slow\", action=\"store_true\")\nparser.add_argument(\"--out\", type=argparse.FileType(\"w\"), default=None)\n\ndef _dump(ns):\n    import json\n    out = {}\n    for k, v in sorted(vars(ns).items()):\n        out[k] = getattr(v, \"name\", v) if not isinstance(v, (str, int, float, bool, type(None), list)) else v\n    print(json.dumps(out, ensure_ascii=False))\n\nif __name__ == \"__main__\":\n    _dump(parser.parse_args())\n",
+  "reqdef": "import argparse\np = argparse.ArgumentParser()\np.add_argument(\"--thr\", type=float, required=True, default=0.5)\np.add_argument(\"--opt\", type=int, default=3)\n\ndef _dump(ns):\n    import json\n    out = {}\n    for k, v in sorted(vars(ns).items()):\n        out[k] = getattr(v, \"name\", v) if not isinstance(v, (str, int, float, bool, type(None), list)) else v\n    print(json.dumps(out, ensure_ascii=False))\n_dump(p.parse_args())\n",
+  "partial": "import argparse\np = argparse.ArgumentParser()\nfor name in (\"alpha\",):\n    p.add_argument(\"--\" + name)\np.add_argument(\"--known\")\n\ndef _dump(ns):\n    import json\n    out = {}\n    for k, v in sorted(vars(ns).items()):\n        out[k] = getattr(v, \"name\", v) if not isinstance(v, (str, int, float, bool, type(None), list)) else v\n    print(json.dumps(out, ensure_ascii=False))\n_dump(p.parse_args())\n",
+  "negopt": "import argparse\np = argparse.ArgumentParser()\np.add_argument(\"-1\", dest=\"one\", action=\"store_true\")\np.add_argument(\"--val\")\n\ndef _dump(ns):\n    import json\n    out = {}\n    for k, v in sorted(vars(ns).items()):\n        out[k] = getattr(v, \"name\", v) if not isinstance(v, (str, int, float, bool, type(None), list)) else v\n    print(json.dumps(out, ensure_ascii=False))\n_dump(p.parse_args())\n",
+  "subcmd": "import argparse\np = argparse.ArgumentParser()\np.add_argument(\"--g\")\nsp = p.add_subparsers(dest=\"cmd\", required=True)\nt = sp.add_parser(\"train\")\nt.add_argument(\"--lr\", type=float)\nsp.add_parser(\"eval\")\n\ndef _dump(ns):\n    import json\n    out = {}\n    for k, v in sorted(vars(ns).items()):\n        out[k] = getattr(v, \"name\", v) if not isinstance(v, (str, int, float, bool, type(None), list)) else v\n    print(json.dumps(out, ensure_ascii=False))\n_dump(p.parse_args())\n"
+ },
+ "schemas": {
+  "fft6": {
+   "version": 1,
+   "source": "static_ast",
+   "framework": "argparse",
+   "status": "complete",
+   "reasons": [],
+   "form_enabled": true,
+   "parser_line": 2,
+   "parse_call": "parse_args",
+   "negative_number_options": false,
+   "arguments": [
+    {
+     "flags": [
+      "--freq"
+     ],
+     "positional": false,
+     "action": "store",
+     "nargs": null,
+     "required": true,
+     "required_source": "explicit",
+     "default": null,
+     "const": null,
+     "choices": null,
+     "choices_dynamic": false,
+     "type": "float",
+     "role": null,
+     "help": "Hz",
+     "hidden": false,
+     "metavar": null,
+     "group": null,
+     "dest": "freq",
+     "arity": 1,
+     "editable": true,
+     "id": "a0",
+     "line": 3,
+     "conditional": false
+    },
+    {
+     "flags": [
+      "--amp"
+     ],
+     "positional": false,
+     "action": "store",
+     "nargs": null,
+     "required": true,
+     "required_source": "explicit",
+     "default": null,
+     "const": null,
+     "choices": null,
+     "choices_dynamic": false,
+     "type": "float",
+     "role": null,
+     "help": null,
+     "hidden": false,
+     "metavar": null,
+     "group": null,
+     "dest": "amp",
+     "arity": 1,
+     "editable": true,
+     "id": "a1",
+     "line": 4,
+     "conditional": false
+    },
+    {
+     "flags": [
+      "--phase"
+     ],
+     "positional": false,
+     "action": "store",
+     "nargs": null,
+     "required": true,
+     "required_source": "explicit",
+     "default": null,
+     "const": null,
+     "choices": null,
+     "choices_dynamic": false,
+     "type": "float",
+     "role": null,
+     "help": null,
+     "hidden": false,
+     "metavar": null,
+     "group": null,
+     "dest": "phase",
+     "arity": 1,
+     "editable": true,
+     "id": "a2",
+     "line": 5,
+     "conditional": false
+    },
+    {
+     "flags": [
+      "--n"
+     ],
+     "positional": false,
+     "action": "store",
+     "nargs": null,
+     "required": true,
+     "required_source": "explicit",
+     "default": null,
+     "const": null,
+     "choices": null,
+     "choices_dynamic": false,
+     "type": "int",
+     "role": null,
+     "help": null,
+     "hidden": false,
+     "metavar": null,
+     "group": null,
+     "dest": "n",
+     "arity": 1,
+     "editable": true,
+     "id": "a3",
+     "line": 6,
+     "conditional": false
+    },
+    {
+     "flags": [
+      "--tag"
+     ],
+     "positional": false,
+     "action": "store",
+     "nargs": null,
+     "required": true,
+     "required_source": "explicit",
+     "default": null,
+     "const": null,
+     "choices": null,
+     "choices_dynamic": false,
+     "type": null,
+     "role": null,
+     "help": null,
+     "hidden": false,
+     "metavar": null,
+     "group": null,
+     "dest": "tag",
+     "arity": 1,
+     "editable": true,
+     "id": "a4",
+     "line": 7,
+     "conditional": false
+    },
+    {
+     "flags": [
+      "--mode"
+     ],
+     "positional": false,
+     "action": "store",
+     "nargs": null,
+     "required": true,
+     "required_source": "explicit",
+     "default": null,
+     "const": null,
+     "choices": [
+      "sin",
+      "cos"
+     ],
+     "choices_dynamic": false,
+     "type": null,
+     "role": null,
+     "help": null,
+     "hidden": false,
+     "metavar": null,
+     "group": null,
+     "dest": "mode",
+     "arity": 1,
+     "editable": true,
+     "id": "a5",
+     "line": 8,
+     "conditional": false
+    }
+   ],
+   "exclusive_groups": [],
+   "subcommands": null
+  },
+  "mixed": {
+   "version": 1,
+   "source": "static_ast",
+   "framework": "argparse",
+   "status": "complete",
+   "reasons": [],
+   "form_enabled": true,
+   "parser_line": 2,
+   "parse_call": "parse_args",
+   "negative_number_options": false,
+   "arguments": [
+    {
+     "flags": [
+      "src"
+     ],
+     "positional": true,
+     "action": "store",
+     "nargs": null,
+     "required": true,
+     "required_source": "positional",
+     "default": null,
+     "const": null,
+     "choices": null,
+     "choices_dynamic": false,
+     "type": null,
+     "role": null,
+     "help": "input csv",
+     "hidden": false,
+     "metavar": null,
+     "group": null,
+     "dest": "src",
+     "arity": 1,
+     "editable": true,
+     "id": "a0",
+     "line": 3,
+     "conditional": false
+    },
+    {
+     "flags": [
+      "count"
+     ],
+     "positional": true,
+     "action": "store",
+     "nargs": null,
+     "required": true,
+     "required_source": "positional",
+     "default": null,
+     "const": null,
+     "choices": null,
+     "choices_dynamic": false,
+     "type": "int",
+     "role": null,
+     "help": null,
+     "hidden": false,
+     "metavar": null,
+     "group": null,
+     "dest": "count",
+     "arity": 1,
+     "editable": true,
+     "id": "a1",
+     "line": 4,
+     "conditional": false
+    },
+    {
+     "flags": [
+      "--scale"
+     ],
+     "positional": false,
+     "action": "store",
+     "nargs": null,
+     "required": false,
+     "required_source": null,
+     "default": {
+      "kind": "literal",
+      "display": "1.0"
+     },
+     "const": null,
+     "choices": null,
+     "choices_dynamic": false,
+     "type": "float",
+     "role": null,
+     "help": null,
+     "hidden": false,
+     "metavar": null,
+     "group": null,
+     "dest": "scale",
+     "arity": 1,
+     "editable": true,
+     "id": "a2",
+     "line": 5,
+     "conditional": false
+    },
+    {
+     "flags": [
+      "-k",
+      "--k-value"
+     ],
+     "positional": false,
+     "action": "store",
+     "nargs": null,
+     "required": false,
+     "required_source": null,
+     "default": {
+      "kind": "literal",
+      "display": "'none'"
+     },
+     "const": null,
+     "choices": null,
+     "choices_dynamic": false,
+     "type": null,
+     "role": null,
+     "help": null,
+     "hidden": false,
+     "metavar": null,
+     "group": null,
+     "dest": "k_value",
+     "arity": 1,
+     "editable": true,
+     "id": "a3",
+     "line": 6,
+     "conditional": false
+    },
+    {
+     "flags": [
+      "--verbose"
+     ],
+     "positional": false,
+     "action": "store_true",
+     "nargs": null,
+     "required": false,
+     "required_source": null,
+     "default": null,
+     "const": null,
+     "choices": null,
+     "choices_dynamic": false,
+     "type": null,
+     "role": null,
+     "help": null,
+     "hidden": false,
+     "metavar": null,
+     "group": null,
+     "dest": "verbose",
+     "arity": 0,
+     "editable": true,
+     "id": "a4",
+     "line": 7,
+     "conditional": false
+    },
+    {
+     "flags": [
+      "--color"
+     ],
+     "positional": false,
+     "action": "boolean_optional",
+     "nargs": null,
+     "required": false,
+     "required_source": null,
+     "default": null,
+     "const": null,
+     "choices": null,
+     "choices_dynamic": false,
+     "type": null,
+     "role": null,
+     "help": null,
+     "hidden": false,
+     "metavar": null,
+     "group": null,
+     "dest": "color",
+     "arity": 0,
+     "editable": true,
+     "id": "a5",
+     "line": 8,
+     "conditional": false
+    },
+    {
+     "flags": [
+      "--level"
+     ],
+     "positional": false,
+     "action": "store",
+     "nargs": null,
+     "required": false,
+     "required_source": null,
+     "default": {
+      "kind": "literal",
+      "display": "2"
+     },
+     "const": null,
+     "choices": [
+      "1",
+      "2",
+      "3"
+     ],
+     "choices_dynamic": false,
+     "type": "int",
+     "role": null,
+     "help": null,
+     "hidden": false,
+     "metavar": null,
+     "group": null,
+     "dest": "level",
+     "arity": 1,
+     "editable": true,
+     "id": "a6",
+     "line": 9,
+     "conditional": false
+    },
+    {
+     "flags": [
+      "--fast"
+     ],
+     "positional": false,
+     "action": "store_true",
+     "nargs": null,
+     "required": false,
+     "required_source": null,
+     "default": null,
+     "const": null,
+     "choices": null,
+     "choices_dynamic": false,
+     "type": null,
+     "role": null,
+     "help": null,
+     "hidden": false,
+     "metavar": null,
+     "group": "g0",
+     "dest": "fast",
+     "arity": 0,
+     "editable": true,
+     "id": "a7",
+     "line": 11,
+     "conditional": false
+    },
+    {
+     "flags": [
+      "--slow"
+     ],
+     "positional": false,
+     "action": "store_true",
+     "nargs": null,
+     "required": false,
+     "required_source": null,
+     "default": null,
+     "const": null,
+     "choices": null,
+     "choices_dynamic": false,
+     "type": null,
+     "role": null,
+     "help": null,
+     "hidden": false,
+     "metavar": null,
+     "group": "g0",
+     "dest": "slow",
+     "arity": 0,
+     "editable": true,
+     "id": "a8",
+     "line": 12,
+     "conditional": false
+    },
+    {
+     "flags": [
+      "--out"
+     ],
+     "positional": false,
+     "action": "store",
+     "nargs": null,
+     "required": false,
+     "required_source": null,
+     "default": {
+      "kind": "literal",
+      "display": "None"
+     },
+     "const": null,
+     "choices": null,
+     "choices_dynamic": false,
+     "type": "file_write",
+     "role": "output_file",
+     "help": null,
+     "hidden": false,
+     "metavar": null,
+     "group": null,
+     "dest": "out",
+     "arity": 1,
+     "editable": true,
+     "id": "a9",
+     "line": 13,
+     "conditional": false
+    }
+   ],
+   "exclusive_groups": [
+    {
+     "id": "g0",
+     "required": false,
+     "members": [
+      "a7",
+      "a8"
+     ]
+    }
+   ],
+   "subcommands": null
+  },
+  "reqdef": {
+   "version": 1,
+   "source": "static_ast",
+   "framework": "argparse",
+   "status": "complete",
+   "reasons": [],
+   "form_enabled": true,
+   "parser_line": 2,
+   "parse_call": "parse_args",
+   "negative_number_options": false,
+   "arguments": [
+    {
+     "flags": [
+      "--thr"
+     ],
+     "positional": false,
+     "action": "store",
+     "nargs": null,
+     "required": true,
+     "required_source": "explicit",
+     "default": {
+      "kind": "literal",
+      "display": "0.5"
+     },
+     "const": null,
+     "choices": null,
+     "choices_dynamic": false,
+     "type": "float",
+     "role": null,
+     "help": null,
+     "hidden": false,
+     "metavar": null,
+     "group": null,
+     "dest": "thr",
+     "arity": 1,
+     "editable": true,
+     "id": "a0",
+     "line": 3,
+     "conditional": false
+    },
+    {
+     "flags": [
+      "--opt"
+     ],
+     "positional": false,
+     "action": "store",
+     "nargs": null,
+     "required": false,
+     "required_source": null,
+     "default": {
+      "kind": "literal",
+      "display": "3"
+     },
+     "const": null,
+     "choices": null,
+     "choices_dynamic": false,
+     "type": "int",
+     "role": null,
+     "help": null,
+     "hidden": false,
+     "metavar": null,
+     "group": null,
+     "dest": "opt",
+     "arity": 1,
+     "editable": true,
+     "id": "a1",
+     "line": 4,
+     "conditional": false
+    }
+   ],
+   "exclusive_groups": [],
+   "subcommands": null
+  },
+  "partial": {
+   "version": 1,
+   "source": "static_ast",
+   "framework": "argparse",
+   "status": "partial",
+   "reasons": [
+    "dynamic_add_argument"
+   ],
+   "form_enabled": true,
+   "parser_line": 2,
+   "parse_call": "parse_args",
+   "negative_number_options": false,
+   "arguments": [
+    {
+     "flags": [
+      "--known"
+     ],
+     "positional": false,
+     "action": "store",
+     "nargs": null,
+     "required": false,
+     "required_source": null,
+     "default": null,
+     "const": null,
+     "choices": null,
+     "choices_dynamic": false,
+     "type": null,
+     "role": null,
+     "help": null,
+     "hidden": false,
+     "metavar": null,
+     "group": null,
+     "dest": "known",
+     "arity": 1,
+     "editable": true,
+     "id": "a0",
+     "line": 5,
+     "conditional": false
+    }
+   ],
+   "exclusive_groups": [],
+   "subcommands": null
+  },
+  "negopt": {
+   "version": 1,
+   "source": "static_ast",
+   "framework": "argparse",
+   "status": "complete",
+   "reasons": [],
+   "form_enabled": true,
+   "parser_line": 2,
+   "parse_call": "parse_args",
+   "negative_number_options": true,
+   "arguments": [
+    {
+     "flags": [
+      "-1"
+     ],
+     "positional": false,
+     "action": "store_true",
+     "nargs": null,
+     "required": false,
+     "required_source": null,
+     "default": null,
+     "const": null,
+     "choices": null,
+     "choices_dynamic": false,
+     "type": null,
+     "role": null,
+     "help": null,
+     "hidden": false,
+     "metavar": null,
+     "group": null,
+     "dest": "one",
+     "arity": 0,
+     "editable": true,
+     "id": "a0",
+     "line": 3,
+     "conditional": false
+    },
+    {
+     "flags": [
+      "--val"
+     ],
+     "positional": false,
+     "action": "store",
+     "nargs": null,
+     "required": false,
+     "required_source": null,
+     "default": null,
+     "const": null,
+     "choices": null,
+     "choices_dynamic": false,
+     "type": null,
+     "role": null,
+     "help": null,
+     "hidden": false,
+     "metavar": null,
+     "group": null,
+     "dest": "val",
+     "arity": 1,
+     "editable": true,
+     "id": "a1",
+     "line": 4,
+     "conditional": false
+    }
+   ],
+   "exclusive_groups": [],
+   "subcommands": null
+  },
+  "subcmd": {
+   "version": 1,
+   "source": "static_ast",
+   "framework": "argparse",
+   "status": "partial",
+   "reasons": [
+    "subcommands"
+   ],
+   "form_enabled": false,
+   "parser_line": 2,
+   "parse_call": "parse_args",
+   "negative_number_options": false,
+   "arguments": [
+    {
+     "flags": [
+      "--g"
+     ],
+     "positional": false,
+     "action": "store",
+     "nargs": null,
+     "required": false,
+     "required_source": null,
+     "default": null,
+     "const": null,
+     "choices": null,
+     "choices_dynamic": false,
+     "type": null,
+     "role": null,
+     "help": null,
+     "hidden": false,
+     "metavar": null,
+     "group": null,
+     "dest": "g",
+     "arity": 1,
+     "editable": true,
+     "id": "a0",
+     "line": 3,
+     "conditional": false
+    }
+   ],
+   "exclusive_groups": [],
+   "subcommands": {
+    "dest": "cmd",
+    "required": true,
+    "choices": [
+     "train",
+     "eval"
+    ],
+    "dynamic": false
+   }
+  }
+ },
+ "cases": [
+  {
+   "name": "fft6_fill_all",
+   "script": "fft6",
+   "before": [],
+   "edits": [
+    {
+     "op": "set",
+     "arg": "a0",
+     "values": [
+      "3"
+     ]
+    },
+    {
+     "op": "set",
+     "arg": "a1",
+     "values": [
+      "2.5"
+     ]
+    },
+    {
+     "op": "set",
+     "arg": "a2",
+     "values": [
+      "0.25"
+     ]
+    },
+    {
+     "op": "set",
+     "arg": "a3",
+     "values": [
+      "16"
+     ]
+    },
+    {
+     "op": "set",
+     "arg": "a4",
+     "values": [
+      "T"
+     ]
+    },
+    {
+     "op": "set",
+     "arg": "a5",
+     "values": [
+      "sin"
+     ]
+    }
+   ],
+   "after": [
+    "--freq",
+    "3",
+    "--amp",
+    "2.5",
+    "--phase",
+    "0.25",
+    "--n",
+    "16",
+    "--tag",
+    "T",
+    "--mode",
+    "sin"
+   ],
+   "namespace": {
+    "amp": 2.5,
+    "freq": 3.0,
+    "mode": "sin",
+    "n": 16,
+    "phase": 0.25,
+    "tag": "T"
+   },
+   "missing": []
+  },
+  {
+   "name": "fft6_missing_reported_not_defaulted",
+   "script": "fft6",
+   "before": [
+    "--freq",
+    "3"
+   ],
+   "edits": [],
+   "after": [
+    "--freq",
+    "3"
+   ],
+   "exit": 2,
+   "missing": [
+    "a1",
+    "a2",
+    "a3",
+    "a4",
+    "a5"
+   ]
+  },
+  {
+   "name": "required_default_is_not_an_answer",
+   "script": "reqdef",
+   "before": [],
+   "edits": [],
+   "after": [],
+   "exit": 2,
+   "missing": [
+    "a0"
+   ]
+  },
+  {
+   "name": "required_default_answered",
+   "script": "reqdef",
+   "before": [],
+   "edits": [
+    {
+     "op": "set",
+     "arg": "a0",
+     "values": [
+      "0.5"
+     ]
+    }
+   ],
+   "after": [
+    "--thr",
+    "0.5"
+   ],
+   "namespace": {
+    "opt": 3,
+    "thr": 0.5
+   },
+   "missing": []
+  },
+  {
+   "name": "set_option_appends_after_positionals",
+   "script": "mixed",
+   "before": [
+    "in.csv",
+    "3"
+   ],
+   "edits": [
+    {
+     "op": "set",
+     "arg": "a2",
+     "values": [
+      "2.5"
+     ]
+    }
+   ],
+   "after": [
+    "in.csv",
+    "3",
+    "--scale",
+    "2.5"
+   ],
+   "namespace": {
+    "color": null,
+    "count": 3,
+    "fast": false,
+    "k_value": "none",
+    "level": 2,
+    "out": null,
+    "scale": 2.5,
+    "slow": false,
+    "src": "in.csv",
+    "verbose": false
+   },
+   "missing": []
+  },
+  {
+   "name": "option_like_value_is_glued",
+   "script": "mixed",
+   "before": [
+    "in.csv",
+    "3"
+   ],
+   "edits": [
+    {
+     "op": "set",
+     "arg": "a3",
+     "values": [
+      "-x"
+     ]
+    }
+   ],
+   "after": [
+    "in.csv",
+    "3",
+    "--k-value=-x"
+   ],
+   "namespace": {
+    "color": null,
+    "count": 3,
+    "fast": false,
+    "k_value": "-x",
+    "level": 2,
+    "out": null,
+    "scale": 1.0,
+    "slow": false,
+    "src": "in.csv",
+    "verbose": false
+   },
+   "missing": []
+  },
+  {
+   "name": "empty_string_is_a_value",
+   "script": "mixed",
+   "before": [
+    "in.csv",
+    "3"
+   ],
+   "edits": [
+    {
+     "op": "set",
+     "arg": "a3",
+     "values": [
+      ""
+     ]
+    }
+   ],
+   "after": [
+    "in.csv",
+    "3",
+    "--k-value",
+    ""
+   ],
+   "namespace": {
+    "color": null,
+    "count": 3,
+    "fast": false,
+    "k_value": "",
+    "level": 2,
+    "out": null,
+    "scale": 1.0,
+    "slow": false,
+    "src": "in.csv",
+    "verbose": false
+   },
+   "missing": []
+  },
+  {
+   "name": "negative_number_stays_separate",
+   "script": "mixed",
+   "before": [
+    "in.csv",
+    "3"
+   ],
+   "edits": [
+    {
+     "op": "set",
+     "arg": "a2",
+     "values": [
+      "-2"
+     ]
+    }
+   ],
+   "after": [
+    "in.csv",
+    "3",
+    "--scale",
+    "-2"
+   ],
+   "namespace": {
+    "color": null,
+    "count": 3,
+    "fast": false,
+    "k_value": "none",
+    "level": 2,
+    "out": null,
+    "scale": -2.0,
+    "slow": false,
+    "src": "in.csv",
+    "verbose": false
+   },
+   "missing": []
+  },
+  {
+   "name": "flag_on_then_bool_off",
+   "script": "mixed",
+   "before": [
+    "in.csv",
+    "3"
+   ],
+   "edits": [
+    {
+     "op": "flag",
+     "arg": "a4",
+     "value": "on"
+    },
+    {
+     "op": "flag",
+     "arg": "a5",
+     "value": "off"
+    }
+   ],
+   "after": [
+    "in.csv",
+    "3",
+    "--verbose",
+    "--no-color"
+   ],
+   "namespace": {
+    "color": false,
+    "count": 3,
+    "fast": false,
+    "k_value": "none",
+    "level": 2,
+    "out": null,
+    "scale": 1.0,
+    "slow": false,
+    "src": "in.csv",
+    "verbose": true
+   },
+   "missing": []
+  },
+  {
+   "name": "bool_default_removes_it",
+   "script": "mixed",
+   "before": [
+    "in.csv",
+    "--color",
+    "3",
+    "--verbose"
+   ],
+   "edits": [
+    {
+     "op": "flag",
+     "arg": "a5",
+     "value": "default"
+    },
+    {
+     "op": "flag",
+     "arg": "a4",
+     "value": "off"
+    }
+   ],
+   "after": [
+    "in.csv",
+    "3"
+   ],
+   "namespace": {
+    "color": null,
+    "count": 3,
+    "fast": false,
+    "k_value": "none",
+    "level": 2,
+    "out": null,
+    "scale": 1.0,
+    "slow": false,
+    "src": "in.csv",
+    "verbose": false
+   },
+   "missing": []
+  },
+  {
+   "name": "repeated_option_edits_the_effective_last_one",
+   "script": "mixed",
+   "before": [
+    "--scale",
+    "1",
+    "in.csv",
+    "3",
+    "--scale",
+    "3"
+   ],
+   "edits": [
+    {
+     "op": "set",
+     "arg": "a2",
+     "values": [
+      "4"
+     ]
+    }
+   ],
+   "after": [
+    "--scale",
+    "1",
+    "in.csv",
+    "3",
+    "--scale",
+    "4"
+   ],
+   "namespace": {
+    "color": null,
+    "count": 3,
+    "fast": false,
+    "k_value": "none",
+    "level": 2,
+    "out": null,
+    "scale": 4.0,
+    "slow": false,
+    "src": "in.csv",
+    "verbose": false
+   },
+   "missing": []
+  },
+  {
+   "name": "glued_forms_keep_their_shape",
+   "script": "mixed",
+   "before": [
+    "in.csv",
+    "3",
+    "--scale=2",
+    "-kabc"
+   ],
+   "edits": [
+    {
+     "op": "set",
+     "arg": "a2",
+     "values": [
+      "3"
+     ]
+    },
+    {
+     "op": "set",
+     "arg": "a3",
+     "values": [
+      "xyz"
+     ]
+    }
+   ],
+   "after": [
+    "in.csv",
+    "3",
+    "--scale=3",
+    "-kxyz"
+   ],
+   "namespace": {
+    "color": null,
+    "count": 3,
+    "fast": false,
+    "k_value": "xyz",
+    "level": 2,
+    "out": null,
+    "scale": 3.0,
+    "slow": false,
+    "src": "in.csv",
+    "verbose": false
+   },
+   "missing": []
+  },
+  {
+   "name": "options_go_before_double_dash",
+   "script": "mixed",
+   "before": [
+    "--",
+    "-in.csv",
+    "3"
+   ],
+   "edits": [
+    {
+     "op": "set",
+     "arg": "a2",
+     "values": [
+      "2"
+     ]
+    }
+   ],
+   "after": [
+    "--scale",
+    "2",
+    "--",
+    "-in.csv",
+    "3"
+   ],
+   "namespace": {
+    "color": null,
+    "count": 3,
+    "fast": false,
+    "k_value": "none",
+    "level": 2,
+    "out": null,
+    "scale": 2.0,
+    "slow": false,
+    "src": "-in.csv",
+    "verbose": false
+   },
+   "missing": []
+  },
+  {
+   "name": "positional_after_double_dash",
+   "script": "mixed",
+   "before": [
+    "--",
+    "-in.csv"
+   ],
+   "edits": [
+    {
+     "op": "set",
+     "arg": "a1",
+     "values": [
+      "5"
+     ]
+    }
+   ],
+   "after": [
+    "--",
+    "-in.csv",
+    "5"
+   ],
+   "namespace": {
+    "color": null,
+    "count": 5,
+    "fast": false,
+    "k_value": "none",
+    "level": 2,
+    "out": null,
+    "scale": 1.0,
+    "slow": false,
+    "src": "-in.csv",
+    "verbose": false
+   },
+   "missing": []
+  },
+  {
+   "name": "chinese_path_with_space_positional",
+   "script": "mixed",
+   "before": [
+    "--scale",
+    "2"
+   ],
+   "edits": [
+    {
+     "op": "set",
+     "arg": "a0",
+     "values": [
+      "数据/样本 1.csv"
+     ]
+    },
+    {
+     "op": "set",
+     "arg": "a1",
+     "values": [
+      "7"
+     ]
+    }
+   ],
+   "after": [
+    "数据/样本 1.csv",
+    "7",
+    "--scale",
+    "2"
+   ],
+   "namespace": {
+    "color": null,
+    "count": 7,
+    "fast": false,
+    "k_value": "none",
+    "level": 2,
+    "out": null,
+    "scale": 2.0,
+    "slow": false,
+    "src": "数据/样本 1.csv",
+    "verbose": false
+   },
+   "missing": []
+  },
+  {
+   "name": "clear_removes_every_occurrence",
+   "script": "mixed",
+   "before": [
+    "--scale",
+    "1",
+    "in.csv",
+    "3",
+    "--scale=2"
+   ],
+   "edits": [
+    {
+     "op": "clear",
+     "arg": "a2"
+    }
+   ],
+   "after": [
+    "in.csv",
+    "3"
+   ],
+   "namespace": {
+    "color": null,
+    "count": 3,
+    "fast": false,
+    "k_value": "none",
+    "level": 2,
+    "out": null,
+    "scale": 1.0,
+    "slow": false,
+    "src": "in.csv",
+    "verbose": false
+   },
+   "missing": []
+  },
+  {
+   "name": "exclusive_conflict_is_left_to_the_parser",
+   "script": "mixed",
+   "before": [
+    "in.csv",
+    "3",
+    "--fast"
+   ],
+   "edits": [
+    {
+     "op": "flag",
+     "arg": "a8",
+     "value": "on"
+    }
+   ],
+   "after": [
+    "in.csv",
+    "3",
+    "--fast",
+    "--slow"
+   ],
+   "exit": 2,
+   "missing": [],
+   "conflicts": [
+    "g0"
+   ]
+  },
+  {
+   "name": "output_file_value_is_only_a_token",
+   "script": "mixed",
+   "before": [
+    "in.csv",
+    "3"
+   ],
+   "edits": [
+    {
+     "op": "set",
+     "arg": "a9",
+     "values": [
+      "结果.txt"
+     ]
+    }
+   ],
+   "after": [
+    "in.csv",
+    "3",
+    "--out",
+    "结果.txt"
+   ],
+   "namespace": {
+    "color": null,
+    "count": 3,
+    "fast": false,
+    "k_value": "none",
+    "level": 2,
+    "out": "结果.txt",
+    "scale": 1.0,
+    "slow": false,
+    "src": "in.csv",
+    "verbose": false
+   },
+   "missing": [],
+   "creates": [
+    "结果.txt"
+   ]
+  },
+  {
+   "name": "unknown_option_freezes_positionals_but_keeps_tokens",
+   "script": "partial",
+   "before": [
+    "--alpha",
+    "1",
+    "--known",
+    "a"
+   ],
+   "edits": [
+    {
+     "op": "set",
+     "arg": "a0",
+     "values": [
+      "b"
+     ]
+    }
+   ],
+   "after": [
+    "--alpha",
+    "1",
+    "--known",
+    "b"
+   ],
+   "namespace": {
+    "alpha": "1",
+    "known": "b"
+   },
+   "missing": [],
+   "unattributed": [
+    0,
+    1
+   ]
+  },
+  {
+   "name": "negative_number_options_force_glue",
+   "script": "negopt",
+   "before": [],
+   "edits": [
+    {
+     "op": "set",
+     "arg": "a1",
+     "values": [
+      "-5"
+     ]
+    }
+   ],
+   "after": [
+    "--val=-5"
+   ],
+   "namespace": {
+    "one": false,
+    "val": "-5"
+   },
+   "missing": []
+  }
+ ],
+ "errors": [
+  {
+   "name": "positional_option_like_needs_dashes",
+   "script": "mixed",
+   "before": [],
+   "edit": {
+    "op": "set",
+    "arg": "a0",
+    "values": [
+     "-weird"
+    ]
+   },
+   "error": "positional_looks_like_option"
+  },
+  {
+   "name": "earlier_positional_missing",
+   "script": "mixed",
+   "before": [],
+   "edit": {
+    "op": "set",
+    "arg": "a1",
+    "values": [
+     "1"
+    ]
+   },
+   "error": "earlier_positional_missing"
+  },
+  {
+   "name": "subcommand_form_is_disabled",
+   "script": "subcmd",
+   "before": [
+    "train",
+    "--lr",
+    "0.1"
+   ],
+   "edit": {
+    "op": "set",
+    "arg": "a0",
+    "values": [
+     "x"
+    ]
+   },
+   "error": "form_disabled"
+  },
+  {
+   "name": "partial_positionals_uncertain",
+   "script": "mixed",
+   "before": [
+    "--weird",
+    "in.csv"
+   ],
+   "edit": {
+    "op": "set",
+    "arg": "a1",
+    "values": [
+     "1"
+    ]
+   },
+   "error": "positionals_uncertain"
+  }
+ ]
+}

@@ -1,0 +1,225 @@
+"""T07：参数 schema / 数据指认 / 输出写入影响进**同一个准备会话**的 checks / requirements / actions（假 pool）。
+
+判据的主语：会话报告与动作是**后端**给的投影——表单只是建议（`blocking: False`，phase 仍 `ready_to_run`、`run`
+动作照样在）；没有 argparse 证据的脚本报告形状与 T06 一字不差；读 schema 不执行脚本、不打开输出文件。
+真 worker 穿过同一组端点的用例在 `test_script_args_e2e.py`。
+"""
+
+# ruff: noqa: F811 — 夹具（client / fake_pool / sessions）从既有用例导入复用，参数名与导入名相同
+from __future__ import annotations
+
+from pathlib import Path
+
+from tavotto import app as m
+from tavotto.engine import inputremap, pool as engine_pool, preparation
+from test_preparation_api import _open, client, fake_pool  # noqa: F401
+from test_preparation_session import _act, _action, _create, _get, _settle, sessions  # noqa: F401
+
+ARGPARSE = """\
+import argparse
+open({sentinel!r}, "a").write("ran")
+p = argparse.ArgumentParser()
+p.add_argument("--freq", type=float, required=True, help="Hz")
+p.add_argument("--out", type=argparse.FileType("w"), default={out!r})
+p.add_argument("--mode", choices=["sin", "cos"], default="sin")
+args = p.parse_args()
+"""
+
+
+def _proj(tmp_path: Path, text: str, name: str = "plot.py") -> Path:
+    root = tmp_path / "proj"
+    root.mkdir(exist_ok=True)
+    (root / name).write_text(text, encoding="utf-8")
+    return root
+
+
+def _argparse_project(tmp_path: Path) -> tuple[Path, Path, Path]:
+    sentinel = tmp_path / "ran.txt"
+    out = tmp_path / "proj" / "result.txt"
+    root = _proj(tmp_path, ARGPARSE.format(sentinel=str(sentinel), out=str(out)))
+    out.write_bytes(b"keep me")
+    return root, sentinel, out
+
+
+def test_an_argparse_script_gets_an_advisory_form_not_a_gate(client, tmp_path, fake_pool, sessions):
+    root, sentinel, out = _argparse_project(tmp_path)
+    _open(client, root)
+    before = sorted(p.name for p in root.iterdir())
+    report = _create(client, {"script": "plot.py"}).get_json()
+    # 必填 --freq 一个都没给：表单是建议——仍然 ready_to_run、run 动作在（真 parser 说缺参是 script_needs_arguments）
+    assert report["phase"] == "ready_to_run", report
+    by = {c["id"]: c for c in report["checks"]}
+    assert by["arguments"] == {
+        "id": "arguments",
+        "status": "ok",
+        "detail": {
+            "schema": "complete",
+            "arguments": 3,
+            "required": 1,
+            "output_files": 1,
+            "form_enabled": True,
+        },
+    }
+    (req,) = [r for r in report["requirements"] if r["kind"] == "script_arguments"]
+    assert req["blocking"] is False and req["code"] == "script_arguments_available"
+    schema = req["payload"]["schema"]
+    assert [a["dest"] for a in schema["arguments"]] == ["freq", "out", "mode"]
+    assert req["payload"]["argv_count"] == 0 and req["payload"]["run_config"] is None
+    run = _action(report, "run")
+    assert run["impact"]["script_writes"] == {"declared_output_arguments": 1, "cwd_mode": "sandbox"}
+    # 读 schema 零执行：脚本顶层哨兵没出现、已有输出没被截断、项目里没多文件、pool 一次没调
+    assert not sentinel.exists()
+    assert out.read_bytes() == b"keep me"
+    assert sorted(p.name for p in root.iterdir()) == before
+    assert fake_pool["build_calls"] == 0
+
+
+def test_with_arguments_the_requirement_names_the_configuration_not_the_values(
+    client, tmp_path, fake_pool, sessions
+):
+    root, _sentinel, _out = _argparse_project(tmp_path)
+    _open(client, root)
+    report = _create(
+        client, {"script": "plot.py", "argv": ["--freq", "SECRET-3.5", "--mode", "cos"]}
+    ).get_json()
+    (req,) = [r for r in report["requirements"] if r["kind"] == "script_arguments"]
+    assert req["payload"]["argv_count"] == 4
+    assert req["payload"]["run_config"] == report["target"]["run_config"]
+    assert "SECRET-3.5" not in str(report)
+
+
+def test_a_script_without_argparse_keeps_the_t06_report_shape(
+    client, tmp_path, fake_pool, sessions
+):
+    root = _proj(tmp_path, "import sys\nprint(sys.argv)\n")
+    _open(client, root)
+    report = _create(client, {"script": "plot.py"}).get_json()
+    assert [c["id"] for c in report["checks"]] == [
+        "target",
+        "environment",
+        "workdir",
+        "dependencies",
+        "data",
+    ]
+    assert report["requirements"] == []
+    assert "script_writes" not in _action(report, "run")["impact"]
+
+
+def test_a_partial_schema_is_labelled_and_still_runnable(client, tmp_path, fake_pool, sessions):
+    root = _proj(
+        tmp_path,
+        "import argparse\np = argparse.ArgumentParser()\n"
+        "for n in ('a', 'b'):\n    p.add_argument('--' + n, required=True)\n"
+        "p.add_argument('--known')\nargs = p.parse_args()\n",
+    )
+    _open(client, root)
+    report = _create(client, {"script": "plot.py"}).get_json()
+    by = {c["id"]: c for c in report["checks"]}
+    assert by["arguments"]["detail"]["schema"] == "partial"
+    (req,) = [r for r in report["requirements"] if r["kind"] == "script_arguments"]
+    assert req["payload"]["schema"]["reasons"] == ["dynamic_add_argument"]
+    assert report["phase"] == "ready_to_run" and _action(report, "run")
+
+
+def test_the_schema_endpoint_reads_only_and_guards_the_path(client, tmp_path, fake_pool):
+    root, sentinel, out = _argparse_project(tmp_path)
+    (tmp_path / "outside.py").write_text("import argparse\n", encoding="utf-8")
+    _open(client, root)
+    resp = client.get("/api/engine/script-arguments", query_string={"script": "plot.py"})
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["script"] == "plot.py" and body["arguments"]["status"] == "complete"
+    assert not sentinel.exists() and out.read_bytes() == b"keep me"
+    outside = client.get("/api/engine/script-arguments", query_string={"script": "../outside.py"})
+    assert outside.status_code == 400
+    assert outside.get_json()["code"] == "script_path_outside_project"
+    missing = client.get("/api/engine/script-arguments", query_string={"script": "nope.py"})
+    assert missing.status_code == 404 and missing.get_json()["code"] == "script_not_found"
+    assert fake_pool["build_calls"] == 0
+
+
+def test_a_missing_input_failure_becomes_a_data_requirement_answered_by_the_remap_endpoint(
+    client, tmp_path, fake_pool, sessions
+):
+    """数据找不到（ADR 0106）：载荷进会话的 requirements（不进计划 / 回执 / 结果投影）；用户指认之后 recheck 换修订，
+    旧失败不再是当前的。"""
+    root = _proj(tmp_path, "import pandas as pd\npd.read_csv('data/raw.csv')\n")
+    (root / "elsewhere").mkdir()
+    (root / "elsewhere" / "raw.csv").write_text("a\n1\n", encoding="utf-8")
+    _open(client, root)
+    err = engine_pool.WorkerError("找不到 data/raw.csv", code="missing_input")
+    err.missing_input = {
+        "script": "plot.py",
+        "requested": "data/raw.csv",
+        "absolute": False,
+        "via": "open",
+        "probe_kind": "any",
+        "others": [],
+    }
+    fake_pool["error"] = err
+    first = _create(client, {"script": "plot.py"}).get_json()
+    claimed = _act(client, first["session_id"], _action(first, "run")["id"], 1)
+    assert claimed.status_code == 202, claimed.get_json()
+    report = _settle(client, first["session_id"])
+    assert report["outcome"]["code"] == "missing_input"
+    (req,) = [r for r in report["requirements"] if r["kind"] == "input_location"]
+    assert req["payload"]["requested"] == "data/raw.csv" and req["blocking"] is False
+    assert "missing_input" not in report["result"] and "missing_input" not in report["plan"]
+    # 回答走既有端点（用户亲手指认）；recheck → 修订 +1，旧失败的需求消失
+    resp = client.post(
+        "/api/engine/input-remap",
+        json={
+            "requested": "data/raw.csv",
+            "chosen": str(root / "elsewhere" / "raw.csv"),
+            "chosen_kind": "file",
+        },
+    )
+    assert resp.status_code == 200, resp.get_json()
+    recheck = _action(report, "recheck")
+    assert _act(
+        client, first["session_id"], recheck["id"], report["config_revision"]
+    ).status_code in (
+        200,
+        202,
+    )
+    after = _get(client, first["session_id"]).get_json()
+    assert after["config_revision"] == report["config_revision"] + 1
+    assert not [r for r in after["requirements"] if r["kind"] == "input_location"]
+    assert after["phase"] == "ready_to_run"
+    assert inputremap.rules_for(str(root))
+
+
+def test_the_missing_input_payload_stays_out_of_public_projections(tmp_path):
+    result = preparation.PreparationResult()
+    result.missing_input = {"requested": "secret/path.csv"}
+    assert "missing_input" not in result.to_payload()
+    assert "secret/path.csv" not in str(result.to_payload())
+
+
+def test_an_asset_target_never_gets_a_form(client, tmp_path, fake_pool, sessions, monkeypatch):
+    """已知素材不接受另给 argv（T03）：它的会话不提议参数表单。"""
+    root, _s, _o = _argparse_project(tmp_path)
+    _open(client, root)
+    from tavotto.engine import prepsession
+
+    plan = preparation.PreparationPlan(
+        plan_id="p",
+        project_id="x",
+        project_root=str(root),
+        interpreter="",
+        asset_id="a",
+        stem="s",
+        script="plot.py",
+        entry="__main__",
+        static_source=None,
+        environment={},
+        python_requirement={},
+        dependency_intents=(),
+        dependency_conflicts=(),
+        launch_context=None,
+        grant={},
+        budget={},
+        created_at=0.0,
+    )
+    assert prepsession.arguments_schema(plan) is None
+    assert m  # app 已导入（夹具）

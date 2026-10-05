@@ -248,6 +248,17 @@
   本机无产物，行为未执行；运行时才产生的答案（getpass / 动态 input）的冻结转录是 T08。
 - 看护：`tests/test_run_argv.py`（模型 + 真 worker 对拍）、`tests/test_run_argv_e2e.py`（HTTP 全链路）。
 
+## 参数表单的静态 schema（T07）
+
+`engine/scriptargs.py` 只读源码（`ast.parse`，不 import / eval / `literal_eval`、不跑 parser、不调 `--help`、不打开 `FileType` 的文件），
+回答「这个脚本的 argparse 字面量声明了哪些参数」。权威仍是 token 列表：schema 只是表单建议与校验提示。只认可证明的字面量；
+循环 / `**kwargs` / 自定义 Action / 子命令 / `parents` / `parse_args([...])` / `parse_known_args` / 多 parser 等一律 `partial` + 闭集理由
+（`REASONS`；`FORM_BLOCKING` 里的让表单整体只读）。`required` 只来自显式 `required=True` 或位置参数规则，`default` 只展示、不注入；
+角色只来自 `FileType` 的模式（名字 `x` / `time` / `range` 不定角色与单位）。表单 ↔ token 的转换在前端 `lib/scriptArgsForm.ts`，
+与这里共用 `tests/golden/script_args_form_vectors.json`（后端跑真 argparse 对拍 Namespace，前端对拍编辑结果；重生成
+`scripts/dev/gen_script_args_vectors.py`）。端点 `GET /api/engine/script-arguments?script=`（与试运行同一道路径检查，只读）。
+看护：`tests/test_script_args.py`。
+
 ## 速查表原要点（2026-09-25 迁入，#608）
 
 `src/tavotto/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
