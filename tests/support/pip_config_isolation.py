@@ -26,13 +26,10 @@ try:
     if spec is not None:
         if spec.loader is None:
             raise RuntimeError("existing sitecustomize has no loader")
-        previous = sys.modules["sitecustomize"]
         original = importlib.util.module_from_spec(spec)
         sys.modules["sitecustomize"] = original
-        try:
-            spec.loader.exec_module(original)
-        finally:
-            sys.modules["sitecustomize"] = previous
+        spec.loader.exec_module(original)
+        # Preserve the original module and its exports for imports after startup.
 
     from pip._internal import configuration
     discover = configuration.get_configuration_files

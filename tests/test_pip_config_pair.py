@@ -266,11 +266,25 @@ def test_global_isolation_preserves_real_pip_cli_and_both_probes(pip_venv, tmp_p
             assert got is None
 
 
-def test_pip_global_isolation_chains_existing_sitecustomize(tmp_path):
+@pytest.mark.parametrize(
+    "after_startup",
+    [
+        "from sitecustomize import TOKEN; assert TOKEN == 'preserved'",
+        "import sitecustomize, tavotto_test_original_sitecustomize; "
+        "assert sitecustomize is tavotto_test_original_sitecustomize",
+    ],
+    ids=["exports", "module-identity"],
+)
+def test_pip_global_isolation_chains_existing_sitecustomize(tmp_path, after_startup):
+    """显式检查启动后的 import；venv 可能禁用自动 usercustomize，不能靠它作证。"""
     original = tmp_path / "existing-startup"
     original.mkdir()
     (original / "sitecustomize.py").write_text(
-        "import os\nos.environ['TAVOTTO_TEST_EXISTING_STARTUP'] = 'yes'\n", encoding="utf-8"
+        "import os, sys\n"
+        "os.environ['TAVOTTO_TEST_EXISTING_STARTUP'] = 'yes'\n"
+        "TOKEN = 'preserved'\n"
+        "sys.modules['tavotto_test_original_sitecustomize'] = sys.modules[__name__]\n",
+        encoding="utf-8",
     )
     env = isolated_pip_globals({**os.environ, "PYTHONPATH": str(original)}, tmp_path)
     probe = subprocess.run(
@@ -278,7 +292,7 @@ def test_pip_global_isolation_chains_existing_sitecustomize(tmp_path):
             sys.executable,
             "-B",
             "-c",
-            "import os; print(os.environ['TAVOTTO_TEST_EXISTING_STARTUP'])",
+            "import os; print(os.environ['TAVOTTO_TEST_EXISTING_STARTUP']); " + after_startup,
         ],
         env=env,
         capture_output=True,
