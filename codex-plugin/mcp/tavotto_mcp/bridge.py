@@ -767,6 +767,8 @@ def _project_needs(code: str, exc, extra: dict, *, project: str | None, script: 
     elif code in ("missing_dependency", "dependency_preparation_required") and project:
         # 确认模式（T05，ADR 0114）：项目里有用户自己的环境，用不用它是用户的决定——MCP 没有「使用它」那个按钮，
         # 所以把候选（纯读的建议）与怎么答一起给出去。没有待决定的候选就什么都不加（原样是缺包 / 准备依赖）。
+        # 默认的检测模式（ADR 0114 §六）：引擎在 `pool.acquire` 里已经自动挑过能跑的环境，`needs_decision` 恒为 False、
+        # 也不会有 `environment_confirmation_required`——这里自然什么都不加，只剩「准备依赖」一件事
         detail = getattr(exc, "project_env", None)
         confirm = (
             isinstance(detail, dict) and detail.get("code") == "environment_confirmation_required"

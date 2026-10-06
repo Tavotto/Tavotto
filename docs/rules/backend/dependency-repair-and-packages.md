@@ -396,16 +396,25 @@
 - **环境代 `projectenv.environment_generation`**：解释器路径 `lstat` + `pyvenv.cfg` 各自的 (inode, mtime_ns, size) 摘要（不含 ctime / 权限位）；重建换代，装包 / chmod / 扩展属性不换。
   `pool.resolve_worker_python` 第 3 档：用户选的记录环境代变了 → `project_python_unusable(reason=rebuilt)`（不降级）；机器记的 → 作废。
   `preparation.plan_for` 记 `environment.generation`，`_stale_reason` 起会话前再比。
-- **确认模式下的三个自动采用点只产出建议**：`pool` 第 4 档不发现 / 不体检 / 不记；`deprepair.decide_environment` 直接回 None；
+- **检测模式（默认，ADR 0114 §六，2026-10-06）**：`deprepair.decide_environment` → `_detect_environment`：用户发起准备 / 运行之后
+  （`plan_for` 与 `pool.acquire` 的 `ENVIRONMENT_DECIDERS`），候选（`user_environment_candidates`，含项目 venv 来源）里能跑这个脚本的
+  （`userenvs.evaluate` 的 `satisfies`，needed = 联合计划的 missing + satisfied + unknown）按「项目线索 → 默认链条 → `userenvs.rank()`」
+  挑一个，`remember(automatic=True, trigger=auto_detected, only_if=record_allows_auto_adopt)`，写在 `unless_installing` 里；都不能跑
+  不采用（检测自己记下的那条作废，`cannot_run`），会话只有依赖待办 + `prepare_dependencies`（受管目标）。全局锁定 / 用户选过且有效 /
+  选回内置不碰；第 3 档失效的记录在检测模式下一律作废后重新检测（`pool._stops_when_unusable`）。运行后缺包的接手
+  （`try_project_env` / `_adopt_system_interpreter`）在检测模式下与旧模式同样会采用（`silent_adoption_enabled()` 为真）。
+- **确认模式（`TAVOTTO_ENV_ADOPTION=confirm` 或设置 `worker.environment_adoption=confirm`）下的三个自动采用点只产出建议**：`pool` 第 4 档不发现 / 不体检 / 不记；`deprepair.decide_environment` 直接回 None；
   `pool.try_project_env` 项目 venv 体检通过时回 `environment_confirmation_required` + `recommended`，`deprepair.offer()` 把它列成
   `system_interpreter` 目标（项目相对路径）等用户点；`_adopt_system_interpreter` 不采用。依赖门的候选表在确认模式下多一个
-  `project_venv` 来源（`userenvs.SOURCE_PROJECT_VENV`），登录 shell 只读检查动作已问出的答案。**唯一开关**
-  `projectenv.silent_adoption_enabled()`（`TAVOTTO_ENV_ADOPTION=auto`，保留一版，退出条件见 ADR 0114 §五）。
+  `project_venv` 来源（`userenvs.SOURCE_PROJECT_VENV`），登录 shell 只读检查动作已问出的答案。模式判据唯一出处
+  `projectenv.adoption_mode()`；`silent_adoption_enabled()` = 检测或旧模式，`legacy_adoption_enabled()` = 旧模式（`legacy`，旧名
+  `auto`，保留一版，退出条件见 ADR 0114 §五）。
 - **GET `/api/engine/environment` 不起解释器**：`pool.peek_project_resolution` 只 `stat`；`project.consent`（`confirmed` / `legacy_auto` /
   `none`）与 `project.recommendation` 是后端投影，`envStore` 原样保存。
 - **迁移**：`automatic=False` 记录 = 已确认，不重新询问；`automatic=True` 的历史记录照用但只是 `legacy_auto`，不当显式确认；没有环境代的
   老记录不追溯。
-- **会话**：`prepsession.checks_of` 的 `environment` 检查项在 `needs_decision` 时 `needs_action`（`environment_choice_required`），
+- **会话**：`prepsession.checks_of` 的 `environment` 检查项在 `needs_decision` 时 `needs_action`（`environment_choice_required`；
+  只在确认模式下可能出现——`envadvice.recommend()` 的 `needs_decision` 在检测模式下恒为 False），
   `requirements[].kind = environment_choice`，载荷是 `recommendation`；回答走采用端点 / 选回内置，再 `recheck`。
 
 ## 授权影响摘要 / 认领 / 采用互斥 / 多作用域互斥（T06，ADR 0115，2026-10-05）

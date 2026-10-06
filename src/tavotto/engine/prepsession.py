@@ -1262,6 +1262,8 @@ class SessionService:
                     # T06：依赖作业的 provider 引用（进度仍读 `GET /api/engine/dependency/state?plan_id=`）
                     "dependency": dep_progress,
                 },
+                # 环境（ADR 0114 §六）：只是一个可展示的事实——用的是哪一类、谁定的、这次检查有没有自动换；不要求用户动作
+                "environment": dict((sess.plan.environment or {}).get("adoption") or {}) or None,
                 # 上一次依赖准备之后按新环境重新算出的差额；None = 没有
                 "dependency_delta": dict(sess.dependency_delta) if sess.dependency_delta else None,
                 # 正在等的那一问（T08）：`inputbroker.Pending.public()`——id / 序号 / 读取方式 / 要不要掩码，

@@ -40,8 +40,8 @@ SOURCE_PYTHON_VERSION = "python_version_file"
 SOURCE_ENVIRONMENT_YML = "environment_yml"
 SOURCE_SHEBANG = "shebang"
 SOURCE_LOGIN_SHELL = "login_shell"
-#: 项目自带的 venv（`projectenv.discover`）。确认模式（ADR 0114）下它和用户的其它环境一起进「改用这个环境」
-#: 的候选表——静默采用时代由 `pool` 第 4 档单独处理，不在这张表里
+#: 项目自带的 venv（`projectenv.discover`）。检测 / 确认模式（ADR 0114）下它和用户的其它环境一起进候选表——
+#: 旧模式（`legacy`）由 `pool` 第 4 档单独处理，不在这张表里
 SOURCE_PROJECT_VENV = "project_venv"
 SOURCE_CONDA = "conda"
 SOURCE_PYENV = "pyenv"
@@ -55,6 +55,18 @@ SOURCES = (
     SOURCE_LOGIN_SHELL,
     SOURCE_CONDA,
     SOURCE_PYENV,
+)
+
+#: 项目自己声明 / 编辑器指向的那几类来源（`rank()` 的第 0 档）：检测模式下默认链条能跑这个脚本时，只有它们还排在
+#: 默认链条前面（ADR 0057 FO11：项目带了自己的环境就用它；ADR 0114 §六）
+PROJECT_SOURCES = frozenset(
+    {
+        SOURCE_PROJECT_VENV,
+        SOURCE_VSCODE,
+        SOURCE_PYTHON_VERSION,
+        SOURCE_ENVIRONMENT_YML,
+        SOURCE_SHEBANG,
+    }
 )
 
 #: 问登录 shell 最多等多久。交互式 shell 要读 rc 文件（Conda init、oh-my-zsh……），冷启动一两秒常见

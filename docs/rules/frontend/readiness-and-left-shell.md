@@ -80,8 +80,8 @@
   （来源 → 文案键的字面量表）。后端在门里**已经自动改用**时不弹框，SSE `engine.environment_adopted`
   进 `envStore.adoptedEnvironment`，通知轨（与「刚为编辑加入本文档」同一档）说一句并给「改回」=
   `revertAdoptedEnvironment()`（`setProjectPython(null)` → 后端 `remember_default`，所有在用的面板
-  `markStale`，不只是失败的）。**ADR 0114 起默认不再有「已经自动改用」**（只在后端兼容开关
-  `TAVOTTO_ENV_ADOPTION=auto` 下才发这条 SSE）：候选里没检查过的（`checked === false`，`ok` / `satisfies` 为 null，
+  `markStale`，不只是失败的）。**ADR 0114 §六（2026-10-06）起默认的检测模式下这条 SSE 又会发**（准备 / 运行时
+  自动检测采用了能跑的那一个）；确认模式（`TAVOTTO_ENV_ADOPTION=confirm`）下不发：候选里没检查过的（`checked === false`，`ok` / `satisfies` 为 null，
   含 `project_venv` 来源）单列成「还没检查」的单选，选中后主按钮是「检查并使用」，仍是同一个 `adoptUserEnvironment`
   ——后端现场体检、装齐才采用，不冒充装齐也不冒充没装齐；「没有装齐的环境」那句只在没有未检查的候选时才说。
 - **环境建议（ADR 0114）**：`project.recommendation` / `project.consent` 是后端 `envadvice.recommend()` 的原样投影，

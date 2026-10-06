@@ -670,18 +670,48 @@ def auto_adoption_off() -> bool:
     return os.environ.get("TAVOTTO_USER_ENV_DISCOVERY", "").strip() == "0"
 
 
-#: 恢复 ADR 0057 / 0079 / 0107 静默采用的兼容开关（ADR 0114 §五，保留一版）。默认不设 = **确认模式**：
-#: 首开 / 跑前的门 / 缺包后的接手只给**建议**，采用是用户的明确动作。无头环境（CI、没有界面的脚本调用）在
-#: 还没有可确认的界面之前设成 `auto` 回到旧行为。判据的唯一出处——三个自动采用点都读这里。
+#: 环境采用的模式（ADR 0114 §五 → 用户 2026-10-06 裁决的修订节 §六）。判据的唯一出处——各采用点都读这里。
+#:
+#: * `detect`（**默认**）：用户点了准备 / 运行之后，自动检测候选环境，能跑这个脚本（解释器健康 + 脚本要的 import
+#:   全都 import 得到）的就直接用，多个能跑时按既有排序挑最好的；一个都不能跑才出「安装缺少的组件」。用户不选环境。
+#:   检测的唯一实现是 `deprepair.decide_environment`（经 `pool.acquire` 的 `ENVIRONMENT_DECIDERS` 与 `preparation.plan_for`）；
+#: * `confirm`：T05 的确认模式——候选只作为建议出现，采用是用户的明确动作（给想自己挑的人，设置或环境变量里打开）；
+#: * `legacy`（旧名 `auto`，ADR 0114 §五的兼容开关）：ADR 0057 / 0079 / 0107 原来的三处静默采用，含「首开只看健康就采用
+#:   项目 venv」的第 4 档。退出条件不变（§五）。
 ADOPTION_ENV = "TAVOTTO_ENV_ADOPTION"
+ADOPTION_DETECT = "detect"
+ADOPTION_CONFIRM = "confirm"
+ADOPTION_LEGACY = "legacy"
+ADOPTION_MODES = (ADOPTION_DETECT, ADOPTION_CONFIRM, ADOPTION_LEGACY)
+#: 环境变量里认得的写法 → 模式；`auto` 是 ADR 0114 §五写下的旧名（= 旧三处静默采用），保留同义
+_ADOPTION_ALIASES = {
+    ADOPTION_DETECT: ADOPTION_DETECT,
+    ADOPTION_CONFIRM: ADOPTION_CONFIRM,
+    ADOPTION_LEGACY: ADOPTION_LEGACY,
+    "auto": ADOPTION_LEGACY,
+}
+
+
+def adoption_mode() -> str:
+    """此刻的环境采用模式：环境变量 `TAVOTTO_ENV_ADOPTION` 优先，其次全局设置 `worker.environment_adoption`，
+    都没有（或写的认不出）→ `detect`。"""
+    raw = os.environ.get(ADOPTION_ENV, "").strip().lower()
+    if raw in _ADOPTION_ALIASES:
+        return _ADOPTION_ALIASES[raw]
+    return _ADOPTION_ALIASES.get(config.environment_adoption().strip().lower(), ADOPTION_DETECT)
 
 
 def silent_adoption_enabled() -> bool:
-    """机器是否可以**替用户**把一个候选环境记成本项目的决定（兼容开关 `TAVOTTO_ENV_ADOPTION=auto`）。
+    """机器是否可以**替用户**把一个候选环境记成本项目的决定：`detect`（默认）与 `legacy` 可以，`confirm` 不可以。
 
-    False（默认）= 确认模式：候选只作为建议出现，采用必须是用户的明确动作。注意这与
-    `auto_adoption_off()`（`TAVOTTO_USER_ENV_DISCOVERY=0`，连发现 / 体检都关掉）是两件事。"""
-    return os.environ.get(ADOPTION_ENV, "").strip().lower() == "auto"
+    注意这与 `auto_adoption_off()`（`TAVOTTO_USER_ENV_DISCOVERY=0`，连发现 / 体检都关掉）是两件事。"""
+    return adoption_mode() != ADOPTION_CONFIRM
+
+
+def legacy_adoption_enabled() -> bool:
+    """旧三处静默采用的那几条**旧路径**是否生效（`legacy` / 旧名 `auto`）：首开第 4 档只看健康就采用项目 venv、
+    跑前的门只在用户环境里挑（不含项目 venv）。`detect` 用的是 `deprepair.decide_environment` 的检测分支。"""
+    return adoption_mode() == ADOPTION_LEGACY
 
 
 def environment_generation(python: str) -> str:
@@ -713,6 +743,8 @@ def environment_generation(python: str) -> str:
 
 CONSENT_CONFIRMED = "confirmed"  # 用户明确采用 / 选回默认链条（`automatic=False`）
 CONSENT_LEGACY_AUTO = "legacy_auto"  # ADR 0114 之前机器替用户记下的：仍照用，但证明不了用户确认过
+#: 自动检测（`detect` 模式）替用户采用的：机器的决定，能跑就一直用；失效 / 不再能跑时由检测重新决定
+CONSENT_AUTO_DETECTED = "auto_detected"
 CONSENT_NONE = "none"  # 没有项目级决定
 
 
@@ -721,7 +753,11 @@ def consent_of(record: dict | None) -> str:
     授权——继续使用（迁移不重新询问），但不当作用户的显式确认。"""
     if record is None:
         return CONSENT_NONE
-    return CONSENT_LEGACY_AUTO if record.get("automatic", False) else CONSENT_CONFIRMED
+    if not record.get("automatic", False):
+        return CONSENT_CONFIRMED
+    if record.get("trigger") == TRIGGER_AUTO_DETECTED:
+        return CONSENT_AUTO_DETECTED
+    return CONSENT_LEGACY_AUTO
 
 
 def generation_changed(record: dict | None) -> bool:
@@ -1138,6 +1174,9 @@ TRIGGER_FIRST_OPEN = "first_open"
 
 #: 用户在环境建议上点「使用」时记进项目设置的 trigger（ADR 0114）：采用的是 `envadvice.recommend()` 列出的候选
 TRIGGER_RECOMMENDED = "recommended"
+
+#: 自动检测替用户采用时记进项目设置的 trigger（`detect` 模式，ADR 0114 §六）：检测过「能跑这个脚本」才记
+TRIGGER_AUTO_DETECTED = "auto_detected"
 
 
 def first_open_candidate(figures_dir: str | Path, script: str | None = None) -> dict:

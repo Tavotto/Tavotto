@@ -1,6 +1,7 @@
 # ADR 0114：环境「建议 → 检查 → 采用」三个动作，首次由用户确认；有效旧选择不重新询问
 
 日期：2026-10-05 · 状态：**Accepted**（产品目标由「项目 Onboarding × 执行主链路收敛」包给定，编排者 2026-10-05 裁决立本 ADR）
+· **2026-10-06 修订**：用户裁决「环境不让用户选」——默认改为自动检测（§六），§一～§二 的确认流程改为可选模式
 修订：[0057 首开的环境与工作目录](0057-first-open-environment-and-workdir.md) §一（解析解释器第 4 档「首开发现 + 体检 + 自动采用项目 venv」）；
 [0079 缺包时先找用户自己的 Python](0079-user-environment-discovery-and-auto-adoption.md) §四（跑前的门里**直接**改用）；
 [0107 缺包时无提示改用这台机器上装着它的 Python](0107-silent-system-interpreter-adoption-and-native-workdir.md) §一（运行后缺包的无提示采用，含项目 venv 那一层）
@@ -105,6 +106,49 @@
   但授权来源是 `legacy_auto`，建议里标签是 `remembered_legacy`，不当作显式确认；用户在建议上点「使用」它之后才变成 `confirmed`。
 * 新导入、无任何项目级决定的项目：只给建议，不采用。
 
+### 六、修订（2026-10-06，用户裁决）：默认改为「自动检测，能跑就用」，确认模式改为可选
+
+用户原话：「我其实更希望能够智能检测环境，如果一个环境可用就不要让用户选。选不到环境就直接回退到让用户安装安装包。
+减少用户的选择，小白用户根本不知道环境是什么意思。」——本节修订 §一 的「采用 = 用户明确点了『使用』」与 §二「什么时候需要
+用户先决定」作为**默认行为**；§三（零执行）、§四（环境代、全局锁、计划过期）、§五 的迁移规则照旧成立。
+
+* **模式**（`projectenv.adoption_mode()`，判据唯一出处）：`detect`（默认）/ `confirm`（§一～§五 原样，给想自己挑的人：
+  环境变量 `TAVOTTO_ENV_ADOPTION=confirm` 或全局设置 `worker.environment_adoption = "confirm"`，环境变量优先）/ `legacy`
+  （§五的兼容开关；旧名 `auto` 同义保留，退出条件不变）。`silent_adoption_enabled()` 现在是「机器可以替用户记决定」
+  （detect / legacy），旧三处里只属于 legacy 的那条（第 4 档只看健康就采用项目 venv）改读 `legacy_adoption_enabled()`。
+* **什么时候检测**：只在用户发起准备 / 运行之后——准备会话的检查（`preparation.plan_for`）与起会话前的
+  `pool.acquire`（编辑已知的图、MCP）都经 `pool.ENVIRONMENT_DECIDERS` 里那**一个**决定者 `deprepair.decide_environment`；
+  它在检测模式下就是 `_detect_environment`。扫描、`GET /api/engine/environment`、`envadvice.recommend()` 仍零执行；运行目录那道门
+  还要先问时也不检测（与旧模式同一个顺序：没答之前一个进程都不起，答完 `recheck` 再检测）。
+* **「能跑这个脚本」**：解释器健康 + 联合计划里脚本要的 import（缺的、已有的、映射不到包名的）全都 import 得到——与
+  跑前的门、依赖弹窗的「装齐」同一个判据（`userenvs.evaluate` + `deprepair._plan_imports`），不另写。
+* **挑选顺序**：项目自己的线索（项目 venv / `.vscode` / `.python-version` / `environment.yml` / shebang）→ 默认链条
+  （内置；能跑就不换，也不去体检机器上别处的环境）→ 其余按 `userenvs.rank()`（登录 shell → 名字对上项目的 Conda → 其余
+  Conda / pyenv → 系统；同档 verified 优先、Python 新的优先，ADR 0079 §三）。能跑的写一条 `automatic=True,
+  trigger=auto_detected` 的记录（授权来源 `auto_detected`，建议里的标签 `auto_detected`）。
+* **都不能跑**：不采用任何环境，报告里只有依赖检查项的一条待办（`dependency_authorization`）与一个动作
+  `prepare_dependencies`——同一个动作 id、同一份影响摘要授权（ADR 0115），目标是 Tavotto 管理的环境；没有 Python 时
+  同一个动作带私有 Python 供应（ADR 0111）。检测从不把用户的环境当成安装目标：检测自己记下的那条后来跑不了、别处也
+  没有能跑的 → 作废它（`invalidated.reason = cannot_run`），安装于是落到受管环境。
+* **不动的**：全局显式解释器（环境变量 / 设置里指定的）、用户为本项目选过且仍有效的（含装包后记下的受管环境）、明确
+  选回内置的——`pool.machine_chosen_interpreter` 为 False 的一个都不碰；历史 `legacy_auto` 记录能跑就照用，跑不了
+  也不被检测作废（装包仍按既有路径）；项目有依赖安装在跑时不改决定（`unless_installing`，与采用同一把锁）；正被安装占着的
+  环境不挑（`envlease.is_mutating`）。
+* **A 失效（不在 / 被重建 / 体检不过）**：检测模式下 `resolve_worker_python` 第 3 档不再停下报
+  `project_python_unusable`，一律作废（`pool._stops_when_unusable`）后重新检测；换到的另一个是**检测的新决定**：作废的事实
+  进 `invalidated_decision()`，报告的 `environment.replaced.reason` 说出来；会话指纹含解释器与环境代，修订加一、旧动作作废；
+  确认之前做的计划由 `_stale_reason` 拒绝（一行用户代码都不跑）。§四对「静默换成 B」的保护于是变成「换可以，但必须是看得见的
+  新决定、旧授权全部作废」。
+* **预算 / 单飞**：候选上限 `userenvs.PROBE_LIMIT`、并发 `PROBE_WORKERS`、每个候选 `projectenv.PROBE_TIMEOUT_S`；同一项目
+  同一时刻一次检测（`deprepair._detect_lock`），后到的等它落地再按落地后的记录判断。检测**不可中途取消**（有界；§三的明确
+  检查动作仍可取消）。`TAVOTTO_USER_ENV_DISCOVERY=0` 关掉检测（测试进程默认关）。
+* **报告**：会话报告多一个顶层 `environment`（= 计划的 `environment.adoption`，`envadvice.adoption_fact`）：
+  `{mode, kind ∈ builtin|project|user|managed|locked|null, decided_by ∈ user|auto|default|locked, switched, replaced}`——
+  只是可展示的事实，不要求用户动作。建议里的 `decision.needs_decision` 只在确认模式下可能为真，`decision.mode` 给出模式；
+  检测模式下不出现 `environment_choice`，界面不出现「确认采用」。
+* **迁移**：`confirmed` / `legacy_auto` 记录照旧有效；确认模式下写的、仍有效的显式选择就是用户的选择，检测不碰。
+  不新增持久化格式（记录多一个 trigger 值）。
+
 ## 不做的事
 
 * 不新增 resolver / 安装器 / worker / 前端可运行判据：解释器怎么选仍只有 `pool.resolve_worker_python`；候选证据复用
@@ -123,3 +167,9 @@
 历史自动记录照用且不算确认。`tests/test_environment_session.py`：会话里的 `environment_choice` 要求、选回内置 / 采用后的修订与旧动作作废、
 重建后新修订、报告不带机器路径。旧机制的看护（`test_first_open_environment.py`、`test_user_environments.py`、`test_project_env.py` 及
 `test_preparation_api.py` 里的一条）在文件级打开兼容开关继续钉着。
+`tests/test_environment_autodetect.py`（§六）：默认是检测模式、确认模式可选、旧名 `auto` = 旧三处；扫描 / GET / 建议零执行且不问；
+默认链条跑不了时挑能跑的里最好的、能跑时只让项目自己的线索排在前面；都不能跑不采用、作废检测自己记下的；用户选过的 / 选回内置 /
+全局锁定不碰；安装在跑时不改决定、被安装占着的环境不挑；真 venv：能跑的项目 venv 直接用、报告只说一句事实、worker 起在它里面；
+跑不了的项目 venv + 内置也缺包 → 只有一条安装待办与 `prepare_dependencies`（目标受管环境），装完同一会话出图；确认过的环境被重建
+→ 重新检测、报告说出「被重建」、修订加一、旧动作与旧计划都不跑。确认模式的用例（`test_environment_adoption.py`、
+`test_environment_session.py`、`test_engine_capabilities.py`）在文件级设 `TAVOTTO_ENV_ADOPTION=confirm` 原样钉着。

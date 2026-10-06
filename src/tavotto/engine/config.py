@@ -389,6 +389,12 @@ def worker_python() -> str | None:
     return (load().get("worker") or {}).get("python") or None
 
 
+def environment_adoption() -> str:
+    """全局设置里的环境采用模式（`worker.environment_adoption`，原样字符串；没设回空串）。判读归
+    `projectenv.adoption_mode()`（环境变量优先，认不出的值按默认）。"""
+    return str((load().get("worker") or {}).get("environment_adoption") or "")
+
+
 def set_worker_python(path: str | None) -> None:
     with _LOCK:
         cfg = load()

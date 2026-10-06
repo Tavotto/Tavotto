@@ -1244,7 +1244,7 @@ def resolve_worker_python(
         return select_worker_python()
     if record is not None:
         remembered = record["path"]
-        explicit_for_project = not record.get("automatic", False)
+        explicit_for_project = _stops_when_unusable(record)
         if not record.get("exists"):
             if explicit_for_project:
                 raise _project_python_unusable(remembered, "missing", record)
@@ -1268,9 +1268,9 @@ def resolve_worker_python(
             if explicit_for_project:
                 raise _project_python_unusable(remembered, "no_matplotlib", record)
             _invalidate_remembered(figures_dir, remembered, "no_matplotlib", record)
-    if discover and projectenv.silent_adoption_enabled():
-        # 兼容开关（ADR 0114 §五）：默认的确认模式不在解析解释器时体检候选、更不替用户采用——项目 venv 是
-        # `envadvice.recommend()` 的线索，采用是用户的明确动作
+    if discover and projectenv.legacy_adoption_enabled():
+        # 兼容开关（ADR 0114 §五）：只在旧模式下解析解释器时体检候选、只看健康就采用项目 venv。默认的检测模式
+        # 由 `deprepair.decide_environment` 在解析**之前**按「能不能跑这个脚本」决定（ADR 0114 §六），确认模式只给建议
         outcome = projectenv.first_open_candidate(figures_dir, script)
         if outcome.get("ok"):
             python = outcome["python"]
@@ -1334,7 +1334,7 @@ def peek_project_resolution(figures_dir: str | Path) -> tuple[str, str] | None:
     if record is None or record.get("mode") == projectenv.MODE_DEFAULT_CHAIN:
         return None
     remembered = record["path"]
-    explicit_for_project = not record.get("automatic", False)
+    explicit_for_project = _stops_when_unusable(record)
     if not record.get("exists"):
         if explicit_for_project:
             raise _project_python_unusable(remembered, "missing", record)
@@ -1344,6 +1344,18 @@ def peek_project_resolution(figures_dir: str | Path) -> tuple[str, str] | None:
             raise _project_python_unusable(remembered, "rebuilt", record)
         return None
     return remembered, remembered_source(figures_dir, remembered)
+
+
+def _stops_when_unusable(record: dict) -> bool:
+    """这条项目记录失效（不在 / 被重建 / 体检不过）时是**停下来**报 `project_python_unusable`，还是作废它、
+    回到「没决定过」重新决定。
+
+    确认 / 旧模式：用户为本项目挑的（`automatic=False`）停下，请他重新确认，不降级、不换别的（ADR 0114 §四）。
+    检测模式（默认，ADR 0114 §六）：一律作废、由自动检测重新决定——用户不选环境，「换到另一个能跑的」是检测的一个
+    新决定：作废的事实进 `invalidated_decision()`（报告里说出来），会话指纹里的解释器 / 环境代随之变化，旧授权作废。"""
+    if projectenv.adoption_mode() == projectenv.ADOPTION_DETECT:
+        return False
+    return not record.get("automatic", False)
 
 
 def explicit_worker_python() -> tuple[str, str] | None:
@@ -1417,6 +1429,14 @@ def _invalidate_remembered(figures_dir: str | Path, python: str, reason: str, re
             "trigger": record.get("trigger", ""),
         }
     projectenv.forget(figures_dir)
+
+
+def invalidate_remembered(
+    figures_dir: str | Path, record: dict, reason: str = "cannot_run"
+) -> None:
+    """检测模式（ADR 0114 §六）作废它自己先前记下、现在已跑不了这个脚本的那条决定；作废的事实同样进
+    `invalidated_decision()`，报告里说得出来。"""
+    _invalidate_remembered(figures_dir, record.get("path", ""), reason, record)
 
 
 def remembered_source(figures_dir: str | Path, python: str) -> str:
