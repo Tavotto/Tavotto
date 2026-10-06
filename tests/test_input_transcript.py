@@ -92,12 +92,83 @@ def test_a_version_one_file_is_read_and_its_answers_are_only_suggestions(tmp_pat
     scriptanswers.remember(tmp_path, "s.py", 1, "n: ", "3", context="ctx1:x")
     data = json.loads(path.read_text("utf-8"))
     assert data["version"] == scriptanswers.FORMAT_VERSION == 2
+    # 上下文摘要不进项目文件（T12，ADR 0099 §十）：它在本机侧表里
     assert data["scripts"]["s.py"] == [
-        {"index": 1, "prompt": "n: ", "answer": "3", "kind": "input", "context": "ctx1:x"}
+        {"index": 1, "prompt": "n: ", "answer": "3", "kind": "input"}
     ]
     assert scriptanswers.load(tmp_path) == {
         "s.py": [{"index": 1, "prompt": "n: ", "answer": "3", "kind": "input"}]
     }
+
+
+def _low_entropy_context(menu: str, earlier: str = "") -> str:
+    """真 worker 会算出的那种摘要：菜单输出低熵，旁人照着脚本就能枚举出来。"""
+    return scriptinput.context_digest("input", "选哪一项: ", menu, [{"answer": earlier}])
+
+
+def test_the_shareable_answer_file_never_carries_a_guessable_context_digest(tmp_path):
+    ctx = _low_entropy_context("1) 线性\n2) 对数\n")
+    scriptanswers.remember(tmp_path, "s.py", 0, "选哪一项: ", "2", context=ctx, run_config="rc_a")
+    raw = scriptanswers.answers_path(tmp_path).read_text("utf-8")
+    assert ctx not in raw and ctx.split(":", 1)[1] not in raw
+    assert all("context" not in e for e in json.loads(raw)["scripts"]["s.py"])
+    # 答案位置与明文非口令答案保持 ADR 0099 原样
+    assert json.loads(raw)["scripts"]["s.py"][0]["answer"] == "2"
+    # 这台机器上仍按上下文原样复用、换了上下文只给建议
+    hit = scriptanswers.recall(tmp_path, "s.py", 0, "选哪一项: ", context=ctx, run_config="rc_a")
+    assert hit == scriptanswers.Recall(answer="2")
+    other = _low_entropy_context("1) 对数\n2) 线性\n")
+    moved = scriptanswers.recall(
+        tmp_path, "s.py", 0, "选哪一项: ", context=other, run_config="rc_a"
+    )
+    assert moved == scriptanswers.Recall(suggestion="2", recheck=scriptanswers.RECHECK_CONTEXT)
+    # 摘要在 Tavotto 自己的数据目录里，不在项目里
+    side = scriptanswers.contexts_path(tmp_path)
+    assert ctx in side.read_text("utf-8")
+    assert tmp_path not in side.parents
+
+
+def test_an_answer_file_from_another_machine_is_only_a_suggestion(tmp_path):
+    ctx = _low_entropy_context("1) a\n2) b\n")
+    scriptanswers.remember(tmp_path, "s.py", 0, "选哪一项: ", "1", context=ctx)
+    # 换一台机器 = 项目文件跟过去了，本机侧表没有
+    scriptanswers.contexts_path(tmp_path).unlink()
+    got = scriptanswers.recall(tmp_path, "s.py", 0, "选哪一项: ", context=ctx)
+    assert got == scriptanswers.Recall(suggestion="1", recheck=scriptanswers.RECHECK_LEGACY)
+
+
+def test_a_context_written_into_the_project_file_is_not_trusted_and_is_dropped(tmp_path):
+    """T08–T11 的开发版把摘要写进了项目文件（从未发布）：读入丢弃、只当建议，下一次写就不再带它。"""
+    ctx = _low_entropy_context("1) a\n")
+    path = scriptanswers.answers_path(tmp_path)
+    path.parent.mkdir(parents=True)
+    entry = {"index": 0, "prompt": "q: ", "answer": "1", "kind": "input", "context": ctx}
+    path.write_text(json.dumps({"version": 2, "scripts": {"s.py": [entry]}}), "utf-8")
+    got = scriptanswers.recall(tmp_path, "s.py", 0, "q: ", context=ctx)
+    assert got == scriptanswers.Recall(suggestion="1", recheck=scriptanswers.RECHECK_LEGACY)
+    scriptanswers.remember(tmp_path, "s.py", 1, "r: ", "x", context="ctx1:other")
+    assert ctx not in path.read_text("utf-8")
+
+
+def test_a_synced_answer_does_not_inherit_this_machine_s_context(tmp_path):
+    ctx = _low_entropy_context("1) a\n2) b\n")
+    scriptanswers.remember(tmp_path, "s.py", 0, "q: ", "1", context=ctx)
+    # 别处（同步 / 手改）把同一问的答案换成了 2：本机记的上下文属于 1，不能拿来原样套 2
+    path = scriptanswers.answers_path(tmp_path)
+    data = json.loads(path.read_text("utf-8"))
+    data["scripts"]["s.py"][0]["answer"] = "2"
+    path.write_text(json.dumps(data), "utf-8")
+    got = scriptanswers.recall(tmp_path, "s.py", 0, "q: ", context=ctx)
+    assert got == scriptanswers.Recall(suggestion="2", recheck=scriptanswers.RECHECK_LEGACY)
+
+
+def test_editing_and_forgetting_keep_the_local_contexts_in_step(tmp_path):
+    scriptanswers.remember(tmp_path, "s.py", 0, "q: ", "1", context="ctx1:c")
+    # 答案管理里改答案：上下文仍是那一问的，改后的答案原样复用（与 T08 行为一致）
+    assert scriptanswers.update(tmp_path, "s.py", 0, "3")
+    assert scriptanswers.recall(tmp_path, "s.py", 0, "q: ", context="ctx1:c").answer == "3"
+    assert scriptanswers.forget(tmp_path, "s.py")
+    assert "ctx1:c" not in scriptanswers.contexts_path(tmp_path).read_text("utf-8")
 
 
 def test_two_configurations_keep_their_own_answers(tmp_path):

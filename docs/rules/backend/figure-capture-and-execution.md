@@ -224,7 +224,7 @@
 
 用户手动给的**精确 argv** 贯通 探测 → 热编辑 → 冷重放 → 导出 → 重开；自动 argparse 表单是 T07，不在这里。
 
-- **载荷**：`safe_spec(argv=, run_config=)` 是唯一构造入口（缺省空 = 旧行为逐字节不变）。`worker_argv` 只在 argv 非空时
+- **载荷**：`safe_spec(argv=, run_config=)` 是唯一构造入口（缺省空 = 旧行为逐字节不变）；调用方一律 `**execspec.run_kwargs(run)`，`RunSelection` 只由 `runconfig.selection*` 产生（T12，`test_execspec.py::TestSingleAssembly` AST 看护）。`worker_argv` 只在 argv 非空时
   多两个 flag：`--script-argv-json <JSON 字符串数组，ASCII 转义>` 与 `--run-config <rc_…>`；token 不直接摊在命令行上
   （空串 / `-` 开头 / `--` / 中文会被 worker 自己的 argparse 或 Windows 命令行重组弄坏）。worker 在 `sys.argv` 处设
   `[script, *argv]`——仍在 `paper_style` / `runpy` / 导入期 `parse_args()` 之前；载荷坏了 worker **拒绝启动**（不回落空 argv）。

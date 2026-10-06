@@ -124,7 +124,9 @@
   看护：`tests/test_script_input.py`（两条控制面）、`tests/test_script_input_api.py`。
 - **答案复用要上下文全对上；冷重放用执行转录；口令不进记账（ADR 0099 §九，T08）**。每一问带 `context` 摘要
   （上一问之后的输出 + 前面的回答，口令只记占位）；`scriptanswers.recall()` 只有 (运行配置, 序号, 读取方式, 提示, 上下文)
-  全对上才回填，否则只给建议、重新问（没有界面 = `script_needs_input`）。build 成功后 `inputbroker.finished()` 把问答绑成
+  全对上才回填，否则只给建议、重新问（没有界面 = `script_needs_input`）。上下文摘要是无盐 sha256、可枚举，**只记在
+  本机侧表**（`scriptanswers.contexts_path()`，数据目录，绑定所属答案），项目文件 `_script_inputs.json` 里没有它
+  （ADR 0099 §十，T12）；换机器 / 答案被别处改过 = 只当建议。build 成功后 `inputbroker.finished()` 把问答绑成
   执行转录（`inputtranscript`，数据目录，按 (脚本, 运行配置) 绑这批产物）；`serving()` 进门冻结策略：有转录就按转录重放、
   不读之后改过的项目答案文件；答案管理改 / 删答案作废转录（明确重算）。getpass 那一问在 worker 记账里只有
   `secret: true`：build 响应、热会话、转录都没有值，重放时重新问，没人答 → `reason=secret_required`，绝不填空。

@@ -426,15 +426,27 @@ export const useEnvStore = create<EnvState>((set, get) => ({
 
   refresh: async () => {
     const epoch = projectEpoch
-    try {
-      const env = await fetchEngineEnvironment()
-      if (epoch !== projectEpoch) return // 响应里的 project 是发请求那个项目的
-      set({ env })
-      // 改指表的代次（ADR 0106 §五）：重连 / 页面恢复的补拉就是这一次刷新
-      const g = env.project?.input_remap?.generation
-      if (typeof g === 'number') get().noteInputRemapGeneration(g)
-    } catch {
-      // 探测失败不该打扰用户：真要渲染时自然会报错
+    // 读取在路上时 env 被别的回包写过（确认运行目录 / 采用环境 / 另一次读取）：这份快照可能是那次写**之前**的，
+    // 整份写进来就把刚确认的事实盖回去（T12：装载期那次读取比紧接着的确认晚回来）。不盖，按此刻再读一次；
+    // 再读的那份在路上又被写过就不落地——store 里已经是更晚到的事实
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const seen = get().env
+      try {
+        const env = await fetchEngineEnvironment()
+        if (epoch !== projectEpoch) return // 响应里的 project 是发请求那个项目的
+        if (get().env !== seen) {
+          if (attempt === 0) continue
+          return
+        }
+        set({ env })
+        // 改指表的代次（ADR 0106 §五）：重连 / 页面恢复的补拉就是这一次刷新
+        const g = env.project?.input_remap?.generation
+        if (typeof g === 'number') get().noteInputRemapGeneration(g)
+        return
+      } catch {
+        // 探测失败不该打扰用户：真要渲染时自然会报错
+        return
+      }
     }
   },
 

@@ -7,6 +7,12 @@ T08 之前记下的没有上下文的旧条目，**最多是建议**（`recall()
 **存放位置只由 `answers_path()` 决定**——用户若改选本机数据目录（ADR §四 B）或「项目里但不进项目包」（C），
 只改这一个函数。
 
+**上下文摘要不进项目文件**（T12，ADR 0099 §十）：它是提示 + 上一问后的输出 + 前面回答的无盐 sha256，菜单类输出
+熵低、照着脚本就能枚举，不能随项目分享出去。它记在 Tavotto 数据目录的本机侧表（`contexts_path()`），按
+(脚本, 运行配置, 序号, 读取方式, 提示) 索引、并绑定它所属的那个答案；项目文件只留答案本身。换了机器 / 答案被别处
+改过 → 本机没有对得上的上下文 → 只当建议重新问（安全方向）。项目文件里若带着 `context`（T08 开发版写过，从未
+发布），读入时丢弃，下一次写就不再有它。
+
 纯标准库，Flask 父进程侧。写入一律 `atomicio`，读用 `documents.loads_document` 的非有限数纪律；
 读坏了当作没有答案（答案丢了只是再问一次，不值得让渲染失败）。答案可能含路径：不进遥测、不进
 诊断包、不进 app.log。
@@ -17,7 +23,9 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
+import os
 import threading
+import time
 from pathlib import Path
 
 from . import atomicio, config, documents
@@ -29,6 +37,10 @@ FILENAME = documents.SCRIPT_INPUTS_FILENAME
 FORMAT_VERSION = 2
 #: 单条答案的长度上限（字符）。答案是人在对话框里敲的，超长多半是粘错了。
 MAX_ANSWER_CHARS = 10_000
+#: 本机上下文侧表的格式与每个项目的条目上限（超出按写入时间丢最旧的：丢了只是再问一次）。
+CONTEXTS_FORMAT_VERSION = 1
+MAX_CONTEXTS = 2000
+_SEP = "\x00"
 
 _LOCK = threading.Lock()
 
@@ -61,7 +73,6 @@ def _read(project_root: str | Path) -> dict[str, list[dict]]:
                 "prompt": e["prompt"],
                 "answer": e["answer"],
                 "kind": e.get("kind") if isinstance(e.get("kind"), str) else "input",
-                "context": e.get("context") if isinstance(e.get("context"), str) else None,
                 "run_config": e.get("run_config") if isinstance(e.get("run_config"), str) else None,
             }
             for e in entries
@@ -77,11 +88,10 @@ def _read(project_root: str | Path) -> dict[str, list[dict]]:
 
 
 def _stored(entry: dict) -> dict:
-    """落盘形状：没有上下文 / 运行配置的不写这两个键（旧条目原样）。"""
+    """落盘形状：没有运行配置的不写这个键（旧条目原样）。上下文摘要从不写进项目文件。"""
     out = {k: entry[k] for k in ("index", "prompt", "answer", "kind")}
-    for k in ("context", "run_config"):
-        if entry.get(k):
-            out[k] = entry[k]
+    if entry.get("run_config"):
+        out["run_config"] = entry["run_config"]
     return out
 
 
@@ -93,6 +103,60 @@ def _write(project_root: str | Path, scripts: dict[str, list[dict]]) -> None:
         "scripts": {k: [_stored(e) for e in v] for k, v in sorted(scripts.items()) if v},
     }
     atomicio.write_json(path, payload, indent=2)
+
+
+# ---------------------------------------------------------------- 本机上下文侧表
+
+
+def contexts_path(project_root: str | Path) -> Path:
+    """上下文摘要的本机侧表：Tavotto 数据目录，不写用户项目、不进项目包。"""
+    norm = os.path.normcase(os.path.normpath(os.path.abspath(str(project_root))))
+    digest = hashlib.sha256(norm.encode("utf-8")).hexdigest()[:24]
+    return config.data_path("scriptanswer-contexts", f"{digest}.json")
+
+
+def _ctx_key(script: str, run_config: str | None, index: int, kind: str, prompt: str) -> str:
+    return _SEP.join((script, run_config or "", str(index), kind, prompt))
+
+
+def _answer_tag(answer: str) -> str:
+    """侧表里的上下文属于哪一个答案：项目文件里的答案被别处换掉，上下文就不再对它作数。"""
+    return hashlib.sha256(answer.encode("utf-8")).hexdigest()[:32]
+
+
+def _read_contexts(project_root: str | Path) -> dict[str, dict]:
+    try:
+        data = json.loads(contexts_path(project_root).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    items = data.get("entries") if isinstance(data, dict) else None
+    if not isinstance(items, dict):
+        return {}
+    return {
+        k: v
+        for k, v in items.items()
+        if isinstance(v, dict)
+        and isinstance(v.get("context"), str)
+        and isinstance(v.get("answer"), str)
+    }
+
+
+def _write_contexts(project_root: str | Path, items: dict[str, dict]) -> None:
+    if len(items) > MAX_CONTEXTS:
+        keep = sorted(items, key=lambda k: float(items[k].get("t") or 0))[-MAX_CONTEXTS:]
+        items = {k: items[k] for k in keep}
+    path = contexts_path(project_root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomicio.write_json(path, {"version": CONTEXTS_FORMAT_VERSION, "entries": items})
+
+
+def _local_context(contexts: dict[str, dict], script: str, entry: dict) -> str | None:
+    side = contexts.get(
+        _ctx_key(script, entry["run_config"], entry["index"], entry["kind"], entry["prompt"])
+    )
+    if side is None or side["answer"] != _answer_tag(entry["answer"]):
+        return None
+    return side["context"]
 
 
 def _public(entry: dict) -> dict:
@@ -136,40 +200,31 @@ def recall(
     context: str | None = None,
     run_config: str | None = None,
 ) -> Recall:
-    """按 (运行配置, 第 N 问, 读取方式, 提示, 上下文) 找记住的答案（ADR 0099 §九）。
+    """按 (运行配置, 第 N 问, 读取方式, 提示, 上下文) 找记住的答案（ADR 0099 §九；上下文只认本机侧表，§十）。
 
     全部对上 → 原样复用。提示与读取方式相同、而上下文 / 运行配置不同，或旧条目没有上下文 → 只给建议：
     「不确定就重新确认」。提示变了 → 新问题，连建议都不给（与 T08 之前同一条判据）。"""
+    with _LOCK:
+        scripts = _read(project_root)
+        contexts = _read_contexts(project_root)
     same = [
         e
-        for e in _read_locked(project_root).get(script, [])
+        for e in scripts.get(script, [])
         if e["index"] == index and e["prompt"] == prompt and e["kind"] == kind
     ]
     if not same:
         return Recall()
     mine = [e for e in same if e["run_config"] == run_config]
     for e in mine:
-        if context and e["context"] == context:
+        if context and _local_context(contexts, script, e) == context:
             return Recall(answer=e["answer"])
     if mine:
         e = mine[0]
+        local = _local_context(contexts, script, e)
         return Recall(
-            suggestion=e["answer"], recheck=RECHECK_LEGACY if not e["context"] else RECHECK_CONTEXT
+            suggestion=e["answer"], recheck=RECHECK_LEGACY if not local else RECHECK_CONTEXT
         )
     return Recall(suggestion=same[0]["answer"], recheck=RECHECK_CONFIG)
-
-
-def _read_locked(project_root: str | Path) -> dict[str, list[dict]]:
-    with _LOCK:
-        return _read(project_root)
-
-
-def lookup(project_root: str | Path, script: str, index: int, prompt: str) -> str | None:
-    """(脚本, 第 N 问, 提示原文) 记住的答案——**只给答案管理 / 旧调用方看**，不是复用判据（那是 `recall()`）。"""
-    for e in entries(project_root, script):
-        if e["index"] == index and e["prompt"] == prompt:
-            return e["answer"]
-    return None
 
 
 def _check_answer(answer: str) -> str:
@@ -206,12 +261,21 @@ def remember(
                 "prompt": prompt,
                 "answer": answer,
                 "kind": kind,
-                "context": context,
                 "run_config": run_config,
             }
         )
         scripts[script] = sorted(kept, key=lambda e: (e["index"], e["run_config"] or ""))
         _write(project_root, scripts)
+        contexts = _read_contexts(project_root)
+        prefix = _SEP.join((script, run_config or "", str(index))) + _SEP
+        contexts = {k: v for k, v in contexts.items() if not k.startswith(prefix)}
+        if context:
+            contexts[_ctx_key(script, run_config, index, kind, prompt)] = {
+                "context": context,
+                "answer": _answer_tag(answer),
+                "t": time.time(),
+            }
+        _write_contexts(project_root, contexts)
 
 
 def update(project_root: str | Path, script: str, index: int, answer: str) -> bool:
@@ -220,12 +284,18 @@ def update(project_root: str | Path, script: str, index: int, answer: str) -> bo
     with _LOCK:
         scripts = _read(project_root)
         found = False
+        contexts = _read_contexts(project_root)
         for e in scripts.get(script, []):
             if e["index"] == index:
+                local = _local_context(contexts, script, e)
                 e["answer"] = answer
                 found = True
+                if local:
+                    key = _ctx_key(script, e["run_config"], index, e["kind"], e["prompt"])
+                    contexts[key] = {**contexts[key], "answer": _answer_tag(answer)}
         if found:
             _write(project_root, scripts)
+            _write_contexts(project_root, contexts)
         return found
 
 
@@ -239,6 +309,14 @@ def forget(project_root: str | Path, script: str, index: int | None = None) -> b
             return False
         scripts[script] = after
         _write(project_root, scripts)
+        prefix = script + _SEP
+        mine = (
+            (lambda k: k.startswith(prefix))
+            if index is None
+            else (lambda k: k.startswith(prefix) and k.split(_SEP)[2] == str(index))
+        )
+        contexts = _read_contexts(project_root)
+        _write_contexts(project_root, {k: v for k, v in contexts.items() if not mine(k)})
         return True
 
 

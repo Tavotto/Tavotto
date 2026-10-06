@@ -49,6 +49,67 @@ class TestSafeDefaults:
         assert execspec.PROFILE_NATIVE is figcapture.PROFILE_NATIVE
 
 
+class TestSingleAssembly:
+    """ExecutionSpec 只有一个装配入口（T12 收敛）：别处不直接构造 `ExecutionSpec(...)`，`safe_spec` 的运行配置
+    （argv / run_config）只经 `execspec.run_kwargs(run)` 进去——准备计划、池的三条 spawn 路径不各自拼一份。
+    AST 检查，不是子串计数；行为证据在 `test_run_argv*.py`（五个消费端同一份 argv）。"""
+
+    SRC = Path(execspec.__file__).resolve().parents[1]
+
+    def _calls(self):
+        import ast
+
+        for path in sorted(self.SRC.rglob("*.py")):
+            if path.name == "execspec.py" and path.parent.name == "engine":
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Call):
+                    f = node.func
+                    name = f.attr if isinstance(f, ast.Attribute) else getattr(f, "id", None)
+                    yield path, node, name
+
+    def test_nothing_else_constructs_an_execution_spec(self):
+        offenders = [
+            f"{p.relative_to(self.SRC)}:{n.lineno}"
+            for p, n, name in self._calls()
+            if name == "ExecutionSpec"
+        ]
+        assert offenders == []
+
+    def test_run_configuration_enters_safe_spec_only_through_run_kwargs(self):
+        import ast
+
+        offenders = []
+        for p, n, name in self._calls():
+            if name != "safe_spec":
+                continue
+            for kw in n.keywords:
+                if kw.arg in ("argv", "run_config"):
+                    offenders.append(f"{p.relative_to(self.SRC)}:{n.lineno} {kw.arg}=")
+                elif kw.arg is None:
+                    v = kw.value
+                    fn = getattr(v, "func", None)
+                    fname = fn.attr if isinstance(fn, ast.Attribute) else getattr(fn, "id", None)
+                    if fname != "run_kwargs":
+                        offenders.append(f"{p.relative_to(self.SRC)}:{n.lineno} **{ast.unparse(v)}")
+        assert offenders == []
+
+    def test_only_the_run_configuration_store_selects_a_configuration(self):
+        """执行用的 argv 只能来自登记过的运行配置（`runconfig.selection*`）：没有绕过 runconfig 的执行路径。"""
+        offenders = [
+            f"{p.relative_to(self.SRC)}:{n.lineno}"
+            for p, n, name in self._calls()
+            if name == "RunSelection" and p.name != "runconfig.py"
+        ]
+        assert offenders == []
+
+    def test_run_kwargs_is_empty_without_a_configuration(self):
+        assert execspec.run_kwargs(None) == {}
+        run = execspec.RunSelection("rc_1", ("--n", "3"))
+        assert execspec.run_kwargs(run) == {"argv": ("--n", "3"), "run_config": "rc_1"}
+
+
 class TestSerialization:
     def test_json_roundtrip_is_lossless(self):
         s = _spec(env={"MPLCONFIGDIR": "/data/mpl"})

@@ -93,7 +93,12 @@
 * `TAVOTTO_ENV_ADOPTION=auto`（`projectenv.silent_adoption_enabled()`）：三个静默采用点的**唯一**开关，保留一版，给还没有可确认界面的
   无头环境用（CI、脚本调用）。默认不设 = 确认模式。它不是第二套逻辑：开着时走原来那几条路径，关着时它们只产出建议。
   与 `TAVOTTO_USER_ENV_DISCOVERY=0`（连发现 / 体检都关掉）是两回事，两个都生效。
-  退出条件：T10 给 MCP / CLI 的显式采用参数与能力协商落地，且一版发布后删除。
+  退出条件：T10 给 MCP / CLI 的显式采用参数与能力协商落地（**已满足**，ADR 0117 §三），且一版发布后删除。
+  T12 复核写死「一版」的判据：带确认模式的那个正式版本发布之后的**下一个**正式版本里删，前提是 ① 期间没有登记「无头 / CI 只能靠
+  静默采用」的 issue（有就先给那条路径显式采用参数，不延长开关）；② 仓库 CI / nightly 里没有任何 job 设置这个变量
+  （`grep -rn TAVOTTO_ENV_ADOPTION .github scripts tests` 只剩开关自己的用例）。删除时一并删：`projectenv.silent_adoption_enabled()`、
+  三个采用点的 auto 分支、`pool.first_open_outcome` / `plan.environment.discovery`、`test_first_open_environment` /
+  `test_user_environments` / `test_project_env` 的文件级开关；`legacy_auto` 的**读者**不删（已落盘的记录仍要被识别成「未确认」）。
 * **迁移：已采用 / 已记住的项目不重新询问**。`automatic=False` 的记录就是用户的显式确认（`consent=confirmed`），继续有效；
   没有环境代的老记录不追溯（`generation_changed` 对它回 False），下次用户重新采用时才写入环境代。
   `automatic=True` 的历史记录**证明不了用户确认过**：继续照用（迁移不终止已有运行、不改 native 的原调用，也不让用户突然被问一次），
