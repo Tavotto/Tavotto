@@ -129,6 +129,10 @@
 - **目标**：绘图证据（已登记 / 静态产图 / 动态图名）才是 `plot`；工具 / 测试 / 样式模块是 `auxiliary`，不默认当目标、缺包
   缺参不阻塞别的绘图脚本；读不动 / 没核验的是 `unknown`（可手动选）。默认目标只在**恰好一个尚未连接的绘图脚本**时给；
   多个就让用户选（`choose_target`），不同作用域（最近的依赖声明目录）的 requirements 不混装。
+  **「已连接」= 登记了且真有可编辑的图（T11）**：`projscan._linked_scripts`——登记的图名里至少一个在项目里有同名图文件，或被某次执行
+  捕获过（`probe.was_captured`，与 `unlinked_stems` 同一判据）；目标多一个 `linked` 字段。打开项目时静态扫描先写进注册表的字面量图名
+  不算（脚本一次没跑、什么都打不开）——否则只有脚本的项目报 `already_connected`（「图可以直接编辑」）、检查条的首跑入口被藏起来。
+  只读：文件名比对 + 数据目录 cache 元数据；`linked` 集合进 `evidence_revision`。
 - **报告**：`phase` 是准备会话词汇的子集（`scanning` / `awaiting_confirmation` / `awaiting_configuration` / `completed` /
   `action_required` / `cancelled`，子集关系由测试钉着），`outcome` 单列事实；`checks` 里环境与依赖恒为 `unknown`
   （`environment.verified` 恒 False，不给推荐），依赖只说声明文件与条数（不带原文行）。`evidence_revision` 是内容证据的
