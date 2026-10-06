@@ -90,16 +90,25 @@ jobs:
       - name: 静默安装 → 起壳 sidecar 冒烟 → 卸载
         shell: pwsh
         env:
-          TAVOTTO_DATA_DIR: ${{ runner.temp }}\beta-data
-          TAVOTTO_CONFIG_DIR: ${{ runner.temp }}\beta-config
           TAVOTTO_NO_UPDATE_CHECK: "1"
         run: |
           $ErrorActionPreference = "Stop"
           $setup = @(Get-ChildItem src-tauri\target\release\bundle\nsis\*.exe)
           if ($setup.Count -ne 1) { throw "NSIS 产物数量异常（$($setup.Count) 个）" }
           $inst = "$env:RUNNER_TEMP\装 这里\Tavotto Beta"
+          # 安装器自己补 Tavotto Beta 目录（installer.nsi 的 beta 段）：这里不设 TAVOTTO_*_DIR，验它真的补了
+          $env:TAVOTTO_CONFIG_DIR = $null
+          $env:TAVOTTO_DATA_DIR = $null
+          $official = Join-Path $env:APPDATA "Tavotto\install.json"
+          $officialBefore = if (Test-Path $official) { (Get-Item $official).LastWriteTimeUtc.Ticks } else { "absent" }
           $p = Start-Process -PassThru -Wait $setup[0].FullName -ArgumentList "/S", "/D=$inst"
           if ($p.ExitCode -ne 0) { throw "安装器退出码 $($p.ExitCode)" }
+          if (-not (Test-Path (Join-Path $env:APPDATA "Tavotto Beta\install.json"))) { throw "安装清单没写进 %APPDATA%\Tavotto Beta" }
+          $officialAfter = if (Test-Path $official) { (Get-Item $official).LastWriteTimeUtc.Ticks } else { "absent" }
+          if ("$officialBefore" -ne "$officialAfter") { throw "正式版 install.json 被安装器改过（$officialBefore → $officialAfter）" }
+          Write-Host "✓ 安装清单在 Tavotto Beta 下，正式版的没动"
+          $env:TAVOTTO_DATA_DIR = "$env:RUNNER_TEMP\beta-data"
+          $env:TAVOTTO_CONFIG_DIR = "$env:RUNNER_TEMP\beta-config"
           $side = Get-ChildItem $inst -Recurse -Filter Tavotto.exe | Where-Object { $_.DirectoryName -like "*sidecar*" } | Select-Object -First 1
           if (-not $side) { throw "装完找不到 sidecar\Tavotto\Tavotto.exe" }
           if (-not (Test-Path "$inst\Tavotto.exe")) { throw "装完找不到壳 Tavotto.exe" }
@@ -107,7 +116,13 @@ jobs:
             --figures examples\runtime_check --expect-source bundled `
             --expect-control-plane workerd
           $un = Join-Path $inst "uninstall.exe"
+          $env:TAVOTTO_CONFIG_DIR = $null
+          $env:TAVOTTO_DATA_DIR = $null
           if (Test-Path $un) { Start-Process -Wait $un -ArgumentList "/S" }
+          # NSIS 卸载器先把自己拷到 temp 再回头删，-Wait 等到的只是第一段：限时轮询
+          $betaManifest = Join-Path $env:APPDATA "Tavotto Beta\install.json"
+          foreach ($i in 1..60) { if (-not (Test-Path $betaManifest)) { break }; Start-Sleep 1 }
+          if (Test-Path $betaManifest) { throw "卸载后 Tavotto Beta 的安装清单还在" }
           Write-Host "✓ 装得上、sidecar 起得来、卸得掉"
 
       - name: 整理产物
