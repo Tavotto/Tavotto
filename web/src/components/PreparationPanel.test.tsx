@@ -373,6 +373,29 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
     })
     expect(panel().dataset.prepState).toBe('edit_ready')
   })
+
+  it('进入编辑时详情自动收起（T12b）：展开着的参数表不得把下面的编辑区挤没；收起后仍可再展开', async () => {
+    await mount()
+    await openWith(report(STATES.completed))
+    const details = () => panel().querySelector('[data-prep-details]') as HTMLDetailsElement
+    // 原生 toggle 事件是排队的任务：点完等它派发，面板的 open 状态才跟上
+    const toggle = () =>
+      act(async () => {
+        ;(details().querySelector(':scope > summary') as HTMLElement).click()
+        await new Promise((r) => setTimeout(r, 0))
+      })
+    expect(details().open).toBe(false)
+    await toggle()
+    expect(details().open).toBe(true)
+    await act(async () => primary()!.click())
+    expect(panel().dataset.prepState).toBe('edit_opening')
+    expect(details().open).toBe(false)
+    await toggle()
+    expect(details().open).toBe(true) // 用户自己再展开：不被抢回去
+    // 面板限高、一句话之外的内容在面板里滚（几何在 e2e `first-run-qualification` 里用 elementFromPoint 量）
+    expect(panel().className).toContain('max-h-[40vh]')
+    expect(panel().querySelector('[data-prep-body]')?.className).toContain('overflow-y-auto')
+  })
 })
 
 describe('运行时 input：同一请求只有一个展示面', () => {
