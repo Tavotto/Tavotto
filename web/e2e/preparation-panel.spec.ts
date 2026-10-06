@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import type { Page } from '@playwright/test'
@@ -214,10 +214,23 @@ test('恢复：关面板换展示面、HTTP 断开后台照跑、应用重启不
     await expect(panel(page)).toHaveAttribute('data-prep-state', 'completed')
     expect(starts(log)).toBe(1) // 失联 / 重连没有重提交任何执行
 
-    // 应用重启：同一端口起一个新后端（内存里的会话都没了）→ 旧会话 404 → 只重建检查，不重跑
+    // 应用重启：同一端口、**同一份数据 / 配置目录**起一个新后端（同一台机器上的重启：内存里的会话都没了，本机的
+    // 数据目录还在）→ 旧会话 404 → 只重建检查，不重跑。fixtures 的 stop 会删整个临时根，先把两个目录存下来。
+    // （以前这里每次重启都换一个全新的数据目录——那等于「换了一台机器」：T12 起 input 回答的上下文摘要只在本机数据
+    // 目录的侧表里，换机器只当建议重新问，这是有意的安全方向，而不是「重启丢了上下文」）
     const port = a.port
+    const keptData = path.join(root, 'kept-data')
+    const keptConfig = path.join(root, 'kept-config')
+    cpSync(a.dataDir, keptData, { recursive: true })
+    const srcConfig = path.join(path.dirname(a.dataDir), 'config')
+    if (existsSync(srcConfig)) cpSync(srcConfig, keptConfig, { recursive: true })
+    else mkdirSync(keptConfig, { recursive: true })
     await a.stop()
-    second = await startApp({ figures: project, port })
+    second = await startApp({
+      figures: project,
+      port,
+      env: { TAVOTTO_DATA_DIR: keptData, TAVOTTO_CONFIG_DIR: keptConfig },
+    })
     await expect(panel(page)).toHaveAttribute('data-prep-state', 'restarted', { timeout: 60_000 })
     await expect(panel(page).locator('[data-prep-primary]')).toHaveAttribute('data-prep-primary', 'run')
     await page.waitForTimeout(2000)
@@ -226,19 +239,15 @@ test('恢复：关面板换展示面、HTTP 断开后台照跑、应用重启不
     // 明确停止：本会话新建的会话在停住时当场关掉（不等脚本自己跑完）
     writeFileSync(hold, 'hold')
     await primary(page).click()
-    // 记住的回答按上下文原样复用（ADR 0099 §九）或再问一次：两种都接着走到停在闸门上
+    // 同一台机器重启：记住的回答连同本机侧表里的上下文都还在，按上下文原样复用（ADR 0099 §九 / §十）——不再问。
+    // （以前这里写成「复用或再问一次都行」，再按某一刻读到的 running|input 分支：input 晚于 running 到来时就走错分支，
+    // 停在问题上去点「停止」——这条用例在 T12 之后的「本机稳定红」就是这个竞态 + 每次重启换数据目录）
     const state = panel(page)
-    await expect
-      .poll(async () => state.getAttribute('data-prep-state'), { timeout: 120_000 })
-      .toMatch(/^(running|input)$/)
-    if ((await state.getAttribute('data-prep-state')) === 'input') {
-      const form = panel(page).locator('[data-prep-input]')
-      await form.locator('[data-script-input-answer]').fill('1')
-      await form.locator('[data-script-input-submit]').click()
-      await expect(state).toHaveAttribute('data-prep-state', 'running', { timeout: 60_000 })
-    }
-    await expect.poll(() => starts(log), { timeout: 60_000 }).toBe(2) // 脚本真的开跑了（停在闸门上）
+    await expect.poll(() => starts(log), { timeout: 120_000 }).toBe(2) // 脚本真的开跑了（停在闸门上）
+    await expect(state).toHaveAttribute('data-prep-state', 'running', { timeout: 60_000 })
+    await page.waitForTimeout(1500) // 若回答没被复用，问题会在脚本开跑后立刻到来：给它时间出现，再断言它没有
     await expect(state).toHaveAttribute('data-prep-state', 'running')
+    await expect(page.locator('[data-script-input-answer]')).toHaveCount(0)
     await primary(page).click() // 停止
     await expect(state).toHaveAttribute('data-prep-state', 'cancelled', { timeout: 30_000 })
     expect(existsSync(hold)).toBe(true) // 闸门还在：是取消当场关掉了会话，不是脚本自己跑完
