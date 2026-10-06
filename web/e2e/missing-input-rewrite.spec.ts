@@ -3,6 +3,12 @@ import os from 'node:os'
 import path from 'node:path'
 import { expect, test } from './fixtures'
 
+// 这一组钉的是**旧**的同步试运行路径（T09 起它只在本地开关关闭时走；默认的准备面板路径见
+// `preparation-panel.spec.ts`）。开关是本机 localStorage 偏好，在页面脚本之前写好
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('tavotto.preparationPanel', 'off'))
+})
+
 /**
  * 改指表救不回的数据路径，经确认改写脚本里的那串（ADR 0110）——真后端、真 worker、真浏览器。
  *

@@ -1266,6 +1266,18 @@ class SessionService:
                     and derived["phase"] == PHASE_AWAITING_RUNTIME_INPUT
                     else None
                 ),
+                # T09：这次尝试真正捕获到的图（与 `/api/registry/probe` 响应里同一份公开描述符：项目相对路径、
+                # 运行配置只是不透明引用）。「进入编辑」直接用它——不按图名再找一遍、不为换界面再跑一次脚本。
+                # 只在这次尝试成功（捕获到且登记好）时给；跑完但没有图 / 失败 / 登记不上时是空表
+                "captured": (
+                    [
+                        dict(d)
+                        for d in ((result.captured or {}).get("descriptors") or ())
+                        if isinstance(d, dict)
+                    ]
+                    if result is not None and derived["outcome"]["kind"] == OUTCOME_SUCCEEDED
+                    else []
+                ),
                 "plan": sess.plan.to_payload(),
                 "result": result.to_payload() if result else None,
             }
@@ -1436,6 +1448,10 @@ class SessionService:
         result = found[1]
         if result.status not in preparation.TERMINAL:
             return True
+        if result.status == preparation.STATUS_CANCELLED:
+            # 取消已经落地（T09：共享会话的等待者被放手时，执行线程可能还卡在别人的会话上）——不等它收尾，
+            # 用户可以马上重新检查 / 再跑一次
+            return False
         return not sess.attempts[-1].finalized
 
     def _active(self, sess: Session) -> bool:

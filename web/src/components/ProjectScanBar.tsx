@@ -13,6 +13,8 @@ import { useOnboardingStore } from '@/store/onboardingStore'
 import { useProjectScanStore } from '@/store/projectScanStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useScriptRunStore } from '@/store/scriptRunStore'
+import { scriptTarget, useProjectPreparationStore } from '@/store/projectPreparationStore'
+import { preparationPanelEnabled } from '@/lib/preparationFlag'
 import { useUiStore } from '@/store/uiStore'
 import { Button } from './ui/Button'
 import { Banner } from './DocumentBanner'
@@ -33,7 +35,8 @@ import { Banner } from './DocumentBanner'
  * * **三个动作不同**：「关闭」只隐藏这条；「取消检查」只取消扫描；切项目由 store 换代。都不碰执行。
  * * **教程**：教程进行中、或当前就是教程副本时不出现——教程的状态在 `onboardingStore`，本条不读写它，
  *   也不另起一个全局「已完成」开关，更不抢焦点（避免与教程的 coachmark 双重焦点）。
- * * 「试运行」是**既有**的素材库动作（`scriptRunStore.run`，用户显式点击才执行）；T09 会让它改走准备会话。
+ * * 选定目标后的「准备并运行」打开准备面板（T09，后端准备会话：先只读检查，确认之后才运行）；本地开关
+ *   （`lib/preparationFlag`）关掉时回到旧的「试运行」（`scriptRunStore.run`）。
  */
 export function ProjectScanBar() {
   const { t } = useTranslation(['workspace', 'common'])
@@ -94,15 +97,26 @@ export function ProjectScanBar() {
                 <li key={x.script} className="flex items-center gap-2" data-scan-target={x.script}>
                   <span className="min-w-0 flex-1 truncate text-ink">{x.script}</span>
                   <span className="shrink-0 text-ink-3">{roleLabel(x.role)}</span>
-                  {x.script === target && (
-                    <Button
-                      size="sm"
-                      className="shrink-0"
-                      onClick={() => void useScriptRunStore.getState().run(x.script)}
-                    >
-                      {t('workspace:scan.run')}
-                    </Button>
-                  )}
+                  {x.script === target &&
+                    (preparationPanelEnabled() ? (
+                      // T09：选定目标 → 准备面板（后端会话，先检查、确认后才运行）
+                      <Button
+                        size="sm"
+                        className="shrink-0"
+                        data-scan-prepare={x.script}
+                        onClick={() => void useProjectPreparationStore.getState().open(scriptTarget(x.script))}
+                      >
+                        {t('workspace:scan.prepare')}
+                      </Button>
+                    ) : (
+                      <Button
+                        size="sm"
+                        className="shrink-0"
+                        onClick={() => void useScriptRunStore.getState().run(x.script)}
+                      >
+                        {t('workspace:scan.run')}
+                      </Button>
+                    ))}
                 </li>
               ))}
             </ul>

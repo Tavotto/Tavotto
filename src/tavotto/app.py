@@ -6935,12 +6935,18 @@ def _preparation_target(rel_id: str) -> dict:
 
 def _preparation_runner(pl, before_retry=None):
     """「真的把 runtime 起起来」只有一份实现：`pool.build_owned`（`pool.build` + 所有权，带一次项目环境
-    自动 fallback）。这里不另写 get + ensure_built。"""
+    自动 fallback）。这里不另写 get + ensure_built。
+
+    取到会话那一刻把所有权报给 `PreparationService.note_owner`（T09）：明确取消据此当场只关本计划新建的会话，
+    共享会话的等待者只停自己的等待。"""
     return engine_pool.build_owned(
         pl.script,
         pl.project_root,
         pl.entry,
         before_retry=before_retry,
+        on_acquired=lambda worker, created: engine_preparation.SERVICE.note_owner(
+            pl.plan_id, worker, created
+        ),
         # T03：计划冻结的运行配置；没有配置时调用形状与以前一致
         **({"run": pl.run} if getattr(pl, "run", None) is not None else {}),
     )

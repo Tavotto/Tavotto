@@ -8,6 +8,10 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+// 这组用例钉的是**旧**的同步试运行路径（T09 起它在本地开关关闭时才走；默认走准备面板，见
+// `PreparationPanel.test.tsx` / `scriptLibraryPanel.test.tsx`）
+vi.mock('@/lib/preparationFlag', () => ({ PREPARATION_PANEL_KEY: 'tavotto.preparationPanel', preparationPanelEnabled: () => false }))
+
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
   startProjectScan: vi.fn(),

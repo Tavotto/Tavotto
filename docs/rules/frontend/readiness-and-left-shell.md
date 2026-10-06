@@ -208,6 +208,36 @@
   `store/projectSwitchScan.test.ts`；真浏览器 + 真后端：`e2e/project-scan.spec.ts`（只有脚本的项目出现真实报告且脚本零执行、
   静态项目无条、目录读不动出 partial、教程独占）。
 
+## 准备面板（T09，ADR 0116：`store/projectPreparationStore.ts` / `lib/preparationText.ts` / `components/PreparationPanel.tsx`）
+
+后端会话合同全文在 `docs/rules/backend/preparation-and-receipts.md`「准备会话」。前端只做四件事：保存报告投影、冻结参数快照、订阅 / 补拉、
+翻译成一句话 + 一个主按钮。
+
+- **入口**：检查条选定目标的「准备并运行」、素材库脚本行 ▶ 都只**打开**面板（`projectPreparationStore.open(scriptTarget(script))`）：
+  后端只做只读检查，一个试运行请求都不发；参数草稿在这一刻取拷贝（`scriptTarget`），之后再改草稿不动这份会话——草稿与会话冻结的不同
+  （`draftDiffers`）时面板说「按新参数检查」。本地开关 `lib/preparationFlag.ts`（`localStorage['tavotto.preparationPanel']`，默认开，
+  `'off'` 回旧的同步试运行，保留一版）；接入中心的逐行试运行、渲染路上的门、PNG 准入不受开关影响、尚未迁移（ADR 0116 §七）。
+- **按钮只来自报告**：`lib/preparationText.prepView` 按 phase / outcome / requirement kind 查句子，主按钮只来自报告里后端生成的
+  `actions` 与 `requirements`——没有 `run` 动作就没有「确认并运行」。一句话 + 至多一个主按钮，其余在默认收起的「详情」；看护
+  `PreparationPanel.test.tsx` 的「每一种状态 × 每一种语种」（`visibleSentenceCount` / `visiblePrimaryButtons`）。运行时 input 嵌入的答题表单
+  不在这条尺子之内（它就是这一步要填的内容），面板默认可见区仍只有那一句与表单自己的主按钮。
+- **既有对话框是薄展示适配器**：环境用 `envStore.adoptCandidate`（ADR 0114）、运行目录交 `envStore.requestWorkdirConfirmation`、
+  缺数据交 `envStore.requestMissingInput`——面板只交载荷，作答走原端点；环境 / 改指 / 工作目录的变化让**空闲**会话只读地 `recheck`
+  （`recheckIdle`，订阅 `envStore`），**绝不认领 `run`**。依赖授权直接认领会话的 `prepare_dependencies` 动作并回显 `impact_digest`。
+- **三种关停**：关面板 = `uiStore.preparationOpen` 一个布尔（订阅照旧，认领过的 input 展示面放手、原对话框接着显示同一问）；
+  切项目 = `clear()` 换代、停轮询、零请求（后端一样不取消）；停止 = 会话的 `cancel` 动作（按 owner，当场）。
+- **连接不是执行**：取报告带看门狗（`REQUEST_TIMEOUT_MS`），超时 / 断网只把 `connection` 标 `lost`、退避补拉，phase 原样、不标失败、
+  动作失败不重发；SSE `preparation.session` 与事件流重连只触发补拉；404 `unknown_or_restarted` → 重建只读检查（`restarted`），不运行。
+  迟到响应：项目代际 + 发请求那一刻的 pj + 同一会话修订 / 观察序号只许前进 + 重建后不被旧会话 id 的回包换回去。
+- **结果分层**：`facts.execution_finished` / `facts.figure_captured` 读后端；`first_edit_ready` 是渲染态观察（那张图有了 ready 的精确
+  manifest）——只决定说「已进入编辑」还是「正在打开编辑…」。「进入编辑」用报告的 `captured` 走 `openFastEdit`（清单还没有这张图时先
+  `addRuntimePanelToCanvas` 描述符），多张图开 `ProbeResultsDialog` 逐张加。跑完没图：「运行完成，未发现可编辑图」，没有「进入编辑」。
+- 面板失败时的诊断是 `TaskDiagnostic`（`preparation` / `dependency`）；旧路径的「复制诊断」随旧路径退役。
+- 看护：`store/projectPreparationStore.test.ts`、`components/PreparationPanel.test.tsx`、`components/preparationEntries.test.tsx`、
+  `store/projectReadinessStore.test.ts`（A → B → A）、`components/EngineEnvironmentCard.test.tsx`（`legacy_auto` 一键确认）；真浏览器 + 真后端：
+  `e2e/preparation-panel.spec.ts`（只有脚本与数据的项目：选目录 → 改参数 → 答 input → 进入编辑，执行恰好一次；关面板换展示面、HTTP 断开、
+  应用重启、明确停止）。旧路径的 e2e（`asset-library` / `dependency-one-click` / `missing-input*` / `script-input`）在开关关闭下跑。
+
 ## 速查表原要点（2026-09-25 迁入，#608）
 
 `web/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。

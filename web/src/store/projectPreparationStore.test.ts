@@ -1,0 +1,304 @@
+/**
+ * 准备会话的前端持有者（T09，ADR 0116）：只保存报告投影、参数快照、订阅与网络状态。
+ *
+ * 看护的几条界线：
+ *   * 参数草稿在**打开那一刻**取拷贝（之后改草稿不动这份会话；改了才提示按新参数检查）；
+ *   * 同一会话里修订 / 观察序号只许前进，旧会话 id 的迟到回包不把重建过的会话换回去；
+ *   * A → B → A：换代之后的迟到回包不落地；
+ *   * 动作只交后端生成的 id + 看到的修订（依赖授权回显影响摘要）；被拒（409）只说一句、重读报告，**不重发、不运行**；
+ *   * 应用重启（旧会话 404 `unknown_or_restarted`）：只重建**检查**会话，不认领 run；
+ *   * 网络看门狗只改连接事实：取报告超时 → `connection: lost`，phase 原样，补拉成功即恢复，绝不标失败、不重提交；
+ *   * 关面板不取消；切项目不取消（零请求）；环境 / 数据有了答案只 `recheck`，不运行。
+ */
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+vi.mock('@/lib/api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api')>()),
+  createPreparationSession: vi.fn(),
+  fetchPreparationSession: vi.fn(),
+  actOnPreparationSession: vi.fn(),
+  fetchEngineEnvironment: vi.fn().mockResolvedValue({}),
+}))
+
+import {
+  actOnPreparationSession,
+  ApiError,
+  createPreparationSession,
+  fetchPreparationSession,
+  type PreparationAction,
+  type PreparationReport,
+} from '@/lib/api'
+import { setCurrentProjectId } from '@/lib/session'
+import {
+  __setPreparationTimingForTests,
+  draftDiffers,
+  scriptTarget,
+  useProjectPreparationStore,
+} from './projectPreparationStore'
+import { useEnvStore } from './envStore'
+import { useScriptArgvStore } from './scriptArgvStore'
+import { useUiStore } from './uiStore'
+
+const mockCreate = vi.mocked(createPreparationSession)
+const mockGet = vi.mocked(fetchPreparationSession)
+const mockAct = vi.mocked(actOnPreparationSession)
+
+const action = (kind: PreparationAction['kind'], over: Partial<PreparationAction> = {}): PreparationAction => ({
+  id: `act-${kind}`,
+  kind,
+  config_revision: 1,
+  impact: { executes_user_script: kind === 'run', installs_packages: false, changes_environment: false, writes_to_project: [] },
+  ...over,
+})
+
+export const prepReport = (over: Partial<PreparationReport> = {}): PreparationReport => ({
+  session_version: 1,
+  session_id: 'psess-1',
+  project_id: 'pj-a',
+  target: { kind: 'script', script: 'plot.py', entry: '__main__', asset_id: null, stem: null },
+  config_revision: 1,
+  observation_seq: 1,
+  phase: 'ready_to_run',
+  outcome: { kind: 'pending' },
+  facts: { execution_finished: null, figure_captured: null },
+  checks: [{ id: 'target', status: 'ok' }],
+  requirements: [],
+  actions: [action('run'), action('recheck')],
+  provider: { plan_id: 'prep-plan', attempt_id: null, attempts: 0, dependency: null },
+  runtime_input: null,
+  captured: [],
+  result: null,
+  ...over,
+})
+
+const flush = async () => {
+  for (let i = 0; i < 5; i++) await Promise.resolve()
+  await new Promise((r) => setTimeout(r, 0))
+}
+
+const KEY = 'script:plot.py'
+const entry = () => useProjectPreparationStore.getState().entries[KEY]
+
+beforeEach(() => {
+  vi.useRealTimers()
+  mockCreate.mockReset()
+  mockGet.mockReset()
+  mockAct.mockReset()
+  __setPreparationTimingForTests({ requestTimeoutMs: 15_000, pollMs: [10_000] })
+  useProjectPreparationStore.getState().clear()
+  useScriptArgvStore.getState().clear()
+  useUiStore.setState({ preparationOpen: false })
+  setCurrentProjectId('pj-a')
+})
+
+afterEach(() => {
+  useProjectPreparationStore.getState().clear()
+  setCurrentProjectId(null)
+})
+
+describe('打开：参数在这一刻冻结', () => {
+  it('草稿里的 token 原样带上（含空串与 --），发请求那一刻的项目随请求走；面板打开', async () => {
+    useScriptArgvStore.getState().setTokens('plot.py', ['--tag', '', '--', '-1'])
+    mockCreate.mockResolvedValueOnce(prepReport())
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    expect(mockCreate).toHaveBeenCalledTimes(1)
+    const [target, pj] = mockCreate.mock.calls[0]
+    expect(target).toEqual({ script: 'plot.py', argv: ['--tag', '', '--', '-1'], argv_sensitive: false })
+    expect(pj).toBe('pj-a')
+    expect(entry().report?.session_id).toBe('psess-1')
+    expect(useUiStore.getState().preparationOpen).toBe(true)
+    expect(mockAct).not.toHaveBeenCalled() // 打开只检查，不运行
+  })
+
+  it('空草稿 = 不带参数（目标里没有 argv）', () => {
+    expect(scriptTarget('plot.py')).toEqual({ script: 'plot.py' })
+  })
+
+  it('打开之后再改草稿：会话的目标不变；与草稿不同了才提示按新参数检查', async () => {
+    useScriptArgvStore.getState().setTokens('plot.py', ['--n', '1'])
+    mockCreate.mockResolvedValueOnce(prepReport())
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    expect(draftDiffers(entry().target)).toBe(false)
+    useScriptArgvStore.getState().setToken('plot.py', 1, '2')
+    expect((entry().target as { argv?: string[] }).argv).toEqual(['--n', '1'])
+    expect(draftDiffers(entry().target)).toBe(true)
+  })
+})
+
+describe('迟到响应', () => {
+  it('同一修订里观察序号不倒退；修订前进的那份即使序号小也赢', async () => {
+    mockCreate.mockResolvedValueOnce(prepReport({ observation_seq: 5 }))
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    mockGet.mockResolvedValueOnce(prepReport({ observation_seq: 3, phase: 'running' }))
+    await useProjectPreparationStore.getState().refresh(KEY)
+    expect(entry().report?.observation_seq).toBe(5)
+    expect(entry().report?.phase).toBe('ready_to_run')
+    mockGet.mockResolvedValueOnce(prepReport({ config_revision: 2, observation_seq: 1, phase: 'action_required' }))
+    await useProjectPreparationStore.getState().refresh(KEY)
+    expect(entry().report?.config_revision).toBe(2)
+  })
+
+  it('会话重建之后，旧会话的迟到 GET 不把它换回去', async () => {
+    mockCreate.mockResolvedValueOnce(prepReport({ session_id: 'psess-old' }))
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    let release!: (r: PreparationReport) => void
+    mockGet.mockReturnValueOnce(new Promise((res) => (release = res)))
+    const late = useProjectPreparationStore.getState().refresh(KEY)
+    mockCreate.mockResolvedValueOnce(prepReport({ session_id: 'psess-new' }))
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    release(prepReport({ session_id: 'psess-old', observation_seq: 99, phase: 'running' }))
+    await late
+    expect(entry().report?.session_id).toBe('psess-new')
+  })
+
+  it('A → B → A：A 第一次打开时发出的检查晚到，不落进回到 A 之后的状态', async () => {
+    let release!: (r: PreparationReport) => void
+    mockCreate.mockReturnValueOnce(new Promise((res) => (release = res)))
+    const old = useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    useProjectPreparationStore.getState().clear()
+    setCurrentProjectId('pj-b')
+    useProjectPreparationStore.getState().clear()
+    setCurrentProjectId('pj-a')
+    release(prepReport({ session_id: 'psess-stale' }))
+    await old
+    expect(useProjectPreparationStore.getState().entries).toEqual({})
+  })
+})
+
+describe('动作只交后端生成的 id', () => {
+  it('依赖授权回显影响摘要；回包的报告直接落地', async () => {
+    const prepare = action('prepare_dependencies', {
+      impact: {
+        executes_user_script: false,
+        installs_packages: true,
+        changes_environment: true,
+        writes_to_project: [],
+        impact_digest: 'imp-123',
+      },
+    })
+    mockCreate.mockResolvedValueOnce(prepReport({ phase: 'awaiting_confirmation', actions: [prepare] }))
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    mockAct.mockResolvedValueOnce({ claimed: true, report: prepReport({ phase: 'preparing_environment', observation_seq: 2 }) })
+    await useProjectPreparationStore.getState().act(KEY, 'prepare_dependencies')
+    expect(mockAct).toHaveBeenCalledWith(
+      'psess-1',
+      { action_id: 'act-prepare_dependencies', expected_config_revision: 1, impact_digest: 'imp-123' },
+      'pj-a',
+    )
+    expect(entry().report?.phase).toBe('preparing_environment')
+  })
+
+  it('报告里没有这个动作：什么都不发', async () => {
+    mockCreate.mockResolvedValueOnce(prepReport({ actions: [action('recheck')] }))
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    await useProjectPreparationStore.getState().act(KEY, 'run')
+    expect(mockAct).not.toHaveBeenCalled()
+  })
+
+  it('409（修订变了）：说一句、重读报告，不重发也不运行', async () => {
+    mockCreate.mockResolvedValueOnce(prepReport())
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    mockAct.mockRejectedValueOnce(
+      new ApiError('changed', 409, { code: 'preparation_config_revision_changed', params: { config_revision: 2 } }),
+    )
+    mockGet.mockResolvedValueOnce(prepReport({ config_revision: 2, observation_seq: 1 }))
+    await useProjectPreparationStore.getState().act(KEY, 'run')
+    expect(mockAct).toHaveBeenCalledTimes(1)
+    expect(mockGet).toHaveBeenCalledTimes(1)
+    expect(entry().rejection?.code).toBe('preparation_config_revision_changed')
+    expect(entry().report?.config_revision).toBe(2)
+  })
+})
+
+describe('应用重启：重建检查会话，不重跑', () => {
+  it('GET 404 unknown_or_restarted → 再 POST 创建（只读检查），绝不认领 run', async () => {
+    mockCreate.mockResolvedValueOnce(prepReport({ phase: 'running', actions: [action('cancel')] }))
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    mockGet.mockRejectedValueOnce(
+      new ApiError('gone', 404, {
+        code: 'preparation_session_not_found',
+        params: { reason: 'unknown_or_restarted' },
+      }),
+    )
+    mockCreate.mockResolvedValueOnce(prepReport({ session_id: 'psess-after-restart' }))
+    await useProjectPreparationStore.getState().refresh(KEY)
+    expect(mockCreate).toHaveBeenCalledTimes(2)
+    expect(mockCreate.mock.calls[1][0]).toEqual({ script: 'plot.py' })
+    expect(entry().report?.session_id).toBe('psess-after-restart')
+    expect(entry().restarted).toBe(true)
+    expect(mockAct).not.toHaveBeenCalled()
+  })
+})
+
+describe('事件流重连', () => {
+  it('refreshAll：每个会话以 GET 补拉一次，不发动作', async () => {
+    mockCreate.mockResolvedValueOnce(prepReport({ phase: 'completed', outcome: { kind: 'succeeded' } }))
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    mockGet.mockResolvedValueOnce(prepReport({ phase: 'completed', outcome: { kind: 'succeeded' }, observation_seq: 2 }))
+    useProjectPreparationStore.getState().refreshAll()
+    await flush()
+    expect(mockGet).toHaveBeenCalledTimes(1)
+    expect(mockAct).not.toHaveBeenCalled()
+  })
+})
+
+describe('网络看门狗只改连接事实', () => {
+  it('取报告超时：connection=lost、phase 原样、不标失败、不重提交；补拉成功即恢复', async () => {
+    __setPreparationTimingForTests({ requestTimeoutMs: 20, pollMs: [15] })
+    mockCreate.mockResolvedValueOnce(prepReport({ phase: 'running', actions: [action('cancel')] }))
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    // 第一次 GET 卡住（只认 abort）：后台照样在跑
+    mockGet.mockImplementationOnce(
+      (_id, _pj, signal) =>
+        new Promise((_res, rej) => {
+          signal?.addEventListener('abort', () => rej(new DOMException('aborted', 'AbortError')))
+        }),
+    )
+    mockGet.mockResolvedValue(prepReport({ phase: 'completed', outcome: { kind: 'succeeded' }, observation_seq: 4 }))
+    await useProjectPreparationStore.getState().refresh(KEY)
+    expect(entry().connection).toBe('lost')
+    expect(entry().report?.phase).toBe('running') // 失联不等于失败
+    expect(mockAct).not.toHaveBeenCalled()
+    await vi.waitFor(() => expect(entry().connection).toBe('ok'), { timeout: 1000 })
+    expect(entry().report?.phase).toBe('completed')
+    expect(mockCreate).toHaveBeenCalledTimes(1) // 没有因为失联重新提交任何东西
+  })
+})
+
+describe('三个不同的动作', () => {
+  it('关面板只改呈现：不发取消，订阅照旧', async () => {
+    mockCreate.mockResolvedValueOnce(prepReport({ phase: 'running', actions: [action('cancel')] }))
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    useUiStore.getState().setPreparationOpen(false)
+    expect(mockAct).not.toHaveBeenCalled()
+    expect(entry().report?.phase).toBe('running')
+  })
+
+  it('取消 = 认领后端的 cancel 动作（按 owner 退役本会话的工作）', async () => {
+    mockCreate.mockResolvedValueOnce(prepReport({ phase: 'running', actions: [action('cancel')] }))
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    mockAct.mockResolvedValueOnce({ claimed: true, report: prepReport({ phase: 'cancelled', observation_seq: 2 }) })
+    await useProjectPreparationStore.getState().act(KEY, 'cancel')
+    expect(mockAct.mock.calls[0][1].action_id).toBe('act-cancel')
+  })
+
+  it('切项目：零请求（不取消后端的任何东西），条目与订阅全丢', async () => {
+    mockCreate.mockResolvedValueOnce(prepReport({ phase: 'running', actions: [action('cancel')] }))
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    const calls = mockAct.mock.calls.length + mockGet.mock.calls.length
+    useProjectPreparationStore.getState().clear()
+    await flush()
+    expect(mockAct.mock.calls.length + mockGet.mock.calls.length).toBe(calls)
+    expect(useProjectPreparationStore.getState().entries).toEqual({})
+  })
+
+  it('环境 / 数据有了答案：空闲的会话只重新检查，不运行', async () => {
+    mockCreate.mockResolvedValueOnce(prepReport({ phase: 'action_required', actions: [action('run'), action('recheck')] }))
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    mockAct.mockResolvedValue({ claimed: true, report: prepReport({ observation_seq: 2 }) })
+    useEnvStore.setState((s) => ({ inputRemapGeneration: s.inputRemapGeneration + 1 }))
+    await flush()
+    expect(mockAct).toHaveBeenCalledTimes(1)
+    expect(mockAct.mock.calls[0][1].action_id).toBe('act-recheck')
+  })
+})

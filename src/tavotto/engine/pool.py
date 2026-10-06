@@ -3392,6 +3392,7 @@ def build_owned(
     allow_project_env: bool = True,
     before_retry=None,
     run=None,
+    on_acquired=None,
 ):
     """`build()` + 所有权：回 `(worker, build 响应, created)`。
 
@@ -3401,10 +3402,20 @@ def build_owned(
     不重跑（`test_worker_runtime_report` 用脚本自己的副作用计数钉着）。
 
     `before_retry()`：缺包后自动接手成功、**第二次执行之前**调一次（见 `_build_with`）。
+
+    `on_acquired(worker, created)`：每次取到会话、**执行之前**调一次（T09）——调用方据此在 build 还在跑的时候就
+    知道「这条是不是我建的」，取消可以当场只关自己建的那条，不必等 build 返回。
     """
     context = {"run": run} if run is not None else {}
+
+    def take():
+        worker, created = acquire(script_name, figures_dir, entry, **context)
+        if on_acquired is not None:
+            on_acquired(worker, created)
+        return worker, created
+
     return _build_with(
-        lambda: acquire(script_name, figures_dir, entry, **context),
+        take,
         script_name,
         figures_dir,
         allow_project_env=allow_project_env,
