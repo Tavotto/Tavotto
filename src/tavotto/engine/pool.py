@@ -3130,7 +3130,22 @@ def acquire(
         break
     if created:  # 出锁再清：prune 要遍历磁盘，不能占着 _lock
         _schedule_prune()
+    _last_acquired.result = (w, created)
     return w, created
+
+
+#: 本线程最近一次 `acquire()` 的结果 `(worker, created)`（T09b）。只经 `get()` 取会话的老入口（`build()`、试运行）
+#: 据此在**同一线程**、取到之后立刻问「这条是不是我建的」——不拿 `peek()` 的快照去猜（两个调用方都会以为是自己）。
+_last_acquired = threading.local()
+
+
+def acquired_here(worker) -> bool | None:
+    """本线程最近一次 `acquire()` 取到的若就是 `worker`：回那一次的 `created`；否则（会话不是经池取的——测试替身、
+    别的线程取的）回 None = 说不清。调用方对 None 按旧语义处理，不当成「别人的」。"""
+    last = getattr(_last_acquired, "result", None)
+    if last is None or last[0] is not worker:
+        return None
+    return bool(last[1])
 
 
 def _refuse_if_mutating(python: str) -> None:

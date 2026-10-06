@@ -20,6 +20,7 @@ import type {
   PreparationRequirement,
   WorkdirConfirmation,
 } from '@/lib/api'
+import { listJoin } from '@/i18n/format'
 import type { PrepEntry } from '@/store/projectPreparationStore'
 
 export type PrepPrimary =
@@ -150,6 +151,15 @@ function completed(report: PreparationReport, entry: PrepEntry, ctx: PrepContext
   }
   const count = (report.captured ?? []).length
   if (count === 0) return view('completed', 'completedNoList', v, null) // 老后端没有 `captured`：不猜图名
+  // 无参数运行整条替换了这个脚本的图名（T03 已知缺口，T09b）：同一句里说清哪些旧图不再关联、怎么恢复（用原参数再运行）。
+  // 名字来自后端报告（`unlinked_stems`），这里不比对任何清单
+  const unlinked = report.unlinked_stems ?? []
+  if (unlinked.length > 0) {
+    return view('completed_unlinked', 'completedUnlinked', { script, count, names: listJoin(unlinked) }, {
+      kind: 'enter_edit',
+      count,
+    })
+  }
   return view('completed', 'completed', { script, count }, { kind: 'enter_edit', count })
 }
 

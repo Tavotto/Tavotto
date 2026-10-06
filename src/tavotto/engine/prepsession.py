@@ -1278,6 +1278,13 @@ class SessionService:
                     if result is not None and derived["outcome"]["kind"] == OUTCOME_SUCCEEDED
                     else []
                 ),
+                # T09b：这次（无参数）运行把哪些此前登记在这个脚本名下的图名替换掉了（T03 已知缺口：注册表按脚本整条替换）。
+                # 只是图名（与 `captured[].stem` 同一口径，项目相对的公开名字），不含参数；界面据此给「用原参数再运行」的提示
+                "unlinked_stems": (
+                    list((attempt_fact.get("finalize") or {}).get("unlinked_stems") or [])
+                    if attempt_fact is not None and derived["outcome"]["kind"] == OUTCOME_SUCCEEDED
+                    else []
+                ),
                 "plan": sess.plan.to_payload(),
                 "result": result.to_payload() if result else None,
             }

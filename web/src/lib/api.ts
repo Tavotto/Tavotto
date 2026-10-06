@@ -4545,6 +4545,11 @@ export interface ProbeResult {
   stem_conflicts?: Record<string, string>
   /** 给了参数的那次运行：它的运行配置引用（T03；不含参数值） */
   run_config?: string
+  /**
+   * 无参数运行整条替换注册表时，此前登记在这个脚本名下、这次没产出的图名（T09b；T03 已知缺口）。多半是带参数那次
+   * 产出的：用原参数再运行一次即可并回来。没有替换掉任何东西时不出现
+   */
+  unlinked_stems?: string[]
   /** 这一次的诊断引用（T04）：`fetchTaskDiagnostic('script_run', ref)` 取回终局时冻结的快照；老后端没有 */
   diagnostic?: { kind: 'script_run'; ref: string }
 }
@@ -4710,6 +4715,8 @@ export interface PreparationReport {
   runtime_input?: { id: string; index: number; input_kind: string; secret: boolean } | null
   /** 这次尝试成功时真正捕获到的图（与试运行响应同一份描述符）；老后端没有 */
   captured?: CapturedFigureDescriptor[]
+  /** 这次（无参数）运行替换掉的旧图名（T09b，与 `ProbeResult.unlinked_stems` 同一口径）；老后端没有 */
+  unlinked_stems?: string[]
   result: {
     status: string
     error?: { code?: string; message?: string; reason?: string; module?: string } | null

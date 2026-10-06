@@ -277,11 +277,14 @@ def probe(
     entries: list[str] | None = None,
     should_cancel=None,
     run=None,
+    on_acquired=None,
 ) -> dict:
     """`_probe()` + 这次运行的输入去向（T08）：成功取 worker 的 `last_input_facts`，失败取第一处错误那次
     build 挂在异常上的 `input_facts`——与 `error` 说的是同一次尝试。"""
     box: dict = {}
-    result = _probe(figures_dir, script, entries, should_cancel, run, facts=box)
+    result = _probe(
+        figures_dir, script, entries, should_cancel, run, facts=box, on_acquired=on_acquired
+    )
     if box.get("facts") is not None:
         result[INPUT_FACTS_KEY] = box["facts"]
     return result
@@ -295,6 +298,7 @@ def _probe(
     run=None,
     *,
     facts: dict,
+    on_acquired=None,
 ) -> dict:
     """跑一次脚本，返回它真实产出的 stem 与每张图的结构化描述。
 
@@ -325,6 +329,10 @@ def _probe(
     `pool.force_cancel` 硬杀在跑的 worker）：一旦为真，**不再尝试下一个
     entry**，并把本轮的失败（多半是被杀 worker 的「进程崩溃」）如实归类为
     `execution_cancelled`——被用户取消的 probe 报「脚本坏了」是撒谎。
+
+    `on_acquired(worker, owned)`（T09b）：每次取到会话、执行之前报一次——`owned` 是 `pool.acquired_here`：True =
+    这次试运行新建的、False = 别人（渲染路 / 准备会话）正在用的同键会话、None = 说不清。取消端点据此**按 owner**
+    只关自己建的那条；共享会话只停自己的等待意图，一根手指不碰（ADR 0116 §三，与准备会话的取消同一条规则）。
     """
     figures_dir = str(Path(figures_dir))
     cancelled = (lambda: bool(should_cancel())) if callable(should_cancel) else (lambda: False)
@@ -362,9 +370,15 @@ def _probe(
     run_ctx = {"run": run} if run is not None else {}
 
     def before_build(worker):
+        owned = pool.acquired_here(worker)
+        if on_acquired is not None:
+            on_acquired(worker, owned)
         # Cancellation may arrive while get() discovers an interpreter, before the
         # worker exists in the pool. Check again after every acquisition, including fallback.
         if cancelled():
+            if owned is False:
+                # 别人的会话（渲染路正在用的同键会话）：本次试运行只是放弃等待，不杀它
+                raise pool.WorkerError("试运行已取消", code=ERROR_CANCELLED)
             if not pool.force_cancel(script, figures_dir, expected_worker=worker, **run_ctx):
                 worker.force_kill()  # Already detached: never retire its replacement.
             raise pool.WorkerError("试运行已取消", code=ERROR_CANCELLED)
@@ -474,7 +488,12 @@ def _live_stem_conflicts(figures_dir: str | Path, script: str, stems: list[str])
 
 
 def probe_and_register(
-    figures_dir: str | Path, script: str, cost: str = "medium", should_cancel=None, run=None
+    figures_dir: str | Path,
+    script: str,
+    cost: str = "medium",
+    should_cancel=None,
+    run=None,
+    on_acquired=None,
 ) -> dict:
     """探测成功就写进 tavotto_registry.json 并重载注册表。
 
@@ -492,6 +511,7 @@ def probe_and_register(
         script,
         should_cancel=should_cancel,
         **({"run": run} if run is not None else {}),
+        **({"on_acquired": on_acquired} if on_acquired is not None else {}),
     )
     if not result["stems"]:
         return {**result, "registered": False}
@@ -522,8 +542,12 @@ def register_probed(
         }
     # 登记在改指表的锁里、核对过代次才落地（ADR 0106 §五）：试运行途中改了指认，产出的图名 / 描述
     # 是按旧位置的数据来的——丢弃、可重试，注册表零改动
+    append = bool(result.get("run_config"))
     try:
         with inputremap.landing(figures_dir, result.get("remap_generation")):
+            # 无参数运行整条替换（T03 已知缺口）：替换之前这个脚本名下、这次没产出的图名会就此失去关联——多半是此前**带参数**
+            # 产出的。记下来如实告诉用户（`unlinked_stems`），用原参数再运行一次即可并回来；不改注册表格式（T09b）
+            before = [] if append else discover.registered_stems(figures_dir, script)
             discover.register(
                 figures_dir,
                 script,
@@ -532,7 +556,7 @@ def register_probed(
                 cost=cost,
                 # T03：带运行配置的执行只是这个脚本的**另一份配置**——并进去，不换掉。整条替换会让
                 # 无参数 / 别的参数登记过的图当场失去编辑入口（注册表是 stem 归属的唯一权威）
-                append=bool(result.get("run_config")),
+                append=append,
             )
             registry.load(figures_dir)
             # stems 可能由数据决定：记下是在哪张改指表下登记的，表变了渲染时据此重新登记
@@ -544,7 +568,8 @@ def register_probed(
             "registered": False,
             "error": _err(inputremap.ERROR_CHANGED, str(exc)),
         }
-    return {**result, "registered": True}
+    unlinked = sorted(set(before) - set(result["stems"]))
+    return {**result, "registered": True, **({"unlinked_stems": unlinked} if unlinked else {})}
 
 
 # ---------------------------------------------------------------------------

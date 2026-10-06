@@ -21,10 +21,12 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   probeScript: vi.fn(),
   scanRegistry: vi.fn(),
   writeRegistryEntry: vi.fn(),
+  createPreparationSession: vi.fn(),
 }))
 
 import {
   ApiError,
+  createPreparationSession,
   fetchPanels,
   fetchReadiness,
   fetchRegistry,
@@ -49,6 +51,9 @@ import {
 import { useUiStore } from '@/store/uiStore'
 import { useEnvStore } from '@/store/envStore'
 import { useScriptRunStore } from '@/store/scriptRunStore'
+import { useScriptArgvStore } from '@/store/scriptArgvStore'
+import { useProjectPreparationStore } from '@/store/projectPreparationStore'
+import { PREPARATION_PANEL_KEY } from '@/lib/preparationFlag'
 import { setCurrentProjectId } from '@/lib/session'
 import { reasonText, statusLabel } from '@/lib/readinessText'
 
@@ -67,6 +72,13 @@ const mockPanels = vi.mocked(fetchPanels)
 const mockProbe = vi.mocked(probeScript)
 const mockScan = vi.mocked(scanRegistry)
 const mockWrite = vi.mocked(writeRegistryEntry)
+const mockCreateSession = vi.mocked(createPreparationSession)
+/** 本地开关关闭（`'off'`）：接入中心委派素材库那台状态机（`scriptRunStore`）——旧路径 */
+const legacyPath = () => localStorage.setItem(PREPARATION_PANEL_KEY, 'off')
+const settle = () =>
+  act(async () => {
+    await new Promise((r) => setTimeout(r, 0))
+  })
 
 const P = (over: Partial<ReadinessPanel>): ReadinessPanel => ({
   id: 'Fig.pdf',
@@ -227,8 +239,11 @@ beforeEach(() => {
   mockProbe.mockResolvedValue({
     script: 'dyn.py', entry: 'main', stems: ['Mystery'], descriptors: [], error: null, tried: [],
   })
+  mockCreateSession.mockReturnValue(new Promise(() => {}))
   resetReadinessBookkeeping()
   resetAssetLoadBookkeeping()
+  useScriptRunStore.getState().clear()
+  useProjectPreparationStore.getState().clear()
   useProjectReadinessStore.getState().clear()
   useAssetStore.setState({ panels: [], byId: {}, loaded: true, loading: false, error: null })
   useUiStore.setState({ registryOpen: false, status: null })
@@ -297,17 +312,52 @@ describe('绝不替用户决定', () => {
     expect(mockProbe).not.toHaveBeenCalled()
   })
 
-  it('试运行只有点了才跑，而且点之前先说清它会运行脚本', async () => {
+  it('试运行只有点了才跑，而且点之前先说清它会运行脚本；默认打开准备面板（T09b），本组件一个执行请求都不发', async () => {
+    useScriptArgvStore.getState().setTokens('dyn.py', ['--n', '3'])
     await open(reportOf(SIX))
     const row = rowOf('Mystery.pdf')!
     expect(row.textContent).toContain('Tavotto 会运行这个脚本')
-    expect(mockProbe).not.toHaveBeenCalled()
+    expect(mockCreateSession).not.toHaveBeenCalled()
     await clickIn(row, '试运行并连接')
-    expect(mockProbe).toHaveBeenCalledWith('dyn.py')
+    // 对话框让开、同一个准备面板打开：只读检查，参数草稿此刻冻结进会话
+    expect(useUiStore.getState().registryOpen).toBe(false)
+    expect(useUiStore.getState().preparationOpen).toBe(true)
+    expect(mockCreateSession).toHaveBeenCalledTimes(1)
+    expect(mockCreateSession.mock.calls[0][0]).toEqual({ script: 'dyn.py', argv: ['--n', '3'], argv_sensitive: false })
+    expect(mockProbe, '接入中心不该再自己跑试运行').not.toHaveBeenCalled()
+    useScriptArgvStore.getState().clear()
+  })
+
+  it('开关关闭：委派素材库那台状态机，参数草稿照样带上（T03：off 之后不退化成空 argv）', async () => {
+    legacyPath()
+    useScriptArgvStore.getState().setTokens('dyn.py', ['--n', '3'])
+    await open(reportOf(SIX))
+    await clickIn(rowOf('Mystery.pdf')!, '试运行并连接')
+    await settle()
+    expect(mockCreateSession).not.toHaveBeenCalled()
+    expect(mockProbe).toHaveBeenCalledTimes(1)
+    expect(mockProbe).toHaveBeenCalledWith('dyn.py', undefined, { argv: ['--n', '3'], sensitive: false })
+    // 状态记在素材库那台状态机里：同一个脚本只有一份运行状态
+    expect(useScriptRunStore.getState().byScript['dyn.py']?.phase).toBe('captured_one')
+    expect(rowOf('Mystery.pdf')!.textContent).toContain('已连接 Mystery')
+    useScriptArgvStore.getState().clear()
+  })
+
+  it('开关关闭：无参数运行替换掉的旧图名在那一行说清怎么恢复（T09b）', async () => {
+    legacyPath()
+    mockProbe.mockResolvedValue({
+      script: 'dyn.py', entry: 'main', stems: ['Mystery'], descriptors: [], error: null, tried: [],
+      unlinked_stems: ['Mystery_scaled'],
+    })
+    await open(reportOf(SIX))
+    await clickIn(rowOf('Mystery.pdf')!, '试运行并连接')
+    await settle()
+    expect(rowOf('Mystery.pdf')!.textContent).toContain('此前带其他参数生成的 Mystery_scaled 已不再关联，用原参数再运行一次即可恢复')
   })
 
   it('试运行撞上起会话之前的依赖门：弹同一个授权框（载荷交给 envStore），不报「试运行失败」', async () => {
     // Windows 真机验收（main 493a1310）：门的载荷在试运行这条路上被当成失败吞掉，授权框从不弹出
+    legacyPath()
     setCurrentProjectId('p1')
     useEnvStore.setState({ dependencyPreparation: null })
     const offer = { code: 'dependency_preparation_required', script: 'dyn.py', plan: {}, target_kind: 'tavotto_managed', targets: [], rounds_remaining: 3, skipped: false }
@@ -317,19 +367,17 @@ describe('绝不替用户决定', () => {
     })
     await open(reportOf(SIX))
     await clickIn(rowOf('Mystery.pdf')!, '试运行并连接')
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 0))
-    })
+    await settle()
     expect(useEnvStore.getState().dependencyPreparation, '载荷没交给 envStore').toEqual(offer)
     expect(dialog().textContent).not.toContain('试运行失败')
-    // 门有了答案（授权准备成功）：这一行自动重跑，不要用户再点一次（#740 Codex P2）
+    // 门有了答案（授权准备成功）：重跑的是**那一台**状态机里停在门上的那一行，一次
     mockProbe.mockClear()
     mockProbe.mockResolvedValue({ script: 'dyn.py', entry: null, stems: ['Mystery'], descriptors: [], tried: [] } as never)
     await act(async () => {
       useScriptRunStore.getState().rerunGated('needs_preparation', 'dyn.py')
       await new Promise((r) => setTimeout(r, 0))
     })
-    expect(mockProbe, '门放行之后那一行没有重跑').toHaveBeenCalledWith('dyn.py')
+    expect(mockProbe, '门放行之后那一行没有重跑').toHaveBeenCalledTimes(1)
     // 别的脚本的答案不重跑这一行
     mockProbe.mockClear()
     await act(async () => {
@@ -342,6 +390,7 @@ describe('绝不替用户决定', () => {
   })
 
   it('门以非 2xx 回来（请求直接抛 409）：同样交给授权框，不报「试运行失败」（#740 Codex P2）', async () => {
+    legacyPath()
     setCurrentProjectId('p1')
     useEnvStore.setState({ dependencyPreparation: null })
     const offer = { code: 'dependency_preparation_required', script: 'dyn.py', plan: {}, target_kind: 'tavotto_managed', targets: [], rounds_remaining: 3, skipped: false }
@@ -350,16 +399,15 @@ describe('绝不替用户决定', () => {
     )
     await open(reportOf(SIX))
     await clickIn(rowOf('Mystery.pdf')!, '试运行并连接')
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 0))
-    })
+    await settle()
     expect(useEnvStore.getState().dependencyPreparation, '抛出来的门没交给 envStore').toEqual(offer)
     expect(dialog().textContent).not.toContain('试运行失败')
     useEnvStore.setState({ dependencyPreparation: null })
     setCurrentProjectId(null)
   })
 
-  it('门放行时素材库那一行也在重跑同一个脚本：接入中心等它跑完再跑，不并发撞 probe_in_progress（#740 Codex P2）', async () => {
+  it('接入中心与素材库是同一台状态机：门放行只重跑一次，在跑时再点不并发（#740 那组补丁的结构性替代）', async () => {
+    legacyPath()
     setCurrentProjectId('p1')
     const offer = { code: 'dependency_preparation_required', script: 'dyn.py', plan: {}, target_kind: 'tavotto_managed', targets: [], rounds_remaining: 3, skipped: false }
     mockProbe.mockResolvedValue({
@@ -368,13 +416,8 @@ describe('绝不替用户决定', () => {
     })
     await open(reportOf(SIX))
     await clickIn(rowOf('Mystery.pdf')!, '试运行并连接')
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 0))
-    })
-    // 素材库那一行同样停在这道门上
-    useScriptRunStore.setState((st) => ({
-      byScript: { ...st.byScript, 'dyn.py': { ...(st.byScript['dyn.py'] ?? {}), phase: 'needs_preparation', gen: 1 } as never },
-    }))
+    await settle()
+    expect(useScriptRunStore.getState().byScript['dyn.py']?.phase).toBe('needs_preparation')
     mockProbe.mockClear()
     let finish!: () => void
     const held = new Promise<void>((r) => (finish = r))
@@ -383,7 +426,7 @@ describe('绝不替用户决定', () => {
     mockProbe.mockImplementation(async () => {
       inFlight += 1
       maxInFlight = Math.max(maxInFlight, inFlight)
-      if (mockProbe.mock.calls.length === 1) await held
+      await held
       inFlight -= 1
       return { script: 'dyn.py', entry: null, stems: ['Mystery'], descriptors: [], tried: [] } as never
     })
@@ -391,87 +434,24 @@ describe('绝不替用户决定', () => {
       useScriptRunStore.getState().rerunGated('needs_preparation', 'dyn.py')
       await new Promise((r) => setTimeout(r, 0))
     })
-    expect(mockProbe, '素材库那一次还没跑完，接入中心就又发了一次').toHaveBeenCalledTimes(1)
+    // 素材库那一行 = 接入中心这一行：再点一次（或另一处再触发）是同一台状态机里的 busy，不发第二个请求
+    await act(async () => {
+      void useScriptRunStore.getState().run('dyn.py')
+      await new Promise((r) => setTimeout(r, 0))
+    })
+    expect(mockProbe).toHaveBeenCalledTimes(1)
     await act(async () => {
       finish()
       await new Promise((r) => setTimeout(r, 10))
     })
-    expect(mockProbe).toHaveBeenCalledTimes(2)
+    expect(mockProbe).toHaveBeenCalledTimes(1)
     expect(maxInFlight).toBe(1)
     useEnvStore.setState({ dependencyPreparation: null })
-    useScriptRunStore.getState().clear()
     setCurrentProjectId(null)
   })
 
-  it('等素材库那一次跑完的途中换了项目：不去重跑新项目里的同名脚本（#740 Codex P2）', async () => {
-    setCurrentProjectId('p1')
-    const offer = { code: 'dependency_preparation_required', script: 'dyn.py', plan: {}, target_kind: 'tavotto_managed', targets: [], rounds_remaining: 3, skipped: false }
-    mockProbe.mockResolvedValue({
-      script: 'dyn.py', entry: null, stems: [], descriptors: [], tried: [],
-      error: { code: 'dependency_preparation_required', message: '要先准备依赖', dependency_preparation: offer as never },
-    })
-    await open(reportOf(SIX))
-    await clickIn(rowOf('Mystery.pdf')!, '试运行并连接')
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 0))
-    })
-    useScriptRunStore.setState((st) => ({
-      byScript: { ...st.byScript, 'dyn.py': { ...(st.byScript['dyn.py'] ?? {}), phase: 'needs_preparation', gen: 1 } as never },
-    }))
-    mockProbe.mockClear()
-    let finish!: () => void
-    const held = new Promise<void>((r) => (finish = r))
-    mockProbe.mockImplementation(async () => {
-      await held
-      return { script: 'dyn.py', entry: null, stems: ['Mystery'], descriptors: [], tried: [] } as never
-    })
-    await act(async () => {
-      useScriptRunStore.getState().rerunGated('needs_preparation', 'dyn.py')
-      await new Promise((r) => setTimeout(r, 0))
-    })
-    expect(mockProbe).toHaveBeenCalledTimes(1) // 素材库那一次
-    // 换到 B：换代清掉素材库的记账，等待随之 resolve
-    await act(async () => {
-      setCurrentProjectId('p2')
-      useScriptRunStore.getState().clear()
-      finish()
-      await new Promise((r) => setTimeout(r, 10))
-    })
-    expect(mockProbe, 'A 的放行在 B 里重跑了同名脚本').toHaveBeenCalledTimes(1)
-    useEnvStore.setState({ dependencyPreparation: null })
-    setCurrentProjectId(null)
-  })
-
-  it('A → B → A：上一代记下的待重跑在这一代不被放行（#740 Codex P2）', async () => {
-    setCurrentProjectId('p1')
-    const offer = { code: 'dependency_preparation_required', script: 'dyn.py', plan: {}, target_kind: 'tavotto_managed', targets: [], rounds_remaining: 3, skipped: false }
-    mockProbe.mockResolvedValue({
-      script: 'dyn.py', entry: null, stems: [], descriptors: [], tried: [],
-      error: { code: 'dependency_preparation_required', message: '要先准备依赖', dependency_preparation: offer as never },
-    })
-    await open(reportOf(SIX))
-    await clickIn(rowOf('Mystery.pdf')!, '试运行并连接')
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 0))
-    })
-    // 换到 p2 再回 p1：项目 id 相同、代际已变（projectStore 每次换代都清 scriptRunStore）
-    await act(async () => {
-      setCurrentProjectId('p2')
-      useScriptRunStore.getState().clear()
-      setCurrentProjectId('p1')
-      useScriptRunStore.getState().clear()
-    })
-    mockProbe.mockClear()
-    await act(async () => {
-      useScriptRunStore.getState().rerunGated('needs_preparation', 'dyn.py')
-      await new Promise((r) => setTimeout(r, 10))
-    })
-    expect(mockProbe, '上一代的待重跑在这一代被放行了').not.toHaveBeenCalled()
-    useEnvStore.setState({ dependencyPreparation: null })
-    setCurrentProjectId(null)
-  })
-
-  it('别的脚本的授权框开着时撞上的门：行上留着再打开的按钮，不停在「还差一步」上（#740 Codex P2）', async () => {
+  it('A → B → A：上一代停在门上的那一行随换代清空，这一代的放行不重跑它，也不留再打开的按钮（#740 Codex P2）', async () => {
+    legacyPath()
     setCurrentProjectId('p1')
     const other = { code: 'dependency_preparation_required', script: 'other.py', plan: {}, target_kind: 'tavotto_managed', targets: [], rounds_remaining: 3, skipped: false }
     const offer = { ...other, script: 'dyn.py' }
@@ -482,15 +462,13 @@ describe('绝不替用户决定', () => {
     })
     await open(reportOf(SIX))
     await clickIn(rowOf('Mystery.pdf')!, '试运行并连接')
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 0))
-    })
+    await settle()
+    // 别的脚本的授权框开着时撞上的门：那一份作答完关掉之后，这一行能把自己的那份再打开
     expect(useEnvStore.getState().dependencyPreparation, '前提：开着的是别的脚本那一份').toEqual(other)
-    // 那一份作答完关掉之后，这一行能把自己的那份再打开
     await act(async () => useEnvStore.setState({ dependencyPreparation: null }))
     await clickIn(rowOf('Mystery.pdf')!, '准备依赖…')
     expect(useEnvStore.getState().dependencyPreparation, '行上没有再打开的入口').toEqual(offer)
-    // 对话框开着换过项目（A → B → A）：上一代的载荷不再给再打开的按钮（#740 Codex P2）
+    // 换到 p2 再回 p1：项目 id 相同、代际已变（projectStore 每次换代都清 scriptRunStore）
     await act(async () => {
       useEnvStore.setState({ dependencyPreparation: null })
       setCurrentProjectId('p2')
@@ -502,6 +480,12 @@ describe('绝不替用户决定', () => {
       b.textContent?.includes('准备依赖…'),
     )
     expect(stale, '换过项目之后还留着上一代的「准备依赖…」').toBeUndefined()
+    mockProbe.mockClear()
+    await act(async () => {
+      useScriptRunStore.getState().rerunGated('needs_preparation', 'dyn.py')
+      await new Promise((r) => setTimeout(r, 10))
+    })
+    expect(mockProbe, '上一代的待重跑在这一代被放行了').not.toHaveBeenCalled()
     setCurrentProjectId(null)
   })
 
@@ -937,7 +921,7 @@ describe('可编辑图的动作层级', () => {
     expect(firstLevelButtons('Ok.pdf')[0]).toBe('添加到画布')
   })
 
-  it('「重新试运行」还在：收进行尾的 ⋯ 菜单，点了跑的是既有的试运行端点', async () => {
+  it('「重新试运行」还在：收进行尾的 ⋯ 菜单；默认打开准备面板，开关关闭时跑既有的试运行端点', async () => {
     await open(reportOf(SIX))
     const row = rowOf('Ok.pdf')!
     // 第一层不再有它——一张已经好了的图不该看起来还有事要做
@@ -949,6 +933,20 @@ describe('可编辑图的动作层级', () => {
     expect(reprobe, '排障动作不该被删掉').toBeTruthy()
     await act(async () => {
       reprobe!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+    })
+    expect(mockCreateSession.mock.calls.map((c) => c[0])).toEqual([{ script: 'ok.py' }])
+    expect(mockProbe).not.toHaveBeenCalled()
+    // 开关关闭：同一个菜单项走素材库那台状态机
+    await act(async () => root.unmount())
+    document.body.innerHTML = ''
+    legacyPath()
+    await open(reportOf(SIX))
+    const again = [...(await openMore(rowOf('Ok.pdf')!)).querySelectorAll('[role="menuitem"]')].find((m) =>
+      m.textContent?.includes('重新试运行'),
+    )
+    await act(async () => {
+      again!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
       await Promise.resolve()
     })
     expect(mockProbe).toHaveBeenCalledWith('ok.py')

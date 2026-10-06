@@ -213,10 +213,14 @@
 后端会话合同全文在 `docs/rules/backend/preparation-and-receipts.md`「准备会话」。前端只做四件事：保存报告投影、冻结参数快照、订阅 / 补拉、
 翻译成一句话 + 一个主按钮。
 
-- **入口**：检查条选定目标的「准备并运行」、素材库脚本行 ▶ 都只**打开**面板（`projectPreparationStore.open(scriptTarget(script))`）：
-  后端只做只读检查，一个试运行请求都不发；参数草稿在这一刻取拷贝（`scriptTarget`），之后再改草稿不动这份会话——草稿与会话冻结的不同
-  （`draftDiffers`）时面板说「按新参数检查」。本地开关 `lib/preparationFlag.ts`（`localStorage['tavotto.preparationPanel']`，默认开，
-  `'off'` 回旧的同步试运行，保留一版）；接入中心的逐行试运行、渲染路上的门、PNG 准入不受开关影响、尚未迁移（ADR 0116 §七）。
+- **入口**：检查条选定目标的「准备并运行」、素材库脚本行 ▶、接入中心逐行「试运行并连接 / 重新试运行」（T09b：接入中心先让开）都只
+  **打开**面板（`projectPreparationStore.open(scriptTarget(script))`）：后端只做只读检查，一个试运行请求都不发；参数草稿在这一刻取拷贝
+  （`scriptTarget`），之后再改草稿不动这份会话——草稿与会话冻结的不同（`draftDiffers`）时面板说「按新参数检查」。本地开关
+  `lib/preparationFlag.ts`（`localStorage['tavotto.preparationPanel']`，默认开，`'off'` 时三个入口回到**同一台**旧状态机
+  `scriptRunStore.run`——接入中心委派它、读它的状态显示那一行，不再自己记一份门与重跑；参数草稿照样经 `probeWithDraft` 带上，保留一版）。
+  渲染路上的门与完整 PNG 准入**不走**会话：它们是编辑已知图的执行器（合同 §A），对话框是 `pool._new_worker` 两道门的薄展示适配器，
+  答完续上的是被挡住的那次渲染 / 准入（ADR 0116 §二）。同一份依赖需求两个展示面的下游效果只有一种：授权框 / 修复卡装完或明确跳过 →
+  空闲会话 `recheckIdle`；会话里的依赖作业装完 → `renderStore.retryEnvironmentFailures()`（与授权框装完同一个出口）。
 - **按钮只来自报告**：`lib/preparationText.prepView` 按 phase / outcome / requirement kind 查句子，主按钮只来自报告里后端生成的
   `actions` 与 `requirements`——没有 `run` 动作就没有「确认并运行」。一句话 + 至多一个主按钮，其余在默认收起的「详情」；看护
   `PreparationPanel.test.tsx` 的「每一种状态 × 每一种语种」（`visibleSentenceCount` / `visiblePrimaryButtons`）。运行时 input 嵌入的答题表单
@@ -233,10 +237,13 @@
   manifest）——只决定说「已进入编辑」还是「正在打开编辑…」。「进入编辑」用报告的 `captured` 走 `openFastEdit`（清单还没有这张图时先
   `addRuntimePanelToCanvas` 描述符），多张图开 `ProbeResultsDialog` 逐张加。跑完没图：「运行完成，未发现可编辑图」，没有「进入编辑」。
 - 面板失败时的诊断是 `TaskDiagnostic`（`preparation` / `dependency`）；旧路径的「复制诊断」随旧路径退役。
+- **无参数运行替换掉的旧图名（T09b）**：报告的 `unlinked_stems` 非空时，完成那一句换成「已捕获 N 张图；此前带其他参数生成的 … 已不再关联，
+  用原参数再运行一次即可恢复。」（`completed_unlinked`，仍一句话 + 「进入编辑」）；开关关闭时接入中心那一行说同一件事（`readiness.probeUnlinked`）。
 - 看护：`store/projectPreparationStore.test.ts`、`components/PreparationPanel.test.tsx`、`components/preparationEntries.test.tsx`、
   `store/projectReadinessStore.test.ts`（A → B → A）、`components/EngineEnvironmentCard.test.tsx`（`legacy_auto` 一键确认）；真浏览器 + 真后端：
   `e2e/preparation-panel.spec.ts`（只有脚本与数据的项目：选目录 → 改参数 → 答 input → 进入编辑，执行恰好一次；关面板换展示面、HTTP 断开、
-  应用重启、明确停止）。旧路径的 e2e（`asset-library` / `dependency-one-click` / `missing-input*` / `script-input`）在开关关闭下跑。
+  应用重启、明确停止）、`e2e/registry-center-preparation.spec.ts`（接入中心 → 同一个面板、点下去不执行、无参数重跑的可恢复提示；开关关闭时
+  委派旧状态机、零会话请求）、`RegistryDialog.test.tsx`（两条路径 + 同一台状态机的并发 / 代际）。旧路径的 e2e（`asset-library` / `dependency-one-click` / `missing-input*` / `script-input`）在开关关闭下跑。
 
 ## 速查表原要点（2026-09-25 迁入，#608）
 

@@ -912,6 +912,8 @@
       "completed_one": "Captured 1 figure, ready to edit.",
       "completed_other": "Captured {{count}} figures, ready to edit.",
       "completedNoList": "The run finished and its figures are in the library.",
+      "completedUnlinked_one": "Captured 1 figure; {{names}} from an earlier run with other arguments are no longer linked, so run again with those arguments to restore them.",
+      "completedUnlinked_other": "Captured {{count}} figures; {{names}} from an earlier run with other arguments are no longer linked, so run again with those arguments to restore them.",
       "static": "This figure has no script and can be laid out directly.",
       "editReady": "Now editing.",
       "editOpening": "Opening the editor…",

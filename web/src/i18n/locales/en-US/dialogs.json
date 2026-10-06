@@ -674,6 +674,7 @@
     "probeAndLink": "Test run and connect",
     "probeDropped_one": "{{count}} more figure exceeded the capture limit and isn’t shown",
     "probeDropped_other": "{{count}} more figures exceeded the capture limit and are not shown",
+    "probeUnlinked": "{{names}} from an earlier run with other arguments are no longer linked; run again with those arguments to restore them",
     "probeFailed": "Test run of {{script}} failed: {{error}}",
     "probeLinked": "Connected {{stems}}",
     "probePickAria": "Choose a script to test run",

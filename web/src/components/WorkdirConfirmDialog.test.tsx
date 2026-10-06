@@ -26,7 +26,7 @@ import { WorkdirChooseButton } from '@/components/WorkdirRow'
 import { i18n, t } from '@/i18n'
 import { setCurrentProjectId } from '@/lib/session'
 import { useEnvStore } from '@/store/envStore'
-import { onGateResolved, useScriptRunStore } from '@/store/scriptRunStore'
+import { useScriptRunStore } from '@/store/scriptRunStore'
 import { useRenderStore } from '@/store/renderStore'
 import { useUiStore } from '@/store/uiStore'
 
@@ -269,8 +269,11 @@ describe('WorkdirConfirmDialog', () => {
   })
 
   it('作答期间换了项目：A 的确认不去重跑 B 停在门上的试运行；同项目照常重跑（#740 Codex P2）', async () => {
+    // 「重跑停在门上的试运行」只有一个入口（`rerunGated`；T09b 起接入中心不再另挂监听）：直接数它被调了几次
     const resolved: string[] = []
-    const off = onGateResolved((phase) => resolved.push(phase))
+    const realRerun = useScriptRunStore.getState().rerunGated
+    useScriptRunStore.setState({ rerunGated: (phase) => void resolved.push(phase) })
+    const off = () => useScriptRunStore.setState({ rerunGated: realRerun })
     const ok = {
       ok: true,
       workdir: { mode: 'project_root', modes: [] },

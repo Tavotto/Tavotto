@@ -3440,6 +3440,9 @@ def api_registry_scan():
 _PROBES: dict[tuple[str, str], threading.Event] = {}
 #: 在跑的试运行各自的运行配置（T03；`_PROBES` 同一把锁）：取消要杀的是**这份配置**的会话，不是同脚本别的参数的
 _PROBE_RUNS: dict[tuple[str, str], object] = {}
+#: 在跑的试运行最近一次取到的会话与所有权 `(worker, owned)`（T09b；`_PROBES` 同一把锁）：取消按 owner 只关
+#: 这次试运行自己建的那条——渲染路 / 准备会话此刻在同一个池键上的会话一根手指不碰（ADR 0116 §三）
+_PROBE_OWNERS: dict[tuple[str, str], tuple[object, bool | None]] = {}
 _PROBES_LOCK = threading.Lock()
 
 
@@ -3549,18 +3552,26 @@ def api_registry_probe():
     sse_publish("probe.started", {"pj": ctx.id, "script": script})
     attempt_id = f"run-{uuid.uuid4().hex}"
     started = time.monotonic()
+
+    def note_owner(worker, owned):
+        with _PROBES_LOCK:
+            if _PROBES.get(key) is cancel_ev:
+                _PROBE_OWNERS[key] = (worker, owned)
+
     try:
         result = engine_probe.probe_and_register(
             ctx.path,
             script,
             cost=str(body.get("cost") or "medium"),
             should_cancel=cancel_ev.is_set,
+            on_acquired=note_owner,
             **({"run": run} if run is not None else {}),
         )
     finally:
         with _PROBES_LOCK:
             _PROBES.pop(key, None)
             _PROBE_RUNS.pop(key, None)
+            _PROBE_OWNERS.pop(key, None)
     # 这次运行里每一问的去向（T08）：只给任务诊断的白名单投影，不进响应体（响应形状不变）
     input_facts = result.pop(engine_probe.INPUT_FACTS_KEY, None)
     if result.get("registered"):
@@ -3605,25 +3616,40 @@ def api_registry_probe():
 
 @app.post("/api/registry/probe/cancel")
 def api_registry_probe_cancel():
-    """取消一个在跑的试运行：置取消标志并**当场硬杀**该脚本的 worker 会话。
+    """取消一个在跑的试运行：置取消标志并**当场硬杀这次试运行自己建的** worker 会话。
 
     「取消」必须真正终止工作（Session 5 反证 #3）：只置标志的话，阻塞在
     build 里的慢脚本会一直跑到超时。`pool.force_cancel` 直接 kill 子进程，
     阻塞中的 probe 请求随即拿到 EOF → execution_cancelled。幂等：没有在跑
     的返回 `{cancelling: false}`——「取消」与「跑完」天然赛跑，输了不是错误
     （跑完的照常登记，probe_and_register 的注释写明了这条语义）。
+
+    **按 owner**（T09b，ADR 0116 §三）：杀的是这次试运行取到的那一条（`expected_worker`），不是此刻池键上的随便哪条——
+    试运行换入口之间渲染路可能已在同一个键上起了自己的会话。那条是别人的（`owned is False`：试运行取到的是渲染路正在用的
+    同键会话）就不碰，只置标志；还没取到会话时同样只置标志，取到那一刻由 `probe` 按同一规则处理。顺序：**先置标志、再读
+    所有权**——与 probe 那一侧「先记所有权、再看标志」配成对，两边至少有一边看得见对方。
     """
     ctx = current_ctx()
     body = request.get_json(force=True)
     script = str(body.get("script") or "").strip()
+    key = (ctx.id, script)
     with _PROBES_LOCK:
-        ev = _PROBES.get((ctx.id, script))
+        ev = _PROBES.get(key)
     if ev is None:
         return jsonify({"cancelling": False})
-    with _PROBES_LOCK:
-        run = _PROBE_RUNS.get((ctx.id, script))
     ev.set()  # 先置标志再杀：probe 醒来时答案已经在了
-    engine_pool.force_cancel(script, str(ctx.path), **({"run": run} if run is not None else {}))
+    with _PROBES_LOCK:
+        run = _PROBE_RUNS.get(key)
+        owner = _PROBE_OWNERS.get(key) if _PROBES.get(key) is ev else None
+    if owner is not None and owner[1] is not False:
+        worker = owner[0]
+        if not engine_pool.force_cancel(
+            script,
+            str(ctx.path),
+            expected_worker=worker,
+            **({"run": run} if run is not None else {}),
+        ):
+            worker.force_kill()  # 已经不在池里（被换掉 / 摘掉）却仍是这次在等的那条：只杀它，不碰替换者
     return jsonify({"cancelling": True})
 
 
@@ -7119,7 +7145,9 @@ def _finalize_script_attempt(ctx: "ProjectCtx", plan, result) -> dict:
     )
     engine_runconfig.set_default(ctx.path, plan.script, run.config_id if run is not None else None)
     refresh_project(ctx, reason="probe", allow_static_merge=False)
-    return {"registered": True}
+    # 无参数运行整条替换掉的旧图名（T09b）：报告里如实说，界面给「用原参数再运行」的可恢复提示
+    unlinked = list(registered.get("unlinked_stems") or [])
+    return {"registered": True, **({"unlinked_stems": unlinked} if unlinked else {})}
 
 
 def _publish_preparation_session(payload: dict) -> None:

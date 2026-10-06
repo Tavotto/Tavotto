@@ -26,6 +26,7 @@ import {
 import { currentProjectId } from '@/lib/session'
 import { t } from '@/i18n'
 import { useEnvStore } from '@/store/envStore'
+import { useProjectPreparationStore } from '@/store/projectPreparationStore'
 import { useRenderStore } from '@/store/renderStore'
 import { useScriptRunStore } from '@/store/scriptRunStore'
 
@@ -447,6 +448,8 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
     useRenderStore.getState().retryEnvironmentFailures()
     // 素材库脚本行上停在这道门上的那次试运行同样重跑（图还没上画布时，门是从那里撞上的）
     useScriptRunStore.getState().rerunGated('needs_preparation', offer.script)
+    // 准备面板（T09b）：同一道门在会话里也是一条待办——空闲的会话只读地重新检查，下一步仍由报告给、用户点（不运行）
+    useProjectPreparationStore.getState().recheckIdle()
   },
 
   makePlan: async (args, scriptOffer = null) => {
@@ -786,6 +789,9 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
           useEnvStore.getState().dismissDependencyPreparation()
           if (script) useScriptRunStore.getState().rerunGated('needs_preparation', script)
         }
+        // 准备面板（T09b）：授权框 / 修复卡装完的依赖也是会话里的那条待办——空闲的会话只读地重新检查（不运行）。
+        // 原对话框是薄展示适配器：作答走原端点，会话这一侧只认后端重新检查出来的报告
+        useProjectPreparationStore.getState().recheckIdle()
       }
       if (p.state !== 'done') {
         set({ errorCode: p.code || '', errorText: p.error || '', pinned: p.pinned ?? null })

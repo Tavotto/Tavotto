@@ -1,6 +1,6 @@
 # ADR 0116：准备会话是 GUI 「准备并打开」的默认入口——一个面板、三种不同的关停、连接失联不是执行失败
 
-日期：2026-10-06 · 状态：**Accepted**（产品目标由「项目 Onboarding × 执行主链路收敛」包的 T09 给定）
+日期：2026-10-06 · 状态：**Accepted**（产品目标由「项目 Onboarding × 执行主链路收敛」包的 T09 给定；同日 T09b 补完入口迁移，见 §二、§七）
 相关：[0053 准备接口](0053-foundation-contracts-and-preparation.md)（`PreparationService` / 取消的所有权）、
 [0099 脚本 input](0099-script-input-bridge.md) §九（同一问一个展示面）、[0114 环境建议 / 检查 / 采用](0114-environment-recommend-check-adopt.md)、
 [0115 依赖授权绑定实际影响](0115-dependency-authorization-binds-impact.md)、[0057 首开](0057-first-open-environment-and-workdir.md) §三（运行目录确认）、
@@ -41,8 +41,21 @@ T01～T08 在后端立起了 script-first 的准备会话（`engine/prepsession.
 |---|---|
 | 项目打开 / 恢复后的检查条，选定目标的「准备并运行」 | 准备会话（`{script}`，参数草稿此刻冻结） |
 | 素材库脚本行 ▶ | 同上；行上的状态一句话翻译会话 phase，点它回到面板 |
-| 接入中心逐行「试运行」、渲染路上的门（运行目录 / 依赖 / 缺数据对话框）、完整 PNG 的编辑准入 | **未迁移**（保留，见 §七） |
+| 接入中心逐行「试运行并连接 / 重新试运行」（T09b） | 同上：接入中心先让开，再打开同一个面板；开关关闭时委派素材库那台旧状态机（`scriptRunStore.run`），不再自己记一份门与重跑 |
+| 渲染路上的门（运行目录 / 依赖 / 缺数据对话框）、完整 PNG 的编辑准入 | **不走会话**（T09b 定案，理由见下）：委派同一个后端判据与动作，对话框是薄展示适配器 |
 | MCP / CLI | T10 |
+
+**为什么渲染门与 PNG 准入不走准备会话（T09b）**：它们是「编辑一张**已知**图」的执行器，不是「发现未知图」的首跑（工程合同 §A：probe 发现、
+render 编辑、native 连接、static 直接用文件，统一外层身份，不强迫走同一内部分支）。PNG 准入还要做源字节 / 画幅守卫与 frame 校验
+（`admitPngEntry`：文档 / 选择 / 历史 / 渲染代际都没变才落地），会话的 `run` 不做这些——走会话就绕过了 guard。所以：
+
+* **判据只有一份**：渲染、PNG 准入、准备会话撞上的运行目录门与依赖门是同一处（`pool._new_worker` 的 `_workdir_gate` 与 `SPAWN_GATES`），
+  会话把它们投影成 `workdir_choice` / `dependency_authorization`，渲染 / 准入以 409 + 同一份载荷回来；
+* **动作只有一份**：运行目录 = 同一个 `PATCH /api/engine/workdir`（`WorkdirConfirmDialog`），依赖 = 同一个 `deprepair` provider
+  （授权框的联合准备 / 会话的 `prepare_dependencies` 都落到它），缺数据 = 同一个 `input-remap` 端点；
+* **答完之后**：对话框续上的是被挡住的那次渲染 / 准入（`retryEnvironmentFailures` → `retryArtifactEntry`，准入仍按发起时的文档 / 选择 /
+  代际判是否落地），不是脚本首跑；同一份需求在会话里的那条待办只**只读地**重新检查（授权框装完 / 跳过 → `recheckIdle`），反过来会话里
+  的依赖作业装完也让停在依赖门上的渲染重排（与授权框装完同一个出口）——两个展示面，下游效果只有一种。
 
 ### 三、三种关停是三件事
 
@@ -80,8 +93,12 @@ T01～T08 在后端立起了 script-first 的准备会话（`engine/prepsession.
 `lib/preparationFlag.ts`：`localStorage['tavotto.preparationPanel']`，**默认开**；`'off'` 回到旧的同步试运行（保留一版）。默认开的前提已核实：
 参数草稿在打开那一刻随目标冻结进会话（T03 运行配置），冷重放 / 导出读产物里冻结的引用，不会因走面板而退化成空 argv。
 
-晋升（删除开关与旧路径）条件：本 ADR 的入口在 T11 真实首跑资格里通过；接入中心的逐行试运行迁到面板；一个发布周期内没有回到 `'off'` 的需要。
-届时退役 `scriptRunStore` 的门相位与重跑协调（`handOffProbeGate` / `rerunGated` / `onGateResolved` / `whenScriptIdle` / 改指代际订阅的自动重跑）、
+晋升（删除开关与旧路径）条件：本 ADR 的入口在 T11 真实首跑资格里通过；接入中心的逐行试运行迁到面板（**T09b 已满足**）；一个发布周期内没有回到 `'off'` 的需要。
+T09b 时第一、三条仍未满足，所以开关与 `scriptRunStore` 旧状态机**保留**；但不依赖开关的重复编排已删除——接入中心自己那份「门 → 弹窗 → 重跑」
+（`onGateResolved` / `whenScriptIdle` / 门载荷代际 / 接入中心自己的 409 解析与 `gatePhaseOf`）：关闭开关时它委派 `scriptRunStore.run`，同一脚本的
+运行状态、门载荷、重跑只剩一份。`/api/registry/probe/cancel` 的取消改为按 owner（T09b）：只杀这次试运行自己建的那条（`expected_worker`，
+所有权来自 `pool.acquired_here`），别人的同键会话 / 替换者不碰——旧路径在开关关闭与 MCP 下仍可达，所以修在这里而不是等它退役。
+届时退役 `scriptRunStore` 的门相位与重跑协调（`handOffProbeGate` / `rerunGated` / 改指代际订阅的自动重跑；`onGateResolved` / `whenScriptIdle` 已在 T09b 删除）、
 `ScriptLibrary` 的修复卡 / 门再打开 / 失败恢复 / 「复制诊断」块、`/api/registry/probe` 的前端调用（后端端点保留为 MCP / 旧客户端的兼容入口直到 T10/T12）。
 渲染路上的门对话框是**普通编辑时的替代展示面**（合同 §K），保留；它们的「答完重排渲染」（`retryEnvironmentFailures`）重排的是渲染请求，不是脚本首跑。
 
@@ -89,7 +106,9 @@ T01～T08 在后端立起了 script-first 的准备会话（`engine/prepsession.
 
 * 正面：首跑有任务句柄，断线 / 刷新 / 重启都能以 GET 补回真实状态；停止当场生效且只关自己的；「答完自动重跑」从已迁移入口上消失；
   执行结束 / 捕获 / 编辑可用分开说。
-* 代价：开关默认开的这一版里，旧路径的代码仍在（关开关时用）；接入中心、渲染路上的门、PNG 准入仍是旧展示面。面板与原对话框并存的组合靠
-  `scriptInputStore.claimPresentation` 保证同一问只有一个展示面。
+* 代价：开关默认开的这一版里，旧路径的代码仍在（关开关时用，三个首跑入口共用一台）；渲染路上的门、PNG 准入按 §二 保留为编辑执行器的
+  薄展示适配器。面板与原对话框并存的组合靠 `scriptInputStore.claimPresentation` 保证同一问只有一个展示面。
+* T09b：无参数运行整条替换注册表 stems 的已知缺口（T03）不改注册表格式，改为如实告知——`register_probed` 带回 `unlinked_stems`，
+  试运行响应与会话报告同一口径，面板 / 接入中心说「用原参数再运行一次即可恢复」。
 * 不改：会话合同（T01）、动作 / 身份 / 授权（T05 / T06）、input broker（T08）、诊断（T04）都没有新字段之外的变化；新增的只有报告的 `captured`
   投影与 `build_owned(on_acquired=)` / `PreparationService.note_owner`。

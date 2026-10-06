@@ -864,6 +864,7 @@
       "readyArgs": "{{script}} 已经可以带 {{count}} 个参数运行。",
       "completed_other": "已捕获 {{count}} 张图，可以进入编辑。",
       "completedNoList": "运行完成，图已登记到素材库。",
+      "completedUnlinked_other": "已捕获 {{count}} 张图；此前带其他参数生成的 {{names}} 已不再关联，用原参数再运行一次即可恢复。",
       "static": "这张图没有脚本，可以直接排版。",
       "editReady": "已进入编辑。",
       "editOpening": "正在打开编辑…",

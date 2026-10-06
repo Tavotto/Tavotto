@@ -198,6 +198,13 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
     // `rejection` 不在这里清：被拒之后重读到的新修订正是要配着那一句看的；下一次动作 / 重新打开才收起它
     patch(key, () => ({ report, connection: 'ok' }))
     if (report.phase === 'completed' && before?.phase !== 'completed') void onCompleted(report)
+    // 同一会话里的依赖作业刚装完（T09b）：画布上因「要先准备依赖」停着的渲染与原授权框作答之后一样重排——同一份
+    // 需求两个展示面，下游效果只有一种（重排的是渲染请求，不是脚本首跑；首跑仍由用户点报告里的 run）
+    const depDone = (r: PreparationReport | null) =>
+      r?.provider.dependency?.state === 'done' ? r.provider.dependency.plan_id : null
+    if (before?.session_id === report.session_id && depDone(report) && depDone(report) !== depDone(before)) {
+      void onDependencyPrepared()
+    }
   }
 
   /** 补拉节奏：有活动就按退避继续，没有活动（等用户 / 终局）且连接正常就停 */
@@ -407,6 +414,16 @@ async function onCompleted(report: PreparationReport): Promise<void> {
     useRenderStore.getState().markStale(ids)
   } catch {
     /* 清单刷新是尽力而为；registry.changed 事件 / 手动刷新会补上 */
+  }
+}
+
+/** 会话里的依赖准备装完了：画布上停在依赖门上的渲染重排（与 `depRepairStore` 装完之后同一个出口） */
+async function onDependencyPrepared(): Promise<void> {
+  try {
+    const { useRenderStore } = await import('@/store/renderStore')
+    useRenderStore.getState().retryEnvironmentFailures()
+  } catch {
+    /* 尽力而为：下一次编辑 / 手动重试会补上 */
   }
 }
 

@@ -122,10 +122,10 @@
   `WorkdirConfirmDialog` 选定后重跑停在这一相位上的全部（项目级；放在组件里是因为 envStore → scriptRunStore 会扩大既有 import 环；
   作答期间换过项目就不重跑——`setWorkdirMode` 的换代作废与成功同形，按发起时的**代际**判：`scriptRunEpoch()`，每次换项目 +1，
   A → B → A 项目 id 相同但代际已变）。
-  接入中心的试运行走同一个 `handOffProbeGate`，不报「试运行失败」；它不在 `scriptRunStore` 里记账，停在门上的行经
-  `onGateResolved`（`rerunGated` 顺带通知）在答案到来时重跑（同脚本、同一代），行上留着与画布错误块同一颗再打开的按钮
-  （授权框同一时刻只开一份、别的脚本的开着时这一份没弹出来，或「稍后」之后），且先等素材库同一脚本的那次
-  重跑结束（`whenScriptIdle`；后端同一脚本只许一个在跑）。抛出来的错误（门以 409 回来）两边都经 `probeErrorOf` 解析。**新写一个调试运行端点的入口，先认这两个 code。**
+  接入中心的试运行（开关关闭时；T09b）**委派这一台状态机**（`scriptRunStore.run`），那一行读它的状态显示（`RegistryDialog.probeNoteOf`）：
+  门、再打开的按钮、`rerunGated` 重跑都只有这一份，同一脚本天然不并发，换项目时随 `clear()` 整个清空（含 A → B → A）——原先接入中心
+  自己那份记账（`onGateResolved` / `whenScriptIdle` / 门载荷的代际）随之删除。抛出来的错误（门以 409 回来）只经 `run` 里那一处
+  `probeErrorOf` 解析。**新写一个调试运行端点的入口，先认这两个 code。**
   看护 `scriptRunStore.test.ts`「试运行撞上起会话之前的门」、`ScriptLibrary.test.tsx` 同名 describe、
   `RegistryDialog.test.tsx`、`e2e/asset-library.spec.ts`「试运行撞上依赖门」。
   **直接弹一键修复框（用户 2026-10-03，取代 #760 的行内例外）**：素材库脚本行与编辑图的入口撞上依赖门，都交给同一个
