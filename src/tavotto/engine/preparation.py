@@ -345,7 +345,7 @@ def plan_for(
             interpreter=python,
             sandbox="",
             cwd_mode=decision["mode"] if decision else workdir.mode_for(root),
-            **({"argv": run.argv, "run_config": run.config_id} if run is not None else {}),
+            **execspec.run_kwargs(run),
         )
         launch_context = execspec.launch_context(spec, grant=grant)
     intents = depresolve.declared_intents(root, script) if script else []

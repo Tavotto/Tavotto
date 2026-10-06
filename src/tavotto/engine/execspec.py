@@ -155,6 +155,13 @@ class RunSelection:
         return hmac.new(_PROCESS_KEY, payload.encode("utf-8"), hashlib.sha256).hexdigest()[:16]
 
 
+def run_kwargs(run: RunSelection | None) -> dict:
+    """`RunSelection` → `safe_spec` 的关键字参数（没有配置 = 空，调用形状与 T03 之前一致）。
+
+    **唯一出处**（T12）：池的三条 spawn 路径与准备计划的启动上下文都经这里，不各自拼 `argv` / `run_config`。"""
+    return {} if run is None else {"argv": run.argv, "run_config": run.config_id}
+
+
 def _normalize_target(target: str, target_kind: str) -> str:
     """script 目标 → 项目相对路径（POSIX）；module 目标原样。
 
