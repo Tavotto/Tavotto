@@ -1365,6 +1365,20 @@ def register(
         return _register_locked(figures_dir, script, stems, entry, cost, notes, append=append)
 
 
+def registered_stems(figures_dir: str | Path, script: str) -> list[str]:
+    """注册表文件里此刻登记在 `script` 名下的 stem（读不到 / 没有这条 = 空表）。只读，不加锁——要与随后的写成对时由调用方
+    持项目锁（`inputremap.landing` / `project_mutex`）。"""
+    path = registry.existing_registry_path(figures_dir)
+    try:
+        cfg = json.loads(path.read_text(encoding="utf-8")) if path else {}
+    except (OSError, ValueError):
+        return []
+    entry = (cfg.get("scripts") or {}).get(script) if isinstance(cfg, dict) else None
+    if not isinstance(entry, dict):
+        return []
+    return [str(s) for s in entry.get("stems") or []]
+
+
 def _register_locked(figures_dir, script, stems, entry, cost, notes, *, append: bool) -> dict:
     path = registry.existing_registry_path(figures_dir)
     try:

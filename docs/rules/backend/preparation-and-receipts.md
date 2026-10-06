@@ -163,6 +163,11 @@ input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/pr
   没报所有权的 runner（测试替身）仍走旧的「build 返回之后再收」。看护 `tests/test_preparation_session_lifecycle.py`、e2e `preparation-panel.spec.ts`。
 - **成功的报告带 `captured`（T09）**：这次尝试捕获到的公开描述符（与 `/api/registry/probe` 响应里同一份：项目相对路径、运行配置只是不透明引用），
   只在 outcome 为 `succeeded` 时非空。界面的「进入编辑」直接用它，不按图名再找一遍、不为换界面再跑一次脚本。
+- **`unlinked_stems`（T09b，T03 已知缺口的可恢复提示）**：无参数的执行按脚本整条替换注册表里的 stems（`discover.register` 的旧语义，
+  注册表格式不动）；`probe.register_probed` 把替换之前登记在这个脚本名下、这次没产出的图名如实带回（带运行配置的执行是并入，不替换，
+  没有这个键）。`/api/registry/probe` 响应与会话报告（outcome `succeeded` 时）同一口径：只是图名（与 `captured[].stem` 同口径），不含参数。
+  界面据此说「此前带其他参数生成的 … 已不再关联，用原参数再运行一次即可恢复」。看护 `tests/test_probe_owner_and_unlinked_stems.py`、
+  e2e `registry-center-preparation.spec.ts`。
 - **依赖准备并入同一个会话（T06）**：phase `preparing_environment` 由依赖作业事实派生；装好后同一会话按新环境重新检查（只重算差额，
   报告多 `dependency_delta`），失败 / 取消保留原代并重新给新的授权动作；脚本跑到一半才发现缺包 = 新的一次尝试
   （outcome `needs_dependencies`，`rerun_required`），不叫"从异常点继续"。认领与失效检查在会话锁内。
@@ -170,11 +175,13 @@ input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/pr
 - 看护：`tests/test_preparation_session.py`（假 pool：合同、并发认领、修订、失效、取消所有权、回收、项目绑定）、
   `tests/test_preparation_session_dependencies.py`（T06：授权 / 认领 / 差额 / 真安装到首图）、
   `tests/test_preparation_session_e2e.py`（真 worker、真服务：只有脚本的项目 → 一次执行 → 进编辑请求不重跑）、
-  `tests/test_script_probe.py::TestEntryLoopStopsOnNonEntryFailures`。**T09 起它是 GUI 的默认入口**（检查条「准备并运行」、
-  素材库脚本行 ▶，前端规则在 `docs/rules/frontend/readiness-and-left-shell.md`「准备面板」，ADR 0116）；`/api/registry/probe` 留给
-  接入中心的逐行试运行、本地开关关闭时的旧路径与 MCP / CLI（T10），是暂存的薄兼容 wrapper。它的取消（`/api/registry/probe/cancel`）
-  仍按「脚本 + 运行配置」键硬杀：试运行每换一次入口先作废自己那条键再取会话，被杀的是这次试运行新建的会话；与渲染路并发取到同一键的
-  残余竞态登记在 ADR 0116 §七，随旧路径退役。
+  `tests/test_script_probe.py::TestEntryLoopStopsOnNonEntryFailures`。**T09 / T09b 起它是 GUI 首跑的默认入口**（检查条「准备并运行」、
+  素材库脚本行 ▶、接入中心逐行「试运行并连接」，前端规则在 `docs/rules/frontend/readiness-and-left-shell.md`「准备面板」，ADR 0116）；
+  `/api/registry/probe` 留给本地开关关闭时的旧路径与 MCP / CLI（T10），是暂存的薄兼容 wrapper。它的取消（`/api/registry/probe/cancel`）
+  **按 owner（T09b）**：试运行每次取到会话（`pool.build` 的 `before_build`）就把 `(worker, owned)` 记进 `app._PROBE_OWNERS`
+  （`owned` = `pool.acquired_here`：本线程最近一次 `acquire()` 取到的就是它时那一次的 `created`），取消端点**先置标志、再读所有权**，
+  只 `force_cancel(expected_worker=那一条)`（已不在池里就只杀那一条，绝不碰同键的替换者）；取到的是别人正在用的同键会话（`owned is False`）
+  只停自己的等待意图、不杀；还没取到会话时只置标志，取到那一刻由 `probe` 按同一规则处理。看护 `tests/test_probe_owner_and_unlinked_stems.py`。
 
 ## 速查表原要点（2026-09-25 迁入，#608）
 

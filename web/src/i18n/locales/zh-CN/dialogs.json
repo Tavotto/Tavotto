@@ -667,6 +667,7 @@
     "pickSourcePlaceholder": "选择源脚本",
     "probeAndLink": "试运行并连接",
     "probeDropped_other": "另有 {{count}} 张图超过捕获上限未显示",
+    "probeUnlinked": "此前带其他参数生成的 {{names}} 已不再关联，用原参数再运行一次即可恢复",
     "probeFailed": "{{script}} 试运行失败：{{error}}",
     "probeLinked": "已连接 {{stems}}",
     "probePickAria": "选择要试运行的脚本",

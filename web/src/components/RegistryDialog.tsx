@@ -19,7 +19,6 @@ import {
   backendErrorText,
   fetchRegistry,
   panelSrc,
-  probeScript,
   scanRegistry,
   writeRegistryEntry,
   type CapturedFigureDescriptor,
@@ -44,18 +43,15 @@ import { addPanelToCanvas, addRuntimePanelToCanvas } from '@/store/workspace'
 import { useAssetStore } from '@/store/assetStore'
 import { refreshAssetsAndSync } from '@/store/liveSync'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
+import { scriptTarget, useProjectPreparationStore } from '@/store/projectPreparationStore'
 import {
-  gatePhaseOf,
-  handOffProbeGate,
-  onGateResolved,
-  probeErrorOf,
-  scriptRunEpoch,
+  isBusyPhase,
+  isGatePhase,
   useScriptRunStore,
-  whenScriptIdle,
+  type ScriptRunState,
 } from '@/store/scriptRunStore'
-import { probeWithDraft } from '@/store/scriptArgvStore'
+import { preparationPanelEnabled } from '@/lib/preparationFlag'
 import { ScriptArgvEditor } from './ScriptArgvEditor'
-import { currentProjectId } from '@/lib/session'
 import { useUiStore } from '@/store/uiStore'
 import { DependencyPrepareButton, WorkdirChooseButton } from './WorkdirRow'
 import { Button, IconButton } from './ui/Button'
@@ -78,7 +74,9 @@ import { TextInput } from './ui/Input'
  * 三条既有的执行路径原样复用，本组件一条都不重写：
  *
  * * 重新扫描 → `POST /api/registry/scan`
- * * 试运行   → `POST /api/registry/probe`（**只由用户点出来**，绝不自动跑）
+ * * 试运行   → **准备面板**（T09b，ADR 0116）：关掉本对话框、为那个脚本打开同一个准备会话（只读检查，执行只在用户
+ *   认领后端的 `run` 动作之后）；本地开关关闭时委派素材库那台状态机（`scriptRunStore.run` → `POST /api/registry/probe`）。
+ *   两条路都**只由用户点出来**，绝不自动跑；本组件不再记自己的一份「门 → 弹窗 → 重跑」
  * * 手工关联 → `PUT /api/registry`
  *
  * 每次成功之后走**统一刷新**（`refreshAssetsAndSync`），不手拼状态：就绪度、
@@ -131,8 +129,32 @@ interface ProbeNote {
   /** 停在起会话之前的门上：再打开授权框 / 运行目录确认框的载荷 */
   prepare?: DependencyPreparationOffer
   workdir?: WorkdirConfirmation
-  /** 载荷属于哪一代（`scriptRunEpoch`）：换过项目（含 A → B → A）就不再给再打开的按钮 */
-  gateEpoch?: number
+}
+
+/**
+ * 开关关闭时的那一行记录：**读素材库那台状态机**（`scriptRunStore`）的这次运行，不另存一份——同一个脚本只有一份
+ * 运行状态、一处门载荷。换项目时那台状态机整个清空（含 A → B → A），上一代的载荷随之消失，不必另比代际。
+ * 显示那一刻才按当前语言翻（i18n 纪律）。
+ */
+function probeNoteOf(st: ScriptRunState | undefined): ProbeNote | undefined {
+  if (!st || st.phase === 'idle' || isBusyPhase(st.phase)) return undefined
+  if (st.error) {
+    const text = formatMessage(backendCodeMsg(st.error.code, st.error.params, st.error.message))
+    if (isGatePhase(st.phase)) {
+      return {
+        text,
+        prepare: st.error.dependency_preparation ?? undefined,
+        workdir: st.error.confirmation ?? undefined,
+      }
+    }
+    return { text, traceback: st.error.traceback }
+  }
+  const stems = st.stems ?? [...new Set(st.descriptors.map((d) => d.stem))]
+  const parts = [rd('probeLinked', { stems: listJoin(stems) })]
+  if (st.droppedFigures) parts.push(rd('probeDropped', { count: st.droppedFigures }))
+  // 无参数运行整条替换掉的旧图名（T09b）：同一行里说清怎么恢复
+  if (st.unlinkedStems?.length) parts.push(rd('probeUnlinked', { names: listJoin(st.unlinkedStems) }))
+  return { text: parts.join(' '), descriptors: st.descriptors }
 }
 
 function ReadinessBody() {
@@ -146,7 +168,16 @@ function ReadinessBody() {
   const [view, setView] = useState<RegistryView | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
-  const [probed, setProbed] = useState<Record<string, ProbeNote>>({})
+  // 那一行的试运行记录 = 素材库那台状态机的状态（开关关闭时的路径；默认路径在准备面板里看）
+  const byScript = useScriptRunStore((s) => s.byScript)
+  const probed = useMemo(() => {
+    const out: Record<string, ProbeNote> = {}
+    for (const [script, st] of Object.entries(byScript)) {
+      const note = probeNoteOf(st)
+      if (note) out[script] = note
+    }
+    return out
+  }, [byScript])
 
   const reloadView = async () => {
     try {
@@ -183,35 +214,6 @@ function ReadinessBody() {
     }
   }
 
-  // 停在门上的逐行试运行：门有了答案（授权准备 / 选定运行目录）就重跑那一行，与素材库脚本行同一个承诺。
-  // 记下发起时的项目：换了项目的答案不重跑这边的行
-  // 按**代际**记（`scriptRunEpoch`，每次换项目 +1）：A → B → A 回来的是同一个项目 id、却是新的一代，
-  // 上一代记下的待重跑不该在这一代被放行（#740 Codex P2）
-  const gated = useRef(
-    new Map<string, { phase: 'needs_workdir' | 'needs_preparation'; project: string | null; epoch: number }>(),
-  )
-  const probeRef = useRef<(script: string) => void>(() => {})
-  useEffect(
-    () =>
-      onGateResolved((phase, resolved) => {
-        for (const [script, g] of [...gated.current]) {
-          if (g.phase !== phase || (resolved && resolved !== script)) continue
-          if (g.project !== currentProjectId() || g.epoch !== scriptRunEpoch()) {
-            gated.current.delete(script)
-            continue
-          }
-          gated.current.delete(script)
-          // 素材库那一行可能也停在这道门上、此刻正被 `rerunGated` 重跑：同一脚本后端只许一个在跑，
-          // 等它跑完再跑这一行的，别撞成 probe_in_progress 当场报失败
-          // 等待期间换了项目（换代会清掉素材库的记账、等待随之 resolve）：这一行属于发起时的项目，不重跑
-          void whenScriptIdle(script).then(() => {
-            if (currentProjectId() === g.project && scriptRunEpoch() === g.epoch) probeRef.current(script)
-          })
-        }
-      }),
-    [],
-  )
-
   const scan = () =>
     run('scan', async () => {
       const res = await scanRegistry()
@@ -225,57 +227,28 @@ function ReadinessBody() {
         )
     })
 
-  const probe = (script: string) =>
-    run(script, async () => {
-      const project = currentProjectId()
-      const epoch = scriptRunEpoch()
-      // 门的两个 code 可能以非 2xx 回来（请求直接抛）：与素材库同一个解析器，抛出来的也认得门
-      const res = await probeWithDraft(probeScript, script).catch((e: unknown) => {
-        const error = probeErrorOf(e)
-        if (!gatePhaseOf(error)) throw e
-        return { script, entry: null, stems: [], descriptors: [], tried: [], error } as Awaited<
-          ReturnType<typeof probeScript>
-        >
-      })
-      // 起会话之前的门（运行目录 / 依赖准备）不是试运行失败：弹与渲染、素材库同一个框，这一行只说还差什么
-      const gate = gatePhaseOf(res.error)
-      if (gate && handOffProbeGate(res.error, project)) {
-        const text = formatMessage(
-          backendCodeMsg(res.error!.code, res.error!.params, res.error!.message),
-        )
-        // 行上留着再打开的入口（与画布错误块同一颗按钮）：同一时刻只开一份授权框，别的脚本的框开着时
-        // 这一份没弹出来；「稍后」关掉之后也要能再开——否则这一行就停在「还差一步」上无路可走（#740 Codex P2）
-        setProbed((p) => ({
-          ...p,
-          [script]: {
-            text,
-            prepare: res.error!.dependency_preparation ?? undefined,
-            workdir: res.error!.confirmation ?? undefined,
-            gateEpoch: epoch,
-          },
-        }))
-        gated.current.set(script, { phase: gate, project, epoch })
-        return
-      }
-      gated.current.delete(script)
-      if (res.error) {
-        // 主文案先按稳定 code 翻成当前语言（后端中文原文只是回退）；
-        // traceback 不进主文案，收在「诊断详情」里。
-        const text = formatMessage(
-          backendCodeMsg(res.error.code, res.error.params, res.error.message),
-        )
-        setProbed((p) => ({ ...p, [script]: { text, traceback: res.error?.traceback } }))
+  /**
+   * 「试运行并连接」/「重新试运行」（T09b）。默认：本对话框让开，为这个脚本打开**同一个准备面板**（参数草稿此刻冻结），
+   * 检查、授权、运行、回答 input、进入编辑都在那里——这里不发任何执行请求。开关关闭：委派素材库那台状态机
+   * （`scriptRunStore.run`：同一次参数快照、同一个门 → 框 → `rerunGated`、同一脚本不并发），本组件只在它落地之后
+   * 走统一刷新；不再自己记一份门与重跑（#740 那组并发 / 代际补丁随之没有了用武之地）。
+   */
+  const probe = (script: string) => {
+    if (preparationPanelEnabled()) {
+      useProjectReadinessStore.getState().closeCenter()
+      void useProjectPreparationStore.getState().open(scriptTarget(script))
+      return
+    }
+    void run(script, async () => {
+      await useScriptRunStore.getState().run(script)
+      const st = useScriptRunStore.getState().byScript[script]
+      // 门（还差一个决定）不是失败：框已经弹了，行上留着再打开的按钮
+      if (st?.error && !isGatePhase(st.phase)) {
+        const text = formatMessage(backendCodeMsg(st.error.code, st.error.params, st.error.message))
         throw new Error(rd('probeFailed', { script, error: text }))
       }
-      const parts = [rd('probeLinked', { stems: listJoin(res.stems) })]
-      if (res.dropped_figures) parts.push(rd('probeDropped', { count: res.dropped_figures }))
-      setProbed((p) => ({
-        ...p,
-        [script]: { text: parts.join(' '), descriptors: res.descriptors },
-      }))
     })
-
-  probeRef.current = probe
+  }
 
   const link = (panel: ReadinessPanel, script: string) =>
     run(`link:${panel.id}`, async () => {
@@ -1067,16 +1040,13 @@ export function parseStems(text: string): string[] {
 function ProbeNoteView({ note }: { note?: ProbeNote }) {
   useTranslation('dialogs')
   const setStatus = useUiStore((s) => s.setStatus)
-  // 再打开的按钮只给**这一代**的载荷：对话框开着换过项目（A → B → A 项目 id 相同、代际已变），上一代的
-  // offer 不许在这一代被作答（后端会按此刻的项目推计划去执行，而框里说的是上一代的那份，#740 Codex P2）
-  const epoch = useScriptRunStore((s) => s.epoch)
   if (!note) return null
-  const gateLive = note.gateEpoch === epoch
   return (
     <div className="type-caption mt-1">
       <p className="whitespace-pre-wrap">{note.text}</p>
-      {gateLive && note.prepare && <DependencyPrepareButton offer={note.prepare} />}
-      {gateLive && note.workdir && <WorkdirChooseButton confirmation={note.workdir} />}
+      {/* 门载荷来自素材库那台状态机：换项目（含 A → B → A）时它整个清空，上一代的 offer 不会留在这里 */}
+      {note.prepare && <DependencyPrepareButton offer={note.prepare} />}
+      {note.workdir && <WorkdirChooseButton confirmation={note.workdir} />}
       {/* 捕获成功的每张图可以直接作为 runtime 面板放上画布。没有磁盘产物的
           show-only 图从这里第一次真正进入产品。 */}
       {note.descriptors && note.descriptors.length > 0 && (

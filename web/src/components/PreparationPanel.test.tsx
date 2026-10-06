@@ -215,6 +215,14 @@ const STATES: Record<string, Partial<PreparationReport>> = {
     captured: [fig('a'), fig('b'), fig('c')],
     actions: [action('run'), action('recheck')],
   },
+  completedUnlinked: {
+    phase: 'completed',
+    outcome: { kind: 'succeeded' },
+    facts: { execution_finished: true, figure_captured: true },
+    captured: [fig('a')],
+    unlinked_stems: ['a_scaled', 'b_scaled'],
+    actions: [action('run'), action('recheck')],
+  },
   cancelled: { phase: 'cancelled', outcome: { kind: 'cancelled' }, actions: [action('run'), action('recheck')] },
 }
 
@@ -320,6 +328,23 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
     expect(panel().dataset.prepState).toBe('no_figure')
     expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('运行完成，未发现可编辑图。')
     expect(primary()).toBeNull()
+  })
+
+  it('无参数运行替换掉了此前带参数产出的图名（T09b）：同一句里说清哪些、怎么恢复，主按钮仍是进入编辑', async () => {
+    await mount()
+    await openWith(report(STATES.completedUnlinked))
+    expect(panel().dataset.prepState).toBe('completed_unlinked')
+    expect(panel().querySelector('[data-prep-line]')?.textContent).toBe(
+      '已捕获 1 张图；此前带其他参数生成的 a_scaled 和 b_scaled 已不再关联，用原参数再运行一次即可恢复。',
+    )
+    expect(primary()?.dataset.prepPrimary).toBe('enter_edit')
+    // 没有替换掉任何东西：照旧那一句
+    await act(async () => root.unmount())
+    host.remove()
+    useProjectPreparationStore.getState().clear()
+    await mount()
+    await openWith(report({ ...STATES.completed, unlinked_stems: [] }))
+    expect(panel().dataset.prepState).toBe('completed')
   })
 
   it('进入编辑：用这次捕获的图进入图内编辑（稳定动作），不发任何运行请求；编辑渲染可用之后才说「已进入编辑」', async () => {

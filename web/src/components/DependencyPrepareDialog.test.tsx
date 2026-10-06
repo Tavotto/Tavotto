@@ -48,6 +48,7 @@ import { setCurrentProjectId } from '@/lib/session'
 import { __resetDepRepairParkingForTests, useDepRepairStore } from '@/store/depRepairStore'
 import { useEnvStore } from '@/store/envStore'
 import { useRenderStore } from '@/store/renderStore'
+import { useProjectPreparationStore } from '@/store/projectPreparationStore'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -578,6 +579,43 @@ describe('DependencyPrepareDialog', () => {
     expect(planMock).not.toHaveBeenCalled()
     expect(dialog()).toBeNull()
     expect(useRenderStore.getState().byKey.k.stale, '没重新排上').toBe(true)
+  })
+
+  it('授权框是薄展示适配器（T09b）：装完 / 明确跳过都让准备面板里空闲的会话只读地重新检查，一次，不认领 run', async () => {
+    const recheck = vi.fn()
+    const real = useProjectPreparationStore.getState().recheckIdle
+    useProjectPreparationStore.setState({ recheckIdle: recheck })
+    try {
+      planMock.mockResolvedValue({
+        plan: {
+          plan_id: 'jp7', script: 'figure.py', target_kind: 'tavotto_managed', python: '', requirements: ['six==1.17.0'],
+          constraints: [], require_hashes: false, adapter: [], identity: 'abc', needed_imports: ['six'], groups: [],
+          modifies_user_environment: false, creates_environment: true, network_required: true, expires_at: 0, joint: joint(),
+        },
+      })
+      prepareMock.mockResolvedValue({ started: true, plan_id: 'jp7', state: 'preparing', log: '', error: null, code: '' })
+      await render(<DependencyPrepareDialog />)
+      await act(async () => useEnvStore.getState().requestDependencyPreparation(offer()))
+      await act(async () => button(en('oneClickRepair'))!.click())
+      await act(async () => {})
+      await act(async () =>
+        useDepRepairStore.getState().onProgress({ plan_id: 'jp7', state: 'installing', log: '', error: null, code: '', flow: 'joint' }),
+      )
+      expect(recheck).not.toHaveBeenCalled() // 还在装：会话不动
+      await act(async () =>
+        useDepRepairStore.getState().onProgress({ plan_id: 'jp7', state: 'done', log: '', error: null, code: '', flow: 'joint', committed: true }),
+      )
+      expect(recheck).toHaveBeenCalledTimes(1)
+      // 明确跳过同样只是让会话重新检查
+      recheck.mockClear()
+      skipMock.mockResolvedValue({ ok: true, script: 'figure.py', skipped: true })
+      await act(async () => useEnvStore.getState().requestDependencyPreparation(offer()))
+      await act(async () => button(en('dependencyPrepareSkip'))!.click())
+      await act(async () => {})
+      expect(recheck).toHaveBeenCalledTimes(1)
+    } finally {
+      useProjectPreparationStore.setState({ recheckIdle: real })
+    }
   })
 
   it('这台电脑没有可用的 Python：受管目标那一行把「将先下载 N MB」说出口；有缓存时说不联网（U05）', async () => {

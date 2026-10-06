@@ -302,3 +302,60 @@ describe('三个不同的动作', () => {
     expect(mockAct.mock.calls[0][1].action_id).toBe('act-recheck')
   })
 })
+
+describe('依赖准备装完：画布上停在依赖门上的渲染重排（T09b）', () => {
+  const dep = (state: string, plan_id = 'dp-1') => ({
+    plan_id,
+    joined: false,
+    origin: 'joint' as const,
+    state,
+    code: '',
+    committed: state === 'done',
+    impact_digest: 'd',
+  })
+  const withDep = (state: string, seq: number, plan_id?: string) =>
+    prepReport({
+      phase: state === 'done' ? 'ready_to_run' : 'preparing_environment',
+      observation_seq: seq,
+      provider: { plan_id: 'prep-plan', attempt_id: null, attempts: 0, dependency: dep(state, plan_id) },
+    })
+
+  it('同一会话里的依赖作业从进行中变成 done：重排一次（与原授权框装完同一个出口），不认领 run', async () => {
+    const { useRenderStore } = await import('./renderStore')
+    const retry = vi.fn()
+    const real = useRenderStore.getState().retryEnvironmentFailures
+    useRenderStore.setState({ retryEnvironmentFailures: retry })
+    try {
+      mockCreate.mockResolvedValueOnce(withDep('running', 1))
+      await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+      expect(retry).not.toHaveBeenCalled()
+      mockGet.mockResolvedValueOnce(withDep('done', 2))
+      await useProjectPreparationStore.getState().refresh(KEY)
+      await flush()
+      expect(retry).toHaveBeenCalledTimes(1)
+      // 同一作业再读一次 done：不再重排
+      mockGet.mockResolvedValueOnce(withDep('done', 3))
+      await useProjectPreparationStore.getState().refresh(KEY)
+      await flush()
+      expect(retry).toHaveBeenCalledTimes(1)
+      expect(mockAct).not.toHaveBeenCalled()
+    } finally {
+      useRenderStore.setState({ retryEnvironmentFailures: real })
+    }
+  })
+
+  it('打开时报告里已经是 done（之前装好的）：不重排——只认这一份会话里看到的那次转变', async () => {
+    const { useRenderStore } = await import('./renderStore')
+    const retry = vi.fn()
+    const real = useRenderStore.getState().retryEnvironmentFailures
+    useRenderStore.setState({ retryEnvironmentFailures: retry })
+    try {
+      mockCreate.mockResolvedValueOnce(withDep('done', 1))
+      await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+      await flush()
+      expect(retry).not.toHaveBeenCalled()
+    } finally {
+      useRenderStore.setState({ retryEnvironmentFailures: real })
+    }
+  })
+})
