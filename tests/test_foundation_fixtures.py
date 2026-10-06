@@ -45,6 +45,7 @@ FIXTURES = (
     "joint_dependencies",  # U04（FO18 / FO20 / FO21 / FO27 / FO31）
     "private_python",  # U05（FO24 / FO25 / FO26；FO23 的机制面）
     "join_h5",  # U09（FO32：真实 h5py + 同名干扰 + 项目 Python ≠ 应用）
+    "script_only_first_run",  # T11（C23：只有脚本 / 数据 / 依赖声明的真实首跑）
 )
 
 
@@ -107,6 +108,34 @@ def test_split_scripts_data_truth_and_local_package():
     mod = _load_module("u00_labhelpers", pkg / "__init__.py")
     assert [mod.predict(x) for x in ts] == vs
     assert set(t["modes"]) == {"file", "cwd"}
+
+
+def test_script_only_first_run_truth_and_starting_point():
+    """T11（C23）：待测项目的起点只有脚本 / 数据 / 依赖声明——没有图、没有注册表；数据按 cwd 读、参数必填、
+    菜单随 `--scale` 变，都写在源码里（不 import 它：用 `ast` 读）。"""
+    t = _truth("script_only_first_run")
+    base = ROOT / "script_only_first_run"
+    assert _csv_column(base / t["data_file"], "x") == t["x"]
+    assert _csv_column(base / t["data_file"], "y") == t["y"]
+    files = sorted(
+        p.relative_to(base).as_posix()
+        for p in base.rglob("*")
+        if p.is_file() and p.name != "truth.json"
+    )
+    assert files == t["initial_files"]
+    assert not [f for f in files if f.endswith((".pdf", ".png", ".svg")) or "registry" in f]
+    src = (base / t["entry"]).read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    required = [
+        c.args[0].value
+        for c in ast.walk(tree)
+        if isinstance(c, ast.Call)
+        and getattr(c.func, "attr", "") == "add_argument"
+        and any(k.arg == "required" and getattr(k.value, "value", False) for k in c.keywords)
+    ]
+    assert required == t["required_arguments"]
+    assert 'open("data/values.csv"' in src  # 相对 cwd，不是 __file__
+    assert 'fig.savefig("spectrum.pdf")' in src and t["expected_output"] == "spectrum.pdf"
 
 
 # --------------------------------------------------------------------------- ③ 同名不同值

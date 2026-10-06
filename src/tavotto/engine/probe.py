@@ -31,7 +31,18 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from . import discover, inputbroker, inputremap, pool, projectenv, registry, taskdiag
+from . import (
+    discover,
+    figcapture,
+    inputbroker,
+    inputremap,
+    pool,
+    projectenv,
+    registry,
+    runconfig,
+    runtimeasset,
+    taskdiag,
+)
 
 LOG = logging.getLogger("tavotto.probe")
 
@@ -568,8 +579,23 @@ def register_probed(
             "registered": False,
             "error": _err(inputremap.ERROR_CHANGED, str(exc)),
         }
-    unlinked = sorted(set(before) - set(result["stems"]))
+    unlinked = sorted(
+        s for s in set(before) - set(result["stems"]) if _was_captured(figures_dir, script, s)
+    )
     return {**result, "registered": True, **({"unlinked_stems": unlinked} if unlinked else {})}
+
+
+def _was_captured(figures_dir: str | Path, script: str, stem: str) -> bool:
+    """这个图名此前真被某次执行捕获过：runtime cache 里有它的物化记录（无参数或这个脚本登记过的任一份运行配置）。
+
+    注册表里的图名不全是执行结果——打开项目时的静态扫描会把字面量 `savefig` 的名字先登记上（T00 deliberate-boundary），
+    条件分支里的那张从没产出过。对它说「此前带其他参数生成的……已不再关联」是假话（T11：第一次无参数运行就报）。
+    cache 被按体积回收过的旧图会漏报——宁可少说，不说假话。"""
+    ids = [figcapture.runtime_asset_id(script, stem)] + [
+        figcapture.runtime_asset_id(script, stem, cfg.id)
+        for cfg in runconfig.configs_of(figures_dir, script)
+    ]
+    return any(runtimeasset.load_metadata(figures_dir, asset_id) is not None for asset_id in ids)
 
 
 # ---------------------------------------------------------------------------

@@ -69,6 +69,10 @@
         {
           "spec": "asset-library.spec.ts",
           "title": "show-only 项目：素材库普通入口 → Runtime Figure → 画布 → 图内编辑 → undo/redo"
+        },
+        {
+          "spec": "first-run-qualification.spec.ts",
+          "title": "真实首跑资格：只有脚本与数据 → 面板里准备并运行 → 编辑 → 存进项目 → 重开冷重放 → 导出"
         }
       ],
       "desktop_manual": [
