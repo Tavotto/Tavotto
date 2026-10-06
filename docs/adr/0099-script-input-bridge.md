@@ -188,6 +188,29 @@ safe worker 的 `sys.stdin` **就是协议管道**（`worker.main()` 从它逐�
 `tests/test_script_input_transcript_api.py`（第二问依赖第一问、准备会话 `runtime_input`、HTTP / SSE / 诊断 / 项目包 /
 日志的口令哨兵、超时与停止进诊断）、`tests/test_input_transcript.py`（单元）、`web/src/components/ScriptInputDialog.test.tsx`。
 
+### 十、修订（T12，2026-10-06）：上下文摘要不进项目文件
+
+本节**修订** §九 第 1 条里「按 (…, 上下文) 存进 `_script_inputs.json` 版本 2」的存放位置；键、复用判据、答案文件位置
+（§四 A：项目的 `tavottofile/`）与明文非口令答案都不变。
+
+上下文摘要是「读取方式 + 提示 + 上一问后的输出 + 前面回答」的**无盐** sha256：菜单类输出熵很低，拿到项目文件的人照着
+脚本就能枚举出来——它不能随项目复制 / 同步 / 分享出去（合同 §3.11：stdout 的低熵 hash 不进可分享载荷）。仓库没有
+现成的持久本机密钥（`execspec._PROCESS_KEY` 每进程一换、遥测 `install_id` 受同意约束，都不能挪用），所以不做 keyed
+digest，而是把摘要**移到本机侧表** `<data_dir>/scriptanswer-contexts/<项目摘要>.json`
+（`scriptanswers.contexts_path()`）：按 (脚本, 运行配置引用, 序号, 读取方式, 提示) 索引，并绑定它所属答案的摘要——
+项目文件里的答案被别处（同步 / 手改 / 另一台机器）换掉，本机记的上下文就不再对它作数。
+
+* 项目文件 `_script_inputs.json` 仍是版本 2：条目 `index / prompt / answer / kind`，可选 `run_config`（随机 opaque 引用，
+  不是 argv 的摘要），**不再有 `context`**。旧读者（版本 1）照旧忽略多出的键。
+* 迁移：T08–T11 的开发版曾把 `context` 写进项目文件（从未发布，main 仍是版本 1）。读入时丢弃该字段、不信任它；
+  下一次写答案时文件里就不再有它。
+* 换机器 / 侧表丢了 / 答案被别处改了：本机没有对得上的上下文 → `recheck=legacy_answer`，旧答案只当建议、重新问
+  （安全方向）。答案管理里改答案：侧表随之改绑新答案（复用语义与 §九 相同）；删答案：侧表一并删。
+* 侧表有界（每项目 `MAX_CONTEXTS` 条，超出丢最旧，丢了只是再问一次）；不进项目包、诊断、遥测。
+
+看护：`tests/test_input_transcript.py`（`…never_carries_a_guessable_context_digest` / `…from_another_machine…` /
+`…written_into_the_project_file_is_not_trusted…` / `…synced_answer_does_not_inherit…` / `…keep_the_local_contexts_in_step`）。
+
 ## 用例的等待上限
 
 用例把 `TAVOTTO_SCRIPT_INPUT_TIMEOUT` 缩到 20 秒（超时用例 1.5 秒）：桥接的某一环回归时（比如父进程不再当答题方），
