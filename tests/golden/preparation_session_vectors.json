@@ -1591,6 +1591,58 @@
       }
     },
     {
+      "name": "a missing package whose difference plan is still being computed is still running (T11)",
+      "facts": {
+        "target_kind": "script",
+        "has_script": true,
+        "checks": [
+          {
+            "id": "target",
+            "status": "ok"
+          },
+          {
+            "id": "environment",
+            "status": "ok"
+          },
+          {
+            "id": "workdir",
+            "status": "ok"
+          },
+          {
+            "id": "dependencies",
+            "status": "ok"
+          },
+          {
+            "id": "data",
+            "status": "ok"
+          }
+        ],
+        "stale": null,
+        "attempt": {
+          "status": "error",
+          "error": {
+            "code": "missing_dependency"
+          },
+          "required_input_code": "",
+          "finalized": false,
+          "finalize": null,
+          "captured_count": 0,
+          "cancel_requested": false,
+          "missing_installable": false
+        },
+        "awaiting_input": false
+      },
+      "expect": {
+        "phase": "running",
+        "outcome": {
+          "kind": "running"
+        },
+        "runnable": false,
+        "execution_finished": null,
+        "figure_captured": null
+      }
+    },
+    {
       "name": "a missing package that cannot be authorised here stays a plain failure",
       "facts": {
         "target_kind": "script",

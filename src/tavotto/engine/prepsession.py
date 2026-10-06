@@ -502,10 +502,16 @@ def derive(facts: dict) -> dict:
 
 
 def attempt_running(attempt: dict) -> bool:
-    """这次尝试是否还在进行：provider 没到终局，或到了终局但执行之后的登记还没做完。"""
+    """这次尝试是否还在进行：provider 没到终局，或到了终局但执行线程的收尾（登记 / 缺包差异计划）还没做完。
+
+    与 `SessionService._has_active_attempt` 同一判据（T11）：`error` 在收尾之前也算进行中——
+    `missing_dependency` 要等 `_observe_missing` 算出差异计划才说得清是「补包后重跑」还是「认不出包名」，
+    先投影成 `failed` 会给出一个没有待办、随后又被改写的终局。取消落地即终局（T09：不等执行线程）。"""
     if attempt["status"] in (preparation.STATUS_PENDING, preparation.STATUS_RUNNING):
         return True
-    return attempt["status"] == preparation.STATUS_READY and not attempt.get("finalized")
+    if attempt["status"] == preparation.STATUS_CANCELLED:
+        return False
+    return not attempt.get("finalized")
 
 
 def _derive_before_attempt(facts: dict) -> dict:

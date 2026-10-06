@@ -548,6 +548,20 @@
       "expected_product_outcome": "automatic",
       "backend": "rendercore",
       "notes": "U08 时 observing（候选只在显式选中时接管，挂在非 required 的 foundation-u06-rendercore.yml 上跑 facade / app / inspector 用例 + u08_parity）。U10（ADR 0072）切默认后提升 **enforced（pr）**：① 用户预期 = 预览与画布导出经默认后端交回可核验的文件；② 合法输入 = pdf_png_assets 夹具（非对称页盒 PDF）+ 文字（拉丁 + CJK + 上标）；③ fixture 先验在 truth.json；④ 命令 = ci.yml invariants 的 harness 步（pytest tests/test_foundation_cutover.py，写 TAVOTTO_FOUNDATION_RESULTS）；⑤ 产物 = PDF（Form + 文字层 + 嵌入子集）与 PNG（桶宽 / ppi 尺寸）；⑥ 证据 = 结果记录 observed.export（manifest verdict / checks / identity / fonts）；⑦ 负例 = tests/test_rendercore_app.py 的 backend_retired（不悄悄换实现）、child 失败 partial、写入器失败 500、坏 staging 写回 409，ADR 0072 §4 的变异表；⑧ 维护责任 = rendercore 细则 + 退役扫描；⑨ 预算 ≈ 3 s（进程内，一次 child 起动）。冷 / 热重复：本机与 CI 每次都是冷 child。facade 19 项 / 产物验证 / 对拍的其余用例在必需矩阵（backend-fast / backend-platforms）里随 pytest 跑，不另开 job。"
+    },
+    {
+      "case_id": "T11-S1",
+      "title": "真实 script-only 首跑：只有脚本 / 数据 / 依赖声明的项目经真实 HTTP 服务扫描 → 准备会话 → 运行目录待办 → 运行中答菜单 → 捕获 → 进编辑 → 改元素 → 保存排版 → 冷重放 → 导出 → 关掉再开",
+      "scenario_refs": [],
+      "stage": "T11",
+      "enrollment": "enforced",
+      "lane": "pr",
+      "entry": "http",
+      "fixture": "tests/fixtures/foundation/script_only_first_run",
+      "test": "tests/test_foundation_script_first_run.py::test_t11_s1_script_only_first_run_through_the_public_entry",
+      "expected_product_outcome": "guided",
+      "backend": "rendercore",
+      "notes": "onboarding 收敛包 T11（C23）：FO01–FO31 都先在待测目录跑原生脚本生成原件（首开，不是首跑），这一条不预热——待测项目起点只有夹具 ⑪ 的三个文件（无图、无注册表），原生参考在另一个临时根跑；真值来自被执行进程自己写在项目外的日志（解释器 prefix / argv / cwd / 菜单 / 选项 / y），与原生参考逐值对拍。两份配置同图名（R02 / C19）、A02 的 token 形状、动态菜单换序不复用旧答案（I02）、运行目录待办（P01）、进编辑不重跑（C27）、冷重放用冻结 argv + 那一次执行的回答转录（R03 / C28）、导出、关掉再开读回排版重放。guided：用户的一次运行目录选择 + 两次菜单作答。分段耗时写进 observed.timings（本地度量，不是遥测）。"
     }
   ]
 }

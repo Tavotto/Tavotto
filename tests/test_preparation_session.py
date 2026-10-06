@@ -480,6 +480,41 @@ def test_a_script_that_finishes_without_a_figure_is_partial_not_a_first_figure(
     assert fake_pool["build_calls"] == 1
 
 
+def test_a_missing_package_is_not_reported_as_a_failure_before_its_difference_plan_is_known(
+    client, tmp_path, fake_pool, sessions, monkeypatch
+):
+    """T11（T09b 登记的 unmapped_import 抖动的根因）：provider 已写下 `error/missing_dependency`、执行线程的收尾
+    （`_observe_missing` 算差异计划）还没做完的那一段，报告不能先给出「失败 / 没有待办」的终局——那时还说不出
+    这是「补包后重跑」还是「认不出包名」。收尾做完之前它仍是 `running`；做完之后才落到带 `runtime_missing` 待办的终局。"""
+    _root, _pj, report = _create_ready(client, tmp_path)
+    fake_pool["error"] = engine_pool.WorkerError(
+        "no module", code="missing_dependency", module="tavotto_test_unmapped"
+    )
+    entered, release = threading.Event(), threading.Event()
+    real_observe = prepsession.SESSIONS._observe_missing
+
+    def slow_observe(sess, plan, result):
+        entered.set()
+        assert release.wait(10), "测试没有放行"
+        return real_observe(sess, plan, result)
+
+    monkeypatch.setattr(prepsession.SESSIONS, "_observe_missing", slow_observe)
+    sid = report["session_id"]
+    assert _act(client, sid, _action(report, "run")["id"], 1).status_code == 202
+    try:
+        assert entered.wait(10)
+        during = _get(client, sid).get_json()
+    finally:
+        release.set()
+    assert during["result"]["status"] == "error"  # provider 已到终局
+    assert during["phase"] == "running", during["outcome"]
+    assert "run" not in [a["kind"] for a in during["actions"]]
+    final = _settle(client, sid)
+    (req,) = [r for r in final["requirements"] if r.get("origin") == "runtime_missing"]
+    assert req["payload"]["module"] == "tavotto_test_unmapped"
+    assert final["phase"] in ("action_required", "awaiting_confirmation")
+
+
 def test_a_known_asset_goes_through_the_same_session_and_the_old_endpoint_is_unchanged(
     client, tmp_path, fake_pool, sessions
 ):
