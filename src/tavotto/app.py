@@ -4265,7 +4265,11 @@ def _engine_attempt(
             _assert_artifact_current(artifact_source)
             return worker, stem, result
         except (engine_pool.WorkerError, engine_artifactcontext.ArtifactContextError) as exc:
-            if artifact_source is not None:
+            # Supersession removes only a queued request; this admitted worker
+            # may still be serving another variant of the same selected source.
+            if artifact_source is not None and not (
+                isinstance(exc, engine_pool.WorkerError) and exc.code == "queue_superseded"
+            ):
                 engine_pool.force_cancel(
                     worker.script_name,
                     str(require_project()),

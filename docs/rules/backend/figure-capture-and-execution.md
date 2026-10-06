@@ -268,7 +268,12 @@ occurrence/figure ordinal/result。看护：`tests/bridge/test_bridge_savefig_ob
 - 复用现有 FigState 与全量 overrides 语义；worker/输出目录按源上下文隔离，仍受池的
   3 个热 worker / 1 GiB 缓存治理。不是每个面板永久保存一个图；同一源的变体独立传完整 edits。
   新上下文会额外执行脚本一次。首次准入按 worker 锁串行；workerd 重启不能绕过重新准入。
-  失败退役只针对那一条 worker 实例；选择子集不能重写整份脚本登记。
+  失败退役只针对那一条 worker 实例；唯一的调度例外 `WorkerError(queue_superseded)`
+  只表示排队项被更新请求替换，原错误继续返回，但不能关闭同源变体共享的 worker、连带中断
+  其它在途请求。其余 worker 错误与源验证失败仍定向退役，不能推广成所有 nonfatal 错误保活。
+  看护 `tests/test_selected_artifact_api.py` 的调用方/错误边界与
+  `tests/test_selected_artifact_worker.py` 的真实 Python worker 在途及后续复用；后者注入队列错误，
+  不替代真实 workerd / Windows 调度验证。选择子集不能重写整份脚本登记。
 - 当前 API 切片只开放 render、带 manifest 的 paired preview、导出新文件；selected GET
   SVG/PNG、binary preview、specfix/sync、写回及历史恢复明确拒绝，不能退回旧坐标。
   空 overrides 原图导出仍保留磁盘像素；正常导出的字体/PPI政策独立于源图上下文。

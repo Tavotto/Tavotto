@@ -226,11 +226,80 @@ def test_legacy_current_state_gets_refuse_selected_policy(api, route):
     assert not api.resolutions
 
 
-def test_source_changed_during_render_is_not_published(api):
+def test_source_changed_during_render_is_not_published(api, monkeypatch):
     assert render(api).status_code == 200
     worker = next(iter(api.workers.values()))
+    retired = []
+    monkeypatch.setattr(
+        m.engine_pool, "force_cancel", lambda *args, **kwargs: retired.append(kwargs)
+    )
     worker.after = lambda: (api.root / "plot.pdf").write_bytes(b"changed")
     refused(render(api), "source_changed")
+    assert retired == [{"artifact_source": worker.context, "expected_worker": worker}]
+
+
+@pytest.mark.parametrize("selected", [False, True], ids=["legacy", "selected"])
+@pytest.mark.parametrize("operation", ["render", "preview_png", "export"])
+def test_superseded_request_preserves_shared_worker_and_error(
+    api, monkeypatch, selected, operation
+):
+    policy = POLICY if selected else None
+    assert render(api, "plot.png", source_policy=policy).status_code == 200
+    worker = next(iter(api.workers.values()))
+    retired = []
+    monkeypatch.setattr(
+        m.engine_pool, "force_cancel", lambda *args, **kwargs: retired.append(kwargs)
+    )
+    error = m.engine_pool.WorkerError("Superseded by a newer render.", code="queue_superseded")
+
+    def superseded(*args, **kwargs):
+        raise error
+
+    method = {"render": "override", "preview_png": "preview_png_snapshot", "export": "export"}[
+        operation
+    ]
+    original = getattr(worker, method)
+    monkeypatch.setattr(worker, method, superseded)
+    if operation == "export":
+        # Exercise the shared export caller; legacy export bypasses _engine_attempt.
+        with m.bound_project(api.ctx), pytest.raises(m.engine_pool.WorkerError) as caught:
+            m._serialize_figure_with_worker(
+                "plot.png", [], "png", 100, artifact_source=worker.context
+            )
+        assert caught.value is error
+    else:
+        response = api.client.post(
+            "/api/engine/" + operation,
+            json={"id": "plot.png", "source_policy": policy, "with_manifest": True},
+        )
+        assert response.status_code == 500
+        assert response.get_json()["code"] == "queue_superseded"
+    assert retired == []
+    monkeypatch.setattr(worker, method, original)
+    assert render(api, "plot.png", source_policy=policy).status_code == 200
+    assert list(api.workers.values()) == [worker]
+    assert worker.builds == 1
+
+
+@pytest.mark.parametrize(
+    "code", ["session_dead", "protocol_mismatch", "worker_timeout", "queue_full", "cancelled"]
+)
+def test_other_selected_worker_errors_still_retire_exact_instance(api, monkeypatch, code):
+    assert render(api).status_code == 200
+    worker = next(iter(api.workers.values()))
+    retired = []
+    monkeypatch.setattr(
+        m.engine_pool, "force_cancel", lambda *args, **kwargs: retired.append(kwargs)
+    )
+    error = m.engine_pool.WorkerError("Request failed.", code=code)
+
+    def fail(*args):
+        raise error
+
+    with m.bound_project(api.ctx), pytest.raises(m.engine_pool.WorkerError) as caught:
+        m._engine_attempt("plot.pdf", worker, "plot", fail, artifact_source=worker.context)
+    assert caught.value is error
+    assert retired == [{"artifact_source": worker.context, "expected_worker": worker}]
 
 
 def test_retry_keeps_exact_context_and_admits_replacement(api, monkeypatch):
