@@ -24,6 +24,8 @@ from pathlib import Path
 
 import pytest
 
+from support.pip_config_isolation import isolated_pip_globals
+
 ROOT = Path(__file__).resolve().parent.parent
 PLUGIN = ROOT / "codex-plugin"
 sys.path.insert(0, str(PLUGIN / "mcp"))
@@ -602,6 +604,11 @@ def _pip_conf(tmp_path: Path, body: str) -> str:
     return str(conf)
 
 
+def _isolated_pip_env(tmp_path: Path, *, python: str = sys.executable, **extra: str) -> dict:
+    # 只用于真 pip 配置用例；missing-pip / pipx 保持自己的原始启动前提。
+    return isolated_pip_globals(_pip_env(tmp_path, **extra), tmp_path, python=python)
+
+
 def test_pip_index_asks_pip_for_the_install_sections(tmp_path):
     """真 pip：`[install]` 压过 `[global]`，`[download]` 不作用于安装；`PIP_INDEX_URL` 压过配置文件；
     `PIP_CONFIG_FILE=os.devnull` 是 pip 约定的「一个配置文件都不读」→ 没配（None）。"""
@@ -611,13 +618,13 @@ def test_pip_index_asks_pip_for_the_install_sections(tmp_path):
         f"[install]\nindex-url = {ALIYUN}\n"
         "[download]\nindex-url = https://download-only.example/simple\n",
     )
-    got = launcher.pip_index(_pip_env(tmp_path, PIP_CONFIG_FILE=conf))
+    got = launcher.pip_index(_isolated_pip_env(tmp_path, PIP_CONFIG_FILE=conf))
     assert got == {"url": ALIYUN_SAID, "source": "pip_config", "mirror": True}
 
     # `PIP_INDEX_URL` 压过配置文件；它指回 PyPI 默认 = 没有自定义索引（#767：只在 index-url 不是 PyPI
     # 默认、或有 extra-index-url 时才算「配了自定义包源」）
     got = launcher.pip_index(
-        _pip_env(tmp_path, PIP_CONFIG_FILE=conf, PIP_INDEX_URL="https://pypi.org/simple")
+        _isolated_pip_env(tmp_path, PIP_CONFIG_FILE=conf, PIP_INDEX_URL="https://pypi.org/simple")
     )
     assert got is None
 
@@ -628,9 +635,9 @@ def test_pip_index_ignores_download_only_and_normalizes_keys(tmp_path):
     """只有 `[download] index-url` 时 pip install 仍走 PyPI → None；`--index-url` 写法照 pip 规范化后认得
     （#724 第 8 轮 Codex P2）。"""
     only_download = _pip_conf(tmp_path, f"[download]\nindex-url = {ALIYUN}\n")
-    assert launcher.pip_index(_pip_env(tmp_path, PIP_CONFIG_FILE=only_download)) is None
+    assert launcher.pip_index(_isolated_pip_env(tmp_path, PIP_CONFIG_FILE=only_download)) is None
     dashed = _pip_conf(tmp_path, f"[global]\n--index-url = {ALIYUN}\n")
-    got = launcher.pip_index(_pip_env(tmp_path, PIP_CONFIG_FILE=dashed))
+    got = launcher.pip_index(_isolated_pip_env(tmp_path, PIP_CONFIG_FILE=dashed))
     assert got == {"url": ALIYUN_SAID, "source": "pip_config", "mirror": True}
 
 
@@ -640,7 +647,7 @@ def test_a_mirror_in_extra_index_urls_still_counts_as_a_mirror(tmp_path):
     conf = _pip_conf(
         tmp_path, f"[global]\nindex-url = https://pypi.org/simple\nextra-index-url = {ALIYUN}\n"
     )
-    got = launcher.pip_index(_pip_env(tmp_path, PIP_CONFIG_FILE=conf))
+    got = launcher.pip_index(_isolated_pip_env(tmp_path, PIP_CONFIG_FILE=conf))
     assert got == {"url": ALIYUN_SAID, "source": "pip_config", "mirror": True}, got
     assert "pipx upgrade tavotto" not in launcher.upgrade_commands("0.18.0", got)
 
@@ -696,7 +703,7 @@ def test_pip_index_never_repeats_path_credentials():
 def test_pip_index_never_reports_local_paths(tmp_path):
     """体检结果进模型看得见的 `tavotto_health`：`source` 只报类别，`file://` 索引的路径也抹掉（Codex #724 P1）。"""
     conf = _pip_conf(tmp_path, "[global]\nindex-url = file:///home/alice/wheels\n")
-    got = launcher.pip_index(_pip_env(tmp_path, PIP_CONFIG_FILE=conf))
+    got = launcher.pip_index(_isolated_pip_env(tmp_path, PIP_CONFIG_FILE=conf))
     assert got["source"] == "pip_config"
     assert "alice" not in json.dumps(got) and got["url"] == "file://***", got
 
@@ -737,8 +744,10 @@ def test_real_pip_config_file_beats_a_site_file_that_config_get_would_read(tmp_p
     (venv / ("pip.ini" if os.name == "nt" else "pip.conf")).write_text(
         "[global]\nindex-url = https://pypi.org/simple\n", "utf-8"
     )
-    env = _pip_env(
-        tmp_path, PIP_CONFIG_FILE=_pip_conf(tmp_path, f"[global]\nindex-url = {ALIYUN}\n")
+    env = _isolated_pip_env(
+        tmp_path,
+        python=str(py),
+        PIP_CONFIG_FILE=_pip_conf(tmp_path, f"[global]\nindex-url = {ALIYUN}\n"),
     )
     got_get = subprocess.run(
         [str(py), "-m", "pip", "config", "get", "global.index-url"],
