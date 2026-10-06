@@ -9,6 +9,7 @@
 //! - 端口：stdin 首行同时带上次记住的 `preferred_port`，sidecar 优先绑它，让窗口的
 //!   origin（进而 localStorage）跨重启稳定；记忆策略在 [`port_memory`]（ADR 0108）。
 
+mod beta_dirs;
 mod port_memory;
 
 use std::fs::OpenOptions;
@@ -218,6 +219,10 @@ impl Sidecar {
         cmd.args(&extra_args);
         if let Some(dir) = project {
             cmd.arg("--figures").arg(dir);
+        }
+        // beta 分支专用（不合进 main）：配置 / 数据目录与正式版分开，用户显式设置的值不动
+        for (key, dir) in beta_dirs::current() {
+            cmd.env(key, dir);
         }
         cmd.arg("--desktop-sidecar")
             .env("TAVOTTO_DESKTOP_HANDSHAKE", &handshake)

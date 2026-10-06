@@ -38,6 +38,9 @@ jobs:
           workspaces: |
             workerd
             src-tauri
+      - name: beta 目录隔离单测（壳给 sidecar 补的 Tavotto Beta 配置 / 数据目录）
+        run: cargo test --release --manifest-path src-tauri/Cargo.toml beta_dirs
+
       - name: 构建 Rust supervisor（tavotto-workerd）
         run: cargo build --release --manifest-path workerd/Cargo.toml
 

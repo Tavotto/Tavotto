@@ -60,6 +60,9 @@ codesign --verify --deep --strict "$SMOKE/Tavotto Beta.app"
 "$PY" "$ROOT/scripts/beta_rendercore_check.py" \
   --exe "$SMOKE/Tavotto Beta.app/Contents/Resources/sidecar/Tavotto/Tavotto" \
   --figures "$ROOT/examples/figures"
+# 配置 / 数据目录与正式版分开（壳补 TAVOTTO_CONFIG_DIR / DATA_DIR = …/Tavotto Beta，beta_dirs.rs）
+"$PY" "$ROOT/scripts/beta_isolation_check.py" \
+  --exe "$SMOKE/Tavotto Beta.app/Contents/Resources/sidecar/Tavotto/Tavotto"
 
 CONFIG_AFTER="$(config_mtime)"
 echo "· 用户 config.json mtime（跑后）：$CONFIG_AFTER"
