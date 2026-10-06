@@ -4,8 +4,11 @@
 Tavotto 是两个独立的应用，可以同时装着，互不覆盖。**beta 与正式版的设置、最近项目和数据目录不共享**：
 beta 用自己的 `Tavotto Beta` 目录（Mac：`~/Library/Application Support/Tavotto Beta`；
 Windows：`%APPDATA%\Tavotto Beta` 与 `%LOCALAPPDATA%\Tavotto Beta`），第一次打开是干净状态，
-测试不会改动正式版的设置。你的项目文件夹本身是同一份——beta 在项目里写的东西（例如
-`tavottofile/` 里记住的回答）正式版也看得到，所以仍建议用项目副本试。
+测试不会改动正式版的设置。
+
+只有一点要知道：项目文件夹本身是同一份。beta 会把脚本里 `input()` 的回答记在项目的
+`tavottofile/_script_inputs.json`，并把这个文件升到新格式（version 2）；之后再用正式版 0.18.0
+打开这个项目，正式版仍能读它（按旧方式回填回答），但不认得新加的那部分信息。
 
 本版 = 正式版 **0.18.0** + 「首跑体验收敛」T01～T12 这一批还没合进正式版的改动
 （分支 `feat/onboarding-convergence` @ `@@HEAD@@`）。
@@ -53,7 +56,6 @@ Windows 版由仓库里的 beta 工作流（`.github/workflows/beta-windows.yml`
 ## 这一版多了什么（请帮忙试）
 
 下面这些都**只在浏览器和自动测试里验证过**，没有在打出来的桌面应用里逐项点过；哪一步不对都告诉我们。
-建议用一份**项目副本**来试。
 
 1. **导入即检查，不运行任何东西**（T01/T02）：打开一个项目文件夹时，Tavotto 只读地扫一遍有哪些脚本、
    哪些图，**不执行**你的脚本；画布上方出现一条检查条，告诉你哪些脚本还没跑过、可以从哪里开始。
