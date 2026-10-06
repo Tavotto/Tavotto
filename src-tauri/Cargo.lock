@@ -4079,7 +4079,7 @@ dependencies = [
 
 [[package]]
 name = "tavotto-desktop"
-version = "0.18.1-beta.1"
+version = "0.18.1-beta.2"
 dependencies = [
  "objc2",
  "percent-encoding",
