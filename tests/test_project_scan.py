@@ -180,10 +180,61 @@ def test_several_unconnected_plot_scripts_are_not_guessed(tmp_path):
     assert [a["kind"] for a in report["actions"]] == ["rescan", "choose_target"]
 
 
-def test_connected_plot_scripts_do_not_nag(tmp_path):
-    """已经登记的绘图脚本（panel 已可编辑）：没有要准备的目标，也不要求用户选。"""
+def test_a_script_only_registered_by_the_static_scan_is_still_the_target_to_prepare(tmp_path):
+    """T11：打开项目时静态扫描把字面量 savefig 的图名写进注册表（T00 deliberate-boundary），但脚本一次没跑过、项目里
+    没有图、也没有捕获记录——什么都打不开。这不是「已连接」：它仍是唯一待准备的目标（检查条给「准备并运行」）。
+    修前：报 `already_connected`，只有脚本的项目的首跑入口被藏起来。"""
     root = _project(tmp_path)
     _write(root, "fig.py", PLOT.format(stem="fig"))
+    _write(
+        root,
+        "tavotto_registry.json",
+        json.dumps(
+            {
+                "version": 1,
+                "scripts": {
+                    "fig.py": {"entry": "__main__", "cost": "medium", "notes": "", "stems": ["fig"]}
+                },
+            }
+        ),
+    )
+
+    report = projscan.scan(root)
+
+    assert report["target_choice"] == "single" and report["default_target"] == "fig.py"
+    assert (report["phase"], report["outcome"]["kind"]) == ("awaiting_confirmation", "target_found")
+    (target,) = report["targets"]
+    assert target["registered"] is True and target["linked"] is False
+    assert any(a["kind"] == "prepare" for a in report["actions"])
+
+
+def test_a_script_whose_figure_was_captured_before_counts_as_connected(tmp_path):
+    """连接的另一种证据：这张图被某次执行捕获过（runtime cache 有物化记录，与 `unlinked_stems` 同一判据）。"""
+    from tavotto.engine import figcapture, runtimeasset
+
+    root = _project(tmp_path)
+    _write(root, "fig.py", PLOT.format(stem="fig"))
+    _write(
+        root,
+        "tavotto_registry.json",
+        json.dumps({"version": 1, "scripts": {"fig.py": {"entry": "__main__", "stems": ["fig"]}}}),
+    )
+    svg = tmp_path / "fig.svg"
+    svg.write_text("<svg xmlns='http://www.w3.org/2000/svg'/>", encoding="utf-8")
+    asset_id = figcapture.runtime_asset_id("fig.py", "fig")
+    assert runtimeasset.materialize(root, {"asset_id": asset_id, "script": "fig.py"}, svg)
+
+    report = projscan.scan(root)
+
+    assert report["target_choice"] == "connected" and report["default_target"] is None
+    assert report["targets"][0]["linked"] is True
+
+
+def test_connected_plot_scripts_do_not_nag(tmp_path):
+    """已经登记、并且真有可编辑的图（项目里有它产出的同名图文件）的绘图脚本：没有要准备的目标，也不要求用户选。"""
+    root = _project(tmp_path)
+    _write(root, "fig.py", PLOT.format(stem="fig"))
+    _asset(root, "fig.pdf")
     _write(
         root,
         "tavotto_registry.json",

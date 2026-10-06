@@ -183,12 +183,31 @@ def _public_problem(problem: dict | None) -> dict | None:
 
 
 def _registered_scripts(root: Path) -> set[str]:
+    return set(_registered_stems(root))
+
+
+def _registered_stems(root: Path) -> dict[str, list[str]]:
     reg = registry.Registry()
     try:
         reg.load(root)
     except (FileNotFoundError, RuntimeError, OSError):
-        return set()
-    return set(reg.all_scripts())
+        return {}
+    return {script: list(reg.stems_of(script)) for script in reg.all_scripts()}
+
+
+def _linked_scripts(root: Path, assets: list) -> set[str]:
+    """登记了、**而且**至少一张登记的图此刻真有东西可编辑的脚本：项目里有同名的图文件，或这张图被某次执行捕获过
+    （`probe.was_captured`：runtime cache 里有物化记录）。
+
+    打开项目时的静态扫描会先把字面量 savefig 的图名写进注册表（T00 deliberate-boundary）——那只是猜测，脚本一次都没
+    跑过、什么都打不开。只按「注册表里有」就报 `already_connected`（「素材已可编辑」）是假话，而且会把只有脚本的项目的
+    「准备并运行」入口藏起来（T11 真首跑发现）。只读：文件名比对 + 数据目录里的 cache 元数据，不执行、不起解释器。"""
+    asset_stems = {Path(p).stem for p, _kind in assets}
+    return {
+        script
+        for script, stems in _registered_stems(root).items()
+        if any(stem in asset_stems or probe.was_captured(root, script, stem) for stem in stems)
+    }
 
 
 def _rel_dir_posix(root: Path, directory: Path) -> str:
@@ -291,7 +310,9 @@ def _scope_of(root: Path, script: str, memo: dict[str, str | None]) -> str | Non
     return found
 
 
-def _targets_of(root: Path, items: list[dict]) -> tuple[list[dict], str | None, str]:
+def _targets_of(
+    root: Path, items: list[dict], linked: set[str] | None = None
+) -> tuple[list[dict], str | None, str]:
     """条目 → 目标列表、默认目标、选择状态。
 
     * 绘图证据的脚本与「读不了 / 没解析成」的脚本可以当目标；工具 / 测试 / 样式模块**不默认**当目标
@@ -319,7 +340,11 @@ def _targets_of(root: Path, items: list[dict]) -> tuple[list[dict], str | None, 
             body["entry"] = target["entry"]
         target["session_target"] = body
         targets.append(target)
-    pending = [t for t in targets if t["role"] == ROLE_PLOT and not t["registered"]]
+    # 「已连接」= 登记了且真有可编辑的图（`_linked_scripts`）；只在注册表里、什么都打不开的仍是待准备的目标
+    linked = {t["script"] for t in targets if t["registered"]} if linked is None else linked
+    for t in targets:
+        t["linked"] = t["script"] in linked
+    pending = [t for t in targets if t["role"] == ROLE_PLOT and not t["linked"]]
     if len(pending) == 1:
         return targets, pending[0]["script"], "single"
     if len(pending) > 1:
@@ -552,7 +577,8 @@ def scan(
     for _path, kind in assets:
         asset_kinds[kind] = asset_kinds.get(kind, 0) + 1
 
-    targets, default_target, choice = _targets_of(root, items)
+    linked = _linked_scripts(root, assets)
+    targets, default_target, choice = _targets_of(root, items, linked)
     script_for_env = default_target or (targets[0]["script"] if len(targets) == 1 else None)
     env = environment_evidence(root, script_for_env)
     deps = dependency_evidence(root, script_for_env)
@@ -574,6 +600,7 @@ def scan(
         "scripts": [(i["script"], i["reason"], i["checked"], i["registered"]) for i in items],
         "sigs": sorted((rel, sig) for rel, (sig, _seen) in cache.items()),
         "assets": sorted((p.relative_to(root).as_posix(), k) for p, k in assets),
+        "linked": sorted(linked),
         "env": [(c["id"], c["status"], c["fingerprint"]) for c in env["candidates"]],
         "deps": deps["files"],
         "issues": [(i["code"], i["severity"], i.get("path", "")) for i in issues],

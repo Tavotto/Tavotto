@@ -26,7 +26,7 @@ import { expect, openElementsTab, startApp, test } from './fixtures'
  * 不是 toast、也不是 store 里的期望值。后端版的同一条旅程见
  * `tests/test_foundation_script_first_run.py::test_t11_s1_*`，这条是它的浏览器对应物。
  *
- * 步骤：素材库脚本行「准备并运行」（此夹具打开即被静态登记，检查条按设计不出现）→ 面板里选运行目录 → 面板里填四个 argv token → 按新参数检查 → 确认并运行 → 面板里答 input →
+ * 步骤：检查条「准备并运行」（导入即扫描给出唯一待准备目标）→ 面板里选运行目录 → 面板里填四个 argv token → 按新参数检查 → 确认并运行 → 面板里答 input →
  * 已捕获 → 进入编辑（不重跑）→ 改标题 → ⌘S 存进项目 → 停实例、同一数据 / 配置目录重开、刷新、从项目里打开该排版 → 双击进入图内编辑触发冷重放
  * （冻结配置 + 回答转录，不再弹输入框）、编辑仍在 → 导出 PDF。
  *
@@ -192,32 +192,22 @@ test(
     }
     page.on('request', onRequest)
 
-    // 等应用的初始装载落定（带项目的环境读取回来）再点：装载没完成时点下去的确认请求会被随后的项目重置丢掉——
-    // 那不是用户能点到的时刻（页面刚出现 100 ms 内），用例不去拿它当场景
-    const envLoaded = page.waitForResponse(
-      (r) => new URL(r.url()).pathname === '/api/engine/environment' && r.url().includes('pj='),
-    )
+    // 入口：导入即扫描的检查条。夹具的 `savefig("spectrum.pdf")` 是字面量，打开项目时静态扫描会先把图名写进注册表
+    // （T00 裁决的既有边界）；T11 起扫描只把「登记了且真有可编辑的图」算作已连接，所以这里仍是唯一待准备的目标
+    // （修前：报 already_connected、检查条不出现）。页面一出现就点，不等任何初始装载（T11 复核过：那一刻点下去也不丢）。
     await page.goto(a.baseURL)
-    await envLoaded
-    // 入口：这份夹具的 `savefig("spectrum.pdf")` 是字面量，打开项目时静态扫描就把它登记了（T00 裁决的既有边界），
-    // 后端扫描报告是 `already_connected`，检查条按设计**不出现**。正式入口因此是素材库脚本行上的「准备并运行」
-    // （同一个准备面板、同一条后端会话）；检查条路径由 preparation-panel.spec.ts 覆盖。
-    await expect
-      .poll(
-        async () => {
-          const r = (await (await page.request.get(`${a.baseURL}/api/project/scan`)).json()) as {
-            state?: string
-            outcome?: { kind: string }
-          }
-          return r.state === 'running' ? 'running' : r.outcome?.kind
-        },
-        { timeout: 60_000 },
-      )
-      .toBe('already_connected')
-    await expect(page.locator('[data-project-scan]')).toHaveCount(0)
-    const run = page.locator(`[data-script-run="${SCRIPT}"]`)
-    await expect(run).toBeVisible({ timeout: 30_000 })
-    await run.click()
+    const bar = page.locator('[data-project-scan]')
+    await expect(bar).toBeVisible({ timeout: 30_000 })
+    const scanned = async () =>
+      (await (await page.request.get(`${a.baseURL}/api/project/scan`)).json()) as {
+        state?: string
+        outcome?: { kind: string }
+        default_target?: string
+      }
+    await expect.poll(async () => (await scanned()).outcome?.kind, { timeout: 60_000 }).toBe('target_found')
+    expect((await scanned()).default_target).toBe(SCRIPT)
+    await bar.getByRole('button', { name: '详情' }).click()
+    await page.locator(`[data-scan-prepare="${SCRIPT}"]`).click()
     await expect(panel(page)).toBeVisible()
 
     // 数据只在项目根找得到 → 先选运行目录
@@ -259,6 +249,10 @@ test(
     // 进入编辑：同一次捕获，不重跑
     await primary(page).click()
     await expect(panel(page)).toHaveAttribute('data-prep-state', 'edit_ready', { timeout: 120_000 })
+    // 进了编辑就关面板（只是换展示面，不取消、不重跑）：参数详情展开着的面板贴在检查条下会占满窗口高度，把元素树
+    // 压到看不见（T11 登记的界面观察，不在本阶段修）
+    await panel(page).locator('[data-prep-close]').click()
+    await expect(panel(page)).toHaveCount(0)
 
     // ---- 真值（一）：恰好 1 次、argv / cwd / mode / y 与原生参考一致
     await page.waitForTimeout(1500)
