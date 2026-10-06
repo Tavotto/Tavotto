@@ -51,6 +51,10 @@ def startup(monkeypatch):
     # 这个文件 import 时拿到的 `facade` 可能已经不是 `pdfbackend._IMPLS` 里的那一个
     monkeypatch.setattr(pdfbackend._impl(), "prewarm", lambda: calls.append("prewarm"))
     monkeypatch.setattr(renderhost.RenderHost, "_start", lambda self: calls.append("render_child"))
+    # main 的最终退出不可逆；这些进程内启动契约用例只记录它，真回收在独立 sidecar 进程验证。
+    monkeypatch.setattr(
+        renderhost, "shutdown_shared_for_exit", lambda: calls.append("renderer_exit")
+    )
     # 占端口默认换成记录器（回 None = 没占到真 socket，serve_browser 桩不在乎）；要量真实占用的用例换回
     # `REAL_CLAIM`
     monkeypatch.setattr(appmod.localserver, "claim", lambda host, port: calls.append("claim"))
@@ -114,6 +118,38 @@ def test_desktop_sidecar_warms_the_backend_before_it_serves(startup, monkeypatch
         run_main(monkeypatch, "--desktop-sidecar")
     assert exc.value.code == 0
     assert startup.index("prewarm") < startup.index("desktop_run")
+    assert startup[-1] == "renderer_exit"
+
+
+@pytest.mark.parametrize("failure", [False, True])
+def test_desktop_final_renderer_cleanup_preserves_exit_or_exception(startup, monkeypatch, failure):
+    def run(app):
+        if failure:
+            raise RuntimeError("sidecar failed")
+        return 2
+
+    monkeypatch.setattr(appmod.desktop_mode, "run", run)
+    with pytest.raises(RuntimeError if failure else SystemExit) as exc:
+        run_main(monkeypatch, "--desktop-sidecar")
+    if failure:
+        assert str(exc.value) == "sidecar failed"
+    else:
+        assert exc.value.code == 2
+    assert startup[-1] == "renderer_exit"
+
+
+@pytest.mark.parametrize("exit_code", [0, 2])
+def test_desktop_final_cleanup_failure_is_reported(startup, monkeypatch, exit_code):
+    def fail():
+        raise OSError("injected renderer cleanup failure")
+
+    monkeypatch.setattr(appmod.desktop_mode, "run", lambda app: exit_code)
+    monkeypatch.setattr(renderhost, "shutdown_shared_for_exit", fail)
+    with pytest.raises(OSError, match="injected renderer cleanup failure") as exc:
+        run_main(monkeypatch, "--desktop-sidecar")
+    # 收尾失败本身报错，原退出状态仍在异常链里；正常 run=0 也不能假装成功。
+    assert isinstance(exc.value.__context__, SystemExit)
+    assert exc.value.__context__.code == exit_code
 
 
 @pytest.mark.parametrize("argv", [("--no-browser", "--insecure-no-auth"), ("--desktop-sidecar",)])
