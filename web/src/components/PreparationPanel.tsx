@@ -140,7 +140,7 @@ function PanelBody({ entry, view }: { entry: PrepEntry; view: PrepView }) {
       data-prep-session={report?.session_id ?? ''}
       data-prep-connection={entry.connection}
       aria-label={pt('aria', { script })}
-      className="flex flex-col gap-1.5 border-b border-border bg-surface px-3 py-2 text-xs text-ink-2"
+      className="flex max-h-[40vh] flex-col gap-1.5 border-b border-border bg-surface px-3 py-2 text-xs text-ink-2"
     >
       <div className="flex items-center gap-2">
         <p className="min-w-0 flex-1 truncate text-ink" data-prep-line aria-live="polite" title={sentence}>
@@ -169,9 +169,12 @@ function PanelBody({ entry, view }: { entry: PrepEntry; view: PrepView }) {
           <X size={ICON_SIZE.sm} />
         </IconButton>
       </div>
-      {view.input && report?.runtime_input && <EmbeddedInput requestId={report.runtime_input.id} />}
-      {view.argsOpen && !('id' in entry.target) && <ScriptArgvEditor script={entry.target.script} />}
-      <PanelDetails entry={entry} view={view} />
+      {/* 一句话那一行之外的内容在面板里滚：面板至多占窗口高度的四成，编辑区永远留在下面（T12b） */}
+      <div className="flex min-h-0 flex-col gap-1.5 overflow-y-auto" data-prep-body>
+        {view.input && report?.runtime_input && <EmbeddedInput requestId={report.runtime_input.id} />}
+        {view.argsOpen && !('id' in entry.target) && <ScriptArgvEditor script={entry.target.script} />}
+        <PanelDetails entry={entry} view={view} />
+      </div>
       {report && (report.captured ?? []).length > 1 && (
         <ProbeResultsDialog
           script={script}
@@ -234,7 +237,7 @@ function EmbeddedInput({ requestId }: { requestId: string }) {
 
 const CHECK_IDS = ['target', 'environment', 'workdir', 'dependencies', 'data', 'arguments'] as const
 
-/** 默认收起的「详情」：检查项、要装什么、参数、失败原文与那一次的诊断、次要动作 */
+/** 默认收起的「详情」：检查项、要装什么、参数、失败原文与那一次的诊断、次要动作；进入编辑时自动收起 */
 function PanelDetails({ entry, view }: { entry: PrepEntry; view: PrepView }) {
   useTranslation(['workspace', 'errors'])
   const report = entry.report
@@ -248,8 +251,14 @@ function PanelDetails({ entry, view }: { entry: PrepEntry; view: PrepView }) {
   const error = report?.result?.error
   const attempt = report?.provider.attempt_id
   const dep = report?.provider.dependency
+  // 进入编辑就把详情收回去：此刻要用的是下面的编辑区，不是参数表（收起后仍可再展开）
+  const [open, setOpen] = useState(false)
+  const editing = view.state === 'edit_opening' || view.state === 'edit_ready'
+  useEffect(() => {
+    if (editing) setOpen(false)
+  }, [editing])
   return (
-    <Details data-prep-details>
+    <Details data-prep-details open={open} onToggle={(e) => setOpen(e.currentTarget.open)}>
       <Summary className="type-meta cursor-pointer">{pt('details')}</Summary>
       <div className="mt-1.5 flex flex-col gap-1.5">
         {report && (

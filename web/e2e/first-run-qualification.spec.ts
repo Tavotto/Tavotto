@@ -13,7 +13,7 @@ import {
 } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import type { Page, Request } from '@playwright/test'
+import type { Locator, Page, Request } from '@playwright/test'
 import { expect, openElementsTab, startApp, test } from './fixtures'
 
 /**
@@ -109,6 +109,30 @@ async function expandTreeUntil(page: Page, name: RegExp, timeoutMs = 60_000) {
     await page.waitForTimeout(150)
   }
   return target
+}
+
+/**
+ * 真的点得到：框落在视口里，且框内的点经 `elementFromPoint` 命中的是它自己或它的后代——不是盖在上面的别的层，
+ * 也不是被挤出可视区、裁掉之后命中的别处（`isVisible` 对被 overflow 裁掉的元素照样为真，不能当判据）
+ */
+async function expectHittable(target: Locator, what: string) {
+  await expect
+    .poll(
+      () =>
+        target.evaluate((el) => {
+          const r = el.getBoundingClientRect()
+          if (r.width < 2 || r.height < 2) return `empty ${Math.round(r.width)}x${Math.round(r.height)}`
+          const x = r.left + Math.min(6, r.width / 2)
+          const y = r.top + r.height / 2
+          if (x < 0 || y < 0 || x >= window.innerWidth || y >= window.innerHeight) return `offscreen y=${Math.round(y)}`
+          const hit = document.elementFromPoint(x, y)
+          if (hit && el.contains(hit)) return 'hit'
+          const owner = hit?.closest('[data-preparation-panel]') ? ' (preparation panel)' : ''
+          return `covered by <${hit?.tagName.toLowerCase() ?? 'null'}>${owner}`
+        }),
+      { timeout: 15_000, message: `${what} 应当点得到` },
+    )
+    .toBe('hit')
 }
 
 function listFiles(root: string): string[] {
@@ -249,10 +273,23 @@ test(
     // 进入编辑：同一次捕获，不重跑
     await primary(page).click()
     await expect(panel(page)).toHaveAttribute('data-prep-state', 'edit_ready', { timeout: 120_000 })
-    // 进了编辑就关面板（只是换展示面，不取消、不重跑）：参数详情展开着的面板贴在检查条下会占满窗口高度，把元素树
-    // 压到看不见（T11 登记的界面观察，不在本阶段修）
-    await panel(page).locator('[data-prep-close]').click()
-    await expect(panel(page)).toHaveCount(0)
+    // 面板不关（T12b）：上面展开过的参数详情不得把编辑区挤没——进入编辑时详情自动收起，左栏轨道与编辑区就点得到；
+    // 用户再展开详情，面板也只在自己的限高里滚，编辑区照样点得到
+    await expect(panel(page)).toBeVisible()
+    const details = panel(page).locator('[data-prep-details]')
+    await expect(details).not.toHaveAttribute('open')
+    await expectHittable(page.locator('[data-rail="elements"]'), '左栏「元素」轨道')
+    await expectHittable(page.locator('[data-work-panel]'), '编辑区')
+    await details.locator('> summary').click()
+    await expect(details).toHaveAttribute('open')
+    // 参数表单是展开后异步取回的、展开本身有高度过渡（index.css 的 interpolate-size）：等表单挂上、过渡走完，
+    // 面板长到最高再量（否则量到的是过渡第一帧，挤没编辑区的那一刻还没到）
+    await expect(panel(page).locator(`[data-testid="argv-form-${SCRIPT}"]`)).toBeAttached({ timeout: 30_000 })
+    await details.evaluate((el) => Promise.all(el.getAnimations({ subtree: true }).map((a) => a.finished)))
+    await expectHittable(page.locator('[data-rail="elements"]'), '详情展开时，左栏「元素」轨道')
+    await expectHittable(page.locator('[data-work-panel]'), '详情展开时，编辑区')
+    await details.locator('> summary').click()
+    await expect(details).not.toHaveAttribute('open')
 
     // ---- 真值（一）：恰好 1 次、argv / cwd / mode / y 与原生参考一致
     await page.waitForTimeout(1500)
@@ -268,7 +305,9 @@ test(
     // ---- 改一个真实元素：标题（元素树 → 标题 → 检查器里的文字字段）
     await expect(page.locator('[data-element-svg] svg').first()).toBeVisible({ timeout: 120_000 })
     await openElementsTab(page)
-    await (await expandTreeUntil(page, /^标题/)).click()
+    const titleItem = await expandTreeUntil(page, /^标题/)
+    await expectHittable(titleItem, '元素树里的「标题」')
+    await titleItem.click()
     const inspector = page.getByLabel('右侧面板', { exact: true })
     const titleField = inspector.locator('[data-prop="text"] textarea')
     await expect(titleField).toBeVisible()
