@@ -36,7 +36,7 @@ class EditState(Protocol):
     def resolve(self, gid: str): ...
 
 
-#: 一次 `build_manifest` 之内的 `get_[xyz]ticklabels()` 记忆表。**线程局部**：
+#: 一次 manifest 测量之内的原始 / 已绘制刻度标签记忆表。**线程局部**：
 #: Figure 归线程所有（`LiveFigureSession._own`），两条线程各建各的 manifest 时
 #: 共用一张表就成了跨图串味。
 _ticklabel_memo = threading.local()
@@ -44,13 +44,13 @@ _ticklabel_memo = threading.local()
 
 @contextlib.contextmanager
 def ticklabel_memo():
-    """在这个作用域里，同一条轴的 `get_[xyz]ticklabels()` 只算一次。
+    """在这个作用域里，同一条轴的原始标签与绘制取舍各只算一次。
 
-    **前提（失效就不能再用）**：作用域里没有任何东西会改刻度。唯一的开启点是
-    `manifest.build_manifest`——它开头先 `fig.canvas.draw()`（locator/formatter
-    在那一刻就把这一帧的刻度定死了），之后整趟只读几何、不动 artist、不动
-    xlim/ylim、不换 locator。override 的应用发生在 `apply()` 里，在这个作用域
-    **之外**（`figsession.do_render` 先 apply 再 render）。
+    **前提（失效就不能再用）**：首次读取之后没有任何东西会改刻度。
+    `manifest.build_manifest` 先完成布局 / 图幅 draw，`capture_preview_manifest`
+    则在最终预览 draw 之后另开一张表；之后只读几何、不改刻度可见性、
+    xlim/ylim 或 locator。两次测量绝不共用记忆表。override 的应用发生在
+    `apply()` 里，在这个作用域**之外**（`figsession.do_render` 先 apply 再 render）。
 
     为什么值得记：matplotlib 每次 `get_[xyz]ticklabels()` 都要跑一趟
     `Axis._update_ticks()`（locator + formatter + 视区取舍），实测
@@ -138,6 +138,24 @@ def _keep_projected_ticks(ax: Axes, which: str):
 
 
 def drawn_tick_label_entries(ax: Axes, which: str, *, minor: bool = False) -> list[tuple]:
+    """本次测量中已绘制的标签；作用域外仍逐次读取当前刻度。"""
+    table = getattr(_ticklabel_memo, "table", None)
+    if table is None:
+        return _drawn_tick_label_entries(ax, which, minor=minor)[0]
+    # 与原始标签的三元键分开；强引用 ax，防止 id 在作用域内被复用。
+    key = ("drawn_entries", id(ax), which, minor)
+    hit = table.get(key)
+    if hit is not None and hit[0] is ax:
+        return hit[1]
+    entries, filtered = _drawn_tick_label_entries(ax, which, minor=minor)
+    if filtered:  # 降级结果不记忆：同一次测量中的后续读取仍可恢复正常过滤。
+        table[key] = (ax, entries)
+    return entries
+
+
+def _drawn_tick_label_entries(
+    ax: Axes, which: str, *, minor: bool = False
+) -> tuple[list[tuple], bool]:
     """**真的画在图上**的刻度标签 → [(它在 `get_[which]ticklabels()` 里的下标, Text)]。
 
     这是刻度伪元素几何与登记的唯一判据。`get_[xy]ticklabels()` 回的是 locator
@@ -159,18 +177,19 @@ def drawn_tick_label_entries(ax: Axes, which: str, *, minor: bool = False) -> li
     「登不登记 / 量不量几何」，第 j 条指的还是同一条——冻结整条轴时
     `_freeze_tick_texts` 按同一个 j 对位。逐位重建对不上、或私有 API 缺席时
     **放弃过滤退回全量**（宁多勿错删；`test_manifest_geometry` 有版本金丝雀）。
+    第二个返回值表示取舍成功，只有这种结果（含正常空列表）才可记忆。
     """
     axis = _axis_of(ax, which)
     try:
         raw = _ticklabels(ax, which, minor=minor)
     except (TypeError, AttributeError):  # 该轴不支持 minor 参数
-        return []
+        return [], False
     entries = list(enumerate(raw))
     if not entries:
-        return []
+        return [], True
     try:
         if not axis.get_visible() or not ax.get_visible():
-            return []
+            return [], True
         with _keep_projected_ticks(ax, which):
             to_draw = {id(t) for t in axis._update_ticks()}  # noqa: SLF001 — 渲染器自己的取舍
         ticks = axis.get_minor_ticks() if minor else axis.get_major_ticks()
@@ -180,11 +199,11 @@ def drawn_tick_label_entries(ax: Axes, which: str, *, minor: bool = False) -> li
         side2 = [t for t in ticks if t.label2.get_visible()]
         rebuilt = [t.label1 for t in side1] + [t.label2 for t in side2]
         if len(rebuilt) != len(raw) or any(a is not b for a, b in zip(rebuilt, raw)):
-            return entries
+            return entries, False
         flags = [t.get_visible() and id(t) in to_draw for t in (*side1, *side2)]
-        return [e for e, ok in zip(entries, flags) if ok]
+        return [e for e, ok in zip(entries, flags) if ok], True
     except Exception:  # noqa: BLE001 — matplotlib 内部形状变了：退回全量，别丢刻度
-        return entries
+        return entries, False
 
 
 class TickSet:

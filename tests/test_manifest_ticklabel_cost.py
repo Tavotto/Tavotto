@@ -105,3 +105,49 @@ def test_apply_inside_the_scope_raises_instead_of_reading_a_stale_memo(probe):
     got = probe["apply_guard"]
     assert got["outside_scope"] == "no-raise", got
     assert got["inside_scope"] == "raised", got
+
+
+def test_repeated_filtered_reads_do_not_update_ticks(probe):
+    """Already-drawn axes: nonempty major/minor, both sides, off-view and hidden ticks.
+
+    Few-vs-many alone cannot catch redundant constant work per axis. Removing only
+    the drawn-entry memo must fail these repeated-read counters.
+    """
+    rows = probe["filtered_reads"]["rows"]
+    assert len(rows) == 8
+    assert probe["filtered_reads"]["revisit_updates"] == 0
+    for row in rows:
+        assert row["indices"] == ([1, 2, 5, 6] if row["minor"] else [1, 3, 6, 8]), row
+        assert row["expected_objects"] and row["same_objects"], row
+        assert row["repeat_updates"] == 0, row
+        assert row.get("tickset_updates", 0) == 0, row
+
+
+def test_filtered_entries_share_the_existing_scope_lifetime(probe):
+    got = probe["filtered_lifetime"]
+    assert got["nested"] and got["restored"] and got["threads"], got
+    assert got["outer_updates"] == 0, got
+    assert got["old"] == [1, 3, 6, 8], got
+    assert got["hidden"] == [], got
+    assert got["current"] == [1, 6], got
+    assert got["outside"] == [0, 2], got
+    assert got["thread_counts"] == [2, 4], got
+
+
+def test_filtered_entries_preserve_empty_and_private_api_fallback(probe):
+    got = probe["filtered_fallback"]
+    assert got["raw_count"] == 10, got
+    assert got["fallback"] and got["repeated"], got
+    assert got["calls"] == 2, got
+    assert got["missing_minor"] == [], got
+    assert got["recovered"] == [1, 3, 6, 8], got
+    assert got["recovered_minor"] == [1, 2, 5, 6], got
+    assert got["recovered_updates"] == 0, got
+
+
+def test_projected_ticks_stay_put_and_frame_draws_precede_memo_reads(probe):
+    got = probe["projection_and_draw_order"]
+    assert got["projected"] and all(n > 0 for n in got["counts"]), got
+    assert got["repeat_updates"] == 0, got
+    assert got["frame_active"], got
+    assert got["draw_memo_sizes"] == [0, 0], got

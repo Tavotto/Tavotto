@@ -17,6 +17,8 @@ from __future__ import annotations
 import json
 import os
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
 # 与 `engine/worker.py` 同一条 sys.path 纪律：engine 目录进 path，模块平铺 import。
 _REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -27,9 +29,12 @@ import matplotlib  # noqa: E402
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.axis import Axis  # noqa: E402
+from matplotlib.ticker import FixedFormatter, FixedLocator  # noqa: E402
+from matplotlib.transforms import Bbox  # noqa: E402
 
 import manifest as M  # noqa: E402
 import overrides as O  # noqa: E402
+import pathgeom  # noqa: E402
 import tickmodel  # noqa: E402
 
 for _stream in (sys.stdout, sys.stderr):
@@ -140,12 +145,228 @@ def _apply_inside_the_scope_raises() -> dict:
     return {"outside_scope": outside, "inside_scope": inside}
 
 
+def _filtered_fixture():
+    fig, axes = plt.subplots(1, 2)
+    for i, ax in enumerate(axes):
+        ax.set(xlim=(0, 2), ylim=(0, 2))
+        for which in ("x", "y"):
+            axis = getattr(ax, f"{which}axis")
+            axis.set_major_locator(FixedLocator([-1, 0, 1, 2, 3]))
+            axis.set_major_formatter(FixedFormatter([f"{i}{which}{n}" for n in range(5)]))
+            axis.set_minor_locator(FixedLocator([-0.5, 0.5, 1.5, 2.5]))
+            axis.set_minor_formatter(FixedFormatter([f"{i}{which}m{n}" for n in range(4)]))
+            ax.tick_params(axis=which, which="both", labeltop=True, labelright=True)
+            axis.get_major_ticks()[2].set_visible(False)
+    fig.canvas.draw()
+    return fig, axes
+
+
+def _filtered_reads() -> dict:
+    """Count only repeated filtered reads after drawing; preserve raw side/index identities."""
+    fig, axes = _filtered_fixture()
+    rows = []
+    with tickmodel.ticklabel_memo(), _Counter() as counter:
+        for ax in axes:
+            for which in ("x", "y"):
+                for minor in (False, True):
+                    axis = getattr(ax, f"{which}axis")
+                    ticks = axis.get_minor_ticks() if minor else axis.get_major_ticks()
+                    expected = [ticks[i].label1 for i in ((1, 2) if minor else (1, 3))]
+                    expected += [ticks[i].label2 for i in ((1, 2) if minor else (1, 3))]
+                    first = tickmodel.drawn_tick_label_entries(ax, which, minor=minor)
+                    before = counter.n
+                    again = [
+                        tickmodel.drawn_tick_label_entries(ax, which, minor=minor) for _ in range(3)
+                    ]
+                    rows.append(
+                        {
+                            "minor": minor,
+                            "indices": [i for i, _ in first],
+                            "expected_objects": [t for _, t in first] == expected,
+                            "same_objects": all(a == first for a in again),
+                            "repeat_updates": counter.n - before,
+                        }
+                    )
+                before = counter.n
+                for _ in range(3):
+                    tickmodel.TickSet(ax, which)._first(lambda t: t.get_text(), "")
+                rows[-1]["tickset_updates"] = counter.n - before
+        before = counter.n
+        for ax in axes:
+            tickmodel.TickSet(ax, "x").labels
+            tickmodel.TickSet(ax, "y").labels
+        revisit_updates = counter.n - before
+    plt.close(fig)
+    return {"rows": rows, "revisit_updates": revisit_updates}
+
+
+def _filtered_lifetime() -> dict:
+    fig, axes = _filtered_fixture()
+    ax = axes[0]
+    with tickmodel.ticklabel_memo():
+        old = tickmodel.drawn_tick_label_entries(ax, "x")
+        outer = tickmodel._ticklabel_memo.table
+        try:
+            with tickmodel.ticklabel_memo():
+                tickmodel.drawn_tick_label_entries(ax, "x")
+                inner_distinct = tickmodel._ticklabel_memo.table is not outer
+                raise ValueError("scope cleanup")
+        except ValueError:
+            pass
+        nested = inner_distinct and tickmodel._ticklabel_memo.table is outer
+        with _Counter() as counter:
+            tickmodel.drawn_tick_label_entries(ax, "x")
+        outer_updates = counter.n
+    restored = getattr(tickmodel._ticklabel_memo, "table", None) is None
+    ax.xaxis.set_visible(False)
+    with tickmodel.ticklabel_memo():
+        hidden = tickmodel.drawn_tick_label_entries(ax, "x")
+    ax.xaxis.set_visible(True)
+    ax.set_xlim(0, 0.5)
+    with tickmodel.ticklabel_memo():
+        current = tickmodel.drawn_tick_label_entries(ax, "x")
+    outside = []
+    for visible in (False, True):
+        ax.xaxis.set_visible(visible)
+        outside.append(len(tickmodel.drawn_tick_label_entries(ax, "x")))
+    # Separate figures are built/drawn serially; only independent reads overlap.
+    other_fig, other_axes = _filtered_fixture()
+    barrier = threading.Barrier(2)
+
+    def read_thread(thread_ax):
+        with tickmodel.ticklabel_memo():
+            entries = tickmodel.drawn_tick_label_entries(thread_ax, "x")
+            table = tickmodel._ticklabel_memo.table
+            barrier.wait(timeout=10)
+            own = tickmodel._ticklabel_memo.table is table
+            barrier.wait(timeout=10)
+        return table, entries, own, getattr(tickmodel._ticklabel_memo, "table", None) is None
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        jobs = [executor.submit(read_thread, a) for a in (ax, other_axes[0])]
+        a, b = [job.result(timeout=30) for job in jobs]
+    plt.close(fig)
+    plt.close(other_fig)
+    return {
+        "nested": nested,
+        "outer_updates": outer_updates,
+        "restored": restored,
+        "old": [i for i, _ in old],
+        "hidden": [i for i, _ in hidden],
+        "current": [i for i, _ in current],
+        "outside": outside,
+        "threads": a[0] is not b[0] and all((a[2], a[3], b[2], b[3])),
+        "thread_counts": [len(a[1]), len(b[1])],
+    }
+
+
+def _filtered_fallback() -> dict:
+    fig, axes = _filtered_fixture()
+    ax = axes[0]
+    axis = ax.xaxis
+    native = axis._update_ticks
+    calls = []
+
+    def unavailable():
+        calls.append(True)
+        raise RuntimeError("private API unavailable")
+
+    try:
+        with tickmodel.ticklabel_memo():
+            raw = tickmodel._ticklabels(ax, "x")
+            axis._update_ticks = unavailable
+            fallback = tickmodel.drawn_tick_label_entries(ax, "x")
+            repeated = tickmodel.drawn_tick_label_entries(ax, "x")
+            axis._update_ticks = native
+            recovered = tickmodel.drawn_tick_label_entries(ax, "x")
+            with _Counter() as counter:
+                tickmodel.drawn_tick_label_entries(ax, "x")
+    finally:
+        axis._update_ticks = native
+    get_labels = ax.get_xticklabels
+    try:
+        ax.get_xticklabels = lambda: get_labels()
+        with tickmodel.ticklabel_memo():
+            missing_minor = tickmodel.drawn_tick_label_entries(ax, "x", minor=True)
+            ax.get_xticklabels = get_labels
+            recovered_minor = tickmodel.drawn_tick_label_entries(ax, "x", minor=True)
+    finally:
+        ax.get_xticklabels = get_labels
+    plt.close(fig)
+    return {
+        "raw_count": len(raw),
+        "fallback": fallback == list(enumerate(raw)),
+        "repeated": repeated == fallback,
+        "calls": len(calls),
+        "missing_minor": missing_minor,
+        "recovered": [i for i, _ in recovered],
+        "recovered_minor": [i for i, _ in recovered_minor],
+        "recovered_updates": counter.n,
+    }
+
+
+def _projection_and_draw_order() -> dict:
+    fig = plt.figure()
+    ax = fig.add_subplot(projection="3d")
+    ax.plot([0, 1], [0, 2], [0, 3])
+    fig.canvas.draw()
+
+    def positions():
+        return [
+            t.label1.get_position()
+            for axis in (ax.xaxis, ax.yaxis, ax.zaxis)
+            for t in axis.get_major_ticks()
+        ]
+
+    before = positions()
+    counts = []
+    with tickmodel.ticklabel_memo():
+        for which in ("x", "y", "z"):
+            counts.append(len(tickmodel.drawn_tick_label_entries(ax, which)))
+        with _Counter() as counter:
+            for which in ("x", "y", "z"):
+                tickmodel.drawn_tick_label_entries(ax, which)
+    projected = before == positions()
+    plt.close(fig)
+
+    fig, ax = plt.subplots(layout="tight")
+    ax.plot([0, 1], [0, 1])
+    pathgeom.set_frame(fig, Bbox.from_extents(-0.2, -0.3, 6.2, 4.5))
+    state = O.FigState(fig)
+    M.instrument(state)
+    sizes = []
+    draw = fig.canvas.draw
+
+    def observe_draw():
+        table = getattr(tickmodel._ticklabel_memo, "table", None)
+        sizes.append(None if table is None else len(table))
+        return draw()
+
+    fig.canvas.draw = observe_draw
+    try:
+        man = M.build_manifest(state, "framed")
+    finally:
+        fig.canvas.draw = draw
+        plt.close(fig)
+    return {
+        "projected": projected,
+        "counts": counts,
+        "repeat_updates": counter.n,
+        "draw_memo_sizes": sizes,
+        "frame_active": man["frame"]["active"],
+    }
+
+
 def main() -> None:
     report = {
         "few": _case(4),
         "many": _case(24),
         "across_builds": _memo_does_not_outlive_one_build(),
         "apply_guard": _apply_inside_the_scope_raises(),
+        "filtered_reads": _filtered_reads(),
+        "filtered_lifetime": _filtered_lifetime(),
+        "filtered_fallback": _filtered_fallback(),
+        "projection_and_draw_order": _projection_and_draw_order(),
     }
     print(json.dumps(report, ensure_ascii=False))
 
