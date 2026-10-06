@@ -9594,7 +9594,12 @@ def main():
         # 没同意时这一行什么都不做；用户在本次会话里同意之后由
         # telemetry.set_consent 补发（同一次会话只发一条）。
         engine_telemetry.note_app_started("desktop")
-        sys.exit(desktop_mode.run(app))
+        try:
+            sys.exit(desktop_mode.run(app))
+        finally:
+            from .rendercore import renderhost as rc_renderhost
+
+            rc_renderhost.shutdown_shared_for_exit()
 
     url = landing(port)
     if insecure:
