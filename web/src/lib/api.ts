@@ -3404,6 +3404,7 @@ export const WORKDIR_CODES = [
  */
 export type EnvCandidateLabel =
   | 'selected'
+  | 'auto_detected'
   | 'remembered_legacy'
   | 'project_hint'
   | 'checked_compatible'
@@ -3449,7 +3450,12 @@ export interface EnvCandidate {
 export interface EnvRecommendation {
   version: number
   decision: {
-    consent: 'none' | 'confirmed' | 'legacy_auto' | 'builtin'
+    /**
+     * 环境采用模式（ADR 0114 §六）：`detect`（默认）= 准备 / 运行时自动检测、不问用户；`confirm` = T05 的确认模式；
+     * `legacy` = 旧三处静默采用。老后端没有这个字段（它们是确认模式）
+     */
+    mode?: 'detect' | 'confirm' | 'legacy'
+    consent: 'none' | 'confirmed' | 'auto_detected' | 'legacy_auto' | 'builtin'
     /** 全局显式解释器压着时：谁锁的（采用不会生效，后端会 409 `environment_locked`） */
     locked_by: { source: string } | null
     needs_decision: boolean
@@ -3474,7 +3480,7 @@ export interface EnvRecommendation {
 export interface ProjectEnvironment {
   open: boolean
   /** 项目级决定的授权来源（后端 `projectenv.consent_of`）：用户明确采用 = confirmed；历史自动记录 = legacy_auto */
-  consent?: 'none' | 'confirmed' | 'legacy_auto'
+  consent?: 'none' | 'confirmed' | 'auto_detected' | 'legacy_auto'
   recommendation?: EnvRecommendation
   /** 稳定枚举，与全局那份同一套（`project_venv` / `bundled` / …） */
   source?: EngineSource
@@ -4760,6 +4766,8 @@ export interface PreparationReport {
     } | null
   }
   dependency_delta?: Record<string, unknown> | null
+  /** 环境：只是一个可展示的事实（ADR 0114 §六），不要求用户动作；老后端没有 */
+  environment?: PreparationEnvironmentFact | null
   /** 正在等的那一问（只有 id / 序号 / 读取方式 / 要不要掩码；提示与答案走 `/api/script_input/*`） */
   runtime_input?: { id: string; index: number; input_kind: string; secret: boolean } | null
   /** 这次尝试成功时真正捕获到的图（与试运行响应同一份描述符）；老后端没有 */
@@ -4771,6 +4779,22 @@ export interface PreparationReport {
     error?: { code?: string; message?: string; reason?: string; module?: string } | null
     note?: string
   } | null
+}
+
+/**
+ * 准备报告里关于环境的那一个事实（后端 `envadvice.adoption_fact`）。界面按 `kind` 说一句人话（不出现「环境 /
+ * 解释器 / venv / Python 版本」这类词），不据此自算「能不能跑」——要用户动手的只有依赖检查项与 `prepare_dependencies`。
+ */
+export interface PreparationEnvironmentFact {
+  mode: 'detect' | 'confirm' | 'legacy'
+  /** 用的是哪一类：Tavotto 自带 / 项目自己带的 / 这台电脑上已有的 / Tavotto 为这个项目装好的 / 全局指定；null = 还没有可用的 */
+  kind: 'builtin' | 'project' | 'user' | 'managed' | 'locked' | null
+  /** 谁定的：用户选过的 / 自动检测（或旧版自动）定的 / 没有项目级决定 / 全局指定压着 */
+  decided_by: 'user' | 'auto' | 'default' | 'locked'
+  /** 这次检查是不是刚自动换了一个 */
+  switched: boolean
+  /** 换之前用的那个为什么不能用了（被删 / 被重建 / 起不来 / 跑不了这个脚本）；没换 = null */
+  replaced: { reason: string } | null
 }
 
 /** 会话目标：一份脚本（可带精确 argv，空 = 不带参数、请求体里没有 `argv`）或一张已知的图 */

@@ -37,7 +37,8 @@ needs_worker = pytest.mark.skipif(
 @pytest.fixture(autouse=True)
 def _clean(monkeypatch):
     monkeypatch.delenv("TAVOTTO_WORKER_PYTHON", raising=False)
-    monkeypatch.delenv("TAVOTTO_ENV_ADOPTION", raising=False)
+    # 本文件钉的是 T05 的**确认模式**（ADR 0114 §一～§五）；默认的检测模式（§六）见 `test_environment_autodetect.py`
+    monkeypatch.setenv("TAVOTTO_ENV_ADOPTION", "confirm")
     projectenv.reset_cache()
     userenvs.reset_cache()
     engine_pool.reset_worker_python()

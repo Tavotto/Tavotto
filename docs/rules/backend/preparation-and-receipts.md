@@ -34,9 +34,11 @@
   与 `worker_argv` 的 golden 一个字节不动。四个 `cwd_origin` 各有且只有一个生产者
   （`sandbox` / `project`=脚本目录 / `project_root`=项目根 / native；ADR 0057 §二）；
   grant 只由 `workdir.set_mode / grant_for` 记账，只记时刻不记人，多 `mode` 与 `decided`。
-- **环境选择前移的落点就是 `plan_for`**（U03，ADR 0057 §一；**ADR 0114 起默认的确认模式下不再替用户发现 / 体检 / 记住
-  项目 venv**，那一整段只在兼容开关 `TAVOTTO_ENV_ADOPTION=auto` 下发生，默认由 `envadvice.recommend()` 给纯读建议、用户采用后
-  才有项目级记录）：它调 `pool.resolve_worker_python(root,
+- **环境选择前移的落点就是 `plan_for`**（U03，ADR 0057 §一；**ADR 0114 §六（2026-10-06）起默认是检测模式**：`plan_for`
+  先调 `deprepair.decide_environment`——候选里能跑这个脚本的直接采用（`trigger=auto_detected`），都不能跑就不采用、只出依赖待办；
+  确认模式（`TAVOTTO_ENV_ADOPTION=confirm`）下只给 `envadvice.recommend()` 的纯读建议、用户采用后才有项目级记录；第 4 档那段
+  「只看健康就采用项目 venv」只在旧模式 `legacy` / `auto` 下发生。计划的 `environment.adoption` 是报告顶层 `environment` 那一个
+  可展示事实（`envadvice.adoption_fact`））：它调 `pool.resolve_worker_python(root,
   script=…)`——项目 venv 的发现 + 体检 + 记住在这里已经发生（每进程每项目一次），计划里
   `environment.python_version / matplotlib_version / support / discovery / invalidated / error.explicit`
   如实写下选了谁、凭什么（体检量到的事实，ADR 0053 的公开投影：项目外的路径一律 None）、发现了什么
@@ -203,7 +205,8 @@ input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/pr
 - 身份三分不混（私有键含路径、公开身份不含、文件 hash 单列）
 - LaunchContext 是派生视图、四个来源各一个生产者
 - 环境选择前移的落点是 `plan_for`（证据 / 作废 / 显式失效如实写）；ADR 0114 起解析解释器不再发现 / 体检 / 采用项目 venv，计划里多
-  `environment.{generation, consent, recommendation}`（纯读建议），`discovery` 只在兼容开关 `TAVOTTO_ENV_ADOPTION=auto` 下有值
+  `environment.{generation, consent, recommendation, adoption}`，`discovery` 只在旧模式（`TAVOTTO_ENV_ADOPTION=legacy|auto`）下有值；
+  默认检测模式下 `plan_for` 先让 `decide_environment` 自动检测（ADR 0114 §六），会话报告的 `environment` 是唯一的环境事实
 - 首开要问的是终局 `needs_input`
 - 过期计划 `preparation_plan_stale` 不执行
 - DependencyIntent 只读不装

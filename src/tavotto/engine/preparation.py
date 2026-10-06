@@ -247,11 +247,12 @@ def plan_for(
     `error.explicit` 说明是哪一条、为什么。
     """
     root = str(project_root)
+    adopted = None
     if script is not None:
-        # 「换不换解释器」先落地（ADR 0079 §四，`deprepair.decide_environment` 是唯一一处）：下面的
-        # 解释器、LaunchContext、环境事实都是快照，执行前 `_stale_reason` 拿它们与此刻比——快照在
+        # 「换不换解释器」先落地（ADR 0079 §四，`deprepair.decide_environment` 是唯一一处；检测模式下就是那次自动检测，
+        # ADR 0114 §六）：下面的解释器、LaunchContext、环境事实都是快照，执行前 `_stale_reason` 拿它们与此刻比——快照在
         # 决定之前拍，第一次准备就以 `preparation_plan_stale` 收场（Codex #522 P1）。
-        deprepair.decide_environment(root, script)
+        adopted = deprepair.decide_environment(root, script)
     try:
         python, source = pool.resolve_worker_python(root, script=script)
         env_error = None
@@ -272,6 +273,7 @@ def plan_for(
     # 公开身份：来源标签 + **项目相对**路径（项目外的解释器——bundled / system / 用户在别处
     # 挑的——一律 None：那是安装目录或用户目录，不进投影）+ 项目记住的版本事实。
     discovery = pool.first_open_outcome(root)
+    invalidated = pool.invalidated_decision(root)
     environment = {
         "python": _project_relative(root, python) if python else None,
         "source": source,
@@ -316,10 +318,12 @@ def plan_for(
                 "reason": inv.get("reason", ""),
                 "trigger": inv.get("trigger", ""),
             }
-            if (inv := pool.invalidated_decision(root))
+            if (inv := invalidated)
             else None
         ),
         "error": env_error,
+        # 给用户看的那一个事实（ADR 0114 §六）：用的是哪一类、谁定的、这次是不是刚自动换了一个——不要求用户动作
+        "adoption": envadvice.adoption_fact(root, source, adopted=adopted, invalidated=invalidated),
     }
     grant = workdir.grant_for(root)
     launch_context = None

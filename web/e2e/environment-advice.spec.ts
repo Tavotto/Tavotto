@@ -41,7 +41,8 @@ test('项目自带的环境：先是一句话的建议，检查才起它，采�
   const project = path.join(root, '项目 空格')
   writeProject(project, sentinels)
   try {
-    const a = await app({ figures: project })
+    // 这条钉的是可选的确认模式（ADR 0114 §一～§五）；默认的检测模式见本文件第二条
+    const a = await app({ figures: project, env: { TAVOTTO_ENV_ADOPTION: 'confirm' } })
     await page.setViewportSize({ width: 1400, height: 900 })
     await page.goto(a.baseURL)
 
@@ -86,6 +87,36 @@ test('项目自带的环境：先是一句话的建议，检查才起它，采�
     await expect(advice.locator('.text-danger')).toBeVisible({ timeout: 30_000 })
     const final = await (await page.request.get(`${a.baseURL}/api/engine/environment`)).json()
     expect(final.project.consent).toBe('none')
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('默认的检测模式：打开项目、打开设置都不问用户选环境，也不起项目的解释器', async ({ app, page }) => {
+  // ADR 0114 §六（用户 2026-10-06 裁决）：环境不让用户选——检测只在用户点准备 / 运行之后，界面不出现「使用它」
+  const root = tmp('tavotto-envdetect-')
+  const sentinels = path.join(root, 'sentinel')
+  mkdirSync(sentinels)
+  const project = path.join(root, '项目 空格')
+  writeProject(project, sentinels)
+  try {
+    const a = await app({ figures: project })
+    await page.setViewportSize({ width: 1400, height: 900 })
+    await page.goto(a.baseURL)
+    await page.locator('[data-rail="settings"]').click()
+    const dialog = page.getByRole('dialog')
+    await expect(dialog).toBeVisible({ timeout: 30_000 })
+    await dialog.getByRole('navigation').locator('[data-section="project"]').click()
+
+    const env = await (await page.request.get(`${a.baseURL}/api/engine/environment`)).json()
+    const rec = env.project.recommendation
+    expect(rec.decision.mode).toBe('detect')
+    expect(rec.decision.needs_decision).toBe(false)
+    // 渲染环境那一块确实渲染出来了（否定断言不是空转），里面没有任何「使用它 / 确认」
+    await expect(dialog.locator('[data-engine-env-card]').first()).toBeVisible({ timeout: 30_000 })
+    await page.waitForTimeout(1500)
+    await expect(dialog.locator('[data-env-advice], [data-env-advice-legacy]')).toHaveCount(0)
+    expect(fired(sentinels)).toEqual([])
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

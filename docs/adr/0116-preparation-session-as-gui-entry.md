@@ -29,7 +29,8 @@ T01～T08 在后端立起了 script-first 的准备会话（`engine/prepsession.
 其余（检查项、要装什么、参数、失败原文、那一次的诊断、次要动作）在默认收起的「详情」里。
 
 * 主按钮 = 报告里后端生成的那件事：`run` →「确认并运行」、`prepare_dependencies` →「准备依赖」（回显 `impact_digest`）、
-  `environment_choice` →「使用这个环境」（既有采用端点，ADR 0114）、`workdir_choice` →「选择运行目录」（既有确认框）、
+  `environment_choice` →「使用这个环境」（既有采用端点，ADR 0114；2026-10-06 起只在确认模式下出现，默认的检测模式由准备时的
+  自动检测决定，报告只给顶层 `environment` 事实，ADR 0114 §六）、`workdir_choice` →「选择运行目录」（既有确认框）、
   `input_location` →「指认数据位置」（既有对话框，ADR 0106）、`awaiting_runtime_input` → 面板里嵌入同一个答题表单、`completed` →「进入编辑」。
   报告里没有的动作，界面就没有那颗按钮——前端没有第二份 ready 判据。
 * 既有对话框（运行目录 / 缺数据 / 环境）在面板里是**薄展示适配器**：面板只交出载荷，作答仍是原来那一个端点；作答引起的环境 / 改指变化

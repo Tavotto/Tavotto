@@ -214,9 +214,12 @@ function EnvironmentAdviceRow() {
     setBusy(false)
   }
   if (!rec.decision.needs_decision) {
-    // ADR 0114 之前无提示自动采用的记录（`legacy_auto`）照常生效；这里给一次一键确认（T09）：对此刻在用的那个候选
-    // 走同一个采用端点，记录升级为 confirmed——一句话 + 一个主按钮，不确认也照旧能用
-    const current = rec.decision.consent === 'legacy_auto' ? rec.candidates.find((c) => c.current) : undefined
+    // ADR 0114 之前无提示自动采用的记录（`legacy_auto`）照常生效；确认模式下给一次一键确认（T09）：对此刻在用的那个
+    // 候选走同一个采用端点，记录升级为 confirmed——一句话 + 一个主按钮，不确认也照旧能用。检测模式（默认，ADR 0114 §六）
+    // 不让用户确认环境：自动定下的就是定下了，这一行不出现（老后端没有 `mode`，它们是确认模式）
+    const confirming = (rec.decision.mode ?? 'confirm') === 'confirm'
+    const current =
+      confirming && rec.decision.consent === 'legacy_auto' ? rec.candidates.find((c) => c.current) : undefined
     if (!current) return null
     return (
       <div className="mt-1.5 flex flex-col gap-1.5 border-t border-border pt-1.5" data-env-advice-legacy>

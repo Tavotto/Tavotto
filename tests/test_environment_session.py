@@ -9,6 +9,8 @@
 # ruff: noqa: F811 — 夹具（client / fake_pool）从 test_preparation_api 导入复用，参数名与导入名相同
 from __future__ import annotations
 
+import pytest
+
 from tavotto.engine import deprepair, pool as engine_pool, prepsession, projectenv
 from test_preparation_api import (  # noqa: F401 — 夹具与替身复用，不重写第二套
     _open,
@@ -25,6 +27,13 @@ from test_preparation_session import (  # noqa: F401
     _get,
     sessions,
 )
+
+
+@pytest.fixture(autouse=True)
+def _confirm_mode(monkeypatch):
+    """本文件钉的是 T05 的**确认模式**（`TAVOTTO_ENV_ADOPTION=confirm`，ADR 0114 §一～§五）。默认的检测模式（§六）
+    不出现 `environment_choice`，见 `test_environment_autodetect.py`。"""
+    monkeypatch.setenv("TAVOTTO_ENV_ADOPTION", "confirm")
 
 
 def _project_with_venv(tmp_path):

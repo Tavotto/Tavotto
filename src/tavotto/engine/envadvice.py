@@ -13,6 +13,7 @@
 推荐的排序只看**证据层次**，不看 Python 新旧、也不看谁装的包更多：
 
 1. `selected`            —— 仍有效的显式选择（用户采用过、路径还在、环境代没变）；
+   `auto_detected`       —— 检测模式（默认，ADR 0114 §六）替用户采用、此刻在用的那一个；
 2. `remembered_legacy`   —— ADR 0114 之前机器替用户记下的：照用，但证明不了用户确认过（迁移：不重新询问）；
 3. `project_hint`        —— 项目自己声明 / 编辑器指向的（项目 venv、`.vscode`、`.python-version`、`environment.yml`、shebang）；
 4. `checked_compatible`  —— 用户的机器上、**已经被明确检查过**且健康的环境；
@@ -34,6 +35,8 @@ from . import pool, projectenv, projscan, userenvs
 REC_VERSION = 1
 
 LABEL_SELECTED = "selected"
+#: 检测模式（ADR 0114 §六）替用户采用、此刻在用的那一个
+LABEL_AUTO = "auto_detected"
 LABEL_LEGACY = "remembered_legacy"
 LABEL_PROJECT = "project_hint"
 LABEL_CHECKED = "checked_compatible"
@@ -42,6 +45,7 @@ LABEL_BUNDLED = "bundled"
 #: 闭集，也是排序（小 = 更该被推荐）
 LABELS = (
     LABEL_SELECTED,
+    LABEL_AUTO,
     LABEL_LEGACY,
     LABEL_PROJECT,
     LABEL_CHECKED,
@@ -195,7 +199,10 @@ def recommend(root: str | Path, script: str | None = None) -> dict:
                 status = STATUS_MISSING
             elif projectenv.generation_changed(record):
                 status = STATUS_CHANGED
-            label = LABEL_SELECTED if consent == projectenv.CONSENT_CONFIRMED else LABEL_LEGACY
+            label = {
+                projectenv.CONSENT_CONFIRMED: LABEL_SELECTED,
+                projectenv.CONSENT_AUTO_DETECTED: LABEL_AUTO,
+            }.get(consent, LABEL_LEGACY)
         elif row["scope"] == projscan.SCOPE_PROJECT:
             label = LABEL_PROJECT
         elif status == STATUS_HEALTHY:
@@ -243,8 +250,11 @@ def recommend(root: str | Path, script: str | None = None) -> dict:
             if c["id"] != BUILTIN_ID and c["status"] not in _BAD:
                 recommended = c["id"]
                 break
+    mode = projectenv.adoption_mode()
+    # 只有确认模式才问用户（ADR 0114 §二）；检测模式（默认，§六）由准备 / 运行时的自动检测决定，用户不选环境
     needs_decision = bool(
-        locked is None
+        mode == projectenv.ADOPTION_CONFIRM
+        and locked is None
         and consent == projectenv.CONSENT_NONE
         and not default_chain
         and any(
@@ -256,6 +266,7 @@ def recommend(root: str | Path, script: str | None = None) -> dict:
     return {
         "version": REC_VERSION,
         "decision": {
+            "mode": mode,
             "consent": "builtin" if default_chain else consent,
             "locked_by": locked,
             "needs_decision": needs_decision,
@@ -271,6 +282,57 @@ def recommend(root: str | Path, script: str | None = None) -> dict:
             "per_candidate_timeout_s": projectenv.PROBE_TIMEOUT_S,
             "scopes": list(CHECK_SCOPES),
         },
+    }
+
+
+# ---------------------------------------------------------------- 报告里的那一个事实（检测模式）
+
+#: 「用的是哪一类」（闭集，界面按它给一句人话；不带路径、不带「环境 / 解释器」之类的词）
+KIND_BUILTIN = "builtin"  # Tavotto 自带的（内置 runtime / 自身 / 源码模式自建的）
+KIND_PROJECT = "project"  # 项目自己带的（项目 venv）
+KIND_USER = "user"  # 这台电脑上已有的（Conda / pyenv / 登录 shell / 系统 Python）
+KIND_MANAGED = "managed"  # Tavotto 为这个项目装好的
+KIND_LOCKED = "locked"  # 全局指定的（环境变量 / 设置里），压过一切项目级决定
+KINDS = (KIND_BUILTIN, KIND_PROJECT, KIND_USER, KIND_MANAGED, KIND_LOCKED)
+_KIND_OF_SOURCE = {
+    pool.SOURCE_ENV: KIND_LOCKED,
+    pool.SOURCE_CONFIGURED: KIND_LOCKED,
+    pool.SOURCE_MANAGED: KIND_BUILTIN,
+    pool.SOURCE_BUNDLED: KIND_BUILTIN,
+    pool.SOURCE_CURRENT: KIND_BUILTIN,
+    pool.SOURCE_SYSTEM: KIND_USER,
+    pool.SOURCE_PROJECT_VENV: KIND_PROJECT,
+    pool.SOURCE_MANAGED_PROJECT: KIND_MANAGED,
+}
+#: 谁定的：用户明确选的 / 机器检测（或旧版自动）定的 / 没有项目级决定（默认）/ 全局指定压着
+DECIDED_USER = "user"
+DECIDED_AUTO = "auto"
+DECIDED_DEFAULT = "default"
+DECIDED_LOCKED = "locked"
+
+
+def adoption_fact(
+    root: str | Path, source: str, *, adopted: dict | None, invalidated: dict | None
+) -> dict:
+    """准备报告里关于环境**唯一**要给用户看的事实（ADR 0114 §六）：这次用的是哪一类、谁定的、这次检查是不是
+    刚换了一个（`switched`）、换之前那个为什么不能用（`replaced`）。**不要求用户做任何事**——要用户动手的只有
+    「安装缺少的组件」，那在依赖检查项与 `prepare_dependencies` 动作里。纯读，不带路径。"""
+    kind = _KIND_OF_SOURCE.get(source) if source else None
+    if kind == KIND_LOCKED:
+        decided = DECIDED_LOCKED
+    else:
+        consent = projectenv.consent_of(projectenv.remembered_record(root))
+        decided = {
+            projectenv.CONSENT_CONFIRMED: DECIDED_USER,
+            projectenv.CONSENT_AUTO_DETECTED: DECIDED_AUTO,
+            projectenv.CONSENT_LEGACY_AUTO: DECIDED_AUTO,
+        }.get(consent, DECIDED_DEFAULT)
+    return {
+        "mode": projectenv.adoption_mode(),
+        "kind": kind,
+        "decided_by": decided,
+        "switched": adopted is not None,
+        "replaced": {"reason": str(invalidated.get("reason") or "")} if invalidated else None,
     }
 
 

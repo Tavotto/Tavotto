@@ -5020,16 +5020,17 @@ def user_environment_candidates(
     root = str(Path(project))
     out: list[dict] = []
     silent = projectenv.silent_adoption_enabled()
-    if not silent:
-        # 确认模式（ADR 0114）：项目自己的 venv 是第一个候选，用户在这张表里点「改用」才算采用。静默采用时代
-        # 它归 `pool` 第 4 档管、不进这张表（`_auto_adopt_allowed` 不碰项目 venv）
+    if not projectenv.legacy_adoption_enabled():
+        # 检测 / 确认模式（ADR 0114）：项目自己的 venv 是第一个候选——检测时它能跑就直接用，确认模式下用户在这张表里
+        # 点「改用」才算采用。旧模式里它归 `pool` 第 4 档管、不进这张表（`_auto_adopt_allowed` 不碰项目 venv）
         for venv in projectenv.discover(root, script):
             py = projectenv.interpreter_of(venv, root=root)
             if py:
                 out.append(
                     {"python": py, "source": userenvs.SOURCE_PROJECT_VENV, "label": Path(venv).name}
                 )
-    # 登录 shell 只在静默采用的旧行为下现问；确认模式只用明确检查动作已经问出来的答案
+    # 登录 shell 只在机器可以替用户决定时（检测 / 旧模式，都由用户发起的准备 / 运行触发）现问；确认模式只用明确
+    # 检查动作已经问出来的答案
     out += (
         userenvs.discover(root, script)
         if silent
@@ -5295,11 +5296,18 @@ def decide_environment(project: str | Path, script: str) -> dict | None:
     `gate()` 里、门又跑在快照与租约检查之后——两条 Codex #522 P1 是同一个顺序错误。
 
     工作目录还要先问时不决定：那道门排在依赖门前面，没答之前不起会话，也就轮不到换环境。"""
-    if not projectenv.silent_adoption_enabled():
+    mode = projectenv.adoption_mode()
+    if mode == projectenv.ADOPTION_CONFIRM:
         # 确认模式（ADR 0114）：「换不换解释器」不再由机器决定。候选环境的体检结果仍随跑前的门 / 修复
         # 卡片的载荷（`user_environments`）交给用户，采用是他点的那一下——这里连门都不必问（不去量一遍
         # 只为了发现自己不该做这个决定）
         return None
+    if mode == projectenv.ADOPTION_DETECT:
+        root = str(Path(project))
+        if workdir.decision_for(root, script)["needs_confirmation"]:
+            # 与旧模式同一个顺序：运行目录那道门先问，没答之前一个进程都不起（检测要量解释器）
+            return None
+        return _detect_environment(root, script)
     root = str(Path(project))
     if not _gate_open(root, script):
         return None
@@ -5312,6 +5320,106 @@ def decide_environment(project: str | Path, script: str) -> dict | None:
     if offer["plan"]["status"] != depplan.STATUS_READY and not offer.get("unknown_missing"):
         return None
     return _auto_adopt(root, offer, user_envs)
+
+
+#: 检测模式的单飞：同一项目同一时刻只有一次检测在体检候选；后到的等它落地，再按落地之后的项目记录判断（通常直接
+#: 回 None——记录已经是能跑的那一个）
+_detect_locks: dict[str, threading.Lock] = {}
+_detect_guard = threading.Lock()
+
+
+def _detect_lock(root: str) -> threading.Lock:
+    key = projectenv._key(root)
+    with _detect_guard:
+        return _detect_locks.setdefault(key, threading.Lock())
+
+
+def _detect_environment(root: str, script: str) -> dict | None:
+    """检测模式（默认，ADR 0114 §六）：用户发起准备 / 运行之后，替他挑一个**能跑这个脚本**的环境。回新采用的那一条
+    （`userenvs.evaluate` 的形状），不换回 None。
+
+    「能跑」= 解释器健康 + 联合计划里脚本要的 import（缺的、已有的、映射不到包名的）全都 import 得到——与跑前的门、
+    依赖弹窗「装齐」同一个判据（`userenvs.evaluate` + `_plan_imports`），不另写。候选 = 项目 venv / 编辑器 /
+    `.python-version` / `environment.yml` / shebang / 登录 shell / Conda / pyenv / 系统（`user_environment_candidates`）。
+    挑选顺序：项目自己的线索 → 默认链条（内置，能跑就不换）→ 其余按 `userenvs.rank()`。
+
+    * 不动的：全局显式解释器（环境变量 / 设置里指定的）、用户为本项目选过且仍有效的、明确选回默认链条的——
+      `pool.machine_chosen_interpreter` 判为 False 的一个都不碰；
+    * 失效的记录（不在 / 被重建 / 体检不过）在这之前由 `resolve_worker_python` 作废（检测模式不停下，见
+      `pool._stops_when_unusable`），然后按「没决定过」重新检测；
+    * 机器先前定下的仍能跑 → 不动；不能跑 → 找别的能跑的换过去；都不能跑 → 检测自己记下的那条作废（装进 Tavotto
+      管理的环境，不往用户的环境里装），历史记录（`legacy_auto`）照旧；
+    * 预算：候选上限 `userenvs.PROBE_LIMIT`、每个 `projectenv.PROBE_TIMEOUT_S`；正被安装占着的环境不挑；这个项目
+      有依赖安装在跑时不改决定（`unless_installing`，与采用同一把锁）。"""
+    with _detect_lock(root):
+        try:
+            current = pool.resolve_worker_python(root, script=script, discover=False)[0]
+        except pool.WorkerError as exc:
+            if getattr(exc, "explicit", None):
+                return None  # 显式选择失效：那是另一条错误，原路径去报
+            current = ""  # 一个 Python 都没有：照样找用户的环境，找不到才是一键私有 Python
+        if not pool.machine_chosen_interpreter(root):
+            return None
+        record = projectenv.remembered_record(root)
+        try:
+            joint, _kind, python = joint_plan_for(root, script)
+        except pool.WorkerError:
+            return None
+        plan = joint.to_payload()
+        clean = private_python_target(root, script) is not None
+        runs_now = (
+            not clean
+            and joint.status == depplan.STATUS_NOTHING_NEEDED
+            and not unknown_imports_missing(plan, python)
+        )
+        if runs_now and record is not None:
+            return None  # 机器先前定下的那个仍能跑：不动
+        needed, unknown = _plan_imports(plan)
+        candidates = user_environment_candidates(root, script, exclude=current or python)
+        if runs_now:
+            # 默认链条能跑：只有项目自己声明 / 指向的环境排在它前面
+            candidates = [c for c in candidates if c.get("source") in userenvs.PROJECT_SOURCES]
+        candidates = [c for c in candidates if not envlease.is_mutating(c["python"])]
+        entry = None
+        if candidates and not _user_env_discovery_off():
+            entry = userenvs.best(userenvs.evaluate(candidates, needed, unknown), Path(root).name)
+        if entry is None:
+            if (
+                not runs_now
+                and record is not None
+                and record.get("trigger") == projectenv.TRIGGER_AUTO_DETECTED
+            ):
+                # 检测先前挑的环境不再能跑这个脚本、别处也没有能跑的：作废它，「安装缺少的组件」装进 Tavotto
+                # 管理的环境——检测从不把用户的环境当成安装目标
+                try:
+                    unless_installing(root, lambda: pool.invalidate_remembered(root, record))
+                except envlease.EnvironmentBusy:
+                    pass
+            return None
+        try:
+            adopted = unless_installing(
+                root,
+                lambda: projectenv.remember(
+                    root,
+                    entry["python"],
+                    automatic=True,
+                    trigger=projectenv.TRIGGER_AUTO_DETECTED,
+                    health=entry,
+                    only_if=_record_allows_auto_adopt,
+                ),
+            )
+        except envlease.EnvironmentBusy:
+            return None
+        if not adopted:
+            return None
+        pool.note_project_python_ok(entry["python"])
+        LOG.info("自动检测：改用 %s（%s）", entry["python"], entry.get("source"))
+        for listener in list(_adoption_listeners):
+            try:
+                listener(root, userenvs.public(entry))
+            except Exception:  # noqa: BLE001 — 通知失败不能挡住准备
+                LOG.exception("用户环境改用通知失败")
+        return entry
 
 
 def gate(project: str | Path, script: str) -> dict | None:
