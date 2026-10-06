@@ -19,6 +19,7 @@ import os
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from unittest.mock import patch
 
 # 与 `engine/worker.py` 同一条 sys.path 纪律：engine 目录进 path，模块平铺 import。
 _REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -264,25 +265,23 @@ def _filtered_fallback() -> dict:
     fig, axes = _filtered_fixture()
     ax = axes[0]
     axis = ax.xaxis
-    native = axis._update_ticks
     calls = []
 
     def unavailable():
         calls.append(True)
         raise RuntimeError("private API unavailable")
 
-    try:
-        with tickmodel.ticklabel_memo():
-            raw = tickmodel._ticklabels(ax, "x")
-            axis._update_ticks = unavailable
+    with tickmodel.ticklabel_memo():
+        raw = tickmodel._ticklabels(ax, "x")
+        with patch.object(axis, "_update_ticks", unavailable):
             fallback = tickmodel.drawn_tick_label_entries(ax, "x")
             repeated = tickmodel.drawn_tick_label_entries(ax, "x")
-            axis._update_ticks = native
+        # Restore class lookup before counting; a saved bound method would shadow it.
+        with _Counter() as counter:
             recovered = tickmodel.drawn_tick_label_entries(ax, "x")
-            with _Counter() as counter:
-                tickmodel.drawn_tick_label_entries(ax, "x")
-    finally:
-        axis._update_ticks = native
+            recovered_first_updates = counter.n
+            tickmodel.drawn_tick_label_entries(ax, "x")
+            recovered_updates = counter.n - recovered_first_updates
     get_labels = ax.get_xticklabels
     try:
         ax.get_xticklabels = lambda: get_labels()
@@ -301,7 +300,8 @@ def _filtered_fallback() -> dict:
         "missing_minor": missing_minor,
         "recovered": [i for i, _ in recovered],
         "recovered_minor": [i for i, _ in recovered_minor],
-        "recovered_updates": counter.n,
+        "recovered_first_updates": recovered_first_updates,
+        "recovered_updates": recovered_updates,
     }
 
 

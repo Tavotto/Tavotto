@@ -142,6 +142,7 @@ def test_filtered_entries_preserve_empty_and_private_api_fallback(probe):
     assert got["missing_minor"] == [], got
     assert got["recovered"] == [1, 3, 6, 8], got
     assert got["recovered_minor"] == [1, 2, 5, 6], got
+    assert got["recovered_first_updates"] == 1, got  # Prove the recovered call is observed.
     assert got["recovered_updates"] == 0, got
 
 
