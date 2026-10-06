@@ -60,6 +60,7 @@ from .engine import (
     bakedbaseline as engine_baked,
     bootstrap as engine_bootstrap,
     brand as engine_brand,
+    capabilities as engine_capabilities,
     cli as engine_cli,
     config as engine_config,
     databinding as engine_databinding,
@@ -892,7 +893,8 @@ DESKTOP_REMOTE_WINDOW_FEATURE = "desktop-remote-window"
 def api_version():
     """当前前端构建 id：旧标签页据此发现自己过期并提示刷新。
 
-    `features` 是给别的程序问的能力标记（目前只有桌面壳连远程实例用）：公开端点，
+    `features` 是给别的程序问的能力标记：桌面壳连远程实例（`desktop-remote-window`）与新客户端发新字段之前的
+    协商（`engine/capabilities.py`，T10：不认识的字段会被旧端点静默忽略，所以先问再发）。公开端点，
     只说「这一版会什么」，不带任何项目或机器信息。"""
     try:
         html = (WEB_DIST / "index.html").read_text(encoding="utf-8")
@@ -904,7 +906,7 @@ def api_version():
         {
             "build": build,
             "version": engine_updater.current_version(),
-            "features": [DESKTOP_REMOTE_WINDOW_FEATURE],
+            "features": [DESKTOP_REMOTE_WINDOW_FEATURE, *engine_capabilities.features()],
         }
     )
     resp.headers["Cache-Control"] = "no-store"
@@ -7615,7 +7617,22 @@ def _set_project_environment(
     root = str(require_project())
     if module and not engine_projectenv.valid_module_name(module):
         module = ""
-    if raw or user_environment or candidate:
+    if candidate and not user_environment:
+        # 环境建议上的「使用」：判据与写入只在 `envadvice.adopt_candidate`（MCP 的 `adopt_environment=` 同一个，T10）
+        try:
+            health = engine_envadvice.adopt_candidate(
+                root,
+                script or None,
+                candidate,
+                expected_generation=expected_generation,
+                module=module,
+            )
+        except engine_envlease.EnvironmentBusy as exc:
+            return _environment_busy(exc)
+        except engine_envadvice.AdoptionRefused as exc:
+            return _adoption_refused(exc)
+        return jsonify({"ok": True, "health": health, "project": _project_environment_state()})
+    if raw or user_environment:
         pinned = engine_pool.explicit_worker_python()
         if pinned:
             # 全局显式选择压过一切项目级决定（`resolve_worker_python` 第 1、2 档）：这里写下去的记录永远不会被用到，
@@ -7627,27 +7644,6 @@ def _set_project_environment(
                 }
             ), 409
     health: dict | None = None
-    adopted_from = ""
-    if candidate:
-        found = engine_envadvice.candidate_python(root, script or None, candidate)
-        if found is None:
-            return jsonify(
-                {
-                    "error": "这个候选环境已经找不到了，请重新检查",
-                    "code": "environment_candidate_gone",
-                }
-            ), 400
-        if expected_generation and (
-            engine_projectenv.environment_generation(found) != expected_generation
-        ):
-            return jsonify(
-                {
-                    "error": "这个环境在你确认之前被重建过，请重新查看再确认",
-                    "code": "environment_changed",
-                }
-            ), 409
-        raw = found
-        adopted_from = engine_projectenv.TRIGGER_RECOMMENDED
     if user_environment:
         # 依赖弹窗里点的「改用这个环境」（ADR 0079）：界面只拿得到 id，路径由后端自己的发现结果换回，
         # 并按此刻的计划**重新**量一次装没装齐——「还被发现得到」不等于「还装齐」（弹窗开着期间环境变了，
@@ -7737,14 +7733,11 @@ def _set_project_environment(
                 str(candidate),
                 automatic=False,
                 trigger=(
-                    adopted_from
-                    or (
-                        engine_deprepair.TRIGGER_USER_ENVIRONMENT
-                        if user_environment
-                        else "missing_dependency"
-                        if module
-                        else "user_selected"
-                    )
+                    engine_deprepair.TRIGGER_USER_ENVIRONMENT
+                    if user_environment
+                    else "missing_dependency"
+                    if module
+                    else "user_selected"
                 ),
                 module=module,
                 health=health,
@@ -7760,6 +7753,25 @@ def _set_project_environment(
 def _environment_busy(exc: "engine_envlease.EnvironmentBusy"):
     """环境正被依赖安装占着：采用 / 选回默认被拒（409，稳定 code），让用户等安装结束。"""
     return jsonify({"error": str(exc), "code": exc.code}), 409
+
+
+def _adoption_refused(exc: "engine_envadvice.AdoptionRefused"):
+    """`envadvice.adopt_candidate` 没采用 → 与手填路径同一组 code 与形状（体检不过给项目相对路径与版本）。"""
+    if exc.health is not None:
+        return jsonify(
+            {
+                "error": _project_env_message(exc.health),
+                "code": exc.code,
+                "params": {
+                    "path": _project_relative(exc.python),
+                    "python_version": exc.health.get("python_version", ""),
+                },
+            }
+        ), exc.status
+    body = {"error": str(exc), "code": exc.code}
+    if exc.python:
+        body["params"] = {"path": _project_relative(exc.python)}
+    return jsonify(body), exc.status
 
 
 def _project_env_message(health: dict) -> str:

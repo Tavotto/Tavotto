@@ -271,9 +271,14 @@ def selection(project_root: str | Path, config_id: str, *, script: str | None = 
     return execspec.RunSelection(config_id=cfg.id, argv=cfg.argv or ())
 
 
-def selection_for(project_root: str | Path, script: str, argv, *, sensitive: bool = False):
-    """用户这次给的 token → `RunSelection`（空 argv → None，旧行为）。登记 + 校验一次做完。"""
-    cfg = put(project_root, script, argv, sensitive=sensitive)
+def selection_for(
+    project_root: str | Path, script: str, argv, *, sensitive: bool = False, source: str = "user"
+):
+    """用户这次给的 token → `RunSelection`（空 argv → None，旧行为）。登记 + 校验一次做完。
+
+    `source` 只记「这份配置最初从哪个入口来」（`user` = 界面、`mcp` = Agent 经插件提交）：同一 (脚本, argv) 两个入口
+    得到**同一个**引用（T10：GUI 与 MCP 同一份执行意图），它不进身份、不进池键。"""
+    cfg = put(project_root, script, argv, sensitive=sensitive, source=source)
     return None if cfg is None else execspec.RunSelection(config_id=cfg.id, argv=cfg.argv or ())
 
 

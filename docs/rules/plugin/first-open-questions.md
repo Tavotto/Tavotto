@@ -23,3 +23,16 @@
   `deprepair` 进 `_BRIDGE_IMPORT` 与 `BRIDGE_IMPORTS_AT_MIN`（v0.9.x 起就有的模块；`create_joint_plan` 是
   新名字，`getattr` 守着、缺就 `engine_too_old`，最低版本不抬）。
   看护 `tests/test_mcp_server.py` 的四条 U03 用例。
+- **运行参数、环境采用与「没有界面时」的待办（T10，ADR 0117）**：`tavotto_open_figure` 的 `argv`（一项一个 token）/
+  `run_config`（`rc_…`）二选一、批量不接受；非空 argv 走 GUI 的同一个 `runconfig.selection_for`（同一 (脚本, argv) 同一个引用，
+  `source="mcp"`），`argv=[]` = 明确无参数（旧行为），都不给 = 沿用这个脚本最近一次在 Tavotto 里**明确运行**的配置（`default_selection`，
+  与 GUI 磁盘面板同一判据），Agent 的 token 不改那份默认、不能标敏感。运行配置是会话身份的一部分（`_live_session_for` 按引用分开），
+  会话冻结它（`acquire` / `verify_replay`），落盘只存引用（带引用的记录 `v=2`，旧插件当作不存在）。`adopt_environment=<候选 id>`
+  （+ `expected_environment_generation`）委派 `envadvice.adopt_candidate`——与 HTTP `PATCH {candidate}` **同一个服务**，先采用再开图，
+  采用 ≠ 安装。**先问再发**：引擎没宣告 `script-argv` / `environment-adoption`（`bridge.engine_features()`）就以
+  `engine_capability_missing` 拒绝，绝不先无参数试一次。失败载荷**追加**（原字段不动）`requirements[]`（`{kind, answer_with, where}`：
+  再调时带哪个参数答；`None` 时 `where=tavotto_app` / `user` 说明这里答不了）、`input`（`reason` 闭集 + `secret`）、`arguments`
+  （T07 只读 schema 摘要，有界、无 help 原文）、`environment`（`envadvice.recommend()` 纯读投影）；口令那一问明确要求不经 Agent。
+  这些新模块比最低引擎版本新，**只经 `bridge._optional_engine()`** 取（`OPTIONAL_ENGINE_MODULES`），不进 `_BRIDGE_IMPORT` /
+  `BRIDGE_IMPORTS_AT_MIN`。看护 `tests/test_mcp_compat.py`（含模拟旧引擎）、`tests/test_mcp_compat_e2e.py`（真 GUI × 真 stdio 同一份
+  配置与数据）、`tests/test_engine_capabilities.py`。

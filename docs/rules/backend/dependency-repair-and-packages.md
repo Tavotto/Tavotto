@@ -391,7 +391,8 @@
 - **采用 = `PATCH /api/engine/environment {scope: project, candidate, expected_generation}`**：id 只换本机自己枚举出来的路径；
   环境代对不上 409 `environment_changed`；全局显式选择压着 409 `environment_locked`（是谁锁的在建议里的 `decision.locked_by`）；现场再体检仍是
   `probe_environment`，通过才 `remember(automatic=False, trigger=recommended)` 并存 `generation`。采用不带安装授权：没有 pip，
-  内置 runtime 只读。
+  内置 runtime 只读。判据与写入的**唯一实现**是 `envadvice.adopt_candidate`（T10，ADR 0117 §三）：HTTP 这一路与 MCP 的
+  `adopt_environment=` 都委派它，不各写一份。
 - **环境代 `projectenv.environment_generation`**：解释器路径 `lstat` + `pyvenv.cfg` 各自的 (inode, mtime_ns, size) 摘要（不含 ctime / 权限位）；重建换代，装包 / chmod / 扩展属性不换。
   `pool.resolve_worker_python` 第 3 档：用户选的记录环境代变了 → `project_python_unusable(reason=rebuilt)`（不降级）；机器记的 → 作废。
   `preparation.plan_for` 记 `environment.generation`，`_stale_reason` 起会话前再比。

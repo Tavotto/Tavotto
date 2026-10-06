@@ -4564,19 +4564,68 @@ export interface ScriptArgs {
   sensitive?: boolean
 }
 
+/* ---------------- 引擎能力协商（T10，`src/tavotto/engine/capabilities.py`） ---------------- */
+
+/**
+ * 引擎宣告「会按精确 argv 运行并回 `run_config` 承认」的标记。**同源**：`engine/capabilities.py` 的
+ * `SCRIPT_ARGV`（`tests/test_engine_capabilities.py` 两侧对拍）。
+ */
+export const ENGINE_FEATURE_SCRIPT_ARGV = 'script-argv'
+/** 引擎没宣告所需能力时的稳定码（与后端 / MCP 桥同一个） */
+export const ENGINE_CAPABILITY_MISSING = 'engine_capability_missing'
+
+let engineFeaturesPromise: Promise<ReadonlySet<string>> | null = null
+
+/**
+ * 引擎宣告的能力（`/api/version` 的 `features`；公开端点、不带项目）。一个标签页问一次：引擎升级后旧标签页
+ * 由同一端点的 `build` 发现过期并刷新。网络失败不缓存（下次再问）；端点在、却没有 `features` = 旧引擎，一个都没有。
+ */
+export function fetchEngineFeatures(): Promise<ReadonlySet<string>> {
+  engineFeaturesPromise ??= fetch(apiUrl('/api/version'), { cache: 'no-store' })
+    .then(async (res) => {
+      const body = res.ok ? ((await res.json()) as { features?: unknown }) : {}
+      const list = Array.isArray(body?.features) ? body.features : []
+      return new Set(list.filter((f): f is string => typeof f === 'string'))
+    })
+    .catch((err: unknown) => {
+      engineFeaturesPromise = null
+      throw err
+    })
+  return engineFeaturesPromise
+}
+
+/** 测试与重连用：忘掉问过的能力。 */
+export function resetEngineFeatures(): void {
+  engineFeaturesPromise = null
+}
+
+/**
+ * **先问再发**：旧端点不认识的字段会被静默忽略——把 `argv` 发给旧引擎，它照样无参数运行，回包看起来一切
+ * 正常。所以发非空 argv 之前确认引擎宣告了 `script-argv`；没有就当场以 `engine_capability_missing` 拒绝，
+ * 一次请求都不发（绝不先「试一次无参数」）。
+ */
+async function requireEngineFeature(feature: string): Promise<void> {
+  if ((await fetchEngineFeatures()).has(feature)) return
+  throw new ApiError('本机 Tavotto 引擎不支持这项功能，请升级后再试', 409, {
+    code: ENGINE_CAPABILITY_MISSING,
+    params: { feature },
+  })
+}
+
 /** 试运行：真的跑一遍脚本，按它**实际产出**的文件名登记（冷启动可能要几分钟） */
-export const probeScript = (script: string, cost?: string, args?: ScriptArgs) =>
-  jsonFetch<ProbeResult>('/api/registry/probe', {
+export const probeScript = async (script: string, cost?: string, args?: ScriptArgs) => {
+  const argv = args?.argv && args.argv.length > 0 ? [...args.argv] : null
+  if (argv) await requireEngineFeature(ENGINE_FEATURE_SCRIPT_ARGV)
+  return jsonFetch<ProbeResult>('/api/registry/probe', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       script,
       cost,
-      ...(args?.argv && args.argv.length > 0
-        ? { argv: [...args.argv], ...(args.sensitive ? { argv_sensitive: true } : {}) }
-        : {}),
+      ...(argv ? { argv, ...(args?.sensitive ? { argv_sensitive: true } : {}) } : {}),
     }),
   })
+}
 
 /**
  * 脚本参数的静态 schema（T07，`engine/scriptargs.py`）：后端只读源码，不执行、不 import、不调 `--help`。
@@ -4744,8 +4793,15 @@ const preparationBody = (target: PreparationTarget) =>
  * 为一个目标创建 / 复用检查会话。**不执行任何用户代码**（201 新建 / 200 复用）。`pj` 是发请求那一刻认领的项目：
  * 回包属于它，换了项目由调用方丢弃。`signal`：只用于网络看门狗（取消的是这一次 HTTP 等待，不是任何后台工作）。
  */
-export const createPreparationSession = (target: PreparationTarget, pj: string | null, signal?: AbortSignal) =>
-  jsonFetch<PreparationReport>(
+export const createPreparationSession = async (
+  target: PreparationTarget,
+  pj: string | null,
+  signal?: AbortSignal,
+) => {
+  if (!('id' in target) && target.argv && target.argv.length > 0) {
+    await requireEngineFeature(ENGINE_FEATURE_SCRIPT_ARGV)
+  }
+  return jsonFetch<PreparationReport>(
     '/api/engine/preparation-sessions',
     {
       method: 'POST',
@@ -4755,6 +4811,7 @@ export const createPreparationSession = (target: PreparationTarget, pj: string |
     },
     pj,
   )
+}
 
 /** 读会话报告（断线 / 刷新 / SSE 提示后的补拉；**不会**重新执行任何东西）。404 + `unknown_or_restarted` = 应用重启过 */
 export const fetchPreparationSession = (sessionId: string, pj: string | null, signal?: AbortSignal) =>
@@ -4782,6 +4839,7 @@ export const actOnPreparationSession = (
 
 /** 运行参数（T03）的稳定错误码：界面按它们翻文案（`errors:backend.*`） */
 export const RUN_ARGV_ERROR_CODES = [
+  ENGINE_CAPABILITY_MISSING,
   'invalid_argv',
   'run_config_missing',
   'run_config_secret_missing',

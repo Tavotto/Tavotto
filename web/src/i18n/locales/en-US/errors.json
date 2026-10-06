@@ -181,6 +181,7 @@
     "script_exited": "The script ended early by calling sys.exit() ({{error}}). Tavotto needs the figures the script leaves in memory when it finishes: remove that exit, or exit only on error.",
     "script_needs_arguments": "The script requires command-line arguments, but Tavotto runs scripts without any (sys.argv holds only the script itself), so argument parsing exited. Give those arguments defaults, or run “tavotto run -- python script.py args…” in a terminal so Tavotto follows your own command. Expand the output to see which arguments it wants.",
     "script_rejected_arguments": "The script’s own argument parser rejected the {{argv_count}} arguments you gave. Check that they match what the script expects (Tavotto passed them exactly as entered). Expand the output to see its message.",
+    "engine_capability_missing": "This Tavotto engine is too old to run scripts with arguments. Upgrade Tavotto and try again; it will not fall back to running without arguments.",
     "invalid_argv": "The run arguments are invalid: they must be a list of strings (one per argument, no NUL characters, with a limit on count and total length).",
     "run_config_missing": "This machine doesn’t have the arguments this figure was originally run with (it may come from another machine, or the record was cleaned up). Enter the arguments again and re-run.",
     "run_config_secret_missing": "That run used sensitive arguments, which Tavotto doesn’t keep. Enter them again to re-run.",

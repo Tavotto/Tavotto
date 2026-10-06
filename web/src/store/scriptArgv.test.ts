@@ -2,7 +2,7 @@
  * 运行参数草稿（T03）：精确 token，不拆不并；运行开始那一刻取拷贝；换项目丢弃；请求体里空草稿没有 `argv`。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { probeScript } from '@/lib/api'
+import { probeScript, resetEngineFeatures } from '@/lib/api'
 import { snapshotScriptArgs, useScriptArgvStore } from './scriptArgvStore'
 
 const store = () => useScriptArgvStore.getState()
@@ -57,7 +57,12 @@ describe('probeScript 的请求体', () => {
   const fetchMock = vi.fn()
   beforeEach(() => {
     fetchMock.mockReset()
-    fetchMock.mockResolvedValue({ ok: true, json: async () => ({}) })
+    resetEngineFeatures()
+    // 引擎宣告会按 argv 运行（T10：带参数之前先问 `/api/version`）
+    fetchMock.mockImplementation(async (url: string) => ({
+      ok: true,
+      json: async () => (String(url).includes('/api/version') ? { features: ['script-argv'] } : {}),
+    }))
     vi.stubGlobal('fetch', fetchMock)
   })
   afterEach(() => vi.unstubAllGlobals())
