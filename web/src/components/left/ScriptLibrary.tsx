@@ -9,6 +9,13 @@ import { backendCodeMsg, type CapturedFigureDescriptor, type ScriptInventoryEntr
 import { formatCm } from '@/lib/units'
 import { formatMessage, msg, t as translate } from '@/i18n'
 import { addRuntimePanelToCanvas } from '@/store/workspace'
+import { preparationPanelEnabled } from '@/lib/preparationFlag'
+import { prepRowKey } from '@/lib/preparationText'
+import {
+  scriptTarget,
+  useProjectPreparationStore,
+  type PrepEntry,
+} from '@/store/projectPreparationStore'
 import { useScriptInputStore } from '@/store/scriptInputStore'
 import { useScriptLibraryStore } from '@/store/scriptLibraryStore'
 import {
@@ -185,11 +192,19 @@ function ScriptRow({
 }) {
   useTranslation('workspace')
   const run = useScriptRunStore((s) => s.byScript[entry.script])
+  const prep = useProjectPreparationStore((s) => s.entries[`script:${entry.script}`])
   const busy = !!run && isBusyPhase(run.phase)
   const [resultsOpen, setResultsOpen] = useState(false)
   const hasAnswers = useScriptInputStore((s) => (s.answers?.[entry.script]?.length ?? 0) > 0)
+  // T09（ADR 0116）：默认这颗钮打开准备面板（后端会话：检查 → 确认 → 运行 → 进入编辑），不直接执行；
+  // 本地开关关掉时回到旧的同步试运行（保留一版）
+  const viaPanel = preparationPanelEnabled() && !busy
 
   const onRunOrCancel = () => {
+    if (viaPanel) {
+      void useProjectPreparationStore.getState().open(scriptTarget(entry.script))
+      return
+    }
     const store = useScriptRunStore.getState()
     if (busy) store.cancel(entry.script)
     else void store.run(entry.script)
@@ -198,7 +213,7 @@ function ScriptRow({
   return (
     <li className="flex flex-col" data-script-row={entry.script}>
       <div className={cn(listRowClass(), 'gap-1.5 pl-1.5 pr-0.5')}>
-        <StatusDot entry={entry} run={run} />
+        <StatusDot entry={entry} run={run} prep={prep} />
         {/* 脚本名是这一行的主文字：等宽（路径 / 脚本名那一档）但字号跟正文走 12，
             与右侧 11px 的状态一句话差一个台阶（左栏审计 L02） */}
         <span
@@ -207,7 +222,13 @@ function ScriptRow({
         >
           {entry.script}
         </span>
-        <StatusLine entry={entry} stems={stems} run={run} onViewResults={() => setResultsOpen(true)} />
+        <StatusLine
+          entry={entry}
+          stems={stems}
+          run={run}
+          prep={prep}
+          onViewResults={() => setResultsOpen(true)}
+        />
         {/* 脚本 input() 记住的答案（ADR 0099）：只在这个脚本真有答案时出现，其余行一个像素不变 */}
         {hasAnswers && (
           <IconButton
@@ -226,9 +247,17 @@ function ScriptRow({
           label={
             busy
               ? sc('cancelAria', { script: entry.script })
-              : sc(entry.registered ? 'rerunAria' : 'runAria', { script: entry.script })
+              : viaPanel
+                ? sc('prepareAria', { script: entry.script })
+                : sc(entry.registered ? 'rerunAria' : 'runAria', { script: entry.script })
           }
-          tip={busy ? sc(run?.cancelRequested ? 'cancelling' : 'cancel') : sc(entry.registered ? 'rerun' : 'run')}
+          tip={
+            busy
+              ? sc(run?.cancelRequested ? 'cancelling' : 'cancel')
+              : viaPanel
+                ? sc('prepareAria', { script: entry.script })
+                : sc(entry.registered ? 'rerun' : 'run')
+          }
           disabled={!!run?.cancelRequested}
           data-script-run={entry.script}
           onClick={onRunOrCancel}
@@ -365,9 +394,23 @@ function GateReopen({ run }: { run: ScriptRunState | undefined }) {
  * 行首的状态点（6px，坐在 16px 列里）：实心 = 已关联；空心 = 还没跑过；
  * 呼吸 = 正在跑；红 = 这次失败。纯装饰——状态本身由旁边那句话与可达名说出。
  */
-function StatusDot({ entry, run }: { entry: ScriptInventoryEntry; run: ScriptRunState | undefined }) {
+function StatusDot({
+  entry,
+  run,
+  prep,
+}: {
+  entry: ScriptInventoryEntry
+  run: ScriptRunState | undefined
+  prep?: PrepEntry
+}) {
   const phase = run?.phase ?? 'idle'
-  const running = phase === 'starting_runtime' || phase === 'running'
+  const prepPhase = prep?.report?.phase
+  const running =
+    phase === 'starting_runtime' ||
+    phase === 'running' ||
+    prepPhase === 'running' ||
+    prepPhase === 'awaiting_runtime_input' ||
+    prepPhase === 'preparing_environment'
   // 停在门上不是失败（缺的是一个决定），不标红
   const failed = !running && !!run?.error && !isGatePhase(phase)
   return (
@@ -396,19 +439,36 @@ function StatusLine({
   entry,
   stems,
   run,
+  prep,
   onViewResults,
 }: {
   entry: ScriptInventoryEntry
   stems: string[]
   run: ScriptRunState | undefined
+  prep?: PrepEntry
   onViewResults: () => void
 }) {
   useTranslation('workspace')
   const phase = run?.phase ?? 'idle'
+  // 准备会话（T09）在这一行上：只翻译它的 phase（`prepRowKey`），点一下回到面板；旧试运行的状态机此刻不在跑
+  const prepKey = !isBusyPhase(phase) ? prepRowKey(prep) : null
 
   let body: React.ReactNode = null
   let title: string | undefined
-  if (phase === 'starting_runtime' || phase === 'running') {
+  if (prepKey && prep) {
+    body = (
+      <button
+        data-script-prep-status={prep.report?.phase ?? 'checking'}
+        onClick={() => {
+          useProjectPreparationStore.setState({ focus: prep.key })
+          useUiStore.getState().setPreparationOpen(true)
+        }}
+        className="max-w-full truncate rounded-xs text-ink-2 underline-offset-2 outline-none hover:text-ink hover:underline focus-visible:focus-ring"
+      >
+        {translate(`prep.row.${prepKey.key}`, { ns: 'workspace', ...prepKey.values })}
+      </button>
+    )
+  } else if (phase === 'starting_runtime' || phase === 'running') {
     body = sc(phase === 'running' ? 'running' : 'starting')
   } else if (phase === 'captured_one' || phase === 'captured_many') {
     body = (
@@ -571,12 +631,15 @@ export function ProbeResultsDialog({
   dropped,
   open,
   onOpenChange,
+  onAdded,
 }: {
   script: string
   descriptors: CapturedFigureDescriptor[]
   dropped: number
   open: boolean
   onOpenChange: (v: boolean) => void
+  /** 加进画布之后（准备面板据此观察那张图的首次编辑渲染，T09） */
+  onAdded?: (d: CapturedFigureDescriptor) => void
 }) {
   useTranslation('workspace')
   const setStatus = useUiStore((s) => s.setStatus)
@@ -606,6 +669,7 @@ export function ProbeResultsDialog({
               onClick={() => {
                 addRuntimePanelToCanvas(d)
                 setStatus(msg('registry.addedToCanvas', { stem: d.stem }, 'dialogs'))
+                onAdded?.(d)
               }}
             >
               {sc('addToCanvas')}

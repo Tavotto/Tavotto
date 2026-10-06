@@ -208,14 +208,32 @@ function EnvironmentAdviceRow() {
       </p>
     )
   }
-  if (!rec.decision.needs_decision) return null
-  const pick = rec.candidates.find((c) => c.id === rec.recommended_id)
-  if (!pick) return null
   const run = async (task: () => Promise<string | null>) => {
     setBusy(true)
     setError(await task())
     setBusy(false)
   }
+  if (!rec.decision.needs_decision) {
+    // ADR 0114 之前无提示自动采用的记录（`legacy_auto`）照常生效；这里给一次一键确认（T09）：对此刻在用的那个候选
+    // 走同一个采用端点，记录升级为 confirmed——一句话 + 一个主按钮，不确认也照旧能用
+    const current = rec.decision.consent === 'legacy_auto' ? rec.candidates.find((c) => c.current) : undefined
+    if (!current) return null
+    return (
+      <div className="mt-1.5 flex flex-col gap-1.5 border-t border-border pt-1.5" data-env-advice-legacy>
+        <span className="text-xs text-ink-2">
+          {en('envAdviceLegacy', { name: current.python_relative || current.name || current.id })}
+        </span>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Button variant="primary" size="sm" disabled={busy} onClick={() => void run(() => adoptCandidate(current))}>
+            {en('envAdviceConfirm')}
+          </Button>
+        </div>
+        {error && <p className="text-xs text-danger">{error}</p>}
+      </div>
+    )
+  }
+  const pick = rec.candidates.find((c) => c.id === rec.recommended_id)
+  if (!pick) return null
   return (
     <div className="mt-1.5 flex flex-col gap-1.5 border-t border-border pt-1.5" data-env-advice>
       <span className="text-xs text-ink-2">

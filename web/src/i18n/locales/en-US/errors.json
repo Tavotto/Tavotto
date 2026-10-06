@@ -643,6 +643,8 @@
     "envAdviceAsk": "This project has a Python environment ({{name}}). Run scripts with it?",
     "envAdviceUse": "Use it",
     "envAdviceBuiltIn": "Use Tavotto’s bundled environment",
+    "envAdviceLegacy": "This project was switched to {{name}} automatically earlier, keep using it?",
+    "envAdviceConfirm": "Keep using it",
     "envAdviceLocked": "A globally chosen Python is in effect, so the project’s environment will not be used. Clear the global choice in Settings first.",
     "projectEnvRecommended": "The project environment {{venv}} already has {{module}} and can run this. Switch to it?",
     "userEnvSource_project_venv": "the project’s {{label}} environment",

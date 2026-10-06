@@ -161,3 +161,38 @@ describe('环境建议：一句话 + 一个主按钮', () => {
     expect(text()).not.toContain(en('envAdviceUse'))
   })
 })
+
+describe('ADR 0114 之前自动采用的记录（legacy_auto）：一键确认（T09）', () => {
+  const legacyEnv = () => {
+    const env = adviceEnv({ needs_decision: false }) as unknown as {
+      project: { recommendation: EnvRecommendation }
+    }
+    const rec = env.project.recommendation
+    rec.decision.consent = 'legacy_auto'
+    rec.decision.current_id = 'cand-1'
+    rec.candidates[0].current = true
+    return env as unknown as EngineEnvironment
+  }
+
+  it('一句话 + 一个主按钮；确认 = 对此刻在用的那个候选走同一个采用端点', async () => {
+    vi.mocked(adoptEnvironmentCandidate).mockReset()
+    vi.mocked(adoptEnvironmentCandidate).mockResolvedValue({ ok: true, project: { open: true } as never })
+    useEnvStore.setState({ env: legacyEnv() })
+    await render(<EngineEnvironmentCard />)
+    const row = document.querySelector('[data-env-advice-legacy]')!
+    expect(row.textContent).toContain(en('envAdviceLegacy', { name: '.venv/bin/python' }))
+    const buttons = row.querySelectorAll('button')
+    expect(buttons.length).toBe(1)
+    await act(async () => (buttons[0] as HTMLButtonElement).click())
+    expect(adoptEnvironmentCandidate).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(adoptEnvironmentCandidate).mock.calls[0][0].id).toBe('cand-1')
+  })
+
+  it('已经明确确认过（confirmed）：不再问', async () => {
+    const env = legacyEnv() as unknown as { project: { recommendation: EnvRecommendation } }
+    env.project.recommendation.decision.consent = 'confirmed'
+    useEnvStore.setState({ env: env as unknown as EngineEnvironment })
+    await render(<EngineEnvironmentCard />)
+    expect(document.querySelector('[data-env-advice-legacy]')).toBeNull()
+  })
+})

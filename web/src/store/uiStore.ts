@@ -340,6 +340,11 @@ interface UiState extends Persisted {
    */
   scanPanelOpen: boolean
   /**
+   * 准备面板（T09，ADR 0116）是否展开。**只是呈现**：会话、订阅与报告在 `projectPreparationStore`；关掉它不取消任何
+   * 后台工作（取消是会话的 `cancel` 动作），等作答的 input 由原对话框接着展示。不进持久化。
+   */
+  preparationOpen: boolean
+  /**
    * 「渲染环境」对话框：`EngineEnvironmentCard` 的独立出口。脚本区「可能需要原环境」
    * 那一组的「选择渲染环境」直接开它，不把用户扔进设置页去找那张卡（卡在设置里
    * 住在「诊断」页、环境正常时还折叠在技术详情里）。这是它**唯一**的开关。
@@ -428,6 +433,7 @@ interface UiState extends Persisted {
   setStylesOpen: (v: boolean, opts?: { presetId?: string | null }) => void
   setRegistryOpen: (v: boolean) => void
   setScanPanelOpen: (v: boolean) => void
+  setPreparationOpen: (v: boolean) => void
   setEngineEnvOpen: (v: boolean) => void
   setShortcutHelpOpen: (v: boolean) => void
   /**
@@ -516,6 +522,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   dialogStack: [],
   registryOpen: false,
   scanPanelOpen: false,
+  preparationOpen: false,
   engineEnvOpen: false,
   shortcutHelpOpen: false,
   settingsOpen: false,
@@ -758,6 +765,7 @@ export const useUiStore = create<UiState>((set, get) => ({
     })),
   setRegistryOpen: (registryOpen) => set({ registryOpen }),
   setScanPanelOpen: (scanPanelOpen) => set({ scanPanelOpen }),
+  setPreparationOpen: (preparationOpen) => set({ preparationOpen }),
   setEngineEnvOpen: (engineEnvOpen) => set({ engineEnvOpen }),
   setShortcutHelpOpen: (shortcutHelpOpen) => set({ shortcutHelpOpen }),
   setSettingsOpen: (settingsOpen, settingsSection = undefined) =>

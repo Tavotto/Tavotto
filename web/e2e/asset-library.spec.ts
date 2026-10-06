@@ -4,6 +4,12 @@ import path from 'node:path'
 import { expect, openElementsTab, test, type RunningApp } from './fixtures'
 import type { Page } from '@playwright/test'
 
+// 这一组钉的是**旧**的同步试运行路径（T09 起它只在本地开关关闭时走；默认的准备面板路径见
+// `preparation-panel.spec.ts`）。开关是本机 localStorage 偏好，在页面脚本之前写好
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('tavotto.preparationPanel', 'off'))
+})
+
 /**
  * Compatibility Bridge Session 5：素材库普通入口的真实后端黄金路径。
  *

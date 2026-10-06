@@ -8,6 +8,11 @@
 （`ScriptLibrary`，项目内每个合理 .py 一行）两个区。普通路径必须在这里
 完成；RegistryDialog 只留冲突裁决 / 手工 stem / 高级诊断。
 
+> **T09（ADR 0116）起**：脚本行 ▶ 默认打开准备面板（后端准备会话：只读检查 → 用户确认 → 运行 → 进入编辑），不再直接试运行；
+> 行上的状态一句话翻译会话 phase。下文的 `scriptRunStore` 状态机、门相位与「答完重跑」协调、修复卡 / 失败恢复 / 「复制诊断」
+> 是本地开关（`lib/preparationFlag.ts`）关闭时的**旧路径**，保留一版，退出条件见 ADR 0116 §七；面板的规则在
+> `readiness-and-left-shell.md`「准备面板」。
+
 - **数据源三件套**：`scriptLibraryStore`（`/api/registry` 全视图，缓存 +
   幂等去重）、`runtimeAssetStore.assets`（`GET /api/runtime/assets`，只读
   清单 + `previewNonce` 预览换代）、`scriptRunStore`（运行状态机）。

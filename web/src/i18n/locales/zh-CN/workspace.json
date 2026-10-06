@@ -541,7 +541,8 @@
     },
     "deps": {
       "declared": "依赖声明：{{files}}（{{count}} 条），尚未检查是否已安装。"
-    }
+    },
+    "prepare": "准备并运行"
   },
   "save": {
     "conflict": "排版已在别处改过，请先处理冲突。",
@@ -593,7 +594,8 @@
     "groupInfraName": "工具与配置脚本",
     "recoveryDetails": "详情",
     "rerunWithArgs": "用这些参数再试一次",
-    "group_needsFix": "需要修复"
+    "group_needsFix": "需要修复",
+    "prepareAria": "准备并运行 {{script}}"
   },
   "spineZone": {
     "label": "{{side}} · {{dir}}刻度 {{state}} · {{action}}",
@@ -840,5 +842,112 @@
     "fast_edit_entered": "你的改动会保存到当前排版，原始文件不动。",
     "multi_select": "用选区旁的浮动栏对齐和分布。",
     "problem_found": "左侧「问题」可定位对象和属性字段。"
+  },
+  "prep": {
+    "aria": "准备 {{script}}",
+    "close": "关闭准备面板（后台任务不会停）",
+    "details": "详情",
+    "restartedNote": "上一次的准备会话已不在（应用可能重启过），这是按此刻的状态重新检查的结果；没有自动运行脚本。",
+    "line": {
+      "checking": "正在检查 {{script}}…",
+      "offline": "暂时连不上 Tavotto，后台任务仍按原样进行，正在重连…",
+      "checkFailed": "没能开始检查 {{script}}。",
+      "argsChanged": "运行参数改了，需要按新参数重新检查。",
+      "rejected": "设置在你确认之后变了，已按最新情况重新显示。",
+      "restarted": "已按此刻的状态重新检查 {{script}}，没有自动运行。",
+      "stopping": "正在停止 {{script}}…",
+      "running": "正在运行 {{script}}…",
+      "input": "{{script}} 在等你回答一个问题。",
+      "preparing": "正在准备 {{script}} 需要的依赖…",
+      "preparingJoined": "同样的依赖已经在准备，正在等它完成…",
+      "ready": "{{script}} 已经可以运行。",
+      "readyArgs": "{{script}} 已经可以带 {{count}} 个参数运行。",
+      "completed_other": "已捕获 {{count}} 张图，可以进入编辑。",
+      "completedNoList": "运行完成，图已登记到素材库。",
+      "static": "这张图没有脚本，可以直接排版。",
+      "editReady": "已进入编辑。",
+      "editOpening": "正在打开编辑…",
+      "noFigure": "运行完成，未发现可编辑图。",
+      "notRegistered": "图已捕获，但没能登记，需要在接入中心处理。",
+      "cancelled": "已停止，没有继续运行。",
+      "envLocked": "全局设置锁定了 Python 解释器，这里不能换环境。",
+      "envChoice": "项目里有自己的 Python 环境 {{name}}，要用它运行吗？",
+      "envChoiceOpen": "需要先选择用哪个 Python 环境运行。",
+      "workdir": "需要先选择脚本在哪个目录运行。",
+      "depsPinned": "全局设置锁定了 Python 解释器，装的包不会被用到。",
+      "depsScope": "这个脚本要的依赖与同一环境里已装的版本冲突。",
+      "depsUnknown": "脚本运行时缺少 {{module}}，Tavotto 认不出该装哪个包。",
+      "depsRuntime": "脚本运行时缺少 {{module}}，装好后需要再运行一次。",
+      "deps_other": "运行前需要先安装 {{count}} 个包。",
+      "depsSome": "运行前需要先安装依赖。",
+      "needsArgs": "{{script}} 需要运行参数，填好后再检查。",
+      "missingData": "{{script}} 找不到它要读的数据。",
+      "stale": "检查之后环境或设置变了，需要重新检查。",
+      "expired": "那次运行的记录已经不在了，无法确认结果。",
+      "unknown": "有一项条件没能判断，需要重新检查。",
+      "envBlocked": "找不到能运行 {{script}} 的 Python 环境。",
+      "blocked": "现在还不能运行 {{script}}。",
+      "depsFailed": "依赖没有装好，原来的环境没有改动。",
+      "failed": "运行 {{script}} 没有成功。",
+      "depsCancelled": "依赖准备已停止。",
+      "attention": "{{script}} 还需要你处理一件事。"
+    },
+    "btn": {
+      "run": "确认并运行",
+      "runAgain": "再运行一次",
+      "stop": "停止",
+      "prepareDeps": "准备依赖",
+      "switchScope": "换成本项目的版本",
+      "recheck": "重新检查",
+      "useEnvironment": "使用这个环境",
+      "chooseWorkdir": "选择运行目录",
+      "pointAtData": "指认数据位置",
+      "viewFigures_other": "查看 {{count}} 张图",
+      "enterEdit": "进入编辑",
+      "checkArgs": "按新参数检查",
+      "retry": "重试",
+      "openEnvironment": "选择渲染环境",
+      "openRegistry": "打开接入中心",
+      "useBuiltin": "改用内置环境"
+    },
+    "check": {
+      "target": "目标脚本",
+      "environment": "Python 环境",
+      "workdir": "运行目录",
+      "dependencies": "依赖",
+      "data": "数据",
+      "arguments": "运行参数"
+    },
+    "status": {
+      "ok": "已满足",
+      "unknown": "未知",
+      "needs_action": "需要你确认",
+      "blocked": "走不通"
+    },
+    "impact": {
+      "installs": "将安装：{{list}}",
+      "userEnvironment": "会直接改动你自己的 Python 环境，失败时不能完整回滚。",
+      "managed": "装进 Tavotto 管理的独立环境，失败不影响现在在用的环境。"
+    },
+    "fact": {
+      "finished": "脚本执行完成",
+      "notFinished": "脚本没有执行完",
+      "captured": "捕获到了图",
+      "notCaptured": "没有捕获到图",
+      "editRequested": "已加入画布，编辑渲染可用后才算进入编辑"
+    },
+    "row": {
+      "checking": "检查中",
+      "offline": "连接中断",
+      "running": "运行中",
+      "input": "等你回答",
+      "preparing": "准备依赖中",
+      "ready": "可以运行",
+      "captured_other": "已捕获 {{count}} 张图",
+      "static": "没有脚本",
+      "noFigure": "运行完成，没有图",
+      "cancelled": "已停止",
+      "attention": "需要处理"
+    }
   }
 }

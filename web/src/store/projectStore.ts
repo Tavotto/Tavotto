@@ -46,6 +46,7 @@ import { useFigurePickerStore } from '@/store/figurePickerStore'
 import { resetExportState } from '@/store/exportStore'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { useProjectScanStore } from '@/store/projectScanStore'
+import { useProjectPreparationStore } from '@/store/projectPreparationStore'
 import { useNativeSessionStore } from '@/store/nativeSessionStore'
 import { useDepRepairStore } from '@/store/depRepairStore'
 import { usePackageStore } from '@/store/packageStore'
@@ -258,6 +259,10 @@ async function resetForNewProject() {
   // **后端那一笔账不取消**——它在项目关闭时才收；切回来时 `start()` 会复用或增量重扫
   useProjectScanStore.getState().clear()
   useUiStore.getState().setScanPanelOpen(false)
+  // 准备会话（T09）：报告、订阅、轮询与迟到响应都属于旧项目，换代丢掉；**后端什么都不取消**——用户的执行与已授权的
+  // 安装照常跑完，切回来重新打开时会话复用（同一目标同一份会话）
+  useProjectPreparationStore.getState().clear()
+  useUiStore.getState().setPreparationOpen(false)
   // 导出作业的**前端状态**跟着丢：结果里的 `/exports/<name>` 是裸路径，
   // 渲染时由 `apiUrl()` 补上**当前**项目的 pj——不清的话，切完项目再打开
   // 导出面板会看到旧项目的结果，而那些链接指向的是新项目的导出目录（不是

@@ -24,6 +24,7 @@ import { StyleDialog } from '@/components/StyleDialog'
 import { DocumentBanner } from '@/components/DocumentBanner'
 import { ProjectReadinessBanner } from '@/components/ProjectReadinessBanner'
 import { ProjectScanBar } from '@/components/ProjectScanBar'
+import { PreparationPanel } from '@/components/PreparationPanel'
 import { VersionDrawer } from '@/components/VersionDialog'
 import { NamedNodeQuickBox } from '@/components/NamedNodeQuickBox'
 import { LeftPanel } from '@/components/left/LeftPanel'
@@ -248,6 +249,8 @@ function Workspace() {
         <DocumentBanner />
         <ProjectReadinessBanner />
         <ProjectScanBar />
+        {/* 准备面板（T09）：所有「准备并打开」入口共用的一个可恢复展示面；非模态，关掉只改呈现 */}
+        <PreparationPanel />
         <div className="relative flex min-h-0 flex-1">
           <LeftRail />
           {/* 窄屏时抽屉盖在画布上（绝对定位在轨道右侧），画布宽度不被侵占 */}

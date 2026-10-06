@@ -562,7 +562,8 @@
     },
     "deps": {
       "declared": "Declared dependencies: {{files}} ({{count}} entries); not yet checked for installation."
-    }
+    },
+    "prepare": "Prepare and run"
   },
   "save": {
     "conflict": "This layout was changed elsewhere. Resolve the conflict first.",
@@ -618,7 +619,8 @@
     "groupInfraName": "Tools and config scripts",
     "recoveryDetails": "Details",
     "rerunWithArgs": "Try again with these arguments",
-    "group_needsFix": "Needs fixing"
+    "group_needsFix": "Needs fixing",
+    "prepareAria": "Prepare and run {{script}}"
   },
   "spineZone": {
     "label": "{{side}} · {{dir}} ticks {{state}} · {{action}}",
@@ -887,5 +889,116 @@
     "fast_edit_entered": "Your changes are saved to this layout. The original file stays untouched.",
     "multi_select": "Use the floating bar by the selection to align and distribute.",
     "problem_found": "“Problems” on the left locates the object and its property field."
+  },
+  "prep": {
+    "aria": "Prepare {{script}}",
+    "close": "Close the preparation panel (background work keeps going)",
+    "details": "Details",
+    "restartedNote": "The earlier preparation session is gone (the app may have restarted); this is a fresh check of the current state, and the script was not run automatically.",
+    "line": {
+      "checking": "Checking {{script}}…",
+      "offline": "Can't reach Tavotto right now, background work continues as it was, reconnecting…",
+      "checkFailed": "Could not start checking {{script}}.",
+      "argsChanged": "The arguments changed, so check again with the new ones.",
+      "rejected": "The settings changed after you confirmed, so this now shows the latest state.",
+      "restarted": "Checked {{script}} again as things stand now, without running it.",
+      "stopping": "Stopping {{script}}…",
+      "running": "Running {{script}}…",
+      "input": "{{script}} is waiting for your answer.",
+      "preparing": "Preparing the packages {{script}} needs…",
+      "preparingJoined": "The same packages are already being prepared, waiting for that to finish…",
+      "ready": "{{script}} is ready to run.",
+      "readyArgs": "{{script}} is ready to run with {{count}} arguments.",
+      "completed_one": "Captured 1 figure, ready to edit.",
+      "completed_other": "Captured {{count}} figures, ready to edit.",
+      "completedNoList": "The run finished and its figures are in the library.",
+      "static": "This figure has no script and can be laid out directly.",
+      "editReady": "Now editing.",
+      "editOpening": "Opening the editor…",
+      "noFigure": "The run finished, but no editable figure was found.",
+      "notRegistered": "The figure was captured but could not be registered, so resolve it in the connection center.",
+      "cancelled": "Stopped without continuing.",
+      "envLocked": "A global setting locks the Python interpreter, so the environment can't be changed here.",
+      "envChoice": "This project has its own Python environment {{name}}, use it to run?",
+      "envChoiceOpen": "Choose which Python environment to run with first.",
+      "workdir": "Choose which folder the script runs in first.",
+      "depsPinned": "A global setting locks the Python interpreter, so installed packages would not be used.",
+      "depsScope": "This script needs package versions that conflict with ones already in the same environment.",
+      "depsUnknown": "The script is missing {{module}} and Tavotto can't tell which package provides it.",
+      "depsRuntime": "The script is missing {{module}}, so install it and run again.",
+      "deps_one": "1 package needs to be installed before running.",
+      "deps_other": "{{count}} packages need to be installed before running.",
+      "depsSome": "Some packages need to be installed before running.",
+      "needsArgs": "{{script}} needs arguments, so fill them in and check again.",
+      "missingData": "{{script}} can't find the data it reads.",
+      "stale": "The environment or settings changed after the check, so check again.",
+      "expired": "The record of that run is gone, so its result can't be confirmed.",
+      "unknown": "One condition couldn't be determined, so check again.",
+      "envBlocked": "No Python environment can run {{script}}.",
+      "blocked": "{{script}} can't run yet.",
+      "depsFailed": "The packages were not installed and the environment in use is unchanged.",
+      "failed": "Running {{script}} did not succeed.",
+      "depsCancelled": "Package preparation stopped.",
+      "attention": "{{script}} needs one more thing from you."
+    },
+    "btn": {
+      "run": "Confirm and run",
+      "runAgain": "Run again",
+      "stop": "Stop",
+      "prepareDeps": "Prepare packages",
+      "switchScope": "Switch to this project's versions",
+      "recheck": "Check again",
+      "useEnvironment": "Use this environment",
+      "chooseWorkdir": "Choose folder",
+      "pointAtData": "Locate data",
+      "viewFigures_one": "View 1 figure",
+      "viewFigures_other": "View {{count}} figures",
+      "enterEdit": "Edit",
+      "checkArgs": "Check with new arguments",
+      "retry": "Retry",
+      "openEnvironment": "Choose environment",
+      "openRegistry": "Open connection center",
+      "useBuiltin": "Use the built-in environment"
+    },
+    "check": {
+      "target": "Target script",
+      "environment": "Python environment",
+      "workdir": "Working folder",
+      "dependencies": "Packages",
+      "data": "Data",
+      "arguments": "Arguments"
+    },
+    "status": {
+      "ok": "Satisfied",
+      "unknown": "Unknown",
+      "needs_action": "Needs your confirmation",
+      "blocked": "Blocked"
+    },
+    "impact": {
+      "installs": "Will install: {{list}}",
+      "userEnvironment": "This changes your own Python environment directly and can't be fully rolled back if it fails.",
+      "managed": "Installs into a separate environment Tavotto manages; a failure leaves the one in use untouched."
+    },
+    "fact": {
+      "finished": "Script finished",
+      "notFinished": "Script did not finish",
+      "captured": "Figures captured",
+      "notCaptured": "No figures captured",
+      "editRequested": "Added to the canvas; editing counts once its render is ready"
+    },
+    "row": {
+      "checking": "Checking",
+      "offline": "Disconnected",
+      "running": "Running",
+      "input": "Waiting for you",
+      "preparing": "Preparing packages",
+      "ready": "Ready to run",
+      "captured_one": "Captured 1 figure",
+      "captured_other": "Captured {{count}} figures",
+      "static": "No script",
+      "noFigure": "Finished, no figure",
+      "cancelled": "Stopped",
+      "attention": "Needs attention"
+    }
   }
 }

@@ -96,21 +96,37 @@ def fake_pool(monkeypatch):
     }
     box["gate"].set()  # 默认不阻塞
 
-    def build_owned(script, root, entry, **_kw):
+    def build_owned(script, root, entry, **kw):
         """替身按 pool 的合同回 `(worker, resp, created)`：所有权由这里**原子**给出，
-        默认「第一次调用创建、之后复用」——与真 pool 的 `get()` 同形。"""
+        默认「第一次调用创建、之后复用」——与真 pool 的 `get()` 同形。
+
+        `announce`（T09）：像真 pool 一样在执行之前把 `(worker, created)` 报给 `on_acquired`；被
+        `force_cancel(expected_worker=…)` 关掉时，卡在 build 里的这一次以 WorkerError 回来（真 worker 被杀即如此）。"""
         box["build_calls"] += 1
         ordinal = box["build_calls"]  # 进门那一刻的序号：所有权在「建会话那一下」就定了
-        box["gate"].wait(timeout=30)
-        if box["error"] is not None:
-            raise box["error"]
         factory = box["worker_factory"] or (lambda: _FakeWorker(Path(root)))
         created = ordinal == 1 if box["created"] is None else box["created"]
+        worker = factory()
+        if box["announce"] and kw.get("on_acquired") is not None:
+            kw["on_acquired"](worker, created)
+        box["gate"].wait(timeout=30)
+        if box["killed"].is_set():
+            raise engine_pool.WorkerError("worker 被关掉", code="worker_crashed")
+        if box["error"] is not None:
+            raise box["error"]
         make_resp = box["build_resp"] or _build_resp
-        return factory(), make_resp(), created
+        return worker, make_resp(), created
+
+    def force_cancel(script, root, **kw):
+        box["force_cancel"].append((script, root))
+        if kw.get("expected_worker") is not None:
+            box["killed"].set()
+            box["gate"].set()  # 被杀的 build 当场返回
 
     box["created"] = None
     box["build_resp"] = None
+    box["announce"] = False
+    box["killed"] = threading.Event()
     monkeypatch.setattr(engine_pool, "build_owned", build_owned)
     monkeypatch.setattr(engine_pool, "same_python", lambda a, b: True)
     monkeypatch.setattr(
@@ -119,9 +135,7 @@ def fake_pool(monkeypatch):
         lambda root=None, **kw: ("/envs/fake/bin/python", "system"),
     )
     monkeypatch.setattr(engine_pool, "peek", lambda script, root: box["peek"])
-    monkeypatch.setattr(
-        engine_pool, "force_cancel", lambda script, root: box["force_cancel"].append((script, root))
-    )
+    monkeypatch.setattr(engine_pool, "force_cancel", force_cancel)
     monkeypatch.setattr(engine_pool, "control_plane_of", lambda w: "python_pool")
     return box
 

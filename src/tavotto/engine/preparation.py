@@ -513,6 +513,10 @@ class _Entry:
     cancel: threading.Event = dataclasses.field(default_factory=threading.Event)
     lock: threading.Lock = dataclasses.field(default_factory=threading.Lock)
     thread: threading.Thread | None = None
+    #: 执行线程取到会话之后由 runner 报上来（`note_owner`，T09）：取到过没有 / 是不是本计划新建的那条。
+    #: 取消据此**当场**决定：自己建的 → 立即关掉它；别人的（共享会话的等待者）→ 只是本计划不再等
+    acquired: bool = False
+    owned: object | None = None
 
 
 class PreparationService:
@@ -653,6 +657,8 @@ class PreparationService:
         try:
             worker, resp, created = runner(plan, before_retry=before_retry)
         except _StaleBeforeRetry as exc:
+            if result.status in TERMINAL:
+                return  # 等待者已被取消放手（T09）：迟到的结局不写
             tr.fail("execute", ERROR_PLAN_STALE, reason=exc.reason)
             result.error = {
                 "code": ERROR_PLAN_STALE,
@@ -669,6 +675,19 @@ class PreparationService:
             )
             return
         except pool.WorkerError as exc:
+            if result.status in TERMINAL:
+                return  # 等待者已被取消放手（T09）：迟到的结局不写
+            if entry.cancel.is_set():
+                # 取消接受时刻 ③ 的落地：本计划新建的会话被当场关掉，build 以 WorkerError 回来——这是用户的取消，
+                # 不是脚本的错
+                result.input_facts = getattr(exc, "input_facts", None)
+                tr.cancel("execute")
+                self._finish(
+                    entry,
+                    STATUS_CANCELLED,
+                    note="运行中取消：本计划新起的会话已当场关闭；脚本已经产生的外部副作用不撤销",
+                )
+                return
             confirmation = getattr(exc, "confirmation", None)
             if isinstance(confirmation, dict):
                 # 计划时不用问、起会话时要问（决定在中间被清掉了）：与计划期的「需要输入」
@@ -707,9 +726,14 @@ class PreparationService:
             self._finish(entry, STATUS_ERROR)
             return
         except Exception as exc:  # noqa: BLE001 — 线程里不许静默死掉，如实记
+            if result.status in TERMINAL:
+                return
             result.error = {"code": "internal_error", "message": f"{type(exc).__name__}: {exc}"}
             tr.fail("spawn", "internal_error")
             self._finish(entry, STATUS_ERROR)
+            return
+        if result.status in TERMINAL:
+            # 本计划是共享会话的等待者、已被取消放手（T09）：会话不是我们的，回执 / 捕获都不归这份计划
             return
         tr.mark("execute", created=bool(created))
         result.created_runtime = bool(created)
@@ -847,6 +871,9 @@ class PreparationService:
 
     def _finish(self, entry: _Entry, status: str, *, note: str = "") -> None:
         with entry.lock:
+            if entry.result.status in TERMINAL:
+                # 已经由取消落了终局（共享会话的等待者不再等，T09）：执行线程迟到的结局不改写它
+                return
             entry.result.finished_at = time.time()
             if note:
                 entry.result.note = note
@@ -878,10 +905,56 @@ class PreparationService:
                 return {"accepted": False, "reason": status}
             entry.result.cancel_requested_at = time.time()
             entry.cancel.set()
+            acquired, owned = entry.acquired, entry.owned
         # pending 且线程还没起：当场收工（起了线程由线程自己在接受时刻 ① 收）
         if status == STATUS_PENDING and entry.thread is None:
             self._finish(entry, STATUS_CANCELLED, note="在起会话之前取消，没有执行任何脚本")
+        elif acquired and owned is not None:
+            # 取消接受时刻 ③（T09）：会话是本计划新建的、还在 build（可能正跑一段很长的计算，或停在一个 input()
+            # 上）——当场关掉**这一条**（`expected_worker`：池里那个键此刻若已换成别人的会话，一根手指都不碰），
+            # build 随即以 WorkerError 返回，执行线程按取消收工
+            pool.force_cancel(
+                entry.plan.script,
+                entry.plan.project_root,
+                expected_worker=owned,
+                **({"run": entry.plan.run} if entry.plan.run is not None else {}),
+            )
+        elif acquired:
+            # 共享会话的等待者：会话属于别的消费者（编辑那条渲染、另一份计划）——不关它，只是本计划不再等；
+            # 执行线程之后回来时发现自己已经终局，什么都不写
+            self._finish(
+                entry,
+                STATUS_CANCELLED,
+                note="取消：会话属于别的消费者，未关闭；本计划不再等它",
+            )
         return {"accepted": True, "reason": ""}
+
+    def note_owner(self, plan_id: str, worker, created: bool) -> None:
+        """runner 取到会话那一刻报一次（每次 take 一次，含缺包后换环境的第二次）：`created` 来自 `pool.acquire`
+        的池锁，不是快照猜的。取消已经在等（来得比取到会话还早）：这条是本计划新建的 → 当场关掉它，不让它开跑；
+        是别人的 → 不碰，本计划不再等它。"""
+        entry = self._entry(plan_id)
+        if entry is None:
+            return
+        with entry.lock:
+            entry.acquired = True
+            entry.owned = worker if created else None
+            waiting = entry.cancel.is_set() and entry.result.status not in TERMINAL
+        if not waiting:
+            return
+        if created:
+            pool.force_cancel(
+                entry.plan.script,
+                entry.plan.project_root,
+                expected_worker=worker,
+                **({"run": entry.plan.run} if entry.plan.run is not None else {}),
+            )
+        else:
+            self._finish(
+                entry,
+                STATUS_CANCELLED,
+                note="取消：会话属于别的消费者，未关闭；本计划不再等它",
+            )
 
     def wait(self, plan_id: str, timeout: float | None = None) -> bool:
         """测试 / CLI 用：等执行线程结束。"""

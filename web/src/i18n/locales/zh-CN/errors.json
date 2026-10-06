@@ -643,6 +643,8 @@
     "envAdviceAsk": "这个项目里有一个 Python 环境（{{name}}）。用它来运行脚本吗？",
     "envAdviceUse": "使用它",
     "envAdviceBuiltIn": "用 Tavotto 内置环境",
+    "envAdviceLegacy": "这个项目之前被自动改用了 {{name}}，确认以后继续用它吗？",
+    "envAdviceConfirm": "确认继续使用",
     "envAdviceLocked": "全局指定的 Python 正在生效，项目里的环境不会被使用。先在设置里解除全局指定。",
     "projectEnvRecommended": "项目环境 {{venv}} 已经装着 {{module}}，可以用它来运行。要改用吗？",
     "userEnvSource_project_venv": "项目里的 {{label}} 环境",

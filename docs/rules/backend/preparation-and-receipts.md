@@ -155,7 +155,14 @@ input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/pr
   `outcome.unknown/attempt_expired`。登记表有界（64 会话，闲置 30 min 回收）：有尝试在跑或登记没完成的会话**永不**被 TTL 回收，
   满了且全部活跃就 429 `preparation_sessions_full`，不驱逐。
 - **取消**只经 `PreparationService.cancel`：本会话新起的会话才关，别人的不碰；关闭面板 / 切项目是展示层的事，不取消。
-  依赖作业的取消同样只退役**自己拥有**的（认领了别人先起的同一份作业的会话没有 `cancel`）。
+  依赖作业的取消同样只退役**自己拥有**的（认领了别人先起的同一份作业的会话没有 `cancel`）。**当场生效（T09，ADR 0116 §三）**：
+  `pool.build_owned(on_acquired=…)` 在取到会话、执行之前把 `(worker, created)` 报给 `PreparationService.note_owner`（app 的
+  `_preparation_runner` 接上）；运行中取消 → 本计划新建的会话 `force_cancel(expected_worker=…)` 只关这一条（build 以 WorkerError 回来、
+  按取消收场，不等长计算 / input 自己结束）；共享会话的等待者 → 不碰会话，本计划直接以取消收场，执行线程迟到的结局不改写终局
+  （`_finish` 对已终局的计划不写）；取消比「取到会话」还早到时，取到那一刻按同一规则处理。取消落地的尝试不再算「活跃」，会话可以马上重新检查。
+  没报所有权的 runner（测试替身）仍走旧的「build 返回之后再收」。看护 `tests/test_preparation_session_lifecycle.py`、e2e `preparation-panel.spec.ts`。
+- **成功的报告带 `captured`（T09）**：这次尝试捕获到的公开描述符（与 `/api/registry/probe` 响应里同一份：项目相对路径、运行配置只是不透明引用），
+  只在 outcome 为 `succeeded` 时非空。界面的「进入编辑」直接用它，不按图名再找一遍、不为换界面再跑一次脚本。
 - **依赖准备并入同一个会话（T06）**：phase `preparing_environment` 由依赖作业事实派生；装好后同一会话按新环境重新检查（只重算差额，
   报告多 `dependency_delta`），失败 / 取消保留原代并重新给新的授权动作；脚本跑到一半才发现缺包 = 新的一次尝试
   （outcome `needs_dependencies`，`rerun_required`），不叫"从异常点继续"。认领与失效检查在会话锁内。
@@ -163,8 +170,11 @@ input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/pr
 - 看护：`tests/test_preparation_session.py`（假 pool：合同、并发认领、修订、失效、取消所有权、回收、项目绑定）、
   `tests/test_preparation_session_dependencies.py`（T06：授权 / 认领 / 差额 / 真安装到首图）、
   `tests/test_preparation_session_e2e.py`（真 worker、真服务：只有脚本的项目 → 一次执行 → 进编辑请求不重跑）、
-  `tests/test_script_probe.py::TestEntryLoopStopsOnNonEntryFailures`。尚未接入的旧入口（GUI 素材库的 `/api/registry/probe`、
-  MCP / CLI）由 T09 / T10 接续，它们是暂存的薄兼容 wrapper。
+  `tests/test_script_probe.py::TestEntryLoopStopsOnNonEntryFailures`。**T09 起它是 GUI 的默认入口**（检查条「准备并运行」、
+  素材库脚本行 ▶，前端规则在 `docs/rules/frontend/readiness-and-left-shell.md`「准备面板」，ADR 0116）；`/api/registry/probe` 留给
+  接入中心的逐行试运行、本地开关关闭时的旧路径与 MCP / CLI（T10），是暂存的薄兼容 wrapper。它的取消（`/api/registry/probe/cancel`）
+  仍按「脚本 + 运行配置」键硬杀：试运行每换一次入口先作废自己那条键再取会话，被杀的是这次试运行新建的会话；与渲染路并发取到同一键的
+  残余竞态登记在 ADR 0116 §七，随旧路径退役。
 
 ## 速查表原要点（2026-09-25 迁入，#608）
 
