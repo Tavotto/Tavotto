@@ -881,6 +881,17 @@ Section Install
   ; · **失败绝不中断安装**：清单只是快路径，已知安装位置那条腿还在。
   SetDetailsPrint both
   DetailPrint "$(registeringTavotto)"
+  ; beta 分支专用（不合进 main）：Tavotto Beta 的配置 / 数据目录与正式版分开（壳侧见
+  ; src-tauri/src/sidecar/beta_dirs.rs）。CLI 按 TAVOTTO_CONFIG_DIR / TAVOTTO_DATA_DIR 定清单落点，
+  ; 不补的话 beta 的安装会改写、卸载会删掉正式版 %APPDATA%\Tavotto\install.json。用户已设的值不动。
+  ReadEnvStr $R6 TAVOTTO_CONFIG_DIR
+  ${If} $R6 == ""
+    System::Call 'kernel32::SetEnvironmentVariable(t "TAVOTTO_CONFIG_DIR", t "$APPDATA\Tavotto Beta")'
+  ${EndIf}
+  ReadEnvStr $R6 TAVOTTO_DATA_DIR
+  ${If} $R6 == ""
+    System::Call 'kernel32::SetEnvironmentVariable(t "TAVOTTO_DATA_DIR", t "$LOCALAPPDATA\Tavotto Beta")'
+  ${EndIf}
   StrCpy $R8 "$INSTDIR\sidecar\Tavotto\tavotto-cli.exe"
   ${If} ${FileExists} "$R8"
     nsExec::ExecToStack /TIMEOUT=60000 '"$R8" doctor --json --write-manifest'
@@ -950,6 +961,17 @@ Section Uninstall
   ; 指向已卸载路径的清单，外部程序会拿着一条不存在的路径去 spawn——报出来
   ; 的错是「执行不了」而不是「没装」。（读的一方也会核实路径还在，这里是
   ; 第一道。）升级时卸载器先跑、安装段随后重写，两边都对。
+  ; beta 分支专用（不合进 main）：Tavotto Beta 的配置 / 数据目录与正式版分开（壳侧见
+  ; src-tauri/src/sidecar/beta_dirs.rs）。CLI 按 TAVOTTO_CONFIG_DIR / TAVOTTO_DATA_DIR 定清单落点，
+  ; 不补的话 beta 的安装会改写、卸载会删掉正式版 %APPDATA%\Tavotto\install.json。用户已设的值不动。
+  ReadEnvStr $R6 TAVOTTO_CONFIG_DIR
+  ${If} $R6 == ""
+    System::Call 'kernel32::SetEnvironmentVariable(t "TAVOTTO_CONFIG_DIR", t "$APPDATA\Tavotto Beta")'
+  ${EndIf}
+  ReadEnvStr $R6 TAVOTTO_DATA_DIR
+  ${If} $R6 == ""
+    System::Call 'kernel32::SetEnvironmentVariable(t "TAVOTTO_DATA_DIR", t "$LOCALAPPDATA\Tavotto Beta")'
+  ${EndIf}
   StrCpy $R8 "$INSTDIR\sidecar\Tavotto\tavotto-cli.exe"
   ${If} ${FileExists} "$R8"
     nsExec::ExecToStack /TIMEOUT=60000 '"$R8" doctor --json --remove-manifest'
