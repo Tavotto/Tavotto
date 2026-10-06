@@ -41,6 +41,7 @@ def test_desktop_main_reaps_its_real_renderer_before_returning(tmp_path, cleanup
     """
     script = r"""
 import io, json, os, sys
+assert (sys.stdout.encoding, sys.stderr.encoding) == ("cp1252", "cp1252")
 from pathlib import Path
 from tavotto import app as a, desktop
 from tavotto.rendercore import renderhost as rh
@@ -49,7 +50,6 @@ root = Path(sys.argv[1])
 cleanup_error = sys.argv[2] == "True"
 handshake = root / "handshake.json"
 os.environ["TAVOTTO_DESKTOP_HANDSHAKE"] = str(handshake)
-a.engine_cli.use_utf8_streams = lambda: None
 a.setup_logging = lambda: None
 a.engine_locate.refresh_manifest = lambda: None
 a.engine_config.last_project = lambda: None
@@ -77,6 +77,7 @@ try:
     try:
         a.main()
     except SystemExit as exc:
+        assert (sys.stdout.encoding, sys.stderr.encoding) == ("utf-8", "utf-8")
         result = {"exit": exc.code, "renderer_returncode": proc.returncode,
                   "handshake_removed": not handshake.exists()}
         (root / "result.json").write_text(json.dumps(result), encoding="utf-8")
@@ -92,6 +93,7 @@ finally:
             "TAVOTTO_DATA_DIR": str(tmp_path / "data"),
             "TAVOTTO_CONFIG_DIR": str(tmp_path / "config"),
             "TAVOTTO_NO_TELEMETRY": "1",
+            "PYTHONIOENCODING": "cp1252",  # 真走 CLI 重配，覆盖 Windows 重定向管道的初始编码。
         },
         capture_output=True,
         encoding="utf-8",
