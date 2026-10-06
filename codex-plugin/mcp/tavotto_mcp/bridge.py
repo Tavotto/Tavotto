@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import importlib
 import json
 import os
 import sys
@@ -121,6 +122,120 @@ class BridgeError(RuntimeError):
 
     def payload(self) -> dict:
         return {"ok": False, "code": self.code, "error": str(self), **self.extra}
+
+
+# ----------------------------- 引擎能力协商（T10） -----------------------------
+#: 引擎能力标记的镜像（`engine/capabilities.py`）。插件要能配更早安装的 Tavotto，旧引擎**没有**那个模块可 import，
+#: 所以桥自己留一份名字；`tests/test_mcp_compat.py` 钉住两侧相等。规矩只有一条：**先问再发**——引擎没宣告
+#: 这个能力，就当场以 `engine_capability_missing` 拒绝，绝不先「试着无参数跑一次」。
+SCRIPT_ARGV_FEATURE = "script-argv"
+ENVIRONMENT_ADOPTION_FEATURE = "environment-adoption"
+CAPABILITY_MISSING = "engine_capability_missing"
+
+
+#: 桥**可选**使用的引擎模块：比插件的最低引擎版本新，旧引擎上不存在。它们不进 `_BRIDGE_IMPORT` /
+#: `BRIDGE_IMPORTS_AT_MIN`（那两处是「桥 import 得动吗」的判据，放进去等于把最低版本抬到今天），只经
+#: `_optional_engine()` 取；用到它们的路径先过能力协商（`_require_feature`），或在缺席时退回旧行为。
+#: `tests/test_mcp_compat.py` 钉住：可选集与必需集不相交、桥里取可选模块只有这一个入口。
+OPTIONAL_ENGINE_MODULES = ("capabilities", "envadvice", "envlease", "runconfig", "scriptargs")
+
+
+def _optional_engine(name: str):
+    """取一个可选引擎模块；旧引擎上没有 → None。"""
+    if name not in OPTIONAL_ENGINE_MODULES:
+        raise ValueError(f"不是登记过的可选引擎模块: {name}")
+    try:
+        return importlib.import_module(f"tavotto.engine.{name}")
+    except ImportError:
+        return None
+
+
+def engine_features() -> list[str]:
+    """已装引擎宣告的能力（旧引擎没有 `capabilities` 模块 = 一个都没有）。"""
+    capabilities = _optional_engine("capabilities")
+    return [] if capabilities is None else list(capabilities.FEATURES)
+
+
+def _require_feature(feature: str, what: str) -> None:
+    if feature in engine_features():
+        return
+    raise BridgeError(
+        f"本机安装的 Tavotto 不支持{what}；这次没有运行脚本，也没有改动任何设置。",
+        code=CAPABILITY_MISSING,
+        capability=feature,
+        recovery="请用户把 Tavotto 升级到与插件相同的版本后再试；不要去掉参数改成无参数运行。",
+        requirements=[{"kind": "engine_upgrade", "answer_with": None, "where": "user"}],
+    )
+
+
+#: 运行配置从哪来（回包 `run_config.source`）：Agent 这次给的 token / 引用了一份已有配置（通常是 GUI 跑过的）/
+#: 没给，沿用这个脚本最近一次**明确运行**的配置（与 GUI 磁盘面板 `_disk_panel_run` 同一个判据）。
+RUN_SOURCE_ARGV = "argv"
+RUN_SOURCE_REFERENCE = "run_config"
+RUN_SOURCE_SCRIPT_DEFAULT = "script_default"
+
+
+def _run_config_error(exc) -> BridgeError:
+    """`runconfig.RunConfigError` → BridgeError（稳定码原样；`reason` 是不含参数值的短理由）。"""
+    extra = {"reason": exc.reason} if getattr(exc, "reason", "") else {}
+    if exc.code == "run_config_secret_missing":
+        extra["recovery"] = (
+            "这份运行参数含口令 / 令牌，Tavotto 不保存也不经插件转交：请用户在 Tavotto 窗口里重新输入并运行。"
+            "不要让用户把口令发给你。"
+        )
+    elif exc.code == "run_config_missing":
+        extra["recovery"] = (
+            "这台机器上没有这份运行参数：请向用户确认要用的参数，再用 argv（一项一个 token）重新打开。"
+        )
+    elif exc.code == "invalid_argv":
+        extra["recovery"] = "argv 必须是字符串数组、一项一个 token；不要把整条命令按空格拆。"
+    if exc.code == "run_config_unsupported":
+        need = {"kind": "engine_upgrade", "answer_with": None, "where": "user"}
+    elif exc.code == "run_config_secret_missing":
+        need = {"kind": "script_arguments", "answer_with": None, "where": "tavotto_app"}
+    else:
+        need = {"kind": "script_arguments", "answer_with": "argv", "where": "this_tool"}
+    return BridgeError(str(exc), code=exc.code, requirements=[need], **extra)
+
+
+def _choose_run(
+    project: str, script: str, argv: list | None, run_config: str | None
+) -> tuple[object | None, str | None]:
+    """这次开图用哪份运行配置：(`execspec.RunSelection` 或 None, 来源)。None = 无参数（旧行为）。
+
+    * `argv` 非空 / `run_config`：引擎必须宣告 `script-argv`，否则拒绝；登记与校验走 GUI 那一个函数
+      （`runconfig.selection_for` / `selection`），同一 (脚本, argv) 两个入口得到同一个 `rc_` 引用；
+    * `argv=[]`：用户明确不带参数——旧行为，不读任何登记；
+    * 都没给：沿用这个脚本最近一次明确运行的配置（磁盘上的产物就是那次写的），没有就是无参数。旧引擎没有登记，
+      照旧无参数。
+    Agent 提交的 token 只是配置来源：不改磁盘面板的默认（`set_default` 只记用户在界面里的明确运行）。
+    """
+    if argv is not None and len(argv) == 0 and run_config is None:
+        return None, None
+    if argv is None and run_config is None:
+        if SCRIPT_ARGV_FEATURE not in engine_features():
+            return None, None
+        runconfig = _optional_engine("runconfig")
+        try:
+            run = runconfig.default_selection(project, script)
+        except runconfig.RunConfigError as exc:
+            raise _run_config_error(exc) from exc
+        return (run, RUN_SOURCE_SCRIPT_DEFAULT) if run is not None else (None, None)
+    _require_feature(SCRIPT_ARGV_FEATURE, "按精确参数运行脚本")
+    runconfig = _optional_engine("runconfig")
+    try:
+        if run_config is not None:
+            return runconfig.selection(project, run_config, script=script), RUN_SOURCE_REFERENCE
+        return runconfig.selection_for(project, script, argv, source="mcp"), RUN_SOURCE_ARGV
+    except runconfig.RunConfigError as exc:
+        raise _run_config_error(exc) from exc
+
+
+def _run_projection(run, source: str | None) -> dict | None:
+    """回包里的运行配置：只有不透明引用、token 个数与来源——**没有参数原文**（与 GUI 回执同一条隐私线）。"""
+    if run is None:
+        return None
+    return {"id": run.config_id, "argv_count": len(run.argv), "source": source}
 
 
 # ----------------------------- 路径范围校验 ---------------------------------
@@ -300,6 +415,11 @@ class Session:
     #: 这个会话是不是**这一次调用里**从落盘记录重建的（ADR 0078）。调用方读一次就清掉，
     #: 让 apply / session_state 的结果如实带一句 `restored: true`，而不是假装它一直开着。
     restored: bool = False
+    #: 打开那一刻冻结的运行配置（`execspec.RunSelection`；None = 无参数，旧行为）。之后每一次取 worker、
+    #: 一次性重放都用它——不读之后的「最新配置」（T03 / T10）。落盘只存它的不透明引用。
+    run: object | None = None
+    #: 回包用的公开投影（`_run_projection`：引用 / 个数 / 来源）。
+    run_info: dict | None = None
 
     def patch_hash(self) -> str:
         return patchspec.patch_hash(self.patches)
@@ -314,10 +434,16 @@ class Session:
         而且没有任何办法恢复。`pool.get()` 本来就负责「死了就重建」，
         每次问它一遍即可，代价是一次字典查找。
         """
+        # 无配置时调用形状与旧版一致（旧引擎的 `pool.get` 不认识 `run=`）
+        context = {"run": self.run} if self.run is not None else {}
         try:
-            return engine_pool.get(self.script, self.project, self.entry)
+            return engine_pool.get(self.script, self.project, self.entry, **context)
         except engine_pool.WorkerError as exc:
-            raise _bridge_error_from_worker(exc) from exc
+            raise _bridge_error_from_worker(exc, project=self.project, script=self.script) from exc
+
+    @property
+    def run_config_id(self) -> str | None:
+        return getattr(self.run, "config_id", None)
 
 
 def _answer_workdir(project: str, mode: str) -> None:
@@ -376,13 +502,45 @@ def _answer_prepare_dependencies(project: str, script: str, target: str) -> dict
     }
 
 
+def _answer_adopt_environment(project: str, script: str, candidate: str, generation: str) -> dict:
+    """`tavotto_open_figure(adopt_environment=…)`：对环境建议的回答（T05 / T10，ADR 0114）。
+
+    与界面上「使用它」、HTTP `PATCH /api/engine/environment {candidate}` **同一个服务**
+    （`envadvice.adopt_candidate`）：候选 id 只从本机枚举换路径、环境代对不上就拒、现场体检、只写项目设置。
+    采用 ≠ 安装：缺包仍走 `prepare_dependencies` 那道门。授权模型与 `workdir=` 相同——这是用户的回答，
+    Agent 把候选告诉用户、按用户的选择传进来，不替用户选。"""
+    _require_feature(ENVIRONMENT_ADOPTION_FEATURE, "采用环境建议")
+    envadvice, envlease = _optional_engine("envadvice"), _optional_engine("envlease")
+
+    try:
+        health = envadvice.adopt_candidate(
+            project, script, candidate, expected_generation=generation
+        )
+    except envadvice.AdoptionRefused as exc:
+        extra = {}
+        if exc.health is not None:
+            extra["python_version"] = str(exc.health.get("python_version") or "")
+        raise BridgeError(
+            str(exc), code=exc.code or "environment_adoption_failed", **extra
+        ) from exc
+    except envlease.EnvironmentBusy as exc:
+        raise BridgeError(str(exc), code=getattr(exc, "code", "") or "environment_busy") from exc
+    return {"candidate": candidate, "python_version": str(health.get("python_version") or "")}
+
+
 #: 改指表救不回、只能经确认改写脚本的几档（ADR 0110）。`engine.inputremap.VIAS_NEED_REWRITE` 的镜像：
 #: 插件要能配更早的 Tavotto，不为一个常量多 import 一个新模块（那会抬高 MIN_TAVOTTO_VERSION）；
 #: `tests/test_mcp_server.py` 钉住两侧相等。
 VIAS_NEED_REWRITE = ("probe", "glob", "native")
 
 
-def _bridge_error_from_worker(exc: engine_pool.WorkerError) -> BridgeError:
+def _bridge_error_from_worker(
+    exc: engine_pool.WorkerError,
+    *,
+    project: str | None = None,
+    script: str | None = None,
+    default_code: str = "worker_error",
+) -> BridgeError:
     """worker 错误 → 带稳定 code 的 BridgeError；U03 的两种结构化载荷原样带出去。
 
     * `workdir_confirmation_required`：首开要先选运行目录——这是「需要输入」，不是失败。
@@ -393,6 +551,8 @@ def _bridge_error_from_worker(exc: engine_pool.WorkerError) -> BridgeError:
       `explicit` 说清是哪一条、为什么。
     """
     extra: dict = {"traceback": exc.traceback_text}
+    if getattr(exc, "module", ""):
+        extra["module"] = exc.module
     confirmation = getattr(exc, "confirmation", None)
     if isinstance(confirmation, dict):
         extra["confirmation"] = confirmation
@@ -493,7 +653,162 @@ def _bridge_error_from_worker(exc: engine_pool.WorkerError) -> BridgeError:
             + (f" 认不出对应包名、不会安装的 import：{unknown}。" if unknown else "")
             + private_note
         )
-    return BridgeError(str(exc), code=exc.code or "worker_error", **extra)
+    code = exc.code or default_code
+    _project_needs(code, exc, extra, project=project, script=script)
+    extra["requirements"] = _requirements(code, extra)
+    if not extra["requirements"]:
+        del extra["requirements"]
+    return BridgeError(str(exc), code=code, **extra)
+
+
+#: 待办索引里最多列几个参数 / 候选 / 选项：载荷进模型上下文，又要守错误预算（`server.ERROR_RESULT_BUDGET_BYTES`）。
+MAX_LISTED_ARGUMENTS = 32
+MAX_LISTED_CHOICES = 16
+MAX_LISTED_CANDIDATES = 12
+_ARGUMENT_KEYS = ("flags", "positional", "required", "type", "nargs", "arity", "role")
+_CANDIDATE_KEYS = ("id", "label", "status", "scope", "python_relative", "generation")
+
+
+def _arguments_summary(project: str, script: str) -> dict | None:
+    """脚本参数的只读 schema 摘要（T07 的静态分析：只读源码，不执行、不 import、不调 `--help`）。
+
+    只给 Agent 拼 token 用得着的结构字段：没有 help 原文、没有默认值；数量有界并说清截了多少。旧引擎没有
+    `scriptargs` 模块 → None（照旧只有错误文案）。"""
+    scriptargs = _optional_engine("scriptargs")
+    if scriptargs is None:
+        return None
+    try:
+        schema = scriptargs.analyze_file(os.path.join(project, script))
+    except Exception:  # noqa: BLE001 — 摘要是附带的线索，读不了就不给，不把一次失败变成另一种失败
+        return None
+    args = []
+    for arg in (schema.get("arguments") or [])[:MAX_LISTED_ARGUMENTS]:
+        item = {k: arg.get(k) for k in _ARGUMENT_KEYS}
+        choices = arg.get("choices")
+        if isinstance(choices, list):
+            item["choices"] = choices[:MAX_LISTED_CHOICES]
+            if len(choices) > MAX_LISTED_CHOICES:
+                item["choices_total"] = len(choices)
+        args.append(item)
+    out = {
+        "source": schema.get("source"),
+        "status": schema.get("status"),
+        "reasons": list(schema.get("reasons") or []),
+        "arguments": args,
+    }
+    total = len(schema.get("arguments") or [])
+    if total > len(args):
+        out["arguments_total"] = total
+    return out
+
+
+def _environment_summary(project: str, script: str | None) -> dict | None:
+    """环境建议的公开投影（T05 `envadvice.recommend()`：**纯读**，不起解释器）——Agent 据此请用户选一个，
+    再用 `adopt_environment=<id>` 回答。只有候选 id / 标签 / 状态 / 项目相对路径 / 环境代，没有项目外的绝对路径。"""
+    envadvice = _optional_engine("envadvice")
+    if envadvice is None:
+        return None
+    try:
+        rec = envadvice.recommend(project, script)
+    except Exception:  # noqa: BLE001 — 同上：建议是线索，算不出就不给
+        return None
+    candidates = [
+        {k: c.get(k) for k in _CANDIDATE_KEYS}
+        for c in rec.get("candidates") or []
+        if c.get("id") != getattr(envadvice, "BUILTIN_ID", "builtin")
+    ]
+    out = {
+        "recommended_id": rec.get("recommended_id"),
+        "needs_decision": bool((rec.get("decision") or {}).get("needs_decision")),
+        "locked": bool((rec.get("decision") or {}).get("locked_by")),
+        "candidates": candidates[:MAX_LISTED_CANDIDATES],
+    }
+    if len(candidates) > MAX_LISTED_CANDIDATES:
+        out["candidates_total"] = len(candidates)
+    return out
+
+
+def _project_needs(code: str, exc, extra: dict, *, project: str | None, script: str | None) -> None:
+    """worker 的「需要输入」→ 没有界面时也立即可答的结构化载荷（T10）。原有字段一个不动，只追加。"""
+    worker_extra = getattr(exc, "extra", None) or {}
+    if code == "script_needs_input":
+        # 没有能答题的界面（MCP 进程里不接 SSE 前端）时 broker 立即回「无答案」，从不等待——这里只说清下一步。
+        # 口令（secret_required）绝不经 Agent 转交：只能请用户在 Tavotto 窗口里输入
+        reason = worker_extra.get("reason")
+        secret = reason == "secret_required"
+        extra["input"] = {"reason": reason, "secret": secret}
+        extra["recovery"] = (
+            "脚本运行到一半要用户输入"
+            + ("口令" if secret else "")
+            + "，而这里没有能答题的界面：请用户在 Tavotto 窗口里打开这张图并作答（同一次运行内回答），"
+            + "之后再调 tavotto_open_figure。"
+            + (
+                "不要让用户把口令发给你，也不要替用户编一个答案。"
+                if secret
+                else "不要替用户编一个答案。"
+            )
+        )
+    elif code == "script_needs_arguments":
+        arguments = {
+            k: worker_extra[k]
+            for k in ("parse_kind", "argv_count", "exit_code")
+            if k in worker_extra
+        }
+        if project and script:
+            schema = _arguments_summary(project, script)
+            if schema is not None:
+                arguments["schema"] = schema
+        extra["arguments"] = arguments
+        extra["recovery"] = (
+            "脚本要命令行参数：请向用户确认每个参数的值（数据文件、单位、取值都要用户说了算，不要猜），"
+            "再调一次 tavotto_open_figure 并带 argv（一项一个 token，原样传入，例如 "
+            '["--freq", "2"]）。schema 只是从源码静态读出的建议，脚本自己的解析器才是裁判。'
+        )
+    elif code in ("missing_dependency", "dependency_preparation_required") and project:
+        # 确认模式（T05，ADR 0114）：项目里有用户自己的环境，用不用它是用户的决定——MCP 没有「使用它」那个按钮，
+        # 所以把候选（纯读的建议）与怎么答一起给出去。没有待决定的候选就什么都不加（原样是缺包 / 准备依赖）。
+        detail = getattr(exc, "project_env", None)
+        confirm = (
+            isinstance(detail, dict) and detail.get("code") == "environment_confirmation_required"
+        )
+        env = _environment_summary(project, script)
+        if env is not None and (confirm or (env["recommended_id"] and env["needs_decision"])):
+            extra["environment"] = env
+            note = (
+                "项目里有用户自己的 Python 环境可以用，但用不用它是用户的决定：请把 environment.candidates 告诉用户，"
+                "用户选定后再调一次 tavotto_open_figure 并带 adopt_environment=<候选 id>"
+                "（连同 expected_environment_generation=<该候选的 generation>）。"
+                "采用只改这个项目用哪个环境，不安装任何东西。"
+            )
+            prior = extra.get("recovery")
+            extra["recovery"] = f"{prior} 另一条路：{note}" if prior else note
+
+
+def _requirements(code: str, extra: dict) -> list[dict]:
+    """这次失败里**有哪些事要用户决定、各用哪个参数回答**（只是索引；载荷在各自原有的键里）。
+
+    `answer_with` = 再调 `tavotto_open_figure` 时带的参数名；None = 这里答不了：`where=tavotto_app` 要用户
+    在 Tavotto 窗口里操作（口令、指认数据位置、运行中的输入），`where=user` 要用户自己处理（升级）。"""
+    out: list[dict] = []
+
+    def need(kind: str, answer_with: str | None, where: str, **more) -> None:
+        out.append({"kind": kind, "answer_with": answer_with, "where": where, **more})
+
+    if "confirmation" in extra:
+        need("workdir", "workdir", "this_tool")
+    if "dependency_preparation" in extra:
+        need("dependencies", "prepare_dependencies", "this_tool")
+    if "environment" in extra:
+        need("environment_choice", "adopt_environment", "this_tool")
+    if "explicit" in extra:
+        need("environment_setting", None, "tavotto_app")
+    if "missing_input" in extra:
+        need("input_location", None, "tavotto_app")
+    if code == "script_needs_arguments":
+        need("script_arguments", "argv", "this_tool")
+    if code == "script_needs_input":
+        need("runtime_input", None, "tavotto_app", reason=(extra.get("input") or {}).get("reason"))
+    return out
 
 
 _SESSIONS: dict[str, Session] = {}
@@ -524,6 +839,11 @@ def _persist(session: Session) -> None:
         "cost": session.cost,
         "created": session.created,
     }
+    if session.run_config_id is not None:
+        # 只存不透明引用（参数原文在本机运行配置登记里，敏感值从不落盘）；带配置的记录用新版本号：
+        # 旧插件读到它当作不存在（`unknown_session`），不会把它当成无参数会话复活（C26）
+        record["run_config"] = session.run_config_id
+        record["run_source"] = (session.run_info or {}).get("source")
     try:
         sessionjournal.save(_journal_dir(), record)
     except (OSError, ValueError, TypeError) as exc:
@@ -585,6 +905,15 @@ def _restore_session(session_id: str) -> Session | None:
             code="session_restore_failed",
             reason="stem_gone",
         )
+    run = None
+    if record.get("run_config"):
+        # 打开时冻结的那份配置；用不了（别的机器 / 敏感值随进程没了）→ 明确拒绝，绝不退成无参数重放
+        _require_feature(SCRIPT_ARGV_FEATURE, "按精确参数运行脚本")
+        runconfig = _optional_engine("runconfig")
+        try:
+            run = runconfig.selection(project, record["run_config"], script=info["script"])
+        except runconfig.RunConfigError as exc:
+            raise _run_config_error(exc) from exc
     session = Session(
         id=session_id,
         project=project,
@@ -595,6 +924,8 @@ def _restore_session(session_id: str) -> Session | None:
         cost=str(info.get("cost", "") or ""),
         contract=record.get("contract"),
         normalized=record.get("normalized"),
+        run=run,
+        run_info=_run_projection(run, record.get("run_source")),
     )
     if isinstance(record.get("created"), (int, float)):
         session.created = float(record["created"])
@@ -686,7 +1017,7 @@ def _evict_if_needed() -> list[str]:
     return evicted
 
 
-def _live_session_for(project: str, stem: str) -> Session | None:
+def _live_session_for(project: str, stem: str, run_config: str | None = None) -> Session | None:
     """这张图是不是已经**原样**开着了？是就沿用，不新建第二个会话。
 
     同一张图开两个会话没有任何好处，代价却是实打实的：账本多占一格，超额时
@@ -699,9 +1030,16 @@ def _live_session_for(project: str, stem: str) -> Session | None:
     （`main.tsx` 里写着为什么），沿用一个已经带着 patch 的会话会让画布的账本与
     引擎状态对不上——画面是改过的，账本是空的，用户下一次编辑就把之前的修改
     静默还原了。改过的图要重开，就诚实地新建一个会话。
+
+    **运行配置也是身份的一部分**（R02）：同脚本同 stem、不同参数画出来的是两张图，不能互相沿用。
     """
     live = [
-        s for s in _SESSIONS.values() if s.project == project and s.stem == stem and not s.patches
+        s
+        for s in _SESSIONS.values()
+        if s.project == project
+        and s.stem == stem
+        and s.run_config_id == run_config
+        and not s.patches
     ]
     return max(live, key=lambda s: s.last_used) if live else None
 
@@ -815,8 +1153,16 @@ def open_figure(
     include_png: bool = False,
     workdir: str | None = None,
     prepare_dependencies: str | None = None,
+    argv: list | None = None,
+    run_config: str | None = None,
+    adopt_environment: str | None = None,
+    expected_environment_generation: str | None = None,
 ) -> dict:
     """解析 → 登记 → 起会话 → 渲染一次。返回给 Codex 的第一份快照。
+
+    `argv` / `run_config`（T10）：这次按哪份运行配置跑（`_choose_run`）。引擎不会就拒绝，绝不无参数先试；
+    回包 `run_config` 只有引用 / 个数 / 来源。`adopt_environment`（T10，ADR 0114）：对环境建议的回答——
+    与界面「使用它」同一个服务（`envadvice.adopt_candidate`），先采用再开图。
 
     `workdir` 是对首开那一次「需要输入」的回答（U03，ADR 0057）：与桌面确认框、HTTP 的
     `PATCH /api/engine/workdir` 同一份决定——记进项目设置、关掉这个项目的旧会话，再开。
@@ -836,6 +1182,13 @@ def open_figure(
     chosen = _pick_stem(project, want, registry)
     info = registry.for_stem(chosen)
     assert info is not None
+    # 先定运行配置（校验 / 能力协商都在任何副作用之前），再采用环境、准备依赖
+    run, run_source = _choose_run(project, info["script"], argv, run_config)
+    adopted = None
+    if adopt_environment is not None:
+        adopted = _answer_adopt_environment(
+            project, info["script"], adopt_environment, expected_environment_generation or ""
+        )
     prepared = None
     if prepare_dependencies is not None:
         prepared = _answer_prepare_dependencies(project, info["script"], prepare_dependencies)
@@ -856,7 +1209,7 @@ def open_figure(
     except (engine_profiles.ProfileError, engine_profilestore.ProfileStoreError) as exc:
         raise BridgeError(str(exc), code="unknown_profile") from exc
 
-    session = _live_session_for(project, chosen)
+    session = _live_session_for(project, chosen, getattr(run, "config_id", None))
     reused = session is not None
     evicted: list[str] = []
     if session is not None:
@@ -865,6 +1218,8 @@ def open_figure(
         # 把上一次的快照直接回给画布等于让它显示一个可能已经过期的画面，
         # raster 档下更是连位图都没有。
         session.profile = profile
+        # 同一份配置（引用相同才会沿用）；来源说的是**这一次**怎么选中它的
+        session.run_info = _run_projection(run, run_source)
         # 开销档位跟着**这次**读到的注册表走：刷新过项目、light 变 heavy 之后沿用旧值，
         # 画布经 `session_state` 拿到的就是旧档，渲染看门狗会按 2 分钟而不是 15 分钟
         # 掐掉一次合法的重渲染（Codex 评审）。
@@ -879,6 +1234,8 @@ def open_figure(
             entry=info["entry"],
             profile=profile,
             cost=str(info.get("cost", "") or ""),
+            run=run,
+            run_info=_run_projection(run, run_source),
         )
         # **先渲染成功，再登记会话**：脚本 build 阶段抛异常时调用方只拿到一个
         # 错误，永远拿不到 session_id，也就永远关不掉它。反复失败的 open 会把
@@ -908,6 +1265,10 @@ def open_figure(
         "profile": engine_profiles.stamp(profile),
         **render,
     }
+    if session.run_info is not None:
+        out["run_config"] = session.run_info
+    if adopted is not None:
+        out["adopted_environment"] = adopted
     if prepared is not None:
         out["prepared"] = prepared
     if include_png:
@@ -1345,12 +1706,12 @@ def _render(session: Session, patches: list, *, preview_dpi: int | None) -> dict
     try:
         resp = worker.override(session.stem, patches, preview_dpi, inline_svg=True)
     except engine_pool.WorkerError as exc:
-        raise BridgeError(
-            str(exc),
-            code=exc.code or "render_failed",
-            traceback=exc.traceback_text,
-            module=getattr(exc, "module", ""),
-        ) from exc
+        # build 期间的「需要输入」（缺参数 / 运行中要输入 / 缺包）在这里冒出来：与跑前的门同一份结构化投影（T10）
+        err = _bridge_error_from_worker(
+            exc, project=session.project, script=session.script, default_code="render_failed"
+        )
+        err.extra.setdefault("module", getattr(exc, "module", ""))
+        raise err from exc
     session.patches = list(patches)
     session.manifest = resp["manifest"]
     session.svg = resp.get("svg")
@@ -2685,7 +3046,8 @@ def verify_replay(session_id: str) -> dict:
     session = get_session(session_id)
     if session.manifest is None:
         raise BridgeError("会话还没有 manifest", code="no_manifest")
-    worker = engine_pool.one_shot(session.script, session.project, session.entry)
+    context = {"run": session.run} if session.run is not None else {}
+    worker = engine_pool.one_shot(session.script, session.project, session.entry, **context)
     try:
         resp = worker.override(session.stem, session.patches, None, inline_svg=False)
         fresh = resp["manifest"]

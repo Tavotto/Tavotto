@@ -1919,6 +1919,7 @@ export default interface Resources {
       "dir_missing": "目录不存在：{{path}}",
       "endpoint_invalid": "接口配置无效：{{reason}}",
       "endpoint_save_failed": "无法保存接口：{{reason}}",
+      "engine_capability_missing": "本机的 Tavotto 引擎版本较旧，不支持按参数运行。请升级 Tavotto 后再试；不会改用空参数运行。",
       "environment_candidate_gone": "这个环境已经找不到了，请重新检查",
       "environment_changed": "这个环境在你确认之前被重建过，请重新查看再确认",
       "environment_check_running": "这个项目的环境检查正在进行",

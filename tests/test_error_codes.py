@@ -64,6 +64,9 @@ _CODE_REGISTRIES = (
     "tavotto.engine.preparation",
     # U04（ADR 0061）：跑前的依赖门——常量式 code，落到确认框与 MCP 的 recovery 上
     "tavotto.engine.deprepair",
+    # T10（ADR 0117）：环境建议的采用（HTTP 与 MCP 同一个 `adopt_candidate`）——常量式 code，经 app 的
+    # `_adoption_refused` 漏斗带 error 原文转成 JSON
+    "tavotto.engine.envadvice",
     # U10（ADR 0072）：`TAVOTTO_RENDER_BACKEND` 指着退役 / 不认识的后端——`BackendSelectionError.code`
     "tavotto.pdfbackend",
     # ADR 0106：数据改指的端点——`RemapError(code)` 由 app 的 400 漏斗转出

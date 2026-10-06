@@ -290,6 +290,104 @@ def _python_requirement(rows: list[dict]) -> dict:
     }
 
 
+# ---------------------------------------------------------------- 采用（明确动作）
+
+
+#: 采用被拒的稳定码（常量式：`tests/test_error_codes.py` 直接读 `ERROR_CODES`）。体检不过时 code 是体检自己的
+#: （`projectenv.ERROR_*`），不在这张表里。
+ERROR_LOCKED = "environment_locked"
+ERROR_CANDIDATE_GONE = "environment_candidate_gone"
+ERROR_CHANGED = "environment_changed"
+ERROR_INTERPRETER_NOT_FOUND = "interpreter_not_found"
+ERROR_CODES = (ERROR_LOCKED, ERROR_CANDIDATE_GONE, ERROR_CHANGED, ERROR_INTERPRETER_NOT_FOUND)
+
+
+class AdoptionRefused(Exception):
+    """采用没有发生（项目设置一个字节没写）。`code` 稳定；`status` 是 HTTP 那一侧的状态码；
+    体检不过时 `health` 是体检结论、`python` 是那条解释器（只给调用方做项目相对投影）。"""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str,
+        status: int = 400,
+        health: dict | None = None,
+        python: str = "",
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.status = status
+        self.health = health
+        self.python = python
+
+
+def adopt_candidate(
+    root: str | Path,
+    script: str | None,
+    candidate_id: str,
+    *,
+    expected_generation: str = "",
+    module: str = "",
+) -> dict:
+    """环境建议上点的「使用」——**唯一实现**：HTTP `PATCH /api/engine/environment {candidate}` 与 MCP 的
+    `adopt_environment=` 都委派这里（T10），不复制判据。成功回体检结论；没采用一律 `AdoptionRefused`；
+    环境正被安装占着抛 `envlease.EnvironmentBusy`（与安装同一把锁）。
+
+    顺序就是授权的含义：全局显式解释器压着 → 不假装能采用（`environment_locked`）；候选 id 只从本机自己的
+    枚举换路径（不接受调用方给路径）；`expected_generation` 是用户看到建议那一刻的环境代，对不上（这期间被重建）
+    → `environment_changed`，绝不采用另一个环境；现场体检不过 → 体检的 code；写项目设置只有这一处
+    （`automatic=False`）。"""
+    # 采用是少见的明确动作：不把安装器拖进每次 import
+    from . import deprepair, envlease  # noqa: PLC0415
+
+    root = str(root)
+    if pool.explicit_worker_python():
+        raise AdoptionRefused(
+            "全局指定的解释器正在生效，项目级的选择不会被使用；请先解除全局指定",
+            code=ERROR_LOCKED,
+            status=409,
+        )
+    found = candidate_python(root, script or None, candidate_id)
+    if found is None:
+        raise AdoptionRefused("这个候选环境已经找不到了，请重新检查", code=ERROR_CANDIDATE_GONE)
+    if expected_generation and projectenv.environment_generation(found) != expected_generation:
+        raise AdoptionRefused(
+            "这个环境在你确认之前被重建过，请重新查看再确认",
+            code=ERROR_CHANGED,
+            status=409,
+        )
+    if not Path(found).is_file():
+        raise AdoptionRefused(
+            "找不到这个环境的解释器", code=ERROR_INTERPRETER_NOT_FOUND, python=found
+        )
+    health = projectenv.probe_environment(found, module or None)
+    if not health.get("ok"):
+        raise AdoptionRefused(
+            "这个环境没有通过体检",
+            code=str(health.get("code") or ""),
+            health=health,
+            python=found,
+        )
+    # 采用与依赖安装互斥（T06）：目标环境本身正被改动时它的体检也是瞬时的，一并拒绝
+    if envlease.is_mutating(found):
+        raise envlease.EnvironmentBusy("这个环境正在安装依赖，请等它结束再采用。")
+    deprepair.unless_installing(
+        root,
+        lambda: projectenv.remember(
+            root,
+            found,
+            automatic=False,
+            trigger=projectenv.TRIGGER_RECOMMENDED,
+            module=module,
+            health=health,
+        ),
+    )
+    pool.reset_worker_python()
+    pool.shutdown_all(root)
+    return health
+
+
 # ---------------------------------------------------------------- 检查（明确动作）
 
 
