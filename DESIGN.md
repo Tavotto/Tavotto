@@ -219,7 +219,8 @@ lg 12（卡片、菜单 / popover 外壳、多行浮动面板）、panel 16（�
 TextInput / NumberField（框内单位）、Select（全仓唯一的下拉）、Checkbox、Toggle（名字必填）、
 Badge、StatusPill、Notice、Card、Tabs（选中 600 + 2px 下划线）、Segmented（灰容器 + 白色浮起的 thumb，选中 600）、listRowClass（28 / 44 / 52，选中 600）/ rowMetaClass / dropLineClass / TreeRow、
 RowMenu（⋯ + 右键 + ⇧F10 同一份菜单）、SearchInput、Section / Disclosure、FormSection / FieldGroup、EmptyState（40px 图标底座 + 15 / 600 标题）、
-Dialog（sm 400 / md 480 / lg 560 / xl 760 / shell；页脚 `{ start, secondary, primary }` 三槽、32px；栈底才画遮罩；Esc = 安全答案）。
+Dialog（sm 400 / md 480 / lg 560 / xl 760 / shell；标题 15 / 600、说明 13 / ink-2、正文 13；页脚 `{ start, secondary, primary }` 三槽、32px；
+栈底才画遮罩；Esc = 安全答案；回应一律 `Notice`，进行中页脚不撤——对话框页的细则在 **宪法第二十六节「对话框与引导」**）。
 四态：hover（surface-hover 5%）< active（surface-active 8%）< selected（selected 10% + 字重 / 对勾）；
 disabled 统一 `opacity-40 + cursor-not-allowed`。光标一律箭头（可拖的卡用抓手）。每个上下文一颗主按钮；对话框里的破坏性确认是浅底危险胶囊，不是实心红。
 图标只有自绘的一套（`web/src/components/ui/icons/`，ADR 0052；说明书 `docs/ux/ICONOGRAPHY.md`）。

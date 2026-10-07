@@ -105,6 +105,10 @@
 * **coachmark 没有遮罩、不改偏好**：`reveal()` 露出折叠侧栏直接 `uiStore.setState`（不经 `setLeftTab`
   的 persist）；画布对象被平移出 `[data-canvas-stage]` 时只调 `viewportStore.revealRect`。锚点在
   `[role=dialog]` 里就 portal 进那个节点（模态层外面点不到）。Esc 只在焦点落在卡片里时暂停。
+  **高亮环也画进那个对话框**（对话框内坐标，2026-10-07 设计审计 §10.2：此前锚点在导出对话框里时一圈都没有），
+  环的圆角 = 锚点圆角 + 4（环画在锚点外 4px）。卡片：圆角 12、宽 320、内边距 16、正文 13、分段进度（字面的
+  「第 n 步，共 N 步」仍在 `data-onboarding-progress` 里）、关闭是写明「暂停教程」的文字按钮（`data-onboarding-pause`）。
+  **换步骤时焦点交接**：上一张卡片卸载时焦点在它里面，新卡片接手；焦点在别处（画布、输入框）一律不抢。
 * **卡片挪位不许从锚点上扫过（2026-09-26，#581）**：滑行途中卡片是可点的，而锚点正是用户此刻要点
   的东西。`lib/onboarding/position.ts` 的 `shouldGlide(from, to, anchor)` 是唯一判据：没落过位（挂载
   那一帧在 -9999）直接出现，两框外接矩形碰到锚点也直接跳，其余才带 left/top 过渡。`from` 是卡片**此刻
