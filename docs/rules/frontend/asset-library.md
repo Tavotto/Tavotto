@@ -208,4 +208,4 @@
   拿它挤动卡片来量 coachmark 的同步重测（Codex #731），换掉那根杠杆之前不删（审计「刷新只留旋转图标」那一条待办）。
 - **脚本区**：组头 28px `type-section` + `type-meta` 计数；运行中 = 一颗静止的 accent 点 + 状态句的 `text-shimmer`（不转圈）；
   所有恢复入口（一键修复卡、跑前准备、运行目录、缺数据、失败详情）是同一种「第二行」（`SecondRow`）；读清单 = 静态骨架、
-  筛不到 = `EmptyState`、读不出 = danger `Notice`；每行一份 `ui/RowMenu`（运行 / 取消、记住的输入、复制路径）。
+  筛不到 = `EmptyState`、读不出 = danger `Notice`；每行一份 `ui/RowMenu`（运行 / 取消、记住的输入、复制路径）。复制路径按**项目根**（`projectStore.project.figures_dir`，退一步才用 `assetStore.figuresDir`）拼绝对路径——不等素材清单；两边都不知道就不给这一项，不复制会在别处解析的相对名；没有 `navigator.clipboard` / 写入被拒一律报 `pathCopyFailed`（带路径），不静默（Codex #832）。
