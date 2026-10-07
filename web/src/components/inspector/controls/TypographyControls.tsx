@@ -168,8 +168,8 @@ export function TypographyControls({
         <Anchor adapter={adapter} prop="color">
           <TextColorRow
             labelWidth={labelWidth}
-            // 多选不一致时色块取第一个目标的真实颜色 + 旁边明写「多个值」，
-            // 不像旧批量行那样谎报一个谁都不是的 #000000
+            // 多选不一致时色块画成「多个值」（`ColorField mixed`）；value 只当取色盘的起点
+            // （第一个目标的真实颜色），不谎报一个谁都不是的 #000000
             value={String(displayValueOf(colorVal) ?? firstColor(adapter))}
             mixed={colorVal.kind === 'mixed'}
             onChange={(v) => adapter.write('color', v, true)}
