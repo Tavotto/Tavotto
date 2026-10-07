@@ -28,7 +28,7 @@ import { emptyProject, type PanelObject } from '@/types/document'
 import { AssistantPanel } from './AiPanel'
 import { COPIED_MS } from './CopyAction'
 import { Markdown } from './Markdown'
-import { formatDuration, parseUnifiedDiff } from './transcriptModel'
+import { formatDuration, parseUnifiedDiff, type LineRow } from './transcriptModel'
 
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
@@ -430,6 +430,27 @@ describe('parseUnifiedDiff', () => {
   it('hunk 里以「--」开头的删除行不是文件头', () => {
     const rows = parseUnifiedDiff(['--- a.py', '+++ a.py', '@@ -1,1 +1,1 @@', '--- old', '+++ new', ''].join('\n'))
     expect(rows.map((r) => r.kind)).toEqual(['del', 'add'])
+  })
+
+  // 前后缀按 UTF-16 码元比：𝛼/𝛽、😀/🙀 共用高代理位，𝐀(U+1D400)/🐀(U+1F400) 共用低代理位——边界不得落在代理对中间
+  const LONE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
+  const pieces = (oldLine: string, newLine: string) => {
+    const rows = parseUnifiedDiff(['@@ -1 +1 @@', `-${oldLine}`, `+${newLine}`, ''].join('\n')) as LineRow[]
+    return rows.map((r) => {
+      expect(r.pair).toBeDefined()
+      const [a, b] = r.pair!
+      return [r.text.slice(0, a), r.text.slice(a, b), r.text.slice(b)]
+    })
+  }
+  it.each([
+    ['x = 𝛼 + 1', 'x = 𝛽 + 1', [['x = ', '𝛼', ' + 1'], ['x = ', '𝛽', ' + 1']]],
+    ['label="😀 ok"', 'label="🙀 ok"', [['label="', '😀', ' ok"'], ['label="', '🙀', ' ok"']]],
+    ['a = "𝐀"', 'a = "🐀"', [['a = "', '𝐀', '"'], ['a = "', '🐀', '"']]],
+    ['f(👨‍👩‍👧)', 'f(👨‍👩‍👦)', [['f(', '👨‍👩‍👧', ')'], ['f(', '👨‍👩‍👦', ')']]],
+  ])('字级高亮的边界不劈开字：%s → %s', (oldLine, newLine, expected) => {
+    const got = pieces(oldLine, newLine)
+    for (const piece of got.flat()) expect(LONE.test(piece)).toBe(false)
+    expect(got).toEqual(expected)
   })
 })
 
