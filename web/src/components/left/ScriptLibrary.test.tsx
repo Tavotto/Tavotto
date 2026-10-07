@@ -998,3 +998,51 @@ describe('试运行撞上起会话之前的门', () => {
     expect(useScriptRunStore.getState().byScript['fig_labels.py']?.phase).toBe('captured_one')
   })
 })
+
+describe('行与状态的写法（2026-10-07 设计审计 §10.3）', () => {
+  it('组头是 28px 的 type-section + type-meta 计数', async () => {
+    mockRegistry.mockResolvedValue(view([entry({ script: 'show.py', reason: 'no_static_output' })]))
+    await mount()
+    const head = host.querySelector<HTMLElement>('[data-script-group]')!
+    expect(head.className).toContain('h-7')
+    expect(head.querySelector('.type-section')).toBeTruthy()
+    expect(head.querySelector('.type-meta')?.textContent).toBe('1')
+  })
+
+  it('运行中：点是静止的，「在动」只由那句话的 shimmer 说（没有转圈 / 呼吸）', async () => {
+    mockRegistry.mockResolvedValue(view([entry({ script: 'show.py' })]))
+    mockProbe.mockImplementation(() => new Promise(() => {}))
+    await mount()
+    await act(async () => runButton().click())
+    const row = host.querySelector<HTMLElement>('[data-script-row="show.py"]')!
+    expect(row.querySelector('[data-script-dot="running"]')).toBeTruthy()
+    expect(row.querySelector('.animate-spin')).toBeNull()
+    expect(row.querySelector('[data-script-running]')!.className).toContain('text-shimmer')
+  })
+
+  it('筛不到时是 EmptyState，不是一行裸字', async () => {
+    mockRegistry.mockResolvedValue(view([entry({ script: 'show.py' })]))
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => {
+      root.render(
+        <TooltipProvider>
+          <ScriptLibrary query="nothing-like-this" />
+        </TooltipProvider>,
+      )
+    })
+    await flush()
+    expect(host.querySelector('[data-script-no-match][data-empty-state]')).toBeTruthy()
+  })
+
+  it('行菜单（⋯ / ⇧F10）：运行与复制路径', async () => {
+    mockRegistry.mockResolvedValue(view([entry({ script: 'show.py' })]))
+    await mount()
+    const row = host.querySelector<HTMLElement>('[data-script-row="show.py"] > div')!
+    await act(async () => {
+      row.dispatchEvent(new KeyboardEvent('keydown', { key: 'F10', shiftKey: true, bubbles: true, cancelable: true }))
+    })
+    expect(document.querySelector('[data-script-copy-path]')).toBeTruthy()
+  })
+})

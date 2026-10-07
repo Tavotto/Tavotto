@@ -6,9 +6,9 @@ import {
   Images,
   Layers,
   LayoutGrid,
+  ListChecks,
   Paintbrush,
   Settings,
-  TriangleAlert,
 } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { EditableFigureIcon } from '@/components/ui/semanticIcons'
@@ -25,8 +25,10 @@ import { Tip } from '../ui/Tooltip'
  * 两者互相跳转（样式里不合规的那一格直达问题清单里的那一条）。
  *
  * 「问题」（Prompt 11）**常驻**：它在没有问题时也要在——「一个问题都没有」
- * 本身就是用户要的答案，而按需出现的入口会让人以为功能坏了。图标上的中性小点
- * 只在有**阻断项**时出现（2026-09-28 起不再挂红底数字）；问题数在可达名里。
+ * 本身就是用户要的答案，而按需出现的入口会让人以为功能坏了。图标上的小点
+ * 只在有**阻断项**时出现（2026-09-28 起不再挂红底数字；2026-10-07 起点是 danger 色——
+ * 它只为阻断亮，颜色就是它唯一要说的话）；问题数在可达名与气泡里（「3 项阻断（共 20）」）。
+ * 图标是 `ListChecks`（检查清单），不再与「警告」同形（审计 §9.4）。
  */
 const ITEMS: { id: LeftTab; icon: typeof Images }[] = [
   // 工作区（项目一级）排最上：范围从外到内——项目 → 画布 → 素材 → 图层 → 图内
@@ -36,17 +38,20 @@ const ITEMS: { id: LeftTab; icon: typeof Images }[] = [
   { id: 'layers', icon: Layers },
   { id: 'elements', icon: EditableFigureIcon },
   { id: 'style', icon: Paintbrush },
-  { id: 'problems', icon: TriangleAlert },
+  { id: 'problems', icon: ListChecks },
 ]
 
 /**
  * 轨钮（2026-09-30 重设计，参照 OpenBitFun）：图标下面写一个短名（`rail.short.*`，两个字 / 一个
- * 英文词），小白不用悬停去猜图标；选中 = 白底 + 卡片投影 + 实心图标，落在灰色桌面上。
+ * 英文词），小白不用悬停去猜图标；选中 = 白底 + 1px 轮廓 + 实心图标，落在灰色桌面上（2026-10-07
+ * 审计 §4.1：此前是卡片投影，4% 的投影在桌面上等于没有；卡片投影只属于 `ui/Card`）。
  * 可达名仍是完整名（`rail.<id>`），短名 aria-hidden，读屏不会念两遍。
  */
 const RAIL_BUTTON =
   'relative flex w-14 flex-col items-center gap-1 rounded-md pb-1.5 pt-2 outline-none transition-colors focus-visible:focus-ring'
 const RAIL_IDLE = 'text-ink-2 hover:bg-surface-hover hover:text-ink'
+/** 选中：白底 + 1px border 轮廓（outline，几何不变）——不靠投影 */
+const RAIL_ACTIVE = 'bg-surface text-ink outline-1 -outline-offset-1 outline-border'
 
 /**
  * 常驻图标轨道：每个上下文各占一格，点击打开对应抽屉，再点一次收起。
@@ -61,7 +66,7 @@ export function LeftRail() {
   const open = useUiStore((s) => s.leftOpen)
   const railClick = useUiStore((s) => s.railClick)
   const problems = useValidationStore((s) => s.issues.length)
-  const blocking = useValidationStore((s) => s.issues.some((i) => i.severity === 'error'))
+  const blocking = useValidationStore((s) => s.issues.reduce((n, i) => n + (i.severity === 'error' ? 1 : 0), 0))
 
   return (
     <nav
@@ -74,9 +79,12 @@ export function LeftRail() {
       {ITEMS.map(({ id, icon: Icon }) => {
         const active = open && tab === id
         // 角标只写进无障碍名，不再单独挂一个 aria-live——轨道是导航，不是播报区
-        const label = id === 'problems' && problems > 0
-          ? t('rail.problemsCount', { count: problems })
-          : t(`rail.${id}`)
+        const label =
+          id !== 'problems' || problems === 0
+            ? t(`rail.${id}`)
+            : blocking > 0
+              ? t('rail.problemsBlocking', { count: blocking, total: problems })
+              : t('rail.problemsCount', { count: problems })
         const button = (
           <button
             onClick={() => railClick(id)}
@@ -85,22 +93,26 @@ export function LeftRail() {
             data-rail={id}
             aria-label={label}
             aria-expanded={active}
-            className={cn(RAIL_BUTTON, active ? 'bg-surface text-ink shadow-card' : RAIL_IDLE)}
+            className={cn(RAIL_BUTTON, active ? RAIL_ACTIVE : RAIL_IDLE)}
           >
             <Icon size={ICON_SIZE.md} filled={active} />
             <span aria-hidden className="max-w-full truncate px-0.5 text-xs leading-none">
               {t(`rail.short.${id}`)}
             </span>
-            {id === 'problems' && blocking && (
+            {id === 'problems' && blocking > 0 && (
               /* 折叠时唯一的提示，而且**只为阻断项亮**（2026-09-28 用户反馈：红底数字
-                 角标一直在余光里报警，数字随每次编辑跳，却不说该做什么）。现在是一颗
-                 6px 的中性墨点：警告与建议不打扰，有会拦住导出的问题时才出现。
-                 问题数没有丢——在可达名与悬停提示里（`rail.problemsCount`）。
-                 点在 28px 钮自己的格子里，不挡画布；`ring-surface` 把它从图标上切开 */
+                 角标一直在余光里报警，数字随每次编辑跳，却不说该做什么）。一颗 6px 的点，
+                 **贴在图标上**、不贴在钮角上（审计 §9.4）；颜色是 danger 锚点（非文字 ≥3:1）——
+                 它只在有阻断时出现，红就是它唯一要说的事（此前的中性墨点约 2.5:1，几乎看不见）。
+                 警告与建议不打扰。数字在可达名与悬停提示里（`rail.problemsBlocking`）。
+                 环的颜色跟着钮底走：选中是白底，未选中是桌面 */
               <span
                 aria-hidden
                 data-rail-blocking
-                className="absolute right-3 top-1 h-1.5 w-1.5 rounded-full bg-ink-2 ring-2 ring-bg"
+                className={cn(
+                  'absolute left-1/2 top-1.5 ml-1 h-1.5 w-1.5 rounded-full bg-danger ring-2',
+                  active ? 'ring-surface' : 'ring-bg',
+                )}
               />
             )}
           </button>

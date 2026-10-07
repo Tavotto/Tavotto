@@ -154,6 +154,14 @@ describe('同名项目', () => {
   })
 })
 
+/** Radix 的 DropdownMenu 开在 pointerdown 上，jsdom 里 .click() 打不开它 */
+function openMenu(trigger: Element) {
+  act(() => {
+    trigger.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0 }))
+    trigger.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, button: 0 }))
+  })
+}
+
 describe('已不存在的目录', () => {
   it('收成一组、默认折叠、能全部移除、展开后各自能移除', () => {
     // 主列表里没有失效项
@@ -170,11 +178,12 @@ describe('已不存在的目录', () => {
     expect(rows).toHaveLength(4)
     expect(rows[0].textContent).toContain('目录不存在')
     expect(rows[0].textContent).toContain('…/pytest-2/figs')
-    // 打不开：主按钮禁用；移除按钮常驻
-    expect(rows[0].querySelector<HTMLButtonElement>('button[aria-label^="打开项目"]')!.disabled).toBe(true)
-    const rm = rows[0].querySelector<HTMLButtonElement>('button[aria-label^="从列表移除"]')!
-    expect(rm.className).not.toContain('opacity-0')
-    act(() => rm.click())
+    // 打不开：主按钮禁用；只剩「移除」一个动作，所以行的「⋯」常驻（不藏在悬停后面）
+    expect(rows[0].querySelector<HTMLButtonElement>('[data-picker-open]')!.disabled).toBe(true)
+    const more = rows[0].querySelector<HTMLButtonElement>('[data-row-menu-trigger]')!
+    expect(more.className).not.toContain('opacity-0')
+    openMenu(more)
+    act(() => document.querySelector<HTMLElement>('[data-project-remove]')!.click())
     expect(remove).toHaveBeenCalledWith('/private/var/folders/T/pytest-of-jiaqi/pytest-2/figs')
 
     const all = [...group.querySelectorAll('button')].find((b) => b.textContent === '全部移除')!
@@ -230,10 +239,10 @@ describe('切换进行中（Codex #550）', () => {
     expect(submitButton().disabled).toBe(true)
     expect(openButtons().length).toBeGreaterThan(20)
     expect(openButtons().every((b) => b.disabled)).toBe(true)
-    // 移除只动列表，不是切换：不跟着灰
-    const removes = [...host.querySelectorAll<HTMLButtonElement>('button[aria-label^="从列表移除"]')]
-    expect(removes.length).toBeGreaterThan(0)
-    expect(removes.some((b) => !b.disabled)).toBe(true)
+    // 移除只动列表，不是切换：行的「⋯」（移除在里面）不跟着灰
+    const menus = [...host.querySelectorAll<HTMLButtonElement>('[data-picker-row] [data-row-menu-trigger]')]
+    expect(menus.length).toBeGreaterThan(0)
+    expect(menus.every((b) => !b.disabled)).toBe(true)
 
     await act(async () => useProjectStore.setState({ switching: false }))
     expect(byText('返回当前项目').disabled).toBe(false)

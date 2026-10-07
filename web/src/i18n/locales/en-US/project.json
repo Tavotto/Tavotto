@@ -70,7 +70,6 @@
     "recentLabel": "Recent projects",
     "regionLabel": "Choose a project",
     "removeAllMissing": "Remove all",
-    "removeFromList": "Remove {{name}} from the list. Nothing on disk is deleted.",
     "removeFromListTitle": "Remove from the list — deletes nothing",
     "tagline": "A project is the folder that holds your plotting scripts. Choose one to start laying out.",
     "tutorial": {
@@ -125,8 +124,6 @@
   },
   "switcher": {
     "home": "Back to projects",
-    "newTabLabel": "Open in a new tab",
-    "newTabTip": "Open in a new tab",
     "trigger": "Current project {{name}} — click to switch"
   },
   "workspace": {

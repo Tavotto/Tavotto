@@ -191,3 +191,17 @@
   `projectSwitchAssets.test.ts` +
   `e2e/asset-library.spec.ts`（show-only 项目真实后端黄金路径 + 窄视口 +
   保存/关闭/重开/重放/预检/导出完整链 + 多 Figure 选择器）。
+
+## 2026-10-07 设计刷新（审计 §5 / §10.3）
+
+- **素材卡经 `ui/Card`**（raised + interactive + selected）：`li[role=option][data-card=<素材 id>]` 是焦点 / 键盘 / 拖拽的那个
+  option，里面一层 `Card`（它自己的 `data-card` 是外观名 `raised`——按素材找卡片一律带值 `[data-card="<id>"]` 或 `li[data-card]`）。
+  就近入口（`data-card-actions`）是箭头光标，卡片本身才是抓手。
+- **选中之后只有一条页脚**（`data-asset-footer`）：上一行名字 + 动作（`data-selected-asset-actions`，真按钮、在 listbox 外），
+  需要说话时下面跟接入说明（`data-capability-notice`，同一个容器）。
+- 「只看可编辑的图」「筛选」「刷新」在抽屉标题行的动作槽里（`left/DrawerHeader`），搜索行只有搜索；筛选 chip 是胶囊；
+  刷新失败是图区里的一条 danger `Notice`。刷新中那行「正在刷新…」（`data-asset-refreshing`）**暂留**：`e2e/tutorial.spec.ts`
+  拿它挤动卡片来量 coachmark 的同步重测（Codex #731），换掉那根杠杆之前不删（审计「刷新只留旋转图标」那一条待办）。
+- **脚本区**：组头 28px `type-section` + `type-meta` 计数；运行中 = 一颗静止的 accent 点 + 状态句的 `text-shimmer`（不转圈）；
+  所有恢复入口（一键修复卡、跑前准备、运行目录、缺数据、失败详情）是同一种「第二行」（`SecondRow`）；读清单 = 静态骨架、
+  筛不到 = `EmptyState`、读不出 = danger `Notice`；每行一份 `ui/RowMenu`（运行 / 取消、记住的输入、复制路径）。

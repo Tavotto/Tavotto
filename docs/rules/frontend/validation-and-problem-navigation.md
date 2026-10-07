@@ -56,11 +56,11 @@ preflight.runSpec()      规则求值（两份求值器，golden vectors 对齐�
   aria-label**——那是本地化文案，换语言就选不中。
 * **普通界面不出现 gid / 对象 id**：措辞唯一实现 `lib/validationText.ts`，
   主语取 manifest 的 `label`（过 `engineLabel()`），精确名词只在每行收起的
-  「技术详情」里。它的开关是行尾**常驻槽位**的图标钮（`data-issue-tech-toggle`，
-  `aria-expanded` / `aria-controls` 指向 `data-issue-tech`），平时透明、指到 / 聚焦 /
-  当前 / 已展开时才画——**悬停只改透明度，绝不改 display，行高永不随悬停变**
-  （2026-10-07 设计审计 P0：此前折叠行悬停才出现，每指一行清单跳 20px；`problemPanel.test` 钉着）。
-  吸顶组头的底色读 `LeftPanel` 按模式设的 `--drawer-bg`（停靠 = bg、覆盖式 = surface），不写死白底。
+  「技术详情」里。它是行尾 88px **尾随格**里的 ⓘ（`data-issue-tech-toggle`），点开是一个 popover
+  （`data-issue-tech`，2026-10-07 设计审计 §9.4：此前在行下展开，逐行扫视时每行涨约 20px）；尾随格静止时
+  画「当前 → 要求」（`data-issue-values`），指到 / 聚焦 / 是当前行时**同一格**换成「修复」+ ⓘ——
+  **悬停只改透明度，绝不改 display，行高与列宽永不随悬停变**（`problemPanel.test` 钉着）。
+  吸顶组头、游标条与页脚的底色读 `LeftPanel` 按模式设的 `--drawer-bg`（停靠 = bg、覆盖式 = surface），不写死白底。
 * **`safe_auto` 的三条判据**：目标值唯一、**修完真的能过**（绝对下限不含等号，
   所以"提到正好 8 pt"不算修好）、不动科研数据（色图 / 裁剪 / 重排一律不自动）。
   落地经 `store/issueFixActions.ts` → `documentStore.commit`，一个修复一个事务、
@@ -79,8 +79,9 @@ preflight.runSpec()      规则求值（两份求值器，golden vectors 对齐�
   渲染报 `unrestored > 0` 的 native 图由 `renderStore.inconsistent` → `nativePanelState` 标成
   `'inconsistent'`（角标，与 offline 同一套）。**画布层**（标注字号、页宽）仍在 `lib/issueFix.planFix()`。
   可修规则集 `ENGINE_FIX_RULES` ↔ `specfix.FIXABLE_RULES` 是严格同源对。
-  「全部处理」的集合唯一出处 `batchable()`（**不含建议档**；组头的「全部修复」
-  是点名那一组，带 `includeSuggestions`）；计数与执行是同一个集合。修复在跑时
+  摘要条「全部修复 N」的集合唯一出处 `batchable()`（**不含建议档**；一支 / 一组的「修复 N」
+  是点名那一堆，带 `includeSuggestions`）；计数与执行是同一个集合。**一个动词**：只有
+  修复（单条安全修）/ 修复…（要选）/ 修复 N（批量）三种说法（2026-10-07 审计 §9.4，此前八种）。修复在跑时
   `uiStore.fixing` 把所有修复入口置灰（同一时刻只跑一轮，第二轮回 `busy`）。修复结果
   是非被动 toast，后台渲染通知以 `{ passive: true }` 发、顶不掉它（`uiStore.statusPassive`）。
   错误 toast 不自动消失，所以它可以带**主人**（`setStatus(…, { owner })`）：`render.failed` 挂
@@ -98,38 +99,50 @@ preflight.runSpec()      规则求值（两份求值器，golden vectors 对齐�
 * **面板的呈现层在 `lib/problemList.ts`（2026-09-06，审计 T09）**，纯函数，
   不跑第二遍求值器：① 范围「当前图 / 整个文档」——当前图 = 快速编辑的
   `activePanelId` → 图内编辑的 `elementPanelId` → 选中的面板，`uiStore.problemScope`
-  为 `null` 时有当前图就看它；抽屉标题的计数与面板同一个范围（`useProblemScope`），
-  轨道上**不挂数字**（2026-09-28 起）：有阻断项时一颗中性小点（`data-rail-blocking`），全文档问题数只在可达名里（它是入口）。② 按 ruleCode 聚合，组头说标题 + 等级 +
+  为 `null` 时有当前图就看它；范围是抽屉标题行里的一枚胶囊（「当前图 13 ▾」，菜单里两档各带自己的数，
+  没有当前图时那一档灰掉并说原因；2026-10-07 审计 §9.4：范围页签 / 总数 / 比例条三层头删掉），
+  判据同一份（`useProblemScope`）；轨道上**不挂数字**（2026-09-28 起）：有**阻断项**时图标上一颗 danger 色小点
+  （`data-rail-blocking`，只为阻断亮），可达名与气泡说「问题 · N 项阻断（共 M）」（它是入口）；轨钮图标是
+  `ListChecks`（检查清单，不与警告同形）。② 按 ruleCode 聚合，组头说标题 + 等级 +
   受影响对象数，行里只说「谁、现在多少、要多少」；叶子行仍带
   `data-issue-row[data-issue-rule][data-issue-object]`。③ 逐项游标
   `uiStore.problemCursor`：定位后清单**留在原地**（`enterElementEdit(id, { leftTab:
-  'keep' })`，元素树不顶掉左栏），当前行 `aria-current` + 左侧竖条 + 「当前」，
-  底部上一项 / 下一项；那条修好消失后「下一项」指向**顶上来的那条**，不跳回开头。
-* **卡片层（2026-09-28，用户反馈「一屏几百行太吵」）**：面板先是卡片，点进去才是上面
-  ② 的逐组清单。两种切法、同一份 `shown`，分桶全在 `lib/problemList.ts`（纯函数）：
+  'keep' })`，元素树不顶掉左栏），当前行 `aria-current` + 选中底与 600（`listRowClass` 的选中态，**不画左竖条**）
+  + 尾随格常亮出「修复」，底部上一项 / 下一项（**F8 / ⇧F8 同一个动作**，一支走完接着走下一支）；那条修好消失后
+  「下一项」指向**顶上来的那条**，不跳回开头。指着一行时画布上那个对象描一道悬停轮廓（`uiStore.issueHover` →
+  `canvas/IssueOverlay`）；「⋯」里可打开**画布等级标记**（`uiStore.problemPins`：每张有问题的图右上角外侧一枚（让开 ne 缩放手柄），
+  点它 = `openProblemAt`）。摘要条（32px）只有等级开关（只有阻断着色）与唯一一颗填色主动作「全部修复 N」；
+  正在重新检查时标题行一段 shimmer（`validationStore.queued`，延迟 300ms 才出），首检是静态骨架，「未发现问题」
+  带证据（按哪套规范、查了几张图、`validationStore.checkedAt`）。
+* **分桶层（2026-09-28 卡片层，2026-10-07 设计审计 §9.4 改成就地展开的披露树）**：面板先是分桶，
+  **就地展开**才是上面 ② 的逐组清单（不再整页钻入）：图 32 → 子图 28 → 规则 28 → 对象 28，全部建在
+  `listRowClass` 上，每行一个 88px 尾随格（静止是值 / 项数，热了同一格换「修复 N」）。分桶默认收着、拆成子图的
+  图头默认开着；展开一支 = 写下 `problemDrill`（直达与定位写的也是它，那一支强制开着、游标在它里面走）。
+  两种切法、同一份 `shown`，分桶全在 `lib/problemList.ts`（纯函数）：
   「按图」`bucketsByFigure()`——一张组图按**子图簇**拆（`subject.part`，判据唯一在
   `lib/subplotParts.ts`：宿主认引擎的 `follow_gids`，否则色条轴认色条的 `host_gid`，
   不按几何猜；名字取图里写着的「(a)」，没有就引擎的「子图 N」；只有一个簇的图不拆）；
   「按类别」`bucketsByCategory()`——类别是规则目录的 `category` 字段（目录里每条都得写，
   没登记的 code 落 `other`，不按名字猜）。卡片里装的、点进去列的、卡片「修复 N」修的
   是同一个集合（`drillIssues()` → `batchable(…, { includeSuggestions: true })`，点名
-  一张卡片与组头「全部修复」同口径）。「无法核验」不进卡片，只占一行入口。点进哪张
+  一支与一组的「修复 N」同口径）。「无法核验」不进分桶，在树底只占一行（虚线圆）。点进哪张
   卡片是 `uiStore.problemDrill`，「正在处理」的游标是 `problemCursor`，两者**与写下它们时的
   现场一起存**（`problemContext` = `problemContextKey()`：排版 `loadSeq` / 生效范围与当前图 /
   切法）。读的一方（`useScopedProblems`）现场对不上就当作回到总览、没有游标——换项目、换
   当前图不需要谁记得来清，面板被卸载时也成立；写的一方一律带上**定位之后**现取的现场
   （`lib/problemContext.problemContextNow()`）。面板挂着时看到现场换了会再把记着的那份丢掉，
-  免得换回原来那张图时已经离开的卡片复活。用户显式换范围 / 换切法 / 点返回也退回总览。
-  **等级筛选不在现场里**：在卡片里筛是正常用法；卡片被筛空说「当前筛选下没有问题」，与
-  「修完了」分开。直达（`openProblemAt`）自己点开那条问题所在的卡片、落游标，面板里没有
-  「看到游标在卡片外就钻进去」的第二套机制。卡片的机器标识 `data-problem-card-key`
-  （`drillKey()`），新手教程按 `drillKeysOf(issue)` 找「那条问题所在的卡片」。
+  免得换回原来那张图时已经离开的卡片复活。用户显式换范围 / 换切法 / 收起那一支也退回总览。
+  **等级筛选不在现场里**：在一支里筛是正常用法（那一支被筛空就暂时不画，人不被踢回总览，取消筛选它带着
+  展开态回来）；整个范围被筛空说「当前筛选下没有问题」，与「修完了」分开。直达（`openProblemAt`）自己点开那条问题所在的卡片、落游标，面板里没有
+  「看到游标在卡片外就钻进去」的第二套机制。分桶节点的机器标识照旧：`li[data-problem-card=<kind>]` 的**第一个
+  子元素是展开钮**，`data-problem-card-key`（`drillKey()`）/ `-rules` / `-objects` / `-count`；新手教程按
+  `drillKeysOf(issue)` 找「那条问题所在的那一支」（`> button:first-child`）。
   按图看、清单里只有一张拆不出子图的图时跳过卡片层（只有一张卡，多点一下什么也没多看到；
   判据 `singleDrill()`，面板与直达共用）。卡片缩略图走 `/api/render` 时按共享退避表重取
   （`lib/imgRetry`），真取不到才退回图标。
 * 看护：`lib/validation.test.ts` / `lib/validationText.test.ts` /
   `lib/issueFocus.test.ts` / `lib/issueFix.test.ts` / `lib/problemList.test.ts` / `lib/subplotParts.test.ts` /
-  `store/validationStore.test.ts` / `components/left/problemPanel.test.tsx`；
+  `store/validationStore.test.ts` / `components/left/problemPanel.test.tsx` / `canvas/issueOverlay.test.tsx`；
   Python 侧 `tests/test_preflight.py` 的跨语言同源一条。
 
 ## 速查表原要点（2026-09-25 迁入，#608）

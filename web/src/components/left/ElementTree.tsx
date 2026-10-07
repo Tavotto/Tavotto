@@ -4,7 +4,6 @@ import { t as translate } from '@/i18n'
 import {
   ChartLine,
   Crosshair,
-  Ellipsis,
   Eye,
   EyeOff,
   LayoutList,
@@ -15,6 +14,7 @@ import {
   Shapes,
   TriangleAlert,
   Type,
+  X,
   type IconComponent,
 } from '@/components/ui/icons'
 import { structuralParent } from '@/components/inspector/roles/hierarchy'
@@ -40,10 +40,12 @@ import { useUiStore } from '@/store/uiStore'
 import type { PanelObject } from '@/types/document'
 import { untruncatedLabel } from '../inspector/identityCrumbs'
 import { engineLabel, groupName, roleName, unsupportedOf } from '../inspector/roles/registry'
-import { Button, IconButton } from '../ui/Button'
+import { IconButton } from '../ui/Button'
 import { EmptyState } from '../ui/EmptyState'
 import { BackgroundChoice } from '../inspector/ElementInspector'
-import { Menu, MenuItem } from '../ui/Menu'
+import { MenuItem } from '../ui/Menu'
+import { RowMenu } from '../ui/RowMenu'
+import { useRowMenu } from '../ui/useRowMenu'
 import { Tip } from '../ui/Tooltip'
 import { isEffectiveOverrideAt } from '@/lib/effectiveOverride'
 
@@ -157,6 +159,9 @@ interface Row {
   node: TreeNode
   depth: number
   key: string
+  /** 同一层兄弟里的位置与个数：读屏念「第 2 项，共 5 项」（`aria-posinset` / `aria-setsize`） */
+  pos: number
+  size: number
 }
 
 function flatten(
@@ -166,11 +171,11 @@ function flatten(
   isOpen: (n: TreeNode, key: string) => boolean,
   out: Row[],
 ): Row[] {
-  for (const n of nodes) {
+  nodes.forEach((n, i) => {
     const key = nodeKey(n, parentKey)
-    out.push({ node: n, depth, key })
+    out.push({ node: n, depth, key, pos: i + 1, size: nodes.length })
     if (n.children.length && isOpen(n, key)) flatten(n.children, depth + 1, key, isOpen, out)
-  }
+  })
   return out
 }
 
@@ -244,7 +249,11 @@ function rowLabel(el: ManifestElement): string {
   return engineLabel(untruncatedLabel(el.label, typeof text === 'string' ? text : undefined))
 }
 
-export function ElementTree() {
+/**
+ * `chrome`：`drawer`（缺省，坐在 `LeftPanel` 里：标题行在上面，搜索行只留下边距）/ `bare`（别处借用，
+ * 如 playground 的侧栏：上面没有标题行，搜索行四周自己留边）。2026-10-07 设计审计 §10.3。
+ */
+export function ElementTree({ chrome = 'drawer' }: { chrome?: 'drawer' | 'bare' } = {}) {
   const elementPanelId = useUiStore((s) => s.elementPanelId)
   const selectedIds = useSelectionStore((s) => s.ids)
   const objects = useDocumentStore((s) => s.doc.objects)
@@ -310,10 +319,18 @@ export function ElementTree() {
     )
   }
 
-  return <TreeView key={panel.id} panel={panel} manifest={manifest} />
+  return <TreeView key={panel.id} panel={panel} manifest={manifest} chrome={chrome} />
 }
 
-function TreeView({ panel, manifest }: { panel: PanelObject; manifest: Manifest }) {
+function TreeView({
+  panel,
+  manifest,
+  chrome,
+}: {
+  panel: PanelObject
+  manifest: Manifest
+  chrome: 'drawer' | 'bare'
+}) {
   useTranslation('workspace')
   const selectedGids = useUiStore((s) => s.selectedGids)
   const [query, setQuery] = useState('')
@@ -432,6 +449,15 @@ function TreeView({ panel, manifest }: { panel: PanelObject; manifest: Manifest 
   )
   const lockedGids = useMemo(() => new Set(panel.lockedGids ?? []), [panel.lockedGids])
 
+  const isolatedLabel = useMemo(() => {
+    if (!isolated) return ''
+    const hit = manifest.elements.find((e) => e.gid === isolated)
+    const group = manifest.groups?.find((g) => g.gid === isolated)
+    return et('isolated', {
+      label: hit ? engineLabel(hit.label) : group ? groupName(group, manifest) : isolated,
+    })
+  }, [isolated, manifest])
+
   // 没有选中时 primaryGid 是 undefined，而聚类行的 `el` 也是 undefined——直接比会停在第一个聚类行
   const focusKey =
     (primaryGid !== undefined ? rows.find((r) => nodeGid(r.node) === primaryGid)?.key : undefined) ??
@@ -439,8 +465,9 @@ function TreeView({ panel, manifest }: { panel: PanelObject; manifest: Manifest 
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {/* 搜索框下留白与素材页 / 画布页同一档 8px（左栏审计 L36） */}
-      <div className="flex shrink-0 items-center px-3 pb-2">
+      {/* 搜索框下留白与素材页 / 画布页同一档 8px（左栏审计 L36）。「只看这一支」是搜索行里的一枚 chip，
+          不再是搜索框下面另起的一条横幅（2026-10-07 设计审计 §10.3）：它与搜索一样是「看哪些行」的筛选 */}
+      <div className={cn('flex shrink-0 items-center gap-1.5', chrome === 'bare' ? 'p-2' : 'px-3 pb-2')}>
         <SearchInput
           value={query}
           onValueChange={setQuery}
@@ -453,25 +480,19 @@ function TreeView({ panel, manifest }: { panel: PanelObject; manifest: Manifest 
           placeholder={et('search')}
           aria-label={et('searchAria')}
         />
-      </div>
-
-      {isolated && (
-        <div className="flex h-7 shrink-0 items-center gap-1.5 border-y border-border bg-surface-2 pl-3 pr-1">
-          <Crosshair size={ICON_SIZE.xs} className="shrink-0 text-ink-3" />
-          <span className="min-w-0 flex-1 truncate text-xs text-ink">
-            {et('isolated', {
-              label: (() => {
-                const hit = manifest.elements.find((e) => e.gid === isolated)
-                const group = manifest.groups?.find((g) => g.gid === isolated)
-                return hit ? engineLabel(hit.label) : group ? groupName(group, manifest) : isolated
-              })(),
-            })}
+        {isolated && (
+          <span
+            data-element-isolate
+            className="flex h-7 min-w-0 max-w-[50%] shrink items-center gap-1 rounded-full bg-surface-hover pl-2 pr-0.5 text-xs text-ink"
+          >
+            <Crosshair size={ICON_SIZE.xs} aria-hidden className="shrink-0 text-ink-3" />
+            <span className="min-w-0 truncate">{isolatedLabel}</span>
+            <IconButton iconSize="xs" label={et('exitIsolate')} data-element-isolate-exit onClick={() => setIsolated(null)}>
+              <X size={ICON_SIZE.xs} />
+            </IconButton>
           </span>
-          <Button size="sm" className="text-ink-2" onClick={() => setIsolated(null)}>
-            {et('exitIsolate')}
-          </Button>
-        </div>
-      )}
+        )}
+      </div>
 
       <ul
         ref={listRef}
@@ -484,7 +505,7 @@ function TreeView({ panel, manifest }: { panel: PanelObject; manifest: Manifest 
             <EmptyState icon={SearchX} title={et('noMatch')} />
           </li>
         )}
-        {rows.map(({ node, depth, key }) => {
+        {rows.map(({ node, depth, key, pos, size }) => {
           if (node.cluster) {
             return (
               <ClusterRow
@@ -494,6 +515,8 @@ function TreeView({ panel, manifest }: { panel: PanelObject; manifest: Manifest 
                 icon={clusterIcon(node.cluster.key)}
                 count={node.children.length}
                 depth={depth}
+                pos={pos}
+                size={size}
                 expanded={isOpen(node, key)}
                 tabbable={focusKey === key}
                 onToggle={toggle}
@@ -518,6 +541,8 @@ function TreeView({ panel, manifest }: { panel: PanelObject; manifest: Manifest 
                 hidden={false}
                 locked={false}
                 depth={depth}
+                pos={pos}
+                size={size}
                 selected={selectedGids.includes(g.gid)}
                 tabbable={focusKey === key}
                 expanded={node.children.length ? isOpen(node, key) : undefined}
@@ -544,6 +569,8 @@ function TreeView({ panel, manifest }: { panel: PanelObject; manifest: Manifest 
               hidden={hiddenGids.has(el.gid) || isElementHidden(el)}
               locked={lockedGids.has(el.gid)}
               depth={depth}
+              pos={pos}
+              size={size}
               selected={selectedGids.includes(el.gid)}
               tabbable={focusKey === key}
               expanded={node.children.length ? isOpen(node, key) : undefined}
@@ -577,6 +604,8 @@ const ClusterRow = memo(function ClusterRow({
   icon,
   count,
   depth,
+  pos,
+  size,
   expanded,
   tabbable,
   onToggle,
@@ -587,6 +616,8 @@ const ClusterRow = memo(function ClusterRow({
   icon: IconComponent
   count: number
   depth: number
+  pos: number
+  size: number
   expanded: boolean
   tabbable: boolean
   onToggle: (key: string, expanded: boolean) => void
@@ -597,6 +628,9 @@ const ClusterRow = memo(function ClusterRow({
     <li
       role="treeitem"
       aria-expanded={expanded}
+      aria-level={depth + 1}
+      aria-posinset={pos}
+      aria-setsize={size}
       aria-label={et('groupAria', { label, count })}
       tabIndex={tabbable ? 0 : -1}
       data-el={rowKey}
@@ -639,6 +673,8 @@ const ElementRow = memo(function ElementRow({
   hidden,
   locked,
   depth,
+  pos,
+  size,
   selected,
   tabbable,
   expanded,
@@ -662,6 +698,8 @@ const ElementRow = memo(function ElementRow({
   hidden: boolean
   locked: boolean
   depth: number
+  pos: number
+  size: number
   selected: boolean
   tabbable: boolean
   /** undefined = 叶子节点，无展开箭头 */
@@ -674,12 +712,18 @@ const ElementRow = memo(function ElementRow({
   useTranslation('workspace')
   const unsupported = unsupportedOf(role)
   const shown = engineLabel(label)
+  // ⋯ / 右键 / ⇧F10 同一份菜单（`ui/RowMenu`）；行有焦点时 ⋯ 进 Tab 顺序（此前 tabIndex=-1，键盘够不着）
+  const menu = useRowMenu()
 
   return (
     <li
+      {...menu.rowProps}
       role="treeitem"
       aria-selected={selected}
       aria-expanded={expanded}
+      aria-level={depth + 1}
+      aria-posinset={pos}
+      aria-setsize={size}
       aria-label={
         et('rowAria', { label: shown, role: roleName(role) }) +
         (hidden ? et('rowAriaHidden') : '') +
@@ -689,12 +733,14 @@ const ElementRow = memo(function ElementRow({
       data-el={rowKey}
       style={treeIndent(depth)}
       onFocus={(e) => {
+        menu.rowProps.onFocus(e)
         if (e.target !== e.currentTarget || selected) return
         // 焦点漫游即选中，与图层树一致
         onSelect(gid, false)
       }}
       onKeyDown={(e) => {
-        if (e.target !== e.currentTarget) return
+        menu.rowProps.onKeyDown?.(e)
+        if (e.defaultPrevented || e.target !== e.currentTarget) return
         if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
           e.preventDefault()
           e.stopPropagation()
@@ -757,22 +803,9 @@ const ElementRow = memo(function ElementRow({
       {locked && <Lock size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-label={et('lockedState')} />}
       {hidden && <EyeOff size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-label={et('hiddenState')} />}
 
-      {/* 低频操作收进 ⋯，hover / 键盘落到行里才出现 */}
-      <span className="shrink-0 opacity-0 transition-opacity duration-fast group-focus-within:opacity-100 group-hover:opacity-100">
-        <Menu
-          width={168}
-          align="end"
-          trigger={
-            <IconButton
-              iconSize="sm"
-              tabIndex={-1}
-              onPointerDown={(e) => e.stopPropagation()}
-              label={et('rowActions', { label: shown })}
-            >
-              <Ellipsis size={ICON_SIZE.sm} className="text-ink-3" />
-            </IconButton>
-          }
-        >
+      {/* 低频操作收进 ⋯（hover / 行有焦点时出现）；右键、⇧F10 开同一份。外面这层挡住按下：开菜单不改选区 */}
+      <span className="flex shrink-0" onPointerDown={(e) => e.stopPropagation()}>
+        <RowMenu state={menu} label={et('rowActions', { label: shown })} width={180} data-element-menu>
           <MenuItem icon={Crosshair} onSelect={() => onIsolate(gid)}>
             {et('isolateBranch')}
           </MenuItem>
@@ -784,12 +817,13 @@ const ElementRow = memo(function ElementRow({
           {canHide && (
             <MenuItem
               icon={hidden ? Eye : EyeOff}
+              shortcut="⌫"
               onSelect={() => (hidden ? unhideElement(panelId, gid) : hideElement(panelId, gid, label))}
             >
               {et(hidden ? 'unhide' : 'hide')}
             </MenuItem>
           )}
-        </Menu>
+        </RowMenu>
       </span>
     </li>
   )

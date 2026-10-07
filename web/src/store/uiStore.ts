@@ -284,6 +284,17 @@ interface UiState extends Persisted {
    */
   issueHighlight: { objectId: string | null; gid: string | null; token: number } | null
   /**
+   * 问题面板里**指着**哪一条（2026-10-07 设计审计 §9.4）：画布上给那个对象画一道悬停轮廓
+   * （`canvas/IssueOverlay`），与画布自己的 hover 预示同一种画法。只是「我在看它」，不选中、
+   * 不定位、不进文档；指针离开 / 焦点离开 / 面板卸载就清。
+   */
+  issueHover: { objectId: string; gid: string | null } | null
+  /**
+   * 画布上的问题标记（每张有问题的图右上角一枚等级记号，点它 = `openProblemAt`）。
+   * 默认关：问题面板「⋯」里打开。会话状态，同 `problemFilter`。
+   */
+  problemPins: boolean
+  /**
    * 问题面板的等级筛选（null = 不筛）。**UI 会话状态**：不进文档、不进
    * 撤销、不跨会话记——它是"我现在想看哪几类"，不是用户的长期偏好。
    */
@@ -407,6 +418,8 @@ interface UiState extends Persisted {
   clearStatusOwnedBy: (owner: string) => void
   setEditingText: (id: string | null) => void
   setIssueHighlight: (v: { objectId: string | null; gid: string | null } | null) => void
+  setIssueHover: (v: { objectId: string; gid: string | null } | null) => void
+  setProblemPins: (v: boolean) => void
   setProblemFilter: (v: Severity[] | null) => void
   setProblemScope: (v: ProblemScope | null) => void
   /** 命令面板跑完一条命令就记一笔（去重、最近在前、封顶） */
@@ -510,6 +523,8 @@ export const useUiStore = create<UiState>((set, get) => ({
   elementPanelId: null,
   selectedGids: [],
   issueHighlight: null,
+  issueHover: null,
+  problemPins: false,
   problemFilter: null,
   problemScope: null,
   problemCursor: null,
@@ -689,6 +704,11 @@ export const useUiStore = create<UiState>((set, get) => ({
     set({ status: null, statusTone: 'info', statusPassive: false, statusOwner: null })
   },
 
+  setIssueHover: (v) =>
+    set((s) =>
+      v?.objectId === s.issueHover?.objectId && v?.gid === s.issueHover?.gid ? s : { issueHover: v },
+    ),
+  setProblemPins: (problemPins) => set({ problemPins }),
   setIssueHighlight: (v) =>
     set((s) => ({
       issueHighlight: v

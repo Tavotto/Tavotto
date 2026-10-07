@@ -39,6 +39,7 @@ import {
   startGuideDrag,
   startResizeDrag,
 } from './interactions'
+import { IssueOverlay } from './IssueOverlay'
 
 const SEL = 'var(--color-sel)'
 const HANDLE = 7
@@ -238,6 +239,9 @@ export function OverlaySvg() {
             />
           )
         })()}
+
+      {/* 问题面板的悬停轮廓与画布等级标记：自己一个文件（`IssueOverlay`），这里只挂进来 */}
+      <IssueOverlay objects={objects} t={t} />
 
       {/* hover 预示；线状与真实轮廓类对象沿自己的形状描示，不画对不上的包围盒 */}
       {hovered && <ObjectOutline obj={hovered} t={t} opacity={0.4} />}
