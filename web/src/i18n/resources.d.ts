@@ -4187,6 +4187,14 @@ export default interface Resources {
       "search": "搜索画布…",
       "searchAria": "搜索画布"
     },
+    "canvasMenu": {
+      "aria": "画布操作",
+      "grid": "网格",
+      "paste": "粘贴",
+      "rulers": "标尺",
+      "safeArea": "安全区",
+      "selectAll": "全选"
+    },
     "canvasTools": {
       "fit": "适应",
       "label": "画布工具",
@@ -4503,6 +4511,7 @@ export default interface Resources {
       "arrangeRef": "参照：{{ref}}",
       "changeKind": "更改为",
       "connectSource": "连接源脚本",
+      "copy": "复制",
       "cropRotatedReason": "旋转过的图暂不能裁剪，先取消旋转",
       "deleteCount": "删除 {{count}} 个对象",
       "duplicate": "创建副本",
@@ -4518,6 +4527,7 @@ export default interface Resources {
       "needObjects_other": "需要至少选中 {{count}} 个对象",
       "openArrange": "打开排列属性",
       "openInspector": "打开全部属性",
+      "paste": "粘贴",
       "rebuild": "重新构建",
       "resetOverridesCount_other": "恢复图内修改（{{count}} 项）",
       "scale": "缩放",
@@ -4659,6 +4669,8 @@ export default interface Resources {
       "emptyHintNoAssets": "把 PDF/PNG 或绘图脚本放进项目目录，就会出现在素材库。",
       "emptyTitle": "画布是空的",
       "exitTitle": "退出图内编辑，回到画布层（Esc）",
+      "rulerUnit": "mm",
+      "rulerUnitTitle": "标尺单位：毫米",
       "tryTutorial": "试用示例"
     },
     "status": {

@@ -579,6 +579,12 @@ export function startPan(e: ReactPointerEvent) {
 /*  绘制新对象                                                                 */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * 新画出来的标注的默认颜色：**文档数据**（落进对象的 `color`），不是界面色——所以它不是 token。
+ * 覆盖层的草稿预览（`OverlaySvg.DraftLinePreview`）读同一个常量：预览即成品。
+ */
+export const DRAW_COLOR = '#1B1B18'
+
 const DEFAULT_DRAW: Record<string, { w: number; h: number }> = {
   text: { w: 40, h: 5 },
   arrow: { w: 30, h: 14 },
@@ -702,7 +708,7 @@ export function startDraw(e: ReactPointerEvent, tool: Exclude<Tool, 'select'>) {
                 h,
                 ...ends,
                 strokePt: 1,
-                color: '#1B1B18',
+                color: DRAW_COLOR,
                 head: 'end',
               } satisfies ArrowObject)
             : ({
@@ -715,7 +721,7 @@ export function startDraw(e: ReactPointerEvent, tool: Exclude<Tool, 'select'>) {
                 h,
                 ...ends,
                 strokePt: 1,
-                color: '#1B1B18',
+                color: DRAW_COLOR,
                 fill: null,
               } satisfies ShapeObject)
       } else {
@@ -728,7 +734,7 @@ export function startDraw(e: ReactPointerEvent, tool: Exclude<Tool, 'select'>) {
           w: Math.max(rect.w, 1),
           h: Math.max(rect.h, 1),
           strokePt: 1,
-          color: '#1B1B18',
+          color: DRAW_COLOR,
           fill: null,
         }
         created = shape

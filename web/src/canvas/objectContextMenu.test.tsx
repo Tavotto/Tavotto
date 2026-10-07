@@ -345,6 +345,8 @@ describe('可编辑面板', () => {
       'fit',
       'reset-overrides',
       'open-inspector',
+      'copy',
+      'paste',
       'duplicate',
       'lock',
       'hide',
@@ -480,6 +482,8 @@ describe('仅排版面板', () => {
       'crop',
       'fit',
       'open-inspector',
+      'copy',
+      'paste',
       'duplicate',
       'lock',
       'hide',
@@ -558,7 +562,7 @@ describe('文字 / 箭头 / 形状', () => {
   it('文字：编辑文字 / 全部属性 ── 副本 / 锁 / 隐藏 / 层级 ── 删除；编辑文字 → setEditingText', async () => {
     await openOn('t1')
     expect(menu()?.dataset.quickMenu).toBe('text')
-    expect(itemKeys()).toEqual(['edit-text', 'open-inspector', 'duplicate', 'lock', 'hide', 'z-order', 'delete'])
+    expect(itemKeys()).toEqual(['edit-text', 'open-inspector', 'copy', 'paste', 'duplicate', 'lock', 'hide', 'z-order', 'delete'])
     await click(item('edit-text'))
     expect(useUiStore.getState().editingTextId).toBe('t1')
   })
@@ -571,6 +575,8 @@ describe('文字 / 箭头 / 形状', () => {
       expect(itemKeys()).toEqual([
         'change-kind',
         'open-inspector',
+        'copy',
+        'paste',
         'duplicate',
         'lock',
         'hide',
@@ -816,6 +822,8 @@ describe('多选', () => {
       'align-sameh',
       'group',
       'open-arrange',
+      'copy',
+      'paste',
       'duplicate',
       'lock',
       'hide',

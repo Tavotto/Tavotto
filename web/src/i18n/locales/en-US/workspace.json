@@ -460,7 +460,9 @@
     "hideCount": "Hide {{count}} objects",
     "zOrder": "Stacking order",
     "deleteCount": "Delete {{count}} objects",
-    "cropRotatedReason": "Rotated figures can’t be cropped yet; reset the rotation first"
+    "cropRotatedReason": "Rotated figures can’t be cropped yet; reset the rotation first",
+    "copy": "Copy",
+    "paste": "Paste"
   },
   "rail": {
     "assets": "Assets",
@@ -589,7 +591,9 @@
     "emptyHintNoAssets": "Put PDF/PNG files or plotting scripts in the project folder, and they’ll show up in the asset library.",
     "emptyTitle": "The canvas is empty",
     "exitTitle": "Leave figure editing and go back to the canvas layer (Esc)",
-    "tryTutorial": "Try the sample project"
+    "tryTutorial": "Try the sample project",
+    "rulerUnit": "mm",
+    "rulerUnitTitle": "Ruler unit: millimetres"
   },
   "stylePanel": {
     "emptyTitle": "Select a figure on the canvas to see its style here",
@@ -846,5 +850,13 @@
     "fast_edit_entered": "Your changes are saved to this layout. The original file stays untouched.",
     "multi_select": "Use the floating bar by the selection to align and distribute.",
     "problem_found": "“Problems” on the left locates the object and its property field."
+  },
+  "canvasMenu": {
+    "aria": "Canvas actions",
+    "paste": "Paste",
+    "selectAll": "Select all",
+    "rulers": "Rulers",
+    "grid": "Grid",
+    "safeArea": "Safe area"
   }
 }

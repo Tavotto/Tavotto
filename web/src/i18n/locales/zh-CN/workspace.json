@@ -440,7 +440,9 @@
     "hideCount": "隐藏 {{count}} 个",
     "zOrder": "排列层级",
     "deleteCount": "删除 {{count}} 个对象",
-    "cropRotatedReason": "旋转过的图暂不能裁剪，先取消旋转"
+    "cropRotatedReason": "旋转过的图暂不能裁剪，先取消旋转",
+    "copy": "复制",
+    "paste": "粘贴"
   },
   "rail": {
     "assets": "素材",
@@ -564,7 +566,9 @@
     "emptyHintNoAssets": "把 PDF/PNG 或绘图脚本放进项目目录，就会出现在素材库。",
     "emptyTitle": "画布是空的",
     "exitTitle": "退出图内编辑，回到画布层（Esc）",
-    "tryTutorial": "试用示例"
+    "tryTutorial": "试用示例",
+    "rulerUnit": "mm",
+    "rulerUnitTitle": "标尺单位：毫米"
   },
   "stylePanel": {
     "emptyTitle": "在画布上选中一张图，这里显示它的样式",
@@ -799,5 +803,13 @@
     "fast_edit_entered": "你的改动会保存到当前排版，原始文件不动。",
     "multi_select": "用选区旁的浮动栏对齐和分布。",
     "problem_found": "左侧「问题」可定位对象和属性字段。"
+  },
+  "canvasMenu": {
+    "aria": "画布操作",
+    "paste": "粘贴",
+    "selectAll": "全选",
+    "rulers": "标尺",
+    "grid": "网格",
+    "safeArea": "安全区"
   }
 }

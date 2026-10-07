@@ -79,7 +79,7 @@ import {
 } from './interactions'
 import { openQuickEdit } from './quickEditStore'
 import { panelContentTransform, panelTransformCss } from '@/lib/panelTransform'
-import { LoaderCircle } from '@/components/ui/icons'
+import { Info, LoaderCircle } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 
 /**
@@ -913,7 +913,8 @@ function ElementHitLayer({
             // 本层随世界 zoom 缩放，线宽反除才是屏幕上恒定的 1px。
             // 颜色是 sel：画布层的彩色线只有一种（2026-09-15 打磨 C2，与 OverlaySvg 的
             // 元素框 / 端点 / 手柄同源）
-            border: `${1 / zoom}px dashed var(--color-sel)`,
+            // 图内框选也是实线（2026-10-07 设计审计 §10.1：虚线只给暂定的东西）
+            border: `${1 / zoom}px solid var(--color-sel)`,
             background: 'color-mix(in srgb, var(--color-sel) 6%, transparent)',
           }}
         />
@@ -1256,12 +1257,15 @@ function RenderStatusBadge({ obj, approx = false }: { obj: PanelObject; approx?:
       style={{ transform: `scale(${scale})` }}
     >
       <span
+        data-panel-badge={shown.tone}
         className={cn(
-          'relative flex items-center gap-1 overflow-hidden rounded-sm px-1.5 py-0.5 text-xs',
+          // 角标是 chip：胶囊（圆角族 full）。三种语气三种颜色（2026-10-07 设计审计 §10.1：此前「过期」与
+          // 「构建中」同为 ink 底，看不出哪个要处理）：构建中 = 墨 + 转圈；过期 = warn 锚点；出错 = danger 锚点
+          'relative flex items-center gap-1 overflow-hidden rounded-full px-1.5 py-0.5 text-xs',
           shown.tone === 'error'
-            ? 'bg-danger text-surface'
+            ? 'bg-danger-surface font-medium text-danger-content inset-ring inset-ring-danger-border'
             : shown.tone === 'stale'
-              ? 'bg-ink text-surface'
+              ? 'bg-warn-surface font-medium text-warn-content inset-ring inset-ring-warn-border'
               : shown.tone === 'info'
                 ? 'bg-ink/70 text-surface'
                 // 进行中不是选中：ink 底状态角标（蓝色不做任何大块背景，accent 只剩焦点 / 链接 / AI）
@@ -1276,14 +1280,19 @@ function RenderStatusBadge({ obj, approx = false }: { obj: PanelObject; approx?:
             `pointer-events-none`（角标画在面板左上角，图内标题常常就在那儿），
             而 raster 那一档的角标**整个编辑期间常驻**——89×19 的一块死区会让
             用户点不到自己的标题。实测撞见过。 */}
+        {/* 说明钮是一颗真按钮（2026-10-07 设计审计 §10.1）：键盘能 Tab 到、读屏念得出那句说明；
+            图标走图标集（此前是字符 ⓘ）。按下不冒到画布（不选中、不起拖） */}
         {shown.hint && (
-          <span
+          <button
+            type="button"
+            data-badge-hint
             title={shown.hint}
             aria-label={shown.hint}
-            className="pointer-events-auto cursor-help font-bold opacity-80"
+            onPointerDown={(e) => e.stopPropagation()}
+            className="pointer-events-auto -my-0.5 flex size-4 items-center justify-center rounded-full opacity-80 outline-none hover:opacity-100 focus-visible:focus-ring"
           >
-            ⓘ
-          </span>
+            <Info size={ICON_SIZE.xs} aria-hidden />
+          </button>
         )}
         {/* 冷启动可能要几分钟：一个呼吸的圆点表达不出「还在动」，补一条来回扫的
             不确定进度条。**不做百分比**——worker 那边根本没有进度可报，
