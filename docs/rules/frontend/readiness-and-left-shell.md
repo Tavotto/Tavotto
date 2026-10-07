@@ -122,7 +122,9 @@
   在后端 `config.pinned_projects`，改动**一次一个按路径描述的操作**（`POST
   /api/projects/pinned`：add / remove / move，move 用相对 `delta` 或 `to_path`），由
   `config.edit_pinned` 在锁里对照最新那份执行——**不发整张列表、不按下标**：整张替换会
-  让两个标签页互相盖掉，按下标排队的挪动会移错项（Codex #550）。前端每个标签页一条
+  让两个标签页互相盖掉，按下标排队的挪动会移错项（Codex #550）。上移 / 下移（⌥↑ / ⌥↓）跳过藏起来的
+  当前项目、与可见的邻居换位，邻居在收藏队列**轮到执行时**按最新列表才找（`movePinned(path, { step, skip })`），
+  不在按键那一刻定——不然连按两下拿同一个旧邻居，第二下挪回原处（Codex #832）。前端每个标签页一条
   收藏队列、一条切项目队列（`projectStore.serialQueue`），切换期间所有「打开」入口置灰；
   `init` / `refreshRecent` 回来时若收藏修订号已变就不写 `pinned`。界面以回包为准、失败
   不动列表；PUT/POST 前先解析 pj，失效时 409 且配置不变。与最近列表互相独立（从最近

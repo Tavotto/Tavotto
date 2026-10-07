@@ -64,8 +64,11 @@ const current: ProjectStatus = {
 let ops: Record<string, unknown>[] = []
 let failPinned = false
 let server: string[] = []
+/** 非 null 时每个收藏请求都挂起，直到用例按顺序放行（模拟请求还在路上） */
+let held: (() => void)[] | null = null
 const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
   if (url.includes('/api/projects/pinned') && init?.method === 'POST') {
+    if (held) await new Promise<void>((r) => held!.push(r))
     if (failPinned) {
       return new Response(JSON.stringify({ error: 'x', code: 'bad_request', params: {} }), { status: 400 })
     }
@@ -119,6 +122,7 @@ beforeEach(() => {
   desktop.revealed = []
   ops = []
   failPinned = false
+  held = null
   server = ['/a/Supplementary', '/b/Rebuttal']
   open.mockClear()
   useProjectStore.setState({
@@ -327,6 +331,48 @@ describe('当前项目被收藏时，排序只认可见的收藏行（Codex #832
       )
     })
     expect(ops).toEqual([])
+  })
+})
+
+describe('连按两下 ⌥↓、前一下还没回来（Codex #832）', () => {
+  const altDown = (path: string) =>
+    act(async () => {
+      host
+        .querySelector<HTMLElement>(`[data-workspace-row][data-project-path="${path}"]`)!
+        .querySelector<HTMLButtonElement>('[data-workspace-open]')!
+        .dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', altKey: true, bubbles: true, cancelable: true }))
+    })
+  /** 放行挂着的第一个请求，等它回包落地、队列把下一个发出去 */
+  const releaseNext = async () => {
+    for (let i = 0; i < 20 && !held!.length; i++) await act(async () => {})
+    await act(async () => held!.shift()!())
+    for (let i = 0; i < 5; i++) await act(async () => {})
+  }
+
+  it.each([
+    ['A B C', ['/a/A', '/b/B', '/c/C'], ['/b/B', '/c/C', '/a/A'], ['/b/B', '/c/C', '/a/A']],
+    // 藏起来的当前项目压在中间：第二下也要按那时可见的邻居算，越过它
+    [
+      '当前项目藏在中间',
+      ['/a/A', '/b/B', CURRENT, '/c/C'],
+      ['/b/B', CURRENT, '/c/C', '/a/A'],
+      ['/b/B', '/c/C', '/a/A'],
+    ],
+  ])('挪两格，而不是挪过去又挪回来（%s）', async (_label, start, end, visible) => {
+    server = [...start]
+    useProjectStore.setState({ pinned: server.map((p) => entryOf(p)) })
+    held = []
+    await mount()
+    await altDown('/a/A')
+    await altDown('/a/A')
+    await releaseNext()
+    await releaseNext()
+    expect(server).toEqual(end)
+    expect(rowNames('pinned')).toEqual(visible)
+    expect(ops).toEqual([
+      { op: 'move', path: '/a/A', to_path: '/b/B' },
+      { op: 'move', path: '/a/A', to_path: '/c/C' },
+    ])
   })
 })
 

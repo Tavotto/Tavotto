@@ -89,10 +89,13 @@ export function WorkspaceList() {
   // 「上移 / 下移」都只认可见的那几行——不然紧挨着它的那一行第一下是跟看不见的它换位，界面上没动静，
   // 可见的首尾行也还亮着上移 / 下移。不筛选时 `pinnedRows` 就是这份显示顺序
   const pinnedIndex = (path: string) => pinnedRows.findIndex((p) => p.path === path)
-  /** 与可见的相邻一行换位：按路径挪到那一行此刻的位置（跳过藏起来的当前项目） */
+  /**
+   * 与可见的相邻一行换位（跳过藏起来的当前项目）。此刻没有邻居就不排；有的话邻居留给
+   * 收藏队列**轮到执行时**按最新列表再找——连按两下 ⌥↓ 是挪两格，不是挪过去又挪回来（Codex #832）
+   */
   const movePinnedBy = (path: string, delta: number) => {
-    const neighbour = pinnedRows[pinnedIndex(path) + delta]
-    if (neighbour) void useProjectStore.getState().movePinned(path, { toPath: neighbour.path })
+    if (!pinnedRows[pinnedIndex(path) + delta]) return
+    void useProjectStore.getState().movePinned(path, { step: delta < 0 ? -1 : 1, skip: currentPath })
   }
   const togglePin = (path: string) => void useProjectStore.getState().togglePin(path)
 
