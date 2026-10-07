@@ -84,6 +84,7 @@ import { useDocumentStore } from '@/store/documentStore'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
+import { fastEditPanelOf, useWorkspaceStore } from '@/store/workspace'
 import { openArrangeInInspector } from './context-bar/openArrange'
 import type { CanvasObject, PanelObject } from '@/types/document'
 import { objectLabel, panelRotation } from '@/types/document'
@@ -504,12 +505,15 @@ function CommonTail({
   const ids = selected.map((o) => o.id)
   const count = selected.length
   const locked = triStateOf(selected, (o) => !!o.locked)
+  // 快速编辑这一屏只画正在编辑的那张图：粘贴 / 创建副本都把新对象落在版面上，这一屏看不见（Codex #833）。
+  // 动作本身也挡（`clipboard.consumePayload` / `duplicateSelected`，⌘V / ⌘D 同经它们），这里不摆入口
+  const fastEdit = useWorkspaceStore((s) => fastEditPanelOf(s) !== null)
   return (
     <>
       {/* 剪贴板组（2026-10-07 设计审计 §10.1）：复制 / 粘贴 / 创建副本挨在一起。复制与粘贴调的是属性页按钮那一对
           （`copySelectedObjects` / `pasteObjects`）；⌘C / ⌘V 的主路径仍是原生剪贴板事件（`handleCopyEvent` /
           `handlePasteEvent`），这里只是同一件事的菜单入口。粘贴靠异步 `readText`，WebKit 不给非编辑区读、
-          Firefox 默认没有——那里不提供这一项（`canPasteFromMenu`，Codex #833），用 ⌘V */}
+          Firefox 默认没有——那里不提供这一项（`canPasteFromMenu`，Codex #833），用 ⌘V。快速编辑里粘贴 / 创建副本都不摆 */}
       <MenuSeparator />
       <MenuItem
         icon={Clipboard}
@@ -519,7 +523,7 @@ function CommonTail({
       >
         {qe('copy')}
       </MenuItem>
-      {canPasteFromMenu() && (
+      {!fastEdit && canPasteFromMenu() && (
         <MenuItem
           icon={ClipboardPaste}
           data-quick-item="paste"
@@ -529,9 +533,11 @@ function CommonTail({
           {qe('paste')}
         </MenuItem>
       )}
-      <MenuItem icon={Copy} data-quick-item="duplicate" shortcut={keyOf('duplicate')} onSelect={run(duplicateSelected)}>
-        {qe('duplicate')}
-      </MenuItem>
+      {!fastEdit && (
+        <MenuItem icon={Copy} data-quick-item="duplicate" shortcut={keyOf('duplicate')} onSelect={run(duplicateSelected)}>
+          {qe('duplicate')}
+        </MenuItem>
+      )}
       <MenuSeparator />
       {!multi ? (
         <MenuItem

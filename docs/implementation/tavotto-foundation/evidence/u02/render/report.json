@@ -1,8 +1,8 @@
 {
  "platform": {
-  "python": "3.13.11",
-  "system": "Darwin",
-  "machine": "arm64"
+  "python": "3.12.14",
+  "system": "Linux",
+  "machine": "x86_64"
  },
  "versions": {
   "pypdfium2": "5.13.0",
@@ -13,7 +13,7 @@
   "uharfbuzz": "0.56.1",
   "harfbuzz": "14.4.0",
   "pdfminer.six": "20251107",
-  "pypdf": "6.16.1"
+  "pypdf": "6.19.0"
  },
  "inputs": {
   "truth": "docs/implementation/tavotto-foundation/evidence/u02/render/truth.json",
@@ -41,8 +41,8 @@
    "bytes": 18073
   },
   "spike_pdfium.png": {
-   "sha256": "422b77b9408edf273d59fc8f359764045b17108a99e2daf575c1cb872c21d413",
-   "bytes": 30866,
+   "sha256": "b8eb01a5611b076f509e8f1e958de85498fa88471c6fcd7aee9f3d48fed7c21f",
+   "bytes": 30789,
    "width": 800,
    "height": 640
   }

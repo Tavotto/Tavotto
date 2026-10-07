@@ -252,8 +252,8 @@ export function useKeyboard() {
       }
       if (mod && e.key.toLowerCase() === 'd') {
         e.preventDefault()
-        // 副本落在版面上、快速编辑这一屏看不见它（与方向键 / 工具字母同一条判据）
-        if (!inFastEdit()) duplicateSelected()
+        // 快速编辑里不加副本（副本落在版面上、这一屏看不见）：判据在 `duplicateSelected` 里
+        duplicateSelected()
         return
       }
       // ⌘C / ⌘V 不在 keydown 层拦：让浏览器派发原生 copy/paste 事件，

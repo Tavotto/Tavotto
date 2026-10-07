@@ -73,7 +73,7 @@ import { exactPanelManifest, rejectArtifactRenders, renderEpoch, renderKeyOf, us
 import { useSelectionStore } from './selectionStore'
 import { askConfirm, useUiStore, type StatusTone } from './uiStore'
 import { useViewportStore } from './viewportStore'
-import { fastEditPanelOf, useWorkspaceStore } from './workspace'
+import { fastEditPanelOf, useWorkspaceStore } from './workspaceStore'
 import { rectOf, visualBounds, type Rect } from '@/lib/geometry'
 import type { CropRect, PanelRotation } from '@/types/document'
 import {
@@ -418,6 +418,10 @@ export function deleteSelected() {
 }
 
 export function duplicateSelected() {
+  // 快速编辑这一屏只画正在编辑的那张图：副本落在版面上、换掉选区，用户什么都看不见（Codex #833）。
+  // ⌘D、系统菜单「创建副本」、对象右键菜单、属性页「⋯」都到这里，判据只在这一处（与粘贴的
+  // `clipboard.consumePayload` 同一个 `fastEditPanelOf`）
+  if (fastEditPanelOf(useWorkspaceStore.getState())) return
   const ids = useSelectionStore.getState().ids
   if (!ids.length) return
   // 克隆**必须**在 commit 的 recipe 外面做：recipe 里的 d 是 Immer 草稿，
@@ -1552,7 +1556,7 @@ function finishElementEntry(panelId: string, leftTab: 'elements' | 'keep'): bool
   const rail = leftTab === 'keep' ? ui.leftTab : 'elements'
   if (seeded) status(note('bakedSeeded', { count: seeded }), 'info')
   // 只说「进了图内编辑」；此刻是快速编辑还是画布排版，订阅方自己问 workspace store
-  // （这里不 import 它：`store/workspace` 已经 import 本模块，别绕成环）
+  // （本模块只许 import 叶子 `store/workspaceStore`，不许 import `store/workspace`：那边已经 import 本模块，别绕成环）
   emitActivity({ kind: 'figure.element_edit_entered' })
   // **焦点救援**：调用方多半是一个自己会被卸载的控件（画布工具条上那个
   // 「编辑图内元素」按钮点完就没了）。焦点掉回 body 之后 WebKit 的 Tab 与
