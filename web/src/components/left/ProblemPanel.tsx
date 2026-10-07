@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useLocale } from '@/i18n/react'
 import {
   ChevronDown,
   ChevronRight,
@@ -749,6 +750,7 @@ function NoneEvidence() {
   const activeCanvasId = useDocumentStore((s) => s.activeCanvasId)
   const activeObjects = useDocumentStore((s) => s.doc.objects)
   const activeBinding = useDocumentStore((s) => s.doc.profile)
+  const locale = useLocale()
   const { figures, names } = useMemo(() => {
     const catalog = toCatalog(specs)
     const nameOf = (binding: typeof activeBinding) => {
@@ -767,7 +769,9 @@ function NoneEvidence() {
       if (!used.includes(name)) used.push(name)
     }
     return { figures, names: used.length ? used : [nameOf(activeBinding)] }
-  }, [specs, canvases, activeCanvasId, activeObjects, activeBinding])
+    // 内置规范的名字（`profileName`）在调用时按当前语言成文：换语言要重算，否则证据句换了语言、规范名还是旧的（Codex #832）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [specs, canvases, activeCanvasId, activeObjects, activeBinding, locale])
   const now = useMinuteClock(checkedAt)
   // 挂上之后才检查完的：`now` 还是挂上那一刻（早于 checkedAt），差是负的，照样是「刚刚」
   const when = checkedAt == null ? null : now - checkedAt < 60_000 ? pr('justNow') : formatRelativeTime(checkedAt, now)

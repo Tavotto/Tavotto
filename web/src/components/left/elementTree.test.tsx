@@ -13,7 +13,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { literal, t } from '@/i18n'
+import { literal, setLocale, t } from '@/i18n'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { LeftPanel } from './LeftPanel'
 import { useAssetStore } from '@/store/assetStore'
@@ -381,6 +381,18 @@ describe('树的语义、行菜单与「只看这一支」（2026-10-07 设计�
     // 与搜索框同一行（不是另起一条横幅）
     expect(chip.parentElement).toBe(search().closest('div')!.parentElement)
     expect(rowGids()).not.toContain('axes_0.xlabel')
+    // chip 的文案在 memo 里成文：换语言要跟着换（Codex #832）
+    expect(chip.textContent).toContain('只看')
+    try {
+      await act(async () => {
+        setLocale('en-US')
+      })
+      expect(host.querySelector<HTMLElement>('[data-element-isolate]')!.textContent).toContain('Isolated')
+    } finally {
+      await act(async () => {
+        setLocale('zh-CN')
+      })
+    }
     await act(async () => host.querySelector<HTMLElement>('[data-element-isolate-exit]')!.click())
     expect(host.querySelector('[data-element-isolate]')).toBeNull()
     expect(rowGids()).toContain('axes_0.xlabel')
