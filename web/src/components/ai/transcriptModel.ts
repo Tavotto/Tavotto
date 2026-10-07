@@ -71,6 +71,36 @@ export type DiffRow =
   | { kind: 'gap'; count: number }
 
 const WORD = /\w/
+
+/*
+ * 前后缀是按 UTF-16 码元比的：「𝛼 → 𝛽」「😀 → 🙀」共用高代理位，比出来的边界会落在一个字的两半之间，
+ * 两半进了不同的文本节点就各自画成「�」。所以比完把边界退到字素边界上（只会让高亮那一截变宽）：
+ * 有 `Intl.Segmenter` 按字素（连 ZWJ emoji、组合附加符一起），没有就至少不劈开代理对。
+ */
+const graphemes: Intl.Segmenter | null =
+  typeof Intl !== 'undefined' && typeof Intl.Segmenter === 'function'
+    ? new Intl.Segmenter(undefined, { granularity: 'grapheme' })
+    : null
+const splitsPair = (s: string, i: number) =>
+  i > 0 && i < s.length && /[\uD800-\uDBFF]/.test(s[i - 1]) && /[\uDC00-\uDFFF]/.test(s[i])
+/** s 里 ≤ i 的最近字素边界 */
+function floorBoundary(s: string, i: number): number {
+  if (i <= 0 || i >= s.length) return i
+  if (!graphemes) return splitsPair(s, i) ? i - 1 : i
+  let b = 0
+  for (const { index } of graphemes.segment(s)) {
+    if (index > i) break
+    b = index
+  }
+  return b
+}
+/** s 里 ≥ i 的最近字素边界 */
+function ceilBoundary(s: string, i: number): number {
+  if (i <= 0 || i >= s.length) return i
+  if (!graphemes) return splitsPair(s, i) ? i + 1 : i
+  for (const { index } of graphemes.segment(s)) if (index >= i) return index
+  return s.length
+}
 const HUNK = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/
 
 /**
@@ -138,6 +168,8 @@ function pairWords(rows: DiffRow[]) {
         const midWord = (c: string | undefined, d: string | undefined) => WORD.test(c ?? '') || WORD.test(d ?? '')
         if (midWord(x[pre], y[pre])) while (pre > 0 && WORD.test(x[pre - 1])) pre--
         if (midWord(x[x.length - 1 - suf], y[y.length - 1 - suf])) while (suf > 0 && WORD.test(x[x.length - suf])) suf--
+        pre = Math.min(floorBoundary(x, pre), floorBoundary(y, pre))
+        suf = Math.min(x.length - ceilBoundary(x, x.length - suf), y.length - ceilBoundary(y, y.length - suf))
         // 整行都不同（或只差空白的一两处）就不画字级：整行底色已经说清楚了
         if (x.length - pre - suf > 0 && pre + suf > 0) del.pair = [pre, x.length - suf]
         if (y.length - pre - suf > 0 && pre + suf > 0) add.pair = [pre, y.length - suf]
