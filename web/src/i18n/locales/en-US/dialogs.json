@@ -6,10 +6,20 @@
     "saveFailed": "Saving failed, so the window stays open. Resolve the problem, or choose “Don’t save” to close anyway.",
     "title": "Unsaved changes"
   },
+  "draftGuard": {
+    "body": "The changes you haven’t saved will be lost.",
+    "discard": "Discard changes",
+    "keepEditing": "Keep editing",
+    "title": "Discard unsaved changes?",
+    "unsaved": "Unsaved changes"
+  },
   "engineEnv": {
     "title": "Rendering environment"
   },
   "export": {
+    "exportAgain": "Export again",
+    "showInFolder": "Show in folder",
+    "finish": "Done",
     "advanced": "Advanced",
     "blockedTitle": "Blocking problems or items that can’t be verified. Tick the confirmation to export.",
     "blockingListLabel": "Blocking problems",
@@ -1680,7 +1690,7 @@
     "manageAria": "Review and change the remembered input for {{script}}",
     "manageTip": "Remembered input",
     "manageTitle": "Remembered input · {{script}}",
-    "manageIntro": "Changing an answer reruns the script right away.",
+    "manageIntro": "Edit any answers, then choose Save and rerun — the script reruns once.",
     "manageWhere": "Answers are stored in {{path}} in the project folder and travel with it; project packages don’t include them.",
     "manageEmpty": "This script has no remembered input.",
     "manageConfig": "Run configuration {{config}}",
@@ -1688,8 +1698,11 @@
     "managePrompt": "Question {{index}}: {{prompt}}",
     "manageNoPrompt": "Question {{index}} (reading standard input)",
     "manageSave": "Save and rerun",
+    "manageSaveCount": "Save and rerun ({{n}})",
     "manageForget": "Remove",
     "manageForgetAria": "Remove the answer to question {{index}}",
+    "manageForgetTitle": "Remove the answer to question {{index}}?",
+    "manageForgetBody": "{{script}} reruns right away and asks this question again.",
     "manageSaved": "Saved; rerunning {{script}}"
   },
   "taskDiagnostic": {

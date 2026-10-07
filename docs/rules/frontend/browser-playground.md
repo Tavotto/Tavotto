@@ -81,6 +81,13 @@
   当第一个会话用——**「一个文件 = 一个 Worker」没有松动**。预热是优化不是
   依赖：失败悄悄退回 cold，绝不在用户动手之前弹错误。营销首页
   （`/`、`/zh/`）**一个字节的 Pyodide 都不加载**，那是网站仓库的静态页面。
+- **外观与工作台同一套（2026-10-07 设计刷新，审计 §10.4）**：`--color-sel` 是画布专用的选择色，playground 里
+  不当品牌色——拖动 / 接收态用 accent（试验台、上传区与主页拖放区共用 `ui/dropZone` 的接收态：平时不画虚线），
+  横幅用 `Notice` / ink 胶囊；要读的字不用 `ink-faint`。案例卡与多图挑选卡都是 `ui/Card` interactive（外 12、
+  封面内 8 坐在画布灰上；整卡点击 = 第 ⑤ 条路，卡内按钮各自 stopPropagation）。编辑态版式同桌面：顶栏是与 MCP 画布
+  共用的 44px `embedded/WidgetHeader`、元素树在 280 宽的 `DrawerShell`（36px 标题行 + `DrawerCount`，坐在
+  `--drawer-bg` 上）、画布 + 属性页在一块白色圆角工作面板里，彼此不画分隔线；源码面板走 `ui/Dialog`；
+  代码着色只用 `syntax-*` token。每屏一颗填色主按钮（首屏 = 主推案例的「开始体验」）。
 - 产物：`python scripts/build_browser_playground.py` → `web/dist-playground/`
   （确定性 engine.zip + 指纹 manifest，指纹算法复用 build_mcp_widget.digest）。
   网站仓库 `pnpm sync-playground` 收走并提交、`pnpm check-playground` 防漂移

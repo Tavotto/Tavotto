@@ -63,6 +63,8 @@ export default defineConfig({
         'a11y.spec.ts',
         'keyboard-golden-path.spec.ts',
         'twin-axes-pick.spec.ts',
+        // Translated panels must not trap transient spine text behind sibling artwork.
+        'spine-feedback.spec.ts',
         // 性能探针（ADR 0075）量的就是用户那台 WKWebView：rAF / MessageChannel 的
         // 时序与合成 PointerEvent 在 WebKit 里成不成立，只有这一腿答得了
         'perf-probe.spec.ts',

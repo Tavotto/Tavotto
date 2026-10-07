@@ -311,6 +311,8 @@ export const useEnvStore = create<EnvState>((set, get) => ({
           res.durable === false
             ? msg('engine.scriptEditNotDurable', { script: res.script }, 'errors')
             : msg('engine.rewriteDone', { script: res.script }, 'errors'),
+          // 改写做成了打 ✓；没确认落盘的那句是提醒，留 ⓘ
+          res.durable === false ? 'info' : 'done',
         )
       return null
     } catch (e) {
@@ -335,6 +337,7 @@ export const useEnvStore = create<EnvState>((set, get) => ({
           res.durable === false
             ? msg('engine.scriptEditNotDurable', { script: backup.script }, 'errors')
             : msg('engine.scriptBackupRestored', { script: backup.script }, 'errors'),
+          res.durable === false ? 'info' : 'done',
         )
       const { useRenderStore } = await import('@/store/renderStore')
       if (epoch !== projectEpoch) return null
@@ -359,7 +362,7 @@ export const useEnvStore = create<EnvState>((set, get) => ({
       if (get().missingInput === offer) set({ missingInput: null })
       // 响应带回新代次：本地就作废，不等事件（事件丢了也不漏）；事件随后到时按代次去重，不再作废第二次
       get().onInputRemapChanged(res.input_remap.generation, 'added')
-      useUiStore.getState().setStatus(msg('engine.missingInputRemembered', undefined, 'errors'))
+      useUiStore.getState().setStatus(msg('engine.missingInputRemembered', undefined, 'errors'), 'done')
       return null
     } catch (e) {
       if (epoch !== projectEpoch) return null
@@ -596,7 +599,7 @@ export const useEnvStore = create<EnvState>((set, get) => ({
           : mode === 'project'
             ? 'engine.workdirNowProject'
             : 'engine.workdirNowSandbox'
-      useUiStore.getState().setStatus(msg(now, undefined, 'errors'))
+      useUiStore.getState().setStatus(msg(now, undefined, 'errors'), 'done')
       return null
     } catch (e) {
       if (epoch !== projectEpoch) return null

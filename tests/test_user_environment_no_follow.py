@@ -150,7 +150,7 @@ def test_project_scan_asks_for_no_follow_environment_hints(tmp_path, monkeypatch
     monkeypatch.setattr(userenvs, "discover", fake)
     projscan.environment_evidence(tmp_path, None)
     # T05：None = 不启动登录 shell（与 False 同样不问），只并入已被明确问过的答案
-    assert seen == {"ask_login_shell": None, "no_follow": True}
+    assert seen == {"ask_login_shell": None, "no_follow": True, "budget": None}
 
 
 @posix_only
@@ -166,3 +166,136 @@ def test_project_scan_report_ignores_a_redirected_settings_file(tmp_path):
     report = projscan.scan(project)
 
     assert all("vscode" not in c["sources"] for c in report["environment"]["candidates"])
+
+
+# ---- 线程 4210267702：枚举 Conda / pyenv 时拿得到预算与取消回调 ----------------------------------
+
+
+class _Clock:
+    def __init__(self):
+        self.now = 0.0
+
+    def __call__(self):
+        return self.now
+
+
+def _fake_home(tmp_path, monkeypatch) -> Path:
+    home = tmp_path / "home"
+    (home / ".conda" / "envs").mkdir(parents=True)
+    monkeypatch.setattr(userenvs, "_home", lambda: str(home))
+    monkeypatch.setattr(userenvs, "_conda_roots", lambda: [])
+    monkeypatch.setenv("PYENV_ROOT", str(home / ".pyenv"))
+    return home
+
+
+def test_expired_budget_stops_conda_enumeration_midway_with_partial(tmp_path, monkeypatch):
+    from tavotto.engine import scanbudget
+
+    home = _fake_home(tmp_path, monkeypatch)
+    for n in range(300):
+        (home / ".conda" / "envs" / f"e{n:03d}").mkdir()
+    clock = _Clock()
+    budget = scanbudget.Budget(clock=clock)
+    seen = {"n": 0}
+    real = scanbudget.Budget.charge_entry
+
+    def ticking(self):
+        seen["n"] += 1
+        if seen["n"] == 70:  # 枚举到一半：墙钟越线
+            clock.now = scanbudget.MAX_SECONDS + 1
+        return real(self)
+
+    monkeypatch.setattr(scanbudget.Budget, "charge_entry", ticking)
+    prefixes = userenvs._conda_prefixes(budget)
+
+    assert 0 < len(prefixes) < 300  # 只有枚举到的那部分
+    assert budget.stopped == scanbudget.ISSUE_TIME
+    assert any(
+        i["code"] == scanbudget.ISSUE_TIME and i["severity"] == "partial" for i in budget.issues()
+    )
+
+
+def test_cancel_during_pyenv_enumeration_returns_partial_discovery(tmp_path, monkeypatch):
+    from tavotto.engine import scanbudget
+
+    home = _fake_home(tmp_path, monkeypatch)
+    # 布局跟 `_pyenv_version_dirs` / `_prefix_python` 走：Windows 是 pyenv-win/versions/<v>/python.exe
+    if os.name == "nt":
+        versions = home / ".pyenv" / "pyenv-win" / "versions"
+        for n in range(200):
+            _python(versions / f"3.{n}").rename(versions / f"3.{n}" / "python.exe")
+    else:
+        versions = home / ".pyenv" / "versions"
+        for n in range(200):
+            _python(versions / f"3.{n}" / "bin").rename(versions / f"3.{n}" / "bin" / "python3")
+    polls = {"n": 0}
+
+    def cancel():
+        polls["n"] += 1
+        return polls["n"] > 3
+
+    budget = scanbudget.Budget(cancel=cancel)
+    found = userenvs._pyenv_pythons(budget)  # 枚举本身要响应取消，不能靠外层循环兜
+
+    assert len(found) < 200
+    assert budget.stopped == scanbudget.ISSUE_CANCELLED
+
+
+@posix_only
+def test_fifo_environments_txt_does_not_hang_and_is_reported(tmp_path, monkeypatch):
+    from tavotto.engine import scanbudget
+
+    home = _fake_home(tmp_path, monkeypatch)
+    os.mkfifo(home / ".conda" / "environments.txt")
+    budget = scanbudget.Budget()
+
+    import threading
+
+    box: dict = {}
+    t = threading.Thread(target=lambda: box.update(v=userenvs._conda_prefixes(budget)), daemon=True)
+    t.start()
+    t.join(5.0)
+    assert not t.is_alive(), "environments.txt FIFO blocked the scan"
+    assert box["v"] == []
+    assert any(i["code"] == scanbudget.ISSUE_UNREADABLE_FILE for i in budget.issues())
+
+
+def test_without_budget_enumeration_is_unchanged(tmp_path, monkeypatch):
+    home = _fake_home(tmp_path, monkeypatch)
+    for n in ("b", "a"):
+        (home / ".conda" / "envs" / n).mkdir()
+
+    assert [os.path.basename(p) for p in userenvs._conda_prefixes()] == ["a", "b"]
+
+
+# --- CodeQL py/path-injection (#811): read_regular_text 与 declared_intents(script=) 的包含性守卫 ---
+
+
+@pytest.mark.parametrize("part", ["..", ".", "", "a/b"])
+def test_read_regular_text_rejects_non_name_components(tmp_path, part):
+    from tavotto.engine import scanbudget
+
+    (tmp_path / "ok.txt").write_text("x", encoding="utf-8")
+    with pytest.raises(OSError):
+        scanbudget.read_regular_text(tmp_path, part, "ok.txt", no_follow=True)
+
+
+def test_read_regular_text_still_reads_regular_file(tmp_path):
+    from tavotto.engine import scanbudget
+
+    (tmp_path / "d").mkdir()
+    (tmp_path / "d" / "f.txt").write_text("hi", encoding="utf-8")
+    assert scanbudget.read_regular_text(tmp_path, "d", "f.txt", no_follow=True) == "hi"
+
+
+def test_declared_intents_script_escape_is_not_read(tmp_path):
+    from tavotto.engine import depresolve
+
+    root = tmp_path / "proj"
+    root.mkdir()
+    (tmp_path / "outside.py").write_text(
+        "# /// script\n# dependencies = ['evilpkg']\n# ///\n", encoding="utf-8"
+    )
+    for no_follow in (False, True):
+        intents = depresolve.declared_intents(root, "../outside.py", no_follow=no_follow)
+        assert all("evilpkg" not in str(i) for i in intents)

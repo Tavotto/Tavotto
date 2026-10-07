@@ -2,7 +2,7 @@ import { useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
 import type { EditableField } from '@/lib/api'
-import { Row } from '../../ui/Field'
+import { Row, type RowLabelWidth } from '../../ui/Field'
 import { NumberField } from '../../ui/Input'
 import { Segmented } from '../../ui/Segmented'
 import { Tab, TabList, TabPanel } from '../../ui/Tabs'
@@ -100,7 +100,7 @@ export function TickTaskCard({
 }: {
   /** 一个或多个轴；给多个时顶部出 X / Y 切换 */
   axes: TickAxisAdapter[]
-  labelWidth?: number
+  labelWidth?: RowLabelWidth
   /**
    * 宿主子图的四边刻度模型（`readAxesTickModel`）。有它方向档多出「隐藏」
    * ——与画布命中区 / 示意图同一份计划函数。
@@ -182,6 +182,7 @@ export function TickTaskCard({
           <Row
             label={labeledWithState(tk('direction'), cur.isOverridden('direction'))}
             labelWidth={labelWidth}
+            status={cur.isOverridden('direction') ? <ResetChip label={tk('direction')} onReset={() => cur.reset('direction')} /> : undefined}
           >
             <Segmented
               className="min-w-0 flex-1"
@@ -195,9 +196,6 @@ export function TickTaskCard({
                 ariaLabel: tk(`dir.${o}`),
               }))}
             />
-            {cur.isOverridden('direction') && (
-              <ResetChip label={tk('direction')} onReset={() => cur.reset('direction')} />
-            )}
           </Row>
         </div>
       )}
@@ -237,7 +235,7 @@ export function TickMinorBlock({
   extra,
 }: {
   axis: TickAxisAdapter
-  labelWidth?: number
+  labelWidth?: RowLabelWidth
   extra?: ReactNode
 }) {
   useTranslation('inspector')
@@ -251,15 +249,13 @@ export function TickMinorBlock({
           <Row
             label={labeledWithState(tk('minor'), cur.isOverridden('minor_visible'))}
             labelWidth={labelWidth}
+            status={cur.isOverridden('minor_visible') ? <ResetChip label={tk('minor')} onReset={() => cur.reset('minor_visible')} /> : undefined}
           >
             <Toggle
               checked={minorOn}
               onChange={(v) => cur.writeOnce('minor_visible', v)}
               aria-label={tk('minorAria', { axis: tk(AXIS_NAME[cur.axis]) })}
             />
-            {cur.isOverridden('minor_visible') && (
-              <ResetChip label={tk('minor')} onReset={() => cur.reset('minor_visible')} />
-            )}
           </Row>
         </div>
       )}
@@ -320,13 +316,16 @@ function NumberRow({
 }: {
   item: NumberItem
   axis: TickAxisAdapter
-  labelWidth: number
+  labelWidth: RowLabelWidth
 }) {
   const { label, field, prop } = item
   return (
     <div data-prop={prop} data-gid={axis.gid}>
-      <Row label={labeledWithState(label, axis.isOverridden(prop))} labelWidth={labelWidth}>
+      <Row label={labeledWithState(label, axis.isOverridden(prop))} labelWidth={labelWidth}
+        status={axis.isOverridden(prop) ? <ResetChip label={label} onReset={() => axis.reset(prop)} /> : undefined}
+      >
         <NumberField
+          half
           dataProp={prop}
           ariaLabel={label}
           value={Number(axis.read(prop) ?? 0)}
@@ -339,7 +338,6 @@ function NumberRow({
           onScrubStart={axis.beginGesture}
           onScrubEnd={axis.endGesture}
         />
-        {axis.isOverridden(prop) && <ResetChip label={label} onReset={() => axis.reset(prop)} />}
       </Row>
     </div>
   )

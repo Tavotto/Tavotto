@@ -13,8 +13,8 @@
  *   5. 宪法第一节颜色表里写了 hex 的行也对一遍——#330 里 selected 收浅到 #ebebe6 时
  *      那张表没跟上（`#e6e6e0`），说明「说明书写值」这件事本身就需要门禁；
  *   6. `spacing` 与 `components`（评审 P2：frontmatter 里每一块机器可读的数据都得有
- *      对拍对象，否则就是没人守的第二份真值）：`spacing.control` 等于 `Button` 的
- *      唯一高度档、`setting-row` 等于 `SettingRow` 的行高；每个组件的
+ *      对拍对象，否则就是没人守的第二份真值）：`spacing.control` / `control-lg` 等于 `Button` 的
+ *      两档高度（28 / 32）、`setting-row` 等于 `SettingRow` 的行高；每个组件的
  *      `{colors.x}` / `{rounded.x}` / `{spacing.x}` 引用都解析得到，并且换算成
  *      Tailwind 类之后真的出现在那个组件的类串里（`rounded.sm` → `rounded-sm`、
  *      `28px` → `h-7`、`{colors.ink}` 做底色 → `bg-ink`）。没有对拍对象的字段
@@ -148,7 +148,7 @@ describe('DESIGN.md 的 frontmatter 是 index.css @theme 的镜像', () => {
 
   it('字体角色：type-<role> 解析出的字号 / 行高 / 字重 / 字距等于 frontmatter', () => {
     const typo = nestedMap('typography')
-    for (const role of ['title', 'section', 'body', 'control', 'caption', 'meta', 'number']) {
+    for (const role of ['display', 'heading', 'title', 'reading', 'section', 'body', 'control', 'caption', 'meta', 'number']) {
       const u = utility(`type-${role}`)
       const fm = typo[role]
       expect(fm, `frontmatter 缺 typography.${role}`).toBeDefined()
@@ -179,13 +179,15 @@ describe('DESIGN.md 的 frontmatter 是 index.css @theme 的镜像', () => {
     expect(m![1]).toBe(vars['shadow-pop'])
   })
 
-  it('ink-3 的对比度说明与 index.css 的实测一致：画布灰上不达标，正文不许说「所有底色」', () => {
-    // index.css 的注释是权威：ink-3 白 5.37 / surface-2 5.00 / bg 4.78 过线，canvas 4.45 不过
-    expect(INDEX_CSS).toMatch(/--color-canvas 上只有\s*4\.45:1/)
+  it('ink-3 的对比度说明与 index.css 的实测一致：2026-10-07 起所有底色都过 4.5:1（画布灰 4.84），两边写的数相同', () => {
+    // index.css 的注释是权威（数由 tokenContrast.test 量）：白 5.28 / 桌面 4.59 / 画布灰 4.84
+    expect(INDEX_CSS).toMatch(/白 5\.28 \/ 桌面 4\.59 \/ surface-2 4\.93 \/\s*画布灰 4\.84/)
+    expect(INDEX_CSS).toMatch(/所有底色都过 4\.5:1/)
     const line = DESIGN_MD.split('\n').find((l) => l.includes('Ink-3') && l.includes('Ink-faint'))!
     expect(line, '正文里没有 Ink-3 那一行').toBeTruthy()
-    expect(line).toMatch(/4\.45:1/)
-    expect(line).not.toMatch(/前两档在所有底色上/)
+    expect(line).toMatch(/5\.28 \/ 4\.59 \/ 4\.84/)
+    // 旧说法（画布灰上不达标）不许留在索引里
+    expect(line).not.toMatch(/4\.45:1/)
   })
 
   it('索引不复制规矩：正文每一节都指向宪法', () => {
@@ -237,9 +239,10 @@ function expectedClasses(prop: string, raw: string): string[] {
       if (!ref || ref[0] !== 'colors') throw new Error(`backgroundColor 只认 {colors.x}：${raw}`)
       return [`bg-${ref[1]}`]
     case 'textColor':
+      // 引用优先：{colors.surface} 的值也是 #ffffff，但它说的是 text-surface（主按钮的字不写死白，2026-10-07）
+      if (ref && ref[0] === 'colors') return [`text-${ref[1]}`]
       if (value === '#ffffff') return ['text-white']
-      if (!ref || ref[0] !== 'colors') throw new Error(`textColor 只认 {colors.x} 或 #ffffff：${raw}`)
-      return [`text-${ref[1]}`]
+      throw new Error(`textColor 只认 {colors.x} 或 #ffffff：${raw}`)
     default:
       throw new Error(`components 里出现了对拍表不认识的属性：${prop}`)
   }
@@ -251,7 +254,10 @@ const COMPONENT_CLASSES: Record<string, () => string> = {
   'button-secondary': () => buttonVariant('secondary') + ' ' + buttonSize('sm'),
   'button-ghost': () => buttonVariant('ghost') + ' ' + buttonSize('sm'),
   'button-danger': () => buttonVariant('danger') + ' ' + buttonSize('sm'),
+  'button-danger-tinted': () => buttonVariant('danger-tinted') + ' ' + buttonSize('lg'),
+  'button-lg': () => buttonVariant('primary') + ' ' + buttonSize('lg'),
   'icon-button': () => buttonSize('icon'),
+  card: () => literal(ui('ui/Card.tsx'), /raised: '([^']*)'/) + ' ' + literal(ui('ui/Card.tsx'), /'(relative rounded-\w+)'/),
   // 框的权威在 fieldBox.ts（S8：全站一份），高度那一截仍在 Input.tsx
   input: () => block1(ui('ui/fieldBox.ts'), /export const FIELD_BOX = cn\(([\s\S]*?)\)\n/) + ' ' + literal(ui('ui/Input.tsx'), /'(h-7 w-full[^']*)'/),
   badge: () => literal(ui('ui/Badge.tsx'), /'(inline-flex h-\d[^']*)'/),
@@ -266,25 +272,25 @@ function literal(src: string, re: RegExp): string {
 }
 const block1 = (src: string, re: RegExp) => literal(src, re).replace(/['\n,]/g, ' ')
 function buttonVariant(name: string): string {
-  const table = literal(ui('ui/Button.tsx'), /const VARIANTS: Record<Variant, string> = \{([\s\S]*?)\n\}/)
-  return literal(table, new RegExp(`\\b${name}:\\s*('[^']*'(?:\\s*\\+\\s*'[^']*')*|\\n\\s*'[^']*')`)).replace(/['\n+]/g, ' ')
+  const table = literal(ui('ui/buttonClass.ts'), /const VARIANTS: Record<Variant, string> = \{([\s\S]*?)\n\}/)
+  return literal(table, new RegExp(`(?:^|\\s)'?${name}'?:\\s*('[^']*'(?:\\s*\\+\\s*'[^']*')*|\\n\\s*'[^']*')`)).replace(/['\n+]/g, ' ')
 }
 function buttonSize(name: string): string {
-  const table = literal(ui('ui/Button.tsx'), /const SIZES: Record<Size, string> = \{([\s\S]*?)\n\}/)
+  const table = literal(ui('ui/buttonClass.ts'), /export const BUTTON_SIZES: Record<Size, string> = \{([\s\S]*?)\n\}/)
   return literal(table, new RegExp(`(?:^|\\n)\\s*'?${name}'?:\\s*'([^']*)'`))
 }
 const hasClass = (classes: string, cls: string) => classes.split(/\s+/).includes(cls)
 
 describe('DESIGN.md 的 spacing / components 是组件源码的镜像', () => {
-  it('spacing.control 等于 Button 唯一那档高度；setting-row 等于 SettingRow 的行高', () => {
+  it('spacing.control / control-lg 等于 Button 的两档高度（28 工具默认 / 32 对话框页脚与页面 CTA）；setting-row 等于 SettingRow 的行高', () => {
     const spacing = flatMap('spacing')
-    expect(Object.keys(spacing).sort()).toEqual(['control', 'setting-row'])
-    const sizes = literal(ui('ui/Button.tsx'), /const SIZES: Record<Size, string> = \{([\s\S]*?)\n\}/)
+    expect(Object.keys(spacing).sort()).toEqual(['control', 'control-lg', 'setting-row'])
+    const sizes = literal(ui('ui/buttonClass.ts'), /export const BUTTON_SIZES: Record<Size, string> = \{([\s\S]*?)\n\}/)
     // icon-xs（20px 行内小钮）是 28 之外唯一的一档（2026-09-15 审计 B08），只给行内 ?、清除、×；
     // 这里量的是「控件档」——把它那一行摘掉再比
     const heights = [...sizes.replace(/'icon-xs':[^\n]*/, '').matchAll(/\bh-(\d+)\b/g)].map((m) => m[1])
     expect(heights.length, 'SIZES 里一条 h- 都没解析到：判据恒真').toBeGreaterThanOrEqual(4)
-    expect(new Set(heights), 'Button 不止一档高度').toEqual(new Set([stepOf(spacing.control)]))
+    expect(new Set(heights), 'Button 的高度档不是 28 / 32 两档').toEqual(new Set([stepOf(spacing.control), stepOf(spacing['control-lg'])]))
     expect(ui('settings/SettingRow.tsx')).toContain(`min-h-${stepOf(spacing['setting-row'])} `)
   })
 
@@ -310,5 +316,9 @@ describe('DESIGN.md 的 spacing / components 是组件源码的镜像', () => {
     expect(expectedClasses('rounded', '9999px')).toEqual(['rounded-full'])
     expect(() => expectedClasses('padding', '4px')).toThrow(/不认识/)
     expect(hasClass('rounded-sm h-7', 'rounded-s')).toBe(false)
+  })
+  it('FieldGroup 的全局行样式只认原语专属的 data-ui-field-group，不误中旧的 data-field-group="fonts" 分组（Codex #822 P2）', () => {
+    expect(INDEX_CSS).toMatch(/\[data-ui-field-group\]\s*>/)
+    expect(INDEX_CSS).not.toMatch(/\[data-field-group[\]=]/)
   })
 })

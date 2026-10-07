@@ -102,7 +102,7 @@ export function WorkdirConfirmDialog() {
             <label
               key={opt.mode}
               className={cn(
-                'flex cursor-pointer items-start gap-2 rounded-sm px-2 py-1.5',
+                'flex items-start gap-2 rounded-sm px-2 py-1.5',
                 selected ? 'bg-selected' : 'hover:bg-surface-hover',
               )}
               data-workdir-option={opt.mode}

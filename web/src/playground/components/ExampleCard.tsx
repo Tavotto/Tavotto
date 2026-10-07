@@ -14,10 +14,13 @@
  *   * 是否落进试验台由 stageRef 的包围盒判定，结果实时回报给 Landing
  *     （试验台据此点亮）；
  *   * pointercancel / capture 丢失 = 取消：回原位、不启动；
- *   * reduced-motion 下卡片不位移不缩放，拖动状态只用边框与试验台文字表达
+ *   * reduced-motion 下卡片不位移不缩放，拖动状态只用轮廓与试验台文字表达
  *     （§21 的硬要求）。
  */
 import { useRef, useState, type RefObject } from 'react'
+import { Badge } from '@/components/ui/Badge'
+import { Button } from '@/components/ui/Button'
+import { Card } from '@/components/ui/Card'
 import { prefersReducedMotion } from '@/lib/motion'
 import { cn } from '@/lib/utils'
 import type { PlaygroundExample } from '../examples'
@@ -47,7 +50,7 @@ export function ExampleCard({
   /** 拖动状态回报（null = 拖动结束/取消） */
   onDragChange?: (drag: CardDragEvent | null) => void
 }) {
-  const rootRef = useRef<HTMLElement>(null)
+  const rootRef = useRef<HTMLDivElement>(null)
   const [dragging, setDragging] = useState(false)
   const [offset, setOffset] = useState<{ x: number; y: number } | null>(null)
   // pointerdown 起点与「这轮手势拖过没有」
@@ -122,8 +125,12 @@ export function ExampleCard({
   }
 
   return (
-    <article
+    <Card
       ref={rootRef}
+      role="article"
+      appearance="raised"
+      padding="none"
+      interactive
       tabIndex={0}
       aria-label={`${title} — ${pg(example.descriptionKey)}`}
       data-example-card={example.id}
@@ -134,6 +141,8 @@ export function ExampleCard({
       onPointerCancel={onPointerCancel}
       onLostPointerCapture={onPointerCancel}
       onClickCapture={onClickCapture}
+      // 整卡可点是第 ⑤ 条路（触屏直接点卡片）。卡里的两颗按钮各自 stopPropagation，
+      // 「查看代码」不会被整卡的启动吞掉（cardDrag.test / landing.test 看护）
       onClick={() => onLaunch(example)}
       onKeyDown={(e) => {
         if (e.key === 'Enter' && e.target === rootRef.current) {
@@ -147,12 +156,13 @@ export function ExampleCard({
           : undefined
       }
       className={cn(
-        'group relative flex cursor-pointer touch-manipulation flex-col overflow-hidden rounded-md border bg-surface text-left',
-        'transition-[border-color,box-shadow,transform] duration-fast ease-out',
-        'focus-visible:focus-ring outline-none',
-        dragging
-          ? 'z-30 border-sel shadow-pop'
-          : 'border-border hover:border-ink-faint hover:shadow-pop',
+        // Card interactive（2026-10-07 设计审计 §5 / §10.4）：外 12 圆角、hover 1px 轮廓、
+        // 卡里任何控件聚焦时整卡一圈 accent 环。可拖（鼠标）的卡用抓手
+        'group flex touch-manipulation flex-col text-left outline-none',
+        'transition-[outline-color,box-shadow,transform] duration-fast ease-out',
+        stageRef && 'cursor-grab active:cursor-grabbing',
+        // 拖起：accent 轮廓（接收 / 拖动态用 accent；sel 只给画布）+ 浮层投影
+        dragging && 'z-drawer shadow-pop outline-accent hover:outline-accent',
       )}
     >
       {dragging && (
@@ -162,55 +172,59 @@ export function ExampleCard({
       )}
 
       {/* 封面：构建期从同一份源码真实执行生成（generate_playground_examples.py）。
-          固定宽高比来自封面固有尺寸——不同图形不会让卡片跳动 */}
-      <div className="border-b border-border bg-white p-3">
-        <img
-          src={example.thumbnail}
-          width={example.thumbWidth}
-          height={example.thumbHeight}
-          alt={pg('coverAlt', { name: title })}
-          draggable={false}
-          className="pointer-events-none h-auto w-full select-none"
-        />
+          固定宽高比来自封面固有尺寸——不同图形不会让卡片跳动。
+          图坐在画布灰上（与工作台里「纸在画布上」同一种关系）；外 12 = 内 8 + 4 */}
+      <div className="p-1">
+        <div className="rounded-md bg-canvas p-3">
+          <img
+            src={example.thumbnail}
+            width={example.thumbWidth}
+            height={example.thumbHeight}
+            alt={pg('coverAlt', { name: title })}
+            draggable={false}
+            className="pointer-events-none h-auto w-full select-none"
+          />
+        </div>
       </div>
 
-      <div className="flex flex-1 flex-col gap-1.5 p-3">
-        <div className="flex items-baseline gap-2">
+      <div className="flex flex-1 flex-col gap-1.5 px-3 pb-3 pt-2">
+        <div className="flex items-center gap-2">
           <h3 className="text-base font-medium text-ink">{title}</h3>
-          {example.difficulty === 'starter' && (
-            <span className="rounded-sm bg-sel/10 px-1.5 py-0.5 text-xs font-medium text-sel">
-              {pg('starterBadge')}
-            </span>
-          )}
-          <span className="ml-auto font-mono text-xs text-ink-faint">{example.filename}</span>
+          {example.difficulty === 'starter' && <Badge tone="accent">{pg('starterBadge')}</Badge>}
+          <span className="type-meta ml-auto font-mono">{example.filename}</span>
         </div>
         <p className="text-xs leading-relaxed text-ink-2">{pg(example.descriptionKey)}</p>
-        <p className="text-xs text-ink-3">
-          <span className="text-ink-faint">{pg('editableLabel')}</span>{' '}
+        <p className="text-xs text-ink-2">
+          <span className="text-ink-3">{pg('editableLabel')}</span>{' '}
           {pg(example.editableKey)}
         </p>
 
         <div className="mt-1.5 flex items-center gap-2">
-          <button
+          <Button
+            variant="secondary"
+            size="sm"
+            data-example-view-code
             onClick={(e) => {
               e.stopPropagation()
               onViewCode(example)
             }}
-            className="h-7 rounded-sm border border-border px-2.5 text-xs text-ink-2 transition-colors hover:border-ink-faint hover:text-ink"
           >
             {pg('viewCode')}
-          </button>
-          <button
+          </Button>
+          {/* 一屏一个填色主动作：只有主推案例（featured）的「开始体验」是 primary，
+              其余卡片同一句话降为次按钮——三颗黑钮并排就没有「先点哪个」了 */}
+          <Button
+            variant={example.featured ? 'primary' : 'secondary'}
+            size="sm"
             onClick={(e) => {
               e.stopPropagation()
               onLaunch(example)
             }}
-            className="h-7 rounded-sm bg-ink px-3 text-xs font-medium text-white transition-opacity hover:opacity-90"
           >
             {pg('startExample')}
-          </button>
+          </Button>
         </div>
       </div>
-    </article>
+    </Card>
   )
 }

@@ -99,7 +99,7 @@ function Bar() {
       data-canvas-toolbar
       role="toolbar"
       aria-label={t('workspace:canvasTools.label')}
-      className="pointer-events-auto absolute bottom-4 left-1/2 z-20 flex max-w-[calc(100%-1.5rem)] -translate-x-1/2 items-center gap-0.5 rounded-full bg-surface p-1 shadow-pop"
+      className="pointer-events-auto absolute bottom-4 left-1/2 z-canvas-chrome flex max-w-[calc(100%-1.5rem)] -translate-x-1/2 items-center gap-0.5 rounded-full bg-surface p-1 shadow-pop"
     >
       <Tip label={t('workspace:canvasTools.select')} shortcut="V">
         <Button
