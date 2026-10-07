@@ -472,6 +472,81 @@ describe('外壳（2026-10-07 设计审计 §10.1：Dialog chrome="palette"）',
     before.remove()
   })
 
+  // Codex #833（erwanjun 复核 8a349482）：Ctrl-K → Esc → 退场动画还没放完又 Ctrl-K。Radix 的 Presence 让退场中的
+  // Content 原样留着、重开时不重挂载，于是挂载时的初始焦点不再跑；而关的那一刻焦点已经还给了打开者——
+  // 它这时正被重开的模态层 aria-hidden 着，键盘用户落在一个读屏看不见、陷阱之外的按钮上。
+  // jsdom 没有 CSS 动画：把共用对话框外壳的 animationName 按 data-state 报出来，Presence 才会等 animationend
+  it('退场动画没放完就再按 Ctrl-K：同一个输入框重新拿到焦点，不留在被 aria-hidden 的打开者上', async () => {
+    const { useKeyboard } = await import('@/hooks/useKeyboard')
+    function Keys() {
+      useKeyboard()
+      return null
+    }
+    const real = window.getComputedStyle
+    const spy = vi.spyOn(window, 'getComputedStyle').mockImplementation((el: Element, pseudo?: string | null) => {
+      const styles = real(el, pseudo)
+      if (!(el instanceof HTMLElement) || !el.hasAttribute('data-dialog')) return styles
+      return new Proxy(styles, {
+        get: (target, prop) =>
+          prop === 'animationName'
+            ? el.getAttribute('data-state') === 'closed'
+              ? 'pop-out'
+              : 'pop-in'
+            : Reflect.get(target, prop),
+      })
+    })
+    usePalette.setState({ open: false })
+    const before = document.createElement('button')
+    document.body.appendChild(before)
+    const ctrlK = () =>
+      act(async () => {
+        ;(document.activeElement ?? window).dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'k', code: 'KeyK', ctrlKey: true, bubbles: true, cancelable: true }),
+        )
+      })
+    const paletteInput = () => document.querySelector<HTMLInputElement>('[data-palette-input]')
+    try {
+      before.focus()
+      host = document.createElement('div')
+      document.body.appendChild(host)
+      root = createRoot(host)
+      act(() =>
+        root!.render(
+          <>
+            <Keys />
+            <CommandPalette />
+          </>,
+        ),
+      )
+      await ctrlK()
+      expect(usePalette.getState().open).toBe(true)
+      const input = paletteInput()!
+      expect(document.activeElement).toBe(input)
+      await act(async () => {
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+      })
+      expect(usePalette.getState().open).toBe(false)
+      // 退场中：Content 还在（没有 animationend），焦点已经还给打开者
+      expect(document.querySelector('[data-dialog="command-palette"]')?.getAttribute('data-state')).toBe('closed')
+      expect(document.activeElement).toBe(before)
+      await ctrlK()
+      expect(usePalette.getState().open).toBe(true)
+      // 前提：确实是同一个被保留的 Content / 输入框（不是重挂载——那条路走挂载时的初始焦点）
+      expect(paletteInput()).toBe(input)
+      expect(before.closest('[aria-hidden="true"]'), '打开者此时被重开的模态层藏着').not.toBeNull()
+      expect(document.activeElement).toBe(input)
+      // 再 Esc：仍然还给最初的打开者
+      await act(async () => {
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+      })
+      expect(usePalette.getState().open).toBe(false)
+      expect(document.activeElement).toBe(before)
+    } finally {
+      spy.mockRestore()
+      before.remove()
+    }
+  })
+
   it('选中行用 selected（ink 10%），不是 surface-2；行 32 / 13', () => {
     mount()
     const active = document.querySelector('[data-cmd-id][data-active]')!

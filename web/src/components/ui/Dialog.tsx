@@ -229,15 +229,44 @@ export function Dialog({
   // 焦点陷阱（trapped={open}）在被动 effect 里才撤，早一步挪出去会被陷阱的 focusout 拽回来。
   // 交接守卫与 onCloseAutoFocus 同一个判据：焦点已经在这层之外一个连着的非 body 元素上，是有意交接，不动它。
   // 之后 onCloseAutoFocus 照常跑，看到焦点已在层外就什么都不做；打开者已卸掉的回退仍归它管。
+  //
+  // 反过来：退场动画还没放完又被打开（Ctrl-K → Esc → Ctrl-K，Codex #833 erwanjun 复核 8a349482）。Presence 让那个
+  // Content 原样留着、不重挂载，于是挂载时的 onOpenAutoFocus 不再跑；而上面已经把焦点还给了打开者——它这时被
+  // 重开的模态层 aria-hidden 着、在焦点陷阱之外。所以「关时还在的那个 Content 又开了」这一种，照 onOpenAutoFocus
+  // 的落点把焦点放回层里。层外一个**没被藏起来**的元素拿着焦点（重开之间命令把它交给了别的表面）仍是有意交接，不抢。
+  // 打开者照旧是关之前记下的那个（层外有新的打开者才换）：再关时还回去，退场登记也由上面的 layout effect 重新挂上。
+  const closingContent = useRef<HTMLDivElement | null>(null)
+  // 只在开 / 关切换的那一次提交里动焦点（initialFocusRef 换了身份不算）
+  const seenOpen = useRef(open)
   useEffect(() => {
-    if (open) return
-    const el = restoreTo.current
-    if (!el?.isConnected) return
+    if (seenOpen.current === open) return
+    seenOpen.current = open
+    const content = contentRef.current
+    if (!open) {
+      closingContent.current = content
+      const el = restoreTo.current
+      if (!el?.isConnected) return
+      const now = document.activeElement
+      const inLayer = !!(now && content?.contains(now))
+      const lost = !(now instanceof HTMLElement) || now === document.body || !now.isConnected
+      if (inLayer || lost) el.focus()
+      return
+    }
+    const retained = !!content && content === closingContent.current && content.isConnected
+    closingContent.current = null
+    if (!retained) return
     const now = document.activeElement
-    const inLayer = !!(now && contentRef.current?.contains(now))
-    const lost = !(now instanceof HTMLElement) || now === document.body || !now.isConnected
-    if (inLayer || lost) el.focus()
-  }, [open])
+    if (now && content.contains(now)) return
+    const handedOff =
+      now instanceof HTMLElement &&
+      now !== document.body &&
+      now.isConnected &&
+      !now.closest('[aria-hidden="true"], [inert]')
+    if (handedOff) return
+    const origin = focusOrigin()
+    if (origin?.isConnected && !content.contains(origin)) restoreTo.current = origin
+    ;(initialFocusRef?.current ?? content).focus({ preventScroll: true })
+  }, [open, initialFocusRef])
 
   const hasBody = children != null && children !== false
   // 浮动页脚：默认外壳、有正文、没有 status 区时，页脚往上叠进正文的底边（负 margin = 自己的高度），正文底部
