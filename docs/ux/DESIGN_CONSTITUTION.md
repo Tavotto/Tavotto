@@ -1075,6 +1075,7 @@ reduced-motion 契约）；68/85 命中 `foundation.test`（533 处）；弹簧 
   透明页面的棋盘格是**不透明**的纸色：深格 `--color-paper-checker` = paper-ink 6% 混进纸（不是混进 transparent），
   页面那一层自己就是底，半透明的格子会透出近黑的画布、成了黑白棋盘（Codex P2）；网格线这类半透明的纸上墨只能压在不透明的纸 / 棋盘格上。
   纸盒里没有图可画时（运行时图没跑过）那块不是纸，底用 `surface-2`。
+  运行时图的占位框（`data-runtime-placeholder`）自己是一张小纸片：底 `bg-paper-tint`（paper-ink 3% 混进纸，**不透明**），字 `paper-ink-2` / `paper-ink-3`（合成后 ≥4.5:1）——拖到页面外落在暗色画布上也不是深字压深底；`paper-ink` 不当底（`bg-paper-ink/N` 会透出画布，`foundation.test` 拦）。
   快速编辑没有页面：当前那张图底下垫一张与它同框的纸（`data-fast-edit-paper`），透明底的图也不落在深色画布上。
   直接坐在纸上的界面（空画布的起步提示）垫 `bg-paper-chrome`：浅色里透明（字照旧落在纸上），暗色里是面板色——浅色的字不落在白纸上
   （真浏览器在暗色下跑 `e2e/a11y` 的自算对比度尺子量出来的那一处）。

@@ -57,6 +57,11 @@
      半透明的格子会透出纸下面的画布色：浅色里画布是浅灰看不出来，暗色里画布近黑，棋盘格就成了黑白相间
      （Codex P2，2026-10-07）。混进纸 = 旧的「6% 墨叠在白纸上」的合成色，浅色观感不变；两套主题同值（tokenContrast.test 守着） */
   --color-paper-checker: color-mix(in srgb, var(--color-paper-ink) 6%, var(--color-paper));
+  /* 纸上的小纸片（运行时图还没跑出来时的占位框，canvas/PanelView）：paper-ink 3% 混进**纸**——不透明。
+     占位框可能被拖到页面外、直接落在画布灰上：旧的半透明 `bg-paper-ink/[0.03]` 在暗色里透出近黑的画布，
+     paper-ink 的字就成了深字压深底（2026-10-07 owner 拍板方案 A）。混进纸 = 旧的「3% 墨叠在白纸上」的合成色，
+     浅色在页面上观感不变；两套主题同值（tokenContrast.test 守着） */
+  --color-paper-tint: color-mix(in srgb, var(--color-paper-ink) 3%, var(--color-paper));
   /* 界面浮在纸上时的底（空画布的起步提示这类直接坐在页面上的界面）：浅色里透明——字就落在白纸上；
      暗色里是面板色——浅色的字不能直接落在不变的白纸上 */
   --color-paper-chrome: transparent;

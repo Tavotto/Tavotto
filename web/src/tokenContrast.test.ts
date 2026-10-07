@@ -304,11 +304,22 @@ const PAGE_SHEET = readFileSync(path.resolve(HERE, 'canvas/PageSheet.tsx'), 'utf
  * → 合成后的不透明颜色。第二个参数必须是纸（不透明）——写成 transparent 就会透出纸下面的画布色（Codex P2）。
  */
 function paperCheckerIn(theme: Theme): string {
-  const v = VARS[theme]['color-paper-checker'] ?? ''
+  return paperMixIn(theme, 'paper-checker')
+}
+/** 「paper-ink N% 混进纸」的不透明纸色（`paper-checker` / `paper-tint`）→ 合成后的颜色；写成混进 transparent 就抛错 */
+function paperMixIn(theme: Theme, name: string): string {
+  const v = VARS[theme][`color-${name}`] ?? ''
   const m = v.match(/^color-mix\(in srgb, var\(--color-paper-ink\) ([\d.]+)%, var\(--color-paper\)\)$/)
-  if (!m) throw new Error(`${theme} 表里 --color-paper-checker 不是「paper-ink N% 混进纸」的不透明色（${v}）`)
+  if (!m) throw new Error(`${theme} 表里 --color-${name} 不是「paper-ink N% 混进纸」的不透明色（${v}）`)
   return mixOver(tokenIn(theme, 'paper-ink'), Number(m[1]) / 100, tokenIn(theme, 'paper'))
 }
+const PANEL_VIEW = readFileSync(path.resolve(HERE, 'canvas/PanelView.tsx'), 'utf8')
+/** 运行时图占位框（`data-runtime-placeholder`）那一段源码：根元素的底与里面每一档字 */
+const RUNTIME_PLACEHOLDER = (() => {
+  const i = PANEL_VIEW.indexOf('data-runtime-placeholder')
+  if (i < 0) throw new Error('PanelView 里找不到 data-runtime-placeholder')
+  return PANEL_VIEW.slice(i, PANEL_VIEW.indexOf('\n  )\n}', i))
+})()
 
 describe('暗色主题的值表（宪法第二十八节）', () => {
   it('两段生效条件写的是同一张表：媒体查询（没选浅色）那一段与 data-theme="dark" 那一段逐字相同', () => {
@@ -348,6 +359,15 @@ describe('暗色主题的值表（宪法第二十八节）', () => {
     // 浅色观感不变：等于旧的「paper-ink 6% 半透明叠在白纸上」的合成色
     expect(paperCheckerIn('light')).toBe(mixOver(tokenIn('light', 'paper-ink'), 0.06, tokenIn('light', 'paper')))
   })
+
+  it('运行时图的占位框是不透明的小纸片（owner 方案 A）：底 --color-paper-tint 是 paper-ink 混进纸、两套同值、浅色观感不变', () => {
+    expect(RUNTIME_PLACEHOLDER).toMatch(/className="[^"]*(?<![\w-])bg-paper-tint(?![\w-])[^"]*"/)
+    expect(RUNTIME_PLACEHOLDER).not.toMatch(/bg-paper-ink/)
+    expect(DARK_VARS['color-paper-tint']).toBeUndefined()
+    expect(paperMixIn('dark', 'paper-tint')).toBe(paperMixIn('light', 'paper-tint'))
+    // 浅色观感不变：等于旧的「paper-ink 3% 半透明叠在白纸上」
+    expect(paperMixIn('light', 'paper-tint')).toBe(mixOver(tokenIn('light', 'paper-ink'), 0.03, tokenIn('light', 'paper')))
+  })
 })
 
 for (const theme of THEMES) {
@@ -364,6 +384,22 @@ for (const theme of THEMES) {
         const [base, alpha] = srgbAlphaOf(theme, name)
         expect(base, name).toBe('paper-ink')
         expect(contrast(mixOver(t(base), alpha, t('paper')), t('paper')), `${name} on paper`).toBeGreaterThanOrEqual(4.5)
+      }
+    })
+
+    it('运行时图占位框里的字（要读的说明 + 脚本名 + 提示）落在它不透明的纸底上 ≥4.5:1；底不随下面是纸还是画布而变', () => {
+      const ground = paperMixIn(theme, 'paper-tint')
+      const inks = [...RUNTIME_PLACEHOLDER.matchAll(/(?<![\w-])text-(paper-ink(?:-[23])?)(?:\/(\d+))?(?![\w-])/g)]
+      expect(inks.length).toBeGreaterThanOrEqual(3)
+      for (const [cls, name, pct] of inks) {
+        let fg: string
+        if (pct) fg = mixOver(t(name), Number(pct) / 100, ground)
+        else if (name === 'paper-ink') fg = t(name)
+        else {
+          const [base, alpha] = srgbAlphaOf(theme, name)
+          fg = mixOver(t(base), alpha, ground)
+        }
+        expect(contrast(fg, ground), `${cls} on paper-tint`).toBeGreaterThanOrEqual(4.5)
       }
     })
 

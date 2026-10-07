@@ -382,7 +382,8 @@ describe('Design Constitution：token 之外没有字面量', () => {
  * 纸上的记号用 paper-ink / paper-ink-2 / paper-ink-3 / `paper-ink/N`。
  *
  * 「画在纸上」怎么认（AST，不是子串）：
- *   - 元素自己的 className 里有一个字面的 `bg-paper` 类（不含 bg-paper-chrome / bg-paper-ink）→ 这个元素整棵子树；
+ *   - 元素自己的 className 里有一个字面的 `bg-paper` / `bg-paper-tint` / `bg-paper-checker` 类（不透明的纸底；
+ *     不含 bg-paper-chrome / bg-paper-ink）→ 这个元素整棵子树；
  *   - SVG 图形 `fill="var(--color-paper)"`（缩略图的页面矩形）→ 它的父元素整棵子树（后面的兄弟画在它上面）。
  * 判不出的（写明盲点，不假装覆盖）：`bg-paper` 存在变量里再拼进 className（RegistryDialog / FigurePicker 的 `box`）、
  * 纸色经常量传入（PageSheet 的 `fill={PAPER}`）、内容经 children 从别的组件传进纸盒（AssetBrowser 的 CardPreview）。
@@ -390,7 +391,8 @@ describe('Design Constitution：token 之外没有字面量', () => {
  */
 const INK_ON_PAPER =
   /(?<![\w-])(?:[\w-]+:)*(?:text|border(?:-[trblxy])?|fill|stroke|bg|ring|inset-ring|outline|divide|decoration|placeholder|caret)-ink(?:-[23]|-faint)?(?![\w-])|var\(--color-ink(?:-[23]|-faint)?\)/g
-const BG_PAPER = /(?<![\w-])bg-paper(?![\w-])/
+/** 不透明的纸底：纸本身与从纸派生的不透明纸色（`paper-tint` 占位纸片 / `paper-checker` 棋盘深格），都两套主题同值 */
+const BG_PAPER = /(?<![\w-])bg-paper(?:-tint|-checker)?(?![\w-])/
 
 function stringsIn(node: ts.Node, out: { text: string; pos: number }[] = []) {
   if (
@@ -459,6 +461,7 @@ describe('纸上的东西用纸上的墨（宪法第二十八节）', () => {
       "<div className={cn('rounded', on ? 'bg-transparent' : 'bg-paper')}><i className=\"border border-ink-faint\" /></div>",
       '<svg><rect fill="var(--color-paper)" /><g>{xs.map(() => { const c = { className: \'text-ink-2\' }; return <text {...c} /> })}</g></svg>',
       '<span className="bg-paper text-ink" />',
+      '<div className="bg-paper-tint"><span className="text-ink-3" /></div>',
     ]
     for (const c of catches) expect(inkOnPaper('x.tsx', c), c).toHaveLength(1)
     const spares = [
@@ -468,5 +471,55 @@ describe('纸上的东西用纸上的墨（宪法第二十八节）', () => {
       '<div className="bg-paper-ink/[0.03] text-ink-2" />',
     ]
     for (const c of spares) expect(inkOnPaper('x.tsx', c), c).toEqual([])
+  })
+
+  /*
+   * paper-ink 是纸上的**墨**，不是底：`bg-paper-ink/N` 这种半透明的「纸色」只在它下面恰好是白纸时才是纸——
+   * 东西被拖到页面外（运行时图的占位框）就透出画布，暗色里画布近黑，paper-ink 的字成了深字压深底。
+   * 纸上的记号要坐在**不透明**的纸底上：bg-paper / bg-paper-tint / bg-paper-checker（2026-10-07 owner 拍板方案 A）。
+   */
+  const PAPER_INK_GROUND = /(?<![\w-])(?:[\w-]+:)*bg-paper-ink(?:-[23])?(?:\/[\w.[\]]+)?(?![\w-])/g
+  const paperInkGrounds = (path: string, src: string) => {
+    const sf = ts.createSourceFile(path, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+    const out: string[] = []
+    for (const s of stringsIn(sf)) {
+      for (const m of s.text.matchAll(PAPER_INK_GROUND)) {
+        out.push(`${sf.getLineAndCharacterOfPosition(s.pos).line + 1}:${m[0]}`)
+      }
+    }
+    return out
+  }
+
+  it('paper-ink 不当底：界面代码里没有 bg-paper-ink（半透明的墨当纸会透出画布）；纸上的墨坐在不透明的纸底上', () => {
+    const offenders: string[] = []
+    for (const [path, raw] of sources()) {
+      if (!CHROME.test(path) || !path.endsWith('.tsx')) continue
+      for (const h of paperInkGrounds(path, raw)) offenders.push(`${path}:${h}`)
+    }
+    expect(offenders, '改用不透明的纸底 bg-paper / bg-paper-tint（paper-ink N% 混进纸，定义在 index.css）').toEqual([])
+    // 自检
+    expect(paperInkGrounds('x.tsx', '<div className="border bg-paper-ink/[0.03]" />')).toHaveLength(1)
+    expect(paperInkGrounds('x.tsx', "cn('hover:bg-paper-ink/5')")).toHaveLength(1)
+    expect(paperInkGrounds('x.tsx', '<div className="bg-paper-tint text-paper-ink-2 border-paper-ink/25" />')).toEqual([])
+  })
+
+  it('运行时图的占位框是一张不透明的小纸片：底 bg-paper-tint，里面的字只用 paper-ink 一族、且都在这张纸片里', () => {
+    const [, src] = sources().find(([p]) => p === '/src/canvas/PanelView.tsx')!
+    const sf = ts.createSourceFile('PanelView.tsx', src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+    let root: ts.JsxElement | undefined
+    const find = (n: ts.Node) => {
+      if (ts.isJsxOpeningElement(n) && attr(n, 'data-runtime-placeholder')) root = n.parent
+      ts.forEachChild(n, find)
+    }
+    find(sf)
+    expect(root, 'PanelView 里找不到 data-runtime-placeholder').toBeDefined()
+    const own = stringsIn(attr(root!.openingElement, 'className')!).map((s) => s.text).join(' ')
+    const bgs = own.split(/\s+/).filter((c) => c.startsWith('bg-'))
+    expect(bgs, '占位框的底').toEqual(['bg-paper-tint'])
+    const texts = stringsIn(root!)
+      .flatMap((s) => s.text.split(/\s+/))
+      .filter((c) => /^text-(?!xs$|sm$|center$|left$|right$)/.test(c))
+    expect(texts.length).toBeGreaterThan(0)
+    for (const c of texts) expect(['text-paper-ink', 'text-paper-ink-2', 'text-paper-ink-3'], c).toContain(c)
   })
 })

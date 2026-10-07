@@ -574,17 +574,19 @@ function RuntimePlaceholder({ obj, layout }: { obj: PanelObject; layout: Layout 
     translate(`runtimePanel.${key}`, { ns: 'workspace', ...(values ?? {}) })
   return (
     <div
-      // 画在纸上（页面内容的颜色两套主题同值），所以墨是 paper-ink 而不是界面的 ink（暗色里 ink 是浅色）
-      className="absolute flex flex-col items-center justify-center gap-1 rounded-sm border border-dashed border-paper-ink/25 bg-paper-ink/[0.03] p-2 text-center"
+      // 自己就是一张小纸片：底是**不透明**的纸色（`bg-paper-tint` = paper-ink 3% 混进纸），墨是 paper-ink 一族——
+      // 占位框被拖到页面外、落在暗色画布上时也不是深字压深底（半透明的 `bg-paper-ink/N` 会透出画布；宪法第二十八节）
+      data-runtime-placeholder=""
+      className="absolute flex flex-col items-center justify-center gap-1 rounded-sm border border-dashed border-paper-ink/25 bg-paper-tint p-2 text-center"
       style={{ ...layout, maxWidth: 'none' }}
     >
-      <span className="text-xs text-paper-ink/65">{rp('placeholder')}</span>
+      <span className="text-xs text-paper-ink-2">{rp('placeholder')}</span>
       {script && (
-        <span className="max-w-full truncate font-mono text-xs text-paper-ink/40" title={script}>
+        <span className="max-w-full truncate font-mono text-xs text-paper-ink-3" title={script}>
           {script}
         </span>
       )}
-      <span className="text-xs text-paper-ink/40">{rp('placeholderHint', { script })}</span>
+      <span className="text-xs text-paper-ink-3">{rp('placeholderHint', { script })}</span>
     </div>
   )
 }
