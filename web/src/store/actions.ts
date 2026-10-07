@@ -80,9 +80,9 @@ import {
   panelAspectLocked,
   panelContentSize,
   panelRotation,
-  rotateVec,
   rotationSwaps,
 } from '@/types/document'
+import { contentToPageVec, panelContentTransform } from '@/lib/panelTransform'
 import { emitLayoutSaved } from '@/lib/layoutSaved'
 import { useTimelineStore } from './timelineStore'
 import { hasPendingStyleWork } from './styleWork'
@@ -2231,17 +2231,17 @@ export function rotatePanelDraft(o: PanelObject, next: PanelRotation): void {
  * 与画布上拖裁剪框、以及原来的「重置裁剪」是同一套语义。
  */
 export function applyCropDraft(o: PanelObject, next?: CropRect): void {
-  const rot = panelRotation(o)
   const cur = o.crop ?? { x: 0, y: 0, w: 1, h: 1 }
   const to = next ?? { x: 0, y: 0, w: 1, h: 1 }
   const content = panelContentSize(o)
   const fullW = content.w / cur.w
   const fullH = content.h / cur.h
-  // 可见区中心在完整图里挪了多少（内容空间 → 页面空间）
-  const [pdx, pdy] = rotateVec(
+  // 可见区中心在完整图里挪了多少（内容空间 → 页面空间：与画布画这张图同一个变换，先翻转再旋转——
+  // 只认旋转的话翻转面板上换取景 / 重置裁剪，整张图会跳到镜像那边去，#833）
+  const [pdx, pdy] = contentToPageVec(
+    panelContentTransform(o),
     (to.x + to.w / 2 - (cur.x + cur.w / 2)) * fullW,
     (to.y + to.h / 2 - (cur.y + cur.h / 2)) * fullH,
-    rot,
   )
   const cx = o.x + o.w / 2 + pdx
   const cy = o.y + o.h / 2 + pdy
