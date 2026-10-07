@@ -144,6 +144,18 @@ def _isolated_interpreter_env():
             os.environ[k] = v
 
 
+@pytest.fixture(autouse=True)
+def _isolated_login_shell_cache():
+    """登录 shell 的答案是进程级缓存（`userenvs._login_shell_cache`），导入即扫描会把「已被明确问过」的答案并进候选
+    （ADR 0114 §三）。同进程里某条用例经应用问过真 shell，后面所有「候选应为空」的用例就会多出一条机器级候选：
+    单跑绿、成组红。每条用例前后清掉，用例间互不影响。"""
+    from tavotto.engine import userenvs
+
+    userenvs.reset_cache()
+    yield
+    userenvs.reset_cache()
+
+
 _WATCH_THREAD_PREFIX = "tavotto-project-watch-"
 
 

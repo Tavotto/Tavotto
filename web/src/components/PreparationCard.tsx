@@ -160,7 +160,7 @@ export function PreparationCard() {
     <div
       data-guide-anchor
       className={cn(
-        'pointer-events-none absolute right-3 z-30 flex max-h-[calc(100%-1.5rem)] w-[400px] max-w-[calc(100%-1.5rem)] flex-col items-end',
+        'pointer-events-none absolute right-3 z-drawer flex max-h-[calc(100%-1.5rem)] w-[400px] max-w-[calc(100%-1.5rem)] flex-col items-end',
         toolbarUp ? 'bottom-16' : 'bottom-3',
       )}
     >
@@ -352,7 +352,7 @@ function Pill({
 
 const Progress = () => (
   <div className="relative h-1 overflow-hidden rounded-full bg-surface-active" data-prep-progress aria-hidden>
-    <span className="absolute inset-y-0 left-0 w-2/5 animate-pulse rounded-full bg-accent motion-reduce:animate-none" />
+    <span className="absolute inset-y-0 left-0 w-1/3 animate-sweep rounded-full bg-ink motion-reduce:animate-none" />
   </div>
 )
 
@@ -443,7 +443,7 @@ function ScanCard({ scan, card }: { scan: ProjectScan; card: { kind: ScanCardKin
                   key={x.script}
                   data-scan-target={x.script}
                   className={cn(
-                    'flex cursor-pointer items-center gap-2.5 rounded-md px-3 py-2',
+                    'flex items-center gap-2.5 rounded-md px-3 py-2',
                     pick === x.script ? 'bg-selected' : 'hover:bg-surface-hover',
                   )}
                 >
@@ -822,7 +822,7 @@ function WorkdirChoice({
             key={opt.mode}
             data-workdir-option={opt.mode}
             className={cn(
-              'flex cursor-pointer items-start gap-2.5 rounded-md px-3 py-2 shadow-[inset_0_0_0_1px_var(--color-border)]',
+              'flex items-start gap-2.5 rounded-md px-3 py-2 shadow-[inset_0_0_0_1px_var(--color-border)]',
               selected && 'shadow-[inset_0_0_0_1.5px_var(--color-sel)]',
             )}
           >
