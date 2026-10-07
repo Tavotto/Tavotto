@@ -518,6 +518,15 @@ export function ColorField({
   const host = useColorFieldHost()
   const rich = !!host?.rich
   const nativeRef = useRef<HTMLInputElement>(null)
+  // 系统取色器（showPicker）选定时只发原生 change，焦点可能从没进过这个隐藏的框、也就没有 blur：
+  // 「最近」在原生 change（取色器关闭、值落定）时记一笔，不靠 blur（Codex #829 P2）。React 的 onChange 是逐帧的 input，不用它记
+  useEffect(() => {
+    const el = nativeRef.current
+    if (!el) return
+    const commit = () => pushRecentColor(el.value)
+    el.addEventListener('change', commit)
+    return () => el.removeEventListener('change', commit)
+  }, [])
   const [open, setOpen] = useState(false)
   const shown = mixed || none ? '' : value.toUpperCase()
 

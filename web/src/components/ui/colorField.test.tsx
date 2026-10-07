@@ -123,3 +123,31 @@ describe('ColorField 的「多个值」', () => {
     expect(host.querySelector('input[type=color]')!.hasAttribute('aria-describedby')).toBe(false)
   })
 })
+
+describe('最近用过的颜色（Codex #829 P2）', () => {
+  it('系统取色器只发原生 change、从未聚焦也没有 blur：选定的颜色照样记进「最近」', async () => {
+    const { resetRecentColors, useRecentColors } = await import('./colorPalette')
+    resetRecentColors()
+    let recent: readonly string[] = []
+    function Probe() {
+      recent = useRecentColors()
+      return null
+    }
+    await act(async () =>
+      root.render(
+        <>
+          <ColorField value="#000000" onChange={() => {}} ariaLabel="颜色" />
+          <Probe />
+        </>,
+      ),
+    )
+    const native = host.querySelector<HTMLInputElement>('input[type="color"]')!
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(native, '#12ab34')
+      native.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    expect(document.activeElement).not.toBe(native)
+    expect(recent.map((c) => c.toLowerCase())).toContain('#12ab34')
+    resetRecentColors()
+  })
+})
