@@ -21,19 +21,37 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import threading
 from pathlib import Path
 
-from . import config, runtime
+from . import config, diagnostictext, runtime
 
 VENV_DIR_NAME = "worker-env"
 INSTALL_TIMEOUT_S = 900  # 首次装 matplotlib 要下几十 MB，网络慢时给足
 PROBE_TIMEOUT_S = 30
+#: 超时没有进程退出状态。POSIX 退出码是 0–255，负值是信号号；-256 两边都不是。
+#: `_run` 把它交回 `install()`，记成 `class=timeout`，而不是把命令行写进日志。
+_RC_TIMEOUT = -256
+#: 失败摘录的单路上限。分类行写在摘录后面，整段日志再由 `_append` 截到末尾 8000 字。
+_EXCERPT_CHARS = 4000
+#: pip 日志里的地址可能带 userinfo 与查询串。主机与路径留下，凭据与 fragment 去掉。
+_URL_RE = re.compile(
+    r"(?i)\b([a-z][a-z0-9+.-]*://)"
+    r"(?:[^\s/?#]*@)?"
+    r"([^\s/?#]+)"
+    r"([^\s?#]*)"
+    r"(?:\?[^\s#]*)?"
+    r"(?:#[^\s]*)?"
+)
 
 _lock = threading.Lock()
 _progress: dict = {"state": "idle", "log": "", "error": None}
+#: 这一次探测失败时的 stdout+stderr（按线程）。`matplotlib_version` 仍只回版本；
+#: `install()` 只在那次调用失败后读它，不再探第二次。
+_probe_failure = threading.local()
 
 
 # ---------------------------------------------------------------------------
@@ -51,7 +69,12 @@ def _probe(python: str, expr: str, *, bundled: bool = False) -> str | None:
     候选多半是**用户的**系统 Python（`find_base_python` 逐个问 `import venv`）：`-B`
     （`runtime.probe_args`）不许把 .pyc 写回它的安装目录；Tavotto 自己的环境按
     `runtime.owned_env` 把 matplotlib 缓存放回数据目录；`bundled=True`（问的是内置 runtime）按
-    worker 同一套启动条件（`child_args` / `child_env`：摘掉外来的 PYTHONHOME / PYTHONPATH、缓存进数据目录）。"""
+    worker 同一套启动条件（`child_args` / `child_env`：摘掉外来的 PYTHONHOME / PYTHONPATH、缓存进数据目录）。
+
+    失败时把这次的 stdout+stderr 留在 `_probe_failure`（先脱敏再截断）。调用方要摘录就读它，
+    不要为了日志再跑一次 import。
+    """
+    _probe_failure.text = ""
     try:
         out = subprocess.run(
             [python, *runtime.probe_args(bundled=bundled), "-c", expr],
@@ -66,7 +89,10 @@ def _probe(python: str, expr: str, *, bundled: bool = False) -> str | None:
         )
     except (OSError, subprocess.SubprocessError):
         return None
-    return out.stdout.strip() if out.returncode == 0 else None
+    if out.returncode == 0:
+        return out.stdout.strip()
+    _probe_failure.text = _excerpt(out.stdout) + _excerpt(out.stderr)
+    return None
 
 
 def matplotlib_version(python: str, *, bundled: bool = False) -> str | None:
@@ -176,7 +202,76 @@ def progress() -> dict:
     return dict(_progress)
 
 
+def _data_dir_prefixes() -> list[str]:
+    """日志里数据目录可能的写法：原样、realpath、另一种分隔符。长的先换。"""
+    raw = os.fspath(config.data_dir()).rstrip("/\\")
+    if not raw:
+        return []
+    variants = [raw]
+    try:
+        resolved = os.path.realpath(raw).rstrip("/\\")
+    except OSError:
+        resolved = ""
+    if resolved:
+        variants.append(resolved)
+    out: list[str] = []
+    for cand in variants:
+        if not cand:
+            continue
+        out.append(cand)
+        flipped = cand.replace("\\", "/") if "\\" in cand else cand.replace("/", "\\")
+        if flipped != cand:
+            out.append(flipped)
+    return sorted(set(out), key=len, reverse=True)
+
+
+def _sanitize(text: str) -> str:
+    """进进度日志之前：数据目录前缀换成 `<data>`，去掉 URL 的 userinfo / 查询串，再走诊断包同一份规则。
+
+    与诊断包共用无探测依赖的 `diagnostictext`，不反向 import `diagnostics` 扩大解释器依赖环。
+    """
+    try:
+        for prefix in _data_dir_prefixes():
+            text = text.replace(prefix, "<data>")
+        text = _URL_RE.sub(r"\1\2\3", text)
+        return diagnostictext.redact_text(text)
+    except Exception:  # noqa: BLE001 — 安装继续，但未脱敏正文与异常消息都不能出门
+        return "[bootstrap] output omitted: redaction failed\n"
+
+
+def _excerpt(chunk: object) -> str:
+    """先脱敏再截尾，免得切掉 URL / 路径前缀后剩下的凭据认不出来。"""
+    if chunk is None:
+        return ""
+    if isinstance(chunk, bytes):
+        text = chunk.decode("utf-8", "replace")
+    else:
+        text = str(chunk)
+    text = _sanitize(text)
+    if len(text) <= _EXCERPT_CHARS:
+        return text
+    return text[-_EXCERPT_CHARS:]
+
+
+def _rc_kind(rc: int) -> str:
+    return "timeout" if rc == _RC_TIMEOUT else f"exit:{rc}"
+
+
+def _mark(stage: str, kind: str) -> None:
+    """分类行放在日志尾巴上：前面的摘录被 8000 字上限截掉时，这一行还在。"""
+    line = f"[bootstrap] stage={stage} class={kind}\n"
+    if _progress["log"] and not _progress["log"].endswith("\n"):
+        line = "\n" + line
+    # stage / kind 只来自本模块的分类常量与退出码；脱敏器失效也不能吞掉这条事实。
+    _append_safe(line)
+
+
 def _append(line: str) -> None:
+    _append_safe(_sanitize(line))
+
+
+def _append_safe(line: str) -> None:
+    """只收已经脱敏的正文，或本模块生成、不含子进程文字的分类行。"""
     _progress["log"] = (_progress["log"] + line)[-8000:]
 
 
@@ -189,6 +284,7 @@ def install(on_event=None) -> dict:
         return {"ok": False, "error": "安装已在进行中"}
     try:
         _progress.update(state="running", log="", error=None)
+        _probe_failure.text = ""
         _emit(on_event)
 
         # 桌面版该有内置 runtime。走到这里说明它缺了或坏了——那时该做的是重装，
@@ -217,6 +313,8 @@ def install(on_event=None) -> dict:
             rc, out = _run([base, "-m", "venv", str(root)])
             _append(out)
             if rc != 0 or not target.exists():
+                if rc != 0:
+                    _mark("venv", _rc_kind(rc))
                 return _fail(f"创建虚拟环境失败（{base}）", on_event)
             _emit(on_event)
 
@@ -235,10 +333,15 @@ def install(on_event=None) -> dict:
         )
         _append(out)
         if rc != 0:
+            _mark("pip", _rc_kind(rc))
             return _fail("安装 matplotlib 失败，日志见下方。", on_event)
 
         ver = matplotlib_version(str(target))
         if not ver:
+            failed = getattr(_probe_failure, "text", "")
+            if failed:
+                _append(failed)
+            _mark("import", "import_failed")
             return _fail("装完仍然 import 不到 matplotlib。", on_event)
 
         # 记到用户配置里：下次启动直接用，不必重新探测
@@ -270,10 +373,11 @@ def _run(cmd: list[str]) -> tuple[int, str]:
             env=runtime.owned_env(cmd[0]) if cmd else None,
             creationflags=runtime.CREATE_NO_WINDOW,
         )
-    except subprocess.TimeoutExpired:
-        return 1, f"\n超时（{INSTALL_TIMEOUT_S}s）：{' '.join(cmd)}\n"
+    except subprocess.TimeoutExpired as exc:
+        # 不记 argv，也不记子进程 env：命令行和继承的环境里都可能有 index 凭据。
+        return _RC_TIMEOUT, _excerpt(exc.stdout) + _excerpt(exc.stderr)
     except OSError as exc:
-        return 1, f"\n无法执行 {' '.join(cmd)}: {exc}\n"
+        return 1, f"\n无法执行: {exc}\n"
     return p.returncode, (p.stdout or "") + (p.stderr or "")
 
 
