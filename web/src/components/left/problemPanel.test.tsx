@@ -1260,6 +1260,20 @@ describe('长列表：一组默认只展开前几行', () => {
     expect(showRest()).toBeNull()
   })
 
+  it('「显示其余 N 项」随现场作废：换分组方式再换回来，组又只列前几行（Codex #832）', async () => {
+    await seedMany()
+    await mount(<ProblemPanel />)
+    await openCard()
+    const rule = 'font-below-absolute-floor'
+    await click(showRest()!)
+    expect(groupRows(rule)).toBe(MANY)
+    await chooseView('category')
+    await chooseView('figure')
+    await openCard()
+    expect(groupRows(rule), '离开过的「显示其余」不该复活').toBe(PREVIEW_ROWS)
+    expect(showRest()).toBeTruthy()
+  })
+
   it('只差一两条就不折：省下的那一行不值得多一次点击', async () => {
     // 6 条：折了只剩「显示其余 1 项」，比直接列出来更啰嗦
     const six = { ...manifestMany, elements: manifestMany.elements.slice(0, PREVIEW_ROWS + 1) }
@@ -1611,6 +1625,43 @@ describe('卡片层：一张组图拆成子图（2026-09-28）', () => {
     })
     expect(liveDrill()).toBeNull()
     expect(partCard('(a)')).toBeTruthy()
+  })
+
+  it('离开一张图再回来（A → B → A）：用户在 A 上展开的子图、折起的规则组都回到默认，不复活（Codex #832）', async () => {
+    await seedTriptych(true)
+    useUiStore.setState({ elementPanelId: 'p1' })
+    await mount(<ProblemPanel />)
+    const partToggle = () => partCard('(a)')!.querySelector<HTMLButtonElement>(':scope > button')!
+    const ruleToggle = () =>
+      partCard('(a)')!.querySelector<HTMLElement>('[data-issue-group] [data-issue-group-toggle]')!
+    expect(partToggle().getAttribute('aria-expanded'), '子图默认收着').toBe('false')
+    // A 上：展开 (a)，再折起它里面的规则组
+    await click(partToggle())
+    expect(partToggle().getAttribute('aria-expanded')).toBe('true')
+    await click(ruleToggle())
+    expect(ruleToggle().getAttribute('aria-expanded')).toBe('false')
+    // B 上：p2 是拆不出子图的普通图，规则组直接列着；折起它
+    await act(async () => {
+      useWorkspaceStore.getState().enterFastEdit('p2')
+    })
+    const p2Rule = () => container.querySelector<HTMLElement>('[data-issue-group] [data-issue-group-toggle]')!
+    expect(p2Rule().getAttribute('aria-expanded')).toBe('true')
+    await click(p2Rule())
+    expect(p2Rule().getAttribute('aria-expanded')).toBe('false')
+    // 回到 A：(a) 收着（默认），不是刚才离开时的展开态
+    await act(async () => {
+      useWorkspaceStore.getState().enterFastEdit('p1')
+    })
+    expect(liveDrill()).toBeNull()
+    expect(partToggle().getAttribute('aria-expanded'), '离开过的那一支不该复活').toBe('false')
+    // 手动再展开 (a)：里面的规则组是默认的展开态，不是离开前折起的样子
+    await click(partToggle())
+    expect(ruleToggle().getAttribute('aria-expanded'), '离开过的折叠不该复活').toBe('true')
+    // 再回到 B：它的规则组同样回到默认
+    await act(async () => {
+      useWorkspaceStore.getState().enterFastEdit('p2')
+    })
+    expect(p2Rule().getAttribute('aria-expanded'), 'B 上的折叠不该复活').toBe('true')
   })
 
   it('直达另一张图上的一条（定位进了那张图的快编）：进那张图，那一行是「当前」', async () => {
