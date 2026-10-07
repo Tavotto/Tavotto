@@ -1,3 +1,5 @@
+import { useId } from 'react'
+import { t } from '@/i18n'
 import { cn } from '@/lib/utils'
 
 /**
@@ -25,6 +27,14 @@ type ToggleProps = {
   onChange: (v: boolean) => void
   disabled?: boolean
   /**
+   * 多选且取值不一致（2026-10-07 审计 §9.2 P0）：`aria-checked="mixed"`，滑块停在轨道正中、
+   * 带一道短横——既不是开也不是关。之前批量行画成「关」再在旁边补一句「多个值」，
+   * 控件本身在谎报。点一下把全部设为开（`onChange(true)`）。
+   * ARIA 1.2 里 switch 的 mixed 会被部分读屏当成 false，所以另用 `aria-describedby`
+   * 把「多个值」念出来，名字照旧由下面两个属性给。
+   */
+  mixed?: boolean
+  /**
    * 给了 id 就能被一个 `<label htmlFor>` 指着——点标签文字等于点开关。
    * 但它**不负责取名**（见上），名字仍要由下面两个属性之一给出。
    */
@@ -38,19 +48,23 @@ export function Toggle({
   checked,
   onChange,
   disabled,
+  mixed,
   id,
   'aria-label': ariaLabel,
   'aria-labelledby': ariaLabelledBy,
 }: ToggleProps) {
+  const mixedId = useId()
   return (
     <button
       role="switch"
       id={id}
-      aria-checked={checked}
+      aria-checked={mixed ? 'mixed' : checked}
       aria-label={ariaLabel}
       aria-labelledby={ariaLabelledBy}
+      aria-describedby={mixed ? mixedId : undefined}
+      data-mixed={mixed || undefined}
       disabled={disabled}
-      onClick={() => onChange(!checked)}
+      onClick={() => onChange(mixed ? true : !checked)}
       // 视觉轨道 16px（28×16，thumb 12；2026-09-15 全面审计 B03：24×14 在 48px 设置行里像角标，
       // OpenAI 32×19、Claude 30×18），点击区拉到 28px 高，符合最小可点面积
       className="group flex h-7 shrink-0 items-center rounded-sm px-0.5 outline-none focus-visible:focus-ring disabled:cursor-not-allowed disabled:opacity-40"
@@ -59,18 +73,26 @@ export function Toggle({
         className={cn(
           'relative h-4 w-7 rounded-full transition-colors duration-base',
           // 关态轨道：border-control（对白 3.48:1）。border-strong 的 1.57:1 让关着的开关在 48px 设置行里几乎看不见
-          checked ? 'bg-ink' : 'bg-border-control',
+          mixed || checked ? 'bg-ink' : 'bg-border-control',
         )}
       >
         {/* 滑块动 transform 不动 left：布局属性每帧重排（二审 E4）；开关的来回用对称曲线。
             白钮带 shadow-thumb（与分段选择器的 thumb 同一份）：两家的 thumb 都有 0 1px 2px 的投影，白钮才浮得起来 */}
         <span
           className={cn(
-            'absolute left-0.5 top-0.5 h-3 w-3 rounded-full bg-white shadow-thumb transition-transform duration-base',
-            checked ? 'translate-x-3' : 'translate-x-0',
+            'absolute left-0.5 top-0.5 flex h-3 w-3 items-center justify-center rounded-full bg-surface shadow-thumb transition-transform duration-base',
+            // mixed：停在正中（开 / 关两端的中点），里面一道短横
+            mixed ? 'translate-x-1.5' : checked ? 'translate-x-3' : 'translate-x-0',
           )}
-        />
+        >
+          {mixed && <span className="h-0.5 w-1.5 rounded-full bg-ink" />}
+        </span>
       </span>
+      {mixed && (
+        <span id={mixedId} className="sr-only">
+          {t('mixed')}
+        </span>
+      )}
     </button>
   )
 }

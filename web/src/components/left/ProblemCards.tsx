@@ -273,7 +273,7 @@ function ProblemCard({
       data-problem-card-count={issues.length}
       data-problem-card-rules={rules.join(' ')}
       data-problem-card-objects={objects.join(' ')}
-      className="relative rounded-md bg-surface shadow-card"
+      className="relative rounded-lg bg-surface shadow-card"
     >
       <button
         type="button"

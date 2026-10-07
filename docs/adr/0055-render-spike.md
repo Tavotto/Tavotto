@@ -28,7 +28,7 @@
 | fontTools | 4.65.0 | MIT | 无 | 读字体表、子集（glyf 与 CFF 两条路） |
 | uharfbuzz | 0.56.1（HarfBuzz 14.4.0） | Apache-2.0（HarfBuzz MIT-old） | 无 | shaping：glyph / cluster / advance / offset |
 | pdfminer.six（只读） | 20251107 | MIT | charset-normalizer、cryptography | 独立文字层读取器 #2 |
-| pypdf（只读） | 6.7.5 → 6.16.1（2026-09-22 Dependabot #484 安全升级；报告重生成，52/52 与产物字节不变） | BSD-3-Clause | 无 | 独立字体结构读取器 |
+| pypdf（只读） | 6.7.5 → 6.16.1 → 6.19.0（2026-09-22 #484；2026-10-07 #790 Linux 重生成，52/52，PDF 字节不变；PNG 见下方复核记录） | BSD-3-Clause | 无 | 独立字体结构读取器 |
 | PyInstaller（只构建） | 6.19.0 | GPL-2.0-or-later + 例外 | — | 最小候选 freeze |
 
 宏观取舍：
@@ -142,3 +142,13 @@ render child 客户端的四条变异：去锁（串行用例红）、超时不 
 ## 7. 其它目标（CI dispatch）
 
 `foundation-u02-spikes.yml` 在 ubuntu-latest / windows-latest / macos-latest 上各跑一遍全套（fonts → render_spike → U02 用例 → freeze_spike → runtime_spike），产物为 `u02-evidence-<os>` 工件。`gh workflow run` 只认默认分支上已登记的 workflow，所以合入前靠 `pull_request`（paths 过滤）触发。run 35507598899 三腿全过；逐腿数字在 `docs/implementation/tavotto-foundation/handoffs/U02_spikes.md`「其它目标」表。要点：`spike.pdf` 在三个平台**逐字节相同**（写入侧跨平台可复现）；PDFium 的 PNG **跨平台不同、同平台可复现**（U07 的像素门要按平台分基线）；`libpdfium.{so,dll,dylib}` 三平台都过 PyInstaller 且冻结 exe 自起 child 成功；`RLIMIT_AS` Linux = set、Windows = unsupported、macOS = 内核不强制。
+
+## 8. 退役证据的依赖复核（2026-10-07，PR #790）
+
+Dependabot 把证据版本钉升级到 pypdf 6.19.0，触发报告与版本钉不一致。没有直接改报告数字：从仓库提交 `6dd63da` 的 `scripts/dev/u02_spikes/` 恢复原始验证器到独立 scratch，按当前 `requirements.txt` 在新 venv 安装全部六个原版钉（仅 pypdf 升级），使用原 `truth.json`、源 PDF 与逐项 SHA-256 验证的批准字体，完整重跑写入器及三把读取器。原 spike 源码未重新入库。
+
+- 平台：Linux x86_64 / CPython 3.12.14；`render_spike` 退出 0，52/52
+- PDF：SHA-256 `12966287d846078030c4e7c29d97014c8eec390e57a5cba5f63ebc666a14b9dc`，与旧证据逐字节相同
+- PNG：SHA-256 `b8eb01a5611b076f509e8f1e958de85498fa88471c6fcd7aee9f3d48fed7c21f`；Linux PDFium 的跨平台字节差异已在 §7 声明，本次提交真实生成的 Linux PNG 与报告，未沿用旧 macOS 平台声明。真值、像素容差与全部核验判据未改
+- `report.json` 如实记录本次平台与版本。除平台、pypdf 版本、PNG 输出 hash/字节数外，其余报告内容与旧报告相同；独立标准库的 20 条证据测试全过
+- 本次没有重跑 freeze 或 runtime 技术证明，没有宣称新的 macOS / Windows 执行；它们原有历史证据保持不变

@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Dialog } from './Dialog'
 import { Segmented } from './Segmented'
 import { Tab, TabList, TabPanel } from './Tabs'
+import { Toggle } from './Toggle'
 import { TooltipProvider } from './Tooltip'
 
 declare global {
@@ -236,5 +237,35 @@ describe('Dialog：打开后的初始焦点', () => {
     const close = document.querySelector('[data-dialog-close]')!
     const first = document.querySelector('input[aria-label="filename"]')!
     expect(first.compareDocumentPosition(close) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+})
+
+describe('Toggle：「多个值」第三态（2026-10-07 审计 §9.2 P0）', () => {
+  const sw = () => host.querySelector<HTMLButtonElement>('[role="switch"]')!
+
+  it('mixed：aria-checked="mixed"，可达描述说「多个值」，点一下发 true', async () => {
+    const onChange = vi.fn()
+    await render(<Toggle aria-label="显示" mixed checked={false} onChange={onChange} />)
+    expect(sw().getAttribute('aria-checked')).toBe('mixed')
+    const desc = document.getElementById(sw().getAttribute('aria-describedby') ?? '')
+    expect(desc?.textContent).toBe('多个值')
+    await act(async () => sw().click())
+    expect(onChange).toHaveBeenCalledWith(true)
+  })
+
+  it('mixed 的滑块停在正中，不在「关」的位置', async () => {
+    await render(<Toggle aria-label="显示" mixed checked={false} onChange={() => {}} />)
+    const thumb = sw().querySelector('span > span') as HTMLElement
+    expect(thumb.className).toContain('translate-x-1.5')
+    expect(thumb.className).not.toContain('translate-x-0')
+  })
+
+  it('不 mixed 时照旧是 true / false，点一下取反（对照组）', async () => {
+    const onChange = vi.fn()
+    await render(<Toggle aria-label="显示" checked onChange={onChange} />)
+    expect(sw().getAttribute('aria-checked')).toBe('true')
+    expect(sw().hasAttribute('aria-describedby')).toBe(false)
+    await act(async () => sw().click())
+    expect(onChange).toHaveBeenCalledWith(false)
   })
 })

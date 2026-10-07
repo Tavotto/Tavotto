@@ -62,6 +62,8 @@ interface ProjectScanState {
 
 let seq = 0
 let applied = 0
+/** 已落地的最晚发出的**权威**请求序号：权威回包彼此之间按发出顺序比较（与 GET 的 `applied` 分开记） */
+let appliedAuthoritative = 0
 let generation = 0
 let pollTimer: ReturnType<typeof setTimeout> | null = null
 let slowTimer: ReturnType<typeof setTimeout> | null = null
@@ -91,12 +93,16 @@ export const useProjectScanStore = create<ProjectScanState>((set, get) => {
   ): boolean => {
     if (gen !== generation || pj !== currentProjectId()) return false
     if (!authoritative && mine < applied) return false
+    // 权威回包不受 GET 序号约束，但彼此之间仍按发出顺序：较早发出的 POST（如缓存终局）
+    // 晚到，不得覆盖已落地的更晚发出的 POST（如 force 重扫的新一轮）
+    if (authoritative && mine < appliedAuthoritative) return false
     const cur = get().scan
     // 同一轮扫描内 observation_seq 只许前进——对权威回包同样成立（后端序号单调）
     if (cur && cur.scan_id === data.scan_id) {
       if (data.observation_seq < cur.observation_seq) return false
     }
     applied = Math.max(applied, mine)
+    if (authoritative) appliedAuthoritative = Math.max(appliedAuthoritative, mine)
     return true
   }
 
@@ -224,6 +230,7 @@ export const useProjectScanStore = create<ProjectScanState>((set, get) => {
 export function resetProjectScanBookkeeping(): void {
   seq = 0
   applied = 0
+  appliedAuthoritative = 0
   generation += 1
   stopTimers()
   startInflight = null

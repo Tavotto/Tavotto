@@ -93,7 +93,9 @@ export function AspectControl({
           setPending(m)
           onPick(aspectValueOf(m, ratio ?? DEFAULT_RATIO))
         }}
-        items={MODES.map((m) => ({ value: m, label: ctl(`aspect.${m}`) }))}
+        // 分段里写短名（「自定义」），全名（「自定义比例」）在可达名与气泡里：行网格的控件列在 320 栏宽下
+        // 只有约 170px，三个全名放不下（2026-10-07 e2e/inspector-overflow 量到 58 > 55）
+        items={MODES.map((m) => ({ value: m, label: ctl(`aspectShort.${m}`), ariaLabel: ctl(`aspect.${m}`), tip: ctl(`aspect.${m}`) }))}
       />
       {custom && (
         <div className="animate-fade-in self-start">

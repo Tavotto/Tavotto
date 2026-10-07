@@ -163,9 +163,10 @@ export function runUndoRedo(redo: boolean) {
   if (label) {
     ui.setStatus(
       msg(redo ? 'status.redone' : 'status.undone', { label: formatMessage(label) }, 'workspace'),
+      'done',
     )
   } else {
-    ui.setStatus(msg(redo ? 'status.nothingToRedo' : 'status.nothingToUndo', undefined, 'workspace'))
+    ui.setStatus(msg(redo ? 'status.nothingToRedo' : 'status.nothingToUndo', undefined, 'workspace'), 'info')
   }
 }
 
@@ -240,7 +241,7 @@ export function useKeyboard() {
         if (undoRedoBlocked()) return
         const label = doc.redo()
         if (label) {
-          ui.setStatus(msg('status.redone', { label: formatMessage(label) }, 'workspace'))
+          ui.setStatus(msg('status.redone', { label: formatMessage(label) }, 'workspace'), 'done')
         }
         return
       }

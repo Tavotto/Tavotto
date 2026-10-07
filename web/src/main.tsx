@@ -34,7 +34,8 @@ void bootstrapDesktopSession().then((r) => {
       'style',
       'display:flex;height:100%;align-items:center;justify-content:center;' +
         'padding:0 24px;text-align:center;' +
-        'font:13px/1.6 -apple-system,sans-serif;color:#3D3D39;background:#F2F2EF',
+        // 颜色走 token（index.css 已随入口加载），不写第二份字面量
+        'font:13px/1.6 var(--font-sans);color:var(--color-ink-2);background:var(--color-bg)',
     )
     div.textContent =
       r === 'unauthenticated'

@@ -11,6 +11,54 @@ Tavotto 在所有宿主里是**同一份完整包、同一个 MCP 服务、同�
 
 按用户**当前所在的宿主**只给那一家的步骤，给完就停，不在旧会话里假装工具可用：
 
+**Claude Code（终端 / IDE 扩展 / 桌面 Code 标签页的 Local 或 SSH 会话）优先走插件**。
+[桌面 Code 的 Cloud 会话不继承本地插件，WSL 会话不支持插件](https://code.claude.com/docs/en/desktop#install-plugins)。
+这两种环境请改用 Local Code 会话，不要让用户在本机安装后继续在原环境找工具。
+SSH 会话要在会话执行的远程机器上安装插件和引擎。在对应环境的终端逐条运行：
+
+```sh
+claude plugin marketplace add Tavotto/Tavotto --sparse .claude-plugin
+claude plugin install tavotto@tavotto
+```
+
+没装引擎再运行 `pipx install "tavotto[worker]"`。装完新开会话或运行 `/reload-plugins`，
+用 `/mcp` 确认 `plugin:tavotto:tavotto` 为 connected，再调用 `tavotto_health`。
+授权目录是 Claude Code 的启动目录和 `/add-dir` 添加的目录；不要在 HOME 里启动。
+没有内嵌画布，照常用工具打开、修改、预检、导出；要手动编辑就交接桌面版。
+不要同时保留生成器配置的同名服务。Claude Desktop 本地聊天仍走下面的配置版；
+它不为 Cloud 或 WSL Code 会话启用插件。
+
+**DeepSeek Harness：已有可用 pnpm 时才走 bundle**。DSH 的 CLI 插件管理器在安装和更新时
+需要 PATH 上的 `pnpm`。没有它，或命令提示找不到 pnpm，就按下面的配置生成器步骤选
+`--host dsh`；这条既有路径仍是 experimental，无需为 Tavotto 另装 Node.js 或 pnpm。
+不要把安装失败当成工具已可用。已有 pnpm 时，`web` 换成用户实际使用的 profile：
+
+```sh
+dsh plugin --profile web add "git+https://github.com/Tavotto/Tavotto.git#plugin-stable&path:/codex-plugin"
+```
+
+没装引擎再运行 `pipx install "tavotto[worker]"`。装完新开 DSH 会话，等 `mcp__tavotto__*`
+工具出现后调用 `tavotto_health`；bundle 自带技能。授权目录是启动 `dsh` 的目录，
+在项目里启动，不要在 HOME 里启动。没有内嵌画布，走同一套工具流程。
+bundle 与生成器给的 YAML patch 二选一，同名 serverName 的第二行会加载失败。
+
+**WorkBuddy 优先走插件**。插件市场的「添加市场」填 `Tavotto/Tavotto`，装
+`tavotto@tavotto`；没装引擎再运行 `pipx install "tavotto[worker]"`。新开对话，让它调用
+`tavotto_health`。授权目录是对话的工作目录，在项目里用，不要在 HOME 里用。
+插件自带技能；内嵌画布尚未核验，工具可独立使用。若已有生成器配置，移除重复条目。
+发现插件更新时，让用户在插件市场的已安装列表中打开 Tavotto 插件卡片，选择「更新」
+（[WorkBuddy 官方插件管理](https://www.workbuddy.cn/docs/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/Plug-In)），
+完成后新开对话并调用 `tavotto_health`；不要用配置生成器代替插件更新。
+
+以上三条渠道是 Beta，依据是本地宿主冒烟（`local_smoke`），不是发行件的 `host_verified`。
+Windows 宿主流程、Claude Code 的 IDE / 桌面 Code 标签页、DSH 桌面版和真模型流程、
+WorkBuddy GUI / 画布与桌面交接仍未核验，不要把工具连通当成这些能力已经验收。
+
+**ZCode** 也能从自己的插件市场装同一份插件，但还没在登录后的真实会话里跑过工具流程；
+仍是 experimental，把这一点告诉用户。
+
+其余宿主（以及不想装插件 / bundle 的 Claude Code、DSH、WorkBuddy 用户）：
+
 1. 下载 GitHub Releases 里的 `codex-plugin-<版本>.zip`，解压到一个会长期保留的目录
    （名字带 codex 是历史原因，内容对所有宿主都一样）。
 2. 在终端运行（路径换成真实的绝对路径）：
@@ -41,13 +89,16 @@ Tavotto 在所有宿主里是**同一份完整包、同一个 MCP 服务、同�
 | 宿主 | 让已开的会话拿到工具 | Skill 入口 |
 | --- | --- | --- |
 | Cursor | 在 MCP 设置里确认已连接后，新开 Agent 对话 | 复制整个 `tavotto-figure/` 到 `.cursor/skills/` |
-| Claude Code（CLI） | 重开会话，用 `/mcp` 确认 connected（项目 `.mcp.json` 第一次要批准） | 复制到 `.claude/skills/` |
+| Claude Code（插件版） | 新开会话或 `/reload-plugins`；用 `/mcp` 确认 `plugin:tavotto:tavotto` connected | 插件自带，不用复制 |
+| Claude Code（配置版） | 重开会话，用 `/mcp` 确认 connected（项目 `.mcp.json` 第一次要批准） | 复制到 `.claude/skills/` |
 | Claude Desktop（聊天） | **完全退出**再打开 | 没有原生入口：`--emit instructions` 放进项目说明 |
 | VS Code（Copilot Agent） | MCP: List Servers → 启动 tavotto；在 Configure Tools 里勾选 | 复制到 `.github/skills/` |
 | Trae | MCP 列表确认已连接，**并把 tavotto 加进所用智能体** | 复制到 `.trae/skills/`（全局：国际版 `~/.trae/skills/`、国内版 `~/.trae-cn/skills/`） |
 | MiniMax Code | 在项目目录里重开 `mcode`（项目 `.mcp.json` 免批准自动加载） | 复制到 `.agents/skills/` 或 `.minimax/skills/` |
-| DSH | 新开会话，等 `mcp__tavotto__*` 工具出现 | 复制到 `.dsh/skills/` 或 `.agents/skills/` |
-| WorkBuddy / ZCode | 在 MCP 设置里确认已连接，重开对话 | `--emit instructions` |
+| DSH（bundle） | 新开会话，等 `mcp__tavotto__*` 工具出现 | bundle 自带，不用复制 |
+| DSH（YAML patch） | 新开会话，等 `mcp__tavotto__*` 工具出现 | 复制到 `.dsh/skills/` 或 `.agents/skills/` |
+| WorkBuddy（插件版） | 新开对话，让它调用 `tavotto_health` | 插件自带，不用复制 |
+| WorkBuddy / ZCode（配置版） | 在 MCP 设置里确认已连接，重开对话 | `--emit instructions` |
 
 ## 引擎不可用（只有 `tavotto_health`，或它回 `ok: false`）
 
@@ -63,8 +114,9 @@ health 结果里 `recovery` 给的原文**，那里是这台机器上的真实�
   `chat.mcp.apps.enabled`，是否开启由用户或组织决定）。没有画布时，同一组工具照样能走完
   打开 → 修改 → 预检 → 导出。`tavotto_health` 里的 `checks.host_ui_rendered` 永远是
   `unknown_to_server`：服务器无法知道画布有没有显示出来，要问用户或看界面。
-- **授权**：只有配置里的项目目录。用户要处理别的目录，就重新生成配置；不要让用户把 HOME
-  或磁盘根加进来。
+- **授权**：配置版只有 `--project-root` 指定的项目目录，换项目就重新生成配置；Claude Code 插件版
+  按启动目录与 `/add-dir`，DSH bundle 按启动目录，WorkBuddy 插件版按对话工作目录。
+  不要让用户把 HOME 或磁盘根加进来。
 - **没有本机终端或文件写入能力的宿主**（Claude Desktop 聊天）：不能运行 `scripts/*.py`，也
   不能把新脚本保存到本机。这种情况下直接问偏好；已有的本地图照常用 MCP 工具打开和修改；
   新的出图脚本交给用户保存并运行。

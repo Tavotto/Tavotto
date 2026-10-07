@@ -414,7 +414,7 @@ export function addFigureToLayout(figureId: string): AddToLayoutOutcome {
   const name = got.panel.name ?? got.panel.fileId
   useUiStore
     .getState()
-    .setStatus(msg(got.created ? 'fastEdit.added' : 'fastEdit.alreadyOnCanvas', { name }, 'workspace'))
+    .setStatus(msg(got.created ? 'fastEdit.added' : 'fastEdit.alreadyOnCanvas', { name }, 'workspace'), got.created ? 'done' : 'info')
   emitActivity({ kind: 'figure.added_to_layout', outcome: got.created ? 'added' : 'focused' })
   return got.created ? 'added' : 'focused'
 }

@@ -86,9 +86,9 @@ export function ElementMultiBar({
     const res = alignSelectedPanelElements(panel.id, mode)
     if (res.ok) return
     // 拒绝必须说得出原因（与属性页对齐区同一套文案）
-    if (res.reason === 'group-blocked' && res.group) setStatus(groupBlockedMessage(res.group))
-    else if (res.reason === 'syncing') setStatus(msg('element.alignSyncing', undefined, 'inspector'))
-    else if (res.reason === 'noop') setStatus(msg('element.alignNoop', undefined, 'inspector'))
+    if (res.reason === 'group-blocked' && res.group) setStatus(groupBlockedMessage(res.group), 'info')
+    else if (res.reason === 'syncing') setStatus(msg('element.alignSyncing', undefined, 'inspector'), 'progress')
+    else if (res.reason === 'noop') setStatus(msg('element.alignNoop', undefined, 'inspector'), 'info')
     else if (res.reason === 'invalid')
       setStatus(msg('element.alignInvalid', undefined, 'inspector'), 'error')
   }
@@ -118,7 +118,7 @@ export function ElementMultiBar({
               className={cn(plan.syncing && 'cursor-not-allowed opacity-40')}
               onClick={() => {
                 if (plan.syncing) {
-                  setStatus(msg('element.alignSyncing', undefined, 'inspector'))
+                  setStatus(msg('element.alignSyncing', undefined, 'inspector'), 'progress')
                   return
                 }
                 apply(mode)
