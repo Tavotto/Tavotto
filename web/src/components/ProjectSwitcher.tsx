@@ -5,6 +5,7 @@ import { ICON_SIZE } from '@/components/ui/Icon'
 import { useProjectStore } from '@/store/projectStore'
 import { useUiStore } from '@/store/uiStore'
 import { Button, IconButton } from './ui/Button'
+import { Tip } from './ui/Tooltip'
 
 /**
  * 顶栏左上角的项目名：点一下开 / 关左栏的「工作区」抽屉（`left/WorkspaceList.tsx`）。
