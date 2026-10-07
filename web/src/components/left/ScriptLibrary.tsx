@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Ban, Copy, CornerDownLeft, Play, Settings, Square } from '@/components/ui/icons'
+import { Ban, Copy, CornerDownLeft, LoaderCircle, Play, Settings, Square } from '@/components/ui/icons'
 import { listRowClass } from '@/components/ui/listRow'
 import { cn } from '@/lib/utils'
 import { Details, Summary } from '@/components/ui/Details'
@@ -361,21 +361,26 @@ function GateReopen({ run }: { run: ScriptRunState | undefined }) {
 
 /**
  * 行首的状态点（6px，坐在 16px 列里）：实心 = 已关联；空心 = 还没跑过；
- * 呼吸 = 正在跑；红 = 这次失败。纯装饰——状态本身由旁边那句话与可达名说出。
+ * 转圈 = 正在跑；红 = 这次失败。纯装饰——状态本身由旁边那句话与可达名说出。
  */
 function StatusDot({ entry, run }: { entry: ScriptInventoryEntry; run: ScriptRunState | undefined }) {
   const phase = run?.phase ?? 'idle'
   const running = phase === 'starting_runtime' || phase === 'running'
   // 停在门上不是失败（缺的是一个决定），不标红
   const failed = !running && !!run?.error && !isGatePhase(phase)
+  if (running) {
+    return (
+      <span className="flex h-4 w-4 shrink-0 items-center justify-center text-ink-2" aria-hidden>
+        <LoaderCircle size={ICON_SIZE.xs} className="animate-spin" />
+      </span>
+    )
+  }
   return (
     <span className="flex h-4 w-4 shrink-0 items-center justify-center" aria-hidden>
       <span
         className={cn(
           'h-1.5 w-1.5 rounded-full',
-          running
-            ? 'animate-pulse bg-ink-2'
-            : failed
+          failed
               ? 'bg-danger'
               : entry.registered
                 ? 'bg-ink-2'
@@ -504,7 +509,7 @@ function FailureRecovery({ script, run }: { script: string; run: ScriptRunState 
     // 缩进到文件名那一列（状态点列 + 间距），不套框：它是这一行的第二行，不是另一张卡。默认只露一个
     // 「详情」（2026-09-29 用户：不许堆说明）：原因解释、两个出口、诊断都在里面
     <Details className="mb-1.5 mt-0.5 pl-8 pr-2" data-script-recovery>
-      <Summary className="type-meta cursor-pointer">{sc('recoveryDetails')}</Summary>
+      <Summary className="type-meta">{sc('recoveryDetails')}</Summary>
       <div className="mt-1.5 flex flex-col gap-1.5">
         <p className="type-caption">{sc('recoveryBody')}</p>
         <div className="flex flex-wrap items-center gap-1.5">

@@ -399,7 +399,7 @@ export function LegendPositionPicker({
             role={anchorSupported ? 'img' : undefined}
             aria-label={anchorSupported ? ins('control.legendPreviewAria') : undefined}
             aria-hidden={anchorSupported ? undefined : true}
-            className="pointer-events-none absolute inset-0 z-10 h-full w-full"
+            className="pointer-events-none absolute inset-0 z-sticky h-full w-full"
           >
             <rect
               x={geo.box.x}

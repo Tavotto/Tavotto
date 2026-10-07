@@ -120,7 +120,7 @@ function formatValue(raw: unknown, unit?: string): string {
 }
 
 /** 一组字段：一条 type-section 小标题 + 若干 compact 行。分组只影响排版（审计 T41 / T42）。 */
-function FieldGroup({ group, children }: { group: string; children: ReactNode }) {
+function ProfileFieldGroup({ group, children }: { group: string; children: ReactNode }) {
   return (
     <div data-field-group={group} className="flex flex-col">
       <span className="type-section mb-1">{st(`group.${group}`)}</span>
@@ -734,7 +734,7 @@ export function ProfilesSettings({
               )}
               <div className="flex flex-col gap-4">
                 {grouped.map(({ group, fields: groupFields }) => (
-                  <FieldGroup key={group} group={group}>
+                  <ProfileFieldGroup key={group} group={group}>
                     {groupFields.map((f) => {
                       const raw = readPath(draft ?? {}, f.path)
                       const set = typeof raw === 'number' && Number.isFinite(raw)
@@ -781,7 +781,7 @@ export function ProfilesSettings({
                         </SettingRow>
                       )
                     })}
-                  </FieldGroup>
+                  </ProfileFieldGroup>
                 ))}
               </div>
 

@@ -312,9 +312,9 @@ function RestoreDialog({
         </div>
 
         {version?.n === -1 && (
-          <div className="flex items-start gap-1.5 rounded-sm bg-danger-subtle p-2">
+          <div className="flex items-start gap-1.5 rounded-sm bg-danger-surface p-2">
             <TriangleAlert size={ICON_SIZE.sm} className="mt-0.5 shrink-0 text-danger" />
-            <p className="text-xs leading-relaxed text-danger">
+            <p className="text-xs leading-relaxed text-danger-content">
               {/* 句中有 <b> 强调，走 Trans 保留标签而不是把句子切三段 */}
               <Trans
                 t={t}

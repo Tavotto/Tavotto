@@ -96,8 +96,8 @@ export function GuidedTask({
       aria-label={pg('taskTitle')}
       data-guided-task={achieved ? 'done' : `step-${step}`}
       className={cn(
-        'absolute bottom-3 left-3 z-20 w-[272px] max-w-[calc(100%-1.5rem)]',
-        'rounded-md bg-surface p-3 shadow-pop',
+        'absolute bottom-3 left-3 z-canvas-chrome w-[272px] max-w-[calc(100%-1.5rem)]',
+        'rounded-lg bg-surface p-3 shadow-pop',
         'animate-rise-in',
       )}
     >

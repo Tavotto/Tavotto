@@ -134,7 +134,7 @@ export function FontMissingTag() {
 }
 
 export function FontMissingHint() {
-  return <p className="pl-1 text-xs leading-relaxed text-warn">{tc('fontMissingHint')}</p>
+  return <p className="pl-1 text-xs leading-relaxed text-warn-content">{tc('fontMissingHint')}</p>
 }
 
 function FontFamilyRowView({

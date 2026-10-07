@@ -510,10 +510,10 @@ export function ColorField({
           </div>
         ) : none ? (
           <div
-            className="absolute inset-0 bg-white"
+            className="absolute inset-0 bg-surface"
             style={{
               backgroundImage:
-                'linear-gradient(to top right, transparent calc(50% - 0.75px), #d0342c calc(50% - 0.75px), #d0342c calc(50% + 0.75px), transparent calc(50% + 0.75px))',
+                'linear-gradient(to top right, transparent calc(50% - 0.75px), var(--color-danger) calc(50% - 0.75px), var(--color-danger) calc(50% + 0.75px), transparent calc(50% + 0.75px))',
             }}
           />
         ) : (

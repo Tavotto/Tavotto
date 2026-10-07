@@ -76,7 +76,7 @@ export function ContextBar() {
   const cropTarget = useUiStore((s) => s.cropTargetId)
   const tool = useUiStore((s) => s.tool)
   // 模态浮层（导出 / 设置 / 确认框…）与命令面板盖着画布时让位：它们的遮罩与
-  // 工具条同一层（z-40），后挂进 DOM 的那个会压在上面
+  // 工具条同一层（z-overlay），后挂进 DOM 的那个会压在上面
   const modalOpen = useUiStore(
     (s) =>
       s.exportOpen ||
@@ -187,8 +187,8 @@ export function ContextBar() {
           : mode === 'multi'
             ? `multi:${idsKey}`
             : ''
-  // narrow 断点下侧栏是盖在画布上的覆盖式抽屉（z-30），portal 出来的工具条
-  // （z-40）会压住并拦截抽屉里的控件；抽屉本来就把属性带到了眼前，此时让位
+  // narrow 断点下侧栏是盖在画布上的覆盖式抽屉（z-drawer），portal 出来的工具条
+  // （z-overlay）会压住并拦截抽屉里的控件；抽屉本来就把属性带到了眼前，此时让位
   const overlayDrawerOpen = layout === 'narrow' && (leftOpen || rightOpen)
   /**
    * 停靠的属性页正开着：文字的完整样式行（字体 / 字号 / 字重 / 字形 / 颜色 /
@@ -430,7 +430,7 @@ export function ContextBar() {
       className={cn(
         // w-max：fixed 盒子的 width:auto 会被「left 到视口右沿」的可用宽度压扁，
         // 量出来的就不是它的自然宽度；落位与宽窄档都靠这个量
-        'fixed z-40 flex w-max items-center gap-1 rounded-md bg-surface p-1',
+        'fixed z-overlay flex w-max items-center gap-1 rounded-lg bg-surface p-1',
         // 12px：栏里的 NumberField 一直是 12，旁边的「线型」「已选 2 个」却是 11（打磨 F2）
         'text-sm text-ink shadow-pop',
         pos ? 'animate-pop-in' : 'invisible',

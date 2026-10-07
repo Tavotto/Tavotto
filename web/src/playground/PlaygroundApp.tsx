@@ -865,7 +865,7 @@ function SourceDialog({
   }, [onClose])
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-ink/20 p-6"
+      className="fixed inset-0 z-dialog flex items-center justify-center bg-ink/20 p-6"
       onClick={onClose}
     >
       <div
@@ -873,7 +873,7 @@ function SourceDialog({
         aria-modal="true"
         aria-label={pg('sourceTitle')}
         onClick={(e) => e.stopPropagation()}
-        className="flex max-h-[80vh] w-full max-w-2xl flex-col rounded-lg bg-surface shadow-dialog"
+        className="flex max-h-[80vh] w-full max-w-2xl flex-col rounded-panel bg-surface shadow-dialog"
       >
         <div className="flex shrink-0 items-center gap-2 border-b border-border px-4 py-2.5">
           <span className="font-mono text-xs">{filename}</span>

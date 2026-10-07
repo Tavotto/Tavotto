@@ -79,6 +79,8 @@ import {
 } from './interactions'
 import { openQuickEdit } from './quickEditStore'
 import { panelContentTransform, panelTransformCss } from '@/lib/panelTransform'
+import { LoaderCircle } from '@/components/ui/icons'
+import { ICON_SIZE } from '@/components/ui/Icon'
 
 /**
  * 面板显示：
@@ -1035,7 +1037,7 @@ function SpineZoneFeedback({
         role="status"
         data-spine-zone-label={hover.side}
         className={cn(
-          'pointer-events-none absolute z-10 whitespace-nowrap rounded-sm bg-surface px-1.5 py-0.5',
+          'pointer-events-none absolute z-sticky whitespace-nowrap rounded-sm bg-surface px-1.5 py-0.5',
           'text-xs leading-4 text-ink shadow-pop',
         )}
         style={{
@@ -1257,17 +1259,17 @@ function RenderStatusBadge({ obj, approx = false }: { obj: PanelObject; approx?:
         className={cn(
           'relative flex items-center gap-1 overflow-hidden rounded-sm px-1.5 py-0.5 text-xs',
           shown.tone === 'error'
-            ? 'bg-danger text-white'
+            ? 'bg-danger text-surface'
             : shown.tone === 'stale'
-              ? 'bg-ink text-white'
+              ? 'bg-ink text-surface'
               : shown.tone === 'info'
-                ? 'bg-ink/70 text-white'
+                ? 'bg-ink/70 text-surface'
                 // 进行中不是选中：ink 底状态角标（蓝色不做任何大块背景，accent 只剩焦点 / 链接 / AI）
-                : 'bg-ink text-white',
+                : 'bg-ink text-surface',
         )}
       >
         {shown.tone === 'busy' && (
-          <span className="h-2 w-2 animate-pulse rounded-full bg-white/80" />
+          <LoaderCircle size={ICON_SIZE.xs} aria-hidden className="animate-spin opacity-80" />
         )}
         {shown.text}
         {/* 只有这一小块接指针事件。整枚角标收回指针事件是不行的：外层刻意是
@@ -1288,7 +1290,7 @@ function RenderStatusBadge({ obj, approx = false }: { obj: PanelObject; approx?:
             假进度条比没有更坏。 */}
         {shown.cold && (
           <span aria-hidden className="absolute inset-x-0 bottom-0 h-0.5">
-            <span className="block h-full w-1/4 rounded-full bg-white/75 animate-sweep" />
+            <span className="block h-full w-1/4 rounded-full bg-surface/75 animate-sweep" />
           </span>
         )}
       </span>

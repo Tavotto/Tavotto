@@ -115,7 +115,7 @@ export function Inspector({
       className={cn(
         // overflow-hidden 是动效的一部分，见 drawerMotion 的注释
         'relative shrink-0 overflow-hidden border-l border-border bg-surface',
-        overlay && 'absolute inset-y-0 right-0 z-30 shadow-pop',
+        overlay && 'absolute inset-y-0 right-0 z-drawer shadow-pop',
         motion.className,
       )}
     >
@@ -248,7 +248,7 @@ function WidthHandle() {
       // 整条都在抽屉内侧：外层 overflow-hidden（开合动效要用）会把伸到外面的部分剪掉
       // 蓝色不做任何大块背景（第一节）：hover 只在内侧描一条 1px 的竖线，
       // 焦点仍用蓝（那是焦点环的语义）。此前是 8px × 全高的 accent/20 蓝带（打磨 S5）
-      className="absolute inset-y-0 left-0 z-20 w-2 cursor-col-resize border-l border-transparent outline-none hover:border-border-strong focus-visible:bg-accent/30"
+      className="absolute inset-y-0 left-0 z-canvas-chrome w-2 cursor-col-resize border-l border-transparent outline-none hover:border-border-strong focus-visible:bg-accent/30"
     />
   )
 }
@@ -531,42 +531,32 @@ function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: P
             </Button>
           }
         >
-          <MenuItem shortcut={`${MOD}D`} onSelect={duplicateSelected}>
-            <span className="flex items-center gap-2">
-              <Copy size={ICON_SIZE.sm} className="text-ink-3" />
-              {translate('actions.copy')}
-            </span>
+          <MenuItem shortcut={`${MOD}D`} onSelect={duplicateSelected} icon={Copy}>
+            {translate('actions.copy')}
           </MenuItem>
           <MenuItem
+            icon={hidden ? Eye : EyeOff}
             onSelect={() =>
               updateObjects(ids, msg(hidden ? 'history.showObject' : 'history.hideObject', undefined, 'workspace'), (o) => {
                 o.hidden = !hidden
               })
             }
           >
-            <span className="flex items-center gap-2">
-              {hidden ? <Eye size={ICON_SIZE.sm} className="text-ink-3" /> : <EyeOff size={ICON_SIZE.sm} className="text-ink-3" />}
-              {t(hidden ? 'show' : 'hide')}
-            </span>
+            {t(hidden ? 'show' : 'hide')}
           </MenuItem>
           <MenuItem
+            icon={locked ? LockOpen : Lock}
             onSelect={() =>
               updateObjects(ids, msg(locked ? 'history.unlockObject' : 'history.lockObject', undefined, 'workspace'), (o) => {
                 o.locked = !locked
               })
             }
           >
-            <span className="flex items-center gap-2">
-              {locked ? <LockOpen size={ICON_SIZE.sm} className="text-ink-3" /> : <Lock size={ICON_SIZE.sm} className="text-ink-3" />}
-              {t(locked ? 'unlock' : 'lock')}
-            </span>
+            {t(locked ? 'unlock' : 'lock')}
           </MenuItem>
           <MenuSeparator />
-          <MenuItem danger shortcut="⌫" onSelect={deleteSelected}>
-            <span className="flex items-center gap-2">
-              <Trash2 size={ICON_SIZE.sm} />
-              {translate('actions.delete')}
-            </span>
+          <MenuItem danger shortcut="⌫" onSelect={deleteSelected} icon={Trash2}>
+            {translate('actions.delete')}
           </MenuItem>
         </Menu>
       </div>

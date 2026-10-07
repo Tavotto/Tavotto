@@ -240,48 +240,36 @@ function CanvasRow({
           </IconButton>
         }
       >
-        <MenuItem onSelect={onRenameStart}>
-          <span className="flex items-center gap-2">
-            <Pencil size={ICON_SIZE.sm} className="text-ink-3" />
-            {cl('rename')}
-          </span>
+        <MenuItem onSelect={onRenameStart} icon={Pencil}>
+          {cl('rename')}
         </MenuItem>
         {/* 拖动重排只有鼠标能用：菜单里给键盘一条同样的路（搜索过滤中索引对不上，禁用） */}
         <MenuItem
+          icon={ArrowUp}
           disabled={filtered || index === 0}
           onSelect={() => useDocumentStore.getState().reorderCanvases(index, index - 1)}
         >
-          <span className="flex items-center gap-2">
-            <ArrowUp size={ICON_SIZE.sm} className="text-ink-3" />
-            {cl('moveUp')}
-          </span>
+          {cl('moveUp')}
         </MenuItem>
         <MenuItem
+          icon={ArrowDown}
           disabled={filtered || index >= count - 1}
           onSelect={() => useDocumentStore.getState().reorderCanvases(index, index + 1)}
         >
-          <span className="flex items-center gap-2">
-            <ArrowDown size={ICON_SIZE.sm} className="text-ink-3" />
-            {cl('moveDown')}
-          </span>
+          {cl('moveDown')}
         </MenuItem>
         <MenuItem
+          icon={Copy}
           onSelect={() => {
             const nid = useDocumentStore.getState().duplicateCanvas(canvas.id)
             if (nid) activateCanvas(nid, { open: true })
           }}
         >
-          <span className="flex items-center gap-2">
-            <Copy size={ICON_SIZE.sm} className="text-ink-3" />
-            {cl('duplicate')}
-          </span>
+          {cl('duplicate')}
         </MenuItem>
         <MenuSeparator />
-        <MenuItem danger onSelect={() => void remove()}>
-          <span className="flex items-center gap-2">
-            <Trash2 size={ICON_SIZE.sm} />
-            {cl('delete')}
-          </span>
+        <MenuItem danger onSelect={() => void remove()} icon={Trash2}>
+          {cl('delete')}
         </MenuItem>
       </Menu>
     </li>

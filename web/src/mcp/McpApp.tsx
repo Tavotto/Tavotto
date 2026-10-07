@@ -224,7 +224,7 @@ export function McpApp({
       </header>
 
       {needsConfirm && (
-        <label className="flex shrink-0 items-start gap-1.5 border-b border-border bg-danger-subtle px-3 py-1.5 text-xs text-ink-2">
+        <label className="flex shrink-0 items-start gap-1.5 border-b border-border bg-danger-surface px-3 py-1.5 text-xs text-ink-2">
           <Checkbox
             checked={confirmForced}
             onChange={(e) => setConfirmForced(e.target.checked)}

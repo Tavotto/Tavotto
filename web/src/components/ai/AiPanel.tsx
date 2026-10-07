@@ -65,6 +65,7 @@ import { StepSlider } from '../ui/StepSlider'
 import { Tip } from '../ui/Tooltip'
 import { DiffView } from './DiffView'
 import { Markdown } from './Markdown'
+import { Card } from '../ui/Card'
 
 /** 右栏标签名与图标：tab bar 引用这里，改名只改这一处 */
 export const assistantTabLabel = () => translate('tabLabel', { ns: 'ai' })
@@ -405,7 +406,7 @@ function AssistantPanelBody() {
         {historyOpen && <TaskHistory onClose={() => setHistoryOpen(false)} />}
 
         {/* 输入区浮在对话流的底部（absolute），内容从它底下滚过；玻璃在下面那个框上 */}
-        <div ref={composerRef} className="absolute inset-x-0 bottom-0 z-30 px-3 pb-3 pt-1">
+        <div ref={composerRef} className="absolute inset-x-0 bottom-0 z-drawer px-3 pb-3 pt-1">
         {/* 起手式：一开始打字就收起——收起是跟着内容合上（Reveal），不是原地消失让输入框跳一下 */}
         <Reveal open={!!panel && mine.length === 0 && !prompt.trim()}>
           <div className="mb-1.5 flex flex-wrap gap-1">
@@ -439,7 +440,7 @@ function AssistantPanelBody() {
             聚焦仍是不透明 accent 边（3:1 由它承担）；禁用只有 opacity-40 一档 */}
         <div
           className={cn(
-            'rounded-lg border border-transparent bg-glass text-sm text-ink shadow-composer backdrop-blur-lg',
+            'rounded-panel border border-transparent bg-glass text-sm text-ink shadow-composer backdrop-blur-lg',
             'transition-colors duration-fast focus-within:border-accent',
             (!panel || noAgent) && 'opacity-40',
           )}
@@ -882,7 +883,7 @@ export function TaskHistory({ onClose }: { onClose: () => void }) {
   }, [query, status, offset])
 
   return (
-    <div className="absolute inset-0 z-20 flex flex-col bg-surface">
+    <div className="absolute inset-0 z-canvas-chrome flex flex-col bg-surface">
       <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border px-2.5">
         <h3 className="text-xs font-medium text-ink">{ai('history.title')}</h3>
         <Button
@@ -982,7 +983,7 @@ function HistoryRow({
   return (
     // 一条任务一张卡（shadow-card，2026-09-15 学 Beautiful UI 的 Task Rows，用户拍板）：
     // 此前是 hairline 隔开的段落；状态改成徽章（语义色 + 淡底一对），失败 danger、改过 ok、其余中性
-    <div className="rounded-md bg-surface p-2 shadow-card">
+    <Card padding="sm">
       <p className="line-clamp-2 text-xs leading-relaxed text-ink">{entry.prompt}</p>
       <p className="type-meta mt-0.5 truncate">
         {/* 历史里的 provider 是**当时**用的那个 Agent id：显示名从当前
@@ -1071,7 +1072,7 @@ function HistoryRow({
           </p>
         </div>
       )}
-    </div>
+    </Card>
   )
 }
 
@@ -1119,8 +1120,9 @@ function SessionBlock({ session }: { session: AiSession }) {
     // 一轮对话是一张卡（shadow-card，2026-09-15 学 Beautiful UI 的 Chat / Task Rows，用户拍板）：
     // 提示 → 过程 → 回答 → 状态 → diff 是一件事的五段，卡把它们收在一起；卡与卡之间只靠间距。
     // 卡里再分层用 surface-2 的凹块（提示），不再套第二张卡。
-    <div
-      className="flex animate-settle-in flex-col gap-1.5 rounded-md bg-surface p-2 shadow-card"
+    <Card
+      padding="sm"
+      className="flex animate-settle-in flex-col gap-1.5"
       data-ai-session={session.status}
     >
       {/* 提示是卡里的凹块：surface-2 底、无边（Beautiful UI 的 inset 那一级）。
@@ -1171,7 +1173,7 @@ function SessionBlock({ session }: { session: AiSession }) {
           </Button>
         </div>
       )}
-    </div>
+    </Card>
   )
 }
 
