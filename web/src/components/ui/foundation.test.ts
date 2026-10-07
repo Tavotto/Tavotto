@@ -451,7 +451,7 @@ describe('纸上的东西用纸上的墨（宪法第二十八节）', () => {
       for (const h of inkOnPaper(path, raw)) offenders.push(`${path}:${h}`)
     }
     expect(offenders, '纸两套主题同值，界面的 ink 在暗色里变浅：改用 text-paper-ink / -2 / -3 或 paper-ink/N').toEqual([])
-  })
+  }, 60_000) // 逐文件建 AST：冷启动或满载的 CI 上要几秒（同 statusTone 扫描）
 
   it('自检：抓得住纸上的界面墨（父元素是纸 / 兄弟矩形是纸），放得过纸上的纸墨与纸外的界面墨', () => {
     const catches = [
