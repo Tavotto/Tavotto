@@ -94,6 +94,7 @@ export function CanvasPage() {
         .join(' · ') || cv('snapPageOnly')
     : cv('snapOff')
   const portrait = page.h >= page.w
+  const square = page.w === page.h
   // 导出摘要读的是本机缓存；后端那份（#715 PR-B）取回、覆盖缓存后要重读——画布页可能在
   // 取回之前就已挂着（右栏记住的页签是画布），不订阅就整次会话停在空缓存的 600 ppi（Codex #829）
   const [, onHydrated] = useReducer((n: number) => n + 1, 0)
@@ -191,18 +192,21 @@ export function CanvasPage() {
             </Row>
           </div>
           <Row label={cv('orientation')} labelWidth={LABEL_W}>
-            <Segmented
-              ariaLabel={cv('orientation')}
-              value={page.w === page.h ? null : portrait ? 'portrait' : 'landscape'}
-              // 方向是宽高的另一种说法：换方向 = 横竖交换；正方形没有方向，两档都不选
-              onChange={(v) => {
-                if (page.w !== page.h && (v === 'portrait') !== portrait) setPageSize(page.h, page.w)
-              }}
-              items={[
-                { value: 'portrait', label: cv('portrait') },
-                { value: 'landscape', label: cv('landscape') },
-              ]}
-            />
+            <div data-page-orientation className="contents">
+              <Segmented
+                ariaLabel={cv('orientation')}
+                value={square ? null : portrait ? 'portrait' : 'landscape'}
+                // 方向是宽高的另一种说法：换方向 = 横竖交换。正方形没有方向：两档都不选、都禁用，
+                // 不摆一个看着能点却永远不变的控件（Codex #829 P2）
+                onChange={(v) => {
+                  if (!square && (v === 'portrait') !== portrait) setPageSize(page.h, page.w)
+                }}
+                items={[
+                  { value: 'portrait', label: cv('portrait'), disabled: square },
+                  { value: 'landscape', label: cv('landscape'), disabled: square },
+                ]}
+              />
+            </div>
           </Row>
         </div>
       </Section>

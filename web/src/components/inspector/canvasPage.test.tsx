@@ -68,6 +68,15 @@ describe('CanvasPage', () => {
     expect([after.w, after.h]).toEqual([before.h, before.w])
   })
 
+  it('正方形画布没有方向：两档都禁用，不摆一个点了也不变的控件（Codex #829 P2）', () => {
+    const opts = () => [...container.querySelectorAll<HTMLButtonElement>('[data-page-orientation] [data-value]')]
+    expect(opts()).toHaveLength(2)
+    expect(opts().every((b) => !b.disabled)).toBe(true)
+    act(() => useDocumentStore.setState((s) => ({ doc: { ...s.doc, page: { ...s.doc.page, w: 150, h: 150 } } })))
+    expect(opts().every((b) => b.disabled)).toBe(true)
+    expect(opts().some((b) => b.getAttribute('aria-checked') === 'true')).toBe(false)
+  })
+
   it('折叠行互不排斥（§9.3）：打开自动对齐时背景仍开着；再点同一组只收起它自己', () => {
     act(() => fold('canvas-bg').click())
     act(() => fold('canvas-snap').click())
