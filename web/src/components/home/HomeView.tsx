@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type DragEvent } from 'react'
-import { useTranslation } from 'react-i18next'
+import { Trans, useTranslation } from 'react-i18next'
 import {
   ArrowLeft,
   ChevronRight,
@@ -43,6 +43,8 @@ import { useProjectStore } from '@/store/projectStore'
 import { useUiStore } from '@/store/uiStore'
 import { BrandMark } from '../ui/BrandMark'
 import { Button, IconButton } from '../ui/Button'
+import { Card } from '../ui/Card'
+import { dropZoneClass } from '../ui/dropZone'
 import { Menu, MenuItem } from '../ui/Menu'
 import { DirBrowser, TailPath } from '../DirBrowser'
 
@@ -52,7 +54,12 @@ import { DirBrowser, TailPath } from '../DirBrowser'
  *
  *   * **新手版**——一句大问题 + 拖放区 + 黑色主按钮「导入我的脚本」；次按钮「用示例学一遍（带引导）」
  *     （= 教程入口，`runTutorialEntry`）+ 最近项目（没有三步说明卡与提示条：拖放区标题本身就是说明）；
- *   * **老手版**——拖放区 + 「使用示例脚本试试看」（只打开示例项目、不带引导）+ 最近项目列表。
+ *   * **老手版**——一句叙事句（「继续 [最近项目] ，或 [打开脚本] 开始新的排版」，句中两枚 24px chip 就是
+ *     两个入口，2026-10-07 设计审计 §4.2 学 OpenBitFun WelcomePanel）+ 拖放区 + 「使用示例脚本试试看」
+ *     （只打开示例项目、不带引导）+ 最近项目卡片网格。
+ *
+ * 两版的最近项目都是 `ui/Card` interactive 网格（缩略图格 + 名字 + 路径 / 时间）；拖放区静态时是一张普通卡，
+ * 只有拖着文件进来才出现 accent 虚线 + 浅底 + 外发光（`ui/dropZone`）。
  *
  * 哪一版只由 `lib/onboarding/tutorial.homeVariant()` 判（onboarding 状态），这里不判。
  * 新建项目、按路径打开 / 筛选、失效目录、教程的「重新开始」都在「全部项目」视图里
@@ -125,7 +132,7 @@ export function HomeView({
         {variant === 'newcomer' ? (
           <Newcomer importer={importer} dragging={dragging} />
         ) : (
-          <Returning importer={importer} dragging={dragging} />
+          <Returning importer={importer} dragging={dragging} openPath={openPath} />
         )}
         {error && (
           <p role="alert" className="mt-3 text-center text-sm leading-relaxed text-danger">
@@ -327,48 +334,54 @@ function SampleFailure({ failure }: { failure: ReturnType<typeof useSampleAvaila
   )
 }
 
-/** 首屏的大号 CTA：版式同一档 primary / secondary，只是高一档（主页是落地页，不是工具栏） */
-const HERO_BUTTON = 'h-9 min-w-[200px] px-5 text-base'
-
 /**
  * 拖放区本身是一颗按钮：点它 / Enter / 空格 = 选择文件（键盘与读屏的等价操作）。
  * 真正收拖放的是整页（HomeView 的 dropHandlers），这里只负责「拖到这里」的高亮。
  * 两版共用：标题本身就是说明，不再另配步骤说明。
+ *
+ * 静态时是一张普通卡（`ui/Card`，没有虚线框）；拖着文件进来才是接收态（`ui/dropZone`：1.5px accent
+ * 虚线 + accent-subtle 底 + 外发光，2026-10-07 设计审计 §4.2）。图标坐在 EmptyState v2 那种 40px 底座上。
  */
 function DropZone({ importer, dragging }: { importer: Importer; dragging: boolean }) {
   const { t } = useTranslation('project')
   const switching = useProjectStore((s) => s.switching)
   return (
-    <button
-      type="button"
-      data-home-dropzone
-      data-dragging={dragging || undefined}
-      disabled={switching}
-      onClick={importer.start}
-      aria-describedby="home-dropzone-hint"
-      className={cn(
-        'mx-auto mt-8 flex w-full max-w-[720px] flex-col items-center rounded-md border border-dashed px-6 py-10',
-        'border-border-strong bg-surface-2 outline-none transition-colors',
-        'hover:border-ink-3 hover:bg-surface focus-visible:focus-ring',
-        'disabled:cursor-not-allowed disabled:opacity-40',
-        dragging && 'border-accent bg-accent-subtle',
-      )}
-    >
-      <span className="flex size-14 items-center justify-center rounded-md border border-border bg-surface text-ink-2">
-        <FileCodeCorner size={ICON_SIZE.lg} aria-hidden />
-      </span>
-      <span className="mt-4 text-[20px] font-medium leading-tight text-ink">
-        {dragging ? t('home.returning.dropRelease') : t('home.returning.dropTitle')}
-      </span>
-      <span id="home-dropzone-hint" className="mt-2 flex flex-col items-center gap-0.5 text-base text-ink-2">
-        {/* 拿得到真实路径（macOS 桌面壳）才说「拖进来就开」；否则如实说还要再选一次 */}
-        <span>{t(importer.native ? 'home.returning.dropHint' : 'home.returning.dropHintPicker')}</span>
-        <span>
-          {t('home.returning.dropOr')}
-          <span className="underline underline-offset-2">{t('home.returning.dropChoose')}</span>
+    <Card interactive={!switching} padding="none" className="mx-auto mt-8 w-full max-w-[720px]">
+      <button
+        type="button"
+        data-home-dropzone
+        data-dragging={dragging || undefined}
+        disabled={switching}
+        onClick={importer.start}
+        aria-describedby="home-dropzone-hint"
+        className={cn(
+          'flex w-full flex-col items-center rounded-lg px-6 py-10',
+          'disabled:cursor-not-allowed disabled:opacity-40',
+          dropZoneClass(dragging),
+        )}
+      >
+        <span
+          aria-hidden
+          className={cn(
+            'flex size-10 items-center justify-center rounded-lg text-ink-2',
+            dragging ? 'bg-surface text-accent' : 'bg-surface-hover',
+          )}
+        >
+          <FileCodeCorner size={ICON_SIZE.lg} />
         </span>
-      </span>
-    </button>
+        <span className="type-heading mt-4">
+          {dragging ? t('home.returning.dropRelease') : t('home.returning.dropTitle')}
+        </span>
+        <span id="home-dropzone-hint" className="mt-2 flex flex-col items-center gap-0.5 text-base text-ink-2">
+          {/* 拿得到真实路径（macOS 桌面壳）才说「拖进来就开」；否则如实说还要再选一次 */}
+          <span>{t(importer.native ? 'home.returning.dropHint' : 'home.returning.dropHintPicker')}</span>
+          <span>
+            {t('home.returning.dropOr')}
+            <span className="underline underline-offset-2">{t('home.returning.dropChoose')}</span>
+          </span>
+        </span>
+      </button>
+    </Card>
   )
 }
 
@@ -382,17 +395,18 @@ function Newcomer({ importer, dragging }: { importer: Importer; dragging: boolea
   return (
     <>
       <header className="flex flex-col items-center pt-4 text-center">
-        <Wordmark />
-        <h1 className="mt-6 text-[24px] font-medium leading-tight text-ink">{t('home.newcomer.title')}</h1>
+        <Wordmark size="sm" />
+        <h1 className="type-display mt-6">{t('home.newcomer.title')}</h1>
       </header>
 
       <DropZone importer={importer} dragging={dragging} />
       {importer.noticeView}
 
+      {/* 这一屏唯一的填色主动作（EmptyState v2 的约定：一屏一颗、32px） */}
       <div className="mt-6 flex flex-wrap justify-center gap-3">
         <Button
           variant="primary"
-          className={HERO_BUTTON}
+          size="lg"
           disabled={switching}
           data-home-import
           onClick={importer.start}
@@ -403,7 +417,7 @@ function Newcomer({ importer, dragging }: { importer: Importer; dragging: boolea
         {!sample.hidden && (
           <Button
             variant="secondary"
-            className={HERO_BUTTON}
+            size="lg"
             disabled={sample.disabled}
             loading={sample.opening}
             loadingLabel={t('picker.tutorialOpening')}
@@ -428,7 +442,15 @@ function Newcomer({ importer, dragging }: { importer: Importer; dragging: boolea
 
 /* --------------------------------- 老手版 ---------------------------------- */
 
-function Returning({ importer, dragging }: { importer: Importer; dragging: boolean }) {
+function Returning({
+  importer,
+  dragging,
+  openPath,
+}: {
+  importer: Importer
+  dragging: boolean
+  openPath: (path: string) => Promise<boolean>
+}) {
   const { t } = useTranslation('project')
   const sample = useSampleAvailability()
   return (
@@ -437,7 +459,7 @@ function Returning({ importer, dragging }: { importer: Importer; dragging: boole
         <h1>
           <Wordmark />
         </h1>
-        <p className="mt-3 text-base text-ink-2">{t('home.returning.lead')}</p>
+        <Narrative importer={importer} openPath={openPath} />
       </header>
 
       <DropZone importer={importer} dragging={dragging} />
@@ -447,7 +469,7 @@ function Returning({ importer, dragging }: { importer: Importer; dragging: boole
         <div className="mt-6 flex flex-col items-center">
           <Button
             variant="secondary"
-            className={HERO_BUTTON}
+            size="lg"
             disabled={sample.disabled}
             loading={sample.opening}
             loadingLabel={t('picker.tutorialOpening')}
@@ -469,13 +491,83 @@ function Returning({ importer, dragging }: { importer: Importer; dragging: boole
   )
 }
 
-/** 品牌标 + 产品名（两处都来自品牌常量；图形是装饰，名字是文字） */
-function Wordmark() {
+/**
+ * 品牌标 + 产品名（两处都来自品牌常量；图形是装饰，名字是文字）。老手版里它就是页面标题（type-display）；
+ * 新手版里页面标题是那句大问题，品牌退一档（type-heading），同一屏不出现两个 24px。
+ */
+function Wordmark({ size = 'md' }: { size?: 'sm' | 'md' }) {
   return (
     <span className="flex items-center justify-center gap-3">
-      <BrandMark size={40} tone="paper" />
-      <span className="text-[26px] font-medium leading-none text-ink">{PRODUCT_NAME}</span>
+      <BrandMark size={size === 'md' ? 40 : 32} tone="paper" />
+      <span className={size === 'md' ? 'type-display' : 'type-heading'}>{PRODUCT_NAME}</span>
     </span>
+  )
+}
+
+/**
+ * 叙事句（2026-10-07 设计审计 §4.2，学 OpenBitFun WelcomePanel）：一句 15px 的话里嵌两枚 24px 行内 chip——
+ * 「继续 [最近项目] ，或 [打开脚本] 开始新的排版。」chip 就是入口本身，比两颗并排的大按钮更像一句话。
+ * 最近项目 chip 直接打开**最近打开的那一个**（更多的在下面的卡片网格里，不再套一层下拉）；
+ * 没有可打开的最近项目时句子只剩脚本那一半。句式整句进翻译（`Trans`），语序各语言自己定。
+ */
+function Narrative({ importer, openPath }: { importer: Importer; openPath: (path: string) => Promise<boolean> }) {
+  const { t } = useTranslation('project')
+  const recent = useProjectStore((s) => s.recent.find((r) => r.exists))
+  const switching = useProjectStore((s) => s.switching)
+  const script = (
+    <NarrativeChip data-home-chip="script" disabled={switching} onClick={importer.start}>
+      <FileCodeCorner size={ICON_SIZE.sm} aria-hidden className="text-ink-3" />
+      {t('home.narrative.script')}
+    </NarrativeChip>
+  )
+  return (
+    <p className="mt-4 text-xl leading-8 text-ink-2" data-home-narrative>
+      {recent ? (
+        <Trans
+          t={t}
+          i18nKey="home.narrative.withRecent"
+          components={{
+            recent: (
+              <NarrativeChip
+                data-home-chip="recent"
+                disabled={switching}
+                aria-label={t('picker.openProject', { name: recent.name })}
+                title={recent.tutorial ? undefined : recent.path}
+                onClick={() => void openPath(recent.path)}
+              >
+                <Folder size={ICON_SIZE.sm} aria-hidden className="text-ink-3" />
+                <span className="max-w-[24ch] truncate">{recent.name}</span>
+              </NarrativeChip>
+            ),
+            script,
+          }}
+        />
+      ) : (
+        <Trans t={t} i18nKey="home.narrative.scriptOnly" components={{ script }} />
+      )}
+    </p>
+  )
+}
+
+/** 叙事句里的行内 chip：24px 胶囊、白底，坐在一行字的基线上（宪法第二节：chip 是 full 圆角） */
+function NarrativeChip({
+  className,
+  children,
+  ...rest
+}: React.ButtonHTMLAttributes<HTMLButtonElement> & Record<`data-${string}`, string>) {
+  return (
+    <button
+      type="button"
+      {...rest}
+      className={cn(
+        'mx-0.5 inline-flex h-6 max-w-full items-center gap-1.5 rounded-full bg-surface px-2.5 align-middle text-base text-ink',
+        'outline-1 -outline-offset-1 outline-transparent transition-[outline-color,background-color]',
+        'hover:outline-border focus-visible:focus-ring disabled:cursor-not-allowed disabled:opacity-40',
+        className,
+      )}
+    >
+      {children}
+    </button>
   )
 }
 
@@ -526,7 +618,7 @@ function RecentSection({
   return (
     <section
       aria-labelledby="home-recent-heading"
-      className={cn('mt-8', variant === 'newcomer' ? 'border-t border-border pt-5' : 'mx-auto w-full max-w-[720px]')}
+      className={cn('mt-10', variant === 'returning' && 'mx-auto w-full max-w-[720px]')}
     >
       <div className="flex items-center justify-between">
         <h2 id="home-recent-heading" className="type-section flex items-baseline gap-1.5">
@@ -535,54 +627,47 @@ function RecentSection({
         </h2>
         {allLink}
       </div>
-      {variant === 'newcomer' ? (
-        <ul className="mt-2 grid grid-cols-1 gap-x-6 sm:grid-cols-2 lg:grid-cols-3">
-          {shown.map((r) => (
-            <RecentItem
-              key={r.path}
-              entry={r}
-              layout="card"
-              busy={busyPath === r.path}
-              disabled={switching}
-              onOpen={() => void openPath(r.path)}
-              onRemove={() => void remove(r.path)}
-            />
-          ))}
-        </ul>
-      ) : (
-        <ul className="mt-2 border-t border-border">
-          {shown.map((r) => (
-            <RecentItem
-              key={r.path}
-              entry={r}
-              layout="row"
-              busy={busyPath === r.path}
-              disabled={switching}
-              onOpen={() => void openPath(r.path)}
-              onRemove={() => void remove(r.path)}
-            />
-          ))}
-        </ul>
-      )}
+      {/* Card interactive 网格（2026-10-07 设计审计 §4.2 / §5）：此前新手版是三列 hover 行、老手版是带分隔线的列表 */}
+      <ul
+        className={cn(
+          'mt-2 grid grid-cols-1 gap-3',
+          variant === 'newcomer' ? 'sm:grid-cols-2 lg:grid-cols-3' : 'sm:grid-cols-2 md:grid-cols-3',
+        )}
+      >
+        {shown.map((r) => (
+          <RecentItem
+            key={r.path}
+            entry={r}
+            detail={variant === 'newcomer' ? 'when' : 'path'}
+            busy={busyPath === r.path}
+            disabled={switching}
+            onOpen={() => void openPath(r.path)}
+            onRemove={() => void remove(r.path)}
+          />
+        ))}
+      </ul>
     </section>
   )
 }
 
 /**
- * 主页上的一条最近项目。主体是一颗「打开」按钮（名字 + 路径 / 时间），右侧 ⋯ 菜单收着
- * 「打开 / 从列表移除」——设计稿上没有移除的位置，放进菜单；「全部项目」里照旧有行尾的 ×。
+ * 主页上的一个最近项目：一张 `Card` interactive。主体是一颗「打开」按钮（缩略图格 + 名字 + 路径 / 时间），
+ * 右上角 ⋯ 菜单收着「打开 / 从列表移除」；「全部项目」里照旧有行尾的 ×。
+ * 缩略图格：最近项目列表（`RecentProject`）不带任何画布数据，画不出 `CanvasThumb`——放一块画布灰上的
+ * 文件夹图标（项目是目录，不是单个脚本）；后端哪天给了首页画布的缩略数据，换成 `CanvasThumb` 就在这一格。
  * 时间是**上次打开**的时间（`last_opened`，后端 `touch_recent` 记的），不是文件修改时间。
  */
 function RecentItem({
   entry,
-  layout,
+  detail,
   busy,
   disabled,
   onOpen,
   onRemove,
 }: {
   entry: RecentProject
-  layout: 'card' | 'row'
+  /** 卡片第二行：新手版说「打开于 …」，老手版给路径（时间放在第三行） */
+  detail: 'when' | 'path'
   busy: boolean
   disabled: boolean
   onOpen: () => void
@@ -592,67 +677,58 @@ function RecentItem({
   const when = entry.last_opened > 0 ? formatRelativeTime(entry.last_opened) : null
   const sub = entry.tutorial ? (
     <span className="block text-sm text-ink-3">{t('picker.tutorialBadge')}</span>
-  ) : layout === 'row' ? (
-    <TailPath path={entry.path} className="text-sm" />
+  ) : detail === 'path' ? (
+    <TailPath path={entry.path} />
   ) : when ? (
     <span className="block text-sm text-ink-3">{t('home.openedAgo', { when })}</span>
   ) : null
   return (
-    <li
-      data-home-recent={entry.path}
-      className={cn(
-        'group flex items-center gap-2',
-        layout === 'row' ? 'border-b border-border py-2' : 'py-2',
-      )}
-    >
-      <button
-        type="button"
-        onClick={onOpen}
-        disabled={busy || disabled}
-        aria-label={t('picker.openProject', { name: entry.name })}
-        title={entry.tutorial ? undefined : entry.path}
-        className={cn(
-          '-ml-2 flex min-w-0 flex-1 items-center gap-3 rounded-sm px-2 py-1.5 text-left outline-none',
-          'hover:bg-surface-hover focus-visible:focus-ring disabled:cursor-not-allowed disabled:opacity-40',
-        )}
-      >
-        {/* 项目是目录（不是设计稿里的单个脚本文件）：两种版式都用文件夹 */}
-        <Folder size={ICON_SIZE.lg} className="shrink-0 text-ink-3" aria-hidden />
-        <span className="min-w-0 flex-1">
-          <span className="flex items-center gap-1.5">
-            <span className="truncate text-base text-ink">{entry.name}</span>
-            {busy && <span className="shrink-0 text-sm text-ink-3">{t('picker.opening')}</span>}
+    <li data-home-recent={entry.path} className="min-w-0">
+      <Card interactive padding="none" className="group h-full">
+        <button
+          type="button"
+          onClick={onOpen}
+          disabled={busy || disabled}
+          aria-label={t('picker.openProject', { name: entry.name })}
+          title={entry.tutorial ? undefined : entry.path}
+          className="flex h-full w-full flex-col gap-2 rounded-lg p-1 pb-3 text-left outline-none disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          {/* 外 12 = 内 8 + 4：缩略图格是 md 圆角、坐在画布灰上 */}
+          <span aria-hidden className="flex h-20 items-center justify-center rounded-md bg-canvas text-ink-3">
+            <Folder size={ICON_SIZE.lg} />
           </span>
-          {sub}
-        </span>
-        {layout === 'row' && when && (
-          <span className="shrink-0 text-sm tabular-nums text-ink-3">{when}</span>
-        )}
-      </button>
-      <Menu
-        align="end"
-        width={180}
-        trigger={
-          <IconButton
-            iconSize="sm"
-            tip={false}
-            label={t('home.recentMenu', { name: entry.name })}
-            className={cn(
-              'text-ink-3',
-              // 行式列表里平时收起、悬停 / 聚焦 / 菜单开着时出现；卡片式常驻（设计稿如此）
-              layout === 'row' &&
-                'opacity-0 transition-[opacity,background-color] focus-visible:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100',
-            )}
+          <span className="flex min-w-0 flex-col gap-0.5 px-2">
+            <span className="flex items-center gap-1.5 pr-6">
+              <span className="truncate text-base font-medium text-ink">{entry.name}</span>
+              {busy && <span className="shrink-0 text-sm text-ink-3">{t('picker.opening')}</span>}
+            </span>
+            {sub}
+            {detail === 'path' && when && <span className="type-meta">{when}</span>}
+          </span>
+        </button>
+        <div className="absolute right-1.5 top-1.5">
+          <Menu
+            align="end"
+            width={180}
+            trigger={
+              <IconButton
+                iconSize="sm"
+                tip={false}
+                label={t('home.recentMenu', { name: entry.name })}
+                // 平时收起、悬停 / 聚焦 / 菜单开着时出现（坐在缩略图格上，白底才看得清）
+                className="bg-surface text-ink-3 opacity-0 transition-[opacity,background-color] hover:bg-surface-hover focus-visible:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100"
+              >
+                <Ellipsis size={ICON_SIZE.sm} />
+              </IconButton>
+            }
           >
-            <Ellipsis size={ICON_SIZE.sm} />
-          </IconButton>
-        }
-      >
-        <MenuItem icon={FolderOpen} disabled={busy || disabled} onSelect={onOpen}>
-          {t('home.menuOpen')}
-        </MenuItem>
-        <MenuItem onSelect={onRemove}>{t('picker.removeFromListTitle')}</MenuItem>
-      </Menu>
+            <MenuItem icon={FolderOpen} disabled={busy || disabled} onSelect={onOpen}>
+              {t('home.menuOpen')}
+            </MenuItem>
+            <MenuItem onSelect={onRemove}>{t('picker.removeFromListTitle')}</MenuItem>
+          </Menu>
+        </div>
+      </Card>
     </li>
   )
 }
