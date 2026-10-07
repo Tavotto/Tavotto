@@ -323,6 +323,45 @@ describe('发送失败（§6.7）', () => {
     expect((start.mock.calls[1] as unknown as [{ prompt: string }])[0].prompt).toBe('加粗线条')
     expect(q('[data-ai-error="send"]')).toBeNull()
   })
+
+  it('发送失败钉在那一张图上：换到别的图就不摆它的重试，回来照常重试原处（Codex #827 P1）', async () => {
+    start.mockImplementationOnce(async () => {
+      throw new Error('boom')
+    })
+    await mount([])
+    const box = q<HTMLTextAreaElement>('[data-ai-input]')!
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!
+    await act(async () => {
+      setter.call(box, '加粗线条')
+      box.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => q<HTMLButtonElement>('[data-ai-send]')!.click())
+    const first = (start.mock.calls[0] as unknown as [{ scope: string }])[0]
+    expect(first.scope).toBe('figure')
+    // 失败之后选了另一张图：那条失败与它的「重试」不跟过去（否则会把 p1 的话改到 p2 上）
+    await act(async () => {
+      useDocumentStore.setState((s) => ({ doc: { ...s.doc, objects: [...s.doc.objects, { ...panel(), id: 'p2', fileId: 'fig2.pdf' }] } }) as never)
+      useSelectionStore.setState({ ids: ['p2'] } as never)
+    })
+    expect(q('[data-ai-error="send"]')).toBeNull()
+    // 回到 p1：失败还在，重试发往 p1
+    await act(async () => useSelectionStore.setState({ ids: ['p1'] } as never))
+    await act(async () => q('[data-ai-error="send"]')!.querySelector<HTMLButtonElement>('[data-ai-retry]')!.click())
+    expect((start.mock.calls[1] as unknown as [{ panelId: string }])[0].panelId).toBe('p1')
+  })
+})
+
+describe('会话失败的重试', () => {
+  it('按那一轮自己的目标重发（元素 / gid），不跟着此刻的作用范围（Codex #827 P1）', async () => {
+    await mount([
+      session({ status: 'failed', error: 'boom', scope: 'element', gid: 'g7', target: '图例' }),
+    ])
+    await act(async () => q('[data-ai-error="session"] [data-ai-retry]')!.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+    const call = (start.mock.calls[0] as unknown as [{ scope: string; gid: string | null; label: string | null }])[0]
+    expect(call.scope).toBe('element')
+    expect(call.gid).toBe('g7')
+    expect(call.label).toBe('图例')
+  })
 })
 
 describe('改了脚本 = 显著卡（§6.2 / §6.4）', () => {

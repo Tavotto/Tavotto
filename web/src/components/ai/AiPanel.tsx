@@ -31,7 +31,7 @@ import {
 import { cn, modKey } from '@/lib/utils'
 import { t as translate } from '@/i18n'
 import { engineLabel } from '@/components/inspector/roles/registry'
-import { isSessionOf, useAiStore, type AiScope } from '@/store/aiStore'
+import { isSessionOf, useAiStore, type AiScope, type AiSession } from '@/store/aiStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { usePanelDisplayManifest } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
@@ -65,6 +65,17 @@ const ai = (key: string, values?: Record<string, unknown>) =>
  * 用户真往上翻时一步就超过它；小于它的偏差只是子像素 / 滚动条尾巴。
  */
 const STICK_SLACK = 24
+
+/** 一次发送钉住的目标：作用范围 + 元素上下文（整张图时 gid / label 为空） */
+type SendTarget = { scope: AiScope; gid: string | null; label: string | null; target: string }
+
+/** 一轮会话发起时的目标：会话里存着 scope / gid / target，元素名就是 target（整张图时没有元素） */
+const targetOf = (s: AiSession): SendTarget => ({
+  scope: s.scope,
+  gid: s.gid,
+  label: s.gid ? s.target : null,
+  target: s.target,
+})
 /** 输入框最多长到几行，再多在框内滚动 */
 const COMPOSER_MAX_ROWS = 8
 /** 空态里最多摆几条可点的示例提示（2026-10-07 设计审计 §6.7） */
@@ -241,7 +252,7 @@ function AssistantPanelBody() {
   const { panel, element, axes } = useAssistantTarget()
   const caps = useAiStore((s) => s.caps)
   const [prompt, setPrompt] = useState('')
-  const [error, setError] = useState<{ text: string; prompt: string } | null>(null)
+  const [error, setError] = useState<{ text: string; prompt: string; target: SendTarget; panelId: string } | null>(null)
   const [sending, setSending] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -338,8 +349,12 @@ function AssistantPanelBody() {
     inputRef.current?.focus()
   }
 
-  /** 发一条：默认发输入框里的；「重新发送 / 重试」传入那一轮的原话（不动输入框里正在写的草稿） */
-  const send = async (override?: string) => {
+  /**
+   * 发一条：默认发输入框里的；「重新发送」传入那一轮的原话（不动输入框里正在写的草稿）。
+   * 「重试」再带上**那一次的目标**（`pinned`）：失败之后用户可能已经选了别的元素 / 换了范围，
+   * 重试必须改原来那处，不能悄悄改到此刻选中的东西上（Codex #827 P1）
+   */
+  const send = async (override?: string, pinned?: SendTarget) => {
     const text = (override ?? prompt).trim()
     if (!text || !canSend || !panel) return
     setSending(true)
@@ -348,12 +363,13 @@ function AssistantPanelBody() {
     jumpToBottom()
     // 作用范围直接决定发给后端的元素上下文：整张图不带 gid，
     // 后端 _build_prompt 就不会写「用户选中的元素」那一行
-    const ctx =
-      scope === 'element' && element
-        ? { gid: element.gid, label: element.label, target: element.label }
+    const ctx: SendTarget =
+      pinned ??
+      (scope === 'element' && element
+        ? { scope, gid: element.gid, label: element.label, target: element.label }
         : scope === 'axes' && axes
-          ? { gid: axes.gid, label: axes.label, target: axes.label }
-          : { gid: null, label: null, target: ai('scope.figure') }
+          ? { scope, gid: axes.gid, label: axes.label, target: axes.label }
+          : { scope, gid: null, label: null, target: ai('scope.figure') })
     try {
       await useAiStore.getState().start({
         prompt: text,
@@ -361,14 +377,14 @@ function AssistantPanelBody() {
         panelId: panel.id,
         gid: ctx.gid,
         label: ctx.label,
-        scope,
+        scope: ctx.scope,
         target: ctx.target,
         overrides: panel.overrides,
         canvas: useDocumentStore.getState().activeCanvasId,
       })
       if (override == null) setPrompt('')
     } catch (e) {
-      setError({ text: backendErrorText(e), prompt: text })
+      setError({ text: backendErrorText(e), prompt: text, target: ctx, panelId: panel.id })
     } finally {
       setSending(false)
     }
@@ -428,7 +444,13 @@ function AssistantPanelBody() {
               className="flex flex-col gap-(--turn-gap) [--item-gap:8px] [--turn-gap:16px]"
             >
               {mine.map((s) => (
-                <Turn key={s.id} session={s} onResend={(text) => void send(text)} canResend={canSend} />
+                <Turn
+                  key={s.id}
+                  session={s}
+                  onResend={(text) => void send(text)}
+                  onRetry={(t) => void send(t.prompt, targetOf(t))}
+                  canResend={canSend}
+                />
               ))}
             </div>
           ) : (
@@ -500,14 +522,15 @@ function AssistantPanelBody() {
               ))}
             </div>
           </Reveal>
-          {error && (
+          {/* 发送失败只属于那一张图：换到别的面板就不再摆着它的「重试」（Codex #827 P1） */}
+          {error && error.panelId === panel?.id && (
             <Notice
               tone="danger"
               data-ai-error="send"
               className="mb-2"
               title={ai('panel.sendFailed')}
               action={
-                <Button data-ai-retry variant="secondary" size="sm" disabled={!canSend} onClick={() => send(error.prompt)}>
+                <Button data-ai-retry variant="secondary" size="sm" disabled={!canSend} onClick={() => send(error.prompt, error.target)}>
                   {ai('panel.retry')}
                 </Button>
               }

@@ -47,11 +47,14 @@ const failedStatus = (s: AiSession) => s.status === 'failed' || s.status === 'ti
 export function Turn({
   session,
   onResend,
+  onRetry,
   canResend,
 }: {
   session: AiSession
-  /** 把这条提示词按当前的作用范围再发一次 */
+  /** 把这条提示词按当前的作用范围再发一次（气泡上的「重新发送」：用户此刻的选择就是新的目标） */
   onResend: (prompt: string) => void
+  /** 失败的这一轮原样重试：**钉在这一轮自己的目标上**，不跟着此刻的选择走（Codex #827 P1） */
+  onRetry: (session: AiSession) => void
   canResend: boolean
 }) {
   useTranslation('ai')
@@ -97,7 +100,7 @@ export function Turn({
           title={statusLabel(session.status)}
           action={
             canResend ? (
-              <Button data-ai-retry variant="secondary" size="sm" onClick={() => onResend(session.prompt)}>
+              <Button data-ai-retry variant="secondary" size="sm" onClick={() => onRetry(session)}>
                 {ai('panel.retry')}
               </Button>
             ) : undefined
