@@ -3535,7 +3535,7 @@ export interface ProjectEnvFailure {
    * `code === 'environment_confirmation_required'`（ADR 0114）：项目自己的环境体检通过、缺的包也在里面——
    * 这是建议不是决定，用户点一次才采用（候选按钮用 `candidates`）。路径不在公开投影里。
    */
-  recommended?: { venv: string }
+  recommended?: { venv: string; id?: string; generation?: string }
 }
 
 /** 一个系统解释器的体检结论（只有结论字段，没有体检脚本的原始输出） */
@@ -3648,7 +3648,11 @@ export const cancelProjectEnvironmentCheck = () =>
  * 现场再体检、通过才记成用户的明确决定。环境在这期间被重建 → 409 `environment_changed`；全局解释器压着 → 409
  * `environment_locked`。
  */
-export const adoptEnvironmentCandidate = (candidate: EnvCandidate, script?: string) =>
+export const adoptEnvironmentCandidate = (
+  candidate: Pick<EnvCandidate, 'id' | 'generation'>,
+  script?: string,
+  module?: string,
+) =>
   jsonFetch<{ ok: boolean; project: ProjectEnvironment }>('/api/engine/environment', {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
@@ -3657,6 +3661,8 @@ export const adoptEnvironmentCandidate = (candidate: EnvCandidate, script?: stri
       candidate: candidate.id,
       expected_generation: candidate.generation,
       ...(script ? { script } : {}),
+      // 依赖修复卡采用时带上缺的那个包：后端连它一起体检（与手填路径同一个 `module` 语义）
+      ...(module ? { module } : {}),
     }),
   })
 
@@ -3888,6 +3894,12 @@ export interface DependencyTarget {
   venv: string
   /** 项目 venv 是项目相对路径；系统解释器是项目外的绝对路径（它本来就不跟项目走） */
   python: string
+  /**
+   * 确认模式下「改用项目自己的环境」这一类目标才有：看到建议那一刻的候选 id 与环境代。采用必须把这一对
+   * 原样交给 `PATCH /api/engine/environment`（`candidate` + `expected_generation`），环境在这期间被重建 → 409。
+   * 没有它的目标是用户手边的机器解释器，按路径采用。
+   */
+  candidate?: { id: string; generation: string }
   /** true = 会修改用户自己的环境，界面必须说清楚 */
   modifies_user_environment: boolean
   creates_environment: boolean
@@ -4560,6 +4572,8 @@ export interface ProbeResult {
  * `sensitive`：含密码 / 令牌——后端只在内存里保留，不落盘，重启后需要重新输入。
  */
 export interface ScriptArgs {
+  /** Opaque existing configuration for an answer-management rerun; null explicitly selects no arguments. */
+  run_config?: string | null
   argv?: readonly string[]
   sensitive?: boolean
 }
@@ -4572,9 +4586,11 @@ export const probeScript = (script: string, cost?: string, args?: ScriptArgs) =>
     body: JSON.stringify({
       script,
       cost,
-      ...(args?.argv && args.argv.length > 0
-        ? { argv: [...args.argv], ...(args.sensitive ? { argv_sensitive: true } : {}) }
-        : {}),
+      ...(args?.run_config !== undefined
+        ? { run_config: args.run_config }
+        : args?.argv && args.argv.length > 0
+          ? { argv: [...args.argv], ...(args.sensitive ? { argv_sensitive: true } : {}) }
+          : {}),
     }),
   })
 
@@ -4811,6 +4827,8 @@ export interface ScriptInputRequest {
 }
 
 export interface RememberedAnswer {
+  /** Opaque configuration identity only; omitted for legacy no-argument answers. */
+  run_config?: string | null
   index: number
   prompt: string
   answer: string
@@ -4859,11 +4877,11 @@ export const stopScriptInput = (id: string) =>
 
 export const fetchScriptAnswers = () => jsonFetch<ScriptAnswersResponse>('/api/script_input/answers')
 
-export const updateScriptAnswer = (script: string, index: number, answer: string) =>
-  postJson<ScriptAnswersResponse>('/api/script_input/answers', { script, index, answer })
+export const updateScriptAnswer = (script: string, index: number, answer: string, runConfig: string | null = null) =>
+  postJson<ScriptAnswersResponse>('/api/script_input/answers', { script, index, answer, run_config: runConfig })
 
-export const forgetScriptAnswer = (script: string, index: number) =>
-  postJson<ScriptAnswersResponse>('/api/script_input/answers', { script, index, forget: true })
+export const forgetScriptAnswer = (script: string, index: number, runConfig: string | null = null) =>
+  postJson<ScriptAnswersResponse>('/api/script_input/answers', { script, index, forget: true, run_config: runConfig })
 
 export const cancelProbe = (script: string) =>
   jsonFetch<{ cancelling: boolean }>('/api/registry/probe/cancel', {

@@ -129,6 +129,8 @@ export const parsePastedCommand = (text: string, script: string): PasteResult =>
     rest = words.slice(2)
   } else if (basename(words[0]) === name) {
     rest = words.slice(1)
+  } else if (/\.pyw?$/i.test(basename(words[0])) && !words[0].startsWith('-')) {
+    return { ok: false, error: 'different_script' }
   } else if (words.slice(1).some((w) => basename(w) === name)) {
     // `uv run x.py …` / `conda run …`：启动器不认识，不猜它的参数边界
     return { ok: false, error: 'unrecognized_launcher' }

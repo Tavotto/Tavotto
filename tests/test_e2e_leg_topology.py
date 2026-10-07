@@ -67,7 +67,8 @@ _IS_WINDOWS = {"windows-latest": True, "ubuntu-24.04": False, "macos-latest": Fa
 PLATFORM_SKIPS = {
     "environment-advice.spec.ts": 1,  # T05：假解释器是 POSIX shell 脚本 → posix-e2e 腿执行
     "error-recovery-en.spec.ts": 3,
-    "project-scan.spec.ts": 1,  # T02：权限位用例 → posix-e2e 腿执行
+    # T02：权限位用例 → posix-e2e 的 chromium 腿执行（ci.yml posix-e2e 含本 spec）
+    "project-scan.spec.ts": 1,
 }
 
 

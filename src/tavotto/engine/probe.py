@@ -588,11 +588,11 @@ OUTCOME_CANCELLED = "cancelled"
 
 
 def outcome_of(result: dict) -> str:
-    if result.get("registered"):
-        return OUTCOME_READY
-    if ((result.get("error") or {}).get("code")) == ERROR_CANCELLED:
-        return OUTCOME_CANCELLED
-    return OUTCOME_ERROR
+    # 已登记后物化 / 默认配置 / 刷新仍可能失败，成功登记不能盖掉这次终局错误。
+    error = result.get("error")
+    if error:
+        return OUTCOME_CANCELLED if error.get("code") == ERROR_CANCELLED else OUTCOME_ERROR
+    return OUTCOME_READY if result.get("registered") else OUTCOME_ERROR
 
 
 def diagnostic_projection(

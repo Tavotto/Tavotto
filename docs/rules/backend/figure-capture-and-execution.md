@@ -225,10 +225,17 @@
 用户手动给的**精确 argv** 贯通 探测 → 热编辑 → 冷重放 → 导出 → 重开；自动 argparse 表单是 T07，不在这里。
 
 - **载荷**：`safe_spec(argv=, run_config=)` 是唯一构造入口（缺省空 = 旧行为逐字节不变）。`worker_argv` 只在 argv 非空时
-  多两个 flag：`--script-argv-json <JSON 字符串数组，ASCII 转义>` 与 `--run-config <rc_…>`；token 不直接摊在命令行上
-  （空串 / `-` 开头 / `--` / 中文会被 worker 自己的 argparse 或 Windows 命令行重组弄坏）。worker 在 `sys.argv` 处设
-  `[script, *argv]`——仍在 `paper_style` / `runpy` / 导入期 `parse_args()` 之前；载荷坏了 worker **拒绝启动**（不回落空 argv）。
-  `MAX_ARGV_TOKENS` / `MAX_ARGV_CHARS` 超限和含 NUL 在边界上拒绝，不截断。
+  多 `--run-config <rc_…>`；**参数值不进 OS 命令行、环境变量或临时文件**，由 `pool._run_payload` 经已有私有 JSON 请求管道
+  传入（两条控制面同源）。Windows 的命令行引号膨胀因此不受参数值影响。每条可执行请求带冻结配置，workerd 透明重开后仍能
+  用原配置冷重建；worker 校验引用、类型与不可变性，缺失 / 错配就拒绝执行，绝不回落空 argv。
+  worker 在 `sys.argv` 处设 `[script, *argv]`，仍在 `paper_style` / `runpy` / 导入期 `parse_args()` 之前。
+  `MAX_ARGV_TOKENS` / `MAX_ARGV_CHARS` / `MAX_ARGV_WIRE_CHARS` 仍是输入预算，超限与含 NUL 在边界上拒绝，不截断。
+- **敏感配置的诊断**：`RunSelection.sensitive` 随冻结配置传入。该 worker 整个生命周期的 fd 1/2（含 native 与继承标准句柄的
+  子进程）进独立解释器的有界丢弃管道（不抢 worker 的 GIL），只在有新输出时最多每秒四次写固定进度标记，保留两条控制面的静默看门狗；
+  协议用独立不可继承 fd，辅助进程随 worker 正常关停被回收、异常死亡后自行退出。
+  错误的自由文字 / traceback、成功响应里的 warning 文字、输入问答的 prompt / stdout tail 不转录，保留 warning 个数与 code / 参数个数 / 有证据的 parse_kind 等结构性事实。
+  敏感会话不自动填入或持久化交互答案；冻结重放以进程密钥派生的 HMAC prompt 身份核对原问题，不能拿同一占位文案当成相同问题。
+  非敏感运行的诊断原样。这里保护的是 Tavotto 自动记录的诊断，**不是**限制用户脚本主动写文件或将参数画进图的安全沙盒。
 - **身份**：池键 = `(项目, 脚本[, selected-artifact][, run:<RunSelection.key>])`，key 是带**进程随机密钥**的 HMAC（不是裸 hash，
   不出进程）；`invalidate(script)` 按 `k[:2]` 前缀作废全部变体，`invalidate(script, run=…)` / `only_run=True` 只动那一份。
   资产 id 末尾拼 `~rc_…`（`figcapture.runtime_asset_id(script, stem, run_config)`，空串时与旧 id 相同），描述符多一个可选
@@ -244,9 +251,9 @@
   （`pool.one_shot(run=)`）；磁盘面板（用户脚本自己写出的 `fig.pdf`）没有 Tavotto 的执行产物可绑，读脚本最近一次**明确运行**的配置
   （`runconfig.set_default`，无参数运行会清掉它）。**不存在**"项目最新配置"这个读取点。
 - **注册表**：带配置的执行并进脚本的 stems（`discover.register(append=True)`），无参数执行仍是整条替换（权威）。
-- **未覆盖**（显式）：MCP / CLI 没有 argv 入口（T10），仍总是无参数；workerd 的 Rust 控制面对 argv 不透明且 spec 哈希含 argv，
+- **未覆盖**（显式）：MCP / CLI 没有 argv 入口（T10），仍总是无参数；workerd 的 Rust 控制面透传私有载荷，spawn 哈希只含配置引用，
   本机无产物，行为未执行；运行时才产生的答案（getpass / 动态 input）的冻结转录是 T08。
-- 看护：`tests/test_run_argv.py`（模型 + 真 worker 对拍）、`tests/test_run_argv_e2e.py`（HTTP 全链路）。
+- 看护：`tests/test_run_argv.py`（模型 + 真 worker 对拍）、`tests/test_run_argv_e2e.py`（HTTP 全链路）、`tests/test_run_argv_privacy.py`（真实进程 argv / fd 输出 / 错误 / 静默看门狗）。
 
 ## 参数表单的静态 schema（T07）
 

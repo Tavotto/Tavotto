@@ -105,6 +105,8 @@ def _clean(records) -> list[dict] | None:
             "context": r.get("context") if isinstance(r.get("context"), str) else None,
             "answer": answer if isinstance(answer, str) else None,
         }
+        if isinstance(r.get("prompt_id"), str):
+            entry["prompt_id"] = r["prompt_id"]
         if secret:
             entry["secret"] = True
         chars += len(entry["prompt"]) + len(entry["answer"] or "")
@@ -160,14 +162,24 @@ def lookup(project_root: str | Path, script: str, run_config: str | None) -> Tra
     return Transcript(rec["id"], tuple(entries))
 
 
-def forget(project_root: str | Path, script: str) -> bool:
-    """答案管理里改 / 删了这个脚本的答案（明确要用新答案重算）：作废它全部运行配置的转录。"""
+def forget(
+    project_root: str | Path,
+    script: str,
+    *,
+    run_config: str | None = None,
+    all_configs: bool = True,
+) -> bool:
+    """明确重算：默认作废整个脚本；单条答案管理只作废它那份配置（包括无参数）的转录。"""
     prefix = script + _SEP
     with _LOCK:
         if not store_path(project_root).exists():
             return False
         bindings = _read(project_root)
-        drop = [k for k in bindings if k.startswith(prefix)]
+        drop = [
+            k
+            for k in bindings
+            if (k.startswith(prefix) if all_configs else k == _key(script, run_config))
+        ]
         if not drop:
             return False
         for k in drop:
