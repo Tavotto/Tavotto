@@ -12,6 +12,8 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { MeasureChip } from './MeasureChip'
+import { nudgeKeyDown, nudgeKeyUp, resetNudge } from './nudge'
+import { MATPLOTLIB_SVG } from '@/lib/__fixtures__/matplotlibSvg'
 import { literal, setLocale } from '@/i18n'
 import type { Manifest } from '@/lib/api'
 import { useDocumentStore } from '@/store/documentStore'
@@ -157,16 +159,22 @@ describe('MeasureChip', () => {
 
   // Codex #833：图内编辑态里选中标题按方向键，`nudge.ts` 推的是图内元素（只动预览平面），画布选区不变——
   // 芯片要贴在**标题**下面，不是整块面板下面（面板没选中时也不能消失）。
-  // 面板 20,30 起、页面 100 × 80 mm；标题 bbox [0.3, 0.05, 0.2, 0.03] → 页面 x 50–70、y 34–36.4；Δ +2 → x 52–72
+  // 面板 20,30 起、页面 100 × 80 mm；标题 bbox [0.3, 0.05, 0.2, 0.03] → 页面 x 50–70、y 34–36.4；Δ +2 → x 52–72。
+  // 位置与 Δ 取的是 `InFigureMove.preview` 发布的那份（标题走 `gidDrag`，子图走 `elementPreview`），与 ElementBoxes 同源
   describe('图内元素微调', () => {
     const title = {
       gid: 'axes_0.title', role: 'title', label: '标题', bbox: [0.3, 0.05, 0.2, 0.03] as [number, number, number, number],
       editable: [], draggable: true, anchor: [0.3, 0.08] as [number, number], drag_prop: 'pos_frac',
     }
+    const axes = {
+      gid: 'axes_0', role: 'axes', label: '子图 1', bbox: [0.1, 0.1, 0.6, 0.6] as [number, number, number, number],
+      editable: [{ prop: 'position', type: 'rect', value: [0.1, 0.3, 0.6, 0.6] }], draggable: false, resizable: true,
+    }
     const manifest = {
       stem: 'Fig1', size_mm: [200, 160],
       elements: [
         { gid: 'figure', role: 'figure', label: '整图', bbox: [0, 0, 1, 1], editable: [], draggable: false },
+        axes,
         title,
       ],
     } as unknown as Manifest
@@ -181,6 +189,11 @@ describe('MeasureChip', () => {
       })
       useRenderStore.getState().clear()
       useUiStore.setState({ elementPanelId: 'p1', selectedGids: [title.gid] })
+    })
+
+    afterEach(() => {
+      resetNudge()
+      document.querySelector('[data-element-svg]')?.remove()
     })
 
     const seedRender = () => {
@@ -199,6 +212,7 @@ describe('MeasureChip', () => {
         seedRender()
         useSelectionStore.getState().set(ids)
         useInteractionStore.getState().setNudge({ dx: 2, dy: 0 })
+        useInteractionStore.getState().setGidDrag({ gid: title.gid, dfx: 0.02, dfy: 0 })
       })
       expect(chip()!.dataset.measureChip).toBe('offset')
       expect(chip()!.textContent).toBe('Δ +2.0, 0.0 mm')
@@ -216,9 +230,37 @@ describe('MeasureChip', () => {
         seedRender()
         useViewportStore.setState({ viewH: 2000 })
         useInteractionStore.getState().setNudge({ dx: 0, dy: 1 })
+        // 页面向下 1 mm = 内容里向右 1 mm（内容宽 100 mm）
+        useInteractionStore.getState().setGidDrag({ gid: title.gid, dfx: 0.01, dfy: 0 })
       })
+      expect(chip()!.textContent).toBe('Δ 0.0, +1.0 mm')
       expect(parseFloat(chip()!.style.left)).toBeCloseTo(mmToWorld(94.8), 6)
       expect(parseFloat(chip()!.style.top)).toBeCloseTo(mmToWorld(81) + 8, 6)
+    })
+
+    // Codex #833：子图 x 0.1、宽 0.6（页面 x 30–90、y 38–86）往左推 30 下 × 0.5 mm = 15 mm，可左边只有 10 mm：
+    // `axesMove` 把框钳在 x = 0，后面的按键子图不动——芯片也得停在那儿，Δ 报 −10，不是按键总和 −15。
+    // 走真的 `nudge.ts` → `axesMove.preview`，芯片读的正是它发布的那份 elementPreview
+    it('子图推到图边被钳住：芯片位置与 Δ 停在钳住的地方，不按按键总和漂走', () => {
+      const host = document.createElement('div')
+      host.dataset.elementSvg = 'p1'
+      host.innerHTML = MATPLOTLIB_SVG
+      document.body.appendChild(host)
+      act(() => {
+        seedRender()
+        useUiStore.setState({ elementPanelId: 'p1', selectedGids: [axes.gid] })
+        useViewportStore.setState({ viewH: 2000 })
+      })
+      act(() => {
+        for (let i = 0; i < 30; i++) {
+          nudgeKeyDown(new KeyboardEvent('keydown', { key: 'ArrowLeft' }))
+          nudgeKeyUp(new KeyboardEvent('keyup', { key: 'ArrowLeft' }))
+        }
+      })
+      expect(useInteractionStore.getState().nudge).toEqual({ dx: -15, dy: 0 })
+      expect(chip()!.textContent).toBe('Δ −10.0, 0.0 mm')
+      expect(parseFloat(chip()!.style.left)).toBeCloseTo(mmToWorld(50), 6)
+      expect(parseFloat(chip()!.style.top)).toBeCloseTo(mmToWorld(86) + 8, 6)
     })
 
     it('几何权威缺席（上一段刚提交、渲染没回来）：不报，不拿面板的框顶替', () => {

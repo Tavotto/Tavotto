@@ -2,8 +2,9 @@ import { useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { perfCount } from '@/perf/core'
 import { t as translate } from '@/i18n'
-import type { Manifest } from '@/lib/api'
-import { geomTarget, panelFullRect } from '@/lib/elementGeom'
+import type { Manifest, ManifestElement } from '@/lib/api'
+import { flipY, type Rect4 } from '@/lib/axesLayout'
+import { geomTarget, panelFullRect, positionOf } from '@/lib/elementGeom'
 import { boundsOf, visualBounds, type Rect } from '@/lib/geometry'
 import { formatMm } from '@/lib/units'
 import { useDocumentStore } from '@/store/documentStore'
@@ -37,9 +38,10 @@ export type MeasureMode = 'size' | 'position' | 'offset'
  * 正在画的草稿框；图内元素的指针拖动（预览平面，不改文档）不在这里报。
  *
  * 图内元素的方向键微调（图内编辑态，`canvas/nudge.ts` 推的是 `selectedGids` 而不是画布选区）贴在**被推的
- * 元素**下面（Codex #833）：起手框取显示中的几何权威（与 `ElementBoxes` 画选中框同一份），加上这一段的 Δ
- * ——微调只动预览平面，权威在收尾前不变，所以「权威框 + Δ」就是元素此刻在页面上的位置。权威缺席（上一段
- * 刚提交、渲染没回来）时不报：拿面板的框顶替会贴错地方。
+ * 元素**下面（Codex #833）。位置与 Δ 都取 `InFigureMove.preview` 发布的那份预览——与 `ElementBoxes` 画选中框
+ * 同一个来源（`elementPreview` 的框 / `gidDrag` 的位移，叠在显示中的几何权威上）：子图贴边时 `axesMove` 把框
+ * 钳住，芯片跟着停、Δ 报的是真正挪了的量，不是按了几下的总和。权威缺席（上一段刚提交、渲染没回来）时不报：
+ * 拿面板的框顶替会贴错地方。
  */
 export function MeasureChip() {
   perfCount('render.MeasureChip')
@@ -59,6 +61,8 @@ export function MeasureChip() {
   const selectedGids = useUiStore((s) => s.selectedGids)
   const editedPanel = nudge && elementPanelId ? panelById(objects, elementPanelId) : null
   const manifest = useDisplayedExactManifest(editedPanel)
+  const gidDrag = useInteractionStore((s) => s.gidDrag)
+  const elementPreview = useInteractionStore((s) => s.elementPreview)
 
   const mode: MeasureMode | null = nudge
     ? 'offset'
@@ -75,19 +79,23 @@ export function MeasureChip() {
   // 旋转的文字 / 形状转出来比逻辑盒高时，按逻辑盒摆会压在对象上。
   const sel = kind === 'draw' && draft ? [] : objects.filter((o) => ids.includes(o.id) && !o.hidden)
   const box: Rect | null = kind === 'draw' && draft ? { x: draft.x, y: draft.y, w: draft.w, h: draft.h } : boundsOf(sel)
-  const anchor: Rect | null = figureNudge
-    ? editedPanel && manifest
-      ? shift(elementsOnPage(editedPanel, manifest, selectedGids), nudge!.dx, nudge!.dy)
+  const fig =
+    figureNudge && editedPanel && manifest
+      ? figureNudgeGeometry(editedPanel, manifest, selectedGids, gidDrag, elementPreview)
       : null
+  const anchor: Rect | null = figureNudge
+    ? (fig?.anchor ?? null)
     : sel.length
       ? boundsOf(sel.map(visualBounds))
       : box
   // 图内微调的读数只要 Δ、不读 `box`（那是画布选区的盒，面板没选中时为 null）
   if (!anchor || (!box && !figureNudge)) return null
 
+  // 图内微调报预览里真正挪了的量（贴边钳住时小于按键总和）；预览还没发布时退回按键的累计
+  const delta = fig?.delta ?? nudge
   const text =
     mode === 'offset'
-      ? `Δ ${translate('measure.mmPair', { a: signedMm(nudge!.dx), b: signedMm(nudge!.dy) })}`
+      ? `Δ ${translate('measure.mmPair', { a: signedMm(delta!.dx), b: signedMm(delta!.dy) })}`
       : mode === 'size'
         ? translate('measure.mmSize', { w: formatMm(Math.abs(box!.w)), h: formatMm(Math.abs(box!.h)) })
         : translate('measure.mmPair', { a: formatMm(box!.x), b: formatMm(box!.y) })
@@ -146,35 +154,71 @@ function panelById(objects: readonly { id: string; type: string }[], id: string)
   return o?.type === 'panel' ? (o as PanelObject) : null
 }
 
+type ElementDrag = { gid: string; dfx: number; dfy: number } | null
+type ElementPreview = { boxes: Record<string, Rect4>; group?: Rect4 } | null
+
 /**
- * 选中的图内元素（或组）在页面上的外接框（mm）：与 `ElementBoxes` 同一套换算——元素取它的几何落点
- * （`geomTarget`：位图落在宿主子图上），分数框（top-origin）按 `panelFullRect` 落到内容坐标，再绕面板中心
- * 转到面板当前的朝向（只有直角，转完仍是轴对齐的框）。一个都解析不出来时回 null。
+ * 图内微调此刻的样子：被推的元素在页面上的外接框（mm）与真正挪了的量（页面 mm）。
+ *
+ * 与 `ElementBoxes` 的 `resolve` 同一套取法：元素取它的几何落点（`geomTarget`：位图落在宿主子图上），选中的组
+ * 展开成成员；框优先取 `elementPreview` 里的（子图 / 成组平移发布的，**已钳位**），否则权威 bbox 叠上
+ * `gidDrag` 的分数位移。分数框（top-origin）按 `panelFullRect` 落到内容坐标，再绕面板中心转到面板当前的
+ * 朝向（只有直角，转完仍是轴对齐的框）。
+ *
+ * 挪了的量取主选（最后一个有预览的目标）：`elementPreview` 的框减去它的起手框——子图与成组平移的起手框是
+ * 它的 position（`axesMove` / `alignEntries` 同一个 `positionOf`），其余是 bbox——或直接是 `gidDrag` 的位移；
+ * 内容分数向量换回页面 mm（`nudge.ts` 的 `toFrac` 的逆）。一个目标都解析不出来时回 null。
  */
-function elementsOnPage(panel: PanelObject, manifest: Manifest, gids: readonly string[]): Rect | null {
+function figureNudgeGeometry(
+  panel: PanelObject,
+  manifest: Manifest,
+  gids: readonly string[],
+  gidDrag: ElementDrag,
+  preview: ElementPreview,
+): { anchor: Rect; delta: { dx: number; dy: number } | null } | null {
   const full = panelFullRect(panel)
   const rot = panelRotation(panel)
   const cx = panel.x + panel.w / 2
   const cy = panel.y + panel.h / 2
-  const rects: Rect[] = []
-  for (const gid of gids) {
+  const targets = new Map<string, ManifestElement>()
+  const add = (gid: string) => {
     const el = manifest.elements.find((e) => e.gid === gid)
-    const bbox =
-      el && el.gid !== 'figure'
-        ? geomTarget(manifest, el).bbox
-        : manifest.groups?.find((g) => g.gid === gid)?.bbox
-    if (!bbox) continue
-    const w = bbox[2] * full.w
-    const h = bbox[3] * full.h
-    const [ox, oy] = rotateVec(full.x + bbox[0] * full.w + w / 2 - cx, full.y + bbox[1] * full.h + h / 2 - cy, rot)
+    if (!el || el.gid === 'figure') return
+    const target = geomTarget(manifest, el)
+    targets.set(target.gid, target)
+  }
+  for (const gid of gids) {
+    const group = manifest.groups?.find((g) => g.gid === gid)
+    if (group) group.members.forEach(add)
+    else add(gid)
+  }
+  const rects: Rect[] = []
+  let moved: [number, number] | null = null
+  for (const target of targets.values()) {
+    const pv = preview?.boxes[target.gid]
+    const drag = gidDrag?.gid === target.gid ? gidDrag : null
+    let box: Rect4 = target.bbox
+    if (pv) {
+      const pos = target.resizable ? positionOf(panel, target) : null
+      const start = pos ? flipY(pos) : target.bbox
+      box = pv
+      moved = [pv[0] - start[0], pv[1] - start[1]]
+    } else if (drag) {
+      box = [box[0] + drag.dfx, box[1] + drag.dfy, box[2], box[3]]
+      moved = [drag.dfx, drag.dfy]
+    }
+    const w = box[2] * full.w
+    const h = box[3] * full.h
+    const [ox, oy] = rotateVec(full.x + box[0] * full.w + w / 2 - cx, full.y + box[1] * full.h + h / 2 - cy, rot)
     const [rw, rh] = rot === 90 || rot === 270 ? [h, w] : [w, h]
     rects.push({ x: cx + ox - rw / 2, y: cy + oy - rh / 2, w: rw, h: rh })
   }
-  return boundsOf(rects)
+  const anchor = boundsOf(rects)
+  if (!anchor) return null
+  if (!moved) return { anchor, delta: null }
+  const [dx, dy] = rotateVec(moved[0] * full.w, moved[1] * full.h, rot)
+  return { anchor, delta: { dx, dy } }
 }
-
-const shift = (r: Rect | null, dx: number, dy: number): Rect | null =>
-  r && { x: r.x + dx, y: r.y + dy, w: r.w, h: r.h }
 
 /** 位移读数带正负号：「+1.5」「−0.5」「0.0」 */
 function signedMm(v: number): string {
