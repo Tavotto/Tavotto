@@ -149,7 +149,7 @@ const $ = <T extends Element = HTMLElement>(sel: string) => document.querySelect
 beforeEach(async () => {
   document.body.innerHTML = ''
   vi.clearAllMocks()
-  useTimelineStore.setState({ preview: null, rev: 0, namingOpen: false })
+  useTimelineStore.setState({ preview: null, rev: 0, namingOpen: false, restoring: null })
   mockCreate.mockResolvedValue({ version: meta({ id: 'v_backup' }) })
   mockDoc.mockResolvedValue({ ...meta(), doc: snapshot() })
   mockUpdate.mockResolvedValue({ version: meta() })
@@ -313,6 +313,56 @@ describe('抽屉的焦点（2026-10-07 设计审计 §10.2）', () => {
     await act(async () => useUiStore.setState({ versionsOpen: false }))
     expect(document.activeElement).toBe(trigger)
     trigger.remove()
+  })
+})
+
+describe('内联条的「恢复到这里」与预览恢复同一把锁（Codex #831 P1）', () => {
+  it('「恢复前」还在存时画布被模态遮住、抽屉与预览都关不掉；存完照常恢复、锁摘掉', async () => {
+    let done!: (v: Awaited<ReturnType<typeof createVersion>>) => void
+    mockCreate.mockImplementationOnce(() => new Promise((resolve) => (done = resolve)))
+    await mount([meta()], undefined, false)
+    const bar = node('v1').querySelector('[data-timeline-row-actions]')!
+    await act(async () => bar.querySelector<HTMLButtonElement>('[data-timeline-row-restore]')!.click())
+    await flush()
+    expect(mockCreate).toHaveBeenCalledTimes(1)
+    // 锁：模态预览以 busy 开着（遮罩挡住画布），× 收起
+    const dlg = $('[data-dialog="timeline-preview"]')
+    expect(dlg).not.toBeNull()
+    expect(dlg!.getAttribute('aria-busy')).toBe('true')
+    expect($('[data-dialog="timeline-preview"] [data-dialog-close]')).toBeNull()
+    expect($('[data-dialog-scrim]')).not.toBeNull()
+    // 抽屉也关不掉（右上角 × 禁用、Esc 不收）
+    expect($<HTMLButtonElement>('[data-timeline-close]')!.disabled).toBe(true)
+    await act(async () => {
+      $('[data-timeline-drawer]')!.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+      )
+    })
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    await flush()
+    expect(useUiStore.getState().versionsOpen).toBe(true)
+    expect(useTimelineStore.getState().preview).not.toBeNull()
+    expect(ids()).toEqual(['now'])
+
+    await act(async () => done({ version: meta({ id: 'v_backup' }) }))
+    await flush()
+    // 恢复写进去了，锁摘掉：预览退出、抽屉的关闭钮能用
+    expect(ids()).toEqual(['old'])
+    expect(useTimelineStore.getState().restoring).toBeNull()
+    expect(useTimelineStore.getState().preview).toBeNull()
+    expect($<HTMLButtonElement>('[data-timeline-close]')!.disabled).toBe(false)
+  })
+
+  it('「恢复前」存不下来：不写、锁摘掉、为这次恢复打开的预览收回去', async () => {
+    mockCreate.mockRejectedValueOnce(new Error('disk full'))
+    await mount([meta()], undefined, false)
+    const bar = node('v1').querySelector('[data-timeline-row-actions]')!
+    await act(async () => bar.querySelector<HTMLButtonElement>('[data-timeline-row-restore]')!.click())
+    await flush()
+    expect(ids()).toEqual(['now'])
+    expect(useTimelineStore.getState().restoring).toBeNull()
+    expect(useTimelineStore.getState().preview).toBeNull()
+    expect($<HTMLButtonElement>('[data-timeline-close]')!.disabled).toBe(false)
   })
 })
 

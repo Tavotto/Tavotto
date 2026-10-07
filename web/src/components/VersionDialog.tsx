@@ -167,7 +167,10 @@ export function VersionDrawer() {
   const setSaveName = useCallback((text: string) => setDraft({ ctx, text }), [ctx])
   // busy 同样记着是哪个上下文忙：A 的保存还在飞时换到 B，B 不该被「忙」锁住
   const [busyCtx, setBusyCtx] = useState<string | null>(null)
+  // 恢复在飞（两个入口共用的那把锁，见 `restoreUnderLock`）时抽屉同样关不掉
+  const restoringHere = useTimelineStore((s) => s.restoring) === ctx
   const busy = busyCtx === ctx
+  const locked = busy || restoringHere
   const submitOnce = useInFlight()
   const asideRef = useRef<HTMLElement>(null)
   const nameRef = useRef<HTMLInputElement>(null)
@@ -304,8 +307,9 @@ export function VersionDrawer() {
   }
 
   /**
-   * 选中行上的「恢复到这里」：取这一版的正文再走同一个 `restoreNode`（唯一的恢复入口，
-   * 先存「恢复前」节点、一次 commit）。正文取不回来就按预览失败那一槽说。
+   * 选中行上的「恢复到这里」：取这一版的正文再走同一个 `restoreUnderLock`（与预览对话框
+   * 同一把锁、同一个 `restoreNode`）。正文取不回来就按预览失败那一槽说。没写进去（取消、
+   * 「恢复前」存不下来）就把为这次恢复打开的预览收回去，回到点之前的样子。
    */
   const restoreFromRow = async (meta: LayoutVersionMeta) => {
     const after = afterAwait(ctx)
@@ -313,7 +317,11 @@ export function VersionDrawer() {
     try {
       const v = await fetchVersionDoc(docId, meta.id)
       if (!after(() => true)) return
-      await restoreNode(meta, v.doc as FigureDocument)
+      const done = await restoreUnderLock(ctx, docId, meta, v.doc as FigureDocument)
+      const cur = useTimelineStore.getState().preview
+      if (!done && cur?.docId === docId && cur.meta.id === meta.id) {
+        useTimelineStore.getState().setPreview(null)
+      }
     } catch (e) {
       setPreviewError(backendErrorText(e))
     }
@@ -334,7 +342,7 @@ export function VersionDrawer() {
       tabIndex={-1}
       data-timeline-drawer
       onKeyDown={(e) => {
-        if (e.key === 'Escape' && !busy) {
+        if (e.key === 'Escape' && !locked) {
           e.stopPropagation()
           // 逐层退出：先退预览，再关抽屉
           if (useTimelineStore.getState().preview) useTimelineStore.getState().setPreview(null)
@@ -354,7 +362,8 @@ export function VersionDrawer() {
         <IconButton
           label={vd('close')}
           className="-mr-1.5"
-          disabled={busy}
+          disabled={locked}
+          data-timeline-close
           onClick={() => setOpen(false)}
         >
           <X size={ICON_SIZE.md} className="text-ink-3" />
@@ -908,6 +917,30 @@ export async function restoreNode(
   return true
 }
 
+/**
+ * 两个恢复入口（预览对话框页脚、抽屉选中行内联条）**唯一**的调用口（Codex #831 P1）：
+ * 在 `restoreNode` 的第一个 await 之前挂上 `timelineStore.restoring`，并让模态预览对话框
+ * 对着这一版开着——它以 `busy` 开着就是这把锁：遮罩挡住画布（没法趁「恢复前」节点还在存
+ * 时再编辑，晚到的恢复也就不会盖掉新编辑）、×/Esc/点外面关不掉，抽屉也关不掉。
+ * 内联入口原来只把行上那颗按钮转圈，画布照常可改。`restoreNode` 照旧先收掉在途手势。
+ */
+async function restoreUnderLock(
+  ctx: string,
+  docId: string,
+  meta: LayoutVersionMeta,
+  doc: FigureDocument,
+): Promise<boolean> {
+  const tl = useTimelineStore.getState()
+  const cur = tl.preview
+  if (!(cur?.docId === docId && cur.meta.id === meta.id && cur.doc)) tl.setPreview({ docId, meta, doc })
+  tl.beginRestore(ctx)
+  try {
+    return await restoreNode(meta, doc)
+  } finally {
+    useTimelineStore.getState().endRestore(ctx)
+  }
+}
+
 /* ------------------------------- 与当前的差异 ------------------------------- */
 
 /**
@@ -975,16 +1008,11 @@ function TimelinePreviewDialog() {
   const gen = useTimelineStore((s) => s.gen)
   const ctx = timelineCtxKey(gen, docId)
   const active = preview && preview.docId === docId ? preview : null
-  const [restoringCtx, setRestoringCtx] = useState<string | null>(null)
-  const restoring = restoringCtx === ctx
+  // 锁在 timelineStore 里，抽屉内联条的恢复也挂这同一把（`restoreUnderLock`）
+  const restoring = useTimelineStore((s) => s.restoring) === ctx
   const close = () => useTimelineStore.getState().setPreview(null)
   const restore = async (meta: LayoutVersionMeta, doc: FigureDocument) => {
-    setRestoringCtx(ctx)
-    try {
-      await restoreNode(meta, doc)
-    } finally {
-      setRestoringCtx((c) => (c === ctx ? null : c))
-    }
+    await restoreUnderLock(ctx, docId, meta, doc)
   }
   return (
     <Dialog
