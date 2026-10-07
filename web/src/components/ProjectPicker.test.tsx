@@ -178,8 +178,11 @@ describe('已不存在的目录', () => {
     expect(rows).toHaveLength(4)
     expect(rows[0].textContent).toContain('目录不存在')
     expect(rows[0].textContent).toContain('…/pytest-2/figs')
-    // 打不开：主按钮禁用；只剩「移除」一个动作，所以行的「⋯」常驻（不藏在悬停后面）
-    expect(rows[0].querySelector<HTMLButtonElement>('[data-picker-open]')!.disabled).toBe(true)
+    // 打不开：主按钮 aria-disabled（不是 disabled——焦点还要落得进来，⋯ 才够得着，Codex #832）；
+    // 只剩「移除」一个动作，所以行的「⋯」常驻（不藏在悬停后面）
+    const opener = rows[0].querySelector<HTMLButtonElement>('[data-picker-open]')!
+    expect(opener.disabled).toBe(false)
+    expect(opener.getAttribute('aria-disabled')).toBe('true')
     const more = rows[0].querySelector<HTMLButtonElement>('[data-row-menu-trigger]')!
     expect(more.className).not.toContain('opacity-0')
     openMenu(more)

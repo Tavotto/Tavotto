@@ -214,7 +214,10 @@ describe('WorkspaceList', () => {
     })
     await mount()
     const btn = section('recent')!.querySelector<HTMLButtonElement>('button[title="/gone/x"]')!
-    expect(btn.disabled).toBe(true)
+    // aria-disabled 而不是 disabled（焦点还要落得进来，见键位契约那组）；点了不打开
+    expect(btn.getAttribute('aria-disabled')).toBe('true')
+    await act(async () => btn.click())
+    expect(open).not.toHaveBeenCalled()
     expect(section('recent')!.querySelectorAll('li:not([data-workspace-row]) button')).toHaveLength(1)
   })
 })
@@ -524,6 +527,44 @@ describe('键位契约与拖放落点（2026-10-07 设计审计 §10.3）', () =
     const r = section('recent')!.querySelector<HTMLElement>('[data-workspace-row]')!
     key(r.querySelector('[data-workspace-open]')!, 'F10', { shiftKey: true })
     expect(document.querySelector('[role="menu"]')).not.toBeNull()
+  })
+
+  /** 键盘能落到的元素：tabIndex ≥ 0 且没 disabled（jsdom 不算 Tab 顺序，这就是判据） */
+  const reachable = (el: HTMLElement | null) =>
+    !!el && el.tabIndex >= 0 && !(el as HTMLButtonElement).disabled
+
+  it('当前项目卡的「⋯」在 Tab 顺序里（卡本身不可聚焦）；⇧F10 在它上面开出菜单（Codex #832）', async () => {
+    await mount()
+    const card = host.querySelector<HTMLElement>('[data-workspace-current]')!
+    const more = card.querySelector<HTMLButtonElement>('[data-row-menu-trigger]')!
+    // 卡里没有别的可聚焦后代：⋯ 不进 Tab 顺序的话，收藏 / 新标签页 / 接入状态键盘一个都够不着
+    expect([...card.querySelectorAll<HTMLElement>('button, [tabindex]')].filter(reachable)).toEqual([more])
+    act(() => more.focus())
+    key(more, 'F10', { shiftKey: true })
+    expect(document.querySelector('[role="menu"]')).not.toBeNull()
+  })
+
+  it('目录已不在的行：「打开」仍可聚焦（aria-disabled）、点了不打开；行里的 ⋯ 跟着进 Tab 顺序（Codex #832）', async () => {
+    useProjectStore.setState({ recent: [entryOf('/work/live'), entryOf('/gone/x', { exists: false })] })
+    await mount()
+    const r = host.querySelector<HTMLElement>('[data-workspace-row][data-project-path="/gone/x"]')!
+    const opener = r.querySelector<HTMLButtonElement>('[data-workspace-open]')!
+    expect(opener.disabled).toBe(false)
+    expect(opener.getAttribute('aria-disabled')).toBe('true')
+    // 漫游列表把它算作一站：↓ 从上一行走得到它
+    const prev = opens()[opens().indexOf(opener) - 1]
+    act(() => prev.focus())
+    key(prev, 'ArrowDown')
+    expect(document.activeElement).toBe(opener)
+    expect(reachable(opener)).toBe(true)
+    // 焦点在行里 → ⋯ 进 Tab 顺序（移除在里面），⇧F10 开同一份
+    expect(reachable(r.querySelector<HTMLElement>('[data-row-menu-trigger]'))).toBe(true)
+    key(opener, 'F10', { shiftKey: true })
+    expect(document.querySelector('[data-project-remove]')).not.toBeNull()
+    act(() => document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
+    // 仍然打不开：点击 / 回车都不发 open
+    await act(async () => opener.click())
+    expect(open).not.toHaveBeenCalled()
   })
 
   it('拖到另一条收藏上时画落点线（2px accent + 圆点），离开就撤', async () => {

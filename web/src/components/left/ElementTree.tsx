@@ -817,7 +817,8 @@ const ElementRow = memo(function ElementRow({
           {canHide && (
             <MenuItem
               icon={hidden ? Eye : EyeOff}
-              shortcut="⌫"
+              // ⌫ 在这棵树上与画布上一样只「隐藏」（删除 = visible:false），不反向显示：已隐藏的行不标它
+              shortcut={hidden ? undefined : '⌫'}
               onSelect={() => (hidden ? unhideElement(panelId, gid) : hideElement(panelId, gid, label))}
             >
               {et(hidden ? 'unhide' : 'hide')}
