@@ -43,6 +43,29 @@ async function openSettings(page: Page, baseURL: string) {
   return dialog
 }
 
+test(
+  '设置搜索：输入关键词只留匹配项，点结果切到那一页、那一行滚进视野并高亮',
+  { tag: '@feature:settings.search' },
+  async ({ app, page }) => {
+    const a = await app()
+    const dialog = await openSettings(page, a.baseURL)
+    const search = dialog.locator('[data-settings-search]')
+    await search.fill('ppi')
+    const hit = dialog.locator('[data-settings-result="export.ppi"]')
+    await expect(hit).toBeVisible()
+    // 只留匹配项：与 ppi 无关的设置项不在结果里
+    await expect(dialog.locator('[data-settings-result="general.language"]')).toHaveCount(0)
+    await hit.click()
+    await expect(dialog.locator('[data-section="export"]')).toHaveAttribute('aria-current', 'true')
+    const row = dialog.locator('[data-settings-anchor="export.ppi"]')
+    await expect(row).toBeInViewport()
+    await expect(row).toHaveAttribute('data-settings-hit', '')
+    // 没有匹配：说一句，不留空白
+    await search.fill('zzqqxx-no-such-setting')
+    await expect(dialog.locator('[data-settings-no-results]')).toBeVisible()
+  },
+)
+
 test('设置：切遍每个分区，外框不跳、内容区自己滚', async ({ app, page }) => {
   const a = await app()
   const dialog = await openSettings(page, a.baseURL)
