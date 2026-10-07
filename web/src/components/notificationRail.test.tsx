@@ -229,5 +229,6 @@ describe('「已改用你的环境」', () => {
     const byKey = useRenderStore.getState().byKey
     expect(byKey.a.stale && byKey.b.stale, '所有在用的面板都要重建，不只是失败的').toBe(true)
     expect(status()?.key).toBe('engine.userEnvReverted')
+    expect(useUiStore.getState().statusTone, '改回做成了打 ✓').toBe('done')
   })
 })

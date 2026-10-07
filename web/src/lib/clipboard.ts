@@ -393,6 +393,7 @@ export function materializePaste(payload: ClipPayload, resolved: MissingAsset[])
       skipped
         ? note('pastedWithSkips', { count: clones.length, skipped, undo: modKey('Z') })
         : note('pasted', { count: clones.length, undo: modKey('Z') }),
-      'info',
+      // 全部贴上是成功（✓）；有跳过的是部分结果，只陈述（ⓘ）
+      skipped ? 'info' : 'done',
     )
 }
