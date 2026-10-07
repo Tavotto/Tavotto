@@ -29,7 +29,6 @@ import { PageOutsideMask } from './PageOutsideMask'
 import { Rulers, RULER_SIZE } from './Rulers'
 import { CanvasContextMenu } from './CanvasContextMenu'
 import { placePanelInPage } from '@/lib/panelPlacement'
-import { objectRotation } from '@/types/document'
 import { startDraw, startMarquee, startPan } from './interactions'
 
 export function CanvasStage() {
@@ -428,18 +427,19 @@ function FastEditPaper({
 }) {
   const o = panelId ? objects.find((x) => x.id === panelId) : undefined
   if (!o) return null
-  const rot = objectRotation(o)
+  // 与 ObjectView 给面板的落位同一种写法（#836）：left / top 恒 0，位置走 translate——WebKit 会把 left / top
+  // 上的小数原点吸到整像素，纸与图差半像素就露边。面板没有对象级旋转（`objectRotation` 对面板恒 0）。
   return (
     <div
       aria-hidden
       data-fast-edit-paper=""
       className="pointer-events-none absolute bg-paper"
       style={{
-        left: mmToWorld(o.x),
-        top: mmToWorld(o.y),
+        left: 0,
+        top: 0,
         width: mmToWorld(o.w),
         height: mmToWorld(o.h),
-        transform: rot ? `rotate(${rot}deg)` : undefined,
+        transform: `translate(${mmToWorld(o.x)}px, ${mmToWorld(o.y)}px)`,
       }}
     />
   )
