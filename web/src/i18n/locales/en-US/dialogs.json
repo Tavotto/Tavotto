@@ -1463,6 +1463,7 @@
     "unname": "Remove name",
     "loadingList": "Loading this layout's timeline…",
     "restoreFailed": "Couldn’t save the current layout first, so nothing was restored: {{error}}",
+    "restoreAbortedEdited": "The layout changed while the point was loading, so nothing was restored. Your latest edit is kept.",
     "filterLabel": "Which points to show",
     "filterAll": "All",
     "filterNamed": "Named",

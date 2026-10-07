@@ -1780,6 +1780,7 @@ export default interface Resources {
       "previewTitle": "预览：{{time}} {{name}}",
       "rename": "改名…",
       "restore": "恢复到这里",
+      "restoreAbortedEdited": "读取节点期间排版有了改动，这次没有恢复，刚才的改动保留着。",
       "restoreFailed": "恢复前没能先存下当前排版，这次没有恢复：{{error}}",
       "restoreHistory": "恢复排版节点「{{name}}」",
       "restoreMissingCanvasBody": "这个节点来自已删除的画布「{{from}}」。继续会写进当前画布「{{to}}」，覆盖现有内容。",
