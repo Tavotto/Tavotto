@@ -20,6 +20,8 @@
 * **选中框的手柄也是对象**（Codex #833）：对象缩放手柄的命中层 / 沿边命中带 / 线状端点、图内元素框的手柄与命中带都画在
   `OverlaySvg` 里、不在 `[data-object-id]` 底下——右键它们由 `OverlaySvg` 自己接住（`stopPropagation`），开那个选中对象 /
   选中元素的同一个菜单，选区不动；正在改字时与 `ObjectView` 一样留给浏览器自己的菜单。不许冒到 `CanvasStage` 被当成空白处。
+  选中的是元素树里的真实组（`Manifest.groups`，gid 不在元素表里）时，弹层说的是这个组（组名 + 「全部属性」，`data-quick-target="group"`），
+  不拿一个不存在的元素当目标、开了又自己关掉。
   看护 `canvas/overlayHandleContextMenu.test.tsx`。
 * **`rebuildPanel`** = `POST /api/engine/invalidate`（与 `panel.file_changed` 同一个
   `pool.invalidate`）→ `markStale` → immediate 渲染；不改文档、不进历史；`invalidated: false`

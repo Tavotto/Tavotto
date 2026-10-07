@@ -24,6 +24,7 @@ export function Menu({
   open,
   onOpenChange,
   modal,
+  pointerKeepsFocus,
 }: {
   trigger: ReactElement
   children: ReactNode
@@ -37,10 +38,29 @@ export function Menu({
    * 2026-10-07 设计审计 §10.1）给 false：第二下才落得回触发器上
    */
   modal?: boolean
+  /**
+   * 指针打开的菜单关掉后，焦点回到**打开前**那里（还活着才还，否则不动），不落到触发器上。触发器本身按下
+   * 不拿焦点的（画布工具条：点完接着按方向键是在推画布上的对象）给 true——Radix 关菜单时默认把焦点还给
+   * 触发器，按下时拦住的那次聚焦会在这里被补上，下一个方向键就被工具条吃掉了（Codex #833）。
+   * 键盘打开的照旧回到触发器：键盘用户是从那里出发的。
+   */
+  pointerKeepsFocus?: boolean
 }) {
+  // 这一次是怎么打开的、打开前焦点在哪（`pointerKeepsFocus` 用）
+  const opened = useRef<{ pointer: boolean; before: Element | null }>({ pointer: false, before: null })
   return (
     <DM.Root open={open} onOpenChange={onOpenChange} modal={modal}>
-      <DM.Trigger asChild>{trigger}</DM.Trigger>
+      <DM.Trigger
+        asChild
+        onPointerDown={() => {
+          opened.current = { pointer: true, before: document.activeElement }
+        }}
+        onKeyDown={() => {
+          opened.current = { pointer: false, before: null }
+        }}
+      >
+        {trigger}
+      </DM.Trigger>
       <DM.Portal>
         <DM.Content
           align={align}
@@ -51,6 +71,18 @@ export function Menu({
             // 从触发器那个角展开，而不是从自己中心——菜单与按钮的因果关系才看得出来
             'origin-[var(--radix-dropdown-menu-content-transform-origin)]',
           )}
+          onCloseAutoFocus={
+            pointerKeepsFocus
+              ? (e) => {
+                  const { pointer, before } = opened.current
+                  if (!pointer) return
+                  e.preventDefault()
+                  if (before instanceof HTMLElement && before !== document.body && before.isConnected) {
+                    before.focus({ preventScroll: true })
+                  }
+                }
+              : undefined
+          }
         >
           {children}
         </DM.Content>
