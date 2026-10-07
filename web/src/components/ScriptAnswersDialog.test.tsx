@@ -282,4 +282,19 @@ describe('ScriptAnswersDialog', () => {
     expect(mockUpdate).toHaveBeenCalledTimes(1)
     expect(runSpy).toHaveBeenCalledTimes(1)
   })
+  it('批量保存在飞时输入框锁住，存好后不冲掉任何新输入（Codex #821 P1）', async () => {
+    let resolve!: (v: Awaited<ReturnType<typeof updateScriptAnswer>>) => void
+    mockUpdate.mockReturnValueOnce(new Promise((r) => (resolve = r)))
+    useScriptInputStore.setState({ answers: TWO })
+    useScriptInputStore.getState().openManager('pick.py')
+    render()
+    const box = () => dialog()!.querySelectorAll<HTMLInputElement>('input')[0]
+    await typeInto(box(), '3')
+    await click(saveButton())
+    expect(box().disabled).toBe(true)
+    await act(async () => {
+      resolve({ scripts: TWO, location: '', pending: [] })
+    })
+    expect(box().disabled).toBe(false)
+  })
 })

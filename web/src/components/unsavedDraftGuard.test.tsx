@@ -191,6 +191,17 @@ describe('设置 › 样式页：没存的草稿', () => {
     expect(currentSection()).toBe('diagnostics')
   })
 
+  it('外部请求被「继续编辑」取消后再发同一个分区，仍然生效（Codex #821 P2）', async () => {
+    await openSettingsWithDirtyStyle()
+    await act(async () => useUiStore.getState().setSettingsOpen(true, 'about'))
+    await answer(false)
+    expect(currentSection()).toBe('style')
+    await act(async () => useUiStore.getState().setSettingsOpen(true, 'about'))
+    expect(confirmReq(), '同一个请求再来一次要再问一次，而不是被吞').toMatchObject({ danger: true })
+    await answer(true)
+    expect(currentSection()).toBe('about')
+  })
+
   it('方向键切分区同样先问', async () => {
     await openSettingsWithDirtyStyle()
     await act(async () => {

@@ -73,6 +73,7 @@ function AnswersManager({ script }: { script: string }) {
     if (!changed.length || saving) return
     const epoch = useScriptInputStore.getState().epoch
     const batch = changed.map((a) => ({ index: a.index, value: valueOf(a) }))
+    const submitted = new Map(batch.map((b) => [b.index, b.value]))
     setSaving(true)
     const saved: number[] = []
     try {
@@ -98,7 +99,10 @@ function AnswersManager({ script }: { script: string }) {
     if (stillCurrent(epoch, script)) {
       setEdits((prev) => {
         const next = { ...prev }
-        for (const index of saved) delete next[index]
+        // 只丢掉与提交时一致的那份；之后又改过的保留（双保险，输入框在批量保存时本就锁着）
+        for (const index of saved) {
+          if (next[index] === submitted.get(index)) delete next[index]
+        }
         return next
       })
     }
@@ -212,6 +216,8 @@ function AnswerRow({
           align="left"
           value={value}
           aria-label={si('answerLabel')}
+          // 批量保存在飞时锁住：存的是点按钮那一刻的快照，途中再打的字会被存好后的清理冲掉（Codex #821 P1）
+          disabled={disabled}
           onChange={(e) => onChange(e.target.value)}
         />
         <Button

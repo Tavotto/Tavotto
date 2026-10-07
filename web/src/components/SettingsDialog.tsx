@@ -156,8 +156,12 @@ export function SettingsDialog() {
     let cancelled = false
     void (async () => {
       const cur = sectionRef.current
-      if (dirtyRef.current === cur && !(await askDiscardDraft())) return
-      if (!cancelled && sectionRef.current === cur) setSection(target)
+      const go = dirtyRef.current !== cur || (await askDiscardDraft())
+      if (go && !cancelled && sectionRef.current === cur) setSection(target)
+      // 请求一律消费掉：否则「继续编辑」之后再从菜单发同一个分区，store 值不变、effect 不重跑，命令被吞（Codex #821 P2）
+      if (!cancelled && useUiStore.getState().settingsSection === requested) {
+        useUiStore.setState({ settingsSection: null })
+      }
     })()
     return () => {
       cancelled = true
