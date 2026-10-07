@@ -71,6 +71,8 @@ def test_project_scan_never_stats_a_network_interpreter_hint(tmp_path, monkeypat
     )
     monkeypatch.setattr(userenvs, "_conda_prefixes", lambda: [])
     monkeypatch.setattr(userenvs, "_pyenv_pythons", lambda: [])
+    # T05：导入即扫描会并入「已被明确问过」的登录 shell 答案（进程级缓存）；同进程里别的用例问过真 shell 就会漏进来
+    monkeypatch.setattr(userenvs, "_login_shell_cache", {})
     real_is_file = Path.is_file
 
     def is_file(path):
