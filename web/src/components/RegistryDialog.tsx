@@ -542,7 +542,7 @@ function PanelThumb({ panel }: { panel: ReadinessPanel }) {
   const asset = useAssetStore((s) => s.byId[panel.id])
   const src = asset ? panelSrc(asset.id, asset.kind, 200, asset.mtime) : null
   // 64×48 的一小格：行里的识别记号，不是看图器
-  const box = 'aspect-[4/3] w-16 shrink-0 rounded-xs border border-border bg-white'
+  const box = 'aspect-[4/3] w-16 shrink-0 rounded-xs border border-border bg-paper'
   if (!src) return <span className={cn(box, 'bg-surface-2')} aria-hidden />
   return <RetryImg src={src} alt="" className={cn(box, 'object-contain')} />
 }

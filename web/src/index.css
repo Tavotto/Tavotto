@@ -20,6 +20,13 @@
    改图助手的输入框是浮在对话流上的玻璃（--color-glass + blur + --shadow-composer，参考 Codex）。
    可编辑框是比面板深一级的底（--color-field），静态无边。
 
+   分层（2026-10-07 设计审计 P2 #13 / #14）：
+     palette  = 每个主题一张**值表**，只住在这个文件里——浅色是下面 @theme 的 hex，暗色是文件末尾
+                `prefers-color-scheme: dark` / `[data-theme='dark']` 那两段（逐字相同，tokenContrast.test 守着）；
+     semantic = `--color-*` 名字（surface / ink-2 / danger-content / syntax-keyword / paper …）。组件**只**引用语义名，
+                不写 hex / rgb() / hsl() / bg-white / color-mix(ink…)（foundation.test 守着）——换主题只换值表。
+     投影 / 遮罩 都从 --color-shadow 派生；「纸」（--color-paper / --color-paper-ink）是文档内容的颜色，两张表里同值。
+
    语义 token 与工具类名对照（工具类名沿用已有的，不为了改名动七百处调用）：
      surface-app = bg · surface-panel = surface · surface-subtle = surface-2
      surface-hover / surface-active / selected（交互面三档，hover 最弱）
@@ -36,6 +43,11 @@
   --color-canvas: #f5f5f3;
   --color-surface: #ffffff;
   --color-surface-2: #f7f7f5;
+  /* 纸（2026-10-07 暗色主题，审计 P2 #14）：画布上的页面、图的缩略图底——**文档内容的颜色**，不是界面色，
+     所以两套主题同值（图是印刷品，暗色里也不反相）。paper-ink 是界面画在纸上的记号（网格、透明棋盘格、
+     占位框的字）用的墨：纸不变，它也不变。 */
+  --color-paper: #ffffff;
+  --color-paper-ink: #1b1b18;
   /* 交互面：hover < active < selected，三档都是 ink 的半透明叠加，白 surface 与
      灰 bg 上都成立。组件里不再手写 bg-ink/[.035]…[.09] 那串随机透明度
      （2026-09-11 收敛前全仓有 9 种）。 */
@@ -82,6 +94,11 @@
      hover 5% < active 8% < selected 10%，三档在白面板与灰底上都成立。selected 只是轻 tint，
      选中态仍要靠字重 / 对勾再说一遍。 */
   --color-selected: color-mix(in srgb, var(--color-ink) 10%, transparent);
+  /* 浮起的那一块（分段 / 选项格的选中 thumb、开关的钮、滑杆的钮，配 shadow-thumb）：浅色里就是白 surface；
+     暗色里比面板亮一档——暗底上「浮起」靠更亮，不靠投影 */
+  --color-thumb: var(--color-surface);
+  /* 文字选区（::selection）：accent 的浅底，字照旧是原色——两套主题同一条公式 */
+  --color-text-selection: color-mix(in srgb, var(--color-accent) 28%, transparent);
 
   /* 状态色：一个锚点派生三值（2026-10-07 设计审计 §1，学 OpenBitFun 的派生公式）：
        -surface  锚点 10% 混白  —— 状态块 / 胶囊的底
@@ -150,22 +167,24 @@
        composer 改图助手输入框（玻璃，参考 Codex 的三层）
      Tooltip 是 ink 底白字，不带投影。 */
   --color-shadow: #1b1b18;
+  /* 1px 环的颜色：浅色里就是 shadow；暗色换成白（暗底上的黑环看不见） */
+  --color-shadow-edge: var(--color-shadow);
   --shadow-card:
-    0 0 0 1px color-mix(in srgb, var(--color-shadow) 6%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--color-shadow-edge) 6%, transparent),
     0 1px 2px color-mix(in srgb, var(--color-shadow) 4%, transparent),
     0 4px 12px color-mix(in srgb, var(--color-shadow) 4%, transparent);
-  --shadow-pop: 0 0 0 1px color-mix(in srgb, var(--color-shadow) 8%, transparent), 0 8px 24px color-mix(in srgb, var(--color-shadow) 8%, transparent);
+  --shadow-pop: 0 0 0 1px color-mix(in srgb, var(--color-shadow-edge) 8%, transparent), 0 8px 24px color-mix(in srgb, var(--color-shadow) 8%, transparent);
   --shadow-dialog:
-    0 0 0 1px color-mix(in srgb, var(--color-shadow) 6%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--color-shadow-edge) 6%, transparent),
     0 24px 64px color-mix(in srgb, var(--color-shadow) 10%, transparent);
   --shadow-thumb:
-    0 0 0 1px color-mix(in srgb, var(--color-shadow) 6%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--color-shadow-edge) 6%, transparent),
     0 1px 2px color-mix(in srgb, var(--color-shadow) 8%, transparent);
   /* 改图助手输入框：浮在对话流上的玻璃（2026-09-15 参考 Codex 的 _ComposerLayoutBody，用户拍板）。
      底 = field 90% 不透明 + backdrop-filter blur、无边、三层投影；内容从它底下滚过时被糊掉——玻璃只在它浮着的时候成立。 */
   --color-glass: color-mix(in srgb, var(--color-field) 90%, transparent);
   --shadow-composer:
-    0 0 0 1px color-mix(in srgb, var(--color-shadow) 4%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--color-shadow-edge) 4%, transparent),
     0 2px 8px color-mix(in srgb, var(--color-shadow) 4%, transparent),
     0 4px 40px 8px color-mix(in srgb, var(--color-shadow) 2.4%, transparent);
 
@@ -306,7 +325,8 @@
   --sel-hover-opacity: 0.6;
   --sel-dash: 4 3;
   --handle-fill: var(--color-surface);
-  --color-scrim: color-mix(in srgb, var(--color-ink) 34%, transparent);
+  /* 遮罩压暗：从 --color-shadow 派生（不是 ink——ink 在暗色里是浅色，遮罩会变成「提亮」） */
+  --color-scrim: color-mix(in srgb, var(--color-shadow) 34%, transparent);
 }
 
 /* Tailwind v4 的 `-translate-x-1/2` 编译成**独立的 `translate` 属性**，不是
@@ -523,6 +543,15 @@
   body,
   #root {
     height: 100%;
+  }
+
+  /* 原生控件（滚动条、取色器、日期框）与 UA 默认色跟着主题走；暗色那两段把它改成 dark */
+  :root {
+    color-scheme: light;
+  }
+
+  ::selection {
+    background: var(--color-text-selection);
   }
 
   body {
@@ -891,4 +920,89 @@
       -webkit-backdrop-filter: none;
     }
   }
+}
+
+/* ---------------------------------------------------------------------------
+   暗色主题（2026-10-07 设计审计 P2 #14；宪法第二十八节）：第二张**值表**，只换值、不换名字。
+   生效条件两条，**同一张表写两遍**（CSS 里没有不重复的写法；tokenContrast.test 逐字比对两段相同）：
+     - 系统是暗色、用户没有选「浅色」（设置 › 通用 › 外观 = 跟随系统，`<html>` 不带 data-theme）；
+     - 用户选了「深色」（`<html data-theme="dark">`）。选「浅色」写 `data-theme="light"`，挡住上面那条媒体查询。
+   没在这里出现的语义 token 都是公式（hover / selected / border / group = ink 的 N%，状态色 -surface / -border =
+   锚点混 surface，glass = field 90%，handle-fill = surface），跟着值表自己变。
+   **纸不变**：--color-paper / --color-paper-ink 不在表里——画布上的页面与图是印刷品，暗色只改它周围的界面。
+   -content 的公式在暗色里换方向（锚点 70% 混**白**），字落在暗底上才够 4.5:1。
+   投影：Tailwind 把 --shadow-* 的值**内联**进 shadow-* 工具类（只有里面的 var() 还是活的），所以暗色不重写投影串，
+   只换两种颜色：模糊层 --color-shadow → 纯黑，1px 环 --color-shadow-edge → 白（暗底上 N% 的黑环看不见，N% 的白环就是一道边）。
+   每一对要读的组合在两套主题里都有对比度断言（tokenContrast.test 的「暗色」一组）。
+   --------------------------------------------------------------------------- */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+    --color-bg: #161615;
+    --color-canvas: #1b1b1a;
+    --color-surface: #222220;
+    --color-surface-2: #282826;
+    --color-field: #2c2c2a;
+    --color-field-hover: #323230;
+    --color-border-control: #7b7b74;
+    --color-ink: #ececea;
+    --color-ink-2: #c2c2bc;
+    --color-ink-3: #9b9b94;
+    --color-ink-faint: #6a6a64;
+    --color-accent: #5a92e5;
+    --color-accent-subtle: #1d2a3d;
+    --color-danger: #ef6e55;
+    --color-warn: #d9a23a;
+    --color-ok: #4fb37a;
+    --color-danger-content: color-mix(in oklab, var(--color-danger) 70%, white);
+    --color-warn-content: color-mix(in oklab, var(--color-warn) 70%, white);
+    --color-ok-content: color-mix(in oklab, var(--color-ok) 70%, white);
+    --color-info-content: color-mix(in oklab, var(--color-info) 70%, white);
+    --color-syntax-keyword: #e6809f;
+    --color-syntax-function: #ad9cf0;
+    --color-syntax-string: #d6ad72;
+    --color-syntax-number: #74abf2;
+    --color-syntax-comment: #9b9b94;
+    --color-syntax-type: #6fc7ad;
+    --color-syntax-builtin: #e3a457;
+    --color-thumb: #3a3a37;
+    --color-shadow: #000000;
+    --color-shadow-edge: #ffffff;
+    --color-scrim: color-mix(in srgb, var(--color-shadow) 50%, transparent);
+  }
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --color-bg: #161615;
+  --color-canvas: #1b1b1a;
+  --color-surface: #222220;
+  --color-surface-2: #282826;
+  --color-field: #2c2c2a;
+  --color-field-hover: #323230;
+  --color-border-control: #7b7b74;
+  --color-ink: #ececea;
+  --color-ink-2: #c2c2bc;
+  --color-ink-3: #9b9b94;
+  --color-ink-faint: #6a6a64;
+  --color-accent: #5a92e5;
+  --color-accent-subtle: #1d2a3d;
+  --color-danger: #ef6e55;
+  --color-warn: #d9a23a;
+  --color-ok: #4fb37a;
+  --color-danger-content: color-mix(in oklab, var(--color-danger) 70%, white);
+  --color-warn-content: color-mix(in oklab, var(--color-warn) 70%, white);
+  --color-ok-content: color-mix(in oklab, var(--color-ok) 70%, white);
+  --color-info-content: color-mix(in oklab, var(--color-info) 70%, white);
+  --color-syntax-keyword: #e6809f;
+  --color-syntax-function: #ad9cf0;
+  --color-syntax-string: #d6ad72;
+  --color-syntax-number: #74abf2;
+  --color-syntax-comment: #9b9b94;
+  --color-syntax-type: #6fc7ad;
+  --color-syntax-builtin: #e3a457;
+  --color-thumb: #3a3a37;
+  --color-shadow: #000000;
+  --color-shadow-edge: #ffffff;
+  --color-scrim: color-mix(in srgb, var(--color-shadow) 50%, transparent);
 }

@@ -119,7 +119,8 @@ export function TextView({ obj }: { obj: TextObject }) {
       data-placeholder={editing ? translate('stage.textPlaceholder', { ns: 'workspace' }) : undefined}
       className={cn(
         'absolute left-0 top-0 w-full outline-none',
-        editing && 'empty:before:pointer-events-none empty:before:text-ink-3 empty:before:content-[attr(data-placeholder)]',
+        // 占位画在纸上：纸上的墨 65%（≈ 浅色里的 ink-3），不是界面的 ink-3（暗色里是浅灰，落在白纸上看不见）
+        editing && 'empty:before:pointer-events-none empty:before:text-paper-ink/65 empty:before:content-[attr(data-placeholder)]',
       )}
       style={{
         fontFamily: canvasFontStack(effectiveCanvasFamily(obj)),

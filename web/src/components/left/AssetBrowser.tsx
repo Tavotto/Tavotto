@@ -532,7 +532,7 @@ export function AssetBrowser() {
       >
         {/* 白弹窗里不再给图套一个框：白上白无需边（宪法第八节；左栏审计 L39） */}
         {zoomed?.kind === 'file' && (
-          <div className="flex items-center justify-center bg-white p-2">
+          <div className="flex items-center justify-center bg-paper p-2">
             <img
               src={renderUrl(zoomed.panel.id, 800, zoomed.panel.mtime)}
               alt={ab('zoomAlt', { name: fileName(zoomed.panel.id) })}
@@ -1057,7 +1057,7 @@ const CARD_ITEM = 'group relative rounded-lg outline-none focus-visible:focus-ri
 /** 预览区：3:2、白底、内容按比例缩放；上面只有悬停时的就近入口，没有常驻标签 */
 function CardPreview({ children }: { children: ReactNode }) {
   return (
-    <div className="relative flex aspect-[3/2] items-center justify-center overflow-hidden bg-white">
+    <div className="relative flex aspect-[3/2] items-center justify-center overflow-hidden bg-paper">
       {children}
     </div>
   )
@@ -1174,7 +1174,7 @@ function CardAction({
       // 光标一律箭头（宪法第二十六节）：卡片本身可拖（抓手），就近入口不是拖拽把手
       className={cn(
         'flex h-6 w-6 cursor-default items-center justify-center rounded-full',
-        'bg-surface text-ink shadow-thumb',
+        'bg-thumb text-ink shadow-thumb',
         'transition-colors duration-fast hover:bg-surface-2',
       )}
     >
@@ -1301,7 +1301,7 @@ function RuntimeZoom({ asset }: { asset: RuntimeAssetInfo }) {
     <div className="flex flex-col gap-2">
       {/* 白弹窗里不再给图套框（左栏审计 L39）；占位块只留一层浅底 */}
       {asset.cached ? (
-        <div className="flex items-center justify-center bg-white p-2">
+        <div className="flex items-center justify-center bg-paper p-2">
           <img
             src={runtimePreviewUrl(asset.id, nonce)}
             alt={ab('zoomAlt', { name: asset.stem })}

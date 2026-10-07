@@ -546,7 +546,7 @@ function RowThumb({ docId, meta }: { docId: string; meta: LayoutVersionMeta }) {
         src={versionThumbUrl(docId, meta)}
         alt=""
         data-timeline-thumb
-        className="h-10 w-14 shrink-0 rounded-xs bg-white object-contain"
+        className="h-10 w-14 shrink-0 rounded-xs bg-paper object-contain"
       />
     )
   }
@@ -1227,7 +1227,7 @@ export function LayoutSnapshot({
     <div
       className={cn(
         'relative w-full overflow-hidden rounded-xs border border-border',
-        outline ? 'bg-transparent' : 'bg-white',
+        outline ? 'bg-transparent' : 'bg-paper',
       )}
       style={{ aspectRatio: `${pw} / ${ph}` }}
     >

@@ -28,6 +28,7 @@ import { PageOutsideMask } from './PageOutsideMask'
 import { Rulers, RULER_SIZE } from './Rulers'
 import { CanvasContextMenu } from './CanvasContextMenu'
 import { placePanelInPage } from '@/lib/panelPlacement'
+import { objectRotation } from '@/types/document'
 import { startDraw, startMarquee, startPan } from './interactions'
 
 export function CanvasStage() {
@@ -248,6 +249,9 @@ export function CanvasStage() {
           data-view-tweening={tweening || undefined}
           className="absolute left-0 top-0 origin-top-left"
           style={{
+            // 世界层里的东西是页面内容：没写颜色的字继承纸上的墨（--color-paper-ink，两套主题同值），
+            // 不继承界面的 ink（暗色里是浅色，落在白纸上看不见）
+            color: 'var(--color-paper-ink)',
             transform: `translate(${panX}px, ${panY}px) scale(${zoom})`,
             width: mmToWorld(page.w),
             height: mmToWorld(page.h),
@@ -267,6 +271,7 @@ export function CanvasStage() {
               showSafeArea={showSafeArea}
             />
           )}
+          {fastEdit && <FastEditPaper panelId={activePanelId} objects={objects} />}
           <CanvasLayers only={fastEdit ? activePanelId : null} />
         </div>
 
@@ -413,6 +418,37 @@ function CanvasLayers({ only }: { only?: string | null }) {
  * 用户在画布上缩放过的面板，快速编辑照样把它整张放进视野（图幅是它的
  * 输出规格，不是它此刻在屏幕上占多大）。
  */
+/**
+ * 快速编辑没有页面（纸），图直接摆在画布灰上——底是透明的图（`savefig(transparent=True)`）在暗色主题里
+ * 就成了深底黑字。图是印刷品：给它垫一张与它的框同大的纸（`--color-paper`，两套主题同值），
+ * 与排版模式里图坐在纸上是同一个意思（2026-10-07 暗色主题，宪法第二十八节）。只是画法，不进文档。
+ */
+function FastEditPaper({
+  panelId,
+  objects,
+}: {
+  panelId: string | null
+  objects: ReturnType<typeof useDocumentStore.getState>['doc']['objects']
+}) {
+  const o = panelId ? objects.find((x) => x.id === panelId) : undefined
+  if (!o) return null
+  const rot = objectRotation(o)
+  return (
+    <div
+      aria-hidden
+      data-fast-edit-paper=""
+      className="pointer-events-none absolute bg-paper"
+      style={{
+        left: mmToWorld(o.x),
+        top: mmToWorld(o.y),
+        width: mmToWorld(o.w),
+        height: mmToWorld(o.h),
+        transform: rot ? `rotate(${rot}deg)` : undefined,
+      }}
+    />
+  )
+}
+
 function useFrame(
   panelId: string | null,
   objects: readonly { id: string; x: number; y: number; w: number; h: number }[],

@@ -101,7 +101,7 @@ export function CanvasThumb({
         width={w}
         height={h}
         rx={radius}
-        fill="#fff"
+        fill="var(--color-paper)"
         stroke="var(--color-border-strong)"
         strokeWidth={1}
         vectorEffect="non-scaling-stroke"

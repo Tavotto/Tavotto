@@ -1,10 +1,13 @@
 import { perfCount } from '@/perf/core'
 import { mmToWorld } from '@/store/viewportStore'
 
-/** 纸的默认底色：**页面内容**（导出时就是这个白），不是界面的 surface——所以它不跟主题走 */
-const PAPER = '#ffffff'
-/** 网格线 / 棋盘格的墨：ink 的 N%（暗色主题只换 --color-ink，不留第二份 rgba 字面量） */
-const GRID_INK = (pct: number) => `color-mix(in srgb, var(--color-ink) ${pct}%, transparent)`
+/** 纸的默认底色：**页面内容**（导出时就是这个白），不是界面的 surface——`--color-paper` 两套主题同值 */
+const PAPER = 'var(--color-paper)'
+/**
+ * 网格线 / 棋盘格的墨：纸上的墨（`--color-paper-ink`）的 N%。不是 `--color-ink`——那是界面的字色，
+ * 暗色里是浅色，画在不变的白纸上就看不见了（2026-10-07 暗色主题）。
+ */
+const GRID_INK = (pct: number) => `color-mix(in srgb, var(--color-paper-ink) ${pct}%, transparent)`
 
 interface PageSheetProps {
   w: number

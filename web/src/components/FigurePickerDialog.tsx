@@ -184,7 +184,7 @@ function FigureThumb({ entry, nonce }: { entry: Entry; nonce: Record<string, num
         ? panelSrc(entry.asset.id, 'runtime', 320, nonce[entry.asset.id])
         : null
   // 40×30 的一小格：行里的识别记号，不是看图器。底是图自己的白（纸），不是界面色
-  const box = 'aspect-[4/3] w-10 shrink-0 rounded-xs ring-1 ring-inset ring-border bg-white'
+  const box = 'aspect-[4/3] w-10 shrink-0 rounded-xs ring-1 ring-inset ring-border bg-paper'
   if (!src) return <span className={cn(box, 'bg-surface-2')} aria-hidden />
   return <img src={src} alt="" className={cn(box, 'object-contain')} />
 }

@@ -40,6 +40,9 @@ interface Rule {
 // 逐页阶段迁移的豁免表（LATER_PHASE）已删空删掉：shadow-card 的素材卡、问题卡、左轨激活态在左栏阶段迁完，
 // 版本对话框的缩略图框在对话框阶段迁到 Card（2026-10-07）。
 
+/** 画界面的代码（颜色门禁的判据范围；lib / store / types 里的颜色是文档数据） */
+const CHROME = /^\/src\/(?:(?:components|canvas|playground|mcp|embedded|onboarding)\/|(?:App|main)\.tsx$)/
+
 const RULES: Rule[] = [
   {
     name: '圆角只来自 token（xs / sm / md / lg / panel / full），没有任意值',
@@ -263,6 +266,62 @@ const RULES: Rule[] = [
     fix: 'bg-surface / text-surface（「纸」——图与页面内容——才是真白，不在 ui/ 里）',
     catches: '<span className="bg-ink text-white" />',
     spares: '<span className="bg-ink text-surface" />',
+  },
+  /*
+   * ---- 颜色只经语义 token（2026-10-07 设计审计 P2 #13，暗色主题的前提）----
+   * 主语：界面代码（components / canvas / playground / mcp / embedded / onboarding、App / main）里**写出来的颜色字面量**。
+   * 换主题只换 index.css 的值表；组件里多一处 `#fff` / `rgba(…)` / `bg-white` / `color-mix(ink…)`，暗色里就多一块
+   * 不跟着走的颜色。判不出「这是界面色还是文档数据」——所以豁免表按文件、带个数、写明是哪一种：
+   *   - 文档数据：属性的缺省值（取色框没值时的 `#000000`、新填充的 `#FFFFFF`）、colormap 色标、样张图——那是图的颜色，
+   *     导出就是它，不该跟主题走；
+   *   - 遮罩：`mask` 里的黑白只是不透明度，不是颜色；
+   *   - 第三方品牌色（编码助手的标）。
+   * 前提：lib / store / types 里的颜色都是文档数据（覆盖值、样式预设、导出默认），不在判据范围内——它们不画界面。
+   */
+  {
+    name: '界面代码里没有原始颜色字面量（hex / rgb() / hsl()）：颜色只经语义 token（暗色只换值表）',
+    pattern: /(?<![\w&])#(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6}|[0-9a-fA-F]{3,4})(?![\w-])|\b(?:rgba?|hsla?)\(/,
+    only: CHROME,
+    fix: 'var(--color-*) / bg-* text-* 语义类；纸上的东西用 --color-paper / --color-paper-ink；投影与遮罩从 --color-shadow 派生',
+    catches: "<rect fill=\"#fff\" /> const scrim = 'rgba(27,27,24,0.34)'",
+    spares: "<rect fill=\"var(--color-paper)\" /> <a href=\"#top\" /> url(#${maskId})",
+    exempt: {
+      '/src/components/StyleDialog.tsx': { count: 2, why: '文档数据：文字样式的缺省颜色 #000000' },
+      '/src/components/VersionDialog.tsx': { count: 2, why: '文档数据：页面底色缺省 #FFFFFF（比较两版页面是否同底）' },
+      '/src/components/CanvasTabs.tsx': { count: 4, why: '遮罩：标签条两端渐隐的 mask-image，黑只表示不透明度' },
+      '/src/components/ui/Input.tsx': { count: 1, why: '文档数据：原生取色框没有值时的占位 #000000（input[type=color] 只认 hex）' },
+      '/src/components/ui/icons/createIcon.tsx': { count: 4, why: '遮罩：图标的镂空 mask（白 = 留、黑 = 挖），不是颜色' },
+      '/src/components/inspector/StrokeSection.tsx': { count: 1, why: '文档数据：新加填充的缺省色 #FFFFFF' },
+      '/src/components/inspector/CanvasPage.tsx': { count: 2, why: '文档数据：页面底色缺省 #FFFFFF' },
+      '/src/components/inspector/TextSection.tsx': { count: 2, why: '文档数据：文字框底色 / 边框色的缺省值' },
+      '/src/components/inspector/ElementInspector.tsx': { count: 2, why: '文档数据：取色框没有值时的 #000000' },
+      '/src/components/inspector/LegendCard.tsx': { count: 1, why: '文档数据：图例句柄颜色缺省 #000000' },
+      '/src/components/inspector/controls/ColorbarPickers.tsx': { count: 2, why: '文档数据：色条样张的兜底色标' },
+      '/src/components/inspector/controls/colormapStops.ts': { count: 126, why: '文档数据：matplotlib colormap 的色标（样张画的就是图会用的颜色）' },
+      '/src/components/inspector/controls/SpineFrameCard.tsx': { count: 2, why: '文档数据：边框 / 刻度颜色缺省 #000000' },
+      '/src/components/inspector/controls/TypographyControls.tsx': { count: 1, why: '文档数据：文字颜色缺省 #000000' },
+      '/src/components/settings/StyleSamplePreview.tsx': { count: 9, why: '文档数据：样式样张是一张小图（印刷色，跟纸一起不随主题变）' },
+      '/src/components/settings/AgentIcon.tsx': { count: 1, why: '第三方品牌色（编码助手的标）' },
+      '/src/canvas/context-bar/ElementBar.tsx': { count: 1, why: '文档数据：取色框没有值时的 #000000' },
+      '/src/canvas/context-bar/textQuick.tsx': { count: 1, why: '文档数据：文字颜色缺省 #000000' },
+      '/src/canvas/interactions.ts': { count: 2, why: '文档数据：新画的标注 / 文字的缺省颜色' },
+    },
+  },
+  {
+    name: '界面代码里没有写死的白 / 黑颜色类（bg-white / text-black / fill-white …）：界面走 surface / ink，纸走 paper',
+    pattern: /\b(?:bg|text|border|fill|stroke|ring|inset-ring|outline|from|to|via|shadow|decoration|caret|divide|placeholder)-(?:white|black)\b/,
+    only: CHROME,
+    fix: '界面：bg-surface / text-surface（墨底上的字）/ text-ink；纸（页面、图的缩略图底）：bg-paper',
+    catches: '<div className="bg-white" /> <span className="text-black" />',
+    spares: '<div className="bg-paper text-surface fill-current" />',
+  },
+  {
+    name: '界面代码里的 color-mix 不调 ink：ink 在暗色里是浅色，叠加 / 遮罩 / 纸上的线要用语义 token',
+    pattern: /color-mix\([^;'"`]*--color-ink/,
+    only: CHROME,
+    fix: 'hover / active / selected / group / border（都已是 ink 的 N%）；遮罩 --color-scrim 或 bg-shadow/N；纸上的线 --color-paper-ink',
+    catches: "const grid = `color-mix(in srgb, var(--color-ink) 7%, transparent)`",
+    spares: "const grid = `color-mix(in srgb, var(--color-paper-ink) 7%, transparent)`",
   },
   {
     name: '按钮层级是 primary / secondary / ghost / danger，没有 outline',

@@ -142,7 +142,7 @@ export function ProblemThumb({
   const crop = part && figure?.sizeMm ? cropStyle(part.bbox, figure.sizeMm) : null
   return (
     // 缩略图里是图本身（纸），底色用纸白；外框一圈 border 把它从行底上切开
-    <span aria-hidden data-problem-thumb className={cn(frame, 'bg-white inset-ring inset-ring-border')}>
+    <span aria-hidden data-problem-thumb className={cn(frame, 'bg-paper inset-ring inset-ring-border')}>
       <img
         src={retry.src}
         alt=""
