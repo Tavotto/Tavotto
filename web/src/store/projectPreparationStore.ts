@@ -12,7 +12,7 @@
  *
  * ### 三个不同的动作
  *
- * `uiStore.setPreparationOpen(false)`（关面板，只改呈现；订阅照旧，原对话框接着展示 input）·
+ * `uiStore.setGuideCard('pill' | 'closed')`（缩成角标 / 收起引导卡，只改呈现；订阅照旧，收起时原对话框接着展示 input）·
  * `cancel()`（认领后端的 `cancel` 动作：按 owner 退役**本会话**的工作）· 切项目 `clear()`（换代、停轮询、丢订阅与
  * 晚到响应；**后端什么都不取消**，用户的执行 / 已授权的安装照常跑完，切回来重新打开时会话复用）。
  *
@@ -76,7 +76,7 @@ export interface PrepEntry {
 interface PreparationState {
   epoch: number
   entries: Record<string, PrepEntry>
-  /** 面板此刻展示哪一份（开合在 `uiStore.preparationOpen`） */
+  /** 引导卡此刻展示哪一份（呈现在 `uiStore.guideCard`） */
   focus: string | null
 
   /** 打开（或复用）一个目标的检查会话并聚焦面板。脚本目标的参数草稿在这一刻取一份拷贝 */
@@ -276,7 +276,7 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
           },
         },
       }))
-      if (opts?.show !== false) useUiStore.getState().setPreparationOpen(true)
+      if (opts?.show !== false) useUiStore.getState().setGuideCard('card')
       await check(key, target, false)
     },
 
@@ -398,6 +398,14 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
  * **不执行**：已经在画布上的这些图按热会话重画，脚本不再跑。
  */
 async function onCompleted(report: PreparationReport): Promise<void> {
+  // 导入即扫描的快照随结果更新（零执行、后端单飞）：这个脚本现在连着可编辑的图了，「显示项目检查结果」不再说它待准备
+  // 素材库脚本行的「已关联」同理（与 registry.changed 事件同一个出口，幂等去重）
+  void Promise.all([import('@/store/projectScanStore'), import('@/store/scriptLibraryStore')])
+    .then(([{ useProjectScanStore }, { useScriptLibraryStore }]) => {
+      void useProjectScanStore.getState().start({ force: true, reason: 'refresh' })
+      void useScriptLibraryStore.getState().load()
+    })
+    .catch(() => undefined)
   const ids = (report.captured ?? []).map((d) => d.asset_id).filter(Boolean)
   if (!ids.length) return
   try {

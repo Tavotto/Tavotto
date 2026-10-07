@@ -56,6 +56,17 @@ export function useScriptInputAnswer(): ScriptInputAnswer {
 
 export const isSecret = (req: ScriptInputRequest) => req.secret === true || req.input_kind === 'getpass'
 
+/**
+ * 为什么要重新确认上次的回答（后端 `recheck`，ADR 0099 §十）：两种原因用户要做的判断不同——
+ * 这台电脑上没有当时的记录（换了机器 / 旧版答案文件）只是没法核对；输出或参数变了是真的可能答错。
+ * 键写成字面量（i18n 检查按字面量判活）
+ */
+export function suggestionText(req: ScriptInputRequest, answer: string): string {
+  if (req.recheck === 'legacy_answer') return si('suggestionNoRecord', { answer })
+  if (req.recheck === 'config_changed') return si('suggestionArgs', { answer })
+  return si('suggestion', { answer })
+}
+
 export function ScriptInputFields({ answer }: { answer: ScriptInputAnswer }) {
   useTranslation('dialogs')
   const { head, value, setValue, busy, error } = answer
@@ -115,7 +126,7 @@ export function ScriptInputFields({ answer }: { answer: ScriptInputAnswer }) {
       </label>
       {suggestion !== null && (
         <p data-script-input-suggestion="" className="whitespace-pre-wrap break-words text-ink-2">
-          {si('suggestion', { answer: suggestion })}
+          {suggestionText(head, suggestion)}
         </p>
       )}
       <p className="text-ink-3">{secret ? si('getpassNote') : si('rememberNote')}</p>

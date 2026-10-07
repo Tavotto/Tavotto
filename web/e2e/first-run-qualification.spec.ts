@@ -15,6 +15,7 @@ import os from 'node:os'
 import path from 'node:path'
 import type { Locator, Page, Request } from '@playwright/test'
 import { expect, openElementsTab, startApp, test } from './fixtures'
+import { card, expectPageNotShifted, pill, primary, workPanelRect } from './prepCard'
 
 /**
  * 真实首跑资格（T11：C23 / C24 / C27）——真后端、真 worker、真浏览器，经产品的正式入口。
@@ -26,9 +27,10 @@ import { expect, openElementsTab, startApp, test } from './fixtures'
  * 不是 toast、也不是 store 里的期望值。后端版的同一条旅程见
  * `tests/test_foundation_script_first_run.py::test_t11_s1_*`，这条是它的浏览器对应物。
  *
- * 步骤：检查条「准备并运行」（导入即扫描给出唯一待准备目标）→ 面板里选运行目录 → 面板里填四个 argv token → 按新参数检查 → 确认并运行 → 面板里答 input →
- * 已捕获 → 进入编辑（不重跑）→ 改标题 → ⌘S 存进项目 → 停实例、同一数据 / 配置目录重开、刷新、从项目里打开该排版 → 双击进入图内编辑触发冷重放
- * （冻结配置 + 回答转录，不再弹输入框）、编辑仍在 → 导出 PDF。
+ * 步骤（T13b 引导卡）：打开项目 → 页面不下移、右下卡自动弹出（导入即扫描给出唯一待准备目标，弹出时不建会话）→ 开始准备 →
+ * 卡里选运行目录（推荐项预选）→ 卡里填两个必填参数（没填齐时「继续」置灰、任何卡都不说可以运行）→ 继续 → 运行 → 卡里答 input →
+ * 画好了 → 进入编辑（不重跑；卡片收起，取景适应窗口，元素树点得到）→ 改标题 → ⌘S 存进项目 → 停实例、同一数据 / 配置目录重开、
+ * 刷新、从项目里打开该排版 → 双击进入图内编辑触发冷重放（冻结配置 + 回答转录，不再弹输入框）、编辑仍在 → 导出 PDF。
  *
  * 导出这一步走的是**界面**（导出对话框），不是 HTTP。
  */
@@ -43,8 +45,6 @@ const LAYOUT = 'T11 首跑'
 /** 产品把排版名里的空格规整成下划线（文件名、列表里的名字都是它） */
 const LAYOUT_STORED = LAYOUT.replace(/ /g, '_')
 
-const panel = (page: Page) => page.locator('[data-preparation-panel]')
-const primary = (page: Page) => panel(page).locator('[data-prep-primary]')
 
 interface ExecRecord {
   executable: string
@@ -127,7 +127,7 @@ async function expectHittable(target: Locator, what: string) {
           if (x < 0 || y < 0 || x >= window.innerWidth || y >= window.innerHeight) return `offscreen y=${Math.round(y)}`
           const hit = document.elementFromPoint(x, y)
           if (hit && el.contains(hit)) return 'hit'
-          const owner = hit?.closest('[data-preparation-panel]') ? ' (preparation panel)' : ''
+          const owner = hit?.closest('[data-prep-card]') ? ' (preparation card)' : ''
           return `covered by <${hit?.tagName.toLowerCase() ?? 'null'}>${owner}`
         }),
       { timeout: 15_000, message: `${what} 应当点得到` },
@@ -151,7 +151,7 @@ function listFiles(root: string): string[] {
 const sameDir = (a: string, b: string) => realpathSync.native(a) === realpathSync.native(b)
 
 test(
-  '真实首跑资格：只有脚本与数据 → 面板里准备并运行 → 编辑 → 存进项目 → 重开冷重放 → 导出',
+  '真实首跑资格：只有脚本与数据 → 引导卡里准备并运行 → 编辑 → 存进项目 → 重开冷重放 → 导出',
   { tag: '@feature:assets.run-script-figure' },
   async ({ app, page }) => {
   test.setTimeout(600_000)
@@ -216,12 +216,18 @@ test(
     }
     page.on('request', onRequest)
 
-    // 入口：导入即扫描的检查条。夹具的 `savefig("spectrum.pdf")` 是字面量，打开项目时静态扫描会先把图名写进注册表
-    // （T00 裁决的既有边界）；T11 起扫描只把「登记了且真有可编辑的图」算作已连接，所以这里仍是唯一待准备的目标
-    // （修前：报 already_connected、检查条不出现）。页面一出现就点，不等任何初始装载（T11 复核过：那一刻点下去也不丢）。
+    // 入口：导入即扫描发现了唯一待准备的目标 → 右下引导卡自动弹出（页面不下移；弹出时不建会话）。夹具的 `savefig("spectrum.pdf")`
+    // 是字面量，打开项目时静态扫描会先把图名写进注册表（T00 裁决的既有边界）；T11 起扫描只把「登记了且真有可编辑的图」
+    // 算作已连接，所以这里仍是唯一待准备的目标；素材库脚本行同一判据（T13b）：不说「已关联」。页面一出现就点（T11 复核过：
+    // 那一刻点下去也不丢）。
+    const sessions: string[] = []
+    page.on('request', (r) => {
+      if (r.method() === 'POST' && new URL(r.url()).pathname === '/api/engine/preparation-sessions') sessions.push(r.url())
+    })
     await page.goto(a.baseURL)
-    const bar = page.locator('[data-project-scan]')
-    await expect(bar).toBeVisible({ timeout: 30_000 })
+    await expect(page.locator('[data-work-panel]')).toBeVisible({ timeout: 30_000 })
+    const layoutBefore = await workPanelRect(page)
+    await expect(card(page)).toHaveAttribute('data-prep-state', 'discover', { timeout: 30_000 })
     const scanned = async () =>
       (await (await page.request.get(`${a.baseURL}/api/project/scan`)).json()) as {
         state?: string
@@ -230,66 +236,70 @@ test(
       }
     await expect.poll(async () => (await scanned()).outcome?.kind, { timeout: 60_000 }).toBe('target_found')
     expect((await scanned()).default_target).toBe(SCRIPT)
-    await bar.getByRole('button', { name: '详情' }).click()
-    await page.locator(`[data-scan-prepare="${SCRIPT}"]`).click()
-    await expect(panel(page)).toBeVisible()
-
-    // 数据只在项目根找得到 → 先选运行目录
-    await expect(panel(page)).toHaveAttribute('data-prep-state', 'workdir', { timeout: 60_000 })
-    expect(execs(project)).toHaveLength(0)
+    await expect(card(page).locator('[data-prep-line]')).toHaveText(`发现绘图脚本 ${SCRIPT}`)
+    // 页面不下移：卡片出现前后工作面板的位置与高度不变，顶栏贴顶、没有横条
+    expect(await workPanelRect(page)).toEqual(layoutBefore)
+    await expectPageNotShifted(page)
+    expect(sessions).toEqual([])
+    // 素材库脚本行：从没运行过，不说「已关联」
+    const row = page.locator(`[data-script-row="${SCRIPT}"]`)
+    if (await row.count()) await expect(row).not.toContainText('已关联')
     await primary(page).click()
-    const workdir = page.locator('[data-dialog="workdir-confirm"]')
-    await expect(workdir).toBeVisible()
-    await workdir.locator('[data-workdir-option="project_root"]').click()
-    await workdir.getByRole('button', { name: '运行', exact: true }).click()
-    await expect(panel(page)).toHaveAttribute('data-prep-state', 'ready', { timeout: 60_000 })
-    expect(execs(project)).toHaveLength(0)
 
-    // 面板里填四个 argv token（含中文与空格），按新参数检查
-    await panel(page).locator('[data-prep-details] > summary').click()
-    await panel(page).locator(`[data-testid="argv-${SCRIPT}"] > summary`).click()
-    const add = panel(page).getByRole('button', { name: '添加参数' })
-    for (let i = 0; i < ARGV.length; i++) await add.click()
-    for (const [i, token] of ARGV.entries()) {
-      await panel(page).getByRole('textbox', { name: `${SCRIPT} 的第 ${i + 1} 个参数` }).fill(token)
-    }
-    await expect(panel(page)).toHaveAttribute('data-prep-state', 'args_changed')
-    await primary(page).click()
-    await expect(panel(page)).toHaveAttribute('data-prep-state', 'ready', { timeout: 60_000 })
-    await expect(panel(page).locator('[data-prep-line]')).toContainText('4 个参数')
+    // 数据只在项目根找得到 → 先在卡里选运行目录（推荐项预选；确认只重新检查，按钮不说「运行」）
+    await expect(card(page)).toHaveAttribute('data-prep-state', 'workdir', { timeout: 60_000 })
     expect(execs(project)).toHaveLength(0)
-
-    // 确认并运行 → 运行时 input 在面板里答（原对话框不出现）
+    await expect(card(page).locator('[data-workdir-option="project_root"] input')).toBeChecked()
+    await expect(primary(page)).toHaveText('用项目根目录')
     await primary(page).click()
-    await expect(panel(page)).toHaveAttribute('data-prep-state', 'input', { timeout: 120_000 })
+
+    // 两个必填参数（argparse 的 --scale / --label）还没填：参数卡、只摆必填项、「继续」置灰，任何卡都不说可以运行
+    await expect(card(page)).toHaveAttribute('data-prep-state', 'args', { timeout: 60_000 })
+    await expect(card(page).locator('[data-prep-line]')).toHaveText('还差 2 个参数')
+    await expect(primary(page)).toBeDisabled()
+    await expect(card(page)).not.toContainText('可以运行')
+    expect(execs(project)).toHaveLength(0)
+    const required = card(page).locator(`[data-testid="argv-form-required-${SCRIPT}"]`)
+    await required.getByRole('textbox', { name: '--scale 的第 1 个值' }).fill(ARGV[1])
+    await expect(card(page).locator('[data-prep-line]')).toHaveText('还差 1 个参数')
+    await expect(primary(page)).toBeDisabled()
+    await required.getByRole('textbox', { name: '--label 的第 1 个值' }).fill(ARGV[3])
+    await expect(card(page)).toHaveAttribute('data-prep-state', 'args_changed')
+    await expect(primary(page)).toBeEnabled()
+    await primary(page).click() // 继续 = 按新参数重新检查
+    await expect(card(page)).toHaveAttribute('data-prep-state', 'ready', { timeout: 60_000 })
+    await expect(card(page).locator('[data-prep-line]')).toHaveText('可以运行了')
+    await expect(card(page).locator('[data-prep-ready-line]')).toContainText('--scale 1.5 --label "峰 值 A"')
+    expect(execs(project)).toHaveLength(0)
+    await expectPageNotShifted(page)
+
+    // 运行 → 运行时 input 在卡里答（原对话框不出现）
+    await primary(page).click()
+    await expect(card(page)).toHaveAttribute('data-prep-state', 'input', { timeout: 120_000 })
     await expect(page.locator('[data-dialog="script-input"]')).toHaveCount(0)
-    const form = panel(page).locator('[data-prep-input]')
+    const form = card(page).locator('[data-prep-input]')
     await expect(form.locator('[data-script-input-output]')).toContainText('1) smooth')
     await form.locator('[data-script-input-answer]').fill('1')
-    await form.locator('[data-script-input-submit]').click()
-    await expect(panel(page)).toHaveAttribute('data-prep-state', 'completed', { timeout: 120_000 })
-    await expect(panel(page).locator('[data-prep-line]')).toContainText('已捕获 1 张图')
+    await primary(page).click() // 回答
+    await expect(card(page)).toHaveAttribute('data-prep-state', 'completed', { timeout: 120_000 })
+    await expect(card(page).locator('[data-prep-line]')).toHaveText('画好了 1 张图')
+    await expectPageNotShifted(page)
 
-    // 进入编辑：同一次捕获，不重跑
+    // 进入编辑：同一次捕获，不重跑；卡片随即收起、不留角标（T13b），左栏轨道、编辑区、元素树都点得到；
+    // 取景适应窗口（不是停在 25% 只露一角）
     await primary(page).click()
-    await expect(panel(page)).toHaveAttribute('data-prep-state', 'edit_ready', { timeout: 120_000 })
-    // 面板不关（T12b）：上面展开过的参数详情不得把编辑区挤没——进入编辑时详情自动收起，左栏轨道与编辑区就点得到；
-    // 用户再展开详情，面板也只在自己的限高里滚，编辑区照样点得到
-    await expect(panel(page)).toBeVisible()
-    const details = panel(page).locator('[data-prep-details]')
-    await expect(details).not.toHaveAttribute('open')
+    await expect(card(page)).toHaveCount(0)
+    await expect(pill(page)).toHaveCount(0)
+    await expect(page.locator('[data-element-svg] svg').first()).toBeVisible({ timeout: 120_000 })
     await expectHittable(page.locator('[data-rail="elements"]'), '左栏「元素」轨道')
     await expectHittable(page.locator('[data-work-panel]'), '编辑区')
-    await details.locator('> summary').click()
-    await expect(details).toHaveAttribute('open')
-    // 参数表单是展开后异步取回的、展开本身有高度过渡（index.css 的 interpolate-size）：等表单挂上、过渡走完，
-    // 面板长到最高再量（否则量到的是过渡第一帧，挤没编辑区的那一刻还没到）
-    await expect(panel(page).locator(`[data-testid="argv-form-${SCRIPT}"]`)).toBeAttached({ timeout: 30_000 })
-    await details.evaluate((el) => Promise.all(el.getAnimations({ subtree: true }).map((a) => a.finished)))
-    await expectHittable(page.locator('[data-rail="elements"]'), '详情展开时，左栏「元素」轨道')
-    await expectHittable(page.locator('[data-work-panel]'), '详情展开时，编辑区')
-    await details.locator('> summary').click()
-    await expect(details).not.toHaveAttribute('open')
+    await expectPageNotShifted(page)
+    const framing = await page.evaluate(() => {
+      const stage = document.querySelector('[data-canvas-stage]')!.getBoundingClientRect()
+      const obj = document.querySelector('[data-canvas-stage] [data-object-id]')!.getBoundingClientRect()
+      return { w: obj.width / stage.width, h: obj.height / stage.height }
+    })
+    expect(Math.max(framing.w, framing.h), `进入编辑后图应当撑开画布（取景 ${JSON.stringify(framing)}）`).toBeGreaterThan(0.45)
 
     // ---- 真值（一）：恰好 1 次、argv / cwd / mode / y 与原生参考一致
     await page.waitForTimeout(1500)
@@ -416,7 +426,7 @@ test(
     }
     await expect(page.locator('[data-dialog="script-input"]')).toHaveCount(0)
     await expect(page.locator('[data-script-input-answer]')).toHaveCount(0)
-    await expect(panel(page)).toHaveCount(0)
+    await expect(card(page)).toHaveCount(0)
 
     // ---- 导出 PDF（界面）：文件真的落盘、%PDF- 开头
     await page.locator('[data-context-back]').first().click()

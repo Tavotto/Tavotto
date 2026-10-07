@@ -89,7 +89,7 @@ export function WorkdirConfirmDialog() {
             {en('engine.workdirChooseLater')}
           </Button>
           <Button variant="primary" size="md" disabled={busy || !choice} onClick={() => void confirm()}>
-            {en('engine.workdirChooseRun')}
+            {en('engine.workdirChooseConfirm')}
           </Button>
         </>
       }

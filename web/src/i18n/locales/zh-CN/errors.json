@@ -441,7 +441,7 @@
     "workdirChooseConflicts": "两处内容不同的文件：{{files}}",
     "workdirChooseLater": "稍后",
     "workdirChooseRootEvidence": "{{script}} 读的数据只有在项目根目录下才找得到。选一个运行目录，这个项目只问这一次。",
-    "workdirChooseRun": "运行",
+    "workdirChooseConfirm": "用这个目录",
     "workdirChooseScriptDirEvidence": "{{script}} 在当前目录里查找数据文件（glob / listdir / exists），在沙盒里找不到——它要在自己的目录里运行。选一个运行目录，这个项目只问这一次。",
     "workdirChooseSuggest": "这张图还没决定在哪个目录里运行。",
     "workdirChooseTitle": "脚本在哪个目录里运行？",

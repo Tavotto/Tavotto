@@ -321,7 +321,7 @@ describe('绝不替用户决定', () => {
     await clickIn(row, '试运行并连接')
     // 对话框让开、同一个准备面板打开：只读检查，参数草稿此刻冻结进会话
     expect(useUiStore.getState().registryOpen).toBe(false)
-    expect(useUiStore.getState().preparationOpen).toBe(true)
+    expect(useUiStore.getState().guideCard).toBe('card')
     expect(mockCreateSession).toHaveBeenCalledTimes(1)
     expect(mockCreateSession.mock.calls[0][0]).toEqual({ script: 'dyn.py', argv: ['--n', '3'], argv_sensitive: false })
     expect(mockProbe, '接入中心不该再自己跑试运行').not.toHaveBeenCalled()

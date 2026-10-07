@@ -169,7 +169,7 @@ input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/pr
   `_preparation_runner` 接上）；运行中取消 → 本计划新建的会话 `force_cancel(expected_worker=…)` 只关这一条（build 以 WorkerError 回来、
   按取消收场，不等长计算 / input 自己结束）；共享会话的等待者 → 不碰会话，本计划直接以取消收场，执行线程迟到的结局不改写终局
   （`_finish` 对已终局的计划不写）；取消比「取到会话」还早到时，取到那一刻按同一规则处理。取消落地的尝试不再算「活跃」，会话可以马上重新检查。
-  没报所有权的 runner（测试替身）仍走旧的「build 返回之后再收」。看护 `tests/test_preparation_session_lifecycle.py`、e2e `preparation-panel.spec.ts`。
+  没报所有权的 runner（测试替身）仍走旧的「build 返回之后再收」。看护 `tests/test_preparation_session_lifecycle.py`、e2e `preparation-card.spec.ts`。
 - **成功的报告带 `captured`（T09）**：这次尝试捕获到的公开描述符（与 `/api/registry/probe` 响应里同一份：项目相对路径、运行配置只是不透明引用），
   只在 outcome 为 `succeeded` 时非空。界面的「进入编辑」直接用它，不按图名再找一遍、不为换界面再跑一次脚本。
 - **`unlinked_stems`（T09b，T03 已知缺口的可恢复提示）**：无参数的执行按脚本整条替换注册表里的 stems（`discover.register` 的旧语义，
@@ -186,8 +186,8 @@ input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/pr
 - 看护：`tests/test_preparation_session.py`（假 pool：合同、并发认领、修订、失效、取消所有权、回收、项目绑定）、
   `tests/test_preparation_session_dependencies.py`（T06：授权 / 认领 / 差额 / 真安装到首图）、
   `tests/test_preparation_session_e2e.py`（真 worker、真服务：只有脚本的项目 → 一次执行 → 进编辑请求不重跑）、
-  `tests/test_script_probe.py::TestEntryLoopStopsOnNonEntryFailures`。**T09 / T09b 起它是 GUI 首跑的默认入口**（检查条「准备并运行」、
-  素材库脚本行 ▶、接入中心逐行「试运行并连接」，前端规则在 `docs/rules/frontend/readiness-and-left-shell.md`「准备面板」，ADR 0116）；
+  `tests/test_script_probe.py::TestEntryLoopStopsOnNonEntryFailures`。**T09 / T09b 起它是 GUI 首跑的默认入口**（引导卡「开始准备」（T13b，取代检查条）、
+  素材库脚本行 ▶、接入中心逐行「试运行并连接」，前端规则在 `docs/rules/frontend/readiness-and-left-shell.md`「准备引导卡」，ADR 0116）；
   `/api/registry/probe` 留给本地开关关闭时的旧路径与 MCP / CLI（T10），是暂存的薄兼容 wrapper。它的取消（`/api/registry/probe/cancel`）
   **按 owner（T09b）**：试运行每次取到会话（`pool.build` 的 `before_build`）就把 `(worker, owned)` 记进 `app._PROBE_OWNERS`
   （`owned` = `pool.acquired_here`：本线程最近一次 `acquire()` 取到的就是它时那一次的 `created`），取消端点**先置标志、再读所有权**，

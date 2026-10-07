@@ -995,7 +995,7 @@ describe('试运行撞上起会话之前的门', () => {
     mockProbe.mockClear()
     mockProbe.mockResolvedValue({ ...ok([desc('Fig1')]), script: 'fig_labels.py' })
     // 在确认框里选定（推荐项已预选）→ 这一行自动再试运行
-    await act(async () => docButton('运行')!.click())
+    await act(async () => docButton('用这个目录')!.click())
     await flush()
     expect(setProjectWorkdir).toHaveBeenCalledWith('project')
     expect(mockProbe, '选定运行目录后没有重跑试运行').toHaveBeenCalledTimes(1)

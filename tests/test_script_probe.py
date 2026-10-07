@@ -297,6 +297,31 @@ class TestRegistryApi:
         # 旧的 candidates 口径不因清单放宽而改变：show-only 不在 candidates 里
         assert all(c["script"] != "show_only.py" for c in view["candidates"])
 
+    def test_all_scripts_linked_uses_the_scan_predicate(self, client, tmp_path):
+        """T13b：素材库脚本行的「已关联 N 张图」与导入即扫描同一判据（`probe.linked_scripts`）。只在注册表里登记了图名、
+        脚本一次没跑过、项目里也没有同名图的，不算已关联（修前：前端只看 `registered`，从没运行的脚本显示「已关联 1 张图」）；
+        项目里有同名图文件的算。"""
+        figs = _make_project(tmp_path)
+        write(figs, "never_ran.py", SHOW_ONLY)
+        write(figs, "has_file.py", SHOW_ONLY)
+        (figs / "HasFile.pdf").write_bytes(b"%PDF-1.4\n%%EOF\n")
+        (figs / "tavotto_registry.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "scripts": {
+                        "never_ran.py": {"entry": "main", "stems": ["NeverRan"]},
+                        "has_file.py": {"entry": "main", "stems": ["HasFile"]},
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        client.post("/api/projects/open", json={"path": str(figs)})
+        by = {e["script"]: e for e in client.get("/api/registry").get_json()["all_scripts"]}
+        assert by["never_ran.py"]["registered"] is True and by["never_ran.py"]["linked"] is False
+        assert by["has_file.py"]["registered"] is True and by["has_file.py"]["linked"] is True
+
     @pytest.mark.skipif(os.name == "nt", reason="POSIX symlink 语义")
     def test_symlink_escape_is_rejected(self, client, tmp_path):
         """realpath 之后仍要在项目内——symlink 指到项目外必须拒绝

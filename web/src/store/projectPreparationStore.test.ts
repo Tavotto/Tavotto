@@ -87,7 +87,7 @@ beforeEach(() => {
   __setPreparationTimingForTests({ requestTimeoutMs: 15_000, pollMs: [10_000] })
   useProjectPreparationStore.getState().clear()
   useScriptArgvStore.getState().clear()
-  useUiStore.setState({ preparationOpen: false })
+  useUiStore.setState({ guideCard: 'closed' })
   setCurrentProjectId('pj-a')
 })
 
@@ -106,7 +106,7 @@ describe('打开：参数在这一刻冻结', () => {
     expect(target).toEqual({ script: 'plot.py', argv: ['--tag', '', '--', '-1'], argv_sensitive: false })
     expect(pj).toBe('pj-a')
     expect(entry().report?.session_id).toBe('psess-1')
-    expect(useUiStore.getState().preparationOpen).toBe(true)
+    expect(useUiStore.getState().guideCard).toBe('card')
     expect(mockAct).not.toHaveBeenCalled() // 打开只检查，不运行
   })
 
@@ -269,7 +269,7 @@ describe('三个不同的动作', () => {
   it('关面板只改呈现：不发取消，订阅照旧', async () => {
     mockCreate.mockResolvedValueOnce(prepReport({ phase: 'running', actions: [action('cancel')] }))
     await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
-    useUiStore.getState().setPreparationOpen(false)
+    useUiStore.getState().setGuideCard('closed')
     expect(mockAct).not.toHaveBeenCalled()
     expect(entry().report?.phase).toBe('running')
   })

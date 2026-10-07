@@ -40,9 +40,9 @@ export default defineConfig({
     {
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
-      // error-recovery-en 自带 en-US locale、由 chromium-en 跑：
+      // error-recovery-en / preparation-card-en 自带 en-US locale、由 chromium-en 跑：
       // 基础 project 再跑一遍就是同一份内容双倍的串行启动与渲染等待
-      testIgnore: ['error-recovery-en.spec.ts'],
+      testIgnore: ['error-recovery-en.spec.ts', 'preparation-card-en.spec.ts'],
     },
     // WebKit 是 macOS 桌面壳（WKWebView）与 Safari 用户的引擎（审计 P1-03）：
     // 只跑黄金路径与可访问性——全量跑三遍只是把门禁拉长三倍，而剩下那些
@@ -87,6 +87,8 @@ export default defineConfig({
       testMatch: [
         'a11y.spec.ts',
         'error-recovery-en.spec.ts',
+        // 准备引导卡（T13b）：英文文案同样一句话、一个主按钮，可达名与布局在英文下照样成立
+        'preparation-card-en.spec.ts',
         'inspector-overflow.spec.ts',
         // 同步修改 → 标准写回窗口（ADR 0037 末节）：语言无关写法，两种语言各走一遍
         'sync-overrides.spec.ts',
