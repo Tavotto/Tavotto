@@ -326,4 +326,25 @@ describe('ScriptAnswersDialog', () => {
     })
     expect(box().disabled).toBe(false)
   })
+
+  it('删除随保存一起发：在飞时输入框、保存与各行 ⋯ 都锁住，回来才放开、只重跑一次（Codex #821 P2，暂存式删除下的同一条保证）', async () => {
+    let resolve!: (v: Awaited<ReturnType<typeof forgetScriptAnswer>>) => void
+    mockForget.mockReturnValueOnce(new Promise((r) => (resolve = r)))
+    useScriptInputStore.setState({ answers: TWO })
+    useScriptInputStore.getState().openManager('pick.py')
+    render()
+    const boxes = () => [...dialog()!.querySelectorAll<HTMLInputElement>('input')]
+    const menus = () => [...dialog()!.querySelectorAll<HTMLButtonElement>('[data-row-menu-trigger]')]
+    await typeInto(boxes()[1], 'b')
+    await forgetRow(dialog()!.querySelector('[data-script-answer="1"]')!)
+    await click(saveButton())
+    expect(mockForget).toHaveBeenCalledWith('pick.py', 1)
+    expect(boxes().every((b) => b.disabled)).toBe(true)
+    expect(menus().every((b) => b.disabled)).toBe(true)
+    expect(saveButton().disabled).toBe(true)
+    await act(async () => {
+      resolve({ scripts: { 'pick.py': [TWO['pick.py'][1]] }, location: '', pending: [] })
+    })
+    expect(runSpy).toHaveBeenCalledTimes(1)
+  })
 })
