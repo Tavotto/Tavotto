@@ -122,7 +122,7 @@ test('纯静态项目：没有检查条，直接可排版', async ({ app, page }
 })
 
 test('目录读不动：条说「没有检查完」，而不是当成没有脚本', async ({ app, page }) => {
-  test.skip(process.platform === 'win32', '需要 POSIX 权限位；本条在 CI 的 posix-e2e 腿上执行（issue #30）')
+  test.skip(process.platform === 'win32', '需要 POSIX 权限位；由 posix-e2e 的 chromium 执行')
   test.skip(typeof process.getuid === 'function' && process.getuid() === 0, 'root 不受权限位约束')
   const root = tmp('tavotto-scan-perm-')
   const project = path.join(root, 'p')
