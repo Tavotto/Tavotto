@@ -44,6 +44,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import stat
 import threading
 import time
 import uuid
@@ -265,6 +266,22 @@ def _role_of(item: dict) -> str:
     return ROLE_UNKNOWN  # unparseable
 
 
+def _marker_present(path: Path, root: Path, budget: scanbudget.Budget | None) -> bool:
+    """作用域标记文件在不在。导入即扫描（有 `budget`）按元数据判：只 `lstat`、不跟随——符号链接 / 路径
+    替身不探目标（UNC 会触发 SMB 访问），记一条 `unreadable_file`（partial）而不是当「没有标记」。
+    没有 `budget`（准备 / 依赖门）保持跟随用户自己的链接。"""
+    if budget is None:
+        return path.is_file()
+    try:
+        st = path.lstat()
+    except OSError:
+        return False
+    if scanbudget.is_redirect(st):
+        budget.note(scanbudget.ISSUE_UNREADABLE_FILE, scope="file", path=_rel_dir_posix(root, path))
+        return False
+    return stat.S_ISREG(st.st_mode)
+
+
 def _scope_of(
     root: Path,
     script: str,
@@ -292,7 +309,7 @@ def _scope_of(
                 for name in _SCOPE_MARKERS:
                     if budget is not None and budget.stop_reason() is not None:
                         return None
-                    if (d / name).is_file():
+                    if _marker_present(d / name, root, budget):
                         has = True
                         break
             except OSError:
@@ -336,11 +353,13 @@ def _targets_of(
         target["session_target"] = body
         targets.append(target)
     pending = [t for t in targets if t["role"] == ROLE_PLOT and not t["registered"]]
-    if len(pending) == 1:
+    unknown = any(t["role"] == ROLE_UNKNOWN for t in targets)
+    if len(pending) == 1 and not unknown:
+        # 还有未核验的 unknown 目标时不替用户挑默认（它可能才是要跑的那个）：落到下面的 ambiguous
         return targets, pending[0]["script"], "single"
     if len(pending) > 1:
         return targets, None, "ambiguous"
-    if any(t["role"] == ROLE_UNKNOWN for t in targets):
+    if unknown:
         # 还有读不了 / 没解析成的脚本是可选目标：它们**未核验**，不能因为别处有已连接的绘图脚本
         # 就当成「全连着了」收起提示——交给用户选（unknown 不当通过）
         return targets, None, "ambiguous"
