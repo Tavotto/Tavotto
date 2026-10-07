@@ -240,6 +240,62 @@ describe('Dialog：关闭时的焦点归还', () => {
     opener.remove()
     target.remove()
   })
+
+  // Codex #833（erwanjun 复核 8a349482）：退场动画没放完又打开，Presence 留着同一个 Content、不重挂载，
+  // 挂载时的初始焦点不再跑。jsdom 没有 CSS 动画：按 data-state 报 animationName，Presence 才会等 animationend
+  describe('退场中被重新打开（同一个 Content）', () => {
+    let spy: { mockRestore: () => void }
+    beforeEach(() => {
+      const real = window.getComputedStyle
+      spy = vi.spyOn(window, 'getComputedStyle').mockImplementation((el: Element, pseudo?: string | null) => {
+        const styles = real(el, pseudo)
+        if (!(el instanceof HTMLElement) || !el.hasAttribute('data-dialog')) return styles
+        return new Proxy(styles, {
+          get: (t, p) =>
+            p === 'animationName' ? (el.getAttribute('data-state') === 'closed' ? 'pop-out' : 'pop-in') : Reflect.get(t, p),
+        })
+      })
+    })
+    afterEach(() => spy.mockRestore())
+
+    it('焦点回到层里（初始落点：容器），不留在被模态层 aria-hidden 的打开者上；再关仍还给打开者', async () => {
+      const opener = document.createElement('button')
+      document.body.appendChild(opener)
+      opener.focus()
+      await render(<Probe open onOpenChange={() => {}} />)
+      const content = dialogEl('f')!
+      expect(document.activeElement).toBe(content)
+      await render(<Probe open={false} onOpenChange={() => {}} />)
+      expect(dialogEl('f'), '退场中仍是同一个 Content').toBe(content)
+      expect(document.activeElement).toBe(opener)
+      await render(<Probe open onOpenChange={() => {}} />)
+      expect(dialogEl('f')).toBe(content)
+      expect(opener.closest('[aria-hidden="true"]')).not.toBeNull()
+      expect(document.activeElement).toBe(content)
+      await render(<Probe open={false} onOpenChange={() => {}} />)
+      expect(document.activeElement).toBe(opener)
+      opener.remove()
+    })
+
+    it('重开之前焦点已交给层外一个没被藏起来的元素：不抢', async () => {
+      const opener = document.createElement('button')
+      document.body.appendChild(opener)
+      opener.focus()
+      await render(<Probe open onOpenChange={() => {}} />)
+      const content = dialogEl('f')!
+      await render(<Probe open={false} onOpenChange={() => {}} />)
+      // 模态层挂上之后才出现的表面（hideOthers 只藏挂载那一刻已有的兄弟）
+      const target = document.createElement('input')
+      document.body.appendChild(target)
+      target.focus()
+      await render(<Probe open onOpenChange={() => {}} />)
+      expect(dialogEl('f')).toBe(content)
+      expect(target.closest('[aria-hidden="true"], [inert]')).toBeNull()
+      expect(document.activeElement).toBe(target)
+      opener.remove()
+      target.remove()
+    })
+  })
 })
 
 describe('Dialog：遮罩只由栈底那个画', () => {
