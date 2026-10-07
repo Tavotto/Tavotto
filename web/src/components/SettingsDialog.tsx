@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { dialogCovered, useUiStore } from '@/store/uiStore'
+import { askDiscardDraft } from './askDiscardDraft'
 import { Dialog } from './ui/Dialog'
 import { CodingAgentsSection } from './settings/CodingAgentsSection'
 import { DiagnosticsSettings } from './settings/DiagnosticsSettings'
@@ -132,6 +133,13 @@ export function SettingsDialog() {
   const [section, setSection] = useState<SectionId>('general')
   const navRef = useRef<HTMLElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
+  /**
+   * 哪一页挂着没存的草稿（样式 / 规范页报上来；同一时刻只挂着一页）。切分区、关设置
+   * 会把那一页卸掉、草稿随之丢掉，所以先问一句；导航项上挂一个点（设计审计 2026-10-07 §9.1）。
+   */
+  const [dirtySection, setDirtySection] = useState<SectionId | null>(null)
+  const reportDirty = (id: SectionId) => (dirty: boolean) =>
+    setDirtySection((cur) => (dirty ? id : cur === id ? null : cur))
 
   // 调用方指定分区时（如顶栏「有新版本」）跳过去，之后仍由用户自由切换
   useEffect(() => {
@@ -146,7 +154,18 @@ export function SettingsDialog() {
   }, [section])
 
   if (!open) return null
-  const close = () => setOpen(false)
+  /** 当前页有没存的草稿时先问；「继续编辑」= false，什么都不动 */
+  const leaveSection = async () => dirtySection !== section || (await askDiscardDraft())
+  const close = async () => {
+    if (!(await leaveSection())) return
+    setOpen(false)
+  }
+  const go = async (id: SectionId) => {
+    if (id === section) return
+    if (!(await leaveSection())) return
+    setSection(id)
+    navRef.current?.querySelector<HTMLButtonElement>(`[data-section="${id}"]`)?.focus()
+  }
 
   const onNavKey = (e: KeyboardEvent<HTMLElement>) => {
     const keys = ['ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight', 'Home', 'End']
@@ -161,10 +180,7 @@ export function SettingsDialog() {
           : e.key === 'ArrowDown' || e.key === 'ArrowRight'
             ? (i + 1) % SECTIONS.length
             : (i - 1 + SECTIONS.length) % SECTIONS.length
-    setSection(SECTIONS[next])
-    navRef.current
-      ?.querySelector<HTMLButtonElement>(`[data-section="${SECTIONS[next]}"]`)
-      ?.focus()
+    void go(SECTIONS[next])
   }
 
   const navItem = (id: SectionId) => (
@@ -172,7 +188,7 @@ export function SettingsDialog() {
       key={id}
       type="button"
       data-section={id}
-      onClick={() => setSection(id)}
+      onClick={() => void go(id)}
       aria-current={section === id || undefined}
       // roving tabindex：Tab 只落在当前项，方向键在项之间走
       tabIndex={section === id ? 0 : -1}
@@ -183,13 +199,20 @@ export function SettingsDialog() {
       )}
     >
       {st(`section.${id}`)}
+      {/* 这一页有没存的改动：6px 的点，读屏读名字后面那句（data-nav-dirty 给用例认） */}
+      {dirtySection === id && (
+        <span data-nav-dirty className="ml-1.5 inline-flex align-middle">
+          <span aria-hidden className="size-1.5 rounded-full bg-accent" />
+          <span className="sr-only">{translate('draftGuard.unsaved', { ns: 'dialogs' })}</span>
+        </span>
+      )}
     </button>
   )
 
   return (
     <Dialog
       open
-      onOpenChange={setOpen}
+      onOpenChange={(v) => (v ? setOpen(true) : void close())}
       title={st('title')}
       width={SHELL_WIDTH}
       height={SHELL_HEIGHT}
@@ -233,10 +256,10 @@ export function SettingsDialog() {
             style={CONTENT_MODE[section] === 'normal' ? { maxWidth: CONTENT_MAX_WIDTH } : undefined}
             className="flex flex-col gap-7"
           >
-            {section === 'general' && <GeneralSettings close={close} />}
+            {section === 'general' && <GeneralSettings close={() => void close()} />}
             {section === 'project' && <ProjectSettings />}
-            {section === 'style' && <ProfilesSettings kind="style" />}
-            {section === 'spec' && <ProfilesSettings kind="spec" />}
+            {section === 'style' && <ProfilesSettings kind="style" onDirtyChange={reportDirty('style')} />}
+            {section === 'spec' && <ProfilesSettings kind="spec" onDirtyChange={reportDirty('spec')} />}
             {section === 'export' && <ExportSettings />}
             {section === 'ai' && <CodingAgentsSection />}
             {section === 'packages' && <PackagesSettings />}
