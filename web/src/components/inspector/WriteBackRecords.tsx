@@ -262,7 +262,7 @@ function RestoreDialog({
       useRenderStore.getState().markStale([panel.fileId])
       useUiStore
         .getState()
-        .setStatus(msg('versionHistory.restored', { dir: res.backup_dir }, 'inspector'))
+        .setStatus(msg('versionHistory.restored', { dir: res.backup_dir }, 'inspector'), 'done')
       onClose()
       onDone()
     } catch (e) {

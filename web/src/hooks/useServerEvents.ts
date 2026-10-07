@@ -104,7 +104,7 @@ export function handleServerEvent(ev: ServerEvent) {
             { name: short(ev.id), hint },
             'workspace',
           ),
-          'info',
+          'progress',
           { passive: true },
         )
       }
@@ -116,7 +116,7 @@ export function handleServerEvent(ev: ServerEvent) {
       // 一个变体还坏着 / 还在渲染时撤掉它。只认同一个主人——挂着的是别的图 / 别的类别的提示就不动
       settleRenderFailureToast(ev.pj, ev.id)
       // 被动通知：不顶掉用户刚触发的那句结果（「已修复 N 项」之类，见 uiStore.statusPassive）
-      setStatus(msg('status.renderDone', { name: short(ev.id) }, 'workspace'), 'info', {
+      setStatus(msg('status.renderDone', { name: short(ev.id) }, 'workspace'), 'done', {
         passive: true,
       })
       break

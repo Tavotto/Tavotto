@@ -199,7 +199,7 @@ export function StyleDialog() {
       return
     }
     setDraft(profileToDraft(stored))
-    useUiStore.getState().setStatus(msg('style.saved', { name: stored.display_name }, 'dialogs'))
+    useUiStore.getState().setStatus(msg('style.saved', { name: stored.display_name }, 'dialogs'), 'done')
   }
 
   const entries = presetEntries(draft)

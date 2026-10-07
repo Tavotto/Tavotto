@@ -84,6 +84,9 @@ preflight.runSpec()      规则求值（两份求值器，golden vectors 对齐�
   （修好依赖后自动重渲染成功，红色「无法渲染」不再挂着）——前提是**这个文件没有一个变体还坏着 / 还在渲染**
   （「坏着」只认画布上还有面板指着的变体，`recent` 里为撤销留着的旧变体不算；同文件不同覆盖的面板各自成败；SSE 的 done 与变体自己的响应谁先到不定，两处各问一次，响应那一处在在途槽位松开之后问）；此刻挂着的是
   别的图 / 别的类别的提示就不动。
+  **toast 的语气**（`uiStore.StatusTone`，2026-10-07 审计 P0）：`info`（缺省，Info 图标）/ `progress`
+  （进行中，转圈）/ `done`（做成了，✓）/ `error`。只有 `error` 改变行为（常驻、assertive），其余三档只换
+  图标；报告「做成了」的调用点显式传 `done`、「正在…」传 `progress`，不确定就留缺省——不许让「正在构建…」打勾。
   看护 `web/src/hooks/useServerEvents.test.ts`、`web/src/store/statusPassive.test.ts`、`web/src/store/renderStore.test.ts`。
 * **就绪度不混进问题清单**：面板底部只放一条通往接入状态的链接。
 * **面板的呈现层在 `lib/problemList.ts`（2026-09-06，审计 T09）**，纯函数，

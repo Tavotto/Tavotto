@@ -71,7 +71,7 @@ import { captureSaveContext, reportSaveSkipped, stillCurrent } from './saveConte
 import { useInteractionStore } from './interactionStore'
 import { exactPanelManifest, rejectArtifactRenders, renderEpoch, renderKeyOf, useRenderStore } from './renderStore'
 import { useSelectionStore } from './selectionStore'
-import { askConfirm, useUiStore } from './uiStore'
+import { askConfirm, useUiStore, type StatusTone } from './uiStore'
 import { useViewportStore } from './viewportStore'
 import { rectOf, visualBounds, type Rect } from '@/lib/geometry'
 import type { CropRect, PanelRotation } from '@/types/document'
@@ -105,7 +105,7 @@ const doc = () => useDocumentStore.getState().doc
 const commit = (label: UiMessage, recipe: (d: FigureDocument) => void, opts?: CommitOptions) =>
   useDocumentStore.getState().commit(label, recipe, opts)
 const select = (ids: string[]) => useSelectionStore.getState().set(ids)
-const status = (message: UiMessage, tone?: 'info' | 'error') =>
+const status = (message: UiMessage, tone?: StatusTone) =>
   useUiStore.getState().setStatus(message, tone)
 
 export const findObject = (id: string): CanvasObject | undefined =>
@@ -570,7 +570,7 @@ export async function runManualSave(): Promise<void> {
   // 但按下那一刻的内容已经在盘上了（Codex #679）
   if (wrote) emitLayoutSaved('local', { moment: ctx.moment })
   if (state === 'saved' || state === 'clean') {
-    ui.setStatus(msg('save.doneLocal', undefined, 'workspace'))
+    ui.setStatus(msg('save.doneLocal', undefined, 'workspace'), 'done')
   } else if (state === 'conflict') {
     ui.setStatus(msg('save.conflict', undefined, 'workspace'), 'error')
   } else if (state === 'save_error') {
