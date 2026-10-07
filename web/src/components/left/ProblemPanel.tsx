@@ -205,6 +205,21 @@ export function ProblemPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cursor])
 
+  // 游标换了之后把那一行滚进清单的可视区（F8 走进视口外的一支、画布标记指到长树深处）。它可能要等上面那次
+  // 「打开被折起的组」再渲染一轮才挂出来，所以记成待办、每轮渲染后看一眼：挂出来就滚一次、销账；只看不抢焦点
+  // （点画布标记时焦点留在画布）。普通的重渲染没有待办，不滚（Codex #832）
+  const scrollFor = useRef<typeof cursor>(null)
+  useEffect(() => {
+    scrollFor.current = cursor
+  }, [cursor])
+  useEffect(() => {
+    if (!scrollFor.current || scrollFor.current !== cursor) return
+    const row = listRef.current?.querySelector<HTMLElement>('[data-issue-row][aria-current="true"]')
+    if (!row) return
+    scrollFor.current = null
+    row.scrollIntoView?.({ block: 'nearest' })
+  })
+
   // 面板卸载（换抽屉 / 收起）时画布上的悬停轮廓一起撤
   useEffect(() => () => useUiStore.getState().setIssueHover(null), [])
 
