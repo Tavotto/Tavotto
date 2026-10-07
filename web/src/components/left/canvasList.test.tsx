@@ -347,6 +347,41 @@ describe('行与键位契约（2026-10-07 设计审计 §10.3）', () => {
     expect(document.querySelector('[role="menu"]')).not.toBeNull()
   })
 
+  it('行菜单开着时 ↑↓ / Home / End 是菜单的：焦点在菜单项之间走，列表不碰下面的行、Tab 停靠点不挪', async () => {
+    await mount()
+    const opens = () => [...container.querySelectorAll<HTMLButtonElement>('[data-canvas-open]')]
+    // 在中间那一行上开菜单：列表若把方向键当成自己的，会把焦点（与 Tab 停靠点）挪到别的行
+    act(() => opens()[1].focus())
+    key(opens()[1], 'F10', { shiftKey: true })
+    const menu = () => document.querySelector<HTMLElement>('[role="menu"]')
+    const items = () => [...menu()!.querySelectorAll<HTMLElement>('[role="menuitem"]:not([data-disabled])')]
+    expect(menu(), '⇧F10 没开出菜单').not.toBeNull()
+    expect(items().length).toBeGreaterThan(2)
+    // 菜单在 portal 里（DOM 上不在列表里），但 React 事件沿组件树冒泡到列表的 onKeyDown
+    expect(container.contains(menu())).toBe(false)
+    act(() => items()[0].focus())
+    // 焦点被抢到行上那一下，Radix 的焦点陷阱会立刻拉回菜单——所以得在行上记下来
+    const stolen: string[] = []
+    for (const b of opens()) b.addEventListener('focus', () => stolen.push(b.textContent ?? ''))
+    const walk = async (k: string) => {
+      await act(async () => {
+        document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }))
+        await new Promise((r) => setTimeout(r, 0))
+      })
+      expect(menu(), `${k} 把菜单关掉了`).not.toBeNull()
+      expect(stolen, `${k} 被列表当成了「走行」，焦点被挪到了下面的行`).toEqual([])
+    }
+    await walk('ArrowDown')
+    expect(document.activeElement).toBe(items()[1])
+    await walk('End')
+    expect(document.activeElement).toBe(items().at(-1))
+    await walk('Home')
+    expect(document.activeElement).toBe(items()[0])
+    await walk('ArrowUp')
+    expect(menu()!.contains(document.activeElement)).toBe(true)
+    expect(opens().map((b) => b.tabIndex), 'Tab 停靠点仍是开菜单的那一行').toEqual([-1, 0, -1])
+  })
+
   it('拖到另一张上画落点线，松手按真实顺序挪', async () => {
     await mount()
     const [a, , c] = rowsEl()

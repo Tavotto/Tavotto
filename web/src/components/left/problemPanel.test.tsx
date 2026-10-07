@@ -852,6 +852,73 @@ describe('定位后清单留在原地（审计 T09）', () => {
     expect(useUiStore.getState().problemCursor).toBeNull()
   })
 
+  /** F8 一下（与「下一项」同一个动作） */
+  const pressF8 = (shiftKey = false) =>
+    act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'F8', shiftKey, bubbles: true }))
+    })
+  /** 树上各支（不含图头）从上到下的机器标识，即 F8 的走法 */
+  const branchKeys = () =>
+    [...container.querySelectorAll<HTMLElement>('li[data-problem-card]')]
+      .filter((c) => !c.querySelector('li[data-problem-card]'))
+      .map((c) => c.dataset.problemCardKey!)
+  const cursorObject = () => {
+    const id = useUiStore.getState().problemCursor?.issueId
+    return useValidationStore.getState().issues.find((i) => i.issueId === id)?.objectRef.objectId ?? null
+  }
+
+  it('当前这一支最后一条修好消失（别的支还有）：F8 / ⇧F8 接着走相邻的那一支，不回到树头 / 树尾', async () => {
+    // 整份排版：三支 page → p1 → p2（定位进快编不会把范围收成「当前图」）
+    await seedThree()
+    useUiStore.setState({ problemScope: 'document' })
+    await mount(<ProblemPanel />)
+    const [page, ...rest] = useValidationStore.getState().issues
+    expect(page.objectRef.objectId, '夹具：页面级那条在第一支').toBeNull()
+    expect(branchKeys()).toEqual([branchKeys()[0], 'figure:p1', 'figure:p2'])
+    const onP1 = rest.filter((i) => i.objectRef.objectId === 'p1')
+    const onP2 = rest.filter((i) => i.objectRef.objectId === 'p2')
+    const fixP1 = () => act(async () => useValidationStore.setState({ issues: [page, ...onP2] }))
+
+    await pressF8()
+    await pressF8()
+    expect(cursorObject()).toBe('p1')
+    await fixP1()
+    await pressF8()
+    expect(cursorObject(), '下一项该是 p1 之后的 p2，不是树头的页面那一支').toBe('p2')
+
+    // 反方向：⇧F8 走 p1 之前的那一支，不是树尾
+    await act(async () => useValidationStore.setState({ issues: [page, ...onP1, ...onP2] }))
+    await act(async () => useUiStore.getState().setProblemDrill(null))
+    await pressF8()
+    await pressF8()
+    expect(cursorObject()).toBe('p1')
+    await fixP1()
+    await pressF8(true)
+    expect(cursorObject(), '上一项该是 p1 之前的页面那一支，不是树尾的 p2').toBeNull()
+    expect(useUiStore.getState().problemCursor?.issueId).toBe(page.issueId)
+  })
+
+  it('多支修到只剩一支（直接列规则组）时，点那一支里的行：游标落下且留着，不被旧的那一支吞掉', async () => {
+    await seedThree()
+    useUiStore.setState({ problemScope: 'document' })
+    await mount(<ProblemPanel />)
+    const issues = useValidationStore.getState().issues
+    const onP1 = issues.filter((i) => i.objectRef.objectId === 'p1')
+    // 在 p2 那一支里落游标
+    await click(container.querySelector('li[data-problem-card-key="figure:p2"] > button')!)
+    await click(rows()[0])
+    expect(cursorObject()).toBe('p2')
+    expect(liveDrill()).toEqual({ kind: 'figure', key: 'p2' })
+    // 其余都修好了，只剩 p1：没有分桶层，规则直接在顶层
+    await act(async () => useValidationStore.setState({ issues: onP1 }))
+    expect(container.querySelector('li[data-problem-card]')).toBeNull()
+    expect(rows()).toHaveLength(onP1.length)
+    await click(rows()[0])
+    expect(useUiStore.getState().problemCursor?.issueId).toBe(onP1[0].issueId)
+    expect(rows()[0].getAttribute('aria-current')).toBe('true')
+    expect(cursorBar()?.textContent).toContain(`第 1 / ${onP1.length} 项`)
+  })
+
   it('叶子行保留稳定机器标识（教程与 e2e 靠它选行）', async () => {
     await seed()
     await mount(<ProblemPanel />)
