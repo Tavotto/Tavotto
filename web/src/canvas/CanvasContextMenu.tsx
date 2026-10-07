@@ -3,7 +3,7 @@ import { ClipboardPaste, Fullscreen, SlidersHorizontal, SquareMousePointer } fro
 import { MenuCheckItem, MenuItem, MenuSeparator, PointMenu } from '@/components/ui/Menu'
 import { keyOf } from '@/lib/keymap'
 import { canPasteFromMenu, pasteObjects } from '@/lib/clipboard'
-import { selectAll } from '@/store/actions'
+import { isSelectAllTarget, selectAll } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
 import { runDiscreteAction } from '@/store/gestureCoordinator'
 import { useUiStore } from '@/store/uiStore'
@@ -24,7 +24,8 @@ export function CanvasContextMenu({ at, close }: { at: { x: number; y: number };
   const showRulers = useUiStore((s) => s.showRulers)
   const showGrid = useUiStore((s) => s.showGrid)
   const showSafeArea = useUiStore((s) => s.showSafeArea)
-  const hasObjects = useDocumentStore((s) => s.doc.objects.length > 0)
+  // 与 `selectAll` 同一判据：全是隐藏 / 锁定的对象时点了什么也选不上，不该亮着（Codex #833）
+  const canSelectAll = useDocumentStore((s) => s.doc.objects.some(isSelectAllTarget))
   const ui = () => useUiStore.getState()
   const run = (fn: () => unknown) => () => {
     close()
@@ -55,7 +56,7 @@ export function CanvasContextMenu({ at, close }: { at: { x: number; y: number };
       <MenuItem
         icon={SquareMousePointer}
         shortcut={keyOf('selectAll')}
-        disabled={!hasObjects}
+        disabled={!canSelectAll}
         data-canvas-menu-item="select-all"
         onSelect={run(selectAll)}
       >

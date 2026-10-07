@@ -80,6 +80,21 @@ describe('MeasureChip', () => {
     expect(chip()!.textContent).toBe('100.0 × 8.0 mm')
   })
 
+  // Codex #833：旋转 90° 的 100×8 横条转出来是竖条（中心 60, 24：x 56–64、y −26–74）；读数仍是逻辑的 W × H，
+  // 芯片贴在看得见的外接框下面——按逻辑盒（底边 y=28）摆会压在竖条中段
+  it('旋转对象：读数是逻辑 W × H，位置按看得见的外接框（visualBounds）', () => {
+    act(() => {
+      useDocumentStore.getState().commit(literal('转'), (d) => {
+        ;(d.objects[0] as ShapeObject).rotationDeg = 90
+      })
+      useViewportStore.setState({ viewH: 2000 })
+      useInteractionStore.getState().begin('resize')
+    })
+    expect(chip()!.textContent).toBe('100.0 × 8.0 mm')
+    expect(chip()!.style.left).toBe(`${mmToWorld(56) + mmToWorld(8) / 2}px`)
+    expect(chip()!.style.top).toBe(`${mmToWorld(74) + 8}px`)
+  })
+
   it('方向键微调：Δ 带正负号', () => {
     act(() => useInteractionStore.getState().setNudge({ dx: 0.5, dy: -1 }))
     expect(chip()!.dataset.measureChip).toBe('offset')

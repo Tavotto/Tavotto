@@ -18,6 +18,7 @@ import { useDocumentStore } from '@/store/documentStore'
 import { useUiStore } from '@/store/uiStore'
 import { mmToWorld, useViewportStore } from '@/store/viewportStore'
 import { emptyProject } from '@/types/document'
+import { literal } from '@/i18n'
 import { CHROMIUM_UA, SAFARI_UA, WKWEBVIEW_UA, stubClipboardEngine } from '@/test/asyncClipboard'
 
 declare global {
@@ -102,6 +103,25 @@ describe('空白画布的右键菜单', () => {
   it('没有对象：「全选」置灰', async () => {
     await contextMenuAt(stage())
     expect(item('select-all').hasAttribute('data-disabled')).toBe(true)
+  })
+
+  // Codex #833：判据与 `selectAll` 同一份——只有隐藏 / 锁定的对象时点了也选不上，不该亮着
+  it('只有隐藏 / 锁定的对象：「全选」置灰；有一个可选的就亮', async () => {
+    const shape = (id: string, extra: object) =>
+      ({ id, type: 'shape', shape: 'rect', x: 10, y: 10, w: 20, h: 10, strokePt: 1, color: '#111', fill: null, ...extra }) as never
+    await act(async () =>
+      useDocumentStore.getState().commit(literal('放'), (d) => {
+        d.objects.push(shape('h', { hidden: true }), shape('l', { locked: true }))
+      }),
+    )
+    await contextMenuAt(stage())
+    expect(item('select-all').hasAttribute('data-disabled')).toBe(true)
+    await act(async () =>
+      useDocumentStore.getState().commit(literal('放'), (d) => {
+        d.objects.push(shape('ok', {}))
+      }),
+    )
+    expect(item('select-all').hasAttribute('data-disabled')).toBe(false)
   })
 
   it('视图开关：选了不关菜单，真的改了 uiStore', async () => {

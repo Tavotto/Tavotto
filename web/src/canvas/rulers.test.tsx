@@ -11,7 +11,7 @@ import { literal } from '@/i18n'
 import { Rulers } from './Rulers'
 import { useDocumentStore } from '@/store/documentStore'
 import { useSelectionStore } from '@/store/selectionStore'
-import { useViewportStore } from '@/store/viewportStore'
+import { mmToWorld, useViewportStore } from '@/store/viewportStore'
 import { emptyProject, type ShapeObject } from '@/types/document'
 
 declare global {
@@ -89,6 +89,23 @@ describe('标尺', () => {
     await act(async () => useSelectionStore.getState().set(['r1']))
     expect(bands()).toHaveLength(2)
     expect(bands().every((b) => (b.alpha ?? 1) < 0.5)).toBe(true)
+  })
+
+  // Codex #833：旋转 90° 的 20×10 矩形看得见的是 x 15–25 / y 5–25（中心 20, 15），不是未旋转的 x 10–30 / y 10–20
+  it('旋转对象：选区带按看得见的外接框（visualBounds），与 zoomToSelection 同一口径', async () => {
+    useDocumentStore.getState().commit(literal('转'), (d) => {
+      ;(d.objects[0] as ShapeObject).rotationDeg = 90
+    })
+    await act(async () => root.render(<Rulers viewW={600} viewH={400} />))
+    calls = []
+    await act(async () => useSelectionStore.getState().set(['r1']))
+    const px = (mm: number) => Math.round(mmToWorld(mm)) + 0.5
+    const bands = calls.filter((c) => c.op === 'fillRect' && c.fill === '#4685e2').map((c) => c.args as number[])
+    // 顶部标尺：fillRect(s0, 0, s1 - s0, h)；左侧标尺：fillRect(0, s0, w, s1 - s0)
+    const xBand = bands.find((a) => a[1] === 0)!
+    const yBand = bands.find((a) => a[0] === 0 && a[1] !== 0)!
+    expect([xBand[0], xBand[0] + xBand[2]]).toEqual([px(15), px(25)])
+    expect([yBand[1], yBand[1] + yBand[3]]).toEqual([px(5), px(25)])
   })
 
   it('颜色按挂载量一次：视口动了重画，但不再每帧读样式', async () => {

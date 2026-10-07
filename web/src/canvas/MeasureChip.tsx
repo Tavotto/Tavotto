@@ -1,7 +1,7 @@
 import { useTranslation } from 'react-i18next'
 import { perfCount } from '@/perf/core'
 import { t as translate } from '@/i18n'
-import { boundsOf } from '@/lib/geometry'
+import { boundsOf, visualBounds, type Rect } from '@/lib/geometry'
 import { formatMm } from '@/lib/units'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
@@ -50,15 +50,13 @@ export function MeasureChip() {
         : null
   if (!mode) return null
 
-  // 被改的那个框：画新对象时是草稿框，其余是选区里看得见的对象的联合包围盒
-  const box =
-    kind === 'draw' && draft
-      ? { x: draft.x, y: draft.y, w: draft.w, h: draft.h }
-      : (() => {
-          const sel = objects.filter((o) => ids.includes(o.id) && !o.hidden)
-          return sel.length ? boundsOf(sel) : null
-        })()
-  if (!box) return null
+  // 被改的那个框：画新对象时是草稿框，其余是选区里看得见的对象。读数（W × H / X, Y）说的是逻辑盒（未旋转的
+  // x/y/w/h，与属性页同一套数）；芯片**贴在**看得见的外接框下面（`visualBounds` 的并，Codex #833）——
+  // 旋转的文字 / 形状转出来比逻辑盒高时，按逻辑盒摆会压在对象上。
+  const sel = kind === 'draw' && draft ? [] : objects.filter((o) => ids.includes(o.id) && !o.hidden)
+  const box: Rect | null = kind === 'draw' && draft ? { x: draft.x, y: draft.y, w: draft.w, h: draft.h } : boundsOf(sel)
+  const anchor: Rect | null = sel.length ? boundsOf(sel.map(visualBounds)) : box
+  if (!box || !anchor) return null
 
   const text =
     mode === 'offset'
@@ -68,9 +66,9 @@ export function MeasureChip() {
         : translate('measure.mmPair', { a: formatMm(box.x), b: formatMm(box.y) })
 
   const t = { zoom, panX, panY, originX: 0, originY: 0 }
-  const left = mmToViewX(box.x, t) + mmToPx(box.w, t) / 2
-  const top = mmToViewY(box.y, t)
-  const bottom = top + mmToPx(box.h, t)
+  const left = mmToViewX(anchor.x, t) + mmToPx(anchor.w, t) / 2
+  const top = mmToViewY(anchor.y, t)
+  const bottom = top + mmToPx(anchor.h, t)
   const below = bottom + GAP + CHIP_H <= viewH || !viewH
   return (
     <div
