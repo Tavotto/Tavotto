@@ -38,9 +38,6 @@ jobs:
           workspaces: |
             workerd
             src-tauri
-      - name: beta 目录隔离单测（壳给 sidecar 补的 Tavotto Beta 配置 / 数据目录）
-        run: cargo test --release --manifest-path src-tauri/Cargo.toml beta_dirs
-
       - name: 构建 Rust supervisor（tavotto-workerd）
         run: cargo build --release --manifest-path workerd/Cargo.toml
 
@@ -79,6 +76,11 @@ jobs:
             --figures "$dst" --expect-source bundled `
             --expect-control-plane workerd `
             --expect-packages numpy,pandas,scipy,seaborn,PIL,matplotlib
+
+      # 必须在「打包 sidecar」之后：编 tavotto-desktop 会跑 build.rs → tauri-build 核 tauri.conf 的
+      # bundle.resources（../dist/Tavotto），dist 还没出时 panic（run 37559988495）
+      - name: beta 目录隔离单测（壳给 sidecar 补的 Tavotto Beta 配置 / 数据目录）
+        run: cargo test --release --manifest-path src-tauri/Cargo.toml beta_dirs
 
       - name: Tauri 打包（NSIS，beta 覆盖）
         run: |
