@@ -174,7 +174,7 @@ import { hasTextStyleBar, TextStyleBar, TEXT_BAR_PROPS } from './TextStyleBar'
 import { LEGEND_CARD_PROPS, LegendCard } from './LegendCard'
 import { LEGEND_SPACING_PROPS, LegendSpacingCard } from './controls/LegendSpacingCard'
 import { ColorScaleLink } from './ColorScaleLink'
-import { ResetChip, labeledWithState } from './controls/textRows'
+import { ResetChip, ResetPairChip, labeledWithState } from './controls/textRows'
 import {
   LEGEND_ANCHOR_PROP,
   LEGEND_PLACEMENT_PROPS,
@@ -839,7 +839,8 @@ const PAIR_TEXT: Record<string, PairText> = Object.fromEntries(
 /**
  * 两条数值字段并排成一行（审计 T22：色阶上下限并排）。
  *
- * 两条仍是**各自的** manifest 字段：各写各的 override、各有各的恢复按钮，
+ * 两条仍是**各自的** manifest 字段：各写各的 override、各自可恢复（状态槽一格，
+ * 两条都改过时是 `ResetPairChip` 的小菜单），
  * 值也不互相钳制（下限大于上限是 matplotlib 自己的事，界面不替它裁决）。
  * 这里只管排版：一个行标题 + 两个带前缀的数字框。写入走 `useElementWriter`
  * ——与刻度卡、边框卡同一份（局部预览 / 事务 / 渲染时机收在一处）。
@@ -891,19 +892,19 @@ function PairRow({
         label={labeledWithState(text.label(), dirty.length === 0 ? 'none' : 'all')}
         labelWidth={LABEL_W}
         status={
-          dirty.length > 0 && (
-            // 一行一颗恢复钮（状态槽只有一格）：清掉这一对里改过的那几条
-            <ResetChip
-              label={text.label()}
-              onReset={() =>
-                clearOverrides(
-                  panel.id,
-                  elMsg('resetProp', { label: text.label() }),
-                  dirty.map((f) => ({ gid: element.gid, prop: f.prop })),
-                )
-              }
-            />
-          )
+          // 状态槽只有一格，但两条各自可恢复：只改了一条就只清那一条，两条都改了给一张
+          // 「恢复下限 / 恢复上限 / 两项都恢复」小菜单（Codex #829 P2）
+          <ResetPairChip
+            label={text.label()}
+            fields={dirty.map((f) => ({ prop: f.prop, label: propLabel(f.prop, element.role) }))}
+            onReset={(props, label) =>
+              clearOverrides(
+                panel.id,
+                elMsg('resetProp', { label }),
+                props.map((prop) => ({ gid: element.gid, prop })),
+              )
+            }
+          />
         }
       >
         {/* 两个半列：控件列的左右两半（2026-10-07 行网格） */}
@@ -1325,19 +1326,20 @@ function AxesRangeCard({
                   label={labeledWithState(invertLabel, invert.some(overridden))}
                   labelWidth={LABEL_W}
                   status={
-                    invert.some(overridden) && (
-                      // 一行一颗恢复钮：清掉 X / Y 里改过的那几条
-                      <ResetChip
-                        label={invertLabel}
-                        onReset={() =>
-                          clearOverrides(
-                            panel.id,
-                            elMsg('resetProp', { label: invertLabel }),
-                            invert.filter(overridden).map((p) => ({ gid: element.gid, prop: p })),
-                          )
-                        }
-                      />
-                    )
+                    // X / Y 是两条各自的 override：各自可恢复，两条都改了才给「两项都恢复」（Codex #829 P2）
+                    <ResetPairChip
+                      label={invertLabel}
+                      fields={invert
+                        .filter(overridden)
+                        .map((p) => ({ prop: p, label: propLabel(p, element.role) }))}
+                      onReset={(props, label) =>
+                        clearOverrides(
+                          panel.id,
+                          elMsg('resetProp', { label }),
+                          props.map((prop) => ({ gid: element.gid, prop })),
+                        )
+                      }
+                    />
                   }
                 >
                   <div className="flex items-center gap-3" role="group" aria-label={el('invertAria')}>

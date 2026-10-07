@@ -322,6 +322,7 @@
       "vmin": "Auto range"
     },
     "resetProp": "Reset {{label}}",
+    "resetPropBoth": "Reset both",
     "resetToScriptCount_one": "Restore the whole figure · {{count}} edit",
     "resetToScriptCount_other": "Restore the whole figure · {{count}} edits",
     "restoreMenuTip": "Restore figure edits",

@@ -377,6 +377,35 @@ describe('几何 → 范围与变换 → 刻度与网格 → 边框，四类任�
     })
     expect(overrideOf('axes_0', 'invert_y')).toBe(true)
   })
+
+  it.each([
+    ['invert_x', '反转 X 轴'],
+    ['invert_y', '反转 Y 轴'],
+  ])('X / Y 都反转过：只恢复 %s，另一条的修改留着（Codex #829 P2）', async (prop, label) => {
+    await mount()
+    await act(async () => byAria('反转 X 轴')!.click())
+    await act(async () => byAria('反转 Y 轴')!.click())
+    // 状态槽里那一颗钮此时是菜单触发器（行标题「反转」）；Radix 认 pointerdown
+    const trigger = byAria('恢复反转')!
+    expect(trigger).toBeTruthy()
+    await act(async () => {
+      trigger.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }))
+    })
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0))
+    })
+    const item = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
+      (m) => m.textContent === `恢复${label}`,
+    )!
+    await act(async () => item.click())
+    const other = prop === 'invert_x' ? 'invert_y' : 'invert_x'
+    expect(overrideOf('axes_0', prop)).toBeUndefined()
+    expect(overrideOf('axes_0', other)).toBe(true)
+    // 只剩一条改过：钮回到普通的单条恢复，名字说的就是剩下那一条
+    const otherLabel = other === 'invert_x' ? '反转 X 轴' : '反转 Y 轴'
+    await act(async () => byAria(`恢复${otherLabel}`)!.click())
+    expect(overrideOf('axes_0', other)).toBeUndefined()
+  })
 })
 
 /* ------------------- 2026-09-15 全面打磨（L2 / L11 / E1 / E2 / E3） ------------------ */
