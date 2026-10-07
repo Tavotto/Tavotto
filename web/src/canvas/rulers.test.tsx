@@ -12,7 +12,8 @@ import { Rulers } from './Rulers'
 import { useDocumentStore } from '@/store/documentStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { mmToWorld, useViewportStore } from '@/store/viewportStore'
-import { emptyProject, type ShapeObject } from '@/types/document'
+import { useWorkspaceStore } from '@/store/workspace'
+import { emptyProject, type PanelObject, type ShapeObject } from '@/types/document'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -72,6 +73,7 @@ afterEach(async () => {
   await act(async () => root.unmount())
   host.remove()
   HTMLCanvasElement.prototype.getContext = realGetContext
+  useWorkspaceStore.getState().clear()
   vi.restoreAllMocks()
 })
 
@@ -122,5 +124,56 @@ describe('标尺', () => {
     expect(labels.length).toBeGreaterThan(0)
     for (const l of labels) expect(l).toMatch(/^-?\d+$/)
     expect(labels).not.toContain('-0')
+  })
+})
+
+/**
+ * 快速编辑这一屏只画正在编辑的那张图（Codex #833 P2）：选区里挂着的版面对象（从排版带进来的、⌘A 留下的）
+ * 不进选区带——带只跨那张图；选区里只有版面对象就没有带。对照组：排版里带跨整个选区。
+ * 今天 `CanvasStage` 在快速编辑里不挂标尺，这里直接挂 `Rulers` 量的是它自己的第二道判据。
+ */
+describe('标尺的选区带在快速编辑里只认那张图', () => {
+  const panel: PanelObject = {
+    id: 'p1', type: 'panel', fileId: 'Fig1.pdf', fileKind: 'pdf', nativeW: 80, nativeH: 60,
+    overrides: [], x: 100, y: 50, w: 40, h: 30,
+  }
+  const px = (mm: number) => Math.round(mmToWorld(mm)) + 0.5
+  const xBand = () => {
+    const b = calls.filter((c) => c.op === 'fillRect' && c.fill === '#4685e2').map((c) => c.args as number[])
+    const x = b.find((a) => a[1] === 0)
+    return x ? [x[0], x[0] + x[2]] : null
+  }
+  beforeEach(() => {
+    useDocumentStore.getState().commit(literal('加图'), (d) => {
+      d.objects.push(panel)
+    })
+  })
+
+  it('排版里：带跨整个选区（对照组）', async () => {
+    await act(async () => root.render(<Rulers viewW={600} viewH={400} />))
+    calls = []
+    await act(async () => useSelectionStore.getState().set(['r1', 'p1']))
+    expect(xBand()).toEqual([px(10), px(140)])
+  })
+
+  it('快速编辑里选区含那张图与版面对象：带只跨那张图', async () => {
+    useWorkspaceStore.getState().enterFastEdit('p1')
+    await act(async () => root.render(<Rulers viewW={600} viewH={400} />))
+    calls = []
+    await act(async () => useSelectionStore.getState().set(['r1', 'p1']))
+    expect(xBand()).toEqual([px(100), px(140)])
+  })
+
+  it('快速编辑里选区只有版面对象：没有带', async () => {
+    useWorkspaceStore.getState().enterFastEdit('p1')
+    await act(async () => root.render(<Rulers viewW={600} viewH={400} />))
+    // 先让带出现（选那张图），再换成只有版面对象：带的落点变了必然重画，量的是那一次重画
+    await act(async () => useSelectionStore.getState().set(['p1']))
+    expect(xBand()).toEqual([px(100), px(140)])
+    calls = []
+    await act(async () => useSelectionStore.getState().set(['r1']))
+    // 主语核对：确实重画了（刻度照画），不是什么都没画
+    expect(calls.some((c) => c.op === 'fillText')).toBe(true)
+    expect(calls.filter((c) => c.op === 'fillRect' && c.fill === '#4685e2')).toHaveLength(0)
   })
 })

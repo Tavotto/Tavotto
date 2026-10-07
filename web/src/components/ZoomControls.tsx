@@ -7,7 +7,7 @@ import { fitStage, useCanZoomToSelection, zoomToSelection } from '@/store/zoomTo
 import { Numbers } from '@sfinterface/numbers'
 import { Button } from './ui/Button'
 import { NumberField } from './ui/Input'
-import { Menu, MenuItem, MenuRadioGroup, MenuRadioItem, MenuSeparator } from './ui/Menu'
+import { Menu, MenuField, MenuItem, MenuRadioGroup, MenuRadioItem, MenuSeparator } from './ui/Menu'
 
 const ZOOM_PRESETS = [0.5, 0.75, 1, 1.5, 2, 4]
 
@@ -64,8 +64,9 @@ export function ZoomControls() {
         }
       >
         {/* 可以直接敲一个倍率（2026-10-07 设计审计 §10.1）：菜单顶上一格数字框，回车 / 失焦生效。
-            按键不交给菜单（Radix 菜单会把字母当首字母跳转、把方向键当换项） */}
-        <div className="px-1 pb-1" onKeyDown={(e) => e.stopPropagation()} data-zoom-value-row>
+            `MenuField`：键盘打开菜单先落在这一格、↓ / Tab 回到菜单项（Codex #833 P2：此前是菜单里一个普通
+            div，方向键只在菜单项之间漫游、键盘走不进去）。按键不交给菜单（首字母跳转），由 NumberField 自己拦 */}
+        <MenuField label={t('topbar.zoomValueInput')} data-zoom-value-row>
           <NumberField
             fill
             value={Math.round(zoom * 100)}
@@ -78,7 +79,7 @@ export function ZoomControls() {
             dataProp="zoom-value"
             onChange={(v) => useViewportStore.getState().setZoomCentered(v / 100)}
           />
-        </div>
+        </MenuField>
         <MenuItem shortcut={keyOf('zoomIn')} onSelect={() => useViewportStore.getState().zoomBy(1.25)}>
           {t('topbar.zoomIn')}
         </MenuItem>

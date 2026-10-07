@@ -31,11 +31,24 @@ export function selectionBoxOf(
   ids: readonly string[],
   fastEditPanelId: string | null,
 ): Rect | null {
-  const objs = objects.filter(
-    (o) => ids.includes(o.id) && !o.hidden && (fastEditPanelId === null || o.id === fastEditPanelId),
-  )
+  const objs = renderedSelection(objects, ids, fastEditPanelId)
   const box = objs.length ? boundsOf(objs.map(visualBounds)) : null
   return box && box.w > 0 && box.h > 0 ? box : null
+}
+
+/**
+ * 选区里**此刻画在舞台上的**对象：没隐藏，快速编辑里只有正在编辑的那张图（`fastEditPanelId`，排版里 null）。
+ * 判据只有这一处——`selectionBoxOf`（缩放到选中）与标尺的选区带（`canvas/Rulers`）都读它，选区里挂着的
+ * 看不见的版面对象既不参与取景、也不画进标尺带（Codex #833）。
+ */
+export function renderedSelection(
+  objects: readonly CanvasObject[],
+  ids: readonly string[],
+  fastEditPanelId: string | null,
+): CanvasObject[] {
+  return objects.filter(
+    (o) => ids.includes(o.id) && !o.hidden && (fastEditPanelId === null || o.id === fastEditPanelId),
+  )
 }
 
 /**

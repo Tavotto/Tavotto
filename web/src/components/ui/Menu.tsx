@@ -1,7 +1,7 @@
 import * as DM from '@radix-ui/react-dropdown-menu'
 import { Check, ChevronRight } from './icons'
 import { ICON_SIZE } from './Icon'
-import { useState, type ButtonHTMLAttributes, type ComponentType, type ReactElement, type ReactNode } from 'react'
+import { useRef, useState, type ButtonHTMLAttributes, type ComponentType, type ReactElement, type ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 
 /** 浮层外壳样式：菜单本体与子菜单共用一份，别各抄一遍 */
@@ -310,6 +310,76 @@ export function MenuRadioItem({
       <span className="min-w-0 flex-1 truncate">{children}</span>
       {shortcut && <span className="shrink-0 text-xs tabular-nums text-ink-3">{shortcut}</span>}
     </DM.RadioItem>
+  )
+}
+
+/** 菜单里能停焦点的项（`MenuField` 用它把方向键 / Tab 交还给菜单） */
+const MENU_ITEM_SELECTOR = '[role="menuitem"]:not([data-disabled]),[role="menuitemradio"]:not([data-disabled]),[role="menuitemcheckbox"]:not([data-disabled])'
+
+/**
+ * 菜单里的一格**输入框**（缩放菜单顶上的倍率框，2026-10-07 设计审计 §10.1）。
+ *
+ * 不能是菜单里一个普通 `div`：Radix 菜单的方向键只在菜单项之间漫游、Tab 被它吞掉，键盘根本走不进去
+ * （Codex #833 P2）。这一行本身是一个 Radix 菜单项（进漫游顺序；键盘打开菜单时它是第一项），但角色是
+ * `group`（带名字）而不是 `menuitem`——菜单项里套可编辑控件是 nested-interactive。焦点落到这一行时转交给
+ * 里面的输入框；在输入框里：
+ *
+ * * ↓ / Tab 回到下一条菜单项（菜单的语义优先，框里不拿方向键步进），↑ / ⇧Tab 留在框里；
+ * * Enter 由输入框自己提交（`NumberField`），提交后焦点留在框里、菜单不关——看得见改完的读数；
+ * * Esc 照常关菜单、焦点还给触发器（Radix 在 document 上接住 Esc，先于这里）。
+ *
+ * 指针一侧与普通 `div` 一样：悬停不抢焦点（不让 Radix 把焦点挪到这一行、移出时挪回菜单本体——那会把正在
+ * 输入的框失焦提交），点进框里就是点进框里；点这一行不关菜单。
+ */
+export function MenuField({
+  label,
+  children,
+  ...rest
+}: { label: string; children: ReactNode } & Record<`data-${string}`, string | number | boolean | undefined>) {
+  const rowRef = useRef<HTMLDivElement>(null)
+  const field = () => rowRef.current?.querySelector<HTMLElement>('input, textarea') ?? null
+  const nextItem = () => {
+    const row = rowRef.current
+    const menu = row?.closest('[role="menu"]')
+    if (!row || !menu) return null
+    return (
+      [...menu.querySelectorAll<HTMLElement>(MENU_ITEM_SELECTOR)].find(
+        (el) => row.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ) ?? null
+    )
+  }
+  return (
+    <DM.Item
+      {...rest}
+      ref={rowRef}
+      role="group"
+      aria-label={label}
+      textValue=""
+      className="px-1 pb-1 outline-none"
+      // 点进框里不是「选中一项」：菜单不关
+      onSelect={(e) => e.preventDefault()}
+      onPointerMove={(e) => e.preventDefault()}
+      onPointerLeave={(e) => e.preventDefault()}
+      onFocus={(e) => {
+        if (e.target === e.currentTarget) field()?.focus()
+      }}
+      onKeyDownCapture={(e) => {
+        if (e.target === e.currentTarget) return
+        const toMenu = e.key === 'ArrowDown' || (e.key === 'Tab' && !e.shiftKey)
+        const stay = e.key === 'ArrowUp' || (e.key === 'Tab' && e.shiftKey)
+        if (toMenu || stay) {
+          e.preventDefault()
+          e.stopPropagation()
+          if (toMenu) nextItem()?.focus()
+        } else if (e.key === 'Enter') {
+          // 输入框提交后会自己失焦；焦点留在这一格，键盘用户不至于掉到 body 上
+          const el = field()
+          setTimeout(() => el?.isConnected && el.focus(), 0)
+        }
+      }}
+    >
+      {children}
+    </DM.Item>
   )
 }
 

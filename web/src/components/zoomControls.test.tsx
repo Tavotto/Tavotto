@@ -156,3 +156,77 @@ describe('缩放菜单 · 快速编辑', () => {
     expect(spy).not.toHaveBeenCalled()
   })
 })
+
+/**
+ * 倍率框的键盘可达（Codex #833 P2）：此前它是 Radix 菜单里的一个普通 div——方向键只在菜单项之间漫游、Tab 被
+ * 菜单吞掉，键盘走不进去。主语：真键盘事件打开菜单（触发器上 Enter），`document.activeElement` 落在哪；
+ * 动作认 viewport store 的 zoom。对照组：指针打开菜单时焦点不被抢进框里。
+ */
+describe('缩放菜单的倍率框：键盘走得进去', () => {
+  const key = async (el: Element, k: string, init: KeyboardEventInit = {}) => {
+    await act(async () => {
+      el.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, ...init }))
+      await new Promise((r) => setTimeout(r, 0))
+    })
+  }
+  const field = () => document.querySelector<HTMLInputElement>('[data-zoom-value-row] input')!
+  const trigger = () => host.querySelector<HTMLElement>('[data-zoom-menu]')!
+  const typeInto = async (el: HTMLInputElement, v: string) => {
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(el, v)
+      el.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+  }
+  const openByKeyboard = async () => {
+    act(() => trigger().focus())
+    await key(trigger(), 'Enter')
+  }
+
+  // 动作认 `setZoomCentered` 的调用（它带补间，jsdom 里量 zoom 量到的是半路上的值）
+  let setZoom: ReturnType<typeof vi.fn>
+  const realSetZoom = useViewportStore.getState().setZoomCentered
+  beforeEach(() => {
+    setZoom = vi.fn()
+    useViewportStore.setState({ zoom: 1, setZoomCentered: setZoom } as never)
+  })
+  afterEach(() => {
+    useViewportStore.setState({ setZoomCentered: realSetZoom })
+  })
+
+  it('键盘打开菜单：焦点落在倍率框里；敲值 + Enter 生效、焦点留在框里', async () => {
+    await openByKeyboard()
+    expect(document.activeElement).toBe(field())
+    await typeInto(field(), '250')
+    await key(field(), 'Enter')
+    expect(setZoom).toHaveBeenCalledTimes(1)
+    expect(setZoom).toHaveBeenCalledWith(2.5)
+    expect(document.activeElement).toBe(field())
+    // 菜单没关
+    expect(document.querySelector('[data-zoom-value-row]')).not.toBeNull()
+  })
+
+  it('框里 ↓ 回到下一条菜单项（不拿来步进倍率）；从菜单项 ↑ 回到框里', async () => {
+    await openByKeyboard()
+    await key(field(), 'ArrowDown')
+    expect(setZoom).not.toHaveBeenCalled()
+    const zoomIn = document.activeElement as HTMLElement
+    expect(zoomIn.getAttribute('role')).toBe('menuitem')
+    expect(zoomIn.closest('[data-zoom-value-row]')).toBeNull()
+    await key(zoomIn, 'ArrowUp')
+    expect(document.activeElement).toBe(field())
+  })
+
+  it('框里 Esc：菜单关掉，焦点还给触发器', async () => {
+    await openByKeyboard()
+    expect(document.activeElement).toBe(field())
+    await key(field(), 'Escape')
+    expect(document.querySelector('[data-zoom-value-row]')).toBeNull()
+    expect(document.activeElement).toBe(trigger())
+  })
+
+  it('指针打开菜单：焦点不被抢进框里（对照组）', async () => {
+    await open()
+    expect(field()).not.toBeNull()
+    expect(document.activeElement).not.toBe(field())
+  })
+})

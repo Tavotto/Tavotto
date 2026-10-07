@@ -603,6 +603,8 @@ UI 正文 14 / 控件字最小 12、台阶 2px；强调至少高一档且配深�
   禁用一律 40%（门禁也抓 `aria-disabled` 那条路）。
 - 菜单只有一份实现：缩放弹层是 `Menu` + `MenuRadioGroup`（当前档带勾）；标注工具是 `MenuRadioItem`（带 `shortcut`）；
   `role="dialog"` 的快捷编辑弹层用 `MenuButton`（同一份 ITEM_CLASS）；菜单从触发钮右缘垂下；分隔线只在真分组之间。
+  菜单里要放一格输入框（缩放菜单的倍率框）一律包 `MenuField`，不放裸 `div`：它是漫游顺序里的一项（`role="group"` 带名字、焦点转交给框），
+  键盘打开先落在框里、↓ / Tab 回到菜单项、Enter 提交后焦点留在框里、Esc 关菜单还焦点给触发器；指针一侧悬停不抢焦点（Codex #833）。
 - 通知轨最多两条：状态来了先顶掉操作提示（提示稍后重播），「已加入」优先级最高；toast 无实边、只 shadow-pop、12 号 ink、底距 16、一种高度；
   HUD 读数盒 `rounded-md shadow-pop` 无边。两种横幅合成一种（贴边、surface-2、border-b、min-h 32）。
 - 命令面板 520 宽、行 32 / 12（2026-10-07 起 32 / 13，见第二十七节·外壳）、选中 `selected` 10%、遮罩与 Dialog 同一串、右上不写「Esc」；快捷键帮助用 `SearchInput`、说明 12、组头 type-section、页脚不重复关闭。

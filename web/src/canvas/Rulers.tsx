@@ -5,6 +5,8 @@ import { boundsOf, visualBounds } from '@/lib/geometry'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
 import { useSelectionStore } from '@/store/selectionStore'
+import { fastEditPanelOf, useWorkspaceStore } from '@/store/workspace'
+import { renderedSelection } from '@/store/zoomToSelection'
 import { mmToPx, mmToViewX, mmToViewY, useViewportStore, type ViewTransform } from '@/store/viewportStore'
 import { startGuideDrag } from './interactions'
 
@@ -218,14 +220,17 @@ function useRuler(
 }
 
 /**
- * 选区（可见对象）**看得见的**包围盒；没有选中就是 null。按 `visualBounds` 取每个对象的盒再并（与
+ * 选区（画在舞台上的可见对象）**看得见的**包围盒；没有选中就是 null。按 `visualBounds` 取每个对象的盒再并（与
  * `zoomToSelection` 同一口径）：旋转的文字 / 形状占的是转出来的外接矩形，不是未旋转的 x/y/w/h（Codex #833）。
  * 按值比较，拖动中每一帧都是新对象也不会多画
  */
 function useSelectionSpan(): { x: [number, number]; y: [number, number] } | null {
   const ids = useSelectionStore((s) => s.ids)
   const objects = useDocumentStore((s) => s.doc.objects)
-  const sel = objects.filter((o) => ids.includes(o.id) && !o.hidden)
+  // 只认画在舞台上的：快速编辑里只有那张图（`renderedSelection`，与缩放到选中同一判据）。今天快速编辑不挂
+  // 标尺（`CanvasStage` 的 showRulers），这里是第二道：选区里挂着的看不见的版面对象不进选区带
+  const fastEditPanelId = useWorkspaceStore(fastEditPanelOf)
+  const sel = renderedSelection(objects, ids, fastEditPanelId)
   if (!sel.length) return null
   const b = boundsOf(sel.map(visualBounds))
   if (!b) return null
