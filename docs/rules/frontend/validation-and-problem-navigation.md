@@ -111,7 +111,7 @@ preflight.runSpec()      规则求值（两份求值器，golden vectors 对齐�
   + 尾随格常亮出「修复」，底部上一项 / 下一项（**F8 / ⇧F8 同一个动作**，一支走完接着走下一支；焦点在输入框 / 对话框里时按 `yieldsCanvasShortcuts` 让位，Codex #832）；那条修好消失后
   「下一项」指向**顶上来的那条**，不跳回开头。指着一行时画布上那个对象描一道悬停轮廓（`uiStore.issueHover` →
   `canvas/IssueOverlay`；问题带 gid 时描**那个图内元素**，换算与图内编辑的 `ElementBoxes` 同一套：
-  `useDisplayedExactManifest` + `geomTarget` + `panelFullRect`，再套面板内容的显示变换 `lib/panelTransform.panelTransformSvg(panelContentTransform())`——先翻转、再旋转，与 `PanelView` 的 CSS 同一份权威，只转不翻会在翻转过的图上描到镜像位置；解不出来才退回整张图，Codex #832；看护 `canvas/issueHoverDisplay.test.tsx`：真实 PanelView + OverlaySvg + ProblemPanel，130%，翻转 / 翻转 + 旋转逐一比对）——行 / 卡片只经 `problemTree.useIssueHover()` 写它，撤一律**比对后再清**
+  `useDisplayedExactManifest` + `geomTarget` + `panelFullRect`，再套面板内容的显示变换 `lib/panelTransform.panelTransformSvg(panelContentTransform())`——先翻转、再旋转，与 `PanelView` 的 CSS 同一份权威，只转不翻会在翻转过的图上描到镜像位置；解不出来才退回整张图，Codex #832；看护 `canvas/issueHoverDisplay.test.tsx`：真实 PanelView + OverlaySvg + ProblemPanel，130%，翻转 / 翻转 + 旋转逐一比对）——行 / 卡片只经 `problemTree.useIssueHover()` 写它（指针进出与键盘焦点 / 失焦都算，分桶钮与对象行同一条路，Codex #832），撤一律**比对后再清**
   （`releaseIssueHover`：对象身份即主人，被别的行顶掉的不动）；行被修好 / 筛掉 / 换文档卸载时不发
   pointerleave / blur，卸载时再撤一次，不靠面板卸载那一道（Codex #832）；「⋯」里可打开**画布等级标记**（`uiStore.problemPins`：每张有问题的图右上角外侧一枚（屏幕空间：按 `visualBounds` 的外接框放、整组不随对象旋转，项数永远正着，Codex #832；让开 ne 缩放手柄；底色与项数字色成对取 `canvas/issuePinColors.PIN_COLORS`，`tokenContrast.test` 逐对量 ≥4.5:1——warn 用 `warn-content` 底，锚点 #b07400 衬白字只有 3.9:1，Codex #832），
   点它 = `openProblemAt`）。摘要条（32px）只有等级开关（只有阻断着色）与唯一一颗填色主动作「全部修复 N」；

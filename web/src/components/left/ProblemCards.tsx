@@ -1,4 +1,4 @@
-import { useContext, useState, type ComponentType, type CSSProperties, type ReactNode } from 'react'
+import { useContext, useState, type ComponentType, type CSSProperties, type FocusEvent, type ReactNode } from 'react'
 import {
   Blend,
   ChartLine,
@@ -243,6 +243,15 @@ function BucketNode({
     },
     onPointerLeave: () => {
       bind.onPointerLeave()
+      point(false)
+    },
+    // 键盘（方向键漫游）走到这一支也要描轮廓，与对象行同一条路（Codex #832）：撤一律比对后再清
+    onFocus: () => {
+      bind.onFocus()
+      point(true)
+    },
+    onBlur: (e: FocusEvent) => {
+      bind.onBlur(e)
       point(false)
     },
   }
