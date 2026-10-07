@@ -258,6 +258,18 @@ const propInput = (prop: string, type?: string) =>
   Array.from(host.querySelectorAll(`[data-prop="${prop}"] input`)).find(
     (i) => !type || i.getAttribute('type') === type,
   ) as HTMLInputElement | undefined
+/** 图例项那一行的主按钮（roving focus 的落点）与行尾菜单（⇧F10 打开同一份清单） */
+const entryMain = (gid: string) =>
+  host.querySelector<HTMLButtonElement>(`[data-legend-entry="${gid}"] [data-legend-entry-main]`)!
+const key = async (el: Element, k: string, init: KeyboardEventInit = {}) => {
+  await act(async () => {
+    el.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, ...init }))
+  })
+}
+const entryMenuItem = async (gid: string, sel: string) => {
+  await key(host.querySelector(`[data-legend-entry="${gid}"]`)!, 'F10', { shiftKey: true })
+  return document.querySelector(sel) ?? undefined
+}
 const labels = () =>
   Array.from(host.querySelectorAll('[data-prop]')).map((n) => n.getAttribute('data-prop'))
 const click = async (el: Element | undefined) => {
@@ -693,7 +705,8 @@ describe('选中图例', () => {
   it('下移写 entry_order（原始序号的排列），一条历史', async () => {
     await mount(['axes_0.legend'])
     const before = useDocumentStore.getState().past.length
-    await click(byAria('下移 “sin”'))
+    // ⌥↓ = 下移（与 ⋯ 菜单里的「下移」同一个动作）
+    await key(entryMain('axes_0.legend.texts_0'), 'ArrowDown', { altKey: true })
     expect(overrideOf('axes_0.legend', 'entry_order')).toEqual([1, 0, 2])
     expect(useDocumentStore.getState().past.length).toBe(before + 1)
     // 列表立刻按新顺序排（不等渲染回来）
@@ -711,15 +724,15 @@ describe('选中图例', () => {
       p.overrides.push({ gid: 'axes_0.legend', prop: 'entry_order', value: [2, 0, 1] })
     })
     await mount(['axes_0.legend'])
-    await click(byAria('下移 “proxy”'))
+    await click(await entryMenuItem('axes_0.legend.texts_2', '[data-legend-move="down"]'))
     expect(overrideOf('axes_0.legend', 'entry_order')).toEqual([0, 2, 1])
   })
 
   it('隐藏写那一项的 visible=false；再点一次恢复', async () => {
     await mount(['axes_0.legend'])
-    await click(byAria('隐藏图例项 “sin”'))
+    await click(await entryMenuItem('axes_0.legend.texts_0', '[data-legend-toggle-hidden]'))
     expect(overrideOf('axes_0.legend.texts_0', 'visible')).toBe(false)
-    await click(byAria('显示图例项 “sin”'))
+    await click(await entryMenuItem('axes_0.legend.texts_0', '[data-legend-toggle-hidden]'))
     expect(overrideOf('axes_0.legend.texts_0', 'visible')).toBeUndefined()
   })
 })

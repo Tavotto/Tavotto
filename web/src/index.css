@@ -799,18 +799,6 @@
   line-height: var(--text-sm--line-height);
 }
 
-/* 形状外观（ShapeSection）：线宽与填充不透明度同一行，两个输入框固定 40px。
-   位置与尺寸的毫米框宽度由 MmField 自己定（6 个字符），不在这里另写。 */
-[data-stroke-fields] input {
-  width: 40px;
-  min-width: 0;
-  flex: 0 0 40px;
-}
-[data-stroke-fields] :has(> input) {
-  flex: 0 0 auto;
-  width: auto;
-}
-
 /* 原生 <details>（ui/Details）的展开也跟着长高（二审 E3）：只在能把高度插值到 auto 的引擎里
    生效（Chromium 129+ 的 interpolate-size），WKWebView 暂时仍是即时展开——不损失信息。 */
 @supports (interpolate-size: allow-keywords) {
@@ -844,6 +832,11 @@
   [data-inspector-panel] [data-section] + [data-section] {
     padding-top: 1rem;
     background: linear-gradient(var(--color-border), var(--color-border)) no-repeat 12px 0 / calc(100% - 24px) 1px;
+  }
+  /* 节后面接一串摘要行（ui/SummaryRow）：同一条内缩线只画在第一行上面，行与行之间不再画线
+     （2026-10-07 设计审计 §9.2「一屏的发丝线只留节与节之间那一条」）。摘要行自带 mx-3，线就是它自己的宽 */
+  [data-inspector-panel] [data-section] + [data-summary-row] {
+    background: linear-gradient(var(--color-border), var(--color-border)) no-repeat 0 0 / 100% 1px;
   }
 
   /* 字段组（ui/FieldGroup，2026-10-07 设计审计 §4.3；钩子带 ui- 前缀，不误中设置页里早有的 data-field-group="fonts" 等分组）：行内边距 12 / 16；相邻两行之间一条左右各内缩 16 的

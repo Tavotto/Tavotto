@@ -1,5 +1,6 @@
 /**
- * 画布页（审计 T31）：宽、高与横竖交换同一行；一次只展开一组；开关行不走
+ * 画布页（审计 T31；2026-10-07 §9.3：折叠行互不排斥并跨会话记住、子开关变暗不卸载、真禁用、
+ * 预设下拉含「自定义」、导出摘要行）：宽、高与横竖交换同一行；开关行不走
  * 44px 标签列（「对齐参考线」在 320px 属性栏里不再折行——折行本身 jsdom 量
  * 不到，这里钉的是结构：开关的标签没有固定宽度、文字占满剩余宽度）。
  */
@@ -11,6 +12,8 @@ import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useDocumentStore } from '@/store/documentStore'
 import { useUiStore } from '@/store/uiStore'
 import { emptyProject } from '@/types/document'
+import { literal } from '@/i18n'
+import { ROW_GRID_COLS } from '../ui/Field'
 import { CanvasPage } from './CanvasPage'
 
 globalThis.fetch = (async () => new Response('{}', { status: 200 })) as typeof fetch
@@ -48,6 +51,8 @@ const disclosure = (title: string) =>
   [...container.querySelectorAll<HTMLButtonElement>('button[aria-expanded]')].find((b) =>
     b.textContent?.includes(title),
   )!
+/** 折叠行的开关按钮（稳定锚点 data-fold） */
+const fold = (id: string) => container.querySelector<HTMLButtonElement>(`[data-fold="${id}"] > button`)!
 
 describe('CanvasPage', () => {
   it('宽、高与横竖交换在同一行', () => {
@@ -62,21 +67,18 @@ describe('CanvasPage', () => {
     expect([after.w, after.h]).toEqual([before.h, before.w])
   })
 
-  it('一次只展开一组：打开自动对齐时背景收起', () => {
-    act(() => disclosure('背景').click())
-    expect(disclosure('背景').getAttribute('aria-expanded')).toBe('true')
-    act(() => disclosure('自动对齐').click())
-    expect(disclosure('自动对齐').getAttribute('aria-expanded')).toBe('true')
-    expect(disclosure('背景').getAttribute('aria-expanded')).toBe('false')
-    // 再点同一组就收起
-    act(() => disclosure('自动对齐').click())
-    expect(disclosure('自动对齐').getAttribute('aria-expanded')).toBe('false')
+  it('折叠行互不排斥（§9.3）：打开自动对齐时背景仍开着；再点同一组只收起它自己', () => {
+    act(() => fold('canvas-bg').click())
+    act(() => fold('canvas-snap').click())
+    expect(fold('canvas-bg').getAttribute('aria-expanded')).toBe('true')
+    expect(fold('canvas-snap').getAttribute('aria-expanded')).toBe('true')
+    act(() => fold('canvas-snap').click())
+    expect(fold('canvas-snap').getAttribute('aria-expanded')).toBe('false')
+    expect(fold('canvas-bg').getAttribute('aria-expanded')).toBe('true')
   })
 
-  it('展开状态记在会话里：展开背景 → 切走（本页卸载）→ 切回，背景仍展开；展开另一行时前一行收起', () => {
-    act(() => disclosure('背景').click())
-    expect(disclosure('背景').getAttribute('aria-expanded')).toBe('true')
-    // 切到「属性 / 改图助手」页签：CanvasPage 被卸载，再回来是一个新挂载
+  it('展开状态跨卸载与跨会话记住（canvas:* 键写进 localStorage）', () => {
+    act(() => fold('canvas-guides').click())
     act(() => root.render(<TooltipProvider><div /></TooltipProvider>))
     act(() =>
       root.render(
@@ -85,10 +87,41 @@ describe('CanvasPage', () => {
         </TooltipProvider>,
       ),
     )
-    expect(disclosure('背景').getAttribute('aria-expanded')).toBe('true')
-    act(() => disclosure('安全边距').click())
-    expect(disclosure('安全边距').getAttribute('aria-expanded')).toBe('true')
-    expect(disclosure('背景').getAttribute('aria-expanded')).toBe('false')
+    expect(fold('canvas-guides').getAttribute('aria-expanded')).toBe('true')
+    const saved = JSON.parse(localStorage.getItem('tavotto.inspector') ?? '{}')
+    expect(saved.canvasFolds?.['canvas:guides']).toBe(true)
+  })
+
+  it('关掉自动对齐：子开关不卸载，留在原位禁用变暗', () => {
+    act(() => fold('canvas-snap').click())
+    const rows = () => [...container.querySelectorAll<HTMLElement>('[data-fold="canvas-snap"] [data-toggle-row]')]
+    expect(rows()).toHaveLength(4)
+    act(() => useUiStore.setState({ snapEnabled: false }))
+    expect(rows()).toHaveLength(4)
+    const dim = rows().filter((r) => r.hasAttribute('data-dim'))
+    expect(dim).toHaveLength(3)
+    for (const r of dim) expect(r.querySelector('button')!.disabled).toBe(true)
+  })
+
+  it('透明背景时背景色是真禁用（色块与 hex 都 disabled），不是 pointer-events-none', () => {
+    act(() => useDocumentStore.getState().commit(literal('透明'), (d) => {
+      d.page.transparent = true
+    }))
+    act(() => fold('canvas-bg').click())
+    const field = container.querySelector('[data-fold="canvas-bg"] [data-color-field]') as HTMLElement
+    expect(field.className).not.toContain('pointer-events-none')
+    expect((field.querySelector('input[type="color"]') as HTMLInputElement).disabled).toBe(true)
+  })
+
+  it('尺寸对不上任何预设时下拉显示「自定义」；导出摘要行打开同一个导出对话框', () => {
+    act(() => useDocumentStore.getState().commit(literal('改尺寸'), (d) => {
+      d.page.w = 123
+      d.page.h = 77
+    }))
+    expect(container.querySelector('[data-page-preset="custom"]')).not.toBeNull()
+    act(() => container.querySelector<HTMLButtonElement>('[data-canvas-export-summary]')!.click())
+    expect(useUiStore.getState().exportOpen).toBe(true)
+    act(() => useUiStore.getState().setExportOpen(false))
   })
 
   it('收起时也报得出网格状态；页面尺寸的组头不再复述下面那两个框', () => {
@@ -108,18 +141,15 @@ describe('CanvasPage', () => {
     expect(values).toContain(String(page.w))
   })
 
-  it('开关行：标签列与数值行同宽（控件从同一条竖线起排），整行可点', () => {
-    act(() => disclosure('自动对齐').click())
+  it('开关行：与数值行同一张行网格（控件从同一条竖线起排），整行可点', () => {
+    act(() => fold('canvas-snap').click())
     const rows = [...container.querySelectorAll<HTMLLabelElement>('[data-toggle-row]')]
     const guides = rows.find((r) => r.textContent?.includes('对齐参考线'))
     expect(guides).toBeDefined()
     expect(guides!.tagName).toBe('LABEL')
+    // 列模板与 Row 的 grid 同出 `ui/Field.ROW_GRID_COLS`（标签 --insp-label · 控件 · 20px 状态槽）
+    expect(guides!.className).toContain(ROW_GRID_COLS)
     const label = guides!.querySelector('span')!
-    // 列宽走类名（w-22 = 88px），与数值行 `Row` 的 labelWidth 是同一个数——
-    // 两者同出 `inspector/layout.INSPECTOR_LABEL_W`（打磨 L1）；
-    // 标签仍可截断（min-w-0），窄栏里不把开关挤出行外
-    expect(label.className).toContain('w-22')
-    expect(label.className).toContain('min-w-0')
     const before = useUiStore.getState().snapToGuides
     act(() => label.click())
     expect(useUiStore.getState().snapToGuides).toBe(!before)

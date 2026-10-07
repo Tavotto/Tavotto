@@ -359,12 +359,22 @@ describe('色阶上下限并排（审计 T22）', () => {
     expect(overrideOf('axes_0.images_0', 'vmin')).toBe(5)
   })
 
-  it('只改了一条时，恢复按钮只出现在那一条上', async () => {
+  it('只改了一条时：行尾状态槽里一颗恢复钮，按下只清改过的那一条（2026-10-07 行网格：一行一颗）', async () => {
     await mount('axes_0.images_0', {
-      overrides: [{ gid: 'axes_0.images_0', prop: 'vmax', value: 20 }],
+      overrides: [
+        { gid: 'axes_0.images_0', prop: 'vmax', value: 20 },
+        { gid: 'axes_0.images_0', prop: 'alpha', value: 0.5 },
+      ],
     })
+    const pair = host.querySelector('[data-pair-row]')!
+    // 两个格子里都没有按钮：恢复钮不再挤在格子旁边
     expect(rowOf('vmin')!.querySelector('button')).toBeNull()
-    expect(rowOf('vmax')!.querySelector('button')).not.toBeNull()
+    expect(rowOf('vmax')!.querySelector('button')).toBeNull()
+    const reset = pair.querySelectorAll('[data-row-status] [data-reset-prop]')
+    expect(reset).toHaveLength(1)
+    await click(reset[0])
+    expect(overrideOf('axes_0.images_0', 'vmax')).toBeUndefined()
+    expect(overrideOf('axes_0.images_0', 'alpha')).toBe(0.5)
   })
 })
 

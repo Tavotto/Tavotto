@@ -1,4 +1,4 @@
-import { memo, useCallback, useLayoutEffect, useRef, type ReactNode } from 'react'
+import { memo, useCallback, useLayoutEffect, useRef, type ReactElement, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { perfCount } from '@/perf/core'
 import { PT_DECIMALS } from '@/lib/stylePresets'
@@ -7,12 +7,13 @@ import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { Button } from '../../ui/Button'
-import { Row } from '../../ui/Field'
+import { Row, type RowLabelWidth } from '../../ui/Field'
 import { ColorField, NumberField } from '../../ui/Input'
 import { Segmented } from '../../ui/Segmented'
 import { Select } from '../../ui/Select'
 import { Tip } from '../../ui/Tooltip'
 import { fontStackOf } from './fontStack'
+import { INSPECTOR_CONTROL_X } from '../layout'
 
 /**
  * 文字属性的共享行组件：**「字体」「字号」是可见文字标签**，不再只有
@@ -26,30 +27,65 @@ import { fontStackOf } from './fontStack'
 
 const tc = (key: string) => translate(`textControls.${key}`, { ns: 'inspector' })
 
-/** 已修改状态：标签前的点 + 行尾恢复按钮（与 FieldRow 同一套表达） */
-export function labeledWithState(label: string, overridden?: boolean): ReactNode {
+/**
+ * 修改状态：`true` / `'all'` = 这个值来自你的修改；`'some'` = 多选里只有一部分改过（部分修改）；
+ * `false` / `'none'` / undefined = 脚本原样。
+ */
+export type ModifiedState = boolean | 'all' | 'some' | 'none' | undefined
+
+const modState = (m: ModifiedState): 'all' | 'some' | null =>
+  m === true || m === 'all' ? 'all' : m === 'some' ? 'some' : null
+
+/**
+ * 修改点（2026-10-07 设计审计 §9.2 P0-3）：**悬挂在标签左边 8px**（`absolute -left-2`），标签文字不右移；
+ * 全部修改 = 实心点，部分修改 = 空心环（多选里只改了几个）——形状而非颜色区分。
+ * 修改点在标签的定位盒里，所以调用方的标签外壳要 `relative`（`Row grid` 的标签格已是）。
+ */
+export function ModifiedDot({ state }: { state: ModifiedState }) {
+  const m = modState(state)
+  if (!m) return null
   return (
     <span
-      className="flex min-w-0 items-center gap-1"
-      title={overridden ? `${label} · ${translate('element.modified', { ns: 'inspector' })}` : label}
-    >
-      {overridden && <span aria-hidden className="h-1 w-1 shrink-0 rounded-full bg-ink" />}
+      aria-hidden
+      data-modified-dot={m}
+      className={cn(
+        'pointer-events-none absolute -left-2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full',
+        m === 'all' ? 'h-1 w-1 bg-ink' : 'h-1.5 w-1.5 border border-ink bg-transparent',
+      )}
+    />
+  )
+}
+
+/** 已修改状态：悬挂的点 + 状态槽里的恢复按钮（与 FieldRow 同一套表达） */
+export function labeledWithState(label: string, overridden?: ModifiedState): ReactElement {
+  const m = modState(overridden)
+  const said =
+    m === 'all'
+      ? translate('element.modified', { ns: 'inspector' })
+      : m === 'some'
+        ? translate('element.modifiedPartial', { ns: 'inspector' })
+        : null
+  return (
+    <span className="relative flex min-w-0 items-center" title={said ? `${label} · ${said}` : label}>
+      <ModifiedDot state={overridden} />
       {/* 折两行而不是截成省略号（与 FieldRow 同一条纪律）：「Major tick mode」在 88px 里
           放得下，放不下的也让用户看见整个词 */}
       <span className="line-clamp-2 min-w-0 leading-tight break-words">{label}</span>
-      {overridden && (
-        <span className="sr-only">{translate('element.modified', { ns: 'inspector' })}</span>
-      )}
+      {said && <span className="sr-only">{said}</span>}
     </span>
   )
 }
 
-export function ResetChip({ label, onReset }: { label: string; onReset: () => void }) {
+/**
+ * 恢复到脚本：20px 的行内小钮，**住在行网格的状态槽里**（`Row status=`），
+ * 出现与消失都不挪动控件（2026-10-07 设计审计 §9.2 P0-3）。
+ */
+export function ResetChip({ label, onReset, hint }: { label: string; onReset: () => void; hint?: string }) {
   const text = translate('element.resetProp', { ns: 'inspector', label })
   return (
-    <Tip label={translate('element.backToScript', { ns: 'inspector' })} side="left">
-      <Button size="icon-sm" className="shrink-0" aria-label={text} onClick={onReset}>
-        <RotateCcw size={ICON_SIZE.xs} className="text-ink-3" />
+    <Tip label={hint ?? translate('element.backToScript', { ns: 'inspector' })} side="left">
+      <Button size="icon-xs" data-reset-prop className="shrink-0 text-ink-2" aria-label={text} onClick={onReset}>
+        <RotateCcw size={ICON_SIZE.xs} />
       </Button>
     </Tip>
   )
@@ -133,8 +169,8 @@ export function FontMissingTag() {
   return <span className="ml-1 font-sans text-ink-3">{tc('fontMissingTag')}</span>
 }
 
-export function FontMissingHint() {
-  return <p className="pl-1 text-xs leading-relaxed text-warn-content">{tc('fontMissingHint')}</p>
+export function FontMissingHint({ className }: { className?: string } = {}) {
+  return <p className={cn('pl-1 text-xs leading-relaxed text-warn-content', className)}>{tc('fontMissingHint')}</p>
 }
 
 function FontFamilyRowView({
@@ -153,8 +189,8 @@ function FontFamilyRowView({
   value: string
   options: string[]
   onChange: (v: string) => void
-  labelWidth?: number
-  overridden?: boolean
+  labelWidth?: RowLabelWidth
+  overridden?: ModifiedState
   onReset?: () => void
   /**
    * 选项的显示名。**在渲染里调用**，所以它必须是当次渲染的那一份（不经 ref 转发），
@@ -181,7 +217,11 @@ function FontFamilyRowView({
   const missing = new Set(unavailable)
   return (
     <>
-      <Row label={labeledWithState(label, overridden)} labelWidth={labelWidth}>
+      <Row
+        label={labeledWithState(label, overridden)}
+        labelWidth={labelWidth}
+        status={overridden && overridden !== 'none' && onReset ? <ResetChip label={label} onReset={onReset} /> : undefined}
+      >
         <Select
           className="min-w-0 flex-1"
           ariaLabel={label}
@@ -200,9 +240,10 @@ function FontFamilyRowView({
             ),
           }))}
         />
-        {overridden && onReset && <ResetChip label={label} onReset={onReset} />}
       </Row>
-      {!mixed && missing.has(value) && <FontMissingHint />}
+      {!mixed && missing.has(value) && (
+        <FontMissingHint className={labelWidth === 'grid' ? INSPECTOR_CONTROL_X : undefined} />
+      )}
     </>
   )
 }
@@ -293,18 +334,23 @@ export function FontSizeRow({
   onChange: (v: number) => void
   onScrubStart?: () => void
   onScrubEnd?: () => void
-  labelWidth?: number | 'auto'
-  overridden?: boolean
+  labelWidth?: RowLabelWidth
+  overridden?: ModifiedState
   onReset?: () => void
-  /** 字形按钮（B / I / U / 上下标）跟在字号后面 */
+  /** 字形按钮（B / I / U / 上下标）跟在字号后面，坐在后半列 */
   children?: ReactNode
 }) {
   const label = tc('size')
   return (
-    <Row label={labeledWithState(label, overridden)} labelWidth={labelWidth}>
-      {/* 单列数值走 compact 档（4ch + 单位列，打磨 L3）：此前字号定宽 76、同页的
-          旋转 59.5、图例标题字号 62——一列数字框十二种宽 */}
+    <Row
+      label={labeledWithState(label, overridden)}
+      labelWidth={labelWidth}
+      status={overridden && overridden !== 'none' && onReset ? <ResetChip label={label} onReset={onReset} /> : undefined}
+    >
+      {/* 字号 = 半列（行网格的 half 档），后半列给 B / I 这组字形钮
+          （2026-10-07 设计审计 §9.2 拍板①：取消字号的行内标签，字号自己一行） */}
       <NumberField
+        half={labelWidth === 'grid'}
         dataProp="fontsize"
         ariaLabel={label}
         value={value}
@@ -318,8 +364,12 @@ export function FontSizeRow({
         onScrubStart={onScrubStart}
         onScrubEnd={onScrubEnd}
       />
-      {children}
-      {overridden && onReset && <ResetChip label={label} onReset={onReset} />}
+      {children != null && (
+        // 字形钮一组：12px 间距之内是同一组，图标钮 28 圆
+        <span data-glyph-group className="flex min-w-0 items-center gap-0.5">
+          {children}
+        </span>
+      )}
     </Row>
   )
 }
@@ -336,17 +386,20 @@ export function TextColorRow({
   value: string
   onChange: (v: string) => void
   onGestureEnd?: () => void
-  labelWidth?: number
-  overridden?: boolean
+  labelWidth?: RowLabelWidth
+  overridden?: ModifiedState
   onReset?: () => void
   /** 多选且颜色不一致：色块自己画成「多个值」（`ColorField mixed`），不把其中一个当成公共色 */
   mixed?: boolean
 }) {
   const label = tc('color')
   return (
-    <Row label={labeledWithState(label, overridden)} labelWidth={labelWidth}>
+    <Row
+      label={labeledWithState(label, overridden)}
+      labelWidth={labelWidth}
+      status={overridden && overridden !== 'none' && onReset ? <ResetChip label={label} onReset={onReset} /> : undefined}
+    >
       <ColorField ariaLabel={label} mixed={mixed} value={value} onChange={onChange} onGestureEnd={onGestureEnd} />
-      {overridden && onReset && <ResetChip label={label} onReset={onReset} />}
     </Row>
   )
 }
@@ -368,13 +421,17 @@ export function AlignmentRow({
   value: 'left' | 'center' | 'right' | null
   onChange: (v: 'left' | 'center' | 'right') => void
   labels: { left: string; center: string; right: string }
-  labelWidth?: number
-  overridden?: boolean
+  labelWidth?: RowLabelWidth
+  overridden?: ModifiedState
   onReset?: () => void
 }) {
   const label = tc('align')
   return (
-    <Row label={labeledWithState(label, overridden)} labelWidth={labelWidth}>
+    <Row
+      label={labeledWithState(label, overridden)}
+      labelWidth={labelWidth}
+      status={overridden && overridden !== 'none' && onReset ? <ResetChip label={label} onReset={onReset} /> : undefined}
+    >
       <Segmented
         className="w-full"
         ariaLabel={label}
@@ -382,7 +439,6 @@ export function AlignmentRow({
         onChange={onChange}
         items={alignmentItems(labels)}
       />
-      {overridden && onReset && <ResetChip label={label} onReset={onReset} />}
     </Row>
   )
 }

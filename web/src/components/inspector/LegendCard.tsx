@@ -1,6 +1,8 @@
+import { useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { useTranslation } from 'react-i18next'
+import type { RowLabelWidth } from '../ui/Field'
 import { displayLabel } from './roles/mathtext'
-import { Eye, EyeOff, MoveDown, MoveUp } from '@/components/ui/icons'
+import { Eye, EyeOff, MoveDown, MoveUp, MoveVertical } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import type { Manifest, ManifestElement } from '@/lib/api'
@@ -11,11 +13,13 @@ import { useUiStore } from '@/store/uiStore'
 import type { PanelObject } from '@/types/document'
 import { msg } from '@/i18n'
 import { Badge } from '../ui/Badge'
-import { Button } from '../ui/Button'
-import { listRowClass } from '../ui/listRow'
+import { dropLineClass, listRowClass } from '../ui/listRow'
+import { MenuItem } from '../ui/Menu'
+import { RowMenu } from '../ui/RowMenu'
+import { useRowMenu } from '../ui/useRowMenu'
 import { GroupHead } from './GroupHead'
 import { INSPECTOR_LABEL_W } from './layout'
-import { Tip } from '../ui/Tooltip'
+import { MarkerGlyph } from './controls/MarkerPicker'
 import { TypographyControls } from './controls/TypographyControls'
 import { FIGURE_TEXT_BATCH_PROPS, useFigureTypography } from './typographyAdapter'
 import { effectiveOverride } from '@/lib/effectiveOverride'
@@ -32,8 +36,8 @@ import { effectiveOverride } from '@/lib/effectiveOverride'
  * 卡片承接掉的图例字段：`fontsize`（由 Typography 接管）与 `entry_order`
  * （由条目列表接管），通用列表要把它们让出来——同一属性不出两套控件。
  *
- * 行里没有嵌套的可交互元素：文字是一个按钮，显隐 / 上移 / 下移是各自独立
- * 的按钮，并排在同一行。
+ * 行里没有嵌套的可交互元素：文字是一个按钮，显隐 / 上移 / 下移收进行尾的 ⋯（同一份菜单
+ * 也挂在右键与 ⇧F10 上），键盘还有 ⌥↑ / ⌥↓（见 `LegendEntryList`）。
  */
 
 /** 卡片承接掉的图例字段 */
@@ -51,7 +55,7 @@ export function LegendCard({
   panel: PanelObject
   manifest: Manifest
   legend: ManifestElement
-  labelWidth?: number
+  labelWidth?: RowLabelWidth
 }) {
   useTranslation('inspector')
   const views = legendEntryViews(panel, manifest, legend)
@@ -60,11 +64,12 @@ export function LegendCard({
   const hasTypography = FIGURE_TEXT_BATCH_PROPS.some((p) => typography.fieldOf(p))
 
   const order = views.map((v) => v.info.index)
-  const move = (i: number, delta: -1 | 1) => {
-    const j = i + delta
-    if (j < 0 || j >= order.length) return
+  /** 把第 from 项挪到第 to 位（上移 / 下移 / 拖动共用）：写一次 `entry_order`（原始序号的排列） */
+  const moveTo = (from: number, to: number) => {
+    if (to < 0 || to >= order.length || to === from) return
     const next = [...order]
-    ;[next[i], next[j]] = [next[j], next[i]]
+    const [item] = next.splice(from, 1)
+    next.splice(to, 0, item)
     setOverride(panel.id, legend.gid, 'entry_order', next, true)
   }
   const toggleHidden = (v: LegendEntryView) => {
@@ -91,56 +96,202 @@ export function LegendCard({
       <div className="flex flex-col gap-1.5">
         {/* 名字 + meta 数字，不是「图例项（2）」（打磨 L10 / 第十九节批次 E–G） */}
         <GroupHead meta={views.length}>{lg('entries')}</GroupHead>
-        {/* 列表不套框（第八节：少用容器）；每一行就是列表行那一副（`listRowClass`） */}
-        <ul className="-mx-1 flex flex-col" aria-label={lg('entriesAria')}>
-          {views.map((v, i) => (
-            <li
-              key={v.element.gid}
-              className={cn(listRowClass({ hidden: v.hidden }), 'px-1')}
-            >
-              <HandleSwatch panel={panel} entry={v} />
-              <button
-                type="button"
-                className="flex h-full min-w-0 flex-1 items-center gap-1 rounded-sm text-left text-xs outline-none hover:text-ink focus-visible:focus-ring"
-                onClick={() => useUiStore.getState().setSelectedGid(v.element.gid)}
-                aria-label={lg('selectEntry', { label: displayLabel(v.text) })}
-              >
-                <span className={cn('min-w-0 truncate', v.hidden ? 'line-through' : 'text-ink')}>
-                  {displayLabel(v.text)}
-                </span>
-                <BindingBadge binding={v.binding} />
-              </button>
-              <Tip label={v.hidden ? lg('show') : lg('hide')}>
-                <Button
-                  size="icon-sm"
-                  aria-label={v.hidden ? lg('showEntry', { label: v.text }) : lg('hideEntry', { label: v.text })}
-                  aria-pressed={v.hidden}
-                  onClick={() => toggleHidden(v)}
-                >
-                  {v.hidden ? <EyeOff size={ICON_SIZE.sm} /> : <Eye size={ICON_SIZE.sm} />}
-                </Button>
-              </Tip>
-              <Button
-                size="icon-sm"
-                disabled={i === 0}
-                onClick={() => move(i, -1)}
-                aria-label={lg('moveUp', { label: v.text })}
-              >
-                <MoveUp size={ICON_SIZE.sm} />
-              </Button>
-              <Button
-                size="icon-sm"
-                disabled={i === views.length - 1}
-                onClick={() => move(i, 1)}
-                aria-label={lg('moveDown', { label: v.text })}
-              >
-                <MoveDown size={ICON_SIZE.sm} />
-              </Button>
-            </li>
-          ))}
-        </ul>
+        <LegendEntryList panel={panel} views={views} order={order} onMove={moveTo} onToggleHidden={toggleHidden} />
       </div>
     </div>
+  )
+}
+
+/**
+ * 图例项列表（2026-10-07 设计审计 §9.2 P1，宪法 §21.2 的行尾纪律）：
+ *
+ * - 一行常驻的只有：色样（真实的标记图形）+ 名字 + 非默认的绑定徽标；拖动柄与 ⋯ 只在
+ *   hover / focus-within 时浮出（此前每行常驻三颗 28px 钮、一行 4 个 Tab 停靠点）；
+ * - **整张列表一个 Tab 停靠点**（roving focus）：↑ / ↓ 在项之间走，Home / End 到首尾，
+ *   ⌥↑ / ⌥↓ 把这一项上移 / 下移（与 ⋯ 里的上移 / 下移同一个动作），Enter 选中那一项；
+ * - 拖动柄按住上下拖：落点一条 accent 线（`dropLineClass`），松手写一次 `entry_order`；
+ * - ⋯ / 右键 / ⇧F10 是同一份菜单（`useRowMenu` + `RowMenu`）：显示 / 隐藏、上移、下移。
+ */
+function LegendEntryList({
+  panel,
+  views,
+  order,
+  onMove,
+  onToggleHidden,
+}: {
+  panel: PanelObject
+  views: LegendEntryView[]
+  order: number[]
+  onMove: (from: number, to: number) => void
+  onToggleHidden: (v: LegendEntryView) => void
+}) {
+  const listRef = useRef<HTMLUListElement>(null)
+  const [focusGid, setFocusGid] = useState<string | null>(null)
+  const [drag, setDrag] = useState<{ from: number; to: number } | null>(null)
+  const current = Math.max(0, views.findIndex((v) => v.element.gid === focusGid))
+  const focusRow = (gid: string) => {
+    setFocusGid(gid)
+    requestAnimationFrame(() =>
+      listRef.current?.querySelector<HTMLElement>(`[data-legend-entry="${CSS.escape(gid)}"] [data-legend-entry-main]`)?.focus(),
+    )
+  }
+
+  const onKeyDown = (e: KeyboardEvent, i: number) => {
+    const v = views[i]
+    if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && e.altKey) {
+      e.preventDefault()
+      const j = i + (e.key === 'ArrowUp' ? -1 : 1)
+      if (j < 0 || j >= views.length) return
+      onMove(i, j)
+      focusRow(v.element.gid)
+      return
+    }
+    let j: number | null = null
+    if (e.key === 'ArrowUp') j = i - 1
+    else if (e.key === 'ArrowDown') j = i + 1
+    else if (e.key === 'Home') j = 0
+    else if (e.key === 'End') j = views.length - 1
+    if (j == null) return
+    e.preventDefault()
+    j = Math.max(0, Math.min(views.length - 1, j))
+    focusRow(views[j].element.gid)
+  }
+
+  /** 拖动柄：按行的中线算落点；同一个位置松手什么都不写 */
+  const startDrag = (e: ReactPointerEvent, from: number) => {
+    if (e.button !== 0) return
+    e.preventDefault()
+    const rows = [...(listRef.current?.querySelectorAll<HTMLElement>('[data-legend-entry]') ?? [])]
+    const targetOf = (y: number) => {
+      let to = rows.length - 1
+      for (let k = 0; k < rows.length; k++) {
+        const r = rows[k].getBoundingClientRect()
+        if (y < r.top + r.height / 2) {
+          to = k > from ? k - 1 : k
+          break
+        }
+      }
+      return Math.max(0, Math.min(rows.length - 1, to))
+    }
+    setDrag({ from, to: from })
+    const move = (ev: PointerEvent) => setDrag({ from, to: targetOf(ev.clientY) })
+    const up = (ev: PointerEvent) => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      window.removeEventListener('pointercancel', cancel)
+      setDrag(null)
+      const to = targetOf(ev.clientY)
+      if (to !== from) onMove(from, to)
+    }
+    const cancel = () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      window.removeEventListener('pointercancel', cancel)
+      setDrag(null)
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+    window.addEventListener('pointercancel', cancel)
+  }
+
+  return (
+    <ul ref={listRef} className="-mx-1 flex flex-col" aria-label={lg('entriesAria')} data-legend-entries={order.join(',')}>
+      {views.map((v, i) => (
+        <LegendEntryRow
+          key={v.element.gid}
+          panel={panel}
+          entry={v}
+          index={i}
+          count={views.length}
+          tabbable={i === current}
+          dropLine={
+            drag && drag.to !== drag.from && drag.to === i ? (drag.to > drag.from ? 'after' : 'before') : null
+          }
+          dragging={drag?.from === i}
+          onFocusMain={() => setFocusGid(v.element.gid)}
+          onKeyDown={(e) => onKeyDown(e, i)}
+          onDragStart={(e) => startDrag(e, i)}
+          onMove={(d) => onMove(i, i + d)}
+          onToggleHidden={() => onToggleHidden(v)}
+        />
+      ))}
+    </ul>
+  )
+}
+
+function LegendEntryRow({
+  panel,
+  entry: v,
+  index: i,
+  count,
+  tabbable,
+  dropLine,
+  dragging,
+  onFocusMain,
+  onKeyDown,
+  onDragStart,
+  onMove,
+  onToggleHidden,
+}: {
+  panel: PanelObject
+  entry: LegendEntryView
+  index: number
+  count: number
+  tabbable: boolean
+  dropLine: 'before' | 'after' | null
+  dragging: boolean
+  onFocusMain: () => void
+  onKeyDown: (e: KeyboardEvent) => void
+  onDragStart: (e: ReactPointerEvent) => void
+  onMove: (delta: -1 | 1) => void
+  onToggleHidden: () => void
+}) {
+  const menu = useRowMenu()
+  const name = displayLabel(v.text)
+  return (
+    <li
+      {...menu.rowProps}
+      data-legend-entry={v.element.gid}
+      data-hidden={v.hidden || undefined}
+      className={cn(listRowClass({ hidden: v.hidden }), 'px-1', dragging && 'bg-surface-hover')}
+    >
+      <span aria-hidden className={dropLineClass(dropLine)} />
+      {/* 拖动柄：只在 hover / focus-within 时出现；不进 Tab 顺序（键盘用 ⌥↑ / ⌥↓） */}
+      <span
+        aria-hidden
+        data-legend-drag
+        onPointerDown={onDragStart}
+        className="flex h-5 w-3 shrink-0 cursor-grab items-center justify-center text-ink-3 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
+      >
+        <MoveVertical size={ICON_SIZE.xs} />
+      </span>
+      <HandleSwatch panel={panel} entry={v} />
+      <button
+        type="button"
+        data-legend-entry-main
+        tabIndex={tabbable ? 0 : -1}
+        className="flex h-full min-w-0 flex-1 items-center gap-1 rounded-sm text-left text-sm outline-none hover:text-ink focus-visible:focus-ring"
+        onClick={() => useUiStore.getState().setSelectedGid(v.element.gid)}
+        onFocus={onFocusMain}
+        onKeyDown={onKeyDown}
+        aria-label={lg('selectEntry', { label: name })}
+        aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
+      >
+        <span className={cn('min-w-0 truncate', v.hidden ? 'line-through' : 'text-ink')}>{name}</span>
+        <BindingBadge binding={v.binding} />
+      </button>
+      <RowMenu state={menu} label={lg('entryActions', { label: name })} data-legend-entry-menu={v.element.gid}>
+        <MenuItem icon={v.hidden ? Eye : EyeOff} data-legend-toggle-hidden onSelect={onToggleHidden}>
+          {v.hidden ? lg('showEntry', { label: v.text }) : lg('hideEntry', { label: v.text })}
+        </MenuItem>
+        <MenuItem icon={MoveUp} disabled={i === 0} data-legend-move="up" onSelect={() => onMove(-1)}>
+          {lg('moveUp', { label: v.text })}
+        </MenuItem>
+        <MenuItem icon={MoveDown} disabled={i === count - 1} data-legend-move="down" onSelect={() => onMove(1)}>
+          {lg('moveDown', { label: v.text })}
+        </MenuItem>
+      </RowMenu>
+    </li>
   )
 }
 
@@ -200,10 +351,18 @@ function HandleSwatch({ panel, entry }: { panel: PanelObject; entry: LegendEntry
             strokeWidth={Math.max(0.75, Math.min(4, lw))}
             strokeDasharray={DASH[String(ls)]}
           />
+          {/* 标记按它真实的形状画（与标记选择器同一份图形），不再一律画成圆点 */}
           {marker !== 'None' && marker !== '' && (
-            <circle cx={12} cy={6} r={2.4} fill={color} stroke="none" />
+            <g transform="translate(6 0)" style={{ color }}>
+              <MarkerGlyph code={marker} />
+            </g>
           )}
         </>
+      ) : marker !== 'None' && marker !== '' ? (
+        // 散点那种只有标记、没有线的项：画它的标记，不画一块色条
+        <g transform="translate(6 0)" style={{ color }}>
+          <MarkerGlyph code={marker} fallback={<rect x={2} y={2} width={8} height={8} fill="currentColor" />} />
+        </g>
       ) : (
         <rect x={2} y={2} width={20} height={8} fill={color} stroke="none" />
       )}

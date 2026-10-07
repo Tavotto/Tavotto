@@ -11,6 +11,8 @@ import {
   type TextareaHTMLAttributes,
 } from 'react'
 import { t } from '@/i18n'
+import { normalizeHex, pushRecentColor, useColorFieldHost, useRecentColors } from './colorPalette'
+import { Popover } from './Popover'
 import { DURATION } from '@/lib/motion'
 import { cn } from '@/lib/utils'
 import {
@@ -193,6 +195,11 @@ interface NumberFieldProps {
   unit?: ReactNode
   /** 撑满所在格：框吃掉剩余宽度（X / Y / W / H 这类网格里的字段），默认只包住数字 */
   fill?: boolean
+  /**
+   * 占所在行的一半宽（属性栏行网格的「半列」档，2026-10-07 设计审计 §9.2 P0-2）：
+   * 控件只有 full（`fill`）/ half 两档，数字框不再按内容各定一个宽。
+   */
+  half?: boolean
   disabled?: boolean
   /** 多选且取值不一致：留空并显示占位符，而不是谎报一个数 */
   mixed?: boolean
@@ -234,6 +241,7 @@ export function NumberField({
   prefixInside,
   unit,
   fill,
+  half,
   disabled,
   mixed,
   mixedPlaceholder,
@@ -340,6 +348,7 @@ export function NumberField({
       className={cn(
         'group flex h-7 items-center gap-1.5',
         fill && 'w-full min-w-0',
+        half && 'w-[calc((100%-0.375rem)/2)] min-w-0 shrink-0',
         // 不用 pointer-events-none（宪法第五节）：它会把 title 与 tooltip 一起吞掉；
         // 点击本来就被原生 disabled 挡住，拖动改数在 startScrub 里自己判 disabled
         disabled && 'cursor-not-allowed opacity-40',
@@ -369,7 +378,7 @@ export function NumberField({
           BOX_CLASS,
           BOX_FOCUS_WITHIN,
           disabled && BOX_DISABLED,
-          fill && 'flex-1',
+          (fill || half) && 'flex-1',
           // 钳位那一刻：边框走 warn（盖过 hover / focus 的颜色），slow 档淡回去
           clamped && 'border-warn transition-colors duration-slow hover:border-warn focus-within:border-warn',
         )}
@@ -429,7 +438,7 @@ export function NumberField({
             // 固有宽度（≈170px）撑开；数字居中。调用方要更宽时覆盖 input 的宽度即可。
             'type-number h-full min-w-0 bg-transparent text-ink outline-none',
             prefix != null && prefixInside ? 'pl-1 pr-1.5' : 'px-1.5',
-            fill ? 'w-full' : 'w-[calc(4ch+0.75rem)]',
+            fill || half ? 'w-full' : 'w-[calc(4ch+0.75rem)]',
             'placeholder:font-sans placeholder:text-ink-3',
             // 框内有单位时数字右对齐、贴着单位；没有单位时居中（框只比数字大一圈）
             unit != null ? 'pr-1 text-right' : 'text-center',
@@ -457,6 +466,8 @@ export function ColorField({
   className,
   ariaLabel,
   mixed,
+  disabled,
+  swatchOnly,
 }: {
   value: string
   onChange: (v: string) => void
@@ -472,6 +483,7 @@ export function ColorField({
    * 这一轮取色结束（取色盘失焦）。取色是连续动作：系统取色盘拖着走会发一串
    * change，调用方靠它把整轮压成一条历史 + 一次定稿渲染。原生对话框不保证发
    * blur，所以调用方另有安静计时兜底——这里只管报告确实发生了的失焦。
+   * hex 框回车 / 面板里点一格是离散的一次：onChange 之后紧跟着就报一次。
    */
   onGestureEnd?: () => void
   className?: string
@@ -484,56 +496,275 @@ export function ColorField({
    * 在那儿退化成普通文本框，axe 的 `label` 规则才落到它头上。
    */
   ariaLabel: string
+  /**
+   * 真禁用（2026-10-07 审计 §9.3：画布页透明背景时的背景色）：色块、hex、取色盘一起禁用、opacity-40。
+   * 此前调用方用 `pointer-events-none opacity-40` 假禁用——键盘照样能 Tab 进去改色。
+   */
+  disabled?: boolean
+  /**
+   * 只要色块、不要 hex 框（一行里还挤着别的控件时，如边框行的「色块 + 线宽」）：
+   * 取色面板照旧（宿主挂了的话），只是不占那一截宽度
+   */
+  swatchOnly?: boolean
 }) {
   // 引擎报 `none` = 这条没有颜色（没设边色的形状、`fill` 关着的面、空心 marker），
   // 不是黑色（#427 之前 `to_hex` 丢掉 alpha，透明黑显示成 #000000，检查器摆出一条
-  // 并不存在的黑边）。色块画成「无」：白底一道红斜线，与画布图形「无填充」同一个记号；
+  // 并不存在的黑边）。色块画成「无」：白底一道斜线，与画布图形「无填充」同一个记号；
   // 取色盘本身只吃合法色号，喂它黑色当起点，用户一取色就是一个真的颜色。
   const none = !mixed && value === NO_COLOR
   const mixedId = useId()
+  // 宿主（属性栏）挂了取色面板时：色块旁是可编辑的 hex，点色块开面板；没挂时（浮动栏）
+  // 只剩一块色块，点它直接开系统取色盘（2026-10-07 设计审计 §9.2 P1）
+  const host = useColorFieldHost()
+  const rich = !!host?.rich
+  const nativeRef = useRef<HTMLInputElement>(null)
+  const [open, setOpen] = useState(false)
+  const shown = mixed || none ? '' : value.toUpperCase()
+
+  const pick = (c: string) => {
+    onChange(c)
+    onGestureEnd?.()
+    if (c !== NO_COLOR) pushRecentColor(c)
+  }
+
+  const swatchFill = mixed ? (
+    // 中性底 + 居中短横：不是任何一个成员的颜色；记号是装饰，名字在下面的描述里
+    <div className="absolute inset-0 flex items-center justify-center bg-surface-2" aria-hidden="true">
+      <span className="h-0.5 w-3 rounded-full bg-ink-3" />
+    </div>
+  ) : none ? (
+    <div className="absolute inset-0 bg-surface" style={{ backgroundImage: NONE_STROKE }} />
+  ) : (
+    <div className="absolute inset-0" style={{ background: value }} />
+  )
+
   return (
-    // 只剩一块色块（2026-09-11 用户反馈：去掉色号框，点色块取色）。
-    // 取色盘是**透明盖在色块上的真控件**，自带一圈 focus ring——纯键盘 Tab 到它
-    // 时屏幕上得有反馈；overflow-hidden 只裁子元素，不会吃掉这一层自己的 outline。
-    // 当前色号走 title：鼠标悬停仍看得到精确值。
-    <div className={cn('flex h-7 items-center', className)}>
+    <div
+      data-color-field
+      className={cn('flex h-7 min-w-0 items-center gap-1.5', rich && !swatchOnly && 'flex-1', disabled && 'opacity-40', className)}
+    >
       <div
         title={mixed ? t('mixed') : none ? t('colorField.none') : value.toUpperCase()}
         data-none={none || undefined}
         data-mixed={mixed || undefined}
-        className="relative h-5 w-8 shrink-0 overflow-hidden rounded-sm border border-border transition-colors hover:border-border-strong has-[:focus-visible]:focus-ring"
-      >
-        {mixed ? (
-          // 中性底 + 居中短横：不是任何一个成员的颜色；记号是装饰，名字在下面的描述里
-          <div className="absolute inset-0 flex items-center justify-center bg-surface-2" aria-hidden="true">
-            <span className="h-0.5 w-3 rounded-full bg-ink-3" />
-          </div>
-        ) : none ? (
-          <div
-            className="absolute inset-0 bg-surface"
-            style={{
-              backgroundImage:
-                'linear-gradient(to top right, transparent calc(50% - 0.75px), var(--color-danger) calc(50% - 0.75px), var(--color-danger) calc(50% + 0.75px), transparent calc(50% + 0.75px))',
-            }}
-          />
-        ) : (
-          <div className="absolute inset-0" style={{ background: value }} />
+        className={cn(
+          // 只剩色块时取色盘是**透明盖在色块上的真控件**；带面板时盖着的是面板触发钮。
+          // 两种都在这一层画焦点环（overflow-hidden 只裁子元素，不吃这一层自己的 outline）
+          'relative h-5 w-8 shrink-0 overflow-hidden rounded-sm border border-border transition-colors has-[:focus-visible]:focus-ring',
+          disabled ? 'cursor-not-allowed' : 'hover:border-border-strong',
         )}
+      >
+        {swatchFill}
         <input
+          ref={nativeRef}
           type="color"
-          value={none || value === NO_COLOR ? '#000000' : value}
+          value={none || !normalizeHex(value) ? '#000000' : normalizeHex(value)!}
+          disabled={disabled}
           onChange={(e) => onChange(e.target.value)}
-          onBlur={onGestureEnd}
+          onBlur={(e) => {
+            onGestureEnd?.()
+            pushRecentColor(e.target.value)
+          }}
           aria-label={t('colorField.picker', { label: ariaLabel })}
           aria-describedby={mixed ? mixedId : undefined}
-          className="absolute inset-0 opacity-0"
+          // 带面板时系统取色盘退到面板里的「系统取色器…」：这个原生框只在后台，不盖色块、不进 Tab 顺序
+          tabIndex={rich ? -1 : undefined}
+          className={cn('absolute inset-0 opacity-0', rich && 'pointer-events-none', disabled && 'cursor-not-allowed')}
         />
+        {rich && (
+          <Popover
+            open={open}
+            onOpenChange={setOpen}
+            align="start"
+            width={208}
+            ariaLabel={ariaLabel}
+            trigger={
+              <button
+                type="button"
+                data-color-swatch
+                disabled={disabled}
+                aria-label={t('colorField.open', { label: ariaLabel })}
+                aria-describedby={mixed ? mixedId : undefined}
+                className="absolute inset-0 outline-none disabled:cursor-not-allowed"
+              />
+            }
+          >
+            <ColorPanel
+              value={mixed ? null : value}
+              documentColors={host?.documentColors ?? []}
+              onPick={(c) => {
+                pick(c)
+                setOpen(false)
+              }}
+              onSystem={() => {
+                setOpen(false)
+                const el = nativeRef.current
+                if (!el) return
+                // showPicker 在不支持的引擎上不存在 / 会抛：退回 click（WKWebView）
+                try {
+                  if (typeof el.showPicker === 'function') el.showPicker()
+                  else el.click()
+                } catch {
+                  el.click()
+                }
+              }}
+            />
+          </Popover>
+        )}
         {mixed && (
           <span id={mixedId} className="sr-only">
             {t('mixed')}
           </span>
         )}
       </div>
+      {rich && !swatchOnly && (
+        <HexInput
+          value={shown}
+          disabled={disabled}
+          ariaLabel={t('colorField.hex', { label: ariaLabel })}
+          placeholder={mixed ? t('mixed') : none ? t('colorField.none') : undefined}
+          onCommit={pick}
+        />
+      )}
+    </div>
+  )
+}
+
+/** 「无」的记号：白底一道斜线（与画布图形「无填充」同一个记号） */
+const NONE_STROKE =
+  'linear-gradient(to top right, transparent calc(50% - 0.75px), var(--color-danger) calc(50% - 0.75px), var(--color-danger) calc(50% + 0.75px), transparent calc(50% + 0.75px))'
+
+/** 可编辑的色号：回车 / 失焦提交，不合法就退回原值；Esc 放弃 */
+function HexInput({
+  value,
+  onCommit,
+  ariaLabel,
+  placeholder,
+  disabled,
+}: {
+  value: string
+  onCommit: (c: string) => void
+  ariaLabel: string
+  placeholder?: string
+  disabled?: boolean
+}) {
+  const [text, setText] = useState(value)
+  const [focused, setFocused] = useState(false)
+  const skip = useRef(false)
+  useEffect(() => {
+    if (!focused) setText(value)
+  }, [value, focused])
+  const submit = () => {
+    if (text === value) return
+    const c = normalizeHex(text)
+    if (c && c.toUpperCase() !== value) onCommit(c)
+    else setText(value)
+  }
+  return (
+    <input
+      type="text"
+      data-color-hex
+      spellCheck={false}
+      autoComplete="off"
+      aria-label={ariaLabel}
+      disabled={disabled}
+      value={text}
+      placeholder={placeholder}
+      onChange={(e) => setText(e.target.value)}
+      onFocus={(e) => {
+        setFocused(true)
+        e.target.select()
+      }}
+      onBlur={() => {
+        setFocused(false)
+        if (skip.current) skip.current = false
+        else submit()
+      }}
+      onKeyDown={(e) => {
+        e.stopPropagation()
+        if (e.key === 'Enter') {
+          submit()
+          skip.current = true
+          ;(e.target as HTMLInputElement).blur()
+        } else if (e.key === 'Escape') {
+          setText(value)
+          skip.current = true
+          ;(e.target as HTMLInputElement).blur()
+        }
+      }}
+      className={cn(
+        'type-number h-7 w-full min-w-0 flex-1 px-2 uppercase outline-none placeholder:font-sans placeholder:normal-case placeholder:text-ink-3',
+        BOX_CLASS,
+        BOX_FOCUS,
+        disabled && BOX_DISABLED,
+      )}
+    />
+  )
+}
+
+/**
+ * 取色面板：文档颜色 / 最近 / 系统取色器。
+ * 「无」与不透明度不在这里：能取「无」的属性各有自己的开关（形状填充、文字底色的 EffectToggle），
+ * 不透明度各有自己的一行——同一个属性不出第二个控件。
+ */
+function ColorPanel({
+  value,
+  documentColors,
+  onPick,
+  onSystem,
+}: {
+  value: string | null
+  documentColors: readonly string[]
+  onPick: (c: string) => void
+  onSystem: () => void
+}) {
+  const recentColors = useRecentColors()
+  const cur = value == null ? null : value === NO_COLOR ? NO_COLOR : normalizeHex(value)
+  const chip = (c: string, key: string) => {
+    const on = cur === c
+    const name = c === NO_COLOR ? t('colorField.none') : c.toUpperCase()
+    return (
+      <button
+        key={key}
+        type="button"
+        data-color-chip={c}
+        aria-label={name}
+        aria-pressed={on}
+        title={name}
+        onClick={() => onPick(c)}
+        className={cn(
+          'relative h-5 w-5 overflow-hidden rounded-xs border outline-none focus-visible:focus-ring',
+          // 选中不只靠颜色：外面多一圈 ink 环
+          on ? 'border-ink ring-1 ring-ink ring-offset-1 ring-offset-surface' : 'border-border hover:border-border-strong',
+        )}
+      >
+        <span
+          aria-hidden
+          className="absolute inset-0"
+          style={c === NO_COLOR ? { backgroundImage: NONE_STROKE } : { background: c }}
+        />
+      </button>
+    )
+  }
+  const group = (title: string, colors: readonly string[], attr: string) =>
+    colors.length > 0 && (
+      <div data-color-group={attr} className="flex flex-col gap-1">
+        <p className="type-meta">{title}</p>
+        <div className="flex flex-wrap gap-1">{colors.map((c) => chip(c, `${attr}-${c}`))}</div>
+      </div>
+    )
+  return (
+    <div className="flex flex-col gap-2" data-color-panel>
+      {group(t('colorField.documentColors'), documentColors.slice(0, 16), 'document')}
+      {group(t('colorField.recent'), recentColors, 'recent')}
+      <button
+        type="button"
+        data-color-system
+        onClick={onSystem}
+        className="-mx-1 flex h-7 items-center rounded-md px-1 text-left text-sm text-ink outline-none hover:bg-surface-hover focus-visible:focus-ring"
+      >
+        {t('colorField.system')}
+      </button>
     </div>
   )
 }

@@ -12,7 +12,8 @@
   custom，**不是**「值和源一不一样」）、「恢复跟随」的计划。
   `LEGEND_ENTRY_STYLE_PROPS` / `LEGEND_BINDINGS` 与 `engine/overrides` 严格同源。
 * **图例卡**（`inspector/LegendCard.tsx`）承接 `fontsize`（Typography 批量作用
-  于全部项）与 `entry_order`（条目列表的上下移动），通用列表让出这两条
+  于全部项）与 `entry_order`（条目列表的上下移动；2026-10-07 起是 ⋯ 菜单 / ⌥↑⌥↓ / 拖动柄三个入口、
+  同一个 `moveTo` 写一次 `entry_order`），通用列表让出这两条
   （`LEGEND_CARD_PROPS`）；没有项的图例不出卡、字段留在通用列表。示意线
   预览读 manifest 的 `handle_*`，**不是第二份样式判断**。
 * **排版详情卡**（`controls/LegendSpacingCard.tsx`，审计 T17）承接五条间距

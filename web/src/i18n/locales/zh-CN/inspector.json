@@ -99,7 +99,6 @@
     "marginSummary": "页边距 {{margin}} mm",
     "objects": "对象",
     "pageSize": "页面尺寸",
-    "presetAria": "{{label}}，{{w}} × {{h}} 毫米",
     "presetGroup": "页面预设",
     "presets": {
       "double": {
@@ -135,7 +134,16 @@
     "swap": "横竖交换",
     "transparent": "透明",
     "transparentBg": "透明背景",
-    "viewAids": "辅助显示"
+    "viewAids": "辅助显示",
+    "sizeMeta": "{{w}} × {{h}} mm",
+    "preset": "预设",
+    "presetCustom": "自定义",
+    "size": "尺寸",
+    "orientation": "方向",
+    "portrait": "竖向",
+    "landscape": "横向",
+    "export": "导出",
+    "exportSummary": "{{formats}} · {{dpi}} ppi"
   },
   "closePanel": "关闭右侧面板",
   "control": {
@@ -193,7 +201,12 @@
       "leftCenter": "左侧中"
     },
     "tickSpineDiagramHint": "点四条边切换刻度线与边框",
-    "legendBestShort": "自动"
+    "legendBestShort": "自动",
+    "aspectShort": {
+      "auto": "自动",
+      "equal": "等比",
+      "custom": "自定义"
+    }
   },
   "element": {
     "absentAppearance": "此元素由脚本生成，当前版本暂不支持在此编辑。",
@@ -331,12 +344,12 @@
     "sizeHead": "子图尺寸",
     "groupLine": "线条",
     "groupMarker": "数据点",
-    "relatedTicksAll": "编辑整个 {{label}}…"
+    "relatedTicksAll": "编辑整个 {{label}}…",
+    "modifiedPartial": "部分已修改"
   },
   "elementFallback": "图内元素",
   "elementsSelected_other": "已选 {{count}} 个元素",
   "emptyHint": "点画布上的图、文字或标注开始编辑。",
-  "emptyTitle": "没有选中对象",
   "engineLabel": {
     "annotationArrow": "标注箭头",
     "arrow": "箭头 {{value}}",
@@ -1165,8 +1178,6 @@
     "typography": "文字",
     "entriesAria": "图例项列表",
     "selectEntry": "选中图例项 “{{label}}”",
-    "show": "显示",
-    "hide": "隐藏",
     "showEntry": "显示图例项 “{{label}}”",
     "hideEntry": "隐藏图例项 “{{label}}”",
     "moveUp": "上移 “{{label}}”",
@@ -1188,6 +1199,16 @@
     "linkedTo": "链接到：{{label}}",
     "unlinkedFrom": "已断开 · 来源：{{label}}",
     "unlinkAction": "断开链接",
-    "relinkAction": "恢复链接"
+    "relinkAction": "恢复链接",
+    "entryActions": "“{{label}}”的操作"
+  },
+  "identity": {
+    "problems_other": "{{count}} 个问题"
+  },
+  "docSummary": {
+    "title": "本排版",
+    "size": "{{w}} × {{h}} mm",
+    "annotations_other": "{{count}} 处文字与标注",
+    "canvasSettings": "画布设置"
   }
 }

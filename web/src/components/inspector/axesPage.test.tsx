@@ -204,7 +204,6 @@ async function mount(gid = 'axes_0', open: string[] = ['coords', 'scaleCenter'])
 const textOf = () => host.textContent ?? ''
 const buttons = () => Array.from(host.querySelectorAll('button'))
 const byAria = (name: string) => buttons().find((b) => b.getAttribute('aria-label') === name)
-const byText = (text: string) => buttons().find((b) => b.textContent?.trim().split(', ')[0] === text)
 
 async function typeNumber(input: HTMLInputElement, text: string) {
   await act(async () => {
@@ -246,6 +245,9 @@ afterEach(async () => {
 
 /* -------------------------------- 纵横比 ---------------------------------- */
 
+/** 纵横比分段的一档（稳定锚点 data-value） */
+const seg = (v: string) => document.querySelector<HTMLButtonElement>(`[role="radiogroup"] [data-value="${v}"]`)!
+
 describe('纵横比：三档控件，不是文字编辑器', () => {
   it('值的解析与还原：auto / equal / 数字串一一对应', () => {
     expect(aspectModeOf('auto')).toEqual({ mode: 'auto', ratio: null })
@@ -265,20 +267,18 @@ describe('纵横比：三档控件，不是文字编辑器', () => {
     expect(row).toBeTruthy()
     expect(row.querySelector('textarea')).toBeNull()
     expect(row.querySelector('[role="radiogroup"][aria-label="纵横比"]')).toBeTruthy()
-    // 三档都在
-    expect(row.textContent).toContain('自动')
-    expect(row.textContent).toContain('等比例')
-    expect(row.textContent).toContain('自定义比例')
+    // 三档都在（分段里是短名，选择器认 data-value）
+    for (const v of ['auto', 'equal', 'custom']) expect(row.querySelector(`[data-value="${v}"]`)).toBeTruthy()
   })
 
   it('换档写引擎能还原的值：等比例 = "equal"，自动 = "auto"，自定义从 1 起', async () => {
     await mount()
     await act(async () => {
-      byText('等比例')!.click()
+      seg('equal').click()
     })
     expect(overrideOf('axes_0', 'aspect')).toBe('equal')
     await act(async () => {
-      byText('自定义比例')!.click()
+      seg('custom').click()
     })
     expect(overrideOf('axes_0', 'aspect')).toBe('1')
     const input = host.querySelector('input[data-inspector-prop="aspect"]') as HTMLInputElement
@@ -286,7 +286,7 @@ describe('纵横比：三档控件，不是文字编辑器', () => {
     await typeNumber(input, '1.5')
     expect(overrideOf('axes_0', 'aspect')).toBe('1.5')
     await act(async () => {
-      byText('自动')!.click()
+      seg('auto').click()
     })
     expect(overrideOf('axes_0', 'aspect')).toBe('auto')
     // 回到自动：数值框收起
@@ -299,7 +299,7 @@ describe('纵横比：三档控件，不是文字编辑器', () => {
     const input = host.querySelector('input[data-inspector-prop="aspect"]') as HTMLInputElement
     expect(input).toBeTruthy()
     expect(input.value).toBe('1.25')
-    const custom = byText('自定义比例')!
+    const custom = seg('custom')
     expect(custom.getAttribute('aria-checked')).toBe('true')
   })
 })
@@ -443,12 +443,14 @@ describe('子图页的版式（2026-09-15 全面打磨）', () => {
     // 列头「颜色 / 线宽」删掉（色块与框内的 pt 已经自说明）
     const texts = [...frame.querySelectorAll('span')].map((el) => el.textContent?.trim())
     expect(texts).not.toContain('颜色')
-    // 标签列与全页同宽
-    const labelCol = frame.querySelector('span[style*="width"]') as HTMLElement
-    expect(labelCol.style.width).toBe('88px')
-    // 线宽回到 compact 档：不再是撑满一列的 142px 框
+    // 每一行都是全栏同一张行网格（2026-10-07：标签 --insp-label · 控件 · 20px 状态槽）
+    const rows = [...frame.querySelectorAll('[data-row-grid]')]
+    expect(rows.length).toBeGreaterThan(0)
+    expect(frame.querySelector('span[style*="width"]')).toBeNull()
+    // 色块只是色块（不带 hex 框，一行里还有线宽），线宽吃掉控件列剩下的宽度
+    expect(frame.querySelector('[data-color-hex]')).toBeNull()
     const input = frame.querySelector('input[data-inspector-prop="spine_linewidth"]') as HTMLInputElement
-    expect(input.className).not.toContain('w-full')
+    expect(input.className).toContain('w-full')
   })
 })
 

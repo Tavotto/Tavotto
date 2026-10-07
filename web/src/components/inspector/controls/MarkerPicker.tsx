@@ -63,6 +63,15 @@ function markerShape(code: string): React.ReactNode | null {
   }
 }
 
+/**
+ * 一个标记的图形（12×12 viewBox 里的 `<g>` 内容，颜色跟 currentColor）：图例项的色样与这里的格子
+ * 画的是同一份形状（2026-10-07 设计审计 §9.2：图例色样按真实 marker 画，不再一律是圆点）。
+ * 认不出的取值画 `fallback`。
+ */
+export function MarkerGlyph({ code, fallback = null }: { code: string; fallback?: React.ReactNode }) {
+  return <>{markerShape(code) ?? fallback}</>
+}
+
 /* -------------------- 引擎发来的几何 → 同一个 12×12 viewBox ------------------ */
 
 /** 单位框四周留的边距：让照顶点画出来的形状与上面那份手绘图形份量相当 */

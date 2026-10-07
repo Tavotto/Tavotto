@@ -229,8 +229,10 @@ describe('右栏的壳（2026-09-15 全面打磨 S2 / S3 / S4）', () => {
     const h2 = document.querySelector('h2')!
     // 身份块的名字是 15/500（2026-09-30 重设计），比它下面的分区标题（type-section 12/500）大一档；
     // 2026-09-15 之前它是 text-xs（11），对象名比分区标题还小
-    expect(h2.className).toContain('text-xl')
-    expect(h2.className).not.toContain('text-xs')
+    // 2026-10-07：名字走 type-heading（17 / 600），折两行、全文在 title
+    expect(h2.className).toContain('type-heading')
+    expect(h2.className).toContain('line-clamp-2')
+    expect(h2.getAttribute('title')).toBe(h2.textContent)
   })
 
   it('身份头的标题比分区标题大一档（S2 · 图内元素页）', async () => {
@@ -241,8 +243,7 @@ describe('右栏的壳（2026-09-15 全面打磨 S2 / S3 / S4）', () => {
     await mount()
     const h2 = document.querySelector('h2')!
     expect(h2.textContent).toBeTruthy()
-    expect(h2.className).toContain('text-xl')
-    expect(h2.className).not.toContain('text-xs')
+    expect(h2.className).toContain('type-heading')
   })
 
   it('图钉：状态靠图形说，不靠常驻的灰块（S3）', async () => {

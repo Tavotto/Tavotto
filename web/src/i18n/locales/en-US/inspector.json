@@ -101,7 +101,6 @@
     "marginSummary": "Margin {{margin}} mm",
     "objects": "Objects",
     "pageSize": "Page size",
-    "presetAria": "{{label}}, {{w}} × {{h}} millimetres",
     "presetGroup": "Page presets",
     "presets": {
       "double": {
@@ -137,7 +136,16 @@
     "swap": "Swap W/H",
     "transparent": "Transparent",
     "transparentBg": "Transparent background",
-    "viewAids": "Display aids"
+    "viewAids": "Display aids",
+    "sizeMeta": "{{w}} × {{h}} mm",
+    "preset": "Preset",
+    "presetCustom": "Custom",
+    "size": "Size",
+    "orientation": "Orientation",
+    "portrait": "Portrait",
+    "landscape": "Landscape",
+    "export": "Export",
+    "exportSummary": "{{formats}} · {{dpi}} ppi"
   },
   "closePanel": "Close right panel",
   "control": {
@@ -196,7 +204,12 @@
       "leftCenter": "Left, middle"
     },
     "tickSpineDiagramHint": "Click a side to toggle its tick marks and spine",
-    "legendBestShort": "Auto"
+    "legendBestShort": "Auto",
+    "aspectShort": {
+      "auto": "Auto",
+      "equal": "Equal",
+      "custom": "Custom"
+    }
   },
   "element": {
     "absentAppearance": "This element comes from the script; editing it here isn’t supported in this version.",
@@ -346,13 +359,13 @@
     "sizeHead": "Axes size",
     "groupLine": "Line",
     "groupMarker": "Data points",
-    "relatedTicksAll": "Edit all of {{label}}…"
+    "relatedTicksAll": "Edit all of {{label}}…",
+    "modifiedPartial": "Partly modified"
   },
   "elementFallback": "Figure element",
   "elementsSelected_one": "{{count}} element selected",
   "elementsSelected_other": "{{count}} elements selected",
   "emptyHint": "Click a figure, text or annotation on the canvas to start editing.",
-  "emptyTitle": "Nothing selected",
   "engineLabel": {
     "annotationArrow": "Annotation arrow",
     "arrow": "Arrow {{value}}",
@@ -1195,8 +1208,6 @@
     "typography": "Text",
     "entriesAria": "Legend entries",
     "selectEntry": "Select legend entry “{{label}}”",
-    "show": "Show",
-    "hide": "Hide",
     "showEntry": "Show legend entry “{{label}}”",
     "hideEntry": "Hide legend entry “{{label}}”",
     "moveUp": "Move “{{label}}” up",
@@ -1218,6 +1229,18 @@
     "linkedTo": "Linked to {{label}}",
     "unlinkedFrom": "Unlinked · from {{label}}",
     "unlinkAction": "Unlink",
-    "relinkAction": "Relink"
+    "relinkAction": "Relink",
+    "entryActions": "Actions for “{{label}}”"
+  },
+  "identity": {
+    "problems_one": "{{count}} issue",
+    "problems_other": "{{count}} issues"
+  },
+  "docSummary": {
+    "title": "This layout",
+    "size": "{{w}} × {{h}} mm",
+    "annotations_one": "{{count}} text or annotation",
+    "annotations_other": "{{count}} texts and annotations",
+    "canvasSettings": "Canvas settings"
   }
 }
