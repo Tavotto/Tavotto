@@ -135,7 +135,6 @@ const RULES: Rule[] = [
       '/src/components/left/AssetBrowser.tsx': { count: 1, why: `素材卡的 hover / 选中环：${LATER_PHASE}` },
       '/src/components/left/ProblemCards.tsx': { count: 1, why: `问题卡：${LATER_PHASE}` },
       '/src/components/left/LeftRail.tsx': { count: 1, why: `左轨激活态：${LATER_PHASE}` },
-      '/src/components/VersionDialog.tsx': { count: 1, why: `版本对话框的缩略图框：${LATER_PHASE}` },
     },
   },
   {

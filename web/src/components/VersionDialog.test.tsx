@@ -189,19 +189,23 @@ describe('预览对话框：只读，不改当前排版', () => {
     expect(mockCreate).not.toHaveBeenCalled()
   })
 
-  it('标题写「预览：时间 名字」；默认焦点在「关闭」上（回车不会误触恢复）', async () => {
+  it('标题写「预览：时间 名字」；默认焦点在对话框容器上（回车不会误触恢复）；页脚只有「恢复到这里」', async () => {
     await mount([meta({ kind: 'named', named: true, auto: false, name: '投稿前' })])
     await act(async () => previews()[0].click())
     await flush()
     expect(dialog()!.textContent).toMatch(/预览：.*投稿前/)
-    expect(document.activeElement?.hasAttribute('data-timeline-preview-close')).toBe(true)
+    const content = $('[data-dialog="timeline-preview"]')!
+    expect(document.activeElement).toBe(content)
+    // 关闭只有右上角 × 一处（2026-10-07 设计审计 §10.2：此前页脚还有一颗重复的「关闭」）
+    expect($('[data-timeline-preview-close]')).toBeNull()
+    expect(content.querySelectorAll('[data-dialog-close]')).toHaveLength(1)
   })
 
-  it('「关闭」收起对话框，排版不动', async () => {
+  it('右上角关闭收起对话框，排版不动', async () => {
     await mount([meta()])
     await act(async () => previews()[0].click())
     await flush()
-    await act(async () => $<HTMLButtonElement>('[data-timeline-preview-close]')!.click())
+    await act(async () => $<HTMLButtonElement>('[data-dialog-close]')!.click())
     expect(useTimelineStore.getState().preview).toBeNull()
     expect(ids()).toEqual(['now'])
   })
@@ -299,6 +303,19 @@ describe('恢复：先存「恢复前」，再写，⌘Z 能退回', () => {
   })
 })
 
+describe('抽屉的焦点（2026-10-07 设计审计 §10.2）', () => {
+  it('打开时焦点交进抽屉本身；关上还给打开前的那个控件', async () => {
+    const trigger = document.createElement('button')
+    document.body.appendChild(trigger)
+    trigger.focus()
+    await mount([meta()], undefined, false)
+    expect(document.activeElement).toBe($('[data-timeline-drawer]'))
+    await act(async () => useUiStore.setState({ versionsOpen: false }))
+    expect(document.activeElement).toBe(trigger)
+    trigger.remove()
+  })
+})
+
 describe('恢复在飞时预览锁住（Codex #679 P1）', () => {
   // 「恢复前」节点还没存完就能关掉预览回去编辑的话，晚到的恢复会把新编辑整份盖掉
   const ways: Record<string, () => Promise<void>> = {
@@ -341,7 +358,8 @@ describe('恢复在飞时预览锁住（Codex #679 P1）', () => {
       await flush()
       expect(mockCreate).toHaveBeenCalledTimes(1)
       expect($('[data-dialog="timeline-preview"]')!.getAttribute('aria-busy')).toBe('true')
-      expect($<HTMLButtonElement>('[data-timeline-preview-close]')!.disabled).toBe(true)
+      // 忙时右上角 × 收起（Dialog 的 busy 锁）
+      expect($('[data-dialog="timeline-preview"] [data-dialog-close]')).toBeNull()
 
       await act(ways[how])
       await flush()
@@ -1466,15 +1484,32 @@ describe('行：单击选中、「预览」钮开预览、双击或「改名」�
     expect($('[data-timeline-rename]')).not.toBeNull()
   })
 
-  it('「预览」钮开预览，「改名」钮进入改名；两颗钮都有可达名', async () => {
+  it('一行的动作只有一颗 ⋯（预览 / 改名 / 复制 / 删除）；选中行下面一条「预览 · 恢复到这里」', async () => {
     await mount([meta({ id: 'a1' })])
-    const previewBtn = node('a1').querySelector<HTMLButtonElement>('[data-timeline-preview-button]')!
-    const renameBtn = node('a1').querySelector<HTMLButtonElement>('[data-timeline-rename-button]')!
-    expect(previewBtn.getAttribute('aria-label')).toBeTruthy()
-    expect(renameBtn.getAttribute('aria-label')).toBeTruthy()
-    await act(async () => renameBtn.click())
+    const row = node('a1')
+    // 行里不再有单独的改名图标；⋯ 有可达名
+    expect(row.querySelector('button[data-timeline-rename-button]')).toBeNull()
+    const more = row.querySelector<HTMLButtonElement>('[data-timeline-more]')!
+    expect(more.getAttribute('aria-label')).toBeTruthy()
+    await act(async () => {
+      more.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }))
+    })
+    await flush()
+    expect($('[data-timeline-menu-preview]')).not.toBeNull()
+    expect($('[data-timeline-delete]')!.className).toContain('text-danger')
+    await act(async () => $<HTMLElement>('[data-timeline-rename-button]')!.click())
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 10))
+    })
     expect($('[data-timeline-rename]')).not.toBeNull()
-    await act(async () => previewBtn.click())
+    expect(document.activeElement).toBe($('[data-timeline-rename]'))
+    await act(async () => $<HTMLInputElement>('[data-timeline-rename]')!.blur())
+    // 选中这一行：内联条露出来（data 锚点在每一行上，靠 CSS 收起 / 露出）
+    const bar = row.querySelector('[data-timeline-row-actions]')!
+    expect(bar.className).toContain('hidden')
+    await act(async () => row.querySelector<HTMLButtonElement>('[data-timeline-row]')!.click())
+    expect(bar.className).not.toContain('hidden')
+    await act(async () => bar.querySelector<HTMLButtonElement>('[data-timeline-preview-button]')!.click())
     await flush()
     expect(useTimelineStore.getState().preview?.meta.id).toBe('a1')
   })

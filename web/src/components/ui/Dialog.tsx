@@ -94,8 +94,11 @@ interface DialogProps {
    */
   status?: ReactNode
   size?: DialogSize
-  /** 特殊场合才用；常规尺寸走 size */
-  width?: number
+  /**
+   * 特殊场合才用；常规尺寸走 size。只给 `shell` 那种自己管布局的大窗口（版本预览按窗口比例：
+   * `"min(1200px, 80vw)"`）——字符串是 CSS 长度，窗口缩放时跟着变
+   */
+  width?: number | string
   /**
    * 固定高度（CSS 长度）。给「内容随分区变化」的外壳（设置）用：外框不随
    * 内容高低跳动，内容区自己滚。不给就是按内容撑高、上限 86vh 的老行为。

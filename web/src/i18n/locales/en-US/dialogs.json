@@ -1462,7 +1462,6 @@
     "filterAll": "All",
     "filterNamed": "Named",
     "previewTitle": "Preview: {{time}} {{name}}",
-    "closePreview": "Close",
     "viewMoment": "This moment",
     "viewSide": "Side by side",
     "viewOverlay": "Overlay",
