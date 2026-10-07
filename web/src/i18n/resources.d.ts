@@ -1425,14 +1425,19 @@ export default interface Resources {
       },
       "general": {
         "groupCanvas": "画布",
-        "groupLanguage": "语言与布局",
+        "groupLanguage": "外观、语言与布局",
         "groupLearning": "学习",
         "groupSidebars": "侧栏",
         "language": "界面语言",
         "layout": "界面乱了？",
         "layoutDesc": "侧栏宽度、开合与画布偏好回到默认，当场生效",
         "layoutReset": "界面布局已恢复默认",
-        "resetLayout": "恢复默认"
+        "resetLayout": "恢复默认",
+        "theme": "外观",
+        "themeDark": "深色",
+        "themeDesc": "画布上的页面与图保持印刷时的颜色",
+        "themeLight": "浅色",
+        "themeSystem": "跟随系统"
       },
       "helpAbout": "关于{{label}}",
       "navGroup": {
@@ -1613,6 +1618,7 @@ export default interface Resources {
           "shortcuts": "快捷键 键盘 速查表",
           "spec": "规范 期刊 检查 字号 栏宽",
           "telemetry": "隐私 统计 遥测 数据",
+          "theme": "主题 深色 浅色 暗色 夜间 外观 模式 颜色",
           "tutorial": "教程 新手 提示 引导",
           "updates": "更新 版本 升级",
           "writeBack": "写回 原始文件 覆盖 备份"

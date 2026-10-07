@@ -5,12 +5,18 @@ import { ErrorBoundary } from './components/ErrorBoundary'
 import { IconProvider } from './components/ui/Icon'
 import { bootstrapDesktopSession, setDesktopMenuLocale } from './lib/desktop'
 import { currentLocale, i18n, initI18n, t } from './i18n'
+import { applyTheme } from './lib/theme'
+import { useUiStore } from './store/uiStore'
 import './index.css'
 
 // i18n 必须在挂载 React **之前**就位：下面那个「桌面会话建立失败」的页面
 // 根本走不到 React，它也得有翻译。
 initI18n()
 document.documentElement.lang = currentLocale()
+
+// 外观（设置 › 通用 › 外观）同样在挂载之前落到 <html> 上：选了深色的人不该先看见一帧浅色，
+// 下面那个不经 React 的「会话建立失败」页也读同一套 CSS 变量（宪法第二十八节）
+applyTheme(useUiStore.getState().theme)
 
 // 原生菜单的文案在壳里另有一份（Rust 在 webview 起来之前就要建菜单）。
 // 这条通知**放在这儿而不是放进 `@/i18n`**：i18n 模块被 store / lib / 单测到处
