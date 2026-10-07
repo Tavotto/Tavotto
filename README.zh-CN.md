@@ -346,7 +346,11 @@ python3 <插件目录>/skills/tavotto-figure/scripts/handoff.py path/to/figure.p
 
 ### 在 Claude Code 中使用 Tavotto（Beta）
 
-同一份插件可装进 Claude Code 的终端、IDE 扩展和桌面应用的 Code 标签页。在终端逐条运行：
+同一份插件可装进 Claude Code 的终端和 IDE 扩展。桌面应用的 Code 标签页仅限 **Local 或 SSH
+会话**使用插件；Cloud 会话不继承本地安装的插件，WSL 会话不支持插件
+（[Claude 的环境限制](https://code.claude.com/docs/en/desktop#install-plugins)）。
+Cloud 或 WSL 用户请切换到 Local Code 会话使用这条路径；在本机安装不会让这两个环境获得插件。
+SSH 会话要在会话实际执行的远程机器上安装。在对应环境的终端逐条运行：
 
 ```sh
 claude plugin marketplace add Tavotto/Tavotto --sparse .claude-plugin
@@ -360,7 +364,8 @@ pipx install "tavotto[worker]"
 Claude Code 没有内嵌画布，照常用工具打开、修改、预检和导出；要手动编辑就交接桌面版。
 更新用 `claude plugin update tavotto@tavotto`。
 
-Claude Desktop 的聊天界面和 claude.ai 不会从插件启动本地 MCP 服务。Claude Desktop 请用下面的配置生成器。
+Claude Desktop 的聊天界面和 claude.ai 不会从插件启动本地 MCP 服务。Claude Desktop 的本地聊天
+请用下面的配置生成器；这条路径不会给 Cloud 或 WSL Code 会话启用插件。
 
 ### 在 DeepSeek Harness 中使用 Tavotto（Beta）
 

@@ -417,8 +417,12 @@ Send Codex this message, in full:
 
 ### Using Tavotto with Claude Code (Beta)
 
-The same plugin installs into Claude Code (terminal, IDE extensions and the desktop app's Code tab).
-Run these in a terminal, one at a time:
+The same plugin installs into Claude Code's terminal and IDE extensions. In the desktop app's Code tab,
+the plugin route is limited to **Local or SSH sessions**: Cloud sessions do not inherit installed local
+plugins, and WSL sessions do not support plugins ([Claude's environment limits](https://code.claude.com/docs/en/desktop#install-plugins)).
+For Cloud or WSL, switch to a Local Code session to use this route; installing on your computer does not
+make the plugin available in those sessions. For SSH, run the setup on the remote machine where the
+session executes. Run these in that environment's terminal, one at a time:
 
 ```sh
 claude plugin marketplace add Tavotto/Tavotto --sparse .claude-plugin
@@ -433,8 +437,8 @@ through MCP roots; `/add-dir` adds more). Claude Code shows no embedded canvas, 
 same tools: open, adjust, preflight, export. To keep editing by hand, hand the figure off to the desktop
 app. Update with `claude plugin update tavotto@tavotto`.
 
-Claude Desktop's chat and claude.ai don't start local MCP servers from plugins. For Claude Desktop, use the
-config generator below.
+Claude Desktop's chat and claude.ai don't start local MCP servers from plugins. For Claude Desktop's
+local chat, use the config generator below; that route does not enable the plugin in Cloud or WSL Code sessions.
 
 ### Using Tavotto with DeepSeek Harness (Beta)
 

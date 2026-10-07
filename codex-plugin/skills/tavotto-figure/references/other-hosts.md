@@ -11,7 +11,10 @@ Tavotto 在所有宿主里是**同一份完整包、同一个 MCP 服务、同�
 
 按用户**当前所在的宿主**只给那一家的步骤，给完就停，不在旧会话里假装工具可用：
 
-**Claude Code（终端 / IDE 扩展 / 桌面 Code 标签页）优先走插件**。在终端逐条运行：
+**Claude Code（终端 / IDE 扩展 / 桌面 Code 标签页的 Local 或 SSH 会话）优先走插件**。
+[桌面 Code 的 Cloud 会话不继承本地插件，WSL 会话不支持插件](https://code.claude.com/docs/en/desktop#install-plugins)。
+这两种环境请改用 Local Code 会话，不要让用户在本机安装后继续在原环境找工具。
+SSH 会话要在会话执行的远程机器上安装插件和引擎。在对应环境的终端逐条运行：
 
 ```sh
 claude plugin marketplace add Tavotto/Tavotto --sparse .claude-plugin
@@ -22,7 +25,8 @@ claude plugin install tavotto@tavotto
 用 `/mcp` 确认 `plugin:tavotto:tavotto` 为 connected，再调用 `tavotto_health`。
 授权目录是 Claude Code 的启动目录和 `/add-dir` 添加的目录；不要在 HOME 里启动。
 没有内嵌画布，照常用工具打开、修改、预检、导出；要手动编辑就交接桌面版。
-不要同时保留生成器配置的同名服务。Claude Desktop 聊天仍走下面的配置版。
+不要同时保留生成器配置的同名服务。Claude Desktop 本地聊天仍走下面的配置版；
+它不为 Cloud 或 WSL Code 会话启用插件。
 
 **DeepSeek Harness：已有可用 pnpm 时才走 bundle**。DSH 的 CLI 插件管理器在安装和更新时
 需要 PATH 上的 `pnpm`。没有它，或命令提示找不到 pnpm，就按下面的配置生成器步骤选
@@ -42,6 +46,9 @@ bundle 与生成器给的 YAML patch 二选一，同名 serverName 的第二行�
 `tavotto@tavotto`；没装引擎再运行 `pipx install "tavotto[worker]"`。新开对话，让它调用
 `tavotto_health`。授权目录是对话的工作目录，在项目里用，不要在 HOME 里用。
 插件自带技能；内嵌画布尚未核验，工具可独立使用。若已有生成器配置，移除重复条目。
+发现插件更新时，让用户在插件市场的已安装列表中打开 Tavotto 插件卡片，选择「更新」
+（[WorkBuddy 官方插件管理](https://www.workbuddy.cn/docs/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/Plug-In)），
+完成后新开对话并调用 `tavotto_health`；不要用配置生成器代替插件更新。
 
 以上三条渠道是 Beta，依据是本地宿主冒烟（`local_smoke`），不是发行件的 `host_verified`。
 Windows 宿主流程、Claude Code 的 IDE / 桌面 Code 标签页、DSH 桌面版和真模型流程、
