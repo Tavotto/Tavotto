@@ -233,13 +233,15 @@ export function MenuCheckItem({
   children,
   checked,
   onSelect,
+  ...rest
 }: {
   children: ReactNode
   checked: boolean
   onSelect: () => void
-}) {
+} & Record<`data-${string}`, string | number | boolean | undefined>) {
   return (
     <DM.CheckboxItem
+      {...rest}
       checked={checked}
       onSelect={(e) => {
         e.preventDefault()

@@ -110,7 +110,7 @@ preflight.runSpec()      规则求值（两份求值器，golden vectors 对齐�
   'keep' })`，元素树不顶掉左栏），当前行 `aria-current` + 选中底与 600（`listRowClass` 的选中态，**不画左竖条**）
   + 尾随格常亮出「修复」，底部上一项 / 下一项（**F8 / ⇧F8 同一个动作**，一支走完接着走下一支）；那条修好消失后
   「下一项」指向**顶上来的那条**，不跳回开头。指着一行时画布上那个对象描一道悬停轮廓（`uiStore.issueHover` →
-  `canvas/IssueOverlay`）；「⋯」里可打开**画布等级标记**（`uiStore.problemPins`：每张有问题的图右上角一枚，
+  `canvas/IssueOverlay`）；「⋯」里可打开**画布等级标记**（`uiStore.problemPins`：每张有问题的图右上角外侧一枚（让开 ne 缩放手柄），
   点它 = `openProblemAt`）。摘要条（32px）只有等级开关（只有阻断着色）与唯一一颗填色主动作「全部修复 N」；
   正在重新检查时标题行一段 shimmer（`validationStore.queued`，延迟 300ms 才出），首检是静态骨架，「未发现问题」
   带证据（按哪套规范、查了几张图、`validationStore.checkedAt`）。

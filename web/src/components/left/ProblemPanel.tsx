@@ -574,7 +574,7 @@ function PanelMenu({ view }: { view: ProblemView }) {
         </MenuRadioItem>
       </MenuRadioGroup>
       <MenuSeparator />
-      <MenuCheckItem checked={pins} onSelect={() => useUiStore.getState().setProblemPins(!pins)}>
+      <MenuCheckItem data-problem-pins checked={pins} onSelect={() => useUiStore.getState().setProblemPins(!pins)}>
         {pr('pins')}
       </MenuCheckItem>
       <MenuItem icon={RefreshCw} data-problem-recheck onSelect={() => schedule()}>

@@ -19,7 +19,7 @@ import { objectRotation, type CanvasObject } from '@/types/document'
  *
  * * **悬停轮廓**：问题面板里指着一行（`uiStore.issueHover`），画布上那个对象画一道与画布自己的
  *   hover 预示同一种画法的轮廓（sel 色、`--sel-hover-opacity`）。只是「我在看它」：不选中、不定位。
- * * **等级标记**（`uiStore.problemPins`，默认关，问题面板「⋯」里打开）：每张有问题的图右上角一枚
+ * * **等级标记**（`uiStore.problemPins`，默认关，问题面板「⋯」里打开）：每张有问题的图右上角外侧一枚
  *   等级色小圆 + 项数；点它 = `openProblemAt`（定位 + 问题面板点开它所在的那一支、落游标）——
  *   与左栏样式面板直达走同一个入口，不另写第二套「跳到问题」。
  *
@@ -78,6 +78,13 @@ const PIN_FILL: Record<Severity, string> = {
 
 const rank = (s: Severity) => SEVERITIES.indexOf(s)
 
+/**
+ * 标记圆心离对象右上角往外挪多少（px，两个方向各一份）。圆心压在角上时，选中对象的 ne 缩放手柄
+ * （`OverlaySvg` 后画、7px）正好盖住标记中心——点标记变成拖缩放，标记也挡住了手柄。挪到
+ * 角外 10px：圆（r=8）离角最近 ≈6px，手柄半对角 ≈5px，两者不相交，各自点得到。
+ */
+const PIN_OFFSET = 10
+
 function IssuePins({ objects, t }: { objects: readonly CanvasObject[]; t: ViewTransform }) {
   const issues = useValidationStore((s) => s.issues)
   const canvasId = useDocumentStore((s) => s.activeCanvasId)
@@ -101,8 +108,8 @@ function IssuePins({ objects, t }: { objects: readonly CanvasObject[]; t: ViewTr
         // 最要紧的那条：等级最高、清单里先出现的
         const worst = list.reduce((a, b) => (rank(b.severity) < rank(a.severity) ? b : a))
         const b = box(o, t)
-        const cx = b.x + b.w
-        const cy = b.y
+        const cx = b.x + b.w + PIN_OFFSET
+        const cy = b.y - PIN_OFFSET
         const label = translate('problems.pinLabel', {
           ns: 'errors',
           count: list.length,
