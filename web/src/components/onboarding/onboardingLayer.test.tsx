@@ -617,7 +617,7 @@ describe('锚点', () => {
 })
 
 describe('卡片与高亮环的形态（2026-10-07 设计审计 §10.2）', () => {
-  it('环的圆角 = 锚点圆角 + 4；分段进度亮到这一步；「暂停教程」是写明的文字按钮', async () => {
+  it('环的圆角 = 锚点圆角 + 4（落在 token 上）；分段进度亮到这一步；「暂停教程」是写明的文字按钮', async () => {
     const anchor = document.createElement('div')
     anchor.setAttribute('data-object-id', 'p2')
     document.body.appendChild(anchor)
@@ -638,7 +638,8 @@ describe('卡片与高亮环的形态（2026-10-07 设计审计 §10.2）', () =
     })
     await flush()
     const ring = document.querySelector<HTMLElement>('[data-onboarding-ring]')!
-    expect(ring.style.borderRadius).toBe('12px')
+    // 8 + 4 = 12 → rounded-lg（圆角只走 token）
+    expect(ring.className).toContain('rounded-lg')
     const segs = [...card()!.querySelectorAll('[data-onboarding-segments] > span')]
     expect(segs).toHaveLength(STEP_IDS.length - 1)
     expect(segs.filter((s) => s.hasAttribute('data-done'))).toHaveLength(1)

@@ -188,7 +188,11 @@ describe('MissingInputDialog', () => {
     expect(details.querySelector('summary')!.textContent).toBe(en('missingInputDetails'))
     // 折叠区之外看得见的：标题、那一句话（只有文件名）、两个按钮
     const outside = (el: Element) => !el.closest('details')
-    const visibleText = [...dialog()!.querySelectorAll('h2, p')].filter(outside).map((e) => e.textContent)
+    // 说明槽是 Dialog 的 description（div，经 aria-describedby 认），不是 p
+    const descId = dialog()!.getAttribute('aria-describedby')
+    const visibleText = [...dialog()!.querySelectorAll(`h2, p, [id="${descId}"]`)]
+      .filter(outside)
+      .map((e) => e.textContent)
     expect(visibleText).toEqual([en('missingInputTitle'), en('missingInputSentence', { name: 'values.txt' })])
     expect(visibleText.join('')).not.toContain('data/values.txt')
     const buttons = [...dialog()!.parentElement!.querySelectorAll('button')]
