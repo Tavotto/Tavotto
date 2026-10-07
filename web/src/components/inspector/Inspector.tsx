@@ -27,6 +27,7 @@ import { deleteSelected, duplicateSelected, hideElement, updateObjects } from '@
 import { useDocumentStore } from '@/store/documentStore'
 import { usePanelDisplayManifest } from '@/store/renderStore'
 import { RIGHT_MAX, RIGHT_MIN, useUiStore, type RightTab } from '@/store/uiStore'
+import { fastEditPanelOf, useWorkspaceStore } from '@/store/workspace'
 import {
   objectLabel,
   type ArrowObject,
@@ -335,6 +336,8 @@ function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: P
   const { t } = useTranslation('inspector')
   const selectedGids = useUiStore((s) => s.selectedGids)
   const manifest = usePanelDisplayManifest(panel)
+  // 快速编辑里不摆「创建副本」：副本落在版面上，这一屏看不见（`duplicateSelected` 自己也挡，Codex #833）
+  const fastEdit = useWorkspaceStore((s) => fastEditPanelOf(s) !== null)
 
   if (panel) {
     const gid = selectedGids.at(-1)
@@ -531,9 +534,11 @@ function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: P
             </Button>
           }
         >
-          <MenuItem shortcut={`${MOD}D`} onSelect={duplicateSelected} icon={Copy}>
-            {translate('actions.copy')}
-          </MenuItem>
+          {!fastEdit && (
+            <MenuItem shortcut={`${MOD}D`} onSelect={duplicateSelected} icon={Copy}>
+              {translate('actions.copy')}
+            </MenuItem>
+          )}
           <MenuItem
             icon={hidden ? Eye : EyeOff}
             onSelect={() =>

@@ -418,6 +418,10 @@ export function deleteSelected() {
 }
 
 export function duplicateSelected() {
+  // 快速编辑这一屏只画正在编辑的那张图：副本落在版面上、换掉选区，用户什么都看不见（Codex #833）。
+  // ⌘D、系统菜单「创建副本」、对象右键菜单、属性页「⋯」都到这里，判据只在这一处（与粘贴的
+  // `clipboard.consumePayload` 同一个 `fastEditPanelOf`）
+  if (fastEditPanelOf(useWorkspaceStore.getState())) return
   const ids = useSelectionStore.getState().ids
   if (!ids.length) return
   // 克隆**必须**在 commit 的 recipe 外面做：recipe 里的 d 是 Immer 草稿，

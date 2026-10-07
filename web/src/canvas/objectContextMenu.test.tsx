@@ -20,6 +20,7 @@ import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
+import { useWorkspaceStore } from '@/store/workspace'
 import {
   emptyProject,
   type ArrowObject,
@@ -683,6 +684,37 @@ describe('文字 / 箭头 / 形状', () => {
 /* -------------------------------------------------------------------------- */
 /*  「更改为 ›」类型切换（cap-shape-switch）                                      */
 /* -------------------------------------------------------------------------- */
+
+/**
+ * Codex #833：快速编辑这一屏只画正在编辑的那张图（`CanvasLayers only=`）。粘贴 / 创建副本把新对象落在版面上、
+ * 换掉选区——「成功」了却什么都看不见。菜单不摆这两项；动作本身也挡（`clipboard.consumePayload` /
+ * `duplicateSelected`，⌘V / ⌘D 同经它们，看护在 `lib/clipboardEvents.test.ts` / `store/actions.test.ts`）。
+ */
+describe('快速编辑里的剪贴板组', () => {
+  beforeEach(async () => {
+    await seed([panel('p1', { script: null }), text('t1')])
+    await mount()
+  })
+  afterEach(() => {
+    useWorkspaceStore.getState().clear()
+  })
+
+  it('排版里：复制 / 粘贴 / 创建副本都在（对照组）', async () => {
+    await openOn('p1')
+    expect(item('copy')).not.toBeNull()
+    expect(item('paste')).not.toBeNull()
+    expect(item('duplicate')).not.toBeNull()
+  })
+
+  it('快速编辑里：只剩复制，没有粘贴与创建副本', async () => {
+    useWorkspaceStore.getState().enterFastEdit('p1')
+    await openOn('p1')
+    expect(menu()).not.toBeNull()
+    expect(item('copy')).not.toBeNull()
+    expect(item('paste')).toBeNull()
+    expect(item('duplicate')).toBeNull()
+  })
+})
 
 /**
  * 判据的主语说在前面：这几条问的是**文档里那个对象的类型**变没变、**历史栈**长

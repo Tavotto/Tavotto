@@ -110,7 +110,11 @@
   此前 ⌘A 把整版看不见的对象全选上，接着 Delete 就把它们从版上删掉。**删除**（`deleteSelected`，Delete /
   Backspace 不在图内元素编辑时、系统菜单「删除」都到这里）在快速编辑里把选区收窄到那张图：选区里挂着的
   旧版面对象（进快编之前留下的、图层面板点的）一个不删；删那张图本身照旧（看得见、可撤销，对象没了快速编辑
-  随之退出）。**「适应」的取景框只有 `store/zoomToSelection.stageFitFrame` 一处**，动作 `fitStage()`：舞台双击、
+  随之退出）。**粘贴与创建副本**在快速编辑里不落：粘贴只在 `lib/clipboard.consumePayload` 判一次（⌘V 原生 paste 事件、
+两份右键菜单的「粘贴」同经它；不拦事件，图内文字编辑器 / 输入框里的粘贴在离散动作闸门那步就让位给浏览器，照旧），
+创建副本只在 `store/actions.duplicateSelected` 判（⌘D、系统菜单、对象右键菜单、属性页「⋯」同经它）——此前对象菜单的
+「粘贴 / 创建副本」把副本落在这一屏不画的版面上、换掉选区；对象菜单与属性页「⋯」在快速编辑里不摆这两项。看护
+`lib/clipboardEvents.test.ts`、`store/actions.test.ts`、`canvas/objectContextMenu.test.tsx`（各带排版对照组）。**「适应」的取景框只有 `store/zoomToSelection.stageFitFrame` 一处**，动作 `fitStage()`：舞台双击、
   ⌘1 / 系统菜单（`runZoomCommand('fit')`）、缩放菜单、命令面板 `fit`、画布工具条与画布菜单全走它——快速编辑里
   框那张图**本身的矩形**（含原点，`fitRectAnimated`；曾按「(0,0) 到右下角」取景，x/y 为负时图被裁、为正时左上留白，
   Codex #833），排版里框页面（`fitAnimated`）；首次挂载的瞬时适应与双击的「框外」判据（`lib/fitGuard`）读同一个框；此前 ⌘1 / 菜单 / 面板在快速编辑里适应这一屏根本没画的页面，
