@@ -14,7 +14,8 @@
 * **图例卡**（`inspector/LegendCard.tsx`）承接 `fontsize`（Typography 批量作用
   于全部项）与 `entry_order`（条目列表的上下移动；2026-10-07 起是 ⋯ 菜单 / ⌥↑⌥↓ / 拖动柄三个入口、
   同一个 `moveTo` 写一次 `entry_order`；整张列表一个 Tab 停靠点，⋯ 是 `RowMenu tabStop={false}`、
-  键盘经 ⇧F10 / ContextMenu 键开菜单），通用列表让出这两条
+  键盘经 ⇧F10 / ContextMenu 键开菜单；拖动会话属于一个图例：条目列表按「面板 + 图例 gid」取 key，
+  卸载或换图例都作废进行中的拖动、迟到的松手不写不进历史，Codex #829），通用列表让出这两条
   （`LEGEND_CARD_PROPS`）；没有项的图例不出卡、字段留在通用列表。示意线
   预览读 manifest 的 `handle_*`，**不是第二份样式判断**。
 * **排版详情卡**（`controls/LegendSpacingCard.tsx`，审计 T17）承接五条间距

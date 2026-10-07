@@ -96,7 +96,17 @@ export function LegendCard({
       <div className="flex flex-col gap-1.5">
         {/* 名字 + meta 数字，不是「图例项（2）」（打磨 L10 / 第十九节批次 E–G） */}
         <GroupHead meta={views.length}>{lg('entries')}</GroupHead>
-        <LegendEntryList panel={panel} views={views} order={order} onMove={moveTo} onToggleHidden={toggleHidden} />
+        {/* 按「面板 + 图例」取 key：拖动会话属于这一个图例。拖到一半在元素树里用 ↓ 换到另一个图例时
+            卡片本身被复用，列表不能被复用——换身份 = 旧列表卸载，卸载收尾作废那次拖动，迟到的松手
+            不给已经不显示的图例重排、不进历史（Codex #829） */}
+        <LegendEntryList
+          key={`${panel.id} ${legend.gid}`}
+          panel={panel}
+          views={views}
+          order={order}
+          onMove={moveTo}
+          onToggleHidden={toggleHidden}
+        />
       </div>
     </div>
   )
@@ -131,7 +141,8 @@ function LegendEntryList({
   const [drag, setDrag] = useState<{ from: number; to: number } | null>(null)
   /**
    * 进行中那次拖动的收尾（摘掉 window 监听、作废这次拖动、不提交）。列表卸载时——比如松手前按
-   * Esc 退出元素编辑——必须跑它：不然迟到的 pointerup 仍会拿旧闭包给已经放弃的图例重排（Codex #829 P2）
+   * Esc 退出元素编辑——必须跑它：不然迟到的 pointerup 仍会拿旧闭包给已经放弃的图例重排（Codex #829 P2）。
+   * 换图例（同一张卡片复用给另一个图例）也走这里：`LegendCard` 按面板 + 图例给列表 key，身份一变就是卸载
    */
   const dragCleanupRef = useRef<(() => void) | null>(null)
   useEffect(() => () => dragCleanupRef.current?.(), [])
