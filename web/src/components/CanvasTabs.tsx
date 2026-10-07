@@ -55,7 +55,9 @@ export function CanvasTabs() {
     const tab = el?.querySelector<HTMLElement>('[data-canvas-tab][data-active]')
     if (!el || !tab) return
     const left = tab.offsetLeft
-    const right = left + tab.offsetWidth
+    // 宽度向上取整：offsetWidth 是四舍五入的整数，72.4px 的页签量成 72，滚完还差半个像素露在条外
+    // （「全部画布」菜单切到最后一张时 e2e 实测差 1px）。FLIP 只用 translate，不影响宽度
+    const right = left + Math.ceil(tab.getBoundingClientRect().width || tab.offsetWidth)
     const placed = `${tab.dataset.canvasTab}|${left}|${right}|${el.clientWidth}`
     if (placed === lastPlaced.current) return
     lastPlaced.current = placed
@@ -173,7 +175,9 @@ export function CanvasTabs() {
         onScroll={measureFade}
         // scrollbar-none：横滚条不画（用户拍板），滚动靠触控板横滑 / Shift+滚轮 / 激活时自动滚到；
         // relative 让页签的 offsetLeft 以这条为基准，下面「滚进视野」用它量
-        className="scrollbar-none relative flex h-full min-w-0 shrink items-center gap-4 overflow-x-auto"
+        // pr-1：条宽常是小数（654.86px），浏览器的最大 scrollLeft 向下取整，最后一个页签滚到头仍差不到 1px
+        // 露在条外；尾部留 4px，「滚到最后一张」才真的整颗在里面（e2e/canvas-tabs-scroll.spec.ts）
+        className="scrollbar-none relative flex h-full min-w-0 shrink items-center gap-4 overflow-x-auto pr-1"
         style={fadeMask(fade)}
       >
         {openTabs.map((id, i) => (
