@@ -10,6 +10,9 @@
     "title": "渲染环境"
   },
   "export": {
+    "exportAgain": "再次导出",
+    "showInFolder": "在文件夹中显示",
+    "finish": "完成",
     "advanced": "高级选项",
     "blockedTitle": "有阻断问题或无法核验的项。勾选确认后才能导出。",
     "blockingListLabel": "阻断性问题",

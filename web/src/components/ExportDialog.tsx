@@ -127,7 +127,7 @@ import {
 import { apiUrl } from "@/lib/session";
 import { boundedCount, captureTelemetry } from "@/lib/telemetry";
 import { cn } from "@/lib/utils";
-import { isDesktop, revealExportedFile } from "@/lib/desktop";
+import { canRevealInFileManager, isDesktop, revealExportedFile } from "@/lib/desktop";
 import { useOriginalAvailability } from "@/hooks/useOriginalSpec";
 import { isJustBakedBaseline } from "@/store/actions";
 import { useAssetStore } from "@/store/assetStore";
@@ -263,6 +263,14 @@ export function ExportDialog() {
    * **不做成记住的偏好**——每次导出都得重新面对一次当前这批问题。
    */
   const [confirmed, setConfirmed] = useState(false);
+  /**
+   * 打开对话框那一刻已经落定的作业：它是**上一回**的结果，不是这一回刚导完的。
+   * 完成态脚部（「再次导出 · 完成」）只给这一回在对话框里跑完的作业；重新打开时
+   * 脚部回到「开始导出」——用户打开导出就是要导，不该先面对一个「完成」。
+   */
+  const [settledJobId, setSettledJobId] = useState<string | null>(null);
+  /** 完成态「在文件夹中显示」失败时的完整路径（不静默） */
+  const [revealError, setRevealError] = useState<string | null>(null);
 
   /* ------------------------------ 出版规范 ------------------------------- */
   const specRecords = useProfileStore((s) => s.specs);
@@ -407,6 +415,9 @@ export function ExportDialog() {
      */
     const snap = useDocumentStore.getState().doc;
     setConfirmed(false);
+    const prior = useExportStore.getState();
+    setSettledJobId(prior.job && !prior.running ? prior.job.job_id : null);
+    setRevealError(null);
     setPickedFigureId(null);
     setProfileId(snap.profile?.id ?? readExportDefaults().profileId);
     // 从「定位」/「查看问题」回来：把用户填过的东西原样还回去。换了文档不还
@@ -695,6 +706,9 @@ export function ExportDialog() {
       // 判断没有被这个咽喉接管，而「覆盖 / 另存 / 重试」走的正是这里
       // 闸与主按钮读**同一个** `canStart`
       if (!canStart) return;
+      // 这一回在对话框里起的作业：它跑完就该给完成态脚部（不论 job_id 是否与上一回重号）
+      setSettledJobId(null);
+      setRevealError(null);
       const report = reportOn
         ? buildProofPayload(
             doc,
@@ -890,6 +904,105 @@ export function ExportDialog() {
 
   const conflicts = job?.status === "conflict" ? job.conflicts : [];
   const busy = running;
+  /**
+   * 导完了（至少一件真的写出来了）：脚部换成「再次导出 · 在文件夹中显示 · 完成」。
+   * 之前完成后脚部还挂着「开始导出」，用户再点一下就撞上自己刚写出的同名文件
+   * （设计审计 §10.2 P0）——新的一次导出必须是显式的「再次导出」。
+   */
+  const doneOutputs = job ? job.outputs.filter((o) => o.status === "done" && o.name) : [];
+  const finished =
+    !!job &&
+    !busy &&
+    job.job_id !== settledJobId &&
+    (job.status === "done" || job.status === "partial") &&
+    doneOutputs.length > 0;
+  const revealTarget =
+    finished && job?.export_dir && canRevealInFileManager() ? doneOutputs[0] : null;
+  const jobId = job?.job_id;
+  useEffect(() => setRevealError(null), [jobId]);
+  /*
+   * 完成态换脚部时「开始导出」那颗按钮被卸掉：焦点要是正停在它上面（键盘按 Enter 导出），
+   * 就会摔到 body 上——键盘用户当场失去位置。接到唯一的主动作「完成」上。
+   */
+  const finishRef = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    if (!finished) return;
+    const active = document.activeElement;
+    if (!active || active === document.body) finishRef.current?.focus();
+  }, [finished]);
+  const revealDone = () => {
+    if (!revealTarget || !job?.export_dir) return;
+    const dir = job.export_dir;
+    const name = revealTarget.name!;
+    void revealExportedFile(dir, name).then((ok) => {
+      // reveal 失败绝不静默——把完整路径告诉用户
+      setRevealError(ok ? null : ex("revealFailed", { path: `${dir}/${name}` }));
+    });
+  };
+
+  /*
+   * 进度 / 冲突 / 拒绝 / 结果：**不在可滚正文的末尾**，而在脚部正上方那块不滚的状态区
+   * （`Dialog status`）。正文一长，末尾就在视口外——点了「开始导出」看不见进度，
+   * 撞名时看不见那两条出路（设计审计 §10.2 P0）。
+   */
+  const statusVisible =
+    busy ||
+    conflicts.length > 0 ||
+    !!prepared.error ||
+    !!startError ||
+    !!cancelError ||
+    !!pollError ||
+    !!revealError ||
+    (!!job && job.status !== "conflict");
+  const statusBlock = statusVisible ? (
+    <div data-export-status className="flex flex-col gap-2">
+      {busy && <ProgressRow job={job} />}
+      {!!conflicts.length && (
+        <ConflictBar
+          names={conflicts}
+          onReplace={() => void start("replace")}
+          onRename={() => void start("rename")}
+        />
+      )}
+      {prepared.error && (
+        <p data-export-refusal role="alert" className="text-xs text-danger">
+          {formatMessage(engineErrorMsg(prepared.error))}
+        </p>
+      )}
+      {startError && !prepared.error && (
+        <p data-export-start-error role="alert" className="text-xs text-danger">
+          {startError.code === "bad_filename"
+            ? ex(`filenameError.${startError.message}`)
+            : ex("operationFailed", { error: formatMessage(startError.message) })}
+        </p>
+      )}
+      {cancelError && (
+        <p data-export-cancel-error role="alert" className="text-xs text-danger">
+          {ex("cancelFailed", { error: formatMessage(cancelError) })}
+        </p>
+      )}
+      {pollError && (
+        <div data-export-poll-error role="alert" className="flex flex-col gap-2 text-xs text-danger">
+          <p>{ex("statusFailed", { error: formatMessage(pollError) })}</p>
+          <Button data-export-status-retry variant="secondary" disabled={refreshing} onClick={() => void refreshExportStatus()}>
+            {ex("retryStatus")}
+          </Button>
+        </div>
+      )}
+      {job && !busy && job.status !== "conflict" && (
+        <ResultBlock
+          job={job}
+          edited={editedDuringExport}
+          onRetry={() => void start("ask")}
+        />
+      )}
+      {revealError && (
+        <p data-export-reveal-error role="alert" className="break-all text-xs text-danger">
+          {revealError}
+        </p>
+      )}
+    </div>
+  ) : null;
 
   return (
     <Dialog
@@ -899,7 +1012,38 @@ export function ExportDialog() {
       width={560}
       covered={covered}
       anchor="export"
+      status={statusBlock}
       footer={
+        finished ? (
+          <>
+            {/* 完成态：再导一次是显式的次要动作（左），唯一的主动作是「完成」 */}
+            <Button
+              variant="ghost"
+              size="md"
+              data-export-again
+              disabled={!canStart}
+              onClick={() => void start("ask")}
+              title={blocked ? ex("blockedTitle") : undefined}
+            >
+              {ex("exportAgain")}
+            </Button>
+            <span className="flex-1" />
+            {revealTarget && (
+              <Button variant="secondary" size="md" data-export-reveal onClick={revealDone}>
+                {ex("showInFolder")}
+              </Button>
+            )}
+            <Button
+              ref={finishRef}
+              variant="primary"
+              size="md"
+              data-export-finish
+              onClick={() => setOpen(false)}
+            >
+              {ex("finish")}
+            </Button>
+          </>
+        ) : (
         <>
           <span className="flex-1" />
           <Button variant="secondary" size="md" onClick={() => setOpen(false)}>
@@ -930,6 +1074,7 @@ export function ExportDialog() {
             </Button>
           )}
         </>
+        )
       }
     >
       <div className="flex flex-col gap-4">
@@ -1303,50 +1448,6 @@ export function ExportDialog() {
             )}
           </div>
         </Details>
-
-        {/* 进度 / 冲突 / 结果（什么都没有时这一层不占位） */}
-        <div className="flex flex-col gap-2 empty:hidden">
-          {busy && <ProgressRow job={job} />}
-          {!!conflicts.length && (
-            <ConflictBar
-              names={conflicts}
-              onReplace={() => void start("replace")}
-              onRename={() => void start("rename")}
-            />
-          )}
-          {prepared.error && (
-            <p data-export-refusal role="alert" className="text-xs text-danger">
-              {formatMessage(engineErrorMsg(prepared.error))}
-            </p>
-          )}
-          {startError && !prepared.error && (
-            <p data-export-start-error role="alert" className="text-xs text-danger">
-              {startError.code === "bad_filename"
-                ? ex(`filenameError.${startError.message}`)
-                : ex("operationFailed", { error: formatMessage(startError.message) })}
-            </p>
-          )}
-          {cancelError && (
-            <p data-export-cancel-error role="alert" className="text-xs text-danger">
-              {ex("cancelFailed", { error: formatMessage(cancelError) })}
-            </p>
-          )}
-          {pollError && (
-            <div data-export-poll-error role="alert" className="flex flex-col gap-2 text-xs text-danger">
-              <p>{ex("statusFailed", { error: formatMessage(pollError) })}</p>
-              <Button data-export-status-retry variant="secondary" disabled={refreshing} onClick={() => void refreshExportStatus()}>
-                {ex("retryStatus")}
-              </Button>
-            </div>
-          )}
-          {job && !busy && job.status !== "conflict" && (
-            <ResultBlock
-              job={job}
-              edited={editedDuringExport}
-              onRetry={() => void start("ask")}
-            />
-          )}
-        </div>
       </div>
     </Dialog>
   );

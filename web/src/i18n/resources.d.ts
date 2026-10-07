@@ -220,6 +220,7 @@ export default interface Resources {
         "canvas_scope": "EPS 只支持按「原图尺寸」导出单张图。",
         "no_script": "此图没有可重新运行的脚本。EPS 只能由脚本生成。"
       },
+      "exportAgain": "再次导出",
       "exported": "导出完成：{{files}}",
       "figureListLabel": "要按原图尺寸导出的图",
       "filenameError": {
@@ -234,6 +235,7 @@ export default interface Resources {
       },
       "filenameLabel": "文件名",
       "filenamePlaceholder": "图 1",
+      "finish": "完成",
       "formatLabel": "格式",
       "ignored": {
         "crop": "裁剪",
@@ -316,6 +318,7 @@ export default interface Resources {
         "unknown_figure": "找不到这张图的信息，暂时只能按画布导出。"
       },
       "severityCount": "{{count}} {{label}}",
+      "showInFolder": "在文件夹中显示",
       "sizeDiskDiffers": "磁盘上的原文件为 {{dw}} × {{dh}} mm（脚本保存时已裁边），将按图幅 {{w}} × {{h}} mm 导出。",
       "sizeUnknownShort": "尺寸未知",
       "start": "开始导出",

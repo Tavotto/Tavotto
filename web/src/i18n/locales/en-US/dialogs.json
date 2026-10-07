@@ -10,6 +10,9 @@
     "title": "Rendering environment"
   },
   "export": {
+    "exportAgain": "Export again",
+    "showInFolder": "Show in folder",
+    "finish": "Done",
     "advanced": "Advanced",
     "blockedTitle": "Blocking problems or items that can’t be verified. Tick the confirmation to export.",
     "blockingListLabel": "Blocking problems",
