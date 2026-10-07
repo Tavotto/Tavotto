@@ -179,6 +179,7 @@ describe('命令集', () => {
     })
     const page = useDocumentStore.getState().doc.page
     const fit = vi.spyOn(useViewportStore.getState(), 'fitAnimated').mockImplementation(() => {})
+    const fitRect = vi.spyOn(useViewportStore.getState(), 'fitRectAnimated').mockImplementation(() => {})
     // 点一条命令会关掉面板；下一条前重新打开（一次挂载，不留多余的根）
     const run = (id: string) => {
       act(() => usePalette.setState({ open: true }))
@@ -197,11 +198,14 @@ describe('命令集', () => {
       run('select-all')
       expect(useSelectionStore.getState().ids).toEqual(['p1'])
       run('fit')
-      expect(fit).toHaveBeenLastCalledWith(140, 110)
+      // 那张图本身的矩形（含原点），不是 (0,0) 到它右下角的 140×110（Codex #833）
+      expect(fit).toHaveBeenCalledTimes(1)
+      expect(fitRect).toHaveBeenLastCalledWith({ x: 100, y: 80, w: 40, h: 30 })
     } finally {
       useSelectionStore.setState({ ids: [] })
       useWorkspaceStore.getState().clear()
       fit.mockRestore()
+      fitRect.mockRestore()
     }
   })
 

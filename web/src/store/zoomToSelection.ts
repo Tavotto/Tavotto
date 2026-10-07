@@ -91,24 +91,32 @@ export function useCanZoomToSelection(): boolean {
  * 命令面板 `fit`、画布工具条与画布菜单的「适应画布」都只读这一份**——快速编辑里 ⌘1 曾经适应整页
  * （页面纸在这一屏根本不画），而双击舞台适应那张图，同一个「适应」两个落点（Codex #833）。
  *
- * 面板的包围盒原点不一定在 (0,0)，而视口的 `fit` 只吃宽高——所以这里把**右下角**当框（`x+w`），
- * 图才不会被裁在视野外。取的是包围盒不是图幅：用户在画布上缩放过的面板，快速编辑照样把它整张放进
- * 视野（图幅是它的输出规格，不是它此刻在屏幕上占多大）。面板可能被拖到过页面左上角外面（x/y 为负）：
- * 框至少要有这张图那么大，否则 fit 出来的比例装不下它。对象不在了（删除的那一拍）退回页面。
+ * 快速编辑框的是那张图**本身的矩形**（含原点）：面板可能不在 (0,0)，甚至被拖到过页面左上角外面（x/y 为负）。
+ * 曾经只交出宽高、按「右下角当框」从 (0,0) 起取景——x/y 为负时图被裁在视野外、为正时左上多出一片空白
+ * （Codex #833）。取的是包围盒不是图幅：用户在画布上缩放过的面板，快速编辑照样把它整张放进视野。
+ * `page`：true = 这块就是页面（`fit*`，原点恒 0），false = 一块非页面的矩形（`fitRect*`）。
+ * 对象不在了（删除的那一拍）退回页面。
  */
 export function stageFitFrame(
   objects: readonly { id: string; x: number; y: number; w: number; h: number }[],
   page: { w: number; h: number },
   fastEditPanelId: string | null,
-): { w: number; h: number } {
+): Rect & { page: boolean } {
   const o = fastEditPanelId === null ? undefined : objects.find((x) => x.id === fastEditPanelId)
-  if (!o) return { w: page.w, h: page.h }
-  return { w: Math.max(o.x + o.w, o.w), h: Math.max(o.y + o.h, o.h) }
+  if (!o) return { x: 0, y: 0, w: page.w, h: page.h, page: true }
+  return { x: o.x, y: o.y, w: o.w, h: o.h, page: false }
+}
+
+/** 把视口适应到 `stageFitFrame` 交出的框：页面走 `fit*`，面板矩形走 `fitRect*`（保留原点）。`animated` 选补间版 */
+export function applyStageFit(frame: Rect & { page: boolean }, animated: boolean): void {
+  const vp = useViewportStore.getState()
+  const rect = { x: frame.x, y: frame.y, w: frame.w, h: frame.h }
+  if (frame.page) (animated ? vp.fitAnimated : vp.fit)(frame.w, frame.h)
+  else (animated ? vp.fitRectAnimated : vp.fitRect)(rect)
 }
 
 /** 按此刻的文档与工作区模式「适应」（带补间）——所有「适应画布」入口的动作 */
 export function fitStage(): void {
   const doc = useDocumentStore.getState().doc
-  const frame = stageFitFrame(doc.objects, doc.page, fastEditPanelOf(useWorkspaceStore.getState()))
-  useViewportStore.getState().fitAnimated(frame.w, frame.h)
+  applyStageFit(stageFitFrame(doc.objects, doc.page, fastEditPanelOf(useWorkspaceStore.getState())), true)
 }
