@@ -10,7 +10,7 @@ import { GroupToggle } from '../GroupToggle'
 import { INSPECTOR_LABEL_W } from '../layout'
 import { useElementWriter } from '../elementWrite'
 import { propLabel } from '../roles/registry'
-import { ModifiedDot, ResetChip } from './textRows'
+import { ModifiedDot, ResetChip, ResetPairChip } from './textRows'
 
 /**
  * 子图边框：**默认四边联动，需要差异时再展开逐边**（审计 T12）。
@@ -182,16 +182,18 @@ export function SpineFrameCard({
           }
           reset={
             linkedModified && (
-              // 状态槽只有一格：一颗钮清掉这一行改过的颜色 / 线宽
-              <ResetChip
+              // 状态槽只有一格，但颜色与线宽是两条各自的 override：只改了一条就只清那一条，
+              // 两条都改了给「恢复颜色 / 恢复线宽 / 两项都恢复」（Codex #829 P2；改版前是两颗钮）
+              <ResetPairChip
                 label={frameLabel}
-                onReset={() =>
+                fields={(['spine_color', 'spine_linewidth'] as const)
+                  .filter((p) => overridden(p))
+                  .map((prop) => ({ prop, label: propLabel(prop, element.role) }))}
+                onReset={(props, label) =>
                   clearOverrides(
                     panel.id,
-                    msg('element.resetProp', { label: frameLabel }, 'inspector'),
-                    (['spine_color', 'spine_linewidth'] as const)
-                      .filter((p) => overridden(p))
-                      .map((prop) => ({ gid: element.gid, prop })),
+                    msg('element.resetProp', { label }, 'inspector'),
+                    props.map((prop) => ({ gid: element.gid, prop })),
                   )
                 }
               />

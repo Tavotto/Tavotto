@@ -196,6 +196,15 @@ export function ProblemPanel() {
     if (ui.problemContext !== context && (ui.problemDrill || ui.problemCursor)) ui.setProblemDrill(null)
   }, [context])
 
+  // 每落下一次游标（直达 / 画布标记 / 定位 / F8），它所在的那一组若被用户折着就打开：否则游标条说「第 N 项」，
+  // aria-current 那一行却没挂出来，跳了等于没跳（Codex #832）。只在游标换的那一刻打开，之后用户照样能再折起它
+  useEffect(() => {
+    if (!cursor || !open) return
+    const key = `${drillKey(open)}|${cursor.ruleCode}`
+    setCollapsed((prev) => (prev.has(key) ? toggled(prev, key) : prev))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cursor])
+
   // 面板卸载（换抽屉 / 收起）时画布上的悬停轮廓一起撤
   useEffect(() => () => useUiStore.getState().setIssueHover(null), [])
 

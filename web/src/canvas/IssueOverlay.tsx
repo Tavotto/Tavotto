@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import { t as translate } from '@/i18n'
 import { geomTarget, isElementHidden, panelFullRect } from '@/lib/elementGeom'
 import { openProblemAt, focusFailureMessage } from '@/lib/issueFocus'
+import { visualBounds } from '@/lib/geometry'
 import { currentFigureOf } from '@/lib/problemContext'
 import { SEVERITIES, type Severity } from '@/lib/profile'
 import type { ValidationIssue } from '@/lib/validation'
@@ -13,6 +14,7 @@ import { useValidationStore } from '@/store/validationStore'
 import { mmToPx, mmToViewX, mmToViewY, type ViewTransform } from '@/store/viewportStore'
 import { objectRotation, type CanvasObject, type PanelObject } from '@/types/document'
 import { elementOverlayTransform } from './elementGeometry'
+import { PIN_COLORS, tokenVar } from './issuePinColors'
 
 /**
  * 问题面板在画布上的两样东西（2026-10-07 设计审计 §9.4），从 `OverlaySvg` 里挂进来、自己一个文件——
@@ -108,7 +110,7 @@ function ElementHover({ panel, gid, t }: { panel: PanelObject; gid: string; t: V
   )
 }
 
-const box = (o: CanvasObject, t: ViewTransform) => ({
+const box = (o: { x: number; y: number; w: number; h: number }, t: ViewTransform) => ({
   x: mmToViewX(o.x, t),
   y: mmToViewY(o.y, t),
   w: mmToPx(o.w, t),
@@ -125,14 +127,6 @@ function spin(o: CanvasObject, t: ViewTransform): string | undefined {
   if (!rot) return undefined
   const b = box(o, t)
   return `rotate(${rot} ${b.x + b.w / 2} ${b.y + b.h / 2})`
-}
-
-/** 标记的底色：等级锚点（非文字 ≥3:1）；查不了 / 建议是 ink-3 */
-const PIN_FILL: Record<Severity, string> = {
-  error: 'var(--color-danger)',
-  warn: 'var(--color-warn)',
-  not_verifiable: 'var(--color-ink-3)',
-  suggestion: 'var(--color-ink-3)',
 }
 
 const rank = (s: Severity) => SEVERITIES.indexOf(s)
@@ -166,7 +160,12 @@ function IssuePins({ objects, t }: { objects: readonly CanvasObject[]; t: ViewTr
         if (!list?.length) return null
         // 最要紧的那条：等级最高、清单里先出现的
         const worst = list.reduce((a, b) => (rank(b.severity) < rank(a.severity) ? b : a))
-        const b = box(o, t)
+        // 底色与项数字色成对取（`issuePinColors`，对比度门禁逐对量）
+        const pin = PIN_COLORS[worst.severity]
+        // 屏幕上的右上角：按**转出来之后**的外接框（`visualBounds`）放，整组不跟着对象转——转 90° / 180° 的
+        // 文字 / 形状上项数会侧过来 / 倒过来，标记也会跟着对象自己的局部角跑（Codex #832）。面板的 x/y/w/h
+        // 本来就是旋转后的盒、翻转不改外框，同一个判据
+        const b = box(visualBounds(o), t)
         const cx = b.x + b.w + PIN_OFFSET
         const cy = b.y - PIN_OFFSET
         const label = translate('problems.pinLabel', {
@@ -190,7 +189,6 @@ function IssuePins({ objects, t }: { objects: readonly CanvasObject[]; t: ViewTr
             role="button"
             tabIndex={0}
             aria-label={label}
-            transform={spin(o, t)}
             style={{ pointerEvents: 'all', cursor: 'default' }}
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => {
@@ -205,7 +203,7 @@ function IssuePins({ objects, t }: { objects: readonly CanvasObject[]; t: ViewTr
             }}
           >
             <title>{label}</title>
-            <circle cx={cx} cy={cy} r={8} fill={PIN_FILL[worst.severity]} stroke="var(--color-surface)" strokeWidth={1.5} />
+            <circle cx={cx} cy={cy} r={8} fill={tokenVar(pin.fill)} stroke="var(--color-surface)" strokeWidth={1.5} />
             <text
               x={cx}
               y={cy}
@@ -213,7 +211,7 @@ function IssuePins({ objects, t }: { objects: readonly CanvasObject[]; t: ViewTr
               textAnchor="middle"
               fontSize={10}
               fontWeight={600}
-              fill="var(--color-surface)"
+              fill={tokenVar(pin.text)}
               aria-hidden
               style={{ fontVariantNumeric: 'tabular-nums' }}
             >

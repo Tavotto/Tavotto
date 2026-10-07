@@ -376,6 +376,50 @@ describe('色阶上下限并排（审计 T22）', () => {
     expect(overrideOf('axes_0.images_0', 'vmax')).toBeUndefined()
     expect(overrideOf('axes_0.images_0', 'alpha')).toBe(0.5)
   })
+
+  /** 两条都改过：同一格里的钮打开小菜单；Radix 的触发器认 pointerdown，`click()` 不开 */
+  const bothOverridden = {
+    overrides: [
+      { gid: 'axes_0.images_0', prop: 'vmin', value: 5 },
+      { gid: 'axes_0.images_0', prop: 'vmax', value: 20 },
+    ],
+  }
+  const openPairReset = async () => {
+    const reset = host.querySelectorAll('[data-pair-row] [data-row-status] [data-reset-prop]')
+    expect(reset).toHaveLength(1)
+    await act(async () => {
+      reset[0].dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }))
+    })
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0))
+    })
+  }
+  const resetItem = (prop: string) =>
+    document.querySelector<HTMLElement>(`[role="menuitem"][data-reset-field="${prop}"]`)
+
+  it.each(['vmin', 'vmax'])(
+    '两条都改过时各自可恢复：只恢复 %s，另一条的修改留着（Codex #829 P2）',
+    async (prop) => {
+      await mount('axes_0.images_0', bothOverridden)
+      await openPairReset()
+      // 菜单三项：各自一条 + 两项都恢复
+      expect(
+        Array.from(document.querySelectorAll('[role="menuitem"]')).map((m) => m.getAttribute('data-reset-field')),
+      ).toEqual(['vmin', 'vmax', '*'])
+      await click(resetItem(prop))
+      const other = prop === 'vmin' ? 'vmax' : 'vmin'
+      expect(overrideOf('axes_0.images_0', prop)).toBeUndefined()
+      expect(overrideOf('axes_0.images_0', other)).toBe(other === 'vmin' ? 5 : 20)
+    },
+  )
+
+  it('两项都恢复：一次清掉两条', async () => {
+    await mount('axes_0.images_0', bothOverridden)
+    await openPairReset()
+    await click(resetItem('*'))
+    expect(overrideOf('axes_0.images_0', 'vmin')).toBeUndefined()
+    expect(overrideOf('axes_0.images_0', 'vmax')).toBeUndefined()
+  })
 })
 
 /* --------------------------------- 透明度 --------------------------------- */

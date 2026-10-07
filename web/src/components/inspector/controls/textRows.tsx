@@ -6,8 +6,9 @@ import { RotateCcw, TextAlignCenter, TextAlignEnd, TextAlignStart } from '@/comp
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import { cn } from '@/lib/utils'
-import { Button } from '../../ui/Button'
+import { Button, IconButton } from '../../ui/Button'
 import { Row, type RowLabelWidth } from '../../ui/Field'
+import { Menu, MenuItem } from '../../ui/Menu'
 import { ColorField, NumberField } from '../../ui/Input'
 import { Segmented } from '../../ui/Segmented'
 import { Select } from '../../ui/Select'
@@ -88,6 +89,69 @@ export function ResetChip({ label, onReset, hint }: { label: string; onReset: ()
         <RotateCcw size={ICON_SIZE.xs} />
       </Button>
     </Tip>
+  )
+}
+
+/**
+ * 一行两条字段、状态槽只有一格时的恢复钮（Codex #829 P2）：两条仍是**各自的** override，
+ * 各自都要能单独回到脚本值——并成一行只是排版，不许把「恢复」也并成一刀。
+ *
+ * * 只有一条改过：就是那一条的 `ResetChip`，只清它（名字说的也是它）。
+ * * 两条都改过：同一格里的钮打开一张小菜单——「恢复 A」「恢复 B」各清各的，
+ *   「两项都恢复」一次清两条（一条历史，与 RestoreMenu 同一副菜单）。
+ *
+ * `fields` 只递**改过的**那几条；`onReset(props, label)` 由调用方写进一次 `clearOverrides`。
+ */
+export function ResetPairChip({
+  label,
+  fields,
+  onReset,
+}: {
+  /** 行标题：菜单触发器与「两项都恢复」那条历史用它 */
+  label: string
+  fields: readonly { prop: string; label: string }[]
+  onReset: (props: string[], label: string) => void
+}) {
+  if (fields.length === 0) return null
+  if (fields.length === 1) {
+    const [f] = fields
+    return <ResetChip label={f.label} onReset={() => onReset([f.prop], f.label)} />
+  }
+  const resetText = (l: string) => translate('element.resetProp', { ns: 'inspector', label: l })
+  return (
+    <Menu
+      align="end"
+      width={176}
+      trigger={
+        <IconButton
+          iconSize="xs"
+          side="left"
+          data-reset-prop
+          data-reset-menu
+          className="shrink-0 text-ink-2"
+          label={resetText(label)}
+        >
+          <RotateCcw size={ICON_SIZE.xs} />
+        </IconButton>
+      }
+    >
+      {fields.map((f) => (
+        <MenuItem key={f.prop} data-reset-field={f.prop} onSelect={() => onReset([f.prop], f.label)}>
+          {resetText(f.label)}
+        </MenuItem>
+      ))}
+      <MenuItem
+        data-reset-field="*"
+        onSelect={() =>
+          onReset(
+            fields.map((f) => f.prop),
+            label,
+          )
+        }
+      >
+        {translate('element.resetPropBoth', { ns: 'inspector' })}
+      </MenuItem>
+    </Menu>
   )
 }
 

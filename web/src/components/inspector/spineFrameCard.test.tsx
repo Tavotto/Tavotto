@@ -121,3 +121,39 @@ describe('逐边重置是一条历史（Codex #829）', () => {
     expect(sideOverrides()).toEqual(['spine_left_color', 'spine_left_linewidth'])
   })
 })
+
+describe('联动行的颜色与线宽各自可恢复（Codex #829 P2）', () => {
+  const linkedOverrides = () =>
+    livePanel()
+      .overrides.filter((o) => o.gid === 'axes_0' && (o.prop === 'spine_color' || o.prop === 'spine_linewidth'))
+      .map((o) => o.prop)
+      .sort()
+
+  it.each([
+    ['spine_color', '恢复边框颜色'],
+    ['spine_linewidth', '恢复边框线宽'],
+  ])('两条都改过：只恢复 %s，另一条留着', async (prop, itemText) => {
+    await act(async () => {
+      useDocumentStore.getState().commit(literal('改联动边框'), (d) => {
+        const p = d.objects.find((o) => o.id === 'p1') as PanelObject
+        p.overrides.push({ gid: 'axes_0', prop: 'spine_color', value: '#00ff00' })
+        p.overrides.push({ gid: 'axes_0', prop: 'spine_linewidth', value: 1.5 })
+      })
+    })
+    const trigger = host.querySelector<HTMLButtonElement>('[data-spine-frame] [data-reset-menu]')!
+    expect(trigger).toBeTruthy()
+    await act(async () => {
+      trigger.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }))
+    })
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0))
+    })
+    const items = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]'))
+    expect(items.map((m) => m.getAttribute('data-reset-field'))).toEqual(['spine_color', 'spine_linewidth', '*'])
+    expect(items[prop === 'spine_color' ? 0 : 1].textContent).toBe(itemText)
+    await act(async () => items[prop === 'spine_color' ? 0 : 1].click())
+    expect(linkedOverrides()).toEqual([prop === 'spine_color' ? 'spine_linewidth' : 'spine_color'])
+    // 逐边那两条不受牵连
+    expect(sideOverrides()).toEqual(['spine_left_color', 'spine_left_linewidth'])
+  })
+})

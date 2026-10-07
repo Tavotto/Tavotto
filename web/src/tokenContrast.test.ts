@@ -20,6 +20,7 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import { PIN_COLORS } from './canvas/issuePinColors'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const CSS = readFileSync(path.resolve(HERE, 'index.css'), 'utf8')
@@ -271,6 +272,16 @@ for (const theme of THEMES) {
 
     it('Tooltip 是 ink 底白字：surface 对 ink ≥4.5:1', () => {
       expect(contrast(token('surface'), token('ink'))).toBeGreaterThanOrEqual(4.5)
+    })
+
+    it('画布等级标记：每一档 pin 的项数字（10px）对它自己的底色 ≥4.5:1；底色对画布灰 / 纸白 ≥3:1（Codex #832）', () => {
+      for (const [severity, { fill, text }] of Object.entries(PIN_COLORS)) {
+        const f = rc(fill)
+        expect(contrast(rc(text), f), `${severity}: ${text} on ${fill}`).toBeGreaterThanOrEqual(4.5)
+        for (const g of ['surface', 'canvas']) {
+          expect(contrast(f, token(g)), `${severity}: ${fill} on ${g}`).toBeGreaterThanOrEqual(3)
+        }
+      }
     })
   })
 }
