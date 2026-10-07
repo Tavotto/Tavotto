@@ -73,24 +73,6 @@ const RULES: Rule[] = [
     fix: 'text-xs / text-sm / text-base / text-lg / text-xl，或六个 type-* 角色',
     catches: '<p className="text-[11px]" />',
     spares: '<p className="text-xs type-meta" />',
-    exempt: {
-      '/src/components/home/HomeView.tsx': {
-        count: 3,
-        why: '主页（没有打开项目时的落地页）的展示级字号：产品名 26px、新手版大标题 24px、老手版拖放区标题 20px——与 /try 首屏同一类，不是工作台界面',
-      },
-      '/src/playground/components/PlaygroundLanding.tsx': {
-        count: 1,
-        why: '网站 /try 的首屏标题（19px）：营销页的展示级字号，不是产品界面',
-      },
-      '/src/playground/components/PlaygroundLoading.tsx': {
-        count: 1,
-        why: '/try 的加载页标题（15px）：同上，营销页',
-      },
-      '/src/playground/components/ExampleCodeSheet.tsx': {
-        count: 1,
-        why: '/try 代码抽屉的文件名（15px）：同上，营销页',
-      },
-    },
   },
   {
     name: '不用 :empty 藏整行——<input> 也是空元素，会把它所在的那一行一起藏掉（2026-09-15 审计 D01）',

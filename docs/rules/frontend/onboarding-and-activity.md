@@ -25,7 +25,11 @@
   是唯一判据——`completed` / `skipped` → 老手版，`not_started` / `active` / `paused` → 新手版；
   **不另设标志、渲染主页不写任何东西**（派生出来的版式不许回写偏好）。新手版 = 一句大问题 + 拖放区 + 黑色主按钮「导入我的脚本」，教程入口
   （`runTutorialEntry('picker')`，锚点 `tutorial-entry`，暂停过的显示「继续」）降为次按钮「用示例学一遍（带引导）」
-  （三步说明卡与提示条已删，拖放区标题本身就是说明；两版共用一个 `DropZone`）；老手版的「使用示例
+  （三步说明卡与提示条已删，拖放区标题本身就是说明；两版共用一个 `DropZone`）。**2026-10-07 设计刷新（审计 §4.2）**：
+  拖放区静态时是一张普通 `ui/Card`、只有带文件拖进页面才是接收态（`ui/dropZone`）；两颗 CTA 是 `size="lg"`、一屏一颗
+  填色主按钮；老手版标题下是一句叙事句，句中两枚 24px chip（`data-home-chip="recent"` 直接打开最近一个仍存在的项目、
+  `"script"` = 导入），整句经 `Trans` 进翻译；两版的最近项目都是 Card interactive 网格（`RecentProject` 不带画布数据，
+  缩略图格是画布灰上的文件夹图标）。老手版的「使用示例
   脚本试试看」走 `openSampleProject()` = `startTutorial(source, { guide: false })`：同一条认领链路打开
   示例项目，**onboarding 一个字段都不碰**、不记 `tutorial_started`——否则一次「看看示例」就把
   `completed` 改回 `active`，下次回主页又成了新手版。「重新开始教程」照旧在「全部项目」视图、帮助菜单、
