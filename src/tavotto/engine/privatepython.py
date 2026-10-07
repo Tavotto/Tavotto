@@ -25,9 +25,10 @@
   一律拒绝，不靠 `tarfile` 的默认行为），落点再过一次 `_assert_under`。不改 PATH、shell、
   注册表、默认 Python、用户的 `.python-version`——本模块没有任何一行写到那些地方，用例用
   HOME / PATH 前后快照钉住。
-* **字节的来源按序三处，信任只有一条**（ADR 0111）：安装包附带的归档（`runtime.private_python_bundle_dirs`，
+* **字节的来源按序三处，上游身份不变**（ADR 0111）：安装包附带的归档（`runtime.private_python_bundle_dirs`，
   桌面版随包带本目标那份 pbs 归档）→ `downloads/` 里校验过的缓存 → 锁里的 URL。前两处不联网；每一处都是
-  **整份 sha256 与锁一致才用**，包内那份对不上就当它不在（记 WARNING）、往下一处走。包内归档**不复制**进
+  **整份 sha256 与锁一致才用**；macOS 签过名的包内归档例外见 `privatepython_bundle`：
+  派生摘要必须有同一 .app 的 Developer ID 封条，来源身份仍是原锁。其余对不上就当它不在（记 WARNING）、往下一处走。包内归档**不复制**进
   `downloads/`：它本身就是一份校验过的本地归档，后面解包 / 真起 / 原子改名是同一条链。
 * **联网只有一条路**：`urllib`（代理只从 `HTTP(S)_PROXY` / `NO_PROXY` 环境变量来），证书按
   **平台原生**校验（`tlstrust`：truststore——干净 Windows 缺 ISRG Root X1 时由 CryptoAPI 按需补装，
@@ -57,6 +58,7 @@ import socket
 import stat
 import subprocess
 import tarfile
+import tempfile
 import threading
 import time
 import urllib.error
@@ -64,7 +66,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from . import brand, config, logsafe, runtime, tlstrust
+from . import brand, config, logsafe, privatepython_bundle, runtime, tlstrust
 
 LOG = logging.getLogger("tavotto.privatepython")
 
@@ -421,7 +423,7 @@ def read_ledger() -> dict:
 
 
 def bundled_archive(source: PythonSource) -> Path | None:
-    """安装包附带的这个目标的归档：文件在、**且整份 sha256 等于锁**才回路径；否则 None。
+    """安装包附带的这个目标的归档：原锁 SHA，或同一 macOS app 封条认证的签名派生 SHA。
 
     判据的主语：包内那个文件**此刻**的字节（不信文件名、不信大小）。对不上的包内归档不是可用来源——
     记 WARNING、当它不在，调用方往缓存 / 下载那一处走（安装目录是只读的，删不掉也不该删）。"""
@@ -431,10 +433,11 @@ def bundled_archive(source: PythonSource) -> Path | None:
             if not cand.is_file():
                 continue
             got = _sha256_file(cand)
+            size = cand.stat().st_size
         except OSError as exc:
             LOG.warning("包内私有 Python 归档读不了，不用它: %s", exc)
             continue
-        if got == source.sha256:
+        if got == source.sha256 or privatepython_bundle.accepts(source, cand, got, size):
             return cand
         LOG.warning(
             "包内私有 Python 归档 SHA-256 与锁不符，不用它（期望 %s，实得 %s）", source.sha256, got
@@ -443,7 +446,7 @@ def bundled_archive(source: PythonSource) -> Path | None:
 
 
 def archive_origin(source: PythonSource) -> str:
-    """供应**此刻**会从哪拿到归档（`ORIGINS`）：包内 → 缓存 → 下载。每一处都按锁的 sha256 判。"""
+    """供应**此刻**会从哪拿到归档（`ORIGINS`）：包内 → 缓存 → 下载。缓存 / 下载只认原锁，签名包内派生物还要验证 app 封条。"""
     if bundled_archive(source) is not None:
         return ORIGIN_BUNDLED
     try:
@@ -840,7 +843,10 @@ def _provision_once(source: PythonSource, job: _Inflight) -> str:
         raise ProvisionError(ERROR_WRITE_FAILED, f"staging 目录不可建: {exc}") from exc
     try:
         _emit(job, STAGE_EXTRACTING, 0, source.size)
-        extracted = _extract(archive, staging, source)
+        if origin == ORIGIN_BUNDLED:
+            extracted = _extract_bundle(archive, staging, source)
+        else:
+            extracted = _extract(archive, staging, source)
         _check_abort(job)
         python = extracted / source.python_rel
         _assert_under(python, root_dir())
@@ -1130,11 +1136,45 @@ def _validate_member(member: tarfile.TarInfo, root: str) -> None:
     raise ProvisionError(ERROR_INVALID_ARCHIVE, "归档里有非常规成员", member=name)
 
 
-def _extract(archive: Path, staging: Path, source: PythonSource) -> Path:
+def _extract_bundle(archive: Path, staging: Path, source: PythonSource) -> Path:
+    """Hash exactly the private snapshot consumed by tarfile, never reopen a checked path.
+
+    The temporary copy is under data_dir, removed on close, and is not a download
+    cache. A replaced/corrupted planned bundle is source_changed, never a download.
+    """
+    try:
+        with tempfile.TemporaryFile(dir=staging) as snapshot:
+            digest, size = hashlib.sha256(), 0
+            try:
+                original = archive.open("rb")
+            except OSError as exc:
+                raise ProvisionError(ERROR_SOURCE_CHANGED, "包内归档读不了") from exc
+            with original:
+                while True:
+                    try:
+                        chunk = original.read(CHUNK)
+                    except OSError as exc:
+                        raise ProvisionError(ERROR_SOURCE_CHANGED, "包内归档读取失败") from exc
+                    if not chunk:
+                        break
+                    snapshot.write(chunk)
+                    digest.update(chunk)
+                    size += len(chunk)
+            if digest.hexdigest() != source.sha256 and not privatepython_bundle.accepts(
+                source, archive, digest.hexdigest(), size
+            ):
+                raise ProvisionError(ERROR_SOURCE_CHANGED, "包内归档在解包前已改变")
+            snapshot.seek(0)
+            return _extract(archive, staging, source, fileobj=snapshot)
+    except OSError as exc:
+        raise ProvisionError(ERROR_WRITE_FAILED, "包内归档快照写入失败") from exc
+
+
+def _extract(archive: Path, staging: Path, source: PythonSource, *, fileobj=None) -> Path:
     """解到 staging；**每个成员先过 `_validate_member`**，再交给 `tarfile`（有 `data` 过滤器就用）。"""
     root = source.archive_root
     try:
-        with tarfile.open(archive, "r:gz") as tar:
+        with tarfile.open(None if fileobj is not None else archive, "r:gz", fileobj=fileobj) as tar:
             members = tar.getmembers()
             for m in members:
                 _validate_member(m, root)

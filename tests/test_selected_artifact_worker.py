@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import subprocess
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -327,6 +329,96 @@ def test_failed_old_worker_does_not_cancel_replacement(tmp_path, monkeypatch):
         "f.py", str(tmp_path), artifact_source=selected, expected_worker=replacement
     )
     assert replacement.killed and key not in pool._workers
+
+
+@needs_worker
+def test_supersession_keeps_real_selected_peer_and_next_request_on_same_worker(
+    tmp_path, monkeypatch
+):
+    """The peer has submitted to a real Python child and has not consumed its reply.
+
+    Only the queue_superseded error is injected: this tests the controller's
+    cancellation boundary, not Rust queue scheduling or a Windows UI interleaving.
+    """
+    from tavotto import app as m
+
+    root = project(tmp_path)
+    registry = root / "tavotto_registry.json"
+    registry.write_text(
+        json.dumps({"scripts": {"figure.py": {"entry": "__main__", "stems": ["same"]}}})
+    )
+    originals = {path: path.read_bytes() for path in root.iterdir() if path.is_file()}
+    monkeypatch.setenv("TAVOTTO_WORKERD", "0")
+    monkeypatch.setattr(m, "PROJECTS", {})
+    monkeypatch.setattr(m, "DEFAULT_PROJECT", None)
+    monkeypatch.setattr(m.engine_inputremap, "registration_stale", lambda *args: True)
+    monkeypatch.setitem(m.app.config, "TESTING", True)
+    m.open_project(str(root))
+    source = context(root, "same.png")
+    expected = {key: source[key] for key in ("bytes_sha256", "size_bytes")}
+    newer = [{"gid": "axes_0.lines_0", "prop": "color", "value": "red"}]
+    submitted, release = threading.Event(), threading.Event()
+
+    def render(patches):
+        with m.app.test_client() as client:
+            return client.post(
+                "/api/engine/render",
+                json={
+                    "id": "same.png",
+                    "source_policy": figcapture.SELECTED_ARTIFACT_POLICY,
+                    "expected_source": expected,
+                    "patches": patches,
+                    "inline_svg": True,
+                },
+            )
+
+    worker = None
+    try:
+        assert render([]).status_code == 200
+        key = pool._worker_key(str(root), "figure.py", source)
+        worker = pool._workers[key]
+        proc = worker.proc
+        original_readline, original_override = worker._readline, worker.override
+
+        def hold_reply(*args, **kwargs):
+            # EngineWorker.request has already flushed this request to stdin.
+            submitted.set()
+            assert release.wait(15), "Peer reply was not released"
+            return original_readline(*args, **kwargs)
+
+        def supersede(stem, patches, *args, **kwargs):
+            if patches == newer:
+                raise pool.WorkerError("Superseded queued request.", code="queue_superseded")
+            return original_override(stem, patches, *args, **kwargs)
+
+        monkeypatch.setattr(worker, "_readline", hold_reply)
+        monkeypatch.setattr(worker, "override", supersede)
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            peer = executor.submit(render, [])
+            try:
+                assert submitted.wait(15), "Peer did not submit to the worker"
+                response = render(newer)
+                assert response.status_code == 500
+                assert response.get_json()["code"] == "queue_superseded"
+                # Measure the original child before allowing its peer to finish.
+                assert worker.alive() and proc.poll() is None
+                assert pool._workers.get(key) is worker
+            finally:
+                release.set()
+            response = peer.result(timeout=30)
+        assert response.status_code == 200, response.get_json()
+        assert response.get_json()["manifest"]["size_mm"] == [101.6, 76.2]
+        monkeypatch.setattr(worker, "_readline", original_readline)
+        monkeypatch.setattr(worker, "override", original_override)
+        assert render(newer).status_code == 200
+        assert pool._workers[key] is worker and worker.proc is proc and worker.alive()
+        assert all(path.read_bytes() == data for path, data in originals.items())
+    finally:
+        release.set()
+        for project_id in list(m.PROJECTS):
+            m.close_project(project_id, wait=True)
+        if worker is not None:
+            assert worker.proc.poll() is not None
 
 
 @needs_worker

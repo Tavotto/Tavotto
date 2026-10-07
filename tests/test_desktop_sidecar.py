@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import http.client
+import importlib.util
 import io
 import json
 import os
@@ -25,6 +26,84 @@ import pytest
 from tavotto import app as appmod, desktop
 
 NONCE = "test-nonce-0123456789abcdef"
+
+
+@pytest.mark.skipif(
+    any(importlib.util.find_spec(name) is None for name in ("pypdfium2", "pikepdf")),
+    reason="真实 render child 依赖未装（not_run）",
+)
+@pytest.mark.parametrize("cleanup_error", [False, True])
+def test_desktop_main_reaps_its_real_renderer_before_returning(tmp_path, cleanup_error):
+    """量 main 返回那一刻的 Popen.returncode，不让测试自己的 poll/wait 冒充应用回收。
+
+    独立 sidecar 进程真走 stdin EOF、server cleanup；finally 的备用 close 只收本用例的 child，
+    保证反证（删掉最终收尾）判红时也不向测试机泄漏进程。这里不推断历史 macOS PID 的身份。
+    """
+    script = r"""
+import io, json, os, sys
+assert (sys.stdout.encoding, sys.stderr.encoding) == ("cp1252", "cp1252")
+from pathlib import Path
+from tavotto import app as a, desktop
+from tavotto.rendercore import renderhost as rh
+
+root = Path(sys.argv[1])
+cleanup_error = sys.argv[2] == "True"
+handshake = root / "handshake.json"
+os.environ["TAVOTTO_DESKTOP_HANDSHAKE"] = str(handshake)
+a.setup_logging = lambda: None
+a.engine_locate.refresh_manifest = lambda: None
+a.engine_config.last_project = lambda: None
+a.prune_render_cache = lambda: None
+a.engine_pool.prune_engine_cache = lambda: None
+a.engine_runtimeasset.prune_cache = lambda: None
+a.engine_ai_history.mark_interrupted_running = lambda: 0
+a.engine_ai_history.purge = lambda **kw: None
+a.engine_telemetry.note_app_started = lambda *args: None
+host = rh.shared()
+def warm():
+    host.ping()
+    return "rendercore"
+a.pdfbackend.warm = warm
+if cleanup_error:
+    def fail_cleanup(*args, **kwargs):
+        raise RuntimeError("injected worker cleanup failure")
+    desktop.engine_pool.shutdown_all = fail_cleanup
+sys.argv = ["tavotto", "--desktop-sidecar"]
+sys.stdin = io.StringIO(json.dumps({"nonce": "test-final-exit-nonce"}) + "\n")
+try:
+    # 保存真正的 Popen 引用：最终收尾会把 host._proc 清空。
+    warm()
+    proc = host._proc
+    try:
+        a.main()
+    except SystemExit as exc:
+        assert (sys.stdout.encoding, sys.stderr.encoding) == ("utf-8", "utf-8")
+        result = {"exit": exc.code, "renderer_returncode": proc.returncode,
+                  "handshake_removed": not handshake.exists()}
+        (root / "result.json").write_text(json.dumps(result), encoding="utf-8")
+finally:
+    host.close()
+"""
+    src_root = Path(desktop.__file__).resolve().parents[1]
+    out = subprocess.run(
+        [sys.executable, "-c", script, str(tmp_path), str(cleanup_error)],
+        env={
+            **os.environ,
+            "PYTHONPATH": str(src_root),
+            "TAVOTTO_DATA_DIR": str(tmp_path / "data"),
+            "TAVOTTO_CONFIG_DIR": str(tmp_path / "config"),
+            "TAVOTTO_NO_TELEMETRY": "1",
+            "PYTHONIOENCODING": "cp1252",  # 真走 CLI 重配，覆盖 Windows 重定向管道的初始编码。
+        },
+        capture_output=True,
+        encoding="utf-8",
+        timeout=30,
+    )
+    assert out.returncode == 0, out.stdout + out.stderr
+    if cleanup_error:
+        assert "injected worker cleanup failure" in out.stderr
+    result = json.loads((tmp_path / "result.json").read_text(encoding="utf-8"))
+    assert result == {"exit": 0, "renderer_returncode": 0, "handshake_removed": True}
 
 
 # ---------------------------------------------------------------------------

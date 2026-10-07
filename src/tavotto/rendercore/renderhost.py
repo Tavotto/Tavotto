@@ -12,7 +12,7 @@
 像素经文件不经管道：`render()` 在 `scratch_dir` 里给 child 一个目标文件，读回后立刻删，返回
 `raster.RasterBuffer`（父进程自己的 `bytes`，与 child 的生命周期无关）。
 
-进程级共享实例：`shared()`（懒建、一个进程一个），`shutdown_shared()`（测试与关停用）。
+进程级共享实例：`shared()`（懒建），`shutdown_shared()`（可重开），`shutdown_shared_for_exit()`（最终退出）。
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ import sys
 import tempfile
 import threading
 import time
+import weakref
 from pathlib import Path
 from typing import Callable
 
@@ -49,6 +50,7 @@ __all__ = [
     "band_rows_for",
     "shared",
     "shutdown_shared",
+    "shutdown_shared_for_exit",
 ]
 
 
@@ -75,6 +77,7 @@ class RenderHost:
         self.env = env
         self.scratch_dir = Path(scratch_dir) if scratch_dir else None
         self._lock = threading.Lock()
+        self._stopping: threading.Event | None = None  # 只有 shared host 跟随进程最终退出
         #: 有界队列：在等 `_lock` 的请求数（含正在执行的那一个）不许超过 max_waiting + 1
         self._slots = threading.BoundedSemaphore(self.max_waiting + 1)
         self._proc: subprocess.Popen | None = None
@@ -163,7 +166,13 @@ class RenderHost:
                 pass
         self._proc = None
 
+    def _check_stopping(self) -> None:
+        if self._stopping is not None and self._stopping.is_set():
+            raise RenderChildError("render_child_died", "render host is shutting down")
+
     def _ensure(self) -> None:
+        # request 已取得自己的锁：排队请求 / reset 前留在外面的旧引用也不能在最终 close 后重启 child。
+        self._check_stopping()
         if self._proc is None or self._proc.poll() is not None:
             if self._proc is not None:
                 self._kill_and_reap()
@@ -198,6 +207,7 @@ class RenderHost:
     def _recv(self, rid: int, timeout: float) -> dict:
         deadline = time.monotonic() + timeout
         while True:
+            self._check_stopping()
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise RenderChildError("render_child_timeout", f"no response within {timeout}s")
@@ -207,6 +217,7 @@ class RenderHost:
                 raise RenderChildError(
                     "render_child_timeout", f"no response within {timeout}s"
                 ) from None
+            self._check_stopping()
             if line is None:
                 raise RenderChildError("render_child_died", "child closed its stdout")
             try:
@@ -465,13 +476,20 @@ class RenderHost:
 # ---------------------------------------------------------------------------
 _SHARED: RenderHost | None = None
 _SHARED_LOCK = threading.Lock()
+_SHARED_STOPPING = threading.Event()
+_SHARED_HOSTS: weakref.WeakSet[RenderHost] = weakref.WeakSet()
+_SHARED_EXIT_LOCK = threading.Lock()
 
 
 def shared() -> RenderHost:
     global _SHARED
     with _SHARED_LOCK:
+        if _SHARED_STOPPING.is_set():
+            raise RenderChildError("render_child_died", "render host is shutting down")
         if _SHARED is None:
             _SHARED = RenderHost()
+            _SHARED._stopping = _SHARED_STOPPING
+            _SHARED_HOSTS.add(_SHARED)
         return _SHARED
 
 
@@ -481,6 +499,33 @@ def shutdown_shared() -> None:
         host, _SHARED = _SHARED, None
     if host is not None:
         host.close()
+
+
+def shutdown_shared_for_exit() -> None:
+    """只供进程最终退出：封住新请求，并在返回前 close/reap 所有仍被持有的 shared host。
+
+    普通 reset 可重开，旧代引用也可能仍在用；弱集合只追踪它们，不延长其生命周期。
+    并发退出者也须等同一次收尾完成，不能看见 stopping 就提前返回。
+    """
+    global _SHARED
+    with _SHARED_EXIT_LOCK:
+        with _SHARED_LOCK:
+            _SHARED_STOPPING.set()
+            hosts, _SHARED = tuple(_SHARED_HOSTS), None
+        # 唤醒已在收响应的请求，让它走既有 kill+wait；不能等其默认 60s deadline 才退出。
+        # 若 _start 正在换队列，_recv 进来先查同一事件，因此不会丢失这次终止。
+        for host in hosts:
+            host._lines.put(None)
+        # 不持 shared 锁等 host 锁；一个 host 关闭出错也要尝试回收余下的，最后如实报告失败。
+        failure = None
+        for host in hosts:
+            try:
+                host.close()
+            except Exception as exc:  # noqa: BLE001 — 收完全部 host 后仍会抛出，不伪装退出成功
+                if failure is None:
+                    failure = exc
+        if failure is not None:
+            raise failure
 
 
 def _self_test() -> int:  # pragma: no cover - 手工诊断用

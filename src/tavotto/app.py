@@ -173,8 +173,10 @@ security.install(app)
 # `_request_ctx`）。没有任何项目时前端显示 Project Picker。
 # 不再内置任何默认路径——项目由 --figures、最近项目或 Picker 决定。
 PROJECTS: dict[str, "ProjectCtx"] = {}
+_OPENING_PROJECTS: dict[str, tuple["ProjectCtx", threading.Event]] = {}
 DEFAULT_PROJECT: str | None = None  # 不带 pj 的请求落到这里
 _PROJECT_LOCK = threading.Lock()
+_TUTORIAL_LOCK = threading.RLock()
 CACHE_DIR = DATA_ROOT / "cache"
 EXPORT_DIR = DATA_ROOT / "exports"
 LAYOUT_DIR = DATA_ROOT / "layouts"
@@ -2152,6 +2154,18 @@ def project_status(ctx: "ProjectCtx | None") -> dict:
     }
 
 
+@contextmanager
+def _tutorial_operation(path: Path | None = None):
+    # 复制 / 重置与读取注册表属于同一代；普通项目不拿这把锁。
+    # reset 与 tutorial/open 内部还会调用 open_project，所以必须可重入。
+    with (
+        _TUTORIAL_LOCK
+        if path is None or engine_tutorial.is_tutorial_path(path)
+        else contextlib.nullcontext()
+    ):
+        yield
+
+
 def open_project(path_str: str, make_default: bool = True) -> dict:
     """打开一个项目（已打开就直接复用），可选把它设为默认项目。
 
@@ -2161,8 +2175,13 @@ def open_project(path_str: str, make_default: bool = True) -> dict:
 
     失败（目录不存在 / 注册表损坏）抛 RuntimeError，已打开的项目不受影响。
     """
-    global DEFAULT_PROJECT
     path = Path(path_str).expanduser().resolve()
+    with _tutorial_operation(path):
+        return _open_project(path, make_default)
+
+
+def _open_project(path: Path, make_default: bool) -> dict:
+    global DEFAULT_PROJECT
     if not path.is_dir():
         raise RuntimeError(f"目录不存在: {path}")
     pid = _project_id(path)
@@ -2170,9 +2189,13 @@ def open_project(path_str: str, make_default: bool = True) -> dict:
     with _PROJECT_LOCK:
         existing = PROJECTS.get(pid)
     if existing is not None:
-        if make_default:
-            DEFAULT_PROJECT = pid
+        # 配置落盘失败时前端仍留在旧项目；成功后才发布后端的默认身份。
         engine_config.touch_recent(str(path))
+        with _PROJECT_LOCK:
+            if PROJECTS.get(pid) is not existing:
+                raise RuntimeError("项目已关闭，请重新打开")
+            if make_default:
+                DEFAULT_PROJECT = pid
         return {**project_status(existing), "drafted": False, "conflicts": [], "reused": True}
 
     drafted, conflicts = False, []
@@ -2188,12 +2211,42 @@ def open_project(path_str: str, make_default: bool = True) -> dict:
     # 第一次刷新只能报「什么都没变」——而用户按刷新正是因为他刚在外面加了
     # 一张图（`engine/project_refresh.seed_state`）。
     engine_refresh.seed_state(ctx)
-    with _PROJECT_LOCK:
-        PROJECTS[pid] = ctx
-        if make_default or DEFAULT_PROJECT is None:
-            DEFAULT_PROJECT = pid
-    engine_watch.start(ctx, sink=_watch_sink(ctx))
     engine_config.touch_recent(str(path))
+    with _PROJECT_LOCK:
+        existing = PROJECTS.get(pid)
+        if existing is None:
+            initializing, ready = _OPENING_PROJECTS.setdefault(pid, (ctx, threading.Event()))
+        elif make_default or DEFAULT_PROJECT is None:
+            DEFAULT_PROJECT = pid
+    if existing is not None:
+        return {**project_status(existing), "drafted": False, "conflicts": [], "reused": True}
+    if initializing is not ctx:
+        # 同一次首开的输家等赢家完成快照；不持全局锁，否则别的项目也会被慢盘挡住。
+        ready.wait()
+        with _PROJECT_LOCK:
+            if PROJECTS.get(pid) is not initializing:
+                raise RuntimeError("项目打开失败或已关闭，请重新打开")
+            if make_default or DEFAULT_PROJECT is None:
+                DEFAULT_PROJECT = pid
+        return {**project_status(initializing), "drafted": False, "conflicts": [], "reused": True}
+    try:
+        try:
+            engine_watch.start(ctx, sink=_watch_sink(ctx))
+        except BaseException:
+            # start 在注册 watcher 之后才起线程；线程启动失败也必须清掉半成品。
+            engine_watch.stop(str(ctx.path))
+            raise
+        with _PROJECT_LOCK:
+            PROJECTS[pid] = ctx
+            if make_default or DEFAULT_PROJECT is None:
+                DEFAULT_PROJECT = pid
+            _OPENING_PROJECTS.pop(pid)
+            ready.set()
+    finally:
+        with _PROJECT_LOCK:
+            if _OPENING_PROJECTS.get(pid) == (ctx, ready):
+                _OPENING_PROJECTS.pop(pid)
+                ready.set()  # 失败也唤醒；不许清掉关闭后重新打开的另一代初始化。
     LOG.info(
         "项目已打开: %s（%d 个脚本%s）",
         path,
@@ -2218,9 +2271,10 @@ def close_project(pid: str, wait: bool = False) -> bool:
         ctx = PROJECTS.pop(pid, None)
         if ctx is not None and DEFAULT_PROJECT == pid:
             DEFAULT_PROJECT = next(iter(PROJECTS), None)
+        if ctx is not None:
+            engine_watch.stop(str(ctx.path))
     if ctx is None:
         return False
-    engine_watch.stop(str(ctx.path))
     engine_pool.shutdown_all(str(ctx.path), wait=wait)
     LOG.info("项目已关闭: %s", ctx.path)
     return True
@@ -2957,7 +3011,8 @@ def api_projects_open():
                 }
             ), 400
         try:
-            p.mkdir(parents=True, exist_ok=True)
+            with _tutorial_operation(p):
+                p.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
             return jsonify(
                 {
@@ -3030,6 +3085,7 @@ def api_tutorial():
 
 
 @app.post("/api/tutorial/open")
+@_tutorial_operation()
 def api_tutorial_open():
     """确保可写副本（缺文件就补）→ 走普通 `open_project()` → 回状态 + 元数据。"""
     body = request.get_json(silent=True) or {}
@@ -3103,6 +3159,7 @@ def _clear_tutorial_local_state(
 
 
 @app.post("/api/tutorial/reset")
+@_tutorial_operation()
 def api_tutorial_reset():
     """重新开始教程：关掉打开着的教程项目 → 原子换成干净副本 → 重新打开。"""
     body = request.get_json(silent=True) or {}
@@ -4208,7 +4265,11 @@ def _engine_attempt(
             _assert_artifact_current(artifact_source)
             return worker, stem, result
         except (engine_pool.WorkerError, engine_artifactcontext.ArtifactContextError) as exc:
-            if artifact_source is not None:
+            # Supersession removes only a queued request; this admitted worker
+            # may still be serving another variant of the same selected source.
+            if artifact_source is not None and not (
+                isinstance(exc, engine_pool.WorkerError) and exc.code == "queue_superseded"
+            ):
                 engine_pool.force_cancel(
                     worker.script_name,
                     str(require_project()),
@@ -9537,7 +9598,12 @@ def main():
         # 没同意时这一行什么都不做；用户在本次会话里同意之后由
         # telemetry.set_consent 补发（同一次会话只发一条）。
         engine_telemetry.note_app_started("desktop")
-        sys.exit(desktop_mode.run(app))
+        try:
+            sys.exit(desktop_mode.run(app))
+        finally:
+            from .rendercore import renderhost as rc_renderhost
+
+            rc_renderhost.shutdown_shared_for_exit()
 
     url = landing(port)
     if insecure:

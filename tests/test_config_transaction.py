@@ -74,6 +74,29 @@ def test_save_leaves_no_temp_files(monkeypatch):
     assert engine_config.config_path().read_text(encoding="utf-8") == before
 
 
+@pytest.mark.parametrize(
+    "error", [PermissionError("ordinary permission denial"), OSError("disk full")]
+)
+def test_config_save_does_not_retry_non_sharing_errors(monkeypatch, error):
+    """只有 Windows 共享拒绝可重试；权限/磁盘故障仍原样抛，旧 JSON 不变。"""
+    with engine_config.transaction() as cfg:
+        cfg["updates"] = {"auto_check": False}
+    path = engine_config.config_path()
+    before, attempts = path.read_bytes(), []
+
+    def fail_replace(source, target):
+        attempts.append((source, target))
+        raise error
+
+    monkeypatch.setattr(Path, "replace", fail_replace)
+    with pytest.raises(type(error)) as caught, engine_config.transaction() as cfg:
+        cfg["updates"]["auto_check"] = True
+    assert caught.value is error
+    assert len(attempts) == 1
+    assert path.read_bytes() == before
+    assert not list(path.parent.glob("*.tmp"))
+
+
 def _dotted(node: ast.AST) -> str | None:
     """`a.b.c` → "a.b.c"；不是纯名字 / 属性链就回 None。"""
     parts = []

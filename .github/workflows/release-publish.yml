@@ -120,7 +120,7 @@ jobs:
       publish: ${{ steps.resolve.outputs.publish }}
       pypi_target: ${{ steps.resolve.outputs.pypi_target }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           fetch-depth: 0
 
@@ -347,19 +347,19 @@ jobs:
       id-token: write          # provenance 签发
       attestations: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: ${{ needs.trust2.outputs.sha }}
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with: { python-version: "3.13" }
 
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: dist
           path: dist
           run-id: ${{ inputs.source_run_id }}
           github-token: ${{ github.token }}
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           path: desktop
           pattern: desktop-tauri-*
@@ -383,7 +383,7 @@ jobs:
           done
           ls -laR desktop || true
           exit "$missing"
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           path: manifests
           pattern: artifact-manifest-*
@@ -409,7 +409,7 @@ jobs:
       # 那是 P1-07 有意的硬失败）。允许这一步失败，等于把一次 artifact 传输
       # 或改名故障变成「发了一个没有 latest.json 的 Release」——而那意味着
       # 桌面用户永远查不到新版本，且整条链全绿。v0.7.0 就是这么发出去的。
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: updater-manifest
           path: out
@@ -636,7 +636,7 @@ jobs:
           cp LICENSE out/LICENSE
 
       - name: 上传全部发行资产
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: release-assets
           path: |
@@ -657,12 +657,12 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: ${{ needs.trust2.outputs.sha }}
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with: { python-version: "3.13" }
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with: { name: release-assets, path: assets }
 
       - name: 校验要挂上去的就是验过的那一份
@@ -680,7 +680,7 @@ jobs:
             --require wheel,sdist,windows-installer,macos-installer,macos-intel-installer \
             --version "$VER" --source-sha "$SOURCE_SHA"
 
-      - uses: softprops/action-gh-release@v3
+      - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         with:
           tag_name: ${{ needs.trust2.outputs.tag }}
           # **tag 不存在时，action 会替我们建一个 —— 必须钉在受信 SHA 上。**
@@ -769,10 +769,10 @@ jobs:
       NEW_TAG: ${{ needs.trust2.outputs.tag }}
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: ${{ needs.trust2.outputs.sha }}
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with: { python-version: "3.13" }
 
       - name: 找上一个正式版本（N-1）并下载官方安装包
@@ -1042,7 +1042,7 @@ jobs:
 
       - name: 失败时收集日志
         if: failure()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: n1-update-windows-logs
           path: |
@@ -1079,12 +1079,12 @@ jobs:
       id-token: write     # OIDC 签发，Trusted Publishing 的必需权限
     steps:
       # 要跑 `artifact_manifest.py`，所以这个 job 也得有仓库
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: ${{ needs.trust2.outputs.sha }}
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with: { python-version: "3.13" }
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with: { name: release-assets, path: assets }
 
       - name: 只把 wheel 与 sdist 交给 PyPI
@@ -1165,7 +1165,7 @@ jobs:
     env:
       GIT_TERMINAL_PROMPT: "0"
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: ${{ needs.trust2.outputs.sha }}
           # 与 plugin-stable.yml 同理：凭据只留 job 自己配的全局那一份，否则发布器在
@@ -1180,9 +1180,9 @@ jobs:
           # 发布器本身不需要历史（plugin-stable.yml 就是浅克隆跑成的 bootstrap），
           # 需要历史的只有这行脚手架。
           fetch-depth: 0
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with: { python-version: "3.13" }
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with: { name: release-assets, path: assets }
 
       - name: 取出 validate 验过的那份插件并再验一次
@@ -1296,7 +1296,7 @@ jobs:
 
       - name: 留下收据
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: plugin-stable-receipt
           path: |

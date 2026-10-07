@@ -16,10 +16,12 @@ from __future__ import annotations
 import importlib.util
 import os
 import signal
+import socket
 import subprocess
 import sys
 import threading
 import time
+import weakref
 from pathlib import Path
 
 import pytest
@@ -809,6 +811,394 @@ def test_shared_host_is_one_per_process_and_can_be_shut_down():
     _assert_not_alive(pid)
     assert rh.shared() is not a
     rh.shutdown_shared()
+
+
+@pytest.fixture
+def isolated_shared_hosts(monkeypatch):
+    """终止只发生在这一组 host；不封住 pytest 进程里其它用例的共享 renderer。"""
+    hosts = []
+
+    class Host(rh.RenderHost):
+        def __init__(self):
+            super().__init__([sys.executable, "-c", FAKE_CHILD], default_timeout=5)
+            hosts.append(self)
+
+    monkeypatch.setattr(rh, "RenderHost", Host)
+    monkeypatch.setattr(rh, "_SHARED", None)
+    monkeypatch.setattr(rh, "_SHARED_STOPPING", threading.Event())
+    monkeypatch.setattr(rh, "_SHARED_HOSTS", weakref.WeakSet())
+    monkeypatch.setattr(rh, "_SHARED_EXIT_LOCK", threading.Lock())
+    yield hosts
+    for host in hosts:
+        host.close()
+
+
+def test_final_shutdown_without_a_host_is_lazy_and_repeatable(isolated_shared_hosts):
+    rh.shutdown_shared_for_exit()
+    rh.shutdown_shared_for_exit()
+    with pytest.raises(rh.RenderChildError, match="shutting down") as exc:
+        rh.shared()
+    assert exc.value.code == "render_child_died"
+    assert isolated_shared_hosts == []
+
+
+def test_final_shutdown_reaps_and_fences_all_held_shared_generations(isolated_shared_hosts):
+    old = rh.shared()
+    old.ping()
+    first = old._proc
+    old.close()
+    assert first.returncode == 0
+    old.ping()  # 普通 close 仍可重开。
+    second = old._proc
+    rh.shutdown_shared()
+    assert second.returncode == 0
+    old.ping()  # reset 前留在外面的旧引用仍可用，也必须进入最终回收集合。
+    current = rh.shared()
+    assert current is not old
+    current.ping()
+    procs = [old._proc, current._proc]
+    starts = [old.starts, current.starts]
+    rh.shutdown_shared_for_exit()
+    assert [proc.returncode for proc in procs] == [0, 0]
+    for host in (old, current):
+        with pytest.raises(rh.RenderChildError, match="shutting down") as exc:
+            host.ping()
+        assert exc.value.code == "render_child_died"
+    assert [old.starts, current.starts] == starts
+    # 直接创建的 host 不属于应用 shared 生命周期，close/reopen 合同照旧。
+    direct = rh.RenderHost()
+    direct.ping()
+    direct.close()
+    direct.ping()
+    assert direct.starts == 2
+
+
+@pytest.mark.parametrize("held", [False, True])
+def test_final_shutdown_fences_prewarm_already_past_its_cancel_check(
+    isolated_shared_hosts, monkeypatch, caplog, held
+):
+    import atexit
+
+    from tavotto.rendercore import facade
+
+    entered, release = threading.Event(), threading.Event()
+    retained = rh.shared() if held else None
+    registered = []
+
+    def delayed_host():
+        entered.set()  # facade.run 已经过 cancel.is_set()，尚未取得/使用 host。
+        assert release.wait(5)
+        return retained if held else rh.shared()
+
+    monkeypatch.setattr(facade, "host", delayed_host)
+    monkeypatch.setattr(atexit, "register", lambda *args: registered.append(args))
+    monkeypatch.setattr(facade, "_faces", lambda *args: pytest.fail("不应进入 native 预热"))
+    thread = facade.prewarm()
+    try:
+        assert entered.wait(5)
+        rh.shutdown_shared_for_exit()
+        stop, *args = registered[0]
+        stop(*args)  # 保留既有 atexit 取消契约；只设 cancel 挡不住已经越过它的 host/ping。
+    finally:
+        release.set()
+        thread.join(5)
+    assert not thread.is_alive()
+    assert "shutting down" in caplog.text
+    assert sum(host.starts for host in isolated_shared_hosts) == 0
+
+
+def test_final_shutdown_waits_for_inflight_request_and_every_concurrent_caller(
+    isolated_shared_hosts, monkeypatch
+):
+    """真协议 child + 事件握手：请求持锁、第二个请求排队、两个退出者都不能早于 reap 返回。"""
+    host = rh.shared()
+    host.ping()
+    proc = host._proc
+    verifying, release = threading.Event(), threading.Event()
+    queued, closing, second_exit = threading.Event(), threading.Event(), threading.Event()
+    errors, returns = [], []
+
+    class ObservedLock:
+        def __init__(self, lock, observed, thread_name):
+            self.lock, self.observed, self.thread_name = lock, observed, thread_name
+
+        def acquire(self, *args, **kwargs):
+            if threading.current_thread().name == self.thread_name:
+                self.observed.set()
+            return self.lock.acquire(*args, **kwargs)
+
+        def release(self):
+            self.lock.release()
+
+        def __enter__(self):
+            self.acquire()
+
+        def __exit__(self, *args):
+            self.release()
+
+    monkeypatch.setattr(host, "_lock", ObservedLock(host._lock, queued, "queued-request"))
+    monkeypatch.setattr(
+        rh, "_SHARED_EXIT_LOCK", ObservedLock(rh._SHARED_EXIT_LOCK, second_exit, "second-exit")
+    )
+    real_close = host.close
+
+    def close():
+        closing.set()
+        if threading.current_thread().name == "second-exit":
+            second_exit.set()
+        real_close()
+
+    monkeypatch.setattr(host, "close", close)
+
+    def verify(resp):
+        verifying.set()
+        assert release.wait(5)
+
+    def request():
+        try:
+            host.request("ping", verify=verify)
+        except BaseException as exc:
+            errors.append(exc)
+
+    def queued_request():
+        try:
+            host.ping()
+            errors.append(AssertionError("排队请求在最终退出开始之后被执行"))
+        except rh.RenderChildError as exc:
+            if exc.code != "render_child_died" or "shutting down" not in exc.message:
+                errors.append(exc)
+
+    def finish():
+        try:
+            rh.shutdown_shared_for_exit()
+            returns.append(proc.returncode)  # 不用 poll/wait 代产品回收。
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            if threading.current_thread().name == "second-exit":
+                second_exit.set()  # 早返回的失效实现也要到达检查点，不能靠等待时长判绿。
+
+    threads = [
+        threading.Thread(target=request),
+        threading.Thread(target=queued_request, name="queued-request"),
+        threading.Thread(target=finish, name="first-exit"),
+        threading.Thread(target=finish, name="second-exit"),
+    ]
+    started = []
+    try:
+        for thread, event in zip(threads, (verifying, queued, closing, second_exit), strict=True):
+            thread.start()
+            started.append(thread)
+            assert event.wait(5)
+        assert returns == [] and proc.returncode is None
+    finally:
+        release.set()
+        for thread in started:
+            thread.join(10)
+    assert all(not thread.is_alive() for thread in started)
+    assert not errors, errors
+    assert returns == [0, 0]
+    assert host.starts == 1
+
+
+def test_final_shutdown_interrupts_a_blocked_rpc_within_the_desktop_exit_budget(
+    isolated_shared_hosts, monkeypatch
+):
+    """child 经独立 socket 告知已经收下请求、等待放行；不用 sleep 猜在途时机。
+
+    普通请求仍有 60s deadline；最终退出必须在既有 smoke 的 15s 内结束，不能排在它后面。
+    """
+    script = r"""
+import json, socket, sys
+with socket.create_connection(("127.0.0.1", int(sys.argv[1]))) as control:
+    for line in sys.stdin:
+        req = json.loads(line)
+        if req["op"] == "close":
+            break
+        control.sendall(b"entered")
+        control.recv(1)
+        print(json.dumps({"id": req["id"], "ok": True}), flush=True)
+"""
+    host = rh.shared()
+    host.default_timeout = 60
+    errors, finished, waiting = [], threading.Event(), threading.Event()
+    real_start = host._start
+
+    def start():
+        real_start()
+        real_wait = host._lines.not_empty.wait
+
+        def wait(timeout=None):
+            waiting.set()  # 已取得 queue 条件锁；put 只能在下面原子释放锁后唤醒它。
+            return real_wait(timeout)
+
+        host._lines.not_empty.wait = wait
+
+    monkeypatch.setattr(host, "_start", start)
+
+    def request():
+        try:
+            host.ping()
+        except rh.RenderChildError as exc:
+            errors.append(exc)
+
+    def finish():
+        try:
+            rh.shutdown_shared_for_exit()
+        finally:
+            finished.set()
+
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        listener.settimeout(5)
+        host.command = [sys.executable, "-c", script, str(listener.getsockname()[1])]
+        request_thread = threading.Thread(target=request)
+        request_thread.start()
+        connection, _ = listener.accept()
+        with connection:
+            connection.settimeout(5)
+            entered = b""
+            while len(entered) < 7:
+                chunk = connection.recv(7 - len(entered))
+                assert chunk
+                entered += chunk
+            assert entered == b"entered" and waiting.wait(5)
+            proc = host._proc
+            final_thread = threading.Thread(target=finish)
+            final_thread.start()
+            try:
+                assert finished.wait(15), "最终退出排在了 60s RPC 后面"
+                assert proc.returncode is not None, "最终入口返回时 child 尚未 reap"
+            finally:
+                try:
+                    connection.sendall(b"x")  # 失效实现反证也释放自己起的 child。
+                except OSError:
+                    pass
+                request_thread.join(10)
+                final_thread.join(10)
+    assert not request_thread.is_alive() and not final_thread.is_alive()
+    assert len(errors) == 1 and errors[0].code == "render_child_died"
+    assert "shutting down" in errors[0].message
+
+
+@pytest.mark.parametrize("stage", ["before_start", "after_queue", "before_recv", "after_recv"])
+def test_final_shutdown_signal_survives_start_and_receive_boundaries(
+    isolated_shared_hosts, monkeypatch, stage
+):
+    host = rh.shared()
+    host.default_timeout = 60
+    if stage != "after_recv":
+        host.command = [
+            sys.executable,
+            "-c",
+            "import sys, threading; sys.stdin.buffer.readline(); threading.Event().wait()",
+        ]
+    entered, release, closing, finished = (threading.Event() for _ in range(4))
+    errors, procs = [], []
+    real_start, real_recv, real_close, real_popen = (
+        host._start,
+        host._recv,
+        host.close,
+        subprocess.Popen,
+    )
+
+    def gate():
+        entered.set()
+        assert release.wait(5)
+
+    def popen(*args, **kwargs):
+        if stage == "after_queue":
+            gate()  # _start 已经替换 _lines，尚未把 Popen 赋给 host。
+        proc = real_popen(*args, **kwargs)
+        procs.append(proc)
+        return proc
+
+    def start():
+        if stage == "before_start":
+            gate()  # _ensure 已经放行；final 的唤醒会进入即将被换掉的旧队列。
+        real_start()
+        if stage == "after_recv":
+            real_get = host._lines.get
+
+            def get(*args, **kwargs):
+                line = real_get(*args, **kwargs)
+                gate()  # 已有真实响应，但尚未交给 _recv；终止后不再消费旧响应。
+                return line
+
+            host._lines.get = get
+
+    def recv(*args, **kwargs):
+        if stage == "before_recv":
+            gate()
+        return real_recv(*args, **kwargs)
+
+    def close():
+        closing.set()
+        real_close()
+
+    def request():
+        try:
+            host.ping()
+        except rh.RenderChildError as exc:
+            errors.append(exc)
+
+    def finish():
+        try:
+            rh.shutdown_shared_for_exit()
+        finally:
+            finished.set()
+
+    monkeypatch.setattr(subprocess, "Popen", popen)
+    monkeypatch.setattr(host, "_start", start)
+    monkeypatch.setattr(host, "_recv", recv)
+    monkeypatch.setattr(host, "close", close)
+    request_thread, final_thread = threading.Thread(target=request), threading.Thread(target=finish)
+    request_thread.start()
+    try:
+        assert entered.wait(5)
+        final_thread.start()
+        assert closing.wait(5)  # final 已set事件并送出唤醒，才放开被测边界。
+        release.set()
+        assert finished.wait(15), "最终退出信号在启动/接收边界丢失"
+        assert len(procs) == 1 and procs[0].returncode is not None
+    finally:
+        release.set()
+        for proc in procs:
+            if proc.poll() is None:
+                proc.kill()  # 只收本用例的进程，让失效实现反证也不会留下挂住的 child。
+        request_thread.join(10)
+        if final_thread.ident is not None:
+            final_thread.join(10)
+    assert not request_thread.is_alive() and not final_thread.is_alive()
+    assert len(errors) == 1 and errors[0].code == "render_child_died"
+    assert "shutting down" in errors[0].message
+
+
+def test_final_shutdown_attempts_every_host_before_reporting_a_close_failure(
+    isolated_shared_hosts, monkeypatch
+):
+    first = rh.shared()
+    rh.shutdown_shared()
+    second = rh.shared()
+    second.ping()
+    proc = second._proc
+    failure = OSError("injected close failure")
+
+    def fail():
+        raise failure
+
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            rh, "_SHARED_HOSTS", [first, second]
+        )  # 固定异常发生在有活 child 的 host 之前。
+        patch.setattr(first, "close", fail)
+        with pytest.raises(OSError) as exc:
+            rh.shutdown_shared_for_exit()
+        assert exc.value is failure
+        assert proc.returncode == 0
+    with pytest.raises(rh.RenderChildError, match="shutting down"):
+        rh.shared()
 
 
 @pytest.mark.skipif(not HAS_PDFIUM, reason="pypdfium2 未装（not_run）")

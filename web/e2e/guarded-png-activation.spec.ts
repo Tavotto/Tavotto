@@ -1,4 +1,4 @@
-import type { APIRequestContext, Locator, Page, Response } from '@playwright/test'
+import type { APIRequestContext, Locator, Page, Request, Response } from '@playwright/test'
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
@@ -129,6 +129,58 @@ function watchRenders(page: Page) {
   return { requests, records }
 }
 
+function watchReopenAdmission(page: Page, guard: Guard) {
+  // Keep only structural facts. This observer must never print user/server strings.
+  const requests = new Map<Request, {
+    sequence: number; sameSource: boolean; policyMatches: boolean
+    patchCount: number | null; expectedSourcePresent: boolean; expectedSourceMatches: boolean
+  }>()
+  let sequence = 0
+  let beforeClick: number | null = null
+  page.on('request', request => {
+    if (request.method() !== 'POST' || new URL(request.url()).pathname !== '/api/engine/render') return
+    let body: RenderRequest | null = null
+    try { body = request.postDataJSON() as RenderRequest } catch { /* No payload is logged. */ }
+    requests.set(request, {
+      sequence: ++sequence,
+      sameSource: body?.id === FILE,
+      policyMatches: body?.source_policy === POLICY,
+      patchCount: Array.isArray(body?.patches) ? body.patches.length : null,
+      expectedSourcePresent: body?.expected_source != null,
+      expectedSourceMatches: body?.expected_source?.bytes_sha256 === guard.bytesSha256 &&
+        body?.expected_source?.size_bytes === guard.sizeBytes,
+    })
+  })
+  return {
+    beforeClick: () => { beforeClick = sequence },
+    async reportFailure(response: Response) {
+      if (response.ok()) return
+      const body = await response.json().catch(() => null) as RenderBody | null
+      const observed = requests.get(response.request())
+      // Exact closed sets, not a regexp or a raw fallback. Unknown text stays private.
+      const code = ['queue_superseded', 'session_dead', 'artifact_source_unavailable',
+        'protocol_mismatch', 'worker_timeout', 'workerd_dead', 'missing_dependency',
+        'script_error', 'internal_error'].find(value => value === body?.code) ?? 'unknown'
+      const reason = ['source_changed', 'source_unreadable', 'source_mismatch',
+        'capture_incomplete', 'unsupported_render_state', 'background_visibility_required',
+        'validation_budget_exceeded'].find(value => value === body?.params?.reason) ?? 'unknown'
+      // stdout survives a successful retry even when failure-only artifacts are skipped.
+      console.log('[guarded-png-reopen] ' + JSON.stringify({
+        status: response.status(), code, reason,
+        requestSequence: observed?.sequence ?? null,
+        lastSequenceBeforeClick: beforeClick,
+        requestObserved: observed !== undefined,
+        sentBeforeClick: observed && beforeClick !== null ? observed.sequence <= beforeClick : null,
+        sameSource: observed?.sameSource ?? null,
+        policyMatches: observed?.policyMatches ?? null,
+        patchCount: observed?.patchCount ?? null,
+        expectedSourcePresent: observed?.expectedSourcePresent ?? null,
+        expectedSourceMatches: observed?.expectedSourceMatches ?? null,
+      }))
+    },
+  }
+}
+
 async function seed(request: APIRequestContext, baseURL: string, ids: string[], docId: string) {
   const projects = await request.get(`${baseURL}/api/projects`)
   expect(projects.ok()).toBe(true)
@@ -214,13 +266,15 @@ async function revealCompanion(page: Page, source: ReturnType<typeof sourceProje
   await expect(page.locator('[data-card="same.pdf"]')).toHaveCount(1)
   await expect(page.locator('[data-card="same.png"]')).toHaveCount(0)
 }
-async function enter(page: Page, id: string, guard?: Guard) {
+async function enter(page: Page, id: string, guard?: Guard, beforeClick?: () => void) {
   await (await only(object(page, id))).click({ button: 'right' })
   const menu = await only(page.locator('[data-quick-menu="panel"]'))
   await expect(menu).toBeVisible()
   const admitted = page.waitForResponse(r => endpoint(r, '/api/engine/render') &&
     r.request().postDataJSON().id === FILE && r.request().postDataJSON().patches.length === 0)
-  await (await only(menu.locator('[data-quick-item="edit-elements"]'))).click()
+  const edit = await only(menu.locator('[data-quick-item="edit-elements"]'))
+  beforeClick?.()
+  await edit.click()
   const response = await admitted
   const req = response.request().postDataJSON() as RenderRequest
   expect(req).toMatchObject({ id: FILE, patches: [], source_policy: POLICY })
@@ -513,6 +567,7 @@ test('guarded PNG: independent A→B→A variants survive empty-context reopen a
     expect((await second.storageState()).origins).toEqual([])
     const reopened = await second.newPage()
     const reopenedTraffic = watchRenders(reopened)
+    const admission = watchReopenAdmission(reopened, source.guard)
     await reopened.goto(`${a.baseURL}/${data.query}`)
     await expect(reopened.locator('[data-object-id]')).toHaveCount(2)
     // Read persistence from the fresh context, not the closed context's request handle.
@@ -522,7 +577,9 @@ test('guarded PNG: independent A→B→A variants survive empty-context reopen a
       return (await r.json() as Saved).canvases[0].objects
     }
     await expect.poll(reopenedSaved).toEqual(saved)
-    expect((await enter(reopened, 'a', source.guard)).ok()).toBe(true)
+    const admitted = await enter(reopened, 'a', source.guard, admission.beforeClick)
+    await admission.reportFailure(admitted)
+    expect(admitted.ok()).toBe(true)
     await exact(reopened, 'a')
     const reopenedManifest = await fullRender(reopenedTraffic.records, variantA.panel.overrides, source.guard)
     expect(titleSize(reopenedManifest)).toBe(titleSize(backA))

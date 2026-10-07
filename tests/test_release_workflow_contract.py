@@ -268,6 +268,52 @@ def _wf(p: Path) -> _Workflow:
     return _Workflow(p)
 
 
+# 上游 action.yml 的 runs.using=node24 已按这些不可变提交逐项核过；
+# 来源与升级边界见 docs/ci/release-actions-node24.md。只判三条发布 workflow
+# 的 uses 字段，不把注释中的版本号当证据，也不在测试中访问网络。
+_NODE24_RELEASE_ACTION_PINS = {
+    "actions/checkout": "fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
+    "actions/setup-python": "ece7cb06caefa5fff74198d8649806c4678c61a1",
+    "actions/setup-node": "249970729cb0ef3589644e2896645e5dc5ba9c38",
+    "actions/cache": "caa296126883cff596d87d8935842f9db880ef25",
+    "actions/upload-artifact": "b7c566a772e6b6bfb58ed0dc250532a479d7789f",
+    "actions/download-artifact": "37930b1c2abaa49bbe596cd826c3c89aef350131",
+    "pnpm/action-setup": "0977fd99725f1db4007ccb2928dbb4e90d06cc86",
+    "softprops/action-gh-release": "efb35369e0ad2afab669f228072c1b0d510eae64",
+    "signpath/github-action-submit-signing-request": "c92b958760219087e01f8d67a1669ed57afe2627",
+}
+
+
+@pytest.mark.parametrize("action,sha", _NODE24_RELEASE_ACTION_PINS.items())
+def test_release_actions_use_audited_node24_commit_pins(action: str, sha: str):
+    matches = []
+    for path in (RELEASE, PUBLISH, DESKTOP):
+        wf = _wf(path)
+        for job, step in wf.all_steps():
+            uses = wf.field(step, "uses") or ""
+            if uses.split("@", 1)[0] == action:
+                matches.append((path.name, job, uses))
+    assert matches, f"发布链上没有找到 {action}，先核实迁移范围"
+    for path, job, uses in matches:
+        assert uses == f"{action}@{sha}", f"{path}::{job} 未使用核过的 Node 24 不可变提交"
+
+
+@pytest.mark.parametrize(
+    "path,jobs",
+    [
+        (RELEASE, ("trust", "build", "dispatch_lab")),
+        (PUBLISH, ("trust2", "validate_artifacts", "github_release", "pypi", "plugin_stable")),
+        (DESKTOP, ("trust", "workerd", "updater-manifest")),
+        (LAB, ("trust-check", "dispatch")),
+    ],
+)
+def test_release_linux_jobs_pin_ubuntu_24_04(path: Path, jobs: tuple[str, ...]):
+    wf = _wf(path)
+    for job in jobs:
+        header = wf.jobs[job].split("steps:", 1)[0]
+        assert wf.field(header, "runs-on") == "ubuntu-24.04", f"{path.name}::{job} runner 漂移"
+
+
 def test_the_parser_itself_still_sees_what_it_should():
     """**解析器自检。**
 

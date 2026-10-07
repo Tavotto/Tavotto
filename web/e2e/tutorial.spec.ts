@@ -1,7 +1,7 @@
 import AxeBuilder from '@axe-core/playwright'
 import { lowContrastNodes } from './contrast'
 import { expect, openWorkspace, switchProjectVia, test } from './fixtures'
-import type { Page } from '@playwright/test'
+import type { Page, Response } from '@playwright/test'
 
 /**
  * 新手教程（Prompt 21，ADR 0040）——只有真浏览器 + 真后端才能回答的那几件：
@@ -372,7 +372,7 @@ test('coachmark 落位途中锚点被挤动也不压上去：素材区顶上冒�
   await openTutorialFromPicker(page, a.baseURL)
   let release!: () => void
   const held = new Promise<void>((r) => (release = r))
-  await page.route('**/api/project/refresh', async (route) => {
+  await page.route(/^https?:\/\/[^/]+\/api\/project\/refresh(?:\?[^#]*)?$/, async (route) => {
     await held
     await route.continue()
   })
@@ -472,8 +472,28 @@ test('切到别的项目自动暂停，切回来自动继续', async ({ app, pag
   await expect(coachmark(page)).toContainText('双击这张图')
 
   // 切回原来的项目 → coachmark 消失（系统暂停）
-  await switchProjectVia(page, { path: a.figures })
-  await expect(page.getByRole('button', { name: /当前项目 figures/ })).toBeVisible({ timeout: 30_000 })
+  let openResult: { status: number; code?: string; reason?: string } | undefined
+  const observeOpen = (response: Response) => {
+    if (response.request().method() !== 'POST'
+      || new URL(response.url()).pathname !== '/api/projects/open') return
+    const result = { status: response.status() } as NonNullable<typeof openResult>
+    openResult = result
+    void response.json().then((body) => {
+      if (typeof body?.code === 'string') result.code = body.code
+      if (typeof body?.params?.reason === 'string') result.reason = body.params.reason
+    }).catch(() => { /* 非 JSON 响应仍留 HTTP status */ })
+  }
+  // 这段只点开一次项目，无并发 open；先旁听，再沿用原来的 30 s UI 等待。
+  // 不另等响应、不重试点击，只在失败时附这一次请求的 status / code / reason。
+  page.on('response', observeOpen)
+  try {
+    await switchProjectVia(page, { path: a.figures })
+    await expect(page.getByRole('button', { name: /当前项目 figures/ })).toBeVisible({ timeout: 30_000 })
+  } catch (error) {
+    throw new Error(`${String(error)}\nProject-open response: ${JSON.stringify(openResult ?? null)}`, { cause: error })
+  } finally {
+    page.off('response', observeOpen)
+  }
   await expect(coachmark(page)).toHaveCount(0)
   // 再切回教程 → 自动继续
   await switchProjectVia(page, { tutorial: true })

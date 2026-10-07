@@ -24,6 +24,8 @@ from pathlib import Path
 
 import pytest
 
+from support.pip_config_isolation import isolated_pip_globals
+from support.pypi_index import make_wheel
 from tavotto.engine import deprepair
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -133,13 +135,13 @@ def _lay_out(case: dict, venv: Path, home: Path) -> dict:
         if f["where"] == "config_file":
             env["PIP_CONFIG_FILE"] = str(path)
     env.update(case["env"])
-    return env
+    return isolated_pip_globals(env, home, python=str(_venv_python(venv)))
 
 
-def _index_pip_install_uses(py: Path, env: dict) -> str:
+def _index_pip_install_uses(py: Path, env: dict, local_wheel: Path | None = None) -> str:
     """真装包时 pip 打印的 `Looking in indexes:`（找一个不存在的包，不装任何东西；索引地址都是不存在的主机，
     立刻失败）。这是三方对拍里**不经过探测脚本**的那一方。"""
-    out = subprocess.run(
+    done = subprocess.run(
         [
             str(py),
             "-m",
@@ -152,15 +154,18 @@ def _index_pip_install_uses(py: Path, env: dict) -> str:
             "--timeout",
             "1",
             "-v",
-            "tavotto-no-such-package-767",
+            str(local_wheel) if local_wheel is not None else "tavotto-no-such-package-767",
         ],
         env=env,
         capture_output=True,
         encoding="utf-8",
         errors="replace",
         timeout=120,
-    ).stdout
-    m = re.search(r"Looking in indexes: (\S+?)(?:,|\s|$)", out)
+    )
+    if local_wheel is not None:
+        assert done.returncode == 0, done.stdout + done.stderr
+        assert "Would install tavtest-1.0" in done.stdout, done.stdout
+    m = re.search(r"Looking in indexes: (\S+?)(?:,|\s|$)", done.stdout)
     # PyPI 默认时 pip 不打印这一行（只有非默认索引才说）
     return m.group(1) if m else deprepair.PYPI_DEFAULT_INDEX
 
@@ -205,3 +210,105 @@ def test_the_cases_cover_what_was_measured():
     assert any(
         [f["where"] for f in c["files"]] == ["legacy_user", "user"] and c["custom"] for c in CASES
     )
+
+
+@pytestmark_posix
+def test_global_isolation_preserves_real_pip_cli_and_both_probes(pip_venv, tmp_path, monkeypatch):
+    """真 pip 先读入合成的 global index + extra；只隔离发现路径后，三方都回默认。
+
+    安装目标是本地 wheel，且 dry-run / no-deps / 禁版本检查：不联网、不安装。
+    原来的参数化用例继续检查 user / site / PIP_CONFIG_FILE / 环境变量优先级。
+    """
+    venv, version = pip_venv
+    py = _venv_python(venv)
+    (venv / "pip.conf").unlink(missing_ok=True)
+    global_dir = tmp_path / "system" / "pip"
+    global_dir.mkdir(parents=True)
+    primary, extra = "https://global.example/simple", "https://extra.example/simple"
+    global_file = global_dir / "pip.conf"
+    global_file.write_text(
+        f"[global]\nindex-url = {primary}\nextra-index-url = {extra}\n", encoding="utf-8"
+    )
+    conf = tmp_path / "download.conf"
+    conf.write_text("[download]\nindex-url = https://download.example/simple\n", encoding="utf-8")
+    home = tmp_path / "home"
+    home.mkdir()
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("PIP_", "PIPX_"))}
+    env.update(
+        HOME=str(home),
+        XDG_CONFIG_HOME=str(home / ".config"),
+        PIP_CONFIG_FILE=str(conf),
+        PIP_DISABLE_PIP_VERSION_CHECK="1",
+    )
+    wheel = make_wheel(tmp_path / "wheels", padding=0)
+    # 正面对照也只读用例拥有的 global，不能让真实 /etc 配置覆盖合成配置。
+    raw = isolated_pip_globals(
+        env, tmp_path / "with-global", python=str(py), global_file=global_file
+    )
+    isolated = isolated_pip_globals(env, tmp_path / "without-global", python=str(py))
+    for env, index, extras in (
+        (raw, primary, [extra]),
+        (isolated, deprepair.PYPI_DEFAULT_INDEX, []),
+    ):
+        assert _index_pip_install_uses(py, env, wheel) == index
+        with monkeypatch.context() as patch:
+            for key in [k for k in os.environ if k.startswith(("PIP_", "PIPX_"))]:
+                patch.delenv(key)
+            for key, value in env.items():
+                patch.setenv(key, value)
+            opts = deprepair.pip_install_options(str(py))
+        assert opts is not None and opts["pip_version"] == version
+        assert (opts["index_url"], opts["extra_index_urls"]) == (index, extras)
+        got = launcher.pip_index_of(str(py), env)
+        if extras:
+            assert got is not None and got["url"] == launcher._redact_url(primary)
+        else:
+            assert got is None
+
+
+@pytest.mark.parametrize(
+    "after_startup",
+    [
+        "from sitecustomize import TOKEN; assert TOKEN == 'preserved'",
+        "import sitecustomize, tavotto_test_original_sitecustomize; "
+        "assert sitecustomize is tavotto_test_original_sitecustomize",
+    ],
+    ids=["exports", "module-identity"],
+)
+def test_pip_global_isolation_chains_existing_sitecustomize(tmp_path, after_startup):
+    """显式检查启动后的 import；venv 可能禁用自动 usercustomize，不能靠它作证。"""
+    original = tmp_path / "existing-startup"
+    original.mkdir()
+    (original / "sitecustomize.py").write_text(
+        "import os, sys\n"
+        "os.environ['TAVOTTO_TEST_EXISTING_STARTUP'] = 'yes'\n"
+        "TOKEN = 'preserved'\n"
+        "sys.modules['tavotto_test_original_sitecustomize'] = sys.modules[__name__]\n",
+        encoding="utf-8",
+    )
+    env = isolated_pip_globals({**os.environ, "PYTHONPATH": str(original)}, tmp_path)
+    probe = subprocess.run(
+        [
+            sys.executable,
+            "-B",
+            "-c",
+            "import os; print(os.environ['TAVOTTO_TEST_EXISTING_STARTUP']); " + after_startup,
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
+        timeout=30,
+    )
+    assert probe.stdout.strip() == "yes"
+
+
+def test_pip_global_isolation_fails_closed_on_startup_error(tmp_path):
+    original = tmp_path / "broken-startup"
+    original.mkdir()
+    (original / "sitecustomize.py").write_text(
+        "raise RuntimeError('existing startup failed')\n", encoding="utf-8"
+    )
+    with pytest.raises(AssertionError, match="pip global isolation startup failed"):
+        isolated_pip_globals({**os.environ, "PYTHONPATH": str(original)}, tmp_path)

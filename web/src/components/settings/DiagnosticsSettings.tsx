@@ -102,55 +102,6 @@ export function DiagnosticsSettings() {
   // 分区之间的间距由外壳统一给：`display: contents` 让三块直接成为内容容器的子项
   return (
     <div className="contents" data-diagnostics-page>
-      <SettingSection title={st('diagnostics.healthTitle')}>
-        {checks === null ? (
-          <p className="type-meta">{st('about.detecting')}</p>
-        ) : (
-          <>
-            {/* 结论一行（全面打磨 D13）：结论是标签、取自何时是现状、「重新获取」在控件列
-                贴右——此前是一句 12px 正文 + 一段 11px meta + 一颗 ghost 挤在一条左对齐的
-                横排里，是这一页唯一不走行语法的东西 */}
-            <SettingRow
-              label={
-                failing.length
-                  ? st('diagnostics.summaryFailing', { count: failing.length })
-                  : st('diagnostics.summaryOk')
-              }
-              status={
-                fetchedAt !== null
-                  ? st('diagnostics.fetchedAt', { time: formatDateTime(fetchedAt) })
-                  : undefined
-              }
-            >
-              <Button variant="ghost" size="sm" loading={busy} onClick={() => void load()}>
-                <RefreshCw size={ICON_SIZE.sm} aria-hidden />
-                {st('diagnostics.refetch')}
-              </Button>
-            </SettingRow>
-            {/* 异常项常驻首屏；正常项折叠——它们在「技术详情」里还有一份带
-                取值的，铺在首屏等于同一件事说两遍。 */}
-            {failing.length > 0 && (
-              <ul className="flex flex-col gap-1">
-                {failing.map((c) => (
-                  <CheckLine key={c.id} check={c} repairCard={repairCard} />
-                ))}
-              </ul>
-            )}
-            {passing.length > 0 && (
-              <DiagnosticDisclosure title={st('diagnostics.okDetails')}>
-                <ul className="flex flex-col gap-1">
-                  {passing.map((c) => (
-                    <CheckLine key={c.id} check={c} repairCard={repairCard} />
-                  ))}
-                </ul>
-              </DiagnosticDisclosure>
-            )}
-          </>
-        )}
-        {/* 缺件 / 损坏：恢复入口整张常驻（那时它给的是「自动安装 / 换解释器」） */}
-        {env && !env.ok && <EngineEnvironmentCard />}
-      </SettingSection>
-
       <DiagnosticsReportSection />
 
       {/* 给开发者：记录拖动性能 + 技术详情（来源 / 版本 / 检查明细）。默认折叠；
@@ -186,6 +137,57 @@ export function DiagnosticsSettings() {
             />
           ))}
       </DiagnosticDisclosure>
+
+      {/* 自动回包的高度不可预知：健康结果与恢复卡放在稳定入口之后，错误照旧常驻。 */}
+      <SettingSection title={st('diagnostics.healthTitle')}>
+        {checks === null ? (
+          <p data-diagnostics-loading className="type-meta">{st('about.detecting')}</p>
+        ) : (
+          <>
+            {/* 结论一行（全面打磨 D13）：结论是标签、取自何时是现状、「重新获取」在控件列
+                贴右——此前是一句 12px 正文 + 一段 11px meta + 一颗 ghost 挤在一条左对齐的
+                横排里，是这一页唯一不走行语法的东西 */}
+            <SettingRow
+              data-diagnostics-summary
+              label={
+                failing.length
+                  ? st('diagnostics.summaryFailing', { count: failing.length })
+                  : st('diagnostics.summaryOk')
+              }
+              status={
+                fetchedAt !== null
+                  ? st('diagnostics.fetchedAt', { time: formatDateTime(fetchedAt) })
+                  : undefined
+              }
+            >
+              <Button data-diagnostics-refetch variant="ghost" size="sm" loading={busy} onClick={() => void load()}>
+                <RefreshCw size={ICON_SIZE.sm} aria-hidden />
+                {st('diagnostics.refetch')}
+              </Button>
+            </SettingRow>
+            {/* 异常项常驻首屏；正常项折叠——它们在「技术详情」里还有一份带
+                取值的，铺在首屏等于同一件事说两遍。 */}
+            {failing.length > 0 && (
+              <ul data-diagnostics-failures className="flex flex-col gap-1">
+                {failing.map((c) => (
+                  <CheckLine key={c.id} check={c} repairCard={repairCard} />
+                ))}
+              </ul>
+            )}
+            {passing.length > 0 && (
+              <DiagnosticDisclosure title={st('diagnostics.okDetails')}>
+                <ul className="flex flex-col gap-1">
+                  {passing.map((c) => (
+                    <CheckLine key={c.id} check={c} repairCard={repairCard} />
+                  ))}
+                </ul>
+              </DiagnosticDisclosure>
+            )}
+          </>
+        )}
+        {/* 缺件 / 损坏：恢复入口整张常驻（那时它给的是「自动安装 / 换解释器」） */}
+        {env && !env.ok && <EngineEnvironmentCard />}
+      </SettingSection>
     </div>
   )
 }

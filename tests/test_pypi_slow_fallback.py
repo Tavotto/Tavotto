@@ -25,6 +25,7 @@ from pathlib import Path
 
 import pytest
 
+from support.pip_config_isolation import isolated_pip_globals
 from support.pypi_index import NAME, SimpleIndex, make_wheel
 from tavotto.engine import deprepair
 
@@ -199,6 +200,8 @@ def test_a_download_only_index_setting_is_not_a_user_source(tmp_path, monkeypatc
     cfg = tmp_path / "pip.conf"
     cfg.write_text("[download]\nindex-url = https://pypi.corp/simple\n", encoding="utf-8")
     monkeypatch.setenv("PIP_CONFIG_FILE", str(cfg))
+    env = isolated_pip_globals(dict(os.environ), tmp_path)
+    monkeypatch.setenv("PYTHONPATH", env["PYTHONPATH"])
     assert deprepair.user_package_source(sys.executable) is False
     cfg.write_text("[install]\n--index-url = https://pypi.corp/simple\n", encoding="utf-8")
     assert deprepair.user_package_source(sys.executable) is True

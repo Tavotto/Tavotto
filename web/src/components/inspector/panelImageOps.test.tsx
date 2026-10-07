@@ -8,7 +8,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { literal } from '@/i18n'
+import { i18n, literal, t } from '@/i18n'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useDocumentStore } from '@/store/documentStore'
 import { useUiStore } from '@/store/uiStore'
@@ -46,6 +46,7 @@ const section = (title: string) =>
   all('section').find((s) => s.querySelector('h3')?.textContent?.trim() === title)!
 
 beforeEach(async () => {
+  await i18n.changeLanguage('zh-CN')
   localStorage.clear()
   await useDocumentStore.getState().switchDocument(emptyProject(), 'd_panel_ops')
   useDocumentStore.getState().commit(literal('放面板'), (d) => {
@@ -68,9 +69,39 @@ beforeEach(async () => {
 afterEach(async () => {
   await act(async () => root.unmount())
   host.remove()
+  await i18n.changeLanguage('zh-CN')
 })
 
 describe('「原始比例 / 原始尺寸」跟着 W/H 走', () => {
+  for (const locale of ['zh-CN', 'en-US']) {
+    it(`${locale}：恢复动作保留完整名称、Tab 顺序与各自的尺寸语义`, async () => {
+      await act(async () => { await i18n.changeLanguage(locale) })
+      const restore = all('[data-panel-restore]') as HTMLButtonElement[]
+      expect(restore.map((b) => b.dataset.panelRestore)).toEqual(['aspect', 'size'])
+      expect(restore.map((b) => b.textContent?.trim())).toEqual([
+        t('panel.aspect', { ns: 'inspector' }), t('panel.nativeSize', { ns: 'inspector' }),
+      ])
+      for (const button of restore) {
+        expect(button.disabled).toBe(false)
+        expect(button.tabIndex).toBe(0)
+      }
+      await act(async () => {
+        useDocumentStore.getState().commit(literal('distort'), (d) => {
+          const panel = d.objects[0] as PanelObject
+          panel.w = 100
+          panel.h = 40
+        })
+        restore[0].click()
+      })
+      let live = useDocumentStore.getState().doc.objects[0] as PanelObject
+      expect(live.w / live.h).toBeCloseTo(80 / 57.6)
+      await act(async () => { restore[1].click() })
+      live = useDocumentStore.getState().doc.objects[0] as PanelObject
+      expect(live.w).toBeCloseTo(80)
+      expect(live.h).toBeCloseTo(57.6)
+    })
+  }
+
   it('它们在「位置与尺寸」里，不在「图片适配」里', () => {
     const geo = section('位置与尺寸')
     expect(geo.textContent).toContain('原始比例')
