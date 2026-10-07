@@ -1,15 +1,17 @@
 import { useMemo } from 'react'
 import { t as translate } from '@/i18n'
+import { geomTarget, isElementHidden, panelFullRect } from '@/lib/elementGeom'
 import { openProblemAt, focusFailureMessage } from '@/lib/issueFocus'
 import { currentFigureOf } from '@/lib/problemContext'
 import { SEVERITIES, type Severity } from '@/lib/profile'
 import type { ValidationIssue } from '@/lib/validation'
 import { severityLabel } from '@/lib/validationText'
 import { useDocumentStore } from '@/store/documentStore'
+import { useDisplayedExactManifest } from '@/store/mountedSvgStore'
 import { useUiStore } from '@/store/uiStore'
 import { useValidationStore } from '@/store/validationStore'
 import { mmToPx, mmToViewX, mmToViewY, type ViewTransform } from '@/store/viewportStore'
-import { objectRotation, type CanvasObject } from '@/types/document'
+import { objectRotation, panelRotation, type CanvasObject, type PanelObject } from '@/types/document'
 
 /**
  * 问题面板在画布上的两样东西（2026-10-07 设计审计 §9.4），从 `OverlaySvg` 里挂进来、自己一个文件——
@@ -17,6 +19,7 @@ import { objectRotation, type CanvasObject } from '@/types/document'
  *
  * * **悬停轮廓**：问题面板里指着一行（`uiStore.issueHover`），画布上那个对象画一道与画布自己的
  *   hover 预示同一种画法的轮廓（sel 色、`--sel-hover-opacity`）。只是「我在看它」：不选中、不定位。
+ *   问题带 gid（图内元素）时描那个元素的框（`ElementHover`），解不出来才退回整张图。
  * * **等级标记**（`uiStore.problemPins`，默认关，问题面板「⋯」里打开）：每张有问题的图右上角外侧一枚
  *   等级色小圆 + 项数；点它 = `openProblemAt`（定位 + 问题面板点开它所在的那一支、落游标）——
  *   与左栏样式面板直达走同一个入口，不另写第二套「跳到问题」。
@@ -29,21 +32,76 @@ export function IssueOverlay({ objects, t }: { objects: readonly CanvasObject[];
   const target = hover ? objects.find((o) => o.id === hover.objectId) : undefined
   return (
     <>
-      {target && (
-        <rect
-          data-issue-hover={target.id}
-          {...boxOf(target, t, 2)}
-          transform={spin(target, t)}
-          rx={2}
-          fill="none"
-          stroke="var(--color-sel)"
-          strokeWidth={1.5}
-          style={{ strokeOpacity: 'var(--sel-hover-opacity)' }}
-          pointerEvents="none"
-        />
-      )}
+      {target &&
+        (target.type === 'panel' && hover?.gid ? (
+          <ElementHover panel={target} gid={hover.gid} t={t} />
+        ) : (
+          <HoverRect id={target.id} {...boxOf(target, t, 2)} transform={spin(target, t)} />
+        ))}
       {pins && <IssuePins objects={objects} t={t} />}
     </>
+  )
+}
+
+function HoverRect({
+  id,
+  gid,
+  ...rect
+}: {
+  id: string
+  gid?: string
+  x: number
+  y: number
+  width: number
+  height: number
+  transform?: string
+}) {
+  return (
+    <rect
+      data-issue-hover={id}
+      data-issue-hover-gid={gid}
+      {...rect}
+      rx={2}
+      fill="none"
+      stroke="var(--color-sel)"
+      strokeWidth={1.5}
+      style={{ strokeOpacity: 'var(--sel-hover-opacity)' }}
+      pointerEvents="none"
+    />
+  )
+}
+
+/**
+ * 问题落在图内某个元素上（刻度、轴标题、图例……，`issueHover.gid`）：轮廓描**那个元素**，不是整张图。
+ * 换算与图内编辑的 `OverlaySvg.ElementBoxes` 同一套：只认此刻显示着的精确 manifest
+ * （`useDisplayedExactManifest`，权威不在就不按旧墨迹框猜）、`geomTarget`（位图落到宿主子图）、
+ * `panelFullRect`（裁剪 / 旋转的内容坐标系），再整体绕面板包围盒中心转到 `panelRotation`。
+ * 解不出来（manifest 没就位、gid 不在里面、是 `figure` 或已隐藏）退回整张图的轮廓（Codex #832）。
+ */
+function ElementHover({ panel, gid, t }: { panel: PanelObject; gid: string; t: ViewTransform }) {
+  const manifest = useDisplayedExactManifest(panel)
+  const el = manifest?.elements.find((e) => e.gid === gid)
+  if (!manifest || !el || el.gid === 'figure' || isElementHidden(el)) {
+    return <HoverRect id={panel.id} {...boxOf(panel, t, 2)} />
+  }
+  const target = geomTarget(manifest, el)
+  const full = panelFullRect(panel)
+  const [bx, by, bw, bh] = target.bbox
+  const pad = 2
+  const x = mmToViewX(full.x + bx * full.w, t)
+  const y = mmToViewY(full.y + by * full.h, t)
+  const pb = box(panel, t)
+  const rot = panelRotation(panel)
+  return (
+    <HoverRect
+      id={panel.id}
+      gid={target.gid}
+      x={x - pad}
+      y={y - pad}
+      width={mmToPx(bw * full.w, t) + 2 * pad}
+      height={mmToPx(bh * full.h, t) + 2 * pad}
+      transform={rot ? `rotate(${rot} ${pb.x + pb.w / 2} ${pb.y + pb.h / 2})` : undefined}
+    />
   )
 }
 
