@@ -147,7 +147,7 @@ interface DialogProps {
 
 /**
  * 共用对话框外壳（宪法第五节 Dialog、第二十六节）：rounded-panel 16、标题 type-title 15 / 600、
- * 正文 type-reading 13 / 1.6、页脚三槽 32px、栈底才画遮罩、Esc = `onEscape` 给的安全答案。
+ * 说明 13 / ink-2、正文 type-reading 13 / 1.6、页脚三槽 32px、栈底才画遮罩、Esc = `onEscape` 给的安全答案。
  *
  * **常驻挂载**：调用方不要写 `if (!x) return null` 再把 `open` 写死成 true——那样只有进场、没有退场
  * （Radix 的 Presence 要等 animationend 才卸载内容）。写法是对话框常驻、`open={!!x}`，正文读一个
@@ -321,8 +321,10 @@ export function Dialog({
           >
             <div className="min-w-0">
               <RD.Title className="type-title">{title}</RD.Title>
+              {/* 说明与正文同一个阅读字号（13 / ink-2，2026-10-07 设计审计 §10.2）：此前 12 / ink-3，
+                  比它下面的正文还轻一档，读着像脚注 */}
               {description && (
-                <RD.Description className="type-caption mt-0.5">{description}</RD.Description>
+                <RD.Description className="mt-1 text-base leading-[1.5] text-ink-2">{description}</RD.Description>
               )}
             </div>
           </div>

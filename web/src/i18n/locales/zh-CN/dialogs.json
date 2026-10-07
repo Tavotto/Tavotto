@@ -1338,7 +1338,8 @@
     "gotIt": "知道了",
     "failed": "无法更新。当前版本不变。",
     "retry": "再试一次",
-    "sourceBody": "源码检出，Tavotto 不会自动升级。请在仓库目录执行："
+    "sourceBody": "源码检出，Tavotto 不会自动升级。请在仓库目录执行：",
+    "log": "日志"
   },
   "versions": {
     "beforeRestore": "恢复前（{{time}}）",

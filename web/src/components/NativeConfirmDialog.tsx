@@ -1,9 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { LoaderCircle } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { Badge } from './ui/Badge'
-import { InlineWarning } from './settings/SettingRow'
 import { Checkbox } from './ui/Checkbox'
 import { backendCodeMsg } from '@/lib/api'
 import { t as translate, type UiMessage } from '@/i18n'
@@ -11,6 +10,7 @@ import { useFormatMessage } from '@/i18n/react'
 import { useNativeSessionStore, type NativeError } from '@/store/nativeSessionStore'
 import { Button } from './ui/Button'
 import { Dialog } from './ui/Dialog'
+import { Notice } from './ui/Notice'
 
 const nr = (key: string, values?: Record<string, unknown>) =>
   translate(`nativeRun.${key}`, { ns: 'dialogs', ...(values ?? {}) })
@@ -50,9 +50,14 @@ const HANDOFF_GONE = new Set([
 export function NativeConfirmDialog() {
   useTranslation('dialogs')
   const fmt = useFormatMessage()
-  const head = useNativeSessionStore((s) => s.pendingQueue[0] ?? null)
+  const current = useNativeSessionStore((s) => s.pendingQueue[0] ?? null)
   const queued = useNativeSessionStore((s) => s.pendingQueue.length)
   const [remember, setRemember] = useState(false)
+  // 常驻挂载、一个 lg 对话框从头到尾（2026-10-07 设计审计 §10.2）：载入 → 确认 → 失败只换正文，
+  // 不在三种尺寸的两个 Dialog 之间交接；关的那 90ms 里队列已空，正文按最后一份载荷画
+  const last = useRef(current)
+  if (current) last.current = current
+  const head = last.current
 
   // 换一条待确认的交接就把勾选还原：上一条勾没勾与这一条无关，而这个勾
   // 决定的是"以后不再问"——继承上一次的状态等于替用户做了决定。
@@ -62,130 +67,127 @@ export function NativeConfirmDialog() {
   const store = useNativeSessionStore.getState()
   const info = head.info
   const busy = head.submitting
-  // descriptor 已经作废：这一屏没有"再试一次"，只有"知道了"
+  // descriptor 已经作废：这一屏没有"再试一次"，只有"关闭"
   const gone = !!head.error && HANDOFF_GONE.has(head.error.code)
-
   // 取不到（过期 / 已被处理 / ID 不对）：说清楚，并给一个能关掉的出口。
   // 转圈的对话框比一条错误更坏——它让人一直等一件不会发生的事。
   // 批准之后 descriptor 作废的那条走同一屏：两种情况下用户能做的事一模一样。
-  if (!info || gone) {
-    return (
-      <Dialog
-        open
-        onOpenChange={(v) => !v && store.dismissPending(head.native_id)}
-        title={nr('title')}
-        size="sm"
-        busy={head.loading}
-        footer={
-          !head.loading && (
-            <Button variant="secondary" size="md" onClick={() => store.dismissPending(head.native_id)}>
-              {translate('actions.close')}
-            </Button>
-          )
-        }
-      >
-        {head.loading ? (
-          <p className="flex items-center gap-2 text-xs text-ink-3">
-            <LoaderCircle size={ICON_SIZE.sm} className="animate-spin" />
-            {nr('loading')}
-          </p>
-        ) : (
-          <ErrorNote error={head.error} fmt={fmt} />
-        )}
-      </Dialog>
-    )
-  }
+  const settled = !info || gone
+  const dismiss = () => store.dismissPending(head.native_id)
 
   return (
     <Dialog
-      open
-      // 必须做出选择：见上面的说明
-      onOpenChange={() => {}}
-      blockDismiss
-      busy={busy}
+      open={!!current}
+      // 闸：必须做出选择，点外面和 Esc 都不算回答（只有「已作废 / 取不到」那一屏没有待决的选择，能关）
+      onOpenChange={(v) => !v && settled && dismiss()}
+      blockDismiss={!settled}
+      busy={settled ? head.loading : busy}
+      onEscape={settled && !head.loading ? dismiss : undefined}
       title={nr('title')}
       // 「还没开始运行」那句说明按 2026-09-11 设计包去掉；排队里还有别的交接时
       // 仍要说出来——悄悄压着第二条等于让用户以为只有这一条
-      description={queued > 1 ? nr('descriptionQueued', { queued: queued - 1 }) : undefined}
+      description={!settled && queued > 1 ? nr('descriptionQueued', { queued: queued - 1 }) : undefined}
       size="lg"
+      anchor="native-confirm"
       footer={
-        <>
-          <Button
-            variant="secondary"
-            size="md"
-            disabled={busy}
-            onClick={() => store.cancel(head.native_id)}
-          >
-            {nr('cancel')}
-          </Button>
-          <Button
-            variant="primary"
-            size="md"
-            loading={busy}
-            loadingLabel={nr('approving')}
-            onClick={() => store.approve(head.native_id, remember)}
-          >
-            {nr('approve')}
-          </Button>
-        </>
+        settled
+          ? {
+              secondary: !head.loading && (
+                <Button data-native-close variant="secondary" size="lg" onClick={dismiss}>
+                  {translate('actions.close')}
+                </Button>
+              ),
+            }
+          : {
+              secondary: (
+                <Button
+                  data-native-cancel
+                  variant="secondary"
+                  size="lg"
+                  disabled={busy}
+                  onClick={() => store.cancel(head.native_id)}
+                >
+                  {nr('cancel')}
+                </Button>
+              ),
+              primary: (
+                <Button
+                  data-native-approve
+                  variant="primary"
+                  size="lg"
+                  loading={busy}
+                  loadingLabel={nr('approving')}
+                  onClick={() => store.approve(head.native_id, remember)}
+                >
+                  {nr('approve')}
+                </Button>
+              ),
+            }
       }
     >
-      <dl className="flex flex-col gap-1.5 text-xs">
-        <Row label={nr('fields.target')}>
-          <span className="font-mono text-ink" title={info.target_display}>
-            {info.target_display}
-          </span>
-          <Badge className="ml-1.5">{nr(`targetKind.${info.target_kind}`)}</Badge>
-        </Row>
-        <Row label={nr('fields.interpreter')}>
-          <span className="break-all font-mono text-ink" title={info.interpreter}>
-            {info.interpreter}
-          </span>
-          {info.python_version && (
-            <span className="ml-1.5 text-ink-3">
-              {nr('pythonVersion', { version: info.python_version })}
-            </span>
-          )}
-        </Row>
-        <Row label={nr('fields.cwd')}>
-          <span className="break-all font-mono text-ink" title={info.cwd}>
-            {info.cwd}
-          </span>
-        </Row>
-        <Row label={nr('fields.project')}>
-          <span className="break-all font-mono text-ink" title={info.project_root}>
-            {info.project_root}
-          </span>
-        </Row>
-        {info.arg_count > 0 && (
-          /* **只有数量。** 参数的内容不经过界面（ADR 0021 §4：descriptor 里
-             本来就只记了个数），所以这里也说不出更多——不假装能。 */
-          <Row label={nr('fields.args')}>
-            <span className="text-ink-2">{nr('argCount', { count: info.arg_count })}</span>
-          </Row>
-        )}
-      </dl>
-
-      {/* 权限说明。四句话是一条一条说的，不拼字符串——中英的从句位置不同，
-          拼出来的句子读着就是机翻。 */}
-      {/* 警示只有一副（全面打磨 D30）：`InlineWarning`，不是黄底加一圈黄边的块 */}
-      <div className="mt-3">
-        <InlineWarning>{nr('permissionNotice')}</InlineWarning>
-      </div>
-
-      <label className="mt-2 flex items-start gap-1.5 text-xs text-ink-2">
-        <Checkbox
-          checked={remember}
-          disabled={busy}
-          onChange={(e) => setRemember(e.target.checked)}
-          className="mt-0.5"
-        />
-        <span className="min-w-0 flex-1">{nr('remember')}</span>
-      </label>
-
-      {head.error && (
-        <div className="mt-2">
+      {settled ? (
+        head.loading ? (
+          <p data-native-loading className="flex items-center gap-2 text-ink-3">
+            <LoaderCircle size={ICON_SIZE.sm} className="animate-spin" />
+            <span className="text-shimmer">{nr('loading')}</span>
+          </p>
+        ) : (
           <ErrorNote error={head.error} fmt={fmt} />
+        )
+      ) : (
+        <div className="flex flex-col gap-3">
+          <dl className="flex flex-col gap-2">
+            <Row label={nr('fields.target')}>
+              <span className="font-mono text-sm text-ink" title={info.target_display}>
+                {info.target_display}
+              </span>
+              <Badge className="ml-1.5">{nr(`targetKind.${info.target_kind}`)}</Badge>
+            </Row>
+            <Row label={nr('fields.interpreter')}>
+              <span className="break-all font-mono text-sm text-ink" title={info.interpreter}>
+                {info.interpreter}
+              </span>
+              {info.python_version && (
+                <span className="ml-1.5 text-ink-3">
+                  {nr('pythonVersion', { version: info.python_version })}
+                </span>
+              )}
+            </Row>
+            <Row label={nr('fields.cwd')}>
+              <span className="break-all font-mono text-sm text-ink" title={info.cwd}>
+                {info.cwd}
+              </span>
+            </Row>
+            <Row label={nr('fields.project')}>
+              <span className="break-all font-mono text-sm text-ink" title={info.project_root}>
+                {info.project_root}
+              </span>
+            </Row>
+            {info.arg_count > 0 && (
+              /* **只有数量。** 参数的内容不经过界面（ADR 0021 §4：descriptor 里
+                 本来就只记了个数），所以这里也说不出更多——不假装能。 */
+              <Row label={nr('fields.args')}>
+                <span className="text-ink-2">{nr('argCount', { count: info.arg_count })}</span>
+              </Row>
+            )}
+          </dl>
+
+          <label className="flex items-start gap-2 text-ink-2">
+            <Checkbox
+              checked={remember}
+              disabled={busy}
+              onChange={(e) => setRemember(e.target.checked)}
+              className="mt-0.5"
+            />
+            <span className="min-w-0 flex-1">{nr('remember')}</span>
+          </label>
+
+          {/* 权限说明与错误：Notice，放在页脚上方（2026-10-07 设计审计 §10.2）。
+              四句话是一条一条说的，不拼字符串——中英的从句位置不同，拼出来的句子读着就是机翻。 */}
+          <Notice tone="warn" data-native-permission>
+            {nr('permissionNotice')}
+          </Notice>
+          {head.error && <ErrorNote error={head.error} fmt={fmt} />}
         </div>
       )}
     </Dialog>
@@ -194,8 +196,8 @@ export function NativeConfirmDialog() {
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="flex min-w-0 gap-2">
-      <dt className="w-20 shrink-0 text-ink-3">{label}</dt>
+    <div className="flex min-w-0 items-baseline gap-3">
+      <dt className="w-24 shrink-0 text-sm text-ink-2">{label}</dt>
       <dd className="min-w-0 flex-1">{children}</dd>
     </div>
   )
@@ -210,9 +212,5 @@ function ErrorNote({
   fmt: (m: UiMessage | null | undefined) => string
 }) {
   if (!error) return null
-  return (
-    <InlineWarning tone="danger">
-      {fmt(backendCodeMsg(error.code, error.params, error.message))}
-    </InlineWarning>
-  )
+  return <Notice tone="danger">{fmt(backendCodeMsg(error.code, error.params, error.message))}</Notice>
 }

@@ -234,7 +234,7 @@ describe('桌面通道', () => {
     expect(relaunchDesktop).toHaveBeenCalledTimes(1)
   })
 
-  it('下载中：真实进度、没有按钮、关不掉；拿不到 Content-Length 就不报百分比', async () => {
+  it('下载中：真实进度、页脚原位置灰（主按钮上写进度）、关不掉；拿不到 Content-Length 就不报百分比', async () => {
     useUpdateStore.setState({
       desktopUpdate: { version: '0.15.0' },
       desktopPhase: 'downloading',
@@ -243,7 +243,10 @@ describe('桌面通道', () => {
     await mount()
     expect(dialog()?.querySelector('[role="progressbar"]')?.getAttribute('aria-valuenow')).toBe('42')
     expect(dialog()?.textContent).toContain('42%')
-    expect(footerLabels()).toEqual([])
+    // 页脚不撤（2026-10-07 设计审计 §10.2）：同一副按钮、全部置灰，主按钮原位置写进度
+    expect(footerLabels()).toEqual(['稍后', '正在下载 42%'])
+    expect(buttons().filter((b) => b.textContent?.trim()).every((b) => b.disabled)).toBe(true)
+    expect(dialog()?.querySelector('[data-dialog-close]')).toBeNull()
     expect(dialog()?.getAttribute('aria-busy')).toBe('true')
     await act(async () => useUpdateStore.setState({ desktopProgress: null }))
     expect(dialog()?.textContent).not.toContain('%')
@@ -256,6 +259,9 @@ describe('桌面通道', () => {
     })
     await mount()
     expect(dialog()?.textContent).toContain('signature verification failed')
+    // 结论是一条危险 Notice，原文收在「日志」里
+    expect(dialog()?.querySelector('[data-notice="danger"]')).not.toBeNull()
+    expect(dialog()?.querySelector('[data-update-log]')).not.toBeNull()
     expect(footerLabels()).toEqual(['稍后', '再试一次'])
   })
 })

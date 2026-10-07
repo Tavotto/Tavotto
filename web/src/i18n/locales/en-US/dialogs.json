@@ -1347,7 +1347,8 @@
     "gotIt": "Got it",
     "failed": "Couldn’t update. You’re still on the current version.",
     "retry": "Try again",
-    "sourceBody": "This is a source checkout, so Tavotto doesn’t upgrade itself. Run this in the repository:"
+    "sourceBody": "This is a source checkout, so Tavotto doesn’t upgrade itself. Run this in the repository:",
+    "log": "Log"
   },
   "versions": {
     "beforeRestore": "Before restore ({{time}})",

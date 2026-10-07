@@ -418,9 +418,9 @@ test('试运行撞上依赖门：直接弹一键修复框，稍后可重开；�
   await expect(dialog).toContainText('这个脚本还缺 adjusttext，点一下自动装好。')
   expect(probes).toBe(1)
 
-  // 「详情」里「其他方式（备选）」的「不准备，直接运行」：真 `POST /api/engine/dependencies/skip`，然后这一行自动再试运行
-  // （真 worker）→ 发现图（授权准备成功后的重跑由 `ScriptLibrary.test.tsx` 与 `dependency-one-click.spec.ts` 看护：SSE 在这里造不了）
-  await dialog.locator('[data-repair-advanced] > summary').click()
+  // 页脚 start 槽的「不准备，直接运行」（2026-10-07 设计审计 §10.2，不再埋在「详情」里）：真 `POST /api/engine/dependencies/skip`，
+  // 然后这一行自动再试运行（真 worker）→ 发现图（授权准备成功后的重跑由 `ScriptLibrary.test.tsx` 与
+  // `dependency-one-click.spec.ts` 看护：SSE 在这里造不了）
   const skipping = page.waitForResponse(response =>
     /\/api\/engine\/dependencies\/skip(\?|$)/.test(response.url()) && response.request().method() === 'POST')
   await dialog.locator('[data-dependency-skip]').click()
