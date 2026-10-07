@@ -15,7 +15,7 @@
     "none": "无",
     "open": "{{label}}：选色",
     "hex": "{{label}}：色号",
-    "documentColors": "文档颜色",
+    "documentColors": "排版里的颜色",
     "recent": "最近使用",
     "system": "系统取色器…"
   },

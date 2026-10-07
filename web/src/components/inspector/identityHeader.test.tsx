@@ -440,6 +440,27 @@ describe('问题胶囊数的是整组选择（Codex #829）', () => {
     expect(chip, '多选时问题胶囊要在').not.toBeNull()
     expect(chip!.getAttribute('data-identity-problems')).toBe('2')
   })
+  it('按着鼠标时校验结果到达：胶囊等松手再出现，按下与松开之间属性栏不多出按钮', async () => {
+    await seed([panel], ['p1'])
+    seedExactRender(panel, manifest as never)
+    useUiStore.getState().setElementPanel('p1')
+    useUiStore.setState({ selectedGids: ['axes_0.title'] })
+    await mount()
+    const chip = () => document.querySelector('[data-identity-problems]')
+    expect(chip()).toBeNull()
+    await act(async () => {
+      window.dispatchEvent(new PointerEvent('pointerdown', { button: 0 }))
+    })
+    await act(async () => {
+      useValidationStore.setState({ issues: [issue('error', 'axes_0.title')] })
+    })
+    expect(chip(), '按着的时候不插进一颗新按钮').toBeNull()
+    await act(async () => {
+      window.dispatchEvent(new PointerEvent('pointerup', { button: 0 }))
+    })
+    expect(chip(), '松手立刻补上，事实不丢').not.toBeNull()
+    expect(chip()!.getAttribute('data-identity-problems')).toBe('1')
+  })
   it('选中真实的组（共享色条）：只数组与它后代上的问题，组外的不算', async () => {
     const G = 'group:axes_2'
     const el = (gid: string, role: string, extra: Record<string, unknown> = {}) => ({
