@@ -8,11 +8,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { literal } from '@/i18n'
 import type { ValidationIssue } from '@/lib/validation'
 import { useDocumentStore } from '@/store/documentStore'
+import { mmToPx, mmToViewX, mmToViewY } from '@/store/viewportStore'
+import { seedExactRender } from '@/test/renderFixtures'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { useValidationStore } from '@/store/validationStore'
 import { useWorkspaceStore } from '@/store/workspace'
-import { emptyProject, type CanvasObject } from '@/types/document'
+import { emptyProject, type CanvasObject, type PanelObject } from '@/types/document'
 import { IssueOverlay } from './IssueOverlay'
 
 const openProblemAt = vi.fn((..._args: unknown[]): { ok: boolean } => ({ ok: true }))
@@ -75,6 +77,101 @@ describe('问题面板的悬停轮廓', () => {
     expect(rect.getAttribute('pointer-events')).toBe('none')
     await act(async () => useUiStore.getState().setIssueHover(null))
     expect(container.querySelector('[data-issue-hover]')).toBeNull()
+  })
+})
+
+describe('悬停轮廓描到问题所在的图内元素（Codex #832）', () => {
+  const manifest = {
+    stem: 'el',
+    size_mm: [40, 30],
+    elements: [
+      { gid: 'axes_0', role: 'axes', label: '子图', bbox: [0.1, 0.1, 0.8, 0.7], draggable: false, editable: [] },
+      // 刻度文字：图内的一小条，不是整张图
+      { gid: 'axes_0.xticks', role: 'ticks', label: 'X 刻度', bbox: [0.1, 0.85, 0.8, 0.05], draggable: false, editable: [] },
+      // 位图：没有自己的几何，落到宿主子图上（geomTarget）
+      { gid: 'img_0', role: 'image', label: '位图', bbox: [0.2, 0.2, 0.1, 0.1], draggable: false, editable: [], geom_gid: 'axes_0' },
+    ],
+  }
+  const elPanel = (over: Partial<PanelObject> = {}): PanelObject => ({
+    id: 'pe',
+    type: 'panel',
+    fileId: 'el.pdf',
+    fileKind: 'pdf',
+    nativeW: 40,
+    nativeH: 30,
+    overrides: [],
+    x: 10,
+    y: 5,
+    w: 40,
+    h: 30,
+    ...over,
+  })
+  const show = async (p: PanelObject, gid: string | null) => {
+    await act(async () =>
+      root.render(
+        <svg>
+          <IssueOverlay objects={[p]} t={t} />
+        </svg>,
+      ),
+    )
+    await act(async () => useUiStore.getState().setIssueHover({ objectId: p.id, gid }))
+    return container.querySelector<SVGRectElement>('[data-issue-hover]')!
+  }
+  const rectOf = (r: SVGRectElement) => ['x', 'y', 'width', 'height'].map((k) => Number(r.getAttribute(k)))
+  /** 期望的框：元素在面板显示矩形（未裁剪）里的分数坐标 → 视图，外扩 2px */
+  const expected = (p: PanelObject, b: number[]) => [
+    mmToViewX(p.x + b[0] * p.w, t) - 2,
+    mmToViewY(p.y + b[1] * p.h, t) - 2,
+    mmToPx(b[2] * p.w, t) + 4,
+    mmToPx(b[3] * p.h, t) + 4,
+  ]
+
+  it('问题带 gid、精确 manifest 在：框是那个元素的，不是整张图', async () => {
+    const p = elPanel()
+    seedExactRender(p, manifest as never)
+    const r = await show(p, 'axes_0.xticks')
+    expect(r.getAttribute('data-issue-hover')).toBe('pe')
+    expect(r.getAttribute('data-issue-hover-gid')).toBe('axes_0.xticks')
+    rectOf(r).forEach((v, i) => expect(v).toBeCloseTo(expected(p, [0.1, 0.85, 0.8, 0.05])[i], 6))
+    expect(r.getAttribute('transform')).toBeNull()
+  })
+
+  it('位图落到宿主子图（与图内编辑的框同一个几何落点）', async () => {
+    const p = elPanel()
+    seedExactRender(p, manifest as never)
+    const r = await show(p, 'img_0')
+    expect(r.getAttribute('data-issue-hover-gid')).toBe('axes_0')
+    rectOf(r).forEach((v, i) => expect(v).toBeCloseTo(expected(p, [0.1, 0.1, 0.8, 0.7])[i], 6))
+  })
+
+  it('旋转 90° 的面板：框在内容坐标系里算，整体绕包围盒中心转过去', async () => {
+    // 转 90° 后包围盒长宽互换（30 × 40），内容仍是 40 × 30、以包围盒中心为中心
+    const p = elPanel({ id: 'pr', rotation: 90, w: 30, h: 40 })
+    seedExactRender(p, manifest as never)
+    const r = await show(p, 'axes_0.xticks')
+    expect(r.getAttribute('data-issue-hover-gid')).toBe('axes_0.xticks')
+    const content = { x: 10 + 15 - 20, y: 5 + 20 - 15, w: 40, h: 30 }
+    rectOf(r).forEach((v, i) =>
+      expect(v).toBeCloseTo(expected({ ...p, ...content }, [0.1, 0.85, 0.8, 0.05])[i], 6),
+    )
+    const cx = mmToViewX(10 + 15, t)
+    const cy = mmToViewY(5 + 20, t)
+    expect(r.getAttribute('transform')).toBe(`rotate(90 ${cx} ${cy})`)
+  })
+
+  it('gid 解不出来（manifest 里没有 / 权威没就位）：退回整张图的轮廓', async () => {
+    const p = elPanel()
+    seedExactRender(p, manifest as never)
+    const panelRect = expected(p, [0, 0, 1, 1])
+    const unknown = await show(p, 'axes_9.nope')
+    expect(unknown.getAttribute('data-issue-hover-gid')).toBeNull()
+    rectOf(unknown).forEach((v, i) => expect(v).toBeCloseTo(panelRect[i], 6))
+    // 没有精确渲染的面板（另一个文件）
+    const bare = elPanel({ id: 'pb', fileId: 'never-rendered.pdf' })
+    const r = await show(bare, 'axes_0.xticks')
+    expect(r.getAttribute('data-issue-hover')).toBe('pb')
+    expect(r.getAttribute('data-issue-hover-gid')).toBeNull()
+    rectOf(r).forEach((v, i) => expect(v).toBeCloseTo(panelRect[i], 6))
   })
 })
 
