@@ -85,7 +85,15 @@ export function WorkspaceList() {
     query,
   )
   const nothing = pinnedRows.length + available.length + missing.length === 0
-  const pinnedIndex = (path: string) => pinned.findIndex((p) => p.path === path)
+  // 排序按**显示出来的**收藏算（Codex #832）：当前项目被收藏时它藏在顶上的卡里，下标、两端判据与
+  // 「上移 / 下移」都只认可见的那几行——不然紧挨着它的那一行第一下是跟看不见的它换位，界面上没动静，
+  // 可见的首尾行也还亮着上移 / 下移。不筛选时 `pinnedRows` 就是这份显示顺序
+  const pinnedIndex = (path: string) => pinnedRows.findIndex((p) => p.path === path)
+  /** 与可见的相邻一行换位：按路径挪到那一行此刻的位置（跳过藏起来的当前项目） */
+  const movePinnedBy = (path: string, delta: number) => {
+    const neighbour = pinnedRows[pinnedIndex(path) + delta]
+    if (neighbour) void useProjectStore.getState().movePinned(path, { toPath: neighbour.path })
+  }
   const togglePin = (path: string) => void useProjectStore.getState().togglePin(path)
 
   return (
@@ -124,10 +132,10 @@ export function WorkspaceList() {
                       ? undefined
                       : {
                           index,
-                          count: pinned.length,
+                          count: pinnedRows.length,
                           dragFrom,
                           indexOf: pinnedIndex,
-                          move: (delta) => void useProjectStore.getState().movePinned(e.path, { delta }),
+                          move: (delta) => movePinnedBy(e.path, delta),
                           moveTo: (from) => void useProjectStore.getState().movePinned(from, { toPath: e.path }),
                         }
                   }

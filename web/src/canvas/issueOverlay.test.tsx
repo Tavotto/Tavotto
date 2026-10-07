@@ -5,14 +5,17 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { literal } from '@/i18n'
 import type { ValidationIssue } from '@/lib/validation'
 import { useDocumentStore } from '@/store/documentStore'
+import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { useValidationStore } from '@/store/validationStore'
-import type { CanvasObject } from '@/types/document'
+import { useWorkspaceStore } from '@/store/workspace'
+import { emptyProject, type CanvasObject } from '@/types/document'
 import { IssueOverlay } from './IssueOverlay'
 
-const openProblemAt = vi.fn((..._args: unknown[]) => ({ ok: true as const }))
+const openProblemAt = vi.fn((..._args: unknown[]): { ok: boolean } => ({ ok: true }))
 vi.mock('@/lib/issueFocus', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/issueFocus')>()),
   openProblemAt: (...args: unknown[]) => openProblemAt(...args),
@@ -93,5 +96,48 @@ describe('画布上的等级标记', () => {
     })
     expect(openProblemAt).toHaveBeenCalledTimes(1)
     expect((openProblemAt.mock.calls[0][0] as ValidationIssue).issueId).toBe('b')
+  })
+})
+
+describe('点标记开的是被点那张图的清单', () => {
+  it('一张画布两张图、选中着 A，点 B 的标记：问题面板按「当前图」= B 开，不退成整份文档（Codex #832）', async () => {
+    const real = await vi.importActual<typeof import('@/lib/issueFocus')>('@/lib/issueFocus')
+    openProblemAt.mockImplementation((...args: unknown[]) =>
+      real.openProblemAt(...(args as Parameters<typeof real.openProblemAt>)),
+    )
+    // 走真的 openProblemAt：问题要是完整的一条（清单要按 subject / propertyPath 分组）
+    const full = (id: string, objectId: string, severity: ValidationIssue['severity']) =>
+      ({
+        ...issue(id, objectId, severity),
+        context: 'document',
+        subject: { part: null },
+        propertyPath: null,
+        technicalDetails: {},
+        fixKind: 'safe_auto',
+      }) as unknown as ValidationIssue
+    try {
+      await useDocumentStore.getState().switchDocument(emptyProject(), 'd')
+      useDocumentStore.getState().commit(literal('准备'), (d) => {
+        d.page = { w: 100, h: 60 }
+        d.objects = objects.map((o) => ({ ...o }))
+      })
+      useWorkspaceStore.getState().clear()
+      useUiStore.setState({ problemScope: null, elementPanelId: null })
+      useSelectionStore.getState().set(['p1'])
+      await act(async () => {
+        useValidationStore.setState({ issues: [full('a', 'p1', 'warn'), full('b', 'p2', 'error')] })
+        useUiStore.getState().setProblemPins(true)
+      })
+      const pin = container.querySelector<SVGGElement>('[data-issue-pin="p2"]')!
+      await act(async () => {
+        pin.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      })
+      expect(openProblemAt.mock.calls[0][2], '传给 openProblemAt 的当前图是被点的那张').toBe('p2')
+      expect(useSelectionStore.getState().ids).toEqual(['p2'])
+      expect(useUiStore.getState().problemScope).toBe('figure')
+      expect(useUiStore.getState().leftTab).toBe('problems')
+    } finally {
+      openProblemAt.mockImplementation(() => ({ ok: true }))
+    }
   })
 })

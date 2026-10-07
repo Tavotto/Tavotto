@@ -6,11 +6,9 @@ import { SEVERITIES, type Severity } from '@/lib/profile'
 import type { ValidationIssue } from '@/lib/validation'
 import { severityLabel } from '@/lib/validationText'
 import { useDocumentStore } from '@/store/documentStore'
-import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { useValidationStore } from '@/store/validationStore'
 import { mmToPx, mmToViewX, mmToViewY, type ViewTransform } from '@/store/viewportStore'
-import { useWorkspaceStore } from '@/store/workspace'
 import { objectRotation, type CanvasObject } from '@/types/document'
 
 /**
@@ -117,10 +115,9 @@ function IssuePins({ objects, t }: { objects: readonly CanvasObject[]; t: ViewTr
         })
         const open = () => {
           const ui = useUiStore.getState()
-          const figure = currentFigureOf(
-            [useWorkspaceStore.getState().activePanelId, ui.elementPanelId, useSelectionStore.getState().ids.at(-1) ?? null],
-            useDocumentStore.getState().doc.objects,
-          )
+          // 「当前图」= 点的这枚标记所在的那张图（`focusIssue` 随后就选中它），不是点之前选中 / 正在编辑的
+          // 那张：拿旧的那张去比，`openProblemAt` 会判成「不是同一张」而开整份文档的清单（Codex #832）
+          const figure = currentFigureOf([o.id], useDocumentStore.getState().doc.objects)
           const outcome = openProblemAt(worst, useValidationStore.getState().issues, figure.id)
           if (!outcome.ok) ui.setStatus(focusFailureMessage(outcome.reason), 'error')
         }

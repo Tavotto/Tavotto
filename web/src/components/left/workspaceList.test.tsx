@@ -265,6 +265,71 @@ describe('收藏拖动', () => {
   })
 })
 
+describe('当前项目被收藏时，排序只认可见的收藏行（Codex #832）', () => {
+  const X = '/x/Thesis'
+  const Y = '/y/Poster'
+  const row = (path: string) =>
+    host.querySelector<HTMLElement>(`[data-workspace-row][data-project-path="${path}"]`)!
+  const openMenu = (path: string) =>
+    act(() => {
+      row(path).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 40, clientY: 60 }))
+    })
+  const moveItem = (dir: 'up' | 'down') => document.querySelector<HTMLElement>(`[data-project-move="${dir}"]`)!
+  const closeMenu = () =>
+    act(() => {
+      document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+
+  beforeEach(() => {
+    server = [X, CURRENT, Y]
+    useProjectStore.setState({ pinned: server.map((p) => entryOf(p)) })
+  })
+
+  it('上移 Y 越过藏起来的当前项目，一下就排到 X 前面', async () => {
+    await mount()
+    expect(rowNames('pinned')).toEqual([X, Y])
+    openMenu(Y)
+    await act(async () => moveItem('up').click())
+    expect(ops).toEqual([{ op: 'move', path: Y, to_path: X }])
+    expect(rowNames('pinned')).toEqual([Y, X])
+  })
+
+  it('⌥↓ 在 X 上同理：与可见的下一行换位', async () => {
+    await mount()
+    await act(async () => {
+      row(X).querySelector<HTMLButtonElement>('[data-workspace-open]')!.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowDown', altKey: true, bubbles: true, cancelable: true }),
+      )
+    })
+    expect(ops).toEqual([{ op: 'move', path: X, to_path: Y }])
+    expect(rowNames('pinned')).toEqual([Y, X])
+  })
+
+  // 藏起来的当前项目分别压在两端：按整张收藏算的话，可见的首行还能「上移」、末行还能「下移」
+  it.each([
+    ['当前项目在最前', [CURRENT, X, Y]],
+    ['当前项目在最后', [X, Y, CURRENT]],
+  ])('可见的首行上移、末行下移停用，⌥↓ 也不发（%s）', async (_label, order) => {
+    server = order
+    useProjectStore.setState({ pinned: server.map((p) => entryOf(p)) })
+    await mount()
+    openMenu(X)
+    expect(moveItem('up').hasAttribute('data-disabled')).toBe(true)
+    expect(moveItem('down').hasAttribute('data-disabled')).toBe(false)
+    closeMenu()
+    openMenu(Y)
+    expect(moveItem('up').hasAttribute('data-disabled')).toBe(false)
+    expect(moveItem('down').hasAttribute('data-disabled')).toBe(true)
+    closeMenu()
+    await act(async () => {
+      row(Y).querySelector<HTMLButtonElement>('[data-workspace-open]')!.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowDown', altKey: true, bubbles: true, cancelable: true }),
+      )
+    })
+    expect(ops).toEqual([])
+  })
+})
+
 describe('切换中', () => {
   it('有一次切换在进行时，所有「打开」入口都置灰，不只是正在打开的那一行', async () => {
     useProjectStore.setState({ switching: true })
@@ -404,7 +469,8 @@ describe('键位契约与拖放落点（2026-10-07 设计审计 §10.3）', () =
         new KeyboardEvent('keydown', { key: 'ArrowDown', altKey: true, bubbles: true, cancelable: true }),
       )
     })
-    expect(ops).toEqual([{ op: 'move', path: '/a/Supplementary', delta: 1 }])
+    // 与可见的下一行换位：按路径挪到它此刻的位置（跳过藏在顶上卡里的当前项目，见下一组）
+    expect(ops).toEqual([{ op: 'move', path: '/a/Supplementary', to_path: '/b/Rebuttal' }])
   })
 
   it('⇧F10 在行上开出与「⋯」同一份菜单', async () => {

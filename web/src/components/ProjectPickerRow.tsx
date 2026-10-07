@@ -116,7 +116,13 @@ export function ProjectRow({
       {/* 拖动只有鼠标能用：菜单里给键盘一条同样的路（⌥↑ / ⌥↓ 同一个动作） */}
       {order && (
         <>
-          <MenuItem disabled={order.index === 0} onSelect={() => order.move(-1)} icon={ArrowUp} shortcut={combo(ALT, '↑')}>
+          <MenuItem
+            disabled={order.index === 0}
+            onSelect={() => order.move(-1)}
+            icon={ArrowUp}
+            shortcut={combo(ALT, '↑')}
+            data-project-move="up"
+          >
             {ws('moveUp')}
           </MenuItem>
           <MenuItem
@@ -124,6 +130,7 @@ export function ProjectRow({
             onSelect={() => order.move(1)}
             icon={ArrowDown}
             shortcut={combo(ALT, '↓')}
+            data-project-move="down"
           >
             {ws('moveDown')}
           </MenuItem>
