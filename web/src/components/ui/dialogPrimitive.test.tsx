@@ -173,6 +173,51 @@ describe('Dialog：Esc = 安全答案', () => {
   })
 })
 
+// Codex #833（comment 4211499735）：关闭时的焦点归还只在焦点还在这层里（层卸掉后落在 body）时做；
+// 关的同时焦点已被交给这层之外的元素（命令面板的命令打开了一个就地表面）就不抢回来
+describe('Dialog：关闭时的焦点归还', () => {
+  const settle = () => act(async () => new Promise((r) => setTimeout(r, 20)))
+  function Probe({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
+    return (
+      <Dialog open={open} onOpenChange={onOpenChange} title={TITLE} anchor="f">
+        <input data-probe-input />
+      </Dialog>
+    )
+  }
+
+  it('Esc 关：焦点还给打开前的元素', async () => {
+    const opener = document.createElement('button')
+    document.body.appendChild(opener)
+    opener.focus()
+    let open = true
+    const set = (v: boolean) => {
+      open = v
+      void render(<Probe open={open} onOpenChange={set} />)
+    }
+    await render(<Probe open onOpenChange={set} />)
+    expect(dialogEl('f')!.contains(document.activeElement)).toBe(true)
+    await escape()
+    await settle()
+    expect(open).toBe(false)
+    expect(document.activeElement).toBe(opener)
+    opener.remove()
+  })
+
+  it('关的同时焦点交给了这层之外的元素：不抢回打开前的元素', async () => {
+    const opener = document.createElement('button')
+    const target = document.createElement('input')
+    document.body.append(opener, target)
+    opener.focus()
+    await render(<Probe open onOpenChange={() => {}} />)
+    await render(<Probe open={false} onOpenChange={() => {}} />)
+    target.focus()
+    await settle()
+    expect(document.activeElement).toBe(target)
+    opener.remove()
+    target.remove()
+  })
+})
+
 describe('Dialog：遮罩只由栈底那个画', () => {
   it('两层叠开：只有先开的那层带 data-dialog-scrim；上层关掉后下层仍画', async () => {
     const two = (top: boolean) => (

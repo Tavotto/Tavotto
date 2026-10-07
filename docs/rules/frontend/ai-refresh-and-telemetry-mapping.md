@@ -24,6 +24,8 @@
 * **命令面板的 id 是稳定标识**（e2e 与资源都认它）：`refresh-project / readiness / tutorial-start /
   tutorial-resume / tutorial-reset / hints-reset / shortcut-help`（2026-10-07 增 `zoom-selection`，⇧2，需要选区）；
   外壳是 `ui/Dialog chrome="palette"`（焦点陷阱与归还、输入框是 combobox + `aria-activedescendant`、行是 option 不嵌按钮），
+  执行命令前先 `flushSync` 关面板（陷阱先撤），关闭归还只在焦点仍在这层里时做——命令把焦点交给了别的表面（命名小框、
+  另一个对话框）就不抢回；那个表面经 `ui/focusOrigin` 认领面板的打开者，关掉时还给它（Codex #833），
   键位从 `lib/keymap` 取；项目命令按
   `projectStore.phase === 'open'` 出现，embedded / playground 整组不出现。中英文 label + keywords
   两份都要有（`CommandPalette.test.tsx` 比两份资源的 id 集合）。**高亮行按身份记不按位置记**

@@ -67,6 +67,7 @@ import { EmptyState } from './ui/EmptyState'
 import { TextInput } from './ui/Input'
 import { MenuItem, MenuSeparator } from './ui/Menu'
 import { Dialog } from './ui/Dialog'
+import { focusOrigin } from './ui/focusOrigin'
 import { Segmented } from './ui/Segmented'
 import { Tip } from './ui/Tooltip'
 
@@ -219,8 +220,8 @@ export function VersionDrawer() {
     if (!open) return
     setSaveName('')
     setRenaming(null)
-    // 打开时记住触发点，关闭后把焦点还回去
-    restoreFocus.current = document.activeElement as HTMLElement | null
+    // 打开时记住触发点，关闭后把焦点还回去（从命令面板打开时是面板的打开者，见 `focusOrigin`）
+    restoreFocus.current = focusOrigin()
     // 焦点交进抽屉（2026-10-07 设计审计 §10.2：此前打开后焦点还留在顶栏，Tab 要走一圈才进来）。
     // 落在抽屉本身：读屏念出「排版时间线」，下一下 Tab 进第一个控件；Esc 在抽屉上才收得到
     const id = requestAnimationFrame(() => asideRef.current?.focus({ preventScroll: true }))

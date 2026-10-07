@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/Button'
 import { TextInput } from '@/components/ui/Input'
+import { focusOrigin } from '@/components/ui/focusOrigin'
 import { VERSION_NAME_MAX, backendErrorText } from '@/lib/api'
 import { saveNamedNode } from '@/lib/timelineCheckpoint'
 import { afterAwait, timelineCtxKey } from '@/lib/timelineContext'
@@ -44,9 +45,10 @@ function QuickBox() {
   // 关闭（Esc / 点外面 / 保存成功）后把焦点还给打开前的元素，键盘用户不落到 body。
   // 不用 `ui/Popover`：它必须有触发器、焦点还给触发器，而这个小框由快捷键 / 命令面板打开，
   // 没有触发器；`ui/Dialog` 是模态，盖住画布不合适。所以在这里记下打开前的 activeElement。
-  // render 阶段读：此刻 `autoFocus` 还没发生（命令面板自己关闭后元素已不在文档里则不还）
-  const prevFocus = useRef<Element | null>(null)
-  if (prevFocus.current === null) prevFocus.current = document.activeElement
+  // render 阶段读：此刻 `autoFocus` 还没发生。从命令面板打开时焦点还在正在退场的面板输入框里——
+  // `focusOrigin()` 认出来、记面板自己的打开者（Codex #833），关掉小框时还给它
+  const prevFocus = useRef<Element | null | undefined>(undefined)
+  if (prevFocus.current === undefined) prevFocus.current = focusOrigin()
   useEffect(
     () => () => {
       const el = prevFocus.current

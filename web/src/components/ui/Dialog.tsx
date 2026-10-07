@@ -15,6 +15,7 @@ import {
 } from 'react'
 import { cn } from '@/lib/utils'
 import { IconButton } from './Button'
+import { focusOrigin, holdFocusReturn, releaseFocusReturn } from './focusOrigin'
 
 /**
  * 宽度五档（2026-10-07 设计审计 §10.2：此前 8 种宽度）：sm 400 · md 480 · lg 560 · xl 760 · shell 1000。
@@ -217,6 +218,13 @@ export function Dialog({
   // 容器带 tabIndex=-1（Radix 自己给的），焦点停在它上面：读屏念标题与说明，
   // 用户再 Tab 进第一个控件；Tab 顺序不变，关闭钮仍在标题栏里。
   const contentRef = useRef<HTMLDivElement | null>(null)
+  // 关上的那一刻登记退场后的归还目标（见 `ui/focusOrigin`）；关闭归还跑完或再次打开时撤销
+  const [owner] = useState(() => Symbol('dialog-return'))
+  useLayoutEffect(() => {
+    if (open) releaseFocusReturn(owner)
+    else if (restoreTo.current) holdFocusReturn(owner, restoreTo.current)
+  }, [open, owner])
+  useEffect(() => () => releaseFocusReturn(owner), [owner])
 
   const hasBody = children != null && children !== false
   // 浮动页脚：默认外壳、有正文、没有 status 区时，页脚往上叠进正文的底边（负 margin = 自己的高度），正文底部
@@ -269,12 +277,26 @@ export function Dialog({
           data-covered={covered || undefined}
           onKeyDown={(e) => e.stopPropagation()}
           onOpenAutoFocus={(e) => {
-            if (document.activeElement instanceof HTMLElement)
-              restoreTo.current = document.activeElement
+            // 从正在退场的命令面板里打开的：记面板的打开者，不记那颗马上消失的输入框
+            restoreTo.current = focusOrigin()
             e.preventDefault()
             ;(initialFocusRef?.current ?? contentRef.current)?.focus({ preventScroll: true })
           }}
           onCloseAutoFocus={(e) => {
+            releaseFocusReturn(owner)
+            // 焦点已经被交给了这层之外的一个元素（命令面板的命令打开了命名小框 / 另一个对话框）：
+            // 那是有意的交接，不抢回来——否则小框的 onBlur 当场把它关掉，命令一闪而过（Codex #833）。
+            // Esc / 取消 / 点外面关的那种，焦点原本在这层里，层卸掉后落在 body：照旧还给打开者
+            const now = document.activeElement
+            if (
+              now instanceof HTMLElement &&
+              now !== document.body &&
+              now.isConnected &&
+              !contentRef.current?.contains(now)
+            ) {
+              e.preventDefault()
+              return
+            }
             const el = restoreTo.current
             if (el?.isConnected) {
               e.preventDefault()
