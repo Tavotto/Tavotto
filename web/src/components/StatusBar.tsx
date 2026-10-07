@@ -326,7 +326,7 @@ export function NotificationRail() {
           .getState()
           .setStatus(
             error ? literal(error) : msg('engine.userEnvReverted', undefined, 'errors'),
-            error ? 'error' : 'info',
+            error ? 'error' : 'done',
           ),
       )
   }
