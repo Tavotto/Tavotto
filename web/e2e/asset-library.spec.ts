@@ -315,14 +315,16 @@ test('多 Figure：?pick= 打开选择器，选第二张加的就是第二张', 
 
   // `tavotto open` 多图交接的落地形态：?pick=<脚本> → Figure 选择器
   await page.goto(`${a.baseURL}/?pick=show_two.py`)
-  const dialog = page.getByRole('dialog', { name: /选择一张图/ })
+  const dialog = page.locator('[data-dialog="figure-picker"]')
   await expect(dialog).toBeVisible({ timeout: 30_000 })
-  const rows = dialog.getByRole('listitem')
+  const rows = dialog.locator('[data-figure-picker-row]')
   await expect(rows).toHaveCount(2)
 
-  // 选第二张：加的必须是第二张（stem/asset id 不串）
-  const secondStem = (await rows.nth(1).textContent())!.match(/[\w.-]+/)![0]
-  await rows.nth(1).getByRole('button', { name: '添加到画布' }).click()
+  // 选第二张：加的必须是第二张（stem/asset id 不串）。加一张不关框（2026-10-07 设计审计 §10.2），「完成」才关
+  const secondStem = (await rows.nth(1).getAttribute('data-figure-picker-row'))!
+  await rows.nth(1).locator('[data-figure-picker-add]').click()
+  await expect(rows.nth(1).locator('[data-figure-picker-placed]')).toBeVisible()
+  await dialog.locator('[data-figure-picker-done]').click()
   await expect(dialog).toHaveCount(0)
   await expect(page.getByText('画布是空的')).toHaveCount(0)
 

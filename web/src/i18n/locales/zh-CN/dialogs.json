@@ -723,8 +723,11 @@
     "refCount_other": "（{{count}} 张图引用）",
     "selectAria": "为 {{name}} 选择替代素材",
     "skipPanel": "跳过这张图",
-    "titleDoc": "排版里的图缺少素材",
-    "titlePaste": "粘贴的图缺少素材"
+    "titleDoc": "重新链接素材",
+    "titlePaste": "粘贴前重新链接素材",
+    "descDoc": "排版里有图找不到原来的素材：为每一张选一个替代，或保持缺失。",
+    "descPaste": "粘贴的图找不到原来的素材：为每一张选一个替代，或跳过它。",
+    "matchedByName": "按名字匹配"
   },
   "settings": {
     "about": {
@@ -1601,7 +1604,7 @@
     "manageAria": "查看和修改 {{script}} 记住的输入",
     "manageTip": "记住的输入",
     "manageTitle": "记住的输入 · {{script}}",
-    "manageIntro": "改好答案后点「保存并重新运行」，脚本只重新运行一次。",
+    "manageIntro": "改好答案或标记删除后点「保存并重新运行」，脚本只重新运行一次。",
     "manageWhere": "答案存在项目文件夹的 {{path}} 里，随文件夹一起复制或分享；项目包不含它。",
     "manageEmpty": "这个脚本没有记住的输入。",
     "managePrompt": "第 {{index}} 个问题：{{prompt}}",
@@ -1609,9 +1612,9 @@
     "manageSave": "保存并重新运行",
     "manageSaveCount": "保存并重新运行（{{n}}）",
     "manageForget": "删除",
-    "manageForgetAria": "删除第 {{index}} 个问题的答案",
-    "manageForgetTitle": "删除第 {{index}} 个问题的答案？",
-    "manageForgetBody": "删除后会立刻重新运行 {{script}}，它会重新问你这个问题。",
-    "manageSaved": "已保存，正在重新运行 {{script}}"
+    "manageSaved": "已保存，正在重新运行 {{script}}",
+    "manageForgetStaged": "保存时删除这个答案",
+    "manageForgetUndo": "撤销",
+    "manageRowActions": "第 {{index}} 个问题的更多操作"
   }
 }

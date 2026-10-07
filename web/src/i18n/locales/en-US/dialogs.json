@@ -731,8 +731,11 @@
     "refCount_other": " (referenced by {{count}} figures)",
     "selectAria": "Choose a replacement asset for {{name}}",
     "skipPanel": "Skip this figure",
-    "titleDoc": "Figures in this layout are missing assets",
-    "titlePaste": "The pasted figures are missing assets"
+    "titleDoc": "Relink assets",
+    "titlePaste": "Relink before pasting",
+    "descDoc": "Some figures in this layout can’t find their assets. Pick a replacement for each, or keep them missing.",
+    "descPaste": "Some pasted figures can’t find their assets. Pick a replacement for each, or skip it.",
+    "matchedByName": "Matched by name"
   },
   "settings": {
     "about": {
@@ -1613,7 +1616,7 @@
     "manageAria": "Review and change the remembered input for {{script}}",
     "manageTip": "Remembered input",
     "manageTitle": "Remembered input · {{script}}",
-    "manageIntro": "Edit any answers, then choose Save and rerun — the script reruns once.",
+    "manageIntro": "Edit answers or mark them for removal, then choose “Save and rerun” — the script reruns once.",
     "manageWhere": "Answers are stored in {{path}} in the project folder and travel with it; project packages don’t include them.",
     "manageEmpty": "This script has no remembered input.",
     "managePrompt": "Question {{index}}: {{prompt}}",
@@ -1621,9 +1624,9 @@
     "manageSave": "Save and rerun",
     "manageSaveCount": "Save and rerun ({{n}})",
     "manageForget": "Remove",
-    "manageForgetAria": "Remove the answer to question {{index}}",
-    "manageForgetTitle": "Remove the answer to question {{index}}?",
-    "manageForgetBody": "{{script}} reruns right away and asks this question again.",
-    "manageSaved": "Saved; rerunning {{script}}"
+    "manageSaved": "Saved; rerunning {{script}}",
+    "manageForgetStaged": "Will be forgotten on save",
+    "manageForgetUndo": "Undo",
+    "manageRowActions": "More actions for question {{index}}"
   }
 }

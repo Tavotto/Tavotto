@@ -629,7 +629,8 @@
     "inputRemapForget": "Remove",
     "workdirChooseWritesShort": "In a real directory, files the script writes land in the project.",
     "workdirChooseWritesMore": "Details",
-    "dependencyPrepareHeading": "Prepare environment"
+    "dependencyPrepareHeading": "Prepare environment",
+    "missingInputStep": "{{n}}/{{total}}"
   },
   "preflight": {
     "axisLabelFormat": "The axis title “{{label}}” isn't in the profile's “{{want}}” form.",

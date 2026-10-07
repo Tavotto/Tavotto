@@ -629,7 +629,8 @@
     "inputRemapForget": "删除",
     "workdirChooseWritesShort": "在真实目录里运行时，脚本写出的文件会落进项目目录。",
     "workdirChooseWritesMore": "详情",
-    "dependencyPrepareHeading": "准备环境"
+    "dependencyPrepareHeading": "准备环境",
+    "missingInputStep": "{{n}}/{{total}}"
   },
   "preflight": {
     "axisLabelFormat": "坐标轴标题「{{label}}」不是规范的「{{want}}」形式",

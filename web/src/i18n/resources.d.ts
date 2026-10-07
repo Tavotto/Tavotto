@@ -1036,12 +1036,15 @@ export default interface Resources {
       "cancelPaste": "取消粘贴",
       "confirmDoc": "重新链接所选素材",
       "confirmPaste": "按上述选择粘贴",
+      "descDoc": "排版里有图找不到原来的素材：为每一张选一个替代，或保持缺失。",
+      "descPaste": "粘贴的图找不到原来的素材：为每一张选一个替代，或跳过它。",
       "keepMissing": "保持缺失",
+      "matchedByName": "按名字匹配",
       "refCount_other": "（{{count}} 张图引用）",
       "selectAria": "为 {{name}} 选择替代素材",
       "skipPanel": "跳过这张图",
-      "titleDoc": "排版里的图缺少素材",
-      "titlePaste": "粘贴的图缺少素材"
+      "titleDoc": "重新链接素材",
+      "titlePaste": "粘贴前重新链接素材"
     },
     "scriptInput": {
       "answerLabel": "你的回答",
@@ -1054,12 +1057,12 @@ export default interface Resources {
       "manageAria": "查看和修改 {{script}} 记住的输入",
       "manageEmpty": "这个脚本没有记住的输入。",
       "manageForget": "删除",
-      "manageForgetAria": "删除第 {{index}} 个问题的答案",
-      "manageForgetBody": "删除后会立刻重新运行 {{script}}，它会重新问你这个问题。",
-      "manageForgetTitle": "删除第 {{index}} 个问题的答案？",
-      "manageIntro": "改好答案后点「保存并重新运行」，脚本只重新运行一次。",
+      "manageForgetStaged": "保存时删除这个答案",
+      "manageForgetUndo": "撤销",
+      "manageIntro": "改好答案或标记删除后点「保存并重新运行」，脚本只重新运行一次。",
       "manageNoPrompt": "第 {{index}} 个问题（读取标准输入）",
       "managePrompt": "第 {{index}} 个问题：{{prompt}}",
+      "manageRowActions": "第 {{index}} 个问题的更多操作",
       "manageSave": "保存并重新运行",
       "manageSaveCount": "保存并重新运行（{{n}}）",
       "manageSaved": "已保存，正在重新运行 {{script}}",
@@ -2109,6 +2112,7 @@ export default interface Resources {
       "missingInputRewriteHint": "可以让 Tavotto 把脚本里写的这个路径改成数据现在的位置：改之前先给你看要改的每一行、先备份，随时能恢复。也可以把数据放回脚本写的位置（相对路径从脚本所在的文件夹算起）。",
       "missingInputSentence": "脚本要读的 {{name}} 不在原来的位置了，请指给 Tavotto 看它现在在哪。",
       "missingInputSentenceProbe": "脚本要读的 {{name}} 不在原来的位置了，请把它放回脚本写的位置。",
+      "missingInputStep": "{{n}}/{{total}}",
       "missingInputTitle": "找不到数据文件",
       "missingInputUsePath": "使用这个路径",
       "missingInputWhyAbsolute": "这是写死的完整路径。数据可能被移动了，或者换了一台电脑。请告诉 Tavotto 数据现在在哪。",
@@ -3900,12 +3904,16 @@ export default interface Resources {
       "titleOpen": "打开项目目录"
     },
     "figurePicker": {
+      "addAll": "全部添加（{{count}}）",
       "addToCanvas": "添加到画布",
+      "addedAll_other": "已加入 {{count}} 张图",
+      "done": "完成",
       "empty": "此脚本尚未登记任何图。在素材库的「脚本」区运行它以捕获图。",
       "listAria": "脚本产出的图",
       "needsRun": "先运行一次",
+      "onCanvas": "已在画布上",
       "runtimeBadge": "运行时图",
-      "title": "选择一张图——{{script}}"
+      "title": "{{script}} 的图"
     },
     "handoff": {
       "added": "已加入 {{name}}",

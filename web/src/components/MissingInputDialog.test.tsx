@@ -375,6 +375,31 @@ describe('MissingInputDialog', () => {
     expect(commitMock).not.toHaveBeenCalled()
   })
 
+  it('两步是同一个 md 对话框换正文：标题旁 1/2 → 2/2，「返回」在 start 槽，Esc 在第 2 步 = 返回（2026-10-07 设计审计 §10.2）', async () => {
+    fileMock.mockResolvedValue('/Volumes/B/run/x.h5')
+    previewMock.mockResolvedValue(preview())
+    await render(<MissingInputDialog />)
+    await act(async () => useEnvStore.getState().requestMissingInput(native()))
+    const first = dialog() as HTMLElement
+    expect(first.style.width).toBe('480px')
+    expect(first.querySelector('[data-missing-input-step="1"]')).not.toBeNull()
+    await act(async () => byTestId('missing-input-pick-file')!.click())
+    await act(async () => {})
+    const second = document.querySelector('[data-dialog="missing-input-rewrite"]') as HTMLElement
+    expect(second, '第 2 步换了一个新的对话框').toBe(first)
+    expect(second.style.width).toBe('480px')
+    expect(second.querySelector('[data-missing-input-step="2"]')).not.toBeNull()
+    expect(second.querySelector('[data-missing-input-back]')!.closest('[data-dialog-footer]')).not.toBeNull()
+    await act(async () => {
+      // 真键盘事件可取消（Radix 认 defaultPrevented 判「安全答案已接手」）
+      second.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    })
+    expect(useEnvStore.getState().missingInput, 'Esc 在第 2 步是返回，不是关掉整件事').not.toBeNull()
+    expect(document.querySelector('[data-dialog="missing-input-rewrite"]')).toBeNull()
+    expect(dialog()).toBe(first)
+    expect(commitMock).not.toHaveBeenCalled()
+  })
+
   it('一处都改不了：留在框里，逐条说出为什么', async () => {
     fileMock.mockResolvedValue('/Volumes/B/run/x.h5')
     previewMock.mockRejectedValue(
