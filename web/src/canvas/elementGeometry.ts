@@ -8,8 +8,13 @@
  */
 import type { Rect4 } from '@/lib/axesLayout'
 import { panelFullRect } from '@/lib/elementGeom'
-import type { Rect } from '@/lib/geometry'
-import { contentToPageVec, panelContentTransform, panelTransformSvg } from '@/lib/panelTransform'
+import type { Rect, ResizeDir } from '@/lib/geometry'
+import {
+  contentToPageVec,
+  pageToContentVec,
+  panelContentTransform,
+  panelTransformSvg,
+} from '@/lib/panelTransform'
 import type { PanelObject } from '@/types/document'
 
 /**
@@ -44,3 +49,25 @@ export function elementOverlayTransform(
 ): string | undefined {
   return panelTransformSvg(panelContentTransform(panel), panelBox.x + panelBox.w / 2, panelBox.y + panelBox.h / 2)
 }
+
+const dirVec = (d: ResizeDir): [number, number] => [
+  d.includes('e') ? 1 : d.includes('w') ? -1 : 0,
+  d.includes('s') ? 1 : d.includes('n') ? -1 : 0,
+]
+/** 直角旋转 / 镜像后的单位方向回到方位名（纵向字母在前，与 `ResizeDir` 的拼法一致） */
+const vecDir = ([x, y]: [number, number]): ResizeDir =>
+  ((y < -0.5 ? 'n' : y > 0.5 ? 's' : '') + (x > 0.5 ? 'e' : x < -0.5 ? 'w' : '')) as ResizeDir
+
+/**
+ * 内容空间的方位（图内元素框的手柄按内容坐标摆）→ 它在画面上朝哪：翻转 / 旋转之后的方位。手柄光标要按
+ * 画面上的方位取——翻转面板上内容的「东北」角画在西北，光标还按东北给就是斜反了。
+ */
+export function contentDirOnPage(panel: PanelObject, dir: ResizeDir): ResizeDir {
+  return vecDir(contentToPageVec(panelContentTransform(panel), ...dirVec(dir)))
+}
+
+/** `contentDirOnPage` 的逆：画面上的方位（裁剪框的手柄按画面摆）→ 内容空间里是哪一边 */
+export function pageDirInContent(panel: PanelObject, dir: ResizeDir): ResizeDir {
+  return vecDir(pageToContentVec(panelContentTransform(panel), ...dirVec(dir)))
+}
+
