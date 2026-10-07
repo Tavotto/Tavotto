@@ -113,7 +113,9 @@ def test_a_cancel_that_arrives_before_the_session_is_taken_still_closes_only_its
     svc = preparation.PreparationService()
     killed: list = []
     monkeypatch.setattr(
-        engine_pool, "force_cancel", lambda script, root, **kw: killed.append(kw["expected_worker"]) or True
+        engine_pool,
+        "force_cancel",
+        lambda script, root, **kw: killed.append(kw["expected_worker"]) or True,
     )
 
     def cancelled_before_taking() -> str:
