@@ -9,6 +9,7 @@
  * 「取消」走 PlaygroundApp 的 cancelLoading：真正 dispose 在途 Worker
  * 回到案例库，不是把加载藏起来。
  */
+import { Button } from '@/components/ui/Button'
 import { Check, LoaderCircle } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import type { PlaygroundPhase } from '../protocol'
@@ -60,19 +61,16 @@ export function PlaygroundLoading({
               ) : (
                 <span className="h-3.5 w-3.5 shrink-0 rounded-full border border-border" aria-hidden />
               )}
-              <span className={state === 'todo' ? 'text-ink-faint' : 'text-ink-2'}>
+              <span className={state === 'todo' ? 'text-ink-3' : 'text-ink-2'}>
                 {pg(s.key, s.values)}
               </span>
             </li>
           )
         })}
       </ol>
-      <button
-        onClick={onCancel}
-        className="h-7 rounded-sm border border-border px-3 text-xs text-ink-2 transition-colors hover:border-ink-faint hover:text-ink"
-      >
+      <Button variant="secondary" onClick={onCancel}>
         {pg('cancelLoading')}
-      </button>
+      </Button>
     </div>
   )
 }

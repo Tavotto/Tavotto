@@ -12,6 +12,7 @@
 import { useEffect, useState } from 'react'
 import { Check, Copy, Play } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
+import { Button } from '@/components/ui/Button'
 import { Dialog } from '@/components/ui/Dialog'
 import { cn } from '@/lib/utils'
 import type { PlaygroundExample } from '../examples'
@@ -72,20 +73,14 @@ export function ExampleCodeSheet({
       }
       footer={
         <>
-          <button
-            onClick={() => void copy()}
-            className="flex h-7 items-center gap-1.5 rounded-sm border border-border px-2.5 text-xs text-ink-2 transition-colors hover:border-ink-faint hover:text-ink"
-          >
+          <Button variant="secondary" onClick={() => void copy()}>
             {copied ? <Check size={ICON_SIZE.sm} aria-hidden /> : <Copy size={ICON_SIZE.sm} aria-hidden />}
             {copied ? pg('copied') : pg('copyCode')}
-          </button>
-          <button
-            onClick={() => onStart(example)}
-            className="flex h-7 items-center gap-1.5 rounded-sm bg-ink px-3 text-xs font-medium text-white transition-opacity hover:opacity-90"
-          >
+          </Button>
+          <Button variant="primary" onClick={() => onStart(example)} className="font-medium">
             <Play size={ICON_SIZE.sm} aria-hidden />
             {pg('codeStart')}
-          </button>
+          </Button>
         </>
       }
     >
