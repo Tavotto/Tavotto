@@ -13,6 +13,7 @@ import { useUiStore } from '@/store/uiStore'
 import { useValidationStore } from '@/store/validationStore'
 import { mmToPx, mmToViewX, mmToViewY, type ViewTransform } from '@/store/viewportStore'
 import { objectRotation, type CanvasObject, type PanelObject } from '@/types/document'
+import { PIN_COLORS, tokenVar } from './issuePinColors'
 
 /**
  * 问题面板在画布上的两样东西（2026-10-07 设计审计 §9.4），从 `OverlaySvg` 里挂进来、自己一个文件——
@@ -127,14 +128,6 @@ function spin(o: CanvasObject, t: ViewTransform): string | undefined {
   return `rotate(${rot} ${b.x + b.w / 2} ${b.y + b.h / 2})`
 }
 
-/** 标记的底色：等级锚点（非文字 ≥3:1）；查不了 / 建议是 ink-3 */
-const PIN_FILL: Record<Severity, string> = {
-  error: 'var(--color-danger)',
-  warn: 'var(--color-warn)',
-  not_verifiable: 'var(--color-ink-3)',
-  suggestion: 'var(--color-ink-3)',
-}
-
 const rank = (s: Severity) => SEVERITIES.indexOf(s)
 
 /**
@@ -166,6 +159,8 @@ function IssuePins({ objects, t }: { objects: readonly CanvasObject[]; t: ViewTr
         if (!list?.length) return null
         // 最要紧的那条：等级最高、清单里先出现的
         const worst = list.reduce((a, b) => (rank(b.severity) < rank(a.severity) ? b : a))
+        // 底色与项数字色成对取（`issuePinColors`，对比度门禁逐对量）
+        const pin = PIN_COLORS[worst.severity]
         const b = box(o, t)
         const cx = b.x + b.w + PIN_OFFSET
         const cy = b.y - PIN_OFFSET
@@ -205,7 +200,7 @@ function IssuePins({ objects, t }: { objects: readonly CanvasObject[]; t: ViewTr
             }}
           >
             <title>{label}</title>
-            <circle cx={cx} cy={cy} r={8} fill={PIN_FILL[worst.severity]} stroke="var(--color-surface)" strokeWidth={1.5} />
+            <circle cx={cx} cy={cy} r={8} fill={tokenVar(pin.fill)} stroke="var(--color-surface)" strokeWidth={1.5} />
             <text
               x={cx}
               y={cy}
@@ -213,7 +208,7 @@ function IssuePins({ objects, t }: { objects: readonly CanvasObject[]; t: ViewTr
               textAnchor="middle"
               fontSize={10}
               fontWeight={600}
-              fill="var(--color-surface)"
+              fill={tokenVar(pin.text)}
               aria-hidden
               style={{ fontVariantNumeric: 'tabular-nums' }}
             >

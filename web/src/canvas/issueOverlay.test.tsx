@@ -16,6 +16,7 @@ import { useValidationStore } from '@/store/validationStore'
 import { useWorkspaceStore } from '@/store/workspace'
 import { emptyProject, type CanvasObject, type PanelObject } from '@/types/document'
 import { IssueOverlay } from './IssueOverlay'
+import { PIN_COLORS } from './issuePinColors'
 
 const openProblemAt = vi.fn((..._args: unknown[]): { ok: boolean } => ({ ok: true }))
 vi.mock('@/lib/issueFocus', async (importOriginal) => ({
@@ -193,6 +194,12 @@ describe('画布上的等级标记', () => {
     })
     expect(openProblemAt).toHaveBeenCalledTimes(1)
     expect((openProblemAt.mock.calls[0][0] as ValidationIssue).issueId).toBe('b')
+    // 底色与项数字色取 `PIN_COLORS` 那一对（对比度门禁量的就是它）：warn 不拿 #b07400 锚点衬白字（Codex #832）
+    await act(async () => useValidationStore.setState({ issues: [issue('w', 'p2', 'warn')] }))
+    const warnPin = container.querySelector<SVGGElement>('[data-issue-pin="p2"]')!
+    expect(warnPin.querySelector('circle')!.getAttribute('fill')).toBe(`var(--color-${PIN_COLORS.warn.fill})`)
+    expect(warnPin.querySelector('text')!.getAttribute('fill')).toBe(`var(--color-${PIN_COLORS.warn.text})`)
+    expect(PIN_COLORS.warn.fill).toBe('warn-content')
   })
 })
 
