@@ -136,6 +136,7 @@ const RULES: Rule[] = [
     exempt: {
       '/src/components/ui/tabClass.ts': { count: 1, why: '选中的页签：600 + ink，与未选中的 400 + ink-3 拉开两档' },
       '/src/components/ui/Segmented.tsx': { count: 1, why: '选中的分段项：白色 thumb 上 600 + ink' },
+      '/src/components/inspector/controls/OptionGrid.tsx': { count: 1, why: '样张网格与 Segmented 同一副皮（2026-10-07 §9.2）：选中格浮起 + 600' },
       '/src/components/ui/listRow.ts': { count: 1, why: '选中的列表 / 树行：selected 底 + 600（2026-10-07 §10.3）' },
       '/src/components/ui/FormSection.tsx': { count: 1, why: '表单分区标题 13 / 600（没有对应的 type 角色，只此一处）' },
       '/src/components/ui/buttonClass.ts': { count: 1, why: '对话框页脚的危险浅底胶囊（danger-tinted）：600' },
@@ -195,10 +196,6 @@ const RULES: Rule[] = [
       '/src/components/inspector/controls/LegendPositionPicker.tsx': {
         count: 4,
         why: '九宫格 + 外侧带的空间型 radio（含一处 querySelector 字面量），自带 roving tabindex',
-      },
-      '/src/components/inspector/CanvasPage.tsx': {
-        count: 1,
-        why: '页面尺寸预设格（OptionGrid 的同族，预览图形要 32px 格子）',
       },
     },
   },
