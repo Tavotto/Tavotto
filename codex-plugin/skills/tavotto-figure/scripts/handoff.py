@@ -389,25 +389,119 @@ def needs_run(script: str, project: str, stem: str | None, mode: str) -> bool:
     return os.path.getmtime(product) < os.path.getmtime(script)
 
 
+# ------------------- matplotlib 配置 / 缓存目录（跑用户脚本时）-------------------
+# 以下判据是 `src/tavotto/engine/runtime._owned_mplconfigdir` 的**镜像**（插件 import 不到 tavotto）：
+# `tests/test_codex_plugin.py::test_script_env_mpl_rule_mirrors_the_engine` 在平台 × 目录在不在 ×
+# 用户设没设 MPLCONFIGDIR 的矩阵上逐格比对两侧，改一边必须同步另一边。
+
+#: matplotlib 从配置目录读的全部东西（`runtime._MPL_CONFIG_ENTRIES` 的镜像）
+MPL_CONFIG_ENTRIES = ("matplotlibrc", "stylelib")
+#: 用户一个 matplotlib 目录都没有时，跑脚本用的固定缓存目录（Tavotto 配置目录下）
+MPL_CACHE_DIRNAME = "mpl-cache"
+#: Linux / FreeBSD 上用户只有配置目录、没有缓存目录时用的目录：里面是指回他配置的符号链接
+#: （`runtime.MPL_LINKED_CONFIG_DIRNAME` 同名）
+MPL_LINKED_CONFIG_DIRNAME = "mpl-userconfig"
+
+
+def _xdg_matplotlib_dirs(env: dict, system: str) -> "tuple[str, str] | None":
+    """Linux / FreeBSD 上用户的 matplotlib 配置目录、缓存目录（两个 XDG 位置）；别的平台 None。"""
+    if not system.startswith(("linux", "freebsd")):
+        return None
+    home = os.path.expanduser("~")
+    config_home = env.get("XDG_CONFIG_HOME") or os.path.join(home, ".config")
+    cache_home = env.get("XDG_CACHE_HOME") or os.path.join(home, ".cache")
+    return os.path.join(config_home, "matplotlib"), os.path.join(cache_home, "matplotlib")
+
+
+def _user_matplotlib_dirs(env: dict, system: str) -> "list[str]":
+    """用户自己的 matplotlib 目录**可能在哪**（macOS 是 `~/.matplotlib`；Windows 另有
+    `%LOCALAPPDATA%\\matplotlib`）。"""
+    home = os.path.expanduser("~")
+    out = [os.path.join(home, ".matplotlib")]
+    if _is_win(system) and env.get("LOCALAPPDATA"):
+        out.append(os.path.join(env["LOCALAPPDATA"], "matplotlib"))
+    return out
+
+
+def _linked_mpl_config_dir(root: str, user_config: str) -> "str | None":
+    """`<root>`，里面 `matplotlibrc` / `stylelib` 是指向 `user_config` 下同名项的符号链接（不是拷贝：
+    他之后改了配置、加了样式，下一次跑就认得；他没有的那项是悬空链接，matplotlib 当它不存在）。
+    建不出来回 None——宁可缓存落在他自己的 XDG 位置，也不让他的配置悄悄失效。"""
+    try:
+        os.makedirs(root, exist_ok=True)
+        for name in MPL_CONFIG_ENTRIES:
+            link = os.path.join(root, name)
+            target = os.path.join(user_config, name)
+            try:
+                if os.readlink(link) == target:
+                    continue
+            except OSError:
+                pass
+            tmp = "%s.%d.tmp" % (link, os.getpid())
+            try:
+                os.unlink(tmp)
+            except FileNotFoundError:
+                pass
+            os.symlink(target, tmp)
+            os.replace(tmp, link)
+    except OSError:
+        return None
+    return root
+
+
+def mplconfigdir_for(
+    cache_root: str, default_name: str, env: "dict | None" = None, system: "str | None" = None
+) -> "str | None":
+    """跑用户脚本该用的 `MPLCONFIGDIR`；None = 不改（用 matplotlib 自己的默认位置）。
+
+    原则与引擎一样：**用户已有的配置照样生效，缓存不在 Tavotto 目录之外新建**。
+
+    * 用户自己设了 `MPLCONFIGDIR`：不动。
+    * macOS / Windows：配置与缓存是同一个目录——在就沿用（里面可能有他的 matplotlibrc /
+      stylelib；改道的话他的脚本在交接时画出来的图与在终端里跑的不一样），不在就
+      `<cache_root>/<default_name>`。
+    * Linux / FreeBSD：配置（`~/.config/matplotlib`）与缓存（`~/.cache/matplotlib`）分别判断——
+      两个都在：沿用；没有配置目录：`<default_name>`（沿用的话 matplotlib import 时就新建配置目录）；
+      只有配置目录：`<cache_root>/mpl-userconfig`，链接回他的 matplotlibrc / stylelib。
+    """
+    env = os.environ if env is None else env
+    system = sys.platform if system is None else system
+    if env.get("MPLCONFIGDIR"):
+        return None
+    default = os.path.join(cache_root, default_name)
+    xdg = _xdg_matplotlib_dirs(env, system)
+    if xdg is None:
+        mine = _user_matplotlib_dirs(env, system)
+        return None if any(os.path.isdir(d) for d in mine) else default
+    config, user_cache = xdg
+    has_config, has_cache = os.path.isdir(config), os.path.isdir(user_cache)
+    if has_config and has_cache:
+        return None
+    if not has_config:
+        return default
+    return _linked_mpl_config_dir(os.path.join(cache_root, MPL_LINKED_CONFIG_DIRNAME), config)
+
+
 def script_env(environ: dict | None = None) -> dict:
-    """跑用户脚本时的环境：**无头 + 稳定的 matplotlib 缓存目录**。
+    """跑用户脚本时的环境：**无头 + 不丢用户的 matplotlib 配置、缓存有固定落点**。
 
     * `MPLBACKEND=Agg`（用户没自己设时）——出图脚本从 Agent/CI 里跑，默认
       GUI backend 在没有显示会话的环境里会崩在 AppKit/Qt 初始化上；
-    * `MPLCONFIGDIR` 指到 Tavotto 配置目录下的固定位置（用户没设、且原位置
-      需要兜底时）——沙箱里 HOME 只读时 matplotlib 每次都重建字体缓存，
-      一次十来秒，还写不进去刷警告。固定目录 = 缓存建一次以后一直用。
+    * `MPLCONFIGDIR` 按 `mplconfigdir_for` 定（与引擎 `runtime._owned_mplconfigdir` 同一套判据）：
+      用户已有 matplotlib 目录就沿用——里面的 matplotlibrc / stylelib 决定他的图长什么样，交接时
+      跑出来的图必须与他在终端里 `python fig.py` 的一样；没有时才指到 Tavotto 配置目录下的固定
+      位置（`mpl-cache`：沙箱里 HOME 只读时 matplotlib 每次都重建字体缓存，一次十来秒，还写不进去
+      刷警告；固定目录 = 缓存建一次以后一直用）；Linux 上只有配置目录时链接回他的配置。
 
-    只补缺，不覆盖：用户显式设过的两个变量原样保留。判据是「设没设」而不是
-    「能不能写」——探测可写性本身就要写文件，不值得。
+    只补缺，不覆盖：用户显式设过的两个变量原样保留。
     """
     env = dict(os.environ if environ is None else environ)
     env.setdefault("MPLBACKEND", "Agg")
-    if "MPLCONFIGDIR" not in env:
-        cache = _join(sys.platform, config_dir(), "mpl-cache")
+    mpl = mplconfigdir_for(config_dir(), MPL_CACHE_DIRNAME, env)
+    if mpl is not None:
         try:
-            os.makedirs(cache, exist_ok=True)
-            env["MPLCONFIGDIR"] = cache
+            os.makedirs(mpl, exist_ok=True)
+            env["MPLCONFIGDIR"] = mpl
         except OSError:
             pass  # 建不出来就让 matplotlib 走自己的默认
     return env

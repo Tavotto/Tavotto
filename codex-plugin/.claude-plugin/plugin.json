@@ -1,0 +1,32 @@
+{
+  "name": "tavotto",
+  "displayName": "Tavotto",
+  "version": "0.18.0",
+  "description": "画论文级 matplotlib 图，并用 Tavotto 的 MCP 工具微调：改图例位置、字号线宽、刻度，跑出版规范预检，导出真矢量 PDF。所有改动都是 override，不动你的 Python 源码。",
+  "author": {
+    "name": "erwanjun",
+    "url": "https://github.com/Tavotto/Tavotto"
+  },
+  "homepage": "https://github.com/Tavotto/Tavotto",
+  "repository": "https://github.com/Tavotto/Tavotto",
+  "license": "AGPL-3.0-only",
+  "keywords": [
+    "matplotlib",
+    "figure",
+    "论文配图",
+    "科研绘图",
+    "publication",
+    "pdf",
+    "chart",
+    "plot"
+  ],
+  "mcpServers": {
+    "tavotto": {
+      "type": "stdio",
+      "command": "${CLAUDE_PLUGIN_ROOT}/mcp/launch",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/mcp/server.py"],
+      "timeout": 1800000,
+      "timeoutMs": 1800000
+    }
+  }
+}

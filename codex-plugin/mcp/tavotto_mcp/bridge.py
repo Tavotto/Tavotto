@@ -61,6 +61,7 @@ from .roots import (
     CODE_AMBIGUOUS_ROOT,
     CODE_NO_WORKSPACE_ROOT,
     CODE_PATH_OUT_OF_SCOPE,
+    CODE_ROOT_TOO_BROAD,
     CODE_ROOTS_ERROR,
     CODE_ROOTS_NO_RESPONSE,
     ROOTS_ENV,
@@ -70,7 +71,27 @@ from .roots import (
     canonical_path,
 )
 
-#: 工作区提示：装好的插件里 `.mcp.json` 的 `cwd` 指向**插件自己的目录**
+# 这些负载只在完整渲染响应与按需快照里返回；摘要与诊断账本共用这一份字段表。
+RENDER_PAYLOAD_KEYS = ("manifest", "svg", "preview_png_base64", "preview_png_manifest")
+# 额外保留的 apply 诊断按紧凑 UTF-8 JSON 限额；warnings / preview 已在 Session，不再保存。
+APPLY_RECEIPT_BUDGET_BYTES = 64 * 1024
+APPLY_RECEIPT_KEYS = (
+    "ok",
+    "session_id",
+    "stem",
+    "restored",
+    "applied",
+    "rejected",
+    "canonical_patch_count",
+    "contract_released",
+    "patch_hash",
+    "worker_generation",
+    "render_revision",
+    "timings",
+    "preview_png_error",
+)
+
+#: 工作区提示：装好的插件里 Codex MCP 配置（`codex.mcp.json`）的 `cwd` 指向**插件自己的目录**
 #: （`./mcp/server.py` 要靠它解析），于是「不给就用进程 cwd」在真实安装下
 #: 等于把用户工作区里的每一张图都判成 `path_out_of_scope`——默认流程根本
 #: 跑不起来。所以 cwd 只在它**不是插件目录**时才算数（源码树里直接跑
@@ -162,7 +183,7 @@ def _no_roots_error() -> "BridgeError":
     diagnostics = root_diagnostics()
     confirmation = diagnostics.get("workspace_confirmation") or {}
     failure = workspace_failure()
-    if failure.code in {CODE_ROOTS_NO_RESPONSE, CODE_ROOTS_ERROR}:
+    if failure.code in {CODE_ROOTS_NO_RESPONSE, CODE_ROOTS_ERROR, CODE_ROOT_TOO_BROAD}:
         detail = "；".join(diagnostics.get("warnings") or ())
     elif failure.code == CODE_NO_WORKSPACE_ROOT:
         detail = (
@@ -266,12 +287,16 @@ class Session:
     #: 非 raster 档恒为 None。留着它是为了 `session_state()` 不必再画一遍：
     #: 位图与 manifest 的配对纪律（ADR 0022）要求它来自同一次渲染。
     preview_png_base64: str | None = None
+    preview_png_manifest: dict | None = None
     #: 最近一次**默认参数**的预检结果（`run_preflight` 不带 profile / journal /
     #: 导出参数那一档），连同它算出时的 `patch_hash` 与 profile 印章。
     #: `session_state()` 只在两者都还对得上时复用；否则重算——预检是 manifest
     #: 与规范的纯函数，键对得上就没有第二个答案。每次 `_render` 都把它清掉：
     #: manifest 换了一份，键没变也不算数。
     preflight_cache: dict | None = None
+    #: 最近一次成功 apply 的有界诊断与版本；不复制渲染负载、不落盘，重渲染后失效。
+    #: warnings 只在上面的既有字段保留；超限诊断显式标记，不另留一份无限大的响应。
+    apply_receipt: dict | None = None
     #: 这个会话是不是**这一次调用里**从落盘记录重建的（ADR 0078）。调用方读一次就清掉，
     #: 让 apply / session_state 的结果如实带一句 `restored: true`，而不是假装它一直开着。
     restored: bool = False
@@ -351,6 +376,12 @@ def _answer_prepare_dependencies(project: str, script: str, target: str) -> dict
     }
 
 
+#: 改指表救不回、只能经确认改写脚本的几档（ADR 0110）。`engine.inputremap.VIAS_NEED_REWRITE` 的镜像：
+#: 插件要能配更早的 Tavotto，不为一个常量多 import 一个新模块（那会抬高 MIN_TAVOTTO_VERSION）；
+#: `tests/test_mcp_server.py` 钉住两侧相等。
+VIAS_NEED_REWRITE = ("probe", "glob", "native")
+
+
 def _bridge_error_from_worker(exc: engine_pool.WorkerError) -> BridgeError:
     """worker 错误 → 带稳定 code 的 BridgeError；U03 的两种结构化载荷原样带出去。
 
@@ -377,6 +408,34 @@ def _bridge_error_from_worker(exc: engine_pool.WorkerError) -> BridgeError:
             )
             + "）。这个决定按项目记住，只问这一次。"
         )
+    # 数据找不到（ADR 0106）：缺的是哪一串、脚本里还有哪些也找不到——原样进 `structuredContent`。
+    # 指认位置要用户在本机的选择器里点（改指规则是本机路径、按项目记住），插件不替用户选：
+    # `recovery` 请用户回 Tavotto 窗口里指认，或把数据放回脚本写的位置。
+    missing_input = getattr(exc, "missing_input", None)
+    if isinstance(missing_input, dict):
+        extra["missing_input"] = missing_input
+        primary = (
+            {"path": missing_input.get("requested"), "via": missing_input.get("via")}
+            if missing_input.get("requested")
+            else next((o for o in missing_input.get("others") or [] if o.get("path")), {})
+        )
+        first = primary.get("path") or ""
+        if primary.get("via") in VIAS_NEED_REWRITE:
+            # exists / glob / C++ 读取器（ADR 0110）：只读改指救不回，出路是改写脚本里那串——
+            # 那必须由用户在 Tavotto 窗口里看过逐行改动、勾选确认；插件与 Agent 都不替用户改
+            extra["recovery"] = (
+                f"脚本要的数据找不到：{first}。脚本是用 exists / glob / C++ 读取器去找它的，只读改指救不回。"
+                "请用户在 Tavotto 窗口里打开这张图，在「找不到脚本要读的数据」里选择数据现在的位置，"
+                "Tavotto 会列出脚本里要改的每一行，用户勾选确认后才改写脚本（改之前先备份，可一键复原）；"
+                "或把数据放回脚本写的位置；"
+                "之后再调一次 tavotto_open_figure。不要自己改用户的脚本。"
+            )
+        else:
+            extra["recovery"] = (
+                f"脚本要读的数据找不到：{first}。请用户在 Tavotto 窗口里打开这张图，在弹出的「找不到脚本要读的"
+                "数据」里指认文件或它所在的文件夹（只影响读取、按项目记住），或把数据放回脚本写的位置；"
+                "之后再调一次 tavotto_open_figure。不要改用户的脚本。"
+            )
     explicit = getattr(exc, "explicit", None)
     if isinstance(explicit, dict):
         extra["explicit"] = {
@@ -575,6 +634,7 @@ def get_session(session_id: str) -> Session:
         or not any(_within(current_project, root) for root in roots)
     ):
         _SESSIONS.pop(session_id, None)
+        s.apply_receipt = None
         raise BridgeError(
             f"会话 {session_id} 的项目已不在当前工作区根内，请重新打开。",
             code="workspace_root_changed",
@@ -597,6 +657,7 @@ def close_session(session_id: str) -> dict:
             "closed": False,
             "note": f"会话 {session_id} 已经不在了（重复关闭不算错）",
         }
+    s.apply_receipt = None
     # worker 归 pool 管（同一个脚本可能还有别的用户）：这里只丢引用与会话账本。
     # 用户的项目数据一个字节都不动。
     return {
@@ -618,6 +679,7 @@ def _evict_if_needed() -> list[str]:
     while len(_SESSIONS) > MAX_SESSIONS:
         oldest = min(_SESSIONS.values(), key=lambda s: s.last_used)
         _SESSIONS.pop(oldest.id, None)
+        oldest.apply_receipt = None
         # 淘汰也是明确的释放（open 的文字里会点名）：不许在下一次调用里悄悄复活
         _forget(oldest.id)
         evicted.append(oldest.id)
@@ -646,6 +708,8 @@ def _live_session_for(project: str, stem: str) -> Session | None:
 
 def shutdown_all() -> None:
     """进程退出前收摊：会话账本清空 + 关掉 worker 子进程（不留孤儿）。"""
+    for session in _SESSIONS.values():
+        session.apply_receipt = None
     _SESSIONS.clear()
     try:
         engine_pool.shutdown_all(wait=True)
@@ -1294,9 +1358,11 @@ def _render(session: Session, patches: list, *, preview_dpi: int | None) -> dict
     session.warnings = list(resp.get("warnings", []) or [])
     # 上一版的位图属于上一组 patches；这一次不是 raster 档就没有位图可配对。
     session.preview_png_base64 = None
+    session.preview_png_manifest = None
     # 预检是 manifest 的函数，而 manifest 刚换了一份——哪怕 patches 没变（脚本改了、
     # worker 重建、重开沿用会话），键对得上也不代表结论还对。缓存只活在两次渲染之间。
     session.preflight_cache = None
+    session.apply_receipt = None
     session.rev = getattr(worker, "rev", session.rev + 1)
     session.last_used = time.time()
     out = {
@@ -1322,15 +1388,46 @@ def _render(session: Session, patches: list, *, preview_dpi: int | None) -> dict
     # 塞回来，那只是把同一个 payload 换个编码再放大三分之一。
     if (session.preview or {}).get("mode") == previewbudget.MODE_RASTER:
         try:
-            out["preview_png_base64"] = preview_png(
-                session, list(patches), previewbudget.RASTER_PREVIEW_WIDTH_PX
-            )
+            snapshot = getattr(worker, "preview_png_snapshot", None)
+            if snapshot is None:
+                # The plugin can run with older installed engines. Keep their
+                # pixels viewable, but do not label SVG geometry as a PNG pair.
+                out["preview_png_base64"] = preview_png(
+                    session, list(patches), previewbudget.RASTER_PREVIEW_WIDTH_PX
+                )
+                out["preview_png_error"] = "preview_geometry_unavailable"
+                session.warnings.append("升级 Tavotto 后可编辑此位图预览中的元素位置。")
+            else:
+                frame = snapshot(session.stem, list(patches), previewbudget.RASTER_PREVIEW_WIDTH_PX)
+                out["preview_png_base64"] = frame["png"]
+                out["preview_png_manifest"] = session.preview_png_manifest = frame["manifest"]
             session.preview_png_base64 = out["preview_png_base64"]
-        except BridgeError as exc:
+        except (BridgeError, engine_pool.WorkerError) as exc:
             # 位图失败不该把这次**成功的渲染**变成一条错误：manifest 是对的、
             # 编辑语义是完整的，缺的只是画面。如实回一个 code，别静默。
             out["preview_png_error"] = exc.code or "preview_failed"
     return out
+
+
+def _bounded_apply_receipt(out: dict) -> dict:
+    """只保存小份诊断；极端 rejected / timings 超限时保留计数并说清缺项。"""
+    receipt = {k: out[k] for k in APPLY_RECEIPT_KEYS if k in out}
+    receipt.update(warning_count=len(out["warnings"]), rejected_count=len(out["rejected"]))
+    encoder = json.JSONEncoder(ensure_ascii=False, separators=(",", ":"))
+    # 流式量字节，避免为了测巨大 rejected 另造一个完整 JSON 字符串。
+    for key in ("rejected", "timings", "preview_png_error", None):
+        size = 0
+        for chunk in encoder.iterencode(receipt):
+            size += len(chunk.encode("utf-8"))
+            if size > APPLY_RECEIPT_BUDGET_BYTES:
+                break
+        if size <= APPLY_RECEIPT_BUDGET_BYTES:
+            return receipt
+        if key is not None and key in receipt:
+            del receipt[key]
+            receipt.setdefault("diagnostics_unavailable", []).append(key)
+    # 固定把手来自会话/worker，不含图中文字与无界诊断。
+    raise AssertionError("apply receipt handle exceeded its budget")
 
 
 def apply_overrides(
@@ -1402,6 +1499,7 @@ def apply_overrides(
             "contract_released": released,
         }
     )
+    session.apply_receipt = _bounded_apply_receipt(out)
     return out
 
 
@@ -1469,10 +1567,13 @@ def session_state(session_id: str) -> dict:
         "warnings": list(session.warnings),
         "restored": _take_restored(session),
     }
+    if session.apply_receipt is not None:
+        out["last_apply"] = session.apply_receipt
     if session.preview is not None:
         out["preview"] = session.preview
     if session.preview_png_base64 is not None:
         out["preview_png_base64"] = session.preview_png_base64
+        out["preview_png_manifest"] = session.preview_png_manifest
     return out
 
 
@@ -2091,7 +2192,8 @@ def _profile_issues(session: Session, profile: dict) -> list[dict]:
 def _original_artifact_facts(session: Session) -> dict:
     """B0 的证据之一：用户磁盘上的原始产物与脚本重跑出来的 live 图对不对得上。
 
-    对不上（最常见：脚本 `savefig(bbox_inches="tight")`，磁盘原件被裁成内容范围）
+    对不上（ADR 0098 起 tight 存盘的图按原件的裁切框出图，不再因此对不上；还会对不上的是原件出自
+    别的机器 / 别的 matplotlib，或脚本在存盘之后改过）
     时**不替换原件、不改脚本、不猜谁更权威**，只把两个尺寸都记下来，报告里说出口。
     """
     rel = engine_figcapture.find_original_artifact(session.project, session.stem)

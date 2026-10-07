@@ -1,13 +1,15 @@
-#!/bin/sh
-:<<'::TAVOTTO_WINDOWS'
 @echo off
-rem Tavotto MCP launcher (issue #266). One file: a sh script on POSIX, a batch file on Windows.
-rem Codex runs `.mcp.json`'s single `command` string with no shell and no per-platform field;
-rem `python3` on Windows is often the Microsoft Store alias (exit 9009, no output), so the
-rem plugin loaded with zero tools. This file only finds a Python that really runs and hands
-rem it every argument unchanged; locating the engine stays with mcp/server.py.
-rem Rules (see codex-plugin/AGENTS.md, "launch.cmd"): keep the shebang on line 1, keep the
-rem file LF + ASCII in this batch part, no goto / call :label, probe every candidate by running it (and checking its version).
+rem Tavotto MCP launcher, Windows half (issue #266). `codex.mcp.json` says `command: ./mcp/launch`;
+rem Codex's program resolver on Windows appends PATHEXT and runs this file (measured on a real
+rem Windows 11 + Codex Desktop, codex-cli 0.158). mcp/launch is the POSIX half.
+rem `python3` on Windows is often the Microsoft Store alias (exit 9009, no output), so this file
+rem finds a Python that really runs and hands it every argument unchanged; locating the engine
+rem stays with mcp/server.py.
+rem Rules (codex-plugin/AGENTS.md, docs/rules/plugin/mcp-launcher-and-provision.md):
+rem `@echo off` is the FIRST line: anything cmd echoes lands on stdout before the first JSON-RPC
+rem frame, and Codex (rmcp) drops the server on it ("expected value at line 1 column 1", #266).
+rem Keep the file ASCII, no goto / call :label, probe every candidate by running it (and checking
+rem its version).
 rem Probes go through `call`: a candidate may itself be a batch file (pyenv-win shims are python.bat), and a
 rem batch file run without `call` never returns -- this launcher would stop at the first probe.
 setlocal EnableExtensions DisableDelayedExpansion
@@ -31,6 +33,3 @@ if not defined TAVOTTO_LAUNCH_PY >&2 echo tavotto-mcp: no runnable Python found 
 if not defined TAVOTTO_LAUNCH_PY exit /b 9009
 "%TAVOTTO_LAUNCH_PY%" %TAVOTTO_LAUNCH_PYARG% %*
 exit /b %ERRORLEVEL%
-::TAVOTTO_WINDOWS
-# ---- POSIX (sh): exactly what `command: python3` did before ----
-exec python3 "$@"

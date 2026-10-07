@@ -1,0 +1,8 @@
+#!/bin/sh
+# Tavotto MCP launcher, POSIX half (issue #266). `codex.mcp.json` says `command: ./mcp/launch`:
+# on macOS / Linux Codex executes this file; on Windows Codex's program resolver appends
+# PATHEXT and runs the sibling mcp/launch.cmd instead (measured on a real Windows 11 +
+# Codex Desktop). Behaviour here is exactly what `command: python3` did before #266.
+# Rules (codex-plugin/AGENTS.md, docs/rules/plugin/mcp-launcher-and-provision.md):
+# shebang on line 1, git mode 100755, LF only.
+exec python3 "$@"

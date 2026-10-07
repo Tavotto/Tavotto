@@ -114,7 +114,8 @@ python3 <插件目录>/mcp/server.py --provision
 装与插件同版本的 `tavotto[worker]`（钉版本可复现；`[worker]` 带上
 matplotlib/numpy 渲染栈——pip 形态的引擎发现不了桌面 App 里的内置
 runtime，自管环境必须自己能渲染）。**不碰**系统 Python、Conda、
-用户 site-packages 或 shell 配置；删掉 `mcp-runtime` 目录即卸载。离线环境
+用户 site-packages 或 shell 配置；它的 pip / matplotlib 缓存也在这个目录里
+（`mcp-runtime/cache`），删掉 `mcp-runtime` 目录即卸载。离线环境
 用 `--from /path/to/tavotto-x.y.z-py3-none-any.whl`（或源码目录）。
 装完**新开一个 Codex 会话**。
 
@@ -133,7 +134,9 @@ python3 <插件目录>/mcp/server.py --health
 
 一行 JSON 说清：引擎找没找到（以及 resolver 每一步的结论与耗时）、画布产物
 在不在、桌面版装没装。它能区分开在 `codex plugin list` 里长得一模一样的
-几种状态：插件装了但没引擎（`desktop_only` / `tavotto_missing`）、显式指的
+几种状态：插件装了但没引擎（`desktop_only` / `tavotto_missing`）、引擎装了但版本
+对不上（`engine_too_old` / `engine_incompatible`，带版本号与升级命令；pip 配了镜像时提示镜像
+可能滞后并给出 `--index-url https://pypi.org/simple` 的写法）、显式指的
 解释器用不了（`engine_unavailable`）、一切就绪但**当前会话还没重载工具**
 （health 是绿的，那就新开会话）。
 
@@ -353,7 +356,7 @@ python3 skills/tavotto-figure/scripts/handoff.py figures/fig_removal_rate.py
 ```
 codex-plugin/
 ├── .codex-plugin/plugin.json          # 插件清单（Codex 认的唯一入口）
-├── .mcp.json                          # MCP server 声明（本地 stdio）
+├── codex.mcp.json                     # Codex 的 MCP server 声明（本地 stdio；不叫 .mcp.json，ADR 0109）
 ├── assets/tavotto.svg                 # composer 图标 / logo
 ├── integrations/configure.py         # 给非 Codex 宿主打印配置片段（只打印，不写文件）
 ├── mcp/
@@ -432,21 +435,29 @@ cwd 正是插件目录，拿它当边界会把每张用户图判成越界。一�
 把权限切到「请求批准」后重新打开即可弹框）；
 路径越界是 `path_out_of_scope`（`narrow_the_path`，错误里列出允许的根）；
 宿主既没给目录也不支持确认是 `no_workspace_root`（`configure_roots`，直接给
-`TAVOTTO_MCP_ROOTS` 的用法）。`tavotto_health` 的
+`TAVOTTO_MCP_ROOTS` 的用法）。给出的目录是整个用户主目录（或它的上级）是 `workspace_root_too_broad`
+（`configure_roots`：在具体项目目录里启动宿主，或设 `TAVOTTO_MCP_ROOTS`）。`tavotto_health` 的
 `root_authority.authorization` 不用先失败一次就能看到当前这一档。
 
 ## 已知限制
 
-**启动命令是插件自带的 `./mcp/launch.cmd`（#266）。** Codex 的 `.mcp.json` 只有一个
+**启动命令是插件自带的 `./mcp/launch`（#266）。** Codex 的 MCP 配置（`codex.mcp.json`）只有一个
 `command` 字符串、没有按平台分支，而 Windows 上 `python3.exe` 常常只是 Microsoft Store
-的执行别名存根（macOS 12.3 起又没有 `python`，两边没有通用的名字）。所以插件自带一个
-sh / cmd 双语启动器：POSIX 上它就是 `exec python3 "$@"`；Windows 上它依次**真跑**
+的执行别名存根（macOS 12.3 起又没有 `python`，两边没有通用的名字）。所以插件自带一对
+启动器：POSIX 上 Codex 执行 `mcp/launch`，它就是 `exec python3 "$@"`；Windows 上 Codex
+按 PATHEXT 把 `./mcp/launch` 解析成同目录的 `mcp/launch.cmd`，它依次**真跑**
 `TAVOTTO_MCP_PYTHON`、插件自管环境、`py -3`、PATH 上的 `python` / `python3`、
 `%LOCALAPPDATA%\Programs\Python\Python3*`，跳过起不来的（商店别名），再把参数原样
 交给第一个能跑的。仍然「插件装上了，但一个工具都看不见」时（这台 Windows 上一个能跑
 的 Python 都没有），跑 `tavotto codex install` 把命令钉到一个验证过的解释器。
-Windows 上 cmd 会把启动器第一行（shebang）回显进 stdout 一次：Codex 用的 rmcp 3.2+
-跳过非 JSON 行，2.x 回一条 parse error 后照常继续。
+
+插件 0.17.0 在 Windows 上用的是 sh / cmd 同一文件的双语启动器：cmd 把它第一行的
+shebang 回显进 stdout，真 Codex Desktop 上握手因此失败、一个工具都没有（引擎装好了也
+一样）。这一版起拆成两个文件、`launch.cmd` 第一行就是 `@echo off`；还停在 0.17.0 的
+Windows 用户升级插件（`codex plugin marketplace upgrade tavotto`）后新开会话即可。
+`tavotto codex install` 的 interpreter 步从这一版引擎起也认得这种形状：stdout 在体检 JSON
+之外多出任何一行都判「起不来」，把已装副本钉到一个验证过的解释器（旧引擎只看最后一行是不是
+JSON，会把它判成起得来）。
 
 （`pipx install tavotto` 那条已经好了：启动器会去读 Windows console script
 `.exe` 里嵌着的 shebang，找到 pipx venv 的解释器。）

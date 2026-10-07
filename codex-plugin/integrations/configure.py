@@ -80,7 +80,7 @@ RUNTIME_FILES = tuple(
     )
 )
 
-#: 配置里的 MCP server 名。与 Codex 的 `.mcp.json` 同一个 key。
+#: 配置里的 MCP server 名。与 Codex 的 `codex.mcp.json` 同一个 key。
 SERVER_NAME = "tavotto"
 #: `RootAuthority` 的显式根变量（`tavotto_mcp/roots.py` 的 `ROOTS_ENV`，同名）
 ROOTS_ENV = "TAVOTTO_MCP_ROOTS"
@@ -167,12 +167,15 @@ HOSTS: "dict[str, dict]" = {
         "format": "json",
         "top_key": "mcpServers",
         "extra": {},
-        "timeout": None,
-        "evidence": "search_snippet",
+        # ZCode 的 MCP 条目只认 timeoutMs（毫秒；连接与工具调用共用，默认 30 s）
+        "timeout": ("timeoutMs", "ms"),
+        "evidence": "official_source",
         "target": [
             "<项目>/.agents/mcp.json（注意：同一作用域的 .zcode 配置里只要定义了任何 MCP"
             " 服务，这个文件就整份被跳过）",
             "或 ZCode 的 MCP 设置界面手动添加",
+            "已装 Tavotto 的 Claude 插件（ZCode 装的是同一份）就不需要这段配置；"
+            "二选一——两样都装会出现两个 Tavotto server",
         ],
         "verify": [
             "ZCode Settings 里 tavotto 为已连接状态并能看到工具",
@@ -193,6 +196,8 @@ HOSTS: "dict[str, dict]" = {
             "单次：dsh web --patch tavotto.cordis.yml",
             "长期：合并进 $DSH_HOME/profiles/<名字>/cordis.patch.yml（或 $DSH_HOME/cordis.patch.yml；"
             "$DSH_HOME 默认 ~/.dsh）",
+            "已装 Tavotto 的 DSH bundle（tavotto-dsh）就不需要这段 YAML；"
+            "二选一——同名 serverName 的第二行会加载失败",
         ],
         "verify": [
             "新开一个 DSH 会话，等 mcp__tavotto__* 工具出现（发现是异步的）",
@@ -209,11 +214,14 @@ HOSTS: "dict[str, dict]" = {
         "format": "json",
         "top_key": "mcpServers",
         "extra": {},
+        # 不读按服务器的超时字段（工具超时由它自己的 MCP_TOOL_TIMEOUT 管，默认很长）
         "timeout": None,
-        "evidence": "search_snippet",
+        "evidence": "official_source",
         "target": [
             "WorkBuddy：插件 → MCP Server → 配置 MCP（编辑 mcp.json），只合并 tavotto 这一项",
             "（不要改 CodeBuddy 的 ~/.codebuddy/mcp.json——那是另一个产品）",
+            "已装 Tavotto 的 Claude 插件（WorkBuddy 装的是同一份）就不需要这段配置；"
+            "二选一——两样都装会出现两个 Tavotto server",
         ],
         "verify": ["WorkBuddy 的 MCP 列表里 tavotto 为已连接，对话里调用 tavotto_health"],
         "skill": "instruction_fallback",
@@ -230,6 +238,8 @@ HOSTS: "dict[str, dict]" = {
         "target": [
             "<项目>/.mcp.json（project 作用域；交互会话里第一次用会请你批准）",
             "不要同时再用 claude mcp add 登记同名 tavotto：local / user 作用域会遮蔽它",
+            "已装 Tavotto 的 Claude Code 插件就不需要这段配置；"
+            "二选一——两样都装会出现两个 Tavotto server",
         ],
         "verify": [
             "在 Claude Code 里运行 /mcp：tavotto 为 connected，并能看到工具",
@@ -237,6 +247,31 @@ HOSTS: "dict[str, dict]" = {
         ],
         "skill": "native",
         "skill_dirs": ["<项目>/.claude/skills/tavotto-figure/", "~/.claude/skills/tavotto-figure/"],
+    },
+    "minimax-code": {
+        "label": "MiniMax Code（mcode，本地 CLI）",
+        "format": "json",
+        "top_key": "mcpServers",
+        "extra": {"type": "stdio"},
+        # 条目的 timeout：毫秒，正整数
+        "timeout": ("timeout", "ms"),
+        "evidence": "official_source",
+        "target": [
+            "<项目>/.mcp.json（mcode 会话主目录下的那一份，不向上查找；免批准自动加载）",
+            "这也是 Claude Code 的项目文件、形状相同——同一个项目两家共用这一条即可",
+            "不要再把 Tavotto 插件目录放进 MiniMax 的 plugins/：插件那条路的工作区是整个用户"
+            "主目录（Tavotto 会拒绝），而且清单里给 ZCode 的 timeoutMs 会让 mcode 整条丢弃",
+        ],
+        "verify": [
+            "在项目目录里运行 mcode mcp list：tavotto 已启用",
+            "在对话里让它调用 tavotto_health，看到引擎版本与允许的项目根",
+        ],
+        "skill": "native",
+        "skill_dirs": [
+            "<项目>/.agents/skills/tavotto-figure/",
+            "<项目>/.claude/skills/tavotto-figure/",
+            "<项目>/.minimax/skills/tavotto-figure/",
+        ],
     },
     "claude-desktop": {
         "label": "Claude Desktop（本地聊天）",
@@ -263,15 +298,27 @@ HOSTS: "dict[str, dict]" = {
         "skill_dirs": [],
     },
     "trae": {
-        "label": "Trae / TraeCode（本地 IDE）",
+        "label": "Trae / TraeCode（本地 IDE，国际版与国内版）",
         "format": "json",
         "top_key": "mcpServers",
         "extra": {},
         "timeout": None,
-        "evidence": "search_snippet",
+        # stdio 的超时写在 env 里（毫秒，字符串）：启动 ← startup_timeout_sec，工具调用 ← tool_timeout_sec
+        "timeout_env": (
+            ("START_MCP_TIMEOUT_MS", "startup_timeout_sec"),
+            ("RUN_MCP_TIMEOUT_MS", "tool_timeout_sec"),
+        ),
+        # 官方：command 里不能有空格，否则解析出错（stdio 条目也没有 cwd 字段）
+        "command_no_spaces": True,
+        "install_links": {
+            "国际版": "trae://trae.ai-ide/mcp-import",
+            "国内版": "trae-cn://trae.ai-ide/mcp-import",
+        },
+        "evidence": "official_source",
         "target": [
-            "Trae：MCP 窗口 → 添加 → 手动添加，粘贴本 JSON",
-            "或项目级 <项目>/.trae/mcp.json",
+            "一键：在浏览器地址栏打开下面对应版本的安装链接，Trae 里弹出「手动配置」后点确认",
+            "或 MCP 窗口 → 添加 → 手动添加，粘贴本 JSON",
+            "或项目级 <项目>/.trae/mcp.json（要先在设置里打开「启用项目级 MCP」）",
         ],
         "verify": [
             "MCP 列表里 tavotto 为已连接、能展开工具",
@@ -279,8 +326,12 @@ HOSTS: "dict[str, dict]" = {
             "——只登记不等于该智能体能调用",
             "在该智能体里调用 tavotto_health；CN 版 / 国际版、IDE / SOLO 各自单独验",
         ],
-        "skill": "instruction_fallback",
-        "skill_dirs": [],
+        "skill": "native",
+        "skill_dirs": [
+            "<项目>/.trae/skills/tavotto-figure/",
+            "~/.trae/skills/tavotto-figure/（国际版全局）",
+            "~/.trae-cn/skills/tavotto-figure/（国内版全局）",
+        ],
     },
     "vscode": {
         "label": "VS Code（GitHub Copilot Agent 模式的原生 MCP）",
@@ -535,15 +586,25 @@ def launch_descriptor(python: str, project_root: str, engine_python: "str | None
 
 
 def tool_timeout_sec() -> "int | None":
-    """工具超时的唯一出处：包里 Codex `.mcp.json` 的 `tool_timeout_sec`（秒）。
+    return codex_timeout_sec("tool_timeout_sec")
 
-    其他宿主有自己的字段与单位（DSH `toolCallTimeoutMs`、Claude Code `timeout`
-    都是毫秒），序列化时按单位换算，**不把 Codex 的字段名原样抄过去**。
+
+def codex_timeout_sec(field: str) -> "int | None":
+    """超时的唯一出处：包里 Codex MCP 配置的 `tool_timeout_sec`（秒）。
+
+    配置文件是 Codex 清单 `mcpServers` 指向的那一份（`codex.mcp.json`，ADR 0109——
+    不叫 `.mcp.json`，别的宿主会自动读那个名字）。其他宿主有自己的字段与单位
+    （DSH `toolCallTimeoutMs`、Claude Code `timeout` 都是毫秒），序列化时按单位换算，
+    **不把 Codex 的字段名原样抄过去**。
     """
     try:
-        with open(os.path.join(PACKAGE_DIR, ".mcp.json"), "r", encoding="utf-8") as fh:
+        with open(
+            os.path.join(PACKAGE_DIR, ".codex-plugin", "plugin.json"), "r", encoding="utf-8"
+        ) as fh:
+            target = json.load(fh)["mcpServers"]
+        with open(os.path.join(PACKAGE_DIR, target), "r", encoding="utf-8") as fh:
             data = json.load(fh)
-        value = data["mcpServers"][SERVER_NAME]["tool_timeout_sec"]
+        value = data["mcpServers"][SERVER_NAME][field]
     except (OSError, ValueError, KeyError, TypeError):
         return None
     return value if isinstance(value, int) and value > 0 else None
@@ -561,12 +622,36 @@ def _entry(host: str, desc: dict) -> dict:
             if value:
                 env[name] = value
     entry["env"] = env
+    for name, source in profile.get("timeout_env", ()):
+        value = codex_timeout_sec(source)
+        if value:
+            env[name] = str(value * 1000)
     timeout = profile.get("timeout")
     seconds = tool_timeout_sec()
     if timeout and seconds:
         field, unit = timeout
         entry[field] = seconds * 1000 if unit == "ms" else seconds
     return entry
+
+
+def install_links(host: str, entry: dict) -> "dict[str, str]":
+    """宿主的一键安装链接（目前只有 Trae）：`<前缀>?type=stdio&name=<名>&config=<配置>`。
+
+    `config` 是**单个 server 的条目**（外面不包 mcpServers）：JSON.stringify 的紧凑形 →
+    UTF-8 → Base64 → URL 编码，与官方文档的三步一致。链接里是本机绝对路径，只能在本机生成。
+    """
+    import base64
+    from urllib.parse import quote
+
+    prefixes = HOSTS[host].get("install_links") or {}
+    if not prefixes:
+        return {}
+    compact = json.dumps(entry, ensure_ascii=False, separators=(",", ":"))
+    encoded = quote(base64.b64encode(compact.encode("utf-8")).decode("ascii"), safe="")
+    return {
+        label: f"{prefix}?type=stdio&name={SERVER_NAME}&config={encoded}"
+        for label, prefix in prefixes.items()
+    }
 
 
 def serialize(host: str, desc: dict) -> "dict | list":
@@ -855,6 +940,12 @@ def _require_server_starts(desc: dict) -> None:
 
 
 def _result(host, pkg, launcher_python, probe, engine, pinned, root, desc) -> dict:
+    if HOSTS[host].get("command_no_spaces") and re.search(r"\s", desc["command"]):
+        raise ConfigureError(
+            "command_has_space",
+            f"{HOSTS[host]['label']} 的 command 里不能有空格（官方说明，否则解析出错），"
+            f"而启动解释器是 {desc['command']}——请用 --python 指一个路径里没有空格的 Python",
+        )
     config = serialize(host, desc)
     return {
         "host": host,
@@ -873,6 +964,9 @@ def _result(host, pkg, launcher_python, probe, engine, pinned, root, desc) -> di
         "config": config,
         "target": HOSTS[host]["target"],
         "verify": HOSTS[host]["verify"],
+        "install_links": install_links(host, config[HOSTS[host]["top_key"]][desc["name"]])
+        if HOSTS[host]["top_key"]
+        else {},
         "skill": {
             "mode": HOSTS[host]["skill"],
             "source": SKILL_DIR,
@@ -929,6 +1023,8 @@ def _notes(result: dict) -> "list[str]":
         )
         for step in engine.get("recovery") or []:
             lines.append(f"#   - {step}")
+    for label, link in result["install_links"].items():
+        lines.append(f"# 一键添加（{label}）：{link}")
     if result["host"] == "claude-code":
         lines.append("# 或者用 CLI 登记（与上面的 .mcp.json 二选一，本工具不替你执行）：")
         lines.append("#   " + _shell_join(claude_cli_argv(result["config"])))
