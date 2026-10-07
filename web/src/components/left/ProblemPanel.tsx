@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   ChevronDown,
@@ -10,7 +10,6 @@ import {
   Wrench,
   X,
 } from '@/components/ui/icons'
-import { Details, Summary } from '@/components/ui/Details'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { TruncateMiddle } from '@/components/ui/TruncateMiddle'
 import { t as translate } from '@/i18n'
@@ -620,7 +619,13 @@ function GroupBlock({
   const visible = folded ? group.issues.slice(0, PREVIEW_ROWS) : group.issues
   return (
     <li data-issue-group={group.ruleCode} className="mb-1">
-      <div className="sticky top-0 z-[1] flex items-center gap-1 bg-surface py-1">
+      {/* 吸顶组头的底色必须与抽屉同色：停靠时抽屉坐在灰色桌面（bg）上，覆盖式才是白底
+          （surface）。写死 bg-surface 的话停靠态就是灰清单上一条条白带——底色读
+          `LeftPanel` 按模式设的 `--drawer-bg`，抽屉外（测试 / 别处借用）退回 surface */}
+      <div
+        data-issue-group-head
+        className="sticky top-0 z-[1] flex items-center gap-1 bg-[var(--drawer-bg,var(--color-surface))] py-1"
+      >
         <button
           type="button"
           onClick={onToggle}
@@ -714,6 +719,8 @@ function IssueRow({
     (s) => s.canvases.find((c) => c.id === issue.objectRef.canvasId)?.name ?? null,
   )
   const elsewhere = issue.objectRef.canvasId !== activeCanvasId
+  const [techOpen, setTechOpen] = useState(false)
+  const techId = useId()
   return (
     <li
       className={cn(
@@ -772,8 +779,30 @@ function IssueRow({
           issue={issue}
           className="text-ink-3 group-focus-within/row:text-ink group-hover/row:text-ink"
         />
+        <IconButton
+          iconSize="sm"
+          label={pr('techTitle')}
+          data-issue-tech-toggle
+          aria-expanded={techOpen}
+          aria-controls={techId}
+          onClick={() => setTechOpen((v) => !v)}
+          className={cn(
+            'text-ink-3 hover:text-ink-2',
+            // 槽位常驻（行高与宽度都不随悬停变），只是平时不画：指到 / 聚焦 / 是「当前」/
+            // 已展开时才浮出来。opacity 不改可聚焦性，Tab 照样落得到它
+            !current &&
+              !techOpen &&
+              'opacity-0 focus-visible:opacity-100 group-focus-within/row:opacity-100 group-hover/row:opacity-100',
+          )}
+        >
+          <ChevronRight
+            size={ICON_SIZE.sm}
+            aria-hidden
+            className={cn('transition-transform duration-fast', techOpen && 'rotate-90')}
+          />
+        </IconButton>
       </div>
-      <TechnicalDetails issue={issue} pinned={current} />
+      <TechnicalDetails id={techId} issue={issue} open={techOpen} />
     </li>
   )
 }
@@ -781,34 +810,37 @@ function IssueRow({
 /**
  * 技术详情默认收起：普通用户一辈子不用打开它，排障的人一定找得到。
  *
- * 折叠行本身也只在**这一行被指到 / 聚焦 / 是「当前」时**才出现（2026-09-14 审计 C1）：
- * 五条同类问题就是五行「› 技术详情」，读的人一条都不需要；打开过就常驻（open 态不收）。
- * 键盘：Tab 到这一行的「修复」钮时 focus-within 让它出现，再 Tab 就到它。
+ * 开关是行尾一颗常驻槽位的图标钮（`data-issue-tech-toggle`），只在**这一行被指到 /
+ * 聚焦 / 是「当前」/ 已展开时**才画出来（2026-09-14 审计 C1：五条同类问题就是五行
+ * 「› 技术详情」，读的人一条都不需要）。此前折叠行本身在悬停时才 `display` 出来，
+ * 每指一行清单就跳 20px（2026-10-07 设计审计 P0）——槽位留在行尾、只改透明度，行高
+ * 永远不随悬停变。键盘：Tab 到这一行的「修复」钮时 focus-within 让它浮出，再 Tab 就到它。
+ * 收起时内容仍在 DOM 里（`hidden`），与原生 `<details>` 同一种语义。
  */
-// 折叠三角走 `components/ui/Details` 那一份（这里从前是自己拼的
-// `<details>` + ChevronRight，与树、检查器的折叠箭头对不上）。
-function TechnicalDetails({ issue, pinned }: { issue: ValidationIssue; pinned: boolean }) {
+function TechnicalDetails({
+  id,
+  issue,
+  open,
+}: {
+  id: string
+  issue: ValidationIssue
+  open: boolean
+}) {
   const lines = technicalDetailLines(issue)
   return (
-    <Details
-      className={cn(
-        'mb-0.5 ml-2',
-        !pinned && 'not-open:hidden group-hover/row:not-open:block group-focus-within/row:not-open:block',
-      )}
+    <ul
+      id={id}
+      data-issue-tech
+      hidden={!open}
+      aria-label={pr('techTitle')}
+      className="mb-1 flex flex-col gap-0.5 pb-0.5 pl-4 pr-2"
     >
-      {/* `ink-faint` 只给装饰与禁用态：这是个真控件、上面是要读的字，
-          用它量出来 2.54:1（axe serious，e2e 那条门禁当场红） */}
-      <Summary className="type-meta h-5 w-fit cursor-default gap-0.5 rounded-xs pr-1 hover:text-ink-2">
-        {pr('techTitle')}
-      </Summary>
-      <ul className="mb-1 mt-0.5 flex flex-col gap-0.5 pl-4">
-        {lines.map((line) => (
-          <li key={line} className="break-all font-mono text-xs leading-4 text-ink-3">
-            {line}
-          </li>
-        ))}
-      </ul>
-    </Details>
+      {lines.map((line) => (
+        <li key={line} className="break-all font-mono text-xs leading-4 text-ink-3">
+          {line}
+        </li>
+      ))}
+    </ul>
   )
 }
 

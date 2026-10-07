@@ -54,10 +54,11 @@ export function LeftPanel({
         // 不画线。覆盖式是浮层：白底 + 浮层投影——投影自带 1px 环，再画一条实边就是双描边
         // （宪法第一节「浮层不再画实色 border」；左栏审计 L20）
         // 可编辑框在桌面上换成白底（field 比桌面还浅，放在灰上就看不出是个框）：只改这一棵子树里的
-        // 两个 token，fieldBox 原语不动
+        // 两个 token，fieldBox 原语不动。`--drawer-bg` = 抽屉此刻的底色，给吸顶的组头这类
+        // 「必须与抽屉同色才不露缝」的子元素读（问题面板的组头），不另造设计 token
         overlay
-          ? 'absolute inset-y-0 z-30 bg-surface shadow-pop'
-          : 'bg-bg [--color-field-hover:var(--color-surface-2)] [--color-field:var(--color-surface)]',
+          ? 'absolute inset-y-0 z-30 bg-surface shadow-pop [--drawer-bg:var(--color-surface)]'
+          : 'bg-bg [--drawer-bg:var(--color-bg)] [--color-field-hover:var(--color-surface-2)] [--color-field:var(--color-surface)]',
         motion.className,
       )}
     >

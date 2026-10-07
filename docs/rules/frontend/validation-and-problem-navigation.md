@@ -56,7 +56,11 @@ preflight.runSpec()      规则求值（两份求值器，golden vectors 对齐�
   aria-label**——那是本地化文案，换语言就选不中。
 * **普通界面不出现 gid / 对象 id**：措辞唯一实现 `lib/validationText.ts`，
   主语取 manifest 的 `label`（过 `engineLabel()`），精确名词只在每行收起的
-  「技术详情」里。
+  「技术详情」里。它的开关是行尾**常驻槽位**的图标钮（`data-issue-tech-toggle`，
+  `aria-expanded` / `aria-controls` 指向 `data-issue-tech`），平时透明、指到 / 聚焦 /
+  当前 / 已展开时才画——**悬停只改透明度，绝不改 display，行高永不随悬停变**
+  （2026-10-07 设计审计 P0：此前折叠行悬停才出现，每指一行清单跳 20px；`problemPanel.test` 钉着）。
+  吸顶组头的底色读 `LeftPanel` 按模式设的 `--drawer-bg`（停靠 = bg、覆盖式 = surface），不写死白底。
 * **`safe_auto` 的三条判据**：目标值唯一、**修完真的能过**（绝对下限不含等号，
   所以"提到正好 8 pt"不算修好）、不动科研数据（色图 / 裁剪 / 重排一律不自动）。
   落地经 `store/issueFixActions.ts` → `documentStore.commit`，一个修复一个事务、
