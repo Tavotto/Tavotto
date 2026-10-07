@@ -5,7 +5,7 @@
 [0099 脚本 input](0099-script-input-bridge.md) §九（同一问一个展示面）、[0114 环境建议 / 检查 / 采用](0114-environment-recommend-check-adopt.md)、
 [0115 依赖授权绑定实际影响](0115-dependency-authorization-binds-impact.md)、[0057 首开](0057-first-open-environment-and-workdir.md) §三（运行目录确认）、
 [0106 缺数据指认](0106-missing-input-relink.md)；规则全文 `docs/rules/backend/preparation-and-receipts.md`（会话合同）、
-`docs/rules/frontend/readiness-and-left-shell.md`「准备面板」（前端）
+`docs/rules/frontend/readiness-and-left-shell.md`「准备引导卡」（前端）
 
 ## 问题
 
@@ -115,10 +115,27 @@ T11 已用真实首跑资格（台账 `T11-S1` + L3 `first-run-qualification.spe
 * **一起删**：`lib/preparationFlag.ts`；`scriptRunStore` 的门相位、`handOffProbeGate` / `rerunGated` / `probeErrorOf` 与
   envStore 代际订阅的自动重跑；`WorkdirConfirmDialog` / `depRepairStore` 里对 `rerunGated` 的调用；`ScriptLibrary` 的修复卡 /
   门再打开 / 失败恢复 / 「复制诊断」块；前端 `probeScript` / `probeWithDraft`。回归用例：`first-run-qualification.spec.ts`、
-  `preparation-panel.spec.ts`、`preparationEntries.test.ts`；钉在 `'off'` 上的旧 vitest 随之删除。
+  `preparation-card.spec.ts`、`preparationEntries.test.tsx`；钉在 `'off'` 上的旧 vitest 随之删除。
 * **不删**：`/api/registry/probe` + `/cancel` 后端（MCP / CLI / 旧客户端的兼容入口，薄 wrapper：路径校验
   `_resolve_project_script`、运行配置 `runconfig.selection*`、登记 `probe.register_probed`、诊断 `taskdiag` 都与会话同一份）；
   渲染门对话框与 PNG 准入（§二，编辑执行器的薄展示适配器）。
+
+### 九、T13b 修订：展示面改为画布右下的引导卡（2026-10-06，用户裁决）
+
+§一 的「一个面板」保留——仍是所有入口共用的**一个**可恢复展示面、按钮只来自报告——但它的形态改了：
+
+* **去掉顶部检查条与贴在它下面的面板**（用户硬性要求：不要顶部横幅、页面不下移）。导入即扫描的结果与准备会话都由画布工作面板右下的
+  **一张浮动卡**（`components/PreparationCard.tsx`，宽 400、浮动工具条上方、不占布局）呈现；扫描本身、`projectScanStore` 与零执行不变。
+* **三种呈现**（`uiStore.guideCard`：展开 / 角标 / 收起）取代 §三 的「关面板」布尔：「稍后」「—」「放到后台」缩成角标，× 才收起；
+  缩成角标时只有脚本发问才自动展开；收起时等作答的 input 仍由原对话框接着问（展示面认领规则不变）。进入编辑之后卡片自动收起。
+* **每个项目只自动弹一次**（本机按项目记）；**弹出时不建会话**——建会话就是检查（会检测候选、起解释器），用户点「开始准备」才建。
+* **运行目录在卡里选**（推荐项预选，确认 = 同一次 `PATCH`，只重新检查），§一 里「选择运行目录 → 既有确认框」这一条改为卡内作答；
+  确认框本身仍是渲染路上的门的展示面（§二），按钮由「运行」改为「用这个目录」（它从来不运行）。
+* **文案极简**：主按钮「运行 / 安装 / 再试一次 / 进入编辑 / 放到后台 / 知道了」；必填参数没填齐时任何卡都不说「可以运行」，参数卡主按钮置灰；
+  失败详情第一行是错误原文，下面是 `TaskDiagnostic`。用哪一套运行只在详情一行人话（ADR 0114 §六）。
+* 本地开关（§七、§八）语义不变：`'off'` 时卡上的「开始准备」回到 `scriptRunStore.run`；退出条件照 §八。
+
+规则全文在 `docs/rules/frontend/readiness-and-left-shell.md`「准备引导卡」。
 
 ## 后果
 

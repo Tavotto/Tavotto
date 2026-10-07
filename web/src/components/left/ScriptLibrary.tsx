@@ -50,10 +50,17 @@ const sc = (key: string, values?: Record<string, unknown>) =>
   translate(`scripts.${key}`, { ns: 'workspace', ...(values ?? {}) })
 
 
-type Group = 'needsFix' | 'linked' | 'notRun' | 'runtimeNames' | 'needsEnv' | 'infra'
-const GROUP_ORDER: Group[] = ['needsFix', 'linked', 'notRun', 'runtimeNames', 'needsEnv', 'infra']
+type Group = 'needsFix' | 'linked' | 'noFigure' | 'notRun' | 'runtimeNames' | 'needsEnv' | 'infra'
+const GROUP_ORDER: Group[] = ['needsFix', 'linked', 'noFigure', 'notRun', 'runtimeNames', 'needsEnv', 'infra']
 
-function groupOf(entry: ScriptInventoryEntry, run: ScriptRunState | undefined): Group {
+/**
+ * 「已关联」= 登记了**且**真有可编辑的图（后端 `all_scripts[].linked`，与导入即扫描同一判据 `probe.linked_scripts`）。
+ * 打开项目时静态扫描先登记的字面量图名只是猜测，脚本一次没跑过时不算（T13b：修前从没运行的脚本显示「已关联 1 张图」）。
+ * 老后端没有 `linked`：退回 `registered`
+ */
+const isLinked = (entry: ScriptInventoryEntry): boolean => entry.registered && entry.linked !== false
+
+function groupOf(entry: ScriptInventoryEntry, run: ScriptRunState | undefined, prep?: PrepEntry): Group {
   // 缺包是能一键修好的那一类：单独一组「需要修复」、排在最前（2026-09-29：「可能需要原环境」对不懂 Python 的
   // 用户是术语）。超时与一般失败仍在下面那组——它们真的可能与原来的环境 / 运行方式有关
   // 「开跑前要先准备依赖」（联合准备的授权）同样能一键修好：与缺包同一组
@@ -61,7 +68,13 @@ function groupOf(entry: ScriptInventoryEntry, run: ScriptRunState | undefined): 
   // 本会话 safe 运行失败且形状像环境问题的，收进「可能需要原环境」——
   // 恢复路径文案（总纲 §四）挂在组上，一眼看全
   if (needsNative(run)) return 'needsEnv'
-  if (entry.registered) return 'linked'
+  // 准备会话（T09）里这一次的结局：跑出错了 → 需要处理；跑完没图 → 单独一组；捕获到图 → 已关联。
+  // 只翻译报告的 outcome，不另判（旧试运行的状态机此刻不在跑时才轮到它）
+  const outcome = !run || !isBusyPhase(run.phase) ? prep?.report?.outcome : undefined
+  if (outcome?.kind === 'failed') return 'needsFix'
+  if (outcome?.kind === 'execution_finished_no_figure') return 'noFigure'
+  if (outcome?.kind === 'succeeded' && (prep?.report?.captured ?? []).length > 0) return 'linked'
+  if (isLinked(entry)) return 'linked'
   if (entry.reason === 'infrastructure') return 'infra'
   if (entry.reason === 'dynamic_stems' || entry.reason === 'unparseable') return 'runtimeNames'
   return 'notRun' // static_candidate / no_static_output
@@ -74,6 +87,7 @@ export function ScriptLibrary({ query }: { query: string }) {
   const loaded = useScriptLibraryStore((s) => s.loaded)
   const error = useScriptLibraryStore((s) => s.error)
   const runStates = useScriptRunStore((s) => s.byScript)
+  const prepEntries = useProjectPreparationStore((s) => s.entries)
 
   const answersLoaded = useScriptInputStore((s) => s.answers !== null)
   const repairOwner = useRepairOwner()
@@ -106,7 +120,7 @@ export function ScriptLibrary({ query }: { query: string }) {
 
   const groups = new Map<Group, ScriptInventoryEntry[]>()
   for (const entry of scripts) {
-    const g = groupOf(entry, runStates[entry.script])
+    const g = groupOf(entry, runStates[entry.script], prepEntries[`script:${entry.script}`])
     const list = groups.get(g)
     if (list) list.push(entry)
     else groups.set(g, [entry])
@@ -249,14 +263,14 @@ function ScriptRow({
               ? sc('cancelAria', { script: entry.script })
               : viaPanel
                 ? sc('prepareAria', { script: entry.script })
-                : sc(entry.registered ? 'rerunAria' : 'runAria', { script: entry.script })
+                : sc(isLinked(entry) ? 'rerunAria' : 'runAria', { script: entry.script })
           }
           tip={
             busy
               ? sc(run?.cancelRequested ? 'cancelling' : 'cancel')
               : viaPanel
                 ? sc('prepareAria', { script: entry.script })
-                : sc(entry.registered ? 'rerun' : 'run')
+                : sc(isLinked(entry) ? 'rerun' : 'run')
           }
           disabled={!!run?.cancelRequested}
           data-script-run={entry.script}
@@ -422,7 +436,7 @@ function StatusDot({
             ? 'animate-pulse bg-ink-2'
             : failed
               ? 'bg-danger'
-              : entry.registered
+              : isLinked(entry)
                 ? 'bg-ink-2'
                 : 'border border-ink-faint',
         )}
@@ -461,7 +475,7 @@ function StatusLine({
         data-script-prep-status={prep.report?.phase ?? 'checking'}
         onClick={() => {
           useProjectPreparationStore.setState({ focus: prep.key })
-          useUiStore.getState().setPreparationOpen(true)
+          useUiStore.getState().setGuideCard('card')
         }}
         className="max-w-full truncate rounded-xs text-ink-2 underline-offset-2 outline-none hover:text-ink hover:underline focus-visible:focus-ring"
       >
@@ -489,7 +503,7 @@ function StatusLine({
     title = text
     // 门上的那句是「还差一个决定」，不是错误：不用危险色
     body = <span className={isGatePhase(phase) ? 'text-ink-2' : 'text-danger'}>{text}</span>
-  } else if (entry.registered) {
+  } else if (isLinked(entry)) {
     body = sc('linkedCount', { count: stems.length })
   } else if (entry.reason === 'dynamic_stems' || entry.reason === 'unparseable') {
     body = sc('runtimeNamesNote')

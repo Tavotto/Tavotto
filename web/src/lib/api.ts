@@ -4450,6 +4450,8 @@ export type ScriptReason =
 export interface ScriptInventoryEntry {
   script: string
   registered: boolean
+  /** 登记了且真有可编辑的图（与导入即扫描同一判据 `probe.linked_scripts`，T13b）；老后端没有 */
+  linked?: boolean
   static_stems: string[]
   entry_candidates: string[]
   reason: ScriptReason

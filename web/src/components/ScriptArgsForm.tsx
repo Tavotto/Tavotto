@@ -72,10 +72,16 @@ export function ScriptArgsForm({
   script,
   schema,
   disabled,
+  fields = 'all',
 }: {
   script: string
   schema: ScriptArgsSchema
   disabled?: boolean
+  /**
+   * 摆哪些字段（T13b 引导卡）：`required` 只摆必填项（卡片主区）、`optional` 只摆其余的（「其他 N 个参数」折叠）。
+   * 分开摆时识别状态、缺哪些、认不出的 token 这几行由卡片自己的标题 / 「原样参数」折叠说，这里不重复
+   */
+  fields?: 'all' | 'required' | 'optional'
 }) {
   useTranslation('dialogs')
   const draft = useScriptArgvStore((s) => s.drafts[script])
@@ -101,29 +107,37 @@ export function ScriptArgsForm({
   }
 
   const reasons = schema.reasons.map((r) => REASON_TEXT[r]?.()).filter(Boolean)
-  const shown = schema.arguments.filter((a) => !a.hidden)
+  const visible = schema.arguments.filter((a) => !a.hidden)
+  const shown =
+    fields === 'all' ? visible : visible.filter((a) => (fields === 'required') === (a.required === true))
+  const full = fields === 'all'
 
   return (
-    <div className="flex flex-col gap-1.5" data-testid={`argv-form-${script}`}>
-      <p className="type-meta" data-testid="argv-form-status">
-        {schema.status === 'complete'
-          ? rf('statusComplete', { n: shown.length })
-          : rf('statusPartial', { n: shown.length })}
-        {reasons.length > 0 ? ` ${reasons.join(' ')}` : ''}
-      </p>
-      {!schema.form_enabled ? (
+    <div
+      className="flex flex-col gap-1.5"
+      data-testid={full ? `argv-form-${script}` : `argv-form-${fields}-${script}`}
+    >
+      {full ? (
+        <p className="type-meta" data-testid="argv-form-status">
+          {schema.status === 'complete'
+            ? rf('statusComplete', { n: shown.length })
+            : rf('statusPartial', { n: shown.length })}
+          {reasons.length > 0 ? ` ${reasons.join(' ')}` : ''}
+        </p>
+      ) : null}
+      {full && !schema.form_enabled ? (
         <p className="type-meta" data-testid="argv-form-readonly">
           {rf('readonly')}
         </p>
       ) : null}
-      {missing.size > 0 ? (
+      {full && missing.size > 0 ? (
         <p className="type-meta text-ink" data-testid="argv-form-missing">
           {rf('missing', {
             names: [...missing].map((id) => label(byId.get(id)!)).join(', '),
           })}
         </p>
       ) : null}
-      {problems.map((g) => (
+      {(fields === 'optional' ? [] : problems).map((g) => (
         <p key={g.id} className="type-meta text-ink" data-testid={`argv-form-group-${g.problem}`}>
           {g.problem === 'conflict'
             ? rf('groupConflict', { names: g.members.map((m) => label(byId.get(m)!)).join(', ') })
@@ -255,7 +269,7 @@ export function ScriptArgsForm({
           )
         })}
       </ul>
-      {view.unattributed.length > 0 ? (
+      {full && view.unattributed.length > 0 ? (
         <p className="type-meta" data-testid="argv-form-other">
           {rf('other', {
             tokens: view.unattributed.map((j) => (sensitive ? '••••' : JSON.stringify(tokens[j]))).join(' '),

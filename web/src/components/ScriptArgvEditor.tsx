@@ -28,7 +28,7 @@ const PASTE_ERROR: Record<PasteError, () => string> = {
 }
 
 /** 展开时取一次静态 schema（后端只读源码）；取不到就只有参数列表——表单是便利，不是门槛。 */
-function useScriptSchema(script: string) {
+export function useScriptSchema(script: string) {
   const [schema, setSchema] = useState<ScriptArgsSchema | null>(null)
   const seq = useRef(0)
   const load = () => {
@@ -45,7 +45,7 @@ function useScriptSchema(script: string) {
   return { schema, load }
 }
 
-function PasteCommand({ script, disabled }: { script: string; disabled?: boolean }) {
+export function PasteCommand({ script, disabled }: { script: string; disabled?: boolean }) {
   const [text, setText] = useState('')
   const [error, setError] = useState<PasteError | null>(null)
   const apply = () => {
@@ -96,10 +96,7 @@ function PasteCommand({ script, disabled }: { script: string; disabled?: boolean
  */
 export function ScriptArgvEditor({ script, disabled }: { script: string; disabled?: boolean }) {
   useTranslation('dialogs')
-  const draft = useScriptArgvStore((s) => s.drafts[script])
-  const tokens = draft?.tokens ?? []
-  const sensitive = draft?.sensitive ?? false
-  const st = useScriptArgvStore.getState
+  const tokens = useScriptArgvStore((s) => s.drafts[script]?.tokens ?? EMPTY)
   const { schema, load } = useScriptSchema(script)
   const hasForm = schema !== null && schema.arguments.some((a) => !a.hidden)
   return (
@@ -119,62 +116,76 @@ export function ScriptArgvEditor({ script, disabled }: { script: string; disable
       <div className="flex flex-col gap-1 py-1">
         {hasForm ? <ScriptArgsForm script={script} schema={schema} disabled={disabled} /> : null}
         <p className="type-meta">{hasForm ? ra('listHint') : ra('hint')}</p>
-        <ol className="flex flex-col gap-1">
-          {tokens.map((token, i) => (
-            // 顺序就是语义，重复的 token 也各占一项：用位置当 key
-            <li key={i} className="flex items-center gap-1">
-              <TextInput
-                value={token}
-                disabled={disabled}
-                onChange={(e) => st().setToken(script, i, e.target.value)}
-                aria-label={ra('tokenAria', { script, n: i + 1 })}
-                className="h-7 min-w-0 flex-1 font-mono"
-                type={sensitive ? 'password' : 'text'}
-                spellCheck={false}
-                autoComplete="off"
-              />
-              <IconButton
-                iconSize="sm"
-                variant="ghost"
-                label={ra('upAria', { script, n: i + 1 })}
-                disabled={disabled || i === 0}
-                onClick={() => st().moveToken(script, i, -1)}
-              >
-                <ArrowUp size={ICON_SIZE.sm} />
-              </IconButton>
-              <IconButton
-                iconSize="sm"
-                variant="ghost"
-                label={ra('removeAria', { script, n: i + 1 })}
-                disabled={disabled}
-                onClick={() => st().removeToken(script, i)}
-              >
-                <X size={ICON_SIZE.sm} />
-              </IconButton>
-            </li>
-          ))}
-        </ol>
-        <div className="flex items-center gap-3">
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={disabled}
-            onClick={() => st().addToken(script)}
-          >
-            <Plus size={ICON_SIZE.sm} />
-            {ra('add')}
-          </Button>
-          <label className="type-meta flex items-center gap-1.5">
-            <Checkbox
-              checked={sensitive}
-              disabled={disabled || tokens.length === 0}
-              onChange={(e) => st().setSensitive(script, e.target.checked)}
-            />
-            {ra('sensitive')}
-          </label>
-        </div>
+        <ArgvTokens script={script} disabled={disabled} />
         <PasteCommand script={script} disabled={disabled} />
       </div>
     </Details>
+  )
+}
+
+const EMPTY: string[] = []
+
+/**
+ * 原样的 token 列表：每个参数一个输入框，可增、删、上移，允许空项；含密码 / 令牌的勾「敏感」（只留在内存里）。
+ * 参数编辑器与准备引导卡的「原样参数 / 粘贴命令」折叠共用这一份。
+ */
+export function ArgvTokens({ script, disabled }: { script: string; disabled?: boolean }) {
+  useTranslation('dialogs')
+  const draft = useScriptArgvStore((s) => s.drafts[script])
+  const tokens = draft?.tokens ?? EMPTY
+  const sensitive = draft?.sensitive ?? false
+  const st = useScriptArgvStore.getState
+  return (
+    <>
+      <ol className="flex flex-col gap-1">
+        {tokens.map((token, i) => (
+          // 顺序就是语义，重复的 token 也各占一项：用位置当 key
+          <li key={i} className="flex items-center gap-1">
+            <TextInput
+              value={token}
+              disabled={disabled}
+              onChange={(e) => st().setToken(script, i, e.target.value)}
+              aria-label={ra('tokenAria', { script, n: i + 1 })}
+              className="h-7 min-w-0 flex-1 font-mono"
+              type={sensitive ? 'password' : 'text'}
+              spellCheck={false}
+              autoComplete="off"
+            />
+            <IconButton
+              iconSize="sm"
+              variant="ghost"
+              label={ra('upAria', { script, n: i + 1 })}
+              disabled={disabled || i === 0}
+              onClick={() => st().moveToken(script, i, -1)}
+            >
+              <ArrowUp size={ICON_SIZE.sm} />
+            </IconButton>
+            <IconButton
+              iconSize="sm"
+              variant="ghost"
+              label={ra('removeAria', { script, n: i + 1 })}
+              disabled={disabled}
+              onClick={() => st().removeToken(script, i)}
+            >
+              <X size={ICON_SIZE.sm} />
+            </IconButton>
+          </li>
+        ))}
+      </ol>
+      <div className="flex items-center gap-3">
+        <Button variant="ghost" size="sm" disabled={disabled} onClick={() => st().addToken(script)}>
+          <Plus size={ICON_SIZE.sm} />
+          {ra('add')}
+        </Button>
+        <label className="type-meta flex items-center gap-1.5">
+          <Checkbox
+            checked={sensitive}
+            disabled={disabled || tokens.length === 0}
+            onChange={(e) => st().setSensitive(script, e.target.checked)}
+          />
+          {ra('sensitive')}
+        </label>
+      </div>
+    </>
   )
 }

@@ -127,7 +127,10 @@ const COMMANDS: Command[] = [
   {
     id: 'project-scan',
     available: () => projectOpen() && useProjectScanStore.getState().scan !== null,
-    run: () => useProjectScanStore.getState().reopen(),
+    run: () => {
+      useProjectScanStore.getState().reopen()
+      useUiStore.getState().setGuideCard('card')
+    },
   },
   // 教程三条：状态判据只有 lib/onboarding/tutorial 一份，这里只挑显示哪条
   {

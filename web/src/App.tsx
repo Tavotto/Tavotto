@@ -23,8 +23,7 @@ import { ShortcutHelp } from '@/components/ShortcutHelp'
 import { StyleDialog } from '@/components/StyleDialog'
 import { DocumentBanner } from '@/components/DocumentBanner'
 import { ProjectReadinessBanner } from '@/components/ProjectReadinessBanner'
-import { ProjectScanBar } from '@/components/ProjectScanBar'
-import { PreparationPanel } from '@/components/PreparationPanel'
+import { PreparationCard } from '@/components/PreparationCard'
 import { VersionDrawer } from '@/components/VersionDialog'
 import { NamedNodeQuickBox } from '@/components/NamedNodeQuickBox'
 import { LeftPanel } from '@/components/left/LeftPanel'
@@ -248,9 +247,6 @@ function Workspace() {
         {outdated && <UpdateBanner />}
         <DocumentBanner />
         <ProjectReadinessBanner />
-        <ProjectScanBar />
-        {/* 准备面板（T09）：所有「准备并打开」入口共用的一个可恢复展示面；非模态，关掉只改呈现 */}
-        <PreparationPanel />
         <div className="relative flex min-h-0 flex-1">
           <LeftRail />
           {/* 窄屏时抽屉盖在画布上（绝对定位在轨道右侧），画布宽度不被侵占 */}
@@ -276,6 +272,9 @@ function Workspace() {
                 <CanvasHud />
                 <NativeSessionCards />
                 <NotificationRail />
+                {/* 准备引导卡（T13b）：所有「准备并打开」入口共用的一张浮动卡，画布右下、浮动工具条上方；
+                    不占布局（页面不下移），缩成角标 / 收起只改呈现 */}
+                <PreparationCard />
                 <PerfProbeHud />
               </div>
             </div>

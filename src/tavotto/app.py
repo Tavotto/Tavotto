@@ -3400,6 +3400,15 @@ def api_registry():
         candidates.append(
             {"script": script, **info, "new_stems": fresh, "registered": script in reg}
         )
+    inventory = engine_probe.script_inventory(ctx.path, registered=set(reg))
+    # 「已关联」与导入即扫描同一判据（`probe.linked_scripts`）：只在注册表里、一张能编辑的图都没有的不算（T13b）
+    linked = engine_probe.linked_scripts(
+        ctx.path,
+        {script: list(c["stems"]) for script, c in reg.items()},
+        {p.stem for p, _kind in engine_refresh.iter_assets(ctx.path)},
+    )
+    for item in inventory:
+        item["linked"] = item["script"] in linked
     return jsonify(
         {
             "source": ctx.registry.source(),
@@ -3409,7 +3418,7 @@ def api_registry():
             # 项目内**全部**合理 .py（含 show-only 与基础设施脚本，
             # 各带稳定 reason code）：普通脚本不因静态分析解不出
             # 产物就从产品里消失，任意一条都可试运行。
-            "all_scripts": engine_probe.script_inventory(ctx.path, registered=set(reg)),
+            "all_scripts": inventory,
         }
     )
 

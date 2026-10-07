@@ -218,6 +218,20 @@ describe('ScriptInputDialog', () => {
     expect(mockAnswer).not.toHaveBeenCalled()
   })
 
+  it.each([
+    ['context_changed', '这次的输出和上次不一样'],
+    ['config_changed', '这次的参数和上次不一样'],
+    ['legacy_answer', '这台电脑上没有当时的记录'],
+  ] as const)('重新确认的原因分开说（T13b）：%s', (recheck, reason) => {
+    useScriptInputStore.getState().onRequested(req({ suggestion: '2', recheck }))
+    render()
+    const text = document.body.querySelector('[data-script-input-suggestion]')!.textContent!
+    expect(text).toContain('「2」')
+    expect(text).toContain(reason)
+    // 换了机器（没有本机记录）不能说成「输出变了」——那是误导
+    if (recheck === 'legacy_answer') expect(text).not.toContain('不一样')
+  })
+
   it('口令永远不显示建议', () => {
     useScriptInputStore.getState().onRequested(
       req({ input_kind: 'getpass', secret: true, suggestion: 'leak' }),

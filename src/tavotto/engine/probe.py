@@ -599,6 +599,20 @@ def was_captured(figures_dir: str | Path, script: str, stem: str) -> bool:
     return any(runtimeasset.load_metadata(figures_dir, asset_id) is not None for asset_id in ids)
 
 
+def linked_scripts(
+    figures_dir: str | Path, stems_by_script: dict[str, list[str]], asset_stems: set[str]
+) -> set[str]:
+    """登记了、**而且**至少一张登记的图此刻真有东西可编辑的脚本：项目里有同名的图文件（`asset_stems`），或这张图被某次
+    执行捕获过（`was_captured`）。「已关联」只有这一份判据：导入即扫描（`projscan`）与素材库脚本清单（`/api/registry`
+    的 `all_scripts[].linked`）都用它——打开项目时静态扫描先登记的字面量图名只是猜测，脚本一次没跑过时不算已关联
+    （T11 修了扫描，T13b 发现素材库脚本行是第二个消费者）。只读：文件名比对 + cache 元数据，不执行、不起解释器。"""
+    return {
+        script
+        for script, stems in stems_by_script.items()
+        if any(stem in asset_stems or was_captured(figures_dir, script, stem) for stem in stems)
+    }
+
+
 # ---------------------------------------------------------------------------
 # 任务绑定诊断（T04）
 # ---------------------------------------------------------------------------

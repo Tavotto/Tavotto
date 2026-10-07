@@ -131,8 +131,10 @@
   多个就让用户选（`choose_target`），不同作用域（最近的依赖声明目录）的 requirements 不混装。
   **「已连接」= 登记了且真有可编辑的图（T11）**：`projscan._linked_scripts`——登记的图名里至少一个在项目里有同名图文件，或被某次执行
   捕获过（`probe.was_captured`，与 `unlinked_stems` 同一判据）；目标多一个 `linked` 字段。打开项目时静态扫描先写进注册表的字面量图名
-  不算（脚本一次没跑、什么都打不开）——否则只有脚本的项目报 `already_connected`（「图可以直接编辑」）、检查条的首跑入口被藏起来。
-  只读：文件名比对 + 数据目录 cache 元数据；`linked` 集合进 `evidence_revision`。
+  不算（脚本一次没跑、什么都打不开）——否则只有脚本的项目报 `already_connected`（「图可以直接编辑」）、首跑入口被藏起来。
+  只读：文件名比对 + 数据目录 cache 元数据；`linked` 集合进 `evidence_revision`。**判据唯一出处 `probe.linked_scripts`**，第二个消费者是
+  素材库脚本清单：`GET /api/registry` 的 `all_scripts[].linked`（T13b：修前前端只看 `registered`，从没运行的脚本显示「已关联 1 张图」）；
+  看护 `tests/test_script_probe.py::test_all_scripts_linked_uses_the_scan_predicate`。
 - **报告**：`phase` 是准备会话词汇的子集（`scanning` / `awaiting_confirmation` / `awaiting_configuration` / `completed` /
   `action_required` / `cancelled`，子集关系由测试钉着），`outcome` 单列事实；`checks` 里环境与依赖恒为 `unknown`
   （`environment.verified` 恒 False，不给推荐），依赖只说声明文件与条数（不带原文行）。`evidence_revision` 是内容证据的

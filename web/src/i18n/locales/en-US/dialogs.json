@@ -1668,7 +1668,7 @@
     "noPrompt": "The script is reading standard input without a prompt.",
     "answerLabel": "Your answer",
     "getpassNote": "The script reads this with getpass: what you type is masked, and Tavotto does not save or log it — you will be asked again next time it is needed.",
-    "suggestion": "Last time you answered “{{answer}}”, but the script’s output or an earlier answer is different this time. Check against the output above before answering.",
+    "suggestion": "Last time you answered “{{answer}}”, but the output is different this time. Check before answering.",
     "rememberNote": "Answers are remembered for this project and reused on the next run.",
     "submit": "Submit",
     "eof": "End input",
@@ -1688,7 +1688,9 @@
     "manageSave": "Save and rerun",
     "manageForget": "Remove",
     "manageForgetAria": "Remove the answer to question {{index}}",
-    "manageSaved": "Saved; rerunning {{script}}"
+    "manageSaved": "Saved; rerunning {{script}}",
+    "suggestionArgs": "Last time you answered “{{answer}}”, but the arguments are different this time. Check before answering.",
+    "suggestionNoRecord": "Last time you answered “{{answer}}”. This computer has no record of that run, so check before answering."
   },
   "taskDiagnostic": {
     "busy": "Preparing…",

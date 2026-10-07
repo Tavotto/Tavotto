@@ -30,6 +30,8 @@ export interface LayoutConflict {
  * 导出 → 设置 → 论文样式是一条前进 / 返回的小流程，不是三层叠着的浮层。
  */
 export type MainDialog = 'export' | 'settings' | 'styles'
+/** 准备引导卡的呈现（T13b）：展开 / 角标 / 收起 */
+export type GuideCardMode = 'card' | 'pill' | 'closed'
 
 /**
  * 这个主对话框此刻是不是被栈里更靠上的那个盖着。**判据只看栈**：直接
@@ -334,16 +336,12 @@ interface UiState extends Persisted {
    */
   registryOpen: boolean
   /**
-   * 「项目检查」条的详情是否展开（T02，导入即扫描）。**只是呈现**：业务事实在 `projectScanStore`
-   * 里读后端的扫描快照；关掉 / 收起它不取消扫描（取消扫描是 `projectScanStore.cancel`，另一个动作）。
-   * 这是它**唯一**的开关；不进持久化（每次打开项目从收起开始）。
+   * 准备引导卡（T13b，画布右下的浮动卡）此刻怎么呈现：`card` 展开、`pill` 缩成角标、`closed` 收起。**只是呈现**：
+   * 扫描事实在 `projectScanStore`，会话、订阅与报告在 `projectPreparationStore`；缩成角标 / 收起都不取消任何后台工作
+   * （取消是会话的 `cancel` 动作）。收起时等作答的 input 由原对话框接着展示；缩成角标时脚本一发问卡就自动展开。
+   * 「每个项目自动弹一次」的标记在 `lib/guideCardSeen.ts`（本机，按项目）。这是它**唯一**的开关；不进持久化。
    */
-  scanPanelOpen: boolean
-  /**
-   * 准备面板（T09，ADR 0116）是否展开。**只是呈现**：会话、订阅与报告在 `projectPreparationStore`；关掉它不取消任何
-   * 后台工作（取消是会话的 `cancel` 动作），等作答的 input 由原对话框接着展示。不进持久化。
-   */
-  preparationOpen: boolean
+  guideCard: GuideCardMode
   /**
    * 「渲染环境」对话框：`EngineEnvironmentCard` 的独立出口。脚本区「可能需要原环境」
    * 那一组的「选择渲染环境」直接开它，不把用户扔进设置页去找那张卡（卡在设置里
@@ -432,8 +430,7 @@ interface UiState extends Persisted {
   /** `presetId`：打开时预选哪一条已存样式（设置页「应用到当前图」带过来的） */
   setStylesOpen: (v: boolean, opts?: { presetId?: string | null }) => void
   setRegistryOpen: (v: boolean) => void
-  setScanPanelOpen: (v: boolean) => void
-  setPreparationOpen: (v: boolean) => void
+  setGuideCard: (v: GuideCardMode) => void
   setEngineEnvOpen: (v: boolean) => void
   setShortcutHelpOpen: (v: boolean) => void
   /**
@@ -521,8 +518,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   stylesPresetId: null,
   dialogStack: [],
   registryOpen: false,
-  scanPanelOpen: false,
-  preparationOpen: false,
+  guideCard: 'closed',
   engineEnvOpen: false,
   shortcutHelpOpen: false,
   settingsOpen: false,
@@ -764,8 +760,7 @@ export const useUiStore = create<UiState>((set, get) => ({
         : popDialog(s.dialogStack, 'styles'),
     })),
   setRegistryOpen: (registryOpen) => set({ registryOpen }),
-  setScanPanelOpen: (scanPanelOpen) => set({ scanPanelOpen }),
-  setPreparationOpen: (preparationOpen) => set({ preparationOpen }),
+  setGuideCard: (guideCard) => set({ guideCard }),
   setEngineEnvOpen: (engineEnvOpen) => set({ engineEnvOpen }),
   setShortcutHelpOpen: (shortcutHelpOpen) => set({ shortcutHelpOpen }),
   setSettingsOpen: (settingsOpen, settingsSection = undefined) =>

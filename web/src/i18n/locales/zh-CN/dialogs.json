@@ -1656,7 +1656,7 @@
     "noPrompt": "脚本在读取标准输入，没有给提示。",
     "answerLabel": "你的回答",
     "getpassNote": "这一项由 getpass 读取：输入会被遮住，Tavotto 不保存它、不写进日志，下次需要时会再问。",
-    "suggestion": "上次的回答是「{{answer}}」，但这次脚本的输出或前面的回答与上次不同，请对照上面的内容确认后再答。",
+    "suggestion": "上次答的是「{{answer}}」，这次的输出和上次不一样，确认后再答。",
     "rememberNote": "答案会按项目记住，下次运行自动使用。",
     "submit": "提交",
     "eof": "结束输入",
@@ -1676,7 +1676,9 @@
     "manageSave": "保存并重新运行",
     "manageForget": "删除",
     "manageForgetAria": "删除第 {{index}} 个问题的答案",
-    "manageSaved": "已保存，正在重新运行 {{script}}"
+    "manageSaved": "已保存，正在重新运行 {{script}}",
+    "suggestionArgs": "上次答的是「{{answer}}」，这次的参数和上次不一样，确认后再答。",
+    "suggestionNoRecord": "上次答的是「{{answer}}」，这台电脑上没有当时的记录，确认后再答。"
   },
   "taskDiagnostic": {
     "busy": "正在生成…",
