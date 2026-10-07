@@ -5,6 +5,7 @@ import {
   applyEdit,
   groupProblems,
   missingRequired,
+  negatedFlags,
   readTokens,
   type EditError,
   type FormEdit,
@@ -156,7 +157,7 @@ export function ScriptArgsForm({
                   items={[
                     { value: 'default', label: rf('useDefault') },
                     { value: 'on', label: rf('on') },
-                    { value: 'off', label: rf('off') },
+                    ...(negatedFlags(arg).length > 0 ? [{ value: 'off' as const, label: rf('off') }] : []),
                   ]}
                 />
               ) : arg.arity === 0 ? (

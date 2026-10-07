@@ -113,7 +113,9 @@ def test_a_cancel_that_arrives_before_the_session_is_taken_still_closes_only_its
     svc = preparation.PreparationService()
     killed: list = []
     monkeypatch.setattr(
-        engine_pool, "force_cancel", lambda script, root, **kw: killed.append(kw["expected_worker"])
+        engine_pool,
+        "force_cancel",
+        lambda script, root, **kw: killed.append(kw["expected_worker"]) or True,
     )
 
     def cancelled_before_taking() -> str:
@@ -209,3 +211,56 @@ def test_an_attempt_without_figures_reports_no_captured_figures(
     final = _terminal(client, sid, timeout=10.0)
     assert final["outcome"]["kind"] == "execution_finished_no_figure"
     assert final["captured"] == []  # 执行完成 ≠ 首图成功：没有图就不给「进入编辑」的东西
+
+
+class _KillableWorker(_FakeWorker):
+    force_killed = False
+
+    def force_kill(self):
+        self.force_killed = True
+
+
+def test_a_cancel_force_kills_an_owned_worker_that_already_left_the_pool(
+    tmp_path, fake_pool, monkeypatch
+):
+    """本计划新建的会话在 Stop 之前已被 watcher / invalidate 摘出池子：`force_cancel(expected_worker)` 回 False
+    （池里没有它），池侧只会优雅关闭、排在 build 后面——取消必须自己 `force_kill()` 这一条，否则脚本继续跑。"""
+    root = _project(tmp_path, "p")
+    svc = preparation.PreparationService()
+    monkeypatch.setattr(engine_pool, "force_cancel", lambda script, root, **kw: False)
+    plan = preparation.plan_for(
+        project_id="pj",
+        project_root=str(root),
+        asset_id="fig.pdf",
+        stem="fig",
+        script="fig.py",
+        entry="__main__",
+        original_artifact="fig.pdf",
+    )
+    svc.register(plan)
+    entry = svc._entry(plan.plan_id)
+    entry.result.status = preparation.STATUS_RUNNING
+    entry.thread = threading.current_thread()
+    mine = _KillableWorker(root)
+    svc.note_owner(plan.plan_id, mine, True)
+    assert svc.cancel(plan.plan_id, "pj")["accepted"] is True
+    assert mine.force_killed, "已离池的自有会话没有被硬杀"
+
+    # 取消早于取到会话、取到那一刻会话已离池：同一条规则
+    plan2 = preparation.plan_for(
+        project_id="pj",
+        project_root=str(root),
+        asset_id="fig.pdf",
+        stem="fig",
+        script="fig.py",
+        entry="__main__",
+        original_artifact="fig.pdf",
+    )
+    svc.register(plan2)
+    e2 = svc._entry(plan2.plan_id)
+    e2.result.status = preparation.STATUS_RUNNING
+    e2.thread = threading.current_thread()
+    assert svc.cancel(plan2.plan_id, "pj")["accepted"] is True
+    late = _KillableWorker(root)
+    svc.note_owner(plan2.plan_id, late, True)
+    assert late.force_killed

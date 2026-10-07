@@ -69,6 +69,16 @@ afterEach(() => {
 })
 
 describe('ScriptArgsForm', () => {
+  it('short-only BooleanOptional offers only default and on, never an impossible off token', async () => {
+    await open(schemas.short_options)
+    expect([...field('f').querySelectorAll('[data-value]')].map((el) => el.getAttribute('data-value')))
+      .toEqual(['default', 'on'])
+    act(() => field('f').querySelector<HTMLButtonElement>('[data-value="on"]')!.click())
+    expect(tokens()).toEqual(['-f'])
+    act(() => field('f').querySelector<HTMLButtonElement>('[data-value="default"]')!.click())
+    expect(tokens()).toEqual([])
+  })
+
   it('A01：六个必填逐项填写 → token 等于向量（后端已用真 argparse 验过这串 token）', async () => {
     await open(schemas.fft6)
     expect(fetchScriptArguments).toHaveBeenCalledWith('plot.py')

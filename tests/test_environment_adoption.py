@@ -175,6 +175,8 @@ def test_a_missing_dependency_lists_the_project_venv_instead_of_switching(tmp_pa
     assert projectenv.remembered_record(root) is None
     # 体检过了（用户自己的运行触发的有界检查），但没有采用
     assert engine_pool.same_python(outcome["recommended"]["python"], venv_python)
+    assert outcome["recommended"]["id"] == userenvs.env_id(venv_python)
+    assert outcome["recommended"]["generation"] == projectenv.environment_generation(venv_python)
 
 
 # ---------------------------------------------------------------------------
@@ -849,3 +851,101 @@ def test_the_environment_generation_ignores_permission_bits_but_sees_a_rebuild(t
     python = build("second")
     assert projectenv.environment_generation(python) not in ("", first)
     assert projectenv.environment_generation(str(tmp_path / "nowhere" / "python")) == ""
+
+
+@needs_worker
+def test_missing_dependency_recommendation_keeps_its_generation_through_http_projection(
+    client, tmp_path, monkeypatch
+):
+    from tavotto import app as m
+
+    root = tmp_path / "missing-dependency-adoption"
+    root.mkdir()
+    (root / "figure.py").write_text("import matplotlib\n", encoding="utf-8")
+    python = real_venv(root, ".venv", python=WORKER_PY)
+    pj = _open(client, root)
+    outcome = engine_pool.try_project_env(str(root), "figure.py", "matplotlib")
+    assert outcome["code"] == projectenv.ERROR_CONFIRMATION_REQUIRED
+    error = engine_pool.WorkerError("missing", code="missing_dependency", module="matplotlib")
+    error.project_env = outcome
+    monkeypatch.setattr(m, "_dependency_repair_offer", lambda *args: None)
+    with m.app.test_request_context(query_string={"pj": pj}):
+        payload = m._worker_error_payload(error)
+    shown = payload["project_env"]["recommended"]
+    assert shown == {
+        "venv": ".venv",
+        "id": userenvs.env_id(python),
+        "generation": projectenv.environment_generation(python),
+    }
+    rebuild_venv(root, ".venv", python=WORKER_PY)
+    response = client.patch(
+        "/api/engine/environment",
+        json={
+            "scope": "project",
+            "candidate": shown["id"],
+            "expected_generation": shown["generation"],
+        },
+        query_string={"pj": pj},
+    )
+    assert response.status_code == 409
+    assert response.get_json()["code"] == "environment_changed"
+    assert projectenv.remembered_record(root) is None
+
+
+@needs_worker
+def test_dependency_repair_offer_binds_the_recommended_target_to_the_displayed_generation(
+    client, tmp_path
+):
+    """#814 评审（PRRT_kwDOT51-YM6pwk-Q）的第二个消费者：依赖修复卡的「改用」目标取自同一份 recommended。
+    它必须带着看到那一刻的候选 id + 环境代，而且这一对交给采用端点时，环境被重建 → 409、什么都不记。"""
+    root = tmp_path / "repair-offer-binding"
+    root.mkdir()
+    (root / "figure.py").write_text("import matplotlib\n", encoding="utf-8")
+    python = real_venv(root, ".venv", python=WORKER_PY)
+    pj = _open(client, root)
+    outcome = engine_pool.try_project_env(str(root), "figure.py", "matplotlib")
+    assert outcome["code"] == projectenv.ERROR_CONFIRMATION_REQUIRED
+
+    offered = deprepair.offer(str(root), "figure.py", "matplotlib", outcome)
+    adoptable = [t for t in offered["targets"] if t["kind"] == deprepair.TARGET_SYSTEM]
+    assert len(adoptable) == 1
+    shown = adoptable[0]["candidate"]
+    assert shown == {
+        "id": userenvs.env_id(python),
+        "generation": projectenv.environment_generation(python),
+    }
+
+    rebuild_venv(root, ".venv", python=WORKER_PY)
+    response = client.patch(
+        "/api/engine/environment",
+        json={
+            "scope": "project",
+            "candidate": shown["id"],
+            "expected_generation": shown["generation"],
+            "module": "matplotlib",
+        },
+        query_string={"pj": pj},
+    )
+    assert response.status_code == 409
+    assert response.get_json()["code"] == "environment_changed"
+    assert projectenv.remembered_record(root) is None
+
+
+def test_dependency_repair_offer_does_not_list_an_unbound_recommendation(tmp_path):
+    """旧响应 / 缺 id 或环境代的建议不能退回按路径采用：目标不列，用户走手填 / 安装那几条路。"""
+    root = tmp_path / "repair-offer-unbound"
+    root.mkdir()
+    (root / "figure.py").write_text("import matplotlib\n", encoding="utf-8")
+    base = {
+        "ok": False,
+        "code": projectenv.ERROR_CONFIRMATION_REQUIRED,
+        "recommended": {
+            "python": str(root / ".venv" / "bin" / "python"),
+            "venv": str(root / ".venv"),
+            "health": {"python_version": "3.12.0", "support": "verified"},
+        },
+    }
+    for missing in ({}, {"id": "env-x"}, {"generation": "gen-x"}):
+        detail = {**base, "recommended": {**base["recommended"], **missing}}
+        offered = deprepair.offer(str(root), "figure.py", "matplotlib", detail)
+        assert [t for t in offered["targets"] if t["kind"] == deprepair.TARGET_SYSTEM] == [], missing

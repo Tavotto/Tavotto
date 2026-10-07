@@ -415,6 +415,12 @@ def _probe(
             if not entry_retry_allowed(exc):
                 break  # 与入口无关的失败：再换入口只会把顶层代码重跑一遍
             continue
+        if cancelled():
+            # 共享会话的等待者被取消：别人的 build 照常跑完（不杀它），但本次试运行不得再当成功返回——
+            # 否则 probe_and_register 会替换注册表 stem，可能摘掉别的参数建出来的图。
+            LOG.info("探测完成但已被取消 %s [entry=%s]", script, entry)
+            facts["facts"] = getattr(_worker, "last_input_facts", None)
+            return {**empty, "tried": tried, "error": _cancel_err()}
         stems = sorted(resp.get("stems") or {})
         facts["facts"] = getattr(_worker, "last_input_facts", None)
         if stems:
@@ -582,11 +588,11 @@ OUTCOME_CANCELLED = "cancelled"
 
 
 def outcome_of(result: dict) -> str:
-    if result.get("registered"):
-        return OUTCOME_READY
-    if ((result.get("error") or {}).get("code")) == ERROR_CANCELLED:
-        return OUTCOME_CANCELLED
-    return OUTCOME_ERROR
+    # 已登记后物化 / 默认配置 / 刷新仍可能失败，成功登记不能盖掉这次终局错误。
+    error = result.get("error")
+    if error:
+        return OUTCOME_CANCELLED if error.get("code") == ERROR_CANCELLED else OUTCOME_ERROR
+    return OUTCOME_READY if result.get("registered") else OUTCOME_ERROR
 
 
 def diagnostic_projection(

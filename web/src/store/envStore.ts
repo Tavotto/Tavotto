@@ -67,7 +67,7 @@ interface EnvState {
     includeLoginShell?: boolean
   }) => Promise<string | null>
   cancelEnvironmentCheck: () => Promise<void>
-  adoptCandidate: (candidate: EnvCandidate, script?: string) => Promise<string | null>
+  adoptCandidate: (candidate: Pick<EnvCandidate, 'id' | 'generation'>, script?: string) => Promise<string | null>
   /**
    * 切当前项目 safe worker 的工作目录模式（ADR 0047）。开到 `project` 要先
    * 确认一次——文案与机制逐条一致：相对路径读得到、相对路径写的文件落进项目、

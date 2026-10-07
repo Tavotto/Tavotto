@@ -31,6 +31,7 @@ import { mmToWorld, useViewportStore } from '@/store/viewportStore'
 import { seedExactRender } from '@/test/renderFixtures'
 import { emptyProject, type PanelObject } from '@/types/document'
 import { PanelView } from './PanelView'
+import { ObjectView } from './ObjectView'
 import { useQuickEdit } from './quickEditStore'
 import {
   canCycleOverlapSelection,
@@ -189,16 +190,16 @@ let container: HTMLDivElement
 
 const LAYOUT = { width: mmToWorld(100), height: mmToWorld(80) }
 
-function Harness() {
+function Harness({ outer = false }: { outer?: boolean }) {
   const p = useDocumentStore((s) => s.doc.objects.find((o) => o.id === 'p1')) as PanelObject
-  return <PanelView obj={p} />
+  return outer ? <ObjectView obj={p} /> : <PanelView obj={p} />
 }
 
 const hitLayer = () => container.querySelector('[data-authority="ready"]') as HTMLDivElement
 
-async function mount() {
+async function mount(outer = false) {
   await act(async () => {
-    root.render(<Harness />)
+    root.render(<Harness outer={outer} />)
   })
   const layer = hitLayer()
   layer.getBoundingClientRect = () =>
@@ -427,6 +428,38 @@ describe('⌥ 点击：画布上换得到孪生轴，并且说得出换到了谁
       )
     })
     expect(useQuickEdit.getState().target).toMatchObject({ gid: 'axes_1.texts_0' })
+  })
+
+  it.each([false, true])('权威同步中双击已编辑的面板不重进编辑、不清掉孪生轴选区（alt=%s）', async (altKey) => {
+    await mount(true)
+    await press(OVERLAP, { altKey: true })
+    await press(OVERLAP, { altKey: true })
+    expect(selected()).toEqual(['axes_2'])
+    await act(async () => {
+      useRenderStore.getState().patch(renderKeyOf(livePanel()), { stale: true })
+    })
+    expect(container.querySelector('[data-authority="syncing"]')).not.toBeNull()
+    expect(hitLayer()).toBeNull()
+    // 真浏览器里 syncing 命中层是 pointer-events:none，双击落到外层 ObjectView。
+    // jsdom 不做 CSS 命中，所以直接分派给实际的后备目标；仅挂 PanelView 看不到重进编辑。
+    await act(async () => {
+      container.querySelector('[data-object-id="p1"]')!.dispatchEvent(
+        new MouseEvent('dblclick', { bubbles: true, cancelable: true, altKey, ...clientAt(...OVERLAP) }),
+      )
+    })
+    expect(useUiStore.getState().elementPanelId).toBe('p1')
+    expect(selected()).toEqual(['axes_2'])
+    expect(useQuickEdit.getState().target).toBeNull()
+    expect(livePanel().overrides).toEqual([])
+    expect(useDocumentStore.getState().past).toEqual([])
+
+    // 新权威回来后仍能正常轮换；同步期间吞掉的双击不能排队补做。
+    await act(async () => seedExactRender(livePanel(), manifest()))
+    await mount(true)
+    await press(OVERLAP, { altKey: true })
+    expect(selected()).toEqual(['axes_1'])
+    await press(OVERLAP, { altKey: true })
+    expect(selected()).toEqual(['axes_2'])
   })
 
   it('⇧⌥ 仍然是加选，不轮换（两个修饰键各管一件事）', async () => {

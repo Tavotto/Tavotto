@@ -10,9 +10,11 @@ import {
   rebuildManagedEnvironment,
   setEngineEnvironment,
   setProjectEnvironment,
+  adoptEnvironmentCandidate,
   setProjectUserEnvironment,
   skipDependencyPreparation,
   backendErrorText,
+  ApiError,
   type DependencyPreparationOffer,
   type DependencyProgress,
   type DependencyRepairOffer,
@@ -269,6 +271,8 @@ interface DepRepairState {
     module: string,
     script?: string,
     scriptOffer?: ScriptRepairOffer | null,
+    /** 目标带着「看到它那一刻」的候选 id + 环境代时必须交（确认模式下的项目环境建议）：走代次绑定的采用 */
+    candidate?: { id: string; generation: string } | null,
   ) => Promise<void>
   /**
    * 修复卡上的「恢复自动检测」：清掉全局显式解释器（`setPython(null)`），成功后收起这张卡、重排失败的渲染、重跑
@@ -610,7 +614,7 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
     }
   },
 
-  adoptSystemPython: async (python, module, script, scriptOffer = null) => {
+  adoptSystemPython: async (python, module, script, scriptOffer = null, candidate = null) => {
     if (get().busy) return
     const owner = currentProjectId()
     const epoch = projectEpoch
@@ -620,7 +624,10 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
     let change: EnvChange
     try {
       // 直接问后端、自己拿**带标签的**结局：`envStore.setProjectPython` 换代之后成败都回 null，分不出来
-      const res = await setProjectEnvironment(python, module)
+      // 带着绑定的目标走与环境建议同一个代次绑定的端点：环境在看到之后被重建 → 409，不采用另一代
+      const res = candidate
+        ? await adoptEnvironmentCandidate(candidate, script, module)
+        : await setProjectEnvironment(python, module)
       change = {
         kind: 'adopt', module, script, peers, scriptOffer,
         outcome: {
@@ -634,6 +641,9 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
         },
       }
     } catch (e) {
+      // 与 `envStore.adoptCandidate` 同一个 409 语义：看到建议之后环境被重建 / 候选没了，建议已过期，重新拿一份
+      if (candidate && e instanceof ApiError && (e.body?.code === 'environment_changed' || e.body?.code === 'environment_candidate_gone'))
+        void useEnvStore.getState().refresh()
       change = {
         kind: 'adopt', module, script, peers, scriptOffer,
         outcome: { ok: false, error: e instanceof Error ? backendErrorText(e) : t('engine.setPythonFailed', { ns: 'errors' }) },

@@ -1119,6 +1119,8 @@ export default interface Resources {
       "failed": "提交失败：{{error}}",
       "getpassNote": "这一项由 getpass 读取：输入会被遮住，Tavotto 不保存它、不写进日志，下次需要时会再问。",
       "manageAria": "查看和修改 {{script}} 记住的输入",
+      "manageConfig": "运行配置 {{config}}",
+      "manageDefaultConfig": "无运行参数",
       "manageEmpty": "这个脚本没有记住的输入。",
       "manageForget": "删除",
       "manageForgetAria": "删除第 {{index}} 个问题的答案",
@@ -4824,7 +4826,7 @@ export default interface Resources {
         "placeholder_file": "{{path}} 是还没下载到本机的云盘文件，没有读取。",
         "script_limit": "脚本很多，只列出了一部分。",
         "source_byte_budget": "脚本总量较大，后面的脚本没有分析。",
-        "symlinked_dir": "{{path}} 是链接目录，没有进入检查。",
+        "symlinked_dir": "{{path}} 是链接或重定向项，未检查其目标。",
         "time_budget": "检查用时较长，在中途停下了。",
         "unreadable_dir": "没能读取目录 {{path}}。",
         "unreadable_file": "没能读取文件 {{path}}。"

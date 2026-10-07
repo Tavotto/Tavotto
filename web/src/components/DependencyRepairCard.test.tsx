@@ -22,11 +22,13 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   cancelDependencyPlan: vi.fn(),
   fetchEngineEnvironment: vi.fn(),
   setProjectEnvironment: vi.fn(),
+  adoptEnvironmentCandidate: vi.fn(),
   setEngineEnvironment: vi.fn(),
 }))
 
 import {
   ApiError,
+  adoptEnvironmentCandidate,
   cancelDependencyPlan,
   createDependencyPlan,
   fetchEngineEnvironment,
@@ -60,6 +62,7 @@ const installMock = vi.mocked(installDependencyPlan)
 const cancelMock = vi.mocked(cancelDependencyPlan)
 const envMock = vi.mocked(fetchEngineEnvironment)
 const adoptMock = vi.mocked(setProjectEnvironment)
+const adoptCandidateMock = vi.mocked(adoptEnvironmentCandidate)
 const clearGlobalMock = vi.mocked(setEngineEnvironment)
 
 const en = (key: string, v?: Record<string, unknown>) =>
@@ -170,6 +173,7 @@ beforeEach(() => {
   envMock.mockReset()
   envMock.mockResolvedValue({} as never)
   adoptMock.mockReset()
+  adoptCandidateMock.mockReset()
   clearGlobalMock.mockReset()
   useDepRepairStore.getState().reset()
   // 预读按卡分格、`reset()` 不动它们（关一张卡不该让另一张回到「正在检查」）：用例之间自己清
@@ -832,6 +836,46 @@ describe('这台机器上已有的解释器（ADR 0044）', () => {
     await render(WITH_SYSTEM)
     await click(en('oneClickRepair'))
     expect(text()).toContain('这个环境里也没有 lmfit')
+  })
+
+  // 确认模式（ADR 0114）下列出的「改用项目自己的环境」：采用必须绑定用户看到它那一刻的候选 id 与环境代，
+  // 与 `MissingDependencyCard` 同一个端点、同一个 409 语义（#814 评审 PRRT_kwDOT51-YM6pwk-Q 的第二个消费者）
+  const PROJECT_RECOMMENDED = {
+    ...SYSTEM,
+    venv: '.venv',
+    python: '.venv/bin/python',
+    candidate: { id: 'env-shown', generation: 'gen-shown' },
+  }
+
+  it('带绑定的项目环境建议：点下去按「候选 id + 看到时的环境代」采用，绝不退回按路径采用', async () => {
+    adoptCandidateMock.mockResolvedValue({ ok: true, project: { open: true } } as never)
+    await render({ ...OFFER, targets: [PROJECT_RECOMMENDED, ...OFFER.targets] })
+    await click(en('oneClickRepair'))
+    expect(adoptCandidateMock).toHaveBeenCalledTimes(1)
+    const [bound, , module] = adoptCandidateMock.mock.calls[0]
+    expect(bound).toEqual({ id: 'env-shown', generation: 'gen-shown' })
+    expect(module).toBe('lmfit')
+    expect(adoptMock, '按路径无代次采用会拿到被重建后的另一代').not.toHaveBeenCalled()
+    expect(planMock).not.toHaveBeenCalled()
+  })
+
+  it('环境在看到建议之后被重建（409 environment_changed）：报错、不改按路径重试', async () => {
+    adoptCandidateMock.mockRejectedValue(
+      new ApiError('这个环境在你确认之前被重建过，请重新查看再确认', 409, { code: 'environment_changed' }),
+    )
+    await render({ ...OFFER, targets: [PROJECT_RECOMMENDED, ...OFFER.targets] })
+    await click(en('oneClickRepair'))
+    expect(adoptCandidateMock).toHaveBeenCalledTimes(1)
+    expect(adoptMock).not.toHaveBeenCalled()
+    expect(text()).toContain('被重建过')
+  })
+
+  it('对照：用户手边的机器解释器（没有候选绑定）仍按路径采用', async () => {
+    adoptMock.mockResolvedValue({ ok: true, project: { open: true } } as never)
+    await render(WITH_SYSTEM)
+    await click(en('oneClickRepair'))
+    expect(adoptMock).toHaveBeenCalledWith('/usr/local/bin/python3', 'lmfit')
+    expect(adoptCandidateMock).not.toHaveBeenCalled()
   })
 
   it('「指定安装包」装到第一个**安装**目标，绝不装进系统解释器', async () => {

@@ -110,11 +110,16 @@ export function scriptTarget(script: string): PreparationTarget {
 /** 草稿与会话冻结的参数是否已经不同（用户在面板里改了参数）：不同就需要按新参数重新检查 */
 export function draftDiffers(target: PreparationTarget): boolean {
   if ('id' in target) return false
-  const now = scriptTarget(target.script) as { argv?: readonly string[]; argv_sensitive?: boolean }
-  const a = target.argv ?? []
-  const b = now.argv ?? []
-  if (a.length !== b.length || !!target.argv_sensitive !== !!now.argv_sensitive) return true
-  return a.some((t, i) => t !== b[i])
+  return targetChanged(target, scriptTarget(target.script))
+}
+
+/** 两个目标的运行参数是否不同（同一个 key 下：资产目标恒等，脚本目标比 argv 与敏感标记） */
+function targetChanged(a: PreparationTarget, b: PreparationTarget): boolean {
+  if ('id' in a || 'id' in b) return false
+  const x = a.argv ?? []
+  const y = b.argv ?? []
+  if (x.length !== y.length || !!a.argv_sensitive !== !!b.argv_sensitive) return true
+  return x.some((t, i) => t !== y[i])
 }
 
 /** 成功的报告里这次尝试真正捕获到的图（老后端没有这个字段 → 空） */
@@ -174,7 +179,12 @@ function newer(cur: PreparationReport | null, next: PreparationReport): boolean 
   return next.observation_seq >= cur.observation_seq
 }
 
+/** 同一个 key 下「目标（参数）换过几次」：在途的检查 / 补拉 / 动作带着发起时的戳，参数换了就失去落地资格 */
+const targetGens = new Map<string, number>()
+
 export const useProjectPreparationStore = create<PreparationState>((set, get) => {
+  /** 回包资格戳 = 代（换项目）× 目标代（同 key 换参数）；两者任一变了，在途响应都不许落地 */
+  const stampOf = (key: string): number => get().epoch * 1_000_000 + (targetGens.get(key) ?? 0)
   const entry = (key: string): PrepEntry | undefined => get().entries[key]
 
   const patch = (key: string, fn: (e: PrepEntry) => Partial<PrepEntry>) =>
@@ -186,7 +196,7 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
 
   /** 这次回包还有没有资格落地：同一代、同一项目、条目还在 */
   const live = (key: string, epoch: number, pj: string | null) =>
-    get().epoch === epoch && currentProjectId() === pj && !!entry(key)
+    stampOf(key) === epoch && currentProjectId() === pj && !!entry(key)
 
   const accept = (key: string, report: PreparationReport, opts?: { session?: boolean }) => {
     const e = entry(key)
@@ -231,7 +241,7 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
 
   /** 检查会话（新建 / 复用 / 重建）。只读：后端不执行任何用户代码 */
   const check = async (key: string, target: PreparationTarget, restarted: boolean) => {
-    const epoch = get().epoch
+    const epoch = stampOf(key)
     const pj = currentProjectId()
     patch(key, () => ({ pending: 'check' }))
     try {
@@ -257,6 +267,15 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
       const key = keyOfTarget(target)
       const pj = currentProjectId()
       const prev = entry(key)
+      // 同一脚本换了参数再打开：上一份报告属于旧参数的会话，不许留（留着的话，新会话建不出来时 refresh 会去补拉旧会话，
+      // 报告和动作就按旧参数展示 / 执行，而条目记着新目标，「草稿不同」的提示也就不亮了）。同参数再打开才保留不闪空
+      const sameTarget = !!prev && !targetChanged(prev.target, target)
+      if (prev && !sameTarget) {
+        targetGens.set(key, (targetGens.get(key) ?? 0) + 1)
+        stopTimer(key)
+        pollStep.delete(key)
+        inflight.delete(key)
+      }
       set((s) => ({
         focus: key,
         entries: {
@@ -266,7 +285,7 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
             target,
             pj,
             // 同一目标再次打开：先留着上一份报告（新报告到了按会话 id 换），不闪成空
-            report: prev?.report ?? null,
+            report: sameTarget ? (prev?.report ?? null) : null,
             connection: 'ok',
             restarted: false,
             rejection: null,
@@ -290,7 +309,7 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
         // 还没有任何报告（第一次检查断线了）：重新检查，仍是只读
         return check(key, e.target, false)
       }
-      const epoch = get().epoch
+      const epoch = stampOf(key)
       const pj = e.pj
       const promise = (async () => {
         try {
@@ -337,7 +356,7 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
       if (!e || !report || e.pending) return
       const action = report.actions.find((a) => a.kind === kind)
       if (!action) return
-      const epoch = get().epoch
+      const epoch = stampOf(key)
       const pj = e.pj
       patch(key, () => ({ pending: kind, rejection: null }))
       try {

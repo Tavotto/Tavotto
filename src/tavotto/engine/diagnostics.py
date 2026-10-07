@@ -1685,12 +1685,16 @@ def _readme(
     if has_tasks:
         extra_zh += (
             "- task-diagnostics.json：最近几次导出 / 准备 / 试运行在结束那一刻留下的摘要"
-            "（只有阶段、稳定错误码、格式与数量；没有文件名、路径、参数、报错文字）\n"
+            "（阶段、状态、稳定错误码、格式、数量、开始/结束时间戳与耗时、Python/matplotlib 版本、"
+            "执行与配置选择、输出尺寸/PPI、修订摘要和本机不透明的任务/配置引用；"
+            "没有文件名、路径、参数原文、报错文字）\n"
         )
         extra_en += (
             "- task-diagnostics.json: a summary of the last few exports / preparations / test runs "
-            "taken when each one ended (stages, stable error codes, formats and counts only; no file "
-            "names, paths, arguments or error text)\n"
+            "taken when each one ended (stages, statuses, stable error codes, formats, counts, "
+            "start/end timestamps and duration, Python/matplotlib versions, execution and "
+            "configuration choices, output dimensions/PPI, revision hashes and opaque local "
+            "attempt/configuration references; no file names, paths, argument values or error text)\n"
         )
     return (
         "Tavotto 诊断包 / Tavotto diagnostic package\n"

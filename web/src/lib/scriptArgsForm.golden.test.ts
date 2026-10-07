@@ -62,6 +62,13 @@ describe('表单编辑 → token（golden）', () => {
 describe('只动自己的 token', () => {
   const schema = schemas.mixed
 
+  it('short equals values round-trip without swallowing the separator or selecting a colliding option', () => {
+    const view = readTokens(schemas.short_options, ['-k=-x'])
+    expect(view.fields.a0).toMatchObject({ state: 'value', values: ['-x'], incomplete: false })
+    expect(view.fields.a1.state).toBe('unset')
+    expect(view.unattributed).toEqual([])
+  })
+
   it('不认识的 token 内容与相对顺序在任意编辑序列后不变（切视图不重建）', () => {
     const before = ['in.csv', '3', '--mystery=1', '-vx', '--scale', '2', '--zz']
     const after = run(schema, before, [
