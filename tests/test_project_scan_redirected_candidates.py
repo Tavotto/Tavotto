@@ -132,9 +132,7 @@ def test_discover_without_hints_does_not_probe_a_redirected_env_venv(tmp_path, m
 
 
 @posix_only
-def test_userenvs_discover_drops_redirected_project_candidate_before_is_file(
-    tmp_path, monkeypatch
-):
+def test_userenvs_discover_drops_redirected_project_candidate_before_is_file(tmp_path, monkeypatch):
     project = tmp_path / "project"
     project.mkdir()
     outside = _outside_venv(tmp_path)
@@ -161,7 +159,9 @@ def test_remembered_decision_through_redirect_is_not_probed(tmp_path, monkeypatc
     monkeypatch.setattr(
         projectenv.config,
         "project_settings",
-        lambda _p: {projectenv.SETTINGS_KEY: {"python_relative": "env/bin/python", "mode": "pinned"}},
+        lambda _p: {
+            projectenv.SETTINGS_KEY: {"python_relative": "env/bin/python", "mode": "pinned"}
+        },
     )
     budget = scanbudget.Budget()
 
@@ -185,8 +185,12 @@ def test_venv_python_symlink_inside_a_clean_venv_is_still_a_candidate(tmp_path):
     (project / ".venv" / "bin" / "python").symlink_to(base)
     root = Path(os.path.realpath(project))
 
-    assert scanbudget.redirected_component(root, root / ".venv" / "bin" / "python",
-                                           allow_final_link=True) is None
+    assert (
+        scanbudget.redirected_component(
+            root, root / ".venv" / "bin" / "python", allow_final_link=True
+        )
+        is None
+    )
     assert projectenv.discover(root, None, no_follow=True) == [str(root / ".venv")]
 
 
@@ -233,9 +237,9 @@ def test_windows_shaped_junction_env_is_rejected_from_lstat_metadata(tmp_path, m
     monkeypatch.setattr(
         os,
         "lstat",
-        lambda p, *a, **k: _Junction()
-        if os.path.normcase(os.fspath(p)) == junction
-        else real_lstat(p, *a, **k),
+        lambda p, *a, **k: (
+            _Junction() if os.path.normcase(os.fspath(p)) == junction else real_lstat(p, *a, **k)
+        ),
     )
 
     trip = Tripwire(monkeypatch, [root / "env"])
