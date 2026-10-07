@@ -27,6 +27,7 @@ import { Notice } from '../ui/Notice'
 import { RowMenu } from '../ui/RowMenu'
 import { useRowMenu } from '../ui/useRowMenu'
 import { useAssetStore } from '@/store/assetStore'
+import { useProjectStore } from '@/store/projectStore'
 import { DependencyRepairCard } from '../DependencyRepairCard'
 import { useDepRepairStore, type ScriptRepairOffer } from '@/store/depRepairStore'
 import { useEnvStore } from '@/store/envStore'
@@ -193,6 +194,13 @@ function SecondRow({ children, ...rest }: { children: React.ReactNode } & Record
   )
 }
 
+/** 项目根 + 相对脚本名 → 绝对路径；根是 Windows 写法（只有反斜杠）时整条按反斜杠拼 */
+function joinProjectPath(root: string, rel: string): string {
+  const win = root.includes('\\') && !root.includes('/')
+  const sep = win ? '\\' : '/'
+  return `${root.replace(/[\\/]+$/, '')}${sep}${win ? rel.replace(/\//g, '\\') : rel}`
+}
+
 /**
  * 一行脚本（Tavotto File Row）：状态点 | 文件名 | 状态一句话 | 运行图标钮。
  *
@@ -220,7 +228,11 @@ function ScriptRow({
   const busy = !!run && isBusyPhase(run.phase)
   const [resultsOpen, setResultsOpen] = useState(false)
   const hasAnswers = useScriptInputStore((s) => (s.answers?.[entry.script]?.length ?? 0) > 0)
-  const figuresDir = useAssetStore((s) => s.figuresDir)
+  // 脚本名相对项目根：根以项目状态（`/api/project` 的 figures_dir）为准，不等素材清单——/api/panels
+  // 失败时 assetStore.figuresDir 是空的，而脚本行照样在（Codex #832）；两边都不知道就不给「复制路径」
+  const projectRoot = useProjectStore((s) => s.project?.figures_dir)
+  const assetRoot = useAssetStore((s) => s.figuresDir)
+  const root = projectRoot || assetRoot
   // ⋯ / 右键 / ⇧F10 同一份菜单（`ui/RowMenu`，审计 §10.3）
   const menu = useRowMenu()
 
@@ -229,12 +241,16 @@ function ScriptRow({
     if (busy) store.cancel(entry.script)
     else void store.run(entry.script)
   }
-  const path = figuresDir ? `${figuresDir.replace(/[\\/]+$/, '')}/${entry.script}` : entry.script
-  const copyPath = () =>
-    void navigator.clipboard
-      ?.writeText(path)
-      .then(() => useUiStore.getState().setStatus(msg('scripts.pathCopied', { path }, 'workspace'), 'done'))
-      .catch(() => useUiStore.getState().setStatus(msg('scripts.pathCopyFailed', { path }, 'workspace'), 'error'))
+  const path = root ? joinProjectPath(root, entry.script) : null
+  const copyPath = () => {
+    if (!path) return
+    const failed = () => useUiStore.getState().setStatus(msg('scripts.pathCopyFailed', { path }, 'workspace'), 'error')
+    // 非安全上下文 / 某些 WebView 里没有 `navigator.clipboard`：照样说「没复制成、路径在这」，不静默（Codex #832）
+    if (typeof navigator.clipboard?.writeText !== 'function') return failed()
+    void Promise.resolve()
+      .then(() => navigator.clipboard.writeText(path))
+      .then(() => useUiStore.getState().setStatus(msg('scripts.pathCopied', { path }, 'workspace'), 'done'), failed)
+  }
 
   return (
     <li className="flex flex-col" data-script-row={entry.script}>
@@ -294,9 +310,11 @@ function ScriptRow({
             </MenuItem>
           )}
           <MenuSeparator />
-          <MenuItem icon={Copy} data-script-copy-path onSelect={copyPath}>
-            {sc('copyPath')}
-          </MenuItem>
+          {path && (
+            <MenuItem icon={Copy} data-script-copy-path onSelect={copyPath}>
+              {sc('copyPath')}
+            </MenuItem>
+          )}
         </RowMenu>
       </div>
 
