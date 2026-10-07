@@ -920,7 +920,12 @@ export function ExportDialog() {
   const revealTarget =
     finished && job?.export_dir && canRevealInFileManager() ? doneOutputs[0] : null;
   const jobId = job?.job_id;
-  useEffect(() => setRevealError(null), [jobId]);
+  /** 每次「在文件夹中显示」/ 换一次导出都换代：只有最近那一次的结果能改 revealError（Codex #821 P2） */
+  const revealSeq = useRef(0);
+  useEffect(() => {
+    revealSeq.current += 1;
+    setRevealError(null);
+  }, [jobId]);
   /*
    * 完成态换脚部时「开始导出」那颗按钮被卸掉：焦点要是正停在它上面（键盘按 Enter 导出），
    * 就会摔到 body 上——键盘用户当场失去位置。接到唯一的主动作「完成」上。
@@ -935,7 +940,10 @@ export function ExportDialog() {
     if (!revealTarget || !job?.export_dir) return;
     const dir = job.export_dir;
     const name = revealTarget.name!;
+    const seq = ++revealSeq.current;
     void revealExportedFile(dir, name).then((ok) => {
+      // 迟到的旧一次（又点了一次 / 已开始新导出）不许覆盖当前状态
+      if (seq !== revealSeq.current) return;
       // reveal 失败绝不静默——把完整路径告诉用户
       setRevealError(ok ? null : ex("revealFailed", { path: `${dir}/${name}` }));
     });

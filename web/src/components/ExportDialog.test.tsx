@@ -2102,4 +2102,18 @@ describe('状态区与完成态脚部', () => {
       '/out/a.pdf',
     )
   })
+  it('连点两次「在文件夹中显示」：先发的那次迟到失败，不覆盖后一次的成功（Codex #821 P2）', async () => {
+    w.__TAURI_INTERNALS__ = {}
+    await setup(9)
+    await click(q('[data-export-start]')!)
+    const reveal = q('[data-export-reveal]')!
+    let rejectFirst!: (e: Error) => void
+    tauriInvoke.mockReturnValueOnce(new Promise((_, rej) => (rejectFirst = rej)))
+    await click(reveal)
+    await click(reveal)
+    await act(async () => {
+      rejectFirst(new Error('late'))
+    })
+    expect(document.body.querySelector('[data-export-reveal-error]')).toBeNull()
+  })
 })
