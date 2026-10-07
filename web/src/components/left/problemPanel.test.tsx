@@ -975,6 +975,46 @@ describe('定位后清单留在原地（审计 T09）', () => {
     }
   })
 
+  it('规则组被折起后从画布标记直达它里面的一条：那一组自己打开、当前行挂出来；之后照样能再折起（Codex #832）', async () => {
+    await seed()
+    await mount(<ProblemPanel />)
+    await openCard()
+    const [first, second] = useValidationStore.getState().issues
+    // 两条落在同一组里（同一规则），折起它
+    const toggle = () => container.querySelector<HTMLElement>(`[data-issue-group="${second.ruleCode}"] [data-issue-group-toggle]`)!
+    await click(toggle())
+    expect(toggle().getAttribute('aria-expanded')).toBe('false')
+    expect(rows().length).toBe(0)
+    const { openProblemAt } = await import('@/lib/issueFocus')
+    await act(async () => {
+      openProblemAt(second, useValidationStore.getState().issues, 'p1')
+    })
+    expect(useUiStore.getState().problemCursor?.issueId).toBe(second.issueId)
+    expect(toggle().getAttribute('aria-expanded')).toBe('true')
+    const current = rows().find((r) => r.getAttribute('aria-current') === 'true')
+    expect(current, 'aria-current 那一行挂出来了').toBeTruthy()
+    expect(first.ruleCode).toBe(second.ruleCode)
+    // 打开只发生在游标换的那一刻：用户再折，就折着
+    await click(toggle())
+    expect(toggle().getAttribute('aria-expanded')).toBe('false')
+  })
+
+  it('F8 走进一个被折起的规则组：同样打开它，当前行挂出来（Codex #832）', async () => {
+    await seed()
+    await mount(<ProblemPanel />)
+    await openCard()
+    const [first] = useValidationStore.getState().issues
+    const toggle = () => container.querySelector<HTMLElement>(`[data-issue-group="${first.ruleCode}"] [data-issue-group-toggle]`)!
+    await click(toggle())
+    expect(rows().length).toBe(0)
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'F8', bubbles: true, cancelable: true }))
+    })
+    expect(useUiStore.getState().problemCursor?.issueId).toBe(first.issueId)
+    expect(toggle().getAttribute('aria-expanded')).toBe('true')
+    expect(rows().find((r) => r.getAttribute('aria-current') === 'true')).toBeTruthy()
+  })
+
   it('当前那条修好消失之后，「下一项」指向顶上来的那条，不必重开清单', async () => {
     await seed()
     await mount(<ProblemPanel />)

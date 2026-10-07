@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import { t as translate } from '@/i18n'
 import { geomTarget, isElementHidden, panelFullRect } from '@/lib/elementGeom'
 import { openProblemAt, focusFailureMessage } from '@/lib/issueFocus'
+import { visualBounds } from '@/lib/geometry'
 import { panelContentTransform, panelTransformSvg } from '@/lib/panelTransform'
 import { currentFigureOf } from '@/lib/problemContext'
 import { SEVERITIES, type Severity } from '@/lib/profile'
@@ -109,7 +110,7 @@ function ElementHover({ panel, gid, t }: { panel: PanelObject; gid: string; t: V
   )
 }
 
-const box = (o: CanvasObject, t: ViewTransform) => ({
+const box = (o: { x: number; y: number; w: number; h: number }, t: ViewTransform) => ({
   x: mmToViewX(o.x, t),
   y: mmToViewY(o.y, t),
   w: mmToPx(o.w, t),
@@ -161,7 +162,10 @@ function IssuePins({ objects, t }: { objects: readonly CanvasObject[]; t: ViewTr
         const worst = list.reduce((a, b) => (rank(b.severity) < rank(a.severity) ? b : a))
         // 底色与项数字色成对取（`issuePinColors`，对比度门禁逐对量）
         const pin = PIN_COLORS[worst.severity]
-        const b = box(o, t)
+        // 屏幕上的右上角：按**转出来之后**的外接框（`visualBounds`）放，整组不跟着对象转——转 90° / 180° 的
+        // 文字 / 形状上项数会侧过来 / 倒过来，标记也会跟着对象自己的局部角跑（Codex #832）。面板的 x/y/w/h
+        // 本来就是旋转后的盒、翻转不改外框，同一个判据
+        const b = box(visualBounds(o), t)
         const cx = b.x + b.w + PIN_OFFSET
         const cy = b.y - PIN_OFFSET
         const label = translate('problems.pinLabel', {
@@ -185,7 +189,6 @@ function IssuePins({ objects, t }: { objects: readonly CanvasObject[]; t: ViewTr
             role="button"
             tabIndex={0}
             aria-label={label}
-            transform={spin(o, t)}
             style={{ pointerEvents: 'all', cursor: 'default' }}
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => {
