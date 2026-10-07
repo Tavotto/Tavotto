@@ -894,19 +894,7 @@ function RuntimeAssetCard({
     // 没有描述符就没有可添加的东西（尺寸未知）——Shift+Enter 落到这里时安静地不做
     if (asset.descriptor) onAdd()
   }
-  const rerun = () => {
-    if (!busy) void useScriptRunStore.getState().run(asset.script)
-  }
-
-  // stale 角标文案复用 panelBadge.runtime*（画布角标同一批 key）；
-  // 还没跑过的卡片占位区已经写着「尚未运行」，needs_rerun 不再重复一行
-  const staleKey: string | null =
-    asset.status === 'fresh' || (!asset.cached && asset.status === 'needs_rerun')
-      ? null
-      : `runtime${asset.status
-          .split('_')
-          .map((s) => s[0].toUpperCase() + s.slice(1))
-          .join('')}`
+  const staleKey = runtimeStaleKey(asset)
 
   const label = [
     asset.stem,
@@ -1023,28 +1011,32 @@ function RuntimeAssetCard({
               : { text: asset.script, title: asset.script },
         ]}
         used={used}
+        // 只留状态文字：「重新运行」是真按钮，住在列表下方的 `SelectedAssetActions`——
+        // option 里嵌一颗可 Tab 的按钮是 axe 的 nested-interactive（此前就嵌在这里）
         extra={
           staleKey ? (
-            <p className="flex items-center justify-between gap-1 text-xs">
-              <span className="min-w-0 truncate text-danger">
-                {translate(`panelBadge.${staleKey}`, { ns: 'workspace' })}
-              </span>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation()
-                  rerun()
-                }}
-                disabled={busy}
-                className="shrink-0 rounded-xs text-ink-2 outline-none hover:text-ink focus-visible:focus-ring disabled:opacity-40"
-              >
-                {translate(`scripts.${busy ? 'running' : 'rerun'}`, { ns: 'workspace' })}
-              </button>
+            <p data-runtime-stale className="truncate text-xs text-danger">
+              {translate(`panelBadge.${staleKey}`, { ns: 'workspace' })}
             </p>
           ) : undefined
         }
       />
     </li>
   )
+}
+
+/**
+ * runtime 卡的 stale 角标 key（复用 panelBadge.runtime*，画布角标同一批 key）；null = 不提示。
+ * 还没跑过的卡片占位区已经写着「尚未运行」，needs_rerun 不再重复一行。卡片的状态文字与
+ * 选中页脚的「重新运行」按钮认同一个判据。
+ */
+function runtimeStaleKey(asset: RuntimeAssetInfo): string | null {
+  return asset.status === 'fresh' || (!asset.cached && asset.status === 'needs_rerun')
+    ? null
+    : `runtime${asset.status
+        .split('_')
+        .map((s) => s[0].toUpperCase() + s.slice(1))
+        .join('')}`
 }
 
 /**
@@ -1230,6 +1222,11 @@ function SelectedAssetActions({ item }: { item: LibraryItem | undefined }) {
   const name = item.kind === 'file' ? fileName(item.panel.id) : item.asset.stem
   const actionable = item.kind === 'file' || !!item.asset.descriptor
   const busy = !!run && isBusyPhase(run.phase)
+  // 跑过但可能过期的 runtime 图：编辑 / 添加照旧，旁边多一颗「重新运行」（原来嵌在卡片里）
+  const stale = item.kind === 'runtime' && actionable && !!runtimeStaleKey(item.asset)
+  const runScript = () => {
+    if (item.kind === 'runtime' && !busy) void useScriptRunStore.getState().run(item.asset.script)
+  }
   return (
     <div
       role="group"
@@ -1264,14 +1261,21 @@ function SelectedAssetActions({ item }: { item: LibraryItem | undefined }) {
             <Plus size={ICON_SIZE.xs} />
             {ab('addToCanvas')}
           </Button>
+          {stale && (
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={busy}
+              data-selected-asset-rerun
+              onClick={runScript}
+            >
+              <RefreshCw size={ICON_SIZE.xs} />
+              {translate(busy ? 'scripts.running' : 'scripts.rerun', { ns: 'workspace' })}
+            </Button>
+          )}
         </>
       ) : (
-        <Button
-          size="sm"
-          variant="secondary"
-          disabled={busy}
-          onClick={() => void useScriptRunStore.getState().run(item.asset.script)}
-        >
+        <Button size="sm" variant="secondary" disabled={busy} onClick={runScript}>
           <Play size={ICON_SIZE.xs} />
           {translate(busy ? 'scripts.running' : 'scripts.run', { ns: 'workspace' })}
         </Button>
