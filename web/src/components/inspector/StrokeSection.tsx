@@ -189,6 +189,29 @@ function DashRow({
   )
 }
 
+/**
+ * 线宽：箭头与形状同一行（半列 pt 框）。多选不一致时留空 +「多个值」占位。
+ * 两种标注的外观分组共用这一行，不再一边与颜色挤一行、一边与不透明度挤一行。
+ */
+function StrokeWidthRow({ value, onChange }: { value: number | undefined; onChange: (v: number) => void }) {
+  return (
+    <Row label={sk('lineWidth')} labelWidth={INSPECTOR_LABEL_W}>
+      <NumberField
+        half
+        ariaLabel={sk('lineWidth')}
+        value={value ?? 1}
+        mixed={value === undefined}
+        step={0.25}
+        min={0.1}
+        max={20}
+        precision={2}
+        unit="pt"
+        onChange={onChange}
+      />
+    </Row>
+  )
+}
+
 /** 写新端型时同步维护旧 head 字段；规则在 `types/document.legacyHead` 一份 */
 function syncLegacyHead(o: ArrowObject): void {
   o.head = legacyHead(arrowHeads(o))
@@ -238,47 +261,37 @@ export function ArrowSection({ objs }: { objs: ArrowObject[] }) {
             ariaLabel={sk('start')}
           />
         </Row>
-        {/* 线宽与颜色同一行：线宽占剩余宽度，颜色靠右 */}
-        <Row label={sk('lineWidth')} labelWidth={INSPECTOR_LABEL_W}>
-          <div className="flex w-full items-center gap-1.5">
-            <div className="min-w-0 flex-1">
-              <NumberField
-                value={shared(objs, (o) => (o as ArrowObject).strokePt) ?? 1}
-                mixed={shared(objs, (o) => (o as ArrowObject).strokePt) === undefined}
-                step={0.25}
-                min={0.1}
-                max={20}
-                precision={2}
-                unit="pt"
-                onChange={(v) => patch(hist('setStrokeWidth'), (o) => (o.strokePt = v))}
-              />
-            </div>
-            <div className="shrink-0">
-              {/* 不一致时色块画成「多个值」，不退回一个假的公共色；value 只当取色盘起点 */}
-              <ColorField
-                ariaLabel={sk('color')}
-                mixed={arrowColor === undefined}
-                value={arrowColor ?? objs[0]?.color ?? NO_COLOR}
-                onChange={(v) => patch(hist('setArrowColor'), (o) => (o.color = v))}
-              />
-            </div>
-          </div>
+        {/* 与形状同一套行语法（2026-10-07 §9.2）：线宽半列一行、颜色一行（色块 + hex） */}
+        <StrokeWidthRow
+          value={shared(objs, (o) => (o as ArrowObject).strokePt)}
+          onChange={(v) => patch(hist('setStrokeWidth'), (o) => (o.strokePt = v))}
+        />
+        <Row label={sk('color')} labelWidth={INSPECTOR_LABEL_W}>
+          {/* 不一致时色块画成「多个值」，不退回一个假的公共色；value 只当取色盘起点 */}
+          <ColorField
+            ariaLabel={sk('color')}
+            mixed={arrowColor === undefined}
+            value={arrowColor ?? objs[0]?.color ?? NO_COLOR}
+            onChange={(v) => patch(hist('setArrowColor'), (o) => (o.color = v))}
+          />
         </Row>
-        {/* 整行按钮不走标签列：空标签会在左边留一块 44px 的白 */}
-        <Button
-          variant="secondary"
-          size="sm"
-          className="w-full"
-          onClick={() =>
-            patch(hist('reverseArrow'), (o) => {
-              const s = o.start
-              o.start = o.end
-              o.end = s
-            })
-          }
-        >
-          {sk('reverse')}
-        </Button>
+        {/* 命令对到控件列（不是整栏宽的第二种按钮行） */}
+        <Row labelWidth={INSPECTOR_LABEL_W}>
+          <Button
+            variant="secondary"
+            size="sm"
+            data-reverse-arrow
+            onClick={() =>
+              patch(hist('reverseArrow'), (o) => {
+                const s = o.start
+                o.start = o.end
+                o.end = s
+              })
+            }
+          >
+            {sk('reverse')}
+          </Button>
+        </Row>
     </AppearanceSection>
   )
 }
@@ -328,6 +341,31 @@ export function ShapeSection({ objs }: { objs: ShapeObject[] }) {
             )}
           </Row>
         )}
+        {hasFillable && fillOn && (
+          // 填充不透明度：填充自己的一行半列（此前挤在线宽那一行的右端，靠 index.css 的 40px 框）
+          <div data-prop="fillOpacity">
+            <Row label={sk('fillOpacity')} labelWidth={INSPECTOR_LABEL_W}>
+              <NumberField
+                half
+                ariaLabel={sk('fillOpacity')}
+                value={Math.round((fillOpacity ?? 1) * 100)}
+                mixed={fillOpacity === undefined}
+                step={5}
+                min={0}
+                max={100}
+                precision={0}
+                unit="%"
+                onChange={(v) =>
+                  patch(hist('setFillOpacity'), (o) => {
+                    const f = Math.max(0, Math.min(1, v / 100))
+                    if (f < 1) o.fillOpacity = f
+                    else delete o.fillOpacity
+                  })
+                }
+              />
+            </Row>
+          </div>
+        )}
         <Row label={sk('strokeColor')} labelWidth={INSPECTOR_LABEL_W}>
           <ColorField
             ariaLabel={sk('strokeColor')}
@@ -336,41 +374,10 @@ export function ShapeSection({ objs }: { objs: ShapeObject[] }) {
             onChange={(v) => patch(hist('setStrokeColor'), (o) => (o.color = v))}
           />
         </Row>
-        {/* 线宽与填充不透明度同一行：两个输入框固定 40px（index.css 的 data-stroke-fields） */}
-        <Row label={sk('lineWidth')} labelWidth={INSPECTOR_LABEL_W}>
-          <div data-stroke-fields className="flex w-full items-center gap-2">
-            <NumberField
-              value={shared(objs, (o) => (o as ShapeObject).strokePt) ?? 1}
-              mixed={shared(objs, (o) => (o as ShapeObject).strokePt) === undefined}
-              step={0.25}
-              min={0.1}
-              max={20}
-              precision={2}
-              unit="pt"
-              onChange={(v) => patch(hist('setStrokeWidth'), (o) => (o.strokePt = v))}
-            />
-            {hasFillable && fillOn && (
-              <label className="ml-auto flex min-w-0 items-center gap-1.5 text-xs text-ink-2">
-                <span className="shrink-0">{sk('fillOpacity')}</span>
-                <NumberField
-                  value={Math.round((fillOpacity ?? 1) * 100)}
-                  mixed={fillOpacity === undefined}
-                  step={5}
-                  min={0}
-                  max={100}
-                  unit="%"
-                  onChange={(v) =>
-                    patch(hist('setFillOpacity'), (o) => {
-                      const f = Math.max(0, Math.min(1, v / 100))
-                      if (f < 1) o.fillOpacity = f
-                      else delete o.fillOpacity
-                    })
-                  }
-                />
-              </label>
-            )}
-          </div>
-        </Row>
+        <StrokeWidthRow
+          value={shared(objs, (o) => (o as ShapeObject).strokePt)}
+          onChange={(v) => patch(hist('setStrokeWidth'), (o) => (o.strokePt = v))}
+        />
         <DashRow
           value={shared(objs, (o) => (o as ShapeObject).dash ?? 'solid') ?? null}
           onChange={(v) => patch(hist('setDash'), (o) => (o.dash = v === 'solid' ? undefined : v))}
@@ -378,6 +385,8 @@ export function ShapeSection({ objs }: { objs: ShapeObject[] }) {
         {allRect && (
           <Row label={sk('cornerRadius')} labelWidth={INSPECTOR_LABEL_W}>
             <NumberField
+              half
+              ariaLabel={sk('cornerRadius')}
               value={shared(objs, (o) => (o as ShapeObject).cornerRadius ?? 0) ?? 0}
               step={0.5}
               min={0}
@@ -396,6 +405,8 @@ export function ShapeSection({ objs }: { objs: ShapeObject[] }) {
         {allPolygon && (
           <Row label={sk('sides')} labelWidth={INSPECTOR_LABEL_W}>
             <NumberField
+              half
+              ariaLabel={sk('sides')}
               value={shared(objs, (o) => (o as ShapeObject).sides ?? 6) ?? 6}
               step={1}
               min={3}

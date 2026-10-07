@@ -116,9 +116,8 @@ describe('形状：描边 / 填充 / 填充不透明度不一致', () => {
         objs={[shapeOf('s1', { fill: '#ffffff', fillOpacity: 0.5 }), shapeOf('s2', { fill: '#ffffff' })]}
       />,
     )
-    const opacity = Array.from(host.querySelectorAll('label'))
-      .find((l) => l.textContent?.includes('不透明度'))
-      ?.querySelector('input') as HTMLInputElement
+    // 填充不透明度自己一行（2026-10-07 行网格），锚点 data-prop="fillOpacity"
+    const opacity = host.querySelector('[data-prop="fillOpacity"] input') as HTMLInputElement
     expect(opacity, '不透明度输入框不见了').toBeTruthy()
     expect(opacity.value).toBe('')
     expect(opacity.placeholder).toBe('多个值')
@@ -133,9 +132,8 @@ describe('形状：描边 / 填充 / 填充不透明度不一致', () => {
         ]}
       />,
     )
-    const opacity = Array.from(host.querySelectorAll('label'))
-      .find((l) => l.textContent?.includes('不透明度'))
-      ?.querySelector('input') as HTMLInputElement
+    // 填充不透明度自己一行（2026-10-07 行网格），锚点 data-prop="fillOpacity"
+    const opacity = host.querySelector('[data-prop="fillOpacity"] input') as HTMLInputElement
     expect(opacity.value).toBe('50')
   })
 })

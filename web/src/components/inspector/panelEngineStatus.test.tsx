@@ -63,7 +63,9 @@ describe('引擎状态提示保留布局足迹', () => {
       const controls = [...host.querySelectorAll('button, input')]
       for (const [building, stale, expected] of [
         ['cold', false, ['cold']], ['warm', false, ['building']], [false, false, []],
-        [false, true, ['stale']], ['cold', true, ['cold', 'stale']], [false, false, []],
+        [false, true, ['stale']],
+        // 一行只说一件事：构建中优先（它正在把「脚本已变」刷新掉）
+        ['cold', true, ['cold']], [false, false, []],
       ] as const) {
         await state(building, stale)
         expect(messages()).toHaveLength(original.length)

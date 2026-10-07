@@ -2,15 +2,15 @@ import { useState, type ReactNode } from 'react'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { msg, t as translate } from '@/i18n'
 import type { EditableField, ManifestElement } from '@/lib/api'
-import { clearOverride, clearOverrides } from '@/store/actions'
+import { clearOverrides } from '@/store/actions'
 import type { PanelObject } from '@/types/document'
-import { Row } from '../../ui/Field'
+import { Row, type RowLabelWidth } from '../../ui/Field'
 import { ColorField, NumberField } from '../../ui/Input'
 import { GroupToggle } from '../GroupToggle'
 import { INSPECTOR_LABEL_W } from '../layout'
 import { useElementWriter } from '../elementWrite'
 import { propLabel } from '../roles/registry'
-import { ResetChip, labeledWithState } from './textRows'
+import { ModifiedDot, ResetChip, ResetPairChip } from './textRows'
 
 /**
  * 子图边框：**默认四边联动，需要差异时再展开逐边**（审计 T12）。
@@ -56,7 +56,7 @@ export function SpineFrameCard({
   panel: PanelObject
   /** 宿主子图（字段都在它身上） */
   element: ManifestElement
-  labelWidth?: number
+  labelWidth?: RowLabelWidth
 }) {
   const w = useElementWriter(panel, element)
   const sides = SIDES.filter((s) => w.has(perSide(s, 'color')) || w.has(perSide(s, 'linewidth')))
@@ -112,7 +112,6 @@ export function SpineFrameCard({
   const widthField = w.fieldOf('spine_linewidth')
   const color = linkedState('color')
   const width = linkedState('linewidth')
-  const mixedText = translate('element.mixedValues', { ns: 'inspector' })
   const frameLabel = translate('element.groupFrame', { ns: 'inspector' })
   const linkedModified = overridden('spine_color') || overridden('spine_linewidth')
 
@@ -127,16 +126,21 @@ export function SpineFrameCard({
         <FrameRow
           side="all"
           labelWidth={labelWidth}
-          label={labeledWithState(frameLabel, linkedModified)}
+          label={frameLabel}
+          modified={linkedModified}
           color={
             colorField && (
               <div
                 data-prop="spine_color"
                 data-gid={element.gid}
-                className="flex min-w-0 items-center gap-1.5"
+                data-spine-mixed={color.mixed ? 'color' : undefined}
+                className="flex shrink-0 items-center"
               >
+                {/* 各边颜色不一致：色块自己说「多个值」（ColorField mixed），行尾不再补一句字 */}
                 <ColorField
+                  swatchOnly
                   ariaLabel={propLabel('spine_color', element.role)}
+                  mixed={color.mixed}
                   value={String(color.value ?? '#000000')}
                   onChange={(v) => {
                     unifySides('color')
@@ -144,11 +148,6 @@ export function SpineFrameCard({
                   }}
                   onGestureEnd={w.endGesture}
                 />
-                {color.mixed && (
-                  <span className="min-w-0 truncate text-xs text-ink-3" data-spine-mixed="color">
-                    {mixedText}
-                  </span>
-                )}
               </div>
             )
           }
@@ -158,9 +157,10 @@ export function SpineFrameCard({
                 data-prop="spine_linewidth"
                 data-gid={element.gid}
                 data-spine-mixed={width.mixed ? 'linewidth' : undefined}
-                className="flex min-w-0 items-center"
+                className="flex min-w-0 flex-1 items-center"
               >
                 <NumberField
+                  fill
                   dataProp="spine_linewidth"
                   ariaLabel={propLabel('spine_linewidth', element.role)}
                   value={Number(width.value ?? 0)}
@@ -182,20 +182,21 @@ export function SpineFrameCard({
           }
           reset={
             linkedModified && (
-              <>
-                {overridden('spine_color') && (
-                  <ResetChip
-                    label={propLabel('spine_color', element.role)}
-                    onReset={() => clearOverride(panel.id, element.gid, 'spine_color')}
-                  />
-                )}
-                {overridden('spine_linewidth') && (
-                  <ResetChip
-                    label={propLabel('spine_linewidth', element.role)}
-                    onReset={() => clearOverride(panel.id, element.gid, 'spine_linewidth')}
-                  />
-                )}
-              </>
+              // 状态槽只有一格，但颜色与线宽是两条各自的 override：只改了一条就只清那一条，
+              // 两条都改了给「恢复颜色 / 恢复线宽 / 两项都恢复」（Codex #829 P2；改版前是两颗钮）
+              <ResetPairChip
+                label={frameLabel}
+                fields={(['spine_color', 'spine_linewidth'] as const)
+                  .filter((p) => overridden(p))
+                  .map((prop) => ({ prop, label: propLabel(prop, element.role) }))}
+                onReset={(props, label) =>
+                  clearOverrides(
+                    panel.id,
+                    msg('element.resetProp', { label }, 'inspector'),
+                    props.map((prop) => ({ gid: element.gid, prop })),
+                  )
+                }
+              />
             )
           }
         />
@@ -226,7 +227,14 @@ export function SpineFrameCard({
             beginGesture={() => w.beginGesture()}
             endGesture={w.endGesture}
             overridden={overridden}
-            reset={(p) => clearOverride(panel.id, element.gid, p)}
+            // 一行一颗重置：这一边的颜色与线宽一起回到脚本值，一条历史、一次渲染（Codex #829 P2）
+            reset={(props, label) =>
+              clearOverrides(
+                panel.id,
+                msg('element.resetProp', { label }, 'inspector'),
+                props.map((prop) => ({ gid: element.gid, prop })),
+              )
+            }
             gid={element.gid}
             role={element.role}
             labelWidth={labelWidth}
@@ -272,14 +280,16 @@ function SideGlyph({ side }: { side: Side | 'all' }) {
 function FrameRow({
   side,
   label,
+  modified,
   labelWidth,
   color,
   width,
   reset,
 }: {
   side: Side | 'all'
-  label: ReactNode
-  labelWidth: number
+  label: string
+  modified: boolean
+  labelWidth: RowLabelWidth
   color?: ReactNode
   width?: ReactNode
   reset?: ReactNode
@@ -287,16 +297,23 @@ function FrameRow({
   return (
     <Row
       labelWidth={labelWidth}
+      // 恢复钮住在状态槽里（2026-10-07 行网格），色块与线宽各占半列
+      status={reset || undefined}
       label={
-        <span className="flex min-w-0 items-center gap-1.5">
+        // 修改点悬挂在整个标签（字形 + 边名）左边 8px
+        <span
+          className="relative flex min-w-0 items-center gap-1.5"
+          title={modified ? `${label} · ${translate('element.modified', { ns: 'inspector' })}` : label}
+        >
+          <ModifiedDot state={modified} />
           <SideGlyph side={side} />
-          <span className="min-w-0 truncate">{label}</span>
+          <span className="line-clamp-2 min-w-0 break-words">{label}</span>
+          {modified && <span className="sr-only">{translate('element.modified', { ns: 'inspector' })}</span>}
         </span>
       }
     >
       {color}
       {width}
-      {reset}
     </Row>
   )
 }
@@ -323,10 +340,10 @@ function SideRow({
   beginGesture: () => void
   endGesture: () => void
   overridden: (prop: string) => boolean
-  reset: (prop: string) => void
+  reset: (props: string[], label: string) => void
   gid: string
   role: string
-  labelWidth: number
+  labelWidth: RowLabelWidth
 }) {
   const colorProp = perSide(side, 'color')
   const widthProp = perSide(side, 'linewidth')
@@ -336,11 +353,13 @@ function SideRow({
     <FrameRow
       side={side}
       labelWidth={labelWidth}
-      label={labeledWithState(sideName, modified)}
+      label={sideName}
+      modified={modified}
       color={
         colorField && (
-          <div data-prop={colorProp} data-gid={gid} className="flex min-w-0 items-center">
+          <div data-prop={colorProp} data-gid={gid} className="flex shrink-0 items-center">
             <ColorField
+              swatchOnly
               ariaLabel={`${sideName} ${propLabel(colorProp, role)}`}
               value={String(read(colorProp) ?? '#000000')}
               onChange={(v) => write(colorProp, v, true)}
@@ -352,6 +371,7 @@ function SideRow({
       width={
         widthField && (
           <NumberField
+            fill
             // 逐边线宽的定位落点与颜色一样是 data-prop（issueFocus 认它）
             dataProp={widthProp}
             ariaLabel={propLabel(widthProp, role)}
@@ -371,10 +391,7 @@ function SideRow({
         modified && (
           <ResetChip
             label={sideName}
-            onReset={() => {
-              if (overridden(colorProp)) reset(colorProp)
-              if (overridden(widthProp)) reset(widthProp)
-            }}
+            onReset={() => reset([colorProp, widthProp].filter(overridden), sideName)}
           />
         )
       }
