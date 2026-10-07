@@ -286,6 +286,16 @@ function srgbAlphaOf(theme: Theme, name: string): [string, number] {
   if (!m) throw new Error(`${theme} 表里 --color-${name} 不是 srgb 半透明叠加`)
   return [m[1], Number(m[2]) / 100]
 }
+/** 全局 `::selection` 规则里写的字色：`color: var(--color-<x>)` → x；没写（保留原色）→ null */
+const SELECTION_FG = (() => {
+  const block = CSS.replace(/\/\*[\s\S]*?\*\//g, '').match(/\n\s*::selection \{([^}]*)\}/)?.[1]
+  if (block === undefined) throw new Error('index.css 里找不到全局 ::selection 规则')
+  const m = block.match(/(?:^|[;\s])color:\s*var\(--color-([a-z0-9-]+)\)\s*;/)
+  return m ? m[1] : null
+})()
+/** 界面里能选中文字的底：面板 / 桌面 / 画布灰 / surface-2（转写里的代码块）/ 可编辑框与它的 hover / 浮起的 thumb */
+const SELECTABLE_GROUNDS = ['surface', 'bg', 'canvas', 'surface-2', 'field', 'field-hover', 'thumb'] as const
+const TEXT_VIEW = readFileSync(path.resolve(HERE, 'canvas/TextView.tsx'), 'utf8')
 /** 两套主题都不变的不透明 token：纸与纸上的墨是文档内容；sel 是画在纸上的那一种彩色线（对纸白与两种画布灰都 ≥3） */
 const THEME_INVARIANT = ['paper', 'paper-ink', 'sel']
 
@@ -339,14 +349,27 @@ for (const theme of THEMES) {
       if (theme === 'dark') expect(contrast(rc('thumb'), t('surface'))).toBeGreaterThan(1.2)
     })
 
-    it('文字选区（::selection）合成到白 / 桌面 / surface-2 上，ink 与 ink-2 照样 ≥4.5:1', () => {
+    it('文字选区（::selection）：选中后的字（::selection 设的 color；没设就是原色 = 每一档正文）合成到每一种能选字的底上 ≥4.5:1', () => {
       const [base, alpha] = srgbAlphaOf(theme, 'text-selection')
-      for (const g of ['surface', 'bg', 'surface-2']) {
-        const sel = mixOver(rc(base), alpha, t(g))
-        for (const name of ['ink', 'ink-2']) {
+      // 没写 color 时选中的字保留原色——ink / ink-2 / ink-3 都可能被选中（Codex P2：ink-3 只剩 3.65 / 3.70）
+      const fgs = SELECTION_FG ? [SELECTION_FG] : ['ink', 'ink-2', 'ink-3']
+      for (const g of SELECTABLE_GROUNDS) {
+        const ground = rc(g)
+        const sel = mixOver(rc(base), alpha, ground)
+        // 选区还得看得见：合成后的底与原底至少拉开 1.3:1（不许把 tint 调到几乎透明来「过」对比度）
+        expect(contrast(sel, ground), `selection visible on ${g}`).toBeGreaterThanOrEqual(1.3)
+        for (const name of fgs) {
           expect(contrast(t(name), sel), `${name} on selection(${g})`).toBeGreaterThanOrEqual(4.5)
         }
       }
+    })
+
+    it('纸上改字（canvas/TextView）选中的字换成 paper-ink，落在合成到纸白上的选区 ≥4.5:1（界面 ink 在暗色里落在白纸上看不见）', () => {
+      expect(TEXT_VIEW).toMatch(/['"`\s]selection:text-paper-ink['"`\s]/)
+      const [base, alpha] = srgbAlphaOf(theme, 'text-selection')
+      const sel = mixOver(rc(base), alpha, t('paper'))
+      expect(contrast(t('paper-ink'), sel), 'paper-ink on selection(paper)').toBeGreaterThanOrEqual(4.5)
+      expect(contrast(sel, t('paper')), 'selection visible on paper').toBeGreaterThanOrEqual(1.3)
     })
 
     it('遮罩与投影从 --color-shadow 派生，shadow 比桌面暗（暗色里遮罩是压暗、不是提亮）', () => {
