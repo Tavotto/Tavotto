@@ -56,6 +56,7 @@ import { Dialog } from '../ui/Dialog'
 import { Row, Section } from '../ui/Field'
 import { SummaryRow } from '../ui/SummaryRow'
 import { NumberField, TextInput } from '../ui/Input'
+import { Notice } from '../ui/Notice'
 import { Tip } from '../ui/Tooltip'
 import { ArrangeSection } from './ArrangeSection'
 import { INSPECTOR_LABEL_W } from './layout'
@@ -112,20 +113,18 @@ export function PanelCapabilityNote({ panel }: { panel: PanelObject }) {
   const cap = useAssetStore((s) => s.byId[panel.fileId]?.capability)
   if (panel.script || !cap || cap.status === 'editable') return null
   return (
-    /* surface-2 底的一条，不画边（第八节 / 第五节：`Notice` 已删）；入口是 ghost
-       （打磨 E10——此前 border + 底 + 整行 secondary 三重强调） */
-    <div className="mx-3 mb-1.5 rounded-md bg-surface-2 px-2 py-1.5">
-      <p className="text-xs font-medium text-ink">{statusLabel(cap.status)}</p>
-      <p className="mt-0.5 text-xs leading-relaxed text-ink-2">{reasonText(cap)}</p>
+    /* 说明条只有一种皮：`ui/Notice`（2026-10-07 设计审计 §9.2：此前属性栏里四种提示框皮肤） */
+    <Notice data-capability-note className="mx-3 mb-1.5" title={statusLabel(cap.status)}>
+      <p className="text-ink-2">{reasonText(cap)}</p>
       <Button
         variant="ghost"
         size="sm"
-        className="-ml-2 mt-0.5"
+        className="-ml-2.5 mt-0.5"
         onClick={() => useProjectReadinessStore.getState().focusPanel(panel.fileId, 'panel')}
       >
         {translate('readiness.openCenter', { ns: 'workspace' })}
       </Button>
-    </div>
+    </Notice>
   )
 }
 
@@ -143,9 +142,8 @@ export function PanelFrameNote({ panel }: { panel: PanelObject }) {
   // 旧裁剪与新图幅不相交：换过去什么都不剩，不给切换，说清为什么（判据只在 `frameSwitchPatch`）
   const blocked = !frameSwitchPatch(panel, frame)
   return (
-    <div data-frame-note className="mx-3 mb-1.5 rounded-md bg-surface-2 px-2 py-1.5">
-      <p className="text-xs font-medium text-ink">{pn('frameLegacyTitle')}</p>
-      <p className="mt-0.5 text-xs leading-relaxed text-ink-2">
+    <Notice data-frame-note className="mx-3 mb-1.5" title={pn('frameLegacyTitle')}>
+      <p className="text-ink-2">
         {pn('frameLegacyBody', {
           w: round1(frame.savefig_mm[2]),
           h: round1(frame.savefig_mm[3]),
@@ -154,7 +152,7 @@ export function PanelFrameNote({ panel }: { panel: PanelObject }) {
       <Button
         variant="ghost"
         size="sm"
-        className="-ml-2 mt-0.5"
+        className="-ml-2.5 mt-0.5"
         data-frame-adopt
         disabled={blocked}
         aria-describedby={blocked ? blockedId : undefined}
@@ -165,11 +163,11 @@ export function PanelFrameNote({ panel }: { panel: PanelObject }) {
         {pn('frameLegacyAdopt')}
       </Button>
       {blocked && (
-        <p id={blockedId} data-frame-adopt-blocked className="text-xs leading-relaxed text-ink-2">
+        <p id={blockedId} data-frame-adopt-blocked className="text-ink-2">
           {pn('frameLegacyAdoptBlocked')}
         </p>
       )}
-    </div>
+    </Notice>
   )
 }
 
@@ -266,6 +264,7 @@ function GeometrySection({ objs }: { objs: PanelObject[] }) {
 
       <Row className="mt-1.5" label={pn('scale')} labelWidth={INSPECTOR_LABEL_W}>
         <NumberField
+          half
           value={scale ?? 100}
           mixed={scale === undefined}
           step={1}
@@ -309,13 +308,13 @@ function GeometrySection({ objs }: { objs: PanelObject[] }) {
         <div className="flex w-full min-w-0 flex-wrap gap-1.5">
           <Tip label={pn('aspectTip')}>
             <Button data-panel-restore="aspect" variant="ghost" size="sm" className="-ml-2" onClick={() => restorePanelAspect(ids)}>
-              <Ratio size={ICON_SIZE.sm} className="text-ink-3" />
+              <Ratio size={ICON_SIZE.sm} className="text-ink-2" />
               {pn('aspect')}
             </Button>
           </Tip>
           <Tip label={pn('nativeSizeTip')}>
             <Button data-panel-restore="size" variant="ghost" size="sm" onClick={() => restorePanelNativeSize(ids)}>
-              <Scaling size={ICON_SIZE.sm} className="text-ink-3" />
+              <Scaling size={ICON_SIZE.sm} className="text-ink-2" />
               {pn('nativeSize')}
             </Button>
           </Tip>
@@ -370,6 +369,7 @@ function PanelMoreSection({ objs }: { objs: PanelObject[] }) {
               步进 90、写回前吸附到这四档 */}
           <Row label={translate('transform.rotation', { ns: 'inspector' })} labelWidth={INSPECTOR_LABEL_W}>
             <NumberField
+              half
               value={rot ?? 0}
               mixed={rot === undefined}
               min={-360}
@@ -387,8 +387,8 @@ function PanelMoreSection({ objs }: { objs: PanelObject[] }) {
           </Row>
 
           <Row label={pn('flip')} labelWidth={INSPECTOR_LABEL_W}>
-            {/* 两颗同高同档的开关键（secondary + active），不撑满整行 */}
-            <div className="flex min-w-0 gap-1">
+            {/* 两颗同高同档的开关键（secondary + active），不撑满整行；控件列放不下（en 320）时折行 */}
+            <div className="flex min-w-0 flex-wrap gap-1">
               <Button
                 variant="secondary"
                 size="sm"
@@ -424,6 +424,7 @@ function PanelMoreSection({ objs }: { objs: PanelObject[] }) {
           {/* 只有数字框，不再配滑杆（2026-09-11 用户反馈） */}
           <Row label={pn('opacity')} labelWidth={INSPECTOR_LABEL_W}>
             <NumberField
+              half
               ariaLabel={pn('opacity')}
               value={opacity ?? 100}
               mixed={opacity === undefined}
@@ -447,7 +448,7 @@ function PanelMoreSection({ objs }: { objs: PanelObject[] }) {
       >
         <Row label={pn('replace')} labelWidth={INSPECTOR_LABEL_W}>
           <Button variant="secondary" size="sm" disabled={!one} onClick={() => setReplacing(true)}>
-            <Replace size={ICON_SIZE.sm} className="text-ink-3" />
+            <Replace size={ICON_SIZE.sm} className="text-ink-2" />
             {pn('replaceAction')}
           </Button>
         </Row>
@@ -492,30 +493,32 @@ function ImageOpsSection({ objs }: { objs: PanelObject[] }) {
               else beginCrop(one.id)
             }}
           >
-            <Crop size={ICON_SIZE.sm} className={cropping ? undefined : 'text-ink-3'} />
+            <Crop size={ICON_SIZE.sm} className={cropping ? undefined : 'text-ink-2'} />
             {pn(cropping ? 'cropDone' : 'crop')}
           </Button>
         </Tip>
       </Row>
-      <Row className="mt-1.5" label={pn('fitRow')} labelWidth={INSPECTOR_LABEL_W}>
+      <Row className="mt-1.5" label={pn('fitRow')} labelWidth={INSPECTOR_LABEL_W} align="start">
+        <div className="flex min-w-0 flex-wrap gap-1.5">
         <Tip label={pn('fitTip')}>
           <Button variant="secondary" size="sm" onClick={() => fitPanels(ids)}>
-            <Minimize2 size={ICON_SIZE.sm} className="text-ink-3" />
+            <Minimize2 size={ICON_SIZE.sm} className="text-ink-2" />
             {pn('fit')}
           </Button>
         </Tip>
         <Tip label={pn('fillTip')}>
           <Button variant="secondary" size="sm" onClick={() => fillPanels(ids)}>
-            <Maximize2 size={ICON_SIZE.sm} className="text-ink-3" />
+            <Maximize2 size={ICON_SIZE.sm} className="text-ink-2" />
             {pn('fill')}
           </Button>
         </Tip>
+        </div>
       </Row>
       {cropped && (
         <div className="mt-1 flex justify-end">
           <Tip label={pn('resetCropTip')}>
             <Button variant="ghost" size="sm" onClick={() => resetPanelCrop(ids)}>
-              <RotateCcw size={ICON_SIZE.sm} className="text-ink-3" />
+              <RotateCcw size={ICON_SIZE.sm} className="text-ink-2" />
               {pn('resetCrop')}
             </Button>
           </Tip>
@@ -747,37 +750,35 @@ function ElementEditEntry({ panel }: { panel: PanelObject }) {
         )}
       </div>
 
-      {/* 两条提示的布局足迹常驻，隐藏只改可见性：首次渲染在 pointerdown / up
-          之间完成时，撤掉提示会把翻转 / 数值框等控件上移，原生 click 随之丢失。
-          冷 / 热文案同格量最大高度，stale 独立一格；翻译换行也不靠写死像素猜。 */}
-      <div data-panel-engine-status className="mt-1.5">
-        <div className="grid">
-          {(['cold', 'building'] as const).map((kind) => {
-            const shown = !editing && building && (kind === 'cold' ? cold : !cold)
-            return (
-              <p
-                key={kind}
-                data-panel-engine-message={kind}
-                data-panel-engine-progress
-                aria-hidden={!shown}
-                className={cn(
-                  'col-start-1 row-start-1 flex items-center gap-1.5 text-xs text-ink-2',
-                  !shown && 'invisible',
-                )}
-              >
-                {/* 「进行中」的字是 text-shimmer（宪法第七节的三种加载方言之一），不再配呼吸点 */}
+      {/* 引擎状态是**一行**（2026-10-07 设计审计 §9.2：此前常驻两行隐形占位，约 42px）：冷启动 / 构建中 /
+          脚本已变三条叠在同一格里，同一时刻只显示一条（构建中优先——它正在把「脚本已变」刷新掉），
+          隐藏只改可见性：足迹常驻、按最长那条译文定高，首次渲染在 pointerdown / up 之间完成时
+          不会把翻转 / 数值框等控件上移（原生 click 随之丢失） */}
+      <div data-panel-engine-status className="mt-1.5 grid">
+        {(['cold', 'building', 'stale'] as const).map((kind) => {
+          const progress = !editing && building
+          const shown = kind === 'stale' ? !!render?.stale && !progress : progress && (kind === 'cold' ? cold : !cold)
+          return (
+            <p
+              key={kind}
+              data-panel-engine-message={kind}
+              data-panel-engine-progress={kind === 'stale' ? undefined : true}
+              aria-hidden={!shown}
+              className={cn(
+                'col-start-1 row-start-1 flex min-h-5 items-center gap-1.5 text-xs',
+                kind === 'stale' ? 'text-danger-content' : 'text-ink-2',
+                !shown && 'invisible',
+              )}
+            >
+              {kind === 'stale' ? (
+                pn('staleScript')
+              ) : (
+                // 「进行中」的字是 text-shimmer（宪法第七节的加载方言之一），不配呼吸点
                 <span className="text-shimmer">{pn(kind === 'cold' ? 'coldBuilding' : 'building')}</span>
-              </p>
-            )
-          })}
-        </div>
-        <p
-          data-panel-engine-message="stale"
-          aria-hidden={!render?.stale}
-          className={cn('mt-1.5 text-xs text-danger', !render?.stale && 'invisible')}
-        >
-          {pn('staleScript')}
-        </p>
+              )}
+            </p>
+          )
+        })}
       </div>
     </Section>
   )
@@ -839,9 +840,7 @@ function RuntimeSourceArea({ panel }: { panel: PanelObject }) {
   const busy = !!run && isBusyPhase(run.phase)
   return (
     <div className="flex flex-col gap-1.5">
-      <p className="rounded-sm border border-border bg-surface-2 p-2 text-xs leading-relaxed text-ink-2">
-        {translate('assets.runtimeNoFile', { ns: 'workspace' })}
-      </p>
+      <Notice>{translate('assets.runtimeNoFile', { ns: 'workspace' })}</Notice>
       <div className="flex items-center gap-1.5">
         <span className="min-w-0 flex-1 truncate font-mono text-xs text-ink-3" title={script}>
           {script}

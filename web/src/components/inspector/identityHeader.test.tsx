@@ -25,6 +25,8 @@ import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
+import { useValidationStore } from '@/store/validationStore'
+import type { ValidationIssue } from '@/lib/validation'
 import { seedExactRender } from '@/test/renderFixtures'
 import { emptyProject, type CanvasObject, type PanelObject } from '@/types/document'
 
@@ -229,8 +231,10 @@ describe('右栏的壳（2026-09-15 全面打磨 S2 / S3 / S4）', () => {
     const h2 = document.querySelector('h2')!
     // 身份块的名字是 15/500（2026-09-30 重设计），比它下面的分区标题（type-section 12/500）大一档；
     // 2026-09-15 之前它是 text-xs（11），对象名比分区标题还小
-    expect(h2.className).toContain('text-xl')
-    expect(h2.className).not.toContain('text-xs')
+    // 2026-10-07：名字走 type-heading（17 / 600），折两行、全文在 title
+    expect(h2.className).toContain('type-heading')
+    expect(h2.className).toContain('line-clamp-2')
+    expect(h2.getAttribute('title')).toBe(h2.textContent)
   })
 
   it('身份头的标题比分区标题大一档（S2 · 图内元素页）', async () => {
@@ -241,8 +245,7 @@ describe('右栏的壳（2026-09-15 全面打磨 S2 / S3 / S4）', () => {
     await mount()
     const h2 = document.querySelector('h2')!
     expect(h2.textContent).toBeTruthy()
-    expect(h2.className).toContain('text-xl')
-    expect(h2.className).not.toContain('text-xs')
+    expect(h2.className).toContain('type-heading')
   })
 
   it('图钉：状态靠图形说，不靠常驻的灰块（S3）', async () => {
@@ -400,5 +403,90 @@ describe('面包屑可点', () => {
     expect(document.body.textContent).not.toContain('所属子图')
     await act(async () => crumbButtons()[1].click())
     expect(useUiStore.getState().selectedGids).toEqual(['axes_0'])
+  })
+})
+
+/**
+ * Codex #829 P2：图内多选时，问题胶囊数的是整组选择——此前只按最后点的那个 gid 过滤，
+ * 先选的元素上的问题从胶囊上消失。
+ */
+describe('问题胶囊数的是整组选择（Codex #829）', () => {
+  const issue = (severity: ValidationIssue['severity'], gid: string): ValidationIssue =>
+    ({
+      issueId: `${severity}-${gid}`,
+      ruleCode: 'font-size-min',
+      severity,
+      context: {},
+      objectRef: { documentId: 'd', canvasId: 'c', objectId: 'p1', gid },
+      subject: { kind: 'object', objectType: 'panel' },
+      propertyPath: 'fontsize',
+      message: literal('x'),
+      technicalDetails: {},
+      fixKind: 'none',
+    }) as unknown as ValidationIssue
+
+  afterEach(() => useValidationStore.setState({ issues: [] }))
+
+  it('选了标题和 X 刻度：两处的问题都算进胶囊，未选元素上的不算', async () => {
+    await seed([panel], ['p1'])
+    seedExactRender(panel, manifest as never)
+    useUiStore.getState().setElementPanel('p1')
+    useUiStore.setState({ selectedGids: ['axes_0.title', 'axes_0.xticks'] })
+    useValidationStore.setState({
+      issues: [issue('error', 'axes_0.title'), issue('warn', 'axes_0.xticks'), issue('error', 'axes_0.legend')],
+    })
+    await mount()
+    const chip = document.querySelector('[data-identity-problems]')
+    expect(chip, '多选时问题胶囊要在').not.toBeNull()
+    expect(chip!.getAttribute('data-identity-problems')).toBe('2')
+  })
+  it('选中真实的组（共享色条）：只数组与它后代上的问题，组外的不算', async () => {
+    const G = 'group:axes_2'
+    const el = (gid: string, role: string, extra: Record<string, unknown> = {}) => ({
+      gid,
+      role,
+      label: gid,
+      bbox: [0.1, 0.1, 0.2, 0.2],
+      draggable: false,
+      editable: [],
+      ...extra,
+    })
+    const grouped = {
+      ...manifest,
+      elements: [
+        ...manifest.elements,
+        el('axes_1', 'axes', { parent_gid: G }),
+        el('axes_1.lines_0', 'line'),
+        el('axes_2', 'axes', { parent_gid: G, is_colorbar: true, colorbar_gid: 'axes_2.colorbar' }),
+        el('axes_2.colorbar', 'colorbar', { geom_gid: 'axes_2', owner_gids: ['axes_1'] }),
+      ],
+      groups: [
+        {
+          gid: G,
+          kind: 'shared_colorbar',
+          members: ['axes_1', 'axes_2'],
+          subplot_gids: ['axes_1'],
+          colorbar_gid: 'axes_2.colorbar',
+          bbox: [0.1, 0.1, 0.5, 0.5],
+          resizable: true,
+        },
+      ],
+    }
+    await seed([panel], ['p1'])
+    seedExactRender(panel, grouped as never)
+    useUiStore.getState().setElementPanel('p1')
+    useUiStore.setState({ selectedGids: [G] })
+    useValidationStore.setState({
+      issues: [
+        issue('warn', 'axes_1.lines_0'), // 成员子图下的元素：算
+        issue('error', 'axes_2.colorbar'), // 成员色条轴上的色条：算
+        issue('error', 'axes_0.title'), // 组外：不算
+        issue('error', 'axes_0.legend'), // 组外：不算
+      ],
+    })
+    await mount()
+    const chip = document.querySelector('[data-identity-problems]')
+    expect(chip, '组里有问题时胶囊要在').not.toBeNull()
+    expect(chip!.getAttribute('data-identity-problems')).toBe('2')
   })
 })

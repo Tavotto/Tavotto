@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { Row, type RowLabelWidth } from '../../ui/Field'
 import { useTranslation } from 'react-i18next'
 import { Bold, Italic } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
@@ -47,8 +48,8 @@ export function TypographyControls({
 }: {
   adapter: TypographyAdapter
   className?: string
-  /** 标签列宽：默认 48（两字标签后留一小段间距即贴上控件），快捷编辑弹层可传 44 */
-  labelWidth?: number
+  /** 标签列宽：默认属性栏行网格（`INSPECTOR_LABEL_W`）；别处可传定宽 */
+  labelWidth?: RowLabelWidth
   /**
    * 跟在 B / I 后面的额外按钮（画布文字的下划线 / 上标 / 下标）。
    *
@@ -73,15 +74,63 @@ export function TypographyControls({
   const boldState = toggleStateOf(adapter.valueOf('weight'), 'bold')
   const italicState = toggleStateOf(adapter.valueOf('style'), 'italic')
 
-  const dirty = (prop: TypographyProp) => adapter.overrideStateOf(prop) !== 'none'
+  // 修改状态四档不压扁（typography-capability-layer）：多选里只改了几个 = 'some'，标签旁是空心环
+  const dirty = (prop: TypographyProp) => adapter.overrideStateOf(prop)
   const reset = (prop: TypographyProp) => () => adapter.reset(prop)
+
+  /*
+   * 一组四行（2026-10-07 设计审计 §9.2 拍板①，宪法第二十节当日修订）：
+   *   字体 [全宽]
+   *   字号 [半列][B I 图标组]
+   *   颜色 [色块 + hex]
+   *   对齐 [Segmented]
+   * 此前字号挤在字体那一行的右端、带一个行内「字号」标签，B / I 单独一行靠 paddingLeft 对齐控件列，
+   * 与上面那行错开 8px。现在每一行都是同一张行网格。
+   */
+  const glyphs = (weight || style || sizeRowExtra) && (
+    <>
+      {/* B / I 各挂各的锚点：`text-weight-policy` 报的 property path 是 `weight`，压在字号那一格的
+          锚点里的话定位会落到数字框上。包一层用 `display:contents`，按钮仍是这一组的直接 flex 项。 */}
+      {weight && (
+        <Anchor adapter={adapter} prop="weight" inline>
+          <StyleToggle
+            state={boldState}
+            label={tb('bold')}
+            hint={
+              boldState === 'mixed'
+                ? tb('boldWeight', { value: translate('element.mixedValues', { ns: 'inspector' }) })
+                : tb('boldWeight', { value: tb(boldState === 'on' ? 'weightBold' : 'weightNormal') })
+            }
+            onClick={() => adapter.writeOnce('weight', nextToggle(adapter.valueOf('weight'), 'bold', 'normal'))}
+          >
+            <Bold size={ICON_SIZE.sm} />
+          </StyleToggle>
+        </Anchor>
+      )}
+      {style && (
+        <Anchor adapter={adapter} prop="style" inline>
+          <StyleToggle
+            state={italicState}
+            label={tb('italic')}
+            hint={
+              italicState === 'mixed'
+                ? tb('italicStyle', { value: translate('element.mixedValues', { ns: 'inspector' }) })
+                : tb('italicStyle', { value: tb(italicState === 'on' ? 'styleItalic' : 'styleNormal') })
+            }
+            onClick={() => adapter.writeOnce('style', nextToggle(adapter.valueOf('style'), 'italic', 'normal'))}
+          >
+            <Italic size={ICON_SIZE.sm} />
+          </StyleToggle>
+        </Anchor>
+      )}
+      {sizeRowExtra}
+    </>
+  )
 
   return (
     <div className={cn('flex flex-col gap-1.5', className)}>
-      {(family || size) && (
-      <div className="flex gap-2">
       {family && (
-        <Anchor adapter={adapter} prop="fontFamily" className="min-w-0 flex-1">
+        <Anchor adapter={adapter} prop="fontFamily">
           <FontFamilyRow
             labelWidth={labelWidth}
             value={String(displayValueOf(familyVal) ?? '')}
@@ -90,20 +139,16 @@ export function TypographyControls({
             unavailable={adapter.unavailableOptions('fontFamily')}
             onChange={(v) => adapter.writeOnce('fontFamily', v)}
             optionLabels={family.option_labels}
-            optionLabelOf={(o) =>
-              fontFamilyOptionLabel(o, family.option_labels, family.options ?? [])
-            }
+            optionLabelOf={(o) => fontFamilyOptionLabel(o, family.option_labels, family.options ?? [])}
             overridden={dirty('fontFamily')}
             onReset={reset('fontFamily')}
           />
         </Anchor>
       )}
-      {size && (
-        <Anchor adapter={adapter} prop="sizePt" className="shrink-0">
-          {/* 字号只占自己的宽度、标签紧挨输入框，剩余宽度全给字体下拉
-              （2026-09-11 用户反馈） */}
+      {size ? (
+        <Anchor adapter={adapter} prop="sizePt">
           <FontSizeRow
-            labelWidth="auto"
+            labelWidth={labelWidth}
             // mixed 时 NumberField 留空 + 占位符；**绝不退回 9 pt 那种默认值**
             value={sizeVal.kind === 'mixed' ? NaN : Number(displayValueOf(sizeVal) ?? 9)}
             mixed={sizeVal.kind === 'mixed'}
@@ -115,54 +160,19 @@ export function TypographyControls({
             onScrubEnd={adapter.endGesture}
             overridden={dirty('sizePt')}
             onReset={reset('sizePt')}
-          />
+          >
+            {glyphs || undefined}
+          </FontSizeRow>
         </Anchor>
-      )}
-      </div>
-      )}
-      {(weight || style || sizeRowExtra) && (
-        <div className="flex items-center gap-1" style={{ paddingLeft: labelWidth }}>
-          {/* B / I 各挂各的锚点：`text-weight-policy` 报的 property path 是
-              `weight`，压在字号那一格的锚点里的话定位会落到数字框上。
-              包一层用 `display:contents`，按钮仍是这一行的直接 flex 项。 */}
-          {weight && (
-            <Anchor adapter={adapter} prop="weight" inline>
-              <StyleToggle
-                state={boldState}
-                label={tb('bold')}
-                hint={
-                  boldState === 'mixed'
-                    ? tb('boldWeight', { value: translate('element.mixedValues', { ns: 'inspector' }) })
-                    : tb('boldWeight', { value: tb(boldState === 'on' ? 'weightBold' : 'weightNormal') })
-                }
-                onClick={() =>
-                  adapter.writeOnce('weight', nextToggle(adapter.valueOf('weight'), 'bold', 'normal'))
-                }
-              >
-                <Bold size={ICON_SIZE.sm} />
-              </StyleToggle>
-            </Anchor>
-          )}
-          {style && (
-            <Anchor adapter={adapter} prop="style" inline>
-              <StyleToggle
-                state={italicState}
-                label={tb('italic')}
-                hint={
-                  italicState === 'mixed'
-                    ? tb('italicStyle', { value: translate('element.mixedValues', { ns: 'inspector' }) })
-                    : tb('italicStyle', { value: tb(italicState === 'on' ? 'styleItalic' : 'styleNormal') })
-                }
-                onClick={() =>
-                  adapter.writeOnce('style', nextToggle(adapter.valueOf('style'), 'italic', 'normal'))
-                }
-              >
-                <Italic size={ICON_SIZE.sm} />
-              </StyleToggle>
-            </Anchor>
-          )}
-          {sizeRowExtra}
-        </div>
+      ) : (
+        glyphs && (
+          // 没有字号能力时字形钮仍在自己那一行的控件列里（同一张行网格，标签空着）
+          <Row labelWidth={labelWidth}>
+            <span data-glyph-group className="flex min-w-0 items-center gap-0.5">
+              {glyphs}
+            </span>
+          </Row>
+        )
       )}
       {color && (
         <Anchor adapter={adapter} prop="color">

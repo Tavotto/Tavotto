@@ -1,6 +1,4 @@
 import { Fragment, useRef, type KeyboardEvent, type ReactNode } from 'react'
-import { Check } from '@/components/ui/icons'
-import { ICON_SIZE } from '@/components/ui/Icon'
 import { cn } from '@/lib/utils'
 import { Tip } from '../../ui/Tooltip'
 
@@ -23,9 +21,11 @@ export interface GridOption<T extends string = string> {
 export const tipLabelOf = (opt: { label: string; code?: string }): string => opt.label
 
 /**
- * 视觉选择器共用的网格：radiogroup 语义 + 方向键漫游 + 选中态角标。
+ * 视觉选择器共用的网格：radiogroup 语义 + 方向键漫游。
  *
- * 选中态不只靠颜色：浅灰底之外还有左上角的 check 角标；
+ * **与 `ui/Segmented` 同一副皮**（2026-10-07 设计审计 §9.2 P1）：灰槽里一格格无边的样张，
+ * 选中那一格浮起成白底 + `shadow-thumb` + 600 字重——不是第三种控件皮肤，也不再在角上压一个
+ * check（角标盖住的正是预览图形的左上角）。选中态不只靠颜色：浮起的白块是形状变化。
  * 每个格子的名字是文字 label（aria-label + tooltip），图形只是预览。
  */
 export function OptionGrid<T extends string>({
@@ -88,7 +88,8 @@ export function OptionGrid<T extends string>({
       ref={ref}
       role="radiogroup"
       aria-label={ariaLabel}
-      className="grid gap-1"
+      data-option-grid
+      className="grid gap-0.5 rounded-lg bg-surface-hover p-0.5"
       style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
       onKeyDown={onKeyDown}
     >
@@ -109,21 +110,15 @@ export function OptionGrid<T extends string>({
               onPick?.(opt.value)
             }}
             className={cn(
-              'relative flex h-8 items-center justify-center rounded-sm border outline-none transition-colors',
+              // 外层 12 = 格 8 + 槽内边距 2 + 2（外层 = 内层 + 内边距）
+              'relative flex h-8 items-center justify-center rounded-md outline-none transition-colors',
               'focus-visible:focus-ring',
               active
-                ? 'border-transparent bg-selected text-ink'
-                : 'border-border bg-surface text-ink-2 hover:border-border-strong hover:text-ink',
+                ? 'bg-surface font-semibold text-ink shadow-thumb'
+                : 'text-ink-2 hover:bg-surface-active hover:text-ink',
               cellClassName,
             )}
           >
-            {active && (
-              <Check
-                size={ICON_SIZE.xs}
-                aria-hidden
-                className="absolute left-0.5 top-0.5 text-ink"
-              />
-            )}
             {opt.preview ?? <span className="truncate px-1 text-sm">{opt.label}</span>}
           </button>
         )

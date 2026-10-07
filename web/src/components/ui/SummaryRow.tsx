@@ -15,7 +15,10 @@ import { cn } from '@/lib/utils'
  *  - 右边只写**当前值或项数**（「原样」「不显示」「5 项」），不写内容清单；
  *  - 展开后右值就没用了（控件本身说得更准），所以只在收起时出现；
  *  - 展开方式只有「原地展开」一种，不推子页——同一页里的状态不丢；
- *  - 行与行之间一条内缩的 hairline（行自带上边线），相邻几行读成一张清单。
+ *  - 行与行之间**不画线**（2026-10-07 设计审计 §9.2：一屏的发丝线只留节与节之间那一条，
+ *    index.css 在「节后面接摘要行」处画它）；相邻几行靠 32px 的同一节拍读成一张清单。
+ *  - 第三级标题：32px、12/400 ink，右值 ink-3，chevron 坐在与 `Row` 同一条 20px 状态槽里
+ *    （节 32 12/500 · 组 24 11/500 ink-3 · 折叠行 32 12/400）。
  *
  * `children` 在收起时不挂载（`Reveal` 保活到收起动画播完），所以收起的行里
  * 没有可聚焦的控件；需要它「收起也在 DOM 里」的调用方（受控值、e2e 锚点）
@@ -45,30 +48,33 @@ export function SummaryRow({
     <div
       data-summary-row
       {...rest}
-      className={cn('mx-3 border-t border-border', className)}
+      className={cn('mx-3', className)}
     >
       <button
         type="button"
         {...triggerProps}
         onClick={onToggle}
         aria-expanded={open}
-        className="flex h-10 w-full items-center gap-2 rounded-sm text-left text-sm text-ink outline-none focus-visible:focus-ring"
+        className="grid h-8 w-full grid-cols-[minmax(40%,1fr)_minmax(0,auto)_1.25rem] items-center gap-x-2 rounded-sm text-left text-sm text-ink outline-none hover:text-ink focus-visible:focus-ring"
       >
-        <span className="min-w-0 flex-1 truncate font-medium">{label}</span>
-        {showValue && (
-          <>
+        <span className="min-w-0 truncate">{label}</span>
+        {showValue ? (
+          <span className="flex min-w-0 justify-end">
             {/* 名字按内容取：标签与值之间没有分隔时读屏念成「背景#FFFFFF」 */}
             <span className="sr-only">, </span>
-            <span data-summary-value className="max-w-[60%] min-w-0 shrink-0 truncate text-right text-xs text-ink-3">
+            <span data-summary-value className="min-w-0 truncate text-right text-sm text-ink-3">
               {value}
             </span>
-          </>
+          </span>
+        ) : (
+          <span aria-hidden />
         )}
-        <ChevronRight
-          size={ICON_SIZE.xs}
-          aria-hidden
-          className={cn('shrink-0 text-ink-3 transition-transform', open && 'rotate-90')}
-        />
+        <span aria-hidden className="flex w-5 justify-center">
+          <ChevronRight
+            size={ICON_SIZE.xs}
+            className={cn('shrink-0 text-ink-3 transition-transform', open && 'rotate-90')}
+          />
+        </span>
       </button>
       <Reveal open={open}>
         <div className="pb-3 pt-0.5">{children}</div>

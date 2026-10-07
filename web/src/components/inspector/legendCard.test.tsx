@@ -258,6 +258,18 @@ const propInput = (prop: string, type?: string) =>
   Array.from(host.querySelectorAll(`[data-prop="${prop}"] input`)).find(
     (i) => !type || i.getAttribute('type') === type,
   ) as HTMLInputElement | undefined
+/** 图例项那一行的主按钮（roving focus 的落点）与行尾菜单（⇧F10 打开同一份清单） */
+const entryMain = (gid: string) =>
+  host.querySelector<HTMLButtonElement>(`[data-legend-entry="${gid}"] [data-legend-entry-main]`)!
+const key = async (el: Element, k: string, init: KeyboardEventInit = {}) => {
+  await act(async () => {
+    el.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, ...init }))
+  })
+}
+const entryMenuItem = async (gid: string, sel: string) => {
+  await key(host.querySelector(`[data-legend-entry="${gid}"]`)!, 'F10', { shiftKey: true })
+  return document.querySelector(sel) ?? undefined
+}
 const labels = () =>
   Array.from(host.querySelectorAll('[data-prop]')).map((n) => n.getAttribute('data-prop'))
 const click = async (el: Element | undefined) => {
@@ -690,10 +702,33 @@ describe('选中图例', () => {
     expect(useUiStore.getState().selectedGids).toEqual(['axes_0.legend.texts_1'])
   })
 
+  it('焦点在项上时整张列表仍只有一个 Tab 停靠点（⋯ 不进 Tab 顺序）；⇧F10 / ContextMenu 键照样开菜单（Codex #829）', async () => {
+    await mount(['axes_0.legend'])
+    const gid = 'axes_0.legend.texts_1'
+    const main = entryMain(gid)
+    await act(async () => main.focus())
+    expect(document.activeElement).toBe(main)
+    // jsdom 不走 Tab：Tab 序列 = 列表里 tabIndex ≥ 0 的元素，必须只剩这一个主按钮，Tab 才会直接离开列表
+    const list = host.querySelector('ul[aria-label="图例项列表"]')!
+    const stops = Array.from(list.querySelectorAll<HTMLElement>('button, [tabindex]')).filter((el) => el.tabIndex >= 0)
+    expect(stops).toEqual([main])
+    const trigger = host.querySelector<HTMLButtonElement>(`[data-legend-entry-menu="${gid}"]`)!
+    expect(trigger.tabIndex).toBe(-1)
+    // 键盘入口：从获得焦点的主按钮发出（真实的冒泡路径），菜单从 ⋯ 垂下
+    for (const init of [{ key: 'F10', shiftKey: true }, { key: 'ContextMenu' }]) {
+      await key(main, init.key, init)
+      expect(trigger.getAttribute('data-state')).toBe('open')
+      expect(document.querySelector('[data-legend-toggle-hidden]')).not.toBeNull()
+      await key(document.activeElement ?? document.body, 'Escape')
+      expect(trigger.getAttribute('data-state')).toBe('closed')
+    }
+  })
+
   it('下移写 entry_order（原始序号的排列），一条历史', async () => {
     await mount(['axes_0.legend'])
     const before = useDocumentStore.getState().past.length
-    await click(byAria('下移 “sin”'))
+    // ⌥↓ = 下移（与 ⋯ 菜单里的「下移」同一个动作）
+    await key(entryMain('axes_0.legend.texts_0'), 'ArrowDown', { altKey: true })
     expect(overrideOf('axes_0.legend', 'entry_order')).toEqual([1, 0, 2])
     expect(useDocumentStore.getState().past.length).toBe(before + 1)
     // 列表立刻按新顺序排（不等渲染回来）
@@ -705,21 +740,55 @@ describe('选中图例', () => {
     ])
   })
 
+  /** 拖动柄按下（jsdom 里行高都是 0，任何松手位置都落到最后一行） */
+  const pressDragHandle = async (gid: string) => {
+    const handle = host.querySelector(`[data-legend-entry="${gid}"] [data-legend-drag]`)!
+    await act(async () => {
+      handle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientY: 0 }))
+    })
+  }
+  const releasePointer = async () => {
+    await act(async () => {
+      window.dispatchEvent(new PointerEvent('pointerup', { clientY: 999 }))
+    })
+  }
+
+  it('拖动柄松手写 entry_order，一条历史（下一条的对照）', async () => {
+    await mount(['axes_0.legend'])
+    const before = useDocumentStore.getState().past.length
+    await pressDragHandle('axes_0.legend.texts_0')
+    await releasePointer()
+    expect(overrideOf('axes_0.legend', 'entry_order')).toEqual([1, 2, 0])
+    expect(useDocumentStore.getState().past.length).toBe(before + 1)
+  })
+
+  it('拖到一半检查器卸载（如松手前 Esc 退出元素编辑）：迟到的松手不重排、不进历史（Codex #829）', async () => {
+    await mount(['axes_0.legend'])
+    const before = useDocumentStore.getState().past.length
+    await pressDragHandle('axes_0.legend.texts_0')
+    await act(async () => {
+      root.unmount()
+    })
+    await releasePointer()
+    expect(overrideOf('axes_0.legend', 'entry_order')).toBeUndefined()
+    expect(useDocumentStore.getState().past.length).toBe(before)
+  })
+
   it('已经重排过再移动：写的仍是原始序号的排列，不是显示位置', async () => {
     useDocumentStore.getState().commit(literal('先重排'), (d) => {
       const p = d.objects.find((o) => o.id === 'p1') as PanelObject
       p.overrides.push({ gid: 'axes_0.legend', prop: 'entry_order', value: [2, 0, 1] })
     })
     await mount(['axes_0.legend'])
-    await click(byAria('下移 “proxy”'))
+    await click(await entryMenuItem('axes_0.legend.texts_2', '[data-legend-move="down"]'))
     expect(overrideOf('axes_0.legend', 'entry_order')).toEqual([0, 2, 1])
   })
 
   it('隐藏写那一项的 visible=false；再点一次恢复', async () => {
     await mount(['axes_0.legend'])
-    await click(byAria('隐藏图例项 “sin”'))
+    await click(await entryMenuItem('axes_0.legend.texts_0', '[data-legend-toggle-hidden]'))
     expect(overrideOf('axes_0.legend.texts_0', 'visible')).toBe(false)
-    await click(byAria('显示图例项 “sin”'))
+    await click(await entryMenuItem('axes_0.legend.texts_0', '[data-legend-toggle-hidden]'))
     expect(overrideOf('axes_0.legend.texts_0', 'visible')).toBeUndefined()
   })
 })
@@ -828,5 +897,48 @@ describe('选中图例项', () => {
     await mount(['axes_0.legend.texts_2'])
     expect(host.querySelector('[data-binding]')).toBeNull()
     expect(propInput('handle_linewidth')).toBeDefined()
+  })
+})
+
+/**
+ * Codex #829 P2：元组 / 路径标记（`(5, 1, 0)`、`$...$`、Path）的取值字符串不是认得的名字，
+ * 色样曾因此一笔不画。没被改过时照引擎的 `marker_current` 几何画（与标记选择器同一份）。
+ */
+describe('图例色样照引擎几何画标记', () => {
+  it('handle_marker 是元组字符串时，色样里画的是 marker_current 那条路径', async () => {
+    const tupleEntry: ManifestElement = {
+      ...sinEntry,
+      editable: sinEntry.editable.map((fld) =>
+        fld.prop === 'handle_marker'
+          ? {
+              ...fld,
+              value: '(5, 1, 0)',
+              marker_current: {
+                kind: 'path',
+                vertices: [
+                  [0, 0.5],
+                  [-0.48, 0.15],
+                  [-0.29, -0.4],
+                  [0.29, -0.4],
+                  [0.48, 0.15],
+                  [0, 0],
+                ],
+                codes: [1, 2, 2, 2, 2, 79],
+              },
+            }
+          : fld,
+      ),
+    }
+    const m = {
+      ...manifest,
+      elements: manifest.elements.map((e) => (e.gid === sinEntry.gid ? tupleEntry : e)),
+    } as Manifest
+    useRenderStore.getState().patch(renderKeyOf(panelOf()), { manifest: m })
+    await mount(['axes_0.legend'])
+    const swatch = host.querySelector(`[data-legend-swatch="${sinEntry.gid}"]`)
+    expect(swatch, '图例项那一行要有色样').not.toBeNull()
+    const path = swatch!.querySelector('path')
+    expect(path, '名字画不出的标记要照引擎几何画').not.toBeNull()
+    expect(path!.getAttribute('d')).toMatch(/^M/)
   })
 })
