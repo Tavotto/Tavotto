@@ -24,7 +24,10 @@ claude plugin install tavotto@tavotto
 没有内嵌画布，照常用工具打开、修改、预检、导出；要手动编辑就交接桌面版。
 不要同时保留生成器配置的同名服务。Claude Desktop 聊天仍走下面的配置版。
 
-**DeepSeek Harness 优先走 bundle**。`web` 换成用户实际使用的 profile：
+**DeepSeek Harness：已有可用 pnpm 时才走 bundle**。DSH 的 CLI 插件管理器在安装和更新时
+需要 PATH 上的 `pnpm`。没有它，或命令提示找不到 pnpm，就按下面的配置生成器步骤选
+`--host dsh`；这条既有路径仍是 experimental，无需为 Tavotto 另装 Node.js 或 pnpm。
+不要把安装失败当成工具已可用。已有 pnpm 时，`web` 换成用户实际使用的 profile：
 
 ```sh
 dsh plugin --profile web add "git+https://github.com/Tavotto/Tavotto.git#plugin-stable&path:/codex-plugin"

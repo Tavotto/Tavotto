@@ -438,8 +438,14 @@ config generator below.
 
 ### Using Tavotto with DeepSeek Harness (Beta)
 
-The same plugin is also a DeepSeek Harness bundle. Add it to the profile you use (`web` here, the one
-`dsh web` starts):
+The same plugin is also a DeepSeek Harness bundle. This optional route needs `pnpm` already on `PATH`:
+[DSH's plugin manager](https://github.com/deepseek-ai/deepseek-harness/blob/master/apps/cli/reference/README.md#plugin-management)
+uses it for installation and updates. If `pnpm` is unavailable, or DSH reports that it cannot find it,
+use the [config-generator route below](#using-tavotto-from-other-ai-editors-and-clients-experimental)
+with `--host dsh` instead. That existing route remains experimental and needs no additional Node.js or
+pnpm installation for Tavotto.
+
+With pnpm available, add the bundle to the profile you use (`web` here, the one `dsh web` starts):
 
 ```sh
 dsh plugin --profile web add "git+https://github.com/Tavotto/Tavotto.git#plugin-stable&path:/codex-plugin"
