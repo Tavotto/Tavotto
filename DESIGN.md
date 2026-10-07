@@ -197,7 +197,8 @@ Dialog 页脚三槽——全文在 **宪法第二十六节**。
 ## Layout
 
 密度：**宪法第三节**。控件 28px（`h-7`），对话框页脚 / 页面 CTA / 命令面板输入行 32px（`size="lg"`）；行内 gap 按 4 / 8 走，分区之间靠 `Section` 的固定留白；
-设置页一行 48px（`SettingRow`，`layout="balanced"` 是 4 : 6 两列），分区是 `FormSection` + `FieldGroup`（12 圆角、ink 3% 底、行内边距 12 / 16、内缩分隔线）。
+设置页一行 48px（`SettingRow`，`layout="balanced"` 是 4 : 6 两列；现状只放文字，路径 / 编辑器 / 预览走跨两列的 `below`），分区是 `FormSection` + `FieldGroup`（12 圆角、ink 3% 底、行内边距 12 / 16、内缩分隔线）。
+设置外壳：导航 200px（28px 搜索框；项 30px / 13px / 8 圆角，选中 600；组名 12 / 500 / ink-3），内容是居中的 680 一列，每页一个 `type-heading` 页头 + 一句说明。
 标签在左、控件在右的紧凑行，控件从同一条竖线起排（`ui/Field.Row`）。
 少用容器：**宪法第八节**——留白、对齐、字体层级、hairline 优先，卡片只给真的是一张卡的东西（`ui/Card`）。
 层级（z-index）只来自 token：sticky 10 · canvas-chrome 20 · drawer 30 · overlay 40 · dialog 50 · popover 60 · tooltip 70 · toast 80 · onboarding 90（**宪法第二十六节**）。

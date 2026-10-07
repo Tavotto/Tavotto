@@ -4,6 +4,7 @@ import { ChevronRight, CircleQuestionMark, TriangleAlert } from '@/components/ui
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import { cn } from '@/lib/utils'
+import { Notice, type StatusTone } from '../ui/Notice'
 import { Popover } from '../ui/Popover'
 import { useInFieldGroup } from '../ui/fieldGroupContext'
 
@@ -14,22 +15,25 @@ import { useInFieldGroup } from '../ui/fieldGroupContext'
  * 视觉权重接近，整页读起来像说明书而不是设置（见
  * `docs/ux/img/ux-consistency-pass/before/zh-1440-settings-about.png`）。
  *
- * 本轮的分工：
- *   * `SettingRow`  —— 标签 + 控件 + 可选的一句状态摘要 + 可选帮助；
+ * 分工（2026-10-07 设计审计 §9.1 起，分组是 `ui/FormSection` + `ui/FieldGroup`，这里只管行）：
+ *   * `SettingRow`  —— 标签 + 控件 + 可选的一句说明 / 现状 + 可选帮助 + 可选的整行宽 fill 行（`below`）；
+ *   * `SettingValueRow` —— 只读的「名字 + 值」（样式 / 规范页的只读摘要，与 `SettingRow` 同一份网格）；
+ *   * `GroupNotice` —— 组里的说明条（`ui/Notice`，作为组内最后一行）：**只**给写源文件 / 清数据 /
+ *     隐私授权 / 当前错误 / 缺件 / 不可逆操作；「当前状态有副作用」的一句低调提醒走行上的 `description`；
  *   * `HelpTip`     —— 解释性内容的唯一落点（小问号）；
- *   * `InlineWarning` —— **只**给写源文件 / 清数据 / 隐私授权 / 当前错误 /
- *     缺件 / 不可逆操作，普通说明不许伪装成警告；「当前状态有副作用」的一句
- *     低调提醒走行上的 `status`（Session 6：写回开着时那句），不套框；
- *   * `DiagnosticDisclosure` —— 路径 / 版本 / 包清单 / 原始状态码，默认折叠。
+ *   * `DiagnosticDisclosure` —— 路径 / 版本 / 包清单 / 原始状态码，默认折叠；`variant="row"` 是组里
+ *     「原地展开的一行」（改图助手详情的高级设置、包管理的背景材料）。
+ *
+ * `InlineWarning` 只剩设置以外的几处对话框在用（待它们各自那一期迁到 `ui/Notice`），设置页不再用。
  */
 
 const st = (key: string, values?: Record<string, unknown>) =>
   translate(`settings.${key}`, { ns: 'dialogs', ...(values ?? {}) })
 
 /**
- * 控件列的宽度（px）。normal 内容宽 640 里标题列拿剩下的约 380：标题 + 一行说明
- * 够放，控件（下拉 / 开关 / 一颗按钮 / 数字框）从同一条竖线起排。样式 / 规范页
- * 的只读摘要行也用它，两种模式在同一位置来回切换时整列不跳（`settingsDisclosure.test`）。
+ * 控件列的宽度（px）。内容列 680、组内左右各 16 的内边距之后，标题列拿剩下的约 380：标题 + 一行说明
+ * 够放，控件（下拉 / 开关 / 一颗按钮 / 数字框）贴同一条右缘。样式 / 规范页的只读摘要行（`SettingValueRow`）
+ * 也用它，两种模式在同一位置来回切换时整列不跳（`settingsDisclosure.test`）。
  */
 export const SETTING_CONTROL_WIDTH = 240
 /** 行的网格：标题列弹性、控件列定宽。值通过 CSS 变量给，摘要行共用同一份 */
@@ -39,63 +43,6 @@ export const settingControlStyle = {
 } as CSSProperties
 
 /**
- * 一个设置分区：小标题 + 可选一句说明 + 若干行。
- *
- * 分区**不是卡片**：靠上下留白与 type-section 小标题分层，相邻两行之间一根
- * hairline（只在两个 `SettingRow` 相邻时画；行与警示条 / 折叠区之间不画）。
- * 分区之间的间距由外壳的内容容器统一给（`SettingsDialog`），分区自己不带外边距，
- * 所以哪一页都不会比别的页更稀或更挤。
- */
-export function SettingSection({
-  title,
-  description,
-  action,
-  children,
-  className,
-}: {
-  title?: ReactNode
-  /** 分区级的一句说明（这一组设置管什么）；行级的说明写在行上 */
-  description?: ReactNode
-  /**
-   * 分区标题行右侧的动作（「添加服务」「重新检测」这类**管整个分区**的那一颗）。
-   * 全面打磨 D05 / D10：此前编码 Agent 页把它们摆成页首一条左对齐的裸按钮条，
-   * 是全部设置页里唯一不在行语法里的控件。
-   */
-  action?: ReactNode
-  children: ReactNode
-  className?: string
-}) {
-  return (
-    <section
-      className={cn(
-        'flex flex-col',
-        '[&>[data-setting-row]+[data-setting-row]]:border-t [&>[data-setting-row]+[data-setting-row]]:border-border',
-        className,
-      )}
-    >
-      {/* 分区头「上 16 下 8」：16 由外壳的 gap-7 给，这里只管下缘（全面打磨 D42） */}
-      {(title != null || description != null || action != null) && (
-        <header
-          className={cn(
-            'mb-2 flex items-start justify-between gap-3',
-            // 有动作时标题行是一个 28px 的盒，钮与标题在一条中线上；没有动作时
-            // 保持原来的纯文字高度，别为了一个不存在的按钮把所有分区头撑高
-            action != null && 'min-h-7 items-center',
-          )}
-        >
-          <span className="flex min-w-0 flex-col gap-0.5">
-            {title != null && <h3 className="type-section">{title}</h3>}
-            {description != null && <p className="type-caption">{description}</p>}
-          </span>
-          {action}
-        </header>
-      )}
-      {children}
-    </section>
-  )
-}
-
-/**
  * 一行设置（Visual Consolidation Session 5 定下的网格，Session 6 定下的对齐）：
  *
  * ```text
@@ -103,8 +50,9 @@ export function SettingSection({
  * 设置 Tavotto 使用的界面语言
  * ```
  *
- *   * 左列：**标题**（type-body，ink）+ 可选的一句**说明**（type-caption）+ 可选的
- *     一句**现状**（`status`，type-meta：「当前窗口只能固定一侧」这类只在成立时给）
+ *   * 左列：**标题**（13 / ink）+ 可选的一句**说明**（type-caption 12 / ink-3）+ 可选的
+ *     一句**现状**（`status`，12 / ink-2 / 等宽数字：「当前窗口只能固定一侧」这类只在成立时给；
+ *     **只放文字**——按钮、路径展开、编辑器一律进 `below`，2026-10-07 设计审计 §9.1）
  *     + 可选的**示意图**（`illustration`，说明下方的小型辅助预览）；
  *   * 右列：**控件列定宽** `SETTING_CONTROL_WIDTH`，控件从同一条竖线起排、左起对齐，
  *     开关 / 下拉 / 按钮 / 数字框哪一种都落在同一列——标签不漂、控件不漂；
@@ -113,7 +61,8 @@ export function SettingSection({
  *     仍与标题并排，而不是漂到说明与示意图之间的某个高度上（Session 6 之前
  *     「拖动时一同移动关联对象」那一行就是这样：开关 + 问号 + 示意图挤在同一条基线上）；
  *   * 行高稳定：`normal` 最小 48px（控件 28 + 上下各 10），`compact` 最小 32px
- *     （密集的字段清单用，不放说明）；相邻行之间一根 hairline 由 `SettingSection` 画；
+ *     （密集的字段清单用，不放说明）；行坐在 `FieldGroup` 里时上下 12 / 左右 16 的内边距与
+ *     行间 hairline 都由组给（compact 行自己收成上下 6）；
  *   * `control="fill"`：控件要整行宽（路径输入框那种）时控件落到标题下一行，
  *     不再挤在 240 里。
  *
@@ -141,6 +90,7 @@ export function SettingRow({
   helpLabel,
   status,
   illustration,
+  below,
   children,
   controlId,
   density = 'normal',
@@ -155,13 +105,18 @@ export function SettingRow({
   help?: ReactNode
   /** 问号的可达名；缺省用「关于<标签>」 */
   helpLabel?: string
-  /** 一句话的现状摘要（「当前窗口只能固定一侧」这类），只在那个状态成立时给 */
+  /** 一句话的现状摘要（「当前窗口只能固定一侧」这类），只在那个状态成立时给。**只放文字** */
   status?: ReactNode
   /** 说明下方的小型辅助示意（关联对象那张关系图）。帮助理解用，不是装饰 */
   illustration?: ReactNode
+  /**
+   * 整行宽的 fill 行（跨两列、落在标题与控件下面）：完整路径、目录编辑器、预览这类要宽度、又属于
+   * 这一行的东西（2026-10-07 设计审计 §9.1：此前塞在 `status` 里，打开时整行跳 36px）。
+   */
+  below?: ReactNode
   /** 控件；纯现状行（自动保存那种没有开关可调的）不给，控件列留空 */
   children?: ReactNode
-  /** 控件的 id：给了标签就是 `<label htmlFor>`，点文字等于点控件 */
+  /** 控件的 id：给了标签就是 `<label htmlFor>`，点文字等于点控件。**控件必须一直挂着**（指向未挂载的输入是坏标签） */
   controlId?: string
   /** normal 48px（默认）/ compact 32px（密集字段清单，不放说明） */
   density?: 'normal' | 'compact'
@@ -178,7 +133,8 @@ export function SettingRow({
   const fill = control === 'fill'
   const compact = density === 'compact'
   const balanced = layout === 'balanced' && !fill
-  // 坐在 FieldGroup 里：上下 12 / 左右 16 的内边距由组给（index.css 的 [data-ui-field-group] 规则），行只管最小高
+  // 坐在 FieldGroup 里：上下 12 / 左右 16 的内边距由组给（index.css 的 [data-ui-field-group] 规则），行只管最小高；
+  // compact 的字段清单在组里收成上下 6（utilities 层的 py 盖得过组的 12），一列十几行不至于拉成一屏半
   const grouped = useInFieldGroup()
   return (
     <div
@@ -190,7 +146,7 @@ export function SettingRow({
       className={cn(
         'grid items-start gap-x-6',
         fill ? 'grid-cols-1 gap-y-1.5' : balanced ? 'grid-cols-[minmax(0,4fr)_minmax(0,6fr)]' : settingRowGrid,
-        compact ? cn('min-h-8', !grouped && 'py-0.5') : grouped ? 'min-h-12' : 'min-h-12 py-2.5',
+        compact ? cn('min-h-8', grouped ? 'py-1.5' : 'py-0.5') : grouped ? 'min-h-12' : 'min-h-12 py-2.5',
       )}
     >
       <div className="flex min-w-0 flex-col">
@@ -199,7 +155,7 @@ export function SettingRow({
           <LabelTag
             id={controlId ? settingRowLabelId(controlId) : undefined}
             htmlFor={controlId}
-            className="min-w-0 break-words text-sm leading-5 text-ink"
+            className="min-w-0 break-words text-base leading-5 text-ink"
           >
             {label}
           </LabelTag>
@@ -213,7 +169,12 @@ export function SettingRow({
         {(description != null || status != null || illustration != null) && (
           <span className="-mt-1 flex min-w-0 flex-col gap-0.5">
             {description != null && <span className="type-caption break-words">{description}</span>}
-            {status != null && <span className="type-meta break-words">{status}</span>}
+            {/* 现状 12 / ink-2 / 等宽数字：比说明深一档——它说的是「此刻」，说明说的是「一向」 */}
+            {status != null && (
+              <span data-setting-status className="break-words text-sm text-ink-2 tabular-nums">
+                {status}
+              </span>
+            )}
             {illustration != null && <span className="mt-1 flex">{illustration}</span>}
           </span>
         )}
@@ -223,6 +184,65 @@ export function SettingRow({
       <div className={cn('flex min-h-7 min-w-0 items-center gap-2', !fill && !balanced && 'justify-end justify-self-end')}>
         {children}
       </div>
+      {below != null && (
+        <div data-setting-below className="col-span-full min-w-0 pt-2">
+          {below}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * 只读的「名字 + 值」一行（样式 / 规范页内置那份的规则摘要）：**刻意不是一排 disabled 的控件**——整页禁用的
+ * 输入看起来像「我的表单坏了」，而它其实是「这份是内置的、想改先复制一份」（审计 T41 / T42）。与 `SettingRow`
+ * 同一份网格、同一档 compact 行高：「摘要 ↔ 输入框」两种模式在同一位置来回切换时，值与输入框从同一条竖线起排
+ * （`settingsDisclosure.test` 量它）。此前样式页与规范页各写了一份同名的私有组件（2026-10-07 设计审计 §9.1 合并）。
+ */
+export function SettingValueRow({
+  label,
+  value,
+  ...rest
+}: { label: string; value: string } & Record<`data-${string}`, string | number | boolean | undefined>) {
+  const grouped = useInFieldGroup()
+  return (
+    <div
+      {...rest}
+      data-summary-row
+      style={settingControlStyle}
+      className={cn('grid min-h-8 items-center gap-x-6 text-base', grouped ? 'py-1.5' : 'py-0.5', settingRowGrid)}
+    >
+      <span className="min-w-0 truncate text-ink" title={label}>
+        {label}
+      </span>
+      <span className="min-w-0 justify-self-end truncate text-sm text-ink-2 tabular-nums" title={value}>
+        {value}
+      </span>
+    </div>
+  )
+}
+
+/**
+ * 组里的说明条：`ui/Notice` 包一层组行（行的 12 / 16 内边距由组给，Notice 自己不贴组边）。作为组内**最后一行**
+ * （2026-10-07 设计审计 §9.1：`InlineWarning` → 锚点派生的 `Notice`）。
+ */
+export function GroupNotice({
+  tone = 'warn',
+  title,
+  action,
+  children,
+  ...rest
+}: {
+  tone?: StatusTone
+  title?: ReactNode
+  action?: ReactNode
+  children?: ReactNode
+} & Record<`data-${string}`, string | number | boolean | undefined>) {
+  return (
+    <div {...rest} data-group-notice className="min-w-0">
+      <Notice tone={tone} title={title} action={action}>
+        {children}
+      </Notice>
     </div>
   )
 }
@@ -371,39 +391,67 @@ export function InlineWarning({
 /**
  * 诊断折叠区：解释器路径、Python / matplotlib 版本、CLI 路径、包清单、
  * 日志、原始状态码。**默认折叠**——它们是排障材料，不是首屏信息。
+ *
+ * 两种形态，DOM 同一种骨架（`根 > div > button[aria-expanded]`，e2e 的 `[data-agent-fold] > div > button` 认它）：
+ *   * `inline`（缺省）：28 高的 chevron 小折叠头，坐在一段内容里；
+ *   * `row`：坐在 `FieldGroup` 里的**一行**——13px 的名字、行尾 `value`（当前值 / 项数，收起时也看得见）
+ *     + chevron，点整行原地展开（2026-10-07 设计审计 §9.1：改图助手详情的「高级」、包管理的背景材料、
+ *     隐私的数据清单都是这一种，与 `ui/SummaryRow` 同一个读法）。
  */
 export function DiagnosticDisclosure({
   title,
   action,
+  value,
   children,
   defaultOpen = false,
+  variant = 'inline',
   ...rest
 }: {
   title: string
-  /** 折叠头右侧的动作（导出诊断包…）或摘要值，不随展开消失 */
+  /** 折叠头右侧的**动作**（复制日志…），在按钮之外，不随展开消失 */
   action?: ReactNode
+  /** 折叠头右侧的**值**（当前来源 / 项数），在按钮里（只放文字），不随展开消失 */
+  value?: ReactNode
   children: ReactNode
   defaultOpen?: boolean
+  variant?: 'inline' | 'row'
 } & Record<`data-${string}`, string | number | boolean | undefined>) {
   const [open, setOpen] = useState(defaultOpen)
+  const row = variant === 'row'
   return (
-    <div {...rest} className="flex min-w-0 flex-col gap-1.5">
+    <div {...rest} data-disclosure={variant} className={cn('flex min-w-0 flex-col', row ? 'gap-0' : 'gap-1.5')}>
       <div className="flex items-center gap-2">
         <button
           type="button"
           onClick={() => setOpen((v) => !v)}
           aria-expanded={open}
           className={cn(
-            'flex h-7 min-w-0 flex-1 items-center gap-1 rounded-sm text-left text-xs',
-            'text-ink-2 outline-none hover:text-ink focus-visible:focus-ring',
+            'flex min-w-0 flex-1 items-center text-left outline-none focus-visible:focus-ring',
+            row
+              ? 'min-h-7 gap-2 rounded-sm text-base text-ink'
+              : 'h-7 gap-1 rounded-sm text-xs text-ink-2 hover:text-ink',
           )}
         >
-          <ChevronRight
-            size={ICON_SIZE.xs}
-            aria-hidden
-            className={cn('transition-transform', open && 'rotate-90')}
-          />
-          <span className="font-medium">{title}</span>
+          {!row && (
+            <ChevronRight
+              size={ICON_SIZE.xs}
+              aria-hidden
+              className={cn('transition-transform', open && 'rotate-90')}
+            />
+          )}
+          <span className={cn('min-w-0 truncate', !row && 'font-medium')}>{title}</span>
+          {value != null && (
+            <span className="ml-auto min-w-0 max-w-[50%] shrink-0 truncate text-right text-sm text-ink-2 tabular-nums">
+              {value}
+            </span>
+          )}
+          {row && (
+            <ChevronRight
+              size={ICON_SIZE.xs}
+              aria-hidden
+              className={cn('shrink-0 text-ink-3 transition-transform', value == null && 'ml-auto', open && 'rotate-90')}
+            />
+          )}
         </button>
         {action}
       </div>
@@ -413,7 +461,7 @@ export function DiagnosticDisclosure({
           「找过这些位置」实测如此）。把列钉成 `minmax(0,1fr)` 之后它才会缩，`truncate` 也才生效。
           行方向的 `grid-template-rows` 由展开动画接管，两者不冲突。 */}
       <Reveal open={open} className="min-w-0 grid-cols-[minmax(0,1fr)]">
-        <div className="flex min-w-0 flex-col gap-1 pl-2">{children}</div>
+        <div className={cn('flex min-w-0 flex-col gap-1', row ? 'pt-2' : 'pl-2')}>{children}</div>
       </Reveal>
     </div>
   )
@@ -442,7 +490,8 @@ export function DiagnosticItem({
           aria-hidden
           className={cn(
             'mt-1 h-1.5 w-1.5 shrink-0 rounded-full',
-            ok ? 'bg-ink-3' : 'bg-danger',
+            // 正常是 ok 绿（锚点作圆点 ≥3:1），不是灰——灰点读不出「通过」（2026-10-07 设计审计 §9.1）
+            ok ? 'bg-ok' : 'bg-danger',
           )}
         />
       )}

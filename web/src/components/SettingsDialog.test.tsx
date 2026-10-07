@@ -22,6 +22,9 @@ import {
   SHELL_WIDTH,
 } from '@/components/SettingsDialog'
 import { TooltipProvider } from '@/components/ui/Tooltip'
+import { anchorsOf, SETTINGS_REGISTRY } from '@/components/settings/settingsRegistry'
+import { agentCaps, capsOf } from '@/components/settings/testCaps'
+import { useProjectStore } from '@/store/projectStore'
 import { dialogCovered, useUiStore } from '@/store/uiStore'
 
 declare global {
@@ -234,5 +237,129 @@ describe('深链的返回：主对话框栈（审计 T35）', () => {
   it('直接 setState 打开（没入栈）的照常显示：判「被盖住」只看栈', async () => {
     useUiStore.setState({ settingsOpen: true })
     expect(dialogCovered(useUiStore.getState().dialogStack, 'settings')).toBe(false)
+  })
+})
+
+describe('页头、导航与内容列（2026-10-07 设计审计 §9.1）', () => {
+  it('每页一个页头：type-heading 的页名 + 一句说明；内容列 680 居中', async () => {
+    await open('export')
+    const header = document.querySelector('[data-settings-page-header]')!
+    const h2 = header.querySelector('h2')!
+    expect(h2.className).toContain('type-heading')
+    expect(h2.textContent).toBe(st('section.export'))
+    expect(header.querySelector('p')!.textContent).toBe(st('pageDesc.export'))
+    const wrap = document.querySelector('[data-content-mode]') as HTMLElement
+    expect(wrap.style.maxWidth).toBe('680px')
+    expect(wrap.className).toMatch(/\bmx-auto\b/)
+  })
+
+  it('导航项 30px / 13px / 8 圆角，选中 600；组名 12 / 500 / ink-3', async () => {
+    await open('project')
+    const item = current()!
+    expect(item.className).toMatch(/\bh-7\.5\b/)
+    expect(item.className).toMatch(/\btext-base\b/)
+    expect(item.className).toMatch(/\brounded-md\b/)
+    expect(item.className).toMatch(/\bfont-semibold\b/)
+    const other = navButtons().find((b) => b.dataset.section === 'general')!
+    expect(other.className).not.toMatch(/\bfont-semibold\b/)
+    const groupLabel = nav().querySelector('[data-nav-group="general"] > span')!
+    expect(groupLabel.className).toMatch(/\btext-sm\b/)
+    expect(groupLabel.className).toMatch(/\bfont-medium\b/)
+    expect(groupLabel.className).toMatch(/\btext-ink-3\b/)
+  })
+})
+
+describe('搜索（2026-10-07 设计审计 §9.1，settingsRegistry）', () => {
+  const search = () => document.querySelector<HTMLInputElement>('[data-settings-search]')!
+  async function type(value: string) {
+    await act(async () => {
+      const el = search()
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+      setter.call(el, value)
+      el.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+  }
+  const results = () =>
+    [...document.querySelectorAll<HTMLElement>('[data-settings-result]')].map((r) => r.dataset.settingsResult)
+
+  it('按行名过滤：只剩命中的分区与那一行，分组隐去', async () => {
+    await open()
+    expect(search().getAttribute('type')).toBe('search')
+    await type(t('export.ppiLabel', { ns: 'dialogs' }))
+    expect(results()).toContain('export.ppi')
+    expect(nav().querySelectorAll('[data-nav-group]')).toHaveLength(0)
+    expect(navButtons().filter((b) => b.dataset.section).map((b) => b.dataset.section)).toContain('export')
+    expect(navButtons().some((b) => b.dataset.section === 'about')).toBe(false)
+  })
+
+  it('也认关键词（标签里没有的词）：dpi → 分辨率那一行', async () => {
+    await open()
+    await type('dpi')
+    expect(results()).toContain('export.ppi')
+  })
+
+  it('分区名命中时只列分区本身，不把那一页的每一行都摊出来', async () => {
+    await open()
+    await type(st('section.packages'))
+    expect(navButtons().some((b) => b.dataset.section === 'packages')).toBe(true)
+    expect(results().filter((r) => r!.startsWith('packages.'))).toHaveLength(0)
+  })
+
+  it('点一个结果：切到那一页，那一行被标出来', async () => {
+    await open('general')
+    await type(st('project.allowWriteBack'))
+    const hit = document.querySelector<HTMLButtonElement>('[data-settings-result="project.writeBack"]')!
+    expect(hit).toBeTruthy()
+    await act(async () => hit.click())
+    await act(async () => {})
+    expect(current()?.dataset.section).toBe('project')
+    const row = document.querySelector('[data-settings-anchor="project.writeBack"]')!
+    expect(row.hasAttribute('data-settings-hit')).toBe(true)
+  })
+
+  it('没有命中时说一句；清空就回到完整导航', async () => {
+    await open()
+    await type('zzzz-nothing')
+    expect(document.querySelector('[data-settings-no-results]')).toBeTruthy()
+    await type('')
+    expect(nav().querySelectorAll('[data-nav-group]')).toHaveLength(4)
+  })
+
+  it('打字只在本地过滤，一个请求都不发', async () => {
+    await open()
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>
+    const before = fetchMock.mock.calls.length
+    await type('python')
+    await type('pip')
+    expect(fetchMock.mock.calls.length).toBe(before)
+  })
+
+  /** 注册表里每一条都在它那一页上找得到锚点：登记了、页面却没挂 `data-settings-anchor` 时，点结果什么都不发生 */
+  it('注册表里的每一条在页面上都有锚点', async () => {
+    const bySection = new Map<string, string[]>()
+    // 每一条认它的落点链：只在某些状态下才渲染的行退到一定在场的那一组上（anchorsOf）
+    const fallback = (e: (typeof SETTINGS_REGISTRY)[number]) => anchorsOf(e).at(-1)!
+    for (const e of SETTINGS_REGISTRY) bySection.set(e.section, [...(bySection.get(e.section) ?? []), fallback(e)])
+    useProjectStore.setState({ project: { figures_dir: '/p/figs', scripts: 1, settings: {}, export_dir: '/p/exp', backup_dir: '/p/bak' } as never })
+    // 「改图助手」页挂载后会自己探一次：给一份像样的回包（只有 checks 的通用桩会被当成没有 agents 的能力表）
+    const caps = capsOf([agentCaps()])
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL) =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(String(input).includes('/api/ai/capabilities') ? caps : { checks: [] }),
+        } as Response),
+      ),
+    )
+    for (const [section, ids] of bySection) {
+      await open(section)
+      for (const id of ids) {
+        expect(document.querySelector(`[data-settings-anchor="${id}"]`), `${section}: ${id}`).toBeTruthy()
+      }
+      await act(async () => root.unmount())
+      document.body.innerHTML = ''
+      useUiStore.setState({ settingsOpen: false, settingsSection: null })
+    }
   })
 })

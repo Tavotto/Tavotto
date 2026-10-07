@@ -71,6 +71,22 @@ const bodyText = () => body()?.textContent ?? ''
 const buttons = () => [...document.querySelectorAll('button')] as HTMLButtonElement[]
 const byText = (s: string) => buttons().find((b) => b.textContent?.trim() === s)
 const byAria = (name: string) => buttons().find((b) => b.getAttribute('aria-label') === name)
+/**
+ * 打开一个 ⋯ 菜单、返回菜单项（2026-10-07 设计审计 §9.1：低频动作收进行尾 ⋯）。
+ * Radix 的菜单开在 pointerdown 上，jsdom 没有 PointerEvent 构造器——同名的 MouseEvent 照样派发。
+ */
+async function menuItems(trigger: Element | null | undefined) {
+  expect(trigger, '没有 ⋯').toBeTruthy()
+  await act(async () => {
+    trigger!.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+    await Promise.resolve()
+  })
+  return [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+}
+const itemText = (items: HTMLElement[], s: string) => items.find((m) => (m.textContent ?? '').includes(s))
+/** 一行（按 `data-settings-anchor` 认）的 ⋯ */
+const rowMenu = (anchor: string) =>
+  document.querySelector(`[data-settings-anchor="${anchor}"] [data-path-menu]`)
 
 function project(patch: Record<string, unknown> = {}) {
   useProjectStore.setState({
@@ -128,23 +144,27 @@ describe('T38 常规：说明改成动作与结果', () => {
     expect(kbd?.textContent?.trim()).toBe('?')
   })
 
-  it('有教程项目时「重置」单独一行', async () => {
+  it('教程是一行：主动作 + ⋯；有教程项目时「重置教程项目」在 ⋯ 里（2026-10-07 设计审计 §9.1）', async () => {
     useOnboardingStore.setState({ status: 'completed', tutorialProjectId: 'p1' } as never)
     await open('general')
-    // 进入教程与重置是两件事，各自一行：改动前它们挤在同一行，
-    // 「再看一遍教程」与「重置教程项目」的区别得点开问号才知道
+    // 进入教程与重置是两件事：主入口是这一行唯一的钮，重置是 ⋯ 里的一项——不再并排两颗同权重的钮
     expect(byText(st('tutorial.restart'))).toBeTruthy()
-    expect(bodyText()).toContain(st('tutorial.reset'))
+    expect(byText(st('tutorial.reset'))).toBeUndefined()
+    const items = await menuItems(document.querySelector('[data-settings-tutorial-more]'))
+    expect(itemText(items, st('tutorial.reset'))).toBeTruthy()
   })
 
-  it('没有教程项目时不出现重置行', async () => {
+  it('没有教程项目时 ⋯ 里没有重置', async () => {
     await open('general')
-    expect(bodyText()).not.toContain(st('tutorial.reset'))
+    const items = await menuItems(document.querySelector('[data-settings-tutorial-more]'))
+    expect(items.length).toBeGreaterThan(0) // 菜单真的打开了：下面那条反向断言不是恒真
+    expect(itemText(items, st('tutorial.reset'))).toBeUndefined()
   })
 
-  it('提示按钮说的是点了会怎样', async () => {
+  it('提示那一项说的是点了会怎样', async () => {
     await open('general')
-    expect(byText(st('tutorial.resetHints'))?.textContent).toBe('重新显示操作提示')
+    const items = await menuItems(document.querySelector('[data-settings-tutorial-more]'))
+    expect(itemText(items, st('tutorial.resetHints'))?.textContent).toContain('重新显示操作提示')
   })
 })
 
@@ -191,10 +211,36 @@ describe('T39 界面：结果式名称 + 条件状态', () => {
     expect(bodyText()).toContain(st('sidebars.pinLimitedMedium'))
   })
 
-  it('窄窗口下说明常驻不生效', async () => {
+  it('窄窗口下说明常驻不生效，两颗固定开关停用（原因就在行内）', async () => {
     useUiStore.setState({ layout: 'narrow' })
     await open('general')
     expect(bodyText()).toContain(st('sidebars.pinLimitedNarrow'))
+    expect((document.getElementById('setting-left-pinned') as HTMLButtonElement).disabled).toBe(true)
+    expect((document.getElementById('setting-right-pinned') as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('互斥断点下开关照常可用（只是同时只能固定一侧）', async () => {
+    useUiStore.setState({ layout: 'medium' })
+    await open('general')
+    expect((document.getElementById('setting-left-pinned') as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('「界面看起来不对？」当场生效：偏好回到默认并写回本机，不用刷新', async () => {
+    useUiStore.setState({ layout: 'wide' })
+    useUiStore.getState().setLeftWidth(355)
+    useUiStore.getState().setLeftPinned(true)
+    useUiStore.getState().setCanvasPref({ gridSize: 7 })
+    await open('general')
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('[data-settings-reset-layout]')!.click()
+    })
+    const s = useUiStore.getState()
+    expect(s.leftWidth).toBe(300)
+    expect(s.leftPinned).toBe(false)
+    expect(s.gridSize).toBe(10)
+    // 写回本机的也是默认值（此前只删掉存储里那一份，刷新之前的任何一次写入又会把旧值写回去）
+    expect(JSON.parse(localStorage.getItem('tavotto.ui') ?? '{}').leftWidth).toBe(300)
+    expect(bodyText()).not.toContain('刷新')
   })
 
   it('联动开关配前后示意，而且随开关换说法', async () => {
@@ -228,27 +274,34 @@ describe('T40 项目：路径可核实、默认值由控件表达', () => {
     await open('project')
     expect(bodyText()).toContain(dirTail(FIGURES))
     expect(bodyText()).not.toContain(FIGURES)
-    const toggle = byAria(st('project.showFullPath', { name: st('project.current') }))!
-    expect(toggle.getAttribute('aria-expanded')).toBe('false')
-    await act(async () => {
-      toggle.click()
-    })
+    // 现状槽只放文字（末级目录，悬停给全文）；完整路径在 ⋯ 里展开成这一行下面的 fill 行
+    const tail = document.querySelector('[data-settings-anchor="project.current"] [data-path-tail]')!
+    expect(tail.getAttribute('title')).toBe(FIGURES)
+    expect(tail.closest('[data-setting-status]')!.querySelector('button')).toBeNull()
+    const items = await menuItems(rowMenu('project.current'))
+    const show = itemText(items, st('project.showFullPath', { name: st('project.current') }))!
+    await act(async () => show.click())
     expect(bodyText()).toContain(FIGURES)
+    expect(document.querySelector('[data-settings-anchor="project.current"] [data-setting-below]')!.textContent).toContain(FIGURES)
   })
 
   it('目录留空时，这一刻真正在用的位置就写在输入框下面', async () => {
     await open('project')
     expect(bodyText()).toContain(st('project.effectivePath'))
     expect(bodyText()).toContain(dirTail(EXPORTS))
-    // 没设过就没有「恢复默认」——那个按钮只在有东西可恢复时才有意义
-    expect(byText(st('project.useDefault'))).toBeUndefined()
+    // 没设过时「恢复默认」停用并说为什么（禁用项第二行常驻原因）——在 ⋯ 里
+    const items = await menuItems(rowMenu('project.exportDir'))
+    const reset = itemText(items, st('project.useDefault'))!
+    expect(reset.hasAttribute('data-disabled')).toBe(true)
+    expect(reset.textContent).toContain(st('project.alreadyDefault'))
   })
 
   it('设过之后出现「恢复默认」，点了清空并回存', async () => {
     project({ settings: { allow_write_back: true, export_dir: '/tmp/mine' } })
     await open('project')
-    const reset = byText(st('project.useDefault'))!
-    expect(reset).toBeTruthy()
+    const items = await menuItems(rowMenu('project.exportDir'))
+    const reset = itemText(items, st('project.useDefault'))!
+    expect(reset.hasAttribute('data-disabled')).toBe(false)
     await act(async () => {
       reset.click()
     })

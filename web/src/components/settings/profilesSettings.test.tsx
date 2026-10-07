@@ -94,6 +94,20 @@ let root: Root
 const text = () => document.body.textContent ?? ''
 const buttons = () => [...document.body.querySelectorAll('button')]
 const byText = (label: string) => buttons().find((b) => b.textContent?.trim() === label)
+/** 库是**一个 Select**（2026-10-07 设计审计 §9.1）：触发器在 `[data-profile-library]` 那一行 */
+const libraryTrigger = () => document.body.querySelector<HTMLElement>('[data-profile-library] [role="combobox"]')
+/** 在库里选一份（Radix Select：点触发器 → 点选项）。选项名后面可能带「内置 · 本项目在用」 */
+async function pickProfile(name: string) {
+  if (!Element.prototype.scrollIntoView) {
+    Object.defineProperty(Element.prototype, 'scrollIntoView', { value: () => {}, configurable: true })
+  }
+  await act(async () => libraryTrigger()!.click())
+  const opt = [...document.body.querySelectorAll<HTMLElement>('[role="option"]')].find((o) =>
+    (o.textContent ?? '').startsWith(name),
+  )
+  expect(opt, `库里没有「${name}」`).toBeTruthy()
+  await act(async () => opt!.click())
+}
 
 async function mount(kind: 'style' | 'spec' = 'style') {
   await act(async () => {
@@ -136,30 +150,34 @@ describe('默认界面不暴露内部身份', () => {
     await mount()
     expect(text()).toContain('默认样式')
     expect(text()).not.toContain('builtin-default-style')
-    // 库是一行分段选择器（2026-09-15 打磨批次 B）：格子上写自然名称，技术身份在 title 里
-    const row = buttons().find((b) => b.getAttribute('role') === 'radio' && b.textContent?.includes('默认样式'))!
-    expect(row.getAttribute('title')).toContain('builtin-default-style')
+    // 库是一个 Select（2026-10-07 设计审计 §9.1）：触发器上写自然名称，技术身份在 title 里
+    const trigger = libraryTrigger()!
+    expect(trigger.textContent).toContain('默认样式')
+    expect(trigger.getAttribute('title')).toContain('builtin-default-style')
   })
 
   it('内置的名字跟界面语言走，用户起的名字不翻译', async () => {
     await mount()
     expect(text()).toContain('默认样式')
+    await pickProfile('投稿用')
     expect(text()).toContain('投稿用')
     await act(async () => {
       await i18n.changeLanguage('en-US')
     })
     await mount()
-    expect(text()).toContain('Default style')
     expect(text()).toContain('投稿用')
+    // 库的选项里：内置那份换成英文名，用户起的名字照原样
+    await act(async () => libraryTrigger()!.click())
+    const options = [...document.body.querySelectorAll<HTMLElement>('[role="option"]')].map((o) => o.textContent ?? '')
+    expect(options.some((o) => o.startsWith('Default style'))).toBe(true)
+    expect(options.some((o) => o.startsWith('投稿用'))).toBe(true)
   })
 })
 
 describe('内置只读', () => {
   it('内置那份只出规则摘要，不摆一整套禁用输入（审计 T41 / T42）', async () => {
     await mount()
-    await act(async () => {
-      buttons().find((b) => b.textContent?.includes('默认样式'))!.click()
-    })
+    await pickProfile('默认样式')
     // 「改不了」是**状态 + 动作**，不是一段散文（2026-09-07，#299：那句 37 字的
     // 解释和分区说明叠成两段，把 e2e 的「一个分区最多一段长解释」顶红了）。
     // 判据认锚点与徽标，不认某一句话——文案下一轮还会被审计改。
@@ -201,9 +219,7 @@ describe('内置只读', () => {
     }) as typeof fetch
 
     await mount()
-    await act(async () => {
-      buttons().find((b) => b.textContent?.includes('默认样式'))!.click()
-    })
+    await pickProfile('默认样式')
     expect(document.body.querySelectorAll('input:not([type="file"])')).toHaveLength(0)
 
     await act(async () => {
@@ -220,9 +236,7 @@ describe('内置只读', () => {
 
   it('用户自建的那份也是可编辑状态（摘要换回输入框）', async () => {
     await mount()
-    await act(async () => {
-      buttons().find((b) => b.textContent?.includes('投稿用'))!.click()
-    })
+    await pickProfile('投稿用')
     expect(text()).not.toContain('内置配置只读')
     expect(
       document.body.querySelectorAll('input:not([type="file"])').length,
@@ -232,12 +246,79 @@ describe('内置只读', () => {
 
   it('用户自建的那条可以改名并保存', async () => {
     await mount()
-    await act(async () => {
-      buttons().find((b) => b.textContent?.includes('投稿用'))!.click()
-    })
+    await pickProfile('投稿用')
     const input = document.body.querySelector<HTMLInputElement>('input[aria-label="名称"]')!
     expect(input.disabled).toBe(false)
     expect(byText('保存')!.disabled).toBe(true) // 没改过就不该是可点的
+  })
+})
+
+describe('吸底保存条（2026-10-07 设计审计 §9.1 P0）', () => {
+  const bar = () => document.body.querySelector<HTMLElement>('[data-profile-savebar]')
+  const nameInput = () => document.body.querySelector<HTMLInputElement>('input[aria-label="名称"]')!
+  async function rename(value: string) {
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+      setter.call(nameInput(), value)
+      nameInput().dispatchEvent(new Event('input', { bubbles: true }))
+    })
+  }
+
+  it('可编辑那份才有；吸在内容区底边；放弃 / 保存都是 32px，没改过时都停用', async () => {
+    await mount()
+    expect(bar(), '内置只读那份不该有保存条').toBeNull()
+    await pickProfile('投稿用')
+    expect(bar()).toBeTruthy()
+    expect(bar()!.className).toMatch(/\bsticky\b/)
+    expect(bar()!.className).toMatch(/\bbottom-0\b/)
+    const discard = bar()!.querySelector<HTMLButtonElement>('[data-profile-discard]')!
+    const save = bar()!.querySelector<HTMLButtonElement>('[data-profile-save]')!
+    expect(discard.className).toMatch(/\bh-8\b/)
+    expect(save.className).toMatch(/\bh-8\b/)
+    expect(save.getAttribute('data-variant')).toBe('primary')
+    expect(discard.disabled).toBe(true)
+    expect(save.disabled).toBe(true)
+  })
+
+  it('改了之后两颗都能点；「放弃修改」回到库里那一版，导航上的点随之撤掉', async () => {
+    const onDirty = vi.fn()
+    await act(async () => {
+      root.render(
+        <TooltipProvider>
+          <ProfilesSettings kind="style" onDirtyChange={onDirty} />
+        </TooltipProvider>,
+      )
+    })
+    await pickProfile('投稿用')
+    await rename('投稿用 改')
+    expect(onDirty).toHaveBeenLastCalledWith(true)
+    const discard = bar()!.querySelector<HTMLButtonElement>('[data-profile-discard]')!
+    expect(discard.disabled).toBe(false)
+    expect(bar()!.querySelector<HTMLButtonElement>('[data-profile-save]')!.disabled).toBe(false)
+    await act(async () => discard.click())
+    expect(nameInput().value).toBe('投稿用')
+    expect(onDirty).toHaveBeenLastCalledWith(false)
+  })
+})
+
+describe('规范页「正在使用」组：四栏关键数 + 跟随更新（2026-10-07 设计审计 §9.1）', () => {
+  it('四个关键数是一条四栏的统计条，数字 17 / 600', async () => {
+    await mount('spec')
+    const rules = document.body.querySelector('[data-spec-key-rules]')!
+    expect(rules.className).toMatch(/\bgrid-cols-4\b/)
+    expect(rules.querySelectorAll('dd')).toHaveLength(4)
+    for (const dd of rules.querySelectorAll('dd')) expect(dd.className).toMatch(/\btype-heading\b/)
+    // 统计条在「正在使用」组里，不在库那一组里
+    expect(rules.closest('[data-spec-binding]')).toBeTruthy()
+  })
+
+  it('「跟随更新」在「正在使用」组里（项目绑定的属性），不在页尾', async () => {
+    await mount('spec')
+    await act(async () => {
+      useForProject()!.click()
+    })
+    const follow = document.body.querySelector('[aria-label="跟随更新"]')!
+    expect(follow.closest('[data-spec-binding]')).toBeTruthy()
   })
 })
 
@@ -266,9 +347,7 @@ const useForProject = () => byText('固定为本项目规范') ?? byText('本项
 describe('警告与项目绑定', () => {
   it('迁移/导入没能识别的字段如实说出来（没有丢，只是没认出）', async () => {
     await mount()
-    await act(async () => {
-      buttons().find((b) => b.textContent?.includes('投稿用'))!.click()
-    })
+    await pickProfile('投稿用')
     expect(text()).toContain('从未见过')
   })
 
@@ -311,8 +390,7 @@ describe('警告与项目绑定', () => {
     expect(useDocumentStore.getState().doc.profile!.follow).toBe(true)
 
     // 选另一套规范：跟随的表态是**项目的**，不是那一套规范的
-    const other = buttons().find((b) => b.textContent?.includes('自由排版'))!
-    await act(async () => other.click())
+    await pickProfile('自由排版')
     await act(async () => {
       useForProject()!.click()
     })
@@ -335,42 +413,36 @@ describe('警告与项目绑定', () => {
 })
 
 describe('无障碍', () => {
-  it('库是一组带可达名的单选（四份以内分段选择器），当前那份 aria-checked（键盘走得到、读屏说得出）', async () => {
-    await mount()
-    const group = document.body.querySelector<HTMLElement>('[role="radiogroup"][aria-label="样式库"]')!
-    expect(group).not.toBeNull()
-    const radios = [...group.querySelectorAll<HTMLElement>('[role="radio"]')]
-    expect(radios.length).toBeGreaterThan(1)
-    expect(radios.filter((b) => b.getAttribute('aria-checked') === 'true')).toHaveLength(1)
-    // 新建 / 复制 / 导入 / 导出收进「更多操作」菜单，库那一行只剩选择器与一颗图标钮
-    expect(buttons().some((b) => b.getAttribute('aria-label') === '更多操作')).toBe(true)
-    expect(byText('新建')).toBeUndefined()
-  })
-
-  it('超过四份时库换成 Select（分段放不下），触发器上是当前那份的名字', async () => {
-    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) =>
-      new Response(
-        JSON.stringify({
-          profiles: String(input).includes('/style')
-            ? [BUILTIN_STYLE, ...[1, 2, 3, 4].map((n) => ({ ...USER_STYLE, id: `s${n}`, display_name: `方案 ${n}` }))]
-            : BUILTIN_SPECS,
-        }),
-        { status: 200, headers: { 'Content-Type': 'application/json' } },
-      ),
-    ) as typeof fetch
-    await mount()
-    expect(document.body.querySelector('[role="radiogroup"][aria-label="样式库"]')).toBeNull()
-    const combo = document.body.querySelector<HTMLElement>('[role="combobox"]')!
-    expect(combo.getAttribute('aria-label')).toBe('样式库')
-    expect(combo.textContent).toContain('默认样式')
-  })
+  /**
+   * 库**固定一个 Select**（2026-10-07 设计审计 §9.1）：此前两到四份是分段、再多换 Select——加一份配置，控件就换一种、
+   * 宽度也跟着跳。份数不同，控件同一个。
+   */
+  for (const count of [2, 5]) {
+    it(`库是一个带可达名的 Select（${count} 份也一样），触发器上是当前那份；新建 / 导入等收进 ⋯`, async () => {
+      globalThis.fetch = vi.fn(async (input: RequestInfo | URL) =>
+        new Response(
+          JSON.stringify({
+            profiles: String(input).includes('/style')
+              ? [BUILTIN_STYLE, ...Array.from({ length: count - 1 }, (_, n) => ({ ...USER_STYLE, id: `s${n}`, display_name: `方案 ${n}` }))]
+              : BUILTIN_SPECS,
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      ) as typeof fetch
+      await mount()
+      expect(document.body.querySelector('[role="radiogroup"][aria-label="样式库"]')).toBeNull()
+      const combo = libraryTrigger()!
+      expect(combo.getAttribute('aria-label')).toBe('样式库')
+      expect(combo.textContent).toContain('默认样式')
+      expect(buttons().some((b) => b.getAttribute('aria-label') === '更多操作')).toBe(true)
+      expect(byText('新建')).toBeUndefined()
+    })
+  }
 
   it('每个数值输入都有可达名', async () => {
     await mount()
     // 内置那份是只读摘要，没有输入框——要选一条可编辑的才量得到这件事
-    await act(async () => {
-      buttons().find((b) => b.textContent?.includes('投稿用'))!.click()
-    })
+    await pickProfile('投稿用')
     const inputs = [...document.body.querySelectorAll('input[type="text"], input:not([type])')]
     expect(inputs.length).toBeGreaterThan(0)
     for (const el of inputs) {
@@ -385,9 +457,7 @@ describe('「用于当前画布」：应用 = 绑定，与左栏样式面板同�
     const { useDocumentStore } = await import('@/store/documentStore')
     useUiStore.setState({ settingsOpen: true, settingsSection: 'style', stylesOpen: false, dialogStack: ['settings'] })
     await mount()
-    await act(async () => {
-      buttons().find((b) => b.textContent?.includes('投稿用'))!.click()
-    })
+    await pickProfile('投稿用')
     await act(async () => {
       byText('用于当前画布')!.click()
     })
@@ -404,9 +474,7 @@ describe('「用于当前画布」：应用 = 绑定，与左栏样式面板同�
 describe('Codex #547：草稿没存时「用于当前画布」先不做', () => {
   it('改了名字（草稿脏了）→ 这颗钮置灰并说先保存', async () => {
     await mount()
-    await act(async () => {
-      buttons().find((b) => b.textContent?.includes('投稿用'))!.click()
-    })
+    await pickProfile('投稿用')
     const use = () => byText('用于当前画布')!
     expect(use().disabled).toBe(false)
     const input = document.body.querySelector<HTMLInputElement>('input[aria-label="名称"]')!
@@ -423,9 +491,7 @@ describe('Codex #547：草稿没存时「用于当前画布」先不做', () => 
 describe('旧样式在设置里第一次被编辑：与样式面板同一条升级规则（pt_basis）', () => {
   it('保存旧版存下的样式（没有 pt_basis）时写上 pt_basis:"page"，已有数字原样', async () => {
     await mount()
-    await act(async () => {
-      buttons().find((b) => b.textContent?.includes('投稿用'))!.click()
-    })
+    await pickProfile('投稿用')
     const saves: Record<string, unknown>[] = []
     const real = useProfileStore.getState().save
     useProfileStore.setState({
@@ -481,9 +547,7 @@ describe('样式页有示例图，字段按用途分组（审计 T42）', () => 
     expect(preview()).toBeTruthy()
     expect(preview()!.querySelector('polyline')!.getAttribute('stroke-width')).toBe('0.5')
 
-    await act(async () => {
-      buttons().find((b) => b.textContent?.includes('投稿用'))!.click()
-    })
+    await pickProfile('投稿用')
     expect(preview()!.querySelector('polyline')!.getAttribute('stroke-width')).toBe('1.25')
   })
 
@@ -544,9 +608,7 @@ describe('样式页与左栏样式面板同一张行表：字体 / 字号 / 粗�
   /** 选中「投稿用」并截住保存时交给后端的内容 */
   async function editUserStyle() {
     await mount()
-    await act(async () => {
-      buttons().find((b) => b.textContent?.includes('投稿用'))!.click()
-    })
+    await pickProfile('投稿用')
     const saves: Record<string, unknown>[] = []
     const real = useProfileStore.getState().save
     useProfileStore.setState({
@@ -1107,9 +1169,7 @@ describe('样式页字体下拉的「未安装」标记（Codex #703）', () => 
       ),
     ) as typeof fetch
     await mount()
-    await act(async () => {
-      buttons().find((b) => b.textContent?.includes('投稿用'))!.click()
-    })
+    await pickProfile('投稿用')
     const cell = (row: string) => document.body.querySelector(`[data-style-cell="${row}.family"]`)!
     const hint = '这台电脑没装这个字体，图上用的是别的字体。'
     // 当前值留着，下面一句 warning；别的行（没设字体）没有
@@ -1157,9 +1217,7 @@ describe('规范页：认不出的值照原值显示、能清，没设的写「�
       ),
     ) as typeof fetch
     await mount('spec')
-    await act(async () => {
-      buttons().find((b) => b.textContent?.includes('我的规范'))!.click()
-    })
+    await pickProfile('我的规范')
     const field = (label: string) => document.body.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)!
     expect(field('最小字号').placeholder).toBe('"6pt"')
     expect(field('最大字号').placeholder).toBe('未设置')
@@ -1216,9 +1274,7 @@ describe('样式里写着、却没有哪张图请求过的未安装字体（Code
       ),
     ) as typeof fetch
     await mount()
-    await act(async () => {
-      buttons().find((b) => b.textContent?.includes('投稿用'))!.click()
-    })
+    await pickProfile('投稿用')
     return () => act(() => useRenderStore.setState({ byKey: prev }))
   }
   const cell = () => document.body.querySelector('[data-style-cell="title.family"]')!

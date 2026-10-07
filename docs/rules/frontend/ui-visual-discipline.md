@@ -55,13 +55,14 @@ SearchInput / `inspector/controls/PickerTrigger` 共用；批次 2，形态 2026
 形状变化）。下拉的记号只有 chevron-down。支持 `prefers-reduced-motion`。
 Document 字体（Times）与 UI 字体严格分离。
 
-设置窗口（Session 5 / 6）：`SettingsDialog` 1000×680、`Dialog chrome="shell"`、导航四组
-（`NAV_GROUPS`）、内容模式 `CONTENT_MODE`（normal 最大宽 640 / wide 铺满）；一行设置是
+设置窗口（Session 5 / 6，2026-10-07 修订）：`SettingsDialog` 1000×680、`Dialog chrome="shell"`、导航 200px（顶上 28px 搜索，
+`settings/settingsRegistry.ts`；项 30px / 13px / 8 圆角，选中 600）四组（`NAV_GROUPS`）、内容模式 `CONTENT_MODE`（normal 一列居中
+最大宽 680 / wide 铺满）、每页一个页头（type-heading + 一句说明；钻入页是面包屑）；一行设置是
 `settings/SettingRow`（标题列弹性 + 控件列定宽 240、normal 48 / compact 32、`control="fill"`
-整行宽；**控件对齐 28px 的标题行而不是整行中线**，`description` / `status` / `illustration`
-都在标题列），分区 `SettingSection`（小标题 + 可选说明 + 行间 hairline，不是卡片）；页面
-不带页标题、不带外层 gap（`display: contents`），分区间距由外壳给。样式 / 规范页是
-「左库（`listRowClass` 行）右编辑器」，规范页顶部四个关键数；`CopyButton` 建在 `Button` 上；
+整行宽、`below` 跨两列的 fill 行；**控件对齐 28px 的标题行而不是整行中线**，`description` / `status`（只放文字）/ `illustration`
+都在标题列），分组 `ui/FormSection` + `ui/FieldGroup`（组里的说明条是 `ui/Notice`，原地展开的是 `DiagnosticDisclosure variant="row"`）；
+页面不带外层 gap（`display: contents`），分区间距由外壳给。样式 / 规范页是「一行库（一个 Select + ⋯）+ 编辑器」，规范页顶部
+「正在使用」组（四栏关键数 + 跟随更新），可编辑那份有吸底保存条；`CopyButton` 建在 `Button` 上；
 键位提示用 `ui/Kbd`。细则在 Design Constitution 第十二、十三节。**用例里渲染任何含
 `IconButton` 的设置页要包 `TooltipProvider`**（与 RegistryDialog.test 同一写法）。
 

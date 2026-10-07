@@ -1,16 +1,15 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
-import { fetchBuildVersion, postDiagnosticsBundle, type TelemetrySettings } from '@/lib/api'
-import { buildDiagnosticPayload } from '@/diagnostics'
+import { fetchBuildVersion, type TelemetrySettings } from '@/lib/api'
 import { PRIVACY_DOC_URL, PRODUCT_NAME, REPO_URL } from '@/lib/brand'
 import { TELEMETRY_DISCLOSED_EVENTS } from '@/lib/telemetryDisclosure'
 import { useTelemetryStore } from '@/store/telemetryStore'
 import { useUpdateStore } from '@/store/updateStore'
 import { BrandMark } from '../ui/BrandMark'
-import { Button } from '../ui/Button'
+import { FieldGroup, FormSection } from '../ui/FormSection'
 import { Toggle } from '../ui/Toggle'
-import { DiagnosticDisclosure, SettingRow, SettingSection } from './SettingRow'
+import { DiagnosticDisclosure, SettingRow } from './SettingRow'
 import { UpdateSettings } from './UpdateSettings'
 
 const st = (key: string, values?: Record<string, unknown>) =>
@@ -93,25 +92,22 @@ function ProductBlock({ version }: { version?: string }) {
 }
 
 /**
- * 隐私与匿名数据。
+ * 隐私与数据。
  *
  * **最短摘要必须常驻**——它是用户判断「这东西会不会上传我的图」的依据，
  * 属于隐私授权，不许折叠。
  *
- * 两处在审计 T49 里改掉：
- *
- * ① **同意是三档，界面也得说得出三档。** 之前这里是个二值开关：`unset`（还没
- *    问过）与 `disabled`（问过了，用户说不）画出来一模一样。那正是后端刻意
- *    分开的两件事——只有前者才该弹询问，后者再弹就是骚扰——被界面重新合并
- *    了一次。现在控件是一个**滑动开关**（`role="switch"`，只表达开 / 关），
- *    当前状态由 `SettingRow.status` 那句话表达：开启 / 关闭 /
- *    尚未选择，三种可辨状态，而**可写的仍然只有开 / 关两档**（回不到 unset
- *    是对的，表过态就是表过态）。
- *    还有第四种情形不能画成「已开启」：同意过、但同意的是上一版采集范围
- *    （后端升了 `CONSENT_VERSION`），此刻一个字节都不发。
+ * ① **同意是三档，界面也得说得出三档。** 控件是一个滑动开关（`role="switch"`，只表达开 / 关），可写的只有
+ *    开 / 关两档（回不到 unset 是对的，表过态就是表过态）。行上的现状**只说开关说不出的那两种**
+ *    （2026-10-07 设计审计 §9.1：此前现状把开关的「开启 / 关闭」再念一遍）：
+ *      * `unset` —— 「尚未选择」：还没问过，不是用户说了不；
+ *      * 同意过、但同意的是上一版采集范围（后端升了 `CONSENT_VERSION`）—— 「待重新确认」：此刻一个字节都不发，
+ *        开关画成关，不能画成「已开启」。
+ *    于是三档仍然可辨：开着 = 同意；关着且没有现状 = 拒绝；关着且写着「尚未选择」= 还没问过。
+ *    硬开关那一档的第一层是「已由本机配置关闭」，环境变量名是第二层。
  *
  * ② **「会发送什么」不再是一段会过期的散文。** 见 `lib/telemetryDisclosure.ts`：
- *    每条事件一行，与后端 `EVENTS` 表严格同源，默认折叠。
+ *    每条事件一行，与后端 `EVENTS` 表严格同源，默认折叠（组里一行原地展开）。
  */
 function PrivacyBlock() {
   useTranslation('dialogs')
@@ -125,66 +121,63 @@ function PrivacyBlock() {
   const hard = settings?.hard_disabled ?? false
   // 首次 `load()` 还在路上时 `settings` 是 null，`hard` 算出来是 false——两档
   // 都点得动。那一下会与在途的 GET 赛跑：PATCH 先回来写下同意态，随后那份
-  // **陈旧**的 GET 响应把它连同 `lib/telemetry` 的缓存一起覆盖掉，界面与后端
-  // 里刚存下的同意状态从此对不上。二值开关时代这里靠 `!settings` 显式禁用，
-  // 换成三档 `Segmented` 时丢了这道守卫（评审 #300-4）。
+  // **陈旧**的 GET 响应把它连同 `lib/telemetry` 的缓存一起覆盖掉（评审 #300-4）。
   const pending = !settings
-  const enabled = settings?.consent === 'enabled'
+  const enabled = settings?.consent === 'enabled' && !settings.needs_reconsent
   return (
-    <SettingSection title={st('about.privacyTitle')}>
-      {/* 一句话摘要是这一行的说明（常驻，不折叠）：它是隐私承诺，不是说明文字 */}
-      <SettingRow
-        label={st('about.telemetry.title')}
-        description={st('about.telemetry.summary')}
-        // 硬开关那一档的第一层是「已由本机配置关闭」（2026-09-13 审计 B42：用户先要
-        // 知道采不采集，环境变量名是第二层）
-        status={hard ? st('about.telemetry.hardDisabled') : consentStatus(settings)}
-      >
-        {/* 滑动开关只表达开 / 关（unset 与待重新确认都画成关），完整状态由
-            行内 status 那句话说。`choose` 只收得到开 / 关两档，所以界面上说
-            得出 unset，却写不回 unset */}
-        <Toggle
-          checked={enabled}
-          aria-label={st('about.telemetry.toggle')}
-          disabled={hard || pending}
-          onChange={(next) => void choose(next ? 'enabled' : 'disabled', 'settings')}
-        />
-      </SettingRow>
-      {hard && (
-        <p className="type-meta" data-telemetry-hard-detail>
-          {st('about.telemetry.hardDisabledDetail', { env: 'TAVOTTO_NO_TELEMETRY=1' })}
-        </p>
-      )}
-      <TelemetryDataDisclosure />
-      <a
-        href={PRIVACY_DOC_URL}
-        target="_blank"
-        rel="noreferrer"
-        className="self-start text-xs text-ink-2 underline underline-offset-2 hover:text-ink"
-      >
-        {st('about.telemetry.policy')}
-      </a>
-    </SettingSection>
+    <FormSection title={st('about.privacyTitle')} data-settings-anchor="about.telemetry">
+      <FieldGroup>
+        {/* 一句话摘要是这一行的说明（常驻，不折叠）：它是隐私承诺，不是说明文字 */}
+        <SettingRow
+          label={st('about.telemetry.title')}
+          description={st('about.telemetry.summary')}
+          status={
+            hard ? (
+              <>
+                {st('about.telemetry.hardDisabled')}
+                <span className="type-meta block" data-telemetry-hard-detail>
+                  {st('about.telemetry.hardDisabledDetail', { env: 'TAVOTTO_NO_TELEMETRY=1' })}
+                </span>
+              </>
+            ) : (
+              consentStatus(settings)
+            )
+          }
+        >
+          {/* 滑动开关只表达开 / 关（unset 与待重新确认都画成关），开关说不出的那两种由
+              行内现状那句话说。`choose` 只收得到开 / 关两档，所以界面上说得出 unset，却写不回 unset */}
+          <Toggle
+            checked={enabled}
+            aria-label={st('about.telemetry.toggle')}
+            disabled={hard || pending}
+            onChange={(next) => void choose(next ? 'enabled' : 'disabled', 'settings')}
+          />
+        </SettingRow>
+        <TelemetryDataDisclosure />
+        <div>
+          <a
+            href={PRIVACY_DOC_URL}
+            target="_blank"
+            rel="noreferrer"
+            className="text-sm text-ink-2 underline underline-offset-2 hover:text-ink"
+          >
+            {st('about.telemetry.policy')}
+          </a>
+        </div>
+      </FieldGroup>
+    </FormSection>
   )
 }
 
 /**
- * 行内状态。控件是个二值开关，说不出 unset 与待重新确认，所以这里得把
- * 当前状态说全：
- *   * `unset` —— 得说清那是「还没问过」，不是「用户说了不」；
- *   * 同意过、但同意的是**上一版采集范围**（后端升了 `CONSENT_VERSION`）——
- *     此刻一个字节都不发，只写「开启」就是一句假话；
- *   * 其余两档如实写「开启」/「关闭」。
- * 硬开关那一档不在这里：它有自己那条常驻警示，说的是「不是你关的」。
+ * 行内现状：**只说开关说不出的那两种**（见上）。开着 / 关着就是开关本身，不再念一遍。
+ * 硬开关那一档不在这里：它有自己那句常驻的话，说的是「不是你关的」。
  */
 function consentStatus(settings: TelemetrySettings | null): string | undefined {
   if (!settings) return undefined
   if (settings.consent === 'unset') return st('about.telemetry.unset')
-  if (settings.consent === 'enabled' && settings.needs_reconsent)
-    return st('about.telemetry.needsReconsent')
-  return settings.consent === 'enabled'
-    ? st('about.telemetry.optIn')
-    : st('about.telemetry.optOut')
+  if (settings.consent === 'enabled' && settings.needs_reconsent) return st('about.telemetry.needsReconsent')
+  return undefined
 }
 
 /**
@@ -198,7 +191,7 @@ function consentStatus(settings: TelemetrySettings | null): string | undefined {
 function TelemetryDataDisclosure() {
   useTranslation('dialogs')
   return (
-    <DiagnosticDisclosure data-privacy-disclosure title={st('about.telemetry.detailsTitle')}>
+    <DiagnosticDisclosure variant="row" data-privacy-disclosure title={st('about.telemetry.detailsTitle')}>
       <p className="type-caption">{st('about.telemetry.autoProps')}</p>
       <p className="type-caption">
         {st('about.telemetry.sendsBefore')}
@@ -222,70 +215,5 @@ function TelemetryDataDisclosure() {
       {/* 「本机优先」这条完整承诺 */}
       <p data-privacy-network-summary className="type-caption">{st('about.privacy')}</p>
     </DiagnosticDisclosure>
-  )
-}
-
-/**
- * 诊断包（ADR 0016）。
- *
- * 以前是「给浏览器一个链接让它自己下」，现在必须走 POST：前端状态与交互轨迹
- * 只活在浏览器内存里，得随请求现交上去。代价是 zip 要过一遍前端内存——
- * 它只有几十到几百 KB，可以接受。
- *
- * **载荷是现采的**：点这个按钮之前，什么都没有被序列化过。
- */
-export async function downloadDiagnostics(): Promise<void> {
-  const blob = await postDiagnosticsBundle(buildDiagnosticPayload())
-  const url = URL.createObjectURL(blob)
-  try {
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `tavotto-diagnostics-${stampForFilename()}.zip`
-    a.click()
-  } finally {
-    // 不撤销就是一条挂到刷新为止的引用，而 zip 全在内存里
-    URL.revokeObjectURL(url)
-  }
-}
-
-/** 本地时间的 YYYYMMDD-HHMMSS，与后端给的 Content-Disposition 同一形状 */
-function stampForFilename(): string {
-  const d = new Date()
-  const p = (n: number) => String(n).padStart(2, '0')
-  return (
-    `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}` +
-    `-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`
-  )
-}
-
-/**
- * 导出按钮。**点了要有反馈**——以前点完没有任何动静，用户不知道成没成；
- * 现在还多了一次真实的网络往返（要把前端状态交上去），沉默更难接受。
- * 失败给的是人话，不是 `POST /diagnostics 500`。
- */
-export function DiagnosticsExportButton() {
-  const [phase, setPhase] = useState<'idle' | 'busy' | 'done' | 'error'>('idle')
-  const run = () => {
-    setPhase('busy')
-    void downloadDiagnostics()
-      .then(() => setPhase('done'))
-      .catch(() => setPhase('error'))
-  }
-  return (
-    <>
-      <Button variant="secondary" size="sm" onClick={run} disabled={phase === 'busy'}>
-        {phase === 'busy' ? st('about.exporting') : st('about.exportBundle')}
-      </Button>
-      {phase === 'done' && (
-        <span className="text-xs text-ink-2" role="status">
-          {st('about.exported')}
-        </span>
-      )}
-      {phase === 'error' && (
-        <span className="text-xs text-danger" role="alert">
-          {st('about.exportFailed')}
-        </span>
-      )}
-    </>
   )
 }

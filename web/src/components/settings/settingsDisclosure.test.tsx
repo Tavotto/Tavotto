@@ -364,12 +364,17 @@ describe('该常驻的不许折叠', () => {
     })
     await open('project')
     expect(bodyText()).toContain(st('project.writeBackOffHint'))
+    // 关掉时是组里最后一行的 warn Notice；它管什么（覆盖原始文件、先备份）那句说明照样在（常驻说明）
+    expect(document.querySelector('[data-write-back-off] [data-notice]')!.getAttribute('data-notice')).toBe('warn')
+    expect(bodyText()).toContain(st('project.writeBackDesc'))
   })
 
-  it('允许写回时不出警告', async () => {
+  it('允许写回时不出警告；它管什么那句是常驻说明，不随开关忽隐忽现', async () => {
     await open('project')
     expect(bodyText()).toContain(st('project.allowWriteBack'))
     expect(bodyText()).not.toContain(st('project.writeBackOffHint'))
+    const row = document.querySelector('[data-settings-anchor="project.writeBack"]')!
+    expect(row.querySelector('.type-caption')!.textContent).toBe(st('project.writeBackDesc'))
   })
 
   it('隐私最短摘要常驻', async () => {
@@ -381,15 +386,14 @@ describe('该常驻的不许折叠', () => {
    * 遥测默认关闭的语义没变。控件是一颗 `role="switch"` 的开关（三档由开关 +
    * 行内现状文字一起表达，细则与三档各自的用例在
    * `components/SettingsTelemetry.test.tsx`）——这里的夹具是 `consent: 'disabled'`，
-   * 开关必须关着、现状写「关闭」而不是「尚未选择」。
+   * 开关必须关着、行上不写「尚未选择」（现状只说开关说不出的那两种，2026-10-07 设计审计 §9.1）。
    */
-  it('遥测默认关闭的语义没变：开关关着，现状是「关闭」', async () => {
+  it('遥测默认关闭的语义没变：开关关着，不说「尚未选择」', async () => {
     await open('about')
     const toggle = body().querySelector(
       `button[role="switch"][aria-label="${st('about.telemetry.toggle')}"]`,
     )!
     expect(toggle.getAttribute('aria-checked')).toBe('false')
-    expect(bodyText()).toContain(st('about.telemetry.optOut'))
     expect(bodyText()).not.toContain(st('about.telemetry.unset'))
   })
 
