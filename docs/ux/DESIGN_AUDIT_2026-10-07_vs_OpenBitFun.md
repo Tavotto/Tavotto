@@ -468,3 +468,104 @@ type CardProps = {
 **P2**：画布严重度角标、Inspector「2 个问题 ›」芯片——`openProblemAt`（`lib/issueFocus.ts:228`）目前**没有生产调用方**，样式面板直达未接通；F8 / ⇧F8；`--drawer-bg` 横扫（`ElementTree.tsx:459`, `AssetBrowser.tsx:1305`）；缩略图半径统一；文档漂移（规则文档说当前行有左竖条，代码明确不画）。
 
 保留 `data-issue-row` / `data-issue-rule` / `data-issue-object` / `data-problem-card-key` / `data-rail-blocking` 钩子（引导与 e2e 依赖）；`batchable()` 与 `lib/problemList.ts` 不动——这是纯表现层改动。
+
+---
+
+## 10. 逐页审计（第三轮，2026-10-07）：外壳、对话框、其余抽屉、Playground
+
+> 画布对应画板：「外壳 · 画布浮层」「对话框 · 引导」「左侧抽屉 · 一致性」「Playground · MCP 小组件」。
+> 每条落地仍按 宪法 → `DESIGN.md` → `foundation.test.ts` → 代码 的顺序。
+
+### 10.1 外壳与画布浮层
+
+**新原则（需写进宪法）**
+1. 浮动外观三档：单行 ≤36px 的浮动条 = 胶囊；多行浮动面板 = 12；模态 / 面板 / 命令面板 = 16。现状五种（`CanvasToolbar` full、`ContextBar`/HUD/toast/QuickEdit 10、`NamedNodeQuickBox` 14、`NativeSessionCards` 6）。
+2. 画布视口四个角位，各 12px 内距、每角一个堆叠容器；右上角现有三者（会话卡 `right-2 top-2 z-10`、快编缩放 `right-3 top-3 z-20`、探针 `right-3 top-3 z-30`）互相压。
+3. 画布覆盖层 token：`--sel-hover 60%`、唯一虚线 `4 3`（现 6 种）、手柄填充 `surface`、遮罩 `color-mix(ink 34%)`；去掉 `#fff`/`#1B1B18`/`rgba(27,27,24,…)` 字面量。
+
+**P0**
+- 冲突横幅「覆盖」一键丢掉磁盘上另一窗口写的版本，与「重新加载」同权重、无确认（`DocumentBanner.tsx:53`, `documentStore.ts` `overwriteDisk`）。→ 重新加载为主按钮；覆盖进 ⋯ 危险项 + 就地确认。
+- 画布标签的未保存点用文档级 `dirty` 挂在当前标签上（`CanvasTabs.tsx:123`），切到 B 时 B 显示未保存，且每次编辑闪约 1s。→ 删除，保存状态归顶栏芯片。
+- 非错误提示一律显示 ✓（`StatusBar.tsx:436–442`），进行中也像已完成。→ `setStatus` 增 `tone: 'progress' | 'done' | 'info'`。
+- 保存标签每次编辑约每秒改字（防抖 1000ms），推动邻居、刷 `aria-live`（`TopBar.tsx:225–284`）。→ 文档状态芯片：已保存只显示图标；保存中静默 600ms 再出固定宽度文字；恢复 / 冲突 / 保存失败 = 锚点色胶囊 + Popover；只播报进入错误类状态。
+
+**P1**
+- 横幅移进 `[data-work-panel]` 内（现横跨整个窗口、把应用下推 32/64px），锚点色区分严重度，错误 `role="alert"`；`UpdateBanner` 实为自动弹出的 Dialog → 改名 `BuildMismatchNotice`、非模态。
+- 覆盖层语法：选中**不着色**（现 6%/12% 蓝填充会让用户在改颜色时看到偏蓝的色）；吸附线（带 × 端点与间距胶囊）与参考线（静止 50%）分开；手柄 8px 视觉 + 16px 命中 + 边缘命中带；框选实线；裁剪用 L 形角标；`geometricPrecision` 为默认。
+- 页面外框在缩放层内画 1px、不除以 zoom（`PageSheet.tsx:45`），400% 时 4px，且 `PageOutsideMask` 又画一遍 → 删除前者。
+- 尺寸芯片贴选区（移动时显示对象 X/Y 而非指针坐标，`StatusBar.tsx:100–112`）。
+- 空白画布右键弹出 WebView 原生菜单（`CanvasStage` 无 `onContextMenu`）→ 画布菜单；素材拖入无落点预览 → 幽灵框。
+- 键盘 / ARIA：画布标签 roving + F2 / ⌘W、× 嵌在 `role=tab` 里；工具条 `aria-pressed` + 方向键；命令面板 combobox + dialog 语义、焦点陷阱与归还；QuickEdit 焦点陷阱。
+- 工具条：模式（选择 / 文字 / 标注）32px 图标、激活态墨色实底；一次性动作（序号 / 适应）28px 文字。
+- 面板角标「过期」与「构建中」同为 `bg-ink`（`PanelView.tsx:1260`）→ 构建中 = 墨 + 旋转；过期 = warn 锚点；ⓘ 可聚焦。QuickEdit 标签列 44px 截断英文 → 64px。
+
+**P2**：品牌并入首页键、撤销重做靠近导出、文档名双击 / F2 重命名；命令面板与宪法 §20 漂移（行 36/13、Esc 键帽）；快捷键在 5 处手写 → `lib/keymap.ts` 单一来源 + 绑定测试；标尺选区带与单位角；右键菜单加剪贴板组；会话卡标题 12/500；过时注释。
+
+### 10.2 对话框与引导
+
+**P0**
+- 遥测同意框 `onOpenChange={() => {}}` 且未开 `blockDismiss`（`TelemetryConsentDialog.tsx:36`）：× 与 Esc 画了却无效；注释描述的「随手关 = 下次再问」从未发生。
+- 导出：进度 / 冲突 / 拒绝 / 结果都在滚动区最底部、无 `scrollIntoView`；成功后页脚仍是「开始导出」，再按一次进入覆盖冲突。→ 页脚上方固定状态条；页脚四态（空闲 / 进行中 / 冲突 / 完成：再次导出 · 在文件夹中显示 · 完成）；导出前可见输出位置。
+- 样式对话框切换样式或关闭时静默丢草稿（同 §9.1 设置页）。→ 未保存点 + 就地「放弃修改？」+ 页脚主按钮「保存」。
+- 脚本答案对话框每行一个 `variant="primary"`（`ScriptAnswersDialog.tsx:86`），删除不确认即重跑。→ 页脚单个「保存并重跑（N 处修改）」，忘记答案为暂存操作。
+
+**P1 · Dialog 原语**
+- 宽度：现 8 种（360/420/520/560/760/920/80vw/1000）→ sm 400 · md 480 · lg 560 · xl 760 · shell。
+- 页脚三槽 `start / secondary / primary`，32px，滚动时毛玻璃；删掉 Export 的空 `flex-1`、Version 预览自建页脚等。
+- 13 个对话框条件挂载（`if (!x) return null` + `open` 写死）→ 无退场动画；缺输入两步换 Dialog 且宽度 360 → 420。→ 常驻挂载、ref 保留最后载荷；多步流程一个 Dialog 换正文。
+- 嵌套对话框两层遮罩（约 51% 暗）→ 原语内计数，只有最底层画遮罩。
+- Esc 语义：`ConfirmDialog` / `CloseGuardDialog` 的 `blockDismiss` 吞掉 Esc → 新增 `onEscape` 执行安全答案。
+- 只有一个输入框的对话框（ScriptInput、DirBrowser）`autoFocus` 被容器聚焦覆盖 → `initialFocusRef`（需真机验证）。
+- 正文约 190 处 11px → `type-reading` 13；标题 15/600；容器 `rounded-panel` 16。
+- 危险键：红字 ghost 比灰底「取消」还轻 → 对话框页脚专用危险浅底胶囊（锚点 10% 底 + 30% 边 + 600，仍不用实心红；需改宪法 §5）。CloseGuard 顺序 `[不保存] … [取消] [保存并关闭]`。
+- 七种提示框 → Notice，统一放在页脚上方（加载错误放顶部）。
+- 依赖准备：标题是会变的长句（失败时换成错误句）→ 固定「准备环境」、md 480、「直接运行」进 start 槽、去掉 Details 套 Details；工作目录确认：360px 里约 10 行 11px 灰字 → md + Card 选项 + 一行 Notice。
+- 图选择对话框加一个就关 → 保持打开 + 「全部添加」。
+- 引导：对话框内不画高亮环（`OnboardingLayer.tsx:380`）、环圆角固定 10 → 跟随目标圆角 + 4；卡片 12 / 320 / 13px。
+- 崩溃页无主按钮、「从空白开始」与「重新加载」同权重；启动失败页无按钮且硬编码旧色（`main.tsx:30–40`）。
+
+**跨对话框规则**：标题是 4–12 字名词短语或问句，不用生成句、不被错误替换；任务型有页脚、浏览型无页脚；主按钮 = 动词 + 宾语（破坏性确认不用「继续」）；「取消」用于中止决定、「关闭」用于无待决、「稍后」只给可延后的系统提示；Esc 永远是安全答案（NativeConfirm、ScriptInput 两个真正的闸门除外）。
+
+### 10.3 其余左侧抽屉、项目选择器
+
+**P0**
+- 画布重命名 `<input>` 嵌在打开用的 `<button>` 里（`CanvasList.tsx:185–208`），取消后草稿不重置。
+- 资源卡「重新运行」`<button>` 嵌在 `role="option"` 里（`AssetBrowser.tsx:1032`）→ 移到页脚条。
+
+**P1 · 一套行系统（先改 `ui/`）**
+- `listRowClass({ size: 'sm' | 'md' | 'lg' })` = 28 / 44 / 52，行圆角 8、选中 600、选中时 meta 自动升 ink-2（导出 `rowMetaClass`）。
+- `dropLineClass`：2px accent + 4px 圆点；工作区置顶与画布列表现在拖放无任何指示，图层只有 1px。
+- `RowMenu`：⋯、右键、⇧F10 同一份 `MenuItem icon=` 菜单，行聚焦时 ⋯ 可 Tab 到（图层 / 元素树现为 `tabIndex={-1}`）。
+- 键位契约：↑↓ 移动 · Enter 主操作 · F2 重命名 · ⌥↑↓ 排序 · ⇧F10 菜单 · Esc 清除。图层 Enter 现为重命名（`LayerTree.tsx:327`）。
+- `LeftPanel` 增 `headerActions` 槽：「+」「刷新」进头部，搜索行只放搜索；画布抽屉补计数。
+- 子节头统一 28px `type-section` + `type-meta` 计数；页脚统一 `border-t px-1.5 py-1`。
+
+**逐抽屉**：工作区（当前项目置顶时被画两次选中 → 当前项目块改 Card subtle 并从置顶列表排除）；画布缩略图把白底与边框画在 svg 盒上，横纵页面缩略图一样（→ 画出页面矩形）；图层树 `listbox` → `tree` + `aria-level`；元素树隔离横幅 → 搜索框内 chip；资源（Card 12、两条页脚合一、刷新只留旋转图标、`pulse` 骨架 → 静态、筛选 chip 白底细边）；脚本（组头三种写法、运行点 `animate-pulse` → shimmer、五种恢复块 → 一种第二行、加载为一行裸字）；样式抽屉（标签列 64px → 属性栏同一行网格、约 150px 固定页脚 → 可折叠「跟随样式」节）；项目选择器（与工作区两种行 → 共用 `ProjectRow`、`cursor-pointer`、计数用等宽字体）；`ProjectSwitcher.OpenInNewTabButton` 无调用方 → 删除。
+
+### 10.4 Playground（`/try`）与 MCP 小组件
+
+**P0**
+- `playground/` 不引入 `ui/Button`：约 20 处手写 `h-7 rounded-sm border` / `bg-ink text-white` 按钮，6px 方角、无焦点环——公开站点上被看得最多的一页是唯一不在设计系统里的界面。
+- `McpApp.tsx:271` 自带一个 `IconButton`（6px、`title`、无焦点环）、导出键手写 → 删除，改用 `ui/`。
+
+**P1**：`--color-sel`（画布专用选择色）在 Playground 用了 9 处当品牌色 → accent / ink；`ink-faint` 用于正文（约 2.5:1）→ ink-3；一屏 4 个黑色主按钮 → 只留推荐卡；示例卡 → Card interactive（外 12 / 封面内 8）；工作台元素树 224px < 应用抽屉最小 280px 且无头部 → 抽出 `DrawerShell`；MCP 错误与警告同一图标、`PreflightPill` 是第四种状态胶囊 → 套用 §9.4 严重度表与 StatusPill。
+
+**P2**：`text-[19px]` → `type-display`；上传区平时不画虚线；Playground 与 MCP 共用 44px `WidgetHeader`。
+
+### 10.5 全部 P0 汇总（三轮）
+
+| # | 位置 | 问题 |
+|---|---|---|
+| 1 | `inspector/ElementInspector.tsx:1840–1853`, `StrokeSection.tsx:258,324` | 多选混合值显示黑色 / 关 / `#1B1B18` |
+| 2 | `settings/ProfilesSettings.tsx`, `StyleDialog.tsx` | 期刊规范 / 样式草稿静默丢失 |
+| 3 | `DocumentBanner.tsx:53` | 冲突「覆盖」无确认、同权重 |
+| 4 | `TelemetryConsentDialog.tsx:36` | × / Esc 无效 |
+| 5 | `CanvasList.tsx:185`, `AssetBrowser.tsx:1032` | 交互控件嵌套 |
+| 6 | `CanvasTabs.tsx:123` | 标签未保存点误导 |
+| 7 | `StatusBar.tsx:436` | 进行中提示显示 ✓ |
+| 8 | `ExportDialog.tsx` | 结果不可见、无完成态 |
+| 9 | `ScriptAnswersDialog.tsx:86` | 每行一个主按钮、删除不确认 |
+| 10 | `left/ProblemPanel.tsx:623,796` | 白色吸顶条、悬停变高 |
+| 11 | `TopBar.tsx:225–284` | 保存标签抖动 + 刷读屏 |
+| 12 | `PackagesSettings.tsx:633,665` | 进度条看不见 |
+| 13 | `playground/*`, `mcp/McpApp.tsx:271` | 第二套按钮系统、无焦点环 |
