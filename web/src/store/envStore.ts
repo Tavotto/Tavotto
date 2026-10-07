@@ -292,7 +292,8 @@ export const useEnvStore = create<EnvState>((set, get) => ({
           res.durable === false
             ? msg('engine.scriptEditNotDurable', { script: res.script }, 'errors')
             : msg('engine.rewriteDone', { script: res.script }, 'errors'),
-          'info',
+          // 改写做成了打 ✓；没确认落盘的那句是提醒，留 ⓘ
+          res.durable === false ? 'info' : 'done',
         )
       return null
     } catch (e) {
@@ -317,7 +318,7 @@ export const useEnvStore = create<EnvState>((set, get) => ({
           res.durable === false
             ? msg('engine.scriptEditNotDurable', { script: backup.script }, 'errors')
             : msg('engine.scriptBackupRestored', { script: backup.script }, 'errors'),
-          'info',
+          res.durable === false ? 'info' : 'done',
         )
       const { useRenderStore } = await import('@/store/renderStore')
       if (epoch !== projectEpoch) return null
