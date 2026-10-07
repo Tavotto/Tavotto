@@ -381,4 +381,124 @@ describe('ScriptAnswersDialog', () => {
     })
     expect(runSpy).toHaveBeenCalledTimes(1)
   })
+
+  describe('答案改动锁归 store（维护者复审：关掉重开的洞；暂存式设计下整批一把锁）', () => {
+    const boxes = () => [...dialog()!.querySelectorAll<HTMLInputElement>('input')]
+    const menus = () => [...dialog()!.querySelectorAll<HTMLButtonElement>('[data-row-menu-trigger]')]
+    const undos = () => [...dialog()!.querySelectorAll<HTMLButtonElement>('[data-script-answer-undo]')]
+    const locked = () =>
+      boxes().every((b) => b.disabled) &&
+      menus().every((b) => b.disabled) &&
+      undos().every((b) => b.disabled) &&
+      saveButton().disabled
+
+    it('删除随批量提交在飞时卸载再挂上答案管理：新对话框照样锁着（busy），回来才放开、只重跑一次', async () => {
+      let resolve!: (v: Awaited<ReturnType<typeof forgetScriptAnswer>>) => void
+      mockForget.mockReturnValueOnce(new Promise((r) => (resolve = r)))
+      useScriptInputStore.setState({ answers: TWO })
+      useScriptInputStore.getState().openManager('pick.py')
+      render()
+      await forgetRow(dialog()!.querySelector('[data-script-answer="1"]')!)
+      await click(saveButton())
+      expect(mockForget).toHaveBeenCalledWith('pick.py', 1)
+      expect(locked()).toBe(true)
+      // 在飞时 busy 拦住了 × / Esc / 点外面 / 「取消」；还能把它关掉的只剩 store 那条路
+      // （closeManager()，例如别处的入口）——关掉再打开换一代 key，AnswersManager 卸载、重新挂上
+      await act(async () => {
+        useScriptInputStore.getState().closeManager()
+      })
+      await act(async () => {
+        useScriptInputStore.getState().openManager('pick.py')
+      })
+      expect(dialog()).not.toBeNull()
+      // 确实是新挂上的那份：旧实例的暂存删除没带过来，第 1 行又是输入框
+      expect(dialog()!.querySelector('[data-script-answer="1"]')!.hasAttribute('data-forgetting')).toBe(false)
+      expect(boxes()).toHaveLength(2)
+      // 新组件读 store 的锁：输入框 / ⋯ / 保存都灰、对话框 busy（没有 ×）
+      expect(locked(), 'pending batch still locks after unmount/remount').toBe(true)
+      expect(dialog()!.querySelector('[data-dialog-close]')).toBeNull()
+      await act(async () => {
+        resolve({ scripts: { 'pick.py': [TWO['pick.py'][1]] }, location: '', pending: [] })
+      })
+      expect(useScriptInputStore.getState().answersBusy).toBe(false)
+      expect(boxes().every((b) => !b.disabled)).toBe(true)
+      expect(dialog()!.querySelector('[data-dialog-close]')).toBeTruthy()
+      expect(runSpy).toHaveBeenCalledTimes(1)
+      expect(mockUpdate).not.toHaveBeenCalled()
+    })
+
+    it('store 正忙时点保存（同一帧里抢先拿了锁）：整批一个请求都不发、也不重跑', async () => {
+      useScriptInputStore.setState({ answers: TWO })
+      useScriptInputStore.getState().openManager('pick.py')
+      render()
+      // 一改一删，两条暂存
+      await typeInto(boxes()[0], '3')
+      await forgetRow(dialog()!.querySelector('[data-script-answer="2"]')!)
+      expect(saveButton().disabled).toBe(false)
+      // 别的改动（例如重开前没回来的那批）已经拿着锁；按钮还没来得及重渲染成灰的
+      let held: number | null = null
+      await act(async () => {
+        held = useScriptInputStore.getState().beginAnswersChange()
+        saveButton().click()
+      })
+      expect(held).not.toBeNull()
+      expect(mockUpdate).not.toHaveBeenCalled()
+      expect(mockForget).not.toHaveBeenCalled()
+      expect(runSpy).not.toHaveBeenCalled()
+      // 不是持有者的 token 也发不出请求
+      const save = await useScriptInputStore.getState().saveAnswer(held! + 1, 'pick.py', 1, '3')
+      const forget = await useScriptInputStore.getState().forgetAnswer(held! + 1, 'pick.py', 2)
+      expect(save.status).toBe('stale')
+      expect(forget.status).toBe('stale')
+      expect(mockUpdate).not.toHaveBeenCalled()
+      expect(mockForget).not.toHaveBeenCalled()
+      expect(useScriptInputStore.getState().beginAnswersChange()).toBeNull()
+      useScriptInputStore.getState().endAnswersChange(held!)
+      expect(useScriptInputStore.getState().answersBusy).toBe(false)
+      // 暂存的改动还在，没被拒掉的那一下吃掉
+      expect(saveButton().textContent).toBe('保存并重新运行（2）')
+    })
+
+    it('换项目清掉旧锁：新项目能存；旧批次的删除回来既不放掉新锁、也不重跑', async () => {
+      setCurrentProjectId('A')
+      let resolveForget!: (v: Awaited<ReturnType<typeof forgetScriptAnswer>>) => void
+      mockForget.mockReturnValueOnce(new Promise((r) => (resolveForget = r)))
+      useScriptInputStore.setState({ answers: TWO })
+      useScriptInputStore.getState().openManager('pick.py')
+      render()
+      await forgetRow(dialog()!.querySelector('[data-script-answer="1"]')!)
+      await click(saveButton())
+      expect(useScriptInputStore.getState().answersBusy).toBe(true)
+      await act(async () => {
+        useScriptInputStore.getState().clear()
+        setCurrentProjectId('B')
+      })
+      expect(useScriptInputStore.getState().answersBusy).toBe(false)
+      // 新项目里打开同名脚本的答案管理并保存（保存挂起）
+      let resolveSave!: (v: Awaited<ReturnType<typeof updateScriptAnswer>>) => void
+      mockUpdate.mockReturnValueOnce(new Promise((r) => (resolveSave = r)))
+      await act(async () => {
+        useScriptInputStore.setState({ answers: TWO })
+        useScriptInputStore.getState().openManager('pick.py')
+      })
+      expect(locked()).toBe(false)
+      await typeInto(boxes()[0], '3')
+      await click(saveButton())
+      expect(mockUpdate).toHaveBeenCalledWith('pick.py', 1, '3')
+      expect(locked()).toBe(true)
+      // 旧项目的删除回来：快照丢弃、不重跑、也不放掉新项目那把锁
+      await act(async () => {
+        resolveForget({ scripts: {}, location: '', pending: [] })
+      })
+      expect(locked()).toBe(true)
+      expect(useScriptInputStore.getState().answers).toEqual(TWO)
+      expect(runSpy).not.toHaveBeenCalled()
+      await act(async () => {
+        resolveSave({ scripts: TWO, location: '', pending: [] })
+      })
+      expect(locked()).toBe(false)
+      expect(runSpy).toHaveBeenCalledTimes(1)
+      setCurrentProjectId(null)
+    })
+  })
 })

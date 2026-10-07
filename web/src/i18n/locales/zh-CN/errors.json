@@ -849,6 +849,7 @@
     "menuLabel": "问题面板选项",
     "rechecking": "正在重新检查…",
     "justNow": "刚刚",
+    "noneEvidenceMulti_other": "按 {{specCount}} 套规范（{{specs}}）检查了 {{count}} 张图 · {{when}}",
     "noneEvidence_other": "按「{{spec}}」检查了 {{count}} 张图 · {{when}}"
   },
   "render": {

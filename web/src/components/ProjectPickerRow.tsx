@@ -231,12 +231,15 @@ export function ProjectRow({
         // 行里有打开 / 收藏 / 「…」几颗钮：「打开」自己带锚点，不靠在行里的次序
         data-workspace-open={drawer || undefined}
         data-picker-open={!drawer || undefined}
-        onClick={onOpen}
-        disabled={!openable}
+        onClick={() => openable && onOpen()}
+        // 目录不在了是**常态**的打不开：用 aria-disabled 而不是 disabled，行仍是漫游列表里的一站，
+        // 焦点落得进来，⋯（移除 / 收藏）才够得着（Codex #832）。切换中 / 正在打开是一时的，照旧 disabled
+        disabled={entry.exists && !openable}
+        aria-disabled={!openable || undefined}
         aria-current={current || undefined}
         aria-label={translate('picker.openProject', { ns: 'project', name: entry.name })}
         title={entry.tutorial ? undefined : entry.path}
-        className="min-w-0 flex-1 self-stretch text-left outline-none focus-visible:focus-ring disabled:cursor-default"
+        className="min-w-0 flex-1 self-stretch text-left outline-none focus-visible:focus-ring disabled:cursor-default aria-disabled:cursor-default"
       >
         <span className="flex items-center gap-1.5">
           <span className={cn('truncate', entry.exists ? 'text-ink' : 'text-ink-3')}>{entry.name}</span>

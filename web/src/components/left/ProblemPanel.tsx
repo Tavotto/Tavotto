@@ -12,7 +12,7 @@ import {
   X,
 } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
-import { formatRelativeTime } from '@/i18n/format'
+import { formatRelativeTime, listJoin } from '@/i18n/format'
 import { t as translate } from '@/i18n'
 import { focusFailureMessage, focusIssue } from '@/lib/issueFocus'
 import { problemContextNow } from '@/lib/problemContext'
@@ -168,6 +168,15 @@ export function ProblemPanel() {
         : [{ kind: 'figure', key: f.key }],
     )
   }, [single, view, categories, figures])
+  /**
+   * 最近一次「点开的那一支还在树上」时的走法（各支的 drillKey）。那一支最后一条修好、整支从树上
+   * 消失之后，F8 靠它认出相邻的那一支——否则「下一项」会回到树头 / 树尾（Codex #832）
+   */
+  const lastWalk = useRef<readonly string[]>([])
+  useEffect(() => {
+    const keys = walk.map(drillKey)
+    if (open && keys.includes(drillKey(open))) lastWalk.current = keys
+  }, [open, walk])
 
   // 与「全部修复」真正执行的是**同一个集合**（`batchable`：本画布、能自动修、
   // 不含建议档）——计数说 5 项、点下去修了 7 项，是这颗按钮最不该有的样子
@@ -203,6 +212,9 @@ export function ProblemPanel() {
     const inSingle = single && drillIssues(shown, single).some((i) => i.issueId === issue.issueId)
     const target = inSingle ? null : drillOf(issue, view, figures)
     if (target) ui.setProblemDrill(target, now)
+    // 多支修到只剩直接列出的一支：之前点开的那一支已经不在了，放下它，否则 `open` 仍指着它、
+    // 清单是空的、刚落下的游标下一帧就被撤掉（Codex #832）。放下点开的那一支会连游标一起清，所以在落游标之前
+    else if (ui.problemDrill) ui.setProblemDrill(null)
     const next = cursorFor(groupIssues(drillIssues(shown, target ?? single!)), issue.issueId)
     if (next) ui.setProblemCursor(next, now)
     else ui.setProblemCursor(null)
@@ -213,8 +225,18 @@ export function ProblemPanel() {
     const near = dir > 0 ? cursorAt.next : cursorAt.prev
     if (cursor && near) return locate(near)
     const at = open ? walk.findIndex((d) => drillKey(d) === drillKey(open)) : -1
-    // 还没开始逐项：从此刻点开的那一支起步（没有就是树的头 / 尾）；已经在走：这一支走完换下一支
-    const target = !cursor && at >= 0 ? walk[at] : at < 0 ? (dir > 0 ? walk[0] : walk.at(-1)) : walk[at + dir]
+    // 还没开始逐项：从此刻点开的那一支起步（没有就是树的头 / 尾）；已经在走：这一支走完换下一支；
+    // 点开的那一支已经修完、从树上消失了：沿它原来的位置往前 / 往后找第一支还在的
+    const target =
+      !cursor && at >= 0
+        ? walk[at]
+        : at >= 0
+          ? walk[at + dir]
+          : open && lastWalk.current.includes(drillKey(open))
+            ? adjacentBranch(walk, lastWalk.current, drillKey(open), dir)
+            : dir > 0
+              ? walk[0]
+              : walk.at(-1)
     if (!target) return
     const flat = flattenGroups(groupIssues(drillIssues(shown, target)))
     const issue = dir > 0 ? flat[0] : flat.at(-1)
@@ -446,6 +468,20 @@ export function ProblemPanel() {
 
 const EMPTY_MAP: ReadonlyMap<string, boolean> = new Map()
 
+/** `gone` 在旧走法 `before` 里的位置往 `dir` 方向，第一支仍在 `walk` 上的；没有就是 undefined（到头了，不绕回） */
+function adjacentBranch(
+  walk: readonly ProblemDrill[],
+  before: readonly string[],
+  gone: string,
+  dir: 1 | -1,
+): ProblemDrill | undefined {
+  for (let i = before.indexOf(gone) + dir; i >= 0 && i < before.length; i += dir) {
+    const hit = walk.find((d) => drillKey(d) === before[i])
+    if (hit) return hit
+  }
+  return undefined
+}
+
 const toggled = (prev: ReadonlySet<string>, key: string) => {
   const next = new Set(prev)
   if (next.has(key)) next.delete(key)
@@ -644,31 +680,47 @@ function TreeSkeleton() {
   )
 }
 
-/** 「未发现问题」+ 证据：按哪套规范、查了几张图、什么时候（2026-10-07 设计审计 §9.4） */
+/**
+ * 「未发现问题」+ 证据：按哪套规范、查了几张图、什么时候（2026-10-07 设计审计 §9.4）。
+ *
+ * 规范按**每张画布各自的绑定**说，与 `collectCanvases()` 给每张画布跑检查时的输入同一份
+ * 判据（激活画布读现值 `doc.profile`，别的画布读 `canvases[].profile`）：几张画布绑了不同的
+ * 规范时，只报当前画布那一套等于把它盖到别的画布的图上（Codex #832）。只算装着图的画布——
+ * 证据说的是「这些图按什么查的」；一张图都没有时退回当前画布那一套。
+ */
 function NoneEvidence() {
   const checkedAt = useValidationStore((s) => s.checkedAt)
   const specs = useProfileStore((s) => s.specs)
-  const binding = useDocumentStore((s) => s.doc.profile)
-  const figures = useDocumentStore((s) =>
-    s.canvases.reduce(
-      (n, c) => n + (c.id === s.activeCanvasId ? s.doc.objects : c.objects).filter((o) => o.type === 'panel').length,
-      0,
-    ),
-  )
-  const spec = useMemo(() => {
-    const resolved = resolveDocumentSpec(binding, toCatalog(specs))
-    const record = resolved.profileId ? specs.find((r) => r.id === resolved.profileId) : undefined
-    return record ? profileName(record) : resolved.profile.label
-  }, [binding, specs])
+  const canvases = useDocumentStore((s) => s.canvases)
+  const activeCanvasId = useDocumentStore((s) => s.activeCanvasId)
+  const activeObjects = useDocumentStore((s) => s.doc.objects)
+  const activeBinding = useDocumentStore((s) => s.doc.profile)
+  const { figures, names } = useMemo(() => {
+    const catalog = toCatalog(specs)
+    const nameOf = (binding: typeof activeBinding) => {
+      const resolved = resolveDocumentSpec(binding, catalog)
+      const record = resolved.profileId ? specs.find((r) => r.id === resolved.profileId) : undefined
+      return record ? profileName(record) : resolved.profile.label
+    }
+    let figures = 0
+    const used: string[] = []
+    for (const c of canvases) {
+      const active = c.id === activeCanvasId
+      const n = (active ? activeObjects : c.objects).filter((o) => o.type === 'panel').length
+      if (n === 0) continue
+      figures += n
+      const name = nameOf(active ? activeBinding : c.profile)
+      if (!used.includes(name)) used.push(name)
+    }
+    return { figures, names: used.length ? used : [nameOf(activeBinding)] }
+  }, [specs, canvases, activeCanvasId, activeObjects, activeBinding])
   const when = checkedAt == null ? null : Date.now() - checkedAt < 60_000 ? pr('justNow') : formatRelativeTime(checkedAt)
-  return (
-    <EmptyState
-      icon={CircleCheck}
-      title={pr('none')}
-      hint={when ? pr('noneEvidence', { spec, count: figures, when }) : undefined}
-      data-problem-evidence
-    />
-  )
+  const hint = !when
+    ? undefined
+    : names.length === 1
+      ? pr('noneEvidence', { spec: names[0], count: figures, when })
+      : pr('noneEvidenceMulti', { specs: listJoin(names), specCount: names.length, count: figures, when })
+  return <EmptyState icon={CircleCheck} title={pr('none')} hint={hint} data-problem-evidence />
 }
 
 /* ------------------------------- 游标 ------------------------------------- */

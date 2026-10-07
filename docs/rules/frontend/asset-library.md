@@ -186,7 +186,7 @@
   一样保留上一份照常显示；来源筛选的选项由 `assetFolders()` 并上它的目录。看护 `lib/panelSrc.test.ts`、`AssetBrowser.tiff.test.tsx`。
 - **脚本 `input()` 的作答（ADR 0099）**：`scriptInputStore` 有项目代际（`clear()` 换代；后端那一问不取消，切回来经
   `loadAnswers()` 的 `pending` 接回对话框）；`ScriptInputDialog` 是闸（`blockDismiss`，出口只有提交 / 结束输入 / 停止脚本），
-  脚本的提示与输出片段只当纯文本；事件流以 `/api/events?answers=1` 声明「能答题」（同一道会话认证），收到 `stream.hello` 与每次认领新项目时（`onCurrentProjectChange`，与事件过滤同一时刻，不等 `project` 赋值）经 `announce()` 报在看哪个项目（后端按项目认答题方）；改 / 删答案的结果换了项目就是 `stale`，调用方不许接着重跑；答案管理（`ScriptAnswersDialog`）行内只改值、没有主按钮，「删除」在行尾 ⋯ 里且是**暂存**的（行上标「保存时删除」、可撤销，2026-10-07 设计审计 §10.2），脚部唯一的主动作「保存并重新运行（N）」依次提交所有改过 / 标了删除的答案、只重跑一次（在飞时对话框 `busy`：×、点外面、Esc 都关不掉，半途关掉会只带部分改动重跑——Codex #831 P1）；没提交前什么都没发，换了项目（store 换代）暂存的删除随之作废；`ScriptInputDialog` 打开时焦点直接在答案框（`initialFocusRef`），「停止脚本」在 start 槽（危险浅底胶囊）；「记住的输入」入口只在
+  脚本的提示与输出片段只当纯文本；事件流以 `/api/events?answers=1` 声明「能答题」（同一道会话认证），收到 `stream.hello` 与每次认领新项目时（`onCurrentProjectChange`，与事件过滤同一时刻，不等 `project` 赋值）经 `announce()` 报在看哪个项目（后端按项目认答题方）；改 / 删答案的结果换了项目就是 `stale`，调用方不许接着重跑；答案管理（`ScriptAnswersDialog`）行内只改值、没有主按钮，「删除」在行尾 ⋯ 里且是**暂存**的（行上标「保存时删除」、可撤销，2026-10-07 设计审计 §10.2），脚部唯一的主动作「保存并重新运行（N）」依次提交所有改过 / 标了删除的答案、只重跑一次（在飞时对话框 `busy`：×、点外面、Esc 都关不掉，半途关掉会只带部分改动重跑——Codex #831 P1）；没提交前什么都没发，换了项目（store 换代）暂存的删除随之作废；改 / 删答案一次只许一件（整批提交算一件、只拿一个 token），锁归 `scriptInputStore`（`answersBusy` + `beginAnswersChange()` / `endAnswersChange(token)`）不归对话框组件——对话框的 `busy` / 禁用都读 `answersBusy`：拿不到锁就一个请求都不发、也不重跑，`saveAnswer` / `forgetAnswer` 只认持锁 token，答案管理被卸载再挂上（`busy` 拦住了 ×/Esc，但 `closeManager()` 等别的路径仍能关）时新挂上的对话框读同一把锁、在飞的那批回来才放开（否则两份同项目整份快照互盖、重跑两次）；`clear()` 换代一并清锁，旧项目那批回来时 token 已不是持有者、放不掉新锁；`ScriptInputDialog` 打开时焦点直接在答案框（`initialFocusRef`），「停止脚本」在 start 槽（危险浅底胶囊）；「记住的输入」入口只在
   这个脚本真有答案时出现在脚本行上；zustand 选择器的空值用模块级常量（每次新建 `[]` = React #185 无限重渲染）。看护：
   `scriptInputStore.test.tsx`、`ScriptInputDialog.test.tsx`、`ScriptAnswersDialog.test.tsx`、`e2e/script-input.spec.ts`。
 - 看护：`scriptRunStore.test.ts` / `ScriptLibrary.test.tsx` /
@@ -203,7 +203,8 @@
 - **选中之后只有一条页脚**（`data-asset-footer`）：上一行名字 + 动作（`data-selected-asset-actions`，真按钮、在 listbox 外），
   需要说话时下面跟接入说明（`data-capability-notice`，同一个容器）。
 - 「只看可编辑的图」「筛选」「刷新」在抽屉标题行的动作槽里（`left/DrawerHeader`），搜索行只有搜索；筛选 chip 是胶囊；
-  刷新失败是图区里的一条 danger `Notice`。刷新中那行「正在刷新…」（`data-asset-refreshing`）**暂留**：`e2e/tutorial.spec.ts`
+  刷新失败是图区里的一条 danger `Notice`，挂在「图」区头下面、**不在可折叠的网格里**（首次读不出的 `EmptyState` 同此）——
+  图区收着时 `/api/panels` 失败不弹提示（`load()` 吞错返回 null），藏进 `hidden` 就是静默失败（Codex #832，`AssetBrowser.refresh.test.tsx`）。刷新中那行「正在刷新…」（`data-asset-refreshing`）**暂留**：`e2e/tutorial.spec.ts`
   拿它挤动卡片来量 coachmark 的同步重测（Codex #731），换掉那根杠杆之前不删（审计「刷新只留旋转图标」那一条待办）。
 - **脚本区**：组头 28px `type-section` + `type-meta` 计数；运行中 = 一颗静止的 accent 点 + 状态句的 `text-shimmer`（不转圈）；
   所有恢复入口（一键修复卡、跑前准备、运行目录、缺数据、失败详情）是同一种「第二行」（`SecondRow`）；读清单 = 静态骨架、

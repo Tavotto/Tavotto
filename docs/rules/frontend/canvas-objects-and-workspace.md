@@ -94,6 +94,27 @@
   舞台的 `data-world-transform` 上（`data-view-tweening`），等它消失再量；补间途中 zoom /
   pan 与刚变的页面尺寸对不上（页面尺寸是瞬间变的），量出来的「居中」是半路上的值，
   「比例已过阈值」这类条件可能被上一步的取景提前满足（#720 的 posix-e2e 偶发红）。
+- **缩放到选中（⇧2 / 缩放菜单 / 命令面板 `zoom-selection`）只有一个判据与一个盒**：`store/zoomToSelection`
+  的 `selectionBoxOf`——选区里没隐藏的对象按 `visualBounds` 求并，面积为 0 算没有；可用判据（菜单置灰用
+  `useCanZoomToSelection`、命令面板用 `canZoomToSelectionNow`）与动作（`zoomToSelection`，⇧2 经
+  `runZoomCommand('selection')`）算的是同一个盒，入口不许自己拼判据。**快速编辑里只认正在编辑的那张图**
+  （`workspace.activePanelId`）：这一屏只画它（`CanvasLayers only=`），⌘A 之后选区里还有一整版看不见的
+  对象，按整个选区取景会把唯一看得见的图挪走、缩小（Codex #833）；选区含它 → 只框它（与快编的「适应」
+  对着那张图同一口径），不含 → 不可用（置灰 / 不出现 / ⇧2 不动视口）。菜单与面板订阅工作区模式，进出
+  快编即重算。看护 `components/zoomControls.test.tsx`、`components/CommandPalette.test.tsx`、
+  `hooks/useKeyboardFastEdit.test.tsx`。
+- **快速编辑里作用于选区 / 取景的动作只认正在编辑的那张图（Codex #833，数据丢失）**：判据只有
+  `store/workspace.fastEditPanelOf`（排版里 null）。**全选**只有 `store/actions.selectAll` → `selectAllIds`
+  一处（⌘A、命令面板 `select-all`、画布菜单「全选」同经它）：排版里收整版看得见且没锁的对象
+  （`isSelectAllTarget`），快速编辑里只收那张图（也得过 `isSelectAllTarget`，锁着就什么都不选，不退到整版）——
+  此前 ⌘A 把整版看不见的对象全选上，接着 Delete 就把它们从版上删掉。**删除**（`deleteSelected`，Delete /
+  Backspace 不在图内元素编辑时、系统菜单「删除」都到这里）在快速编辑里把选区收窄到那张图：选区里挂着的
+  旧版面对象（进快编之前留下的、图层面板点的）一个不删；删那张图本身照旧（看得见、可撤销，对象没了快速编辑
+  随之退出）。**「适应」的取景框只有 `store/zoomToSelection.stageFitFrame` 一处**，动作 `fitStage()`：舞台双击、
+  ⌘1 / 系统菜单（`runZoomCommand('fit')`）、缩放菜单、命令面板 `fit`、画布工具条与画布菜单全走它——快速编辑里
+  框那张图（右下角当框，见函数注释），排版里框页面；此前 ⌘1 / 菜单 / 面板在快速编辑里适应这一屏根本没画的页面，
+  而双击适应那张图。看护 `hooks/useKeyboardFastEdit.test.tsx`（⌘A / Delete / ⌘1 各带排版对照组）、
+  `components/CommandPalette.test.tsx`。
 - **换画布尺寸就重新取景；新加的图软上限缩放；页面外画淡（2026-09-28，用户反馈）**：
   同一份文档、同一张画布的 `page.w/h` 一变（预设、手填、横竖对调、样式预设带的页面、
   以及它们的撤销 / 重做）→ `store/pageFit.startPageSizeFit` 按新页面 `fitAnimated`，

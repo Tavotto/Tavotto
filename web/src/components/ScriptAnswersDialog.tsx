@@ -70,7 +70,11 @@ function AnswersManager({ script, open }: { script: string; open: boolean }) {
   const [forgets, setForgets] = useState<ReadonlySet<number>>(EMPTY)
   /** 每一行最近一次保存 / 删除失败的原因 */
   const [errors, setErrors] = useState<Record<number, string>>({})
-  const [saving, setSaving] = useState(false)
+  /**
+   * 答案改动锁归 store（`answersBusy`）：关掉再打开，新挂上的对话框照样锁着，直到在飞的那件回来
+   * （维护者复审：组件自己的 `saving` 随卸载消失，重开后能再存一次、两份快照互盖、重跑两次）
+   */
+  const saving = useScriptInputStore((s) => s.answersBusy)
 
   const close = () => useScriptInputStore.getState().closeManager()
   const valueOf = (a: RememberedAnswer) => edits[a.index] ?? a.answer
@@ -99,23 +103,27 @@ function AnswersManager({ script, open }: { script: string; open: boolean }) {
   /**
    * 依次提交所有改过的答案与标了删除的答案，**只重跑一次**；任何一条回来时已换项目就整个作罢
    * （不在新项目里重跑同名脚本）。对话框在途中被关掉：剩下的不再发，已提交好的照常重跑。
+   * 整批算**一件**答案改动、只拿一把 store 锁（`beginAnswersChange()`）：已有一件在飞（含关掉重开前
+   * 没回来的那批）就一个请求都不发、也不重跑；批里每一条都带同一个 token，finally 放锁。
    */
   const commitAll = async () => {
-    if (!pending || saving) return
-    const epoch = useScriptInputStore.getState().epoch
+    if (!pending) return
+    const store = useScriptInputStore.getState()
+    const epoch = store.epoch
+    const token = store.beginAnswersChange()
+    if (token === null) return
     const batch: { index: number; value: string | null }[] = [
       ...changed.map((a) => ({ index: a.index, value: valueOf(a) })),
       ...staged.map((a) => ({ index: a.index, value: null })),
     ]
     const submitted = new Map(batch.map((b) => [b.index, b.value]))
-    setSaving(true)
     const done: number[] = []
     try {
       for (const { index, value } of batch) {
         const res =
           value === null
-            ? await useScriptInputStore.getState().forgetAnswer(script, index)
-            : await useScriptInputStore.getState().saveAnswer(script, index, value)
+            ? await useScriptInputStore.getState().forgetAnswer(token, script, index)
+            : await useScriptInputStore.getState().saveAnswer(token, script, index, value)
         // 请求在飞时换了项目：什么都不做——尤其不在新项目里重跑同名脚本
         if (res.status === 'stale' || !sameProject(epoch)) return
         const stillOpen = stillCurrent(epoch, script)
@@ -129,7 +137,7 @@ function AnswersManager({ script, open }: { script: string; open: boolean }) {
         if (!stillOpen) break
       }
     } finally {
-      if (stillCurrent(epoch, script)) setSaving(false)
+      useScriptInputStore.getState().endAnswersChange(token)
     }
     if (!done.length || !sameProject(epoch)) return
     // 提交好的那几行不再是「改过 / 将删除」：丢掉本地副本，以后台那份为准（对话框已关就不必）

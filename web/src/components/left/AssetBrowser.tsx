@@ -390,31 +390,37 @@ export function AssetBrowser() {
           onToggle={() => useAssetBrowseStore.getState().setFiguresOpen(!figuresOpen)}
           controls="asset-figures-section"
         />
+        {/* 读不出 / 刷新失败**不收进可折叠的内容里**：图区收着时，头部「刷新」后端那一轮成了、
+            `/api/panels` 却失败——`assetStore.load()` 吞掉错误返回 null，`refreshProjectNow()` 照常
+            resolve、不弹提示，而这条 Notice 若在 hidden 的网格里，用户只看到图标停转（Codex #832）。
+            错误挂在区头下面、不跟着折叠走，展开与否都看得见 */}
+        {error && (
+          <div className="px-3 pb-2">
+            {/* 刷新失败：一条 Notice 坐在它说的那一区里（此前是贴着工具栏的一条红带）；
+                加载过就照旧列保留下来的那份，卡片不消失 */}
+            {loaded ? (
+              <Notice tone="danger" role="status" data-asset-refresh-failed>
+                {ab('refreshFailed', { error })}
+              </Notice>
+            ) : (
+              <EmptyState
+                icon={TriangleAlert}
+                title={ab('loadFailed')}
+                hint={error}
+                action={{
+                  label: ab('retry'),
+                  // 首次加载失败后的重试：**强制**另起一次，不复用可能同样
+                  // 失败的那个在途请求——用户点重试的原因正是"刚才没成"
+                  onClick: () => void useAssetStore.getState().load({ force: true }),
+                }}
+              />
+            )}
+          </div>
+        )}
         {/* 网格容器常驻（收起时只是 hidden）：列数由它的实测宽度决定，ResizeObserver
             只在挂载时接一次，卸了再挂就量不到了；display:none 报 0 宽 → 单列，再展开时
             报回真实宽度 → 双列，同一个观察者两边都接得住 */}
         <div id="asset-figures-section" ref={gridRef} className="px-3 pb-2" hidden={!figuresShown}>
-          {/* 刷新失败：一条 Notice 坐在它说的那一区里（此前是贴着工具栏的一条红带）；
-              加载过就照旧列保留下来的那份，卡片不消失 */}
-          {error && loaded && (
-            <Notice tone="danger" role="status" data-asset-refresh-failed className="mb-2">
-              {ab('refreshFailed', { error })}
-            </Notice>
-          )}
-          {error && !loaded && (
-            <EmptyState
-              icon={TriangleAlert}
-              title={ab('loadFailed')}
-              hint={error}
-              action={{
-                label: ab('retry'),
-                // 首次加载失败后的重试：**强制**另起一次，不复用可能同样
-                // 失败的那个在途请求——用户点重试的原因正是"刚才没成"
-                onClick: () => void useAssetStore.getState().load({ force: true }),
-              }}
-            />
-          )}
-
           {!loaded && !error && <GridSkeleton columns={columns} />}
 
           {/* 用不了的文件也是「有东西可说」：只有一张范围之外的 TIFF 的项目不是「还没有图」，

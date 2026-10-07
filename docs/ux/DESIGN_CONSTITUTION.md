@@ -148,7 +148,9 @@ Tavotto 是「紧凑工具」那一档：**控件一律 28px（`h-7`）**——�
   拖放落点是 `dropLineClass(pos)`：2px accent 条 + 左端 4px 圆点。
 - **RowMenu**（`useRowMenu` + `RowMenu`）：一行的 ⋯、右键、⇧F10 / ContextMenu 键打开**同一份** `MenuItem` 清单；⋯ 只在
   hover / focus-within / 打开时看得见，行聚焦时它在 Tab 顺序里（tabIndex 0），否则 -1；自己管 roving focus、整张列表只许一个
-  Tab 停靠点的列表传 `tabStop={false}`，⋯ 恒为 -1，键盘入口只剩 ⇧F10 / ContextMenu 键。菜单项图标一律经 `MenuItem icon=`
+  Tab 停靠点的列表传 `tabStop={false}`，⋯ 恒为 -1，键盘入口只剩 ⇧F10 / ContextMenu 键；宿主自己不可聚焦、又不在一列里
+  （当前项目卡）时 `tabbable`，⋯ 常驻 Tab 顺序（两者互斥，`tabStop={false}` 优先）。行的主操作「常态打不开」（目录已不在）用
+  `aria-disabled` 不用 `disabled`：焦点仍落得进行里，⋯ 才够得着。菜单项标的快捷键只标那个键在这一行上真会做的事。菜单项图标一律经 `MenuItem icon=`
   （ink-2，危险项跟字走红），不在 children 里自己排。
 - **TreeRow**（`treeIndent` / `TreeChevron` / `TreeIcon` / `TreeCount`）：树行的固定列——
   缩进 8 + 14 × 层级、16px 折叠箭头列、16px 类型图标列、右对齐计数。图层树与图内
@@ -674,6 +676,8 @@ UI 正文 14 / 控件字最小 12、台阶 2px；强调至少高一档且配深�
   禁用一律 40%（门禁也抓 `aria-disabled` 那条路）。
 - 菜单只有一份实现：缩放弹层是 `Menu` + `MenuRadioGroup`（当前档带勾）；标注工具是 `MenuRadioItem`（带 `shortcut`）；
   `role="dialog"` 的快捷编辑弹层用 `MenuButton`（同一份 ITEM_CLASS）；菜单从触发钮右缘垂下；分隔线只在真分组之间。
+  菜单里要放一格输入框（缩放菜单的倍率框）一律包 `MenuField`，不放裸 `div`：它是漫游顺序里的一项（`role="group"` 带名字、焦点转交给框），
+  键盘打开先落在框里、↓ / Tab 回到菜单项、Enter 提交后焦点留在框里、Esc 关菜单还焦点给触发器；指针一侧悬停不抢焦点（Codex #833）。
 - 通知轨最多两条：状态来了先顶掉操作提示（提示稍后重播），「已加入」优先级最高；toast 无实边、只 shadow-pop、12 号 ink、底距 16、一种高度；
   HUD 读数盒 `rounded-md shadow-pop` 无边。两种横幅合成一种（贴边、surface-2、border-b、min-h 32）。
 - 命令面板 520 宽、行 32 / 12（2026-10-07 起 32 / 13，见第二十七节）、选中 `selected` 10%、遮罩与 Dialog 同一串、右上不写「Esc」；快捷键帮助用 `SearchInput`、说明 12、组头 type-section、页脚不重复关闭。

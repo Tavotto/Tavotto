@@ -2,14 +2,12 @@ import { useTranslation } from 'react-i18next'
 import { ChevronDown } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { keyOf } from '@/lib/keymap'
-import { useDocumentStore } from '@/store/documentStore'
-import { useSelectionStore } from '@/store/selectionStore'
 import { MAX_ZOOM, MIN_ZOOM, useViewportStore } from '@/store/viewportStore'
-import { canZoomToSelection, zoomToSelection } from '@/store/zoomToSelection'
+import { fitStage, useCanZoomToSelection, zoomToSelection } from '@/store/zoomToSelection'
 import { Numbers } from '@sfinterface/numbers'
 import { Button } from './ui/Button'
 import { NumberField } from './ui/Input'
-import { Menu, MenuItem, MenuRadioGroup, MenuRadioItem, MenuSeparator } from './ui/Menu'
+import { Menu, MenuField, MenuItem, MenuRadioGroup, MenuRadioItem, MenuSeparator } from './ui/Menu'
 
 const ZOOM_PRESETS = [0.5, 0.75, 1, 1.5, 2, 4]
 
@@ -23,14 +21,12 @@ export function ZoomControls() {
   // 读数显示的是「用户要去的那一档」（补间的终点），不是补间中的每一帧；见 viewportStore
   const readoutZoom = useViewportStore((s) => s.readoutZoom)
   const readoutRolls = useViewportStore((s) => s.readoutRolls)
-  const page = useDocumentStore((s) => s.doc.page)
   // 预设那一组是**互斥取值**：当前档带勾。缩放不是整数档时一个都不勾（「不知道是哪一档」
   // 有自己的取值，不能就近归到相邻那一档）
   const preset = ZOOM_PRESETS.find((z) => Math.abs(z - zoom) < 1e-6)
-  // 与动作同一个判据：选中的全隐藏了 / 面积为 0 也置灰（隐藏不清选区，只看 ids 长度会留一个空转的入口）
-  const objects = useDocumentStore((s) => s.doc.objects)
-  const ids = useSelectionStore((s) => s.ids)
-  const canZoomSelection = canZoomToSelection(objects, ids)
+  // 与动作同一个判据：选中的全隐藏了 / 面积为 0 / 快速编辑里选区不含正在编辑的那张图都置灰
+  // （隐藏不清选区，只看 ids 长度会留一个空转的入口；快编里 ⌘A 选进来的版面对象这一屏看不见）
+  const canZoomSelection = useCanZoomToSelection()
 
   return (
     /* 缩放是一颗文本钮「114% ⌄」（2026-09-15 打磨批次 F，L3；适应画布的图标钮已并进浮动工具条）：
@@ -68,8 +64,9 @@ export function ZoomControls() {
         }
       >
         {/* 可以直接敲一个倍率（2026-10-07 设计审计 §10.1）：菜单顶上一格数字框，回车 / 失焦生效。
-            按键不交给菜单（Radix 菜单会把字母当首字母跳转、把方向键当换项） */}
-        <div className="px-1 pb-1" onKeyDown={(e) => e.stopPropagation()} data-zoom-value-row>
+            `MenuField`：键盘打开菜单先落在这一格、↓ / Tab 回到菜单项（Codex #833 P2：此前是菜单里一个普通
+            div，方向键只在菜单项之间漫游、键盘走不进去）。按键不交给菜单（首字母跳转），由 NumberField 自己拦 */}
+        <MenuField label={t('topbar.zoomValueInput')} data-zoom-value-row>
           <NumberField
             fill
             value={Math.round(zoom * 100)}
@@ -82,7 +79,7 @@ export function ZoomControls() {
             dataProp="zoom-value"
             onChange={(v) => useViewportStore.getState().setZoomCentered(v / 100)}
           />
-        </div>
+        </MenuField>
         <MenuItem shortcut={keyOf('zoomIn')} onSelect={() => useViewportStore.getState().zoomBy(1.25)}>
           {t('topbar.zoomIn')}
         </MenuItem>
@@ -103,7 +100,7 @@ export function ZoomControls() {
         <MenuSeparator />
         <MenuItem
           shortcut={keyOf('zoomFit')}
-          onSelect={() => useViewportStore.getState().fitAnimated(page.w, page.h)}
+          onSelect={fitStage}
           data-fit-canvas-item
         >
           {t('topbar.fitCanvas')}

@@ -212,10 +212,18 @@ function ActiveStep({ stepId }: { stepId: StepId }) {
     if (handoff.pending && card) card.focus({ preventScroll: true })
     handoff.pending = false
     return () => {
-      // 卸载那一刻焦点还在这张卡片里：下一张接手
-      handoff.pending = !!card && card.contains(document.activeElement)
+      // 卸载那一刻焦点还在这张卡片里、而且是**直接换到下一步**（教程仍 active、步骤已变）：下一张接手。
+      // 暂停 / 完成 / 跳过整个教程也会卸掉这张卡片，那不是交接——不记下，否则过一阵「继续教程」时
+      // 新挂上的卡片会把用户已经放在别处的焦点抢走（#831 Codex P2）
+      const s = useOnboardingStore.getState()
+      handoff.pending =
+        s.status === 'active' &&
+        s.currentStep !== stepId &&
+        !!card &&
+        card.contains(document.activeElement)
     }
-  }, [])
+    // `ActiveStep` 按 stepId 重挂，stepId 在一个实例里不变：这仍是「挂载 / 卸载各一次」
+  }, [stepId])
 
   // 每次相关状态变化重新组装上下文并重测；再加一个兜底的低频重测
   const refresh = useCallback(() => {

@@ -54,7 +54,7 @@ import { useDocumentStore } from '@/store/documentStore'
 import { useTimelineStore } from '@/store/timelineStore'
 import { setCurrentProjectId } from '@/lib/session'
 import { useUiStore } from '@/store/uiStore'
-import { formatMessage } from '@/i18n'
+import { formatMessage, literal } from '@/i18n'
 import { emptyProject, type FigureDocument, type TextObject } from '@/types/document'
 
 declare global {
@@ -149,7 +149,7 @@ const $ = <T extends Element = HTMLElement>(sel: string) => document.querySelect
 beforeEach(async () => {
   document.body.innerHTML = ''
   vi.clearAllMocks()
-  useTimelineStore.setState({ preview: null, rev: 0, namingOpen: false, restoring: null })
+  useTimelineStore.setState({ preview: null, rev: 0, namingOpen: false, restoring: null, restoreToken: null })
   mockCreate.mockResolvedValue({ version: meta({ id: 'v_backup' }) })
   mockDoc.mockResolvedValue({ ...meta(), doc: snapshot() })
   mockUpdate.mockResolvedValue({ version: meta() })
@@ -363,6 +363,143 @@ describe('内联条的「恢复到这里」与预览恢复同一把锁（Codex #
     expect(useTimelineStore.getState().restoring).toBeNull()
     expect(useTimelineStore.getState().preview).toBeNull()
     expect($<HTMLButtonElement>('[data-timeline-close]')!.disabled).toBe(false)
+  })
+})
+
+describe('内联恢复取正文期间画布就被遮住（Codex #831 P1）', () => {
+  /** 让 `fetchVersionDoc` 挂起，返回放行 / 失败的两个把手 */
+  const holdFetch = () => {
+    const h: { give: () => void; fail: (e: unknown) => void } = { give: () => {}, fail: () => {} }
+    mockDoc.mockImplementationOnce(
+      () =>
+        new Promise((resolve, reject) => {
+          h.give = () => resolve({ ...meta(), doc: snapshot() })
+          h.fail = reject
+        }),
+    )
+    return h
+  }
+  const clickRowRestore = async () => {
+    const bar = node('v1').querySelector('[data-timeline-row-actions]')!
+    await act(async () => bar.querySelector<HTMLButtonElement>('[data-timeline-row-restore]')!.click())
+    await flush()
+  }
+
+  it('正文还在路上：模态预览已以「加载中」busy 开着、遮罩挡住画布；回来后照常恢复', async () => {
+    const h = holdFetch()
+    await mount([meta()], undefined, false)
+    await clickRowRestore()
+    expect(mockDoc).toHaveBeenCalledTimes(1)
+    expect(mockCreate).not.toHaveBeenCalled()
+    const dlg = $('[data-dialog="timeline-preview"]')
+    expect(dlg).not.toBeNull()
+    expect(dlg!.getAttribute('aria-busy')).toBe('true')
+    expect($('[data-dialog-scrim]')).not.toBeNull()
+    expect($('[data-dialog="timeline-preview"] [data-dialog-close]')).toBeNull()
+    expect(useTimelineStore.getState().preview?.doc).toBeNull()
+    expect($<HTMLButtonElement>('[data-timeline-preview-restore]')!.disabled).toBe(true)
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    await flush()
+    expect(useTimelineStore.getState().preview).not.toBeNull()
+
+    await act(async () => h.give())
+    await flush()
+    expect(ids()).toEqual(['old'])
+    expect(mockCreate).toHaveBeenCalledTimes(1)
+    expect(useTimelineStore.getState().restoring).toBeNull()
+    expect(useTimelineStore.getState().preview).toBeNull()
+  })
+
+  it('取正文期间落了一笔编辑：放弃恢复——新编辑留着、不打「恢复前」节点、锁摘掉、预览收回', async () => {
+    const h = holdFetch()
+    useUiStore.setState({ statusTone: 'info' })
+    await mount([meta()], undefined, false)
+    await clickRowRestore()
+    act(() =>
+      useDocumentStore.getState().commit(literal('新编辑'), (d) => {
+        d.objects.push(text('newer', '更新的一段'))
+      }),
+    )
+    await act(async () => h.give())
+    await flush()
+    expect(ids()).toEqual(['now', 'newer'])
+    expect(mockCreate).not.toHaveBeenCalled()
+    expect(useTimelineStore.getState().restoring).toBeNull()
+    expect(useTimelineStore.getState().preview).toBeNull()
+    expect(useUiStore.getState().statusTone).toBe('error')
+  })
+
+  it('正文取不回来：「加载中」预览收回、锁摘掉、错误落在抽屉里', async () => {
+    const h = holdFetch()
+    await mount([meta()], undefined, false)
+    await clickRowRestore()
+    expect($('[data-dialog="timeline-preview"]')).not.toBeNull()
+    await act(async () => h.fail(new Error('boom')))
+    await flush()
+    expect(useTimelineStore.getState().preview).toBeNull()
+    expect($('[data-dialog="timeline-preview"]')).toBeNull()
+    expect(useTimelineStore.getState().restoring).toBeNull()
+    expect($<HTMLButtonElement>('[data-timeline-close]')!.disabled).toBe(false)
+    expect($('[data-timeline-error-kind="preview"]')).not.toBeNull()
+    expect(ids()).toEqual(['now'])
+    expect(mockCreate).not.toHaveBeenCalled()
+  })
+})
+
+describe('恢复锁在取正文之前就挂上、按凭据摘（Codex #831 P1）', () => {
+  it('A 的正文还在路上时再点 B 的「恢复到这里」：B 不取、不写，只有 A 写进去', async () => {
+    let giveA!: (v: Awaited<ReturnType<typeof fetchVersionDoc>>) => void
+    const docOf = (id: string): FigureDocument => ({ ...snapshot(), objects: [text(id, id)] })
+    mockDoc.mockImplementation((_doc, id) =>
+      id === 'vA'
+        ? new Promise((resolve) => (giveA = resolve))
+        : Promise.resolve({ ...meta({ id }), doc: docOf(`from_${id}`) }),
+    )
+    await mount([meta({ id: 'vA', ts: NOW - 120_000 }), meta({ id: 'vB' })], undefined, false)
+    const restoreBtn = (id: string) =>
+      node(id).querySelector<HTMLButtonElement>('[data-timeline-row-restore]')!
+    await act(async () => restoreBtn('vA').click())
+    await flush()
+    // A 还在取正文：锁已挂上，所有行的「恢复到这里」一起禁用、抽屉关不掉
+    expect(useTimelineStore.getState().restoring).not.toBeNull()
+    expect(restoreBtn('vB').disabled).toBe(true)
+    expect($<HTMLButtonElement>('[data-timeline-close]')!.disabled).toBe(true)
+    await act(async () => restoreBtn('vB').click())
+    await flush()
+    expect(mockDoc).toHaveBeenCalledTimes(1)
+
+    await act(async () => giveA({ ...meta({ id: 'vA' }), doc: docOf('from_vA') }))
+    await flush()
+    expect(ids()).toEqual(['from_vA'])
+    expect(mockCreate).toHaveBeenCalledTimes(1)
+    expect(useTimelineStore.getState().restoring).toBeNull()
+  })
+
+  it('同一上下文已有一次恢复在飞：再挂锁被拒；过期的持有者摘不掉后来者的锁', () => {
+    const tl = () => useTimelineStore.getState()
+    const first = tl().beginRestore('ctx')
+    expect(first).not.toBeNull()
+    expect(tl().beginRestore('ctx')).toBeNull()
+    tl().endRestore(first!)
+    expect(tl().restoring).toBeNull()
+    const second = tl().beginRestore('ctx')
+    expect(second).not.toBeNull()
+    // 第一次的 finally 晚到（或重复）：不许摘掉第二次的锁
+    tl().endRestore(first!)
+    expect(tl().restoring).toBe('ctx')
+    tl().endRestore(second!)
+    expect(tl().restoring).toBeNull()
+  })
+
+  it('别的上下文挂着的旧锁不挡新上下文；旧的那次结束也摘不掉新上下文的锁', () => {
+    const tl = () => useTimelineStore.getState()
+    const a = tl().beginRestore('ctxA')
+    const b = tl().beginRestore('ctxB')
+    expect(b).not.toBeNull()
+    tl().endRestore(a!)
+    expect(tl().restoring).toBe('ctxB')
+    tl().endRestore(b!)
+    expect(tl().restoring).toBeNull()
   })
 })
 

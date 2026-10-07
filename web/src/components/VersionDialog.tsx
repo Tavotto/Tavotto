@@ -308,21 +308,27 @@ export function VersionDrawer() {
 
   /**
    * 选中行上的「恢复到这里」：取这一版的正文再走同一个 `restoreUnderLock`（与预览对话框
-   * 同一把锁、同一个 `restoreNode`）。正文取不回来就按预览失败那一槽说。没写进去（取消、
-   * 「恢复前」存不下来）就把为这次恢复打开的预览收回去，回到点之前的样子。
+   * 同一把锁、同一个 `restoreNode`）。锁在**取正文之前**就挂上（Codex #831 P1）：否则
+   * A 的正文还在路上时再点 B，两次都会走到恢复、都会写。正文取不回来就按预览失败那一槽说。
+   * 没写进去（取消、「恢复前」存不下来、取正文期间文档变了、正文取不回来）就把为这次恢复
+   * 打开的预览收回去，回到点之前的样子；被锁拒掉（已有一次在飞）什么都不动。
    */
   const restoreFromRow = async (meta: LayoutVersionMeta) => {
-    const after = afterAwait(ctx)
     setPreviewError(null)
-    try {
-      const v = await fetchVersionDoc(docId, meta.id)
-      if (!after(() => true)) return
-      const done = await restoreUnderLock(ctx, docId, meta, v.doc as FigureDocument)
+    const closeOurs = () => {
       const cur = useTimelineStore.getState().preview
-      if (!done && cur?.docId === docId && cur.meta.id === meta.id) {
-        useTimelineStore.getState().setPreview(null)
-      }
+      if (cur?.docId === docId && cur.meta.id === meta.id) useTimelineStore.getState().setPreview(null)
+    }
+    try {
+      const done = await restoreUnderLock(ctx, docId, meta, async () => {
+        const v = await fetchVersionDoc(docId, meta.id)
+        return v.doc as FigureDocument
+      })
+      if (done === null) return
+      if (!done) closeOurs()
     } catch (e) {
+      // 正文取不回来：取正文期间开着的那张「加载中」模态预览也收回去（锁由 `restoreUnderLock` 摘）
+      closeOurs()
       setPreviewError(backendErrorText(e))
     }
   }
@@ -644,6 +650,8 @@ function TimelineRow({
   // ⋯ / 右键 / ⇧F10 是同一份菜单（`RowMenu`）；选中的那一行下面再露一条「预览 · 恢复到这里」
   const menu = useRowMenu()
   const [restoring, setRestoring] = useState(false)
+  // 这个上下文有一次恢复在飞（哪一行发起的都算）：所有行的「恢复到这里」一起禁用
+  const restoreLocked = useTimelineStore((s) => s.restoring) === ctx
   const renamingFromMenu = useRef(false)
   return (
     <li className="group/node" data-timeline-node={v.id} data-timeline-named={named || undefined}>
@@ -764,6 +772,7 @@ function TimelineRow({
           size="sm"
           data-timeline-row-restore
           loading={restoring}
+          disabled={restoreLocked}
           onClick={async () => {
             setRestoring(true)
             try {
@@ -919,25 +928,67 @@ export async function restoreNode(
 
 /**
  * 两个恢复入口（预览对话框页脚、抽屉选中行内联条）**唯一**的调用口（Codex #831 P1）：
- * 在 `restoreNode` 的第一个 await 之前挂上 `timelineStore.restoring`，并让模态预览对话框
+ * 在任何 await（取正文、`restoreNode`）之前挂上 `timelineStore.restoring`，并让模态预览对话框
  * 对着这一版开着——它以 `busy` 开着就是这把锁：遮罩挡住画布（没法趁「恢复前」节点还在存
  * 时再编辑，晚到的恢复也就不会盖掉新编辑）、×/Esc/点外面关不掉，抽屉也关不掉。
  * 内联入口原来只把行上那颗按钮转圈，画布照常可改。`restoreNode` 照旧先收掉在途手势。
+ *
+ * 这个上下文已经有一次恢复在飞（含还在取正文的那段）→ 拒绝，返回 null、什么都不动；锁按
+ * `beginRestore` 发的凭据摘，先结束的一次摘不掉后来者的锁。`doc` 可以是取正文的函数：
+ * 取回来时换了项目 / 排版就不恢复（同样返回 null）。返回 true = 写进去了。
+ *
+ * 取正文那段（Codex #831 P1）：模态预览在 **await 之前**就以「加载中」（`doc: null`）对着
+ * 这一版开起来——锁挂上的同时遮罩就挡住画布，不是等正文回来才挡（只锁抽屉时画布照常可改，
+ * 那段时间的编辑不换上下文，晚到的 `restoreNode` 会把它整份盖掉）。再兜一层：开工时记下
+ * 编辑历史的标记（`editMark`），正文回来时变了（有编辑 / 撤销 / 重做 / 手势收尾 / 换画布
+ * 落了地）就放弃这次恢复：不写、不打「恢复前」节点，返回 false。
  */
+/**
+ * 文档的「编辑修订」：用户能落进文档的每一笔（commit / 撤销 / 重做 / 事务累积 / 换画布）都
+ * 会换掉其中某个引用；派生同步（`applyDerivedUpdate`）不进 `past` / `future`，不算编辑。
+ */
+function editMark() {
+  const s = useDocumentStore.getState()
+  return [s.past, s.future, s.txn, s.activeCanvasId] as const
+}
+
+function sameEditMark(a: ReturnType<typeof editMark>, b: ReturnType<typeof editMark>): boolean {
+  return a.every((x, i) => x === b[i])
+}
+
 async function restoreUnderLock(
   ctx: string,
   docId: string,
   meta: LayoutVersionMeta,
-  doc: FigureDocument,
-): Promise<boolean> {
-  const tl = useTimelineStore.getState()
-  const cur = tl.preview
-  if (!(cur?.docId === docId && cur.meta.id === meta.id && cur.doc)) tl.setPreview({ docId, meta, doc })
-  tl.beginRestore(ctx)
+  doc: FigureDocument | (() => Promise<FigureDocument>),
+): Promise<boolean | null> {
+  const token = useTimelineStore.getState().beginRestore(ctx)
+  if (token === null) return null
   try {
-    return await restoreNode(meta, doc)
+    let body: FigureDocument
+    if (typeof doc === 'function') {
+      const mark = editMark()
+      const open = useTimelineStore.getState().preview
+      if (!(open?.docId === docId && open.meta.id === meta.id)) {
+        useTimelineStore.getState().setPreview({ docId, meta, doc: null })
+      }
+      body = await doc()
+      // 换了项目 / 排版才取回来：这次恢复作废，旧上下文的什么都不动
+      if (!afterAwait(ctx)(() => true)) return null
+      // 取正文期间文档被改过：那笔编辑比这次恢复新，不盖掉它
+      if (!sameEditMark(mark, editMark())) {
+        useUiStore.getState().setStatus(msg('versions.restoreAbortedEdited', undefined, 'dialogs'), 'error')
+        return false
+      }
+    } else body = doc
+    const tl = useTimelineStore.getState()
+    const cur = tl.preview
+    if (!(cur?.docId === docId && cur.meta.id === meta.id && cur.doc)) {
+      tl.setPreview({ docId, meta, doc: body })
+    }
+    return await restoreNode(meta, body)
   } finally {
-    useTimelineStore.getState().endRestore(ctx)
+    useTimelineStore.getState().endRestore(token)
   }
 }
 

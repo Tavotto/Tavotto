@@ -23,8 +23,10 @@ import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useSelectionStore } from '@/store/selectionStore'
-import { emptyProject, type TextObject } from '@/types/document'
+import { emptyProject, type PanelObject, type TextObject } from '@/types/document'
 import { useUiStore } from '@/store/uiStore'
+import { useViewportStore } from '@/store/viewportStore'
+import { useWorkspaceStore } from '@/store/workspace'
 import { CommandPalette, usePalette } from './CommandPalette'
 
 declare global {
@@ -123,6 +125,83 @@ describe('命令集', () => {
       expect(ids()).not.toContain('zoom-selection')
     } finally {
       useSelectionStore.setState({ ids: [] })
+    }
+  })
+
+  // Codex #833：快速编辑这一屏只画正在编辑的那张图；选区里只有看不见的版面对象时不出现，有那张图时只框它
+  it('「缩放到选中」在快速编辑里只认正在编辑的那张图', async () => {
+    const text: TextObject = {
+      id: 't1', type: 'text', text: 'a', sizePt: 9, bold: false,
+      color: '#000', align: 'left', x: 10, y: 20, w: 30, h: 8,
+    }
+    const panel: PanelObject = {
+      id: 'p1', type: 'panel', fileId: 'Fig1.pdf', fileKind: 'pdf', nativeW: 80, nativeH: 60,
+      overrides: [], x: 100, y: 80, w: 40, h: 30,
+    }
+    await useDocumentStore.getState().switchDocument(emptyProject(), 'd_palette_zoom_fe')
+    useDocumentStore.getState().silent((d) => {
+      d.objects.push(text, panel)
+    })
+    const spy = vi.spyOn(useViewportStore.getState(), 'fitRectAnimated').mockImplementation(() => {})
+    const cmd = () => document.querySelector<HTMLElement>('[data-cmd-id="zoom-selection"]')
+    try {
+      useSelectionStore.setState({ ids: ['t1'] })
+      mount()
+      expect(cmd()).not.toBeNull()
+      // 进快速编辑本身就让命令重算（面板开着也一样）
+      act(() => useWorkspaceStore.getState().enterFastEdit('p1'))
+      expect(cmd()).toBeNull()
+      act(() => useSelectionStore.setState({ ids: ['t1', 'p1'] }))
+      expect(cmd()).not.toBeNull()
+      act(() => cmd()!.click())
+      expect(spy).toHaveBeenCalledWith({ x: 100, y: 80, w: 40, h: 30 })
+    } finally {
+      useSelectionStore.setState({ ids: [] })
+      useWorkspaceStore.getState().clear()
+      spy.mockRestore()
+    }
+  })
+
+  // Codex #833（数据丢失）：快速编辑这一屏只画那张图——「全选」只收它，不把整版看不见的对象选上（接着 Delete
+  // 就删掉它们）；「适应画布」与 ⌘1 / 舞台双击同一个取景框，适应那张图。对照组：排版里全选整版、适应页面
+  it('「全选」与「适应画布」在快速编辑里只认正在编辑的那张图', async () => {
+    const text: TextObject = {
+      id: 't1', type: 'text', text: 'a', sizePt: 9, bold: false,
+      color: '#000', align: 'left', x: 10, y: 20, w: 30, h: 8,
+    }
+    const panel: PanelObject = {
+      id: 'p1', type: 'panel', fileId: 'Fig1.pdf', fileKind: 'pdf', nativeW: 80, nativeH: 60,
+      overrides: [], x: 100, y: 80, w: 40, h: 30,
+    }
+    await useDocumentStore.getState().switchDocument(emptyProject(), 'd_palette_select_all_fe')
+    useDocumentStore.getState().silent((d) => {
+      d.objects.push(text, panel)
+    })
+    const page = useDocumentStore.getState().doc.page
+    const fit = vi.spyOn(useViewportStore.getState(), 'fitAnimated').mockImplementation(() => {})
+    // 点一条命令会关掉面板；下一条前重新打开（一次挂载，不留多余的根）
+    const run = (id: string) => {
+      act(() => usePalette.setState({ open: true }))
+      act(() => document.querySelector<HTMLElement>(`[data-cmd-id="${id}"]`)!.click())
+    }
+    mount()
+    try {
+      useSelectionStore.setState({ ids: [] })
+      run('select-all')
+      expect(useSelectionStore.getState().ids).toEqual(['t1', 'p1'])
+      run('fit')
+      expect(fit).toHaveBeenLastCalledWith(page.w, page.h)
+
+      useWorkspaceStore.getState().enterFastEdit('p1')
+      useSelectionStore.setState({ ids: [] })
+      run('select-all')
+      expect(useSelectionStore.getState().ids).toEqual(['p1'])
+      run('fit')
+      expect(fit).toHaveBeenLastCalledWith(140, 110)
+    } finally {
+      useSelectionStore.setState({ ids: [] })
+      useWorkspaceStore.getState().clear()
+      fit.mockRestore()
     }
   })
 

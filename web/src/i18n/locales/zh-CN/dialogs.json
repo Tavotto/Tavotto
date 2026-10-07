@@ -1515,6 +1515,7 @@
     "unname": "删除名字",
     "loadingList": "正在读取这份排版的时间线…",
     "restoreFailed": "恢复前没能先存下当前排版，这次没有恢复：{{error}}",
+    "restoreAbortedEdited": "读取节点期间排版有了改动，这次没有恢复，刚才的改动保留着。",
     "filterLabel": "显示哪些节点",
     "filterAll": "全部",
     "filterNamed": "命名",

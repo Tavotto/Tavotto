@@ -30,7 +30,7 @@ import { useTimelineStore } from '@/store/timelineStore'
 import { useUiStore, type Tool } from '@/store/uiStore'
 import { useViewportStore } from '@/store/viewportStore'
 import { useWorkspaceStore } from '@/store/workspace'
-import { zoomToSelection } from '@/store/zoomToSelection'
+import { fitStage, zoomToSelection } from '@/store/zoomToSelection'
 
 /**
  * 快速编辑里**只有这一张图**：页面纸、网格、别的对象全部让开。
@@ -97,10 +97,8 @@ export function runZoomCommand(cmd: ZoomCommand) {
   if (cmd === 'in' || cmd === 'out') vp.zoomBy(cmd === 'out' ? 1 / 1.25 : 1.25)
   else if (cmd === 'actual') vp.setZoomCentered(1)
   else if (cmd === 'selection') zoomToSelection()
-  else {
-    const page = useDocumentStore.getState().doc.page
-    vp.fitAnimated(page.w, page.h)
-  }
+  // 快速编辑里适应那张图、排版里适应页面——与舞台双击同一个取景框（`stageFitFrame`）
+  else fitStage()
 }
 
 /**

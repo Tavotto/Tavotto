@@ -237,7 +237,7 @@ function Section({
 
 /**
  * 顶上的当前项目：一张 subtle 卡（2026-10-07 审计 §10.3）——名字、路径、脚本数；项目级动作收在「⋯」里
- * （收藏、在新标签页打开、在文件管理器中打开、接入状态），右键 / ⇧F10 开同一份。
+ * （收藏、在新标签页打开、在文件管理器中打开、接入状态），右键 / ⇧F10 开同一份。⋯ 常驻 Tab 顺序（`tabbable`）。
  * 它不是一个可点的切换目标——已经在这个项目里了。
  */
 function CurrentProject({ project, pinned }: { project: ProjectStatus; pinned: boolean }) {
@@ -269,7 +269,8 @@ function CurrentProject({ project, pinned }: { project: ProjectStatus; pinned: b
             {readOnly && ws('readOnlySuffix')}
           </span>
         </div>
-        <RowMenu state={menu} label={ws('currentActions')} visible="always" width={220}>
+        {/* 卡本身 tabIndex -1（不是切换目标）：⋯ 常驻 Tab 顺序，是它唯一的键盘入口（Codex #832） */}
+        <RowMenu state={menu} label={ws('currentActions')} visible="always" tabbable width={220}>
           {project.figures_dir && (
             <MenuItem
               icon={pinned ? BookmarkFilled : Bookmark}

@@ -15,6 +15,7 @@ import { addPanelToCanvas, openFastEdit, useWorkspaceStore } from '@/store/works
 import { clientToMm, mmToPx, mmToViewX, mmToViewY, mmToWorld, useViewportStore } from '@/store/viewportStore'
 import { emptyStateAnchor } from '@/lib/emptyStateAnchor'
 import { shouldFitOnDoubleClick } from '@/lib/fitGuard'
+import { fitStage, stageFitFrame } from '@/store/zoomToSelection'
 import { normalizeWheel } from '@/lib/wheel'
 import { ObjectView } from './ObjectView'
 import { WorkspaceContextBar } from './WorkspaceContextBar'
@@ -74,7 +75,8 @@ export function CanvasStage() {
 
   // 「适应」看的是哪一块。快速编辑下是那张图的包围盒（图比页面大是常态，
   // 按页面 fit 会把它切掉一半）；排版下是页面。
-  const frame = useFrame(fastEdit ? activePanelId : null, objects, page)
+  // 取景框只有 `stageFitFrame` 一份（⌘1 / 缩放菜单 / 命令面板的 `fitStage` 读同一份）
+  const frame = stageFitFrame(objects, page, fastEdit ? activePanelId : null)
 
   const pad = showRulers ? RULER_SIZE : 0
 
@@ -179,7 +181,7 @@ export function CanvasStage() {
       point: clientToMm(e.clientX, e.clientY),
       page: { w: frame.w, h: frame.h },
     })
-    if (ok) useViewportStore.getState().fitAnimated(frame.w, frame.h)
+    if (ok) fitStage()
   }
 
   const cursor = spaceDown
@@ -411,14 +413,6 @@ function CanvasLayers({ only }: { only?: string | null }) {
 }
 
 /**
- * 「适应」的取景框：快速编辑对着那一张图，画布排版对着页面。
- *
- * 面板的包围盒原点不一定在 (0,0)，而视口的 `fit` 只吃宽高——所以这里把
- * **右下角**当框（`x+w`），图才不会被裁在视野外。取的是包围盒不是图幅：
- * 用户在画布上缩放过的面板，快速编辑照样把它整张放进视野（图幅是它的
- * 输出规格，不是它此刻在屏幕上占多大）。
- */
-/**
  * 快速编辑没有页面（纸），图直接摆在画布灰上——底是透明的图（`savefig(transparent=True)`）在暗色主题里
  * 就成了深底黑字。图是印刷品：给它垫一张与它的框同大的纸（`--color-paper`，两套主题同值），
  * 与排版模式里图坐在纸上是同一个意思（2026-10-07 暗色主题，宪法第二十八节）。只是画法，不进文档。
@@ -447,19 +441,6 @@ function FastEditPaper({
       }}
     />
   )
-}
-
-function useFrame(
-  panelId: string | null,
-  objects: readonly { id: string; x: number; y: number; w: number; h: number }[],
-  page: { w: number; h: number },
-): { w: number; h: number } {
-  if (!panelId) return { w: page.w, h: page.h }
-  const o = objects.find((x) => x.id === panelId)
-  if (!o) return { w: page.w, h: page.h }
-  // 面板可能被拖到过页面左上角外面（x/y 为负）：框至少要有这张图那么大，
-  // 否则 fit 出来的比例装不下它。落位由随后的 revealRect 负责。
-  return { w: Math.max(o.x + o.w, o.w), h: Math.max(o.y + o.h, o.h) }
 }
 
 /** 画布层的文案在 workspace:stage.* 下 */

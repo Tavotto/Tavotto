@@ -40,7 +40,8 @@ import { KeyCaps } from '@/components/ui/Kbd'
 import { Dialog } from '@/components/ui/Dialog'
 import { StatusPill } from '@/components/ui/StatusPill'
 import { keyOf } from '@/lib/keymap'
-import { canZoomToSelection, zoomToSelection } from '@/store/zoomToSelection'
+import { useWorkspaceStore } from '@/store/workspace'
+import { canZoomToSelectionNow, fitStage, zoomToSelection } from '@/store/zoomToSelection'
 import { objectLabel } from '@/types/document'
 import { rankCommands, type PaletteSection } from '@/lib/commandRanking'
 import { ICON_SIZE } from '@/components/ui/Icon'
@@ -66,7 +67,6 @@ import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
-import { useViewportStore } from '@/store/viewportStore'
 
 /**
  * ⌘K 命令面板：把散在菜单里的动作变成一个可搜索入口。
@@ -188,15 +188,14 @@ const COMMANDS: Command[] = [
   {
     id: 'fit',
     shortcut: keyOf('zoomFit'),
-    run: () => {
-      const page = useDocumentStore.getState().doc.page
-      useViewportStore.getState().fitAnimated(page.w, page.h)
-    },
+    // 与 ⌘1 / 舞台双击同一个取景框：快速编辑里适应那张图（`stageFitFrame`）
+    run: fitStage,
   },
-  // 可用判据与动作同一个（`canZoomToSelection`）：选中的全隐藏了不出现，不留一条静默空转的命令（Codex #833）
+  // 可用判据与动作同一个（`canZoomToSelectionNow`）：选中的全隐藏了 / 快速编辑里选区不含正在编辑的那张图
+  // 不出现，不留一条静默空转、或去框一片看不见的版面的命令（Codex #833）
   {
     id: 'zoom-selection',
-    available: () => canZoomToSelection(useDocumentStore.getState().doc.objects, useSelectionStore.getState().ids),
+    available: canZoomToSelectionNow,
     shortcut: keyOf('zoomSelection'),
     run: () => void zoomToSelection(),
   },
@@ -268,6 +267,8 @@ export function CommandPalette() {
   // 「缩放到选中」的可用判据看的是选区里**可见**的对象：隐藏 / 换选不一定改 ids 的长度
   const docObjects = useDocumentStore((s) => s.doc.objects)
   const selectionIds = useSelectionStore((s) => s.ids)
+  // ……也看工作区模式：快速编辑里只认正在编辑的那张图（`zoomToSelection.selectionBoxOf`）
+  const fastEditPanelId = useWorkspaceStore((s) => s.activePanelId)
   const [query, setQuery] = useState('')
   // 高亮行记的是**命令 id + 放置它时的查询**，不是下标（2026-09-16，学 beUI `useRowCursor`）。
   // 下标版的失败形状：↓↓ 停在第 3 行再多打一个字，列表换成另一组命令，高亮仍停在
@@ -308,9 +309,9 @@ export function CommandPalette() {
         })
       : pool
     return rankCommands(hit, { hasSelection, recent })
-    // `onboardingStatus` / `projectPhase` / `docObjects` / `selectionIds` 是让 memo 在状态变化时重算的信号，不是入参
+    // `onboardingStatus` / `projectPhase` / `docObjects` / `selectionIds` / `fastEditPanelId` 是让 memo 在状态变化时重算的信号，不是入参
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q, hasSelection, recent, t, onboardingStatus, projectPhase, docObjects, selectionIds])
+  }, [q, hasSelection, recent, t, onboardingStatus, projectPhase, docObjects, selectionIds, fastEditPanelId])
   const matches = useMemo(() => sections.flatMap((s) => s.items), [sections])
   const showHeaders = !q
 
