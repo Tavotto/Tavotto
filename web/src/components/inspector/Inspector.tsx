@@ -1,58 +1,28 @@
 import { useTranslation } from 'react-i18next'
 import { perfCount } from '@/perf/core'
-import {
-  ChevronRight,
-  Copy,
-  Eye,
-  EyeOff,
-  Image as ImageIcon,
-  Lock,
-  LockOpen,
-  Ellipsis,
-  MousePointerClick,
-  MoveUpRight,
-  Pin,
-  Square,
-  Trash2,
-  Type as TypeIcon,
-  X,
-} from '@/components/ui/icons'
+import { useMemo } from 'react'
+import { ChevronRight, Pin, X } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
-import { switchKindOf } from '@/lib/shapeSwitch'
 import { drawerMotion, type PresenceState } from '@/lib/motion'
-import { msg, t as translate } from '@/i18n'
-import { listJoin } from '@/i18n/format'
-import { cn, MOD } from '@/lib/utils'
-import { deleteSelected, duplicateSelected, hideElement, updateObjects } from '@/store/actions'
+import { t as translate } from '@/i18n'
+import { formatMm } from '@/lib/units'
+import { cn } from '@/lib/utils'
 import { useDocumentStore } from '@/store/documentStore'
-import { usePanelDisplayManifest } from '@/store/renderStore'
 import { RIGHT_MAX, RIGHT_MIN, useUiStore, type RightTab } from '@/store/uiStore'
-import { fastEditPanelOf, useWorkspaceStore } from '@/store/workspace'
-import {
-  objectLabel,
-  type ArrowObject,
-  type CanvasObject,
-  type PanelObject,
-  type ShapeObject,
-  type TextObject,
-} from '@/types/document'
+import type { ArrowObject, PanelObject, ShapeObject, TextObject } from '@/types/document'
 import { useAiStore } from '@/store/aiStore'
 import { assistantTabLabel, AssistantPanel } from '../ai/AiPanel'
-import { Button, IconButton } from '../ui/Button'
-import { EmptyState } from '../ui/EmptyState'
-import { Menu, MenuItem, MenuSeparator } from '../ui/Menu'
+import { IconButton } from '../ui/Button'
+import { Card } from '../ui/Card'
+import { ColorFieldContext } from '../ui/colorPalette'
 import { Tab, TabList, TabPanel } from '../ui/Tabs'
 import { Tip } from '../ui/Tooltip'
 import { ArrangeSection } from './ArrangeSection'
 import { CanvasPage } from './CanvasPage'
+import { useDocumentColors } from './documentColors'
 import { PanelElementPage } from './GroupPage'
-import { displayLabel, identityCrumbs, untruncatedLabel } from './identityCrumbs'
-import { ancestorsOf, containerGid, groupByGid, structuralParent } from './roles/hierarchy'
-import { KIND_SWITCH_ICON } from './kindSwitchIcons'
-import { ObjectKindSwitch } from './ObjectKindSwitch'
-import { RestoreMenu } from './RestoreMenu'
-import { groupName, roleName } from './roles/registry'
-import { roleIcon } from './roles/roleIcons'
+import { IdentityHeader } from './IdentityHeader'
+import { INSPECTOR_CONTAINER } from './layout'
 import { PanelSection } from './PanelSection'
 import { ArrowSection, ShapeSection } from './StrokeSection'
 import { TextSection } from './TextSection'
@@ -60,13 +30,15 @@ import { TransformSection } from './TransformSection'
 import { useSelectedObjects } from './common'
 
 /**
- * 右栏三个模式在同一个 tablist 里：属性（当前选中对象）· 改图助手 · 画布（当前文档）。
+ * 右栏三个模式在同一个 tablist 里：属性（当前选中对象）· 画布（当前文档）· 改图助手。
+ * 顺序按「对象 → 文档 → 独立工作流」由近及远排（2026-10-07 设计审计 §9.2 拍板②，ADR 0010 §3 当日修订）：
+ * 此前助手夹在两个上下文页签中间。
  * ADR 0010 §3 曾把助手移出 tab 行做成头部的独立按钮（2026-09-14 修订）：那一版助手打开时
  * tablist 里**没有任何选中项**、方向键也到不了助手——三个互斥视图却用了两种控件。
  * ADR 0010 要的两件事都还在：选中对象一律切回属性页（`autoShowProperties`）、助手会话状态
  * 在 aiStore 里切走不丢；运行状态点留在助手页签上。
  */
-const TABS: RightTab[] = ['properties', 'assistant', 'canvas']
+const TABS: RightTab[] = ['properties', 'canvas', 'assistant']
 /** 内容区 id（`TabPanel`）：`<id>-tab` 是对应页签的 id */
 const PANEL_ID: Record<RightTab, string> = {
   properties: 'inspector-panel-properties',
@@ -76,13 +48,6 @@ const PANEL_ID: Record<RightTab, string> = {
 
 const tabLabel = (id: RightTab): string =>
   id === 'assistant' ? assistantTabLabel() : translate(`tab.${id}`, { ns: 'inspector' })
-
-const TYPE_ICON = {
-  panel: ImageIcon,
-  text: TypeIcon,
-  arrow: MoveUpRight,
-  shape: Square,
-} as const
 
 export function Inspector({
   overlay = false,
@@ -102,6 +67,9 @@ export function Inspector({
   const runningAi = useAiStore((s) => s.sessions.some((x) => x.status === 'running'))
 
   const motion = drawerMotion({ state, overlay, width, side: 'right' })
+  // 属性栏里的 ColorField 带可编辑 hex 与取色面板（文档颜色 / 最近 / 系统取色器）；浮动栏不挂这层
+  const documentColors = useDocumentColors()
+  const colorHost = useMemo(() => ({ rich: true, documentColors }), [documentColors])
 
   return (
     <aside
@@ -120,7 +88,9 @@ export function Inspector({
         motion.className,
       )}
     >
-      <div className="flex h-full flex-col" style={{ width }}>
+      <ColorFieldContext.Provider value={colorHost}>
+      {/* 行网格的标签列宽 `--insp-label` 按这一层的宽度算（`@container` + cqi，layout.ts） */}
+      <div className={cn('flex h-full flex-col', INSPECTOR_CONTAINER)} style={{ width }}>
       {/* 页签条（2026-09-30 重设计，学 OpenBitFun 的面板头）：与左边画布标签行同高 44、底边同一条
           hairline，两条线在工作面板里连成一条 */}
       <div className="flex h-11 shrink-0 items-center gap-3 border-b border-border px-3">
@@ -183,7 +153,7 @@ export function Inspector({
             tip={translate('actions.close')}
             side="bottom"
             iconSize="sm"
-            className="text-ink-3 hover:text-ink"
+            className="text-ink-2 hover:text-ink"
             // 稳定定位（e2e）：不认 aria-label 文案
             data-inspector-close
             onClick={() => useUiStore.getState().toggleRight()}
@@ -207,6 +177,7 @@ export function Inspector({
         </TabPanel>
       )}
       </div>
+      </ColorFieldContext.Provider>
       <WidthHandle />
     </aside>
   )
@@ -247,9 +218,9 @@ function WidthHandle() {
         ui.setRightWidth(ui.rightWidth + (e.key === 'ArrowLeft' ? 16 : -16))
       }}
       // 整条都在抽屉内侧：外层 overflow-hidden（开合动效要用）会把伸到外面的部分剪掉
-      // 蓝色不做任何大块背景（第一节）：hover 只在内侧描一条 1px 的竖线，
-      // 焦点仍用蓝（那是焦点环的语义）。此前是 8px × 全高的 accent/20 蓝带（打磨 S5）
-      className="absolute inset-y-0 left-0 z-canvas-chrome w-2 cursor-col-resize border-l border-transparent outline-none hover:border-border-strong focus-visible:bg-accent/30"
+      // 蓝色不做任何大块背景（第一节）：hover 只在内侧描一条 1px 的竖线；
+      // 键盘聚焦是一条 2px 的 accent 竖线（2026-10-07 设计审计 §9.2：此前是 8px 宽的 accent/30 蓝带）
+      className="absolute inset-y-0 left-0 z-canvas-chrome w-2 cursor-col-resize border-l border-transparent outline-none hover:border-border-strong focus-visible:border-l-2 focus-visible:border-accent"
     />
   )
 }
@@ -259,7 +230,6 @@ function WidthHandle() {
 /* -------------------------------------------------------------------------- */
 
 function PropertiesPage() {
-  const { t } = useTranslation('inspector')
   const objs = useSelectedObjects()
   const elementPanelId = useUiStore((s) => s.elementPanelId)
   const elementPanel = useDocumentStore((s) =>
@@ -293,10 +263,11 @@ function PropertiesPage() {
   }
 
   if (objs.length === 0) {
-    // 钉住时面板留着；未钉住时选择清空后面板本来就收起了
+    // 钉住时面板留着；未钉住时选择清空后面板本来就收起了。空着的属性页说这份文档本身
+    // （2026-10-07 设计审计 §9.3：文档摘要卡），而不是一句「没有选中对象」
     return (
-      <div className="flex min-h-0 flex-1 overflow-y-auto">
-        <EmptyState icon={MousePointerClick} title={t('emptyTitle')} hint={t('emptyHint')} />
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <DocumentSummary />
       </div>
     )
   }
@@ -324,257 +295,45 @@ function PropertiesPage() {
 }
 
 /**
- * 唯一的上下文头：现在改的是谁、它处于什么状态、对它还能做什么。
- * 复制 / 显隐 / 锁定 / 删除收进右侧更多菜单，锁定与隐藏状态本身常驻显示。
- *
- * 图内编辑态的头上**没有退出按钮**：返回排版的唯一入口是画布上方上下文栏的
- * 「返回画布 Esc」（`WorkspaceContextBar`，它还顺手选中该面板）。此前这里另有一颗
- * ×，与右栏自己的关闭 × 上下叠着，一个退编辑、一个关面板，靠悬停才分得清
- * （2026-09-13 审计 B45：每个 × 核对动作后只留面板关闭）。
+ * 没有选中时的属性页：这份文档的摘要卡（尺寸、几张图、几处修改）+「画布设置 ›」。
+ * 只读事实，不重复画布页的控件；一句提示告诉用户点什么开始编辑。
  */
-function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: PanelObject }) {
+function DocumentSummary() {
   const { t } = useTranslation('inspector')
-  const selectedGids = useUiStore((s) => s.selectedGids)
-  const manifest = usePanelDisplayManifest(panel)
-  // 快速编辑里不摆「创建副本」：副本落在版面上，这一屏看不见（`duplicateSelected` 自己也挡，Codex #833）
-  const fastEdit = useWorkspaceStore((s) => fastEditPanelOf(s) !== null)
-
-  if (panel) {
-    const gid = selectedGids.at(-1)
-    // 在树里点「整张图」与什么都没选是同一个对象：头部只有一种写法（「整张图」徽标 +
-    // 图名），不因为选中方式不同而换一副面孔（2026-09-13 审计 B54 / B56 的连续性）
-    const picked = gid ? manifest?.elements.find((e) => e.gid === gid) : undefined
-    const el = picked?.gid === 'figure' ? undefined : picked
-    // 选中的是一个真实的组（`Manifest.groups`）：它不是元素，头部按组写
-    const selGroup = gid && manifest ? groupByGid(manifest, gid) : undefined
-    // gid 形如 axes_1.images_0：中段就是宿主子图，拼出「面板 / 子图 / 元素」
-    const axesGid = gid?.includes('.') ? gid.split('.')[0] : undefined
-    const axes0 = axesGid ? manifest?.elements.find((e) => e.gid === axesGid) : undefined
-    // 真实祖先链（显式父级优先，`roles/hierarchy.structuralParent`）：组进面包屑；
-    // 色条轴是色条的承载轴、属性页本来就把它换成色条，面包屑里不再单列这一级——
-    // 单宿主色条的上一级是宿主子图，共享色条的上一级是组
-    const chain = gid && manifest ? ancestorsOf(structuralParent(manifest), gid) : []
-    const ancGroup = chain.map((g) => groupByGid(manifest, g)).find((g) => !!g)
-    const axes = axes0?.is_colorbar
-      ? manifest?.elements.find(
-          (e) => e.gid === axes0.parent_gid && (e.role === 'axes' || e.role === 'axes3d'),
-        )
-      : axes0
-    // 子图与元素之间那一级（图例 / X 轴刻度 / 柱形系列）：归属进面包屑
-    const has = (g: string) => !!manifest?.elements.some((e) => e.gid === g)
-    const containerOf = gid
-      ? containerGid(gid, has, (g) => {
-          const r = manifest?.elements.find((e) => e.gid === g)?.role
-          return r === 'axes' || r === 'axes3d'
-        })
-      : null
-    const container = containerOf ? manifest?.elements.find((e) => e.gid === containerOf) : undefined
-    // 文字元素的 `text`、系列的 `label`：都是「名字里被引擎截断的那段用户文字」的全文
-    const text = el?.editable.find((f) => f.prop === 'text' || f.prop === 'label')?.value
-    const crumbs = identityCrumbs(
-      panel.name ?? panel.fileId,
-      axes && axes.gid !== gid ? axes.label : undefined,
-      // 标题显示可读文本：mathtext 源码只在下面的「名称」框里（审计 B48）
-      el
-        ? displayLabel(untruncatedLabel(el.label, typeof text === 'string' ? text : undefined))
-        : selGroup && manifest
-          ? groupName(selGroup, manifest)
-          : undefined,
-      selectedGids.length,
-      container?.label,
-      ancGroup && manifest ? groupName(ancGroup, manifest) : undefined,
-    )
-    // 面包屑里每一级祖先都能点（2026-09-14 审计 A4）：往上走的路就是它本身，
-    // 「所属子图 / 所属系列」那种再写一行的链接删掉。与 identityCrumbs 同一套条件，
-    // 顺序一致：整张图 → 宿主子图 → 容器（图例 / X 轴刻度 / 柱形系列）
-    const crumbTargets = [
-      'figure',
-      ancGroup ? ancGroup.gid : null,
-      axes && axes.gid !== gid ? axes.gid : null,
-      container ? container.gid : null,
-    ].filter((g): g is string => !!g)
-    const hideable =
-      el && el.gid !== 'figure' && el.editable.some((f) => f.prop === 'visible')
-    // 来源状态：选中元素时报它自己被改了几项，没选（整张图）时报面板总数。
-    // 「多少项被 Tavotto 修改、怎么恢复」是右栏头部要直接回答的问题。
-    // 组没有自己的属性、也没有「恢复这个组」——恢复菜单在组页上不出现（没选元素时
-    // 那个菜单恢复的是整张图，挂在组的头上会读成「恢复这个组」）
-    const modified = selGroup
-      ? 0
-      : el
-        ? panel.overrides.filter((o) => o.gid === el.gid).length
-        : panel.overrides.length
-    const RoleIcon = roleIcon(el?.role ?? (selGroup ? 'group' : 'figure'))
-
-    // 身份块（2026-09-30 重设计）：一行灰色路径（只有祖先，每级可点）在上、一行大号名字在下。
-    // DOM 顺序就是视觉顺序（键盘 Tab 先到路径、再到隐藏钮）
-    return (
-      <header data-identity className="mx-3 mb-3 flex shrink-0 flex-col gap-2 border-b border-border pb-3 pt-3">
-        {(crumbs.length > 1 || modified > 0) && (
-          <p className="flex min-h-4 items-center gap-1.5 text-xs text-ink-3">
-            {crumbs.length > 1 && (
-              <span className="flex min-w-0 items-center gap-1 truncate" title={crumbs.join(' / ')}>
-                {crumbs.slice(0, -1).map((c, i) => (
-                  <span key={`${i}-${c}`} className="flex min-w-0 items-center gap-1">
-                    {i > 0 && <ChevronRight size={ICON_SIZE.xs} aria-hidden className="shrink-0" />}
-                    <button
-                      type="button"
-                      data-crumb={crumbTargets[i]}
-                      onClick={() => useUiStore.getState().setSelectedGid(crumbTargets[i])}
-                      className="min-w-0 truncate rounded-xs text-ink-3 outline-none hover:text-ink focus-visible:focus-ring"
-                    >
-                      {c}
-                    </button>
-                  </span>
-                ))}
-              </span>
-            )}
-            {/* 「n 项已修改」徽标本身就是恢复菜单（恢复此元素 / 恢复整张图）：
-                改了几项与怎么撤回是同一个问题的两半，不另起一行 */}
-            <span className="ml-auto shrink-0">
-              <RestoreMenu panel={panel} gid={el?.gid} count={modified} />
-            </span>
-          </p>
-        )}
-        <div className="flex min-h-7 items-center gap-2">
-          {/* 图标按角色查树里那张表（roles/roleIcons）：标题是 T、曲线是折线、图例是列表，
-              与左栏元素树同一张脸；以前不管选了什么都是同一个图片图标 */}
-          <span data-identity-icon className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm bg-surface-hover text-ink-2">
-            <RoleIcon size={ICON_SIZE.sm} aria-hidden />
-          </span>
-          {/* 没选元素时标题是面板名：标出「整张图」这一层，免得与画布上的面板混淆（审计 T01） */}
-          {!el && !selGroup && (
-            <span data-object-kind className="shrink-0 rounded-sm bg-surface-active px-1 text-xs text-ink-2">
-              {roleName('figure')}
-            </span>
-          )}
-          {/* 对象名比它下面的分区标题大一档（2026-09-30 重设计：15/500；打磨 S2 时是 12/500） */}
-          <h2 className="min-w-0 truncate text-xl font-medium">
-            {crumbs.at(-1) ?? t('elementFallback')}
-          </h2>
-          <span className="ml-auto flex shrink-0 items-center">
-            {hideable && el && (
-              <Tip label={t('hideElementTip')} side="bottom">
-                <Button
-                  size="icon-sm"
-                  onClick={() => {
-                    hideElement(panel.id, el.gid, el.label)
-                    useUiStore.getState().setSelectedGid(null)
-                  }}
-                  aria-label={t('hideElement')}
-                >
-                  <EyeOff size={ICON_SIZE.sm} className="text-ink-3" />
-                </Button>
-              </Tip>
-            )}
-          </span>
-        </div>
-      </header>
-    )
-  }
-
-  const one = objs.length === 1 ? objs[0] : null
-  const kinds = [...new Set(objs.map((o) => o.type))]
-  // 标注的图标按**它自己那一种**画，不是所有形状都用一个方块：三角形旁边摆
-  // 一个正方形，图标说的和徽标说的是两件事（与 MarkerPicker 同一条纪律——
-  // 形状是事实，不该拿一个通用图形代替）
-  const oneKind = one ? switchKindOf(one) : null
-  const Icon = one
-    ? oneKind
-      ? KIND_SWITCH_ICON[oneKind]
-      : TYPE_ICON[one.type]
-    : kinds.length === 1
-      ? TYPE_ICON[kinds[0]]
-      : Copy
-  /**
-   * 标题 = **用户内容**。没起过名字的标注，`objectLabel` 的兜底正是类型名，
-   * 而类型徽标已经在说它了——两格并排写着同一个词（「三角形 ⌄ 三角形」）看起来
-   * 像个 bug。这一格没有新话要说时就整个不出现，让徽标独自承担（文字与面板不受
-   * 影响：它们的名字是那句话 / 那个文件名，与类型不是一回事）。
-   */
-  const title = one
-    ? oneKind && !one.name
-      ? null
-      : objectLabel(one)
-    : translate('count.selectedObjects', { count: objs.length })
-  const locked = objs.length > 0 && objs.every((o) => o.locked)
-  const hidden = objs.length > 0 && objs.every((o) => o.hidden)
-  const ids = objs.map((o) => o.id)
-
+  const page = useDocumentStore((s) => s.doc.page)
+  const objects = useDocumentStore((s) => s.doc.objects)
+  const figures = objects.filter((o): o is PanelObject => o.type === 'panel')
+  const changes = figures.reduce((n, p) => n + p.overrides.length, 0)
+  const facts = [
+    t('docSummary.size', { w: formatMm(page.w), h: formatMm(page.h) }),
+    t('summaryPanels', { count: figures.length }),
+    ...(objects.length > figures.length
+      ? [t('docSummary.annotations', { count: objects.length - figures.length })]
+      : []),
+    ...(changes > 0 ? [t('element.modifiedCount', { count: changes })] : []),
+  ]
   return (
-    <header data-identity className="mx-3 mb-3 flex shrink-0 flex-col gap-2 border-b border-border pb-3 pt-3">
-      {/* 对象类型与名字分开写：名字是用户内容（文件名 / 文字），类型才回答
-          「我在改的是文字、面板还是标注」（审计 T01）。类型写在上面那行灰字里（与图内元素的路径行
-          同一个位置，2026-09-30 重设计）；它同时是**类型切换**的入口——标注能换成同族的另一种时
-          它就是下拉，换不了时是静态的字（cap-shape-switch；判据在 lib/shapeSwitch，这里不判）。
-          名字与类型说的是同一个词时（没起名的标注）不出上面这行，类型直接当大标题 */}
-      {title != null && (
-        <p className="flex min-h-4 items-center gap-1.5 text-xs text-ink-3">
-          <ObjectKindSwitch objs={objs} />
-          {!one && <span className="min-w-0 truncate">{summarize(objs)}</span>}
-        </p>
-      )}
-      <div className="flex min-h-7 items-center gap-2">
-        <span data-identity-icon className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm bg-surface-hover text-ink-2">
-          <Icon size={ICON_SIZE.sm} />
-        </span>
-        {title != null ? (
-          <h2 className="min-w-0 truncate text-xl font-medium">{title}</h2>
-        ) : (
-          <ObjectKindSwitch objs={objs} />
-        )}
-        {locked && <Lock size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-label={t('locked')} />}
-        {hidden && <EyeOff size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-label={t('hiddenState')} />}
-        <Menu
-          width={172}
-          align="end"
-          trigger={
-            <Button size="icon-sm" className="ml-auto" aria-label={t('objectActions')}>
-              <Ellipsis size={ICON_SIZE.sm} className="text-ink-3" />
-            </Button>
-          }
+    <div className="p-3">
+      <Card appearance="subtle" padding="md" data-document-summary className="flex flex-col gap-2">
+        <p className="type-title">{t('docSummary.title')}</p>
+        <ul className="flex flex-col gap-0.5">
+          {facts.map((f) => (
+            <li key={f} className="type-number text-ink-2">
+              {f}
+            </li>
+          ))}
+        </ul>
+        <p className="type-caption">{t('emptyHint')}</p>
+        <button
+          type="button"
+          data-document-summary-canvas
+          onClick={() => useUiStore.getState().setRightTab('canvas')}
+          className="-mx-1 flex h-7 items-center gap-1 self-start rounded-md px-1 text-sm text-ink-2 outline-none hover:bg-surface-hover hover:text-ink focus-visible:focus-ring"
         >
-          {!fastEdit && (
-            <MenuItem shortcut={`${MOD}D`} onSelect={duplicateSelected} icon={Copy}>
-              {translate('actions.copy')}
-            </MenuItem>
-          )}
-          <MenuItem
-            icon={hidden ? Eye : EyeOff}
-            onSelect={() =>
-              updateObjects(ids, msg(hidden ? 'history.showObject' : 'history.hideObject', undefined, 'workspace'), (o) => {
-                o.hidden = !hidden
-              })
-            }
-          >
-            {t(hidden ? 'show' : 'hide')}
-          </MenuItem>
-          <MenuItem
-            icon={locked ? LockOpen : Lock}
-            onSelect={() =>
-              updateObjects(ids, msg(locked ? 'history.unlockObject' : 'history.lockObject', undefined, 'workspace'), (o) => {
-                o.locked = !locked
-              })
-            }
-          >
-            {t(locked ? 'unlock' : 'lock')}
-          </MenuItem>
-          <MenuSeparator />
-          <MenuItem danger shortcut="⌫" onSelect={deleteSelected} icon={Trash2}>
-            {translate('actions.delete')}
-          </MenuItem>
-        </Menu>
-      </div>
-    </header>
+          {t('docSummary.canvasSettings')}
+          <ChevronRight size={ICON_SIZE.xs} aria-hidden />
+        </button>
+      </Card>
+    </div>
   )
-}
-
-function summarize(objs: CanvasObject[]): string {
-  const n = (type: CanvasObject['type']) => objs.filter((o) => o.type === type).length
-  const parts: string[] = []
-  if (n('panel')) parts.push(translate('summaryPanels', { ns: 'inspector', count: n('panel') }))
-  if (n('text')) parts.push(translate('summaryTexts', { ns: 'inspector', count: n('text') }))
-  const marks = n('arrow') + n('shape')
-  if (marks) parts.push(translate('summaryMarks', { ns: 'inspector', count: marks }))
-  return listJoin(parts)
 }
