@@ -1,10 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { msg, t as translate } from '@/i18n'
 import type { RememberedAnswer } from '@/lib/api'
 import { useScriptInputStore } from '@/store/scriptInputStore'
 import { useScriptRunStore } from '@/store/scriptRunStore'
-import { useUiStore } from '@/store/uiStore'
+import { askConfirm, useUiStore } from '@/store/uiStore'
 import { Button } from './ui/Button'
 import { Dialog } from './ui/Dialog'
 import { TextInput } from './ui/Input'
@@ -19,15 +19,107 @@ const si = (key: string, values?: Record<string, unknown>) =>
  * 一个脚本记住的输入（ADR 0099 §七）：看、改、删。改 / 删之后后端作废热会话并通知重渲染用到它的面板，
  * 这里再对这个脚本发起一次运行——产出的图名可能随选择变化，要重新登记。
  * 提示文字是用户脚本的文字，纯文本渲染。
+ *
+ * 2026-10-07 设计审计 §10.2 P0：以前每一行各挂一颗深色「保存并重新运行」（N 颗主按钮），「删除」点下去
+ * 不问就忘掉答案并重跑。现在行内只改值；脚部**唯一**的主动作「保存并重新运行（N）」依次保存所有改过的
+ * 答案、**只重跑一次**；删除先问（danger），点头才忘掉并重跑。
  */
 export function ScriptAnswersDialog() {
   useTranslation('dialogs')
   const script = useScriptInputStore((s) => s.managing)
-  const answers = useScriptInputStore((s) => (script ? (s.answers?.[script] ?? NONE) : NONE))
-  const location = useScriptInputStore((s) => s.location)
-
   if (!script) return null
+  // 按脚本换 key：换了脚本，上一个脚本没保存的改动不带过来
+  return <AnswersManager key={script} script={script} />
+}
+
+/** 这次请求还属于发起时那个项目 / 那个对话框吗（换项目 = store 换代，`managing` 被清） */
+function stillCurrent(epoch: number, script: string): boolean {
+  const s = useScriptInputStore.getState()
+  return s.epoch === epoch && s.managing === script
+}
+
+function AnswersManager({ script }: { script: string }) {
+  useTranslation('dialogs')
+  const answers = useScriptInputStore((s) => s.answers?.[script] ?? NONE)
+  const location = useScriptInputStore((s) => s.location)
+  /** 行内改过、还没保存的值（按问题序号）；与已存答案相同的不算改过 */
+  const [edits, setEdits] = useState<Record<number, string>>({})
+  /** 每一行最近一次保存 / 删除失败的原因 */
+  const [errors, setErrors] = useState<Record<number, string>>({})
+  const [saving, setSaving] = useState(false)
+
   const close = () => useScriptInputStore.getState().closeManager()
+  const valueOf = (a: RememberedAnswer) => edits[a.index] ?? a.answer
+  const changed = answers.filter((a) => valueOf(a) !== a.answer)
+  const setError = (index: number, error: string | null) =>
+    setErrors((prev) => {
+      const next = { ...prev }
+      if (error === null) delete next[index]
+      else next[index] = error
+      return next
+    })
+  const rerun = () => {
+    useUiStore.getState().setStatus(msg('scriptInput.manageSaved', { script }, 'dialogs'))
+    void useScriptRunStore.getState().run(script)
+  }
+
+  /** 依次保存所有改过的答案，**只重跑一次**；任何一条回来时已换项目就整个作罢（不在新项目里重跑同名脚本） */
+  const saveAll = async () => {
+    if (!changed.length || saving) return
+    const epoch = useScriptInputStore.getState().epoch
+    const batch = changed.map((a) => ({ index: a.index, value: valueOf(a) }))
+    setSaving(true)
+    const saved: number[] = []
+    try {
+      for (const { index, value } of batch) {
+        const res = await useScriptInputStore.getState().saveAnswer(script, index, value)
+        // 请求在飞时换了项目：什么都不做——尤其不在新项目里重跑同名脚本
+        if (res.status === 'stale' || !stillCurrent(epoch, script)) return
+        if (res.status === 'error') {
+          setError(index, res.error)
+          continue
+        }
+        setError(index, null)
+        saved.push(index)
+      }
+    } finally {
+      if (stillCurrent(epoch, script)) setSaving(false)
+    }
+    if (!saved.length) return
+    // 存好的那几行不再是「改过」：丢掉本地副本，以后台那份为准
+    setEdits((prev) => {
+      const next = { ...prev }
+      for (const index of saved) delete next[index]
+      return next
+    })
+    rerun()
+  }
+
+  /** 删除这一条：先问，点头才忘掉并重跑 */
+  const forget = async (a: RememberedAnswer) => {
+    const epoch = useScriptInputStore.getState().epoch
+    const ok = await askConfirm({
+      title: msg('scriptInput.manageForgetTitle', { index: a.index }, 'dialogs'),
+      body: msg('scriptInput.manageForgetBody', { script }, 'dialogs'),
+      confirmLabel: msg('actions.delete', undefined, 'common'),
+      danger: true,
+    })
+    // 确认框开着时换了项目 / 关了对话框：点头属于旧的那一份，不发请求
+    if (!ok || !stillCurrent(epoch, script)) return
+    const res = await useScriptInputStore.getState().forgetAnswer(script, a.index)
+    // 请求在飞时换了项目：什么都不做——尤其不在新项目里重跑同名脚本
+    if (res.status === 'stale') return
+    setError(a.index, res.status === 'error' ? res.error : null)
+    if (res.status === 'ok') {
+      setEdits((prev) => {
+        const next = { ...prev }
+        delete next[a.index]
+        return next
+      })
+      rerun()
+    }
+  }
+
   return (
     <Dialog
       open
@@ -37,9 +129,22 @@ export function ScriptAnswersDialog() {
       title={si('manageTitle', { script })}
       description={si('manageIntro')}
       footer={
-        <Button variant="secondary" size="md" onClick={close}>
-          {translate('actions.close')}
-        </Button>
+        <>
+          <Button variant="secondary" size="md" onClick={close}>
+            {translate('actions.close')}
+          </Button>
+          <Button
+            variant="primary"
+            size="md"
+            data-script-answers-save
+            disabled={!changed.length || saving}
+            onClick={() => void saveAll()}
+          >
+            {changed.length
+              ? si('manageSaveCount', { n: changed.length })
+              : si('manageSave')}
+          </Button>
+        </>
       }
     >
       <div className="flex flex-col gap-3 text-xs">
@@ -48,7 +153,15 @@ export function ScriptAnswersDialog() {
         ) : (
           <ul className="flex flex-col gap-3">
             {answers.map((a) => (
-              <AnswerRow key={`${a.index}:${a.prompt}`} script={script} entry={a} />
+              <AnswerRow
+                key={`${a.index}:${a.prompt}`}
+                entry={a}
+                value={valueOf(a)}
+                error={errors[a.index] ?? null}
+                disabled={saving}
+                onChange={(v) => setEdits((prev) => ({ ...prev, [a.index]: v }))}
+                onForget={() => void forget(a)}
+              />
             ))}
           </ul>
         )}
@@ -58,18 +171,27 @@ export function ScriptAnswersDialog() {
   )
 }
 
-function AnswerRow({ script, entry }: { script: string; entry: RememberedAnswer }) {
-  const [value, setValue] = useState(entry.answer)
-  const [error, setError] = useState<string | null>(null)
-  useEffect(() => setValue(entry.answer), [entry.answer])
-  const dirty = value !== entry.answer
-  const rerun = () => {
-    useUiStore.getState().setStatus(msg('scriptInput.manageSaved', { script }, 'dialogs'))
-    void useScriptRunStore.getState().run(script)
-  }
-
+function AnswerRow({
+  entry,
+  value,
+  error,
+  disabled,
+  onChange,
+  onForget,
+}: {
+  entry: RememberedAnswer
+  value: string
+  error: string | null
+  disabled: boolean
+  onChange: (value: string) => void
+  onForget: () => void
+}) {
   return (
-    <li className="flex flex-col gap-1" data-script-answer={entry.index}>
+    <li
+      className="flex flex-col gap-1"
+      data-script-answer={entry.index}
+      data-dirty={value !== entry.answer || undefined}
+    >
       <span className="whitespace-pre-wrap break-words font-mono text-ink-2">
         {entry.prompt
           ? si('managePrompt', { index: entry.index, prompt: entry.prompt })
@@ -80,33 +202,15 @@ function AnswerRow({ script, entry }: { script: string; entry: RememberedAnswer 
           align="left"
           value={value}
           aria-label={si('answerLabel')}
-          onChange={(e) => setValue(e.target.value)}
+          onChange={(e) => onChange(e.target.value)}
         />
-        <Button
-          variant="primary"
-          size="md"
-          disabled={!dirty}
-          onClick={async () => {
-            const res = await useScriptInputStore.getState().saveAnswer(script, entry.index, value)
-            // 请求在飞时换了项目：什么都不做——尤其不在新项目里重跑同名脚本
-            if (res.status === 'stale') return
-            setError(res.status === 'error' ? res.error : null)
-            if (res.status === 'ok') rerun()
-          }}
-        >
-          {si('manageSave')}
-        </Button>
         <Button
           variant="ghost"
           size="md"
+          data-script-answer-forget
+          disabled={disabled}
           aria-label={si('manageForgetAria', { index: entry.index })}
-          onClick={async () => {
-            const res = await useScriptInputStore.getState().forgetAnswer(script, entry.index)
-            // 请求在飞时换了项目：什么都不做——尤其不在新项目里重跑同名脚本
-            if (res.status === 'stale') return
-            setError(res.status === 'error' ? res.error : null)
-            if (res.status === 'ok') rerun()
-          }}
+          onClick={onForget}
         >
           {si('manageForget')}
         </Button>
