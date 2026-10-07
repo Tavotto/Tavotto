@@ -66,7 +66,7 @@ export function FigurePickerDialog() {
       // runtime 条目没有描述符时按钮根本不渲染（见下），这里必然有
       addRuntimePanelToCanvas(e.asset.descriptor!)
     }
-    setStatus(msg('handoff.added', { name: e.stem }, 'project'))
+    setStatus(msg('handoff.added', { name: e.stem }, 'project'), 'done')
     close()
   }
 

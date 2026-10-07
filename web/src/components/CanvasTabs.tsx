@@ -24,7 +24,6 @@ export function CanvasTabs() {
   const activeId = useDocumentStore((s) => s.activeCanvasId)
   const canvases = useDocumentStore((s) => s.canvases)
   const activeName = useDocumentStore((s) => s.doc.name)
-  const dirty = useDocumentStore((s) => s.dirty)
   const [renaming, setRenaming] = useState<string | null>(null)
   const dragFrom = useRef<number | null>(null)
   // 重排是在 drop 那一刻整排换位的（拖动中只有一条落点提示线），
@@ -40,7 +39,7 @@ export function CanvasTabs() {
   // 重排时 useFlip 的 transform 动画不影响量值。
   // 不只在切页签时判：窗口 / 抽屉变窄、当前页签改成长名、前面的页签改名把它挤出去，当前页签都会
   // 出界而 activeId 没变——每次渲染后与 ResizeObserver 里都再判一次。只在「当前页签的位置 / 宽度、
-  // 条宽」变了时才动：用户自己横滑到别处之后，一次无关的重渲染（改一下图、dirty 变了）不许把条拽回来。
+  // 条宽」变了时才动：用户自己横滑到别处之后，一次无关的重渲染（改一下图）不许把条拽回来。
   // 认 data-canvas-tab / data-active，不认 role / aria-selected（web/AGENTS.md：选择器认稳定 data-*）
   const lastPlaced = useRef('')
   const keepActiveInView = useCallback(() => {
@@ -120,7 +119,6 @@ export function CanvasTabs() {
             index={i}
             name={nameOf(id)}
             active={id === activeId}
-            dirty={id === activeId && dirty}
             closable={openTabs.length > 1}
             renaming={renaming === id}
             onActivate={() => activate(id)}
@@ -164,7 +162,6 @@ function TabItem({
   index,
   name,
   active,
-  dirty,
   closable,
   renaming,
   onActivate,
@@ -178,7 +175,6 @@ function TabItem({
   index: number
   name: string
   active: boolean
-  dirty: boolean
   closable: boolean
   renaming: boolean
   onActivate: () => void
@@ -269,10 +265,11 @@ function TabItem({
         tabClass(active),
         'group flex max-w-44 shrink-0 cursor-default items-center gap-1',
         // 关闭键仍绝对定位，只在右边留出它那一格：左缘因此是文字本身（T8）。
-        // 未保存的点也住在这一格里（悬停时让给 ×）：此前它是 flex 里的第三个子元素、只在当前页签
-        // 出现，激活一个页签它就宽 10px、× 跟着右移——双击非当前页签改名时，第二下落在挪过来的
-        // × 上把页签关了（WebKit，e2e/canvas-tabs-scroll.spec.ts）。多页签时这一格常驻，激活不改宽度
-        (closable || dirty) && 'pr-5',
+        // 多页签时这一格常驻，激活不改宽度（双击非当前页签改名时，第二下不许落在挪过来的 × 上，
+        // e2e/canvas-tabs-scroll.spec.ts）。
+        // 页签上**没有「未保存」点**（2026-10-07 审计 P0）：保存状态是整份文档的事（顶栏文档名旁），
+        // 此前拿文档级 `dirty` 只画在当前页签上——哪页激活哪页「未保存」，每次编辑还闪一秒
+        closable && 'pr-5',
         // 拖动排序的落点提示：不只靠颜色，加背景块让目标一眼可辨
         dragOver && 'rounded-sm bg-selected text-ink',
       )}
@@ -289,16 +286,6 @@ function TabItem({
       >
         <span className="truncate">{name}</span>
       </span>
-      {dirty && (
-        <span
-          className={cn(
-            'pointer-events-none absolute right-0 top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center',
-            closable && 'group-hover:opacity-0',
-          )}
-        >
-          <span aria-label={t('tabs.unsaved')} className="h-1.5 w-1.5 rounded-full bg-ink-3" />
-        </span>
-      )}
       {closable && (
         <button
           aria-label={t('tabs.closeTab', { name })}

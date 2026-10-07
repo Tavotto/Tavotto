@@ -164,8 +164,8 @@
     },
     {
       "path": "evidence/u02/README.md",
-      "bytes": 2366,
-      "sha256": "0ccff221f6d00e596ea482ad428918f32ac848a69c548e63009b4b2b48eddd9e"
+      "bytes": 2855,
+      "sha256": "f26ece3f2bb01cb2ecea80835539b001e013e8ea8a8b163f6e4280b8a4760ea6"
     },
     {
       "path": "evidence/u02/freeze/frozen-render-darwin-arm64.png",
@@ -185,7 +185,7 @@
     {
       "path": "evidence/u02/render/report.json",
       "bytes": 20405,
-      "sha256": "bd355cb0981408f7d0b489526a72c6a7e35a9bce746b5eda42d0ba45350986aa"
+      "sha256": "1e46cfada475dd976757149f33969ccb91f5d185f0cf33b594ff43e6e4578393"
     },
     {
       "path": "evidence/u02/render/spike.pdf",
@@ -194,8 +194,8 @@
     },
     {
       "path": "evidence/u02/render/spike_pdfium.png",
-      "bytes": 30866,
-      "sha256": "422b77b9408edf273d59fc8f359764045b17108a99e2daf575c1cb872c21d413"
+      "bytes": 30789,
+      "sha256": "b8eb01a5611b076f509e8f1e958de85498fa88471c6fcd7aee9f3d48fed7c21f"
     },
     {
       "path": "evidence/u02/render/truth.json",

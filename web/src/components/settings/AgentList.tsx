@@ -71,7 +71,7 @@ export function AgentList({
               的按钮——同一个控件既当状态又当动作。↑↓ 在同名组里就能换默认；不可用的 Agent
               那颗禁用 */}
           {onSetDefault && (
-            <span className="relative z-10 flex h-7 shrink-0 items-center">
+            <span className="relative z-sticky flex h-7 shrink-0 items-center">
               <Radio
                 name="default-coding-agent"
                 data-agent-default={agent.id}
@@ -111,7 +111,7 @@ export function AgentList({
             )}
           </div>
           {/* 开关浮在覆盖层之上；未安装 / 装坏了时禁用（开了也用不了） */}
-          <div className="relative z-10 flex shrink-0 items-center gap-1.5">
+          <div className="relative z-sticky flex shrink-0 items-center gap-1.5">
             <Toggle
               checked={agent.enabled && agent.installed}
               disabled={!agent.installed || busyAgent === agent.id}

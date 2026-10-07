@@ -1,5 +1,6 @@
 import { artifactRequestFields, artifactValidationIssue, ArtifactValidationError } from '@/lib/artifactValidation'
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { createPortal } from 'react-dom'
 import { perfCount, perfRenderPainted } from '@/perf/core'
 import { formatMessage, t as translate } from '@/i18n'
 import { listJoin } from '@/i18n/format'
@@ -79,6 +80,8 @@ import {
 } from './interactions'
 import { openQuickEdit } from './quickEditStore'
 import { panelContentTransform, panelTransformCss } from '@/lib/panelTransform'
+import { LoaderCircle } from '@/components/ui/icons'
+import { ICON_SIZE } from '@/components/ui/Icon'
 
 /**
  * 面板显示：
@@ -318,6 +321,16 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   const approxPreview =
     !runtime && needsEngine && !showSvg && !(useEnginePng && enginePng) && !!fileSrc
 
+  // The canvas feedback portal consumes this same transform/opacity chain.
+  const contentStyle: CSSProperties = {
+    width: contentW,
+    height: contentH,
+    left: (boxW - contentW) / 2,
+    top: (boxH - contentH) / 2,
+    transform: panelTransformCss(panelContentTransform(obj)),
+    opacity: obj.opacity ?? undefined,
+  }
+
   return (
     <div
       className="absolute inset-0 overflow-hidden"
@@ -329,15 +342,7 @@ export function PanelView({ obj }: { obj: PanelObject }) {
     >
       <div
         className="absolute overflow-hidden"
-        style={{
-          width: contentW,
-          height: contentH,
-          left: (boxW - contentW) / 2,
-          top: (boxH - contentH) / 2,
-          // 先在内容空间翻转，再旋转落位——与时间线缩略图共用 `lib/panelTransform` 这一份
-          transform: panelTransformCss(panelContentTransform(obj)),
-          opacity: obj.opacity ?? undefined,
-        }}
+        style={contentStyle}
       >
         {showSvg ? (
           <div
@@ -373,7 +378,7 @@ export function PanelView({ obj }: { obj: PanelObject }) {
           <RuntimePlaceholder obj={obj} layout={layout} />
         )}
 
-        {editing && <ElementHitLayer obj={obj} layout={layout} rot={rot} />}
+        {editing && <ElementHitLayer obj={obj} layout={layout} rot={rot} contentStyle={contentStyle} />}
       </div>
 
       <RenderStatusBadge obj={obj} approx={approxPreview} />
@@ -600,10 +605,12 @@ function ElementHitLayer({
   obj,
   layout,
   rot,
+  contentStyle,
 }: {
   obj: PanelObject
   layout: Layout
   rot: PanelRotation
+  contentStyle: CSSProperties
 }) {
   perfCount('render.ElementHitLayer')
   // 换图解码那几帧（新权威已到、画面还是旧图）停摆，见 store/mountedSvgStore
@@ -615,6 +622,10 @@ function ElementHitLayer({
   const [band, setBand] = useState<{ l: number; t: number; w: number; h: number } | null>(null)
   /** 指针悬在某条边框的内 / 外侧命中带上（Prompt 16）：高亮 + 说明 + 点击即切 */
   const [spineHover, setSpineHover] = useState<SpineHover | null>(null)
+  const interacting = useInteractionStore((s) => s.kind !== 'none')
+  useEffect(() => {
+    if (interacting) setSpineHover(null)
+  }, [interacting])
 
   /** 一个分数单位对应的屏幕像素：命中带按屏幕像素定宽，zoom 变了带不变 */
   const zoneScale = { pxPerFracX: layout.width * zoom, pxPerFracY: layout.height * zoom }
@@ -916,8 +927,8 @@ function ElementHitLayer({
           }}
         />
       )}
-      {spineHover && spineHover.zone !== 'neutral' && (
-        <SpineZoneFeedback hover={spineHover} layout={layout} zoom={zoom} rot={rot} />
+      {!interacting && spineHover && spineHover.zone !== 'neutral' && (
+        <SpineZoneFeedback obj={obj} hover={spineHover} layout={layout} zoom={zoom} rot={rot} contentStyle={contentStyle} />
       )}
     </div>
   )
@@ -975,16 +986,27 @@ const spineTip = (key: string, values?: Record<string, unknown>) =>
  *   * 只在 hover 期间存在，不常驻遮挡图形。
  */
 function SpineZoneFeedback({
+  obj,
   hover,
   layout,
   zoom,
   rot,
+  contentStyle,
 }: {
+  obj: PanelObject
   hover: SpineHover
   layout: Layout
   zoom: number
   rot: PanelRotation
+  contentStyle: CSSProperties
 }) {
+  const labelRef = useRef<HTMLDivElement>(null)
+  const [feedbackRoot, setFeedbackRoot] = useState<HTMLElement | null>(null)
+  useLayoutEffect(() => {
+    // Stay in the same persistent canvas tab, outside this panel's stacking
+    // context. A body portal would outlive the tab's CSS visibility boundary.
+    setFeedbackRoot(labelRef.current?.closest('[data-object-id]')?.parentElement ?? null)
+  }, [])
   const scale = { pxPerFracX: layout.width * zoom, pxPerFracY: layout.height * zoom }
   const zone = hover.zone as 'inner' | 'outer'
   const strip = (side: SpineSide, geom: SpineGeom, strong: boolean) => {
@@ -1027,27 +1049,43 @@ function SpineZoneFeedback({
   const r = zoneRectFrac(hover.side, hover.geom, zone, scale, hover.widths)
   const cx = (r.x + r.w / 2) * layout.width
   const cy = (r.y + r.h / 2) * layout.height
+  const label = (
+    <div
+      ref={labelRef}
+      role="status"
+      data-spine-zone-label={hover.side}
+      className={cn(
+        'pointer-events-none absolute z-sticky whitespace-nowrap rounded-sm bg-surface px-1.5 py-0.5',
+        'text-xs leading-4 text-ink shadow-pop',
+      )}
+      style={{
+        left: cx,
+        top: cy,
+        transform: `${LABEL_SHIFT[hover.side]} rotate(${-rot}deg) scale(${1 / zoom})`,
+        transformOrigin: 'center',
+      }}
+    >
+      {text}
+      {coupled ? <span className="text-ink-3"> {coupled}</span> : null}
+    </div>
+  )
   return (
     <>
       {strip(hover.side, hover.geom, true)}
       {hover.coupledGeoms.map((c) => strip(c.side, c.geom, false))}
-      <div
-        role="status"
-        data-spine-zone-label={hover.side}
-        className={cn(
-          'pointer-events-none absolute z-10 whitespace-nowrap rounded-sm bg-surface px-1.5 py-0.5',
-          'text-xs leading-4 text-ink shadow-pop',
-        )}
-        style={{
-          left: cx,
-          top: cy,
-          transform: `${LABEL_SHIFT[hover.side]} rotate(${-rot}deg) scale(${1 / zoom})`,
-          transformOrigin: 'center',
-        }}
-      >
-        {text}
-        {coupled ? <span className="text-ink-3"> {coupled}</span> : null}
-      </div>
+      {feedbackRoot ? createPortal(
+        <div
+          data-spine-feedback-layer={obj.id}
+          className="pointer-events-none absolute z-sticky overflow-hidden"
+          style={{ left: mmToWorld(obj.x), top: mmToWorld(obj.y), width: mmToWorld(obj.w), height: mmToWorld(obj.h) }}
+        >
+          {/* Mirror the existing clip/transform/crop wrappers, not a second coordinate formula. */}
+          <div className="absolute overflow-hidden" style={contentStyle}>
+            <div className="absolute" style={layout}>{label}</div>
+          </div>
+        </div>,
+        feedbackRoot,
+      ) : label}
     </>
   )
 }
@@ -1257,17 +1295,17 @@ function RenderStatusBadge({ obj, approx = false }: { obj: PanelObject; approx?:
         className={cn(
           'relative flex items-center gap-1 overflow-hidden rounded-sm px-1.5 py-0.5 text-xs',
           shown.tone === 'error'
-            ? 'bg-danger text-white'
+            ? 'bg-danger text-surface'
             : shown.tone === 'stale'
-              ? 'bg-ink text-white'
+              ? 'bg-ink text-surface'
               : shown.tone === 'info'
-                ? 'bg-ink/70 text-white'
+                ? 'bg-ink/70 text-surface'
                 // 进行中不是选中：ink 底状态角标（蓝色不做任何大块背景，accent 只剩焦点 / 链接 / AI）
-                : 'bg-ink text-white',
+                : 'bg-ink text-surface',
         )}
       >
         {shown.tone === 'busy' && (
-          <span className="h-2 w-2 animate-pulse rounded-full bg-white/80" />
+          <LoaderCircle size={ICON_SIZE.xs} aria-hidden className="animate-spin opacity-80" />
         )}
         {shown.text}
         {/* 只有这一小块接指针事件。整枚角标收回指针事件是不行的：外层刻意是
@@ -1288,7 +1326,7 @@ function RenderStatusBadge({ obj, approx = false }: { obj: PanelObject; approx?:
             假进度条比没有更坏。 */}
         {shown.cold && (
           <span aria-hidden className="absolute inset-x-0 bottom-0 h-0.5">
-            <span className="block h-full w-1/4 rounded-full bg-white/75 animate-sweep" />
+            <span className="block h-full w-1/4 rounded-full bg-surface/75 animate-sweep" />
           </span>
         )}
       </span>

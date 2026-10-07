@@ -35,6 +35,19 @@ export const autofillDismissTimer = createDismissTimer()
  */
 export type AnswerChange = { status: 'ok' } | { status: 'stale' } | { status: 'error'; error: string }
 
+/**
+ * 答案改动锁（Codex #821 / 维护者复审）：改 / 删答案**一次只许一件**——批量保存整批算一件、删除一条算一件。
+ * 锁归 store、不归对话框组件：关掉再打开答案管理，新挂上的对话框读到的仍是这把锁，删除在飞时照样锁着；
+ * 否则两份同项目的整份快照谁后到谁赢（删除的快照盖掉刚显示的保存结果），还会重跑两次。
+ *
+ * `beginAnswersChange()` 拿锁（已被占 → `null`，调用方什么请求都不许发）；`saveAnswer` / `forgetAnswer`
+ * 只认手里这把锁的 token，不是当前持有者就不发请求、回 `stale`；`endAnswersChange(token)` 只在 token
+ * 仍是当前持有者时放锁。`clear()` 换代时把锁一并清掉——旧项目那件改动回来时 token 已不是持有者，
+ * 既不会放掉新项目里的锁，它的快照也照旧按代际被丢弃。
+ */
+let answersLockSeq = 0
+let answersLockHeld: number | null = null
+
 export interface AutofillNotice {
   script: string
   answer: string
@@ -51,6 +64,8 @@ interface ScriptInputState {
   /** 记住的答案（`null` = 还没取过） */
   answers: Record<string, RememberedAnswer[]> | null
   location: string
+  /** 有一件答案改动（批量保存 / 删除）在飞：见上方「答案改动锁」。答案管理据此锁住输入框、保存与删除 */
+  answersBusy: boolean
   /** 答案管理对话框正开着的脚本 */
   managing: string | null
   /** 本页那条能答题事件流的 id（`stream.hello`）。**不随项目换代清掉**：事件流跨项目存活 */
@@ -67,8 +82,24 @@ interface ScriptInputState {
   loadAnswers: () => Promise<void>
   openManager: (script: string) => void
   closeManager: () => void
-  saveAnswer: (script: string, index: number, answer: string, runConfig?: string | null) => Promise<AnswerChange>
-  forgetAnswer: (script: string, index: number, runConfig?: string | null) => Promise<AnswerChange>
+  /** 拿答案改动锁；已有一件在飞 → `null`（不许发请求） */
+  beginAnswersChange: () => number | null
+  /** 放锁；token 已不是持有者（换代清过 / 别人的）就什么都不做 */
+  endAnswersChange: (token: number) => void
+  /** `runConfig`：这条答案属于哪份运行配置（null = 默认配置，ADR 0114 之前的老形状） */
+  saveAnswer: (
+    token: number,
+    script: string,
+    index: number,
+    answer: string,
+    runConfig?: string | null,
+  ) => Promise<AnswerChange>
+  forgetAnswer: (
+    token: number,
+    script: string,
+    index: number,
+    runConfig?: string | null,
+  ) => Promise<AnswerChange>
   /** `stream.hello`：记下流 id 并报一次在看哪个项目 */
   onStreamHello: (streamId: string) => void
   /** 报「这条事件流此刻在看 `pj`」；没有流 / 没有项目时什么都不做 */
@@ -89,8 +120,11 @@ type Set = (partial: Partial<ScriptInputState>) => void
 async function changeAnswer(
   get: Get,
   set: Set,
+  token: number,
   request: () => Promise<{ scripts: Record<string, RememberedAnswer[]>; location: string }>,
 ): Promise<AnswerChange> {
+  // 不是锁的当前持有者（没拿锁 / 换代清过）：不发请求
+  if (answersLockHeld !== token) return { status: 'stale' }
   const epoch = get().epoch
   const pj = currentProjectId()
   const stale = () => get().epoch !== epoch || currentProjectId() !== pj
@@ -134,6 +168,7 @@ export const useScriptInputStore = create<ScriptInputState>((set, get) => ({
   autofilled: null,
   answers: null,
   location: '',
+  answersBusy: false,
   managing: null,
   streamId: null,
   presenters: [],
@@ -213,10 +248,25 @@ export const useScriptInputStore = create<ScriptInputState>((set, get) => ({
   openManager: (script) => set({ managing: script }),
   closeManager: () => set({ managing: null }),
 
-  saveAnswer: (script, index, answer, runConfig = null) =>
-    changeAnswer(get, set, () => updateScriptAnswer(script, index, answer, runConfig)),
+  beginAnswersChange: () => {
+    if (answersLockHeld !== null) return null
+    const token = ++answersLockSeq
+    answersLockHeld = token
+    set({ answersBusy: true })
+    return token
+  },
 
-  forgetAnswer: (script, index, runConfig = null) => changeAnswer(get, set, () => forgetScriptAnswer(script, index, runConfig)),
+  endAnswersChange: (token) => {
+    if (answersLockHeld !== token) return
+    answersLockHeld = null
+    set({ answersBusy: false })
+  },
+
+  saveAnswer: (token, script, index, answer, runConfig = null) =>
+    changeAnswer(get, set, token, () => updateScriptAnswer(script, index, answer, runConfig)),
+
+  forgetAnswer: (token, script, index, runConfig = null) =>
+    changeAnswer(get, set, token, () => forgetScriptAnswer(script, index, runConfig)),
 
   onStreamHello: (streamId) => {
     set({ streamId })
@@ -241,6 +291,7 @@ export const useScriptInputStore = create<ScriptInputState>((set, get) => ({
 
   clear: () => {
     autofillDismissTimer.cancel()
+    answersLockHeld = null
     set((s) => ({
       epoch: s.epoch + 1,
       queue: [],
@@ -249,6 +300,7 @@ export const useScriptInputStore = create<ScriptInputState>((set, get) => ({
       autofilled: null,
       answers: null,
       location: '',
+      answersBusy: false,
       managing: null,
     }))
   },

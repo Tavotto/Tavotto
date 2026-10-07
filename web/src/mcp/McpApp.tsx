@@ -3,16 +3,21 @@ import { useTranslation } from 'react-i18next'
 import {
   Check,
   Download,
-  Lightbulb,
   LoaderCircle,
   Redo2,
   Undo2,
   ShieldCheck,
-  ShieldQuestionMark,
   TriangleAlert,
 } from '@/components/ui/icons'
+import { Button, IconButton } from '@/components/ui/Button'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { Checkbox } from '@/components/ui/Checkbox'
+import { listRowClass } from '@/components/ui/listRow'
+import { Notice } from '@/components/ui/Notice'
+import { StatusPill } from '@/components/ui/StatusPill'
+import { PANEL_DRAWER, WidgetHeader, WORK_PANEL } from '@/embedded/WidgetHeader'
+import type { Severity } from '@/lib/profile'
+import { SEVERITY_ICON, severityLabel } from '@/lib/validationText'
 import { CanvasStage } from '@/canvas/CanvasStage'
 import { ElementInspector } from '@/components/inspector/ElementInspector'
 import { useEngineSync } from '@/hooks/useEngineSync'
@@ -178,20 +183,26 @@ export function McpApp({
 
   return (
     <div className="flex h-full w-full flex-col bg-bg text-ink">
-      <header className="flex h-11 shrink-0 items-center gap-2 border-b border-border bg-surface px-3">
-        <span className="truncate text-base font-medium">{open.stem}</span>
-        <span className="shrink-0 rounded-sm bg-surface-2 px-1.5 py-0.5 font-mono text-xs text-ink-3">
-          {open.profile.profile_id} v{open.profile.profile_version}
-        </span>
-        <span className="shrink-0 font-mono text-xs text-ink-3">
-          {translate('measure.mmSize', { w: panel.w.toFixed(1), h: panel.h.toFixed(1) })}
-        </span>
-
-        <span className="mx-1 h-4 w-px bg-border" />
-        <IconButton label={translate('topbar.undo', { ns: 'workspace' })} disabled={!canUndo} onClick={() => undo()}>
+      {/* 与 /try 共用的 44px 顶栏：品牌标 + 图名 + 一行 type-meta（规范 · 尺寸） */}
+      <WidgetHeader
+        name={open.stem}
+        title={
+          <>
+            <span className="font-mono">
+              {open.profile.profile_id} v{open.profile.profile_version}
+            </span>
+            <span aria-hidden> · </span>
+            <span className="tabular-nums">
+              {translate('measure.mmSize', { w: panel.w.toFixed(1), h: panel.h.toFixed(1) })}
+            </span>
+          </>
+        }
+      >
+        <span className="mx-1 h-4 w-px shrink-0 bg-border" />
+        <IconButton label={translate('topbar.undo', { ns: 'workspace' })} disabled={!canUndo} onClick={() => void undo()}>
           <Undo2 size={ICON_SIZE.md} />
         </IconButton>
-        <IconButton label={translate('topbar.redo', { ns: 'workspace' })} disabled={!canRedo} onClick={() => redo()}>
+        <IconButton label={translate('topbar.redo', { ns: 'workspace' })} disabled={!canRedo} onClick={() => void redo()}>
           <Redo2 size={ICON_SIZE.md} />
         </IconButton>
 
@@ -204,8 +215,9 @@ export function McpApp({
           loading={busy === 'preflight'}
           onClick={() => void runPreflight()}
         />
-        <button
-          className="flex h-7 shrink-0 items-center gap-1.5 rounded-sm bg-ink px-2.5 text-xs text-white disabled:opacity-40"
+        <Button
+          variant="primary"
+          size="sm"
           disabled={busy != null || pending || (needsConfirm && !confirmForced)}
           title={
             pending
@@ -218,40 +230,44 @@ export function McpApp({
         >
           {busy === 'export' ? <LoaderCircle size={ICON_SIZE.sm} className="animate-spin" /> : <Download size={ICON_SIZE.sm} />}
           {mc('exportBoth')}
-        </button>
-      </header>
+        </Button>
+      </WidgetHeader>
 
+      {/* 「仍要导出」的确认：一块插在桌面上的 danger 说明条（不是通栏红带），勾选框在条里 */}
       {needsConfirm && (
-        <label className="flex shrink-0 items-start gap-1.5 border-b border-border bg-danger-subtle px-3 py-1.5 text-xs text-ink-2">
-          <Checkbox
-            checked={confirmForced}
-            onChange={(e) => setConfirmForced(e.target.checked)}
-            className="mt-0.5"
-          />
-          {/* 两种情况各是一句完整的话，不拼字符串（英文从句位置与中文不同） */}
-          <span>
-            {preflight!.not_verifiable.length > 0
-              ? mc('confirmBoth', {
-                  errors: preflight!.errors.length,
-                  notVerifiable: preflight!.not_verifiable.length,
-                })
-              : mc('confirmErrors', { errors: preflight!.errors.length })}
-          </span>
-        </label>
+        <Notice tone="danger" className="mx-2 mb-2 shrink-0 text-xs" data-mcp-confirm>
+          <label className="flex items-start gap-1.5">
+            <Checkbox
+              checked={confirmForced}
+              onChange={(e) => setConfirmForced(e.target.checked)}
+              className="mt-0.5"
+            />
+            {/* 两种情况各是一句完整的话，不拼字符串（英文从句位置与中文不同） */}
+            <span>
+              {preflight!.not_verifiable.length > 0
+                ? mc('confirmBoth', {
+                    errors: preflight!.errors.length,
+                    notVerifiable: preflight!.not_verifiable.length,
+                  })
+                : mc('confirmErrors', { errors: preflight!.errors.length })}
+            </span>
+          </label>
+        </Notice>
       )}
 
       {notice && (
-        <p
-          className={cn(
-            'shrink-0 truncate border-b border-border px-3 py-1.5 text-xs',
-            notice.tone === 'ok' ? 'text-ink-2' : 'text-danger',
-          )}
+        <Notice
+          tone={notice.tone === 'ok' ? 'neutral' : 'danger'}
+          icon={notice.tone === 'ok' ? Check : undefined}
+          className="mx-2 mb-2 shrink-0 text-xs"
+          data-mcp-notice={notice.tone}
         >
           {notice.text}
-        </p>
+        </Notice>
       )}
 
-      <div className="flex min-h-0 flex-1">
+      {/* 画布 + 属性页在一块白色圆角工作面板里（与 /try、桌面版同形），彼此不画分隔线 */}
+      <div data-work-panel className={WORK_PANEL}>
         {/* CanvasStage 的根是 `flex-1`：**外面必须是 flex 容器**，否则它在普通
             block 父级里高度塌成 0，画布连同面板被 overflow-hidden 整块裁掉
             ——DOM 还在、getBoundingClientRect 还有值，只是既画不出来也点不中
@@ -259,36 +275,12 @@ export function McpApp({
         <div className="flex min-h-0 min-w-0 flex-1">
           <CanvasStage />
         </div>
-        <aside className="flex w-[304px] shrink-0 flex-col overflow-y-auto border-l border-border bg-surface">
+        <aside className={cn('flex w-[304px] shrink-0 flex-col overflow-y-auto', PANEL_DRAWER)}>
           <ElementInspector panel={panel} />
           <IssueList issues={issues} stale={preflightStale} panel={panel} />
         </aside>
       </div>
     </div>
-  )
-}
-
-function IconButton({
-  label,
-  disabled,
-  onClick,
-  children,
-}: {
-  label: string
-  disabled?: boolean
-  onClick: () => void
-  children: React.ReactNode
-}) {
-  return (
-    <button
-      aria-label={label}
-      title={label}
-      disabled={disabled}
-      onClick={onClick}
-      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-ink-2 hover:bg-surface-2 disabled:opacity-40"
-    >
-      {children}
-    </button>
   )
 }
 
@@ -335,7 +327,12 @@ function RenderState({
   )
 }
 
-function PreflightPill({
+/**
+ * 预检结论：一枚 `StatusPill`（与全产品的状态胶囊同一种；此前是第四种手写胶囊），整枚可点 = 重跑预检。
+ * 语气：过期 / 进行中 neutral，有阻断 danger，只有警告 warn，只有无法验证 neutral，全过 ok；
+ * 图标取问题面板那张严重度表（`SEVERITY_ICON`），形状与颜色各说一遍。
+ */
+export function PreflightPill({
   counts,
   stale,
   loading,
@@ -350,34 +347,34 @@ function PreflightPill({
   const warn = counts.warn ?? 0
   const nv = counts.not_verifiable ?? 0
   const clean = err + warn + nv === 0
+  const tone = stale || loading ? 'neutral' : err ? 'danger' : warn ? 'warn' : nv ? 'neutral' : 'ok'
+  const Icon = loading
+    ? LoaderCircle
+    : err
+      ? SEVERITY_ICON.error
+      : warn
+        ? SEVERITY_ICON.warn
+        : nv
+          ? SEVERITY_ICON.not_verifiable
+          : ShieldCheck
   return (
-    <button
+    <Button
+      variant="ghost"
+      size="sm"
       onClick={onClick}
-      className={cn(
-        'flex h-7 shrink-0 items-center gap-1.5 rounded-sm border px-2 text-xs',
-        stale
-          ? 'border-border bg-surface-2 text-ink-3'
-          : err
-            ? 'border-danger/40 text-danger'
-            : 'border-border text-ink-2',
-      )}
+      className="px-1"
+      data-preflight-pill={stale ? 'stale' : tone}
       title={stale ? mc('pillStaleTitle') : mc('pillTitle')}
     >
-      {loading ? (
-        <LoaderCircle size={ICON_SIZE.sm} className="animate-spin" />
-      ) : err ? (
-        <TriangleAlert size={ICON_SIZE.sm} />
-      ) : nv ? (
-        <ShieldQuestionMark size={ICON_SIZE.sm} />
-      ) : (
-        <ShieldCheck size={ICON_SIZE.sm} />
-      )}
-      {stale
-        ? mc('pillStale')
-        : clean
-          ? mc('pillClean')
-          : mc('pillCounts', { errors: err, warnings: warn, notVerifiable: nv })}
-    </button>
+      <StatusPill tone={tone}>
+        <Icon size={ICON_SIZE.xs} aria-hidden className={loading ? 'animate-spin' : undefined} />
+        {stale
+          ? mc('pillStale')
+          : clean
+            ? mc('pillClean')
+            : mc('pillCounts', { errors: err, warnings: warn, notVerifiable: nv })}
+      </StatusPill>
+    </Button>
   )
 }
 
@@ -385,12 +382,16 @@ function PreflightPill({
 const mc = (key: string, values?: Record<string, unknown>) =>
   translate(`mcp.${key}`, { ns: 'dialogs', ...(values ?? {}) })
 
-const SEVERITY_ICON = {
-  error: TriangleAlert,
-  warn: TriangleAlert,
-  not_verifiable: ShieldQuestionMark,
-  suggestion: Lightbulb,
-} as const
+/**
+ * 严重度的颜色：形状来自问题面板那张图标表（`lib/validationText` 的 `SEVERITY_ICON`——阻断八角、
+ * 警告三角，两级不再共用一个图标），颜色是锚点本色（图标 ≥3:1）；无法验证与建议是 ink-3。
+ */
+const SEVERITY_INK: Record<Severity, string> = {
+  error: 'text-danger',
+  warn: 'text-warn',
+  not_verifiable: 'text-ink-3',
+  suggestion: 'text-ink-3',
+}
 
 /** 预检条目的显示文案：有描述符按本地 locale 渲染，否则回退 Python 成文 */
 const issueDisplayText = (it: PreflightIssuePayload): string =>
@@ -402,7 +403,7 @@ const issueDisplayText = (it: PreflightIssuePayload): string =>
       })
     : it.text
 
-function IssueList({
+export function IssueList({
   issues,
   stale,
   panel,
@@ -418,11 +419,11 @@ function IssueList({
   const manifest = usePanelRender(panel)?.manifest
   if (!issues.length) return null
   return (
-    <section className="border-t border-border p-2">
-      <h3 className="mb-1.5 text-xs text-ink-3">
+    <section className="pb-2 pt-3" data-mcp-issues>
+      <h3 className="type-section mb-1 px-3">
         {stale ? mc('issuesTitleStale') : mc('issuesTitle')}
       </h3>
-      <ul className="flex flex-col gap-1.5">
+      <ul className="flex flex-col">
         {issues.map((it) => {
           const Icon = SEVERITY_ICON[it.severity]
           // 只有当 gid 真的在当前 manifest 里才给「定位」——图改过之后
@@ -430,18 +431,20 @@ function IssueList({
           const gids = it.gids.filter((g) => manifest?.elements.some((e) => e.gid === g))
           return (
             <li key={it.id}>
+              {/* 一行 = listRowClass（8 圆角、hover 底、焦点环）；文字可能折成两行，所以高度放开 */}
               <button
+                type="button"
                 disabled={!gids.length}
+                data-mcp-issue={it.severity}
                 onClick={() => setSelectedGids(gids)}
-                className="flex w-full items-start gap-1.5 text-left text-xs leading-relaxed text-ink-2 disabled:cursor-default"
+                className={cn(
+                  listRowClass({ size: 'sm', muted: true }),
+                  'h-auto min-h-7 w-[calc(100%-0.5rem)] items-start gap-1.5 px-2 py-1 text-left leading-relaxed',
+                  'disabled:cursor-default disabled:hover:bg-transparent',
+                )}
               >
-                <Icon
-                  size={ICON_SIZE.sm}
-                  className={cn(
-                    'mt-px shrink-0',
-                    it.severity === 'error' ? 'text-danger' : 'text-ink-3',
-                  )}
-                />
+                <Icon size={ICON_SIZE.sm} aria-hidden className={cn('mt-0.5 shrink-0', SEVERITY_INK[it.severity])} />
+                <span className="sr-only">{severityLabel(it.severity)}</span>
                 {/* issue #30：Python 求值器随 issue 发可翻译描述符（message =
                     key + params，golden vectors 与前端求值器逐字对齐），这里按
                     webview 自己的 locale 渲染；老引擎没有 message、或 key 尚未

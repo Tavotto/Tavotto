@@ -3,10 +3,10 @@ import { useTranslation } from 'react-i18next'
 import { formatMessage, t as translate } from '@/i18n'
 import { formatDateTime } from '@/i18n/format'
 import type { UpdateStatus } from '@/lib/api'
-import { cn } from '@/lib/utils'
 import { useUpdateStore } from '@/store/updateStore'
 import { UpdateRestartError } from '../UpdateRestartError'
 import { Button } from '../ui/Button'
+import { ProgressBar } from '../ui/ProgressBar'
 import { Toggle } from '../ui/Toggle'
 import {
   DiagnosticDisclosure,
@@ -312,19 +312,7 @@ function DesktopUpdateSettings({ status }: { status: UpdateStatus }) {
           ) : desktopPhase === 'downloading' ? (
             <div className="flex flex-col gap-1">
               {/* 拿不到 Content-Length 就走不确定态，不假装卡在某个百分比 */}
-              <div
-                role="progressbar"
-                aria-label={st('update.downloadProgressAria')}
-                aria-valuenow={pct ?? undefined}
-                aria-valuemin={0}
-                aria-valuemax={100}
-                className="h-1 overflow-hidden rounded-full bg-surface-2"
-              >
-                <div
-                  className={cn('h-full bg-ink', pct === null && 'w-1/3 animate-pulse')}
-                  style={pct === null ? undefined : { width: `${pct}%` }}
-                />
-              </div>
+              <ProgressBar pct={pct} label={st('update.downloadProgressAria')} />
               <span className="text-xs text-ink-3">
                 {pct === null ? st('update.downloading') : st('update.downloadingPct', { pct })}
               </span>

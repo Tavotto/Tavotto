@@ -6,13 +6,13 @@ import { cn } from '@/lib/utils'
 
 /** 浮层外壳样式：菜单本体与子菜单共用一份，别各抄一遍 */
 const CONTENT_CLASS = cn(
-  'z-50 rounded-md bg-surface p-1 shadow-pop',
+  'z-popover rounded-lg bg-surface p-1 shadow-pop',
   'data-[state=open]:animate-pop-in data-[state=closed]:animate-pop-out',
 )
 
 /** 一条菜单项的样式：`MenuItem` 与子菜单的触发项共用 */
 const ITEM_CLASS = cn(
-  'flex min-h-7 cursor-default select-none items-center gap-2 rounded-sm px-2 py-1 text-sm outline-none',
+  'flex min-h-7 cursor-default select-none items-center gap-2 rounded-md px-2 py-1 text-sm outline-none',
   'data-[highlighted]:bg-surface-hover data-[disabled]:opacity-40',
 )
 
@@ -21,14 +21,19 @@ export function Menu({
   children,
   align = 'start',
   width = 200,
+  open,
+  onOpenChange,
 }: {
   trigger: ReactElement
   children: ReactNode
   align?: 'start' | 'center' | 'end'
   width?: number
+  /** 受控打开（`RowMenu` 用它让 ⇧F10 / 右键打开同一份菜单）；不给就是 Radix 自己管 */
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
 }) {
   return (
-    <DM.Root>
+    <DM.Root open={open} onOpenChange={onOpenChange}>
       <DM.Trigger asChild>{trigger}</DM.Trigger>
       <DM.Portal>
         <DM.Content
@@ -163,7 +168,9 @@ export function MenuItem({
       onSelect={onSelect}
       className={cn(ITEM_CLASS, danger ? 'text-danger' : 'text-ink')}
     >
-      {Icon && <Icon size={ICON_SIZE.sm} className="shrink-0 text-ink-2" />}
+      {/* 菜单项图标一律 ink-2（2026-10-07 设计审计 §3.4）——比字淡一档，危险项跟着字走红；
+          图标只经 `icon=` 传，不塞进 children 自己排（否则每处各挑一个颜色） */}
+      {Icon && <Icon size={ICON_SIZE.sm} aria-hidden className={cn('shrink-0', danger ? 'text-danger' : 'text-ink-2')} />}
       <span className="flex min-w-0 flex-1 flex-col">
         <span className="truncate">{children}</span>
         {reason && <span className="truncate text-xs leading-4 text-ink-3">{reason}</span>}
@@ -197,7 +204,7 @@ export function MenuSub({
         disabled={disabled}
         className={cn(ITEM_CLASS, 'text-ink data-[state=open]:bg-surface-hover')}
       >
-        {Icon && <Icon size={ICON_SIZE.sm} className="shrink-0 text-ink-2" />}
+        {Icon && <Icon size={ICON_SIZE.sm} aria-hidden className="shrink-0 text-ink-2" />}
         <span className="min-w-0 flex-1 truncate">{label}</span>
         <ChevronRight size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-hidden />
       </DM.SubTrigger>
@@ -329,7 +336,7 @@ export function MenuButton({
         className,
       )}
     >
-      {Icon && <Icon size={ICON_SIZE.sm} className="shrink-0 text-ink-2" aria-hidden />}
+      {Icon && <Icon size={ICON_SIZE.sm} aria-hidden className={cn('shrink-0', danger ? 'text-danger' : 'text-ink-2')} />}
       <span className="min-w-0 flex-1 truncate">{children}</span>
       {shortcut && <span className="shrink-0 text-xs tabular-nums text-ink-3">{shortcut}</span>}
     </button>

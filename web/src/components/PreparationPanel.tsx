@@ -250,7 +250,7 @@ function PanelDetails({ entry, view }: { entry: PrepEntry; view: PrepView }) {
   const dep = report?.provider.dependency
   return (
     <Details data-prep-details>
-      <Summary className="type-meta cursor-pointer">{pt('details')}</Summary>
+      <Summary className="type-meta">{pt('details')}</Summary>
       <div className="mt-1.5 flex flex-col gap-1.5">
         {report && (
           <ul className="flex flex-col gap-0.5" data-prep-checks>

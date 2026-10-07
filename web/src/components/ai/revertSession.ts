@@ -21,5 +21,5 @@ export async function revertSession(session: AiSession) {
   if (!landed) return
   // 回滚后 worker 会话同样失效，重建让画布自动回到改动前的样子
   if (session.fileId) useRenderStore.getState().markStale([session.fileId])
-  useUiStore.getState().setStatus(msg('session.revertedStatus', undefined, 'ai'))
+  useUiStore.getState().setStatus(msg('session.revertedStatus', undefined, 'ai'), 'done')
 }

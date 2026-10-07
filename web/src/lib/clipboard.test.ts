@@ -142,6 +142,7 @@ describe('pasteObjects 正常路径不受影响', () => {
     expect(objects[0].type === 'text' && objects[0].text).toBe('hi')
     expect(l.useSelectionStore.getState().ids).toEqual([objects[0].id])
     expect(status(l)).toContain('已粘贴')
+    expect(l.useUiStore.getState().statusTone, '全部贴上是成功，打 ✓（Codex #821 P2）').toBe('done')
   })
 
   it('升级前的面板（没有图幅记号）粘进来：与读档同一道迁移，重开时不再变样（ADR 0098 §三）', async () => {

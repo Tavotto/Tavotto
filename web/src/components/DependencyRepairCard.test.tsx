@@ -206,7 +206,7 @@ describe('缺依赖的修复卡片', () => {
     expect(advanced.open, '「高级」默认折叠').toBe(false)
     expect(advanced.contains(byName(en('repairUseProjectEnv'))!)).toBe(true)
     // 主按钮只有一颗（UI 纪律：一个上下文最多一个填色主动作）
-    expect(buttons().filter((b) => b.className.includes('text-white'))).toHaveLength(1)
+    expect(buttons().filter((b) => b.getAttribute('data-variant') === 'primary')).toHaveLength(1)
   })
 
   it('装进项目环境之前先说清楚「这会修改你的环境」，按钮不是「确定」', async () => {
@@ -802,8 +802,8 @@ describe('这台机器上已有的解释器（ADR 0044）', () => {
     expect(card.getAttribute('data-one-click-repair')).toBe('system_interpreter')
     expect(text()).toContain(en('oneClickSentenceSystem', { module: 'lmfit' }))
     // 它是首选：不装、不联网、不改任何环境，比两种安装都便宜
-    expect(byName(en('oneClickRepair'))!.className).toContain('text-white') // primary
-    expect(byName(en('repairUseProjectEnv'))!.className).not.toContain('text-white')
+    expect(byName(en('oneClickRepair'))!.getAttribute('data-variant')).toBe('primary') // primary
+    expect(byName(en('repairUseProjectEnv'))!.getAttribute('data-variant')).not.toBe('primary')
     const detail = document.querySelector('[data-one-click-system]')!
     expect(detail.closest('[data-repair-advanced]')).toBeTruthy()
     expect(detail.textContent).toContain('/usr/local/bin/python3')
