@@ -165,6 +165,9 @@ function Bar() {
       <Menu
         width={188}
         align="center"
+        // 鼠标打开、点了「插入形状」：焦点留在打开前那里，不落回这颗钮上——否则接着按 ← / → 是在工具条里
+        // 换焦点，推不动刚插入的形状（Codex #833）。键盘打开的照旧回到这颗钮
+        pointerKeepsFocus
         trigger={
           <Button
             size="icon-lg"

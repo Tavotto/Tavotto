@@ -182,6 +182,36 @@ describe('文档名', () => {
     expect(renameBox()).not.toBeNull()
   })
 
+  // Codex #833：Enter / Esc 收起改名框后焦点回到文档名按钮（框卸载后焦点掉到 body，键盘用户得从头 Tab）；
+  // 点别处收起的不抢焦点
+  const startRename = async () => {
+    trigger().focus()
+    await act(async () => {
+      trigger().dispatchEvent(new KeyboardEvent('keydown', { key: 'F2', bubbles: true, cancelable: true }))
+    })
+    expect(document.activeElement).toBe(renameBox())
+  }
+  const key = (k: string) =>
+    act(async () => {
+      renameBox()!.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }))
+    })
+
+  it.each(['Enter', 'Escape'])('%s 收起改名：焦点回到文档名按钮', async (k) => {
+    await startRename()
+    await key(k)
+    expect(renameBox()).toBeNull()
+    expect(document.activeElement).toBe(trigger())
+  })
+
+  it('点别处收起改名：不把焦点抢回文档名按钮', async () => {
+    const other = document.createElement('button')
+    document.body.appendChild(other)
+    await startRename()
+    await act(async () => other.focus())
+    expect(renameBox()).toBeNull()
+    expect(document.activeElement).toBe(other)
+  })
+
   it('项目文件落后是空心环，不是实心点', async () => {
     const { setCurrentProjectId } = await import('@/lib/session')
     setCurrentProjectId('pA')
