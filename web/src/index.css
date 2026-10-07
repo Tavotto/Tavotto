@@ -846,7 +846,7 @@
     background: linear-gradient(var(--color-border), var(--color-border)) no-repeat 12px 0 / calc(100% - 24px) 1px;
   }
 
-  /* 字段组（ui/FieldGroup，2026-10-07 设计审计 §4.3）：行内边距 12 / 16；相邻两行之间一条左右各内缩 16 的
+  /* 字段组（ui/FieldGroup，2026-10-07 设计审计 §4.3；钩子带 ui- 前缀，不误中设置页里早有的 data-field-group="fonts" 等分组）：行内边距 12 / 16；相邻两行之间一条左右各内缩 16 的
      hairline，用背景画（border 会顶到组的圆角边缘）。行自己的 px / py 工具类（utilities 层）盖得过这里。 */
   [data-ui-field-group] > * {
     padding: 12px 16px;

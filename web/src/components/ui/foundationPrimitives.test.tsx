@@ -120,6 +120,8 @@ describe('FormSection + FieldGroup + SettingRow', () => {
     )
     expect(q('[data-fs] h3')!.className).toMatch(/\bfont-semibold\b/)
     expect(q('[data-fg]')!.hasAttribute('data-ui-field-group')).toBe(true)
+    // 设置页早有 data-field-group="fonts" 这类分组：原语的样式钩子另起名，不让 index.css 的规则误中它们
+    expect(q('[data-fg]')!.hasAttribute('data-field-group')).toBe(false)
     expect(q('[data-fg]')!.className).toMatch(/\brounded-lg\b/)
     expect(q('[data-fg]')!.className).toMatch(/\bbg-group\b/)
     expect(q('[data-row="in"]')!.className).not.toMatch(/\bpy-/)
