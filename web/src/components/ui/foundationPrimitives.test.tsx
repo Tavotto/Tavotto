@@ -119,7 +119,7 @@ describe('FormSection + FieldGroup + SettingRow', () => {
       </FormSection>,
     )
     expect(q('[data-fs] h3')!.className).toMatch(/\bfont-semibold\b/)
-    expect(q('[data-fg]')!.hasAttribute('data-field-group')).toBe(true)
+    expect(q('[data-fg]')!.hasAttribute('data-ui-field-group')).toBe(true)
     expect(q('[data-fg]')!.className).toMatch(/\brounded-lg\b/)
     expect(q('[data-fg]')!.className).toMatch(/\bbg-group\b/)
     expect(q('[data-row="in"]')!.className).not.toMatch(/\bpy-/)

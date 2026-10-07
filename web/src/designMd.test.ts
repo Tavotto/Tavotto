@@ -317,4 +317,8 @@ describe('DESIGN.md 的 spacing / components 是组件源码的镜像', () => {
     expect(() => expectedClasses('padding', '4px')).toThrow(/不认识/)
     expect(hasClass('rounded-sm h-7', 'rounded-s')).toBe(false)
   })
+  it('FieldGroup 的全局行样式只认原语专属的 data-ui-field-group，不误中旧的 data-field-group="fonts" 分组（Codex #822 P2）', () => {
+    expect(INDEX_CSS).toMatch(/\[data-ui-field-group\]\s*>/)
+    expect(INDEX_CSS).not.toMatch(/\[data-field-group[\]=]/)
+  })
 })
