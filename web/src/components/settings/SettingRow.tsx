@@ -178,7 +178,7 @@ export function SettingRow({
   const fill = control === 'fill'
   const compact = density === 'compact'
   const balanced = layout === 'balanced' && !fill
-  // 坐在 FieldGroup 里：上下 12 / 左右 16 的内边距由组给（index.css 的 [data-field-group] 规则），行只管最小高
+  // 坐在 FieldGroup 里：上下 12 / 左右 16 的内边距由组给（index.css 的 [data-ui-field-group] 规则），行只管最小高
   const grouped = useInFieldGroup()
   return (
     <div

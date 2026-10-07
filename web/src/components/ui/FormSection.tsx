@@ -38,13 +38,13 @@ export function FormSection({
 
 /**
  * 一组字段：12 圆角、ink 3% 的底（`bg-group`），行内边距 12 / 16，行与行之间一条左右各内缩 16 的
- * hairline（index.css 的 `[data-field-group]` 规则——用背景画线，border 会顶到组的边缘）。
+ * hairline（index.css 的 `[data-ui-field-group]` 规则——用背景画线，border 会顶到组的边缘）。
  * macOS 系统设置 / Linear 设置的标准形态；组里的说明条（`Notice`）作为最后一行。
  */
 export function FieldGroup({ className, children, ...rest }: HTMLAttributes<HTMLDivElement>) {
   return (
     <InFieldGroup.Provider value>
-      <div {...rest} data-field-group className={cn('flex flex-col rounded-lg bg-group', className)}>
+      <div {...rest} data-ui-field-group className={cn('flex flex-col rounded-lg bg-group', className)}>
         {children}
       </div>
     </InFieldGroup.Provider>
