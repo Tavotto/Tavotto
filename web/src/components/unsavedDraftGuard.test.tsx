@@ -178,6 +178,19 @@ describe('设置 › 样式页：没存的草稿', () => {
     expect(document.querySelector('[data-nav-dirty]'), '放弃之后点也没了').toBeNull()
   })
 
+  it('外部请求换分区（桌面菜单「检查更新」）同样先问（Codex #821 P1）', async () => {
+    await openSettingsWithDirtyStyle()
+    await act(async () => useUiStore.getState().setSettingsOpen(true, 'about'))
+    expect(confirmReq()).toMatchObject({ danger: true })
+    await answer(false)
+    expect(currentSection()).toBe('style')
+    expect(profileName()!.value).toBe('投稿用 改')
+
+    await act(async () => useUiStore.getState().setSettingsOpen(true, 'diagnostics'))
+    await answer(true)
+    expect(currentSection()).toBe('diagnostics')
+  })
+
   it('方向键切分区同样先问', async () => {
     await openSettingsWithDirtyStyle()
     await act(async () => {

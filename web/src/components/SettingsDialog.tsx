@@ -141,11 +141,27 @@ export function SettingsDialog() {
   const reportDirty = (id: SectionId) => (dirty: boolean) =>
     setDirtySection((cur) => (dirty ? id : cur === id ? null : cur))
 
-  // 调用方指定分区时（如顶栏「有新版本」）跳过去，之后仍由用户自由切换
+  // effect 里要读「此刻」的分区与草稿页，不吃闭包里的旧值
+  const sectionRef = useRef(section)
+  sectionRef.current = section
+  const dirtyRef = useRef(dirtySection)
+  dirtyRef.current = dirtySection
+
+  // 调用方指定分区时（如顶栏「有新版本」、桌面菜单「检查更新 / 诊断」）跳过去，之后仍由用户自由切换。
+  // 设置已开着、当前页挂着没存的草稿时，外部请求同样先问（Codex #821 P1）——否则直接换页会卸掉那一页、静默丢草稿
   useEffect(() => {
     if (!open) return
     const target = resolveSection(requested)
-    if (target) setSection(target)
+    if (!target || target === sectionRef.current) return
+    let cancelled = false
+    void (async () => {
+      const cur = sectionRef.current
+      if (dirtyRef.current === cur && !(await askDiscardDraft())) return
+      if (!cancelled && sectionRef.current === cur) setSection(target)
+    })()
+    return () => {
+      cancelled = true
+    }
   }, [open, requested])
 
   // 切页：内容区滚回顶部。焦点留在导航——用户正在导航
