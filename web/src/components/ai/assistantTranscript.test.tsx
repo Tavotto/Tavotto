@@ -352,6 +352,12 @@ describe('发送失败（§6.7）', () => {
 })
 
 describe('会话失败的重试', () => {
+  it('兄弟面板（同一脚本的另一张图）发起的失败轮次：看得到，但不给重试（Codex #827 P1）', async () => {
+    await mount([session({ status: 'failed', error: 'boom', panelId: 'p-sibling' })])
+    expect(q('[data-ai-error="session"]')).not.toBeNull()
+    expect(q('[data-ai-error="session"] [data-ai-retry]')).toBeNull()
+  })
+
   it('按那一轮自己的目标重发（元素 / gid），不跟着此刻的作用范围（Codex #827 P1）', async () => {
     await mount([
       session({ status: 'failed', error: 'boom', scope: 'element', gid: 'g7', target: '图例' }),

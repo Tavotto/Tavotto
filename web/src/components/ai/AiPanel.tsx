@@ -450,6 +450,7 @@ function AssistantPanelBody() {
                   onResend={(text) => void send(text)}
                   onRetry={(t) => void send(t.prompt, targetOf(t))}
                   canResend={canSend}
+                  canRetry={canSend && s.panelId === panel?.id}
                 />
               ))}
             </div>

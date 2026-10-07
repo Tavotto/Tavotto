@@ -49,6 +49,7 @@ export function Turn({
   onResend,
   onRetry,
   canResend,
+  canRetry,
 }: {
   session: AiSession
   /** 把这条提示词按当前的作用范围再发一次（气泡上的「重新发送」：用户此刻的选择就是新的目标） */
@@ -56,6 +57,8 @@ export function Turn({
   /** 失败的这一轮原样重试：**钉在这一轮自己的目标上**，不跟着此刻的选择走（Codex #827 P1） */
   onRetry: (session: AiSession) => void
   canResend: boolean
+  /** 只在发起这一轮的那张图上给「重试」：同一脚本的兄弟面板也看得到这一轮，但重试不能改到别的面板上（Codex #827 P1） */
+  canRetry: boolean
 }) {
   useTranslation('ai')
   const caps = useAiStore((s) => s.caps)
@@ -99,7 +102,7 @@ export function Turn({
           data-ai-error="session"
           title={statusLabel(session.status)}
           action={
-            canResend ? (
+            canRetry ? (
               <Button data-ai-retry variant="secondary" size="sm" onClick={() => onRetry(session)}>
                 {ai('panel.retry')}
               </Button>
