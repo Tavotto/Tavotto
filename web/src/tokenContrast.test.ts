@@ -323,6 +323,13 @@ for (const theme of THEMES) {
     it('纸上的线与字：sel 对纸 ≥3:1；纸上的墨对纸 ≥4.5:1（网格、占位框的字都画在纸上）', () => {
       expect(contrast(t('sel'), t('paper'))).toBeGreaterThanOrEqual(3)
       expect(contrast(t('paper-ink'), t('paper'))).toBeGreaterThanOrEqual(4.5)
+      // 纸上的二 / 三级墨（缩略图里的文字与标注线）：从 paper-ink 派生、合成到纸白上 ≥4.5:1——不是界面的 ink-2 / ink-3
+      // （那两档在暗色里变浅，落在不变的白纸上只剩 1.8 / 2.8）
+      for (const name of ['paper-ink-2', 'paper-ink-3']) {
+        const [base, alpha] = srgbAlphaOf(theme, name)
+        expect(base, name).toBe('paper-ink')
+        expect(contrast(mixOver(t(base), alpha, t('paper')), t('paper')), `${name} on paper`).toBeGreaterThanOrEqual(4.5)
+      }
     })
 
     it('浮起的 thumb（分段 / 选项格 / 开关钮）上的字 ink / ink-2 ≥4.5:1；暗色里 thumb 比面板亮（浮起靠更亮）', () => {

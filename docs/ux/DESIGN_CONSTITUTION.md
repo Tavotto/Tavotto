@@ -1057,14 +1057,18 @@ reduced-motion 契约）；68/85 命中 `foundation.test`（533 处）；弹簧 
   两段都写 `color-scheme: dark`，原生控件（滚动条、取色框）跟着变。
 - **偏好**：设置 › 通用 › 外观 = 跟随系统 / 浅色 / 深色（三档 `Segmented`，`data-testid="settings-theme"`，每档 `data-value`）。
   存在本机 `tavotto.ui` 的 `theme`（与侧栏、网格同一份界面偏好）；写入口只有 `uiStore.setTheme`，落到 `<html>` 上的只有
-  `lib/theme.applyTheme`（system = 不挂 `data-theme`，交给媒体查询，系统切外观当场跟着变；light / dark = 挂上）。入口在 React 挂载之前
-  调一次，选了深色的人不会先看见一帧浅色。「界面看起来不对？」那颗重置**不动外观**。/try 与 Codex 画布没有这个设置，跟随系统。
+  `lib/theme.applyTheme`（system = 不挂 `data-theme`，交给媒体查询，系统切外观当场跟着变；light / dark = 挂上）。首帧之前的落点是
+  `index.html` `<head>` 里一段同步内联脚本（入口是延迟执行的 module，等它就晚了一帧）：读同一个 `tavotto.ui`、只认 light / dark、存储抛错就不挂；
+  它与 uiStore + `applyTheme` 的读法由 `lib/themeBoot.test` 拿原文逐例对拍。入口在 React 挂载之前再调一次 `applyTheme` 对账。没有 CSP 拦内联脚本（Tauri `security.csp` 为 null，后端不发 CSP）——将来加 CSP 要给这段脚本放 hash。「界面看起来不对？」那颗重置**不动外观**。/try 与 Codex 画布没有这个设置，跟随系统。
 - **值表**（暗色）：桌面 `#161615` < 画布灰 `#1b1b1a` < 面板 `#222220` < surface-2 `#282826`；可编辑框 `#2c2c2a` / hover `#323230`（暗底上「深一级」是更亮一级）；
   墨 `#ececea` / ink-2 `#c2c2bc` / ink-3 `#9b9b94` / faint `#6a6a64`；控件边界 `#7b7b74`；accent 就是品牌蓝 `#5a92e5`（暗底上它本身就够 4.5:1）、浅底 `#1d2a3d`；
   锚点 danger `#ef6e55` · warn `#d9a23a` · ok `#4fb37a`，`-content` 改成锚点 70% 混**白**；语法色七档提亮一档、comment 仍 = ink-3；thumb `#3a3a37`；
   shadow 纯黑、shadow-edge 白。
 - **纸不变**：`--color-paper` / `--color-paper-ink` 不在暗色表里。画布上的页面、图、图的缩略图底是印刷品，**不反相、不变暗**；暗色只改它周围的界面。
   界面画在纸上的东西用纸上的墨（网格、透明棋盘格、运行时占位框、文字框的占位），世界层里没写颜色的字继承 paper-ink。
+  二 / 三级的纸上墨是 `paper-ink-2` / `paper-ink-3`（paper-ink 的 80% / 65%，画布 / 版本缩略图里的文字框与标注线）——纸上不写界面的
+  `ink-2` / `ink-3` / `ink-faint`（暗色里变浅，落在白纸上 1.8 / 2.8:1）；`foundation.test`「纸上的东西用纸上的墨」按 AST 认纸面子树。
+  纸盒里没有图可画时（运行时图没跑过）那块不是纸，底用 `surface-2`。
   快速编辑没有页面：当前那张图底下垫一张与它同框的纸（`data-fast-edit-paper`），透明底的图也不落在深色画布上。
   直接坐在纸上的界面（空画布的起步提示）垫 `bg-paper-chrome`：浅色里透明（字照旧落在纸上），暗色里是面板色——浅色的字不落在白纸上
   （真浏览器在暗色下跑 `e2e/a11y` 的自算对比度尺子量出来的那一处）。

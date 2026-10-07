@@ -1227,7 +1227,8 @@ export function LayoutSnapshot({
     <div
       className={cn(
         'relative w-full overflow-hidden rounded-xs border border-border',
-        outline ? 'bg-transparent' : 'bg-paper',
+        // 纸上的东西用纸上的墨：没写颜色的文字框继承 paper-ink（界面的 ink 在暗色里是浅色）
+        outline ? 'bg-transparent' : 'bg-paper text-paper-ink',
       )}
       style={{ aspectRatio: `${pw} / ${ph}` }}
     >
@@ -1273,7 +1274,7 @@ export function LayoutSnapshot({
               </div>
             )
           }
-          return <div key={o.id} className="absolute border border-ink-faint" style={style} />
+          return <div key={o.id} className="absolute border border-paper-ink/40" style={style} />
         })}
     </div>
   )

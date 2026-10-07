@@ -49,7 +49,9 @@ const pushDialog = (stack: readonly MainDialog[], id: MainDialog): MainDialog[] 
 const popDialog = (stack: readonly MainDialog[], id: MainDialog): MainDialog[] =>
   stack.filter((d) => d !== id)
 
-const LS_KEY = 'tavotto.ui'
+/** 本机界面偏好的存储键。`index.html` 里那段开机脚本也读它（先挂 `data-theme`），`themeBoot.test` 对拍两边 */
+export const UI_PREFS_KEY = 'tavotto.ui'
+const LS_KEY = UI_PREFS_KEY
 
 export const LEFT_MIN = 280
 export const LEFT_MAX = 360

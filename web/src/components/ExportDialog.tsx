@@ -1774,7 +1774,7 @@ function TargetHeader({
           ) : (
             <ImageOff
               size={ICON_SIZE.sm}
-              className="text-ink-faint"
+              className="text-paper-ink/40"
               aria-hidden
             />
           )}

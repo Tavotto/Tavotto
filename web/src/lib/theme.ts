@@ -8,7 +8,9 @@
  *   - `light` / `dark`：挂 `data-theme="light"` / `"dark"`，前者挡住媒体查询，后者直接套深色表。
  *
  * 偏好本身住在 `uiStore`（`theme`，与侧栏 / 网格那些本机界面偏好同一份 `tavotto.ui`），写入口只有
- * `uiStore.setTheme`；开机在 React 挂载之前由入口调一次 `applyTheme`，不闪一帧浅色。
+ * `uiStore.setTheme`。开机的首帧落点是 `index.html` `<head>` 里的同步脚本（入口模块延迟执行，等它就晚了一帧）；
+ * 那段脚本重写了一遍键 / 合法值，`themeBoot.test` 拿原文对着 uiStore + `applyTheme` 逐例对拍。入口再调一次
+ * `applyTheme` 对账（`<html>` 上的 `data-theme` 仍只由这里的语义决定）。
  */
 
 export const THEME_PREFS = ['system', 'light', 'dark'] as const

@@ -64,6 +64,18 @@ test(
     expect(await theme(page)).toBe('dark')
     expect(await bg(body)).toBe(DARK_DESK)
 
+    // 首帧之前就落上：入口模块（type="module"，延迟执行）根本不让它跑，index.html <head> 里那段同步脚本
+    // 也已经把 data-theme 挂好、样式已经是暗色——系统是浅色、存的是深色的冷启动不会先画一帧浅色
+    const entryJs = /\/assets\/[^/]+\.js(\?.*)?$|\/src\/main\.tsx/
+    await page.route(entryJs, (r) => r.abort())
+    await page.reload({ waitUntil: 'load' })
+    expect(await page.locator('#root').evaluate((el) => el.childElementCount)).toBe(0)
+    expect(await theme(page)).toBe('dark')
+    expect(await bg(body)).toBe(DARK_DESK)
+    await page.unroute(entryJs)
+    await page.reload()
+    await expect(sheet).toBeVisible({ timeout: 30_000 })
+
     // 「跟随系统」：不挂 data-theme，颜色跟着系统外观走
     ;({ dialog, group } = await openGeneralSettings(page))
     await group.locator('[data-value="system"]').click()

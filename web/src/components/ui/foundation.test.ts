@@ -10,6 +10,7 @@
  * （src 归 tsconfig.app.json 管，不引 node:fs）。注释先剥掉——解释「为什么不用
  * `text-[11px]`」的那句话不该被自己咬到。
  */
+import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 
 const SOURCES = import.meta.glob('/src/**/*.{ts,tsx}', {
@@ -370,5 +371,102 @@ describe('Design Constitution：token 之外没有字面量', () => {
       // 注释里提到禁写法不算：那正是在解释为什么不用它
       expect(rule.pattern.test(stripComments(`// 别写 ${rule.catches}`)), rule.name).toBe(false)
     }
+  })
+})
+
+/*
+ * ---- 纸上的东西用纸上的墨（2026-10-07 暗色主题，宪法第二十八节）----
+ * 主语：画界面的代码里，**画在纸上**（纸两套主题同值，暗色里仍是白）的 JSX 子树中写出来的界面墨类
+ * （`text-ink` / `text-ink-2` / `text-ink-3` / `border-ink-faint` / `var(--color-ink-*)` …）。界面的 ink 一族在暗色里
+ * 变浅，落在白纸上只剩 1.8:1（ink-2）/ 2.8:1（ink-3）——缩略图里的文字框、标注线就这样看不见了（Codex P2）。
+ * 纸上的记号用 paper-ink / paper-ink-2 / paper-ink-3 / `paper-ink/N`。
+ *
+ * 「画在纸上」怎么认（AST，不是子串）：
+ *   - 元素自己的 className 里有一个字面的 `bg-paper` 类（不含 bg-paper-chrome / bg-paper-ink）→ 这个元素整棵子树；
+ *   - SVG 图形 `fill="var(--color-paper)"`（缩略图的页面矩形）→ 它的父元素整棵子树（后面的兄弟画在它上面）。
+ * 判不出的（写明盲点，不假装覆盖）：`bg-paper` 存在变量里再拼进 className（RegistryDialog / FigurePicker 的 `box`）、
+ * 纸色经常量传入（PageSheet 的 `fill={PAPER}`）、内容经 children 从别的组件传进纸盒（AssetBrowser 的 CardPreview）。
+ * 这些处今天里面只有 <img> 或已按同一规则改过；新写的纸面请把 `bg-paper` 写成字面类。
+ */
+const INK_ON_PAPER =
+  /(?<![\w-])(?:[\w-]+:)*(?:text|border(?:-[trblxy])?|fill|stroke|bg|ring|inset-ring|outline|divide|decoration|placeholder|caret)-ink(?:-[23]|-faint)?(?![\w-])|var\(--color-ink(?:-[23]|-faint)?\)/g
+const BG_PAPER = /(?<![\w-])bg-paper(?![\w-])/
+
+function stringsIn(node: ts.Node, out: { text: string; pos: number }[] = []) {
+  if (
+    ts.isStringLiteral(node) ||
+    ts.isNoSubstitutionTemplateLiteral(node) ||
+    ts.isTemplateHead(node) ||
+    ts.isTemplateMiddle(node) ||
+    ts.isTemplateTail(node) ||
+    ts.isJsxText(node)
+  ) {
+    out.push({ text: node.text, pos: node.getStart() })
+  }
+  ts.forEachChild(node, (c) => void stringsIn(c, out))
+  return out
+}
+
+function attr(el: ts.JsxOpeningLikeElement, name: string) {
+  return el.attributes.properties.find(
+    (p): p is ts.JsxAttribute => ts.isJsxAttribute(p) && p.name.getText() === name,
+  )
+}
+
+/** 一份源码里「纸上用了界面墨」的每一处（`行:类`） */
+function inkOnPaper(path: string, src: string): string[] {
+  const sf = ts.createSourceFile(path, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+  const scopes = new Set<ts.Node>()
+  const visit = (node: ts.Node) => {
+    if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
+      const self = ts.isJsxOpeningElement(node) ? node.parent : node
+      const cls = attr(node, 'className')?.initializer
+      if (cls && stringsIn(cls).some((s) => BG_PAPER.test(s.text))) scopes.add(self)
+      const fill = attr(node, 'fill')?.initializer
+      if (fill && stringsIn(fill).some((s) => s.text.replace(/\s/g, '') === 'var(--color-paper)')) {
+        const parent = self.parent
+        if (ts.isJsxElement(parent)) scopes.add(parent)
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(sf)
+  const hits = new Map<number, string>()
+  for (const scope of scopes) {
+    for (const s of stringsIn(scope)) {
+      for (const m of s.text.matchAll(INK_ON_PAPER)) {
+        const line = sf.getLineAndCharacterOfPosition(s.pos).line + 1
+        hits.set(s.pos * 1000 + (m.index ?? 0), `${line}:${m[0]}`)
+      }
+    }
+  }
+  return [...hits.values()]
+}
+
+describe('纸上的东西用纸上的墨（宪法第二十八节）', () => {
+  it('画在纸上（bg-paper / fill=var(--color-paper)）的子树里没有界面的 ink 一族：用 paper-ink / paper-ink-2 / paper-ink-3', () => {
+    const offenders: string[] = []
+    for (const [path, raw] of sources()) {
+      if (!CHROME.test(path) || !path.endsWith('.tsx')) continue
+      for (const h of inkOnPaper(path, raw)) offenders.push(`${path}:${h}`)
+    }
+    expect(offenders, '纸两套主题同值，界面的 ink 在暗色里变浅：改用 text-paper-ink / -2 / -3 或 paper-ink/N').toEqual([])
+  })
+
+  it('自检：抓得住纸上的界面墨（父元素是纸 / 兄弟矩形是纸），放得过纸上的纸墨与纸外的界面墨', () => {
+    const catches = [
+      '<div className="bg-paper"><span className="text-ink-3">x</span></div>',
+      "<div className={cn('rounded', on ? 'bg-transparent' : 'bg-paper')}><i className=\"border border-ink-faint\" /></div>",
+      '<svg><rect fill="var(--color-paper)" /><g>{xs.map(() => { const c = { className: \'text-ink-2\' }; return <text {...c} /> })}</g></svg>',
+      '<span className="bg-paper text-ink" />',
+    ]
+    for (const c of catches) expect(inkOnPaper('x.tsx', c), c).toHaveLength(1)
+    const spares = [
+      '<div className="bg-paper text-paper-ink"><span className="text-paper-ink-2" /><i className="border-paper-ink/40" /></div>',
+      '<div className="bg-paper-chrome text-ink-3" />',
+      '<div><div className="bg-paper" /><span className="text-ink-3" /></div>',
+      '<div className="bg-paper-ink/[0.03] text-ink-2" />',
+    ]
+    for (const c of spares) expect(inkOnPaper('x.tsx', c), c).toEqual([])
   })
 })

@@ -14,7 +14,8 @@ import './index.css'
 initI18n()
 document.documentElement.lang = currentLocale()
 
-// 外观（设置 › 通用 › 外观）同样在挂载之前落到 <html> 上：选了深色的人不该先看见一帧浅色，
+// 外观（设置 › 通用 › 外观）：首帧之前的那一次落点在 index.html <head> 的同步脚本里（这个模块是延迟执行的，
+// 跑到这里时浏览器可能已经画过一帧）；这里是对账——以 uiStore 读出的偏好为准再落一次。
 // 下面那个不经 React 的「会话建立失败」页也读同一套 CSS 变量（宪法第二十八节）
 applyTheme(useUiStore.getState().theme)
 

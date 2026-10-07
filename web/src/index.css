@@ -48,6 +48,11 @@
      占位框的字）用的墨：纸不变，它也不变。 */
   --color-paper: #ffffff;
   --color-paper-ink: #1b1b18;
+  /* 纸上的二 / 三级墨（缩略图里的文字框 / 标注线、纸上的图形记号）：paper-ink 的 80% / 65%，合成到纸白上约等于浅色的
+     ink-2 / ink-3。纸上不许用界面的 ink-2 / ink-3——它们在暗色里变浅，落在不变的白纸上只剩 1.8:1 / 2.8:1
+     （foundation.test「纸上的东西用纸上的墨」+ tokenContrast.test 守着） */
+  --color-paper-ink-2: color-mix(in srgb, var(--color-paper-ink) 80%, transparent);
+  --color-paper-ink-3: color-mix(in srgb, var(--color-paper-ink) 65%, transparent);
   /* 界面浮在纸上时的底（空画布的起步提示这类直接坐在页面上的界面）：浅色里透明——字就落在白纸上；
      暗色里是面板色——浅色的字不能直接落在不变的白纸上 */
   --color-paper-chrome: transparent;
