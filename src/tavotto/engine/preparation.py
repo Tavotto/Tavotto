@@ -493,6 +493,7 @@ class PreparationResult:
 class _Entry:
     plan: PreparationPlan
     result: PreparationResult
+    force_rebuild: bool = False
     cancel: threading.Event = dataclasses.field(default_factory=threading.Event)
     lock: threading.Lock = dataclasses.field(default_factory=threading.Lock)
     thread: threading.Thread | None = None
@@ -506,7 +507,7 @@ class PreparationService:
         self._lock = threading.Lock()
 
     # ---- 登记 ----
-    def register(self, plan: PreparationPlan) -> PreparationResult:
+    def register(self, plan: PreparationPlan, *, force_rebuild: bool = False) -> PreparationResult:
         """登记一份计划。没有脚本可跑的直接落 `static_source_available`（不起线程）。"""
         result = PreparationResult()
         if plan.script is None:
@@ -529,7 +530,9 @@ class PreparationService:
             result.status = STATUS_NEEDS_INPUT
         with self._lock:
             self._sweep()
-            self._entries[plan.plan_id] = _Entry(plan=plan, result=result)
+            self._entries[plan.plan_id] = _Entry(
+                plan=plan, result=result, force_rebuild=force_rebuild
+            )
         return result
 
     def start(self, plan_id: str, *, runner, bind=None, on_done=None) -> None:
@@ -596,7 +599,7 @@ class PreparationService:
             return
         tr.mark("check")
         result.status = STATUS_RUNNING
-        reusable = self._reusable(existing, plan)
+        reusable = None if entry.force_rebuild else self._reusable(existing, plan)
         if reusable is not None:
             # 已 build 过的会话：回执从它记下的 build 响应装配，不发任何请求、不碰脚本。
             result.created_runtime = False
@@ -634,6 +637,10 @@ class PreparationService:
                 raise _StaleBeforeRetry(*stale)
 
         try:
+            if entry.force_rebuild:
+                # Explicit reruns must not reuse workerd's cached spawn while
+                # asynchronous retirement is pending. Refuse if close is unknown.
+                pool.invalidate(plan.script, plan.project_root, plan.run, only_run=True, force=True)
             worker, resp, created = runner(plan, before_retry=before_retry)
         except _StaleBeforeRetry as exc:
             tr.fail("execute", ERROR_PLAN_STALE, reason=exc.reason)
@@ -711,12 +718,20 @@ class PreparationService:
         # 本来就在的（别的消费者的）一根手指都不碰（FO-009）。
         if entry.cancel.is_set():
             if result.created_runtime:
-                pool.force_cancel(
+                # A different target's explicit rerun may have replaced this
+                # worker while build was running. Ownership is instance-scoped.
+                closed = pool.force_cancel(
                     plan.script,
                     plan.project_root,
+                    expected_worker=worker,
                     **({"run": plan.run} if plan.run is not None else {}),
                 )
-                note = "build 期间取消：本计划新起的会话已关闭；脚本已经产生的外部副作用不撤销"
+                note = (
+                    "build 期间取消：本计划新起的会话已关闭；脚本已经产生的外部副作用不撤销"
+                    if closed
+                    else "build 期间取消：本计划的会话已被替换，未关闭后来的会话；脚本已经产生的外部副作用不撤销"
+                )
+
             else:
                 note = "build 期间取消：会话属于别的消费者，未关闭；本计划不再等它"
             tr.cancel("receipt")
@@ -807,6 +822,9 @@ class PreparationService:
         仍是这个项目此刻的决策（用户换了环境的话它是旧世界的，`pool.get()` 会重建）。
         能用就回它记下的 build 响应形态（descriptors + runtime），否则 None。"""
         if existing is None or not getattr(existing, "built", False):
+            return None
+        spec = getattr(existing, "spec", None)
+        if getattr(existing, "entry", getattr(spec, "entry", None)) != plan.entry:
             return None
         try:
             wanted = pool.resolve_worker_python(plan.project_root)[0]

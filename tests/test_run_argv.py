@@ -49,7 +49,7 @@ def _spec(**kw):
 
 
 # ===========================================================================
-# 模型：空 argv 逐字节不变；非空只多两个 flag；公开投影不带参数值
+# 模型：空 argv 逐字节不变；非空只多配置引用；参数值走私有请求管道
 # ===========================================================================
 class TestWorkerArgvShape:
     def _argv(self, spec):
@@ -61,13 +61,12 @@ class TestWorkerArgvShape:
         assert "--script-argv-json" not in argv and "--run-config" not in argv
         assert argv == self._argv(_spec(argv=()))
 
-    def test_nonempty_argv_is_one_ascii_json_array_plus_the_config_reference(self):
+    def test_nonempty_argv_sends_only_the_config_reference_at_spawn(self):
         tokens = ["", " ", "中文", "--", "-3", "--", '"q"', "--x", "--x"]
         argv = self._argv(_spec(argv=tokens, run_config="rc_0123456789ab"))
-        i = argv.index("--script-argv-json")
-        assert json.loads(argv[i + 1]) == tokens  # 无损还原：空串、空格、中文、重复、`--`、负数
-        assert argv[i + 1].isascii()  # 命令行编码（Windows UTF-16 / workerd）无关
-        assert argv[argv.index("--run-config") + 1] == "rc_0123456789ab"
+        assert argv == [*self._argv(_spec()), "--run-config", "rc_0123456789ab"]
+        run = execspec.RunSelection("rc_0123456789ab", tuple(tokens))
+        assert pool._run_payload(run)["run"]["argv"] == tokens  # 所有 token 经私有请求无损传入
 
     def test_argv_requires_a_config_reference(self):
         with pytest.raises(ValueError, match="run_config"):
@@ -280,10 +279,9 @@ def test_the_workerd_spawn_spec_carries_the_same_tokens_as_the_python_pool(tmp_p
     plain = pool._spawn_spec(*args, "/usr/bin/python3", pool.SOURCE_CURRENT)
     with_run = pool._spawn_spec(*args, "/usr/bin/python3", pool.SOURCE_CURRENT, run=run)
     assert "--script-argv-json" not in plain["argv"]
-    i = with_run["argv"].index("--script-argv-json")
-    assert json.loads(with_run["argv"][i + 1]) == list(tokens)
-    assert with_run["argv"][:i] == plain["argv"]  # 其余部分逐 token 相同
-    assert with_run["argv"] != plain["argv"]  # → workerd 的 spec 哈希随 argv 而变，不会复用会话
+    assert with_run["argv"] == [*plain["argv"], "--run-config", run.config_id]
+    assert pool._run_payload(run)["run"]["argv"] == list(tokens)
+    assert with_run["argv"] != plain["argv"]  # → workerd 的 spec 哈希随配置引用而变，不会复用会话
 
 
 def test_the_semantic_revision_follows_the_configuration_and_nothing_else(tmp_path):
@@ -622,29 +620,42 @@ def test_a_cold_replay_uses_the_frozen_configuration_not_the_latest_one(figs, tm
 
 
 @needs_worker
-def test_a_bad_argv_payload_makes_the_worker_refuse_to_start(figs):
-    """旧/坏载荷不回落成空 argv：worker 直接拒绝启动（父进程拿到明确失败）。"""
-    (figs / "dump.py").write_text(DUMP_SCRIPT, encoding="utf-8")
-    base = [
-        WORKER_PY,
-        str(pool.WORKER_PY),
-        "--script",
-        str(figs / "dump.py"),
-        "--figures-dir",
+def test_missing_or_bad_private_argv_payload_never_executes_empty_arguments(figs):
+    """缺失 / 坏载荷必须在用户脚本之前被拒绝；同一进程仍能响应，错误中不回显 token。"""
+    (figs / "dump.py").write_text(
+        "raise AssertionError('user script executed')\n", encoding="utf-8"
+    )
+    spec = execspec.safe_spec(
+        "dump.py",
         str(figs),
-        "--out-dir",
-        str(figs.parent / "o"),
-        "--sandbox",
-        str(figs.parent / "sb"),
-        "--entry",
         "__main__",
-    ]
-    for payload in ("not json", '{"a": 1}', "[1, 2]"):
-        done = subprocess.run(
-            [*base, "--script-argv-json", payload],
-            input="",
-            capture_output=True,
-            text=True,
-            timeout=120,
+        interpreter=WORKER_PY,
+        sandbox=str(figs.parent / "sb"),
+        argv=["placeholder"],
+        run_config="rc_test",
+    )
+    base = execspec.worker_argv(spec, worker_py=pool.WORKER_PY, out_dir=figs.parent / "o")
+    requests = [
+        pool.build_envelope({"cmd": "build", **payload})
+        for payload in (
+            {},
+            {"run": SENTINEL},
+            {"run": {"config_id": "wrong", "argv": [SENTINEL], "sensitive": True}},
+            {"run": {"config_id": "rc_test", "argv": [1, 2], "sensitive": False}},
+            {"run": {"config_id": "rc_test", "argv": [SENTINEL], "sensitive": "false"}},
         )
-        assert done.returncode != 0 and "script-argv-json" in done.stderr
+    ]
+    done = subprocess.run(
+        base,
+        input="".join(json.dumps(r) + "\n" for r in [*requests, {"cmd": "build"}]),
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert done.returncode == 0, done.stderr
+    responses = [json.loads(line) for line in done.stdout.splitlines()]
+    assert len(responses) == len(requests) + 1
+    assert all(r["error"]["code"] == "bad_request" for r in responses[:-1])
+    assert not responses[-1]["ok"] and "required" in responses[-1]["error"]
+    assert "user script executed" not in done.stdout
+    assert SENTINEL not in done.stdout + done.stderr

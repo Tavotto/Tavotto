@@ -621,6 +621,14 @@ def _worker_error_payload(exc, stage: str = "") -> dict:
         # 脚本要输入（ADR 0099）：界面按 code 翻译，提示原文走 params
         extra = getattr(exc, "extra", None) or {}
         body["params"] = {"prompt": str(extra.get("prompt") or "")}
+    if exc.code == "script_needs_arguments":
+        extra = getattr(exc, "extra", None) or {}
+        params = {}
+        if extra.get("argv_count"):
+            params["argv_count"] = str(int(extra["argv_count"]))
+        if extra.get("parse_kind"):
+            params["parse_kind"] = str(extra["parse_kind"])
+        body["params"] = params
     if getattr(exc, "module", ""):
         body["module"] = exc.module
     # 项目环境自动接手失败时的结构化原因（ADR 0018）：找不到 venv / venv 里
@@ -3452,20 +3460,8 @@ def _resolve_project_script(ctx: "ProjectCtx", raw: str):
             404,
         )
     root = ctx.path.resolve()
-    try:
-        target = (Path(raw) if Path(raw).is_absolute() else ctx.path / raw).resolve()
-    except OSError:
-        return None, (
-            jsonify(
-                {
-                    "error": f"脚本不存在: {raw}",
-                    "code": "script_not_found",
-                    "params": {"script": raw},
-                }
-            ),
-            404,
-        )
-    if not target.is_relative_to(root):
+    resolved = engine_projectenv.contained_path(root, raw)
+    if resolved is None:
         return None, (
             jsonify(
                 {
@@ -3476,6 +3472,9 @@ def _resolve_project_script(ctx: "ProjectCtx", raw: str):
             ),
             400,
         )
+    # Filesystem sinks use only the common sanitizer's returned path; duplicating
+    # containment checks here also obscures the barrier from CodeQL.
+    target = Path(resolved)
     if target.suffix.lower() != ".py" or target.is_dir():
         return None, (
             jsonify(

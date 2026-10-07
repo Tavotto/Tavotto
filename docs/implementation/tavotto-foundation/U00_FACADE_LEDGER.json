@@ -639,13 +639,13 @@
         {
           "file": "src/tavotto/app.py",
           "symbol": "_original_page_pt",
-          "line": 1343,
+          "line": 1348,
           "role": "请求里已解析的物理尺寸 → 页面 pt"
         },
         {
           "file": "src/tavotto/app.py",
           "symbol": "_original_page_pt",
-          "line": 1343,
+          "line": 1348,
           "role": "originalspec 现算的逻辑尺寸 → 页面 pt"
         }
       ],
@@ -973,7 +973,7 @@
         {
           "file": "src/tavotto/app.py",
           "symbol": "_original_page_pt",
-          "line": 1344,
+          "line": 1348,
           "role": "老客户端 / MCP 没带尺寸时现算位图页面"
         },
         {

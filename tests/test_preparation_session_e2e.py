@@ -187,3 +187,58 @@ def test_the_old_blocking_probe_endpoint_still_registers_the_same_script(script_
         assert result["stems"] == ["dyn_abc"]
         assert result["error"] is None
         assert _runs(counter) == 1
+
+
+@needs_worker
+def test_explicit_rerun_executes_again_and_refreshes_an_unobserved_input(tmp_path):
+    """os.open input is outside the observer and project watcher; only an explicit run refreshes it."""
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    counter = tmp_path / "runs.txt"
+    data = tmp_path / "input.txt"
+    data.write_text("2", encoding="utf-8")
+    (proj / "fig.py").write_text(
+        "import os\n"
+        "import matplotlib\n"
+        "matplotlib.use('Agg')\n"
+        "import matplotlib.pyplot as plt\n"
+        f"open({str(counter)!r}, 'a').write('x')\n"
+        f"fd = os.open({str(data)!r}, os.O_RDONLY)\n"
+        "try:\n"
+        "    value = float(os.read(fd, 32))\n"
+        "finally:\n"
+        "    os.close(fd)\n"
+        "fig, ax = plt.subplots()\n"
+        "ax.plot([0, 1], [0, value])\n"
+        "fig.savefig('unobserved.pdf')\n",
+        encoding="utf-8",
+    )
+    with fa.running_app(proj, tmp_path / "work", env_overrides=ENV) as app:
+        _, report = app.call(SESSIONS, {"script": "fig.py"}, timeout=120)
+        sid = report["session_id"]
+        first_action = next(a for a in report["actions"] if a["kind"] == "run")
+        app.call(
+            f"{SESSIONS}/{sid}/actions",
+            {
+                "action_id": first_action["id"],
+                "expected_config_revision": report["config_revision"],
+            },
+        )
+        first = _wait_settled(app, sid)
+        assert first["phase"] == "completed", first
+        asset_id = figcapture.runtime_asset_id("fig.py", "unobserved")
+        assert _ylim(app.render(asset_id)) == pytest.approx([-0.1, 2.1])
+        assert _runs(counter) == 1
+        data.write_text("20", encoding="utf-8")
+        run = next(a for a in first["actions"] if a["kind"] == "run")
+        payload = {"action_id": run["id"], "expected_config_revision": first["config_revision"]}
+        _, claim = app.call(f"{SESSIONS}/{sid}/actions", payload)
+        assert claim["claimed"] is True
+        second = _wait_settled(app, sid)
+        assert second["phase"] == "completed", second
+        assert second["provider"]["attempt_id"] != first["provider"]["attempt_id"]
+        assert _runs(counter) == 2
+        assert _ylim(app.render(asset_id)) == pytest.approx([-1, 21])
+        _, duplicate = app.call(f"{SESSIONS}/{sid}/actions", payload)
+        assert duplicate["claimed"] is False
+        assert _runs(counter) == 2
