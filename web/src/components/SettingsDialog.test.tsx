@@ -152,7 +152,8 @@ describe('尺寸与滚动合同', () => {
   it('内容区独立滚动：切分区后滚回顶部，导航不滚', async () => {
     await open('project')
     const content = dialog().querySelector('[data-settings-content]') as HTMLElement
-    expect(content.className).toContain('overflow-y-auto') // jsdom 没有样式表，量 class 合同
+    // jsdom 只量常驻滚动轨道的合同；异步回包前后的像素位置由 e2e/perf-probe.spec.ts 验。
+    expect(content.className).toContain('overflow-y-scroll')
     content.scrollTop = 120
     await act(async () => navButtons().find((b) => b.dataset.section === 'export')!.click())
     expect(content.scrollTop).toBe(0)

@@ -408,9 +408,10 @@ export function SettingsDialog() {
         <div
           ref={contentRef}
           data-settings-content
-          // scrollbar-gutter 常驻：有没有滚动条内容都从同一条竖线起排，切页不左右跳；
+          // 常驻滚动轨道：Windows WebKit 的自定义滚动条不会靠 scrollbar-gutter 预留空间；
+          // auto 等回包撑高后才占 6px，会把居中的内容列左挪 3px，移动正在按的入口。
           // 底部留 mb 让滚动条在圆角之前就结束，不会贴着圆角被削
-          className="mb-2 min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden px-6 py-5 [scrollbar-gutter:stable]"
+          className="mb-2 min-h-0 min-w-0 flex-1 overflow-y-scroll overflow-x-hidden px-6 py-5 [scrollbar-gutter:stable]"
         >
           <SettingsCrumbContext.Provider value={setCrumb}>
             <div
