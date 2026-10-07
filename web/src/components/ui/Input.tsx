@@ -663,10 +663,11 @@ function HexInput({
   useEffect(() => {
     if (!focused) setText(value)
   }, [value, focused])
+  // 「改没改」比的是**颜色**不是字面：两边都过 normalizeHex（大小写、# 有无、首尾空白、三位简写）。
+  // 框里显示大写、引擎发来的常是小写——只比字面的话聚焦再离开就会白写一条 override（Codex #829 P2）
   const submit = () => {
-    if (text === value) return
     const c = normalizeHex(text)
-    if (c && c.toUpperCase() !== value) onCommit(c)
+    if (c && c !== normalizeHex(value)) onCommit(c)
     else setText(value)
   }
   return (
