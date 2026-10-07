@@ -63,6 +63,7 @@ import { EmptyState } from './ui/EmptyState'
 import { TextInput } from './ui/Input'
 import { Menu, MenuItem, MenuSeparator } from './ui/Menu'
 import { Dialog } from './ui/Dialog'
+import { focusOrigin } from './ui/focusOrigin'
 import { Segmented } from './ui/Segmented'
 import { Tip } from './ui/Tooltip'
 
@@ -212,8 +213,8 @@ export function VersionDrawer() {
     if (!open) return
     setSaveName('')
     setRenaming(null)
-    // 打开时记住触发点，关闭后把焦点还回去
-    restoreFocus.current = document.activeElement as HTMLElement | null
+    // 打开时记住触发点，关闭后把焦点还回去（从命令面板打开时是面板的打开者，见 `focusOrigin`）
+    restoreFocus.current = focusOrigin()
     return () => {
       // 抽屉关了，命名输入跟着收起：下次打开是「给现在存个名字…」按钮，不是一直开着的输入框
       setNaming(false)

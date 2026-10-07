@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { flushSync } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import { create } from 'zustand'
 import { msg, t as translate } from '@/i18n'
@@ -334,7 +335,10 @@ export function CommandPalette() {
   }, [active])
 
   const runCommand = (c: { id: string; run: () => void }) => {
-    setOpen(false)
+    // 先把「面板已关」整个提交完（含 effect）再执行命令：Radix 的焦点陷阱要等 effect 才撤，
+    // 命令若在同一次提交里把焦点交给别的表面（命名小框的 autoFocus），会被还没撤的陷阱当场拽回
+    // 输入框——小框的 onBlur 随即把自己关掉，命令一闪而过（Codex #833）。退场后的焦点归还见 `ui/Dialog`
+    flushSync(() => setOpen(false))
     useUiStore.getState().pushRecentCommand(c.id)
     c.run()
   }
