@@ -48,7 +48,7 @@ const REAL_USAGES = [
   ['focus-visible:focus-ring', 'src/index.css 的 @utility + 变体'],
   ['shadow-pop', '主题 token 工具类（--shadow-pop）'],
   ['bg-surface-2', '主题颜色'],
-  ['animate-pulse', 'src/canvas/PanelView.tsx'],
+  ['animate-sweep', 'src/canvas/PanelView.tsx（自定义动画 token）'],
   ['w-max', 'src/canvas/WorkspaceContextBar.tsx'],
   ['sr-only', 'src/playground/components/ExampleCard.tsx'],
 ]

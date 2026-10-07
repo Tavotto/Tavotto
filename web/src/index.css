@@ -12,7 +12,7 @@
    Tavotto — design tokens（Design Constitution 的落地；全文见
    docs/ux/DESIGN_CONSTITUTION.md，这里只放值与一句理由）
 
-   方向：Paper × Instrument。微暖纸白底、白色 surface、层级靠留白与轻微背景差；
+   方向：Paper × Instrument。灰色桌面、白色 surface、层级靠留白与轻微背景差；
    边框只给真实输入框、区域边界、选择状态与浮层；
    持久表面里只有「真的是一张卡」的东西有投影（--shadow-card，2026-09-15 学 Beautiful UI）；
    浮层只有两种投影：--shadow-pop（菜单 / popover / 气泡以外的浮条）
@@ -25,111 +25,138 @@
      surface-hover / surface-active / selected（交互面三档，hover 最弱）
      ink-1 = ink · ink-2 · ink-3 · ink-disabled = ink-faint
      border / border-strong · accent / accent-subtle
-     danger / warning = warn / success = ok（各带 -subtle 底色）
+     danger / warning = warn / success = ok / info（锚点 + 派生的 -surface / -border / -content）
    --------------------------------------------------------------------------- */
 @theme {
-  /* 2026-09-30 重设计（用户拍板，参照 OpenBitFun）：灰色桌面放导航（顶栏 / 左轨 / 抽屉），
-     作品放进白色圆角的工作面板（画布标签 + 画布 + 属性栏）。bg 是桌面；canvas 是工作面板里
-     画布那一块的底，比桌面浅一档，纸（白）放在它上面。 */
-  --color-bg: #eeede9;
-  --color-canvas: #f3f2ee;
+  /* 中性面（2026-09-30 重设计 + 2026-10-07 设计审计 §1 收敛，用户拍板）：灰色桌面放导航（顶栏 / 左轨 / 抽屉），
+     作品放进白色圆角的工作面板（画布标签 + 画布 + 属性栏）。黄度降低、合成三档 + 可编辑框：
+     bg 桌面 < canvas 工作面板里画布那一块（比桌面浅一档，纸（白）放在它上面）< surface 白；
+     surface-2 只读值 / 徽章底。「纸感」只留在画布上的那张纸本身。 */
+  --color-bg: #efefed;
+  --color-canvas: #f5f5f3;
   --color-surface: #ffffff;
-  --color-surface-2: #f7f7f4;
+  --color-surface-2: #f7f7f5;
   /* 交互面：hover < active < selected，三档都是 ink 的半透明叠加，白 surface 与
-     暖灰 bg 上都成立。组件里不再手写 bg-ink/[.035]…[.09] 那串随机透明度
+     灰 bg 上都成立。组件里不再手写 bg-ink/[.035]…[.09] 那串随机透明度
      （2026-09-11 收敛前全仓有 9 种）。 */
   --color-surface-hover: color-mix(in srgb, var(--color-ink) 5%, transparent);
   --color-surface-active: color-mix(in srgb, var(--color-ink) 8%, transparent);
+  /* 字段组（ui/FieldGroup）的底：ink 3%，比 hover 还淡一档——设置页的分组是一块「凹进去的托盘」，不是卡 */
+  --color-group: color-mix(in srgb, var(--color-ink) 3%, transparent);
 
-  /* hairline 与区域边界：ink 12% 的半透明叠加（2026-09-15 打磨批次 A），落在白与纸上都是「一级台阶」
+  /* hairline 与区域边界：ink 12% 的半透明叠加（2026-09-15 打磨批次 A），落在白与灰上都是「一级台阶」
      而不是一根实线；strong 18% 给 hover 中的边界。 */
   --color-border: color-mix(in srgb, var(--color-ink) 12%, transparent);
   --color-border-strong: color-mix(in srgb, var(--color-ink) 18%, transparent);
   /* 控件边界：未选中的复选框 / 单选的方框圆圈、开关关态的轨道——它们的边界就是
-     控件的全部识别信息，要过非文字对比 3:1（WCAG 1.4.11）。border-strong（#cfcfc7）
-     对白只有 1.57:1、对纸 1.40:1，2026-09-14 审计（S10）量到关态开关在 48px 设置行里
-     几乎看不见。#8a8a82：白 3.48 / 纸 3.10 / surface-2 3.24。
+     控件的全部识别信息，要过非文字对比 3:1（WCAG 1.4.11）。border-strong 对白只有约 1.5:1，
+     2026-09-14 审计（S10）量到关态开关在 48px 设置行里几乎看不见。
+     #84847c：白 3.77 / 桌面 3.27 / surface-2 3.51（tokenContrast.test 守着 ≥3）。
      border / border-strong 继续给 hairline 分隔、hover 中的输入框与区域边界。 */
   --color-border-control: #84847c;
-  /* 可编辑框的**底**（fieldBox，S8 甲「有框 = 能改」不变；2026-09-15 参考 Codex 设置页的输入框，用户拍板
-     「普通输入框稍微换一个颜色就可以了」）：比面板深一级的灰（对白 1.14:1）、静态无边线、无内阴影；hover 再深
-     一档；聚焦才是不透明 accent 边——3:1 由它承担。此前（批次 A T1）是 ink 16% 的边、hover 25%；同一天先试过
-     「凹面」（这个底 + 1px 内阴影 + 聚焦浮回白底），用户看过对比后取消了内阴影那一层，只留颜色。
-     ink-3 落在 field 上 4.71:1、hover 底 4.54:1（`#ebeae5` 只有 4.46，tokenContrast.test 拦下过），
-     占位 / 单位 / 前缀都还能读。border-control（复选框 / 单选 / 关态开关）仍是实色 3:1，边界就是它们的全部。 */
-  --color-field: #f1f0ec;
-  --color-field-hover: #edece8;
+  /* 可编辑框的**底**（fieldBox，S8 甲「有框 = 能改」不变；2026-09-15 参考 Codex 设置页的输入框）：比面板深一级的灰
+     （对白 1.12:1）、静态无边线、无内阴影；hover 再深一档；聚焦才是不透明 accent 边——3:1 由它承担。
+     ink-3 落在 field 上 4.71:1、hover 底 4.55:1（tokenContrast.test 守着 ≥4.5），占位 / 单位 / 前缀都还能读。 */
+  --color-field: #f2f2f0;
+  --color-field-hover: #eeeeec;
 
+  /* 墨阶（2026-10-07 设计审计 §1.1，用户拍板 ink-2 #4a4a45 / ink-3 #74746e）：此前 ink-2 #5c5c55 与 ink-3 #6b6b64
+     几乎同色，次级与元信息分不开。ink-2 压深到 8.9:1（白）；ink-3 的拍板值 #74746e 在桌面上只有 4.08:1、
+     可编辑框 hover 底上 3.98:1，按「不过就最小幅度压深」收到 #6c6c66——白 5.28 / 桌面 4.59 / surface-2 4.93 /
+     画布灰 4.84 / field 4.71 / field-hover 4.55，**所有底色都过 4.5:1**（此前画布灰上不达标的那条限制随之取消）。 */
   --color-ink: #1b1b18;
-  /* 次级正文：≥5.9:1（#f2f2ef 上），可放心用于说明文字 */
-  --color-ink-2: #5c5c55;
-  /* 三级正文：可读的最浅一档。实测（issue #210）——白 5.37:1、surface-2 5.00:1、
-     --color-bg 4.78:1，都过普通文字的 4.5:1；但**画布灰 --color-canvas 上只有
-     4.45:1**，差 0.05 不达标。要在画布底色上直接写字得往上挑一档（ink-2）。
-     空画布提示用的是它，成立的理由是那段字坐在**白纸**上而不是画布灰上。 */
-  --color-ink-3: #6b6b64;
+  /* 次级正文：标签、说明里要读的字 */
+  --color-ink-2: #4a4a45;
+  /* 三级正文：元数据、单位、占位、说明（type-caption / type-meta） */
+  --color-ink-3: #6c6c66;
   /* faint：仅装饰、禁用态、非必要信息；不用于需要阅读的文字 */
   --color-ink-faint: #a3a39a;
 
-  /* 品牌蓝（Tavotto Brand System Rev 2.0）：链接、主动作强调、徽章、focus ring。
-     与选中蓝 --color-sel 分工明确：sel 只做选中 / 对齐 / 尺寸线，不进标志。 */
-  /* 2026-09-30 用户定的品牌蓝 #5A92E5（色相 216°）。它本身对白只有 3.14:1、对桌面 2.7:1，
-     当焦点环 / 蓝字不够格（焦点环 ≥3:1、字 ≥4.5:1，tokenContrast.test 守着）——所以蓝字与焦点环
-     用同一色相压深到 4.5:1 的一档，浅底 subtle 用它本身调淡。 */
+  /* 品牌蓝：2026-09-30 用户定的 #5A92E5（色相 216°）。它本身对白只有 3.14:1、对桌面 2.7:1，
+     当焦点环 / 蓝字不够格（焦点环 ≥3:1、字 ≥4.5:1，tokenContrast.test 守着）——所以焦点环、AI 与少数蓝字
+     用同一色相压深的一档，浅底 subtle 用它本身调淡。与选中蓝 --color-sel 分工明确：sel 只在画布上做
+     选中 / 对齐 / 尺寸线。链接不是蓝字（ink-2 + 悬停下划线，第二十五节）。 */
   --color-accent: #2c73de;
   --color-accent-subtle: #ebf2fc;
   /* 列表 / 分段 / 选项格的**选中态**：ink 10% 的半透明叠加（2026-09-15 打磨批次 A）——
-     hover 5% < active 8% < selected 10%，三档在白面板与纸底上都成立；此前固定色 #ebebe6 在
-     纸底上只有 1.07:1，比 hover 还淡。selected 只是轻 tint，选中态仍要靠字重 / 对勾再说一遍。 */
+     hover 5% < active 8% < selected 10%，三档在白面板与灰底上都成立。selected 只是轻 tint，
+     选中态仍要靠字重 / 对勾再说一遍。 */
   --color-selected: color-mix(in srgb, var(--color-ink) 10%, transparent);
+
+  /* 状态色：一个锚点派生三值（2026-10-07 设计审计 §1，学 OpenBitFun 的派生公式）：
+       -surface  锚点 10% 混白  —— 状态块 / 胶囊的底
+       -border   锚点 30% 混白  —— 状态块的内描边
+       -content  锚点 70% 压黑  —— 状态块里的**字**（≥4.5:1，tokenContrast.test 量的是合成后的颜色）
+     锚点本色给图标、圆点、进度、红字 ghost 按钮（danger / ok 锚点对白 ≥4.5，可直接当字；
+     warn 锚点 #b07400 对白只有 3.9，字一律用 warn-content）。info 的锚点就是 accent。
+     新增一种状态色只写一个锚点。旧名 *-subtle 是 -surface 的别名，迁完再删。 */
   --color-danger: #c4442a;
-  /* danger 字落在 danger-subtle 上（InlineWarning / Badge / 状态栏）要过 4.5:1：
-     #fbeeeb 只有 4.40（settings-shell 的 axe 在「更新」分区当场 serious），
-     #fdf3f1 是 4.58——与从前 `bg-danger/[.07]` 混出来的 #fbf2f0（4.53）同一档。 */
-  --color-danger-subtle: #fdf3f1;
-  /* 警示（「需要处理，但还没坏」）：编码 Agent 的「需要登录」用它。
-     与 danger 分工明确——没登录不是故障，装坏了才是。
-     5.9:1（白）/ 5.3:1（暖灰底），两处都过普通文字的 4.5:1。 */
-  --color-warn: #8a5a00;
-  --color-warn-subtle: #f7efe0;
-  /* 成功 / 就绪（「已经好了，不用管」）：编码 Agent 的「可用」用它。
-     小面积图标与 Badge 的字：#2e7d4f 落在 ok-subtle 上只有 4.41:1（tokenContrast.test 抓到），
-     收深一档到 #2b7649——ok-subtle 上 4.85、白上 5.54、白对勾压在上面 5.54。 */
+  --color-warn: #b07400;
   --color-ok: #2b7649;
-  --color-ok-subtle: #e6f3ea;
+  --color-info: var(--color-accent);
+  --color-danger-surface: color-mix(in oklab, var(--color-danger) 10%, var(--color-surface));
+  --color-danger-border: color-mix(in oklab, var(--color-danger) 30%, var(--color-surface));
+  --color-danger-content: color-mix(in oklab, var(--color-danger) 70%, black);
+  --color-warn-surface: color-mix(in oklab, var(--color-warn) 10%, var(--color-surface));
+  --color-warn-border: color-mix(in oklab, var(--color-warn) 30%, var(--color-surface));
+  --color-warn-content: color-mix(in oklab, var(--color-warn) 70%, black);
+  --color-ok-surface: color-mix(in oklab, var(--color-ok) 10%, var(--color-surface));
+  --color-ok-border: color-mix(in oklab, var(--color-ok) 30%, var(--color-surface));
+  --color-ok-content: color-mix(in oklab, var(--color-ok) 70%, black);
+  --color-info-surface: color-mix(in oklab, var(--color-info) 10%, var(--color-surface));
+  --color-info-border: color-mix(in oklab, var(--color-info) 30%, var(--color-surface));
+  --color-info-content: color-mix(in oklab, var(--color-info) 70%, black);
+  /* 对话框页脚的危险浅底胶囊 hover：底再深一档（16%） */
+  --color-danger-surface-hover: color-mix(in oklab, var(--color-danger) 16%, var(--color-surface));
+  /* 旧名别名（迁完删除） */
+  --color-danger-subtle: var(--color-danger-surface);
+  --color-warn-subtle: var(--color-warn-surface);
+  --color-ok-subtle: var(--color-ok-surface);
   --color-sel: #4685e2;
-  /* 圆角只有四档 + full（圆点 / 开关 / 徽章）。先把 Tailwind 自带的 xl / 2xl…
+
+  /* 圆角族（2026-10-07 设计审计 §3.1，用户拍板）。先把 Tailwind 自带的 xl / 2xl…
      整个清掉，rounded-xl 这种写了也不生效，随机圆角就没有来路。
-       xs 3  ——16px 高以下的小片：kbd、计数角标、缩略图上的标签
-       sm 6  ——控件：输入框、按钮、图标钮、选项格、树行
-       md 8  ——卡片与浮层：菜单、popover、tooltip、select 弹层
-       lg 12 ——对话框、命令面板 */
+       xs 4     ——16px 高以下的小片：kbd、计数角标、缩略图上的标签、分段 thumb
+       sm 6     ——小控件：tooltip、20px 行内片、复选框以外的小块
+       md 8     ——行、可编辑框、菜单项、小卡片 / 缩略图、说明条
+       lg 12    ——卡片、菜单 / popover / select 弹层的外壳、多行浮动面板、列表里的说明块
+       panel 16 ——对话框、工作面板、助手输入框、命令面板
+       full     ——带字的按钮、图标钮、分段控件、chip、toast、单行浮动条
+     规则：外层圆角 = 内层圆角 + 内边距（菜单 lg 12 = 项 md 8 + 内边距 4）。 */
   --radius-*: initial;
-  --radius-xs: 3px;
+  --radius-xs: 4px;
   --radius-sm: 6px;
-  /* md 10 / lg 14（2026-09-15 打磨批次 A）：浮层与对话框比控件（6）大 4～8，此前只差 2。 */
-  --radius-md: 10px;
-  --radius-lg: 14px;
-  /* 工作面板（画布 + 属性栏那一整块白面板）的外圆角，全产品只有这一处（2026-09-30 重设计） */
+  --radius-md: 8px;
+  --radius-lg: 12px;
   --radius-panel: 16px;
 
-  /* 浮层投影（2026-09-15 打磨批次 A）：ring 8% + 大模糊 8%。环替代了实色 border——OpenAI apps-sdk-ui
-     与 Claude 产品壳的浮层都是「1px 半透明环 + 一层 24px 左右的低 alpha 阴影」。对话框 / 命令面板
-     用更深一档的 --shadow-dialog；分段选择器的白色 thumb 用 --shadow-thumb。Tooltip 是 ink 底白字，不带投影。 */
-  --shadow-pop: 0 0 0 1px rgba(27, 27, 24, 0.08), 0 8px 24px rgba(27, 27, 24, 0.08);
-  --shadow-dialog: 0 0 0 1px rgba(27, 27, 24, 0.06), 0 24px 64px rgba(27, 27, 24, 0.1);
-  --shadow-thumb: 0 0 0 1px rgba(27, 27, 24, 0.06), 0 1px 2px rgba(27, 27, 24, 0.08);
-  /* 真的是一张卡的东西才有的抬升（2026-09-15 学 Beautiful UI 的 shadow-card，数取 Codex 浅色的
-     --elevation-composer 前两层：1px 环 4% + 0 2px 8px 4%）——比 shadow-pop 低一档（卡在面上，不是浮在面上）。
-     给素材卡 / 会话卡 / 任务行 / 诊断与修复卡；分区、列表行、输入框、分段控件仍是平的。
-     hover / 选中用 ring-1 叠在它上面说话。 */
-  --shadow-card: 0 0 0 1px rgba(27, 27, 24, 0.04), 0 2px 8px rgba(27, 27, 24, 0.04);
+  /* 投影（2026-10-07 设计审计 §1：阶梯化 + 去 rgba 化）：全部写成 `color-mix(var(--color-shadow) N%)`，
+     暗色只换 --color-shadow 一处。浮层是「1px 环 + 一层大模糊」，不画实色 border。
+       card     真的是一张卡（ui/Card；门禁：只在 Card.tsx 里写）：环 6% + 0 1px 2px 4% + 0 4px 12px 4%
+       pop      菜单 / popover / 浮条：环 8% + 0 8px 24px 8%
+       dialog   对话框 / 命令面板：更深一档
+       thumb    分段选择器的白色 thumb、开关的滑块
+       composer 改图助手输入框（玻璃，参考 Codex 的三层）
+     Tooltip 是 ink 底白字，不带投影。 */
+  --color-shadow: #1b1b18;
+  --shadow-card:
+    0 0 0 1px color-mix(in srgb, var(--color-shadow) 6%, transparent),
+    0 1px 2px color-mix(in srgb, var(--color-shadow) 4%, transparent),
+    0 4px 12px color-mix(in srgb, var(--color-shadow) 4%, transparent);
+  --shadow-pop: 0 0 0 1px color-mix(in srgb, var(--color-shadow) 8%, transparent), 0 8px 24px color-mix(in srgb, var(--color-shadow) 8%, transparent);
+  --shadow-dialog:
+    0 0 0 1px color-mix(in srgb, var(--color-shadow) 6%, transparent),
+    0 24px 64px color-mix(in srgb, var(--color-shadow) 10%, transparent);
+  --shadow-thumb:
+    0 0 0 1px color-mix(in srgb, var(--color-shadow) 6%, transparent),
+    0 1px 2px color-mix(in srgb, var(--color-shadow) 8%, transparent);
   /* 改图助手输入框：浮在对话流上的玻璃（2026-09-15 参考 Codex 的 _ComposerLayoutBody，用户拍板）。
-     Codex 的写法：底 = soft 灰 90% 不透明 + backdrop-filter blur(16px)、border 0、浅色投影
-     `0 0 0 1px 4%, 0 2px 8px 4%, 0 4px 40px 8px 2%`（深色是 inset 0 0 1px #fff3 的高光边）。
-     这里同一组数：底是 field 90%，内容从它底下滚过时被糊掉——玻璃只在它浮着的时候成立。 */
+     底 = field 90% 不透明 + backdrop-filter blur、无边、三层投影；内容从它底下滚过时被糊掉——玻璃只在它浮着的时候成立。 */
   --color-glass: color-mix(in srgb, var(--color-field) 90%, transparent);
-  --shadow-composer: 0 0 0 1px rgba(27, 27, 24, 0.04), 0 2px 8px rgba(27, 27, 24, 0.04), 0 4px 40px 8px rgba(27, 27, 24, 0.024);
+  --shadow-composer:
+    0 0 0 1px color-mix(in srgb, var(--color-shadow) 4%, transparent),
+    0 2px 8px color-mix(in srgb, var(--color-shadow) 4%, transparent),
+    0 4px 40px 8px color-mix(in srgb, var(--color-shadow) 2.4%, transparent);
 
   --text-xs: 11px;
   --text-xs--line-height: 15px;
@@ -139,7 +166,8 @@
   --text-base--line-height: 18px;
   --text-lg: 14px;
   --text-lg--line-height: 20px;
-  /* xl 15：只给 type-title（2026-09-15 打磨批次 A）——标题与正文 12 之间要有 3px 台阶。 */
+  /* xl 15：只给 type-title（2026-09-15 打磨批次 A）——标题与正文 12 之间要有 3px 台阶。
+     17 / 24 不进字号阶梯：只经 type-heading / type-display 两个角色出现，不给页面单独挑。 */
   --text-xl: 15px;
   --text-xl--line-height: 20px;
 
@@ -228,6 +256,10 @@
   --animate-swap-out: swap-out var(--duration-fast) var(--ease-standard) both;
   --animate-swap-in: swap-in var(--duration-fast) var(--ease-standard) var(--duration-fast) both;
   --animate-shimmer: shimmer 1.8s linear infinite;
+  /* 「看这里」：问题面板定位到画布对象时那一圈高亮闪三下就停（2026-10-07 设计审计 §9.4）。
+     不是 Tailwind 的 pulse——那条无限呼吸被门禁禁了（加载方言只有 sweep / 静态骨架 / shimmer / 转圈）；
+     这是一次性的注意力信号，有限次数、走 token 曲线。 */
+  --animate-attention: attention 900ms var(--ease-standard) 3;
 }
 
 /* @sfinterface/numbers 的两个时长钩子接到动效 token（宪法第七节：时长只来自 token）：
@@ -235,6 +267,35 @@
 :root {
   --sfi-resolve: var(--duration-slow);
   --sfi-settle: var(--duration-exit);
+
+  /* 层级（z-index）token（2026-10-07 设计审计 §1）：组件里只写 z-sticky / z-canvas-chrome / … 这些工具类
+     （下面的 @utility），不写数字——foundation.test 守着。值与 token 化之前的裸值逐档对应，叠放顺序不变：
+       sticky 10        吸顶的组头、组件内部「压在兄弟上面」的那一层（分段 thumb 之上的字、标尺角）
+       canvas-chrome 20 画布 / 面板里的浮层：浮动工具条、通知轨、缩放、抽屉把手
+       drawer 30        覆盖式抽屉、属性栏覆盖态、HUD
+       overlay 40       对话框遮罩、选中浮动栏、命名小框
+       dialog 50        对话框本体、命令面板、快捷编辑
+       popover 60       菜单 / popover / select 弹层（从对话框里打开的也在它上面）
+       tooltip 70       气泡
+       toast 80         预留给通知轨移出画布列之后（此前它在画布列里，用 canvas-chrome）
+       onboarding 90    引导卡（高亮环 = onboarding-ring，比卡低一层） */
+  --z-sticky: 10;
+  --z-canvas-chrome: 20;
+  --z-drawer: 30;
+  --z-overlay: 40;
+  --z-dialog: 50;
+  --z-popover: 60;
+  --z-tooltip: 70;
+  --z-toast: 80;
+  --z-onboarding-ring: 89;
+  --z-onboarding: 90;
+
+  /* 画布覆盖层 token（2026-10-07 设计审计 §10.1）：悬停描边的不透明度、唯一的一种虚线、手柄填充、遮罩。
+     画布代码逐处迁到这里属于画布那一期；新代码不再写 #fff / #1B1B18 / rgba(27,27,24,…) 字面量。 */
+  --sel-hover-opacity: 0.6;
+  --sel-dash: 4 3;
+  --handle-fill: var(--color-surface);
+  --color-scrim: color-mix(in srgb, var(--color-ink) 34%, transparent);
 }
 
 /* Tailwind v4 的 `-translate-x-1/2` 编译成**独立的 `translate` 属性**，不是
@@ -418,6 +479,16 @@
   }
 }
 
+@keyframes attention {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
 /* 亮带从左扫到右（1.35s），停 0.45s 再来：一直扫会像在催 */
 @keyframes shimmer {
   0% {
@@ -464,6 +535,8 @@
   [contenteditable='true'] {
     user-select: text;
     -webkit-user-select: text;
+    /* 插入点用 accent（2026-10-07 设计审计 §3.3）：输入框聚焦只换边色，光标是框里唯一的一点蓝 */
+    caret-color: var(--color-accent);
   }
 
   button {
@@ -472,10 +545,12 @@
     color: inherit;
   }
 
-  /* 按钮 / 复选 / 单选 / 折叠头一律箭头光标，手形只给链接（2026-09-15 拍板）。
-     原语里的 cursor-pointer 已删；这一条兜住 UA 默认值——summary 与这三种
-     input 的 UA 样式根本不写 cursor，不兜的话落回 auto。 */
+  /* 按钮 / 复选 / 单选 / 折叠头 / 标签一律箭头光标，手形只给链接（2026-09-15 拍板；2026-10-07 起
+     foundation.test 禁掉了页面里的手形光标类，最后 16 处一并删掉）。这一条兜住 UA 默认值——summary、label
+     与这三种 input 的 UA 样式根本不写 cursor，不兜的话落回 auto（label 上是文字光标）。
+     例外只有可拖的卡（素材卡、画布对象）：抓手光标说的是「能拖」，不是「能点」。 */
   summary,
+  label,
   input[type='checkbox'],
   input[type='radio'],
   input[type='color'] {
@@ -488,19 +563,23 @@
     margin: 0;
   }
 
+  /* 滚动条（2026-10-07 设计审计 §3.7）：6px 胶囊，**只在这个滚动区被悬停或内含焦点时**画出来——
+     300px 的窄栏里常显的 10px 条很占眼。`:hover` 落在滚动容器自己身上（指针在它任何后代上都算），
+     所以只有指针所在的那一列显示；键盘用户靠 :focus-within。轨道永远透明。 */
   ::-webkit-scrollbar {
-    width: 10px;
-    height: 10px;
+    width: 6px;
+    height: 6px;
   }
   ::-webkit-scrollbar-thumb {
-    background: color-mix(in srgb, var(--color-ink-faint) 55%, transparent);
+    background: transparent;
     border-radius: 99px;
-    border: 3px solid transparent;
-    background-clip: content-box;
+  }
+  :hover::-webkit-scrollbar-thumb,
+  :focus-within::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--color-ink-faint) 60%, transparent);
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: color-mix(in srgb, var(--color-ink-2) 55%, transparent);
-    background-clip: content-box;
+    background: color-mix(in srgb, var(--color-ink-3) 60%, transparent);
   }
   ::-webkit-scrollbar-track {
     background: transparent;
@@ -522,10 +601,6 @@
   }
 }
 
-/* 焦点环：不透明的品牌蓝。2026-09-14 审计（S2）量过 45% 透明那一版——合成后对白 /
-   纸 / surface-2 / selected / 画布灰只有 1.86–1.98:1，达不到非文字对比 3:1（WCAG 1.4.11），
-   而 Tavotto 又刻意把别的蓝色都去掉了，这一圈是键盘用户唯一的位置线索。
-   不透明的 #2868b7 对同一组底色 4.6–5.6:1。要柔和感在外面另叠光晕，对比度由这一圈负责。 */
 /* 时长四档接成真正的工具类（2026-09-15 全面审计 A01）：Tailwind 4 没有 --duration-* 命名空间，
    duration-fast / base / slow / exit 写了不产出，页签下划线、分段 thumb、钳位闪边全在跑默认档。
    同时写 --tw-duration，让 transition-* 的 var(--tw-duration, …) 接得上。 */
@@ -534,13 +609,49 @@
   transition-duration: --value(--duration-*);
 }
 
+/* 焦点环：不透明的 accent 2px、离开元素 2px（2026-10-07 设计审计 §3.3：offset 1 → 2，环与控件之间留一道底色）。
+   2026-09-14 审计（S2）量过 45% 透明那一版——合成后对各底色只有 1.9:1，达不到非文字对比 3:1（WCAG 1.4.11），
+   而 Tavotto 又刻意把别的蓝色都去掉了，这一圈是键盘用户唯一的位置线索。accent 对各底色 ≥3:1（tokenContrast.test）。
+   可编辑框不叠这一圈：它们聚焦只换边色（fieldBox）。 */
 @utility focus-ring {
   outline: 2px solid var(--color-accent);
-  outline-offset: 1px;
+  outline-offset: 2px;
+}
+
+/* 层级工具类：值在 :root 的 --z-*（见上），组件只写名字 */
+@utility z-sticky {
+  z-index: var(--z-sticky);
+}
+@utility z-canvas-chrome {
+  z-index: var(--z-canvas-chrome);
+}
+@utility z-drawer {
+  z-index: var(--z-drawer);
+}
+@utility z-overlay {
+  z-index: var(--z-overlay);
+}
+@utility z-dialog {
+  z-index: var(--z-dialog);
+}
+@utility z-popover {
+  z-index: var(--z-popover);
+}
+@utility z-tooltip {
+  z-index: var(--z-tooltip);
+}
+@utility z-toast {
+  z-index: var(--z-toast);
+}
+@utility z-onboarding-ring {
+  z-index: var(--z-onboarding-ring);
+}
+@utility z-onboarding {
+  z-index: var(--z-onboarding);
 }
 
 /* 可滚但不画滚动条：只给画布页签条这种「一行、36px 高」的横滚区（2026-09-27 用户拍板）。
-   全局的 ::-webkit-scrollbar 是 10px 自定义条，WebKit 里它占掉条内 10px、页签被压到 25px。
+   全局的 ::-webkit-scrollbar 是 6px 自定义条，WebKit 里它照样占掉条内的高度、把页签压扁。
    两行都要：scrollbar-width 给 Firefox / 新版 WebKit，伪元素给 WKWebView 与旧 Chromium。
    触控板横滑、Shift+滚轮照常滚——只是不画出来。 */
 @utility scrollbar-none {
@@ -606,27 +717,44 @@
 
 /* ---------------------------------------------------------------------------
    字体角色：层级由角色决定，不由页面自己挑 font-size / font-weight 组合。
-   六档对应 docs/ux/DESIGN_CONSTITUTION.md 第八节；数值全部取自上面的字号阶梯。
-     type-title    对话框 / 页面标题        15px 500 ink
+   对应 docs/ux/DESIGN_CONSTITUTION.md 第六节（2026-10-07 设计审计 §2 增补 display / heading / reading，
+   title 升 600、caption 升 12 / ink-3）。
+     type-display  首页 / 空态大标题        24px 600 -0.02em ink
+     type-heading  属性栏对象名、设置页头    17px 600 -0.01em ink
+     type-title    对话框 / 分区级标题      15px 600 ink
+     type-reading  阅读面正文（助手回答、对话框正文、设置说明）13px 行距 1.6 ink
      type-section  分区小标题              12px 500 ink
      type-body     正文                    12px ink
-     type-control  控件里的文字            12px（颜色随控件）
-     type-caption  说明文字                11px ink-2，行距放宽
+     type-control  控件里的文字            12px（颜色随控件；阅读面上的 32px 控件用 13）
+     type-caption  说明文字                12px 行距 1.5 ink-3
      type-meta     元数据 / 路径 / 计数    11px ink-3
      type-number   数值（输入框的值、只读读数）12px，系统字体 + 等宽数字（定义在文件末尾）
    --------------------------------------------------------------------------- */
+@utility type-display {
+  font-size: 24px;
+  line-height: 30px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--color-ink);
+}
+@utility type-heading {
+  font-size: 17px;
+  line-height: 24px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--color-ink);
+}
 @utility type-title {
   font-size: var(--text-xl);
   line-height: var(--text-xl--line-height);
-  font-weight: 500;
+  font-weight: 600;
   color: var(--color-ink);
 }
-/* 分区小标题：12px / 500 / ink（2026-09-14 审计 S9，用户拍板）。此前 11px / ink-3 只靠
-   大写 + 字距与行标签（12px / 400 / ink-2）区分——中文没有大写、0.06em 在两个汉字上
-   看不见，于是「线条 / 数据点 / 刻度与网格」与「颜色 / 线宽」几乎同形。现在「深 + 重」
-   永远是标题、「浅 + 常规」永远是标签。二审 B2（用户拍板「甲」）：英文也不再大写 + 字距——
-   两种手段叠着，「TICK MARKS」读起来像 14px 页头，中英不是同一个骨架；Apple 检查器的分区
-   标题就是句首大写的 500 字重。 */
+@utility type-reading {
+  font-size: var(--text-base);
+  line-height: 1.6;
+  color: var(--color-ink);
+}
 @utility type-section {
   font-size: var(--text-sm);
   line-height: var(--text-sm--line-height);
@@ -638,15 +766,17 @@
   line-height: var(--text-sm--line-height);
   color: var(--color-ink);
 }
-/* 控件里的值：12px（2026-09-14 审计分歧 1，用户拍板「要读的值」试到正文档；标签 / caption / meta 留 11） */
+/* 控件里的值：12px（2026-09-14 审计分歧 1，用户拍板「要读的值」试到正文档；meta 留 11） */
 @utility type-control {
   font-size: var(--text-sm);
   line-height: var(--text-sm--line-height);
 }
+/* 说明文字：12 / 1.5 / ink-3（2026-10-07 设计审计 §2：11 → 12，ink-2 → ink-3——ink-2 拉深之后它留给标签，
+   说明与 meta 同一档颜色、靠字号分开） */
 @utility type-caption {
-  font-size: var(--text-xs);
+  font-size: var(--text-sm);
   line-height: 1.5;
-  color: var(--color-ink-2);
+  color: var(--color-ink-3);
 }
 @utility type-meta {
   font-size: var(--text-xs);
@@ -714,5 +844,34 @@
   [data-inspector-panel] [data-section] + [data-section] {
     padding-top: 1rem;
     background: linear-gradient(var(--color-border), var(--color-border)) no-repeat 12px 0 / calc(100% - 24px) 1px;
+  }
+
+  /* 字段组（ui/FieldGroup，2026-10-07 设计审计 §4.3）：行内边距 12 / 16；相邻两行之间一条左右各内缩 16 的
+     hairline，用背景画（border 会顶到组的圆角边缘）。行自己的 px / py 工具类（utilities 层）盖得过这里。 */
+  [data-field-group] > * {
+    padding: 12px 16px;
+  }
+  [data-field-group] > * + * {
+    background: linear-gradient(var(--color-border), var(--color-border)) no-repeat 16px 0 / calc(100% - 32px) 1px;
+  }
+
+  /* 对话框的浮动页脚（ui/Dialog，2026-10-07 设计审计 §3.5）：页脚吸在可滚正文的底边，正文还有没滚到的部分时
+     （`data-scrolled`）变成一层毛玻璃 + 顶上一条 hairline，内容从它底下滑过；滚到底 / 不滚时就是普通的白底页脚。
+     prefers-reduced-transparency：不模糊，实底。 */
+  [data-dialog-footer][data-floating] {
+    background: var(--color-surface);
+  }
+  [data-dialog-footer][data-scrolled] {
+    background: color-mix(in srgb, var(--color-surface) 82%, transparent);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    box-shadow: 0 -1px 0 var(--color-border);
+  }
+  @media (prefers-reduced-transparency: reduce) {
+    [data-dialog-footer][data-scrolled] {
+      background: var(--color-surface);
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
+    }
   }
 }
