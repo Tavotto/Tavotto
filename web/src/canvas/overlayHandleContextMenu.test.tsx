@@ -140,4 +140,42 @@ describe('选中框手柄上的右键', () => {
     expect(canvasMenu()).toBeNull()
     expect(useQuickEdit.getState().target).toEqual({ kind: 'element', panelId: 'p1', gid: 'axes_0' })
   })
+
+  // Codex #833：从元素树选中的真实组（共享色条，`Manifest.groups`）——选中 gid 是组 gid，不在元素表里。
+  // 右键组框手柄开的弹层要说的是这个组（不是一个不存在的元素、开了马上自己关掉）
+  it('图内组框手柄：开这个组的弹层，选区不动', async () => {
+    const axes1 = {
+      gid: 'axes_1', role: 'axes', label: '子图 2', bbox: [0.72, 0.1, 0.1, 0.6] as [number, number, number, number],
+      editable: [{ prop: 'position', type: 'rect', value: [0.72, 0.3, 0.1, 0.6] }], draggable: false, resizable: true,
+    }
+    const cbar = { ...axes1, gid: 'axes_2', label: '色条轴', bbox: [0.85, 0.1, 0.03, 0.6] as [number, number, number, number],
+      editable: [{ prop: 'position', type: 'rect', value: [0.85, 0.3, 0.03, 0.6] }], is_colorbar: true }
+    const grouped = {
+      ...manifest,
+      elements: [...manifest.elements, axes1, cbar],
+      groups: [{
+        gid: 'group:axes_2', kind: 'shared_colorbar', members: ['axes_0', 'axes_1', 'axes_2'],
+        subplot_gids: ['axes_0', 'axes_1'], colorbar_gid: 'axes_2.colorbar', bbox: [0.1, 0.1, 0.78, 0.7], resizable: true,
+      }],
+    } as unknown as Manifest
+    await act(async () =>
+      useDocumentStore.getState().commit(literal('放'), (d) => {
+        d.objects.push(structuredClone(panel))
+      }),
+    )
+    seedExactRender(panel, grouped)
+    useSelectionStore.getState().set(['p1'])
+    useUiStore.setState({ elementPanelId: 'p1', selectedGids: ['group:axes_2'] })
+    await mount()
+    const handle = document.querySelector('[data-element-handle="se"]')
+    expect(handle, '组框手柄画出来了').not.toBeNull()
+    const ev = await contextMenuOn(handle!)
+    expect(ev.defaultPrevented).toBe(true)
+    expect(canvasMenu()).toBeNull()
+    expect(useQuickEdit.getState().target).toEqual({ kind: 'element', panelId: 'p1', gid: 'group:axes_2' })
+    const pop = document.querySelector('[data-quick-target="group"]')
+    expect(pop, '弹层开着、说的是这个组').not.toBeNull()
+    expect(pop!.textContent).toContain('子图 1')
+    expect(useUiStore.getState().selectedGids).toEqual(['group:axes_2'])
+  })
 })

@@ -183,6 +183,49 @@ describe('浮动工具条：工具 vs 动作', () => {
     expect(document.activeElement).toBe(items[4])
   })
 
+  // Codex #833：鼠标打开标注菜单、点「插入形状」——Radix 关菜单时默认把焦点还给触发器，下一个 ← / → 就被
+  // 工具条吃掉（换焦点），推不动刚插入的形状。指针打开的回到打开前的焦点；键盘打开的照旧回到触发器
+  describe('标注菜单关掉后的焦点', () => {
+    const trigger = () => q('[data-tool-menu="annotate"]')!
+    const firstShape = () =>
+      [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((el) =>
+        el.textContent?.includes('三角'),
+      )!
+    const shapes = () => useDocumentStore.getState().doc.objects.length
+
+    it.each([
+      ['焦点原在别处', true],
+      ['焦点原在 body', false],
+    ])('鼠标打开、插入形状（%s）：焦点不落回触发器', async (_n, elsewhere) => {
+      await mount(<CanvasToolbar />)
+      const other = document.createElement('button')
+      document.body.appendChild(other)
+      if (elsewhere) other.focus()
+      await act(async () => {
+        trigger().dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, button: 0, ctrlKey: false }))
+      })
+      expect(document.body.querySelector('[role="menu"]'), '菜单没打开').toBeTruthy()
+      await act(async () => firstShape().click())
+      expect(document.body.querySelector('[role="menu"]')).toBeNull()
+      expect(shapes()).toBe(1)
+      expect(document.activeElement).not.toBe(trigger())
+      if (elsewhere) expect(document.activeElement).toBe(other)
+    })
+
+    it('键盘打开、插入形状：焦点回到触发器', async () => {
+      await mount(<CanvasToolbar />)
+      trigger().focus()
+      await act(async () => {
+        trigger().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+      })
+      expect(document.body.querySelector('[role="menu"]'), '菜单没打开').toBeTruthy()
+      await act(async () => firstShape().click())
+      expect(document.body.querySelector('[role="menu"]')).toBeNull()
+      expect(shapes()).toBe(1)
+      expect(document.activeElement).toBe(trigger())
+    })
+  })
+
   it('鼠标按下工具不拿焦点（点完「选择」接着按方向键是在微调对象）', async () => {
     await mount(<CanvasToolbar />)
     const ev = new MouseEvent('mousedown', { bubbles: true, cancelable: true })

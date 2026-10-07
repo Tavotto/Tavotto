@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { msg, t as translate } from '@/i18n'
-import { engineLabel } from '@/components/inspector/roles/registry'
+import { engineLabel, groupName } from '@/components/inspector/roles/registry'
 import { createPortal } from 'react-dom'
 import { ExternalLink, Eye, EyeOff, Minus, Plus, RotateCcw } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
@@ -222,10 +222,30 @@ function ElementQuick({
   ) as PanelObject | undefined
   const manifest = usePanelDisplayManifest(panel)
   const el = manifest?.elements.find((e) => e.gid === target.gid)
+  // 从元素树选中的真实组（ADR 0102，`Manifest.groups`）不在元素表里：右键它的组框手柄时目标是组 gid
+  // （Codex #833）。组没有自己的样式字段，弹层只说它是谁、给「全部属性」——不把一个不存在的元素当目标关掉
+  const group = el ? undefined : manifest?.groups?.find((g) => g.gid === target.gid)
 
   useEffect(() => {
-    if (!panel || !el) close()
-  }, [panel, el, close])
+    if (!panel || (!el && !group)) close()
+  }, [panel, el, group, close])
+  if (panel && manifest && group) {
+    return (
+      <div data-quick-target="group">
+        <Head>{groupName(group, manifest)}</Head>
+        {/* 选区本来就是这个组：只换到属性页，不动选区 */}
+        <MenuButton
+          icon={ExternalLink}
+          onClick={() => {
+            useUiStore.getState().setRightTab('properties')
+            close()
+          }}
+        >
+          {qe('openInspector')}
+        </MenuButton>
+      </div>
+    )
+  }
   if (!panel || !el || !manifest) return null
 
   // 以 pt 计的量进出都是页面上的值（`pagePtLens`，与属性页、样式面板同一个换算）

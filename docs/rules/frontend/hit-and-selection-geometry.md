@@ -174,7 +174,8 @@
   * 焦点：输入框 / 对话框、控件已 `preventDefault` 的键、ARIA 复合控件（listbox / tree / radiogroup /
     menu / slider …，`useKeyboard.arrowOwnedByWidget`）归它们；`toolbar` 不在此列——画布底部的浮动工具条
     （2026-10-07）自己按 ARIA toolbar 模式认领方向键（`preventDefault`，于是走的是「控件已处理」那一条），
-    但鼠标点它**不拿焦点**，点完「选择」接着按方向键照样是微调；选中浮动栏（ContextBar）不做方向键漫游。
+    但鼠标点它**不拿焦点**，点完「选择」接着按方向键照样是微调；标注下拉同理——鼠标打开、点「插入形状」后焦点回到打开前
+    那里，不落回触发器（`Menu.pointerKeepsFocus`；键盘打开的照旧回触发器，Codex #833）；选中浮动栏（ContextBar）不做方向键漫游。
   * 选中框手柄（2026-10-07 设计审计 §10.1）：8px 视觉 + 16px 透明命中层（稳定钩子挂在命中层上）+ 沿边的
     命中带（`OverlaySvg.EdgeStrips`，整条边除去两端手柄都能改那一边）；图内元素 / 组框的手柄与命中带一样经
     `guardStale` 包装。看护 `canvas/overlayGrammar.test.tsx`、`canvas/nudgeThenPointer.test.tsx`。
