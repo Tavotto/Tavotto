@@ -156,7 +156,10 @@ function AnswersManager({ script, open }: { script: string; open: boolean }) {
       open={open}
       onOpenChange={(v) => !v && close()}
       // Esc 的安全答案 = 不提交、关掉（没提交前什么都没发生）
-      onEscape={saving ? undefined : close}
+      onEscape={close}
+      // 批量保存在飞时锁住（Codex #831 P1）：×、点外面、Esc 都关不掉——半途关掉会让 commitAll 停在
+      // 第一条之后、只带着部分改动重跑，剩下的暂存改动丢掉；「一次提交、只重跑一次」必须走完
+      busy={saving}
       anchor="script-answers"
       size="lg"
       title={si('manageTitle', { script })}

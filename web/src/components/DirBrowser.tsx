@@ -74,10 +74,16 @@ export function DirBrowser({
   /** 子目录列表的漫游焦点：Tab 只停一行，↑↓ 走行、Enter 进入、⌫ 回上一级 */
   const [active, setActive] = useState(0)
   const listRef = useRef<HTMLUListElement>(null)
+  /**
+   * ⌫ 回上一级之后要把焦点放到**新清单**的第一行：只能等响应落地、新行渲染出来再挪（Codex #831 P2——
+   * 以前下一帧就挪，响应慢于一帧时焦点落在旧目录的行上，随后那一行被换掉，焦点掉出清单）。
+   */
+  const focusFirstOnLand = useRef(false)
 
-  const nav = async (path?: string) => {
+  const nav = async (path?: string, opts?: { focusFirst?: boolean }) => {
     try {
       const next = await browseDirs(path)
+      if (opts?.focusFirst) focusFirstOnLand.current = true
       setState(next)
       setActive(0)
       setError(null)
@@ -110,11 +116,23 @@ export function DirBrowser({
     setActive(next)
     listRef.current?.querySelectorAll<HTMLButtonElement>('[data-dir-row]')[next]?.focus()
   }
-  const goParent = () => {
+  const goParent = (focusFirst = false) => {
     if (!state?.parent) return
     editingPath.current = false
-    void nav(state.parent)
+    void nav(state.parent, { focusFirst })
   }
+  // 新清单渲染之后才挪焦点；这期间用户把焦点挪去了别处（地址栏等）就不抢
+  useEffect(() => {
+    if (!focusFirstOnLand.current) return
+    focusFirstOnLand.current = false
+    const list = listRef.current
+    const at = document.activeElement
+    if (!list || (at && at !== document.body && !list.contains(at))) return
+    const first = list.querySelector<HTMLButtonElement>('[data-dir-row]')
+    if (!first) return
+    setActive(0)
+    first.focus()
+  }, [state])
   const onListKey = (e: React.KeyboardEvent) => {
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault()
@@ -125,8 +143,7 @@ export function DirBrowser({
     } else if (e.key === 'Backspace') {
       // 焦点在列表里时 ⌫ = 上一级（与访达 / 资源管理器一致）；地址栏里的 ⌫ 照常删字（事件不经过这里）
       e.preventDefault()
-      goParent()
-      requestAnimationFrame(() => focusRow(0))
+      goParent(true)
     }
   }
 
@@ -195,7 +212,7 @@ export function DirBrowser({
             void nav(pathText.trim() || undefined)
           }}
         >
-          <IconButton type="button" iconSize="sm" tip={false} disabled={!state?.parent} onClick={goParent} label={t('browser.parentDir')}>
+          <IconButton type="button" iconSize="sm" tip={false} disabled={!state?.parent} onClick={() => goParent()} label={t('browser.parentDir')}>
             <ArrowUp size={ICON_SIZE.sm} />
           </IconButton>
           <TextInput

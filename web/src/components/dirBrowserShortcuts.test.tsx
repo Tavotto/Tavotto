@@ -132,4 +132,49 @@ describe('目录列表的键盘与焦点（2026-10-07 设计审计 §10.2）', (
     expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(new URL(String(fetchMock.mock.calls[0][0]), 'http://x').searchParams.get('path')).toBe('/')
   })
+
+  it('⌫ 回上一级：等响应落地、新清单渲染后焦点落在新清单第一行（Codex #831 P2）', async () => {
+    const PARENT_DIRS = [
+      { name: 'u', path: '/u' },
+      { name: 'v', path: '/v' },
+    ]
+    let release!: () => void
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const at = new URL(String(input), 'http://x').searchParams.get('path') ?? '/u'
+      // 上一级的响应慢于一帧：手动放行
+      if (at === '/') await new Promise<void>((r) => (release = r))
+      return new Response(
+        JSON.stringify({
+          path: at,
+          parent: at === '/' ? null : '/',
+          dirs: at === '/u' ? DIRS : PARENT_DIRS,
+          roots: [],
+          shortcuts: [],
+          is_roots: false,
+        }),
+        { status: 200 },
+      )
+    })
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+    await act(async () => {
+      root.render(<DirBrowser mode="open" initialPath="/u" onClose={() => {}} onPick={() => {}} />)
+    })
+    const rows = () => [...document.querySelectorAll<HTMLButtonElement>('[data-dir-row]')]
+    act(() => rows()[1].focus())
+    await act(async () => {
+      document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true }))
+    })
+    // 等过不止一帧，响应还没回来
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50))
+    })
+    expect(rows().map((r) => r.dataset.dirRow)).toEqual(['a', 'b', 'c'])
+    await act(async () => {
+      release()
+      await new Promise((r) => setTimeout(r, 0))
+    })
+    expect(rows().map((r) => r.dataset.dirRow)).toEqual(['u', 'v'])
+    expect(document.activeElement).toBe(document.querySelector('[data-dir-row="u"]'))
+    expect(rows().map((r) => r.tabIndex)).toEqual([0, -1])
+  })
 })

@@ -327,6 +327,40 @@ describe('ScriptAnswersDialog', () => {
     expect(box().disabled).toBe(false)
   })
 
+  it('批量保存在飞时对话框锁住（Codex #831 P1）：Esc、点外面、× 都关不掉，所有暂存改动发完、只重跑一次', async () => {
+    let resolve!: (v: Awaited<ReturnType<typeof updateScriptAnswer>>) => void
+    mockUpdate.mockReturnValueOnce(new Promise((r) => (resolve = r)))
+    useScriptInputStore.setState({ answers: TWO })
+    useScriptInputStore.getState().openManager('pick.py')
+    render()
+    // 两条暂存：改第 1 条、删第 2 条
+    await typeInto(dialog()!.querySelectorAll<HTMLInputElement>('input')[0], '3')
+    await forgetRow(dialog()!.querySelector('[data-script-answer="2"]')!)
+    expect(dialog()!.querySelector('[data-dialog-close]'), '没在保存时右上角应有 ×').toBeTruthy()
+    await click(saveButton())
+    expect(mockUpdate).toHaveBeenCalledTimes(1)
+    // 在飞：× 不给、Esc 与点外面都不关
+    expect(dialog()!.querySelector('[data-dialog-close]')).toBeNull()
+    await act(async () => {
+      document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    })
+    await act(async () => {
+      document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+      document.body.dispatchEvent(new MouseEvent('pointerup', { bubbles: true, button: 0 }))
+      document.body.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }))
+    })
+    expect(useScriptInputStore.getState().managing).toBe('pick.py')
+    expect(dialog()).toBeTruthy()
+    await act(async () => {
+      resolve({ scripts: TWO, location: '', pending: [] })
+    })
+    expect(mockUpdate.mock.calls).toEqual([['pick.py', 1, '3']])
+    expect(mockForget.mock.calls).toEqual([['pick.py', 2]])
+    expect(runSpy).toHaveBeenCalledTimes(1)
+    // 走完放开：× 回来
+    expect(dialog()!.querySelector('[data-dialog-close]')).toBeTruthy()
+  })
+
   it('删除随保存一起发：在飞时输入框、保存与各行 ⋯ 都锁住，回来才放开、只重跑一次（Codex #821 P2，暂存式删除下的同一条保证）', async () => {
     let resolve!: (v: Awaited<ReturnType<typeof forgetScriptAnswer>>) => void
     mockForget.mockReturnValueOnce(new Promise((r) => (resolve = r)))
