@@ -123,12 +123,18 @@ export const ObjectView = memo(function ObjectView({ obj }: { obj: CanvasObject 
       }}
       className="absolute"
       style={{
-        left: mmToWorld(obj.x),
-        top: mmToWorld(obj.y),
+        // WebKit can snap an inline SVG's layout paint origin before canvas zoom.
+        // Keep panel layout at zero and carry its exact position in a transform;
+        // the document and screen-space overlays still use the same coordinates.
+        left: obj.type === 'panel' ? 0 : mmToWorld(obj.x),
+        top: obj.type === 'panel' ? 0 : mmToWorld(obj.y),
         width: mmToWorld(obj.w),
         height: mmToWorld(obj.h),
-        // 任意角度旋转（text/arrow/shape）：绕中心，包围盒字段保持未旋转值
-        transform: objectRotation(obj) ? `rotate(${objectRotation(obj)}deg)` : undefined,
+        // Panel crop/rotation/flips stay inside PanelView. Other objects retain
+        // their center rotation and unrotated bounding-box fields.
+        transform: obj.type === 'panel'
+          ? `translate(${mmToWorld(obj.x)}px, ${mmToWorld(obj.y)}px)`
+          : objectRotation(obj) ? `rotate(${objectRotation(obj)}deg)` : undefined,
         // 不写 'auto'：绘制工具激活时世界层整体设为 none，靠继承让对象一起失去命中。
         // 细长线状对象让位给自己的命中线（事件仍会从命中线冒泡到这里的 handler）
         pointerEvents: obj.locked || isThinLinear || pathHitShape ? 'none' : undefined,
