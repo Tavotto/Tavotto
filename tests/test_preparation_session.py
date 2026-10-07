@@ -837,3 +837,59 @@ def test_unconfirmed_rerun_retirement_reports_an_error_without_a_new_build(
     assert refused["phase"] == "action_required"
     assert refused["result"]["error"]["code"] == "session_dead"
     assert fake_pool["build_calls"] == 1
+
+
+@pytest.mark.parametrize("change", ["declarations", "identity", "inputs_digest"])
+@pytest.mark.parametrize("gate_required", [False, True], ids=["runnable", "authorization-required"])
+def test_recheck_revises_changed_dependency_authorization_with_the_same_status(
+    client, tmp_path, fake_pool, sessions, monkeypatch, change, gate_required
+):
+    import copy
+
+    root = _project(tmp_path, "p")
+    declarations = root / "requirements.txt"
+    declarations.write_text("numpy>=1.24\n", encoding="utf-8")
+    _open(client, root)
+    offer = {
+        "code": deprepair.ERROR_PREPARATION_REQUIRED,
+        "plan": {
+            "status": "ready",
+            "identity": "old-identity",
+            "inputs_digest": "old-inputs",
+            "requirements": ["numpy>=1.24"],
+        },
+    }
+    monkeypatch.setattr(
+        deprepair, "gate", lambda *_: copy.deepcopy(offer) if gate_required else None
+    )
+    monkeypatch.setattr(deprepair, "preparation_offer", lambda *_: copy.deepcopy(offer))
+    first = _create(client, {"script": "fig.py"}).get_json()
+    assert first["phase"] == ("awaiting_confirmation" if gate_required else "ready_to_run")
+    old_run = None if gate_required else _action(first, "run")
+    old = _action(first, "recheck")
+    if change == "declarations":
+        declarations.write_text("numpy>=2\n", encoding="utf-8")
+    else:
+        offer["plan"][change] = "new-value"
+    offer["plan"]["requirements"] = ["numpy>=2"]
+    changed = _act(client, first["session_id"], old["id"], first["config_revision"]).get_json()[
+        "report"
+    ]
+    assert changed["config_revision"] == first["config_revision"] + 1
+    if gate_required:
+        assert changed["requirements"][0]["payload"]["plan"]["requirements"] == ["numpy>=2"]
+    else:
+        assert _action(changed, "run")["id"] != old_run["id"]
+        assert (
+            _act(client, first["session_id"], old_run["id"], changed["config_revision"]).status_code
+            == 404
+        )
+    assert changed["plan"]["dependency_preparation"] == offer
+    assert _action(changed, "recheck")["id"] != old["id"]
+    assert (
+        _act(client, first["session_id"], old["id"], changed["config_revision"]).status_code == 404
+    )
+    unchanged = _create(client, {"script": "fig.py"}).get_json()
+    assert unchanged["config_revision"] == changed["config_revision"]
+    assert _action(unchanged, "recheck")["id"] == _action(changed, "recheck")["id"]
+    assert fake_pool["build_calls"] == 0

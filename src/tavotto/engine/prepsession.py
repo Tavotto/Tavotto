@@ -416,6 +416,7 @@ def _fingerprint(plan: preparation.PreparationPlan) -> str:
     门的结论变了才算「执行意图变了」。进度 / 文案 / 时间戳不在里面——它们只动 `observation_seq`。
     T03 起 argv / 运行配置也加进来。"""
     decision = plan.workdir_decision or {}
+    dependencies = (plan.dependency_preparation or {}).get("plan") or {}
     payload = {
         "target": plan.target,
         "script": plan.script,
@@ -429,7 +430,14 @@ def _fingerprint(plan: preparation.PreparationPlan) -> str:
         "binding": (plan.binding or {}).get("revision"),
         "required": (plan.required_input or {}).get("code"),
         "env_error": ((plan.environment or {}).get("error") or {}).get("code"),
-        "deps": ((plan.dependency_preparation or {}).get("plan") or {}).get("status"),
+        # JointPlan owns the installation identity and source-input fingerprint.
+        # Declarations remain relevant when the dependency gate is not evaluated.
+        "deps": {
+            key: dependencies.get(key)
+            for key in ("status", "identity", "inputs_digest", "selection")
+        },
+        "dependency_intents": plan.dependency_intents,
+        "dependency_conflicts": plan.dependency_conflicts,
     }
     return json.dumps(payload, sort_keys=True, default=str)
 

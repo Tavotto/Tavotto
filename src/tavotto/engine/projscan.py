@@ -265,7 +265,12 @@ def _role_of(item: dict) -> str:
     return ROLE_UNKNOWN  # unparseable
 
 
-def _scope_of(root: Path, script: str, memo: dict[str, str | None]) -> str | None:
+def _scope_of(
+    root: Path,
+    script: str,
+    memo: dict[str, str | None],
+    budget: scanbudget.Budget | None = None,
+) -> str | None:
     """脚本的依赖作用域：从脚本所在目录往上，第一个放着依赖声明文件的目录（项目相对 POSIX；`.` = 根）。
     没有就是 None。只 `is_file`，不读文件；不同作用域的 requirements **不**在这里合并。"""
     directory = (root / script).parent
@@ -278,10 +283,18 @@ def _scope_of(root: Path, script: str, memo: dict[str, str | None]) -> str | Non
         cur = cur.parent
     found: str | None = None
     for d in chain:
+        if budget is not None and budget.stop_reason() is not None:
+            return None
         key = str(d)
         if key not in memo:
             try:
-                has = any((d / name).is_file() for name in _SCOPE_MARKERS)
+                has = False
+                for name in _SCOPE_MARKERS:
+                    if budget is not None and budget.stop_reason() is not None:
+                        return None
+                    if (d / name).is_file():
+                        has = True
+                        break
             except OSError:
                 has = False
             memo[key] = _rel_dir_posix(root, d) if has else None
@@ -291,7 +304,9 @@ def _scope_of(root: Path, script: str, memo: dict[str, str | None]) -> str | Non
     return found
 
 
-def _targets_of(root: Path, items: list[dict]) -> tuple[list[dict], str | None, str]:
+def _targets_of(
+    root: Path, items: list[dict], budget: scanbudget.Budget | None = None
+) -> tuple[list[dict], str | None, str]:
     """条目 → 目标列表、默认目标、选择状态。
 
     * 绘图证据的脚本与「读不了 / 没解析成」的脚本可以当目标；工具 / 测试 / 样式模块**不默认**当目标
@@ -311,7 +326,8 @@ def _targets_of(root: Path, items: list[dict]) -> tuple[list[dict], str | None, 
             "evidence": it["reason"],
             "registered": it["registered"],
             "entry": it["entry_candidates"][0] if it["entry_candidates"] else None,
-            "scope": _scope_of(root, it["script"], memo),
+            "scope": _scope_of(root, it["script"], memo, budget),
+            "scope_checked": budget is None or budget.stop_reason() is None,
             "checked": it.get("checked", True),
         }
         body = {"script": it["script"]}
@@ -498,13 +514,21 @@ def _checks_of(state: str, partial: bool, items: list[dict], env: dict, deps: di
         {
             "id": "environment",
             "status": CHECK_UNKNOWN,
-            "code": "candidates_unverified" if env["candidates"] else "no_candidates",
+            "code": (
+                "scan_incomplete"
+                if env.get("checked") is False
+                else ("candidates_unverified" if env["candidates"] else "no_candidates")
+            ),
             "detail": {"candidates": len(env["candidates"])},
         },
         {
             "id": "dependencies",
             "status": CHECK_UNKNOWN,
-            "code": "declared_not_evaluated" if deps["files"] else "no_declarations",
+            "code": (
+                "scan_incomplete"
+                if deps.get("checked") is False
+                else ("declared_not_evaluated" if deps["files"] else "no_declarations")
+            ),
             "detail": {"files": len(deps["files"]), "requirements": deps["requirements"]},
         },
     ]
@@ -526,14 +550,15 @@ def scan(
     root = Path(root)
     budget = budget or scanbudget.Budget(limits=limits or scanbudget.Limits(), cancel=cancel)
     cache = cache if cache is not None else {}
-    registered = _registered_scripts(root)
+    registered = _registered_scripts(root) if budget.stop_reason() is None else set()
 
-    paths = discover.iter_all_scripts(root, budget=budget)
+    paths = discover.iter_all_scripts(root, budget=budget) if budget.stop_reason() is None else []
     items: list[dict] = []
     live = set()
     for path in paths:
-        # 目录项预算用完只是不再往下找新文件——已经找到的照样解析；时间用完 / 取消才停
-        if budget.stop_reason() in (scanbudget.ISSUE_TIME, scanbudget.ISSUE_CANCELLED):
+        # A stopped walk must not begin a new parsing stage, even for paths it
+        # collected before stopping. The incomplete scan remains explicit below.
+        if budget.stop_reason() is not None:
             break
         item = _script_item(path, root, registered, budget, cache)
         live.add(item["script"])
@@ -541,15 +566,38 @@ def scan(
     for gone in [k for k in cache if k not in live and budget.stopped is None]:
         cache.pop(gone, None)  # 脚本没了：缓存里不留（没被预算打断的完整一轮才清）
 
-    assets = project_refresh.iter_assets(root, budget=budget)
+    assets = (
+        project_refresh.iter_assets(root, budget=budget) if budget.stop_reason() is None else []
+    )
     asset_kinds = {"pdf": 0, "raster": 0}
     for _path, kind in assets:
         asset_kinds[kind] = asset_kinds.get(kind, 0) + 1
 
-    targets, default_target, choice = _targets_of(root, items)
+    targets, default_target, choice = _targets_of(root, items, budget)
     script_for_env = default_target or (targets[0]["script"] if len(targets) == 1 else None)
-    env = environment_evidence(root, script_for_env)
-    deps = dependency_evidence(root, script_for_env)
+    # A stopped traversal must not start fresh filesystem discovery. Keep these
+    # stages separately guarded: cancellation/timeout can occur in either one.
+    env = {
+        "verified": False,
+        "remembered": None,
+        "candidates": [],
+        "truncated": True,
+        "checked": False,
+    }
+    deps = {
+        "script": script_for_env,
+        "files": [],
+        "requirements": 0,
+        "unsupported": [],
+        "readable": False,
+        "evaluated": False,
+        "checked": False,
+    }
+    if budget.stop_reason() is None:
+        env = environment_evidence(root, script_for_env)
+    if budget.stop_reason() is None:
+        deps = dependency_evidence(root, script_for_env)
+    budget.stop_reason()  # Include expiry during the last evidence stage in the report.
 
     issues = budget.issues()
     if budget.stopped == scanbudget.ISSUE_CANCELLED:
@@ -561,7 +609,7 @@ def scan(
             i["severity"] == scanbudget.SEVERITY_NOTE for i in issues
         )
         state = STATE_PARTIAL if (has_partial or notes_matter) else STATE_COMPLETE
-    partial = state == STATE_PARTIAL
+    partial = state in (STATE_PARTIAL, STATE_CANCELLED)
     derived = phase_of(state, targets, choice, len(assets), partial)
 
     evidence = {
