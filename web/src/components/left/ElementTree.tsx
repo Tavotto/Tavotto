@@ -674,6 +674,7 @@ const ElementRow = memo(function ElementRow({
   useTranslation('workspace')
   const unsupported = unsupportedOf(role)
   const shown = engineLabel(label)
+  const pointerFocusing = useRef(false)
 
   return (
     <li
@@ -689,7 +690,7 @@ const ElementRow = memo(function ElementRow({
       data-el={rowKey}
       style={treeIndent(depth)}
       onFocus={(e) => {
-        if (e.target !== e.currentTarget || selected) return
+        if (e.target !== e.currentTarget || selected || pointerFocusing.current) return
         // 焦点漫游即选中，与图层树一致
         onSelect(gid, false)
       }}
@@ -710,7 +711,7 @@ const ElementRow = memo(function ElementRow({
         } else if (e.key === 'Enter') {
           e.preventDefault()
           e.stopPropagation()
-          onSelect(gid, e.shiftKey)
+          onSelect(gid, e.shiftKey || e.ctrlKey || e.metaKey)
         } else if (e.key === 'Delete' || e.key === 'Backspace') {
           e.preventDefault()
           e.stopPropagation()
@@ -724,7 +725,11 @@ const ElementRow = memo(function ElementRow({
       }}
       onPointerDown={(e) => {
         if (e.button !== 0) return
-        onSelect(gid, e.shiftKey)
+        // 先接住焦点，但让这次选择只由指针做一次：加减多选不能被 onFocus 重选。
+        pointerFocusing.current = true
+        e.currentTarget.focus({ preventScroll: true })
+        pointerFocusing.current = false
+        onSelect(gid, e.shiftKey || e.ctrlKey || e.metaKey)
       }}
       className={cn(listRowClass({ selected, hidden }), 'pr-0.5')}
     >

@@ -106,6 +106,18 @@ describe('selection routing keeps the active drawer workflow', () => {
     expect(useUiStore.getState().rightOpen).toBe(false)
   })
 
+  it.each(['shiftKey', 'ctrlKey', 'metaKey'] as const)('layer tree %s preserves additive selection', modifier => {
+    act(() => useDocumentStore.setState(s => ({
+      doc: { ...s.doc, objects: [panel, { ...panel, id: 'p2', x: 90 }] },
+    })))
+    pointer('[data-layer="p1"]')
+    pointer('[data-layer="p2"]', { [modifier]: true })
+    expect(useSelectionStore.getState().ids).toEqual(['p1', 'p2'])
+    pointer('[data-layer="p1"]', { [modifier]: true })
+    expect(useSelectionStore.getState().ids).toEqual(['p2'])
+    expect(useUiStore.getState().leftOpen).toBe(true)
+  })
+
   for (const layout of ['medium', 'narrow'] as const) {
     for (const gid of gids) {
       it(`${layout}: pointerdown selects ${gid} while external focus is stale`, () => {
@@ -118,13 +130,12 @@ describe('selection routing keeps the active drawer workflow', () => {
 
   it('keyboard focus and arrow navigation preserve the tree', () => {
     openElements()
-    act(() => node(treeRow(gids[0])).focus())
-    expectTreeSelection([gids[0]])
-    act(() => node(treeRow(gids[0])).dispatchEvent(new KeyboardEvent('keydown', {
+    act(() => node(treeRow('figure')).focus())
+    expectTreeSelection(['figure'])
+    act(() => node(treeRow('figure')).dispatchEvent(new KeyboardEvent('keydown', {
       bubbles: true, key: 'ArrowDown',
     })))
-    expect(useUiStore.getState().leftOpen).toBe(true)
-    expect(useUiStore.getState().selectedGids).not.toEqual([gids[0]])
+    expectTreeSelection(['axes_0'])
   })
 
   it.each(['shiftKey', 'ctrlKey', 'metaKey'] as const)('%s adds and removes without focus reselecting', modifier => {
