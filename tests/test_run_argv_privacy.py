@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from support import procprobe
 from tavotto.engine import execspec, pool, runconfig, workerd_client
 
 SECRET = "private-argv-SENTINEL-2026"
@@ -358,19 +359,15 @@ else:
     )
     worker.ensure_built()
     helper = int(pid_file.read_text())
-    os.kill(helper, 0)  # Proven alive before the action being tested.
+    helper_born = procprobe.started(helper)
+    assert procprobe.alive(helper, helper_born)  # Proven alive before the action being tested.
     pid = worker.proc.pid if isinstance(worker, pool.EngineWorker) else worker.child_pid
     if hard_exit:
         os.kill(pid, 9)
     else:
         worker.shutdown()
-    deadline = time.monotonic() + 5
-    while time.monotonic() < deadline:
-        try:
-            os.kill(helper, 0)
-        except ProcessLookupError:
-            return
-        time.sleep(0.05)
+    if procprobe.wait_gone(helper, helper_born, timeout=5):
+        return
     pytest.fail("sensitive output helper outlived the worker")
 
 

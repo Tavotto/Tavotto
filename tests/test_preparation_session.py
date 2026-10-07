@@ -160,6 +160,12 @@ def test_error_results_wait_for_session_finalization_before_publishing_recovery(
         )
 
 
+def test_cancelled_provider_does_not_wait_for_a_shared_worker_finalizer():
+    assert not prepsession.attempt_running(
+        {"status": preparation.STATUS_CANCELLED, "finalized": False}
+    )
+
+
 def test_the_no_figure_codes_are_the_pool_ones():
     assert prepsession._NO_FIGURE_CODES == {
         engine_pool.NO_FIGURES_CODE,

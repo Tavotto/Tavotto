@@ -3644,7 +3644,11 @@ export const cancelProjectEnvironmentCheck = () =>
  * 现场再体检、通过才记成用户的明确决定。环境在这期间被重建 → 409 `environment_changed`；全局解释器压着 → 409
  * `environment_locked`。
  */
-export const adoptEnvironmentCandidate = (candidate: Pick<EnvCandidate, 'id' | 'generation'>, script?: string) =>
+export const adoptEnvironmentCandidate = (
+  candidate: Pick<EnvCandidate, 'id' | 'generation'>,
+  script?: string,
+  module?: string,
+) =>
   jsonFetch<{ ok: boolean; project: ProjectEnvironment }>('/api/engine/environment', {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
@@ -3653,6 +3657,8 @@ export const adoptEnvironmentCandidate = (candidate: Pick<EnvCandidate, 'id' | '
       candidate: candidate.id,
       expected_generation: candidate.generation,
       ...(script ? { script } : {}),
+      // 依赖修复卡采用时带上缺的那个包：后端连它一起体检（与手填路径同一个 `module` 语义）
+      ...(module ? { module } : {}),
     }),
   })
 
@@ -3884,6 +3890,12 @@ export interface DependencyTarget {
   venv: string
   /** 项目 venv 是项目相对路径；系统解释器是项目外的绝对路径（它本来就不跟项目走） */
   python: string
+  /**
+   * 确认模式下「改用项目自己的环境」这一类目标才有：看到建议那一刻的候选 id 与环境代。采用必须把这一对
+   * 原样交给 `PATCH /api/engine/environment`（`candidate` + `expected_generation`），环境在这期间被重建 → 409。
+   * 没有它的目标是用户手边的机器解释器，按路径采用。
+   */
+  candidate?: { id: string; generation: string }
   /** true = 会修改用户自己的环境，界面必须说清楚 */
   modifies_user_environment: boolean
   creates_environment: boolean

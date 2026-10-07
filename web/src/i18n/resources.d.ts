@@ -4711,7 +4711,7 @@ export default interface Resources {
         "placeholder_file": "{{path}} 是还没下载到本机的云盘文件，没有读取。",
         "script_limit": "脚本很多，只列出了一部分。",
         "source_byte_budget": "脚本总量较大，后面的脚本没有分析。",
-        "symlinked_dir": "{{path}} 是链接目录，没有进入检查。",
+        "symlinked_dir": "{{path}} 是链接或重定向项，未检查其目标。",
         "time_budget": "检查用时较长，在中途停下了。",
         "unreadable_dir": "没能读取目录 {{path}}。",
         "unreadable_file": "没能读取文件 {{path}}。"

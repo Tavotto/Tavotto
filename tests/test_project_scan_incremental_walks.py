@@ -4,6 +4,7 @@ The synthetic scandir iterator bounds actual directory reads in this process; no
 large fixture or wall-clock timing assumption is needed to expose eager os.walk.
 """
 
+import stat
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -30,6 +31,14 @@ class _BoundedScandir:
     def __iter__(self):
         return self
 
+    def _stat(self, *, follow_symlinks=True):
+        assert follow_symlinks is False, "budgeted classification must not follow entry targets"
+        return SimpleNamespace(
+            st_mode=stat.S_IFDIR if self.directories else stat.S_IFREG,
+            st_file_attributes=0,
+            st_reparse_tag=0,
+        )
+
     def __next__(self):
         assert self.reads < self.max_reads, "asset walk read beyond its scan budget"
         self.reads += 1
@@ -41,6 +50,7 @@ class _BoundedScandir:
             path=str(self.root / name),
             is_dir=lambda **_: self.directories,
             is_symlink=lambda: False,
+            stat=self._stat,
         )
 
 
@@ -199,11 +209,11 @@ def test_script_budget_remains_live_while_classifying_collected_entries(
     for index in range(80):
         (tmp_path / f"script{index}.py").touch()
     inspected = []
-    real_is_dir = Path.is_dir
+    real_lstat = Path.lstat
 
-    def is_dir(path):
+    def lstat(path):
         inspected.append(path)
-        return real_is_dir(path)
+        return real_lstat(path)
 
     budget = scanbudget.Budget(
         limits=scanbudget.Limits(max_seconds=2),
@@ -211,7 +221,7 @@ def test_script_budget_remains_live_while_classifying_collected_entries(
         cancel=lambda: reason == scanbudget.ISSUE_CANCELLED and len(inspected) >= 2,
     )
     with monkeypatch.context() as patch:
-        patch.setattr(Path, "is_dir", is_dir)
+        patch.setattr(Path, "lstat", lstat)
         discover.iter_all_scripts(tmp_path, budget=budget)
     assert 0 < len(inspected) <= 4
     assert budget.stopped == reason
