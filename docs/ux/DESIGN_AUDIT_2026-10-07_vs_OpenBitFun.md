@@ -370,3 +370,98 @@ type CardProps = {
 | 毛玻璃配方 | `src/web-ui/src/shared/styles/_surface-recipes.scss` |
 | 欢迎页 | `src/web-ui/src/flow_chat/components/WelcomePanel.css` |
 | 壳层 | `src/web-ui/src/app/layout/{AppLayout,WorkspaceBody}.scss` |
+
+---
+
+## 9. 逐页审计（第二轮，2026-10-07）
+
+> 前提：§1–§8 的原则已认同（墨阶 ink-2 #4a4a45 / ink-3 #74746e、字阶角色、32px lg、
+> 半径族 行 8 / 卡 12 / 面板 16、Card 原语、状态色锚点派生）。下文所有「→」都按这些值写。
+> 画布对应画板：「设置页 · 逐页」「属性侧栏」「画布侧栏」「左侧 · 问题面板」。
+
+### 9.1 设置页（`SettingsDialog.tsx`, `components/settings/*`）
+
+总评：`SettingRow` 的行语法（`1fr | 240`、48/32px）很守纪律，但约 40% 的可见内容绕开了它
+（引擎卡、Codex 面板、更新块、包安装/任务面板、样式编辑器）；反馈落点离触发点很远；
+`SummaryRow` 有三份、局部 `FieldGroup` 有两份（与要新增的原语重名，先改名）。
+
+**全局外壳**
+- 内容列止于 640，而可用约 760 → 右侧 120px 空带，控件浮在对话框中部。→ 680 列居中。
+- 无页头（宪法 §13「导航项即其名」），钻入页与长页滚动后失去上下文；导航词与页内首行用词不一致。→ 页头 `type-heading` 17/600 + 一行说明（需修 §13）。
+- 导航项 28px / 6px / 12px / 选中 500。→ 30px / 8px / 13px / 选中 600；顶部 28px 搜索（OBF `SettingsNav.tsx:52–145` + `settingsRegistry.ts` keywords）。
+- 未保存草稿无标记。→ 导航 6px 蓝点 + 离开确认。
+
+**原语**
+- 新增 `ui/FieldGroup`（12px 圆角、ink 3% 底、行 12/16、内缩分隔线）与 `FormSection`（标题 13/600、组间 24）。
+- `status` 槽只放文字：`PathValue` 的 28px 按钮、`DirectoryRow` 的编辑器（`ProjectSettings.tsx:215–249`）移到跨两列的 fill 行。
+- `InlineWarning` → 锚点派生的 `Notice`，作为组内最后一行。
+- 行增加 `layout="balanced"`（4:6），给格式复选框、库选择、安装表单用（OBF `ConfigPageLayout.tsx:85–140`）。
+
+**逐页**
+| 页 | 级别 | 问题 | 建议 |
+|---|---|---|---|
+| 通用 | P1 | 首个分区无标题；5 个相同次级按钮，其中 3 个关于教程；「界面看起来不对？」重置后要用户自己刷新 | 四组：语言与布局 / 侧栏 / 画布 / 学习；教程合并为一行 + ⋯；重置直接生效 |
+| 项目 | **P0** | 「运行脚本」= 重复标题 + 段落 + `border-t` 碎片 + 左对齐按钮（`EngineEnvironmentCard.tsx:92,105,229`, `WorkdirRow.tsx:63,98–159,183,252`）；目录编辑器塞进 meta 行，打开时跳 36px；label `htmlFor` 指向未挂载的输入 | 「Python 与运行」组：解释器 / 项目环境 / 运行目录 / 记住的输入 / 脚本备份 各一行；缺包是组内 danger Notice |
+| 期刊规范 / 样式 | **P0** | 切导航、关对话框静默丢草稿（代码注释自承，`ProfilesSettings.tsx:664`）；两个 15/500 名称竞争；「跟随更新」在最底；错误远离保存键；库控件 2–4 项 Segmented、5+ 项 Select，宽度跳变 | 吸底保存条（放弃 / 保存 32px）+ 导航蓝点 + 离开确认；「正在使用」组含名称、KeyRules 四栏统计、跟随更新；库固定一个 Select |
+| 导出 | P1 | 三个分区各一行；格式复选框标签 11px | 合为「默认导出」一组；格式用 balanced 行 |
+| 改图助手 | **P0** | 重新扫描错误在页底（`CodingAgentsSection.tsx:242–246`）；每行单选 + 开关 + 整行 + chevron 四种操作；「就绪」只有绿点、其他状态有字；Codex 面板左对齐、`StepList` 是设置里唯一带框列表 | 「默认助手」改为组首一个 Select；行内只留开关；状态统一 StatusPill；错误是组首 Notice；详情页删除收进 ⋯ + 确认 |
+| Python 库 | **P0** | 进度条轨道与面板同为 `surface-2` 看不见 + `animate-pulse`（`PackagesSettings.tsx:633,663,665`）；安装反馈渲染在表格下方；每行升级/卸载两个等重胶囊 | 任务行紧贴安装表单；2px sweep 条在 `border` 色轨道上；每行一个 ghost「升级」+ ⋯（卸载为危险项） |
+| 帮助与诊断 | **P0** | 「环境是否正常」排在最后；导出结果挤进分区头（`PrivacyAboutSettings.tsx:270–281`）；结论当行标签、OK 点是灰色 | 顺序：健康 → 报告 → 开发者；结论用 StatusPill |
+| 关于 | P1 | 更新分区无标题；「有新版本」块打破行语法、`<pre>` 原样输出；遥测状态重复开关 | 产品信息作页头；更新可用 = accent Notice + 32px 主按钮；遥测只显示「未选择 / 需重新同意」 |
+
+### 9.2 属性侧栏（`components/inspector/*`）
+
+总评：信息架构（三层、角色注册表、可视选择器、逐字段重置）是对的，问题在执行几何。
+
+**P0**
+1. **混合值谎报**：多选时色块画 `#000000`、开关显示「关」（`ElementInspector.tsx:1840–1853`），箭头/形状颜色回落 `#1B1B18` 且无混合提示（`StrokeSection.tsx:258,324`）；`OverrideState 'some'` 被压成「全部」（`TypographyControls.tsx:76`）。→ 双色斜分色块、居中带横线的开关（`aria-checked="mixed"`）、删掉行尾「多个值」文字；部分修改用空心环。
+2. **控件列没有右缘**：Select 全宽、NumberField `calc(4ch+.75rem)`、ColorField 32px、`[data-stroke-fields]` 40px（`index.css:674`）、成对格 `6ch`。→ 一张行网格：
+   ```css
+   --insp-label: clamp(88px, 28%, 112px);
+   .insp-row { display:grid; grid-template-columns: var(--insp-label) minmax(0,1fr) 20px; column-gap:8px; min-height:28px; }
+   ```
+   控件只有 `full` / `half` 两档；导出 `INSPECTOR_CONTROL_X`，替换 `pl-20`（`:789,1989`）、`paddingLeft: labelWidth`（`TypographyControls.tsx:124`）。
+3. **改值移动布局**：重置键只在已修改时追加（控件少 34px），修改点让标签右移 8px。→ 20px 状态槽常驻；点悬挂在 x = −8px。
+4. **三级同形**：Section / GroupHead / SummaryRow 都是 12/500/ink。→ 节 32px 12/500 ink · 组 24px 11/500 ink-3 · 折叠行 32px 12/400 ink + ink-3 摘要。
+
+**P1**
+- 身份头只在有祖先/有修改时出面包屑 → 切换选择跳 24px。改固定两行（24 + 32）；面包屑 24px 命中区 + `TruncateMiddle`；名称 `type-heading` + `title`。
+- 修改徽章 hover 由 `bg-selected` 变 `bg-surface-hover`（变浅），违反「悬停只加深」。
+- 标签 11px（`Field.tsx:102`）与宪法 §6 的 12px 冲突；三种标签溢出策略（折行 / 截断 / 截断）→ 统一折两行。
+- 发丝线每屏约 8 条 → 只在节之间 1 条；折叠行 40 → 32px；披露方言 5 → 3（SummaryRow / GroupToggle / Details）。
+- 颜色字段只在 `title` 里有 hex → 可编辑 hex + Popover（文档色、最近色、alpha、「无」）；`#d0342c` → danger token。
+- 选项格是第三种控件皮肤 + 角落对勾压预览 → Segmented 皮肤。
+- 图例行常驻 3 个 28px 按钮、每项 4 个 Tab 停点（`LegendCard.tsx:113–137`），与宪法 §21.2 冲突 → hover/focus-within 的 ⋯ + ⌥↑↓ 排序；色块按真实 marker 绘制。
+- 四种提示框皮肤 → Card `subtle`；`ElementEditEntry` 常驻两行隐形占位（约 42px，`PanelSection.tsx:766–779`）→ 单行 SwapText。
+- 字体：字号行内标签、B/I 行错位 8px。
+
+**待拍板**：① 字号行内标签（宪法 §20 曾明确保留）；② 标签页顺序改为 属性 | 画布 | 助手（ADR 0010 §3）；③ 标签 ink-2 还是 ink-3。
+
+### 9.3 画布侧栏（`inspector/CanvasPage.tsx`）
+
+- **P1 假禁用**：透明背景时背景色用 `pointer-events-none opacity-40`（`:191`），键盘仍能改色，也违反宪法 §5。→ `ColorField` 增 `disabled`。
+- **P1 预设卡**：4 张 88px 卡占首屏约 25%，是第四种选中皮肤，尺寸不匹配预设时无「自定义」。→ 一行 Select（选项带缩略图、含「自定义」）+ W/H 半宽 + 方向 Segmented。
+- **P1 头部**：与属性页同一套两行头（「画布」/ 文档名 / 尺寸 meta）。
+- **P2**：手风琴互斥（`:73–76`）→ 可多开并记住；关掉自动对齐时子开关卸载 → 保留并变暗；参考线列表每行重复「垂直参考线」→ │ / ─ 字形列；可加只读「导出 · PDF · 300 ppi ↗」摘要行（不新增第二个导出入口）。
+- 未选中时属性页的空态改为文档摘要卡（尺寸、N 张图、N 处修改、「画布设置 ›」）。
+
+### 9.4 左侧问题面板（`components/left/ProblemPanel.tsx`, `ProblemCards.tsx`, `LeftRail.tsx`）
+
+**P0**
+1. 吸顶组头 `bg-surface`（`ProblemPanel.tsx:623`），停靠抽屉是 `bg-bg` → 每个规则头是一条白带。→ `--drawer-bg` 变量。
+2. 技术细节 `group-hover/row:not-open:block`（`:796`）→ 逐行扫视时每行涨约 20px。→ 尾随格 ⓘ → Popover。
+3. 首项之前约 245px 头部（标题 / 范围 / 总数 + 比例条 + 统计 + 自动修复 / 视图切换），违反宪法「行上方至多三层」。→ 范围并入标题行胶囊、视图切换进 ⋯、删总数与比例条：36 + 32 = 68px。
+4. 严重度无层级：轨上阻断是灰点（`LeftRail.tsx:94–105`），建议点 `ink-faint` 约 2.5:1，`not_verifiable` 两处图标不同。→ 锚点派生 danger/warn 三值 + 一张图标表（OctagonAlert / TriangleAlert / Lightbulb / CircleDashed）；只有错误计数用着色胶囊。
+5. 画布定位高亮用 `animate-pulse`（`OverlaySvg.tsx:237`）→ token 关键帧。
+
+**P1**
+- 卡片 → 披露树：图 32 / 子图 28 / 规则 28 / 对象 28，全部基于 `listRowClass`、行圆角 8，就地展开，不再整页钻入；`pr-24` 硬预留导致 280px 宽时标题只剩约 118px。
+- 尾随格 88px：静止「6.5 → 8 pt」，悬停同格换「修复」，宽高不变。
+- 一个动词：只留 修复 / 修复… / 修复 N（现有 8 种说法）。
+- 悬停行即在画布描边（复用 OverlaySvg hovered outline）。
+- 检查中无提示（`validationStore.ts:98`）→ 头部 shimmer；首检用静态骨架；空态给证据（「按某规范检查了 4 张图 · 刚刚」）。
+- 左轨：红点（只表示阻断）、提示「3 项阻断（共 20）」；图标与警告同形 → 换 ListChecks（需在 ICONOGRAPHY 登记）；「工作区 / 项目」名称不一致。
+
+**P2**：画布严重度角标、Inspector「2 个问题 ›」芯片——`openProblemAt`（`lib/issueFocus.ts:228`）目前**没有生产调用方**，样式面板直达未接通；F8 / ⇧F8；`--drawer-bg` 横扫（`ElementTree.tsx:459`, `AssetBrowser.tsx:1305`）；缩略图半径统一；文档漂移（规则文档说当前行有左竖条，代码明确不画）。
+
+保留 `data-issue-row` / `data-issue-rule` / `data-issue-object` / `data-problem-card-key` / `data-rail-blocking` 钩子（引导与 e2e 依赖）；`batchable()` 与 `lib/problemList.ts` 不动——这是纯表现层改动。
