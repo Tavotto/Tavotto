@@ -2,6 +2,7 @@
  "version": 1,
  "note": "T07：表单编辑 → token（TS：web/src/lib/scriptArgsForm.golden.test.ts）与 token → 真 argparse（Python：tests/test_script_args.py）共用；schema 是 engine/scriptargs.analyze 的快照，改分析器后用 scripts/dev/gen_script_args_vectors.py 重生成并逐条核对期望",
  "scripts": {
+  "short_options": "import argparse\np = argparse.ArgumentParser()\np.add_argument(\"-k\", default=\"none\")\np.add_argument(\"-k-x\", \"-kitty\", dest=\"collision\", action=\"store_true\")\np.add_argument(\"-f\", action=argparse.BooleanOptionalAction, default=True)\n\ndef _dump(ns):\n    import json\n    out = {}\n    for k, v in sorted(vars(ns).items()):\n        out[k] = getattr(v, \"name\", v) if not isinstance(v, (str, int, float, bool, type(None), list)) else v\n    print(json.dumps(out, ensure_ascii=False))\n_dump(p.parse_args())\n",
   "fft6": "import argparse\np = argparse.ArgumentParser(description=\"FFT\")\np.add_argument(\"--freq\", type=float, required=True, help=\"Hz\")\np.add_argument(\"--amp\", type=float, required=True)\np.add_argument(\"--phase\", type=float, required=True)\np.add_argument(\"--n\", type=int, required=True)\np.add_argument(\"--tag\", required=True)\np.add_argument(\"--mode\", choices=[\"sin\", \"cos\"], required=True)\nargs = p.parse_args()\n\ndef _dump(ns):\n    import json\n    out = {}\n    for k, v in sorted(vars(ns).items()):\n        out[k] = getattr(v, \"name\", v) if not isinstance(v, (str, int, float, bool, type(None), list)) else v\n    print(json.dumps(out, ensure_ascii=False))\n_dump(args)\n",
   "mixed": "import argparse\nparser = argparse.ArgumentParser()\nparser.add_argument(\"src\", help=\"input csv\")\nparser.add_argument(\"count\", type=int)\nparser.add_argument(\"--scale\", type=float, default=1.0)\nparser.add_argument(\"-k\", \"--k-value\", default=\"none\")\nparser.add_argument(\"--verbose\", action=\"store_true\")\nparser.add_argument(\"--color\", action=argparse.BooleanOptionalAction)\nparser.add_argument(\"--level\", type=int, choices=[1, 2, 3], default=2)\nspeed = parser.add_mutually_exclusive_group()\nspeed.add_argument(\"--fast\", action=\"store_true\")\nspeed.add_argument(\"--slow\", action=\"store_true\")\nparser.add_argument(\"--out\", type=argparse.FileType(\"w\"), default=None)\n\ndef _dump(ns):\n    import json\n    out = {}\n    for k, v in sorted(vars(ns).items()):\n        out[k] = getattr(v, \"name\", v) if not isinstance(v, (str, int, float, bool, type(None), list)) else v\n    print(json.dumps(out, ensure_ascii=False))\n\nif __name__ == \"__main__\":\n    _dump(parser.parse_args())\n",
   "reqdef": "import argparse\np = argparse.ArgumentParser()\np.add_argument(\"--thr\", type=float, required=True, default=0.5)\np.add_argument(\"--opt\", type=int, default=3)\n\ndef _dump(ns):\n    import json\n    out = {}\n    for k, v in sorted(vars(ns).items()):\n        out[k] = getattr(v, \"name\", v) if not isinstance(v, (str, int, float, bool, type(None), list)) else v\n    print(json.dumps(out, ensure_ascii=False))\n_dump(p.parse_args())\n",
@@ -10,6 +11,106 @@
   "subcmd": "import argparse\np = argparse.ArgumentParser()\np.add_argument(\"--g\")\nsp = p.add_subparsers(dest=\"cmd\", required=True)\nt = sp.add_parser(\"train\")\nt.add_argument(\"--lr\", type=float)\nsp.add_parser(\"eval\")\n\ndef _dump(ns):\n    import json\n    out = {}\n    for k, v in sorted(vars(ns).items()):\n        out[k] = getattr(v, \"name\", v) if not isinstance(v, (str, int, float, bool, type(None), list)) else v\n    print(json.dumps(out, ensure_ascii=False))\n_dump(p.parse_args())\n"
  },
  "schemas": {
+  "short_options": {
+   "version": 1,
+   "source": "static_ast",
+   "framework": "argparse",
+   "status": "complete",
+   "reasons": [],
+   "form_enabled": true,
+   "parser_line": 2,
+   "parse_call": "parse_args",
+   "negative_number_options": false,
+   "arguments": [
+    {
+     "flags": [
+      "-k"
+     ],
+     "positional": false,
+     "action": "store",
+     "nargs": null,
+     "required": false,
+     "required_source": null,
+     "default": {
+      "kind": "literal",
+      "display": "'none'"
+     },
+     "const": null,
+     "choices": null,
+     "choices_dynamic": false,
+     "type": null,
+     "role": null,
+     "help": null,
+     "hidden": false,
+     "metavar": null,
+     "group": null,
+     "dest": "k",
+     "arity": 1,
+     "editable": true,
+     "id": "a0",
+     "line": 3,
+     "conditional": false
+    },
+    {
+     "flags": [
+      "-k-x",
+      "-kitty"
+     ],
+     "positional": false,
+     "action": "store_true",
+     "nargs": null,
+     "required": false,
+     "required_source": null,
+     "default": null,
+     "const": null,
+     "choices": null,
+     "choices_dynamic": false,
+     "type": null,
+     "role": null,
+     "help": null,
+     "hidden": false,
+     "metavar": null,
+     "group": null,
+     "dest": "collision",
+     "arity": 0,
+     "editable": true,
+     "id": "a1",
+     "line": 4,
+     "conditional": false
+    },
+    {
+     "flags": [
+      "-f"
+     ],
+     "positional": false,
+     "action": "boolean_optional",
+     "nargs": null,
+     "required": false,
+     "required_source": null,
+     "default": {
+      "kind": "literal",
+      "display": "True"
+     },
+     "const": null,
+     "choices": null,
+     "choices_dynamic": false,
+     "type": null,
+     "role": null,
+     "help": null,
+     "hidden": false,
+     "metavar": null,
+     "group": null,
+     "dest": "f",
+     "arity": 0,
+     "editable": true,
+     "id": "a2",
+     "line": 5,
+     "conditional": false
+    }
+   ],
+   "exclusive_groups": [],
+   "subcommands": null
+  },
   "fft6": {
    "version": 1,
    "source": "static_ast",
@@ -722,6 +823,248 @@
  },
  "cases": [
   {
+   "name": "short_attached_ordinary_value_cannot_select_an_exact_option",
+   "script": "short_options",
+   "before": [
+    "-kold"
+   ],
+   "edits": [
+    {
+     "op": "set",
+     "arg": "a0",
+     "values": [
+      "itty"
+     ]
+    }
+   ],
+   "after": [
+    "-k=itty"
+   ],
+   "namespace": {
+    "k": "itty",
+    "collision": false,
+    "f": true
+   },
+   "missing": []
+  },
+  {
+   "name": "short_option_edit_preserves_other_exact_option",
+   "script": "short_options",
+   "before": [
+    "-k-x"
+   ],
+   "edits": [
+    {
+     "op": "set",
+     "arg": "a0",
+     "values": [
+      "-x"
+     ]
+    }
+   ],
+   "after": [
+    "-k-x",
+    "-k=-x"
+   ],
+   "namespace": {
+    "k": "-x",
+    "collision": true,
+    "f": true
+   },
+   "missing": []
+  },
+  {
+   "name": "short_new_option_like_value",
+   "script": "short_options",
+   "before": [],
+   "edits": [
+    {
+     "op": "set",
+     "arg": "a0",
+     "values": [
+      "-x"
+     ]
+    }
+   ],
+   "after": [
+    "-k=-x"
+   ],
+   "namespace": {
+    "k": "-x",
+    "collision": false,
+    "f": true
+   },
+   "missing": []
+  },
+  {
+   "name": "short_replace_separate_option_like_value",
+   "script": "short_options",
+   "before": [
+    "-k",
+    "old"
+   ],
+   "edits": [
+    {
+     "op": "set",
+     "arg": "a0",
+     "values": [
+      "-x"
+     ]
+    }
+   ],
+   "after": [
+    "-k=-x"
+   ],
+   "namespace": {
+    "k": "-x",
+    "collision": false,
+    "f": true
+   },
+   "missing": []
+  },
+  {
+   "name": "short_replace_attached_option_like_value",
+   "script": "short_options",
+   "before": [
+    "-kold"
+   ],
+   "edits": [
+    {
+     "op": "set",
+     "arg": "a0",
+     "values": [
+      "-x"
+     ]
+    }
+   ],
+   "after": [
+    "-k=-x"
+   ],
+   "namespace": {
+    "k": "-x",
+    "collision": false,
+    "f": true
+   },
+   "missing": []
+  },
+  {
+   "name": "short_equals_value_is_read_without_separator",
+   "script": "short_options",
+   "before": [
+    "-k=-x"
+   ],
+   "edits": [
+    {
+     "op": "set",
+     "arg": "a0",
+     "values": [
+      "next"
+     ]
+    }
+   ],
+   "after": [
+    "-k=next"
+   ],
+   "namespace": {
+    "k": "next",
+    "collision": false,
+    "f": true
+   },
+   "missing": []
+  },
+  {
+   "name": "short_replace_attached_empty_value",
+   "script": "short_options",
+   "before": [
+    "-kold"
+   ],
+   "edits": [
+    {
+     "op": "set",
+     "arg": "a0",
+     "values": [
+      ""
+     ]
+    }
+   ],
+   "after": [
+    "-k="
+   ],
+   "namespace": {
+    "k": "",
+    "collision": false,
+    "f": true
+   },
+   "missing": []
+  },
+  {
+   "name": "short_replace_attached_equals_value",
+   "script": "short_options",
+   "before": [
+    "-kold"
+   ],
+   "edits": [
+    {
+     "op": "set",
+     "arg": "a0",
+     "values": [
+      "=x"
+     ]
+    }
+   ],
+   "after": [
+    "-k==x"
+   ],
+   "namespace": {
+    "k": "=x",
+    "collision": false,
+    "f": true
+   },
+   "missing": []
+  },
+  {
+   "name": "short_boolean_on",
+   "script": "short_options",
+   "before": [],
+   "edits": [
+    {
+     "op": "flag",
+     "arg": "a2",
+     "value": "on"
+    }
+   ],
+   "after": [
+    "-f"
+   ],
+   "namespace": {
+    "k": "none",
+    "collision": false,
+    "f": true
+   },
+   "missing": []
+  },
+  {
+   "name": "short_boolean_default",
+   "script": "short_options",
+   "before": [
+    "-f"
+   ],
+   "edits": [
+    {
+     "op": "flag",
+     "arg": "a2",
+     "value": "default"
+    }
+   ],
+   "after": [],
+   "namespace": {
+    "k": "none",
+    "collision": false,
+    "f": true
+   },
+   "missing": []
+  },
+  {
    "name": "fft6_fill_all",
    "script": "fft6",
    "before": [],
@@ -1430,6 +1773,19 @@
   }
  ],
  "errors": [
+  {
+   "name": "short_boolean_cannot_force_off",
+   "script": "short_options",
+   "before": [
+    "-f"
+   ],
+   "edit": {
+    "op": "flag",
+    "arg": "a2",
+    "value": "off"
+   },
+   "error": "not_editable"
+  },
   {
    "name": "positional_option_like_needs_dashes",
    "script": "mixed",

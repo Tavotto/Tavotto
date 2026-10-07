@@ -160,12 +160,12 @@ def _local_context(contexts: dict[str, dict], script: str, entry: dict) -> str |
 
 
 def _public(entry: dict) -> dict:
-    return {k: entry[k] for k in ("index", "prompt", "answer", "kind")}
+    return _stored(entry)
 
 
 def load(project_root: str | Path) -> dict[str, list[dict]]:
     """整个项目记住的答案：`{脚本: [{index, prompt, answer, kind}, …]}`（按序号排）。给界面的答案管理：
-    上下文摘要与运行配置引用是本机比对用的，不出这个模块。"""
+    只带运行配置的不透明引用以区分条目；上下文摘要与 argv 不出这个模块。"""
     with _LOCK:
         return {k: [_public(e) for e in v] for k, v in _read(project_root).items()}
 
@@ -278,15 +278,17 @@ def remember(
         _write_contexts(project_root, contexts)
 
 
-def update(project_root: str | Path, script: str, index: int, answer: str) -> bool:
-    """答案管理里改一条（提示不变）。没有这一条回 False。"""
+def update(
+    project_root: str | Path, script: str, index: int, answer: str, *, run_config: str | None = None
+) -> bool:
+    """答案管理里改一份配置的一条（提示不变）；缺省只改无参数配置。没有这一条回 False。"""
     _check_answer(answer)
     with _LOCK:
         scripts = _read(project_root)
         found = False
         contexts = _read_contexts(project_root)
         for e in scripts.get(script, []):
-            if e["index"] == index:
+            if e["index"] == index and e["run_config"] == run_config:
                 local = _local_context(contexts, script, e)
                 e["answer"] = answer
                 found = True
@@ -299,12 +301,24 @@ def update(project_root: str | Path, script: str, index: int, answer: str) -> bo
         return found
 
 
-def forget(project_root: str | Path, script: str, index: int | None = None) -> bool:
-    """删掉一条（`index`）或这个脚本的全部答案。什么都没删回 False。"""
+def forget(
+    project_root: str | Path,
+    script: str,
+    index: int | None = None,
+    *,
+    run_config: str | None = None,
+) -> bool:
+    """删一份配置的一条（缺省无参数）；仅省略 index 时删整个脚本。什么都没删回 False。"""
+    if index is None and run_config is not None:
+        raise ValueError("指定 run_config 时需要 index")
     with _LOCK:
         scripts = _read(project_root)
         before = scripts.get(script, [])
-        after = [] if index is None else [e for e in before if e["index"] != index]
+        after = (
+            []
+            if index is None
+            else [e for e in before if not (e["index"] == index and e["run_config"] == run_config)]
+        )
         if len(after) == len(before):
             return False
         scripts[script] = after
@@ -313,7 +327,7 @@ def forget(project_root: str | Path, script: str, index: int | None = None) -> b
         mine = (
             (lambda k: k.startswith(prefix))
             if index is None
-            else (lambda k: k.startswith(prefix) and k.split(_SEP)[2] == str(index))
+            else (lambda k: k.startswith(_SEP.join((script, run_config or "", str(index))) + _SEP))
         )
         contexts = _read_contexts(project_root)
         _write_contexts(project_root, {k: v for k, v in contexts.items() if not mine(k)})

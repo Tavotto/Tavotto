@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from tavotto import app as m
 from tavotto.engine import inputremap, pool as engine_pool, preparation
 from test_preparation_api import _open, client, fake_pool  # noqa: F401
@@ -175,6 +177,14 @@ def test_a_missing_input_failure_becomes_a_data_requirement_answered_by_the_rema
         },
     )
     assert resp.status_code == 200, resp.get_json()
+    # 报告上已经发出的重跑动作也不能直接消费新改指表：先拒绝，再要求 recheck。
+    rejected = _act(
+        client, first["session_id"], _action(report, "run")["id"], report["config_revision"]
+    )
+    assert rejected.status_code == 409, rejected.get_json()
+    assert rejected.get_json()["code"] == "preparation_plan_stale"
+    assert fake_pool["build_calls"] == 1
+    report = _get(client, first["session_id"]).get_json()
     recheck = _action(report, "recheck")
     assert _act(
         client, first["session_id"], recheck["id"], report["config_revision"]
@@ -194,6 +204,77 @@ def test_the_missing_input_payload_stays_out_of_public_projections(tmp_path):
     result.missing_input = {"requested": "secret/path.csv"}
     assert "missing_input" not in result.to_payload()
     assert "secret/path.csv" not in str(result.to_payload())
+
+
+@pytest.mark.parametrize("change", ["add", "replace", "remove"])
+def test_changed_remap_rejects_issued_run_until_rechecked(
+    client, tmp_path, fake_pool, sessions, change
+):
+    root = _proj(tmp_path, "print('ready')\n")
+    _open(client, root)
+    rule = {"kind": "file", "from": "data.csv", "to": str(tmp_path / "old.csv")}
+    if change != "add":
+        inputremap.add_rule(root, rule)
+    report = _create(client, {"script": "plot.py"}).get_json()
+    run = _action(report, "run")
+    if change == "remove":
+        inputremap.remove_rule(root, "file", "data.csv")
+    else:
+        inputremap.add_rule(root, {**rule, "to": str(tmp_path / "new.csv")})
+
+    rejected = _act(client, report["session_id"], run["id"], report["config_revision"])
+    assert rejected.status_code == 409, rejected.get_json()
+    assert rejected.get_json()["code"] == "preparation_plan_stale"
+    assert rejected.get_json()["params"] == {
+        "reason": "data_binding_changed",
+        "executed": False,
+    }
+    assert fake_pool["build_calls"] == 0
+    stale = _get(client, report["session_id"]).get_json()
+    assert not [a for a in stale["actions"] if a["kind"] == "run"]
+    rechecked = _act(
+        client, report["session_id"], _action(stale, "recheck")["id"], report["config_revision"]
+    )
+    assert rechecked.status_code in (200, 202), rechecked.get_json()
+    refreshed = _get(client, report["session_id"]).get_json()
+    assert refreshed["config_revision"] == report["config_revision"] + 1
+    assert refreshed["phase"] == "ready_to_run"
+    assert _action(refreshed, "run")["id"] != run["id"]
+    assert (
+        _act(
+            client,
+            report["session_id"],
+            _action(refreshed, "run")["id"],
+            refreshed["config_revision"],
+        ).status_code
+        == 202
+    )
+    assert _settle(client, report["session_id"])["phase"] == "completed"
+    assert fake_pool["build_calls"] == 1
+
+
+def test_changed_remap_is_rechecked_before_delayed_execution(
+    client, tmp_path, fake_pool, sessions, monkeypatch
+):
+    root = _proj(tmp_path, "print('ready')\n")
+    _open(client, root)
+    report = _create(client, {"script": "plot.py"}).get_json()
+    start = preparation.SERVICE.start
+
+    def delayed_start(plan_id, **kwargs):
+        inputremap.add_rule(
+            root, {"kind": "file", "from": "data.csv", "to": str(tmp_path / "new.csv")}
+        )
+        start(plan_id, **kwargs)
+
+    monkeypatch.setattr(preparation.SERVICE, "start", delayed_start)
+    claimed = _act(client, report["session_id"], _action(report, "run")["id"], 1)
+    assert claimed.status_code == 202, claimed.get_json()
+    settled = _settle(client, report["session_id"])
+    assert settled["result"]["error"]["code"] == "preparation_plan_stale"
+    assert settled["result"]["error"]["reason"] == "data_binding_changed"
+    assert settled["result"]["error"]["executed"] is False
+    assert fake_pool["build_calls"] == 0
 
 
 def test_an_asset_target_never_gets_a_form(client, tmp_path, fake_pool, sessions, monkeypatch):

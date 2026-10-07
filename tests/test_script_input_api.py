@@ -363,3 +363,84 @@ def test_render_endpoint_error_body_carries_the_prompt():
         body = m._worker_error_payload(err)
         assert body["code"] == code
         assert body["params"] == {"prompt": "numbers: "}
+
+
+@needs_worker
+def test_configured_answer_edit_and_rerun_keep_the_original_argv_and_other_answer(
+    client, figs, events, monkeypatch, tmp_path
+):
+    """Public management + rerun: actual worker outputs prove A/B stay distinct at the same input index."""
+    from tavotto.engine import inputtranscript, runconfig
+
+    counter = tmp_path / "runs.jsonl"
+    (figs / "pick.py").write_text(
+        "import json, sys\n"
+        "import matplotlib.pyplot as plt\n"
+        "choice = input('numbers: ')\n"
+        f"with open({str(counter)!r}, 'a', encoding='utf-8') as f:\n"
+        "    f.write(json.dumps([sys.argv[1:], choice]) + '\\n')\n"
+        "fig, ax = plt.subplots(figsize=(2, 1.5))\n"
+        "ax.set_title(choice)\n"
+        "fig.savefig('sel_' + choice + '.pdf')\n",
+        encoding="utf-8",
+    )
+    client.post("/api/projects/open", json={"path": str(figs)})
+    _listening(monkeypatch, figs)
+
+    def probe(config):
+        out = {}
+
+        def run():
+            resp = m.app.test_client().post(
+                "/api/registry/probe", json={"script": "pick.py", "run_config": config}
+            )
+            out.update(status=resp.status_code, body=resp.get_json())
+
+        thread = threading.Thread(target=run, daemon=True)
+        thread.start()
+        return thread, out
+
+    a = runconfig.put(figs, "pick.py", ["--mode", "A"])
+    b = runconfig.put(figs, "pick.py", ["--mode", "B"])
+    for count, (cfg, answer) in enumerate(((a, "alpha"), (b, "beta")), 1):
+        thread, out = probe(cfg.id)
+        asked = events.wait_for("script.input_requested", count)[-1]
+        assert (
+            client.post(
+                "/api/script_input/answer", json={"id": asked["id"], "answer": answer}
+            ).status_code
+            == 200
+        )
+        thread.join(120)
+        assert not thread.is_alive() and out["status"] == 200, out
+        assert _stems(out["body"]) == ["sel_" + answer]
+        assert json.loads(counter.read_text("utf-8").splitlines()[-1]) == [list(cfg.argv), answer]
+    frozen_b = inputtranscript.lookup(figs, "pick.py", b.id)
+    changed = client.post(
+        "/api/script_input/answers",
+        json={
+            "script": "pick.py",
+            "index": 1,
+            "run_config": a.id,
+            "answer": "newalpha",
+        },
+    )
+    assert changed.status_code == 200
+    assert inputtranscript.lookup(figs, "pick.py", b.id) == frozen_b
+    thread, out = probe(a.id)
+    thread.join(120)
+    assert not thread.is_alive() and out["status"] == 200, out
+    assert _stems(out["body"]) == ["sel_newalpha"]
+    assert runconfig.default_selection(figs, "pick.py").config_id == a.id
+    # B can go cold and still replays B's original answer, not the changed A answer.
+    thread, out = probe(b.id)
+    thread.join(120)
+    assert not thread.is_alive() and out["status"] == 200, out
+    assert _stems(out["body"]) == ["sel_beta"]
+    assert [json.loads(line) for line in counter.read_text("utf-8").splitlines()] == [
+        [["--mode", "A"], "alpha"],
+        [["--mode", "B"], "beta"],
+        [["--mode", "A"], "newalpha"],
+        [["--mode", "B"], "beta"],
+    ]
+    assert len(events.of("script.input_requested")) == 2

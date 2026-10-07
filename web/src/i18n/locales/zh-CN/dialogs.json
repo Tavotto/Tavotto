@@ -1670,6 +1670,8 @@
     "manageIntro": "改了答案会立刻重新运行脚本。",
     "manageWhere": "答案存在项目文件夹的 {{path}} 里，随文件夹一起复制或分享；项目包不含它。",
     "manageEmpty": "这个脚本没有记住的输入。",
+    "manageConfig": "运行配置 {{config}}",
+    "manageDefaultConfig": "无运行参数",
     "managePrompt": "第 {{index}} 个问题：{{prompt}}",
     "manageNoPrompt": "第 {{index}} 个问题（读取标准输入）",
     "manageSave": "保存并重新运行",

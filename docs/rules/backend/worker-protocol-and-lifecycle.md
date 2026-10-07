@@ -128,7 +128,8 @@
   本机侧表**（`scriptanswers.contexts_path()`，数据目录，绑定所属答案），项目文件 `_script_inputs.json` 里没有它
   （ADR 0099 §十，T12）；换机器 / 答案被别处改过 = 只当建议。build 成功后 `inputbroker.finished()` 把问答绑成
   执行转录（`inputtranscript`，数据目录，按 (脚本, 运行配置) 绑这批产物）；`serving()` 进门冻结策略：有转录就按转录重放、
-  不读之后改过的项目答案文件；答案管理改 / 删答案作废转录（明确重算）。getpass 那一问在 worker 记账里只有
+  不读之后改过的项目答案文件；答案管理按 (脚本, 运行配置, 序号) 改 / 删，只作废对应配置的转录（明确重算）；显式整脚本删除才清全部配置。
+  管理投影保留不透明 `run_config`，无参数旧条目缺省；重跑按引用取回参数，不回落到空 argv 或当前草稿。getpass 那一问在 worker 记账里只有
   `secret: true`：build 响应、热会话、转录都没有值，重放时重新问，没人答 → `reason=secret_required`，绝不填空。
   问答去向计数（`InputFacts`）经 `facts_projection` 进 T04 任务诊断。不向协议 stdin 写答案；native / 子进程 input 不变。
   看护：`tests/test_script_input_context.py`、`tests/test_script_input_transcript_api.py`、`tests/test_input_transcript.py`。

@@ -67,8 +67,8 @@ interface ScriptInputState {
   loadAnswers: () => Promise<void>
   openManager: (script: string) => void
   closeManager: () => void
-  saveAnswer: (script: string, index: number, answer: string) => Promise<AnswerChange>
-  forgetAnswer: (script: string, index: number) => Promise<AnswerChange>
+  saveAnswer: (script: string, index: number, answer: string, runConfig?: string | null) => Promise<AnswerChange>
+  forgetAnswer: (script: string, index: number, runConfig?: string | null) => Promise<AnswerChange>
   /** `stream.hello`：记下流 id 并报一次在看哪个项目 */
   onStreamHello: (streamId: string) => void
   /** 报「这条事件流此刻在看 `pj`」；没有流 / 没有项目时什么都不做 */
@@ -213,10 +213,10 @@ export const useScriptInputStore = create<ScriptInputState>((set, get) => ({
   openManager: (script) => set({ managing: script }),
   closeManager: () => set({ managing: null }),
 
-  saveAnswer: (script, index, answer) =>
-    changeAnswer(get, set, () => updateScriptAnswer(script, index, answer)),
+  saveAnswer: (script, index, answer, runConfig = null) =>
+    changeAnswer(get, set, () => updateScriptAnswer(script, index, answer, runConfig)),
 
-  forgetAnswer: (script, index) => changeAnswer(get, set, () => forgetScriptAnswer(script, index)),
+  forgetAnswer: (script, index, runConfig = null) => changeAnswer(get, set, () => forgetScriptAnswer(script, index, runConfig)),
 
   onStreamHello: (streamId) => {
     set({ streamId })

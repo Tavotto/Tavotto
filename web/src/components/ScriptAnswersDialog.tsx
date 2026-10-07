@@ -48,7 +48,7 @@ export function ScriptAnswersDialog() {
         ) : (
           <ul className="flex flex-col gap-3">
             {answers.map((a) => (
-              <AnswerRow key={`${a.index}:${a.prompt}`} script={script} entry={a} />
+              <AnswerRow key={JSON.stringify([script, a.run_config ?? null, a.index, a.prompt])} script={script} entry={a} />
             ))}
           </ul>
         )}
@@ -65,11 +65,14 @@ function AnswerRow({ script, entry }: { script: string; entry: RememberedAnswer 
   const dirty = value !== entry.answer
   const rerun = () => {
     useUiStore.getState().setStatus(msg('scriptInput.manageSaved', { script }, 'dialogs'))
-    void useScriptRunStore.getState().run(script)
+    void useScriptRunStore.getState().run(script, entry.run_config ?? null)
   }
 
   return (
     <li className="flex flex-col gap-1" data-script-answer={entry.index}>
+      <span className="text-ink-3">
+        {entry.run_config ? si('manageConfig', { config: entry.run_config }) : si('manageDefaultConfig')}
+      </span>
       <span className="whitespace-pre-wrap break-words font-mono text-ink-2">
         {entry.prompt
           ? si('managePrompt', { index: entry.index, prompt: entry.prompt })
@@ -87,7 +90,7 @@ function AnswerRow({ script, entry }: { script: string; entry: RememberedAnswer 
           size="md"
           disabled={!dirty}
           onClick={async () => {
-            const res = await useScriptInputStore.getState().saveAnswer(script, entry.index, value)
+            const res = await useScriptInputStore.getState().saveAnswer(script, entry.index, value, entry.run_config ?? null)
             // 请求在飞时换了项目：什么都不做——尤其不在新项目里重跑同名脚本
             if (res.status === 'stale') return
             setError(res.status === 'error' ? res.error : null)
@@ -101,7 +104,7 @@ function AnswerRow({ script, entry }: { script: string; entry: RememberedAnswer 
           size="md"
           aria-label={si('manageForgetAria', { index: entry.index })}
           onClick={async () => {
-            const res = await useScriptInputStore.getState().forgetAnswer(script, entry.index)
+            const res = await useScriptInputStore.getState().forgetAnswer(script, entry.index, entry.run_config ?? null)
             // 请求在飞时换了项目：什么都不做——尤其不在新项目里重跑同名脚本
             if (res.status === 'stale') return
             setError(res.status === 'error' ? res.error : null)

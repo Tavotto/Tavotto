@@ -308,3 +308,24 @@ def test_configurations_whose_outputs_have_different_names_all_stay_editable(tmp
             ylim = next(f["value"] for f in axes["editable"] if f["prop"] == "ylim")
             margin = 0.05 * (len(name) - 1)  # 各自的数据：alpha 5 个字母、beta 4 个
             assert ylim == pytest.approx([1 - margin, len(name) + margin])
+
+
+@needs_worker
+def test_cold_runtime_render_reports_that_the_frozen_arguments_were_rejected(project):
+    """The ordinary render adapter needs the same parse facts as the probe adapter."""
+    proj, _counter, work = project
+    with fa.running_app(proj, work, env_overrides=ENV) as app:
+        original = _probe(app, ["--scale", "2"])
+        asset_id = figcapture.runtime_asset_id("scaled.py", "result", original["run_config"])
+        (proj / "scaled.py").write_text(
+            "import argparse\np = argparse.ArgumentParser()\n"
+            "p.add_argument('--scale', choices=['3'])\np.parse_args()\n",
+            encoding="utf-8",
+        )
+        app.call("/api/engine/invalidate", {"id": asset_id}, timeout=30)
+        status, body = _call(
+            app, "/api/engine/render", {"id": asset_id, "patches": []}, timeout=120
+        )
+        assert status == 500, body
+        assert body["code"] == "script_needs_arguments"
+        assert body["params"] == {"argv_count": "2", "parse_kind": "invalid_value"}

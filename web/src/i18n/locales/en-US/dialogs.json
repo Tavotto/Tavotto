@@ -1682,6 +1682,8 @@
     "manageIntro": "Changing an answer reruns the script right away.",
     "manageWhere": "Answers are stored in {{path}} in the project folder and travel with it; project packages don’t include them.",
     "manageEmpty": "This script has no remembered input.",
+    "manageConfig": "Run configuration {{config}}",
+    "manageDefaultConfig": "No run arguments",
     "managePrompt": "Question {{index}}: {{prompt}}",
     "manageNoPrompt": "Question {{index}} (reading standard input)",
     "manageSave": "Save and rerun",

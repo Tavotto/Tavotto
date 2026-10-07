@@ -179,6 +179,10 @@ class V1Handler:
     def ensure_built(self, timings: dict | None = None) -> None:
         return None
 
+    def configure_run(self, payload: dict) -> None:
+        """Safe workers receive exact argv privately before any user code runs."""
+        return None
+
     def build_result(self, timings: dict) -> dict:
         raise NotImplementedError
 
@@ -245,6 +249,7 @@ class V1Handler:
         #: 这一版的预览表示法（ADR 0022）。与 `timings` 同一条纪律：**只在 v1
         #: 出现**，出参形态传下去，legacy 的 `{ok, manifest, warnings}` 一字不动。
         preview: dict = {}
+        self.configure_run(payload)
         self.select_artifact(payload.get("artifact_source"))
         context = getattr(self.session, "artifact_source", None)
         if context is not None and cmd in PATCH_COMMANDS:

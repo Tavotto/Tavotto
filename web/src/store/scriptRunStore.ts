@@ -59,6 +59,8 @@ export type ScriptRunPhase =
   | 'failed'
 
 export interface ScriptRunState {
+  /** Answer-management reruns retain their exact configuration through gates/retries; undefined uses the draft. */
+  runConfig?: string | null
   phase: ScriptRunPhase
   /** 成功那次捕获的描述符（captured_* 才有） */
   descriptors: CapturedFigureDescriptor[]
@@ -214,7 +216,7 @@ interface ScriptRunStore {
   /** 项目代际：clear() 递增，在途响应据此作废 */
   epoch: number
   byScript: Record<string, ScriptRunState>
-  run: (script: string) => Promise<void>
+  run: (script: string, runConfig?: string | null) => Promise<void>
   cancel: (script: string) => void
   /** SSE probe.started：starting_runtime → running（其余状态不动） */
   markRunning: (script: string) => void
@@ -244,7 +246,7 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
   epoch: 0,
   byScript: {},
 
-  run: async (script) => {
+  run: async (script, runConfig) => {
     const prev = get().byScript[script]
     if (prev && isBusyPhase(prev.phase)) return // 同脚本防并发
     const epoch = get().epoch
@@ -253,7 +255,7 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
     set((s) => ({
       byScript: {
         ...s.byScript,
-        [script]: { ...IDLE, phase: 'starting_runtime', gen },
+        [script]: { ...IDLE, phase: 'starting_runtime', gen, runConfig },
       },
     }))
 
@@ -272,7 +274,9 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
 
     try {
       // T03：参数草稿在**运行开始那一刻**取一份拷贝；此后再编辑不影响这一次
-      const res = await probeWithDraft(probeScript, script)
+      const res = await (runConfig === undefined
+        ? probeWithDraft(probeScript, script)
+        : probeScript(script, undefined, { run_config: runConfig }))
       if (stale()) return
       if (res.error?.code === INPUT_REMAP_CHANGED_CODE) {
         // 试运行途中改了指认，后端按代次丢弃了这次结果（ADR 0106 §五）：按新表重跑一次，不报失败
@@ -281,7 +285,7 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
           delete byScript[script]
           return { byScript }
         })
-        void get().run(script)
+        void get().run(script, runConfig)
         return
       }
       if (res.error?.missing_input) {
@@ -387,7 +391,7 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
   rerunGated: (phase, script) => {
     const scripts = script ? [script] : Object.keys(get().byScript)
     for (const name of scripts) {
-      if (get().byScript[name]?.phase === phase) void get().run(name)
+      if (get().byScript[name]?.phase === phase) void get().run(name, get().byScript[name].runConfig)
     }
     for (const cb of [...gateListeners]) cb(phase, script)
   },
@@ -404,7 +408,9 @@ useEnvStore.subscribe((state, prev) => {
   const store = useScriptRunStore.getState()
   // 顺序是判据：**先收集**要重跑的（带「找不到数据」载荷的，含「没出图」那种），**再作废**旧条件下的
   // 结果（它会删掉「没出图」那一行），**最后重跑**收集到的——不依赖作废时留哪些行（Codex 评 #716 P2）
-  const retry = state.inputRemapGeneration !== prev.inputRemapGeneration ? store.missingInputScripts() : []
+  const retry = state.inputRemapGeneration !== prev.inputRemapGeneration
+    ? store.missingInputScripts().map((script) => ({ script, runConfig: store.byScript[script]?.runConfig }))
+    : []
   if (state.probeResultsGeneration !== prev.probeResultsGeneration) store.invalidateCaptured()
-  for (const script of retry) void useScriptRunStore.getState().run(script)
+  for (const { script, runConfig } of retry) void useScriptRunStore.getState().run(script, runConfig)
 })

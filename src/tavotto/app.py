@@ -628,6 +628,14 @@ def _worker_error_payload(exc, stage: str = "") -> dict:
         # 为什么没人能答（闭集，T08）：口令要重新提供 / 冷重放的上下文对不上——界面据此说清下一步
         if extra.get("reason") in engine_inputbroker.REASONS:
             body["params"]["reason"] = extra["reason"]
+    if exc.code == "script_needs_arguments":
+        extra = getattr(exc, "extra", None) or {}
+        params = {}
+        if extra.get("argv_count"):
+            params["argv_count"] = str(int(extra["argv_count"]))
+        if extra.get("parse_kind"):
+            params["parse_kind"] = str(extra["parse_kind"])
+        body["params"] = params
     if getattr(exc, "module", ""):
         body["module"] = exc.module
     # 项目环境自动接手失败时的结构化原因（ADR 0018）：找不到 venv / venv 里
@@ -644,7 +652,13 @@ def _worker_error_payload(exc, stage: str = "") -> dict:
             # 确认模式（ADR 0114）：项目自己的环境体检通过、缺的包也在里面——建议，不是决定。
             # 只给项目相对的目录（采用走候选按钮 / 采用端点），路径与体检原始输出不出后端
             **(
-                {"recommended": {"venv": _project_relative(detail.get("venv", ""))}}
+                {
+                    "recommended": {
+                        "venv": _project_relative(detail.get("venv", "")),
+                        "id": (detail.get("recommended") or {}).get("id", ""),
+                        "generation": (detail.get("recommended") or {}).get("generation", ""),
+                    }
+                }
                 if detail.get("code") == engine_projectenv.ERROR_CONFIRMATION_REQUIRED
                 else {}
             ),
@@ -3520,20 +3534,8 @@ def _resolve_project_script(ctx: "ProjectCtx", raw: str):
             404,
         )
     root = ctx.path.resolve()
-    try:
-        target = (Path(raw) if Path(raw).is_absolute() else ctx.path / raw).resolve()
-    except OSError:
-        return None, (
-            jsonify(
-                {
-                    "error": f"脚本不存在: {raw}",
-                    "code": "script_not_found",
-                    "params": {"script": raw},
-                }
-            ),
-            404,
-        )
-    if not target.is_relative_to(root):
+    resolved = engine_projectenv.contained_path(root, raw)
+    if resolved is None:
         return None, (
             jsonify(
                 {
@@ -3544,6 +3546,9 @@ def _resolve_project_script(ctx: "ProjectCtx", raw: str):
             ),
             400,
         )
+    # Filesystem sinks use only the common sanitizer's returned path; duplicating
+    # containment checks here also obscures the barrier from CodeQL.
+    target = Path(resolved)
     if target.suffix.lower() != ".py" or target.is_dir():
         return None, (
             jsonify(
@@ -3587,9 +3592,22 @@ def api_registry_probe():
     if rejected is not None:
         return rejected
     # T03：用户给的精确 argv（字符串数组，空 = 不带参数）。校验 + 登记一次做完；坏的当场 400，不截断不"修"
-    run = engine_runconfig.selection_for(
-        ctx.path, script, body.get("argv"), sensitive=bool(body.get("argv_sensitive"))
-    )
+    if "run_config" in body:
+        # 答案管理重跑的是那一条答案的配置，不是此刻参数编辑器里的草稿。null 显式选无参数。
+        ref = body["run_config"]
+        if (
+            "argv" in body
+            or "argv_sensitive" in body
+            or (ref is not None and not isinstance(ref, str))
+        ):
+            return jsonify(
+                {"error": "run_config 不能与 argv 混用且必须是引用或 null", "code": "bad_request"}
+            ), 400
+        run = engine_runconfig.selection(ctx.path, ref, script=script) if ref is not None else None
+    else:
+        run = engine_runconfig.selection_for(
+            ctx.path, script, body.get("argv"), sensitive=bool(body.get("argv_sensitive"))
+        )
     key = (ctx.id, script)
     cancel_ev = threading.Event()
     with _PROBES_LOCK:
@@ -3603,10 +3621,12 @@ def api_registry_probe():
             ), 409
         _PROBES[key] = cancel_ev
         _PROBE_RUNS[key] = run
-    sse_publish("probe.started", {"pj": ctx.id, "script": script})
     attempt_id = f"run-{uuid.uuid4().hex}"
     started = time.monotonic()
+    result = {"registered": False, "stems": []}
+    failure_response = None
     try:
+        sse_publish("probe.started", {"pj": ctx.id, "script": script})
         result = engine_probe.probe_and_register(
             ctx.path,
             script,
@@ -3614,30 +3634,42 @@ def api_registry_probe():
             should_cancel=cancel_ev.is_set,
             **({"run": run} if run is not None else {}),
         )
+        if result.get("registered"):
+            # 每张捕获图当场物化进 runtime cache（复制热 worker 已写好的预览
+            # SVG + 描述符——不触发第二次执行）。重开文档时的首帧占位靠它。
+            # **在刷新之前**：刷新会发 `registry.changed`，前端收到就去取 runtime
+            # 清单与预览，那时 cache 里得已经有东西。
+            _materialize_runtime(
+                script,
+                result.get("entry") or "",
+                result.get("descriptors") or [],
+                remap_generation=result.get("remap_generation"),
+                run=run,
+            )
+            # 磁盘面板重跑该用哪份配置：这次明确运行用的（无参数 = 清掉旧的）
+            engine_runconfig.set_default(
+                ctx.path, script, run.config_id if run is not None else None
+            )
+            # probe 已经把结果写进注册表了（`probe.probe_and_register` → `discover.register`），
+            # 这里只要重装 + 发事件：再跑一遍静态扫描既慢，又会把刚刚按**真实产出**
+            # 裁决好的归属重新掀一遍。
+            refresh_project(ctx, reason="probe", allow_static_merge=False)
+    except Exception as exc:  # noqa: BLE001 — 保留原异常响应，同时给终局补上诊断引用
+        # 复用 Flask 已登记的处理器，保留 RefreshError 的 400 等既有契约；
+        # 快照只取稳定错误码，异常文字仍留在原错误响应，不进入可分享的投影。
+        failure_response = app.make_response(app.handle_user_exception(exc))
+        failure_body = failure_response.get_json(silent=True)
+        failure_code = failure_body.get("code") if isinstance(failure_body, dict) else None
+        result = {
+            **result,
+            "error": {"code": failure_code or "internal_error"},
+        }
     finally:
         with _PROBES_LOCK:
             _PROBES.pop(key, None)
             _PROBE_RUNS.pop(key, None)
     # 这次运行里每一问的去向（T08）：只给任务诊断的白名单投影，不进响应体（响应形状不变）
     input_facts = result.pop(engine_probe.INPUT_FACTS_KEY, None)
-    if result.get("registered"):
-        # 每张捕获图当场物化进 runtime cache（复制热 worker 已写好的预览
-        # SVG + 描述符——不触发第二次执行）。重开文档时的首帧占位靠它。
-        # **在刷新之前**：刷新会发 `registry.changed`，前端收到就去取 runtime
-        # 清单与预览，那时 cache 里得已经有东西。
-        _materialize_runtime(
-            script,
-            result.get("entry") or "",
-            result.get("descriptors") or [],
-            remap_generation=result.get("remap_generation"),
-            run=run,
-        )
-        # 磁盘面板重跑该用哪份配置：这次明确运行用的（无参数 = 清掉旧的）
-        engine_runconfig.set_default(ctx.path, script, run.config_id if run is not None else None)
-        # probe 已经把结果写进注册表了（`probe.probe_and_register` → `discover.register`），
-        # 这里只要重装 + 发事件：再跑一遍静态扫描既慢，又会把刚刚按**真实产出**
-        # 裁决好的归属重新掀一遍。
-        refresh_project(ctx, reason="probe", allow_static_merge=False)
     # 失败（和成功）那一次的现场冻结成一份小快照（T04）：界面凭 `diagnostic.ref` 一键取回，之后的重试是新的 attempt
     engine_taskdiag.STORE.record(
         ctx.id,
@@ -3655,9 +3687,16 @@ def api_registry_probe():
         failed=engine_probe.outcome_of(result) == engine_probe.OUTCOME_ERROR,
         subject={("script", script)},
     )
-    return jsonify(
-        {**result, "diagnostic": {"kind": engine_taskdiag.KIND_SCRIPT_RUN, "ref": attempt_id}}
-    )
+    diagnostic = {"kind": engine_taskdiag.KIND_SCRIPT_RUN, "ref": attempt_id}
+    if failure_response is not None:
+        failure_body = failure_response.get_json(silent=True)
+        if isinstance(failure_body, dict):
+            failure_response.set_data(app.json.dumps({**failure_body, "diagnostic": diagnostic}))
+        else:
+            # HTTPException / 自定义处理器的非对象响应保持原样，引用由响应头取回。
+            failure_response.headers["X-Tavotto-Diagnostic-Ref"] = attempt_id
+        return failure_response
+    return jsonify({**result, "diagnostic": diagnostic})
 
 
 @app.post("/api/registry/probe/cancel")
@@ -3773,39 +3812,48 @@ def api_script_input_answers():
     return jsonify(_script_answers_payload(current_ctx()))
 
 
-def _after_script_answers_changed(ctx: "ProjectCtx", script: str) -> None:
+def _after_script_answers_changed(
+    ctx: "ProjectCtx", script: str, *, run_config: str | None = None, all_configs: bool = True
+) -> None:
     """答案变了必须重跑（ADR 0099 §七）：作废热会话 + `panel.file_changed`（reason=script_input）。
-    改答案是「明确要用新答案重算」：这个脚本的执行转录一并作废（T08），否则冷重放仍按旧转录作答。"""
-    engine_inputtranscript.forget(ctx.path, script)
+    改答案是「明确要用新答案重算」：对应配置的执行转录一并作废（T08），否则冷重放仍按旧转录作答。"""
+    engine_inputtranscript.forget(ctx.path, script, run_config=run_config, all_configs=all_configs)
     engine_pool.invalidate(script, str(ctx.path))
     _script_change_handler(ctx, "script_input")([script])
 
 
 @app.post("/api/script_input/answers")
 def api_script_input_answers_update():
-    """答案管理：`{script, index, answer}` 改一条；`{script, index, forget: true}` 删一条；
-    `{script, forget: true}` 删这个脚本的全部。改了就重跑。"""
+    """答案管理：index + run_config（缺省 / null = 无参数）只改 / 删一条；
+    仅 `{script, forget: true}` 明确删除整个脚本的答案。"""
     ctx = current_ctx()
     body = request.get_json(force=True) or {}
     script = str(body.get("script") or "")
     index = body.get("index")
-    if index is not None and (not isinstance(index, int) or isinstance(index, bool)):
+    ref = body.get("run_config")
+    if "forget" in body and not isinstance(body["forget"], bool):
+        return jsonify({"error": "forget 必须是布尔值", "code": "bad_request"}), 400
+    if "index" in body and (not isinstance(index, int) or isinstance(index, bool)):
         return jsonify({"error": "index 必须是整数", "code": "bad_request"}), 400
+    if ref is not None and (not isinstance(ref, str) or not ref):
+        return jsonify({"error": "run_config 必须是非空引用或 null", "code": "bad_request"}), 400
+    if "run_config" in body and index is None:
+        return jsonify({"error": "指定 run_config 时需要 index", "code": "bad_request"}), 400
     if not script or script not in engine_scriptanswers.load(ctx.path):
         return jsonify({"error": "这个脚本没有记住的答案", "code": "script_input_not_found"}), 404
     if body.get("forget"):
-        changed = engine_scriptanswers.forget(ctx.path, script, index)
+        changed = engine_scriptanswers.forget(ctx.path, script, index, run_config=ref)
     else:
         answer = body.get("answer")
         if index is None or not isinstance(answer, str):
             return jsonify({"error": "需要 index 与 answer", "code": "bad_request"}), 400
         try:
-            changed = engine_scriptanswers.update(ctx.path, script, index, answer)
+            changed = engine_scriptanswers.update(ctx.path, script, index, answer, run_config=ref)
         except ValueError as exc:
             return jsonify({"error": str(exc), "code": "script_input_invalid"}), 400
     if not changed:
         return jsonify({"error": "没有这一条答案", "code": "script_input_not_found"}), 404
-    _after_script_answers_changed(ctx, script)
+    _after_script_answers_changed(ctx, script, run_config=ref, all_configs=index is None)
     return jsonify(_script_answers_payload(ctx))
 
 
