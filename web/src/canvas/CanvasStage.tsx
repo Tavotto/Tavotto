@@ -15,7 +15,7 @@ import { addPanelToCanvas, openFastEdit, useWorkspaceStore } from '@/store/works
 import { clientToMm, mmToPx, mmToViewX, mmToViewY, mmToWorld, useViewportStore } from '@/store/viewportStore'
 import { emptyStateAnchor } from '@/lib/emptyStateAnchor'
 import { shouldFitOnDoubleClick } from '@/lib/fitGuard'
-import { fitStage, stageFitFrame } from '@/store/zoomToSelection'
+import { applyStageFit, fitStage, stageFitFrame } from '@/store/zoomToSelection'
 import { normalizeWheel } from '@/lib/wheel'
 import { ObjectView } from './ObjectView'
 import { WorkspaceContextBar } from './WorkspaceContextBar'
@@ -103,16 +103,18 @@ export function CanvasStage() {
     }
   }, [setViewRect, pad])
 
-  // 首次拿到尺寸后自动适应页面
+  // 首次拿到尺寸后自动适应（与 ⌘1 同一个框：快速编辑里那张图本身的矩形，排版里页面）。
+  // frame 每次渲染都是新对象：依赖它的各个分量，不是它本身
+  const { x: fx, y: fy, w: fw, h: fh, page: fpage } = frame
   const fittedRef = useRef(false)
   useEffect(() => {
     if (fittedRef.current) return
-    const { viewW, viewH, fit } = useViewportStore.getState()
+    const { viewW, viewH } = useViewportStore.getState()
     if (viewW && viewH) {
-      fit(frame.w, frame.h)
+      applyStageFit({ x: fx, y: fy, w: fw, h: fh, page: fpage }, false)
       fittedRef.current = true
     }
-  }, [outer.w, outer.h, frame.w, frame.h])
+  }, [outer.w, outer.h, fx, fy, fw, fh, fpage])
 
   // React 的 onWheel 是被动监听，缩放必须手动挂非被动监听器
   useEffect(() => {
@@ -179,7 +181,7 @@ export function CanvasStage() {
       interacting: useInteractionStore.getState().kind !== 'none',
       onObject: !!(e.target as HTMLElement).closest('[data-object-id]'),
       point: clientToMm(e.clientX, e.clientY),
-      page: { w: frame.w, h: frame.h },
+      frame: { x: frame.x, y: frame.y, w: frame.w, h: frame.h },
     })
     if (ok) fitStage()
   }

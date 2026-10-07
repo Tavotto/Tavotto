@@ -112,9 +112,10 @@
   旧版面对象（进快编之前留下的、图层面板点的）一个不删；删那张图本身照旧（看得见、可撤销，对象没了快速编辑
   随之退出）。**「适应」的取景框只有 `store/zoomToSelection.stageFitFrame` 一处**，动作 `fitStage()`：舞台双击、
   ⌘1 / 系统菜单（`runZoomCommand('fit')`）、缩放菜单、命令面板 `fit`、画布工具条与画布菜单全走它——快速编辑里
-  框那张图（右下角当框，见函数注释），排版里框页面；此前 ⌘1 / 菜单 / 面板在快速编辑里适应这一屏根本没画的页面，
+  框那张图**本身的矩形**（含原点，`fitRectAnimated`；曾按「(0,0) 到右下角」取景，x/y 为负时图被裁、为正时左上留白，
+  Codex #833），排版里框页面（`fitAnimated`）；首次挂载的瞬时适应与双击的「框外」判据（`lib/fitGuard`）读同一个框；此前 ⌘1 / 菜单 / 面板在快速编辑里适应这一屏根本没画的页面，
   而双击适应那张图。看护 `hooks/useKeyboardFastEdit.test.tsx`（⌘A / Delete / ⌘1 各带排版对照组）、
-  `components/CommandPalette.test.tsx`。
+  `components/CommandPalette.test.tsx`、`canvas/stageFitRect.test.tsx`（正 / 负偏移下 ⌘1、系统菜单、`fitStage`、舞台双击的视口终点）。
 - **换画布尺寸就重新取景；新加的图软上限缩放；页面外画淡（2026-09-28，用户反馈）**：
   同一份文档、同一张画布的 `page.w/h` 一变（预设、手填、横竖对调、样式预设带的页面、
   以及它们的撤销 / 重做）→ `store/pageFit.startPageSizeFit` 按新页面 `fitAnimated`，
