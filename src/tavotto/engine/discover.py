@@ -33,6 +33,7 @@ import json
 import os
 import platform
 import re
+import stat
 import subprocess
 import sys
 import threading
@@ -965,17 +966,19 @@ def is_infrastructure_name(name: str) -> bool:
 # 扫描
 # --------------------------------------------------------------------------
 def _children(d: Path, budget: scanbudget.Budget | None) -> list[Path]:
-    """目录的直接子项（排好序）。带预算时**最多读预算还剩的那么多项**——一个有上百万文件的数据
-    目录不能先整个 `sorted()` 进内存再谈预算；读到上限，后面 `charge_entry()` 会记 `entry_budget`
-    并让调用方收手。不带预算与改造前逐字相同。"""
+    """目录的直接子项（排好序）。带预算时逐项 scandir 并当场记账；Path.iterdir 在一些受支持的
+    Python 版本里先 listdir 整个目录，事后截断仍会无界读取。只给已经读进预算的子项排序，时间与
+    取消也在读取期间检查。不带预算与改造前逐字相同。"""
     if budget is None:
         return sorted(d.iterdir())
-    room = max(budget.limits.max_entries - budget.entries, 0) + 1
+    if budget.stop_reason() is not None:
+        return []
     out: list[Path] = []
-    for child in d.iterdir():
-        out.append(child)
-        if len(out) >= room:
-            break
+    with os.scandir(d) as entries:
+        for entry in entries:
+            if not budget.charge_entry():
+                break
+            out.append(d / entry.name)
     return sorted(out)
 
 
@@ -1013,6 +1016,9 @@ def _iter_py(
 
     def walk(d: Path, depth: int) -> None:
         try:
+            if budget is not None and d != root and scanbudget.is_redirect(d.lstat()):
+                budget.note(scanbudget.ISSUE_SYMLINK_DIR, path=rel(d))
+                return
             children = _children(d, budget)
         except OSError:
             if strict:
@@ -1021,15 +1027,27 @@ def _iter_py(
                 budget.note(scanbudget.ISSUE_UNREADABLE_DIR, path=rel(d) if d != root else ".")
             return
         for child in children:
-            if budget is not None and not budget.charge_entry():
+            # Children are already charged, but classification/stat can also be slow.
+            if budget is not None and budget.stop_reason() is not None:
                 return
             if child.name.startswith("."):
                 continue
-            if child.is_dir():
-                if child.name in PRUNE_DIRS:
+            if budget is None:
+                is_dir = child.is_dir()
+            else:
+                try:
+                    metadata = child.lstat()
+                except OSError:
+                    if strict:
+                        raise
+                    budget.note(scanbudget.ISSUE_UNREADABLE_FILE, scope="entry", path=rel(child))
                     continue
-                if budget is not None and child.is_symlink():
-                    budget.note(scanbudget.ISSUE_SYMLINK_DIR, path=rel(child))
+                if scanbudget.is_redirect(metadata):
+                    budget.note(scanbudget.ISSUE_SYMLINK_DIR, scope="entry", path=rel(child))
+                    continue
+                is_dir = stat.S_ISDIR(metadata.st_mode)
+            if is_dir:
+                if child.name in PRUNE_DIRS:
                     continue
                 if depth < MAX_DEPTH:
                     walk(child, depth + 1)

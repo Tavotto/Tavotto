@@ -769,6 +769,12 @@ def _call_open(args: dict) -> dict:
         raise RpcError(
             INVALID_PARAMS, "adopt_environment / expected_environment_generation 必须是字符串"
         )
+    if (adopt is None) != (generation is None):
+        # 候选与它的环境代是一份绑定的回答：缺一个就会跳过比对，采用用户没看过的那一代
+        raise RpcError(
+            INVALID_PARAMS,
+            "adopt_environment 与 expected_environment_generation 必须一起给（候选 id + 它的 generation）",
+        )
     plan = _batch_request(args)
     if plan is not None:
         if prepare is not None:

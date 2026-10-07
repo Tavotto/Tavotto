@@ -426,6 +426,12 @@ def _probe(
             if not entry_retry_allowed(exc):
                 break  # 与入口无关的失败：再换入口只会把顶层代码重跑一遍
             continue
+        if cancelled():
+            # 共享会话的等待者被取消：别人的 build 照常跑完（不杀它），但本次试运行不得再当成功返回——
+            # 否则 probe_and_register 会替换注册表 stem，可能摘掉别的参数建出来的图。
+            LOG.info("探测完成但已被取消 %s [entry=%s]", script, entry)
+            facts["facts"] = getattr(_worker, "last_input_facts", None)
+            return {**empty, "tried": tried, "error": _cancel_err()}
         stems = sorted(resp.get("stems") or {})
         facts["facts"] = getattr(_worker, "last_input_facts", None)
         if stems:
@@ -600,16 +606,23 @@ def was_captured(figures_dir: str | Path, script: str, stem: str) -> bool:
 
 
 def linked_scripts(
-    figures_dir: str | Path, stems_by_script: dict[str, list[str]], asset_stems: set[str]
+    figures_dir: str | Path, stems_by_script: dict[str, list[str]]
 ) -> set[str]:
-    """登记了、**而且**至少一张登记的图此刻真有东西可编辑的脚本：项目里有同名的图文件（`asset_stems`），或这张图被某次
-    执行捕获过（`was_captured`）。「已关联」只有这一份判据：导入即扫描（`projscan`）与素材库脚本清单（`/api/registry`
-    的 `all_scripts[].linked`）都用它——打开项目时静态扫描先登记的字面量图名只是猜测，脚本一次没跑过时不算已关联
-    （T11 修了扫描，T13b 发现素材库脚本行是第二个消费者）。只读：文件名比对 + cache 元数据，不执行、不起解释器。"""
+    """登记了、**而且**至少一张登记的图此刻真有东西可编辑的脚本：项目根一层有这个图名的原件
+    （`figcapture.find_original_artifact`——与 handoff / probe 找原件是同一份判据；递归素材清单里的 `archive/fig.pdf`
+    不是这个脚本的原件，不算，#819 P2），或这张图被某次执行捕获过（`was_captured`）。「已关联」只有这一份判据：
+    导入即扫描（`projscan`）与素材库脚本清单（`/api/registry` 的 `all_scripts[].linked`）都用它——打开项目时静态扫描
+    先登记的字面量图名只是猜测，脚本一次没跑过时不算已关联（T11 修了扫描，T13b 发现素材库脚本行是第二个消费者）。
+    只读：文件名比对 + cache 元数据，不执行、不起解释器。"""
+    root = str(figures_dir)
     return {
         script
         for script, stems in stems_by_script.items()
-        if any(stem in asset_stems or was_captured(figures_dir, script, stem) for stem in stems)
+        if any(
+            figcapture.find_original_artifact(root, stem) is not None
+            or was_captured(figures_dir, script, stem)
+            for stem in stems
+        )
     }
 
 
@@ -623,11 +636,11 @@ OUTCOME_CANCELLED = "cancelled"
 
 
 def outcome_of(result: dict) -> str:
-    if result.get("registered"):
-        return OUTCOME_READY
-    if ((result.get("error") or {}).get("code")) == ERROR_CANCELLED:
-        return OUTCOME_CANCELLED
-    return OUTCOME_ERROR
+    # 已登记后物化 / 默认配置 / 刷新仍可能失败，成功登记不能盖掉这次终局错误。
+    error = result.get("error")
+    if error:
+        return OUTCOME_CANCELLED if error.get("code") == ERROR_CANCELLED else OUTCOME_ERROR
+    return OUTCOME_READY if result.get("registered") else OUTCOME_ERROR
 
 
 def diagnostic_projection(

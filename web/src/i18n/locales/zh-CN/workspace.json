@@ -511,7 +511,7 @@
     "issue": {
       "unreadable_dir": "没能读取目录 {{path}}。",
       "unreadable_file": "没能读取文件 {{path}}。",
-      "symlinked_dir": "{{path}} 是链接目录，没有进入检查。",
+      "symlinked_dir": "{{path}} 是链接或重定向项，未检查其目标。",
       "placeholder_file": "{{path}} 是还没下载到本机的云盘文件，没有读取。",
       "file_too_large": "{{path}} 太大，没有分析。",
       "parse_budget": "{{path}} 结构过于复杂，没有分析。",

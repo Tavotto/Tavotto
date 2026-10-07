@@ -73,13 +73,13 @@ class World:
         self.venv_python.write_text(
             f'#!/bin/sh\ntouch "{self.sentinel}/venv_python.$$"\nexit 0\n', "utf-8"
         )
-        self.venv_python.chmod(0o755)
+        self.venv_python.chmod(0o700)
         # 假登录 shell
         self.shell = base / "fakeshell.sh"
         self.shell.write_text(
             f'#!/bin/sh\ntouch "{self.sentinel}/login_shell.$$"\necho nothing\n', "utf-8"
         )
-        self.shell.chmod(0o755)
+        self.shell.chmod(0o700)
 
     def fired(self) -> list[str]:
         return sorted(p.name.split(".")[0] for p in self.sentinel.iterdir())

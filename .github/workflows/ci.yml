@@ -1698,6 +1698,11 @@ jobs:
         run: |
           $env:TAVOTTO_WORKER_PYTHON = $null
           $env:TAVOTTO_EXE = "$env:GITHUB_WORKSPACE\dist\Tavotto\Tavotto.exe"
+          # 真实首跑资格（web/e2e/first-run-qualification.spec.ts）要一个「原生参考」解释器：用它直接跑一遍脚本，
+          # 与应用里的跑法逐项对拍。这条腿跑的是产物，应用的 worker 就是**内置 runtime**，所以参考也取它——
+          # 同一个解释器、同一套锁定的 numpy / matplotlib，对拍比的是「经产品」与「不经产品」两种跑法，
+          # 不是两套科学栈的版本差。（TAVOTTO_PYTHON 在有 TAVOTTO_EXE 时不参与启动应用，见 web/e2e/fixtures.ts。）
+          $env:TAVOTTO_PYTHON = "$env:GITHUB_WORKSPACE\dist\Tavotto\_internal\runtime\python.exe"
           pnpm e2e ${{ matrix.projects }}
 
       - name: 上传分片自验证据

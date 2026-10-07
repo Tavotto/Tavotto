@@ -27,11 +27,12 @@ import glob
 import logging
 import os
 import re
+import stat
 import subprocess
 import threading
 from pathlib import Path
 
-from . import projectenv, runtime
+from . import projectenv, runtime, scanbudget
 
 LOG = logging.getLogger("tavotto.userenvs")
 
@@ -88,7 +89,60 @@ def _home() -> str:
     return os.path.expanduser("~")
 
 
+def _local_hint(path: str) -> bool:
+    """Lexically reject network/device namespaces before filesystem discovery.
+
+    Normalize separators as text on every host: a Windows project can be scanned
+    on POSIX too. Do not resolve/stat a rejected hint, since even existence checks
+    may contact SMB/WebDAV and send the user's network authentication on Windows.
+    """
+    value = path.replace("\\", "/")
+    return not value.startswith(("//", "/??/"))
+
+
+#: 项目内线索文件（`.vscode/settings.json` / `.python-version` / `environment.yml`）的读取上限。
+#: 与 `scanbudget.MAX_FILE_BYTES` 同值：超过就当读不了，不是「读一半」。
+MAX_HINT_BYTES = scanbudget.MAX_FILE_BYTES
+
+
+def _read_hint_text(base: Path, *parts: str, no_follow: bool = False) -> str:
+    """读项目里的一个线索文件：只认**普通文件**、有字节上限、绝不阻塞在 FIFO 上；读不了一律 `OSError`。
+
+    `no_follow=True`（导入即扫描）：`base`（已 realpath、钉在项目内的目录）之下的每一级都先 `lstat`，
+    符号链接 / Windows 路径替身（junction 等）不探目标；打开用 `O_NOFOLLOW`（有的平台）并在打开后
+    `fstat` 复核仍是普通文件。这是元数据先行的防御，不声称对并发替换有原子保证。
+    默认形态（准备 / 依赖门）保持跟随用户自己的符号链接（dotfile 管理常见），但同样只读普通文件、有上限。"""
+    cur = Path(base)
+    for part in parts:
+        cur = cur / part
+        if no_follow and scanbudget.is_redirect(cur.lstat()):
+            raise OSError(f"redirect refused: {part}")
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0)
+    if no_follow:
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(cur, flags)
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_size > MAX_HINT_BYTES:
+            raise OSError("not a bounded regular file")
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            chunk = os.read(fd, 64 * 1024)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > MAX_HINT_BYTES:  # 打开之后又长大了：同样不读
+                raise OSError("hint file grew past the limit")
+            chunks.append(chunk)
+    finally:
+        os.close(fd)
+    return b"".join(chunks).decode("utf-8", errors="replace")
+
+
 def _is_python_file(path: str) -> bool:
+    if not _local_hint(path):
+        return False
     try:
         p = Path(path)
         return p.name.lower().startswith("python") and p.is_file()
@@ -98,6 +152,8 @@ def _is_python_file(path: str) -> bool:
 
 def _prefix_python(prefix: str) -> str | None:
     """环境前缀（Conda / pyenv / venv）→ 里面的解释器；没有回 None。"""
+    if not _local_hint(prefix):
+        return None
     names = ("python.exe",) if os.name == "nt" else ("bin/python3", "bin/python")
     for name in names:
         cand = os.path.join(prefix, name)
@@ -128,17 +184,19 @@ def _hint_dirs(root_real: str, script_path: str | None) -> list[Path]:
 _VSCODE_KEY = re.compile(r'"python\.(?:defaultInterpreterPath|pythonPath)"\s*:\s*"([^"]+)"')
 
 
-def _vscode_pythons(dirs: list[Path]) -> list[str]:
+def _vscode_pythons(dirs: list[Path], *, no_follow: bool = False) -> list[str]:
     # settings.json 是 JSONC（注释、尾逗号）；只要这一个键，正则比「先把 JSONC 洗成 JSON」可靠
     out: list[str] = []
     for d in dirs:
         try:
-            text = (d / ".vscode" / "settings.json").read_text(encoding="utf-8", errors="replace")
+            text = _read_hint_text(d, ".vscode", "settings.json", no_follow=no_follow)
         except OSError:
             continue
         for raw in _VSCODE_KEY.findall(text):
             value = raw.replace("${workspaceFolder}", str(d)).replace("\\\\", "\\")
             value = os.path.expanduser(value)
+            if not _local_hint(value):
+                continue
             if not os.path.isabs(value):
                 value = str(d / value)
             out.append(value)
@@ -156,11 +214,11 @@ def _pyenv_version_dirs() -> list[str]:
     return [os.path.join(root, "versions")]
 
 
-def _python_version_pythons(dirs: list[Path]) -> list[tuple[str, str]]:
+def _python_version_pythons(dirs: list[Path], *, no_follow: bool = False) -> list[tuple[str, str]]:
     out: list[tuple[str, str]] = []
     for d in dirs:
         try:
-            lines = (d / ".python-version").read_text(encoding="utf-8", errors="replace").split()
+            lines = _read_hint_text(d, ".python-version", no_follow=no_follow).split()
         except OSError:
             continue
         for name in lines:
@@ -177,12 +235,12 @@ def _python_version_pythons(dirs: list[Path]) -> list[tuple[str, str]]:
 _ENV_NAME = re.compile(r"^name:\s*['\"]?([A-Za-z0-9_.\-]+)['\"]?\s*$", re.M)
 
 
-def _environment_yml_pythons(dirs: list[Path]) -> list[tuple[str, str]]:
+def _environment_yml_pythons(dirs: list[Path], *, no_follow: bool = False) -> list[tuple[str, str]]:
     out: list[tuple[str, str]] = []
     for d in dirs:
         for fname in ("environment.yml", "environment.yaml"):
             try:
-                text = (d / fname).read_text(encoding="utf-8", errors="replace")
+                text = _read_hint_text(d, fname, no_follow=no_follow)
             except OSError:
                 continue
             m = _ENV_NAME.search(text)
@@ -197,13 +255,23 @@ def _environment_yml_pythons(dirs: list[Path]) -> list[tuple[str, str]]:
     return out
 
 
-def _shebang_python(script_path: str | None) -> str | None:
-    """`script_path` 同 `_hint_dirs`：只认 `contained_path()` 的输出。"""
+def _shebang_python(script_path: str | None, *, no_follow: bool = False) -> str | None:
+    """`script_path` 同 `_hint_dirs`：只认 `contained_path()` 的输出。只读普通文件的前 512 字节。"""
     if not script_path:
         return None
     try:
-        with open(script_path, "rb") as fh:
-            first = fh.readline(512)
+        if no_follow and scanbudget.is_redirect(os.lstat(script_path)):
+            return None
+        flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0)
+        if no_follow:
+            flags |= getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(script_path, flags)
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                return None
+            first = os.read(fd, 512).split(b"\n", 1)[0]
+        finally:
+            os.close(fd)
     except OSError:
         return None
     if not first.startswith(b"#!"):
@@ -378,7 +446,11 @@ def _key(python: str) -> tuple[str, str]:
 
 
 def discover(
-    figures_dir: str | Path, script: str | None = None, *, ask_login_shell: bool | None = True
+    figures_dir: str | Path,
+    script: str | None = None,
+    *,
+    ask_login_shell: bool | None = True,
+    no_follow: bool = False,
 ) -> list[dict]:
     """按优先级排好的候选表（去重、只含存在的文件）。不起任何 Python；默认可能问一次登录 shell。
 
@@ -386,16 +458,24 @@ def discover(
     `environments.txt` 与常见安装根、pyenv 的 versions），**不启动登录 shell**——登录 shell 要读用户的
     rc 文件（可能是任何东西）才答得出，那是 T05 的明确检查动作，不是导入时的读线索。导入即扫描永远
     传 False；默认值保持老行为（静默采用兼容开关下，准备 / 依赖门里的 `deprepair` 仍问）。
-    `None`（T05）：不问、但把**已经被明确问过**的登录 shell 答案并进来（`cached_login_shell_pythons`）。"""
+    `None`（T05）：不问、但把**已经被明确问过**的登录 shell 答案并进来（`cached_login_shell_pythons`）。
+
+    `no_follow=True`（导入即扫描传）：项目里的线索文件（`.vscode/settings.json` / `.python-version` /
+    `environment.yml` / 脚本 shebang）不跟随符号链接 / 路径替身，且无论哪种形态都只读有上限的普通文件。"""
     # `script` 可能来自请求体：先钉在项目内，下游一律用净化器回的那一条；越界就当没给脚本
     root_real = os.path.realpath(os.fspath(figures_dir))
     script_path = projectenv.contained_path(root_real, script) if script else None
     dirs = _hint_dirs(root_real, script_path)
     raw: list[tuple[str, str, str]] = []
-    raw += [(p, SOURCE_VSCODE, "") for p in _vscode_pythons(dirs)]
-    raw += [(p, SOURCE_PYTHON_VERSION, n) for p, n in _python_version_pythons(dirs)]
-    raw += [(p, SOURCE_ENVIRONMENT_YML, n) for p, n in _environment_yml_pythons(dirs)]
-    shebang = _shebang_python(script_path)
+    raw += [(p, SOURCE_VSCODE, "") for p in _vscode_pythons(dirs, no_follow=no_follow)]
+    raw += [
+        (p, SOURCE_PYTHON_VERSION, n) for p, n in _python_version_pythons(dirs, no_follow=no_follow)
+    ]
+    raw += [
+        (p, SOURCE_ENVIRONMENT_YML, n)
+        for p, n in _environment_yml_pythons(dirs, no_follow=no_follow)
+    ]
+    shebang = _shebang_python(script_path, no_follow=no_follow)
     if shebang:
         raw.append((shebang, SOURCE_SHEBANG, ""))
     if ask_login_shell:

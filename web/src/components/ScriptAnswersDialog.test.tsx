@@ -81,8 +81,8 @@ describe('ScriptAnswersDialog', () => {
       box.dispatchEvent(new Event('input', { bubbles: true }))
     })
     await click(buttonWith('保存并重新运行'))
-    expect(mockUpdate).toHaveBeenCalledWith('pick.py', 1, '2')
-    expect(runSpy).toHaveBeenCalledWith('pick.py')
+    expect(mockUpdate).toHaveBeenCalledWith('pick.py', 1, '2', null)
+    expect(runSpy).toHaveBeenCalledWith('pick.py', null)
   })
 
   it('请求在飞时换了项目：不在新项目里重新运行（Codex #680 P1）', async () => {
@@ -116,7 +116,57 @@ describe('ScriptAnswersDialog', () => {
     useScriptInputStore.getState().openManager('pick.py')
     render()
     await click(buttonWith('删除'))
-    expect(mockForget).toHaveBeenCalledWith('pick.py', 1)
-    expect(runSpy).toHaveBeenCalledWith('pick.py')
+    expect(mockForget).toHaveBeenCalledWith('pick.py', 1, null)
+    expect(runSpy).toHaveBeenCalledWith('pick.py', null)
   })
+})
+
+
+it('same-index configurations have distinct rows; editing and deleting target that row', async () => {
+  const rows = [
+    { ...ANSWERS['pick.py'][0], run_config: 'rc_a', answer: 'alpha' },
+    { ...ANSWERS['pick.py'][0], run_config: 'rc_b', answer: 'beta' },
+  ]
+  useScriptInputStore.setState({ answers: { 'pick.py': rows } })
+  useScriptInputStore.getState().openManager('pick.py')
+  render()
+  const before = Array.from(dialog()!.querySelectorAll<HTMLLIElement>('li'))
+  expect(before[0].textContent).toContain('rc_a')
+  expect(before[1].textContent).toContain('rc_b')
+  const box = before[1].querySelector('input')!
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(box, 'new-beta')
+    box.dispatchEvent(new Event('input', { bubbles: true }))
+    // Reorder incoming rows: the draft must stay with B, not with its old position.
+    useScriptInputStore.setState({ answers: { 'pick.py': [rows[1], rows[0]] } })
+  })
+  const reordered = Array.from(dialog()!.querySelectorAll<HTMLLIElement>('li'))
+  expect(reordered[0]).toBe(before[1])
+  expect(reordered[0].querySelector('input')!.value).toBe('new-beta')
+  mockUpdate.mockResolvedValue({ scripts: { 'pick.py': [rows[1], rows[0]] }, location: '', pending: [] })
+  await click(reordered[0].querySelector('button')!)
+  expect(mockUpdate).toHaveBeenCalledWith('pick.py', 1, 'new-beta', 'rc_b')
+  expect(runSpy).toHaveBeenLastCalledWith('pick.py', 'rc_b')
+  await click(reordered[1].querySelectorAll('button')[1])
+  expect(mockForget).toHaveBeenCalledWith('pick.py', 1, 'rc_a')
+  expect(runSpy).toHaveBeenLastCalledWith('pick.py', 'rc_a')
+})
+
+it('a delayed configured delete cannot rerun after switching projects', async () => {
+  setCurrentProjectId('A')
+  let resolve!: (v: Awaited<ReturnType<typeof forgetScriptAnswer>>) => void
+  mockForget.mockReturnValue(new Promise((r) => (resolve = r)))
+  useScriptInputStore.setState({ answers: { 'pick.py': [{ ...ANSWERS['pick.py'][0], run_config: 'rc_a' }] } })
+  useScriptInputStore.getState().openManager('pick.py')
+  render()
+  await click(buttonWith('删除'))
+  expect(mockForget).toHaveBeenCalledWith('pick.py', 1, 'rc_a')
+  await act(async () => {
+    useScriptInputStore.getState().clear()
+    setCurrentProjectId('B')
+    resolve({ scripts: {}, location: '', pending: [] })
+  })
+  expect(runSpy).not.toHaveBeenCalled()
+  expect(useScriptInputStore.getState().answers).toBeNull()
+  setCurrentProjectId(null)
 })

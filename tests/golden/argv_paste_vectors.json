@@ -162,6 +162,47 @@
     "plot.py"
    ],
    "argv": []
+  },
+  {
+   "text": "data.csv --a 1",
+   "script": "plot.py",
+   "words": [
+    "data.csv",
+    "--a",
+    "1"
+   ],
+   "argv": [
+    "data.csv",
+    "--a",
+    "1"
+   ]
+  },
+  {
+   "text": "plot.py other.py --a 1",
+   "script": "plot.py",
+   "words": [
+    "plot.py",
+    "other.py",
+    "--a",
+    "1"
+   ],
+   "argv": [
+    "other.py",
+    "--a",
+    "1"
+   ]
+  },
+  {
+   "text": "-- other.py",
+   "script": "plot.py",
+   "words": [
+    "--",
+    "other.py"
+   ],
+   "argv": [
+    "--",
+    "other.py"
+   ]
   }
  ],
  "rejected": [
@@ -264,6 +305,31 @@
    "text": "   ",
    "script": "plot.py",
    "error": "empty"
+  },
+  {
+   "text": "other.py --a 1",
+   "script": "plot.py",
+   "error": "different_script"
+  },
+  {
+   "text": "./other.py --a 1",
+   "script": "plot.py",
+   "error": "different_script"
+  },
+  {
+   "text": "\"scripts/other file.py\" --a 1",
+   "script": "plot.py",
+   "error": "different_script"
+  },
+  {
+   "text": "'C:\\scripts\\other.py' --a 1",
+   "script": "plot.py",
+   "error": "different_script"
+  },
+  {
+   "text": "other.pyw --a 1",
+   "script": "plot.py",
+   "error": "different_script"
   }
  ]
 }

@@ -467,7 +467,9 @@ def test_a_refused_adoption_never_opens_the_figure(project, pool, monkeypatch):
 
 
 def test_adopt_environment_on_an_old_engine_is_refused(project, pool, old_engine):
-    body = _open(project, adopt_environment="p_venv")["structuredContent"]
+    body = _open(project, adopt_environment="p_venv", expected_environment_generation="g1")[
+        "structuredContent"
+    ]
     assert body["code"] == "engine_capability_missing"
     assert body["capability"] == "environment-adoption"
     assert pool.runs == []
@@ -572,3 +574,71 @@ def test_optional_engine_modules_never_raise_the_plugins_minimum_engine():
     assert len(dynamic) == 1  # 只有 `_optional_engine` 自己那一处
     with pytest.raises(ValueError):
         bridge._optional_engine("pool")
+
+
+# ------------------------------------------------- #818 评审线程：采用必须绑环境代 / argv 不越出工作区
+@pytest.mark.parametrize(
+    "args",
+    [
+        {"adopt_environment": "p_venv"},
+        {"expected_environment_generation": "g1"},
+    ],
+    ids=["candidate_without_generation", "generation_without_candidate"],
+)
+def test_adoption_requires_candidate_and_generation_together(project, pool, monkeypatch, args):
+    """候选 id 与环境代是一份绑定的回答：缺环境代会让 `adopt_candidate` 跳过比对（采用用户没看过的那一代）。"""
+    from tavotto.engine import envadvice
+
+    monkeypatch.setattr(
+        envadvice, "adopt_candidate", lambda *a, **k: pytest.fail("不该走到采用服务")
+    )
+    with pytest.raises(rpc.RpcError) as exc:
+        _open(project, **args)
+    assert exc.value.code == rpc.INVALID_PARAMS
+    assert pool.runs == []
+
+
+def test_bridge_refuses_an_empty_generation_even_when_called_directly(project, pool, monkeypatch):
+    from tavotto.engine import envadvice
+
+    monkeypatch.setattr(
+        envadvice, "adopt_candidate", lambda *a, **k: pytest.fail("不该走到采用服务")
+    )
+    with pytest.raises(bridge.BridgeError) as exc:
+        bridge.open_figure(
+            str(project), adopt_environment="p_venv", expected_environment_generation=""
+        )
+    assert exc.value.code == "environment_generation_required"
+    assert pool.runs == []
+
+
+@pytest.mark.parametrize(
+    "shape", ["bare", "equals", "short_attached", "tilde", "dotdot", "dotdot_equals", "root"]
+)
+def test_argv_paths_outside_the_approved_workspace_are_refused(
+    project, pool, tmp_path_factory, shape
+):
+    """argv 会原样成为 sys.argv：`FileType('w')` 一类选项能据此截断项目外的文件。指到根之外一律拒，
+    脚本不执行、不登记配置。"""
+    outside = str(tmp_path_factory.mktemp("outside") / "victim.txt")
+    token = {
+        "bare": outside,
+        "equals": f"--out={outside}",
+        "short_attached": f"-o{outside}",
+        "tilde": "~/victim.txt",
+        "dotdot": "../../../../../../etc/passwd",
+        "dotdot_equals": "--out=../../../x",
+        "root": "/",
+    }[shape]
+    before = runconfig.configs_of(str(project), "fig1.py")
+    body = _open(project, argv=["--freq", "1", "--out", token])["structuredContent"]
+    assert body["code"] == "argv_path_out_of_scope"
+    assert pool.runs == []
+    assert runconfig.configs_of(str(project), "fig1.py") == before
+
+
+def test_argv_paths_inside_the_workspace_and_plain_values_still_pass(project, pool):
+    inside = str(project / "out.csv")
+    ok = _open(project, argv=["--freq", "2", "--out", inside, "--mode=a", "sub/dir.txt", "-1"])
+    assert ok["structuredContent"].get("ok") is True
+    assert pool.runs and pool.runs[-1] is not None

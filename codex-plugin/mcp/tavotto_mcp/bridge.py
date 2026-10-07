@@ -27,6 +27,7 @@ import hashlib
 import importlib
 import json
 import os
+import re
 import sys
 import time
 import uuid
@@ -198,6 +199,68 @@ def _run_config_error(exc) -> BridgeError:
     return BridgeError(str(exc), code=exc.code, requirements=[need], **extra)
 
 
+#: Windows 盘符 / UNC 开头的绝对路径（`os.path.isabs` 在 POSIX 上认不出它们，但脚本可能在任何平台上被
+#: 当成路径打开：一律按「像路径」处理）。
+_WIN_ABS_RE = re.compile(r"^(?:[A-Za-z]:[\\/]|[\\/]{2})")
+
+
+def _argv_path_candidates(token: str) -> list[str]:
+    """一个 argv token 里可能被脚本当成路径的片段：整项、`--opt=值` 的值、`-oVALUE` 的值。"""
+    out = [token]
+    if token.startswith("-") and "=" in token:
+        out.append(token.split("=", 1)[1])
+    if len(token) > 2 and token[0] == "-" and token[1] != "-":
+        out.append(token[2:])
+    return out
+
+
+def _argv_path_escapes(value: str, roots: list[str]) -> str | None:
+    """这段文字若会指到已授权根之外，返回规范化后的路径（或原文）；否则 None。
+
+    只看「形状」：绝对路径（含盘符 / UNC / `~`）必须落在允许的根里；含 `..` 的相对路径一律拒
+    （worker 的 cwd 不一定是项目根，没法证明它不越界）。普通相对路径与非路径值放行。"""
+    if not value:
+        return None
+    if value.startswith("~") or os.path.isabs(value) or _WIN_ABS_RE.match(value):
+        if _WIN_ABS_RE.match(value) and not os.path.isabs(value):
+            return value  # 非本平台的绝对路径形状：无法证明它在根里
+        real = canonical_path(os.path.expanduser(value))
+        return None if any(_within(real, r) for r in roots) else real
+    if ".." in re.split(r"[\\/]+", value):
+        return value
+    return None
+
+
+def _check_argv_scope(argv: list | None) -> None:
+    """MCP 的 `argv` 是 Agent 自己给的 token，会原样成为脚本的 `sys.argv`：脚本里
+    `argparse.FileType('w')` 之类的路径选项能据此写项目之外的文件。`check_scope()` 只管项目目标，管不到这里。
+
+    没有「用户绑定」的授权凭据可核（桥不能自证用户同意），所以**范围就是边界**：指到已授权根之外的 token
+    一律拒，脚本不执行、不登记配置。用户要用项目外的路径，请他在 Tavotto 窗口里自己运行（GUI 的参数是
+    用户自己输入的）。`run_config` 引用来自用户在界面里登记的配置，不在此列。"""
+    if not argv:
+        return
+    roots = allowed_roots()
+    for token in argv:
+        if not isinstance(token, str):
+            continue  # 形状错误交给 validate_argv 报 invalid_argv
+        for cand in _argv_path_candidates(token):
+            bad = _argv_path_escapes(cand, roots)
+            if bad is not None:
+                raise BridgeError(
+                    "argv 里有一项指到了已授权的工作区之外，这次没有运行脚本，也没有登记这份参数。",
+                    code="argv_path_out_of_scope",
+                    recovery=(
+                        "只能传项目内的路径（相对路径不要含 ..）。需要写 / 读项目之外的位置，请用户在 Tavotto "
+                        "窗口里自己输入参数并运行；不要改写路径绕过，也不要把路径换成别的写法重试。"
+                    ),
+                    roots=roots,
+                    requirements=[
+                        {"kind": "script_arguments", "answer_with": None, "where": "tavotto_app"}
+                    ],
+                )
+
+
 def _choose_run(
     project: str, script: str, argv: list | None, run_config: str | None
 ) -> tuple[object | None, str | None]:
@@ -222,6 +285,8 @@ def _choose_run(
             raise _run_config_error(exc) from exc
         return (run, RUN_SOURCE_SCRIPT_DEFAULT) if run is not None else (None, None)
     _require_feature(SCRIPT_ARGV_FEATURE, "按精确参数运行脚本")
+    if run_config is None:
+        _check_argv_scope(argv)
     runconfig = _optional_engine("runconfig")
     try:
         if run_config is not None:
@@ -510,6 +575,13 @@ def _answer_adopt_environment(project: str, script: str, candidate: str, generat
     采用 ≠ 安装：缺包仍走 `prepare_dependencies` 那道门。授权模型与 `workdir=` 相同——这是用户的回答，
     Agent 把候选告诉用户、按用户的选择传进来，不替用户选。"""
     _require_feature(ENVIRONMENT_ADOPTION_FEATURE, "采用环境建议")
+    if not generation:
+        # 与界面「使用它」同一条线：候选 id 与环境代一起绑定，缺了环境代就会跳过比对、采用用户没看过的那一代
+        raise BridgeError(
+            "采用环境必须同时给 adopt_environment 与它的 expected_environment_generation。",
+            code="environment_generation_required",
+            recovery="用上一次 open 的 structuredContent.environment.candidates 里该候选的 generation 再调一次。",
+        )
     envadvice, envlease = _optional_engine("envadvice"), _optional_engine("envlease")
 
     try:

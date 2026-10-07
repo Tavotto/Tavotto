@@ -145,6 +145,45 @@ describe('请求序号与快照序号', () => {
   })
 })
 
+describe('权威回包不被请求重排吞掉', () => {
+  const running = (over: Partial<ProjectScan> = {}) =>
+    scan({ state: 'running', phase: 'scanning', outcome: { kind: 'scanning' }, ...over })
+
+  it('先发的重扫 POST 晚于后发的 GET 返回上一轮终局：POST 的新扫描仍落地并继续轮询', async () => {
+    const post = deferred<ProjectScan>()
+    mockStart.mockReturnValueOnce(post.promise)
+    mockFetch.mockResolvedValueOnce(scan({ scan_id: 'old', observation_seq: 4 }))
+    const started = useProjectScanStore.getState().start({ force: true, reason: 'manual' })
+    // 迟到的 SSE 提示触发的 GET 在 POST 之后发出，却先带着上一轮终局回来
+    await useProjectScanStore.getState().refresh()
+    expect(useProjectScanStore.getState().scan?.scan_id).toBe('old')
+    post.resolve(running({ scan_id: 'new', observation_seq: 1 }))
+    await started
+    expect(useProjectScanStore.getState().scan?.scan_id).toBe('new')
+    expect(useProjectScanStore.getState().scan?.state).toBe('running')
+    // 落地的是运行中快照 => 轮询继续，不会卡在旧结果上
+    mockFetch.mockResolvedValueOnce(scan({ scan_id: 'new', observation_seq: 9 }))
+    await vi.advanceTimersByTimeAsync(500)
+    expect(useProjectScanStore.getState().scan?.observation_seq).toBe(9)
+  })
+
+  it('权威回包仍受项目换代约束，且同一轮内 observation_seq 不倒退', async () => {
+    const post = deferred<ProjectScan>()
+    mockStart.mockReturnValueOnce(post.promise)
+    const started = useProjectScanStore.getState().start({ force: true })
+    useProjectScanStore.getState().clear()
+    post.resolve(running({ scan_id: 'new' }))
+    await started
+    expect(useProjectScanStore.getState().scan).toBeNull()
+
+    mockFetch.mockResolvedValueOnce(running({ scan_id: 'n2', observation_seq: 8 }))
+    await useProjectScanStore.getState().refresh()
+    mockStart.mockResolvedValueOnce(running({ scan_id: 'n2', observation_seq: 2 }))
+    await useProjectScanStore.getState().start({ force: true })
+    expect(useProjectScanStore.getState().scan?.observation_seq).toBe(8)
+  })
+})
+
 describe('start() 去重', () => {
   it('同一项目在途的 start 合并成一次请求', async () => {
     const d = deferred<ProjectScan>()

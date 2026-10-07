@@ -805,7 +805,13 @@ def offer(project: str | Path, script: str, module: str, project_env: dict | Non
         if isinstance(detail, dict) and detail.get("code") == projectenv.ERROR_CONFIRMATION_REQUIRED
         else None
     )
-    if recommended:
+    # 建议带着「看到它那一刻」的候选 id 与环境代：缺一个都不列成目标——没有绑定的「改用」只能退回按路径采用，
+    # 环境在看到之后被重建，就会静默采用用户没看过的那一代（与 `MissingDependencyCard` 同一条纪律）
+    if (
+        isinstance(recommended, dict)
+        and recommended.get("id")
+        and recommended.get("generation")
+    ):
         # 确认模式（ADR 0114）：项目自己的 venv 体检通过、缺的包也在里面——不再无提示接手，列成一个
         # 「改用」目标，用户点一次才记进项目设置（与系统解释器同一个采用端点、同一次现场体检）。项目内的
         # 解释器给项目相对路径：采用端点把它钉回项目根之内
@@ -823,6 +829,11 @@ def offer(project: str | Path, script: str, module: str, project_env: dict | Non
                 "python_version": health.get("python_version", ""),
                 "matplotlib_version": health.get("matplotlib_version", ""),
                 "support": health.get("support", ""),
+                # 与 `PATCH /api/engine/environment` 的 `candidate` + `expected_generation` 一一对应
+                "candidate": {
+                    "id": str(recommended["id"]),
+                    "generation": str(recommended["generation"]),
+                },
             }
         )
     found = projectenv.healthy_system_candidate(system)

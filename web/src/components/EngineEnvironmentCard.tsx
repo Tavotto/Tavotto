@@ -135,6 +135,7 @@ export function EngineEnvironmentCard({ compact }: { compact?: boolean }) {
             {en('incompleteAfter')}
           </p>
           <p className="mt-1 text-xs leading-relaxed text-ink-3">{en('incompleteHint')}</p>
+          <EnvironmentAdviceRow />
         </div>
         {!compact && advancedBlock}
       </div>
@@ -147,6 +148,7 @@ export function EngineEnvironmentCard({ compact }: { compact?: boolean }) {
       <div>
         <h3 className="type-section">{en('missingTitle')}</h3>
         <p className="mt-1 text-xs leading-relaxed text-ink-2">{en('missingBody')}</p>
+        <EnvironmentAdviceRow />
       </div>
 
       {env.can_install ? (
@@ -327,7 +329,7 @@ export function MissingDependencyCard({
   projectEnv?: ProjectEnvFailure
 }) {
   useTranslation('errors')
-  const { env, setPython, setProjectPython } = useEnvStore()
+  const { env, setPython, setProjectPython, adoptCandidate } = useEnvStore()
   const [manual, setManual] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -335,9 +337,17 @@ export function MissingDependencyCard({
   const pkg = module || en('missingModulePackage')
   // 后端发现到但还没在用的候选。`projectEnv.candidates` 是这次失败时算出来的，
   // 没有它就退回环境状态里那份（用户是从设置页看到这张卡的场合）。
-  const candidates = projectEnv?.candidates?.length
-    ? projectEnv.candidates
-    : (env?.project?.can_use_project_venv ?? [])
+  const confirmation = projectEnv?.code === 'environment_confirmation_required'
+  const recommendation = projectEnv?.recommended
+  const boundCandidate = recommendation?.id && recommendation.generation
+    ? { id: recommendation.id, generation: recommendation.generation }
+    : null
+  // 确认路径只呈现这次错误里绑定了身份/代次的候选；旧响应缺少绑定时不能退回无代次采用。
+  const candidates = confirmation
+    ? (boundCandidate && recommendation ? [recommendation.venv] : [])
+    : projectEnv?.candidates?.length
+      ? projectEnv.candidates
+      : (env?.project?.can_use_project_venv ?? [])
 
   /** 四种「没接手成」各有各的下一步，绝不合并成一句 */
   const reason = (() => {
@@ -367,7 +377,9 @@ export function MissingDependencyCard({
 
   const applyVenv = async (rel: string) => {
     setBusy(true)
-    setError(await setProjectPython(rel))
+    setError(await (confirmation && boundCandidate
+      ? adoptCandidate(boundCandidate)
+      : setProjectPython(rel)))
     setBusy(false)
   }
 
@@ -389,7 +401,7 @@ export function MissingDependencyCard({
           <span className="text-xs text-ink-2">{en('projectEnvPick')}</span>
           <div className="flex flex-wrap gap-1.5">
             {candidates.map((rel) => (
-              <Button key={rel} disabled={busy} onClick={() => void applyVenv(rel)}>
+              <Button key={rel} data-env-candidate={boundCandidate?.id ?? rel} disabled={busy} onClick={() => void applyVenv(rel)}>
                 {rel}
               </Button>
             ))}

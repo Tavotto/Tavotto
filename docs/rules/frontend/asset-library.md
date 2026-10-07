@@ -214,8 +214,12 @@ argv、无参数运行）；无参数时不问。看护 `lib/engineFeatures.test
 **参数表单与粘贴命令（T07）**：展开时取一次静态 schema（`fetchScriptArguments`，后端只读源码）；有参数就在列表上方多一个表单
 （`ScriptArgsForm`）。表单**不另存意图**：每次从草稿 token 读出字段视图（`readTokens`），编辑 = 只改这个参数自己那几个 token
 （`applyEdit`，`scriptArgvStore.setTokens`），认不出的 token 原样留在原位并列出来；默认值只当占位符，删光输入 = 空字符串、× = 不提供，
-BooleanOptional 三态；编辑被拒时输入框保留原值与焦点、token 不变、说出原因；缺必填 / 互斥冲突只提示不拦。粘贴命令（`lib/argvPaste.ts`）
+BooleanOptional 仅在有长名反向选项时提供三态，短名只有「用默认 / 开」，不生成无法表达的「关」；短选项的选项形状值用
+`-k=-x` 消歧，不能被完整的 `-k-x` 选项接管。编辑被拒时输入框保留原值与焦点、token 不变、说出原因；缺必填 / 互斥冲突只提示不拦。粘贴命令（`lib/argvPaste.ts`）
 只接受一条简单 POSIX sh 调用（拒绝管道 / 重定向 / 变量 / 通配符 / 多行 / 前置赋值，失败提示改用逐项填写），被接受的分词与
-`shlex.split` 逐项相同。两份 golden：`tests/golden/script_args_form_vectors.json`、`argv_paste_vectors.json`。
+`shlex.split` 逐项相同；直接调用别的 `.py` / `.pyw` 脚本也报 `different_script`，不吞成位置参数。两份 golden：`tests/golden/script_args_form_vectors.json`、`argv_paste_vectors.json`。
 看护：`lib/scriptArgsForm.golden.test.ts`、`lib/argvPaste.golden.test.ts`、`components/ScriptArgsForm.test.tsx`。
 
+
+答案管理（T08）：行身份、改 / 删请求与随后重跑都绑定答案的 `run_config`（只显示不透明引用，不取 argv / 上下文）。
+无参数条目显式用 `null` 重跑，避免读取当前草稿；配置引用保留到运行门放行与数据改指后的重试。换项目的迟到响应不重跑。

@@ -80,7 +80,7 @@ class ReplayAnswers:
         return cls(tuple(dict(e) for e in t.entries), ask_on_mismatch=True, transcript_id=t.id)
 
     def match(
-        self, index: int, prompt: str, kind: str, context: str | None
+        self, index: int, prompt: str, kind: str, context: str | None, prompt_id: str | None = None
     ) -> tuple[str, dict | None]:
         """这一问能不能按记录作答：(结论, 记录里同序号的那条)。
 
@@ -91,6 +91,7 @@ class ReplayAnswers:
                 continue
             same = (
                 r.get("prompt") == prompt
+                and r.get("prompt_id") == prompt_id
                 and (r.get("kind") in (None, kind))
                 and not (r.get("context") and context and r.get("context") != context)
             )
@@ -158,6 +159,7 @@ class Pending:
     kind: str
     directory: Path
     stdout_tail: str = ""
+    private: bool = False
     #: 上下文摘要与运行配置引用（T08）：作答后按它们记住——本机比对用，**不进**界面事件
     context: str | None = None
     run_config: str | None = None
@@ -263,7 +265,7 @@ def answer(pending_id: str, text: str | None, *, eof: bool = False) -> Pending |
             _count(p.facts, "timed_out")
             _emit("script.input_closed", p.project_root, {"id": p.id, "reason": "timed_out"})
             return None
-        if not (eof or text is None) and p.kind != "getpass":
+        if not (eof or text is None) and p.kind != "getpass" and not p.private:
             # 先校验、先落盘，**成功之后才出队**：答案不合法（太长）或写盘失败时这一问仍在等，界面改好再交一次
             # 照样答得上（Codex #680 P2）。先出队的话改好的那次拿到 404，而 worker 白等到超时。
             # 口令不落盘：getpass 的答案每次都问（ADR 0099 §四）。按上下文 + 运行配置记（T08）
@@ -344,13 +346,14 @@ def _decide(
     project_root = str(worker.figures_dir)
     script = str(worker.script_name)
     run_config = _run_config_of(worker)
+    private = bool(getattr(getattr(worker, "run", None), "sensitive", False))
     _count(facts, "asked")
     if kind == "getpass":
         _count(facts, "secret")
     suggestion = recheck = None
     reason = REASON_NO_CLIENT
     if isinstance(policy, ReplayAnswers):
-        verdict, entry = policy.match(index, prompt, kind, context)
+        verdict, entry = policy.match(index, prompt, kind, context, request.get("prompt_id"))
         if verdict in (MATCH_ANSWER, MATCH_EOF):
             payload = {"answer": entry["answer"]} if verdict == MATCH_ANSWER else {"eof": True}
             _reply(directory, index, payload)
@@ -377,7 +380,7 @@ def _decide(
                 and isinstance(entry.get("answer"), str)
             ):
                 suggestion = entry["answer"]
-    elif kind != "getpass":
+    elif kind != "getpass" and not private:
         found = scriptanswers.recall(
             project_root, script, index, prompt, kind=kind, context=context, run_config=run_config
         )
@@ -404,6 +407,7 @@ def _decide(
         kind=kind,
         directory=directory,
         stdout_tail=tail,
+        private=private,
         context=context,
         run_config=run_config,
         suggestion=suggestion,
@@ -462,6 +466,10 @@ def _frozen_policy(worker) -> "ReplayAnswers | None":
     policy = getattr(worker, "script_input_policy", None)
     if policy is not None:
         return policy
+    # Private runs may replay their explicit hot records, but must never read
+    # or write durable answer transcripts under a sensitive configuration.
+    if getattr(getattr(worker, "run", None), "sensitive", False):
+        return None
     try:
         found = inputtranscript.lookup(
             str(worker.figures_dir), str(worker.script_name), _run_config_of(worker)
@@ -476,6 +484,8 @@ def finished(worker, records) -> None:
     不是新产物的执行，不改转录。落盘失败只记一笔——转录缺了，冷重放回到上下文匹配，不会静默套错。"""
     policy = getattr(worker, "script_input_policy", None)
     if isinstance(policy, ReplayAnswers) and not policy.ask_on_mismatch:
+        return
+    if getattr(getattr(worker, "run", None), "sensitive", False):
         return
     try:
         t = inputtranscript.bind(

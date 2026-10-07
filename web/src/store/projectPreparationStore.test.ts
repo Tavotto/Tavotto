@@ -125,6 +125,55 @@ describe('打开：参数在这一刻冻结', () => {
   })
 })
 
+describe('同一脚本换参数再打开', () => {
+  it('旧参数的报告不留：新会话建不出来（超时）时重试的是新目标，不去补拉旧会话', async () => {
+    useScriptArgvStore.getState().setTokens('plot.py', ['--n', '1'])
+    mockCreate.mockResolvedValueOnce(prepReport({ session_id: 'psess-old' }))
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    expect(entry().report?.session_id).toBe('psess-old')
+
+    useScriptArgvStore.getState().setTokens('plot.py', ['--n', '2'])
+    mockCreate.mockRejectedValueOnce(new DOMException('timeout', 'AbortError'))
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    expect(entry().report).toBeNull() // 旧参数的报告 / 动作不再显示
+    expect(entry().connection).toBe('lost')
+    expect(draftDiffers(entry().target)).toBe(false)
+
+    mockCreate.mockResolvedValueOnce(prepReport({ session_id: 'psess-new' }))
+    await useProjectPreparationStore.getState().refresh(KEY)
+    expect(mockGet).not.toHaveBeenCalled() // 没有补拉旧会话
+    expect(mockCreate).toHaveBeenCalledTimes(3)
+    expect(mockCreate.mock.calls[2][0]).toEqual({ script: 'plot.py', argv: ['--n', '2'], argv_sensitive: false })
+    expect(entry().report?.session_id).toBe('psess-new')
+  })
+
+  it('换参数之前发出的补拉，回包不能把旧会话的报告落回新目标上', async () => {
+    useScriptArgvStore.getState().setTokens('plot.py', ['--n', '1'])
+    mockCreate.mockResolvedValueOnce(prepReport({ session_id: 'psess-old' }))
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    let late!: (r: PreparationReport) => void
+    mockGet.mockReturnValueOnce(new Promise((res) => (late = res)))
+    const pending = useProjectPreparationStore.getState().refresh(KEY)
+
+    useScriptArgvStore.getState().setTokens('plot.py', ['--n', '2'])
+    mockCreate.mockRejectedValueOnce(new DOMException('timeout', 'AbortError'))
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    late(prepReport({ session_id: 'psess-old', observation_seq: 9 }))
+    await pending
+    await flush()
+    expect(entry().report).toBeNull()
+  })
+
+  it('同参数再打开仍保留上一份报告（不闪空）', async () => {
+    useScriptArgvStore.getState().setTokens('plot.py', ['--n', '1'])
+    mockCreate.mockResolvedValueOnce(prepReport())
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    mockCreate.mockRejectedValueOnce(new DOMException('timeout', 'AbortError'))
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    expect(entry().report?.session_id).toBe('psess-1')
+  })
+})
+
 describe('迟到响应', () => {
   it('同一修订里观察序号不倒退；修订前进的那份即使序号小也赢', async () => {
     mockCreate.mockResolvedValueOnce(prepReport({ observation_seq: 5 }))

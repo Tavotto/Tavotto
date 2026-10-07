@@ -29,7 +29,7 @@
   与 GUI 磁盘面板同一判据），Agent 的 token 不改那份默认、不能标敏感。运行配置是会话身份的一部分（`_live_session_for` 按引用分开），
   会话冻结它（`acquire` / `verify_replay`），落盘只存引用（带引用的记录 `v=2`，旧插件当作不存在）。`adopt_environment=<候选 id>`
   （+ `expected_environment_generation`）委派 `envadvice.adopt_candidate`——与 HTTP `PATCH {candidate}` **同一个服务**，先采用再开图，
-  采用 ≠ 安装。**先问再发**：引擎没宣告 `script-argv` / `environment-adoption`（`bridge.engine_features()`）就以
+  采用 ≠ 安装。**采用必须候选 id 与环境代**一起**给（缺一个在 server 边界拒、桥里空环境代也拒——否则 `adopt_candidate` 跳过比对，会采用用户没看过的那一代）。`argv` 里任何指到已授权根之外的路径（绝对 / `~` / 盘符 / UNC、含 `..`；整项、`--opt=值`、`-o值` 三种形状）以 `argv_path_out_of_scope` 拒，脚本不跑、不登记配置——桥没有「用户绑定」的凭据可核，范围就是边界；项目外的路径请用户在 Tavotto 窗口里自己运行（`run_config` 引用来自用户在界面登记的配置，不查）。**先问再发**：引擎没宣告 `script-argv` / `environment-adoption`（`bridge.engine_features()`）就以
   `engine_capability_missing` 拒绝，绝不先无参数试一次。失败载荷**追加**（原字段不动）`requirements[]`（`{kind, answer_with, where}`：
   再调时带哪个参数答；`None` 时 `where=tavotto_app` / `user` 说明这里答不了）、`input`（`reason` 闭集 + `secret`）、`arguments`
   （T07 只读 schema 摘要，有界、无 help 原文）、`environment`（`envadvice.recommend()` 纯读投影）；口令那一问明确要求不经 Agent。

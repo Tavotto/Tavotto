@@ -66,6 +66,7 @@ from . import (
     execspec,
     figcapture,
     inputbroker,
+    inputremap,
     pool,
     projectenv,
     receipt,
@@ -184,6 +185,8 @@ class PreparationPlan:
     #: 用户给的精确 argv 的运行配置（T03，`execspec.RunSelection`）。**私有**：argv 原文只在这里和 worker
     #: 命令行里，`to_payload()` / 回执 / LaunchContext 只带数量与本机不透明引用 `run_config`。None = 没给参数。
     run: object | None = None
+    #: 数据改指也是计划的输入快照。私有字段；动作认领与执行线程都经 `_stale_reason` 对账。
+    input_remap_generation: int | None = None
 
     def to_payload(self) -> dict:
         return {
@@ -248,6 +251,7 @@ def plan_for(
     """
     root = str(project_root)
     adopted = None
+    remap_generation = inputremap.generation(root)
     if script is not None:
         # 「换不换解释器」先落地（ADR 0079 §四，`deprepair.decide_environment` 是唯一一处；检测模式下就是那次自动检测，
         # ADR 0114 §六）：下面的解释器、LaunchContext、环境事实都是快照，执行前 `_stale_reason` 拿它们与此刻比——快照在
@@ -406,6 +410,7 @@ def plan_for(
         binding=binding,
         target=target,
         run=run,
+        input_remap_generation=remap_generation,
     )
 
 
@@ -514,6 +519,7 @@ class PreparationResult:
 class _Entry:
     plan: PreparationPlan
     result: PreparationResult
+    force_rebuild: bool = False
     cancel: threading.Event = dataclasses.field(default_factory=threading.Event)
     lock: threading.Lock = dataclasses.field(default_factory=threading.Lock)
     thread: threading.Thread | None = None
@@ -531,7 +537,7 @@ class PreparationService:
         self._lock = threading.Lock()
 
     # ---- 登记 ----
-    def register(self, plan: PreparationPlan) -> PreparationResult:
+    def register(self, plan: PreparationPlan, *, force_rebuild: bool = False) -> PreparationResult:
         """登记一份计划。没有脚本可跑的直接落 `static_source_available`（不起线程）。"""
         result = PreparationResult()
         if plan.script is None:
@@ -554,7 +560,9 @@ class PreparationService:
             result.status = STATUS_NEEDS_INPUT
         with self._lock:
             self._sweep()
-            self._entries[plan.plan_id] = _Entry(plan=plan, result=result)
+            self._entries[plan.plan_id] = _Entry(
+                plan=plan, result=result, force_rebuild=force_rebuild
+            )
         return result
 
     def start(self, plan_id: str, *, runner, bind=None, on_done=None) -> None:
@@ -621,7 +629,7 @@ class PreparationService:
             return
         tr.mark("check")
         result.status = STATUS_RUNNING
-        reusable = self._reusable(existing, plan)
+        reusable = None if entry.force_rebuild else self._reusable(existing, plan)
         if reusable is not None:
             # 已 build 过的会话：回执从它记下的 build 响应装配，不发任何请求、不碰脚本。
             result.created_runtime = False
@@ -659,6 +667,10 @@ class PreparationService:
                 raise _StaleBeforeRetry(*stale)
 
         try:
+            if entry.force_rebuild:
+                # Explicit reruns must not reuse workerd's cached spawn while
+                # asynchronous retirement is pending. Refuse if close is unknown.
+                pool.invalidate(plan.script, plan.project_root, plan.run, only_run=True, force=True)
             worker, resp, created = runner(plan, before_retry=before_retry)
         except _StaleBeforeRetry as exc:
             if result.status in TERMINAL:
@@ -761,12 +773,20 @@ class PreparationService:
         # 本来就在的（别的消费者的）一根手指都不碰（FO-009）。
         if entry.cancel.is_set():
             if result.created_runtime:
-                pool.force_cancel(
+                # A different target's explicit rerun may have replaced this
+                # worker while build was running. Ownership is instance-scoped.
+                closed = pool.force_cancel(
                     plan.script,
                     plan.project_root,
+                    expected_worker=worker,
                     **({"run": plan.run} if plan.run is not None else {}),
                 )
-                note = "build 期间取消：本计划新起的会话已关闭；脚本已经产生的外部副作用不撤销"
+                note = (
+                    "build 期间取消：本计划新起的会话已关闭；脚本已经产生的外部副作用不撤销"
+                    if closed
+                    else "build 期间取消：本计划的会话已被替换，未关闭后来的会话；脚本已经产生的外部副作用不撤销"
+                )
+
             else:
                 note = "build 期间取消：会话属于别的消费者，未关闭；本计划不再等它"
             tr.cancel("receipt")
@@ -797,11 +817,15 @@ class PreparationService:
 
     @staticmethod
     def _stale_reason(plan: PreparationPlan) -> tuple[str, dict] | None:
-        """起会话之前把计划记下的三样东西与此刻各比一次：授权（`workdir.grant_for`）、项目的解释器决策
-        （`pool.resolve_worker_python`）、数据绑定（`databinding.binding_for`）。第一条不一致的就是理由。"""
+        """起会话之前核对授权、解释器、数据绑定与改指表代次；第一条不一致的就是理由。"""
         root = plan.project_root
         if workdir.grant_for(root) != plan.grant:
             return STALE_GRANT, {}
+        if (
+            plan.input_remap_generation is not None
+            and inputremap.generation(root) != plan.input_remap_generation
+        ):
+            return STALE_DATA_BINDING, {}
         if plan.interpreter:
             try:
                 python_now = pool.resolve_worker_python(root, script=plan.script)[0]
@@ -862,6 +886,9 @@ class PreparationService:
         能用就回它记下的 build 响应形态（descriptors + runtime），否则 None。"""
         if existing is None or not getattr(existing, "built", False):
             return None
+        spec = getattr(existing, "spec", None)
+        if getattr(existing, "entry", getattr(spec, "entry", None)) != plan.entry:
+            return None
         try:
             wanted = pool.resolve_worker_python(plan.project_root)[0]
         except pool.WorkerError:
@@ -917,12 +944,13 @@ class PreparationService:
             # 取消接受时刻 ③（T09）：会话是本计划新建的、还在 build（可能正跑一段很长的计算，或停在一个 input()
             # 上）——当场关掉**这一条**（`expected_worker`：池里那个键此刻若已换成别人的会话，一根手指都不碰），
             # build 随即以 WorkerError 返回，执行线程按取消收工
-            pool.force_cancel(
+            if not pool.force_cancel(
                 entry.plan.script,
                 entry.plan.project_root,
                 expected_worker=owned,
                 **({"run": entry.plan.run} if entry.plan.run is not None else {}),
-            )
+            ):
+                owned.force_kill()  # 已被 watcher / invalidate 摘出池子：池侧只会优雅关闭（排在 build 后面），这里只杀自己的那条
         elif acquired:
             # 共享会话的等待者：会话属于别的消费者（编辑那条渲染、另一份计划）——不关它，只是本计划不再等；
             # 执行线程之后回来时发现自己已经终局，什么都不写
@@ -947,12 +975,13 @@ class PreparationService:
         if not waiting:
             return
         if created:
-            pool.force_cancel(
+            if not pool.force_cancel(
                 entry.plan.script,
                 entry.plan.project_root,
                 expected_worker=worker,
                 **({"run": entry.plan.run} if entry.plan.run is not None else {}),
-            )
+            ):
+                worker.force_kill()  # 同上：已离池就只杀这一条
         else:
             self._finish(
                 entry,
