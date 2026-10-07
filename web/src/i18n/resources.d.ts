@@ -186,6 +186,13 @@ export default interface Resources {
       "saveFailed": "保存失败，窗口保持打开。请先解决保存问题，或选择「不保存」直接关闭。",
       "title": "有未保存的修改"
     },
+    "draftGuard": {
+      "body": "还没保存的修改会丢掉。",
+      "discard": "放弃修改",
+      "keepEditing": "继续编辑",
+      "title": "放弃未保存的修改？",
+      "unsaved": "有未保存的修改"
+    },
     "engineEnv": {
       "title": "渲染环境"
     },

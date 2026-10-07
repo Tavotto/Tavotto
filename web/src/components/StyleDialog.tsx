@@ -22,6 +22,7 @@ import { profileName } from '@/lib/profileText'
 import { panelRender, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { askConfirm, dialogCovered, useUiStore } from '@/store/uiStore'
+import { askDiscardDraft } from './askDiscardDraft'
 import { propLabel } from './inspector/roles/registry'
 import { FormRow } from './FormRow'
 import { Button, IconButton } from './ui/Button'
@@ -82,14 +83,41 @@ export function StyleDialog() {
   }
 
   const [draft, setDraft] = useState<StylePreset>(EMPTY)
+  /**
+   * 草稿是从哪一版起改的（选中 / 存下 / 新建那一刻的样子）。草稿与它不同 = 有没存的改动：
+   * 切样式、新建、关对话框之前先问一句，footer 的「保存」升为主按钮（设计审计 2026-10-07 §10.2）。
+   */
+  const [baseline, setBaseline] = useState<StylePreset>(EMPTY)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-
-  /** 切到库里的另一份：草稿整份换掉（深拷贝，编辑不回写到清单里的那一份） */
-  const pick = (id: string) => {
-    const next = saved.find((s) => s.id === id)
-    if (next) setDraft(structuredClone(next))
+  const dirty = JSON.stringify(draft) !== JSON.stringify(baseline)
+  /** 换一份草稿：草稿与基线一起换（深拷贝，编辑不回写到清单里的那一份） */
+  const load = (next: StylePreset) => {
+    setDraft(structuredClone(next))
+    setBaseline(structuredClone(next))
   }
+  /** 草稿干净就直接放行；脏了先问，「继续编辑」= false（调用方什么都不做） */
+  const leaveDraft = async () => !dirty || (await askDiscardDraft())
+
+  /** 切到库里的另一份：草稿整份换掉 */
+  const pick = async (id: string) => {
+    if (id === draft.id) return
+    const next = saved.find((s) => s.id === id)
+    if (!next) return
+    if (!(await leaveDraft())) return
+    load(next)
+  }
+  const startNew = async () => {
+    if (!(await leaveDraft())) return
+    load(EMPTY)
+  }
+  /** 关对话框：放弃的改动退回基线，下次打开不再带着它 */
+  const close = async () => {
+    if (!(await leaveDraft())) return
+    setDraft(structuredClone(baseline))
+    setOpen(false)
+  }
+  const onOpenChange = (v: boolean) => (v ? setOpen(true) : void close())
   /** 选中的这一份删得掉吗：内置只读那几份不行（`reason` 会把原因说出来） */
   const deletable = !!draft.id && !readOnlyIds.has(draft.id)
   const removeCurrent = async () => {
@@ -107,7 +135,7 @@ export function StyleDialog() {
       return
     }
     await useProfileStore.getState().remove('style', id)
-    setDraft(EMPTY)
+    load(EMPTY)
   }
   /** 本对话框自己的报错优先，其次是清单那一层的（拉取失败 / 并发撞车）。 */
   const shownError = error ?? storeError?.message ?? null
@@ -136,7 +164,7 @@ export function StyleDialog() {
       (isEmptyDraft(draft) ? saved[0] : undefined)
     if (!want) return
     preselected.current = true
-    setDraft(structuredClone(want))
+    load(want)
   }, [open, presetId, saved, draft])
 
   const doc = useDocumentStore((s) => s.doc)
@@ -198,7 +226,7 @@ export function StyleDialog() {
       setError(err ? err.message : sd('saveFailed'))
       return
     }
-    setDraft(profileToDraft(stored))
+    load(profileToDraft(stored))
     useUiStore.getState().setStatus(msg('style.saved', { name: stored.display_name }, 'dialogs'))
   }
 
@@ -213,14 +241,14 @@ export function StyleDialog() {
     return (
       <Dialog
         open={open}
-        onOpenChange={setOpen}
+        onOpenChange={onOpenChange}
         title={sd('title')}
         width={520}
         busy={busy}
         covered={covered}
         footer={
           <>
-            <Button variant="secondary" size="md" onClick={() => setOpen(false)}>
+            <Button variant="secondary" size="md" onClick={() => void close()}>
               {t('common:actions.close')}
             </Button>
             <Button
@@ -245,7 +273,7 @@ export function StyleDialog() {
   return (
     <Dialog
       open={open}
-      onOpenChange={setOpen}
+      onOpenChange={onOpenChange}
       title={sd('title')}
       width={920}
       /* 固定高：字段清单在中间滚，样式库与底部的应用范围不随内容高低跳动 */
@@ -254,8 +282,20 @@ export function StyleDialog() {
       covered={covered}
       footer={
         <>
-          <Button variant="secondary" size="md" onClick={() => setOpen(false)}>
+          <Button variant="secondary" size="md" onClick={() => void close()}>
             {t('common:actions.close')}
+          </Button>
+          {/* 保存在 footer（设计审计 2026-10-07 §10.2）：有没存的改动时它是这一层唯一的
+              主按钮，与「关闭会问要不要放弃」配成一对；没改时退回次按钮——内置样式上照样
+              按得动（另存为一份用户样式）。此前它是名称行尾一颗小次按钮，改完找不到 */}
+          <Button
+            variant={dirty ? 'primary' : 'secondary'}
+            size="md"
+            loading={busy}
+            data-style-save
+            onClick={() => void save()}
+          >
+            {t('common:actions.save')}
           </Button>
         </>
       }
@@ -279,7 +319,7 @@ export function StyleDialog() {
                 ariaLabel={sd('savedStyles')}
                 className="min-w-0 flex-1"
                 value={draft.id ?? null}
-                onChange={(id) => pick(id)}
+                onChange={(id) => void pick(id)}
                 items={saved.map((s) => ({ value: s.id ?? '', label: nameOf(s) }))}
               />
             ) : (
@@ -287,7 +327,7 @@ export function StyleDialog() {
                 ariaLabel={sd('savedStyles')}
                 className="min-w-0 flex-1"
                 value={draft.id ?? ''}
-                onChange={(id) => pick(id)}
+                onChange={(id) => void pick(id)}
                 options={saved.map((s) => ({ value: s.id ?? '', label: nameOf(s) }))}
               />
             )}
@@ -299,7 +339,7 @@ export function StyleDialog() {
                 </IconButton>
               }
             >
-              <MenuItem icon={Plus} onSelect={() => setDraft(EMPTY)}>
+              <MenuItem icon={Plus} onSelect={() => void startNew()}>
                 {sd('newStyle')}
               </MenuItem>
               <MenuItem
@@ -326,7 +366,8 @@ export function StyleDialog() {
 
           {/* 名称也是一行表单（全面打磨 D24）：此前是一个 513 宽、没有标签的框，
               占位文案是它唯一的提示，旁边并排两颗带图标的 secondary，与 footer 的
-              主钮抢分量。图标去掉，留给 footer 那一颗 */}
+              主钮抢分量。图标去掉，留给 footer 那一颗；行尾那颗「保存」也挪进了
+              footer（设计审计 2026-10-07 §10.2） */}
           <FormRow label={sd('nameLabel')}>
             <TextInput
               value={draft.name}
@@ -334,9 +375,6 @@ export function StyleDialog() {
               placeholder={sd('namePlaceholder')}
               className="min-w-0 flex-1"
             />
-            <Button variant="secondary" size="sm" loading={busy} onClick={save}>
-              {t('common:actions.save')}
-            </Button>
           </FormRow>
 
           {/* 字段清单：靠组头与留白分区，不套边框（宪法第八节「少用容器」） */}

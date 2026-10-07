@@ -6,6 +6,13 @@
     "saveFailed": "Saving failed, so the window stays open. Resolve the problem, or choose “Don’t save” to close anyway.",
     "title": "Unsaved changes"
   },
+  "draftGuard": {
+    "body": "The changes you haven’t saved will be lost.",
+    "discard": "Discard changes",
+    "keepEditing": "Keep editing",
+    "title": "Discard unsaved changes?",
+    "unsaved": "Unsaved changes"
+  },
   "engineEnv": {
     "title": "Rendering environment"
   },
