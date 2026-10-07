@@ -54,7 +54,7 @@ import { useDocumentStore } from '@/store/documentStore'
 import { useTimelineStore } from '@/store/timelineStore'
 import { setCurrentProjectId } from '@/lib/session'
 import { useUiStore } from '@/store/uiStore'
-import { formatMessage } from '@/i18n'
+import { formatMessage, literal } from '@/i18n'
 import { emptyProject, type FigureDocument, type TextObject } from '@/types/document'
 
 declare global {
@@ -363,6 +363,86 @@ describe('内联条的「恢复到这里」与预览恢复同一把锁（Codex #
     expect(useTimelineStore.getState().restoring).toBeNull()
     expect(useTimelineStore.getState().preview).toBeNull()
     expect($<HTMLButtonElement>('[data-timeline-close]')!.disabled).toBe(false)
+  })
+})
+
+describe('内联恢复取正文期间画布就被遮住（Codex #831 P1）', () => {
+  /** 让 `fetchVersionDoc` 挂起，返回放行 / 失败的两个把手 */
+  const holdFetch = () => {
+    const h: { give: () => void; fail: (e: unknown) => void } = { give: () => {}, fail: () => {} }
+    mockDoc.mockImplementationOnce(
+      () =>
+        new Promise((resolve, reject) => {
+          h.give = () => resolve({ ...meta(), doc: snapshot() })
+          h.fail = reject
+        }),
+    )
+    return h
+  }
+  const clickRowRestore = async () => {
+    const bar = node('v1').querySelector('[data-timeline-row-actions]')!
+    await act(async () => bar.querySelector<HTMLButtonElement>('[data-timeline-row-restore]')!.click())
+    await flush()
+  }
+
+  it('正文还在路上：模态预览已以「加载中」busy 开着、遮罩挡住画布；回来后照常恢复', async () => {
+    const h = holdFetch()
+    await mount([meta()], undefined, false)
+    await clickRowRestore()
+    expect(mockDoc).toHaveBeenCalledTimes(1)
+    expect(mockCreate).not.toHaveBeenCalled()
+    const dlg = $('[data-dialog="timeline-preview"]')
+    expect(dlg).not.toBeNull()
+    expect(dlg!.getAttribute('aria-busy')).toBe('true')
+    expect($('[data-dialog-scrim]')).not.toBeNull()
+    expect($('[data-dialog="timeline-preview"] [data-dialog-close]')).toBeNull()
+    expect(useTimelineStore.getState().preview?.doc).toBeNull()
+    expect($<HTMLButtonElement>('[data-timeline-preview-restore]')!.disabled).toBe(true)
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    await flush()
+    expect(useTimelineStore.getState().preview).not.toBeNull()
+
+    await act(async () => h.give())
+    await flush()
+    expect(ids()).toEqual(['old'])
+    expect(mockCreate).toHaveBeenCalledTimes(1)
+    expect(useTimelineStore.getState().restoring).toBeNull()
+    expect(useTimelineStore.getState().preview).toBeNull()
+  })
+
+  it('取正文期间落了一笔编辑：放弃恢复——新编辑留着、不打「恢复前」节点、锁摘掉、预览收回', async () => {
+    const h = holdFetch()
+    useUiStore.setState({ statusTone: 'info' })
+    await mount([meta()], undefined, false)
+    await clickRowRestore()
+    act(() =>
+      useDocumentStore.getState().commit(literal('新编辑'), (d) => {
+        d.objects.push(text('newer', '更新的一段'))
+      }),
+    )
+    await act(async () => h.give())
+    await flush()
+    expect(ids()).toEqual(['now', 'newer'])
+    expect(mockCreate).not.toHaveBeenCalled()
+    expect(useTimelineStore.getState().restoring).toBeNull()
+    expect(useTimelineStore.getState().preview).toBeNull()
+    expect(useUiStore.getState().statusTone).toBe('error')
+  })
+
+  it('正文取不回来：「加载中」预览收回、锁摘掉、错误落在抽屉里', async () => {
+    const h = holdFetch()
+    await mount([meta()], undefined, false)
+    await clickRowRestore()
+    expect($('[data-dialog="timeline-preview"]')).not.toBeNull()
+    await act(async () => h.fail(new Error('boom')))
+    await flush()
+    expect(useTimelineStore.getState().preview).toBeNull()
+    expect($('[data-dialog="timeline-preview"]')).toBeNull()
+    expect(useTimelineStore.getState().restoring).toBeNull()
+    expect($<HTMLButtonElement>('[data-timeline-close]')!.disabled).toBe(false)
+    expect($('[data-timeline-error-kind="preview"]')).not.toBeNull()
+    expect(ids()).toEqual(['now'])
+    expect(mockCreate).not.toHaveBeenCalled()
   })
 })
 

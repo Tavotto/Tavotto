@@ -249,6 +249,8 @@
   就不恢复，再一次 `restoreLayoutVersion` commit（⌘Z 一步退回；布局组跟着对象恢复）。
   两个恢复入口（预览页脚、抽屉选中行内联条）都经 `restoreUnderLock()`：挂 `timelineStore.restoring`、
   让模态预览以 `busy` 开着——遮罩挡画布、预览与抽屉都关不掉，「恢复前」在存时不许再编辑（Codex #831）。
+  内联入口的模态预览在**取正文之前**就以「加载中」开起来（不是正文回来才开）；另记编辑标记（`past` / `future` / `txn` / 激活画布），
+  正文回来时变了就放弃恢复（不写、不打「恢复前」），取不回来就把「加载中」预览收回。
   预览是 `timelineStore.preview` 上的模态对话框（`TimelinePreviewDialog`，默认焦点在对话框容器上、回车不触发恢复；
   页脚只有「恢复到这里」，关闭是右上角 ×——ADR 0101 2026-10-07 修订），抽屉一行一颗 ⋯（`ui/RowMenu`）+ 选中行的「预览 · 恢复到这里」，
   不进 documentStore、换项目时 `clear()`；「存为命名节点」只有 `saveNamedNode()` 一份（抽屉里「给现在存个名字…」
