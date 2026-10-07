@@ -786,14 +786,14 @@ function EditorView({
         </footer>
       )}
 
-      {showSource && (
-        <SourceDialog
-          filename={session.scriptName}
-          source={session.originalSource}
-          integrity={integrity}
-          onClose={() => setShowSource(false)}
-        />
-      )}
+      {/* 常驻挂载、用 open 开关：关时走 Dialog 自己的 Presence 退场与 onCloseAutoFocus，和其余对话框同一条生命周期（Codex #823 P2） */}
+      <SourceDialog
+        open={showSource}
+        filename={session.scriptName}
+        source={session.originalSource}
+        integrity={integrity}
+        onClose={() => setShowSource(false)}
+      />
     </div>
   )
 }
@@ -865,11 +865,13 @@ function IntegrityDetails({ integrity }: { integrity: SourceIntegrity }) {
  * fixed 遮罩 + 自己监听 Esc，2026-10-07 设计审计 §10.4）。
  */
 function SourceDialog({
+  open,
   filename,
   source,
   integrity,
   onClose,
 }: {
+  open: boolean
   filename: string
   source: string
   integrity: SourceIntegrity
@@ -877,7 +879,7 @@ function SourceDialog({
 }) {
   return (
     <Dialog
-      open
+      open={open}
       onOpenChange={(v) => !v && onClose()}
       onEscape={onClose}
       size="lg"
