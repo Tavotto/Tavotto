@@ -1,0 +1,1293 @@
+{
+  "_comment": "T01 准备会话 phase 派生的黄金向量：engine/prepsession.derive(facts) 的输出逐条钉死。前端（T09 起）读同一份向量，不另算 phase。",
+  "vectors": [
+    {
+      "name": "all checks ok, nothing run yet",
+      "facts": {
+        "target_kind": "script",
+        "has_script": true,
+        "checks": [
+          {
+            "id": "target",
+            "status": "ok"
+          },
+          {
+            "id": "environment",
+            "status": "ok"
+          },
+          {
+            "id": "workdir",
+            "status": "ok"
+          },
+          {
+            "id": "dependencies",
+            "status": "ok"
+          },
+          {
+            "id": "data",
+            "status": "ok"
+          }
+        ],
+        "stale": null,
+        "attempt": null,
+        "awaiting_input": false
+      },
+      "expect": {
+        "phase": "ready_to_run",
+        "outcome": {
+          "kind": "pending"
+        },
+        "runnable": true,
+        "execution_finished": null,
+        "figure_captured": null
+      }
+    },
+    {
+      "name": "static asset without a script",
+      "facts": {
+        "target_kind": "asset",
+        "has_script": false,
+        "checks": [],
+        "stale": null,
+        "attempt": null,
+        "awaiting_input": false
+      },
+      "expect": {
+        "phase": "completed",
+        "outcome": {
+          "kind": "static_source"
+        },
+        "runnable": false,
+        "execution_finished": null,
+        "figure_captured": false
+      }
+    },
+    {
+      "name": "workdir needs an answer (dependencies not evaluated: unknown, not satisfied)",
+      "facts": {
+        "target_kind": "script",
+        "has_script": true,
+        "checks": [
+          {
+            "id": "target",
+            "status": "ok"
+          },
+          {
+            "id": "environment",
+            "status": "ok"
+          },
+          {
+            "id": "workdir",
+            "status": "needs_action",
+            "code": "workdir_confirmation_required"
+          },
+          {
+            "id": "dependencies",
+            "status": "unknown"
+          },
+          {
+            "id": "data",
+            "status": "ok"
+          }
+        ],
+        "stale": null,
+        "attempt": null,
+        "awaiting_input": false
+      },
+      "expect": {
+        "phase": "awaiting_configuration",
+        "outcome": {
+          "kind": "pending",
+          "code": "workdir_confirmation_required"
+        },
+        "runnable": false,
+        "execution_finished": null,
+        "figure_captured": null
+      }
+    },
+    {
+      "name": "dependency install needs authorization",
+      "facts": {
+        "target_kind": "script",
+        "has_script": true,
+        "checks": [
+          {
+            "id": "target",
+            "status": "ok"
+          },
+          {
+            "id": "environment",
+            "status": "ok"
+          },
+          {
+            "id": "workdir",
+            "status": "ok"
+          },
+          {
+            "id": "dependencies",
+            "status": "needs_action",
+            "code": "dependency_preparation_required"
+          },
+          {
+            "id": "data",
+            "status": "ok"
+          }
+        ],
+        "stale": null,
+        "attempt": null,
+        "awaiting_input": false
+      },
+      "expect": {
+        "phase": "awaiting_confirmation",
+        "outcome": {
+          "kind": "pending",
+          "code": "dependency_preparation_required"
+        },
+        "runnable": false,
+        "execution_finished": null,
+        "figure_captured": null
+      }
+    },
+    {
+      "name": "environment blocked beats everything",
+      "facts": {
+        "target_kind": "script",
+        "has_script": true,
+        "checks": [
+          {
+            "id": "target",
+            "status": "ok"
+          },
+          {
+            "id": "environment",
+            "status": "blocked",
+            "code": "no_worker_python"
+          },
+          {
+            "id": "workdir",
+            "status": "needs_action",
+            "code": "workdir_confirmation_required"
+          },
+          {
+            "id": "dependencies",
+            "status": "ok"
+          },
+          {
+            "id": "data",
+            "status": "ok"
+          }
+        ],
+        "stale": null,
+        "attempt": null,
+        "awaiting_input": false
+      },
+      "expect": {
+        "phase": "action_required",
+        "outcome": {
+          "kind": "blocked",
+          "code": "no_worker_python"
+        },
+        "runnable": false,
+        "execution_finished": null,
+        "figure_captured": null
+      }
+    },
+    {
+      "name": "an unknown check is never a pass",
+      "facts": {
+        "target_kind": "script",
+        "has_script": true,
+        "checks": [
+          {
+            "id": "target",
+            "status": "ok"
+          },
+          {
+            "id": "environment",
+            "status": "ok"
+          },
+          {
+            "id": "workdir",
+            "status": "ok"
+          },
+          {
+            "id": "dependencies",
+            "status": "ok"
+          },
+          {
+            "id": "data",
+            "status": "unknown"
+          }
+        ],
+        "stale": null,
+        "attempt": null,
+        "awaiting_input": false
+      },
+      "expect": {
+        "phase": "action_required",
+        "outcome": {
+          "kind": "unknown",
+          "code": "data_unknown"
+        },
+        "runnable": false,
+        "execution_finished": null,
+        "figure_captured": null
+      }
+    },
+    {
+      "name": "dependencies unknown alone is not runnable",
+      "facts": {
+        "target_kind": "script",
+        "has_script": true,
+        "checks": [
+          {
+            "id": "target",
+            "status": "ok"
+          },
+          {
+            "id": "environment",
+            "status": "ok"
+          },
+          {
+            "id": "workdir",
+            "status": "ok"
+          },
+          {
+            "id": "dependencies",
+            "status": "unknown"
+          },
+          {
+            "id": "data",
+            "status": "ok"
+          }
+        ],
+        "stale": null,
+        "attempt": null,
+        "awaiting_input": false
+      },
+      "expect": {
+        "phase": "action_required",
+        "outcome": {
+          "kind": "unknown",
+          "code": "dependencies_unknown"
+        },
+        "runnable": false,
+        "execution_finished": null,
+        "figure_captured": null
+      }
+    },
+    {
+      "name": "check invalidated at claim time",
+      "facts": {
+        "target_kind": "script",
+        "has_script": true,
+        "checks": [
+          {
+            "id": "target",
+            "status": "ok"
+          },
+          {
+            "id": "environment",
+            "status": "ok"
+          },
+          {
+            "id": "workdir",
+            "status": "ok"
+          },
+          {
+            "id": "dependencies",
+            "status": "ok"
+          },
+          {
+            "id": "data",
+            "status": "ok"
+          }
+        ],
+        "stale": {
+          "reason": "grant_changed"
+        },
+        "attempt": null,
+        "awaiting_input": false
+      },
+      "expect": {
+        "phase": "action_required",
+        "outcome": {
+          "kind": "stale",
+          "code": "preparation_plan_stale",
+          "reason": "grant_changed"
+        },
+        "runnable": false,
+        "execution_finished": null,
+        "figure_captured": null
+      }
+    },
+    {
+      "name": "attempt pending",
+      "facts": {
+        "target_kind": "script",
+        "has_script": true,
+        "checks": [
+          {
+            "id": "target",
+            "status": "ok"
+          },
+          {
+            "id": "environment",
+            "status": "ok"
+          },
+          {
+            "id": "workdir",
+            "status": "ok"
+          },
+          {
+            "id": "dependencies",
+            "status": "ok"
+          },
+          {
+            "id": "data",
+            "status": "ok"
+          }
+        ],
+        "stale": null,
+        "attempt": {
+          "status": "pending",
+          "error": null,
+          "required_input_code": "",
+          "finalized": false,
+          "finalize": null,
+          "captured_count": 0,
+          "cancel_requested": false
+        },
+        "awaiting_input": false
+      },
+      "expect": {
+        "phase": "running",
+        "outcome": {
+          "kind": "running"
+        },
+        "runnable": false,
+        "execution_finished": null,
+        "figure_captured": null
+      }
+    },
+    {
+      "name": "attempt running, cancel requested",
+      "facts": {
+        "target_kind": "script",
+        "has_script": true,
+        "checks": [
+          {
+            "id": "target",
+            "status": "ok"
+          },
+          {
+            "id": "environment",
+            "status": "ok"
+          },
+          {
+            "id": "workdir",
+            "status": "ok"
+          },
+          {
+            "id": "dependencies",
+            "status": "ok"
+          },
+          {
+            "id": "data",
+            "status": "ok"
+          }
+        ],
+        "stale": null,
+        "attempt": {
+          "status": "running",
+          "error": null,
+          "required_input_code": "",
+          "finalized": false,
+          "finalize": null,
+          "captured_count": 0,
+          "cancel_requested": true
+        },
+        "awaiting_input": false
+      },
+      "expect": {
+        "phase": "running",
+        "outcome": {
+          "kind": "running",
+          "reason": "cancel_requested"
+        },
+        "runnable": false,
+        "execution_finished": null,
+        "figure_captured": null
+      }
+    },
+    {
+      "name": "attempt running and the script waits for input()",
+      "facts": {
+        "target_kind": "script",
+        "has_script": true,
+        "checks": [
+          {
+            "id": "target",
+            "status": "ok"
+          },
+          {
+            "id": "environment",
+            "status": "ok"
+          },
+          {
+            "id": "workdir",
+            "status": "ok"
+          },
+          {
+            "id": "dependencies",
+            "status": "ok"
+          },
+          {
+            "id": "data",
+            "status": "ok"
+          }
+        ],
+        "stale": null,
+        "attempt": {
+          "status": "running",
+          "error": null,
+          "required_input_code": "",
+          "finalized": false,
+          "finalize": null,
+          "captured_count": 0,
+          "cancel_requested": false
+        },
+        "awaiting_input": true
+      },
+      "expect": {
+        "phase": "awaiting_runtime_input",
+        "outcome": {
+          "kind": "running"
+        },
+        "runnable": false,
+        "execution_finished": null,
+        "figure_captured": null
+      }
+    },
+    {
+      "name": "attempt ready but registration not finished is still running",
+      "facts": {
+        "target_kind": "script",
+        "has_script": true,
+        "checks": [
+          {
+            "id": "target",
+            "status": "ok"
+          },
+          {
+            "id": "environment",
+            "status": "ok"
+          },
+          {
+            "id": "workdir",
+            "status": "ok"
+          },
+          {
+            "id": "dependencies",
+            "status": "ok"
+          },
+          {
+            "id": "data",
+            "status": "ok"
+          }
+        ],
+        "stale": null,
+        "attempt": {
+          "status": "ready",
+          "error": null,
+          "required_input_code": "",
+          "finalized": false,
+          "finalize": null,
+          "captured_count": 1,
+          "cancel_requested": false
+        },
+        "awaiting_input": false
+      },
+      "expect": {
+        "phase": "running",
+        "outcome": {
+          "kind": "running"
+        },
+        "runnable": false,
+        "execution_finished": null,
+        "figure_captured": null
+      }
+    },
+    {
+      "name": "script target captured and registered",
+      "facts": {
+        "target_kind": "script",
+        "has_script": true,
+        "checks": [
+          {
+            "id": "target",
+            "status": "ok"
+          },
+          {
+            "id": "environment",
+            "status": "ok"
+          },
+          {
+            "id": "workdir",
+            "status": "ok"
+          },
+          {
+            "id": "dependencies",
+            "status": "ok"
+          },
+          {
+            "id": "data",
+            "status": "ok"
+          }
+        ],
+        "stale": null,
+        "attempt": {
+          "status": "ready",
+          "error": null,
+          "required_input_code": "",
+          "finalized": true,
+          "finalize": {
+            "registered": true
+          },
+          "captured_count": 1,
+          "cancel_requested": false
+        },
+        "awaiting_input": false
+      },
+      "expect": {
+        "phase": "completed",
+        "outcome": {
+          "kind": "succeeded"
+        },
+        "runnable": false,
+        "execution_finished": true,
+        "figure_captured": true
+      }
+    },
+    {
+      "name": "asset target ready",
+      "facts": {
+        "target_kind": "asset",
+        "has_script": true,
+        "checks": [
+          {
+            "id": "target",
+            "status": "ok"
+          },
+          {
+            "id": "environment",
+            "status": "ok"
+          },
+          {
+            "id": "workdir",
+            "status": "ok"
+          },
+          {
+            "id": "dependencies",
+            "status": "ok"
+          },
+          {
+            "id": "data",
+            "status": "ok"
+          }
+        ],
+        "stale": null,
+        "attempt": {
+          "status": "ready",
+          "error": null,
+          "required_input_code": "",
+          "finalized": true,
+          "finalize": null,
+          "captured_count": 0,
+          "cancel_requested": false
+        },
+        "awaiting_input": false
+      },
+      "expect": {
+        "phase": "completed",
+        "outcome": {
+          "kind": "succeeded"
+        },
+        "runnable": false,
+        "execution_finished": true,
+        "figure_captured": true
+      }
+    },
+    {
+      "name": "captured but registration refused (stem conflict)",
+      "facts": {
+        "target_kind": "script",
+        "has_script": true,
+        "checks": [
+          {
+            "id": "target",
+            "status": "ok"
+          },
+          {
+            "id": "environment",
+            "status": "ok"
+          },
+          {
+            "id": "workdir",
+            "status": "ok"
+          },
+          {
+            "id": "dependencies",
+            "status": "ok"
+          },
+          {
+            "id": "data",
+            "status": "ok"
+          }
+        ],
+        "stale": null,
+        "attempt": {
+          "status": "ready",
+          "error": null,
+          "required_input_code": "",
+          "finalized": true,
+          "finalize": {
+            "registered": false,
+            "code": "multiple_stem_conflict"
+          },
+          "captured_count": 1,
+          "cancel_requested": false
+        },
+        "awaiting_input": false
+      },
+      "expect": {
+        "phase": "partial",
+        "outcome": {
+          "kind": "failed",
+          "code": "multiple_stem_conflict"
+        },
+        "runnable": false,
+        "execution_finished": true,
+        "figure_captured": true
+      }
+    },
+    {
+      "name": "script ran but nothing was captured (error code from the shared stem rule)",
+      "facts": {
+        "target_kind": "script",
+        "has_script": true,
+        "checks": [
+          {
+            "id": "target",
+            "status": "ok"
+          },
+          {
+            "id": "environment",
+            "status": "ok"
+          },
+          {
+            "id": "workdir",
+            "status": "ok"
+          },
+          {
+            "id": "dependencies",
+            "status": "ok"
+          },
+          {
+            "id": "data",
+            "status": "ok"
+          }
+        ],
+        "stale": null,
+        "attempt": {
+          "status": "error",
+          "error": {
+            "code": "no_figures_captured_silent",
+            "message": "x"
+          },
+          "required_input_code": "",
+          "finalized": true,
+          "finalize": null,
+          "captured_count": 0,
+          "cancel_requested": false
+        },
+        "awaiting_input": false
+      },
+      "expect": {
+        "phase": "partial",
+        "outcome": {
+          "kind": "execution_finished_no_figure",
+          "code": "no_figures_captured_silent"
+        },
+        "runnable": false,
+        "execution_finished": true,
+        "figure_captured": false
+      }
+    },
+    {
+      "name": "script target ready with zero captured figures never counts as first figure",
+      "facts": {
+        "target_kind": "script",
+        "has_script": true,
+        "checks": [
+          {
+            "id": "target",
+            "status": "ok"
+          },
+          {
+            "id": "environment",
+            "status": "ok"
+          },
+          {
+            "id": "workdir",
+            "status": "ok"
+          },
+          {
+            "id": "dependencies",
+            "status": "ok"
+          },
+          {
+            "id": "data",
+            "status": "ok"
+          }
+        ],
+        "stale": null,
+        "attempt": {
+          "status": "ready",
+          "error": null,
+          "required_input_code": "",
+          "finalized": true,
+          "finalize": null,
+          "captured_count": 0,
+          "cancel_requested": false
+        },
+        "awaiting_input": false
+      },
+      "expect": {
+        "phase": "partial",
+        "outcome": {
+          "kind": "execution_finished_no_figure"
+        },
+        "runnable": false,
+        "execution_finished": true,
+        "figure_captured": false
+      }
+    },
+    {
+      "name": "script raised",
+      "facts": {
+        "target_kind": "script",
+        "has_script": true,
+        "checks": [
+          {
+            "id": "target",
+            "status": "ok"
+          },
+          {
+            "id": "environment",
+            "status": "ok"
+          },
+          {
+            "id": "workdir",
+            "status": "ok"
+          },
+          {
+            "id": "dependencies",
+            "status": "ok"
+          },
+          {
+            "id": "data",
+            "status": "ok"
+          }
+        ],
+        "stale": null,
+        "attempt": {
+          "status": "error",
+          "error": {
+            "code": "script_probe_failed",
+            "message": "x"
+          },
+          "required_input_code": "",
+          "finalized": true,
+          "finalize": null,
+          "captured_count": 0,
+          "cancel_requested": false
+        },
+        "awaiting_input": false
+      },
+      "expect": {
+        "phase": "action_required",
+        "outcome": {
+          "kind": "failed",
+          "code": "script_probe_failed"
+        },
+        "runnable": false,
+        "execution_finished": false,
+        "figure_captured": false
+      }
+    },
+    {
+      "name": "error without a code keeps a failure fact",
+      "facts": {
+        "target_kind": "script",
+        "has_script": true,
+        "checks": [
+          {
+            "id": "target",
+            "status": "ok"
+          },
+          {
+            "id": "environment",
+            "status": "ok"
+          },
+          {
+            "id": "workdir",
+            "status": "ok"
+          },
+          {
+            "id": "dependencies",
+            "status": "ok"
+          },
+          {
+            "id": "data",
+            "status": "ok"
+          }
+        ],
+        "stale": null,
+        "attempt": {
+          "status": "error",
+          "error": {
+            "message": "x"
+          },
+          "required_input_code": "",
+          "finalized": true,
+          "finalize": null,
+          "captured_count": 0,
+          "cancel_requested": false
+        },
+        "awaiting_input": false
+      },
+      "expect": {
+        "phase": "action_required",
+        "outcome": {
+          "kind": "failed",
+          "code": "worker_error"
+        },
+        "runnable": false,
+        "execution_finished": false,
+        "figure_captured": false
+      }
+    },
+    {
+      "name": "plan stale at execution",
+      "facts": {
+        "target_kind": "script",
+        "has_script": true,
+        "checks": [
+          {
+            "id": "target",
+            "status": "ok"
+          },
+          {
+            "id": "environment",
+            "status": "ok"
+          },
+          {
+            "id": "workdir",
+            "status": "ok"
+          },
+          {
+            "id": "dependencies",
+            "status": "ok"
+          },
+          {
+            "id": "data",
+            "status": "ok"
+          }
+        ],
+        "stale": null,
+        "attempt": {
+          "status": "error",
+          "error": {
+            "code": "preparation_plan_stale",
+            "reason": "data_binding_changed",
+            "executed": false
+          },
+          "required_input_code": "",
+          "finalized": true,
+          "finalize": null,
+          "captured_count": 0,
+          "cancel_requested": false
+        },
+        "awaiting_input": false
+      },
+      "expect": {
+        "phase": "action_required",
+        "outcome": {
+          "kind": "stale",
+          "code": "preparation_plan_stale",
+          "reason": "data_binding_changed"
+        },
+        "runnable": false,
+        "execution_finished": false,
+        "figure_captured": false
+      }
+    },
+    {
+      "name": "cancelled",
+      "facts": {
+        "target_kind": "script",
+        "has_script": true,
+        "checks": [
+          {
+            "id": "target",
+            "status": "ok"
+          },
+          {
+            "id": "environment",
+            "status": "ok"
+          },
+          {
+            "id": "workdir",
+            "status": "ok"
+          },
+          {
+            "id": "dependencies",
+            "status": "ok"
+          },
+          {
+            "id": "data",
+            "status": "ok"
+          }
+        ],
+        "stale": null,
+        "attempt": {
+          "status": "cancelled",
+          "error": null,
+          "required_input_code": "",
+          "finalized": true,
+          "finalize": null,
+          "captured_count": 0,
+          "cancel_requested": false
+        },
+        "awaiting_input": false
+      },
+      "expect": {
+        "phase": "cancelled",
+        "outcome": {
+          "kind": "cancelled"
+        },
+        "runnable": false,
+        "execution_finished": false,
+        "figure_captured": false
+      }
+    },
+    {
+      "name": "legacy needs_input terminal: workdir",
+      "facts": {
+        "target_kind": "script",
+        "has_script": true,
+        "checks": [
+          {
+            "id": "target",
+            "status": "ok"
+          },
+          {
+            "id": "environment",
+            "status": "ok"
+          },
+          {
+            "id": "workdir",
+            "status": "ok"
+          },
+          {
+            "id": "dependencies",
+            "status": "ok"
+          },
+          {
+            "id": "data",
+            "status": "ok"
+          }
+        ],
+        "stale": null,
+        "attempt": {
+          "status": "needs_input",
+          "error": null,
+          "required_input_code": "workdir_confirmation_required",
+          "finalized": true,
+          "finalize": null,
+          "captured_count": 0,
+          "cancel_requested": false
+        },
+        "awaiting_input": false
+      },
+      "expect": {
+        "phase": "awaiting_configuration",
+        "outcome": {
+          "kind": "needs_input",
+          "code": "workdir_confirmation_required"
+        },
+        "runnable": false,
+        "execution_finished": false,
+        "figure_captured": false
+      }
+    },
+    {
+      "name": "legacy needs_input terminal: dependency",
+      "facts": {
+        "target_kind": "script",
+        "has_script": true,
+        "checks": [
+          {
+            "id": "target",
+            "status": "ok"
+          },
+          {
+            "id": "environment",
+            "status": "ok"
+          },
+          {
+            "id": "workdir",
+            "status": "ok"
+          },
+          {
+            "id": "dependencies",
+            "status": "ok"
+          },
+          {
+            "id": "data",
+            "status": "ok"
+          }
+        ],
+        "stale": null,
+        "attempt": {
+          "status": "needs_input",
+          "error": null,
+          "required_input_code": "dependency_preparation_required",
+          "finalized": true,
+          "finalize": null,
+          "captured_count": 0,
+          "cancel_requested": false
+        },
+        "awaiting_input": false
+      },
+      "expect": {
+        "phase": "awaiting_confirmation",
+        "outcome": {
+          "kind": "needs_input",
+          "code": "dependency_preparation_required"
+        },
+        "runnable": false,
+        "execution_finished": false,
+        "figure_captured": false
+      }
+    },
+    {
+      "name": "legacy needs_input terminal with an unknown code is not silently mapped",
+      "facts": {
+        "target_kind": "script",
+        "has_script": true,
+        "checks": [
+          {
+            "id": "target",
+            "status": "ok"
+          },
+          {
+            "id": "environment",
+            "status": "ok"
+          },
+          {
+            "id": "workdir",
+            "status": "ok"
+          },
+          {
+            "id": "dependencies",
+            "status": "ok"
+          },
+          {
+            "id": "data",
+            "status": "ok"
+          }
+        ],
+        "stale": null,
+        "attempt": {
+          "status": "needs_input",
+          "error": null,
+          "required_input_code": "something_new",
+          "finalized": true,
+          "finalize": null,
+          "captured_count": 0,
+          "cancel_requested": false
+        },
+        "awaiting_input": false
+      },
+      "expect": {
+        "phase": "action_required",
+        "outcome": {
+          "kind": "needs_input",
+          "code": "something_new"
+        },
+        "runnable": false,
+        "execution_finished": false,
+        "figure_captured": false
+      }
+    },
+    {
+      "name": "static terminal through the attempt path",
+      "facts": {
+        "target_kind": "asset",
+        "has_script": true,
+        "checks": [
+          {
+            "id": "target",
+            "status": "ok"
+          },
+          {
+            "id": "environment",
+            "status": "ok"
+          },
+          {
+            "id": "workdir",
+            "status": "ok"
+          },
+          {
+            "id": "dependencies",
+            "status": "ok"
+          },
+          {
+            "id": "data",
+            "status": "ok"
+          }
+        ],
+        "stale": null,
+        "attempt": {
+          "status": "static_source_available",
+          "error": null,
+          "required_input_code": "",
+          "finalized": true,
+          "finalize": null,
+          "captured_count": 0,
+          "cancel_requested": false
+        },
+        "awaiting_input": false
+      },
+      "expect": {
+        "phase": "completed",
+        "outcome": {
+          "kind": "static_source"
+        },
+        "runnable": false,
+        "execution_finished": null,
+        "figure_captured": false
+      }
+    },
+    {
+      "name": "a stale check outranks the previous attempt's completed",
+      "facts": {
+        "target_kind": "script",
+        "has_script": true,
+        "checks": [
+          {
+            "id": "target",
+            "status": "ok"
+          },
+          {
+            "id": "environment",
+            "status": "ok"
+          },
+          {
+            "id": "workdir",
+            "status": "ok"
+          },
+          {
+            "id": "dependencies",
+            "status": "ok"
+          },
+          {
+            "id": "data",
+            "status": "ok"
+          }
+        ],
+        "stale": {
+          "reason": "data_binding_changed"
+        },
+        "attempt": {
+          "status": "ready",
+          "error": null,
+          "required_input_code": "",
+          "finalized": true,
+          "finalize": {
+            "registered": true
+          },
+          "captured_count": 1,
+          "cancel_requested": false
+        },
+        "awaiting_input": false
+      },
+      "expect": {
+        "phase": "action_required",
+        "outcome": {
+          "kind": "stale",
+          "code": "preparation_plan_stale",
+          "reason": "data_binding_changed"
+        },
+        "runnable": false,
+        "execution_finished": null,
+        "figure_captured": null
+      }
+    },
+    {
+      "name": "a stale flag does not hide an attempt that is still running",
+      "facts": {
+        "target_kind": "script",
+        "has_script": true,
+        "checks": [
+          {
+            "id": "target",
+            "status": "ok"
+          },
+          {
+            "id": "environment",
+            "status": "ok"
+          },
+          {
+            "id": "workdir",
+            "status": "ok"
+          },
+          {
+            "id": "dependencies",
+            "status": "ok"
+          },
+          {
+            "id": "data",
+            "status": "ok"
+          }
+        ],
+        "stale": {
+          "reason": "grant_changed"
+        },
+        "attempt": {
+          "status": "running",
+          "error": null,
+          "required_input_code": "",
+          "finalized": false,
+          "finalize": {
+            "registered": true
+          },
+          "captured_count": 0,
+          "cancel_requested": false
+        },
+        "awaiting_input": false
+      },
+      "expect": {
+        "phase": "running",
+        "outcome": {
+          "kind": "running"
+        },
+        "runnable": false,
+        "execution_finished": null,
+        "figure_captured": null
+      }
+    }
+  ]
+}

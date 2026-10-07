@@ -23,6 +23,7 @@ import { ShortcutHelp } from '@/components/ShortcutHelp'
 import { StyleDialog } from '@/components/StyleDialog'
 import { BannerStack, DocumentBanner } from '@/components/DocumentBanner'
 import { ProjectReadinessBanner } from '@/components/ProjectReadinessBanner'
+import { ProjectScanBar } from '@/components/ProjectScanBar'
 import { VersionDrawer } from '@/components/VersionDialog'
 import { NamedNodeQuickBox } from '@/components/NamedNodeQuickBox'
 import { LeftPanel } from '@/components/left/LeftPanel'
@@ -261,6 +262,7 @@ function Workspace() {
                 {outdated && <BuildMismatchNotice />}
                 <DocumentBanner />
                 <ProjectReadinessBanner />
+                <ProjectScanBar />
               </BannerStack>
               {!fastEdit && <CanvasTabs />}
               <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">

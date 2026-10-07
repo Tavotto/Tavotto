@@ -377,6 +377,12 @@ interface UiState extends Persisted {
    */
   registryOpen: boolean
   /**
+   * 「项目检查」条的详情是否展开（T02，导入即扫描）。**只是呈现**：业务事实在 `projectScanStore`
+   * 里读后端的扫描快照；关掉 / 收起它不取消扫描（取消扫描是 `projectScanStore.cancel`，另一个动作）。
+   * 这是它**唯一**的开关；不进持久化（每次打开项目从收起开始）。
+   */
+  scanPanelOpen: boolean
+  /**
    * 「渲染环境」对话框：`EngineEnvironmentCard` 的独立出口。脚本区「可能需要原环境」
    * 那一组的「选择渲染环境」直接开它，不把用户扔进设置页去找那张卡（卡在设置里
    * 住在「诊断」页、环境正常时还折叠在技术详情里）。这是它**唯一**的开关。
@@ -476,6 +482,7 @@ interface UiState extends Persisted {
   /** `presetId`：打开时预选哪一条已存样式（设置页「应用到当前图」带过来的） */
   setStylesOpen: (v: boolean, opts?: { presetId?: string | null }) => void
   setRegistryOpen: (v: boolean) => void
+  setScanPanelOpen: (v: boolean) => void
   setEngineEnvOpen: (v: boolean) => void
   setShortcutHelpOpen: (v: boolean) => void
   /**
@@ -565,6 +572,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   stylesPresetId: null,
   dialogStack: [],
   registryOpen: false,
+  scanPanelOpen: false,
   engineEnvOpen: false,
   shortcutHelpOpen: false,
   settingsOpen: false,
@@ -835,6 +843,7 @@ export const useUiStore = create<UiState>((set, get) => ({
         : popDialog(s.dialogStack, 'styles'),
     })),
   setRegistryOpen: (registryOpen) => set({ registryOpen }),
+  setScanPanelOpen: (scanPanelOpen) => set({ scanPanelOpen }),
   setEngineEnvOpen: (engineEnvOpen) => set({ engineEnvOpen }),
   setShortcutHelpOpen: (shortcutHelpOpen) => set({ shortcutHelpOpen }),
   setSettingsOpen: (settingsOpen, settingsSection = undefined) =>

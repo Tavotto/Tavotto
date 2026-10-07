@@ -197,6 +197,31 @@
   `canvas/drawerViewportResize.test.tsx`、`store/uiStore.test.ts` 的两个左栏
   describe；e2e `a11y.spec.ts` 的接入状态两条 + `golden-paths.spec.ts`。
 
+## 导入即扫描的准备条（T02，`store/projectScanStore.ts` / `lib/projectScanText.ts` / `components/ProjectScanBar.tsx`）
+
+后端规则全文在 `docs/rules/backend/registry-discovery-and-probe.md`「导入即扫描」。前端只做三件事：取回快照、翻译、
+记住「条被关掉了」。
+
+- **接在统一认领与启动恢复上**：`projectStore.adoptOpenedProject`（打开 / 切换 / 教程换画布都走它）认领完成后、
+  `init()` 发现项目还开着时，各调一次 `projectScanStore.start()`（后端单飞 + 新鲜复用，重复认领便宜）。**不 await、不阻塞**
+  认领——静态素材此刻已经可以排版；教程副本不扫。不要只在某个 picker 按钮上接。
+- **事实在后端**：phase / outcome / 目标选择 / 每项检查的状态都读快照，前端没有第二份「有没有脚本 / 能不能运行」的判据；
+  环境与依赖永远显示成「未核验」。句子只在 `lib/projectScanText.ts`（按 outcome / 账本 code / role 查，不从计数里推结论）。
+  运行中只说「已发现 N 个脚本、M 张图」，**没有百分比**。
+- **要不要出现也在那一处**（`scanBarVisible`）：完整扫描且没有要注意的事（静态项目、脚本都已连接、空项目）不出现；
+  有目标 / 要选 / 看不全 / 失败 / 取消一定出现；运行中的更快于 `SLOW_SCAN_MS` 的不闪一下；用户从命令面板「显示项目检查结果」
+  主动重新打开时照常显示。
+- **三个不同的动作**：「关闭」只隐藏这一轮（`dismissedScanId`，下一轮新 `scan_id` 自然再提示）；「取消检查」只打取消扫描的
+  端点；切项目 `clear()` 换代并停轮询（后端那笔账在项目关闭时才收）。没有一个会碰执行 / 安装 / worker。
+- **迟到响应**：请求序号只认最后发出的、发请求那一刻的项目 id、`clear()` 换代、同一 `scan_id` 内 `observation_seq` 不许倒退；
+  POST 回包是「此刻谁在跑」的最新事实，不比序号。后端 404（`project_scan_not_started`）= 丢掉旧快照等下一次 `start()`。
+- **教程与焦点**：开合用 `uiStore.scanPanelOpen`（不进持久化）；教程进行中 / 当前是教程副本时条不出现；条是状态条不是对话框——
+  不抢焦点，不另起全局「已完成」开关，`onboardingStore` 的语义不被共用。
+- 「试运行」是**既有**的素材库动作（`scriptRunStore.run`，用户显式点击才执行）；T09 让它改走准备会话。
+- 看护：`store/projectScanStore.test.ts`、`lib/projectScanText.test.ts`、`components/ProjectScanBar.test.tsx`、
+  `store/projectSwitchScan.test.ts`；真浏览器 + 真后端：`e2e/project-scan.spec.ts`（只有脚本的项目出现真实报告且脚本零执行、
+  静态项目无条、目录读不动出 partial、教程独占）。
+
 ## 速查表原要点（2026-09-25 迁入，#608）
 
 `web/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。

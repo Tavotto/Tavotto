@@ -25,8 +25,8 @@
     宿主判语法错误而项目此刻决定的解释器是另一个时，`analyze_in_interpreter` 在它里面 `-I`
     起子进程跑**同一份**分析（合成 `tavotto.engine` 命名空间包；只解析，绝不 import 用户
     脚本；按内容缓存）：它认就按它的结果算（`parser == "target"`，脚本不从列表消失），它也不认
-    才是确认的语法错误。目标解释器由调用方给（`pool.resolve_worker_python(discover=False)`），
-    `discover` 自己不挑解释器、不 import pool。
+    才是确认的语法错误。目标解释器由调用方给（`pool.peek_worker_python`：只读路径、不复检，T02；
+    导入即扫描从不给），`discover` 自己不挑解释器、不 import pool。
 - **试运行探测（`engine/probe.py`）**：stem 真的只有运行期才知道时（遍历数据
   目录、读配置、命令行参数），把脚本**跑一遍**按真实产出登记——worker 本来
   就在 build 阶段拦 savefig 并按真实文件名捕获，跑得起来 = 能参数化。
@@ -75,6 +75,12 @@
     失败 entry 各自新建 worker（看护 `tests/test_script_probe.py` 的
     execution-count 用例）。
 
+- **换入口只在「入口猜错」时**（T01，准备会话收敛）：`probe.entry_retry_allowed(exc)` 是唯一判据；缺参
+  （`script_needs_arguments`）/ 要输入 / 读不到数据 / 缺包 / 超时 / 取消 / 起会话前的两道门都停在第一个入口，不再把
+  顶层代码按入口数重跑一遍。登记（冲突判据 + 改指代次 + `discover.register`）的唯一实现是 `probe.register_probed`——试运行
+  与准备会话的 `script` 目标执行成功之后都走它。`/api/registry/probe` 与 `script` 目标共用 app 里的
+  `_resolve_project_script`（越界 / 非 .py / 不存在三种拒绝各有稳定 code）。看护 `tests/test_script_probe.py::TestEntryLoopStopsOnNonEntryFailures`。
+
 ## 速查表原要点（2026-09-25 迁入，#608）
 
 `src/tavotto/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
@@ -85,3 +91,51 @@
 - probe 绝不猜也绝不静默跳过，失败不写注册表、错误码闭集
 - 同脚本互斥、取消当场 kill
 - 读不动 / 解码不了 / 语法错误与「确认非绘图」分开（`inspect_script`），宿主判语法错误交项目解释器再解析一遍（只解析不执行）
+
+## 导入即扫描（T02，`engine/projscan.py` / `scanbudget.py` / `/api/project/scan*`）
+
+项目被认领 / 启动恢复时，前端（`projectStore` 的统一认领与 `init()` 恢复）调一次 `POST /api/project/scan`，
+后端在后台线程里做一次**有界、只读、零执行**的结构检查，给轻量准备条一份真实报告。它**不是**准备会话
+（`prepsession`，T01）：会话的「检查」要问环境决策（`preparation.plan_for` → `decide_environment`，有解释器体检
+与写配置的副作用），是用户选定目标之后的明确动作；扫描发生在选目标**之前**，只许读。报告里每个目标带
+`session_target`（= 创建会话端点的请求体）——扫描只提供候选证据，不另造素材扫描器或关系判定器。
+
+- **复用，不新造**：脚本走 `discover.iter_all_scripts(budget=)`（同一份剪枝 / `MAX_DEPTH`），素材走
+  `project_refresh.iter_assets(budget=)`（同一份素材边界），分类走 `probe.inventory_entry`（与 `script_inventory`
+  同一份 reason 判据，抽出的纯函数）。`scanbudget` 只给这两个遍历一个共同的预算 + 账本；不带 `budget` 的老调用方
+  逐字不变（符号链接目录照旧会被下探，既有行为）。
+- **零执行（可证明）**：`projscan.py` 不 import `pool` / `preparation` / `deprepair` / `subprocess` 等（AST 门禁）；解析
+  永远 `target_python=None`（宿主判语法错误 = `syntax_error` + `parser=None`，**未核验**）；环境线索只读磁盘记录
+  （`userenvs.discover(ask_login_shell=False)`、`projectenv.discover`、`remembered_record`——记住的解释器只 `stat`），
+  不问登录 shell、不体检；扫描期间 `Popen` / `os.exec*` / `posix_spawn*` / `socket.connect` 被换成会炸的桩仍通过。
+  **有副作用、扫描路径不得调用**：`pool.resolve_worker_python`（任何形态，含 `discover=False`——有记住的解释器时它仍会
+  `import matplotlib`）、`preparation.plan_for`、`deprepair.decide_environment` / `gate` / `joint_plan_for`、
+  `userenvs.discover` 的默认形态、`projectenv.first_open_candidate` / `probe_environment`、`discover.analyze_in_interpreter`、
+  `GET /api/engine/dependencies`。**读候选线索**用 `pool.peek_worker_python`（`project_refresh._target_parser` 与
+  `script_inventory` 已改用它：每次刷新不再复检记住的解释器）。已登记的唯一例外：宿主 `ast.parse` 真的判了语法错误时，
+  非扫描路径的刷新 / 清单仍会用记住的解释器做一次**静态**再解析（`-I -B`，FO12），扫描从不走。
+- **链接判别先于类型判别**：带预算的两种遍历只用 `lstat` / `DirEntry.stat(follow_symlinks=False)` 的元数据判目录；符号链接与 Windows name-surrogate 重解析点（含 junction）不查目标，目录递归前再核一次。`symlinked_dir` 保留协议名，文案覆盖文件与目录；非路径替身的云盘 tag 保留占位文件判据。普通文件系统并发替换的最后一次检查到实际读取之间仍有竞态，扫描不声称提供操作系统级的原子 no-follow 打开。
+- **不写用户项目**（`open_project` 缺注册表时起草并写注册表是既有 deliberate-boundary，不在这里）；只有 Tavotto 自己的
+  内存账。报告里没有绝对路径：脚本 / 素材 / 账本用项目相对 POSIX 路径，项目外的环境只给不透明 `id`
+  （`userenvs.env_id`），异常原文（含路径）不出门。
+- **预算**（`scanbudget`，新常量；单文件上限与 `importscan.MAX_SOURCE_BYTES` 同值）：目录项 10 万、脚本 400、素材 2 万、
+  单文件 1 MiB、累计源码 32 MiB、素材层级 12、墙钟 20 s、取消回调。每一项超限都进账本（`issues`，闭集 code），
+  `state` 变 `partial`；**partial + 没找到脚本绝不报「静态项目 / 没有脚本」**（outcome 是 `unchecked`）。设计内的静默剪枝
+  （`depth_limit`）只记 `note`，一个脚本都没找到时才升级成 partial。读不动的目录、符号链接目录（不跟进，防环与越界）、
+  云盘占位文件（`st_flags` SF_DATALESS / Windows RECALL 位，只看 stat，不读）、过大文件、病态 AST 都是「未核验」条目：
+  照样列出、可手动选为目标。通配输出名不上磁盘比对（`glob_disk=False`，避免无界 `rglob`）。
+- **目标**：绘图证据（已登记 / 静态产图 / 动态图名）才是 `plot`；工具 / 测试 / 样式模块是 `auxiliary`，不默认当目标、缺包
+  缺参不阻塞别的绘图脚本；读不动 / 没核验的是 `unknown`（可手动选）。默认目标只在**恰好一个尚未连接的绘图脚本**时给；
+  多个就让用户选（`choose_target`），不同作用域（最近的依赖声明目录）的 requirements 不混装。
+- **报告**：`phase` 是准备会话词汇的子集（`scanning` / `awaiting_confirmation` / `awaiting_configuration` / `completed` /
+  `action_required` / `cancelled`，子集关系由测试钉着），`outcome` 单列事实；`checks` 里环境与依赖恒为 `unknown`
+  （`environment.verified` 恒 False，不给推荐），依赖只说声明文件与条数（不带原文行）。`evidence_revision` 是内容证据的
+  哈希（脚本签名 / 素材 / 环境线索指纹 / 声明文件 / 账本），耗时与 `observation_seq` 不进；`observation_seq` 单调，进度只动它。
+- **服务**（`ScanService`）：单飞（在跑就返回同一轮）；`FRESH_S`（30 s）内的终局报告被重复认领直接复用，之后重扫但
+  脚本解析走 `{相对路径: ((size, mtime_ns), 解析结果)}` 缓存（内容证据没变不重解析，不重新体检环境）；`epoch` 进程内单调，
+  `drop`（项目关闭）后线程醒来发现自己不是当前条目就丢弃结果；`cancel` 只取消扫描（没有执行 / 安装 / worker 归它所有）。
+  SSE `project.scan`（`pj` / `scan_id` / `epoch`）只是「重读」提示。
+- **端点**：`POST /api/project/scan`（体只认 `force` / `reason`；202 起新一轮，200 复用）、`GET`（补拉，不会开始扫描；
+  404 `project_scan_not_started` = 未开始或后端重启过，客户端重新 POST）、`POST …/cancel`。项目按 `current_ctx()` 认领。
+
+看护：`tests/test_project_scan.py`（行为与服务）、`tests/test_project_scan_zero_exec.py`（哨兵 + 进程 / 网络桩 + AST 门禁）。

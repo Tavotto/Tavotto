@@ -27,11 +27,12 @@ import glob
 import logging
 import os
 import re
+import stat
 import subprocess
 import threading
 from pathlib import Path
 
-from . import projectenv, runtime
+from . import projectenv, runtime, scanbudget
 
 LOG = logging.getLogger("tavotto.userenvs")
 
@@ -72,7 +73,30 @@ def _home() -> str:
     return os.path.expanduser("~")
 
 
+def _local_hint(path: str) -> bool:
+    """Lexically reject network/device namespaces before filesystem discovery.
+
+    Normalize separators as text on every host: a Windows project can be scanned
+    on POSIX too. Do not resolve/stat a rejected hint, since even existence checks
+    may contact SMB/WebDAV and send the user's network authentication on Windows.
+    """
+    value = path.replace("\\", "/")
+    return not value.startswith(("//", "/??/"))
+
+
+#: 项目内线索文件（`.vscode/settings.json` / `.python-version` / `environment.yml`）的读取上限。
+#: 与 `scanbudget.MAX_FILE_BYTES` 同值：超过就当读不了，不是「读一半」。
+MAX_HINT_BYTES = scanbudget.MAX_FILE_BYTES
+
+
+def _read_hint_text(base: Path, *parts: str, no_follow: bool = False) -> str:
+    """读项目里的一个线索文件：唯一读法在 `scanbudget.read_regular_text`（依赖声明共用），上限 `MAX_HINT_BYTES`。"""
+    return scanbudget.read_regular_text(base, *parts, no_follow=no_follow, max_bytes=MAX_HINT_BYTES)
+
+
 def _is_python_file(path: str) -> bool:
+    if not _local_hint(path):
+        return False
     try:
         p = Path(path)
         return p.name.lower().startswith("python") and p.is_file()
@@ -82,6 +106,8 @@ def _is_python_file(path: str) -> bool:
 
 def _prefix_python(prefix: str) -> str | None:
     """环境前缀（Conda / pyenv / venv）→ 里面的解释器；没有回 None。"""
+    if not _local_hint(prefix):
+        return None
     names = ("python.exe",) if os.name == "nt" else ("bin/python3", "bin/python")
     for name in names:
         cand = os.path.join(prefix, name)
@@ -112,17 +138,19 @@ def _hint_dirs(root_real: str, script_path: str | None) -> list[Path]:
 _VSCODE_KEY = re.compile(r'"python\.(?:defaultInterpreterPath|pythonPath)"\s*:\s*"([^"]+)"')
 
 
-def _vscode_pythons(dirs: list[Path]) -> list[str]:
+def _vscode_pythons(dirs: list[Path], *, no_follow: bool = False) -> list[str]:
     # settings.json 是 JSONC（注释、尾逗号）；只要这一个键，正则比「先把 JSONC 洗成 JSON」可靠
     out: list[str] = []
     for d in dirs:
         try:
-            text = (d / ".vscode" / "settings.json").read_text(encoding="utf-8", errors="replace")
+            text = _read_hint_text(d, ".vscode", "settings.json", no_follow=no_follow)
         except OSError:
             continue
         for raw in _VSCODE_KEY.findall(text):
             value = raw.replace("${workspaceFolder}", str(d)).replace("\\\\", "\\")
             value = os.path.expanduser(value)
+            if not _local_hint(value):
+                continue
             if not os.path.isabs(value):
                 value = str(d / value)
             out.append(value)
@@ -140,11 +168,11 @@ def _pyenv_version_dirs() -> list[str]:
     return [os.path.join(root, "versions")]
 
 
-def _python_version_pythons(dirs: list[Path]) -> list[tuple[str, str]]:
+def _python_version_pythons(dirs: list[Path], *, no_follow: bool = False) -> list[tuple[str, str]]:
     out: list[tuple[str, str]] = []
     for d in dirs:
         try:
-            lines = (d / ".python-version").read_text(encoding="utf-8", errors="replace").split()
+            lines = _read_hint_text(d, ".python-version", no_follow=no_follow).split()
         except OSError:
             continue
         for name in lines:
@@ -161,19 +189,21 @@ def _python_version_pythons(dirs: list[Path]) -> list[tuple[str, str]]:
 _ENV_NAME = re.compile(r"^name:\s*['\"]?([A-Za-z0-9_.\-]+)['\"]?\s*$", re.M)
 
 
-def _environment_yml_pythons(dirs: list[Path]) -> list[tuple[str, str]]:
+def _environment_yml_pythons(
+    dirs: list[Path], *, no_follow: bool = False, budget: scanbudget.Budget | None = None
+) -> list[tuple[str, str]]:
     out: list[tuple[str, str]] = []
     for d in dirs:
         for fname in ("environment.yml", "environment.yaml"):
             try:
-                text = (d / fname).read_text(encoding="utf-8", errors="replace")
+                text = _read_hint_text(d, fname, no_follow=no_follow)
             except OSError:
                 continue
             m = _ENV_NAME.search(text)
             if not m:
                 continue
             name = m.group(1)
-            for prefix in _conda_prefixes():
+            for prefix in _conda_prefixes(budget):
                 if os.path.basename(prefix.rstrip("/\\")) == name:
                     py = _prefix_python(prefix)
                     if py:
@@ -181,13 +211,23 @@ def _environment_yml_pythons(dirs: list[Path]) -> list[tuple[str, str]]:
     return out
 
 
-def _shebang_python(script_path: str | None) -> str | None:
-    """`script_path` 同 `_hint_dirs`：只认 `contained_path()` 的输出。"""
+def _shebang_python(script_path: str | None, *, no_follow: bool = False) -> str | None:
+    """`script_path` 同 `_hint_dirs`：只认 `contained_path()` 的输出。只读普通文件的前 512 字节。"""
     if not script_path:
         return None
     try:
-        with open(script_path, "rb") as fh:
-            first = fh.readline(512)
+        if no_follow and scanbudget.is_redirect(os.lstat(script_path)):
+            return None
+        flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0)
+        if no_follow:
+            flags |= getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(script_path, flags)
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                return None
+            first = os.read(fd, 512).split(b"\n", 1)[0]
+        finally:
+            os.close(fd)
     except OSError:
         return None
     if not first.startswith(b"#!"):
@@ -295,21 +335,61 @@ def _conda_roots() -> list[str]:
     return roots
 
 
-def _conda_prefixes() -> list[str]:
-    """Conda 知道的每一个环境前缀（base 与具名环境），去重、保序。"""
-    out: list[str] = []
+def _scan_children(pattern_dir: str, budget: scanbudget.Budget | None) -> list[str]:
+    """`pattern_dir/*` 的子项（排序）。有预算时用 `os.scandir` **增量**枚举：每项记一笔、到期 / 取消就收手
+    （返回已枚举到的那部分，账本由 `Budget.stop_reason()` 记 time_budget / cancelled）。"""
+    if budget is None:
+        return sorted(glob.glob(os.path.join(pattern_dir, "*")))
+    names: list[str] = []
     try:
-        text = Path(_home(), ".conda", "environments.txt").read_text(
-            encoding="utf-8", errors="replace"
-        )
-        out += [ln.strip() for ln in text.splitlines() if ln.strip()]
+        with os.scandir(pattern_dir) as it:
+            for entry in it:
+                if not budget.charge_entry():
+                    break
+                if entry.name.startswith("."):  # 与 glob 的 `*` 一致：不列点开头
+                    continue
+                names.append(os.path.join(pattern_dir, entry.name))
     except OSError:
         pass
+    return sorted(names)
+
+
+def _conda_environments_txt(budget: scanbudget.Budget | None) -> list[str]:
+    path = Path(_home(), ".conda", "environments.txt")
+    try:
+        if budget is None:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        else:
+            # 有界、只认普通文件（FIFO / 超大文件不挂住扫描）：读不了记一条看不全，不是「没有」
+            text = scanbudget.read_regular_text(path.parent, path.name, max_bytes=MAX_HINT_BYTES)
+    except FileNotFoundError:
+        return []
+    except OSError:
+        if budget is not None:
+            budget.note(scanbudget.ISSUE_UNREADABLE_FILE, scope="environment")
+        return []
+    out: list[str] = []
+    for ln in text.splitlines():
+        if budget is not None and not budget.charge_entry():
+            break
+        if ln.strip():
+            out.append(ln.strip())
+    return out
+
+
+def _conda_prefixes(budget: scanbudget.Budget | None = None) -> list[str]:
+    """Conda 知道的每一个环境前缀（base 与具名环境），去重、保序。
+
+    `budget`（导入即扫描传）：`environments.txt` 有界读、`envs` 目录增量枚举，到期 / 取消返回已有的那部分。"""
+    out: list[str] = _conda_environments_txt(budget)
     for root in _conda_roots():
+        if budget is not None and budget.stop_reason() is not None:
+            break
         if os.path.isdir(root):
             out.append(root)
-            out += sorted(glob.glob(os.path.join(root, "envs", "*")))
-    out += sorted(glob.glob(os.path.join(_home(), ".conda", "envs", "*")))
+            out += _scan_children(os.path.join(root, "envs"), budget)
+    if budget is None or budget.stop_reason() is None:
+        out += _scan_children(os.path.join(_home(), ".conda", "envs"), budget)
     seen: set[str] = set()
     uniq: list[str] = []
     for p in out:
@@ -326,10 +406,12 @@ def _conda_label(prefix: str) -> str:
     return name if parent == "envs" else "base"
 
 
-def _pyenv_pythons() -> list[tuple[str, str]]:
+def _pyenv_pythons(budget: scanbudget.Budget | None = None) -> list[tuple[str, str]]:
     out: list[tuple[str, str]] = []
     for vdir in _pyenv_version_dirs():
-        for prefix in sorted(glob.glob(os.path.join(vdir, "*")), reverse=True):
+        for prefix in sorted(_scan_children(vdir, budget), reverse=True):
+            if budget is not None and budget.stop_reason() is not None:
+                return out
             py = _prefix_python(prefix)
             if py:
                 out.append((py, os.path.basename(prefix)))
@@ -351,30 +433,65 @@ def _key(python: str) -> tuple[str, str]:
     return os.path.normcase(os.path.dirname(path)), os.path.normcase(real)
 
 
-def discover(figures_dir: str | Path, script: str | None = None) -> list[dict]:
-    """按优先级排好的候选表（去重、只含存在的文件）。不起任何 Python；可能问一次登录 shell。"""
+def discover(
+    figures_dir: str | Path,
+    script: str | None = None,
+    *,
+    ask_login_shell: bool = True,
+    no_follow: bool = False,
+    budget: scanbudget.Budget | None = None,
+) -> list[dict]:
+    """按优先级排好的候选表（去重、只含存在的文件）。不起任何 Python；默认可能问一次登录 shell。
+
+    **线索与体检分开**（T02）：`ask_login_shell=False` 时只读磁盘上的记录（项目里的线索、Conda 的
+    `environments.txt` 与常见安装根、pyenv 的 versions），**不启动登录 shell**——登录 shell 要读用户的
+    rc 文件（可能是任何东西）才答得出，那是 T05 的明确检查动作，不是导入时的读线索。导入即扫描永远
+    传 False；默认值保持老行为（准备 / 依赖门里的 `deprepair` 仍问）。
+
+    `no_follow=True`（导入即扫描传）：项目里的线索文件（`.vscode/settings.json` / `.python-version` /
+    `environment.yml` / 脚本 shebang）不跟随符号链接 / 路径替身，且无论哪种形态都只读有上限的普通文件。
+
+    `budget`（导入即扫描传）：Conda `environments.txt` / `envs` 与 pyenv `versions` 的枚举拿得到墙钟预算与取消回调，
+    到期 / 取消就停在已枚举到的部分（账本记 time_budget / cancelled → 报告 partial）。不传 = 老行为。"""
     # `script` 可能来自请求体：先钉在项目内，下游一律用净化器回的那一条；越界就当没给脚本
     root_real = os.path.realpath(os.fspath(figures_dir))
     script_path = projectenv.contained_path(root_real, script) if script else None
     dirs = _hint_dirs(root_real, script_path)
     raw: list[tuple[str, str, str]] = []
-    raw += [(p, SOURCE_VSCODE, "") for p in _vscode_pythons(dirs)]
-    raw += [(p, SOURCE_PYTHON_VERSION, n) for p, n in _python_version_pythons(dirs)]
-    raw += [(p, SOURCE_ENVIRONMENT_YML, n) for p, n in _environment_yml_pythons(dirs)]
-    shebang = _shebang_python(script_path)
+    raw += [(p, SOURCE_VSCODE, "") for p in _vscode_pythons(dirs, no_follow=no_follow)]
+    raw += [
+        (p, SOURCE_PYTHON_VERSION, n) for p, n in _python_version_pythons(dirs, no_follow=no_follow)
+    ]
+    raw += [
+        (p, SOURCE_ENVIRONMENT_YML, n)
+        for p, n in _environment_yml_pythons(dirs, no_follow=no_follow, budget=budget)
+    ]
+    shebang = _shebang_python(script_path, no_follow=no_follow)
     if shebang:
         raw.append((shebang, SOURCE_SHEBANG, ""))
-    raw += [(p, SOURCE_LOGIN_SHELL, "") for p in login_shell_pythons()]
-    raw += [
-        (p, SOURCE_CONDA, _conda_label(pre))
-        for pre in _conda_prefixes()
-        for p in [_prefix_python(pre)]
-        if p
-    ]
-    raw += [(p, SOURCE_PYENV, n) for p, n in _pyenv_pythons()]
+    if ask_login_shell:
+        raw += [(p, SOURCE_LOGIN_SHELL, "") for p in login_shell_pythons()]
+    for pre in _conda_prefixes(budget):
+        if budget is not None and budget.stop_reason() is not None:
+            break
+        py = _prefix_python(pre)
+        if py:
+            raw.append((py, SOURCE_CONDA, _conda_label(pre)))
+    if budget is None or budget.stop_reason() is None:
+        raw += [(p, SOURCE_PYENV, n) for p, n in _pyenv_pythons(budget)]
     out: list[dict] = []
     seen: set[tuple[str, str]] = set()
     for python, source, label in raw:
+        if budget is not None and budget.stop_reason() is not None:
+            break
+        if no_follow:
+            # 项目派生的候选（vscode / .python-version / environment.yml / shebang 解析出的项目内路径）：
+            # 在任何跟随链接的谓词（is_file / realpath）之前逐级 lstat，被重定向的丢弃并记账，不探目标
+            bad = scanbudget.redirected_component(root_real, python, allow_final_link=True)
+            if bad is not None:
+                if budget is not None:
+                    budget.note(scanbudget.ISSUE_SYMLINK_DIR, scope="file", path=bad)
+                continue
         if not _is_python_file(python):
             continue
         key = _key(python)

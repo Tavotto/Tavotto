@@ -360,6 +360,10 @@
         "label": "显示项目接入状态",
         "keywords": "readiness status editable jr jieru 接入 可编辑 仅版面 仅排版 为什么不能编辑"
       },
+      "project-scan": {
+        "label": "显示项目检查结果",
+        "keywords": "scan check structure jc jiancha 检查 扫描 脚本 目标"
+      },
       "hints-reset": {
         "label": "重新显示操作提示",
         "keywords": "hints tips reset ts tishi 提示 新手"
