@@ -168,7 +168,8 @@
     "saveAs": "Save as…",
     "saveErrorBody": "Your changes are kept for now, not yet on disk.",
     "tooNewBody": "Tavotto didn’t open it, so the file on disk is unchanged. Upgrade and try again.",
-    "tooNewTitle": "This layout comes from a newer Tavotto (schema {{schema}})"
+    "tooNewTitle": "This layout comes from a newer Tavotto (schema {{schema}})",
+    "moreActions": "More ways to resolve"
   },
   "document": {
     "defaultName": "Untitled"
@@ -828,12 +829,15 @@
     "zoomIn": "Zoom in",
     "zoomOut": "Zoom out",
     "zoomValue": "Zoom {{percent}}%",
-    "timelineButton": "Layout timeline"
+    "timelineButton": "Layout timeline",
+    "issueLastDoc": "Last layout not opened",
+    "issueTooNew": "Newer layout",
+    "issueAria": "Document status: {{status}}. Show details",
+    "documentRenameHint": "Click for layout actions; double-click or F2 to rename"
   },
   "update": {
     "banner": "Tavotto has been updated. Reload to use the new version.",
-    "later": "Later",
-    "title": "Tool updated"
+    "later": "Later"
   },
   "hints": {
     "panel_editable": "Double-click to edit inside the figure.",

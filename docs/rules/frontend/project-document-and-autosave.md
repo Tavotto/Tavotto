@@ -169,7 +169,7 @@
 - **切项目回到那个项目上次开着的文档（2026-09-06，审计 T02）**：`lib/projectDocs.ts`
   按项目 id 记最近一份**有内容**的 documentId（2026-09-29 起权威在后端、`tavotto.projectDoc.<pj>` 只当缓存，见上条「会话状态以后端为准」；
   空白文档不记——它从不落盘），`projectStore.adoptOpenedProject` 在换代之后按记录
-  读自动保存槽位换回去；读不回来时 `lastDocumentIssue` → `DocumentBanner` 指名那份
+  读自动保存槽位换回去；读不回来时 `lastDocumentIssue` → 顶栏文档状态芯片（`TopBar.SaveStateLabel` 的说明块，2026-10-07 起不再是横幅）指名那份
   文档并给「打开上次文档」重试，**不静默留一份空白**。带 `prepareDocument` 的入口
   （教程）不走这条。记录的键取 `currentProjectId()` 而不是 `project` 字段：换代期间
   后者还是旧项目。Project Picker 的同名区分 / 失效分组 / 筛选判据只在
@@ -185,7 +185,7 @@
     = 同一个 origin 升级上来的旧记录，拿它当迁移源并推一份上去。
   - 取哪一份：`restoreSession` = `loadProjectDocument(pj)`（当前项目的 last：后端 → 本机按项目的缓存）→ 旧的
     `tavotto.currentDoc`（**只在确知属于当前项目时**：本机索引记着，或后端给得出证据）；`adoptNow` = `loadProjectDocument(pj)`。
-    `lastDocumentIssue` / `DocumentBanner` 机制不变。
+    `lastDocumentIssue` / 顶栏文档状态芯片机制不变。
   - **一个项目的排版不许漏进另一个项目（2026-10-01，#715 Windows 真机验收 P1）**：稳定端口之后先后打开的项目共用
     一个 origin，`currentDoc` / `docIndex` 这类全局键跨项目存活。改造前「后端没记过」（`null`）时 `restoreSession`
     退回全局 `currentDoc`，关掉 F 再打开新项目 G，G 一打开就是 F 的排版，随后记成 G 的 last、往 G 的目录打时间线节点。

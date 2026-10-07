@@ -23,6 +23,7 @@ export function Menu({
   width = 200,
   open,
   onOpenChange,
+  modal,
 }: {
   trigger: ReactElement
   children: ReactNode
@@ -31,9 +32,14 @@ export function Menu({
   /** 受控打开（`RowMenu` 用它让 ⇧F10 / 右键打开同一份菜单）；不给就是 Radix 自己管 */
   open?: boolean
   onOpenChange?: (open: boolean) => void
+  /**
+   * 默认模态（打开时页面其余部分不吃指针）。触发器自己还要认双击的（顶栏文档名：单击开菜单、双击改名，
+   * 2026-10-07 设计审计 §10.1）给 false：第二下才落得回触发器上
+   */
+  modal?: boolean
 }) {
   return (
-    <DM.Root open={open} onOpenChange={onOpenChange}>
+    <DM.Root open={open} onOpenChange={onOpenChange} modal={modal}>
       <DM.Trigger asChild>{trigger}</DM.Trigger>
       <DM.Portal>
         <DM.Content

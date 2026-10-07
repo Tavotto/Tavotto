@@ -4236,6 +4236,7 @@ export default interface Resources {
       "lastDocOpen": "打开上次的排版",
       "lastDocTitle": "无法打开项目上次的排版「{{name}}」",
       "lastDocUnnamed": "未命名",
+      "moreActions": "其他处理方式",
       "overwrite": "用我的版本覆盖",
       "overwriteConfirmBodyExternal": "磁盘上被外部修改过的那份会被这个窗口的内容替换，那些外部改动会丢失。想两份都留，请改用「另存为」。",
       "overwriteConfirmBodyStale": "另一个窗口保存的较新版本会被这个窗口的内容替换，那个窗口的改动会丢失。想两份都留，请改用「另存为」。",
@@ -4824,6 +4825,7 @@ export default interface Resources {
       "commandPalette": "命令面板",
       "documentLabel": "排版：{{name}}",
       "documentName": "排版名",
+      "documentRenameHint": "单击打开排版菜单；双击或按 F2 重命名",
       "export": "导出",
       "exportPackage": "导出项目包",
       "exportTip": "导出 PNG / PDF",
@@ -4832,6 +4834,9 @@ export default interface Resources {
       "fromProject": "· 项目 {{name}}",
       "importPackage": "导入项目包…",
       "insertShape": "插入形状",
+      "issueAria": "文档状态：{{status}}。查看详情",
+      "issueLastDoc": "上次的排版没打开",
+      "issueTooNew": "排版版本较新",
       "more": "更多",
       "moreWithUpdate": "更多（有新版本）",
       "newBlankDocument": "新建空白排版",
@@ -4880,8 +4885,7 @@ export default interface Resources {
     },
     "update": {
       "banner": "工具已更新，刷新后使用新版本",
-      "later": "稍后",
-      "title": "工具已更新"
+      "later": "稍后"
     }
   }
 }

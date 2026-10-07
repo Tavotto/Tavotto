@@ -21,7 +21,7 @@ import { SettingsDialog } from '@/components/SettingsDialog'
 import { TelemetryConsentDialog } from '@/components/TelemetryConsentDialog'
 import { ShortcutHelp } from '@/components/ShortcutHelp'
 import { StyleDialog } from '@/components/StyleDialog'
-import { DocumentBanner } from '@/components/DocumentBanner'
+import { BannerStack, DocumentBanner } from '@/components/DocumentBanner'
 import { ProjectReadinessBanner } from '@/components/ProjectReadinessBanner'
 import { VersionDrawer } from '@/components/VersionDialog'
 import { NamedNodeQuickBox } from '@/components/NamedNodeQuickBox'
@@ -30,7 +30,7 @@ import { LeftRail } from '@/components/left/LeftRail'
 import { CanvasHud, NotificationRail } from '@/components/StatusBar'
 import { PerfProbeHud } from '@/components/PerfProbeHud'
 import { TopBar } from '@/components/TopBar'
-import { UpdateBanner } from '@/components/UpdateBanner'
+import { BuildMismatchNotice } from '@/components/BuildMismatchNotice'
 import { UpdateNoticeDialog } from '@/components/UpdateNoticeDialog'
 import { DependencyPrepareDialog } from '@/components/DependencyPrepareDialog'
 import { EngineEnvironmentDialog } from '@/components/EngineEnvironmentDialog'
@@ -239,13 +239,10 @@ function Workspace() {
 
   return (
     <TooltipProvider>
-      {/* 顶栏坐在灰色桌面上（2026-09-30 重设计）：它自己的 bg-surface 在这里按桌面色覆盖——
-          不去改 TopBar 那一行，免得和在飞的 #679（给同一行加 data-topbar）撞车 */}
-      <div className="flex h-full flex-col overflow-hidden bg-bg text-ink [&>header]:bg-bg">
+      {/* 顶栏坐在灰色桌面上（2026-09-30 重设计）：底色是它自己给的 `bg`（2026-10-07 起不再由这里级联覆盖）。
+          提示条不再横贯整个窗口：进了工作面板（见下面的 BannerStack） */}
+      <div className="flex h-full flex-col overflow-hidden bg-bg text-ink">
         <TopBar />
-        {outdated && <UpdateBanner />}
-        <DocumentBanner />
-        <ProjectReadinessBanner />
         <div className="relative flex min-h-0 flex-1">
           <LeftRail />
           {/* 窄屏时抽屉盖在画布上（绝对定位在轨道右侧），画布宽度不被侵占 */}
@@ -258,20 +255,35 @@ function Workspace() {
             className="relative mb-2 mr-2 flex min-w-0 flex-1 overflow-hidden rounded-panel bg-surface shadow-card"
           >
             <div className="relative flex min-w-0 flex-1 flex-col">
+              {/* 文档 / 项目级的提示条（2026-10-07 设计审计 §10.1）：内嵌在工作面板里、画布标签行上方，锚点色分轻重。
+                  此前横贯整个窗口、把整个应用往下推 32 / 64px */}
+              <BannerStack>
+                {outdated && <BuildMismatchNotice />}
+                <DocumentBanner />
+                <ProjectReadinessBanner />
+              </BannerStack>
               {!fastEdit && <CanvasTabs />}
               <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
                 <CanvasStage />
-                {/* 画布工具：底部浮动工具条（排版模式）；快速编辑没有标签行，缩放菜单悬在右上角 */}
+                {/* 画布视口的浮层按角位摆（2026-10-07 设计审计 §10.1）：四个角各 12px 内距、每角一个堆叠容器。
+                    底部居中 = 浮动工具条 + 通知轨；左下 = HUD（工具提示）；顶部居中 = 工作区上下文条（CanvasStage 里）；
+                    右上 = 一个容器从上往下：缩放（快速编辑没有标签行时）→ `tavotto run` 会话卡 → 性能探针。
+                    此前右上三者各自 absolute（right-2 / right-3、z 10 / 20 / 30）互相压 */}
                 <CanvasToolbar />
-                {fastEdit && (
-                  <div className="absolute right-3 top-3 z-canvas-chrome rounded-full bg-surface shadow-pop">
-                    <ZoomControls />
-                  </div>
-                )}
+                <div
+                  data-canvas-corner="top-right"
+                  className="pointer-events-none absolute right-3 top-3 z-canvas-chrome flex max-h-[calc(100%-1.5rem)] w-72 max-w-[calc(100%-1.5rem)] flex-col items-end gap-2"
+                >
+                  {fastEdit && (
+                    <div className="pointer-events-auto rounded-full bg-surface shadow-pop">
+                      <ZoomControls />
+                    </div>
+                  )}
+                  <NativeSessionCards />
+                  <PerfProbeHud />
+                </div>
                 <CanvasHud />
-                <NativeSessionCards />
                 <NotificationRail />
-                <PerfProbeHud />
               </div>
             </div>
             {right.mounted && <Inspector overlay={overlay} state={right.state} />}

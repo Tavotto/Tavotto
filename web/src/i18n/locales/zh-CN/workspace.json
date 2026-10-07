@@ -160,7 +160,8 @@
     "saveAs": "另存为…",
     "saveErrorBody": "改动已暂存，尚未写入磁盘。",
     "tooNewBody": "Tavotto 没有打开它，磁盘文件没有改动。升级后再试。",
-    "tooNewTitle": "这份排版来自更新的 Tavotto（schema {{schema}}）"
+    "tooNewTitle": "这份排版来自更新的 Tavotto（schema {{schema}}）",
+    "moreActions": "其他处理方式"
   },
   "document": {
     "defaultName": "新排版"
@@ -781,12 +782,15 @@
     "zoomIn": "放大",
     "zoomOut": "缩小",
     "zoomValue": "缩放 {{percent}}%",
-    "timelineButton": "排版时间线"
+    "timelineButton": "排版时间线",
+    "issueLastDoc": "上次的排版没打开",
+    "issueTooNew": "排版版本较新",
+    "issueAria": "文档状态：{{status}}。查看详情",
+    "documentRenameHint": "单击打开排版菜单；双击或按 F2 重命名"
   },
   "update": {
     "banner": "工具已更新，刷新后使用新版本",
-    "later": "稍后",
-    "title": "工具已更新"
+    "later": "稍后"
   },
   "hints": {
     "panel_editable": "双击进入图内编辑。",
