@@ -122,7 +122,7 @@ export function DocumentBanner() {
  * 等用户回答的那段时间里冲突可能已经被别处裁决了（另一颗按钮、换了文档）：回答之后**冲突还在、
  * 还是同一份文档**才覆盖，否则什么都不做。导出给用例直接驱动。
  */
-export async function confirmOverwriteDisk(stale: boolean): Promise<boolean> {
+async function confirmOverwriteDisk(stale: boolean): Promise<boolean> {
   const before = useDocumentStore.getState().documentId
   const ok = await askConfirm({
     title: msg('docBanner.overwriteConfirmTitle', undefined, 'workspace'),
