@@ -7,7 +7,7 @@ import { arrowHeads, legacyHead } from '@/types/document'
 import { Button } from '../ui/Button'
 import { Row, Section } from '../ui/Field'
 import { INSPECTOR_LABEL_W } from './layout'
-import { ColorField, NumberField } from '../ui/Input'
+import { ColorField, NO_COLOR, NumberField } from '../ui/Input'
 import { Popover } from '../ui/Popover'
 import { EffectToggle } from './controls/EffectToggle'
 import { OptionGrid, type GridOption } from './controls/OptionGrid'
@@ -201,6 +201,7 @@ export function ArrowSection({ objs }: { objs: ArrowObject[] }) {
     updateObjects(ids, label, (o) => {
       if (o.type === 'arrow') fn(o)
     })
+  const arrowColor = shared(objs, (o) => (o as ArrowObject).color)
 
   return (
     <AppearanceSection>
@@ -253,9 +254,11 @@ export function ArrowSection({ objs }: { objs: ArrowObject[] }) {
               />
             </div>
             <div className="shrink-0">
+              {/* 不一致时色块画成「多个值」，不退回一个假的公共色；value 只当取色盘起点 */}
               <ColorField
                 ariaLabel={sk('color')}
-                value={shared(objs, (o) => (o as ArrowObject).color) ?? '#1B1B18'}
+                mixed={arrowColor === undefined}
+                value={arrowColor ?? objs[0]?.color ?? NO_COLOR}
                 onChange={(v) => patch(hist('setArrowColor'), (o) => (o.color = v))}
               />
             </div>
@@ -288,6 +291,12 @@ export function ShapeSection({ objs }: { objs: ShapeObject[] }) {
   const allRect = objs.every((o) => o.shape === 'rect')
   const allPolygon = objs.every((o) => o.shape === 'polygon')
   const fill = shared(objs, (o) => (o as ShapeObject).fill)
+  // 全都有填充、只是颜色不同：填充是开着的，色块画「多个值」（之前 shared 给 undefined，
+  // 整行退回「＋添加填充」，一点就把所有人的填充刷成白色）。有的有、有的没有仍按「没开」处理
+  const fillMixed = fill === undefined && objs.length > 0 && objs.every((o) => !!o.fill)
+  const fillOn = !!fill || fillMixed
+  const strokeColor = shared(objs, (o) => (o as ShapeObject).color)
+  const fillOpacity = shared(objs, (o) => (o as ShapeObject).fillOpacity ?? 1)
   const patch = (label: UiMessage, fn: (o: ShapeObject) => void) =>
     updateObjects(ids, label, (o) => {
       if (o.type === 'shape') fn(o)
@@ -303,16 +312,17 @@ export function ShapeSection({ objs }: { objs: ShapeObject[] }) {
         {hasFillable && (
           <Row label={sk('fill')} labelWidth={INSPECTOR_LABEL_W}>
             <EffectToggle
-              on={!!fill}
+              on={fillOn}
               label={sk('fill')}
               addLabel={sk('addFill')}
               onAdd={() => patch(hist('addFill'), (o) => (o.fill = '#FFFFFF'))}
               onOff={() => patch(hist('clearFill'), (o) => (o.fill = null))}
             />
-            {fill && (
+            {fillOn && (
               <ColorField
                 ariaLabel={sk('fill')}
-                value={fill}
+                mixed={fillMixed}
+                value={fill ?? objs[0]?.fill ?? NO_COLOR}
                 onChange={(v) => patch(hist('setFill'), (o) => (o.fill = v))}
               />
             )}
@@ -321,7 +331,8 @@ export function ShapeSection({ objs }: { objs: ShapeObject[] }) {
         <Row label={sk('strokeColor')} labelWidth={INSPECTOR_LABEL_W}>
           <ColorField
             ariaLabel={sk('strokeColor')}
-            value={shared(objs, (o) => (o as ShapeObject).color) ?? '#1B1B18'}
+            mixed={strokeColor === undefined}
+            value={strokeColor ?? objs[0]?.color ?? NO_COLOR}
             onChange={(v) => patch(hist('setStrokeColor'), (o) => (o.color = v))}
           />
         </Row>
@@ -338,11 +349,12 @@ export function ShapeSection({ objs }: { objs: ShapeObject[] }) {
               unit="pt"
               onChange={(v) => patch(hist('setStrokeWidth'), (o) => (o.strokePt = v))}
             />
-            {hasFillable && fill && (
+            {hasFillable && fillOn && (
               <label className="ml-auto flex min-w-0 items-center gap-1.5 text-xs text-ink-2">
                 <span className="shrink-0">{sk('fillOpacity')}</span>
                 <NumberField
-                  value={Math.round(((shared(objs, (o) => (o as ShapeObject).fillOpacity ?? 1) ?? 1) as number) * 100)}
+                  value={Math.round((fillOpacity ?? 1) * 100)}
+                  mixed={fillOpacity === undefined}
                   step={5}
                   min={0}
                   max={100}

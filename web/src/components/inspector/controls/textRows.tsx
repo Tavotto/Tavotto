@@ -339,15 +339,13 @@ export function TextColorRow({
   labelWidth?: number
   overridden?: boolean
   onReset?: () => void
-  /** 多选且颜色不一致：色块旁明说「多个值」，不把其中一个当成公共色 */
+  /** 多选且颜色不一致：色块自己画成「多个值」（`ColorField mixed`），不把其中一个当成公共色 */
   mixed?: boolean
 }) {
   const label = tc('color')
-  const mixedText = translate('element.mixedValues', { ns: 'inspector' })
   return (
     <Row label={labeledWithState(label, overridden)} labelWidth={labelWidth}>
-      <ColorField ariaLabel={label} value={value} onChange={onChange} onGestureEnd={onGestureEnd} />
-      {mixed && <span className="shrink-0 text-xs text-ink-3">{mixedText}</span>}
+      <ColorField ariaLabel={label} mixed={mixed} value={value} onChange={onChange} onGestureEnd={onGestureEnd} />
       {overridden && onReset && <ResetChip label={label} onReset={onReset} />}
     </Row>
   )
