@@ -20,7 +20,6 @@
     "exportAgain": "Export again",
     "showInFolder": "Show in folder",
     "finish": "Done",
-    "advanced": "Advanced",
     "blockedTitle": "Blocking problems or items that can’t be verified. Tick the confirmation to export.",
     "blockingListLabel": "Blocking problems",
     "blockingMore_one": "{{count}} more — open the problems panel",
@@ -159,7 +158,13 @@
     "cancelNotAccepted": "The server did not accept cancellation. Check the export status and output folder before retrying.",
     "statusFailed": "Export status is unavailable; the job may still finish. {{error}}",
     "retryStatus": "Retry status check",
-    "connectionFailed": "Couldn’t reach the export service. Check the connection and that {{app}} is running, then retry. Check the output folder before starting another export."
+    "connectionFailed": "Couldn’t reach the export service. Check the connection and that {{app}} is running, then retry. Check the output folder before starting another export.",
+    "groupOutput": "Output",
+    "groupFormat": "Format",
+    "groupChecks": "Checks",
+    "locationLabel": "Location",
+    "locationDefault": "Project export folder",
+    "locationChange": "Change…"
   },
   "layout": {
     "conflict": "A layout named “{{name}}” already exists on disk, written by another window or tool.",

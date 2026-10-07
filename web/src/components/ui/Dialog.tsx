@@ -327,7 +327,10 @@ export function Dialog({
               {/* 说明与正文同一个阅读字号（13 / ink-2，2026-10-07 设计审计 §10.2）：此前 12 / ink-3，
                   比它下面的正文还轻一档，读着像脚注 */}
               {description && (
-                <RD.Description className="mt-1 text-base leading-[1.5] text-ink-2">{description}</RD.Description>
+                // div 而不是 Radix 默认的 p：说明槽也可以是一段结构（导出对话框把「要导的是什么」的对象头放在这里）
+                <RD.Description asChild>
+                  <div className="mt-1 text-base leading-[1.5] text-ink-2">{description}</div>
+                </RD.Description>
               )}
             </div>
           </div>

@@ -197,7 +197,6 @@ export default interface Resources {
       "title": "渲染环境"
     },
     "export": {
-      "advanced": "高级选项",
       "blockedTitle": "有阻断问题或无法核验的项。勾选确认后才能导出。",
       "blockingGroupCount": "{{count}} 项",
       "blockingListLabel": "阻断性问题",
@@ -244,6 +243,9 @@ export default interface Resources {
       "filenamePlaceholder": "图 1",
       "finish": "完成",
       "formatLabel": "格式",
+      "groupChecks": "检查",
+      "groupFormat": "格式",
+      "groupOutput": "输出",
       "ignored": {
         "crop": "裁剪",
         "flip": "翻转",
@@ -272,6 +274,9 @@ export default interface Resources {
       "locate": "定位",
       "locateAria": "定位到{{subject}}：{{title}}",
       "locatedHint": "再点「导出」回到导出面板，设置还在。",
+      "locationChange": "更改…",
+      "locationDefault": "项目的导出目录",
+      "locationLabel": "位置",
       "mmSize": "{{w}} × {{h}} mm",
       "openProblems": "在问题面板中查看",
       "operationFailed": "无法完成：{{error}}",
@@ -1618,6 +1623,17 @@ export default interface Resources {
         "series": "曲线与系列",
         "text": "文字"
       },
+      "impact": {
+        "entries": "字段",
+        "following_other": "这份文档里有 {{count}} 张画布跟随这套样式，存下的改动会自动跟上。",
+        "off": "关",
+        "on": "开",
+        "page": "页面尺寸",
+        "pageSize": "{{w}} × {{h}} mm",
+        "palette": "配色",
+        "title": "影响",
+        "unsavedDraft": "还没存下：存下之后才能让画布跟随它。"
+      },
       "includePageSize": "包含页面尺寸",
       "legendTitle": "图例标题",
       "nameLabel": "名称",
@@ -1652,6 +1668,7 @@ export default interface Resources {
       "textColorAria": "文字颜色",
       "title": "论文样式",
       "unmappableEntry": "{{label}}：无「{{prop}}」",
+      "unsaved": "未保存的修改",
       "willAffect": "将影响"
     },
     "telemetry": {
@@ -1698,7 +1715,6 @@ export default interface Resources {
       "beforeRestore": "恢复前（{{time}}）",
       "budgetOver": "命名节点已占用 {{used}} MB，超过 {{limit}} MB 的上限。它们不会被自动删除，但删掉几个之前不能再命名新节点。",
       "close": "关闭排版时间线",
-      "closePreview": "关闭",
       "delete": "删除节点",
       "deleteBody": "删除后无法找回，当前排版不受影响。",
       "deleteTitle": "删除节点「{{name}}」？",
@@ -4231,6 +4247,7 @@ export default interface Resources {
     "crash": {
       "blank": "打开空白排版",
       "body": "排版已自动保存在本机，刷新后从最后一次快照继续。仍然出错可选「打开空白排版」，原排版不会删除。",
+      "details": "详情",
       "title": "界面出错了"
     },
     "docBanner": {

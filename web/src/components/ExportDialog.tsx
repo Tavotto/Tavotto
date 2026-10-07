@@ -47,12 +47,11 @@ import {
   Download,
   FileExclamationPoint,
   ImageOff,
-  LoaderCircle,
   Pencil,
   TriangleAlert,
   X,
 } from "@/components/ui/icons";
-import { ICON_SIZE, ICON_STROKE } from "@/components/ui/Icon";
+import { ICON_SIZE } from "@/components/ui/Icon";
 import { CanvasThumb } from "./CanvasThumb";
 import { Checkbox } from "./ui/Checkbox";
 import { Segmented } from "./ui/Segmented";
@@ -159,6 +158,12 @@ import { Dialog } from "./ui/Dialog";
 import { TextInput } from "./ui/Input";
 import { Select } from "./ui/Select";
 import { Toggle } from "./ui/Toggle";
+import { Card } from "./ui/Card";
+import { FieldGroup, FormSection } from "./ui/FormSection";
+import { listRowClass } from "./ui/listRow";
+import { Notice } from "./ui/Notice";
+import { ProgressBar } from "./ui/ProgressBar";
+import { dirTail } from "@/lib/pathDisplay";
 
 /** 阻断问题的图标：与问题面板同一张表（`SEVERITY_ICON`），八角 */
 const BlockingIcon = SEVERITY_ICON.error;
@@ -239,6 +244,8 @@ export function ExportDialog() {
   const cancelError = useExportStore((s) => s.cancelError);
   const cancelState = useExportStore((s) => s.cancelState);
   const editedDuringExport = useExportStore((s) => s.editedDuringExport);
+  /** 导出会落到哪个目录（后端说了算：`project.export_dir`）；导出之前就摆出来，改它在设置 › 导出 */
+  const exportDir = useProjectStore((s) => s.project?.export_dir ?? null);
 
   const [formats, setFormats] = useState<string[]>(
     () => readExportDefaults().formats,
@@ -257,7 +264,6 @@ export function ExportDialog() {
   const [strict, setStrict] = useState(
     () => readExportDefaults().strictInspection,
   );
-  const [advancedOpen, setAdvancedOpen] = useState(false);
   /**
    * 用户对本次导出的显式确认：阻断项与「无法核验」项都要点过才放行。
    * **不做成记住的偏好**——每次导出都得重新面对一次当前这批问题。
@@ -952,7 +958,7 @@ export function ExportDialog() {
   /*
    * 进度 / 冲突 / 拒绝 / 结果：**不在可滚正文的末尾**，而在脚部正上方那块不滚的状态区
    * （`Dialog status`）。正文一长，末尾就在视口外——点了「开始导出」看不见进度，
-   * 撞名时看不见那两条出路（设计审计 §10.2 P0）。
+   * 撞名时看不见那两条出路（设计审计 §10.2 P0）。各种回应一律是 `Notice`（一种说明条，不是七种方言）。
    */
   const statusVisible =
     busy ||
@@ -967,130 +973,161 @@ export function ExportDialog() {
     <div data-export-status className="flex flex-col gap-2">
       {busy && <ProgressRow job={job} />}
       {!!conflicts.length && (
-        <ConflictBar
-          names={conflicts}
-          onReplace={() => void start("replace")}
-          onRename={() => void start("rename")}
-        />
+        // 撞名：一句话说清是哪几个文件；两条出路在脚部（另存一份 / 覆盖），不在这里另摆一排小按钮
+        <Notice tone="warn" icon={FileExclamationPoint} data-export-conflict>
+          {ex("conflict", { files: conflicts.join("、") })}
+        </Notice>
       )}
       {prepared.error && (
-        <p data-export-refusal role="alert" className="text-xs text-danger">
+        <Notice tone="danger" data-export-refusal>
           {formatMessage(engineErrorMsg(prepared.error))}
-        </p>
+        </Notice>
       )}
       {startError && !prepared.error && (
-        <p data-export-start-error role="alert" className="text-xs text-danger">
+        <Notice tone="danger" data-export-start-error>
           {startError.code === "bad_filename"
             ? ex(`filenameError.${startError.message}`)
             : ex("operationFailed", { error: formatMessage(startError.message) })}
-        </p>
+        </Notice>
       )}
       {cancelError && (
-        <p data-export-cancel-error role="alert" className="text-xs text-danger">
+        <Notice tone="danger" data-export-cancel-error>
           {ex("cancelFailed", { error: formatMessage(cancelError) })}
-        </p>
+        </Notice>
       )}
       {pollError && (
-        <div data-export-poll-error role="alert" className="flex flex-col gap-2 text-xs text-danger">
-          <p>{ex("statusFailed", { error: formatMessage(pollError) })}</p>
-          <Button data-export-status-retry variant="secondary" disabled={refreshing} onClick={() => void refreshExportStatus()}>
-            {ex("retryStatus")}
-          </Button>
-        </div>
+        <Notice
+          tone="danger"
+          data-export-poll-error
+          action={
+            <Button
+              data-export-status-retry
+              variant="secondary"
+              size="sm"
+              disabled={refreshing}
+              onClick={() => void refreshExportStatus()}
+            >
+              {ex("retryStatus")}
+            </Button>
+          }
+        >
+          {ex("statusFailed", { error: formatMessage(pollError) })}
+        </Notice>
       )}
       {job && !busy && job.status !== "conflict" && (
-        <ResultBlock
-          job={job}
-          edited={editedDuringExport}
-          onRetry={() => void start("ask")}
-        />
+        <ResultBlock job={job} edited={editedDuringExport} onRetry={() => void start("ask")} />
       )}
       {revealError && (
-        <p data-export-reveal-error role="alert" className="break-all text-xs text-danger">
+        <Notice tone="danger" data-export-reveal-error className="break-all">
           {revealError}
-        </p>
+        </Notice>
       )}
     </div>
   ) : null;
 
-  return (
-    <Dialog
-      open={open}
-      onOpenChange={setOpen}
-      title={ex("title")}
-      width={560}
-      covered={covered}
-      anchor="export"
-      status={statusBlock}
-      footer={
-        finished ? (
-          <>
-            {/* 完成态：再导一次是显式的次要动作（左），唯一的主动作是「完成」 */}
-            <Button
-              variant="ghost"
-              size="md"
-              data-export-again
-              disabled={!canStart}
-              onClick={() => void start("ask")}
-              title={blocked ? ex("blockedTitle") : undefined}
-            >
-              {ex("exportAgain")}
-            </Button>
-            <span className="flex-1" />
-            {revealTarget && (
-              <Button variant="secondary" size="md" data-export-reveal onClick={revealDone}>
-                {ex("showInFolder")}
-              </Button>
-            )}
-            <Button
-              ref={finishRef}
-              variant="primary"
-              size="md"
-              data-export-finish
-              onClick={() => setOpen(false)}
-            >
-              {ex("finish")}
-            </Button>
-          </>
-        ) : (
-        <>
-          <span className="flex-1" />
-          <Button variant="secondary" size="md" onClick={() => setOpen(false)}>
-            {translate("actions.close")}
+  /*
+   * 页脚是一台四态的状态机（2026-10-07 设计审计 §10.2）：
+   *   idle     [关闭] [开始导出]
+   *   running  [关闭] [取消导出]（关闭不取消作业：作业活在 store 里）
+   *   conflict [另存一份] [覆盖]（覆盖是破坏性的那一条：危险浅底胶囊；另存一份是安全答案，也是 Esc）
+   *   done     [再次导出] …… [在文件夹中显示] [完成]
+   */
+  const close = () => setOpen(false);
+  const footer = finished
+    ? {
+        // 完成态：再导一次是显式的次要动作（左），唯一的主动作是「完成」
+        start: (
+          <Button
+            variant="ghost"
+            size="lg"
+            data-export-again
+            disabled={!canStart}
+            onClick={() => void start("ask")}
+            title={blocked ? ex("blockedTitle") : undefined}
+          >
+            {ex("exportAgain")}
           </Button>
-          {busy ? (
+        ),
+        secondary: revealTarget ? (
+          <Button variant="secondary" size="lg" data-export-reveal onClick={revealDone}>
+            {ex("showInFolder")}
+          </Button>
+        ) : undefined,
+        primary: (
+          <Button ref={finishRef} variant="primary" size="lg" data-export-finish onClick={close}>
+            {ex("finish")}
+          </Button>
+        ),
+      }
+    : conflicts.length > 0
+      ? {
+          start: (
+            <Button variant="ghost" size="lg" data-export-conflict-close onClick={close}>
+              {translate("actions.cancel")}
+            </Button>
+          ),
+          secondary: (
+            <Button variant="secondary" size="lg" data-export-conflict-rename onClick={() => void start("rename")}>
+              {ex("conflictRename")}
+            </Button>
+          ),
+          primary: (
+            <Button
+              variant="danger-tinted"
+              size="lg"
+              data-export-conflict-replace
+              onClick={() => void start("replace")}
+            >
+              {ex("conflictReplace")}
+            </Button>
+          ),
+        }
+      : {
+          secondary: (
+            <Button variant="secondary" size="lg" onClick={close}>
+              {translate("actions.close")}
+            </Button>
+          ),
+          primary: busy ? (
             <Button
               variant="secondary"
-              size="md"
+              size="lg"
               data-export-cancel
               disabled={!job || cancelState !== "idle"}
               onClick={() => void cancelCurrentExport()}
             >
-              <X size={ICON_SIZE.md} />
-              {cancelState === "pending" ? ex("cancelPending") : cancelState === "requested" ? ex("cancelRequested") : ex("cancelExport")}
+              <X size={ICON_SIZE.sm} />
+              {cancelState === "pending"
+                ? ex("cancelPending")
+                : cancelState === "requested"
+                  ? ex("cancelRequested")
+                  : ex("cancelExport")}
             </Button>
           ) : (
             <Button
               variant="primary"
-              size="md"
+              size="lg"
               data-export-start
               disabled={!canStart}
               onClick={() => void start("ask")}
               title={blocked ? ex("blockedTitle") : undefined}
             >
-              <Download size={ICON_SIZE.md} />
+              <Download size={ICON_SIZE.sm} />
               {ex("start")}
             </Button>
-          )}
-        </>
-        )
-      }
-    >
-      <div className="flex flex-col gap-4">
-        {/* 一种行语法（2026-09-15 打磨批次 D，L1）：标签列 80px 在左、控件在右，行高 28；
-            此前「文件名 / 格式」标签在上、「范围 / 规范」标签在左、「检查」行内混排三种轮换。
-            对象头（缩略图 · 名字 · 一行 meta）在最上面，不再是一张带边框的预览卡 */}
-        {(scope === "canvas" || figure) && (
+          ),
+        };
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={setOpen}
+      // Esc 的安全答案：撞名时 = 另存一份（绝不是覆盖）；其余 = 关（关掉不取消作业）
+      onEscape={conflicts.length > 0 ? () => void start("rename") : close}
+      title={ex("title")}
+      // 对象头（缩略图 · 名字 · 范围 · 尺寸）就是这个对话框的说明：要导的是什么
+      description={
+        (scope === "canvas" || figure) && (
           <TargetHeader
             scope={scope}
             figure={figure}
@@ -1099,319 +1136,330 @@ export function ExportDialog() {
             asset={figureId ? assets[figureId] : undefined}
             previewNonce={figureId ? runtimePreviewNonce[figureId] : undefined}
           />
-        )}
-
-        {/* 0. 范围 —— 一组互斥取值 → `Segmented`（宪法第五节；2026-09-14 审计 B1 / S3）。
-            `data-onboarding-anchor`：新手教程的 coachmark 挂在这一组上（Step 5 / 8） */}
-        <section aria-label={ex("scopeLabel")} className="flex flex-col gap-2">
-          <FormRow label={ex("scopeLabel")}>
-            <Segmented<ExportScope>
-              value={scope}
-              onChange={changeScope}
-              ariaLabel={ex("scopeLabel")}
-              data-onboarding-anchor="export-scope"
-              className="w-auto shrink-0"
-              items={[
-                {
-                  value: "original",
-                  label: ex("scopeOriginal"),
-                  disabled: !originalSelectable,
-                  title: originalSelectable
-                    ? undefined
-                    : ex("scopeUnavailable.no_figures"),
-                },
-                { value: "canvas", label: ex("scopeCanvas") },
-              ]}
-            />
-          </FormRow>
-          <ScopeNote
-            scope={scope}
-            available={availability.ok}
-            reason={availability.reason}
-            originalSelectable={originalSelectable}
-            ignored={availability.spec?.ignored ?? []}
-            fallback={availability.spec?.fallback ?? false}
-          />
-          {/* 要导的是哪一张 —— **只在原图范围下**列出项目里的图（用户反馈 06；审计 B20）：
-              还没定 / 当前那张导不出时清单直接展开；已经选好且项目里不止一张时收进折叠项；
-              只有一张时不出现。画布范围下一个字都不出现——那是另一个范围的事 */}
-          {scope === "original" &&
-            figures.length > 0 &&
-            (!availability.ok ? (
-              <FormRow>
-                <FigurePicker
-                  figures={figures}
-                  selectedId={figureId}
-                  onPick={pickFigure}
+        )
+      }
+      size="lg"
+      covered={covered}
+      anchor="export"
+      status={statusBlock}
+      footer={footer}
+    >
+      {/* 三组（2026-10-07 设计审计 §10.2）：输出（范围 · 文件名 · 位置）/ 格式（格式 · 分辨率 · 透明背景）/
+          检查（规范 · 摘要 + 阻断项 + 知情确认 · 严格核验 · 报告）。「高级选项」拆散进各自所属的组——
+          折起来的开关没人看得见，而它们决定的是交出去的文件 */}
+      <div className="flex flex-col gap-5">
+        <FormSection title={ex("groupOutput")} data-export-group="output">
+          <FieldGroup>
+            {/* 0. 范围 —— 一组互斥取值 → `Segmented`（宪法第五节；2026-09-14 审计 B1 / S3）。
+                `data-onboarding-anchor`：新手教程的 coachmark 挂在这一组上（Step 5 / 8） */}
+            <section aria-label={ex("scopeLabel")} className="flex flex-col gap-2">
+              <FormRow label={ex("scopeLabel")}>
+                <Segmented<ExportScope>
+                  value={scope}
+                  onChange={changeScope}
+                  ariaLabel={ex("scopeLabel")}
+                  data-onboarding-anchor="export-scope"
+                  className="w-auto shrink-0"
+                  items={[
+                    {
+                      value: "original",
+                      label: ex("scopeOriginal"),
+                      disabled: !originalSelectable,
+                      title: originalSelectable ? undefined : ex("scopeUnavailable.no_figures"),
+                    },
+                    { value: "canvas", label: ex("scopeCanvas") },
+                  ]}
                 />
               </FormRow>
-            ) : figures.length > 1 ? (
-              <FormRow>
-                <Details key={figureId} className="w-full rounded-sm">
-                  <Summary className="rounded-sm text-xs text-ink-2">
-                    {ex("figureListLabel")}
-                  </Summary>
-                  <div className="mt-2">
-                    <FigurePicker
-                      figures={figures}
-                      selectedId={figureId}
-                      onPick={pickFigure}
+              <ScopeNote
+                scope={scope}
+                available={availability.ok}
+                reason={availability.reason}
+                originalSelectable={originalSelectable}
+                ignored={availability.spec?.ignored ?? []}
+                fallback={availability.spec?.fallback ?? false}
+              />
+              {/* 要导的是哪一张 —— **只在原图范围下**列出项目里的图（用户反馈 06；审计 B20）：
+                  还没定 / 当前那张导不出时清单直接展开；已经选好且项目里不止一张时收进折叠项；
+                  只有一张时不出现。画布范围下一个字都不出现——那是另一个范围的事 */}
+              {scope === "original" &&
+                figures.length > 0 &&
+                (!availability.ok ? (
+                  <FormRow>
+                    <FigurePicker figures={figures} selectedId={figureId} onPick={pickFigure} />
+                  </FormRow>
+                ) : figures.length > 1 ? (
+                  <FormRow>
+                    <Details key={figureId} className="w-full rounded-md">
+                      <Summary className="rounded-md text-sm text-ink-2 hover:text-ink">
+                        {ex("figureListLabel")}
+                      </Summary>
+                      <div className="mt-2">
+                        <FigurePicker figures={figures} selectedId={figureId} onPick={pickFigure} />
+                      </div>
+                    </Details>
+                  </FormRow>
+                ) : null)}
+            </section>
+
+            {/* 1. 文件名 —— 默认名跟着导出对象走；校验在**输入的那一刻**就地给出 */}
+            <section className="flex flex-col gap-1.5">
+              <FormRow label={<label htmlFor="export-filename">{ex("filenameLabel")}</label>}>
+                <TextInput
+                  id="export-filename"
+                  value={filename}
+                  onChange={(e) => {
+                    setFilenameTouched(true);
+                    setFilename(e.target.value);
+                  }}
+                  placeholder={ex("filenamePlaceholder")}
+                  aria-invalid={filenameIssue ? true : undefined}
+                  aria-describedby={filenameIssue ? "export-filename-error" : undefined}
+                  className="w-full"
+                />
+              </FormRow>
+              {filenameIssue && (
+                <FormRow>
+                  <p id="export-filename-error" className="text-sm text-danger-content">
+                    {ex(`filenameError.${filenameIssue}`)}
+                  </p>
+                </FormRow>
+              )}
+            </section>
+
+            {/* 2. 位置 —— 导出之前就看得见文件会落到哪（审计 §10.2 P0）；改它在设置 › 导出（这里只读） */}
+            <FormRow label={ex("locationLabel")}>
+              <span
+                data-export-location
+                className="min-w-0 flex-1 truncate font-mono text-sm text-ink-2"
+                title={exportDir ?? undefined}
+              >
+                {exportDir ? dirTail(exportDir) : ex("locationDefault")}
+              </span>
+              <Button
+                variant="ghost"
+                size="sm"
+                data-export-location-change
+                onClick={() => useUiStore.getState().setSettingsOpen(true, "export")}
+              >
+                {ex("locationChange")}
+              </Button>
+            </FormRow>
+          </FieldGroup>
+        </FormSection>
+
+        <FormSection title={ex("groupFormat")} data-export-group="format">
+          <FieldGroup>
+            {/* 格式 —— 四颗复选框均分一行（balanced），顺序与 `FORMATS` 同源 */}
+            <section className="flex flex-col gap-1.5">
+              <fieldset aria-label={ex("formatLabel")} className="m-0 min-w-0 border-0 p-0">
+                <FormRow label={ex("formatLabel")}>
+                  <div className="grid flex-1 grid-cols-4 items-center gap-2" data-export-formats>
+                    <FormatCheck
+                      checked={formats.includes("pdf")}
+                      onChange={() => toggleFormat("pdf")}
+                      title="PDF"
+                      hint={ex("pdfHint")}
+                    />
+                    <FormatCheck
+                      checked={formats.includes("png")}
+                      onChange={() => toggleFormat("png")}
+                      title="PNG"
+                      hint={ex("pngHint")}
+                    />
+                    {/* EPS 只在「原图 + 有脚本」时给得出：不可用就禁用并说原因，不藏 */}
+                    <FormatCheck
+                      checked={formats.includes("eps") && eps.ok}
+                      onChange={() => toggleFormat("eps")}
+                      title="EPS"
+                      hint={eps.ok ? ex("epsHint") : ex(`epsUnavailable.${eps.reason}`)}
+                      disabled={!eps.ok}
+                      describedBy={formats.includes("eps") && !eps.ok ? "export-eps-reason" : undefined}
+                    />
+                    <FormatCheck
+                      checked={formats.includes("tiff")}
+                      onChange={() => toggleFormat("tiff")}
+                      title="TIFF"
+                      hint={ex("tiffHint")}
                     />
                   </div>
-                </Details>
-              </FormRow>
-            ) : null)}
-        </section>
-
-        {/* 1. 文件名 —— 默认名跟着导出对象走；校验在**输入的那一刻**就地给出 */}
-        <section className="flex flex-col gap-1.5">
-          <FormRow
-            label={
-              <label htmlFor="export-filename">
-                {ex("filenameLabel")}
-              </label>
-            }
-          >
-            <TextInput
-              id="export-filename"
-              value={filename}
-              onChange={(e) => {
-                setFilenameTouched(true);
-                setFilename(e.target.value);
-              }}
-              placeholder={ex("filenamePlaceholder")}
-              aria-invalid={filenameIssue ? true : undefined}
-              aria-describedby={
-                filenameIssue ? "export-filename-error" : undefined
-              }
-              className="w-full"
-            />
-          </FormRow>
-          {filenameIssue && (
-            <FormRow>
-              <p id="export-filename-error" className="text-xs text-danger">
-                {ex(`filenameError.${filenameIssue}`)}
-              </p>
-            </FormRow>
-          )}
-        </section>
-
-        {/* 2. 格式 —— 四颗复选框紧凑排一行（gap 20），不再拉满 560px；顺序与 `FORMATS` 同源 */}
-        <section className="flex flex-col gap-1.5">
-          <fieldset
-            aria-label={ex("formatLabel")}
-            className="m-0 min-w-0 border-0 p-0"
-          >
-            <FormRow label={ex("formatLabel")}>
-              <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
-                <FormatCheck
-                  checked={formats.includes("pdf")}
-                  onChange={() => toggleFormat("pdf")}
-                  title="PDF"
-                  hint={ex("pdfHint")}
-                />
-                <FormatCheck
-                  checked={formats.includes("png")}
-                  onChange={() => toggleFormat("png")}
-                  title="PNG"
-                  hint={ex("pngHint")}
-                />
-                {/* EPS 只在「原图 + 有脚本」时给得出：不可用就禁用并说原因，不藏 */}
-                <FormatCheck
-                  checked={formats.includes("eps") && eps.ok}
-                  onChange={() => toggleFormat("eps")}
-                  title="EPS"
-                  hint={
-                    eps.ok ? ex("epsHint") : ex(`epsUnavailable.${eps.reason}`)
-                  }
-                  disabled={!eps.ok}
-                  describedBy={
-                    formats.includes("eps") && !eps.ok
-                      ? "export-eps-reason"
-                      : undefined
-                  }
-                />
-                <FormatCheck
-                  checked={formats.includes("tiff")}
-                  onChange={() => toggleFormat("tiff")}
-                  title="TIFF"
-                  hint={ex("tiffHint")}
-                />
-              </div>
-            </FormRow>
-          </fieldset>
-          {/* 勾着 EPS 却给不出（切回了画布 / 这张图没有脚本）：原因摆成可见的一行，
-              不只藏在灰掉的复选框的 title 里——一个灰掉的复选框解释不了自己 */}
-          {formats.includes("eps") && !eps.ok && (
-            <FormRow>
-              <p id="export-eps-reason" className="type-caption">
-                {ex(`epsUnavailable.${eps.reason}`)}
-              </p>
-            </FormRow>
-          )}
-        </section>
-
-        {/* 3. 分辨率 —— 只在选了位图格式时出现，旁边直接给像素数（此前像素数挂在对象头里） */}
-        {raster && (
-          <FormRow label={ex("ppiLabel")}>
-            <Select
-              value={String(ppi)}
-              onChange={setPpi}
-              options={PPI_VALUES.map((v) => ({
-                value: v,
-                label: translate("measure.ppi", { value: v }),
-              }))}
-              ariaLabel={ex("ppiSelectLabel")}
-              className="w-56"
-            />
-            {pixels && (
-              <span
-                id="export-pixel-preview"
-                className="type-meta min-w-0 truncate tabular-nums"
-              >
-                {pixels}
-              </span>
-            )}
-          </FormRow>
-        )}
-
-        {/* 4. 规范 —— 只出现自然名称，id 与版本号在设置里 */}
-        <section className="flex flex-col gap-1.5">
-          <FormRow label={ex("profileLabel")}>
-            <Select
-              value={checkProfileId}
-              onChange={applyProfile}
-              disabled={!checkOnActive}
-              options={catalog.map((p) => ({
-                value: p.id,
-                label: p.display_name,
-              }))}
-              ariaLabel={ex("profileAria")}
-              /* 同一张表单里的下拉只有一种宽（全面打磨 D40）：此前「分辨率」128、
-                 「规范」372，两档并排读不出它们是同一类控件。224 装得下最长的规范名，
-                 「编辑」紧跟其后 */
-              className="w-56"
-            />
-            <Button
-              variant="ghost"
-              size="sm"
-              aria-label={ex("profileEditAria")}
-              onClick={() => {
-                useUiStore.getState().setSettingsOpen(true, "spec");
-              }}
-            >
-              <Pencil size={ICON_SIZE.sm} aria-hidden />
-              {ex("profileEdit")}
-            </Button>
-          </FormRow>
-          {/* 图在别的画布上：显示的是那张画布的规范，改它得先切过去（Codex 评审 #596 P1） */}
-          {checkCanvasName !== null && (
-            <FormRow>
-              <p
-                data-export-profile-canvas
-                className="text-xs leading-relaxed text-ink-2"
-              >
-                {ex("profileOtherCanvas", { canvas: checkCanvasName })}
-              </p>
-            </FormRow>
-          )}
-          {/* 规范异常提示不藏起来 */}
-          {resolved.updateAvailable && checkOnActive && (
-            <FormRow>
-              <p className="flex flex-wrap items-center gap-2 text-xs leading-relaxed text-ink-2">
-                {ex("profileUpdateAvailable")}
-                <Button variant="secondary" size="sm" onClick={syncProfile}>
-                  {ex("profileSync")}
-                </Button>
-              </p>
-            </FormRow>
-          )}
-        </section>
-
-        <div className="h-px bg-border" aria-hidden />
-
-        {/* 5. 检查 —— 摘要行 + 阻断项清单 + 知情确认，都在控件列；
-            摘要按导出目标取范围，完整清单在左侧问题面板（§四） */}
-        <section aria-label={ex("checkLabel")} className="flex flex-col gap-2">
-          <FormRow label={ex("checkLabel")}>
-            <CheckRow
-              summary={summary}
-              scopeHint={ex(
-                scope === "original" && panel
-                  ? "checkScopeFigure"
-                  : "checkScopeCanvas",
+                </FormRow>
+              </fieldset>
+              {/* 勾着 EPS 却给不出（切回了画布 / 这张图没有脚本）：原因摆成可见的一行，
+                  不只藏在灰掉的复选框的 title 里——一个灰掉的复选框解释不了自己 */}
+              {formats.includes("eps") && !eps.ok && (
+                <FormRow>
+                  <p id="export-eps-reason" className="type-caption">
+                    {ex(`epsUnavailable.${eps.reason}`)}
+                  </p>
+                </FormRow>
               )}
-              onOpenPanel={() => {
-                park();
-                openProblems();
-              }}
-            />
-          </FormRow>
+            </section>
 
-          {/* 阻断项逐条列出，紧挨着知情确认框（确认框是清单的下一个兄弟）：点头之前先看见
-              自己在为什么点头。只有阻断级；警告 / 建议仍只给数量（完整清单归问题面板） */}
-          {(errors.length > 0 || needsConfirm) && (
-            <FormRow align="start">
-              <div className="flex min-w-0 flex-1 flex-col gap-2">
-                {errors.length > 0 && (
-                  <BlockingList
-                    issues={errors}
-                    onLocate={locateBlocking}
-                    onMore={() => {
-                      park();
-                      openProblems({ severities: ["error"] });
-                    }}
-                  />
+            {/* 分辨率 —— 只在选了位图格式时出现，旁边直接给像素数 */}
+            {raster && (
+              <FormRow label={ex("ppiLabel")}>
+                <Select
+                  value={String(ppi)}
+                  onChange={setPpi}
+                  options={PPI_VALUES.map((v) => ({
+                    value: v,
+                    label: translate("measure.ppi", { value: v }),
+                  }))}
+                  ariaLabel={ex("ppiSelectLabel")}
+                  className="w-56"
+                />
+                {pixels && (
+                  <span id="export-pixel-preview" className="type-meta min-w-0 truncate tabular-nums">
+                    {pixels}
+                  </span>
                 )}
-                {needsConfirm && (
-                  <label className="flex items-start gap-2 text-xs leading-relaxed text-ink-2">
-                    {/* `data-export-confirm`：e2e 与用例的稳定锚点——格式那四颗复选框排在它前面，
-                        「页面里第一颗 checkbox」早就不是它了 */}
-                    <Checkbox
-                      data-export-confirm
-                      checked={confirmed}
-                      onChange={(e) => setConfirmed(e.target.checked)}
-                      className="mt-0.5"
-                    />
-                    {/* 三种情况各是一句完整的话，不拼字符串：中文能靠「与」串起来，
-                        英文的从句位置不一样，拼出来的句子读着就是机翻 */}
-                    <span className="min-w-0 flex-1">
-                      {errors.length > 0 && notVerifiable.length > 0
-                        ? ex("confirmBoth", {
-                            errors: errors.length,
-                            notVerifiable: notVerifiable.length,
-                          })
-                        : errors.length > 0
-                          ? ex("confirmErrors", { errors: errors.length })
-                          : notVerifiable.length > 0
-                            ? ex("confirmNotVerifiable", {
+              </FormRow>
+            )}
+
+            {/* 透明背景只在「有位图格式」且**不是照抄源文件**的那条路上有意义。
+                原图 + 位图源出来的就是那张图本身（我们只换容器不换像素），
+                背景是它自己的——开着一个不起作用的开关就是说了而不做 */}
+            <div className="flex flex-col gap-1">
+              <label
+                className={cn(
+                  "flex min-h-7 items-center justify-between gap-4",
+                  transparentApplies ? "text-ink" : "text-ink-3",
+                )}
+              >
+                <span>{ex("transparent")}</span>
+                <Toggle
+                  aria-label={ex("transparent")}
+                  checked={transparent && transparentApplies}
+                  onChange={setTransparent}
+                  disabled={!transparentApplies}
+                />
+              </label>
+              {raster && !transparentApplies && (
+                <p className="type-caption">{ex("transparentNotForRaster")}</p>
+              )}
+            </div>
+          </FieldGroup>
+        </FormSection>
+
+        {/* 检查 —— 规范 · 摘要行 + 阻断项清单 + 知情确认 · 严格核验 · 报告；
+            摘要按导出目标取范围，完整清单在左侧问题面板（§四） */}
+        <FormSection title={ex("groupChecks")} data-export-group="checks">
+          <FieldGroup>
+            <section className="flex flex-col gap-1.5">
+              <FormRow label={ex("profileLabel")}>
+                <Select
+                  value={checkProfileId}
+                  onChange={applyProfile}
+                  disabled={!checkOnActive}
+                  options={catalog.map((p) => ({
+                    value: p.id,
+                    label: p.display_name,
+                  }))}
+                  ariaLabel={ex("profileAria")}
+                  /* 同一张表单里的下拉只有一种宽（全面打磨 D40） */
+                  className="w-56"
+                />
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  aria-label={ex("profileEditAria")}
+                  onClick={() => {
+                    useUiStore.getState().setSettingsOpen(true, "spec");
+                  }}
+                >
+                  <Pencil size={ICON_SIZE.sm} aria-hidden />
+                  {ex("profileEdit")}
+                </Button>
+              </FormRow>
+              {/* 图在别的画布上：显示的是那张画布的规范，改它得先切过去（Codex 评审 #596 P1） */}
+              {checkCanvasName !== null && (
+                <FormRow>
+                  <p data-export-profile-canvas className="text-sm text-ink-2">
+                    {ex("profileOtherCanvas", { canvas: checkCanvasName })}
+                  </p>
+                </FormRow>
+              )}
+              {/* 规范异常提示不藏起来 */}
+              {resolved.updateAvailable && checkOnActive && (
+                <FormRow>
+                  <p className="flex flex-wrap items-center gap-2 text-sm text-ink-2">
+                    {ex("profileUpdateAvailable")}
+                    <Button variant="secondary" size="sm" onClick={syncProfile}>
+                      {ex("profileSync")}
+                    </Button>
+                  </p>
+                </FormRow>
+              )}
+            </section>
+
+            <section aria-label={ex("checkLabel")} className="flex flex-col gap-2">
+              <FormRow label={ex("checkLabel")}>
+                <CheckRow
+                  summary={summary}
+                  scopeHint={ex(scope === "original" && panel ? "checkScopeFigure" : "checkScopeCanvas")}
+                  onOpenPanel={() => {
+                    park();
+                    openProblems();
+                  }}
+                />
+              </FormRow>
+
+              {/* 阻断项逐条列出，紧挨着知情确认框（确认框是清单的下一个兄弟）：点头之前先看见
+                  自己在为什么点头。只有阻断级；警告 / 建议仍只给数量（完整清单归问题面板） */}
+              {(errors.length > 0 || needsConfirm) && (
+                <FormRow align="start">
+                  <div className="flex min-w-0 flex-1 flex-col gap-2">
+                    {errors.length > 0 && (
+                      <BlockingList
+                        issues={errors}
+                        onLocate={locateBlocking}
+                        onMore={() => {
+                          park();
+                          openProblems({ severities: ["error"] });
+                        }}
+                      />
+                    )}
+                    {needsConfirm && (
+                      <label className="flex items-start gap-2 text-sm text-ink-2">
+                        {/* `data-export-confirm`：e2e 与用例的稳定锚点——格式那四颗复选框排在它前面，
+                            「页面里第一颗 checkbox」早就不是它了 */}
+                        <Checkbox
+                          data-export-confirm
+                          checked={confirmed}
+                          onChange={(e) => setConfirmed(e.target.checked)}
+                          className="mt-0.5"
+                        />
+                        {/* 三种情况各是一句完整的话，不拼字符串：中文能靠「与」串起来，
+                            英文的从句位置不一样，拼出来的句子读着就是机翻 */}
+                        <span className="min-w-0 flex-1">
+                          {errors.length > 0 && notVerifiable.length > 0
+                            ? ex("confirmBoth", {
+                                errors: errors.length,
                                 notVerifiable: notVerifiable.length,
                               })
-                            : ex("confirmCheckFailed")}
-                    </span>
-                  </label>
-                )}
-              </div>
-            </FormRow>
-          )}
-        </section>
+                            : errors.length > 0
+                              ? ex("confirmErrors", { errors: errors.length })
+                              : notVerifiable.length > 0
+                                ? ex("confirmNotVerifiable", {
+                                    notVerifiable: notVerifiable.length,
+                                  })
+                                : ex("confirmCheckFailed")}
+                        </span>
+                      </label>
+                    )}
+                  </div>
+                </FormRow>
+              )}
+            </section>
 
-        {/* 5. 高级选项 —— 默认收起；开关靠右 */}
-        <Details
-          className="rounded-sm"
-          open={advancedOpen}
-          onToggle={(e) =>
-            setAdvancedOpen((e.target as HTMLDetailsElement).open)
-          }
-        >
-          <Summary className="rounded-sm text-xs text-ink-2">
-            {ex("advanced")}
-          </Summary>
-          <div className="mt-2 flex flex-col gap-3">
-            <label
-              className="flex items-center justify-between gap-4 text-xs text-ink-2"
-              title={ex("reportTitle")}
-            >
+            {/* 严格核验（ADR 0068）：按这套规范的阈值重新打开封口的文件量事实，
+                必需项失败**或无法核验**的那一项不发布。standard 是缺省，不勾就不发这个键 */}
+            <label className="flex min-h-7 items-center justify-between gap-4 text-ink" title={ex("strictTitle")}>
+              <span>{ex("strictToggle")}</span>
+              <Toggle aria-label={ex("strictToggle")} checked={strict} onChange={setStrict} />
+            </label>
+            <label className="flex min-h-7 items-center justify-between gap-4 text-ink" title={ex("reportTitle")}>
               <span>{ex("reportToggle")}</span>
               <Toggle
                 aria-label={ex("reportToggle")}
@@ -1420,46 +1468,12 @@ export function ExportDialog() {
                 disabled={reportRequired}
               />
             </label>
-            {/* 严格核验（ADR 0068）：按这套规范的阈值重新打开封口的文件量事实，
-                必需项失败**或无法核验**的那一项不发布。standard 是缺省，不勾就不发这个键 */}
-            <label
-              className="flex items-center justify-between gap-4 text-xs text-ink-2"
-              title={ex("strictTitle")}
-            >
-              <span>{ex("strictToggle")}</span>
-              <Toggle
-                aria-label={ex("strictToggle")}
-                checked={strict}
-                onChange={setStrict}
-              />
-            </label>
-            {/* 透明背景只在「有位图格式」且**不是照抄源文件**的那条路上有意义。
-                原图 + 位图源出来的就是那张图本身（我们只换容器不换像素），
-                背景是它自己的——开着一个不起作用的开关就是说了而不做 */}
-            <label
-              className={cn(
-                "flex items-center justify-between gap-4 text-xs",
-                transparentApplies ? "text-ink-2" : "text-ink-3",
-              )}
-            >
-              <span>{ex("transparent")}</span>
-              <Toggle
-                aria-label={ex("transparent")}
-                checked={transparent && transparentApplies}
-                onChange={setTransparent}
-                disabled={!transparentApplies}
-              />
-            </label>
-            {raster && !transparentApplies && (
-              <p className="text-xs text-ink-3">
-                {ex("transparentNotForRaster")}
-              </p>
-            )}
-          </div>
-        </Details>
+          </FieldGroup>
+        </FormSection>
       </div>
     </Dialog>
   );
+
 
   function toggleFormat(f: string) {
     setFormats((prev) =>
@@ -1491,11 +1505,13 @@ function FigurePicker({
   onPick: (figureId: string) => void;
 }) {
   useTranslation("dialogs");
+  // 40px 的列表行（listRowClass；2026-10-07 设计审计 §10.2）：此前是一墙 92px 的带框小卡，
+  // 名字被截成三四个字。选中 = selected 底 + 600 + 行尾一个勾（不只靠颜色）
   return (
     <div
       role="listbox"
       aria-label={ex("figureListLabel")}
-      className="flex max-h-[168px] flex-wrap gap-1.5 overflow-y-auto"
+      className="-mx-1 flex max-h-[200px] w-full flex-col gap-0.5 overflow-y-auto"
     >
       {figures.map((f) => {
         const selected = f.figureId === selectedId;
@@ -1506,32 +1522,13 @@ function FigurePicker({
             role="option"
             aria-selected={selected}
             title={f.name}
+            data-export-figure={f.figureId}
             onClick={() => onPick(f.figureId)}
-            className={cn(
-              "relative flex w-[92px] shrink-0 flex-col gap-1 rounded-sm border p-1 text-left outline-none transition-colors focus-visible:focus-ring",
-              selected
-                ? "border-border-strong bg-surface-2"
-                : "border-border bg-surface hover:border-border-strong",
-            )}
+            className={cn(listRowClass({ size: "md", selected }), "min-h-10 w-full gap-2.5 px-2 text-left")}
           >
             <FigureThumb figure={f} />
-            <span
-              className={cn(
-                "block w-full truncate text-xs leading-tight",
-                selected ? "text-ink" : "text-ink-2",
-              )}
-            >
-              {f.name}
-            </span>
-            {/* 选中态不只靠颜色：右上角一个勾（web/AGENTS.md UI 视觉纪律） */}
-            {selected && (
-              <span
-                aria-hidden
-                className="absolute right-1 top-1 flex h-3.5 w-3.5 items-center justify-center rounded-xs bg-ink-2 text-white"
-              >
-                <Check size={ICON_SIZE.xs} strokeWidth={ICON_STROKE.emphasis} />
-              </span>
-            )}
+            <span className="min-w-0 flex-1 truncate">{f.name}</span>
+            {selected && <Check size={ICON_SIZE.sm} aria-hidden className="shrink-0 text-ink" />}
           </button>
         );
       })}
@@ -1569,7 +1566,7 @@ function FigureThumb({ figure }: { figure: ExportableFigure }) {
   const ratio =
     sizeMm && sizeMm[0] > 0 && sizeMm[1] > 0 ? sizeMm[0] / sizeMm[1] : 4 / 3;
   return (
-    <span className="flex h-14 w-full items-center justify-center overflow-hidden rounded-xs border border-border bg-white">
+    <span className="flex h-7 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xs bg-white ring-1 ring-inset ring-border">
       {svg ? (
         // store 里的 SVG 已被 `prepareSvg` 改成 width/height 100%，得给它一个
         // 按图幅比例定好的盒子，否则会被拉成缩略格的形状
@@ -1635,7 +1632,7 @@ function ScopeNote({
   if (scope === "canvas") {
     return (
       <FormRow>
-        <div className="flex flex-col gap-0.5 text-xs leading-relaxed text-ink-3">
+        <div className="type-caption flex flex-col gap-0.5">
           {/* 「原图尺寸」灰着时说一句为什么——一个禁用的按钮解释不了自己（§五：不隐藏
               选项）。这是一句说明，不是错误：用户此刻导的是画布，什么都没挡着他 */}
           <span>{ex("scopeUnavailable.no_figures")}</span>
@@ -1645,7 +1642,7 @@ function ScopeNote({
   }
   return (
     <FormRow>
-      <div className="flex flex-col gap-0.5 text-xs leading-relaxed text-ink-3">
+      <div className="type-caption flex flex-col gap-0.5">
         {/* 原图范围下当前这张导不出：说出原因。「还没定要导哪一张」是一句指引
           （下面的清单就是给这个的），不是错误；源文件不见了 / 找不到这张图才是 */}
         {!available &&
@@ -1654,7 +1651,7 @@ function ScopeNote({
               {ex("scopeUnavailable.no_figure")}
             </span>
           ) : (
-            <span className="flex items-start gap-1.5 text-danger">
+            <span className="flex items-start gap-1.5 text-danger-content">
               <TriangleAlert
                 size={ICON_SIZE.xs}
                 className="mt-0.5 shrink-0"
@@ -1792,7 +1789,7 @@ function TargetHeader({
         />
       )}
       <div className="min-w-0 flex-1">
-        <p className="truncate text-base font-medium text-ink" title={name}>
+        <p className="truncate font-medium text-ink" title={name}>
           {name}
         </p>
         <p className="type-meta">
@@ -1806,9 +1803,7 @@ function TargetHeader({
             </>
           )}
         </p>
-        {originNote && (
-          <p className="text-xs leading-relaxed text-ink-3">{originNote}</p>
-        )}
+        {originNote && <p className="type-caption">{originNote}</p>}
       </div>
     </div>
   );
@@ -2022,60 +2017,22 @@ function OpenProblems({ onClick }: { onClick: () => void }) {
   );
 }
 
-/** 进度。屏幕阅读器读得到阶段与进度（§十） */
+/**
+ * 进度：阶段句 + 一根扫动的细进度条（`ProgressBar` 不定态，与更新下载 / 包管理同一份；
+ * 阶段数是粗粒度的，拿它当百分比是假精确）。屏幕阅读器读得到阶段（§十）
+ */
 function ProgressRow({ job }: { job: ExportJob | null }) {
   useTranslation("dialogs");
   const phase = job?.progress?.phase ?? "preparing";
   const step = job?.progress?.step ?? 0;
   const total = job?.progress?.total ?? 1;
+  const text = ex(`phase.${phase}`, { step, total });
   return (
-    <p
-      role="status"
-      aria-live="polite"
-      className="flex items-center gap-1.5 rounded-sm bg-surface-2 px-2 py-1.5 text-xs text-ink-2"
-    >
-      <LoaderCircle
-        size={ICON_SIZE.sm}
-        className="shrink-0 motion-safe:animate-spin"
-        aria-hidden
-      />
-      {ex(`phase.${phase}`, { step, total })}
-    </p>
-  );
-}
-
-/**
- * 已有同名文件。**先问再动手**（§六）：`ask` 是默认策略，撞上了就把两条
- * 明确的出路摆出来，绝不静默覆盖用户上一次的成果。
- */
-function ConflictBar({
-  names,
-  onReplace,
-  onRename,
-}: {
-  names: string[];
-  onReplace: () => void;
-  onRename: () => void;
-}) {
-  useTranslation("dialogs");
-  return (
-    <div className="flex flex-col gap-1.5 rounded-sm border border-warn/40 bg-surface-2 px-2 py-1.5">
-      <p className="flex items-start gap-1.5 text-xs text-ink-2">
-        <FileExclamationPoint
-          size={ICON_SIZE.sm}
-          className="mt-0.5 shrink-0 text-warn-content"
-          aria-hidden
-        />
-        {ex("conflict", { files: names.join("、") })}
+    <div data-export-progress className="flex flex-col gap-1.5">
+      <p role="status" aria-live="polite" className="text-shimmer text-sm text-ink-2">
+        {text}
       </p>
-      <div className="flex gap-1.5">
-        <Button variant="secondary" size="sm" onClick={onRename}>
-          {ex("conflictRename")}
-        </Button>
-        <Button variant="secondary" size="sm" onClick={onReplace}>
-          {ex("conflictReplace")}
-        </Button>
-      </div>
+      <ProgressBar pct={null} label={text} />
     </div>
   );
 }
@@ -2095,50 +2052,51 @@ function ResultBlock({
 }) {
   useTranslation(["dialogs", "errors"]);
   if (job.status === "cancelled") {
-    return <p className="text-xs text-ink-3">{ex("cancelledNote")}</p>;
+    return <Notice tone="neutral">{ex("cancelledNote")}</Notice>;
   }
   if (job.status === "unknown") {
     // 后端重启 / 作业过期。**这与"失败"是两件事**：我们不知道那些文件写出来
     // 没有，所以既不说"已保存到"，也不说"导出失败"
     return (
-      <div className="flex flex-col gap-1.5 rounded-sm border border-warn/40 bg-surface-2 p-2">
-        <p className="flex items-start gap-1.5 text-xs text-ink-2">
-          <TriangleAlert
-            size={ICON_SIZE.sm}
-            className="mt-0.5 shrink-0 text-warn-content"
-            aria-hidden
-          />
-          {ex("jobLost")}
-        </p>
-        <Button variant="secondary" size="sm" onClick={onRetry}>
-          {ex("retry")}
-        </Button>
-      </div>
+      <Notice
+        tone="warn"
+        data-export-job-lost
+        action={
+          <Button variant="secondary" size="sm" onClick={onRetry}>
+            {ex("retry")}
+          </Button>
+        }
+      >
+        {ex("jobLost")}
+      </Notice>
     );
   }
   if (job.status === "failed" && !job.outputs.length) {
     return (
-      <div className="flex flex-col gap-1.5 rounded-sm border border-danger/40 bg-surface-2 p-2">
-        <p className="text-xs text-danger">
-          {translate(`backend.${job.error?.code ?? "export_failed"}`, {
-            ns: "errors",
-            ...(job.error?.params ?? {}),
-            defaultValue: ex("operationFailed", {
-              error: job.error?.code ?? "",
-            }),
-          })}
-        </p>
-        {job.error?.recoverable !== false && (
-          <Button variant="secondary" size="sm" onClick={onRetry}>
-            {ex("retry")}
-          </Button>
-        )}
-      </div>
+      <Notice
+        tone="danger"
+        data-export-failed
+        action={
+          job.error?.recoverable !== false ? (
+            <Button variant="secondary" size="sm" onClick={onRetry}>
+              {ex("retry")}
+            </Button>
+          ) : undefined
+        }
+      >
+        {translate(`backend.${job.error?.code ?? "export_failed"}`, {
+          ns: "errors",
+          ...(job.error?.params ?? {}),
+          defaultValue: ex("operationFailed", {
+            error: job.error?.code ?? "",
+          }),
+        })}
+      </Notice>
     );
   }
   return (
-    <div className="flex flex-col gap-1 rounded-sm border border-border bg-surface-2 p-2">
-      <p className="break-all text-xs text-ink-3">
+    <Card appearance="subtle" padding="sm" data-export-result className="flex flex-col gap-1 px-3">
+      <p className="break-all text-sm text-ink-3">
         {ex("savedTo", {
           dir:
             job.export_dir ??
@@ -2154,7 +2112,7 @@ function ResultBlock({
         />
       ))}
       {edited && (
-        <p className="mt-1 text-xs text-warn-content">{ex("editedDuringExport")}</p>
+        <p className="mt-1 text-sm text-warn-content">{ex("editedDuringExport")}</p>
       )}
       {/* 引擎重渲染的警告：图已经出来了，但可能与画布不完全一致
           （元素不存在 = 脚本改过了）。不吞——用户投出去之前得知道 */}
@@ -2168,7 +2126,7 @@ function ResultBlock({
           ))}
         </div>
       )}
-    </div>
+    </Card>
   );
 }
 
@@ -2333,7 +2291,7 @@ function FormatCheck({
     <label
       title={hint}
       className={cn(
-        "flex min-h-6 items-center gap-2 text-sm font-medium",
+        "flex min-h-7 items-center gap-2 font-medium",
         disabled ? "cursor-not-allowed text-ink-faint" : "text-ink",
       )}
     >
