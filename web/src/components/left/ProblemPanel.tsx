@@ -681,6 +681,30 @@ function TreeSkeleton() {
 }
 
 /**
+ * 证据里「什么时候」的那个「现在」：从 `since` 起按整分钟走一格（下一次文字可能变的时刻），
+ * 只在证据挂着时走、卸载即停。不靠别的重渲染顺带刷新——抽屉一直开着、清单不变时没人重渲染，
+ * 「刚刚」会一直挂到几小时后（Codex #832）。`since` 一换（重新检查）按新的起点重新对齐。
+ */
+function useMinuteClock(since: number | null): number {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (since == null) return
+    let timer: ReturnType<typeof setTimeout>
+    const arm = () => {
+      const elapsed = Math.max(0, Date.now() - since)
+      // 多等 50ms：落在边界之后，`formatRelativeTime` 的取整已经跨过去
+      timer = setTimeout(() => {
+        setNow(Date.now())
+        arm()
+      }, 60_000 - (elapsed % 60_000) + 50)
+    }
+    arm()
+    return () => clearTimeout(timer)
+  }, [since])
+  return now
+}
+
+/**
  * 「未发现问题」+ 证据：按哪套规范、查了几张图、什么时候（2026-10-07 设计审计 §9.4）。
  *
  * 规范按**每张画布各自的绑定**说，与 `collectCanvases()` 给每张画布跑检查时的输入同一份
@@ -714,7 +738,9 @@ function NoneEvidence() {
     }
     return { figures, names: used.length ? used : [nameOf(activeBinding)] }
   }, [specs, canvases, activeCanvasId, activeObjects, activeBinding])
-  const when = checkedAt == null ? null : Date.now() - checkedAt < 60_000 ? pr('justNow') : formatRelativeTime(checkedAt)
+  const now = useMinuteClock(checkedAt)
+  // 挂上之后才检查完的：`now` 还是挂上那一刻（早于 checkedAt），差是负的，照样是「刚刚」
+  const when = checkedAt == null ? null : now - checkedAt < 60_000 ? pr('justNow') : formatRelativeTime(checkedAt, now)
   const hint = !when
     ? undefined
     : names.length === 1

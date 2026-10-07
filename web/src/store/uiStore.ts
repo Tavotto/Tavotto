@@ -29,6 +29,12 @@ export interface LayoutConflict {
  * 参与「一次只显示一个主对话框」的三个主对话框（审计 T35）。
  * 导出 → 设置 → 论文样式是一条前进 / 返回的小流程，不是三层叠着的浮层。
  */
+/** 问题面板此刻指着的那个对象（`issueHover`）；对象身份即主人，见 `releaseIssueHover` */
+export interface IssueHover {
+  objectId: string
+  gid: string | null
+}
+
 export type MainDialog = 'export' | 'settings' | 'styles'
 
 /**
@@ -286,9 +292,12 @@ interface UiState extends Persisted {
   /**
    * 问题面板里**指着**哪一条（2026-10-07 设计审计 §9.4）：画布上给那个对象画一道悬停轮廓
    * （`canvas/IssueOverlay`），与画布自己的 hover 预示同一种画法。只是「我在看它」，不选中、
-   * 不定位、不进文档；指针离开 / 焦点离开 / 面板卸载就清。
+   * 不定位、不进文档；指针离开 / 焦点离开 / 那一行卸载 / 面板卸载就清。
+   * **对象身份就是主人**：每次指上都是一个新对象，行撤销时用 `releaseIssueHover(它写下的那个)`
+   * 比对后再清——行被修好 / 筛掉 / 换文档卸载时不触发 pointerleave / blur，靠这个撤；
+   * 已经被别的行顶掉的就不动（Codex #832）。
    */
-  issueHover: { objectId: string; gid: string | null } | null
+  issueHover: IssueHover | null
   /**
    * 画布上的问题标记（每张有问题的图右上角一枚等级记号，点它 = `openProblemAt`）。
    * 默认关：问题面板「⋯」里打开。会话状态，同 `problemFilter`。
@@ -412,7 +421,9 @@ interface UiState extends Persisted {
   clearStatusOwnedBy: (owner: string) => void
   setEditingText: (id: string | null) => void
   setIssueHighlight: (v: { objectId: string | null; gid: string | null } | null) => void
-  setIssueHover: (v: { objectId: string; gid: string | null } | null) => void
+  setIssueHover: (v: IssueHover | null) => void
+  /** 比对后再清：此刻的 `issueHover` 还是 `v` 这个对象（同一身份）才撤，别的行写下的不动 */
+  releaseIssueHover: (v: IssueHover) => void
   setProblemPins: (v: boolean) => void
   setProblemFilter: (v: Severity[] | null) => void
   setProblemScope: (v: ProblemScope | null) => void
@@ -684,10 +695,9 @@ export const useUiStore = create<UiState>((set, get) => ({
     set({ status: null, statusTone: 'info', statusPassive: false, statusOwner: null })
   },
 
-  setIssueHover: (v) =>
-    set((s) =>
-      v?.objectId === s.issueHover?.objectId && v?.gid === s.issueHover?.gid ? s : { issueHover: v },
-    ),
+  // 不按值短路：值相同的新对象也要换上，否则后来者拿不到主人身份，`releaseIssueHover` 会认错人
+  setIssueHover: (v) => set((s) => (v === s.issueHover ? s : { issueHover: v })),
+  releaseIssueHover: (v) => set((s) => (s.issueHover === v ? { issueHover: null } : s)),
   setProblemPins: (problemPins) => set({ problemPins }),
   setIssueHighlight: (v) =>
     set((s) => ({
