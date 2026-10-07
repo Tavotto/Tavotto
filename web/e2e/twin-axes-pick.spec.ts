@@ -212,9 +212,13 @@ test('键盘轮换：bbox 中心不在曲线身上时也走得回来', async ({ 
    * 输入框**必须**按命令面板自己的可达名取。`getByRole('textbox').first()` 会
    * 抓到属性页里的某个数值框 —— 那样这条用例不但测不到轮换，还会往图上写一个
    * 属性（实测第一版就是这么静默跑偏的）。
+   *
+   * 角色是 combobox：命令面板按 WAI-ARIA 组合框模式实现（输入框 `role="combobox"`、
+   * `aria-controls` 指向结果 listbox、高亮行经 `aria-activedescendant` 报给读屏，
+   * 2026-10-07 设计审计 §10.1）。按 textbox 取的话面板开着也找不到它。
    */
   const palette = page.getByRole('listbox', { name: '命令' })
-  const search = page.getByRole('textbox', { name: '搜索命令' })
+  const search = page.getByRole('combobox', { name: '搜索命令' })
   const runCommand = async () => {
     // 焦点可能停在属性页某个输入框里，那时 useKeyboard 会把 ⌘K 让给原生编辑
     // （`inEditableTarget`）—— 面板根本不开。先摘掉焦点，别让这条用例偶发红。
