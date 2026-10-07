@@ -1114,8 +1114,6 @@ export default interface Resources {
           "needsReconsent": "采集范围有变化，待重新确认",
           "never": "图、脚本、文件名、路径、科研数据、图内文字与助手提示词。",
           "neverLabel": "绝不发送：",
-          "optIn": "开启",
-          "optOut": "关闭",
           "policy": "隐私政策",
           "sends": {
             "ai_assistant_invoked": "调用改图助手：用的是 Codex、Claude 还是其他 Agent。",

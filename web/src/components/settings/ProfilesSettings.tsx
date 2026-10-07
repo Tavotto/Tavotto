@@ -324,7 +324,7 @@ export function ProfilesSettings({
       if (!selected) return
       const text = await useProfileStore.getState().exportOne(kind, selected.id)
       if (!text) return
-      // 与「导出诊断包」同一条路径（`PrivacyAboutSettings.downloadDiagnostics`）：
+      // 与「导出诊断包」同一条路径（`DiagnosticsSettings` 的 `downloadDiagnostics`）：
       // 浏览器里能给的只有"下载一个文件"，桌面端也走这条。
       const blob = new Blob([text], { type: 'application/json' })
       const url = URL.createObjectURL(blob)

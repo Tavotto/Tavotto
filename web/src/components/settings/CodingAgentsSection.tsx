@@ -30,10 +30,10 @@ function scrollParent(el: HTMLElement | null): HTMLElement | null {
 }
 
 /**
- * 设置 → 编码 Agent。
+ * 设置 → 改图助手（分区 id 仍是 `ai`）。
  *
- * 一级页面只回答一个问题：**这台机器上有哪些编码 Agent、现在能不能用**。
- * 每行只有名称、版本号、状态；路径、命令、检测来源、第三方接口、Base URL、
+ * 一级页面只回答一个问题：**这台机器上有哪些编码 Agent、现在能不能用**。组首一行是「默认助手」（一个 Select），
+ * 下面每行只有名称、状态（带字的 StatusPill）、启用开关、›；路径、命令、检测来源、第三方接口、Base URL、
  * 密钥、wire api 一个都不在这儿——它们全在各自 Agent 的详情里
  * （`AgentDetailView`，可复制）。这一页上也没有解释段：普通用户装好 CLI
  * 之后什么都不用配，页面本身就是那句话的兑现（ADR 0015 / 0038）。
@@ -46,8 +46,8 @@ function scrollParent(el: HTMLElement | null): HTMLElement | null {
  * 方向由小节里的内容承担：② 里那一行就叫「Tavotto for Codex」。
  * 「本机装了 codex CLI」不等于「装了 Tavotto for Codex」，两个状态绝不合并。
  *
- * **e2e 锚点**（清单见 web/AGENTS.md）：`data-agent-section="in-app" | "external"`
- * 标住这两节，`data-agent-codex-integration` 标住 ② 里那一行，
+ * **e2e 锚点**（清单见 `docs/rules/frontend/settings-shell-and-packages.md`）：`data-agent-section="in-app" | "external"`
+ * 标住这两组（各是一个 `FieldGroup`），`data-agent-codex-integration` 标住 ② 里那一行，
  * `data-agent-rescan` / `data-agent-last-checked` 标住重新检测那对控件。
  * 小标题的**文字**归审计管、随时可以再改一次——用例认的是这几个属性，
  * 不认那句话（T44 改名时它们就是靠认文案红的）。
