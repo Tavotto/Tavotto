@@ -6,9 +6,12 @@ import { backendErrorText, ApiError, browseDirs, type BrowseResult, type DirEntr
 import { t as translate } from '@/i18n'
 import { checkProjectName, type ProjectNameProblem } from '@/lib/projectName'
 import { cn } from '@/lib/utils'
-import { Button } from './ui/Button'
+import { FormRow } from './FormRow'
+import { Button, IconButton } from './ui/Button'
 import { Dialog } from './ui/Dialog'
 import { TextInput } from './ui/Input'
+import { listRowClass } from './ui/listRow'
+import { Notice } from './ui/Notice'
 
 /*
  * 服务器端目录浏览器、桌面「新建项目」的起名框与「留尾巴的路径」：Project Picker（全部项目）、主页的「导入我的脚本」
@@ -66,11 +69,17 @@ export function DirBrowser({
   const [name, setName] = useState('')
   const [pathText, setPathText] = useState(initialPath ?? '')
   const editingPath = useRef(false)
+  // 新建：打开时焦点直接落在名字框（`initialFocusRef`，2026-10-07 设计审计 §10.2——`autoFocus` 被 Dialog 的「焦点落容器」盖掉）
+  const nameRef = useRef<HTMLInputElement>(null)
+  /** 子目录列表的漫游焦点：Tab 只停一行，↑↓ 走行、Enter 进入、⌫ 回上一级 */
+  const [active, setActive] = useState(0)
+  const listRef = useRef<HTMLUListElement>(null)
 
   const nav = async (path?: string) => {
     try {
       const next = await browseDirs(path)
       setState(next)
+      setActive(0)
       setError(null)
       setNearest(null)
       if (!editingPath.current) setPathText(next.is_roots ? '' : next.path)
@@ -94,21 +103,53 @@ export function DirBrowser({
   const nameProblem = mode === 'create' ? checkProjectName(name) : null
   const createDisabled = mode === 'create' && nameProblem !== null
   const target = state?.is_roots ? '' : (state?.path ?? '')
+  const dirs = state?.dirs ?? []
+
+  const focusRow = (i: number) => {
+    const next = Math.max(0, Math.min(dirs.length - 1, i))
+    setActive(next)
+    listRef.current?.querySelectorAll<HTMLButtonElement>('[data-dir-row]')[next]?.focus()
+  }
+  const goParent = () => {
+    if (!state?.parent) return
+    editingPath.current = false
+    void nav(state.parent)
+  }
+  const onListKey = (e: React.KeyboardEvent) => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault()
+      focusRow(active + (e.key === 'ArrowDown' ? 1 : -1))
+    } else if (e.key === 'Home' || e.key === 'End') {
+      e.preventDefault()
+      focusRow(e.key === 'Home' ? 0 : dirs.length - 1)
+    } else if (e.key === 'Backspace') {
+      // 焦点在列表里时 ⌫ = 上一级（与访达 / 资源管理器一致）；地址栏里的 ⌫ 照常删字（事件不经过这里）
+      e.preventDefault()
+      goParent()
+      requestAnimationFrame(() => focusRow(0))
+    }
+  }
 
   return (
     <Dialog
       open
       onOpenChange={(v) => !v && onClose()}
+      onEscape={onClose}
       title={title ?? t(mode === 'create' ? 'browser.titleCreate' : 'browser.titleOpen')}
       size="md"
-      footer={
-        <>
-          <Button variant="secondary" size="md" onClick={onClose}>
+      anchor="dir-browser"
+      initialFocusRef={mode === 'create' ? nameRef : undefined}
+      footer={{
+        secondary: (
+          <Button variant="secondary" size="lg" onClick={onClose}>
             {translate('actions.cancel')}
           </Button>
+        ),
+        primary: (
           <Button
             variant="primary"
-            size="md"
+            size="lg"
+            data-dir-browser-confirm
             disabled={!target || createDisabled}
             onClick={() => {
               if (!target) return
@@ -117,10 +158,34 @@ export function DirBrowser({
           >
             {t(mode === 'create' ? 'browser.confirmCreate' : 'browser.confirmOpen')}
           </Button>
-        </>
-      }
+        ),
+      }}
     >
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-2.5">
+        {/* 新建：先问名字（这一步要回答的那件事），再选放在哪 */}
+        {mode === 'create' && (
+          <div className="flex flex-col gap-1">
+            <FormRow label={t('browser.projectName')} asLabel>
+              <TextInput
+                ref={nameRef}
+                data-dir-browser-name
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="my_paper_figures"
+                className="min-w-0 flex-1"
+                aria-invalid={nameProblem && nameProblem !== 'empty' ? true : undefined}
+                aria-describedby={nameProblem && nameProblem !== 'empty' ? 'dir-browser-name-error' : undefined}
+              />
+            </FormRow>
+            {/* 空着不算错（按钮已经是禁用的），只有真输错了才出话 */}
+            {nameProblem && nameProblem !== 'empty' && (
+              <p id="dir-browser-name-error" role="alert" className="pl-[92px] text-sm text-danger-content">
+                {nameErrorText(nameProblem)}
+              </p>
+            )}
+          </div>
+        )}
+
         {/* 路径输入框就是地址栏：可读可改可粘贴 */}
         <form
           className="flex items-center gap-1.5"
@@ -130,20 +195,9 @@ export function DirBrowser({
             void nav(pathText.trim() || undefined)
           }}
         >
-          <Button
-            type="button"
-            size="icon-sm"
-            disabled={!state?.parent}
-            onClick={() => {
-              if (state?.parent) {
-                editingPath.current = false
-                void nav(state.parent)
-              }
-            }}
-            aria-label={t('browser.parentDir')}
-          >
+          <IconButton type="button" iconSize="sm" tip={false} disabled={!state?.parent} onClick={goParent} label={t('browser.parentDir')}>
             <ArrowUp size={ICON_SIZE.sm} />
-          </Button>
+          </IconButton>
           <TextInput
             value={pathText}
             onChange={(e) => {
@@ -158,12 +212,28 @@ export function DirBrowser({
             className="min-w-0 flex-1 font-mono"
             spellCheck={false}
           />
-          <Button type="submit" size="icon-sm" aria-label={t('browser.goToPath')}>
+          <IconButton type="submit" iconSize="sm" tip={false} label={t('browser.goToPath')}>
             <CornerDownLeft size={ICON_SIZE.sm} />
-          </Button>
+          </IconButton>
         </form>
 
-        {/* 常用起点 + 驱动器：Windows 上跨盘全靠这一行 */}
+        {/* 错误紧贴地址栏下面（它多半是地址栏里那条路径的事） */}
+        {error && (
+          <Notice
+            tone="danger"
+            action={
+              nearest ? (
+                <Button variant="ghost" size="sm" data-dir-browser-nearest onClick={() => void nav(nearest)}>
+                  {t('browser.goTo', { path: nearest })}
+                </Button>
+              ) : undefined
+            }
+          >
+            {error}
+          </Notice>
+        )}
+
+        {/* 常用起点 + 驱动器：Windows 上跨盘全靠这一行（胶囊，与全站带字按钮同一族） */}
         <div className="flex flex-wrap gap-1">
           {(state?.shortcuts ?? []).map((s) => (
             <Chip key={s.path} entry={s} label={shortcutLabel(s)} onGo={() => void nav(s.path)} />
@@ -173,21 +243,27 @@ export function DirBrowser({
           ))}
         </div>
 
-        {/* 清单不套外框（全面打磨 D44，§8）：行之间的 hairline 已经把它分开了 */}
-        <ul aria-label={t('browser.subdirsLabel')} className="h-56 overflow-y-auto">
-          {state?.dirs.map((d) => (
-            <li key={d.path}>
+        {/* 清单不套外框（全面打磨 D44，§8）：32px 的列表行；漫游焦点（Tab 只停一行） */}
+        <ul
+          ref={listRef}
+          aria-label={t('browser.subdirsLabel')}
+          className="-mx-1 flex h-56 flex-col overflow-y-auto"
+          onKeyDown={onListKey}
+        >
+          {dirs.map((d, i) => (
+            <li key={d.path} className="flex">
               <button
+                type="button"
+                data-dir-row={d.name}
+                tabIndex={i === active ? 0 : -1}
+                onFocus={() => setActive(i)}
                 onClick={() => {
                   editingPath.current = false
                   void nav(d.path)
                 }}
-                className={cn(
-                  'flex h-7 w-full items-center gap-2 px-2 text-left text-xs text-ink',
-                  'outline-none hover:bg-surface-hover focus-visible:focus-ring',
-                )}
+                className={cn(listRowClass(), 'h-8 w-full gap-2 px-2 text-left text-sm')}
               >
-                {state.is_roots ? (
+                {state?.is_roots ? (
                   <HardDrive size={ICON_SIZE.sm} className="shrink-0 text-ink-3" />
                 ) : (
                   <Folder size={ICON_SIZE.sm} className="shrink-0 text-ink-3" />
@@ -196,51 +272,10 @@ export function DirBrowser({
               </button>
             </li>
           ))}
-          {state && state.dirs.length === 0 && (
-            <li className="flex h-full items-center justify-center text-xs text-ink-3">
-              {t('browser.noSubdirs')}
-            </li>
+          {state && dirs.length === 0 && (
+            <li className="flex h-full items-center justify-center text-ink-3">{t('browser.noSubdirs')}</li>
           )}
         </ul>
-
-        {mode === 'create' && (
-          <div className="flex flex-col gap-1">
-            <label className="flex items-center gap-2 text-xs text-ink-2">
-              {t('browser.projectName')}
-              <TextInput
-                autoFocus
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="my_paper_figures"
-                className="flex-1"
-                aria-invalid={nameProblem && nameProblem !== 'empty' ? true : undefined}
-                aria-describedby={
-                  nameProblem && nameProblem !== 'empty' ? 'dir-browser-name-error' : undefined
-                }
-              />
-            </label>
-            {/* 空着不算错（按钮已经是禁用的），只有真输错了才出话 */}
-            {nameProblem && nameProblem !== 'empty' && (
-              <p id="dir-browser-name-error" role="alert" className="text-xs text-danger">
-                {nameErrorText(nameProblem)}
-              </p>
-            )}
-          </div>
-        )}
-
-        {error && (
-          <p className="text-xs text-danger">
-            {error}
-            {nearest && (
-              <button
-                className="ml-2 underline outline-none focus-visible:focus-ring"
-                onClick={() => void nav(nearest)}
-              >
-                {t('browser.goTo', { path: nearest })}
-              </button>
-            )}
-          </p>
-        )}
       </div>
     </Dialog>
   )
@@ -261,6 +296,7 @@ export function NewProjectNameDialog({
 }) {
   const { t } = useTranslation('project')
   const [name, setName] = useState('')
+  const nameRef = useRef<HTMLInputElement>(null)
   // 上级目录已经定了，这里收的是**叶子名**：`..` / `nested/name` 拼进去之后
   // 项目会建在 `parent` 之外（评审 #299-2）。与 DirBrowser 同一份判据。
   const problem = checkProjectName(name)
@@ -269,23 +305,24 @@ export function NewProjectNameDialog({
     <Dialog
       open
       onOpenChange={(v) => !v && onClose()}
+      onEscape={onClose}
       title={t('browser.titleCreate')}
       size="sm"
-      footer={
-        <>
-          <Button variant="secondary" size="md" onClick={onClose}>
+      anchor="new-project-name"
+      // 只有一个输入框：打开时焦点直接在它上面
+      initialFocusRef={nameRef}
+      footer={{
+        secondary: (
+          <Button variant="secondary" size="lg" onClick={onClose}>
             {translate('actions.cancel')}
           </Button>
-          <Button
-            variant="primary"
-            size="md"
-            disabled={problem !== null}
-            onClick={() => onCreate(name)}
-          >
+        ),
+        primary: (
+          <Button variant="primary" size="lg" disabled={problem !== null} onClick={() => onCreate(name)}>
             {t('browser.confirmCreate')}
           </Button>
-        </>
-      }
+        ),
+      }}
     >
       <form
         className="flex flex-col gap-2"
@@ -294,24 +331,23 @@ export function NewProjectNameDialog({
           if (!problem) onCreate(name)
         }}
       >
-        <label className="flex items-center gap-2 text-xs text-ink-2">
-          {t('browser.projectName')}
+        <FormRow label={t('browser.projectName')} asLabel>
           <TextInput
-            autoFocus
+            ref={nameRef}
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="my_paper_figures"
-            className="flex-1"
+            className="min-w-0 flex-1"
             aria-invalid={showProblem ? true : undefined}
             aria-describedby={showProblem ? 'new-project-name-error' : undefined}
           />
-        </label>
+        </FormRow>
         {showProblem && (
-          <p id="new-project-name-error" role="alert" className="text-xs text-danger">
+          <p id="new-project-name-error" role="alert" className="pl-[92px] text-sm text-danger-content">
             {nameErrorText(problem)}
           </p>
         )}
-        <p className="truncate font-mono text-xs text-ink-3" title={parent}>
+        <p className="truncate font-mono text-sm text-ink-3" title={parent}>
           {t('picker.createIn', { dir: parent })}
         </p>
       </form>
@@ -350,17 +386,11 @@ function Chip({
   icon?: boolean
   onGo: () => void
 }) {
+  // 胶囊 = 全站带字按钮那一族（Button secondary sm），不再是自画的 6px 圆角描边块
   return (
-    <button
-      onClick={onGo}
-      title={entry.path}
-      className={cn(
-        'flex h-7 items-center gap-1 rounded-sm border border-border px-2 text-xs text-ink-2',
-        'outline-none transition-colors duration-fast hover:border-border-strong hover:text-ink focus-visible:focus-ring',
-      )}
-    >
+    <Button variant="secondary" size="sm" onClick={onGo} title={entry.path} data-dir-chip>
       {icon && <HardDrive size={ICON_SIZE.xs} className="text-ink-3" />}
       {label ?? entry.name}
-    </button>
+    </Button>
   )
 }
