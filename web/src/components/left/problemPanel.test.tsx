@@ -313,6 +313,50 @@ describe('空态、筛选与「查不了」', () => {
     expect(text()).toContain('未发现问题')
   })
 
+  /**
+   * 「未发现问题」的证据按每张画布各自的绑定说（与 `collectCanvases()` 同一份判据）：
+   * 两张画布绑了不同的规范时，不许只报当前画布那一套、把它盖到另一张画布的图上（Codex #832）。
+   */
+  type SpecId = 'lab-publication-v1' | 'free-form-v1'
+  async function seedTwoCanvases(active: SpecId, second: SpecId, unused: SpecId) {
+    await useDocumentStore.getState().switchDocument(emptyProject(), 'd_evidence')
+    const s = useDocumentStore.getState()
+    const page = { w: 80, h: 60 }
+    const a = { ...panel, id: 'pa' }
+    const b = { ...panel, id: 'pb' }
+    const c3 = { ...panel, id: 'pc' }
+    useDocumentStore.setState({
+      activeCanvasId: 'c1',
+      doc: { ...s.doc, page, objects: [a], profile: { id: active } },
+      canvases: [
+        // 激活画布的 `canvases[]` 快照是旧的（没图、没绑定）：证据必须读现值 `doc`
+        { id: 'c1', name: '画布 1', page, objects: [], guides: [] },
+        { id: 'c2', name: '画布 2', page, objects: [b, c3], guides: [], profile: { id: second } },
+        // 没装图的画布不算进证据：它的规范没查过任何一张图
+        { id: 'c3', name: '画布 3', page, objects: [], guides: [], profile: { id: unused } },
+      ],
+    } as never)
+    useValidationStore.setState({ ready: true, failed: false, issues: [], results: [], checkedAt: Date.now() })
+  }
+  const evidence = () => container.querySelector('[data-problem-evidence]')?.textContent ?? ''
+
+  it('几张画布绑了不同的规范、整份没问题：证据把实际用过的几套都说出来，不只报当前画布那一套', async () => {
+    await seedTwoCanvases('free-form-v1', 'lab-publication-v1', 'free-form-v1')
+    await mount(<ProblemPanel />)
+    expect(text()).toContain('未发现问题')
+    expect(evidence()).toContain('按 2 套规范')
+    expect(evidence()).toContain('默认规范')
+    expect(evidence()).toContain('自由排版')
+    expect(evidence()).toContain('检查了 3 张图')
+  })
+
+  it('各画布同一套规范：证据照旧只说那一套（单规范的句子不变）', async () => {
+    await seedTwoCanvases('free-form-v1', 'free-form-v1', 'lab-publication-v1')
+    await mount(<ProblemPanel />)
+    expect(evidence()).toContain('按「自由排版」检查了 3 张图')
+    expect(evidence()).not.toContain('默认规范')
+  })
+
   it('「这一次没查成」与「没问题」是两句不同的话', async () => {
     useValidationStore.setState({ ready: false, failed: true, issues: [], results: [] })
     await mount(<ProblemPanel />)

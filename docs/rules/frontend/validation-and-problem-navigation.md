@@ -113,7 +113,8 @@ preflight.runSpec()      规则求值（两份求值器，golden vectors 对齐�
   `canvas/IssueOverlay`）；「⋯」里可打开**画布等级标记**（`uiStore.problemPins`：每张有问题的图右上角外侧一枚（让开 ne 缩放手柄），
   点它 = `openProblemAt`）。摘要条（32px）只有等级开关（只有阻断着色）与唯一一颗填色主动作「全部修复 N」；
   正在重新检查时标题行一段 shimmer（`validationStore.queued`，延迟 300ms 才出），首检是静态骨架，「未发现问题」
-  带证据（按哪套规范、查了几张图、`validationStore.checkedAt`）。
+  带证据（按哪套规范、查了几张图、`validationStore.checkedAt`；规范按**每张装着图的画布各自的绑定**说，与
+  `collectCanvases()` 同一份判据——几张画布绑了不同规范时说「按 N 套规范（A、B）」，不拿当前画布那一套冒充全部，Codex #832）。
 * **分桶层（2026-09-28 卡片层，2026-10-07 设计审计 §9.4 改成就地展开的披露树）**：面板先是分桶，
   **就地展开**才是上面 ② 的逐组清单（不再整页钻入）：图 32 → 子图 28 → 规则 28 → 对象 28，全部建在
   `listRowClass` 上，每行一个 88px 尾随格（静止是值 / 项数，热了同一格换「修复 N」）。分桶默认收着、拆成子图的
