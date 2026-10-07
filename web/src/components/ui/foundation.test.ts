@@ -132,7 +132,6 @@ const RULES: Rule[] = [
         count: 1,
         why: '工作面板（data-work-panel，宪法第二十五节）不是卡，是一块面板；它的抬升与卡同一档是拍板过的，常驻豁免',
       },
-      '/src/components/left/AssetBrowser.tsx': { count: 1, why: `素材卡的 hover / 选中环：${LATER_PHASE}` },
       '/src/components/VersionDialog.tsx': { count: 1, why: `版本对话框的缩略图框：${LATER_PHASE}` },
     },
   },
