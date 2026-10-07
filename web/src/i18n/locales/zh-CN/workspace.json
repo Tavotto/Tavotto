@@ -551,7 +551,11 @@
     "viewResults": "查看捕获结果",
     "groupInfraName": "工具与配置脚本",
     "recoveryDetails": "详情",
-    "group_needsFix": "需要修复"
+    "group_needsFix": "需要修复",
+    "copyPath": "复制路径",
+    "pathCopied": "已复制：{{path}}",
+    "pathCopyFailed": "无法写入剪贴板。脚本在：{{path}}",
+    "rowActions": "{{script}} 的更多操作"
   },
   "spineZone": {
     "label": "{{side}} · {{dir}}刻度 {{state}} · {{action}}",

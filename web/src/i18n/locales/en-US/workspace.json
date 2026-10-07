@@ -578,7 +578,11 @@
     "viewResults": "View captured figures",
     "groupInfraName": "Tools and config scripts",
     "recoveryDetails": "Details",
-    "group_needsFix": "Needs fixing"
+    "group_needsFix": "Needs fixing",
+    "copyPath": "Copy path",
+    "pathCopied": "Copied: {{path}}",
+    "pathCopyFailed": "Couldn’t write to the clipboard. The script is at: {{path}}",
+    "rowActions": "More actions for {{script}}"
   },
   "spineZone": {
     "label": "{{side}} · {{dir}} ticks {{state}} · {{action}}",
