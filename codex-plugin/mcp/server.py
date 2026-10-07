@@ -60,9 +60,8 @@ WORKER_PYTHON_ENVS = ("TAVOTTO_WORKER_PYTHON", "MM_WORKER_PYTHON")
 #: 不许再交第二次——那是无限 exec 循环。
 _EXECED_ENV = "TAVOTTO_MCP_EXECED"
 #: 本文件起的探测 / 重装子进程一律不要窗口（引擎 `runtime.CREATE_NO_WINDOW` 的镜像：插件在引擎
-#: 不可用时也要能跑，import 不到它）。不带的话，父进程一旦没有控制台（后台重装、或宿主没给
-#: 隐藏控制台），Windows 11 会给每个 python / pip 子进程开一个 Windows Terminal 窗口——用户
-#: 看到的就是「弹窗、报错、关闭、再弹窗」。非 Windows 上值为 0，等同于不传。
+#: 不可用时也要能跑，import 不到它）。Win32 的 CREATE_NO_WINDOW 让控制台应用无控制台窗口运行，
+#: 且不设置控制台句柄；不等于新建隐藏控制台。非 Windows 上值为 0，等同于不传。
 CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
 
@@ -1175,9 +1174,8 @@ def managed_runtime_stale(resolution: dict) -> bool:
 #: 关掉启动时的后台自动重装（测试、或不想让启动器联网的用户）。宿主只转发清单里点了名的变量，
 #: 所以它也在 `codex.mcp.json` 的 `env_vars` 里——不在那里，用户设了 Codex 也不传，开关是死的。
 NO_AUTO_PROVISION_ENV = "TAVOTTO_MCP_NO_AUTO_PROVISION"
-#: 两次后台自动重装之间至少隔多久。宿主每起一次 server 都会判一次「自管环境旧了」，而后台
-#: 重装可能根本没跑起来（Windows 上它的窗口一启动就报 0x800700e8）或跑了却装不成（离线、镜像
-#: 滞后）：没有退避，就是每开一次会话起一次、弹一次，永不收敛。退避期内照常降级、说清去看日志
+#: Popen 返回且记号写入后，两次后台自动重装至少隔多久。子进程退出或安装失败也会退避；
+#: Popen 自己抛 OSError 时不写记号，不在这条退避内。退避期内照常降级、说清去看日志
 #: 或手动跑；手动 `--provision` 成功会清掉记号。
 AUTO_PROVISION_BACKOFF_SEC = 30 * 60
 
@@ -1308,7 +1306,8 @@ def kick_background_provision() -> dict:
     这里只**探一下**锁（拿到立刻放）来省掉明显多余的 spawn；真正的互斥在子进程
     `--provision` 里——它改环境之前自己拿内核锁，拿不到就不动环境。所以几个会话
     同时起、各自探到空闲而各起一个子进程也无妨：只有一个会真的跑 pip。
-    上一次起过之后 `AUTO_PROVISION_BACKOFF_SEC` 内不再起（reason `backoff`）。
+    Popen 返回且记号写入后 `AUTO_PROVISION_BACKOFF_SEC` 内不再起（reason `backoff`）；
+    Popen 抛 OSError 时不写记号，下次仍可重试。
     返回 `{"started": bool, "reason": str, "log": path}`，进 health 与降级 payload。
     """
     root = managed_runtime_dir()
@@ -1340,10 +1339,9 @@ def kick_background_provision() -> dict:
         return {"started": False, "reason": f"cannot_write: {exc}", "log": log}
     kwargs: dict = {"stdin": subprocess.DEVNULL, "stdout": out, "stderr": out}
     if _IS_WINDOWS:
-        # 不用 DETACHED_PROCESS：那是「没有控制台」，它和它起的 venv / pip 都会被 Windows 11
-        # 交给默认终端开一个可见窗口，实测在 Codex 下这个窗口一启动就报 0x800700e8（管道正在
-        # 被关闭），重装一行都没跑。CREATE_NO_WINDOW 给它一个自己的隐藏控制台（同样不与本
-        # server 共用，宿主关掉 server 的控制台事件到不了它），子孙继承这个隐藏控制台。
+        # CREATE_NO_WINDOW 让控制台应用无控制台窗口运行，不设置控制台句柄；与 DETACHED_PROCESS
+        # 混用时会被忽略，所以这里不用后者。stdin / stdout / stderr 已在上面显式传入。
+        # flags 的语义本身不能证明 Win11 + Codex 的弹窗或 0x800700e8 原因，仍需真机回验。
         kwargs["creationflags"] = CREATE_NO_WINDOW | getattr(
             subprocess, "CREATE_NEW_PROCESS_GROUP", 0
         )
@@ -1907,9 +1905,8 @@ def _hand_off(python: str, argv: "list[str]") -> int:
       退出码 0、一个协议帧都没有（#559 的 Windows CI 由 configure 的握手探针撞出来）。
       所以改为子进程：参数按列表传（subprocess 负责逐个加引号），stdio 继承，等它结束并
       原样带回退出码——父进程一直活着，host 看到的管道也就一直在。
-      **这一处故意不带 `CREATE_NO_WINDOW`**：它会给子进程一个新的隐藏控制台，而没显式传
-      stdin/stdout 时子进程的标准句柄就落到那个新控制台上，不再是宿主的协议管道。继承本进程
-      的控制台本来就不弹窗（本进程若没有控制台，它自己早已弹过窗，不是这里多出来的）。
+      **这一处保留既有调用，不带 `CREATE_NO_WINDOW`**：它承载宿主的 stdin/stdout 协议管道，
+      与只读探测 / 后台重装不是同一用途。本次不改变这条交棒路径的 flags 与 stdio 继承。
     """
     args = [python, os.path.abspath(__file__), *argv]
     if _IS_WINDOWS:

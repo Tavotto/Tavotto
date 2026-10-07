@@ -972,12 +972,9 @@ def test_every_documented_contention_errno_means_someone_holds_the_lock(
 _DETACHED_PROCESS = 0x00000008
 
 
-def test_background_provision_on_windows_gets_a_hidden_console_not_none(
-    tmp_path, fake_popen, monkeypatch
-):
-    """用户反馈（0.18.0，Win11 + Codex）：后台重装用 DETACHED_PROCESS 起，没有控制台的
-    python 被交给 Windows Terminal 开了个可见窗口，一启动就报 0x800700e8，重装一行没跑，
-    每开一次会话弹一次。主语是**传给 Popen 的 creationflags**：要隐藏控制台、不要「无控制台」。"""
+def test_background_provision_on_windows_uses_no_window_flag(tmp_path, fake_popen, monkeypatch):
+    """主语是传给 Popen 的 creationflags：用 CREATE_NO_WINDOW，不与 DETACHED_PROCESS 混用。
+    这里只判 kwargs；Win11 + Codex 的弹窗与 0x800700e8 是否消失仍需真机验证。"""
     monkeypatch.setattr(launcher, "_IS_WINDOWS", True)
     monkeypatch.setattr(launcher, "CREATE_NO_WINDOW", 0x08000000)
     assert launcher.kick_background_provision()["started"] is True
@@ -989,9 +986,8 @@ def test_background_provision_on_windows_gets_a_hidden_console_not_none(
 
 
 def test_background_provision_backs_off_after_a_kick(tmp_path, fake_popen, monkeypatch):
-    """起过一次之后退避期内不再起：宿主每起一次 server 就判一次「旧了」，后台那次没跑起来
-    或装不成时，没有退避就是每个会话起一次、弹一次。过了退避期照常再试；手动
-    `--provision` 成功清掉记号，下一次不必等。"""
+    """Popen 返回后记下这次启动，退避期内不再起；不覆盖 Popen 自己抛 OSError 的情况。
+    过了退避期照常再试；手动 `--provision` 成功清掉记号，下一次不必等。"""
     assert launcher.kick_background_provision()["started"] is True
     again = launcher.kick_background_provision()
     assert again["started"] is False and again["reason"] == "backoff", again
@@ -1031,8 +1027,8 @@ def test_startup_inside_the_backoff_says_where_the_log_is(tmp_path, fake_popen, 
     assert len(fake_popen) == 1
 
 
-def _plugin_spawn_calls() -> "list[tuple[int, str, set]]":
-    """`codex-plugin/mcp/server.py` 里每个 `subprocess.<fn>(...)` 调用：(行号, 函数名, 关键字名)。"""
+def _plugin_spawn_calls() -> "list[tuple[int, str, dict]]":
+    """`codex-plugin/mcp/server.py` 里每个 subprocess 调用：(行号, 函数名, 关键字值的 AST)。"""
     import ast
 
     tree = ast.parse((PLUGIN / "mcp" / "server.py").read_text(encoding="utf-8"))
@@ -1045,22 +1041,31 @@ def _plugin_spawn_calls() -> "list[tuple[int, str, set]]":
             and node.func.value.id == "subprocess"
             and node.func.attr in ("run", "Popen", "call", "check_output", "check_call")
         ):
-            out.append((node.lineno, node.func.attr, {kw.arg for kw in node.keywords}))
+            out.append(
+                (node.lineno, node.func.attr, {kw.arg: ast.dump(kw.value) for kw in node.keywords})
+            )
     return out
 
 
 def test_every_plugin_probe_spawn_is_windowless():
-    """插件启动器起的每个子进程都声明 `creationflags`（隐藏窗口）。唯一例外是 Windows 交棒的
-    `subprocess.call`：它要继承本进程的控制台与协议管道（见 `_hand_off` 的说明）。
-    `Popen(**kwargs)` 的那一处由上面的行为用例按真实 kwargs 判。"""
+    """主语是直接 spawn 的参数绑定：flags 用插件常量，stdin 用 DEVNULL；只出现关键字不够。
+    这不是 Windows 窗口实测。Windows 交棒的 call 保留 stdio 继承；后台 Popen 的 kwargs
+    由上面的行为用例判。新增其他间接传参要补行为用例，不能靠 **kwargs 自动豁免。"""
+    import ast
+
     calls = _plugin_spawn_calls()
     assert len(calls) >= 8, f"只扫到 {calls}，AST 匹配可能失效"
-    missing = [
-        (line, fn)
-        for line, fn, kws in calls
-        if fn != "call" and "creationflags" not in kws and None not in kws
-    ]
-    assert missing == [], f"这些 spawn 没带 creationflags（Windows 上会弹窗）：{missing}"
+    expected = {
+        "creationflags": ast.dump(ast.parse("CREATE_NO_WINDOW", mode="eval").body),
+        "stdin": ast.dump(ast.parse("subprocess.DEVNULL", mode="eval").body),
+    }
+    for line, fn, kws in calls:
+        if fn in ("call", "Popen"):
+            continue
+        assert None not in kws, f"新增的间接 spawn 参数需要行为看护：{line} {fn}"
+        for name, value in expected.items():
+            assert kws.get(name) == value, f"spawn 参数绑定不符：{line} {fn} {name}={kws.get(name)}"
+    assert [fn for _l, fn, _k in calls if fn == "Popen"] == ["Popen"], "后台之外又多了 Popen"
     assert [fn for _l, fn, _k in calls if fn == "call"] == ["call"], "交棒之外又多了 call"
 
 
