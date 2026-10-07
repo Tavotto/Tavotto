@@ -3111,6 +3111,7 @@ export default interface Resources {
         "vmin": "自动范围"
       },
       "resetProp": "恢复{{label}}",
+      "resetPropBoth": "两项都恢复",
       "resetToScriptCount_other": "恢复整张图 · {{count}} 项",
       "restore": "恢复",
       "restoreMenuTip": "恢复图内修改",

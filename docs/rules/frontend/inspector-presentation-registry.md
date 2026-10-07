@@ -50,6 +50,11 @@
   不一致——有的成员改过、有的没改，那时同样谁的都不画。
 * `pairRows` 的查表键由 `pairKey` 自己生成，别手写字面量：`['vmin','vmax']`
   排序之后是 `vmax|vmin`，手写的键查不到就安静退回两行，界面上看不出异常。
+* **并成一行的两条字段仍各自可恢复**（色阶上下限 `PairRow`、反转 X / Y、边框联动行的颜色 / 线宽；
+  Codex #829 P2）：行网格的状态槽只有一格，那一格放 `controls/textRows` 的 `ResetPairChip`——只改了
+  一条就是那一条的 `ResetChip`、只清它；两条都改了是一张小菜单（恢复 A / 恢复 B / 两项都恢复，后者一条
+  历史）。不许把一行的恢复并成「清掉这一行改过的全部」：那样只想让一界回到脚本值的用户会连另一界的
+  修改一起丢。看护 `colorScalePanels.test.tsx`、`axesPage.test.tsx`、`spineFrameCard.test.tsx`。
 * 色阶共用关系（`inspector/ColorScaleLink.tsx`）判据只认 manifest 的两条事实：
   `mappable_gid`（色条直接挂着的那个）与 `scale_gids`（与它共用同一份 norm 对象的
   **色阶兄弟**，引擎 `colorbarmodel.scale_siblings` 判、2026-09-21），唯一谓词

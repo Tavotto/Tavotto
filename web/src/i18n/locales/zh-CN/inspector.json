@@ -310,6 +310,7 @@
       "vmin": "自动范围"
     },
     "resetProp": "恢复{{label}}",
+    "resetPropBoth": "两项都恢复",
     "resetToScriptCount_other": "恢复整张图 · {{count}} 项",
     "restoreMenuTip": "恢复图内修改",
     "restore": "恢复",
