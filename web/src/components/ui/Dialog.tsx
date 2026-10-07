@@ -222,6 +222,22 @@ export function Dialog({
     else if (restoreTo.current) holdFocusReturn(owner, restoreTo.current)
   }, [open, owner])
   useEffect(() => () => releaseFocusReturn(owner), [owner])
+  // 关上的那一刻就把焦点还给打开者，不等退场。Radix 的归还（下面的 onCloseAutoFocus）要等 Presence
+  // 卸掉内容、再隔一个 setTimeout 才跑：那之间焦点要么还在一层已关的（`data-state=closed`、正淡出的）
+  // 对话框里，要么已经摔在 body 上——键盘用户这时按键落空，忙的机器上这个窗口能拉到几十毫秒
+  // （CI 满载时命令面板的归还用例就在这里撞见 body）。用被动 effect 而不是 layout effect：Radix 的
+  // 焦点陷阱（trapped={open}）在被动 effect 里才撤，早一步挪出去会被陷阱的 focusout 拽回来。
+  // 交接守卫与 onCloseAutoFocus 同一个判据：焦点已经在这层之外一个连着的非 body 元素上，是有意交接，不动它。
+  // 之后 onCloseAutoFocus 照常跑，看到焦点已在层外就什么都不做；打开者已卸掉的回退仍归它管。
+  useEffect(() => {
+    if (open) return
+    const el = restoreTo.current
+    if (!el?.isConnected) return
+    const now = document.activeElement
+    const inLayer = !!(now && contentRef.current?.contains(now))
+    const lost = !(now instanceof HTMLElement) || now === document.body || !now.isConnected
+    if (inLayer || lost) el.focus()
+  }, [open])
 
   const hasBody = children != null && children !== false
   // 浮动页脚：默认外壳、有正文、没有 status 区时，页脚往上叠进正文的底边（负 margin = 自己的高度），正文底部

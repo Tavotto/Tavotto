@@ -203,6 +203,30 @@ describe('Dialog：关闭时的焦点归还', () => {
     opener.remove()
   })
 
+  // CI 满载时命令面板的归还用例撞见过 body：Radix 的归还排在 Presence 卸载之后的一个 setTimeout 里，
+  // 那之间焦点悬空。这里把定时器整个扣住，证明归还不靠它——关上的那次提交里焦点就已经回到打开者
+  it('关上的那次提交里就还回去，不等 Radix 那个延后的定时器', async () => {
+    const opener = document.createElement('button')
+    document.body.appendChild(opener)
+    opener.focus()
+    await render(<Probe open onOpenChange={() => {}} />)
+    expect(dialogEl('f')!.contains(document.activeElement)).toBe(true)
+    const held: (() => void)[] = []
+    const spy = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((fn: () => void) => {
+      held.push(fn)
+      return 0
+    }) as unknown as typeof setTimeout)
+    try {
+      await render(<Probe open={false} onOpenChange={() => {}} />)
+      expect(document.activeElement).toBe(opener)
+    } finally {
+      spy.mockRestore()
+    }
+    await act(async () => held.forEach((fn) => fn()))
+    expect(document.activeElement).toBe(opener)
+    opener.remove()
+  })
+
   it('关的同时焦点交给了这层之外的元素：不抢回打开前的元素', async () => {
     const opener = document.createElement('button')
     const target = document.createElement('input')
