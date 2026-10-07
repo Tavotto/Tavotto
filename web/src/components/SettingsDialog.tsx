@@ -140,6 +140,26 @@ const PAGE_DESC: Record<SectionId, () => string> = {
 /** 点了搜索结果之后，那一行亮多久（ms）——只是「在这儿」的提示，不是状态 */
 const SEARCH_HIT_MS = 1600
 
+/**
+ * 搜索框此刻看得见吗？**同源对**：与搜索框外层的 `hidden … sm:block`（Tailwind `sm` = 40rem）是同一条判据。
+ * 没有 `matchMedia` 的环境当作宽屏（探测不到不该把搜索整个关掉）。
+ */
+const SEARCH_SHOWN_QUERY = '(min-width: 40rem)'
+function useSearchShown(): boolean {
+  const [shown, setShown] = useState(
+    () => typeof matchMedia === 'undefined' || matchMedia(SEARCH_SHOWN_QUERY).matches,
+  )
+  useEffect(() => {
+    if (typeof matchMedia === 'undefined') return
+    const mql = matchMedia(SEARCH_SHOWN_QUERY)
+    const sync = () => setShown(mql.matches)
+    sync()
+    mql.addEventListener?.('change', sync)
+    return () => mql.removeEventListener?.('change', sync)
+  }, [])
+  return shown
+}
+
 export function SettingsDialog() {
   useTranslation('dialogs')
   const open = useUiStore((s) => s.settingsOpen)
@@ -151,6 +171,8 @@ export function SettingsDialog() {
   const navRef = useRef<HTMLElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
   const [query, setQuery] = useState('')
+  const searchShown = useSearchShown()
+  const hitTimers = useRef(new Set<number>())
   /** 点了某个搜索结果：切到那一页之后要滚到的锚点（按顺序找，第一个在场的） */
   const [pendingAnchor, setPendingAnchor] = useState<readonly string[] | null>(null)
   /** 钻入页报上来的面包屑（null = 普通页头） */
@@ -215,13 +237,22 @@ export function SettingsDialog() {
     if (!el) return
     el.scrollIntoView?.({ block: 'center' })
     el.setAttribute('data-settings-hit', '')
-    const timer = window.setTimeout(() => el.removeAttribute('data-settings-hit'), SEARCH_HIT_MS)
-    return () => window.clearTimeout(timer)
+    // 计时器不挂在这个 effect 的 cleanup 上：上面的 setPendingAnchor(null) 会让它马上重跑，
+    // cleanup 一跑就把刚起的计时器撤了，高亮便永远留在那一行（Codex #828 P2）
+    hitTimers.current.add(
+      window.setTimeout(() => el.removeAttribute('data-settings-hit'), SEARCH_HIT_MS),
+    )
   }, [pendingAnchor, section])
+  useEffect(() => {
+    const timers = hitTimers.current
+    return () => timers.forEach((t) => window.clearTimeout(t))
+  }, [])
 
   const label = (id: SectionId) => st(`section.${id}`)
   const results = useMemo(() => searchSettings(query, SECTIONS, label), [query]) // eslint-disable-line react-hooks/exhaustive-deps
-  const searching = query.trim() !== ''
+  // 搜索框只在 ≥640px 出现：窄下去时不再按搜索词过滤，否则用户看不见也清不掉它，
+  // 无匹配时导航整个空掉（Codex #828 P2）。搜索词留着，宽回来原样接着搜
+  const searching = searchShown && query.trim() !== ''
   /** 导航里此刻摆着的分区（搜索时只剩命中的）：方向键只在它们之间走 */
   const visible: SectionId[] = searching ? results.map((r) => r.section) : SECTIONS
 

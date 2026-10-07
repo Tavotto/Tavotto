@@ -317,6 +317,44 @@ describe('搜索（2026-10-07 设计审计 §9.1，settingsRegistry）', () => {
     expect(row.hasAttribute('data-settings-hit')).toBe(true)
   })
 
+  it('命中高亮是一下：过一会儿自己消掉，不永久挂在那一行（Codex #828 P2）', async () => {
+    await open('general')
+    await type(st('project.allowWriteBack'))
+    await act(async () =>
+      document.querySelector<HTMLButtonElement>('[data-settings-result="project.writeBack"]')!.click(),
+    )
+    await act(async () => {})
+    const row = document.querySelector('[data-settings-anchor="project.writeBack"]')!
+    expect(row.hasAttribute('data-settings-hit')).toBe(true)
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 1800))
+    })
+    expect(row.hasAttribute('data-settings-hit')).toBe(false)
+  })
+
+  it('窄到搜索框藏起来时不再按搜索词过滤：导航完整回来；宽回来接着搜（Codex #828 P2）', async () => {
+    const listeners: (() => void)[] = []
+    let wide = true
+    vi.stubGlobal('matchMedia', (q: string) => ({
+      get matches() {
+        return q.includes('40rem') ? wide : false
+      },
+      media: q,
+      addEventListener: (_: string, cb: () => void) => listeners.push(cb),
+      removeEventListener: () => {},
+    }))
+    await open()
+    await type('zzzz-nothing')
+    expect(document.querySelector('[data-settings-no-results]')).toBeTruthy()
+    wide = false
+    await act(async () => listeners.forEach((cb) => cb()))
+    expect(document.querySelector('[data-settings-no-results]')).toBeNull()
+    expect(nav().querySelectorAll('[data-nav-group]')).toHaveLength(4)
+    wide = true
+    await act(async () => listeners.forEach((cb) => cb()))
+    expect(document.querySelector('[data-settings-no-results]')).toBeTruthy()
+  })
+
   it('没有命中时说一句；清空就回到完整导航', async () => {
     await open()
     await type('zzzz-nothing')

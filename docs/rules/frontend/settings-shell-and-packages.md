@@ -14,8 +14,9 @@
   的别名表（`profiles → spec`、`interface / canvas / sidebars / shortcuts → general`、`update → about`），深链的调用方**不要**再写旧 id。
 * **深链带返回**：`setSettingsOpen(true, section, { returnTo: 'export' })`；`settingsReturnTo` 是闭集
   （`'export' | null`），每次打开重置。要加新的返回目标先扩闭集。
-* **编码 Agent 一级列表只有名称 · 版本号 · 状态**：版本号经 `agentVersionLabel` 只取数字，抽不出
-  就不渲染（真机上 shim 的报错行带完整路径）；路径 / 命令 / 检测来源只在 `AgentDetailView`，
+* **编码 Agent 一级列表只有名称 · 状态**（审计 T44：列表与详情不重复，版本号只在详情里；
+  `CodingAgentsSection.test` 守着；没装 / 装坏时副行说一句为什么）：详情里的版本号经 `agentVersionLabel`
+  只取数字，抽不出就不渲染（真机上 shim 的报错行带完整路径）；路径 / 命令 / 检测来源只在 `AgentDetailView`，
   用 `settings/CopyButton` 给复制。**一级页面上不许出现路径、内部包名、解释段、卡片外框。**
 * **编码 Agent 的 e2e 锚点是稳定 `data-*`，不是小标题上那句话**（2026-09-07，#299 posix-e2e
   真红）：审计 T44 把两个小节按用户目标改了名（「在 A 中使用 B / 在 B 中使用 A」→「配置改图
@@ -144,7 +145,7 @@
 它们与上文同等有效，改规则时一并改这里。
 
 - 深链返回是闭集
-- 一级列表只有名称 · 版本 · 状态
+- 一级列表只有名称 · 状态（版本号只在详情）
 - e2e 锚点全是 `data-agent-*` / `data-rail` / `data-write-back`
 - 查找只在点「在 PyPI 查找」时出网
 - 代际与 `lookupSeq` 两条轴不合并、作业按所属项目分格
