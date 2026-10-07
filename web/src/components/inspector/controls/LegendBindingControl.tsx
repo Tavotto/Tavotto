@@ -100,7 +100,7 @@ export function LegendBindingControl({
             label={lg('viewSource', { label: engineLabel(source.label) })}
             onClick={() => useUiStore.getState().setSelectedGid(source.gid)}
           >
-            <CornerUpLeft size={ICON_SIZE.sm} className="text-ink-3" />
+            <CornerUpLeft size={ICON_SIZE.sm} className="text-ink-2" />
           </IconButton>
         )}
       </div>
