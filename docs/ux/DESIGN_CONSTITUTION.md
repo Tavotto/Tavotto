@@ -144,7 +144,9 @@ Tavotto 是「紧凑工具」那一档：**控件一律 28px（`h-7`）**——�
   拖放落点是 `dropLineClass(pos)`：2px accent 条 + 左端 4px 圆点。
 - **RowMenu**（`useRowMenu` + `RowMenu`）：一行的 ⋯、右键、⇧F10 / ContextMenu 键打开**同一份** `MenuItem` 清单；⋯ 只在
   hover / focus-within / 打开时看得见，行聚焦时它在 Tab 顺序里（tabIndex 0），否则 -1；自己管 roving focus、整张列表只许一个
-  Tab 停靠点的列表传 `tabStop={false}`，⋯ 恒为 -1，键盘入口只剩 ⇧F10 / ContextMenu 键。菜单项图标一律经 `MenuItem icon=`
+  Tab 停靠点的列表传 `tabStop={false}`，⋯ 恒为 -1，键盘入口只剩 ⇧F10 / ContextMenu 键；宿主自己不可聚焦、又不在一列里
+  （当前项目卡）时 `tabbable`，⋯ 常驻 Tab 顺序（两者互斥，`tabStop={false}` 优先）。行的主操作「常态打不开」（目录已不在）用
+  `aria-disabled` 不用 `disabled`：焦点仍落得进行里，⋯ 才够得着。菜单项标的快捷键只标那个键在这一行上真会做的事。菜单项图标一律经 `MenuItem icon=`
   （ink-2，危险项跟字走红），不在 children 里自己排。
 - **TreeRow**（`treeIndent` / `TreeChevron` / `TreeIcon` / `TreeCount`）：树行的固定列——
   缩进 8 + 14 × 层级、16px 折叠箭头列、16px 类型图标列、右对齐计数。图层树与图内

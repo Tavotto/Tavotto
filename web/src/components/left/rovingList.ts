@@ -33,6 +33,9 @@ export function useRovingList<T extends HTMLElement>() {
 
   const onKeyDown = (e: KeyboardEvent) => {
     if (e.altKey || e.metaKey || e.ctrlKey) return
+    // 行菜单（`ui/RowMenu`）开在 portal 里，它的方向键沿 **React 组件树** 冒泡到这里：DOM 上不在这一列里、
+    // 或者已经有人处理过的，都不是这一列的——否则焦点被抢到下面的行上、Tab 停靠点跟着挪走（Codex #832）
+    if (e.defaultPrevented || !e.currentTarget.contains(e.target as Node)) return
     if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return
     // 输入框里的方向键是光标的
     if ((e.target as HTMLElement).closest('input, textarea, [contenteditable="true"]')) return

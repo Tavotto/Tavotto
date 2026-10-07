@@ -96,7 +96,8 @@
   单行 label 或行名变只重画那一行 / A3 selected·tabbable·hidden·locked·expanded 各自只重画
   那一行并显示新状态；观测点是 `<li>` 上 React 记的 props 对象，读不到直接抛）。
 - **元素树与图层树是 ARIA 树（2026-10-07 设计审计 §10.3）**：`role="tree"`，每行 `aria-level` / `aria-posinset` /
-  `aria-setsize`；每行一份 `ui/RowMenu`（⋯ / 右键 / ⇧F10，行有焦点时 ⋯ 进 Tab 顺序；开菜单不改选区）。图层行的键位：
+  `aria-setsize`；每行一份 `ui/RowMenu`（⋯ / 右键 / ⇧F10，行有焦点时 ⋯ 进 Tab 顺序；开菜单不改选区）。元素行的 ⌫ / Delete
+  与画布一样只隐藏、不反向显示，所以菜单只在「隐藏」上标 ⌫，「恢复显示」不标（Codex #832）。图层行的键位：
   Enter = 只选这一个（主操作，此前是改名）· F2 改名 · ⌥↑↓ 改层级 · Esc 清选区；拖放落点是 `dropLineClass`。元素树的
   「只看这一支」是搜索行里的一枚 chip（`data-element-isolate`，× 退出），不再是一条横幅；`ElementTree` 有 `chrome`
   （`drawer` 缺省 / `bare`：别处借用时搜索行自己留边，playground 侧栏用它）。
@@ -115,7 +116,9 @@
   抽屉用 `density="drawer"`（44px）、Project Picker「全部项目」用 `density="page"`（52px + 文件夹记号），两处同一份菜单
   （`ui/RowMenu`：⋯ / 右键 / ⇧F10）、同一套键位（一列一个 Tab 停靠点 `left/rovingList`，↑↓ / Home / End 走行，Enter 打开，
   收藏行 ⌥↑ / ⌥↓ 与菜单的上移 / 下移、拖动同一个按路径的 move，拖动时画 `dropLineClass` 落点线）。当前项目是顶上一张
-  `Card appearance="subtle"`，**不再在收藏区重复**（此前被收藏时一屏画两次选中）。页脚是左栏统一的页脚语法
+  `Card appearance="subtle"`，**不再在收藏区重复**（此前被收藏时一屏画两次选中）；卡不可聚焦，它的 ⋯ 常驻 Tab 顺序
+  （`RowMenu tabbable`）。目录已不在的行「打开」是 `aria-disabled`（不是 `disabled`）：仍是漫游列表的一站，⋯（移除 / 收藏）
+  够得着，点了不打开；切换中 / 正在打开照旧 `disabled`（Codex #832）。页脚是左栏统一的页脚语法
   （`border-t px-1.5 py-1`、抽屉底、28px ghost 钮）。Project Picker 不在工作台的 TooltipProvider 里，「全部项目」自己包一层。顶栏项目名
   （`ProjectSwitcher`）只做 `railClick('workspace')`，不再自己弹菜单——两处各列一遍
   就是两套判据。同名区分 / 筛选 / 失效分组共用 `lib/recentProjects`；「打开文件夹 /

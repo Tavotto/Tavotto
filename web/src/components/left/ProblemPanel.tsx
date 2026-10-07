@@ -168,6 +168,15 @@ export function ProblemPanel() {
         : [{ kind: 'figure', key: f.key }],
     )
   }, [single, view, categories, figures])
+  /**
+   * 最近一次「点开的那一支还在树上」时的走法（各支的 drillKey）。那一支最后一条修好、整支从树上
+   * 消失之后，F8 靠它认出相邻的那一支——否则「下一项」会回到树头 / 树尾（Codex #832）
+   */
+  const lastWalk = useRef<readonly string[]>([])
+  useEffect(() => {
+    const keys = walk.map(drillKey)
+    if (open && keys.includes(drillKey(open))) lastWalk.current = keys
+  }, [open, walk])
 
   // 与「全部修复」真正执行的是**同一个集合**（`batchable`：本画布、能自动修、
   // 不含建议档）——计数说 5 项、点下去修了 7 项，是这颗按钮最不该有的样子
@@ -203,6 +212,9 @@ export function ProblemPanel() {
     const inSingle = single && drillIssues(shown, single).some((i) => i.issueId === issue.issueId)
     const target = inSingle ? null : drillOf(issue, view, figures)
     if (target) ui.setProblemDrill(target, now)
+    // 多支修到只剩直接列出的一支：之前点开的那一支已经不在了，放下它，否则 `open` 仍指着它、
+    // 清单是空的、刚落下的游标下一帧就被撤掉（Codex #832）。放下点开的那一支会连游标一起清，所以在落游标之前
+    else if (ui.problemDrill) ui.setProblemDrill(null)
     const next = cursorFor(groupIssues(drillIssues(shown, target ?? single!)), issue.issueId)
     if (next) ui.setProblemCursor(next, now)
     else ui.setProblemCursor(null)
@@ -213,8 +225,18 @@ export function ProblemPanel() {
     const near = dir > 0 ? cursorAt.next : cursorAt.prev
     if (cursor && near) return locate(near)
     const at = open ? walk.findIndex((d) => drillKey(d) === drillKey(open)) : -1
-    // 还没开始逐项：从此刻点开的那一支起步（没有就是树的头 / 尾）；已经在走：这一支走完换下一支
-    const target = !cursor && at >= 0 ? walk[at] : at < 0 ? (dir > 0 ? walk[0] : walk.at(-1)) : walk[at + dir]
+    // 还没开始逐项：从此刻点开的那一支起步（没有就是树的头 / 尾）；已经在走：这一支走完换下一支；
+    // 点开的那一支已经修完、从树上消失了：沿它原来的位置往前 / 往后找第一支还在的
+    const target =
+      !cursor && at >= 0
+        ? walk[at]
+        : at >= 0
+          ? walk[at + dir]
+          : open && lastWalk.current.includes(drillKey(open))
+            ? adjacentBranch(walk, lastWalk.current, drillKey(open), dir)
+            : dir > 0
+              ? walk[0]
+              : walk.at(-1)
     if (!target) return
     const flat = flattenGroups(groupIssues(drillIssues(shown, target)))
     const issue = dir > 0 ? flat[0] : flat.at(-1)
@@ -446,6 +468,20 @@ export function ProblemPanel() {
 
 const EMPTY_MAP: ReadonlyMap<string, boolean> = new Map()
 
+/** `gone` 在旧走法 `before` 里的位置往 `dir` 方向，第一支仍在 `walk` 上的；没有就是 undefined（到头了，不绕回） */
+function adjacentBranch(
+  walk: readonly ProblemDrill[],
+  before: readonly string[],
+  gone: string,
+  dir: 1 | -1,
+): ProblemDrill | undefined {
+  for (let i = before.indexOf(gone) + dir; i >= 0 && i < before.length; i += dir) {
+    const hit = walk.find((d) => drillKey(d) === before[i])
+    if (hit) return hit
+  }
+  return undefined
+}
+
 const toggled = (prev: ReadonlySet<string>, key: string) => {
   const next = new Set(prev)
   if (next.has(key)) next.delete(key)
@@ -520,7 +556,9 @@ function ScopePill({
         >
           <span className="truncate">{label}</span>
           {n != null && n > 0 && (
-            <span aria-hidden className="type-meta tabular-nums">
+            // 计数坐在 hover 5% 的胶囊底上（桌面上合成 ≈ #e4e4e2）：ink-3 在那里只有 4.14:1，跟胶囊的字走 ink-2
+            // （e2e/a11y 的自算对比度尺子量到的；数字是要读的字）
+            <span aria-hidden className="text-xs tabular-nums">
               {n}
             </span>
           )}
