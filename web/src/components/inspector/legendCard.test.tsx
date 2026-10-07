@@ -843,3 +843,46 @@ describe('选中图例项', () => {
     expect(propInput('handle_linewidth')).toBeDefined()
   })
 })
+
+/**
+ * Codex #829 P2：元组 / 路径标记（`(5, 1, 0)`、`$...$`、Path）的取值字符串不是认得的名字，
+ * 色样曾因此一笔不画。没被改过时照引擎的 `marker_current` 几何画（与标记选择器同一份）。
+ */
+describe('图例色样照引擎几何画标记', () => {
+  it('handle_marker 是元组字符串时，色样里画的是 marker_current 那条路径', async () => {
+    const tupleEntry: ManifestElement = {
+      ...sinEntry,
+      editable: sinEntry.editable.map((fld) =>
+        fld.prop === 'handle_marker'
+          ? {
+              ...fld,
+              value: '(5, 1, 0)',
+              marker_current: {
+                kind: 'path',
+                vertices: [
+                  [0, 0.5],
+                  [-0.48, 0.15],
+                  [-0.29, -0.4],
+                  [0.29, -0.4],
+                  [0.48, 0.15],
+                  [0, 0],
+                ],
+                codes: [1, 2, 2, 2, 2, 79],
+              },
+            }
+          : fld,
+      ),
+    }
+    const m = {
+      ...manifest,
+      elements: manifest.elements.map((e) => (e.gid === sinEntry.gid ? tupleEntry : e)),
+    } as Manifest
+    useRenderStore.getState().patch(renderKeyOf(panelOf()), { manifest: m })
+    await mount(['axes_0.legend'])
+    const swatch = host.querySelector(`[data-legend-swatch="${sinEntry.gid}"]`)
+    expect(swatch, '图例项那一行要有色样').not.toBeNull()
+    const path = swatch!.querySelector('path')
+    expect(path, '名字画不出的标记要照引擎几何画').not.toBeNull()
+    expect(path!.getAttribute('d')).toMatch(/^M/)
+  })
+})

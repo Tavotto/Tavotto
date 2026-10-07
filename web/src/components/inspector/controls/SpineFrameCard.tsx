@@ -2,7 +2,7 @@ import { useState, type ReactNode } from 'react'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { msg, t as translate } from '@/i18n'
 import type { EditableField, ManifestElement } from '@/lib/api'
-import { clearOverride, clearOverrides } from '@/store/actions'
+import { clearOverrides } from '@/store/actions'
 import type { PanelObject } from '@/types/document'
 import { Row, type RowLabelWidth } from '../../ui/Field'
 import { ColorField, NumberField } from '../../ui/Input'
@@ -225,7 +225,14 @@ export function SpineFrameCard({
             beginGesture={() => w.beginGesture()}
             endGesture={w.endGesture}
             overridden={overridden}
-            reset={(p) => clearOverride(panel.id, element.gid, p)}
+            // 一行一颗重置：这一边的颜色与线宽一起回到脚本值，一条历史、一次渲染（Codex #829 P2）
+            reset={(props, label) =>
+              clearOverrides(
+                panel.id,
+                msg('element.resetProp', { label }, 'inspector'),
+                props.map((prop) => ({ gid: element.gid, prop })),
+              )
+            }
             gid={element.gid}
             role={element.role}
             labelWidth={labelWidth}
@@ -331,7 +338,7 @@ function SideRow({
   beginGesture: () => void
   endGesture: () => void
   overridden: (prop: string) => boolean
-  reset: (prop: string) => void
+  reset: (props: string[], label: string) => void
   gid: string
   role: string
   labelWidth: RowLabelWidth
@@ -382,10 +389,7 @@ function SideRow({
         modified && (
           <ResetChip
             label={sideName}
-            onReset={() => {
-              if (overridden(colorProp)) reset(colorProp)
-              if (overridden(widthProp)) reset(widthProp)
-            }}
+            onReset={() => reset([colorProp, widthProp].filter(overridden), sideName)}
           />
         )
       }

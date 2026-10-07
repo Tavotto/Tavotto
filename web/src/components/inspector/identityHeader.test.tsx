@@ -25,6 +25,8 @@ import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
+import { useValidationStore } from '@/store/validationStore'
+import type { ValidationIssue } from '@/lib/validation'
 import { seedExactRender } from '@/test/renderFixtures'
 import { emptyProject, type CanvasObject, type PanelObject } from '@/types/document'
 
@@ -401,5 +403,41 @@ describe('面包屑可点', () => {
     expect(document.body.textContent).not.toContain('所属子图')
     await act(async () => crumbButtons()[1].click())
     expect(useUiStore.getState().selectedGids).toEqual(['axes_0'])
+  })
+})
+
+/**
+ * Codex #829 P2：图内多选时，问题胶囊数的是整组选择——此前只按最后点的那个 gid 过滤，
+ * 先选的元素上的问题从胶囊上消失。
+ */
+describe('问题胶囊数的是整组选择（Codex #829）', () => {
+  const issue = (severity: ValidationIssue['severity'], gid: string): ValidationIssue =>
+    ({
+      issueId: `${severity}-${gid}`,
+      ruleCode: 'font-size-min',
+      severity,
+      context: {},
+      objectRef: { documentId: 'd', canvasId: 'c', objectId: 'p1', gid },
+      subject: { kind: 'object', objectType: 'panel' },
+      propertyPath: 'fontsize',
+      message: literal('x'),
+      technicalDetails: {},
+      fixKind: 'none',
+    }) as unknown as ValidationIssue
+
+  afterEach(() => useValidationStore.setState({ issues: [] }))
+
+  it('选了标题和 X 刻度：两处的问题都算进胶囊，未选元素上的不算', async () => {
+    await seed([panel], ['p1'])
+    seedExactRender(panel, manifest as never)
+    useUiStore.getState().setElementPanel('p1')
+    useUiStore.setState({ selectedGids: ['axes_0.title', 'axes_0.xticks'] })
+    useValidationStore.setState({
+      issues: [issue('error', 'axes_0.title'), issue('warn', 'axes_0.xticks'), issue('error', 'axes_0.legend')],
+    })
+    await mount()
+    const chip = document.querySelector('[data-identity-problems]')
+    expect(chip, '多选时问题胶囊要在').not.toBeNull()
+    expect(chip!.getAttribute('data-identity-problems')).toBe('2')
   })
 })

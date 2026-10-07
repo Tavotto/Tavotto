@@ -331,6 +331,10 @@ function HandleSwatch({ panel, entry }: { panel: PanelObject; entry: LegendEntry
   const ls = read('handle_linestyle')
   const lw = Number(read('handle_linewidth') ?? 1.5)
   const marker = String(read('handle_marker') ?? 'None')
+  // 没被改过时，图上那个标记的真实几何由引擎给：自定义 / 元组 / 路径标记名字画不出，照它画
+  const markerFact = effectiveOverride(panel.overrides, el.gid, 'handle_marker')
+    ? undefined
+    : el.editable.find((f) => f.prop === 'handle_marker')?.marker_current
   const hasLine = el.editable.some((f) => f.prop === 'handle_linestyle')
   return (
     <svg
@@ -338,6 +342,7 @@ function HandleSwatch({ panel, entry }: { panel: PanelObject; entry: LegendEntry
       height={12}
       viewBox="0 0 24 12"
       aria-hidden
+      data-legend-swatch={el.gid}
       className={cn('shrink-0', entry.hidden && 'opacity-40')}
     >
       {hasLine ? (
@@ -354,14 +359,14 @@ function HandleSwatch({ panel, entry }: { panel: PanelObject; entry: LegendEntry
           {/* 标记按它真实的形状画（与标记选择器同一份图形），不再一律画成圆点 */}
           {marker !== 'None' && marker !== '' && (
             <g transform="translate(6 0)" style={{ color }}>
-              <MarkerGlyph code={marker} />
+              <MarkerGlyph code={marker} fact={markerFact} />
             </g>
           )}
         </>
       ) : marker !== 'None' && marker !== '' ? (
         // 散点那种只有标记、没有线的项：画它的标记，不画一块色条
         <g transform="translate(6 0)" style={{ color }}>
-          <MarkerGlyph code={marker} fallback={<rect x={2} y={2} width={8} height={8} fill="currentColor" />} />
+          <MarkerGlyph code={marker} fact={markerFact} fallback={<rect x={2} y={2} width={8} height={8} fill="currentColor" />} />
         </g>
       ) : (
         <rect x={2} y={2} width={20} height={8} fill={color} stroke="none" />

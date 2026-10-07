@@ -160,7 +160,7 @@ function StateChip({
  * （`openProblemAt`，与左栏样式面板的直达同一个动作，2026-10-07 设计审计 §9.4 P2）。
  * 判据只读 `validationStore.issues` 的 `objectRef`，不在这里另判。
  */
-function ProblemsChip({ objectIds, gid, figureId }: { objectIds: string[]; gid?: string | null; figureId: string | null }) {
+function ProblemsChip({ objectIds, gids, figureId }: { objectIds: string[]; gids?: readonly string[] | null; figureId: string | null }) {
   const { t } = useTranslation('inspector')
   const all = useValidationStore((s) => s.issues)
   const mine = all.filter(
@@ -168,7 +168,8 @@ function ProblemsChip({ objectIds, gid, figureId }: { objectIds: string[]; gid?:
       (i.severity === 'error' || i.severity === 'warn') &&
       i.objectRef.objectId != null &&
       objectIds.includes(i.objectRef.objectId) &&
-      (gid == null || i.objectRef.gid === gid),
+      // 多选图内元素时数整组选择，不只最后点的那一个（Codex #829 P2）
+      (gids == null || (i.objectRef.gid != null && gids.includes(i.objectRef.gid))),
   )
   if (!mine.length) return null
   const errors = mine.filter((i) => i.severity === 'error')
@@ -283,7 +284,7 @@ function ElementIdentity({ panel }: { panel: PanelObject }) {
         <>
           <ProblemsChip
             objectIds={[panel.id]}
-            gid={el?.gid ?? null}
+            gids={el ? selectedGids.filter((g) => g !== 'figure') : null}
             figureId={panel.id}
           />
           {/* 「n 项已修改」徽标本身就是恢复菜单（恢复此元素 / 恢复整张图） */}

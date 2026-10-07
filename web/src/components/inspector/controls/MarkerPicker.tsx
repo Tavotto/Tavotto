@@ -68,8 +68,17 @@ function markerShape(code: string): React.ReactNode | null {
  * 画的是同一份形状（2026-10-07 设计审计 §9.2：图例色样按真实 marker 画，不再一律是圆点）。
  * 认不出的取值画 `fallback`。
  */
-export function MarkerGlyph({ code, fallback = null }: { code: string; fallback?: React.ReactNode }) {
-  return <>{markerShape(code) ?? fallback}</>
+export function MarkerGlyph({
+  code,
+  fact,
+  fallback = null,
+}: {
+  code: string
+  /** 引擎发来的图上形状（`marker_current`）：元组 / 路径这类名字画不出的标记照它画（Codex #829 P2） */
+  fact?: MarkerShape
+  fallback?: React.ReactNode
+}) {
+  return <>{markerShape(code) ?? shapeOfFact(fact) ?? fallback}</>
 }
 
 /* -------------------- 引擎发来的几何 → 同一个 12×12 viewBox ------------------ */
