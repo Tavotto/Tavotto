@@ -27,7 +27,7 @@ import subprocess
 import threading
 from pathlib import Path
 
-from . import config, runtime
+from . import config, diagnostictext, runtime
 
 VENV_DIR_NAME = "worker-env"
 INSTALL_TIMEOUT_S = 900  # 首次装 matplotlib 要下几十 MB，网络慢时给足
@@ -71,7 +71,7 @@ def _probe(python: str, expr: str, *, bundled: bool = False) -> str | None:
     `runtime.owned_env` 把 matplotlib 缓存放回数据目录；`bundled=True`（问的是内置 runtime）按
     worker 同一套启动条件（`child_args` / `child_env`：摘掉外来的 PYTHONHOME / PYTHONPATH、缓存进数据目录）。
 
-    失败时把这次的 stdout+stderr 留在 `_probe_failure`（已截断）。调用方要摘录就读它，
+    失败时把这次的 stdout+stderr 留在 `_probe_failure`（先脱敏再截断）。调用方要摘录就读它，
     不要为了日志再跑一次 import。
     """
     _probe_failure.text = ""
@@ -228,28 +228,26 @@ def _data_dir_prefixes() -> list[str]:
 def _sanitize(text: str) -> str:
     """进进度日志之前：数据目录前缀换成 `<data>`，去掉 URL 的 userinfo / 查询串，再走诊断包同一份规则。
 
-    `diagnostics` 在模块顶层 import 了本模块，所以延后 import（与 `deprepair._sanitize` 同一理由）。
+    与诊断包共用无探测依赖的 `diagnostictext`，不反向 import `diagnostics` 扩大解释器依赖环。
     """
-    for prefix in _data_dir_prefixes():
-        text = text.replace(prefix, "<data>")
-    text = _URL_RE.sub(r"\1\2\3", text)
     try:
-        from . import diagnostics
-
-        text = diagnostics.redact_text(text)
-    except Exception:  # noqa: BLE001 — 脱敏不该拖垮安装
-        pass
-    return text
+        for prefix in _data_dir_prefixes():
+            text = text.replace(prefix, "<data>")
+        text = _URL_RE.sub(r"\1\2\3", text)
+        return diagnostictext.redact_text(text)
+    except Exception:  # noqa: BLE001 — 安装继续，但未脱敏正文与异常消息都不能出门
+        return "[bootstrap] output omitted: redaction failed\n"
 
 
 def _excerpt(chunk: object) -> str:
-    """子进程输出的有界尾巴。`TimeoutExpired` 的 stdout/stderr 可能是 bytes 或 str。"""
+    """先脱敏再截尾，免得切掉 URL / 路径前缀后剩下的凭据认不出来。"""
     if chunk is None:
         return ""
     if isinstance(chunk, bytes):
         text = chunk.decode("utf-8", "replace")
     else:
         text = str(chunk)
+    text = _sanitize(text)
     if len(text) <= _EXCERPT_CHARS:
         return text
     return text[-_EXCERPT_CHARS:]
@@ -264,11 +262,17 @@ def _mark(stage: str, kind: str) -> None:
     line = f"[bootstrap] stage={stage} class={kind}\n"
     if _progress["log"] and not _progress["log"].endswith("\n"):
         line = "\n" + line
-    _append(line)
+    # stage / kind 只来自本模块的分类常量与退出码；脱敏器失效也不能吞掉这条事实。
+    _append_safe(line)
 
 
 def _append(line: str) -> None:
-    _progress["log"] = (_progress["log"] + _sanitize(line))[-8000:]
+    _append_safe(_sanitize(line))
+
+
+def _append_safe(line: str) -> None:
+    """只收已经脱敏的正文，或本模块生成、不含子进程文字的分类行。"""
+    _progress["log"] = (_progress["log"] + line)[-8000:]
 
 
 def install(on_event=None) -> dict:

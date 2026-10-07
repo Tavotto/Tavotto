@@ -7,6 +7,8 @@
   版本 / 系统与编码 / 安装方式 / 数据目录 / 渲染解释器 + matplotlib /
   AI CLI 探测 / 项目概况 / 最近错误 + app.log + 用户配置。
   **密钥与个人路径必须先脱敏再交出去**（用户会把它贴进 issue 或发到群里）。
+  共享文本脱敏原语只在 `engine/diagnostictext.py`，`diagnostics.redact_text` / `_redact_text`
+  保留兼容入口；bootstrap 直接依赖该叶子模块，不反向引入诊断包的解释器探测依赖。
   `recent_projects` / `projects` **只留条数**：那是用户所有课题的名字与路径，
   排障一次都用不到（当前项目在 report.json 的 project 段里）。
 - **包里的日志取自出门版 `cache/diagnostics.log`，不读 `cache/app.log`（QA 2026-09-24 REL-05-B1 / B2）**：
