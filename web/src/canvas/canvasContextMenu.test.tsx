@@ -1,7 +1,7 @@
 /**
  * 空白画布的右键菜单与素材落点预览（2026-10-07 设计审计 §10.1）。
  *   1. 空白处右键：拦下浏览器 / WebView 自己的菜单，开画布菜单（粘贴 / 全选 / 适应 / 视图开关 / 画布设置）；
- *   2. 对象上的右键不归它（对象有自己的菜单）；
+ *   2. 对象上的右键不归它（对象有自己的菜单）；快速编辑里不开（菜单全是版面级动作，这一屏只有那一张图）；
  *   3. 视图开关选了不关菜单、真的改了 uiStore；没有对象时「全选」置灰；
  *   4. 从素材库拖一张图进来：落点预览框出现，大小与松手后 `placePanelInPage` 落的是同一个框；离开就收。
  * 主语：`data-canvas-stage` 上派发的原生事件；菜单认 `data-canvas-menu` / `data-canvas-menu-item`，预览认 `data-drop-ghost`。
@@ -16,6 +16,7 @@ import { placePanelInPage } from '@/lib/panelPlacement'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useUiStore } from '@/store/uiStore'
+import { openFastEdit, returnToLayout } from '@/store/workspace'
 import { mmToWorld, useViewportStore } from '@/store/viewportStore'
 import { emptyProject } from '@/types/document'
 import { literal } from '@/i18n'
@@ -129,6 +130,31 @@ describe('空白画布的右键菜单', () => {
     await act(async () => item('rulers').click())
     expect(useUiStore.getState().showRulers).toBe(true)
     expect(menu(), '开关选完菜单还开着').not.toBeNull()
+  })
+
+  // Codex #833：快速编辑只画那一张图，粘贴进版面 / 全选版面 / 适应页面 / 标尺网格在这一屏都没有对应物
+  it('快速编辑里空白处右键：原生菜单照样拦下，画布菜单不开', async () => {
+    try {
+      await act(async () => void openFastEdit('fig1'))
+      const ev = await contextMenuAt(stage())
+      expect(ev.defaultPrevented).toBe(true)
+      expect(menu()).toBeNull()
+    } finally {
+      await act(async () => returnToLayout())
+    }
+    expect(menu(), '回到排版不会冒出一个快速编辑里点出来的菜单').toBeNull()
+  })
+
+  it('开着画布菜单切进快速编辑：菜单收起，回到排版也不在旧落点上重新冒出来', async () => {
+    await contextMenuAt(stage())
+    expect(menu()).not.toBeNull()
+    try {
+      await act(async () => void openFastEdit('fig1'))
+      expect(menu()).toBeNull()
+    } finally {
+      await act(async () => returnToLayout())
+    }
+    expect(menu()).toBeNull()
   })
 
   it('对象上的右键不归它', async () => {

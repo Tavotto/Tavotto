@@ -39,6 +39,8 @@
   只接空白处（落在 `[data-object-id]` 上的冒泡不接——文字编辑 / 裁剪中留给浏览器自己的菜单）。只放调既有函数的入口：
   粘贴 / 全选 / 适应画布 / 标尺·网格·安全区开关 / 画布设置（`data-canvas-menu-item`），离散动作过 `runDiscreteAction`。
   「全选」可不可用与 `selectAll` 读同一个判据 `store/actions.isSelectAllTarget`（看得见且没锁）——只有隐藏 / 锁定对象时置灰（Codex #833）。
+  快速编辑（`fast_edit`）里不开：这一屏只画那一张图，菜单全是版面级动作；原生菜单照样拦下，开着时切进快速编辑当场收起
+  （收起不是藏起，回排版不在旧落点上重新冒出来，Codex #833）。
   看护 `canvas/canvasContextMenu.test.tsx`。
 * 看护：`canvas/objectContextMenu.test.tsx` / `store/quickEditActions.test.ts` /
   `components/inspector/syncOverrides.test.tsx` / `components/inspector/writeBackRecords.test.tsx` /

@@ -70,10 +70,11 @@ export const KEYMAP = {
     { key: 'arrowright' },
   ),
   // 排列
-  zTop: k(`⇧${MOD}]`, { key: ']', mod: true, shift: true }),
+  // 浏览器报 ⇧ 改写后的 key：美式布局 ⇧] = `}`、⇧[ = `{`（useKeyboard 两种写法都认，按 shiftKey 分上下）
+  zTop: k(`⇧${MOD}]`, { key: '}', mod: true, shift: true }, { key: ']', mod: true, shift: true }),
   zUp: k(`${MOD}]`, { key: ']', mod: true, shift: false }),
   zDown: k(`${MOD}[`, { key: '[', mod: true, shift: false }),
-  zBottom: k(`⇧${MOD}[`, { key: '[', mod: true, shift: true }),
+  zBottom: k(`⇧${MOD}[`, { key: '{', mod: true, shift: true }, { key: '[', mod: true, shift: true }),
   // 视图
   zoomIn: k(`${MOD}+`, { key: '=', mod: true }, { key: '+', mod: true }),
   zoomOut: k(`${MOD}−`, { key: '-', mod: true }),

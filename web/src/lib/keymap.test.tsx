@@ -4,22 +4,25 @@
  * 主语：**挂着的 `useKeyboard` 在 window 上消费了哪些按键**（`defaultPrevented`）——不是它源码里写了
  * 哪些字串。一整张按键表（字母 / 数字 / 标点 / 功能键 × 六种修饰组合）逐个派发：
  *   1. 被消费的每一个都必须落在 `KEYMAP` 的某条 `match` 上（useKeyboard 加了绑定却没登记 → 红）；
- *   2. 反过来，与状态无关的每条登记（不是 native、不需要先有选区的）合成出来的按键确实被消费
- *      （登记了一条 useKeyboard 根本不认的键 → 红）。
+ *   2. 反过来，与状态无关的每条登记（不是 native、不需要先有选区的）按美式布局合成出**真浏览器会给的**
+ *      事件（⇧ 改写后的 key + 物理 code，⇧⌘] 报 `}`）确实被消费（登记了一条 useKeyboard 根本不认、
+ *      或真浏览器里按不出来的键 → 红）。
  * 盲点写在明处：只在有选区 / 手势进行中才消费的键（Enter、方向键、手势中的 Esc）第 1 条照样覆盖
  * （它们在这里不被消费，不会误报），第 2 条跳过它们。
  */
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
-import { KEYMAP, bindingFor, keyOf, keysOf, type KeyId } from './keymap'
+import { KEYMAP, bindingFor, keyOf, keysOf, type KeyId, type KeyMatch } from './keymap'
 import { useKeyboard } from '@/hooks/useKeyboard'
+import { changeZOrder } from '@/store/actions'
 
 vi.mock('@/store/actions', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/store/actions')>()),
   runManualSave: vi.fn().mockResolvedValue(undefined),
   startNamedNode: vi.fn(),
   toggleTimeline: vi.fn(),
+  changeZOrder: vi.fn(),
 }))
 
 declare global {
@@ -85,6 +88,56 @@ function* probes(): Generator<Probe> {
     for (const m of mods) yield { key: m.shiftKey && b.shifted ? b.shifted : b.key, code: b.code, ...m }
 }
 
+/** ⇧ 改写出来的字 → 未改写的那颗键（`}` → `]`） */
+const UNSHIFTED = Object.fromEntries(Object.entries(SHIFTED).map(([b, s]) => [s, b]))
+
+/** 一颗未改写的字符键在美式布局上的 `code` */
+function codeOfBase(c: string): string | undefined {
+  if (/^[a-z]$/.test(c)) return `Key${c.toUpperCase()}`
+  if (/^[0-9]$/.test(c)) return `Digit${c}`
+  if (c === ' ') return 'Space'
+  return PUNCT_CODE[c]
+}
+
+/**
+ * 一条 `KeyMatch` 在美式布局的真浏览器里按出来的 keydown：`key` 是 ⇧ 改写**之后**的字
+ * （⇧⌘] 报 `}`，不是 `]`），`code` 是物理键位。按不出来（要求 `}` 却又要求不按 ⇧）返回 null。
+ * 主语是「用户真按下去时浏览器给的事件」，不是把 KEYMAP 里的字串原样塞回去——那样 ⇧⌘] 只认
+ * `]` 的绑定在这里照样绿，真浏览器里却是死键。
+ */
+function usLayoutEvent(m: KeyMatch): Probe | null {
+  const mods = { ctrlKey: !!m.mod, altKey: !!m.alt }
+  let base: string
+  let shift: boolean
+  if (m.code) {
+    // 按 code 认的：从物理键位反推未改写的字
+    base = m.code.startsWith('Key')
+      ? m.code.slice(3).toLowerCase()
+      : m.code.startsWith('Digit')
+        ? m.code.slice(5)
+        : m.code === 'Space'
+          ? ' '
+          : (Object.entries(PUNCT_CODE).find(([, c]) => c === m.code)?.[0] ?? '')
+    shift = !!m.shift
+  } else if (m.key && m.key.length > 1) {
+    // 具名键（escape → Escape）：⇧ 不改写它
+    const named = m.key[0].toUpperCase() + m.key.slice(1)
+    return { key: named, code: named, shiftKey: !!m.shift, ...mods }
+  } else if (m.key && UNSHIFTED[m.key]) {
+    // `}` / `?` / `+` 这类字只有按着 ⇧ 才按得出来
+    if (m.shift === false) return null
+    base = UNSHIFTED[m.key]
+    shift = true
+  } else {
+    base = m.key ?? ''
+    shift = !!m.shift
+  }
+  const code = codeOfBase(base)
+  if (code === undefined) return null
+  const key = !shift ? base : /^[a-z]$/.test(base) ? base.toUpperCase() : (SHIFTED[base] ?? base)
+  return { key, code, shiftKey: shift, ...mods }
+}
+
 const press = (p: Probe) => {
   const ev = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...p })
   act(() => {
@@ -120,28 +173,28 @@ describe('keymap ↔ useKeyboard', () => {
     for (const [id, b] of Object.entries(KEYMAP) as [KeyId, (typeof KEYMAP)[KeyId]][]) {
       if ('native' in b || stateful.has(id)) continue
       for (const m of b.match) {
-        // KEYMAP 里的 key 是小写比较用的；派发时还原成浏览器给的写法（escape → Escape）
-        const named = m.key && m.key.length > 1 ? m.key[0].toUpperCase() + m.key.slice(1) : m.key
-        const fromCode = m.code?.startsWith('Key')
-          ? m.code.slice(3).toLowerCase()
-          : m.code?.startsWith('Digit')
-            ? m.code.slice(5)
-            : m.code === 'Space'
-              ? ' '
-              : ''
-        // 只有按 code 认的那几条（⇧2）才需要模拟 ⇧ 改写出来的 key
-        const key = named ?? (m.shift && SHIFTED[fromCode] ? SHIFTED[fromCode] : fromCode)
-        const p: Probe = {
-          key,
-          code: m.code ?? '',
-          ctrlKey: !!m.mod,
-          shiftKey: !!m.shift,
-          altKey: !!m.alt,
+        const p = usLayoutEvent(m)
+        if (!p) {
+          dead.push(`${id} ${JSON.stringify(m)}（美式布局按不出这个组合）`)
+          continue
         }
         if (!press(p).defaultPrevented) dead.push(`${id} ${JSON.stringify(p)}`)
       }
     }
     expect(dead).toEqual([])
+  })
+
+  it('⌘] 族按真浏览器的事件（美式布局 ⇧] = `}`）分出上移 / 置顶 / 下移 / 置底', () => {
+    vi.mocked(changeZOrder).mockClear()
+    for (const [key, code, shiftKey] of [
+      ['}', 'BracketRight', true],
+      [']', 'BracketRight', false],
+      ['[', 'BracketLeft', false],
+      ['{', 'BracketLeft', true],
+    ] as const) {
+      expect(press({ key, code, shiftKey, ctrlKey: true }).defaultPrevented).toBe(true)
+    }
+    expect(vi.mocked(changeZOrder).mock.calls.map((c) => c[0])).toEqual(['top', 'up', 'down', 'bottom'])
   })
 })
 

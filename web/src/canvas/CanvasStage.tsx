@@ -64,6 +64,10 @@ export function CanvasStage() {
   const dragging = useInteractionStore((s) => s.kind !== 'none')
   /** 空白画布上的右键菜单落点（client 坐标）；null = 没开 */
   const [canvasMenu, setCanvasMenu] = useState<{ x: number; y: number } | null>(null)
+  // 快速编辑这一屏只有那一张图，而画布菜单全是版面级动作（粘贴进版面、全选版面、适应页面、标尺 / 网格）——
+  // 与 useKeyboard 的 inFastEdit 同一条判据：快速编辑里不开。一处管两种来路：在快速编辑里右键（开了当场收掉、
+  // 不会提交出来），与开着菜单切进快速编辑。是收起不是藏起：藏起的话回排版时它会在旧落点上重新冒出来
+  if (fastEdit && canvasMenu) setCanvasMenu(null)
   /** 素材拖进来时的落点预览（mm，与松手后 `addPanelToCanvas` 落的是同一个框） */
   const ghost = useDropGhost(fastEdit)
 
@@ -205,6 +209,7 @@ export function CanvasStage() {
           // 对象自己的右键菜单在 ObjectView / PanelView 里（它们 stopPropagation）；冒到这里的是空白处。
           // 文字编辑 / 裁剪中落在对象上的右键也会冒上来——那时留给浏览器自己的菜单（复制 / 粘贴文字）
           if ((e.target as HTMLElement).closest('[data-object-id]')) return
+          // 快速编辑里原生菜单照样拦下，画布菜单由上面 `fastEdit && canvasMenu` 那一句收掉
           e.preventDefault()
           setCanvasMenu({ x: e.clientX, y: e.clientY })
         }}
