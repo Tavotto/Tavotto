@@ -14,16 +14,17 @@
 import { createElement } from 'react'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useKeyboard } from './useKeyboard'
 import { resetNudge } from '@/canvas/nudge'
 import { useDocumentStore } from '@/store/documentStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
+import { useViewportStore } from '@/store/viewportStore'
 import { useWorkspaceStore } from '@/store/workspace'
 import { canvasToDoc } from '@/types/document'
-import type { CanvasData, PanelObject } from '@/types/document'
+import type { CanvasData, PanelObject, TextObject } from '@/types/document'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -98,6 +99,7 @@ afterEach(() => {
   root = null
   document.body.innerHTML = ''
   useWorkspaceStore.getState().clear()
+  vi.restoreAllMocks()
 })
 
 describe('快速编辑里的版面快捷键', () => {
@@ -135,5 +137,56 @@ describe('快速编辑里的版面快捷键', () => {
     useWorkspaceStore.getState().enterFastEdit(PANEL.id)
     press('v')
     expect(useUiStore.getState().tool).toBe('select')
+  })
+})
+
+/**
+ * ⇧2「缩放到选中」在快速编辑里只认正在编辑的那张图（Codex #833）：这一屏只画这一张，⌘A 之后选区里还有
+ * 一整版看不见的对象——按整个选区取景会把唯一看得见的图挪走、缩小。对照组：排版里照常框整个选区。
+ */
+describe('快速编辑里的 ⇧2', () => {
+  const NOTE: TextObject = {
+    id: 't1', type: 'text', text: 'a', sizePt: 9, bold: false,
+    color: '#000', align: 'left', x: 100, y: 80, w: 30, h: 8,
+  }
+  const shift2 = () =>
+    act(() => {
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: '@', code: 'Digit2', shiftKey: true, bubbles: true, cancelable: true }),
+      )
+    })
+  const selectAllKey = () =>
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', ctrlKey: true, bubbles: true, cancelable: true }))
+    })
+  beforeEach(() => {
+    useDocumentStore.getState().silent((d) => {
+      d.objects.push({ ...NOTE })
+    })
+  })
+
+  it('排版里 ⌘A 后 ⇧2：框整个选区（对照组）', () => {
+    const spy = vi.spyOn(useViewportStore.getState(), 'fitRectAnimated').mockImplementation(() => {})
+    selectAllKey()
+    expect(useSelectionStore.getState().ids).toEqual(['p1', 't1'])
+    shift2()
+    expect(spy).toHaveBeenCalledWith({ x: 10, y: 20, w: 120, h: 68 })
+  })
+
+  it('快速编辑里 ⌘A 后 ⇧2：只框正在编辑的那张图', () => {
+    const spy = vi.spyOn(useViewportStore.getState(), 'fitRectAnimated').mockImplementation(() => {})
+    useWorkspaceStore.getState().enterFastEdit(PANEL.id)
+    selectAllKey()
+    shift2()
+    expect(spy).toHaveBeenCalledTimes(1)
+    expect(spy).toHaveBeenCalledWith({ x: 10, y: 20, w: 40, h: 30 })
+  })
+
+  it('快速编辑里选区不含那张图：⇧2 不动视口', () => {
+    const spy = vi.spyOn(useViewportStore.getState(), 'fitRectAnimated').mockImplementation(() => {})
+    useWorkspaceStore.getState().enterFastEdit(PANEL.id)
+    useSelectionStore.getState().set([NOTE.id])
+    shift2()
+    expect(spy).not.toHaveBeenCalled()
   })
 })

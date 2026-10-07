@@ -10,8 +10,9 @@ import { ZoomControls } from './ZoomControls'
 import { useDocumentStore } from '@/store/documentStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useViewportStore } from '@/store/viewportStore'
+import { useWorkspaceStore } from '@/store/workspace'
 import { zoomToSelection } from '@/store/zoomToSelection'
-import { emptyProject, type TextObject } from '@/types/document'
+import { emptyProject, type PanelObject, type TextObject } from '@/types/document'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -51,6 +52,7 @@ beforeEach(async () => {
 afterEach(async () => {
   await act(async () => root.unmount())
   document.body.innerHTML = ''
+  useWorkspaceStore.getState().clear()
   vi.restoreAllMocks()
 })
 
@@ -105,5 +107,52 @@ describe('缩放菜单', () => {
     expect(box.h).toBeCloseTo(side, 6)
     expect(box.x).toBeCloseTo(10 - side / 2, 6)
     expect(box.y).toBeCloseTo(10 - side / 2, 6)
+  })
+})
+
+/**
+ * 快速编辑这一屏只画正在编辑的那张图（`CanvasLayers only=`），缩放菜单还挂着。⌘A / 面板「全选」之后选区里有
+ * 一整版看不见的对象——「缩放到选中」只认那张图；选区里没有它就置灰（Codex #833）。
+ */
+describe('缩放菜单 · 快速编辑', () => {
+  const panel: PanelObject = {
+    id: 'p1', type: 'panel', fileId: 'Fig1.pdf', fileKind: 'pdf', nativeW: 80, nativeH: 60,
+    overrides: [], x: 100, y: 80, w: 40, h: 30,
+  }
+  beforeEach(() => {
+    act(() =>
+      useDocumentStore.getState().silent((d) => {
+        d.objects.push({ ...panel })
+      }),
+    )
+  })
+
+  it('排版里选中两者：框两者的并（对照组）', async () => {
+    const spy = vi.spyOn(useViewportStore.getState(), 'fitRectAnimated').mockImplementation(() => {})
+    act(() => useSelectionStore.setState({ ids: ['t1', 'p1'] }))
+    await open()
+    await act(async () => item().click())
+    expect(spy).toHaveBeenCalledWith({ x: 10, y: 20, w: 130, h: 90 })
+  })
+
+  it('快速编辑里选中两者：只框正在编辑的那张图', async () => {
+    const spy = vi.spyOn(useViewportStore.getState(), 'fitRectAnimated').mockImplementation(() => {})
+    act(() => useWorkspaceStore.getState().enterFastEdit('p1'))
+    act(() => useSelectionStore.setState({ ids: ['t1', 'p1'] }))
+    await open()
+    expect(item().hasAttribute('data-disabled')).toBe(false)
+    await act(async () => item().click())
+    expect(spy).toHaveBeenCalledWith({ x: 100, y: 80, w: 40, h: 30 })
+  })
+
+  it('快速编辑里只选中了看不见的版面对象：置灰，动作不动视口', async () => {
+    const spy = vi.spyOn(useViewportStore.getState(), 'fitRectAnimated').mockImplementation(() => {})
+    act(() => useSelectionStore.setState({ ids: ['t1'] }))
+    act(() => useWorkspaceStore.getState().enterFastEdit('p1'))
+    await open()
+    // 进快速编辑本身要让已开着的菜单重算（订阅了工作区模式），不是只在选区变时
+    expect(item().hasAttribute('data-disabled')).toBe(true)
+    expect(zoomToSelection()).toBe(false)
+    expect(spy).not.toHaveBeenCalled()
   })
 })
