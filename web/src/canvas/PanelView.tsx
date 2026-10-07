@@ -65,7 +65,6 @@ import {
   panelKind,
   panelRotation,
   rotationSwaps,
-  unrotateVec,
 } from '@/types/document'
 import {
   cycleOverlapAt,
@@ -78,7 +77,7 @@ import {
   trackPointer,
 } from './interactions'
 import { openQuickEdit } from './quickEditStore'
-import { panelContentTransform, panelTransformCss } from '@/lib/panelTransform'
+import { pageToContentVec, panelContentTransform, panelTransformCss } from '@/lib/panelTransform'
 import { Info, LoaderCircle } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 
@@ -670,10 +669,11 @@ function ElementHitLayer({
     const r = ref.current!.getBoundingClientRect()
     const w = rotationSwaps(rot) ? r.height : r.width
     const h = rotationSwaps(rot) ? r.width : r.height
-    const [u, v] = unrotateVec(
+    // 画这张图的变换（先翻转再旋转）整个反过来：翻转面板上点哪儿就命中画面上那儿的元素，不是它的镜像
+    const [u, v] = pageToContentVec(
+      panelContentTransform(obj),
       e.clientX - (r.left + r.width / 2),
       e.clientY - (r.top + r.height / 2),
-      rot,
     )
     return { fx: u / w + 0.5, fy: v / h + 0.5 }
   }

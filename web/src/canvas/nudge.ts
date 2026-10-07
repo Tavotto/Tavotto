@@ -39,7 +39,8 @@ import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { useWorkspaceStore } from '@/store/workspace'
 import { moveLabel, warnBlockedGroups } from '@/store/actions'
-import { panelRotation, unrotateVec, type PanelObject } from '@/types/document'
+import { pageToContentVec, panelContentTransform } from '@/lib/panelTransform'
+import type { PanelObject } from '@/types/document'
 import {
   draggableSelection,
   groupMove,
@@ -231,16 +232,17 @@ function beginBurst(key: string): boolean {
     const panel = findPanel(ui.elementPanelId!)
     if (!panel) return false
     const full = panelFullRect(panel)
-    const rot = panelRotation(panel)
+    const tf = panelContentTransform(panel)
     b = {
       ...common,
       kind: 'figure',
       panelId: panel.id,
       gids: [...ui.selectedGids],
       mover: null,
-      // 面板可能被旋转过：页面上的位移先转回内容坐标系，再按面板在页面上的实际大小折成分数
+      // 面板可能被旋转 / 翻转过：页面上的位移先折回内容坐标系（与画布画这张图同一个变换的逆，
+      // 翻转面板上按 → 元素在画面上也往右走），再按面板在页面上的实际大小折成分数
       toFrac: (dx, dy) => {
-        const [cx, cy] = unrotateVec(dx, dy, rot)
+        const [cx, cy] = pageToContentVec(tf, dx, dy)
         return [cx / full.w, cy / full.h]
       },
       unwatchAuthority: null,

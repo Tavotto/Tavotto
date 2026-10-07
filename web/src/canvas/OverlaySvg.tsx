@@ -27,7 +27,7 @@ import {
 } from '@/store/viewportStore'
 import { useDisplayedExactManifest } from '@/store/mountedSvgStore'
 import type { CanvasObject, LinearObject, PanelObject } from '@/types/document'
-import { isLinear, lineEndpoints, objectRotation, panelRotation } from '@/types/document'
+import { isLinear, lineEndpoints, objectRotation } from '@/types/document'
 import {
   guardStale,
   startArrowDrag,
@@ -40,6 +40,7 @@ import {
   startResizeDrag,
   DRAW_COLOR,
 } from './interactions'
+import { elementOverlayTransform } from './elementGeometry'
 import { IssueOverlay } from './IssueOverlay'
 import { openQuickEdit } from './quickEditStore'
 
@@ -751,10 +752,8 @@ function PreviewLines({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
   if (!lines.size) return null
   const full = panelFullRect(panel)
   const panelBox = toScreen(panel, t)
-  const rot = panelRotation(panel)
-  const spin = rot
-    ? `rotate(${rot} ${panelBox.x + panelBox.w / 2} ${panelBox.y + panelBox.h / 2})`
-    : undefined
+  // 与 PanelView 画这张图同一个变换（先翻转再旋转，`canvas/elementGeometry`）
+  const spin = elementOverlayTransform(panel, panelBox)
   const toPoint = (p: [number, number]) => {
     const b = toScreen({ x: full.x + p[0] * full.w, y: full.y + p[1] * full.h, w: 0, h: 0 }, t)
     return { x: b.x, y: b.y }
@@ -820,11 +819,9 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
   const panelBox = toScreen(panel, t)
   const primary = selectedGid ? resolve(selectedGid) : null
   const layout = { width: mmToWorld(full.w), height: mmToWorld(full.h) }
-  // 内容坐标系里算好的框，整组绕包围盒中心转到面板当前的朝向
-  const rot = panelRotation(panel)
-  const spin = rot
-    ? `rotate(${rot} ${panelBox.x + panelBox.w / 2} ${panelBox.y + panelBox.h / 2})`
-    : undefined
+  // 内容坐标系里算好的框，整组绕包围盒中心翻转、转到面板当前的样子——与 PanelView 画这张图同一个变换
+  // （`canvas/elementGeometry`）；只转不翻的话，翻转面板上的框停在元素的镜像位置（#832 / #833 评审）
+  const spin = elementOverlayTransform(panel, panelBox)
   // 手柄与命中层同一道闸：这一下按下之前捕获阶段刚提交了方向键微调，闭包里的 panel /
   // 包围框已经过期——吞掉，不拿旧基线起手（清单见 guardStale）
   const guarded = (start: (e: React.PointerEvent) => void) => guardStale(panel, start)

@@ -238,6 +238,31 @@ describe('MeasureChip', () => {
       expect(parseFloat(chip()!.style.top)).toBeCloseTo(mmToWorld(81) + 8, 6)
     })
 
+    // #832 评审：翻转过的面板，画布按 `panelContentTransform` 镜像画这张图（先翻转、再旋转，绕面板中心 70, 70）。
+    // 芯片得贴在元素**看得见的**镜像位置，Δ 报页面上看得见的方向：
+    //   - flipH：标题内容 x 52–72（Δ 内容 +2）中心 62 → 镜像到 78；页面上是往左挪了 2；
+    //   - flipV：标题内容 y 35–37.4（Δ 内容 +1）中心 36.2 → 镜像到 103.8、底边 105；页面上是往上挪了 1
+    it.each([
+      ['flipH', { flipH: true }, { dfx: 0.02, dfy: 0 }, 78, 36.4, 'Δ −2.0, 0.0 mm'],
+      ['flipV', { flipV: true }, { dfx: 0, dfy: 0.0125 }, 60, 105, 'Δ 0.0, −1.0 mm'],
+      // 先翻转、再旋转（顺序反了中心会落到 25.2）：版上 80 × 100、中心 60, 80；标题内容中心偏移 (−8, −34.8)
+      // → 翻转 (8, −34.8) → 转 90° (34.8, 8) → 中心 94.8, 88、2.4 × 20、底边 98；Δ 内容 (+2, 0) → (−2, 0) → (0, −2)
+      ['flipH + 90°', { flipH: true, rotation: 90, w: 80, h: 100 }, { dfx: 0.02, dfy: 0 }, 94.8, 98, 'Δ 0.0, −2.0 mm'],
+    ])('%s 面板：芯片贴在镜像后的元素下面，Δ 是页面上看得见的方向', (_n, flip, drag, cxMm, bottomMm, text) => {
+      act(() => {
+        useDocumentStore.getState().commit(literal('翻'), (d) => {
+          Object.assign(d.objects.find((o) => o.id === 'p1')!, flip)
+        })
+        seedRender()
+        useViewportStore.setState({ viewH: 2000 })
+        useInteractionStore.getState().setNudge({ dx: drag.dfx * 100, dy: drag.dfy * 80 })
+        useInteractionStore.getState().setGidDrag({ gid: title.gid, ...drag })
+      })
+      expect(chip()!.textContent).toBe(text)
+      expect(parseFloat(chip()!.style.left)).toBeCloseTo(mmToWorld(cxMm), 6)
+      expect(parseFloat(chip()!.style.top)).toBeCloseTo(mmToWorld(bottomMm) + 8, 6)
+    })
+
     // Codex #833：子图 x 0.1、宽 0.6（页面 x 30–90、y 38–86）往左推 30 下 × 0.5 mm = 15 mm，可左边只有 10 mm：
     // `axesMove` 把框钳在 x = 0，后面的按键子图不动——芯片也得停在那儿，Δ 报 −10，不是按键总和 −15。
     // 走真的 `nudge.ts` → `axesMove.preview`，芯片读的正是它发布的那份 elementPreview

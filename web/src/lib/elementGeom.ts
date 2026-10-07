@@ -14,12 +14,12 @@ import {
 import {
   panelContentSize,
   panelRotation,
-  rotateVec,
   type CanvasObject,
   type PanelObject,
   type PanelOverride,
 } from '@/types/document'
 import { effectiveOverride, isEffectiveOverrideAt } from '@/lib/effectiveOverride'
+import { contentToPageVec, panelContentTransform } from '@/lib/panelTransform'
 import { structuralParent } from '@/components/inspector/roles/hierarchy'
 
 /**
@@ -68,7 +68,8 @@ export function elementSnapCandidates(
   manifest: Manifest,
 ): { xs: number[]; ys: number[] } {
   const full = panelFullRect(panel)
-  const rot = panelRotation(panel)
+  // 与画布画这张图同一个变换（先翻转再旋转）：翻转面板上的中心线落在元素看得见的位置
+  const tf = panelContentTransform(panel)
   const cx = panel.x + panel.w / 2
   const cy = panel.y + panel.h / 2
   const xs: number[] = []
@@ -86,7 +87,7 @@ export function elementSnapCandidates(
     }
     const mx = full.x + (bx + bw / 2) * full.w
     const my = full.y + (by + bh / 2) * full.h
-    const [dx, dy] = rotateVec(mx - cx, my - cy, rot)
+    const [dx, dy] = contentToPageVec(tf, mx - cx, my - cy)
     const px = cx + dx
     const py = cy + dy
     // 裁剪窗外的元素在画布上看不见，不在空白处凭空出参考线
