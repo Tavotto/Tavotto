@@ -337,6 +337,34 @@ describe('MeasureChip', () => {
       expect(parseFloat(chip()!.style.top)).toBeCloseTo(mmToWorld(86) + 8, 6)
     })
 
+    // Codex #833：多选（子图 + 标题）走 `groupMove`，标题是主选（末位）且此前被挪过——文档里它的 `pos_frac`
+    // 是 0.35，与这一版 manifest 的锚点 0.3 差 0.05（页面 5 mm）。`groupMove` 的起手框是 `alignEntries` 按锚点
+    // 修正过的框（`elementBoxOf`），芯片的 Δ 必须从同一个框量起：推 4 × 0.5 mm 报 +2.0，不能把那 5 mm 旧位移算进来
+    it('成组微调、主选是挪过的标题：Δ 从 groupMove 同一个起手框量起，不含旧 override', () => {
+      const host = document.createElement('div')
+      host.dataset.elementSvg = 'p1'
+      host.innerHTML = MATPLOTLIB_SVG
+      document.body.appendChild(host)
+      act(() => {
+        useDocumentStore.getState().commit(literal('挪标题'), (d) => {
+          const p = d.objects.find((o) => o.id === 'p1') as PanelObject
+          p.overrides = [{ gid: title.gid, prop: 'pos_frac', value: [0.35, 0.08] }]
+        })
+        seedRender()
+        useUiStore.setState({ elementPanelId: 'p1', selectedGids: [axes.gid, title.gid] })
+        useViewportStore.setState({ viewH: 2000 })
+      })
+      act(() => {
+        for (let i = 0; i < 4; i++) {
+          nudgeKeyDown(new KeyboardEvent('keydown', { key: 'ArrowRight' }))
+          nudgeKeyUp(new KeyboardEvent('keyup', { key: 'ArrowRight' }))
+        }
+      })
+      expect(useInteractionStore.getState().nudge).toEqual({ dx: 2, dy: 0 })
+      expect(useInteractionStore.getState().elementPreview?.boxes[title.gid]).toBeDefined()
+      expect(chip()!.textContent).toBe('Δ +2.0, 0.0 mm')
+    })
+
     it('几何权威缺席（上一段刚提交、渲染没回来）：不报，不拿面板的框顶替', () => {
       act(() => {
         useSelectionStore.getState().set(['p1'])
