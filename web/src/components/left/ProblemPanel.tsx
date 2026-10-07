@@ -520,7 +520,9 @@ function ScopePill({
         >
           <span className="truncate">{label}</span>
           {n != null && n > 0 && (
-            <span aria-hidden className="type-meta tabular-nums">
+            // 计数坐在 hover 5% 的胶囊底上（桌面上合成 ≈ #e4e4e2）：ink-3 在那里只有 4.14:1，跟胶囊的字走 ink-2
+            // （e2e/a11y 的自算对比度尺子量到的；数字是要读的字）
+            <span aria-hidden className="text-xs tabular-nums">
               {n}
             </span>
           )}
