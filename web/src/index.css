@@ -48,6 +48,9 @@
      占位框的字）用的墨：纸不变，它也不变。 */
   --color-paper: #ffffff;
   --color-paper-ink: #1b1b18;
+  /* 界面浮在纸上时的底（空画布的起步提示这类直接坐在页面上的界面）：浅色里透明——字就落在白纸上；
+     暗色里是面板色——浅色的字不能直接落在不变的白纸上 */
+  --color-paper-chrome: transparent;
   /* 交互面：hover < active < selected，三档都是 ink 的半透明叠加，白 surface 与
      灰 bg 上都成立。组件里不再手写 bg-ink/[.035]…[.09] 那串随机透明度
      （2026-09-11 收敛前全仓有 9 种）。 */
@@ -966,6 +969,7 @@
     --color-syntax-type: #6fc7ad;
     --color-syntax-builtin: #e3a457;
     --color-thumb: #3a3a37;
+    --color-paper-chrome: var(--color-surface);
     --color-shadow: #000000;
     --color-shadow-edge: #ffffff;
     --color-scrim: color-mix(in srgb, var(--color-shadow) 50%, transparent);
@@ -1002,6 +1006,7 @@
   --color-syntax-type: #6fc7ad;
   --color-syntax-builtin: #e3a457;
   --color-thumb: #3a3a37;
+  --color-paper-chrome: var(--color-surface);
   --color-shadow: #000000;
   --color-shadow-edge: #ffffff;
   --color-scrim: color-mix(in srgb, var(--color-shadow) 50%, transparent);

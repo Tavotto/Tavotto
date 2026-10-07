@@ -347,6 +347,21 @@ for (const theme of THEMES) {
       expect(contrast(t('shadow'), '#000000')).toBeLessThan(contrast(t('bg'), '#000000'))
     })
 
+    it('坐在纸上的界面（空画布提示）：浅色里底透明、字直接落在纸上 ≥4.5:1；暗色里有自己的面板底，字落在它上面 ≥4.5:1', () => {
+      const v = VARS[theme]['color-paper-chrome']
+      if (theme === 'light') {
+        expect(v).toBe('transparent')
+        for (const name of ['ink', 'ink-2', 'ink-3']) {
+          expect(contrast(t(name), t('paper')), `${name} on paper`).toBeGreaterThanOrEqual(4.5)
+        }
+      } else {
+        const ground = rc('paper-chrome')
+        for (const name of ['ink', 'ink-2', 'ink-3']) {
+          expect(contrast(t(name), ground), `${name} on paper-chrome`).toBeGreaterThanOrEqual(4.5)
+        }
+      }
+    })
+
     it('代码注释与 ink-3 同值（注释就是三级正文）', () => {
       expect(t('syntax-comment')).toBe(t('ink-3'))
     })

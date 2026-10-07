@@ -503,7 +503,9 @@ function EmptyHint() {
       className="pointer-events-none absolute w-max -translate-x-1/2 -translate-y-1/2"
       style={{ left: cx, top: cy }}
     >
-      <div className="pointer-events-auto">
+      {/* 提示坐在页面（纸）上：纸两套主题都是白，暗色里给它一块面板色的底（`paper-chrome`，浅色里透明——
+          字照旧直接落在纸上），浅色的字才不会落在白纸上（2026-10-07 暗色主题，宪法第二十八节） */}
+      <div data-on-paper className="pointer-events-auto rounded-lg bg-paper-chrome p-4">
         <EmptyState
           icon={Images}
           title={sg('emptyTitle')}
