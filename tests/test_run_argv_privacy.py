@@ -88,7 +88,7 @@ def worker_factory(request, tmp_path, monkeypatch):
     for worker in workers:
         worker.shutdown()
     if client is not None:
-        client.shutdown()
+        client.close()
 
 
 @pytest.mark.parametrize(
