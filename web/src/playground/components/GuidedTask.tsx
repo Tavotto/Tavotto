@@ -18,6 +18,8 @@
  * 不跨会话持久化。浮在画布左下角，不遮画布、不遮右栏、无全屏遮罩。
  */
 import { useEffect, useRef, useState } from 'react'
+import { Button, IconButton } from '@/components/ui/Button'
+import { buttonClass } from '@/components/ui/buttonClass'
 import { Check, Download, LoaderCircle, X } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { runUndoRedo } from '@/hooks/useKeyboard'
@@ -99,13 +101,14 @@ export function GuidedTask({
         'animate-rise-in',
       )}
     >
-      <button
+      <IconButton
+        label={translate('actions.close')}
+        iconSize="xs"
         onClick={onDismiss}
-        aria-label={translate('actions.close')}
-        className="absolute right-1.5 top-1.5 flex h-6 w-6 items-center justify-center rounded-sm text-ink-3 hover:bg-surface-2"
+        className="absolute right-2 top-2 text-ink-3"
       >
         <X size={ICON_SIZE.sm} />
-      </button>
+      </IconButton>
 
       {achieved ? (
         <div aria-live="polite" className="flex flex-col gap-1.5 pr-5">
@@ -126,28 +129,16 @@ export function GuidedTask({
             <p className="text-xs leading-relaxed text-ink-2">{pg('taskDoneUnverified')}</p>
           )}
           <div className="mt-1 flex flex-wrap items-center gap-1.5">
-            <button
-              onClick={() => runUndoRedo(false)}
-              className="h-6 rounded-sm border border-border px-2 text-xs text-ink-2 hover:text-ink"
-            >
+            <Button variant="secondary" size="sm" onClick={() => runUndoRedo(false)}>
               {translate('topbar.undo', { ns: 'workspace' })}
-            </button>
-            <button
-              onClick={onDismiss}
-              className="h-6 rounded-sm border border-border px-2 text-xs text-ink-2 hover:text-ink"
-            >
+            </Button>
+            <Button variant="secondary" size="sm" onClick={onDismiss}>
               {pg('taskContinue')}
-            </button>
-            <button
-              onClick={onViewSource}
-              className="h-6 rounded-sm border border-border px-2 text-xs text-ink-2 hover:text-ink"
-            >
+            </Button>
+            <Button variant="secondary" size="sm" onClick={onViewSource}>
               {pg('taskViewSource')}
-            </button>
-            <a
-              href={RELEASES_LATEST_URL}
-              className="flex h-6 items-center gap-1 rounded-sm border border-border px-2 text-xs text-ink-2 hover:text-ink"
-            >
+            </Button>
+            <a href={RELEASES_LATEST_URL} className={buttonClass({ variant: 'secondary', size: 'sm' })}>
               <Download size={ICON_SIZE.xs} aria-hidden />
               {pg('downloadDesktop')}
             </a>
@@ -162,12 +153,9 @@ export function GuidedTask({
           <p aria-live="polite" className="text-xs leading-relaxed text-ink-2">
             {step === 1 ? pg('taskSelectTitle') : pg('taskEditFontsize')}
           </p>
-          <button
-            onClick={onDismiss}
-            className="self-start text-xs text-ink-3 underline-offset-2 hover:text-ink hover:underline"
-          >
+          <Button size="sm" onClick={onDismiss} className="-ml-2.5 self-start text-ink-3 hover:text-ink">
             {pg('taskSkip')}
-          </button>
+          </Button>
         </div>
       )}
     </aside>
