@@ -1031,6 +1031,47 @@ describe('定位后清单留在原地（审计 T09）', () => {
     expect(toggle().getAttribute('aria-expanded')).toBe('false')
   })
 
+  it('游标换了才把当前行滚进可视区（直达 / F8 各一次）；普通重渲染不滚，也不抢焦点（Codex #832）', async () => {
+    const calls: Element[] = []
+    const had = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollIntoView')
+    Element.prototype.scrollIntoView = function (this: Element) {
+      calls.push(this)
+    }
+    try {
+      await seed()
+      await mount(<ProblemPanel />)
+      await openCard()
+      const [first, second] = useValidationStore.getState().issues
+      // 先折起那一组：当前行要等「打开被折起的组」那一轮渲染后才挂出来
+      await click(container.querySelector<HTMLElement>(`[data-issue-group="${second.ruleCode}"] [data-issue-group-toggle]`)!)
+      calls.length = 0
+      const before = document.activeElement
+      const { openProblemAt } = await import('@/lib/issueFocus')
+      await act(async () => {
+        openProblemAt(second, useValidationStore.getState().issues, 'p1')
+      })
+      const current = () => rows().find((r) => r.getAttribute('aria-current') === 'true')!
+      const rowCalls = () => calls.filter((el) => el.hasAttribute('data-issue-row'))
+      expect(rowCalls()).toEqual([current()])
+      expect(current().getAttribute('data-issue-object')).toBe(second.objectRef.objectId)
+      expect(document.activeElement, '只滚不抢焦点').toBe(before)
+      // 与游标无关的重渲染：不再滚
+      await act(async () => useValidationStore.setState({ queued: true }))
+      await act(async () => useValidationStore.setState({ queued: false }))
+      expect(rowCalls().length).toBe(1)
+      // F8 往回走一条：游标换了，再滚一次，滚的是新的当前行
+      await act(async () => {
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'F8', shiftKey: true, bubbles: true, cancelable: true }))
+      })
+      expect(useUiStore.getState().problemCursor?.issueId).toBe(first.issueId)
+      expect(rowCalls().length).toBe(2)
+      expect(rowCalls()[1]).toBe(current())
+    } finally {
+      if (had) Object.defineProperty(Element.prototype, 'scrollIntoView', had)
+      else delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView
+    }
+  })
+
   it('F8 走进一个被折起的规则组：同样打开它，当前行挂出来（Codex #832）', async () => {
     await seed()
     await mount(<ProblemPanel />)
