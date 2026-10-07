@@ -4421,11 +4421,6 @@ export default interface Resources {
       "zTop": "置于顶层",
       "zUp": "上移一层"
     },
-    "hud": {
-      "cursor": "光标",
-      "offset": "位移",
-      "size": "尺寸"
-    },
     "layerTree": {
       "collapseGroup": "折叠组",
       "count_other": "{{count}} 个对象",
@@ -4683,6 +4678,8 @@ export default interface Resources {
         "heavy": "冷启动可能需要几分钟",
         "medium": "冷启动约十几秒"
       },
+      "copiedDetails": "已复制",
+      "copyDetails": "复制详情",
       "dismissError": "关闭错误提示",
       "documentLoaded_other": "已载入：{{name}}（{{count}} 张画布）",
       "documentReopened_other": "已切回：{{name}}（{{count}} 张画布）",
@@ -4700,6 +4697,7 @@ export default interface Resources {
       "elementHidden": "已隐藏「{{label}}」，可在「已隐藏元素」里恢复",
       "elementLocked": "已锁定「{{label}}」，画布点击将跳过它",
       "elementsHidden_other": "已隐藏 {{count}} 个元素，可在「已隐藏元素」里恢复",
+      "errorTitle": "这一步没有完成",
       "geometrySyncing": "正在同步图形几何，请稍候再试",
       "groupBlocked": {
         "incomplete": "组里有成员这一版拿不到位置，暂时不能整组移动或缩放",

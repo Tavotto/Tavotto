@@ -326,11 +326,6 @@
     "hideObjects": "隐藏 {{count}} 个对象",
     "showObjects": "显示 {{count}} 个对象"
   },
-  "hud": {
-    "cursor": "光标",
-    "offset": "位移",
-    "size": "尺寸"
-  },
   "layerTree": {
     "collapseGroup": "折叠组",
     "count_other": "{{count}} 个对象",
@@ -707,7 +702,10 @@
       "notResizable": "组里有成员的位置由 matplotlib 自动决定，不能整组移动或缩放",
       "locked": "组里有锁定的成员，先解锁才能整组移动或缩放",
       "incomplete": "组里有成员这一版拿不到位置，暂时不能整组移动或缩放"
-    }
+    },
+    "errorTitle": "这一步没有完成",
+    "copyDetails": "复制详情",
+    "copiedDetails": "已复制"
   },
   "tabs": {
     "allCanvases": "全部画布",

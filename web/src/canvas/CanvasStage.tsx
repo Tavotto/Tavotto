@@ -19,6 +19,7 @@ import { normalizeWheel } from '@/lib/wheel'
 import { ObjectView } from './ObjectView'
 import { WorkspaceContextBar } from './WorkspaceContextBar'
 import { OverlaySvg } from './OverlaySvg'
+import { MeasureChip } from './MeasureChip'
 import { PageSheet } from './PageSheet'
 import { ContextBar } from './context-bar/ContextBar'
 import { QuickEdit } from './QuickEdit'
@@ -249,6 +250,8 @@ export function CanvasStage() {
         {!fastEdit && <PageOutsideMask />}
 
         <OverlaySvg />
+        {/* 贴着选区的尺寸芯片：与选框同一个视口坐标系（2026-10-07 设计审计 §10.1） */}
+        <MeasureChip />
 
         {!fastEdit && objects.length === 0 && <EmptyHint />}
       </div>

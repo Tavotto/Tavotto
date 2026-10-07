@@ -1,7 +1,7 @@
-import { useEffect, useRef, type FocusEvent, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type FocusEvent, type ReactNode } from 'react'
 import { perfCount } from '@/perf/core'
 import { useTranslation } from 'react-i18next'
-import { Check, CircleAlert, Info, Lightbulb, LoaderCircle, X } from '@/components/ui/icons'
+import { Check, CircleAlert, Copy, Info, Lightbulb, LoaderCircle, X } from '@/components/ui/icons'
 import { Button } from '@/components/ui/Button'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { SwapText } from '@/components/ui/SwapText'
@@ -11,12 +11,10 @@ import { literal, msg, t as translate, type UiMessage } from '@/i18n'
 import { useFormatMessage } from '@/i18n/react'
 import type { DismissTimer } from '@/lib/dismissTimer'
 import { DURATION, usePresence } from '@/lib/motion'
-import { formatMm } from '@/lib/units'
 import { cn } from '@/lib/utils'
 import { useCanvasToolbarVisible } from './CanvasToolbar'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
-import { useSelectionStore } from '@/store/selectionStore'
 import { adoptedDismissTimer, useEnvStore, type AdoptedEnvironment } from '@/store/envStore'
 import {
   autofillDismissTimer,
@@ -26,127 +24,58 @@ import {
 import { statusDismissTimer, useUiStore, type StatusTone } from '@/store/uiStore'
 import { userEnvironmentName } from '@/lib/userEnvironmentText'
 import { useWorkspaceStore } from '@/store/workspace'
-import { boundsOf } from '@/lib/geometry'
 
 /**
  * 底部不再有常驻状态栏。这里是两块按需出现的浮层：
- * - CanvasHud：坐标 / 选区尺寸，只在移动、缩放等交互进行中出现；
- *   工具提示只在非选择工具激活时出现。
- * - NotificationRail：状态 / 操作提示 / 「刚为编辑加入」三种通知同一条轨（二审 D1）；带 aria-live。
+ * - CanvasHud：左下角，**只有工具提示**（非选择工具激活时）。拖动中的几何读数（W × H / X, Y / Δ）
+ *   2026-10-07 起贴着选区画（`canvas/MeasureChip`），不在左下角——此前移动时这里报的还是指针坐标；
+ * - NotificationRail：状态 / 操作提示 / 「刚为编辑加入」等几种通知同一条轨（二审 D1）；带 aria-live。
  * 两者都挂在画布列内部，不占布局高度。
  */
 
-/** 交互进行中才值得显示实时几何数字的拖动类型 */
-const GEOMETRY_KINDS = new Set(['move', 'resize', 'draw', 'crop', 'endpoint', 'element', 'guide'])
-
-/** 以尺寸为主读数的交互：改的是大小，坐标退为次要；其余（移动等）反之 */
-const SIZE_FIRST_KINDS = new Set(['resize', 'draw', 'crop'])
-
 /**
- * 读数盒与工具提示共用的一只盒子：inline-flex 可换行、最小高 28px、内边距 5/10px。
- *
- * 它虽然是读数不是消息，但**落在画布上就是浮层**：圆角 10 + `shadow-pop`、不画实色边
- * （宪法第一节）。此前是「圆角 6 + 12% 实边、无投影」，与同一角落的 toast（圆角 10 +
- * 投影）是两种浮盒（2026-09-15 打磨 N4）。
+ * 工具提示：落在画布上就是浮层——单行浮动条 = 胶囊 + `shadow-pop`、不画实色边（浮动外观三档，
+ * 2026-10-07 设计审计 §10.1；此前是圆角 10 的方盒，与同一角落的 toast 两种浮盒）。
  */
 const HUD_BOX =
-  'inline-flex min-h-7 max-w-full flex-wrap items-center gap-x-2.5 gap-y-1.5 rounded-lg bg-surface px-2.5 py-1.25 text-sm shadow-pop'
+  'inline-flex min-h-7 max-w-full items-center rounded-full bg-surface px-3 py-1 text-sm text-ink-2 shadow-pop'
 
 export function CanvasHud() {
   perfCount('render.CanvasHud')
   const { t } = useTranslation('workspace')
   const kind = useInteractionStore((s) => s.kind)
-  const cursor = useInteractionStore((s) => s.cursor)
   const nudge = useInteractionStore((s) => s.nudge)
   const tool = useUiStore((s) => s.tool)
-  const objects = useDocumentStore((s) => s.doc.objects)
-  const ids = useSelectionStore((s) => s.ids)
   const toolbarUp = useCanvasToolbarVisible()
 
-  // 方向键微调这一段也算交互中：读数盒先报这一段挪了多少（ADR 0093）
-  const interacting = GEOMETRY_KINDS.has(kind) || !!nudge
+  // 拖动 / 微调进行中不说工具提示：那时读数在选区旁边（MeasureChip），左下角安静
+  const interacting = kind !== 'none' || !!nudge
   const hint = !interacting && tool !== 'select' ? t(`toolHint.${tool}`) : null
-
-  const selected = objects.filter((o) => ids.includes(o.id))
-  const bounds = selected.length > 0 ? boundsOf(selected) : null
-  // 交互中但既没有光标也没有选区时什么都不画——不留一只空边框盒子
-  const showReadings = interacting && (!!nudge || !!cursor || !!bounds)
-  if (!showReadings && !hint) return null
-
-  const sizeFirst = SIZE_FIRST_KINDS.has(kind)
+  if (!hint) return null
 
   return (
     <div
-      // 画布底部有浮动工具条时抬到它上面去：读数 / 提示与工具条同在底边会叠在一起
+      data-canvas-hud
+      // 左下角位：12px 内距；画布底部有浮动工具条时抬到它上面去（读数 / 提示与工具条同在底边会叠在一起）
       className={cn(
-        'pointer-events-none absolute left-3 z-sticky flex max-w-[calc(100%-1.5rem)] flex-col items-start gap-1',
+        'pointer-events-none absolute left-3 z-sticky flex max-w-[calc(100%-1.5rem)] flex-col items-start',
         toolbarUp ? 'bottom-16' : 'bottom-3',
       )}
-      aria-hidden={interacting ? undefined : true}
+      aria-hidden
     >
-      {showReadings && (
-        <div
-          className={cn(HUD_BOX, 'tabular-nums')}
-          data-hud-mode={nudge ? 'offset' : sizeFirst ? 'size' : 'cursor'}
-        >
-          {nudge && (
-            <span className="inline-flex items-baseline gap-1.75 whitespace-nowrap" data-hud-offset>
-              <span className="text-xs text-ink-3">{t('hud.offset')}</span>
-              <span className="inline-block min-w-[13ch] font-medium text-ink">
-                {translate('measure.mmPair', { a: signedMm(nudge.dx), b: signedMm(nudge.dy) })}
-              </span>
-            </span>
-          )}
-          {!nudge && cursor && (
-            <span className="inline-flex items-baseline gap-1.75 whitespace-nowrap">
-              <span className="text-xs text-ink-3">{t('hud.cursor')}</span>
-              {/* 固定最小宽度 + 等宽数字：拖动时数字变长变短，盒子不跟着跳 */}
-              <span
-                className={cn(
-                  'inline-block min-w-[13ch]',
-                  sizeFirst ? 'text-ink-3' : 'font-medium text-ink',
-                )}
-              >
-                {translate('measure.mmPair', { a: formatMm(cursor.x), b: formatMm(cursor.y) })}
-              </span>
-            </span>
-          )}
-          {bounds && (
-            <span
-              className={cn(
-                'inline-flex items-baseline gap-1.75 whitespace-nowrap',
-                (nudge || cursor) && 'border-l border-border pl-2.5',
-              )}
-            >
-              <span className="text-xs text-ink-3">{t('hud.size')}</span>
-              <span
-                className={cn(
-                  'inline-block min-w-[12ch]',
-                  sizeFirst ? 'font-medium text-ink' : 'text-ink-3',
-                )}
-              >
-                {translate('measure.mmSize', { w: formatMm(bounds.w), h: formatMm(bounds.h) })}
-              </span>
-            </span>
-          )}
-        </div>
-      )}
-      {hint && <p className={cn(HUD_BOX, 'text-ink-2')}>{hint}</p>}
+      <p className={HUD_BOX}>{hint}</p>
     </div>
   )
 }
 
-/** 位移读数带正负号：「+1.5」「−0.5」「0.0」 */
-function signedMm(v: number): string {
-  const s = formatMm(Math.abs(v))
-  if (s === formatMm(0)) return s
-  return v > 0 ? `+${s}` : `−${s}`
-}
-
 /**
- * 一条通知的形态：图标 + 一句话 + 至多一个动作 / 关闭。三种来源共用（二审 D1）。
+ * 一条通知的形态。几种来源共用（二审 D1）：
+ *   - 普通的（状态 / 提示 / 加入说明……）：图标 + 一句话 + 至多一个动作 / 关闭，**胶囊**（单行浮动条，
+ *     浮动外观三档，2026-10-07 设计审计 §10.1）；
+ *   - 错误：多行浮动面板 = 圆角 12，左侧一道 danger 锚点色竖条 + 标题 + 至多两行正文 + 「复制详情」——
+ *     报错原文常常很长（路径、后端给的句子），此前整段塞进一行胶囊里截不断也读不完。
  *
- * 会自己走的那两种（状态、提示）带着各自的 `timer`：指针停在上面、焦点落在它的按钮上就不走表
+ * 会自己走的那几种带着各自的 `timer`：指针停在上面、焦点落在它的按钮上就不走表
  * （宪法第二十三节）。按住的原因记在 ref 里，**卸载时一并放开**——用户点 × 把它关掉时指针还在
  * 上面，pointerleave 不会再来一次，不放开的话下一条状态永远不走。
  */
@@ -159,6 +88,7 @@ function Toast({
   closeLabel,
   state,
   timer,
+  order,
   ...rest
 }: {
   tone: 'info' | 'error' | 'hint'
@@ -170,6 +100,8 @@ function Toast({
   state: 'open' | 'closed'
   /** 自动收起的计时器；不自己走的那种（错误、加入说明）不传 */
   timer?: DismissTimer
+  /** 出现的先后（越新越大）：轨里按它排，最新的那条最靠近底边 */
+  order: number
 } & Record<`data-${string}`, string | undefined>) {
   const held = useRef(new Set<string>())
   const grip = (reason: string) => {
@@ -189,29 +121,37 @@ function Toast({
     },
     [timer],
   )
+  const error = tone === 'error'
   return (
     <div
       {...rest}
       data-state={state}
+      data-toast-layout={error ? 'panel' : 'pill'}
       onPointerEnter={() => grip('pointer')}
       onPointerLeave={() => drop('pointer')}
       onFocus={() => grip('focus')}
       onBlur={(e: FocusEvent<HTMLDivElement>) => {
         if (!e.currentTarget.contains(e.relatedTarget as Node | null)) drop('focus')
       }}
+      style={{ order }}
       className={cn(
-        // 浮层不画实色 border（宪法第一节）：环在 shadow-pop 里。字 12 / ink——11 号 ink-2
-        // 的一句话在画布上方读起来像脚注（2026-09-15 打磨 N2）。
-        // `min-h-9 py-1`：一种高度 36。带动作的那条由 28 的按钮 + py 8 撑到 36，不带动作的
-        // 靠 min-h 补齐——此前是 34 / 29 两种（N3），min-h-8 只把差距从 5 缩到 4，仍是两种
-        'pointer-events-auto flex min-h-9 max-w-[520px] items-center gap-2 rounded-lg px-3 py-1 text-sm shadow-pop',
-        tone === 'error' ? 'bg-danger-surface text-danger-content' : 'bg-surface text-ink',
+        // 浮层不画实色 border（宪法第一节）：环在 shadow-pop 里。字 12 / ink（2026-09-15 打磨 N2）。
+        // 一种高度 36：带动作的那条由 28 的按钮 + py 4 撑到 36，不带动作的靠 min-h 补齐（N3）
+        'pointer-events-auto relative flex max-w-[520px] gap-2 bg-surface text-sm text-ink shadow-pop',
+        error
+          ? 'items-start overflow-hidden rounded-lg py-2.5 pl-4 pr-2'
+          : 'min-h-9 items-center rounded-full py-1 pl-3.5 pr-1.5',
         'data-[state=open]:animate-rise-in data-[state=closed]:animate-rise-out',
       )}
     >
-      {icon}
-      {/* 同一条 toast 换文字时原位换（旧字退、新字进），不硬切 */}
-      <SwapText className="min-w-0 flex-1" text={text} />
+      {error && <span aria-hidden data-toast-bar className="absolute inset-y-0 left-0 w-1 bg-danger" />}
+      <span className={cn('flex shrink-0', error && 'pt-px')}>{icon}</span>
+      {error ? (
+        <ErrorBody text={text} />
+      ) : (
+        /* 同一条 toast 换文字时原位换（旧字退、新字进），不硬切 */
+        <SwapText className="min-w-0 flex-1" text={text} />
+      )}
       {action && (
         <Button variant="ghost" size="sm" className="shrink-0 text-ink" onClick={action.onClick}>
           {action.label}
@@ -222,7 +162,7 @@ function Toast({
           size="icon-xs"
           onClick={onClose}
           aria-label={closeLabel}
-          className={cn('shrink-0', tone === 'error' ? 'hover:bg-danger/10' : 'text-ink-3 hover:text-ink')}
+          className="shrink-0 text-ink-3 hover:text-ink"
         >
           <X size={ICON_SIZE.sm} />
         </Button>
@@ -231,17 +171,68 @@ function Toast({
   )
 }
 
+/** 错误 toast 的正文：一行标题、至多两行原文（全文在 title 与「复制详情」里） */
+function ErrorBody({ text }: { text: string }) {
+  const { t } = useTranslation('workspace')
+  const [copied, setCopied] = useState(false)
+  useEffect(() => {
+    if (!copied) return
+    const id = setTimeout(() => setCopied(false), 1500)
+    return () => clearTimeout(id)
+  }, [copied])
+  return (
+    <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+      <p className="font-medium text-danger-content">{t('status.errorTitle')}</p>
+      <SwapText className="min-w-0" textClassName="line-clamp-2 break-words text-ink-2" text={text} title={text} />
+      <div className="-ml-2 pt-0.5">
+        <Button
+          variant="ghost"
+          size="sm"
+          data-copy-details
+          onClick={() => {
+            void navigator.clipboard?.writeText(text).then(
+              () => setCopied(true),
+              () => {},
+            )
+          }}
+        >
+          {copied ? <Check size={ICON_SIZE.sm} aria-hidden /> : <Copy size={ICON_SIZE.sm} aria-hidden />}
+          {t(copied ? 'status.copiedDetails' : 'status.copyDetails')}
+        </Button>
+      </div>
+    </div>
+  )
+}
+
 /**
  * 状态 toast 的图标按语气取（`StatusTone`，2026-10-07 审计 P0）：只有报告「做成了」的那句打 ✓，
  * 进行中的转圈（与 `Button` 忙碌态同一个 LoaderCircle），其余中性的一句给 Info——此前
- * 「正在构建…」也打勾。颜色除错误外都是 ink-3：图标只分语气，不抢字的戏。
+ * 「正在构建…」也打勾。颜色除错误外都是 ink-3：图标只分语气，不抢字的戏；错误用 danger 锚点。
  */
 function StatusIcon({ tone }: { tone: StatusTone }) {
-  if (tone === 'error') return <CircleAlert size={ICON_SIZE.sm} className="shrink-0" aria-hidden />
+  if (tone === 'error') return <CircleAlert size={ICON_SIZE.sm} className="shrink-0 text-danger" aria-hidden />
   if (tone === 'done') return <Check size={ICON_SIZE.sm} className="shrink-0 text-ink-3" aria-hidden />
   if (tone === 'progress')
     return <LoaderCircle size={ICON_SIZE.sm} className="shrink-0 animate-spin text-ink-3" aria-hidden />
   return <Info size={ICON_SIZE.sm} className="shrink-0 text-ink-3" aria-hidden />
+}
+
+/**
+ * 通知轨里每条的「出现先后」（越新越大）：轨按它排（CSS `order`，DOM 顺序不动——读屏区与退场动画都不受影响），
+ * **最新的一条最靠近底边**（2026-10-07 设计审计 §10.1；此前按来源写死顺序，新来的状态有时排在旧提示上面）。
+ * 身份变了（新的一条状态 / 新的提示 token）才算新的一条；同一条换字不挪位置。
+ */
+function useArrivalOrder() {
+  const seq = useRef(0)
+  const seen = useRef(new Map<string, { id: unknown; n: number }>())
+  return (slot: string, id: unknown): number => {
+    if (id == null || id === false) return 0
+    const cur = seen.current.get(slot)
+    if (cur && cur.id === id) return cur.n
+    const n = ++seq.current
+    seen.current.set(slot, { id, n })
+    return n
+  }
 }
 
 /**
@@ -354,6 +345,14 @@ export function NotificationRail() {
   const hintHasSlot = [justAdded, !!adopted || !!autofilled, !!status].filter(Boolean).length < 2
   const hintPresence = usePresence(!!hint && hintHasSlot, DURATION.exit)
 
+  // 出现的先后：最新的一条最靠近底边（见 useArrivalOrder）
+  const arrival = useArrivalOrder()
+  const addedOrder = arrival('added', addedPresence.mounted && `added:${addedDepth}`)
+  const adoptedOrder = arrival('adopted', adoptedPresence.mounted && adoptedShown?.token)
+  const autofillOrder = arrival('autofill', autofillPresence.mounted && autofillShown?.token)
+  const hintOrder = arrival('hint', hintPresence.mounted && hint && hintToken)
+  const statusOrder = arrival('status', statusPresence.mounted && shown.status)
+
   return (
     <div
       // 画布底部有浮动工具条时整列抬到它上面去（toast 居中、工具条也居中，不抬就叠在一起）
@@ -389,9 +388,10 @@ export function NotificationRail() {
       <div aria-live="polite" className="sr-only">
         {autofilled ? autofillText : ''}
       </div>
-      {/* 顺序 = 出现的先后：加入说明最早、提示其次、刚说的状态最靠近底边 */}
+      {/* 显示顺序 = 出现的先后（`order`），最新的最靠近底边；DOM 顺序固定 */}
       {addedPresence.mounted && (
         <Toast
+          order={addedOrder}
           tone="info"
           state={addedPresence.state}
           data-fast-edit-added-note=""
@@ -403,6 +403,7 @@ export function NotificationRail() {
       {adoptedPresence.mounted && adoptedShown && (
         <Toast
           key={adoptedShown.token}
+          order={adoptedOrder}
           tone="info"
           state={adoptedPresence.state}
           data-environment-adopted={adoptedShown.source}
@@ -417,6 +418,7 @@ export function NotificationRail() {
       {autofillPresence.mounted && autofillShown && (
         <Toast
           key={`autofill-${autofillShown.token}`}
+          order={autofillOrder}
           tone="info"
           state={autofillPresence.state}
           data-script-input-autofilled=""
@@ -431,6 +433,7 @@ export function NotificationRail() {
       {hintPresence.mounted && hint && (
         <Toast
           key={hintToken}
+          order={hintOrder}
           tone="hint"
           state={hintPresence.state}
           data-onboarding-hint={hint}
@@ -443,6 +446,7 @@ export function NotificationRail() {
       )}
       {statusPresence.mounted && (
         <Toast
+          order={statusOrder}
           tone={shown.tone === 'error' ? 'error' : 'info'}
           state={statusPresence.state}
           timer={statusDismissTimer}
