@@ -446,7 +446,7 @@ def environment_evidence(root: Path, script: str | None) -> dict:
             )
             remembered["id"] = row["id"]
 
-    for entry in userenvs.discover(root, script, ask_login_shell=False):
+    for entry in userenvs.discover(root, script, ask_login_shell=False, no_follow=True):
         add(entry["python"], entry["source"], entry.get("label") or "")
 
     candidates = [by_key[k] for k in order]
