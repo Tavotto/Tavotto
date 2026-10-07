@@ -1312,7 +1312,20 @@
     "unmappableEntry": "{{label}}: no “{{prop}}”",
     "willAffect": "Will affect",
     "nameLabel": "Name",
-    "deleteBuiltinReason": "Built-in styles can’t be deleted"
+    "deleteBuiltinReason": "Built-in styles can’t be deleted",
+    "unsaved": "Unsaved changes",
+    "impact": {
+      "title": "Impact",
+      "entries": "Properties",
+      "palette": "Colors",
+      "page": "Page size",
+      "on": "On",
+      "off": "Off",
+      "pageSize": "{{w}} × {{h}} mm",
+      "following_one": "1 canvas in this document follows this style and picks up saved changes.",
+      "following_other": "{{count}} canvases in this document follow this style and pick up saved changes.",
+      "unsavedDraft": "Not saved yet — save it before a canvas can follow it."
+    }
   },
   "telemetry": {
     "allow": "Share anonymous usage",

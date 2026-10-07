@@ -282,3 +282,26 @@ describe('旧样式在样式对话框里第一次被存：升级成按页面 pt 
     expect(saves[0]).toMatchObject({ pt_basis: 'page', element: (USER as unknown as { data: { element: unknown } }).data.element })
   })
 })
+
+describe('右栏的影响摘要（2026-10-07 设计审计 §10.2）', () => {
+  it('xl 760；摘要卡数出这份样式管几项，以及这份文档里有几张画布跟随它（脱离的不算）', async () => {
+    await mount()
+    await act(async () => {
+      useUiStore.getState().setStylesOpen(true, { presetId: 's1' })
+    })
+    await act(async () => {})
+    const dialog = document.querySelector<HTMLElement>('[data-dialog="styles"]')!
+    expect(dialog.style.width).toBe('760px')
+    const card = () => document.querySelector('[data-style-impact]')!
+    expect(card().closest('[data-card="subtle"]')).not.toBeNull()
+    expect(card().querySelector('[data-style-following]')!.getAttribute('data-style-following')).toBe('0')
+    await act(async () => {
+      useDocumentStore.setState((s) => ({ doc: { ...s.doc, style: { id: 's1', snapshot: {} } } }))
+    })
+    expect(card().querySelector('[data-style-following]')!.getAttribute('data-style-following')).toBe('1')
+    await act(async () => {
+      useDocumentStore.setState((s) => ({ doc: { ...s.doc, style: { id: 's1', snapshot: {}, detached: true } } }))
+    })
+    expect(card().querySelector('[data-style-following]')!.getAttribute('data-style-following')).toBe('0')
+  })
+})
