@@ -1850,7 +1850,7 @@ function BlockingList({
         <li
           key={g.ruleCode}
           data-blocking-group={g.ruleCode}
-          className="py-0.5 text-xs"
+          className="py-0.5 text-sm"
         >
           <div className="flex items-center gap-2 leading-relaxed">
             {/* 阻断的形状与问题面板同一张表（八角），不在这里另画一个三角 */}
@@ -1894,7 +1894,7 @@ function BlockingList({
                     type="button"
                     onClick={() => onLocate(issue)}
                     aria-label={ex("locateAria", { subject, title: g.title })}
-                    className="shrink-0 rounded-sm text-xs text-ink-2 outline-none hover:underline focus-visible:focus-ring"
+                    className="shrink-0 rounded-md text-sm text-ink-2 outline-none hover:underline focus-visible:focus-ring"
                   >
                     {ex("locate")}
                   </button>
@@ -1909,7 +1909,7 @@ function BlockingList({
           <button
             type="button"
             onClick={onMore}
-            className="rounded-sm text-xs text-ink-2 outline-none hover:underline focus-visible:focus-ring"
+            className="rounded-md text-sm text-ink-2 outline-none hover:underline focus-visible:focus-ring"
           >
             {ex("blockingMore", { count: rest })}
           </button>
@@ -2010,7 +2010,7 @@ function OpenProblems({ onClick }: { onClick: () => void }) {
     <button
       type="button"
       onClick={onClick}
-      className="shrink-0 rounded-sm text-xs text-ink-2 outline-none hover:underline focus-visible:focus-ring"
+      className="shrink-0 rounded-md text-sm text-ink-2 outline-none hover:underline focus-visible:focus-ring"
     >
       {ex("openProblems")}
     </button>
@@ -2118,9 +2118,9 @@ function ResultBlock({
           （元素不存在 = 脚本改过了）。不吞——用户投出去之前得知道 */}
       {!!job.warnings?.length && (
         <div className="mt-1 flex flex-col gap-0.5 border-t border-border pt-1">
-          <p className="text-xs text-ink-2">{ex("warningsIntro")}</p>
+          <p className="text-sm text-ink-2">{ex("warningsIntro")}</p>
           {job.warnings.map((w) => (
-            <p key={w} className="break-all text-xs text-ink-3">
+            <p key={w} className="break-all text-sm text-ink-3">
               {w}
             </p>
           ))}
@@ -2135,7 +2135,7 @@ function OutputRow({ out, dir }: { out: ExportOutput; dir: string }) {
   const [revealError, setRevealError] = useState<string | null>(null);
   if (out.status === "failed" || !out.name) {
     return (
-      <p className="flex items-start gap-1.5 text-xs text-danger">
+      <p className="flex items-start gap-1.5 text-sm text-danger-content">
         <TriangleAlert
           size={ICON_SIZE.xs}
           className="mt-0.5 shrink-0"
@@ -2181,7 +2181,7 @@ function OutputRow({ out, dir }: { out: ExportOutput; dir: string }) {
                   );
               });
             }}
-            className="min-w-0 truncate rounded-sm font-mono text-xs text-ink-2 outline-none hover:underline focus-visible:focus-ring"
+            className="min-w-0 truncate rounded-md font-mono text-sm text-ink-2 outline-none hover:underline focus-visible:focus-ring"
           >
             {out.name}
           </button>
@@ -2192,7 +2192,7 @@ function OutputRow({ out, dir }: { out: ExportOutput; dir: string }) {
             href={apiUrl(out.url ?? "")}
             target="_blank"
             rel="noreferrer"
-            className="min-w-0 truncate font-mono text-xs text-ink-2 hover:underline"
+            className="min-w-0 truncate font-mono text-sm text-ink-2 hover:underline"
           >
             {out.name}
           </a>
@@ -2203,7 +2203,7 @@ function OutputRow({ out, dir }: { out: ExportOutput; dir: string }) {
         )}
       </div>
       <InspectionLine manifest={out.manifest} />
-      {revealError && <p className="text-xs text-danger">{revealError}</p>}
+      {revealError && <p className="text-sm text-danger-content">{revealError}</p>}
     </div>
   );
 }
@@ -2227,7 +2227,7 @@ function InspectionLine({
     return (
       <p
         data-inspection="verified"
-        className="flex items-center gap-1 text-xs text-ok"
+        className="flex items-center gap-1 text-sm text-ok-content"
       >
         <CircleCheck size={ICON_SIZE.xs} className="shrink-0" aria-hidden />
         {ex("inspection.verified")}
@@ -2238,7 +2238,7 @@ function InspectionLine({
     return (
       <p
         data-inspection="failed"
-        className="flex items-start gap-1 text-xs text-danger"
+        className="flex items-start gap-1 text-sm text-danger-content"
       >
         <TriangleAlert
           size={ICON_SIZE.xs}
@@ -2252,7 +2252,7 @@ function InspectionLine({
     );
   }
   return (
-    <p data-inspection="unknown" className="text-xs text-ink-3">
+    <p data-inspection="unknown" className="text-sm text-ink-3">
       {state.unknown.length
         ? ex("inspection.unknownItems", {
             items: state.unknown.map(label).join("、"),

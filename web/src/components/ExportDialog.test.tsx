@@ -327,6 +327,8 @@ describe('信息架构：删掉的东西不许回来', () => {
     await click(group('output').querySelector('[data-export-location-change]')!)
     expect(useUiStore.getState().settingsOpen).toBe(true)
     expect(useUiStore.getState().settingsSection).toBe('export')
+    // 设置压在导出上（dialogStack）：收起来，别把这一层栈带进后面的用例
+    await act(async () => useUiStore.getState().setSettingsOpen(false))
   })
 })
 
