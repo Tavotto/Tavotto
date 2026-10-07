@@ -72,15 +72,17 @@ export function Menu({
           align={align}
           sideOffset={6}
           style={{ minWidth: width }}
-          onCloseAutoFocus={onCloseAutoFocus}
           className={cn(
             CONTENT_CLASS,
             // 从触发器那个角展开，而不是从自己中心——菜单与按钮的因果关系才看得出来
             'origin-[var(--radix-dropdown-menu-content-transform-origin)]',
           )}
           onCloseAutoFocus={
-            pointerKeepsFocus
+            onCloseAutoFocus || pointerKeepsFocus
               ? (e) => {
+                  // 调用方先说话（行内改名要把焦点留给输入框）；它拦下了就不再还焦点
+                  onCloseAutoFocus?.(e)
+                  if (e.defaultPrevented || !pointerKeepsFocus) return
                   const { pointer, before } = opened.current
                   if (!pointer) return
                   e.preventDefault()
