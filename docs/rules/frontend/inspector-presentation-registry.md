@@ -17,7 +17,7 @@
 * `controlKindOf` 按 **prop + 角色**认控件形态，不按「值长得像什么」猜：图例
   位置九宫格、图例项的链接开关、纵横比、色条的方向 / 两端延伸（用当前色图画
   的小色条）、三维投影（小立方体）、透明度百分比。多数视觉选择器走
-  `controls/OptionGrid`（radiogroup + 方向键漫游 + 选中角标）——线型 / 标记 /
+  `controls/OptionGrid`（radiogroup + 方向键漫游；2026-10-07 起与 `ui/Segmented` 同一副皮：灰槽 + 选中格浮起，不再有选中角标）——线型 / 标记 /
   纹理 / 箭头 / 色条方向与延伸 / 三维投影；色图选择器与图例九宫格自己实现
   radiogroup（一个要分组长列表、一个是 3×3 几何）。哪一种都一样：**图形之外
   必须有文字名与 aria-label**，选中态不只靠颜色。
@@ -35,8 +35,7 @@
   引擎没发事实、给了这边画不出的名字、`multiple` / `too_complex`——**一律
   退回没有这个字段时的样子**，漂移只回到原状。多选时各成员事实不一致就谁的
   都不画（`sharedMarkerShape`）：取值一致不等于形状一致，那是两个维度。
-  判据的锚点是 `data-marker-preview`（触发按钮里有下拉箭头、格子里有选中
-  角标，两个都是 `<svg>`，按标签名找的断言恒真）。看护
+  判据的锚点是 `data-marker-preview`（触发按钮里有下拉箭头，也是 `<svg>`，按标签名找的断言恒真）。看护
   `controls/pickers.test.tsx` / `seriesPanels.test.tsx`。
 * **「脚本原始」那一格画的是 `marker_original`，不是 `marker_current`**
   （2026-09-07，cap-marker-orig 补做）：换过标记之后 `marker_current` 读的是
@@ -51,6 +50,11 @@
   不一致——有的成员改过、有的没改，那时同样谁的都不画。
 * `pairRows` 的查表键由 `pairKey` 自己生成，别手写字面量：`['vmin','vmax']`
   排序之后是 `vmax|vmin`，手写的键查不到就安静退回两行，界面上看不出异常。
+* **并成一行的两条字段仍各自可恢复**（色阶上下限 `PairRow`、反转 X / Y、边框联动行的颜色 / 线宽；
+  Codex #829 P2）：行网格的状态槽只有一格，那一格放 `controls/textRows` 的 `ResetPairChip`——只改了
+  一条就是那一条的 `ResetChip`、只清它；两条都改了是一张小菜单（恢复 A / 恢复 B / 两项都恢复，后者一条
+  历史）。不许把一行的恢复并成「清掉这一行改过的全部」：那样只想让一界回到脚本值的用户会连另一界的
+  修改一起丢。看护 `colorScalePanels.test.tsx`、`axesPage.test.tsx`、`spineFrameCard.test.tsx`。
 * 色阶共用关系（`inspector/ColorScaleLink.tsx`）判据只认 manifest 的两条事实：
   `mappable_gid`（色条直接挂着的那个）与 `scale_gids`（与它共用同一份 norm 对象的
   **色阶兄弟**，引擎 `colorbarmodel.scale_siblings` 判、2026-09-21），唯一谓词
@@ -99,7 +103,10 @@
   换一张图、多选的分布 / 间距成组 / 复制样式、图例间距、画布页的各分区全走它；同类的第二套（带 chevron 的
   分区头、不带 chevron 的文字链接）已删。`GroupToggle`（文字链接）只留给**嵌在某张卡里的小尾巴**
   （分别设置各边 / 技术详情 / 隐藏元素 / 同角色多选里的分组）。
-  * 右边**只写当前值或项数**，不写内容清单、不写括号清单；展开后右值收起；没有值就不画。值的说法只在
+  * 右边**只写当前值或项数**，不写内容清单、不写括号清单；展开后右值收起；没有值就不画。
+    （2026-10-07 设计审计 §9.2）行高 32、12/400 ink + ink-3 右值，chevron 坐在 20px 状态槽里；**行与行之间不画线**，
+    一串摘要行只在第一行上面有一条内缩线（index.css `[data-section] + [data-summary-row]`）。画布页的折叠行互不排斥、
+    开合跨会话记住（`inspectorPrefs` 的 `canvas:*` 键）。值的说法只在
     `presentation/foldSummary.ts`，行本身不认识任何属性。
   * `RoleProfile.folds`（`FoldSpec`）点名的字段由摘要行**认领**，先于 primary / more / advanced——同一个字段只在
     一处出现。认领不是裁能力：`visibleWhen` 先判、改过的字段照样在；一条字段都没有的行不出现

@@ -138,8 +138,13 @@ export default interface Resources {
       "save": "保存"
     },
     "colorField": {
+      "documentColors": "排版里的颜色",
+      "hex": "{{label}}：色号",
       "none": "无",
-      "picker": "{{label}}：取色盘"
+      "open": "{{label}}：选色",
+      "picker": "{{label}}：取色盘",
+      "recent": "最近使用",
+      "system": "系统取色器…"
     },
     "count": {
       "selectedObjects_other": "已选 {{count}} 个对象"
@@ -2784,6 +2789,8 @@ export default interface Resources {
       "bgColor": "背景色",
       "clearAll": "全部清除",
       "deleteGuide": "删除{{axis}}参考线 {{pos}} mm",
+      "export": "导出",
+      "exportSummary": "{{formats}} · {{dpi}} ppi",
       "grid": "网格",
       "gridSize": "网格间距",
       "gridSummary": "网格 {{size}} mm",
@@ -2793,12 +2800,16 @@ export default interface Resources {
       "guides": "参考线",
       "guidesLockedSuffix": " · 已锁定",
       "guidesNone": "无",
+      "landscape": "横向",
       "lock": "锁定",
       "margin": "页边距",
       "marginSummary": "页边距 {{margin}} mm",
       "objects": "对象",
+      "orientation": "方向",
       "pageSize": "页面尺寸",
-      "presetAria": "{{label}}，{{w}} × {{h}} 毫米",
+      "portrait": "竖向",
+      "preset": "预设",
+      "presetCustom": "自定义",
       "presetGroup": "页面预设",
       "presets": {
         "double": {
@@ -2823,6 +2834,8 @@ export default interface Resources {
       "safeAreaOff": "关闭",
       "safeAreaTip": "只是画布上的参考框，不裁剪也不影响导出",
       "show": "显示",
+      "size": "尺寸",
+      "sizeMeta": "{{w}} × {{h}} mm",
       "snap": "自动对齐",
       "snapEnable": "启用吸附",
       "snapGrid": "对齐网格",
@@ -2844,6 +2857,11 @@ export default interface Resources {
         "equal": "等比例"
       },
       "aspectRatio": "纵横比：一单位 Y 与一单位 X 的显示长度之比",
+      "aspectShort": {
+        "auto": "自动",
+        "custom": "自定义",
+        "equal": "等比"
+      },
       "customColormap": "自定义色图（{{value}}）",
       "customColormapName": "自定义",
       "customLineStyle": "自定义线型（{{value}}）",
@@ -2893,6 +2911,12 @@ export default interface Resources {
       "tickSpineDiagramHint": "点四条边切换刻度线与边框",
       "viewAngle": "视角：俯仰 {{elev}}°、方位 {{azim}}°、侧倾 {{roll}}°",
       "zoneAria": "{{side}}{{dir}}刻度"
+    },
+    "docSummary": {
+      "annotations_other": "{{count}} 处文字与标注",
+      "canvasSettings": "画布设置",
+      "size": "{{w}} × {{h}} mm",
+      "title": "本排版"
     },
     "element": {
       "absentAppearance": "此元素由脚本生成，当前版本暂不支持在此编辑。",
@@ -2978,6 +3002,7 @@ export default interface Resources {
       "mixedValues": "多个值",
       "modified": "已修改",
       "modifiedCount_other": "{{count}} 项已修改",
+      "modifiedPartial": "部分已修改",
       "more": "更多",
       "moveDown": "下移",
       "moveUp": "上移",
@@ -3009,6 +3034,7 @@ export default interface Resources {
         "vmin": "自动范围"
       },
       "resetProp": "恢复{{label}}",
+      "resetPropBoth": "两项都恢复",
       "resetToScriptCount_other": "恢复整张图 · {{count}} 项",
       "restore": "恢复",
       "restoreMenuTip": "恢复图内修改",
@@ -3035,7 +3061,6 @@ export default interface Resources {
     "elementFallback": "图内元素",
     "elementsSelected_other": "已选 {{count}} 个元素",
     "emptyHint": "点画布上的图、文字或标注开始编辑。",
-    "emptyTitle": "没有选中对象",
     "engineLabel": {
       "annotationArrow": "标注箭头",
       "arrow": "箭头 {{value}}",
@@ -3316,6 +3341,9 @@ export default interface Resources {
       "toggleUnderline": "切换下划线",
       "transformCase": "转换大小写"
     },
+    "identity": {
+      "problems_other": "{{count}} 个问题"
+    },
     "kindSwitch": {
       "aria": "类型：{{name}}，点击更改",
       "title": "更改为"
@@ -3330,8 +3358,8 @@ export default interface Resources {
       "customHintStyled": "恢复链接会撤销这里改的样式。",
       "entries": "图例项",
       "entriesAria": "图例项列表",
+      "entryActions": "“{{label}}”的操作",
       "followHint": "断开关联后才能单独改颜色、线型和标记。",
-      "hide": "隐藏",
       "hideEntry": "隐藏图例项 “{{label}}”",
       "layoutDetails": "间距",
       "linkedTo": "链接到：{{label}}",
@@ -3339,7 +3367,6 @@ export default interface Resources {
       "moveUp": "上移 “{{label}}”",
       "relinkAction": "恢复链接",
       "selectEntry": "选中图例项 “{{label}}”",
-      "show": "显示",
       "showEntry": "显示图例项 “{{label}}”",
       "spacingAdjusted": "已调整",
       "spacingDefault": "默认",

@@ -143,7 +143,8 @@ Tavotto 是「紧凑工具」那一档：**控件一律 28px（`h-7`）**——�
   **选中 = selected 底 + 600**（2026-10-07）；行里的 meta 用 `rowMetaClass(selected)`（选中时 ink-3 → ink-2）。
   拖放落点是 `dropLineClass(pos)`：2px accent 条 + 左端 4px 圆点。
 - **RowMenu**（`useRowMenu` + `RowMenu`）：一行的 ⋯、右键、⇧F10 / ContextMenu 键打开**同一份** `MenuItem` 清单；⋯ 只在
-  hover / focus-within / 打开时看得见，行聚焦时它在 Tab 顺序里（tabIndex 0），否则 -1。菜单项图标一律经 `MenuItem icon=`
+  hover / focus-within / 打开时看得见，行聚焦时它在 Tab 顺序里（tabIndex 0），否则 -1；自己管 roving focus、整张列表只许一个
+  Tab 停靠点的列表传 `tabStop={false}`，⋯ 恒为 -1，键盘入口只剩 ⇧F10 / ContextMenu 键。菜单项图标一律经 `MenuItem icon=`
   （ink-2，危险项跟字走红），不在 children 里自己排。
 - **TreeRow**（`treeIndent` / `TreeChevron` / `TreeIcon` / `TreeCount`）：树行的固定列——
   缩进 8 + 14 × 层级、16px 折叠箭头列、16px 类型图标列、右对齐计数。图层树与图内
@@ -591,6 +592,9 @@ UI 正文 14 / 控件字最小 12、台阶 2px；强调至少高一档且配深�
 - 改图助手：输入框走 fieldBox；会话块 surface-2 无边、meta 走 type-meta；回滚 danger ghost；⌘↵ 小片删；目标片是钮形。
 - 图例「最佳位置」是这一组的**第十格**、画布页预设卡英文改短名（Single / Double）——两条都是 2026-09-15 拍板，见下。
 - 保留：字号内联标签、示意图无标签列、组内「更多」无 chevron、32px 样张格。
+  **2026-10-07 修订（设计审计 §9.2 拍板①）**：字号内联标签**取消**——文字组改为四行同一张行网格：
+  「字体 [全宽] / 字号 [半列][B I 图标组] / 颜色 [色块 + hex] / 对齐 [Segmented]」。B / I 不再单独一行靠 paddingLeft 对齐，
+  与字号同一行坐在后半列；画布文字的下划线跟在 B / I 后面（同一组）。细则见第二十六节末「属性栏与画布栏」。
 
 **顶栏 · 画布 · 浮动栏 · 通知 · 命令面板**
 - 顶栏所有带字的钮同一副壳（`Button size="md"`、12、圆角 6）；项目 / 文档面包屑两颗同形；缩放值 `type-number`；chevron 一律 ink-3。
@@ -849,6 +853,36 @@ reduced-motion 契约）；68/85 命中 `foundation.test`（533 处）；弹簧 
 只在 `Card.tsx`；`font-semibold` 的豁免扩到 listRow / FormSection / buttonClass。逐页阶段才迁的几处 `shadow-card`（素材卡、问题卡、
 左轨激活态）以带个数的 `LATER_PHASE` 豁免列在门禁里，迁完一处删一条（版本对话框缩略图框已在对话框那一期迁到 `Card`）；工作面板是常驻豁免。
 `tokenContrast.test` 增：状态色派生（oklab 重算）、墨阶间距、ink-3 在画布灰上；`designMd.test` 对拍新增的四个角色、`control-lg`、Card / danger-tinted / lg 按钮。
+
+### 属性栏与画布栏（逐页阶段，2026-10-07 设计审计 §9.2 / §9.3 / §9.4 P2，用户全部认可）
+- **一张行网格**：`[标签 --insp-label] 8 [控件 minmax(0,1fr)] 8 [状态槽 20]`，`--insp-label = clamp(88px, 28cqi, 112px)`
+  由属性栏容器（`@container`）给；`ui/Field.Row labelWidth="grid"`（检查器常量 `INSPECTOR_LABEL_W`）。控件只有 **full / half** 两档
+  （`NumberField half`、`INSPECTOR_HALF`）；不走 Row 却要对到控件列的块用 `INSPECTOR_CONTROL_X`，不再手写 `pl-20` / `paddingLeft: 88`，
+  `[data-stroke-fields]` 那条 CSS 删除。
+- **状态槽常驻**：恢复到脚本的 ↺ 是 20px 小钮（`ResetChip`，图标 ink-2），住在第三列——改值不再让控件少 34px；
+  一行一颗（成对 / 多开关的行清掉这一行改过的全部）。**修改点悬挂在标签左边 8px**，标签不右移；全部修改实心点、部分修改（多选里只改了几个）空心环。
+- **标签** 12/400 ink-2，放不下折两行（line-clamp-2），全栏一条规则。
+- **三级标题**：节（`Section`）32px 12/500 ink · 组（`GroupHead`）24px 11/500 ink-3 · 折叠行（`SummaryRow`）32px 12/400 ink + ink-3 右值，
+  chevron 坐在与 Row 同一条 20px 状态槽里。
+- **发丝线预算**：一屏只有「节与节之间」一条内缩线（节后面接一串摘要行时画在第一行上面）；摘要行之间不画线、身份头下面不画线、
+  对齐工具条的组间是 12px 空而不是竖线。
+- **折叠只有三种写法**：SummaryRow（低频项）/ GroupToggle（卡内小尾巴）/ Details（技术细节，如渲染失败的 traceback）。
+- **身份头固定两行**（路径 24 + 名字 32）：面包屑每级 24px 命中区、长名字中间省略（`TruncateMiddle`）；名字 `type-heading`、折两行、全文在 title；
+  角色图标底座圆角 8；右侧簇两种对象同一副——路径行右端是状态胶囊（n 项已修改 / n 个问题 / 已锁定 / 已隐藏，点它就是撤销那个状态或去看问题），
+  名字行右端是 ⋯；修改徽标是胶囊、hover 只加深；多选图标是 Layers。「n 个问题 ›」直达问题面板里的那一条（`openProblemAt`）。
+- **ColorField**：属性栏里（宿主挂 `ColorFieldContext`）色块旁是可编辑的 hex，点色块开取色面板（文档颜色 / 最近使用 / 系统取色器…）；
+  浮动栏不挂这层，色块照旧直接开系统取色盘。`disabled` 是真禁用（画布页透明背景时的背景色），不再 `pointer-events-none` 假禁用。
+  「无」与不透明度不进面板：有这两件事的属性各有自己的开关 / 一行（同一属性不出第二个控件）。
+- **OptionGrid 与 Segmented 同一副皮**：灰槽 + 无边样张格，选中格浮起白底 + shadow-thumb + 600，不再压角标 check。
+- **说明条只有 `Notice` 一种**（能力说明、旧图幅、渲染失败、引擎不支持、运行时无原文件）；图内编辑入口下的引擎状态只占一行。
+- **图例项行**：常驻只有色样（真实 marker 图形）+ 名字 + 非默认徽标；拖动柄与 ⋯ 在 hover / focus-within 出现；整张列表一个 Tab 停靠点
+  （↑↓ 漫游、⌥↑ / ⌥↓ 排序、拖动柄拖放、⋯ / 右键 / ⇧F10 同一份菜单；⋯ 是 `RowMenu tabStop={false}`，焦点在项上时 Tab 直接离开列表）。
+- **文字内容框**：上标 / 下标 / 换行是框右下角 20px 的图标钮。
+- **空属性页**是文档摘要卡（尺寸、几张图、几处文字与标注、几处修改、「画布设置 ›」）。
+- **页签顺序** 属性 | 画布 | 助手（ADR 0010 §3 当日修订）；右栏宽度把手键盘聚焦是一条 2px accent 竖线。
+- **画布页**：与属性页同一副两行头（「画布」/ 画布名 + 尺寸 meta）；页面尺寸 = 一行带缩略图的预设下拉（含「自定义」）+ W / H 两个半列
+  （横竖交换在状态槽）+ 方向 Segmented；折叠行可同时开多个、跨会话记住；关掉自动对齐时子开关留在原位变暗；参考线列表用 │ / ─ 字形列；
+  末尾一行只读「导出 · PDF · 600 ppi ↗」打开导出对话框（不是第二条导出管线）。
 
 ### 对话框与引导（2026-10-07 第三期，审计 §10.2 的 P1 / P2）
 - **对话框的说明槽**是 13 / ink-2（与正文同一个阅读字号，不再是比正文还轻的 12 / ink-3），可以是一段结构：导出对话框把

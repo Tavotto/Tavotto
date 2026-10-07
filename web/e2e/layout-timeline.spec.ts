@@ -801,7 +801,10 @@ for (const locale of ['zh-CN', 'en-US']) {
           return { x: r.x, y: r.y, w: r.width, h: r.height }
         }
         const status = root.querySelector('[data-panel-engine-status]')!
-        return { status: rect(status), controls: [...root.querySelectorAll('button, input')].map(rect) }
+        // 身份头路径行右端的状态胶囊（「n 个问题 ›」随检查结果到来）在固定高的那一行里出现 / 消失，
+        // 不挪动任何东西；这把尺子量的是属性表本身（2026-10-07 §9.2 身份头固定两行）
+        const controls = [...root.querySelectorAll('button, input')].filter((el) => !el.closest('[data-identity]'))
+        return { status: rect(status), controls: controls.map(rect) }
       })
       const baseline = await measure()
       const measurements: { state: string; geometry: Awaited<ReturnType<typeof measure>> }[] = []
@@ -824,9 +827,10 @@ for (const locale of ['zh-CN', 'en-US']) {
       await check('ready', [])
       await emit('panel.file_changed', { stems: ['Fig1_kinetics'], reason: 'watcher' })
       await expect.poll(() => held.length).toBe(2)
-      await check('stale while rebuilding', ['building', 'stale'])
+      // 引擎状态一行只说一件事（2026-10-07 §9.2）：构建中优先，「脚本已变」等这一轮构建结束
+      await check('stale while rebuilding', ['building'])
       await emit('render.started', { id: 'Fig1_kinetics.pdf', cold: true, cost: 'light' })
-      await check('cold and stale', ['cold', 'stale'])
+      await check('cold and stale', ['cold'])
       await releaseRender(1)
       await expectExact()
       await emit('render.done', { id: 'Fig1_kinetics.pdf' })

@@ -106,10 +106,12 @@ import {
 import { Button } from '../ui/Button'
 import { GroupHead } from './GroupHead'
 import { GroupToggle } from './GroupToggle'
-import { INSPECTOR_LABEL_W } from './layout'
+import { INSPECTOR_CONTROL_X, INSPECTOR_HALF, INSPECTOR_LABEL_W } from './layout'
 import { OriginalFileActions } from './OriginalFileActions'
 import { Grid2, Reveal, Row, Section } from '../ui/Field'
 import { SummaryRow } from '../ui/SummaryRow'
+import { Details, Summary } from '../ui/Details'
+import { Notice } from '../ui/Notice'
 import { ColorField, NumberField, TextArea, TextInput } from '../ui/Input'
 import { Select } from '../ui/Select'
 import { Toggle } from '../ui/Toggle'
@@ -172,7 +174,7 @@ import { hasTextStyleBar, TextStyleBar, TEXT_BAR_PROPS } from './TextStyleBar'
 import { LEGEND_CARD_PROPS, LegendCard } from './LegendCard'
 import { LEGEND_SPACING_PROPS, LegendSpacingCard } from './controls/LegendSpacingCard'
 import { ColorScaleLink } from './ColorScaleLink'
-import { ResetChip } from './controls/textRows'
+import { ResetChip, ResetPairChip, labeledWithState } from './controls/textRows'
 import {
   LEGEND_ANCHOR_PROP,
   LEGEND_PLACEMENT_PROPS,
@@ -411,8 +413,11 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
             并给一个「选中对方」的入口。没有对家时组件自己不渲染 */}
         {manifest && element && <ColorScaleLink manifest={manifest} element={element} />}
         {!manifest ? (
-          <p className="text-xs text-ink-3">
-            {el(render?.status === 'rendering' ? 'building' : 'waiting')}
+          // 正在构建是「进行中的字」：text-shimmer（宪法第七节的加载方言之一），等待态是静止的 ink-3
+          <p data-element-building={render?.status === 'rendering' || undefined} className="text-xs text-ink-3">
+            <span className={cn(render?.status === 'rendering' && 'text-shimmer')}>
+              {el(render?.status === 'rendering' ? 'building' : 'waiting')}
+            </span>
           </p>
         ) : !element?.editable.length || !buckets ? (
           <>
@@ -662,12 +667,11 @@ function ErrorBlock({
   missingInput?: MissingInputOffer | null
   onRetry?: () => void
 }) {
-  const [open, setOpen] = useState(false)
   return (
     <Section>
-      <div className="rounded-sm bg-danger-surface px-2 py-1.5">
+      <Notice tone="danger" data-render-error>
         {/* 描述符在**显示这一刻**才翻，切语言后这条跟着换 */}
-        <p className="text-xs text-danger-content">{formatMessage(error)}</p>
+        <p>{formatMessage(error)}</p>
         {/* 「先选运行目录」（U03）：确认框被「稍后」关掉之后从这里再开；
             「脚本跑完没出图」：多半是沙盒 cwd 下相对路径找不到数据，给出口（ADR 0047） */}
         {code === WORKDIR_CONFIRMATION_CODE ? (
@@ -680,34 +684,24 @@ function ErrorBlock({
         {/* 数据找不到（ADR 0106）：指认对话框被关掉之后从这里再开 */}
         <MissingInputButton offer={missingInput ?? null} />
         <div className="mt-0.5 flex items-center gap-2">
-          <p className="text-xs text-danger/70">{el('keptPrevious')}</p>
+          <p className="text-xs">{el('keptPrevious')}</p>
           {onRetry && (
-            <button
-              onClick={onRetry}
-              className="flex items-center gap-1 text-xs text-danger underline-offset-2 hover:underline"
-            >
+            <Button variant="danger" size="sm" className="-my-1" onClick={onRetry}>
               <RotateCcw size={ICON_SIZE.xs} />
               {el('retryRender')}
-            </button>
+            </Button>
           )}
         </div>
         {traceback && (
-          <>
-            <button
-              onClick={() => setOpen((v) => !v)}
-              className="mt-1 flex items-center gap-0.5 text-xs text-danger/80 hover:text-danger"
-            >
-              <ChevronRight size={ICON_SIZE.xs} className={cn('transition-transform', open && 'rotate-90')} />
-              {el('traceback')}
-            </button>
-            {open && (
-              <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-all rounded-sm bg-surface p-1.5 font-mono text-xs leading-relaxed text-ink-2">
-                {traceback}
-              </pre>
-            )}
-          </>
+          // 折叠只有三种写法（SummaryRow / GroupToggle / Details）：技术细节是原生 details
+          <Details className="mt-1">
+            <Summary className="h-6 text-xs">{el('traceback')}</Summary>
+            <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-all rounded-sm bg-surface p-1.5 font-mono text-xs leading-relaxed text-ink-2">
+              {traceback}
+            </pre>
+          </Details>
         )}
-      </div>
+      </Notice>
     </Section>
   )
 }
@@ -786,7 +780,7 @@ function FieldBlock({
     <div data-prop={field.prop} data-gid={element.gid}>
       <FieldRow panel={panel} element={element} field={field} />
       {warning && (
-        <p className="mt-0.5 pl-20 text-xs leading-relaxed text-danger">{warning}</p>
+        <p className={cn('mt-0.5 text-sm leading-relaxed text-danger-content', INSPECTOR_CONTROL_X)}>{warning}</p>
       )}
     </div>
   )
@@ -807,7 +801,7 @@ function ViewAngleRow({ panel, element }: { panel: PanelObject; element: Manifes
   }
   if (!element.editable.some((x) => x.prop === 'elev' || x.prop === 'azim')) return null
   return (
-    <div className="flex" style={{ paddingLeft: LABEL_W + 8 }}>
+    <div className={cn('flex', INSPECTOR_CONTROL_X)}>
       <ViewAngleDiagram elev={num('elev')} azim={num('azim')} roll={num('roll')} />
     </div>
   )
@@ -845,7 +839,8 @@ const PAIR_TEXT: Record<string, PairText> = Object.fromEntries(
 /**
  * 两条数值字段并排成一行（审计 T22：色阶上下限并排）。
  *
- * 两条仍是**各自的** manifest 字段：各写各的 override、各有各的恢复按钮，
+ * 两条仍是**各自的** manifest 字段：各写各的 override、各自可恢复（状态槽一格，
+ * 两条都改过时是 `ResetPairChip` 的小菜单），
  * 值也不互相钳制（下限大于上限是 matplotlib 自己的事，界面不替它裁决）。
  * 这里只管排版：一个行标题 + 两个带前缀的数字框。写入走 `useElementWriter`
  * ——与刻度卡、边框卡同一份（局部预览 / 事务 / 渲染时机收在一处）。
@@ -869,11 +864,12 @@ function PairRow({
   const cell = (field: EditableField, prefix: string) => {
     const label = propLabel(field.prop, element.role)
     return (
-      <div key={field.prop} data-prop={field.prop} className="flex min-w-0 shrink-0 items-center gap-1">
+      <div key={field.prop} data-prop={field.prop} className={cn('flex min-w-0 items-center', INSPECTOR_HALF)}>
         <NumberField
-          // 图幅那一对是「393.7」这种五位带小数的数：4ch 只剩「39」（2026-09-11 用户反馈）
-          className="min-w-0 [&_input]:w-[calc(6ch+0.75rem)]"
+          // 半列（行网格的 half 档）：两个框各占控件列的一半，右缘对齐整列
+          fill
           prefix={prefix}
+          prefixInside
           ariaLabel={label}
           value={Number(w.read(field.prop) ?? 0)}
           // 界随读数一起过写入器（页面 pt 的量换到页面上；成对的色阶上下限原样）
@@ -886,20 +882,33 @@ function PairRow({
           onScrubStart={() => w.beginGesture()}
           onScrubEnd={w.endGesture}
         />
-        {overridden(field.prop) && (
-          <ResetChip label={label} onReset={() => clearOverride(panel.id, element.gid, field.prop)} />
-        )}
       </div>
     )
   }
+  const dirty = [a, b].filter((f) => overridden(f.prop))
   return (
     <div data-pair-row={`${text.props[0]}|${text.props[1]}`}>
       <Row
-        label={labeledWithStateNode(text.label(), overridden(a.prop) || overridden(b.prop))}
+        label={labeledWithState(text.label(), dirty.length === 0 ? 'none' : 'all')}
         labelWidth={LABEL_W}
+        status={
+          // 状态槽只有一格，但两条各自可恢复：只改了一条就只清那一条，两条都改了给一张
+          // 「恢复下限 / 恢复上限 / 两项都恢复」小菜单（Codex #829 P2）
+          <ResetPairChip
+            label={text.label()}
+            fields={dirty.map((f) => ({ prop: f.prop, label: propLabel(f.prop, element.role) }))}
+            onReset={(props, label) =>
+              clearOverrides(
+                panel.id,
+                elMsg('resetProp', { label }),
+                props.map((prop) => ({ gid: element.gid, prop })),
+              )
+            }
+          />
+        }
       >
-        {/* 两个数值框靠右贴齐、不再各占半行（2026-09-11 用户反馈：右侧不留空隙） */}
-        <div className="flex w-full min-w-0 items-center justify-end gap-1.5">
+        {/* 两个半列：控件列的左右两半（2026-10-07 行网格） */}
+        <div className="flex w-full min-w-0 items-center gap-1.5">
           {cell(byProp(text.props[0]), text.prefixes[0]())}
           {cell(byProp(text.props[1]), text.prefixes[1]())}
         </div>
@@ -1314,8 +1323,24 @@ function AxesRangeCard({
               {scale.map(block)}
               {invert.length > 0 && (
                 <Row
-                  label={labeledWithStateNode(invertLabel, invert.some(overridden))}
+                  label={labeledWithState(invertLabel, invert.some(overridden))}
                   labelWidth={LABEL_W}
+                  status={
+                    // X / Y 是两条各自的 override：各自可恢复，两条都改了才给「两项都恢复」（Codex #829 P2）
+                    <ResetPairChip
+                      label={invertLabel}
+                      fields={invert
+                        .filter(overridden)
+                        .map((p) => ({ prop: p, label: propLabel(p, element.role) }))}
+                      onReset={(props, label) =>
+                        clearOverrides(
+                          panel.id,
+                          elMsg('resetProp', { label }),
+                          props.map((prop) => ({ gid: element.gid, prop })),
+                        )
+                      }
+                    />
+                  }
                 >
                   <div className="flex items-center gap-3" role="group" aria-label={el('invertAria')}>
                     {invert.map((p) => (
@@ -1323,7 +1348,7 @@ function AxesRangeCard({
                         key={p}
                         data-prop={p}
                         data-gid={element.gid}
-                        className="flex items-center gap-1.5 text-xs text-ink-2"
+                        className="flex items-center gap-1.5 text-sm text-ink-2"
                       >
                         <Toggle
                           checked={w.read(p) === true}
@@ -1331,18 +1356,6 @@ function AxesRangeCard({
                           aria-label={propLabel(p, element.role)}
                         />
                         {el(p === 'invert_x' ? 'axis.x' : 'axis.y')}
-                        {overridden(p) && (
-                          <Tip label={resetHint(p)} side="left">
-                            <Button
-                              size="icon-sm"
-                              className="shrink-0"
-                              aria-label={el('resetProp', { label: propLabel(p, element.role) })}
-                              onClick={() => clearOverride(panel.id, element.gid, p)}
-                            >
-                              <RotateCcw size={ICON_SIZE.xs} className="text-ink-3" />
-                            </Button>
-                          </Tip>
-                        )}
                       </span>
                     ))}
                   </div>
@@ -1361,21 +1374,6 @@ function AxesRangeCard({
 function aspectValueText(value: unknown): string {
   const { mode, ratio } = aspectModeOf(value)
   return mode === 'custom' ? String(ratio) : translate(`control.aspect.${mode}`, { ns: 'inspector' })
-}
-
-/** 与 FieldRow 的标签同一套「已修改」表达（点 + sr-only 文案） */
-function labeledWithStateNode(label: string, overridden: boolean): ReactNode {
-  return (
-    <span
-      className="flex min-w-0 items-center gap-1"
-      title={overridden ? `${label} · ${el('modified')}` : label}
-    >
-      {overridden && <span aria-hidden className="h-1 w-1 shrink-0 rounded-full bg-ink" />}
-      {/* 折两行而不是截成省略号：省略号遮住的正是用户本来认识的那个词 */}
-      <span className="line-clamp-2 min-w-0 leading-tight break-words">{label}</span>
-      {overridden && <span className="sr-only">{el('modified')}</span>}
-    </span>
-  )
 }
 
 /* ------------------------------ 刻度组页：刻度 / 文字 ---------------------- */
@@ -1762,11 +1760,6 @@ function BatchFieldRow({
   const mixed = values.some((v) => JSON.stringify(v) !== JSON.stringify(values[0]))
   const first = lens.toPage(field.prop, values[0])
   const label = propLabel(field.prop, elements[0].role)
-  const labelNode = (
-    <span className="block truncate" title={label}>
-      {label}
-    </span>
-  )
   const gesture = useFieldGesture(panel, el('batchEdit', { label }))
   // 只有色图的「脚本原样」要看别的元素（谁是谁的色条）；显示用，上一版也行
   const batchManifest = usePanelRender(panel)?.manifest
@@ -1821,6 +1814,7 @@ function BatchFieldRow({
         }
         return (
           <NumberField
+            half
             value={mixed ? 0 : Number(first ?? 0)}
             mixed={mixed}
             min={pageField.min}
@@ -1954,41 +1948,44 @@ function BatchFieldRow({
               )
           }
         }
-        return (
-          <>
-            {picker()}
-            {mixed && kind !== 'marker' && kind !== 'hatch' && kind !== 'colormap' && (
-              <span className="shrink-0 text-xs text-ink-3">{el('mixedValues')}</span>
-            )}
-          </>
-        )
+        // 「多个值」由控件自己说（Select 的占位、样张格一格不选），行尾不再补一句字（§9.2 P0-1）
+        return picker()
       }
       default:
         return null
     }
   }
 
+  // 多选的修改状态有三档：全部改过 = 实心点，只改了几个 = 空心环（部分修改），没改 = 无
+  const modified =
+    overridden.length === 0 ? 'none' : overridden.length === elements.length ? 'all' : 'some'
   return (
     <div>
-      <Row label={labelNode} labelWidth={LABEL_W}>
+      <Row
+        label={labeledWithState(label, modified)}
+        labelWidth={LABEL_W}
+        status={
+          overridden.length > 0 ? (
+            <ResetChip
+              label={label}
+              hint={
+                overridden.length === elements.length
+                  ? el('backToScript')
+                  : el('backToScriptPartial', { count: overridden.length })
+              }
+              onReset={() =>
+                clearOverrides(
+                  panel.id,
+                  elMsg('resetProp', { label }),
+                  overridden.map((item) => ({ gid: item.gid, prop: field.prop })),
+                )
+              }
+            />
+          ) : undefined
+        }
+      >
         {control()}
       </Row>
-      {overridden.length > 0 && (
-        <button
-          onClick={() =>
-            clearOverrides(
-              panel.id,
-              elMsg('resetProp', { label }),
-              overridden.map((item) => ({ gid: item.gid, prop: field.prop })),
-            )
-          }
-          className="mt-0.5 pl-20 text-xs text-ink-3 hover:text-ink"
-        >
-          {overridden.length === elements.length
-            ? el('backToScript')
-            : el('backToScriptPartial', { count: overridden.length })}
-        </button>
-      )}
     </div>
   )
 }
@@ -2108,19 +2105,8 @@ function FieldRow({
   // 单位或语义会被读错的字段带一句短提示（没有问号按钮，见展示注册表）
   const hintKey = fieldHintKey(field.prop)
   const hint = hintKey ? el(`hint.${hintKey}`) : undefined
-  const labelBody = (
-    <span
-      className="flex min-w-0 items-center gap-1"
-      title={overridden ? `${label} · ${el('modified')}` : label}
-    >
-      {overridden && (
-        <span aria-hidden className="h-1 w-1 shrink-0 rounded-full bg-ink" />
-      )}
-      {/* 折两行而不是截成省略号：省略号遮住的正是用户本来认识的那个词 */}
-      <span className="line-clamp-2 min-w-0 leading-tight break-words">{label}</span>
-      {overridden && <span className="sr-only">{el('modified')}</span>}
-    </span>
-  )
+  // 修改点悬挂在标签左边 8px（不推字），折两行不截省略号——与卡片里的行同一份 `labeledWithState`
+  const labelBody = labeledWithState(label, overridden)
   const labelNode = hint ? <Tip label={hint} side="left">{labelBody}</Tip> : labelBody
   const gesture = useFieldGesture(panel, el('editProp', { label }))
   const previewable = canPreviewStyle(element.role, field.prop)
@@ -2157,20 +2143,18 @@ function FieldRow({
 
   /** 每种控件都套同一个壳：标签列 + 控件 + （已修改时）恢复到脚本 */
   const wrap = (children: ReactNode, align: 'center' | 'start' = 'center') => (
-    <Row label={labelNode} labelWidth={LABEL_W} align={align}>
+    <Row
+      label={labelNode}
+      labelWidth={LABEL_W}
+      align={align}
+      // 恢复钮住在常驻的 20px 状态槽里：出现 / 消失都不挪动控件（2026-10-07 §9.2 P0-3）
+      status={
+        overridden && resettable ? (
+          <ResetChip label={label} hint={resetHint(field.prop)} onReset={resetOwned} />
+        ) : undefined
+      }
+    >
       {children}
-      {overridden && resettable && (
-        <Tip label={resetHint(field.prop)} side="left">
-          <Button
-            size="icon-sm"
-            className="shrink-0 self-start"
-            aria-label={el('resetProp', { label })}
-            onClick={resetOwned}
-          >
-            <RotateCcw size={ICON_SIZE.xs} className="text-ink-3" />
-          </Button>
-        </Tip>
-      )}
     </Row>
   )
 
@@ -2428,6 +2412,7 @@ function FieldRow({
       return wrap(
         <>
           <NumberField
+            half
             value={Number(value ?? 0)}
             min={pageField.min}
             max={pageField.max}
@@ -2688,6 +2673,7 @@ export function ScaleField({ panel, group, meta }: { panel: PanelObject; group: 
       {/* 单列数值一律 compact 档（4ch + 单位列，打磨 L3）：此前这里定宽 84，同页的
           「长度」62、「边框线宽」142——一列数字框十二种宽 */}
       <NumberField
+        half
         ariaLabel={el('scaleLabel')}
         value={pct}
         min={10}
@@ -2924,6 +2910,8 @@ function AxesSizeMm({
             「原始比例 / 原始尺寸」同形——标签列 + 两颗 ghost sm，第一颗 -ml-2 让图标
             压回控件竖线上 */}
         <Row label={el('centerRow')} labelWidth={LABEL_W}>
+          {/* 控件列在行网格里有了右缘：两颗命令 + 行尾的尺寸放不下时折行，不撑破列（en 320 实测） */}
+          <div className="flex min-w-0 flex-wrap items-center gap-x-1.5">
           <Button
             variant="ghost"
             size="sm"
@@ -2931,7 +2919,7 @@ function AxesSizeMm({
             aria-label={el('centerH')}
             onClick={() => write(centerInFigure(rect, 'x'), 'centerAxesH')}
           >
-            <AlignCenterVertical size={ICON_SIZE.sm} className="text-ink-3" />
+            <AlignCenterVertical size={ICON_SIZE.sm} className="text-ink-2" />
             {el('centerHShort')}
           </Button>
           <Button
@@ -2940,12 +2928,13 @@ function AxesSizeMm({
             aria-label={el('centerV')}
             onClick={() => write(centerInFigure(rect, 'y'), 'centerAxesV')}
           >
-            <AlignCenterHorizontal size={ICON_SIZE.sm} className="text-ink-3" />
+            <AlignCenterHorizontal size={ICON_SIZE.sm} className="text-ink-2" />
             {el('centerVShort')}
           </Button>
           {/* 没有成组缩放那一行（子图不可改尺寸）时，整图尺寸落在这一行的行尾——
               位置换了，格式还是同一个：type-meta、靠右 */}
           {!group && figureMeta}
+          </div>
         </Row>
         </div>
       </SummaryRow>
@@ -3031,21 +3020,18 @@ function UnsupportedNote({ role }: { role: string }) {
   const info = unsupportedOf(role)
   if (!info) return null
   return (
-    /* 说明条是 surface-2 底的一条，不套框（第八节 / 第五节：`Notice` 已删，
-       状态一句话不画边）；入口降成 ghost、不撑满（打磨 E10） */
-    <div className="mt-2 rounded-sm bg-surface-2 px-2 py-1.5">
-      <p className="text-xs leading-relaxed text-ink-2">
-        <b className="font-medium text-ink">{info.title}</b>：{info.reason}
-      </p>
+    /* 说明条只有一种皮：`ui/Notice`；入口是 ghost、不撑满（打磨 E10） */
+    <Notice className="mt-2" title={info.title}>
+      <p className="text-ink-2">{info.reason}</p>
       <Button
         variant="ghost"
         size="sm"
-        className="-ml-2 mt-0.5"
+        className="-ml-2.5 mt-0.5"
         onClick={() => useUiStore.getState().setRightTab('assistant')}
       >
         {el('useAssistant')}
       </Button>
-    </div>
+    </Notice>
   )
 }
 
