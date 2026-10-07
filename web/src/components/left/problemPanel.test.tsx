@@ -1195,6 +1195,32 @@ describe('定位后清单留在原地（审计 T09）', () => {
     expect(cursorBar()?.textContent).toContain(`第 1 / ${onP1.length} 项`)
   })
 
+  it('游标在 A 支里，再手动展开另一支 B：游标不带过去，页脚不说「已处理」，F8 从 B 的第一条起步（Codex #832）', async () => {
+    await seedThree()
+    useUiStore.setState({ problemScope: 'document' })
+    await mount(<ProblemPanel />)
+    const branch = (key: string) => container.querySelector<HTMLElement>(`li[data-problem-card-key="${key}"]`)!
+    const branchRows = (key: string) => [...branch(key).querySelectorAll<HTMLElement>('[data-issue-row]')]
+    // A = p1：展开、在它的最后一条上落游标（下标 > 0，旧游标的 ruleCode / index 套到 B 上才会跳过 B 的头几条）
+    await click(branch('figure:p1').querySelector(':scope > button')!)
+    const inA = branchRows('figure:p1')
+    expect(inA.length, '夹具：A 至少两条').toBeGreaterThan(1)
+    await click(inA.at(-1)!)
+    expect(cursorObject()).toBe('p1')
+    // B = p2：收着的一支，用户点开它
+    expect(branch('figure:p2').querySelector(':scope > button')!.getAttribute('aria-expanded')).toBe('false')
+    await click(branch('figure:p2').querySelector(':scope > button')!)
+    expect(liveDrill()).toEqual({ kind: 'figure', key: 'p2' })
+    expect(useUiStore.getState().problemCursor, 'A 的游标不该带进 B').toBeNull()
+    expect(cursorBar(), '页脚不该拿 A 的游标在 B 里说「已处理」').toBeNull()
+    // F8：从 B 的第一条起步，不是按 A 的旧下标跳到 B 的后面
+    await pressF8()
+    expect(cursorObject()).toBe('p2')
+    const inB = branchRows('figure:p2')
+    expect(inB[0].getAttribute('aria-current'), 'F8 该落在 B 的第一条').toBe('true')
+    expect(cursorBar()?.textContent).toContain(`第 1 / ${inB.length} 项`)
+  })
+
   it('叶子行保留稳定机器标识（教程与 e2e 靠它选行）', async () => {
     await seed()
     await mount(<ProblemPanel />)
@@ -1258,6 +1284,20 @@ describe('长列表：一组默认只展开前几行', () => {
     await click(more!)
     expect(groupRows(rule)).toBe(MANY)
     expect(showRest()).toBeNull()
+  })
+
+  it('「显示其余 N 项」随现场作废：换分组方式再换回来，组又只列前几行（Codex #832）', async () => {
+    await seedMany()
+    await mount(<ProblemPanel />)
+    await openCard()
+    const rule = 'font-below-absolute-floor'
+    await click(showRest()!)
+    expect(groupRows(rule)).toBe(MANY)
+    await chooseView('category')
+    await chooseView('figure')
+    await openCard()
+    expect(groupRows(rule), '离开过的「显示其余」不该复活').toBe(PREVIEW_ROWS)
+    expect(showRest()).toBeTruthy()
   })
 
   it('只差一两条就不折：省下的那一行不值得多一次点击', async () => {
@@ -1611,6 +1651,43 @@ describe('卡片层：一张组图拆成子图（2026-09-28）', () => {
     })
     expect(liveDrill()).toBeNull()
     expect(partCard('(a)')).toBeTruthy()
+  })
+
+  it('离开一张图再回来（A → B → A）：用户在 A 上展开的子图、折起的规则组都回到默认，不复活（Codex #832）', async () => {
+    await seedTriptych(true)
+    useUiStore.setState({ elementPanelId: 'p1' })
+    await mount(<ProblemPanel />)
+    const partToggle = () => partCard('(a)')!.querySelector<HTMLButtonElement>(':scope > button')!
+    const ruleToggle = () =>
+      partCard('(a)')!.querySelector<HTMLElement>('[data-issue-group] [data-issue-group-toggle]')!
+    expect(partToggle().getAttribute('aria-expanded'), '子图默认收着').toBe('false')
+    // A 上：展开 (a)，再折起它里面的规则组
+    await click(partToggle())
+    expect(partToggle().getAttribute('aria-expanded')).toBe('true')
+    await click(ruleToggle())
+    expect(ruleToggle().getAttribute('aria-expanded')).toBe('false')
+    // B 上：p2 是拆不出子图的普通图，规则组直接列着；折起它
+    await act(async () => {
+      useWorkspaceStore.getState().enterFastEdit('p2')
+    })
+    const p2Rule = () => container.querySelector<HTMLElement>('[data-issue-group] [data-issue-group-toggle]')!
+    expect(p2Rule().getAttribute('aria-expanded')).toBe('true')
+    await click(p2Rule())
+    expect(p2Rule().getAttribute('aria-expanded')).toBe('false')
+    // 回到 A：(a) 收着（默认），不是刚才离开时的展开态
+    await act(async () => {
+      useWorkspaceStore.getState().enterFastEdit('p1')
+    })
+    expect(liveDrill()).toBeNull()
+    expect(partToggle().getAttribute('aria-expanded'), '离开过的那一支不该复活').toBe('false')
+    // 手动再展开 (a)：里面的规则组是默认的展开态，不是离开前折起的样子
+    await click(partToggle())
+    expect(ruleToggle().getAttribute('aria-expanded'), '离开过的折叠不该复活').toBe('true')
+    // 再回到 B：它的规则组同样回到默认
+    await act(async () => {
+      useWorkspaceStore.getState().enterFastEdit('p2')
+    })
+    expect(p2Rule().getAttribute('aria-expanded'), 'B 上的折叠不该复活').toBe('true')
   })
 
   it('直达另一张图上的一条（定位进了那张图的快编）：进那张图，那一行是「当前」', async () => {

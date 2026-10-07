@@ -26,6 +26,7 @@
   外壳是 `ui/Dialog chrome="palette"`（焦点陷阱与归还、输入框是 combobox + `aria-activedescendant`、行是 option 不嵌按钮），
   执行命令前先 `flushSync` 关面板（陷阱先撤），关闭归还只在焦点仍在这层里时做——命令把焦点交给了别的表面（命名小框、
   另一个对话框）就不抢回；那个表面经 `ui/focusOrigin` 认领面板的打开者，关掉时还给它（Codex #833），
+  归还在关上的那次提交的被动 effect 里就做（`ui/Dialog`），不等 Radix 卸载后那个 `setTimeout`——焦点不悬空在 body，
   键位从 `lib/keymap` 取；项目命令按
   `projectStore.phase === 'open'` 出现，embedded / playground 整组不出现。中英文 label + keywords
   两份都要有（`CommandPalette.test.tsx` 比两份资源的 id 集合）。**高亮行按身份记不按位置记**

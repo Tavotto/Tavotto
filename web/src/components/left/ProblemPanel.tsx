@@ -114,16 +114,28 @@ export function ProblemPanel() {
   // null——换项目、换当前图时没有人需要记得来清（2026-09-29 #690 评审）
   const { figureId, figureName, scope, issues, context, drill, cursor } = useScopedProblems()
   const listRef = useRef<HTMLUListElement>(null)
-  /** 用户的开合：键 = drillKey，随现场作废（换范围 / 切法 / 项目都回到默认） */
-  const [opened, setOpened] = useState<{ context: string; map: ReadonlyMap<string, boolean> }>(() => ({
-    context,
-    map: new Map(),
-  }))
-  const openMap = opened.context === context ? opened.map : EMPTY_MAP
+  /**
+   * 用户的开合（展开 / 收起的支、折起的规则组、点过「显示其余 N 项」的组）**整份归现场所有**：
+   * 现场一换就整份丢掉、从默认重来——不是暂时藏起来，否则换回原来那张图（A → B → A）时
+   * 离开过的开合会复活（Codex #832）。在渲染期间对账（不等 effect），换现场的那一帧就不会闪出旧状态
+   */
+  const [disclosure, setDisclosure] = useState(() => freshDisclosure(context))
+  if (disclosure.context !== context) setDisclosure(freshDisclosure(context))
+  const live = disclosure.context === context ? disclosure : freshDisclosure(context)
+  /** 键 = drillKey */
+  const openMap = live.opened
   /** 用户折起的规则组（键 = 支 | 规则） */
-  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set())
+  const collapsed = live.collapsed
   /** 用户点过「显示其余 N 项」的组 */
-  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set())
+  const expanded = live.expanded
+  /** 只改此刻这个现场的那份；排进来时现场已经换了（旧现场的回调晚到）就从默认起算 */
+  const updateDisclosure = (fn: (d: Disclosure) => Disclosure) =>
+    setDisclosure((prev) => fn(prev.context === context ? prev : freshDisclosure(context)))
+  const setCollapsed = (fn: (prev: ReadonlySet<string>) => ReadonlySet<string>) =>
+    updateDisclosure((d) => {
+      const next = fn(d.collapsed)
+      return next === d.collapsed ? d : { ...d, collapsed: next }
+    })
   const rechecking = useDelayed(ready && queued, 300)
 
   /**
@@ -322,9 +334,7 @@ export function ProblemPanel() {
     isOpen: (d, dflt) => forcedOpen(d, drill) || (openMap.get(drillKey(d)) ?? dflt),
     toggle: (d, dflt) => {
       const now = forcedOpen(d, drill) || (openMap.get(drillKey(d)) ?? dflt)
-      const map = new Map(openMap)
-      map.set(drillKey(d), !now)
-      setOpened({ context, map })
+      updateDisclosure((prev) => ({ ...prev, opened: new Map(prev.opened).set(drillKey(d), !now) }))
       const ui = useUiStore.getState()
       if (now) {
         // 收起直达 / 定位撑开的那一支：放下它（连同游标），否则它下一帧又被撑开
@@ -346,7 +356,7 @@ export function ProblemPanel() {
             open={!collapsed.has(key)}
             expanded={expanded.has(key)}
             onToggle={() => setCollapsed((prev) => toggled(prev, key))}
-            onExpand={() => setExpanded((prev) => new Set(prev).add(key))}
+            onExpand={() => updateDisclosure((prev) => ({ ...prev, expanded: new Set(prev.expanded).add(key) }))}
             currentId={cursorAt.current?.issueId ?? null}
             activeCanvasId={activeCanvasId}
             onLocate={locate}
@@ -497,7 +507,20 @@ export function ProblemPanel() {
   )
 }
 
-const EMPTY_MAP: ReadonlyMap<string, boolean> = new Map()
+/** 树的开合，连同写下它的现场（`problemContextKey`） */
+interface Disclosure {
+  context: string
+  opened: ReadonlyMap<string, boolean>
+  collapsed: ReadonlySet<string>
+  expanded: ReadonlySet<string>
+}
+
+const freshDisclosure = (context: string): Disclosure => ({
+  context,
+  opened: new Map(),
+  collapsed: new Set(),
+  expanded: new Set(),
+})
 
 /** `gone` 在旧走法 `before` 里的位置往 `dir` 方向，第一支仍在 `walk` 上的；没有就是 undefined（到头了，不绕回） */
 function adjacentBranch(
