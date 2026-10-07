@@ -33,13 +33,14 @@ import json
 import os
 import platform
 import re
+import stat
 import subprocess
 import sys
 import threading
 import tokenize
 from pathlib import Path, PurePosixPath
 
-from . import atomicio, figcapture, inputremap, projectenv, registry, runtime
+from . import atomicio, figcapture, inputremap, projectenv, registry, runtime, scanbudget
 
 #: 「什么算一份图产物」的唯一出处在 `figcapture.ARTIFACT_EXTS`（捕获描述符
 #: 判原件、handoff 找产物、这里的静态扫描必须是同一张表）；旧名保留作镜像。
@@ -964,8 +965,29 @@ def is_infrastructure_name(name: str) -> bool:
 # --------------------------------------------------------------------------
 # 扫描
 # --------------------------------------------------------------------------
+def _children(d: Path, budget: scanbudget.Budget | None) -> list[Path]:
+    """目录的直接子项（排好序）。带预算时逐项 scandir 并当场记账；Path.iterdir 在一些受支持的
+    Python 版本里先 listdir 整个目录，事后截断仍会无界读取。只给已经读进预算的子项排序，时间与
+    取消也在读取期间检查。不带预算与改造前逐字相同。"""
+    if budget is None:
+        return sorted(d.iterdir())
+    if budget.stop_reason() is not None:
+        return []
+    out: list[Path] = []
+    with os.scandir(d) as entries:
+        for entry in entries:
+            if not budget.charge_entry():
+                break
+            out.append(d / entry.name)
+    return sorted(out)
+
+
 def _iter_py(
-    figures_dir: Path, *, include_infrastructure: bool, strict: bool = False
+    figures_dir: Path,
+    *,
+    include_infrastructure: bool,
+    strict: bool = False,
+    budget: scanbudget.Budget | None = None,
 ) -> list[Path]:
     """图库里的 .py：递归但剪枝（隐藏目录、虚拟环境、缓存一律不下探）。
 
@@ -981,28 +1003,69 @@ def _iter_py(
     「用户把这些文件删了」长得一模一样，照它行事会把一批 worker 作废、发一
     串假的 `assets.changed`。列给用户挑的那两个视图仍然宽容——网盘上一个读
     不动的子目录不该让整份脚本清单从界面上消失。
+
+    `budget`（T02 导入即扫描）：给了就**有界且留痕**——目录项数 / 脚本数 / 时间 / 取消；符号链接目录
+    **不跟进**（防环与越界，记 `symlinked_dir`）；读不动的目录、超限、层级太深都进账本而不是静默少给。
+    不给则与改造前逐字相同（符号链接目录照旧会被下探，既有行为，不在这里改）。
     """
     out: list[Path] = []
     root = Path(figures_dir)
 
+    def rel(p: Path) -> str:
+        return rel_key(p, root)
+
     def walk(d: Path, depth: int) -> None:
         try:
-            children = sorted(d.iterdir())
+            if budget is not None and d != root and scanbudget.is_redirect(d.lstat()):
+                budget.note(scanbudget.ISSUE_SYMLINK_DIR, path=rel(d))
+                return
+            children = _children(d, budget)
         except OSError:
             if strict:
                 raise
+            if budget is not None:
+                budget.note(scanbudget.ISSUE_UNREADABLE_DIR, path=rel(d) if d != root else ".")
             return
         for child in children:
+            # Children are already charged, but classification/stat can also be slow.
+            if budget is not None and budget.stop_reason() is not None:
+                return
             if child.name.startswith("."):
                 continue
-            if child.is_dir():
-                if depth < MAX_DEPTH and child.name not in PRUNE_DIRS:
+            if budget is None:
+                is_dir = child.is_dir()
+            else:
+                try:
+                    metadata = child.lstat()
+                except OSError:
+                    if strict:
+                        raise
+                    budget.note(scanbudget.ISSUE_UNREADABLE_FILE, scope="entry", path=rel(child))
+                    continue
+                if scanbudget.is_redirect(metadata):
+                    budget.note(scanbudget.ISSUE_SYMLINK_DIR, scope="entry", path=rel(child))
+                    continue
+                is_dir = stat.S_ISDIR(metadata.st_mode)
+            if is_dir:
+                if child.name in PRUNE_DIRS:
+                    continue
+                if depth < MAX_DEPTH:
                     walk(child, depth + 1)
+                elif budget is not None:
+                    # 设计内的静默剪枝：只记 note，「一个脚本都没找到」时才升级成 partial（projscan）
+                    budget.note(
+                        scanbudget.ISSUE_DEPTH, severity=scanbudget.SEVERITY_NOTE, path=rel(child)
+                    )
                 continue
             if child.suffix != ".py":
                 continue
             if not include_infrastructure and is_infrastructure_name(child.name):
                 continue
+            if budget is not None:
+                if len(out) >= budget.limits.max_scripts:
+                    budget.note(scanbudget.ISSUE_SCRIPTS, scope="walk")
+                    continue
+                budget.scripts = len(out) + 1
             out.append(child)
 
     walk(root, 0)
@@ -1014,14 +1077,17 @@ def iter_scripts(figures_dir: Path) -> list[Path]:
     return _iter_py(Path(figures_dir), include_infrastructure=False)
 
 
-def iter_all_scripts(figures_dir: Path, *, strict: bool = False) -> list[Path]:
+def iter_all_scripts(
+    figures_dir: Path, *, strict: bool = False, budget: scanbudget.Budget | None = None
+) -> list[Path]:
     """项目内**全部**合理 .py（含基础设施脚本；被 prune 的目录仍然不列）。
 
     供「列给用户挑」的清单（probe.script_inventory）用：普通 .py 不该因为
     静态分析解不出产物就从产品里消失。
 
-    `strict=True`：遍历中途读不动就抛 `OSError`（见 `_iter_py`）。"""
-    return _iter_py(Path(figures_dir), include_infrastructure=True, strict=strict)
+    `strict=True`：遍历中途读不动就抛 `OSError`（见 `_iter_py`）。
+    `budget`：有界扫描用的预算 + 账本（见 `_iter_py`）。"""
+    return _iter_py(Path(figures_dir), include_infrastructure=True, strict=strict, budget=budget)
 
 
 def rel_key(path: Path, root: Path) -> str:
@@ -1039,13 +1105,22 @@ def rel_key(path: Path, root: Path) -> str:
 _rel_key = rel_key  # 旧名（模块内与既有调用方）
 
 
-def _resolve(patterns: set[str], figures_dir: Path) -> tuple[set[str], list[str]]:
-    """模式 → 具体 stem。带 * 的与磁盘产物比对；无匹配进 unresolved。"""
+def _resolve(
+    patterns: set[str], figures_dir: Path, *, glob_disk: bool = True
+) -> tuple[set[str], list[str]]:
+    """模式 → 具体 stem。带 * 的与磁盘产物比对；无匹配进 unresolved。
+
+    `glob_disk=False`：带 * 的**不上磁盘比对**，一律进 unresolved。`rglob` 对整棵项目树无界（含
+    `.venv` / `node_modules`），导入即扫描（T02）不能背这个账；代价是通配的输出名在扫描里不能由磁盘
+    上已有的成图补出 stem（于是归为 `dynamic_names`，仍是绘图候选）。"""
     stems: set[str] = set()
     unresolved: list[str] = []
     for pat in sorted(patterns):
         if "*" not in pat:
             stems.add(pat)
+            continue
+        if not glob_disk:
+            unresolved.append(pat)
             continue
         found = {p.stem for ext in OUT_EXTS for p in figures_dir.rglob(pat + ext)}
         if found:
@@ -1066,7 +1141,13 @@ def analyze_script(
     return inspect_script(path, figures_dir, target_python=target_python)["info"]
 
 
-def inspect_script(path: Path, figures_dir: Path, *, target_python: str | None = None) -> dict:
+def inspect_script(
+    path: Path,
+    figures_dir: Path,
+    *,
+    target_python: str | None = None,
+    glob_disk: bool = True,
+) -> dict:
     """单个脚本 → `{"info": 报告条目 | None, "problem": 问题 | None, "parser": …, "entry_candidates": …}`。
 
     * `info` 是 `analyze_script()` 的条目；不是绘图脚本时 None——那时 `problem` 也是 None
@@ -1081,6 +1162,10 @@ def inspect_script(path: Path, figures_dir: Path, *, target_python: str | None =
 
     读的永远是钉在 `figures_dir` 之内的 realpath：`..` 回溯、指到项目外的软链接都算
     `io_error`（脚本不在项目目录之内），不替调用方读项目外的文件（CodeQL #145）。
+
+    `target_python` 不给（缺省）就**不会起任何解释器**：宿主判语法错误就是 `syntax_error`，
+    `parser` 为 None（未核验，不是「确认不是脚本」）。导入即扫描（T02）永远走这一档。
+    `glob_disk=False`：通配输出名不上磁盘比对（见 `_resolve`）。
     """
     real = projectenv.contained_path(figures_dir, path)
     if real is None:
@@ -1113,14 +1198,16 @@ def inspect_script(path: Path, figures_dir: Path, *, target_python: str | None =
                 }
         return {"info": None, "problem": problem, "parser": None, "entry_candidates": None}
     return {
-        "info": _analyze_tree(tree, path, figures_dir),
+        "info": _analyze_tree(tree, path, figures_dir, glob_disk=glob_disk),
         "problem": None,
         "parser": PARSER_HOST,
         "entry_candidates": entry_candidates_of(tree),
     }
 
 
-def _analyze_tree(tree: ast.Module, path: Path, figures_dir: Path) -> dict | None:
+def _analyze_tree(
+    tree: ast.Module, path: Path, figures_dir: Path, *, glob_disk: bool = True
+) -> dict | None:
     """解析好的树 → 报告条目；不是绘图脚本（无入口 / 不存图）返回 None。"""
     entry = _entry_of(tree)
     if entry is None:
@@ -1139,7 +1226,7 @@ def _analyze_tree(tree: ast.Module, path: Path, figures_dir: Path) -> dict | Non
     an.run(entry)
     if not an.sites:
         return None  # 压根不产图（纯数据/工具模块）
-    stems, unresolved = _resolve(an.patterns, figures_dir)
+    stems, unresolved = _resolve(an.patterns, figures_dir, glob_disk=glob_disk)
     return {
         "entry": entry,
         "stems": sorted(stems),

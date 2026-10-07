@@ -65,6 +65,7 @@ import { useDocumentStore } from '@/store/documentStore'
 import { refreshProjectNow } from '@/store/liveSync'
 import { useOnboardingStore } from '@/store/onboardingStore'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
+import { useProjectScanStore } from '@/store/projectScanStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
@@ -128,6 +129,12 @@ const COMMANDS: Command[] = [
       const focus = o?.type === 'panel' ? o.fileId : null
       useProjectReadinessStore.getState().openCenter({ focus, source: 'palette' })
     },
+  },
+  // 导入即扫描（T02）的条被关掉之后，从这里重新打开：只是呈现，不开始新的扫描
+  {
+    id: 'project-scan',
+    available: () => projectOpen() && useProjectScanStore.getState().scan !== null,
+    run: () => useProjectScanStore.getState().reopen(),
   },
   // 教程三条：状态判据只有 lib/onboarding/tutorial 一份，这里只挑显示哪条
   {
@@ -216,6 +223,7 @@ const COMMANDS: Command[] = [
 const COMMAND_ICONS: Record<string, ComponentType<{ size?: number; className?: string }>> = {
   'refresh-project': RefreshCw,
   readiness: ClipboardList,
+  'project-scan': ClipboardList,
   'tutorial-start': Play,
   'tutorial-resume': Play,
   'tutorial-reset': RotateCcw,
