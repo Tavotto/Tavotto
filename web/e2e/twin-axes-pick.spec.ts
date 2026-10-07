@@ -73,6 +73,12 @@ function writeTwinProject(): string {
 
 test('twinx：⌥ 点击在宿主与孪生轴之间轮换，并说出换到了谁', async ({ app, page }) => {
   const a = await app({ figures: writeTwinProject() })
+  const patchedRenders: unknown[][] = []
+  page.on('request', (req) => {
+    if (new URL(req.url()).pathname !== '/api/engine/render' || req.method() !== 'POST') return
+    const body = req.postDataJSON() as { patches?: unknown[] }
+    if (body.patches?.length) patchedRenders.push(body.patches)
+  })
   await page.goto(a.baseURL)
 
   await page.getByText('Fig_twin.pdf').dblclick({ timeout: 30_000 })
@@ -80,17 +86,37 @@ test('twinx：⌥ 点击在宿主与孪生轴之间轮换，并说出换到了�
   await expect(svgWrap.locator('svg')).toBeVisible({ timeout: 60_000 })
   await page.waitForTimeout(1500)
 
-  // 绘图区容器在屏幕上的矩形：直接问 SVG 里那个 `<g id="axes_0">`
-  const box = await page.evaluate(() => {
-    const g = document.querySelector('[data-element-svg] svg [id="axes_0"]')
+  // axes 组的矩形还包着刻度文字 / 轴标题，不能拿它的 80% 当绘图区空白：
+  // CI #811 那一点距下边框只有 9.7px，普通点击实际在切刻度（10px 命中带），
+  // 随后的 ⌥ 双击撞上了它意外触发的重渲染。量真正的背景矩形，并自证离墨迹 / 边框够远。
+  const probe = await page.evaluate(() => {
+    const svg = document.querySelector('[data-element-svg] svg')
+    const g = svg?.querySelector('[id="axes_0"]')
     if (!g) return null
-    const r = (g as SVGGElement).getBoundingClientRect()
-    return { x: r.x, y: r.y, w: r.width, h: r.height }
+    // 本夹具的宿主只有一个二维 patch（白色绘图区）；其余四条 spine 宽或高为 0。
+    const plots = [...g.querySelectorAll<SVGPathElement>(':scope > [id^="patch_"] path')]
+      .filter((p) => {
+        const r = p.getBBox()
+        return r.width > 0 && r.height > 0
+      })
+    if (plots.length !== 1) return null
+    const r = plots[0].getBoundingClientRect()
+    const at = { x: r.x + r.width * 0.5, y: r.y + r.height * 0.8 }
+    const lines = [...svg!.querySelectorAll('[id*=".lines_"]')]
+    if (!lines.length) return null
+    return {
+      at,
+      spineClearance: Math.min(at.x - r.left, r.right - at.x, at.y - r.top, r.bottom - at.y),
+      inkClearance: at.y - Math.max(...lines.map((line) => line.getBoundingClientRect().bottom)),
+    }
   })
-  expect(box, 'SVG 里应当有 axes_0 这个组').not.toBeNull()
+  expect(probe, 'SVG 里应当有唯一的宿主绘图区背景和曲线').not.toBeNull()
+  // lib/tickSides.ts 的 ZONE_PX.band = 10px；另留 4px 覆盖 SVG / manifest 的亚像素误差。
+  expect(probe!.spineClearance, '轮换探针必须在四条边框命中带之外').toBeGreaterThan(14)
+  expect(probe!.inkClearance, '轮换探针必须在所有曲线下方的空白里').toBeGreaterThan(14)
 
   /** 绘图区下半块中间：曲线都在上半部分，这儿只剩两个重叠的 axes 容器 */
-  const at = { x: box!.x + box!.w * 0.5, y: box!.y + box!.h * 0.8 }
+  const at = probe!.at
 
   /** 属性页此刻挂在哪个元素上（属性行的 data-gid，见 ElementInspector） */
   const shownGid = () =>
@@ -112,6 +138,7 @@ test('twinx：⌥ 点击在宿主与孪生轴之间轮换，并说出换到了�
   await page.waitForTimeout(400)
   const host = await shownGid()
   expect(host, '空白处点击应当选中一个 axes 容器').toMatch(/^axes_\d+$/)
+  expect(patchedRenders, '普通空白点击只选中，不改刻度或任何属性').toEqual([])
   // 不能断言这条播报是空的：渲染完成那句 toast 还挂着，播报区里本来就有话
   expect(await announced(), '普通点击不该说出轮换那句话').not.toContain('重叠元素')
 
@@ -146,6 +173,7 @@ test('twinx：⌥ 点击在宿主与孪生轴之间轮换，并说出换到了�
   await page.mouse.click(at.x, at.y)
   await page.waitForTimeout(400)
   expect(await shownGid()).toBe(host)
+  expect(patchedRenders, '普通点击回到宿主仍然不写任何 patch').toEqual([])
 
   // 4) ⌥ 双击：只轮换，**不弹快速改字**。两个 pointerdown 各换一次选中，双击
   //    再弹一个内容输入框的话，用户要的是「换一个」，拿到的是一次没要的编辑。
@@ -158,6 +186,7 @@ test('twinx：⌥ 点击在宿主与孪生轴之间轮换，并说出换到了�
     '⌥ 双击不该弹出快速编辑弹层',
   ).toBe(0)
   expect(await shownGid(), '⌥ 双击仍然只是换选中').toMatch(/^axes_\d+$/)
+  expect(patchedRenders, '整轮选择 / 轮换都不应触发带 patch 的渲染').toEqual([])
 })
 
 test('键盘轮换：bbox 中心不在曲线身上时也走得回来', async ({ app, page }) => {

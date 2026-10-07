@@ -77,7 +77,11 @@ function stopTimers(): void {
 }
 
 export const useProjectScanStore = create<ProjectScanState>((set, get) => {
-  /** 一次响应能不能落地。`authoritative`：POST 的回包是「此刻谁在跑」的最新事实，不比序号。 */
+  /**
+   * 一次响应能不能落地。项目 / 换代守卫对所有响应生效；请求序号只约束**非权威**的补拉
+   * （GET）。`authoritative`（start / cancel 的 POST 回包）是「此刻谁在跑」的最新事实：若有更晚发出的
+   * GET 先带着上一轮终局回来，序号比较会把这次新扫描的回包丢掉、而终局快照又不会再触发轮询。
+   */
   const accept = (
     mine: number,
     pj: string | null,
@@ -86,12 +90,13 @@ export const useProjectScanStore = create<ProjectScanState>((set, get) => {
     authoritative: boolean,
   ): boolean => {
     if (gen !== generation || pj !== currentProjectId()) return false
-    if (mine < applied) return false
+    if (!authoritative && mine < applied) return false
     const cur = get().scan
-    if (!authoritative && cur && cur.scan_id === data.scan_id) {
+    // 同一轮扫描内 observation_seq 只许前进——对权威回包同样成立（后端序号单调）
+    if (cur && cur.scan_id === data.scan_id) {
       if (data.observation_seq < cur.observation_seq) return false
     }
-    applied = mine
+    applied = Math.max(applied, mine)
     return true
   }
 
