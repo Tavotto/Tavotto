@@ -350,14 +350,19 @@ def _targets_of(
 
 
 # ---------------------------------------------------------------- 依赖声明
-def dependency_evidence(root: Path, script: str | None) -> dict:
+def dependency_evidence(
+    root: Path, script: str | None, budget: scanbudget.Budget | None = None
+) -> dict:
     """依赖**声明**在哪、有多少条、哪几类读不懂——只读文件、不求值、不联网、不问解释器。
 
     `declared_intents` 自带文件数 / 字节上限，读不了的记 `unsupported`（不是「没有依赖」）。输出只有
     声明文件的项目相对路径、条数与闭集 reason，**不带原文行**（原文可能含带凭据的 index URL）。
-    结论永远是 `evaluated: False`：能不能装、装没装，要等环境被核验（T05 / T06）。"""
+    结论永远是 `evaluated: False`：能不能装、装没装，要等环境被核验（T05 / T06）。
+
+    `budget`（导入即扫描传）：声明文件按**不跟随链接、只读有上限普通文件**读（符号链接 / UNC / FIFO / 超大
+    文件被拒、不被探），被拒的条目进账本（`unreadable_file`，partial）——不是「没有依赖」。"""
     try:
-        intents = depresolve.declared_intents(root, script)
+        intents = depresolve.declared_intents(root, script, no_follow=budget is not None)
     except (OSError, ValueError, RuntimeError):
         return {
             "script": script,
@@ -368,6 +373,15 @@ def dependency_evidence(root: Path, script: str | None) -> dict:
             "evaluated": False,
         }
     files = sorted({i.source for i in intents if i.source})
+    if budget is not None:
+        for rel in sorted(
+            {
+                i.source
+                for i in intents
+                if i.reason == depresolve.UNSUPPORTED_UNREADABLE and i.source
+            }
+        ):
+            budget.note(scanbudget.ISSUE_UNREADABLE_FILE, scope="file", path=rel)
     return {
         "script": script,
         "files": files,
@@ -379,14 +393,17 @@ def dependency_evidence(root: Path, script: str | None) -> dict:
 
 
 # ---------------------------------------------------------------- 环境线索
-def environment_evidence(root: Path, script: str | None) -> dict:
+def environment_evidence(
+    root: Path, script: str | None, budget: scanbudget.Budget | None = None
+) -> dict:
     """环境**候选线索**（只读磁盘记录）：项目 venv、记住的决策、`.vscode` / `.python-version` /
     `environment.yml` / shebang、Conda / pyenv 的落盘记录。
 
     * 每条 `status` 都是 `unchecked`（记住的是 `remembered_unverified`，文件没了是 `missing`）——**没有
       任何一条被体检过**，`verified` 恒为 False；"推荐"与"采用"是 T05 的事，这里不给推荐；
     * 项目内的解释器给项目相对路径，项目外的只给不透明 `id`（`userenvs.env_id`）与来源 / 标签，不出机器路径；
-    * 不问登录 shell（`ask_login_shell=False`）、不 `import`、不 `stat` 以外的东西。"""
+    * 不问登录 shell（`ask_login_shell=False`）、不 `import`、不 `stat` 以外的东西；
+    * `budget`：Conda / pyenv 的枚举带着墙钟预算与取消回调，到期 / 取消停在已枚举到的部分（账本 → partial）。"""
     root = Path(root)
     by_key: dict[str, dict] = {}
     order: list[str] = []
@@ -446,7 +463,9 @@ def environment_evidence(root: Path, script: str | None) -> dict:
             )
             remembered["id"] = row["id"]
 
-    for entry in userenvs.discover(root, script, ask_login_shell=False, no_follow=True):
+    for entry in userenvs.discover(
+        root, script, ask_login_shell=False, no_follow=True, budget=budget
+    ):
         add(entry["python"], entry["source"], entry.get("label") or "")
 
     candidates = [by_key[k] for k in order]
@@ -598,9 +617,9 @@ def scan(
         "checked": False,
     }
     if budget.stop_reason() is None:
-        env = environment_evidence(root, script_for_env)
+        env = environment_evidence(root, script_for_env, budget)
     if budget.stop_reason() is None:
-        deps = dependency_evidence(root, script_for_env)
+        deps = dependency_evidence(root, script_for_env, budget)
     budget.stop_reason()  # Include expiry during the last evidence stage in the report.
 
     issues = budget.issues()

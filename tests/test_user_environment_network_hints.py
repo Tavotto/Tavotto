@@ -69,8 +69,8 @@ def test_project_scan_never_stats_a_network_interpreter_hint(tmp_path, monkeypat
         json.dumps({"python.defaultInterpreterPath": "//attacker/share/python.exe"}),
         encoding="utf-8",
     )
-    monkeypatch.setattr(userenvs, "_conda_prefixes", lambda: [])
-    monkeypatch.setattr(userenvs, "_pyenv_pythons", lambda: [])
+    monkeypatch.setattr(userenvs, "_conda_prefixes", lambda *a, **k: [])
+    monkeypatch.setattr(userenvs, "_pyenv_pythons", lambda *a, **k: [])
     real_is_file = Path.is_file
 
     def is_file(path):

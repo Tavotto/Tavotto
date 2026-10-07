@@ -149,7 +149,7 @@ def test_project_scan_asks_for_no_follow_environment_hints(tmp_path, monkeypatch
 
     monkeypatch.setattr(userenvs, "discover", fake)
     projscan.environment_evidence(tmp_path, None)
-    assert seen == {"ask_login_shell": False, "no_follow": True}
+    assert seen == {"ask_login_shell": False, "no_follow": True, "budget": None}
 
 
 @posix_only
@@ -165,3 +165,92 @@ def test_project_scan_report_ignores_a_redirected_settings_file(tmp_path):
     report = projscan.scan(project)
 
     assert all("vscode" not in c["sources"] for c in report["environment"]["candidates"])
+
+
+# ---- 线程 4210267702：枚举 Conda / pyenv 时拿得到预算与取消回调 ----------------------------------
+
+
+class _Clock:
+    def __init__(self):
+        self.now = 0.0
+
+    def __call__(self):
+        return self.now
+
+
+def _fake_home(tmp_path, monkeypatch) -> Path:
+    home = tmp_path / "home"
+    (home / ".conda" / "envs").mkdir(parents=True)
+    monkeypatch.setattr(userenvs, "_home", lambda: str(home))
+    monkeypatch.setattr(userenvs, "_conda_roots", lambda: [])
+    monkeypatch.setenv("PYENV_ROOT", str(home / ".pyenv"))
+    return home
+
+
+def test_expired_budget_stops_conda_enumeration_midway_with_partial(tmp_path, monkeypatch):
+    from tavotto.engine import scanbudget
+
+    home = _fake_home(tmp_path, monkeypatch)
+    for n in range(300):
+        (home / ".conda" / "envs" / f"e{n:03d}").mkdir()
+    clock = _Clock()
+    budget = scanbudget.Budget(clock=clock)
+    seen = {"n": 0}
+    real = scanbudget.Budget.charge_entry
+
+    def ticking(self):
+        seen["n"] += 1
+        if seen["n"] == 70:  # 枚举到一半：墙钟越线
+            clock.now = scanbudget.MAX_SECONDS + 1
+        return real(self)
+
+    monkeypatch.setattr(scanbudget.Budget, "charge_entry", ticking)
+    prefixes = userenvs._conda_prefixes(budget)
+
+    assert 0 < len(prefixes) < 300  # 只有枚举到的那部分
+    assert budget.stopped == scanbudget.ISSUE_TIME
+    assert any(
+        i["code"] == scanbudget.ISSUE_TIME and i["severity"] == "partial" for i in budget.issues()
+    )
+
+
+def test_cancel_during_pyenv_enumeration_returns_partial_discovery(tmp_path, monkeypatch):
+    from tavotto.engine import scanbudget
+
+    home = _fake_home(tmp_path, monkeypatch)
+    versions = home / ".pyenv" / "versions"
+    for n in range(200):
+        _python(versions / f"3.{n}" / "bin").rename(versions / f"3.{n}" / "bin" / "python3")
+    polls = {"n": 0}
+
+    def cancel():
+        polls["n"] += 1
+        return polls["n"] > 3
+
+    budget = scanbudget.Budget(cancel=cancel)
+    found = userenvs.discover(
+        tmp_path / "project", None, ask_login_shell=False, no_follow=True, budget=budget
+    )
+
+    assert len(found) < 200
+    assert budget.stopped == scanbudget.ISSUE_CANCELLED
+
+
+@posix_only
+def test_fifo_environments_txt_does_not_hang_and_is_reported(tmp_path, monkeypatch):
+    from tavotto.engine import scanbudget
+
+    home = _fake_home(tmp_path, monkeypatch)
+    os.mkfifo(home / ".conda" / "environments.txt")
+    budget = scanbudget.Budget()
+
+    assert userenvs._conda_prefixes(budget) == []
+    assert any(i["code"] == scanbudget.ISSUE_UNREADABLE_FILE for i in budget.issues())
+
+
+def test_without_budget_enumeration_is_unchanged(tmp_path, monkeypatch):
+    home = _fake_home(tmp_path, monkeypatch)
+    for n in ("b", "a"):
+        (home / ".conda" / "envs" / n).mkdir()
+
+    assert [os.path.basename(p) for p in userenvs._conda_prefixes()] == ["a", "b"]

@@ -20,11 +20,13 @@
 
 from __future__ import annotations
 
+import os
 import stat
 import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 
 # ---- 预算上限（新常量；与既有常量的关系写在旁边） -------------------------------------------------
 #: 一次扫描最多检视多少个目录项（文件 + 目录；脚本遍历与素材遍历共用一本账）。
@@ -97,6 +99,45 @@ def is_redirect(st) -> bool:
         return False
     tag = getattr(st, "st_reparse_tag", 0) or 0
     return tag == 0 or bool(tag & 0x20000000)
+
+
+def read_regular_text(
+    base, *parts: str, no_follow: bool = False, max_bytes: int | None = MAX_FILE_BYTES
+) -> str:
+    """读一个文件的文本：只认**普通文件**、有字节上限、绝不阻塞在 FIFO 上；读不了一律 `OSError`。
+
+    导入即扫描里「读用户项目里的文件」的唯一读法（环境线索文件与依赖声明共用，不另造第二套）。
+    `no_follow=True`：`base`（已 realpath、钉在项目内的目录）之下的每一级都先 `lstat`，符号链接 /
+    Windows 路径替身（junction 等）不探目标；打开用 `O_NOFOLLOW`（有的平台）并在打开后 `fstat` 复核
+    仍是普通文件。这是元数据先行的防御，不声称对并发替换有原子保证。默认形态保持跟随用户自己的符号
+    链接（准备 / 依赖门），但同样只读普通文件、有上限。`max_bytes=None` = 不设字节上限（仍只认普通文件）。
+    """
+    cur = Path(base)
+    for part in parts:
+        cur = cur / part
+        if no_follow and is_redirect(cur.lstat()):
+            raise OSError(f"redirect refused: {part}")
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0)
+    if no_follow:
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(cur, flags)
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or (max_bytes is not None and st.st_size > max_bytes):
+            raise OSError("not a bounded regular file")
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            chunk = os.read(fd, 64 * 1024)
+            if not chunk:
+                break
+            total += len(chunk)
+            if max_bytes is not None and total > max_bytes:  # 打开之后又长大了：同样不读
+                raise OSError("file grew past the limit")
+            chunks.append(chunk)
+    finally:
+        os.close(fd)
+    return b"".join(chunks).decode("utf-8", errors="replace")
 
 
 def is_placeholder(st) -> bool:
