@@ -97,6 +97,22 @@ function statusToneViolations(path: string, src: string): string[] {
   const at = (n: ts.Node, why: string) =>
     out.push(`${path}:${sf.getLineAndCharacterOfPosition(n.getStart()).line + 1} ${why}`)
 
+  /**
+   * 包装层把语气当可选 / 带缺省的形参透传（`(m, tone?) => setStatus(m, tone)`，Codex #821 P1）：
+   * 调用点看着有两个实参，实际调包装时不写 tone 就静默落回 info。语气形参必须必填。
+   */
+  const optionalToneParam = (arg: ts.Expression): boolean => {
+    const id = unwrap(arg)
+    if (!ts.isIdentifier(id)) return false
+    for (let cur: ts.Node | undefined = id.parent; cur; cur = cur.parent) {
+      if (ts.isFunctionLike(cur)) {
+        const param = cur.parameters.find((q) => ts.isIdentifier(q.name) && q.name.text === id.text)
+        if (param) return !!(param.questionToken || param.initializer)
+      }
+    }
+    return false
+  }
+
   /** 一个「store 的 setStatus」表达式出现在 n 处：它的去处是否在允许的几种之内 */
   const checkUse = (n: ts.Expression) => {
     const self = outer(n)
@@ -105,6 +121,7 @@ function statusToneViolations(path: string, src: string): string[] {
       const args = p.arguments
       const clears = args.length === 1 && args[0].kind === ts.SyntaxKind.NullKeyword
       if (args.length < 2 && !clears) at(p, 'untoned')
+      else if (args.length >= 2 && optionalToneParam(args[1])) at(p, 'optional-tone')
       return
     }
     if (ts.isVariableDeclaration(p) && p.initializer === self && ts.isIdentifier(p.name)) return
@@ -175,6 +192,10 @@ describe('通知轨语气', () => {
     // React 依赖数组不算逃出；useState 解出来的同名 setter 不是 store 的
     expect(v('const s = useUiStore((x) => x.setStatus)\nuseCallback(() => s("m", "done"), [s])')).toEqual([])
     expect(v('const [status, setStatus] = useState(1)\nsetStatus(2)')).toEqual([])
+    // 包装层的语气形参必须必填（Codex #821 P1）
+    expect(v('const status = (m: M, tone?: T) => useUiStore.getState().setStatus(m, tone)')).toEqual(['optional-tone'])
+    expect(v('function say(m: M, tone: T = "info") { useUiStore.getState().setStatus(m, tone) }')).toEqual(['optional-tone'])
+    expect(v('const status = (m: M, tone: T) => useUiStore.getState().setStatus(m, tone)')).toEqual([])
     // 注释里提到不算
     expect(v('/** see `uiStore.setStatus` */')).toEqual([])
   })
