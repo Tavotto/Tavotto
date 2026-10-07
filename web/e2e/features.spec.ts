@@ -753,13 +753,24 @@ test(
     const zoomBtn = page.locator('[data-zoom-menu]')
     const zoomLabel = () => zoomBtn.getAttribute('aria-label')
 
+    // 视口的缩放与取景都是 180 ms 补间（`viewportStore.animateTo`）；补间途中量到的是半路上的几何。
+    // 每一次量之前都等舞台上的 `data-view-tweening` 消失（`canvas-objects-and-workspace.md`）——
+    // 否则「已过阈值」的条件在补间半路就放行：缩放到选区还没铺满就被当成起点、两档缩小还没走完就被
+    // 当成终点，量到 0.61 / 0.64 这种半路值（PR #833 的 posix-e2e，同一份应用代码时红时绿）。
+    const tweening = page.locator('[data-world-transform][data-view-tweening]')
+
     /** 先缩小两档，让选中对象明显变小（每个入口都从「对象小」出发） */
     const shrink = async () => {
+      await expect(tweening, '量起点之前视口补间应当已落定').toHaveCount(0)
       const before = (await panel.boundingBox())!
       await page.keyboard.press('ControlOrMeta+-')
       await page.keyboard.press('ControlOrMeta+-')
+      // 变小且补间已落定（同一次轮询里判，补间开始前那一拍不会被当成「已落定」放行）
       await expect
-        .poll(async () => (await panel.boundingBox())!.width, { message: '缩小后对象应当变小' })
+        .poll(
+          async () => ((await tweening.count()) === 0 ? (await panel.boundingBox())!.width : Number.POSITIVE_INFINITY),
+          { message: '缩小后对象应当变小、且视口补间落定' },
+        )
         .toBeLessThan(before.width * 0.9)
       const s = await stageBox(page)
       const b = (await panel.boundingBox())!
@@ -773,6 +784,7 @@ test(
       await expect
         .poll(
           async () => {
+            if ((await tweening.count()) > 0) return 'tweening'
             const s = await stageBox(page)
             const b = (await panel.boundingBox())!
             const fill = Math.max(b.width / s.width, b.height / s.height)
