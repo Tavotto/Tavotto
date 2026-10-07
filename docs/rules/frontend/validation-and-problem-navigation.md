@@ -90,8 +90,10 @@ preflight.runSpec()      规则求值（两份求值器，golden vectors 对齐�
   别的图 / 别的类别的提示就不动。
   **toast 的语气**（`uiStore.StatusTone`，2026-10-07 审计 P0）：`info`（缺省，Info 图标）/ `progress`
   （进行中，转圈）/ `done`（做成了，✓）/ `error`。只有 `error` 改变行为（常驻、assertive），其余三档只换
-  图标；报告「做成了」的调用点显式传 `done`、「正在…」传 `progress`，不确定就留缺省——不许让「正在构建…」打勾。
-  看护 `web/src/hooks/useServerEvents.test.ts`、`web/src/store/statusPassive.test.ts`、`web/src/store/renderStore.test.ts`。
+  图标；**每个调用点都显式给出语气**（做成了 `done`、正在… `progress`、中性 / 没做成 `info`、出错 `error`），
+  不靠缺省——缺省是 `info`，忘写就会把「已撤销 / 已复制」悄悄从 ✓ 变成 ⓘ（Codex #821 P2）。不许让「正在构建…」打勾。
+  看护 `web/src/store/statusTone.test.ts`（源码扫描：无 tone 的 `setStatus` 调用即红）、`web/src/hooks/useServerEvents.test.ts`、
+  `web/src/store/statusPassive.test.ts`、`web/src/store/renderStore.test.ts`。
 * **就绪度不混进问题清单**：面板底部只放一条通往接入状态的链接。
 * **面板的呈现层在 `lib/problemList.ts`（2026-09-06，审计 T09）**，纯函数，
   不跑第二遍求值器：① 范围「当前图 / 整个文档」——当前图 = 快速编辑的

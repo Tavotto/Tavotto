@@ -64,7 +64,7 @@ function AnswersManager({ script }: { script: string }) {
       return next
     })
   const rerun = () => {
-    useUiStore.getState().setStatus(msg('scriptInput.manageSaved', { script }, 'dialogs'))
+    useUiStore.getState().setStatus(msg('scriptInput.manageSaved', { script }, 'dialogs'), 'done')
     void useScriptRunStore.getState().run(script)
   }
 

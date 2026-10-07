@@ -77,6 +77,7 @@ function announceCopied(payload: ClipPayload): void {
       payload.objects.length === 1
         ? note('objectCopied', { name: objectLabel(payload.objects[0]) })
         : note('objectsCopied', { count: payload.objects.length }),
+      'done',
     )
 }
 
@@ -207,7 +208,7 @@ export function materializeRelink(resolved: MissingAsset[]): void {
   const assets = useAssetStore.getState().byId
   const relink = resolved.filter((m) => m.relinkTo && assets[m.relinkTo])
   if (!relink.length) {
-    useUiStore.getState().setStatus(note('relinkNone'))
+    useUiStore.getState().setStatus(note('relinkNone'), 'info')
     return
   }
   const byFileId = new Map(relink.map((m) => [m.fileId, assets[m.relinkTo!]]))
@@ -230,7 +231,7 @@ export function materializeRelink(resolved: MissingAsset[]): void {
     }
     // 新素材的写回基线原样放进来（身份不按旧素材的 manifest 重抄，ADR 0083）
   }, { overrides: 'restored' })
-  useUiStore.getState().setStatus(note('relinked', { count: relink.length, undo: modKey('Z') }))
+  useUiStore.getState().setStatus(note('relinked', { count: relink.length, undo: modKey('Z') }), 'done')
 }
 
 /**
@@ -392,5 +393,6 @@ export function materializePaste(payload: ClipPayload, resolved: MissingAsset[])
       skipped
         ? note('pastedWithSkips', { count: clones.length, skipped, undo: modKey('Z') })
         : note('pasted', { count: clones.length, undo: modKey('Z') }),
+      'info',
     )
 }

@@ -1018,7 +1018,7 @@ function HistoryRow({
                 void aiRevert(entry.id, pj).then(
                   () => {
                     if (!stillMine()) return
-                    useUiStore.getState().setStatus(msg('history.reverted', undefined, 'ai'))
+                    useUiStore.getState().setStatus(msg('history.reverted', undefined, 'ai'), 'done')
                     onChanged()
                   },
                   // 脚本在这次修改之后又变过（`ai_revert_conflict`）等：说出口，不装作已回滚——

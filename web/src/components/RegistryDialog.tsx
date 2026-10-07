@@ -211,6 +211,7 @@ function ReadinessBody() {
           n
             ? msg('readiness.linkedCount', { count: n }, 'dialogs')
             : msg('readiness.nothingNew', undefined, 'dialogs'),
+          n ? 'done' : 'info',
         )
     })
 

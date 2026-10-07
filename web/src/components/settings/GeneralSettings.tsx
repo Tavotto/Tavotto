@@ -80,7 +80,7 @@ function GeneralRows({ close }: { close: () => void }) {
             } catch {
               /* 忽略 */
             }
-            setStatus(msg('settings.general.layoutReset', undefined, 'dialogs'))
+            setStatus(msg('settings.general.layoutReset', undefined, 'dialogs'), 'done')
           }}
         >
           {st('general.resetLayout')}

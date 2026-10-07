@@ -190,7 +190,7 @@ export function handleServerEvent(ev: ServerEvent) {
       // AI 那条路紧跟着一条 `ai.done` 在说同一件事：一次修改只留一条提示；改记住的输入（script_input）
       // 是用户在答案管理里刚点的，那边自己说「正在重新运行」，这里不再说「脚本已更新」
       if (affected.length && ev.reason !== 'ai' && ev.reason !== 'script_input') {
-        setStatus(msg('status.scriptChanged', { count: affected.length }, 'workspace'))
+        setStatus(msg('status.scriptChanged', { count: affected.length }, 'workspace'), 'info')
       }
       break
     }
