@@ -478,6 +478,13 @@ write inside the conversation's working folder (WorkBuddy doesn't report MCP roo
 not your home folder. The embedded canvas hasn't been checked in WorkBuddy yet; the tools work without it. If you
 added Tavotto by hand with the config generator below, remove that entry, or you will have two Tavotto servers.
 
+To update an existing marketplace installation, open the installed Tavotto plugin card in WorkBuddy's
+plugin marketplace and select **Update** ([official plugin management](https://www.workbuddy.cn/docs/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/Plug-In)).
+Then start a new conversation and ask WorkBuddy to call `tavotto_health`. These steps also apply to the
+published v0.18.0 plugin; downloading a ZIP and regenerating MCP configuration does not update a marketplace plugin.
+To uninstall the plugin, open the installed Tavotto entry's **Manage** page and use its uninstall action
+([WorkBuddy plugin management](https://www.workbuddy.cn/docs/workbuddy/Plugins)).
+
 These Beta labels cover the installation channels above, backed by local host smoke tests; they do not
 claim `host_verified` acceptance of a released artifact. Windows host flows, Claude Code's IDE extensions
 and desktop Code tab, DSH's desktop app and real-model flow, and WorkBuddy's GUI/canvas remain unverified.

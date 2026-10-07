@@ -402,6 +402,13 @@ Tavotto/Tavotto
 WorkBuddy 的内嵌画布还没有验收；工具可独立使用。若之前用配置生成器手动添加过 Tavotto，
 请移除重复项，避免出现两个 Tavotto 服务。
 
+更新已有的市场插件时，在 WorkBuddy 插件市场的已安装列表中打开 Tavotto 插件卡片，选择
+**「更新」**（[官方插件管理](https://www.workbuddy.cn/docs/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/Plug-In)），
+然后新开对话并调用 `tavotto_health`。这些步骤也适用于已发布的 v0.18.0 插件；下载 ZIP 并
+重新生成 MCP 配置不会更新市场插件。
+卸载插件时，打开已安装 Tavotto 条目的**「管理」**页面，再执行卸载
+（[WorkBuddy 插件管理](https://www.workbuddy.cn/docs/workbuddy/Plugins)）。
+
 以上三条 Beta 只描述安装渠道，依据是本地宿主冒烟（`local_smoke`），不是发行产物的
 `host_verified` 验收。Windows 宿主流程、Claude Code 的 IDE 扩展和桌面 Code 标签页、
 DSH 桌面版和真实模型流程、WorkBuddy GUI / 画布仍未验收。
