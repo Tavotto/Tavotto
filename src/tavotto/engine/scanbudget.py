@@ -20,11 +20,13 @@
 
 from __future__ import annotations
 
+import os
 import stat
 import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 
 # ---- 预算上限（新常量；与既有常量的关系写在旁边） -------------------------------------------------
 #: 一次扫描最多检视多少个目录项（文件 + 目录；脚本遍历与素材遍历共用一本账）。
@@ -97,6 +99,120 @@ def is_redirect(st) -> bool:
         return False
     tag = getattr(st, "st_reparse_tag", 0) or 0
     return tag == 0 or bool(tag & 0x20000000)
+
+
+def redirected_component(root, path, *, allow_final_link: bool = False) -> str | None:
+    """项目派生路径 `path` 在 `root` 之下的每一级里，第一个符号链接 / 路径替身（junction 等）的**项目相对
+    POSIX 路径**；干净、不在 `root` 之下（机器级候选）或这一级不存在回 None。
+
+    导入即扫描对项目派生的候选解释器路径，在调用任何会跟随链接的谓词（`is_file` / `exists` / `realpath` /
+    `stat` / 指纹 / 起进程）**之前**先问这一句：只做字符串运算与逐级 `lstat`，不碰目标（目标可能是
+    攻击者的 UNC / WebDAV 共享，哪怕 `exists` 也会发 NTLM）。`..` 一律按「名字」原样当作被拒（normpath
+    会悄悄折叠掉中间那一级的 lstat）。`root` 自己（用户打开的那一层）不查。
+
+    `allow_final_link=True`：最后一级允许是 POSIX 符号链接（venv 的 `bin/python` 本来就是指向基础解释器的
+    软链接，不是目录重定向）；Windows 上最后一级的任何重定向仍然拒。不可读（非「不存在」的 OSError）当拒。
+    """
+    root_n = os.path.normpath(os.fspath(root))
+    norm = [os.path.normcase(x) for x in Path(root_n).parts]
+    rest: tuple[str, ...] | None = None
+    for candidate in (Path(os.fspath(path)).parts, Path(os.path.normpath(os.fspath(path))).parts):
+        head = [os.path.normcase(x) for x in candidate[: len(norm)]]
+        if len(candidate) > len(norm) and head == norm:
+            rest = candidate[len(norm) :]
+            break
+    if not rest:
+        return None
+    cur = root_n
+    seen: list[str] = []
+    for i, part in enumerate(rest):
+        seen.append(part)
+        rel = "/".join(seen)
+        if part in ("..", ".") or any(sep in part for sep in {os.sep, os.altsep or os.sep}):
+            return rel
+        cur = os.path.join(cur, part)
+        try:
+            st = os.lstat(cur)
+        except (FileNotFoundError, NotADirectoryError):
+            return None
+        except (OSError, ValueError):
+            return rel
+        if is_redirect(st):
+            final = i == len(rest) - 1
+            if final and allow_final_link and os.name != "nt" and stat.S_ISLNK(st.st_mode):
+                return None
+            return rel
+    return None
+
+
+def _contained_lexical(base, parts: tuple[str, ...]) -> str:
+    """把 `base` + `parts` 钉在 `base` 之内，回**守卫过的那一条**字符串路径；逃出去抛 `OSError`。
+
+    只做字符串运算（`normpath` + 前缀判，不 realpath、不 stat：no_follow 下 UNC / 链接目标不能被碰）。
+    守卫写成静态分析认得的 barrier 形状（`== base` 与 `not startswith` 分开两段，相等那支回 `base_n`
+    本身；规则见 docs/rules/backend/session-auth.md「用户可控的路径」），下游 lstat / open 只用回值。
+    `parts` 里的 `..` / `.` / 分隔符一律拒（它们是名字不是路径，normpath 会悄悄折叠掉中间一级的 lstat）。
+    """
+    seps = {os.sep, os.altsep or os.sep}
+    for part in parts:
+        if part in ("", ".", "..") or any(sep in part for sep in seps):
+            raise OSError(f"bad path component: {part!r}")
+    base_n = os.path.normpath(os.fspath(base))
+    cur = os.path.normpath(os.path.join(base_n, *parts))
+    if cur == base_n:
+        return base_n
+    if not cur.startswith(base_n.rstrip(os.sep) + os.sep):
+        raise OSError("path escapes base")
+    return cur
+
+
+def read_regular_text(
+    base, *parts: str, no_follow: bool = False, max_bytes: int | None = MAX_FILE_BYTES
+) -> str:
+    """读一个文件的文本：只认**普通文件**、有字节上限、绝不阻塞在 FIFO 上；读不了一律 `OSError`。
+
+    导入即扫描里「读用户项目里的文件」的唯一读法（环境线索文件与依赖声明共用，不另造第二套）。
+    `no_follow=True`：`base`（已 realpath、钉在项目内的目录）之下的每一级都先 `lstat`，符号链接 /
+    Windows 路径替身（junction 等）不探目标；打开用 `O_NOFOLLOW`（有的平台）并在打开后 `fstat` 复核
+    仍是普通文件。这是元数据先行的防御，不声称对并发替换有原子保证。默认形态保持跟随用户自己的符号
+    链接（准备 / 依赖门），但同样只读普通文件、有上限。`max_bytes=None` = 不设字节上限（仍只认普通文件）。
+    """
+    safe = _contained_lexical(base, parts)
+    if no_follow:
+        # 逐级 lstat：层级全从守卫过的 `safe` 往上取 dirname（不拿 base / parts 原串重拼）
+        levels: list[str] = []
+        level = safe
+        base_n = os.path.normpath(os.fspath(base))
+        while level != base_n:
+            levels.append(level)
+            parent = os.path.dirname(level)
+            if parent == level:
+                break
+            level = parent
+        for level in reversed(levels):
+            if is_redirect(Path(level).lstat()):
+                raise OSError(f"redirect refused: {os.path.basename(level)}")
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0)
+    if no_follow:
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(safe, flags)
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or (max_bytes is not None and st.st_size > max_bytes):
+            raise OSError("not a bounded regular file")
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            chunk = os.read(fd, 64 * 1024)
+            if not chunk:
+                break
+            total += len(chunk)
+            if max_bytes is not None and total > max_bytes:  # 打开之后又长大了：同样不读
+                raise OSError("file grew past the limit")
+            chunks.append(chunk)
+    finally:
+        os.close(fd)
+    return b"".join(chunks).decode("utf-8", errors="replace")
 
 
 def is_placeholder(st) -> bool:
