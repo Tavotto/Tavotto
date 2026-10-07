@@ -316,6 +316,130 @@ def test_full_flow_over_real_stdio(client, project, tmp_path):
     assert client.tool("tavotto_close_session", {"session_id": sid})["closed"] is True
 
 
+@pytest.mark.parametrize("extra_texts", [0, 450])
+def test_summary_receipt_over_real_stdio_preserves_the_edit_and_legacy_app(
+    tmp_path, monkeypatch, extra_texts
+):
+    """真 matplotlib / stdio：量完整 CallToolResult，读快照不增加 revision，旧画布仍得原子负载。"""
+    figures = tmp_path / "figures"
+    figures.mkdir()
+    script = SCRIPT.replace(
+        "fig.tight_layout(pad=0.4)",
+        f"""\
+fig.set_size_inches(220 / 25.4, 250 / 25.4)
+    for i in range({extra_texts}):
+        fig.text(0.02 + (i % 20) * 0.048, 0.98 - (i // 20) * 0.04, f"T{{i}}", fontsize=8)
+    fig.tight_layout(pad=0.4)""",
+    )
+    (figures / "figm.py").write_text(script, encoding="utf-8")
+    (figures / "tavotto_registry.json").write_text(json.dumps(REGISTRY), encoding="utf-8")
+    generated = subprocess.run(
+        [_worker_python(), str(figures / "figm.py")],
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=60,
+    )
+    assert generated.returncode == 0, generated.stderr
+    # 只声明协议资源可用，不以这个夹具冒充真实 iframe 或生成物验收。
+    widget = tmp_path / "canvas.html"
+    widget.write_text("<!doctype html><title>protocol fixture</title>", encoding="utf-8")
+    monkeypatch.setenv("TAVOTTO_MCP_WIDGET", str(widget))
+    c = Client(str(tmp_path), str(tmp_path / "data"))
+    try:
+        c.call("initialize", {"protocolVersion": "2025-11-25", "capabilities": {}})
+        opened = c.tool("tavotto_open_figure", {"project_path": str(figures)})
+        sid = opened["session_id"]
+        initial = c.tool("tavotto_session_state", {"session_id": sid})
+        patches = [{"gid": _gid(initial["manifest"], "title"), "prop": "fontsize", "value": 11}]
+        raw = c.call(
+            "tools/call",
+            {
+                "name": "tavotto_apply_overrides",
+                "arguments": {"session_id": sid, "patches": patches, "summary": True},
+            },
+        )
+        summary = raw["result"]
+        body = summary["structuredContent"]
+        size = len(json.dumps(summary, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+        assert not summary.get("isError") and size <= 16 * 1024
+        assert body["applied"] == 1 and body["warning_count"] == body["rejected_count"] == 0
+        assert summary["_meta"]["ui"]["resourceUri"] == "ui://tavotto/canvas/v1.html"
+        assert body["elided"]["fetch_with"] == "tavotto_session_state"
+        current = c.tool("tavotto_session_state", {"session_id": sid})
+        assert current["patches"] == patches
+        assert current["patch_hash"] == body["patch_hash"]
+        assert current["render_revision"] == body["render_revision"]
+        assert current["last_apply"]["rejected"] == []
+        title = next(e for e in current["manifest"]["elements"] if e["role"] == "title")
+        assert next(p["value"] for p in title["editable"] if p["prop"] == "fontsize") == 11
+        assert current["svg"] and "<svg" in current["svg"]
+        # 模型读回全量 patches 后继续编辑：第一次的字号必须仍然在，而不是被增量请求撤掉。
+        next_patches = [
+            *current["patches"],
+            {"gid": title["gid"], "prop": "text", "value": "Read after edit"},
+        ]
+        next_result = c.call(
+            "tools/call",
+            {
+                "name": "tavotto_apply_overrides",
+                "arguments": {"session_id": sid, "patches": next_patches, "summary": True},
+            },
+        )["result"]
+        next_size = len(
+            json.dumps(next_result, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        )
+        assert not next_result.get("isError") and next_size <= 16 * 1024
+        next_body = next_result["structuredContent"]
+        assert next_body["render_revision"] == body["render_revision"] + 1
+        assert next_body["patch_hash"] != body["patch_hash"] and next_body["applied"] == 2
+        current = c.tool("tavotto_session_state", {"session_id": sid})
+        assert current["patches"] == next_patches
+        assert current["patch_hash"] == next_body["patch_hash"]
+        assert current["render_revision"] == next_body["render_revision"]
+        next_title = next(e for e in current["manifest"]["elements"] if e["gid"] == title["gid"])
+        assert next(p["value"] for p in next_title["editable"] if p["prop"] == "fontsize") == 11
+        assert (
+            next(p["value"] for p in next_title["editable"] if p["prop"] == "text")
+            == "Read after edit"
+        )
+        # 与省略参数的旧画布调用对拍：不靠二次读取来完成这次渲染。
+        legacy_raw = c.call(
+            "tools/call",
+            {
+                "name": "tavotto_apply_overrides",
+                "arguments": {"session_id": sid, "patches": next_patches},
+            },
+        )
+        legacy = legacy_raw["result"]
+        legacy_body = legacy["structuredContent"]
+        legacy_size = len(
+            json.dumps(legacy, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        )
+        assert legacy_body["manifest"] == current["manifest"]
+        assert legacy_body["patch_hash"] == next_body["patch_hash"]
+        assert legacy_body["render_revision"] == next_body["render_revision"] + 1
+        assert legacy_body["svg"] and "<svg" in legacy_body["svg"]
+        assert legacy["_meta"] == summary["_meta"]
+        if extra_texts:
+            assert legacy_size > 1024 * 1024
+        print(
+            json.dumps(
+                {
+                    "extra_texts": extra_texts,
+                    "elements": len(current["manifest"]["elements"]),
+                    "summary_bytes": size,
+                    "next_summary_bytes": next_size,
+                    "legacy_bytes": legacy_size,
+                    "patch_hash": body["patch_hash"],
+                    "render_revision": body["render_revision"],
+                }
+            )
+        )
+    finally:
+        c.close()
+
+
 def test_hot_equals_fresh_worker_replay(client, project):
     """不变式一：热态 == 全新 worker 从零全量重放。"""
     opened = client.tool("tavotto_open_figure", {"project_path": str(project)})

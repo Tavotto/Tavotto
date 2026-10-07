@@ -1393,7 +1393,7 @@ class TestIsolation:
                 config_calls.add(node.func.attr)
         allowed = {
             "dataclasses", "hashlib", "http", "json", "logging", "os", "platform", "posixpath", "re", "secrets", "shutil",
-            "socket", "stat", "subprocess", "tarfile", "threading", "time", "urllib", "pathlib",
+            "socket", "stat", "subprocess", "tarfile", "tempfile", "privatepython_bundle", "threading", "time", "urllib", "pathlib",
             "importlib", "__future__", "brand", "config", "logsafe", "runtime", "tlstrust", "files", "__version__",
         }  # fmt: skip
         assert imported <= allowed, imported - allowed

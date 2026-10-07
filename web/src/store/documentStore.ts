@@ -29,7 +29,7 @@ import { newId } from '@/lib/id'
 import { boundedCount, captureTelemetry, classifyEditKind } from '@/lib/telemetry'
 import { documentDigest, recordDiagnosticEvent } from '@/diagnostics'
 import { patchRefs } from '@/diagnostics/patches'
-import { defaultCanvasName, type CanvasData, type FigureDocument, type ProjectDocument } from '@/types/document'
+import { defaultCanvasName, type CanvasData, type FigureDocument, type PanelObject, type ProjectDocument } from '@/types/document'
 import {
   SCHEMA_CURRENT,
   canvasToDoc,
@@ -1865,4 +1865,25 @@ export function startAutosave(): () => void {
     window.removeEventListener('beforeunload', onLeave)
     unsubscribe()
   }
+}
+
+/**
+ * 文档里的素材实例：激活画布优先，其次别的画布，只有这一份查找规则。
+ * 给定 panelId 时必须仍是同一素材的那个实例；删除 / 换素材后绝不退到另一个副本。
+ */
+export function findFigurePanel(
+  figureId: string,
+  panelId?: string,
+): { panel: PanelObject; canvasId: string } | null {
+  const state = useDocumentStore.getState()
+  const matches = (o: FigureDocument['objects'][number]): o is PanelObject =>
+    o.type === 'panel' && o.fileId === figureId && (panelId === undefined || o.id === panelId)
+  const here = state.doc.objects.find(matches)
+  if (here) return { panel: here, canvasId: state.activeCanvasId }
+  for (const canvas of state.canvases) {
+    if (canvas.id === state.activeCanvasId) continue
+    const panel = canvas.objects.find(matches)
+    if (panel) return { panel, canvasId: canvas.id }
+  }
+  return null
 }

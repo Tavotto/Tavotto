@@ -11,8 +11,23 @@
 - **只有单图 open 守预算**（`CANVAS_INLINE_BUDGET_BYTES` 768 KiB，量整个 `CallToolResult`
   的紧凑 UTF-8 字节，别用默认 ensure_ascii），按 `INLINE_ELISION_STEPS` 省 svg → manifest →
   位图 → 预检清单，写 `structuredContent.elided`；说明加完再量一次，还超先退到只剩把手
-  （`HANDLE_ONLY_KEYS`）再截 `content` 文字；只在单图 + 有画布时跑（批量 / 无画布没有
-  iframe）；**apply 不守**（画布靠它拿新 manifest）；`_meta` 不再复制 `widgetData`。
+  （`HANDLE_ONLY_KEYS`）再截 `content` 文字；open 只在单图 + 有画布时跑（批量 / 无画布没有
+  iframe）；`_meta` 不再复制 `widgetData`。
+- **apply 的 `summary=true` 是显式的模型回执选项**：不返回 manifest / SVG / 位图负载，
+  保留会话、patch_hash、render_revision、worker_generation、应用与拒绝计数、合同解除与
+  恢复标志，写 `elided.fetch_with=tavotto_session_state`。资源与无画布说明加完后量整个
+  CallToolResult，守 `APPLY_SUMMARY_BUDGET_BYTES`（16 KiB），超限诊断可省但计数不可省。
+  `Session.apply_receipt` 只保留最近成功 apply 的诊断（紧凑 UTF-8 JSON ≤ 64 KiB），不存
+  manifest / 预览，也不重复保存既有的 `Session.warnings`；warnings 仍从取件顶层完整读取。
+  超限的 rejected / timings / 预览错误依次不保留，用 `last_apply.diagnostics_unavailable`
+  明示缺项，计数与同一 hash / revision 留着。这些极端诊断清单无法再完整取回，完整图态
+  不受影响。下次成功 `_render` 清除旧回执；关闭 / 淘汰 / 出界 / 退出释放，进程重建
+  不保留旧诊断。失败仍回 `isError=true`、`ok=false` 与原错误码；显式摘要的超大错误也守
+  16 KiB，保留有界错误 / recovery 与诊断样本，列表带原计数，`elided` 明示完整错误诊断
+  未保留（不能冒称 `tavotto_session_state` 能取回它）。预算内错误逐字段不变，不把失败压成成功。
+  **省略 summary 或 false 保留旧 apply 完整响应**（画布靠同一次响应拿 manifest / 预览；
+  另跳取件可能取到另一组 patches，不能代替原子响应）。工具说明与技能引导新模型传 true；
+  旧客户端仍可能超过宿主事件上限，这是兼容性保留的边界。
 - **`tavotto_session_state` 是画布的取件通道**：只读、不重渲染，全部来自 `Session` 上最近一次
   `_render` 留下的字段（加字段先加到 `Session`），预检复用 `Session.preflight_cache`（`_render` 必清）。降级
   `NORMAL_TOOLS` 由 `test_degraded_normal_tool_names_mirror_the_real_server` 钉成镜像。

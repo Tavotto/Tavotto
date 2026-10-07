@@ -1782,6 +1782,18 @@ export default interface Resources {
     }
   },
   "errors": {
+    "artifact": {
+      "adoptFrame": "采用 PNG 原图图幅",
+      "backgroundVisibilityRequired": "请选择保留透明背景，还是显示背景颜色。现有修改已保留。",
+      "chooseBackground": "选择背景",
+      "frameChanged": "保存的图幅标记不匹配，已保留修改与位置。请使用兼容的历史版本；不会自动换算。",
+      "keepTransparent": "保留透明背景",
+      "legacyEdits": "这张图已有编辑或写回基线，暂不能自动改用所选 PNG 图幅。现有修改保持原样。",
+      "showBackground": "显示背景颜色",
+      "sourceChanged": "源文件已变化，已保留你的修改。请恢复匹配的源文件或选择兼容的历史版本。",
+      "unsupported": "这张 PNG 暂不能安全进入编辑。已保留原图；当前支持固定或已完成一次排版的完整 figsize 图幅。",
+      "writebackUnsupported": "这张图暂不支持重新构建、写回或同步源图。可以继续编辑并导出新文件。"
+    },
     "backend": {
       "ai_agent_disabled": "{{agent}} 已在设置中关闭。在「改图助手」里打开后再试。",
       "ai_agent_executable_invalid": "无法用作该 Agent 的可执行文件：{{path}}。原设置不变。",
@@ -1796,6 +1808,7 @@ export default interface Resources {
       "ai_start_failed": "无法启动 AI 任务：{{reason}}",
       "annotations_need_pdf": "该素材没有矢量 PDF，标注暂时无法写回原图。",
       "artifact_rejected": "导出文件没有通过 {{policy}} 检查（{{failed}}），未发布到导出目录。",
+      "artifact_source_unavailable": "当前操作无法使用所选源图模式，未应用本次修改。请保留原图显示。",
       "backend_retired": "环境变量 TAVOTTO_RENDER_BACKEND={{value}} 指向已退役的 PyMuPDF 渲染后端。去掉这个变量即用默认渲染后端。",
       "backend_unavailable": "渲染后端不可用（依赖或字体缺失）：{{reason}}。请重新安装。",
       "backend_unknown": "环境变量 TAVOTTO_RENDER_BACKEND={{value}} 不是可用的渲染后端。去掉这个变量即用默认渲染后端。",
@@ -2497,6 +2510,7 @@ export default interface Resources {
       "fixCategory": "修复此类",
       "fixChoose": "修复…",
       "fixFailed": {
+        "artifact_unsupported": "所选源图暂不支持自动修复；现有修改保持原样，可手动编辑并导出新文件。",
         "busy": "上一次修复还在进行，稍后再试。",
         "canvas_missing": "找不到这条问题所在的画布，请刷新问题列表。",
         "engine_failed": "修复时渲染出错，图没有改动。",
@@ -2888,6 +2902,9 @@ export default interface Resources {
       "clickToEdit": "点击图内元素开始编辑",
       "colorScaleLinked": "与{{label}}共用色阶",
       "colorScaleTip": "色图与色阶范围同步",
+      "colorbarOwnershipHelp": "在脚本中明确指定这条色条的宿主，然后重新运行。保留现有 cax 布局：",
+      "colorbarOwnershipShared": "共享色条：把全部宿主写入 ax 列表。",
+      "colorbarOwnershipUnknown": "归属未确定",
       "editElement": "修改图内元素",
       "editProp": "修改{{label}}",
       "figureSize": "整图 {{w}} × {{h}} mm",

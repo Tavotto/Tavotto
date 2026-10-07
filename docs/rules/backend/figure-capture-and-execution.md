@@ -142,6 +142,12 @@
   * 「什么算一份图产物」唯一出处 `figcapture.ARTIFACT_EXTS`
     （`discover.OUT_EXTS` / `handoff.OUT_EXTS` 是镜像别名）；「stem 的原始
     产物在哪」唯一判据 `figcapture.find_original_artifact`。
+- **手动色条的宿主记录（#792 / ADR 0102）**：safe worker、native bridge 与浏览器 playground
+  都在脚本执行前调用 `figcapture.install_colorbar_capture`。它幂等地包装 `FigureBase.colorbar`，
+  原样委托 matplotlib，只在手动 `cax=` 带显式 `ax` 时记录标准 Axes / list / tuple / ndarray，
+  不消费被原调用忽略的迭代器，不写 `_colorbar_info`。结构、随行、宿主数统一读 `declared_parents`；
+  颜色关系不能补布局声明。看护 `tests/test_colorbar_capture.py`、`tests/test_browser_session.py`、
+  `tests/bridge/test_bridge_e2e.py`。
 - **live-figure 会话**：worker 跑一次脚本（拦截 `Figure.savefig` + `paper_style.save`，
   不写真实文件），Figure 常驻内存；override 直接 mutate artist 再导出带 gid 的
   SVG（dpi≈120 预览）——冷启动秒到分钟级，热态 ~40ms。
@@ -233,3 +239,53 @@
 用户 Figure getter/数值转换。自定义或无法确定的元数据为 null、账本 incomplete，仍保留
 occurrence/figure ordinal/result。看护：`tests/bridge/test_bridge_savefig_observations.py` 的
 真实 subclass/实例方法/类属性 getter 次数、PNG 字节与异常行为对拍。
+
+## 选择具体产物的受限源图上下文
+
+`source_policy=selected-artifact-v1` 是显式选择，不改变省略它的旧请求，也不迁移存量布局。
+控制面从安全解析后的 PDF/PNG 文件生成 `SourceArtifact` 字节身份；有 edits 的请求必须带
+`expected_source`（原始 hash/字节数），变了回 409 `artifact_source_unavailable`，不能把旧坐标
+静默绑到新文件。首次无编辑采用会返回实际身份。对象身份仍遵守 ADR 0083 的既有边界。
+
+- 只支持 safe 档、固定/已完成一次性布局的标准 rectilinear line/bar/text 图。
+  活跃布局、脚本留下的 Python 线程、额外 bbox artists、自定义渲染钩子、locale/TeX/
+  外部字体、其它 artist 家族拒绝；不序列化 Figure，不重放保存历史。
+- 完整保存账本里必须有唯一的完整路径匹配，且属于已捕获 Figure。执行目录相对路径
+  只是候选，不能按 stem/basename 猜。拼写不同只在解析后仍位于项目内、且文件系统确认
+  是同一个文件时视为别名；不按平台或统一小写猜测卷的大小写语义。重复覆盖、未知目的地/格式/backend 拒绝。
+- 先按该次保存的 DPI/crop 定图幅，再由**初始化后、任何 patch 之前**的源格式候选验证
+  实际文件的像素/图幅；不另画 pre-instrument 探针。PDF 经父进程 pdfbackend，科学 worker
+  不新增 PDF 库。32 MiB、1600 万像素、单页 PDF 与既有 worker/renderer 超时是硬界。
+  PNG pHYs 只容许一个整数像素/米量化步，色彩管理块拒绝，不拿宽松阈值掩盖差异。
+- 所选保存的背景在采集 FigState originals 前落到该 worker 私有 Figure/axes 的既有属性：
+  默认透明背景用 Figure patch 可见性与 axes 的 none 填充/边线，保留 Figure 潜在颜色供切回不透明。
+  显式 facecolor/edgecolor 按保存记录应用，auto 保留当前属性；随后仅此 selected worker 把
+  savefig 的透明、底色、边色、bbox 默认值归一为 False/auto/auto/None，避免后续 rc 覆盖编辑或重裁图幅。
+  witness、manifest、所有预览/导出共用这个可编辑基线；native 与无 source context 的旧路径不变。
+  若这一步把脚本里可见的 Figure 背景隐藏，而保存的 edits 只有 facecolor、没有明确布尔 transparent，
+  不能猜旧版本的可见性意图：render/preview/export 在应用前以 background_visibility_required 拒绝。
+  保留所有 edits，由既有控件让用户明确选择透明或显示底色；导出错误携带请求源身份，只撤销对应变体。
+- 复用现有 FigState 与全量 overrides 语义；worker/输出目录按源上下文隔离，仍受池的
+  3 个热 worker / 1 GiB 缓存治理。不是每个面板永久保存一个图；同一源的变体独立传完整 edits。
+  新上下文会额外执行脚本一次。首次准入按 worker 锁串行；workerd 重启不能绕过重新准入。
+  失败退役只针对那一条 worker 实例；唯一的调度例外 `WorkerError(queue_superseded)`
+  只表示排队项被更新请求替换，原错误继续返回，但不能关闭同源变体共享的 worker、连带中断
+  其它在途请求。其余 worker 错误与源验证失败仍定向退役，不能推广成所有 nonfatal 错误保活。
+  看护 `tests/test_selected_artifact_api.py` 的调用方/错误边界与
+  `tests/test_selected_artifact_worker.py` 的真实 Python worker 在途及后续复用；后者注入队列错误，
+  不替代真实 workerd / Windows 调度验证。选择子集不能重写整份脚本登记。
+- 当前 API 切片只开放 render、带 manifest 的 paired preview、导出新文件；selected GET
+  SVG/PNG、binary preview、specfix/sync、写回及历史恢复明确拒绝，不能退回旧坐标。
+  空 overrides 原图导出仍保留磁盘像素；正常导出的字体/PPI政策独立于源图上下文。
+- 这不是任意用户脚本的无写入沙盒：现有通用 open/原生扩展边界不扩张；新验证/导出路径
+  不写原图，并在发布前复核字节。活跃布局/历史场景、产物级 baked/writeback 与非完整 PNG 的采用仍是后续门。
+
+看护：`tests/test_selected_artifact_worker.py`、`tests/test_selected_artifact_api.py`、
+`tests/test_artifact_context.py`。
+
+`selected-figsize-v1` 是上述机制的窄子集：只接 PNG、已解析的 bbox_inches=None，非空编辑
+必须保留有效 `figure.frame="figsize"`。后端直接检查当前 baked 基线，非空即拒绝；不能依赖
+首选 PDF 可能隐藏 PNG 的素材清单，也不扫描更早的历史版本。它复用同一准入、预算与上下文键，供 ADR 0098 的
+旧坐标兼容采用。`/api/export/validate` 在已验证的选中源请求上附 `artifact_sources`；
+它只确认策略和磁盘字节、不启动 worker，也不宣称场景已经准入。看护：
+`tests/test_selected_figsize_policy.py`、`tests/test_selected_artifact_api.py`。

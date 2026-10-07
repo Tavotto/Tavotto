@@ -1,3 +1,5 @@
+import { artifactValidationIssue, ArtifactValidationError } from '@/lib/artifactValidation'
+import { engineErrorMsg } from '@/lib/api'
 /**
  * 引擎渲染的**调度器**：把「什么时候麻烦 matplotlib」这件事从 React 里拿出来。
  *
@@ -77,6 +79,14 @@ export function requestRender(panel: PanelObject, immediate: boolean | RenderPol
   const store = useRenderStore.getState()
   const key = renderKeyOf(panel)
   const want = JSON.stringify(panel.overrides)
+  cancelScheduledRender(panel.id)
+  const issue = artifactValidationIssue(panel)
+  if (issue) {
+    store.patch(key, { fileId: panel.fileId, status: 'error', code: 'artifact_source_unavailable',
+      error: engineErrorMsg(new ArtifactValidationError(issue)), stale: true, manifest: null,
+      svg: null, svgBytes: 0, lastPatches: null, wantPatches: want })
+    return
+  }
   // 值没变就别写 store：patch() 会换掉 byKey 的引用，把依赖它的 effect
   // 全部重跑一遍——白白多一轮渲染，也是同步循环的燃料
   if (store.get(key).wantPatches !== want) {
@@ -91,7 +101,7 @@ export function requestRender(panel: PanelObject, immediate: boolean | RenderPol
   const epoch = renderEpoch()
   const fire = () => {
     timers.delete(panel.id)
-    void store.render(fileId, patches, dpi, policy, epoch)
+    void store.render(fileId, patches, dpi, policy, epoch, panel.artifactValidation)
   }
   cancelScheduledRender(panel.id)
   if (policy === 'none') return
@@ -120,11 +130,11 @@ export function flushRender(panelId: string) {
   // 松手时就会一声不响地什么都不做——占位的 wantPatches 还挡着同步器，
   // 结果是用户改完之后**永远等不到那张定稿图**。
   if (state.lastPatches !== want) {
-    void store.render(panel.fileId, panel.overrides, undefined, 'sync')
+    requestRender(panel, 'immediate')
     return
   }
   // 已经是这一版了：只有「现在这张是拖动期的低清」才需要补一张定稿
   if (state.previewDpi != null) {
-    void store.render(panel.fileId, panel.overrides, undefined, 'sync')
+    requestRender(panel, 'immediate')
   }
 }

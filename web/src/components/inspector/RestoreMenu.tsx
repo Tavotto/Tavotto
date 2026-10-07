@@ -37,7 +37,7 @@ export function RestoreMenu({
   count: number
 }) {
   useTranslation('inspector')
-  if (count <= 0) return null
+  if (count <= 0 && !Object.hasOwn(panel, 'artifactValidation')) return null
   const counts = overrideCounts(panel.overrides, gid)
 
   return (

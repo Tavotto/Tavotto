@@ -566,6 +566,10 @@ jobs:
             --expect-control-plane workerd \
             --expect-packages numpy,pandas,scipy,seaborn,PIL,matplotlib \
             --tutorial
+          # The rendering smoke above consumes _internal/runtime, not the private
+          # Python archive. Exercise actual offline provisioning + managed venv.
+          TAVOTTO_DATA_DIR="$RUNNER_TEMP/私有 Python 冒烟" \
+            "$SIDECAR" --private-python-smoke
           rm -rf "$DEST"
 
       - name: 打 .dmg

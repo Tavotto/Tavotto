@@ -1,6 +1,6 @@
 # ADR 0102：共享色条的真实组——归属只认脚本声明，组是派生结构、不进文档
 
-日期：2026-09-28 · 状态：**Accepted**（第一阶段：只覆盖显式声明的共享色条）
+日期：2026-09-28 · 状态：**Accepted**（2026-10-03：补齐手动 `cax=` 的显式宿主记录，#792）
 相关：[0081 画布跟随样式](0081-canvas-follows-style.md)（左栏的另一块）、
 [0083 override 的目标身份](0083-override-target-identity.md)（成员 gid 漂移时的降级）、
 细则 `docs/rules/backend/colorbar.md`「结构归属」、`docs/rules/frontend/readiness-and-left-shell.md`「元素树」
@@ -31,17 +31,25 @@
 
 ### 二、归属只认色条自己声明的宿主
 
-证据只有一份：matplotlib 在 `fig.colorbar(..., ax=...)` 那一刻记下的 ax 列表
-`cax._colorbar_info["parents"]`（`colorbarmodel.declared_parents`，`make_axes` /
-`make_axes_gridspec` 写、constrained layout 读）。它是调用参数的记录，不是从渲染结果反推的；
-仓库此前已用它判多宿主（`colorbar_host_count`）。
+证据只有调用时明确传入的宿主，统一经 `colorbarmodel.declared_parents` 读取：自动色条由
+matplotlib 的 `make_axes` / `make_axes_gridspec` 记在 `cax._colorbar_info["parents"]`；
+手动 `cax=` 由三条执行入口共用的 `figcapture.install_colorbar_capture` 记下显式 `ax`
+（`Colorbar._tavotto_colorbar_parents`）。钩子原样调用 matplotlib，兼容 Figure / SubFigure、
+标量 Axes、list / tuple / ndarray 与位置参数；不消费 matplotlib 在 `cax=` 路径忽略的迭代器。
+不伪造 `_colorbar_info`，不改 GridSpec、轴位置、像素、数组或遍历身份。
 
 - 声明 1 个宿主 → 色条轴 `parent_gid` = 那个子图；
 - 声明 ≥2 个宿主 → 组 `group:<色条轴 gid>`，成员 = 这几个子图 + 色条轴，成员的
   `parent_gid` = 组；色条元素另报 `owner_gids`；
-- **不成组、保持原样**：`cax=` 建的色条（没有声明）、宿主有一个不在元素表里、成员不在
+- **不成组、保持原样**：没有显式宿主的 `cax=` 色条、宿主有一个不在元素表里、成员不在
   同一个（子）图里（`SubFigure`）、同一个子图被两条共享色条同时声明（两个组重叠，单父树
   表达不了）。位置相邻、颜色相同、norm 相同一律**不是**成组的证据。
+- 没有声明时报 `owner_status: undeclared`；属性页显示「归属未确定」，给出保留手动 cax 的
+  `fig.colorbar(mappable, cax=cax, ax=ax)` / `ax=[b, c]` 调用方式，用户改脚本后重开。
+  `host_gid` / `mappable_gid` / `scale_gids` 只表示颜色关系，不能证明布局归属；原有颜色宿主与
+  `colorbar_key` 的身份不因显式布局宿主而改变，颜色认领也保留原生宿主来源。
+  单宿主随行与方向落位消费有效声明；方向落位读取该宿主的 pending position。
+- 子图**显示编号**排除色条轴；`axes_N` gid 和遍历次序保持原样，旧 override 不迁移。
 
 ### 三、组是派生结构，不进文档
 
@@ -73,6 +81,9 @@
   拿不到可写的 position。这样的组不展开、不给手柄、组页不摆缩放，拖动 / 方向键按原因说一句，只点
   不拖照常钻进去。不「跳过不能动的、挪其余的」——那会把色条与子图拆开；与画布对象组「组内有锁定
   成员整组不动」同一条规则。
+- 同一个 SubFigure 内可以确认归属，但其 position 仍是局部坐标（ADR 0100「不做」），
+  组的 `resizable=false`，复用上面的能力开关禁用整组变换；根图中的其他组不受影响。
+  本次不重写单个 SubFigure 子图的坐标转换。
 - **不变式：组的变换只有全员刚性与零两种结果。** `expandGroups` 之后的出口不许再逐个过滤成员
   （隐藏的成员照样跟着组走）；对齐 / 分布 / 等宽等高把组当一个单位（成员并集为框、成员一起
   重映射，`elementGeom.alignUnits`），不逐个成员排版。
@@ -83,12 +94,11 @@
 - 属性页选中组是**组页**（成员、颜色来源、整组缩放），不是退回「整张图」；面包屑走
   `structuralParent` 的真实祖先链，色条轴那一级不单列。
 
-## 不做（第一阶段之外）
+## 不做
 
-共享图例、共享轴标题、手动分组、拖拽改归属、按几何自动推断、智能建议；`cax=` 色条的
-归属（需要在导入入口记录 owner，见下）；组级锁定与隐藏；组的方向翻转（多宿主色条翻转
+共享图例、共享轴标题、手动分组、拖拽改归属、按几何自动推断、智能建议；组级锁定与隐藏；组的方向翻转（多宿主色条翻转
 仍按 `multi_host_colorbar` 不宣称）。
 
-`cax=` 要成组，得在脚本执行时截获 `Figure.colorbar` 的调用参数（`figcapture` 的 savefig
-拦截那一层）并记下 owner——那是执行入口的改动，两条入口（safe worker / native bridge）都要
-同步，不在本阶段。
+旧手动共享 cax 文档中同时保存的方向与色条轴 position 可兼容重放：已有明确矩形时不自动
+落位，不缩到第一个宿主。没有明确 position 的共享翻转、自动共享色条的翻转仍报
+`multi_host_colorbar`，不开放新控件。

@@ -3033,6 +3033,528 @@ def test_session_state_for_an_unknown_session_is_a_structured_error(project, fak
     assert _body(res)["code"] == "unknown_session"
 
 
+@pytest.mark.parametrize("pool_fixture", ["fake_pool", "big_pool"])
+@pytest.mark.parametrize("ui", [False, True])
+def test_apply_summary_preserves_the_handle_and_current_state(
+    project, pool_fixture, ui, request, monkeypatch
+):
+    """量本次成功 apply 的整个 UTF-8 回执；取件不能再画，也不能丢已提交的编辑。"""
+    worker = request.getfixturevalue(pool_fixture)
+    monkeypatch.setattr(widget, "available", lambda: ui)
+    opened = _body(_call("tavotto_open_figure", {"project_path": str(project)}))
+    patches = [{"gid": "axes_0.xticks", "prop": "fontsize", "value": 11}]
+    res = _call(
+        "tavotto_apply_overrides",
+        {"session_id": opened["session_id"], "patches": patches, "summary": True},
+    )
+    body = _body(res)
+    assert _wire_bytes(res) <= 16 * 1024
+    assert body["ok"] is True and body["session_id"] == opened["session_id"]
+    assert body["applied"] == body["canonical_patch_count"] == 1
+    assert body["contract_released"] is False and body["restored"] is False
+    assert body["worker_generation"] == worker.generation
+    assert body["warnings"] == body["rejected"] == []
+    assert body["warning_count"] == body["rejected_count"] == 0
+    assert body["elided"]["fetch_with"] == "tavotto_session_state"
+    assert {"manifest", "svg"} <= set(body["elided"]["fields"])
+    assert "manifest" not in body and "svg" not in body
+    if ui:
+        assert res["_meta"] == widget.resource_meta()
+    else:
+        assert body["canvas_ui"]["code"] == "widget_missing"
+    rendered = len(worker.calls)
+    state = _body(_call("tavotto_session_state", {"session_id": body["session_id"]}))
+    assert len(worker.calls) == rendered
+    assert state["patches"] == patches
+    assert state["patch_hash"] == body["patch_hash"]
+    assert state["render_revision"] == body["render_revision"] == worker.rev
+    assert state["svg"].startswith("<svg") and state["manifest"]["elements"]
+    ticks = next(e for e in state["manifest"]["elements"] if e["gid"] == "axes_0.xticks")
+    assert next(e["value"] for e in ticks["editable"] if e["prop"] == "fontsize") == 11
+    assert state["last_apply"]["patch_hash"] == body["patch_hash"]
+    assert state["last_apply"]["rejected"] == []
+    if pool_fixture == "big_pool":
+        assert _wire_bytes({"structuredContent": state}) > 1024 * 1024
+
+
+@pytest.mark.parametrize("summary_args", [{}, {"summary": False}])
+def test_legacy_app_apply_keeps_its_full_response(project, big_pool, widget_present, summary_args):
+    """旧画布不传新参数：manifest 与 SVG 必须仍与本次 apply 原子返回，不能另跳取件。"""
+    opened = _body(_call("tavotto_open_figure", {"project_path": str(project)}))
+    res = _call(
+        "tavotto_apply_overrides",
+        {"session_id": opened["session_id"], "patches": [], **summary_args},
+    )
+    assert _wire_bytes(res) > 1024 * 1024
+    assert set(_body(res)) == {
+        "manifest",
+        "svg",
+        "patch_hash",
+        "worker_generation",
+        "render_revision",
+        "warnings",
+        "timings",
+        "ok",
+        "session_id",
+        "stem",
+        "restored",
+        "applied",
+        "rejected",
+        "canonical_patch_count",
+        "contract_released",
+    }
+    assert _body(res)["manifest"] is bridge.get_session(opened["session_id"]).manifest
+    assert res["_meta"] == widget.resource_meta()
+
+
+@pytest.mark.parametrize("legacy_args", [{}, {"summary": False}])
+@pytest.mark.parametrize(
+    "fragment, reason_elided",
+    [
+        ("x" * 64, False),
+        ("x" * 7000, False),
+        ("x" * 8000, True),
+        ("x" * 20_000, True),
+        ("图" * 5000, True),
+        ('\\"\n' * 5000, True),
+    ],
+    ids=["short", "below-budget", "near-budget", "ascii-long", "utf8-long", "escaped-long"],
+)
+def test_apply_summary_bounds_real_missing_widget_reason_and_keeps_legacy_full(
+    project, fake_pool, monkeypatch, fragment, reason_elided, legacy_args
+):
+    """真实 widget 缺失说明；量 content + body，含 UTF-8 / JSON 转义及预算两侧。"""
+    monkeypatch.setenv(widget.WIDGET_ENV, "/tmp/" + fragment)
+    assert widget.available() is False
+    reason = widget.missing_reason()
+    sid = _body(_call("tavotto_open_figure", {"project_path": str(project)}))["session_id"]
+    res = _call("tavotto_apply_overrides", {"session_id": sid, "patches": [], "summary": True})
+    body = _body(res)
+    size = _wire_bytes(res)
+    print({"reason_utf8_bytes": len(reason.encode("utf-8")), "summary_bytes": size})
+    assert not res.get("isError") and size <= 16 * 1024
+    assert body["canvas_ui"]["available"] is False and body["canvas_ui"]["code"] == "widget_missing"
+    if reason_elided:
+        assert "reason" not in body["canvas_ui"]
+        assert "canvas_ui.reason" in body["elided"]["fields"]
+    else:
+        assert body["canvas_ui"]["reason"] == reason
+    if body["elided"]["reason"] == "inline_budget":
+        assert body["elided"]["final_bytes"] == size
+    assert body["applied"] == body["canonical_patch_count"] == 0
+    assert body["warning_count"] == body["rejected_count"] == 0
+    assert body["worker_generation"] == fake_pool.generation
+    assert body["restored"] is False and body["contract_released"] is False
+    state = _body(_call("tavotto_session_state", {"session_id": sid}))
+    assert (
+        state["patch_hash"] == body["patch_hash"]
+        and state["render_revision"] == body["render_revision"]
+    )
+    legacy = _call("tavotto_apply_overrides", {"session_id": sid, "patches": [], **legacy_args})
+    assert not legacy.get("isError")
+    assert _body(legacy)["canvas_ui"] == {
+        "available": False,
+        "code": "widget_missing",
+        "reason": reason,
+    }
+    assert _body(legacy)["manifest"] == state["manifest"] and _body(legacy)["svg"] == state["svg"]
+
+
+def test_apply_summary_bounds_the_envelope_and_keeps_diagnostics_on_demand(
+    project, fake_pool, widget_present, monkeypatch
+):
+    opened = _body(_call("tavotto_open_figure", {"project_path": str(project)}))
+    original = fake_pool.override
+    warnings = ['警告\n"' * 100_000]
+
+    def noisy(*args, **kwargs):
+        return {**original(*args, **kwargs), "warnings": warnings}
+
+    monkeypatch.setattr(fake_pool, "override", noisy)
+    patches = [None] * 20
+    res = _call(
+        "tavotto_apply_overrides",
+        {"session_id": opened["session_id"], "patches": patches, "summary": True},
+    )
+    body = _body(res)
+    assert not res.get("isError")
+    assert _wire_bytes(res) <= 16 * 1024
+    assert body["applied"] == body["canonical_patch_count"] == 0
+    assert body["warning_count"] == 1 and body["rejected_count"] == 20
+    assert {"warnings", "rejected"} <= set(body["elided"]["fields"])
+    assert body["elided"]["final_bytes"] == _wire_bytes(res)
+    assert body["session_id"] == opened["session_id"] and body["patch_hash"]
+    count = len(fake_pool.calls)
+    state = _body(_call("tavotto_session_state", {"session_id": body["session_id"]}))
+    assert len(fake_pool.calls) == count
+    receipt = state["last_apply"]
+    assert receipt["render_revision"] == body["render_revision"]
+    assert receipt["patch_hash"] == body["patch_hash"]
+    assert state["warnings"] == warnings
+    assert "warnings" not in receipt
+    assert len(receipt["rejected"]) == 20
+    assert receipt["rejected"][0]["index"] == 0 and receipt["rejected"][-1]["index"] == 19
+    assert receipt["timings"] == {"total_ms": 1}
+    assert body["worker_generation"] == fake_pool.generation
+    assert body["contract_released"] is False and body["restored"] is False
+
+
+def test_apply_summary_caps_extra_resident_diagnostics_and_replaces_them(project, fake_pool):
+    opened = _body(_call("tavotto_open_figure", {"project_path": str(project)}))
+    sid = opened["session_id"]
+    body = _body(
+        _call(
+            "tavotto_apply_overrides",
+            {"session_id": sid, "patches": [None] * 6000, "summary": True},
+        )
+    )
+    state = _body(_call("tavotto_session_state", {"session_id": sid}))
+    session = bridge.get_session(sid)
+    receipt = session.apply_receipt
+    assert _wire_bytes(receipt) <= 64 * 1024
+    assert state["last_apply"]["diagnostics_unavailable"] == ["rejected"]
+    assert receipt["rejected_count"] == body["rejected_count"] == 6000
+    assert receipt["warning_count"] == 0 and "rejected" not in receipt
+    assert receipt["patch_hash"] == state["patch_hash"] == body["patch_hash"]
+    assert "warnings" not in receipt and "manifest" not in receipt and "svg" not in receipt
+    newer = _body(
+        _call("tavotto_apply_overrides", {"session_id": sid, "patches": [], "summary": True})
+    )
+    assert session.apply_receipt is not receipt
+    assert session.apply_receipt["rejected"] == []
+    assert session.apply_receipt["rejected_count"] == 0
+    assert session.apply_receipt["render_revision"] == newer["render_revision"]
+    assert "diagnostics_unavailable" not in session.apply_receipt
+
+
+@pytest.mark.parametrize("release", ["close", "evict", "shutdown", "scope"])
+def test_apply_summary_diagnostics_are_released_with_the_session(
+    project, fake_pool, monkeypatch, tmp_path, release
+):
+    sid = _body(_call("tavotto_open_figure", {"project_path": str(project)}))["session_id"]
+    _call("tavotto_apply_overrides", {"session_id": sid, "patches": [], "summary": True})
+    session = bridge.get_session(sid)
+    assert session.apply_receipt is not None
+    if release == "close":
+        assert bridge.close_session(sid)["closed"] is True
+        assert (
+            _body(_call("tavotto_session_state", {"session_id": sid}))["code"] == "unknown_session"
+        )
+    elif release == "evict":
+        monkeypatch.setattr(bridge, "MAX_SESSIONS", 0)
+        assert bridge._evict_if_needed() == [sid]
+    elif release == "shutdown":
+        bridge.shutdown_all()
+    else:
+        other = tmp_path / "other"
+        other.mkdir()
+        monkeypatch.setenv(bridge.ROOTS_ENV, str(other))
+        bridge.reset_root_authority()
+        assert (
+            _body(_call("tavotto_session_state", {"session_id": sid}))["code"]
+            == "workspace_root_changed"
+        )
+    assert sid not in bridge.sessions()
+    assert session.apply_receipt is None
+
+
+@pytest.mark.parametrize("invalid", [None, "true", 0, 1, [], {}])
+def test_bad_summary_option_is_rejected_before_editing(project, fake_pool, invalid):
+    opened = _body(_call("tavotto_open_figure", {"project_path": str(project)}))
+    count = len(fake_pool.calls)
+    with pytest.raises(rpc.RpcError) as exc:
+        _call(
+            "tavotto_apply_overrides",
+            {"session_id": opened["session_id"], "patches": [], "summary": invalid},
+        )
+    assert exc.value.code == rpc.INVALID_PARAMS
+    assert len(fake_pool.calls) == count
+
+
+def test_apply_summary_tracks_repeated_edits_and_does_not_mask_failure(
+    project, fake_pool, monkeypatch
+):
+    opened = _body(_call("tavotto_open_figure", {"project_path": str(project)}))
+    args = {"session_id": opened["session_id"], "summary": True}
+    first = _body(_call("tavotto_apply_overrides", {**args, "patches": []}))
+    patches = [{"gid": "axes_0.xticks", "prop": "fontsize", "value": 12}]
+    second = _body(_call("tavotto_apply_overrides", {**args, "patches": patches}))
+    state = _body(_call("tavotto_session_state", {"session_id": args["session_id"]}))
+    assert first["patch_hash"] != second["patch_hash"] == state["patch_hash"]
+    assert first["render_revision"] + 1 == second["render_revision"] == state["render_revision"]
+    assert state["last_apply"]["applied"] == 1
+
+    def failed(*a, **k):
+        raise bridge.engine_pool.WorkerError("渲染失败", code="render_failed")
+
+    monkeypatch.setattr(fake_pool, "override", failed)
+    failed_res = _call("tavotto_apply_overrides", {**args, "patches": []})
+    assert failed_res["isError"] is True and _body(failed_res)["code"] == "render_failed"
+    after = _body(_call("tavotto_session_state", {"session_id": args["session_id"]}))
+    assert after["patches"] == patches and after["last_apply"] == state["last_apply"]
+    assert after["patch_hash"] == second["patch_hash"]
+    assert after["render_revision"] == second["render_revision"]
+
+
+def test_apply_summary_contract_and_unknown_session_errors_stay_structured(project, fake_pool):
+    missing = _call(
+        "tavotto_apply_overrides", {"session_id": "missing", "patches": [], "summary": True}
+    )
+    assert missing["isError"] is True and _body(missing)["code"] == "unknown_session"
+    opened = _body(_call("tavotto_open_figure", {"project_path": str(project)}))
+    session = bridge.get_session(opened["session_id"])
+    session.contract = {"contract_id": "test", "allowed": [], "allowed_adjust": []}
+    count = len(fake_pool.calls)
+    denied = _call(
+        "tavotto_apply_overrides",
+        {
+            "session_id": session.id,
+            "summary": True,
+            "patches": [{"gid": "axes_0.xticks", "prop": "fontsize", "value": 12}],
+        },
+    )
+    assert denied["isError"] is True and _body(denied)["code"] == "requires_authorization"
+    assert _body(denied)["contract_id"] == "test" and _body(denied)["violations"]
+    assert len(fake_pool.calls) == count and session.contract["contract_id"] == "test"
+
+
+@pytest.mark.parametrize("legacy_args", [{}, {"summary": False}])
+@pytest.mark.parametrize(
+    "diagnostic", ["x" * 100_000, "图" * 40_000, '\\"\n' * 40_000], ids=["ascii", "utf8", "escapes"]
+)
+def test_apply_summary_bounds_worker_errors_without_changing_state_or_legacy(
+    project, fake_pool, monkeypatch, diagnostic, legacy_args
+):
+    sid = _body(_call("tavotto_open_figure", {"project_path": str(project)}))["session_id"]
+    patches = [{"gid": "axes_0.xticks", "prop": "fontsize", "value": 12}]
+    _call("tavotto_apply_overrides", {"session_id": sid, "patches": patches, "summary": True})
+    before = _body(_call("tavotto_session_state", {"session_id": sid}))
+    message = "渲染失败：" + diagnostic + "；请修正脚本后重试。"
+    trace = "Traceback start\n" + diagnostic + "\nTraceback end"
+
+    def failed(*a, **k):
+        raise bridge.engine_pool.WorkerError(message, traceback_text=trace, code="render_failed")
+
+    monkeypatch.setattr(fake_pool, "override", failed)
+    args = {"session_id": sid, "patches": []}
+    res = _call("tavotto_apply_overrides", {**args, "summary": True})
+    size = len(json.dumps(res, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+    print({"error_kind": diagnostic[:1], "summary_error_bytes": size})
+    assert size <= 16 * 1024
+    body = _body(res)
+    assert res["isError"] is True and body["ok"] is False and body["code"] == "render_failed"
+    assert body["error"].startswith("渲染失败：") and body["error"].endswith("；请修正脚本后重试。")
+    assert body["traceback"].startswith("Traceback start") and body["traceback"].endswith(
+        "Traceback end"
+    )
+    assert set(body["elided"]["fields"]) == {"error", "traceback"}
+    assert body["elided"]["diagnostics_unavailable"] is True
+    assert "fetch_with" not in body["elided"]
+    assert body["code"] not in res["content"][0]["text"]
+    after = _body(_call("tavotto_session_state", {"session_id": sid}))
+    assert after == before
+    legacy = _call("tavotto_apply_overrides", {**args, **legacy_args})
+    assert legacy == {
+        "isError": True,
+        "content": [{"type": "text", "text": message}],
+        "structuredContent": {
+            "ok": False,
+            "code": "render_failed",
+            "error": message,
+            "traceback": trace,
+            "module": "",
+        },
+    }
+
+
+def test_apply_summary_bounds_contract_errors_without_releasing_the_contract(project, fake_pool):
+    sid = _body(_call("tavotto_open_figure", {"project_path": str(project)}))["session_id"]
+    session = bridge.get_session(sid)
+    keys = [[f"text_{i}", "fontsize"] for i in range(6000)]
+    contract = {"contract_id": "test", "allowed": keys, "allowed_adjust": keys}
+    session.contract = contract
+    before = _body(_call("tavotto_session_state", {"session_id": sid}))
+    count = len(fake_pool.calls)
+    patches = [{"gid": gid, "prop": prop, "value": 12} for gid, prop in keys]
+    args = {"session_id": sid, "patches": patches}
+    full = _call("tavotto_apply_overrides", args)
+    res = _call("tavotto_apply_overrides", {**args, "summary": True})
+    size = len(json.dumps(res, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+    print({"violations": len(_body(full)["violations"]), "summary_error_bytes": size})
+    assert size <= 16 * 1024
+    body = _body(res)
+    assert res["isError"] is True and body["ok"] is False
+    assert body["code"] == "requires_authorization" and body["contract_id"] == "test"
+    assert body["error"] == _body(full)["error"]
+    for key in ("violations", "allowed", "allowed_adjust"):
+        assert body[key] and body[key] == _body(full)[key][: len(body[key])]
+        assert body["elided"]["counts"][key] == 6000
+    assert set(body["elided"]["fields"]) == {"violations", "allowed", "allowed_adjust"}
+    assert "user_authorized=true" in body["error"]
+    assert session.contract == contract and len(fake_pool.calls) == count
+    assert _body(_call("tavotto_session_state", {"session_id": sid})) == before
+    assert len(_body(full)["violations"]) == 6000 and _body(full)["allowed"] == keys
+
+
+@pytest.mark.parametrize(
+    "recovery",
+    ["请用户检查：" + "图" * 40_000 + "；不要自动重试。", ["确认环境", "修正脚本"] * 6000],
+    ids=["long_text", "many_steps"],
+)
+def test_apply_summary_bounds_recovery_and_marks_unavailable_details(monkeypatch, recovery):
+    extra = {
+        "recovery": recovery,
+        "disposition": "ask_user_again",
+        "confirmation": {"detail": "x" * 100_000},
+    }
+    exc = bridge.BridgeError("需要用户决定", code="needs_input", **extra)
+
+    def failed(args):
+        raise exc
+
+    monkeypatch.setitem(server.HANDLERS, "tavotto_apply_overrides", failed)
+    res = _call("tavotto_apply_overrides", {"summary": True})
+    assert (
+        len(json.dumps(res, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) <= 16 * 1024
+    )
+    body = _body(res)
+    assert res["isError"] is True and body["code"] == "needs_input" and body["ok"] is False
+    assert body["error"] == "需要用户决定" and body["disposition"] == "ask_user_again"
+    assert body["recovery"] and set(body["elided"]["fields"]) == {"recovery", "confirmation"}
+    if isinstance(recovery, str):
+        assert body["recovery"].startswith("请用户检查：") and body["recovery"].endswith(
+            "；不要自动重试。"
+        )
+    else:
+        assert body["recovery"] == recovery[: len(body["recovery"])]
+        assert body["elided"]["counts"]["recovery"] == len(recovery)
+    assert "fetch_with" not in body["elided"] and "confirmation" not in body
+    assert exc.payload() == {"ok": False, "code": "needs_input", "error": "需要用户决定", **extra}
+
+
+@pytest.mark.parametrize("summary_args", [{}, {"summary": False}, {"summary": True}])
+def test_small_apply_errors_remain_exactly_compatible(monkeypatch, summary_args):
+    exc = bridge.BridgeError(
+        "需要用户决定",
+        code="needs_input",
+        recovery=["确认环境", "修正脚本"],
+        confirmation={"option": "project"},
+    )
+
+    def failed(args):
+        raise exc
+
+    monkeypatch.setitem(server.HANDLERS, "tavotto_apply_overrides", failed)
+    res = _call("tavotto_apply_overrides", summary_args)
+    assert res == {
+        "isError": True,
+        "content": [{"type": "text", "text": "需要用户决定\n恢复步骤：\n- 确认环境\n- 修正脚本"}],
+        "structuredContent": exc.payload(),
+    }
+
+
+def test_apply_summary_keeps_a_large_recovery_step_and_bounds_combined_extras(monkeypatch):
+    step = "请用户确认：" + '\\"\n' * 40_000 + "；不要自动授权。"
+    extra = {f"detail_{i}": "x" * 900 for i in range(40)}
+    exc = bridge.BridgeError("请先检查", code="needs_input", recovery=[step], **extra)
+
+    def failed(args):
+        raise exc
+
+    monkeypatch.setitem(server.HANDLERS, "tavotto_apply_overrides", failed)
+    res = _call("tavotto_apply_overrides", {"summary": True})
+    assert (
+        len(json.dumps(res, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) <= 16 * 1024
+    )
+    body = _body(res)
+    assert res["isError"] is True and body["code"] == "needs_input" and body["ok"] is False
+    assert body["error"] == "请先检查" and len(body["recovery"]) == 1
+    assert body["recovery"][0].startswith("请用户确认：")
+    assert body["recovery"][0].endswith("；不要自动授权。")
+    assert body["elided"]["counts"]["recovery"] == 1
+    assert set(body["elided"]["fields"]) == {"recovery", *extra}
+    assert exc.extra == {"recovery": [step], **extra}
+
+
+def test_summary_option_is_declared_without_changing_legacy_defaults():
+    tool = next(t for t in server._tools() if t["name"] == "tavotto_apply_overrides")
+    option = tool["inputSchema"]["properties"]["summary"]
+    assert option["type"] == "boolean" and option["default"] is False
+    assert "summary" not in tool["inputSchema"]["required"]
+
+
+def test_apply_summary_preserves_authorized_contract_release(project, fake_pool):
+    sid = _body(_call("tavotto_open_figure", {"project_path": str(project)}))["session_id"]
+    session = bridge.get_session(sid)
+    session.contract = {"contract_id": "contract", "allowed": [], "allowed_adjust": []}
+    session.normalized = {"patch_hash": session.patch_hash()}
+    patches = [{"gid": "axes_0.xticks", "prop": "fontsize", "value": 11}]
+    res = _call(
+        "tavotto_apply_overrides",
+        {"session_id": sid, "patches": patches, "summary": True, "user_authorized": True},
+    )
+    body = _body(res)
+    assert not res.get("isError") and body["contract_released"] is True
+    assert session.contract is None and session.normalized is None
+    state = _body(_call("tavotto_session_state", {"session_id": sid}))
+    assert state["patches"] == patches and state["patch_hash"] == body["patch_hash"]
+    assert state["last_apply"]["contract_released"] is True
+
+
+@pytest.mark.parametrize("summary_args", [{}, {"summary": True}])
+def test_summary_keeps_raster_payloads_available_as_an_atomic_pair(
+    project, fake_pool, widget_present, monkeypatch, summary_args
+):
+    opened = _body(_call("tavotto_open_figure", {"project_path": str(project)}))
+    original = fake_pool.override
+    png = "iVBORw0KGgo=" * 120_000
+    manifest = {"stem": "Fig1", "size_mm": [80, 60], "elements": []}
+
+    def raster(*args, **kwargs):
+        return {**original(*args, **kwargs), "svg": None, "preview": {"mode": "raster"}}
+
+    monkeypatch.setattr(fake_pool, "override", raster)
+    monkeypatch.setattr(
+        fake_pool,
+        "preview_png_snapshot",
+        lambda *a: {"png": png, "manifest": manifest},
+        raising=False,
+    )
+    res = _call(
+        "tavotto_apply_overrides",
+        {"session_id": opened["session_id"], "patches": [], **summary_args},
+    )
+    body = _body(res)
+    count = len(fake_pool.calls)
+    state = _body(_call("tavotto_session_state", {"session_id": opened["session_id"]}))
+    assert len(fake_pool.calls) == count
+    assert state["svg"] is None and state["preview"]["mode"] == "raster"
+    assert state["preview_png_base64"] == png and state["preview_png_manifest"] == manifest
+    assert state["patch_hash"] == body["patch_hash"]
+    assert state["render_revision"] == body["render_revision"]
+    if summary_args:
+        assert _wire_bytes(res) <= 16 * 1024
+        assert {"preview_png_base64", "preview_png_manifest"} <= set(body["elided"]["fields"])
+        assert "preview_png_base64" not in body and "preview_png_manifest" not in body
+    else:
+        assert body["preview_png_base64"] == png and body["preview_png_manifest"] == manifest
+
+
+def test_new_render_invalidates_the_previous_apply_receipt(project, fake_pool):
+    opened = _body(_call("tavotto_open_figure", {"project_path": str(project)}))
+    _call(
+        "tavotto_apply_overrides",
+        {"session_id": opened["session_id"], "patches": [], "summary": True},
+    )
+    before = _body(_call("tavotto_session_state", {"session_id": opened["session_id"]}))
+    assert before["last_apply"]["render_revision"] == before["render_revision"]
+    again = _body(_call("tavotto_open_figure", {"project_path": str(project)}))
+    assert again["reused"] is True and again["render_revision"] > before["render_revision"]
+    assert "last_apply" not in _body(
+        _call("tavotto_session_state", {"session_id": opened["session_id"]})
+    )
+
+
 def test_open_carries_the_missing_input_offer_and_points_back_to_tavotto(project, monkeypatch):
     """数据找不到（ADR 0106）：载荷原样进 structuredContent，recovery 请用户回 Tavotto 里指认。"""
     offer = {

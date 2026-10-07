@@ -68,3 +68,15 @@ fileId，写**文件级** `building` 表，绝不盖任何变体条目（盖了�
 - 同步器的渲染态一侧只挂叶子 `<EngineRenderSync />`，Workspace 不订阅渲染态
 - 磁盘原图冒充不了 overrides 渲染结果（必须出「近似预览」角标）
 - `baked_current` 失效时重新裁决
+
+选择完整 PNG 的 guard 是渲染键的一部分（`renderKeyOf` 仍是唯一入口），选中上下文只消费
+自己的精确变体，不从文件级 latest/recent 借几何或像素；旧请求不变。guard 问题先于 cache、
+调度、native-size 同步与配对位图检查。服务器在 render/preview/export 首次发现源变更时，
+`rejectArtifactRenders` 撤销相同源字节的缓存权威并中断其在途请求，保存的 edits 不动。
+重新进入编辑的源身份验证失败也走同一撤销，只作用于发起项目和渲染代际；过期导航不能写提示。
+待准入请求随选择变化（含离开再返回）或工作区切换作废，不写历史、不抢回编辑态。
+样式欠账只按当前文档代际挡准入；当代已解绑的欠账仍保留给撤销，不从旧代次继承阻塞。
+`background_visibility_required` 是变体的背景选择，不是源文件变更：仅撤销发起请求的完整键；
+导出须匹配后端携带的文件和字节身份，再定位缺少显式透明度的提交变体。用户选择写普通
+`figure.transparent`，取消不改文档；仅恢复透明度且背景色仍在时保留精确 manifest 的原始布尔值。
+看护：`store/artifactEntry.test.ts`、`canvas/artifactPreview.test.tsx`。

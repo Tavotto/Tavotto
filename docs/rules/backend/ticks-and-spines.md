@@ -24,6 +24,13 @@
   每次 `build_manifest` 按当前状态重登记（`manifest.sync_tick_elements`），
   `FigState.resolve` 还能按 gid 形状**现解**尚未登记的那些——「先改刻度定位、
   再改新出现的那条刻度」在全量重放里才不会报「元素不存在」。
+- **刻度测量记忆表**：原始标签与已绘制标签的过滤结果共用 `ticklabel_memo`，
+  按强引用的 axes 身份、x/y/z、主/次刻度分开；过滤结果保留原始序号与 live Text。
+  只记成功取舍（含正常空列表）；签名不支持、身份对拍失败或异常降级仍逐次重试。
+  前提是首次读取后不改刻度，布局 / 图幅 draw 必须发生在表还空时。
+  preliminary 与最终 SVG/PNG 测量各开新表，作用域外逐次现读；线程、嵌套和异常
+  清理沿用同一张表，`apply` 的作用域守卫保留。两趟完整 manifest 与所有 draw
+  原样保留，不跨测量缓存。看护 `tests/test_manifest_ticklabel_cost.py`。
 - **边框模型（2026-08-18）**：与刻度模型同一套路数（写进 cfg 再**整体重建**，
   `spine_cfg` / `apply_spine_model` 是唯一出处）。一档「全部」（`spine_color` /
   `spine_linewidth`，作用于 `ax.spines` 的**每一条**，含色条轴的 'outline'）+

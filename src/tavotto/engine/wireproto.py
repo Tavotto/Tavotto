@@ -29,6 +29,7 @@ import collections
 import sys
 import traceback
 
+import figcapture
 import patchspec
 
 __all__ = [
@@ -181,6 +182,14 @@ class V1Handler:
     def build_result(self, timings: dict) -> dict:
         raise NotImplementedError
 
+    def select_artifact(self, context) -> None:
+        if context is not None:
+            raise ProtocolError(
+                "artifact_source_unavailable",
+                "This execution mode cannot select a disk artifact.",
+                extra={"reason": "unsupported_render_state"},
+            )
+
     def handle_extra(self, cmd: str, req: dict, payload: dict) -> dict:
         raise ProtocolError("unknown_cmd", f"未知指令: {cmd}")
 
@@ -236,6 +245,17 @@ class V1Handler:
         #: 这一版的预览表示法（ADR 0022）。与 `timings` 同一条纪律：**只在 v1
         #: 出现**，出参形态传下去，legacy 的 `{ok, manifest, warnings}` 一字不动。
         preview: dict = {}
+        self.select_artifact(payload.get("artifact_source"))
+        context = getattr(self.session, "artifact_source", None)
+        if context is not None and cmd in PATCH_COMMANDS:
+            try:
+                figcapture.artifact_request(
+                    context["render_policy"],
+                    {k: context[k] for k in ("bytes_sha256", "size_bytes")},
+                    patches,
+                )
+            except figcapture.ArtifactContextError as exc:
+                raise ProtocolError(exc.code, str(exc), extra={"reason": exc.reason}) from exc
         self.ensure_built(timings)
         if cmd == "build":
             return {**self.build_result(timings), "timings": timings}
@@ -299,6 +319,8 @@ class V1Handler:
                 )
         except ProtocolError:
             raise
+        except figcapture.ArtifactContextError as exc:
+            raise ProtocolError(exc.code, str(exc), extra=exc.params) from exc
         except Exception as exc:  # noqa: BLE001
             # 我们也不知道为什么——supervisor 重启后重试一次是合理的
             raise ProtocolError(

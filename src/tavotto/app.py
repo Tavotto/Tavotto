@@ -54,6 +54,7 @@ from .engine import (
     ai_bridge as engine_ai,
     ai_history as engine_ai_history,
     ai_providers as engine_ai_providers,
+    artifactcontext as engine_artifactcontext,
     artifactinspect as engine_artifactinspect,
     atomicio as engine_atomicio,
     bakedbaseline as engine_baked,
@@ -172,8 +173,10 @@ security.install(app)
 # `_request_ctx`）。没有任何项目时前端显示 Project Picker。
 # 不再内置任何默认路径——项目由 --figures、最近项目或 Picker 决定。
 PROJECTS: dict[str, "ProjectCtx"] = {}
+_OPENING_PROJECTS: dict[str, tuple["ProjectCtx", threading.Event]] = {}
 DEFAULT_PROJECT: str | None = None  # 不带 pj 的请求落到这里
 _PROJECT_LOCK = threading.Lock()
+_TUTORIAL_LOCK = threading.RLock()
 CACHE_DIR = DATA_ROOT / "cache"
 EXPORT_DIR = DATA_ROOT / "exports"
 LAYOUT_DIR = DATA_ROOT / "layouts"
@@ -967,6 +970,7 @@ def _resolve_panel_source(
     out_dir: Path | None = None,
     *,
     rerender: bool = False,
+    artifact_source=None,
 ) -> Path:
     """面板对象 → 待嵌入的源文件路径。带 override 的 ⚡ 面板先由引擎按全质量
     重渲染成临时 PDF，导出的永远是矢量而不是画布上的预览位图。
@@ -1000,13 +1004,29 @@ def _resolve_panel_source(
     overrides = o.get("overrides") or []
     if engine_runtimeasset.is_runtime_id(rel_id):
         # runtime 素材没有磁盘原件，**永远**由 worker 现画
-        return _serialize_figure(rel_id, overrides, "pdf", dpi, sink, out_dir)
+        return _serialize_figure(
+            rel_id,
+            overrides,
+            "pdf",
+            dpi,
+            sink,
+            out_dir,
+            **_artifact_kwargs(artifact_source),
+        )
     try:
         path = safe_resolve(o["id"])
     except tiffprobe.UnsupportedTiff as exc:
         raise _export_tiff_error(exc) from exc
     if overrides or rerender:
-        rendered = _serialize_figure(rel_id, overrides, "pdf", dpi, sink, out_dir)
+        rendered = _serialize_figure(
+            rel_id,
+            overrides,
+            "pdf",
+            dpi,
+            sink,
+            out_dir,
+            **_artifact_kwargs(artifact_source),
+        )
         if rendered is not None:
             path = rendered
     return path
@@ -1024,6 +1044,8 @@ def _serialize_figure(
     dpi: int,
     sink: list | None = None,
     out_dir: Path | None = None,
+    *,
+    artifact_source=None,
 ) -> Path | None:
     """让引擎按 `fmt` **直接序列化**一张图（matplotlib `savefig`，worker 侧）。
 
@@ -1037,7 +1059,15 @@ def _serialize_figure(
     `eps_needs_script`）；runtime 素材解析不到由 `_engine_worker` 直接 404。
     `sink` 收 worker 的 warnings（哪些 override 没写进去），前缀是面板 id。
     """
-    rendered = _serialize_figure_with_worker(rel_id, overrides, fmt, dpi, sink, out_dir)
+    rendered = _serialize_figure_with_worker(
+        rel_id,
+        overrides,
+        fmt,
+        dpi,
+        sink,
+        out_dir,
+        **_artifact_kwargs(artifact_source),
+    )
     return rendered[0] if rendered is not None else None
 
 
@@ -1048,10 +1078,15 @@ def _serialize_figure_with_worker(
     dpi: int,
     sink: list | None = None,
     out_dir: Path | None = None,
+    *,
+    artifact_source=None,
 ) -> tuple[Path, object, str] | None:
     """`_serialize_figure` 的本体：多回 `(路径, worker-like, 脚本)`——候选后端的执行侧源解析器要拿
     worker 装配回执（`engine/receipt`），旧调用方只取路径。"""
-    if engine_runtimeasset.is_runtime_id(rel_id):
+    if artifact_source is not None:
+        worker, stem = _engine_worker(rel_id, artifact_source=artifact_source)
+        script = str(current_registry().for_stem(stem)["script"])
+    elif engine_runtimeasset.is_runtime_id(rel_id):
         worker, stem = _engine_worker(rel_id)
         info = engine_runtimeasset.resolve(rel_id, current_registry())
         script = str(info["script"]) if info else ""
@@ -1064,7 +1099,16 @@ def _serialize_figure_with_worker(
         script = str(info["script"])
         worker = _safe_worker(info["script"], info["entry"], stem)
     tmp = _panel_render_target(worker, stem, out_dir, fmt)
-    resp = worker.export(stem, overrides, str(tmp), fmt, dpi)
+    if artifact_source is None:
+        resp = worker.export(stem, overrides, str(tmp), fmt, dpi)
+    else:
+        worker, stem, resp = _engine_attempt(
+            rel_id,
+            worker,
+            stem,
+            lambda wk, st: wk.export(st, overrides, str(tmp), fmt, dpi),
+            artifact_source=artifact_source,
+        )
     # 导出途中改了指认（ADR 0106 §五）：这份文件是按旧位置的数据画的——不交出去（409 可重试）
     # （后台导出作业里没有请求上下文：项目根取会话自己的 `figures_dir`）
     if getattr(worker, "figures_dir", None):
@@ -1117,7 +1161,9 @@ def _execution_receipt(worker, script: str):
     )
 
 
-def _execution_source(obj: dict, dpi: int, sink: list | None, out_dir: Path | None):
+def _execution_source(
+    obj: dict, dpi: int, sink: list | None, out_dir: Path | None, *, artifact_source=None
+):
     """候选后端的执行侧源：带 override / runtime 素材的面板 → 当次权威 worker 现画的 PDF +
     **回执**（`origin=execution`，`receipt_id` / `receipt_identity` / `patch_hash` 进 RenderPlan 的
     资源身份）。「谁来渲染」仍只有 `_serialize_figure_with_worker` 这一扇门。
@@ -1130,7 +1176,15 @@ def _execution_source(obj: dict, dpi: int, sink: list | None, out_dir: Path | No
     rel_id = str(obj.get("id", ""))
     overrides = obj.get("overrides") or []
     try:
-        rendered = _serialize_figure_with_worker(rel_id, overrides, "pdf", dpi, sink, out_dir)
+        rendered = _serialize_figure_with_worker(
+            rel_id,
+            overrides,
+            "pdf",
+            dpi,
+            sink,
+            out_dir,
+            **_artifact_kwargs(artifact_source),
+        )
     except engine_pool.WorkerError as exc:
         LOG.error("导出失败: %s 重渲染出错: %s", rel_id, exc)
         raise engine_exportreq.ExportRequestError(
@@ -1170,7 +1224,7 @@ def _panel_render_target(worker, stem: str, out_dir: Path | None, fmt: str = "pd
 
 
 # --------------------------- 统一导出管线（ADR 0031）-------------------------
-def _export_produce_original(job, tmp_dir: Path) -> list:
+def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> list:
     """`scope=original`：这张图**按它自己的尺寸**出。
 
     这里**没有一行**读得到 x/y/w/h、页面尺寸或裁切——不是"记得别用"，是那些
@@ -1193,6 +1247,11 @@ def _export_produce_original(job, tmp_dir: Path) -> list:
         job.warnings,
         tmp_dir,
         rerender=wants_eps,
+        **(
+            {"artifact_source": artifact_sources[src.figure_id]}
+            if src.source_policy and artifact_sources
+            else {}
+        ),
     )
     if not source_path.is_file():
         raise engine_exportreq.ExportRequestError(
@@ -1206,7 +1265,15 @@ def _export_produce_original(job, tmp_dir: Path) -> list:
         tmp = tmp_dir / f"out.{fmt}"
         try:
             if fmt == engine_exportreq.FORMAT_EPS:
-                produced.append(_produce_original_eps(job, src, dpi, tmp_dir))
+                produced.append(
+                    _produce_original_eps(
+                        job,
+                        src,
+                        dpi,
+                        tmp_dir,
+                        artifact_source=(artifact_sources or {}).get(src.figure_id),
+                    )
+                )
             elif fmt == engine_exportreq.FORMAT_PDF:
                 facts = pdfbackend.original_pdf(source_path, tmp, page_pt)
                 produced.append(
@@ -1247,7 +1314,7 @@ def _export_produce_original(job, tmp_dir: Path) -> list:
                         vector=False,
                     )
                 )
-        except engine_exportreq.ExportRequestError:
+        except (engine_exportreq.ExportRequestError, engine_artifactcontext.ArtifactContextError):
             raise
         except Exception as exc:  # noqa: BLE001
             LOG.warning("原图导出 %s 失败: %s", fmt, exc)
@@ -1299,7 +1366,7 @@ def _declared_density(source_path: Path) -> float | None:
     return float(spec["dpi"])
 
 
-def _produce_original_eps(job, src, dpi: int, tmp_dir: Path):
+def _produce_original_eps(job, src, dpi: int, tmp_dir: Path, *, artifact_source=None):
     """`scope=original` 的 EPS：由 worker 的 matplotlib 直接序列化（ADR 0046）。
 
     父进程没有 PostScript 写入器，所以这一格**只有一条路**：注册表里有这张图的
@@ -1307,7 +1374,15 @@ def _produce_original_eps(job, src, dpi: int, tmp_dir: Path):
     交付。尺寸事实从 EPS 自己的 `%%BoundingBox` 读（`engine/epsfile`），不拿
     请求里的 mm 数冒充测量值。
     """
-    path = _serialize_figure(src.figure_id, src.overrides, "eps", dpi, job.warnings, tmp_dir)
+    path = _serialize_figure(
+        src.figure_id,
+        src.overrides,
+        "eps",
+        dpi,
+        job.warnings,
+        tmp_dir,
+        **_artifact_kwargs(artifact_source),
+    )
     if path is None or not path.is_file():
         return engine_exportjob.Produced(
             format=engine_exportreq.FORMAT_EPS,
@@ -1324,7 +1399,7 @@ def _produce_original_eps(job, src, dpi: int, tmp_dir: Path):
     )
 
 
-def _export_produce_rendercore(job, tmp_dir: Path) -> list:
+def _export_produce_rendercore(job, tmp_dir: Path, *, artifact_sources=None) -> list:
     """`scope=canvas` 的 `produce`：RenderPlan → Canonical PDF → child 栅格（U08 候选、U10 起默认，ADR 0067 / 0072）。
 
     **忠实于画布**——页面尺寸、布局、裁切照搬；多格式出自同一份 Canonical PDF，所以 PDF 与 PNG 不可能
@@ -1357,7 +1432,17 @@ def _export_produce_rendercore(job, tmp_dir: Path) -> list:
 
     resolver = rc_sources.ExecutionSourceResolver(
         static=_StaticInProject(),
-        execute=lambda obj: _execution_source(obj, dpi, job.warnings, tmp_dir),
+        execute=lambda obj: _execution_source(
+            obj,
+            dpi,
+            job.warnings,
+            tmp_dir,
+            **(
+                {"artifact_source": artifact_sources[obj["id"]]}
+                if obj.get("source_policy") and artifact_sources
+                else {}
+            ),
+        ),
     )
     return rc_job.produce(
         job, tmp_dir, sources=resolver, provider=rc_facade.provider(), host=rc_facade.host()
@@ -1372,11 +1457,17 @@ def _export_inspect(job, produced: list) -> list:
     )
 
 
-def _export_produce(job, tmp_dir: Path) -> list:
+def _export_produce(job, tmp_dir: Path, *, artifact_sources=None) -> list:
+    for context in (artifact_sources or {}).values():
+        _assert_artifact_current(context)
     pdfbackend.selected()  # 退役 / 写错的后端名在这里就报错（BackendSelectionError），不进作业再说
     if job.request.scope == engine_exportreq.SCOPE_ORIGINAL:
-        return _export_produce_original(job, tmp_dir)
-    return _export_produce_rendercore(job, tmp_dir)
+        return _export_produce_original(
+            job, tmp_dir, **({"artifact_sources": artifact_sources} if artifact_sources else {})
+        )
+    return _export_produce_rendercore(
+        job, tmp_dir, **({"artifact_sources": artifact_sources} if artifact_sources else {})
+    )
 
 
 def _style_check_report(spec: dict):
@@ -1469,7 +1560,11 @@ def _legacy_export_response(job) -> tuple:
     ]
     if job.status == engine_exportjob.STATUS_FAILED:
         code = job.error_code or "export_failed"
-        status = 409 if code in ("bad_filename", "export_dir_unwritable") else 500
+        status = (
+            409
+            if code in ("bad_filename", "export_dir_unwritable", "artifact_source_unavailable")
+            else 500
+        )
         return jsonify(
             {
                 "error": job.error_params.get("error") or f"导出失败（{code}）",
@@ -1484,6 +1579,8 @@ def _legacy_export_response(job) -> tuple:
 def _classify_export_error(exc: BaseException):
     """导出作业里冒出的「渲染后端此刻不可用」→ 稳定码 `backend_unavailable`，不再笼统地记 `export_failed`
     （Codex #539）。判据归契约层（`pdfbackend.is_backend_unavailable`），这里只翻译。"""
+    if isinstance(exc, engine_artifactcontext.ArtifactContextError):
+        return exc.code, {**exc.params, "retryable": exc.retryable}
     if pdfbackend.is_backend_unavailable(exc):
         return "backend_unavailable", {"reason": str(exc)[:300]}
     if isinstance(exc, engine_inputremap.RemapChanged):
@@ -1492,14 +1589,50 @@ def _classify_export_error(exc: BaseException):
     return None
 
 
-def _export_commit_guard(root):
-    """导出作业的提交守卫（ADR 0106 §五）：作业开始时记下改指表代次，一路带到发布那一步——`exportjob.run`
-    在提交点之前进这个守卫，持项目锁**再核一次**、一直持到最后一个文件发布完。开始之后改了指认，
-    这次导出按旧位置的数据画 → 一个文件都不发布（`input_remap_changed`，可重试）。没有项目的导出不拦。"""
-    if not root:
-        return None
-    start = engine_inputremap.generation(root)
-    return lambda: engine_inputremap.landing(root, start)
+def _export_artifact_sources(req):
+    objects = (
+        req.canvas.objects
+        if req.canvas
+        else [
+            {
+                "id": req.original.figure_id,
+                "source_policy": req.original.source_policy,
+                "expected_source": req.original.expected_source,
+                "overrides": req.original.overrides,
+            }
+        ]
+    )
+    contexts = {}
+    for obj in objects:
+        if obj.get("hidden") or (
+            obj.get("source_policy") is None and obj.get("expected_source") is None
+        ):
+            continue
+        rel_id = str(obj.get("id", ""))
+        context = _artifact_source(
+            rel_id, obj.get("source_policy"), obj.get("expected_source"), obj.get("overrides")
+        )
+        if rel_id in contexts and contexts[rel_id] != context:
+            raise engine_artifactcontext.ArtifactContextError(
+                "source_changed", "The selected source changed during export preparation."
+            )
+        contexts[rel_id] = context
+    return contexts
+
+
+def _export_commit_guard(root, artifact_sources=None):
+    """Carry project/remap and selected byte identities through final publication."""
+    start = engine_inputremap.generation(root) if root else None
+    sources = [(_artifact_path(key), value) for key, value in (artifact_sources or {}).items()]
+
+    @contextmanager
+    def guard():
+        with engine_inputremap.landing(root, start) if root else contextlib.nullcontext():
+            for path, context in sources:
+                engine_artifactcontext.assert_current(path, context)
+            yield
+
+    return guard if root or sources else None
 
 
 def _prepare_export_job(spec: dict):
@@ -1516,7 +1649,7 @@ def _prepare_export_job(spec: dict):
     except engine_exportreq.ExportRequestError as exc:
         return None, (
             jsonify({"error": exc.message, "code": exc.code, "params": exc.params}),
-            400,
+            409 if exc.code == "artifact_source_unavailable" else 400,
         )
     # 上一次进程被 kill 时留下的临时目录：**在这里顺手扫掉**，
     # 不然它们会一直躺在用户的导出目录里，看起来像是我们弄脏的
@@ -1539,14 +1672,17 @@ def api_export():
     job, err = _prepare_export_job(spec)
     if job is None:
         return err
+    artifact_sources = _export_artifact_sources(job.request)
     t0 = time.time()
     engine_exportjob.run(
         job,
-        _export_produce,
+        lambda j, tmp: _export_produce(
+            j, tmp, **({"artifact_sources": artifact_sources} if artifact_sources else {})
+        ),
         report=_style_check_report(spec),
         inspect=_export_inspect,
         classify_error=_classify_export_error,
-        commit_guard=_export_commit_guard(getattr(_request_ctx(), "path", None)),
+        commit_guard=_export_commit_guard(getattr(_request_ctx(), "path", None), artifact_sources),
     )
     LOG.info(
         "导出[%s]: %s（scope=%s, %s, %.0fms，%d 条警告）",
@@ -1574,6 +1710,7 @@ def api_export_start():
     job, err = _prepare_export_job(spec)
     if job is None:
         return err
+    artifact_sources = _export_artifact_sources(job.request)
     report = _style_check_report(spec)
     # 项目 id 在**请求上下文里**取好带走：后台线程没有 request context，
     # 到那边再问一次拿到的是"没有项目"
@@ -1593,7 +1730,9 @@ def api_export_start():
         # 后台线程把自己钉在**起这次导出的那个项目**上：不钉的话
         # `_resolve_panel_source` 会落到默认项目，出来的是另一个图库的图
         with bound_project(ctx):
-            return _export_produce(j, tmp_dir)
+            return _export_produce(
+                j, tmp_dir, **({"artifact_sources": artifact_sources} if artifact_sources else {})
+            )
 
     def inspect(j, produced):
         with bound_project(ctx):
@@ -1606,7 +1745,7 @@ def api_export_start():
         report=report,
         inspect=inspect,
         classify_error=_classify_export_error,
-        commit_guard=_export_commit_guard(ctx.path),
+        commit_guard=_export_commit_guard(ctx.path, artifact_sources),
     )
     return jsonify(job.to_payload())
 
@@ -1640,8 +1779,17 @@ def api_export_validate():
         return jsonify(
             {"ok": False, "error": {"code": exc.code, "params": exc.params, "message": exc.message}}
         ), 200
+    # Acknowledge recognized policies and current disk identities, not Figure admission.
+    # Reuse export's authority without a worker, including untouched original copies.
+    artifact_sources = _export_artifact_sources(req)
     probe = engine_exportjob.ExportJob(id="probe", request=req, export_dir=out_dir)
-    return jsonify({"ok": True, **engine_exportjob.validate(probe)})
+    return jsonify(
+        {
+            "ok": True,
+            **engine_exportjob.validate(probe),
+            **({"artifact_sources": artifact_sources} if artifact_sources else {}),
+        }
+    )
 
 
 @app.get("/exports/<path:name>")
@@ -2006,6 +2154,18 @@ def project_status(ctx: "ProjectCtx | None") -> dict:
     }
 
 
+@contextmanager
+def _tutorial_operation(path: Path | None = None):
+    # 复制 / 重置与读取注册表属于同一代；普通项目不拿这把锁。
+    # reset 与 tutorial/open 内部还会调用 open_project，所以必须可重入。
+    with (
+        _TUTORIAL_LOCK
+        if path is None or engine_tutorial.is_tutorial_path(path)
+        else contextlib.nullcontext()
+    ):
+        yield
+
+
 def open_project(path_str: str, make_default: bool = True) -> dict:
     """打开一个项目（已打开就直接复用），可选把它设为默认项目。
 
@@ -2015,8 +2175,13 @@ def open_project(path_str: str, make_default: bool = True) -> dict:
 
     失败（目录不存在 / 注册表损坏）抛 RuntimeError，已打开的项目不受影响。
     """
-    global DEFAULT_PROJECT
     path = Path(path_str).expanduser().resolve()
+    with _tutorial_operation(path):
+        return _open_project(path, make_default)
+
+
+def _open_project(path: Path, make_default: bool) -> dict:
+    global DEFAULT_PROJECT
     if not path.is_dir():
         raise RuntimeError(f"目录不存在: {path}")
     pid = _project_id(path)
@@ -2024,9 +2189,13 @@ def open_project(path_str: str, make_default: bool = True) -> dict:
     with _PROJECT_LOCK:
         existing = PROJECTS.get(pid)
     if existing is not None:
-        if make_default:
-            DEFAULT_PROJECT = pid
+        # 配置落盘失败时前端仍留在旧项目；成功后才发布后端的默认身份。
         engine_config.touch_recent(str(path))
+        with _PROJECT_LOCK:
+            if PROJECTS.get(pid) is not existing:
+                raise RuntimeError("项目已关闭，请重新打开")
+            if make_default:
+                DEFAULT_PROJECT = pid
         return {**project_status(existing), "drafted": False, "conflicts": [], "reused": True}
 
     drafted, conflicts = False, []
@@ -2042,12 +2211,42 @@ def open_project(path_str: str, make_default: bool = True) -> dict:
     # 第一次刷新只能报「什么都没变」——而用户按刷新正是因为他刚在外面加了
     # 一张图（`engine/project_refresh.seed_state`）。
     engine_refresh.seed_state(ctx)
-    with _PROJECT_LOCK:
-        PROJECTS[pid] = ctx
-        if make_default or DEFAULT_PROJECT is None:
-            DEFAULT_PROJECT = pid
-    engine_watch.start(ctx, sink=_watch_sink(ctx))
     engine_config.touch_recent(str(path))
+    with _PROJECT_LOCK:
+        existing = PROJECTS.get(pid)
+        if existing is None:
+            initializing, ready = _OPENING_PROJECTS.setdefault(pid, (ctx, threading.Event()))
+        elif make_default or DEFAULT_PROJECT is None:
+            DEFAULT_PROJECT = pid
+    if existing is not None:
+        return {**project_status(existing), "drafted": False, "conflicts": [], "reused": True}
+    if initializing is not ctx:
+        # 同一次首开的输家等赢家完成快照；不持全局锁，否则别的项目也会被慢盘挡住。
+        ready.wait()
+        with _PROJECT_LOCK:
+            if PROJECTS.get(pid) is not initializing:
+                raise RuntimeError("项目打开失败或已关闭，请重新打开")
+            if make_default or DEFAULT_PROJECT is None:
+                DEFAULT_PROJECT = pid
+        return {**project_status(initializing), "drafted": False, "conflicts": [], "reused": True}
+    try:
+        try:
+            engine_watch.start(ctx, sink=_watch_sink(ctx))
+        except BaseException:
+            # start 在注册 watcher 之后才起线程；线程启动失败也必须清掉半成品。
+            engine_watch.stop(str(ctx.path))
+            raise
+        with _PROJECT_LOCK:
+            PROJECTS[pid] = ctx
+            if make_default or DEFAULT_PROJECT is None:
+                DEFAULT_PROJECT = pid
+            _OPENING_PROJECTS.pop(pid)
+            ready.set()
+    finally:
+        with _PROJECT_LOCK:
+            if _OPENING_PROJECTS.get(pid) == (ctx, ready):
+                _OPENING_PROJECTS.pop(pid)
+                ready.set()  # 失败也唤醒；不许清掉关闭后重新打开的另一代初始化。
     LOG.info(
         "项目已打开: %s（%d 个脚本%s）",
         path,
@@ -2072,9 +2271,10 @@ def close_project(pid: str, wait: bool = False) -> bool:
         ctx = PROJECTS.pop(pid, None)
         if ctx is not None and DEFAULT_PROJECT == pid:
             DEFAULT_PROJECT = next(iter(PROJECTS), None)
+        if ctx is not None:
+            engine_watch.stop(str(ctx.path))
     if ctx is None:
         return False
-    engine_watch.stop(str(ctx.path))
     engine_pool.shutdown_all(str(ctx.path), wait=wait)
     LOG.info("项目已关闭: %s", ctx.path)
     return True
@@ -2811,7 +3011,8 @@ def api_projects_open():
                 }
             ), 400
         try:
-            p.mkdir(parents=True, exist_ok=True)
+            with _tutorial_operation(p):
+                p.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
             return jsonify(
                 {
@@ -2884,6 +3085,7 @@ def api_tutorial():
 
 
 @app.post("/api/tutorial/open")
+@_tutorial_operation()
 def api_tutorial_open():
     """确保可写副本（缺文件就补）→ 走普通 `open_project()` → 回状态 + 元数据。"""
     body = request.get_json(silent=True) or {}
@@ -2957,6 +3159,7 @@ def _clear_tutorial_local_state(
 
 
 @app.post("/api/tutorial/reset")
+@_tutorial_operation()
 def api_tutorial_reset():
     """重新开始教程：关掉打开着的教程项目 → 原子换成干净副本 → 重新打开。"""
     body = request.get_json(silent=True) or {}
@@ -3389,7 +3592,7 @@ def api_script_input_stop():
         ev = _PROBES.get((ctx.id, p.script))
     if ev is not None:
         ev.set()
-    engine_pool.force_cancel(p.script, str(ctx.path))
+    engine_pool.force_cancel_input(p.directory, str(ctx.path))
     return jsonify({"ok": True})
 
 
@@ -3950,25 +4153,156 @@ def _switched_to_project_env(worker, exc) -> bool:
     return False
 
 
-def _engine_attempt(rel_id: str, worker, stem: str, action, *, safe_only: bool = False):
-    """`action(worker, stem)`；缺依赖时切项目环境**重试一次**。
+def _artifact_kwargs(context):
+    # Keep legacy caller/protocol envelopes exactly unchanged when the opt-in is absent.
+    return {"artifact_source": context} if context is not None else {}
 
-    回 `(worker, stem, 结果)`——重试后 worker 换成了新解释器起的那个，调用方
-    后续要拿 `rev` / `last_build_descriptors` 的话必须用回传的这一个。
 
-    `safe_only`：重试时重新解析出来的若是 native 会话，在 `action` 之前就抛
-    `NativeWorkerRefused`（原样转给 `_engine_worker`，见那里）。
-    """
+def _artifact_source(rel_id: str, policy, expected=None, patches=()):
+    expected = engine_artifactcontext.artifact_request(policy, expected, patches)
+    if policy is None:
+        return None
+    if engine_runtimeasset.is_runtime_id(rel_id):
+        raise engine_artifactcontext.ArtifactContextError(
+            "unsupported_render_state", "Selected artifacts require a safe disk source."
+        )
+    path = _artifact_path(rel_id)
+    if policy == engine_figcapture.SELECTED_FIGSIZE_POLICY and _baseline_patches(
+        path.stem, load_baked()
+    ):
+        raise engine_artifactcontext.ArtifactContextError(
+            "not_untouched", "This source has a saved edit baseline."
+        )
+    source_id = path.relative_to(require_project().resolve()).as_posix()
+    context = engine_artifactcontext.create_context(path, source_id)
+    if expected is not None and any(context[k] != v for k, v in expected.items()):
+        raise engine_artifactcontext.ArtifactContextError(
+            "source_changed", "The selected source changed; reopen it.", retryable=False
+        )
+    return engine_figcapture.selected_artifact_context({**context, "render_policy": policy})
+
+
+def _artifact_path(rel_id):
     try:
-        return worker, stem, action(worker, stem)
-    except engine_pool.WorkerError as exc:
-        if not _switched_to_project_env(worker, exc):
+        return safe_resolve(rel_id)
+    except HTTPException as exc:
+        if exc.code != 404:
             raise
-    worker, stem = _engine_worker(rel_id, safe_only=safe_only)
-    return worker, stem, action(worker, stem)
+        raise engine_artifactcontext.ArtifactContextError(
+            "source_unreadable", "The selected source is unavailable."
+        ) from exc
 
 
-def _safe_worker(script: str, entry: str, stem: str = ""):
+def _refuse_artifact_policy(policy, expected=None, *, reason="unsupported_render_state"):
+    engine_artifactcontext.artifact_request(policy, expected)
+    if policy is not None:
+        raise engine_artifactcontext.ArtifactContextError(
+            reason,
+            "This operation does not support the selected source policy; no edit was applied.",
+        )
+
+
+def _assert_artifact_current(context):
+    if context is not None:
+        engine_artifactcontext.assert_current(_artifact_path(context["source_id"]), context)
+
+
+@app.errorhandler(engine_artifactcontext.ArtifactContextError)
+def _artifact_error(exc):
+    return jsonify(error=str(exc), code=exc.code, params=exc.params, retryable=exc.retryable), 409
+
+
+def _admit_artifact(worker, stem, context):
+    if context is None:
+        return
+    if engine_enginesession.is_native(worker):
+        raise engine_artifactcontext.ArtifactContextError(
+            "unsupported_render_state", "Selected artifacts require a safe disk source."
+        )
+    # Selected workers own this lock; legacy calls returned above and need no new member.
+    with worker.artifact_admission_lock:
+        _assert_artifact_current(context)
+        if not worker.built:
+            worker._validated_artifact_probe = None
+            worker.ensure_built()
+        probe = getattr(worker, "last_build_artifact_probe", None)
+        if (
+            not isinstance(probe, dict)
+            or probe.get("context") != context
+            or probe.get("stem") != stem
+        ):
+            raise engine_artifactcontext.ArtifactContextError(
+                "capture_incomplete", "Source probe unavailable."
+            )
+        try:
+            candidate = Path(probe["initialized"]).resolve()
+            if (
+                not candidate.is_relative_to(Path(worker.out_dir).resolve())
+                or not candidate.is_file()
+            ):
+                raise ValueError("uncontained candidate")
+            if type(probe["occurrence"]) is not int or probe["occurrence"] < 1:
+                raise ValueError("invalid occurrence")
+        except (KeyError, TypeError, ValueError, OSError) as exc:
+            raise engine_artifactcontext.ArtifactContextError(
+                "capture_incomplete", "Source probe unavailable."
+            ) from exc
+        if getattr(worker, "_validated_artifact_probe", None) != probe:
+            engine_artifactcontext.validate_candidate(
+                _artifact_path(context["source_id"]), candidate, context
+            )
+            worker._validated_artifact_probe = json.loads(json.dumps(probe))
+
+
+def _engine_attempt(
+    rel_id: str, worker, stem: str, action, *, safe_only: bool = False, artifact_source=None
+):
+    """Run on the admitted source; a dependency retry carries the identical context."""
+    for attempt in range(2):
+        try:
+            _admit_artifact(worker, stem, artifact_source)
+            result = action(worker, stem)
+            _assert_artifact_current(artifact_source)
+            return worker, stem, result
+        except (engine_pool.WorkerError, engine_artifactcontext.ArtifactContextError) as exc:
+            # Supersession removes only a queued request; this admitted worker
+            # may still be serving another variant of the same selected source.
+            if artifact_source is not None and not (
+                isinstance(exc, engine_pool.WorkerError) and exc.code == "queue_superseded"
+            ):
+                engine_pool.force_cancel(
+                    worker.script_name,
+                    str(require_project()),
+                    artifact_source=artifact_source,
+                    expected_worker=worker,
+                )
+            if isinstance(exc, engine_artifactcontext.ArtifactContextError):
+                raise
+            if artifact_source is not None and exc.code == "artifact_source_unavailable":
+                reason = exc.extra.get("reason", "unsupported_render_state")
+                raise engine_artifactcontext.ArtifactContextError(
+                    reason,
+                    "The selected source cannot be reproduced; no edit was applied.",
+                    owner=(
+                        {
+                            "file_id": rel_id,
+                            "bytes_sha256": artifact_source["bytes_sha256"],
+                            "size_bytes": artifact_source["size_bytes"],
+                        }
+                        if reason == "background_visibility_required"
+                        else None
+                    ),
+                ) from exc
+            if attempt or not _switched_to_project_env(worker, exc):
+                raise
+        worker, stem = _engine_worker(
+            rel_id,
+            safe_only=safe_only,
+            **_artifact_kwargs(artifact_source),
+        )
+
+
+def _safe_worker(script: str, entry: str, stem: str = "", *, artifact_source=None):
     """**磁盘面板永远是 safe**——它有自己的原始产物，那是 safe worker 产出的
     世界（写回、画布合成、两图同步走的都是这条）。
 
@@ -3983,6 +4317,7 @@ def _safe_worker(script: str, entry: str, stem: str = ""):
         entry=entry,
         stem=stem,
         execution_profile=engine_enginesession.PROFILE_SAFE,
+        **_artifact_kwargs(artifact_source),
     )
 
 
@@ -3990,7 +4325,7 @@ class NativeWorkerRefused(Exception):
     """`safe_only` 的解析拿到了 native 会话：调用方在碰它之前就被拦下。"""
 
 
-def _engine_worker(rel_id: str, *, safe_only: bool = False):
+def _engine_worker(rel_id: str, *, safe_only: bool = False, artifact_source=None):
     """面板 id → (worker-like, stem)；非脚本面板 404。
 
     `safe_only=True`：只要 safe worker——解析出来的是 native 会话就抛
@@ -4008,15 +4343,18 @@ def _engine_worker(rel_id: str, *, safe_only: bool = False):
     这里绝不写 `if 有 native 会话 … else pool.get(…)`——那个形状会在下一个
     端点上被漏掉一次，表现是"预览是 native 的、导出是 safe 的"。
     """
-    worker, stem = _resolve_engine_worker(rel_id)
+    worker, stem = _resolve_engine_worker(rel_id, **_artifact_kwargs(artifact_source))
     if safe_only and engine_enginesession.is_native(worker):
         raise NativeWorkerRefused(rel_id)
     return worker, stem
 
 
-def _resolve_engine_worker(rel_id: str):
+def _resolve_engine_worker(rel_id: str, *, artifact_source=None):
     """`_engine_worker` 的本体（「谁来渲染」按档案解析，不设闸）。"""
+    _assert_artifact_current(artifact_source)
     root = str(require_project())
+    if artifact_source is not None and engine_runtimeasset.is_runtime_id(rel_id):
+        _refuse_artifact_policy(artifact_source["render_policy"])
     if engine_runtimeasset.is_runtime_id(rel_id):
         info = engine_runtimeasset.resolve(rel_id, current_registry())
         if info is None:
@@ -4034,6 +4372,10 @@ def _resolve_engine_worker(rel_id: str):
     path = safe_resolve(rel_id)
     info = current_registry().for_stem(path.stem)
     if info is None:
+        if artifact_source is not None:
+            raise engine_artifactcontext.ArtifactContextError(
+                "destination_unresolved", "Source script unavailable."
+            )
         abort(404)
     # 磁盘面板永远是 safe：它有自己的原始产物，那是 safe worker 产出的世界。
     return (
@@ -4043,6 +4385,7 @@ def _resolve_engine_worker(rel_id: str):
             entry=info["entry"],
             stem=path.stem,
             execution_profile=engine_enginesession.PROFILE_SAFE,
+            **_artifact_kwargs(artifact_source),
         ),
         path.stem,
     )
@@ -4072,6 +4415,9 @@ def api_engine_render():
     """
     body = request.get_json(force=True)
     rel_id = body.get("id", "")
+    artifact_source = _artifact_source(
+        rel_id, body.get("source_policy"), body.get("expected_source"), body.get("patches")
+    )
     inline_svg = bool(body.get("inline_svg"))
     # 参数校验先做完再进渲染：混在下面那个 try 里的话，worker 响应的
     # JSONDecodeError（也是 ValueError）会被当成「preview_dpi 写错了」
@@ -4097,7 +4443,7 @@ def api_engine_render():
         ), 400
     t0 = time.time()
     t_get = time.perf_counter()
-    worker, stem = _engine_worker(rel_id)
+    worker, stem = _engine_worker(rel_id, **_artifact_kwargs(artifact_source))
     # 取会话可能当场 spawn 一个解释器并 import matplotlib——冷启动的大头常常
     # 在这里，而它**既不在 worker 的 timings 里也不在 build 里**。不单独量出来，
     # 用户等的那十几秒在数据里就凭空消失了（第一版计时管道就是这么骗了自己）。
@@ -4120,6 +4466,7 @@ def api_engine_render():
             lambda wk, st: wk.override(
                 st, body.get("patches", []), preview_dpi, inline_svg=inline_svg
             ),
+            artifact_source=artifact_source,
         )
     except engine_pool.WorkerError as exc:
         LOG.error("引擎渲染失败: %s: %s", stem, exc)
@@ -4196,6 +4543,8 @@ def api_engine_render():
     # 前端据此把 native 面板标成「与文档不一致」。老 worker 不给时字段整个不出现
     if "unrestored" in resp:
         out["unrestored"] = resp["unrestored"]
+    if artifact_source is not None:
+        out["artifact_source"] = artifact_source
     switched = g.pop("environment_switched", None)
     if switched:
         # 同上：加字段不改老形状。只在**真的发生了自动切换**的那一次响应里出现。
@@ -4231,6 +4580,7 @@ def api_engine_specfix():
     的回滚干净与否只有作废这一条兜底——native 的完整保证另在叠栈 PR 里做（ADR 0080）。
     """
     body = request.get_json(force=True) or {}
+    _refuse_artifact_policy(body.get("source_policy"), body.get("expected_source"))
     rel_id = body.get("id", "")
     base = body.get("patches")
     if not isinstance(base, list):
@@ -4557,6 +4907,7 @@ def api_engine_invalidate():
     「没有重跑脚本」——一个静默的 200 会让用户以为数据文件的改动已经生效。
     """
     body = request.get_json(force=True) or {}
+    _refuse_artifact_policy(body.get("source_policy"), body.get("expected_source"))
     rel_id = body.get("id", "")
     root = str(require_project())
     if engine_runtimeasset.is_runtime_id(rel_id):
@@ -4592,7 +4943,13 @@ def api_engine_preview_png():
     冒号在 Windows 上不是合法文件名字符。
     """
     body = request.get_json(force=True)
-    worker, stem = _engine_worker(body.get("id", ""))
+    if body.get("source_policy") is not None and body.get("with_manifest") is not True:
+        _refuse_artifact_policy(body.get("source_policy"), body.get("expected_source"))
+    rel_id = body.get("id", "")
+    artifact_source = _artifact_source(
+        rel_id, body.get("source_policy"), body.get("expected_source"), body.get("patches")
+    )
+    worker, stem = _engine_worker(rel_id, **_artifact_kwargs(artifact_source))
     patches = body.get("patches", [])
     if not isinstance(patches, list):
         return jsonify({"error": "patches 必须是数组", "code": "invalid_patches"}), 400
@@ -4619,16 +4976,25 @@ def api_engine_preview_png():
                 worker,
                 stem,
                 lambda wk, st: wk.preview_png_snapshot(st, patches, w),
+                artifact_source=artifact_source,
             )
         except engine_pool.WorkerError as exc:
             return jsonify(_worker_error_payload(exc)), 500
-        resp = jsonify(png=snapshot["png"], manifest=snapshot["manifest"])
+        resp = jsonify(
+            png=snapshot["png"],
+            manifest=snapshot["manifest"],
+            **({"artifact_source": artifact_source} if artifact_source is not None else {}),
+        )
         resp.headers["Cache-Control"] = "no-store"
         return resp
     tag = "v" + engine_patchspec.patch_hash(patches).split(":")[-1][:12]
     try:
         worker, stem, path = _engine_attempt(
-            body.get("id", ""), worker, stem, lambda wk, st: wk.preview_png(st, patches, w, tag=tag)
+            body.get("id", ""),
+            worker,
+            stem,
+            lambda wk, st: wk.preview_png(st, patches, w, tag=tag),
+            artifact_source=artifact_source,
         )
     except engine_pool.WorkerError as exc:
         return jsonify(_worker_error_payload(exc)), 500
@@ -4645,6 +5011,7 @@ def api_engine_png():
     同文件多变体的场景请改用 `/api/engine/preview_png`（前端已全部改过去），
     这个端点只为兼容保留。
     """
+    _refuse_artifact_policy(request.args.get("source_policy"), request.args.get("expected_source"))
     worker, stem = _engine_worker(request.args.get("id", ""))
     want_w = int(request.args.get("w", 800))
     w = next((b for b in RENDER_BUCKETS if b >= want_w), RENDER_BUCKETS[-1])
@@ -4667,9 +5034,12 @@ def api_engine_update_source():
     只覆盖图片文件，脚本不动——脚本与文件从此不再一一对应，但 override
     仍是文档里的真相（工具内渲染始终走脚本 + overrides）。
     """
+    body = request.get_json(force=True)
+    _refuse_artifact_policy(
+        body.get("source_policy"), body.get("expected_source"), reason="writeback_not_supported"
+    )
     if err := _write_back_forbidden():
         return err
-    body = request.get_json(force=True)
     rel_id = body.get("id", "")
     patches = body.get("patches", [])
     # 可选：随写回把画布标注烙进原图（坐标已由前端换算成该图自身的 mm）
@@ -5545,6 +5915,7 @@ def api_engine_sync_overrides():
     + unmatched（目标图没有对应元素）。不落任何状态，由前端决定怎么用。
     """
     body = request.get_json(force=True)
+    _refuse_artifact_policy(body.get("source_policy"), body.get("expected_source"))
     src_path = safe_resolve(body.get("from_id", ""))
     dst_path = safe_resolve(body.get("to_id", ""))
     patches = body.get("patches", [])
@@ -5608,6 +5979,7 @@ def api_engine_sync_overrides():
 @app.get("/api/engine/history")
 def api_engine_history():
     """某张图的「更新原图」版本足迹（末位 = 当前基线）。"""
+    _refuse_artifact_policy(request.args.get("source_policy"), request.args.get("expected_source"))
     worker, stem = _engine_worker(request.args.get("id", ""))
     versions = load_baked().get(stem, {}).get("versions") or []
     return jsonify(
@@ -5624,6 +5996,7 @@ def api_engine_history():
 def api_engine_history_preview():
     """历史版本缩略图：临时应用该版本 patches 渲染，不影响当前编辑状态。
     n=-1 表示脚本原始状态。"""
+    _refuse_artifact_policy(request.args.get("source_policy"), request.args.get("expected_source"))
     worker, stem = _engine_worker(request.args.get("id", ""))
     n = int(request.args.get("n", -1))
     w = int(request.args.get("w", 400))
@@ -5642,9 +6015,12 @@ def api_engine_history_preview():
 def api_engine_history_restore():
     """一键恢复到某个历史版本：重放该版本的 patches 重出文件，
     并把它追加为最新版本（历史不回卷、只前进）。n=-1 恢复脚本原始。"""
+    body = request.get_json(force=True)
+    _refuse_artifact_policy(
+        body.get("source_policy"), body.get("expected_source"), reason="writeback_not_supported"
+    )
     if err := _write_back_forbidden():
         return err
-    body = request.get_json(force=True)
     if engine_runtimeasset.is_runtime_id(str(body.get("id", ""))):
         # 版本恢复写的是磁盘原件——runtime 素材没有原件，同一条硬拒绝
         return jsonify(
@@ -5685,6 +6061,7 @@ def api_engine_history_restore():
 @app.get("/api/engine/svg")
 def api_engine_svg():
     """当前 override 状态下的预览 SVG（元素带 gid）。"""
+    _refuse_artifact_policy(request.args.get("source_policy"), request.args.get("expected_source"))
     rel_id = request.args.get("id", "")
     worker, stem = _engine_worker(rel_id)
     try:
@@ -5908,6 +6285,8 @@ def _resync_registration(ctx, worker) -> bool:
     一张没出也是权威结果（build 跑完、描述符是空表）：摘掉这个脚本的全部旧 stems，素材库不再挂着必然
     `no_figures_captured` 的条目（Codex 评 #716 P2）；没 build / build 失败的不算。落地在改指表的锁里核对
     这个会话的代次；不是按此刻的表 build 的不动。回有没有改。"""
+    if getattr(worker, "artifact_source", None) is not None:
+        return False  # A selected source is a subset, not whole-script discovery.
     script = getattr(worker, "script_name", "") or ""
     root = getattr(worker, "figures_dir", None)
     registry = getattr(ctx, "registry", None)
@@ -9219,7 +9598,12 @@ def main():
         # 没同意时这一行什么都不做；用户在本次会话里同意之后由
         # telemetry.set_consent 补发（同一次会话只发一条）。
         engine_telemetry.note_app_started("desktop")
-        sys.exit(desktop_mode.run(app))
+        try:
+            sys.exit(desktop_mode.run(app))
+        finally:
+            from .rendercore import renderhost as rc_renderhost
+
+            rc_renderhost.shutdown_shared_for_exit()
 
     url = landing(port)
     if insecure:

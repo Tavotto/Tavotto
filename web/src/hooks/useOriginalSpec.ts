@@ -13,6 +13,7 @@
  * 所以 linter 看不见的那层依赖要显式列出来。
  */
 import { useMemo } from 'react'
+import type { PanelObject } from '@/types/document'
 import { originalAvailability, type OriginalAvailability } from '@/lib/exportRequest'
 import { getOriginalOutputSpec, type OriginalOutputSpec } from '@/lib/originalSpec'
 import { useAssetStore } from '@/store/assetStore'
@@ -51,14 +52,14 @@ export function useOriginalSpec(figureId: string | null): OriginalOutputSpec | n
  */
 export function useOriginalAvailability(
   figureId: string | null,
-  opts: { anyFigures?: boolean } = {},
+  opts: { anyFigures?: boolean; panel?: PanelObject | null } = {},
 ): OriginalAvailability {
   const signals = useSpecSignals()
-  const anyFigures = opts.anyFigures
+  const { anyFigures, panel } = opts
   return useMemo(
-    () => originalAvailability(figureId, { anyFigures }),
+    () => originalAvailability(figureId, { anyFigures, panel }),
     // 同上：信号，不是入参
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [figureId, anyFigures, ...signals],
+    [figureId, anyFigures, panel, ...signals],
   )
 }

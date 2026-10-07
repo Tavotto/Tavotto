@@ -369,8 +369,10 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
     if (!offer || get().busy) return
     const epoch = projectEpoch
     let planId = ''
-    // 素材库脚本行发起的才记归属（切项目停放 / 认领进度 / 装好重跑）；授权框发起的归框，不往脚本行上重跑
-    set({ busy: true, errorCode: '', errorText: '', jointBlocked: null, jointScript: offerArg ? offer.script : '', jointOffer: offer })
+    // 脚本行也直接弹框：按发起时的运行记录记归属，切回项目后继续那次试运行。
+    // 只有画布渲染的门没有脚本行意图，切回后仍只重排渲染。
+    const fromScript = !!offerArg || useScriptRunStore.getState().byScript[offer.script]?.phase === 'needs_preparation'
+    set({ busy: true, errorCode: '', errorText: '', jointBlocked: null, jointScript: fromScript ? offer.script : '', jointOffer: offer })
     try {
       const { plan } = await createJointDependencyPlan({ script: offer.script, target })
       // 绑定回来时已经切了项目：这是 A 的计划，不在 B 上执行（绑定不装，丢掉即可）
@@ -380,11 +382,9 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
       const seen = new Set(offer.plan.requirements.map(requirementKey))
       if (plan.requirements.some((r) => !seen.has(requirementKey(r)))) {
         set({ busy: false, jointPlan: null, jointScript: '', jointOffer: null })
-        if (offerArg) void useScriptRunStore.getState().run(offer.script)
-        else {
-          useEnvStore.getState().dismissDependencyPreparation()
-          useRenderStore.getState().retryEnvironmentFailures()
-        }
+        useEnvStore.getState().dismissDependencyPreparation()
+        useRenderStore.getState().retryEnvironmentFailures()
+        if (fromScript) void useScriptRunStore.getState().run(offer.script)
         return
       }
       planId = plan.plan_id
@@ -863,9 +863,8 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
       // 回到所属项目：失败的只说那一句、不重跑；成功的按此刻重新读一次环境、核实生效了才重跑
       void applyEnvChange(here === '' ? null : here, pend, true)
     }
-    // 授权框发起的联合准备（不是脚本行）切走再切回：`envStore` 已随切项目清空，框里的进度 / 取消 / 失败结局没有载荷可挂，
-    // 用停放的那份载荷把框重新打开（同一个框、同一份进度）；脚本行发起的由行按 `jointOffer` 自己渲染
-    if (back && back.flow === 'joint' && back.state !== 'done' && retryCtx?.jointOffer && !retryCtx.jointScript)
+    // 联合准备统一在弹窗里：切回所属项目时用停放的载荷恢复同一份进度 / 取消 / 重试。
+    if (back && back.flow === 'joint' && back.state !== 'done' && retryCtx?.jointOffer)
       useEnvStore.getState().requestDependencyPreparation(retryCtx.jointOffer, currentProjectId())
     if (back?.state === 'done' && (retryCtx?.scriptOffer || retryCtx?.jointScript)) {
       const script = back.script ?? retryCtx.request?.script ?? retryCtx.jointScript

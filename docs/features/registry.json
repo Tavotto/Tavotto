@@ -83,7 +83,7 @@
         "zh-CN": "脚本缺包时一键修复：一句话 + 一个主按钮准备运行环境并装好缺的包，进度一行（第几步 / 下载 MB），装好后自动重跑",
         "en-US": "One-click fix when a script is missing a package: one sentence and one button set up the environment and install it, progress is one line (with download MB), then the script reruns"
       },
-      "entry": "左栏「素材」→ 脚本行运行后缺包 →「一键修复」（画布右栏的缺包卡片、跑前的依赖授权框同一套）",
+      "entry": "编辑图 / 运行脚本遇到跑前缺依赖 → 直接弹「一键修复」；运行中缺包仍有修复卡片",
       "e2e": [
         {
           "spec": "dependency-one-click.spec.ts",
@@ -91,12 +91,16 @@
         },
         {
           "spec": "dependency-one-click.spec.ts",
-          "title": "一键修复：开跑前要准备依赖的脚本行同样只有一句话 + 一个主按钮，点一次走联合准备，装好后自动重跑出图"
+          "title": "一键修复：脚本跑前缺依赖直接弹框，进度留在弹窗，装好后自动重跑出图"
+        },
+        {
+          "spec": "guarded-png-activation.spec.ts",
+          "title": "guarded PNG: a dependency gate opens one-click repair and completion resumes real source validation"
         }
       ],
       "desktop_manual": [
-        "在一台没有装 Python 的 macOS / Windows 上打开一个 import 了 openpyxl 的脚本项目，脚本行点「运行并发现图」：卡片只有一句「这个脚本还缺 openpyxl，点一下自动装好。」和「一键修复」按钮（下载大小、路径输入框都在折叠的「详情」里）；点一次，进度只有一行（下载时显示「12 / 25 MB」，之后是「（3/4）」这样的第几步），装好后那一行自动重跑出图",
-        "在一台没有装 Python 的 macOS / Windows 上打开一个同时 import pandas 与 openpyxl 的脚本项目（内置 runtime 有 pandas、没有 openpyxl），脚本行点「运行并发现图」：点一次「一键修复」后，自动重跑不会再停在「脚本开跑就需要的包渲染环境里没有」；脚本行始终只有一句话 + 一个主按钮，没有「可能需要原环境」"
+        "在一台没有装 Python 的 macOS / Windows 上打开一个 import 了 openpyxl 的脚本项目，脚本行点「运行并发现图」：直接弹修复框，只有一句「这个脚本还缺 openpyxl，点一下自动装好。」和「一键修复」主按钮（下载大小、完整需求与备选方式在折叠的详情里）；点一次，进度在弹窗里显示一行（下载时显示「12 / 25 MB」，之后是「（3/4）」这样的第几步），装好后关闭弹窗并自动重跑出图",
+        "打开一个同时 import pandas 与 openpyxl 的脚本项目，运行脚本或点击关联 PNG 的「改图里的内容」：跑前缺依赖直接弹「一键修复」；点击「稍后」能再次打开；点一次修复，进度留在弹窗，安装期间切走再切回仍能看进度和取消，完成后继续刚才的操作"
       ]
     },
     {
@@ -369,7 +373,7 @@
       "e2e": [
         {
           "spec": "shared-colorbar-group.spec.ts",
-          "title": "共享色条成组：树、整组平移、撤销重做、钻进成员、单拖不带色条、重开还在"
+          "title": "自动色条轴成组：树、平移缩放、撤销重做、钻进成员、单拖不带色条、重开还在"
         },
         {
           "spec": "shared-colorbar-group.spec.ts",
@@ -378,6 +382,18 @@
         {
           "spec": "shared-colorbar-group.spec.ts",
           "title": "选区 = 组 + 组外的子图一起选中：从组外子图里的东西起手拖，只挪那样东西，组不跟着走（Codex #691 P2）"
+        },
+        {
+          "spec": "shared-colorbar-group.spec.ts",
+          "title": "手动 cax成组：树、平移缩放、撤销重做、钻进成员、单拖不带色条、重开还在"
+        },
+        {
+          "spec": "shared-colorbar-group.spec.ts",
+          "title": "手动 cax single：树与面包屑按声明，缺声明时给出可执行关联方式"
+        },
+        {
+          "spec": "shared-colorbar-group.spec.ts",
+          "title": "手动 cax unknown：树与面包屑按声明，缺声明时给出可执行关联方式"
         }
       ]
     },

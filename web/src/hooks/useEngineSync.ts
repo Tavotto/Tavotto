@@ -1,3 +1,4 @@
+import { artifactValidationIssue, artifactEntryPending, artifactEditIntentChanged } from '@/lib/artifactValidation'
 /**
  * 引擎渲染的**订阅与生命周期装配**。调度（防抖 / 立即 / 占位 / 定稿）在
  * `store/renderScheduler.ts`，「只带基线、还没动过」的判据在 `lib/bakedBaseline.ts`；
@@ -92,6 +93,11 @@ function liveRenderKeys(objects: readonly CanvasObject[]): Set<string> {
  * 能在测试里直接跑（旧实现的死循环就是在这一层）。
  */
 export function syncEngine(objects: readonly CanvasObject[], editingId: string | null): void {
+  const active = objects.find((o): o is PanelObject => o.type === 'panel' && o.id === editingId)
+  if (artifactEditIntentChanged(active)) {
+    useUiStore.getState().setElementPanel(null)
+    editingId = null
+  }
   const store = useRenderStore.getState()
   const assets = useAssetStore.getState().byId
   const style = useDocumentStore.getState().doc.style
@@ -239,7 +245,8 @@ function nativeSizeFixes(
 ): NativeSizeFix[] {
   const fixes: NativeSizeFix[] = []
   for (const o of objects) {
-    if (o.type !== 'panel') continue
+    if (o.type !== 'panel' || artifactValidationIssue(o) || artifactEntryPending(o.id)) continue
+    if (!o.overrides.length && o.fileKind === 'raster' && /\.png$/i.test(o.fileId) && useUiStore.getState().elementPanelId !== o.id && !useRenderStore.getState().tracked[o.fileId]) continue
     const size = byKey[renderKeyOf(o)]?.manifest?.size_mm
     if (!size) continue
     const [wMm, hMm] = size

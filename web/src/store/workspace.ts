@@ -27,6 +27,7 @@
  * ——指着一个已经被删掉的对象的"快速编辑"是一个打不开的界面。
  */
 import { create } from 'zustand'
+import { cancelArtifactEntry } from '@/lib/artifactValidation'
 import { msg } from '@/i18n'
 import { emitActivity } from '@/lib/activity'
 import { rescueFocus } from '@/lib/focusRescue'
@@ -35,7 +36,7 @@ import { pageUnion } from '@/lib/panelPlacement'
 import { addPanel, addRuntimePanel, enterElementEdit } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
 import { activateCanvas } from '@/store/canvasSession'
-import { useDocumentStore } from '@/store/documentStore'
+import { findFigurePanel, useDocumentStore } from '@/store/documentStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
@@ -102,6 +103,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   addedForEdit: null,
   addedForEditDepth: 0,
   enterFastEdit: (panelId) => {
+    cancelArtifactEntry()
     const changed = get().mode !== 'fast_edit' || get().activePanelId !== panelId
     // 记下排版视口**在这里**，不在 `openFastEdit` 里：问题面板的定位
     // （`lib/issueFocus.ts`）也是从排版进快速编辑的，它调的是这个 action
@@ -112,6 +114,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
   setPendingElementEdit: (panelId) => set({ pendingElementEdit: panelId }),
   exitToLayout: () => {
+    cancelArtifactEntry()
     const changed = get().mode !== 'layout'
     // 回排版 = 用户改了主意，那个待办跟着作废（迟到的关联不该把他拽回去）
     set({ mode: 'layout', activePanelId: null, pendingElementEdit: null, addedForEdit: null })
@@ -119,6 +122,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
   // 换文档 / 换项目的清理**不发信号**：那不是用户在表达「我要回排版」
   clear: () => {
+    cancelArtifactEntry()
     // 第二道保险，**没有用例杀得掉它**：新文档的画布 id 是新生成的，
     // `takeParkedLayoutView()` 的画布判据已经把跨文档还原挡住了（变异反证过）。
     // 留着是为了不让模块变量一直挂着上一份文档的状态；别把它当成被看住的保证。
@@ -281,30 +285,7 @@ export function activeFigurePanel(): PanelObject | null {
  * 「找对象 / 没有就添加 / 切画布 / 选中」，那正是同一件事有两份判据的开头。
  */
 
-/**
- * 找文档里代表这张素材的面板：激活画布优先，其次别的画布。
- *
- * **这是"文档里有没有这张图"的唯一判据**——交接（`lib/openRequest.ts`）、
- * 原图规格（`lib/originalSpec.ts`）、这里的三个动作用的都是它。各写一遍的
- * 后果是"已经在画布上了"这句话在几个入口给出不同答案。
- */
-export function findFigurePanel(
-  figureId: string,
-): { panel: PanelObject; canvasId: string } | null {
-  const s = useDocumentStore.getState()
-  const here = s.doc.objects.find(
-    (o): o is PanelObject => o.type === 'panel' && o.fileId === figureId,
-  )
-  if (here) return { panel: here, canvasId: s.activeCanvasId }
-  for (const c of s.canvases) {
-    if (c.id === s.activeCanvasId) continue
-    const o = c.objects.find(
-      (x): x is PanelObject => x.type === 'panel' && x.fileId === figureId,
-    )
-    if (o) return { panel: o, canvasId: c.id }
-  }
-  return null
-}
+export { findFigurePanel } from './documentStore'
 
 /** 素材 id → 能加进画布的来源：磁盘图的 `PanelInfo`，或带描述符的 runtime 图 */
 type FigureSource = { kind: 'file'; info: PanelInfo } | { kind: 'runtime'; desc: CapturedFigureDescriptor }

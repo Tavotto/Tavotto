@@ -84,7 +84,7 @@ function PanelObjectActions({ obj }: { obj: PanelObject }) {
   return (
     <div className="flex items-center gap-1">
       {obj.script && (
-        <Button size="md" onClick={() => enterElementEdit(obj.id)}>
+        <Button size="md" onClick={() => { void enterElementEdit(obj.id) }}>
           <Pencil size={ICON_SIZE.sm} />
           {translate('panel.editElements', { ns: 'inspector' })}
         </Button>

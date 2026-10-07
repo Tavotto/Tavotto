@@ -158,7 +158,7 @@ function AlignToolbar({
   const horizontal = ALIGN_BUTTONS.filter((b) => H_ALIGN.has(b.mode))
   const vertical = ALIGN_BUTTONS.filter((b) => !H_ALIGN.has(b.mode))
   const render = ({ mode, icon: Icon }: (typeof ALIGN_BUTTONS)[number]) => (
-    <IconButton key={mode} label={nameFor(mode)} tip={tipFor(mode)} side="left" onClick={() => onPick(mode)}>
+    <IconButton key={mode} data-inspector-align-mode={mode} label={nameFor(mode)} tip={tipFor(mode)} side="left" onClick={() => onPick(mode)}>
       <Icon size={ICON_SIZE.md} />
     </IconButton>
   )

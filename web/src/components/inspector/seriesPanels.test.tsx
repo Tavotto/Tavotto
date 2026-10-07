@@ -3,6 +3,7 @@
  * 整张图、曲线、散点、柱形、误差棒、填充区域。字段形状与 engine/manifest.py
  * 各 `_*_fields` 同形；写入经真实的 documentStore，断言落在 override 上。
  */
+import { seedExactRender } from '@/test/renderFixtures'
 import { literal } from '@/i18n'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -878,3 +879,22 @@ describe('数值行的可达名：标签在视觉与辅助技术中一致（T11 
 })
 
 export { textOf, byText, row, inputIn, typeNumber, openMore, host as hostRef }
+
+describe('selected transparency reset indication',()=>{
+ it.each([true,false])('original-valued visibility %s keeps the toggle but hides a no-op reset',async value=>{
+  useDocumentStore.getState().commit(literal('selected source'),d=>{
+   const p=d.objects[0] as PanelObject
+   p.artifactValidation={version:1,requiredFrame:'figsize',sourceId:p.fileId,bytesSha256:'a'.repeat(64),sizeBytes:10}
+   p.overrides=[{gid:'figure',prop:'frame',value:'figsize'},{gid:'figure',prop:'facecolor',value:'red'},{gid:'figure',prop:'transparent',value}]
+  })
+  const m=makeManifest([])
+  m.elements[0].editable.find(f=>f.prop==='transparent')!.value_original=value
+  seedExactRender(livePanel(),m);await mount(['figure'])
+  expect(row('transparent')?.querySelectorAll('button')).toHaveLength(1)
+  await act(async()=>{
+   const changed=structuredClone(m);changed.elements[0].editable.find(f=>f.prop==='transparent')!.value_original=!value
+   seedExactRender(livePanel(),changed)
+  })
+  expect(row('transparent')?.querySelectorAll('button')).toHaveLength(2)
+ })
+})

@@ -441,7 +441,34 @@ def test_font_collections_open_the_face_matplotlib_named_not_the_first_one():
 #: 脚本用 `FontProperties(fname=…)` 锁了一个**西文**字体文件（用户反馈：改图助手把
 #: 全局字体改成 `fname="times.ttf"`，汉字全变方框）。DejaVu Serif 随 matplotlib 分发，
 #: 三个平台都有，而且没有汉字字形——与 Times New Roman 同一个处境。
-FNAME_LIBRARY = """\
+#: Positive fname fixtures require an unambiguous family-to-file round trip. Keep
+#: CJK/system fallback fonts, but register only this Matplotlib's bundled DejaVu
+#: faces for the two fixture families. This registry is private to each child;
+#: no installed font or on-disk font cache is changed. The collision below tests
+#: the deliberately unreleasable case with two actual, different font files.
+_FNAME_FONT_FIXTURE = """\
+import os
+import matplotlib
+from matplotlib import font_manager
+
+TTF = os.path.join(matplotlib.get_data_path(), "fonts", "ttf")
+font_manager.fontManager.ttflist = [
+    e for e in font_manager.fontManager.ttflist
+    if e.name not in {"DejaVu Serif", "DejaVu Sans"}
+]
+for name in sorted(os.listdir(TTF)):
+    if name.endswith(".ttf") and (
+        name.startswith("DejaVuSerif") or name.startswith("DejaVuSans-")
+        or name == "DejaVuSans.ttf"
+    ):
+        font_manager.fontManager.addfont(os.path.join(TTF, name))
+font_manager.fontManager._findfont_cached.cache_clear()
+"""
+
+
+FNAME_LIBRARY = (
+    _FNAME_FONT_FIXTURE
+    + """\
 import os
 
 import matplotlib
@@ -460,6 +487,7 @@ def main():
     ax.set_xlabel("时间 (s)", fontproperties=REGULAR)
     fig.savefig("FnameFig.pdf")
 """
+)
 
 
 def test_fname_locked_latin_font_still_gets_the_cjk_tail(tmp_path, installed_cjk):
@@ -507,7 +535,9 @@ def test_fname_locked_latin_font_still_gets_the_cjk_tail(tmp_path, installed_cjk
     assert pixels[0] != pixels[1]  # 「中」与「文」不是同一个方框
 
 
-_FNAME_DRIVER = """\
+_FNAME_DRIVER = (
+    _FNAME_FONT_FIXTURE
+    + """\
 import io, os, sys
 sys.path.insert(0, sys.argv[1])
 import matplotlib
@@ -602,6 +632,31 @@ font_manager.fontManager.addfont(probe_face("Tavotto Pair", "Regular", 400))
 fig, t = figure("Voltage", probe_face("Tavotto Pair", "Light", 300))
 overrides.ensure_figure_fallback(fig)
 assert t.get_fontproperties().get_file() is not None
+plt.close(fig)
+
+# i) Same family/style/weight, different bytes: a pre-existing face wins name
+# resolution. Keep the requested file, its Latin pixels, and honest CJK facts.
+first = probe_face("Tavotto Collision", "Regular", 400)
+prior = os.path.join(tmp, "collision-prior.ttf")
+shutil.copyfile(first, prior)
+font_manager.fontManager.addfont(prior)
+locked = probe_face("Tavotto Collision", "Regular", 400, base="DejaVuSans.ttf")
+assert open(prior, "rb").read() != open(locked, "rb").read()
+resolved = font_manager.findfont(
+    FontProperties(family=["Tavotto Collision"], weight="normal"),
+    fallback_to_default=False,
+)
+assert os.path.samefile(resolved, prior), "fixture: earlier equal-score face must win"
+fig, t = figure("Voltage 72.5 MPa", locked)
+before = png(fig)
+overrides.ensure_figure_fallback(fig)
+f = t.get_fontproperties().get_file()
+assert f is not None and os.path.samefile(f, locked), "different bytes must stay locked"
+assert png(fig) == before, "collision changed Latin pixels"
+assert manifest._glyph_scan("中文", t.get_fontfamily(), f) == (["中", "文"], [], [])
+assert manifest.font_faces("中文", t.get_fontfamily(), "dejavusans", f) == {
+    "face": "Tavotto Collision"
+}
 plt.close(fig)
 
 # d) 同一个相对 fname 在两个目录里是两个文件（native 会话两次 show 之间换了 cwd）：
@@ -721,6 +776,7 @@ assert manifest.font_faces(t.get_text(), t.get_fontfamily(), "dejavusans", f) ==
 }
 print("OK")
 """
+)
 
 
 def test_fname_release_keeps_latin_pixels_and_reports_unreleasable_honestly():

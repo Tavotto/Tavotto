@@ -14,7 +14,7 @@ worker 能让症状消失，但两份代码迟早分叉，而分叉的表现正�
 入口里产出**不同的 stem**（前端按 stem 索引一切，那是数据级的错位）。所以
 策略收在这里，两边各调一次。
 
-三件事这里是唯一出处：
+共享捕获语义的唯一出处：
 
 * `savefig_stem()` —— `savefig(路径)` 里那个 stem 怎么取；
 * `savefig_call()` —— 一次 savefig 调用决定产物长相的那几个参数（`bbox_inches` /
@@ -22,6 +22,7 @@ worker 能让症状消失，但两份代码迟早分叉，而分叉的表现正�
   记成 JSON（`savefig_calls` 进描述符，见函数 docstring）；
 * `collect_pyplot_figures()` —— 脚本跑完之后还活着的 pyplot Figure 怎么补进
   捕获表（去重、命名、保序）；
+* `install_colorbar_capture()` —— 原样调用 matplotlib，记下手动 `cax=` 的显式 `ax` 宿主；
 * `install_relative_read_fallback()` —— 相对路径**只读**回退（见下）；
 * `remap_target()` / `install_input_remap()` / `missing_input_of()` —— 数据找不到时用户指认的
   只读改指表与「缺的是哪个」的判据（ADR 0106；父进程推规则也用 `remap_target`）；
@@ -154,6 +155,11 @@ import re
 import sys
 import weakref
 
+if __package__:
+    from . import patchspec
+else:
+    import patchspec
+
 __all__ = [
     "savefig_stem",
     "savefig_call",
@@ -169,6 +175,7 @@ __all__ = [
     "collect_pyplot_figures",
     "fallback_stems",
     "install_relative_read_fallback",
+    "install_colorbar_capture",
     "unused_imports",
     "reaches_main",
     "install_unused_import_placeholders",
@@ -229,6 +236,38 @@ _SOURCES = (SOURCE_SAVEFIG, SOURCE_PYPLOT)
 #: 这类例外本身也有上限：总数最多 `MAX_SAVEFIG_CALLS_HARD`。
 MAX_SAVEFIG_CALLS = 8
 MAX_SAVEFIG_CALLS_HARD = 2 * MAX_SAVEFIG_CALLS
+
+
+def install_colorbar_capture(mfigure) -> None:
+    """Record explicit `cax=…, ax=…` owners without giving matplotlib layout metadata.
+
+    Figure and SubFigure inherit this method. Forward the call unchanged; only
+    standard Axes / lists / tuples / ndarray declarations are observed. In
+    particular, do not consume iterators which matplotlib ignores with cax.
+    """
+    from functools import wraps
+
+    original = mfigure.FigureBase.colorbar
+    if getattr(original, "_tavotto_colorbar_capture", False):
+        return
+    axes_type, array_type = mfigure.Axes, mfigure.np.ndarray
+
+    @wraps(original)
+    def colorbar(self, *args, **kwargs):
+        cb = original(self, *args, **kwargs)
+        cax = kwargs.get("cax", args[1] if len(args) > 1 else None)
+        ax = kwargs.get("ax", args[2] if len(args) > 2 else None)
+        if cax is not None and ax is not None:
+            parents = list(ax.flat) if type(ax) is array_type else ax
+            if type(parents) not in (list, tuple):
+                parents = [parents]
+            if parents and all(isinstance(p, axes_type) for p in parents):
+                cb._tavotto_colorbar_parents = tuple(parents)  # noqa: SLF001
+        return cb
+
+    colorbar._tavotto_colorbar_capture = True  # noqa: SLF001
+    mfigure.FigureBase.colorbar = colorbar
+
 
 #: 每次执行的观察预算，独立于旧的逐 stem 调用表。超限必须说历史不完整，
 #: 不能把「最后一条留下的记录」当成「磁盘上最后一次保存」。不保留 Figure 强引用。
@@ -511,16 +550,116 @@ SOURCE_ARTIFACT_VERSION = 1
 ORIGIN_EXECUTION = "execution"
 ORIGIN_STATIC = "static"
 _ORIGINS = (ORIGIN_EXECUTION, ORIGIN_STATIC)
+SELECTED_ARTIFACT_POLICY = "selected-artifact-v1"
+SELECTED_FIGSIZE_POLICY = "selected-figsize-v1"
+SELECTED_ARTIFACT_POLICIES = (SELECTED_ARTIFACT_POLICY, SELECTED_FIGSIZE_POLICY)
+ARTIFACT_VALIDATION_MAX_BYTES = 32 * 1024 * 1024
+ARTIFACT_VALIDATION_MAX_PIXELS = 16_000_000
 
 
-def hash_file(path) -> tuple[str, int]:
-    """文件的 sha256 十六进制 + 字节数。分块读，大 PDF 不整个进内存。"""
+class ArtifactContextError(ValueError):
+    code = "artifact_source_unavailable"
+
+    def __init__(self, reason: str, message: str, *, retryable: bool | None = None, owner=None):
+        super().__init__(message)
+        self.reason = reason
+        self.retryable = reason == "source_changed" if retryable is None else retryable
+        self.params = {"reason": reason}
+        if owner is not None:
+            self.params.update(
+                {key: owner[key] for key in ("file_id", "bytes_sha256", "size_bytes")}
+            )
+
+
+def artifact_request(policy, expected_source=None, patches=()):
+    """Validate the opt-in and durable byte basis; execution tokens are never accepted."""
+    if policy is None and expected_source is None:
+        return None
+    if policy not in SELECTED_ARTIFACT_POLICIES:
+        raise ArtifactContextError("unsupported_render_state", "Unsupported source policy.")
+    if policy == SELECTED_FIGSIZE_POLICY and patches:
+        frame = next(
+            (
+                p["value"]
+                for p in patchspec.canonicalize(patches)
+                if (p["gid"], p["prop"]) == ("figure", "frame")
+            ),
+            None,
+        )
+        if frame != "figsize":
+            raise ArtifactContextError(
+                "unsupported_render_state", "Selected figsize edits require the figsize frame."
+            )
+    if expected_source is None:
+        if patches:
+            raise ArtifactContextError(
+                "source_changed",
+                "Edited sources require their saved byte identity.",
+                retryable=False,
+            )
+        return None
+    if (
+        not isinstance(expected_source, dict)
+        or set(expected_source) != {"bytes_sha256", "size_bytes"}
+        or not isinstance(expected_source["bytes_sha256"], str)
+        or not re.fullmatch(r"[0-9a-f]{64}", expected_source["bytes_sha256"])
+        or type(expected_source["size_bytes"]) is not int
+        or expected_source["size_bytes"] <= 0
+    ):
+        raise ArtifactContextError("source_changed", "Invalid source basis.", retryable=False)
+    return dict(expected_source)
+
+
+def selected_artifact_context(value):
+    """Validate the controller-owned static source identity; None preserves legacy rendering."""
+    if value is None:
+        return None
+    if not isinstance(value, dict) or value.get("render_policy") not in SELECTED_ARTIFACT_POLICIES:
+        raise ValueError("unsupported artifact render policy")
+    source_id = normalize_relative_script(value.get("source_id"))
+    if ".." in pathlib.PurePosixPath(source_id).parts:
+        raise ValueError("artifact source must remain inside its project")
+    artifact = SourceArtifact(
+        source_id=pathlib.PurePosixPath(source_id).as_posix(),
+        origin=ORIGIN_STATIC,
+        kind=value.get("kind"),
+        bytes_sha256=value.get("bytes_sha256"),
+        size_bytes=value.get("size_bytes"),
+    )
+    if artifact.kind not in ("pdf", "png"):
+        raise ValueError("selected artifact rendering supports PDF and PNG")
+    policy = value["render_policy"]
+    if policy == SELECTED_FIGSIZE_POLICY and artifact.kind != "png":
+        raise ArtifactContextError(
+            "unsupported_render_state", "Selected figsize requires a PNG source."
+        )
+    return {**artifact.to_payload(), "render_policy": policy}
+
+
+def selected_artifact_key(value) -> str:
+    """A rendering context includes the actual bytes, unlike SourceArtifact's semantic ID."""
+    context = selected_artifact_context(value)
+    if context is None:
+        return ""
+    return hashlib.sha256(
+        json.dumps(context, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+class FileHashBudgetExceeded(ValueError):
+    """The byte budget was exceeded while reading, including a growing source."""
+
+
+def hash_file(path, *, max_bytes: int | None = None) -> tuple[str, int]:
+    """SHA256 + byte count; an optional budget stops after at most one excess chunk."""
     h = hashlib.sha256()
     size = 0
     with open(os.fspath(path), "rb") as f:
         for chunk in iter(lambda: f.read(1 << 16), b""):
-            h.update(chunk)
             size += len(chunk)
+            if max_bytes is not None and size > max_bytes:
+                raise FileHashBudgetExceeded("File exceeds the hashing byte budget.")
+            h.update(chunk)
     return h.hexdigest(), size
 
 
@@ -980,6 +1119,9 @@ class SavefigObservations:
     def complete(self, index, result):
         if index is not None:
             self._records[index]["result"] = result
+
+    def observation(self, index):
+        return None if index is None else json.loads(json.dumps(self._records[index]))
 
     def report(self):
         return {

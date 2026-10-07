@@ -68,6 +68,11 @@
   `scriptRunStore.handOffProbeGate` 交同一份载荷、准备成功后重跑那一行（全文在 `asset-library.md`）。**目标与状态的文案键写成
   字面量**（`TARGET_LABEL` / `STATE_TEXT` / `BLOCKED_TEXT` 表）。MCP 那一面是同一份决定：
   `tavotto_open_figure(prepare_dependencies=…)`。
+  **完整 PNG 的编辑准入**同样交出工作目录 / 依赖准备 / 缺数据的结构化载荷；准入发生在加入渲染态之前，
+  不把未采用的 PNG 标成待重建。作答经 `retryEnvironmentFailures`（数据改指经 `restaleProjectRenders`）接回显式编辑意图，
+  重新校验所选源字节才提交 FRAME / guard 与进入编辑。改指只交接它自己造成的那次渲染作废；等待期间先发生的
+  换项目 / 渲染代际、选择或工作区变化、文档或历史变化仍不接回。真实 `pointAtData` 响应与同代 SSE 只恢复一次。
+  看护 `store/artifactEntry.test.ts`「selected PNG environment gates」、`e2e/guarded-png-activation.spec.ts`。
   **用户自己的环境（ADR 0079）**：载荷的 `user_environments` 里装齐的排在安装目标前面、同一组单选，
   后端排第一的预选；「改用这个环境」= `depRepairStore.adoptUserEnvironment(id, script)`（只交 id，不认路径），
   成功关框 + `retryEnvironmentFailures`；没装齐的收在 `ui/Details` 里只说还缺什么（不可选）；一个都没装齐
@@ -95,8 +100,10 @@
   不进面包屑、不参与几何）；组下不加抽屉。抽屉按元素**是什么**分（`clusterOf(el)`：色条轴与
   图例同进「图例与色条」），与它挂在谁下面无关。面包屑走 `ancestorsOf` 的真实祖先链，色条轴
   那一级不单列。选中组时属性区是组页（`inspector/GroupPage.tsx` 的 `PanelElementPage` 分流）。
+  手动色条缺显式宿主时保持顶层；属性页消费 `owner_status=undeclared` 显示「归属未确定」与
+  保留 cax 的可执行 `ax` 关联方式，不由颜色关系推父级（#792）。
   看护：`components/left/elementTreeGroups.test.tsx`、`inspector/groupInspector.test.tsx`、
-  `roles/hierarchy.test.ts`。
+  `roles/hierarchy.test.ts`、`inspector/colorScalePanels.test.tsx`、`e2e/shared-colorbar-group.spec.ts`。
 - **左栏「工作区」抽屉（2026-09-24）**：切项目的列表**只有一份**，住在
   `components/left/WorkspaceList.tsx`（当前 · 收藏 · 最近，最近不截断）。顶栏项目名
   （`ProjectSwitcher`）只做 `railClick('workspace')`，不再自己弹菜单——两处各列一遍
@@ -119,7 +126,7 @@
   行尾的等级记号去掉，字号被阻断这类情况样式页不提示，问题只在左侧图标栏带计数角标的「问题」面板里看）。数字是**页面上
   的 pt**（× `panelScale`，写入 ÷ 回去，与样式应用同一个换算）；图内元素经 `useTextStyleAdapter`、画布标注经
   `useCanvasTypography` 写（Inspector 同一条路，一次改动一次 commit）；多个值是「多个值」不压扁。底部是**画布跟随
-  样式**（ADR 0081，唯一实现 `store/styleBinding.ts`）：选一套 = 绑定并立刻对齐整张画布（一次 commit）；已绑定时各格
+  样式**（ADR 0081，唯一编排 `store/styleBinding.ts`；在途计数与欠账唯一持有者是叶子 `store/styleWork.ts`，原图准入直接读同一份）：选一套 = 绑定并立刻对齐整张画布（一次 commit）；已绑定时各格
   的改动改的是**这套样式本身**（先存库、存成功再一次 commit 对齐改了的那一项，内置样式先复制一份再改绑）；「不跟随
   样式」只解绑；「恢复原样」清整张画布样式管得到的 override 并解绑。写入前一律过 `effectiveChanges`，已合样式的图零
   commit。设置 › 样式页的「用于当前画布」调同一个 `bindCanvasStyle`；样式对话框只编辑、不应用。

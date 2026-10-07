@@ -1,3 +1,4 @@
+import { artifactRequestFields } from './artifactValidation'
 import type { ExportObject } from './api'
 import type { CanvasObject } from '@/types/document'
 import { panelRotation } from '@/types/document'
@@ -24,6 +25,7 @@ function toExportObject(o: CanvasObject): ExportObject {
       return {
         ...box,
         type: 'panel',
+        ...artifactRequestFields(o),
         id: o.fileId,
         overrides: o.overrides.length ? o.overrides : undefined,
         crop: o.crop,

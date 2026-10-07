@@ -32,6 +32,10 @@ RECENT_KEEP = 20
 PINNED_KEEP = 50
 
 _LOCK = threading.Lock()
+# Windows 普通读句柄（含本进程 load / 外部扫描器）暂时不允许替换目标。
+# 同一份 tmp 在写锁里有限退让；旧配置存在绝不能算这次写入成功。
+_REPLACE_TRIES = 5
+_REPLACE_BACKOFF_S = 0.05
 
 #: 「这个卷大小写敏感吗」的探测结果，按绝对路径缓存（探测要 stat，而问它的
 #: 那两个地方在热路径上）。
@@ -202,7 +206,17 @@ def save(cfg: dict) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(json.dumps(cfg, ensure_ascii=False, indent=1))
-        tmp.replace(p)
+        for attempt in range(_REPLACE_TRIES):
+            try:
+                tmp.replace(p)
+                break
+            except PermissionError as exc:
+                if (
+                    getattr(exc, "winerror", None) not in (5, 32, 33)
+                    or attempt == _REPLACE_TRIES - 1
+                ):
+                    raise
+                time.sleep(_REPLACE_BACKOFF_S)
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise

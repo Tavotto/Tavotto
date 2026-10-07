@@ -253,6 +253,7 @@ USER_VISIBLE_CODES = {
     "desktop_updater_disabled": set(),
     "file_locked": set(),
     "replay_divergence": set(),
+    "artifact_source_unavailable": set(),
     "script_changed": set(),
     "source_changed": set(),
     "stale_write": set(),
