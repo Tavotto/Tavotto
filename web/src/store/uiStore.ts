@@ -7,6 +7,7 @@ import { emitActivity } from '@/lib/activity'
 import { createDismissTimer } from '@/lib/dismissTimer'
 import type { Severity } from '@/lib/profile'
 import type { ProblemCursor, ProblemDrill, ProblemScope, ProblemView } from '@/lib/problemList'
+import { drillKey } from '@/lib/drillKey'
 
 export type LeftTab = 'workspace' | 'canvases' | 'assets' | 'layers' | 'elements' | 'style' | 'problems'
 /** 右栏三模式：属性 / 改图助手 / 画布设置 */
@@ -432,7 +433,7 @@ interface UiState extends Persisted {
   /** 落游标要说明现场；现场换了，旧现场里点进的卡片一并作废 */
   setProblemCursor: { (v: null): void; (v: ProblemCursor, context: string): void }
   setProblemView: (v: ProblemView) => void
-  /** 点进卡片要说明现场；现场换了，旧现场里的游标一并作废。null = 回总览（连游标） */
+  /** 点进卡片要说明现场；现场换了、或同一现场换到另一支，旧游标一并作废。null = 回总览（连游标） */
   setProblemDrill: { (v: null): void; (v: ProblemDrill, context: string): void }
   /** 关掉设置、打开左栏「样式」面板（设置 › 样式页「用于当前画布」绑完之后去看结果） */
   openStylePanel: () => void
@@ -726,13 +727,18 @@ export const useUiStore = create<UiState>((set, get) => ({
           : { problemCursor, problemContext: context ?? null, problemDrill: null },
     ),
   setProblemView: (problemView) => set({ problemView, problemDrill: null, problemCursor: null }),
+  // 游标只在点开的那一支里走（细则：「那一支强制开着、游标在它里面走」）：同一现场里换到**另一支**，
+  // 旧游标就没有主语了——留着它，页脚会拿 A 的规则 / 下标在 B 里说「已处理」、F8 跳过 B 的头几条（Codex #832）。
+  // 同一支再写一次（定位 / F8 在这一支里走）照旧留着；跨支的 F8 / 直达 / 定位都是先写支、再落游标
   setProblemDrill: (problemDrill: ProblemDrill | null, context?: string) =>
     set((s) =>
       !problemDrill
         ? { problemDrill: null, problemCursor: null }
-        : context === s.problemContext
-          ? { problemDrill }
-          : { problemDrill, problemContext: context ?? null, problemCursor: null },
+        : context !== s.problemContext
+          ? { problemDrill, problemContext: context ?? null, problemCursor: null }
+          : s.problemDrill && drillKey(s.problemDrill) === drillKey(problemDrill)
+            ? { problemDrill }
+            : { problemDrill, problemCursor: null },
     ),
   setFixing: (fixing) => set({ fixing }),
   setEditingText: (editingTextId) => set({ editingTextId }),

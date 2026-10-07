@@ -1195,6 +1195,32 @@ describe('定位后清单留在原地（审计 T09）', () => {
     expect(cursorBar()?.textContent).toContain(`第 1 / ${onP1.length} 项`)
   })
 
+  it('游标在 A 支里，再手动展开另一支 B：游标不带过去，页脚不说「已处理」，F8 从 B 的第一条起步（Codex #832）', async () => {
+    await seedThree()
+    useUiStore.setState({ problemScope: 'document' })
+    await mount(<ProblemPanel />)
+    const branch = (key: string) => container.querySelector<HTMLElement>(`li[data-problem-card-key="${key}"]`)!
+    const branchRows = (key: string) => [...branch(key).querySelectorAll<HTMLElement>('[data-issue-row]')]
+    // A = p1：展开、在它的最后一条上落游标（下标 > 0，旧游标的 ruleCode / index 套到 B 上才会跳过 B 的头几条）
+    await click(branch('figure:p1').querySelector(':scope > button')!)
+    const inA = branchRows('figure:p1')
+    expect(inA.length, '夹具：A 至少两条').toBeGreaterThan(1)
+    await click(inA.at(-1)!)
+    expect(cursorObject()).toBe('p1')
+    // B = p2：收着的一支，用户点开它
+    expect(branch('figure:p2').querySelector(':scope > button')!.getAttribute('aria-expanded')).toBe('false')
+    await click(branch('figure:p2').querySelector(':scope > button')!)
+    expect(liveDrill()).toEqual({ kind: 'figure', key: 'p2' })
+    expect(useUiStore.getState().problemCursor, 'A 的游标不该带进 B').toBeNull()
+    expect(cursorBar(), '页脚不该拿 A 的游标在 B 里说「已处理」').toBeNull()
+    // F8：从 B 的第一条起步，不是按 A 的旧下标跳到 B 的后面
+    await pressF8()
+    expect(cursorObject()).toBe('p2')
+    const inB = branchRows('figure:p2')
+    expect(inB[0].getAttribute('aria-current'), 'F8 该落在 B 的第一条').toBe('true')
+    expect(cursorBar()?.textContent).toContain(`第 1 / ${inB.length} 项`)
+  })
+
   it('叶子行保留稳定机器标识（教程与 e2e 靠它选行）', async () => {
     await seed()
     await mount(<ProblemPanel />)
