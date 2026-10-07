@@ -24,3 +24,7 @@ PYTHONPATH=scripts:src .venv/bin/python -m dev.u02_spikes.runtime_spike --out do
 ```
 
 其它平台的同一套产物由 `.github/workflows/foundation-u02-spikes.yml`（`workflow_dispatch` + 只在 spike 文件变动时的 `pull_request`，非 required）以工件 `u02-evidence-<os>` 给出，不进 git；run 号记在交接文件。
+
+## 2026-10-07 render 复核
+
+PR #790 的 `render/report.json` 与 `render/spike_pdfium.png` 已由 Linux x86_64 / CPython 3.12.14、pypdf 6.19.0 完整重生成；52/52，原 PDF 与真值逐字节不变。PNG 是本次 Linux 字节，不能当作原 macOS 栅格。恢复的原 spike 验证器来自仓库提交 `6dd63da`，仅在 scratch 运行；源码保持退役。方法、完整边界与 hash 见 ADR 0055 §8。上面的 macOS 命令与 freeze/runtime 目录仍是历史记录。

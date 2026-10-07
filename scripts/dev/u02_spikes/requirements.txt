@@ -9,4 +9,4 @@ uharfbuzz==0.56.1
 # 栅格 / 读取侧（三把尺子）
 pypdfium2==5.13.0
 pdfminer.six==20251107
-pypdf==6.16.1
+pypdf==6.19.0
