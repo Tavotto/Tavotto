@@ -117,7 +117,7 @@
   /* 文字选区（::selection）：accent 28% 的浅底，**选中的字一律换成 ink**（下面 @layer base 的 ::selection）——
      保留原色的话 ink-3 的说明 / 元数据落在选区上只剩 3.65:1（浅色白面板）/ 3.70:1（暗色面板），任何不透明度都救不回所有底色
      （Codex P2）。ink 落在合成后的选区上：浅色最低 10.55（field-hover）、暗色最低 6.63（thumb）。画布上改字的那块（canvas/TextView）
-     坐在不变的白纸上，选中的字换 paper-ink（`selection:text-paper-ink`）。两套主题同一条公式，tokenContrast.test 量的是合成后的颜色。 */
+     坐在文档的底上：选中的字按实际的底（文字框底色 → 页面底色 → 纸，`lib/selectionInk`）换 paper-ink 或 paper（Codex P2：页面可以是深色）。两套主题同一条公式，tokenContrast.test 量的是合成后的颜色。 */
   --color-text-selection: color-mix(in srgb, var(--color-accent) 28%, transparent);
 
   /* 状态色：一个锚点派生三值（2026-10-07 设计审计 §1，学 OpenBitFun 的派生公式）：

@@ -229,3 +229,42 @@ describe('TextView 编辑态的插入点与占位', () => {
     expect(el().textContent, '占位不进正文').toBe('')
   })
 })
+
+/**
+ * 改字时选中的字落在什么上（Codex P2，PR #834）：全局 `::selection` 把选中的字换成界面的 ink，TextView 再换成
+ * 纸上的墨——可页面底色（CanvasPage）与文字框底色（`obj.bg`）都是用户定的，深底上换成深色的 paper-ink 就成了
+ * 深字压深底（选区底只是 accent 28% 的半透明 tint）。主语：编辑态那个 div 上 `selection:text-*` 指向的 token
+ * ——它必须由「这段字实际坐在什么上」（obj.bg → 页面底色 → 纸）决定。token 合成后的对比度在 tokenContrast.test 量。
+ */
+describe('TextView 选中的字按实际的底取墨', () => {
+  const selectionInk = (over: Partial<TextObject>, page?: { bg?: string; transparent?: boolean }) => {
+    useDocumentStore.getState().silent((d) => {
+      if (page) Object.assign(d.page, page)
+      d.objects.push(textObj({ text: 'Fig. 1', ...over }))
+    })
+    useUiStore.setState({ editingTextId: 't1' })
+    act(() => root.render(<TextView obj={useDocumentStore.getState().doc.objects[0] as TextObject} />))
+    const cls = container.querySelector<HTMLElement>('div')!.className
+    return [...cls.matchAll(/(?:^|\s)selection:text-([\w-]+)(?=\s|$)/g)].map((m) => m[1])
+  }
+
+  it('文字框自己是深底（#000）、字是浅色：选中的字换浅色的纸墨，不换深色的 paper-ink', () => {
+    expect(selectionInk({ color: '#f5f5f5', bg: '#000000' })).toEqual(['paper'])
+  })
+
+  it('文字框没底、页面底色是深色：跟着页面底色走', () => {
+    expect(selectionInk({ color: '#f5f5f5' }, { bg: '#101820' })).toEqual(['paper'])
+  })
+
+  it('文字框的浅底压在深色页面上：以文字框自己的底为准', () => {
+    expect(selectionInk({ bg: '#FFFFFF' }, { bg: '#000000' })).toEqual(['paper-ink'])
+  })
+
+  it('白纸 / 浅色页面 / 透明页面（棋盘格是浅的）：仍是纸上的墨', () => {
+    expect(selectionInk({})).toEqual(['paper-ink'])
+  })
+
+  it('页面设了深色但标成透明：画的是浅棋盘格，按纸算', () => {
+    expect(selectionInk({}, { bg: '#000000', transparent: true })).toEqual(['paper-ink'])
+  })
+})

@@ -21,6 +21,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { PIN_COLORS } from './canvas/issuePinColors'
+import { PAPER_INK_RGB, PAPER_RGB, selectionInkFor } from './lib/selectionInk'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const CSS = readFileSync(path.resolve(HERE, 'index.css'), 'utf8')
@@ -443,12 +444,28 @@ for (const theme of THEMES) {
       }
     })
 
-    it('纸上改字（canvas/TextView）选中的字换成 paper-ink，落在合成到纸白上的选区 ≥4.5:1（界面 ink 在暗色里落在白纸上看不见）', () => {
-      expect(TEXT_VIEW).toMatch(/['"`\s]selection:text-paper-ink['"`\s]/)
+    it('纸上改字（canvas/TextView）选中的字按实际的底取纸上的墨：深 / 浅底上合成后的选区与选中的字 ≥4.5:1、中灰一带取两者中较好的那个（Codex P2：深底上不再是深字）', () => {
+      // 主语：`lib/selectionInk` 对这块底选出的那个 token，落在「选区 tint 合成到这块底上」的颜色上——不是 token 字面、也不假设底是白纸
+      for (const cls of ['selection:text-paper-ink', 'selection:text-paper']) {
+        expect(TEXT_VIEW).toMatch(new RegExp(`['"\`\\s]${cls}['"\`\\s]`))
+      }
+      expect(hex([...PAPER_RGB]), 'selectionInk 链的最底层就是 --color-paper').toBe(t('paper'))
+      expect(hex([...PAPER_INK_RGB]), 'selectionInk 的换手点按 --color-paper-ink 算').toBe(t('paper-ink'))
       const [base, alpha] = srgbAlphaOf(theme, 'text-selection')
-      const sel = mixOver(rc(base), alpha, t('paper'))
-      expect(contrast(t('paper-ink'), sel), 'paper-ink on selection(paper)').toBeGreaterThanOrEqual(4.5)
-      expect(contrast(sel, t('paper')), 'selection visible on paper').toBeGreaterThanOrEqual(1.3)
+      // 用户能定的底：纯黑 / 深色页面 / 深蓝 / 深红 / 纸白 / 浅色页面；另扫一遍 0–255 的灰阶与 accent 色（含两种墨换手的那一段）
+      const named = ['#000000', '#101820', '#1a2b5c', '#5c1a1a', '#ffffff', '#fff8e1', '#e8f0ff']
+      const grays = ['#2c73de', ...Array.from({ length: 52 }, (_, i) => hex([i * 5, i * 5, i * 5]))]
+      const worst: [number, string] = [Infinity, '']
+      for (const g of [...named, ...grays]) {
+        const ink = t(selectionInkFor(g, {}))
+        const sel = mixOver(rc(base), alpha, g)
+        const c = contrast(ink, sel)
+        if (c < worst[0]) [worst[0], worst[1]] = [c, g]
+        if (named.includes(g)) expect(c, `${ink} on selection(${g})`).toBeGreaterThanOrEqual(4.5)
+      }
+      // 中灰一带（亮度在两种墨换手点附近）两个固定的墨谁都到不了 4.5——任何底上对纸白与 paper-ink 二者取大，理论上限约 4.15。
+      // 这一段不假装覆盖：只守「选对了那一个」的下限（量出来浅色 3.95 @#7d7d7d、暗色 4.06 @#787878）。旧的一律 paper-ink 在 #000 上是 ≈1.1
+      expect(worst[0], `worst at ${worst[1]}`).toBeGreaterThanOrEqual(3.9)
     })
 
     it('遮罩与投影从 --color-shadow 派生，shadow 比桌面暗（暗色里遮罩是压暗、不是提亮）', () => {

@@ -74,7 +74,7 @@ cursor-not-allowed`；未选中复选框 / 单选边框与关态开关轨道 `bo
 SearchInput / `inspector/controls/PickerTrigger` 共用；批次 2，形态 2026-09-15 参考 Codex 改成只换底色）；带样张的取值选择器一律 `Popover + PickerTrigger + OptionGrid`
 （`onPick` 收弹层、方向键漫游不收）；数值与单位 `formatQuantity`；token 配对对比度由
 `src/tokenContrast.test.ts` 守着（焦点环 / 控件边界 ≥3:1，要读的字 ≥4.5:1）。文字对比：
-`ink-2`/`ink-3` 均 ≥4.5:1（文字选区上也算：`::selection` 把选中的字换成 `ink`，纸上改字换 `paper-ink`，宪法第二十八节），`ink-faint` 仅装饰 / 禁用——装饰记号（`当前 → 要求` 的箭头、
+`ink-2`/`ink-3` 均 ≥4.5:1（文字选区上也算：`::selection` 把选中的字换成 `ink`，纸上改字按实际的底换 `paper-ink` / `paper`（`lib/selectionInk`），宪法第二十八节），`ink-faint` 仅装饰 / 禁用——装饰记号（`当前 → 要求` 的箭头、
 `状态 · 时间` 的间隔点）必须 `aria-hidden`：e2e 的自算对比度尺子（`e2e/contrast.ts`）只放过
 「aria-hidden **且**自己的文字里没有字母数字」的元素，其余用 `ink-faint` 的字照样量、照样红
 （折叠 summary 是要读的字，用 `ink-3`；未选中的分段标签用 `ink-2`——2026-09-30 起分段槽叠在灰桌面上，ink-3 不到 4.5:1）。选中态不只靠颜色（字重 / check /

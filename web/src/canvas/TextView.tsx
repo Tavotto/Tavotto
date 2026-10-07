@@ -12,11 +12,21 @@ import {
 } from '@/lib/richText'
 import { layerOf } from '@/lib/glyphPlan'
 import { MM_PER_PT } from '@/lib/units'
+import { selectionInkFor, type SelectionInk } from '@/lib/selectionInk'
 import { useDocumentStore } from '@/store/documentStore'
 import { useUiStore } from '@/store/uiStore'
 import { mmToWorld, worldToMm } from '@/store/viewportStore'
 import { canvasFontStack, effectiveCanvasFamily } from '@/lib/typography'
 import type { TextObject } from '@/types/document'
+
+/**
+ * 纸上的墨按字实际坐着的底二选一（`lib/selectionInk`）：选中的字与编辑态的占位。类名写全（Tailwind 只扫字面量）。
+ * 深底（用户把页面或文字框设成深色）用纸色，浅底用纸上的墨——两个 token 两套主题同值，不跟界面的 ink 走。
+ */
+const INK_ON_GROUND: Record<SelectionInk, { selection: string; placeholder: string }> = {
+  'paper-ink': { selection: 'selection:text-paper-ink', placeholder: 'empty:before:text-paper-ink/65' },
+  paper: { selection: 'selection:text-paper', placeholder: 'empty:before:text-paper/65' },
+}
 
 /**
  * 文字对象：字体族由对象自己选（`CANVAS_TEXT_FAMILIES` 三选一），没设过就是
@@ -25,6 +35,9 @@ import type { TextObject } from '@/types/document'
  */
 export function TextView({ obj }: { obj: TextObject }) {
   const editing = useUiStore((s) => s.editingTextId === obj.id)
+  const pageBg = useDocumentStore((s) => s.doc.page.bg)
+  const pageTransparent = useDocumentStore((s) => s.doc.page.transparent)
+  const ink = INK_ON_GROUND[selectionInkFor(obj.bg, { bg: pageBg, transparent: pageTransparent })]
   const setEditingText = useUiStore((s) => s.setEditingText)
   const ref = useRef<HTMLDivElement>(null)
   const heightRef = useRef(obj.h)
@@ -119,10 +132,11 @@ export function TextView({ obj }: { obj: TextObject }) {
       data-placeholder={editing ? translate('stage.textPlaceholder', { ns: 'workspace' }) : undefined}
       className={cn(
         'absolute left-0 top-0 w-full outline-none',
-        // 选中的字：全局 ::selection 换成界面的 ink——暗色里是浅灰，落在不变的白纸上看不见；纸上换纸上的墨
-        'selection:text-paper-ink',
-        // 占位画在纸上：纸上的墨 65%（≈ 浅色里的 ink-3），不是界面的 ink-3（暗色里是浅灰，落在白纸上看不见）
-        editing && 'empty:before:pointer-events-none empty:before:text-paper-ink/65 empty:before:content-[attr(data-placeholder)]',
+        // 选中的字：全局 ::selection 换成界面的 ink——暗色里是浅灰，落在白纸上看不见；这里换纸上的墨。
+        // 但纸不一定是白的：页面底色与文字框底色都由用户定，深底上换深墨又看不见（Codex P2）——按实际的底二选一
+        ink.selection,
+        // 占位画在同一块底上：所选墨的 65%（白纸上 ≈ 浅色里的 ink-3），不是界面的 ink-3（暗色里是浅灰，落在白纸上看不见）
+        editing && cn('empty:before:pointer-events-none empty:before:content-[attr(data-placeholder)]', ink.placeholder),
       )}
       style={{
         fontFamily: canvasFontStack(effectiveCanvasFamily(obj)),

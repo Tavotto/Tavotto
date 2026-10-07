@@ -1084,7 +1084,9 @@ reduced-motion 契约）；68/85 命中 `foundation.test`（533 处）；弹簧 
   外加纸上的线与字、thumb 上的字、文字选区上的字。量的是合成后的颜色。
 - **文字选区**（`::selection`）：底是 accent 28%，**选中的字一律换成 `ink`**——保留原色的话 `ink-3` 的说明 / 元数据落在选区上只剩
   3.65:1（浅色面板）/ 3.70:1（暗色面板），任何不透明度都救不回所有底色（Codex P2）。ink 落在合成后的选区上浅色最低 10.55、暗色最低 6.63；
-  画布上改字的那块（`canvas/TextView`）坐在不变的白纸上，选中的字换 `paper-ink`（`selection:text-paper-ink`）。
+  画布上改字的那块（`canvas/TextView`）坐在文档的底上，不一定是白纸（页面底色、文字框底色都由用户定）：选中的字与编辑态占位按实际的底
+  （文字框底色 → 页面底色 → 纸，`lib/selectionInk`）在 `paper-ink` / `paper` 之间取对比度大的那个（Codex P2：深底上换深墨看不见）；
+  深 / 浅底 ≥4.5:1，中灰一带两个固定墨的上限约 4.15，守下限 3.9。
   `tokenContrast.test` 读 `::selection` 实际写的字色，合成到每一种能选字的底（面板 / 桌面 / 画布灰 / surface-2 / field / field-hover / thumb，外加纸）上断言 ≥4.5:1，
   并要求选区底与原底至少拉开 1.3:1。
 - **桌面壳**：Tauri 窗口不设 `theme`，标题栏本来就跟随系统外观；壳自带的启动 / 出错 / 远程连接页各加一段 `prefers-color-scheme: dark`。
