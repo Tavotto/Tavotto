@@ -1043,3 +1043,34 @@ def test_asset_scan_vanished_entry_does_not_erase_unrelated_assets(
         expected.add((root / "vanished.png", "raster"))
     assert set(found) == expected
     assert any(row.get("path") == vanished_name for row in budget.issues())
+
+
+def test_registered_plot_script_plus_unknown_script_is_not_already_connected(tmp_path):
+    """线程 PRRT_kwDOT51-YM6p52HC：已登记的 fig.py + 语法无法识别的 weird.py。后者仍是未登记的
+    可选目标（未核验），不能因为前者已连接就报 already_connected、收起提示。"""
+    root = _project(tmp_path)
+    _write(root, "fig.py", PLOT.format(stem="fig"))
+    _write(root, "weird.py", "def broken(:\n")
+    _write(
+        root,
+        "tavotto_registry.json",
+        json.dumps(
+            {
+                "version": 1,
+                "scripts": {
+                    "fig.py": {"entry": "__main__", "cost": "light", "notes": "", "stems": ["fig"]}
+                },
+            }
+        ),
+    )
+
+    report = projscan.scan(root)
+
+    roles = {t["script"]: t["role"] for t in report["targets"]}
+    assert roles == {"fig.py": "plot", "weird.py": "unknown"}
+    assert report["target_choice"] == "ambiguous" and report["default_target"] is None
+    assert (report["phase"], report["outcome"]["kind"]) == (
+        "awaiting_configuration",
+        "choose_target",
+    )
+    assert [a["kind"] for a in report["actions"]] == ["rescan", "choose_target"]
