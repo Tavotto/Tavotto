@@ -1064,3 +1064,26 @@ def test_no_response_ever_carries_a_bare_infinity(client, tmp_path):
     r = client.get("/api/versions/dinf/v1")
     assert r.status_code == 500, "非有限数悄悄地被发出去了"
     documents.loads_document(r.get_data())  # 浏览器那一侧必须解析得动这份错误响应
+
+
+def test_layout_listing_skips_entries_that_cannot_be_stat_ed(client, tmp_path, monkeypatch):
+    """一条坏条目（断开的符号链接 / glob 之后被删掉）只跳过它自己，列表照常 200。"""
+    assert client.post("/api/layouts/好的", json={"schema": 2}).status_code == 200
+    try:
+        (tmp_path / "断链.json").symlink_to(tmp_path / "不存在.json")
+    except OSError:
+        pytest.skip("no symlink privilege")
+    (tmp_path / "消失.json").write_text('{"schema": 2}', encoding="utf-8")
+    real_stat = Path.stat
+
+    def vanishing_stat(self, *a, **kw):
+        if self.name == "消失.json":
+            raise FileNotFoundError(self)
+        return real_stat(self, *a, **kw)
+
+    monkeypatch.setattr(Path, "stat", vanishing_stat)
+    resp = client.get("/api/layouts")
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["layouts"] == ["好的"]
+    assert set(body["modified"]) == {"好的"}

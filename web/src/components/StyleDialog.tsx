@@ -243,6 +243,11 @@ export function StyleDialog() {
       return
     }
     load(profileToDraft(stored))
+    // 就地那一问（「放弃修改？」）开着时用户点了页脚「保存」：没有可放弃的了，问题作废。
+    // 不能留着——记下的离开动作闭包里是**存之前**的基线，事后点「放弃修改」会把草稿退回旧样子、
+    // 下次打开它对着新基线显示「未保存」，再存一次就把刚存的盖掉。也不替用户接着离开：
+    // 他点的是「保存」不是「保存并关闭」，草稿干净了，再点关闭 / 别的样式就直接走。
+    setPendingLeave(null)
     useUiStore.getState().setStatus(msg('style.saved', { name: stored.display_name }, 'dialogs'), 'done')
   }
 
