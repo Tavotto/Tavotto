@@ -724,7 +724,7 @@ function EditorView({
       </p>
       <div className="flex min-h-0 flex-1">
         <aside className="hidden w-[224px] shrink-0 flex-col overflow-y-auto border-r border-border bg-surface lg:flex">
-          <ElementTree />
+          <ElementTree chrome="bare" />
         </aside>
         {/* CanvasStage 的根是 flex-1：外面必须是 flex 容器（见 McpApp 的注）。
             relative 是给首次引导那张小卡定位用的——它浮在画布左下角，

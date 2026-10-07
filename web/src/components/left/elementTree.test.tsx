@@ -349,3 +349,40 @@ describe('空态', () => {
     expect(tick.textContent).toContain('刻度文字 0.75')
   })
 })
+
+describe('树的语义、行菜单与「只看这一支」（2026-10-07 设计审计 §10.3）', () => {
+  const row = (gid: string) => host.querySelector(`[data-el="${gid}"]`) as HTMLElement
+
+  it('每行报层级与同层位置（aria-level / posinset / setsize）', async () => {
+    await mount()
+    const ticks = row('axes_0.yticks')
+    const level = Number(ticks.getAttribute('aria-level'))
+    expect(level).toBeGreaterThan(1)
+    expect(Number(ticks.getAttribute('aria-posinset'))).toBeGreaterThan(0)
+    expect(Number(ticks.getAttribute('aria-setsize'))).toBeGreaterThanOrEqual(Number(ticks.getAttribute('aria-posinset')))
+    expect(row('figure').getAttribute('aria-level')).toBe('1')
+  })
+
+  it('⇧F10 开行菜单；「只看这一支」是搜索行里的一枚 chip，点 × 退出', async () => {
+    await mount()
+    const ticks = row('axes_0.yticks')
+    await act(async () => {
+      ticks.focus()
+      ticks.dispatchEvent(new KeyboardEvent('keydown', { key: 'F10', shiftKey: true, bubbles: true, cancelable: true }))
+    })
+    const items = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+    expect(items.length).toBeGreaterThan(0)
+    await act(async () => {
+      items[0].click() // 第一项是「只看这一支」
+      await new Promise((r) => setTimeout(r, 0))
+    })
+    const chip = host.querySelector<HTMLElement>('[data-element-isolate]')!
+    expect(chip, '只看这一支：搜索行里出现 chip').toBeTruthy()
+    // 与搜索框同一行（不是另起一条横幅）
+    expect(chip.parentElement).toBe(search().closest('div')!.parentElement)
+    expect(rowGids()).not.toContain('axes_0.xlabel')
+    await act(async () => host.querySelector<HTMLElement>('[data-element-isolate-exit]')!.click())
+    expect(host.querySelector('[data-element-isolate]')).toBeNull()
+    expect(rowGids()).toContain('axes_0.xlabel')
+  })
+})

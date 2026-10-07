@@ -4427,6 +4427,7 @@ export default interface Resources {
       "moveDown": "下移一层",
       "moveUp": "上移一层",
       "primary": "基准",
+      "rename": "重命名",
       "rowActions": "{{label}} 的操作",
       "rowAria": "{{label}}，{{state}}",
       "show": "显示",

@@ -8,7 +8,6 @@ import {
   ChevronUp,
   Circle,
   Diamond,
-  Ellipsis,
   Eye,
   EyeOff,
   Hexagon,
@@ -16,6 +15,7 @@ import {
   Layers,
   Lock,
   LockOpen,
+  Pencil,
   Slash,
   Square,
   Triangle,
@@ -25,7 +25,7 @@ import { FIELD_BOX, FIELD_FOCUS } from '@/components/ui/fieldBox'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { EditableFigureIcon } from '@/components/ui/semanticIcons'
 import { cn } from '@/lib/utils'
-import { listRowClass } from '@/components/ui/listRow'
+import { dropLineClass, listRowClass } from '@/components/ui/listRow'
 import { TreeChevron, TreeIcon, treeIndent } from '@/components/ui/TreeRow'
 import { useFlip } from '@/lib/motion'
 import { renameObject, reorderObject, toggleHidden, toggleLocked } from '@/store/actions'
@@ -34,9 +34,10 @@ import { useSelectionStore } from '@/store/selectionStore'
 import { objectLabel, type CanvasObject, type LayoutGroup } from '@/types/document'
 import { layoutKindLabel } from '@/store/actions'
 import { Badge } from '../ui/Badge'
-import { IconButton } from '../ui/Button'
 import { EmptyState } from '../ui/EmptyState'
-import { Menu, MenuItem, MenuSeparator } from '../ui/Menu'
+import { MenuItem, MenuSeparator } from '../ui/Menu'
+import { RowMenu } from '../ui/RowMenu'
+import { useRowMenu } from '../ui/useRowMenu'
 
 const ICONS = {
   panel: Image,
@@ -62,8 +63,8 @@ const lt = (key: string, values?: Record<string, unknown>) =>
 
 /** 显示行：普通对象 / 组标题（组成员挂在标题下，可折叠） */
 type TreeRow =
-  | { kind: 'object'; obj: CanvasObject; depth: 0 | 1 }
-  | { kind: 'group'; gid: string; members: CanvasObject[] }
+  | { kind: 'object'; obj: CanvasObject; depth: 0 | 1; pos: number; size: number }
+  | { kind: 'group'; gid: string; members: CanvasObject[]; pos: number; size: number }
 
 export function LayerTree() {
   useTranslation('workspace')
@@ -84,20 +85,27 @@ export function LayerTree() {
   // 侧栏不再各配一颗按钮
   if (!zOrder.length) return <EmptyState icon={Layers} title={lt('emptyTitle')} />
 
-  // 成组的对象折进组标题下（在最上层成员的位置出现一次）
+  // 成组的对象折进组标题下（在最上层成员的位置出现一次）。树的语义（2026-10-07 设计审计 §10.3：
+  // listbox → tree）：顶层是对象与组标题，组成员是第二层；每行报自己在同层里的位置与个数
+  const topLevel = zOrder.filter(
+    (o, i) => !o.groupId || zOrder.findIndex((x) => x.groupId === o.groupId) === i,
+  ).length
   const rows: TreeRow[] = []
   const seenGroups = new Set<string>()
+  let top = 0
   for (const o of zOrder) {
     if (!o.groupId) {
-      rows.push({ kind: 'object', obj: o, depth: 0 })
+      rows.push({ kind: 'object', obj: o, depth: 0, pos: ++top, size: topLevel })
       continue
     }
     if (seenGroups.has(o.groupId)) continue
     seenGroups.add(o.groupId)
     const members = zOrder.filter((x) => x.groupId === o.groupId)
-    rows.push({ kind: 'group', gid: o.groupId, members })
+    rows.push({ kind: 'group', gid: o.groupId, members, pos: ++top, size: topLevel })
     if (!collapsed[o.groupId]) {
-      for (const m of members) rows.push({ kind: 'object', obj: m, depth: 1 })
+      members.forEach((m, i) =>
+        rows.push({ kind: 'object', obj: m, depth: 1, pos: i + 1, size: members.length }),
+      )
     }
   }
 
@@ -137,7 +145,7 @@ export function LayerTree() {
   return (
     <ul
       ref={listRef}
-      role="listbox"
+      role="tree"
       aria-label={lt('listLabel')}
       aria-multiselectable
       className="min-h-0 flex-1 overflow-y-auto py-1"
@@ -153,6 +161,8 @@ export function LayerTree() {
               members={r.members}
               layout={layoutGroups?.find((g) => g.id === r.gid)}
               collapsed={!!collapsed[r.gid]}
+              pos={r.pos}
+              size={r.size}
               tabbable={focusKey === `g:${r.gid}`}
               allSelected={r.members.every((m) => selectedIds.includes(m.id))}
               onToggle={() => setCollapsed((s) => ({ ...s, [r.gid]: !s[r.gid] }))}
@@ -169,6 +179,8 @@ export function LayerTree() {
             key={o.id}
             obj={o}
             depth={r.depth}
+            pos={r.pos}
+            size={r.size}
             selected={selected}
             primary={selectedIds.at(-1) === o.id && selectedIds.length > 1}
             tabbable={focusKey === o.id}
@@ -191,6 +203,8 @@ function GroupRow({
   members,
   layout,
   collapsed,
+  pos,
+  size,
   tabbable,
   allSelected,
   onToggle,
@@ -200,6 +214,8 @@ function GroupRow({
   members: CanvasObject[]
   layout?: LayoutGroup
   collapsed: boolean
+  pos: number
+  size: number
   tabbable: boolean
   allSelected: boolean
   onToggle: () => void
@@ -209,9 +225,12 @@ function GroupRow({
   const selectAllMembers = () => useSelectionStore.getState().set(members.map((m) => m.id))
   return (
     <li
-      role="option"
+      role="treeitem"
       aria-selected={allSelected}
       aria-expanded={!collapsed}
+      aria-level={1}
+      aria-posinset={pos}
+      aria-setsize={size}
       aria-label={
         layout
           ? lt('groupAriaWithLayout', {
@@ -265,6 +284,8 @@ function GroupRow({
 interface RowProps {
   obj: CanvasObject
   depth?: 0 | 1
+  pos: number
+  size: number
   selected: boolean
   primary: boolean
   tabbable: boolean
@@ -280,6 +301,8 @@ interface RowProps {
 function LayerRow({
   obj,
   depth = 0,
+  pos,
+  size,
   selected,
   primary,
   tabbable,
@@ -292,6 +315,8 @@ function LayerRow({
 }: RowProps) {
   useTranslation('workspace')
   const [editing, setEditing] = useState(false)
+  // ⋯ / 右键 / ⇧F10 同一份菜单（`ui/RowMenu`）；行有焦点时 ⋯ 进 Tab 顺序
+  const menu = useRowMenu({ enabled: !editing })
   const Icon = iconFor(obj)
   const isScript = obj.type === 'panel' && !!obj.script
   // 可编辑（能进图内编辑）与隐藏 / 锁定一样进可达名：角标只是视觉记号
@@ -305,29 +330,43 @@ function LayerRow({
 
   return (
     <li
-      role="option"
+      {...menu.rowProps}
+      role="treeitem"
       aria-selected={selected}
+      aria-level={depth + 1}
+      aria-posinset={pos}
+      aria-setsize={size}
       aria-label={
         stateLabel ? lt('rowAria', { label: objectLabel(obj), state: stateLabel }) : objectLabel(obj)
       }
       tabIndex={tabbable ? 0 : -1}
       data-layer={obj.id}
       onFocus={(e) => {
+        menu.rowProps.onFocus(e)
         // 焦点即选中（方向键漫游）；子按钮的焦点冒泡上来时不动选区
         if (e.target === e.currentTarget && !selected) useSelectionStore.getState().set([obj.id])
       }}
       onKeyDown={(e) => {
-        if (e.target !== e.currentTarget) return
+        menu.rowProps.onKeyDown?.(e)
+        if (e.defaultPrevented || e.target !== e.currentTarget) return
+        // 键位契约（2026-10-07 设计审计 §10.3）：↑↓ 走行 · Enter 主操作（只选这一个）· F2 改名 ·
+        // ⌥↑↓ 改层级 · ⇧F10 菜单 · Esc 清选区。此前 Enter 是改名，与其它列表的 Enter 不是一件事
         if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
           e.preventDefault()
           e.stopPropagation()
           const delta = e.key === 'ArrowDown' ? 1 : -1
           if (e.altKey) onReorder(delta as -1 | 1)
           else onMoveFocus(delta)
-        } else if (e.key === 'Enter' || e.key === 'F2') {
+        } else if (e.key === 'Enter') {
+          e.preventDefault()
+          e.stopPropagation()
+          useSelectionStore.getState().set([obj.id])
+        } else if (e.key === 'F2') {
           e.preventDefault()
           e.stopPropagation()
           setEditing(true)
+        } else if (e.key === 'Escape') {
+          useSelectionStore.getState().clear()
         }
       }}
       draggable={!editing}
@@ -357,13 +396,10 @@ function LayerRow({
       }}
       onDoubleClick={() => setEditing(true)}
       style={treeIndent(depth)}
-      className={cn(
-        listRowClass({ selected, hidden: obj.hidden }),
-        'gap-1.5 pr-0.5',
-        dropHint === 'above' && 'shadow-[inset_0_1px_0_0_var(--color-accent)]',
-        dropHint === 'below' && 'shadow-[inset_0_-1px_0_0_var(--color-accent)]',
-      )}
+      className={cn(listRowClass({ selected, hidden: obj.hidden }), 'gap-1.5 pr-0.5')}
     >
+      {/* 落点线：2px accent + 圆点（`dropLineClass`，此前是 1px 的内阴影线，几乎看不见） */}
+      <span aria-hidden data-layer-drop={dropHint ?? undefined} className={dropLineClass(dropHint === 'above' ? 'before' : dropHint === 'below' ? 'after' : null)} />
       {/* 顶层对象没有折叠箭头，留一个空列：与组标题行的图标对齐 */}
       <TreeChevron />
       <TreeIcon icon={Icon} selected={selected} />
@@ -420,27 +456,13 @@ function LayerRow({
         <EyeOff size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-label={lt('hiddenState')} />
       )}
 
-      {/* 低频操作收进 ⋯，hover / 键盘落到行里才出现（键盘可达靠 focus-within） */}
-      <span
-        className={cn(
-          'ml-auto shrink-0 transition-opacity duration-fast',
-          !editing && 'opacity-0 group-focus-within:opacity-100 group-hover:opacity-100',
-        )}
-      >
-        <Menu
-          width={168}
-          align="end"
-          trigger={
-            <IconButton
-              iconSize="sm"
-              tabIndex={-1}
-              onPointerDown={(e) => e.stopPropagation()}
-              label={lt('rowActions', { label: objectLabel(obj) })}
-            >
-              <Ellipsis size={ICON_SIZE.sm} className="text-ink-3" />
-            </IconButton>
-          }
-        >
+      {/* 低频操作收进 ⋯（hover / 行有焦点时出现）；右键、⇧F10 开同一份。外面这层挡住按下：开菜单不改选区 */}
+      <span className="ml-auto flex shrink-0" onPointerDown={(e) => e.stopPropagation()}>
+        <RowMenu state={menu} label={lt('rowActions', { label: objectLabel(obj) })} width={180} data-layer-menu>
+          <MenuItem icon={Pencil} shortcut="F2" onSelect={() => setEditing(true)}>
+            {lt('rename')}
+          </MenuItem>
+          <MenuSeparator />
           <MenuItem icon={obj.locked ? LockOpen : Lock} onSelect={() => toggleLocked(obj.id)}>
             {lt(obj.locked ? 'unlock' : 'lock')}
           </MenuItem>
@@ -449,15 +471,15 @@ function LayerRow({
           </MenuItem>
           <MenuSeparator />
           {/* 层级动作作用在**这一行**上，不看选区——菜单是从这一行打开的。
-              走的是行自己那条 `onReorder`（与 Alt+方向键同一份实现），
+              走的是行自己那条 `onReorder`（与 ⌥↑↓ 同一份实现），
               到顶 / 到底时那一项禁用，而不是点了什么都不发生 */}
-          <MenuItem icon={ChevronUp} disabled={!canMoveUp} onSelect={() => onReorder(-1)}>
+          <MenuItem icon={ChevronUp} shortcut="⌥↑" disabled={!canMoveUp} onSelect={() => onReorder(-1)}>
             {lt('moveUp')}
           </MenuItem>
-          <MenuItem icon={ChevronDown} disabled={!canMoveDown} onSelect={() => onReorder(1)}>
+          <MenuItem icon={ChevronDown} shortcut="⌥↓" disabled={!canMoveDown} onSelect={() => onReorder(1)}>
             {lt('moveDown')}
           </MenuItem>
-        </Menu>
+        </RowMenu>
       </span>
     </li>
   )

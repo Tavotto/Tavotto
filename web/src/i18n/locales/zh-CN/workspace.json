@@ -352,7 +352,8 @@
     "editableState": "可编辑",
     "rowActions": "{{label}} 的操作",
     "moveUp": "上移一层",
-    "moveDown": "下移一层"
+    "moveDown": "下移一层",
+    "rename": "重命名"
   },
   "layoutKind": {
     "col": "列布局",

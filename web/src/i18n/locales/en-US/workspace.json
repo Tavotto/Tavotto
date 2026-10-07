@@ -370,7 +370,8 @@
     "editableState": "editable",
     "rowActions": "Actions for {{label}}",
     "moveUp": "Bring forward",
-    "moveDown": "Send backward"
+    "moveDown": "Send backward",
+    "rename": "Rename"
   },
   "layoutKind": {
     "col": "column layout",
