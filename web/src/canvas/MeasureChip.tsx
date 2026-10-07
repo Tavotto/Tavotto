@@ -1,3 +1,4 @@
+import { useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { perfCount } from '@/perf/core'
 import { t as translate } from '@/i18n'
@@ -15,6 +16,8 @@ const MOVE_KINDS = new Set(['move'])
 /** 芯片与它所贴的框之间的缝；放不下（贴到视口底）就翻到框的上面 */
 const GAP = 8
 const CHIP_H = 22
+/** 芯片与舞台边缘至少留的距离：舞台 `overflow-hidden`，贴出去的那一截会被裁掉 */
+const EDGE = 4
 
 export type MeasureMode = 'size' | 'position' | 'offset'
 
@@ -39,6 +42,7 @@ export function MeasureChip() {
   const zoom = useViewportStore((s) => s.zoom)
   const panX = useViewportStore((s) => s.panX)
   const panY = useViewportStore((s) => s.panY)
+  const viewW = useViewportStore((s) => s.viewW)
   const viewH = useViewportStore((s) => s.viewH)
 
   const mode: MeasureMode | null = nudge
@@ -71,14 +75,47 @@ export function MeasureChip() {
   const bottom = top + mmToPx(anchor.h, t)
   const below = bottom + GAP + CHIP_H <= viewH || !viewH
   return (
+    <ChipAt
+      mode={mode}
+      text={text}
+      left={left}
+      top={below ? bottom + GAP : top - GAP - CHIP_H}
+      viewW={viewW}
+      viewH={viewH}
+    />
+  )
+}
+
+/**
+ * 先按「框下 / 放不下翻到框上」摆（`left` 是芯片中心、`top` 是上沿），再整体夹进舞台（Codex #833）：选区几乎占满
+ * 或超出视口时上下都放不下，翻上去会落到负坐标、被舞台的 overflow-hidden 裁掉；横向同理（框中心在视口外时芯片
+ * 半截出界）。芯片宽随读数变（w-max），读数一变就在绘制之前量一次。
+ */
+function ChipAt(props: { mode: MeasureMode; text: string; left: number; top: number; viewW: number; viewH: number }) {
+  const { mode, text, viewW, viewH } = props
+  const ref = useRef<HTMLDivElement>(null)
+  const [chipW, setChipW] = useState(0)
+  useLayoutEffect(() => {
+    setChipW(ref.current?.offsetWidth ?? 0)
+  }, [text])
+  const y = clamp(props.top, EDGE, viewH - EDGE - CHIP_H, viewH)
+  const x = clamp(props.left, EDGE + chipW / 2, viewW - EDGE - chipW / 2, viewW)
+  return (
     <div
+      ref={ref}
       data-measure-chip={mode}
       className="pointer-events-none absolute z-sticky w-max -translate-x-1/2 rounded-full bg-ink px-2 py-0.5 text-xs font-medium tabular-nums text-surface shadow-pop"
-      style={{ left, top: below ? bottom + GAP : top - GAP - CHIP_H }}
+      style={{ left: x, top: y }}
     >
       {text}
     </div>
   )
+}
+
+/** 夹进 [lo, hi]；舞台还没量到尺寸（`size` 为 0）时不夹；舞台比芯片还窄时贴住起始边 */
+function clamp(v: number, lo: number, hi: number, size: number): number {
+  if (!size) return v
+  return Math.max(lo, Math.min(v, hi))
 }
 
 /** 位移读数带正负号：「+1.5」「−0.5」「0.0」 */

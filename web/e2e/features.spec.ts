@@ -843,7 +843,9 @@ test(
               const y = y0 + h * fy
               const top = document.elementFromPoint(x, y)
               const stage = document.querySelector('[data-canvas-stage]')!
-              if (top && stage.contains(top) && !top.closest('[data-object-id]') && !top.closest('[data-context-bar]')) {
+              // 选中框的手柄 / 沿边命中带 / 端点右键开的是对象菜单（Codex #833），不算空白
+              const onHandle = top?.closest('[data-handle],[data-edge-strip],[data-endpoint]')
+              if (top && stage.contains(top) && !top.closest('[data-object-id]') && !top.closest('[data-context-bar]') && !onHandle) {
                 return { x, y }
               }
             }

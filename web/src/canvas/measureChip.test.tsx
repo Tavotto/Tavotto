@@ -108,4 +108,45 @@ describe('MeasureChip', () => {
     })
     expect(parseFloat(chip()!.style.top)).toBeLessThan(mmToWorld(20))
   })
+
+  // Codex #833：选区几乎占满视口（y 2–102 mm，视口只比它高一点）——下面放不下、翻上去落到负坐标被舞台裁掉。
+  // 夹回舞台里：上沿不出界，下沿也不出界
+  it('选区占满视口：上下都放不下，芯片夹在舞台里', () => {
+    const viewH = mmToWorld(102) + 10
+    act(() => {
+      useDocumentStore.getState().commit(literal('拉高'), (d) => {
+        Object.assign(d.objects[0], { y: 2, h: 100 })
+      })
+      useViewportStore.setState({ viewH })
+      useInteractionStore.getState().begin('resize')
+    })
+    const top = parseFloat(chip()!.style.top)
+    expect(top).toBeGreaterThanOrEqual(0)
+    expect(top + 22).toBeLessThanOrEqual(viewH)
+  })
+
+  // 横向同理：框中心平移到视口左外 / 右外，芯片（桩宽 80px，按中心定位）整条留在舞台里
+  it.each([
+    ['左外', -mmToWorld(200)],
+    ['右外', mmToWorld(200)],
+  ])('框中心在视口%s：芯片横向夹在舞台里', (_side, panX) => {
+    const desc = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetWidth')!
+    Object.defineProperty(HTMLElement.prototype, 'offsetWidth', {
+      configurable: true,
+      get(this: HTMLElement) {
+        return this.hasAttribute('data-measure-chip') ? 80 : 0
+      },
+    })
+    try {
+      act(() => {
+        useViewportStore.setState({ panX })
+        useInteractionStore.getState().begin('move')
+      })
+      const left = parseFloat(chip()!.style.left)
+      expect(left - 40).toBeGreaterThanOrEqual(0)
+      expect(left + 40).toBeLessThanOrEqual(800)
+    } finally {
+      Object.defineProperty(HTMLElement.prototype, 'offsetWidth', desc)
+    }
+  })
 })

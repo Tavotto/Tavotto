@@ -206,7 +206,8 @@ export function CanvasStage() {
         onDoubleClick={onDoubleClick}
         onPointerLeave={() => useInteractionStore.getState().setCursor(null)}
         onContextMenu={(e) => {
-          // 对象自己的右键菜单在 ObjectView / PanelView 里（它们 stopPropagation）；冒到这里的是空白处。
+          // 对象自己的右键菜单在 ObjectView / PanelView 里，选中框的手柄 / 命中带在 OverlaySvg 里（它们都 stopPropagation）；
+          // 冒到这里的是空白处。
           // 文字编辑 / 裁剪中落在对象上的右键也会冒上来——那时留给浏览器自己的菜单（复制 / 粘贴文字）
           if ((e.target as HTMLElement).closest('[data-object-id]')) return
           // 快速编辑里原生菜单照样拦下，画布菜单由上面 `fastEdit && canvasMenu` 那一句收掉

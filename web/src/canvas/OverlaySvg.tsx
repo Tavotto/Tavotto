@@ -40,6 +40,7 @@ import {
   startResizeDrag,
   DRAW_COLOR,
 } from './interactions'
+import { openQuickEdit } from './quickEditStore'
 
 /**
  * 覆盖层语法（2026-10-07 设计审计 §10.1，值在 index.css 的画布覆盖层 token）：
@@ -288,7 +289,12 @@ export function OverlaySvg() {
 
       {/* 缩放手柄 + 线状对象端点（箭头 / 直线）：整组绕包围盒中心转到对象朝向 */}
       {single && !single.locked && (
-        <g transform={spinOf(single, toScreen(single, t))}>
+        <g
+          transform={spinOf(single, toScreen(single, t))}
+          // 手柄 / 命中带 / 端点不在 `[data-object-id]` 底下：右键它们要开**这个对象**的菜单，
+          // 不能冒到 CanvasStage 被当成空白处（Codex #833）。它就是唯一的选中，选区不用动
+          onContextMenu={(e) => onHandleContextMenu(e, single.id, editingTextId === single.id)}
+        >
           <EdgeStrips
             box={toScreen(single, t)}
             dirs={dirsFor(single)}
@@ -888,7 +894,16 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
         strokeOpacity={0.7}
         style={DASH}
       />
-      <g transform={spin}>
+      <g
+        transform={spin}
+        // 元素 / 组框的手柄与命中带：右键开选中元素的菜单（与 PanelView 的右键同一个弹层），
+        // 不冒到 CanvasStage 被当成空白处（Codex #833）。选中的已在 selectedGids 里，不动选区
+        onContextMenu={guardStale(panel, (e: React.MouseEvent) => {
+          e.preventDefault()
+          e.stopPropagation()
+          if (selectedGid) openQuickEdit({ kind: 'element', panelId: panel.id, gid: selectedGid }, e)
+        })}
+      >
         {/* 选中与悬停都只描边、不着色（2026-10-07 设计审计 §10.1）。`data-element-box` 是框的稳定钩子
             （此前用例认的是 6% 底色那个 `fill-opacity` 属性——底色一撤就认不出了） */}
         {hover &&
@@ -1041,6 +1056,17 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
       </g>
     </>
   )
+}
+
+/**
+ * 对象缩放手柄 / 沿边命中带 / 线状端点上的右键 = 右键这个对象（`ObjectView.onContextMenu` 的同一个菜单）。
+ * 正在改字时与 ObjectView 一样留给浏览器自己的菜单——只是不让它冒到画布去开版面菜单。
+ */
+function onHandleContextMenu(e: React.MouseEvent, id: string, editing: boolean) {
+  e.stopPropagation()
+  if (editing) return
+  e.preventDefault()
+  openQuickEdit({ kind: 'object', id }, e)
 }
 
 /** 图例整体缩放只给四个角：等比缩放，边上的手柄没有意义 */
