@@ -110,10 +110,12 @@ preflight.runSpec()      规则求值（两份求值器，golden vectors 对齐�
   'keep' })`，元素树不顶掉左栏），当前行 `aria-current` + 选中底与 600（`listRowClass` 的选中态，**不画左竖条**）
   + 尾随格常亮出「修复」，底部上一项 / 下一项（**F8 / ⇧F8 同一个动作**，一支走完接着走下一支）；那条修好消失后
   「下一项」指向**顶上来的那条**，不跳回开头。指着一行时画布上那个对象描一道悬停轮廓（`uiStore.issueHover` →
-  `canvas/IssueOverlay`）；「⋯」里可打开**画布等级标记**（`uiStore.problemPins`：每张有问题的图右上角外侧一枚（让开 ne 缩放手柄），
+  `canvas/IssueOverlay`）——行 / 卡片只经 `problemTree.useIssueHover()` 写它，撤一律**比对后再清**
+  （`releaseIssueHover`：对象身份即主人，被别的行顶掉的不动）；行被修好 / 筛掉 / 换文档卸载时不发
+  pointerleave / blur，卸载时再撤一次，不靠面板卸载那一道（Codex #832）；「⋯」里可打开**画布等级标记**（`uiStore.problemPins`：每张有问题的图右上角外侧一枚（让开 ne 缩放手柄），
   点它 = `openProblemAt`）。摘要条（32px）只有等级开关（只有阻断着色）与唯一一颗填色主动作「全部修复 N」；
   正在重新检查时标题行一段 shimmer（`validationStore.queued`，延迟 300ms 才出），首检是静态骨架，「未发现问题」
-  带证据（按哪套规范、查了几张图、`validationStore.checkedAt`；规范按**每张装着图的画布各自的绑定**说，与
+  带证据（按哪套规范、查了几张图、`validationStore.checkedAt`——「刚刚 / N 分钟前」由证据自己按整分钟走表刷新，不等别的重渲染，Codex #832；规范按**每张装着图的画布各自的绑定**说，与
   `collectCanvases()` 同一份判据——几张画布绑了不同规范时说「按 N 套规范（A、B）」，不拿当前画布那一套冒充全部，Codex #832）。
 * **分桶层（2026-09-28 卡片层，2026-10-07 设计审计 §9.4 改成就地展开的披露树）**：面板先是分桶，
   **就地展开**才是上面 ② 的逐组清单（不再整页钻入）：图 32 → 子图 28 → 规则 28 → 对象 28，全部建在
