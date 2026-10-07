@@ -132,9 +132,34 @@ describe('缩略图画的是真实内容', () => {
     expect(t?.textContent).toContain('第一张版上的说明')
   })
 
-  it('空画布的缩略图是空的：不画一个假内容', async () => {
+  it('空画布的缩略图是空的：只有那张纸，不画一个假内容', async () => {
     await mount()
-    expect(thumbs()[2].querySelectorAll('*')).toHaveLength(0)
+    const g = thumbs()[2].querySelector('g[clip-path]')!
+    expect(g.children).toHaveLength(0)
+    expect(thumbs()[2].querySelector('[data-thumb-page]')).toBeTruthy()
+  })
+
+  it('画的是页面矩形（方向看得出）：横版与竖版的纸不一样，盒子本身透明', async () => {
+    // 默认页面是横的（150×100）：把激活画布改成竖版 A4
+    await act(async () => {
+      useDocumentStore.getState().commit(literal('竖版'), (d) => {
+        d.page = { w: 210, h: 297 }
+      })
+    })
+    await mount()
+    const ratio = (t: SVGElement) => {
+      const r = t.querySelector('[data-thumb-page]')!
+      return Number(r.getAttribute('width')) / Number(r.getAttribute('height'))
+    }
+    const landscape = thumbs().find((t) => ratio(t) > 1)
+    const portrait = thumbs().find((t) => ratio(t) < 1)
+    expect(portrait, '激活画布改成了竖版').toBeTruthy()
+    expect(landscape, '其余画布仍是横版').toBeTruthy()
+    for (const t of thumbs()) {
+      // 白底与边线画在页面矩形上，不画在盒子上（此前横竖两种页面的缩略图是同一个白框）
+      expect(t.getAttribute('class')).not.toMatch(/\bbg-|\bborder\b/)
+      expect(Number(t.querySelector('[data-thumb-page]')!.getAttribute('rx'))).toBeGreaterThan(0)
+    }
   })
 })
 
@@ -284,5 +309,51 @@ describe('拖动重排', () => {
     expect((await fire(b, 'dragover')).defaultPrevented).toBe(false)
     await fire(b, 'drop')
     expect(names()).toEqual(before)
+  })
+})
+
+describe('行与键位契约（2026-10-07 设计审计 §10.3）', () => {
+  const rowsEl = () => [...container.querySelectorAll<HTMLElement>('[data-canvas-row]')]
+  const key = (el: Element, k: string, init: KeyboardEventInit = {}) =>
+    act(() => {
+      el.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, ...init }))
+    })
+
+  it('带缩略图的行是 lg 52；「+」在（没有外壳时就地画出的）动作槽里，搜索行只有搜索', async () => {
+    await mount()
+    expect(rowsEl()[0].className).toContain('min-h-13')
+    expect(container.querySelector('[data-canvas-new]')).toBeTruthy()
+  })
+
+  it('⌥↓ 把这一张往下挪一格（与菜单的「下移」同一个动作）', async () => {
+    await mount()
+    const before = names()
+    await act(async () => {
+      rowsEl()[0].querySelector<HTMLElement>('[data-canvas-open]')!.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowDown', altKey: true, bubbles: true, cancelable: true }),
+      )
+    })
+    expect(names()).toEqual([before[1], before[0], before[2]])
+  })
+
+  it('一列一个 Tab 停靠点，↑↓ 在行间走；⇧F10 开出行菜单', async () => {
+    await mount()
+    const opens = () => [...container.querySelectorAll<HTMLButtonElement>('[data-canvas-open]')]
+    expect(opens().filter((b) => b.tabIndex === 0)).toHaveLength(1)
+    act(() => opens()[0].focus())
+    key(opens()[0], 'ArrowDown')
+    expect(document.activeElement).toBe(opens()[1])
+    key(opens()[1], 'F10', { shiftKey: true })
+    expect(document.querySelector('[role="menu"]')).not.toBeNull()
+  })
+
+  it('拖到另一张上画落点线，松手按真实顺序挪', async () => {
+    await mount()
+    const [a, , c] = rowsEl()
+    act(() => {
+      a.dispatchEvent(new Event('dragstart', { bubbles: true }))
+      c.dispatchEvent(new Event('dragover', { bubbles: true, cancelable: true }))
+    })
+    expect(c.querySelector<HTMLElement>(':scope > span[aria-hidden]')!.className).toContain('bg-accent')
   })
 })

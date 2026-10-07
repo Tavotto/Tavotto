@@ -102,7 +102,9 @@
     "search": "Search canvases…",
     "searchAria": "Search canvases",
     "moveUp": "Move up",
-    "moveDown": "Move down"
+    "moveDown": "Move down",
+    "count_one": "{{count}} canvas",
+    "count_other": "{{count}} canvases"
   },
   "canvasTools": {
     "fit": "Fit",

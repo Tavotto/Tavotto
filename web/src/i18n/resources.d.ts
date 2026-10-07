@@ -4151,6 +4151,7 @@ export default interface Resources {
     },
     "canvasList": {
       "canvasName": "画布名",
+      "count_other": "{{count}} 张画布",
       "delete": "删除画布…",
       "deleteBody_other": "画布上的 {{count}} 个对象也会删除，无法撤销。",
       "deleteConfirm": "删除画布",

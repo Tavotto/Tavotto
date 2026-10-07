@@ -97,7 +97,8 @@
     "search": "搜索画布…",
     "searchAria": "搜索画布",
     "moveUp": "上移",
-    "moveDown": "下移"
+    "moveDown": "下移",
+    "count_other": "{{count}} 张画布"
   },
   "canvasTools": {
     "fit": "适应",
