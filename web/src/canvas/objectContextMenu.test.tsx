@@ -33,6 +33,7 @@ import { ObjectView } from './ObjectView'
 import { QuickEdit } from './QuickEdit'
 import { SyncOverridesHost } from '@/components/inspector/SyncOverridesDialog'
 import { useQuickEdit } from './quickEditStore'
+import { CHROMIUM_UA, SAFARI_UA, WKWEBVIEW_UA, stubClipboardEngine } from '@/test/asyncClipboard'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -195,7 +196,10 @@ const key = async (k: string, target: Element | null = document.activeElement) =
   })
 }
 
+// 默认按 Chromium 摆：菜单里有「粘贴」（WebKit / 无 readText 的那一组在「剪贴板组」里单独钉）
+let restoreClipboard: () => void = () => {}
 beforeEach(async () => {
+  restoreClipboard = stubClipboardEngine(CHROMIUM_UA, true)
   localStorage.clear()
   document.body.innerHTML = ''
   if (!('ResizeObserver' in globalThis)) {
@@ -240,6 +244,7 @@ afterEach(async () => {
   })
   useSelectionStore.getState().clear()
   document.body.innerHTML = ''
+  restoreClipboard()
 })
 
 /* -------------------------------------------------------------------------- */
@@ -586,6 +591,25 @@ describe('文字 / 箭头 / 形状', () => {
       expect(menu()?.querySelector('input')).toBeNull()
     },
   )
+
+  // Codex #833：菜单的粘贴只能走异步 readText；WebKit（Safari / 桌面壳）不给非编辑区读、Firefox 默认没有，
+  // 那里点了只会报「无法读取剪贴板」——不提供这一项（⌘V 的原生事件照常）
+  it.each([
+    ['Safari', SAFARI_UA, true],
+    ['macOS 桌面壳（WKWebView）', WKWEBVIEW_UA, true],
+    ['没有 readText（Firefox 默认）', CHROMIUM_UA, false],
+  ] as const)('剪贴板组：%s 上不提供「粘贴」，复制照旧', async (_name, ua, readText) => {
+    restoreClipboard()
+    restoreClipboard = stubClipboardEngine(ua, readText)
+    await openOn('t1')
+    expect(item('copy')).not.toBeNull()
+    expect(document.querySelector('[data-quick-item="paste"]')).toBeNull()
+  })
+
+  it('剪贴板组：Chromium（有 readText）上提供「粘贴」', async () => {
+    await openOn('t1')
+    expect(document.querySelector('[data-quick-item="paste"]')).not.toBeNull()
+  })
 
   it('创建副本 → duplicateSelected：副本成为选区，一条历史', async () => {
     await openOn('t1')

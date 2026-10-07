@@ -121,10 +121,13 @@ export function CanvasTabs() {
 
   const activate = (id: string) => activateCanvas(id)
 
-  /** 把键盘焦点挪到第 i 个页签（roving tabindex）；焦点跟着 DOM 走，渲染后再 focus */
+  /** 把键盘焦点挪到第 i 个页签（roving tabindex）；i 按**这一次渲染**的 `openTabs` 算 */
   const focusTab = (i: number) => {
     const id = openTabs[Math.max(0, Math.min(openTabs.length - 1, i))]
-    if (!id) return
+    if (id) focusTabId(id)
+  }
+  /** 按 id 挪焦点：会改 `openTabs` 的动作（关 / 重排）之后用它——下标对的是改之前的数组；焦点跟着 DOM 走，渲染后再 focus */
+  const focusTabId = (id: string) => {
     setFocusId(id)
     requestAnimationFrame(() =>
       strip.current?.querySelector<HTMLElement>(`[data-canvas-tab="${CSS.escape(id)}"]`)?.focus(),
@@ -140,7 +143,7 @@ export function CanvasTabs() {
       const to = i + (e.key === 'ArrowLeft' ? -1 : 1)
       if (to >= 0 && to < openTabs.length) {
         useDocumentStore.getState().reorderTabs(i, to)
-        focusTab(to)
+        focusTabId(id)
       }
     } else if (e.key === 'ArrowLeft') focusTab(i === 0 ? openTabs.length - 1 : i - 1)
     else if (e.key === 'ArrowRight') focusTab(i === openTabs.length - 1 ? 0 : i + 1)
@@ -149,8 +152,11 @@ export function CanvasTabs() {
     else if (e.key === 'Enter' || e.key === ' ') activate(id)
     else if (e.key === 'F2') setRenaming(id)
     else if (closable && (e.key === 'Delete' || (mod && e.key.toLowerCase() === 'w'))) {
+      // 关之前先记下留下来的邻居（右边那个，没有就左边那个）：关完再按下标去取，取的是关之前的数组，
+      // 关第一个 / 中间那个时会落回刚关掉的 id，焦点掉出页签条（Codex #833）
+      const neighbor = openTabs[i + 1] ?? openTabs[i - 1]
       useDocumentStore.getState().closeCanvasTab(id)
-      focusTab(Math.min(i, openTabs.length - 2))
+      if (neighbor) focusTabId(neighbor)
     } else handled = false
     if (handled) {
       // 这些键在页签上有自己的意思：不许再冒到全局快捷键（Delete 会删画布上的选中对象）

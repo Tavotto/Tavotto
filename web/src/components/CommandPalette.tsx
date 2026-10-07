@@ -40,7 +40,7 @@ import { KeyCaps } from '@/components/ui/Kbd'
 import { Dialog } from '@/components/ui/Dialog'
 import { StatusPill } from '@/components/ui/StatusPill'
 import { keyOf } from '@/lib/keymap'
-import { zoomToSelection } from '@/store/zoomToSelection'
+import { canZoomToSelection, zoomToSelection } from '@/store/zoomToSelection'
 import { objectLabel } from '@/types/document'
 import { rankCommands, type PaletteSection } from '@/lib/commandRanking'
 import { ICON_SIZE } from '@/components/ui/Icon'
@@ -193,7 +193,13 @@ const COMMANDS: Command[] = [
       useViewportStore.getState().fitAnimated(page.w, page.h)
     },
   },
-  { id: 'zoom-selection', needsSelection: true, shortcut: keyOf('zoomSelection'), run: () => void zoomToSelection() },
+  // 可用判据与动作同一个（`canZoomToSelection`）：选中的全隐藏了不出现，不留一条静默空转的命令（Codex #833）
+  {
+    id: 'zoom-selection',
+    available: () => canZoomToSelection(useDocumentStore.getState().doc.objects, useSelectionStore.getState().ids),
+    shortcut: keyOf('zoomSelection'),
+    run: () => void zoomToSelection(),
+  },
   { id: 'rulers', run: () => ui().setShowRulers(!ui().showRulers) },
   { id: 'grid', run: () => ui().setShowGrid(!ui().showGrid) },
   { id: 'canvas-settings', run: () => ui().setRightTab('canvas') },
@@ -259,6 +265,9 @@ export function CommandPalette() {
   // 教程状态变了要重算可用命令（三条互斥）；项目开合决定项目命令出不出现
   const onboardingStatus = useOnboardingStore((s) => s.status)
   const projectPhase = useProjectStore((s) => s.phase)
+  // 「缩放到选中」的可用判据看的是选区里**可见**的对象：隐藏 / 换选不一定改 ids 的长度
+  const docObjects = useDocumentStore((s) => s.doc.objects)
+  const selectionIds = useSelectionStore((s) => s.ids)
   const [query, setQuery] = useState('')
   // 高亮行记的是**命令 id + 放置它时的查询**，不是下标（2026-09-16，学 beUI `useRowCursor`）。
   // 下标版的失败形状：↓↓ 停在第 3 行再多打一个字，列表换成另一组命令，高亮仍停在
@@ -299,9 +308,9 @@ export function CommandPalette() {
         })
       : pool
     return rankCommands(hit, { hasSelection, recent })
-    // `onboardingStatus` / `projectPhase` 是让 memo 在状态变化时重算的信号，不是入参
+    // `onboardingStatus` / `projectPhase` / `docObjects` / `selectionIds` 是让 memo 在状态变化时重算的信号，不是入参
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q, hasSelection, recent, t, onboardingStatus, projectPhase])
+  }, [q, hasSelection, recent, t, onboardingStatus, projectPhase, docObjects, selectionIds])
   const matches = useMemo(() => sections.flatMap((s) => s.items), [sections])
   const showHeaders = !q
 

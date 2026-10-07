@@ -18,6 +18,7 @@ import { useDocumentStore } from '@/store/documentStore'
 import { useUiStore } from '@/store/uiStore'
 import { mmToWorld, useViewportStore } from '@/store/viewportStore'
 import { emptyProject } from '@/types/document'
+import { CHROMIUM_UA, SAFARI_UA, WKWEBVIEW_UA, stubClipboardEngine } from '@/test/asyncClipboard'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -40,7 +41,10 @@ const stage = () => document.querySelector<HTMLElement>('[data-canvas-stage]')!
 const menu = () => document.querySelector<HTMLElement>('[data-canvas-menu]')
 const item = (k: string) => document.querySelector<HTMLElement>(`[data-canvas-menu-item="${k}"]`)!
 
+// 默认按 Chromium 摆（有异步 readText → 菜单里有「粘贴」）；WebKit 那一组单独钉
+let restoreClipboard: () => void = () => {}
 beforeEach(async () => {
+  restoreClipboard = stubClipboardEngine(CHROMIUM_UA, true)
   await useDocumentStore.getState().switchDocument(emptyProject(), 'd_canvas_menu')
   useUiStore.setState({ showRulers: false, showGrid: false })
   useAssetStore.setState({ byId: { fig1: asset }, panels: [asset], loaded: true } as never)
@@ -60,6 +64,7 @@ beforeEach(async () => {
 afterEach(async () => {
   await act(async () => root.unmount())
   document.body.innerHTML = ''
+  restoreClipboard()
 })
 
 const contextMenuAt = async (target: Element) => {
@@ -78,6 +83,20 @@ describe('空白画布的右键菜单', () => {
     expect(menu()).not.toBeNull()
     for (const k of ['paste', 'select-all', 'fit', 'rulers', 'grid', 'safe-area', 'canvas-settings'])
       expect(item(k), k).not.toBeNull()
+  })
+
+  // Codex #833：菜单的粘贴只能走异步 readText；WebKit（Safari / 桌面壳）不给非编辑区读、Firefox 默认没有——不提供
+  it.each([
+    ['Safari', SAFARI_UA, true],
+    ['macOS 桌面壳（WKWebView）', WKWEBVIEW_UA, true],
+    ['没有 readText（Firefox 默认）', CHROMIUM_UA, false],
+  ] as const)('%s：不提供「粘贴」，其余照旧', async (_name, ua, readText) => {
+    restoreClipboard()
+    restoreClipboard = stubClipboardEngine(ua, readText)
+    await contextMenuAt(stage())
+    expect(menu()).not.toBeNull()
+    expect(document.querySelector('[data-canvas-menu-item="paste"]')).toBeNull()
+    expect(item('select-all')).not.toBeNull()
   })
 
   it('没有对象：「全选」置灰', async () => {

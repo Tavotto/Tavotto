@@ -2,7 +2,7 @@ import { useTranslation } from 'react-i18next'
 import { ClipboardPaste, Fullscreen, SlidersHorizontal, SquareMousePointer } from '@/components/ui/icons'
 import { MenuCheckItem, MenuItem, MenuSeparator, PointMenu } from '@/components/ui/Menu'
 import { keyOf } from '@/lib/keymap'
-import { pasteObjects } from '@/lib/clipboard'
+import { canPasteFromMenu, pasteObjects } from '@/lib/clipboard'
 import { selectAll } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
 import { runDiscreteAction } from '@/store/gestureCoordinator'
@@ -14,7 +14,7 @@ import { useViewportStore } from '@/store/viewportStore'
  * 弹出的是 WebView 自己的「重新加载 / 检查元素」。
  *
  * 只放「在这块画布上」能做的事，**每一项都调键盘 / 顶栏 / 命令面板已经在调的那个函数**，不新增能力：
- *   粘贴（`pasteObjects`）· 全选（`selectAll`）· 适应画布（`fitAnimated`，与 ⌘1 同一个）·
+ *   粘贴（`pasteObjects`，只在 `canPasteFromMenu` 的引擎上出现）· 全选（`selectAll`）· 适应画布（`fitAnimated`，与 ⌘1 同一个）·
  *   标尺 / 网格 / 安全区开关（与命令面板、画布设置同一份 uiStore 开关）· 画布设置（右栏「画布」页）。
  * 离散动作先过 `runDiscreteAction`（先落定开着的连续编辑，与菜单栏 / 剪贴板事件同一道闸）。
  * 外壳是右键菜单的同一份 `PointMenu`（非模态、Esc 不出菜单、焦点还给打开前的元素）。
@@ -40,14 +40,18 @@ export function CanvasContextMenu({ at, close }: { at: { x: number; y: number };
       ariaLabel={t('canvasMenu.aria')}
       data-canvas-menu=""
     >
-      <MenuItem
-        icon={ClipboardPaste}
-        shortcut={keyOf('paste')}
-        data-canvas-menu-item="paste"
-        onSelect={run(() => void pasteObjects())}
-      >
-        {t('canvasMenu.paste')}
-      </MenuItem>
+      {/* 只在异步读剪贴板走得通的引擎上提供（`canPasteFromMenu`）：WebKit 上点了只会报「无法读取剪贴板」，
+          那里的粘贴是 ⌘V 的原生事件 */}
+      {canPasteFromMenu() && (
+        <MenuItem
+          icon={ClipboardPaste}
+          shortcut={keyOf('paste')}
+          data-canvas-menu-item="paste"
+          onSelect={run(() => void pasteObjects())}
+        >
+          {t('canvasMenu.paste')}
+        </MenuItem>
+      )}
       <MenuItem
         icon={SquareMousePointer}
         shortcut={keyOf('selectAll')}

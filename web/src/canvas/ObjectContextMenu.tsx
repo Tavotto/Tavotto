@@ -30,7 +30,7 @@ import {
 import { t as translate } from '@/i18n'
 import { emitActivity } from '@/lib/activity'
 import { keyOf } from '@/lib/keymap'
-import { copySelectedObjects, pasteObjects } from '@/lib/clipboard'
+import { canPasteFromMenu, copySelectedObjects, pasteObjects } from '@/lib/clipboard'
 import {
   ALIGN_BUTTONS,
   DISTRIBUTE_BUTTONS,
@@ -507,8 +507,9 @@ function CommonTail({
   return (
     <>
       {/* 剪贴板组（2026-10-07 设计审计 §10.1）：复制 / 粘贴 / 创建副本挨在一起。复制与粘贴调的是属性页按钮那一对
-          （`copySelectedObjects` / `pasteObjects`，点击是用户手势，异步剪贴板各浏览器都放行）；⌘C / ⌘V 的主路径
-          仍是原生剪贴板事件（`handleCopyEvent` / `handlePasteEvent`），这里只是同一件事的菜单入口 */}
+          （`copySelectedObjects` / `pasteObjects`）；⌘C / ⌘V 的主路径仍是原生剪贴板事件（`handleCopyEvent` /
+          `handlePasteEvent`），这里只是同一件事的菜单入口。粘贴靠异步 `readText`，WebKit 不给非编辑区读、
+          Firefox 默认没有——那里不提供这一项（`canPasteFromMenu`，Codex #833），用 ⌘V */}
       <MenuSeparator />
       <MenuItem
         icon={Clipboard}
@@ -518,14 +519,16 @@ function CommonTail({
       >
         {qe('copy')}
       </MenuItem>
-      <MenuItem
-        icon={ClipboardPaste}
-        data-quick-item="paste"
-        shortcut={keyOf('paste')}
-        onSelect={runAsync(pasteObjects)}
-      >
-        {qe('paste')}
-      </MenuItem>
+      {canPasteFromMenu() && (
+        <MenuItem
+          icon={ClipboardPaste}
+          data-quick-item="paste"
+          shortcut={keyOf('paste')}
+          onSelect={runAsync(pasteObjects)}
+        >
+          {qe('paste')}
+        </MenuItem>
+      )}
       <MenuItem icon={Copy} data-quick-item="duplicate" shortcut={keyOf('duplicate')} onSelect={run(duplicateSelected)}>
         {qe('duplicate')}
       </MenuItem>

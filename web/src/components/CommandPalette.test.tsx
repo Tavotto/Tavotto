@@ -21,6 +21,9 @@ import zhDialogs from '@/i18n/locales/zh-CN/dialogs.json'
 import enDialogs from '@/i18n/locales/en-US/dialogs.json'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { useProjectStore } from '@/store/projectStore'
+import { useDocumentStore } from '@/store/documentStore'
+import { useSelectionStore } from '@/store/selectionStore'
+import { emptyProject, type TextObject } from '@/types/document'
 import { useUiStore } from '@/store/uiStore'
 import { CommandPalette, usePalette } from './CommandPalette'
 
@@ -95,6 +98,32 @@ describe('命令集', () => {
     expect(seen).toContain('显示项目接入状态')
     expect(seen).toContain('重新显示操作提示')
     expect(seen).toContain('快捷键帮助')
+  })
+
+  // Codex #833：可用判据与动作同一个——选中的全隐藏了，「缩放到选中」不出现（隐藏不清选区，只看 ids 长度会留一条空转命令）
+  it('「缩放到选中」：选中可见对象才出现；把它隐藏后不出现', async () => {
+    const text: TextObject = {
+      id: 't1', type: 'text', text: 'a', sizePt: 9, bold: false,
+      color: '#000', align: 'left', x: 10, y: 20, w: 30, h: 8,
+    }
+    await useDocumentStore.getState().switchDocument(emptyProject(), 'd_palette_zoom')
+    useDocumentStore.getState().silent((d) => {
+      d.objects.push(text)
+    })
+    const ids = () => Array.from(document.querySelectorAll<HTMLElement>('[data-cmd-id]')).map((el) => el.dataset.cmdId)
+    try {
+      useSelectionStore.setState({ ids: ['t1'] })
+      mount()
+      expect(ids()).toContain('zoom-selection')
+      act(() =>
+        useDocumentStore.getState().silent((d) => {
+          d.objects[0].hidden = true
+        }),
+      )
+      expect(ids()).not.toContain('zoom-selection')
+    } finally {
+      useSelectionStore.setState({ ids: [] })
+    }
   })
 
   it('没有打开项目时项目命令整组不出现（embedded / playground）', () => {

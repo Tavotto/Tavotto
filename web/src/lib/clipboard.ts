@@ -235,6 +235,21 @@ export function materializeRelink(resolved: MissingAsset[]): void {
 }
 
 /**
+ * 菜单里的「粘贴」能不能真的读到剪贴板（Codex #833）。菜单项没有原生 paste 事件可接，只能走
+ * `pasteObjects()` 的异步 `readText`；两类引擎上它走不通，菜单就**不提供**这一项（⌘V 的原生事件照常可用）：
+ *   - 根本没有 `readText`（Firefox 默认）；
+ *   - WebKit（Safari、macOS / Linux 桌面壳的 WKWebView / WebKitGTK、iOS 上的一切浏览器）：非编辑区的
+ *     异步读不放行（`docs/rules/frontend/canvas-objects-and-workspace.md`「剪贴板」）。按 UA 认：
+ *     带 AppleWebKit、却不是 Chromium 一族（Chrome / Edge / WebView2 / Android WebView 都自报 `Chrome/`）。
+ */
+export function canPasteFromMenu(nav: Navigator | undefined = typeof navigator !== 'undefined' ? navigator : undefined): boolean {
+  if (typeof nav?.clipboard?.readText !== 'function') return false
+  const ua = nav.userAgent ?? ''
+  const webkit = /AppleWebKit\//.test(ua) && !/(Chrome|Chromium|Edg)\//.test(ua)
+  return !webkit
+}
+
+/**
  * 「浏览器根本不给读剪贴板」每会话只提示一次：粘贴键是高频操作，
  * 每按一次弹一条等于噪音，而这个结论一次就够用户知道了。
  * 会话级语义 → 模块级变量，不进文档态。

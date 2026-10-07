@@ -5,7 +5,7 @@ import { keyOf } from '@/lib/keymap'
 import { useDocumentStore } from '@/store/documentStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { MAX_ZOOM, MIN_ZOOM, useViewportStore } from '@/store/viewportStore'
-import { zoomToSelection } from '@/store/zoomToSelection'
+import { canZoomToSelection, zoomToSelection } from '@/store/zoomToSelection'
 import { Numbers } from '@sfinterface/numbers'
 import { Button } from './ui/Button'
 import { NumberField } from './ui/Input'
@@ -27,7 +27,10 @@ export function ZoomControls() {
   // 预设那一组是**互斥取值**：当前档带勾。缩放不是整数档时一个都不勾（「不知道是哪一档」
   // 有自己的取值，不能就近归到相邻那一档）
   const preset = ZOOM_PRESETS.find((z) => Math.abs(z - zoom) < 1e-6)
-  const hasSelection = useSelectionStore((s) => s.ids.length > 0)
+  // 与动作同一个判据：选中的全隐藏了 / 面积为 0 也置灰（隐藏不清选区，只看 ids 长度会留一个空转的入口）
+  const objects = useDocumentStore((s) => s.doc.objects)
+  const ids = useSelectionStore((s) => s.ids)
+  const canZoomSelection = canZoomToSelection(objects, ids)
 
   return (
     /* 缩放是一颗文本钮「114% ⌄」（2026-09-15 打磨批次 F，L3；适应画布的图标钮已并进浮动工具条）：
@@ -105,10 +108,10 @@ export function ZoomControls() {
         >
           {t('topbar.fitCanvas')}
         </MenuItem>
-        {/* 缩放到选中（⇧2）：没有选中时置灰，不去适应整页冒充 */}
+        {/* 缩放到选中（⇧2）：没有（可见的）选中时置灰，不去适应整页冒充 */}
         <MenuItem
           shortcut={keyOf('zoomSelection')}
-          disabled={!hasSelection}
+          disabled={!canZoomSelection}
           onSelect={() => void zoomToSelection()}
           data-zoom-selection-item
         >

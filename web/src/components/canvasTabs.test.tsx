@@ -277,9 +277,37 @@ describe('画布标签条的键盘', () => {
     expect(useDocumentStore.getState().openTabs).toEqual(['c1'])
   })
 
-  it('⌥→ 把页签往右挪一格（与拖动同一个 reorderTabs）', () => {
+  it('⌥→ 把页签往右挪一格（与拖动同一个 reorderTabs），焦点跟着它', async () => {
     mount()
+    tab('c1').focus()
     key(tab('c1'), { key: 'ArrowRight', altKey: true })
     expect(useDocumentStore.getState().openTabs).toEqual(['c2', 'c1'])
+    await flush()
+    expect(document.activeElement).toBe(tab('c1'))
+  })
+
+  // Codex #833：关掉第一个 / 中间那个页签后，焦点落到留下来的邻居上（右边那个，没有就左边那个），
+  // 不按关之前的下标去取——那样会取回刚关掉的 id，焦点掉出页签条
+  describe('Delete / ⌘W 关页签后焦点留在页签条里', () => {
+    beforeEach(() => {
+      const st = useDocumentStore.getState()
+      const c3 = { ...st.canvases[0], id: 'c3', name: 'Figure 3' }
+      useDocumentStore.setState({ canvases: [...st.canvases, c3], openTabs: ['c1', 'c2', 'c3'] })
+    })
+
+    it.each([
+      ['第一个（Delete）', 'c1', { key: 'Delete' }, ['c2', 'c3'], 'c2'],
+      ['中间那个（Delete）', 'c2', { key: 'Delete' }, ['c1', 'c3'], 'c3'],
+      ['中间那个（⌘W）', 'c2', { key: 'w', metaKey: true }, ['c1', 'c3'], 'c3'],
+      ['最后一个（Delete）', 'c3', { key: 'Delete' }, ['c1', 'c2'], 'c2'],
+    ] as const)('%s → 焦点到 %s 的邻居', async (_name, closing, init, rest, focused) => {
+      mount()
+      tab(closing).focus()
+      key(tab(closing), init)
+      expect(useDocumentStore.getState().openTabs).toEqual(rest)
+      await flush()
+      expect(document.activeElement).toBe(tab(focused))
+      expect(tab(focused).tabIndex).toBe(0)
+    })
   })
 })
