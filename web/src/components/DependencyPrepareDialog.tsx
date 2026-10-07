@@ -148,7 +148,7 @@ export function DependencyPrepareDialog() {
             <label
               key={env.id}
               className={cn(
-                'flex cursor-pointer items-start gap-2 rounded-sm px-2 py-1.5',
+                'flex items-start gap-2 rounded-sm px-2 py-1.5',
                 selected ? 'bg-selected' : 'hover:bg-surface-hover',
               )}
               data-user-env={env.source}
@@ -179,7 +179,7 @@ export function DependencyPrepareDialog() {
             <label
               key={kind}
               className={cn(
-                'flex cursor-pointer items-start gap-2 rounded-sm px-2 py-1.5',
+                'flex items-start gap-2 rounded-sm px-2 py-1.5',
                 selected ? 'bg-selected' : 'hover:bg-surface-hover',
                 opt.available === false && 'opacity-60',
               )}
@@ -241,7 +241,7 @@ export function DependencyPrepareDialog() {
       )}
       {partial.length > 0 && (
         <Details className="mt-2 text-xs text-ink-3" data-user-env-partial>
-          <Summary className="cursor-pointer">{en('engine.userEnvPartial')}</Summary>
+          <Summary>{en('engine.userEnvPartial')}</Summary>
           <ul className="mt-1 flex flex-col gap-0.5 pl-3">
             {partial.map((env) => (
               <li key={env.id}>
@@ -342,7 +342,7 @@ export function DependencyPrepareDialog() {
       {!simple && !running && targetChoice}
       {!running && (
         <Details className={cn('text-xs', !simple && 'mt-2')} data-repair-advanced>
-          <Summary className="type-meta cursor-pointer">{en('engine.repairAdvanced')}</Summary>
+          <Summary className="type-meta">{en('engine.repairAdvanced')}</Summary>
           <div className="mt-2">
             {failing && (
               <div className="mb-2 flex flex-col gap-0.5 text-xs leading-relaxed text-ink-3" data-dependency-error-detail>

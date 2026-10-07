@@ -1120,6 +1120,7 @@ export function cycleOverlapAt(
       { label: engineLabel(step.el.label), index: step.index, total: step.total },
       'workspace',
     ),
+    'info',
   )
   return true
 }
@@ -1463,7 +1464,7 @@ export function explainBlockedGroupDrag(
     onMove: () => {
       if (told) return
       told = true
-      useUiStore.getState().setStatus(groupBlockedMessage(reason))
+      useUiStore.getState().setStatus(groupBlockedMessage(reason), 'info')
     },
     onEnd: (moved, _ev, end) => {
       if (!moved && !end.cancelled) onTap()
@@ -1498,7 +1499,7 @@ function explainImmovableDrag(e: ReactPointerEvent, el: ManifestElement) {
     onMove: () => {
       if (told) return
       told = true
-      useUiStore.getState().setStatus(immovableMessage(el))
+      useUiStore.getState().setStatus(immovableMessage(el), 'info')
     },
     onEnd: () => {},
   })

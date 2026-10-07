@@ -40,11 +40,13 @@ function draw(
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
   ctx.clearRect(0, 0, w, h)
 
+  // 颜色只来自 token（index.css 的 @theme），不在这里留第二份字面量当兜底——那几份兜底色早已过期
+  // （2026-10-07 设计审计 §8）；样式表没加载时 canvas 忽略空串，什么都不画也比画错色好
   const css = getComputedStyle(document.documentElement)
-  const bg = css.getPropertyValue('--color-bg').trim() || '#F2F2EF'
-  const line = css.getPropertyValue('--color-ink-3').trim() || '#A3A39A'
-  const text = css.getPropertyValue('--color-ink-2').trim() || '#6E6E67'
-  const accent = css.getPropertyValue('--color-sel').trim() || '#2F6FED'
+  const bg = css.getPropertyValue('--color-bg').trim()
+  const line = css.getPropertyValue('--color-ink-3').trim()
+  const text = css.getPropertyValue('--color-ink-2').trim()
+  const accent = css.getPropertyValue('--color-sel').trim()
 
   ctx.fillStyle = bg
   ctx.fillRect(0, 0, w, h)
@@ -120,7 +122,7 @@ function draw(
   }
 
   // 与画布之间的 1px 分隔
-  ctx.strokeStyle = css.getPropertyValue('--color-border').trim() || '#E3E3DD'
+  ctx.strokeStyle = css.getPropertyValue('--color-border').trim()
   ctx.beginPath()
   if (axis === 'x') {
     ctx.moveTo(0, RULER_SIZE - 0.5)
@@ -159,18 +161,18 @@ export function Rulers({ viewW, viewH }: { viewW: number; viewH: number }) {
   return (
     <>
       <div
-        className="absolute left-0 top-0 z-10 border-b border-r border-border bg-bg"
+        className="absolute left-0 top-0 z-sticky border-b border-r border-border bg-bg"
         style={{ width: RULER_SIZE, height: RULER_SIZE }}
       />
       <canvas
         ref={topRef}
-        className="absolute top-0 z-10 cursor-ns-resize"
+        className="absolute top-0 z-sticky cursor-ns-resize"
         style={{ left: RULER_SIZE, width: viewW, height: RULER_SIZE }}
         onPointerDown={(e) => startGuideDrag(e, 'y', null)}
       />
       <canvas
         ref={leftRef}
-        className="absolute left-0 z-10 cursor-ew-resize"
+        className="absolute left-0 z-sticky cursor-ew-resize"
         style={{ top: RULER_SIZE, width: RULER_SIZE, height: viewH }}
         onPointerDown={(e) => startGuideDrag(e, 'x', null)}
       />

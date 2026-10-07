@@ -56,7 +56,7 @@ export function PerfProbeHud() {
     <div
       data-perf-probe
       data-phase={phase}
-      className="absolute right-3 top-3 z-30 flex w-72 flex-col gap-2 rounded-md bg-surface p-3 text-sm shadow-pop"
+      className="absolute right-3 top-3 z-drawer flex w-72 flex-col gap-2 rounded-lg bg-surface p-3 text-sm shadow-pop"
     >
       <p className="font-medium text-ink">{t('perfProbe.title')}</p>
 

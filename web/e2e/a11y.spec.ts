@@ -273,7 +273,8 @@ test('图内编辑的属性栏：展开每一个折叠区之后 axe 仍然干净
       // 只认真正的折叠区：带 `aria-haspopup` 的是弹层触发器（写回、菜单），
       // 禁用的点不动——两者都会让这个循环卡死在同一颗按钮上
       const collapsed = inspector
-        .locator('button[aria-expanded="false"]:not([disabled]):not([aria-haspopup])')
+        // 2026-10-07：画布页多了一颗预设下拉（Radix Select 的触发器也带 aria-expanded），只认摘要行的开关
+        .locator('[data-summary-row] > button[aria-expanded="false"]:not([disabled])')
         .first()
       if (!(await collapsed.count())) break
       await collapsed.click()

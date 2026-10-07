@@ -44,6 +44,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import stat
 import threading
 import time
 import uuid
@@ -265,6 +266,22 @@ def _role_of(item: dict) -> str:
     return ROLE_UNKNOWN  # unparseable
 
 
+def _marker_present(path: Path, root: Path, budget: scanbudget.Budget | None) -> bool:
+    """作用域标记文件在不在。导入即扫描（有 `budget`）按元数据判：只 `lstat`、不跟随——符号链接 / 路径
+    替身不探目标（UNC 会触发 SMB 访问），记一条 `unreadable_file`（partial）而不是当「没有标记」。
+    没有 `budget`（准备 / 依赖门）保持跟随用户自己的链接。"""
+    if budget is None:
+        return path.is_file()
+    try:
+        st = path.lstat()
+    except OSError:
+        return False
+    if scanbudget.is_redirect(st):
+        budget.note(scanbudget.ISSUE_UNREADABLE_FILE, scope="file", path=_rel_dir_posix(root, path))
+        return False
+    return stat.S_ISREG(st.st_mode)
+
+
 def _scope_of(
     root: Path,
     script: str,
@@ -292,7 +309,7 @@ def _scope_of(
                 for name in _SCOPE_MARKERS:
                     if budget is not None and budget.stop_reason() is not None:
                         return None
-                    if (d / name).is_file():
+                    if _marker_present(d / name, root, budget):
                         has = True
                         break
             except OSError:
@@ -336,11 +353,13 @@ def _targets_of(
         target["session_target"] = body
         targets.append(target)
     pending = [t for t in targets if t["role"] == ROLE_PLOT and not t["registered"]]
-    if len(pending) == 1:
+    unknown = any(t["role"] == ROLE_UNKNOWN for t in targets)
+    if len(pending) == 1 and not unknown:
+        # 还有未核验的 unknown 目标时不替用户挑默认（它可能才是要跑的那个）：落到下面的 ambiguous
         return targets, pending[0]["script"], "single"
     if len(pending) > 1:
         return targets, None, "ambiguous"
-    if any(t["role"] == ROLE_UNKNOWN for t in targets):
+    if unknown:
         # 还有读不了 / 没解析成的脚本是可选目标：它们**未核验**，不能因为别处有已连接的绘图脚本
         # 就当成「全连着了」收起提示——交给用户选（unknown 不当通过）
         return targets, None, "ambiguous"
@@ -350,14 +369,19 @@ def _targets_of(
 
 
 # ---------------------------------------------------------------- 依赖声明
-def dependency_evidence(root: Path, script: str | None) -> dict:
+def dependency_evidence(
+    root: Path, script: str | None, budget: scanbudget.Budget | None = None
+) -> dict:
     """依赖**声明**在哪、有多少条、哪几类读不懂——只读文件、不求值、不联网、不问解释器。
 
     `declared_intents` 自带文件数 / 字节上限，读不了的记 `unsupported`（不是「没有依赖」）。输出只有
     声明文件的项目相对路径、条数与闭集 reason，**不带原文行**（原文可能含带凭据的 index URL）。
-    结论永远是 `evaluated: False`：能不能装、装没装，要等环境被核验（T05 / T06）。"""
+    结论永远是 `evaluated: False`：能不能装、装没装，要等环境被核验（T05 / T06）。
+
+    `budget`（导入即扫描传）：声明文件按**不跟随链接、只读有上限普通文件**读（符号链接 / UNC / FIFO / 超大
+    文件被拒、不被探），被拒的条目进账本（`unreadable_file`，partial）——不是「没有依赖」。"""
     try:
-        intents = depresolve.declared_intents(root, script)
+        intents = depresolve.declared_intents(root, script, no_follow=budget is not None)
     except (OSError, ValueError, RuntimeError):
         return {
             "script": script,
@@ -368,6 +392,15 @@ def dependency_evidence(root: Path, script: str | None) -> dict:
             "evaluated": False,
         }
     files = sorted({i.source for i in intents if i.source})
+    if budget is not None:
+        for rel in sorted(
+            {
+                i.source
+                for i in intents
+                if i.reason == depresolve.UNSUPPORTED_UNREADABLE and i.source
+            }
+        ):
+            budget.note(scanbudget.ISSUE_UNREADABLE_FILE, scope="file", path=rel)
     return {
         "script": script,
         "files": files,
@@ -379,19 +412,28 @@ def dependency_evidence(root: Path, script: str | None) -> dict:
 
 
 # ---------------------------------------------------------------- 环境线索
-def environment_evidence(root: Path, script: str | None) -> dict:
+def environment_evidence(
+    root: Path, script: str | None, budget: scanbudget.Budget | None = None
+) -> dict:
     """环境**候选线索**（只读磁盘记录）：项目 venv、记住的决策、`.vscode` / `.python-version` /
     `environment.yml` / shebang、Conda / pyenv 的落盘记录。
 
     * 每条 `status` 都是 `unchecked`（记住的是 `remembered_unverified`，文件没了是 `missing`）——**没有
       任何一条被体检过**，`verified` 恒为 False；"推荐"与"采用"是 T05 的事，这里不给推荐；
     * 项目内的解释器给项目相对路径，项目外的只给不透明 `id`（`userenvs.env_id`）与来源 / 标签，不出机器路径；
-    * 不问登录 shell（`ask_login_shell=False`）、不 `import`、不 `stat` 以外的东西。"""
+    * 不问登录 shell（`ask_login_shell=False`）、不 `import`、不 `stat` 以外的东西；
+    * `budget`：Conda / pyenv 的枚举带着墙钟预算与取消回调，到期 / 取消停在已枚举到的部分（账本 → partial）。"""
     root = Path(root)
     by_key: dict[str, dict] = {}
     order: list[str] = []
 
-    def add(python: str, source: str, label: str, extra: dict | None = None) -> dict:
+    def add(python: str, source: str, label: str, extra: dict | None = None) -> dict | None:
+        # 最后一道：项目派生路径经过重定向就不算指纹 / 不入表（指纹的 stat 会跟随）；上游已各自拦过，这里兜底
+        bad = scanbudget.redirected_component(root, python, allow_final_link=True)
+        if bad is not None:
+            if budget is not None:
+                budget.note(scanbudget.ISSUE_SYMLINK_DIR, scope="file", path=bad)
+            return None
         key = projectenv._executable_key(python)
         row = by_key.get(key)
         if row is None:
@@ -416,12 +458,14 @@ def environment_evidence(root: Path, script: str | None) -> dict:
             row.update(extra)
         return row
 
-    for venv in projectenv.discover(root, script):
+    for venv in projectenv.discover(root, script, no_follow=True, budget=budget):
         python = projectenv.interpreter_of(venv, root=root)
         if python:
             add(python, SOURCE_PROJECT_VENV, Path(venv).name)
 
-    record = projectenv.remembered_record(root)
+    record = projectenv.remembered_record(root, no_follow=True)
+    if record is not None and record.get("redirected") and budget is not None:
+        budget.note(scanbudget.ISSUE_SYMLINK_DIR, scope="file", path=record["redirected"])
     remembered = None
     if record is not None:
         remembered = {
@@ -444,9 +488,12 @@ def environment_evidence(root: Path, script: str | None) -> dict:
                     "chosen_by": "automatic" if record.get("automatic") else "user",
                 },
             )
-            remembered["id"] = row["id"]
+            if row is not None:
+                remembered["id"] = row["id"]
 
-    for entry in userenvs.discover(root, script, ask_login_shell=False, no_follow=True):
+    for entry in userenvs.discover(
+        root, script, ask_login_shell=False, no_follow=True, budget=budget
+    ):
         add(entry["python"], entry["source"], entry.get("label") or "")
 
     candidates = [by_key[k] for k in order]
@@ -598,9 +645,9 @@ def scan(
         "checked": False,
     }
     if budget.stop_reason() is None:
-        env = environment_evidence(root, script_for_env)
+        env = environment_evidence(root, script_for_env, budget)
     if budget.stop_reason() is None:
-        deps = dependency_evidence(root, script_for_env)
+        deps = dependency_evidence(root, script_for_env, budget)
     budget.stop_reason()  # Include expiry during the last evidence stage in the report.
 
     issues = budget.issues()

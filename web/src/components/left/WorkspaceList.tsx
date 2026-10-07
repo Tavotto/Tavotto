@@ -58,11 +58,8 @@ function RevealItem({ path }: { path: string }) {
       if (!ok) useUiStore.getState().setStatus(msg('workspace.revealFailed', { path }, 'project'), 'error')
     })
   return (
-    <MenuItem data-workspace-reveal onSelect={reveal}>
-      <span className="flex items-center gap-2">
-        <Folder size={ICON_SIZE.sm} className="text-ink-3" />
-        {ws(REVEAL_LABEL[fileManagerKind()])}
-      </span>
+    <MenuItem data-workspace-reveal onSelect={reveal} icon={Folder}>
+      {ws(REVEAL_LABEL[fileManagerKind()])}
     </MenuItem>
   )
 }
@@ -71,6 +68,9 @@ function RevealItem({ path }: { path: string }) {
  * 右键 = 在光标处开出与「…」同一份菜单（项目一份清单，两个入口）。
  * 菜单里一项都没有时不拦右键。
  */
+/** 已收藏的那一枚（实心孪生）：`MenuItem icon=` 只收组件，不收 `filled` 这一档 */
+const BookmarkFilled = (p: { size?: number; className?: string }) => <Bookmark {...p} filled />
+
 function useRowContextMenu(enabled: boolean) {
   const [at, setAt] = useState<{ x: number; y: number } | null>(null)
   const onContextMenu = enabled
@@ -274,20 +274,15 @@ function CurrentProject({ project, pinned }: { project: ProjectStatus; pinned: b
     <>
       {project.figures_dir && (
         <MenuItem
+          icon={pinned ? BookmarkFilled : Bookmark}
           onSelect={() => void useProjectStore.getState().togglePin(project.figures_dir!)}
         >
-          <span className="flex items-center gap-2">
-            <Bookmark size={ICON_SIZE.sm} filled={pinned} className="text-ink-3" />
-            {pinned ? ws('unpin') : ws('pin')}
-          </span>
+          {pinned ? ws('unpin') : ws('pin')}
         </MenuItem>
       )}
       {project.id && (
-        <MenuItem onSelect={() => openInNewTab(project.id!)}>
-          <span className="flex items-center gap-2">
-            <ExternalLink size={ICON_SIZE.sm} className="text-ink-3" />
-            {ws('openInNewTab')}
-          </span>
+        <MenuItem onSelect={() => openInNewTab(project.id!)} icon={ExternalLink}>
+          {ws('openInNewTab')}
         </MenuItem>
       )}
       {/* 目录被删 / 卷被卸下时当前项目仍是 open，只是 exists 为 false：与行同一个判据，不给这一项 */}
@@ -403,27 +398,18 @@ function ProjectRow({
       {/* 拖动只有鼠标能用：菜单里给键盘一条同样的路 */}
       {order && (
         <>
-          <MenuItem disabled={order.index === 0} onSelect={() => moveBy(-1)}>
-            <span className="flex items-center gap-2">
-              <ArrowUp size={ICON_SIZE.sm} className="text-ink-3" />
-              {ws('moveUp')}
-            </span>
+          <MenuItem disabled={order.index === 0} onSelect={() => moveBy(-1)} icon={ArrowUp}>
+            {ws('moveUp')}
           </MenuItem>
-          <MenuItem disabled={order.index >= order.count - 1} onSelect={() => moveBy(1)}>
-            <span className="flex items-center gap-2">
-              <ArrowDown size={ICON_SIZE.sm} className="text-ink-3" />
-              {ws('moveDown')}
-            </span>
+          <MenuItem disabled={order.index >= order.count - 1} onSelect={() => moveBy(1)} icon={ArrowDown}>
+            {ws('moveDown')}
           </MenuItem>
         </>
       )}
       {/* 新标签页要带 pj：只有后端已经打开着的项目才有 id */}
       {canNewTab && (
-        <MenuItem onSelect={() => openInNewTab(entry.id!)}>
-          <span className="flex items-center gap-2">
-            <ExternalLink size={ICON_SIZE.sm} className="text-ink-3" />
-            {ws('openInNewTab')}
-          </span>
+        <MenuItem onSelect={() => openInNewTab(entry.id!)} icon={ExternalLink}>
+          {ws('openInNewTab')}
         </MenuItem>
       )}
       {canReveal && <RevealItem path={entry.path} />}
