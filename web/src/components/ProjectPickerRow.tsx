@@ -6,7 +6,7 @@ import { ICON_SIZE } from '@/components/ui/Icon'
 import { dropLineClass, listRowClass, rowMetaClass } from '@/components/ui/listRow'
 import type { RecentProject } from '@/lib/api'
 import { canRevealInFileManager, fileManagerKind, revealProjectFolder, type FileManagerKind } from '@/lib/desktop'
-import { cn } from '@/lib/utils'
+import { ALT, cn, combo } from '@/lib/utils'
 import { useUiStore } from '@/store/uiStore'
 import { TailPath } from './DirBrowser'
 import { openInNewTab } from './left/projectActions'
@@ -116,14 +116,14 @@ export function ProjectRow({
       {/* 拖动只有鼠标能用：菜单里给键盘一条同样的路（⌥↑ / ⌥↓ 同一个动作） */}
       {order && (
         <>
-          <MenuItem disabled={order.index === 0} onSelect={() => order.move(-1)} icon={ArrowUp} shortcut="⌥↑">
+          <MenuItem disabled={order.index === 0} onSelect={() => order.move(-1)} icon={ArrowUp} shortcut={combo(ALT, '↑')}>
             {ws('moveUp')}
           </MenuItem>
           <MenuItem
             disabled={order.index >= order.count - 1}
             onSelect={() => order.move(1)}
             icon={ArrowDown}
-            shortcut="⌥↓"
+            shortcut={combo(ALT, '↓')}
           >
             {ws('moveDown')}
           </MenuItem>

@@ -10,7 +10,7 @@ import {
   createCanvasAndActivate,
   deleteCanvasWithSession,
 } from '@/store/canvasSession'
-import { cn } from '@/lib/utils'
+import { ALT, cn, combo } from '@/lib/utils'
 import { useDocumentStore } from '@/store/documentStore'
 import { askConfirm, useUiStore } from '@/store/uiStore'
 import type { CanvasData } from '@/types/document'
@@ -267,10 +267,10 @@ function CanvasRow({
           {cl('rename')}
         </MenuItem>
         {/* 拖动重排只有鼠标能用：菜单里给键盘一条同样的路（搜索过滤中索引对不上，禁用） */}
-        <MenuItem icon={ArrowUp} disabled={!canMove(-1)} shortcut="⌥↑" onSelect={() => onMove(-1)}>
+        <MenuItem icon={ArrowUp} disabled={!canMove(-1)} shortcut={combo(ALT, '↑')} onSelect={() => onMove(-1)}>
           {cl('moveUp')}
         </MenuItem>
-        <MenuItem icon={ArrowDown} disabled={!canMove(1)} shortcut="⌥↓" onSelect={() => onMove(1)}>
+        <MenuItem icon={ArrowDown} disabled={!canMove(1)} shortcut={combo(ALT, '↓')} onSelect={() => onMove(1)}>
           {cl('moveDown')}
         </MenuItem>
         <MenuItem

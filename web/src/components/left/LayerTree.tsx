@@ -24,7 +24,7 @@ import {
 import { FIELD_BOX, FIELD_FOCUS } from '@/components/ui/fieldBox'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { EditableFigureIcon } from '@/components/ui/semanticIcons'
-import { cn } from '@/lib/utils'
+import { ALT, cn, combo } from '@/lib/utils'
 import { dropLineClass, listRowClass } from '@/components/ui/listRow'
 import { TreeChevron, TreeIcon, treeIndent } from '@/components/ui/TreeRow'
 import { useFlip } from '@/lib/motion'
@@ -473,10 +473,10 @@ function LayerRow({
           {/* 层级动作作用在**这一行**上，不看选区——菜单是从这一行打开的。
               走的是行自己那条 `onReorder`（与 ⌥↑↓ 同一份实现），
               到顶 / 到底时那一项禁用，而不是点了什么都不发生 */}
-          <MenuItem icon={ChevronUp} shortcut="⌥↑" disabled={!canMoveUp} onSelect={() => onReorder(-1)}>
+          <MenuItem icon={ChevronUp} shortcut={combo(ALT, '↑')} disabled={!canMoveUp} onSelect={() => onReorder(-1)}>
             {lt('moveUp')}
           </MenuItem>
-          <MenuItem icon={ChevronDown} shortcut="⌥↓" disabled={!canMoveDown} onSelect={() => onReorder(1)}>
+          <MenuItem icon={ChevronDown} shortcut={combo(ALT, '↓')} disabled={!canMoveDown} onSelect={() => onReorder(1)}>
             {lt('moveDown')}
           </MenuItem>
         </RowMenu>

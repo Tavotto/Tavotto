@@ -19,7 +19,6 @@
  * 回答「那一版长什么样」——后者是版本详情里的 `LayoutSnapshot`，它会在出不来
  * 时明确标「近似预览」。
  */
-import { useId } from 'react'
 import { renderUrl, runtimePreviewUrl } from '@/lib/api'
 import { useRetryingSrc } from '@/lib/imgRetry'
 import { cn } from '@/lib/utils'
@@ -58,7 +57,8 @@ export function CanvasThumb({
   const { w, h } = page
   const byId = useAssetStore((s) => s.byId)
   const nonce = useRuntimeAssetStore((s) => s.previewNonce)
-  const clip = useId()
+  // 裁切 id 只由页面尺寸决定：同一份内容在画布列表与版本列表里画出的 DOM 逐字相同（同尺寸的两张共用一个也无妨，几何一样）
+  const clip = `thumb-page-${w}x${h}`
   // 盒子是透明的，**画出来的是页面本身**（2026-10-07 设计审计 §10.3）：此前白底与边框画在 svg 盒上，
   // 横版与竖版的缩略图一模一样（都是一个 56×40 的白框）。现在页面矩形按真实比例居中，方向一眼可辨；
   // 圆角 4px（缩略图半径族 4 / 6 的小档），按默认盒子的缩放折成用户单位
