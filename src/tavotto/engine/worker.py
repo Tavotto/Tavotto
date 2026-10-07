@@ -219,6 +219,7 @@ _ENGINE_MODULES = (
     "figsession",
     "wireproto",
     "scriptinput",
+    "runtime",
 )
 _PKG = bridgeboot.load_engine_modules(str(HERE), _ENGINE_MODULES)
 
@@ -236,6 +237,8 @@ figsession = _PKG.figsession
 wireproto = _PKG.wireproto
 # 脚本里的 input() / sys.stdin / getpass 桥接（ADR 0099）：每一问经会话缓存目录里的文件会合交给父进程
 scriptinput = _PKG.scriptinput
+# Windows 平台判断与 CREATE_NO_WINDOW 的唯一出处（只依赖标准库，装进私有包不拖闭包）
+runtime = _PKG.runtime
 
 #: 本 worker 的常驻会话。`_patched_savefig` 是模块级函数（要顶掉
 #: `Figure.savefig` 这个类属性），拿不到 Worker 实例，只能走模块级引用。
@@ -550,7 +553,7 @@ def _suppress_sensitive_output():
         stdout=sys.stderr,
         stderr=subprocess.DEVNULL,
         close_fds=True,
-        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        creationflags=runtime.CREATE_NO_WINDOW,
     )
     try:
         os.dup2(proc.stdin.fileno(), 1)
