@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { msg, t as translate } from '@/i18n'
 import type { RememberedAnswer } from '@/lib/api'
-import { useScriptInputStore } from '@/store/scriptInputStore'
+import { useScriptInputStore, type AnswerChange } from '@/store/scriptInputStore'
 import { useScriptRunStore } from '@/store/scriptRunStore'
 import { askConfirm, useUiStore } from '@/store/uiStore'
 import { Button } from './ui/Button'
@@ -51,7 +51,11 @@ function AnswersManager({ script }: { script: string }) {
   const [edits, setEdits] = useState<Record<number, string>>({})
   /** 每一行最近一次保存 / 删除失败的原因 */
   const [errors, setErrors] = useState<Record<number, string>>({})
-  const [saving, setSaving] = useState(false)
+  /**
+   * 答案改动锁归 store（`answersBusy`）：关掉再打开，新挂上的对话框照样锁着，直到在飞的那件回来
+   * （维护者复审：组件自己的 `saving` 随卸载消失，重开后能再存一次、两份快照互盖、重跑两次）
+   */
+  const saving = useScriptInputStore((s) => s.answersBusy)
 
   const close = () => useScriptInputStore.getState().closeManager()
   const valueOf = (a: RememberedAnswer) => edits[a.index] ?? a.answer
@@ -70,15 +74,18 @@ function AnswersManager({ script }: { script: string }) {
 
   /** 依次保存所有改过的答案，**只重跑一次**；任何一条回来时已换项目就整个作罢（不在新项目里重跑同名脚本） */
   const saveAll = async () => {
-    if (!changed.length || saving) return
-    const epoch = useScriptInputStore.getState().epoch
+    if (!changed.length) return
+    const store = useScriptInputStore.getState()
+    const epoch = store.epoch
+    // 整批算一件改动；已有一件在飞（含关掉重开前没回来的删除）就一个请求都不发
+    const token = store.beginAnswersChange()
+    if (token === null) return
     const batch = changed.map((a) => ({ index: a.index, value: valueOf(a) }))
     const submitted = new Map(batch.map((b) => [b.index, b.value]))
-    setSaving(true)
     const saved: number[] = []
     try {
       for (const { index, value } of batch) {
-        const res = await useScriptInputStore.getState().saveAnswer(script, index, value)
+        const res = await useScriptInputStore.getState().saveAnswer(token, script, index, value)
         // 请求在飞时换了项目：什么都不做——尤其不在新项目里重跑同名脚本
         if (res.status === 'stale' || !sameProject(epoch)) return
         const open = stillCurrent(epoch, script)
@@ -92,7 +99,7 @@ function AnswersManager({ script }: { script: string }) {
         if (!open) break
       }
     } finally {
-      if (stillCurrent(epoch, script)) setSaving(false)
+      useScriptInputStore.getState().endAnswersChange(token)
     }
     if (!saved.length || !sameProject(epoch)) return
     // 存好的那几行不再是「改过」：丢掉本地副本，以后台那份为准（对话框已关就不必）
@@ -120,14 +127,15 @@ function AnswersManager({ script }: { script: string }) {
     })
     // 确认框开着时换了项目 / 关了对话框：点头属于旧的那一份，不发请求
     if (!ok || !stillCurrent(epoch, script)) return
-    // 删除在飞时与批量保存共用一把锁：输入框、保存钮、各行删除都锁住，
-    // 否则并发的保存与删除谁先回来谁赢、还会重跑两次（Codex #821 P2）
-    setSaving(true)
-    let res: Awaited<ReturnType<ReturnType<typeof useScriptInputStore.getState>['forgetAnswer']>>
+    // 删除与批量保存共用 store 那把锁：输入框、保存钮、各行删除都锁住（关掉重开也锁着），
+    // 否则并发的保存与删除谁先回来谁赢、还会重跑两次（Codex #821 P2 / 维护者复审）
+    const token = useScriptInputStore.getState().beginAnswersChange()
+    if (token === null) return
+    let res: AnswerChange
     try {
-      res = await useScriptInputStore.getState().forgetAnswer(script, a.index)
+      res = await useScriptInputStore.getState().forgetAnswer(token, script, a.index)
     } finally {
-      if (stillCurrent(epoch, script)) setSaving(false)
+      useScriptInputStore.getState().endAnswersChange(token)
     }
     // 请求在飞时换了项目：什么都不做——尤其不在新项目里重跑同名脚本
     if (res.status === 'stale') return
