@@ -110,6 +110,53 @@ def test_derivation_never_reads_the_clock_or_a_provider(monkeypatch):
     assert prepsession.derive(vector["facts"]) == vector["expect"]
 
 
+@pytest.mark.parametrize("code", ["missing_dependency", "script_error"])
+def test_error_result_waits_until_the_session_callback_finalizes(
+    client, tmp_path, fake_pool, sessions, monkeypatch, code
+):
+    """Provider terminal status must not expose retry actions before session finalization."""
+    _open(client, _project(tmp_path, "p"))
+    fake_pool["error"] = engine_pool.WorkerError("failed", code=code, module="alpha")
+    entered, release = threading.Event(), threading.Event()
+    original_start = preparation.SERVICE.start
+
+    def held_start(*args, **kwargs):
+        original_done = kwargs["on_done"]
+
+        def held_done(plan, result):
+            entered.set()
+            assert release.wait(10), "test did not release the finalizer"
+            original_done(plan, result)
+
+        return original_start(*args, **{**kwargs, "on_done": held_done})
+
+    monkeypatch.setattr(preparation.SERVICE, "start", held_start)
+    report = _create(client, {"script": "fig.py"}).get_json()
+    sid = report["session_id"]
+    try:
+        response = _act(client, sid, _action(report, "run")["id"], report["config_revision"])
+        assert response.status_code == 202
+        assert entered.wait(10)
+        pending = _get(client, sid).get_json()
+        assert pending["result"]["status"] == preparation.STATUS_ERROR
+        assert pending["phase"] == "running", pending
+        assert pending["outcome"] == {"kind": "running"}
+        assert not {"run", "recheck"} & {action["kind"] for action in pending["actions"]}
+    finally:
+        release.set()
+        live = prepsession.SESSIONS.get(sid, report["project_id"])
+        assert preparation.SERVICE.wait(live.attempts[-1].attempt_id, 10)
+    done = _get(client, sid).get_json()
+    assert done["phase"] == "action_required", done
+    assert done["outcome"]["code"] == code
+
+
+def test_cancelled_provider_does_not_wait_for_a_shared_worker_finalizer():
+    assert not prepsession.attempt_running(
+        {"status": preparation.STATUS_CANCELLED, "finalized": False}
+    )
+
+
 def test_the_no_figure_codes_are_the_pool_ones():
     assert prepsession._NO_FIGURE_CODES == {
         engine_pool.NO_FIGURES_CODE,

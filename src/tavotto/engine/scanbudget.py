@@ -20,6 +20,7 @@
 
 from __future__ import annotations
 
+import stat
 import threading
 import time
 from collections.abc import Callable
@@ -47,7 +48,7 @@ MAX_ISSUES = 40
 # ---- 账本 code（闭集；前端按 code 查自己的文案） ------------------------------------------------
 ISSUE_UNREADABLE_DIR = "unreadable_dir"  # 目录读不动（权限 / IO）
 ISSUE_UNREADABLE_FILE = "unreadable_file"  # 文件读不动
-ISSUE_SYMLINK_DIR = "symlinked_dir"  # 符号链接目录：没跟进（防环与越界）
+ISSUE_SYMLINK_DIR = "symlinked_dir"  # 保留协议名；链接 / 路径替身的目标未检查
 ISSUE_PLACEHOLDER = "placeholder_file"  # 云盘占位文件：不读它（读就是强制下载）
 ISSUE_TOO_LARGE = "file_too_large"  # 单个源文件超过 MAX_FILE_BYTES
 ISSUE_PARSE_FAILED = "parse_budget"  # AST 解析递归 / 内存失败（病态嵌套）
@@ -81,6 +82,21 @@ SEVERITY_NOTE = "note"
 _DARWIN_DATALESS = 0x40000000
 #: Windows `st_file_attributes`：OFFLINE / RECALL_ON_OPEN / RECALL_ON_DATA_ACCESS。
 _WIN_PLACEHOLDER = 0x1000 | 0x40000 | 0x400000
+
+
+def is_redirect(st) -> bool:
+    """只读不跟随的 stat 结果：符号链接、Windows 路径替身（含 junction）不得探目标。
+
+    Windows name-surrogate 位表示重解析点可替换路径；云盘非路径替身的 tag
+    保留既有占位文件判据。属性说是 reparse 却没有 tag 时保守跳过，不猜目标类型。
+    调用方必须传 lstat / stat(follow_symlinks=False)，不能先 is_dir 再来问。
+    """
+    if stat.S_ISLNK(st.st_mode):
+        return True
+    if not (getattr(st, "st_file_attributes", 0) or 0) & 0x400:
+        return False
+    tag = getattr(st, "st_reparse_tag", 0) or 0
+    return tag == 0 or bool(tag & 0x20000000)
 
 
 def is_placeholder(st) -> bool:
