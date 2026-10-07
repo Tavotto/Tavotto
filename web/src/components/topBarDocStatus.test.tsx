@@ -123,6 +123,23 @@ describe('出事：锚点色胶囊 + 说明块', () => {
     expect(pop!.textContent).toContain('Fig X')
   })
 
+  it('版本过新排在上次的排版没打开之前（启动时两件同时在），关掉时同一份的重试一起收掉', async () => {
+    await act(async () => {
+      useProjectStore.setState({ lastDocumentIssue: { id: 'd_new', name: 'Fig New' } })
+      useDocumentStore.setState({ docNotice: { kind: 'schema_too_new', docId: 'd_new', schema: 99 } })
+    })
+    expect(chip().dataset.docIssue).toBe('too_new')
+    expect(pill()!.dataset.docStatusPill).toBe('too_new')
+    const pop = await openPill()
+    expect(pop!.dataset.docStatusPopover).toBe('too_new')
+    expect(pop!.textContent).toContain('99')
+    const dismiss = pop!.querySelector<HTMLButtonElement>('button')!
+    await act(async () => dismiss.click())
+    expect(useDocumentStore.getState().docNotice).toBeNull()
+    expect(useProjectStore.getState().lastDocumentIssue, '同一份的「打开上次文档」只会再失败').toBeNull()
+    expect(pill()).toBeNull()
+  })
+
   it('保存失败：danger 胶囊，字就是保存状态那句，播报区有字', async () => {
     await act(async () => useDocumentStore.setState({ saveState: 'save_error' }))
     expect(pill()!.dataset.tone).toBe('danger')

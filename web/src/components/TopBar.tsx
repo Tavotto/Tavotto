@@ -244,8 +244,11 @@ function useDocIssue(): DocIssue | null {
   if (saveState === 'conflict') return 'conflict'
   if (saveState === 'save_error') return 'save_error'
   if (notice === 'recovery') return 'recovery'
-  if (lastDoc) return 'last_doc'
+  // 版本过新排在「上次的排版没打开」之前：启动时那份上次的排版若来自更新的版本，两件会同时在
+  // （切项目接回失败记 `lastDocumentIssue`，工作台挂载的 `restoreSession` 读同一份记 `schema_too_new`），
+  // 而「打开上次文档」那条重试只会再失败一次——该说的是具体原因
   if (notice === 'schema_too_new') return 'too_new'
+  if (lastDoc) return 'last_doc'
   return null
 }
 
@@ -525,7 +528,14 @@ function IssueBody({ issue, close }: { issue: DocIssue; close: () => void }) {
       <>
         {head(t('docBanner.tooNewTitle', { schema: notice.schema }), t('docBanner.tooNewBody'))}
         {row(
-          <Button size="sm" onClick={done(dismissDocNotice)}>
+          <Button
+            size="sm"
+            onClick={done(() => {
+              // 「上次的排版没打开」指的若是同一份：一起收掉，否则关掉这句后又冒出一个只会失败的重试
+              if (lastDoc?.id === notice.docId) useProjectStore.getState().dismissLastDocumentIssue()
+              dismissDocNotice()
+            })}
+          >
             {t('docBanner.dismiss')}
           </Button>,
         )}

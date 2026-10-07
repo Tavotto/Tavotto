@@ -42,7 +42,7 @@
 * **空白画布的右键菜单**（2026-10-07）：`canvas/CanvasContextMenu.tsx`，同一份 `PointMenu` 外壳；`CanvasStage.onContextMenu`
   只接空白处（选中框手柄在 `OverlaySvg` 里就截下了，见上；落在 `[data-object-id]` 上的冒泡不接——文字编辑 / 裁剪中留给浏览器自己的菜单）。只放调既有函数的入口：
   粘贴 / 全选 / 适应画布 / 标尺·网格·安全区开关 / 画布设置（`data-canvas-menu-item`），离散动作过 `runDiscreteAction`。
-  「全选」可不可用与 `selectAll` 读同一个判据 `store/actions.isSelectAllTarget`（看得见且没锁）——只有隐藏 / 锁定对象时置灰（Codex #833）。
+  「全选」可不可用与 `selectAll` 读同一个判据 `store/actions.isSelectAllTarget`（看得见且没锁）——只有隐藏 / 锁定对象时置灰（Codex #833）；快速编辑里的范围收窄见 `canvas-objects-and-workspace.md`（`selectAllIds`）。「适应画布」走 `fitStage`（与 ⌘1 同一个取景框）。
   快速编辑（`fast_edit`）里不开：这一屏只画那一张图，菜单全是版面级动作；原生菜单照样拦下，开着时切进快速编辑当场收起
   （收起不是藏起，回排版不在旧落点上重新冒出来，Codex #833）。
   看护 `canvas/canvasContextMenu.test.tsx`。

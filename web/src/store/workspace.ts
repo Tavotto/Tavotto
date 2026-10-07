@@ -131,6 +131,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 }))
 
+/**
+ * 快速编辑正在编辑的面板 id；排版里 null（不变式 `mode === 'fast_edit'` ⟺ `activePanelId !== null`）。
+ * 快速编辑这一屏只画这一张（`CanvasLayers only=`）：作用于选区 / 取景的动作在这一屏上只认它——
+ * 全选与删除（`store/actions`）、缩放到选中与「适应」（`store/zoomToSelection`）都读这一个判据。
+ */
+export const fastEditPanelOf = (s: { mode: string; activePanelId: string | null }): string | null =>
+  s.mode === 'fast_edit' ? s.activePanelId : null
+
 /* -------------------------- 排版视口的寄存处 ------------------------------ */
 
 /**
