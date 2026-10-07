@@ -20,6 +20,8 @@ playground / mcp / embedded / onboarding、App / main）不写 hex / `rgb()` / `
 **纸**（`--color-paper` / `--color-paper-ink`：画布页面、图的缩略图底 `bg-paper`、纸上的网格 / 棋盘格 / 占位字）两套主题同值，图不反相；
 快速编辑给当前那张图垫一张同框的纸；直接坐在纸上的界面（空画布提示）垫 `bg-paper-chrome`（浅色透明、暗色面板色）。暗色值表在 `index.css` 末尾，媒体查询（没选浅色）与 `[data-theme='dark']` 两段逐字相同；
 外观偏好在设置 › 通用 › 外观（跟随系统 / 浅色 / 深色，`uiStore.setTheme` → `lib/theme.applyTheme`，本机 `tavotto.ui`）。
+把 token 量进 JS / canvas 并缓存的地方（`canvas/Rulers` 的 `readInk`）以 `lib/theme.useEffectiveTheme()` 为缓存键——它跟 `data-theme` 与系统外观，
+换主题当场重画；按挂载量一次、永不失效的缓存会留旧色（Codex #834，`canvas/rulers.test.tsx`）。
 `tokenContrast.test` 把浅色的每一对字 / 底在暗色里再断言一遍；`DESIGN.md` 的「### Dark」表由 `designMd.test` 对拍；真浏览器
 「切了主题计算色真的变了、纸仍是白」由 `e2e/theme.spec.ts`（`@feature:settings.appearance`）量。
 
