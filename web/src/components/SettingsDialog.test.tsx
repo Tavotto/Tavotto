@@ -107,6 +107,21 @@ describe('分区与深链', () => {
     expect(resolveSection(null)).toBeNull()
   })
 
+  it('外部请求落在当前页也被消费：切走后同一菜单命令再来一次仍然生效（Codex #821 P2）', async () => {
+    await open()
+    await act(async () => navButtons().find((b) => b.dataset.section === 'about')!.click())
+    // 已经在「关于」时菜单发「检查更新」：无事可做，但请求要消费掉
+    await act(async () => useUiStore.getState().setSettingsOpen(true, 'about'))
+    await act(async () => {})
+    expect(current()?.dataset.section).toBe('about')
+    expect(useUiStore.getState().settingsSection, '已在目标页的请求也要消费').toBeNull()
+    await act(async () => navButtons().find((b) => b.dataset.section === 'general')!.click())
+    expect(current()?.dataset.section).toBe('general')
+    await act(async () => useUiStore.getState().setSettingsOpen(true, 'about'))
+    await act(async () => {})
+    expect(current()?.dataset.section).toBe('about')
+  })
+
   it('导出面板的「编辑」深链落在「规范」页，不是样式页', async () => {
     await open('profiles')
     expect(current()?.dataset.section).toBe('spec')

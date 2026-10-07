@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { msg, t as translate } from '@/i18n'
 import {
@@ -133,7 +133,19 @@ function CanvasRow({
   dragFrom: React.RefObject<number | null>
 }) {
   useTranslation('workspace')
-  const [draft, setDraft] = useState(canvas.name)
+  const openRef = useRef<HTMLButtonElement>(null)
+  // Enter / Esc 结束改名后焦点回到这一行的按钮；失焦提交（点了别处）不抢焦点
+  const refocus = useRef(false)
+  useEffect(() => {
+    if (!renaming && refocus.current) {
+      refocus.current = false
+      openRef.current?.focus()
+    }
+  }, [renaming])
+  const finishRename = (name: string | null, viaKey: boolean) => {
+    refocus.current = viaKey
+    onRenamed(name)
+  }
 
   const remove = async () => {
     const s = useDocumentStore.getState()
@@ -151,7 +163,7 @@ function CanvasRow({
     deleteCanvasWithSession(canvas.id)
     useUiStore
       .getState()
-      .setStatus(msg('canvasList.deleted', { name: canvas.name }, 'workspace'))
+      .setStatus(msg('canvasList.deleted', { name: canvas.name }, 'workspace'), 'done')
   }
 
   return (
@@ -182,45 +194,39 @@ function CanvasRow({
       className={cn(listRowClass({ selected: active }), 'h-auto gap-2 px-2 py-1.5')}
     >
       <CanvasThumb page={canvas.page} objects={canvas.objects} />
-      <button
-        onClick={onOpen}
-        onDoubleClick={onRenameStart}
-        className="min-w-0 flex-1 text-left outline-none focus-visible:focus-ring"
-        aria-label={cl('openCanvas', { name: canvas.name })}
-        aria-current={active || undefined}
-      >
-        {renaming ? (
-          <input
-            autoFocus
-            value={draft}
-            aria-label={cl('canvasName')}
-            onChange={(e) => setDraft(e.target.value)}
-            onClick={(e) => e.stopPropagation()}
-            onBlur={() => onRenamed(draft.trim() || null)}
-            onKeyDown={(e) => {
-              e.stopPropagation()
-              if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
-              if (e.key === 'Escape') onRenamed(null)
-            }}
-            // 行内改名框也是「可编辑框」那一副（fieldBox），28 高；此前三处行内改名框三种
-            // 高度 / 圆角（左栏审计 L31）
-            className={cn('h-7 w-full px-1.5 outline-none', FIELD_BOX, FIELD_FOCUS)}
-          />
-        ) : (
-          <>
-            {/* 画布名是主文字：12 / ink（选中时行自己加粗），与树行 / 卡名同一档（L02 / L32）；
-                元数据 11 / ink-3，选中时不跟着行加粗 */}
-            <span className="block truncate text-sm text-ink">{canvas.name}</span>
-            <span className="block text-xs font-normal text-ink-3">
-              {cl('meta', {
-                w: canvas.page.w,
-                h: canvas.page.h,
-                count: canvas.objects.length,
-              })}
-            </span>
-          </>
-        )}
-      </button>
+      {/* 改名框与「打开」按钮是兄弟、不是父子：此前框嵌在 <button> 里（嵌套交互控件，
+          读屏与键盘都乱）。改名时整颗按钮让位给框，结束后焦点回到按钮 */}
+      {renaming ? (
+        <RenameInput initial={canvas.name} onDone={finishRename} />
+      ) : (
+        <button
+          ref={openRef}
+          data-canvas-open
+          onClick={onOpen}
+          onDoubleClick={onRenameStart}
+          onKeyDown={(e) => {
+            // F2 = 改当前行的名字（与访达 / 资源管理器同一个键）
+            if (e.key === 'F2') {
+              e.preventDefault()
+              onRenameStart()
+            }
+          }}
+          className="min-w-0 flex-1 text-left outline-none focus-visible:focus-ring"
+          aria-label={cl('openCanvas', { name: canvas.name })}
+          aria-current={active || undefined}
+        >
+          {/* 画布名是主文字：12 / ink（选中时行自己加粗），与树行 / 卡名同一档（L02 / L32）；
+              元数据 11 / ink-3，选中时不跟着行加粗 */}
+          <span className="block truncate text-sm text-ink">{canvas.name}</span>
+          <span className="block text-xs font-normal text-ink-3">
+            {cl('meta', {
+              w: canvas.page.w,
+              h: canvas.page.h,
+              count: canvas.objects.length,
+            })}
+          </span>
+        </button>
+      )}
       <Menu
         width={148}
         align="end"
@@ -279,5 +285,45 @@ function CanvasRow({
         </MenuItem>
       </Menu>
     </li>
+  )
+}
+
+/**
+ * 行内改名框。每次进入改名都重新挂载，草稿从**此刻**的名字起步——此前草稿只在行挂载时
+ * 取一次，Esc 放弃后再改名，框里还是上次没提交的草稿。
+ */
+function RenameInput({
+  initial,
+  onDone,
+}: {
+  initial: string
+  onDone: (name: string | null, viaKey: boolean) => void
+}) {
+  const [draft, setDraft] = useState(initial)
+  // Esc / Enter 之后框被卸掉，浏览器可能再补一次 blur：只认第一次结束
+  const done = useRef(false)
+  const finish = (name: string | null, viaKey: boolean) => {
+    if (done.current) return
+    done.current = true
+    onDone(name, viaKey)
+  }
+  return (
+    <input
+      autoFocus
+      data-canvas-rename
+      value={draft}
+      aria-label={cl('canvasName')}
+      onChange={(e) => setDraft(e.target.value)}
+      onFocus={(e) => e.currentTarget.select()}
+      onBlur={() => finish(draft.trim() || null, false)}
+      onKeyDown={(e) => {
+        e.stopPropagation()
+        if (e.key === 'Enter') finish(draft.trim() || null, true)
+        if (e.key === 'Escape') finish(null, true)
+      }}
+      // 行内改名框也是「可编辑框」那一副（fieldBox），28 高；此前三处行内改名框三种
+      // 高度 / 圆角（左栏审计 L31）
+      className={cn('h-7 min-w-0 flex-1 px-1.5 outline-none', FIELD_BOX, FIELD_FOCUS)}
+    />
   )
 }

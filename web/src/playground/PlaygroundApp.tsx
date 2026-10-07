@@ -10,7 +10,10 @@ import {
   TriangleAlert,
   X,
 } from '@/components/ui/icons'
+import { Button, IconButton } from '@/components/ui/Button'
+import { buttonClass } from '@/components/ui/buttonClass'
 import { Details, Summary } from '@/components/ui/Details'
+import { Tip } from '@/components/ui/Tooltip'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { CanvasStage } from '@/canvas/CanvasStage'
 import { ElementInspector } from '@/components/inspector/ElementInspector'
@@ -78,7 +81,7 @@ function BrandLink() {
       href={homeHref()}
       title={pg('backHome')}
       aria-label={pg('backHome')}
-      className="shrink-0 rounded-sm text-base font-medium tracking-tight text-ink transition-colors hover:text-sel"
+      className="shrink-0 rounded-sm text-base font-medium tracking-tight text-ink outline-none transition-colors hover:text-sel focus-visible:focus-ring"
     >
       {PRODUCT_NAME}
     </a>
@@ -297,17 +300,16 @@ export function PlaygroundApp() {
         <BrandLink />
         <span className="text-xs text-ink-3">{pg('title')}</span>
         <span className="flex-1" />
-        <button
+        <Button
+          size="sm"
           onClick={() => void switchLocale()}
-          className="h-7 rounded-sm px-2 text-xs text-ink-2 hover:bg-surface-2"
+          className="text-ink-2"
           lang={currentLocale() === 'zh-CN' ? 'en' : 'zh-Hans'}
         >
           {currentLocale() === 'zh-CN' ? 'English' : '简体中文'}
-        </button>
-        <a
-          href={RELEASES_LATEST_URL}
-          className="flex h-7 items-center gap-1.5 rounded-sm bg-ink px-2.5 text-xs text-white"
-        >
+        </Button>
+        {/* 次按钮：首屏唯一的填色主动作留给案例卡上的「开始体验」 */}
+        <a href={RELEASES_LATEST_URL} className={buttonClass({ variant: 'secondary', size: 'sm' })}>
           <Download size={ICON_SIZE.sm} />
           {pg('downloadDesktop')}
         </a>
@@ -392,7 +394,7 @@ function PickView({
           <button
             key={f.stem}
             onClick={() => onPick(f.stem)}
-            className="flex w-[220px] flex-col gap-2 rounded-sm border border-border bg-surface p-3 text-left hover:border-sel"
+            className="flex w-[220px] flex-col gap-2 rounded-md border border-border bg-surface p-3 text-left outline-none hover:border-sel focus-visible:focus-ring"
           >
             {f.preview ? (
               <img
@@ -401,7 +403,7 @@ function PickView({
                 className="w-full rounded-xs border border-border bg-white"
               />
             ) : (
-              <span className="flex h-24 items-center justify-center rounded-xs border border-border text-xs text-ink-faint">
+              <span className="flex h-24 items-center justify-center rounded-xs border border-border text-xs text-ink-3">
                 {f.stem}
               </span>
             )}
@@ -415,9 +417,9 @@ function PickView({
           </button>
         ))}
       </div>
-      <button onClick={onBack} className="mt-6 text-xs text-ink-3 underline-offset-2 hover:underline">
+      <Button size="sm" onClick={onBack} className="mt-6 text-ink-3">
         {backLabel(origin)}
-      </button>
+      </Button>
     </div>
   )
 }
@@ -438,9 +440,9 @@ function NoFigureView({
       <p className="text-lg font-medium">{pg('noFigureTitle')}</p>
       <p className="max-w-md text-center text-xs leading-relaxed text-ink-2">{pg('noFigureBody')}</p>
       {log && <LogDisclosure label={pg('showLog')} text={log} open />}
-      <button onClick={onBack} className="btn-back mt-2 h-7 rounded-sm border border-border px-3 text-xs text-ink-2 hover:text-ink">
+      <Button variant="secondary" onClick={onBack} className="mt-2">
         {backLabel(origin)}
-      </button>
+      </Button>
     </div>
   )
 }
@@ -643,21 +645,22 @@ function EditorView({
         <span className="hidden text-xs text-ink-3 sm:inline">{pg('title')}</span>
 
         <span className="mx-1 h-4 w-px bg-border" />
-        <button
-          onClick={openSourceDialog}
-          className="flex h-7 items-center gap-1.5 rounded-sm px-2 font-mono text-xs text-ink-2 hover:bg-surface-2"
-          title={pg('sourceNote')}
-        >
-          <FileCodeCorner size={ICON_SIZE.sm} aria-hidden />
-          <span className="max-w-[16ch] truncate">{session.scriptName}</span>
-          <IntegrityBadge integrity={integrity} />
-        </button>
-        <button
+        <Tip label={pg('sourceNote')}>
+          <Button size="sm" onClick={openSourceDialog} className="font-mono text-xs text-ink-2">
+            <FileCodeCorner size={ICON_SIZE.sm} aria-hidden />
+            <span className="max-w-[16ch] truncate">{session.scriptName}</span>
+            <IntegrityBadge integrity={integrity} />
+          </Button>
+        </Tip>
+        <Button
+          size="sm"
+          active={showPatches}
+          aria-expanded={showPatches}
           onClick={() => setShowPatches((v) => !v)}
-          className="h-7 rounded-sm px-2 font-mono text-xs text-ink-3 hover:bg-surface-2"
+          className="font-mono text-xs text-ink-3"
         >
           {pg('overrides', { count: overrideCount })}
-        </button>
+        </Button>
 
         <span className="mx-1 h-4 w-px bg-border" />
         <IconButton label={translate('topbar.undo', { ns: 'workspace' })} disabled={!canUndo} onClick={() => runUndoRedo(false)}>
@@ -666,26 +669,23 @@ function EditorView({
         <IconButton label={translate('topbar.redo', { ns: 'workspace' })} disabled={!canRedo} onClick={() => runUndoRedo(true)}>
           <Redo2 size={ICON_SIZE.md} />
         </IconButton>
-        <button
-          onClick={resetEdits}
-          disabled={overrideCount === 0}
-          className="h-7 rounded-sm px-2 text-xs text-ink-2 hover:bg-surface-2 disabled:opacity-40"
-        >
+        <Button size="sm" onClick={resetEdits} disabled={overrideCount === 0} className="text-ink-2">
           {pg('resetEdits')}
-        </button>
+        </Button>
 
         <span className="flex-1" />
         <RenderState rendering={rendering} pending={pending} error={renderError} />
-        <button onClick={onLoadAnother} className="h-7 rounded-sm px-2 text-xs text-ink-2 hover:bg-surface-2">
+        <Button size="sm" onClick={onLoadAnother} className="text-ink-2">
           {backLabel(origin)}
-        </button>
-        <button
+        </Button>
+        <Button
+          size="sm"
           onClick={onSwitchLocale}
-          className="h-7 rounded-sm px-2 text-xs text-ink-3 hover:bg-surface-2"
+          className="text-ink-3"
           lang={currentLocale() === 'zh-CN' ? 'en' : 'zh-Hans'}
         >
           {currentLocale() === 'zh-CN' ? 'EN' : '中文'}
-        </button>
+        </Button>
       </header>
 
       {/* 不变式失效：Tavotto 保证碰不到源文件，而工作区里那个文件确实变了。
@@ -756,20 +756,18 @@ function EditorView({
       {overrideCount > 0 && !cueDismissed && (
         <footer className="flex shrink-0 items-center gap-3 border-t border-border bg-surface px-3 py-1.5">
           <p className="min-w-0 flex-1 truncate text-xs text-ink-3">{pg('desktopNote')}</p>
-          <a
-            href={RELEASES_LATEST_URL}
-            className="flex h-6 shrink-0 items-center gap-1 rounded-sm border border-border px-2 text-xs text-ink-2 hover:text-ink"
-          >
+          <a href={RELEASES_LATEST_URL} className={buttonClass({ variant: 'secondary', size: 'sm' })}>
             <Download size={ICON_SIZE.xs} aria-hidden />
             {pg('downloadDesktop')}
           </a>
-          <button
+          <IconButton
+            label={translate('actions.close')}
+            iconSize="sm"
             onClick={() => setCueDismissed(true)}
-            aria-label={translate('actions.close')}
-            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-ink-3 hover:bg-surface-2"
+            className="text-ink-3"
           >
             <X size={ICON_SIZE.sm} />
-          </button>
+          </IconButton>
         </footer>
       )}
 
@@ -809,7 +807,8 @@ function IntegrityBadge({ integrity }: { integrity: SourceIntegrity }) {
     <span
       className={cn(
         'flex items-center gap-1',
-        verdict === 'changed' ? 'text-danger' : verdict === 'unchanged' ? 'text-ink-3' : 'text-ink-faint',
+        // 「核对中 / 未核对」也是要读的字：ink-3（ink-faint 只给装饰，宪法文字对比一节）
+        verdict === 'changed' ? 'text-danger' : 'text-ink-3',
       )}
     >
       {verdict === 'changed' && <ShieldAlert size={ICON_SIZE.xs} aria-hidden />}
@@ -882,13 +881,9 @@ function SourceDialog({
             <IntegrityBadge integrity={integrity} />
           </span>
           <span className="flex-1" />
-          <button
-            onClick={onClose}
-            aria-label={translate('actions.close')}
-            className="flex h-6 w-6 items-center justify-center rounded-sm text-ink-3 hover:bg-surface-2"
-          >
+          <IconButton label={translate('actions.close')} iconSize="sm" onClick={onClose} className="text-ink-3">
             <X size={ICON_SIZE.sm} />
-          </button>
+          </IconButton>
         </div>
         <p className="shrink-0 border-b border-border px-4 py-2 text-xs leading-relaxed text-ink-3">
           {pg('sourceNote')}
@@ -899,30 +894,6 @@ function SourceDialog({
         <IntegrityDetails integrity={integrity} />
       </div>
     </div>
-  )
-}
-
-function IconButton({
-  label,
-  disabled,
-  onClick,
-  children,
-}: {
-  label: string
-  disabled?: boolean
-  onClick: () => void
-  children: React.ReactNode
-}) {
-  return (
-    <button
-      aria-label={label}
-      title={label}
-      disabled={disabled}
-      onClick={onClick}
-      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-ink-2 hover:bg-surface-2 disabled:opacity-40"
-    >
-      {children}
-    </button>
   )
 }
 

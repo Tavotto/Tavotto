@@ -69,3 +69,57 @@ describe('ColorField 的「无」', () => {
     expect(onChange).toHaveBeenCalledWith('#123456')
   })
 })
+
+/**
+ * 「多个值」（2026-10-07 审计 §9.2 P0）：多选颜色不一致时，色块不画任何一个颜色
+ * ——之前批量行画 #000000、标注画 #1B1B18，再在旁边补一句「多个值」，控件本身在谎报。
+ */
+describe('ColorField 的「多个值」', () => {
+  it('mixed：中性色块，不画 value 那个色，title 与可达描述都是「多个值」', async () => {
+    await act(async () => {
+      root.render(<ColorField value="#ff00ff" mixed onChange={() => {}} ariaLabel="边色" />)
+    })
+    const swatch = host.querySelector('[data-mixed]') as HTMLElement
+    expect(swatch).not.toBeNull()
+    expect(swatch.title).toBe('多个值')
+    const fills = Array.from(swatch.querySelectorAll('div')).map((d) => d.style.background)
+    expect(fills).not.toContain('rgb(255, 0, 255)')
+    expect(fills).not.toContain('rgb(0, 0, 0)')
+    const input = host.querySelector('input[type=color]') as HTMLInputElement
+    const desc = document.getElementById(input.getAttribute('aria-describedby') ?? '')
+    expect(desc?.textContent).toBe('多个值')
+    // value 只当取色盘的起点
+    expect(input.value).toBe('#ff00ff')
+  })
+
+  it('mixed 盖过「无」：起点是 none 时也画「多个值」，取色盘拿到合法色号', async () => {
+    await act(async () => {
+      root.render(<ColorField value={NO_COLOR} mixed onChange={() => {}} ariaLabel="边色" />)
+    })
+    expect(host.querySelector('[data-mixed]')).not.toBeNull()
+    expect(host.querySelector('[data-none]')).toBeNull()
+    expect((host.querySelector('input[type=color]') as HTMLInputElement).value).toMatch(/^#[0-9a-f]{6}$/)
+  })
+
+  it('mixed 时取色照旧发出取色盘的色号', async () => {
+    const onChange = vi.fn()
+    await act(async () => {
+      root.render(<ColorField value="#ff00ff" mixed onChange={onChange} ariaLabel="边色" />)
+    })
+    const input = host.querySelector('input[type=color]') as HTMLInputElement
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+      setter.call(input, '#123456')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    expect(onChange).toHaveBeenCalledWith('#123456')
+  })
+
+  it('不 mixed 时没有描述、没有 data-mixed（对照组）', async () => {
+    await act(async () => {
+      root.render(<ColorField value="#ff00ff" onChange={() => {}} ariaLabel="边色" />)
+    })
+    expect(host.querySelector('[data-mixed]')).toBeNull()
+    expect(host.querySelector('input[type=color]')!.hasAttribute('aria-describedby')).toBe(false)
+  })
+})

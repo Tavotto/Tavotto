@@ -578,7 +578,7 @@ export function ProbeResultsDialog({
               size="sm"
               onClick={() => {
                 addRuntimePanelToCanvas(d)
-                setStatus(msg('registry.addedToCanvas', { stem: d.stem }, 'dialogs'))
+                setStatus(msg('registry.addedToCanvas', { stem: d.stem }, 'dialogs'), 'done')
               }}
             >
               {sc('addToCanvas')}

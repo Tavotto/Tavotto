@@ -113,11 +113,11 @@ jobs:
   # ────────────────────────────────────────────────────────────────
   trust:
     timeout-minutes: 60  # 上限是防挂死、不是性能预算：把损失从「无限」变成「有界」
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       sha: ${{ steps.resolve.outputs.sha }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           fetch-depth: 0
       - id: resolve
@@ -131,8 +131,14 @@ jobs:
         run: |
           set -euo pipefail
           if [ -n "${GIVEN_SHA:-}" ]; then
-            # 信任但仍要核实：调用方给的必须是本仓库里一个真实、可达 main 的 commit
-            if ! git cat-file -e "${GIVEN_SHA}^{commit}" 2>/dev/null; then
+            # 只收完整 commit SHA：分支/缩写/表达式会在 trust 与后续 checkout 之间
+            # 再解析一次，祖先判断通过的对象不能随 ref 移动而改变。
+            if [[ ! "$GIVEN_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::调用方必须传完整的 40 位小写十六进制 commit SHA"
+              exit 1
+            fi
+            # 信任但仍要核实：对象必须真是 commit，不能只是能剥到 commit 的 tag。
+            if [ "$(git cat-file -t "$GIVEN_SHA" 2>/dev/null)" != "commit" ]; then
               echo "::error::调用方给的 $GIVEN_SHA 不是本仓库里的 commit"
               exit 1
             fi
@@ -141,7 +147,7 @@ jobs:
               exit 1
             fi
             echo "sha=$GIVEN_SHA" >> "$GITHUB_OUTPUT"
-            echo "✅ 调用方传入 $GIVEN_SHA（可达 origin/main）"
+            echo "✅ 调用方传入 ${GIVEN_SHA}（可达 origin/main）"
             exit 0
           fi
           if ! SHA="$(git rev-parse --verify "refs/tags/${TAG}^{commit}" 2>/dev/null)"; then
@@ -153,7 +159,7 @@ jobs:
             exit 1
           fi
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
-          echo "✅ $TAG → $SHA（可达 origin/main）"
+          echo "✅ $TAG → ${SHA}（可达 origin/main）"
 
   # Rust supervisor 的静态门禁。**只在 Linux 上跑一份**：它是纯标准库 + serde
   # 的 stdio 进程，没有任何平台分支，三平台各跑一遍只是把发布慢三倍。
@@ -163,12 +169,12 @@ jobs:
   workerd:
     needs: trust
     timeout-minutes: 60  # 上限是防挂死、不是性能预算：把损失从「无限」变成「有界」
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: workerd
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: ${{ needs.trust.outputs.sha }}
       - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
@@ -231,7 +237,7 @@ jobs:
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: ${{ needs.trust.outputs.sha }}
 
@@ -296,7 +302,7 @@ jobs:
         env:
           SIGNPATH_ENABLED_VAR: ${{ vars.SIGNPATH_ENABLED }}
 
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with: { python-version: "3.13" }
 
       - name: 产品名（brand 常量是唯一出处）
@@ -311,9 +317,9 @@ jobs:
           test -n "$APP_NAME" || { echo "::error::读不到 brand.PRODUCT_NAME"; exit 1; }
           echo "APP_NAME=$APP_NAME" >> "$GITHUB_ENV"
 
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
         with: { version: 11.27.1 }
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 22
           cache: pnpm
@@ -329,7 +335,9 @@ jobs:
             workerd
 
       - name: 缓存 CPython 归档下载
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        # 发布消费者只读种子，不把指定源码构建后的目录写回 workflow ref 的缓存。
+        # main 的 CI cache-seed 维护同一 key；miss 仍走下面的下载与逐项 SHA 校验。
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: build/runtime-cache
           key: cpython-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('packaging/runtime-lock.json') }}
@@ -685,7 +693,7 @@ jobs:
       - name: 上传待签名 Windows 安装包
         if: runner.os == 'Windows'
         id: upload-unsigned-windows-artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: windows-installer-signing-input-${{ github.run_id }}
           path: out/*
@@ -759,7 +767,7 @@ jobs:
       # latest.json 里一直只有 windows-x86_64——dmg 装的那批用户永远查不到
       # 新版本，而整条链全绿（v0.7.0 就是这么发出去的）。
       - name: 上传最终桌面产物（更新清单的输入）
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: desktop-tauri-${{ matrix.artifact }}
           path: out/*
@@ -822,7 +830,7 @@ jobs:
             --out "out/artifact-manifest-${LEG}.json" "${ARGS[@]}"
 
       - name: 上传这条腿的产物清单
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: artifact-manifest-${{ matrix.artifact }}
           path: out/artifact-manifest-${{ matrix.artifact }}.json
@@ -838,19 +846,19 @@ jobs:
     needs: [trust, build]
     if: ${{ inputs.release_build }}
     timeout-minutes: 60  # 上限是防挂死、不是性能预算：把损失从「无限」变成「有界」
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read    # 只产出 latest.json 这个 artifact，挂 Release 归 publish job
     env:
       RELEASE_TAG: ${{ inputs.tag || format('v{0}', inputs.version) }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: ${{ needs.trust.outputs.sha }}
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with: { python-version: "3.13" }
 
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           path: artifacts
           pattern: desktop-tauri-*
@@ -914,7 +922,7 @@ jobs:
       # publish job，一次挂全部。这个 job 现在只产出 latest.json 这个产物。
       - name: 上传 latest.json
         if: steps.probe.outputs.have == '1'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: updater-manifest
           path: out/latest.json

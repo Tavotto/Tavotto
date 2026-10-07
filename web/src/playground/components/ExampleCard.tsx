@@ -18,6 +18,7 @@
  *     （§21 的硬要求）。
  */
 import { useRef, useState, type RefObject } from 'react'
+import { Button } from '@/components/ui/Button'
 import { prefersReducedMotion } from '@/lib/motion'
 import { cn } from '@/lib/utils'
 import type { PlaygroundExample } from '../examples'
@@ -182,33 +183,38 @@ export function ExampleCard({
               {pg('starterBadge')}
             </span>
           )}
-          <span className="ml-auto font-mono text-xs text-ink-faint">{example.filename}</span>
+          <span className="ml-auto font-mono text-xs text-ink-3">{example.filename}</span>
         </div>
         <p className="text-xs leading-relaxed text-ink-2">{pg(example.descriptionKey)}</p>
-        <p className="text-xs text-ink-3">
-          <span className="text-ink-faint">{pg('editableLabel')}</span>{' '}
+        <p className="text-xs text-ink-2">
+          <span className="text-ink-3">{pg('editableLabel')}</span>{' '}
           {pg(example.editableKey)}
         </p>
 
         <div className="mt-1.5 flex items-center gap-2">
-          <button
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={(e) => {
               e.stopPropagation()
               onViewCode(example)
             }}
-            className="h-7 rounded-sm border border-border px-2.5 text-xs text-ink-2 transition-colors hover:border-ink-faint hover:text-ink"
           >
             {pg('viewCode')}
-          </button>
-          <button
+          </Button>
+          {/* 一屏一个填色主动作：只有主推案例（featured）的「开始体验」是 primary，
+              其余卡片同一句话降为次按钮——三颗黑钮并排就没有「先点哪个」了 */}
+          <Button
+            variant={example.featured ? 'primary' : 'secondary'}
+            size="sm"
             onClick={(e) => {
               e.stopPropagation()
               onLaunch(example)
             }}
-            className="h-7 rounded-sm bg-ink px-3 text-xs font-medium text-white transition-opacity hover:opacity-90"
+            className="font-medium"
           >
             {pg('startExample')}
-          </button>
+          </Button>
         </div>
       </div>
     </article>

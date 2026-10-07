@@ -1834,24 +1834,20 @@ function BatchFieldRow({
           />
         )
       case 'color':
+        // 不一致时色块自己说「多个值」（`ColorField mixed`）：不画任何一个颜色，
+        // value 只当取色盘的起点（第一个成员的真色）
         return (
-          <>
-            <ColorField
-              ariaLabel={label}
-              value={mixed ? '#000000' : String(first ?? '#000000')}
-              onChange={(v) => write(v, true)}
-              onGestureEnd={gesture.end}
-            />
-            {mixed && <span className="shrink-0 text-xs text-ink-3">{el('mixedValues')}</span>}
-          </>
+          <ColorField
+            ariaLabel={label}
+            mixed={mixed}
+            value={String(first ?? '#000000')}
+            onChange={(v) => write(v, true)}
+            onGestureEnd={gesture.end}
+          />
         )
       case 'bool':
-        return (
-          <>
-            <Toggle aria-label={label} checked={!mixed && !!first} onChange={writeOnce} />
-            {mixed && <span className="shrink-0 text-xs text-ink-3">{el('mixedValues')}</span>}
-          </>
-        )
+        // 不一致时开关是第三态（滑块居中 + 短横、aria-checked="mixed"），点一下全部设为开
+        return <Toggle aria-label={label} mixed={mixed} checked={!mixed && !!first} onChange={writeOnce} />
       case 'enum': {
         // **视觉选择器不因为多选而退化**：线型仍是真实线段预览、marker 仍是
         // 图形网格、图例位置仍是 3×3 网格。同一个属性在单选与多选下是同一种
@@ -2749,9 +2745,9 @@ function AlignSection({
     const res = alignSelectedPanelElements(panel.id, mode)
     if (res.ok) return
     // 拒绝必须说得出原因：什么都不发生而界面一声不吭，用户只会再点几下
-    if (res.reason === 'group-blocked' && res.group) setStatus(groupBlockedMessage(res.group))
-    else if (res.reason === 'syncing') setStatus(elMsg('alignSyncing'))
-    else if (res.reason === 'noop') setStatus(elMsg('alignNoop'))
+    if (res.reason === 'group-blocked' && res.group) setStatus(groupBlockedMessage(res.group), 'info')
+    else if (res.reason === 'syncing') setStatus(elMsg('alignSyncing'), 'progress')
+    else if (res.reason === 'noop') setStatus(elMsg('alignNoop'), 'info')
     else if (res.reason === 'invalid') setStatus(elMsg('alignInvalid'), 'error')
   }
 

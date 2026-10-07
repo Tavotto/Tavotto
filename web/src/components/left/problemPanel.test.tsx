@@ -234,9 +234,35 @@ describe('普通界面不出现内部标识', () => {
     await seed()
     await mount(<ProblemPanel />)
     await openCard()
-    const details = container.querySelector('details')!
-    expect(details.open).toBe(false)
+    const details = container.querySelector<HTMLElement>('[data-issue-tech]')!
+    expect(details.hidden).toBe(true)
     expect(details.textContent).toContain('axes_0.xticks')
+    const toggle = details.closest('li')!.querySelector<HTMLElement>('[data-issue-tech-toggle]')!
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(toggle.getAttribute('aria-controls')).toBe(details.id)
+    await click(toggle)
+    expect(details.hidden).toBe(false)
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    await click(toggle)
+    expect(details.hidden).toBe(true)
+  })
+
+  it('悬停不改行高：技术详情的开关是行尾常驻槽位，只改透明度，不按悬停显示 / 隐藏', async () => {
+    await seed()
+    await mount(<ProblemPanel />)
+    await openCard()
+    const toggles = [...container.querySelectorAll<HTMLElement>('[data-issue-tech-toggle]')]
+    expect(toggles.length).toBe(container.querySelectorAll('[data-issue-row]').length)
+    for (const t of toggles) {
+      // 与「定位」按钮同一行（兄弟），不是行下面另起的一行
+      expect(t.parentElement).toBe(t.closest('li')!.querySelector('[data-issue-row]')!.parentElement)
+    }
+    // 任何会随悬停 / 聚焦改 display 的类都不许再出现（那正是每指一行清单跳 20px 的来源）
+    const classes = [...container.querySelectorAll<HTMLElement>('[data-issue-row]')]
+      .flatMap((r) => [...r.closest('li')!.querySelectorAll<HTMLElement>('*')])
+      .map((el) => el.getAttribute('class') ?? '')
+      .join(' ')
+    expect(classes).not.toMatch(/group-(hover|focus-within)\/row:[\w:-]*(block|hidden|flex)\b/)
   })
 
   it('每行给出短标题 + 当前值 → 要求', async () => {
@@ -659,6 +685,26 @@ describe('范围：当前图 / 整份排版（审计 T09）', () => {
   })
 })
 
+describe('吸顶组头与抽屉同色', () => {
+  it('停靠抽屉（灰桌面）里组头读抽屉底色，不写死白底', async () => {
+    await seed()
+    await mount(<LeftPanel />)
+    await openCard()
+    const aside = container.querySelector<HTMLElement>('[data-left-drawer]')!
+    expect(aside.className).toContain('[--drawer-bg:var(--color-bg)]')
+    const head = container.querySelector<HTMLElement>('[data-issue-group-head]')!
+    expect(head.className).toContain('bg-[var(--drawer-bg')
+    expect(head.className).not.toMatch(/(^|\s)bg-surface(\s|$)/)
+  })
+
+  it('覆盖式抽屉（白底浮层）的底色变量跟着换', async () => {
+    await seed()
+    await mount(<LeftPanel overlay />)
+    const aside = container.querySelector<HTMLElement>('[data-left-drawer]')!
+    expect(aside.className).toContain('[--drawer-bg:var(--color-surface)]')
+  })
+})
+
 describe('定位后清单留在原地（审计 T09）', () => {
   it('点一行：左栏仍是「问题」页，那行带「当前」标记，底部给第几条与「下一项」', async () => {
     await seed()
@@ -978,7 +1024,7 @@ describe('卡片层：一张组图拆成子图（2026-09-28）', () => {
     await mount(<ProblemPanel />)
     await click(partCard('(a)')!.querySelector('button')!)
     expect(liveDrill()).toEqual({ kind: 'part', figure: 'p1', key: 'axes_0' })
-    const gids = rows().map((r) => r.closest('li')?.querySelector('details')?.textContent ?? '')
+    const gids = rows().map((r) => r.closest('li')?.querySelector('[data-issue-tech]')?.textContent ?? '')
     expect(rows()).toHaveLength(2)
     expect(gids.every((g) => g.includes('axes_0') || g.includes('axes_1'))).toBe(true)
     expect(text()).toContain('修复此子图')
