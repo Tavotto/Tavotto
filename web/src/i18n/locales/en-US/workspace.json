@@ -489,7 +489,9 @@
       "workspace": "Project"
     },
     "style": "Style",
-    "workspace": "Workspace"
+    "workspace": "Projects",
+    "problemsBlocking_one": "Problems · {{count}} blocking (of {{total}})",
+    "problemsBlocking_other": "Problems · {{count}} blocking (of {{total}})"
   },
   "readiness": {
     "bannerSummary": "{{total}} figures found: {{editable}} editable, {{pending}} waiting to connect, {{layoutOnly}} layout only.",

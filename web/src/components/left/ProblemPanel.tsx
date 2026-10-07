@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   ChevronDown,
@@ -6,68 +6,70 @@ import {
   ChevronUp,
   CircleCheck,
   ClipboardList,
-  TriangleAlert,
-  Wrench,
+  Ellipsis,
+  OctagonAlert,
+  RefreshCw,
   X,
 } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
-import { TruncateMiddle } from '@/components/ui/TruncateMiddle'
+import { formatRelativeTime } from '@/i18n/format'
 import { t as translate } from '@/i18n'
 import { focusFailureMessage, focusIssue } from '@/lib/issueFocus'
 import { problemContextNow } from '@/lib/problemContext'
+import { profileName } from '@/lib/profileText'
 import {
   bucketsByCategory,
   bucketsByFigure,
   cursorFor,
   cursorView,
   drillIssues,
+  drillKey,
+  drillOf,
+  flattenGroups,
   groupIssues,
+  isSplit,
   isUnverifiable,
   issuesInScope,
   singleDrill,
-  type IssueGroup,
+  type FigureBucket,
   type ProblemDrill,
   type ProblemScope,
   type ProblemView,
 } from '@/lib/problemList'
+import { resolveDocumentSpec } from '@/lib/specBinding'
 import { cn } from '@/lib/utils'
 import { SEVERITIES, type Severity } from '@/lib/profile'
-import {
-  issueAriaLabel,
-  issueDetailText,
-  issueTitle,
-  issueValues,
-  severityLabel,
-  SEVERITY_ICON,
-  subjectName,
-  technicalDetailLines,
-} from '@/lib/validationText'
+import { severityLabel, subjectName } from '@/lib/validationText'
 import type { ValidationIssue } from '@/lib/validation'
 import { useDocumentStore } from '@/store/documentStore'
+import { toCatalog, useProfileStore } from '@/store/profileStore'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { useUiStore } from '@/store/uiStore'
 import { schedule, useValidationStore } from '@/store/validationStore'
 import { Button, IconButton } from '../ui/Button'
 import { EmptyState } from '../ui/EmptyState'
-import { FixButton, runBatchFix, useBatchable } from './IssueFixButton'
-import { CategoryCards, DrillHeader, FigureCards, UnverifiableEntry } from './ProblemCards'
-import { Segmented } from '../ui/Segmented'
-import { Tab, TabList, TabPanel } from '../ui/Tabs'
+import {
+  Menu,
+  MenuCheckItem,
+  MenuItem,
+  MenuLabel,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuSeparator,
+} from '../ui/Menu'
+import { Notice } from '../ui/Notice'
 import { Tip } from '../ui/Tooltip'
+import { DrawerHeaderActions, DrawerTitleMeta } from './DrawerHeader'
+import { runBatchFix, useBatchable } from './IssueFixButton'
+import { CategoryCards, FigureCards, SeverityGlyph, UnverifiableEntry } from './ProblemCards'
+import { ProblemTreeContext, type ProblemTreeCtx } from './problemTree'
+import { GroupNode } from './ProblemTreeRows'
 import { useScopedProblems } from './useProblemScope'
+
 
 /** 本组文案在 errors:problems.* 下（问题的措辞与检查项同一个命名空间） */
 const pr = (key: string, values?: Record<string, unknown>) =>
   translate(`problems.${key}`, { ns: 'errors', ...(values ?? {}) })
-
-/**
- * 一组默认只展开这么多行；再多的收进「显示其余 N 项」。
- * 23 条几乎一样的「字号低于绝对下限」逐条铺开，用户看到的是一面墙，而不是
- * 「一个问题、23 个对象、一颗全部修复」。
- */
-export const PREVIEW_ROWS = 5
-/** 只差一两条就不值得折：「显示其余 1 项」比直接列出来更啰嗦 */
-export const MIN_HIDDEN_ROWS = 3
 
 /**
  * 左侧「问题」抽屉。**打开导出对话框才知道图有没有问题的日子到此为止。**
@@ -77,27 +79,22 @@ export const MIN_HIDDEN_ROWS = 3
  * **不自己挑规范**（`lib/specBinding.ts` 唯一判据）、**不显示 gid**
  * （精确名词只在每行的技术详情里）。
  *
- * ### 呈现（审计 T09；2026-09-11 Visual Consolidation Session 4 定形；2026-09-28 卡片化）
+ * ### 呈现（2026-10-07 设计审计 §9.4：四层头 → 两层，卡片 → 披露树）
  *
- * * **范围**：「当前图 / 整份排版」两档等分的下划线页签。判据在 `lib/problemList.ts`，
- *   抽屉标题的计数与这里同一份。轨道上不再挂数字：有阻断项时一颗中性小点，问题数在
- *   可达名里——它是入口，不跟着范围变。
- * * **总览**：总数 + 等级比例条 + `● 阻断 25   ● 警告 110   ● 建议 30` 一行轻量的开关
- *   （等级色只在点上）+ `N 项可自动处理  [全部处理]`——总览唯一的填色主动作。
- * * **卡片层**（2026-09-28 用户反馈：178 行逐条铺开太吵）：先分类、再批量。「按图」
- *   一张组图拆成子图卡片（(a)(b)(c)，判据 `lib/subplotParts.ts`），「整份排版」下挂在
- *   一行带「修复本图」的图头下面；「按类别」一类一张（规则目录的 `category`）。卡片只说
- *   项数、阻断数、最主要的检查项 + 这张卡的「修复 N」；「无法核验」只占一行入口。
- *   按图看、清单里只有一张拆不出子图的图时卡片层只有一张卡——跳过它，直接列清单。
- * * **详情**：点进卡片（`uiStore.problemDrill`）才是按规则聚合的逐组清单：组头 = 折叠
- *   箭头 + 等级图标 + 标题 + 「N 个对象 · 等级」+ 该组的「全部修复」，滚动时钉在顶上；
- *   组内一行一个真实对象，只说「谁、现在多少 → 要多少」。一组默认只展开前
- *   {@link PREVIEW_ROWS} 行，其余收进「显示其余 N 项」。头上的「修复此子图 / 此类」是
- *   这一屏唯一的填色主动作。
- * * **定位后清单留在原地**：`issueFocus` 不再让元素树顶掉左栏；正在处理的那一条
- *   带浅灰底 + 「当前」字样（不只靠颜色），底部给「上一项 / 下一项」（在这张卡片里走）。
- *   修好一条它会消失，「下一项」指向顶上来的那一条；「下一项」走进被折起的那部分时，
- *   那一组自动展开。样式面板直达（`openProblemAt`）由它自己点开那条所在的卡片。
+ * * **标题行**（`LeftPanel` 的 36px 头）：「问题」+ 范围胶囊「当前图 13 ▾」（两档各带自己的数，
+ *   判据 `lib/problemList`，与清单同一份）+ 正在重新检查的 shimmer；「⋯」里是分组方式（按图 / 按类别）、
+ *   画布标记开关、重新检查。轨道上不挂数字：有阻断项时一颗红点，数字在可达名里。
+ * * **摘要条**（32px）：等级开关（只有阻断着色）+ 唯一一颗填色主动作「全部修复 N」（`batchable()`，不含建议档）。
+ *   总数与等级比例条删掉了——数字在开关上各说一遍。
+ * * **树**：图（32）→ 子图（28）→ 规则（28）→ 对象（28），全部建在 `listRowClass` 上、**就地展开**；
+ *   「按类别」是 类别 → 规则 → 对象。只有一张拆不出子图的图时跳过分桶层，规则直接在顶层。
+ *   每行一个 88px 尾随格：静止时是值，指到 / 聚焦 / 当前时同一格换成「修复」（一个动词：修复 / 修复… / 修复 N）。
+ *   「无法核验」不进分桶，在树底只占一行。
+ * * **定位后清单留在原地**：点一行 = `focusIssue`，正在处理的那一条是选中底（600 + selected，
+ *   不只靠颜色）；底部「上一项 / 下一项」，F8 / ⇧F8 同一个动作，走到一支的尽头接着走下一支。
+ *   修好一条它会消失，「下一项」指向顶上来的那一条。指着一行时画布上那个对象描一道轮廓（`issueHover`）。
+ * * **点开哪一支**：用户的开合在面板里（随现场作废）；直达（`openProblemAt`）与定位写的
+ *   `uiStore.problemDrill` 让那一支**强制开着**，游标在它里面走——与卡片层时代同一份状态、同一个现场章。
  *
  * 接入状态（哪张图连没连上脚本）刻意**不混进来**：那是另一类事实，有自己的
  * 中心与自己的下一步；底部只放一条链接把用户送过去。
@@ -107,20 +104,29 @@ export function ProblemPanel() {
   const all = useValidationStore((s) => s.issues)
   const ready = useValidationStore((s) => s.ready)
   const failed = useValidationStore((s) => s.failed)
+  const queued = useValidationStore((s) => s.queued)
   const filter = useUiStore((s) => s.problemFilter)
   const view = useUiStore((s) => s.problemView)
   const activeCanvasId = useDocumentStore((s) => s.activeCanvasId)
-  // 卡片与游标是**派生**的：写下它们的现场（排版 / 范围与当前图 / 切法）不是此刻就是
+  // 点开的那一支与游标是**派生**的：写下它们的现场（排版 / 范围与当前图 / 切法）不是此刻就是
   // null——换项目、换当前图时没有人需要记得来清（2026-09-29 #690 评审）
   const { figureId, figureName, scope, issues, context, drill, cursor } = useScopedProblems()
   const listRef = useRef<HTMLUListElement>(null)
+  /** 用户的开合：键 = drillKey，随现场作废（换范围 / 切法 / 项目都回到默认） */
+  const [opened, setOpened] = useState<{ context: string; map: ReadonlyMap<string, boolean> }>(() => ({
+    context,
+    map: new Map(),
+  }))
+  const openMap = opened.context === context ? opened.map : EMPTY_MAP
+  /** 用户折起的规则组（键 = 支 | 规则） */
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set())
   /** 用户点过「显示其余 N 项」的组 */
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set())
+  const rechecking = useDelayed(ready && queued, 300)
 
   /**
    * 这一轮检查失败了，**但上一轮的结果被留着**（`validationStore` 刻意保留，
-   * 见 web/AGENTS.md）。这时候清单要照常列——它们仍然算在计数条与导出摘要里，
+   * 见 web/AGENTS.md）。这时候清单要照常列——它们仍然算在计数与导出摘要里，
    * 藏起来等于让用户看得见数字却找不到东西。
    */
   const retained = failed && ready && all.length > 0
@@ -136,24 +142,34 @@ export function ProblemPanel() {
     return issues.filter((i) => !keep || keep.has(i.severity))
   }, [issues, filter])
 
-  // 卡片层（2026-09-28）：同一份 `shown` 的两种切法；点进一张卡片后，下面的逐组
-  // 清单、游标与「修复」都只对这张卡片里的那些问题
+  // 分桶：同一份 `shown` 的两种切法；展开一支列的、尾随格「修复 N」修的都是 `drillIssues` 那一份
   const figures = useMemo(() => bucketsByFigure(shown), [shown])
   const categories = useMemo(() => bucketsByCategory(shown), [shown])
-  const unverifiableCount = useMemo(() => shown.filter(isUnverifiable).length, [shown])
-  // 按图看、清单里只有一张拆不出子图的图（单子图的普通图）：卡片层只会有一张卡片，
-  // 多点一下什么也没多看到——直接列它的清单，不给返回
+  const unverifiable = useMemo(() => shown.filter(isUnverifiable), [shown])
+  // 按图看、清单里只有一张拆不出子图的图（单子图的普通图）：分桶层只会有一支，
+  // 多点一下什么也没多看到——直接列它的规则组
   const single = useMemo<ProblemDrill | null>(
-    () => (drill ? null : singleDrill(view, figures, unverifiableCount)),
-    [drill, view, figures, unverifiableCount],
+    () => singleDrill(view, figures, unverifiable.length),
+    [view, figures, unverifiable.length],
   )
+  /** 游标在哪一支里走：直达 / 定位写下的那一支，或唯一的那一支 */
   const open = drill ?? single
-  const listed = useMemo(() => (open ? drillIssues(shown, open) : shown), [shown, open])
-
+  const listed = useMemo(() => (open ? drillIssues(shown, open) : []), [shown, open])
   const groups = useMemo(() => groupIssues(listed), [listed])
   const cursorAt = useMemo(() => cursorView(groups, cursor), [groups, cursor])
 
-  // 与「全部处理」真正执行的是**同一个集合**（`batchable`：本画布、能自动修、
+  /** F8 的走法：树里各支从上到下（无法核验不在里面——它们要的是人眼确认，不是逐条处理） */
+  const walk = useMemo<ProblemDrill[]>(() => {
+    if (single) return [single]
+    if (view === 'category') return categories.map((c) => ({ kind: 'category', key: c.key }))
+    return figures.flatMap<ProblemDrill>((f) =>
+      isSplit(f)
+        ? f.parts.map((p) => ({ kind: 'part', figure: f.key, key: p.key }))
+        : [{ kind: 'figure', key: f.key }],
+    )
+  }, [single, view, categories, figures])
+
+  // 与「全部修复」真正执行的是**同一个集合**（`batchable`：本画布、能自动修、
   // 不含建议档）——计数说 5 项、点下去修了 7 项，是这颗按钮最不该有的样子
   const fixableHere = useBatchable(shown, activeCanvasId)
   const fixing = useUiStore((s) => s.fixing)
@@ -163,14 +179,17 @@ export function ProblemPanel() {
     if (cursor && groups.length === 0) useUiStore.getState().setProblemCursor(null)
   }, [cursor, groups.length])
 
-  // 派生已经保证过期的卡片不显示；面板挂着时看到现场换了，再把记着的那份也丢掉——
-  // 否则换回原来那张图（A → B → A）时，用户已经离开的那张卡片会复活
+  // 派生已经保证过期的那一支不显示；面板挂着时看到现场换了，再把记着的那份也丢掉——
+  // 否则换回原来那张图（A → B → A）时，用户已经离开的那一支会复活
   useEffect(() => {
     const ui = useUiStore.getState()
     if (ui.problemContext !== context && (ui.problemDrill || ui.problemCursor)) ui.setProblemDrill(null)
   }, [context])
 
-  /** 定位 + 记下「正在处理这一条」。失败照旧说原因，游标不动。 */
+  // 面板卸载（换抽屉 / 收起）时画布上的悬停轮廓一起撤
+  useEffect(() => () => useUiStore.getState().setIssueHover(null), [])
+
+  /** 定位 + 记下「正在处理这一条」与它所在的那一支。失败照旧说原因，游标不动。 */
   const locate = (issue: ValidationIssue) => {
     const outcome = focusIssue(issue)
     if (!outcome.ok) {
@@ -178,106 +197,159 @@ export function ProblemPanel() {
       return
     }
     // 现场在定位**之后**现取：定位可能把当前图换成了这一行所在的那张（整份排版下点一行
-    // 会进它的快速编辑）。点进的卡片一起盖到新现场上——人还在这张卡片里
+    // 会进它的快速编辑）。这一支一起盖到新现场上——人还在这一支里
     const ui = useUiStore.getState()
     const now = problemContextNow()
-    if (drill) ui.setProblemDrill(drill, now)
-    const next = cursorFor(groups, issue.issueId)
+    const inSingle = single && drillIssues(shown, single).some((i) => i.issueId === issue.issueId)
+    const target = inSingle ? null : drillOf(issue, view, figures)
+    if (target) ui.setProblemDrill(target, now)
+    const next = cursorFor(groupIssues(drillIssues(shown, target ?? single!)), issue.issueId)
     if (next) ui.setProblemCursor(next, now)
     else ui.setProblemCursor(null)
   }
 
-  /** 方向键在行（或卡片）间漫游：清单可能很长，只有 Tab 的话走到底要按几十次 */
+  /** 上一项 / 下一项（F8 / ⇧F8 与游标条同一个动作）：一支走完接着走下一支，不跳回开头 */
+  const step = (dir: 1 | -1) => {
+    const near = dir > 0 ? cursorAt.next : cursorAt.prev
+    if (cursor && near) return locate(near)
+    const at = open ? walk.findIndex((d) => drillKey(d) === drillKey(open)) : -1
+    // 还没开始逐项：从此刻点开的那一支起步（没有就是树的头 / 尾）；已经在走：这一支走完换下一支
+    const target = !cursor && at >= 0 ? walk[at] : at < 0 ? (dir > 0 ? walk[0] : walk.at(-1)) : walk[at + dir]
+    if (!target) return
+    const flat = flattenGroups(groupIssues(drillIssues(shown, target)))
+    const issue = dir > 0 ? flat[0] : flat.at(-1)
+    if (issue) locate(issue)
+  }
+  const stepRef = useRef(step)
+  stepRef.current = step
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'F8' || e.metaKey || e.ctrlKey || e.altKey || e.defaultPrevented) return
+      e.preventDefault()
+      stepRef.current(e.shiftKey ? -1 : 1)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
+  /** 方向键：↑↓ 在行间漫游，→ 展开 / ← 收起（收着的、或叶子行按 ← 回到上一层的行） */
   const roam = (e: React.KeyboardEvent) => {
-    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
     const rows = [...(listRef.current?.querySelectorAll<HTMLElement>(ROAM_TARGETS) ?? [])]
     if (!rows.length) return
-    const at = rows.findIndex((r) => r.contains(document.activeElement))
-    const next = at < 0 ? 0 : at + (e.key === 'ArrowDown' ? 1 : -1)
-    if (next < 0 || next >= rows.length) return
-    e.preventDefault()
-    rows[next].focus()
+    const at = rows.findIndex((r) => r === document.activeElement)
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      const next = at < 0 ? 0 : at + (e.key === 'ArrowDown' ? 1 : -1)
+      if (next < 0 || next >= rows.length) return
+      e.preventDefault()
+      rows[next].focus()
+      return
+    }
+    if ((e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') || at < 0) return
+    const row = rows[at]
+    const state = row.getAttribute('aria-expanded')
+    if (e.key === 'ArrowRight' && state === 'false') {
+      e.preventDefault()
+      row.click()
+    } else if (e.key === 'ArrowLeft' && state === 'true') {
+      e.preventDefault()
+      row.click()
+    } else if (e.key === 'ArrowLeft') {
+      // 回到上一层：最近的、自己就是一支 / 一组的祖先 li 的那颗展开钮
+      const parent = row.closest('li')?.parentElement?.closest('li')
+      const head = parent?.querySelector<HTMLElement>(':scope > button, :scope > [data-issue-group-head] > button')
+      if (head) {
+        e.preventDefault()
+        head.focus()
+      }
+    }
   }
 
-  const toggleGroup = (ruleCode: string) =>
-    setCollapsed((prev) => {
-      const next = new Set(prev)
-      if (next.has(ruleCode)) next.delete(ruleCode)
-      else next.add(ruleCode)
-      return next
-    })
+  const tree: ProblemTreeCtx = {
+    activeCanvasId,
+    isOpen: (d, dflt) => forcedOpen(d, drill) || (openMap.get(drillKey(d)) ?? dflt),
+    toggle: (d, dflt) => {
+      const now = forcedOpen(d, drill) || (openMap.get(drillKey(d)) ?? dflt)
+      const map = new Map(openMap)
+      map.set(drillKey(d), !now)
+      setOpened({ context, map })
+      const ui = useUiStore.getState()
+      if (now) {
+        // 收起直达 / 定位撑开的那一支：放下它（连同游标），否则它下一帧又被撑开
+        if (forcedOpen(d, drill)) ui.setProblemDrill(null)
+      } else if (!isHeader(d, figures)) {
+        // 展开一支 = 点名它（与卡片层「点进一张卡片」同一份状态）：F8 从这里走、教程认得出人在哪一支。
+        // 拆成子图的图头只是分组头，不点名
+        ui.setProblemDrill(d, problemContextNow())
+      }
+    },
+    body: (d, depth) =>
+      groupIssues(drillIssues(shown, d)).map((g) => {
+        const key = `${drillKey(d)}|${g.ruleCode}`
+        return (
+          <GroupNode
+            key={key}
+            group={g}
+            depth={depth}
+            open={!collapsed.has(key)}
+            expanded={expanded.has(key)}
+            onToggle={() => setCollapsed((prev) => toggled(prev, key))}
+            onExpand={() => setExpanded((prev) => new Set(prev).add(key))}
+            currentId={cursorAt.current?.issueId ?? null}
+            activeCanvasId={activeCanvasId}
+            onLocate={locate}
+          />
+        )
+      }),
+  }
 
-  const expandGroup = (ruleCode: string) => setExpanded((prev) => new Set(prev).add(ruleCode))
-
-  // 两个页签各带自己的计数（审计 B55：「当前图 14 / 整份排版 16」两个数得同时看得见，
-  // 用户才知道切过去会多出几条）。判据与清单同一份 `issuesInScope`
+  // 范围胶囊的两个数（审计 B55：两个数得同时看得见，用户才知道切过去会多出几条）
   const figureCount = figureId ? issuesInScope(all, 'figure', figureId).length : 0
   const documentCount = all.length
 
-  const back = () => {
-    const ui = useUiStore.getState()
-    ui.setProblemDrill(null)
-    ui.setProblemCursor(null)
-  }
-
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <ScopeBar
-        figureId={figureId}
-        figureName={figureName}
-        scope={scope}
-        counts={ready ? { figure: figureCount, document: documentCount } : null}
-      />
+      <DrawerTitleMeta>
+        <ScopePill
+          figureId={figureId}
+          figureName={figureName}
+          scope={scope}
+          counts={ready ? { figure: figureCount, document: documentCount } : null}
+        />
+        {rechecking && (
+          <span data-problem-rechecking role="status" className="type-meta shrink-0 text-shimmer">
+            {pr('rechecking')}
+          </span>
+        )}
+      </DrawerTitleMeta>
+      <DrawerHeaderActions>
+        <PanelMenu view={view} />
+      </DrawerHeaderActions>
 
-      {/* 范围页签对应的内容区（tabpanel，由当前页签命名）：概览 + 卡片 / 清单 + 游标条 */}
-      <TabPanel id={`problem-scope-${scope}`} className="flex min-h-0 flex-1 flex-col">
-      {/* 概览只在这一轮结果就绪后出现：还在检查时挂着一条计数，与下面的
-          「正在检查…」是两句互相打架的话（2026-09-11 设计包）。点进卡片后只留
-          等级筛选——总数、比例条与「全部处理」属于总览，这时的主动作是卡片自己的修复 */}
+      {/* 摘要条只在这一轮结果就绪后出现：还在检查时挂着一条计数，与下面的骨架是两句打架的话 */}
       {ready && issues.length > 0 && (
-        <section className="shrink-0 border-b border-border px-3 pb-2.5 pt-2">
-          {!drill && (
-            <div data-problem-total className="mb-1.5 flex flex-col gap-1.5">
-              <p className="flex items-baseline gap-1 text-ink">
-                <span className="type-title tabular-nums">{shown.length}</span>
-                <span className="text-xs text-ink-3">{pr('totalUnit', { count: shown.length })}</span>
-              </p>
-              <SeverityBar counts={counts} />
-            </div>
-          )}
-          <div
-            role="group"
-            aria-label={pr('severityLabel')}
-            className="-mx-1.5 flex flex-wrap items-center"
-          >
+        <section
+          data-problem-summary
+          aria-label={pr('severityLabel')}
+          className="flex min-h-10 shrink-0 flex-wrap items-center gap-1 px-2 py-1"
+        >
+          <div role="group" aria-label={pr('severityLabel')} className="flex flex-wrap items-center gap-1">
             {SEVERITIES.filter((s) => counts[s] > 0).map((s) => (
-              <SeverityStat key={s} severity={s} count={counts[s]} active={!!filter?.includes(s)} />
+              <SeverityToggle key={s} severity={s} count={counts[s]} active={!!filter?.includes(s)} />
             ))}
           </div>
-          {!drill && fixableHere.length > 0 && (
-            <div
+          <span className="flex-1" />
+          {fixableHere.length > 0 && (
+            <Button
+              size="lg"
+              variant="primary"
               data-problem-autofix
-              className="mt-2 flex items-center justify-between gap-2 rounded-sm bg-surface-2 py-1.5 pl-2.5 pr-1.5"
+              className="shrink-0 tabular-nums"
+              disabled={fixing}
+              title={pr('fixAllTip', { count: fixableHere.length })}
+              onClick={() => void runBatchFix(fixableHere)}
             >
-              <span className="flex min-w-0 items-center gap-1.5">
-                <Wrench size={ICON_SIZE.sm} className="shrink-0 text-ink-2" aria-hidden />
-                <span className="min-w-0">
-                  <span className="block truncate text-sm font-medium tabular-nums text-ink">
-                    {pr('fixableHere', { count: fixableHere.length })}
-                  </span>
-                  <span className="type-meta block truncate">{pr('fixableHint')}</span>
-                </span>
-              </span>
-              <Button
-                size="md"
-                variant="primary"
-                className="shrink-0"
-                disabled={fixing}
-                onClick={() => void runBatchFix(fixableHere)}
-              >
-                {fixing ? pr('fixing') : pr('fixAuto')}
-              </Button>
-            </div>
+              {fixing ? pr('fixing') : pr('fixAll', { count: fixableHere.length })}
+            </Button>
           )}
         </section>
       )}
@@ -285,28 +357,30 @@ export function ProblemPanel() {
       {/*
         这一轮查砸了、但上一轮的结果**留着**（`ready && issues.length`）：
         那就把失败说出来，**同时把留下来的问题继续列出来**。整屏换成一张错误
-        空态的话，那些问题仍然被计进上面的计数条、也仍然进导出摘要，却在**唯一
+        空态的话，那些问题仍然被计进计数、也仍然进导出摘要，却在**唯一
         一份完整问题清单**里翻不到、点不到、跳不过去（PR #214 第七轮评审）。
       */}
       {retained && (
-        <div
-          role="status"
-          className="mx-3 my-2 flex shrink-0 items-center gap-2 rounded-sm bg-warn-surface py-1.5 pl-2 pr-1 text-xs leading-relaxed text-ink-2"
-        >
-          <TriangleAlert size={ICON_SIZE.sm} className="shrink-0 text-warn-content" aria-hidden />
-          <span className="flex-1">{pr('failedKeptHint')}</span>
-          <Button size="sm" variant="ghost" className="-my-1" onClick={() => schedule()}>
-            {pr('retry')}
-          </Button>
+        <div className="shrink-0 px-2 pb-2">
+          <Notice
+            tone="warn"
+            role="status"
+            action={
+              <Button size="sm" variant="ghost" onClick={() => schedule()}>
+                {pr('retry')}
+              </Button>
+            }
+          >
+            {pr('failedKeptHint')}
+          </Notice>
         </div>
       )}
 
       {failed && !retained ? (
         <EmptyState
-          icon={TriangleAlert}
+          icon={OctagonAlert}
           title={pr('failedTitle')}
-          /* 「查不了」与「没问题」是两个答案：压成一个的话用户会带着一屏
-             静悄悄的绿去投稿 */
+          /* 「查不了」与「没问题」是两个答案：压成一个的话用户会带着一屏静悄悄的绿去投稿 */
           hint={pr(ready ? 'failedKeptHint' : 'failedHint')}
           action={{ label: pr('retry'), onClick: () => schedule() }}
         />
@@ -315,13 +389,12 @@ export function ProblemPanel() {
            `resetValidation()` 与那一轮真正开跑之间有 250ms 防抖窗口，
            那段时间里 `ready=false, running=false, issues=[]` —— 挂着
            `running` 的话会**掉进下面那个绿色的"没有问题"**，而这一刻
-           根本还没查过（T-54，PR #214 第六轮评审）。 */
-        <p className="px-3 py-6 text-center text-xs text-ink-3">{pr('running')}</p>
+           根本还没查过（T-54，PR #214 第六轮评审）。首检是静态骨架（加载四种写法之一）。 */
+        <TreeSkeleton />
       ) : shown.length === 0 ? (
         all.length === 0 ? (
-          /* 说明只是标题的复述（「未发现问题」/「按当前规范检查，项目没有需要处理的
-             问题」），删掉一份（左栏审计 L35） */
-          <EmptyState icon={CircleCheck} title={pr('none')} />
+          /* 空态给证据：按哪套规范、查了几张图、什么时候——「没问题」得说得出凭什么 */
+          <NoneEvidence />
         ) : issues.length === 0 ? (
           /* 范围裁掉了：整份排版里有问题、这张图上没有——是两句不同的话 */
           <EmptyState
@@ -334,137 +407,88 @@ export function ProblemPanel() {
             }}
           />
         ) : (
+          /* 被等级筛选筛空了：不是「修完了」（#690 评审） */
           <EmptyState
             icon={CircleCheck}
             title={pr('noneInFilter')}
             action={{ label: pr('clearFilter'), onClick: () => useUiStore.getState().setProblemFilter(null) }}
           />
         )
-      ) : !open ? (
-        <>
-          <ViewSwitch view={view} />
+      ) : (
+        <ProblemTreeContext.Provider value={tree}>
           <ul
             ref={listRef}
             onKeyDown={roam}
+            data-problem-tree={view}
             data-problem-cards={view}
             aria-label={pr('listLabel')}
-            className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto px-2 pb-3 pt-1.5"
+            className="min-h-0 flex-1 overflow-y-auto pb-2"
           >
-            {view === 'figure' ? (
-              <FigureCards
-                figures={figures}
-                withHeaders={scope === 'document' || figures.length > 1}
-                activeCanvasId={activeCanvasId}
-              />
-            ) : (
-              <CategoryCards categories={categories} activeCanvasId={activeCanvasId} />
-            )}
-            {unverifiableCount > 0 && <UnverifiableEntry count={unverifiableCount} />}
-          </ul>
-        </>
-      ) : (
-        <>
-          {drill ? (
-            <DrillHeader drill={drill} figures={figures} issues={listed} activeCanvasId={activeCanvasId} />
-          ) : (
-            <ViewSwitch view={view} />
-          )}
-          {listed.length === 0 && filter?.length && drillIssues(issues, open).length > 0 ? (
-            /* 卡片里还有，只是被等级筛选筛掉了：不是「修完了」（#690 评审） */
-            <EmptyState
-              icon={CircleCheck}
-              title={pr('noneInFilter')}
-              action={{ label: pr('clearFilter'), onClick: () => useUiStore.getState().setProblemFilter(null) }}
-            />
-          ) : listed.length === 0 ? (
-            /* 这张卡片被修空了：说一声，给回总览的路，不留一块空白 */
-            <EmptyState
-              icon={CircleCheck}
-              title={pr('drillDone')}
-              action={{ label: view === 'category' ? pr('backCategories') : pr('backFigures'), onClick: back }}
-            />
-          ) : (
-            <ul
-              ref={listRef}
-              onKeyDown={roam}
-              aria-label={pr('listLabel')}
-              className="min-h-0 flex-1 overflow-y-auto border-t border-border px-2 pb-3 pt-1"
-            >
-              {/* 「需要处理」与「无法自动检查」是两层不同的话（审计 B06）：前者是规范
-                  判过、给得出「当前 → 要求」的；后者是**查不了**——不是通过，也不是
-                  错误。卡片层把它们分开了（后者只有一行入口），所以点进来的这一屏只会
-                  是其中一层；`data-problem-tier` 说是哪一层 */}
-              <li data-problem-tier={open.kind === 'unverifiable' ? 'unverifiable' : 'actionable'}>
-                <ul>
-                  {groups.map((g) => (
-                    <GroupBlock
-                      key={g.ruleCode}
-                      group={g}
-                      open={!collapsed.has(g.ruleCode)}
-                      expanded={expanded.has(g.ruleCode)}
-                      onToggle={() => toggleGroup(g.ruleCode)}
-                      onExpand={() => expandGroup(g.ruleCode)}
-                      currentId={cursorAt.current?.issueId ?? null}
-                      activeCanvasId={activeCanvasId}
-                      onLocate={locate}
-                    />
-                  ))}
-                </ul>
+            {single ? (
+              <li data-problem-tier="actionable">
+                <ul>{tree.body(single, 0)}</ul>
               </li>
-            </ul>
-          )}
-        </>
+            ) : view === 'figure' ? (
+              <FigureCards figures={figures} withHeaders={scope === 'document' || figures.length > 1} />
+            ) : (
+              <CategoryCards categories={categories} />
+            )}
+            {unverifiable.length > 0 && <UnverifiableEntry issues={unverifiable} />}
+          </ul>
+        </ProblemTreeContext.Provider>
       )}
 
-      {open && cursor && groups.length > 0 && <CursorBar view={cursorAt} onLocate={locate} />}
-      </TabPanel>
+      {open && cursor && groups.length > 0 && <CursorBar view={cursorAt} onStep={step} />}
       <ReadinessLink />
     </div>
   )
 }
 
-/** 分组方式是一个取值（按图 / 按类别），不是「看哪一页」：用 Segmented，不用 Tabs */
-function ViewSwitch({ view }: { view: ProblemView }) {
-  return (
-    <div className="shrink-0 px-3 pb-1 pt-2.5">
-      <Segmented<ProblemView>
-        ariaLabel={pr('view.label')}
-        value={view}
-        onChange={(v) => useUiStore.getState().setProblemView(v)}
-        items={[
-          { value: 'figure', label: pr('view.figure') },
-          { value: 'category', label: pr('view.category') },
-        ]}
-      />
-    </div>
-  )
+const EMPTY_MAP: ReadonlyMap<string, boolean> = new Map()
+
+const toggled = (prev: ReadonlySet<string>, key: string) => {
+  const next = new Set(prev)
+  if (next.has(key)) next.delete(key)
+  else next.add(key)
+  return next
 }
 
-/** 方向键漫游的落点：清单行，或卡片层每张卡片的「查看详情」钮 */
-const ROAM_TARGETS = '[data-issue-row], [data-problem-card] > button:first-child, button[data-problem-card]'
+/** 拆成子图的图头：分组头，不是一支 */
+const isHeader = (d: ProblemDrill, figures: readonly FigureBucket[]) =>
+  d.kind === 'figure' && figures.some((f) => f.key === d.key && isSplit(f))
 
-/**
- * 等级比例条：一眼看出这一屏是「几条阻断 + 一堆建议」还是「全是警告」。
- * 纯装饰（数字在下面的筛选开关里各说一遍），`aria-hidden`。
- */
-function SeverityBar({ counts }: { counts: Record<Severity, number> }) {
-  const present = SEVERITIES.filter((s) => counts[s] > 0)
-  return (
-    <div aria-hidden className="flex h-1 gap-0.5 overflow-hidden rounded-xs">
-      {present.map((s) => (
-        <span key={s} className={cn('h-full', DOT[s])} style={{ flexGrow: counts[s] }} />
-      ))}
-    </div>
-  )
+/** 直达 / 定位写下的那一支（与它的图头）强制开着 */
+function forcedOpen(d: ProblemDrill, drill: ProblemDrill | null): boolean {
+  if (!drill) return false
+  if (drillKey(d) === drillKey(drill)) return true
+  return d.kind === 'figure' && drill.kind === 'part' && d.key === drill.figure
 }
 
-/* ------------------------------- 范围 ------------------------------------- */
+/** 方向键漫游的落点：每一行的主按钮（分桶的展开钮、组头、对象行、「显示其余」） */
+const ROAM_TARGETS =
+  '[data-problem-card] > button:first-child, [data-issue-group-toggle], [data-issue-row], [data-issue-show-rest]'
+
+/** 指示物晚一点再出：防抖 250ms 的一轮常常一闪就过，那一闪不该变成一道闪烁的 shimmer */
+function useDelayed(on: boolean, ms: number): boolean {
+  const [shown, setShown] = useState(false)
+  useEffect(() => {
+    if (!on) {
+      setShown(false)
+      return
+    }
+    const id = setTimeout(() => setShown(true), ms)
+    return () => clearTimeout(id)
+  }, [on, ms])
+  return on && shown
+}
+
+/* ------------------------------- 标题行 ----------------------------------- */
 
 /**
- * 「当前图 / 整份排版」两个页签。没有当前图时那一档留在原位灰掉、
+ * 范围胶囊：「当前图 13 ▾」。两档各带自己的数；没有当前图时那一档留在原位灰掉、
  * 说明为什么——消失的选项解释不了自己。
  */
-function ScopeBar({
+function ScopePill({
   figureId,
   figureName,
   scope,
@@ -473,425 +497,202 @@ function ScopeBar({
   figureId: string | null
   figureName: string | null
   scope: ProblemScope
-  /** 两档各自的问题数；这一轮还没查完时是 null（挂着旧数字与「正在检查…」是两句打架的话） */
+  /** 两档各自的问题数；这一轮还没查完时是 null（挂着旧数字与骨架是两句打架的话） */
   counts: { figure: number; document: number } | null
 }) {
-  const count = (n: number | undefined) =>
-    n ? (
-      // 计数不是页签文字：600 只给页签选中态，数字跟着粗起来就成了第二个重点（左栏审计 L24）
-      <span className="ml-1 type-meta font-normal tabular-nums" aria-hidden>
-        {n}
-      </span>
-    ) : null
+  const label = scope === 'figure' ? pr('scopeFigure') : pr('scopeDocument')
+  const n = counts ? (scope === 'figure' ? counts.figure : counts.document) : null
   return (
-    <div className="shrink-0 px-3">
-      {/* 「当前图 / 整份排版」是看哪一页的清单，不是一个取值：下划线页签（`Tabs`），
-          与右栏「属性 / 画布」同一条线；取值控件是 `Segmented` */}
-      {/* 页签条 36：同一个 Tabs 原语在左栏 32、右栏 36 是两档头高（左栏审计 L25） */}
-      <div className="flex h-9 items-center border-b border-border">
-        <TabList label={pr('scopeLabel')}>
-          <Tab
-            panelId="problem-scope-figure"
-            active={scope === 'figure'}
-            disabled={!figureId}
-            title={
-              figureId
-                ? figureName
-                  ? pr('scopeFigureTip', { name: figureName })
-                  : undefined
-                : pr('scopeFigureUnavailable')
-            }
-            className="disabled:cursor-not-allowed disabled:opacity-40"
-            aria-label={
-              counts && figureId ? pr('scopeCountAria', { label: pr('scopeFigure'), count: counts.figure }) : undefined
-            }
-            onClick={() => useUiStore.getState().setProblemScope('figure')}
-          >
-            {pr('scopeFigure')}
-            {figureId && count(counts?.figure)}
-          </Tab>
-          <Tab
-            panelId="problem-scope-document"
-            active={scope === 'document'}
-            aria-label={
-              counts ? pr('scopeCountAria', { label: pr('scopeDocument'), count: counts.document }) : undefined
-            }
-            onClick={() => useUiStore.getState().setProblemScope('document')}
-          >
-            {pr('scopeDocument')}
-            {count(counts?.document)}
-          </Tab>
-        </TabList>
-      </div>
-      {/* 「当前图」是谁：写在页签的 title 里（scopeFigureTip），不再在页签下面挂一行图名
-          （2026-09-15 打磨批次 E，L4：一条问题上面曾有六层头） */}
-    </div>
+    <Menu
+      width={220}
+      trigger={
+        <button
+          type="button"
+          data-problem-scope-trigger={scope}
+          aria-label={
+            n != null ? pr('scopeCountAria', { label, count: n }) : label
+          }
+          title={scope === 'figure' && figureName ? pr('scopeFigureTip', { name: figureName }) : undefined}
+          className={cn(
+            'flex h-6 min-w-0 items-center gap-1 rounded-full bg-surface-hover pl-2 pr-1.5 text-xs text-ink-2 outline-none',
+            'transition-colors duration-fast hover:bg-surface-active hover:text-ink focus-visible:focus-ring data-[state=open]:bg-surface-active',
+          )}
+        >
+          <span className="truncate">{label}</span>
+          {n != null && n > 0 && (
+            <span aria-hidden className="type-meta tabular-nums">
+              {n}
+            </span>
+          )}
+          <ChevronDown size={ICON_SIZE.xs} aria-hidden className="shrink-0 text-ink-3" />
+        </button>
+      }
+    >
+      <MenuLabel>{pr('scopeLabel')}</MenuLabel>
+      <MenuRadioGroup value={scope} onValueChange={(v) => useUiStore.getState().setProblemScope(v as ProblemScope)}>
+        <MenuRadioItem
+          value="figure"
+          data-problem-scope="figure"
+          disabled={!figureId}
+          reason={figureId ? (figureName ?? undefined) : pr('scopeFigureUnavailable')}
+          shortcut={figureId && counts ? String(counts.figure) : undefined}
+        >
+          {pr('scopeFigure')}
+        </MenuRadioItem>
+        <MenuRadioItem
+          value="document"
+          data-problem-scope="document"
+          shortcut={counts ? String(counts.document) : undefined}
+        >
+          {pr('scopeDocument')}
+        </MenuRadioItem>
+      </MenuRadioGroup>
+    </Menu>
   )
 }
 
-/** 等级色点。**颜色不是唯一表达**：名字与数字各说一遍同一件事。 */
-const DOT: Record<Severity, string> = {
-  error: 'bg-danger',
-  warn: 'bg-warn',
-  not_verifiable: 'bg-ink-3',
-  suggestion: 'bg-ink-faint',
+/** 标题行的「⋯」：分组方式（取值，单选）、画布上的问题标记（开关）、重新检查 */
+function PanelMenu({ view }: { view: ProblemView }) {
+  const pins = useUiStore((s) => s.problemPins)
+  return (
+    <Menu
+      width={220}
+      align="end"
+      trigger={
+        <IconButton label={pr('menuLabel')} data-problem-menu>
+          <Ellipsis size={ICON_SIZE.md} className="text-ink-3" />
+        </IconButton>
+      }
+    >
+      <MenuLabel>{pr('view.label')}</MenuLabel>
+      <MenuRadioGroup value={view} onValueChange={(v) => useUiStore.getState().setProblemView(v as ProblemView)}>
+        <MenuRadioItem value="figure" data-problem-view="figure">
+          {pr('view.figure')}
+        </MenuRadioItem>
+        <MenuRadioItem value="category" data-problem-view="category">
+          {pr('view.category')}
+        </MenuRadioItem>
+      </MenuRadioGroup>
+      <MenuSeparator />
+      <MenuCheckItem checked={pins} onSelect={() => useUiStore.getState().setProblemPins(!pins)}>
+        {pr('pins')}
+      </MenuCheckItem>
+      <MenuItem icon={RefreshCw} data-problem-recheck onSelect={() => schedule()}>
+        {pr('retry')}
+      </MenuItem>
+    </Menu>
+  )
 }
 
-/** 组头的等级图标：只有 14px 的图标本身带色，不铺底色 */
-const SEVERITY_INK: Record<Severity, string> = {
-  error: 'text-danger',
-  warn: 'text-warn-content',
-  not_verifiable: 'text-ink-3',
-  suggestion: 'text-ink-3',
-}
+/* ------------------------------- 摘要条 ----------------------------------- */
 
-function SeverityStat({
-  severity,
-  count,
-  active,
-}: {
-  severity: Severity
-  count: number
-  active: boolean
-}) {
+/**
+ * 等级开关：记号 + 数，可切换（aria-pressed）。**只有阻断着色**（danger 浅底 + content 字）——
+ * 警告 / 建议不打扰，形状与名字照样说出等级（名字在可达名里）。
+ */
+function SeverityToggle({ severity, count, active }: { severity: Severity; count: number; active: boolean }) {
   const label = severityLabel(severity)
   const toggle = () => {
     const cur = useUiStore.getState().problemFilter ?? []
     const next = cur.includes(severity) ? cur.filter((s) => s !== severity) : [...cur, severity]
     useUiStore.getState().setProblemFilter(next.length ? next : null)
   }
+  const tinted = severity === 'error'
   return (
-    <button
-      type="button"
-      onClick={toggle}
-      aria-pressed={active}
-      aria-label={pr('filterAria', { label, count })}
-      className={cn(
-        'flex h-7 shrink-0 items-center gap-1.5 rounded-sm px-1.5 text-xs outline-none',
-        'transition-colors duration-fast focus-visible:focus-ring',
-        active ? 'bg-selected font-medium text-ink' : 'text-ink-2 hover:bg-surface-hover hover:text-ink',
-      )}
-    >
-      <span aria-hidden className={cn('h-1.5 w-1.5 shrink-0 rounded-full', DOT[severity])} />
-      <span>{label}</span>
-      <span className="tabular-nums text-ink">{count}</span>
-    </button>
-  )
-}
-
-/* ------------------------------- 分组 ------------------------------------- */
-
-/**
- * 一条规则一组。组头把「这是什么问题」说一遍（标题不截断、可换行）并钉在
- * 滚动区顶上；组内每行只说「谁、现在多少 → 要多少」+ 定位 + 修复。
- *
- * 行数达到 {@link PREVIEW_ROWS} + {@link MIN_HIDDEN_ROWS} 时只展开前几行，其余
- * 收进「显示其余 N 项」；「当前」那条落在被折起的部分时整组自动展开——逐项
- * 处理的「下一项」不能把用户带到一条看不见的行上。
- */
-function GroupBlock({
-  group,
-  open,
-  expanded,
-  onToggle,
-  onExpand,
-  currentId,
-  activeCanvasId,
-  onLocate,
-}: {
-  group: IssueGroup
-  open: boolean
-  expanded: boolean
-  onToggle: () => void
-  onExpand: () => void
-  currentId: string | null
-  activeCanvasId: string
-  onLocate: (issue: ValidationIssue) => void
-}) {
-  const Icon = SEVERITY_ICON[group.severity]
-  const title = issueTitle(group.issues[0])
-  // 组头的「全部修复」是用户点名这一组：建议档的组也照修（「全部处理」才不带建议档）
-  const fixable = useBatchable(group.issues, activeCanvasId, { includeSuggestions: true })
-  const fixing = useUiStore((s) => s.fixing)
-  const currentAt = currentId ? group.issues.findIndex((i) => i.issueId === currentId) : -1
-  const folded =
-    !expanded && currentAt < PREVIEW_ROWS && group.issues.length >= PREVIEW_ROWS + MIN_HIDDEN_ROWS
-  const visible = folded ? group.issues.slice(0, PREVIEW_ROWS) : group.issues
-  return (
-    <li data-issue-group={group.ruleCode} className="mb-1">
-      {/* 吸顶组头的底色必须与抽屉同色：停靠时抽屉坐在灰色桌面（bg）上，覆盖式才是白底
-          （surface）。写死 bg-surface 的话停靠态就是灰清单上一条条白带——底色读
-          `LeftPanel` 按模式设的 `--drawer-bg`，抽屉外（测试 / 别处借用）退回 surface */}
-      <div
-        data-issue-group-head
-        className="sticky top-0 z-sticky flex items-center gap-1 bg-[var(--drawer-bg,var(--color-surface))] py-1"
-      >
-        <button
-          type="button"
-          onClick={onToggle}
-          aria-expanded={open}
-          className={cn(
-            'flex min-w-0 flex-1 items-center gap-1.5 rounded-sm px-1 py-0.5 text-left outline-none',
-            'transition-colors duration-fast hover:bg-surface-hover focus-visible:focus-ring',
-          )}
-        >
-          <span className="flex h-4 w-4 shrink-0 items-center justify-center text-ink-3">
-            <ChevronRight
-              size={ICON_SIZE.xs}
-              aria-hidden
-              className={cn('transition-transform duration-fast', open && 'rotate-90')}
-            />
-          </span>
-          <Icon
-            size={ICON_SIZE.sm}
-            aria-hidden
-            className={cn('shrink-0', SEVERITY_INK[group.severity])}
-          />
-          {/* 组头一行（2026-09-15 打磨批次 E）：标题在左、「N 个对象 · 等级」meta 在右；
-              等级文字仍在——等级不只靠颜色（problemPanel.test 钉着） */}
-          <span className="flex min-w-0 flex-1 items-baseline gap-2">
-            <span className="min-w-0 flex-1 truncate text-sm font-medium leading-5 text-ink">{title}</span>
-            <span className="type-meta shrink-0 leading-5 tabular-nums">
-              {pr('groupObjects', { count: group.objects })}
-              {' · '}
-              {severityLabel(group.severity)}
-            </span>
-          </span>
-        </button>
-        {fixable.length > 0 && (
-          <Button
-            size="sm"
-            variant="ghost"
-            className="shrink-0 text-ink-2 hover:text-ink"
-            disabled={fixing}
-            onClick={() => void runBatchFix(fixable, { includeSuggestions: true })}
-          >
-            {pr('groupFixAll')}
-          </Button>
+    <Tip label={pr('filterAria', { label, count })} side="bottom">
+      <button
+        type="button"
+        onClick={toggle}
+        data-problem-severity={severity}
+        aria-pressed={active}
+        aria-label={pr('filterAria', { label, count })}
+        className={cn(
+          'flex h-6 shrink-0 items-center gap-1 rounded-full px-2 text-xs tabular-nums outline-none',
+          'outline-1 -outline-offset-1 transition-colors duration-fast focus-visible:focus-ring',
+          tinted
+            ? 'bg-danger-surface text-danger-content hover:bg-danger-surface'
+            : 'text-ink-2 hover:bg-surface-hover hover:text-ink',
+          active ? (tinted ? 'font-medium outline-danger-border' : 'bg-selected font-medium text-ink outline-border-strong') : 'outline-transparent',
         )}
-      </div>
-      {open && (
-        <ul className="ml-5">
-          {visible.map((issue) => (
-            <IssueRow
-              key={issue.issueId}
-              issue={issue}
-              current={issue.issueId === currentId}
-              activeCanvasId={activeCanvasId}
-              onLocate={() => onLocate(issue)}
-            />
-          ))}
-          {folded && (
-            <li>
-              <button
-                type="button"
-                data-issue-show-rest
-                onClick={onExpand}
-                className={cn(
-                  'flex h-7 items-center gap-1 rounded-sm pl-2 pr-2.5 text-xs text-ink-2 outline-none',
-                  'transition-colors duration-fast hover:bg-surface-hover hover:text-ink focus-visible:focus-ring',
-                )}
-              >
-                <ChevronDown size={ICON_SIZE.xs} aria-hidden className="text-ink-3" />
-                {pr('showRest', { count: group.issues.length - PREVIEW_ROWS })}
-              </button>
-            </li>
-          )}
-        </ul>
-      )}
-    </li>
+      >
+        <SeverityGlyph severity={severity} size="sm" />
+        <span>{count}</span>
+        <span className="sr-only">{label}</span>
+      </button>
+    </Tip>
   )
 }
 
-function IssueRow({
-  issue,
-  current,
-  activeCanvasId,
-  onLocate,
-}: {
-  issue: ValidationIssue
-  current: boolean
-  activeCanvasId: string
-  onLocate: () => void
-}) {
-  const values = issueValues(issue)
-  const canvasName = useDocumentStore(
-    (s) => s.canvases.find((c) => c.id === issue.objectRef.canvasId)?.name ?? null,
-  )
-  const elsewhere = issue.objectRef.canvasId !== activeCanvasId
-  const [techOpen, setTechOpen] = useState(false)
-  const techId = useId()
-  return (
-    <li
-      className={cn(
-        'group/row rounded-sm transition-colors duration-fast',
-        // 「当前」= 浅灰圆角块 + 文字标签，不画左侧竖条、不用蓝（2026-09-11 用户反馈）
-        current ? 'bg-selected' : 'hover:bg-surface-hover',
-      )}
-    >
-      <div className="flex items-start gap-1 py-1 pl-2 pr-0.5">
-        {/* 整行点击 = 定位。修复是它的兄弟节点而不是子节点——按钮套按钮
-            在辅助技术里是一个读不出来的控件（nested interactive） */}
-        <button
-          data-issue-row
-          // 稳定的机器标识（规则码 + 画布对象 id），新手教程按它找那一行；
-          // aria-label 是本地化文案，不能当选择器
-          data-issue-rule={issue.ruleCode}
-          data-issue-object={issue.objectRef.objectId ?? undefined}
-          aria-current={current ? 'true' : undefined}
-          onClick={onLocate}
-          aria-label={issueAriaLabel(issue)}
-          title={issueDetailText(issue)}
-          className="min-w-0 flex-1 rounded-sm py-0.5 text-left outline-none focus-visible:focus-ring"
-        >
-          <span className="flex min-w-0 items-center gap-1.5 leading-4">
-            <TruncateMiddle text={subjectName(issue)} className="min-w-0 text-sm text-ink" />
-            {current && (
-              <span className="type-meta shrink-0 rounded-xs bg-surface px-1 leading-4">
-                {pr('current')}
-              </span>
-            )}
-          </span>
-          <span className="type-meta mt-px flex min-w-0 flex-wrap items-center gap-x-1 leading-4">
-            {values.current ? (
-              values.expected ? (
-                <>
-                  <span className="tabular-nums">{values.current}</span>
-                  <span aria-hidden className="text-ink-faint">
-                    →
-                  </span>
-                  <span className="tabular-nums text-ink-2">{values.expected}</span>
-                </>
-              ) : (
-                <span className="tabular-nums">{values.current}</span>
-              )
-            ) : (
-              /* 说明允许两行：它是错误原因，截成一行省略号之后 title 会成为读它的唯一途径
-                 （二审 D3；组件模式 §4「不要通过固定很矮的行截断两行文本」） */
-              <span className="line-clamp-2 min-w-0">{issueDetailText(issue)}</span>
-            )}
-            {elsewhere && canvasName && <span>{pr('onCanvas', { name: canvasName })}</span>}
-          </span>
-        </button>
-        {/* 修复钮常态退到 ink-3，指针 / 焦点落在这一行时才与文字同色——
-            它一直在（键盘与读屏都找得到），只是不抢那一列数字的注意力 */}
-        <FixButton
-          issue={issue}
-          className="text-ink-3 group-focus-within/row:text-ink group-hover/row:text-ink"
-        />
-        <IconButton
-          iconSize="sm"
-          label={pr('techTitle')}
-          data-issue-tech-toggle
-          aria-expanded={techOpen}
-          aria-controls={techId}
-          onClick={() => setTechOpen((v) => !v)}
-          className={cn(
-            'text-ink-3 hover:text-ink-2',
-            // 槽位常驻（行高与宽度都不随悬停变），只是平时不画：指到 / 聚焦 / 是「当前」/
-            // 已展开时才浮出来。opacity 不改可聚焦性，Tab 照样落得到它
-            !current &&
-              !techOpen &&
-              'opacity-0 focus-visible:opacity-100 group-focus-within/row:opacity-100 group-hover/row:opacity-100',
-          )}
-        >
-          <ChevronRight
-            size={ICON_SIZE.sm}
-            aria-hidden
-            className={cn('transition-transform duration-fast', techOpen && 'rotate-90')}
-          />
-        </IconButton>
-      </div>
-      <TechnicalDetails id={techId} issue={issue} open={techOpen} />
-    </li>
-  )
-}
+/* --------------------------------- 状态 ----------------------------------- */
 
-/**
- * 技术详情默认收起：普通用户一辈子不用打开它，排障的人一定找得到。
- *
- * 开关是行尾一颗常驻槽位的图标钮（`data-issue-tech-toggle`），只在**这一行被指到 /
- * 聚焦 / 是「当前」/ 已展开时**才画出来（2026-09-14 审计 C1：五条同类问题就是五行
- * 「› 技术详情」，读的人一条都不需要）。此前折叠行本身在悬停时才 `display` 出来，
- * 每指一行清单就跳 20px（2026-10-07 设计审计 P0）——槽位留在行尾、只改透明度，行高
- * 永远不随悬停变。键盘：Tab 到这一行的「修复」钮时 focus-within 让它浮出，再 Tab 就到它。
- * 收起时内容仍在 DOM 里（`hidden`），与原生 `<details>` 同一种语义。
- */
-function TechnicalDetails({
-  id,
-  issue,
-  open,
-}: {
-  id: string
-  issue: ValidationIssue
-  open: boolean
-}) {
-  const lines = technicalDetailLines(issue)
+/** 首检：静态骨架（加载四种写法之一：sweep / 静态骨架 / shimmer / 转圈），读屏念一句「正在检查」 */
+function TreeSkeleton() {
   return (
-    <ul
-      id={id}
-      data-issue-tech
-      hidden={!open}
-      aria-label={pr('techTitle')}
-      className="mb-1 flex flex-col gap-0.5 pb-0.5 pl-4 pr-2"
-    >
-      {lines.map((line) => (
-        <li key={line} className="break-all font-mono text-xs leading-4 text-ink-3">
-          {line}
-        </li>
+    <div data-problem-loading className="flex flex-col gap-1 px-1 pt-1" aria-busy="true">
+      <span role="status" className="sr-only">
+        {pr('running')}
+      </span>
+      {[72, 56, 64, 48].map((w, i) => (
+        <span key={i} aria-hidden className="mx-1 flex h-8 items-center gap-2 px-2">
+          <span className="size-6 shrink-0 rounded-xs bg-surface-hover opacity-65" />
+          <span className="h-2.5 rounded-xs bg-surface-hover opacity-65" style={{ width: `${w}%` }} />
+        </span>
       ))}
-    </ul>
+    </div>
+  )
+}
+
+/** 「未发现问题」+ 证据：按哪套规范、查了几张图、什么时候（2026-10-07 设计审计 §9.4） */
+function NoneEvidence() {
+  const checkedAt = useValidationStore((s) => s.checkedAt)
+  const specs = useProfileStore((s) => s.specs)
+  const binding = useDocumentStore((s) => s.doc.profile)
+  const figures = useDocumentStore((s) =>
+    s.canvases.reduce(
+      (n, c) => n + (c.id === s.activeCanvasId ? s.doc.objects : c.objects).filter((o) => o.type === 'panel').length,
+      0,
+    ),
+  )
+  const spec = useMemo(() => {
+    const resolved = resolveDocumentSpec(binding, toCatalog(specs))
+    const record = resolved.profileId ? specs.find((r) => r.id === resolved.profileId) : undefined
+    return record ? profileName(record) : resolved.profile.label
+  }, [binding, specs])
+  const when = checkedAt == null ? null : Date.now() - checkedAt < 60_000 ? pr('justNow') : formatRelativeTime(checkedAt)
+  return (
+    <EmptyState
+      icon={CircleCheck}
+      title={pr('none')}
+      hint={when ? pr('noneEvidence', { spec, count: figures, when }) : undefined}
+      data-problem-evidence
+    />
   )
 }
 
 /* ------------------------------- 游标 ------------------------------------- */
 
 /**
- * 「正在处理第几条」+ 上一项 / 下一项。那条修好消失之后这里说「已处理」，
+ * 「正在处理第几条」+ 上一项 / 下一项（F8 / ⇧F8）。那条修好消失之后这里说「已处理」，
  * 「下一项」指向顶上来的那条——清单不必重开、位置不必重找。
  */
-function CursorBar({
-  view,
-  onLocate,
-}: {
-  view: ReturnType<typeof cursorView>
-  onLocate: (issue: ValidationIssue) => void
-}) {
+function CursorBar({ view, onStep }: { view: ReturnType<typeof cursorView>; onStep: (dir: 1 | -1) => void }) {
   return (
     <div
       data-problem-cursor
       aria-label={pr('cursorLabel')}
-      // 左栏页脚只有一种行语法：`border-t px-1.5 py-1` + 28px 控件，文字自己再让 6px
-      // 落到 56 那条竖线上（左栏审计 L27）
-      className="flex shrink-0 items-center gap-1 border-t border-border px-1.5 py-1"
+      // 左栏页脚只有一种行语法：`border-t px-1.5 py-1` + 28px 控件，底色是抽屉底
+      className="flex shrink-0 items-center gap-1 border-t border-border bg-[var(--drawer-bg,var(--color-surface))] px-1.5 py-1"
     >
       <span className="min-w-0 flex-1 truncate pl-1.5 text-xs text-ink-2">
         {view.current
           ? `${pr('cursorAt', { pos: view.position, total: view.total })} · ${subjectName(view.current)}`
           : pr('cursorDone', { count: view.total })}
       </span>
-      {/* 「上一项 / 下一项」是一对方向相反的同一个动作，两颗同形（左栏审计 L26）：
-          此前上是图标钮、下是文字钮，一对动作看起来像两件事 */}
-      <IconButton
-        iconSize="sm"
-        side="top"
-        label={pr('prev')}
-        disabled={!view.prev}
-        onClick={() => {
-          if (view.prev) onLocate(view.prev)
-        }}
-      >
+      {/* 「上一项 / 下一项」是一对方向相反的同一个动作，两颗同形（左栏审计 L26） */}
+      <IconButton iconSize="sm" side="top" label={pr('prev')} shortcut="⇧F8" onClick={() => onStep(-1)}>
         <ChevronUp size={ICON_SIZE.sm} />
       </IconButton>
-      <IconButton
-        iconSize="sm"
-        side="top"
-        label={pr('next')}
-        disabled={!view.next}
-        onClick={() => {
-          if (view.next) onLocate(view.next)
-        }}
-      >
+      <IconButton iconSize="sm" side="top" label={pr('next')} shortcut="F8" onClick={() => onStep(1)}>
         <ChevronDown size={ICON_SIZE.sm} />
       </IconButton>
       <IconButton
@@ -910,20 +711,20 @@ function CursorBar({
  * 接入状态的出口。**不把就绪度问题混进上面的清单**——「这张图还没连上脚本」
  * 与「这张图字号偏小」的下一步完全不同，混在一起用户两件事都做不了。
  */
-function ReadinessLink() {
+function ReadinessLink(): ReactNode {
   const report = useProjectReadinessStore((s) => s.report)
   if (!report || report.summary.total <= 0 || report.summary.editable >= report.summary.total) {
     return null
   }
   const pending = report.summary.total - report.summary.editable
   return (
-    <div className="shrink-0 border-t border-border px-1.5 py-1">
+    <div className="shrink-0 border-t border-border bg-[var(--drawer-bg,var(--color-surface))] px-1.5 py-1">
       <Tip label={pr('readinessTip')} side="top">
         <button
           type="button"
           onClick={() => useProjectReadinessStore.getState().openCenter({ source: 'panel' })}
           className={cn(
-            'flex h-7 w-full items-center gap-1.5 rounded-sm px-1.5 text-left text-xs text-ink-2 outline-none',
+            'flex h-7 w-full items-center gap-1.5 rounded-md px-1.5 text-left text-xs text-ink-2 outline-none',
             'transition-colors duration-fast hover:bg-surface-hover hover:text-ink focus-visible:focus-ring',
           )}
         >
@@ -935,4 +736,3 @@ function ReadinessLink() {
     </div>
   )
 }
-

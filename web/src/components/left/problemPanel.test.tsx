@@ -12,7 +12,8 @@ import { RENDER_RETRY_DELAYS_MS } from '@/lib/imgRetry'
 import { problemContextNow } from '@/lib/problemContext'
 import { drillKey } from '@/lib/problemList'
 import { useScopedProblems } from './useProblemScope'
-import { PREVIEW_ROWS, ProblemPanel } from './ProblemPanel'
+import { ProblemPanel } from './ProblemPanel'
+import { PREVIEW_ROWS } from './problemTree'
 import { LeftPanel } from './LeftPanel'
 import { LeftRail } from './LeftRail'
 import { TooltipProvider } from '@/components/ui/Tooltip'
@@ -149,12 +150,33 @@ const liveDrill = () => {
   const s = useUiStore.getState()
   return s.problemContext === problemContextNow() ? s.problemDrill : null
 }
-/** 卡片层上各卡片的项数之和（整份排版范围里它应当等于全部问题数） */
+/** 树上各分桶的项数之和（不含图头：图头的项数就是它下面子图的和；整份排版范围里它应当等于全部问题数） */
 const cardTotal = () =>
-  [...container.querySelectorAll<HTMLElement>('li[data-problem-card]')].reduce(
-    (n, c) => n + Number(c.dataset.problemCardCount),
-    0,
-  )
+  [...container.querySelectorAll<HTMLElement>('li[data-problem-card]')]
+    .filter((c) => !c.querySelector('li[data-problem-card]'))
+    .reduce((n, c) => n + Number(c.dataset.problemCardCount), 0)
+/** Radix 的 DropdownMenu 开在 pointerdown 上，jsdom 里 .click() 打不开它 */
+async function openMenu(trigger: Element) {
+  await act(async () => {
+    trigger.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0 }))
+    trigger.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, button: 0 }))
+    await new Promise((r) => setTimeout(r, 0))
+  })
+}
+/** 标题行的范围胶囊（`data-problem-scope-trigger` = 此刻生效的范围） */
+const scopePill = () => container.querySelector<HTMLElement>('[data-problem-scope-trigger]')!
+const scopeNow = () => scopePill().dataset.problemScopeTrigger
+const scopeItem = (s: 'figure' | 'document') => document.querySelector<HTMLElement>(`[data-problem-scope="${s}"]`)!
+/** 换范围：开胶囊的菜单、点那一档 */
+async function chooseScope(s: 'figure' | 'document') {
+  await openMenu(scopePill())
+  await act(async () => scopeItem(s).click())
+}
+/** 换分组方式：开标题行的「⋯」、点那一档 */
+async function chooseView(v: 'figure' | 'category') {
+  await openMenu(container.querySelector('[data-problem-menu]')!)
+  await act(async () => document.querySelector<HTMLElement>(`[data-problem-view="${v}"]`)!.click())
+}
 
 beforeEach(() => {
   useUiStore.setState({
@@ -230,39 +252,48 @@ describe('普通界面不出现内部标识', () => {
     }
   })
 
-  it('技术详情里有 gid，而且默认是收起的', async () => {
+  it('技术详情（ⓘ）里有 gid：默认不在页面上，点开尾随格里的 ⓘ 才出现', async () => {
     await seed()
     await mount(<ProblemPanel />)
     await openCard()
-    const details = container.querySelector<HTMLElement>('[data-issue-tech]')!
-    expect(details.hidden).toBe(true)
-    expect(details.textContent).toContain('axes_0.xticks')
-    const toggle = details.closest('li')!.querySelector<HTMLElement>('[data-issue-tech-toggle]')!
+    expect(document.querySelector('[data-issue-tech]')).toBeNull()
+    const toggle = container.querySelector<HTMLElement>('[data-issue-tech-toggle]')!
+    expect(toggle.closest('[data-problem-trail]'), 'ⓘ 在行尾的尾随格里').toBeTruthy()
     expect(toggle.getAttribute('aria-expanded')).toBe('false')
-    expect(toggle.getAttribute('aria-controls')).toBe(details.id)
     await click(toggle)
-    expect(details.hidden).toBe(false)
+    const details = document.querySelector<HTMLElement>('[data-issue-tech]')!
+    expect(details.textContent).toContain('axes_0.xticks')
     expect(toggle.getAttribute('aria-expanded')).toBe('true')
-    await click(toggle)
-    expect(details.hidden).toBe(true)
   })
 
-  it('悬停不改行高：技术详情的开关是行尾常驻槽位，只改透明度，不按悬停显示 / 隐藏', async () => {
+  it('悬停不改行高：尾随格只换透明度——静止是值，指到 / 聚焦时同一格换成「修复」与 ⓘ', async () => {
     await seed()
     await mount(<ProblemPanel />)
     await openCard()
+    const rowEls = [...container.querySelectorAll<HTMLElement>('[data-issue-row]')]
     const toggles = [...container.querySelectorAll<HTMLElement>('[data-issue-tech-toggle]')]
-    expect(toggles.length).toBe(container.querySelectorAll('[data-issue-row]').length)
+    expect(toggles.length).toBe(rowEls.length)
     for (const t of toggles) {
-      // 与「定位」按钮同一行（兄弟），不是行下面另起的一行
-      expect(t.parentElement).toBe(t.closest('li')!.querySelector('[data-issue-row]')!.parentElement)
+      // 与「定位」按钮同一个 li（兄弟），不是行下面另起的一行
+      const li = t.closest('[data-problem-trail]')!.parentElement!
+      expect(li.querySelector(':scope > [data-issue-row]')).toBeTruthy()
     }
-    // 任何会随悬停 / 聚焦改 display 的类都不许再出现（那正是每指一行清单跳 20px 的来源）
-    const classes = [...container.querySelectorAll<HTMLElement>('[data-issue-row]')]
+    // 任何会随悬停 / 聚焦改 display 的类都不许出现（那正是每指一行清单跳 20px 的来源）
+    const classes = rowEls
       .flatMap((r) => [...r.closest('li')!.querySelectorAll<HTMLElement>('*')])
       .map((el) => el.getAttribute('class') ?? '')
       .join(' ')
-    expect(classes).not.toMatch(/group-(hover|focus-within)\/row:[\w:-]*(block|hidden|flex)\b/)
+    expect(classes).not.toMatch(/(hover|focus-within|focus-visible)[\w/-]*:(block|hidden|flex|inline)\b/)
+    // 同一格两层：静止时值可见、动作透明；行拿到焦点后反过来
+    const trail = rowEls[0].closest('li')!.querySelector<HTMLElement>('[data-problem-trail]')!
+    const rest = trail.querySelector<HTMLElement>('[data-problem-trail-rest]')!
+    const action = trail.querySelector<HTMLElement>('[data-problem-trail-action]')!
+    expect(rest.textContent).toMatch(/6\.00 pt/)
+    expect(action.className).toContain('opacity-0')
+    expect(action.querySelector('[data-issue-fix]'), '修复钮一直在 DOM 里（Tab 得到）').toBeTruthy()
+    await act(async () => rowEls[0].focus())
+    expect(action.className).toContain('opacity-100')
+    expect(rest.className).toContain('opacity-0')
   })
 
   it('每行给出短标题 + 当前值 → 要求', async () => {
@@ -378,11 +409,16 @@ describe('安全修复', () => {
         adjustments: [],
       }
     })
-    const all = container.querySelector<HTMLButtonElement>('[data-problem-autofix] button')!
+    const all = container.querySelector<HTMLButtonElement>('button[data-problem-autofix]')!
+    expect(all.textContent).toBe('全部修复 2')
+    // 一颗填色主动作（32px lg）
+    expect(all.dataset.variant).toBe('primary')
     await click(all)
     expect(all.disabled).toBe(true)
     expect(all.textContent).toBe('正在修复…')
-    expect(byText('修复')?.hasAttribute('disabled')).toBe(true)
+    const rowFixes = [...container.querySelectorAll<HTMLButtonElement>('[data-issue-fix]')]
+    expect(rowFixes.length).toBeGreaterThan(0)
+    for (const b of rowFixes) expect(b.disabled).toBe(true)
     await act(async () => {
       release()
       await gate
@@ -419,14 +455,14 @@ describe('安全修复', () => {
     const fixable = useValidationStore
       .getState()
       .issues.filter((i) => i.fixKind !== 'none').length
-    const fixButtons = buttons().filter((b) => b.textContent === '修复').length
+    const fixButtons = container.querySelectorAll('[data-issue-fix="safe"]').length
     expect(fixButtons).toBeLessThanOrEqual(fixable)
     expect(fixButtons).toBeGreaterThan(0)
   })
 })
 
 describe('左轨入口', () => {
-  it('有阻断项时图标上是一颗中性小点，不挂红底数字；问题数在可达名里（2026-09-28 用户反馈）', async () => {
+  it('有阻断项时图标上是一颗红点（只为阻断亮），不挂红底数字；「N 项阻断（共 M）」在可达名里', async () => {
     await seed() // 两条都是阻断（字号低于绝对下限）
     useUiStore.setState({ leftOpen: false })
     await mount(<LeftRail />)
@@ -435,10 +471,23 @@ describe('左轨入口', () => {
     const n = useValidationStore.getState().issues.length
     const dot = entry.querySelector('[data-rail-blocking]')
     expect(dot, '有阻断项时要有提示').toBeTruthy()
-    expect(dot!.className).not.toContain('danger')
+    expect(dot!.className).toContain('bg-danger')
+    // 图标是检查清单，不与「警告」同形（2026-10-07 审计 §9.4）
+    expect(entry.querySelector('svg.icon-list-checks')).toBeTruthy()
     // 轨钮下面写的是短名（2026-09-30 重设计），不是数字
     expect(entry.textContent?.trim(), '轨道上不再写数字').not.toMatch(/\d/)
-    expect(entry.getAttribute('aria-label')).toContain(String(n))
+    expect(entry.getAttribute('aria-label')).toBe(`问题 · ${n} 项阻断（共 ${n}）`)
+  })
+
+  it('选中态是白底 + 1px 轮廓，不靠投影（卡片投影只属于 ui/Card）', async () => {
+    await seed()
+    useUiStore.setState({ leftOpen: true, leftTab: 'problems' })
+    await mount(<LeftRail />)
+    const entry = container.querySelector('[data-rail="problems"]')!
+    expect(entry.getAttribute('aria-expanded')).toBe('true')
+    expect(entry.className).toContain('bg-surface')
+    expect(entry.className).toContain('outline-border')
+    expect(entry.className).not.toContain('shadow')
   })
 
   it('只有警告 / 建议时不打扰：没有小点', async () => {
@@ -565,10 +614,6 @@ async function seedThree() {
 }
 
 const rows = () => [...container.querySelectorAll<HTMLElement>('[data-issue-row]')]
-// 「当前图 / 整份排版」是看哪一页的清单——页签（role=tab），不是取值（radio）
-const radios = () => [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
-const checkedRadio = () => radios().find((r) => r.getAttribute('aria-selected') === 'true')
-const radioNamed = (s: string) => radios().find((r) => r.textContent?.includes(s))!
 const cursorBar = () => container.querySelector('[data-problem-cursor]')
 /** 全文档的问题数（三张图的 + 页面级那条：80×200 的页面比例不合规范） */
 const total = () => useValidationStore.getState().issues.length
@@ -609,7 +654,10 @@ describe('按规则聚合（审计 T09）', () => {
     await mount(<ProblemPanel />)
     await openCard()
     const past = useDocumentStore.getState().past.length
-    await click(byText('全部修复')!)
+    // 组的「修复 N」在组头的尾随格里（一个动词：修复 / 修复… / 修复 N）
+    const fix = container.querySelector<HTMLButtonElement>('[data-issue-group-head] [data-problem-fix-count]')!
+    expect(fix.textContent).toBe('修复 2')
+    await click(fix)
     expect(useDocumentStore.getState().past.length).toBe(past + 1)
     const p = useDocumentStore.getState().doc.objects[0] as PanelObject
     expect(p.overrides.length).toBe(2)
@@ -623,11 +671,12 @@ describe('范围：当前图 / 整份排版（审计 T09）', () => {
     await seedThree()
     useUiStore.setState({ elementPanelId: 'p1' })
     await mount(<ProblemPanel />)
-    expect(checkedRadio()?.textContent).toContain('当前图')
+    expect(scopeNow()).toBe('figure')
+    expect(scopePill().textContent).toContain('当前图')
     await openCard()
     expect(text()).toContain('X 轴刻度')
     expect(text()).not.toContain('Y 轴刻度')
-    await click(radioNamed('整份排版'))
+    await chooseScope('document')
     expect(useUiStore.getState().problemScope).toBe('document')
     // 换范围退回卡片总览：别的图各有一张卡片，项数加起来就是全部
     expect(liveDrill()).toBeNull()
@@ -642,23 +691,25 @@ describe('范围：当前图 / 整份排版（审计 T09）', () => {
     await seedThree()
     useWorkspaceStore.getState().enterFastEdit('p2')
     await mount(<ProblemPanel />)
-    expect(checkedRadio()?.textContent).toContain('当前图')
+    expect(scopeNow()).toBe('figure')
     await openCard()
     expect(text()).toContain('Y 轴刻度')
     expect(text()).not.toContain('X 轴刻度')
-    // 图名写在「当前图」页签的 title 里（2026-09-15 打磨批次 E：不再在页签下面挂一行图名）
+    // 图名写在范围胶囊的 title 里，不在面板上另挂一行
     expect(text()).not.toContain('Fig2.pdf')
-    expect(checkedRadio()?.getAttribute('title')).toContain('Fig2.pdf')
+    expect(scopePill().getAttribute('title')).toContain('Fig2.pdf')
   })
 
   it('没有正在编辑或选中的图：「当前图」灰掉并说明原因，实际看整份排版', async () => {
     await seedThree()
     useUiStore.setState({ problemScope: 'figure' })
     await mount(<ProblemPanel />)
-    const fig = radioNamed('当前图')
-    expect(fig.disabled).toBe(true)
-    expect(fig.getAttribute('title')).toContain('没有正在编辑或选中的图')
-    expect(checkedRadio()?.textContent).toContain('整份排版')
+    expect(scopeNow()).toBe('document')
+    await openMenu(scopePill())
+    const fig = scopeItem('figure')
+    expect(fig.hasAttribute('data-disabled')).toBe(true)
+    // 灰掉的那一档原地说明为什么——消失的选项解释不了自己
+    expect(fig.textContent).toContain('没有正在编辑或选中的图')
     expect(cardTotal()).toBe(total())
   })
 
@@ -673,14 +724,19 @@ describe('范围：当前图 / 整份排版（审计 T09）', () => {
     expect(cardTotal()).toBe(total())
   })
 
-  it('计数条按范围算；抽屉标题不再带计数（二审 C2：页签已把两个范围各说一遍）', async () => {
+  it('范围并进标题行：标题旁是范围胶囊（带这一档的数），没有第二层范围条；等级开关按范围算', async () => {
     await seedThree()
     useUiStore.setState({ elementPanelId: 'p1' })
     await mount(<LeftPanel />)
-    // 标题行只有「问题」两个字：2 / 3 都不在标题里，范围数字只在页签与计数条
     const heading = container.querySelector('h2')!
-    // 标题旁没有计数节点：h2 之后紧跟的是占位的 flex-1，不是 type-meta 的数字
-    expect(heading.nextElementSibling?.textContent?.trim()).toBe('')
+    expect(heading.textContent).toBe('问题')
+    // 胶囊 portal 进了标题行的 meta 槽（与 h2 同一行）
+    const meta = container.querySelector('[data-drawer-meta]')!
+    expect(meta.parentElement).toBe(heading.parentElement)
+    expect(meta.querySelector('[data-problem-scope-trigger]')?.textContent).toContain('2')
+    // 「⋯」进了 actions 槽
+    expect(container.querySelector('[data-drawer-actions] [data-problem-menu]')).toBeTruthy()
+    expect(container.querySelectorAll('[role="tab"]')).toHaveLength(0)
     expect(severityChip().getAttribute('aria-label')).toContain('2')
   })
 })
@@ -715,7 +771,9 @@ describe('定位后清单留在原地（审计 T09）', () => {
     expect(useUiStore.getState().elementPanelId).toBe('p1')
     expect(useUiStore.getState().selectedGids).toEqual(['axes_0.xticks'])
     expect(rows()[0].getAttribute('aria-current')).toBe('true')
-    expect(rows()[0].textContent).toContain('当前')
+    // 「当前」不只靠颜色：选中底 + 600（listRowClass 的选中态），尾随格常亮出「修复」
+    expect(rows()[0].className).toContain('font-semibold')
+    expect(rows()[0].closest('li')!.querySelector('[data-problem-trail-action]')!.className).toContain('opacity-100')
     expect(rows()[1].getAttribute('aria-current')).toBeNull()
     expect(cursorBar()?.textContent).toContain('第 1 / 2 项')
     expect(cursorBar()?.textContent).toContain('X 轴刻度')
@@ -730,8 +788,39 @@ describe('定位后清单留在原地（审计 T09）', () => {
     expect(rows()[0].getAttribute('aria-current')).toBeNull()
     expect(useUiStore.getState().selectedGids).toEqual(['axes_0.xlabel'])
     expect(cursorBar()?.textContent).toContain('第 2 / 2 项')
-    // 到底了：下一项不可按
-    expect(byLabel('下一项')!.disabled).toBe(true)
+    // 到底了：清单里没有下一支，「下一项」原地不动
+    await click(byLabel('下一项')!)
+    expect(rows()[1].getAttribute('aria-current')).toBe('true')
+  })
+
+  it('F8 / ⇧F8 与「上一项 / 下一项」是同一个动作：没有游标时 F8 落到第一条', async () => {
+    await seed()
+    await mount(<ProblemPanel />)
+    const press = (shiftKey = false) =>
+      act(async () => {
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'F8', shiftKey, bubbles: true }))
+      })
+    await press()
+    expect(rows()[0].getAttribute('aria-current')).toBe('true')
+    await press()
+    expect(rows()[1].getAttribute('aria-current')).toBe('true')
+    await press(true)
+    expect(rows()[0].getAttribute('aria-current')).toBe('true')
+    expect(useUiStore.getState().selectedGids).toEqual(['axes_0.xticks'])
+  })
+
+  it('指着一行：画布上那个对象描一道悬停轮廓（issueHover），指针离开就撤', async () => {
+    await seed()
+    await mount(<ProblemPanel />)
+    const row = rows()[0]
+    await act(async () => {
+      row.dispatchEvent(new PointerEvent('pointerover', { bubbles: true }))
+    })
+    expect(useUiStore.getState().issueHover).toEqual({ objectId: 'p1', gid: 'axes_0.xticks' })
+    await act(async () => {
+      row.dispatchEvent(new PointerEvent('pointerout', { bubbles: true, relatedTarget: document.body }))
+    })
+    expect(useUiStore.getState().issueHover).toBeNull()
   })
 
   it('当前那条修好消失之后，「下一项」指向顶上来的那条，不必重开清单', async () => {
@@ -865,25 +954,24 @@ describe('长列表：一组默认只展开前几行', () => {
  * 带一行小标题，排在需要处理的组之后——它不是通过，也不是错误。
  */
 describe('页签计数与「无法自动检查」分段', () => {
-  it('「当前图」与「整份排版」各带自己的数，两个数同时看得见', async () => {
+  it('「当前图」与「整份排版」各带自己的数：胶囊上是生效那一档，菜单里两档的数同时看得见', async () => {
     await seedThree()
     useUiStore.setState({ elementPanelId: 'p1' })
     await mount(<ProblemPanel />)
-    const fig = radioNamed('当前图')
-    const doc = radioNamed('整份排版')
     const figureCount = useValidationStore
       .getState()
       .issues.filter((i) => i.objectRef.objectId === 'p1').length
     expect(figureCount).toBeGreaterThan(0)
     expect(figureCount).toBeLessThan(total())
-    expect(fig.textContent).toContain(String(figureCount))
-    expect(doc.textContent).toContain(String(total()))
-    // 可达名也带数：读屏不用切过去才知道那一档有几条
-    expect(fig.getAttribute('aria-label')).toContain(String(figureCount))
-    expect(doc.getAttribute('aria-label')).toContain(String(total()))
+    expect(scopePill().textContent).toContain(String(figureCount))
+    // 可达名也带数：读屏不用切过去才知道这一档有几条
+    expect(scopePill().getAttribute('aria-label')).toContain(String(figureCount))
+    await openMenu(scopePill())
+    expect(scopeItem('figure').textContent).toContain(String(figureCount))
+    expect(scopeItem('document').textContent).toContain(String(total()))
   })
 
-  it('无法核验的不进卡片：卡片层只有一行入口，点进去是单独的一层', async () => {
+  it('无法核验的不进分桶：树底只有一行，展开是单独的一层', async () => {
     await seed()
     const issues = useValidationStore.getState().issues
     const base = issues[0]
@@ -902,20 +990,23 @@ describe('页签计数与「无法自动检查」分段', () => {
     })
     await mount(<ProblemPanel />)
     // 卡片只装需要处理的：那条无法核验的不算在任何一张卡片里
-    expect(cardTotal()).toBe(issues.length)
-    const entry = container.querySelector<HTMLButtonElement>('button[data-problem-card="unverifiable"]')!
-    expect(entry.textContent).toContain('1 项无法自动检查')
-    // 需要处理的那张卡片点进去，看不到无法核验的组
-    await openCard()
+    const entry = container.querySelector<HTMLElement>('li[data-problem-card="unverifiable"]')!
+    // 树底一行：虚线圆 + 名字 + 项数
+    expect(container.querySelector('[data-problem-tree] > li:last-child')).toBe(entry)
+    expect(entry.textContent).toContain('无法自动检查')
+    expect(entry.dataset.problemCardCount).toBe('1')
+    expect(entry.querySelector('svg.icon-circle-dashed')).toBeTruthy()
+    // 需要处理的那一支展开，看不到无法核验的组
+    await openCard('p1')
     expect(container.querySelector('[data-issue-group="panel-text-not-verifiable"]')).toBeNull()
-    await click(container.querySelector('[data-problem-back]')!)
-    await click(container.querySelector('button[data-problem-card="unverifiable"]')!)
-    const tiers = [...container.querySelectorAll<HTMLElement>('[data-problem-tier]')].map(
-      (n) => n.dataset.problemTier,
-    )
-    expect(tiers).toEqual(['unverifiable'])
-    expect(container.querySelector('[data-issue-group="panel-text-not-verifiable"]')).not.toBeNull()
-    expect(container.querySelector('[data-issue-group="font-below-absolute-floor"]')).toBeNull()
+    expect(
+      Number(container.querySelector<HTMLElement>('li[data-problem-card="figure"]')!.dataset.problemCardCount),
+    ).toBe(issues.length)
+    await click(entry.querySelector(':scope > button')!)
+    const inEntry = [...entry.querySelectorAll<HTMLElement>('[data-problem-tier]')].map((n) => n.dataset.problemTier)
+    expect(inEntry).toEqual(['unverifiable'])
+    expect(entry.querySelector('[data-issue-group="panel-text-not-verifiable"]')).not.toBeNull()
+    expect(entry.querySelector('[data-issue-group="font-below-absolute-floor"]')).toBeNull()
   })
 })
 
@@ -990,17 +1081,19 @@ describe('卡片层：一张组图拆成子图（2026-09-28）', () => {
     useUiStore.setState({ elementPanelId: 'p1' })
     await mount(<ProblemPanel />)
     expect(floorIssues('axes_').length, '夹具没产出预期的四条字号问题').toBe(4)
-    expect(rows(), '卡片层不列逐条清单').toHaveLength(0)
-    const names = [...container.querySelectorAll('li[data-problem-card] button')].map((b) =>
+    expect(rows(), '分桶默认收着，不铺逐条清单').toHaveLength(0)
+    const names = [...container.querySelectorAll('li[data-problem-card] > button')].map((b) =>
       b.getAttribute('aria-label'),
     )
     expect(names.some((n) => n?.startsWith('子图 (a)：2 项'))).toBe(true)
     expect(names.some((n) => n?.startsWith('子图 (c)：2 项'))).toBe(true)
     expect(partCard('(b)')).toBeUndefined()
     expect(cardTotal()).toBe(onP1())
-    // 卡片副标题说阻断数与最主要的检查项，不列对象
-    expect(partCard('(c)')!.textContent).toContain('阻断 2')
-    expect(partCard('(c)')!.textContent).not.toContain('Theory')
+    // 尾随格静止时说阻断数与总数；各等级几项在可达名里，不列对象
+    const c = partCard('(c)')!
+    expect(c.querySelector(':scope > button')!.getAttribute('aria-label')).toContain('阻断 2')
+    expect(c.querySelector('[data-problem-trail-rest]')!.textContent).toBe('2·2')
+    expect(c.textContent).not.toContain('Theory')
   })
 
   it('子图卡片上的「修复 N」只修这一个子图，一次历史', async () => {
@@ -1008,8 +1101,8 @@ describe('卡片层：一张组图拆成子图（2026-09-28）', () => {
     useUiStore.setState({ elementPanelId: 'p1' })
     await mount(<ProblemPanel />)
     const card = partCard('(c)')!
-    const fix = [...card.querySelectorAll('button')].find((b) => b.textContent === '修复 2')!
-    expect(fix).toBeTruthy()
+    const fix = card.querySelector<HTMLButtonElement>(':scope > [data-problem-trail] [data-problem-fix-count]')!
+    expect(fix.textContent).toBe('修复 2')
     const past = useDocumentStore.getState().past.length
     engineSpecfix.mockClear()
     await click(fix)
@@ -1018,19 +1111,22 @@ describe('卡片层：一张组图拆成子图（2026-09-28）', () => {
     expect(useDocumentStore.getState().past.length).toBe(past + 1)
   })
 
-  it('点进子图只列它的行；返回回到卡片层', async () => {
+  it('就地展开子图只列它的行（不整页钻入）；再点一下收起', async () => {
     await seedTriptych()
     useUiStore.setState({ elementPanelId: 'p1' })
     await mount(<ProblemPanel />)
-    await click(partCard('(a)')!.querySelector('button')!)
+    const toggle = partCard('(a)')!.querySelector<HTMLButtonElement>(':scope > button')!
+    await click(toggle)
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
     expect(liveDrill()).toEqual({ kind: 'part', figure: 'p1', key: 'axes_0' })
-    const gids = rows().map((r) => r.closest('li')?.querySelector('[data-issue-tech]')?.textContent ?? '')
     expect(rows()).toHaveLength(2)
-    expect(gids.every((g) => g.includes('axes_0') || g.includes('axes_1'))).toBe(true)
-    expect(text()).toContain('修复此子图')
-    await click(container.querySelector('[data-problem-back]')!)
+    expect(rows().every((r) => partCard('(a)')!.contains(r))).toBe(true)
+    // 别的子图还在原地（同一屏，不是换了一页）
+    expect(partCard('(c)')).toBeTruthy()
+    await click(toggle)
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
     expect(liveDrill()).toBeNull()
-    expect(partCard('(a)')).toBeTruthy()
+    expect(rows()).toHaveLength(0)
   })
 
   it('按类别：一类一张卡，项数加起来是全部；换分组方式退回总览', async () => {
@@ -1038,27 +1134,28 @@ describe('卡片层：一张组图拆成子图（2026-09-28）', () => {
     useUiStore.setState({ elementPanelId: 'p1' })
     useUiStore.getState().setProblemDrill({ kind: 'part', figure: 'p1', key: 'axes_0' }, problemContextNow())
     await mount(<ProblemPanel />)
-    await click(container.querySelector('[data-problem-back]')!)
-    const radio = [...container.querySelectorAll<HTMLElement>('[role="radio"]')].find((r) =>
-      r.textContent?.includes('按类别'),
-    )!
-    await click(radio)
+    expect(rows().length).toBeGreaterThan(0)
+    await chooseView('category')
     expect(useUiStore.getState().problemView).toBe('category')
+    expect(liveDrill()).toBeNull()
+    expect(rows()).toHaveLength(0)
     const cats = [...container.querySelectorAll<HTMLElement>('li[data-problem-card="category"]')]
     expect(cats.length).toBeGreaterThan(0)
     expect(cats[0].textContent).toContain('文字')
     expect(cardTotal()).toBe(onP1())
   })
 
-  it('整份排版：组图有一行图头带「修复本图」，子图卡片挂在它下面；普通图仍是一张卡', async () => {
+  it('整份排版：组图是一行 32px 的图头（默认展开、带「修复 N」），子图挂在它下面；普通图仍是一支', async () => {
     await seedTriptych(true)
     useUiStore.setState({ problemScope: 'document' })
     await mount(<ProblemPanel />)
-    const head = container.querySelector('li[data-problem-figure]')!
+    const head = container.querySelector<HTMLElement>('li[data-problem-card="figure"][data-problem-card-objects~="p1"]')!
     expect(head).toBeTruthy()
+    expect(head.querySelector(':scope > button')!.className).toContain('h-8')
+    expect(head.querySelector(':scope > button')!.getAttribute('aria-expanded')).toBe('true')
     expect(head.querySelectorAll('li[data-problem-card="part"]').length).toBeGreaterThanOrEqual(2)
-    const fixFigure = [...head.querySelectorAll('button')].find((b) => b.textContent?.startsWith('修复本图'))
-    expect(fixFigure?.textContent).toContain(String(floorIssues('axes_').length))
+    const fixFigure = head.querySelector(':scope > [data-problem-trail] [data-problem-fix-count]')
+    expect(fixFigure?.textContent).toBe(`修复 ${floorIssues('axes_').length}`)
     expect(container.querySelector('li[data-problem-card="figure"][data-problem-card-objects~="p2"]')).toBeTruthy()
     expect(cardTotal()).toBe(useValidationStore.getState().issues.length)
   })
@@ -1086,13 +1183,9 @@ describe('卡片层：一张组图拆成子图（2026-09-28）', () => {
     })
     expect(liveDrill()).toEqual({ kind: 'part', figure: 'p1', key: 'axes_3' })
   }
-  /** 范围页签（tab）与分组开关（radio）都算：用户显式换视图 */
-  const pick = (label: string) =>
-    click(
-      [...container.querySelectorAll<HTMLElement>('[role="radio"], [role="tab"]')].find((r) =>
-        r.textContent?.includes(label),
-      )!,
-    )
+  /** 范围（胶囊菜单）与分组方式（「⋯」菜单）都算：用户显式换视图 */
+  const pick = (label: '整份排版' | '当前图' | '按类别') =>
+    label === '按类别' ? chooseView('category') : chooseScope(label === '整份排版' ? 'document' : 'figure')
 
   it('直达过一条之后，用户切范围：留在新范围的总览，不被游标钻回那张卡片', async () => {
     await seedTriptych(true)
@@ -1102,7 +1195,7 @@ describe('卡片层：一张组图拆成子图（2026-09-28）', () => {
     await pick('整份排版')
     expect(useUiStore.getState().problemScope).toBe('document')
     expect(liveDrill()).toBeNull()
-    expect(rows(), '总览不列逐条清单').toHaveLength(0)
+    expect(rows(), '总览不展开任何一支').toHaveLength(0)
     expect(cardTotal()).toBe(useValidationStore.getState().issues.length)
     await pick('当前图')
     expect(liveDrill()).toBeNull()
@@ -1110,7 +1203,7 @@ describe('卡片层：一张组图拆成子图（2026-09-28）', () => {
   })
 
   it('单图详情里直达过一条之后，用户换分组方式：留在「按类别」的总览', async () => {
-    // 单子图的普通图没有卡片层，详情头上就是分组开关——游标还指着那一条
+    // 单子图的普通图没有分桶层（规则直接在顶层）——游标还指着那一条
     await seedThree()
     useUiStore.setState({ elementPanelId: 'p1' })
     await mount(<ProblemPanel />)
@@ -1131,7 +1224,7 @@ describe('卡片层：一张组图拆成子图（2026-09-28）', () => {
     await seedTriptych(true)
     useUiStore.setState({ elementPanelId: 'p1' })
     await mount(<ProblemPanel />)
-    await click(partCard('(c)')!.querySelector('button')!)
+    await click(partCard('(c)')!.querySelector(':scope > button')!)
     await click(rows()[0])
     expect(useUiStore.getState().problemCursor).not.toBeNull()
     await pick('整份排版')
@@ -1156,7 +1249,7 @@ describe('卡片层：一张组图拆成子图（2026-09-28）', () => {
     await seedTriptych(true)
     useUiStore.setState({ elementPanelId: 'p1' })
     await mount(<ProblemPanel />)
-    await click(partCard('(a)')!.querySelector('button')!)
+    await click(partCard('(a)')!.querySelector(':scope > button')!)
     await click(rows()[0])
     expect(useUiStore.getState().problemCursor).not.toBeNull()
     // 点过一行，定位已把 p1 设成快编中的图（它压过 elementPanelId）：换图就换这一个
@@ -1165,7 +1258,6 @@ describe('卡片层：一张组图拆成子图（2026-09-28）', () => {
     })
     expect(liveDrill()).toBeNull()
     expect(cursorBar(), '上一张图的游标不该跟过来').toBeNull()
-    expect(text()).not.toContain('这里的问题都处理完了')
     const onP2 = useValidationStore.getState().issues.filter((i) => i.objectRef.objectId === 'p2').length
     expect(onP2, '夹具里 p2 得有问题').toBeGreaterThan(0)
     // p2 是拆不出子图的普通图：它的总览就是它自己的清单
@@ -1182,7 +1274,7 @@ describe('卡片层：一张组图拆成子图（2026-09-28）', () => {
     await seedTriptych(true)
     useUiStore.setState({ elementPanelId: 'p1' })
     await mount(<ProblemPanel />)
-    await click(partCard('(a)')!.querySelector('button')!)
+    await click(partCard('(a)')!.querySelector(':scope > button')!)
     const target = useValidationStore.getState().issues.find((i) => i.objectRef.objectId === 'p2')!
     const { openProblemAt } = await import('@/lib/issueFocus')
     await act(async () => {
@@ -1197,7 +1289,7 @@ describe('卡片层：一张组图拆成子图（2026-09-28）', () => {
     await seedTriptych(true)
     useUiStore.setState({ elementPanelId: 'p1' })
     await mount(<ProblemPanel />)
-    await click(partCard('(c)')!.querySelector('button')!)
+    await click(partCard('(c)')!.querySelector(':scope > button')!)
     expect(liveDrill()).toEqual({ kind: 'part', figure: 'p1', key: 'axes_3' })
     // 切到别的页签：面板被卸载，它的 effect 看不见接下来的换项目
     await act(async () => {
@@ -1208,16 +1300,15 @@ describe('卡片层：一张组图拆成子图（2026-09-28）', () => {
     await act(async () => {
       root.render(<TooltipProvider><ProblemPanel /></TooltipProvider>)
     })
-    expect(container.querySelector('[data-problem-back]'), '不该还在上一个项目的 (c) 里').toBeNull()
+    expect(rows(), '不该还在上一个项目的 (c) 里').toHaveLength(0)
     expect(partCard('(a)')).toBeTruthy()
-    expect(text()).not.toContain('这里的问题都处理完了')
   })
 
-  it('卡片里的问题被等级筛选筛光：说「当前筛选下没有问题」、给「显示全部」，不冒充「都处理完了」', async () => {
+  it('展开的那一支被等级筛选筛光：它从树上暂时消失、人不被踢回总览；取消筛选它带着展开态回来', async () => {
     await seedTriptych(true)
     useUiStore.setState({ problemScope: 'document' })
     await mount(<ProblemPanel />)
-    await click(partCard('(c)')!.querySelector('button')!)
+    await click(partCard('(c)')!.querySelector(':scope > button')!)
     const inCard = new Set(
       useValidationStore
         .getState()
@@ -1229,10 +1320,12 @@ describe('卡片层：一张组图拆成子图（2026-09-28）', () => {
     await act(async () => {
       useUiStore.getState().setProblemFilter([other!.severity])
     })
-    expect(liveDrill(), '在卡片里筛选不把人踢回总览').toEqual({ kind: 'part', figure: 'p1', key: 'axes_3' })
-    expect(text()).toContain('当前筛选下没有问题')
-    expect(text()).not.toContain('这里的问题都处理完了')
-    await click(byText('显示全部')!)
+    expect(liveDrill(), '在一支里筛选不把人踢回总览').toEqual({ kind: 'part', figure: 'p1', key: 'axes_3' })
+    expect(partCard('(c)'), '筛掉的那一支不画空壳').toBeUndefined()
+    await act(async () => {
+      useUiStore.getState().setProblemFilter(null)
+    })
+    expect(partCard('(c)')!.querySelector(':scope > button')!.getAttribute('aria-expanded')).toBe('true')
     expect(rows().length).toBeGreaterThan(0)
   })
 
@@ -1283,13 +1376,12 @@ describe('卡片层：一张组图拆成子图（2026-09-28）', () => {
     }
   })
 
-  it('native 图（tavotto run）的问题不进任何批量修：卡片、图头、详情头、组头、「全部处理」口径一致（#690 评审）', async () => {
+  it('native 图（tavotto run）的问题不进任何批量修：子图、图头、组头、「全部修复」口径一致（#690 评审）', async () => {
     await seedTriptych(true)
     useUiStore.setState({ problemScope: 'document' })
     await mount(<ProblemPanel />)
-    const fixOn = (el: Element | null | undefined, prefix: string) =>
-      [...(el?.querySelectorAll('button') ?? [])].find((b) => b.textContent?.startsWith(prefix))
-    expect(fixOn(partCard('(c)'), '修复'), '对照：普通图的卡片有「修复 N」').toBeTruthy()
+    const fixOf = (el: Element | null | undefined) => el?.querySelector(':scope > [data-problem-trail] [data-problem-fix-count]')
+    expect(fixOf(partCard('(c)')), '对照：普通图的子图有「修复 N」').toBeTruthy()
     const autofix = () => container.querySelector('[data-problem-autofix]')?.textContent ?? ''
     const before = autofix()
     try {
@@ -1299,12 +1391,11 @@ describe('卡片层：一张组图拆成子图（2026-09-28）', () => {
           byId: { 'Fig1.pdf': { status: 'fresh', cached: true, registered: true, profile: 'native', checked: true } },
         } as never)
       })
-      expect(fixOn(partCard('(c)'), '修复'), '子图卡片不给「修复 N」').toBeUndefined()
-      expect(fixOn(container.querySelector('li[data-problem-figure]'), '修复本图')).toBeUndefined()
-      expect(autofix(), '「全部处理」的计数不含 native 图上的').not.toBe(before)
-      await click(partCard('(c)')!.querySelector('button')!)
-      expect(text()).not.toContain('修复此子图')
-      expect(byText('全部修复')).toBeFalsy()
+      expect(fixOf(partCard('(c)')), '子图不给「修复 N」').toBeFalsy()
+      expect(fixOf(container.querySelector('li[data-problem-card="figure"][data-problem-card-objects~="p1"]'))).toBeFalsy()
+      expect(autofix(), '「全部修复」的计数不含 native 图上的').not.toBe(before)
+      await click(partCard('(c)')!.querySelector(':scope > button')!)
+      expect(partCard('(c)')!.querySelector('[data-issue-group-head] [data-problem-fix-count]'), '组头也不给').toBeNull()
       // 逐行按钮仍是禁用的那颗（口径与批量一致）
       expect(container.querySelectorAll('[data-fix-native-unsupported]').length).toBeGreaterThan(0)
     } finally {
