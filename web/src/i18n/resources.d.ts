@@ -2550,6 +2550,7 @@ export default interface Resources {
       "next": "下一项",
       "nodeLabel_other": "{{name}}：{{count}} 项问题。{{detail}}",
       "none": "未发现问题",
+      "noneEvidenceMulti_other": "按 {{specCount}} 套规范（{{specs}}）检查了 {{count}} 张图 · {{when}}",
       "noneEvidence_other": "按「{{spec}}」检查了 {{count}} 张图 · {{when}}",
       "noneInFilter": "当前筛选下没有问题",
       "noneInScope": "这张图上没有问题",

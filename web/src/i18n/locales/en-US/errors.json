@@ -860,6 +860,8 @@
     "menuLabel": "Problems options",
     "rechecking": "Rechecking…",
     "justNow": "just now",
+    "noneEvidenceMulti_one": "Checked {{count}} figure against {{specCount}} specs ({{specs}}) · {{when}}",
+    "noneEvidenceMulti_other": "Checked {{count}} figures against {{specCount}} specs ({{specs}}) · {{when}}",
     "noneEvidence_one": "Checked {{count}} figure against {{spec}} · {{when}}",
     "noneEvidence_other": "Checked {{count}} figures against {{spec}} · {{when}}"
   },

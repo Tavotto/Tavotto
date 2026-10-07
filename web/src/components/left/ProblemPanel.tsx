@@ -12,7 +12,7 @@ import {
   X,
 } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
-import { formatRelativeTime } from '@/i18n/format'
+import { formatRelativeTime, listJoin } from '@/i18n/format'
 import { t as translate } from '@/i18n'
 import { focusFailureMessage, focusIssue } from '@/lib/issueFocus'
 import { problemContextNow } from '@/lib/problemContext'
@@ -680,31 +680,47 @@ function TreeSkeleton() {
   )
 }
 
-/** 「未发现问题」+ 证据：按哪套规范、查了几张图、什么时候（2026-10-07 设计审计 §9.4） */
+/**
+ * 「未发现问题」+ 证据：按哪套规范、查了几张图、什么时候（2026-10-07 设计审计 §9.4）。
+ *
+ * 规范按**每张画布各自的绑定**说，与 `collectCanvases()` 给每张画布跑检查时的输入同一份
+ * 判据（激活画布读现值 `doc.profile`，别的画布读 `canvases[].profile`）：几张画布绑了不同的
+ * 规范时，只报当前画布那一套等于把它盖到别的画布的图上（Codex #832）。只算装着图的画布——
+ * 证据说的是「这些图按什么查的」；一张图都没有时退回当前画布那一套。
+ */
 function NoneEvidence() {
   const checkedAt = useValidationStore((s) => s.checkedAt)
   const specs = useProfileStore((s) => s.specs)
-  const binding = useDocumentStore((s) => s.doc.profile)
-  const figures = useDocumentStore((s) =>
-    s.canvases.reduce(
-      (n, c) => n + (c.id === s.activeCanvasId ? s.doc.objects : c.objects).filter((o) => o.type === 'panel').length,
-      0,
-    ),
-  )
-  const spec = useMemo(() => {
-    const resolved = resolveDocumentSpec(binding, toCatalog(specs))
-    const record = resolved.profileId ? specs.find((r) => r.id === resolved.profileId) : undefined
-    return record ? profileName(record) : resolved.profile.label
-  }, [binding, specs])
+  const canvases = useDocumentStore((s) => s.canvases)
+  const activeCanvasId = useDocumentStore((s) => s.activeCanvasId)
+  const activeObjects = useDocumentStore((s) => s.doc.objects)
+  const activeBinding = useDocumentStore((s) => s.doc.profile)
+  const { figures, names } = useMemo(() => {
+    const catalog = toCatalog(specs)
+    const nameOf = (binding: typeof activeBinding) => {
+      const resolved = resolveDocumentSpec(binding, catalog)
+      const record = resolved.profileId ? specs.find((r) => r.id === resolved.profileId) : undefined
+      return record ? profileName(record) : resolved.profile.label
+    }
+    let figures = 0
+    const used: string[] = []
+    for (const c of canvases) {
+      const active = c.id === activeCanvasId
+      const n = (active ? activeObjects : c.objects).filter((o) => o.type === 'panel').length
+      if (n === 0) continue
+      figures += n
+      const name = nameOf(active ? activeBinding : c.profile)
+      if (!used.includes(name)) used.push(name)
+    }
+    return { figures, names: used.length ? used : [nameOf(activeBinding)] }
+  }, [specs, canvases, activeCanvasId, activeObjects, activeBinding])
   const when = checkedAt == null ? null : Date.now() - checkedAt < 60_000 ? pr('justNow') : formatRelativeTime(checkedAt)
-  return (
-    <EmptyState
-      icon={CircleCheck}
-      title={pr('none')}
-      hint={when ? pr('noneEvidence', { spec, count: figures, when }) : undefined}
-      data-problem-evidence
-    />
-  )
+  const hint = !when
+    ? undefined
+    : names.length === 1
+      ? pr('noneEvidence', { spec: names[0], count: figures, when })
+      : pr('noneEvidenceMulti', { specs: listJoin(names), specCount: names.length, count: figures, when })
+  return <EmptyState icon={CircleCheck} title={pr('none')} hint={hint} data-problem-evidence />
 }
 
 /* ------------------------------- 游标 ------------------------------------- */

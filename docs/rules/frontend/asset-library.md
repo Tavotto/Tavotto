@@ -200,7 +200,8 @@
 - **选中之后只有一条页脚**（`data-asset-footer`）：上一行名字 + 动作（`data-selected-asset-actions`，真按钮、在 listbox 外），
   需要说话时下面跟接入说明（`data-capability-notice`，同一个容器）。
 - 「只看可编辑的图」「筛选」「刷新」在抽屉标题行的动作槽里（`left/DrawerHeader`），搜索行只有搜索；筛选 chip 是胶囊；
-  刷新失败是图区里的一条 danger `Notice`。刷新中那行「正在刷新…」（`data-asset-refreshing`）**暂留**：`e2e/tutorial.spec.ts`
+  刷新失败是图区里的一条 danger `Notice`，挂在「图」区头下面、**不在可折叠的网格里**（首次读不出的 `EmptyState` 同此）——
+  图区收着时 `/api/panels` 失败不弹提示（`load()` 吞错返回 null），藏进 `hidden` 就是静默失败（Codex #832，`AssetBrowser.refresh.test.tsx`）。刷新中那行「正在刷新…」（`data-asset-refreshing`）**暂留**：`e2e/tutorial.spec.ts`
   拿它挤动卡片来量 coachmark 的同步重测（Codex #731），换掉那根杠杆之前不删（审计「刷新只留旋转图标」那一条待办）。
 - **脚本区**：组头 28px `type-section` + `type-meta` 计数；运行中 = 一颗静止的 accent 点 + 状态句的 `text-shimmer`（不转圈）；
   所有恢复入口（一键修复卡、跑前准备、运行目录、缺数据、失败详情）是同一种「第二行」（`SecondRow`）；读清单 = 静态骨架、
