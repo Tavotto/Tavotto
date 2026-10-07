@@ -136,6 +136,9 @@ export function inFigureSnapCandidates(
 /**
  * 元素此刻的框（figure 分数、top-origin）：子图取 position（请求空间，与对齐同源），
  * 文字 / 图例取墨迹框并跟着未渲染回来的锚点平移。
+ *
+ * 也是图内平移的**起手框**的唯一出处：`alignEntries` 的 `box`（`groupMove` 从它起）与尺寸芯片
+ * 量 Δ 的起点（`MeasureChip.figureNudgeGeometry`）都取它。
  */
 export function elementBoxOf(panel: PanelObject, el: ManifestElement): Rect4 | null {
   if (el.resizable && !el.geom_gid) {
@@ -424,13 +427,9 @@ export function alignEntries(
       const anchor = anchorOf(panel, el)
       if (!anchor || !el.anchor) continue
       seen.add(key)
-      // bbox 是渲染那一刻的墨迹框；锚点若被 override 挪过，框要跟着挪同样的量
-      const box: Rect4 = [
-        el.bbox[0] + anchor[0] - el.anchor[0],
-        el.bbox[1] + anchor[1] - el.anchor[1],
-        el.bbox[2],
-        el.bbox[3],
-      ]
+      // bbox 是渲染那一刻的墨迹框；锚点若被 override 挪过，框要跟着挪同样的量。起手框只有
+      // `elementBoxOf` 一个出处：尺寸芯片（`MeasureChip`）量 Δ 也从它起，两边不会各算一套
+      const box = elementBoxOf(panel, el)!
       const prop = el.drag_prop!
       out.push({
         key,
