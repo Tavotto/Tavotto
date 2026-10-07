@@ -440,4 +440,53 @@ describe('问题胶囊数的是整组选择（Codex #829）', () => {
     expect(chip, '多选时问题胶囊要在').not.toBeNull()
     expect(chip!.getAttribute('data-identity-problems')).toBe('2')
   })
+  it('选中真实的组（共享色条）：只数组与它后代上的问题，组外的不算', async () => {
+    const G = 'group:axes_2'
+    const el = (gid: string, role: string, extra: Record<string, unknown> = {}) => ({
+      gid,
+      role,
+      label: gid,
+      bbox: [0.1, 0.1, 0.2, 0.2],
+      draggable: false,
+      editable: [],
+      ...extra,
+    })
+    const grouped = {
+      ...manifest,
+      elements: [
+        ...manifest.elements,
+        el('axes_1', 'axes', { parent_gid: G }),
+        el('axes_1.lines_0', 'line'),
+        el('axes_2', 'axes', { parent_gid: G, is_colorbar: true, colorbar_gid: 'axes_2.colorbar' }),
+        el('axes_2.colorbar', 'colorbar', { geom_gid: 'axes_2', owner_gids: ['axes_1'] }),
+      ],
+      groups: [
+        {
+          gid: G,
+          kind: 'shared_colorbar',
+          members: ['axes_1', 'axes_2'],
+          subplot_gids: ['axes_1'],
+          colorbar_gid: 'axes_2.colorbar',
+          bbox: [0.1, 0.1, 0.5, 0.5],
+          resizable: true,
+        },
+      ],
+    }
+    await seed([panel], ['p1'])
+    seedExactRender(panel, grouped as never)
+    useUiStore.getState().setElementPanel('p1')
+    useUiStore.setState({ selectedGids: [G] })
+    useValidationStore.setState({
+      issues: [
+        issue('warn', 'axes_1.lines_0'), // 成员子图下的元素：算
+        issue('error', 'axes_2.colorbar'), // 成员色条轴上的色条：算
+        issue('error', 'axes_0.title'), // 组外：不算
+        issue('error', 'axes_0.legend'), // 组外：不算
+      ],
+    })
+    await mount()
+    const chip = document.querySelector('[data-identity-problems]')
+    expect(chip, '组里有问题时胶囊要在').not.toBeNull()
+    expect(chip!.getAttribute('data-identity-problems')).toBe('2')
+  })
 })

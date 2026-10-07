@@ -160,7 +160,16 @@ function StateChip({
  * （`openProblemAt`，与左栏样式面板的直达同一个动作，2026-10-07 设计审计 §9.4 P2）。
  * 判据只读 `validationStore.issues` 的 `objectRef`，不在这里另判。
  */
-function ProblemsChip({ objectIds, gids, figureId }: { objectIds: string[]; gids?: readonly string[] | null; figureId: string | null }) {
+function ProblemsChip({
+  objectIds,
+  inScope,
+  figureId,
+}: {
+  objectIds: string[]
+  /** 图内 gid 归不归这一选择；`null` / 缺省 = 不按 gid 过滤（整张图、画布对象） */
+  inScope?: ((gid: string) => boolean) | null
+  figureId: string | null
+}) {
   const { t } = useTranslation('inspector')
   const all = useValidationStore((s) => s.issues)
   const mine = all.filter(
@@ -168,8 +177,8 @@ function ProblemsChip({ objectIds, gids, figureId }: { objectIds: string[]; gids
       (i.severity === 'error' || i.severity === 'warn') &&
       i.objectRef.objectId != null &&
       objectIds.includes(i.objectRef.objectId) &&
-      // 多选图内元素时数整组选择，不只最后点的那一个（Codex #829 P2）
-      (gids == null || (i.objectRef.gid != null && gids.includes(i.objectRef.gid))),
+      // 多选图内元素时数整组选择，不只最后点的那一个；选中组时只数它的成员（Codex #829 P2）
+      (inScope == null || (i.objectRef.gid != null && inScope(i.objectRef.gid))),
   )
   if (!mine.length) return null
   const errors = mine.filter((i) => i.severity === 'error')
@@ -255,6 +264,13 @@ function ElementIdentity({ panel }: { panel: PanelObject }) {
     : el
       ? panel.overrides.filter((o) => o.gid === el.gid).length
       : panel.overrides.length
+  // 问题胶囊的范围：选中元素 = 那组选择；选中组 = 组与它结构上的全部后代（成员子图 / 色条轴
+  // 及其下的元素，同一份 `structuralParent`，manifest 里没有的 gid 按路径回退）；整张图 = 不过滤
+  const problemScope: ((g: string) => boolean) | null = el
+    ? (g) => selectedGids.includes(g) && g !== 'figure'
+    : selGroup && manifest
+      ? (g) => g === selGroup.gid || ancestorsOf(structuralParent(manifest), g).includes(selGroup.gid)
+      : null
   const RoleIcon = roleIcon(el?.role ?? (selGroup ? 'group' : 'figure'))
   const name = crumbs.at(-1) ?? t('elementFallback')
 
@@ -284,7 +300,7 @@ function ElementIdentity({ panel }: { panel: PanelObject }) {
         <>
           <ProblemsChip
             objectIds={[panel.id]}
-            gids={el ? selectedGids.filter((g) => g !== 'figure') : null}
+            inScope={problemScope}
             figureId={panel.id}
           />
           {/* 「n 项已修改」徽标本身就是恢复菜单（恢复此元素 / 恢复整张图） */}

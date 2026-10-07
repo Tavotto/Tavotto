@@ -1,9 +1,9 @@
-import type { ReactNode } from 'react'
+import { useEffect, useReducer, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ArrowLeftRight, ExternalLink, LayoutGrid, Trash2 } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { formatMm } from '@/lib/units'
-import { readExportDefaults } from '@/lib/exportDefaults'
+import { onExportDefaultsHydrated, readExportDefaults } from '@/lib/exportDefaults'
 import { msg, t as translate, type UiMessage } from '@/i18n'
 import { cn, MOD } from '@/lib/utils'
 import { clearGuides, removeGuide, setPageSetup, setPageSize } from '@/store/actions'
@@ -94,6 +94,10 @@ export function CanvasPage() {
         .join(' · ') || cv('snapPageOnly')
     : cv('snapOff')
   const portrait = page.h >= page.w
+  // 导出摘要读的是本机缓存；后端那份（#715 PR-B）取回、覆盖缓存后要重读——画布页可能在
+  // 取回之前就已挂着（右栏记住的页签是画布），不订阅就整次会话停在空缓存的 600 ppi（Codex #829）
+  const [, onHydrated] = useReducer((n: number) => n + 1, 0)
+  useEffect(() => onExportDefaultsHydrated(onHydrated), [])
   const exportDefaults = readExportDefaults()
 
   return (

@@ -15,6 +15,7 @@ import { emptyProject } from '@/types/document'
 import { literal } from '@/i18n'
 import { ROW_GRID_COLS } from '../ui/Field'
 import { CanvasPage } from './CanvasPage'
+import { hydrateExportDefaults } from '@/lib/exportDefaults'
 
 globalThis.fetch = (async () => new Response('{}', { status: 200 })) as typeof fetch
 declare global {
@@ -122,6 +123,25 @@ describe('CanvasPage', () => {
     act(() => container.querySelector<HTMLButtonElement>('[data-canvas-export-summary]')!.click())
     expect(useUiStore.getState().exportOpen).toBe(true)
     act(() => useUiStore.getState().setExportOpen(false))
+  })
+
+  it('导出摘要跟着取回的后端默认值重读：画布页先挂着、取回后不停在空缓存的 600 ppi（Codex #829）', async () => {
+    const summary = () => container.querySelector('[data-canvas-export-summary]')!.textContent ?? ''
+    expect(summary()).toContain('600 ppi') // 前提：挂载时本机缓存是空的
+    const prev = globalThis.fetch
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({ defaults: { dpi: '1200', formats: ['tiff'], withProof: false, strictInspection: false } }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      )) as typeof fetch
+    try {
+      await act(async () => {
+        await hydrateExportDefaults()
+      })
+    } finally {
+      globalThis.fetch = prev
+    }
+    expect(summary()).toContain('TIFF · 1200 ppi')
   })
 
   it('收起时也报得出网格状态；页面尺寸的组头不再复述下面那两个框', () => {
