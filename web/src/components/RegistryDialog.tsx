@@ -94,9 +94,21 @@ const rd = (key: string, values?: Record<string, unknown>) =>
 export function RegistryDialog() {
   useTranslation('dialogs')
   const open = useUiStore((s) => s.registryOpen)
+  // 正文按**项目代际 × 打开代际**重挂（#831 Codex P1 / 维护者复审）。关掉之后 Radix Presence 会把同一份正文
+  // 留到退场动画结束（约 90 ms，data-state=closed）；这段时间里换了项目再打开，不重挂的话还是那一份：
+  // 上一个项目的注册表视图、试运行结果（含可以「添加到画布」的 runtime 描述符）都还在，注册表也不重取。
+  // 项目代际 = `scriptRunStore.epoch`（每次换项目 +1，A → B → A 也换），覆盖开着时换项目；
+  // 打开代际每次「关 → 开」+1，覆盖退场动画里重新打开
+  const epoch = useScriptRunStore((s) => s.epoch)
+  const [openGen, setOpenGen] = useState(0)
+  const [wasOpen, setWasOpen] = useState(open)
+  if (open !== wasOpen) {
+    setWasOpen(open)
+    if (open) setOpenGen((g) => g + 1)
+  }
   return (
     <Dialog
-      // 常驻挂载（Dialog 的常驻写法）：正文只在开着时由 Radix 挂上，关的时候有退场动画
+      // 常驻挂载（Dialog 的常驻写法）：正文只在开着时由 Radix 挂上，关的时候放完退场动画才卸（见上：按代际重挂）
       open={open}
       onOpenChange={(v) => {
         if (!v) useProjectReadinessStore.getState().closeCenter()
@@ -107,7 +119,7 @@ export function RegistryDialog() {
       size="lg"
       anchor="readiness"
     >
-      <ReadinessBody />
+      <ReadinessBody key={`${epoch}:${openGen}`} />
     </Dialog>
   )
 }
@@ -139,8 +151,11 @@ function ReadinessBody() {
   const [probed, setProbed] = useState<Record<string, ProbeNote>>({})
 
   const reloadView = async () => {
+    const epoch = scriptRunEpoch()
     try {
-      setView(await fetchRegistry())
+      const next = await fetchRegistry()
+      // 在飞时换了项目：这份视图属于上一个项目（正文已按代际重挂，这里再挡一道）
+      if (scriptRunEpoch() === epoch) setView(next)
     } catch (e) {
       // 高级段取不回来**不算这个对话框失败**：主体那份事实来自另一个端点，
       // 它在的话每一行照常显示与操作
@@ -159,15 +174,18 @@ function ReadinessBody() {
    * 素材清单、画布上面板的派生元数据都在它后面，这里不手拼任何状态。
    */
   const run = async (key: string, fn: () => Promise<void>) => {
+    const epoch = scriptRunEpoch()
     setBusy(key)
     setError(null)
     try {
       await fn()
+      // 在飞时换了项目：结果属于上一个项目，不重取、不刷新、不报错
+      if (scriptRunEpoch() !== epoch) return
       await reloadView()
       // `force`：用户刚写过盘，绝不能复用一个**写之前**就发出的在途请求
       await refreshAssetsAndSync({ force: true })
     } catch (e) {
-      setError(backendErrorText(e))
+      if (scriptRunEpoch() === epoch) setError(backendErrorText(e))
     } finally {
       setBusy(null)
     }
@@ -228,6 +246,8 @@ function ReadinessBody() {
           ReturnType<typeof probeScript>
         >
       })
+      // 在飞时换了项目：A 的试运行结果（描述符、门的载荷）不落进 B（#831 Codex P1）
+      if (scriptRunEpoch() !== epoch) return
       // 起会话之前的门（运行目录 / 依赖准备）不是试运行失败：弹与渲染、素材库同一个框，这一行只说还差什么
       const gate = gatePhaseOf(res.error)
       if (gate && handOffProbeGate(res.error, project)) {

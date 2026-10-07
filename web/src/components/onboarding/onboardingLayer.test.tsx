@@ -690,4 +690,33 @@ describe('卡片与高亮环的形态（2026-10-07 设计审计 §10.2）', () =
     expect(document.activeElement).toBe(outside)
     outside.remove()
   })
+
+  it('「暂停教程」不是换步骤：之后焦点在别处时继续教程，不把焦点抢进卡片（#831 Codex P2）', async () => {
+    await mount()
+    await act(async () => {
+      ob().start({ projectId: 'p_tut', documentId: META.document_id })
+    })
+    await flush()
+    // 焦点在卡片里按「暂停教程」（键盘用户的常态）：卡片卸载那一刻焦点还在它里面
+    const pause = card()!.querySelector<HTMLButtonElement>('[data-onboarding-pause]')!
+    pause.focus()
+    await act(async () => pause.click())
+    await flush()
+    expect(card()).toBeNull()
+    // 用户去别处干活
+    const outside = document.createElement('input')
+    document.body.appendChild(outside)
+    outside.focus()
+    await act(async () => ob().resume())
+    await flush()
+    expect(card()).not.toBeNull()
+    expect(document.activeElement, '继续教程把焦点抢进了卡片').toBe(outside)
+    // 继续之后换步骤（焦点在卡片里）照旧交接
+    const skip = card()!.querySelector<HTMLButtonElement>('[data-onboarding-skip]')!
+    skip.focus()
+    await act(async () => skip.click())
+    await flush()
+    expect(card()!.contains(document.activeElement), '换步骤没有交接焦点').toBe(true)
+    outside.remove()
+  })
 })

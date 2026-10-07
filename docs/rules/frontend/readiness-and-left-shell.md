@@ -27,6 +27,10 @@
 - **开关只有 `uiStore.registryOpen`**（`RegistryDialog` 的文件名与导出名保留）。
   就绪度 store 只管 `focusId`；`focusPanel(fileId)` 是 17/18 复用的入口。
   关闭后的焦点归位归 `ui/Dialog`，**别再记第二份**。
+  正文 `ReadinessBody` 按**项目代际（`scriptRunStore.epoch`）× 打开代际（每次关 → 开 +1）**重挂：开着换项目、或关掉后
+  Radix Presence 留着同一份正文放退场动画（data-state=closed，到 `animationend`）时换项目 / 重新打开，上一份的注册表视图、
+  试运行结果（runtime 描述符与「添加到画布」）、待重跑的门都不带过来，视图重取；在飞的试运行 / 重取回来时项目代际已变就
+  不落地（#831 Codex P1 + 维护者复审）。测试用 `getComputedStyle` 按 data-state 报动画名来模拟退场，生产动画不改。
 - **「没测量」三档不许压扁**：`conflicts` 的 `null`、`project.registry_valid`
   的 `null`、`PanelInfo.capability` 的 `undefined`。第三档的界面表现是
   **什么都不显示**——补成 `layout_only` 就是替后端撒谎。

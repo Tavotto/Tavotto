@@ -149,7 +149,7 @@ const $ = <T extends Element = HTMLElement>(sel: string) => document.querySelect
 beforeEach(async () => {
   document.body.innerHTML = ''
   vi.clearAllMocks()
-  useTimelineStore.setState({ preview: null, rev: 0, namingOpen: false, restoring: null })
+  useTimelineStore.setState({ preview: null, rev: 0, namingOpen: false, restoring: null, restoreToken: null })
   mockCreate.mockResolvedValue({ version: meta({ id: 'v_backup' }) })
   mockDoc.mockResolvedValue({ ...meta(), doc: snapshot() })
   mockUpdate.mockResolvedValue({ version: meta() })
@@ -363,6 +363,63 @@ describe('内联条的「恢复到这里」与预览恢复同一把锁（Codex #
     expect(useTimelineStore.getState().restoring).toBeNull()
     expect(useTimelineStore.getState().preview).toBeNull()
     expect($<HTMLButtonElement>('[data-timeline-close]')!.disabled).toBe(false)
+  })
+})
+
+describe('恢复锁在取正文之前就挂上、按凭据摘（Codex #831 P1）', () => {
+  it('A 的正文还在路上时再点 B 的「恢复到这里」：B 不取、不写，只有 A 写进去', async () => {
+    let giveA!: (v: Awaited<ReturnType<typeof fetchVersionDoc>>) => void
+    const docOf = (id: string): FigureDocument => ({ ...snapshot(), objects: [text(id, id)] })
+    mockDoc.mockImplementation((_doc, id) =>
+      id === 'vA'
+        ? new Promise((resolve) => (giveA = resolve))
+        : Promise.resolve({ ...meta({ id }), doc: docOf(`from_${id}`) }),
+    )
+    await mount([meta({ id: 'vA', ts: NOW - 120_000 }), meta({ id: 'vB' })], undefined, false)
+    const restoreBtn = (id: string) =>
+      node(id).querySelector<HTMLButtonElement>('[data-timeline-row-restore]')!
+    await act(async () => restoreBtn('vA').click())
+    await flush()
+    // A 还在取正文：锁已挂上，所有行的「恢复到这里」一起禁用、抽屉关不掉
+    expect(useTimelineStore.getState().restoring).not.toBeNull()
+    expect(restoreBtn('vB').disabled).toBe(true)
+    expect($<HTMLButtonElement>('[data-timeline-close]')!.disabled).toBe(true)
+    await act(async () => restoreBtn('vB').click())
+    await flush()
+    expect(mockDoc).toHaveBeenCalledTimes(1)
+
+    await act(async () => giveA({ ...meta({ id: 'vA' }), doc: docOf('from_vA') }))
+    await flush()
+    expect(ids()).toEqual(['from_vA'])
+    expect(mockCreate).toHaveBeenCalledTimes(1)
+    expect(useTimelineStore.getState().restoring).toBeNull()
+  })
+
+  it('同一上下文已有一次恢复在飞：再挂锁被拒；过期的持有者摘不掉后来者的锁', () => {
+    const tl = () => useTimelineStore.getState()
+    const first = tl().beginRestore('ctx')
+    expect(first).not.toBeNull()
+    expect(tl().beginRestore('ctx')).toBeNull()
+    tl().endRestore(first!)
+    expect(tl().restoring).toBeNull()
+    const second = tl().beginRestore('ctx')
+    expect(second).not.toBeNull()
+    // 第一次的 finally 晚到（或重复）：不许摘掉第二次的锁
+    tl().endRestore(first!)
+    expect(tl().restoring).toBe('ctx')
+    tl().endRestore(second!)
+    expect(tl().restoring).toBeNull()
+  })
+
+  it('别的上下文挂着的旧锁不挡新上下文；旧的那次结束也摘不掉新上下文的锁', () => {
+    const tl = () => useTimelineStore.getState()
+    const a = tl().beginRestore('ctxA')
+    const b = tl().beginRestore('ctxB')
+    expect(b).not.toBeNull()
+    tl().endRestore(a!)
+    expect(tl().restoring).toBe('ctxB')
+    tl().endRestore(b!)
+    expect(tl().restoring).toBeNull()
   })
 })
 
