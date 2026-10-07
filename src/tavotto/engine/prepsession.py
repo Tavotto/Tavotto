@@ -424,6 +424,7 @@ def _fingerprint(plan: preparation.PreparationPlan) -> str:
     门的结论变了才算「执行意图变了」。进度 / 文案 / 时间戳不在里面——它们只动 `observation_seq`。
     T03 起 argv / 运行配置也加进来。"""
     decision = plan.workdir_decision or {}
+    dependencies = (plan.dependency_preparation or {}).get("plan") or {}
     payload = {
         "target": plan.target,
         "script": plan.script,
@@ -439,7 +440,14 @@ def _fingerprint(plan: preparation.PreparationPlan) -> str:
         # T03：运行配置引用（不透明 id，换任何一个 token 都是新引用）——不放 argv 原文
         "run": plan.run.config_id if plan.run is not None else None,
         "env_error": ((plan.environment or {}).get("error") or {}).get("code"),
-        "deps": ((plan.dependency_preparation or {}).get("plan") or {}).get("status"),
+        # JointPlan owns the installation identity and source-input fingerprint.
+        # Declarations remain relevant when the dependency gate is not evaluated.
+        "deps": {
+            key: dependencies.get(key)
+            for key in ("status", "identity", "inputs_digest", "selection")
+        },
+        "dependency_intents": plan.dependency_intents,
+        "dependency_conflicts": plan.dependency_conflicts,
     }
     return json.dumps(payload, sort_keys=True, default=str)
 
@@ -519,6 +527,7 @@ class SessionService:
             sess.touched_at = now
             if not created and not self._has_active_attempt(sess):
                 if sess.stale or fingerprint != sess.fingerprint:
+                    sess.target = dict(target)
                     sess.plan = plan
                     sess.fingerprint = fingerprint
                     sess.config_revision += 1
@@ -649,7 +658,9 @@ class SessionService:
                 attempt.finalized = True
             self._notify(sess)
 
-        self._prep.register(plan)
+        # A new action after a settled attempt is an explicit rerun. The provider
+        # retires the old build only after its cancellation and stale-plan checks.
+        self._prep.register(plan, force_rebuild=bool(sess.attempts))
         sess.attempts.append(attempt)
         action.attempt_id = plan.plan_id
         entry = self._prep.get(plan.plan_id, sess.project_id)

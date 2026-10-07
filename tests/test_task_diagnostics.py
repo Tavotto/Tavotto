@@ -780,3 +780,146 @@ def test_export_projection_never_reads_the_full_payload(env, tmp_path, monkeypat
     monkeypatch.setattr(exportreq.ExportRequest, "to_payload", poisoned)
     proj = exportjob.diagnostic_projection(j)
     assert proj["attempt_id"] == j.id and proj["request"]["scope"] == "canvas"
+
+
+@pytest.mark.parametrize("failure_at", ["started", "probe", "materialize", "default", "refresh"])
+def test_probe_terminal_exceptions_keep_diagnostic_reference(
+    prep_client, tmp_path, monkeypatch, failure_at
+):
+    root = _project(tmp_path, "terminal-probe")
+    pj = _open(prep_client, root)
+    outcome = {"registered": True, "stems": ["fig"], "entry": "main", "descriptors": []}
+    monkeypatch.setattr(m.engine_probe, "probe_and_register", lambda *a, **kw: outcome.copy())
+    monkeypatch.setattr(m, "_materialize_runtime", lambda *a, **kw: None)
+    monkeypatch.setattr(m.engine_runconfig, "set_default", lambda *a, **kw: None)
+    monkeypatch.setattr(m, "refresh_project", lambda *a, **kw: None)
+
+    def fail(*args, **kwargs):
+        raise RuntimeError(SECRET)
+
+    target, name = {
+        "started": (m, "sse_publish"),
+        "probe": (m.engine_probe, "probe_and_register"),
+        "materialize": (m, "_materialize_runtime"),
+        "default": (m.engine_runconfig, "set_default"),
+        "refresh": (m, "refresh_project"),
+    }[failure_at]
+    monkeypatch.setattr(target, name, fail)
+    response = prep_client.post(
+        "/api/registry/probe", json={"script": "fig.py"}, query_string={"pj": pj}
+    )
+    assert response.status_code == 500
+    body = response.get_json()
+    assert body["code"] == "internal_error"
+    ref = body["diagnostic"]["ref"]
+    snapshot_response = _get(prep_client, "script_run", ref, pj)
+    assert snapshot_response.status_code == 200
+    assert_no_secret(snapshot_response.get_data(as_text=True))
+    snapshot = snapshot_response.get_json()["snapshot"]
+    assert snapshot["outcome"] == "error"
+    assert snapshot["error"]["code"] == "internal_error"
+    # Preserve the actual registration result even if a later response step failed.
+    assert snapshot["execution"]["registered"] is (failure_at not in ("started", "probe"))
+    assert (pj, "fig.py") not in m._PROBES
+    assert (pj, "fig.py") not in m._PROBE_RUNS
+
+
+def test_task_snapshot_readme_discloses_all_metadata_categories():
+    text = m.engine_diagnostics._readme(False, False, has_tasks=True)
+    for category in (
+        "时间戳",
+        "Python",
+        "matplotlib",
+        "执行",
+        "配置",
+        "尺寸",
+        "PPI",
+        "修订摘要",
+        "timestamps",
+        "execution",
+        "configuration",
+        "dimensions",
+        "revision hashes",
+    ):
+        assert category in text
+
+
+def test_probe_refresh_failure_keeps_original_status_and_diagnostic(
+    prep_client, tmp_path, monkeypatch
+):
+    root = _project(tmp_path, "refresh-probe")
+    pj = _open(prep_client, root)
+    monkeypatch.setattr(
+        m.engine_probe,
+        "probe_and_register",
+        lambda *a, **kw: {"registered": True, "stems": ["fig"], "entry": "main", "descriptors": []},
+    )
+    monkeypatch.setattr(m, "_materialize_runtime", lambda *a, **kw: None)
+    monkeypatch.setattr(m.engine_runconfig, "set_default", lambda *a, **kw: None)
+
+    def fail(*args, **kwargs):
+        raise m.engine_refresh.RefreshError("registry_invalid", SECRET, {"detail": SECRET})
+
+    monkeypatch.setattr(m, "refresh_project", fail)
+    response = prep_client.post(
+        "/api/registry/probe", json={"script": "fig.py"}, query_string={"pj": pj}
+    )
+    assert response.status_code == 400
+    body = response.get_json()
+    assert body["code"] == "registry_invalid" and body["params"] == {"detail": SECRET}
+    snapshot = _get(prep_client, "script_run", body["diagnostic"]["ref"], pj)
+    assert_no_secret(snapshot.get_data(as_text=True))
+    assert snapshot.get_json()["snapshot"]["error"] == {"code": "registry_invalid"}
+    assert snapshot.get_json()["snapshot"]["outcome"] == "error"
+
+
+@pytest.mark.parametrize("body_kind", ["object", "array", "string", "html"])
+def test_probe_custom_error_response_keeps_status_body_headers_and_snapshot(
+    prep_client, tmp_path, monkeypatch, body_kind
+):
+    root = _project(tmp_path, "custom-response-probe")
+    pj = _open(prep_client, root)
+
+    class ProbeHandlerError(Exception):
+        pass
+
+    payload = {
+        "object": {"code": "probe_throttled", "detail": SECRET},
+        "array": [SECRET],
+        "string": SECRET,
+        "html": f"<p>{SECRET}</p>",
+    }[body_kind]
+    encoded = payload if body_kind == "html" else json.dumps(payload)
+    mimetype = "text/html" if body_kind == "html" else "application/json"
+
+    def handle(exc):
+        return m.app.response_class(
+            encoded, status=429, mimetype=mimetype, headers={"Retry-After": "3"}
+        )
+
+    def fail(*args, **kwargs):
+        raise ProbeHandlerError(SECRET)
+
+    monkeypatch.setitem(m.app.error_handler_spec[None][None], ProbeHandlerError, handle)
+    monkeypatch.setattr(m.engine_probe, "probe_and_register", fail)
+    response = prep_client.post(
+        "/api/registry/probe", json={"script": "fig.py"}, query_string={"pj": pj}
+    )
+    assert response.status_code == 429
+    assert response.mimetype == mimetype and response.headers["Retry-After"] == "3"
+    if body_kind == "object":
+        body = response.get_json()
+        ref = body.pop("diagnostic")["ref"]
+        assert body == payload
+    else:
+        assert response.get_data(as_text=True) == encoded
+        ref = response.headers["X-Tavotto-Diagnostic-Ref"]
+    snapshot_response = _get(prep_client, "script_run", ref, pj)
+    assert snapshot_response.status_code == 200
+    assert_no_secret(snapshot_response.get_data(as_text=True))
+    snapshot = snapshot_response.get_json()["snapshot"]
+    assert snapshot["outcome"] == "error"
+    expected_code = "probe_throttled" if body_kind == "object" else "internal_error"
+    assert snapshot["error"] == {"code": expected_code}
+    assert (pj, "fig.py") not in m._PROBES
+    assert (pj, "fig.py") not in m._PROBE_RUNS

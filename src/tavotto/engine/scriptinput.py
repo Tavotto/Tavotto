@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import builtins
 import contextlib
+import hashlib
+import hmac
 import io
 import json
 import os
@@ -173,10 +175,18 @@ class StdoutTail(io.TextIOBase):
 class Channel:
     """一次 build 的问答通道：发问、等答、记账。"""
 
-    def __init__(self, directory: str | os.PathLike, script: str, tail: StdoutTail | None = None):
+    def __init__(
+        self,
+        directory: str | os.PathLike,
+        script: str,
+        tail: StdoutTail | None = None,
+        *,
+        private_key: str = "",
+    ):
         self.dir = Path(directory)
         self.script = script
         self.tail = tail
+        self.private_key = private_key
         self.count = 0
         #: 本次 build 实际用到的每一问（build 响应的 `script_inputs`）。
         self.record: list[dict] = []
@@ -220,13 +230,23 @@ class Channel:
             return None
         self.count += 1
         index = self.count
-        prompt = clip_prompt(prompt)
+        # Prompts can interpolate sensitive argv too. Neither those nor stdout
+        # snippets may cross the on-disk input rendezvous for a private run.
+        identity = {"prompt": clip_prompt(prompt)}
+        if self.private_key:
+            identity = {
+                "prompt": "[sensitive run: input prompt omitted]",
+                "prompt_id": hmac.new(
+                    bytes.fromhex(self.private_key), prompt.encode("utf-8"), hashlib.sha256
+                ).hexdigest(),
+            }
+        prompt = identity["prompt"]
         self._write_request(
             index,
             {
                 "index": index,
                 "kind": kind,
-                "prompt": prompt,
+                **identity,
                 "script": self.script,
                 "stdout_tail": self.tail.tail() if self.tail is not None else "",
             },
@@ -254,7 +274,7 @@ class Channel:
         if not isinstance(reply, dict):
             self._log(f"[input] 第 {index} 问等待超时，按 EOF 处理\n")
             self.record.append(
-                {"index": index, "kind": kind, "prompt": prompt, "answer": None, "timed_out": True}
+                {"index": index, "kind": kind, **identity, "answer": None, "timed_out": True}
             )
             return None
         if reply.get("no_answer"):
@@ -262,7 +282,7 @@ class Channel:
             raise ScriptNeedsInput(prompt, str(reply.get("reason") or ""))
         if reply.get("eof") or not isinstance(reply.get("answer"), str):
             self._log(f"[input] 第 {index} 问：EOF\n")
-            self.record.append({"index": index, "kind": kind, "prompt": prompt, "answer": None})
+            self.record.append({"index": index, "kind": kind, **identity, "answer": None})
             return None
         answer = reply["answer"]
         if kind == "getpass":
@@ -274,7 +294,7 @@ class Channel:
         else:
             # 转录「提示 → 答案」：和终端里看到的一样
             self._log(f"{answer}\n")
-        self.record.append({"index": index, "kind": kind, "prompt": prompt, "answer": answer})
+        self.record.append({"index": index, "kind": kind, **identity, "answer": answer})
         return answer
 
 
