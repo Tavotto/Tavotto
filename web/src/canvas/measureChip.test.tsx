@@ -13,11 +13,14 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { MeasureChip } from './MeasureChip'
 import { literal, setLocale } from '@/i18n'
+import type { Manifest } from '@/lib/api'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
+import { renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
+import { useUiStore } from '@/store/uiStore'
 import { mmToWorld, useViewportStore } from '@/store/viewportStore'
-import { emptyProject, type ShapeObject } from '@/types/document'
+import { emptyProject, type PanelObject, type ShapeObject } from '@/types/document'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -55,6 +58,8 @@ afterEach(async () => {
   container.remove()
   useInteractionStore.getState().end()
   useInteractionStore.getState().setNudge(null)
+  useUiStore.setState({ elementPanelId: null, selectedGids: [] })
+  useRenderStore.getState().clear()
   await setLocale('zh-CN')
 })
 
@@ -148,5 +153,91 @@ describe('MeasureChip', () => {
     } finally {
       Object.defineProperty(HTMLElement.prototype, 'offsetWidth', desc)
     }
+  })
+
+  // Codex #833：图内编辑态里选中标题按方向键，`nudge.ts` 推的是图内元素（只动预览平面），画布选区不变——
+  // 芯片要贴在**标题**下面，不是整块面板下面（面板没选中时也不能消失）。
+  // 面板 20,30 起、页面 100 × 80 mm；标题 bbox [0.3, 0.05, 0.2, 0.03] → 页面 x 50–70、y 34–36.4；Δ +2 → x 52–72
+  describe('图内元素微调', () => {
+    const title = {
+      gid: 'axes_0.title', role: 'title', label: '标题', bbox: [0.3, 0.05, 0.2, 0.03] as [number, number, number, number],
+      editable: [], draggable: true, anchor: [0.3, 0.08] as [number, number], drag_prop: 'pos_frac',
+    }
+    const manifest = {
+      stem: 'Fig1', size_mm: [200, 160],
+      elements: [
+        { gid: 'figure', role: 'figure', label: '整图', bbox: [0, 0, 1, 1], editable: [], draggable: false },
+        title,
+      ],
+    } as unknown as Manifest
+    const panel = {
+      id: 'p1', type: 'panel', x: 20, y: 30, w: 100, h: 80, fileId: 'Fig1.pdf', fileKind: 'pdf',
+      nativeW: 200, nativeH: 160, script: 'fig.py', overrides: [],
+    } as unknown as PanelObject
+
+    beforeEach(() => {
+      useDocumentStore.getState().commit(literal('加图'), (d) => {
+        d.objects.push(panel)
+      })
+      useRenderStore.getState().clear()
+      useUiStore.setState({ elementPanelId: 'p1', selectedGids: [title.gid] })
+    })
+
+    const seedRender = () => {
+      const p = useDocumentStore.getState().doc.objects.find((o) => o.id === 'p1') as PanelObject
+      useRenderStore.getState().patch(renderKeyOf(p), {
+        fileId: 'Fig1.pdf', manifest, svg: '<svg/>', rev: 1, status: 'ready', lastPatches: JSON.stringify(p.overrides),
+      })
+      useRenderStore.setState({ latest: { 'Fig1.pdf': renderKeyOf(p) } })
+    }
+
+    it.each([
+      ['面板也在画布选区里', ['p1']],
+      ['画布选区里没有面板', []],
+    ])('%s：芯片贴在被推的标题下面（权威框 + Δ），读数仍是 Δ', (_name, ids) => {
+      act(() => {
+        seedRender()
+        useSelectionStore.getState().set(ids)
+        useInteractionStore.getState().setNudge({ dx: 2, dy: 0 })
+      })
+      expect(chip()!.dataset.measureChip).toBe('offset')
+      expect(chip()!.textContent).toBe('Δ +2.0, 0.0 mm')
+      expect(parseFloat(chip()!.style.left)).toBeCloseTo(mmToWorld(62), 6)
+      expect(parseFloat(chip()!.style.top)).toBeCloseTo(mmToWorld(36.4) + 8, 6)
+    })
+
+    // 面板转 90°（版上 80 × 100，中心 60, 80；内容 100 × 80 落在 x 10–110、y 40–120）：标题内容框中心 50, 45.2
+    // 绕面板中心顺时针转 90° → 中心 94.8, 70、宽高互换成 2.4 × 20（y 60–80）；Δ (0, +1) → 底边 81
+    it('面板旋转 90°：元素框随面板朝向转到页面上', () => {
+      act(() => {
+        useDocumentStore.getState().commit(literal('转'), (d) => {
+          Object.assign(d.objects.find((o) => o.id === 'p1')!, { rotation: 90, w: 80, h: 100 })
+        })
+        seedRender()
+        useViewportStore.setState({ viewH: 2000 })
+        useInteractionStore.getState().setNudge({ dx: 0, dy: 1 })
+      })
+      expect(parseFloat(chip()!.style.left)).toBeCloseTo(mmToWorld(94.8), 6)
+      expect(parseFloat(chip()!.style.top)).toBeCloseTo(mmToWorld(81) + 8, 6)
+    })
+
+    it('几何权威缺席（上一段刚提交、渲染没回来）：不报，不拿面板的框顶替', () => {
+      act(() => {
+        useSelectionStore.getState().set(['p1'])
+        useInteractionStore.getState().setNudge({ dx: 2, dy: 0 })
+      })
+      expect(chip()).toBeNull()
+    })
+
+    it('对照：没在图内编辑态，微调推的是画布选区，芯片仍贴在选区下面', () => {
+      act(() => {
+        seedRender()
+        useUiStore.setState({ elementPanelId: null, selectedGids: [] })
+        useSelectionStore.getState().set(['r1'])
+        useInteractionStore.getState().setNudge({ dx: 0.5, dy: 0 })
+      })
+      expect(chip()!.style.left).toBe(`${mmToWorld(10) + mmToWorld(100) / 2}px`)
+      expect(chip()!.style.top).toBe(`${mmToWorld(28) + 8}px`)
+    })
   })
 })
