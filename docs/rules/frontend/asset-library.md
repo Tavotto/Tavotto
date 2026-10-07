@@ -4,7 +4,7 @@
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 
 素材面板分「图」（FileAsset + RuntimeFigureAsset 同一个 listbox，runtime
-卡带「运行时图」badge、cache 预览、stale 角标与重跑）与「脚本」
+卡带「运行时图」badge、cache 预览、stale 角标；重跑是选中页脚 `SelectedAssetActions` 的「重新运行」，不嵌在卡里）与「脚本」
 （`ScriptLibrary`，项目内每个合理 .py 一行）两个区。普通路径必须在这里
 完成；RegistryDialog 只留冲突裁决 / 手工 stem / 高级诊断。
 
