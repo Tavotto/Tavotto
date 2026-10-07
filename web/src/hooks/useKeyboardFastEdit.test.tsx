@@ -262,7 +262,8 @@ describe('快速编辑里的 ⌘A / Delete', () => {
 })
 
 /**
- * ⌘1「适应」与舞台双击同一个取景框（`stageFitFrame`，Codex #833）：快速编辑里适应那张图（右下角当框），
+ * ⌘1「适应」与舞台双击同一个取景框（`stageFitFrame`，Codex #833）：快速编辑里适应那张图本身的矩形（含原点，
+ * `fitRectAnimated`；视口终点的几何见 `canvas/stageFitRect.test.tsx`），
  * 不是适应这一屏根本没画的页面。对照组：排版里适应页面。
  */
 describe('快速编辑里的 ⌘1', () => {
@@ -277,12 +278,13 @@ describe('快速编辑里的 ⌘1', () => {
     expect(spy).toHaveBeenCalledWith(150, 100)
   })
 
-  it('快速编辑里 ⌘1 适应正在编辑的那张图', () => {
-    const spy = vi.spyOn(useViewportStore.getState(), 'fitAnimated').mockImplementation(() => {})
+  it('快速编辑里 ⌘1 适应正在编辑的那张图（它自己的矩形，不是 (0,0) 到右下角）', () => {
+    const page = vi.spyOn(useViewportStore.getState(), 'fitAnimated').mockImplementation(() => {})
+    const spy = vi.spyOn(useViewportStore.getState(), 'fitRectAnimated').mockImplementation(() => {})
     useWorkspaceStore.getState().enterFastEdit(PANEL.id)
     cmd1()
+    expect(page).not.toHaveBeenCalled()
     expect(spy).toHaveBeenCalledTimes(1)
-    // PANEL x10 y20 w40 h30 → 右下角 (50, 50)
-    expect(spy).toHaveBeenCalledWith(50, 50)
+    expect(spy).toHaveBeenCalledWith({ x: 10, y: 20, w: 40, h: 30 })
   })
 })

@@ -2,7 +2,8 @@
  * 快捷键单一来源（`lib/keymap`，2026-10-07 设计审计 §10.1 P2）的两条判据。
  *
  * 主语：**挂着的 `useKeyboard` 在 window 上消费了哪些按键**（`defaultPrevented`）——不是它源码里写了
- * 哪些字串。一整张按键表（字母 / 数字 / 标点 / 功能键 × 六种修饰组合）逐个派发：
+ * 哪些字串。一整张按键表（字母 / 数字 / 标点 / 功能键 × {Ctrl, ⌘, ⌥, ⇧} 的全部 16 种组合，按美式布局合成
+ * 真浏览器会给的事件）逐个派发：
  *   1. 被消费的每一个都必须落在 `KEYMAP` 的某条 `match` 上（useKeyboard 加了绑定却没登记 → 红）；
  *   2. 反过来，与状态无关的每条登记（不是 native、不需要先有选区的）按美式布局合成出**真浏览器会给的**
  *      事件（⇧ 改写后的 key + 物理 code，⇧⌘] 报 `}`）确实被消费（登记了一条 useKeyboard 根本不认、
@@ -74,20 +75,6 @@ const SPECIAL: [string, string][] = [
   ['ArrowLeft', 'ArrowLeft'], ['ArrowRight', 'ArrowRight'], ['F2', 'F2'], ['Home', 'Home'], ['End', 'End'],
 ]
 
-function* probes(): Generator<Probe> {
-  const base: { key: string; code: string; shifted?: string }[] = []
-  for (const c of 'abcdefghijklmnopqrstuvwxyz') base.push({ key: c, code: `Key${c.toUpperCase()}`, shifted: c.toUpperCase() })
-  for (const d of '0123456789') base.push({ key: d, code: `Digit${d}`, shifted: SHIFTED[d] })
-  for (const p of Object.keys(PUNCT_CODE)) base.push({ key: p, code: PUNCT_CODE[p], shifted: SHIFTED[p] })
-  for (const [key, code] of SPECIAL) base.push({ key, code })
-  const mods = [
-    {}, { shiftKey: true }, { ctrlKey: true }, { ctrlKey: true, shiftKey: true },
-    { altKey: true }, { ctrlKey: true, altKey: true }, { metaKey: true },
-  ]
-  for (const b of base)
-    for (const m of mods) yield { key: m.shiftKey && b.shifted ? b.shifted : b.key, code: b.code, ...m }
-}
-
 /** ⇧ 改写出来的字 → 未改写的那颗键（`}` → `]`） */
 const UNSHIFTED = Object.fromEntries(Object.entries(SHIFTED).map(([b, s]) => [s, b]))
 
@@ -99,14 +86,59 @@ function codeOfBase(c: string): string | undefined {
   return PUNCT_CODE[c]
 }
 
+interface Mods {
+  ctrlKey: boolean
+  metaKey: boolean
+  altKey: boolean
+  shiftKey: boolean
+}
+
 /**
- * 一条 `KeyMatch` 在美式布局的真浏览器里按出来的 keydown：`key` 是 ⇧ 改写**之后**的字
- * （⇧⌘] 报 `}`，不是 `]`），`code` 是物理键位。按不出来（要求 `}` 却又要求不按 ⇧）返回 null。
- * 主语是「用户真按下去时浏览器给的事件」，不是把 KEYMAP 里的字串原样塞回去——那样 ⇧⌘] 只认
- * `]` 的绑定在这里照样绿，真浏览器里却是死键。
+ * 美式布局的真浏览器里按下一颗键时给的 keydown：`base` 是未改写的字（`]`）或具名键（`Escape`），
+ * `key` 是 ⇧ 改写**之后**的字（⇧⌘] 报 `}`，不是 `]`），`code` 是物理键位。⌥ 不改写 key（Windows / Linux
+ * 的行为；macOS 上 ⌥ 改写出来的字因键而异，需要它的绑定按 code 认）。两条判据共用这一个构造器。
+ */
+function usLayoutKeydown(base: string, mods: Mods): Probe | null {
+  if (base.length > 1) return { key: base, code: base, ...mods }
+  const code = codeOfBase(base)
+  if (code === undefined) return null
+  const key = !mods.shiftKey ? base : /^[a-z]$/.test(base) ? base.toUpperCase() : (SHIFTED[base] ?? base)
+  return { key, code, ...mods }
+}
+
+/**
+ * 修饰键的**全幂集**：{Ctrl, ⌘, ⌥, ⇧} 的 16 种组合。⌘ 与 Ctrl 分开枚举（useKeyboard 与 `bindingFor`
+ * 都把两者并成「mod」，但只枚举其中一个就判不出谁只认了 Ctrl）；两个都按也算一种。
+ * 此前只派发 7 种，Ctrl+⌥+⇧+S 这类组合从没派发过——useKeyboard 把它当「另存为」消费，而 `saveAs`
+ * 登记的是 `alt: false`，漂移一直是绿的（Codex #833）。
+ */
+const ALL_MODS: Mods[] = Array.from({ length: 16 }, (_, i) => ({
+  ctrlKey: !!(i & 1),
+  metaKey: !!(i & 2),
+  altKey: !!(i & 4),
+  shiftKey: !!(i & 8),
+}))
+
+function* probes(): Generator<Probe> {
+  const bases: string[] = [
+    ...'abcdefghijklmnopqrstuvwxyz',
+    ...'0123456789',
+    ...Object.keys(PUNCT_CODE),
+    ...SPECIAL.map(([key]) => key),
+  ]
+  for (const b of bases)
+    for (const m of ALL_MODS) {
+      const p = usLayoutKeydown(b, m)
+      if (p) yield p
+    }
+}
+
+/**
+ * 一条 `KeyMatch` 在美式布局的真浏览器里按出来的 keydown（经 `usLayoutKeydown`）。按不出来（要求 `}`
+ * 却又要求不按 ⇧）返回 null。主语是「用户真按下去时浏览器给的事件」，不是把 KEYMAP 里的字串原样塞
+ * 回去——那样 ⇧⌘] 只认 `]` 的绑定在这里照样绿，真浏览器里却是死键。
  */
 function usLayoutEvent(m: KeyMatch): Probe | null {
-  const mods = { ctrlKey: !!m.mod, altKey: !!m.alt }
   let base: string
   let shift: boolean
   if (m.code) {
@@ -121,8 +153,8 @@ function usLayoutEvent(m: KeyMatch): Probe | null {
     shift = !!m.shift
   } else if (m.key && m.key.length > 1) {
     // 具名键（escape → Escape）：⇧ 不改写它
-    const named = m.key[0].toUpperCase() + m.key.slice(1)
-    return { key: named, code: named, shiftKey: !!m.shift, ...mods }
+    base = m.key[0].toUpperCase() + m.key.slice(1)
+    shift = !!m.shift
   } else if (m.key && UNSHIFTED[m.key]) {
     // `}` / `?` / `+` 这类字只有按着 ⇧ 才按得出来
     if (m.shift === false) return null
@@ -132,10 +164,7 @@ function usLayoutEvent(m: KeyMatch): Probe | null {
     base = m.key ?? ''
     shift = !!m.shift
   }
-  const code = codeOfBase(base)
-  if (code === undefined) return null
-  const key = !shift ? base : /^[a-z]$/.test(base) ? base.toUpperCase() : (SHIFTED[base] ?? base)
-  return { key, code, shiftKey: shift, ...mods }
+  return usLayoutKeydown(base, { ctrlKey: !!m.mod, metaKey: false, altKey: !!m.alt, shiftKey: shift })
 }
 
 const press = (p: Probe) => {

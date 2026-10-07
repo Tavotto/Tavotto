@@ -216,7 +216,9 @@ export function useKeyboard() {
         startNamedNode()
         return
       }
-      if (mod && e.key.toLowerCase() === 's') {
+      // 带 ⌥ 的不认（`lib/keymap` 的 save / saveAs 都登记 `alt: false`）：⌥⇧⌘S 不是「另存为」，Windows 上
+      // Ctrl+Alt+Shift+S 还是 AltGr+⇧S（波兰语 Ś），这一条排在输入框让位之前，认了就是吞掉用户在打的字
+      if (mod && !e.altKey && e.key.toLowerCase() === 's') {
         e.preventDefault()
         // ⇧⌘S = 另存为一份命名的画布文件；⌘S = 真的保存当前文档
         if (e.shiftKey) useUiStore.getState().setLayoutOpen(true, 'save')
