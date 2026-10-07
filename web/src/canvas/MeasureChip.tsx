@@ -57,6 +57,9 @@ export function MeasureChip() {
   const panY = useViewportStore((s) => s.panY)
   const viewW = useViewportStore((s) => s.viewW)
   const viewH = useViewportStore((s) => s.viewH)
+  // 底部浮动工具条显示时舞台底边让出的高度（`TOOLBAR_FIT_CLEARANCE`，工具条自己按显示判据写进来，隐藏 /
+  // 快速编辑时为 0）：与「适应」取景同一个值。工具条的层级高于芯片，贴进那一条就被盖住（Codex #833）
+  const bottomClear = useViewportStore((s) => s.fitBottomClear)
   // 图内编辑态：方向键推的是图内选中的元素（与 `nudge.ts` 的 `currentTargetKey` 同一判据）
   const elementPanelId = useUiStore((s) => s.elementPanelId)
   const selectedGids = useUiStore((s) => s.selectedGids)
@@ -105,7 +108,7 @@ export function MeasureChip() {
   const left = mmToViewX(anchor.x, t) + mmToPx(anchor.w, t) / 2
   const top = mmToViewY(anchor.y, t)
   const bottom = top + mmToPx(anchor.h, t)
-  const below = bottom + GAP + CHIP_H <= viewH || !viewH
+  const below = bottom + GAP + CHIP_H <= viewH - bottomClear || !viewH
   return (
     <ChipAt
       mode={mode}
@@ -114,6 +117,7 @@ export function MeasureChip() {
       top={below ? bottom + GAP : top - GAP - CHIP_H}
       viewW={viewW}
       viewH={viewH}
+      bottomClear={bottomClear}
     />
   )
 }
@@ -121,16 +125,25 @@ export function MeasureChip() {
 /**
  * 先按「框下 / 放不下翻到框上」摆（`left` 是芯片中心、`top` 是上沿），再整体夹进舞台（Codex #833）：选区几乎占满
  * 或超出视口时上下都放不下，翻上去会落到负坐标、被舞台的 overflow-hidden 裁掉；横向同理（框中心在视口外时芯片
- * 半截出界）。芯片宽随读数变（w-max），读数一变就在绘制之前量一次。
+ * 半截出界）。底部浮动工具条那一条（`bottomClear`）不算可用的舞台：上沿翻转与纵向夹取都让开它。
+ * 芯片宽随读数变（w-max），读数一变就在绘制之前量一次。
  */
-function ChipAt(props: { mode: MeasureMode; text: string; left: number; top: number; viewW: number; viewH: number }) {
-  const { mode, text, viewW, viewH } = props
+function ChipAt(props: {
+  mode: MeasureMode
+  text: string
+  left: number
+  top: number
+  viewW: number
+  viewH: number
+  bottomClear: number
+}) {
+  const { mode, text, viewW, viewH, bottomClear } = props
   const ref = useRef<HTMLDivElement>(null)
   const [chipW, setChipW] = useState(0)
   useLayoutEffect(() => {
     setChipW(ref.current?.offsetWidth ?? 0)
   }, [text])
-  const y = clamp(props.top, EDGE, viewH - EDGE - CHIP_H, viewH)
+  const y = clamp(props.top, EDGE, viewH - Math.max(EDGE, bottomClear) - CHIP_H, viewH)
   const x = clamp(props.left, EDGE + chipW / 2, viewW - EDGE - chipW / 2, viewW)
   return (
     <div

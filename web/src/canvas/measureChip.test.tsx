@@ -21,7 +21,7 @@ import { useInteractionStore } from '@/store/interactionStore'
 import { renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
-import { mmToWorld, useViewportStore } from '@/store/viewportStore'
+import { mmToWorld, TOOLBAR_FIT_CLEARANCE, useViewportStore } from '@/store/viewportStore'
 import { emptyProject, type PanelObject, type ShapeObject } from '@/types/document'
 
 declare global {
@@ -48,7 +48,7 @@ beforeEach(async () => {
     d.objects.push(rect())
   })
   useSelectionStore.getState().set(['r1'])
-  useViewportStore.setState({ zoom: 1, panX: 0, panY: 0, viewW: 800, viewH: 600 })
+  useViewportStore.setState({ zoom: 1, panX: 0, panY: 0, viewW: 800, viewH: 600, fitBottomClear: 0 })
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -130,6 +130,55 @@ describe('MeasureChip', () => {
     const top = parseFloat(chip()!.style.top)
     expect(top).toBeGreaterThanOrEqual(0)
     expect(top + 22).toBeLessThanOrEqual(viewH)
+  })
+
+  // Codex #833：底部浮动工具条（层级高于芯片）显示时占着舞台底部 TOOLBAR_FIT_CLEARANCE。框底（28 mm）离视口底
+  // 只剩 70 px：不算工具条放得下（8 + 22），算上就放不下——芯片翻到框上面，不钻到工具条底下
+  describe('底部浮动工具条', () => {
+    const viewH = mmToWorld(28) + 70
+    it('显示时：框底落进工具条那一带，芯片翻到框上面', () => {
+      act(() => {
+        useViewportStore.setState({ viewH, fitBottomClear: TOOLBAR_FIT_CLEARANCE })
+        useInteractionStore.getState().begin('resize')
+      })
+      const top = parseFloat(chip()!.style.top)
+      expect(top).toBe(mmToWorld(20) - 8 - 22)
+      expect(top + 22).toBeLessThanOrEqual(viewH - TOOLBAR_FIT_CLEARANCE)
+    })
+
+    it('对照：工具条不在（快速编辑 / 隐藏时为 0），芯片照旧贴在框下面', () => {
+      act(() => {
+        useViewportStore.setState({ viewH, fitBottomClear: 0 })
+        useInteractionStore.getState().begin('resize')
+      })
+      expect(parseFloat(chip()!.style.top)).toBe(mmToWorld(28) + 8)
+    })
+
+    // 框的上沿就在工具条那一带（离视口底 40 px），下面放不下、翻上去的芯片下沿仍压在工具条上：夹到工具条之上
+    it('框上沿落进工具条那一带：翻上去之后再夹到工具条之上', () => {
+      act(() => {
+        useDocumentStore.getState().commit(literal('挪低'), (d) => {
+          Object.assign(d.objects[0], { y: (600 - 40) / mmToWorld(1) })
+        })
+        useViewportStore.setState({ viewH: 600, fitBottomClear: TOOLBAR_FIT_CLEARANCE })
+        useInteractionStore.getState().begin('resize')
+      })
+      expect(parseFloat(chip()!.style.top)).toBeCloseTo(600 - TOOLBAR_FIT_CLEARANCE - 22, 6)
+    })
+
+    it('选区占满视口、上下都放不下：夹取也让开工具条', () => {
+      const tall = mmToWorld(102) + 10
+      act(() => {
+        useDocumentStore.getState().commit(literal('拉高'), (d) => {
+          Object.assign(d.objects[0], { y: 2, h: 100 })
+        })
+        useViewportStore.setState({ viewH: tall, fitBottomClear: TOOLBAR_FIT_CLEARANCE })
+        useInteractionStore.getState().begin('resize')
+      })
+      const top = parseFloat(chip()!.style.top)
+      expect(top).toBeGreaterThanOrEqual(0)
+      expect(top + 22).toBeLessThanOrEqual(tall - TOOLBAR_FIT_CLEARANCE)
+    })
   })
 
   // 横向同理：框中心平移到视口左外 / 右外，芯片（桩宽 80px，按中心定位）整条留在舞台里
