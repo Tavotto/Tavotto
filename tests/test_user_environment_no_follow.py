@@ -259,3 +259,36 @@ def test_without_budget_enumeration_is_unchanged(tmp_path, monkeypatch):
         (home / ".conda" / "envs" / n).mkdir()
 
     assert [os.path.basename(p) for p in userenvs._conda_prefixes()] == ["a", "b"]
+
+
+# --- CodeQL py/path-injection (#811): read_regular_text 与 declared_intents(script=) 的包含性守卫 ---
+
+
+@pytest.mark.parametrize("part", ["..", ".", "", "a/b"])
+def test_read_regular_text_rejects_non_name_components(tmp_path, part):
+    from tavotto.engine import scanbudget
+
+    (tmp_path / "ok.txt").write_text("x", encoding="utf-8")
+    with pytest.raises(OSError):
+        scanbudget.read_regular_text(tmp_path, part, "ok.txt", no_follow=True)
+
+
+def test_read_regular_text_still_reads_regular_file(tmp_path):
+    from tavotto.engine import scanbudget
+
+    (tmp_path / "d").mkdir()
+    (tmp_path / "d" / "f.txt").write_text("hi", encoding="utf-8")
+    assert scanbudget.read_regular_text(tmp_path, "d", "f.txt", no_follow=True) == "hi"
+
+
+def test_declared_intents_script_escape_is_not_read(tmp_path):
+    from tavotto.engine import depresolve
+
+    root = tmp_path / "proj"
+    root.mkdir()
+    (tmp_path / "outside.py").write_text(
+        "# /// script\n# dependencies = ['evilpkg']\n# ///\n", encoding="utf-8"
+    )
+    for no_follow in (False, True):
+        intents = depresolve.declared_intents(root, "../outside.py", no_follow=no_follow)
+        assert all("evilpkg" not in str(i) for i in intents)

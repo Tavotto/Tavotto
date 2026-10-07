@@ -101,6 +101,27 @@ def is_redirect(st) -> bool:
     return tag == 0 or bool(tag & 0x20000000)
 
 
+def _contained_lexical(base, parts: tuple[str, ...]) -> str:
+    """把 `base` + `parts` 钉在 `base` 之内，回**守卫过的那一条**字符串路径；逃出去抛 `OSError`。
+
+    只做字符串运算（`normpath` + 前缀判，不 realpath、不 stat：no_follow 下 UNC / 链接目标不能被碰）。
+    守卫写成静态分析认得的 barrier 形状（`== base` 与 `not startswith` 分开两段，相等那支回 `base_n`
+    本身；规则见 docs/rules/backend/session-auth.md「用户可控的路径」），下游 lstat / open 只用回值。
+    `parts` 里的 `..` / `.` / 分隔符一律拒（它们是名字不是路径，normpath 会悄悄折叠掉中间一级的 lstat）。
+    """
+    seps = {os.sep, os.altsep or os.sep}
+    for part in parts:
+        if part in ("", ".", "..") or any(sep in part for sep in seps):
+            raise OSError(f"bad path component: {part!r}")
+    base_n = os.path.normpath(os.fspath(base))
+    cur = os.path.normpath(os.path.join(base_n, *parts))
+    if cur == base_n:
+        return base_n
+    if not cur.startswith(base_n.rstrip(os.sep) + os.sep):
+        raise OSError("path escapes base")
+    return cur
+
+
 def read_regular_text(
     base, *parts: str, no_follow: bool = False, max_bytes: int | None = MAX_FILE_BYTES
 ) -> str:
@@ -112,15 +133,25 @@ def read_regular_text(
     仍是普通文件。这是元数据先行的防御，不声称对并发替换有原子保证。默认形态保持跟随用户自己的符号
     链接（准备 / 依赖门），但同样只读普通文件、有上限。`max_bytes=None` = 不设字节上限（仍只认普通文件）。
     """
-    cur = Path(base)
-    for part in parts:
-        cur = cur / part
-        if no_follow and is_redirect(cur.lstat()):
-            raise OSError(f"redirect refused: {part}")
+    safe = _contained_lexical(base, parts)
+    if no_follow:
+        # 逐级 lstat：层级全从守卫过的 `safe` 往上取 dirname（不拿 base / parts 原串重拼）
+        levels: list[str] = []
+        level = safe
+        base_n = os.path.normpath(os.fspath(base))
+        while level != base_n:
+            levels.append(level)
+            parent = os.path.dirname(level)
+            if parent == level:
+                break
+            level = parent
+        for level in reversed(levels):
+            if is_redirect(Path(level).lstat()):
+                raise OSError(f"redirect refused: {os.path.basename(level)}")
     flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0)
     if no_follow:
         flags |= getattr(os, "O_NOFOLLOW", 0)
-    fd = os.open(cur, flags)
+    fd = os.open(safe, flags)
     try:
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode) or (max_bytes is not None and st.st_size > max_bytes):

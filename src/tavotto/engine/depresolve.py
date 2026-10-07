@@ -1205,8 +1205,13 @@ def declared_intents(
                         rel, UNSUPPORTED_UNREADABLE, group=f"{GROUP_PEP723}:{rel}", source=rel
                     )
                 )
-            elif walk.inside(script_path) and script_path.is_file():
-                text, why = walk.read(script_path)
+            elif (
+                # `script` 可来自请求体：先经净化器钉在项目内，下游只用它回的那一条（CodeQL py/path-injection）
+                (safe_script := projectenv.contained_path(root, script)) is not None
+                and walk.inside(Path(safe_script))
+                and os.path.isfile(safe_script)
+            ):
+                text, why = walk.read(Path(safe_script))
                 rel = Path(script).as_posix()
                 if text is None:
                     out.append(
