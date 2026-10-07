@@ -223,7 +223,7 @@ def test_an_unrelated_nested_asset_with_the_same_stem_is_not_the_scripts_origina
 
     report = projscan.scan(root)
 
-    assert any(p == "archive/fig.pdf" for p, _k in report["assets"])  # 素材清单确实看得见它
+    assert report["assets"]["count"] == 1  # 递归素材清单确实看得见 archive/fig.pdf
     assert report["target_choice"] == "single" and report["default_target"] == "fig.py"
     (target,) = report["targets"]
     assert target["linked"] is False

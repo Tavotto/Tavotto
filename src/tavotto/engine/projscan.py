@@ -53,6 +53,7 @@ from pathlib import Path, PurePosixPath
 from . import (
     depresolve,
     discover,
+    figcapture,
     probe,
     project_refresh,
     projectenv,
