@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, type FocusEvent, type KeyboardEvent } from 'react'
+import { useEffect, useLayoutEffect, useRef, type FocusEvent, type KeyboardEvent } from 'react'
 
 /**
  * 一列行的**漫游焦点**（roving tabindex，2026-10-07 设计审计 §10.3 键位契约）：整列只有一个 Tab 停靠点，
@@ -17,12 +17,35 @@ export function useRovingList<T extends HTMLElement>() {
       (el) => !(el as HTMLButtonElement).disabled,
     )
 
-  useLayoutEffect(() => {
+  const normalize = () => {
     const all = [...(ref.current?.querySelectorAll<HTMLElement>('[data-roving]') ?? [])]
     const live = items()
     const keep = last.current && live.includes(last.current) ? last.current : (live[0] ?? null)
     for (const el of all) el.tabIndex = el === keep ? 0 : -1
+  }
+  useLayoutEffect(normalize)
+
+  // 只有子组件自己重渲染时（例如 Project Picker 里展开「已不存在」那一组，状态在组里），这一列的
+  // layout effect 不会跑，新挂上的行保留原生 tabIndex=0，Tab 就一行一站（Codex #832）。看着这一列的
+  // 子树：有行挂上 / 卸下就再归一一次。只看 childList，改 tabIndex 不会回头触发自己
+  const observed = useRef<{ el: HTMLElement; mo: MutationObserver } | null>(null)
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (observed.current?.el === el) return
+    observed.current?.mo.disconnect()
+    observed.current = null
+    if (!el || typeof MutationObserver === 'undefined') return
+    const mo = new MutationObserver(() => normalize())
+    mo.observe(el, { childList: true, subtree: true })
+    observed.current = { el, mo }
   })
+  useEffect(
+    () => () => {
+      observed.current?.mo.disconnect()
+      observed.current = null
+    },
+    [],
+  )
 
   const onFocus = (e: FocusEvent) => {
     const hit = (e.target as HTMLElement).closest<HTMLElement>('[data-roving]')

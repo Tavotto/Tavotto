@@ -350,6 +350,17 @@ describe('空态、筛选与「查不了」', () => {
     expect(evidence()).toContain('检查了 3 张图')
   })
 
+  it('证据挂着时换语言：内置规范名跟着换，不留在旧语言里（Codex #832）', async () => {
+    await seedTwoCanvases('free-form-v1', 'free-form-v1', 'lab-publication-v1')
+    await mount(<ProblemPanel />)
+    expect(evidence()).toContain('自由排版')
+    await act(async () => {
+      setLocale('en-US')
+    })
+    expect(evidence()).toContain('Free layout')
+    expect(evidence()).not.toContain('自由排版')
+  })
+
   it('各画布同一套规范：证据照旧只说那一套（单规范的句子不变）', async () => {
     await seedTwoCanvases('free-form-v1', 'free-form-v1', 'lab-publication-v1')
     await mount(<ProblemPanel />)

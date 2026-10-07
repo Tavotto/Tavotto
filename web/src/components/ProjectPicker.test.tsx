@@ -196,6 +196,24 @@ describe('已不存在的目录', () => {
   })
 })
 
+describe('一列一个 Tab 停靠点：失效组展开后也是', () => {
+  it('展开「已不存在的目录」只重渲染那一组：新挂上的行照样归进漫游，整列恰好一个 tabIndex=0（Codex #832）', async () => {
+    const stops = () =>
+      [...host.querySelectorAll<HTMLElement>('[data-roving]')].filter((el) => el.tabIndex === 0)
+    expect(stops()).toHaveLength(1)
+    const group = host.querySelector<HTMLElement>('section[aria-label="已不存在的目录"]')!
+    await act(async () => {
+      group.querySelector<HTMLButtonElement>('button[aria-expanded]')!.click()
+      // MutationObserver 的回调是微任务
+      await Promise.resolve()
+    })
+    const missingRows = [...group.querySelectorAll<HTMLElement>('[data-roving]')]
+    expect(missingRows).toHaveLength(4)
+    expect(missingRows.every((el) => el.tabIndex === -1)).toBe(true)
+    expect(stops()).toHaveLength(1)
+  })
+})
+
 describe('输入框：路径打开 / 名字筛选', () => {
   it('输入名字只留匹配项，两组都筛；唯一匹配时回车打开它', () => {
     typeInto(pathInput(), 'polish')

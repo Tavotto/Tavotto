@@ -118,7 +118,7 @@
 - **左栏「项目」抽屉（2026-09-24；轨名 2026-10-07 起与短名同为「项目」）**：切项目的列表**只有一份**，住在
   `components/left/WorkspaceList.tsx`（当前 · 收藏 · 最近，最近不截断）。**行只有一种**：`ProjectPickerRow.ProjectRow`，
   抽屉用 `density="drawer"`（44px）、Project Picker「全部项目」用 `density="page"`（52px + 文件夹记号），两处同一份菜单
-  （`ui/RowMenu`：⋯ / 右键 / ⇧F10）、同一套键位（一列一个 Tab 停靠点 `left/rovingList`，↑↓ / Home / End 走行，Enter 打开，
+  （`ui/RowMenu`：⋯ / 右键 / ⇧F10）、同一套键位（一列一个 Tab 停靠点 `left/rovingList`——每次渲染后归一，子组件自己展开挂出的新行（Picker 的失效组）由它对整列子树的 MutationObserver 再归一一次，Codex #832；↑↓ / Home / End 走行，Enter 打开，
   收藏行 ⌥↑ / ⌥↓ 与菜单的上移 / 下移、拖动同一个按路径的 move，拖动时画 `dropLineClass` 落点线）。当前项目是顶上一张
   `Card appearance="subtle"`，**不再在收藏区重复**（此前被收藏时一屏画两次选中）；卡不可聚焦，它的 ⋯ 常驻 Tab 顺序
   （`RowMenu tabbable`）。目录已不在的行「打开」是 `aria-disabled`（不是 `disabled`）：仍是漫游列表的一站，⋯（移除 / 收藏）

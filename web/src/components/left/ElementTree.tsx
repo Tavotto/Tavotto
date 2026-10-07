@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useLocale } from '@/i18n/react'
 import { t as translate } from '@/i18n'
 import {
   ChartLine,
@@ -449,6 +450,8 @@ function TreeView({
   )
   const lockedGids = useMemo(() => new Set(panel.lockedGids ?? []), [panel.lockedGids])
 
+  // 文案在 memo 里成文：换语言要重算（依赖里带上当前语言，Codex #832）
+  const locale = useLocale()
   const isolatedLabel = useMemo(() => {
     if (!isolated) return ''
     const hit = manifest.elements.find((e) => e.gid === isolated)
@@ -456,7 +459,8 @@ function TreeView({
     return et('isolated', {
       label: hit ? engineLabel(hit.label) : group ? groupName(group, manifest) : isolated,
     })
-  }, [isolated, manifest])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isolated, manifest, locale])
 
   // 没有选中时 primaryGid 是 undefined，而聚类行的 `el` 也是 undefined——直接比会停在第一个聚类行
   const focusKey =
