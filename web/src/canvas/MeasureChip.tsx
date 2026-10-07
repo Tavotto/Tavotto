@@ -3,8 +3,8 @@ import { useTranslation } from 'react-i18next'
 import { perfCount } from '@/perf/core'
 import { t as translate } from '@/i18n'
 import type { Manifest, ManifestElement } from '@/lib/api'
-import { flipY, type Rect4 } from '@/lib/axesLayout'
-import { geomTarget, positionOf } from '@/lib/elementGeom'
+import type { Rect4 } from '@/lib/axesLayout'
+import { elementBoxOf, geomTarget } from '@/lib/elementGeom'
 import { boundsOf, visualBounds, type Rect } from '@/lib/geometry'
 import { formatMm } from '@/lib/units'
 import { useDocumentStore } from '@/store/documentStore'
@@ -179,8 +179,9 @@ type ElementPreview = { boxes: Record<string, Rect4>; group?: Rect4 } | null
  * `gidDrag` 的分数位移。分数框落到页面走 `canvas/elementGeometry.elementRectOnPage`——与选中框、画布画这张图
  * 同一个变换（先翻转再旋转）；翻转过的面板上不跟着翻，芯片就贴到元素的镜像位置上去了（#832 评审）。
  *
- * 挪了的量取主选（最后一个有预览的目标）：`elementPreview` 的框减去它的起手框——子图与成组平移的起手框是
- * 它的 position（`axesMove` / `alignEntries` 同一个 `positionOf`），其余是 bbox——或直接是 `gidDrag` 的位移；
+ * 挪了的量取主选（最后一个有预览的目标）：`elementPreview` 的框减去它的起手框——起手框是 `elementBoxOf`，
+ * 与 `alignEntries` 交给 `groupMove` 的 `box`、`axesMove` 的 `positionOf` 同一个出处（子图取 position，锚定
+ * 元素取按当前锚点修正过的墨迹框）——或直接是 `gidDrag` 的位移；
  * 内容分数向量经同一个变换换回页面 mm（`elementDeltaOnPage`）——报的是元素在页面上看得见的挪动方向。一个目标都解析不出来时回 null。
  */
 function figureNudgeGeometry(
@@ -209,8 +210,9 @@ function figureNudgeGeometry(
     const drag = gidDrag?.gid === target.gid ? gidDrag : null
     let box: Rect4 = target.bbox
     if (pv) {
-      const pos = target.resizable ? positionOf(panel, target) : null
-      const start = pos ? flipY(pos) : target.bbox
+      // 起手框与 `alignEntries` 的 `box`（`groupMove` / `axesMove` 的起点）同一个出处：子图取 position，
+      // 锚定元素取按当前锚点修正过的墨迹框——直接减 manifest bbox 会把它此前的 override 算进 Δ（Codex #833）
+      const start = elementBoxOf(panel, target) ?? target.bbox
       box = pv
       moved = [pv[0] - start[0], pv[1] - start[1]]
     } else if (drag) {
