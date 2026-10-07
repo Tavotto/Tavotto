@@ -389,6 +389,89 @@ describe('外壳（2026-10-07 设计审计 §10.1：Dialog chrome="palette"）',
     before.remove()
   })
 
+  // Codex #833（comment 4211499735）：命令把焦点交给了另一个非模态表面（命名小框的 autoFocus），
+  // 面板退场时的焦点归还不能把它再抢回打开前的元素——否则小框的 onBlur 当场把自己关掉，命令一闪而过
+  it('命令把焦点交给了别的表面（「把现在存为命名节点」）：关闭不抢回焦点，小框留着、焦点在它的输入框里', async () => {
+    const { useTimelineStore } = await import('@/store/timelineStore')
+    const { NamedNodeQuickBox } = await import('./NamedNodeQuickBox')
+    useTimelineStore.setState({ namingOpen: false })
+    usePalette.setState({ open: false })
+    const before = document.createElement('button')
+    document.body.appendChild(before)
+    before.focus()
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    act(() =>
+      root!.render(
+        <>
+          <CommandPalette />
+          <NamedNodeQuickBox />
+        </>,
+      ),
+    )
+    await act(async () => usePalette.setState({ open: true }))
+    await act(async () => {})
+    expect(document.activeElement).toBe(document.querySelector('[data-palette-input]'))
+    await act(async () =>
+      document.querySelector<HTMLElement>('[data-cmd-id="save-named-version"]')!.click(),
+    )
+    // Radix FocusScope 的卸载归还排在 setTimeout(0) 里：等它跑完
+    await act(async () => new Promise((r) => setTimeout(r, 20)))
+    expect(useTimelineStore.getState().namingOpen).toBe(true)
+    expect(document.activeElement).toBe(document.querySelector('[data-timeline-quick-name-input]'))
+    // Esc 关小框：焦点回到打开命令面板之前的元素，不掉到 body
+    await act(async () => {
+      document
+        .querySelector('[data-timeline-quick-name-input]')!
+        .dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+    expect(useTimelineStore.getState().namingOpen).toBe(false)
+    expect(document.activeElement).toBe(before)
+    before.remove()
+  })
+
+  it('命令打开的是另一个对话框（导出）：焦点留在新对话框里，不被面板的归还拽回打开前的元素', async () => {
+    const { Dialog } = await import('@/components/ui/Dialog')
+    const PROBE = 'probe'
+    function Export() {
+      const open = useUiStore((s) => s.exportOpen)
+      return (
+        <Dialog open={open} onOpenChange={(v) => useUiStore.getState().setExportOpen(v)} title={PROBE} anchor="export-probe">
+          <button data-probe-inner>{PROBE}</button>
+        </Dialog>
+      )
+    }
+    useUiStore.setState({ exportOpen: false })
+    usePalette.setState({ open: false })
+    const before = document.createElement('button')
+    document.body.appendChild(before)
+    before.focus()
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    act(() =>
+      root!.render(
+        <>
+          <CommandPalette />
+          <Export />
+        </>,
+      ),
+    )
+    await act(async () => usePalette.setState({ open: true }))
+    await act(async () => {})
+    await act(async () => document.querySelector<HTMLElement>('[data-cmd-id="export"]')!.click())
+    await act(async () => new Promise((r) => setTimeout(r, 20)))
+    const exportDialog = document.querySelector('[data-dialog="export-probe"]')!
+    expect(exportDialog).not.toBeNull()
+    expect(exportDialog.contains(document.activeElement)).toBe(true)
+    // 关掉导出：焦点回到打开命令面板之前的那个元素（不是顶栏兜底按钮、不是 body）
+    await act(async () => useUiStore.getState().setExportOpen(false))
+    await act(async () => new Promise((r) => setTimeout(r, 20)))
+    expect(document.activeElement).toBe(before)
+    before.remove()
+  })
+
   it('选中行用 selected（ink 10%），不是 surface-2；行 32 / 13', () => {
     mount()
     const active = document.querySelector('[data-cmd-id][data-active]')!
