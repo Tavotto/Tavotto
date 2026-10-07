@@ -157,6 +157,9 @@
     "lastDocTitle": "Couldn’t reopen “{{name}}”, the last layout in this project.",
     "lastDocUnnamed": "Untitled",
     "overwrite": "Overwrite with mine",
+    "overwriteConfirmBodyExternal": "The copy on disk that was modified outside Tavotto will be replaced with this window’s edits, and those outside changes will be lost. To keep both, use Save as instead.",
+    "overwriteConfirmBodyStale": "The newer version saved by another window will be replaced with this window’s edits, and that window’s changes will be lost. To keep both, use Save as instead.",
+    "overwriteConfirmTitle": "Overwrite the copy on disk with this window’s version?",
     "recover": "Recover",
     "recoveryBody": "{{name}} · {{canvases}} canvases · {{objects}} objects · saved {{time}}",
     "recoveryTitle": "Unrecovered edits",
@@ -796,8 +799,7 @@
     "canvasName": "Canvas name",
     "closeTab": "Close tab {{name}}",
     "listLabel": "Canvas tabs",
-    "newCanvas": "New canvas",
-    "unsaved": "Unsaved changes"
+    "newCanvas": "New canvas"
   },
   "toolHint": {
     "arrow": "Drag to draw an arrow; hold Shift to snap to 15°. Esc to cancel.",

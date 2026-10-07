@@ -222,7 +222,7 @@ export function AgentDetailView({
                           {e.base_url || ag('detail.officialBaseUrl')}
                         </span>
                         {!e.has_key && (
-                          <span className="shrink-0 text-warn">{ag('detail.noKeySuffix')}</span>
+                          <span className="shrink-0 text-warn-content">{ag('detail.noKeySuffix')}</span>
                         )}
                       </span>
                     </span>

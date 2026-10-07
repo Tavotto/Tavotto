@@ -265,7 +265,7 @@ function Workspace() {
                 {/* 画布工具：底部浮动工具条（排版模式）；快速编辑没有标签行，缩放菜单悬在右上角 */}
                 <CanvasToolbar />
                 {fastEdit && (
-                  <div className="absolute right-3 top-3 z-20 rounded-full bg-surface shadow-pop">
+                  <div className="absolute right-3 top-3 z-canvas-chrome rounded-full bg-surface shadow-pop">
                     <ZoomControls />
                   </div>
                 )}
@@ -295,7 +295,7 @@ function Workspace() {
                 if (ui.leftOpen) ui.toggleLeft()
                 if (ui.rightOpen) ui.toggleRight()
               }}
-              className="absolute inset-0 z-20 cursor-default bg-ink/10 data-[state=open]:animate-fade-in data-[state=closed]:animate-fade-out"
+              className="absolute inset-0 z-canvas-chrome cursor-default bg-ink/10 data-[state=open]:animate-fade-in data-[state=closed]:animate-fade-out"
             />
           )}
           <VersionDrawer />

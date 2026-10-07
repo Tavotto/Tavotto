@@ -1,6 +1,5 @@
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
-import { cn } from '@/lib/utils'
 import { pendingUpdateNotice } from '@/lib/updateNotice'
 import { useNativeSessionStore } from '@/store/nativeSessionStore'
 import { useTelemetryStore } from '@/store/telemetryStore'
@@ -8,6 +7,7 @@ import { useUpdateStore } from '@/store/updateStore'
 import { InlineWarning } from './settings/SettingRow'
 import { UpdateRestartError } from './UpdateRestartError'
 import { Button } from './ui/Button'
+import { ProgressBar } from './ui/ProgressBar'
 import { Dialog } from './ui/Dialog'
 
 /** 本对话框的文案在 dialogs:updateNotice.* 下 */
@@ -81,21 +81,9 @@ export function UpdateNoticeDialog() {
     body = (
       <div className="flex flex-col gap-1.5">
         {/* 拿不到 Content-Length 就走不确定态，不假装卡在某个百分比上 */}
-        <div
-          role="progressbar"
-          aria-label={tt('downloadProgressAria')}
-          aria-valuenow={pct ?? undefined}
-          aria-valuemin={0}
-          aria-valuemax={100}
-          className="h-1 overflow-hidden rounded-full bg-surface-2"
-        >
-          {/* 与设置 › 更新页同一种颜色（全面打磨 D32）：同一个下载进度此前在弹窗里是蓝色
-              填充、在设置页里是 ink——蓝色不做任何大块背景（§1） */}
-          <div
-            className={cn('h-full bg-ink', pct === null && 'w-1/3 animate-pulse')}
-            style={pct === null ? undefined : { width: `${pct}%` }}
-          />
-        </div>
+        {/* 与设置 › 更新页同一份进度条（全面打磨 D32）：同一个下载进度此前在弹窗里是蓝色
+            填充、在设置页里是 ink——蓝色不做任何大块背景（§1） */}
+        <ProgressBar pct={pct} label={tt('downloadProgressAria')} />
         <span className="text-xs text-ink-3">
           {pct === null ? tt('downloading') : tt('downloadingPct', { pct })}
         </span>

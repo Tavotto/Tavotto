@@ -73,7 +73,7 @@ import tempfile
 import threading
 from pathlib import Path
 
-from . import config, runtime
+from . import config, runtime, scanbudget
 
 LOG = logging.getLogger("tavotto.projectenv")
 
@@ -257,7 +257,24 @@ def within(root: Path, path: Path) -> bool:
     return real_path == real_root or real_root in real_path.parents
 
 
-def discover(figures_dir: str | Path, script: str | None = None) -> list[str]:
+def _venv_redirect(root: Path, cand: Path) -> str | None:
+    """no_follow：venv 目录自身、`pyvenv.cfg`、两个解释器名，任何一级是重定向就回那一级的项目相对路径。
+    在 `within`（resolve）/ `interpreter_of`（realpath + is_file）之前问——它们会跟随链接。"""
+    for rel in ("", "pyvenv.cfg", *_interpreter_names()):
+        target = cand / rel if rel else cand
+        bad = scanbudget.redirected_component(root, target, allow_final_link=bool(rel))
+        if bad is not None:
+            return bad
+    return None
+
+
+def discover(
+    figures_dir: str | Path,
+    script: str | None = None,
+    *,
+    no_follow: bool = False,
+    budget: scanbudget.Budget | None = None,
+) -> list[str]:
     """从脚本所在目录逐级向上找到项目根，收集本地 venv 目录。
 
     返回**按优先级排好序**的 venv 目录路径（可能为空）。规则（写进 ADR 与
@@ -274,7 +291,9 @@ def discover(figures_dir: str | Path, script: str | None = None) -> list[str]:
     """
     root = Path(figures_dir)
     start = (root / script).parent if script else root
-    if not within(root, start):
+    if no_follow and scanbudget.redirected_component(root, start) is not None:
+        start = root  # 导入即扫描：脚本目录链上有重定向就不从那里起（resolve 会跟随）
+    elif not no_follow and not within(root, start):
         # 脚本在项目外（理论上更早就该被 `script_path_outside_project` 拦下）
         start = root
     found: list[str] = []
@@ -284,7 +303,15 @@ def discover(figures_dir: str | Path, script: str | None = None) -> list[str]:
         layer: list[str] = []
         for name in VENV_DIRNAMES:
             cand = cur / name
-            if not within(root, cand):
+            if no_follow:
+                # 导入即扫描：项目里叫 `env` 的 junction / 符号链接可以指到攻击者的 UNC 共享；
+                # `within`（resolve）与 `interpreter_of`（realpath / is_file）都会跟随，先逐级 lstat
+                bad = _venv_redirect(root, cand)
+                if bad is not None:
+                    if budget is not None:
+                        budget.note(scanbudget.ISSUE_SYMLINK_DIR, scope="file", path=bad)
+                    continue
+            elif not within(root, cand):
                 continue
             if interpreter_of(cand, root=root):
                 layer.append(str(cand))
@@ -294,7 +321,12 @@ def discover(figures_dir: str | Path, script: str | None = None) -> list[str]:
             if p not in seen:
                 seen.add(p)
                 found.append(p)
-        if _same_dir(cur, root) or not within(root, cur.parent) or _same_dir(cur.parent, cur):
+        if no_follow:
+            if cur == root or os.path.normcase(str(cur)) == os.path.normcase(str(root)):
+                break
+            if scanbudget.redirected_component(root, cur.parent) is not None or cur.parent == cur:
+                break
+        elif _same_dir(cur, root) or not within(root, cur.parent) or _same_dir(cur.parent, cur):
             break
         cur = cur.parent
     return found
@@ -831,7 +863,7 @@ def _key(figures_dir: str | Path) -> str:
     return os.path.normcase(str(Path(figures_dir).resolve(strict=False)))
 
 
-def remembered_record(figures_dir: str | Path) -> dict | None:
+def remembered_record(figures_dir: str | Path, *, no_follow: bool = False) -> dict | None:
     """项目设置里记着的那条环境决策**原样**（含 `automatic` / `trigger` / 路径），文件在不在
     都回——「记住过但已经不在了」与「没记住过」是两个答案（U03：显式选的失效要说出原因，
     自动选的失效要作废并重新发现），`remembered()` 把前者压成 None 是给渲染主路径的便利，
@@ -847,6 +879,12 @@ def remembered_record(figures_dir: str | Path) -> dict | None:
     path = str(Path(figures_dir) / rel) if rel else (absolute or "")
     if not path:
         return None
+    if no_follow:
+        # 导入即扫描：项目相对的记录路径不得经重定向探到目标（`is_file` 会跟随）。被重定向 = 当作不在，
+        # 并带 `redirected` 让调用方记账；项目外的绝对路径（用户显式挑的 conda 环境）保持老行为
+        bad = scanbudget.redirected_component(figures_dir, path, allow_final_link=True)
+        if bad is not None:
+            return {**stored, "path": path, "exists": False, "redirected": bad}
     try:
         exists = Path(path).is_file()
     except OSError:

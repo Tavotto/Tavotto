@@ -31,7 +31,7 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
     if (!this.state.error) return this.props.children
     return (
       <div className="flex h-screen items-center justify-center bg-bg">
-        <div className="w-[420px] rounded-lg border border-border bg-surface p-5">
+        <div className="w-[420px] rounded-panel border border-border bg-surface p-5">
           <div className="mb-1 text-base font-medium text-ink">
             {t('crash.title', { ns: 'workspace' })}
           </div>

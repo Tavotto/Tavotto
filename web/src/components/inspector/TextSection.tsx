@@ -142,6 +142,9 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
   return (
     <Section title={tx('title')}>
       {one && (
+        // 上标 / 下标 / 换行是 20px 的图标钮，坐在文本框右下角（2026-10-07 设计审计 §9.2）：
+        // 它们只对这段文字起作用，就该长在框里；此前是框下面单独一行 28px 的三颗钮
+        <div className="relative mb-2" data-text-content>
         <TextArea
           ref={taRef}
           // 名字 = 分区标题那句可见文字，同一个表达式（此前这格没有可达名）
@@ -161,37 +164,46 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
           }}
           onDoubleClick={() => useUiStore.getState().setEditingText(one.id)}
           placeholder={tx('placeholder')}
-          // 画布文字用文档字体预览；框本身与其它可编辑框同一副（fieldBox）
-          className="mb-1"
+          // 画布文字用文档字体预览；框本身与其它可编辑框同一副（fieldBox）。底边留出角上那排钮的高度
+          className="pb-6"
           style={{ fontFamily: 'var(--font-doc)' }}
         />
-      )}
-      {one && (
-        <div className="mb-2 flex items-center justify-start gap-1">
-          <Button
-            size="icon-sm"
-            onClick={() => wrapScript('sup')}
-            aria-label={tx('superscript')}
-            title={tx('superscriptTitle', { key: modKey('↑') })}
-          >
-            <Superscript size={ICON_SIZE.sm} />
-          </Button>
-          <Button
-            size="icon-sm"
-            onClick={() => wrapScript('sub')}
-            aria-label={tx('subscript')}
-            title={tx('subscriptTitle', { key: modKey('↓') })}
-          >
-            <Subscript size={ICON_SIZE.sm} />
-          </Button>
-          <Button
-            size="icon-sm"
-            onClick={insertNewline}
-            aria-label={tx('insertNewline')}
-            title={tx('newlineTitle', { alt: combo(ALT, '⏎'), mod: modKey('⏎') })}
-          >
-            <CornerDownLeft size={ICON_SIZE.sm} />
-          </Button>
+          <div className="absolute bottom-1 right-1 flex items-center gap-0.5">
+            {/* 按下不抢焦点：textarea 的编辑事务不该因为点了钮就提交 */}
+            <Button
+              size="icon-xs"
+              data-text-action="sup"
+              className="text-ink-2"
+              onPointerDown={(e) => e.preventDefault()}
+              onClick={() => wrapScript('sup')}
+              aria-label={tx('superscript')}
+              title={tx('superscriptTitle', { key: modKey('↑') })}
+            >
+              <Superscript size={ICON_SIZE.xs} />
+            </Button>
+            <Button
+              size="icon-xs"
+              data-text-action="sub"
+              className="text-ink-2"
+              onPointerDown={(e) => e.preventDefault()}
+              onClick={() => wrapScript('sub')}
+              aria-label={tx('subscript')}
+              title={tx('subscriptTitle', { key: modKey('↓') })}
+            >
+              <Subscript size={ICON_SIZE.xs} />
+            </Button>
+            <Button
+              size="icon-xs"
+              data-text-action="newline"
+              className="text-ink-2"
+              onPointerDown={(e) => e.preventDefault()}
+              onClick={insertNewline}
+              aria-label={tx('insertNewline')}
+              title={tx('newlineTitle', { alt: combo(ALT, '⏎'), mod: modKey('⏎') })}
+            >
+              <CornerDownLeft size={ICON_SIZE.xs} />
+            </Button>
+          </div>
         </div>
       )}
 
@@ -271,6 +283,7 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
             </Row>
             <Row label={tx('lineHeight')} labelWidth={INSPECTOR_LABEL_W}>
               <NumberField
+                half
                 value={shared(objs, (o) => (o as TextObject).lineHeight ?? 1.25) ?? 1.25}
                 step={0.05}
                 min={0.8}
@@ -340,6 +353,7 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
             {(bg || borderColor) && (
               <Row label={tx('padding')} labelWidth={INSPECTOR_LABEL_W}>
                 <NumberField
+                  half
                   value={shared(objs, (o) => (o as TextObject).padding ?? 0) ?? 0}
                   step={0.5}
                   min={0}

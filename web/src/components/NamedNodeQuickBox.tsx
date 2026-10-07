@@ -96,7 +96,7 @@ function QuickBox() {
           close()
         }
       }}
-      className="absolute left-1/2 top-12 z-40 w-[360px] max-w-[92vw] -translate-x-1/2 rounded-lg bg-surface p-3 shadow-pop"
+      className="absolute left-1/2 top-12 z-overlay w-[360px] max-w-[92vw] -translate-x-1/2 rounded-lg bg-surface p-3 shadow-pop"
     >
       <form
         className="flex flex-col gap-2"

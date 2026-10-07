@@ -75,7 +75,7 @@ export function OpenInNewTabButton() {
         }
         aria-label={t('switcher.newTabLabel')}
         className={cn(
-          'flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-ink-3',
+          'flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-ink-3',
           'outline-none hover:bg-surface-hover hover:text-ink focus-visible:focus-ring',
         )}
       >

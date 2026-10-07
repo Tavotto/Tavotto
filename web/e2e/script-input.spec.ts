@@ -86,7 +86,8 @@ test('input()：弹框作答 → 记住 → 重跑自动回填 → 改答案 →
   const answer = manager.getByRole('textbox', { name: '你的回答' })
   await expect(answer).toHaveValue('1,2')
   await answer.fill('2')
-  await manager.getByRole('button', { name: '保存并重新运行' }).click()
+  // 脚部唯一的主动作（行内不再各挂一颗）：认稳定锚点，不认文案（它带改动计数）
+  await manager.locator('[data-script-answers-save]').click()
   await expect(page.locator('[data-card="runtime:pick.py#sel_2"]')).toBeVisible({
     timeout: 120_000,
   })
