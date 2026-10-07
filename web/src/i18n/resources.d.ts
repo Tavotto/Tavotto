@@ -227,6 +227,7 @@ export default interface Resources {
         "canvas_scope": "EPS 只支持按「原图尺寸」导出单张图。",
         "no_script": "此图没有可重新运行的脚本。EPS 只能由脚本生成。"
       },
+      "exportAgain": "再次导出",
       "exported": "导出完成：{{files}}",
       "figureListLabel": "要按原图尺寸导出的图",
       "filenameError": {
@@ -241,6 +242,7 @@ export default interface Resources {
       },
       "filenameLabel": "文件名",
       "filenamePlaceholder": "图 1",
+      "finish": "完成",
       "formatLabel": "格式",
       "ignored": {
         "crop": "裁剪",
@@ -323,6 +325,7 @@ export default interface Resources {
         "unknown_figure": "找不到这张图的信息，暂时只能按画布导出。"
       },
       "severityCount": "{{count}} {{label}}",
+      "showInFolder": "在文件夹中显示",
       "sizeDiskDiffers": "磁盘上的原文件为 {{dw}} × {{dh}} mm（脚本保存时已裁边），将按图幅 {{w}} × {{h}} mm 导出。",
       "sizeUnknownShort": "尺寸未知",
       "start": "开始导出",
@@ -1052,10 +1055,13 @@ export default interface Resources {
       "manageEmpty": "这个脚本没有记住的输入。",
       "manageForget": "删除",
       "manageForgetAria": "删除第 {{index}} 个问题的答案",
-      "manageIntro": "改了答案会立刻重新运行脚本。",
+      "manageForgetBody": "删除后会立刻重新运行 {{script}}，它会重新问你这个问题。",
+      "manageForgetTitle": "删除第 {{index}} 个问题的答案？",
+      "manageIntro": "改好答案后点「保存并重新运行」，脚本只重新运行一次。",
       "manageNoPrompt": "第 {{index}} 个问题（读取标准输入）",
       "managePrompt": "第 {{index}} 个问题：{{prompt}}",
       "manageSave": "保存并重新运行",
+      "manageSaveCount": "保存并重新运行（{{n}}）",
       "manageSaved": "已保存，正在重新运行 {{script}}",
       "manageTip": "记住的输入",
       "manageTitle": "记住的输入 · {{script}}",
