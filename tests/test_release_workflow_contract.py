@@ -373,6 +373,7 @@ def desktop_trust_repo(tmp_path):
             cwd=tmp_path,
             env=env,
             text=True,
+            encoding="utf-8",
         ).strip()
 
     git("init", "--quiet", "--initial-branch=main")

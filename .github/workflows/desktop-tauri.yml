@@ -147,7 +147,7 @@ jobs:
               exit 1
             fi
             echo "sha=$GIVEN_SHA" >> "$GITHUB_OUTPUT"
-            echo "✅ 调用方传入 $GIVEN_SHA（可达 origin/main）"
+            echo "✅ 调用方传入 ${GIVEN_SHA}（可达 origin/main）"
             exit 0
           fi
           if ! SHA="$(git rev-parse --verify "refs/tags/${TAG}^{commit}" 2>/dev/null)"; then
@@ -159,7 +159,7 @@ jobs:
             exit 1
           fi
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
-          echo "✅ $TAG → $SHA（可达 origin/main）"
+          echo "✅ $TAG → ${SHA}（可达 origin/main）"
 
   # Rust supervisor 的静态门禁。**只在 Linux 上跑一份**：它是纯标准库 + serde
   # 的 stdio 进程，没有任何平台分支，三平台各跑一遍只是把发布慢三倍。
