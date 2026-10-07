@@ -228,9 +228,7 @@ def test_cancel_during_pyenv_enumeration_returns_partial_discovery(tmp_path, mon
         return polls["n"] > 3
 
     budget = scanbudget.Budget(cancel=cancel)
-    found = userenvs.discover(
-        tmp_path / "project", None, ask_login_shell=False, no_follow=True, budget=budget
-    )
+    found = userenvs._pyenv_pythons(budget)  # 枚举本身要响应取消，不能靠外层循环兜
 
     assert len(found) < 200
     assert budget.stopped == scanbudget.ISSUE_CANCELLED
