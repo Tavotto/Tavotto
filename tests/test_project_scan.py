@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import threading
 import time
 from pathlib import Path
@@ -957,12 +958,12 @@ def test_scope_marker_reads_stop_between_files(tmp_path, monkeypatch):
     cancel = threading.Event()
     calls = []
 
-    def is_file(path):
+    def lstat(path):  # 导入即扫描的标记探测只走 lstat（不跟随）
         calls.append(path)
         cancel.set()
-        return False
+        raise FileNotFoundError(path)
 
-    monkeypatch.setattr(Path, "is_file", is_file)
+    monkeypatch.setattr(Path, "lstat", lstat)
     budget = scanbudget.Budget(cancel=cancel.is_set)
     assert projscan._scope_of(tmp_path, "nested/plot.py", {}, budget) is None
     assert len(calls) == 1
@@ -1074,3 +1075,41 @@ def test_registered_plot_script_plus_unknown_script_is_not_already_connected(tmp
         "choose_target",
     )
     assert [a["kind"] for a in report["actions"]] == ["rescan", "choose_target"]
+
+
+def test_one_plot_script_plus_an_unknown_script_is_not_a_single_default(tmp_path):
+    """Codex #811 P2：恰好一个未登记绘图脚本 + 一个解析不了的 unknown 脚本，不能给默认目标直接跑。"""
+    root = _project(tmp_path)
+    _write(root, "plot.py", DYNAMIC)
+    _write(root, "weird.py", "def broken(:\n")
+
+    report = projscan.scan(root)
+
+    assert report["default_target"] is None and report["target_choice"] == "ambiguous"
+    assert report["outcome"]["kind"] == "choose_target"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink")
+def test_a_redirected_scope_marker_is_not_probed_and_is_partial(tmp_path, monkeypatch):
+    """Codex #811 P2：requirements.txt 是链接时 `_scope_of` 不得 `is_file()` 跟随探目标，记 partial。"""
+    root = _project(tmp_path)
+    _write(root, "plot.py", DYNAMIC)
+    outside = tmp_path / "outside-req.txt"
+    outside.write_text("numpy\n", "utf-8")
+    os.symlink(outside, root / "requirements.txt")
+    real_is_file = Path.is_file
+    probed: list[Path] = []
+
+    def spy(self, *a, **k):
+        probed.append(self)
+        return real_is_file(self, *a, **k)
+
+    monkeypatch.setattr(Path, "is_file", spy)
+
+    report = projscan.scan(root)
+
+    assert root / "requirements.txt" not in probed
+    assert any(
+        i["code"] == "unreadable_file" and i["path"] == "requirements.txt" for i in report["issues"]
+    )
+    assert report["state"] == "partial"

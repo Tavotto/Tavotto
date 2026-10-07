@@ -1,15 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import {
-  CircleCheck,
-  CircleDashed,
-  CircleMinus,
-  Ellipsis,
-  Play,
-  Plus,
-  RefreshCw,
-  TriangleAlert,
-} from '@/components/ui/icons'
+import { CircleCheck, CircleDashed, CircleMinus, Ellipsis, LoaderCircle, Play, Plus, RefreshCw, TriangleAlert } from '@/components/ui/icons'
 import { Details, Summary } from '@/components/ui/Details'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { RetryImg } from '@/components/ui/RetryImg'
@@ -222,6 +213,7 @@ function ReadinessBody() {
           n
             ? msg('readiness.linkedCount', { count: n }, 'dialogs')
             : msg('readiness.nothingNew', undefined, 'dialogs'),
+          n ? 'done' : 'info',
         )
     })
 
@@ -291,7 +283,7 @@ function ReadinessBody() {
       })
       useUiStore
         .getState()
-        .setStatus(msg('readiness.linked', { name: fileName(panel.id) }, 'dialogs'))
+        .setStatus(msg('readiness.linked', { name: fileName(panel.id) }, 'dialogs'), 'done')
     })
 
   /** 项目里全部脚本，供「手工选择脚本」用；取不回来时只剩候选 */
@@ -475,7 +467,7 @@ function ProjectNotices({
     <ul className="flex flex-col gap-1 rounded-sm bg-surface-2 px-2 py-1.5">
       {notes.map((n) => (
         <li key={n} className="type-caption flex items-start gap-1.5">
-          <TriangleAlert size={ICON_SIZE.sm} className="mt-px shrink-0 text-warn" aria-hidden />
+          <TriangleAlert size={ICON_SIZE.sm} className="mt-px shrink-0 text-warn-content" aria-hidden />
           {n}
         </li>
       ))}
@@ -846,7 +838,11 @@ function ProbePicker({
         disabled={disabled}
         onClick={() => onProbe(script)}
       >
-        <Play size={ICON_SIZE.sm} className={cn(busyKey === script && 'animate-pulse')} />
+        {busyKey === script ? (
+          <LoaderCircle size={ICON_SIZE.sm} className="animate-spin" />
+        ) : (
+          <Play size={ICON_SIZE.sm} />
+        )}
         {rd(busyKey === script ? 'running' : 'probeAndLink')}
       </Button>
     </>
@@ -1088,7 +1084,7 @@ function ProbeNoteView({ note }: { note?: ProbeNote }) {
               size="sm"
               onClick={() => {
                 addRuntimePanelToCanvas(d)
-                setStatus(msg('registry.addedToCanvas', { stem: d.stem }, 'dialogs'))
+                setStatus(msg('registry.addedToCanvas', { stem: d.stem }, 'dialogs'), 'done')
                 useProjectReadinessStore.getState().closeCenter()
               }}
             >

@@ -13,12 +13,29 @@ Consolidation Session 1 定稿），值在 `src/index.css` 的 `@theme`，门禁
 （`data-work-panel`：画布标签 + 画布 + 属性栏）里；画布灰铺到面板边缘。左轨写短名（`rail.short.*`）。带字的按钮与分段控件是胶囊，
 次按钮灰底无边；链接是灰字；品牌蓝 #5A92E5 压深两档当 accent / sel。下面是此前的速记，与第二十五节冲突处以第二十五节为准。
 
+**2026-10-07 属性栏与画布栏（宪法第二十六节末）**：属性栏是一张行网格（`Row labelWidth="grid"`：标签 `--insp-label` · 控件 full / half ·
+20px 常驻状态槽），恢复钮在槽里、修改点悬挂在标签左 8px（部分修改空心环）；三级标题 32 / 24 / 32；一屏只有节间一条发丝线；折叠只有
+SummaryRow / GroupToggle / Details；身份头固定两行；`ColorField` 在属性栏里带可编辑 hex 与取色面板（`ColorFieldContext`）、`disabled` 是真禁用；
+OptionGrid 与 Segmented 同皮；说明条只有 `Notice`；页签 属性 | 画布 | 助手。
+
+**2026-10-07 设计刷新 · 基础层（宪法第二十六节）**——与下文冲突处以它为准：墨阶 ink-2 `#4a4a45` / ink-3 `#6c6c66`（所有底色 ≥4.5:1）；
+中性面降黄（桌面 `#efefed` / 画布灰 `#f5f5f3` / field `#f2f2f0`）；**圆角族 xs 4 / sm 6 / md 8（行、框、菜单项、说明条）/ lg 12（卡、菜单与 popover
+外壳、多行浮动面板）/ panel 16（对话框、工作面板、助手输入框、命令面板）/ full（带字按钮、图标钮、分段、chip、toast、单行浮动条）**，外层 = 内层 + 内边距；
+字体角色十个（新增 `type-display` 24 / `type-heading` 17 / `type-reading` 13·1.6；`type-title` 600；`type-caption` 12 / ink-3）；控件高 28 + `lg` 32
+（对话框页脚 / 页面 CTA）；投影全部 `color-mix(var(--color-shadow) N%)`，`shadow-card` **只在 `ui/Card`**；状态色一个锚点派生
+`-surface` / `-border` / `-content`（字用 content），旧 `*-subtle` 是别名；z-index 只用 `z-sticky … z-onboarding` 九档 token；焦点环 offset 2、
+插入点 accent；滚动条 6px、只在悬停 / 内含焦点时出现；加载只有 sweep / 静态骨架 / shimmer / 转圈（禁呼吸动画）；光标一律箭头（可拖的卡用抓手）。
+新原语：`Card`、`Notice`（恢复）、`StatusPill`、`dropZoneClass`（拖放接收态：静态不画、拖入才是 1.5px accent 虚线 + accent-subtle + 外发光）、`FormSection` + `FieldGroup`（`SettingRow layout="balanced"`）、EmptyState v2、`listRowClass({ size })`
++ `rowMetaClass` + `dropLineClass`、`useRowMenu` + `RowMenu`（⋯ / 右键 / ⇧F10 同一份菜单）；Dialog 宽度 sm 400 / md 480 / lg 560 / xl 760 / shell、
+页脚 `{ start, secondary, primary }` 三槽、浮动毛玻璃页脚、`onEscape`（Esc = 安全答案）、栈底才画遮罩；**每个上下文一颗主按钮**；对话框页脚的破坏性动作是
+`Button variant="danger-tinted"`（浅底危险胶囊，永不实心红）；按钮层级的稳定判据是 `data-variant`。门禁全在 `foundation.test`（含逐页阶段的 `LATER_PHASE` 豁免）。
+
 白色 surface；层级靠留白 / 字号 / 轻微背景差，
 边框只给区域边界、选择状态与浮层；可编辑框是 `field` 底、静态无边（聚焦 accent 边）。**持久表面里只有
 「真的是一张卡」的东西有投影（`--shadow-card`：素材卡 / 会话卡 / 任务行 / 诊断卡），浮层用 `--shadow-pop` /
 `--shadow-dialog`；改图助手输入框是浮在对话流上的玻璃（`--color-glass` + `backdrop-blur-lg` + `--shadow-composer`）**
 （宪法第二十二节，2026-09-15）。
-radius：`xs` 3（≤16px 小片）、`sm` 6（小控件）、`md` 10（输入框 / 图标钮 / 浮层 / 卡片）、`lg` 14（对话框）、`panel` 16（工作面板）、`full`（带字的按钮 / 分段）；
+radius（2026-10-07 起，见上）：`xs` 4、`sm` 6、`md` 8（行 / 输入框 / 说明条）、`lg` 12（卡片 / 浮层外壳）、`panel` 16（对话框 / 工作面板）、`full`（带字的按钮 / 图标钮 / 分段）；
 Tailwind 自带的 xl 以上已清空。UI 字号 11-14px（`xs/sm/base/lg`）、六个 `type-*` 字体角色；
 控件高 28px、树行高 28px、图标点击区 ≥28px。交互面三档 token：`surface-hover` <
 `surface-active` ≈ `selected`（#e6e6e0，轻 tint + 字重，不靠深灰块）。主按钮近黑色
@@ -53,10 +70,10 @@ Document 字体（Times）与 UI 字体严格分离。
 键位提示用 `ui/Kbd`。细则在 Design Constitution 第十二、十三节。**用例里渲染任何含
 `IconButton` 的设置页要包 `TooltipProvider`**（与 RegistryDialog.test 同一写法）。
 
-公共 primitive 只在 `components/ui/`：Button / IconButton、TextInput（框内 `suffix`）、
+公共 primitive 只在 `components/ui/`：Button / IconButton（长得像按钮的 `<a href>` 用 `ui/buttonClass` 取同一份外观，不手写按钮类名）、TextInput（框内 `suffix`）、
 NumberField（框内 `unit`）、Select、Checkbox、Radio、Toggle、Badge、Kbd、Tabs（视图）、`listRowClass`、
-TreeRow（`treeIndent` / `TreeChevron` / `TreeIcon` / `TreeCount`）、SearchInput、Notice、
-Section / Disclosure / Details、Dialog、Popover、Menu、Tooltip、Segmented（取值）、StepSlider、
+TreeRow（`treeIndent` / `TreeChevron` / `TreeIcon` / `TreeCount`）、SearchInput、Notice、StatusPill、Card、
+FormSection / FieldGroup、RowMenu、Section / Disclosure / Details、Dialog、Popover、Menu、Tooltip、Segmented（取值）、StepSlider、
 EmptyState。**同类控件出现第二套实现先删第二套，不给新写法开豁免。**
 跨区域的语义图标在 `ui/semanticIcons.ts`（「可编辑的图」= `EditableFigureIcon`，左轨 / 图层
 角标 / 素材卡 / 元素树空态从同一处取）；角色图标在 `inspector/roles/roleIcons.ts`。

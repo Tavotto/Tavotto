@@ -130,7 +130,7 @@ export function MissingInputDialog() {
       {(error ?? rewriteError) && <p className="mt-1 text-xs text-danger">{error ?? rewriteError}</p>}
       {skipped.length > 0 && <SkippedList items={skipped} />}
       <Details className="mt-2 text-xs text-ink-3" data-missing-input-details>
-        <Summary className="cursor-pointer py-0.5 text-ink-2">{t('engine.missingInputDetails')}</Summary>
+        <Summary className="py-0.5 text-ink-2">{t('engine.missingInputDetails')}</Summary>
         <div className="mt-1 flex flex-col gap-2 pl-4">
           {/* 路径是用户自己写的，不翻译 */}
           <p className="break-all font-mono text-ink" data-missing-input-path>
@@ -221,7 +221,7 @@ function RewriteConfirm({ preview }: { preview: ScriptEditPreview }) {
         </>
       }
     >
-      <div className="rounded-md bg-warn-subtle px-2 py-1.5" data-rewrite-warning>
+      <div className="rounded-md bg-warn-surface px-2 py-1.5" data-rewrite-warning>
         <p className="text-sm font-medium text-ink">{t('engine.rewriteWarning')}</p>
         {/* 用户自己的路径，不翻译 */}
         <p className="mt-0.5 break-all font-mono text-xs text-ink-2">{preview.script_abs}</p>
@@ -252,7 +252,7 @@ function RewriteConfirm({ preview }: { preview: ScriptEditPreview }) {
         </p>
       )}
       {preview.checksums.length > 0 && (
-        <p className="mt-1 text-xs text-warn">
+        <p className="mt-1 text-xs text-warn-content">
           {t('engine.rewriteChecksums', { files: preview.checksums.join(', ') })}
         </p>
       )}

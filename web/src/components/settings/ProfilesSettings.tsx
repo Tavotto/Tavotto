@@ -36,6 +36,7 @@ import { useProfileStore } from '@/store/profileStore'
 import { isLegacyBasis, withPageBasis } from '@/lib/stylePresets'
 import { bindCanvasStyle } from '@/store/styleBinding'
 import { askConfirm, useUiStore } from '@/store/uiStore'
+import { askDiscardDraft } from '../askDiscardDraft'
 import { Button, IconButton } from '../ui/Button'
 import { EmptyState } from '../ui/EmptyState'
 import { Menu, MenuItem, MenuSeparator } from '../ui/Menu'
@@ -119,7 +120,7 @@ function formatValue(raw: unknown, unit?: string): string {
 }
 
 /** 一组字段：一条 type-section 小标题 + 若干 compact 行。分组只影响排版（审计 T41 / T42）。 */
-function FieldGroup({ group, children }: { group: string; children: ReactNode }) {
+function ProfileFieldGroup({ group, children }: { group: string; children: ReactNode }) {
   return (
     <div data-field-group={group} className="flex flex-col">
       <span className="type-section mb-1">{st(`group.${group}`)}</span>
@@ -178,7 +179,17 @@ function KeyRules({ profile }: { profile: Record<string, unknown> }) {
   )
 }
 
-export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
+export function ProfilesSettings({
+  kind,
+  onDirtyChange,
+}: {
+  kind: ProfileKind
+  /**
+   * 草稿与库里存着的那一版不一样了（含只改了名字）：外壳据此在导航项上挂一个点，
+   * 切分区 / 关设置之前先问一句（设计审计 2026-10-07 §9.1）。卸载时报一次 false。
+   */
+  onDirtyChange?: (dirty: boolean) => void
+}) {
   useTranslation('dialogs')
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [draft, setDraft] = useState<Record<string, unknown> | null>(null)
@@ -221,6 +232,29 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
     (JSON.stringify(draft) !== JSON.stringify(selected.data) ||
       name.trim() !== profileName(selected))
 
+  /**
+   * 「有没存的改动」——与上面的 `dirty` 不同，空名字也算（那是一份**改了但存不了**的
+   * 草稿，丢掉它照样要问）。换选中项、新建 / 复制 / 导入（都会换选中项）、切分区、关设置
+   * 都会整份丢掉它，所以这几条路先过 `leaveDraft()`。
+   */
+  const changed =
+    !!selected &&
+    !!draft &&
+    (JSON.stringify(draft) !== JSON.stringify(selected.data) || name.trim() !== profileName(selected))
+  const onDirtyChangeRef = useRef(onDirtyChange)
+  onDirtyChangeRef.current = onDirtyChange
+  useEffect(() => {
+    onDirtyChangeRef.current?.(changed)
+  }, [changed])
+  useEffect(() => () => onDirtyChangeRef.current?.(false), [])
+  /** 草稿干净就直接放行；脏了先问，「继续编辑」= false（调用方什么都不做） */
+  const leaveDraft = async () => !changed || (await askDiscardDraft())
+  const select = async (id: string) => {
+    if (id === selected?.id) return
+    if (!(await leaveDraft())) return
+    setSelectedId(id)
+  }
+
   // 样式页的字段不在这张表里：它们与左栏样式面板同一张行表（`StyleProfileFields`）
   const grouped = useMemo(() => (kind === 'spec' ? groupFields(SPEC_FIELDS) : []), [kind])
 
@@ -235,8 +269,9 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
     }
   }
 
-  const create = () =>
-    withBusy(async () => {
+  const create = async () => {
+    if (!(await leaveDraft())) return
+    await withBusy(async () => {
       // 新建 = 从当前选中的那条复制（多半就是内置默认）。**空白模板没有意义**：
       // 一份什么规则都没有的规范会把所有检查静默放行。
       const base = selected ?? records[0]
@@ -244,9 +279,11 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
       const rec = await useProfileStore.getState().duplicate(kind, base.id, st('newName'))
       if (rec) setSelectedId(rec.id)
     })
+  }
 
-  const duplicate = () =>
-    withBusy(async () => {
+  const duplicate = async () => {
+    if (!(await leaveDraft())) return
+    await withBusy(async () => {
       if (!selected) return
       // 名字**在前端拼**：后端的 `display_name` 对内置来说是中文兜底
       // （真正的名字是 `name_key` 查出来的），让后端拼就会在英文界面里
@@ -256,6 +293,7 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
         .duplicate(kind, selected.id, st('copyOf', { name: profileName(selected) }))
       if (rec) setSelectedId(rec.id)
     })
+  }
 
   const save = () =>
     withBusy(async () => {
@@ -277,6 +315,7 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
           upgraded
             ? msg('stylePanel.upgradedLegacy', { name: trimmed }, 'workspace')
             : msg('profiles.saved', { name: trimmed }, 'dialogs'),
+          'done',
         )
     })
 
@@ -324,12 +363,16 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
       }
     })
 
-  const importOne = (file: File) =>
-    withBusy(async () => {
+  const importOne = async (file: File) => {
+    // 导入成功会选中导进来的那份：草稿没存就先问（问在选完文件之后——在打开文件
+    // 选择器之前 await 会丢掉用户手势，选择器在 WebView 里弹不出来）
+    if (!(await leaveDraft())) return
+    await withBusy(async () => {
       const text = await file.text()
       const rec = await useProfileStore.getState().importOne(kind, text)
       if (rec) setSelectedId(rec.id)
     })
+  }
 
   /* -------------------- 与当前项目 / 当前图的两个明确出口 ------------------ */
   const doc = useDocumentStore((s) => s.doc)
@@ -356,7 +399,7 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
     })
     useUiStore
       .getState()
-      .setStatus(msg('profiles.usedForProject', { name: profileName(selected) }, 'dialogs'))
+      .setStatus(msg('profiles.usedForProject', { name: profileName(selected) }, 'dialogs'), 'done')
   }
 
   /**
@@ -380,7 +423,7 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
    * 绑完关掉设置、打开左栏样式面板——对齐的结果在画布上，看得见才知道改了什么。
    */
   const useForCanvas = () => {
-    if (kind !== 'style' || !selected || dirty) return
+    if (kind !== 'style' || !selected || changed) return
     bindCanvasStyle(selected.id)
     useUiStore.getState().openStylePanel()
   }
@@ -494,7 +537,7 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
           /* 二到四份是一组互斥的取值：分段选择器（宪法第五节）；本项目在用的那份带勾 */
           <Segmented
             value={selected?.id ?? null}
-            onChange={(id) => setSelectedId(id)}
+            onChange={(id) => void select(id)}
             ariaLabel={st(`library.${kind}`)}
             className="min-w-0 flex-1"
             items={records.map((r) => ({
@@ -510,7 +553,7 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
         ) : (
           <Select
             value={selected?.id ?? ''}
-            onChange={(id) => setSelectedId(id)}
+            onChange={(id) => void select(id)}
             ariaLabel={st(`library.${kind}`)}
             title={selected ? profileTechnicalDetail(selected) : undefined}
             className="min-w-0 flex-1"
@@ -660,10 +703,11 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
                     <Button
                       variant="secondary"
                       size="sm"
-                      // 草稿没存：绑定用的是库里存着的那一版，关掉设置还会把没存的改动丢掉——
-                      // 先存再用（Codex #547）。原因写在 title 里，不是一颗按了没反应的钮
-                      disabled={dirty}
-                      title={dirty ? st('useForCanvasSaveFirst') : undefined}
+                      // 草稿没存：绑定用的是库里存着的那一版，而这颗钮会直接关掉设置（不经
+                      // 外壳的放弃确认）——先存再用（Codex #547）。判的是 `changed`（空名字的
+                      // 草稿也算）。原因写在 title 里，不是一颗按了没反应的钮
+                      disabled={changed}
+                      title={changed ? st('useForCanvasSaveFirst') : undefined}
                       onClick={useForCanvas}
                     >
                       {st('useForCanvas')}
@@ -691,7 +735,7 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
               )}
               <div className="flex flex-col gap-4">
                 {grouped.map(({ group, fields: groupFields }) => (
-                  <FieldGroup key={group} group={group}>
+                  <ProfileFieldGroup key={group} group={group}>
                     {groupFields.map((f) => {
                       const raw = readPath(draft ?? {}, f.path)
                       const set = typeof raw === 'number' && Number.isFinite(raw)
@@ -738,7 +782,7 @@ export function ProfilesSettings({ kind }: { kind: ProfileKind }) {
                         </SettingRow>
                       )
                     })}
-                  </FieldGroup>
+                  </ProfileFieldGroup>
                 ))}
               </div>
 

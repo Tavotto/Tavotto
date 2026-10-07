@@ -5,6 +5,7 @@ import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { Popover } from '../ui/Popover'
+import { useInFieldGroup } from '../ui/fieldGroupContext'
 
 /**
  * 设置页的基础构件。
@@ -144,6 +145,7 @@ export function SettingRow({
   controlId,
   density = 'normal',
   control = 'fixed',
+  layout = 'default',
   ...rest
 }: {
   label: ReactNode
@@ -165,21 +167,30 @@ export function SettingRow({
   density?: 'normal' | 'compact'
   /** fixed：控件落在定宽的控件列；fill：控件整行宽，落到标题下一行 */
   control?: 'fixed' | 'fill'
+  /**
+   * default：标题列弹性 + 控件列定宽 240、控件贴右缘；balanced：两列 4 : 6、控件从控件列左缘起排
+   * （格式复选框、库选择、安装表单这类控件本身就宽、或是一组控件的行；2026-10-07 设计审计 §9.1）
+   */
+  layout?: 'default' | 'balanced'
 } & Record<`data-${string}`, string | number | boolean | undefined>) {
   const labelText = typeof label === 'string' ? label : ''
   const LabelTag = controlId ? 'label' : 'span'
   const fill = control === 'fill'
   const compact = density === 'compact'
+  const balanced = layout === 'balanced' && !fill
+  // 坐在 FieldGroup 里：上下 12 / 左右 16 的内边距由组给（index.css 的 [data-ui-field-group] 规则），行只管最小高
+  const grouped = useInFieldGroup()
   return (
     <div
       {...rest}
       data-setting-row
       data-density={density}
+      data-layout={balanced ? 'balanced' : undefined}
       style={settingControlStyle}
       className={cn(
         'grid items-start gap-x-6',
-        fill ? 'grid-cols-1 gap-y-1.5' : settingRowGrid,
-        compact ? 'min-h-8 py-0.5' : 'min-h-12 py-2.5',
+        fill ? 'grid-cols-1 gap-y-1.5' : balanced ? 'grid-cols-[minmax(0,4fr)_minmax(0,6fr)]' : settingRowGrid,
+        compact ? cn('min-h-8', !grouped && 'py-0.5') : grouped ? 'min-h-12' : 'min-h-12 py-2.5',
       )}
     >
       <div className="flex min-w-0 flex-col">
@@ -188,7 +199,7 @@ export function SettingRow({
           <LabelTag
             id={controlId ? settingRowLabelId(controlId) : undefined}
             htmlFor={controlId}
-            className={cn('min-w-0 break-words text-sm leading-5 text-ink', controlId && 'cursor-pointer')}
+            className="min-w-0 break-words text-sm leading-5 text-ink"
           >
             {label}
           </LabelTag>
@@ -209,7 +220,7 @@ export function SettingRow({
       </div>
       {/* 控件贴列右缘（2026-09-15 打磨批次 A，用户拍板）：定宽列里左起对齐会把控件漂在页面中间、
           右侧空一大片；整行宽的 fill 形态不在此列，照旧铺满 */}
-      <div className={cn('flex min-h-7 min-w-0 items-center gap-2', !fill && 'justify-end justify-self-end')}>
+      <div className={cn('flex min-h-7 min-w-0 items-center gap-2', !fill && !balanced && 'justify-end justify-self-end')}>
         {children}
       </div>
     </div>
@@ -308,7 +319,7 @@ export function HelpTip({
           // 20px 档的图标钮（与 Button icon-xs 同形，这里保留手写是因为它挂着自己的指针 / 焦点处理）：
           // 它坐在标题行里，28px 的钮会把标题行撑出节奏
           className={cn(
-            'flex h-5 w-5 shrink-0 items-center justify-center rounded-sm text-ink-3',
+            'flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-ink-3',
             'outline-none transition-colors duration-fast hover:bg-surface-hover hover:text-ink',
             'focus-visible:focus-ring',
           )}
@@ -348,7 +359,7 @@ export function InlineWarning({
       role={tone === 'danger' ? 'alert' : undefined}
       className={cn(
         'flex items-start gap-1.5 rounded-sm px-2 py-1.5 text-xs leading-relaxed',
-        tone === 'danger' ? 'bg-danger-subtle text-danger' : 'bg-surface-hover text-ink-2',
+        tone === 'danger' ? 'bg-danger-surface text-danger-content' : 'bg-surface-hover text-ink-2',
       )}
     >
       <TriangleAlert size={ICON_SIZE.sm} className="mt-px shrink-0" aria-hidden />

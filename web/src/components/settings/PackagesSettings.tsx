@@ -11,6 +11,7 @@ import { useDepRepairStore } from '@/store/depRepairStore'
 import { isPackageJobRunning, searchTerm, usePackageStore } from '@/store/packageStore'
 import { askConfirm } from '@/store/uiStore'
 import { Button } from '../ui/Button'
+import { ProgressBar } from '../ui/ProgressBar'
 import { TextInput } from '../ui/Input'
 import { Select } from '../ui/Select'
 import { CopyButton } from './CopyButton'
@@ -191,6 +192,10 @@ export function PackagesSettings() {
             {specError}
           </p>
         )}
+        {/* 作业进度 / 结果：它说的是刚点下去的那次安装 / 升级 / 卸载，就落在安装框正下方、
+            包表上面——反馈出现在用户点的地方（2026-10-07 设计审计 P0）。此前排在整张包表之后，
+            包一多，点了「安装」页面上什么都没发生，进度在屏幕外 */}
+        <JobPanel progress={progress} errorCode={errorCode} errorText={errorText} />
         {/* 「安装、升级与查找会联网访问 PyPI」删了（全面打磨 D16）：它是常驻说明，而且
             出网这件事「在 PyPI 查找」这颗钮的名字已经说了，细则在技术详情里。它此前与
             空态那句「还没有安装过包。」同字同色紧挨着，读作一段两句话 */}
@@ -226,11 +231,6 @@ export function PackagesSettings() {
           }))}
         />
       </SettingSection>
-
-      {/* ---------------- 作业进度 / 结果 ---------------- */}
-      {/* 它说的是刚点下去的那次安装 / 升级，紧跟在发起它的那一段后面（全面打磨 D17）；
-          此前夹在两个折叠区中间，把本该相邻的两条折叠头隔开了 */}
-      <JobPanel progress={progress} errorCode={errorCode} errorText={errorText} />
 
       {/* ---------------- 两条折叠：内置包 · 技术详情 ---------------- */}
       {/* 一页下半原本是两条 28 高的折叠头，中间隔着 28px 的分区间距，读起来是两个空分区。
@@ -489,7 +489,7 @@ function StatusText({ status, detail }: { status: string; detail?: string }) {
       : status === 'missing'
         ? 'text-danger'
         : status === 'changed'
-          ? 'text-warn'
+          ? 'text-warn-content'
           : 'text-ink-3'
   return (
     <span className={cn('flex flex-col text-xs', tone)}>
@@ -656,15 +656,8 @@ function JobPanel({
           </Button>
         )}
       </div>
-      {running && (
-        <div
-          role="progressbar"
-          aria-label={pk('job.progressAria')}
-          className="h-1 overflow-hidden rounded-full bg-surface-2"
-        >
-          <div className="h-full w-1/3 animate-pulse bg-ink" />
-        </div>
-      )}
+      {/* 包管理器不报百分比：不确定态，来回扫（轨道 border 档，放在 surface-2 面板里也看得见） */}
+      {running && <ProgressBar pct={null} label={pk('job.progressAria')} data-packages-progress />}
       {failure && (
         <InlineWarning tone="danger">
           {failure}

@@ -149,7 +149,7 @@ function ElementPopover({
       onContextMenu={(e) => e.preventDefault()}
       style={{ left: pos.x, top: pos.y }}
       className={cn(
-        'fixed z-50 w-[268px] rounded-md bg-surface p-1',
+        'fixed z-dialog w-[268px] rounded-lg bg-surface p-1',
         // 12px：与菜单项同档（M2）。此前整块 11，而里面的数字框是 12
         'text-sm text-ink shadow-pop animate-pop-in',
       )}

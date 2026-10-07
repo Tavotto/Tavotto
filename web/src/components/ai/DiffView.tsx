@@ -21,8 +21,8 @@ function classify(line: string): LineKind {
 /** 增删只用语义色那一对（实色字 + 淡底，2026-09-15 学 Beautiful UI 的 Diff Table）：
     此前是四个只在这里出现的自造色，与 ok / danger 徽章两套绿红并存 */
 const STYLES: Record<LineKind, string> = {
-  add: 'bg-ok-subtle text-ok',
-  del: 'bg-danger-subtle text-danger',
+  add: 'bg-ok-surface text-ok-content',
+  del: 'bg-danger-surface text-danger-content',
   hunk: 'text-ink-3',
   meta: 'text-ink-3',
   ctx: 'text-ink-2',

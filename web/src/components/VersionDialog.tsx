@@ -318,7 +318,7 @@ export function VersionDrawer() {
       }}
       // 覆盖在画布上的浮板只留投影：`shadow-pop` 自带 1px 环，再画一条实色 border
       // 就是双描边（宪法第一节；左栏审计 L20，左抽屉 overlay 态同改）
-      className="absolute inset-y-0 right-0 z-40 flex w-[400px] max-w-[92vw] flex-col bg-surface shadow-pop"
+      className="absolute inset-y-0 right-0 z-overlay flex w-[400px] max-w-[92vw] flex-col bg-surface shadow-pop"
     >
       {/* 抽屉头与左抽屉同一副骨架：36 高、type-section 标题、DrawerCount 计数、IconButton
           关闭钮（左栏审计 L20 / L01 / L13 / L14） */}
@@ -401,7 +401,7 @@ export function VersionDrawer() {
       </div>
       {budget?.namedOver && (
         // 命名节点超出字节上限：**不删**，照实说，请用户自己删（ADR 0101）
-        <p role="alert" data-timeline-budget className="mx-3 mb-2 rounded-sm bg-warn-subtle px-2 py-1.5 text-xs leading-relaxed text-warn">
+        <p role="alert" data-timeline-budget className="mx-3 mb-2 rounded-sm bg-warn-surface px-2 py-1.5 text-xs leading-relaxed text-warn-content">
           {vd('budgetOver', {
             used: ((budget.namedBytes ?? 0) / 1048576).toFixed(1),
             limit: Math.round(budget.limit / 1048576),
@@ -471,7 +471,7 @@ function TimelineDay({ group, children }: { group: TimelineGroup; children: Reac
         : formatDate(group.day.ts)
   return (
     <section role="listitem" data-timeline-day={group.key}>
-      <h3 className="sticky top-0 z-10 bg-surface px-3 pb-1 pt-2 text-xs text-ink-3">{label}</h3>
+      <h3 className="sticky top-0 z-sticky bg-surface px-3 pb-1 pt-2 text-xs text-ink-3">{label}</h3>
       <ul aria-label={label}>{children}</ul>
     </section>
   )
@@ -836,7 +836,7 @@ export async function restoreNode(
   useTimelineStore.getState().setPreview(null)
   useUiStore
     .getState()
-    .setStatus(msg('versions.restored', { name: label, undo: modKey('Z') }, 'dialogs'))
+    .setStatus(msg('versions.restored', { name: label, undo: modKey('Z') }, 'dialogs'), 'done')
   return true
 }
 

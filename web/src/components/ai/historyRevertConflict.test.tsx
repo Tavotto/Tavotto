@@ -100,7 +100,8 @@ describe('历史条目回滚：过期写入被拒时说出口', () => {
     vi.mocked(aiRevert).mockResolvedValue({ ok: true, script: 'fig1.py' })
     await clickRevert()
     const ui = useUiStore.getState()
-    expect(ui.statusTone).toBe('info')
+    // 成功是完成态（✓），不是中性提示（Codex #821 P2：成功类提示都显式标 done）
+    expect(ui.statusTone).toBe('done')
     expect(ui.status?.key).toBe('history.reverted')
   })
 })
