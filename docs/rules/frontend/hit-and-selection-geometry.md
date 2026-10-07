@@ -201,7 +201,12 @@
   指针拖动（`contentDelta`）、方向键（`nudge.ts` 的 `toFrac`）走 `pageToContentVec`；画布标注吸图内中心线
   （`elementSnapCandidates`）走 `contentToPageVec`。只认旋转的后果：翻转面板上选中框停在镜像处、点到的是
   镜像处的元素、往右拖 / 按 → 元素在画面上往左走。图内拖动的吸附与混排对齐仍在旋转 / 翻转时整个关掉（上面 ⑤）。
-  看护 `canvas/flippedElementOverlay.test.tsx`（真 PanelView + OverlaySvg，两份 transform 字符串各自解析比对）、
+  手柄的**方位**同理：图内元素框的手柄按内容方位摆、整组跟着翻转 / 旋转，光标按它在画面上的方位给
+  （`elementGeometry.contentDirOnPage`，翻转面板上内容的东北角画在西北）；裁剪框的手柄按画面方位摆，拖它改的是
+  内容里哪条边走 `pageDirInContent`，位移走 `pageToContentVec`，整图锚点与重算包围盒的偏移走 `contentToPageVec`
+  ——属性页的换取景 / 重置裁剪（`applyCropDraft`）同一个变换，与 `lib/figureFrame` 一致：完整图在画布上纹丝不动。
+  看护 `canvas/flippedElementOverlay.test.tsx`（真 PanelView + OverlaySvg，两份 transform 字符串各自解析比对；含手柄光标、裁剪框）、
+  `store/cropFlip.test.ts`、
   `lib/panelTransform.test.ts`、`canvas/measureChip.test.tsx`。
 
 ## 速查表原要点（2026-09-25 迁入，#608）

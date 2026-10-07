@@ -40,7 +40,7 @@ import {
   startResizeDrag,
   DRAW_COLOR,
 } from './interactions'
-import { elementOverlayTransform } from './elementGeometry'
+import { contentDirOnPage, elementOverlayTransform } from './elementGeometry'
 import { openQuickEdit } from './quickEditStore'
 
 /**
@@ -821,6 +821,9 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
   // 手柄与命中层同一道闸：这一下按下之前捕获阶段刚提交了方向键微调，闭包里的 panel /
   // 包围框已经过期——吞掉，不拿旧基线起手（清单见 guardStale）
   const guarded = (start: (e: React.PointerEvent) => void) => guardStale(panel, start)
+  // 手柄按内容坐标摆、跟着整组翻转 / 旋转到画面上：光标按它在**画面上**的方位给（翻转面板上内容的东北角画在
+  // 西北，光标还按东北给就是斜反了）
+  const handleCursor = (dir: ResizeDir) => cursorFor(contentDirOnPage(panel, dir), 0)
   // 多选且全是子图 → 组包围框接管手柄，成组缩放
   const group = resolveGroup(panel, manifest, selectedGids)
   // 选中的是一个真实的组（从元素树选的，`Manifest.groups`）：组框之外，成员各描一道
@@ -964,7 +967,7 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
           <EdgeStrips
             box={groupBox}
             dirs={ALL_DIRS}
-            cursor={(dir) => CURSORS[dir]}
+            cursor={handleCursor}
             onPointerDown={(e, dir) => guarded((ev) => startGroupResize(ev, panel, group, layout, dir))(e)}
           />
         )}
@@ -975,6 +978,7 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
               key={dir}
               box={groupBox}
               dir={dir}
+              cursor={handleCursor(dir)}
               onPointerDown={guarded((e) => startGroupResize(e, panel, group, layout, dir))}
             />
           ))}
@@ -983,7 +987,7 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
           <EdgeStrips
             box={axesBox}
             dirs={ALL_DIRS}
-            cursor={(dir) => CURSORS[dir]}
+            cursor={handleCursor}
             onPointerDown={(e, dir) => guarded((ev) => startAxesDrag(ev, panel, primary.target, layout, dir))(e)}
           />
         )}
@@ -994,6 +998,7 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
               key={dir}
               box={axesBox}
               dir={dir}
+              cursor={handleCursor(dir)}
               onPointerDown={guarded((e) => startAxesDrag(e, panel, primary.target, layout, dir))}
             />
           ))}
@@ -1005,6 +1010,7 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
               key={dir}
               box={legendBox}
               dir={dir}
+              cursor={handleCursor(dir)}
               data-legend-scale={dir}
               onPointerDown={guarded((e) => startLegendScale(e, panel, primary.target, layout, dir))}
             />
@@ -1074,18 +1080,21 @@ function Handle({
   box,
   dir,
   onPointerDown,
+  cursor,
   'data-legend-scale': legendScale,
 }: {
   box: Box
   dir: ResizeDir
   onPointerDown: (e: React.PointerEvent) => void
+  /** 画面上的光标（翻转 / 旋转面板上与 `dir` 不同，见 ElementBoxes 的 `handleCursor`） */
+  cursor: string
   'data-legend-scale'?: string
 }) {
   return (
     <HandleMark
       at={handlePos(box, dir)}
       hook={{ 'data-element-handle': dir, 'data-legend-scale': legendScale }}
-      cursor={CURSORS[dir]}
+      cursor={cursor}
       onPointerDown={onPointerDown}
     />
   )
