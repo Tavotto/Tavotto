@@ -56,7 +56,7 @@ import {
   type RegistryView,
   type ScriptInventoryEntry,
 } from '@/lib/api'
-import { i18n } from '@/i18n'
+import { formatMessage, i18n } from '@/i18n'
 import { setCurrentProjectId } from '@/lib/session'
 import { DependencyPrepareDialog } from '@/components/DependencyPrepareDialog'
 import { EngineEnvironmentDialog } from '@/components/EngineEnvironmentDialog'
@@ -67,6 +67,8 @@ import { useEnvStore } from '@/store/envStore'
 import { useScriptLibraryStore } from '@/store/scriptLibraryStore'
 import { useScriptRunStore } from '@/store/scriptRunStore'
 import { useUiStore } from '@/store/uiStore'
+import { useProjectStore } from '@/store/projectStore'
+import { useAssetStore } from '@/store/assetStore'
 import { visibleBlocks } from '@/test/visibleBlocks'
 
 declare global {
@@ -173,6 +175,7 @@ beforeEach(() => {
   localStorage.clear()
   useScriptLibraryStore.getState().clear()
   useScriptRunStore.getState().clear()
+  useProjectStore.setState({ project: null })
   useUiStore.setState({ engineEnvOpen: false, settingsOpen: false, settingsSection: null, dialogStack: [] })
   mockRegistry.mockReset()
   mockProbe.mockReset()
@@ -1037,12 +1040,93 @@ describe('行与状态的写法（2026-10-07 设计审计 §10.3）', () => {
   })
 
   it('行菜单（⋯ / ⇧F10）：运行与复制路径', async () => {
+    useProjectStore.setState({ project: { open: true, figures_dir: '/proj' } })
     mockRegistry.mockResolvedValue(view([entry({ script: 'show.py' })]))
     await mount()
-    const row = host.querySelector<HTMLElement>('[data-script-row="show.py"] > div')!
-    await act(async () => {
-      row.dispatchEvent(new KeyboardEvent('keydown', { key: 'F10', shiftKey: true, bubbles: true, cancelable: true }))
-    })
+    await openRowMenu('show.py')
     expect(document.querySelector('[data-script-copy-path]')).toBeTruthy()
+  })
+})
+
+/** ⇧F10 开这一行的菜单 */
+async function openRowMenu(script: string) {
+  const row = host.querySelector<HTMLElement>(`[data-script-row="${script}"] > div`)!
+  await act(async () => {
+    row.dispatchEvent(new KeyboardEvent('keydown', { key: 'F10', shiftKey: true, bubbles: true, cancelable: true }))
+  })
+}
+
+describe('复制路径（Codex #832）', () => {
+  const statusText = () => {
+    const st = useUiStore.getState().status
+    return st ? formatMessage(st) : ''
+  }
+  const realClipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
+  const setClipboard = (value: unknown) =>
+    Object.defineProperty(navigator, 'clipboard', { value, configurable: true, writable: true })
+  const copy = async (script: string) => {
+    await openRowMenu(script)
+    await act(async () => {
+      document.querySelector<HTMLElement>('[data-script-copy-path]')!.click()
+      await new Promise((r) => setTimeout(r, 0))
+    })
+  }
+  afterEach(() => {
+    useProjectStore.setState({ project: null })
+    useAssetStore.setState({ figuresDir: '' })
+    if (realClipboard) Object.defineProperty(navigator, 'clipboard', realClipboard)
+    else delete (navigator as { clipboard?: unknown }).clipboard
+    useUiStore.setState({ status: null })
+  })
+
+  it('素材清单没加载成（figuresDir 为空）：照样按项目根拼出绝对路径，不只复制相对名', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    setClipboard({ writeText })
+    useAssetStore.setState({ figuresDir: '' })
+    useProjectStore.setState({ project: { open: true, figures_dir: '/proj/' } })
+    mockRegistry.mockResolvedValue(view([entry({ script: 'sub/show.py' })]))
+    await mount()
+    await copy('sub/show.py')
+    expect(writeText).toHaveBeenCalledWith('/proj/sub/show.py')
+    expect(useUiStore.getState().statusTone).toBe('done')
+    expect(statusText()).toContain('/proj/sub/show.py')
+  })
+
+  it('Windows 写法的项目根：整条按反斜杠拼', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    setClipboard({ writeText })
+    useProjectStore.setState({ project: { open: true, figures_dir: 'C:\\Users\\me\\proj' } })
+    mockRegistry.mockResolvedValue(view([entry({ script: 'sub/show.py' })]))
+    await mount()
+    await copy('sub/show.py')
+    expect(writeText).toHaveBeenCalledWith('C:\\Users\\me\\proj\\sub\\show.py')
+  })
+
+  it('项目根两边都不知道：不给「复制路径」，而不是复制一个会在别处解析的相对名', async () => {
+    mockRegistry.mockResolvedValue(view([entry({ script: 'show.py' })]))
+    await mount()
+    await openRowMenu('show.py')
+    expect(document.querySelector('[role="menu"]')).toBeTruthy()
+    expect(document.querySelector('[data-script-copy-path]')).toBeNull()
+  })
+
+  it('没有 navigator.clipboard（非安全上下文 / WebView）：说「没复制成、路径在这」，不静默', async () => {
+    setClipboard(undefined)
+    useProjectStore.setState({ project: { open: true, figures_dir: '/proj' } })
+    mockRegistry.mockResolvedValue(view([entry({ script: 'show.py' })]))
+    await mount()
+    await copy('show.py')
+    expect(useUiStore.getState().statusTone).toBe('error')
+    expect(statusText()).toContain('/proj/show.py')
+    expect(statusText()).toContain('无法写入剪贴板')
+  })
+
+  it('写剪贴板被拒：同样报失败', async () => {
+    setClipboard({ writeText: vi.fn().mockRejectedValue(new Error('denied')) })
+    useProjectStore.setState({ project: { open: true, figures_dir: '/proj' } })
+    mockRegistry.mockResolvedValue(view([entry({ script: 'show.py' })]))
+    await mount()
+    await copy('show.py')
+    expect(useUiStore.getState().statusTone).toBe('error')
   })
 })
