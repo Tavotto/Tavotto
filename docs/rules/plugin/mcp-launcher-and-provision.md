@@ -124,6 +124,14 @@
   过期锁可言。**改环境的一方拿锁**：`--provision`（后台的与手动 / `tavotto codex install`
   跑的同一条路）动 venv 之前非阻塞地拿，拿不到就不动、报 `provision_in_progress`；
   启动器只探一下锁（拿到即放）省掉明显多余的 spawn，多起一个子进程也只会有一个真跑 pip。
-  `TAVOTTO_MCP_NO_AUTO_PROVISION=1` 关掉。本次会话仍是降级、payload 带 `auto_provision`，
+  `TAVOTTO_MCP_NO_AUTO_PROVISION=1` 关掉（它在 `codex.mcp.json` 的 `env_vars` 里：Codex 起 server 前清空环境，
+  只放默认那几个与点了名的，漏掉开关就是死的）。**Windows 上后台那次用 `CREATE_NO_WINDOW`，不用
+  `DETACHED_PROCESS`**：后者是「没有控制台」，Win11 把它和它的 venv / pip 交给默认终端开可见窗口，
+  0.18.0 用户实测这个窗口一启动就报 0x800700e8、重装一行没跑、每次起 server 弹一次。本文件其余探测 /
+  pip 子进程也都带 `CREATE_NO_WINDOW`（引擎 `runtime.CREATE_NO_WINDOW` 的镜像），**唯一例外是 Windows
+  交棒的 `subprocess.call`**：新的隐藏控制台会把没显式传的标准句柄换掉，协议管道就断了。
+  **起过一次就退避 `AUTO_PROVISION_BACKOFF_SEC`（30 分钟）**，记号是 `mcp-runtime/provision.kicked` 的 mtime，
+  手动 `--provision` 成功时清掉；退避期内降级话术指出 `provision.log` 与手动命令，不说「已在后台」。
+  本次会话仍是降级、payload 带 `auto_provision`，
   文案说「后台在装、装完新开会话」。**只管「在、却 import 不过」**：能 import 但版本旧的
   自管环境不在这里重装（它此刻正被本会话用着）。看护 `tests/test_mcp_resolver.py` 末节。

@@ -59,6 +59,11 @@ WORKER_PYTHON_ENVS = ("TAVOTTO_WORKER_PYTHON", "MM_WORKER_PYTHON")
 #: execv 交棒后的防环护栏：棒交过去了 import 还是失败（装了一半的环境），
 #: 不许再交第二次——那是无限 exec 循环。
 _EXECED_ENV = "TAVOTTO_MCP_EXECED"
+#: 本文件起的探测 / 重装子进程一律不要窗口（引擎 `runtime.CREATE_NO_WINDOW` 的镜像：插件在引擎
+#: 不可用时也要能跑，import 不到它）。不带的话，父进程一旦没有控制台（后台重装、或宿主没给
+#: 隐藏控制台），Windows 11 会给每个 python / pip 子进程开一个 Windows Terminal 窗口——用户
+#: 看到的就是「弹窗、报错、关闭、再弹窗」。非 Windows 上值为 0，等同于不传。
+CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
 
 def _self_command() -> str:
@@ -127,9 +132,11 @@ def _importable(python: str, timeout: float = 30.0) -> bool:
         proc = subprocess.run(
             # `-B`：只读探测，不往候选解释器的安装目录写 .pyc（与引擎侧 `runtime.probe_args` 同一条）
             [python, "-B", "-c", _BRIDGE_IMPORT],
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             timeout=timeout,
+            creationflags=CREATE_NO_WINDOW,
         )
     except (OSError, subprocess.TimeoutExpired):
         return False
@@ -393,7 +400,12 @@ def _probe_python(argv: "list[str]", timeout: float = 15.0) -> "dict | None":
     """
     try:
         proc = subprocess.run(
-            [*argv, "-B", "-c", _PROBE_VERSION], capture_output=True, text=True, timeout=timeout
+            [*argv, "-B", "-c", _PROBE_VERSION],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            creationflags=CREATE_NO_WINDOW,
         )
     except (OSError, subprocess.TimeoutExpired):
         return None
@@ -595,9 +607,11 @@ def _tavotto_cli_version(cmd: "list[str]", timeout: float = 30.0) -> "str | None
     try:
         proc = subprocess.run(
             [*cmd, *_VERSION_ARGV],
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             timeout=timeout,
+            creationflags=CREATE_NO_WINDOW,
             # 只读探测不往那个 Tavotto 所在的环境写 .pyc：`cmd` 多半是 pip / pipx 的控制台脚本，塞不进
             # `-B`，只能靠环境变量（它起的解释器继承）
             env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
@@ -679,9 +693,11 @@ def _dist_version(python: str, timeout: float = 15.0) -> "str | None":
     try:
         proc = subprocess.run(
             [python, "-B", "-c", _DIST_VERSION],
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             timeout=timeout,
+            creationflags=CREATE_NO_WINDOW,
         )
     except (OSError, subprocess.TimeoutExpired, ValueError):
         return None
@@ -832,6 +848,7 @@ def _run_probe(argv: "list[str]", environ, timeout: float) -> "str | None":
             stdin=subprocess.DEVNULL,
             env=env,
             timeout=timeout,
+            creationflags=CREATE_NO_WINDOW,
         )
     except (OSError, subprocess.TimeoutExpired, ValueError):
         return None
@@ -1155,12 +1172,46 @@ def managed_runtime_stale(resolution: dict) -> bool:
     )
 
 
-#: 关掉启动时的后台自动重装（测试、或不想让启动器联网的用户）。
+#: 关掉启动时的后台自动重装（测试、或不想让启动器联网的用户）。宿主只转发清单里点了名的变量，
+#: 所以它也在 `codex.mcp.json` 的 `env_vars` 里——不在那里，用户设了 Codex 也不传，开关是死的。
 NO_AUTO_PROVISION_ENV = "TAVOTTO_MCP_NO_AUTO_PROVISION"
+#: 两次后台自动重装之间至少隔多久。宿主每起一次 server 都会判一次「自管环境旧了」，而后台
+#: 重装可能根本没跑起来（Windows 上它的窗口一启动就报 0x800700e8）或跑了却装不成（离线、镜像
+#: 滞后）：没有退避，就是每开一次会话起一次、弹一次，永不收敛。退避期内照常降级、说清去看日志
+#: 或手动跑；手动 `--provision` 成功会清掉记号。
+AUTO_PROVISION_BACKOFF_SEC = 30 * 60
 
 
 def _provision_lock_path() -> str:
     return os.path.join(managed_runtime_dir(), "provision.lock")
+
+
+def _provision_kicked_path() -> str:
+    """上一次后台自动重装的记号：只看它的 mtime（退避用），内容无意义。"""
+    return os.path.join(managed_runtime_dir(), "provision.kicked")
+
+
+def _recently_kicked() -> bool:
+    try:
+        age = time.time() - os.path.getmtime(_provision_kicked_path())
+    except OSError:
+        return False
+    return 0 <= age < AUTO_PROVISION_BACKOFF_SEC
+
+
+def _mark_kicked() -> None:
+    try:
+        with open(_provision_kicked_path(), "w", encoding="utf-8"):
+            pass
+    except OSError:
+        pass  # 记不下来只是少了退避，不让启动失败
+
+
+def _clear_kicked() -> None:
+    try:
+        os.remove(_provision_kicked_path())
+    except OSError:
+        pass
 
 
 def _try_lock_fd(fd: int) -> bool:
@@ -1257,6 +1308,7 @@ def kick_background_provision() -> dict:
     这里只**探一下**锁（拿到立刻放）来省掉明显多余的 spawn；真正的互斥在子进程
     `--provision` 里——它改环境之前自己拿内核锁，拿不到就不动环境。所以几个会话
     同时起、各自探到空闲而各起一个子进程也无妨：只有一个会真的跑 pip。
+    上一次起过之后 `AUTO_PROVISION_BACKOFF_SEC` 内不再起（reason `backoff`）。
     返回 `{"started": bool, "reason": str, "log": path}`，进 health 与降级 payload。
     """
     root = managed_runtime_dir()
@@ -1280,13 +1332,19 @@ def kick_background_provision() -> dict:
     if probe is None:
         return {"started": False, "reason": "already_running", "log": log}
     _release_provision_lock(probe)
+    if _recently_kicked():
+        return {"started": False, "reason": "backoff", "log": log}
     try:
         out = open(log, "a", encoding="utf-8")
     except OSError as exc:
         return {"started": False, "reason": f"cannot_write: {exc}", "log": log}
     kwargs: dict = {"stdin": subprocess.DEVNULL, "stdout": out, "stderr": out}
-    if os.name == "nt":
-        kwargs["creationflags"] = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(
+    if _IS_WINDOWS:
+        # 不用 DETACHED_PROCESS：那是「没有控制台」，它和它起的 venv / pip 都会被 Windows 11
+        # 交给默认终端开一个可见窗口，实测在 Codex 下这个窗口一启动就报 0x800700e8（管道正在
+        # 被关闭），重装一行都没跑。CREATE_NO_WINDOW 给它一个自己的隐藏控制台（同样不与本
+        # server 共用，宿主关掉 server 的控制台事件到不了它），子孙继承这个隐藏控制台。
+        kwargs["creationflags"] = CREATE_NO_WINDOW | getattr(
             subprocess, "CREATE_NEW_PROCESS_GROUP", 0
         )
     else:
@@ -1301,6 +1359,7 @@ def kick_background_provision() -> dict:
         return {"started": False, "reason": f"spawn_failed: {exc}", "log": log}
     finally:
         out.close()
+    _mark_kicked()
     return {"started": True, "reason": "stale_managed_runtime", "log": log}
 
 
@@ -1610,9 +1669,11 @@ def health() -> "tuple[dict, int]":
                         "-c",
                         "import tavotto; print(tavotto.__version__)",
                     ],
+                    stdin=subprocess.DEVNULL,
                     capture_output=True,
                     text=True,
                     timeout=30,
+                    creationflags=CREATE_NO_WINDOW,
                 )
                 report["engine_version"] = (proc.stdout or "").strip() or None
             except (OSError, subprocess.TimeoutExpired):
@@ -1704,7 +1765,15 @@ def provision(spec: "str | None" = None, python_base: "str | None" = None) -> "t
     def _run(argv, what):
         t = time.monotonic()
         try:
-            proc = subprocess.run(argv, capture_output=True, text=True, timeout=900, env=env)
+            proc = subprocess.run(
+                argv,
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                text=True,
+                timeout=900,
+                env=env,
+                creationflags=CREATE_NO_WINDOW,
+            )
         except (OSError, subprocess.TimeoutExpired) as exc:
             steps.append({"step": what, "ok": False, "error": str(exc)})
             return False
@@ -1838,6 +1907,9 @@ def _hand_off(python: str, argv: "list[str]") -> int:
       退出码 0、一个协议帧都没有（#559 的 Windows CI 由 configure 的握手探针撞出来）。
       所以改为子进程：参数按列表传（subprocess 负责逐个加引号），stdio 继承，等它结束并
       原样带回退出码——父进程一直活着，host 看到的管道也就一直在。
+      **这一处故意不带 `CREATE_NO_WINDOW`**：它会给子进程一个新的隐藏控制台，而没显式传
+      stdin/stdout 时子进程的标准句柄就落到那个新控制台上，不再是宿主的协议管道。继承本进程
+      的控制台本来就不弹窗（本进程若没有控制台，它自己早已弹过窗，不是这里多出来的）。
     """
     args = [python, os.path.abspath(__file__), *argv]
     if _IS_WINDOWS:
@@ -1919,6 +1991,8 @@ def main() -> int:
             report, rc = provision(values["--from"], python_base=values["--python"])
         finally:
             _release_provision_lock(lock)
+        if rc == 0:
+            _clear_kicked()  # 环境已对上：下次再旧了（插件又升级）不必等退避
         print(json.dumps(report, ensure_ascii=False))
         return rc
 
@@ -1957,6 +2031,17 @@ def main() -> int:
         resolution = {**resolution, "auto_provision": auto}
         if auto["started"] or auto["reason"] == "already_running":
             hint = MANAGED_STALE_KICKED_HINT
+        elif auto["reason"] == "backoff":
+            hint = (
+                "插件自管环境里的引擎跟当前插件对不上（多半是插件升级后环境还是旧版）。"
+                "后台刚自动重装过一次、还没装好（可能仍在装，也可能失败了，详情见 "
+                + auto["log"]
+                + "），为免反复重试，"
+                + str(AUTO_PROVISION_BACKOFF_SEC // 60)
+                + " 分钟内不再自动重装。可以在终端手动运行："
+                + _self_command()
+                + " --provision，装完新开一次 Codex 会话。"
+            )
         elif auto["reason"] == "venv_in_use":
             hint = (
                 "插件自管环境要整个重建（它的 Python 版本不在 "

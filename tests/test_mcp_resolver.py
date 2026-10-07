@@ -779,7 +779,7 @@ def test_background_provision_spawns_detached_and_skips_while_a_provision_holds_
     call = fake_popen[0]
     assert call["argv"][1:] == [os.path.abspath(launcher.__file__), "--provision"]
     if os.name == "nt":
-        assert call["creationflags"]
+        assert call["creationflags"] & launcher.CREATE_NO_WINDOW
     else:
         assert call["start_new_session"] is True
     assert launcher._EXECED_ENV not in call["env"], "交棒标记传下去会让 --provision 以外的路径走偏"
@@ -966,3 +966,108 @@ def test_every_documented_contention_errno_means_someone_holds_the_lock(
 
     monkeypatch.setattr(fcntl, "flock", busy)
     assert launcher._acquire_provision_lock() is None
+
+
+#: Win32 的 DETACHED_PROCESS（非 Windows 的 subprocess 里没有这个名字）
+_DETACHED_PROCESS = 0x00000008
+
+
+def test_background_provision_on_windows_gets_a_hidden_console_not_none(
+    tmp_path, fake_popen, monkeypatch
+):
+    """用户反馈（0.18.0，Win11 + Codex）：后台重装用 DETACHED_PROCESS 起，没有控制台的
+    python 被交给 Windows Terminal 开了个可见窗口，一启动就报 0x800700e8，重装一行没跑，
+    每开一次会话弹一次。主语是**传给 Popen 的 creationflags**：要隐藏控制台、不要「无控制台」。"""
+    monkeypatch.setattr(launcher, "_IS_WINDOWS", True)
+    monkeypatch.setattr(launcher, "CREATE_NO_WINDOW", 0x08000000)
+    assert launcher.kick_background_provision()["started"] is True
+    (call,) = fake_popen
+    flags = call["creationflags"]
+    assert flags & 0x08000000, f"后台重装没带 CREATE_NO_WINDOW：{flags:#x}"
+    assert not flags & _DETACHED_PROCESS, f"后台重装仍是 DETACHED_PROCESS：{flags:#x}"
+    assert "start_new_session" not in call
+
+
+def test_background_provision_backs_off_after_a_kick(tmp_path, fake_popen, monkeypatch):
+    """起过一次之后退避期内不再起：宿主每起一次 server 就判一次「旧了」，后台那次没跑起来
+    或装不成时，没有退避就是每个会话起一次、弹一次。过了退避期照常再试；手动
+    `--provision` 成功清掉记号，下一次不必等。"""
+    assert launcher.kick_background_provision()["started"] is True
+    again = launcher.kick_background_provision()
+    assert again["started"] is False and again["reason"] == "backoff", again
+    assert len(fake_popen) == 1
+
+    marker = launcher._provision_kicked_path()
+    old = os.path.getmtime(marker) - launcher.AUTO_PROVISION_BACKOFF_SEC - 1
+    os.utime(marker, (old, old))
+    assert launcher.kick_background_provision()["started"] is True
+    assert len(fake_popen) == 2
+
+    rc = _run_provision_main(monkeypatch, lambda spec, python_base=None: ({"ok": True}, 0))
+    assert rc == 0
+    assert not os.path.exists(marker), "手动重装成功后退避记号还在"
+    assert launcher.kick_background_provision()["started"] is True
+
+
+def test_startup_inside_the_backoff_says_where_the_log_is(tmp_path, fake_popen, monkeypatch):
+    """退避期内的降级话术：不说「已在后台」（没起），指出日志与手动那条。"""
+    assert launcher.kick_background_provision()["started"] is True
+    (res,) = _run_main_degraded(
+        monkeypatch,
+        _stale_resolution(tmp_path),
+        [
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": "tavotto_open_figure", "arguments": {}},
+            }
+        ],
+    )
+    body = res["result"]["structuredContent"]
+    assert body["auto_provision"]["reason"] == "backoff"
+    assert "provision.log" in body["error"] and "--provision" in body["error"]
+    assert "已在后台" not in body["error"]
+    assert len(fake_popen) == 1
+
+
+def _plugin_spawn_calls() -> "list[tuple[int, str, set]]":
+    """`codex-plugin/mcp/server.py` 里每个 `subprocess.<fn>(...)` 调用：(行号, 函数名, 关键字名)。"""
+    import ast
+
+    tree = ast.parse((PLUGIN / "mcp" / "server.py").read_text(encoding="utf-8"))
+    out = []
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "subprocess"
+            and node.func.attr in ("run", "Popen", "call", "check_output", "check_call")
+        ):
+            out.append((node.lineno, node.func.attr, {kw.arg for kw in node.keywords}))
+    return out
+
+
+def test_every_plugin_probe_spawn_is_windowless():
+    """插件启动器起的每个子进程都声明 `creationflags`（隐藏窗口）。唯一例外是 Windows 交棒的
+    `subprocess.call`：它要继承本进程的控制台与协议管道（见 `_hand_off` 的说明）。
+    `Popen(**kwargs)` 的那一处由上面的行为用例按真实 kwargs 判。"""
+    calls = _plugin_spawn_calls()
+    assert len(calls) >= 8, f"只扫到 {calls}，AST 匹配可能失效"
+    missing = [
+        (line, fn)
+        for line, fn, kws in calls
+        if fn != "call" and "creationflags" not in kws and None not in kws
+    ]
+    assert missing == [], f"这些 spawn 没带 creationflags（Windows 上会弹窗）：{missing}"
+    assert [fn for _l, fn, _k in calls if fn == "call"] == ["call"], "交棒之外又多了 call"
+
+
+def test_the_auto_provision_switch_reaches_the_server_under_codex():
+    """Codex 起 MCP server 前清空环境，只放默认那几个和 `env_vars` 点了名的。开关不在里面，
+    用户设了 `TAVOTTO_MCP_NO_AUTO_PROVISION=1` 也到不了 server——文档里那个开关就是死的。"""
+    entry = json.loads((PLUGIN / "codex.mcp.json").read_text(encoding="utf-8"))["mcpServers"][
+        "tavotto"
+    ]
+    assert launcher.NO_AUTO_PROVISION_ENV in entry["env_vars"]

@@ -126,3 +126,15 @@ write inside the conversation's working folder (WorkBuddy doesn't report MCP roo
 not your home folder. The embedded canvas hasn't been checked in WorkBuddy yet; the tools work without it. If you
 added Tavotto by hand with the config generator below, remove that entry, or you will have two Tavotto servers.
 -->
+
+## Codex on Windows: no more terminal window popping up again and again
+
+After upgrading the Codex plugin, Tavotto rebuilds its own plugin environment
+in the background. On Windows 11 that rebuild opened a terminal window that
+failed straight away with error `0x800700e8`, so the environment was never
+rebuilt and the window came back every time Codex started the Tavotto
+server. The rebuild now runs without a window, and after one attempt Tavotto
+waits 30 minutes before trying again in the background; the message in Codex
+points to `provision.log` and gives the command to run it by hand. Setting
+`TAVOTTO_MCP_NO_AUTO_PROVISION=1` now also reaches the server under Codex
+(before, Codex did not pass it on, so the switch had no effect).
