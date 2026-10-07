@@ -222,11 +222,12 @@ describe('当前项目按本标签页的项目认', () => {
     })
     await mount()
     const btn = (path: string) =>
-      section('pinned')!.querySelector<HTMLButtonElement>(`button[title="${path}"]`)!
-    expect(btn(CURRENT).disabled).toBe(true)
-    expect(btn(CURRENT).getAttribute('aria-current')).toBe('true')
-    expect(btn('/a/Supplementary').disabled).toBe(false)
-    expect(btn('/a/Supplementary').hasAttribute('aria-current')).toBe(false)
+      section('pinned')!.querySelector<HTMLButtonElement>(`button[title="${path}"]`)
+    // 当前项目只在顶上的卡里（审计 §10.3：此前收藏了的当前项目一屏画两次选中）
+    expect(btn(CURRENT), '当前项目不在收藏区重复').toBeNull()
+    expect(section('current')!.querySelector('[data-workspace-current]')!.getAttribute('data-card')).toBe('subtle')
+    expect(btn('/a/Supplementary')!.disabled).toBe(false)
+    expect(btn('/a/Supplementary')!.hasAttribute('aria-current')).toBe(false)
   })
 })
 
@@ -271,7 +272,7 @@ describe('切换中', () => {
     const opens = [...host.querySelectorAll<HTMLButtonElement>('[data-workspace-row] button[title]')]
     expect(opens.length).toBeGreaterThan(3)
     expect(opens.every((b) => b.disabled)).toBe(true)
-    const footer = [...host.querySelectorAll<HTMLButtonElement>('[data-workspace-list] > div:last-of-type button')]
+    const footer = [...host.querySelectorAll<HTMLButtonElement>('[data-workspace-footer] button')]
     expect(footer).toHaveLength(2)
     expect(footer.every((b) => b.disabled)).toBe(true)
     useProjectStore.setState({ switching: false })
@@ -373,5 +374,60 @@ describe('右键「在 Finder 中打开」', () => {
     rightClick(row('/work/p-3'))
     expect(menu()).not.toBeNull()
     expect(reveal()).toBeNull()
+  })
+})
+
+describe('键位契约与拖放落点（2026-10-07 设计审计 §10.3）', () => {
+  const key = (el: Element, k: string, init: KeyboardEventInit = {}) =>
+    act(() => {
+      el.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, ...init }))
+    })
+  const opens = () => [...host.querySelectorAll<HTMLButtonElement>('[data-workspace-open]')]
+
+  it('一列一个 Tab 停靠点：↑↓ 在行间走，焦点到哪一行哪一行就是停靠点', async () => {
+    await mount()
+    const tabbable = () => opens().filter((b) => b.tabIndex === 0)
+    expect(tabbable()).toHaveLength(1)
+    act(() => opens()[0].focus())
+    key(opens()[0], 'ArrowDown')
+    expect(document.activeElement).toBe(opens()[1])
+    expect(tabbable()).toEqual([opens()[1]])
+    key(opens()[1], 'ArrowUp')
+    expect(document.activeElement).toBe(opens()[0])
+  })
+
+  it('收藏行 ⌥↓ = 下移（拖动的键盘那条路，按路径发 move）', async () => {
+    await mount()
+    const first = section('pinned')!.querySelector<HTMLElement>('[data-workspace-row]')!
+    await act(async () => {
+      first.querySelector<HTMLButtonElement>('[data-workspace-open]')!.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowDown', altKey: true, bubbles: true, cancelable: true }),
+      )
+    })
+    expect(ops).toEqual([{ op: 'move', path: '/a/Supplementary', delta: 1 }])
+  })
+
+  it('⇧F10 在行上开出与「⋯」同一份菜单', async () => {
+    await mount()
+    const r = section('recent')!.querySelector<HTMLElement>('[data-workspace-row]')!
+    key(r.querySelector('[data-workspace-open]')!, 'F10', { shiftKey: true })
+    expect(document.querySelector('[role="menu"]')).not.toBeNull()
+  })
+
+  it('拖到另一条收藏上时画落点线（2px accent + 圆点），离开就撤', async () => {
+    await mount()
+    const [a, b] = [...section('pinned')!.querySelectorAll<HTMLElement>('[data-workspace-row]')]
+    act(() => {
+      a.dispatchEvent(new Event('dragstart', { bubbles: true }))
+      b.dispatchEvent(new Event('dragover', { bubbles: true, cancelable: true }))
+    })
+    const line = b.querySelector<HTMLElement>(':scope > span[aria-hidden]')!
+    expect(line.className).toContain('bg-accent')
+    // 从上面拖下来：落下之后它占这一行，线画在下缘
+    expect(line.className).toContain('-bottom-px')
+    act(() => {
+      b.dispatchEvent(new Event('dragleave', { bubbles: true }))
+    })
+    expect(line.className).toBe('hidden')
   })
 })

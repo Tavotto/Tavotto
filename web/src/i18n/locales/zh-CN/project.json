@@ -70,7 +70,6 @@
     "recentLabel": "最近项目",
     "regionLabel": "选择项目",
     "removeAllMissing": "全部移除",
-    "removeFromList": "从列表移除 {{name}}，不删除磁盘文件。",
     "removeFromListTitle": "从列表移除，不删文件",
     "tagline": "项目是绘图脚本所在的文件夹。选择一个开始做图。",
     "tutorial": {
@@ -121,8 +120,6 @@
   },
   "switcher": {
     "home": "回到项目列表",
-    "newTabLabel": "在新标签页打开",
-    "newTabTip": "在新标签页打开",
     "trigger": "当前项目 {{name}}，点击切换"
   },
   "workspace": {
