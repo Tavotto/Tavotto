@@ -23,10 +23,21 @@ export default interface Resources {
       "unifyLineWidth": "统一线宽",
       "unifyTickFormat": "统一刻度格式"
     },
+    "code": {
+      "copied": "已复制",
+      "copy": "复制代码",
+      "plain": "代码"
+    },
     "diff": {
+      "copyPatch": "复制补丁",
+      "edited": "已修改",
       "title": "脚本改动",
-      "zoomAria": "放大查看",
+      "unchanged_other": "⋯ 未改动 {{count}} 行",
       "zoomTip": "放大查看完整 diff"
+    },
+    "duration": {
+      "minutes": "{{m}}m {{s}}s",
+      "seconds": "{{value}}s"
     },
     "effortLabel": {
       "high": "高",
@@ -65,16 +76,24 @@ export default interface Resources {
       "image": "[图片：{{alt}}]",
       "untitled": "未命名"
     },
+    "message": {
+      "collapse": "收起",
+      "copy": "复制消息",
+      "expand": "展开",
+      "resend": "重新发送"
+    },
     "panel": {
       "abort": "中止",
-      "actsOn": "作用于：{{scope}}",
       "agentModel": "执行器与模型",
       "agentNote": "直接修改脚本；每次运行前自动快照，可回滚。",
       "cli": "CLI：{{version}}",
       "cliPath": "路径：{{path}}",
       "effort": "推理强度",
+      "effortPill": "推理 {{effort}}",
       "effortRaw": "强度原始值：{{value}}",
       "emptyHint": "助手会直接修改脚本，改动可回滚。",
+      "emptyTitle": "想怎么改这张图？",
+      "inputAria": "描述要怎么改这张图",
       "noCli": "没有可用的改图助手。",
       "noPanelTitle": "选中一张可编辑的图",
       "none": "—",
@@ -82,20 +101,24 @@ export default interface Resources {
       "placeholder": "例如：把图例移到左上角",
       "placeholderNoPanel": "先选中一张可编辑的图",
       "probing": "正在查找本机 CLI…",
-      "processSteps_other": "过程 {{count}} 步",
-      "processTail": " · {{text}}",
+      "processSteps_other": "{{count}} 步",
+      "retry": "重试",
       "revert": "回滚此次修改",
       "runningHere": "脚本已有任务在运行",
-      "scopeAndAgent": "作用范围与执行器",
       "scopeTitle": "作用范围",
       "scriptLabel": "脚本",
       "scrollToBottom": "回到底部",
       "send": "发送（{{key}}）",
       "sendAria": "发送",
+      "sendFailed": "没有发出去",
       "stepRan": "运行",
       "targetAria": "作用目标：{{target}}",
       "taskHistory": "任务历史",
       "techDetails": "技术详情"
+    },
+    "process": {
+      "thought": "已思考 {{duration}}",
+      "thoughtNoTime": "已思考"
     },
     "scope": {
       "axes": "当前子图",

@@ -1,53 +1,37 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { revertSession } from './revertSession'
-import { currentProjectId } from '@/lib/session'
 import {
   ArrowDown,
   ArrowUp,
+  CaseSensitive,
+  ChartLine,
   ChevronRight,
   FileCodeCorner,
+  Image as ImageIcon,
+  LayoutGrid,
+  LayoutList,
+  Minus,
+  MoveHorizontal,
   RotateCcwClock,
-  Pencil,
-  Pin,
-  RotateCcw,
-  SlidersHorizontal,
   Sparkles,
   Square,
-  Trash2,
-  Wrench,
-  X,
+  Type,
+  type IconComponent,
 } from '@/components/ui/icons'
-import { Badge } from '../ui/Badge'
 import { ICON_SIZE } from '@/components/ui/Icon'
-import { SwapText } from '@/components/ui/SwapText'
 import {
   agentById,
   agentDisplayName,
-  backendErrorMsg,
   backendErrorText,
-  aiRevert,
-  deleteAiHistory,
   effectiveAgent,
-  fetchAiHistory,
-  pinAiHistory,
   usableAgents,
-  type AiHistoryEntry,
+  type AiCapabilities,
   type ManifestElement,
 } from '@/lib/api'
 import { cn, modKey } from '@/lib/utils'
-import { msg, t as translate } from '@/i18n'
-import { formatTime } from '@/i18n/format'
+import { t as translate } from '@/i18n'
 import { engineLabel } from '@/components/inspector/roles/registry'
-import {
-  isSessionOf,
-  scriptName,
-  sessionAgentLabel,
-  useAiStore,
-  type AiEntry,
-  type AiScope,
-  type AiSession,
-} from '@/store/aiStore'
+import { isSessionOf, useAiStore, type AiScope } from '@/store/aiStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { usePanelDisplayManifest } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
@@ -57,15 +41,16 @@ import { Button, IconButton } from '../ui/Button'
 import { EmptyState } from '../ui/EmptyState'
 import { Reveal } from '../ui/Field'
 import { fitTextAreaHeight } from '../ui/Input'
-import { SearchInput } from '../ui/SearchInput'
+import { Notice } from '../ui/Notice'
 import { Popover } from '../ui/Popover'
 import { Segmented } from '../ui/Segmented'
 import { Select } from '../ui/Select'
 import { StepSlider } from '../ui/StepSlider'
 import { Tip } from '../ui/Tooltip'
-import { DiffView } from './DiffView'
-import { Markdown } from './Markdown'
-import { Card } from '../ui/Card'
+import { TaskHistory } from './TaskHistory'
+import { Turn } from './Transcript'
+
+export { TaskHistory }
 
 /** 右栏标签名与图标：tab bar 引用这里，改名只改这一处 */
 export const assistantTabLabel = () => translate('tabLabel', { ns: 'ai' })
@@ -75,10 +60,6 @@ export const ASSISTANT_TAB_ICON = FileCodeCorner
 const ai = (key: string, values?: Record<string, unknown>) =>
   translate(key, { ns: 'ai', ...(values ?? {}) })
 
-/** 会话状态名；未知状态原样透出（后端加了新状态也不会变成空白） */
-const statusLabel = (status: string) =>
-  translate(`status.${status}`, { ns: 'ai', defaultValue: status })
-
 /**
  * 贴底跟随的松弛量：离底部这么近仍算「看着最新内容」。滚轮一格通常 ≥ 40px，
  * 用户真往上翻时一步就超过它；小于它的偏差只是子像素 / 滚动条尾巴。
@@ -86,6 +67,8 @@ const statusLabel = (status: string) =>
 const STICK_SLACK = 24
 /** 输入框最多长到几行，再多在框内滚动 */
 const COMPOSER_MAX_ROWS = 8
+/** 空态里最多摆几条可点的示例提示（2026-10-07 设计审计 §6.7） */
+const EXAMPLE_COUNT = 3
 
 const SCOPE_VALUES: AiScope[] = ['element', 'axes', 'figure']
 
@@ -124,10 +107,44 @@ const CHIP_IDS: Record<string, string[]> = {
   series: ['thickenLines', 'distinguishablePalette', 'adjustMarkerSize'],
 }
 
-const chips = (kind: string): string[] =>
-  (CHIP_IDS[kind] ?? []).map((id) => translate(`chip.${id}`, { ns: 'ai' }))
+/** 起手式的前置小图标（§6.5）：只是「这条改哪类东西」的视觉提示，按改动对象分 */
+const CHIP_ICON: Record<string, IconComponent> = {
+  unifyFont: Type,
+  unifyAxisFont: Type,
+  adjustFontSize: Type,
+  switchToTimes: Type,
+  shrinkLegendFont: Type,
+  checkMinFontSize: CaseSensitive,
+  unifyTickFormat: CaseSensitive,
+  unifyLineWidth: Minus,
+  thickenLines: Minus,
+  improveSpacing: MoveHorizontal,
+  adjustPadding: MoveHorizontal,
+  avoidOverlap: MoveHorizontal,
+  fixLegendOverlap: LayoutList,
+  moveLegend: LayoutList,
+  legendTwoColumns: LayoutList,
+  changeColormap: ImageIcon,
+  increaseContrast: ImageIcon,
+  unifyColorScale: ImageIcon,
+  distinguishablePalette: ChartLine,
+  adjustMarkerSize: ChartLine,
+}
 
-function chipsFor(scope: AiScope, element: ManifestElement | null, hasAxes: boolean): string[] {
+interface Chip {
+  id: string
+  label: string
+  Icon: IconComponent
+}
+
+const chips = (kind: string): Chip[] =>
+  (CHIP_IDS[kind] ?? []).map((id) => ({
+    id,
+    label: translate(`chip.${id}`, { ns: 'ai' }),
+    Icon: CHIP_ICON[id] ?? LayoutGrid,
+  }))
+
+function chipsFor(scope: AiScope, element: ManifestElement | null, hasAxes: boolean): Chip[] {
   if (scope === 'figure') return chips('figure')
   if (scope === 'axes') return chips('axes')
   switch (element?.role) {
@@ -187,6 +204,28 @@ function useAssistantTarget() {
 }
 
 /**
+ * 「这一刻真的会派给谁、用哪个模型、哪档推理强度」——弹层（详情）与输入框工具行的两颗胶囊（摘要）
+ * 读同一份，不各算一遍。首选那个暂时不可用时用第一个可用的，**但不改用户存着的首选值**；
+ * 模型 / 强度选项完全由该 Agent 自己声明的能力决定，不在前端列第二份名单。
+ */
+function useAgentChoice() {
+  const agent = useAiStore((s) => s.agent)
+  const caps = useAiStore((s) => s.caps)
+  const models = useAiStore((s) => s.models)
+  const efforts = useAiStore((s) => s.efforts)
+  const usable = usableAgents(caps)
+  const active = effectiveAgent(agent, caps)
+  const cur = agentById(caps, active)
+  const model = (active && models[active]) ?? cur?.default_model ?? ''
+  const effort = (active && efforts[active]) ?? cur?.default_effort ?? ''
+  // 档位下标由**真实能力数组**算出来；记忆里那个已经不在清单里时回落到 0，
+  // 绝不凭字符串造一个数组里没有的档位
+  const effortList: string[] = cur?.efforts ?? []
+  const effortIndex = Math.max(0, effortList.indexOf(effort))
+  return { caps, usable, active, cur, model, effortList, effortIndex }
+}
+
+/**
  * 以 aiStore 的项目代际为 key 重挂：切项目时草稿、错误提示、打开着的历史视图这些组件内状态
  * 跟着换代，不把 A 的东西留在 B 的面板里（#589）。
  */
@@ -202,7 +241,7 @@ function AssistantPanelBody() {
   const { panel, element, axes } = useAssistantTarget()
   const caps = useAiStore((s) => s.caps)
   const [prompt, setPrompt] = useState('')
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<{ text: string; prompt: string } | null>(null)
   const [sending, setSending] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -227,7 +266,7 @@ function AssistantPanelBody() {
     // pin 只读 ref，身份无所谓
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
-  // 输入框浮在对话流上（玻璃，参考 Codex）：它的高度会变（起手式收起、输入框长高、报错一行），
+  // 输入框浮在对话流上（玻璃，参考 Codex）：它的高度会变（起手式收起、输入框长高 / 两态切换、报错一行），
   // 量出来写成 --composer-h，滚动区用它做底部内边距，最后一条回答不会被压在玻璃底下——
   // 底边距长了要紧跟着 pin，不然贴着底的末几行正好被长高的那截玻璃盖住
   const stageRef = useRef<HTMLDivElement>(null)
@@ -262,6 +301,7 @@ function AssistantPanelBody() {
   // 一个可用的编码 Agent 都没有：**探测出结果之后**才这么说
   // （caps 还是 null 时是「正在检测」，那时不该把输入区锁上）
   const noAgent = caps !== null && usableAgents(caps).length === 0
+  const canSend = !!panel && !noAgent && !sending && !runningHere
 
   // 原先每个 delta 都把视口拽回底部——往上翻看旧回答时等于不让人看。
   // 换了目标面板视作重新贴底。jsdom 里 scrollHeight 恒 0，gap 恒 0，一律贴底。
@@ -298,9 +338,10 @@ function AssistantPanelBody() {
     inputRef.current?.focus()
   }
 
-  const send = async () => {
-    const text = prompt.trim()
-    if (!text || !panel || noAgent || sending || runningHere) return
+  /** 发一条：默认发输入框里的；「重新发送 / 重试」传入那一轮的原话（不动输入框里正在写的草稿） */
+  const send = async (override?: string) => {
+    const text = (override ?? prompt).trim()
+    if (!text || !canSend || !panel) return
     setSending(true)
     setError(null)
     // 自己发的消息一定要看见：不管刚才翻到哪，发出去就回到底部
@@ -325,9 +366,9 @@ function AssistantPanelBody() {
         overrides: panel.overrides,
         canvas: useDocumentStore.getState().activeCanvasId,
       })
-      setPrompt('')
+      if (override == null) setPrompt('')
     } catch (e) {
-      setError(backendErrorText(e))
+      setError({ text: backendErrorText(e), prompt: text })
     } finally {
       setSending(false)
     }
@@ -339,159 +380,221 @@ function AssistantPanelBody() {
     if (running) void useAiStore.getState().cancel(running.id)
   }
 
+  const suggestions = panel ? chipsFor(scope, element, !!axes) : []
+  // 两态（§6.5）：空着时是 42px 的单行胶囊；一有内容（或正在跑）就展开成「内容 / 工具行」两行
+  const expanded = prompt !== '' || runningHere
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex shrink-0 items-center gap-1.5 px-3 pb-2">
-        {panel ? (
-          <TargetChip panel={panel} element={element} axes={axes} scope={scope} scopes={scopes} />
-        ) : (
-          <span className="min-w-0 flex-1" />
-        )}
-        <Tip label={ai('panel.taskHistory')}>
-          <Button
-            size="icon-sm"
-            className="shrink-0"
-            onClick={() => setHistoryOpen((v) => !v)}
-            aria-label={ai('panel.taskHistory')}
-            aria-expanded={historyOpen}
-          >
-            <RotateCcwClock size={ICON_SIZE.sm} className="text-ink-2" />
-          </Button>
-        </Tip>
+      {/* 面板顶部只剩历史：作用目标挪到了输入框上方的上下文带（§6.5） */}
+      <div className="flex shrink-0 items-center justify-end px-3 pb-1">
+        <Popover
+          width={320}
+          align="end"
+          open={historyOpen}
+          onOpenChange={setHistoryOpen}
+          trigger={
+            <IconButton
+              data-ai-history-trigger
+              label={ai('panel.taskHistory')}
+              tip={!historyOpen}
+              iconSize="sm"
+              className="text-ink-2"
+            >
+              <RotateCcwClock size={ICON_SIZE.sm} />
+            </IconButton>
+          }
+        >
+          <TaskHistory onClose={() => setHistoryOpen(false)} />
+        </Popover>
       </div>
 
       <div ref={stageRef} className="relative min-h-0 flex-1">
         <div
           ref={scrollRef}
+          data-ai-scroller
           onScroll={syncStick}
-          className="h-full overflow-y-auto px-2.5 pt-2"
+          className="h-full overflow-y-auto px-3 pt-2"
           style={{ paddingBottom: 'calc(var(--composer-h, 0px) + 8px)' }}
         >
           {!panel ? (
             /* 「这里没有可干的活」是真正的空状态，留在中间 */
             <EmptyState icon={FileCodeCorner} title={ai('panel.noPanelTitle')} />
+          ) : mine.length > 0 ? (
+            // 节奏由列表容器统一管（§6.1）：轮与轮 16、轮内各块 8；子组件不带外边距
+            <div
+              ref={contentRef}
+              data-ai-transcript
+              className="flex flex-col gap-(--turn-gap) [--item-gap:8px] [--turn-gap:16px]"
+            >
+              {mine.map((s) => (
+                <Turn key={s.id} session={s} onResend={(text) => void send(text)} canResend={canSend} />
+              ))}
+            </div>
           ) : (
-            /* 还没发过任务：中间是空态——「助手会做什么」那一句就是空态的说明（二审 D2；
-               审计 T37 曾把它压到输入框上方，底部叠成四层而中间全空）。起手式仍留在输入框旁：
-               它们是输入的快捷方式，跟着输入框走。会话一来，空态让位给它 */
-            mine.length > 0 ? (
-              <div ref={contentRef} className="flex flex-col gap-3">
-                {mine.map((s) => (
-                  <SessionBlock key={s.id} session={s} />
+            /* 还没发过任务：中间是空态 + 至多三条可点的示例提示（§6.7）——点一下填进输入框，改完再发 */
+            <div data-ai-empty className="flex min-h-full flex-col items-center justify-center pb-4">
+              <div className="w-full">
+                <EmptyState icon={Sparkles} title={ai('panel.emptyTitle')} hint={ai('panel.emptyHint')} />
+              </div>
+              <div className="-mt-4 flex w-full max-w-[17rem] flex-col gap-1.5">
+                {suggestions.slice(0, EXAMPLE_COUNT).map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    data-ai-example={c.id}
+                    onClick={() => fillPrompt(c.label)}
+                    className={cn(
+                      'flex min-h-8 items-center gap-2 rounded-md bg-surface px-3 py-1.5 text-left text-base text-ink-2',
+                      'inset-ring inset-ring-border outline-none transition-colors duration-fast',
+                      'hover:bg-surface-hover hover:text-ink focus-visible:focus-ring',
+                    )}
+                  >
+                    <c.Icon size={ICON_SIZE.sm} aria-hidden className="shrink-0 text-ink-3" />
+                    <span className="min-w-0 break-words">{c.label}</span>
+                  </button>
                 ))}
               </div>
-            ) : (
-              <EmptyState icon={Sparkles} title={ai('panel.emptyHint')} />
-            )
+            </div>
           )}
         </div>
-        {/* 往上翻着看、而新内容还在来：给一颗回到底部的钮；到底了它自己消失 */}
+        {/* 往上翻着看、而新内容还在来：给一颗回到底部的钮（34px 毛玻璃圆）；到底了它自己消失 */}
         {detached && runningHere && (
           <div
             className="pointer-events-none absolute inset-x-0 flex justify-center"
             style={{ bottom: 'calc(var(--composer-h, 0px) + 8px)' }}
           >
             <IconButton
+              data-ai-scroll-bottom
               label={ai('panel.scrollToBottom')}
               iconSize="sm"
-              variant="secondary"
               side="top"
-              className="pointer-events-auto animate-pop-in rounded-full shadow-pop"
+              className="pointer-events-auto h-[34px] w-[34px] animate-pop-in bg-glass text-ink-2 shadow-pop backdrop-blur-lg hover:bg-glass hover:text-ink"
               onClick={jumpToBottom}
             >
-              <ArrowDown size={ICON_SIZE.sm} />
+              <ArrowDown size={ICON_SIZE.md} />
             </IconButton>
           </div>
         )}
-        {historyOpen && <TaskHistory onClose={() => setHistoryOpen(false)} />}
 
         {/* 输入区浮在对话流的底部（absolute），内容从它底下滚过；玻璃在下面那个框上 */}
-        <div ref={composerRef} className="absolute inset-x-0 bottom-0 z-drawer px-3 pb-3 pt-1">
-        {/* 起手式：一开始打字就收起——收起是跟着内容合上（Reveal），不是原地消失让输入框跳一下 */}
-        <Reveal open={!!panel && mine.length === 0 && !prompt.trim()}>
-          <div className="mb-1.5 flex flex-wrap gap-1">
-            {panel &&
-              chipsFor(scope, element, !!axes).map((c) => (
-                <Button key={c} variant="secondary" size="sm" className="text-ink-2 hover:text-ink" onClick={() => fillPrompt(c)}>
-                  {c}
+        <div ref={composerRef} data-ai-composer-dock className="absolute inset-x-0 bottom-0 z-drawer px-3 pb-3 pt-1">
+          {/* 起手式（有对话之后的快捷追问）：一开始打字 / 正在跑就收起——收起是跟着内容合上（Reveal）。
+              空态时它们以「示例提示」的形态在正中，这里不重复摆 */}
+          <Reveal open={!!panel && mine.length > 0 && !prompt.trim() && !runningHere}>
+            <div
+              data-ai-chips
+              className="flex gap-1.5 overflow-x-auto pb-2 scrollbar-none [mask-image:linear-gradient(to_right,black_calc(100%-24px),transparent)]"
+            >
+              {suggestions.map((c) => (
+                <Button
+                  key={c.id}
+                  data-ai-chip={c.id}
+                  size="sm"
+                  className="h-[26px] shrink-0 bg-surface px-2.5 text-ink-2 inset-ring inset-ring-border hover:bg-surface-hover hover:text-ink"
+                  onClick={() => fillPrompt(c.label)}
+                >
+                  <c.Icon size={ICON_SIZE.xs} aria-hidden className="text-ink-3" />
+                  {c.label}
                 </Button>
               ))}
-          </div>
-        </Reveal>
-        {error && <p className="mb-1.5 text-xs text-danger">{error}</p>}
-        {noAgent && (
-          // 「没装 CLI」不是错误，用中性语气 + 一个可执行的下一步。
-          // 以前这句话只藏在「作用范围与执行器」弹层里，不点开根本看不到
-          <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
-            <p className="text-xs leading-relaxed text-ink-3">{ai('panel.noCli')}</p>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => useUiStore.getState().setSettingsOpen(true, 'ai')}
-            >
-              {ai('panel.openAiSettings')}
-            </Button>
-          </div>
-        )}
-        {/* 玻璃（2026-09-15 参考 Codex 的 _ComposerLayoutBody，用户拍板）：field 90% 的底 + 16px 背景模糊 +
-            环 4% 与两层投影（--shadow-composer），无边线；它浮在对话流上，内容从底下滚过时被糊掉——玻璃
-            只在浮着的时候成立，所以整个输入区是 absolute 的，滚动区按 --composer-h 留底边。圆角 lg：
-            它是一块浮在流上的多行输入区（Codex 多行是 3xl），比控件（6）与卡（10）都大一档。
-            聚焦仍是不透明 accent 边（3:1 由它承担）；禁用只有 opacity-40 一档 */}
-        <div
-          className={cn(
-            'rounded-panel border border-transparent bg-glass text-sm text-ink shadow-composer backdrop-blur-lg',
-            'transition-colors duration-fast focus-within:border-accent',
-            (!panel || noAgent) && 'opacity-40',
-          )}
-          data-ai-composer
-        >
-          <textarea
-            ref={inputRef}
-            value={prompt}
-            rows={2}
-            disabled={!panel || noAgent}
-            placeholder={panel ? ai('panel.placeholder') : undefined}
-            onChange={(e) => setPrompt(e.target.value)}
-            onKeyDown={(e) => {
-              e.stopPropagation()
-              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-                e.preventDefault()
-                void send()
+            </div>
+          </Reveal>
+          {error && (
+            <Notice
+              tone="danger"
+              data-ai-error="send"
+              className="mb-2"
+              title={ai('panel.sendFailed')}
+              action={
+                <Button data-ai-retry variant="secondary" size="sm" disabled={!canSend} onClick={() => send(error.prompt)}>
+                  {ai('panel.retry')}
+                </Button>
               }
-            }}
+            >
+              {error.text}
+            </Notice>
+          )}
+          {noAgent && (
+            // 「没装 CLI」不是错误，用中性语气 + 一个可执行的下一步
+            <Notice
+              tone="neutral"
+              data-ai-no-agent
+              className="mb-2"
+              action={
+                <Button variant="secondary" size="sm" onClick={() => useUiStore.getState().setSettingsOpen(true, 'ai')}>
+                  {ai('panel.openAiSettings')}
+                </Button>
+              }
+            >
+              {ai('panel.noCli')}
+            </Notice>
+          )}
+          {panel && (
+            <ContextBand panel={panel} element={element} axes={axes} scope={scope} scopes={scopes} />
+          )}
+          {/* 玻璃（2026-09-15 参考 Codex，用户拍板）：field 90% 的底 + 16px 背景模糊 + --shadow-composer。
+              聚焦只把边框加深到 border-strong（§6.5：只变色无环，更安静；插入点是框里唯一的一点 accent）。
+              两态由 data-layout 说：compact = 42px 胶囊 [内容 | 发送]；expanded = 16px 圆角
+              [内容 / 工具行 + 发送]。同一个 textarea 节点换格子，焦点不丢。禁用只有 opacity-40 一档 */}
+          <div
+            data-ai-composer
+            data-layout={expanded ? 'expanded' : 'compact'}
             className={cn(
-              'block w-full resize-none bg-transparent px-2 pt-2 text-xs leading-relaxed',
-              // 占位是要读的字：ink-3，与其它输入框同一档（faint 只给装饰 / 禁用）
-              'text-ink outline-none placeholder:text-ink-3',
+              'relative grid grid-cols-[minmax(0,1fr)_auto] border border-transparent bg-glass text-ink shadow-composer backdrop-blur-lg',
+              'transition-[border-color] duration-fast focus-within:border-border-strong',
+              expanded
+                ? "min-h-24 gap-y-2 rounded-panel pb-2 pl-3.5 pr-2 pt-2.5 [grid-template-areas:'content_content'_'start_end']"
+                : "h-[42px] items-center gap-x-2 rounded-full pl-4 pr-2 [grid-template-areas:'content_end']",
+              (!panel || noAgent) && 'opacity-40',
             )}
-          />
-          <div className="flex items-center gap-1 px-1.5 pb-1.5">
-            <ScopeAgentButton
-              panel={panel}
-              element={element}
-              axes={axes}
-              scope={scope}
-              scopes={scopes}
+          >
+            <textarea
+              ref={inputRef}
+              data-ai-input
+              value={prompt}
+              rows={1}
+              disabled={!panel || noAgent}
+              placeholder={panel ? ai('panel.placeholder') : undefined}
+              aria-label={ai('panel.inputAria')}
+              onChange={(e) => setPrompt(e.target.value)}
+              onKeyDown={(e) => {
+                e.stopPropagation()
+                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                  e.preventDefault()
+                  void send()
+                }
+              }}
+              className={cn(
+                'block w-full resize-none bg-transparent text-base leading-5 [grid-area:content]',
+                // 占位是要读的字：ink-3，与其它输入框同一档（faint 只给装饰 / 禁用）
+                'text-ink outline-none placeholder:text-ink-3',
+                expanded ? 'min-h-10 self-start' : 'h-5 overflow-hidden',
+              )}
             />
-            {/* 快捷键只说一次：发送钮的气泡里已经有「⌘↵」，输入框上不再常驻一枚键帽
-                （打磨 A5——已表达过的不重复） */}
-            <span className="ml-auto" />
-            <Tip label={runningHere ? ai('panel.abort') : ai('panel.send', { key: modKey('↵') })}>
-              <Button
-                variant="primary"
-                size="icon-sm"
-                data-ai-send={runningHere ? 'stop' : 'send'}
-                disabled={!panel || noAgent || (!runningHere && !prompt.trim())}
-                loading={sending}
-                onClick={runningHere ? stopRunning : send}
-                aria-label={runningHere ? ai('panel.abort') : ai('panel.sendAria')}
-              >
-                {!sending && <SendStopGlyph stop={runningHere} />}
-              </Button>
-            </Tip>
+            {expanded && (
+              <div className="flex min-w-0 items-center gap-1 [grid-area:start]">
+                <AgentPills panel={panel} element={element} axes={axes} scope={scope} scopes={scopes} />
+              </div>
+            )}
+            <div className="flex items-center self-end [grid-area:end]">
+              {/* 快捷键只说一次：发送钮的气泡里已经有「⌘↵」，输入框上不再常驻一枚键帽（打磨 A5） */}
+              <Tip label={runningHere ? ai('panel.abort') : ai('panel.send', { key: modKey('↵') })}>
+                <Button
+                  variant="primary"
+                  size="icon-sm"
+                  data-ai-send={runningHere ? 'stop' : 'send'}
+                  className="relative h-[26px] w-[26px]"
+                  disabled={!panel || noAgent || sending || (!runningHere && !prompt.trim())}
+                  aria-busy={sending || runningHere || undefined}
+                  onClick={runningHere ? stopRunning : () => send()}
+                  aria-label={runningHere ? ai('panel.abort') : ai('panel.sendAria')}
+                >
+                  <SendStopGlyph stop={runningHere} busy={sending || runningHere} />
+                </Button>
+              </Tip>
+            </div>
           </div>
-        </div>
         </div>
       </div>
     </div>
@@ -499,38 +602,47 @@ function AssistantPanelBody() {
 }
 
 /**
- * 发送 ↔ 中止的图标：两个叠在同一格里，换的时候旧的缩小淡出、新的放大浮现，
- * 弹簧曲线收尾——按钮本身不动，位置与尺寸一像素都不变。
+ * 发送 ↔ 中止的图标（§6.5）：26px 黑圆里，↑ 与 9px 圆角方块（图标集的 Square 填实）叠在同一格交叉淡化——**不缩放**
+ * （此前 scale-50 换形，小钮上像一跳）。进行中多一圈 1px 的弧线绕着转：它是「中止」这个状态的一部分
+ * （说明此刻点下去是停），不是第二个「还活着」信号——那仍只有转录里的状态行（宪法第十八节）。
  */
-function SendStopGlyph({ stop }: { stop: boolean }) {
+function SendStopGlyph({ stop, busy }: { stop: boolean; busy: boolean }) {
   const cls = (shown: boolean) =>
-    cn(
-      'col-start-1 row-start-1 transition-[opacity,transform] duration-base ease-spring',
-      shown ? 'scale-100 opacity-100' : 'scale-50 opacity-0',
-    )
+    cn('col-start-1 row-start-1 transition-opacity duration-base', shown ? 'opacity-100' : 'opacity-0')
   return (
-    <span className="grid place-items-center" aria-hidden>
-      <ArrowUp size={ICON_SIZE.sm} className={cls(!stop)} />
-      <Square size={ICON_SIZE.xs} className={cn('fill-current', cls(stop))} />
-    </span>
+    <>
+      <span className="grid place-items-center" aria-hidden>
+        <ArrowUp size={ICON_SIZE.sm} className={cls(!stop)} />
+        {/* 图标集里的 Square 填实：12px 的格里画出来约 9px 见方、圆角约 2px */}
+        <Square size={ICON_SIZE.xs} className={cn('fill-current', cls(stop))} />
+      </span>
+      {busy && (
+        <span
+          aria-hidden
+          data-ai-orbit
+          className="pointer-events-none absolute inset-[3px] animate-spin rounded-full border border-surface/25 border-t-surface"
+        />
+      )}
+    </>
   )
 }
 
-/** 顶部目标标签：一眼可见作用对象，点开可换作用范围 */
-function TargetChip({
-  panel,
-  element,
-  axes,
-  scope,
-  scopes,
-}: {
+type TargetProps = {
   panel: PanelObject
   element: ManifestElement | null
   axes: ManifestElement | null
   scope: AiScope
   scopes: AiScope[]
-}) {
+}
+
+/**
+ * 上下文带（§6.5）：输入框**上方**一条 30px 的玻璃带，里面一枚「● 目标 · 作用范围」chip——发送前这一行
+ * 独立回答「按下去会改什么」。点开是作用范围与执行器的详情弹层。作用范围只在这里说一次（打磨 L6）。
+ * 带的下沿压在输入框后面 10px，看上去像从输入框里长出来的一截。
+ */
+function ContextBand(props: TargetProps) {
   useTranslation('ai')
+  const { panel, element, axes, scope } = props
   // 元素名是引擎发来的散文，过 engineLabel 换成当前语言；面板名是用户内容
   const targetText =
     scope === 'element' && element
@@ -539,113 +651,81 @@ function TargetChip({
         ? engineLabel(axes.label)
         : (panel.name ?? panel.fileId)
   return (
-    <Popover
-      width={288}
-      align="start"
-      /*
-        它是个触发器，不是只读值：**hover 才浮底**（surface-2 常驻底是「只读值」
-        的语义，第一节；打磨 A7）。右端的作用范围也去掉了——输入框那颗
-        「作用于：X · Agent」已经把范围与执行器说全了，顶部片只回答「改哪张图 /
-        哪个元素」，它就是面包屑（打磨 L6）。
-      */
-      trigger={
-        <button
-          aria-label={ai('panel.targetAria', { target: targetText })}
-          className={cn(
-            'flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-sm px-2 text-left',
-            'outline-none transition-colors hover:bg-surface-hover focus-visible:focus-ring',
-          )}
-        >
-          <FileCodeCorner size={ICON_SIZE.sm} className="shrink-0 text-ink-3" />
-          <span className="min-w-0 truncate text-xs text-ink">{targetText}</span>
-        </button>
-      }
+    <div
+      data-ai-context
+      className="mx-3 -mb-2.5 flex h-10 items-start rounded-t-lg bg-glass px-1.5 pt-[3px] backdrop-blur-lg"
     >
-      <ScopeAgentContent panel={panel} element={element} axes={axes} scope={scope} scopes={scopes} />
-    </Popover>
+      <Popover
+        width={288}
+        align="start"
+        side="top"
+        trigger={
+          <button
+            type="button"
+            data-ai-target
+            aria-label={ai('panel.targetAria', { target: targetText })}
+            className={cn(
+              'flex h-6 min-w-0 max-w-full items-center gap-1.5 rounded-full px-2 text-left text-sm',
+              'outline-none transition-colors duration-fast hover:bg-surface-hover focus-visible:focus-ring data-[state=open]:bg-surface-active',
+            )}
+          >
+            <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-accent" />
+            <span className="min-w-0 truncate text-ink">{targetText}</span>
+            <span className="shrink-0 text-ink-3">· {scopeLabel(scope)}</span>
+          </button>
+        }
+      >
+        <ScopeAgentContent {...props} />
+      </Popover>
+    </div>
   )
 }
 
-/** 输入器左侧模式按钮：作用范围 + 执行器 */
-function ScopeAgentButton({
-  panel,
-  element,
-  axes,
-  scope,
-  scopes,
-}: {
-  panel: PanelObject | null
-  element: ManifestElement | null
-  axes: ManifestElement | null
-  scope: AiScope
-  scopes: AiScope[]
-}) {
+/**
+ * 工具行的两颗胶囊（§6.5）：「执行器 · 模型」与「推理 强度」直接可见，不再埋进弹层；点开是同一份详情弹层。
+ * 写的是**这一刻真的会派给谁**，不是用户存着的首选值。探测中 / 没有可用 Agent 时不摆（上下文带与说明条说）。
+ */
+function AgentPills({ panel, ...rest }: Omit<TargetProps, 'panel'> & { panel: PanelObject | null }) {
   useTranslation('ai')
-  const caps = useAiStore((s) => s.caps)
-  const preferred = useAiStore((s) => s.agent)
-  // 按钮上写的是**这一刻真的会派给谁**，不是用户存着的首选值——
-  // 首选那个被关掉时，按钮说 Codex、任务却交给 Claude Code 是最难查的一类错。
-  const active = effectiveAgent(preferred, caps)
-  return (
+  const { caps, active, cur, model, effortList, effortIndex } = useAgentChoice()
+  if (!panel || !active || !cur) return null
+  const pill = (key: string, text: string, aria: string) => (
     <Popover
       width={288}
       align="start"
+      side="top"
       trigger={
         <Button
+          data-ai-pill={key}
+          variant="secondary"
           size="sm"
-          className="text-ink-2"
-          disabled={!panel}
-          aria-label={ai('panel.scopeAndAgent')}
+          aria-label={aria}
+          className="h-6 min-w-0 px-2 text-ink-2 hover:text-ink"
         >
-          <SlidersHorizontal size={ICON_SIZE.sm} />
-          {/* 「作用于：当前元素」而不是光一个「当前元素」（审计 T37）：
-              发送前这一行要能独立回答「按下去会改什么」 */}
-          <span className="text-xs">
-            {ai('panel.actsOn', { scope: scopeLabel(scope) })}
-            {active ? ` · ${agentDisplayName(caps, active)}` : ''}
-          </span>
+          <span className="min-w-0 truncate">{text}</span>
         </Button>
       }
     >
-      {panel && (
-        <ScopeAgentContent panel={panel} element={element} axes={axes} scope={scope} scopes={scopes} />
-      )}
+      <ScopeAgentContent panel={panel} {...rest} />
     </Popover>
+  )
+  return (
+    <>
+      {pill('model', modelText(caps, active, model), ai('panel.agentModel'))}
+      {effortList.length > 0 &&
+        pill('effort', ai('panel.effortPill', { effort: effortLabel(effortList[effortIndex]) }), ai('panel.effort'))}
+    </>
   )
 }
 
-export function ScopeAgentContent({
-  panel,
-  element,
-  axes,
-  scope,
-  scopes,
-}: {
-  panel: PanelObject
-  element: ManifestElement | null
-  axes: ManifestElement | null
-  scope: AiScope
-  scopes: AiScope[]
-}) {
+const modelText = (caps: AiCapabilities | null, active: string, model: string) =>
+  model ? `${agentDisplayName(caps, active)} · ${model}` : agentDisplayName(caps, active)
+
+export function ScopeAgentContent({ panel, element, axes, scope, scopes }: TargetProps) {
   useTranslation('ai')
-  const agent = useAiStore((s) => s.agent)
-  const caps = useAiStore((s) => s.caps)
-  const models = useAiStore((s) => s.models)
-  const efforts = useAiStore((s) => s.efforts)
+  const { caps, usable, active, cur, model, effortList, effortIndex } = useAgentChoice()
   const [effortOpen, setEffortOpen] = useState(false)
 
-  // 只展示**可用**的 Agent（装了、没被关掉、也没在等登录）；顺序沿用后端注册表。
-  // 模型 / 强度选项完全由该 Agent 自己声明的能力决定，不在前端列第二份名单。
-  const usable = usableAgents(caps)
-  // 首选那个暂时不可用时用第一个可用的，**但不改用户存着的首选值**
-  const active = effectiveAgent(agent, caps)
-  const cur = agentById(caps, active)
-  const model = (active && models[active]) ?? cur?.default_model ?? ''
-  const effort = (active && efforts[active]) ?? cur?.default_effort ?? ''
-  // 档位下标由**真实能力数组**算出来；记忆里那个已经不在清单里时回落到 0，
-  // 绝不凭字符串造一个数组里没有的档位
-  const effortList: string[] = cur?.efforts ?? []
-  const effortIndex = Math.max(0, effortList.indexOf(effort))
   // 「执行器 · 模型」的候选。装了两个 Agent 时每一项都带执行器名，只装一个时
   // 不重复它（触发按钮上已经写着）。**模型清单为空 = 跟随 CLI 默认**，给一条
   // 只有执行器名的项，绝不伪造一个模型名。
@@ -710,7 +790,7 @@ export function ScopeAgentContent({
               各写各的，切回另一个 Agent 时它自己的模型记忆还在。
               只有一项可选时不摆一个选不动的选择器：**但那一项写的是什么仍要
               看得见**，退成一行静态文字。连模型名都没有（跟随 CLI 默认）时整块
-              不出现——执行器是谁，弹层触发按钮上已经写着了 */}
+              不出现——执行器是谁，工具行的胶囊上已经写着了 */}
           {pairs.length > 1 ? (
             <div data-ai-agent-model="select" className="flex min-w-0 items-center gap-2">
               <span className="shrink-0 text-xs text-ink-2">{ai('panel.agentModel')}</span>
@@ -820,450 +900,4 @@ function Breadcrumb({
       ))}
     </p>
   )
-}
-
-/** 历史筛选下拉里的状态集合（会话状态 + 只在历史里出现的 interrupted） */
-/** 「全部状态」的哨兵：Radix Select 不接受空串作为 Item 的值 */
-const ALL_STATUSES = '__all__'
-
-const HISTORY_STATUSES = [
-  'running',
-  'done',
-  'failed',
-  'timeout',
-  'cancelled',
-  'reverted',
-  'interrupted',
-]
-
-const PAGE = 20
-
-/**
- * 任务历史：项目级持久化记录（SQLite），刷新与后端重启后仍在。
- * 默认只显示人类可读目标；脚本名等技术信息在条目的「技术详情」里。
- */
-export function TaskHistory({ onClose }: { onClose: () => void }) {
-  useTranslation('ai')
-  // 历史按项目存：这个视图说的是**打开它那一刻**的项目，查询与每一条的动作都钉在它上面（#589）
-  // （ref 而不是 state：它一经定下就不变，也不该成为下面那个查询 effect 的依赖）
-  const pjRef = useRef(currentProjectId())
-  const pj = pjRef.current
-  const [query, setQuery] = useState('')
-  const [status, setStatus] = useState('')
-  const [entries, setEntries] = useState<AiHistoryEntry[]>([])
-  const [total, setTotal] = useState(0)
-  const [offset, setOffset] = useState(0)
-  const [error, setError] = useState<string | null>(null)
-  // 第一次查回来之前什么都不判断：还不知道有没有记录时既不该摆筛选，
-  // 也不该先闪一句「还没有改图任务」
-  const [loaded, setLoaded] = useState(false)
-  const filtering = !!query || !!status
-  // 一条记录都没有时不渲染搜索与筛选（审计 T37）——搜一个空库、按状态筛
-  // 一个空库，两个动作都不会有任何结果。**筛出零条时它们必须留着**，
-  // 否则用户没有办法把筛选条件取消掉。
-  const showFilters = loaded && (filtering || total > 0)
-
-  const load = async (q: string, st: string, off: number) => {
-    try {
-      const res = await fetchAiHistory({ q, status: st, limit: PAGE, offset: off }, pjRef.current)
-      if (currentProjectId() !== pjRef.current) return
-      setEntries(res.sessions)
-      setTotal(res.total)
-      setError(null)
-    } catch (e) {
-      setError(backendErrorText(e))
-    } finally {
-      setLoaded(true)
-    }
-  }
-
-  useEffect(() => {
-    const t = window.setTimeout(() => void load(query, status, offset), query ? 250 : 0)
-    return () => window.clearTimeout(t)
-  }, [query, status, offset])
-
-  return (
-    <div className="absolute inset-0 z-canvas-chrome flex flex-col bg-surface">
-      <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border px-2.5">
-        <h3 className="text-xs font-medium text-ink">{ai('history.title')}</h3>
-        <Button
-          size="icon-sm"
-          className="-mr-1 ml-auto"
-          onClick={onClose}
-          aria-label={ai('history.close')}
-        >
-          <X size={ICON_SIZE.sm} />
-        </Button>
-      </div>
-      {showFilters && (
-      <div className="flex shrink-0 items-center gap-1.5 px-2.5 py-1.5">
-        <SearchInput
-          value={query}
-          onValueChange={(v) => {
-            setQuery(v)
-            setOffset(0)
-          }}
-          placeholder={ai('history.searchPlaceholder')}
-          aria-label={ai('history.searchAria')}
-        />
-        <Select
-          value={status || ALL_STATUSES}
-          onChange={(v) => {
-            // Radix 的 Item 不许用空串当值（那是「未选中」的保留态），所以
-            // 「全部状态」走一个显式哨兵，只在这一层翻译成后端认的空筛选
-            setStatus(v === ALL_STATUSES ? '' : v)
-            setOffset(0)
-          }}
-          options={[
-            { value: ALL_STATUSES, label: ai('history.allStatuses') },
-            ...HISTORY_STATUSES.map((v) => ({ value: v, label: statusLabel(v) })),
-          ]}
-          ariaLabel={ai('history.filterAria')}
-          className="w-auto shrink-0"
-        />
-      </div>
-      )}
-      <div className="min-h-0 flex-1 overflow-y-auto px-2.5 pb-2">
-        {error ? (
-          <p className="py-2 text-xs text-danger">{error}</p>
-        ) : !loaded ? null : entries.length === 0 ? (
-          /* 空状态只给一句（审计 T37）：怎么开始，输入框自己说 */
-          <EmptyState icon={RotateCcwClock} title={ai(filtering ? 'history.noMatch' : 'history.empty')} />
-        ) : (
-          <div className="flex flex-col gap-2 pt-1">
-            {entries.map((s) => (
-              <HistoryRow
-                key={s.id}
-                entry={s}
-                pj={pj}
-                onChanged={() => void load(query, status, offset)}
-              />
-            ))}
-          </div>
-        )}
-      </div>
-      {total > PAGE && (
-        <div className="flex shrink-0 items-center justify-between border-t border-border px-2.5 py-1.5">
-          <Button size="sm" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - PAGE))}>
-            {ai('history.prev')}
-          </Button>
-          <span className="text-xs text-ink-3">
-            {Math.floor(offset / PAGE) + 1} / {Math.ceil(total / PAGE)}
-          </span>
-          <Button
-            size="sm"
-            disabled={offset + PAGE >= total}
-            onClick={() => setOffset(offset + PAGE)}
-          >
-            {ai('history.next')}
-          </Button>
-        </div>
-      )}
-    </div>
-  )
-}
-
-function HistoryRow({
-  entry,
-  pj,
-  onChanged,
-}: {
-  entry: AiHistoryEntry
-  /** 这条记录所属的项目（历史视图打开时认领的那个） */
-  pj: string | null
-  onChanged: () => void
-}) {
-  useTranslation('ai')
-  // 动作回来时已经换了项目：后果（提示、重查）属于那个项目，不写进现在这个
-  const stillMine = () => currentProjectId() === pj
-  const caps = useAiStore((s) => s.caps)
-  const [detailsOpen, setDetailsOpen] = useState(false)
-  const failed = entry.status === 'failed' || entry.status === 'timeout' || entry.status === 'interrupted'
-
-  return (
-    // 一条任务一张卡（shadow-card，2026-09-15 学 Beautiful UI 的 Task Rows，用户拍板）：
-    // 此前是 hairline 隔开的段落；状态改成徽章（语义色 + 淡底一对），失败 danger、改过 ok、其余中性
-    <Card padding="sm">
-      <p className="line-clamp-2 text-xs leading-relaxed text-ink">{entry.prompt}</p>
-      <p className="type-meta mt-0.5 truncate">
-        {/* 历史里的 provider 是**当时**用的那个 Agent id：显示名从当前
-            capabilities 查，查不到就原样显示 id（不写死两个名字，也不留空） */}
-        {entry.target || ai('scope.figure')} · {agentDisplayName(caps, entry.provider)}
-        {entry.model ? ` · ${entry.model}` : ''} · {timeOf(entry.started_ms)}
-      </p>
-      <div className="mt-1.5 flex items-center gap-1.5">
-        <Badge tone={failed ? 'danger' : entry.changed ? 'ok' : 'neutral'}>
-          {statusLabel(entry.status)}
-          {entry.changed ? ai('history.changedSuffix') : ''}
-        </Badge>
-        <span className="flex-1" />
-        <Tip label={ai(entry.pinned ? 'history.unpinTip' : 'history.pinTip')}>
-          <Button
-            size="icon-sm"
-            active={entry.pinned}
-            aria-pressed={entry.pinned}
-            aria-label={ai(entry.pinned ? 'history.unpin' : 'history.pin')}
-            onClick={() => void pinAiHistory(entry.id, !entry.pinned, pj).then(() => stillMine() && onChanged())}
-          >
-            <Pin size={ICON_SIZE.xs} filled={entry.pinned} className={entry.pinned ? undefined : 'text-ink-3'} />
-          </Button>
-        </Tip>
-        {entry.changed && entry.revert_available && (
-          <Tip label={ai('history.revertTip')}>
-            <Button
-              size="icon-sm"
-              className="text-danger"
-              aria-label={ai('history.revert')}
-              onClick={() =>
-                void aiRevert(entry.id, pj).then(
-                  () => {
-                    if (!stillMine()) return
-                    useUiStore.getState().setStatus(msg('history.reverted', undefined, 'ai'), 'done')
-                    onChanged()
-                  },
-                  // 脚本在这次修改之后又变过（`ai_revert_conflict`）等：说出口，不装作已回滚——
-                  // 但只在还是那个项目的时候说（#589）
-                  (e) => {
-                    if (stillMine()) useUiStore.getState().setStatus(backendErrorMsg(e), 'error')
-                  },
-                )
-              }
-            >
-              <RotateCcw size={ICON_SIZE.xs} />
-            </Button>
-          </Tip>
-        )}
-        <Tip label={ai('history.delete')}>
-          <Button
-            size="icon-sm"
-            aria-label={ai('history.delete')}
-            onClick={() => void deleteAiHistory(entry.id, pj).then(() => stillMine() && onChanged())}
-          >
-            <Trash2 size={ICON_SIZE.xs} className="text-ink-3" />
-          </Button>
-        </Tip>
-      </div>
-      {entry.error && <p className="mt-0.5 text-xs text-danger">{entry.error}</p>}
-      <button
-        onClick={() => setDetailsOpen((v) => !v)}
-        aria-expanded={detailsOpen}
-        className="mt-0.5 flex items-center gap-1 text-left text-xs text-ink-3 outline-none hover:text-ink-2 focus-visible:focus-ring"
-      >
-        <ChevronRight
-          size={ICON_SIZE.xs}
-          className={cn('shrink-0 transition-transform', detailsOpen && 'rotate-90')}
-        />
-        {ai('panel.techDetails')}
-      </button>
-      {detailsOpen && (
-        <div className="mt-0.5 flex flex-col gap-0.5 border-l border-border pl-2">
-          {/* 脚本名是路径 → 等宽片；句子本身不是代码 */}
-          <p className="type-meta flex min-w-0 items-center gap-1">
-            <span className="shrink-0">{ai('panel.scriptLabel')}</span>
-            <code className="min-w-0 truncate rounded-xs bg-surface-2 px-1 font-mono text-ink-2">
-              {entry.script ? scriptName(entry.script) : ai('panel.none')}
-            </code>
-          </p>
-          {entry.effort && <p className="type-meta">{ai('history.effort', { effort: entry.effort })}</p>}
-          <p className="type-meta">
-            {ai(entry.revert_available ? 'history.snapshotAvailable' : 'history.snapshotCleared', {
-              id: entry.id,
-            })}
-          </p>
-        </div>
-      )}
-    </Card>
-  )
-}
-
-/** 时间按**当前界面语言**格式化（以前钉死 zh-CN，英文界面里会露馅） */
-const timeOf = (ts: number) => formatTime(ts)
-
-/** 改动是直接落盘的，措辞不能像「待应用的预览」 */
-function statusText(s: AiSession): string {
-  if (s.status === 'running') return ai('session.running')
-  if (s.status === 'done') return ai(s.changed ? 'session.doneChanged' : 'session.doneNoChange')
-  if (s.status === 'reverted') return ai('session.reverted')
-  return statusLabel(s.status)
-}
-
-const toneOf = (s: AiSession) =>
-  s.status === 'failed' || s.status === 'timeout' ? 'text-danger' : 'text-ink-3'
-
-/** 把连续的 thinking/action 折成一组「过程」，正文单独成条 */
-type Group =
-  | { type: 'message'; text: string; streaming?: boolean }
-  | { type: 'process'; items: { kind: string; text: string }[] }
-
-function groupEntries(entries: AiEntry[]): Group[] {
-  const groups: Group[] = []
-  for (const e of entries) {
-    if (e.kind === 'message' || e.kind === 'delta') {
-      groups.push({ type: 'message', text: e.text, streaming: e.streaming })
-      continue
-    }
-    const last = groups.at(-1)
-    if (last?.type === 'process') last.items.push(e)
-    else groups.push({ type: 'process', items: [e] })
-  }
-  return groups
-}
-
-function SessionBlock({ session }: { session: AiSession }) {
-  useTranslation('ai')
-  const caps = useAiStore((s) => s.caps)
-  const running = session.status === 'running'
-  const groups = groupEntries(session.entries)
-
-  return (
-    // 新的一轮对话落位：淡入 + 4px 上浮，弹簧收尾（settle-in）。
-    // 一轮对话是一张卡（shadow-card，2026-09-15 学 Beautiful UI 的 Chat / Task Rows，用户拍板）：
-    // 提示 → 过程 → 回答 → 状态 → diff 是一件事的五段，卡把它们收在一起；卡与卡之间只靠间距。
-    // 卡里再分层用 surface-2 的凹块（提示），不再套第二张卡。
-    <Card
-      padding="sm"
-      className="flex animate-settle-in flex-col gap-1.5"
-      data-ai-session={session.status}
-    >
-      {/* 提示是卡里的凹块：surface-2 底、无边（Beautiful UI 的 inset 那一级）。
-          meta 那行是执行器 / 目标 / 时刻，不是代码或路径——等宽字体只留给代码 */}
-      <div className="rounded-sm bg-surface-2 px-2 py-1.5">
-        <p className="text-sm leading-[1.6] break-words text-ink">{session.prompt}</p>
-        <p className="type-meta mt-0.5 truncate">
-          {sessionAgentLabel(caps, session)} · {session.target} · {timeOf(session.startedAt)}
-        </p>
-      </div>
-
-      {groups.map((g, i) =>
-        g.type === 'message' ? (
-          <MessageBody key={i} text={g.text} streaming={g.streaming} />
-        ) : (
-          <ProcessGroup key={i} items={g.items} />
-        ),
-      )}
-
-      {/* 状态行是唯一的「还活着」信号：进行中一道亮带扫过文字，完成即停——不另摆
-          loader / 骨架（三样东西同时在动是在互相抢注意力）。中止在输入框旁那颗按钮上
-          （发送 ↔ 中止同一位置），这里不再复制一颗。 */}
-      {/* 换字原位换（宪法第二十三节）：running → done 那一下不硬切。`text-shimmer` 落在会动的那句字上；
-          外层 ink-3 是退场那句幽灵的颜色。`data-ai-status` 跟着字走——用例与诊断认它 */}
-      <p className="text-xs text-ink-3">
-        <SwapText
-          text={statusText(session)}
-          textClassName={running ? 'text-shimmer' : toneOf(session)}
-          data-ai-status={session.status}
-        />
-      </p>
-
-      {session.error && <p className="text-xs text-danger">{session.error}</p>}
-
-      {session.changed && session.diff && (
-        <div className="flex animate-settle-in flex-col gap-1.5">
-          <DiffView diff={session.diff} script={session.script} />
-          {/* destructive 只有红字 ghost（第五节）：此前是 secondary + 撑满 + 红字，
-              整个对话区最宽的一颗钮（打磨 A3） */}
-          <Button
-            variant="danger"
-            size="sm"
-            className="self-end"
-            onClick={() => void revertSession(session)}
-          >
-            <RotateCcw size={ICON_SIZE.sm} />
-            {ai('panel.revert')}
-          </Button>
-        </div>
-      )}
-    </Card>
-  )
-}
-
-/** 思考/动作默认只占一行，点开才看时间线——不刷屏 */
-function ProcessGroup({ items }: { items: { kind: string; text: string }[] }) {
-  useTranslation('ai')
-  const [open, setOpen] = useState(false)
-  return (
-    <div>
-      <button
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        className="flex w-full items-center gap-1 text-left text-xs text-ink-3 outline-none hover:text-ink-2 focus-visible:focus-ring"
-      >
-        <ChevronRight size={ICON_SIZE.xs} className={cn('shrink-0 transition-transform', open && 'rotate-90')} />
-        <span className="truncate">
-          {ai('panel.processSteps', { count: items.length })}
-          {!open && items.at(-1)
-            ? ai('panel.processTail', {
-                text: items.at(-1)!.text.replace(/\s+/g, ' ').slice(0, 16),
-              })
-            : ''}
-        </span>
-      </button>
-      {/* 展开是跟着内容长高（Reveal），不是一整块瞬间跳出来 */}
-      <Reveal open={open}>
-        <ul className="mt-1 flex flex-col gap-1 pl-1">
-          {items.map((it, i) => (
-            <ProcessRow key={i} kind={it.kind} text={it.text} />
-          ))}
-        </ul>
-      </Reveal>
-    </div>
-  )
-}
-
-/**
- * 过程里的一行（2026-09-15 学 Beautiful UI 的 Tool Chips）：种类图标（ink-3）· 动词 · 参数片。
- * 后端（`engine/ai_agents.py`）给 action 文本开头放一个**标记符 + 空格**：`$` = 跑了一条命令，
- * 其它符号（一支笔）= 改了文件 / 调了工具。这里只拆标记、不画它——图标是 Wrench / Pencil；
- * 「一个非字母数字的符号 + 空格」统一当标记解析，不把那个字形写死在前端。拆成「动词 + 参数」后
- * 参数放进 surface-2 底的等宽片里——路径 / 命令是代码，正文的动词不是。没有标记的 action 原样
- * 当参数片；thinking 是一句话，ink-3、无片。
- */
-const ACTION_MARK = /^([^\p{L}\p{N}\s])\s+(.*)$/su
-
-function ProcessRow({ kind, text }: { kind: string; text: string }) {
-  useTranslation('ai')
-  if (kind !== 'action') {
-    return (
-      <li className="flex items-start gap-1.5 text-xs leading-relaxed text-ink-3">
-        <Sparkles size={ICON_SIZE.xs} className="mt-[3px] shrink-0" aria-hidden />
-        <span className="min-w-0 whitespace-pre-wrap break-words">{text}</span>
-      </li>
-    )
-  }
-  const m = ACTION_MARK.exec(text)
-  const shell = m?.[1] === '$'
-  const Icon = shell ? Wrench : Pencil
-  let verb = ''
-  let arg = text
-  if (m && shell) {
-    verb = ai('panel.stepRan')
-    arg = m[2]
-  } else if (m) {
-    // 「<标记> 名字 目标」：名字是动词位，目标是参数；只有名字时参数为空
-    const rest = m[2].trim()
-    const sp = rest.indexOf(' ')
-    verb = sp === -1 ? rest : rest.slice(0, sp)
-    arg = sp === -1 ? '' : rest.slice(sp + 1)
-  }
-  return (
-    <li className="flex min-w-0 items-start gap-1.5 text-xs leading-relaxed text-ink-2">
-      <Icon size={ICON_SIZE.xs} className="mt-[3px] shrink-0 text-ink-3" aria-hidden />
-      {verb && <span className="shrink-0 text-ink">{verb}</span>}
-      {arg && (
-        <code className="min-w-0 truncate rounded-xs bg-surface-2 px-1 font-mono text-ink-2" title={arg}>
-          {arg}
-        </code>
-      )}
-    </li>
-  )
-}
-
-
-/**
- * 正文。流式阶段**照样按 markdown 渲染**（与 ChatGPT / Claude 一致，不等终稿），
- * 新到的词由 `lib/streamMarkdown` 包成一次淡入；终稿到达后去掉插件，视觉零变化。
- * 此前流式阶段走第三方的「涂黑显影」效果、终稿才换排版——两段观感不同，切换那一下会跳。
- */
-function MessageBody({ text, streaming }: { text: string; streaming?: boolean }) {
-  return <Markdown text={text} streaming={!!streaming} />
 }

@@ -25,9 +25,18 @@ Consolidation Session 1 定稿），值在 `src/index.css` 的 `@theme`，门禁
 页脚 `{ start, secondary, primary }` 三槽、浮动毛玻璃页脚、`onEscape`（Esc = 安全答案）、栈底才画遮罩；**每个上下文一颗主按钮**；对话框页脚的破坏性动作是
 `Button variant="danger-tinted"`（浅底危险胶囊，永不实心红）；按钮层级的稳定判据是 `data-variant`。门禁全在 `foundation.test`（含逐页阶段的 `LATER_PHASE` 豁免）。
 
+**2026-10-07 改图助手重做（宪法第十八节「2026-10-07 重做」小节）**：转录是一段对话而不是一轮一张卡——用户消息右对齐气泡（超 3 行折叠，hover 出复制 / 重新发送），
+助手回答不装卡、`type-reading` ink；过程折成一行「已思考 Ns · N 步」的环境行（耗时来自 `AiEntry.at` / `AiSession.finishedAt`，缺了不说），
+改了脚本是唯一带边框的显著卡（`DiffView`：文件头 + hover 替换计数的操作 + 22px 行 + 4px 变更条 + 行号 + 词级高亮）；代码块无边框 + 语言 + 复制 +
+`--color-syntax-*` 语法色（/try 的 Code Sheet 共用）；回答里的链接 accent 是「链接灰字」的唯一例外；输入框 42px 胶囊 ↔ 两行两态、聚焦只加深到
+border-strong、上方玻璃上下文带（目标 · 作用范围 chip）、工具行两颗模型 / 推理强度胶囊、26px 圆形发送 / 中止（交叉淡化不缩放，进行中 1px 轨道）；
+任务历史是 320px 弹层；错误是 danger `Notice` + 重试。600 字重在 `ai/Markdown`（h2 / h3）与 `ai/DiffView`（「已修改」）有带个数的门禁豁免。
+选择器认 `data-ai-*`（`data-ai-input` / `-composer[data-layout]` / `-context` / `-target` / `-pill` / `-user` / `-process-toggle` / `-step` /
+`-diff` / `-revert` / `-code` / `-history` …）。
+
 白色 surface；层级靠留白 / 字号 / 轻微背景差，
 边框只给区域边界、选择状态与浮层；可编辑框是 `field` 底、静态无边（聚焦 accent 边）。**持久表面里只有
-「真的是一张卡」的东西有投影（`--shadow-card`：素材卡 / 会话卡 / 任务行 / 诊断卡），浮层用 `--shadow-pop` /
+「真的是一张卡」的东西有投影（`--shadow-card`：素材卡 / 诊断卡；助手的会话卡与任务行 2026-10-07 起撤了卡），浮层用 `--shadow-pop` /
 `--shadow-dialog`；改图助手输入框是浮在对话流上的玻璃（`--color-glass` + `backdrop-blur-lg` + `--shadow-composer`）**
 （宪法第二十二节，2026-09-15）。
 radius（2026-10-07 起，见上）：`xs` 4、`sm` 6、`md` 8（行 / 输入框 / 说明条）、`lg` 12（卡片 / 浮层外壳）、`panel` 16（对话框 / 工作面板）、`full`（带字的按钮 / 图标钮 / 分段）；
