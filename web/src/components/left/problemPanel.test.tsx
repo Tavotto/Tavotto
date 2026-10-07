@@ -869,6 +869,59 @@ describe('定位后清单留在原地（审计 T09）', () => {
     expect(useUiStore.getState().selectedGids).toEqual(['axes_0.xticks'])
   })
 
+  it('面板压在模态框底下：对话框里（含输入框）按 F8 不走后面的清单（Codex #832）', async () => {
+    await seed()
+    await mount(<ProblemPanel />)
+    const dialog = document.createElement('div')
+    dialog.setAttribute('role', 'dialog')
+    const input = document.createElement('input')
+    const btn = document.createElement('button')
+    dialog.append(input, btn)
+    document.body.appendChild(dialog)
+    try {
+      for (const el of [input, btn]) {
+        await act(async () => {
+          el.focus()
+          el.dispatchEvent(new KeyboardEvent('keydown', { key: 'F8', bubbles: true, cancelable: true }))
+        })
+        expect(useUiStore.getState().problemCursor).toBeNull()
+        expect(rows().some((r) => r.getAttribute('aria-current') === 'true')).toBe(false)
+      }
+    } finally {
+      dialog.remove()
+    }
+  })
+
+  it('↑↓ 只在行主按钮之间走：焦点在后面某行尾随格的按钮上时不被甩回第一行（Codex #832）', async () => {
+    await seed()
+    await mount(<ProblemPanel />)
+    await openCard()
+    const roamTargets = () => [
+      ...container.querySelectorAll<HTMLElement>(
+        '[data-problem-card] > button:first-child, [data-issue-group-toggle], [data-issue-row], [data-issue-show-rest]',
+      ),
+    ]
+    const last = rows().at(-1)!
+    // 那一行不是第一个漫游落点（前面至少还有组头 / 别的行）
+    expect(roamTargets().indexOf(last)).toBeGreaterThan(0)
+    const trail = last.closest('li')!.querySelector<HTMLElement>('[data-issue-tech-toggle]')!
+    expect(trail).not.toBeNull()
+    for (const k of ['ArrowDown', 'ArrowUp']) {
+      await act(async () => {
+        trail.focus()
+        trail.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }))
+      })
+      expect(document.activeElement).toBe(trail)
+    }
+    // 行主按钮上照常漫游
+    await act(async () => {
+      last.focus()
+      last.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true, cancelable: true }))
+    })
+    expect(document.activeElement).not.toBe(last)
+    expect(roamTargets()).toContain(document.activeElement)
+  })
+
   it('指着一行：画布上那个对象描一道悬停轮廓（issueHover），指针离开就撤', async () => {
     await seed()
     await mount(<ProblemPanel />)

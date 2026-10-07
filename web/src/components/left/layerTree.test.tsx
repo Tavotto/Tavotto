@@ -20,9 +20,11 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { LayerTree } from '@/components/left/LayerTree'
 import { TooltipProvider } from '@/components/ui/Tooltip'
+import { useKeyboard } from '@/hooks/useKeyboard'
 import { t } from '@/i18n'
 import { useDocumentStore } from '@/store/documentStore'
 import { useSelectionStore } from '@/store/selectionStore'
+import { useUiStore } from '@/store/uiStore'
 import { emptyProject, type CanvasObject } from '@/types/document'
 
 declare global {
@@ -191,6 +193,31 @@ describe('树的语义与键位契约（2026-10-07 设计审计 §10.3）', () =
     expect(rows()[0].querySelector('input')).toBeNull()
     key(rows()[0], 'F2')
     expect(rows()[0].querySelector('input')).not.toBeNull()
+  })
+
+  it('图内编辑态还开着时，行上按一次 Esc 只清选区：不再冒到窗口级快捷键去退元素 / 图内编辑（Codex #832）', async () => {
+    function Keys() {
+      useKeyboard()
+      return null
+    }
+    await mount([panel('p1', 'Fig1'), panel('p2', 'Fig2')])
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const keysRoot = createRoot(host)
+    await act(async () => keysRoot.render(<Keys />))
+    try {
+      // 换左栏页签不结束图内编辑：那一段与选中的元素都还在
+      useUiStore.setState({ elementPanelId: 'p1', selectedGids: ['axes_0.title'] })
+      useSelectionStore.getState().set(['p2'])
+      act(() => rows()[0].focus())
+      key(rows()[0], 'Escape')
+      expect(useSelectionStore.getState().ids).toEqual([])
+      expect(useUiStore.getState().elementPanelId).toBe('p1')
+      expect(useUiStore.getState().selectedGids).toEqual(['axes_0.title'])
+    } finally {
+      await act(async () => keysRoot.unmount())
+      useUiStore.setState({ elementPanelId: null, selectedGids: [] })
+    }
   })
 
   it('⇧F10 开出与 ⋯ 同一份菜单；行有焦点时 ⋯ 进 Tab 顺序', async () => {
