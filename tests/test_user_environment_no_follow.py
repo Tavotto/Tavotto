@@ -218,9 +218,15 @@ def test_cancel_during_pyenv_enumeration_returns_partial_discovery(tmp_path, mon
     from tavotto.engine import scanbudget
 
     home = _fake_home(tmp_path, monkeypatch)
-    versions = home / ".pyenv" / "versions"
-    for n in range(200):
-        _python(versions / f"3.{n}" / "bin").rename(versions / f"3.{n}" / "bin" / "python3")
+    # 布局跟 `_pyenv_version_dirs` / `_prefix_python` 走：Windows 是 pyenv-win/versions/<v>/python.exe
+    if os.name == "nt":
+        versions = home / ".pyenv" / "pyenv-win" / "versions"
+        for n in range(200):
+            _python(versions / f"3.{n}").rename(versions / f"3.{n}" / "python.exe")
+    else:
+        versions = home / ".pyenv" / "versions"
+        for n in range(200):
+            _python(versions / f"3.{n}" / "bin").rename(versions / f"3.{n}" / "bin" / "python3")
     polls = {"n": 0}
 
     def cancel():
