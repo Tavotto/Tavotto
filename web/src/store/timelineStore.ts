@@ -37,25 +37,44 @@ interface TimelineState {
    * 按上下文记账：A 的恢复还在飞时换到 B，B 不该被锁住。只经 `VersionDialog.restoreUnderLock` 写。
    */
   restoring: string | null
+  /**
+   * 锁的**持有者凭据**（`beginRestore` 发的唯一号）。`restoring` 只记上下文，同一上下文里
+   * 先后两次恢复的上下文一样——只凭 ctx 摘锁的话，先结束的那次会把还在写的那次的锁摘掉
+   * （Codex #831 P1）。摘锁只认凭据。
+   */
+  restoreToken: number | null
   bump: () => void
   setPreview: (p: TimelinePreview | null) => void
   setNamingOpen: (v: boolean) => void
-  /** 挂上 / 摘掉恢复锁；摘的时候只摘**自己**挂的那一把（`ctx` 不符不动） */
-  beginRestore: (ctx: string) => void
-  endRestore: (ctx: string) => void
+  /**
+   * 挂上恢复锁，返回这一把的凭据；**这个上下文已经有一次恢复在飞就拒绝**（返回 null，什么都不改）。
+   * 别的上下文挂着的旧锁不挡（A 的恢复在飞时换到 B，B 照样能恢复），直接换成 B 的。
+   */
+  beginRestore: (ctx: string) => number | null
+  /** 摘锁：只摘**凭据相符**的那一把（过期的持有者摘不掉后来者的锁） */
+  endRestore: (token: number) => void
   clear: () => void
 }
 
-export const useTimelineStore = create<TimelineState>((set) => ({
+let restoreSeq = 0
+
+export const useTimelineStore = create<TimelineState>((set, get) => ({
   rev: 0,
   gen: 0,
   preview: null,
   namingOpen: false,
   restoring: null,
+  restoreToken: null,
   bump: () => set((s) => ({ rev: s.rev + 1 })),
   setPreview: (preview) => set({ preview }),
   setNamingOpen: (namingOpen) => set({ namingOpen }),
-  beginRestore: (restoring) => set({ restoring }),
-  endRestore: (ctx) => set((s) => (s.restoring === ctx ? { restoring: null } : {})),
+  beginRestore: (ctx) => {
+    if (get().restoring === ctx) return null
+    const token = ++restoreSeq
+    set({ restoring: ctx, restoreToken: token })
+    return token
+  },
+  endRestore: (token) =>
+    set((s) => (s.restoreToken === token ? { restoring: null, restoreToken: null } : {})),
   clear: () => set((s) => ({ preview: null, namingOpen: false, gen: s.gen + 1 })),
 }))
