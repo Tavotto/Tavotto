@@ -19,6 +19,7 @@ import {
 } from '@/lib/geometry'
 import type { Manifest, ManifestElement } from '@/lib/api'
 import { flipY, resizeGroup, round4, sameAfterRound4, unionBox, type Rect4 } from '@/lib/axesLayout'
+import { pageToContentVec, panelContentTransform } from '@/lib/panelTransform'
 import {
   anchorOf,
   arrowEndpointsOf,
@@ -1760,9 +1761,10 @@ export function startArrowDrag(
  * 面板带 90° 步进旋转时先把位移反向旋转回内容坐标系。
  */
 function contentDelta(panel: PanelObject, layout: { width: number; height: number }) {
-  const rot = panelRotation(panel)
+  // 屏幕位移折回内容坐标：画布画这张图的变换（先翻转再旋转）的逆——翻转面板上往右拖，元素在画面上也往右走
+  const tf = panelContentTransform(panel)
   const toFrac = (dxPx: number, dyPx: number, zoom: number): [number, number] => {
-    const [dx, dy] = unrotateVec(dxPx, dyPx, rot)
+    const [dx, dy] = pageToContentVec(tf, dxPx, dyPx)
     return [dx / (layout.width * zoom), dy / (layout.height * zoom)]
   }
   // 拖动途中视图倍率变了（⌘= / ⌘− / 捏合）：**以倍率变化那一刻为新基准**。
