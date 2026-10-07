@@ -13,6 +13,7 @@ import {
 import { useEnvStore } from '@/store/envStore'
 import { SettingRow } from './settings/SettingRow'
 import { Button } from './ui/Button'
+import { Notice } from './ui/Notice'
 import { Segmented } from './ui/Segmented'
 
 const en = (key: string, values?: Record<string, unknown>) =>
@@ -60,10 +61,16 @@ export function WorkdirRow() {
     setBusy(false)
   }
   return (
-    <div className="mt-1.5 border-t border-border pt-1.5">
-      {/* 标准设置行（全面打磨 D14）。当前档那句话是**现状**不是说明（§13：低调提醒走
-          `status`），常驻在标题列里，不收进问号。控件整行宽：三档分段放不进定宽控件列 */}
-      <SettingRow label={en('workdirLabel')} status={t(status)} control="fill">
+    // 标准设置行，坐在「Python 与运行」组里（2026-10-07 设计审计 §9.1：此前外面再包一层 border-t 碎片）。
+    // 当前档那句话是**现状**不是说明（§13），常驻在标题列里，不收进问号。三档分段放不进定宽控件列，
+    // 所以控件整行宽（fill）；错误是分段下面的 danger Notice
+    <SettingRow
+      label={en('workdirLabel')}
+      status={t(status)}
+      control="fill"
+      data-settings-anchor="project.workdir"
+    >
+      <div className="flex min-w-0 flex-col gap-2">
         <Segmented
           value={mode}
           onChange={(v) => void pick(v)}
@@ -75,9 +82,9 @@ export function WorkdirRow() {
             disabled: busy,
           }))}
         />
-      </SettingRow>
-      {error && <p className="text-xs text-danger">{error}</p>}
-    </div>
+        {error && <Notice tone="danger">{error}</Notice>}
+      </div>
+    </SettingRow>
   )
 }
 
@@ -180,28 +187,35 @@ export function InputRemapRows() {
     setBusy(false)
   }
   return (
-    <div className="mt-1.5 border-t border-border pt-1.5" data-testid="input-remap-rows">
-      <p className="text-xs text-ink-2">{en('inputRemapLabel')}</p>
-      <ul className="mt-1 flex flex-col gap-1">
-        {rules.map((r) => (
-          <li key={`${r.kind}:${r.from}`} className="flex items-start gap-2">
-            {/* 两侧都是用户自己的路径，不翻译 */}
-            <span className="min-w-0 flex-1 break-all font-mono text-xs text-ink-2">
-              {r.from === '' ? t('engine.inputRemapAnyRelative') : r.from}
-              {' → '}
-              {r.to}
-              {r.target_exists === false && (
-                <span className="ml-1 font-sans text-danger">{en('inputRemapTargetGone')}</span>
-              )}
-            </span>
-            <Button size="sm" variant="secondary" disabled={busy} onClick={() => void forget(r)}>
-              {en('inputRemapForget')}
-            </Button>
-          </li>
-        ))}
-      </ul>
-      {error && <p className="text-xs text-danger">{error}</p>}
-    </div>
+    // 一行：标题 + 整行宽的规则清单（每条「脚本写的 → 现在去哪找」+ 一颗删除）
+    <SettingRow
+      label={en('inputRemapLabel')}
+      control="fill"
+      data-testid="input-remap-rows"
+      data-settings-anchor="project.inputRemap"
+    >
+      <div className="flex min-w-0 flex-1 flex-col gap-1">
+        <ul className="flex flex-col gap-1">
+          {rules.map((r) => (
+            <li key={`${r.kind}:${r.from}`} className="flex items-center gap-2">
+              {/* 两侧都是用户自己的路径，不翻译 */}
+              <span className="min-w-0 flex-1 break-all font-mono text-xs text-ink-2">
+                {r.from === '' ? t('engine.inputRemapAnyRelative') : r.from}
+                {' → '}
+                {r.to}
+                {r.target_exists === false && (
+                  <span className="ml-1 font-sans text-danger-content">{en('inputRemapTargetGone')}</span>
+                )}
+              </span>
+              <Button size="sm" variant="ghost" disabled={busy} onClick={() => void forget(r)}>
+                {en('inputRemapForget')}
+              </Button>
+            </li>
+          ))}
+        </ul>
+        {error && <Notice tone="danger">{error}</Notice>}
+      </div>
+    </SettingRow>
   )
 }
 
@@ -249,12 +263,17 @@ export function ScriptBackupRows() {
     setError(failure)
   }
   return (
-    <div className="mt-1.5 border-t border-border pt-1.5" data-testid="script-backup-rows">
-      <p className="text-xs text-ink-2">{en('scriptBackupLabel')}</p>
-      <ul className="mt-1 flex flex-col gap-1">
+    <SettingRow
+      label={en('scriptBackupLabel')}
+      control="fill"
+      data-testid="script-backup-rows"
+      data-settings-anchor="project.scriptBackups"
+    >
+      <div className="flex min-w-0 flex-1 flex-col gap-1">
+      <ul className="flex flex-col gap-1">
         {shown.map((b) => (
-          <li key={b.id} className="flex flex-wrap items-start gap-2" data-script-backup={b.id}>
-            <span className="min-w-0 flex-1 text-xs text-ink-2">
+          <li key={b.id} className="flex flex-wrap items-center gap-2" data-script-backup={b.id}>
+            <span className="min-w-0 flex-1 text-xs text-ink-2 tabular-nums">
               {/* 脚本名是用户自己的路径，不翻译 */}
               <span className="break-all font-mono">{b.script}</span>
               {' · '}
@@ -283,7 +302,8 @@ export function ScriptBackupRows() {
           </li>
         ))}
       </ul>
-      {error && <p className="text-xs text-danger">{error}</p>}
-    </div>
+      {error && <Notice tone="danger">{error}</Notice>}
+      </div>
+    </SettingRow>
   )
 }

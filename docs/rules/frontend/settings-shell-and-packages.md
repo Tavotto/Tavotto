@@ -5,14 +5,18 @@
 
 完整版在 `docs/adr/0038-settings-shell-agents-packages.md`，改动前先读。
 
-* **外壳尺寸是合同**：`SettingsDialog` 固定 `SHELL_WIDTH = 760` / `SHELL_HEIGHT = 600px`
-  （`ui/Dialog` 的 `height`），内容区 `[data-settings-content]` 独立滚、切页滚回顶部；<640px 导航变
-  顶部一条。**新分区再长也不许让外框撑高。** 九个分区在 `SECTIONS`（2026-09-30 由十一个并成，ADR 0038 修订）；旧 id 走 `resolveSection()`
+* **外壳尺寸是合同**：`SettingsDialog` 固定 `SHELL_WIDTH = 1000` / `SHELL_HEIGHT = 680px`
+  （`ui/Dialog` 的 `height`；此前这里写的 760 / 600 是 Session 5 之前的旧值），内容区 `[data-settings-content]` 独立滚、切页滚回顶部；<640px 导航变
+  顶部一条。**新分区再长也不许让外框撑高。** 2026-10-07（设计审计 §9.1）：导航 200px、顶上一个 28px 的搜索框
+  （`settings/settingsRegistry.ts`：行名取页面上**同一个 i18n key**，另加按语言给的关键词；纯本地过滤、**不发请求**；
+  点结果 = 切页 + 把 `data-settings-anchor` 那一行滚进视野、亮一下，只在某些状态下才渲染的行退到一定在场的那一组上，
+  `SettingsDialog.test` 逐条核对锚点在场）；内容是居中的 680 一列；每页一个页头（页名 + 一句说明，钻入页是面包屑）。 九个分区在 `SECTIONS`（2026-09-30 由十一个并成，ADR 0038 修订）；旧 id 走 `resolveSection()`
   的别名表（`profiles → spec`、`interface / canvas / sidebars / shortcuts → general`、`update → about`），深链的调用方**不要**再写旧 id。
 * **深链带返回**：`setSettingsOpen(true, section, { returnTo: 'export' })`；`settingsReturnTo` 是闭集
   （`'export' | null`），每次打开重置。要加新的返回目标先扩闭集。
-* **编码 Agent 一级列表只有名称 · 版本号 · 状态**：版本号经 `agentVersionLabel` 只取数字，抽不出
-  就不渲染（真机上 shim 的报错行带完整路径）；路径 / 命令 / 检测来源只在 `AgentDetailView`，
+* **编码 Agent 一级列表只有名称 · 状态**（审计 T44：列表与详情不重复，版本号只在详情里；
+  `CodingAgentsSection.test` 守着；没装 / 装坏时副行说一句为什么）：详情里的版本号经 `agentVersionLabel`
+  只取数字，抽不出就不渲染（真机上 shim 的报错行带完整路径）；路径 / 命令 / 检测来源只在 `AgentDetailView`，
   用 `settings/CopyButton` 给复制。**一级页面上不许出现路径、内部包名、解释段、卡片外框。**
 * **编码 Agent 的 e2e 锚点是稳定 `data-*`，不是小标题上那句话**（2026-09-07，#299 posix-e2e
   真红）：审计 T44 把两个小节按用户目标改了名（「在 A 中使用 B / 在 B 中使用 A」→「配置改图
@@ -25,8 +29,9 @@
   `data-agent-rescan`（列表头与详情概览各一颗「重新检测」）、
   `data-agent-last-checked`（那颗按钮旁边的时间戳）、
   `data-agent-open="<agent id>"`（`AgentList` 覆盖整行的进详情按钮）、
+  `data-agent-default`（组首「默认助手」那一行，里面是一个 `Select`；2026-10-07 设计审计 §9.1 起取代每行行首的 Radio）、
   `data-agent-detail="<agent id>"`（`AgentDetailView` 根节点 = 「此刻在详情页」）、
-  `data-agent-back`（返回列表）、`data-agent-field="state | version | executable | source |
+  `data-agent-back`（返回列表；2026-10-07 起是外壳页头面包屑里「改图助手」那一截）、`data-agent-field="state | version | executable | source |
   checked-at | readiness"`（概览与诊断里的「标签 / 值」行）、
   `data-agent-fold="custom-executable" | "diagnostics"`（两个 `<details>`）、
   `data-agent-custom-exe`（「使用自定义可执行文件」——它只被一条 `toBeHidden()` 用到，
@@ -104,20 +109,28 @@
   现在它是**状态 + 动作**：一枚常驻徽标（`profiles.readOnlyBuiltinBadge` / `readOnlyBadge`）
   加旁边一颗「复制一份再修改」（接的还是原来那个 `duplicate`，原先摆在所有字段下面、要滚很远）。
   信息一个字没丢，锚点 `data-profile-readonly`。
-* **诊断页不显示 `cli_*` 检查**（Agent 页已有），渲染环境卡在「项目」页常驻一张（诊断页只在环境异常时另挂），内置包清单归包管理页。
+* **诊断页不显示 `cli_*` 检查**（Agent 页已有），渲染环境组在「项目」页常驻一份（「Python 与运行」组；诊断页只在环境异常时另挂），内置包清单归包管理页。
+  诊断页顺序是**健康 → 报告 → 开发者**（2026-10-07 设计审计 §9.1 P0），而且 #797 那条「异步结果不挪动正在按的入口」照样成立：
+  健康组只有一行结论，取数前后是同一行、同高（结论是控件列里的一枚 `StatusPill`）；会随结果长高的（异常项、各项检查结果、
+  恢复入口）全在开发者之后的「检查结果」组里。`DiagnosticsSettings.test` 按 DOM 先后与「同一个元素」钉它，`e2e/perf-probe.spec.ts` 量像素。
   「复制诊断」的文本来自 `fetchDiagnosticsSummary()`（后端同一份采集），前端不另拼。
+* **自动检查那一行两条通道同形**（2026-10-07 设计审计 §9.1）：浏览器版是可写的开关；桌面版后端 updater 停用、存不下这个偏好，
+  所以开关画成开着、停用，原因（「桌面版每次启动都会检查」）在行内——与关于页隐私说明里那句同一个事实。
+  「有新版本」是更新组里一条 accent（info）`Notice` + 32px 主按钮，发行说明是折叠行。
 * **更新页只说得出「上一次检查的回答」**（2026-09-06 审计 T48）：界面上没有无条件的「已是最新
   版本」——`LastCheckVerdict` 按**真实存在的时间戳**二选一（没查过 → 「无法判断」，查过 →
   「{时间} 检查时没有发现新版本」），判据认 `data-update-verdict`，不认那两句散文。桌面通道的
   时间戳 `desktopCheckedAtMs` **只在检查成功时**写。下载进度只显示壳真给的数，拿不到就走不确定
   态、绝不编百分比。细进度条只有 `ui/ProgressBar` 一份（更新弹窗 / 更新页 / 修复下载 / 包作业）：
   轨道 `border` 档（放在 `surface-2` 面板里也看得见）、不确定态是 `animate-sweep`，不是呼吸块。
-  包作业面板（`JobPanel`）紧跟安装框、在包表之上——反馈落在用户点的地方（2026-10-07 设计审计 P0）。升级失败要看得出是失败（`applyFailed` + danger）且重试入口留着；pip 那条
+  包作业（`JobPanel`）是安装组里紧跟安装框的一行、在包表之上——反馈落在用户点的地方（2026-10-07 设计审计 P0）；
+  每个用户包一颗 ghost「升级」+ ⋯（卸载是危险项，先确认），「重建环境…」在环境行的 ⋯ 里、先确认。升级失败要看得出是失败（`applyFailed` + danger）且重试入口留着；pip 那条
   失败走 500、原因在响应体的 `log` 里而 `error` 是空的，得自己取出来。五态覆盖在
   `components/settings/updateStates.test.tsx` + `store/updateStore.test.ts`。
-* **同意是三档，控件也得是三档**（审计 T49）：`unset` / `enabled` / `disabled` 在界面上必须可辨，
-  用 `Segmented` 的 `value=null` 表达「尚未选择」——**可写的只有开 / 关两档**（回不到 unset）。
-  「同意的是上一版采集范围」（`needs_reconsent`）单独一句话，不许画成「已开启」。
+* **同意是三档，界面也得是三档**（审计 T49）：`unset` / `enabled` / `disabled` 在界面上必须可辨。控件是一颗开关
+  （只表达开 / 关，**可写的只有开 / 关两档**，回不到 unset），行上的现状**只说开关说不出的那两种**（2026-10-07 设计审计 §9.1）：
+  「尚未选择」与「待重新确认」（`needs_reconsent`：此刻一个字节都不发，开关画成关、不许画成「已开启」）；开着 = 同意、
+  关着且没有现状 = 拒绝，不再把「开启 / 关闭」念一遍。
   「会发送哪些数据」是闭集 `lib/telemetryDisclosure.ts`，逐条对应后端 `EVENTS`（严格同源对，见根
   `AGENTS.md`）——**别再写成一段会过期的散文**，上一版就是这么漂掉九条事件的。
   看护：`components/SettingsTelemetry.test.tsx` + `tests/test_telemetry_disclosure.py`。
@@ -132,7 +145,7 @@
 它们与上文同等有效，改规则时一并改这里。
 
 - 深链返回是闭集
-- 一级列表只有名称 · 版本 · 状态
+- 一级列表只有名称 · 状态（版本号只在详情）
 - e2e 锚点全是 `data-agent-*` / `data-rail` / `data-write-back`
 - 查找只在点「在 PyPI 查找」时出网
 - 代际与 `lookupSeq` 两条轴不合并、作业按所属项目分格

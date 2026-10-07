@@ -1,55 +1,51 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { t as translate } from '@/i18n'
+import { msg, t as translate } from '@/i18n'
 import { backendErrorText, patchProjectSettings } from '@/lib/api'
 import { isDesktop, pickDirectory } from '@/lib/desktop'
+import { dirTail } from '@/lib/pathDisplay'
 import { useProjectStore } from '@/store/projectStore'
 import { useUiStore } from '@/store/uiStore'
 import { EngineEnvironmentCard } from '../EngineEnvironmentCard'
-import { FolderOpen } from '@/components/ui/icons'
+import { Copy, Ellipsis, Eye, FolderOpen, RotateCcw } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { Button, IconButton } from '../ui/Button'
-import { Reveal } from '../ui/Field'
+import { FieldGroup, FormSection } from '../ui/FormSection'
 import { TextInput } from '../ui/Input'
+import { Menu, MenuItem } from '../ui/Menu'
 import { Toggle } from '../ui/Toggle'
-import { PathValue } from './PathValue'
-import { InlineWarning, SettingRow, SettingSection, settingRowLabelId } from './SettingRow'
+import { GroupNotice, SettingRow, settingRowLabelId } from './SettingRow'
 
 const st = (key: string, values?: Record<string, unknown>) =>
   translate(`settings.${key}`, { ns: 'dialogs', ...(values ?? {}) })
 
+/** 菜单里的「复制完整路径」：菜单项没地方改口说「已复制」，回执走状态条 */
+async function copyText(text: string) {
+  try {
+    await navigator.clipboard.writeText(text)
+    useUiStore.getState().setStatus(msg('settings.copied', undefined, 'dialogs'), 'done')
+  } catch {
+    /* 剪贴板不可用：什么都不说，不谎报已复制 */
+  }
+}
+
 /**
- * 项目与路径。
+ * 项目与路径。四组：项目 → Python 与运行 → 位置 → 写回源图。
  *
- * 三处改动都来自审计 T40 / 说明文字专项补查：
+ * 几条来自审计 T40 / 说明文字专项补查 / 2026-10-07 设计审计 §9.1：
  *
- * 1. **路径要能核实。** 改动前每条路径是一行 `truncate` 的绝对路径，被截掉的
- *    恰好是末尾——而末尾那一级才是人认得出的那个名字。现在默认只显示末级
- *    目录，完整路径按需展开、旁边可复制（`PathValue`）。
- * 2. **默认值由控件表达。** 「目录留空 = 使用默认位置」原本是问号里的一句话；
- *    现在输入框下面直接写着这一刻真正会写到哪儿，桌面版还给系统文件夹选择器，
- *    设过之后多一个「恢复默认」。
- * 3. **开关按结果命名。** 「项目只读」这个名字比它管的范围大得多——它只关掉
- *    「写回原始文件」那条路径，画布编辑与导出照常。而且它是个反向开关：关着
- *    的时候旁边写「允许写回原始文件」，用户得在脑子里做一次否定。现在开关就叫
- *    「允许写回原始文件」，关掉时那句副作用常驻。
+ * 1. **路径要能核实，但现状只放文字。** 默认只显示末级目录（人认得出的那一级，`dirTail`，悬停给全文）；
+ *    完整路径与复制收进行尾 ⋯，「显示完整路径」在这一行下面展开一条整行宽的 fill 行。此前现状槽里是一颗
+ *    28px 的展开钮 + 一颗复制钮，两条目录行打开编辑器时整行跳 36px。
+ * 2. **默认值由控件表达。** 「目录留空 = 使用默认位置」原本是问号里的一句话；现在现状直接写着这一刻真正会
+ *    写到哪儿，点「更改…」才在 fill 行展开输入框（桌面版多一颗系统选择器），「恢复默认」在 ⋯ 里——没设过时
+ *    停用并说为什么。标签不再是指向未挂载输入框的 `<label htmlFor>`。
+ * 3. **开关按结果命名。** 开关就叫「允许写回原始文件」；它管什么（覆盖原始文件、先备份）是**常驻说明**
+ *    ——开着关着都成立的事实，不随开关忽隐忽现；关掉时另有一条 warn Notice 说清「写回已停用」。
  *
  * **后端字段名一个字没动**（仍是 `allow_write_back`）：这里改的是界面表达。
  * 关掉之后写回按钮是真的停用（`inspector/UpdateSourceButton` 读同一个字段），
  * `settingsCopy.test.tsx` 里有一条用例把设置页的开关与那两个按钮连起来判。
- *
- * Session 6 的形态：**值在标题列、动作在控件列**。「当前项目」「可编辑来源」的值
- * （目录名 / 脚本数）是这一行的现状，落在标题下的 `status`；「切换项目…」「管理来源…」
- * 是明确的 secondary 动作，独占控件列。两条目录行同一语法（2026-09-15 打磨批次 B）：
- *
- * ```text
- * 导出位置                                     [恢复默认] [更改…]
- * 实际位置  › export  复制
- * （点「更改…」才在这里展开输入框）
- * ```
- *
- * 写回开关**开着**时也说一句（`status`，低调的一行，不套框）：修改可直接写入原始
- * 脚本——这是这一页唯一会碰用户源文件的设置；关着时那句副作用照旧是 InlineWarning。
  */
 export function ProjectSettings() {
   useTranslation('dialogs')
@@ -81,109 +77,187 @@ export function ProjectSettings() {
     }
   }
 
-  // 三段（2026-09-13 审计 B33）：项目 → 位置 → 写回源图。写回是会碰原始文件的
-  // 高影响能力，与导出位置同级并排时看不出它的分量；单独一段，说清会覆盖什么、
-  // 备份去哪
   return (
     <>
-    {/* 「只影响这个项目」删了（全面打磨 D37）：导航项与分区标题都已经叫「项目」，
-        这句说明只是把同一个词换个说法再写一遍 */}
-    <SettingSection title={st('project.sectionProject')}>
-      <SettingRow
-        label={st('project.current')}
-        status={<PathValue path={project?.figures_dir} name={st('project.current')} />}
-      >
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={() => {
-            useUiStore.getState().setSettingsOpen(false)
-            useProjectStore.getState().showPicker() // Picker 接管；可从最近项目回来
-          }}
-        >
-          {st('project.switch')}
-        </Button>
-      </SettingRow>
+      {/* 「只影响这个项目」删了（全面打磨 D37）：页名与分区标题都已经叫「项目」 */}
+      <FormSection title={st('project.sectionProject')}>
+        <FieldGroup>
+          <PathRow
+            label={st('project.current')}
+            path={project?.figures_dir}
+            anchor="project.current"
+            action={
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  useUiStore.getState().setSettingsOpen(false)
+                  useProjectStore.getState().showPicker() // Picker 接管；可从最近项目回来
+                }}
+              >
+                {st('project.switch')}
+              </Button>
+            }
+          />
+          {/* 「只有登记过的脚本，其产出的图才能进入图内编辑」是登记规则，属于
+              注册表对话框自己的事。这一行只报结果：有几个可编辑来源 */}
+          <SettingRow
+            label={st('project.scripts')}
+            data-settings-anchor="project.scripts"
+            status={
+              <>
+                {st('project.scriptCount', { count: project?.scripts ?? 0 })}
+                {(project?.scripts ?? 0) === 0 && st('project.noScriptsSuffix')}
+              </>
+            }
+          >
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                useUiStore.getState().setSettingsOpen(false)
+                useUiStore.getState().setRegistryOpen(true)
+              }}
+            >
+              {st('project.registry')}
+            </Button>
+          </SettingRow>
+        </FieldGroup>
+      </FormSection>
 
-      {/* 「只有登记过的脚本，其产出的图才能进入图内编辑」是登记规则，属于
-          注册表对话框自己的事。这一行只报结果：有几个可编辑来源 */}
-      <SettingRow
-        label={st('project.scripts')}
-        status={
-          <>
-            {st('project.scriptCount', { count: project?.scripts ?? 0 })}
-            {(project?.scripts ?? 0) === 0 && st('project.noScriptsSuffix')}
-          </>
-        }
-      >
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={() => {
-            useUiStore.getState().setSettingsOpen(false)
-            useUiStore.getState().setRegistryOpen(true)
-          }}
-        >
-          {st('project.registry')}
-        </Button>
-      </SettingRow>
-    </SettingSection>
+      {/* 运行设置（用哪个 Python、项目环境、脚本运行目录、记住的数据位置、脚本备份）：一组行，
+          由 `EngineEnvironmentCard` 渲染（「渲染环境」对话框用的是同一份） */}
+      <FormSection title={st('project.sectionRuntime')} data-settings-anchor="project.runtime">
+        <EngineEnvironmentCard />
+      </FormSection>
 
-    <SettingSection title={st('project.sectionLocations')}>
-      <DirectoryRow
-        id="setting-export-dir"
-        label={st('project.exportDir')}
-        value={exportDir}
-        onValue={setExportDir}
-        onCommit={(v) => void save({ export_dir: v })}
-        effective={project?.export_dir}
-      />
-      <DirectoryRow
-        id="setting-backup-dir"
-        label={st('project.backupDir')}
-        value={backupDir}
-        onValue={setBackupDir}
-        onCommit={(v) => void save({ backup_dir: v })}
-        effective={project?.backup_dir}
-      />
-    </SettingSection>
+      <FormSection title={st('project.sectionLocations')}>
+        <FieldGroup>
+          <DirectoryRow
+            id="setting-export-dir"
+            anchor="project.exportDir"
+            label={st('project.exportDir')}
+            value={exportDir}
+            onValue={setExportDir}
+            onCommit={(v) => void save({ export_dir: v })}
+            effective={project?.export_dir}
+          />
+          <DirectoryRow
+            id="setting-backup-dir"
+            anchor="project.backupDir"
+            label={st('project.backupDir')}
+            value={backupDir}
+            onValue={setBackupDir}
+            onCommit={(v) => void save({ backup_dir: v })}
+            effective={project?.backup_dir}
+          />
+        </FieldGroup>
+      </FormSection>
 
-    {/* 运行设置（用哪个 Python / 渲染环境、脚本运行目录，及在飞 PR 往这张卡里加的
-        记住的数据位置、脚本备份）原在「诊断」页；整张卡搬过来、不改卡的内部 */}
-    <SettingSection title={st('project.sectionRuntime')}>
-      <EngineEnvironmentCard />
-    </SettingSection>
-
-    <SettingSection title={st('project.sectionWriteBack')}>
-      {/* 副作用那句话（覆盖什么、备份去哪）从分区说明降到行的 `status`（全面打磨 D37，§13
-          「开关开着时的低调提醒是 status」）：它只在写回真的开着时成立，常驻在分区标题下面
-          的话，关掉写回的人也要读一遍一件不会发生的事 */}
-      <SettingRow
-        label={st('project.allowWriteBack')}
-        status={allowWriteBack ? st('project.writeBackDesc') : undefined}
-        controlId="setting-allow-write-back"
-      >
-        <Toggle
-          aria-labelledby={settingRowLabelId('setting-allow-write-back')}
-          id="setting-allow-write-back"
-          checked={allowWriteBack}
-          onChange={(v) => void save({ allow_write_back: v })}
-        />
-      </SettingRow>
-      {/* 副作用一句话，常驻——它决定「写回原始文件」这条会碰磁盘的能力在不在 */}
-      {!allowWriteBack && <InlineWarning>{st('project.writeBackOffHint')}</InlineWarning>}
-
-      {error && <InlineWarning tone="danger">{error}</InlineWarning>}
-    </SettingSection>
+      <FormSection title={st('project.sectionWriteBack')}>
+        <FieldGroup>
+          {/* 它管什么（覆盖原始文件、先备份到上面的位置）是常驻说明：开着关着都成立 */}
+          <SettingRow
+            label={st('project.allowWriteBack')}
+            description={st('project.writeBackDesc')}
+            controlId="setting-allow-write-back"
+            data-settings-anchor="project.writeBack"
+          >
+            <Toggle
+              aria-labelledby={settingRowLabelId('setting-allow-write-back')}
+              id="setting-allow-write-back"
+              checked={allowWriteBack}
+              onChange={(v) => void save({ allow_write_back: v })}
+            />
+          </SettingRow>
+          {/* 关着时那句副作用常驻——它决定「写回原始文件」这条会碰磁盘的能力在不在 */}
+          {!allowWriteBack && (
+            <GroupNotice tone="warn" data-write-back-off>
+              {st('project.writeBackOffHint')}
+            </GroupNotice>
+          )}
+          {error && <GroupNotice tone="danger">{error}</GroupNotice>}
+        </FieldGroup>
+      </FormSection>
     </>
   )
 }
 
 /**
- * 一个目录设置（2026-09-15 打磨批次 B，行语法 L1 / L2）：值在标题列、动作在控件列——
- * 标题下面一行是**这一刻真正会用的位置**，控件列是「更改…」；点开才在标题列下方展开
- * 输入框（桌面版多一颗系统选择器），设过之后控件列多一颗「恢复默认」。此前两条目录
- * 各占一个整行宽的空输入框，只为了表达「留空 = 默认」。
+ * 「路径 + 动作」一行的公共部分：现状 = 末级目录（文字，悬停给全文），行尾 ⋯ 里是「显示完整路径」与「复制
+ * 完整路径」（+ 调用方的额外项），完整路径展开在 fill 行。
+ */
+function PathRow({
+  label,
+  path,
+  anchor,
+  action,
+  extraMenu,
+  status,
+  below,
+}: {
+  label: string
+  path?: string | null
+  anchor: string
+  /** 控件列里 ⋯ 之前的那一颗（「切换项目…」「更改…」） */
+  action?: ReactNode
+  extraMenu?: ReactNode
+  /** 现状前缀（「实际位置」）；缺省只写目录名 */
+  status?: ReactNode
+  below?: ReactNode
+}) {
+  const [showFull, setShowFull] = useState(false)
+  const tail = path ? dirTail(path) : '—'
+  return (
+    <SettingRow
+      label={label}
+      data-settings-anchor={anchor}
+      status={
+        <span className="flex min-w-0 items-center gap-1.5">
+          {status}
+          <span data-path-tail className="min-w-0 truncate font-mono" title={path ?? undefined}>
+            {tail}
+          </span>
+        </span>
+      }
+      below={
+        showFull || below ? (
+          <div className="flex min-w-0 flex-col gap-2">
+            {showFull && path && (
+              <p data-path-full className="break-all font-mono text-xs leading-snug text-ink-3">
+                {path}
+              </p>
+            )}
+            {below}
+          </div>
+        ) : undefined
+      }
+    >
+      {action}
+      <Menu
+        align="end"
+        width={220}
+        trigger={
+          <IconButton label={st('project.pathActions', { name: label })} iconSize="sm" data-path-menu>
+            <Ellipsis size={ICON_SIZE.sm} aria-hidden />
+          </IconButton>
+        }
+      >
+        <MenuItem icon={Eye} disabled={!path} onSelect={() => setShowFull((v) => !v)}>
+          {showFull ? st('project.hideFullPath') : st('project.showFullPath', { name: label })}
+        </MenuItem>
+        <MenuItem icon={Copy} disabled={!path} onSelect={() => path && void copyText(path)}>
+          {st('project.copyPath', { name: label })}
+        </MenuItem>
+        {extraMenu}
+      </Menu>
+    </SettingRow>
+  )
+}
+
+/**
+ * 一个目录设置（行语法 L1 / L2）：现状是**这一刻真正会用的位置**，控件列「更改…」+ ⋯（恢复默认 / 显示完整路径 /
+ * 复制）；点「更改…」才在 fill 行展开输入框（桌面版多一颗系统选择器）。
  *
  * 输入框留着不是为了对称：浏览器模式没有原生选择器（`pickDirectory()` 在那里
  * 返回 null），手敲路径是那条路上唯一的改法。所以「选择…」只在桌面版渲染——
@@ -191,6 +265,7 @@ export function ProjectSettings() {
  */
 function DirectoryRow({
   id,
+  anchor,
   label,
   value,
   onValue,
@@ -198,6 +273,7 @@ function DirectoryRow({
   effective,
 }: {
   id: string
+  anchor: string
   label: string
   /** 用户设过的值（空 = 用默认） */
   value: string
@@ -209,66 +285,65 @@ function DirectoryRow({
   const [editing, setEditing] = useState(false)
   const editorId = `${id}-editor`
   return (
-    <SettingRow
+    <PathRow
       label={label}
-      controlId={id}
-      status={
-        <span className="flex min-w-0 flex-col">
-          <span className="flex min-w-0 items-center gap-1.5">
-            {st('project.effectivePath')}
-            <PathValue path={effective} name={label} />
-          </span>
-          <Reveal open={editing}>
-            <span id={editorId} className="flex min-w-0 items-center gap-1.5 pb-1 pt-1.5">
-              <TextInput
-                id={id}
-                value={value}
-                autoFocus
-                onChange={(e) => onValue(e.target.value)}
-                onBlur={() => onCommit(value)}
-                placeholder={st('project.dirPlaceholder')}
-                className="min-w-0 flex-1"
-              />
-              {isDesktop() && (
-                <IconButton
-                  variant="secondary"
-                  label={st('project.chooseFolder')}
-                  onClick={async () => {
-                    const picked = await pickDirectory(label)
-                    if (picked == null) return // 取消不是错误
-                    onValue(picked)
-                    onCommit(picked)
-                  }}
-                >
-                  <FolderOpen size={ICON_SIZE.md} aria-hidden />
-                </IconButton>
-              )}
-            </span>
-          </Reveal>
-        </span>
-      }
-    >
-      {value !== '' && (
+      path={effective}
+      anchor={anchor}
+      status={<span className="shrink-0">{st('project.effectivePath')}</span>}
+      action={
         <Button
-          variant="ghost"
+          variant="secondary"
           size="sm"
-          onClick={() => {
+          aria-expanded={editing}
+          aria-controls={editing ? editorId : undefined}
+          onClick={() => setEditing((v) => !v)}
+        >
+          {st('project.change')}
+        </Button>
+      }
+      extraMenu={
+        <MenuItem
+          icon={RotateCcw}
+          disabled={value === ''}
+          reason={value === '' ? st('project.alreadyDefault') : undefined}
+          onSelect={() => {
             onValue('')
             onCommit('')
           }}
         >
           {st('project.useDefault')}
-        </Button>
-      )}
-      <Button
-        variant="secondary"
-        size="sm"
-        aria-expanded={editing}
-        aria-controls={editing ? editorId : undefined}
-        onClick={() => setEditing((v) => !v)}
-      >
-        {st('project.change')}
-      </Button>
-    </SettingRow>
+        </MenuItem>
+      }
+      below={
+        editing ? (
+          <span id={editorId} className="flex min-w-0 items-center gap-1.5">
+            <TextInput
+              id={id}
+              value={value}
+              autoFocus
+              aria-label={label}
+              onChange={(e) => onValue(e.target.value)}
+              onBlur={() => onCommit(value)}
+              placeholder={st('project.dirPlaceholder')}
+              className="min-w-0 flex-1"
+            />
+            {isDesktop() && (
+              <IconButton
+                variant="secondary"
+                label={st('project.chooseFolder')}
+                onClick={async () => {
+                  const picked = await pickDirectory(label)
+                  if (picked == null) return // 取消不是错误
+                  onValue(picked)
+                  onCommit(picked)
+                }}
+              >
+                <FolderOpen size={ICON_SIZE.md} aria-hidden />
+              </IconButton>
+            )}
+          </span>
+        ) : undefined
+      }
+    />
   )
 }

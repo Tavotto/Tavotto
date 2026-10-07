@@ -389,6 +389,12 @@ interface UiState extends Persisted {
   setCanvasPref: (patch: Partial<Persisted>) => void
   setShowRulers: (v: boolean) => void
   setShowGrid: (v: boolean) => void
+  /**
+   * 设置 › 通用「界面看起来不对？」：本机的界面偏好（侧栏开合 / 宽度 / 固定、标尺网格、吸附、
+   * 命令面板最近项……`Persisted` 那一整份）**当场**回到默认并写回本机——此前只删掉存储里的那一份，
+   * 要用户自己刷新才生效，而在刷新之前的任何一次 persist 又会把旧值写回去（2026-10-07 设计审计 §9.1）。
+   */
+  resetLayoutPrefs: () => void
   setStatus: (
     msg: UiMessage | null,
     tone?: StatusTone,
@@ -638,6 +644,20 @@ export const useUiStore = create<UiState>((set, get) => ({
   },
   setShowRulers: (showRulers) => {
     set({ showRulers })
+    persist(get())
+  },
+  resetLayoutPrefs: () => {
+    prefOpen = { left: DEFAULTS.leftOpen, right: DEFAULTS.rightOpen }
+    const s = get()
+    // 两侧开合按此刻的窗口裁一次（与开机读偏好同一条规矩：偏好是默认值，排布跟着窗口走）
+    const layout = s.layout
+    const open =
+      layout === 'narrow'
+        ? { leftOpen: DEFAULTS.leftOpen, rightOpen: false }
+        : layout === 'medium' && DEFAULTS.leftOpen && DEFAULTS.rightOpen
+          ? { leftOpen: false, rightOpen: true }
+          : { leftOpen: DEFAULTS.leftOpen, rightOpen: DEFAULTS.rightOpen }
+    set({ ...DEFAULTS, ...open })
     persist(get())
   },
   setShowGrid: (showGrid) => {
