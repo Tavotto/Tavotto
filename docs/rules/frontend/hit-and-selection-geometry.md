@@ -192,6 +192,17 @@
   沿 `inset_of` 走完嵌套的插图，连同插图里挪过的后代与插图的随行色条轴。
   看护 `canvas/dragCoverage.test.tsx`、`e2e/drag-coverage.spec.ts`。
 
+- **翻转 / 旋转面板上的图内几何只有一个变换（#832 / #833 评审，2026-10-07）**：PanelView 画这张图是
+  `lib/panelTransform` 的 `panelContentTransform`——先在内容空间翻转、再绕中心旋转。叠在图上、或把屏幕位移
+  折回内容的每一处都从同一份取，不许只认旋转：覆盖层（`ElementBoxes` / `PreviewLines` 的 `<g transform>`）走
+  `canvas/elementGeometry.elementOverlayTransform`（= `panelTransformSvg`）；页面 mm 上的元素框与位移
+  （`MeasureChip`、问题标记该接的也是它）走 `elementRectOnPage` / `elementDeltaOnPage`；点选（PanelView `frac`）、
+  指针拖动（`contentDelta`）、方向键（`nudge.ts` 的 `toFrac`）走 `pageToContentVec`；画布标注吸图内中心线
+  （`elementSnapCandidates`）走 `contentToPageVec`。只认旋转的后果：翻转面板上选中框停在镜像处、点到的是
+  镜像处的元素、往右拖 / 按 → 元素在画面上往左走。图内拖动的吸附与混排对齐仍在旋转 / 翻转时整个关掉（上面 ⑤）。
+  看护 `canvas/flippedElementOverlay.test.tsx`（真 PanelView + OverlaySvg，两份 transform 字符串各自解析比对）、
+  `lib/panelTransform.test.ts`、`canvas/measureChip.test.tsx`。
+
 ## 速查表原要点（2026-09-25 迁入，#608）
 
 `web/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。

@@ -4,7 +4,7 @@ import { perfCount } from '@/perf/core'
 import { t as translate } from '@/i18n'
 import type { Manifest, ManifestElement } from '@/lib/api'
 import { flipY, type Rect4 } from '@/lib/axesLayout'
-import { geomTarget, panelFullRect, positionOf } from '@/lib/elementGeom'
+import { geomTarget, positionOf } from '@/lib/elementGeom'
 import { boundsOf, visualBounds, type Rect } from '@/lib/geometry'
 import { formatMm } from '@/lib/units'
 import { useDocumentStore } from '@/store/documentStore'
@@ -12,8 +12,9 @@ import { useInteractionStore } from '@/store/interactionStore'
 import { useDisplayedExactManifest } from '@/store/mountedSvgStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
-import { panelRotation, rotateVec, type PanelObject } from '@/types/document'
+import type { PanelObject } from '@/types/document'
 import { mmToPx, mmToViewX, mmToViewY, useViewportStore } from '@/store/viewportStore'
+import { elementDeltaOnPage, elementRectOnPage } from './elementGeometry'
 
 /** 改的是大小的那几种拖动：芯片说 W × H；移动说对象的 X, Y；方向键微调说这一段挪了多少（Δ） */
 const SIZE_KINDS = new Set(['resize', 'draw', 'crop', 'endpoint'])
@@ -162,12 +163,12 @@ type ElementPreview = { boxes: Record<string, Rect4>; group?: Rect4 } | null
  *
  * 与 `ElementBoxes` 的 `resolve` 同一套取法：元素取它的几何落点（`geomTarget`：位图落在宿主子图上），选中的组
  * 展开成成员；框优先取 `elementPreview` 里的（子图 / 成组平移发布的，**已钳位**），否则权威 bbox 叠上
- * `gidDrag` 的分数位移。分数框（top-origin）按 `panelFullRect` 落到内容坐标，再绕面板中心转到面板当前的
- * 朝向（只有直角，转完仍是轴对齐的框）。
+ * `gidDrag` 的分数位移。分数框落到页面走 `canvas/elementGeometry.elementRectOnPage`——与选中框、画布画这张图
+ * 同一个变换（先翻转再旋转）；翻转过的面板上不跟着翻，芯片就贴到元素的镜像位置上去了（#832 评审）。
  *
  * 挪了的量取主选（最后一个有预览的目标）：`elementPreview` 的框减去它的起手框——子图与成组平移的起手框是
  * 它的 position（`axesMove` / `alignEntries` 同一个 `positionOf`），其余是 bbox——或直接是 `gidDrag` 的位移；
- * 内容分数向量换回页面 mm（`nudge.ts` 的 `toFrac` 的逆）。一个目标都解析不出来时回 null。
+ * 内容分数向量经同一个变换换回页面 mm（`elementDeltaOnPage`）——报的是元素在页面上看得见的挪动方向。一个目标都解析不出来时回 null。
  */
 function figureNudgeGeometry(
   panel: PanelObject,
@@ -176,10 +177,6 @@ function figureNudgeGeometry(
   gidDrag: ElementDrag,
   preview: ElementPreview,
 ): { anchor: Rect; delta: { dx: number; dy: number } | null } | null {
-  const full = panelFullRect(panel)
-  const rot = panelRotation(panel)
-  const cx = panel.x + panel.w / 2
-  const cy = panel.y + panel.h / 2
   const targets = new Map<string, ManifestElement>()
   const add = (gid: string) => {
     const el = manifest.elements.find((e) => e.gid === gid)
@@ -207,16 +204,12 @@ function figureNudgeGeometry(
       box = [box[0] + drag.dfx, box[1] + drag.dfy, box[2], box[3]]
       moved = [drag.dfx, drag.dfy]
     }
-    const w = box[2] * full.w
-    const h = box[3] * full.h
-    const [ox, oy] = rotateVec(full.x + box[0] * full.w + w / 2 - cx, full.y + box[1] * full.h + h / 2 - cy, rot)
-    const [rw, rh] = rot === 90 || rot === 270 ? [h, w] : [w, h]
-    rects.push({ x: cx + ox - rw / 2, y: cy + oy - rh / 2, w: rw, h: rh })
+    rects.push(elementRectOnPage(panel, box))
   }
   const anchor = boundsOf(rects)
   if (!anchor) return null
   if (!moved) return { anchor, delta: null }
-  const [dx, dy] = rotateVec(moved[0] * full.w, moved[1] * full.h, rot)
+  const [dx, dy] = elementDeltaOnPage(panel, moved[0], moved[1])
   return { anchor, delta: { dx, dy } }
 }
 
