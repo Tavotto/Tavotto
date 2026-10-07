@@ -42,6 +42,7 @@ import { SEVERITIES, type Severity } from '@/lib/profile'
 import { severityLabel, subjectName } from '@/lib/validationText'
 import type { ValidationIssue } from '@/lib/validation'
 import { useDocumentStore } from '@/store/documentStore'
+import { yieldsCanvasShortcuts } from '@/store/gestureCoordinator'
 import { toCatalog, useProfileStore } from '@/store/profileStore'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { useUiStore } from '@/store/uiStore'
@@ -247,6 +248,8 @@ export function ProblemPanel() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'F8' || e.metaKey || e.ctrlKey || e.altKey || e.defaultPrevented) return
+      // 面板挂在模态框底下时，对话框（含其中的输入框）里按 F8 不许走后面的清单（Codex #832）
+      if (yieldsCanvasShortcuts(e.target)) return
       e.preventDefault()
       stepRef.current(e.shiftKey ? -1 : 1)
     }
@@ -258,15 +261,18 @@ export function ProblemPanel() {
   const roam = (e: React.KeyboardEvent) => {
     const rows = [...(listRef.current?.querySelectorAll<HTMLElement>(ROAM_TARGETS) ?? [])]
     if (!rows.length) return
-    const at = rows.findIndex((r) => r === document.activeElement)
+    // 只认从行主按钮上发出的：尾随格里的「修复」/ ⓘ 冒上来的 ↑↓ 不归这里管——此前 at = -1，
+    // 焦点被甩回第一行（Codex #832）
+    const at = rows.findIndex((r) => r === e.target)
+    if (at < 0) return
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-      const next = at < 0 ? 0 : at + (e.key === 'ArrowDown' ? 1 : -1)
+      const next = at + (e.key === 'ArrowDown' ? 1 : -1)
       if (next < 0 || next >= rows.length) return
       e.preventDefault()
       rows[next].focus()
       return
     }
-    if ((e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') || at < 0) return
+    if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return
     const row = rows[at]
     const state = row.getAttribute('aria-expanded')
     if (e.key === 'ArrowRight' && state === 'false') {

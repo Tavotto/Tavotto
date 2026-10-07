@@ -366,6 +366,10 @@ function LayerRow({
           e.stopPropagation()
           setEditing(true)
         } else if (e.key === 'Escape') {
+          // 这一下只清选区：不拦的话它接着冒到窗口级 useKeyboard，图内编辑态还开着时再退一次
+          // 选中元素 / 图内编辑（换左栏页签不结束那一段，Codex #832）
+          e.preventDefault()
+          e.stopPropagation()
           useSelectionStore.getState().clear()
         }
       }}

@@ -102,7 +102,7 @@
 - **元素树与图层树是 ARIA 树（2026-10-07 设计审计 §10.3）**：`role="tree"`，每行 `aria-level` / `aria-posinset` /
   `aria-setsize`；每行一份 `ui/RowMenu`（⋯ / 右键 / ⇧F10，行有焦点时 ⋯ 进 Tab 顺序；开菜单不改选区）。元素行的 ⌫ / Delete
   与画布一样只隐藏、不反向显示，所以菜单只在「隐藏」上标 ⌫，「恢复显示」不标（Codex #832）。图层行的键位：
-  Enter = 只选这一个（主操作，此前是改名）· F2 改名 · ⌥↑↓ 改层级 · Esc 清选区；拖放落点是 `dropLineClass`。元素树的
+  Enter = 只选这一个（主操作，此前是改名）· F2 改名 · ⌥↑↓ 改层级 · Esc 清选区（这一下就此为止：拦下、不再冒到窗口级去退图内编辑，Codex #832）；拖放落点是 `dropLineClass`。元素树的
   「只看这一支」是搜索行里的一枚 chip（`data-element-isolate`，× 退出），不再是一条横幅；`ElementTree` 有 `chrome`
   （`drawer` 缺省 / `bare`：别处借用时搜索行自己留边，playground 侧栏用它）。
 - **元素树的父级只有 `roles/hierarchy.structuralParent` 一份（ADR 0102）**：先认 manifest 的显式

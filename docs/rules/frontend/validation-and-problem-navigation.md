@@ -108,7 +108,7 @@ preflight.runSpec()      规则求值（两份求值器，golden vectors 对齐�
   `data-issue-row[data-issue-rule][data-issue-object]`。③ 逐项游标
   `uiStore.problemCursor`：定位后清单**留在原地**（`enterElementEdit(id, { leftTab:
   'keep' })`，元素树不顶掉左栏），当前行 `aria-current` + 选中底与 600（`listRowClass` 的选中态，**不画左竖条**）
-  + 尾随格常亮出「修复」，底部上一项 / 下一项（**F8 / ⇧F8 同一个动作**，一支走完接着走下一支）；那条修好消失后
+  + 尾随格常亮出「修复」，底部上一项 / 下一项（**F8 / ⇧F8 同一个动作**，一支走完接着走下一支；焦点在输入框 / 对话框里时按 `yieldsCanvasShortcuts` 让位，Codex #832）；那条修好消失后
   「下一项」指向**顶上来的那条**，不跳回开头。指着一行时画布上那个对象描一道悬停轮廓（`uiStore.issueHover` →
   `canvas/IssueOverlay`）——行 / 卡片只经 `problemTree.useIssueHover()` 写它，撤一律**比对后再清**
   （`releaseIssueHover`：对象身份即主人，被别的行顶掉的不动）；行被修好 / 筛掉 / 换文档卸载时不发
