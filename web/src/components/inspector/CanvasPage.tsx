@@ -4,6 +4,7 @@ import { ArrowLeftRight, ExternalLink, LayoutGrid, Trash2 } from '@/components/u
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { formatMm } from '@/lib/units'
 import { onExportDefaultsHydrated, readExportDefaults } from '@/lib/exportDefaults'
+import { hasRaster } from '@/lib/exportRequest'
 import { msg, t as translate, type UiMessage } from '@/i18n'
 import { cn, MOD } from '@/lib/utils'
 import { clearGuides, removeGuide, setPageSetup, setPageSize } from '@/store/actions'
@@ -100,6 +101,7 @@ export function CanvasPage() {
   const [, onHydrated] = useReducer((n: number) => n + 1, 0)
   useEffect(() => onExportDefaultsHydrated(onHydrated), [])
   const exportDefaults = readExportDefaults()
+  const exportFormatsText = exportDefaults.formats.map((f) => f.toUpperCase()).join(' · ')
 
   return (
     <>
@@ -426,10 +428,10 @@ export function CanvasPage() {
           <span className="min-w-0 truncate">{cv('export')}</span>
           <span className="min-w-0 truncate text-right text-ink-3">
             <span className="sr-only">, </span>
-            {cv('exportSummary', {
-              formats: exportDefaults.formats.map((f) => f.toUpperCase()).join(' · '),
-              dpi: exportDefaults.dpi,
-            })}
+            {/* ppi 只对位图格式有意义：默认只有 PDF / EPS 时不报 ppi（与设置页、导出对话框同一判据 hasRaster，Codex #829 P2） */}
+            {hasRaster(exportDefaults.formats)
+              ? cv('exportSummary', { formats: exportFormatsText, dpi: exportDefaults.dpi })
+              : exportFormatsText}
           </span>
           <span aria-hidden className="flex w-5 justify-center text-ink-3">
             <ExternalLink size={ICON_SIZE.xs} />

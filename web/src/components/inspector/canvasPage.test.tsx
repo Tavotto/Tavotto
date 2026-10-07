@@ -187,6 +187,31 @@ describe('CanvasPage', () => {
     expect(summary()).toContain('TIFF · 1200 ppi')
   })
 
+  it.each([
+    [['pdf'], 'PDF', false],
+    [['pdf', 'eps'], 'PDF · EPS', false],
+    [['png'], 'PNG · 900 ppi', true],
+    [['pdf', 'png'], 'PDF · PNG · 900 ppi', true],
+  ])('导出摘要只在有位图格式时报 ppi：%j（Codex #829 P2，判据 hasRaster）', async (formats, text, raster) => {
+    const summary = () => container.querySelector('[data-canvas-export-summary]')!.textContent ?? ''
+    const prev = globalThis.fetch
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({ defaults: { dpi: '900', formats, withProof: false, strictInspection: false } }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      )) as typeof fetch
+    try {
+      await act(async () => {
+        await hydrateExportDefaults()
+      })
+    } finally {
+      globalThis.fetch = prev
+    }
+    // 先验落点：取回的格式确实进了摘要
+    expect(summary()).toContain(text)
+    expect(summary().includes('ppi')).toBe(raster)
+  })
+
   it('收起时也报得出网格状态；页面尺寸的组头不再复述下面那两个框', () => {
     // 「辅助显示」收着：摘要里要带网格间距，不能只说一个「网格」
     expect(disclosure('辅助显示').getAttribute('aria-expanded')).toBe('false')
