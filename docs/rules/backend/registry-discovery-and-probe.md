@@ -117,6 +117,7 @@
   `GET /api/engine/dependencies`。**读候选线索**用 `pool.peek_worker_python`（`project_refresh._target_parser` 与
   `script_inventory` 已改用它：每次刷新不再复检记住的解释器）。已登记的唯一例外：宿主 `ast.parse` 真的判了语法错误时，
   非扫描路径的刷新 / 清单仍会用记住的解释器做一次**静态**再解析（`-I -B`，FO12），扫描从不走。
+- **链接判别先于类型判别**：带预算的两种遍历只用 `lstat` / `DirEntry.stat(follow_symlinks=False)` 的元数据判目录；符号链接与 Windows name-surrogate 重解析点（含 junction）不查目标，目录递归前再核一次。`symlinked_dir` 保留协议名，文案覆盖文件与目录；非路径替身的云盘 tag 保留占位文件判据。普通文件系统并发替换的最后一次检查到实际读取之间仍有竞态，扫描不声称提供操作系统级的原子 no-follow 打开。
 - **不写用户项目**（`open_project` 缺注册表时起草并写注册表是既有 deliberate-boundary，不在这里）；只有 Tavotto 自己的
   内存账。报告里没有绝对路径：脚本 / 素材 / 账本用项目相对 POSIX 路径，项目外的环境只给不透明 `id`
   （`userenvs.env_id`），异常原文（含路径）不出门。

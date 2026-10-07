@@ -170,7 +170,7 @@ safe worker 的 `sys.stdin` **就是协议管道**（`worker.main()` 从它逐�
    这批产物有转录就**按转录重放**（`ReplayAnswers.transcript`），不读之后被同步 / 手改的项目答案文件；上下文对不上
    就重新问（有界面）或 `script_needs_input`（`reason=transcript_mismatch`）。没有转录（T08 之前的产物、超出上限）
    回到上下文匹配的项目答案。新的成功执行整条替换转录；失败的执行不动它。答案管理里改 / 删答案 = 明确要用新答案
-   重算：作废该脚本的转录（`_after_script_answers_changed`）。写回 verify 的一次性重放不写转录。
+   重算：只作废该答案所属运行配置的转录（`_after_script_answers_changed`）；显式删除整个脚本的答案才作废全部配置。写回 verify 的一次性重放不写转录。
 3. **口令**（修订 §一 getpass 行与 §四 隐私）。界面用密码框（`type=password`、不自动补全），交出去就清空输入框；
    答案不进 store、不进事件、不进 worker.log（原有）、**不进 worker 记账**：build 响应 / `last_build_script_inputs` /
    执行转录里那一问只有 `secret: true`、没有值。重放到它（冷重放或写回 verify）时**重新问**；没有能答题的界面就
@@ -206,7 +206,9 @@ digest，而是把摘要**移到本机侧表** `<data_dir>/scriptanswer-contexts
   下一次写答案时文件里就不再有它。
 * 换机器 / 侧表丢了 / 答案被别处改了：本机没有对得上的上下文 → `recheck=legacy_answer`，旧答案只当建议、重新问
   （安全方向）。答案管理里改答案：侧表随之改绑新答案（复用语义与 §九 相同）；删答案：侧表一并删。
+* 答案管理公开投影保留不透明 `run_config`，以 (脚本, 运行配置, 序号) 区分行和改 / 删目标；省略配置只表示无参数旧条目，绝不匹配全部配置。重跑按该引用取回原 argv，引用丢失 / 敏感值已清除就报错，不读取参数编辑器里无关的草稿。
 * 侧表有界（每项目 `MAX_CONTEXTS` 条，超出丢最旧，丢了只是再问一次）；不进项目包、诊断、遥测。
+* 敏感 argv 运行继续不记住答案，也不读写持久执行转录；明确的热态 verify 仍按内存记录重放。提示以带密钥的 `prompt_id` 比对，输出 / 前答上下文也用该运行密钥保护，只在内存里取输出片段，公开会合载荷不含原提示与输出。相同占位提示下菜单变了仍拒绝旧答案；口令仍只留 `secret` 标记。
 
 看护：`tests/test_input_transcript.py`（`…never_carries_a_guessable_context_digest` / `…from_another_machine…` /
 `…written_into_the_project_file_is_not_trusted…` / `…synced_answer_does_not_inherit…` / `…keep_the_local_contexts_in_step`）。

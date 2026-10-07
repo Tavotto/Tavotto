@@ -224,6 +224,12 @@
     },
     {
       "from": "tavotto/engine/worker.py",
+      "to": "tavotto/engine/runtime.py",
+      "scope": "module",
+      "via": "bridgeboot.load_engine_modules(str(HERE), _ENGINE_MODULES)"
+    },
+    {
+      "from": "tavotto/engine/worker.py",
       "to": "tavotto/engine/bridgeboot.py",
       "scope": "module",
       "via": "importlib.util.spec_from_file_location(..., bridgeboot.py)"

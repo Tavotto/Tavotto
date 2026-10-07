@@ -239,7 +239,9 @@ input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/pr
 - **数据缺失**：执行线程把 `WorkerError.missing_input`（ADR 0106 的指认载荷）存进 `PreparationResult.missing_input`（**不进**
   `to_payload()`、回执与诊断快照）；当前修订的尝试以错误收场且带它时，报告多 `requirements[kind=input_location, origin=last_attempt,
   blocking=False]`。回答走既有 `POST /api/engine/input-remap`（用户亲手指认，同名不同内容不就近猜），之后 `recheck`：
-  `_fingerprint` 含 `inputremap.generation`，改指表变了 = 新 `config_revision`，旧失败不再是当前的。
+  计划私有字段 `input_remap_generation` 冻结检查时的代次，`_fingerprint` 用这份快照；改指表变了 = 新
+  `config_revision`，旧失败不再是当前的。认领 `run` 与执行线程起跑前均经 `preparation.stale_reason` 核对代次，
+  不一致就 `preparation_plan_stale / data_binding_changed`、`executed=False`，必须重新检查。
 - **输出参数**（P03）：schema 里 `role=output_file`（只来自 `FileType('w'|'a'|'x'|…)`）的个数进 `run` 动作的
   `impact.script_writes = {declared_output_arguments, cwd_mode}`（不含参数名与路径）。Tavotto 从不替用户加 overwrite / force 一类 token。
 - 看护：`tests/test_script_args_session.py`（假 pool）、`tests/test_script_args_e2e.py`（真 worker：A01 表单路径 = 原始 token 路径、

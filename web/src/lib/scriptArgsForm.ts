@@ -119,7 +119,7 @@ export const looksLikeOption = (schema: ScriptArgsSchema, token: string): boolea
   return true
 }
 
-const negatedFlags = (arg: ScriptArgument) =>
+export const negatedFlags = (arg: ScriptArgument) =>
   arg.action === 'boolean_optional'
     ? arg.flags.filter((f) => f.startsWith('--')).map((f) => `--no-${f.slice(2)}`)
     : []
@@ -210,7 +210,7 @@ const scan = (schema: ScriptArgsSchema, tokens: string[]): Scan => {
       }
       continue
     }
-    const eq = t.startsWith('--') ? t.indexOf('=') : -1
+    const eq = t.indexOf('=')
     if (eq > 0) {
       const named = exact.get(t.slice(0, eq))
       if (named && !named.negated && named.arg.arity === 1) {
@@ -366,7 +366,7 @@ export const groupProblems = (
 
 const preferredFlag = (arg: ScriptArgument) => arg.flags.find((f) => f.startsWith('--')) ?? arg.flags[0]
 
-/** 一次新出现写成哪几个 token：值像选项（`-x` / 被当成选项的负数）时写成 `--k=-x` / `-k-x`，保证仍是这个参数的值。 */
+/** 值像选项时用等号，短选项同样如此：`-k-x` 可能是另一个完整选项，`-k=-x` 才是值。 */
 const encodeOption = (
   schema: ScriptArgsSchema,
   arg: ScriptArgument,
@@ -374,7 +374,7 @@ const encodeOption = (
 ): string[] | EditError => {
   const flag = preferredFlag(arg)
   if (values.length === 1 && looksLikeOption(schema, values[0])) {
-    return flag.startsWith('--') ? [`${flag}=${values[0]}`] : [`${flag}${values[0]}`]
+    return [`${flag}=${values[0]}`]
   }
   if (values.some((v) => looksLikeOption(schema, v) || v === '--')) return 'value_looks_like_option'
   return [flag, ...values]
@@ -416,6 +416,8 @@ export const applyEdit = (schema: ScriptArgsSchema, tokens: string[], edit: Form
       const cleared = removeOccurrences(tokens, occs)
       if (want === 'default') return { ok: true, tokens: cleared }
       const flag = want === 'on' ? preferredFlag(arg) : negatedFlags(arg)[0]
+      // argparse 的短名 BooleanOptionalAction 没有反向选项，不能把“关”冒充成脚本默认。
+      if (flag === undefined) return { ok: false, error: 'not_editable' }
       const at = optionInsertAt(cleared, readTokens(schema, cleared))
       return { ok: true, tokens: splice(cleared, at, at, [flag]) }
     }
@@ -434,12 +436,16 @@ export const applyEdit = (schema: ScriptArgsSchema, tokens: string[], edit: Form
   const last = occs[occs.length - 1]
   if (last && last.complete) {
     if (last.style === 'equals' || last.style === 'attached') {
-      const glue = last.style === 'equals' ? '=' : ''
+      const value = edit.values[0]
+      // 保留安全的粘连形状；空值、等号开头或会被认成另一个完整选项的形状必须消歧。
+      const needsEquals = last.style === 'equals' || value === '' || value.startsWith('=') ||
+        looksLikeOption(schema, value) || indexOptions(schema).exact.has(`${last.flag}${value}`)
+      const glue = needsEquals ? '=' : ''
       return { ok: true, tokens: splice(tokens, last.start, last.end, [`${last.flag}${glue}${edit.values[0]}`]) }
     }
     if (edit.values.some((v) => looksLikeOption(schema, v) || v === '--')) {
       if (arg.arity !== 1) return { ok: false, error: 'value_looks_like_option' }
-      const glued = last.flag.startsWith('--') ? `${last.flag}=${edit.values[0]}` : `${last.flag}${edit.values[0]}`
+      const glued = `${last.flag}=${edit.values[0]}`
       return { ok: true, tokens: splice(tokens, last.start, last.end, [glued]) }
     }
     return { ok: true, tokens: splice(tokens, last.start, last.end, [last.flag, ...edit.values]) }

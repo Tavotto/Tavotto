@@ -942,3 +942,210 @@ def test_the_scan_event_is_a_kind_the_frontend_listens_for():
     assert '"project.scan"' in (Path(m.__file__).read_text(encoding="utf-8")) or "project.scan" in (
         Path(projscan.__file__).read_text(encoding="utf-8")
     )
+
+
+@pytest.mark.parametrize("stop", ["cancel", "time", "entries"])
+def test_stopped_scan_does_not_start_later_evidence_stages(tmp_path, monkeypatch, stop):
+    root = _project(tmp_path)
+    _write(root, "plot.py", DYNAMIC)
+    budget = scanbudget.Budget()
+
+    def stop_in_walk(*args, **kwargs):
+        if stop == "cancel":
+            budget.cancel = lambda: True
+        elif stop == "time":
+            budget.clock = lambda: budget._t0 + budget.limits.max_seconds + 1
+        else:
+            budget.entries = budget.limits.max_entries + 1
+        assert budget.stop_reason() is not None
+        return []
+
+    def expensive(*args, **kwargs):
+        pytest.fail("stopped scan started another evidence stage")
+
+    monkeypatch.setattr(engine_discover, "iter_all_scripts", stop_in_walk)
+    monkeypatch.setattr(projscan.project_refresh, "iter_assets", expensive)
+    monkeypatch.setattr(projscan, "environment_evidence", expensive)
+    monkeypatch.setattr(projscan, "dependency_evidence", expensive)
+    report = projscan.scan(root, budget=budget)
+    assert report["state"] == ("cancelled" if stop == "cancel" else "partial")
+    assert {c["id"]: c for c in report["checks"]}["environment"]["code"] == "scan_incomplete"
+    assert {c["id"]: c for c in report["checks"]}["dependencies"]["code"] == "scan_incomplete"
+
+
+def test_precancelled_scan_never_reads_registry_or_starts_traversal(tmp_path, monkeypatch):
+    def expensive(*args, **kwargs):
+        pytest.fail("pre-cancelled scan performed filesystem discovery")
+
+    monkeypatch.setattr(projscan, "_registered_scripts", expensive)
+    monkeypatch.setattr(engine_discover, "iter_all_scripts", expensive)
+    monkeypatch.setattr(projscan.project_refresh, "iter_assets", expensive)
+    monkeypatch.setattr(projscan, "environment_evidence", expensive)
+    monkeypatch.setattr(projscan, "dependency_evidence", expensive)
+    report = projscan.scan(tmp_path, cancel=lambda: True)
+    assert report["state"] == "cancelled"
+    assert report["environment"]["checked"] is False
+    assert report["dependencies"]["checked"] is False
+    assert {c["id"]: c for c in report["checks"]}["scripts"]["status"] == "partial"
+
+
+def test_stopped_script_walk_does_not_parse_previously_found_paths(tmp_path, monkeypatch):
+    path = _write(tmp_path, "plot.py", DYNAMIC)
+    budget = scanbudget.Budget()
+
+    def walk(*args, **kwargs):
+        budget.entries = budget.limits.max_entries + 1
+        budget.stop_reason()
+        return [path]
+
+    def inspect(*args, **kwargs):
+        pytest.fail("exhausted scan parsed another script")
+
+    monkeypatch.setattr(engine_discover, "iter_all_scripts", walk)
+    monkeypatch.setattr(engine_discover, "inspect_script", inspect)
+    assert projscan.scan(tmp_path, budget=budget)["state"] == "partial"
+
+
+def test_cancelled_asset_stage_keeps_targets_without_probing_their_scopes(tmp_path, monkeypatch):
+    _write(tmp_path, "plot.py", DYNAMIC)
+    cancel = threading.Event()
+
+    def is_file(path):
+        pytest.fail("stopped scan searched for dependency scope markers")
+
+    def assets(*args, **kwargs):
+        cancel.set()
+        monkeypatch.setattr(Path, "is_file", is_file)
+        return []
+
+    monkeypatch.setattr(projscan.project_refresh, "iter_assets", assets)
+    report = projscan.scan(tmp_path, cancel=cancel.is_set)
+    assert report["state"] == "cancelled"
+    assert report["targets"][0]["script"] == "plot.py"
+    assert report["targets"][0]["scope"] is None
+    assert report["targets"][0]["scope_checked"] is False
+
+
+def test_scope_marker_reads_stop_between_files(tmp_path, monkeypatch):
+    cancel = threading.Event()
+    calls = []
+
+    def is_file(path):
+        calls.append(path)
+        cancel.set()
+        return False
+
+    monkeypatch.setattr(Path, "is_file", is_file)
+    budget = scanbudget.Budget(cancel=cancel.is_set)
+    assert projscan._scope_of(tmp_path, "nested/plot.py", {}, budget) is None
+    assert len(calls) == 1
+    assert budget.stopped == scanbudget.ISSUE_CANCELLED
+
+
+def test_cancellation_in_environment_evidence_prevents_dependency_discovery(tmp_path, monkeypatch):
+    cancel = threading.Event()
+
+    def environment(*args):
+        cancel.set()
+        return {"verified": False, "remembered": None, "candidates": [], "truncated": False}
+
+    def dependencies(*args):
+        pytest.fail("cancellation during environment discovery still read dependencies")
+
+    monkeypatch.setattr(projscan, "environment_evidence", environment)
+    monkeypatch.setattr(projscan, "dependency_evidence", dependencies)
+    report = projscan.scan(tmp_path, cancel=cancel.is_set)
+    assert report["state"] == "cancelled"
+    assert report["dependencies"]["checked"] is False
+
+
+def test_expiry_in_the_last_evidence_stage_is_reflected_in_the_final_report(tmp_path, monkeypatch):
+    budget = scanbudget.Budget()
+
+    def dependencies(*args):
+        budget.clock = lambda: budget._t0 + budget.limits.max_seconds + 1
+        return {"files": [], "requirements": 0, "evaluated": False}
+
+    monkeypatch.setattr(projscan, "dependency_evidence", dependencies)
+    report = projscan.scan(tmp_path, budget=budget)
+    assert report["state"] == "partial"
+    assert any(issue["code"] == scanbudget.ISSUE_TIME for issue in report["issues"])
+
+
+@pytest.mark.parametrize("vanished_name", ["temporary.txt", "vanished.pdf"])
+@pytest.mark.parametrize("strict", [False, True])
+def test_asset_scan_vanished_entry_does_not_erase_unrelated_assets(
+    tmp_path, monkeypatch, vanished_name, strict
+):
+    """目录已枚举而单项消失：保留其它素材/子目录，未知 PDF 不释放同名位图。"""
+    from contextlib import contextmanager
+
+    from tavotto.engine import project_refresh as engine_refresh
+
+    root = _project(tmp_path)
+    _write(root, "stable.pdf", "%PDF")
+    _write(root, "child/nested.pdf", "%PDF")
+    _write(root, "vanished.png", "raster")
+    _write(root, vanished_name, "temporary")
+    real_scandir = os.scandir
+
+    class VanishedEntry:
+        name = vanished_name
+
+        def stat(self, *, follow_symlinks=True):
+            raise FileNotFoundError(2, "entry vanished", str(root / vanished_name))
+
+    @contextmanager
+    def scandir(path):
+        with real_scandir(path) as entries:
+            rows = [
+                VanishedEntry() if Path(path) == root and entry.name == vanished_name else entry
+                for entry in entries
+            ]
+        yield iter(rows)
+
+    monkeypatch.setattr(os, "scandir", scandir)
+    budget = scanbudget.Budget()
+    if strict:
+        with pytest.raises(FileNotFoundError):
+            engine_refresh.iter_assets(root, strict=True, budget=budget)
+        return
+    found = engine_refresh.iter_assets(root, budget=budget)
+    expected = {(root / "stable.pdf", "pdf"), (root / "child/nested.pdf", "pdf")}
+    if vanished_name != "vanished.pdf":
+        expected.add((root / "vanished.png", "raster"))
+    assert set(found) == expected
+    assert any(row.get("path") == vanished_name for row in budget.issues())
+
+
+def test_registered_plot_script_plus_unknown_script_is_not_already_connected(tmp_path):
+    """线程 PRRT_kwDOT51-YM6p52HC：已登记的 fig.py + 语法无法识别的 weird.py。后者仍是未登记的
+    可选目标（未核验），不能因为前者已连接就报 already_connected、收起提示。"""
+    root = _project(tmp_path)
+    _write(root, "fig.py", PLOT.format(stem="fig"))
+    # T11：「已连接」要求登记的图此刻真有素材可编辑——只在注册表里不算；给它放一份同名原件
+    (root / "fig.png").write_bytes(b"\x89PNG\r\n")
+    _write(root, "weird.py", "def broken(:\n")
+    _write(
+        root,
+        "tavotto_registry.json",
+        json.dumps(
+            {
+                "version": 1,
+                "scripts": {
+                    "fig.py": {"entry": "__main__", "cost": "light", "notes": "", "stems": ["fig"]}
+                },
+            }
+        ),
+    )
+
+    report = projscan.scan(root)
+
+    roles = {t["script"]: t["role"] for t in report["targets"]}
+    assert roles == {"fig.py": "plot", "weird.py": "unknown"}
+    assert report["target_choice"] == "ambiguous" and report["default_target"] is None
+    assert (report["phase"], report["outcome"]["kind"]) == (
+        "awaiting_configuration",
+        "choose_target",
+    )
+    assert [a["kind"] for a in report["actions"]] == ["rescan", "choose_target"]

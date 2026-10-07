@@ -23,6 +23,14 @@ def _dump(ns):
 """
 
 SCRIPTS = {
+    "short_options": """import argparse
+p = argparse.ArgumentParser()
+p.add_argument("-k", default="none")
+p.add_argument("-k-x", "-kitty", dest="collision", action="store_true")
+p.add_argument("-f", action=argparse.BooleanOptionalAction, default=True)
+"""
+    + DUMP
+    + "_dump(p.parse_args())\n",
     "fft6": """import argparse
 p = argparse.ArgumentParser(description="FFT")
 p.add_argument("--freq", type=float, required=True, help="Hz")
@@ -109,6 +117,96 @@ def mixed(**kw):
 
 
 CASES = [
+    {
+        "name": "short_attached_ordinary_value_cannot_select_an_exact_option",
+        "script": "short_options",
+        "before": ["-kold"],
+        "edits": [{"op": "set", "arg": "k", "values": ["itty"]}],
+        "after": ["-k=itty"],
+        "namespace": {"k": "itty", "collision": False, "f": True},
+        "missing": [],
+    },
+    {
+        "name": "short_option_edit_preserves_other_exact_option",
+        "script": "short_options",
+        "before": ["-k-x"],
+        "edits": [{"op": "set", "arg": "k", "values": ["-x"]}],
+        "after": ["-k-x", "-k=-x"],
+        "namespace": {"k": "-x", "collision": True, "f": True},
+        "missing": [],
+    },
+    {
+        "name": "short_new_option_like_value",
+        "script": "short_options",
+        "before": [],
+        "edits": [{"op": "set", "arg": "k", "values": ["-x"]}],
+        "after": ["-k=-x"],
+        "namespace": {"k": "-x", "collision": False, "f": True},
+        "missing": [],
+    },
+    {
+        "name": "short_replace_separate_option_like_value",
+        "script": "short_options",
+        "before": ["-k", "old"],
+        "edits": [{"op": "set", "arg": "k", "values": ["-x"]}],
+        "after": ["-k=-x"],
+        "namespace": {"k": "-x", "collision": False, "f": True},
+        "missing": [],
+    },
+    {
+        "name": "short_replace_attached_option_like_value",
+        "script": "short_options",
+        "before": ["-kold"],
+        "edits": [{"op": "set", "arg": "k", "values": ["-x"]}],
+        "after": ["-k=-x"],
+        "namespace": {"k": "-x", "collision": False, "f": True},
+        "missing": [],
+    },
+    {
+        "name": "short_equals_value_is_read_without_separator",
+        "script": "short_options",
+        "before": ["-k=-x"],
+        "edits": [{"op": "set", "arg": "k", "values": ["next"]}],
+        "after": ["-k=next"],
+        "namespace": {"k": "next", "collision": False, "f": True},
+        "missing": [],
+    },
+    {
+        "name": "short_replace_attached_empty_value",
+        "script": "short_options",
+        "before": ["-kold"],
+        "edits": [{"op": "set", "arg": "k", "values": [""]}],
+        "after": ["-k="],
+        "namespace": {"k": "", "collision": False, "f": True},
+        "missing": [],
+    },
+    {
+        "name": "short_replace_attached_equals_value",
+        "script": "short_options",
+        "before": ["-kold"],
+        "edits": [{"op": "set", "arg": "k", "values": ["=x"]}],
+        "after": ["-k==x"],
+        "namespace": {"k": "=x", "collision": False, "f": True},
+        "missing": [],
+    },
+    {
+        "name": "short_boolean_on",
+        "script": "short_options",
+        "before": [],
+        "edits": [{"op": "flag", "arg": "f", "value": "on"}],
+        "after": ["-f"],
+        "namespace": {"k": "none", "collision": False, "f": True},
+        "missing": [],
+    },
+    {
+        "name": "short_boolean_default",
+        "script": "short_options",
+        "before": ["-f"],
+        "edits": [{"op": "flag", "arg": "f", "value": "default"}],
+        "after": [],
+        "namespace": {"k": "none", "collision": False, "f": True},
+        "missing": [],
+    },
     # --- fft6：六必填，从空草稿逐项填满（A01）
     {
         "name": "fft6_fill_all",
@@ -330,6 +428,13 @@ CASES = [
 ]
 # 位置参数 / 只读等错误路径：TS 侧专测（没有 after / namespace）
 ERRORS = [
+    {
+        "name": "short_boolean_cannot_force_off",
+        "script": "short_options",
+        "before": ["-f"],
+        "edit": {"op": "flag", "arg": "f", "value": "off"},
+        "error": "not_editable",
+    },
     {
         "name": "positional_option_like_needs_dashes",
         "script": "mixed",

@@ -44,6 +44,7 @@ import importlib.util
 import json
 import os
 import shutil
+import subprocess
 import sys
 import sysconfig  # 模块层：项目目录进 sys.path 之前就拿住标准库这一份（见 `_INTERPRETER_PACKAGE_DIRS`）
 import threading
@@ -218,6 +219,7 @@ _ENGINE_MODULES = (
     "figsession",
     "wireproto",
     "scriptinput",
+    "runtime",
 )
 _PKG = bridgeboot.load_engine_modules(str(HERE), _ENGINE_MODULES)
 
@@ -235,6 +237,8 @@ figsession = _PKG.figsession
 wireproto = _PKG.wireproto
 # 脚本里的 input() / sys.stdin / getpass 桥接（ADR 0099）：每一问经会话缓存目录里的文件会合交给父进程
 scriptinput = _PKG.scriptinput
+# Windows 平台判断与 CREATE_NO_WINDOW 的唯一出处（只依赖标准库，装进私有包不拖闭包）
+runtime = _PKG.runtime
 
 #: 本 worker 的常驻会话。`_patched_savefig` 是模块级函数（要顶掉
 #: `Figure.savefig` 这个类属性），拿不到 Worker 实例，只能走模块级引用。
@@ -489,6 +493,102 @@ def _real_output():
         _intercept = True
 
 
+_PRIVATE_OUTPUT_NOTICE = "[sensitive run: script output omitted]\n"
+
+
+# A separate interpreter is essential: native extensions can write while holding
+# the worker's GIL, which would deadlock a Python-thread drainer on a full pipe.
+# No user bytes/keys are in this program or its command line. It owns no secrets.
+_PRIVATE_OUTPUT_DRAINER = r"""
+import os, sys, threading, time
+parent = int(sys.argv[1])
+done = threading.Event()
+if os.name == "nt":
+    import ctypes
+    kernel = ctypes.windll.kernel32
+    kernel.OpenProcess.argtypes = [ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong]
+    kernel.OpenProcess.restype = ctypes.c_void_p
+    kernel.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+    kernel.WaitForSingleObject.restype = ctypes.c_ulong
+    handle = kernel.OpenProcess(0x100000, False, parent)
+    def alive():
+        return bool(handle) and kernel.WaitForSingleObject(handle, 0) == 258
+else:
+    def alive():
+        return os.getppid() == parent
+
+def drain():
+    last = -float("inf")
+    try:
+        while os.read(0, 8192):
+            now = time.monotonic()
+            if now - last >= 0.25:
+                os.write(1, b"[sensitive run: script output omitted]\n")
+                last = now
+    except OSError:
+        pass
+    finally:
+        done.set()
+
+threading.Thread(target=drain, daemon=True).start()
+while not done.wait(0.25):
+    if not alive():
+        os._exit(0)
+"""
+
+
+def _stop_output_drainer(proc) -> None:
+    if proc is None:
+        return
+    if proc.poll() is None:
+        proc.terminate()
+    try:
+        proc.wait(timeout=2)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait(timeout=2)
+
+
+def _suppress_sensitive_output():
+    """Discard fd 1/2 in bounded chunks, preserving content-free output activity.
+
+    Protection lasts through deferred draws, native writes and inherited child
+    output. The helper checks parent liveness even if a user subprocess keeps a
+    pipe writer open; normal worker shutdown also explicitly terminates/reaps it.
+    """
+    sys.stdout.flush()
+    sys.stderr.flush()
+    proc = subprocess.Popen(
+        [sys.executable, "-I", "-S", "-u", "-c", _PRIVATE_OUTPUT_DRAINER, str(os.getpid())],
+        stdin=subprocess.PIPE,
+        stdout=sys.stderr,
+        stderr=subprocess.DEVNULL,
+        close_fds=True,
+        creationflags=runtime.CREATE_NO_WINDOW,
+    )
+    try:
+        os.dup2(proc.stdin.fileno(), 1)
+        os.dup2(proc.stdin.fileno(), 2)
+        if os.name == "nt":
+            # CRT descriptors and Win32 standard handles are separate; Popen and
+            # native libraries can inherit/use the latter directly.
+            import ctypes  # noqa: PLC0415
+            import msvcrt  # noqa: PLC0415
+
+            set_handle = ctypes.windll.kernel32.SetStdHandle
+            set_handle.argtypes = [ctypes.c_ulong, ctypes.c_void_p]
+            set_handle.restype = ctypes.c_int
+            for kind, fd in ((-11, 1), (-12, 2)):
+                if not set_handle(kind, msvcrt.get_osfhandle(fd)):
+                    raise OSError("Cannot protect sensitive script output")
+    except BaseException:
+        _stop_output_drainer(proc)
+        raise
+    finally:
+        proc.stdin.close()
+    return proc
+
+
 class Worker(wireproto.V1Handler):
     """safe 档执行侧：**怎么把用户脚本跑起来**（沙盒 / 守卫 / argv / 拦截）。
 
@@ -523,9 +623,14 @@ class Worker(wireproto.V1Handler):
         #: 数据改指（ADR 0106）：用户指认过的只读改指表（`--input-remap`，父进程按项目给），
         #: 与本次 build 里落空的只读打开——`missing_input` 靠它说出缺的是哪个。
         self.input_remap = _parse_remap(getattr(args, "input_remap", None))
-        #: T03：用户给的脚本 argv（`--script-argv-json`，父进程按运行配置给）与它的本机引用。没有 = 旧行为（空）。
-        self.script_argv = _parse_script_argv(getattr(args, "script_argv_json", None))
+        #: Only the opaque reference is on the command line. Values arrive over
+        #: the private request pipe before the first execution, then stay frozen.
+        self.script_argv: list[str] = []
         self.run_config = str(getattr(args, "run_config", "") or "")
+        self.sensitive_argv = False
+        self._input_key = ""
+        self._private_output = None
+        self._run_loaded = False
         self._input_misses = figcapture.InputMisses()
         SESSION = SafeSession(self.out_dir, self.preview_dpi)
         SESSION.frame_project_root = str(self.figures_dir)
@@ -533,6 +638,79 @@ class Worker(wireproto.V1Handler):
             project_root=self.figures_dir, execution_root=self.sandbox, metadata=_SAVEFIG_METADATA
         )
         super().__init__(SESSION)
+
+    def configure_run(self, payload: dict) -> None:
+        run = payload.get("run")
+        if run is None:
+            if self.run_config and not self._run_loaded:
+                raise ProtocolError("bad_request", "Run configuration payload is required")
+            return
+        if (
+            not isinstance(run, dict)
+            or not self.run_config
+            or run.get("config_id") != self.run_config
+            or not isinstance(run.get("argv"), list)
+            or not run["argv"]
+            or not all(isinstance(a, str) and "\x00" not in a for a in run["argv"])
+            or not isinstance(run.get("sensitive"), bool)
+        ):
+            raise ProtocolError("bad_request", "Invalid run configuration payload")
+        input_key = run.get("input_key", "")
+        if run["sensitive"] and (
+            not isinstance(input_key, str)
+            or len(input_key) != 64
+            or any(c not in "0123456789abcdef" for c in input_key)
+        ):
+            raise ProtocolError("bad_request", "Private input identity key is required")
+        if self._run_loaded:
+            if (
+                run["argv"] != self.script_argv
+                or run["sensitive"] != self.sensitive_argv
+                or input_key != self._input_key
+            ):
+                raise ProtocolError("bad_request", "Run configuration cannot change in a worker")
+            return
+        if run["sensitive"]:
+            self._private_output = _suppress_sensitive_output()
+        self.script_argv = list(run["argv"])
+        self.sensitive_argv = run["sensitive"]
+        self._input_key = input_key
+        self._run_loaded = True
+
+    def diagnostic_response(self, resp: dict) -> dict:
+        """Exceptions can quote/escape/transform argv; omit their free-form text.
+
+        Keep structural parse evidence for UI recovery. Ordinary diagnostics and
+        successful figure data are unchanged; this is not a sandbox for explicit
+        writes performed by the user's own script.
+        """
+        if not self.sensitive_argv:
+            return resp
+        if resp.get("ok"):
+            # Setters/custom artists can turn a caught exception into warnings
+            # on a successful render/export. Preserve failure cardinality for
+            # writeback verification, but never forward their free-form text.
+            if resp.get("warnings"):
+                return {
+                    **resp,
+                    "warnings": [_PRIVATE_OUTPUT_NOTICE.strip() for _ in resp["warnings"]],
+                }
+            return resp
+        err = resp.get("error")
+        if isinstance(err, dict):
+            safe = {
+                k: err[k] for k in ("code", "retryable", "argv_count", "parse_kind") if k in err
+            }
+            safe.update(
+                message="Sensitive run failed; script diagnostics were omitted.",
+                traceback=_PRIVATE_OUTPUT_NOTICE.strip(),
+            )
+            return {**resp, "error": safe}
+        return {
+            **resp,
+            "error": "Sensitive run failed; script diagnostics were omitted.",
+            "traceback": _PRIVATE_OUTPUT_NOTICE.strip(),
+        }
 
     def select_artifact(self, context):
         try:
@@ -561,6 +739,7 @@ class Worker(wireproto.V1Handler):
         t_build = time.perf_counter()
         if self.built:
             return self._stems_summary()
+        self.configure_run({})
         self.out_dir.mkdir(parents=True, exist_ok=True)
         self.sandbox.mkdir(parents=True, exist_ok=True)
         # cwd：默认沙盒（写入边界）；项目级开关打开时是脚本自己所在的目录——
@@ -703,7 +882,10 @@ class Worker(wireproto.V1Handler):
             rel_script = self.script.name
         stdout_tail = scriptinput.StdoutTail(sys.stderr)
         channel = scriptinput.Channel(
-            self.out_dir / scriptinput.DIRNAME, rel_script, tail=stdout_tail
+            self.out_dir / scriptinput.DIRNAME,
+            rel_script,
+            tail=stdout_tail,
+            private_key=self._input_key,
         )
         channel.reset()
         self._input_channel = channel
@@ -911,6 +1093,7 @@ class Worker(wireproto.V1Handler):
         """
         if self.built:
             return
+        self.configure_run({})
         try:
             self.build(timings)
         except ProtocolError:
@@ -980,6 +1163,7 @@ class Worker(wireproto.V1Handler):
             "script_inputs": [
                 {
                     **{k: r.get(k) for k in ("index", "kind", "prompt", "context", "answer")},
+                    **({"prompt_id": r["prompt_id"]} if "prompt_id" in r else {}),
                     **({"secret": True} if r.get("secret") else {}),
                 }
                 for r in (self._input_channel.record if self._input_channel else [])
@@ -1004,20 +1188,6 @@ def _parse_remap(raw) -> list[dict]:
         return []
 
 
-def _parse_script_argv(raw) -> list[str]:
-    """`--script-argv-json` → token 列表。**坏了就启动失败**（不像改指表那样当没有）：丢掉参数去跑，
-    会用错参数产出一张看似正常的图。父进程只会给 `json.dumps(list[str])`。"""
-    if not raw:
-        return []
-    try:
-        data = json.loads(raw)
-    except ValueError as exc:
-        raise SystemExit(f"worker: --script-argv-json 不是合法 JSON: {exc}") from exc
-    if not isinstance(data, list) or not all(isinstance(a, str) for a in data):
-        raise SystemExit("worker: --script-argv-json 必须是字符串数组")
-    return data
-
-
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--script", required=True)
@@ -1028,8 +1198,7 @@ def main() -> None:
     ap.add_argument("--cwd", default=None)
     # ADR 0106：用户指认过的只读改指表（JSON 数组）；没有规则时不出现
     ap.add_argument("--input-remap", default=None)
-    # T03：脚本的 `sys.argv[1:]`（JSON 字符串数组）与产物身份用的本机运行配置引用；都只在用户给了参数时出现
-    ap.add_argument("--script-argv-json", default=None)
+    # Only the opaque identity is public; exact argv arrives over the request pipe.
     ap.add_argument("--run-config", default="")
     ap.add_argument("--entry", default="main")
     ap.add_argument("--preview-dpi", type=int, default=200)
@@ -1060,49 +1229,62 @@ def main() -> None:
     # 协议管道的引用在这里定死：build 期间 `sys.stdin` 会被换成给脚本用的桥接对象（ADR 0099），
     # 协议循环读的永远是这一个
     protocol_in = sys.stdin
-    for line in protocol_in:
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            req = json.loads(line)
-        except ValueError as exc:
-            # 连信封都解析不出来，无从判断对方说的是哪套协议：按 v1 的错误
-            # 形状回（request_id 只能是 null），至少 code 是可读的。
-            resp = wireproto.v1_error({}, ProtocolError("bad_request", f"JSON 解析失败: {exc}"))
-            sys.stdout.write(json.dumps(resp, ensure_ascii=False) + "\n")
-            sys.stdout.flush()
-            continue
-        try:
-            resp = wireproto.respond(worker, req, legacy=worker.handle)
-        except SystemExit:
-            break
-        except Exception as exc:  # noqa: BLE001 — 结构化返回，进程不退出
-            resp = {"ok": False, "error": str(exc), "traceback": traceback.format_exc()}
-        # `allow_nan=False`：**NaN / Infinity 不是 JSON**（RFC 8259），
-        # 而 Python 的 `json.dumps` 默认会把它们当字面量写出去、`json.loads`
-        # 也照收——于是 Python 渲染池一路绿灯，而 workerd（Rust serde_json）
-        # 严格拒收整帧、报「往协议管道里写了非 JSON 的内容」并重启会话。
-        # 同一份响应，两条控制面两个结果，而症状指向的是「协议错乱」，
-        # 与真实原因（某个包围盒是 inf）毫不相干。
-        #
-        # 几何那一层已经有总闸（`manifest._finite_geometry`），这里是**底线**：
-        # 将来别处再漏一个非有限值时，它变成一条**结构化错误**（两条控制面
-        # 表现一致、说得出是哪个字段），而不是一条只在其中一条上炸的坏帧。
-        try:
-            line = json.dumps(resp, ensure_ascii=False, default=_json_default, allow_nan=False)
-        except ValueError as exc:
-            line = json.dumps(
-                {
-                    "ok": False,
-                    "code": "non_finite_response",
-                    "error": f"响应里有非有限数值，无法编成合法 JSON: {exc}",
-                    "request_id": (req or {}).get("request_id") if isinstance(req, dict) else None,
-                },
-                ensure_ascii=False,
-            )
-        sys.stdout.write(line + "\n")
-        sys.stdout.flush()
+    # A private stream survives sensitive-session redirection of the public fd 1.
+    # It is non-inheritable, so user subprocesses only inherit the discard pipe.
+    protocol_fd = os.dup(sys.stdout.fileno())
+    os.set_inheritable(protocol_fd, False)
+    protocol_out = os.fdopen(protocol_fd, "w", encoding="utf-8", errors="replace")
+    try:
+        for line in protocol_in:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                req = json.loads(line)
+            except ValueError as exc:
+                # 连信封都解析不出来，无从判断对方说的是哪套协议：按 v1 的错误
+                # 形状回（request_id 只能是 null），至少 code 是可读的。
+                resp = wireproto.v1_error({}, ProtocolError("bad_request", f"JSON 解析失败: {exc}"))
+                resp = worker.diagnostic_response(resp)
+                protocol_out.write(json.dumps(resp, ensure_ascii=False) + "\n")
+                protocol_out.flush()
+                continue
+            try:
+                resp = wireproto.respond(worker, req, legacy=worker.handle)
+            except SystemExit:
+                break
+            except Exception as exc:  # noqa: BLE001 — 结构化返回，进程不退出
+                resp = {"ok": False, "error": str(exc), "traceback": traceback.format_exc()}
+            resp = worker.diagnostic_response(resp)
+            # `allow_nan=False`：**NaN / Infinity 不是 JSON**（RFC 8259），
+            # 而 Python 的 `json.dumps` 默认会把它们当字面量写出去、`json.loads`
+            # 也照收——于是 Python 渲染池一路绿灯，而 workerd（Rust serde_json）
+            # 严格拒收整帧、报「往协议管道里写了非 JSON 的内容」并重启会话。
+            # 同一份响应，两条控制面两个结果，而症状指向的是「协议错乱」，
+            # 与真实原因（某个包围盒是 inf）毫不相干。
+            #
+            # 几何那一层已经有总闸（`manifest._finite_geometry`），这里是**底线**：
+            # 将来别处再漏一个非有限值时，它变成一条**结构化错误**（两条控制面
+            # 表现一致、说得出是哪个字段），而不是一条只在其中一条上炸的坏帧。
+            try:
+                line = json.dumps(resp, ensure_ascii=False, default=_json_default, allow_nan=False)
+            except ValueError as exc:
+                line = json.dumps(
+                    {
+                        "ok": False,
+                        "code": "non_finite_response",
+                        "error": f"响应里有非有限数值，无法编成合法 JSON: {exc}",
+                        "request_id": (req or {}).get("request_id")
+                        if isinstance(req, dict)
+                        else None,
+                    },
+                    ensure_ascii=False,
+                )
+            protocol_out.write(line + "\n")
+            protocol_out.flush()
+    finally:
+        _stop_output_drainer(worker._private_output)
+        protocol_out.close()
 
 
 if __name__ == "__main__":

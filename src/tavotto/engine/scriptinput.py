@@ -28,6 +28,7 @@ from __future__ import annotations
 import builtins
 import contextlib
 import hashlib
+import hmac
 import io
 import json
 import os
@@ -215,10 +216,18 @@ class StdoutTail(io.TextIOBase):
 class Channel:
     """一次 build 的问答通道：发问、等答、记账。"""
 
-    def __init__(self, directory: str | os.PathLike, script: str, tail: StdoutTail | None = None):
+    def __init__(
+        self,
+        directory: str | os.PathLike,
+        script: str,
+        tail: StdoutTail | None = None,
+        *,
+        private_key: str = "",
+    ):
         self.dir = Path(directory)
         self.script = script
         self.tail = tail
+        self.private_key = private_key
         self.count = 0
         #: 本次 build 实际用到的每一问（build 响应的 `script_inputs`）。
         self.record: list[dict] = []
@@ -262,18 +271,34 @@ class Channel:
             return None
         self.count += 1
         index = self.count
-        prompt = clip_prompt(prompt)
+        # Private-run prompts retain a keyed identity without exposing argv in
+        # the disk rendezvous. Replay must compare the real question as well as
+        # its output/answer context, even though the displayed prompt is masked.
+        identity = {"prompt": clip_prompt(prompt)}
         context = context_digest(
-            kind, prompt, self.tail.segment() if self.tail is not None else "", self.record
+            kind,
+            identity["prompt"],
+            self.tail.segment() if self.tail is not None else "",
+            self.record,
         )
+        if self.private_key:
+            key = bytes.fromhex(self.private_key)
+            identity = {
+                "prompt": "[sensitive run: input prompt omitted]",
+                "prompt_id": hmac.new(key, prompt.encode("utf-8"), hashlib.sha256).hexdigest(),
+            }
+            context = "ctx1:" + hmac.new(key, context.encode("utf-8"), hashlib.sha256).hexdigest()
+        prompt = identity["prompt"]
         self._write_request(
             index,
             {
                 "index": index,
                 "kind": kind,
-                "prompt": prompt,
+                **identity,
                 "script": self.script,
-                "stdout_tail": self.tail.tail() if self.tail is not None else "",
+                "stdout_tail": self.tail.tail()
+                if self.tail is not None and not self.private_key
+                else "",
                 "context": context,
             },
         )
@@ -299,7 +324,7 @@ class Channel:
                 reply = None
                 break
             time.sleep(WORKER_POLL)
-        base = {"index": index, "kind": kind, "prompt": prompt, "context": context}
+        base = {"index": index, "kind": kind, **identity, "context": context}
         if not isinstance(reply, dict):
             self._log(f"[input] 第 {index} 问等待超时，按 EOF 处理\n")
             self.record.append({**base, "answer": None, "timed_out": True})

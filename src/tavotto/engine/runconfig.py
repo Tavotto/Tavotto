@@ -116,7 +116,7 @@ def validate_argv(raw) -> tuple[str, ...]:
     if any("\x00" in a for a in raw):
         raise InvalidArgv("argv 的 token 不能含 NUL 字符", reason="nul_character")
     if len(execspec.argv_wire(raw)) > execspec.MAX_ARGV_WIRE_CHARS:
-        raise InvalidArgv("argv 序列化后超出命令行长度上限", reason="too_long")
+        raise InvalidArgv("argv 序列化后超出载荷长度上限", reason="too_long")
     return tuple(raw)
 
 
@@ -268,7 +268,7 @@ def get(project_root: str | Path, config_id: str, *, script: str | None = None) 
 def selection(project_root: str | Path, config_id: str, *, script: str | None = None):
     """`get()` + 转成 pool 吃的 `execspec.RunSelection`。"""
     cfg = get(project_root, config_id, script=script)
-    return execspec.RunSelection(config_id=cfg.id, argv=cfg.argv or ())
+    return execspec.RunSelection(config_id=cfg.id, argv=cfg.argv or (), sensitive=cfg.sensitive)
 
 
 def selection_for(
@@ -279,7 +279,11 @@ def selection_for(
     `source` 只记「这份配置最初从哪个入口来」（`user` = 界面、`mcp` = Agent 经插件提交）：同一 (脚本, argv) 两个入口
     得到**同一个**引用（T10：GUI 与 MCP 同一份执行意图），它不进身份、不进池键。"""
     cfg = put(project_root, script, argv, sensitive=sensitive, source=source)
-    return None if cfg is None else execspec.RunSelection(config_id=cfg.id, argv=cfg.argv or ())
+    return (
+        None
+        if cfg is None
+        else execspec.RunSelection(config_id=cfg.id, argv=cfg.argv or (), sensitive=cfg.sensitive)
+    )
 
 
 def configs_of(project_root: str | Path, script: str) -> list[RunConfig]:
