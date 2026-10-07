@@ -344,7 +344,10 @@ jobs:
                tail -40 slow-collect.log
                exit 1 ;;
           esac
-          ${{ steps.venv.outputs.python }} -m pytest -m slow -q
+          # pytest 的退出码仍是这道门禁（上面的 set -o pipefail）：tee 只把同一份输出
+          # 留到失败诊断包，不另设一道收集门。
+          ${{ steps.venv.outputs.python }} -m pytest -m slow -q \
+              2>&1 | tee "$RUNNER_TEMP/slow-pytest.log"
 
       - name: 操作序列 harness 放宽种子（仅 nightly 及以上）
         # `tests/test_override_sequences.py` 默认 8 条种子 × 2 张图（PR / merge_group / 上面的
@@ -584,6 +587,7 @@ jobs:
             ${{ env.TAVOTTO_CI_STATE_ROOT }}/reports/*.json
             ${{ runner.temp }}/pytest-shard-*.log
             ${{ runner.temp }}/pytest-shard-*-junit.xml
+            ${{ runner.temp }}/slow-pytest.log
             ${{ runner.temp }}/pytest-shard-*-manifest.json
             ${{ runner.temp }}/seq-shard-*.log
             ${{ runner.temp }}/seq-shard-*-junit.xml

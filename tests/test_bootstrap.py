@@ -122,6 +122,143 @@ def test_install_reports_pip_failure(monkeypatch):
     assert "下载超时" in bootstrap.progress()["log"]
 
 
+def test_pip_failure_keeps_a_redacted_excerpt(monkeypatch):
+    """pip 非 0：日志尾巴是 stage=pip，用户看见的那句仍是「日志见下方」。"""
+    monkeypatch.setenv("TAVOTTO_PIP_EVIDENCE_SECRET", "envdump-secret")
+    monkeypatch.setattr(bootstrap, "find_base_python", lambda: "/usr/bin/python3")
+    data = str(config.data_dir())
+
+    def fake_run(cmd):
+        if "venv" in cmd:
+            bootstrap.venv_python().parent.mkdir(parents=True, exist_ok=True)
+            bootstrap.venv_python().write_text("#!/bin/sh\n")
+            return 0, ""
+        return (
+            1,
+            "ERROR: resolution impossible\n"
+            "https://user:secret@pypi.example/simple?token=secret\n"
+            f"{data}/worker-env/evidence-marker\n",
+        )
+
+    monkeypatch.setattr(bootstrap, "_run", fake_run)
+    out = bootstrap.install()
+    log = bootstrap.progress()["log"]
+    assert out == {"ok": False, "error": "安装 matplotlib 失败，日志见下方。"}
+    assert bootstrap.progress()["state"] == "failed"
+    assert "ERROR: resolution impossible" in log
+    assert log.rstrip().endswith("[bootstrap] stage=pip class=exit:1")
+    assert "pypi.example" in log and "<data>/worker-env/evidence-marker" in log
+    assert "secret" not in log and "token=" not in log and data not in log
+    assert "envdump-secret" not in log
+
+
+def test_venv_failure_keeps_a_redacted_excerpt(monkeypatch):
+    """venv 非 0：分类是 stage=venv，错误文案仍是「创建虚拟环境失败」。"""
+    monkeypatch.setenv("TAVOTTO_PIP_EVIDENCE_SECRET", "envdump-secret")
+    monkeypatch.setattr(bootstrap, "find_base_python", lambda: "/usr/bin/python3")
+    data = str(config.data_dir())
+
+    def fake_run(cmd):
+        return (
+            1,
+            "Error: venv creation failed\n"
+            "https://user:secret@pypi.example/simple?token=secret\n"
+            f"{data}/worker-env/evidence-marker\n",
+        )
+
+    monkeypatch.setattr(bootstrap, "_run", fake_run)
+    out = bootstrap.install()
+    log = bootstrap.progress()["log"]
+    assert out["ok"] is False and "创建虚拟环境失败" in out["error"]
+    assert bootstrap.progress()["state"] == "failed"
+    assert "Error: venv creation failed" in log
+    assert log.rstrip().endswith("[bootstrap] stage=venv class=exit:1")
+    assert "pypi.example" in log and "<data>/worker-env/evidence-marker" in log
+    assert "secret" not in log and "token=" not in log and data not in log
+    assert "envdump-secret" not in log
+
+
+def test_timeout_keeps_partial_output_and_not_the_argv(monkeypatch):
+    """真 _run：subprocess.run 抛 TimeoutExpired 时留下摘录，不留下命令行。"""
+    monkeypatch.setenv("TAVOTTO_PIP_EVIDENCE_SECRET", "envdump-secret")
+    monkeypatch.setattr(bootstrap, "find_base_python", lambda: "/usr/bin/python3")
+    data = str(config.data_dir())
+    timeouts: list[int | None] = []
+
+    def fake_run(cmd, **kwargs):
+        timeouts.append(kwargs.get("timeout"))
+        if "venv" in cmd:
+            bootstrap.venv_python().parent.mkdir(parents=True, exist_ok=True)
+            bootstrap.venv_python().write_text("#!/bin/sh\n")
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        raise subprocess.TimeoutExpired(
+            cmd,
+            kwargs.get("timeout", 0),
+            output=(
+                b"partial wheel listing\n"
+                b"https://user:secret@pypi.example/simple?token=secret\n"
+                + data.encode()
+                + b"/worker-env/evidence-marker\n"
+            ),
+            stderr="index stalled\n",
+        )
+
+    monkeypatch.setattr(bootstrap.subprocess, "run", fake_run)
+    out = bootstrap.install()
+    log = bootstrap.progress()["log"]
+    assert out == {"ok": False, "error": "安装 matplotlib 失败，日志见下方。"}
+    assert "partial wheel listing" in log and "index stalled" in log
+    assert "b'partial" not in log
+    assert log.rstrip().endswith("[bootstrap] stage=pip class=timeout")
+    assert "--disable-pip-version-check" not in log
+    assert bootstrap.INSTALL_TIMEOUT_S == 900
+    assert timeouts == [900, 900]
+    assert "pypi.example" in log and "<data>/worker-env/evidence-marker" in log
+    assert "secret" not in log and "token=" not in log and data not in log
+    assert "envdump-secret" not in log
+
+
+def test_import_failure_reads_the_probe_excerpt(monkeypatch):
+    """装完之后走真的 matplotlib_version / _probe；失败摘录来自那一次，不是再探一次。"""
+    monkeypatch.setenv("TAVOTTO_PIP_EVIDENCE_SECRET", "envdump-secret")
+    monkeypatch.setattr(bootstrap, "find_base_python", lambda: "/usr/bin/python3")
+    data = str(config.data_dir())
+    probes = 0
+
+    def fake_run(cmd):
+        if "venv" in cmd:
+            bootstrap.venv_python().parent.mkdir(parents=True, exist_ok=True)
+            bootstrap.venv_python().write_text("#!/bin/sh\n")
+        return 0, ""
+
+    def fake_probe(cmd, **kwargs):
+        nonlocal probes
+        probes += 1
+        return subprocess.CompletedProcess(
+            cmd,
+            1,
+            stdout="",
+            stderr=(
+                "ModuleNotFoundError: No module named 'matplotlib'\n"
+                "https://user:secret@pypi.example/simple?token=secret\n"
+                f"{data}/worker-env/evidence-marker\n"
+            ),
+        )
+
+    monkeypatch.setattr(bootstrap, "_run", fake_run)
+    monkeypatch.setattr(bootstrap.subprocess, "run", fake_probe)
+    out = bootstrap.install()
+    log = bootstrap.progress()["log"]
+    assert out["error"] == "装完仍然 import 不到 matplotlib。"
+    assert probes == 1
+    assert "ModuleNotFoundError: No module named 'matplotlib'" in log
+    assert log.rstrip().endswith("[bootstrap] stage=import class=import_failed")
+    assert config.worker_python() is None
+    assert "pypi.example" in log and "<data>/worker-env/evidence-marker" in log
+    assert "secret" not in log and "token=" not in log and data not in log
+    assert "envdump-secret" not in log
+
+
 def test_install_without_any_python_is_honest(monkeypatch):
     monkeypatch.setattr(bootstrap, "find_base_python", lambda: None)
     out = bootstrap.install()
@@ -144,7 +281,7 @@ def test_real_install_end_to_end(monkeypatch):
     if bootstrap.find_base_python() is None:
         pytest.skip("这台机器上没有可用来建 venv 的 Python")
     out = bootstrap.install()
-    assert out["ok"] is True, out
+    assert out["ok"] is True, f"{out}\n{bootstrap.progress()['log']}"
     assert (
         subprocess.run([out["python"], "-c", "import matplotlib"], capture_output=True).returncode
         == 0
