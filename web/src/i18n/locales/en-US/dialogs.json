@@ -1458,7 +1458,8 @@
     "zoomIn": "Zoom in",
     "zoomOut": "Zoom out",
     "zoomFit": "Fit",
-    "diffTitle": "Compared with the current canvas"
+    "diffTitle": "Compared with the current canvas",
+    "quickNameTitle": "Save this moment as a named point"
   },
   "onboarding": {
     "pause": "Pause tutorial",

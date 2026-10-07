@@ -207,3 +207,25 @@ describe('科学文本解释', () => {
 function mmPxOf(el: HTMLElement): number {
   return parseFloat(el.style.fontSize)
 }
+
+/**
+ * 编辑态的插入点与占位（2026-10-07 设计审计 §10.1）：插入点是界面的 accent，不跟正文颜色；空着时有一句占位，
+ * 只在 ::before 里（`data-placeholder`），不进正文。主语：编辑态那个 div 的内联 style 与 data 属性。
+ */
+describe('TextView 编辑态的插入点与占位', () => {
+  it('编辑时：caret 是 accent、带占位；不编辑时两样都没有', () => {
+    useDocumentStore.getState().silent((d) => {
+      d.objects.push(textObj())
+    })
+    const obj = () => useDocumentStore.getState().doc.objects[0] as TextObject
+    act(() => root.render(<TextView obj={obj()} />))
+    const el = () => container.querySelector<HTMLElement>('div')!
+    expect(el().style.caretColor).toBe('')
+    expect(el().dataset.placeholder).toBeUndefined()
+    act(() => useUiStore.setState({ editingTextId: 't1' }))
+    act(() => root.render(<TextView obj={obj()} />))
+    expect(el().style.caretColor).toBe('var(--color-accent)')
+    expect(el().dataset.placeholder).toBe('输入文字')
+    expect(el().textContent, '占位不进正文').toBe('')
+  })
+})

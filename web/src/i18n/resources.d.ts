@@ -1761,6 +1761,7 @@ export default interface Resources {
       "preview": "预览",
       "previewApproximate": "图内修改预览不可用，面板显示的是磁盘上的原图。",
       "previewTitle": "预览：{{time}} {{name}}",
+      "quickNameTitle": "把现在存为命名节点",
       "rename": "改名…",
       "restore": "恢复到这里",
       "restoreFailed": "恢复前没能先存下当前排版，这次没有恢复：{{error}}",
@@ -4671,6 +4672,7 @@ export default interface Resources {
       "exitTitle": "退出图内编辑，回到画布层（Esc）",
       "rulerUnit": "mm",
       "rulerUnitTitle": "标尺单位：毫米",
+      "textPlaceholder": "输入文字",
       "tryTutorial": "试用示例"
     },
     "status": {

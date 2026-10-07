@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/Button'
 import { TextInput } from '@/components/ui/Input'
@@ -39,6 +39,7 @@ function QuickBox() {
   const busyRef = useRef(false)
   busyRef.current = busy
   const close = () => useTimelineStore.getState().setNamingOpen(false)
+  const headingId = useId()
 
   // 关闭（Esc / 点外面 / 保存成功）后把焦点还给打开前的元素，键盘用户不落到 body。
   // 不用 `ui/Popover`：它必须有触发器、焦点还给触发器，而这个小框由快捷键 / 命令面板打开，
@@ -88,7 +89,7 @@ function QuickBox() {
     <div
       ref={boxRef}
       role="dialog"
-      aria-label={t('versions.save')}
+      aria-labelledby={headingId}
       data-timeline-quick-name
       onKeyDown={(e) => {
         if (e.key === 'Escape' && !busy) {
@@ -96,8 +97,22 @@ function QuickBox() {
           close()
         }
       }}
+      // 焦点离开小框（Tab 出去 / 点了别处的控件）就关，与点外面同一条规则（2026-10-07 设计审计 §10.1）；
+      // 在途时不关：名字还没落盘
+      onBlur={(e) => {
+        if (busyRef.current) return
+        const next = e.relatedTarget as Node | null
+        if (next && boxRef.current?.contains(next)) return
+        if (!next) return // 焦点去了 body（窗口失焦 / 点在空白）：点外面那条已经管了
+        close()
+      }}
+      // 多行浮动面板 = 圆角 12（浮动外观三档）
       className="absolute left-1/2 top-12 z-overlay w-[360px] max-w-[92vw] -translate-x-1/2 rounded-lg bg-surface p-3 shadow-pop"
     >
+      {/* 标题：说出这是在做什么（此前只有一个名字框和一颗「存为命名节点」，读屏只念得出按钮） */}
+      <p id={headingId} className="type-title mb-2 text-ink">
+        {t('versions.quickNameTitle')}
+      </p>
       <form
         className="flex flex-col gap-2"
         onSubmit={(e) => {

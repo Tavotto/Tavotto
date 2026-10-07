@@ -33,6 +33,7 @@ import { NumberField, TextArea } from '@/components/ui/Input'
 import { LegendPositionPicker } from '@/components/inspector/controls/LegendPositionPicker'
 import { effectiveOverride } from '@/lib/effectiveOverride'
 import { BOTTOM_SAFE } from './context-bar/position'
+import { trapTab } from '@/lib/focusTrap'
 
 /**
  * 右键快捷编辑：光标处的小弹层。
@@ -118,6 +119,12 @@ function ElementPopover({
   useEffect(() => {
     // Esc 走捕获阶段：全局快捷键里的 Esc 另有职责（退编辑态），这里要先接住
     const onKey = (e: KeyboardEvent) => {
+      // 焦点陷阱（2026-10-07 设计审计 §10.1）：Tab 在弹层里转圈，不掉回画布 / 页面后面那一串控件——
+      // 它是一个对话框（role=dialog），Tab 出去了用户就找不回来，Esc 也没人接
+      if (e.key === 'Tab') {
+        trapTab(e, ref.current)
+        return
+      }
       if (e.key !== 'Escape') return
       e.preventDefault()
       e.stopPropagation()
@@ -185,8 +192,11 @@ function Line({
   return (
     /* 行高 28：宪法第十四节「高度只有 28 与 24 两档，24 只给就近入口 / 筛选小片 / 角标」，
        这里是一整块可编辑的字段，不是角标（2026-09-15 打磨 M2） */
-    <div className="flex min-h-7 items-center gap-1.5 px-2 py-0.5" title={hint}>
-      <span className="w-11 shrink-0 truncate text-ink-2">{label}</span>
+    <div className="grid min-h-7 grid-cols-[4rem_minmax(0,1fr)] items-center gap-1.5 px-2 py-0.5" title={hint}>
+      {/* 标签列 64（2026-10-07 设计审计 §10.1）：此前 44，英文的 Legend position / Font size 被截成两三个字母 */}
+      <span className="truncate text-ink-2" title={label}>
+        {label}
+      </span>
       <div className="flex min-w-0 flex-1 items-center gap-1">{children}</div>
     </div>
   )

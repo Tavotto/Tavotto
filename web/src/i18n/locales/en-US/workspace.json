@@ -593,7 +593,8 @@
     "exitTitle": "Leave figure editing and go back to the canvas layer (Esc)",
     "tryTutorial": "Try the sample project",
     "rulerUnit": "mm",
-    "rulerUnitTitle": "Ruler unit: millimetres"
+    "rulerUnitTitle": "Ruler unit: millimetres",
+    "textPlaceholder": "Type text"
   },
   "stylePanel": {
     "emptyTitle": "Select a figure on the canvas to see its style here",

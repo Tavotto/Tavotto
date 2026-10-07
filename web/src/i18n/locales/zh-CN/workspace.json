@@ -568,7 +568,8 @@
     "exitTitle": "退出图内编辑，回到画布层（Esc）",
     "tryTutorial": "试用示例",
     "rulerUnit": "mm",
-    "rulerUnitTitle": "标尺单位：毫米"
+    "rulerUnitTitle": "标尺单位：毫米",
+    "textPlaceholder": "输入文字"
   },
   "stylePanel": {
     "emptyTitle": "在画布上选中一张图，这里显示它的样式",

@@ -3,6 +3,7 @@ import { ArrowLeft, Plus } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import { Button } from '@/components/ui/Button'
+import { cn } from '@/lib/utils'
 import { Kbd } from '@/components/ui/Kbd'
 import { Sep } from './context-bar/shared'
 import { untruncatedLabel } from '@/components/inspector/identityCrumbs'
@@ -108,7 +109,12 @@ export function WorkspaceContextBar() {
         // 与选区浮动栏（`ContextBar`）同一副骨架：p-1 → 36 高、gap 4、12px 字
         // （2026-09-15 打磨 F1 / F2）。此前是 px-2 py-1.5 → 40 高、gap 8、分隔线 14，
         // 同一块画布上两条浮条两种壳
-        className="pointer-events-auto flex w-max min-w-0 max-w-full flex-col gap-1 rounded-lg bg-surface p-1 text-sm text-ink shadow-pop"
+        // 浮动外观三档（2026-10-07 设计审计 §10.1）：只有一行时是单行浮动条 = 胶囊；带「进不了图内编辑」那第二行时
+        // 是多行浮动面板 = 圆角 12
+        className={cn(
+          'pointer-events-auto flex w-max min-w-0 max-w-full flex-col gap-1 bg-surface p-1 text-sm text-ink shadow-pop',
+          fastEdit && !editable ? 'rounded-lg' : 'rounded-full',
+        )}
       >
         {/* 单行：返回 + 面包屑 + 添加到画布。浮条按内容量宽，这一行默认正好装下，
             面包屑（唯一可伸缩项）完整显示；只有画布窄到装不下才 truncate。两颗

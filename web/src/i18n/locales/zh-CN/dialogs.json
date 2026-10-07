@@ -1446,7 +1446,8 @@
     "zoomIn": "放大",
     "zoomOut": "缩小",
     "zoomFit": "适配",
-    "diffTitle": "与当前画布相比"
+    "diffTitle": "与当前画布相比",
+    "quickNameTitle": "把现在存为命名节点"
   },
   "onboarding": {
     "pause": "暂停教程",

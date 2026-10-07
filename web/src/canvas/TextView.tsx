@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef } from 'react'
-import { msg } from '@/i18n'
+import { msg, t as translate } from '@/i18n'
+import { cn } from '@/lib/utils'
 import {
   DEFAULT_INTERPRETATION,
   interpretRuns,
@@ -113,7 +114,13 @@ export function TextView({ obj }: { obj: TextObject }) {
           : undefined
       }
       onPointerDown={editing ? (e) => e.stopPropagation() : undefined}
-      className="absolute left-0 top-0 w-full outline-none"
+      // 编辑时空着就写一句占位（2026-10-07 设计审计 §10.1）：此前清空之后框里什么都没有，看不出还在编辑。
+      // 占位只在 ::before 里（不进 innerText、不会被提交成正文）
+      data-placeholder={editing ? translate('stage.textPlaceholder', { ns: 'workspace' }) : undefined}
+      className={cn(
+        'absolute left-0 top-0 w-full outline-none',
+        editing && 'empty:before:pointer-events-none empty:before:text-ink-3 empty:before:content-[attr(data-placeholder)]',
+      )}
       style={{
         fontFamily: canvasFontStack(effectiveCanvasFamily(obj)),
         fontSize: sizePx,
@@ -126,6 +133,8 @@ export function TextView({ obj }: { obj: TextObject }) {
         whiteSpace: 'pre-wrap',
         wordBreak: 'break-word',
         cursor: editing ? 'text' : 'inherit',
+        // 插入点是界面的东西，不是正文的颜色：accent（与所有可编辑框同一条规矩，宪法第二十六节）
+        caretColor: editing ? 'var(--color-accent)' : undefined,
         // 背景 / 描边 / 内边距（内容盒不变：宽度扣除 padding 由 border-box 承担）
         boxSizing: 'border-box',
         padding: obj.padding ? mmToWorld(obj.padding) : undefined,
