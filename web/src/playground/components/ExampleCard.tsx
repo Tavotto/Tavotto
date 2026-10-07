@@ -203,6 +203,7 @@ export function ExampleCard({
           <Button
             variant="secondary"
             size="sm"
+            data-example-view-code
             onClick={(e) => {
               e.stopPropagation()
               onViewCode(example)

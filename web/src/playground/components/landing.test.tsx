@@ -125,7 +125,7 @@ describe('PlaygroundLanding', () => {
     const card = container.querySelector<HTMLElement>('[data-example-card="kinetics"]')!
     expect(card.dataset.card).toBe('raised')
     expect(card.dataset.interactive).toBe('true')
-    const view = [...card.querySelectorAll('button')].find((b) => b.textContent?.includes('查看代码'))!
+    const view = card.querySelector<HTMLElement>('[data-example-view-code]')!
     act(() => view.click())
     expect(onLaunch).not.toHaveBeenCalled()
     expect(document.querySelector('[data-dialog="playground-code"]')).not.toBeNull()
