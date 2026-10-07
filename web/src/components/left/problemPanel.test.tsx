@@ -726,6 +726,38 @@ describe('按规则聚合（审计 T09）', () => {
   })
 })
 
+describe('分桶行的悬停轮廓也认键盘焦点（Codex #832）', () => {
+  const head = (objectId: string) =>
+    container.querySelector<HTMLElement>(`li[data-problem-card="figure"][data-problem-card-objects~="${objectId}"] > button:first-child`)!
+
+  it('方向键走到一张图的分桶钮：画布轮廓跟到那张图；走开只撤自己那一份；离开清单就撤', async () => {
+    await seedThree()
+    await mount(<ProblemPanel />)
+    const p1 = head('p1')
+    const p2 = head('p2')
+    expect(p1).toBeTruthy()
+    expect(p2).toBeTruthy()
+    await act(async () => p1.focus())
+    expect(useUiStore.getState().issueHover).toEqual({ objectId: 'p1', gid: null })
+    // 方向键漫游到下一张图：p1 的那份撤掉、换成 p2
+    await act(async () => {
+      p1.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }))
+    })
+    expect(document.activeElement).toBe(p2)
+    expect(useUiStore.getState().issueHover).toEqual({ objectId: 'p2', gid: null })
+    // 别处（另一行 / 指针）后写下的不被这一支的失焦撤掉
+    const newer = { objectId: 'p9', gid: null }
+    await act(async () => useUiStore.getState().setIssueHover(newer))
+    await act(async () => p2.blur())
+    expect(useUiStore.getState().issueHover).toBe(newer)
+    // 自己写下的那份，失焦就撤
+    await act(async () => p2.focus())
+    expect(useUiStore.getState().issueHover).toEqual({ objectId: 'p2', gid: null })
+    await act(async () => p2.blur())
+    expect(useUiStore.getState().issueHover).toBeNull()
+  })
+})
+
 describe('范围：当前图 / 整份排版（审计 T09）', () => {
   it('在图内编辑里打开面板，默认只看这张图；切到整份排版才列别的图', async () => {
     await seedThree()
