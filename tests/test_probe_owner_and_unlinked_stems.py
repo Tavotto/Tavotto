@@ -238,6 +238,9 @@ def test_a_probe_waiting_on_someone_elses_session_does_not_kill_it(client, tmp_p
     probe_pool["gate"].set()  # 别人的 build 自己跑完
     th.join(timeout=5)
     assert not th.is_alive() and done["status"] == 200
+    # 共享 build 跑完之后本次试运行也不能当成功返回：取消了就是取消，不登记、不替换注册表 stem
+    assert done["json"]["error"]["code"] == "execution_cancelled"
+    assert not done["json"].get("registered"), "被取消的试运行仍登记了 stem"
 
 
 def test_a_cancel_before_the_session_is_taken_spares_a_shared_session(client, tmp_path, probe_pool):

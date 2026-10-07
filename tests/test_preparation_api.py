@@ -122,6 +122,7 @@ def fake_pool(monkeypatch):
         if kw.get("expected_worker") is not None:
             box["killed"].set()
             box["gate"].set()  # 被杀的 build 当场返回
+        return True  # 真 pool：池里找到并关掉了（回 False = 已离池，调用方自己硬杀）
 
     box["created"] = None
     box["build_resp"] = None

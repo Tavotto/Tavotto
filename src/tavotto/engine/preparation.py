@@ -913,12 +913,13 @@ class PreparationService:
             # 取消接受时刻 ③（T09）：会话是本计划新建的、还在 build（可能正跑一段很长的计算，或停在一个 input()
             # 上）——当场关掉**这一条**（`expected_worker`：池里那个键此刻若已换成别人的会话，一根手指都不碰），
             # build 随即以 WorkerError 返回，执行线程按取消收工
-            pool.force_cancel(
+            if not pool.force_cancel(
                 entry.plan.script,
                 entry.plan.project_root,
                 expected_worker=owned,
                 **({"run": entry.plan.run} if entry.plan.run is not None else {}),
-            )
+            ):
+                owned.force_kill()  # 已被 watcher / invalidate 摘出池子：池侧只会优雅关闭（排在 build 后面），这里只杀自己的那条
         elif acquired:
             # 共享会话的等待者：会话属于别的消费者（编辑那条渲染、另一份计划）——不关它，只是本计划不再等；
             # 执行线程之后回来时发现自己已经终局，什么都不写
@@ -943,12 +944,13 @@ class PreparationService:
         if not waiting:
             return
         if created:
-            pool.force_cancel(
+            if not pool.force_cancel(
                 entry.plan.script,
                 entry.plan.project_root,
                 expected_worker=worker,
                 **({"run": entry.plan.run} if entry.plan.run is not None else {}),
-            )
+            ):
+                worker.force_kill()  # 同上：已离池就只杀这一条
         else:
             self._finish(
                 entry,
