@@ -13,6 +13,11 @@ Consolidation Session 1 定稿），值在 `src/index.css` 的 `@theme`，门禁
 （`data-work-panel`：画布标签 + 画布 + 属性栏）里；画布灰铺到面板边缘。左轨写短名（`rail.short.*`）。带字的按钮与分段控件是胶囊，
 次按钮灰底无边；链接是灰字；品牌蓝 #5A92E5 压深两档当 accent / sel。下面是此前的速记，与第二十五节冲突处以第二十五节为准。
 
+**2026-10-07 属性栏与画布栏（宪法第二十六节末）**：属性栏是一张行网格（`Row labelWidth="grid"`：标签 `--insp-label` · 控件 full / half ·
+20px 常驻状态槽），恢复钮在槽里、修改点悬挂在标签左 8px（部分修改空心环）；三级标题 32 / 24 / 32；一屏只有节间一条发丝线；折叠只有
+SummaryRow / GroupToggle / Details；身份头固定两行；`ColorField` 在属性栏里带可编辑 hex 与取色面板（`ColorFieldContext`）、`disabled` 是真禁用；
+OptionGrid 与 Segmented 同皮；说明条只有 `Notice`；页签 属性 | 画布 | 助手。
+
 **2026-10-07 设计刷新 · 基础层（宪法第二十六节）**——与下文冲突处以它为准：墨阶 ink-2 `#4a4a45` / ink-3 `#6c6c66`（所有底色 ≥4.5:1）；
 中性面降黄（桌面 `#efefed` / 画布灰 `#f5f5f3` / field `#f2f2f0`）；**圆角族 xs 4 / sm 6 / md 8（行、框、菜单项、说明条）/ lg 12（卡、菜单与 popover
 外壳、多行浮动面板）/ panel 16（对话框、工作面板、助手输入框、命令面板）/ full（带字按钮、图标钮、分段、chip、toast、单行浮动条）**，外层 = 内层 + 内边距；

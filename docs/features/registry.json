@@ -310,6 +310,10 @@
         {
           "spec": "inspector-redesign.spec.ts",
           "title": "流程 A+E：标题的字体/字号可见标签、改字号、undo/redo、来源计数与单项恢复"
+        },
+        {
+          "spec": "spine-feedback.spec.ts",
+          "title": "spine hover text paints above a later panel stacking context"
         }
       ]
     },
