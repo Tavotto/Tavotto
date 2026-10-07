@@ -174,6 +174,7 @@ export async function applyOpenRequest(req: OpenRequest): Promise<OpenOutcome> {
   if (!stem) {
     ui.setStatus(
       msg('handoff.projectOpened', { name: useProjectStore.getState().project?.name ?? '' }, 'project'),
+      'done',
     )
     return 'project-only'
   }
@@ -207,6 +208,7 @@ export async function applyOpenRequest(req: OpenRequest): Promise<OpenOutcome> {
     }
     ui.setStatus(
       msg(landed === 'selected' ? 'handoff.located' : 'handoff.added', { name: asset.stem }, 'project'),
+      'done',
     )
     return landed
   }
@@ -220,6 +222,7 @@ export async function applyOpenRequest(req: OpenRequest): Promise<OpenOutcome> {
   }
   ui.setStatus(
     msg(landed === 'selected' ? 'handoff.located' : 'handoff.added', { name: info.name }, 'project'),
+    'done',
   )
   return landed
 }

@@ -834,7 +834,7 @@ export function ExportDialog() {
       return;
     }
     park();
-    ui.setStatus(msg("export.locatedHint", undefined, "dialogs"));
+    ui.setStatus(msg("export.locatedHint", undefined, "dialogs"), "info");
   };
 
   /**
@@ -899,7 +899,7 @@ export function ExportDialog() {
     } else if (job.status === "cancelled") {
       useUiStore
         .getState()
-        .setStatus(msg("export.cancelled", undefined, "dialogs"));
+        .setStatus(msg("export.cancelled", undefined, "dialogs"), "info");
     }
   }, [job, running]);
 

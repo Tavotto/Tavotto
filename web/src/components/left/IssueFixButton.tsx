@@ -161,5 +161,6 @@ export function reportFix(res: FixOutcome): void {
       { count: res.applied, failed: failedCount, why: fixFailedText(res.failed[0]) },
       'errors',
     ),
+    'info',
   )
 }

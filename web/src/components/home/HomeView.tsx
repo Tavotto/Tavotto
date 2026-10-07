@@ -184,7 +184,7 @@ function useScriptImport(openPath: (path: string) => Promise<boolean>) {
       // 页面已经换成编辑器：说明走通知轨。说出是哪个脚本（关联），多拖了的说只开了哪个
       const values = { name: drop.name, total: drop.ignored + 1 }
       const key = drop.ignored > 0 ? 'home.import.droppedMany' : drop.kind === 'script' ? 'home.import.openedScript' : 'home.import.openedFolder'
-      useUiStore.getState().setStatus(msg(key, values, 'project'))
+      useUiStore.getState().setStatus(msg(key, values, 'project'), 'done')
     })
   }
 

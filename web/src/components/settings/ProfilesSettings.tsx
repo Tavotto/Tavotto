@@ -315,6 +315,7 @@ export function ProfilesSettings({
           upgraded
             ? msg('stylePanel.upgradedLegacy', { name: trimmed }, 'workspace')
             : msg('profiles.saved', { name: trimmed }, 'dialogs'),
+          'done',
         )
     })
 
@@ -398,7 +399,7 @@ export function ProfilesSettings({
     })
     useUiStore
       .getState()
-      .setStatus(msg('profiles.usedForProject', { name: profileName(selected) }, 'dialogs'))
+      .setStatus(msg('profiles.usedForProject', { name: profileName(selected) }, 'dialogs'), 'done')
   }
 
   /**
