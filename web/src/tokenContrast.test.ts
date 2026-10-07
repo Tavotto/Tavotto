@@ -52,6 +52,63 @@ export function contrast(a: string, b: string): number {
   return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05)
 }
 
+/* ---- 状态色锚点派生（2026-10-07 设计审计 §1）：`color-mix(in oklab, anchor N%, base)` 在这里按 CSS Color 4
+   的 oklab 插值重算，量的是**合成后的颜色**（与 ink 叠加那一族同一个主语），不是 token 字面。 ---- */
+const toLin = (v: number) => {
+  const c = v / 255
+  return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4
+}
+const fromLin = (v: number) => {
+  const c = v <= 0.0031308 ? 12.92 * v : 1.055 * v ** (1 / 2.4) - 0.055
+  return Math.max(0, Math.min(255, c * 255))
+}
+function toOklab(h: string): number[] {
+  const [r, g, b] = rgb(h).map(toLin)
+  const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b)
+  const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b)
+  const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b)
+  return [
+    0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s,
+    1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s,
+    0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s,
+  ]
+}
+function fromOklab([L, A, B]: number[]): string {
+  const l = (L + 0.3963377774 * A + 0.2158037573 * B) ** 3
+  const m = (L - 0.1055613458 * A - 0.0638541728 * B) ** 3
+  const s = (L - 0.0894841775 * A - 1.291485548 * B) ** 3
+  return hex(
+    [
+      4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+      -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+      -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s,
+    ].map(fromLin),
+  )
+}
+/** 解析 `--color-<name>`：hex 直接回；`var(--color-x)` 跟过去；`color-mix(in oklab, A N%, B)` 按 oklab 混 */
+export function resolveColor(name: string): string {
+  const m = CSS.match(new RegExp(`--color-${name}:\\s*([^;]+);`))
+  if (!m) throw new Error(`index.css 里没有 --color-${name}`)
+  const v = m[1].trim()
+  const ref = (x: string): string => {
+    x = x.trim()
+    if (x === 'black') return '#000000'
+    if (x === 'white') return '#ffffff'
+    if (/^#[0-9a-f]{6}$/i.test(x)) return x.toLowerCase()
+    const r = x.match(/^var\(--color-([a-z0-9-]+)\)$/)
+    if (r) return resolveColor(r[1])
+    throw new Error(`解析不了的颜色：${x}`)
+  }
+  const mix = v.match(/^color-mix\(in oklab, (.+?) ([\d.]+)%, (.+)\)$/)
+  if (mix) {
+    const p = Number(mix[2]) / 100
+    const a = toOklab(ref(mix[1]))
+    const b = toOklab(ref(mix[3]))
+    return fromOklab(a.map((x, i) => x * p + b[i] * (1 - p)))
+  }
+  return ref(v)
+}
+
 const GROUNDS = ['surface', 'bg', 'surface-2'] as const
 
 describe('token 配对的对比度', () => {
@@ -107,6 +164,10 @@ describe('token 配对的对比度', () => {
     }
   })
 
+  it('墨阶拉开（2026-10-07 设计审计 §1.1）：ink-2 与 ink-3 在白上至少差 1.5:1 的对比度，不再几乎同色', () => {
+    expect(contrast(token('ink-2'), token('surface')) - contrast(token('ink-3'), token('surface'))).toBeGreaterThanOrEqual(1.5)
+  })
+
   it('交互面三档：hover < active < selected，都是 ink 的半透明叠加，selected 是 hover 的两倍', () => {
     const h = alphaOfInk('surface-hover')
     const a = alphaOfInk('surface-active')
@@ -116,9 +177,9 @@ describe('token 配对的对比度', () => {
     expect(s).toBeCloseTo(h * 2, 2)
   })
 
-  it('要读的字（ink / ink-2 / ink-3）对白 / 纸 / surface-2 ≥4.5:1；ink 与 ink-2 在合成后的 selected 上也 ≥4.5:1', () => {
+  it('要读的字（ink / ink-2 / ink-3）对白 / 桌面 / surface-2 / 画布灰 ≥4.5:1；ink 与 ink-2 在合成后的 selected 上也 ≥4.5:1', () => {
     for (const name of ['ink', 'ink-2', 'ink-3']) {
-      for (const g of GROUNDS) {
+      for (const g of [...GROUNDS, 'canvas']) {
         expect(contrast(token(name), token(g)), `${name} on ${g}`).toBeGreaterThanOrEqual(4.5)
       }
     }
@@ -130,10 +191,43 @@ describe('token 配对的对比度', () => {
     }
   })
 
-  it('语义色的字（danger / warn / ok）落在各自的 subtle 底上 ≥4.5:1', () => {
-    for (const name of ['danger', 'warn', 'ok']) {
-      expect(contrast(token(name), token(`${name}-subtle`)), name).toBeGreaterThanOrEqual(4.5)
+  it('自检：oklab 混色在两端等于原色，派生链跟得过 var() 与别名', () => {
+    expect(fromOklab(toOklab('#c4442a'))).toBe('#c4442a')
+    expect(resolveColor('info')).toBe(token('accent'))
+    expect(resolveColor('danger-subtle')).toBe(resolveColor('danger-surface'))
+  })
+
+  it('状态色锚点派生（danger / warn / ok / info）：-content 落在自己的 -surface 底上、白上 ≥4.5:1；锚点（图标 / 圆点）对白 / 桌面 / 自己的底 ≥3:1；-border 比 -surface 深', () => {
+    for (const s of ['danger', 'warn', 'ok', 'info']) {
+      const anchor = resolveColor(s)
+      const surface = resolveColor(`${s}-surface`)
+      const border = resolveColor(`${s}-border`)
+      const content = resolveColor(`${s}-content`)
+      expect(contrast(content, surface), `${s}-content on ${s}-surface`).toBeGreaterThanOrEqual(4.5)
+      expect(contrast(content, token('surface')), `${s}-content on surface`).toBeGreaterThanOrEqual(4.5)
+      for (const g of [token('surface'), token('bg'), surface]) {
+        expect(contrast(anchor, g), `${s} anchor on ${g}`).toBeGreaterThanOrEqual(3)
+      }
+      expect(contrast(border, token('surface')), `${s}-border`).toBeGreaterThan(contrast(surface, token('surface')))
     }
+  })
+
+  it('代码着色七档（syntax-*）在白 / 桌面 / surface-2 上都是要读的字 ≥4.5:1', () => {
+    for (const k of ['keyword', 'function', 'string', 'number', 'comment', 'type', 'builtin']) {
+      for (const g of GROUNDS) {
+        expect(contrast(token(`syntax-${k}`), token(g)), `syntax-${k} on ${g}`).toBeGreaterThanOrEqual(4.5)
+      }
+    }
+  })
+
+  it('当字用的锚点（text-danger / text-ok：红字 ghost 按钮、行内失败字）对白 ≥4.5:1；warn 锚点不当字（字一律 warn-content）', () => {
+    for (const s of ['danger', 'ok']) {
+      expect(contrast(resolveColor(s), token('surface')), s).toBeGreaterThanOrEqual(4.5)
+    }
+  })
+
+  it('对话框页脚的危险浅底胶囊：danger-content 在 hover 底上也 ≥4.5:1', () => {
+    expect(contrast(resolveColor('danger-content'), resolveColor('danger-surface-hover'))).toBeGreaterThanOrEqual(4.5)
   })
 
   it('Tooltip 是 ink 底白字：surface 对 ink ≥4.5:1', () => {

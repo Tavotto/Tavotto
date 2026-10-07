@@ -651,8 +651,8 @@ export function editBoundStyle(edit: StyleEdit): Promise<boolean> {
       throw e
     }
     owe(docNow(), delta, missing, presetDelta(null, data))
-    if (copied) useUiStore.getState().setStatus(msg('stylePanel.copiedBuiltin', { name }, 'workspace'))
-    else if (upgraded) useUiStore.getState().setStatus(msg('stylePanel.upgradedLegacy', { name }, 'workspace'))
+    if (copied) useUiStore.getState().setStatus(msg('stylePanel.copiedBuiltin', { name }, 'workspace'), 'done')
+    else if (upgraded) useUiStore.getState().setStatus(msg('stylePanel.upgradedLegacy', { name }, 'workspace'), 'done')
     return true
   })
 }

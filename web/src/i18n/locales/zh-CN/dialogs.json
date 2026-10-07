@@ -6,10 +6,20 @@
     "saveFailed": "保存失败，窗口保持打开。请先解决保存问题，或选择「不保存」直接关闭。",
     "title": "有未保存的修改"
   },
+  "draftGuard": {
+    "body": "还没保存的修改会丢掉。",
+    "discard": "放弃修改",
+    "keepEditing": "继续编辑",
+    "title": "放弃未保存的修改？",
+    "unsaved": "有未保存的修改"
+  },
   "engineEnv": {
     "title": "渲染环境"
   },
   "export": {
+    "exportAgain": "再次导出",
+    "showInFolder": "在文件夹中显示",
+    "finish": "完成",
     "advanced": "高级选项",
     "blockedTitle": "有阻断问题或无法核验的项。勾选确认后才能导出。",
     "blockingListLabel": "阻断性问题",
@@ -1605,14 +1615,17 @@
     "manageAria": "查看和修改 {{script}} 记住的输入",
     "manageTip": "记住的输入",
     "manageTitle": "记住的输入 · {{script}}",
-    "manageIntro": "改了答案会立刻重新运行脚本。",
+    "manageIntro": "改好答案后点「保存并重新运行」，脚本只重新运行一次。",
     "manageWhere": "答案存在项目文件夹的 {{path}} 里，随文件夹一起复制或分享；项目包不含它。",
     "manageEmpty": "这个脚本没有记住的输入。",
     "managePrompt": "第 {{index}} 个问题：{{prompt}}",
     "manageNoPrompt": "第 {{index}} 个问题（读取标准输入）",
     "manageSave": "保存并重新运行",
+    "manageSaveCount": "保存并重新运行（{{n}}）",
     "manageForget": "删除",
     "manageForgetAria": "删除第 {{index}} 个问题的答案",
+    "manageForgetTitle": "删除第 {{index}} 个问题的答案？",
+    "manageForgetBody": "删除后会立刻重新运行 {{script}}，它会重新问你这个问题。",
     "manageSaved": "已保存，正在重新运行 {{script}}"
   }
 }

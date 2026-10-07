@@ -144,7 +144,7 @@ export function Segmented<T extends string>({
               'relative flex min-w-7 flex-1 items-center justify-center gap-1 whitespace-nowrap px-2 text-sm outline-none',
               // 每格同形（rounded-full，与 thumb 同）：此前 first:/last: 落在 thumb 上失效，只剩键盘焦点环末格圆角、其余方角
               'rounded-full',
-              'transition-colors duration-fast focus-visible:z-10 focus-visible:focus-ring',
+              'transition-colors duration-fast focus-visible:z-sticky focus-visible:focus-ring',
               active
                 ? 'font-semibold text-ink'
                 : item.disabled

@@ -80,7 +80,7 @@ export function Select<T extends string>({
           position="popper"
           sideOffset={6}
           className={cn(
-            'z-50 min-w-[var(--radix-select-trigger-width)] overflow-hidden rounded-md',
+            'z-popover min-w-[var(--radix-select-trigger-width)] overflow-hidden rounded-lg',
             'bg-surface p-1 shadow-pop',
             'origin-[var(--radix-select-content-transform-origin)]',
             'data-[state=open]:animate-pop-in data-[state=closed]:animate-pop-out',
@@ -92,7 +92,7 @@ export function Select<T extends string>({
                 key={opt.value}
                 value={opt.value}
                 className={cn(
-                  'relative flex h-7 cursor-default select-none items-center gap-2 rounded-sm',
+                  'relative flex h-7 cursor-default select-none items-center gap-2 rounded-md',
                   'pl-6 pr-2 text-sm text-ink outline-none',
                   'data-[highlighted]:bg-surface-hover data-[state=checked]:font-medium data-[state=checked]:text-ink',
                 )}

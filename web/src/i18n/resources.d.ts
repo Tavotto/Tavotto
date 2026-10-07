@@ -138,8 +138,13 @@ export default interface Resources {
       "save": "保存"
     },
     "colorField": {
+      "documentColors": "排版里的颜色",
+      "hex": "{{label}}：色号",
       "none": "无",
-      "picker": "{{label}}：取色盘"
+      "open": "{{label}}：选色",
+      "picker": "{{label}}：取色盘",
+      "recent": "最近使用",
+      "system": "系统取色器…"
     },
     "count": {
       "selectedObjects_other": "已选 {{count}} 个对象"
@@ -186,6 +191,13 @@ export default interface Resources {
       "saveFailed": "保存失败，窗口保持打开。请先解决保存问题，或选择「不保存」直接关闭。",
       "title": "有未保存的修改"
     },
+    "draftGuard": {
+      "body": "还没保存的修改会丢掉。",
+      "discard": "放弃修改",
+      "keepEditing": "继续编辑",
+      "title": "放弃未保存的修改？",
+      "unsaved": "有未保存的修改"
+    },
     "engineEnv": {
       "title": "渲染环境"
     },
@@ -220,6 +232,7 @@ export default interface Resources {
         "canvas_scope": "EPS 只支持按「原图尺寸」导出单张图。",
         "no_script": "此图没有可重新运行的脚本。EPS 只能由脚本生成。"
       },
+      "exportAgain": "再次导出",
       "exported": "导出完成：{{files}}",
       "figureListLabel": "要按原图尺寸导出的图",
       "filenameError": {
@@ -234,6 +247,7 @@ export default interface Resources {
       },
       "filenameLabel": "文件名",
       "filenamePlaceholder": "图 1",
+      "finish": "完成",
       "formatLabel": "格式",
       "ignored": {
         "crop": "裁剪",
@@ -316,6 +330,7 @@ export default interface Resources {
         "unknown_figure": "找不到这张图的信息，暂时只能按画布导出。"
       },
       "severityCount": "{{count}} {{label}}",
+      "showInFolder": "在文件夹中显示",
       "sizeDiskDiffers": "磁盘上的原文件为 {{dw}} × {{dh}} mm（脚本保存时已裁边），将按图幅 {{w}} × {{h}} mm 导出。",
       "sizeUnknownShort": "尺寸未知",
       "start": "开始导出",
@@ -1060,10 +1075,13 @@ export default interface Resources {
       "manageEmpty": "这个脚本没有记住的输入。",
       "manageForget": "删除",
       "manageForgetAria": "删除第 {{index}} 个问题的答案",
-      "manageIntro": "改了答案会立刻重新运行脚本。",
+      "manageForgetBody": "删除后会立刻重新运行 {{script}}，它会重新问你这个问题。",
+      "manageForgetTitle": "删除第 {{index}} 个问题的答案？",
+      "manageIntro": "改好答案后点「保存并重新运行」，脚本只重新运行一次。",
       "manageNoPrompt": "第 {{index}} 个问题（读取标准输入）",
       "managePrompt": "第 {{index}} 个问题：{{prompt}}",
       "manageSave": "保存并重新运行",
+      "manageSaveCount": "保存并重新运行（{{n}}）",
       "manageSaved": "已保存，正在重新运行 {{script}}",
       "manageTip": "记住的输入",
       "manageTitle": "记住的输入 · {{script}}",
@@ -2766,6 +2784,8 @@ export default interface Resources {
       "bgColor": "背景色",
       "clearAll": "全部清除",
       "deleteGuide": "删除{{axis}}参考线 {{pos}} mm",
+      "export": "导出",
+      "exportSummary": "{{formats}} · {{dpi}} ppi",
       "grid": "网格",
       "gridSize": "网格间距",
       "gridSummary": "网格 {{size}} mm",
@@ -2775,12 +2795,16 @@ export default interface Resources {
       "guides": "参考线",
       "guidesLockedSuffix": " · 已锁定",
       "guidesNone": "无",
+      "landscape": "横向",
       "lock": "锁定",
       "margin": "页边距",
       "marginSummary": "页边距 {{margin}} mm",
       "objects": "对象",
+      "orientation": "方向",
       "pageSize": "页面尺寸",
-      "presetAria": "{{label}}，{{w}} × {{h}} 毫米",
+      "portrait": "竖向",
+      "preset": "预设",
+      "presetCustom": "自定义",
       "presetGroup": "页面预设",
       "presets": {
         "double": {
@@ -2805,6 +2829,8 @@ export default interface Resources {
       "safeAreaOff": "关闭",
       "safeAreaTip": "只是画布上的参考框，不裁剪也不影响导出",
       "show": "显示",
+      "size": "尺寸",
+      "sizeMeta": "{{w}} × {{h}} mm",
       "snap": "自动对齐",
       "snapEnable": "启用吸附",
       "snapGrid": "对齐网格",
@@ -2826,6 +2852,11 @@ export default interface Resources {
         "equal": "等比例"
       },
       "aspectRatio": "纵横比：一单位 Y 与一单位 X 的显示长度之比",
+      "aspectShort": {
+        "auto": "自动",
+        "custom": "自定义",
+        "equal": "等比"
+      },
       "customColormap": "自定义色图（{{value}}）",
       "customColormapName": "自定义",
       "customLineStyle": "自定义线型（{{value}}）",
@@ -2875,6 +2906,12 @@ export default interface Resources {
       "tickSpineDiagramHint": "点四条边切换刻度线与边框",
       "viewAngle": "视角：俯仰 {{elev}}°、方位 {{azim}}°、侧倾 {{roll}}°",
       "zoneAria": "{{side}}{{dir}}刻度"
+    },
+    "docSummary": {
+      "annotations_other": "{{count}} 处文字与标注",
+      "canvasSettings": "画布设置",
+      "size": "{{w}} × {{h}} mm",
+      "title": "本排版"
     },
     "element": {
       "absentAppearance": "此元素由脚本生成，当前版本暂不支持在此编辑。",
@@ -2960,6 +2997,7 @@ export default interface Resources {
       "mixedValues": "多个值",
       "modified": "已修改",
       "modifiedCount_other": "{{count}} 项已修改",
+      "modifiedPartial": "部分已修改",
       "more": "更多",
       "moveDown": "下移",
       "moveUp": "上移",
@@ -2991,6 +3029,7 @@ export default interface Resources {
         "vmin": "自动范围"
       },
       "resetProp": "恢复{{label}}",
+      "resetPropBoth": "两项都恢复",
       "resetToScriptCount_other": "恢复整张图 · {{count}} 项",
       "restore": "恢复",
       "restoreMenuTip": "恢复图内修改",
@@ -3017,7 +3056,6 @@ export default interface Resources {
     "elementFallback": "图内元素",
     "elementsSelected_other": "已选 {{count}} 个元素",
     "emptyHint": "点画布上的图、文字或标注开始编辑。",
-    "emptyTitle": "没有选中对象",
     "engineLabel": {
       "annotationArrow": "标注箭头",
       "arrow": "箭头 {{value}}",
@@ -3298,6 +3336,9 @@ export default interface Resources {
       "toggleUnderline": "切换下划线",
       "transformCase": "转换大小写"
     },
+    "identity": {
+      "problems_other": "{{count}} 个问题"
+    },
     "kindSwitch": {
       "aria": "类型：{{name}}，点击更改",
       "title": "更改为"
@@ -3312,8 +3353,8 @@ export default interface Resources {
       "customHintStyled": "恢复链接会撤销这里改的样式。",
       "entries": "图例项",
       "entriesAria": "图例项列表",
+      "entryActions": "“{{label}}”的操作",
       "followHint": "断开关联后才能单独改颜色、线型和标记。",
-      "hide": "隐藏",
       "hideEntry": "隐藏图例项 “{{label}}”",
       "layoutDetails": "间距",
       "linkedTo": "链接到：{{label}}",
@@ -3321,7 +3362,6 @@ export default interface Resources {
       "moveUp": "上移 “{{label}}”",
       "relinkAction": "恢复链接",
       "selectEntry": "选中图例项 “{{label}}”",
-      "show": "显示",
       "showEntry": "显示图例项 “{{label}}”",
       "spacingAdjusted": "已调整",
       "spacingDefault": "默认",
@@ -3934,6 +3974,11 @@ export default interface Resources {
       },
       "menuOpen": "打开",
       "more": "更多",
+      "narrative": {
+        "script": "打开脚本",
+        "scriptOnly": "<script/>，把它变成可编辑的论文图。",
+        "withRecent": "继续 <recent/>，或 <script/> 开始新的排版。"
+      },
       "newcomer": {
         "import": "导入我的脚本",
         "title": "你的绘图脚本在哪里？",
@@ -3950,7 +3995,6 @@ export default interface Resources {
         "dropOr": "或",
         "dropRelease": "松开即可导入",
         "dropTitle": "把 Python 脚本拖到这里",
-        "lead": "将你的 Python 绘图脚本，转换为可编辑的论文图。",
         "sample": "使用示例脚本试试看",
         "sampleHint": "{{product}} 会自动识别脚本中生成的图片，并进入排版界面。"
       }
@@ -4240,6 +4284,9 @@ export default interface Resources {
       "lastDocTitle": "无法打开项目上次的排版「{{name}}」",
       "lastDocUnnamed": "未命名",
       "overwrite": "用我的版本覆盖",
+      "overwriteConfirmBodyExternal": "磁盘上被外部修改过的那份会被这个窗口的内容替换，那些外部改动会丢失。想两份都留，请改用「另存为」。",
+      "overwriteConfirmBodyStale": "另一个窗口保存的较新版本会被这个窗口的内容替换，那个窗口的改动会丢失。想两份都留，请改用「另存为」。",
+      "overwriteConfirmTitle": "用这个窗口的版本覆盖磁盘？",
       "recover": "恢复",
       "recoveryBody": "{{name}} · {{canvases}} 张画布 · {{objects}} 个对象 · 存于 {{time}}",
       "recoveryTitle": "有未恢复的编辑",
@@ -4856,8 +4903,7 @@ export default interface Resources {
       "canvasName": "画布名",
       "closeTab": "关闭标签 {{name}}",
       "listLabel": "画布标签",
-      "newCanvas": "新建画布",
-      "unsaved": "有未保存的改动"
+      "newCanvas": "新建画布"
     },
     "toolHint": {
       "arrow": "拖动画出箭头，Shift 吸附 15° 角；Esc 取消",

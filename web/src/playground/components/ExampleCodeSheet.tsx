@@ -12,6 +12,7 @@
 import { useEffect, useState } from 'react'
 import { Check, Copy, Play } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
+import { Button } from '@/components/ui/Button'
 import { Dialog } from '@/components/ui/Dialog'
 import { cn } from '@/lib/utils'
 import type { PlaygroundExample } from '../examples'
@@ -21,11 +22,12 @@ import { tokenizePython, type TokenKind } from '../pythonHighlight'
 //: 技术名词，语言中立，不进翻译（与 runtime 包名同一口径）
 const CODE_DEPS = ['NumPy', 'Matplotlib'].join(' · ')
 
+// 颜色只来自 syntax-* token（index.css；与助手的代码块同一张表），这里不写 hex
 const TOKEN_CLASS: Record<TokenKind, string> = {
-  comment: 'text-ink-3 italic',
-  string: 'text-[#7a5a2b]',
-  number: 'text-[#2868b7]',
-  keyword: 'text-[#8a3350] font-medium',
+  comment: 'text-syntax-comment italic',
+  string: 'text-syntax-string',
+  number: 'text-syntax-number',
+  keyword: 'text-syntax-keyword font-medium',
   plain: '',
 }
 
@@ -60,7 +62,7 @@ export function ExampleCodeSheet({
       onOpenChange={(v) => !v && onClose()}
       size="lg"
       width={640}
-      title={<span className="font-mono text-[15px]">{example.filename}</span>}
+      title={<span className="font-mono">{example.filename}</span>}
       description={
         <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
           <span>{pg('codePlain')}</span>
@@ -70,31 +72,28 @@ export function ExampleCodeSheet({
           <span>{pg('codeSelfContained')}</span>
         </span>
       }
-      footer={
-        <>
-          <button
-            onClick={() => void copy()}
-            className="flex h-7 items-center gap-1.5 rounded-sm border border-border px-2.5 text-xs text-ink-2 transition-colors hover:border-ink-faint hover:text-ink"
-          >
+      anchor="playground-code"
+      footer={{
+        secondary: (
+          <Button variant="secondary" size="lg" onClick={() => void copy()}>
             {copied ? <Check size={ICON_SIZE.sm} aria-hidden /> : <Copy size={ICON_SIZE.sm} aria-hidden />}
             {copied ? pg('copied') : pg('copyCode')}
-          </button>
-          <button
-            onClick={() => onStart(example)}
-            className="flex h-7 items-center gap-1.5 rounded-sm bg-ink px-3 text-xs font-medium text-white transition-opacity hover:opacity-90"
-          >
+          </Button>
+        ),
+        primary: (
+          <Button variant="primary" size="lg" onClick={() => onStart(example)}>
             <Play size={ICON_SIZE.sm} aria-hidden />
             {pg('codeStart')}
-          </button>
-        </>
-      }
+          </Button>
+        ),
+      }}
     >
-      <div className="overflow-x-auto rounded-sm border border-border bg-bg">
+      <div className="overflow-x-auto rounded-md bg-bg">
         <pre className="flex min-w-max p-3 font-mono text-sm leading-[1.7] text-ink-2">
           {/* 行号列：aria-hidden + select-none——复制与朗读都只有代码本身 */}
           <span
             aria-hidden
-            className="mr-3 select-none border-r border-border pr-3 text-right text-ink-faint"
+            className="mr-3 select-none border-r border-border pr-3 text-right text-ink-3"
           >
             {lines.map((_, i) => (
               <span key={i} className="block">

@@ -56,7 +56,11 @@ preflight.runSpec()      规则求值（两份求值器，golden vectors 对齐�
   aria-label**——那是本地化文案，换语言就选不中。
 * **普通界面不出现 gid / 对象 id**：措辞唯一实现 `lib/validationText.ts`，
   主语取 manifest 的 `label`（过 `engineLabel()`），精确名词只在每行收起的
-  「技术详情」里。
+  「技术详情」里。它的开关是行尾**常驻槽位**的图标钮（`data-issue-tech-toggle`，
+  `aria-expanded` / `aria-controls` 指向 `data-issue-tech`），平时透明、指到 / 聚焦 /
+  当前 / 已展开时才画——**悬停只改透明度，绝不改 display，行高永不随悬停变**
+  （2026-10-07 设计审计 P0：此前折叠行悬停才出现，每指一行清单跳 20px；`problemPanel.test` 钉着）。
+  吸顶组头的底色读 `LeftPanel` 按模式设的 `--drawer-bg`（停靠 = bg、覆盖式 = surface），不写死白底。
 * **`safe_auto` 的三条判据**：目标值唯一、**修完真的能过**（绝对下限不含等号，
   所以"提到正好 8 pt"不算修好）、不动科研数据（色图 / 裁剪 / 重排一律不自动）。
   落地经 `store/issueFixActions.ts` → `documentStore.commit`，一个修复一个事务、
@@ -84,7 +88,12 @@ preflight.runSpec()      规则求值（两份求值器，golden vectors 对齐�
   （修好依赖后自动重渲染成功，红色「无法渲染」不再挂着）——前提是**这个文件没有一个变体还坏着 / 还在渲染**
   （「坏着」只认画布上还有面板指着的变体，`recent` 里为撤销留着的旧变体不算；同文件不同覆盖的面板各自成败；SSE 的 done 与变体自己的响应谁先到不定，两处各问一次，响应那一处在在途槽位松开之后问）；此刻挂着的是
   别的图 / 别的类别的提示就不动。
-  看护 `web/src/hooks/useServerEvents.test.ts`、`web/src/store/statusPassive.test.ts`、`web/src/store/renderStore.test.ts`。
+  **toast 的语气**（`uiStore.StatusTone`，2026-10-07 审计 P0）：`info`（缺省，Info 图标）/ `progress`
+  （进行中，转圈）/ `done`（做成了，✓）/ `error`。只有 `error` 改变行为（常驻、assertive），其余三档只换
+  图标；**每个调用点都显式给出语气**（做成了 `done`、正在… `progress`、中性 / 没做成 `info`、出错 `error`），
+  不靠缺省——缺省是 `info`，忘写就会把「已撤销 / 已复制」悄悄从 ✓ 变成 ⓘ（Codex #821 P2）。不许让「正在构建…」打勾。
+  看护 `web/src/store/statusTone.test.ts`（源码扫描：无 tone 的 `setStatus` 调用即红）、`web/src/hooks/useServerEvents.test.ts`、
+  `web/src/store/statusPassive.test.ts`、`web/src/store/renderStore.test.ts`。
 * **就绪度不混进问题清单**：面板底部只放一条通往接入状态的链接。
 * **面板的呈现层在 `lib/problemList.ts`（2026-09-06，审计 T09）**，纯函数，
   不跑第二遍求值器：① 范围「当前图 / 整个文档」——当前图 = 快速编辑的

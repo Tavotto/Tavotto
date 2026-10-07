@@ -190,6 +190,7 @@ export function LayoutDialog() {
           res.file
             ? msg('save.doneProject', { file: res.file }, 'workspace')
             : msg('layout.saved', { name: stem }, 'dialogs'),
+          'done',
         )
     } catch (e) {
       const revision =

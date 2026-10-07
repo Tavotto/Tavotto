@@ -234,7 +234,7 @@ export function OverlaySvg() {
               stroke={SEL}
               strokeWidth={2}
               strokeDasharray="6 3"
-              className="motion-safe:animate-pulse"
+              className="motion-safe:animate-attention"
             />
           )
         })()}
