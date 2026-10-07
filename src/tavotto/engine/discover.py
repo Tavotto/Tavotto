@@ -33,6 +33,7 @@ import json
 import os
 import platform
 import re
+import stat
 import subprocess
 import sys
 import threading
@@ -1015,6 +1016,9 @@ def _iter_py(
 
     def walk(d: Path, depth: int) -> None:
         try:
+            if budget is not None and d != root and scanbudget.is_redirect(d.lstat()):
+                budget.note(scanbudget.ISSUE_SYMLINK_DIR, path=rel(d))
+                return
             children = _children(d, budget)
         except OSError:
             if strict:
@@ -1028,11 +1032,22 @@ def _iter_py(
                 return
             if child.name.startswith("."):
                 continue
-            if child.is_dir():
-                if child.name in PRUNE_DIRS:
+            if budget is None:
+                is_dir = child.is_dir()
+            else:
+                try:
+                    metadata = child.lstat()
+                except OSError:
+                    if strict:
+                        raise
+                    budget.note(scanbudget.ISSUE_UNREADABLE_FILE, scope="entry", path=rel(child))
                     continue
-                if budget is not None and child.is_symlink():
-                    budget.note(scanbudget.ISSUE_SYMLINK_DIR, path=rel(child))
+                if scanbudget.is_redirect(metadata):
+                    budget.note(scanbudget.ISSUE_SYMLINK_DIR, scope="entry", path=rel(child))
+                    continue
+                is_dir = stat.S_ISDIR(metadata.st_mode)
+            if is_dir:
+                if child.name in PRUNE_DIRS:
                     continue
                 if depth < MAX_DEPTH:
                     walk(child, depth + 1)

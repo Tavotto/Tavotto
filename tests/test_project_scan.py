@@ -997,3 +997,49 @@ def test_expiry_in_the_last_evidence_stage_is_reflected_in_the_final_report(tmp_
     report = projscan.scan(tmp_path, budget=budget)
     assert report["state"] == "partial"
     assert any(issue["code"] == scanbudget.ISSUE_TIME for issue in report["issues"])
+
+
+@pytest.mark.parametrize("vanished_name", ["temporary.txt", "vanished.pdf"])
+@pytest.mark.parametrize("strict", [False, True])
+def test_asset_scan_vanished_entry_does_not_erase_unrelated_assets(
+    tmp_path, monkeypatch, vanished_name, strict
+):
+    """目录已枚举而单项消失：保留其它素材/子目录，未知 PDF 不释放同名位图。"""
+    from contextlib import contextmanager
+
+    from tavotto.engine import project_refresh as engine_refresh
+
+    root = _project(tmp_path)
+    _write(root, "stable.pdf", "%PDF")
+    _write(root, "child/nested.pdf", "%PDF")
+    _write(root, "vanished.png", "raster")
+    _write(root, vanished_name, "temporary")
+    real_scandir = os.scandir
+
+    class VanishedEntry:
+        name = vanished_name
+
+        def stat(self, *, follow_symlinks=True):
+            raise FileNotFoundError(2, "entry vanished", str(root / vanished_name))
+
+    @contextmanager
+    def scandir(path):
+        with real_scandir(path) as entries:
+            rows = [
+                VanishedEntry() if Path(path) == root and entry.name == vanished_name else entry
+                for entry in entries
+            ]
+        yield iter(rows)
+
+    monkeypatch.setattr(os, "scandir", scandir)
+    budget = scanbudget.Budget()
+    if strict:
+        with pytest.raises(FileNotFoundError):
+            engine_refresh.iter_assets(root, strict=True, budget=budget)
+        return
+    found = engine_refresh.iter_assets(root, budget=budget)
+    expected = {(root / "stable.pdf", "pdf"), (root / "child/nested.pdf", "pdf")}
+    if vanished_name != "vanished.pdf":
+        expected.add((root / "vanished.png", "raster"))
+    assert set(found) == expected
+    assert any(row.get("path") == vanished_name for row in budget.issues())

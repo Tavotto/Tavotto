@@ -26,6 +26,7 @@ autosave / 版本历史目录（Prompt 02–03 的文档合同）。这个模块
 from __future__ import annotations
 
 import os
+import stat
 import threading
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
@@ -211,6 +212,7 @@ def iter_assets(
     """
     root = Path(root)
     files: list[Path] = []
+    uncertain_pdf_stems: set[tuple[Path, str]] = set()
 
     def on_error(exc: OSError, directory: Path | None = None) -> None:
         if strict:
@@ -234,12 +236,14 @@ def iter_assets(
         pending = [root]
         while pending and budget.stop_reason() is None:
             here = pending.pop()
-            if here != root and here.is_symlink():
-                budget.note(scanbudget.ISSUE_SYMLINK_DIR, path=here.relative_to(root).as_posix())
-                continue
             subdirs: list[Path] = []
             directory_files: list[Path] = []
             try:
+                if here != root and scanbudget.is_redirect(here.lstat()):
+                    budget.note(
+                        scanbudget.ISSUE_SYMLINK_DIR, path=here.relative_to(root).as_posix()
+                    )
+                    continue
                 with os.scandir(here) as entries:
                     for entry in entries:
                         if not budget.charge_entry():
@@ -247,15 +251,31 @@ def iter_assets(
                         if entry.name.startswith("."):
                             continue
                         path = here / entry.name
-                        if not entry.is_dir():
+                        rel = path.relative_to(root)
+                        try:
+                            metadata = entry.stat(follow_symlinks=False)
+                        except FileNotFoundError:
+                            if strict:
+                                raise
+                            budget.note(
+                                scanbudget.ISSUE_UNREADABLE_FILE, scope="entry", path=rel.as_posix()
+                            )
+                            # 单项消失不抹掉其它已发现的素材/子目录；但未知 PDF
+                            # 仍遮住同名位图，不能把不完整观测误当成「没有 PDF」。
+                            if path.suffix.lower() in PDF_EXT:
+                                uncertain_pdf_stems.add((path.parent, path.stem))
+                            continue
+                        if scanbudget.is_redirect(metadata):
+                            budget.note(
+                                scanbudget.ISSUE_SYMLINK_DIR, scope="entry", path=rel.as_posix()
+                            )
+                            continue
+                        if not stat.S_ISDIR(metadata.st_mode):
                             directory_files.append(path)
                             continue
                         if entry.name in EXCLUDE_DIRS:
                             continue
-                        rel = path.relative_to(root)
-                        if entry.is_symlink():
-                            budget.note(scanbudget.ISSUE_SYMLINK_DIR, path=rel.as_posix())
-                        elif len(rel.parts) > budget.limits.max_asset_depth:
+                        if len(rel.parts) > budget.limits.max_asset_depth:
                             budget.note(
                                 scanbudget.ISSUE_DEPTH,
                                 severity=scanbudget.SEVERITY_NOTE,
@@ -273,7 +293,9 @@ def iter_assets(
             files.extend(directory_files)
             pending.extend(reversed(subdirs))
     files.sort()
-    pdf_stems = {(p.parent, p.stem) for p in files if p.suffix.lower() in PDF_EXT}
+    pdf_stems = uncertain_pdf_stems | {
+        (p.parent, p.stem) for p in files if p.suffix.lower() in PDF_EXT
+    }
 
     out: list[tuple[Path, str]] = []
     for p in files:
