@@ -94,7 +94,7 @@ export function WorkspaceContextBar() {
 
   return (
     <div
-      className="pointer-events-none absolute inset-x-0 top-2 z-30 flex justify-center px-1"
+      className="pointer-events-none absolute inset-x-0 top-2 z-drawer flex justify-center px-1"
       style={overlayLeft || overlayRight ? { paddingLeft: overlayLeft + 4, paddingRight: overlayRight + 4 } : undefined}
     >
       {/* 宽度按内容量：`w-max` = 内容的 max-content，面包屑因此拿到自然宽度、
@@ -108,7 +108,7 @@ export function WorkspaceContextBar() {
         // 与选区浮动栏（`ContextBar`）同一副骨架：p-1 → 36 高、gap 4、12px 字
         // （2026-09-15 打磨 F1 / F2）。此前是 px-2 py-1.5 → 40 高、gap 8、分隔线 14，
         // 同一块画布上两条浮条两种壳
-        className="pointer-events-auto flex w-max min-w-0 max-w-full flex-col gap-1 rounded-md bg-surface p-1 text-sm text-ink shadow-pop"
+        className="pointer-events-auto flex w-max min-w-0 max-w-full flex-col gap-1 rounded-lg bg-surface p-1 text-sm text-ink shadow-pop"
       >
         {/* 单行：返回 + 面包屑 + 添加到画布。浮条按内容量宽，这一行默认正好装下，
             面包屑（唯一可伸缩项）完整显示；只有画布窄到装不下才 truncate。两颗

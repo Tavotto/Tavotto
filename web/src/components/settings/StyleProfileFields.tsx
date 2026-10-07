@@ -259,7 +259,7 @@ export function StyleProfileFields({
 
   return (
     <div className="flex flex-col gap-4">
-      <FieldGroup group="text">
+      <StyleFieldGroup group="text">
         {STYLE_TEXT_ROWS.map((row) =>
           editable ? (
             <TextRowEditor
@@ -274,8 +274,8 @@ export function StyleProfileFields({
             <SummaryRow key={row.id} id={row.id} value={textSummary(row, draft)} />
           ),
         )}
-      </FieldGroup>
-      <FieldGroup group="lines">
+      </StyleFieldGroup>
+      <StyleFieldGroup group="lines">
         {STYLE_LINE_ROWS.map((row) =>
           editable ? (
             <LineRowEditor key={row.id} row={row} draft={draft} onSet={set} onClear={clear} />
@@ -283,13 +283,13 @@ export function StyleProfileFields({
             <SummaryRow key={row.id} id={row.id} value={lineSummary(row, draft)} />
           ),
         )}
-      </FieldGroup>
+      </StyleFieldGroup>
     </div>
   )
 }
 
 /** 一组：一条 type-section 小标题 + 若干行（与规范页同一种分组，`data-field-group` 同名） */
-function FieldGroup({ group, children }: { group: 'text' | 'lines'; children: ReactNode }) {
+function StyleFieldGroup({ group, children }: { group: 'text' | 'lines'; children: ReactNode }) {
   return (
     <div data-field-group={group} className="flex flex-col">
       <span className="type-section mb-1">{st(`group.${group}`)}</span>

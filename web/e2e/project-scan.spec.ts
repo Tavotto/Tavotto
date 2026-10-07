@@ -1,7 +1,7 @@
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { expect, test } from './fixtures'
+import { expect, test, type RunningApp } from './fixtures'
 
 /**
  * 导入即扫描（T02）——只有真浏览器 + 真后端才能回答的几件：
@@ -50,13 +50,30 @@ function writeScriptProject(dir: string, sentinel: string): void {
 
 const bar = (page: import('@playwright/test').Page) => page.locator('[data-project-scan]')
 
+/**
+ * 删临时项目之前先让应用整个退出：它还握着项目里的缩略图 / 版本文件。POSIX 上 unlink 打开着的文件
+ * 照样成功，Windows 上是 EBUSY（windows-exe-smoke 实测）；fixture 的收尾在用例体**之后**才停它，
+ * 来不及。退出后句柄释放可能滞后一拍，删目录带有界重试（同 fake-realtime.spec.ts）。
+ */
+async function stopAndRemove(a: RunningApp | undefined, root: string): Promise<void> {
+  if (a) {
+    await a.stop()
+    for (let i = 0; i < 60 && a.proc.exitCode === null && a.proc.signalCode === null; i++) {
+      await new Promise((r) => setTimeout(r, 250))
+    }
+  }
+  rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
+}
+
 test('只有脚本的项目：自动出现真实的检查结果，工作台可用，脚本一次都没跑', async ({ app, page }) => {
   const root = tmp('tavotto-scan-')
   const sentinel = path.join(root, 'SENTINEL_script_ran')
   const project = path.join(root, '项目 空格')
   writeScriptProject(project, sentinel)
+  let running: RunningApp | undefined
   try {
     const a = await app({ figures: project })
+    running = a
     await page.setViewportSize({ width: 1400, height: 900 })
     await page.goto(a.baseURL)
 
@@ -92,7 +109,7 @@ test('只有脚本的项目：自动出现真实的检查结果，工作台可�
     expect((await after.json()).state).not.toBe('cancelled')
     expect(existsSync(sentinel)).toBe(false)
   } finally {
-    rmSync(root, { recursive: true, force: true })
+    await stopAndRemove(running, root)
   }
 })
 
@@ -101,8 +118,10 @@ test('纯静态项目：没有检查条，直接可排版', async ({ app, page }
   const project = path.join(root, 'static')
   mkdirSync(project, { recursive: true })
   copyFileSync(SAMPLE_PDF, path.join(project, 'Only_Static.pdf'))
+  let running: RunningApp | undefined
   try {
     const a = await app({ figures: project })
+    running = a
     await page.setViewportSize({ width: 1400, height: 900 })
     await page.goto(a.baseURL)
     await expect(page.locator('[data-card="Only_Static.pdf"]')).toBeVisible({ timeout: 30_000 })
@@ -117,7 +136,7 @@ test('纯静态项目：没有检查条，直接可排版', async ({ app, page }
     expect(report.assets.browsable).toBe(true)
     await expect(bar(page)).toHaveCount(0)
   } finally {
-    rmSync(root, { recursive: true, force: true })
+    await stopAndRemove(running, root)
   }
 })
 
@@ -130,8 +149,10 @@ test('目录读不动：条说「没有检查完」，而不是当成没有脚�
   copyFileSync(SAMPLE_PDF, path.join(project, 'Visible.pdf'))
   writeFileSync(path.join(project, 'locked', 'hidden.py'), 'print(1)\n', 'utf-8')
   chmodSync(path.join(project, 'locked'), 0)
+  let running: RunningApp | undefined
   try {
     const a = await app({ figures: project })
+    running = a
     await page.setViewportSize({ width: 1400, height: 900 })
     await page.goto(a.baseURL)
     await expect(bar(page)).toBeVisible({ timeout: 30_000 })
@@ -143,7 +164,7 @@ test('目录读不动：条说「没有检查完」，而不是当成没有脚�
     await expect(page.locator('[data-card="Visible.pdf"]')).toBeVisible()
   } finally {
     chmodSync(path.join(project, 'locked'), 0o755)
-    rmSync(root, { recursive: true, force: true })
+    await stopAndRemove(running, root)
   }
 })
 

@@ -8,6 +8,7 @@ import { ManagedEnvironmentRow } from './DependencyRepairCard'
 import { InputRemapRows, ScriptBackupRows, WorkdirRow } from './WorkdirRow'
 import { Button } from './ui/Button'
 import { TextInput } from './ui/Input'
+import { Card } from './ui/Card'
 
 /**
  * 渲染环境的状态与出口。
@@ -61,9 +62,7 @@ export function EngineEnvironmentCard({ compact }: { compact?: boolean }) {
    * （图内元素面板 / 脚本区里的错误块）仍然是一张卡：它在那里是插进别的内容
    * 之间的一段独立提示，不套框就散了。
    */
-  const shell = compact
-    ? 'flex flex-col gap-2.5 rounded-md bg-surface p-3 shadow-card'
-    : 'flex flex-col gap-2.5'
+  const shell = { appearance: compact ? 'raised' : 'plain', padding: compact ? 'md' : 'none' } as const
 
   const advancedBlock = (
     <div className="flex flex-col gap-1.5 border-t border-border pt-2.5">
@@ -100,7 +99,7 @@ export function EngineEnvironmentCard({ compact }: { compact?: boolean }) {
   if (env.ok) {
     const label = sourceLabel(env.source)
     return (
-      <div data-engine-env-card className={shell}>
+      <Card data-engine-env-card {...shell} className="flex flex-col gap-2.5">
         <div>
           <h3 className="type-section">{en('okTitle')}</h3>
           <p className="mt-1 text-xs leading-relaxed text-ink-2">
@@ -119,14 +118,14 @@ export function EngineEnvironmentCard({ compact }: { compact?: boolean }) {
         </div>
         {/* 内置包版本清单在设置 → 包管理（ADR 0038）；这张卡只说环境本身 */}
         {!compact && advancedBlock}
-      </div>
+      </Card>
     )
   }
 
   // ---- 3. 内置环境缺失 / 损坏（桌面版）-----------------------------------
   if (env.runtime?.expected) {
     return (
-      <div data-engine-env-card className={shell}>
+      <Card data-engine-env-card {...shell} className="flex flex-col gap-2.5">
         <div>
           <h3 className="type-section">{en('incompleteTitle')}</h3>
           <p className="mt-1 text-xs leading-relaxed text-ink-2">
@@ -138,13 +137,13 @@ export function EngineEnvironmentCard({ compact }: { compact?: boolean }) {
           <EnvironmentAdviceRow />
         </div>
         {!compact && advancedBlock}
-      </div>
+      </Card>
     )
   }
 
   // ---- 2. 缺环境（源码 / pip 安装）---------------------------------------
   return (
-    <div data-engine-env-card className={shell}>
+    <Card data-engine-env-card {...shell} className="flex flex-col gap-2.5">
       <div>
         <h3 className="type-section">{en('missingTitle')}</h3>
         <p className="mt-1 text-xs leading-relaxed text-ink-2">{en('missingBody')}</p>
@@ -184,7 +183,7 @@ export function EngineEnvironmentCard({ compact }: { compact?: boolean }) {
       )}
 
       {!compact && advancedBlock}
-    </div>
+    </Card>
   )
 }
 
@@ -381,7 +380,7 @@ export function MissingDependencyCard({
   }
 
   return (
-    <div className="flex flex-col gap-2.5 rounded-md bg-surface p-3 shadow-card">
+    <Card className="flex flex-col gap-2.5">
       <div>
         <h3 className="type-section">
           {/* 包名是脚本里的标识符，原样显示 */}
@@ -423,6 +422,6 @@ export function MissingDependencyCard({
       </div>
 
       {error && <p className="text-xs text-danger">{error}</p>}
-    </div>
+    </Card>
   )
 }

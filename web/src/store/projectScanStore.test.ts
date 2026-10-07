@@ -167,6 +167,27 @@ describe('权威回包不被请求重排吞掉', () => {
     expect(useProjectScanStore.getState().scan?.observation_seq).toBe(9)
   })
 
+  it('先发的非 force start 晚于后发的 force start 回来（带缓存终局）：不覆盖 force 那一轮，轮询继续', async () => {
+    const plain = deferred<ProjectScan>()
+    const forced = deferred<ProjectScan>()
+    mockStart.mockReturnValueOnce(plain.promise).mockReturnValueOnce(forced.promise)
+    const first = useProjectScanStore.getState().start({ reason: 'claim' })
+    const second = useProjectScanStore.getState().start({ force: true, reason: 'manual' })
+    // force 的回包先落地：新一轮 running
+    forced.resolve(running({ scan_id: 'new', observation_seq: 1 }))
+    await second
+    expect(useProjectScanStore.getState().scan?.scan_id).toBe('new')
+    // 非 force 的缓存终局（scan_id 不同）后到：必须丢弃
+    plain.resolve(scan({ scan_id: 'cached', observation_seq: 7 }))
+    await first
+    expect(useProjectScanStore.getState().scan?.scan_id).toBe('new')
+    expect(useProjectScanStore.getState().scan?.state).toBe('running')
+    // 仍在轮询
+    mockFetch.mockResolvedValueOnce(scan({ scan_id: 'new', observation_seq: 9 }))
+    await vi.advanceTimersByTimeAsync(500)
+    expect(useProjectScanStore.getState().scan?.observation_seq).toBe(9)
+  })
+
   it('权威回包仍受项目换代约束，且同一轮内 observation_seq 不倒退', async () => {
     const post = deferred<ProjectScan>()
     mockStart.mockReturnValueOnce(post.promise)

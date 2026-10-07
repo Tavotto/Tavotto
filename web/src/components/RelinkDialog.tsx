@@ -73,7 +73,7 @@ export function RelinkDialog() {
           <li key={m.fileId} className="flex items-center gap-2">
             {/* 缺件是**警告**不是阻断（全面打磨 D47）：接入状态里同一类状态用的就是 warn，
                 同一件事两种等级会让红色贬值 */}
-            <TriangleAlert size={ICON_SIZE.sm} className="shrink-0 text-warn" />
+            <TriangleAlert size={ICON_SIZE.sm} className="shrink-0 text-warn-content" />
             <div className="min-w-0 flex-1">
               <p className="truncate text-xs text-ink" title={m.fileId}>
                 {m.name}

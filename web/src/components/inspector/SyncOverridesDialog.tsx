@@ -146,6 +146,7 @@ function SyncOverridesDialog({ panel, onClose }: { panel: PanelObject; onClose: 
       .getState()
       .setStatus(
         msg('sync.syncedToCanvas', { count: mapped.length, name: onCanvas.name }, 'inspector'),
+        'done',
       )
     onClose()
   }

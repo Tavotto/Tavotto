@@ -352,7 +352,7 @@ async function landTutorial(
   if (how === 'open') {
     // 不带引导：onboarding 一个字段都不碰，也不记 tutorial_started（这不是开始教程）
     useTutorialStore.setState({ busy: null, failure: null })
-    useUiStore.getState().setStatus(msg('onboarding.landed.opened', undefined, 'dialogs'))
+    useUiStore.getState().setStatus(msg('onboarding.landed.opened', undefined, 'dialogs'), 'done')
     return { ok: true, kind: 'opened' }
   }
 
@@ -373,7 +373,7 @@ async function landTutorial(
     kind = 'started'
   }
   useTutorialStore.setState({ busy: null, failure: null })
-  useUiStore.getState().setStatus(msg(`onboarding.landed.${kind}`, undefined, 'dialogs'))
+  useUiStore.getState().setStatus(msg(`onboarding.landed.${kind}`, undefined, 'dialogs'), 'done')
   // 遥测只记**真的开始了**的那一次（含重新开始）；继续不是开始。入口不传
   // source（重置那条路、测试）就不记——来源说不出来就别编一个。
   if (kind !== 'resumed' && source) {
@@ -436,5 +436,5 @@ export function homeVariant(
 /** 「重置提示」：所有一次性情境提示重新可见 */
 export function resetHints(): void {
   useOnboardingStore.getState().resetHints()
-  useUiStore.getState().setStatus(msg('onboarding.hintsReset', undefined, 'dialogs'))
+  useUiStore.getState().setStatus(msg('onboarding.hintsReset', undefined, 'dialogs'), 'done')
 }

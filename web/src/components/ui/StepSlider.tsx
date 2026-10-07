@@ -164,7 +164,7 @@ export function StepSlider({
         aria-valuetext={valueText}
         onChange={(e) => onChange(Number(e.target.value))}
         className={cn(
-          'peer relative h-[var(--thumb)] w-full cursor-pointer appearance-none bg-transparent outline-none',
+          'peer relative h-[var(--thumb)] w-full appearance-none bg-transparent outline-none',
           'disabled:cursor-not-allowed',
           // 轨道由上面两层 span 画，原生轨道让位：透明 + 与输入框等高，这样拇指和
           // 轨道等高、天然垂直居中，不用给拇指补 margin-top 去凑。

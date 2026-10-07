@@ -11,6 +11,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useUiStore } from '@/store/uiStore'
 import type { PanelObject } from '@/types/document'
 import type { SourceIntegrity } from '../sourceIntegrity'
@@ -72,18 +73,21 @@ const render = ({
   onRecheck = vi.fn(),
 }: Props = {}) => {
   act(() => {
+    // 关闭钮是 ui/IconButton（带 Tip），与 RegistryDialog.test 同一写法包 TooltipProvider
     root.render(
-      <GuidedTask
-        task={task}
-        scriptName="kinetics.py"
-        panel={basePanel(overrides)}
-        integrity={integrity(verdict)}
-        renderBusy={renderBusy}
-        renderFailed={renderFailed}
-        onRequestIntegrityRecheck={onRecheck}
-        onViewSource={vi.fn()}
-        onDismiss={onDismiss}
-      />,
+      <TooltipProvider>
+        <GuidedTask
+          task={task}
+          scriptName="kinetics.py"
+          panel={basePanel(overrides)}
+          integrity={integrity(verdict)}
+          renderBusy={renderBusy}
+          renderFailed={renderFailed}
+          onRequestIntegrityRecheck={onRecheck}
+          onViewSource={vi.fn()}
+          onDismiss={onDismiss}
+        />
+      </TooltipProvider>,
     )
   })
 }

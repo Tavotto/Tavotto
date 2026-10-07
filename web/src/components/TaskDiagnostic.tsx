@@ -85,7 +85,7 @@ export function TaskDiagnostic({
   if (!folded) return body
   return (
     <Details className="mt-0.5" data-task-diagnostic data-task-diagnostic-kind={kind}>
-      <Summary className="type-meta cursor-pointer">{td('title')}</Summary>
+      <Summary className="type-meta">{td('title')}</Summary>
       <div className="mt-1.5">{body}</div>
     </Details>
   )

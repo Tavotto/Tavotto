@@ -137,6 +137,19 @@ describe('画布标签条', () => {
     }
   })
 
+  it('页签上没有「未保存」记号：文档级 dirty 来回翻，每个页签的 DOM 一字不变（2026-10-07 审计 P0）', () => {
+    // 保存状态是整份文档的事，只在顶栏文档名旁说。此前当前页签拿文档级 dirty 画一个点：
+    // 哪页激活哪页「未保存」，自动保存每轮还让它闪一秒
+    act(() => useDocumentStore.setState({ dirty: false }))
+    mount()
+    const snapshot = () =>
+      [...host.querySelectorAll<HTMLElement>('[data-canvas-tab]')].map((t) => t.outerHTML)
+    const clean = snapshot()
+    expect(clean).toHaveLength(2)
+    act(() => useDocumentStore.setState({ dirty: true }))
+    expect(snapshot(), 'dirty 置位后页签不变').toEqual(clean)
+  })
+
   it('当前页签认稳定的 data 钩子：每个页签带自己的 id，只有当前那一个带 data-active', () => {
     mount()
     const hooked = () =>
@@ -191,9 +204,9 @@ describe('画布标签条', () => {
       mount()
       expect(scrollLeft).toBe(0)
 
-      // 用户横滑到第二个页签那里；随后一次与页签几何无关的重渲染（改了图 → dirty）
+      // 用户横滑到第二个页签那里；随后一次与页签几何无关的重渲染（画布表换了引用、内容没变）
       scrollLeft = 100
-      act(() => useDocumentStore.setState({ dirty: true }))
+      act(() => useDocumentStore.setState({ canvases: [...useDocumentStore.getState().canvases] }))
       expect(scrollLeft, '当前页签没动：不许把条拽回来').toBe(100)
 
       // 当前页签改了名、变宽了（activeId 与 openTabs 都没变）：它在条外，要滚回来

@@ -137,6 +137,20 @@ describe('两个选择', () => {
     expect(decline!.className).toBe(allow!.className)
   })
 
+  it('两颗按钮是仅有的出口：不画右上角 ×（画了却关不掉就是假控件）', () => {
+    expect(document.querySelector('[data-dialog-close]')).toBeNull()
+  })
+
+  it('Esc 不算表态：框还在、什么都没写', async () => {
+    const content = document.querySelector('[data-dialog]') as HTMLElement
+    await act(async () => {
+      content.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+    expect(patchMock).not.toHaveBeenCalled()
+    expect(useTelemetryStore.getState().askOpen).toBe(true)
+    expect(document.body.textContent).toContain(dlg('title'))
+  })
+
   it('说清楚发什么、不发什么', () => {
     const text = document.body.textContent ?? ''
     for (const key of ['sendsTitle', 'sendsVersion', 'sendsPlatform', 'sendsFeatures',

@@ -32,8 +32,11 @@ export function TelemetryConsentDialog() {
   return (
     <Dialog
       open
-      // 随手关掉 = 还没表态，下次启动再问。真正的「不」要按「暂不」。
+      // 必须表态的询问：两颗同权按钮是仅有的出口。之前只给了空的 onOpenChange，
+      // 右上角 × 照画、Esc 照收，点了却什么都不发生（2026-10-07 设计审计 §10.2 P0）。
+      // blockDismiss 把 × 去掉、Esc / 点外面吞掉——没有「看起来能关其实关不掉」的控件。
       onOpenChange={() => {}}
+      blockDismiss
       title={tt('title')}
       description={tt('intro')}
       size="md"

@@ -12,7 +12,12 @@
   },
   "colorField": {
     "picker": "{{label}}：取色盘",
-    "none": "无"
+    "none": "无",
+    "open": "{{label}}：选色",
+    "hex": "{{label}}：色号",
+    "documentColors": "排版里的颜色",
+    "recent": "最近使用",
+    "system": "系统取色器…"
   },
   "count": {
     "selectedObjects_other": "已选 {{count}} 个对象"
