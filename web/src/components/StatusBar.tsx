@@ -358,7 +358,7 @@ export function NotificationRail() {
       // 画布底部有浮动工具条时整列抬到它上面去（toast 居中、工具条也居中，不抬就叠在一起）
       className={cn(
         'pointer-events-none absolute inset-x-0 z-canvas-chrome flex flex-col items-center gap-1.5 px-4',
-        toolbarUp ? 'bottom-16' : 'bottom-4',
+        toolbarUp ? 'bottom-16' : 'bottom-3',
       )}
     >
       {/* aria-live 常驻在 DOM 里，读屏器才能捕捉内容变化。

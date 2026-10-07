@@ -22,7 +22,9 @@
   `completeStep(id, 'done')`（跳过不记）；`tutorial_started` 只在真的开始 / 重新开始。所有
   字段先进后端 `EVENTS` 表（两侧对拍），前端不发表里没有的键。
 * **命令面板的 id 是稳定标识**（e2e 与资源都认它）：`refresh-project / readiness / tutorial-start /
-  tutorial-resume / tutorial-reset / hints-reset / shortcut-help`；项目命令按
+  tutorial-resume / tutorial-reset / hints-reset / shortcut-help`（2026-10-07 增 `zoom-selection`，⇧2，需要选区）；
+  外壳是 `ui/Dialog chrome="palette"`（焦点陷阱与归还、输入框是 combobox + `aria-activedescendant`、行是 option 不嵌按钮），
+  键位从 `lib/keymap` 取；项目命令按
   `projectStore.phase === 'open'` 出现，embedded / playground 整组不出现。中英文 label + keywords
   两份都要有（`CommandPalette.test.tsx` 比两份资源的 id 集合）。**高亮行按身份记不按位置记**
   （光标 `{ id, query }`，查询一变回首行；查询按词切、每个词都要命中、顺序不限）——宪法第二十四节。

@@ -836,7 +836,7 @@
     "timelineButton": "Layout timeline",
     "issueLastDoc": "Last layout not opened",
     "issueTooNew": "Newer layout",
-    "issueAria": "Document status: {{status}}. Show details",
+    "issueAria": "Layout status: {{status}}. Show details",
     "documentRenameHint": "Click for layout actions; double-click or F2 to rename",
     "zoomValueInput": "Zoom (%)",
     "zoomSelection": "Zoom to selection"

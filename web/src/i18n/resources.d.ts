@@ -4847,7 +4847,7 @@ export default interface Resources {
       "fromProject": "· 项目 {{name}}",
       "importPackage": "导入项目包…",
       "insertShape": "插入形状",
-      "issueAria": "文档状态：{{status}}。查看详情",
+      "issueAria": "排版状态：{{status}}。查看详情",
       "issueLastDoc": "上次的排版没打开",
       "issueTooNew": "排版版本较新",
       "more": "更多",

@@ -30,6 +30,13 @@
   兄弟图」时摆（不做 disabled）；点它只调 `openSyncOverrides`，窗口是画布舞台上常驻的 `SyncOverridesHost`。
   目标图不在画布上时「同步并写回」走标准 `WriteBackDialog`（`detached`），不许在这里再长出第二条写回路径。
 * 不可用的项用 `MenuItem.reason` 常驻原因，不用 tooltip（禁用项收不到指针）。
+* **剪贴板组**（2026-10-07 设计审计 §10.1）：公共尾巴的第一组是「复制 / 粘贴 / 创建副本」（`data-quick-item="copy" / "paste" /
+  "duplicate"`）。复制 / 粘贴调属性页按钮那一对 `copySelectedObjects` / `pasteObjects`（菜单点击是用户手势，异步剪贴板放行）；
+  ⌘C / ⌘V 的主路径仍是原生剪贴板事件，这里只是同一件事的菜单入口，不长第二套剪贴板。键位一律 `lib/keymap.keyOf`。
+* **空白画布的右键菜单**（2026-10-07）：`canvas/CanvasContextMenu.tsx`，同一份 `PointMenu` 外壳；`CanvasStage.onContextMenu`
+  只接空白处（落在 `[data-object-id]` 上的冒泡不接——文字编辑 / 裁剪中留给浏览器自己的菜单）。只放调既有函数的入口：
+  粘贴 / 全选 / 适应画布 / 标尺·网格·安全区开关 / 画布设置（`data-canvas-menu-item`），离散动作过 `runDiscreteAction`。
+  看护 `canvas/canvasContextMenu.test.tsx`。
 * 看护：`canvas/objectContextMenu.test.tsx` / `store/quickEditActions.test.ts` /
   `components/inspector/syncOverrides.test.tsx` / `components/inspector/writeBackRecords.test.tsx` /
   `e2e/sync-overrides.spec.ts` / `tests/test_engine_invalidate.py` / `e2e/quick-menu.spec.ts`。

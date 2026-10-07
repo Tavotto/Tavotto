@@ -37,8 +37,8 @@ import { Tip } from './ui/Tooltip'
  */
 
 /**
- * 浮动工具条此刻是否显示；底部的 toast / HUD 据此抬高自己（工具条占掉画布底边 16 + 40 = 56，
- * 再留 8 的缝：抬到 bottom-16）
+ * 浮动工具条此刻是否显示；底部的 toast / HUD 据此抬高自己（工具条占掉画布底边 12 + 40 = 52，
+ * 再留 12 的缝：抬到 bottom-16）
  */
 export function useCanvasToolbarVisible(): boolean {
   return useWorkspaceStore((s) => s.mode !== 'fast_edit')
@@ -124,7 +124,9 @@ function Bar() {
       aria-label={t('workspace:canvasTools.label')}
       aria-orientation="horizontal"
       onKeyDown={onKeyDown}
-      className="pointer-events-auto absolute bottom-4 left-1/2 z-canvas-chrome flex max-w-[calc(100%-1.5rem)] -translate-x-1/2 items-center gap-0.5 rounded-full bg-surface p-1 shadow-pop"
+      // 底边居中角位，12px 内距（四个角位同一档，2026-10-07 设计审计 §10.1）。工具钮 32 + p-1 = 40 高，
+      // 顶边离舞台底边 52——与 TOOLBAR_FIT_CLEARANCE（52 + 8 的缝）对上
+      className="pointer-events-auto absolute bottom-3 left-1/2 z-canvas-chrome flex max-w-[calc(100%-1.5rem)] -translate-x-1/2 items-center gap-0.5 rounded-full bg-surface p-1 shadow-pop"
     >
       {/* 工具（模式）：32 圆形图标钮，名字在气泡与读屏里；激活 = 墨色实底 + 实心图标 + aria-pressed
           （2026-10-07 设计审计 §10.1）。此前与一次性动作同为 28 的带字钮、激活只是一层 10% 灰 */}

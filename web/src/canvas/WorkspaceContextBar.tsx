@@ -95,7 +95,8 @@ export function WorkspaceContextBar() {
 
   return (
     <div
-      className="pointer-events-none absolute inset-x-0 top-2 z-drawer flex justify-center px-1"
+      // 顶边居中角位，12px 内距（四个角位同一档，2026-10-07 设计审计 §10.1）
+      className="pointer-events-none absolute inset-x-0 top-3 z-drawer flex justify-center px-1"
       style={overlayLeft || overlayRight ? { paddingLeft: overlayLeft + 4, paddingRight: overlayRight + 4 } : undefined}
     >
       {/* 宽度按内容量：`w-max` = 内容的 max-content，面包屑因此拿到自然宽度、

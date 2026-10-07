@@ -291,7 +291,7 @@
   --z-onboarding: 90;
 
   /* 画布覆盖层 token（2026-10-07 设计审计 §10.1）：悬停描边的不透明度、唯一的一种虚线、手柄填充、遮罩。
-     画布代码逐处迁到这里属于画布那一期；新代码不再写 #fff / #1B1B18 / rgba(27,27,24,…) 字面量。 */
+     画布那一期（2026-10-07）已迁完：OverlaySvg / PageSheet / 裁剪框只读这几个 token，不再写 #fff / rgba(27,27,24,…) 字面量。 */
   --sel-hover-opacity: 0.6;
   --sel-dash: 4 3;
   --handle-fill: var(--color-surface);

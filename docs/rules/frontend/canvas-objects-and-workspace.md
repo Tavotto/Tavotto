@@ -121,6 +121,10 @@
   另判。伸出去的那截由 `canvas/PageOutsideMask` 画淡（导出时 PDF 页框本来就裁掉它），
   页面轮廓压在内容之上——参考可画「页面即蒙版」，但只画淡不隐藏、不吃指针事件。遮罩是
   屏幕空间的四条 div 色带，**不用 svg**（e2e 有「舞台里第一个 svg / img」的等渲染定位）。
+  **页面轮廓只有这一圈**（2026-10-07 设计审计 §10.1）：`PageSheet` 不再在世界层里画 outline（它随缩放变粗、
+  与遮罩那圈画两遍）。从素材库拖图进来时舞台上有落点预览框（`CanvasStage` 的 `data-drop-ghost`），框就是
+  `placePanelInPage(原图尺寸, 页面, 指针)`——与松手后 `addPanel` 落的是同一个计算；被拖的素材 id 在 dragstart
+  冒泡到 document 时记下（拖动中读不到 dataTransfer 的内容）。看护 `canvas/canvasContextMenu.test.tsx`。
   - **加图是一条分层链，本条是它的唯一权威**（`asset-library.md`、`web/AGENTS.md` 引用这里，
     #706 评审 P1）：
     1. `workspace.addFigureToLayout(figureId)`——按素材 id 加，**去重 / 聚焦**：已在文档里就
