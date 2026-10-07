@@ -114,6 +114,17 @@
   --color-ok-subtle: var(--color-ok-surface);
   --color-sel: #4685e2;
 
+  /* 代码着色（2026-10-07 设计审计 §6.3 / §10.4）：只读代码块（/try 的 Code Sheet、助手的代码块）共用这七档，
+     不在组件里写 hex。每一档在白 / 桌面 / surface-2 上都 ≥4.5:1（tokenContrast.test 守着）；
+     comment 与 ink-3 同值，注释就是「三级正文」。 */
+  --color-syntax-keyword: #8a3350;
+  --color-syntax-function: #5b45a8;
+  --color-syntax-string: #7a5a2b;
+  --color-syntax-number: #2868b7;
+  --color-syntax-comment: #6c6c66;
+  --color-syntax-type: #2a6b5b;
+  --color-syntax-builtin: #86520a;
+
   /* 圆角族（2026-10-07 设计审计 §3.1，用户拍板）。先把 Tailwind 自带的 xl / 2xl…
      整个清掉，rounded-xl 这种写了也不生效，随机圆角就没有来路。
        xs 4     ——16px 高以下的小片：kbd、计数角标、缩略图上的标签、分段 thumb

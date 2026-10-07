@@ -46,7 +46,7 @@ export function PlaygroundLoading({
   ]
   return (
     <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-5 p-6">
-      <p className="text-[15px] font-medium text-ink">{pg('preparing', { name: title })}</p>
+      <p className="type-title">{pg('preparing', { name: title })}</p>
       {/* 真话进度：确切阶段逐个点亮，没有假造的百分比 */}
       <ol className="flex flex-col gap-2.5" aria-live="polite">
         {steps.map((s, i) => {
@@ -57,7 +57,7 @@ export function PlaygroundLoading({
               {state === 'done' ? (
                 <Check size={ICON_SIZE.md} className="shrink-0 text-ink-3" aria-hidden />
               ) : state === 'active' ? (
-                <LoaderCircle size={ICON_SIZE.md} className="shrink-0 animate-spin text-sel" aria-hidden />
+                <LoaderCircle size={ICON_SIZE.md} className="shrink-0 animate-spin text-accent" aria-hidden />
               ) : (
                 <span className="h-3.5 w-3.5 shrink-0 rounded-full border border-border" aria-hidden />
               )}

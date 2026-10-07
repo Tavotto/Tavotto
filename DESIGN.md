@@ -19,6 +19,13 @@ colors:
   warn: "#b07400"
   ok: "#2b7649"
   sel: "#4685e2"
+  syntax-keyword: "#8a3350"
+  syntax-function: "#5b45a8"
+  syntax-string: "#7a5a2b"
+  syntax-number: "#2868b7"
+  syntax-comment: "#6c6c66"
+  syntax-type: "#2a6b5b"
+  syntax-builtin: "#86520a"
   shadow: "#1b1b18"
 typography:
   display:
@@ -176,6 +183,9 @@ Dialog 页脚三槽——全文在 **宪法第二十六节**。
 ### Status
 - **锚点** danger `#c4442a` · warn `#b07400` · ok `#2b7649` · info = accent。**派生**：`-surface` = 锚点 10% 混白、`-border` = 30%、`-content` = 锚点 70% 压黑（字，≥4.5:1）。新增一种状态色只写一个锚点；旧名 `*-subtle` 是 `-surface` 的别名，迁完删除。
 
+### Syntax
+- **代码着色七档** `syntax-keyword / function / string / number / comment / type / builtin`：只读代码块（/try 的 Code Sheet、助手的代码块）共用，组件里不写 hex；每档在白 / 桌面 / surface-2 上 ≥4.5:1，comment 与 ink-3 同值。
+
 ### Named Rules
 **The Small Blue Rule.** 蓝色不做任何大块背景、不做按钮填色；主按钮是近黑 `bg-ink`。
 **The Hairline Rule.** surface 之间靠极轻的明度差与 hairline 分层，不靠框。
@@ -218,7 +228,7 @@ lg 12（卡片、菜单 / popover 外壳、多行浮动面板）、panel 16（�
 全部原语在 `web/src/components/ui/`，形态与状态在 **宪法第五节**：Button 五档（primary / secondary / ghost / danger / danger-tinted，高 28 / 32）、IconButton（圆）、
 TextInput / NumberField（框内单位）、Select（全仓唯一的下拉）、Checkbox、Toggle（名字必填）、
 Badge、StatusPill、Notice、Card、Tabs（选中 600 + 2px 下划线）、Segmented（灰容器 + 白色浮起的 thumb，选中 600）、listRowClass（28 / 44 / 52，选中 600）/ rowMetaClass / dropLineClass / TreeRow、
-RowMenu（⋯ + 右键 + ⇧F10 同一份菜单）、SearchInput、Section / Disclosure、FormSection / FieldGroup、EmptyState（40px 图标底座 + 15 / 600 标题）、
+RowMenu（⋯ + 右键 + ⇧F10 同一份菜单）、dropZoneClass（拖放接收态：静态不画、拖入才是 accent 虚线 + 浅底 + 外发光）、SearchInput、Section / Disclosure、FormSection / FieldGroup、EmptyState（40px 图标底座 + 15 / 600 标题）、
 Dialog（sm 400 / md 480 / lg 560 / xl 760 / shell；页脚 `{ start, secondary, primary }` 三槽、32px；栈底才画遮罩；Esc = 安全答案）。
 四态：hover（surface-hover 5%）< active（surface-active 8%）< selected（selected 10% + 字重 / 对勾）；
 disabled 统一 `opacity-40 + cursor-not-allowed`。光标一律箭头（可拖的卡用抓手）。每个上下文一颗主按钮；对话框里的破坏性确认是浅底危险胶囊，不是实心红。
