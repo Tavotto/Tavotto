@@ -263,4 +263,23 @@ describe('ScriptAnswersDialog', () => {
     expect(runSpy).not.toHaveBeenCalled()
     setCurrentProjectId(null)
   })
+  it('保存在飞时关掉对话框（Codex #821 P2）：同一项目里已存好的那条照样重跑，剩下的不再发', async () => {
+    let resolve!: (v: Awaited<ReturnType<typeof updateScriptAnswer>>) => void
+    mockUpdate.mockReturnValueOnce(new Promise((r) => (resolve = r)))
+    useScriptInputStore.setState({ answers: TWO })
+    useScriptInputStore.getState().openManager('pick.py')
+    render()
+    const boxes = dialog()!.querySelectorAll<HTMLInputElement>('input')
+    await typeInto(boxes[0], '3')
+    await typeInto(boxes[1], 'b')
+    await click(saveButton())
+    await act(async () => {
+      useScriptInputStore.getState().closeManager()
+    })
+    await act(async () => {
+      resolve({ scripts: {}, location: '', pending: [] })
+    })
+    expect(mockUpdate).toHaveBeenCalledTimes(1)
+    expect(runSpy).toHaveBeenCalledTimes(1)
+  })
 })

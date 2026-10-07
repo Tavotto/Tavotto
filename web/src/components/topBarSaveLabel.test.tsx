@@ -48,7 +48,8 @@ beforeEach(async () => {
   useDocumentStore.getState().silent((d) => {
     d.objects.push(text)
   })
-  useDocumentStore.setState({ saveState: 'saved', lastPersisted: null })
+  // 真实流程里 saved 总伴随着一次落盘时间（afterWriteOk）；「从没落过盘」另有用例
+  useDocumentStore.setState({ saveState: 'saved', lastPersisted: Date.now() })
   vi.useFakeTimers()
   host = document.createElement('div')
   document.body.appendChild(host)
@@ -63,6 +64,17 @@ afterEach(() => {
 })
 
 describe('顶栏保存状态', () => {
+  it('从没落过盘的新排版（Codex #821 P2）：第一次改动不等门槛，直接说进行中，不先声称「已存在本机」', () => {
+    act(() => useDocumentStore.setState({ saveState: 'clean', lastPersisted: null }))
+    go('dirty')
+    expect(shown()).toBe('dirty')
+    expect(visibleText()).not.toBe('已存在本机')
+    go('saving')
+    expect(shown()).toBe('saving')
+    act(() => useDocumentStore.setState({ saveState: 'saved', lastPersisted: Date.now() }))
+    expect(shown()).toBe('settled')
+  })
+
   it('快的一轮（dirty → saving → saved 在门槛内走完）：一直是落定那句，不闪', () => {
     expect(shown()).toBe('settled')
     expect(visibleText()).toBe('已存在本机')
@@ -95,7 +107,9 @@ describe('顶栏保存状态', () => {
 
   it('宽度占位：无论哪一档，这一格里叠着的都是同样那几句', () => {
     const settledCell = [...cell()].sort()
-    expect(settledCell).toEqual(['已存在本机', '有未保存修改', '正在保存…'].sort())
+    // 本机落定话的两种写法（saved 不带时间 / 快的一轮带上次落盘时间）都在占位里
+    expect(settledCell.filter((c) => c?.startsWith('已存在本机'))).toHaveLength(2)
+    expect(settledCell).toEqual(expect.arrayContaining(['已存在本机', '有未保存修改', '正在保存…']))
     go('dirty')
     tick(SAVE_PENDING_REVEAL_MS)
     expect([...cell()].sort()).toEqual(settledCell)

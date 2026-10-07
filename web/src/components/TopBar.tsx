@@ -262,8 +262,12 @@ export function SaveStateLabel() {
   const bound = useActiveProjectFile()
   const projectOpen = useProjectStore((s) => !!s.project?.open) && currentProjectId() !== null
   const localPending = saveState === 'dirty' || saveState === 'saving'
-  const revealPending = useHeldFor(localPending, SAVE_PENDING_REVEAL_MS)
+  const held = useHeldFor(localPending, SAVE_PENDING_REVEAL_MS)
   if (!hasContent && !bound) return null
+  // 还从没落过盘（新排版的第一次改动）：没有「上一句落定的话」可以继续显示，
+  // 不等 600ms 直接说进行中——否则会在第一轮自动保存完成前就声称「已存在本机」
+  const neverPersisted = !bound && !lastPersisted && saveState !== 'saved'
+  const revealPending = held || (localPending && neverPersisted)
 
   const settled = saveState === 'clean' || saveState === 'saved'
   // 落定时那句话（也是快的一轮里继续显示的那句）
@@ -297,7 +301,12 @@ export function SaveStateLabel() {
   const pending = revealPending || !!bound?.dirty
   // 占位：会在本机自动保存一轮里轮到的那几句（落定那句 + 两句进行中）。叠在同一格里，
   // 格宽取最宽那句——只是给宽度，不可见、不给读屏
-  const reserve = [settledText, t('topbar.saveDirty'), t('topbar.saveSaving')].filter(
+  // 本机那句落定话在 saved（不带时间）与快的一轮里（带上次落盘时间）是两种写法，两种都占位，
+  // 否则 saved → dirty 时格宽跟着变
+  const localSettled = bound
+    ? []
+    : [t('topbar.saveLocal'), ...(lastPersisted ? [t('topbar.saveLocalAt', { time: formatTime(lastPersisted) })] : [])]
+  const reserve = [...new Set([settledText, ...localSettled, t('topbar.saveDirty'), t('topbar.saveSaving')])].filter(
     (r) => r !== text,
   )
   return (

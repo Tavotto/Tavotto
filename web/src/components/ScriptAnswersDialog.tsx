@@ -38,6 +38,11 @@ function stillCurrent(epoch: number, script: string): boolean {
   return s.epoch === epoch && s.managing === script
 }
 
+/** 只看项目代际：保存在飞时用户关掉对话框不算作罢——答案已经存进同一个项目，重跑仍要做 */
+function sameProject(epoch: number): boolean {
+  return useScriptInputStore.getState().epoch === epoch
+}
+
 function AnswersManager({ script }: { script: string }) {
   useTranslation('dialogs')
   const answers = useScriptInputStore((s) => s.answers?.[script] ?? NONE)
@@ -74,24 +79,29 @@ function AnswersManager({ script }: { script: string }) {
       for (const { index, value } of batch) {
         const res = await useScriptInputStore.getState().saveAnswer(script, index, value)
         // 请求在飞时换了项目：什么都不做——尤其不在新项目里重跑同名脚本
-        if (res.status === 'stale' || !stillCurrent(epoch, script)) return
+        if (res.status === 'stale' || !sameProject(epoch)) return
+        const open = stillCurrent(epoch, script)
         if (res.status === 'error') {
-          setError(index, res.error)
-          continue
+          if (open) setError(index, res.error)
+        } else {
+          if (open) setError(index, null)
+          saved.push(index)
         }
-        setError(index, null)
-        saved.push(index)
+        // 对话框已关：剩下的改动没人看得见，不再接着存；已存好的照常重跑
+        if (!open) break
       }
     } finally {
       if (stillCurrent(epoch, script)) setSaving(false)
     }
-    if (!saved.length) return
-    // 存好的那几行不再是「改过」：丢掉本地副本，以后台那份为准
-    setEdits((prev) => {
-      const next = { ...prev }
-      for (const index of saved) delete next[index]
-      return next
-    })
+    if (!saved.length || !sameProject(epoch)) return
+    // 存好的那几行不再是「改过」：丢掉本地副本，以后台那份为准（对话框已关就不必）
+    if (stillCurrent(epoch, script)) {
+      setEdits((prev) => {
+        const next = { ...prev }
+        for (const index of saved) delete next[index]
+        return next
+      })
+    }
     rerun()
   }
 
