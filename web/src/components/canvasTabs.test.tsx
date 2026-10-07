@@ -226,3 +226,60 @@ describe('画布标签条', () => {
     }
   })
 })
+
+/**
+ * 键盘（2026-10-07 设计审计 §10.1，ARIA tabs 模式）：整条一个 Tab 停靠点（roving tabindex）、←/→ 挪焦点、
+ * F2 改名、Delete / ⌘W 关、⌥← / ⌥→ 重排；× 不进 Tab 顺序。主语：页签认 `data-canvas-tab`，× 认
+ * `data-canvas-tab-close`，改名框认 `data-canvas-tab-rename`。
+ */
+describe('画布标签条的键盘', () => {
+  const tab = (id: string) => host.querySelector<HTMLElement>(`[data-canvas-tab="${id}"]`)!
+  const key = (el: HTMLElement, init: KeyboardEventInit) => {
+    const ev = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init })
+    act(() => {
+      el.dispatchEvent(ev)
+    })
+    return ev
+  }
+  const flush = () => act(async () => new Promise<void>((r) => requestAnimationFrame(() => r())))
+
+  it('只有当前画布那个页签在 Tab 顺序里；× 永远不在', () => {
+    mount()
+    expect(tab('c1').tabIndex).toBe(0)
+    expect(tab('c2').tabIndex).toBe(-1)
+    for (const x of host.querySelectorAll<HTMLElement>('[data-canvas-tab-close]')) expect(x.tabIndex).toBe(-1)
+  })
+
+  it('→ 把焦点挪到下一个页签（不切画布），Enter 才切', async () => {
+    mount()
+    tab('c1').focus()
+    key(tab('c1'), { key: 'ArrowRight' })
+    await flush()
+    expect(document.activeElement).toBe(tab('c2'))
+    expect(tab('c2').tabIndex).toBe(0)
+    expect(useDocumentStore.getState().activeCanvasId, '方向键不切画布').toBe('c1')
+  })
+
+  it('F2 进入改名；Delete 关掉这个页签，而且不冒到全局（不删画布上的选中对象）', () => {
+    mount()
+    key(tab('c2'), { key: 'F2' })
+    expect(host.querySelector('[data-canvas-tab-rename]')).not.toBeNull()
+    act(() => {
+      ;(host.querySelector('[data-canvas-tab-rename]') as HTMLElement).blur()
+    })
+    const seen: string[] = []
+    const spy = (e: Event) => seen.push((e as KeyboardEvent).key)
+    window.addEventListener('keydown', spy)
+    const ev = key(tab('c2'), { key: 'Delete' })
+    window.removeEventListener('keydown', spy)
+    expect(ev.defaultPrevented).toBe(true)
+    expect(seen, 'Delete 没冒到 window 上的全局快捷键').toEqual([])
+    expect(useDocumentStore.getState().openTabs).toEqual(['c1'])
+  })
+
+  it('⌥→ 把页签往右挪一格（与拖动同一个 reorderTabs）', () => {
+    mount()
+    key(tab('c1'), { key: 'ArrowRight', altKey: true })
+    expect(useDocumentStore.getState().openTabs).toEqual(['c2', 'c1'])
+  })
+})

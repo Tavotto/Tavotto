@@ -759,7 +759,8 @@
     "canvasName": "Canvas name",
     "closeTab": "Close tab {{name}}",
     "listLabel": "Canvas tabs",
-    "newCanvas": "New canvas"
+    "newCanvas": "New canvas",
+    "unopened": "Not open"
   },
   "toolHint": {
     "arrow": "Drag to draw an arrow; hold Shift to snap to 15°. Esc to cancel.",
@@ -833,7 +834,9 @@
     "issueLastDoc": "Last layout not opened",
     "issueTooNew": "Newer layout",
     "issueAria": "Document status: {{status}}. Show details",
-    "documentRenameHint": "Click for layout actions; double-click or F2 to rename"
+    "documentRenameHint": "Click for layout actions; double-click or F2 to rename",
+    "zoomValueInput": "Zoom (%)",
+    "zoomSelection": "Zoom to selection"
   },
   "update": {
     "banner": "Tavotto has been updated. Reload to use the new version.",

@@ -4809,7 +4809,8 @@ export default interface Resources {
       "canvasName": "画布名",
       "closeTab": "关闭标签 {{name}}",
       "listLabel": "画布标签",
-      "newCanvas": "新建画布"
+      "newCanvas": "新建画布",
+      "unopened": "未打开"
     },
     "toolHint": {
       "arrow": "拖动画出箭头，Shift 吸附 15° 角；Esc 取消",
@@ -4881,7 +4882,9 @@ export default interface Resources {
       "versionTimeline": "排版时间线…",
       "zoomIn": "放大",
       "zoomOut": "缩小",
-      "zoomValue": "缩放 {{percent}}%"
+      "zoomSelection": "缩放到选中对象",
+      "zoomValue": "缩放 {{percent}}%",
+      "zoomValueInput": "缩放比例（%）"
     },
     "update": {
       "banner": "工具已更新，刷新后使用新版本",

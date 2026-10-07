@@ -1,11 +1,14 @@
 import { useTranslation } from 'react-i18next'
 import { ChevronDown } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
-import { MOD } from '@/lib/utils'
+import { keyOf } from '@/lib/keymap'
 import { useDocumentStore } from '@/store/documentStore'
-import { useViewportStore } from '@/store/viewportStore'
+import { useSelectionStore } from '@/store/selectionStore'
+import { MAX_ZOOM, MIN_ZOOM, useViewportStore } from '@/store/viewportStore'
+import { zoomToSelection } from '@/store/zoomToSelection'
 import { Numbers } from '@sfinterface/numbers'
 import { Button } from './ui/Button'
+import { NumberField } from './ui/Input'
 import { Menu, MenuItem, MenuRadioGroup, MenuRadioItem, MenuSeparator } from './ui/Menu'
 
 const ZOOM_PRESETS = [0.5, 0.75, 1, 1.5, 2, 4]
@@ -24,6 +27,7 @@ export function ZoomControls() {
   // 预设那一组是**互斥取值**：当前档带勾。缩放不是整数档时一个都不勾（「不知道是哪一档」
   // 有自己的取值，不能就近归到相邻那一档）
   const preset = ZOOM_PRESETS.find((z) => Math.abs(z - zoom) < 1e-6)
+  const hasSelection = useSelectionStore((s) => s.ids.length > 0)
 
   return (
     /* 缩放是一颗文本钮「114% ⌄」（2026-09-15 打磨批次 F，L3；适应画布的图标钮已并进浮动工具条）：
@@ -60,10 +64,26 @@ export function ZoomControls() {
           </Button>
         }
       >
-        <MenuItem shortcut={`${MOD}+`} onSelect={() => useViewportStore.getState().zoomBy(1.25)}>
+        {/* 可以直接敲一个倍率（2026-10-07 设计审计 §10.1）：菜单顶上一格数字框，回车 / 失焦生效。
+            按键不交给菜单（Radix 菜单会把字母当首字母跳转、把方向键当换项） */}
+        <div className="px-1 pb-1" onKeyDown={(e) => e.stopPropagation()} data-zoom-value-row>
+          <NumberField
+            fill
+            value={Math.round(zoom * 100)}
+            min={MIN_ZOOM * 100}
+            max={MAX_ZOOM * 100}
+            step={10}
+            precision={0}
+            unit="%"
+            ariaLabel={t('topbar.zoomValueInput')}
+            dataProp="zoom-value"
+            onChange={(v) => useViewportStore.getState().setZoomCentered(v / 100)}
+          />
+        </div>
+        <MenuItem shortcut={keyOf('zoomIn')} onSelect={() => useViewportStore.getState().zoomBy(1.25)}>
           {t('topbar.zoomIn')}
         </MenuItem>
-        <MenuItem shortcut={`${MOD}−`} onSelect={() => useViewportStore.getState().zoomBy(1 / 1.25)}>
+        <MenuItem shortcut={keyOf('zoomOut')} onSelect={() => useViewportStore.getState().zoomBy(1 / 1.25)}>
           {t('topbar.zoomOut')}
         </MenuItem>
         <MenuSeparator />
@@ -72,18 +92,27 @@ export function ZoomControls() {
           onValueChange={(v) => useViewportStore.getState().setZoomCentered(Number(v))}
         >
           {ZOOM_PRESETS.map((z) => (
-            <MenuRadioItem key={z} value={String(z)} shortcut={z === 1 ? `${MOD}0` : undefined}>
+            <MenuRadioItem key={z} value={String(z)} shortcut={z === 1 ? keyOf('zoomActual') : undefined}>
               {`${z * 100}%`}
             </MenuRadioItem>
           ))}
         </MenuRadioGroup>
         <MenuSeparator />
         <MenuItem
-          shortcut={`${MOD}1`}
+          shortcut={keyOf('zoomFit')}
           onSelect={() => useViewportStore.getState().fitAnimated(page.w, page.h)}
           data-fit-canvas-item
         >
           {t('topbar.fitCanvas')}
+        </MenuItem>
+        {/* 缩放到选中（⇧2）：没有选中时置灰，不去适应整页冒充 */}
+        <MenuItem
+          shortcut={keyOf('zoomSelection')}
+          disabled={!hasSelection}
+          onSelect={() => void zoomToSelection()}
+          data-zoom-selection-item
+        >
+          {t('topbar.zoomSelection')}
         </MenuItem>
       </Menu>
     </div>

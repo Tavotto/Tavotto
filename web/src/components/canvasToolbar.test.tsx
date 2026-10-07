@@ -144,3 +144,51 @@ describe('写回在「⋯」菜单第一项', () => {
     expect(item()!.getAttribute('data-write-back')).toBe('open')
   })
 })
+
+/**
+ * 工具与动作分两种外观（2026-10-07 设计审计 §10.1）：工具 = 32 圆形图标钮、激活 = 墨色实底 + aria-pressed；
+ * 动作 = 28 带字 ghost 钮；中间一道竖线。条里 ←/→ 挪焦点（ARIA toolbar），鼠标点工具不拿焦点。
+ * 主语：认 `data-tool` / `data-toolbar-item` / `data-fit-canvas`，判的是 aria-pressed 与按钮的 `h-8 / h-7` 档。
+ */
+describe('浮动工具条：工具 vs 动作', () => {
+  it('工具 32 + aria-pressed，激活是墨色实底；动作 28', async () => {
+    await mount(<CanvasToolbar />)
+    const select = q('[data-tool="select"]')!
+    const text = q('[data-tool="text"]')!
+    expect(select.className).toContain('h-8')
+    expect(select.getAttribute('aria-pressed')).toBe('true')
+    expect(select.className).toContain('bg-ink')
+    expect(text.getAttribute('aria-pressed')).toBe('false')
+    expect(text.className).not.toContain('bg-ink')
+    expect(q('[data-fit-canvas]')!.className).toContain('h-7')
+    await act(async () => text.click())
+    expect(q('[data-tool="text"]')!.getAttribute('aria-pressed')).toBe('true')
+    expect(q('[data-tool="select"]')!.getAttribute('aria-pressed')).toBe('false')
+  })
+
+  it('条里 → / End 挪焦点，事件被认领（不推画布上的选中对象）', async () => {
+    await mount(<CanvasToolbar />)
+    const items = [...host.querySelectorAll<HTMLElement>('[data-toolbar-item]')]
+    expect(items.length).toBe(5)
+    items[0].focus()
+    const ev = new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true })
+    act(() => {
+      items[0].dispatchEvent(ev)
+    })
+    expect(ev.defaultPrevented).toBe(true)
+    expect(document.activeElement).toBe(items[1])
+    act(() => {
+      items[1].dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true, cancelable: true }))
+    })
+    expect(document.activeElement).toBe(items[4])
+  })
+
+  it('鼠标按下工具不拿焦点（点完「选择」接着按方向键是在微调对象）', async () => {
+    await mount(<CanvasToolbar />)
+    const ev = new MouseEvent('mousedown', { bubbles: true, cancelable: true })
+    act(() => {
+      q('[data-tool="select"]')!.dispatchEvent(ev)
+    })
+    expect(ev.defaultPrevented).toBe(true)
+  })
+})
