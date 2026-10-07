@@ -163,7 +163,7 @@
     "conflict": "磁盘上已存在名为「{{name}}」的排版，由其他窗口或外部工具写入。",
     "conflictDisk": "磁盘上那份：{{canvases}} 张画布 / {{objects}} 个对象",
     "empty": "项目里还没有排版",
-    "load": "载入",
+    "load": "打开",
     "nameLabel": "排版名",
     "namePlaceholder": "排版名",
     "nameTaken": "已有同名排版。继续会覆盖它。",
@@ -178,7 +178,8 @@
     "saveToProjectTitle": "存进项目",
     "saved": "已另存为新排版：{{name}}",
     "saving": "正在保存…",
-    "savesIntoLabel": "保存到"
+    "savesIntoLabel": "保存到",
+    "rename": "改名"
   },
   "mcp": {
     "confirmBoth": "仍要导出：已知悉 {{errors}} 条阻断项与 {{notVerifiable}} 条无法核验的项。确认会记入 proof report。",

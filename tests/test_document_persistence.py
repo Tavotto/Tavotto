@@ -282,6 +282,16 @@ def test_legacy_styles_file_is_not_listed_as_a_document(client, tmp_path):
     assert "_styles" not in names
 
 
+def test_layout_listing_carries_modified_times_for_listed_names_only(client, tmp_path):
+    """「打开」列表的日期元信息（加字段）：每个列出的名字都有一个修改时间，被剔掉的不出现。"""
+    (tmp_path / documents.STYLES_FILENAME).write_text('{"styles": []}', encoding="utf-8")
+    assert client.post("/api/layouts/主图", json={"schema": 2}).status_code == 200
+    body = client.get("/api/layouts").get_json()
+    assert set(body["modified"]) == set(body["layouts"])
+    assert isinstance(body["modified"]["主图"], (int, float))
+    assert "_styles" not in body["modified"]
+
+
 def test_reserved_name_is_not_reachable_through_the_document_api(client, tmp_path):
     """否则一份画布能把老装机上那份样式表整个盖掉。"""
     legacy = tmp_path / documents.STYLES_FILENAME

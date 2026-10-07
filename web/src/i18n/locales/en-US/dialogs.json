@@ -165,7 +165,7 @@
     "conflict": "A layout named “{{name}}” already exists on disk, written by another window or tool.",
     "conflictDisk": "On disk: {{canvases}} canvases / {{objects}} objects",
     "empty": "No layouts in this project yet",
-    "load": "Load",
+    "load": "Open",
     "nameLabel": "Layout name",
     "namePlaceholder": "Layout name",
     "nameTaken": "A layout with this name already exists; saving replaces it.",
@@ -180,7 +180,8 @@
     "saveToProjectTitle": "Save to project",
     "saved": "Saved as a new layout: {{name}}",
     "saving": "Saving…",
-    "savesIntoLabel": "Save into"
+    "savesIntoLabel": "Save into",
+    "rename": "Rename"
   },
   "mcp": {
     "confirmBoth": "Export anyway: I understand the {{errors}} blocking problems and {{notVerifiable}} items that can’t be verified automatically. The confirmation goes in the proof report.",
