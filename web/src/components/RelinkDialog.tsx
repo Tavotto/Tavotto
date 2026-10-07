@@ -10,11 +10,11 @@ import {
 } from '@/lib/clipboard'
 import { panelSrc } from '@/lib/api'
 import { useAssetStore } from '@/store/assetStore'
+import { TailPath } from './DirBrowser'
 import { Button } from './ui/Button'
 import { Dialog } from './ui/Dialog'
 import { RetryImg } from './ui/RetryImg'
 import { Select } from './ui/Select'
-import { TruncateMiddle } from './ui/TruncateMiddle'
 
 /**
  * 缺失素材处置：粘贴（跨图库剪贴板）与项目包导入共用。
@@ -118,8 +118,8 @@ export function RelinkDialog() {
                     </span>
                   )}
                 </p>
-                {/* 路径尾部才有区分力（文件名）：中间省略、等宽 */}
-                <TruncateMiddle text={m.fileId} tail={24} className="font-mono text-xs text-ink-3" />
+                {/* 路径尾部才有区分力（文件名）：放不下时从左边裁、留尾巴（`TailPath`，与项目选择器同一份） */}
+                <TailPath path={m.fileId} />
               </div>
               <div className="w-52 shrink-0">
                 <Select
