@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -275,7 +276,7 @@ _NODE24_RELEASE_ACTION_PINS = {
     "actions/checkout": "fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
     "actions/setup-python": "ece7cb06caefa5fff74198d8649806c4678c61a1",
     "actions/setup-node": "249970729cb0ef3589644e2896645e5dc5ba9c38",
-    "actions/cache": "caa296126883cff596d87d8935842f9db880ef25",
+    "actions/cache/restore": "caa296126883cff596d87d8935842f9db880ef25",
     "actions/upload-artifact": "b7c566a772e6b6bfb58ed0dc250532a479d7789f",
     "actions/download-artifact": "37930b1c2abaa49bbe596cd826c3c89aef350131",
     "pnpm/action-setup": "0977fd99725f1db4007ccb2928dbb4e90d06cc86",
@@ -312,6 +313,138 @@ def test_release_linux_jobs_pin_ubuntu_24_04(path: Path, jobs: tuple[str, ...]):
     for job in jobs:
         header = wf.jobs[job].split("steps:", 1)[0]
         assert wf.field(header, "runs-on") == "ubuntu-24.04", f"{path.name}::{job} runner 漂移"
+
+
+def test_desktop_cpython_cache_is_restore_only_and_keeps_the_seed_contract():
+    """主语是发布 build 的 CPython 归档缓存；只读后仍无条件验字节并构建。"""
+    wf = _wf(DESKTOP)
+    steps = wf.steps("build")
+    cache_steps = [
+        step
+        for step in steps
+        if (_Workflow.field(step, "uses") or "").split("@", 1)[0].startswith("actions/cache")
+    ]
+    assert len(cache_steps) == 1, "发布构建只许一处 CPython restore，不许加回 save"
+    cache = cache_steps[0]
+    assert _Workflow.field(cache, "uses") == (
+        "actions/cache/restore@" + _NODE24_RELEASE_ACTION_PINS["actions/cache/restore"]
+    )
+    seed = [
+        step
+        for step in _wf(WF / "ci.yml").steps("cache-seed")
+        if _Workflow.with_scalars(step).get("path") == "build/runtime-cache"
+    ]
+    assert len(seed) == 1, "默认分支 CPython 种子必须仍有唯一来源"
+    assert _Workflow.with_scalars(cache) == _Workflow.with_scalars(seed[0]), (
+        "restore 的 path/key 必须与种子一致，不加宽 restore-keys 或要求 cache hit"
+    )
+    runtime = [step for step in steps if "build_worker_runtime.py --clean" in step]
+    assert len(runtime) == 1 and steps.index(cache) < steps.index(runtime[0])
+    assert _Workflow.field(runtime[0], "if") is None, "cache hit 不能绕过 runtime 构建与 SHA 校验"
+
+
+@pytest.fixture
+def desktop_trust_repo(tmp_path):
+    """真实 Git 对象、无远端/凭据/可执行载荷；运行的是 workflow 原始 trust shell。"""
+    git_exe = shutil.which("git")
+    assert git_exe, "运行 Git 信任边界合同需要 git"
+    bash = shutil.which("bash")
+    if os.name == "nt":
+        # Windows hosted 的 bash 是 Git for Windows，不选可能指向未启用 WSL 的 bash。
+        candidates = [parent / "bin" / "bash.exe" for parent in Path(git_exe).parents]
+        bash = next((str(path) for path in candidates if path.is_file()), bash)
+    assert bash, "运行 Ubuntu trust shell 合同需要 bash（Windows 使用 Git for Windows）"
+    env = dict(os.environ, GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
+
+    def git(*args):
+        return subprocess.check_output(
+            [
+                git_exe,
+                "-c",
+                "user.name=Workflow contract test",
+                "-c",
+                "user.email=workflow-test@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                "-c",
+                "tag.gpgsign=false",
+                *args,
+            ],
+            cwd=tmp_path,
+            env=env,
+            text=True,
+        ).strip()
+
+    git("init", "--quiet", "--initial-branch=main")
+    (tmp_path / "fixture.txt").write_text("reviewed inert fixture\n", encoding="utf-8")
+    git("add", "fixture.txt")
+    git("commit", "--quiet", "-m", "reviewed")
+    trusted = git("rev-parse", "HEAD")
+    git("update-ref", "refs/remotes/origin/main", trusted)
+    git("branch", "moving-source", trusted)
+    git("tag", "-a", "reviewed-tag", "-m", "reviewed", trusted)
+    tag_object = git("rev-parse", "refs/tags/reviewed-tag")
+    blob = git("rev-parse", "HEAD:fixture.txt")
+    (tmp_path / "fixture.txt").write_text("unreviewed inert fixture\n", encoding="utf-8")
+    git("commit", "--quiet", "-am", "unreviewed")
+    untrusted = git("rev-parse", "HEAD")
+    git("tag", "unreviewed-tag", untrusted)
+
+    def resolve(given_sha="", tag=""):
+        scripts = _wf(DESKTOP).job_runs("trust")
+        assert len(scripts) == 1, "只运行 trust 自己的 resolve，不能偷用别的 job 的守卫"
+        output = tmp_path / "outputs"
+        output.write_text("", encoding="utf-8")
+        proc = subprocess.run(
+            [bash, "-c", scripts[0]],
+            cwd=tmp_path,
+            env=dict(env, GIVEN_SHA=given_sha, TAG=tag, GITHUB_OUTPUT=output.as_posix()),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=15,
+        )
+        return proc, output.read_text(encoding="utf-8")
+
+    return trusted, untrusted, tag_object, blob, resolve
+
+
+@pytest.mark.parametrize(
+    "case",
+    ["commit", "branch", "short", "expression", "tag-object", "blob", "missing", "unmerged"],
+)
+def test_desktop_call_requires_an_exact_reviewed_commit(desktop_trust_repo, case):
+    trusted, untrusted, tag_object, blob, resolve = desktop_trust_repo
+    value = {
+        "commit": trusted,
+        "branch": "moving-source",
+        "short": trusted[:12],
+        "expression": trusted + "^{commit}",
+        "tag-object": tag_object,
+        "blob": blob,
+        "missing": "0" * 40,
+        "unmerged": untrusted,
+    }[case]
+    proc, output = resolve(given_sha=value)
+    if case == "commit":
+        assert proc.returncode == 0, proc.stderr
+        assert output == f"sha={trusted}\n"
+    else:
+        assert proc.returncode != 0, f"{case} 不能成为已验证的 checkout 身份"
+        assert output == "", f"拒绝 {case} 时不能留下 sha 输出"
+
+
+@pytest.mark.parametrize("tag", ["reviewed-tag", "unreviewed-tag", "missing-tag"])
+def test_desktop_manual_tag_is_resolved_and_still_requires_main_ancestry(desktop_trust_repo, tag):
+    trusted, _, _, _, resolve = desktop_trust_repo
+    proc, output = resolve(tag=tag)
+    if tag == "reviewed-tag":
+        assert proc.returncode == 0, proc.stderr
+        assert output == f"sha={trusted}\n"
+    else:
+        assert proc.returncode != 0
+        assert output == ""
 
 
 def test_the_parser_itself_still_sees_what_it_should():
