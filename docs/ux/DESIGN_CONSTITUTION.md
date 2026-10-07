@@ -832,6 +832,18 @@ reduced-motion 契约）；68/85 命中 `foundation.test`（533 处）；弹簧 
 - **加载四种写法**（第七节）；**光标一律箭头**（第五节）；**界面外观不写死白**：原语里 `bg-white` / `text-white` 换成 surface token，
   图与页面内容（纸）才是真白。
 
+### 逐页 · 主页 / Playground / MCP 画布（2026-10-07，审计 §4.2 / §10.4）
+- **拖放接收态只有一种样子**（`ui/dropZone.dropZoneClass`）：静态什么都不画（没有常驻虚线框）；有东西拖到上面时 1.5px
+  accent 虚线 + accent-subtle 底 + 一圈柔和外发光，画在 outline 上、几何不变。主页拖放区、/try 上传区与试验台共用。
+- **`sel` 只在画布上**：内嵌面（/try、MCP）的拖动、接收、进行中用 accent，横幅用 Notice / ink 胶囊。
+- **代码着色七档 token** `syntax-keyword / function / string / number / comment / type / builtin`：只读代码块不写 hex，
+  每档在白 / 桌面 / surface-2 上 ≥4.5:1（`tokenContrast.test`）。
+- **内嵌工作台的顶栏是一份**（`embedded/WidgetHeader`，44px：20px 品牌标 + 名字 + type-meta 标题，坐在桌面上不画底线）；
+  左侧元素抽屉 280 + 36px 标题行（`DrawerShell`），画布 + 属性页在白色圆角工作面板里，侧栏读 `--drawer-bg`、不画分隔线。
+- **严重度在 MCP 画布上与问题面板同一张图标表**（`lib/validationText.SEVERITY_ICON`），颜色是锚点；预检结论是 `StatusPill`。
+- **主页**：标题走 `type-display`（没有像素字号）；老手版是一句 15px 叙事句 + 两枚 24px 行内 chip（chip = full 圆角、白底）；
+  最近项目是 Card interactive 网格。
+
 ### 门禁（`components/ui/foundation.test.ts`）
 新增：任意值圆角与内联 `borderRadius`、Tailwind 呼吸动画、数字 z-index（类名与内联）、手形光标类、`ui/` 里的写死白、`shadow-card`
 只在 `Card.tsx`；`font-semibold` 的豁免扩到 listRow / FormSection / buttonClass。逐页阶段才迁的几处 `shadow-card`（素材卡、问题卡、

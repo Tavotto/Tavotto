@@ -12,7 +12,11 @@ import {
 } from '@/components/ui/icons'
 import { Button, IconButton } from '@/components/ui/Button'
 import { buttonClass } from '@/components/ui/buttonClass'
+import { BrandMark } from '@/components/ui/BrandMark'
+import { Card } from '@/components/ui/Card'
 import { Details, Summary } from '@/components/ui/Details'
+import { Dialog } from '@/components/ui/Dialog'
+import { Notice } from '@/components/ui/Notice'
 import { Tip } from '@/components/ui/Tooltip'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { CanvasStage } from '@/canvas/CanvasStage'
@@ -24,9 +28,11 @@ import { currentLocale, formatMessage, msg, setLocale, t as translate, type UiMe
 import { PRODUCT_NAME, RELEASES_LATEST_URL } from '@/lib/brand'
 import { cn } from '@/lib/utils'
 import { useDocumentStore } from '@/store/documentStore'
-import { usePanelRender } from '@/store/renderStore'
+import { usePanelDisplayManifest, usePanelRender } from '@/store/renderStore'
+import { PANEL_DRAWER, WidgetHeader, WORK_PANEL } from '@/embedded/WidgetHeader'
 import type { PanelObject } from '@/types/document'
 import { exampleById, type PlaygroundExample } from './examples'
+import { DrawerShell } from './components/DrawerShell'
 import { GuidedTask } from './components/GuidedTask'
 import { PlaygroundFailureActions } from './components/PlaygroundFailureActions'
 import { PlaygroundLanding } from './components/PlaygroundLanding'
@@ -74,15 +80,19 @@ const originTitle = (origin: PlaygroundOrigin, filename: string): string => {
  */
 const homeHref = () => (currentLocale() === 'zh-CN' ? '../zh/' : '../')
 
-/** 顶栏左上角的品牌 = 回站入口。两处 header 共用同一份，别各写一个。 */
+/**
+ * 顶栏左上角的品牌（20px 图形标 + 产品名）= 回站入口。两处 header 共用同一份，别各写一个；
+ * 顶栏本身是与 MCP 画布共用的 `WidgetHeader`（品牌标收在这枚链接里，整块都能点）。
+ */
 function BrandLink() {
   return (
     <a
       href={homeHref()}
       title={pg('backHome')}
       aria-label={pg('backHome')}
-      className="shrink-0 rounded-sm text-base font-medium tracking-tight text-ink outline-none transition-colors hover:text-sel focus-visible:focus-ring"
+      className="inline-flex items-center gap-2 rounded-sm align-middle text-ink outline-none transition-colors hover:text-ink-2 focus-visible:focus-ring"
     >
+      <BrandMark size={20} />
       {PRODUCT_NAME}
     </a>
   )
@@ -296,9 +306,7 @@ export function PlaygroundApp() {
 
   const chrome = (body: React.ReactNode) => (
     <div className="flex h-full w-full flex-col bg-bg text-ink">
-      <header className="flex h-11 shrink-0 items-center gap-3 border-b border-border bg-surface px-4">
-        <BrandLink />
-        <span className="text-xs text-ink-3">{pg('title')}</span>
+      <WidgetHeader brand={false} name={<BrandLink />} title={pg('title')} className="gap-3 sm:px-4">
         <span className="flex-1" />
         <Button
           size="sm"
@@ -313,7 +321,7 @@ export function PlaygroundApp() {
           <Download size={ICON_SIZE.sm} />
           {pg('downloadDesktop')}
         </a>
-      </header>
+      </WidgetHeader>
       {body}
     </div>
   )
@@ -390,31 +398,30 @@ function PickView({
         <p className="mt-1 text-xs text-ink-3">{pg('pickTruncated', { count: truncated })}</p>
       )}
       <div className="mt-5 flex flex-wrap items-start justify-center gap-4">
+        {/* 每张图一张 Card interactive（与案例卡同一副：外 12、封面内 8 坐在画布灰上） */}
         {figures.map((f) => (
-          <button
-            key={f.stem}
-            onClick={() => onPick(f.stem)}
-            className="flex w-[220px] flex-col gap-2 rounded-md border border-border bg-surface p-3 text-left outline-none hover:border-sel focus-visible:focus-ring"
-          >
-            {f.preview ? (
-              <img
-                src={`data:image/png;base64,${f.preview}`}
-                alt=""
-                className="w-full rounded-xs border border-border bg-white"
-              />
-            ) : (
-              <span className="flex h-24 items-center justify-center rounded-xs border border-border text-xs text-ink-3">
-                {f.stem}
+          <Card key={f.stem} interactive padding="none" className="w-[220px]">
+            <button
+              type="button"
+              onClick={() => onPick(f.stem)}
+              className="flex w-full flex-col gap-2 rounded-lg p-1 pb-3 text-left outline-none"
+            >
+              <span className="block rounded-md bg-canvas p-2">
+                {f.preview ? (
+                  <img src={`data:image/png;base64,${f.preview}`} alt="" className="block w-full bg-white" />
+                ) : (
+                  <span className="flex h-24 items-center justify-center text-xs text-ink-3">{f.stem}</span>
+                )}
               </span>
-            )}
-            <span className="truncate text-xs font-medium">{f.stem}</span>
-            <span className="font-mono text-xs text-ink-3">
-              {translate('measure.mmSize', {
-                w: f.size_mm[0].toFixed(1),
-                h: f.size_mm[1].toFixed(1),
-              })}
-            </span>
-          </button>
+              <span className="truncate px-2 text-xs font-medium">{f.stem}</span>
+              <span className="type-meta px-2 font-mono">
+                {translate('measure.mmSize', {
+                  w: f.size_mm[0].toFixed(1),
+                  h: f.size_mm[1].toFixed(1),
+                })}
+              </span>
+            </button>
+          </Card>
         ))}
       </div>
       <Button size="sm" onClick={onBack} className="mt-6 text-ink-3">
@@ -582,6 +589,8 @@ function EditorView({
   }, [])
 
   const overrideCount = panel?.overrides.length ?? 0
+  // 抽屉标题旁的元素计数：与桌面版左抽屉同一个数（manifest 元素减去 figure 本身）
+  const elementCount = Math.max(0, (usePanelDisplayManifest(panel ?? null)?.elements.length ?? 0) - 1)
 
   /**
    * 复验源文件完整性：让 Worker 再读一次虚拟 FS 里的脚本重算 sha256。
@@ -640,11 +649,12 @@ function EditorView({
 
   return (
     <div className="flex h-full w-full flex-col bg-bg text-ink">
-      <header className="flex h-11 shrink-0 items-center gap-2 border-b border-border bg-surface px-3">
-        <BrandLink />
-        <span className="hidden text-xs text-ink-3 sm:inline">{pg('title')}</span>
-
-        <span className="mx-1 h-4 w-px bg-border" />
+      <WidgetHeader
+        brand={false}
+        name={<BrandLink />}
+        title={<span className="hidden sm:inline">{pg('title')}</span>}
+      >
+        <span className="mx-1 h-4 w-px shrink-0 bg-border" />
         <Tip label={pg('sourceNote')}>
           <Button size="sm" onClick={openSourceDialog} className="font-mono text-xs text-ink-2">
             <FileCodeCorner size={ICON_SIZE.sm} aria-hidden />
@@ -662,7 +672,7 @@ function EditorView({
           {pg('overrides', { count: overrideCount })}
         </Button>
 
-        <span className="mx-1 h-4 w-px bg-border" />
+        <span className="mx-1 h-4 w-px shrink-0 bg-border" />
         <IconButton label={translate('topbar.undo', { ns: 'workspace' })} disabled={!canUndo} onClick={() => runUndoRedo(false)}>
           <Undo2 size={ICON_SIZE.md} />
         </IconButton>
@@ -686,30 +696,28 @@ function EditorView({
         >
           {currentLocale() === 'zh-CN' ? 'EN' : '中文'}
         </Button>
-      </header>
+      </WidgetHeader>
 
       {/* 不变式失效：Tavotto 保证碰不到源文件，而工作区里那个文件确实变了。
           这不是一条提示，是「别再信这个会话」——所以常驻、不可关、带技术细节。 */}
       {integrity.verdict === 'changed' && (
-        <div
-          role="alert"
-          className="flex shrink-0 items-start gap-2 border-b border-danger/40 bg-danger/8 px-3 py-2"
+        // Notice danger 自带 role="alert"；插在桌面上的一块说明条，不再是一条通栏红带
+        <Notice
+          tone="danger"
+          icon={ShieldAlert}
+          title={`${session.scriptName} · ${pg('changed')}`}
+          className="mx-2 mb-2 shrink-0 text-xs"
+          data-integrity-alarm
         >
-          <ShieldAlert size={ICON_SIZE.md} className="mt-0.5 shrink-0 text-danger" aria-hidden />
-          <div className="min-w-0 text-xs leading-relaxed text-ink-2">
-            <p className="font-medium text-danger">
-              {session.scriptName} · {pg('changed')}
-            </p>
-            <p className="mt-0.5">{pg('integrityMismatchNote')}</p>
-            <p className="mt-1 font-mono text-xs text-ink-3">
-              {shortHash(integrity.originalSha256)} → {shortHash(integrity.workspaceSha256)}
-            </p>
-          </div>
-        </div>
+          <p>{pg('integrityMismatchNote')}</p>
+          <p className="mt-1 font-mono">
+            {shortHash(integrity.originalSha256)} → {shortHash(integrity.workspaceSha256)}
+          </p>
+        </Notice>
       )}
 
       {showPatches && (
-        <div className="shrink-0 border-b border-border bg-surface px-3 py-2">
+        <div className="mx-2 mb-2 shrink-0 rounded-lg bg-surface px-3 py-2">
           {/* 真实的 Tavotto patch 表示，不造一个更友好的假格式 */}
           <pre className="max-h-40 overflow-auto font-mono text-xs leading-relaxed text-ink-2">
             {JSON.stringify(panel.overrides, null, 2)}
@@ -719,13 +727,19 @@ function EditorView({
 
       {/* 窄屏是刻意的受限形态（ADR 0007）：画布可看可拖，树与属性页收起，
           不硬塞一个 375px 上没法精确操作的三栏 */}
-      <p className="shrink-0 border-b border-border bg-surface px-3 py-1.5 text-xs text-ink-3 md:hidden">
-        {pg('mobileNote')}
-      </p>
+      <p className="type-caption shrink-0 px-3 pb-1.5 md:hidden">{pg('mobileNote')}</p>
+      {/* 版式与桌面版一致（宪法第二十五节）：元素抽屉坐在灰色桌面上（DrawerShell，280 + 36px 标题行），
+          画布 + 属性页在一块白色圆角工作面板里；彼此靠明度差分开，不画分隔线 */}
       <div className="flex min-h-0 flex-1">
-        <aside className="hidden w-[224px] shrink-0 flex-col overflow-y-auto border-r border-border bg-surface lg:flex">
+        <DrawerShell
+          title={translate('rail.elements', { ns: 'workspace' })}
+          count={elementCount}
+          countLabel={translate('elementTree.count', { ns: 'workspace', count: elementCount })}
+          className="hidden lg:flex"
+        >
           <ElementTree />
-        </aside>
+        </DrawerShell>
+        <div data-work-panel className={cn(WORK_PANEL, 'lg:ml-0')}>
         {/* CanvasStage 的根是 flex-1：外面必须是 flex 容器（见 McpApp 的注）。
             relative 是给首次引导那张小卡定位用的——它浮在画布左下角，
             不遮树、不遮属性页、无全屏遮罩 */}
@@ -748,13 +762,14 @@ function EditorView({
             />
           )}
         </div>
-        <aside className="hidden w-[304px] shrink-0 flex-col overflow-y-auto border-l border-border bg-surface md:flex">
+        <aside className={cn('hidden w-[304px] shrink-0 flex-col overflow-y-auto md:flex', PANEL_DRAWER)}>
           <ElementInspector panel={panel} />
         </aside>
+        </div>
       </div>
 
       {overrideCount > 0 && !cueDismissed && (
-        <footer className="flex shrink-0 items-center gap-3 border-t border-border bg-surface px-3 py-1.5">
+        <footer className="-mt-0.5 flex shrink-0 items-center gap-3 px-3 pb-2">
           <p className="min-w-0 flex-1 truncate text-xs text-ink-3">{pg('desktopNote')}</p>
           <a href={RELEASES_LATEST_URL} className={buttonClass({ variant: 'secondary', size: 'sm' })}>
             <Download size={ICON_SIZE.xs} aria-hidden />
@@ -827,7 +842,7 @@ function IntegrityDetails({ integrity }: { integrity: SourceIntegrity }) {
         ? pg('integrityUnavailableNote')
         : pg('integrityNote')
   return (
-    <Details className="shrink-0 border-t border-border px-4 py-2">
+    <Details className="mt-3">
       <Summary className="text-xs text-ink-3">{pg('integrityTitle')}</Summary>
       <p className={cn('mt-1.5 text-xs leading-relaxed', verdict === 'changed' ? 'text-danger' : 'text-ink-3')}>
         {note}
@@ -844,7 +859,11 @@ function IntegrityDetails({ integrity }: { integrity: SourceIntegrity }) {
   )
 }
 
-/** 只读源码面板：证明编辑发生在 override 层，源文件一个字节没动。 */
+/**
+ * 只读源码面板：证明编辑发生在 override 层，源文件一个字节没动。
+ * 走共用的 `ui/Dialog`（焦点圈定、Esc、栈底遮罩、关闭钮都是原语给的；此前是手写的一层
+ * fixed 遮罩 + 自己监听 Esc，2026-10-07 设计审计 §10.4）。
+ */
 function SourceDialog({
   filename,
   source,
@@ -856,44 +875,27 @@ function SourceDialog({
   integrity: SourceIntegrity
   onClose: () => void
 }) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
   return (
-    <div
-      className="fixed inset-0 z-dialog flex items-center justify-center bg-ink/20 p-6"
-      onClick={onClose}
-    >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label={pg('sourceTitle')}
-        onClick={(e) => e.stopPropagation()}
-        className="flex max-h-[80vh] w-full max-w-2xl flex-col rounded-panel bg-surface shadow-dialog"
-      >
-        <div className="flex shrink-0 items-center gap-2 border-b border-border px-4 py-2.5">
-          <span className="font-mono text-xs">{filename}</span>
-          <span className="font-mono text-xs">
+    <Dialog
+      open
+      onOpenChange={(v) => !v && onClose()}
+      onEscape={onClose}
+      size="lg"
+      width={672}
+      anchor="playground-source"
+      title={
+        <span className="flex items-baseline gap-1.5">
+          <span className="font-mono">{filename}</span>
+          <span className="type-meta font-mono">
             <IntegrityBadge integrity={integrity} />
           </span>
-          <span className="flex-1" />
-          <IconButton label={translate('actions.close')} iconSize="sm" onClick={onClose} className="text-ink-3">
-            <X size={ICON_SIZE.sm} />
-          </IconButton>
-        </div>
-        <p className="shrink-0 border-b border-border px-4 py-2 text-xs leading-relaxed text-ink-3">
-          {pg('sourceNote')}
-        </p>
-        <pre className="min-h-0 flex-1 overflow-auto p-4 font-mono text-sm leading-relaxed text-ink-2">
-          {source}
-        </pre>
-        <IntegrityDetails integrity={integrity} />
-      </div>
-    </div>
+        </span>
+      }
+      description={pg('sourceNote')}
+    >
+      <pre className="overflow-auto rounded-md bg-bg p-3 font-mono text-sm leading-relaxed text-ink-2">{source}</pre>
+      <IntegrityDetails integrity={integrity} />
+    </Dialog>
   )
 }
 
