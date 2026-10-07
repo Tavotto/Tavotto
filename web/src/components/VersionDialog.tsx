@@ -635,6 +635,7 @@ function TimelineRow({
   // ⋯ / 右键 / ⇧F10 是同一份菜单（`RowMenu`）；选中的那一行下面再露一条「预览 · 恢复到这里」
   const menu = useRowMenu()
   const [restoring, setRestoring] = useState(false)
+  const renamingFromMenu = useRef(false)
   return (
     <li className="group/node" data-timeline-node={v.id} data-timeline-named={named || undefined}>
       <div
@@ -695,16 +696,30 @@ function TimelineRow({
             )}
           </span>
         </button>
-        <RowMenu state={menu} label={vd('more')} className="mt-1.5" data-timeline-more>
+        <RowMenu
+          state={menu}
+          label={vd('more')}
+          className="mt-1.5"
+          data-timeline-more
+          // 从菜单进改名：关菜单时不把焦点还给 ⋯（那一下就是改名框的 blur——框一出现就按「没改」提交收起了）
+          onCloseAutoFocus={(e) => {
+            if (!renamingFromMenu.current) return
+            renamingFromMenu.current = false
+            e.preventDefault()
+          }}
+        >
           <MenuItem icon={Eye} data-timeline-menu-preview onSelect={onPreview}>
             {vd('preview')}
           </MenuItem>
-          {/* 等菜单关完、焦点还回 ⋯ 之后再展开改名框：同一拍展开的话，Radix 把焦点还给 ⋯ 那一下
-              就是改名框的 blur——框一出现就按「没改」提交收起了 */}
           <MenuItem
             icon={Pencil}
             data-timeline-rename-button
-            onSelect={() => window.setTimeout(() => onRename(true), 0)}
+            onSelect={() => {
+              // 两件事都要：等菜单卸掉再展开（菜单开着时它的焦点圈会把改名框的焦点拽回去），
+              // 并且关菜单时不把焦点还给 ⋯（见上面的 onCloseAutoFocus）
+              renamingFromMenu.current = true
+              window.setTimeout(() => onRename(true), 0)
+            }}
           >
             {vd(named ? 'rename' : 'name')}
           </MenuItem>
