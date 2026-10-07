@@ -120,7 +120,15 @@ function AnswersManager({ script }: { script: string }) {
     })
     // 确认框开着时换了项目 / 关了对话框：点头属于旧的那一份，不发请求
     if (!ok || !stillCurrent(epoch, script)) return
-    const res = await useScriptInputStore.getState().forgetAnswer(script, a.index)
+    // 删除在飞时与批量保存共用一把锁：输入框、保存钮、各行删除都锁住，
+    // 否则并发的保存与删除谁先回来谁赢、还会重跑两次（Codex #821 P2）
+    setSaving(true)
+    let res: Awaited<ReturnType<ReturnType<typeof useScriptInputStore.getState>['forgetAnswer']>>
+    try {
+      res = await useScriptInputStore.getState().forgetAnswer(script, a.index)
+    } finally {
+      if (stillCurrent(epoch, script)) setSaving(false)
+    }
     // 请求在飞时换了项目：什么都不做——尤其不在新项目里重跑同名脚本
     if (res.status === 'stale') return
     setError(a.index, res.status === 'error' ? res.error : null)
