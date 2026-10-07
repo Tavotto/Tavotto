@@ -113,7 +113,7 @@ preflight.runSpec()      规则求值（两份求值器，golden vectors 对齐�
   `canvas/IssueOverlay`；问题带 gid 时描**那个图内元素**，换算与图内编辑的 `ElementBoxes` 同一套：
   `useDisplayedExactManifest` + `geomTarget` + `panelFullRect`，再套面板内容的显示变换 `lib/panelTransform.panelTransformSvg(panelContentTransform())`——先翻转、再旋转，与 `PanelView` 的 CSS 同一份权威，只转不翻会在翻转过的图上描到镜像位置；解不出来才退回整张图，Codex #832；看护 `canvas/issueHoverDisplay.test.tsx`：真实 PanelView + OverlaySvg + ProblemPanel，130%，翻转 / 翻转 + 旋转逐一比对）——行 / 卡片只经 `problemTree.useIssueHover()` 写它，撤一律**比对后再清**
   （`releaseIssueHover`：对象身份即主人，被别的行顶掉的不动）；行被修好 / 筛掉 / 换文档卸载时不发
-  pointerleave / blur，卸载时再撤一次，不靠面板卸载那一道（Codex #832）；「⋯」里可打开**画布等级标记**（`uiStore.problemPins`：每张有问题的图右上角外侧一枚（让开 ne 缩放手柄），
+  pointerleave / blur，卸载时再撤一次，不靠面板卸载那一道（Codex #832）；「⋯」里可打开**画布等级标记**（`uiStore.problemPins`：每张有问题的图右上角外侧一枚（屏幕空间：按 `visualBounds` 的外接框放、整组不随对象旋转，项数永远正着，Codex #832；让开 ne 缩放手柄；底色与项数字色成对取 `canvas/issuePinColors.PIN_COLORS`，`tokenContrast.test` 逐对量 ≥4.5:1——warn 用 `warn-content` 底，锚点 #b07400 衬白字只有 3.9:1，Codex #832），
   点它 = `openProblemAt`）。摘要条（32px）只有等级开关（只有阻断着色）与唯一一颗填色主动作「全部修复 N」；
   正在重新检查时标题行一段 shimmer（`validationStore.queued`，延迟 300ms 才出），首检是静态骨架，「未发现问题」
   带证据（按哪套规范、查了几张图、`validationStore.checkedAt`——「刚刚 / N 分钟前」由证据自己按整分钟走表刷新，不等别的重渲染，Codex #832；规范按**每张装着图的画布各自的绑定**说，与
@@ -137,7 +137,7 @@ preflight.runSpec()      规则求值（两份求值器，golden vectors 对齐�
   （`lib/problemContext.problemContextNow()`）。面板挂着时看到现场换了会再把记着的那份丢掉，
   免得换回原来那张图时已经离开的卡片复活。用户显式换范围 / 换切法 / 收起那一支也退回总览。
   **等级筛选不在现场里**：在一支里筛是正常用法（那一支被筛空就暂时不画，人不被踢回总览，取消筛选它带着
-  展开态回来）；整个范围被筛空说「当前筛选下没有问题」，与「修完了」分开。直达（`openProblemAt`）自己点开那条问题所在的卡片、落游标，面板里没有
+  展开态回来）；整个范围被筛空说「当前筛选下没有问题」，与「修完了」分开。直达（`openProblemAt`）自己点开那条问题所在的卡片、落游标（每落一次游标——直达 / 标记 / 定位 / F8——它所在的规则组若被用户折着就当场打开，之后用户仍可再折，Codex #832），面板里没有
   「看到游标在卡片外就钻进去」的第二套机制。分桶节点的机器标识照旧：`li[data-problem-card=<kind>]` 的**第一个
   子元素是展开钮**，`data-problem-card-key`（`drillKey()`）/ `-rules` / `-objects` / `-count`；新手教程按
   `drillKeysOf(issue)` 找「那条问题所在的那一支」（`> button:first-child`）。

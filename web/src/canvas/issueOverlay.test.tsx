@@ -16,6 +16,7 @@ import { useValidationStore } from '@/store/validationStore'
 import { useWorkspaceStore } from '@/store/workspace'
 import { emptyProject, type CanvasObject, type PanelObject } from '@/types/document'
 import { IssueOverlay } from './IssueOverlay'
+import { PIN_COLORS } from './issuePinColors'
 
 const openProblemAt = vi.fn((..._args: unknown[]): { ok: boolean } => ({ ok: true }))
 vi.mock('@/lib/issueFocus', async (importOriginal) => ({
@@ -193,6 +194,57 @@ describe('画布上的等级标记', () => {
     })
     expect(openProblemAt).toHaveBeenCalledTimes(1)
     expect((openProblemAt.mock.calls[0][0] as ValidationIssue).issueId).toBe('b')
+    // 底色与项数字色取 `PIN_COLORS` 那一对（对比度门禁量的就是它）：warn 不拿 #b07400 锚点衬白字（Codex #832）
+    await act(async () => useValidationStore.setState({ issues: [issue('w', 'p2', 'warn')] }))
+    const warnPin = container.querySelector<SVGGElement>('[data-issue-pin="p2"]')!
+    expect(warnPin.querySelector('circle')!.getAttribute('fill')).toBe(`var(--color-${PIN_COLORS.warn.fill})`)
+    expect(warnPin.querySelector('text')!.getAttribute('fill')).toBe(`var(--color-${PIN_COLORS.warn.text})`)
+    expect(PIN_COLORS.warn.fill).toBe('warn-content')
+  })
+})
+
+describe('标记在屏幕右上角、项数始终正着（Codex #832）', () => {
+  const pinOf = async (o: CanvasObject) => {
+    await act(async () =>
+      root.render(
+        <svg>
+          <IssueOverlay objects={[o]} t={t} />
+        </svg>,
+      ),
+    )
+    await act(async () => {
+      useValidationStore.setState({ issues: [issue('r', o.id, 'warn')] })
+      useUiStore.getState().setProblemPins(true)
+    })
+    const g = container.querySelector<SVGGElement>(`[data-issue-pin="${o.id}"]`)!
+    const c = g.querySelector('circle')!
+    return { g, cx: Number(c.getAttribute('cx')), cy: Number(c.getAttribute('cy')) }
+  }
+  /** 外接框（mm）的右上角往外 10px */
+  const corner = (x: number, y: number, w: number) => ({ cx: mmToViewX(x + w, t) + 10, cy: mmToViewY(y, t) - 10 })
+
+  for (const deg of [90, 180, 45]) {
+    it(`转 ${deg}° 的文字：整组不旋转（项数正着），圆心在转出来的外接框右上角外侧`, async () => {
+      // 40 × 10 的文字绕中心 (30, 25) 转
+      const o = { id: `t${deg}`, type: 'text', text: 'x', x: 10, y: 20, w: 40, h: 10, rotationDeg: deg } as unknown as CanvasObject
+      const { g, cx, cy } = await pinOf(o)
+      expect(g.getAttribute('transform')).toBeNull()
+      const r = (deg * Math.PI) / 180
+      const w = 40 * Math.abs(Math.cos(r)) + 10 * Math.abs(Math.sin(r))
+      const h = 40 * Math.abs(Math.sin(r)) + 10 * Math.abs(Math.cos(r))
+      const want = corner(30 - w / 2, 25 - h / 2, w)
+      expect(cx).toBeCloseTo(want.cx, 6)
+      expect(cy).toBeCloseTo(want.cy, 6)
+    })
+  }
+
+  it('旋转 + 翻转的面板：x/y/w/h 本来就是转后的盒，标记同样在它的右上角、不带变换', async () => {
+    const p = { ...objects[0], id: 'prf', rotation: 90, flipH: true, x: 5, y: 8, w: 30, h: 40 } as CanvasObject
+    const { g, cx, cy } = await pinOf(p)
+    expect(g.getAttribute('transform')).toBeNull()
+    const want = corner(5, 8, 30)
+    expect(cx).toBeCloseTo(want.cx, 6)
+    expect(cy).toBeCloseTo(want.cy, 6)
   })
 })
 
