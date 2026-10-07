@@ -624,6 +624,14 @@ def _worker_error_payload(exc, stage: str = "") -> dict:
         # 脚本要输入（ADR 0099）：界面按 code 翻译，提示原文走 params
         extra = getattr(exc, "extra", None) or {}
         body["params"] = {"prompt": str(extra.get("prompt") or "")}
+    if exc.code == "script_needs_arguments":
+        extra = getattr(exc, "extra", None) or {}
+        params = {}
+        if extra.get("argv_count"):
+            params["argv_count"] = str(int(extra["argv_count"]))
+        if extra.get("parse_kind"):
+            params["parse_kind"] = str(extra["parse_kind"])
+        body["params"] = params
     if getattr(exc, "module", ""):
         body["module"] = exc.module
     # 项目环境自动接手失败时的结构化原因（ADR 0018）：找不到 venv / venv 里
@@ -640,7 +648,13 @@ def _worker_error_payload(exc, stage: str = "") -> dict:
             # 确认模式（ADR 0114）：项目自己的环境体检通过、缺的包也在里面——建议，不是决定。
             # 只给项目相对的目录（采用走候选按钮 / 采用端点），路径与体检原始输出不出后端
             **(
-                {"recommended": {"venv": _project_relative(detail.get("venv", ""))}}
+                {
+                    "recommended": {
+                        "venv": _project_relative(detail.get("venv", "")),
+                        "id": (detail.get("recommended") or {}).get("id", ""),
+                        "generation": (detail.get("recommended") or {}).get("generation", ""),
+                    }
+                }
                 if detail.get("code") == engine_projectenv.ERROR_CONFIRMATION_REQUIRED
                 else {}
             ),
@@ -3516,20 +3530,8 @@ def _resolve_project_script(ctx: "ProjectCtx", raw: str):
             404,
         )
     root = ctx.path.resolve()
-    try:
-        target = (Path(raw) if Path(raw).is_absolute() else ctx.path / raw).resolve()
-    except OSError:
-        return None, (
-            jsonify(
-                {
-                    "error": f"脚本不存在: {raw}",
-                    "code": "script_not_found",
-                    "params": {"script": raw},
-                }
-            ),
-            404,
-        )
-    if not target.is_relative_to(root):
+    resolved = engine_projectenv.contained_path(root, raw)
+    if resolved is None:
         return None, (
             jsonify(
                 {
@@ -3540,6 +3542,9 @@ def _resolve_project_script(ctx: "ProjectCtx", raw: str):
             ),
             400,
         )
+    # Filesystem sinks use only the common sanitizer's returned path; duplicating
+    # containment checks here also obscures the barrier from CodeQL.
+    target = Path(resolved)
     if target.suffix.lower() != ".py" or target.is_dir():
         return None, (
             jsonify(
@@ -3599,10 +3604,12 @@ def api_registry_probe():
             ), 409
         _PROBES[key] = cancel_ev
         _PROBE_RUNS[key] = run
-    sse_publish("probe.started", {"pj": ctx.id, "script": script})
     attempt_id = f"run-{uuid.uuid4().hex}"
     started = time.monotonic()
+    result = {"registered": False, "stems": []}
+    failure_response = None
     try:
+        sse_publish("probe.started", {"pj": ctx.id, "script": script})
         result = engine_probe.probe_and_register(
             ctx.path,
             script,
@@ -3610,28 +3617,40 @@ def api_registry_probe():
             should_cancel=cancel_ev.is_set,
             **({"run": run} if run is not None else {}),
         )
+        if result.get("registered"):
+            # 每张捕获图当场物化进 runtime cache（复制热 worker 已写好的预览
+            # SVG + 描述符——不触发第二次执行）。重开文档时的首帧占位靠它。
+            # **在刷新之前**：刷新会发 `registry.changed`，前端收到就去取 runtime
+            # 清单与预览，那时 cache 里得已经有东西。
+            _materialize_runtime(
+                script,
+                result.get("entry") or "",
+                result.get("descriptors") or [],
+                remap_generation=result.get("remap_generation"),
+                run=run,
+            )
+            # 磁盘面板重跑该用哪份配置：这次明确运行用的（无参数 = 清掉旧的）
+            engine_runconfig.set_default(
+                ctx.path, script, run.config_id if run is not None else None
+            )
+            # probe 已经把结果写进注册表了（`probe.probe_and_register` → `discover.register`），
+            # 这里只要重装 + 发事件：再跑一遍静态扫描既慢，又会把刚刚按**真实产出**
+            # 裁决好的归属重新掀一遍。
+            refresh_project(ctx, reason="probe", allow_static_merge=False)
+    except Exception as exc:  # noqa: BLE001 — 保留原异常响应，同时给终局补上诊断引用
+        # 复用 Flask 已登记的处理器，保留 RefreshError 的 400 等既有契约；
+        # 快照只取稳定错误码，异常文字仍留在原错误响应，不进入可分享的投影。
+        failure_response = app.make_response(app.handle_user_exception(exc))
+        failure_body = failure_response.get_json(silent=True)
+        failure_code = failure_body.get("code") if isinstance(failure_body, dict) else None
+        result = {
+            **result,
+            "error": {"code": failure_code or "internal_error"},
+        }
     finally:
         with _PROBES_LOCK:
             _PROBES.pop(key, None)
             _PROBE_RUNS.pop(key, None)
-    if result.get("registered"):
-        # 每张捕获图当场物化进 runtime cache（复制热 worker 已写好的预览
-        # SVG + 描述符——不触发第二次执行）。重开文档时的首帧占位靠它。
-        # **在刷新之前**：刷新会发 `registry.changed`，前端收到就去取 runtime
-        # 清单与预览，那时 cache 里得已经有东西。
-        _materialize_runtime(
-            script,
-            result.get("entry") or "",
-            result.get("descriptors") or [],
-            remap_generation=result.get("remap_generation"),
-            run=run,
-        )
-        # 磁盘面板重跑该用哪份配置：这次明确运行用的（无参数 = 清掉旧的）
-        engine_runconfig.set_default(ctx.path, script, run.config_id if run is not None else None)
-        # probe 已经把结果写进注册表了（`probe.probe_and_register` → `discover.register`），
-        # 这里只要重装 + 发事件：再跑一遍静态扫描既慢，又会把刚刚按**真实产出**
-        # 裁决好的归属重新掀一遍。
-        refresh_project(ctx, reason="probe", allow_static_merge=False)
     # 失败（和成功）那一次的现场冻结成一份小快照（T04）：界面凭 `diagnostic.ref` 一键取回，之后的重试是新的 attempt
     engine_taskdiag.STORE.record(
         ctx.id,
@@ -3648,9 +3667,16 @@ def api_registry_probe():
         failed=engine_probe.outcome_of(result) == engine_probe.OUTCOME_ERROR,
         subject={("script", script)},
     )
-    return jsonify(
-        {**result, "diagnostic": {"kind": engine_taskdiag.KIND_SCRIPT_RUN, "ref": attempt_id}}
-    )
+    diagnostic = {"kind": engine_taskdiag.KIND_SCRIPT_RUN, "ref": attempt_id}
+    if failure_response is not None:
+        failure_body = failure_response.get_json(silent=True)
+        if isinstance(failure_body, dict):
+            failure_response.set_data(app.json.dumps({**failure_body, "diagnostic": diagnostic}))
+        else:
+            # HTTPException / 自定义处理器的非对象响应保持原样，引用由响应头取回。
+            failure_response.headers["X-Tavotto-Diagnostic-Ref"] = attempt_id
+        return failure_response
+    return jsonify({**result, "diagnostic": diagnostic})
 
 
 @app.post("/api/registry/probe/cancel")

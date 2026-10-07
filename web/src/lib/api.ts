@@ -3531,7 +3531,7 @@ export interface ProjectEnvFailure {
    * `code === 'environment_confirmation_required'`（ADR 0114）：项目自己的环境体检通过、缺的包也在里面——
    * 这是建议不是决定，用户点一次才采用（候选按钮用 `candidates`）。路径不在公开投影里。
    */
-  recommended?: { venv: string }
+  recommended?: { venv: string; id?: string; generation?: string }
 }
 
 /** 一个系统解释器的体检结论（只有结论字段，没有体检脚本的原始输出） */
@@ -3644,7 +3644,7 @@ export const cancelProjectEnvironmentCheck = () =>
  * 现场再体检、通过才记成用户的明确决定。环境在这期间被重建 → 409 `environment_changed`；全局解释器压着 → 409
  * `environment_locked`。
  */
-export const adoptEnvironmentCandidate = (candidate: EnvCandidate, script?: string) =>
+export const adoptEnvironmentCandidate = (candidate: Pick<EnvCandidate, 'id' | 'generation'>, script?: string) =>
   jsonFetch<{ ok: boolean; project: ProjectEnvironment }>('/api/engine/environment', {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },

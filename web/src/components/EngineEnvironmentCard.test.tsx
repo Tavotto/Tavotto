@@ -13,7 +13,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
 }))
 
 import { adoptEnvironmentCandidate, type EngineEnvironment, type EnvRecommendation } from '@/lib/api'
-import { EngineEnvironmentCard } from '@/components/EngineEnvironmentCard'
+import { EngineEnvironmentCard, MissingDependencyCard } from '@/components/EngineEnvironmentCard'
 import { t } from '@/i18n'
 import { useEnvStore } from '@/store/envStore'
 
@@ -159,5 +159,33 @@ describe('环境建议：一句话 + 一个主按钮', () => {
     await render(<EngineEnvironmentCard />)
     expect(text()).toContain(en('envAdviceLocked'))
     expect(text()).not.toContain(en('envAdviceUse'))
+  })
+})
+
+
+describe('环境建议的错误路径', () => {
+  it.each([false, true])('全局环境不可用仍可采用项目候选（compact=%s）', async (compact) => {
+    const env = adviceEnv({})
+    env.ok = false
+    useEnvStore.setState({ env })
+    await render(<EngineEnvironmentCard compact={compact} />)
+    expect(document.querySelector('[data-env-advice]')).not.toBeNull()
+  })
+
+  it('缺依赖的采用绑定已显示的一代，不读取环境 store 里的较新一代', async () => {
+    vi.mocked(adoptEnvironmentCandidate).mockClear()
+    vi.mocked(adoptEnvironmentCandidate).mockResolvedValue({ ok: true, project: { open: true } as never })
+    const env = adviceEnv({})
+    env.project!.recommendation!.candidates[0].generation = 'gen-new'
+    useEnvStore.setState({ env })
+    await render(<MissingDependencyCard module="adjustText" projectEnv={{
+      code: 'environment_confirmation_required', module: 'adjustText', venv: '.venv',
+      candidates: ['.venv'], python_version: '3.13',
+      recommended: { venv: '.venv', id: 'cand-1', generation: 'gen-displayed' },
+    }} />)
+    const button = document.querySelector<HTMLButtonElement>('[data-env-candidate="cand-1"]')!
+    expect(button).not.toBeNull()
+    await act(async () => button.click())
+    expect(adoptEnvironmentCandidate).toHaveBeenCalledExactlyOnceWith({ id: 'cand-1', generation: 'gen-displayed' }, undefined)
   })
 })

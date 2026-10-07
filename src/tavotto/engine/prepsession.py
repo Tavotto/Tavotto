@@ -34,7 +34,7 @@ import uuid
 from pathlib import Path
 from typing import Callable
 
-from . import deprepair, inputremap, preparation, registry, scriptargs
+from . import deprepair, preparation, registry, scriptargs
 from .preparation import TARGET_SCRIPT
 
 LOG = logging.getLogger("tavotto.prepsession")
@@ -502,10 +502,14 @@ def derive(facts: dict) -> dict:
 
 
 def attempt_running(attempt: dict) -> bool:
-    """这次尝试是否还在进行：provider 没到终局，或到了终局但执行之后的登记还没做完。"""
+    """Wait for recovery finalization, except a cancelled consumer immediately stops waiting."""
+    if attempt["status"] == preparation.STATUS_CANCELLED:
+        # A shared worker can keep building for another consumer. Its cancelled
+        # waiter is already terminal and must not wait for that worker's callback.
+        return False
     if attempt["status"] in (preparation.STATUS_PENDING, preparation.STATUS_RUNNING):
         return True
-    return attempt["status"] == preparation.STATUS_READY and not attempt.get("finalized")
+    return attempt["status"] in preparation.TERMINAL and not attempt.get("finalized")
 
 
 def _derive_before_attempt(facts: dict) -> dict:
@@ -671,6 +675,7 @@ def _fingerprint(plan: preparation.PreparationPlan) -> str:
     门的结论变了才算「执行意图变了」。进度 / 文案 / 时间戳不在里面——它们只动 `observation_seq`。
     T03 起 argv / 运行配置也加进来。"""
     decision = plan.workdir_decision or {}
+    dependencies = (plan.dependency_preparation or {}).get("plan") or {}
     payload = {
         "target": plan.target,
         "script": plan.script,
@@ -690,12 +695,19 @@ def _fingerprint(plan: preparation.PreparationPlan) -> str:
         "grant": plan.grant,
         "binding": (plan.binding or {}).get("revision"),
         # T07：数据改指表的代次（ADR 0106）：用户指认了数据位置，同一个目标的执行意图就变了（新修订，旧失败不再是当前的）
-        "input_remap": inputremap.generation(plan.project_root),
+        "input_remap": plan.input_remap_generation,
         "required": (plan.required_input or {}).get("code"),
         # T03：运行配置引用（不透明 id，换任何一个 token 都是新引用）——不放 argv 原文
         "run": plan.run.config_id if plan.run is not None else None,
         "env_error": ((plan.environment or {}).get("error") or {}).get("code"),
-        "deps": ((plan.dependency_preparation or {}).get("plan") or {}).get("status"),
+        # JointPlan owns the installation identity and source-input fingerprint.
+        # Declarations remain relevant when the dependency gate is not evaluated.
+        "deps": {
+            key: dependencies.get(key)
+            for key in ("status", "identity", "inputs_digest", "selection")
+        },
+        "dependency_intents": plan.dependency_intents,
+        "dependency_conflicts": plan.dependency_conflicts,
         # T06：要装的集合 / 目标环境与代 / 写入范围变了，先前的确认就不覆盖它（摘要不含进度与文案）
         "deps_impact": (plan.dependency_preparation or {}).get("impact_digest"),
         "deps_switch": ((plan.dependency_preparation or {}).get("scope_switch") or {}).get(
@@ -780,6 +792,7 @@ class SessionService:
             sess.touched_at = now
             if not created and not self._has_active_attempt(sess):
                 if sess.stale or fingerprint != sess.fingerprint:
+                    sess.target = dict(target)
                     sess.plan = plan
                     sess.fingerprint = fingerprint
                     sess.config_revision += 1
@@ -1142,7 +1155,9 @@ class SessionService:
                 attempt.finalized = True
             self._notify(sess)
 
-        self._prep.register(plan)
+        # A new action after a settled attempt is an explicit rerun. The provider
+        # retires the old build only after its cancellation and stale-plan checks.
+        self._prep.register(plan, force_rebuild=bool(sess.attempts))
         sess.attempts.append(attempt)
         action.attempt_id = plan.plan_id
         entry = self._prep.get(plan.plan_id, sess.project_id)
