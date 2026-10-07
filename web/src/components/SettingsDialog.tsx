@@ -161,7 +161,7 @@ function useSearchShown(): boolean {
 }
 
 export function SettingsDialog() {
-  useTranslation('dialogs')
+  const { i18n } = useTranslation('dialogs')
   const open = useUiStore((s) => s.settingsOpen)
   const setOpen = useUiStore((s) => s.setSettingsOpen)
   const requested = useUiStore((s) => s.settingsSection)
@@ -249,7 +249,8 @@ export function SettingsDialog() {
   }, [])
 
   const label = (id: SectionId) => st(`section.${id}`)
-  const results = useMemo(() => searchSettings(query, SECTIONS, label), [query]) // eslint-disable-line react-hooks/exhaustive-deps
+  // 命中与否按当前语言的标签 / 关键词算：换了界面语言要重算，不能只看搜索词（Codex #828 P2）
+  const results = useMemo(() => searchSettings(query, SECTIONS, label), [query, i18n.language]) // eslint-disable-line react-hooks/exhaustive-deps
   // 搜索框只在 ≥640px 出现：窄下去时不再按搜索词过滤，否则用户看不见也清不掉它，
   // 无匹配时导航整个空掉（Codex #828 P2）。搜索词留着，宽回来原样接着搜
   const searching = searchShown && query.trim() !== ''

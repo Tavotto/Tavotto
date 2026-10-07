@@ -13,7 +13,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { t } from '@/i18n'
+import { setLocale, t } from '@/i18n'
 import {
   resolveSection,
   SECTIONS,
@@ -361,6 +361,23 @@ describe('搜索（2026-10-07 设计审计 §9.1，settingsRegistry）', () => {
     expect(document.querySelector('[data-settings-no-results]')).toBeTruthy()
     await type('')
     expect(nav().querySelectorAll('[data-nav-group]')).toHaveLength(4)
+  })
+
+  it('换界面语言后按新语言重算命中，不沿用旧语言的结果（Codex #828 P2）', async () => {
+    await open()
+    // 「语言」在中文下命中语言那一行；换到英文后中文词不再命中
+    await type('语言')
+    expect(results()).toContain('general.language')
+    await act(async () => {
+      await setLocale('en-US')
+    })
+    try {
+      expect(results()).not.toContain('general.language')
+    } finally {
+      await act(async () => {
+        await setLocale('zh-CN')
+      })
+    }
   })
 
   it('打字只在本地过滤，一个请求都不发', async () => {
