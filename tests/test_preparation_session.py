@@ -712,3 +712,128 @@ def test_the_app_publishes_the_ping_on_the_existing_event_stream(monkeypatch):
             },
         )
     ]
+
+
+def test_changed_explicit_entry_survives_recheck(client, tmp_path, fake_pool, sessions):
+    _open(client, _project(tmp_path, "p"))
+    first = _create(client, {"script": "fig.py", "entry": "first"}).get_json()
+    changed = _create(client, {"script": "fig.py", "entry": "second"}).get_json()
+    assert changed["session_id"] == first["session_id"]
+    assert changed["config_revision"] == first["config_revision"] + 1
+    assert changed["target"]["entry"] == "second"
+    rechecked = _act(
+        client, changed["session_id"], _action(changed, "recheck")["id"], changed["config_revision"]
+    ).get_json()["report"]
+    assert rechecked["target"]["entry"] == rechecked["plan"]["entry"] == "second"
+    assert rechecked["config_revision"] == changed["config_revision"]
+    assert fake_pool["build_calls"] == 0
+
+
+def test_explicit_rerun_retires_the_cached_build(
+    client, tmp_path, fake_pool, sessions, monkeypatch
+):
+    root, _pj, report = _create_ready(client, tmp_path)
+    sid = report["session_id"]
+    assert _act(client, sid, _action(report, "run")["id"], 1).status_code == 202
+    done = _settle(client, sid)
+    cached = _FakeWorker(root)
+    cached.last_build_descriptors = _build_resp()["descriptors"]
+    cached.last_build_runtime = _build_resp()["runtime"]
+    fake_pool["peek"] = cached
+    retired = []
+
+    def invalidate(script, project_root, *, force=False):
+        assert force
+        retired.append((script, project_root))
+        fake_pool["peek"] = None
+
+    monkeypatch.setattr(engine_pool, "invalidate", invalidate)
+    again = _act(client, sid, _action(done, "run")["id"], done["config_revision"])
+    assert again.status_code == 202
+    assert _settle(client, sid)["phase"] == "completed"
+    assert fake_pool["build_calls"] == 2
+    assert retired == [("fig.py", str(root))]
+
+
+def test_script_resolution_uses_the_shared_containment_result(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "validated.py").write_text("pass\n", encoding="utf-8")
+    calls = []
+
+    def contained(project_root, raw):
+        calls.append((project_root, raw))
+        return str(root / "validated.py")
+
+    monkeypatch.setattr(m.engine_projectenv, "contained_path", contained)
+    with m.app.app_context():
+        script, rejected = m._resolve_project_script(SimpleNamespace(path=root), "untrusted.py")
+    assert rejected is None
+    assert script == "validated.py"
+    assert calls == [(root, "untrusted.py")]
+
+
+def test_script_resolution_rejects_symlink_and_prefix_sibling_escapes(tmp_path):
+    from types import SimpleNamespace
+
+    root = tmp_path / "project"
+    root.mkdir()
+    sibling = tmp_path / "project-evil"
+    sibling.mkdir()
+    outside = sibling / "escape.py"
+    outside.write_text("pass\n", encoding="utf-8")
+    link = root / "link.py"
+    try:
+        link.symlink_to(outside)
+    except OSError:
+        pytest.skip("symlinks unavailable")
+    with m.app.app_context():
+        for raw in (str(outside), "../project-evil/escape.py", "link.py"):
+            script, rejected = m._resolve_project_script(SimpleNamespace(path=root), raw)
+            assert script is None
+            response, status = rejected
+            assert status == 400
+            assert response.get_json()["code"] == "script_path_outside_project"
+
+
+def test_changed_entry_does_not_reuse_a_build_from_another_entry(
+    client, tmp_path, fake_pool, sessions
+):
+    root = _project(tmp_path, "p")
+    _open(client, root)
+    _create(client, {"script": "fig.py", "entry": "first"})
+    changed = _create(client, {"script": "fig.py", "entry": "second"}).get_json()
+    cached = _FakeWorker(root)
+    cached.entry = "first"
+    cached.last_build_descriptors = _build_resp()["descriptors"]
+    cached.last_build_runtime = _build_resp()["runtime"]
+    fake_pool["peek"] = cached
+    assert (
+        _act(
+            client, changed["session_id"], _action(changed, "run")["id"], changed["config_revision"]
+        ).status_code
+        == 202
+    )
+    assert _settle(client, changed["session_id"])["phase"] == "completed"
+    assert fake_pool["build_calls"] == 1
+
+
+def test_unconfirmed_rerun_retirement_reports_an_error_without_a_new_build(
+    client, tmp_path, fake_pool, sessions, monkeypatch
+):
+    _root, _pj, report = _create_ready(client, tmp_path)
+    sid = report["session_id"]
+    assert _act(client, sid, _action(report, "run")["id"], 1).status_code == 202
+    done = _settle(client, sid)
+
+    def refuse_close(*args, **kwargs):
+        raise engine_pool.WorkerError("close not confirmed", code="session_dead")
+
+    monkeypatch.setattr(engine_pool, "invalidate", refuse_close)
+    assert _act(client, sid, _action(done, "run")["id"], 1).status_code == 202
+    refused = _settle(client, sid)
+    assert refused["phase"] == "action_required"
+    assert refused["result"]["error"]["code"] == "session_dead"
+    assert fake_pool["build_calls"] == 1

@@ -3441,20 +3441,8 @@ def _resolve_project_script(ctx: "ProjectCtx", raw: str):
             404,
         )
     root = ctx.path.resolve()
-    try:
-        target = (Path(raw) if Path(raw).is_absolute() else ctx.path / raw).resolve()
-    except OSError:
-        return None, (
-            jsonify(
-                {
-                    "error": f"脚本不存在: {raw}",
-                    "code": "script_not_found",
-                    "params": {"script": raw},
-                }
-            ),
-            404,
-        )
-    if not target.is_relative_to(root):
+    resolved = engine_projectenv.contained_path(root, raw)
+    if resolved is None:
         return None, (
             jsonify(
                 {
@@ -3465,6 +3453,9 @@ def _resolve_project_script(ctx: "ProjectCtx", raw: str):
             ),
             400,
         )
+    # Filesystem sinks use only the common sanitizer's returned path; duplicating
+    # containment checks here also obscures the barrier from CodeQL.
+    target = Path(resolved)
     if target.suffix.lower() != ".py" or target.is_dir():
         return None, (
             jsonify(

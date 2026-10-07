@@ -508,6 +508,7 @@ class SessionService:
             sess.touched_at = now
             if not created and not self._has_active_attempt(sess):
                 if sess.stale or fingerprint != sess.fingerprint:
+                    sess.target = dict(target)
                     sess.plan = plan
                     sess.fingerprint = fingerprint
                     sess.config_revision += 1
@@ -638,7 +639,9 @@ class SessionService:
                 attempt.finalized = True
             self._notify(sess)
 
-        self._prep.register(plan)
+        # A new action after a settled attempt is an explicit rerun. The provider
+        # retires the old build only after its cancellation and stale-plan checks.
+        self._prep.register(plan, force_rebuild=bool(sess.attempts))
         sess.attempts.append(attempt)
         action.attempt_id = plan.plan_id
         entry = self._prep.get(plan.plan_id, sess.project_id)
