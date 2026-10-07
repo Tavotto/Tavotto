@@ -538,7 +538,7 @@
     "issue": {
       "unreadable_dir": "Couldn't read folder {{path}}.",
       "unreadable_file": "Couldn't read file {{path}}.",
-      "symlinked_dir": "{{path}} is a linked folder and was not entered.",
+      "symlinked_dir": "{{path}} is a link or redirected entry; its target was not inspected.",
       "placeholder_file": "{{path}} is a cloud file that isn't downloaded yet; it was not read.",
       "file_too_large": "{{path}} is too large and was not analysed.",
       "parse_budget": "{{path}} is too complex and was not analysed.",

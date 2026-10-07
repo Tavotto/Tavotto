@@ -290,10 +290,14 @@ def derive(facts: dict) -> dict:
 
 
 def attempt_running(attempt: dict) -> bool:
-    """这次尝试是否还在进行：provider 没到终局，或到了终局但执行之后的登记还没做完。"""
+    """Wait for recovery finalization, except a cancelled consumer immediately stops waiting."""
+    if attempt["status"] == preparation.STATUS_CANCELLED:
+        # A shared worker can keep building for another consumer. Its cancelled
+        # waiter is already terminal and must not wait for that worker's callback.
+        return False
     if attempt["status"] in (preparation.STATUS_PENDING, preparation.STATUS_RUNNING):
         return True
-    return attempt["status"] == preparation.STATUS_READY and not attempt.get("finalized")
+    return attempt["status"] in preparation.TERMINAL and not attempt.get("finalized")
 
 
 def _derive_before_attempt(facts: dict) -> dict:

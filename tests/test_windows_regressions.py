@@ -3612,3 +3612,102 @@ def test_no_unguarded_os_kill_zero():
     # 正面形式：扫描真的看见了已知的正确写法——rglob 坏了 / 识别器全失灵时这里先红，而不是一片空绿
     assert any(g.startswith("tests/support/procprobe.py:") for g in guarded), guarded
     assert not unparsable, f"这些文件解析不了，判据看不见它们：{unparsable}"
+
+
+@pytest.mark.parametrize("walker", ["scripts", "assets"])
+@pytest.mark.parametrize("redirect_kind", ["symlink_dir", "junction", "symlink_file"])
+def test_budget_scan_never_follows_redirect_before_classification(
+    tmp_path, monkeypatch, walker, redirect_kind
+):
+    """模拟 Windows UNC 重解析项；任何跟随目标的元数据查询都当场失败，不接触网络。"""
+    import stat
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+
+    from tavotto.engine import discover, project_refresh, scanbudget
+
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "local.py").write_text("pass\n", encoding="utf-8")
+    (root / "local.pdf").write_bytes(b"%PDF")
+    name = "redirect.py" if redirect_kind == "symlink_file" else "redirect"
+    blocked = root / name
+    metadata = SimpleNamespace(
+        st_mode=stat.S_IFDIR if redirect_kind == "junction" else stat.S_IFLNK,
+        st_file_attributes=0x400,
+        st_reparse_tag=0xA0000003 if redirect_kind == "junction" else 0xA000000C,
+    )
+    followed = []
+    real_stat = Path.stat
+
+    def guarded_stat(path, *args, **kwargs):
+        if path == blocked:
+            if kwargs.get("follow_symlinks", True):
+                followed.append("Path.stat")
+                raise AssertionError("followed a synthetic remote redirect")
+            return metadata
+        return real_stat(path, *args, **kwargs)
+
+    class Redirect:
+        def __init__(self):
+            self.name = name
+
+        def stat(self, *, follow_symlinks=True):
+            if follow_symlinks:
+                followed.append("DirEntry.stat")
+                raise AssertionError("followed a synthetic remote redirect")
+            return metadata
+
+        def is_dir(self, *, follow_symlinks=True):
+            if follow_symlinks:
+                followed.append("DirEntry.is_dir")
+                raise AssertionError("followed a synthetic remote redirect")
+            return stat.S_ISDIR(metadata.st_mode)
+
+        def is_symlink(self):
+            return redirect_kind != "junction"
+
+    real_scandir = os.scandir
+
+    @contextmanager
+    def guarded_scandir(path):
+        assert Path(path) != blocked, "entered a synthetic remote redirect"
+        with real_scandir(path) as entries:
+            rows = list(entries)
+        if Path(path) == root:
+            rows.append(Redirect())
+        yield iter(rows)
+
+    monkeypatch.setattr(Path, "stat", guarded_stat)
+    monkeypatch.setattr(os, "scandir", guarded_scandir)
+    budget = scanbudget.Budget()
+    if walker == "scripts":
+        assert discover.iter_all_scripts(root, budget=budget) == [root / "local.py"]
+    else:
+        assert project_refresh.iter_assets(root, budget=budget) == [(root / "local.pdf", "pdf")]
+    assert followed == []
+    assert any(row.get("path") == name for row in budget.issues())
+
+
+@pytest.mark.parametrize(
+    ("mode", "attrs", "tag", "expected"),
+    [
+        (0o100644, 0, 0, False),
+        (0o040755, 0x400, 0xA0000003, True),
+        (0o100644, 0x400, 0, True),
+        (0o100644, 0x400 | 0x400000, 0x9000001A, False),
+        (0o120777, 0, 0, True),
+    ],
+)
+def test_scan_redirect_metadata_preserves_nonredirect_cloud_placeholders(
+    mode, attrs, tag, expected
+):
+    """Windows name-surrogate 与云盘 tag 是两个维度；不为跳过链接吞掉占位文件。"""
+    from types import SimpleNamespace
+
+    from tavotto.engine import scanbudget
+
+    metadata = SimpleNamespace(st_mode=mode, st_file_attributes=attrs, st_reparse_tag=tag)
+    assert scanbudget.is_redirect(metadata) is expected
+    if tag == 0x9000001A:
+        assert scanbudget.is_placeholder(metadata)

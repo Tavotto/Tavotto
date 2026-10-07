@@ -340,8 +340,12 @@ def _targets_of(
         return targets, pending[0]["script"], "single"
     if len(pending) > 1:
         return targets, None, "ambiguous"
+    if any(t["role"] == ROLE_UNKNOWN for t in targets):
+        # 还有读不了 / 没解析成的脚本是可选目标：它们**未核验**，不能因为别处有已连接的绘图脚本
+        # 就当成「全连着了」收起提示——交给用户选（unknown 不当通过）
+        return targets, None, "ambiguous"
     if any(t["role"] == ROLE_PLOT for t in targets):
-        return targets, None, "connected"  # 绘图脚本都已连着素材（未核验的脚本仍可手动选）
+        return targets, None, "connected"  # 绘图脚本都已连着素材
     return targets, None, "ambiguous" if targets else "none"
 
 
@@ -442,7 +446,7 @@ def environment_evidence(root: Path, script: str | None) -> dict:
             )
             remembered["id"] = row["id"]
 
-    for entry in userenvs.discover(root, script, ask_login_shell=False):
+    for entry in userenvs.discover(root, script, ask_login_shell=False, no_follow=True):
         add(entry["python"], entry["source"], entry.get("label") or "")
 
     candidates = [by_key[k] for k in order]
