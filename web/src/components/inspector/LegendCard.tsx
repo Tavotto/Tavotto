@@ -110,7 +110,8 @@ export function LegendCard({
  * - **整张列表一个 Tab 停靠点**（roving focus）：↑ / ↓ 在项之间走，Home / End 到首尾，
  *   ⌥↑ / ⌥↓ 把这一项上移 / 下移（与 ⋯ 里的上移 / 下移同一个动作），Enter 选中那一项；
  * - 拖动柄按住上下拖：落点一条 accent 线（`dropLineClass`），松手写一次 `entry_order`；
- * - ⋯ / 右键 / ⇧F10 是同一份菜单（`useRowMenu` + `RowMenu`）：显示 / 隐藏、上移、下移。
+ * - ⋯ / 右键 / ⇧F10 是同一份菜单（`useRowMenu` + `RowMenu`）：显示 / 隐藏、上移、下移。⋯ 是
+ *   `tabStop={false}`——焦点在项上时 Tab 直接离开列表，不在 ⋯ 上多停一下（Codex #829）。
  */
 function LegendEntryList({
   panel,
@@ -296,7 +297,13 @@ function LegendEntryRow({
         <span className={cn('min-w-0 truncate', v.hidden ? 'line-through' : 'text-ink')}>{name}</span>
         <BindingBadge binding={v.binding} />
       </button>
-      <RowMenu state={menu} label={lg('entryActions', { label: name })} data-legend-entry-menu={v.element.gid}>
+      {/* ⋯ 不进 Tab 顺序：整张列表一个 Tab 停靠点；键盘开菜单走 ⇧F10 / ContextMenu 键（冒泡到 li 的 rowProps） */}
+      <RowMenu
+        state={menu}
+        label={lg('entryActions', { label: name })}
+        tabStop={false}
+        data-legend-entry-menu={v.element.gid}
+      >
         <MenuItem icon={v.hidden ? Eye : EyeOff} data-legend-toggle-hidden onSelect={onToggleHidden}>
           {v.hidden ? lg('showEntry', { label: v.text }) : lg('hideEntry', { label: v.text })}
         </MenuItem>

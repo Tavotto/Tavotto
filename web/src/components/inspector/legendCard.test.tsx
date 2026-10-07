@@ -702,6 +702,28 @@ describe('选中图例', () => {
     expect(useUiStore.getState().selectedGids).toEqual(['axes_0.legend.texts_1'])
   })
 
+  it('焦点在项上时整张列表仍只有一个 Tab 停靠点（⋯ 不进 Tab 顺序）；⇧F10 / ContextMenu 键照样开菜单（Codex #829）', async () => {
+    await mount(['axes_0.legend'])
+    const gid = 'axes_0.legend.texts_1'
+    const main = entryMain(gid)
+    await act(async () => main.focus())
+    expect(document.activeElement).toBe(main)
+    // jsdom 不走 Tab：Tab 序列 = 列表里 tabIndex ≥ 0 的元素，必须只剩这一个主按钮，Tab 才会直接离开列表
+    const list = host.querySelector('ul[aria-label="图例项列表"]')!
+    const stops = Array.from(list.querySelectorAll<HTMLElement>('button, [tabindex]')).filter((el) => el.tabIndex >= 0)
+    expect(stops).toEqual([main])
+    const trigger = host.querySelector<HTMLButtonElement>(`[data-legend-entry-menu="${gid}"]`)!
+    expect(trigger.tabIndex).toBe(-1)
+    // 键盘入口：从获得焦点的主按钮发出（真实的冒泡路径），菜单从 ⋯ 垂下
+    for (const init of [{ key: 'F10', shiftKey: true }, { key: 'ContextMenu' }]) {
+      await key(main, init.key, init)
+      expect(trigger.getAttribute('data-state')).toBe('open')
+      expect(document.querySelector('[data-legend-toggle-hidden]')).not.toBeNull()
+      await key(document.activeElement ?? document.body, 'Escape')
+      expect(trigger.getAttribute('data-state')).toBe('closed')
+    }
+  })
+
   it('下移写 entry_order（原始序号的排列），一条历史', async () => {
     await mount(['axes_0.legend'])
     const before = useDocumentStore.getState().past.length

@@ -143,7 +143,8 @@ Tavotto 是「紧凑工具」那一档：**控件一律 28px（`h-7`）**——�
   **选中 = selected 底 + 600**（2026-10-07）；行里的 meta 用 `rowMetaClass(selected)`（选中时 ink-3 → ink-2）。
   拖放落点是 `dropLineClass(pos)`：2px accent 条 + 左端 4px 圆点。
 - **RowMenu**（`useRowMenu` + `RowMenu`）：一行的 ⋯、右键、⇧F10 / ContextMenu 键打开**同一份** `MenuItem` 清单；⋯ 只在
-  hover / focus-within / 打开时看得见，行聚焦时它在 Tab 顺序里（tabIndex 0），否则 -1。菜单项图标一律经 `MenuItem icon=`
+  hover / focus-within / 打开时看得见，行聚焦时它在 Tab 顺序里（tabIndex 0），否则 -1；自己管 roving focus、整张列表只许一个
+  Tab 停靠点的列表传 `tabStop={false}`，⋯ 恒为 -1，键盘入口只剩 ⇧F10 / ContextMenu 键。菜单项图标一律经 `MenuItem icon=`
   （ink-2，危险项跟字走红），不在 children 里自己排。
 - **TreeRow**（`treeIndent` / `TreeChevron` / `TreeIcon` / `TreeCount`）：树行的固定列——
   缩进 8 + 14 × 层级、16px 折叠箭头列、16px 类型图标列、右对齐计数。图层树与图内
@@ -863,7 +864,7 @@ reduced-motion 契约）；68/85 命中 `foundation.test`（533 处）；弹簧 
 - **OptionGrid 与 Segmented 同一副皮**：灰槽 + 无边样张格，选中格浮起白底 + shadow-thumb + 600，不再压角标 check。
 - **说明条只有 `Notice` 一种**（能力说明、旧图幅、渲染失败、引擎不支持、运行时无原文件）；图内编辑入口下的引擎状态只占一行。
 - **图例项行**：常驻只有色样（真实 marker 图形）+ 名字 + 非默认徽标；拖动柄与 ⋯ 在 hover / focus-within 出现；整张列表一个 Tab 停靠点
-  （↑↓ 漫游、⌥↑ / ⌥↓ 排序、拖动柄拖放、⋯ / 右键 / ⇧F10 同一份菜单）。
+  （↑↓ 漫游、⌥↑ / ⌥↓ 排序、拖动柄拖放、⋯ / 右键 / ⇧F10 同一份菜单；⋯ 是 `RowMenu tabStop={false}`，焦点在项上时 Tab 直接离开列表）。
 - **文字内容框**：上标 / 下标 / 换行是框右下角 20px 的图标钮。
 - **空属性页**是文档摘要卡（尺寸、几张图、几处文字与标注、几处修改、「画布设置 ›」）。
 - **页签顺序** 属性 | 画布 | 助手（ADR 0010 §3 当日修订）；右栏宽度把手键盘聚焦是一条 2px accent 竖线。
