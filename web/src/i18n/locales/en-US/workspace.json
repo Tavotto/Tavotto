@@ -755,8 +755,7 @@
     "canvasName": "Canvas name",
     "closeTab": "Close tab {{name}}",
     "listLabel": "Canvas tabs",
-    "newCanvas": "New canvas",
-    "unsaved": "Unsaved changes"
+    "newCanvas": "New canvas"
   },
   "toolHint": {
     "arrow": "Drag to draw an arrow; hold Shift to snap to 15°. Esc to cancel.",

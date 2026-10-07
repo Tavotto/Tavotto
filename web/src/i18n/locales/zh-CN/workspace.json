@@ -710,8 +710,7 @@
     "canvasName": "画布名",
     "closeTab": "关闭标签 {{name}}",
     "listLabel": "画布标签",
-    "newCanvas": "新建画布",
-    "unsaved": "有未保存的改动"
+    "newCanvas": "新建画布"
   },
   "toolHint": {
     "arrow": "拖动画出箭头，Shift 吸附 15° 角；Esc 取消",
