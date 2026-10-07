@@ -104,7 +104,8 @@
   快编即重算。看护 `components/zoomControls.test.tsx`、`components/CommandPalette.test.tsx`、
   `hooks/useKeyboardFastEdit.test.tsx`。
 - **快速编辑里作用于选区 / 取景的动作只认正在编辑的那张图（Codex #833，数据丢失）**：判据只有
-  `store/workspace.fastEditPanelOf`（排版里 null）。**全选**只有 `store/actions.selectAll` → `selectAllIds`
+  `store/workspaceStore.fastEditPanelOf`（排版里 null；`store/workspace` 原样再导出。状态本体 `useWorkspaceStore` 与排版视口寄存处住在这个叶子模块里，
+  因为 `store/actions` 要读它，而 `store/workspace` 的工作流动作要调 `actions`——`actions` / `clipboard` 只许 import 叶子，否则成环，`importArchitecture.test.ts` 看护）。**全选**只有 `store/actions.selectAll` → `selectAllIds`
   一处（⌘A、命令面板 `select-all`、画布菜单「全选」同经它）：排版里收整版看得见且没锁的对象
   （`isSelectAllTarget`），快速编辑里只收那张图（也得过 `isSelectAllTarget`，锁着就什么都不选，不退到整版）——
   此前 ⌘A 把整版看不见的对象全选上，接着 Delete 就把它们从版上删掉。**删除**（`deleteSelected`，Delete /
