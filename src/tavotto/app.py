@@ -7809,7 +7809,9 @@ def api_layouts():
             if p.stem not in seen:
                 seen[p.stem] = p.stat().st_mtime
     names = sorted(seen, key=lambda n: seen[n], reverse=True)
-    return jsonify({"layouts": names})
+    # `modified`（加字段，老前端不认也无妨）：每份文档的修改时间（epoch 秒），
+    # 「打开」列表在名字旁写「几分钟前」——只是展示，排序仍以 `layouts` 的顺序为准
+    return jsonify({"layouts": names, "modified": {n: seen[n] for n in names}})
 
 
 def serve_document(path: Path):

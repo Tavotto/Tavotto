@@ -377,12 +377,14 @@ test('排版时间线：自动节点 → 命名 → 预览不改排版 → 恢�
   await page.keyboard.press('ControlOrMeta+Shift+H')
   await expect(drawer).toBeVisible()
   await (await only(drawer.locator('[data-timeline-filter] [data-value="named"]'))).click()
+  // 「预览」在选中行下面的内联条上（2026-10-07 设计审计 §10.2）：先选中这一行
+  await (await only(named.locator('[data-timeline-row]'))).click()
   await (await only(named.locator('[data-timeline-preview-button]'))).click()
   const preview = await only(page.locator('[data-dialog="timeline-preview"]'))
   await expect(preview).toBeVisible()
   await expect(preview).toContainText('投稿前')
-  // 默认焦点在「关闭」：回车不会误触恢复
-  await expect(await only(preview.locator('[data-timeline-preview-close]'))).toBeFocused()
+  // 默认焦点在对话框容器上：回车不会误触恢复（页脚只有「恢复到这里」，关闭是右上角 ×）
+  await expect(preview).toBeFocused()
   // 对话框里是那一刻：有甲、没有乙
   await expect(preview.getByText('甲版标注', { exact: true })).toBeVisible()
   await expect(preview.getByText('乙版标注', { exact: true })).toHaveCount(0)
@@ -414,6 +416,7 @@ test('排版时间线：自动节点 → 命名 → 预览不改排版 → 恢�
   })
   await expect(before).toHaveCount(1, { timeout: 15_000 })
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'timeline-before-restore.png') })
+  await (await only(before.locator('[data-timeline-row]'))).click()
   await (await only(before.locator('[data-timeline-preview-button]'))).click()
   await expect(preview).toBeVisible()
   await expect(preview.getByText('乙版标注', { exact: true })).toBeVisible()

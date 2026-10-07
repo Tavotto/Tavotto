@@ -615,3 +615,79 @@ describe('锚点', () => {
     anchor.remove()
   })
 })
+
+describe('卡片与高亮环的形态（2026-10-07 设计审计 §10.2）', () => {
+  it('环的圆角 = 锚点圆角 + 4（落在 token 上）；分段进度亮到这一步；「暂停教程」是写明的文字按钮', async () => {
+    const anchor = document.createElement('div')
+    anchor.setAttribute('data-object-id', 'p2')
+    document.body.appendChild(anchor)
+    // jsdom 不算 border-radius：只替这一个锚点报一个 8px 的圆角
+    const real = window.getComputedStyle.bind(window)
+    vi.spyOn(window, 'getComputedStyle').mockImplementation((el, pseudo) => {
+      const cs = real(el, pseudo)
+      if (el !== anchor) return cs
+      return new Proxy(cs, {
+        get: (t, k) => (k === 'borderTopLeftRadius' ? '8px' : Reflect.get(t, k)),
+      })
+    })
+    giveRect(anchor, { x: 200, y: 100, w: 80, h: 40 })
+    await mount()
+    await act(async () => {
+      ob().start({ projectId: 'p_tut', documentId: META.document_id })
+      ob().goTo('open_fast_edit')
+    })
+    await flush()
+    const ring = document.querySelector<HTMLElement>('[data-onboarding-ring]')!
+    // 8 + 4 = 12 → rounded-lg（圆角只走 token）
+    expect(ring.className).toContain('rounded-lg')
+    const segs = [...card()!.querySelectorAll('[data-onboarding-segments] > span')]
+    expect(segs).toHaveLength(STEP_IDS.length - 1)
+    expect(segs.filter((s) => s.hasAttribute('data-done'))).toHaveLength(1)
+    const pause = card()!.querySelector<HTMLButtonElement>('[data-onboarding-pause]')!
+    expect(pause.textContent).toBe('暂停教程')
+  })
+
+  it('锚点在对话框里：环也画，画进那个对话框（坐标换成对话框内的）', async () => {
+    const dialog = document.createElement('div')
+    dialog.setAttribute('role', 'dialog')
+    document.body.appendChild(dialog)
+    giveRect(dialog, { x: 100, y: 50, w: 560, h: 500 })
+    const anchor = document.createElement('div')
+    anchor.setAttribute('data-object-id', 'p2')
+    dialog.appendChild(anchor)
+    giveRect(anchor, { x: 200, y: 100, w: 80, h: 40 })
+    await mount()
+    await act(async () => {
+      ob().start({ projectId: 'p_tut', documentId: META.document_id })
+      ob().goTo('open_fast_edit')
+    })
+    await flush()
+    const ring = dialog.querySelector<HTMLElement>('[data-onboarding-ring]')
+    expect(ring, '对话框里没有画环').not.toBeNull()
+    expect(ring!.className).toContain('absolute')
+    expect(ring!.style.left).toBe(`${200 - 100 - 4}px`)
+    expect(ring!.style.top).toBe(`${100 - 50 - 4}px`)
+  })
+
+  it('换步骤时焦点在卡片里就交接给新卡片；不在卡片里不抢', async () => {
+    await mount()
+    await act(async () => {
+      ob().start({ projectId: 'p_tut', documentId: META.document_id })
+    })
+    await flush()
+    const skip = card()!.querySelector<HTMLButtonElement>('[data-onboarding-skip]')!
+    skip.focus()
+    await act(async () => skip.click())
+    await flush()
+    expect(card()!.contains(document.activeElement), '焦点摔到了 body').toBe(true)
+
+    const outside = document.createElement('input')
+    document.body.appendChild(outside)
+    outside.focus()
+    await act(async () => card()!.querySelector<HTMLButtonElement>('[data-onboarding-skip]')!.click())
+    await flush()
+    // 点击不挪焦点（jsdom 的 click() 不给按钮焦点）：焦点还在页面上的输入框里，教程不抢
+    expect(document.activeElement).toBe(outside)
+    outside.remove()
+  })
+})

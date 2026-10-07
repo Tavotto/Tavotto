@@ -145,7 +145,8 @@
   "crash": {
     "blank": "Open a blank layout",
     "body": "Your layout is saved on this computer; reload to resume from the last snapshot. If it fails again, choose “Open a blank layout” — nothing is deleted.",
-    "title": "Something went wrong"
+    "title": "Something went wrong",
+    "details": "Details"
   },
   "docBanner": {
     "conflictDisk": "On disk: {{canvases}} canvases · {{objects}} objects · changed {{time}}",

@@ -22,11 +22,13 @@ import { profileName } from '@/lib/profileText'
 import { panelRender, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { askConfirm, dialogCovered, useUiStore } from '@/store/uiStore'
-import { askDiscardDraft } from './askDiscardDraft'
 import { propLabel } from './inspector/roles/registry'
 import { FormRow } from './FormRow'
+import { FormSection } from './ui/FormSection'
 import { Button, IconButton } from './ui/Button'
+import { Card } from './ui/Card'
 import { Dialog } from './ui/Dialog'
+import { Notice } from './ui/Notice'
 import { Menu, MenuItem, MenuSeparator } from './ui/Menu'
 import { ColorField, NumberField, TextInput } from './ui/Input'
 import { Segmented } from './ui/Segmented'
@@ -96,28 +98,39 @@ export function StyleDialog() {
     setDraft(structuredClone(next))
     setBaseline(structuredClone(next))
   }
-  /** 草稿干净就直接放行；脏了先问，「继续编辑」= false（调用方什么都不做） */
-  const leaveDraft = async () => !dirty || (await askDiscardDraft())
+  /**
+   * 要离开一份脏草稿时**就地**问（2026-10-07 设计审计 §10.2）：不再在对话框上面再叠一层确认框，
+   * 而是在页脚正上方（`Dialog status`，不随正文滚）出一条警示「有未保存的修改」+「继续编辑」「放弃修改」。
+   * 记下的是用户刚才想做的那件事；「放弃修改」才去做，「继续编辑」/ Esc 什么都不动。
+   */
+  const [pendingLeave, setPendingLeave] = useState<(() => void) | null>(null)
+  /** 草稿干净就直接做；脏了先记下、就地问 */
+  const guarded = (action: () => void) => {
+    if (!dirty) return action()
+    setPendingLeave(() => action)
+  }
+  const keepEditing = () => setPendingLeave(null)
+  const discardAndContinue = () => {
+    const action = pendingLeave
+    setPendingLeave(null)
+    action?.()
+  }
 
   /** 切到库里的另一份：草稿整份换掉 */
-  const pick = async (id: string) => {
+  const pick = (id: string) => {
     if (id === draft.id) return
     const next = saved.find((s) => s.id === id)
     if (!next) return
-    if (!(await leaveDraft())) return
-    load(next)
+    guarded(() => load(next))
   }
-  const startNew = async () => {
-    if (!(await leaveDraft())) return
-    load(EMPTY)
-  }
+  const startNew = () => guarded(() => load(EMPTY))
   /** 关对话框：放弃的改动退回基线，下次打开不再带着它 */
-  const close = async () => {
-    if (!(await leaveDraft())) return
-    setDraft(structuredClone(baseline))
-    setOpen(false)
-  }
-  const onOpenChange = (v: boolean) => (v ? setOpen(true) : void close())
+  const close = () =>
+    guarded(() => {
+      setDraft(structuredClone(baseline))
+      setOpen(false)
+    })
+  const onOpenChange = (v: boolean) => (v ? setOpen(true) : close())
   /** 选中的这一份删得掉吗：内置只读那几份不行（`reason` 会把原因说出来） */
   const deletable = !!draft.id && !readOnlyIds.has(draft.id)
   const removeCurrent = async () => {
@@ -143,6 +156,7 @@ export function StyleDialog() {
   useEffect(() => {
     if (!open) return
     setError(null)
+    setPendingLeave(null)
     useProfileStore.getState().clearError()
     void useProfileStore.getState().load()
   }, [open])
@@ -168,6 +182,8 @@ export function StyleDialog() {
   }, [open, presetId, saved, draft])
 
   const doc = useDocumentStore((s) => s.doc)
+  const canvases = useDocumentStore((s) => s.canvases)
+  const activeCanvasId = useDocumentStore((s) => s.activeCanvasId)
   const selectedIds = useSelectionStore((s) => s.ids)
   const elementPanelId = useUiStore((s) => s.elementPanelId)
   // 变体分键之后取 manifest 必须带上面板本身（同文件的两个副本各有各的）
@@ -242,63 +258,104 @@ export function StyleDialog() {
       <Dialog
         open={open}
         onOpenChange={onOpenChange}
+        onEscape={close}
         title={sd('title')}
-        width={520}
+        size="md"
         busy={busy}
         covered={covered}
-        footer={
-          <>
-            <Button variant="secondary" size="md" onClick={() => void close()}>
+        anchor="styles"
+        footer={{
+          secondary: (
+            <Button variant="secondary" size="lg" onClick={close}>
               {t('common:actions.close')}
             </Button>
+          ),
+          primary: (
             <Button
               variant="primary"
-              size="md"
+              size="lg"
               disabled={!primaryManifest}
               title={primaryManifest ? undefined : sd('needPanel')}
               onClick={extract}
             >
-              <Pipette size={ICON_SIZE.md} />
+              <Pipette size={ICON_SIZE.sm} />
               {sd('extract')}
             </Button>
-          </>
-        }
+          ),
+        }}
       >
-        <p className="text-xs leading-relaxed text-ink-2">{sd('emptyBody')}</p>
-        {shownError && <p className="mt-2 text-xs text-danger">{shownError}</p>}
+        <div className="flex flex-col gap-3">
+          <p className="text-ink-2">{sd('emptyBody')}</p>
+          {shownError && <Notice tone="danger">{shownError}</Notice>}
+        </div>
       </Dialog>
     )
   }
+
+  // 右侧的影响摘要：这份样式管几项、配色几色、标注 / 序号 / 页面尺寸，以及这份文档里有几张画布跟随它
+  const following = draft.id ? followingCanvases(canvases, activeCanvasId, doc, draft.id) : 0
 
   return (
     <Dialog
       open={open}
       onOpenChange={onOpenChange}
+      // Esc 的安全答案：关（脏了就地问）；那一问开着时 Esc = 继续编辑
+      onEscape={pendingLeave ? keepEditing : close}
       title={sd('title')}
-      width={920}
+      size="xl"
       /* 固定高：字段清单在中间滚，样式库与底部的应用范围不随内容高低跳动 */
       height="640px"
       busy={busy}
       covered={covered}
-      footer={
-        <>
-          <Button variant="secondary" size="md" onClick={() => void close()}>
+      anchor="styles"
+      status={
+        pendingLeave && (
+          <Notice
+            tone="warn"
+            data-style-discard
+            action={
+              <>
+                <Button variant="ghost" size="sm" data-style-discard-keep onClick={keepEditing}>
+                  {t('dialogs:draftGuard.keepEditing')}
+                </Button>
+                <Button variant="danger-tinted" size="sm" data-style-discard-confirm onClick={discardAndContinue}>
+                  {t('dialogs:draftGuard.discard')}
+                </Button>
+              </>
+            }
+          >
+            {t('dialogs:draftGuard.title')}
+          </Notice>
+        )
+      }
+      footer={{
+        // 左边一颗「未保存」的点：改了什么都看得见，不必等到关的时候才知道
+        start: dirty ? (
+          <span className="type-meta flex items-center gap-1.5" data-style-dirty>
+            <span aria-hidden className="size-1.5 rounded-full bg-accent" />
+            {sd('unsaved')}
+          </span>
+        ) : undefined,
+        secondary: (
+          <Button variant="secondary" size="lg" onClick={close}>
             {t('common:actions.close')}
           </Button>
-          {/* 保存在 footer（设计审计 2026-10-07 §10.2）：有没存的改动时它是这一层唯一的
-              主按钮，与「关闭会问要不要放弃」配成一对；没改时退回次按钮——内置样式上照样
-              按得动（另存为一份用户样式）。此前它是名称行尾一颗小次按钮，改完找不到 */}
+        ),
+        /* 保存在 footer（设计审计 2026-10-07 §10.2）：有没存的改动时它是这一层唯一的
+           主按钮，与「关闭会问要不要放弃」配成一对；没改时退回次按钮——内置样式上照样
+           按得动（另存为一份用户样式）。此前它是名称行尾一颗小次按钮，改完找不到 */
+        primary: (
           <Button
             variant={dirty ? 'primary' : 'secondary'}
-            size="md"
+            size="lg"
             loading={busy}
             data-style-save
             onClick={() => void save()}
           >
             {t('common:actions.save')}
           </Button>
-        </>
-      }
+        ),
+      }}
     >
       {/*
         一栏：样式库收成顶部一行，编辑器铺满 920（全面打磨 D23）。此前左边一列 176px
@@ -307,19 +364,20 @@ export function StyleDialog() {
         二到四份是分段选择器、再多换下拉，新建 / 提取 / 删除收进行尾的 ⋯。
         应用范围与影响仍在**底部**自成一段（2026-09-13 审计 B25）。
       */}
-      <div className="flex h-full min-w-0 flex-col gap-2">
+      <div className="flex h-full min-w-0 gap-4">
+      <div className="flex h-full min-w-0 flex-1 flex-col gap-2">
           <FormRow label={sd('savedStyles')}>
             {saved.length === 0 ? (
               <span className="type-meta min-w-0 flex-1">{sd('noSavedStyles')}</span>
             ) : saved.length === 1 ? (
               /* 只有一份时没有可选的：写名字就够了，一格的分段选择器读作坏掉的控件 */
-              <span className="min-w-0 flex-1 truncate text-xs text-ink">{nameOf(saved[0])}</span>
+              <span className="min-w-0 flex-1 truncate text-ink">{nameOf(saved[0])}</span>
             ) : saved.length <= LIBRARY_AS_SEGMENTED ? (
               <Segmented<string>
                 ariaLabel={sd('savedStyles')}
                 className="min-w-0 flex-1"
                 value={draft.id ?? null}
-                onChange={(id) => void pick(id)}
+                onChange={pick}
                 items={saved.map((s) => ({ value: s.id ?? '', label: nameOf(s) }))}
               />
             ) : (
@@ -327,7 +385,7 @@ export function StyleDialog() {
                 ariaLabel={sd('savedStyles')}
                 className="min-w-0 flex-1"
                 value={draft.id ?? ''}
-                onChange={(id) => void pick(id)}
+                onChange={pick}
                 options={saved.map((s) => ({ value: s.id ?? '', label: nameOf(s) }))}
               />
             )}
@@ -339,7 +397,7 @@ export function StyleDialog() {
                 </IconButton>
               }
             >
-              <MenuItem icon={Plus} onSelect={() => void startNew()}>
+              <MenuItem icon={Plus} onSelect={startNew}>
                 {sd('newStyle')}
               </MenuItem>
               <MenuItem
@@ -380,12 +438,11 @@ export function StyleDialog() {
           {/* 字段清单：靠组头与留白分区，不套边框（宪法第八节「少用容器」） */}
           <div className="min-h-0 flex-1 overflow-y-auto" data-style-entries>
             {groups.length === 0 && !draft.palette?.length ? (
-              <p className="py-2 text-xs leading-relaxed text-ink-3">{sd('emptyDraft')}</p>
+              <p className="py-2 text-ink-3">{sd('emptyDraft')}</p>
             ) : (
-              <div className="flex flex-col gap-3">
+              <div className="flex flex-col gap-4">
                 {groups.map(({ group, entries: list }) => (
-                  <div key={group} data-style-group={group}>
-                    <p className="mb-1 type-section">{styleGroupLabel(group)}</p>
+                  <FormSection key={group} data-style-group={group} title={styleGroupLabel(group)} className="gap-0">
                     <div className="flex flex-col gap-0.5">
                       {list.map((en, i) => (
                         <div key={`${en.role}.${en.prop}`}>
@@ -395,7 +452,7 @@ export function StyleDialog() {
                               一副；同角色的后续行角色列还留空，右缘参差。现在行只剩
                               「属性 ‖ 控件 ×」，走共用的 `FormRow` */}
                           {(i === 0 || list[i - 1].role !== en.role) && (
-                            <p className="flex h-7 items-end text-xs text-ink-3">
+                            <p className="type-section flex h-7 items-end" data-style-role={en.role}>
                               {styleRoleLabel(en.role)}
                             </p>
                           )}
@@ -441,12 +498,11 @@ export function StyleDialog() {
                         </div>
                       ))}
                     </div>
-                  </div>
+                  </FormSection>
                 ))}
 
                 {!!draft.palette?.length && (
-                  <div data-style-group="palette">
-                    <p className="mb-1 type-section">{sd('paletteTitle')}</p>
+                  <FormSection data-style-group="palette" title={sd('paletteTitle')}>
                     <div className="flex flex-wrap items-center gap-1">
                       {draft.palette.map((c, i) => (
                         <span key={i} className="flex items-center gap-0.5">
@@ -476,13 +532,12 @@ export function StyleDialog() {
                         </span>
                       ))}
                     </div>
-                  </div>
+                  </FormSection>
                 )}
               </div>
             )}
 
-            <div className="mt-3" data-style-group="annotation">
-              <p className="mb-1 type-section">{sd('annotationGroup')}</p>
+            <FormSection className="mt-4 gap-0" data-style-group="annotation" title={sd('annotationGroup')}>
               <TextStylePart
                 label={sd('annotationText')}
                 boldByDefault={false}
@@ -495,7 +550,7 @@ export function StyleDialog() {
                 value={draft.subLabel}
                 onChange={(v) => setDraft((d) => ({ ...d, subLabel: v }))}
               />
-              <label className="flex h-7 items-center gap-1.5 text-xs text-ink-2">
+              <label className="flex h-7 items-center gap-1.5 text-ink-2">
                 <Toggle
                   aria-label={sd('includePageSize')}
                   checked={!!draft.page}
@@ -511,12 +566,63 @@ export function StyleDialog() {
                   {draft.page ? sd('pageSizeSuffix', { w: draft.page.w, h: draft.page.h }) : ''}
                 </span>
               </label>
-            </div>
+            </FormSection>
           </div>
 
+          {shownError && <Notice tone="danger">{shownError}</Notice>}
       </div>
-      {shownError && <p className="mt-2 text-xs text-danger">{shownError}</p>}
+      <ImpactSummary draft={draft} following={following} />
+      </div>
     </Dialog>
+  )
+}
+
+/** 这份文档里有几张画布**跟随**这份样式（脱离了的不算；活动画布读此刻的 doc） */
+function followingCanvases(
+  canvases: { id: string; style?: { id: string; detached?: true } }[],
+  activeCanvasId: string,
+  doc: { style?: { id: string; detached?: true } },
+  styleId: string,
+): number {
+  return canvases.filter((c) => {
+    const st = c.id === activeCanvasId ? doc.style : c.style
+    return !!st && st.id === styleId && !st.detached
+  }).length
+}
+
+/**
+ * 右栏的影响摘要（2026-10-07 设计审计 §10.2）：一张浅底卡，回答「存下这份会影响什么」——
+ * 它管几项、几种颜色、标注 / 序号 / 页面尺寸管不管，以及这份文档里有几张画布在跟随它
+ * （跟随的画布会自己跟上存下的改动，ADR 0081）。只读、只是数，不是第二个编辑器。
+ */
+function ImpactSummary({ draft, following }: { draft: StylePreset; following: number }) {
+  useTranslation('dialogs')
+  const rows: { key: string; label: string; value: string }[] = [
+    { key: 'entries', label: sd('impact.entries'), value: String(presetEntries(draft).length) },
+    { key: 'palette', label: sd('impact.palette'), value: String(draft.palette?.length ?? 0) },
+    { key: 'annotation', label: sd('annotationText'), value: sd(draft.annotation ? 'impact.on' : 'impact.off') },
+    { key: 'subLabel', label: sd('subLabel'), value: sd(draft.subLabel ? 'impact.on' : 'impact.off') },
+    {
+      key: 'page',
+      label: sd('impact.page'),
+      value: draft.page ? sd('impact.pageSize', { w: draft.page.w, h: draft.page.h }) : sd('impact.off'),
+    },
+  ]
+  return (
+    <Card appearance="subtle" className="flex w-52 shrink-0 flex-col gap-3 self-start" data-style-impact>
+      <h3 className="type-section">{sd('impact.title')}</h3>
+      <dl className="flex flex-col gap-1.5 text-sm">
+        {rows.map((r) => (
+          <div key={r.key} className="flex items-baseline justify-between gap-2">
+            <dt className="text-ink-2">{r.label}</dt>
+            <dd className="tabular-nums text-ink">{r.value}</dd>
+          </div>
+        ))}
+      </dl>
+      <p className="type-caption" data-style-following={following}>
+        {draft.id ? sd('impact.following', { count: following }) : sd('impact.unsavedDraft')}
+      </p>
+    </Card>
   )
 }
 
@@ -622,7 +728,7 @@ function TextStylePart({
   useTranslation('dialogs')
   return (
     <div>
-      <label className="flex h-7 items-center gap-1.5 text-xs text-ink-2">
+      <label className="flex h-7 items-center gap-1.5 text-ink-2">
         <Toggle
           aria-label={label}
           checked={!!value}
@@ -642,7 +748,7 @@ function TextStylePart({
             unit="pt"
             onChange={(v) => onChange({ ...value, sizePt: v })}
           />
-          <label className="flex items-center gap-1 text-xs text-ink-2">
+          <label className="flex items-center gap-1 text-sm text-ink-2">
             <Toggle
               aria-label={sd('bold')}
               checked={!!value.bold}

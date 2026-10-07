@@ -25,6 +25,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
 
 import {
   ApiError,
+  WORKDIR_CONFIRMATION_CODE,
   fetchPanels,
   fetchReadiness,
   fetchRegistry,
@@ -40,6 +41,7 @@ import {
   pickableStems,
   sourceOptions,
 } from '@/components/RegistryDialog'
+import { WorkdirConfirmDialog } from '@/components/WorkdirConfirmDialog'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { resetAssetLoadBookkeeping, useAssetStore } from '@/store/assetStore'
 import {
@@ -288,6 +290,36 @@ describe('六个状态', () => {
     // 那句话现在由素材卡与图内能力说明负责，看护在 AssetBrowser.readiness.test.tsx /
     // panelCapabilityNote.test.tsx；这里只守「不画成错误」。
     expect(row.textContent).toContain('仅版面')
+  })
+})
+
+describe('嵌套对话框（2026-10-07 设计审计 §10.2）', () => {
+  it('接入中心上再弹运行目录确认：只有栈底那一层画遮罩，不叠成两层暗', async () => {
+    await open(reportOf(SIX))
+    const extra = document.createElement('div')
+    document.body.appendChild(extra)
+    const second = createRoot(extra)
+    await act(async () => {
+      second.render(<WorkdirConfirmDialog />)
+    })
+    await act(async () => {
+      useEnvStore.getState().requestWorkdirConfirmation({
+        kind: 'workdir',
+        code: WORKDIR_CONFIRMATION_CODE,
+        script: 'dyn.py',
+        reason: 'project_root_evidence',
+        recommended: 'project_root',
+        options: [],
+        conflicts: [],
+        reads: [],
+      } as never)
+    })
+    expect(document.querySelectorAll('[data-dialog]').length).toBe(2)
+    // 两层都有遮罩元素（点外面的判定仍落在它上面），但只有一层是有颜色的那一个
+    expect(document.querySelectorAll('[data-dialog-scrim]').length).toBe(1)
+    await act(async () => useEnvStore.getState().dismissWorkdirConfirmation())
+    await act(async () => second.unmount())
+    extra.remove()
   })
 })
 
