@@ -32,7 +32,9 @@ description: 画 matplotlib 论文级图表，并用 Tavotto 继续微调（拖�
    然后要求**新开会话**（或按宿主要求重载 MCP 服务），然后**停止**；
    不要在旧会话里继续假装工具可用。
 6. 发现插件更新：当前任务照常完成，只在收尾提醒一次（Codex：
-   `codex plugin marketplace upgrade tavotto`；其他宿主：下载新版完整包、解压、重新生成配置），
+   `codex plugin marketplace upgrade tavotto`；Claude Code 插件版：`claude plugin update tavotto@tavotto`；
+   DSH bundle：`dsh plugin --profile <名> update tavotto-dsh`；其他配置版宿主：下载新版完整包、解压、
+   重新生成配置并刷新技能），
    不自动升级、不反复提醒。
 7. 健康检查或恢复失败：报告结构化错误与下一步，不循环重试，不退回源码构建。
 
