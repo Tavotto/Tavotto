@@ -146,15 +146,21 @@ export function CanvasPage() {
                     </span>
                   ),
                 })),
-                {
-                  value: CUSTOM,
-                  label: (
-                    <span data-page-preset={CUSTOM} className="flex min-w-0 items-center gap-2">
-                      <PageThumb w={page.w} h={page.h} />
-                      <span className="truncate">{cv('presetCustom')}</span>
-                    </span>
-                  ),
-                },
+                // 「自定义」只是「当前尺寸不是任何预设」的说法，不是一个能选的尺寸：只在它就是当前
+                // 值时出现。尺寸对上预设时还摆着它，选了什么都不写、受控下拉又弹回去（Codex #829 P2）
+                ...(active
+                  ? []
+                  : [
+                      {
+                        value: CUSTOM,
+                        label: (
+                          <span data-page-preset={CUSTOM} className="flex min-w-0 items-center gap-2">
+                            <PageThumb w={page.w} h={page.h} />
+                            <span className="truncate">{cv('presetCustom')}</span>
+                          </span>
+                        ),
+                      },
+                    ]),
               ]}
             />
           </Row>

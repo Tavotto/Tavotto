@@ -718,6 +718,40 @@ describe('选中图例', () => {
     ])
   })
 
+  /** 拖动柄按下（jsdom 里行高都是 0，任何松手位置都落到最后一行） */
+  const pressDragHandle = async (gid: string) => {
+    const handle = host.querySelector(`[data-legend-entry="${gid}"] [data-legend-drag]`)!
+    await act(async () => {
+      handle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientY: 0 }))
+    })
+  }
+  const releasePointer = async () => {
+    await act(async () => {
+      window.dispatchEvent(new PointerEvent('pointerup', { clientY: 999 }))
+    })
+  }
+
+  it('拖动柄松手写 entry_order，一条历史（下一条的对照）', async () => {
+    await mount(['axes_0.legend'])
+    const before = useDocumentStore.getState().past.length
+    await pressDragHandle('axes_0.legend.texts_0')
+    await releasePointer()
+    expect(overrideOf('axes_0.legend', 'entry_order')).toEqual([1, 2, 0])
+    expect(useDocumentStore.getState().past.length).toBe(before + 1)
+  })
+
+  it('拖到一半检查器卸载（如松手前 Esc 退出元素编辑）：迟到的松手不重排、不进历史（Codex #829）', async () => {
+    await mount(['axes_0.legend'])
+    const before = useDocumentStore.getState().past.length
+    await pressDragHandle('axes_0.legend.texts_0')
+    await act(async () => {
+      root.unmount()
+    })
+    await releasePointer()
+    expect(overrideOf('axes_0.legend', 'entry_order')).toBeUndefined()
+    expect(useDocumentStore.getState().past.length).toBe(before)
+  })
+
   it('已经重排过再移动：写的仍是原始序号的排列，不是显示位置', async () => {
     useDocumentStore.getState().commit(literal('先重排'), (d) => {
       const p = d.objects.find((o) => o.id === 'p1') as PanelObject

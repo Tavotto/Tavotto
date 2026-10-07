@@ -1,4 +1,4 @@
-import { useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
+import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { RowLabelWidth } from '../ui/Field'
 import { displayLabel } from './roles/mathtext'
@@ -128,6 +128,12 @@ function LegendEntryList({
   const listRef = useRef<HTMLUListElement>(null)
   const [focusGid, setFocusGid] = useState<string | null>(null)
   const [drag, setDrag] = useState<{ from: number; to: number } | null>(null)
+  /**
+   * 进行中那次拖动的收尾（摘掉 window 监听、作废这次拖动、不提交）。列表卸载时——比如松手前按
+   * Esc 退出元素编辑——必须跑它：不然迟到的 pointerup 仍会拿旧闭包给已经放弃的图例重排（Codex #829 P2）
+   */
+  const dragCleanupRef = useRef<(() => void) | null>(null)
+  useEffect(() => () => dragCleanupRef.current?.(), [])
   const current = Math.max(0, views.findIndex((v) => v.element.gid === focusGid))
   const focusRow = (gid: string) => {
     setFocusGid(gid)
@@ -173,22 +179,32 @@ function LegendEntryList({
       }
       return Math.max(0, Math.min(rows.length - 1, to))
     }
+    // 同一时刻只有一次拖动：上一次没收尾（理论上不该有）先作废，不提交
+    dragCleanupRef.current?.()
     setDrag({ from, to: from })
-    const move = (ev: PointerEvent) => setDrag({ from, to: targetOf(ev.clientY) })
-    const up = (ev: PointerEvent) => {
+    let live = true
+    const detach = () => {
+      live = false
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', up)
       window.removeEventListener('pointercancel', cancel)
+      if (dragCleanupRef.current === detach) dragCleanupRef.current = null
+    }
+    const move = (ev: PointerEvent) => {
+      if (live) setDrag({ from, to: targetOf(ev.clientY) })
+    }
+    const up = (ev: PointerEvent) => {
+      if (!live) return
+      detach()
       setDrag(null)
       const to = targetOf(ev.clientY)
       if (to !== from) onMove(from, to)
     }
     const cancel = () => {
-      window.removeEventListener('pointermove', move)
-      window.removeEventListener('pointerup', up)
-      window.removeEventListener('pointercancel', cancel)
+      detach()
       setDrag(null)
     }
+    dragCleanupRef.current = detach
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', up)
     window.addEventListener('pointercancel', cancel)

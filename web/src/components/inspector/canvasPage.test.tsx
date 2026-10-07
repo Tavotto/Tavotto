@@ -23,6 +23,9 @@ declare global {
   var IS_REACT_ACT_ENVIRONMENT: boolean
 }
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
+// Radix 的 Select 打开时会 scrollIntoView / 查 pointer capture；jsdom 没有
+Element.prototype.scrollIntoView ??= function scrollIntoView() {}
+Element.prototype.hasPointerCapture ??= () => false
 
 let container: HTMLDivElement
 let root: Root
@@ -132,6 +135,37 @@ describe('CanvasPage', () => {
     act(() => container.querySelector<HTMLButtonElement>('[data-canvas-export-summary]')!.click())
     expect(useUiStore.getState().exportOpen).toBe(true)
     act(() => useUiStore.getState().setExportOpen(false))
+  })
+
+  it('「自定义」只在它就是当前尺寸时出现：尺寸对上预设时下拉里没有这一档（Codex #829）', async () => {
+    const options = async () => {
+      const trigger = container.querySelector<HTMLElement>('[role="combobox"]')!
+      await act(async () => trigger.click())
+      const found = [...document.body.querySelectorAll<HTMLElement>('[role="option"]')]
+      await act(async () => {
+        document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      })
+      return found
+    }
+    const preset = { id: 'single', w: 85, h: 60 } // 单栏预设
+    act(() => useDocumentStore.getState().commit(literal('预设尺寸'), (d) => {
+      d.page.w = preset.w
+      d.page.h = preset.h
+    }))
+    const presetOpts = await options()
+    expect(presetOpts.length).toBeGreaterThan(0) // 前提：真把下拉打开了
+    expect(presetOpts.some((o) => o.querySelector('[data-page-preset="custom"]'))).toBe(false)
+    expect(container.querySelector(`[role="combobox"] [data-page-preset="${preset.id}"]`)).not.toBeNull()
+
+    act(() => useDocumentStore.getState().commit(literal('改尺寸'), (d) => {
+      d.page.w = 123
+      d.page.h = 77
+    }))
+    expect(container.querySelector('[role="combobox"] [data-page-preset="custom"]')).not.toBeNull()
+    const customOpts = await options()
+    const custom = customOpts.find((o) => o.querySelector('[data-page-preset="custom"]'))
+    expect(custom).toBeDefined()
+    expect(custom!.getAttribute('data-state')).toBe('checked')
   })
 
   it('导出摘要跟着取回的后端默认值重读：画布页先挂着、取回后不停在空缓存的 600 ppi（Codex #829）', async () => {
