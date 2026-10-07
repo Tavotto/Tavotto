@@ -164,6 +164,31 @@ describe('用户消息与助手回答分开（§6.1）', () => {
     expect(text.className).not.toContain('line-clamp-3')
   })
 
+  it('右栏变窄后软换行超过 3 行：重新量，摆出折叠钮（Codex #827 P2）', async () => {
+    const observers: ResizeObserverCallback[] = []
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(cb: ResizeObserverCallback) {
+          observers.push(cb)
+        }
+        observe() {}
+        disconnect() {}
+      },
+    )
+    try {
+      await mount([session({ prompt: '一句很长但没有换行的话' })])
+      expect(q('[data-ai-user-fold]')).toBeNull()
+      const p = q('[data-ai-user] p')!
+      Object.defineProperty(p, 'scrollHeight', { configurable: true, value: 120 })
+      Object.defineProperty(p, 'clientHeight', { configurable: true, value: 60 })
+      await act(async () => observers.forEach((cb) => cb([], {} as ResizeObserver)))
+      expect(q('[data-ai-user-fold]')).not.toBeNull()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('复制：写进剪贴板，图标换 ✓，1.2s 后换回', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     await mount([session()])
@@ -252,6 +277,17 @@ describe('过程：环境行（§6.2）', () => {
     expect(live.textContent).toBe(`${ai('panel.stepRan')} python fig1.py`)
     // 中止钮上那圈轨道只在跑的时候有
     expect(q('[data-ai-orbit]')).toBeTruthy()
+  })
+
+  it('跑着的一轮转成失败：同一组过程就地展开（Codex #827 P2）', async () => {
+    await mount([session({ status: 'running', finishedAt: undefined, entries: steps.slice(0, 2) })])
+    expect(q('[data-ai-process-toggle]')!.getAttribute('aria-expanded')).toBe('false')
+    await act(async () => {
+      useAiStore.setState({
+        sessions: [session({ status: 'failed', error: 'boom', entries: steps.slice(0, 2) })],
+      } as never)
+    })
+    expect(q('[data-ai-process-toggle]')!.getAttribute('aria-expanded')).toBe('true')
   })
 
   it('失败的一轮：最后一组过程自动展开，失败说明是 danger Notice + 重试', async () => {

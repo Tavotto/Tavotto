@@ -145,7 +145,13 @@ function UserBubble({
   useLayoutEffect(() => {
     const el = textRef.current
     if (!el || expanded) return
-    setOverflows(el.scrollHeight > el.clientHeight + 1)
+    const measure = () => setOverflows(el.scrollHeight > el.clientHeight + 1)
+    measure()
+    // 右栏可拖宽窄：变窄后软换行能超出 3 行，不重量就会被 line-clamp 吞掉又没有「展开」（Codex #827 P2）
+    if (typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
   }, [session.prompt, expanded])
   const foldable = hardLines > FOLD_LINES || overflows
 
@@ -258,6 +264,12 @@ const ROW_BUTTON =
 function ProcessGroup({ items, live, defaultOpen }: { items: Step[]; live: boolean; defaultOpen: boolean }) {
   useTranslation('ai')
   const [open, setOpen] = useState(defaultOpen)
+  // 跑着的一轮失败时同一个组件不重挂，初值不会重算：defaultOpen 变真那一刻把它展开（Codex #827 P2）
+  const [prevDefaultOpen, setPrevDefaultOpen] = useState(defaultOpen)
+  if (defaultOpen !== prevDefaultOpen) {
+    setPrevDefaultOpen(defaultOpen)
+    if (defaultOpen) setOpen(true)
+  }
   const thinking = items.filter((s) => s.kind !== 'action')
   const actions = items.length - thinking.length
   const spans = thinking.map(spanOf)
