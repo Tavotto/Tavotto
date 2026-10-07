@@ -152,7 +152,12 @@ export function SettingsDialog() {
   useEffect(() => {
     if (!open) return
     const target = resolveSection(requested)
-    if (!target || target === sectionRef.current) return
+    if (!target) return
+    // 已在目标页：无事可做，但请求同样要消费，否则下次同一分区的菜单命令 store 值不变、被吞（Codex #821 P2）
+    if (target === sectionRef.current) {
+      if (useUiStore.getState().settingsSection === requested) useUiStore.setState({ settingsSection: null })
+      return
+    }
     let cancelled = false
     void (async () => {
       const cur = sectionRef.current
