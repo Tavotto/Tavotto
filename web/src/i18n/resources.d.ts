@@ -1625,7 +1625,7 @@ export default interface Resources {
       },
       "impact": {
         "entries": "字段",
-        "following_other": "这份文档里有 {{count}} 张画布跟随这套样式，存下的改动会自动跟上。",
+        "following_other": "这份排版里有 {{count}} 张画布跟随这套样式，存下的改动会自动跟上。",
         "off": "关",
         "on": "开",
         "page": "页面尺寸",

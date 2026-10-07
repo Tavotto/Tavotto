@@ -1327,8 +1327,8 @@
       "on": "On",
       "off": "Off",
       "pageSize": "{{w}} × {{h}} mm",
-      "following_one": "1 canvas in this document follows this style and picks up saved changes.",
-      "following_other": "{{count}} canvases in this document follow this style and pick up saved changes.",
+      "following_one": "1 canvas in this layout follows this style and picks up saved changes.",
+      "following_other": "{{count}} canvases in this layout follow this style and pick up saved changes.",
       "unsavedDraft": "Not saved yet — save it before a canvas can follow it."
     }
   },
