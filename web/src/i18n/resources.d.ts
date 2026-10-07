@@ -161,7 +161,7 @@ export default interface Resources {
       "save": "保存"
     },
     "colorField": {
-      "documentColors": "文档颜色",
+      "documentColors": "排版里的颜色",
       "hex": "{{label}}：色号",
       "none": "无",
       "open": "{{label}}：选色",

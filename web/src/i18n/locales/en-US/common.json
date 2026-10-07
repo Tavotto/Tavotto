@@ -15,7 +15,7 @@
     "none": "None",
     "open": "{{label}}: colours",
     "hex": "{{label}}: hex",
-    "documentColors": "In this document",
+    "documentColors": "In this layout",
     "recent": "Recent",
     "system": "System colour picker…"
   },

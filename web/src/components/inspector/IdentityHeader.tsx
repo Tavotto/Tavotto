@@ -18,6 +18,7 @@ import {
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { msg, t as translate } from '@/i18n'
 import { listJoin } from '@/i18n/format'
+import { useHeldWhilePointerDown } from '@/hooks/useHeldWhilePointerDown'
 import { openProblemAt } from '@/lib/issueFocus'
 import { switchKindOf } from '@/lib/shapeSwitch'
 import { cn, MOD } from '@/lib/utils'
@@ -172,7 +173,9 @@ function ProblemsChip({
   figureId: string | null
 }) {
   const { t } = useTranslation('inspector')
-  const all = useValidationStore((s) => s.issues)
+  // 胶囊是一颗按钮：校验结果（常在首次渲染之后才有）在用户按着某个控件时到达，就等他松手再出现，
+  // 免得按下与松开之间属性栏多出一颗按钮（e2e layout-timeline「首次渲染在水平翻转按下与松开间完成」）
+  const all = useHeldWhilePointerDown(useValidationStore((s) => s.issues))
   const mine = all.filter(
     (i) =>
       (i.severity === 'error' || i.severity === 'warn') &&
