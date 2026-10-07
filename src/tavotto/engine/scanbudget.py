@@ -101,6 +101,50 @@ def is_redirect(st) -> bool:
     return tag == 0 or bool(tag & 0x20000000)
 
 
+def redirected_component(root, path, *, allow_final_link: bool = False) -> str | None:
+    """项目派生路径 `path` 在 `root` 之下的每一级里，第一个符号链接 / 路径替身（junction 等）的**项目相对
+    POSIX 路径**；干净、不在 `root` 之下（机器级候选）或这一级不存在回 None。
+
+    导入即扫描对项目派生的候选解释器路径，在调用任何会跟随链接的谓词（`is_file` / `exists` / `realpath` /
+    `stat` / 指纹 / 起进程）**之前**先问这一句：只做字符串运算与逐级 `lstat`，不碰目标（目标可能是
+    攻击者的 UNC / WebDAV 共享，哪怕 `exists` 也会发 NTLM）。`..` 一律按「名字」原样当作被拒（normpath
+    会悄悄折叠掉中间那一级的 lstat）。`root` 自己（用户打开的那一层）不查。
+
+    `allow_final_link=True`：最后一级允许是 POSIX 符号链接（venv 的 `bin/python` 本来就是指向基础解释器的
+    软链接，不是目录重定向）；Windows 上最后一级的任何重定向仍然拒。不可读（非「不存在」的 OSError）当拒。
+    """
+    root_n = os.path.normpath(os.fspath(root))
+    norm = [os.path.normcase(x) for x in Path(root_n).parts]
+    rest: tuple[str, ...] | None = None
+    for candidate in (Path(os.fspath(path)).parts, Path(os.path.normpath(os.fspath(path))).parts):
+        head = [os.path.normcase(x) for x in candidate[: len(norm)]]
+        if len(candidate) > len(norm) and head == norm:
+            rest = candidate[len(norm) :]
+            break
+    if not rest:
+        return None
+    cur = root_n
+    seen: list[str] = []
+    for i, part in enumerate(rest):
+        seen.append(part)
+        rel = "/".join(seen)
+        if part in ("..", ".") or any(sep in part for sep in {os.sep, os.altsep or os.sep}):
+            return rel
+        cur = os.path.join(cur, part)
+        try:
+            st = os.lstat(cur)
+        except (FileNotFoundError, NotADirectoryError):
+            return None
+        except (OSError, ValueError):
+            return rel
+        if is_redirect(st):
+            final = i == len(rest) - 1
+            if final and allow_final_link and os.name != "nt" and stat.S_ISLNK(st.st_mode):
+                return None
+            return rel
+    return None
+
+
 def _contained_lexical(base, parts: tuple[str, ...]) -> str:
     """把 `base` + `parts` 钉在 `base` 之内，回**守卫过的那一条**字符串路径；逃出去抛 `OSError`。
 

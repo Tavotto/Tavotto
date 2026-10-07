@@ -484,6 +484,14 @@ def discover(
     for python, source, label in raw:
         if budget is not None and budget.stop_reason() is not None:
             break
+        if no_follow:
+            # 项目派生的候选（vscode / .python-version / environment.yml / shebang 解析出的项目内路径）：
+            # 在任何跟随链接的谓词（is_file / realpath）之前逐级 lstat，被重定向的丢弃并记账，不探目标
+            bad = scanbudget.redirected_component(root_real, python, allow_final_link=True)
+            if bad is not None:
+                if budget is not None:
+                    budget.note(scanbudget.ISSUE_SYMLINK_DIR, scope="file", path=bad)
+                continue
         if not _is_python_file(python):
             continue
         key = _key(python)

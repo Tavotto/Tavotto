@@ -427,7 +427,13 @@ def environment_evidence(
     by_key: dict[str, dict] = {}
     order: list[str] = []
 
-    def add(python: str, source: str, label: str, extra: dict | None = None) -> dict:
+    def add(python: str, source: str, label: str, extra: dict | None = None) -> dict | None:
+        # 最后一道：项目派生路径经过重定向就不算指纹 / 不入表（指纹的 stat 会跟随）；上游已各自拦过，这里兜底
+        bad = scanbudget.redirected_component(root, python, allow_final_link=True)
+        if bad is not None:
+            if budget is not None:
+                budget.note(scanbudget.ISSUE_SYMLINK_DIR, scope="file", path=bad)
+            return None
         key = projectenv._executable_key(python)
         row = by_key.get(key)
         if row is None:
@@ -452,12 +458,14 @@ def environment_evidence(
             row.update(extra)
         return row
 
-    for venv in projectenv.discover(root, script):
+    for venv in projectenv.discover(root, script, no_follow=True, budget=budget):
         python = projectenv.interpreter_of(venv, root=root)
         if python:
             add(python, SOURCE_PROJECT_VENV, Path(venv).name)
 
-    record = projectenv.remembered_record(root)
+    record = projectenv.remembered_record(root, no_follow=True)
+    if record is not None and record.get("redirected") and budget is not None:
+        budget.note(scanbudget.ISSUE_SYMLINK_DIR, scope="file", path=record["redirected"])
     remembered = None
     if record is not None:
         remembered = {
@@ -480,7 +488,8 @@ def environment_evidence(
                     "chosen_by": "automatic" if record.get("automatic") else "user",
                 },
             )
-            remembered["id"] = row["id"]
+            if row is not None:
+                remembered["id"] = row["id"]
 
     for entry in userenvs.discover(
         root, script, ask_login_shell=False, no_follow=True, budget=budget
