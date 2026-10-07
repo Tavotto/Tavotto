@@ -32,10 +32,9 @@ import { SEVERITY_ICON, SEVERITY_INK } from '@/lib/validationText'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
-import { useUiStore } from '@/store/uiStore'
 import type { PanelObject } from '@/types/document'
 import { useBatchable } from './IssueFixButton'
-import { ProblemTreeContext, TRAIL_PAD, useHot, type ProblemTreeCtx } from './problemTree'
+import { ProblemTreeContext, TRAIL_PAD, useHot, useIssueHover, type ProblemTreeCtx } from './problemTree'
 import { FixCountButton, TrailCell } from './ProblemTreeRows'
 
 /** 本组文案在 errors:problems.* 下 */
@@ -232,8 +231,9 @@ function BucketNode({
   const rules = [...new Set(issues.map((i) => i.ruleCode))]
   const objects = [...new Set(issues.map((i) => i.objectRef.objectId).filter(Boolean))]
   const blocking = issues.filter((i) => i.severity === 'error').length
+  const hover = useIssueHover()
   const point = (on: boolean) => {
-    if (objectId) useUiStore.getState().setIssueHover(on ? { objectId, gid: null } : null)
+    if (objectId) hover(on ? { objectId, gid: null } : null)
   }
   const rowBind = {
     ...bind,

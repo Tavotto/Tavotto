@@ -357,6 +357,22 @@ describe('空态、筛选与「查不了」', () => {
     expect(evidence()).not.toContain('默认规范')
   })
 
+  it('抽屉一直开着、没有别的重渲染：「刚刚」到点自己变成「N 分钟前」（Codex #832）', async () => {
+    await seedTwoCanvases('free-form-v1', 'free-form-v1', 'lab-publication-v1')
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    try {
+      useValidationStore.setState({ checkedAt: Date.now() })
+      await mount(<ProblemPanel />)
+      expect(evidence()).toContain('刚刚')
+      await act(async () => vi.advanceTimersByTime(5 * 60_000 + 100))
+      expect(evidence()).not.toContain('刚刚')
+      // ICU 版本不同，「5分钟前」与「5 分钟前」都有
+      expect(evidence()).toMatch(/5\s?分钟前/)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('「这一次没查成」与「没问题」是两句不同的话', async () => {
     useValidationStore.setState({ ready: false, failed: true, issues: [], results: [] })
     await mount(<ProblemPanel />)
@@ -865,6 +881,45 @@ describe('定位后清单留在原地（审计 T09）', () => {
       row.dispatchEvent(new PointerEvent('pointerout', { bubbles: true, relatedTarget: document.body }))
     })
     expect(useUiStore.getState().issueHover).toBeNull()
+  })
+
+  it('指着的那一行被修好消失（不发 pointerleave）：画布上的悬停轮廓跟着撤，面板还挂着（Codex #832）', async () => {
+    await seed()
+    await mount(<ProblemPanel />)
+    await act(async () => {
+      rows()[0].dispatchEvent(new PointerEvent('pointerover', { bubbles: true }))
+    })
+    expect(useUiStore.getState().issueHover).toEqual({ objectId: 'p1', gid: 'axes_0.xticks' })
+    const [, second] = useValidationStore.getState().issues
+    await act(async () => useValidationStore.setState({ issues: [second] }))
+    expect(rows().length).toBe(1)
+    expect(container.querySelector('[data-issue-row]')).not.toBeNull()
+    expect(useUiStore.getState().issueHover).toBeNull()
+  })
+
+  it('那一行卸载时只撤自己写下的：已被别的行顶掉（哪怕指的是同一个对象）就不动', async () => {
+    const cases = [
+      { objectId: 'p9', gid: null },
+      // 值相同、身份不同：另一行（同一对象的另一条规则）后指上的
+      { objectId: 'p1', gid: 'axes_0.xticks' },
+    ]
+    for (const [i, newer] of cases.entries()) {
+      if (i > 0) {
+        // 上一轮的面板撤掉（afterEach 只收最后一个）
+        await act(async () => root.unmount())
+        container.remove()
+      }
+      await seed()
+      await mount(<ProblemPanel />)
+      await act(async () => {
+        rows()[0].dispatchEvent(new PointerEvent('pointerover', { bubbles: true }))
+      })
+      await act(async () => useUiStore.getState().setIssueHover(newer))
+      const [, second] = useValidationStore.getState().issues
+      await act(async () => useValidationStore.setState({ issues: [second] }))
+      expect(rows().length).toBe(1)
+      expect(useUiStore.getState().issueHover).toBe(newer)
+    }
   })
 
   it('当前那条修好消失之后，「下一项」指向顶上来的那条，不必重开清单', async () => {

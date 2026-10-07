@@ -1,5 +1,6 @@
-import { createContext, useState, type FocusEvent, type ReactNode } from 'react'
+import { createContext, useEffect, useRef, useState, type FocusEvent, type ReactNode } from 'react'
 import type { ProblemDrill } from '@/lib/problemList'
+import { useUiStore, type IssueHover } from '@/store/uiStore'
 
 /*
  * 问题树的共用件（行组件在 `ProblemTreeRows.tsx`、分桶节点在 `ProblemCards.tsx`、面板在 `ProblemPanel.tsx`）。
@@ -35,6 +36,32 @@ export function useHot() {
     },
   }
   return { hot: hover || focus, bind }
+}
+
+/**
+ * 一行在画布上的悬停轮廓（`uiStore.issueHover`）：`point(目标)` 指上、`point(null)` 撤。
+ * 撤一律**比对后再清**——只撤这一行自己写下、且还没被别的行顶掉的那一份。行被修好 / 被筛掉 /
+ * 换项目换文档时 React 直接卸载它，不发 pointerleave / blur，所以卸载时再撤一次；面板还挂着，
+ * 不靠面板卸载那一道（Codex #832：否则轮廓留在旧 id 上，下一份文档复用这个 id 时描到不相干的对象）。
+ */
+export function useIssueHover() {
+  const owned = useRef<IssueHover | null>(null)
+  useEffect(
+    () => () => {
+      if (owned.current) useUiStore.getState().releaseIssueHover(owned.current)
+      owned.current = null
+    },
+    [],
+  )
+  return (target: IssueHover | null) => {
+    if (target) {
+      owned.current = target
+      useUiStore.getState().setIssueHover(target)
+    } else if (owned.current) {
+      useUiStore.getState().releaseIssueHover(owned.current)
+      owned.current = null
+    }
+  }
 }
 
 /**

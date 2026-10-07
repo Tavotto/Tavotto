@@ -1,5 +1,5 @@
 import { useState, type FocusEvent, type ReactNode } from 'react'
-import { MIN_HIDDEN_ROWS, PREVIEW_ROWS, TRAIL_PAD, TRAIL_W, useHot } from './problemTree'
+import { MIN_HIDDEN_ROWS, PREVIEW_ROWS, TRAIL_PAD, TRAIL_W, useHot, useIssueHover } from './problemTree'
 import { ChevronDown, Info } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { listRowClass, rowMetaClass } from '@/components/ui/listRow'
@@ -242,9 +242,10 @@ export function IssueRow({
   const [techOpen, setTechOpen] = useState(false)
   const { hot, bind } = useHot()
   const objectId = issue.objectRef.objectId
+  const hover = useIssueHover()
   const point = (on: boolean) => {
     if (!objectId) return
-    useUiStore.getState().setIssueHover(on ? { objectId, gid: issue.objectRef.gid ?? null } : null)
+    hover(on ? { objectId, gid: issue.objectRef.gid ?? null } : null)
   }
   const rowBind = {
     ...bind,
