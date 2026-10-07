@@ -2,9 +2,8 @@ import { useTranslation } from 'react-i18next'
 import { ChevronDown } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { keyOf } from '@/lib/keymap'
-import { useDocumentStore } from '@/store/documentStore'
 import { MAX_ZOOM, MIN_ZOOM, useViewportStore } from '@/store/viewportStore'
-import { useCanZoomToSelection, zoomToSelection } from '@/store/zoomToSelection'
+import { fitStage, useCanZoomToSelection, zoomToSelection } from '@/store/zoomToSelection'
 import { Numbers } from '@sfinterface/numbers'
 import { Button } from './ui/Button'
 import { NumberField } from './ui/Input'
@@ -22,7 +21,6 @@ export function ZoomControls() {
   // 读数显示的是「用户要去的那一档」（补间的终点），不是补间中的每一帧；见 viewportStore
   const readoutZoom = useViewportStore((s) => s.readoutZoom)
   const readoutRolls = useViewportStore((s) => s.readoutRolls)
-  const page = useDocumentStore((s) => s.doc.page)
   // 预设那一组是**互斥取值**：当前档带勾。缩放不是整数档时一个都不勾（「不知道是哪一档」
   // 有自己的取值，不能就近归到相邻那一档）
   const preset = ZOOM_PRESETS.find((z) => Math.abs(z - zoom) < 1e-6)
@@ -101,7 +99,7 @@ export function ZoomControls() {
         <MenuSeparator />
         <MenuItem
           shortcut={keyOf('zoomFit')}
-          onSelect={() => useViewportStore.getState().fitAnimated(page.w, page.h)}
+          onSelect={fitStage}
           data-fit-canvas-item
         >
           {t('topbar.fitCanvas')}

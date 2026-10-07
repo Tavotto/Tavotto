@@ -17,10 +17,10 @@ import { addSubLabels } from '@/store/actions'
 import { insertShape } from '@/lib/presets'
 import { keyOf, type KeyId } from '@/lib/keymap'
 import { cn } from '@/lib/utils'
-import { useDocumentStore } from '@/store/documentStore'
 import { useUiStore } from '@/store/uiStore'
 import { TOOLBAR_FIT_CLEARANCE, useViewportStore } from '@/store/viewportStore'
 import { useWorkspaceStore } from '@/store/workspace'
+import { fitStage } from '@/store/zoomToSelection'
 import { PresetsDialog } from './PresetsDialog'
 import { Button } from './ui/Button'
 import { Menu, MenuItem, MenuLabel, MenuRadioGroup, MenuRadioItem, MenuSeparator } from './ui/Menu'
@@ -87,7 +87,6 @@ function Bar() {
   const { t } = useTranslation(['workspace', 'common'])
   const tool = useUiStore((s) => s.tool)
   const setTool = useUiStore((s) => s.setTool)
-  const page = useDocumentStore((s) => s.doc.page)
   const [presetsOpen, setPresetsOpen] = useState(false)
   const activeMark = MARK_TOOLS.find((m) => m.tool === tool)
   const ActiveMark = activeMark?.icon
@@ -230,7 +229,7 @@ function Bar() {
           size="md"
           data-toolbar-item
           onMouseDown={noFocusOnPointer}
-          onClick={() => useViewportStore.getState().fitAnimated(page.w, page.h)}
+          onClick={fitStage}
           aria-label={t('workspace:topbar.fitCanvas')}
           // e2e 的稳定锚点（选择器不认 aria-label / 文案，web/AGENTS.md）
           data-fit-canvas

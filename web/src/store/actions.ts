@@ -73,6 +73,7 @@ import { exactPanelManifest, rejectArtifactRenders, renderEpoch, renderKeyOf, us
 import { useSelectionStore } from './selectionStore'
 import { askConfirm, useUiStore, type StatusTone } from './uiStore'
 import { useViewportStore } from './viewportStore'
+import { fastEditPanelOf, useWorkspaceStore } from './workspace'
 import { rectOf, visualBounds, type Rect } from '@/lib/geometry'
 import type { CropRect, PanelRotation } from '@/types/document'
 import {
@@ -389,7 +390,11 @@ export function updateObjects(ids: string[], label: UiMessage, patch: (o: Canvas
 }
 
 export function deleteSelected() {
-  const ids = useSelectionStore.getState().ids
+  // 快速编辑里只删得到这一屏画着的那张图：选区里可能还挂着看不见的版面对象（进快编之前留下的、
+  // 图层面板点的），删掉它们 = 用户看不见的东西从版上消失（Codex #833）。删那张图本身照旧——
+  // 看得见、可撤销，对象没了快速编辑随之退出（`usePruneSelection` 的 `usable`）
+  const fe = fastEditPanelOf(useWorkspaceStore.getState())
+  const ids = useSelectionStore.getState().ids.filter((id) => fe === null || id === fe)
   if (!ids.length) return
   // 单选时把对象名（用户自己的内容，不翻译）插进去，多选才说数量——这是
   // **两句不同的话**，不是同一句的单复数：中文没有单数档（Intl.PluralRules
@@ -507,8 +512,19 @@ export function revealObjects(ids: string[]) {
 /** 「全选」收进来的对象：看得见、没锁。判据只有这一份——`selectAll` 与画布菜单「全选」可不可用都读它 */
 export const isSelectAllTarget = (o: CanvasObject): boolean => !o.hidden && !o.locked
 
+/**
+ * 「全选」此刻收进来的 id：排版里是整版看得见、没锁的对象；**快速编辑里只有正在编辑的那张图**（它也得
+ * 过 `isSelectAllTarget`，否则什么都不选）。⌘A、命令面板 `select-all`、任何菜单的「全选」都经 `selectAll`
+ * 走这一处——快速编辑里曾经把整版看不见的对象全选上，接着 Delete 就把它们从版上删掉（Codex #833）。
+ */
+export function selectAllIds(objects: readonly CanvasObject[], fastEditPanel: string | null): string[] {
+  return objects
+    .filter((o) => isSelectAllTarget(o) && (fastEditPanel === null || o.id === fastEditPanel))
+    .map((o) => o.id)
+}
+
 export function selectAll() {
-  select(doc().objects.filter(isSelectAllTarget).map((o) => o.id))
+  select(selectAllIds(doc().objects, fastEditPanelOf(useWorkspaceStore.getState())))
 }
 
 /* ------------------------------- 文档切换 --------------------------------- */

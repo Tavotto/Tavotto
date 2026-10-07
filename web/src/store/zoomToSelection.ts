@@ -3,7 +3,7 @@ import type { CanvasObject } from '@/types/document'
 import { useDocumentStore } from './documentStore'
 import { useSelectionStore } from './selectionStore'
 import { useViewportStore } from './viewportStore'
-import { useWorkspaceStore } from './workspace'
+import { fastEditPanelOf, useWorkspaceStore } from './workspace'
 
 /**
  * 缩放到选区（⇧2 / 缩放菜单 / 命令面板，2026-10-07 设计审计 §10.1）：把选中对象的包围盒放进视野，
@@ -51,10 +51,6 @@ export function canZoomToSelection(
   return selectionBoxOf(objects, ids, fastEditPanelId) !== null
 }
 
-/** 快速编辑正在编辑的面板 id；排版里 null（不变式 `mode === 'fast_edit'` ⟺ `activePanelId !== null`） */
-const fastEditPanelOf = (s: { mode: string; activePanelId: string | null }) =>
-  s.mode === 'fast_edit' ? s.activePanelId : null
-
 /** 当前文档 + 当前选区 + 当前工作区模式的 `selectionBoxOf` */
 export function selectionBox(): Rect | null {
   return selectionBoxOf(
@@ -75,4 +71,31 @@ export function useCanZoomToSelection(): boolean {
   const ids = useSelectionStore((s) => s.ids)
   const fastEditPanelId = useWorkspaceStore(fastEditPanelOf)
   return canZoomToSelection(objects, ids, fastEditPanelId)
+}
+
+/**
+ * 「适应」的取景框：快速编辑对着正在编辑的那张图，画布排版对着页面。**舞台双击、⌘1 / 缩放菜单 /
+ * 命令面板 `fit`、画布工具条与画布菜单的「适应画布」都只读这一份**——快速编辑里 ⌘1 曾经适应整页
+ * （页面纸在这一屏根本不画），而双击舞台适应那张图，同一个「适应」两个落点（Codex #833）。
+ *
+ * 面板的包围盒原点不一定在 (0,0)，而视口的 `fit` 只吃宽高——所以这里把**右下角**当框（`x+w`），
+ * 图才不会被裁在视野外。取的是包围盒不是图幅：用户在画布上缩放过的面板，快速编辑照样把它整张放进
+ * 视野（图幅是它的输出规格，不是它此刻在屏幕上占多大）。面板可能被拖到过页面左上角外面（x/y 为负）：
+ * 框至少要有这张图那么大，否则 fit 出来的比例装不下它。对象不在了（删除的那一拍）退回页面。
+ */
+export function stageFitFrame(
+  objects: readonly { id: string; x: number; y: number; w: number; h: number }[],
+  page: { w: number; h: number },
+  fastEditPanelId: string | null,
+): { w: number; h: number } {
+  const o = fastEditPanelId === null ? undefined : objects.find((x) => x.id === fastEditPanelId)
+  if (!o) return { w: page.w, h: page.h }
+  return { w: Math.max(o.x + o.w, o.w), h: Math.max(o.y + o.h, o.h) }
+}
+
+/** 按此刻的文档与工作区模式「适应」（带补间）——所有「适应画布」入口的动作 */
+export function fitStage(): void {
+  const doc = useDocumentStore.getState().doc
+  const frame = stageFitFrame(doc.objects, doc.page, fastEditPanelOf(useWorkspaceStore.getState()))
+  useViewportStore.getState().fitAnimated(frame.w, frame.h)
 }

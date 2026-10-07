@@ -41,7 +41,7 @@ import { Dialog } from '@/components/ui/Dialog'
 import { StatusPill } from '@/components/ui/StatusPill'
 import { keyOf } from '@/lib/keymap'
 import { useWorkspaceStore } from '@/store/workspace'
-import { canZoomToSelectionNow, zoomToSelection } from '@/store/zoomToSelection'
+import { canZoomToSelectionNow, fitStage, zoomToSelection } from '@/store/zoomToSelection'
 import { objectLabel } from '@/types/document'
 import { rankCommands, type PaletteSection } from '@/lib/commandRanking'
 import { ICON_SIZE } from '@/components/ui/Icon'
@@ -67,7 +67,6 @@ import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
-import { useViewportStore } from '@/store/viewportStore'
 
 /**
  * ⌘K 命令面板：把散在菜单里的动作变成一个可搜索入口。
@@ -189,10 +188,8 @@ const COMMANDS: Command[] = [
   {
     id: 'fit',
     shortcut: keyOf('zoomFit'),
-    run: () => {
-      const page = useDocumentStore.getState().doc.page
-      useViewportStore.getState().fitAnimated(page.w, page.h)
-    },
+    // 与 ⌘1 / 舞台双击同一个取景框：快速编辑里适应那张图（`stageFitFrame`）
+    run: fitStage,
   },
   // 可用判据与动作同一个（`canZoomToSelectionNow`）：选中的全隐藏了 / 快速编辑里选区不含正在编辑的那张图
   // 不出现，不留一条静默空转、或去框一片看不见的版面的命令（Codex #833）
