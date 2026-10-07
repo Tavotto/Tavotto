@@ -208,6 +208,28 @@ def test_a_script_only_registered_by_the_static_scan_is_still_the_target_to_prep
     assert any(a["kind"] == "prepare" for a in report["actions"])
 
 
+def test_an_unrelated_nested_asset_with_the_same_stem_is_not_the_scripts_original(tmp_path):
+    """#819 P2：`archive/fig.pdf` 被递归素材清单看见，但 `figcapture.find_original_artifact`（项目根一层）不认它是
+    `fig.py` 的原件——「已连接」只能用那一份判据，不另立第二条「素材在哪」的规则。修前：按 stem 比对递归素材，
+    报 `already_connected` 并藏起「准备并运行」。"""
+    root = _project(tmp_path)
+    _write(root, "fig.py", PLOT.format(stem="fig"))
+    _asset(root, "archive/fig.pdf")
+    _write(
+        root,
+        "tavotto_registry.json",
+        json.dumps({"version": 1, "scripts": {"fig.py": {"entry": "__main__", "stems": ["fig"]}}}),
+    )
+
+    report = projscan.scan(root)
+
+    assert any(p == "archive/fig.pdf" for p, _k in report["assets"])  # 素材清单确实看得见它
+    assert report["target_choice"] == "single" and report["default_target"] == "fig.py"
+    (target,) = report["targets"]
+    assert target["linked"] is False
+    assert any(a["kind"] == "prepare" for a in report["actions"])
+
+
 def test_a_script_whose_figure_was_captured_before_counts_as_connected(tmp_path):
     """连接的另一种证据：这张图被某次执行捕获过（runtime cache 有物化记录，与 `unlinked_stems` 同一判据）。"""
     from tavotto.engine import figcapture, runtimeasset

@@ -288,3 +288,39 @@ class TestDesktopWindowLeg:
         assert wf in m.group(1) and job in m.group(1), (
             f"skip 理由里的腿「{m.group(1)}」没点出 {wf} / {job}"
         )
+
+
+class TestSpecsThatNeedAReferencePython:
+    """e2e 用例自己 `expect(process.env.TAVOTTO_PYTHON)` 的，**每一条会跑它的腿**都得在跑 `pnpm e2e` 的那一步里定义它。
+
+    `TAVOTTO_PYTHON` 在 posix 腿是 job 级 step env（也是启动应用的解释器），在 Windows 腿原本根本不存在
+    （那条腿用 `TAVOTTO_EXE` 启动产物）——于是 first-run-qualification 在 Windows 分片上第一行断言就红（#819 P1）。
+    """
+
+    @staticmethod
+    def _needing_specs() -> list[str]:
+        return sorted(
+            p.name
+            for p in E2E.glob("*.spec.ts")
+            if re.search(r"expect\(\s*python\b[^)]*TAVOTTO_PYTHON", p.read_text(encoding="utf-8"))
+        )
+
+    @staticmethod
+    def _e2e_step(block: str) -> str:
+        """含 `pnpm e2e` 的那个 step（按 `      - name:` 切）。"""
+        steps = re.split(r"(?m)^      - (?=name:)", block)
+        hits = [s for s in steps if re.search(r"(?m)^\s*pnpm e2e\b", s)]
+        assert len(hits) == 1, f"含 `pnpm e2e` 的 step 应当恰好一个，实际 {len(hits)}"
+        return hits[0]
+
+    def test_the_enumeration_is_not_empty(self):
+        assert "first-run-qualification.spec.ts" in self._needing_specs()
+
+    def test_every_leg_defines_it_where_e2e_runs(self):
+        ci = _code((WF / "ci.yml").read_text(encoding="utf-8"))
+        for job_id in E2E_LEGS:
+            step = self._e2e_step(_job(ci, job_id))
+            assert re.search(r"(?m)^\s*(\$env:)?TAVOTTO_PYTHON\s*[:=]\s*\S", step), (
+                f"job `{job_id}` 跑 `pnpm e2e` 的 step 没定义 TAVOTTO_PYTHON，"
+                f"但 {self._needing_specs()} 会在 `expect(process.env.TAVOTTO_PYTHON)` 上先红（#819 P1）"
+            )

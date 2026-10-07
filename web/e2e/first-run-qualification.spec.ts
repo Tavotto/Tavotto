@@ -148,7 +148,13 @@ test(
       cwd: ref,
       input: '1\n',
       encoding: 'utf-8',
-      env: { PATH: process.env.PATH ?? '', MPLBACKEND: 'Agg', MPLCONFIGDIR: mplDir },
+      // Windows 上的解释器没有 SystemRoot 起不来（随机数初始化失败），其余仍是最小环境
+      env: {
+        PATH: process.env.PATH ?? '',
+        ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
+        MPLBACKEND: 'Agg',
+        MPLCONFIGDIR: mplDir,
+      },
       timeout: 180_000,
     })
     expect(native.status, `原生参考失败：${native.stderr}`).toBe(0)

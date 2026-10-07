@@ -195,18 +195,23 @@ def _registered_stems(root: Path) -> dict[str, list[str]]:
     return {script: list(reg.stems_of(script)) for script in reg.all_scripts()}
 
 
-def _linked_scripts(root: Path, assets: list) -> set[str]:
+def _linked_scripts(root: Path) -> set[str]:
     """登记了、**而且**至少一张登记的图此刻真有东西可编辑的脚本：项目里有同名的图文件，或这张图被某次执行捕获过
-    （`probe.was_captured`：runtime cache 里有物化记录）。
+    （`probe.was_captured`：runtime cache 里有物化记录）。「有同名的图文件」只认 `figcapture.find_original_artifact`
+    ——项目根一层、`ARTIFACT_EXTS`——与 handoff / probe 找原件是同一份判据，不另立「素材在哪」的第二条规则
+    （递归素材清单里的 `archive/fig.pdf` 不是这个脚本的原件，不算连接）。
 
     打开项目时的静态扫描会先把字面量 savefig 的图名写进注册表（T00 deliberate-boundary）——那只是猜测，脚本一次都没
     跑过、什么都打不开。只按「注册表里有」就报 `already_connected`（「素材已可编辑」）是假话，而且会把只有脚本的项目的
     「准备并运行」入口藏起来（T11 真首跑发现）。只读：文件名比对 + 数据目录里的 cache 元数据，不执行、不起解释器。"""
-    asset_stems = {Path(p).stem for p, _kind in assets}
     return {
         script
         for script, stems in _registered_stems(root).items()
-        if any(stem in asset_stems or probe.was_captured(root, script, stem) for stem in stems)
+        if any(
+            figcapture.find_original_artifact(str(root), stem) is not None
+            or probe.was_captured(root, script, stem)
+            for stem in stems
+        )
     }
 
 
@@ -577,7 +582,7 @@ def scan(
     for _path, kind in assets:
         asset_kinds[kind] = asset_kinds.get(kind, 0) + 1
 
-    linked = _linked_scripts(root, assets)
+    linked = _linked_scripts(root)
     targets, default_target, choice = _targets_of(root, items, linked)
     script_for_env = default_target or (targets[0]["script"] if len(targets) == 1 else None)
     env = environment_evidence(root, script_for_env)
