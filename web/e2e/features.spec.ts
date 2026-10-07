@@ -723,6 +723,196 @@ test(
   },
 )
 
+/** 画布视口（`data-canvas-stage`）的屏幕框。 */
+async function stageBox(page: Page) {
+  const b = await page.locator('[data-canvas-stage]').boundingBox()
+  expect(b, '画布视口没有布局框').not.toBeNull()
+  return b!
+}
+
+/** 排版画布上唯一那个对象：回到排版、等它出现在视口里。 */
+async function toLayoutWithPanel(page: Page, baseURL: string) {
+  await openFigure(page, baseURL)
+  await page.locator('[data-context-back]').click()
+  await expect(page.locator('[data-element-svg]')).toHaveCount(0)
+  const panel = page.locator('[data-canvas-stage] [data-object-id]')
+  await expect(panel).toHaveCount(1, { timeout: 30_000 })
+  await expectInViewport(page, panel, '画布上的面板')
+  return panel
+}
+
+test(
+  '功能：缩放到选区——⇧2、缩放菜单、命令面板都把选中对象放大到铺满画布视口',
+  { tag: ['@feature:canvas.zoom-to-selection'] },
+  async ({ app, page }) => {
+    const a = await app()
+    const panel = await toLayoutWithPanel(page, a.baseURL)
+    await panel.click()
+    await expect(page.locator('[data-context-bar]')).toHaveCount(1)
+
+    const zoomBtn = page.locator('[data-zoom-menu]')
+    const zoomLabel = () => zoomBtn.getAttribute('aria-label')
+
+    /** 先缩小两档，让选中对象明显变小（每个入口都从「对象小」出发） */
+    const shrink = async () => {
+      const before = (await panel.boundingBox())!
+      await page.keyboard.press('ControlOrMeta+-')
+      await page.keyboard.press('ControlOrMeta+-')
+      await expect
+        .poll(async () => (await panel.boundingBox())!.width, { message: '缩小后对象应当变小' })
+        .toBeLessThan(before.width * 0.9)
+      const s = await stageBox(page)
+      const b = (await panel.boundingBox())!
+      // 出发点：对象只占视口的一小块
+      expect(Math.max(b.width / s.width, b.height / s.height)).toBeLessThan(0.6)
+      return { box: b, label: await zoomLabel() }
+    }
+
+    /** 缩放到选区之后：读数换了；对象整个框在画布视口里，并铺满其中一个方向的大半 */
+    const expectFilled = async (from: { box: { width: number }; label: string | null }, via: string) => {
+      await expect
+        .poll(
+          async () => {
+            const s = await stageBox(page)
+            const b = (await panel.boundingBox())!
+            const fill = Math.max(b.width / s.width, b.height / s.height)
+            const inside =
+              b.x >= s.x - 0.5 &&
+              b.y >= s.y - 0.5 &&
+              b.x + b.width <= s.x + s.width + 0.5 &&
+              b.y + b.height <= s.y + s.height + 0.5
+            return inside && fill > 0.7 && b.width > from.box.width * 1.3 ? 'ok' : `fill=${fill.toFixed(2)} inside=${inside}`
+          },
+          { timeout: 10_000, message: `${via}：选中对象应当放大到铺满画布视口、且整个在视口里` },
+        )
+        .toBe('ok')
+      await expect.poll(zoomLabel, { message: `${via}：缩放读数应当变了` }).not.toBe(from.label)
+      await expectInViewport(page, panel, `${via} 后的选中对象`)
+      // 选区没丢
+      await expect(page.locator('[data-context-bar]')).toHaveCount(1)
+    }
+
+    // ── ⇧2 ──
+    let from = await shrink()
+    await page.keyboard.press('Shift+Digit2')
+    await expectFilled(from, '⇧2')
+
+    // ── 缩放菜单「缩放到选中」 ──
+    from = await shrink()
+    await zoomBtn.click()
+    const item = page.locator('[data-zoom-selection-item]')
+    await expectInViewport(page, item, '缩放菜单里的「缩放到选中」')
+    await expectHittable(item, '「缩放到选中」')
+    await expect(item).not.toHaveAttribute('data-disabled')
+    await item.click()
+    await expect(item).toHaveCount(0)
+    await expectFilled(from, '缩放菜单')
+
+    // ── 命令面板 zoom-selection ──
+    from = await shrink()
+    await page.keyboard.press('ControlOrMeta+k')
+    const list = page.locator('[role="listbox"]:has([data-cmd-id])')
+    await expect(list).toHaveCount(1)
+    await page.keyboard.type('zoom')
+    const cmd = list.locator('[data-cmd-id="zoom-selection"]')
+    await expectInViewport(page, cmd, '命令面板里的「缩放到选中」')
+    await cmd.click()
+    await expect(list).toHaveCount(0)
+    await expectFilled(from, '命令面板')
+  },
+)
+
+test(
+  '功能：空白画布右键菜单——在视口内，「全选」选中对象，「标尺」开关真的收起 / 放出标尺',
+  { tag: ['@feature:canvas.empty-menu'] },
+  async ({ app, page }) => {
+    const a = await app()
+    const panel = await toLayoutWithPanel(page, a.baseURL)
+    // 回到排版时面板仍是选中的：先清掉选区，「全选」才看得出效果
+    await page.keyboard.press('Escape')
+    await expect(page.locator('[data-context-bar]')).toHaveCount(0)
+
+    /** 画布视口里一块空白处（最上层不是任何对象，且就在画布视口里） */
+    const emptyPoint = async () => {
+      const s = await stageBox(page)
+      const pt = await page.evaluate(
+        ({ x0, y0, w, h }) => {
+          for (let fy = 0.06; fy < 0.95; fy += 0.04) {
+            for (let fx = 0.06; fx < 0.95; fx += 0.04) {
+              const x = x0 + w * fx
+              const y = y0 + h * fy
+              const top = document.elementFromPoint(x, y)
+              const stage = document.querySelector('[data-canvas-stage]')!
+              if (top && stage.contains(top) && !top.closest('[data-object-id]') && !top.closest('[data-context-bar]')) {
+                return { x, y }
+              }
+            }
+          }
+          return null
+        },
+        { x0: s.x, y0: s.y, w: s.width, h: s.height },
+      )
+      expect(pt, '画布上找不到空白处').not.toBeNull()
+      return pt!
+    }
+    const openMenu = async () => {
+      const p = await emptyPoint()
+      await page.mouse.click(p.x, p.y, { button: 'right' })
+      const menu = page.locator('[data-canvas-menu]')
+      await expect(menu).toHaveCount(1)
+      await expectInViewport(page, menu, '空白画布右键菜单')
+      return menu
+    }
+
+    // ── 全选：对象真的被选中（单选浮动栏出现） ──
+    let menu = await openMenu()
+    const selectAll = menu.locator('[data-canvas-menu-item="select-all"]')
+    await expectInViewport(page, selectAll, '「全选」')
+    await expectHittable(selectAll, '「全选」')
+    await selectAll.click()
+    await expect(menu).toHaveCount(0)
+    await expect(page.locator('[data-context-bar]')).toHaveCount(1)
+    await expectInViewport(page, page.locator('[data-context-bar]'), '全选后的浮动栏')
+    await page.keyboard.press('Escape')
+    await expect(page.locator('[data-context-bar]')).toHaveCount(0)
+
+    // ── 标尺开关：默认开着；关掉后单位角消失、画布视口左上角退回到边上；再开回来 ──
+    const unit = page.locator('[data-ruler-unit]')
+    await expect(unit).toBeVisible()
+    const s0 = await stageBox(page)
+    const panel0 = (await panel.boundingBox())!
+    menu = await openMenu()
+    const rulers = menu.locator('[data-canvas-menu-item="rulers"]')
+    await expectInViewport(page, rulers, '「标尺」开关')
+    await expectHittable(rulers, '「标尺」开关')
+    await expect(rulers).toHaveAttribute('aria-checked', 'true')
+    await rulers.click()
+    await expect(unit).toHaveCount(0)
+    await expect(rulers).toHaveAttribute('aria-checked', 'false')
+    await expect
+      .poll(async () => {
+        const s = await stageBox(page)
+        return s.x < s0.x - 10 && s.y < s0.y - 10 && s.width > s0.width + 10
+      }, { message: '收起标尺后画布视口应当占回标尺那一条' })
+      .toBe(true)
+    // 开关项选了不关菜单：再点一次放回来
+    await rulers.click()
+    await expect(unit).toBeVisible()
+    await expect(rulers).toHaveAttribute('aria-checked', 'true')
+    await page.keyboard.press('Escape')
+    await expect(menu).toHaveCount(0)
+    await expect
+      .poll(async () => {
+        const s = await stageBox(page)
+        return Math.abs(s.x - s0.x) < 0.5 && Math.abs(s.y - s0.y) < 0.5
+      })
+      .toBe(true)
+    // 菜单不是对象的右键菜单：面板没被动过
+    const panel1 = (await panel.boundingBox())!
+    expect(Math.abs(panel1.width - panel0.width)).toBeLessThan(1)
+  },
+)
+
 test(
   '功能：设置里把界面语言切成英文，整页当场换语言，刷新后仍是英文',
   { tag: ['@feature:i18n.language'] },
