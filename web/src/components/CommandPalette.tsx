@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { create } from 'zustand'
-import { msg } from '@/i18n'
+import { msg, t as translate } from '@/i18n'
 import {
   AlignHorizontalDistributeCenter,
   AlignVerticalDistributeCenter,
@@ -27,6 +27,7 @@ import {
   RotateCcwClock,
   Ruler,
   Save,
+  Scaling,
   Search,
   SlidersHorizontal,
   SquareMousePointer,
@@ -36,9 +37,14 @@ import {
 } from '@/components/ui/icons'
 import type { ComponentType } from 'react'
 import { KeyCaps } from '@/components/ui/Kbd'
+import { Dialog } from '@/components/ui/Dialog'
+import { StatusPill } from '@/components/ui/StatusPill'
+import { keyOf } from '@/lib/keymap'
+import { zoomToSelection } from '@/store/zoomToSelection'
+import { objectLabel } from '@/types/document'
 import { rankCommands, type PaletteSection } from '@/lib/commandRanking'
 import { ICON_SIZE } from '@/components/ui/Icon'
-import { ALT, cn, MOD } from '@/lib/utils'
+import { cn } from '@/lib/utils'
 import {
   addSubLabels,
   addText,
@@ -139,17 +145,17 @@ const COMMANDS: Command[] = [
     run: () => void resetTutorial(),
   },
   { id: 'hints-reset', run: () => resetHints() },
-  { id: 'export', shortcut: `${MOD}E`, run: () => ui().setExportOpen(true) },
-  { id: 'save-document', shortcut: `${MOD}S`, run: () => void runManualSave() },
-  { id: 'save-layout', shortcut: `⇧${MOD}S`, run: () => ui().setLayoutOpen(true, 'save') },
+  { id: 'export', shortcut: keyOf('export'), run: () => ui().setExportOpen(true) },
+  { id: 'save-document', shortcut: keyOf('save'), run: () => void runManualSave() },
+  { id: 'save-layout', shortcut: keyOf('saveAs'), run: () => ui().setLayoutOpen(true, 'save') },
   { id: 'load-layout', run: () => ui().setLayoutOpen(true, 'load') },
-  { id: 'versions', shortcut: `⇧${MOD}H`, run: () => ui().setVersionsOpen(true) },
-  { id: 'save-named-version', shortcut: `${ALT}${MOD}S`, run: startNamedNode },
+  { id: 'versions', shortcut: keyOf('timeline'), run: () => ui().setVersionsOpen(true) },
+  { id: 'save-named-version', shortcut: keyOf('saveNamed'), run: startNamedNode },
   { id: 'styles', run: () => ui().setStylesOpen(true) },
   { id: 'new-doc', run: () => void newBlankDocument() },
-  { id: 'add-text', shortcut: 'T', run: () => void addText() },
+  { id: 'add-text', shortcut: keyOf('toolText'), run: () => void addText() },
   { id: 'sub-labels', run: addSubLabels },
-  { id: 'select-all', shortcut: `${MOD}A`, run: selectAll },
+  { id: 'select-all', shortcut: keyOf('selectAll'), run: selectAll },
   { id: 'group', needsSelection: true, run: groupSelected },
   { id: 'ungroup', needsSelection: true, run: ungroupSelected },
   { id: 'layout-row', needsSelection: true, run: () => createLayoutGroup('row') },
@@ -181,19 +187,20 @@ const COMMANDS: Command[] = [
   },
   {
     id: 'fit',
-    shortcut: `${MOD}1`,
+    shortcut: keyOf('zoomFit'),
     run: () => {
       const page = useDocumentStore.getState().doc.page
       useViewportStore.getState().fitAnimated(page.w, page.h)
     },
   },
+  { id: 'zoom-selection', needsSelection: true, shortcut: keyOf('zoomSelection'), run: () => void zoomToSelection() },
   { id: 'rulers', run: () => ui().setShowRulers(!ui().showRulers) },
   { id: 'grid', run: () => ui().setShowGrid(!ui().showGrid) },
   { id: 'canvas-settings', run: () => ui().setRightTab('canvas') },
   { id: 'left-assets', run: () => ui().setLeftTab('assets') },
   { id: 'left-elements', run: () => ui().setLeftTab('elements') },
   { id: 'left-layers', run: () => ui().setLeftTab('layers') },
-  { id: 'shortcut-help', shortcut: '?', run: () => ui().setShortcutHelpOpen(true) },
+  { id: 'shortcut-help', shortcut: keyOf('help'), run: () => ui().setShortcutHelpOpen(true) },
 ]
 
 /**
@@ -225,6 +232,7 @@ const COMMAND_ICONS: Record<string, ComponentType<{ size?: number; className?: s
   'edit-elements': SquareMousePointer,
   'cycle-overlap': Layers2,
   fit: Fullscreen,
+  'zoom-selection': Scaling,
   rulers: Ruler,
   'canvas-settings': SlidersHorizontal,
   'left-assets': Images,
@@ -261,24 +269,13 @@ export function CommandPalette() {
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLUListElement>(null)
 
+  // 每次打开都从空查询、首行开始。焦点进输入框、Esc / 点外面关闭、关闭后焦点还给打开前的元素——
+  // 这三件都由 `Dialog chrome="palette"` 给（焦点陷阱与归还，2026-10-07 设计审计 §10.1），这里不再自己挂监听
   useEffect(() => {
     if (!open) return
     setQuery('')
     setCursor(null)
-    const id = requestAnimationFrame(() => inputRef.current?.focus())
-    // 兜底：焦点不在输入框（点了列表 / 空白）时 Esc 也要能关
-    const onEsc = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.stopPropagation()
-        setOpen(false)
-      }
-    }
-    window.addEventListener('keydown', onEsc, true)
-    return () => {
-      cancelAnimationFrame(id)
-      window.removeEventListener('keydown', onEsc, true)
-    }
-  }, [open, setOpen])
+  }, [open])
 
   // 搜索按**当前语言**的文案与关键词来：英文界面下输 "export" 能中，
   // 中文界面下输拼音首字母也能中。顺序（选区 / 最近 / 常用 / 其他）由
@@ -323,10 +320,8 @@ export function CommandPalette() {
   useEffect(() => {
     listRef.current
       ?.querySelector(`[data-cmd-index="${active}"]`)
-      ?.scrollIntoView({ block: 'nearest' })
+      ?.scrollIntoView?.({ block: 'nearest' })
   }, [active])
-
-  if (!open) return null
 
   const runCommand = (c: { id: string; run: () => void }) => {
     setOpen(false)
@@ -334,105 +329,133 @@ export function CommandPalette() {
     c.run()
   }
   const sectionLabel = (s: PaletteSection) => t(`palette.section.${s}`)
+  const activeId = matches[active] ? optionId(matches[active].id) : undefined
 
   return (
-    <div
-      // 遮罩与 `ui/Dialog` 同值：30%、不模糊（宪法第十九节 / 审计 B13）。这一串是从那边
-      // 抄来的第二份字面量，Dialog 改了它不会跟——原语层这一轮冻结，已请 team-lead 抽成
-      // 一处（`ui/overlay`），落地后这里只留引用（2026-09-15 打磨 K2）
-      className="fixed inset-0 z-dialog flex items-start justify-center bg-ink/30 pt-[18vh]"
-      onPointerDown={(e) => {
-        if (e.target === e.currentTarget) setOpen(false)
-      }}
+    <Dialog
+      open={open}
+      onOpenChange={setOpen}
+      title={t('palette.searchLabel')}
+      chrome="palette"
+      width={PALETTE_WIDTH}
+      anchor="command-palette"
+      initialFocusRef={inputRef}
     >
-      <div className="w-[520px] max-w-[calc(100vw-2rem)] overflow-hidden rounded-panel bg-surface shadow-dialog animate-pop-in">
-        <div className="flex h-12 items-center gap-2.5 border-b border-border px-4">
-          <Search size={ICON_SIZE.md} className="shrink-0 text-ink-3" />
-          <input
-            ref={inputRef}
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => {
-              e.stopPropagation()
-              if (e.key === 'Escape') setOpen(false)
-              else if (e.key === 'ArrowDown') {
-                e.preventDefault()
-                moveTo(Math.min(active + 1, matches.length - 1))
-              } else if (e.key === 'ArrowUp') {
-                e.preventDefault()
-                moveTo(Math.max(active - 1, 0))
-              } else if (e.key === 'Enter' && matches[active]) {
-                e.preventDefault()
-                runCommand(matches[active])
-              }
-            }}
-            placeholder={t('palette.placeholder')}
-            aria-label={t('palette.searchLabel')}
-            className="h-6 min-w-0 flex-1 bg-transparent text-lg text-ink outline-none placeholder:text-ink-3"
-          />
-          <span aria-hidden>
-            <KeyCaps keys="Esc" />
-          </span>
-        </div>
-        <ul
-          ref={listRef}
-          className="max-h-80 overflow-y-auto py-1"
-          role="listbox"
-          aria-label={t('palette.listLabel')}
-        >
-          {matches.length === 0 && (
-            <li className="px-3 py-2 text-sm text-ink-3">{t('palette.noMatch')}</li>
-          )}
-          {sections.map((section) => {
-            const offset = matches.indexOf(section.items[0])
-            return [
-              showHeaders ? (
-                <li
-                  key={`h:${section.section}`}
-                  role="presentation"
-                  data-palette-section={section.section}
-                  // 组头与菜单的 `MenuLabel` 同一格：12 / 400 / ink-3（比项淡一档，审计 M3）
-                  className="px-4 pb-1 pt-2.5 text-sm text-ink-3"
-                >
-                  {sectionLabel(section.section)}
-                </li>
-              ) : null,
-              ...section.items.map((c, j) => {
-                const i = offset + j
-                const CmdIcon = COMMAND_ICONS[c.id]
-                return (
-                  <li
-                    key={c.id}
-                    role="option"
-                    aria-selected={i === active}
-                    data-cmd-index={i}
-                    data-cmd-id={c.id}
-                    className="px-1"
-                  >
-                    <button
-                      onPointerMove={() => moveTo(i)}
-                      onClick={() => runCommand(c)}
-                      // 选中行用 `selected`（ink 10%）：`surface-2` 对白底只有 1.05:1，
-                      // 「现在会执行哪一条」几乎看不出来。行 32 / 12 号与菜单项同档（打磨 K1）
-                      className={cn(
-                        'flex h-9 w-full items-center gap-3 rounded-md px-2.5 text-left text-base text-ink',
-                        i === active && 'bg-selected',
-                      )}
-                    >
-                      {/* 图标槽定宽：没图标的命令（全选 / 网格）文字仍与别的行对齐 */}
-                      <span className="flex w-4 shrink-0 justify-center text-ink-2" aria-hidden>
-                        {CmdIcon && <CmdIcon size={ICON_SIZE.md} />}
-                      </span>
-                      <span className="min-w-0 flex-1 truncate">{c.label}</span>
-                      {c.shortcut && <KeyCaps keys={c.shortcut} className="shrink-0 flex-nowrap" />}
-                    </button>
-                  </li>
-                )
-              }),
-            ]
-          })}
-        </ul>
+      {/* 输入行 48 / 输入 15（宪法第二十节命令面板那条的 2026-10-07 修订）。组合框语义：输入框是 combobox，
+          结果列表是它控制的 listbox，高亮行经 aria-activedescendant 报给读屏——焦点始终留在输入框里 */}
+      <div className="flex h-12 shrink-0 items-center gap-2.5 border-b border-border px-4">
+        <Search size={ICON_SIZE.md} className="shrink-0 text-ink-3" aria-hidden />
+        <input
+          ref={inputRef}
+          data-palette-input
+          role="combobox"
+          aria-expanded
+          aria-autocomplete="list"
+          aria-controls={LIST_ID}
+          aria-activedescendant={activeId}
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'ArrowDown') {
+              e.preventDefault()
+              moveTo(Math.min(active + 1, matches.length - 1))
+            } else if (e.key === 'ArrowUp') {
+              e.preventDefault()
+              moveTo(Math.max(active - 1, 0))
+            } else if (e.key === 'Enter' && matches[active]) {
+              e.preventDefault()
+              runCommand(matches[active])
+            }
+          }}
+          placeholder={t('palette.placeholder')}
+          aria-label={t('palette.searchLabel')}
+          className="h-6 min-w-0 flex-1 bg-transparent text-xl text-ink outline-none placeholder:text-ink-3"
+        />
+        {/* 选区上下文：命令作用在谁身上（「已选 2 个对象」/ 对象名）。不画 Esc 键帽：Esc 是所有对话框的约定 */}
+        <SelectionChip />
       </div>
-    </div>
+      <ul
+        ref={listRef}
+        id={LIST_ID}
+        className="max-h-80 overflow-y-auto p-1"
+        role="listbox"
+        aria-label={t('palette.listLabel')}
+      >
+        {matches.length === 0 && (
+          <li role="presentation" className="px-3 py-2 text-base text-ink-3">
+            {t('palette.noMatch')}
+          </li>
+        )}
+        {sections.map((section) => {
+          const offset = matches.indexOf(section.items[0])
+          return [
+            showHeaders ? (
+              <li
+                key={`h:${section.section}`}
+                role="presentation"
+                data-palette-section={section.section}
+                // 组头与菜单的 `MenuLabel` 同一格：12 / 400 / ink-3（比项淡一档，审计 M3）
+                className="px-3 pb-1 pt-2.5 text-sm text-ink-3"
+              >
+                {sectionLabel(section.section)}
+              </li>
+            ) : null,
+            ...section.items.map((c, j) => {
+              const i = offset + j
+              const CmdIcon = COMMAND_ICONS[c.id]
+              return (
+                <li
+                  key={c.id}
+                  id={optionId(c.id)}
+                  role="option"
+                  aria-selected={i === active}
+                  data-cmd-index={i}
+                  data-cmd-id={c.id}
+                  data-active={i === active || undefined}
+                  onPointerMove={() => moveTo(i)}
+                  // 指针按下不抢焦点：焦点留在输入框里（组合框的约定），点击照常执行
+                  onPointerDown={(e) => e.preventDefault()}
+                  onClick={() => runCommand(c)}
+                  // 行 32 / 13（宪法第二十节命令面板那条的 2026-10-07 修订）；选中行 `selected`（ink 10%）：
+                  // `surface-2` 对白底只有 1.05:1，「现在会执行哪一条」几乎看不出来
+                  className={cn(
+                    'flex h-8 items-center gap-3 rounded-md px-2.5 text-base text-ink',
+                    i === active && 'bg-selected',
+                  )}
+                >
+                  {/* 图标槽定宽：没图标的命令（全选 / 网格）文字仍与别的行对齐 */}
+                  <span className="flex w-4 shrink-0 justify-center text-ink-2" aria-hidden>
+                    {CmdIcon && <CmdIcon size={ICON_SIZE.md} />}
+                  </span>
+                  <span data-cmd-label className="min-w-0 flex-1 truncate">
+                    {c.label}
+                  </span>
+                  {c.shortcut && <KeyCaps keys={c.shortcut} className="shrink-0 flex-nowrap" />}
+                </li>
+              )
+            }),
+          ]
+        })}
+      </ul>
+    </Dialog>
+  )
+}
+
+/** 宪法第二十节：命令面板 520 宽 */
+const PALETTE_WIDTH = 520
+const LIST_ID = 'command-palette-list'
+const optionId = (id: string) => `command-palette-option-${id}`
+
+/** 输入行右端的选区上下文：选中一个对象时是它的名字，多个时是个数；没选中不占位 */
+function SelectionChip() {
+  const ids = useSelectionStore((s) => s.ids)
+  const objects = useDocumentStore((s) => s.doc.objects)
+  if (ids.length === 0) return null
+  const one = ids.length === 1 ? objects.find((o) => o.id === ids[0]) : null
+  const text = one ? objectLabel(one) : translate('count.selectedObjects', { count: ids.length })
+  return (
+    <StatusPill data-palette-selection className="max-w-40 shrink-0">
+      <span className="truncate">{text}</span>
+    </StatusPill>
   )
 }

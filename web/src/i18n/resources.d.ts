@@ -657,6 +657,10 @@ export default interface Resources {
         "versions": {
           "keywords": "version history timeline banben shijianxian sjx lishi",
           "label": "排版时间线…"
+        },
+        "zoom-selection": {
+          "keywords": "zoom selection sfxz suofang xuanzhong",
+          "label": "缩放到选中对象"
         }
       },
       "listLabel": "命令",
@@ -4033,7 +4037,6 @@ export default interface Resources {
       "rightClick": "右键",
       "shiftClick": "⇧+点击",
       "spaceDrag": "Space+拖动",
-      "tools": "V / T / A / R / O / L",
       "wheelZoom": "{{mod}}+滚轮"
     },
     "group": {
@@ -4065,6 +4068,7 @@ export default interface Resources {
       "saveNamed": "把现在存为命名节点",
       "script": "上标 / 下标（属性面板文字框内）",
       "selectAll": "全选",
+      "tabs": "焦点在画布标签上时：重命名 / 关闭 / 左右挪动",
       "timeline": "打开 / 关闭排版时间线",
       "tools": "选择 / 文字 / 箭头 / 矩形 / 椭圆 / 直线",
       "tutorialPause": "暂停教程（教程卡片有焦点时）",
@@ -4073,7 +4077,8 @@ export default interface Resources {
       "zEnds": "置顶 / 置底",
       "zMove": "上移 / 下移一层",
       "zoom": "放大 / 缩小",
-      "zoomPresets": "100% / 适应画布"
+      "zoomPresets": "100% / 适应画布",
+      "zoomSelection": "缩放到选中的对象"
     },
     "noMatch": "没有匹配的快捷键",
     "or": "或",

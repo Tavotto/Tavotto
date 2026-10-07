@@ -361,6 +361,10 @@
       "save-named-version": {
         "keywords": "named version bookmark snapshot mingming jiedian mmjd",
         "label": "把现在存为命名节点…"
+      },
+      "zoom-selection": {
+        "label": "缩放到选中对象",
+        "keywords": "zoom selection sfxz suofang xuanzhong"
       }
     },
     "listLabel": "命令",

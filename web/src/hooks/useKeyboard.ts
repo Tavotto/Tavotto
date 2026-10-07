@@ -30,6 +30,7 @@ import { useTimelineStore } from '@/store/timelineStore'
 import { useUiStore, type Tool } from '@/store/uiStore'
 import { useViewportStore } from '@/store/viewportStore'
 import { useWorkspaceStore } from '@/store/workspace'
+import { zoomToSelection } from '@/store/zoomToSelection'
 
 /**
  * 快速编辑里**只有这一张图**：页面纸、网格、别的对象全部让开。
@@ -88,13 +89,14 @@ export function deleteSelection() {
   deleteSelected()
 }
 
-export type ZoomCommand = 'in' | 'out' | 'actual' | 'fit'
+export type ZoomCommand = 'in' | 'out' | 'actual' | 'fit' | 'selection'
 
-/** ⌘+ / ⌘− / ⌘0 / ⌘1 的视口动作（系统菜单「显示」里的四条也走这里） */
+/** ⌘+ / ⌘− / ⌘0 / ⌘1 / ⇧2 的视口动作（系统菜单「显示」里的四条也走这里） */
 export function runZoomCommand(cmd: ZoomCommand) {
   const vp = useViewportStore.getState()
   if (cmd === 'in' || cmd === 'out') vp.zoomBy(cmd === 'out' ? 1 / 1.25 : 1.25)
   else if (cmd === 'actual') vp.setZoomCentered(1)
+  else if (cmd === 'selection') zoomToSelection()
   else {
     const page = useDocumentStore.getState().doc.page
     vp.fitAnimated(page.w, page.h)
@@ -292,6 +294,14 @@ export function useKeyboard() {
       }
 
       if (mod) return
+
+      // ⇧2 = 缩放到选区（`lib/keymap` 的 zoomSelection）。按 code 认：⇧ 把 key 改成 @ / " 因布局而异；
+      // ⌥ 组合是在打字，不认
+      if (e.shiftKey && !e.altKey && e.code === 'Digit2') {
+        e.preventDefault()
+        runZoomCommand('selection')
+        return
+      }
 
       if (e.key === 'Delete' || e.key === 'Backspace') {
         e.preventDefault()
