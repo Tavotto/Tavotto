@@ -93,6 +93,8 @@ interface PreparationState {
   recheckIdle: () => void
   /** 「进入编辑」：记下加进画布的那张图（呈现层用它观察首次编辑渲染） */
   noteEditing: (key: string, assetId: string) => void
+  /** 卡片改看扫描结果：只放下聚焦，会话与它的后端状态原样保留（再点开同一目标会复用） */
+  blur: () => void
   /** 换项目：属于旧项目的一切原地丢掉，在途响应失去落地资格；**后端什么都不取消** */
   clear: () => void
 }
@@ -252,6 +254,8 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
     epoch: 0,
     entries: {},
     focus: null,
+
+    blur: () => set({ focus: null }),
 
     open: async (target, opts) => {
       const key = keyOfTarget(target)

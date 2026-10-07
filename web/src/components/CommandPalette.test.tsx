@@ -21,6 +21,8 @@ import zhDialogs from '@/i18n/locales/zh-CN/dialogs.json'
 import enDialogs from '@/i18n/locales/en-US/dialogs.json'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { useProjectStore } from '@/store/projectStore'
+import { useProjectPreparationStore } from '@/store/projectPreparationStore'
+import { useProjectScanStore } from '@/store/projectScanStore'
 import { useUiStore } from '@/store/uiStore'
 import { CommandPalette, usePalette } from './CommandPalette'
 
@@ -342,5 +344,21 @@ describe('外观：图标与键帽（2026-10-01）', () => {
     // 没有合适图标的命令不硬凑：行仍在、图标槽留空对齐
     const all = document.querySelector('[data-cmd-id="select-all"] button')!
     expect(all.querySelector('svg')).toBeNull()
+  })
+})
+
+describe('显示项目检查结果（project-scan）', () => {
+  it('卡片正聚焦着某个准备会话时，点它要放下聚焦，才轮得到扫描结果', () => {
+    useProjectScanStore.setState({ scan: { project_id: 'p1' } as never, forced: false })
+    useProjectPreparationStore.setState({ focus: 'script:plot.py' })
+    useUiStore.setState({ guideCard: 'closed' })
+    mount()
+    act(() => {
+      ;(document.querySelector('[data-cmd-id="project-scan"] button') as HTMLButtonElement).click()
+    })
+    expect(useProjectPreparationStore.getState().focus).toBeNull()
+    expect(useProjectScanStore.getState().forced).toBe(true)
+    expect(useUiStore.getState().guideCard).toBe('card')
+    useProjectScanStore.setState({ scan: null, forced: false })
   })
 })

@@ -633,4 +633,13 @@ describe('运行时 input：同一请求只有一个展示面', () => {
     expect(panel().querySelector('[data-prep-input]')).toBeNull()
     expect(useScriptInputStore.getState().presenters).toEqual([])
   })
+
+  it('队首是别的脚本的问：本卡不渲染「回答」与 ⋯（点了会答到别人头上），也不露别人的输出', async () => {
+    await mount(true)
+    useScriptInputStore.getState().onRequested({ ...req, id: 'other', script: 'other.py', stdout_tail: 'OTHER-OUTPUT' })
+    await openWith(report(STATES.input))
+    expect(panel().querySelector('[data-prep-more]')).toBeNull()
+    expect(primary()?.textContent).not.toBe('回答')
+    expect(panel().textContent).not.toContain('OTHER-OUTPUT')
+  })
 })

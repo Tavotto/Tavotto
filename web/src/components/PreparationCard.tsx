@@ -705,6 +705,8 @@ function SessionCard({ entry, view }: { entry: PrepEntry; view: PrepView }) {
   if (view.slot === 'install') slot.push(<InstallLine key="install" report={report} />)
   if (view.slot === 'ready') slot.push(<ReadyLine key="ready" entry={entry} />)
   if (view.slot === 'figures') slot.push(<Figures key="figures" report={report} />)
+  // 回答控件只属于「队首就是本报告那一问」的卡片：别的脚本的问由原对话框展示，这里的按钮绝不能答到它头上
+  const ownsInput = view.input && report?.runtime_input != null && answer.head?.id === report.runtime_input.id
   if (view.input && report?.runtime_input) {
     slot.push(<EmbeddedInput key="input" requestId={report.runtime_input.id} answer={answer} />)
   }
@@ -713,7 +715,7 @@ function SessionCard({ entry, view }: { entry: PrepEntry; view: PrepView }) {
     slot.push(<ArgsBlock key="args" script={scriptTargetName} schema={argsSchemaOf(report)} expanded={view.argsOpen} />)
   }
 
-  const details = view.input ? <InputOutput /> : <SessionDetails entry={entry} view={view} />
+  const details = ownsInput ? <InputOutput /> : <SessionDetails entry={entry} view={view} />
   return (
     <>
       <Shell
@@ -724,10 +726,10 @@ function SessionCard({ entry, view }: { entry: PrepEntry; view: PrepView }) {
         attrs={attrs}
         slot={slot.length ? slot : undefined}
         details={details}
-        detailsLabel={view.input ? pt('card.allOutput') : undefined}
-        more={view.input ? <InputMore answer={answer} /> : undefined}
+        detailsLabel={ownsInput ? pt('card.allOutput') : undefined}
+        more={ownsInput ? <InputMore answer={answer} /> : undefined}
         ghost={ghost}
-        primary={view.input ? <AnswerButton answer={answer} /> : primary}
+        primary={ownsInput ? <AnswerButton answer={answer} /> : primary}
       />
       {report && (report.captured ?? []).length > 1 && (
         <ProbeResultsDialog
