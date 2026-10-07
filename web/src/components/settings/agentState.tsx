@@ -32,7 +32,7 @@ const PRESENTATION: Record<
   // 「可用」是唯一不带文字的一档：实心绿圆 + 白对勾，文字留给读屏与 title
   ready: { icon: Check, tone: 'text-ok', iconOnly: true },
   installed: { icon: CircleCheck, tone: 'text-ink-2' },
-  needs_auth: { icon: KeyRound, tone: 'text-warn' },
+  needs_auth: { icon: KeyRound, tone: 'text-warn-content' },
   broken: { icon: TriangleAlert, tone: 'text-danger' },
   not_installed: { icon: CircleDashed, tone: 'text-ink-3' },
   disabled: { icon: CircleMinus, tone: 'text-ink-3' },

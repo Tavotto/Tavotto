@@ -477,8 +477,7 @@ function RecentRow({
         onClick={onOpen}
         disabled={busy || disabled || !entry.exists}
         className={cn(
-          'min-w-0 flex-1 text-left outline-none focus-visible:focus-ring',
-          entry.exists ? 'cursor-pointer' : 'cursor-default',
+          'min-w-0 flex-1 cursor-default text-left outline-none focus-visible:focus-ring',
         )}
         aria-label={t('picker.openProject', { name: entry.name })}
         title={entry.tutorial ? undefined : entry.path}

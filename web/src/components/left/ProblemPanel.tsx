@@ -291,9 +291,9 @@ export function ProblemPanel() {
       {retained && (
         <div
           role="status"
-          className="mx-3 my-2 flex shrink-0 items-center gap-2 rounded-sm bg-warn-subtle py-1.5 pl-2 pr-1 text-xs leading-relaxed text-ink-2"
+          className="mx-3 my-2 flex shrink-0 items-center gap-2 rounded-sm bg-warn-surface py-1.5 pl-2 pr-1 text-xs leading-relaxed text-ink-2"
         >
-          <TriangleAlert size={ICON_SIZE.sm} className="shrink-0 text-warn" aria-hidden />
+          <TriangleAlert size={ICON_SIZE.sm} className="shrink-0 text-warn-content" aria-hidden />
           <span className="flex-1">{pr('failedKeptHint')}</span>
           <Button size="sm" variant="ghost" className="-my-1" onClick={() => schedule()}>
             {pr('retry')}
@@ -540,7 +540,7 @@ const DOT: Record<Severity, string> = {
 /** 组头的等级图标：只有 14px 的图标本身带色，不铺底色 */
 const SEVERITY_INK: Record<Severity, string> = {
   error: 'text-danger',
-  warn: 'text-warn',
+  warn: 'text-warn-content',
   not_verifiable: 'text-ink-3',
   suggestion: 'text-ink-3',
 }
@@ -624,7 +624,7 @@ function GroupBlock({
           `LeftPanel` 按模式设的 `--drawer-bg`，抽屉外（测试 / 别处借用）退回 surface */}
       <div
         data-issue-group-head
-        className="sticky top-0 z-[1] flex items-center gap-1 bg-[var(--drawer-bg,var(--color-surface))] py-1"
+        className="sticky top-0 z-sticky flex items-center gap-1 bg-[var(--drawer-bg,var(--color-surface))] py-1"
       >
         <button
           type="button"

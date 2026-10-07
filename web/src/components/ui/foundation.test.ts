@@ -33,20 +33,37 @@ interface Rule {
    * 文件里多写一处照样红。
    */
   exempt?: Record<string, { count: number; why: string }>
+  /** 只判这些路径（不给 = 全部 web/src） */
+  only?: RegExp
 }
+
+/**
+ * 留给逐页阶段迁移的豁免（2026-10-07 设计刷新的 FOUNDATION 阶段落门禁时，这几处属于后面某一页的重做，
+ * 不在原语阶段顺手改）。**TODO（逐页阶段）**：迁完一处删一条，删空了把这张表一起删掉。
+ *   - shadow-card：素材卡（左栏阶段，换 Card interactive）、问题卡（问题面板阶段，换披露树）、
+ *     左轨激活态（外壳阶段，改纯填充）、版本对话框的缩略图框（对话框阶段，改 shadow-thumb 或去掉）
+ */
+const LATER_PHASE = '逐页阶段迁移（TODO，见文件头 LATER_PHASE 说明）'
 
 const RULES: Rule[] = [
   {
-    name: '圆角只有 xs / sm / md / lg / full 五档，没有像素字面量',
-    pattern: /\brounded(-[trbl]|-[trbl][lr])?-\[\d+px\]/,
-    fix: 'rounded-xs(3) / rounded-sm(6) / rounded-md(8) / rounded-lg(12)',
-    catches: '<div className="rounded-[5px]" />',
-    spares: '<div className="rounded-sm rounded-t-xs rounded-full" />',
+    name: '圆角只来自 token（xs / sm / md / lg / panel / full），没有任意值',
+    pattern: /\brounded(-[trbl]|-[trbl][lr])?-\[/,
+    fix: 'rounded-xs(4) / rounded-sm(6) / rounded-md(8) / rounded-lg(12) / rounded-panel(16) / rounded-full',
+    catches: '<div className="rounded-[5px] rounded-t-[var(--r)]" />',
+    spares: '<div className="rounded-sm rounded-t-xs rounded-full rounded-panel" />',
+  },
+  {
+    name: '圆角不写内联样式（borderRadius）：同一件事只有 token 一条路',
+    pattern: /\bborderRadius\s*:/,
+    fix: 'className="rounded-md"（或 rounded-lg / rounded-panel）',
+    catches: '<div style={{ borderRadius: 6 }} />',
+    spares: '<div className="rounded-md" style={{ width: 6 }} />',
   },
   {
     name: 'Tailwind 自带的 xl 以上圆角已被清掉，写了也不生效',
     pattern: /\brounded(-[trbl]|-[trbl][lr])?-(xl|2xl|3xl|4xl)\b/,
-    fix: '对话框用 rounded-lg(12)，再大的圆角不在体系里',
+    fix: '对话框 / 工作面板 / 命令面板用 rounded-panel(16)，再大的圆角不在体系里',
     catches: '<div className="rounded-xl" />',
     spares: '<div className="rounded-lg" />',
   },
@@ -104,6 +121,24 @@ const RULES: Rule[] = [
     spares: '<h3 className="type-section" />',
   },
   {
+    name: '卡片的抬升只有 ui/Card 一处：shadow-card 不在页面里手写（2026-10-07 设计审计 §5）',
+    pattern: /\bshadow-card\b/,
+    fix: 'import { Card } from "@/components/ui/Card"（appearance / padding / interactive / selected）',
+    catches: '<div className="rounded-md bg-surface p-3 shadow-card" />',
+    spares: '<Card padding="md" className="shadow-pop" />',
+    exempt: {
+      '/src/components/ui/Card.tsx': { count: 1, why: '它就是那一处实现（raised）' },
+      '/src/App.tsx': {
+        count: 1,
+        why: '工作面板（data-work-panel，宪法第二十五节）不是卡，是一块面板；它的抬升与卡同一档是拍板过的，常驻豁免',
+      },
+      '/src/components/left/AssetBrowser.tsx': { count: 1, why: `素材卡的 hover / 选中环：${LATER_PHASE}` },
+      '/src/components/left/ProblemCards.tsx': { count: 1, why: `问题卡：${LATER_PHASE}` },
+      '/src/components/left/LeftRail.tsx': { count: 1, why: `左轨激活态：${LATER_PHASE}` },
+      '/src/components/VersionDialog.tsx': { count: 1, why: `版本对话框的缩略图框：${LATER_PHASE}` },
+    },
+  },
+  {
     name: '投影只有 shadow-pop（浮层专用），没有 Tailwind 预设投影',
     pattern: /\bshadow(-sm|-md|-lg|-xl|-2xl)\b/,
     fix: '浮层 shadow-pop；常驻表面不用投影',
@@ -111,14 +146,17 @@ const RULES: Rule[] = [
     spares: '<div className="shadow-pop shadow-[inset_0_1px_0_0_var(--color-accent)]" />',
   },
   {
-    name: '600 字重只给页签 / 分段选择器的选中态（2026-09-15 打磨批次 A，用户拍板）',
+    name: '600 字重只在原语里：选中态（页签 / 分段 / 列表行）、表单分区标题、危险浅底胶囊（2026-10-07 设计审计 §2）',
     pattern: /\bfont-semibold\b/,
-    fix: '正文、标题、按钮只有 400 / 500；「选中的页签 / 分段项」由 tabClass / Segmented 自己加粗',
+    fix: '页面里只有 400 / 500；标题走 type-title / type-heading / type-display（600 在角色里），选中行走 listRowClass',
     catches: '<span className="font-semibold" />',
-    spares: '<span className="font-medium" />',
+    spares: '<span className="font-medium type-title" />',
     exempt: {
       '/src/components/ui/tabClass.ts': { count: 1, why: '选中的页签：600 + ink，与未选中的 400 + ink-3 拉开两档' },
       '/src/components/ui/Segmented.tsx': { count: 1, why: '选中的分段项：白色 thumb 上 600 + ink' },
+      '/src/components/ui/listRow.ts': { count: 1, why: '选中的列表 / 树行：selected 底 + 600（2026-10-07 §10.3）' },
+      '/src/components/ui/FormSection.tsx': { count: 1, why: '表单分区标题 13 / 600（没有对应的 type 角色，只此一处）' },
+      '/src/components/ui/buttonClass.ts': { count: 1, why: '对话框页脚的危险浅底胶囊（danger-tinted）：600' },
     },
   },
   {
@@ -213,6 +251,42 @@ const RULES: Rule[] = [
     spares: '<span className="peer-focus-visible:ring-2 peer-focus-visible:ring-accent" />',
   },
   {
+    name: '加载只有四种写法：sweep / 静态骨架 / text-shimmer / 转圈——没有 Tailwind 的 animate-pulse（宪法第七节）',
+    pattern: /\banimate-pulse\b/,
+    fix: '不定进度 ProgressBar（animate-sweep）；骨架静态 bg-surface-hover + opacity-65；进行中的字 text-shimmer；按钮 / 行内 LoaderCircle animate-spin；一次性「看这里」animate-attention',
+    catches: '<span className="h-2 w-2 animate-pulse rounded-full" />',
+    spares: '<span className="animate-sweep animate-spin text-shimmer animate-attention" />',
+  },
+  {
+    name: '层级只来自 z-index token（z-sticky / z-canvas-chrome / z-drawer / z-overlay / z-dialog / z-popover / z-tooltip / z-toast / z-onboarding），没有数字',
+    pattern: /(?:^|[\s'"`:])-?z-(?:\d+|\[)/,
+    fix: 'index.css 的 --z-* 表里挑一档；新的一层先在那张表里加 token',
+    catches: '<div className="fixed z-50" /> <div className="z-[59]" />',
+    spares: '<div className="fixed z-dialog sticky z-sticky" />',
+  },
+  {
+    name: '内联样式的 zIndex 也只来自 token',
+    pattern: /\bzIndex\s*:\s*-?\d/,
+    fix: "zIndex: 'var(--z-onboarding)'",
+    catches: 'const style = { zIndex: 60 }',
+    spares: "const style = { zIndex: 'var(--z-onboarding)' }",
+  },
+  {
+    name: '光标一律箭头：没有手形光标类（宪法第五节；可拖的卡用抓手，不在此列）',
+    pattern: /\bcursor-pointer\b/,
+    fix: '删掉它；index.css 的 base 层已把 button / summary / label / 复选单选兜成箭头，手形只给真正的 <a>',
+    catches: '<button className="cursor-pointer" />',
+    spares: '<div className="cursor-grab active:cursor-grabbing cursor-default" />',
+  },
+  {
+    name: '原语里没有写死的白（bg-white / text-white）：界面外观走 surface token，暗色只换值',
+    pattern: /\b(?:bg|text)-white\b/,
+    only: /^\/src\/components\/ui\//,
+    fix: 'bg-surface / text-surface（「纸」——图与页面内容——才是真白，不在 ui/ 里）',
+    catches: '<span className="bg-ink text-white" />',
+    spares: '<span className="bg-ink text-surface" />',
+  },
+  {
     name: '按钮层级是 primary / secondary / ghost / danger，没有 outline',
     pattern: /variant=["']outline["']/,
     fix: 'variant="secondary"',
@@ -232,6 +306,7 @@ describe('Design Constitution：token 之外没有字面量', () => {
       const offenders: string[] = []
       const exemptSeen: Record<string, number> = {}
       for (const [path, raw] of sources()) {
+        if (rule.only && !rule.only.test(path)) continue
         const src = stripComments(raw)
         const hits = src.match(new RegExp(rule.pattern.source, 'g'))?.length ?? 0
         if (hits === 0) continue

@@ -15,27 +15,33 @@
 
 | 语义 | 工具类 | 值 | 用途 |
 | --- | --- | --- | --- |
-| surface-app | `bg` | `#eeede9` | 桌面：顶栏、左轨、停靠的抽屉坐在它上面；作品在白色工作面板里（2026-09-30 重设计，第二十五节。此前是纸白 #f7f6f3） |
+| surface-app | `bg` | `#efefed` | 桌面：顶栏、左轨、停靠的抽屉坐在它上面；作品在白色工作面板里（2026-09-30 重设计，第二十五节；2026-10-07 降黄，第二十六节） |
 | surface-panel | `surface` | `#ffffff` | 面板 / 输入框 / 浮层 |
-| surface-subtle | `surface-2` | `#f7f7f4` | 只读值、徽章底、禁用框的底（数字框不再用它做静态底，S8） |
+| surface-subtle | `surface-2` | `#f7f7f5` | 只读值、徽章底、禁用框的底（数字框不再用它做静态底，S8） |
 | surface-hover | `surface-hover` | ink 5% | hover。三档里最弱 |
 | surface-active | `surface-active` | ink 8% | 按下、小 chip 的静态底 |
 | surface-selected | `selected` | ink 10% | 选中：hover 的两倍，白面板与纸底上都成立（2026-09-15 打磨批次 A，此前固定 #ebebe6 在纸底上只有 1.07:1）；配字重 / 对勾再说一遍 |
 | ink-1 | `ink` | `#1b1b18` | 主文字，不是纯黑 |
-| ink-2 | `ink-2` | `#5c5c55` | 次级文字、标签 |
-| ink-3 | `ink-3` | `#6b6b64` | 元数据、单位、占位。仍 ≥4.5:1 |
+| ink-2 | `ink-2` | `#4a4a45` | 次级文字、标签（2026-10-07 拉深：此前与 ink-3 几乎同色） |
+| ink-3 | `ink-3` | `#6c6c66` | 元数据、单位、占位、说明（type-caption / type-meta）。所有底色上 ≥4.5:1（画布灰 4.84） |
 | ink-disabled | `ink-faint` | `#a3a39a` | 禁用 / 装饰。不用于要读的字 |
 | border | `border` | ink 12% | hairline。只给区域边界、次级按钮；浮层不再画边（环在投影里） |
 | border-strong | `border-strong` | ink 18% | hover 中的区域边界 |
 | border-control | `border-control` | `#84847c` | 未选中的复选框 / 单选、开关关态轨道：边界就是控件的全部识别信息，≥3:1（2026-09-14 审计 S10） |
-| field | `field` / `field-hover` | `#f1f0ec` / `#edece8` | 所有可编辑框的**底**（`ui/fieldBox.ts`）：比面板深一级、静态无边线，聚焦 / 打开才是不透明 accent 边（2026-09-15 参考 Codex，第二十二节）。**有框 = 能改**不变，「框」是一块底；此前是 ink 16% 的边（批次 A T1，已作废） |
-| accent | `accent` / `accent-subtle` | `#2c73de` | **小面积**：焦点环（`focus-ring`，**不透明** 2px + 1px offset——45% 透明那一版对所有底色只有 1.9:1，2026-09-14 审计 S2）、AI。色相取自品牌蓝 #5A92E5，压深到蓝字 4.5:1（第二十五节）；链接不再用蓝 |
-| danger / warning / success | `danger` / `warn` / `ok`（各带 `-subtle`） | | 只表达语义 |
+| field | `field` / `field-hover` | `#f2f2f0` / `#eeeeec` | 所有可编辑框的**底**（`ui/fieldBox.ts`）：比面板深一级、静态无边线，聚焦 / 打开才是不透明 accent 边（2026-09-15 参考 Codex，第二十二节）。**有框 = 能改**不变，「框」是一块底；此前是 ink 16% 的边（批次 A T1，已作废） |
+| canvas | `canvas` | `#f5f5f3` | 工作面板里画布那一块的底，比桌面浅一档，纸放在它上面 |
+| group | `group` | ink 3% | 设置页字段组（`FieldGroup`）的底，比 hover 还淡一档 |
+| accent | `accent` / `accent-subtle` | `#2c73de` | **小面积**：焦点环（`focus-ring`，**不透明** 2px + 2px offset（2026-10-07 从 1 改 2）——45% 透明那一版对所有底色只有 1.9:1，2026-09-14 审计 S2）、AI。色相取自品牌蓝 #5A92E5，压深到蓝字 4.5:1（第二十五节）；链接不再用蓝 |
+| danger | `danger`（锚点） | `#c4442a` | 只表达语义。派生 `-surface` / `-border` / `-content`（第二十六节） |
+| warning | `warn`（锚点） | `#b07400` | 同上。锚点对白只有 3.9:1——只给图标 / 圆点，字一律 `warn-content` |
+| success | `ok`（锚点） | `#2b7649` | 同上 |
+| info | `info` | = accent | 同上（锚点就是 accent） |
+| shadow | `shadow`（只在投影 token 里） | `#1b1b18` | 所有投影的底色（`color-mix(shadow N%)`），暗色只换它 |
 
 工具类名沿用旧名（不为了改名动七百处调用），对照表也写在 index.css 顶部。
 
-规矩：蓝色不做任何大块背景、不做按钮填色（主按钮是近黑 `bg-ink`）；持久表面里只有「真的是一张卡」的
-东西有投影（`shadow-card`：素材卡 / 会话卡 / 任务行 / 诊断与修复卡，第二十二节），分区 / 列表行 / 输入框仍是平的；
+规矩：蓝色不做任何大块背景、不做按钮填色（主按钮是近黑 `bg-ink`、字是 `surface` 色）；持久表面里只有「真的是一张卡」的
+东西有投影（`shadow-card`，**只经 `ui/Card` 一处**：素材卡 / 会话卡 / 任务行 / 诊断与修复卡，第二十二节、第二十六节），分区 / 列表行 / 输入框仍是平的；
 浮层只有 `shadow-pop`（菜单 / popover / 浮条）与 `shadow-dialog`（对话框 / 命令面板）两种，都是
 「1px 半透明环 + 一层大模糊」，浮层**不再画实色 border**；Tooltip 是 ink 底白字；surface 之间靠极轻的
 明度差与半透明 hairline 分层，不靠框。
@@ -46,14 +52,18 @@
 
 | 档 | 值 | 给谁 |
 | --- | --- | --- |
-| `rounded-xs` | 3 | 16px 高以下的小片：kbd、计数角标、缩略图上的标签、分段选择器的 thumb |
-| `rounded-sm` | 6 | 控件：输入框、按钮、图标钮、选项格、树行、tooltip |
-| `rounded-md` | 10 | 卡片与浮层：菜单、popover、select 弹层（2026-09-15 从 8 抬到 10：浮层要比控件大一档以上） |
-| `rounded-lg` | 14 | 对话框、命令面板（2026-09-15 从 12 抬到 14） |
-| `rounded-panel` | 16 | 工作面板（画布标签 + 画布 + 属性栏那一整块），全产品只有这一处（2026-09-30） |
-| `rounded-full` | | 带字的按钮与分段控件（2026-09-30 起是胶囊）、圆点、开关、徽章 |
+| `rounded-xs` | 4 | 16px 高以下的小片：kbd、计数角标、缩略图上的标签、复选框 |
+| `rounded-sm` | 6 | tooltip、20px 行内小片 |
+| `rounded-md` | 8 | 行（列表 / 树 / 菜单项 / select 项）、可编辑框、小卡 / 缩略图、说明条（`Notice`） |
+| `rounded-lg` | 12 | 卡片（`Card`）、菜单 / popover / select 弹层的外壳、多行浮动面板、空态图标底座 |
+| `rounded-panel` | 16 | 对话框、工作面板、改图助手输入框、命令面板 |
+| `rounded-full` | | 带字的按钮、**图标钮**、分段控件、chip、toast、单行浮动条、圆点、开关、徽章 |
 
-2026-09-30 重设计的改动（第二十五节）：带字的按钮 / 分段控件 `sm` → `full`；输入框 `sm` → `md`；图标钮 `sm` → `md`。
+**外层圆角 = 内层圆角 + 内边距**（菜单 lg 12 = 项 md 8 + 内边距 4；卡 12 包 8 的封面）。
+**浮动外观三档**：单行（≤36px）的浮动条 = 胶囊；多行浮动面板 = 12；模态 / 面板 / 命令面板 = 16。
+2026-09-30 重设计的改动（第二十五节）：带字的按钮 / 分段控件 `sm` → `full`。2026-10-07（第二十六节）：圆角族
+4 / 6 / 8 / 12 / 16（此前 3 / 6 / 10 / 14 / 16），图标钮 → `full`，对话框 → `panel`，菜单 / popover 外壳 → `lg`。
+门禁：`rounded-*-[…]` 任意值与内联 `borderRadius` 都不许出现。
 
 ## 三、密度
 
@@ -64,7 +74,7 @@ Tavotto 是「紧凑工具」那一档：**控件一律 28px（`h-7`）**——�
 三档定义：
 
 - compact row 28：控件与列表行（已落地）
-- normal control 32：对话框脚部主动作（待定，看真实页面再决定要不要拉高）
+- normal control 32：对话框页脚的按钮、页面级 CTA、命令面板输入行（2026-10-07 落地：`Button size="lg"` / `IconButton iconSize="lg"`）
 - setting row 48：设置页一行（Session 5 落地：`SettingRow` `density="normal"` 最小 48px，
   `compact` 最小 32px；见第十二节）
 
@@ -80,10 +90,13 @@ Tavotto 是「紧凑工具」那一档：**控件一律 28px（`h-7`）**——�
 
 ## 五、控件
 
-- **Button**：四档 `primary`（近黑填色，每个上下文最多一个）/ `secondary`（细边白底，
-  工具操作默认）/ `ghost`（无边无底）/ `danger`（红字 ghost）。`active` 是 selected 轻 tint +
-  字重。忙碌态自带。
-- **IconButton**：`label` 既是可达名也是气泡，一份文案两处用。
+- **Button**：五档 `primary`（近黑填色、surface 色字，每个上下文最多一个）/ `secondary`（灰底胶囊，
+  工具操作默认）/ `ghost`（无边无底）/ `danger`（红字 ghost，行内 / 菜单旁）/ `danger-tinted`（**只给对话框页脚**的
+  破坏性确认：danger-surface 底 + danger-border 内描边 + danger-content 字 + 600，配 `size="lg"`；永远不用实心红，
+  2026-10-07）。高度 28（sm / md）与 32（`lg`，对话框页脚 / 页面 CTA）。`active` 是 selected 轻 tint +
+  字重。忙碌态自带。层级落在 `data-variant` 上，用例认它，不认类名。
+- **IconButton**：`label` 既是可达名也是气泡，一份文案两处用。**圆形**（`rounded-full`，2026-10-07）：28（md / sm）、
+  32（`iconSize="lg"`）、20（`xs`，只给行内）。
 - **可编辑框只有一副**（`ui/fieldBox.ts`，2026-09-14 审计 S8）：`field` 底、静态无边，hover 底加深一档，
   聚焦 / 打开不透明 accent 边，禁用 opacity-40（形态 2026-09-15 参考 Codex 改成「只换底色」，第二十二节）。
   TextInput / TextArea / NumberField / Select / SearchInput / 样张选择器触发器（`PickerTrigger`）全从这里取；
@@ -126,14 +139,24 @@ Tavotto 是「紧凑工具」那一档：**控件一律 28px（`h-7`）**——�
   **键盘**（2026-09-14 审计 S3）：整组只占一个 Tab 停靠点（选中项），← → Home End 换值并带
   焦点，禁用项跳过；`role="radio"` 字面量只许出现在它与空间型选择器（OptionGrid 一族）里，
   `foundation.test` 守着。
-- **listRowClass**：树行 / 列表行的共同外观（28px、hover / selected / hidden 三态）。
+- **listRowClass**：树行 / 列表行的共同外观：`size` sm 28 / md 44 / lg 52、圆角 md 8、hover / selected / hidden 三态，
+  **选中 = selected 底 + 600**（2026-10-07）；行里的 meta 用 `rowMetaClass(selected)`（选中时 ink-3 → ink-2）。
+  拖放落点是 `dropLineClass(pos)`：2px accent 条 + 左端 4px 圆点。
+- **RowMenu**（`useRowMenu` + `RowMenu`）：一行的 ⋯、右键、⇧F10 / ContextMenu 键打开**同一份** `MenuItem` 清单；⋯ 只在
+  hover / focus-within / 打开时看得见，行聚焦时它在 Tab 顺序里（tabIndex 0），否则 -1。菜单项图标一律经 `MenuItem icon=`
+  （ink-2，危险项跟字走红），不在 children 里自己排。
 - **TreeRow**（`treeIndent` / `TreeChevron` / `TreeIcon` / `TreeCount`）：树行的固定列——
   缩进 8 + 14 × 层级、16px 折叠箭头列、16px 类型图标列、右对齐计数。图层树与图内
   元素树共用；叶子行留空的箭头列，同层的图标才对得齐。层级只靠缩进与箭头，不靠留白。
 - **SearchInput**：面板顶部的搜索框，唯一的一种——与其它可编辑框同一副框（S8 之前是安静的
   surface-2 填充框）；左侧放大镜固定列，有内容才出清除钮；Esc 先清空再失焦。
-- **说明条**：没有独立原语（`Notice` 于 2026-09-15 删除，最后一个调用点是批次 G 删掉的安全导入说明）。要警告语义
-  用设置页的 `InlineWarning`；状态一句话是 surface-2 底的一条，不套框。
+- **说明条 `Notice`**（2026-10-07 恢复为原语，第二十六节；2026-09-15 那次删除作废）：`tone` neutral / info / ok / warn / danger，
+  8 圆角、内边距 8 / 12、锚点派生的底 / 内描边 / 字，图标按语气（阻断八角 / 警告三角 / 信息圆 / 完成对勾），可选 `title` 与右侧 `action`。
+  对话框里放在页脚上方（加载错误放顶部）；设置组里作为组内最后一行。设置页的 `InlineWarning` 逐页迁到它。
+- **StatusPill**：20px 胶囊、11 / 500、锚点派生的底与字，可选锚点色圆点。**状态**（就绪 / 需要登录 / 失败）用它，计数与版本号仍是 `Badge`。
+- **Card**：`appearance` raised（白 + shadow-card）/ subtle（surface-2 填充）/ plain；`padding` none / sm 8 / md 12；
+  `interactive`（hover 画 1px outline，offset -1，几何不变）/ `selected`（border-strong outline + selected 底）；可交互的卡
+  `:has(:focus-visible)` 画 accent 环。圆角 lg 12。`shadow-card` 只在 `Card.tsx` 里写（门禁）。
 - **Section / SettingSection / Disclosure / Details**：分区与折叠。
 - **「去到」的记号只有一枚**（2026-09-14 审计 A4）：尾随的 `ChevronRight`（xs），给「X 轴刻度 ›」
   「在子图页编辑刻度线与边框 ›」这种往下 / 往旁边走的入口；往上走的路是身份头的**面包屑**，
@@ -145,10 +168,10 @@ Tavotto 是「紧凑工具」那一档：**控件一律 28px（`h-7`）**——�
   问题面板 / 导出清单 / 上下文栏 / 图例项一律生效；引擎按字数截断的名字在树行用 `untruncatedLabel`
   补回全文、由 CSS 按宽度截（S15）。
 
-- **光标一律箭头**（2026-09-15 拍板）：按钮 / 复选 / 单选 / 折叠头一律箭头，手形只给真正的
-  `<a>` 链接。原语里的 `cursor-pointer` 全部删掉，`index.css` 的 base 层兜住 UA 默认值
-  （`button` / `summary` / `input[type=checkbox|radio|color]`）——同一行里按钮手形、
-  分段选择器箭头，是「同一件事第二种写法」的最小形态。
+- **光标一律箭头**（2026-09-15 拍板；2026-10-07 门禁化）：按钮 / 复选 / 单选 / 折叠头 / 标签一律箭头，手形只给真正的
+  `<a>` 链接。页面里的手形光标类全部删掉、`foundation.test` 禁止再写，`index.css` 的 base 层兜住 UA 默认值
+  （`button` / `summary` / `label` / `input[type=checkbox|radio|color]`）——同一行里按钮手形、
+  分段选择器箭头，是「同一件事第二种写法」的最小形态。**唯一例外**是可拖的卡（素材卡）：抓手光标说的是「能拖」。
 
 状态四态必须可辨：hover（surface-hover）< active（surface-active）≈ selected（selected +
 字重 / 对勾）；disabled 统一 **`opacity-40 + cursor-not-allowed`**（一档，2026-09-14 审计 S7 之前
@@ -160,18 +183,28 @@ Tavotto 是「紧凑工具」那一档：**控件一律 28px（`h-7`）**——�
 - **Dialog**：打开后焦点落在 `role=dialog` 容器本身（不预选控件；读屏先念标题与说明），
   关闭钮画在右上角但 DOM 排在正文与脚部之后——第一下 Tab 进正文第一个控件，Shift+Tab 或走到
   末尾才到关闭钮；Esc、`busy` / `blockDismiss` / `covered`、关闭还焦不变（2026-09-14 审计 S1）。
+  2026-10-07（第二十六节）：宽度 sm 400 / md 480 / lg 560 / xl 760 / shell；`rounded-panel` 16；标题 15 / 600、正文
+  `type-reading`；页脚三槽 `{ start, secondary, primary }`（旧的整段 `footer` 仍可用），按钮 32；正文会滚时页脚吸底变毛玻璃
+  （`data-scrolled`，尊重 reduced-transparency）；**Esc 永远是安全答案**（`onEscape`：确认框 = 取消、关窗三选一 = 取消；
+  `blockDismiss` 时点外面仍不算回答；真正的闸门 NativeConfirm / ScriptInput 不给它）；遮罩只由最底下那个开着的对话框画；
+  **每个上下文一颗主按钮**，对话框页脚的破坏性动作用 `danger-tinted`（CloseGuard：`[不保存] … [取消] [保存并关闭]`）；
+  对话框常驻挂载、`open` 由载荷驱动（不写 `if (!x) return null`）。
 
 ## 六、文字
 
-六个角色（`index.css` 的 `@utility type-*`），层级由角色定，不由页面自己挑组合：
+十个角色（`index.css` 的 `@utility type-*`），层级由角色定，不由页面自己挑组合（2026-10-07 增 display / heading / reading，
+title 升 600、caption 升 12 / ink-3，第二十六节）：
 
 | 角色 | 值 | 给谁 |
 | --- | --- | --- |
-| `type-title` | 15 / 20 · 500 · ink | 对话框 / 页面标题（2026-09-15 打磨批次 A 从 14 抬到 15：与正文 12 之间要有 3px 台阶） |
+| `type-display` | 24 / 30 · 600 · -0.02em · ink | 首页、空画布这类「一屏只有一件事」的大标题（取代 `text-[24px]` 一类例外） |
+| `type-heading` | 17 / 24 · 600 · -0.01em · ink | 属性栏对象名、设置页页头 |
+| `type-title` | 15 / 20 · 600 · ink | 对话框标题、空态标题（2026-09-15 从 14 抬到 15；2026-10-07 从 500 升 600） |
+| `type-reading` | 13 · 行距 1.6 · ink | 阅读面正文：改图助手回答、对话框正文（Dialog 默认给）、设置说明 |
 | `type-section` | 12 / 16 · 500 · ink | 分区小标题、菜单组标题。2026-09-14 审计 S9：中文没有大写、字距看不见，靠「深 + 重」与行标签（12 · 400 · ink-2）拉开；二审 B2（拍板「甲」）英文也去掉大写 + 字距，两种语言同一个骨架 |
 | `type-body` | 12 / 16 · ink | 正文 |
 | `type-control` | 12 · 颜色随控件 | 控件里**要读的值**（输入框 / 数字框 / 下拉 / 分段 / 样张格）。2026-09-14 审计分歧 1 拍板：值试到正文档，标签 / caption / meta 留 11，28px 不变 |
-| `type-caption` | 11 · 行距 1.5 · ink-2 | 说明文字 |
+| `type-caption` | 12 · 行距 1.5 · ink-3 | 说明文字（2026-10-07 从 11 / ink-2 改：ink-2 拉深后留给标签） |
 | `type-meta` | 11 · ink-3 | 元数据、路径、计数 |
 | `type-number` | 12 / 16 · 系统字体 + tabular-nums | 数值：输入框里的值与单位、只读的尺寸 / 计数 / 缩放 / 像素读数（二审 B1，拍板「乙」）。快捷键与 `Kbd` 同样是系统字体 + tabular-nums（2026-09-15 全面打磨 B05：Claude 的 kbd 全部 `font: inherit`）。等宽字体只留给代码、路径、脚本名与 matplotlib 取值代号 |
 
@@ -182,9 +215,10 @@ ppi）前一个空格，`%` / `°` 贴着数字；i18n 字串里写 `{{x}} pt`�
 i18n 字串里写 `{{w}} × {{h}} mm`，`resources.test` 守着（此前 `{{w}}×{{h}} mm` 十处、`{{w}} × {{h}} mm` 五处、
 `{{w}}×{{h}}cm` 一处并存，`measure.mmSize` 与 `mmSizeSpaced` 两个 key 同一件事）。
 
-字号阶梯只有 xs 11 / sm 12 / base 13 / lg 14 / xl 15 五档（xl 只给 `type-title`）；`text-[Npx]` 不许出现
-（营销页 /try 的三个展示级字号按个数豁免在门禁里）。字重只有 400 / 500；**600 只给页签 / 分段选择器
-的选中态**（`tabClass` / `Segmented`，2026-09-15 打磨批次 A，用户拍板），`foundation.test` 按文件计数守住。
+字号阶梯只有 xs 11 / sm 12 / base 13 / lg 14 / xl 15 五档（xl 只给 `type-title`；17 / 24 只经 heading / display 两个角色出现）；
+`text-[Npx]` 不许出现（营销页 /try 的三个展示级字号按个数豁免在门禁里）。字重 400 / 500 / 600：**600 只在角色与原语里**——
+标题角色（title / heading / display）、页签 / 分段 / 列表行的选中态（`tabClass` / `Segmented` / `listRowClass`）、表单分区标题
+（`FormSection`）、对话框页脚的危险浅底胶囊（`danger-tinted`）；页面里不写 `font-semibold`，`foundation.test` 按文件计数守住。
 
 ## 七、动效
 
@@ -204,6 +238,10 @@ opacity + ≤4px 位移 + scale 0.97~1；没有缩放炫技、漂浮。`prefers-
 `prefers-reduced-motion` 下即时。它们解释的是「谁被选中了 / 哪些行是新出现的」，不是装饰。
 实现只有一份：`ui/slidingIndicator.useSlidingIndicator`（Tabs / Segmented 共用）与 `ui/Field.Reveal`
 （Disclosure；原生 `<details>` 用 `::details-content` 在支持 `interpolate-size` 的引擎里同样长高）。
+
+**加载只有四种写法**（2026-10-07，第二十六节）：不定进度 = `animate-sweep`（`ui/ProgressBar`，轨道 border 色）；骨架 = 静态
+`bg-surface-hover` + 65% 不透明，不动；「进行中」的字 = `text-shimmer`；按钮 / 行内 = `LoaderCircle animate-spin`。Tailwind 的
+呼吸动画（pulse）被 `foundation.test` 禁掉。一次性的「看这里」（问题定位高亮）是 `animate-attention`，有限三次。
 
 **写了 `transition-*` 没写时长的，默认档也是 token**（二审 E1）：`--default-transition-duration`
 = `--duration-fast`、`--default-transition-timing-function` = `--ease-standard`（对称曲线，给 hover /
@@ -747,3 +785,55 @@ reduced-motion 契约）；68/85 命中 `foundation.test`（533 处）；弹簧 
   下缘一条 hairline。选中一张图时，第一件事「改图里的内容」是整行宽的次按钮。
 - **属性栏分组线**：相邻两个 `Section` 之间一条左右各内缩 12px 的 hairline（`index.css` 的 `[data-inspector-panel] [data-section]` 规则），
   只在属性栏里；设置页与抽屉仍靠留白。
+
+## 二十六、2026-10-07 设计刷新 · 基础层（用户拍板，对照 OpenBitFun）
+
+审计全文 `docs/ux/DESIGN_AUDIT_2026-10-07_vs_OpenBitFun.md`（§1–§10 全部认可，§7「不学」除外）。这一节只收**基础层**
+（token、原语、门禁）——页面的重做按页分期落，每期仍先改这里。与前文冲突处以本节为准。
+
+### token
+- **墨阶拉开**：ink-2 `#4a4a45`（白 8.9:1）、ink-3 `#6c6c66`。拍板值 `#74746e` 在桌面上只有 4.08:1、可编辑框 hover 底 3.98:1，
+  按「不过就最小幅度压深」收到 `#6c6c66`——所有底色 ≥4.5:1（画布灰也过了，第一节那条「画布灰上用 ink-2」的限制取消）。
+  字段标签 ink-2；单位、元信息、摘要值、说明 ink-3。
+- **中性面降黄，三档 + 可编辑框**：桌面 `#efefed` < 画布灰 `#f5f5f3` < 白；surface-2 `#f7f7f5`；field `#f2f2f0` / hover `#eeeeec`；
+  字段组底 `group` = ink 3%。「纸感」只留在画布上那张纸本身。
+- **圆角族** 4 / 6 / 8 / 12 / 16 / full，「外层 = 内层 + 内边距」，浮动外观三档（第二节）。
+- **字体角色** 增 display 24 / heading 17 / reading 13，title 600，caption 12 / ink-3（第六节）。
+- **投影**全部写成 `color-mix(in srgb, var(--color-shadow) N%, transparent)`：card = 环 6% + `0 1px 2px` 4% + `0 4px 12px` 4%（此前
+  4% / 4% 在白底上几乎看不见）；pop / dialog / thumb / composer 数值不变、只换写法。暗色只换 `--color-shadow`。
+- **状态色锚点派生**：danger `#c4442a` · warn `#b07400` · ok `#2b7649` · info = accent；
+  `--color-<s>-surface` = `color-mix(in oklab, 锚点 10%, surface)`、`-border` = 30%、`-content` = `color-mix(in oklab, 锚点 70%, black)`。
+  字一律用 `-content`（`tokenContrast.test` 按 oklab 重算合成色量 ≥4.5:1）；锚点给图标 / 圆点 / 进度（≥3:1），danger / ok 锚点
+  对白 ≥4.5 也可当字（红字 ghost），warn 锚点不当字。旧名 `*-subtle` 是 `-surface` 的别名，迁完删除。
+- **层级 token**（`:root` 的 `--z-*` + 同名工具类）：sticky 10 · canvas-chrome 20 · drawer 30 · overlay 40 · dialog 50 · popover 60 ·
+  tooltip 70 · toast 80 · onboarding 90（引导高亮环 89）。逐档对应 token 化之前的裸值，叠放顺序不变；原来同为 50 的三类拆成
+  dialog < popover < tooltip——从对话框里打开的弹层本来就在它上面（后挂进 DOM），现在由 token 而不是 DOM 顺序保证。通知轨仍在画布列里
+  用 canvas-chrome（对话框盖住它），toast 档预留给它移出画布列那一期。门禁：数字 z-index（类名与内联 `zIndex`）不许出现。
+- **焦点环** 2px accent、offset 2；可编辑框聚焦只换边色，插入点 `caret-color: accent`。
+- **滚动条** 6px 胶囊，只在该滚动区被悬停或内含焦点时画出。
+- **画布覆盖层 token**：`--sel-hover-opacity` .6、唯一虚线 `--sel-dash` `4 3`、手柄填充 `--handle-fill` = surface、遮罩 `--color-scrim` = ink 34%。
+  画布代码逐处迁移在画布那一期。
+- **抽屉底** `--drawer-bg`：`LeftPanel` 停靠 = bg、覆盖 = surface；吸顶组头这类「必须与抽屉同色」的子元素读它。
+
+### 原语（`web/src/components/ui/`）
+- **Button / IconButton**：`lg` 32；图标钮一律圆；primary 字 `text-surface`；`danger-tinted` 只给对话框页脚；`data-variant` 是层级的稳定判据（第五节）。
+- **Card**、**Notice**、**StatusPill**、**FormSection + FieldGroup**（`SettingRow layout="balanced"` 4 : 6；行坐在组里时内边距交给组）、
+  **EmptyState v2**（40px lg 圆角图标底座 + type-title + type-caption 42ch + 32px 主动作）、**listRowClass** 三档 + `rowMetaClass` + `dropLineClass`、
+  **RowMenu**（第五节）。
+- **Dialog**：宽度五档、页脚三槽、浮动毛玻璃页脚、`onEscape`、栈底遮罩、常驻挂载（第五节）。ConfirmDialog 的 Esc = 取消、危险确认 `danger-tinted`；
+  CloseGuardDialog `[不保存]（start）… [取消] [保存并关闭]`、Esc = 取消。
+- **MenuItem** 的图标一律经 `icon=`（ink-2，危险项跟字走红）。
+
+### 规矩
+- **每个上下文一颗主按钮**（顶栏 = 导出、助手 = 发送、对话框 = 确认、空态 = 它自己那一颗）。
+- **对话框页脚的危险动作是浅底危险胶囊**，永远不用实心红；行内 / 菜单里的危险动作仍是红字。
+- **Esc 永远是安全答案**；只有真正的闸门（NativeConfirm、ScriptInput）不给 Esc 答案。
+- **浮动外观三档**：单行浮动条胶囊、多行浮动面板 12、模态 16。
+- **加载四种写法**（第七节）；**光标一律箭头**（第五节）；**界面外观不写死白**：原语里 `bg-white` / `text-white` 换成 surface token，
+  图与页面内容（纸）才是真白。
+
+### 门禁（`components/ui/foundation.test.ts`）
+新增：任意值圆角与内联 `borderRadius`、Tailwind 呼吸动画、数字 z-index（类名与内联）、手形光标类、`ui/` 里的写死白、`shadow-card`
+只在 `Card.tsx`；`font-semibold` 的豁免扩到 listRow / FormSection / buttonClass。逐页阶段才迁的几处 `shadow-card`（素材卡、问题卡、
+左轨激活态、版本对话框缩略图框）以带个数的 `LATER_PHASE` 豁免列在门禁里，迁完一处删一条；工作面板是常驻豁免。
+`tokenContrast.test` 增：状态色派生（oklab 重算）、墨阶间距、ink-3 在画布灰上；`designMd.test` 对拍新增的四个角色、`control-lg`、Card / danger-tinted / lg 按钮。

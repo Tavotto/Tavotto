@@ -50,7 +50,7 @@ const SIZE_FIRST_KINDS = new Set(['resize', 'draw', 'crop'])
  * 投影）是两种浮盒（2026-09-15 打磨 N4）。
  */
 const HUD_BOX =
-  'inline-flex min-h-7 max-w-full flex-wrap items-center gap-x-2.5 gap-y-1.5 rounded-md bg-surface px-2.5 py-1.25 text-sm shadow-pop'
+  'inline-flex min-h-7 max-w-full flex-wrap items-center gap-x-2.5 gap-y-1.5 rounded-lg bg-surface px-2.5 py-1.25 text-sm shadow-pop'
 
 export function CanvasHud() {
   perfCount('render.CanvasHud')
@@ -79,7 +79,7 @@ export function CanvasHud() {
     <div
       // 画布底部有浮动工具条时抬到它上面去：读数 / 提示与工具条同在底边会叠在一起
       className={cn(
-        'pointer-events-none absolute left-3 z-10 flex max-w-[calc(100%-1.5rem)] flex-col items-start gap-1',
+        'pointer-events-none absolute left-3 z-sticky flex max-w-[calc(100%-1.5rem)] flex-col items-start gap-1',
         toolbarUp ? 'bottom-16' : 'bottom-3',
       )}
       aria-hidden={interacting ? undefined : true}
@@ -204,8 +204,8 @@ function Toast({
         // 的一句话在画布上方读起来像脚注（2026-09-15 打磨 N2）。
         // `min-h-9 py-1`：一种高度 36。带动作的那条由 28 的按钮 + py 8 撑到 36，不带动作的
         // 靠 min-h 补齐——此前是 34 / 29 两种（N3），min-h-8 只把差距从 5 缩到 4，仍是两种
-        'pointer-events-auto flex min-h-9 max-w-[520px] items-center gap-2 rounded-md px-3 py-1 text-sm shadow-pop',
-        tone === 'error' ? 'bg-danger-subtle text-danger' : 'bg-surface text-ink',
+        'pointer-events-auto flex min-h-9 max-w-[520px] items-center gap-2 rounded-lg px-3 py-1 text-sm shadow-pop',
+        tone === 'error' ? 'bg-danger-surface text-danger-content' : 'bg-surface text-ink',
         'data-[state=open]:animate-rise-in data-[state=closed]:animate-rise-out',
       )}
     >
@@ -358,7 +358,7 @@ export function NotificationRail() {
     <div
       // 画布底部有浮动工具条时整列抬到它上面去（toast 居中、工具条也居中，不抬就叠在一起）
       className={cn(
-        'pointer-events-none absolute inset-x-0 z-20 flex flex-col items-center gap-1.5 px-4',
+        'pointer-events-none absolute inset-x-0 z-canvas-chrome flex flex-col items-center gap-1.5 px-4',
         toolbarUp ? 'bottom-16' : 'bottom-4',
       )}
     >

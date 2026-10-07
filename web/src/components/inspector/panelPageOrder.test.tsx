@@ -187,7 +187,7 @@ describe('对象页的版式（2026-09-15 全面打磨）', () => {
     // 只读值不套容器：这一行上没有填充底
     let node: Element | null = value
     for (let i = 0; i < 3 && node; i++) {
-      expect(node.className).not.toMatch(/bg-surface-2|bg-danger-subtle/)
+      expect(node.className).not.toMatch(/bg-surface-2|bg-danger-surface/)
       node = node.parentElement
     }
   })

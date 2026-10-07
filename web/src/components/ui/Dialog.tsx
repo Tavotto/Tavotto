@@ -2,13 +2,78 @@ import * as RD from '@radix-ui/react-dialog'
 import { t } from '@/i18n'
 import { X } from './icons'
 import { ICON_SIZE } from './Icon'
-import { useRef, type ReactNode, type RefObject } from 'react'
+import {
+  isValidElement,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+  type RefObject,
+} from 'react'
 import { cn } from '@/lib/utils'
 import { IconButton } from './Button'
 
-export type DialogSize = 'sm' | 'md' | 'lg'
+/**
+ * 宽度五档（2026-10-07 设计审计 §10.2：此前 8 种宽度）：sm 400 · md 480 · lg 560 · xl 760 · shell 1000。
+ * `shell` 同时意味着 `chrome="shell"`（设置那种自己管布局的窗口）。
+ */
+export type DialogSize = 'sm' | 'md' | 'lg' | 'xl' | 'shell'
 
-const WIDTH: Record<DialogSize, number> = { sm: 360, md: 420, lg: 560 }
+const WIDTH: Record<DialogSize, number> = { sm: 400, md: 480, lg: 560, xl: 760, shell: 1000 }
+
+/**
+ * 页脚三槽（2026-10-07 设计审计 §10.2）：`[start] …… [secondary] [primary]`。
+ *   start      左侧：破坏性的另一条路（「不保存」，`danger-tinted`）或次要入口（「直接运行」）
+ *   secondary  右侧主按钮左边：「取消」「关闭」「稍后」
+ *   primary    最右：唯一一颗主动作（动词 + 宾语）
+ * 页脚按钮一律 32px（`size="lg"`）——约定，不由外壳改写。
+ */
+export interface DialogFooterSlots {
+  start?: ReactNode
+  secondary?: ReactNode
+  primary?: ReactNode
+}
+
+const isSlots = (f: unknown): f is DialogFooterSlots =>
+  f != null &&
+  typeof f === 'object' &&
+  !isValidElement(f) &&
+  !Array.isArray(f) &&
+  ('start' in f || 'secondary' in f || 'primary' in f)
+
+/**
+ * 遮罩只由**最底下**那个开着的对话框画（2026-10-07 设计审计 §10.2：嵌套两层遮罩叠成约 51% 暗）。
+ * 模块级的栈：开着且没被 `covered` 的对话框按打开顺序登记，栈底那个画遮罩，其余的遮罩透明
+ * （元素还在——Radix 的模态点外面判定仍落在它上面）。被 covered 的那层先退栈，盖着它的那层就成了栈底。
+ */
+const scrimStack: symbol[] = []
+const scrimListeners = new Set<() => void>()
+const scrimSubscribe = (fn: () => void) => {
+  scrimListeners.add(fn)
+  return () => scrimListeners.delete(fn)
+}
+const scrimBottom = () => scrimStack[0] ?? null
+const scrimEmit = () => scrimListeners.forEach((fn) => fn())
+
+function useScrimOwner(active: boolean): boolean {
+  const [id] = useState(() => Symbol('dialog'))
+  useLayoutEffect(() => {
+    if (!active) return
+    scrimStack.push(id)
+    scrimEmit()
+    return () => {
+      const i = scrimStack.indexOf(id)
+      if (i >= 0) scrimStack.splice(i, 1)
+      scrimEmit()
+    }
+  }, [active, id])
+  const bottom = useSyncExternalStore(scrimSubscribe, scrimBottom, scrimBottom)
+  // 还没登记上的那一帧（或没开）按「自己画」算：单个对话框打开时不闪一帧无遮罩
+  return bottom === null || bottom === id
+}
 
 interface DialogProps {
   open: boolean
@@ -16,7 +81,11 @@ interface DialogProps {
   title: ReactNode
   description?: ReactNode
   children: ReactNode
-  footer?: ReactNode
+  /**
+   * 页脚。`{ start, secondary, primary }` 三槽（推荐，见 `DialogFooterSlots`），或旧写法的一段 ReactNode
+   * （整段右对齐）。正文会滚时页脚吸在底边、变成毛玻璃，内容从它底下滑过（`data-scrolled`）。
+   */
+  footer?: ReactNode | DialogFooterSlots
   /**
    * 正文与脚部之间一块**不随正文滚**的状态区（进度 / 冲突 / 拒绝 / 结果）。给「点了脚部
    * 按钮之后的回应」用：放在可滚正文的最末尾的话，正文一长它就在视口外，用户点完
@@ -39,6 +108,12 @@ interface DialogProps {
   busy?: boolean
   /** 与 busy 分开：不忙但也不许随手关（例如必须做出选择的确认框） */
   blockDismiss?: boolean
+  /**
+   * Esc 的**安全答案**（2026-10-07 设计审计 §10.2：Esc 永远是安全答案）。给了它，Esc 就调它——
+   * 即使 `blockDismiss`（点外面仍然不算回答）；`busy` 时 Esc 什么都不做。确认框的 Esc = 取消、
+   * 关窗三选一的 Esc = 取消。真正的闸门（NativeConfirm、ScriptInput）不给它。
+   */
+  onEscape?: () => void
   /**
    * 被主对话框栈里更靠上的那个盖着（`uiStore.dialogStack`，审计 T35）：整层
    * 不可见，但**不卸载**——表单状态、滚动位置与打开子步骤的那颗按钮都还在，
@@ -70,6 +145,15 @@ interface DialogProps {
   initialFocusRef?: RefObject<HTMLElement | null>
 }
 
+/**
+ * 共用对话框外壳（宪法第五节 Dialog、第二十六节）：rounded-panel 16、标题 type-title 15 / 600、
+ * 正文 type-reading 13 / 1.6、页脚三槽 32px、栈底才画遮罩、Esc = `onEscape` 给的安全答案。
+ *
+ * **常驻挂载**：调用方不要写 `if (!x) return null` 再把 `open` 写死成 true——那样只有进场、没有退场
+ * （Radix 的 Presence 要等 animationend 才卸载内容）。写法是对话框常驻、`open={!!x}`，正文读一个
+ * ref 里保留的**最后一份载荷**（关的那 90ms 里 x 已经是 null，正文仍要画得出来）；多步流程是一个
+ * Dialog 换正文，不是两个 Dialog 交接。
+ */
 export function Dialog({
   open,
   onOpenChange,
@@ -83,13 +167,39 @@ export function Dialog({
   height,
   busy = false,
   blockDismiss = false,
+  onEscape,
   covered = false,
   anchor,
   chrome = 'default',
   initialFocusRef,
 }: DialogProps) {
-  const shell = chrome === 'shell'
+  const shell = chrome === 'shell' || size === 'shell'
   const locked = busy || blockDismiss
+  const ownsScrim = useScrimOwner(open && !covered)
+  const slots = isSlots(footer) ? footer : null
+  const hasStatus = status != null && status !== false
+  const hasFooter = slots ? !!(slots.start || slots.secondary || slots.primary) : footer != null && footer !== false
+  // 正文还有没滚到的部分：页脚变毛玻璃（只在默认外壳里；shell 的正文自己管滚动）
+  const bodyRef = useRef<HTMLDivElement | null>(null)
+  const [scrolled, setScrolled] = useState(false)
+  const footerRef = useRef<HTMLDivElement | null>(null)
+  const [footerH, setFooterH] = useState(0)
+  const measure = useCallback(() => {
+    const el = bodyRef.current
+    setScrolled(!!el && el.scrollHeight - el.clientHeight - el.scrollTop > 1)
+    setFooterH(footerRef.current?.offsetHeight ?? 0)
+  }, [])
+  useEffect(() => {
+    const el = bodyRef.current
+    if (!open || !el || shell || !hasFooter || hasStatus) return
+    measure()
+    if (typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    if (el.firstElementChild) ro.observe(el.firstElementChild)
+    if (footerRef.current) ro.observe(footerRef.current)
+    return () => ro.disconnect()
+  }, [open, shell, hasFooter, hasStatus, measure])
   // 本仓库的对话框全部由 store 驱动、没有 Radix Trigger：关闭时 Radix 找不到
   // 触发元素，焦点会掉回 body——键盘用户按 Esc 后不知道自己在哪（审计 P1-09）。
   // 在 Radix 挪焦点**之前**（onOpenAutoFocus）记下打开前的焦点，关闭时还回去。
@@ -101,16 +211,47 @@ export function Dialog({
   // 用户再 Tab 进第一个控件；Tab 顺序不变，关闭钮仍在标题栏里。
   const contentRef = useRef<HTMLDivElement | null>(null)
 
+  const hasBody = children != null && children !== false
+  // 浮动页脚：默认外壳、有正文、没有 status 区时，页脚往上叠进正文的底边（负 margin = 自己的高度），正文底部
+  // 留出同样高的内边距——滚动时内容从页脚底下滑过、滚到底时最后一行停在页脚上方。页脚**永远**是 Content 的
+  // 同一个孩子（不在正文里进进出出）：status 出现 / 消失时它不重挂载，按钮上的焦点不会丢。
+  const floating = !shell && !hasStatus && hasBody && hasFooter
+  const footerEl = (
+    <div
+      ref={footerRef}
+      data-dialog-footer
+      data-floating={floating || undefined}
+      data-scrolled={(floating && scrolled) || undefined}
+      // 底色在 index.css 的 [data-dialog-footer] 规则里（白底 ↔ 毛玻璃两态，含 reduced-transparency）
+      className={cn('flex shrink-0 items-center gap-2 px-5 pb-4 pt-3', floating && 'relative z-sticky')}
+      style={floating && footerH ? { marginTop: -footerH } : undefined}
+    >
+      {slots ? (
+        <>
+          {slots.start}
+          <span className="flex-1" />
+          {slots.secondary}
+          {slots.primary}
+        </>
+      ) : (
+        <div className="flex flex-1 items-center justify-end gap-2">{footer as ReactNode}</div>
+      )}
+    </div>
+  )
+
   return (
     <RD.Root open={open} onOpenChange={(v) => (locked && !v ? undefined : onOpenChange(v))}>
       <RD.Portal>
         <RD.Overlay
           className={cn(
-            // 30%、不模糊：OpenAI 30% / shadcn 50%，两家都不做玻璃（2026-09-15 审计 B13）
-            'fixed inset-0 z-40 bg-ink/30',
+            // 30%、不模糊：OpenAI 30% / shadcn 50%，两家都不做玻璃（2026-09-15 审计 B13）。
+            // 只有栈底的对话框画遮罩，叠着的那层遮罩透明（见 useScrimOwner）
+            'fixed inset-0 z-overlay',
+            ownsScrim ? 'bg-ink/30' : 'bg-transparent',
             'data-[state=open]:animate-fade-in data-[state=closed]:animate-fade-out',
             covered && 'invisible',
           )}
+          data-dialog-scrim={ownsScrim || undefined}
         />
         <RD.Content
           ref={contentRef}
@@ -147,12 +288,20 @@ export function Dialog({
               fallback.focus()
             }
           }}
-          onEscapeKeyDown={(e) => locked && e.preventDefault()}
+          onEscapeKeyDown={(e) => {
+            if (busy) return e.preventDefault()
+            if (onEscape) {
+              e.preventDefault()
+              onEscape()
+              return
+            }
+            if (locked) e.preventDefault()
+          }}
           onInteractOutside={(e) => locked && e.preventDefault()}
           className={cn(
-            'fixed left-1/2 top-1/2 z-50 max-h-[86vh] max-w-[calc(100vw-2rem)]',
+            'fixed left-1/2 top-1/2 z-dialog max-h-[86vh] max-w-[calc(100vw-2rem)]',
             '-translate-x-1/2 -translate-y-1/2',
-            'flex flex-col overflow-hidden rounded-lg bg-surface shadow-dialog',
+            'flex flex-col overflow-hidden rounded-panel bg-surface shadow-dialog',
             // 容器是初始焦点的落点：对话框自己的出现就是位置线索，不再套一圈焦点环
             'outline-none',
             // 退场靠 Radix 的 Presence 保活（它会等 animationend）——**不要**改成条件
@@ -177,18 +326,22 @@ export function Dialog({
               )}
             </div>
           </div>
-          {/* 没有正文（标题已说完）就不摆这块留白 */}
-          {children != null && children !== false && (
+          {/* 没有正文（标题已说完）就不摆这块留白。正文是阅读面：type-reading 13 / 1.6
+              （子元素自己写了字号的照旧）。浮动页脚时正文底部留出页脚的高度（见 floating） */}
+          {hasBody && (
             <div
+              ref={bodyRef}
+              onScroll={shell ? undefined : measure}
               className={cn(
                 'min-h-0 flex-1',
-                shell ? 'flex flex-col overflow-hidden' : 'overflow-y-auto px-5 py-3',
+                shell ? 'flex flex-col overflow-hidden' : 'type-reading overflow-y-auto px-5 py-3',
               )}
+              style={floating && footerH ? { paddingBottom: footerH + 4, scrollPaddingBottom: footerH } : undefined}
             >
               {children}
             </div>
           )}
-          {status != null && status !== false && (
+          {hasStatus && (
             <div
               data-dialog-status
               className="max-h-[30vh] shrink-0 overflow-y-auto border-t border-border px-5 pb-2 pt-3"
@@ -196,11 +349,7 @@ export function Dialog({
               {status}
             </div>
           )}
-          {footer && (
-            <div className="flex items-center justify-end gap-2 px-5 pb-4 pt-1">
-              {footer}
-            </div>
-          )}
+          {hasFooter && footerEl}
           {!locked && (
             <RD.Close asChild>
               {/* `data-dialog-close` 是关闭按钮的稳定锚点：aria-label 是

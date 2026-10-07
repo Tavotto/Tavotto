@@ -57,7 +57,7 @@ export function LeftPanel({
         // 两个 token，fieldBox 原语不动。`--drawer-bg` = 抽屉此刻的底色，给吸顶的组头这类
         // 「必须与抽屉同色才不露缝」的子元素读（问题面板的组头），不另造设计 token
         overlay
-          ? 'absolute inset-y-0 z-30 bg-surface shadow-pop [--drawer-bg:var(--color-surface)]'
+          ? 'absolute inset-y-0 z-drawer bg-surface shadow-pop [--drawer-bg:var(--color-surface)]'
           : 'bg-bg [--drawer-bg:var(--color-bg)] [--color-field-hover:var(--color-surface-2)] [--color-field:var(--color-surface)]',
         motion.className,
       )}
@@ -167,7 +167,7 @@ function WidthHandle() {
       // 整条都在抽屉内侧：外层 overflow-hidden（开合动效要用）会把伸到外面的部分剪掉。
       // hover 只把边界加深一档：accent 小面积只给焦点 / 链接 / AI / 选择框，一条 8px 的
       // 蓝带不在其中（宪法第一节；左栏审计 L38），键盘聚焦时才用 accent
-      className="absolute inset-y-0 right-0 z-20 w-2 cursor-col-resize outline-none hover:bg-border-strong focus-visible:bg-accent/30"
+      className="absolute inset-y-0 right-0 z-canvas-chrome w-2 cursor-col-resize outline-none hover:bg-border-strong focus-visible:bg-accent/30"
     />
   )
 }

@@ -571,7 +571,7 @@ function PanelQuality({ objs }: { objs: PanelObject[] }) {
 
   return (
     /* 只读值不套容器（第八节）、状态区不是卡片（十三节）：普通的一行——标签列 +
-       type-number 的值，`bad` 只换字色，不铺 surface-2 / danger-subtle（打磨 O1） */
+       type-number 的值，`bad` 只换字色，不铺 surface-2 / danger-surface（打磨 O1） */
     <div className="mt-4 flex flex-col gap-1.5">
       <p className="-mb-0.5 flex h-4 items-center type-section">{pn('diagnostics')}</p>
       {items.map((q) => (
@@ -765,8 +765,8 @@ function ElementEditEntry({ panel }: { panel: PanelObject }) {
                   !shown && 'invisible',
                 )}
               >
-                <span aria-hidden className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-ink-faint" />
-                {pn(kind === 'cold' ? 'coldBuilding' : 'building')}
+                {/* 「进行中」的字是 text-shimmer（宪法第七节的三种加载方言之一），不再配呼吸点 */}
+                <span className="text-shimmer">{pn(kind === 'cold' ? 'coldBuilding' : 'building')}</span>
               </p>
             )
           })}

@@ -1167,7 +1167,7 @@ export function ExportDialog() {
         <section className="flex flex-col gap-1.5">
           <FormRow
             label={
-              <label htmlFor="export-filename" className="cursor-pointer">
+              <label htmlFor="export-filename">
                 {ex("filenameLabel")}
               </label>
             }
@@ -1668,7 +1668,7 @@ function ScopeNote({
         {available && (
           <>
             {fallback && (
-              <span className="text-warn">{ex("scopeOriginalFallback")}</span>
+              <span className="text-warn-content">{ex("scopeOriginalFallback")}</span>
             )}
             {ignored.length > 0 && (
               <span>
@@ -2063,7 +2063,7 @@ function ConflictBar({
       <p className="flex items-start gap-1.5 text-xs text-ink-2">
         <FileExclamationPoint
           size={ICON_SIZE.sm}
-          className="mt-0.5 shrink-0 text-warn"
+          className="mt-0.5 shrink-0 text-warn-content"
           aria-hidden
         />
         {ex("conflict", { files: names.join("、") })}
@@ -2105,7 +2105,7 @@ function ResultBlock({
         <p className="flex items-start gap-1.5 text-xs text-ink-2">
           <TriangleAlert
             size={ICON_SIZE.sm}
-            className="mt-0.5 shrink-0 text-warn"
+            className="mt-0.5 shrink-0 text-warn-content"
             aria-hidden
           />
           {ex("jobLost")}
@@ -2154,7 +2154,7 @@ function ResultBlock({
         />
       ))}
       {edited && (
-        <p className="mt-1 text-xs text-warn">{ex("editedDuringExport")}</p>
+        <p className="mt-1 text-xs text-warn-content">{ex("editedDuringExport")}</p>
       )}
       {/* 引擎重渲染的警告：图已经出来了，但可能与画布不完全一致
           （元素不存在 = 脚本改过了）。不吞——用户投出去之前得知道 */}

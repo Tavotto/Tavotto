@@ -489,7 +489,7 @@ function StatusText({ status, detail }: { status: string; detail?: string }) {
       : status === 'missing'
         ? 'text-danger'
         : status === 'changed'
-          ? 'text-warn'
+          ? 'text-warn-content'
           : 'text-ink-3'
   return (
     <span className={cn('flex flex-col text-xs', tone)}>

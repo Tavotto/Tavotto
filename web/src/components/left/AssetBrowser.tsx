@@ -379,7 +379,7 @@ export function AssetBrowser() {
         </p>
       )}
       {error && loaded && (
-        <p className="bg-danger-subtle px-3 py-1.5 text-xs text-danger" role="status">
+        <p className="bg-danger-surface px-3 py-1.5 text-xs text-danger-content" role="status">
           {ab('refreshFailed', { error })}
         </p>
       )}
@@ -684,11 +684,12 @@ function GridSkeleton({ columns }: { columns: number }) {
       style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
     >
       {Array.from({ length: 8 }, (_, i) => (
-        <li key={i} className="overflow-hidden rounded-md bg-surface shadow-card">
-          <div className="aspect-[3/2] animate-pulse bg-surface-2" />
+        // 骨架是静止的（宪法第七节：加载只有 sweep / 静态骨架 / shimmer / 转圈四种写法，不呼吸）
+        <li key={i} className="overflow-hidden rounded-lg bg-surface opacity-65">
+          <div className="aspect-[3/2] bg-surface-hover" />
           <div className="flex flex-col gap-1 px-1.5 py-1.5">
-            <div className="h-3 animate-pulse rounded-xs bg-selected" />
-            <div className="h-3 w-3/5 animate-pulse rounded-xs bg-surface-2" />
+            <div className="h-3 rounded-xs bg-surface-hover" />
+            <div className="h-3 w-3/5 rounded-xs bg-surface-hover" />
           </div>
         </li>
       ))}
@@ -1048,7 +1049,7 @@ function runtimeStaleKey(asset: RuntimeAssetInfo): string | null {
  */
 const cardClass = (selected: boolean) =>
   cn(
-    'group relative overflow-hidden rounded-md bg-surface shadow-card outline-none transition-shadow duration-fast',
+    'group relative overflow-hidden rounded-lg bg-surface shadow-card outline-none transition-shadow duration-fast',
     selected ? 'ring-1 ring-border-strong' : 'hover:ring-1 hover:ring-border',
     'focus-visible:focus-ring',
   )
@@ -1171,7 +1172,7 @@ function CardAction({
         onClick()
       }}
       className={cn(
-        'flex h-6 w-6 cursor-pointer items-center justify-center rounded-sm',
+        'flex h-6 w-6 items-center justify-center rounded-sm',
         'bg-surface text-ink shadow-thumb',
         'transition-colors duration-fast hover:bg-surface-2',
       )}

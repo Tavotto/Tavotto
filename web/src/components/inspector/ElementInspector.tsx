@@ -665,9 +665,9 @@ function ErrorBlock({
   const [open, setOpen] = useState(false)
   return (
     <Section>
-      <div className="rounded-sm bg-danger-subtle px-2 py-1.5">
+      <div className="rounded-sm bg-danger-surface px-2 py-1.5">
         {/* 描述符在**显示这一刻**才翻，切语言后这条跟着换 */}
-        <p className="text-xs text-danger">{formatMessage(error)}</p>
+        <p className="text-xs text-danger-content">{formatMessage(error)}</p>
         {/* 「先选运行目录」（U03）：确认框被「稍后」关掉之后从这里再开；
             「脚本跑完没出图」：多半是沙盒 cwd 下相对路径找不到数据，给出口（ADR 0047） */}
         {code === WORKDIR_CONFIRMATION_CODE ? (

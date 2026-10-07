@@ -148,11 +148,11 @@ export function ExampleCard({
           : undefined
       }
       className={cn(
-        'group relative flex cursor-pointer touch-manipulation flex-col overflow-hidden rounded-md border bg-surface text-left',
+        'group relative flex touch-manipulation flex-col overflow-hidden rounded-md border bg-surface text-left',
         'transition-[border-color,box-shadow,transform] duration-fast ease-out',
         'focus-visible:focus-ring outline-none',
         dragging
-          ? 'z-30 border-sel shadow-pop'
+          ? 'z-drawer border-sel shadow-pop'
           : 'border-border hover:border-ink-faint hover:shadow-pop',
       )}
     >

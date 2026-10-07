@@ -340,12 +340,12 @@ export function CommandPalette() {
       // 遮罩与 `ui/Dialog` 同值：30%、不模糊（宪法第十九节 / 审计 B13）。这一串是从那边
       // 抄来的第二份字面量，Dialog 改了它不会跟——原语层这一轮冻结，已请 team-lead 抽成
       // 一处（`ui/overlay`），落地后这里只留引用（2026-09-15 打磨 K2）
-      className="fixed inset-0 z-50 flex items-start justify-center bg-ink/30 pt-[18vh]"
+      className="fixed inset-0 z-dialog flex items-start justify-center bg-ink/30 pt-[18vh]"
       onPointerDown={(e) => {
         if (e.target === e.currentTarget) setOpen(false)
       }}
     >
-      <div className="w-[520px] max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg bg-surface shadow-dialog animate-pop-in">
+      <div className="w-[520px] max-w-[calc(100vw-2rem)] overflow-hidden rounded-panel bg-surface shadow-dialog animate-pop-in">
         <div className="flex h-12 items-center gap-2.5 border-b border-border px-4">
           <Search size={ICON_SIZE.md} className="shrink-0 text-ink-3" />
           <input

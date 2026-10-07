@@ -203,7 +203,7 @@ describe('DependencyPrepareDialog', () => {
       { tag: 'button', text: en('dependencyPrepareLater') },
       { tag: 'button', text: en('oneClickRepair') },
     ])
-    expect(button(en('oneClickRepair'))!.className).toContain('text-white')
+    expect(button(en('oneClickRepair'))!.getAttribute('data-variant')).toBe('primary')
     expect(visibleSentenceCount(dialog()!)).toBe(1)
     expect(visiblePrimaryButtons(dialog()!)).toBe(1)
     const advanced = document.querySelector('[data-repair-advanced]') as HTMLDetailsElement
