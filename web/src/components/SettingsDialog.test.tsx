@@ -389,6 +389,30 @@ describe('搜索（2026-10-07 设计审计 §9.1，settingsRegistry）', () => {
     expect(fetchMock.mock.calls.length).toBe(before)
   })
 
+  it('钻入页（改图助手 › 某 Agent）挂着时点同一分区的结果：先退回列表再落地高亮（Codex #828 P2）', async () => {
+    const caps = capsOf([agentCaps()])
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL) =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(String(input).includes('/api/ai/capabilities') ? caps : { checks: [] }),
+        } as Response),
+      ),
+    )
+    await open('ai')
+    await act(async () => {})
+    await act(async () => document.querySelector<HTMLButtonElement>('[data-agent-open]')!.click())
+    expect(document.querySelector('[data-settings-anchor="ai.default"]'), '进了详情，列表那几行不在').toBeNull()
+    const label = SETTINGS_REGISTRY.find((e) => e.id === 'ai.default')!.label()
+    await type(label)
+    await act(async () => document.querySelector<HTMLButtonElement>('[data-settings-result="ai.default"]')!.click())
+    await act(async () => {})
+    const row = document.querySelector('[data-settings-anchor="ai.default"]')
+    expect(row, '退回了列表').toBeTruthy()
+    expect(row!.hasAttribute('data-settings-hit')).toBe(true)
+  })
+
   /** 注册表里每一条都在它那一页上找得到锚点：登记了、页面却没挂 `data-settings-anchor` 时，点结果什么都不发生 */
   it('注册表里的每一条在页面上都有锚点', async () => {
     const bySection = new Map<string, string[]>()

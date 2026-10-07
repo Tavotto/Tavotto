@@ -268,6 +268,9 @@ export function SettingsDialog() {
     if (id !== section) {
       if (!(await leaveSection())) return
       setSection(id)
+    } else if (anchor && crumb) {
+      // 同一分区里正挂着钻入页（改图助手 › Codex）：锚点都在列表态上，先退回列表再落地（Codex #828 P2）
+      crumb.onBack()
     }
     if (anchor) setPendingAnchor(anchor)
     else navRef.current?.querySelector<HTMLButtonElement>(`[data-section="${id}"]`)?.focus()
