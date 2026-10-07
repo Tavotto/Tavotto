@@ -175,6 +175,8 @@ def test_a_missing_dependency_lists_the_project_venv_instead_of_switching(tmp_pa
     assert projectenv.remembered_record(root) is None
     # 体检过了（用户自己的运行触发的有界检查），但没有采用
     assert engine_pool.same_python(outcome["recommended"]["python"], venv_python)
+    assert outcome["recommended"]["id"] == userenvs.env_id(venv_python)
+    assert outcome["recommended"]["generation"] == projectenv.environment_generation(venv_python)
 
 
 # ---------------------------------------------------------------------------
@@ -849,3 +851,42 @@ def test_the_environment_generation_ignores_permission_bits_but_sees_a_rebuild(t
     python = build("second")
     assert projectenv.environment_generation(python) not in ("", first)
     assert projectenv.environment_generation(str(tmp_path / "nowhere" / "python")) == ""
+
+
+@needs_worker
+def test_missing_dependency_recommendation_keeps_its_generation_through_http_projection(
+    client, tmp_path, monkeypatch
+):
+    from tavotto import app as m
+
+    root = tmp_path / "missing-dependency-adoption"
+    root.mkdir()
+    (root / "figure.py").write_text("import matplotlib\n", encoding="utf-8")
+    python = real_venv(root, ".venv", python=WORKER_PY)
+    pj = _open(client, root)
+    outcome = engine_pool.try_project_env(str(root), "figure.py", "matplotlib")
+    assert outcome["code"] == projectenv.ERROR_CONFIRMATION_REQUIRED
+    error = engine_pool.WorkerError("missing", code="missing_dependency", module="matplotlib")
+    error.project_env = outcome
+    monkeypatch.setattr(m, "_dependency_repair_offer", lambda *args: None)
+    with m.app.test_request_context(query_string={"pj": pj}):
+        payload = m._worker_error_payload(error)
+    shown = payload["project_env"]["recommended"]
+    assert shown == {
+        "venv": ".venv",
+        "id": userenvs.env_id(python),
+        "generation": projectenv.environment_generation(python),
+    }
+    rebuild_venv(root, ".venv", python=WORKER_PY)
+    response = client.patch(
+        "/api/engine/environment",
+        json={
+            "scope": "project",
+            "candidate": shown["id"],
+            "expected_generation": shown["generation"],
+        },
+        query_string={"pj": pj},
+    )
+    assert response.status_code == 409
+    assert response.get_json()["code"] == "environment_changed"
+    assert projectenv.remembered_record(root) is None

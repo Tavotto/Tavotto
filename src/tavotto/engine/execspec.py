@@ -105,17 +105,17 @@ WRITE_MODES = (WRITE_MODE_SANDBOXED, WRITE_MODE_PROJECT_DIR, WRITE_MODE_UNRESTRI
 #: `launch_context()` 形态的版本。加可选字段不升；改语义 / 删字段才升。
 LAUNCH_CONTEXT_VERSION = 1
 
-#: 用户给的脚本 argv 的上限（T03）。操作系统命令行装不下无限长的参数，更重要的是别让一个粘错的
-#: 超长文本进 worker 命令行 / workerd 的 spec 哈希。超限在边界上拒绝，不截断（截断 = 静默丢参数）。
+#: 用户给的脚本 argv 的上限（T03）。私有请求管道仍需有界，别让一个粘错的
+#: 超长文本占满请求与运行配置。超限在边界上拒绝，不截断（截断 = 静默丢参数）。
 MAX_ARGV_TOKENS = 256
 MAX_ARGV_CHARS = 32 * 1024
-#: 上线的 JSON 载荷长度上限（字符）。Windows 整条命令行只有 32,767 个字符，而中文会被转义成 6 个字符的
-#: `\\uXXXX`——只限原文长度挡不住，所以单独量**实际放进命令行的那一串**。
+#: JSON 载荷预算（字符，保留 T03 的输入上限）。safe argv 经私有请求管道传输，
+#: 不再占 Windows 命令行；ASCII 转义仍给序列化开销一个稳定上界。
 MAX_ARGV_WIRE_CHARS = 16 * 1024
 
 
 def argv_wire(argv) -> str:
-    """argv 在 worker 命令行上的样子（`worker_argv` 的唯一序列化）：ASCII 转义的紧凑 JSON 数组。"""
+    """argv 的序列化预算：ASCII 转义的紧凑 JSON 数组。"""
     return json.dumps(list(argv), ensure_ascii=True, separators=(",", ":"))
 
 
@@ -143,6 +143,7 @@ class RunSelection:
 
     config_id: str
     argv: tuple[str, ...]
+    sensitive: bool = False
 
     def __post_init__(self) -> None:
         if not self.config_id or not isinstance(self.argv, tuple) or not self.argv:
@@ -151,8 +152,15 @@ class RunSelection:
     @property
     def key(self) -> str:
         """池键 / 缓存目录的区分段：不同 argv（或同 argv 的不同配置引用）永不共用会话。"""
-        payload = json.dumps([self.config_id, list(self.argv)], ensure_ascii=True)
+        payload = json.dumps([self.config_id, list(self.argv), self.sensitive], ensure_ascii=True)
         return hmac.new(_PROCESS_KEY, payload.encode("utf-8"), hashlib.sha256).hexdigest()[:16]
+
+    @property
+    def input_key(self) -> str:
+        """Private prompt identities cannot be brute-forced from public run IDs."""
+        return hmac.new(
+            _PROCESS_KEY, ("input:" + self.key).encode("ascii"), hashlib.sha256
+        ).hexdigest()
 
 
 def _normalize_target(target: str, target_kind: str) -> str:
@@ -203,7 +211,7 @@ class ExecutionSpec:
     input_remap: tuple = ()
     #: 这次执行的**运行配置引用**（T03，`engine/runconfig.py`）：本机不透明 id（`rc_…`），空串 =
     #: 没有（旧行为：argv 为空）。argv 非空时它必须有值——`argv` 的原文只活在 `to_payload()`
-    #: 与 worker 命令行里，**公开投影（`stable_payload` / `launch_context` / 回执）只带数量与这个 id**，
+    #: 与私有请求管道里，**公开投影（`stable_payload` / `launch_context` / 回执）只带数量与这个 id**，
     #: 参数值可能是路径 / 令牌 / 患者编号，低熵摘要也不行。
     run_config: str = ""
 
@@ -226,7 +234,7 @@ class ExecutionSpec:
         if any("\x00" in a for a in self.argv):
             raise ValueError("argv 的 token 不能含 NUL（操作系统的 argv 装不下）")
         if len(argv_wire(self.argv)) > MAX_ARGV_WIRE_CHARS:
-            raise ValueError("argv 序列化后超出命令行长度上限")
+            raise ValueError("argv 序列化后超出载荷长度上限")
         if not isinstance(self.run_config, str):
             raise ValueError("run_config 必须是字符串")
         if self.profile == PROFILE_SAFE and self.argv and not self.run_config:
@@ -559,14 +567,8 @@ def worker_argv(
             json.dumps(list(spec.input_remap), ensure_ascii=False, separators=(",", ":")),
         ]
     if spec.argv:
-        # T03：脚本的 `sys.argv[1:]`——**一个 JSON 字符串数组，一个 flag**。不把 token 直接摊在命令行上：
-        # 空串 / 以 `-` 开头 / `--` / 中文都会被 worker 自己的 argparse 或 Windows 的命令行重组弄坏；
-        # JSON 是无歧义载荷，且 ASCII 转义后与控制面的编码无关（workerd 的 spec 哈希也按它分会话）。
-        # 只在非空时多两个 token（golden）；`--run-config` 是产物身份的本机引用，worker 把它编进描述符。
-        out += [
-            "--script-argv-json",
-            argv_wire(spec.argv),
-            "--run-config",
-            spec.run_config,
-        ]
+        # 只传不透明引用：精确 token 经私有请求管道传，既不出现在 OS 进程列表，
+        # 也不受 Windows list2cmdline 的引号膨胀影响。引用仍参与 workerd 的 spawn
+        # 身份；worker 缺少匹配载荷时拒绝执行，绝不回落为空 argv。
+        out += ["--run-config", spec.run_config]
     return out

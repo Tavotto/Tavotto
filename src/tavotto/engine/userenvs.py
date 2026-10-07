@@ -76,7 +76,20 @@ def _home() -> str:
     return os.path.expanduser("~")
 
 
+def _local_hint(path: str) -> bool:
+    """Lexically reject network/device namespaces before filesystem discovery.
+
+    Normalize separators as text on every host: a Windows project can be scanned
+    on POSIX too. Do not resolve/stat a rejected hint, since even existence checks
+    may contact SMB/WebDAV and send the user's network authentication on Windows.
+    """
+    value = path.replace("\\", "/")
+    return not value.startswith(("//", "/??/"))
+
+
 def _is_python_file(path: str) -> bool:
+    if not _local_hint(path):
+        return False
     try:
         p = Path(path)
         return p.name.lower().startswith("python") and p.is_file()
@@ -86,6 +99,8 @@ def _is_python_file(path: str) -> bool:
 
 def _prefix_python(prefix: str) -> str | None:
     """环境前缀（Conda / pyenv / venv）→ 里面的解释器；没有回 None。"""
+    if not _local_hint(prefix):
+        return None
     names = ("python.exe",) if os.name == "nt" else ("bin/python3", "bin/python")
     for name in names:
         cand = os.path.join(prefix, name)
@@ -127,6 +142,8 @@ def _vscode_pythons(dirs: list[Path]) -> list[str]:
         for raw in _VSCODE_KEY.findall(text):
             value = raw.replace("${workspaceFolder}", str(d)).replace("\\\\", "\\")
             value = os.path.expanduser(value)
+            if not _local_hint(value):
+                continue
             if not os.path.isabs(value):
                 value = str(d / value)
             out.append(value)

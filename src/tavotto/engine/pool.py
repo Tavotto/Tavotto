@@ -379,6 +379,25 @@ def _run_kwargs(run) -> dict:
     return {} if run is None else {"argv": run.argv, "run_config": run.config_id}
 
 
+def _run_payload(run) -> dict:
+    """Exact argv only crosses the private request pipe, never spawn argv/env/logs.
+
+    Include it on executable requests too: a workerd retry can transparently reopen
+    a child before render/export, which must rebuild with this frozen selection.
+    """
+    if run is None:
+        return {}
+    private = {"input_key": run.input_key} if run.sensitive else {}
+    return {
+        "run": {
+            "config_id": run.config_id,
+            "argv": list(run.argv),
+            "sensitive": run.sensitive,
+            **private,
+        }
+    }
+
+
 def _worker_key(figures_dir, script_name, artifact_source=None, run=None):
     """池键 = (项目, 脚本[, selected-artifact 字节身份][, 运行配置])。
 
@@ -1886,6 +1905,7 @@ class EngineWorker:
         )
 
     def request(self, obj: dict, timeout: float | None = None) -> dict:
+        obj = {**obj, **_run_payload(getattr(self, "run", None))}
         if getattr(self, "artifact_source", None) is not None:
             obj = {**obj, "artifact_source": self.artifact_source}
         # None → 取模块常量的**当前**值（默认参数会在 def 时定死，测试改不动）
@@ -2471,6 +2491,7 @@ class WorkerdWorker:
     ) -> dict:
         from . import workerd_client
 
+        payload = {**(payload or {}), **_run_payload(getattr(self, "run", None))}
         if getattr(self, "artifact_source", None) is not None:
             payload = {**(payload or {}), "artifact_source": self.artifact_source}
         self.last_used = time.time()
@@ -2632,12 +2653,12 @@ class WorkerdWorker:
         finally:
             self._dead = True
 
-    def force_kill(self) -> None:
-        """硬关：workerd 当场杀掉 worker，不等在飞的活跑完。"""
+    def force_kill(self) -> bool:
+        """硬关：workerd 当场杀掉 worker，不等在飞的活跑完。False 表示关停未确认，不能据此重跑。"""
         from . import workerd_client
 
         if not self._session_id:
-            return
+            return True
         try:
             self._client.call(
                 "close_session",
@@ -2647,7 +2668,9 @@ class WorkerdWorker:
                 slack=2.0,
             )
         except workerd_client.WorkerdError:
-            pass
+            return False
+        else:
+            return True
         finally:
             self._dead = True
 
@@ -3218,6 +3241,8 @@ def try_project_env(figures_dir: str, script_name: str, module: str) -> dict:
         return outcome
     python = outcome["python"]
     if not projectenv.silent_adoption_enabled():
+        from . import userenvs
+
         # 确认模式（ADR 0114）：项目 venv 体检通过、缺的包也在里面——这是**建议**，不是决定。体检是这次
         # 运行缺包触发的有界检查（上面的 `mark_attempted` 一次一对），采用是用户在修复卡片上点的那一下
         # （`PATCH /api/engine/environment`），之后才进项目设置
@@ -3228,6 +3253,8 @@ def try_project_env(figures_dir: str, script_name: str, module: str) -> dict:
             "recommended": {
                 "python": python,
                 "venv": outcome.get("venv", ""),
+                "id": userenvs.env_id(python),
+                "generation": projectenv.environment_generation(python),
                 "health": outcome.get("health"),
             },
         }
@@ -3440,7 +3467,12 @@ def _build_with(
 
 
 def invalidate(
-    script_name: str, figures_dir: str | None = None, run=None, *, only_run: bool = False
+    script_name: str,
+    figures_dir: str | None = None,
+    run=None,
+    *,
+    only_run: bool = False,
+    force: bool = False,
 ) -> None:
     """脚本文件变更后作废其会话（下次请求自动重建）。
 
@@ -3451,6 +3483,10 @@ def invalidate(
     给了 `run` = 只作废这一份配置的会话（用户重跑 / 试运行某一份参数，不该把同脚本别的参数的热会话顺手杀掉）。
     `only_run=True` 把"这一份"也用在 `run=None` 上：只作废**不带参数**的那条会话（试运行 / 重跑无参数的脚本时，
     同脚本别的配置的热态编辑不该被顺手打断）。
+    `force=True` is an explicit rerun: synchronously retire old workers before
+    another acquisition can reuse workerd's spawn hash. An unconfirmed supervisor
+    close refuses the rerun and retains its handle for a later retirement retry.
+
     """
     with _lock:
         if figures_dir is None:
@@ -3459,6 +3495,15 @@ def invalidate(
             keys = [k for k in _workers if k == _worker_key(figures_dir, script_name, None, run)]
         else:
             keys = [k for k in _workers if k[:2] == (_norm_dir(figures_dir), script_name)]
+        if force:
+            for key in keys:
+                worker = _workers[key]
+                # force_kill bypasses the worker request lock and is bounded.
+                # Keep acquisition fenced until workerd has removed by_hash.
+                if worker.force_kill() is False:
+                    raise WorkerError("无法确认旧渲染会话已关闭，请重试", code="session_dead")
+                _workers.pop(key, None)
+            return
         victims = [_workers.pop(k) for k in keys]
     for w in victims:
         threading.Thread(target=w.shutdown, daemon=True).start()

@@ -979,13 +979,13 @@
         {
           "file": "src/tavotto/app.py",
           "symbol": "_declared_density",
-          "line": 1380,
+          "line": 1386,
           "role": "TIFF 分辨率标签的来源判据（只认 dpi_source == metadata）"
         },
         {
           "file": "src/tavotto/app.py",
           "symbol": "_post_check_size",
-          "line": 5903,
+          "line": 5926,
           "role": "写回 commit 后自检：PDF 页面尺寸 vs 重放 manifest 的 size_mm（容差 0.5mm，不回滚）"
         },
         {
