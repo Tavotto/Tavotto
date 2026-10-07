@@ -53,6 +53,10 @@
      （foundation.test「纸上的东西用纸上的墨」+ tokenContrast.test 守着） */
   --color-paper-ink-2: color-mix(in srgb, var(--color-paper-ink) 80%, transparent);
   --color-paper-ink-3: color-mix(in srgb, var(--color-paper-ink) 65%, transparent);
+  /* 透明页面的棋盘格（canvas/PageSheet）：paper-ink 6% 混进**纸**、不是混进 transparent——格子必须不透明。
+     半透明的格子会透出纸下面的画布色：浅色里画布是浅灰看不出来，暗色里画布近黑，棋盘格就成了黑白相间
+     （Codex P2，2026-10-07）。混进纸 = 旧的「6% 墨叠在白纸上」的合成色，浅色观感不变；两套主题同值（tokenContrast.test 守着） */
+  --color-paper-checker: color-mix(in srgb, var(--color-paper-ink) 6%, var(--color-paper));
   /* 界面浮在纸上时的底（空画布的起步提示这类直接坐在页面上的界面）：浅色里透明——字就落在白纸上；
      暗色里是面板色——浅色的字不能直接落在不变的白纸上 */
   --color-paper-chrome: transparent;

@@ -298,6 +298,17 @@ const SELECTABLE_GROUNDS = ['surface', 'bg', 'canvas', 'surface-2', 'field', 'fi
 const TEXT_VIEW = readFileSync(path.resolve(HERE, 'canvas/TextView.tsx'), 'utf8')
 /** 两套主题都不变的不透明 token：纸与纸上的墨是文档内容；sel 是画在纸上的那一种彩色线（对纸白与两种画布灰都 ≥3） */
 const THEME_INVARIANT = ['paper', 'paper-ink', 'sel']
+const PAGE_SHEET = readFileSync(path.resolve(HERE, 'canvas/PageSheet.tsx'), 'utf8')
+/**
+ * 透明页面棋盘格的深格 `--color-paper-checker`：`color-mix(in srgb, var(--color-paper-ink) N%, var(--color-paper))`
+ * → 合成后的不透明颜色。第二个参数必须是纸（不透明）——写成 transparent 就会透出纸下面的画布色（Codex P2）。
+ */
+function paperCheckerIn(theme: Theme): string {
+  const v = VARS[theme]['color-paper-checker'] ?? ''
+  const m = v.match(/^color-mix\(in srgb, var\(--color-paper-ink\) ([\d.]+)%, var\(--color-paper\)\)$/)
+  if (!m) throw new Error(`${theme} 表里 --color-paper-checker 不是「paper-ink N% 混进纸」的不透明色（${v}）`)
+  return mixOver(tokenIn(theme, 'paper-ink'), Number(m[1]) / 100, tokenIn(theme, 'paper'))
+}
 
 describe('暗色主题的值表（宪法第二十八节）', () => {
   it('两段生效条件写的是同一张表：媒体查询（没选浅色）那一段与 data-theme="dark" 那一段逐字相同', () => {
@@ -323,6 +334,20 @@ describe('暗色主题的值表（宪法第二十八节）', () => {
     }
     expect(tokenIn('light', 'paper')).toBe('#ffffff')
   })
+
+  it('透明页面的棋盘格是不透明的纸色（Codex P2）：PageSheet 的两种格子都是不透明的纸 token，深格两套主题同值、浅色观感不变', () => {
+    // 棋盘格那一行只用 --color-paper-checker 与 --color-paper，不再用半透明的 GRID_INK / transparent
+    const conic = PAGE_SHEET.match(/repeating-conic-gradient\(([^\n]*)\)/)?.[1] ?? ''
+    expect(conic, 'PageSheet 里找不到棋盘格').not.toBe('')
+    expect(conic).toBe('${CHECKER} 0% 25%, ${PAPER} 0% 50%')
+    expect(PAGE_SHEET).toMatch(/const CHECKER = 'var\(--color-paper-checker\)'/)
+    expect(PAGE_SHEET).toMatch(/const PAPER = 'var\(--color-paper\)'/)
+    // 纸上的东西不跟主题走：暗色表里不重写它
+    expect(DARK_VARS['color-paper-checker']).toBeUndefined()
+    expect(paperCheckerIn('dark')).toBe(paperCheckerIn('light'))
+    // 浅色观感不变：等于旧的「paper-ink 6% 半透明叠在白纸上」的合成色
+    expect(paperCheckerIn('light')).toBe(mixOver(tokenIn('light', 'paper-ink'), 0.06, tokenIn('light', 'paper')))
+  })
 })
 
 for (const theme of THEMES) {
@@ -340,6 +365,13 @@ for (const theme of THEMES) {
         expect(base, name).toBe('paper-ink')
         expect(contrast(mixOver(t(base), alpha, t('paper')), t('paper')), `${name} on paper`).toBeGreaterThanOrEqual(4.5)
       }
+    })
+
+    it('透明棋盘格的深格与纸的差别两套主题一样（看得出、但不抢图）：合成后对纸 1.05–1.2:1', () => {
+      const c = contrast(paperCheckerIn(theme), t('paper'))
+      expect(c).toBeCloseTo(contrast(paperCheckerIn('light'), tokenIn('light', 'paper')), 6)
+      expect(c).toBeGreaterThanOrEqual(1.05)
+      expect(c).toBeLessThanOrEqual(1.2)
     })
 
     it('浮起的 thumb（分段 / 选项格 / 开关钮）上的字 ink / ink-2 ≥4.5:1；暗色里 thumb 比面板亮（浮起靠更亮）', () => {
