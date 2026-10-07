@@ -135,7 +135,8 @@
   "crash": {
     "blank": "打开空白排版",
     "body": "排版已自动保存在本机，刷新后从最后一次快照继续。仍然出错可选「打开空白排版」，原排版不会删除。",
-    "title": "界面出错了"
+    "title": "界面出错了",
+    "details": "详情"
   },
   "docBanner": {
     "conflictDisk": "磁盘上：{{canvases}} 张画布 · {{objects}} 个对象 · 改动于 {{time}}",

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Bookmark, Ellipsis, Eye, Minus, Pencil, Plus, RotateCcw, RotateCcwClock, X } from '@/components/ui/icons'
+import { Bookmark, Copy, Eye, Minus, Pencil, Plus, RotateCcw, RotateCcwClock, Trash2, X } from '@/components/ui/icons'
 import { FIELD_BOX, FIELD_FOCUS } from '@/components/ui/fieldBox'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { RetryImg } from '@/components/ui/RetryImg'
@@ -58,10 +58,14 @@ import {
 } from './CanvasThumb'
 import { DrawerCount } from './left/DrawerCount'
 import { Badge } from './ui/Badge'
+import { Card } from './ui/Card'
+import { Notice } from './ui/Notice'
+import { RowMenu } from './ui/RowMenu'
+import { useRowMenu } from './ui/useRowMenu'
 import { Button, IconButton } from './ui/Button'
 import { EmptyState } from './ui/EmptyState'
 import { TextInput } from './ui/Input'
-import { Menu, MenuItem, MenuSeparator } from './ui/Menu'
+import { MenuItem, MenuSeparator } from './ui/Menu'
 import { Dialog } from './ui/Dialog'
 import { Segmented } from './ui/Segmented'
 import { Tip } from './ui/Tooltip'
@@ -163,7 +167,10 @@ export function VersionDrawer() {
   const setSaveName = useCallback((text: string) => setDraft({ ctx, text }), [ctx])
   // busy 同样记着是哪个上下文忙：A 的保存还在飞时换到 B，B 不该被「忙」锁住
   const [busyCtx, setBusyCtx] = useState<string | null>(null)
+  // 恢复在飞（两个入口共用的那把锁，见 `restoreUnderLock`）时抽屉同样关不掉
+  const restoringHere = useTimelineStore((s) => s.restoring) === ctx
   const busy = busyCtx === ctx
+  const locked = busy || restoringHere
   const submitOnce = useInFlight()
   const asideRef = useRef<HTMLElement>(null)
   const nameRef = useRef<HTMLInputElement>(null)
@@ -214,7 +221,11 @@ export function VersionDrawer() {
     setRenaming(null)
     // 打开时记住触发点，关闭后把焦点还回去
     restoreFocus.current = document.activeElement as HTMLElement | null
+    // 焦点交进抽屉（2026-10-07 设计审计 §10.2：此前打开后焦点还留在顶栏，Tab 要走一圈才进来）。
+    // 落在抽屉本身：读屏念出「排版时间线」，下一下 Tab 进第一个控件；Esc 在抽屉上才收得到
+    const id = requestAnimationFrame(() => asideRef.current?.focus({ preventScroll: true }))
     return () => {
+      cancelAnimationFrame(id)
       // 抽屉关了，命名输入跟着收起：下次打开是「给现在存个名字…」按钮，不是一直开着的输入框
       setNaming(false)
       // 抽屉关了，预览跟着退出：没有抽屉的只读大图没有出口
@@ -295,6 +306,33 @@ export function VersionDrawer() {
     })
   }
 
+  /**
+   * 选中行上的「恢复到这里」：取这一版的正文再走同一个 `restoreUnderLock`（与预览对话框
+   * 同一把锁、同一个 `restoreNode`）。锁在**取正文之前**就挂上（Codex #831 P1）：否则
+   * A 的正文还在路上时再点 B，两次都会走到恢复、都会写。正文取不回来就按预览失败那一槽说。
+   * 没写进去（取消、「恢复前」存不下来、取正文期间文档变了、正文取不回来）就把为这次恢复
+   * 打开的预览收回去，回到点之前的样子；被锁拒掉（已有一次在飞）什么都不动。
+   */
+  const restoreFromRow = async (meta: LayoutVersionMeta) => {
+    setPreviewError(null)
+    const closeOurs = () => {
+      const cur = useTimelineStore.getState().preview
+      if (cur?.docId === docId && cur.meta.id === meta.id) useTimelineStore.getState().setPreview(null)
+    }
+    try {
+      const done = await restoreUnderLock(ctx, docId, meta, async () => {
+        const v = await fetchVersionDoc(docId, meta.id)
+        return v.doc as FigureDocument
+      })
+      if (done === null) return
+      if (!done) closeOurs()
+    } catch (e) {
+      // 正文取不回来：取正文期间开着的那张「加载中」模态预览也收回去（锁由 `restoreUnderLock` 摘）
+      closeOurs()
+      setPreviewError(backendErrorText(e))
+    }
+  }
+
   const groups = useMemo(
     () => groupTimeline(versions, { namedOnly: filter === 'named', now: Date.now() }),
     [versions, filter],
@@ -307,9 +345,10 @@ export function VersionDrawer() {
       ref={asideRef}
       role="dialog"
       aria-label={vd('drawerLabel')}
+      tabIndex={-1}
       data-timeline-drawer
       onKeyDown={(e) => {
-        if (e.key === 'Escape' && !busy) {
+        if (e.key === 'Escape' && !locked) {
           e.stopPropagation()
           // 逐层退出：先退预览，再关抽屉
           if (useTimelineStore.getState().preview) useTimelineStore.getState().setPreview(null)
@@ -318,7 +357,7 @@ export function VersionDrawer() {
       }}
       // 覆盖在画布上的浮板只留投影：`shadow-pop` 自带 1px 环，再画一条实色 border
       // 就是双描边（宪法第一节；左栏审计 L20，左抽屉 overlay 态同改）
-      className="absolute inset-y-0 right-0 z-overlay flex w-[400px] max-w-[92vw] flex-col bg-surface shadow-pop"
+      className="absolute inset-y-0 right-0 z-overlay flex w-[400px] max-w-[92vw] flex-col bg-surface shadow-pop outline-none"
     >
       {/* 抽屉头与左抽屉同一副骨架：36 高、type-section 标题、DrawerCount 计数、IconButton
           关闭钮（左栏审计 L20 / L01 / L13 / L14） */}
@@ -329,7 +368,8 @@ export function VersionDrawer() {
         <IconButton
           label={vd('close')}
           className="-mr-1.5"
-          disabled={busy}
+          disabled={locked}
+          data-timeline-close
           onClick={() => setOpen(false)}
         >
           <X size={ICON_SIZE.md} className="text-ink-3" />
@@ -385,7 +425,7 @@ export function VersionDrawer() {
           </Tip>
         )}
       </div>
-      {naming && <p className="shrink-0 px-3 pb-2 text-xs text-ink-3">{vd('nameHint')}</p>}
+      {naming && <p className="type-caption shrink-0 px-3 pb-2">{vd('nameHint')}</p>}
       <div className="flex shrink-0 px-3 pb-1.5">
         <Segmented
           value={filter}
@@ -401,19 +441,27 @@ export function VersionDrawer() {
       </div>
       {budget?.namedOver && (
         // 命名节点超出字节上限：**不删**，照实说，请用户自己删（ADR 0101）
-        <p role="alert" data-timeline-budget className="mx-3 mb-2 rounded-sm bg-warn-surface px-2 py-1.5 text-xs leading-relaxed text-warn-content">
+        <Notice tone="warn" role="alert" data-timeline-budget className="mx-3 mb-2">
           {vd('budgetOver', {
             used: ((budget.namedBytes ?? 0) / 1048576).toFixed(1),
             limit: Math.round(budget.limit / 1048576),
           })}
-        </p>
+        </Notice>
+      )}
+      {/* 错误紧贴筛选器下面（2026-10-07 设计审计 §10.2）：此前在列表最末尾，列表一长就在视口外 */}
+      {(actionError || previewError || loadError) && (
+        <Notice tone="danger" data-timeline-error className="mx-3 mb-2">
+          {actionError && <p data-timeline-error-kind="action">{actionError}</p>}
+          {previewError && <p data-timeline-error-kind="preview">{previewError}</p>}
+          {loadError && <p data-timeline-error-kind="load">{loadError}</p>}
+        </Notice>
       )}
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         {!loaded ? (
           // 这个上下文的列表还没到（或第一次就失败了：错误在下面）——不是「没有节点」
           !loadError && (
-            <p data-timeline-loading className="p-6 text-center text-xs text-ink-3">
+            <p data-timeline-loading className="text-shimmer p-6 text-center text-ink-3">
               {vd('loadingList')}
             </p>
           )
@@ -436,6 +484,7 @@ export function VersionDrawer() {
                     showCanvas={canvases.length > 1 || v.canvasId !== activeCanvasId}
                     onSelect={() => setPicked({ ctx, id: v.id })}
                     onPreview={() => openPreview(v)}
+                    onRestore={() => restoreFromRow(v)}
                     onRename={(on) => setRenaming(on ? v.id : null)}
                     onChanged={async () => {
                       await reload()
@@ -446,13 +495,6 @@ export function VersionDrawer() {
                 ))}
               </TimelineDay>
             ))}
-          </div>
-        )}
-        {(actionError || previewError || loadError) && (
-          <div data-timeline-error className="px-3 py-2 text-xs text-danger">
-            {actionError && <p data-timeline-error-kind="action">{actionError}</p>}
-            {previewError && <p data-timeline-error-kind="preview">{previewError}</p>}
-            {loadError && <p data-timeline-error-kind="load">{loadError}</p>}
           </div>
         )}
       </div>
@@ -471,7 +513,7 @@ function TimelineDay({ group, children }: { group: TimelineGroup; children: Reac
         : formatDate(group.day.ts)
   return (
     <section role="listitem" data-timeline-day={group.key}>
-      <h3 className="sticky top-0 z-sticky bg-surface px-3 pb-1 pt-2 text-xs text-ink-3">{label}</h3>
+      <h3 className="type-section sticky top-0 z-sticky bg-surface px-3 pb-1 pt-3">{label}</h3>
       <ul aria-label={label}>{children}</ul>
     </section>
   )
@@ -532,6 +574,7 @@ function TimelineRow({
   showCanvas,
   onSelect,
   onPreview,
+  onRestore,
   onRename,
   onChanged,
   onError,
@@ -546,8 +589,10 @@ function TimelineRow({
   showCanvas: boolean
   /** 单击行：选中（不开模态） */
   onSelect: () => void
-  /** 行上的「预览」钮：打开模态预览 */
+  /** 选中行内联条上的「预览」：打开模态预览 */
   onPreview: () => void
+  /** 选中行内联条上的「恢复到这里」（同一个 `restoreNode`） */
+  onRestore: () => Promise<void>
   onRename: (on: boolean) => void
   onChanged: () => Promise<void>
   onError: (e: string | null) => void
@@ -601,11 +646,19 @@ function TimelineRow({
   }
 
   const index = all.indexOf(v)
+  // 一行的动作只有一颗 ⋯（2026-10-07 设计审计 §10.2：此前「预览」「改名」两颗图标 + ⋯，三个入口说的是同一张清单）。
+  // ⋯ / 右键 / ⇧F10 是同一份菜单（`RowMenu`）；选中的那一行下面再露一条「预览 · 恢复到这里」
+  const menu = useRowMenu()
+  const [restoring, setRestoring] = useState(false)
+  // 这个上下文有一次恢复在飞（哪一行发起的都算）：所有行的「恢复到这里」一起禁用
+  const restoreLocked = useTimelineStore((s) => s.restoring) === ctx
+  const renamingFromMenu = useRef(false)
   return (
-    <li data-timeline-node={v.id} data-timeline-named={named || undefined}>
+    <li className="group/node" data-timeline-node={v.id} data-timeline-named={named || undefined}>
       <div
+        {...menu.rowProps}
         className={cn(
-          'group flex items-start gap-1 rounded-sm pr-1.5',
+          'group flex items-start gap-1 rounded-md pr-1.5',
           selected ? 'bg-selected' : 'hover:bg-surface-hover',
         )}
       >
@@ -619,7 +672,7 @@ function TimelineRow({
           }}
           aria-pressed={selected}
           data-timeline-row
-          className="flex min-w-0 flex-1 items-start gap-2 rounded-sm py-1.5 pl-3 text-left outline-none focus-visible:focus-ring"
+          className="flex min-w-0 flex-1 items-start gap-2 rounded-md py-1.5 pl-3 text-left outline-none focus-visible:focus-ring"
         >
           <RowThumb docId={docId} meta={v} />
           <span className="flex min-w-0 flex-1 flex-col gap-0.5">
@@ -660,45 +713,78 @@ function TimelineRow({
             )}
           </span>
         </button>
-        {/* 显式入口：预览 / 改名。选中、悬停或键盘焦点在这一行时露出（Tab 照样走得到） */}
-        <span
-          className={cn(
-            'mt-1.5 flex shrink-0 items-center transition-opacity duration-fast',
-            selected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100',
-          )}
+        <RowMenu
+          state={menu}
+          label={vd('more')}
+          className="mt-1.5"
+          data-timeline-more
+          // 从菜单进改名：关菜单时不把焦点还给 ⋯（那一下就是改名框的 blur——框一出现就按「没改」提交收起了）
+          onCloseAutoFocus={(e) => {
+            if (!renamingFromMenu.current) return
+            renamingFromMenu.current = false
+            e.preventDefault()
+          }}
         >
-          <IconButton iconSize="sm" label={vd('preview')} data-timeline-preview-button onClick={onPreview}>
-            <Eye size={ICON_SIZE.sm} className="text-ink-3" />
-          </IconButton>
-          <IconButton
-            iconSize="sm"
-            label={vd(named ? 'rename' : 'name')}
+          <MenuItem icon={Eye} data-timeline-menu-preview onSelect={onPreview}>
+            {vd('preview')}
+          </MenuItem>
+          <MenuItem
+            icon={Pencil}
             data-timeline-rename-button
-            onClick={() => onRename(true)}
+            onSelect={() => {
+              // 两件事都要：等菜单卸掉再展开（菜单开着时它的焦点圈会把改名框的焦点拽回去），
+              // 并且关菜单时不把焦点还给 ⋯（见上面的 onCloseAutoFocus）
+              renamingFromMenu.current = true
+              window.setTimeout(() => onRename(true), 0)
+            }}
           >
-            <Pencil size={ICON_SIZE.sm} className="text-ink-3" />
-          </IconButton>
-        </span>
-        <Menu
-          align="end"
-          trigger={
-            <IconButton iconSize="sm" label={vd('more')} className="mt-1.5 shrink-0" data-timeline-more>
-              <Ellipsis size={ICON_SIZE.sm} className="text-ink-3" />
-            </IconButton>
-          }
-        >
-          <MenuItem onSelect={() => onRename(true)}>{vd(named ? 'rename' : 'name')}</MenuItem>
+            {vd(named ? 'rename' : 'name')}
+          </MenuItem>
           {named && (
-            <MenuItem onSelect={act(() => updateVersion(docId, v.id, { named: false }))}>
+            <MenuItem icon={Bookmark} onSelect={act(() => updateVersion(docId, v.id, { named: false }))}>
               {vd('unname')}
             </MenuItem>
           )}
-          <MenuItem onSelect={act(() => duplicateVersion(docId, v.id))}>{vd('duplicate')}</MenuItem>
-          <MenuSeparator />
-          <MenuItem onSelect={() => void remove()}>
-            <span className="text-danger">{vd('delete')}</span>
+          <MenuItem icon={Copy} onSelect={act(() => duplicateVersion(docId, v.id))}>
+            {vd('duplicate')}
           </MenuItem>
-        </Menu>
+          <MenuSeparator />
+          <MenuItem icon={Trash2} danger data-timeline-delete onSelect={() => void remove()}>
+            {vd('delete')}
+          </MenuItem>
+        </RowMenu>
+      </div>
+      {/* 选中行下面的内联条：「预览」「恢复到这里」。没选中时收起，悬停 / 键盘焦点在这一行时也露出来
+          （鼠标用户不必先点一下才看得见这两件最常做的事） */}
+      <div
+        data-timeline-row-actions
+        className={cn(
+          'items-center gap-1 pb-1.5 pl-[76px] pr-3',
+          selected ? 'flex' : 'hidden group-hover/node:flex group-focus-within/node:flex',
+        )}
+      >
+        <Button variant="secondary" size="sm" data-timeline-preview-button onClick={onPreview}>
+          <Eye size={ICON_SIZE.sm} />
+          {vd('preview')}
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          data-timeline-row-restore
+          loading={restoring}
+          disabled={restoreLocked}
+          onClick={async () => {
+            setRestoring(true)
+            try {
+              await onRestore()
+            } finally {
+              setRestoring(false)
+            }
+          }}
+        >
+          <RotateCcw size={ICON_SIZE.sm} />
+          {vd('restore')}
+        </Button>
       </div>
       {renaming && (
         <div className="px-3 pb-1.5">
@@ -840,6 +926,72 @@ export async function restoreNode(
   return true
 }
 
+/**
+ * 两个恢复入口（预览对话框页脚、抽屉选中行内联条）**唯一**的调用口（Codex #831 P1）：
+ * 在任何 await（取正文、`restoreNode`）之前挂上 `timelineStore.restoring`，并让模态预览对话框
+ * 对着这一版开着——它以 `busy` 开着就是这把锁：遮罩挡住画布（没法趁「恢复前」节点还在存
+ * 时再编辑，晚到的恢复也就不会盖掉新编辑）、×/Esc/点外面关不掉，抽屉也关不掉。
+ * 内联入口原来只把行上那颗按钮转圈，画布照常可改。`restoreNode` 照旧先收掉在途手势。
+ *
+ * 这个上下文已经有一次恢复在飞（含还在取正文的那段）→ 拒绝，返回 null、什么都不动；锁按
+ * `beginRestore` 发的凭据摘，先结束的一次摘不掉后来者的锁。`doc` 可以是取正文的函数：
+ * 取回来时换了项目 / 排版就不恢复（同样返回 null）。返回 true = 写进去了。
+ *
+ * 取正文那段（Codex #831 P1）：模态预览在 **await 之前**就以「加载中」（`doc: null`）对着
+ * 这一版开起来——锁挂上的同时遮罩就挡住画布，不是等正文回来才挡（只锁抽屉时画布照常可改，
+ * 那段时间的编辑不换上下文，晚到的 `restoreNode` 会把它整份盖掉）。再兜一层：开工时记下
+ * 编辑历史的标记（`editMark`），正文回来时变了（有编辑 / 撤销 / 重做 / 手势收尾 / 换画布
+ * 落了地）就放弃这次恢复：不写、不打「恢复前」节点，返回 false。
+ */
+/**
+ * 文档的「编辑修订」：用户能落进文档的每一笔（commit / 撤销 / 重做 / 事务累积 / 换画布）都
+ * 会换掉其中某个引用；派生同步（`applyDerivedUpdate`）不进 `past` / `future`，不算编辑。
+ */
+function editMark() {
+  const s = useDocumentStore.getState()
+  return [s.past, s.future, s.txn, s.activeCanvasId] as const
+}
+
+function sameEditMark(a: ReturnType<typeof editMark>, b: ReturnType<typeof editMark>): boolean {
+  return a.every((x, i) => x === b[i])
+}
+
+async function restoreUnderLock(
+  ctx: string,
+  docId: string,
+  meta: LayoutVersionMeta,
+  doc: FigureDocument | (() => Promise<FigureDocument>),
+): Promise<boolean | null> {
+  const token = useTimelineStore.getState().beginRestore(ctx)
+  if (token === null) return null
+  try {
+    let body: FigureDocument
+    if (typeof doc === 'function') {
+      const mark = editMark()
+      const open = useTimelineStore.getState().preview
+      if (!(open?.docId === docId && open.meta.id === meta.id)) {
+        useTimelineStore.getState().setPreview({ docId, meta, doc: null })
+      }
+      body = await doc()
+      // 换了项目 / 排版才取回来：这次恢复作废，旧上下文的什么都不动
+      if (!afterAwait(ctx)(() => true)) return null
+      // 取正文期间文档被改过：那笔编辑比这次恢复新，不盖掉它
+      if (!sameEditMark(mark, editMark())) {
+        useUiStore.getState().setStatus(msg('versions.restoreAbortedEdited', undefined, 'dialogs'), 'error')
+        return false
+      }
+    } else body = doc
+    const tl = useTimelineStore.getState()
+    const cur = tl.preview
+    if (!(cur?.docId === docId && cur.meta.id === meta.id && cur.doc)) {
+      tl.setPreview({ docId, meta, doc: body })
+    }
+    return await restoreNode(meta, body)
+  } finally {
+    useTimelineStore.getState().endRestore(token)
+  }
+}
+
 /* ------------------------------- 与当前的差异 ------------------------------- */
 
 /**
@@ -860,11 +1012,11 @@ function useCurrentDocFor(meta: LayoutVersionMeta): FigureDocument {
 
 function NodeDiff({ versionDoc, currentDoc }: { versionDoc: FigureDocument; currentDoc: FigureDocument }) {
   const diff = useMemo(() => diffDocs(versionDoc, currentDoc), [versionDoc, currentDoc])
-  if (diff.length === 0) return <p className="text-xs text-ink-3">{vd('noDiff')}</p>
+  if (diff.length === 0) return <p className="type-caption">{vd('noDiff')}</p>
   return (
     <ul data-timeline-diff>
       {diff.map((d, i) => (
-        <li key={i} className="flex items-start gap-1.5 py-0.5 text-xs leading-relaxed text-ink-2">
+        <li key={i} className="flex items-start gap-1.5 py-0.5 text-sm text-ink-2">
           <span
             className={cn(
               'mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full',
@@ -907,22 +1059,17 @@ function TimelinePreviewDialog() {
   const gen = useTimelineStore((s) => s.gen)
   const ctx = timelineCtxKey(gen, docId)
   const active = preview && preview.docId === docId ? preview : null
-  const [restoringCtx, setRestoringCtx] = useState<string | null>(null)
-  const restoring = restoringCtx === ctx
+  // 锁在 timelineStore 里，抽屉内联条的恢复也挂这同一把（`restoreUnderLock`）
+  const restoring = useTimelineStore((s) => s.restoring) === ctx
   const close = () => useTimelineStore.getState().setPreview(null)
-  const closeRef = useRef<HTMLButtonElement>(null)
   const restore = async (meta: LayoutVersionMeta, doc: FigureDocument) => {
-    setRestoringCtx(ctx)
-    try {
-      await restoreNode(meta, doc)
-    } finally {
-      setRestoringCtx((c) => (c === ctx ? null : c))
-    }
+    await restoreUnderLock(ctx, docId, meta, doc)
   }
   return (
     <Dialog
       busy={restoring}
-      initialFocusRef={closeRef}
+      // 默认焦点落在对话框容器上（Dialog 的默认）：回车什么都不触发，不会误触恢复。
+      // 页脚不再另摆一颗「关闭」——右上角 × 与 Esc 就是关闭（2026-10-07 设计审计 §10.2：两个关闭重复）
       open={!!active}
       onOpenChange={(v) => {
         if (!v) close()
@@ -930,15 +1077,14 @@ function TimelinePreviewDialog() {
       title={active ? previewTitle(active.meta) : ''}
       anchor="timeline-preview"
       chrome="shell"
-      width={typeof window === 'undefined' ? 1200 : Math.round(window.innerWidth * 0.8)}
+      // 宽度走 CSS（窗口缩放时跟着变），不在打开那一刻按 innerWidth 算死一个像素数
+      width="min(1200px, 80vw)"
       height="80vh"
     >
       {active && (
         <PreviewBody
           meta={active.meta}
           doc={active.doc}
-          onClose={close}
-          closeRef={closeRef}
           restoring={restoring}
           onRestore={restore}
         />
@@ -956,16 +1102,11 @@ function previewTitle(meta: LayoutVersionMeta): string {
 function PreviewBody({
   meta,
   doc,
-  onClose,
-  closeRef,
   restoring,
   onRestore,
 }: {
   meta: LayoutVersionMeta
   doc: FigureDocument | null
-  onClose: () => void
-  /** 「关闭」钮：对话框的默认焦点（回车不会误触恢复） */
-  closeRef: React.RefObject<HTMLButtonElement | null>
   /** 恢复在飞：状态在外层对话框上（它要据此锁住关闭），这里只管按钮 */
   restoring: boolean
   onRestore: (meta: LayoutVersionMeta, doc: FigureDocument) => Promise<void>
@@ -1015,15 +1156,15 @@ function PreviewBody({
       style={{ width }}
       data-timeline-frame={d === doc ? 'moment' : 'current'}
     >
-      <div className="relative w-full shadow-card">
+      <Card appearance="raised" padding="none" className="w-full overflow-hidden rounded-xs">
         <LayoutSnapshot doc={d} renderOverrides onApproximate={d === doc ? setApproximate : undefined} />
         {opts?.outlineOver && (
           <div className="absolute inset-0 opacity-55" data-timeline-overlay-current>
             <LayoutSnapshot doc={opts.outlineOver} outline />
           </div>
         )}
-      </div>
-      {caption && <figcaption className="text-xs text-ink-3">{caption}</figcaption>}
+      </Card>
+      {caption && <figcaption className="type-caption">{caption}</figcaption>}
     </figure>
   )
 
@@ -1066,7 +1207,7 @@ function PreviewBody({
           </div>
           <div ref={stageRef} className="min-h-0 flex-1 overflow-auto bg-canvas">
             {!doc ? (
-              <p className="p-6 text-center text-xs text-ink-3">{vd('loadingSnapshot')}</p>
+              <p className="text-shimmer p-6 text-center text-ink-3">{vd('loadingSnapshot')}</p>
             ) : (
               <div className="flex min-h-full min-w-max items-center justify-center gap-8 p-8">
                 {view === 'side' ? (
@@ -1083,20 +1224,18 @@ function PreviewBody({
             )}
           </div>
           {approximate && (
-            <p className="shrink-0 px-3 py-1.5 text-xs leading-relaxed text-ink-3">{vd('previewApproximate')}</p>
+            <p className="type-caption shrink-0 px-3 py-1.5">{vd('previewApproximate')}</p>
           )}
         </div>
         <aside className="w-64 shrink-0 overflow-y-auto border-l border-border px-3 py-2">
-          <h3 className="pb-1 text-xs text-ink-3">{vd('diffTitle')}</h3>
+          <h3 className="type-section pb-1.5">{vd('diffTitle')}</h3>
           {doc ? <NodeDiff versionDoc={doc} currentDoc={currentDoc} /> : null}
         </aside>
       </div>
-      <div className="flex shrink-0 items-center justify-end gap-2 border-t border-border px-4 py-3">
-        <Button ref={closeRef} onClick={onClose} disabled={restoring} data-timeline-preview-close>
-          {vd('closePreview')}
-        </Button>
+      <div data-dialog-footer className="flex shrink-0 items-center justify-end gap-2 border-t border-border px-5 pb-4 pt-3">
         <Button
           variant="primary"
+          size="lg"
           loading={restoring}
           disabled={!doc}
           onClick={restore}

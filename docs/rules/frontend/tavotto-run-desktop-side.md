@@ -17,6 +17,9 @@ descriptor 文件读。
   Python 一行都还没跑。所以 `blockDismiss`——点外面和 Esc **不算回答**。
   展示 descriptor 里那条 invocation；参数只报**个数**（值不经过界面）。
   `□ 记住此项目和此 Python` 默认不勾；记住过的直接批准，不再问。
+  **一个 lg 对话框从头到尾**（2026-10-07 设计审计 §10.2）：载入 → 确认 → 已作废 / 取不到只换正文，不在
+  两种尺寸的两个 Dialog 之间交接；闸只在确认那一屏（`blockDismiss`、不给 `onEscape`），已作废那一屏没有
+  待决的选择，Esc / × = 关闭。
   **两个终端各跑一条 → 排队**，不是留一个丢一个。
 - **`nativeSessionStore` 的四条纪律**（vitest 看护）：事件按 `sequence`
   判序（终态不回头是它的推论）——SSE 断线重连的补发与新事件之间没有次序
