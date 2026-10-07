@@ -94,12 +94,23 @@ function floorBoundary(s: string, i: number): number {
   }
   return b
 }
-/** s 里 ≥ i 的最近字素边界 */
-function ceilBoundary(s: string, i: number): number {
-  if (i <= 0 || i >= s.length) return i
-  if (!graphemes) return splitsPair(s, i) ? i + 1 : i
-  for (const { index } of graphemes.segment(s)) if (index >= i) return index
-  return s.length
+/** Largest common suffix length that is a boundary in both original lines. */
+function suffixBoundary(x: string, y: string, limit: number): number {
+  if (limit <= 0) return 0
+  if (!graphemes) return Math.min(
+    limit - (splitsPair(x, x.length - limit) ? 1 : 0),
+    limit - (splitsPair(y, y.length - limit) ? 1 : 0),
+  )
+  const boundaries = new Set<number>([0])
+  for (const { index } of graphemes.segment(x)) {
+    const suffix = x.length - index
+    if (suffix <= limit) boundaries.add(suffix)
+  }
+  for (const { index } of graphemes.segment(y)) {
+    const suffix = y.length - index
+    if (suffix <= limit && boundaries.has(suffix)) return suffix
+  }
+  return 0
 }
 const HUNK = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/
 
@@ -169,7 +180,7 @@ function pairWords(rows: DiffRow[]) {
         if (midWord(x[pre], y[pre])) while (pre > 0 && WORD.test(x[pre - 1])) pre--
         if (midWord(x[x.length - 1 - suf], y[y.length - 1 - suf])) while (suf > 0 && WORD.test(x[x.length - suf])) suf--
         pre = Math.min(floorBoundary(x, pre), floorBoundary(y, pre))
-        suf = Math.min(x.length - ceilBoundary(x, x.length - suf), y.length - ceilBoundary(y, y.length - suf))
+        suf = suffixBoundary(x, y, suf)
         // 整行都不同（或只差空白的一两处）就不画字级：整行底色已经说清楚了
         if (x.length - pre - suf > 0 && pre + suf > 0) del.pair = [pre, x.length - suf]
         if (y.length - pre - suf > 0 && pre + suf > 0) add.pair = [pre, y.length - suf]
