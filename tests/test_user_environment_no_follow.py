@@ -244,7 +244,14 @@ def test_fifo_environments_txt_does_not_hang_and_is_reported(tmp_path, monkeypat
     os.mkfifo(home / ".conda" / "environments.txt")
     budget = scanbudget.Budget()
 
-    assert userenvs._conda_prefixes(budget) == []
+    import threading
+
+    box: dict = {}
+    t = threading.Thread(target=lambda: box.update(v=userenvs._conda_prefixes(budget)), daemon=True)
+    t.start()
+    t.join(5.0)
+    assert not t.is_alive(), "environments.txt FIFO blocked the scan"
+    assert box["v"] == []
     assert any(i["code"] == scanbudget.ISSUE_UNREADABLE_FILE for i in budget.issues())
 
 

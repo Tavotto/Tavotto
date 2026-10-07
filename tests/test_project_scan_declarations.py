@@ -6,6 +6,7 @@ thread forever) or oversized must be refused and reported as partial, never read
 
 import os
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,20 @@ import pytest
 from tavotto.engine import depresolve, projscan, scanbudget
 
 posix_only = pytest.mark.skipif(sys.platform == "win32", reason="POSIX link/FIFO semantics")
+
+
+def _bounded(fn, seconds: float = 5.0):
+    """在守护线程里跑 `fn`：旧行为会永久阻塞在 FIFO 上，这里转成断言失败而不是挂住整个测试进程。"""
+    box: dict = {}
+
+    def run():
+        box["value"] = fn()
+
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    t.join(seconds)
+    assert not t.is_alive(), "reader blocked on the FIFO"
+    return box["value"]
 
 
 def _evidence(root: Path):
@@ -50,7 +65,7 @@ def test_fifo_requirements_does_not_block_and_is_reported_partial(tmp_path):
     project.mkdir()
     os.mkfifo(project / "requirements.txt")
 
-    ev, budget = _evidence(project)  # 没有写端：普通 open/read 会永远阻塞
+    ev, budget = _bounded(lambda: _evidence(project))  # 没有写端：普通 open/read 会永远阻塞
 
     assert ev["requirements"] == 0
     assert _unreadable_paths(budget) == ["requirements.txt"]
