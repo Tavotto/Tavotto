@@ -351,7 +351,7 @@ describe('OverlaySvg：路径式选中描示', () => {
   let container: HTMLDivElement
   let root: Root
 
-  const rects = () => container.querySelectorAll('rect[fill-opacity]')
+  const rects = () => container.querySelectorAll('[data-element-box]')
   const paths = () => [...container.querySelectorAll('path')].filter((p) => p.getAttribute('d'))
 
   beforeEach(async () => {
@@ -404,14 +404,14 @@ describe('OverlaySvg：路径式选中描示', () => {
     expect(container.querySelectorAll('clipPath rect').length).toBe(1)
   })
 
-  it('选中多边形：闭合路径（带 Z）+ 一层很淡的填充，让人看出「这一整块」', () => {
+  it('选中多边形：闭合路径（带 Z），只描边不着色（2026-10-07 设计审计 §10.1：改颜色时看到的是真颜色）', () => {
     show(['axes_0.patches_0'])
     expect(rects().length).toBe(0)
     const outline = paths().find((p) => p.getAttribute('d')?.includes('Z'))
     expect(outline).toBeTruthy()
     // 画布层只有一种蓝（--color-sel）：元素框 / 端点 / 手柄与画布选框同色（2026-09-15 打磨 C2）
-    expect(outline!.getAttribute('fill')).toBe('var(--color-sel)')
-    expect(outline!.getAttribute('fill-rule')).toBe('evenodd')
+    expect(outline!.getAttribute('stroke')).toBe('var(--color-sel)')
+    expect(outline!.getAttribute('fill')).toBe('none')
   })
 
   it('选中散点：每颗 marker 一条闭合子路径，没有罩住整组的矩形框', () => {
@@ -441,7 +441,7 @@ describe('OverlaySvg：路径式选中描示', () => {
   })
 
   it('选中色条：手柄画在色条轴上（八个），与选中那条轴本身一样', () => {
-    const handles = () => [...container.querySelectorAll('rect[fill="#fff"]')]
+    const handles = () => [...container.querySelectorAll('[data-element-handle]')]
     show(['axes_2.colorbar'])
     expect(handles().length).toBe(8)
     const viaColorbar = handles().map((h) => [h.getAttribute('x'), h.getAttribute('y')])
@@ -467,11 +467,11 @@ describe('OverlaySvg：路径式选中描示', () => {
 
   it('多选子图的组包围框仍是矩形虚线框（组的语义就是包围盒，别硬转路径）', () => {
     show(['axes_0', 'axes_1'])
-    // 组框的指纹：strokeDasharray="4 2" 的无底色 rect
-    const dashed = [...container.querySelectorAll('rect')].filter(
-      (r) => r.getAttribute('stroke-dasharray') === '4 2',
-    )
+    // 组框认 `data-element-group-box`（2026-10-07 起虚线只有一种 `--sel-dash`，不再拿 4 2 当指纹）
+    const dashed = [...container.querySelectorAll<SVGRectElement>('rect[data-element-group-box]')]
     expect(dashed.length).toBe(1)
+    expect(dashed[0].style.strokeDasharray).toBe('var(--sel-dash)')
+    expect(dashed[0].getAttribute('fill')).toBe('none')
     expect(paths().some((p) => p.getAttribute('d')?.startsWith('M'))).toBe(false)
   })
 

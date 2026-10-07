@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChevronDown, Plus, X } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
+import { keyOf } from '@/lib/keymap'
 import { useFlip } from '@/lib/motion'
 import { cn } from '@/lib/utils'
 import { activateCanvas, createCanvasAndActivate } from '@/store/canvasSession'
@@ -9,14 +10,18 @@ import { useDocumentStore } from '@/store/documentStore'
 import { Button } from './ui/Button'
 import { TextInput } from './ui/Input'
 import { ZoomControls } from './ZoomControls'
-import { Menu, MenuItem, MenuSeparator } from './ui/Menu'
+import { Menu, MenuItem, MenuLabel, MenuRadioGroup, MenuRadioItem, MenuSeparator } from './ui/Menu'
 import { TAB_UNDERLINE, tabClass } from './ui/tabClass'
 import { useBoldWidthLock } from './ui/useBoldWidthLock'
 import { Tip } from './ui/Tooltip'
 
 /**
  * Canvas 标签行：Tab = 打开的画布（关标签不删画布，全部画布见左栏「画布」）。
- * 单击切换、双击重命名、拖动重排、× 关闭；激活画布切换后视口自动 fit。
+ * 单击切换、双击 / F2 重命名、拖动或 ⌥← / ⌥→ 重排、× / Delete / ⌘W 关闭；激活画布切换后视口自动 fit。
+ *
+ * 键盘（2026-10-07 设计审计 §10.1，ARIA tabs 模式）：整条只有**一个** Tab 停靠点（roving tabindex，落在
+ * 当前画布上），←/→/Home/End 在页签之间挪焦点，Enter / Space 才切换（切画布要重新取景，不在方向键上自动切）。
+ * × 不进 Tab 顺序（`tabIndex=-1`）：键盘用 Delete / ⌘W 关。
  */
 export function CanvasTabs() {
   const { t } = useTranslation('workspace')
@@ -32,6 +37,9 @@ export function CanvasTabs() {
   useFlip(strip)
   /** 拖动经过的目标标签，给一个可见的落点提示 */
   const [dragOver, setDragOver] = useState<number | null>(null)
+  /** 键盘焦点所在的页签（roving tabindex 的那一个）；null = 跟着当前画布 */
+  const [focusId, setFocusId] = useState<string | null>(null)
+  const rovingId = focusId && openTabs.includes(focusId) ? focusId : activeId
 
   // 激活的页签在可视范围外时滚进来（新建的画布排在最后、从「全部画布」菜单切过去的可能在
   // 条外）：条没有滚动条可看，不滚的话用户不知道当前是哪一页。只动这条自己的 scrollLeft，
@@ -47,7 +55,9 @@ export function CanvasTabs() {
     const tab = el?.querySelector<HTMLElement>('[data-canvas-tab][data-active]')
     if (!el || !tab) return
     const left = tab.offsetLeft
-    const right = left + tab.offsetWidth
+    // 宽度向上取整：offsetWidth 是四舍五入的整数，72.4px 的页签量成 72，滚完还差半个像素露在条外
+    // （「全部画布」菜单切到最后一张时 e2e 实测差 1px）。FLIP 只用 translate，不影响宽度
+    const right = left + Math.ceil(tab.getBoundingClientRect().width || tab.offsetWidth)
     const placed = `${tab.dataset.canvasTab}|${left}|${right}|${el.clientWidth}`
     if (placed === lastPlaced.current) return
     lastPlaced.current = placed
@@ -77,9 +87,22 @@ export function CanvasTabs() {
     const slack = (menu ? menu.getBoundingClientRect().right : from.right) - from.left
     setOverflowing(el.scrollWidth > el.clientWidth + slack + 1)
   }, [menuPinned])
+
+  // 溢出边缘的渐隐（2026-10-07 设计审计 §3.7 / §10.1）：条外还有页签的那一侧 16px alpha mask，
+  // 不叠色块。只在真的还能往那边滚时画，滚到头就收
+  const [fade, setFade] = useState<{ start: boolean; end: boolean }>({ start: false, end: false })
+  const measureFade = useCallback(() => {
+    const el = strip.current
+    if (!el) return
+    const start = el.scrollLeft > 1
+    const end = el.scrollLeft + el.clientWidth < el.scrollWidth - 1
+    setFade((f) => (f.start === start && f.end === end ? f : { start, end }))
+  }, [])
+
   useLayoutEffect(() => {
     measureOverflow()
     keepActiveInView()
+    measureFade()
   })
   useEffect(() => {
     const el = strip.current
@@ -87,30 +110,81 @@ export function CanvasTabs() {
     const ro = new ResizeObserver(() => {
       measureOverflow()
       keepActiveInView()
+      measureFade()
     })
     ro.observe(el)
     return () => ro.disconnect()
-  }, [measureOverflow, keepActiveInView])
+  }, [measureOverflow, keepActiveInView, measureFade])
 
   const nameOf = (id: string) =>
     id === activeId ? activeName : (canvases.find((c) => c.id === id)?.name ?? '')
 
   const activate = (id: string) => activateCanvas(id)
 
+  /** 把键盘焦点挪到第 i 个页签（roving tabindex）；i 按**这一次渲染**的 `openTabs` 算 */
+  const focusTab = (i: number) => {
+    const id = openTabs[Math.max(0, Math.min(openTabs.length - 1, i))]
+    if (id) focusTabId(id)
+  }
+  /** 按 id 挪焦点：会改 `openTabs` 的动作（关 / 重排）之后用它——下标对的是改之前的数组；焦点跟着 DOM 走，渲染后再 focus */
+  const focusTabId = (id: string) => {
+    setFocusId(id)
+    requestAnimationFrame(() =>
+      strip.current?.querySelector<HTMLElement>(`[data-canvas-tab="${CSS.escape(id)}"]`)?.focus(),
+    )
+  }
+
+  const onTabKey = (e: KeyboardEvent<HTMLDivElement>, id: string, i: number) => {
+    const mod = e.metaKey || e.ctrlKey
+    const closable = openTabs.length > 1
+    let handled = true
+    if (e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+      // ⌥← / ⌥→：把这个页签往左 / 右挪一格（与拖动同一个 reorderTabs），焦点跟着它
+      const to = i + (e.key === 'ArrowLeft' ? -1 : 1)
+      if (to >= 0 && to < openTabs.length) {
+        useDocumentStore.getState().reorderTabs(i, to)
+        focusTabId(id)
+      }
+    } else if (e.key === 'ArrowLeft') focusTab(i === 0 ? openTabs.length - 1 : i - 1)
+    else if (e.key === 'ArrowRight') focusTab(i === openTabs.length - 1 ? 0 : i + 1)
+    else if (e.key === 'Home') focusTab(0)
+    else if (e.key === 'End') focusTab(openTabs.length - 1)
+    else if (e.key === 'Enter' || e.key === ' ') activate(id)
+    else if (e.key === 'F2') setRenaming(id)
+    else if (closable && (e.key === 'Delete' || (mod && e.key.toLowerCase() === 'w'))) {
+      // 关之前先记下留下来的邻居（右边那个，没有就左边那个）：关完再按下标去取，取的是关之前的数组，
+      // 关第一个 / 中间那个时会落回刚关掉的 id，焦点掉出页签条（Codex #833）
+      const neighbor = openTabs[i + 1] ?? openTabs[i - 1]
+      useDocumentStore.getState().closeCanvasTab(id)
+      if (neighbor) focusTabId(neighbor)
+    } else handled = false
+    if (handled) {
+      // 这些键在页签上有自己的意思：不许再冒到全局快捷键（Delete 会删画布上的选中对象）
+      e.preventDefault()
+      e.stopPropagation()
+    }
+  }
+
   return (
-    /* px-3 与顶栏同值：品牌标 12 / 页签盒 8 / 页签文字 18 三条竖线收成一条（2026-09-15 打磨 T8）。
-       条高 36 与右栏页签同档（B1）；顶栏那条 border-b 已删，整屏的那一条 hairline 就是这里 */
+    /* px-3 与顶栏同值：品牌胶囊 / 页签文字左缘收成一条竖线（2026-09-15 打磨 T8）。
+       条高 44 与右栏页签条同档（2026-09-30 重设计）；底边那条 hairline 与属性栏页签条的连成一条 */
     <div className="flex h-11 shrink-0 items-center gap-1 border-b border-border bg-surface px-3">
       {/* tablist 只许直接拥有 tab 子项（ARIA 硬性要求，axe critical）：
           role 挂在真正装着 TabItem 的滚动条上；「+」与画布菜单在 tablist 外 */}
       <div
         ref={strip}
         data-canvas-tabs
+        data-fade-start={fade.start || undefined}
+        data-fade-end={fade.end || undefined}
         role="tablist"
         aria-label={t('tabs.listLabel')}
+        onScroll={measureFade}
         // scrollbar-none：横滚条不画（用户拍板），滚动靠触控板横滑 / Shift+滚轮 / 激活时自动滚到；
         // relative 让页签的 offsetLeft 以这条为基准，下面「滚进视野」用它量
-        className="scrollbar-none relative flex h-full min-w-0 shrink items-center gap-4 overflow-x-auto"
+        // pr-1：条宽常是小数（654.86px），浏览器的最大 scrollLeft 向下取整，最后一个页签滚到头仍差不到 1px
+        // 露在条外；尾部留 4px，「滚到最后一张」才真的整颗在里面（e2e/canvas-tabs-scroll.spec.ts）
+        className="scrollbar-none relative flex h-full min-w-0 shrink items-center gap-4 overflow-x-auto pr-1"
+        style={fadeMask(fade)}
       >
         {openTabs.map((id, i) => (
           <TabItem
@@ -119,17 +193,30 @@ export function CanvasTabs() {
             index={i}
             name={nameOf(id)}
             active={id === activeId}
+            roving={id === rovingId}
             closable={openTabs.length > 1}
             renaming={renaming === id}
-            onActivate={() => activate(id)}
+            onActivate={() => {
+              setFocusId(null)
+              activate(id)
+            }}
             onRename={() => setRenaming(id)}
             onRenamed={(name) => {
               setRenaming(null)
               if (name) useDocumentStore.getState().renameCanvas(id, name)
+              focusTab(i)
             }}
             onClose={() => useDocumentStore.getState().closeCanvasTab(id)}
+            onKeyDown={(e) => onTabKey(e, id, i)}
+            onFocus={() => setFocusId(id)}
             dragFrom={dragFrom}
-            dragOver={dragOver === i && dragFrom.current !== i}
+            dropSide={
+              dragOver === i && dragFrom.current != null && dragFrom.current !== i
+                ? dragFrom.current < i
+                  ? 'after'
+                  : 'before'
+                : null
+            }
             setDragOver={setDragOver}
           />
         ))}
@@ -148,13 +235,20 @@ export function CanvasTabs() {
       </Tip>
       <span ref={spacer} className="flex-1" />
 
-      {menuPinned || overflowing ? (
-        <AllCanvasesMenu activate={activate} />
-      ) : null}
+      {menuPinned || overflowing ? <AllCanvasesMenu activate={activate} /> : null}
       {/* 缩放菜单住在标签行最右（2026-09-30 重设计 A1；此前在顶栏右段） */}
       <ZoomControls />
     </div>
   )
+}
+
+/** 溢出那一侧的 16px alpha 渐隐（mask-image，不叠色块：底下是什么颜色都对） */
+function fadeMask(f: { start: boolean; end: boolean }): React.CSSProperties | undefined {
+  if (!f.start && !f.end) return undefined
+  const a = f.start ? 'transparent 0, #000 16px' : '#000 0'
+  const b = f.end ? '#000 calc(100% - 16px), transparent 100%' : '#000 100%'
+  const mask = `linear-gradient(to right, ${a}, ${b})`
+  return { maskImage: mask, WebkitMaskImage: mask }
 }
 
 function TabItem({
@@ -162,28 +256,36 @@ function TabItem({
   index,
   name,
   active,
+  roving,
   closable,
   renaming,
   onActivate,
   onRename,
   onRenamed,
   onClose,
+  onKeyDown,
+  onFocus,
   dragFrom,
-  dragOver,
+  dropSide,
   setDragOver,
 }: {
+  id: string
   index: number
   name: string
   active: boolean
+  /** roving tabindex 落在它上面（整条唯一的 Tab 停靠点） */
+  roving: boolean
   closable: boolean
   renaming: boolean
   onActivate: () => void
   onRename: () => void
   onRenamed: (name: string | null) => void
   onClose: () => void
-  id: string
+  onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => void
+  onFocus: () => void
   dragFrom: React.RefObject<number | null>
-  dragOver: boolean
+  /** 拖动排序的落点：这个页签的左边 / 右边亮一根 2px 竖线 */
+  dropSide: 'before' | 'after' | null
   setDragOver: (i: number | null) => void
 }) {
   const { t } = useTranslation('workspace')
@@ -221,8 +323,9 @@ function TabItem({
       data-flip-id={id}
       data-canvas-tab={id}
       data-active={active || undefined}
+      data-drop={dropSide ?? undefined}
       aria-selected={active}
-      tabIndex={0}
+      tabIndex={roving ? 0 : -1}
       draggable
       onDragStart={(e) => {
         // Firefox / WebKit 不写 dataTransfer 数据就不会真正开始拖拽
@@ -250,31 +353,35 @@ function TabItem({
       }}
       onClick={onActivate}
       onDoubleClick={onRename}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault()
-          onActivate()
-        }
-      }}
+      onKeyDown={onKeyDown}
+      onFocus={onFocus}
       className={cn(
-        // 选中态与右栏页签同一副语法（`tabClass`：600 + ink + 2px 线，宪法第五节）：
-        // 此前这里只借了那条线，选中仍是 400——同一屏两种「选中」（2026-09-15 打磨 B1）
-        // 高度取 tabClass 的 h-full，不另写 h-9：条是 h-9 + border-b，里面只剩 35px，36px 的页签
-        // 让横滚条的 overflow-y 被算成 auto、多出 1px 纵向滚动——WebKit 当场在「+」左边画一根
-        // 竖滚动条（e2e/canvas-tabs-scroll.spec.ts 量 scrollHeight ≤ clientHeight）
+        // 选中态与右栏页签同一副语法（`tabClass`：600 + ink + 2px 线，宪法第五节）。
+        // 高度取 tabClass 的 h-full，不另写：条是 h-11 + border-b，里面只剩 43px，页签再写一个固定高度
+        // 就会让横滚条的 overflow-y 被算成 auto、多出 1px 纵向滚动——WebKit 当场画一根竖滚动条
+        // （e2e/canvas-tabs-scroll.spec.ts 量 scrollHeight ≤ clientHeight）
         tabClass(active),
         'group flex max-w-44 shrink-0 cursor-default items-center gap-1',
-        // 关闭键仍绝对定位，只在右边留出它那一格：左缘因此是文字本身（T8）。
+        // 关闭键仍绝对定位，只在右边留出它那一格（20px 命中区）：左缘因此是文字本身（T8）。
         // 多页签时这一格常驻，激活不改宽度（双击非当前页签改名时，第二下不许落在挪过来的 × 上，
         // e2e/canvas-tabs-scroll.spec.ts）。
-        // 页签上**没有「未保存」点**（2026-10-07 审计 P0）：保存状态是整份文档的事（顶栏文档名旁），
-        // 此前拿文档级 `dirty` 只画在当前页签上——哪页激活哪页「未保存」，每次编辑还闪一秒
+        // 页签上**没有「未保存」点**（2026-10-07 审计 P0）：保存状态是整份文档的事（顶栏文档状态芯片）
         closable && 'pr-5',
-        // 拖动排序的落点提示：不只靠颜色，加背景块让目标一眼可辨
-        dragOver && 'rounded-sm bg-selected text-ink',
       )}
       title={name}
     >
+      {/* 拖动排序的落点：页签之间一根 2px accent 竖线（2026-10-07 设计审计 §10.1，与列表的 `dropLineClass`
+          同一种语言：线说「落在这儿」），不再把目标页签整块染灰（那像是「选中了它」） */}
+      {dropSide && (
+        <span
+          aria-hidden
+          data-drop-line
+          className={cn(
+            'pointer-events-none absolute inset-y-2.5 w-0.5 rounded-full bg-accent',
+            dropSide === 'before' ? '-left-2.5' : '-right-2.5',
+          )}
+        />
+      )}
       {/* 下划线挂在**文字盒**上而不是整个 tab 上（B2）：此前「Figure 1」41px 宽、线 49px，
           可关闭时还延到 × 底下。外层给 h-full 让 `after:bottom-0` 落在条的底边 */}
       <span
@@ -288,7 +395,12 @@ function TabItem({
       </span>
       {closable && (
         <button
+          type="button"
+          // 不进 Tab 顺序：整条只有一个停靠点（roving），键盘用 Delete / ⌘W 关（ARIA tabs 模式里 tab 内不嵌可聚焦控件）
+          tabIndex={-1}
+          data-canvas-tab-close
           aria-label={t('tabs.closeTab', { name })}
+          title={`${t('tabs.closeTab', { name })} (${keyOf('tabClose')})`}
           onClick={(e) => {
             e.stopPropagation()
             // 第二道防线：双击的第二下（detail ≥ 2）落到 × 上不算关闭——那一下是冲着改名去的
@@ -297,9 +409,9 @@ function TabItem({
           }}
           className={cn(
             'absolute right-0 top-1/2 -translate-y-1/2',
-            'flex h-4 w-4 shrink-0 items-center justify-center rounded-sm text-ink-3',
+            'flex size-5 shrink-0 items-center justify-center rounded-full text-ink-3',
             'opacity-0 outline-none hover:bg-surface-hover hover:text-ink',
-            'focus-visible:opacity-100 focus-visible:focus-ring group-hover:opacity-100',
+            'group-hover:opacity-100 group-focus-visible:opacity-100',
           )}
         >
           <X size={ICON_SIZE.xs} />
@@ -309,7 +421,10 @@ function TabItem({
   )
 }
 
-/** 标签放不下 / 有未打开画布时的总览菜单 */
+/**
+ * 标签放不下 / 有未打开画布时的总览菜单。打开着的那些是一组互斥取值（当前那张带勾，`MenuRadioGroup`），
+ * 未打开的另起一组、带「未打开」组头——此前两组只差一条分隔线和字色，看不出第二组是什么。
+ */
 function AllCanvasesMenu({ activate }: { activate: (id: string) => void }) {
   const { t } = useTranslation('workspace')
   const canvases = useDocumentStore((s) => s.canvases)
@@ -328,21 +443,24 @@ function AllCanvasesMenu({ activate }: { activate: (id: string) => void }) {
         </Button>
       }
     >
-      {openTabs.map((id) => (
-        <MenuItem key={id} onSelect={() => activate(id)}>
-          <span className={id === activeId ? 'text-ink' : undefined}>
-            {id === activeId
-              ? activeName
-              : (canvases.find((c) => c.id === id)?.name ?? '')}
-          </span>
-        </MenuItem>
-      ))}
+      <MenuRadioGroup value={activeId} onValueChange={activate}>
+        {openTabs.map((id) => (
+          <MenuRadioItem key={id} value={id} data-all-canvases-item={id}>
+            {id === activeId ? activeName : (canvases.find((c) => c.id === id)?.name ?? '')}
+          </MenuRadioItem>
+        ))}
+      </MenuRadioGroup>
       {unopened.length > 0 && (
         <>
           <MenuSeparator />
+          <MenuLabel>{t('tabs.unopened')}</MenuLabel>
           {unopened.map((c) => (
-            <MenuItem key={c.id} onSelect={() => activateCanvas(c.id, { open: true })}>
-              <span className="text-ink-2">{c.name}</span>
+            <MenuItem
+              key={c.id}
+              data-all-canvases-item={c.id}
+              onSelect={() => activateCanvas(c.id, { open: true })}
+            >
+              {c.name}
             </MenuItem>
           ))}
         </>

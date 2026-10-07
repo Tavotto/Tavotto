@@ -504,8 +504,11 @@ export function revealObjects(ids: string[]) {
   if (bounds) useViewportStore.getState().revealRect(bounds)
 }
 
+/** 「全选」收进来的对象：看得见、没锁。判据只有这一份——`selectAll` 与画布菜单「全选」可不可用都读它 */
+export const isSelectAllTarget = (o: CanvasObject): boolean => !o.hidden && !o.locked
+
 export function selectAll() {
-  select(doc().objects.filter((o) => !o.hidden && !o.locked).map((o) => o.id))
+  select(doc().objects.filter(isSelectAllTarget).map((o) => o.id))
 }
 
 /* ------------------------------- 文档切换 --------------------------------- */

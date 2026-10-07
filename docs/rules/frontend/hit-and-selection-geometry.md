@@ -172,7 +172,12 @@
   * 几何权威缺席（上一段的渲染还没回来）时不建 `InFigureMove`、不写文档，只记位移，权威挂上画面
     （`displayedExactManifest`）再动；被要求立刻收尾就放弃。
   * 焦点：输入框 / 对话框、控件已 `preventDefault` 的键、ARIA 复合控件（listbox / tree / radiogroup /
-    menu / slider …，`useKeyboard.arrowOwnedByWidget`）归它们；`toolbar` 不在此列。
+    menu / slider …，`useKeyboard.arrowOwnedByWidget`）归它们；`toolbar` 不在此列——画布底部的浮动工具条
+    （2026-10-07）自己按 ARIA toolbar 模式认领方向键（`preventDefault`，于是走的是「控件已处理」那一条），
+    但鼠标点它**不拿焦点**，点完「选择」接着按方向键照样是微调；选中浮动栏（ContextBar）不做方向键漫游。
+  * 选中框手柄（2026-10-07 设计审计 §10.1）：8px 视觉 + 16px 透明命中层（稳定钩子挂在命中层上）+ 沿边的
+    命中带（`OverlaySvg.EdgeStrips`，整条边除去两端手柄都能改那一边）；图内元素 / 组框的手柄与命中带一样经
+    `guardStale` 包装。看护 `canvas/overlayGrammar.test.tsx`、`canvas/nudgeThenPointer.test.tsx`。
   看护：`canvas/arrowNudge.test.tsx`、`canvas/nudgeThenPointer.test.tsx`、`e2e/arrow-nudge.spec.ts`、`canvas/groupLockDrag.test.ts`。
 
 - **拖不动要说出来（ADR 0100，2026-09-27 拖动全族排查）**：`inFigureMoveOf` 回 null 的元素，

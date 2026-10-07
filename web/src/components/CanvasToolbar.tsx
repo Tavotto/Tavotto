@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type KeyboardEvent, type MouseEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   ArrowUpRight,
@@ -15,7 +15,8 @@ import {
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { addSubLabels } from '@/store/actions'
 import { insertShape } from '@/lib/presets'
-import { MOD } from '@/lib/utils'
+import { keyOf, type KeyId } from '@/lib/keymap'
+import { cn } from '@/lib/utils'
 import { useDocumentStore } from '@/store/documentStore'
 import { useUiStore } from '@/store/uiStore'
 import { TOOLBAR_FIT_CLEARANCE, useViewportStore } from '@/store/viewportStore'
@@ -26,7 +27,8 @@ import { Menu, MenuItem, MenuLabel, MenuRadioGroup, MenuRadioItem, MenuSeparator
 import { Tip } from './ui/Tooltip'
 
 /**
- * 画布底部的浮动工具条（2026-09-30 重设计 A1）：选择 / 文字 / 标注 ▾ / 序号 | 适应。
+ * 画布底部的浮动工具条（2026-09-30 重设计 A1）：〔选择 / 文字 / 标注 ▾〕| 〔序号 / 适应〕——前一组是工具
+ * （模式，32 圆形图标钮），后一组是一次性动作（28 带字 ghost 钮），2026-10-07 设计审计 §10.1 起用竖线分开。
  * 它们此前住在顶栏中段与右段；搬家不改行为：快捷键（V / T / A / R / O / L / ⌘1）、`data-tool`、
  * `data-fit-canvas` 这些钩子都跟着元素走。
  *
@@ -35,8 +37,8 @@ import { Tip } from './ui/Tooltip'
  */
 
 /**
- * 浮动工具条此刻是否显示；底部的 toast / HUD 据此抬高自己（工具条占掉画布底边 16 + 40 = 56，
- * 再留 8 的缝：抬到 bottom-16）
+ * 浮动工具条此刻是否显示；底部的 toast / HUD 据此抬高自己（工具条占掉画布底边 12 + 40 = 52，
+ * 再留 12 的缝：抬到 bottom-16）
  */
 export function useCanvasToolbarVisible(): boolean {
   return useWorkspaceStore((s) => s.mode !== 'fast_edit')
@@ -48,11 +50,11 @@ export function useCanvasToolbarVisible(): boolean {
  */
 type MarkTool = 'arrow' | 'rect' | 'ellipse' | 'line'
 
-const MARK_TOOLS: { tool: MarkTool; icon: typeof Type; key: string }[] = [
-  { tool: 'arrow', icon: ArrowUpRight, key: 'A' },
-  { tool: 'rect', icon: Square, key: 'R' },
-  { tool: 'ellipse', icon: Circle, key: 'O' },
-  { tool: 'line', icon: Slash, key: 'L' },
+const MARK_TOOLS: { tool: MarkTool; icon: typeof Type; key: KeyId }[] = [
+  { tool: 'arrow', icon: ArrowUpRight, key: 'toolArrow' },
+  { tool: 'rect', icon: Square, key: 'toolRect' },
+  { tool: 'ellipse', icon: Circle, key: 'toolEllipse' },
+  { tool: 'line', icon: Slash, key: 'toolLine' },
 ]
 
 /**
@@ -90,8 +92,29 @@ function Bar() {
   const activeMark = MARK_TOOLS.find((m) => m.tool === tool)
   const ActiveMark = activeMark?.icon
 
-  // 按钮文字窄于 900 收成只有图标（名字仍在 aria-label 与读屏里）：画布窄时工具条不许比画布还宽
+  // 动作按钮的字窄于 900 收成只有图标（名字仍在 aria-label 与读屏里）：画布窄时工具条不许比画布还宽
   const label = (text: string) => <span className="max-[899px]:sr-only">{text}</span>
+
+  /**
+   * 工具条的方向键（ARIA toolbar 模式，2026-10-07 设计审计 §10.1）：焦点在条里时 ←/→/Home/End 在按钮之间挪，
+   * 不冒到全局（`preventDefault` = `arrowOwnedByWidget` 认领，不推画布上的选中对象）。
+   * 鼠标点工具**不拿焦点**（`onMouseDown` 拦默认）：点完「选择」接着按方向键是在微调对象，不是在条里漫游。
+   */
+  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return
+    const items = [...e.currentTarget.querySelectorAll<HTMLElement>('[data-toolbar-item]:not(:disabled)')]
+    const i = items.indexOf(document.activeElement as HTMLElement)
+    if (i < 0) return
+    const next =
+      e.key === 'Home'
+        ? 0
+        : e.key === 'End'
+          ? items.length - 1
+          : (i + (e.key === 'ArrowLeft' ? -1 : 1) + items.length) % items.length
+    e.preventDefault()
+    items[next].focus()
+  }
+  const noFocusOnPointer = (e: MouseEvent) => e.preventDefault()
 
   return (
     <div
@@ -99,32 +122,44 @@ function Bar() {
       data-canvas-toolbar
       role="toolbar"
       aria-label={t('workspace:canvasTools.label')}
-      className="pointer-events-auto absolute bottom-4 left-1/2 z-canvas-chrome flex max-w-[calc(100%-1.5rem)] -translate-x-1/2 items-center gap-0.5 rounded-full bg-surface p-1 shadow-pop"
+      aria-orientation="horizontal"
+      onKeyDown={onKeyDown}
+      // 底边居中角位，12px 内距（四个角位同一档，2026-10-07 设计审计 §10.1）。工具钮 32 + p-1 = 40 高，
+      // 顶边离舞台底边 52——与 TOOLBAR_FIT_CLEARANCE（52 + 8 的缝）对上
+      className="pointer-events-auto absolute bottom-3 left-1/2 z-canvas-chrome flex max-w-[calc(100%-1.5rem)] -translate-x-1/2 items-center gap-0.5 rounded-full bg-surface p-1 shadow-pop"
     >
-      <Tip label={t('workspace:canvasTools.select')} shortcut="V">
+      {/* 工具（模式）：32 圆形图标钮，名字在气泡与读屏里；激活 = 墨色实底 + 实心图标 + aria-pressed
+          （2026-10-07 设计审计 §10.1）。此前与一次性动作同为 28 的带字钮、激活只是一层 10% 灰 */}
+      <Tip label={t('workspace:canvasTools.select')} shortcut={keyOf('toolSelect')}>
         <Button
-          size="md"
+          size="icon-lg"
           active={tool === 'select'}
+          aria-pressed={tool === 'select'}
           data-tool="select"
+          data-toolbar-item
+          onMouseDown={noFocusOnPointer}
           onClick={() => setTool('select')}
           aria-label={t('workspace:canvasTools.select')}
+          className={toolClass(tool === 'select')}
         >
-          <MousePointerClick size={ICON_SIZE.md} />
-          {label(t('workspace:canvasTools.select'))}
+          <MousePointerClick size={ICON_SIZE.md} filled={tool === 'select'} />
         </Button>
       </Tip>
 
-      <Tip label={t('common:objectType.text')} shortcut="T">
+      <Tip label={t('common:objectType.text')} shortcut={keyOf('toolText')}>
         <Button
-          size="md"
+          size="icon-lg"
           active={tool === 'text'}
+          aria-pressed={tool === 'text'}
           // 稳定定位（e2e / 引导）：不认 aria-label 文案
           data-tool="text"
+          data-toolbar-item
+          onMouseDown={noFocusOnPointer}
           onClick={() => setTool(tool === 'text' ? 'select' : 'text')}
           aria-label={t('common:objectType.text')}
+          className={toolClass(tool === 'text')}
         >
-          <Type size={ICON_SIZE.md} />
-          {label(t('common:objectType.text'))}
+          <Type size={ICON_SIZE.md} filled={tool === 'text'} />
         </Button>
       </Tip>
 
@@ -132,10 +167,19 @@ function Bar() {
         width={188}
         align="center"
         trigger={
-          <Button size="md" active={!!activeMark} aria-label={t('workspace:topbar.annotate')}>
+          <Button
+            size="icon-lg"
+            active={!!activeMark}
+            aria-pressed={!!activeMark}
+            data-toolbar-item
+            data-tool-menu="annotate"
+            onMouseDown={noFocusOnPointer}
+            aria-label={t('workspace:topbar.annotate')}
+            // 带一个下拉记号，比纯图标钮宽一点；仍是 32 高的圆端
+            className={cn('w-auto gap-0.5 px-2', toolClass(!!activeMark))}
+          >
             {ActiveMark ? <ActiveMark size={ICON_SIZE.md} filled /> : <Shapes size={ICON_SIZE.md} />}
-            {label(t('workspace:topbar.annotate'))}
-            <ChevronDown size={ICON_SIZE.xs} className="text-ink-3" />
+            <ChevronDown size={ICON_SIZE.xs} className={activeMark ? undefined : 'text-ink-3'} />
           </Button>
         }
       >
@@ -147,7 +191,7 @@ function Bar() {
           onValueChange={(v) => setTool(tool === v ? 'select' : (v as MarkTool))}
         >
           {MARK_TOOLS.map(({ tool: mark, icon: Icon, key }) => (
-            <MenuRadioItem key={mark} value={mark} icon={Icon} shortcut={key}>
+            <MenuRadioItem key={mark} value={mark} icon={Icon} shortcut={keyOf(key)}>
               {t(markToolKey(mark))}
             </MenuRadioItem>
           ))}
@@ -164,27 +208,40 @@ function Bar() {
       </Menu>
       <PresetsDialog open={presetsOpen} onClose={() => setPresetsOpen(false)} />
 
+      {/* 工具（模式）与一次性动作之间一道竖线：前者按下去「换了一种状态」，后者「做一件事就完」 */}
+      <span aria-hidden className="mx-1 h-5 w-px shrink-0 bg-border" />
+
+      {/* 一次性动作：28 高的带字 ghost 钮 */}
       <Tip label={t('workspace:topbar.subLabelsTip')}>
-        <Button size="md" onClick={addSubLabels} aria-label={t('workspace:topbar.addSubLabels')}>
-          <Tags size={ICON_SIZE.md} />
+        <Button
+          size="md"
+          data-toolbar-item
+          onMouseDown={noFocusOnPointer}
+          onClick={addSubLabels}
+          aria-label={t('workspace:topbar.addSubLabels')}
+        >
+          <Tags size={ICON_SIZE.sm} />
           {label(t('workspace:canvasTools.subLabels'))}
         </Button>
       </Tip>
 
-      <span aria-hidden className="mx-1 h-5 w-px shrink-0 bg-border" />
-
-      <Tip label={t('workspace:topbar.fitCanvas')} shortcut={`${MOD}1`}>
+      <Tip label={t('workspace:topbar.fitCanvas')} shortcut={keyOf('zoomFit')}>
         <Button
           size="md"
+          data-toolbar-item
+          onMouseDown={noFocusOnPointer}
           onClick={() => useViewportStore.getState().fitAnimated(page.w, page.h)}
           aria-label={t('workspace:topbar.fitCanvas')}
           // e2e 的稳定锚点（选择器不认 aria-label / 文案，web/AGENTS.md）
           data-fit-canvas
         >
-          <Maximize2 size={ICON_SIZE.md} />
+          <Maximize2 size={ICON_SIZE.sm} />
           {label(t('workspace:canvasTools.fit'))}
         </Button>
       </Tip>
     </div>
   )
 }
+
+/** 工具钮的激活态：墨色实底 + surface 字（与主按钮同一对颜色），盖过 `active` 那层 10% 灰 */
+const toolClass = (on: boolean) => (on ? 'bg-ink text-surface hover:bg-ink/90' : 'text-ink-2 hover:text-ink')

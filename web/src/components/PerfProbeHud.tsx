@@ -56,7 +56,9 @@ export function PerfProbeHud() {
     <div
       data-perf-probe
       data-phase={phase}
-      className="absolute right-3 top-3 z-drawer flex w-72 flex-col gap-2 rounded-lg bg-surface p-3 text-sm shadow-pop"
+      // 位置由画布右上角的堆叠容器给（App 的 `data-canvas-corner="top-right"`：缩放 → 会话卡 → 探针，
+      // 2026-10-07 设计审计 §10.1）；此前自己 absolute 在 right-3 top-3，与会话卡叠在同一处
+      className="pointer-events-auto flex w-full flex-col gap-2 rounded-lg bg-surface p-3 text-sm shadow-pop"
     >
       <p className="font-medium text-ink">{t('perfProbe.title')}</p>
 

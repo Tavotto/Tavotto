@@ -17,6 +17,10 @@
   判据与写入都不在这里——见下面「画布标注的类型切换」。
 * **右键的选区规则在 `ObjectView.onContextMenu`**：已在选区里一个字不动；不在 → 换成它 / 整组，
   并与左键一样退出图内编辑态（shift 混排进来的标注除外）。
+* **选中框的手柄也是对象**（Codex #833）：对象缩放手柄的命中层 / 沿边命中带 / 线状端点、图内元素框的手柄与命中带都画在
+  `OverlaySvg` 里、不在 `[data-object-id]` 底下——右键它们由 `OverlaySvg` 自己接住（`stopPropagation`），开那个选中对象 /
+  选中元素的同一个菜单，选区不动；正在改字时与 `ObjectView` 一样留给浏览器自己的菜单。不许冒到 `CanvasStage` 被当成空白处。
+  看护 `canvas/overlayHandleContextMenu.test.tsx`。
 * **`rebuildPanel`** = `POST /api/engine/invalidate`（与 `panel.file_changed` 同一个
   `pool.invalidate`）→ `markStale` → immediate 渲染；不改文档、不进历史；`invalidated: false`
   （native / 内嵌画布）照常重画但 toast 说「源脚本没有重跑」。**`resetOverridesConfirmed`** 就是
@@ -30,6 +34,18 @@
   兄弟图」时摆（不做 disabled）；点它只调 `openSyncOverrides`，窗口是画布舞台上常驻的 `SyncOverridesHost`。
   目标图不在画布上时「同步并写回」走标准 `WriteBackDialog`（`detached`），不许在这里再长出第二条写回路径。
 * 不可用的项用 `MenuItem.reason` 常驻原因，不用 tooltip（禁用项收不到指针）。
+* **剪贴板组**（2026-10-07 设计审计 §10.1）：公共尾巴的第一组是「复制 / 粘贴 / 创建副本」（`data-quick-item="copy" / "paste" /
+  "duplicate"`）。复制 / 粘贴调属性页按钮那一对 `copySelectedObjects` / `pasteObjects`（菜单点击是用户手势）；
+  菜单没有原生 paste 事件可接，粘贴只能走异步 `readText`——WebKit（Safari / 桌面壳）不给非编辑区读、Firefox 默认没有，
+  这两类引擎上**两份菜单都不提供「粘贴」**（判据只有 `lib/clipboard.canPasteFromMenu`，Codex #833），用 ⌘V；
+  ⌘C / ⌘V 的主路径仍是原生剪贴板事件，这里只是同一件事的菜单入口，不长第二套剪贴板。键位一律 `lib/keymap.keyOf`。
+* **空白画布的右键菜单**（2026-10-07）：`canvas/CanvasContextMenu.tsx`，同一份 `PointMenu` 外壳；`CanvasStage.onContextMenu`
+  只接空白处（选中框手柄在 `OverlaySvg` 里就截下了，见上；落在 `[data-object-id]` 上的冒泡不接——文字编辑 / 裁剪中留给浏览器自己的菜单）。只放调既有函数的入口：
+  粘贴 / 全选 / 适应画布 / 标尺·网格·安全区开关 / 画布设置（`data-canvas-menu-item`），离散动作过 `runDiscreteAction`。
+  「全选」可不可用与 `selectAll` 读同一个判据 `store/actions.isSelectAllTarget`（看得见且没锁）——只有隐藏 / 锁定对象时置灰（Codex #833）。
+  快速编辑（`fast_edit`）里不开：这一屏只画那一张图，菜单全是版面级动作；原生菜单照样拦下，开着时切进快速编辑当场收起
+  （收起不是藏起，回排版不在旧落点上重新冒出来，Codex #833）。
+  看护 `canvas/canvasContextMenu.test.tsx`。
 * 看护：`canvas/objectContextMenu.test.tsx` / `store/quickEditActions.test.ts` /
   `components/inspector/syncOverrides.test.tsx` / `components/inspector/writeBackRecords.test.tsx` /
   `e2e/sync-overrides.spec.ts` / `tests/test_engine_invalidate.py` / `e2e/quick-menu.spec.ts`。

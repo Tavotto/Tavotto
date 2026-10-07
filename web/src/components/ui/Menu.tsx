@@ -24,6 +24,7 @@ export function Menu({
   open,
   onOpenChange,
   onCloseAutoFocus,
+  modal,
 }: {
   trigger: ReactElement
   children: ReactNode
@@ -37,9 +38,14 @@ export function Menu({
    * 输入框」的场合（行内改名）：否则还给 ⋯ 的那一下就是那个输入框的 blur
    */
   onCloseAutoFocus?: (e: Event) => void
+  /**
+   * 默认模态（打开时页面其余部分不吃指针）。触发器自己还要认双击的（顶栏文档名：单击开菜单、双击改名，
+   * 2026-10-07 设计审计 §10.1）给 false：第二下才落得回触发器上
+   */
+  modal?: boolean
 }) {
   return (
-    <DM.Root open={open} onOpenChange={onOpenChange}>
+    <DM.Root open={open} onOpenChange={onOpenChange} modal={modal}>
       <DM.Trigger asChild>{trigger}</DM.Trigger>
       <DM.Portal>
         <DM.Content

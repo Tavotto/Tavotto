@@ -294,6 +294,38 @@
       ]
     },
     {
+      "id": "canvas.zoom-to-selection",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "缩放到选区：把选中对象放大到铺满画布视口",
+        "en-US": "Zoom to selection: fit the selected objects to the canvas view"
+      },
+      "entry": "选中对象后 ⇧2 / 缩放菜单「缩放到选中」/ 命令面板",
+      "e2e": [
+        {
+          "spec": "features.spec.ts",
+          "title": "功能：缩放到选区——⇧2、缩放菜单、命令面板都把选中对象放大到铺满画布视口"
+        }
+      ]
+    },
+    {
+      "id": "canvas.empty-menu",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "空白画布右键菜单：粘贴、全选、适应画布、标尺 / 网格 / 安全区开关、画布设置",
+        "en-US": "Empty-canvas context menu: paste, select all, fit, rulers / grid / safe-area toggles, canvas settings"
+      },
+      "entry": "在画布空白处右键",
+      "e2e": [
+        {
+          "spec": "features.spec.ts",
+          "title": "功能：空白画布右键菜单——在视口内，「全选」选中对象，「标尺」开关真的收起 / 放出标尺"
+        }
+      ]
+    },
+    {
       "id": "figure.select-and-edit",
       "status": "active",
       "platform": "both",

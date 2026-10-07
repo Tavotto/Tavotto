@@ -138,8 +138,10 @@ interface DialogProps {
    * `shell`：给「左导航 + 右内容」这种自己管布局与滚动的窗口（设置）——标题栏
    * 收成 44px 一条、下面一根 hairline，正文**不带内边距也不滚**，子树自己铺满、
    * 自己决定哪一列滚。
+   * `palette`：命令面板（2026-10-07 设计审计 §10.1）——钉在视口上方 18vh、标题只给读屏、没有右上角 ×
+   * （Esc / 点外面就是关）、正文不带内边距也不滚（输入行与结果列表自己排）。焦点陷阱与归还照旧由本外壳给。
    */
-  chrome?: 'default' | 'shell'
+  chrome?: 'default' | 'shell' | 'palette'
   /**
    * 打开时焦点落在哪个控件上。**默认落在容器上**（第一下 Tab 进正文第一个控件，
    * 2026-09-14 审计 S1）；只给「默认动作必须是安全的那一个」的对话框用——排版
@@ -176,7 +178,9 @@ export function Dialog({
   chrome = 'default',
   initialFocusRef,
 }: DialogProps) {
-  const shell = chrome === 'shell' || size === 'shell'
+  const palette = chrome === 'palette'
+  // 命令面板与 shell 一样自己管正文的排版与滚动
+  const shell = chrome === 'shell' || size === 'shell' || palette
   const locked = busy || blockDismiss
   const ownsScrim = useScrimOwner(open && !covered)
   const slots = isSlots(footer) ? footer : null
@@ -302,8 +306,8 @@ export function Dialog({
           }}
           onInteractOutside={(e) => locked && e.preventDefault()}
           className={cn(
-            'fixed left-1/2 top-1/2 z-dialog max-h-[86vh] max-w-[calc(100vw-2rem)]',
-            '-translate-x-1/2 -translate-y-1/2',
+            'fixed left-1/2 z-dialog max-h-[86vh] max-w-[calc(100vw-2rem)] -translate-x-1/2',
+            palette ? 'top-[18vh]' : 'top-1/2 -translate-y-1/2',
             'flex flex-col overflow-hidden rounded-panel bg-surface shadow-dialog',
             // 容器是初始焦点的落点：对话框自己的出现就是位置线索，不再套一圈焦点环
             'outline-none',
@@ -316,6 +320,7 @@ export function Dialog({
           <div
             className={cn(
               'flex gap-3',
+              palette && 'sr-only',
               // 右侧给关闭钮留位：它画在右上角，但 DOM 排在最后（见下）
               shell
                 ? 'h-11 shrink-0 items-center border-b border-border pl-4 pr-12'
@@ -358,7 +363,7 @@ export function Dialog({
             </div>
           )}
           {hasFooter && footerEl}
-          {!locked && (
+          {!locked && !palette && (
             <RD.Close asChild>
               {/* `data-dialog-close` 是关闭按钮的稳定锚点：aria-label 是
                   本地化文案（`actions.close`），换语言就选不中——e2e 里

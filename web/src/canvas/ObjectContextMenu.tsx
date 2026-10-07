@@ -7,6 +7,8 @@ import {
   ChevronDown,
   ChevronUp,
   CircleQuestionMark,
+  Clipboard,
+  ClipboardPaste,
   Copy,
   Crop,
   Eye,
@@ -27,7 +29,8 @@ import {
 } from '@/components/ui/icons'
 import { t as translate } from '@/i18n'
 import { emitActivity } from '@/lib/activity'
-import { MOD } from '@/lib/utils'
+import { keyOf } from '@/lib/keymap'
+import { canPasteFromMenu, copySelectedObjects, pasteObjects } from '@/lib/clipboard'
 import {
   ALIGN_BUTTONS,
   DISTRIBUTE_BUTTONS,
@@ -114,10 +117,10 @@ const ins = (key: string, values?: Record<string, unknown>) =>
 export type ObjectMenuKind = 'panel' | 'panel-layout-only' | 'text' | 'mark' | 'multi'
 
 const Z_MOVES: readonly { move: ZMove; key: string; shortcut: string; icon: typeof ChevronUp }[] = [
-  { move: 'top', key: 'zTop', shortcut: `⇧${MOD}]`, icon: ArrowUpToLine },
-  { move: 'up', key: 'zUp', shortcut: `${MOD}]`, icon: ChevronUp },
-  { move: 'down', key: 'zDown', shortcut: `${MOD}[`, icon: ChevronDown },
-  { move: 'bottom', key: 'zBottom', shortcut: `⇧${MOD}[`, icon: ArrowDownToLine },
+  { move: 'top', key: 'zTop', shortcut: keyOf('zTop'), icon: ArrowUpToLine },
+  { move: 'up', key: 'zUp', shortcut: keyOf('zUp'), icon: ChevronUp },
+  { move: 'down', key: 'zDown', shortcut: keyOf('zDown'), icon: ChevronDown },
+  { move: 'bottom', key: 'zBottom', shortcut: keyOf('zBottom'), icon: ArrowDownToLine },
 ]
 
 export function ObjectContextMenu({
@@ -214,7 +217,7 @@ export function ObjectContextMenu({
 
       {kind !== 'multi' && <OpenInspectorItem run={run} />}
 
-      <CommonTail selected={selected} obj={obj} multi={multi} run={run} />
+      <CommonTail selected={selected} obj={obj} multi={multi} run={run} runAsync={runAsync} />
     </PointMenu>
   )
 }
@@ -490,20 +493,46 @@ function CommonTail({
   obj,
   multi,
   run,
+  runAsync,
 }: {
   selected: CanvasObject[]
   obj: CanvasObject
   multi: boolean
   run: (fn: () => void) => () => void
+  runAsync: (fn: () => Promise<unknown>) => () => void
 }) {
   const ids = selected.map((o) => o.id)
   const count = selected.length
   const locked = triStateOf(selected, (o) => !!o.locked)
   return (
     <>
-      <MenuItem icon={Copy} data-quick-item="duplicate" shortcut={`${MOD}D`} onSelect={run(duplicateSelected)}>
+      {/* 剪贴板组（2026-10-07 设计审计 §10.1）：复制 / 粘贴 / 创建副本挨在一起。复制与粘贴调的是属性页按钮那一对
+          （`copySelectedObjects` / `pasteObjects`）；⌘C / ⌘V 的主路径仍是原生剪贴板事件（`handleCopyEvent` /
+          `handlePasteEvent`），这里只是同一件事的菜单入口。粘贴靠异步 `readText`，WebKit 不给非编辑区读、
+          Firefox 默认没有——那里不提供这一项（`canPasteFromMenu`，Codex #833），用 ⌘V */}
+      <MenuSeparator />
+      <MenuItem
+        icon={Clipboard}
+        data-quick-item="copy"
+        shortcut={keyOf('copy')}
+        onSelect={runAsync(copySelectedObjects)}
+      >
+        {qe('copy')}
+      </MenuItem>
+      {canPasteFromMenu() && (
+        <MenuItem
+          icon={ClipboardPaste}
+          data-quick-item="paste"
+          shortcut={keyOf('paste')}
+          onSelect={runAsync(pasteObjects)}
+        >
+          {qe('paste')}
+        </MenuItem>
+      )}
+      <MenuItem icon={Copy} data-quick-item="duplicate" shortcut={keyOf('duplicate')} onSelect={run(duplicateSelected)}>
         {qe('duplicate')}
       </MenuItem>
+      <MenuSeparator />
       {!multi ? (
         <MenuItem
           icon={obj.locked ? LockOpen : Lock}
@@ -561,7 +590,7 @@ function CommonTail({
         ))}
       </MenuSub>
       <MenuSeparator />
-      <MenuItem icon={Trash2} danger data-quick-item="delete" shortcut="Delete" onSelect={run(deleteSelected)}>
+      <MenuItem icon={Trash2} danger data-quick-item="delete" shortcut={keyOf('delete')} onSelect={run(deleteSelected)}>
         {multi ? qe('deleteCount', { count }) : translate('actions.delete')}
       </MenuItem>
     </>

@@ -232,3 +232,37 @@ describe('「已改用你的环境」', () => {
     expect(useUiStore.getState().statusTone, '改回做成了打 ✓').toBe('done')
   })
 })
+
+/**
+ * 通知轨的外形与顺序（2026-10-07 设计审计 §10.1）：普通的一条是胶囊；错误是圆角 12 的面板——左侧 danger
+ * 竖条 + 标题 + 至多两行原文 + 「复制详情」；**最新的一条最靠近底边**（CSS order，DOM 顺序不动）。
+ * 主语：`data-toast-layout` / `data-toast-bar` / `data-copy-details`；顺序认 style.order 的大小。
+ */
+describe('通知轨：外形与先后', () => {
+  it('普通状态是胶囊；错误是面板：竖条 + 标题 + 原文 + 复制详情', async () => {
+    say('已导出')
+    expect(statusToast()!.dataset.toastLayout).toBe('pill')
+    expect(statusToast()!.className).toContain('rounded-full')
+    act(() => useUiStore.getState().setStatus(literal('写盘失败：/very/long/path/that/goes/on'), 'error'))
+    const box = statusToast()!
+    expect(box.dataset.toastLayout).toBe('panel')
+    expect(box.className).toContain('rounded-lg')
+    expect(box.querySelector('[data-toast-bar]')).not.toBeNull()
+    expect(box.textContent).toContain('写盘失败：/very/long/path/that/goes/on')
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+    await act(async () => box.querySelector<HTMLButtonElement>('[data-copy-details]')!.click())
+    expect(writeText).toHaveBeenCalledWith('写盘失败：/very/long/path/that/goes/on')
+  })
+
+  it('最新的一条最靠近底边：先有状态、后来提示 → 提示排在后面；再来一条状态 → 状态又到最后', () => {
+    say('正在构建')
+    act(() => {
+      showHint('multi_select')
+    })
+    const orderOf = (el: HTMLElement | null) => Number(el!.style.order)
+    expect(orderOf(hintToast())).toBeGreaterThan(orderOf(statusToast()))
+    say('已导出')
+    expect(orderOf(statusToast())).toBeGreaterThan(orderOf(hintToast()))
+  })
+})
