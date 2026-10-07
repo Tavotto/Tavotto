@@ -880,6 +880,7 @@ export function ExportDialog() {
             { files: done.map((o) => o.name).join("、") },
             "dialogs",
           ),
+          "done",
         );
     } else if (job.status === "cancelled") {
       useUiStore

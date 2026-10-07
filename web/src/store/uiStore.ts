@@ -212,6 +212,17 @@ function readPersisted(): Persisted {
  * 文案全部是**描述符**而不是翻译好的字符串：确认框可能挂着等用户很久，
  * 中途切了语言得跟着换。用户自己的内容（文件名、画布名）走 values 插值。
  */
+/**
+ * toast 的语气，决定图标（2026-10-07 审计 P0）：此前所有非错误状态一律打 ✓，「正在构建…」
+ * 也打勾，读起来像已经做完了。
+ *   - `info`（缺省）：中性的一句话（提示、没有可撤销的操作、已取消）——Info 图标；
+ *   - `progress`：事情还在进行（正在构建 / 正在修复）——转圈；
+ *   - `done`：报告一件**做成了**的事（已保存 / 已导出 / 渲染完成）——✓；
+ *   - `error`：失败，常驻到用户关掉。
+ * 只有 `error` 改变行为（不自动消失、走 assertive 播报）；其余三档只换图标。
+ */
+export type StatusTone = 'info' | 'progress' | 'done' | 'error'
+
 export interface ConfirmRequest {
   title: UiMessage
   body: UiMessage
@@ -234,7 +245,7 @@ export interface CropBaseline {
 interface UiState extends Persisted {
   /** 当前 toast 的描述符；null = 没有 toast。切语言时 toast 跟着换 */
   status: UiMessage | null
-  statusTone: 'info' | 'error'
+  statusTone: StatusTone
   /**
    * 这条 toast 是不是**被动通知**（后台渲染完成 / 正在构建）。被动通知不许顶掉一条
    * 还挂着的非被动 toast：「已修复 8 项，可撤销」是用户点完按钮要读的那句，而修复
@@ -380,7 +391,7 @@ interface UiState extends Persisted {
   setShowGrid: (v: boolean) => void
   setStatus: (
     msg: UiMessage | null,
-    tone?: 'info' | 'error',
+    tone?: StatusTone,
     opts?: { passive?: boolean; owner?: string },
   ) => void
   /**

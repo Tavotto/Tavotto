@@ -836,7 +836,7 @@ export async function restoreNode(
   useTimelineStore.getState().setPreview(null)
   useUiStore
     .getState()
-    .setStatus(msg('versions.restored', { name: label, undo: modKey('Z') }, 'dialogs'))
+    .setStatus(msg('versions.restored', { name: label, undo: modKey('Z') }, 'dialogs'), 'done')
   return true
 }
 

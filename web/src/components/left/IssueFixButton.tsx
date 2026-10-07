@@ -125,7 +125,7 @@ async function withBusy(job: () => Promise<FixOutcome>): Promise<void> {
   const ui = useUiStore.getState()
   // 后端事务要真实渲染一两遍，几秒钟：先说一声，免得用户以为没点上又点一次
   ui.setFixing(true)
-  ui.setStatus({ key: 'problems.fixing', ns: 'errors' })
+  ui.setStatus({ key: 'problems.fixing', ns: 'errors' }, 'progress')
   try {
     reportFix(await job())
   } finally {
@@ -152,7 +152,7 @@ export function reportFix(res: FixOutcome): void {
     return
   }
   if (!failedCount) {
-    ui.setStatus(msg('problems.fixed', { count: res.applied }, 'errors'))
+    ui.setStatus(msg('problems.fixed', { count: res.applied }, 'errors'), 'done')
     return
   }
   ui.setStatus(

@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
+  Check,
   ChevronDown,
+  CircleAlert,
   Download,
   Ellipsis,
   Redo2,
@@ -97,7 +99,7 @@ async function exportPackage() {
   const doc = useDocumentStore.getState()
   try {
     const res = await createPackage(doc.projectMeta.name || doc.doc.name, doc.buildProject(), {})
-    ui.setStatus(msg('status.packaged', { name: res.name, count: res.assets }, 'workspace'))
+    ui.setStatus(msg('status.packaged', { name: res.name, count: res.assets }, 'workspace'), 'done')
   } catch (e) {
     ui.setStatus(
       msg(
@@ -135,6 +137,7 @@ function importPackage() {
       if (!missing && !drift) {
         ui.setStatus(
           msg('status.packageOpened', { createdAt: res.manifest.created_at ?? '' }, 'workspace'),
+          'done',
         )
       } else if (drift) {
         ui.setStatus(msg('status.packageDrift', { count: drift }, 'workspace'), 'error')
@@ -218,9 +221,36 @@ function useActiveProjectFile() {
 }
 
 /**
+ * 「有未保存修改 / 正在保存…」要持续这么久才说出来（2026-10-07 审计 P0）。自动保存防抖 1 s，
+ * 一次快的写盘从改动到落定只要一瞬——不等这一下的话顶栏每秒在三句话之间翻一轮。
+ */
+export const SAVE_PENDING_REVEAL_MS = 600
+
+/** `on` 连续为真满 `ms` 才变真；一变假立刻变假。 */
+function useHeldFor(on: boolean, ms: number): boolean {
+  const [held, setHeld] = useState(false)
+  useEffect(() => {
+    if (!on) {
+      setHeld(false)
+      return
+    }
+    const timer = setTimeout(() => setHeld(true), ms)
+    return () => clearTimeout(timer)
+  }, [on, ms])
+  return on && held
+}
+
+/**
  * 顶栏的保存状态。两根轴（ADR 0096）：`saveState` 说本机自动保存走到哪一步；
  * 绑定的项目文件说「项目里那份是不是最新」。落定之后的那句话说**去向**——
  * 「已保存到项目」「已存在本机」，tooltip 给出项目里的相对路径。
+ *
+ * 三条安静纪律（2026-10-07 审计 P0：自动保存每秒一轮，此前标签跟着每秒换一次字、换一次宽、
+ * 播报一次）：
+ *   1. 本机自动保存的「有未保存修改 / 正在保存…」持续满 `SAVE_PENDING_REVEAL_MS` 才说，
+ *      快的那一轮里仍显示上一句落定的话；
+ *   2. 宽度按所有会轮到的那几句里最宽的那句占位（同格叠放、只有当前那句可见），换字不推邻居；
+ *   3. 读屏播报只在进入「保存失败 / 外部冲突」时说（单独的 sr-only 区），平常的保存一轮不打扰。
  */
 export function SaveStateLabel() {
   const { t } = useTranslation('workspace')
@@ -231,25 +261,27 @@ export function SaveStateLabel() {
   )
   const bound = useActiveProjectFile()
   const projectOpen = useProjectStore((s) => !!s.project?.open) && currentProjectId() !== null
+  const localPending = saveState === 'dirty' || saveState === 'saving'
+  const revealPending = useHeldFor(localPending, SAVE_PENDING_REVEAL_MS)
   if (!hasContent && !bound) return null
 
   const settled = saveState === 'clean' || saveState === 'saved'
+  // 落定时那句话（也是快的一轮里继续显示的那句）
+  const settledText = bound
+    ? t(bound.dirty ? 'topbar.saveProjectPending' : 'topbar.saveProjectSaved')
+    : saveState === 'saved'
+      ? t('topbar.saveLocal')
+      : lastPersisted
+        ? t('topbar.saveLocalAt', { time: formatTime(lastPersisted) })
+        : t('topbar.saveLocal')
   const text =
-    saveState === 'saving'
-      ? t('topbar.saveSaving')
-      : saveState === 'dirty'
-        ? t('topbar.saveDirty')
-        : saveState === 'save_error'
-          ? t('topbar.saveError')
-          : saveState === 'conflict'
-            ? t('topbar.saveConflict')
-            : bound
-              ? t(bound.dirty ? 'topbar.saveProjectPending' : 'topbar.saveProjectSaved')
-              : saveState === 'saved'
-                ? t('topbar.saveLocal')
-                : lastPersisted
-                  ? t('topbar.saveLocalAt', { time: formatTime(lastPersisted) })
-                  : t('topbar.saveLocal')
+    saveState === 'save_error'
+      ? t('topbar.saveError')
+      : saveState === 'conflict'
+        ? t('topbar.saveConflict')
+        : revealPending
+          ? t(saveState === 'saving' ? 'topbar.saveSaving' : 'topbar.saveDirty')
+          : settledText
   const bad = saveState === 'save_error' || saveState === 'conflict'
   const title = bound
     ? t(bound.dirty || !settled ? 'topbar.saveTitleProjectPending' : 'topbar.saveTitleProject', {
@@ -262,13 +294,18 @@ export function SaveStateLabel() {
   // 顶栏左段放不下「新文档 · 已自动保存 14:03」再加时间线两颗钮，文字不收的话
   // 会被右边的按钮压住（#677 集成时 600 宽下实测重叠，ADR 0101 §8）
   // 项目文件落后于这份排版（ADR 0096）也算「还没落定」
-  const pending = saveState === 'dirty' || saveState === 'saving' || !!bound?.dirty
+  const pending = revealPending || !!bound?.dirty
+  // 占位：会在本机自动保存一轮里轮到的那几句（落定那句 + 两句进行中）。叠在同一格里，
+  // 格宽取最宽那句——只是给宽度，不可见、不给读屏
+  const reserve = [settledText, t('topbar.saveDirty'), t('topbar.saveSaving')].filter(
+    (r) => r !== text,
+  )
   return (
     <span
-      aria-live="polite"
       data-save-state
       data-save-destination={bound ? 'project' : 'local'}
-      className={cn('flex min-w-0 shrink items-center text-xs', bad ? 'text-danger' : 'text-ink-3')}
+      data-save-shown={bad ? saveState : revealPending ? saveState : 'settled'}
+      className={cn('flex min-w-0 shrink items-center gap-1 text-xs', bad ? 'text-danger' : 'text-ink-3')}
       // 窄时文字只给读屏，悬停气泡要连状态一起说
       title={`${text} · ${title}`}
     >
@@ -279,7 +316,34 @@ export function SaveStateLabel() {
           bad ? 'bg-danger' : pending ? 'bg-ink-3' : 'bg-ok',
         )}
       />
-      <span className="sr-only min-[900px]:not-sr-only min-[900px]:truncate">{text}</span>
+      {/* 落定 = ✓，出错 = 叹号，进行中留空位（不转圈：它本来就只在慢的那一轮出现）。
+          位置常驻，换状态时文字不左右跳 */}
+      <span aria-hidden className="hidden size-3 shrink-0 items-center justify-center min-[900px]:flex">
+        {bad ? (
+          <CircleAlert size={ICON_SIZE.xs} />
+        ) : !pending ? (
+          <Check size={ICON_SIZE.xs} />
+        ) : null}
+      </span>
+      <span className="grid min-w-0">
+        <span data-save-text className="sr-only col-start-1 row-start-1 min-[900px]:not-sr-only min-[900px]:truncate">
+          {text}
+        </span>
+        {reserve.map((r) => (
+          <span
+            key={r}
+            aria-hidden
+            className="invisible col-start-1 row-start-1 hidden truncate min-[900px]:block"
+          >
+            {r}
+          </span>
+        ))}
+      </span>
+      {/* 读屏只在出事时说：标签本身不再 aria-live（每秒一轮的保存不该每秒播一次）。
+          不带 role（`role=status` 全产品只留通知轨那一个） */}
+      <span aria-live="polite" data-save-live className="sr-only">
+        {bad ? text : ''}
+      </span>
     </span>
   )
 }
@@ -355,7 +419,7 @@ export function DocumentMenu() {
       trigger={
         <Button size="md" className="min-w-0 max-w-52 shrink text-ink-2" aria-label={t('topbar.documentLabel', { name })}>
           <span className="truncate">{name}</span>
-          {/* 项目里的文件落后于这份排版（ADR 0096）：与画布页签的「未保存」同一颗圆点 */}
+          {/* 项目里的文件落后于这份排版（ADR 0096）：排版名旁一颗圆点（画布页签上不再有「未保存」点，2026-10-07） */}
           {projectFile?.dirty && (
             <span
               data-project-file-dirty

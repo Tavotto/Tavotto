@@ -289,7 +289,7 @@ function ReadinessBody() {
       })
       useUiStore
         .getState()
-        .setStatus(msg('readiness.linked', { name: fileName(panel.id) }, 'dialogs'))
+        .setStatus(msg('readiness.linked', { name: fileName(panel.id) }, 'dialogs'), 'done')
     })
 
   /** 项目里全部脚本，供「手工选择脚本」用；取不回来时只剩候选 */
@@ -1085,7 +1085,7 @@ function ProbeNoteView({ note }: { note?: ProbeNote }) {
               size="sm"
               onClick={() => {
                 addRuntimePanelToCanvas(d)
-                setStatus(msg('registry.addedToCanvas', { stem: d.stem }, 'dialogs'))
+                setStatus(msg('registry.addedToCanvas', { stem: d.stem }, 'dialogs'), 'done')
                 useProjectReadinessStore.getState().closeCenter()
               }}
             >

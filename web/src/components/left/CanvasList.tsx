@@ -163,7 +163,7 @@ function CanvasRow({
     deleteCanvasWithSession(canvas.id)
     useUiStore
       .getState()
-      .setStatus(msg('canvasList.deleted', { name: canvas.name }, 'workspace'))
+      .setStatus(msg('canvasList.deleted', { name: canvas.name }, 'workspace'), 'done')
   }
 
   return (
