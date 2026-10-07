@@ -13,6 +13,7 @@ import { useRef, useState } from 'react'
 import { Button } from '@/components/ui/Button'
 import { Upload } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
+import { dropZoneClass } from '@/components/ui/dropZone'
 import { cn } from '@/lib/utils'
 import { pg } from '../pgText'
 
@@ -27,16 +28,22 @@ export function IndependentScriptUpload({ onFile }: { onFile: (f: File) => void 
           e.preventDefault()
           setOver(true)
         }}
-        onDragLeave={() => setOver(false)}
+        onDragLeave={(e) => {
+          // 在子元素之间穿行不算离开（否则接收态一闪一闪）
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOver(false)
+        }}
         onDrop={(e) => {
           e.preventDefault()
           setOver(false)
           const f = e.dataTransfer.files?.[0]
           if (f) onFile(f)
         }}
+        data-upload-zone
+        data-dragging={over || undefined}
         className={cn(
-          'flex flex-col gap-2 rounded-md border border-dashed px-4 py-3 transition-colors',
-          over ? 'border-sel bg-sel/5' : 'border-border',
+          // 平时是一块安静的白面（不画虚线，2026-10-07 设计审计 §10.4 P2）；拖着文件进来才是接收态
+          'flex flex-col gap-2 rounded-lg bg-surface px-4 py-3',
+          dropZoneClass(over),
         )}
       >
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">

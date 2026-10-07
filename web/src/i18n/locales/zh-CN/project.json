@@ -97,6 +97,11 @@
     },
     "menuOpen": "打开",
     "more": "更多",
+    "narrative": {
+      "script": "打开脚本",
+      "scriptOnly": "<script/>，把它变成可编辑的论文图。",
+      "withRecent": "继续 <recent/>，或 <script/> 开始新的排版。"
+    },
     "newcomer": {
       "import": "导入我的脚本",
       "title": "你的绘图脚本在哪里？",
@@ -113,7 +118,6 @@
       "dropOr": "或",
       "dropRelease": "松开即可导入",
       "dropTitle": "把 Python 脚本拖到这里",
-      "lead": "将你的 Python 绘图脚本，转换为可编辑的论文图。",
       "sample": "使用示例脚本试试看",
       "sampleHint": "{{product}} 会自动识别脚本中生成的图片，并进入排版界面。"
     }

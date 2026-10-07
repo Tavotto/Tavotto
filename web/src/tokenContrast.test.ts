@@ -213,6 +213,14 @@ describe('token 配对的对比度', () => {
     }
   })
 
+  it('代码着色七档（syntax-*）在白 / 桌面 / surface-2 上都是要读的字 ≥4.5:1', () => {
+    for (const k of ['keyword', 'function', 'string', 'number', 'comment', 'type', 'builtin']) {
+      for (const g of GROUNDS) {
+        expect(contrast(token(`syntax-${k}`), token(g)), `syntax-${k} on ${g}`).toBeGreaterThanOrEqual(4.5)
+      }
+    }
+  })
+
   it('当字用的锚点（text-danger / text-ok：红字 ghost 按钮、行内失败字）对白 ≥4.5:1；warn 锚点不当字（字一律 warn-content）', () => {
     for (const s of ['danger', 'ok']) {
       expect(contrast(resolveColor(s), token('surface')), s).toBeGreaterThanOrEqual(4.5)

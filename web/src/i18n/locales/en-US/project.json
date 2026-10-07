@@ -97,6 +97,11 @@
     },
     "menuOpen": "Open",
     "more": "More",
+    "narrative": {
+      "script": "Open a script",
+      "scriptOnly": "<script/> and turn it into an editable paper figure.",
+      "withRecent": "Continue <recent/>, or <script/> to start a new layout."
+    },
     "newcomer": {
       "import": "Import my script",
       "title": "Where is your plotting script?",
@@ -113,7 +118,6 @@
       "dropOr": "or ",
       "dropRelease": "Release to import",
       "dropTitle": "Drag a Python script here",
-      "lead": "Turn your Python plotting scripts into editable paper figures.",
       "sample": "Try a sample script",
       "sampleHint": "{{product}} finds the figures the script makes and opens the layout view."
     }
