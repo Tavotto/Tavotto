@@ -1,7 +1,7 @@
 import { useEffect, useRef, type FocusEvent, type ReactNode } from 'react'
 import { perfCount } from '@/perf/core'
 import { useTranslation } from 'react-i18next'
-import { Check, CircleAlert, Info, Lightbulb, X } from '@/components/ui/icons'
+import { Check, CircleAlert, Info, Lightbulb, LoaderCircle, X } from '@/components/ui/icons'
 import { Button } from '@/components/ui/Button'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { SwapText } from '@/components/ui/SwapText'
@@ -23,7 +23,7 @@ import {
   useScriptInputStore,
   type AutofillNotice,
 } from '@/store/scriptInputStore'
-import { statusDismissTimer, useUiStore } from '@/store/uiStore'
+import { statusDismissTimer, useUiStore, type StatusTone } from '@/store/uiStore'
 import { userEnvironmentName } from '@/lib/userEnvironmentText'
 import { useWorkspaceStore } from '@/store/workspace'
 import { boundsOf } from '@/lib/geometry'
@@ -50,7 +50,7 @@ const SIZE_FIRST_KINDS = new Set(['resize', 'draw', 'crop'])
  * 投影）是两种浮盒（2026-09-15 打磨 N4）。
  */
 const HUD_BOX =
-  'inline-flex min-h-7 max-w-full flex-wrap items-center gap-x-2.5 gap-y-1.5 rounded-md bg-surface px-2.5 py-1.25 text-sm shadow-pop'
+  'inline-flex min-h-7 max-w-full flex-wrap items-center gap-x-2.5 gap-y-1.5 rounded-lg bg-surface px-2.5 py-1.25 text-sm shadow-pop'
 
 export function CanvasHud() {
   perfCount('render.CanvasHud')
@@ -79,7 +79,7 @@ export function CanvasHud() {
     <div
       // 画布底部有浮动工具条时抬到它上面去：读数 / 提示与工具条同在底边会叠在一起
       className={cn(
-        'pointer-events-none absolute left-3 z-10 flex max-w-[calc(100%-1.5rem)] flex-col items-start gap-1',
+        'pointer-events-none absolute left-3 z-sticky flex max-w-[calc(100%-1.5rem)] flex-col items-start gap-1',
         toolbarUp ? 'bottom-16' : 'bottom-3',
       )}
       aria-hidden={interacting ? undefined : true}
@@ -204,8 +204,8 @@ function Toast({
         // 的一句话在画布上方读起来像脚注（2026-09-15 打磨 N2）。
         // `min-h-9 py-1`：一种高度 36。带动作的那条由 28 的按钮 + py 8 撑到 36，不带动作的
         // 靠 min-h 补齐——此前是 34 / 29 两种（N3），min-h-8 只把差距从 5 缩到 4，仍是两种
-        'pointer-events-auto flex min-h-9 max-w-[520px] items-center gap-2 rounded-md px-3 py-1 text-sm shadow-pop',
-        tone === 'error' ? 'bg-danger-subtle text-danger' : 'bg-surface text-ink',
+        'pointer-events-auto flex min-h-9 max-w-[520px] items-center gap-2 rounded-lg px-3 py-1 text-sm shadow-pop',
+        tone === 'error' ? 'bg-danger-surface text-danger-content' : 'bg-surface text-ink',
         'data-[state=open]:animate-rise-in data-[state=closed]:animate-rise-out',
       )}
     >
@@ -229,6 +229,19 @@ function Toast({
       )}
     </div>
   )
+}
+
+/**
+ * 状态 toast 的图标按语气取（`StatusTone`，2026-10-07 审计 P0）：只有报告「做成了」的那句打 ✓，
+ * 进行中的转圈（与 `Button` 忙碌态同一个 LoaderCircle），其余中性的一句给 Info——此前
+ * 「正在构建…」也打勾。颜色除错误外都是 ink-3：图标只分语气，不抢字的戏。
+ */
+function StatusIcon({ tone }: { tone: StatusTone }) {
+  if (tone === 'error') return <CircleAlert size={ICON_SIZE.sm} className="shrink-0" aria-hidden />
+  if (tone === 'done') return <Check size={ICON_SIZE.sm} className="shrink-0 text-ink-3" aria-hidden />
+  if (tone === 'progress')
+    return <LoaderCircle size={ICON_SIZE.sm} className="shrink-0 animate-spin text-ink-3" aria-hidden />
+  return <Info size={ICON_SIZE.sm} className="shrink-0 text-ink-3" aria-hidden />
 }
 
 /**
@@ -313,7 +326,7 @@ export function NotificationRail() {
           .getState()
           .setStatus(
             error ? literal(error) : msg('engine.userEnvReverted', undefined, 'errors'),
-            error ? 'error' : 'info',
+            error ? 'error' : 'done',
           ),
       )
   }
@@ -345,7 +358,7 @@ export function NotificationRail() {
     <div
       // 画布底部有浮动工具条时整列抬到它上面去（toast 居中、工具条也居中，不抬就叠在一起）
       className={cn(
-        'pointer-events-none absolute inset-x-0 z-20 flex flex-col items-center gap-1.5 px-4',
+        'pointer-events-none absolute inset-x-0 z-canvas-chrome flex flex-col items-center gap-1.5 px-4',
         toolbarUp ? 'bottom-16' : 'bottom-4',
       )}
     >
@@ -359,10 +372,10 @@ export function NotificationRail() {
         aria-live="polite"
         role="status"
         data-status-live
-        data-status-key={tone === 'info' && status ? status.key : undefined}
+        data-status-key={tone !== 'error' && status ? status.key : undefined}
         className="sr-only"
       >
-        {tone === 'info' ? liveText : ''}
+        {tone !== 'error' ? liveText : ''}
       </div>
       <div aria-live="assertive" role="alert" className="sr-only">
         {tone === 'error' ? liveText : ''}
@@ -430,16 +443,12 @@ export function NotificationRail() {
       )}
       {statusPresence.mounted && (
         <Toast
-          tone={shown.tone}
+          tone={shown.tone === 'error' ? 'error' : 'info'}
           state={statusPresence.state}
           timer={statusDismissTimer}
-          icon={
-            shown.tone === 'error' ? (
-              <CircleAlert size={ICON_SIZE.sm} className="shrink-0" aria-hidden />
-            ) : (
-              <Check size={ICON_SIZE.sm} className="shrink-0 text-ink-3" aria-hidden />
-            )
-          }
+          // 语气认这个钩子（用例 / e2e），不认图标的类名
+          data-status-tone={shown.tone}
+          icon={<StatusIcon tone={shown.tone} />}
           text={shownText}
           onClose={shown.tone === 'error' ? () => useUiStore.getState().setStatus(null) : undefined}
           closeLabel={t('status.dismissError')}

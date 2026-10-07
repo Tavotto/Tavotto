@@ -39,7 +39,7 @@ export function NativeSessionCards() {
   const list = sortSessions(Object.values(sessions))
   if (!list.length) return null
   return (
-    <div className="pointer-events-none absolute right-2 top-2 z-10 flex w-72 flex-col gap-1.5">
+    <div className="pointer-events-none absolute right-2 top-2 z-sticky flex w-72 flex-col gap-1.5">
       {list.map((s) => (
         <SessionCard key={s.session_id} session={s} />
       ))}

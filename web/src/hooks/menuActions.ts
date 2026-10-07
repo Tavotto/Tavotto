@@ -24,9 +24,9 @@ function reportElementAlignBlocked(
   group?: GroupBlockReason,
 ) {
   const ui = useUiStore.getState()
-  if (reason === 'group-blocked' && group) ui.setStatus(groupBlockedMessage(group))
-  else if (reason === 'syncing') ui.setStatus(msg('element.alignSyncing', undefined, 'inspector'))
-  else if (reason === 'noop') ui.setStatus(msg('element.alignNoop', undefined, 'inspector'))
+  if (reason === 'group-blocked' && group) ui.setStatus(groupBlockedMessage(group), 'info')
+  else if (reason === 'syncing') ui.setStatus(msg('element.alignSyncing', undefined, 'inspector'), 'progress')
+  else if (reason === 'noop') ui.setStatus(msg('element.alignNoop', undefined, 'inspector'), 'info')
   else if (reason === 'invalid') {
     ui.setStatus(msg('element.alignInvalid', undefined, 'inspector'), 'error')
   } else if (reason === 'too-few') {

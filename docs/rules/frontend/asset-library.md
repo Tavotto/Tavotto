@@ -4,7 +4,7 @@
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 
 素材面板分「图」（FileAsset + RuntimeFigureAsset 同一个 listbox，runtime
-卡带「运行时图」badge、cache 预览、stale 角标与重跑）与「脚本」
+卡带「运行时图」badge、cache 预览、stale 角标；重跑是选中页脚 `SelectedAssetActions` 的「重新运行」，不嵌在卡里）与「脚本」
 （`ScriptLibrary`，项目内每个合理 .py 一行）两个区。普通路径必须在这里
 完成；RegistryDialog 只留冲突裁决 / 手工 stem / 高级诊断。
 
@@ -183,7 +183,7 @@
   一样保留上一份照常显示；来源筛选的选项由 `assetFolders()` 并上它的目录。看护 `lib/panelSrc.test.ts`、`AssetBrowser.tiff.test.tsx`。
 - **脚本 `input()` 的作答（ADR 0099）**：`scriptInputStore` 有项目代际（`clear()` 换代；后端那一问不取消，切回来经
   `loadAnswers()` 的 `pending` 接回对话框）；`ScriptInputDialog` 是闸（`blockDismiss`，出口只有提交 / 结束输入 / 停止脚本），
-  脚本的提示与输出片段只当纯文本；事件流以 `/api/events?answers=1` 声明「能答题」（同一道会话认证），收到 `stream.hello` 与每次认领新项目时（`onCurrentProjectChange`，与事件过滤同一时刻，不等 `project` 赋值）经 `announce()` 报在看哪个项目（后端按项目认答题方）；改 / 删答案的结果换了项目就是 `stale`，调用方不许接着重跑；「记住的输入」入口只在
+  脚本的提示与输出片段只当纯文本；事件流以 `/api/events?answers=1` 声明「能答题」（同一道会话认证），收到 `stream.hello` 与每次认领新项目时（`onCurrentProjectChange`，与事件过滤同一时刻，不等 `project` 赋值）经 `announce()` 报在看哪个项目（后端按项目认答题方）；改 / 删答案的结果换了项目就是 `stale`，调用方不许接着重跑；答案管理（`ScriptAnswersDialog`；答案按运行配置 `run_config` 分行，改 / 删只动那一行、重跑只重跑那份配置）行内只改值、没有主按钮，脚部唯一的主动作「保存并重新运行（N）」依次保存所有改过的答案、只重跑一次；删除先 `askConfirm`（danger），确认框开着时换了项目（store 换代）点头作废；改 / 删答案一次只许一件（批量保存整批算一件、删除一条算一件），锁归 `scriptInputStore`（`answersBusy` + `beginAnswersChange()` / `endAnswersChange(token)`）不归对话框组件：拿不到锁就一个请求都不发，`saveAnswer` / `forgetAnswer` 只认持锁 token，关掉再打开答案管理时新挂上的对话框读同一把锁、在飞的那件回来才放开（否则两份同项目整份快照互盖、重跑两次）；`clear()` 换代一并清锁，旧项目那件回来时 token 已不是持有者、放不掉新锁；「记住的输入」入口只在
   这个脚本真有答案时出现在脚本行上；zustand 选择器的空值用模块级常量（每次新建 `[]` = React #185 无限重渲染）。
   作答内容在 `ScriptInputForm`（`useScriptInputAnswer` + 字段 + 按钮），原对话框与准备面板共用；同一问只有一个展示面：
   面板挂载时 `claimPresentation`、卸载时 `releasePresentation`，对话框只在没有展示面认领时出现（关面板 = 换展示，不停脚本）。

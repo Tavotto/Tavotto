@@ -355,7 +355,7 @@ function ActiveStep({ stepId }: { stepId: StepId }) {
     position: inDialog ? 'absolute' : 'fixed',
     left: placement?.x ?? -9999,
     top: placement?.y ?? -9999,
-    zIndex: 60,
+    zIndex: 'var(--z-onboarding)',
     // 时长与曲线只来自 token（宪法第七节）：此前是写死的 120ms + ease-out（打磨 G1）
     transition:
       reduced || !placement?.glide
@@ -385,7 +385,7 @@ function ActiveStep({ stepId }: { stepId: StepId }) {
           aria-hidden
           data-onboarding-ring
           className={cn(
-            'pointer-events-none fixed z-[59] rounded-md border-2 border-accent',
+            'pointer-events-none fixed z-onboarding-ring rounded-md border-2 border-accent',
             !reduced && 'animate-fade-in',
           )}
           style={ring}

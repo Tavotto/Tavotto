@@ -40,7 +40,7 @@ export function sentenceCount(text: string, lang: string): number {
 
 /**
  * 「一句话就能读懂」的两把尺子：主区域（收起的「详情 / 高级」不算）里的句子数——每个看得见的文字块各按语种数、再加总，
- * 不按子串找某一句；以及看得见的主按钮（`variant="primary"` 的近黑底白字）颗数
+ * 不按子串找某一句；以及看得见的主按钮（`data-variant="primary"`）颗数
  */
 export function visibleSentenceCount(root: Element, lang = i18n.language): number {
   return visibleBlocks(root)
@@ -49,7 +49,7 @@ export function visibleSentenceCount(root: Element, lang = i18n.language): numbe
 }
 
 export function visiblePrimaryButtons(root: Element): number {
-  return visibleElements(root).filter((el) => el.tagName === 'BUTTON' && el.className.includes('text-white')).length
+  return visibleElements(root).filter((el) => el.tagName === 'BUTTON' && el.getAttribute('data-variant') === 'primary').length
 }
 
 /**

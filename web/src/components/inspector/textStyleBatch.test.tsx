@@ -368,13 +368,18 @@ describe('图标题 + X/Y 轴标题的公共样式', () => {
     expect(overrideOf('axes_0.xaxis.label', 'color')).toBe('#aa2233')
   })
 
-  it('颜色不一致时旁边明写「多个值」', async () => {
+  it('颜色不一致时色块自己画成「多个值」，不画其中任何一个颜色', async () => {
     useDocumentStore.getState().commit(literal('先改一个'), (d) => {
       const p = d.objects.find((o) => o.id === 'p1') as PanelObject
       p.overrides.push({ gid: 'axes_0.title', prop: 'color', value: '#ff0000' })
     })
     await mount(['axes_0.title', 'axes_0.xaxis.label'])
-    expect(textOf()).toContain('多个值')
+    const swatch = colorInputs()[0].parentElement as HTMLElement
+    expect(swatch.getAttribute('data-mixed')).toBe('true')
+    expect(swatch.title).toBe('多个值')
+    const fills = Array.from(swatch.querySelectorAll('div')).map((d) => d.style.background)
+    expect(fills).not.toContain('rgb(255, 0, 0)')
+    expect(fills).not.toContain('rgb(0, 0, 0)')
   })
 })
 
@@ -610,6 +615,71 @@ describe('批量里的视觉选择器', () => {
     })
     expect(overrideOf('axes_0.lines_10', 'linestyle')).toBe('--')
     expect(overrideOf('axes_0.lines_12', 'linestyle')).toBe('--')
+  })
+
+  /* ---- 2026-10-07 审计 §9.2 P0：mixed 的颜色 / 开关由控件自己说，不谎报一个值 ---- */
+
+  const withVisible = (e: ManifestElement, visible: boolean): ManifestElement => ({
+    ...e,
+    editable: [...e.editable, f('visible', 'bool', visible)],
+  })
+  const lineColorSwatch = () => {
+    const input = colorInputs().find((i) => i.getAttribute('aria-label')?.startsWith('颜色'))
+    expect(input, '颜色取色盘不见了').toBeTruthy()
+    return input!.parentElement as HTMLElement
+  }
+  const visibleSwitch = () => {
+    const sw = host.querySelector<HTMLButtonElement>('button[role="switch"][aria-label="显示"]')
+    expect(sw, '「显示」开关不见了').toBeTruthy()
+    return sw!
+  }
+
+  it('颜色不一致：色块是「多个值」，不画 #000000 也不画任何一个成员的颜色', async () => {
+    await mountLines([lineA, lineC])
+    const swatch = lineColorSwatch()
+    expect(swatch.getAttribute('data-mixed')).toBe('true')
+    expect(swatch.title).toBe('多个值')
+    const fills = Array.from(swatch.querySelectorAll('div')).map((d) => d.style.background)
+    expect(fills).not.toContain('rgb(0, 0, 0)')
+    expect(fills).not.toContain('rgb(31, 119, 180)')
+    expect(fills).not.toContain('rgb(214, 39, 40)')
+    // 可达描述说「多个值」
+    const input = swatch.querySelector('input[type=color]')!
+    const desc = document.getElementById(input.getAttribute('aria-describedby') ?? '')
+    expect(desc?.textContent).toBe('多个值')
+  })
+
+  it('颜色不一致时取色照旧写给全部成员', async () => {
+    await mountLines([lineA, lineC])
+    const input = lineColorSwatch().querySelector('input[type=color]') as HTMLInputElement
+    await act(async () => {
+      typeInto(input, '#123456')
+    })
+    expect(overrideOf('axes_0.lines_10', 'color')).toBe('#123456')
+    expect(overrideOf('axes_0.lines_12', 'color')).toBe('#123456')
+  })
+
+  it('颜色一致：色块就是那个色，没有 mixed 标记（对照组）', async () => {
+    await mountLines([lineA, lineB])
+    const swatch = lineColorSwatch()
+    expect(swatch.getAttribute('data-mixed')).toBeNull()
+    expect(swatch.title).toBe('#1F77B4')
+  })
+
+  it('开关不一致：aria-checked="mixed"（不是画成「关」），点一下全部设为开', async () => {
+    await mountLines([withVisible(lineA, true), withVisible(lineC, false)])
+    const sw = visibleSwitch()
+    expect(sw.getAttribute('aria-checked')).toBe('mixed')
+    await act(async () => {
+      sw.click()
+    })
+    expect(overrideOf('axes_0.lines_10', 'visible')).toBe(true)
+    expect(overrideOf('axes_0.lines_12', 'visible')).toBe(true)
+  })
+
+  it('开关一致时照旧是 true / false（对照组）', async () => {
+    await mountLines([withVisible(lineA, false), withVisible(lineB, false)])
+    expect(visibleSwitch().getAttribute('aria-checked')).toBe('false')
   })
 
   it('marker 仍是图形选择器：触发按钮在，mixed 时说「多个值」', async () => {
