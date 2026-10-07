@@ -16,3 +16,16 @@ v0.18.0 的五条用户可见说明已迁入 v0.18.0.md。渠道启用在 v0.18.
 
 英文写，与 release notes 一致：**按症状和触发条件写，不要按提交写**。
 -->
+
+## Codex on Windows: background environment repair and retry backoff
+
+When an upgraded Codex plugin cannot import the engine in its existing managed
+runtime, Tavotto tries to repair that environment in the background. Windows 11
+users reported repeated terminal windows with error `0x800700e8` during this
+startup path. The launcher now requests Windows' no-window process flag for
+background repair and its probe/pip subprocesses. After the repair process is
+started and its retry marker is written, Tavotto waits 30 minutes before trying
+again in the background; a process that fails to start does not set the marker.
+The message in Codex points to `provision.log` and gives the command to run the
+repair by hand. Setting `TAVOTTO_MCP_NO_AUTO_PROVISION=1` now also reaches the
+server under Codex (before, Codex did not pass it on, so the switch had no effect).
