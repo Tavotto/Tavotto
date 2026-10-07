@@ -603,6 +603,10 @@ export default interface Resources {
           "keywords": "new blank xj xinjian pb paiban",
           "label": "新建空白排版"
         },
+        "project-scan": {
+          "keywords": "scan check structure jc jiancha 检查 扫描 脚本 目标",
+          "label": "显示项目检查结果"
+        },
         "readiness": {
           "keywords": "readiness status editable jr jieru 接入 可编辑 仅版面 仅排版 为什么不能编辑",
           "label": "显示项目接入状态"
@@ -1958,6 +1962,7 @@ export default interface Resources {
       "project_env_unusable": "项目环境无法启动。",
       "project_env_worker_import_failed": "项目环境能导入 matplotlib，但 Tavotto 的渲染代码在它里面起不来。",
       "project_python_unusable": "为这个项目指定的解释器用不了；Tavotto 不会自动换成别的环境。请在渲染环境设置里重新指定，或清除它回到自动选择。",
+      "project_scan_not_started": "这个项目还没有开始检查（或应用重启过）。重新检查即可。",
       "publish_failed": "文件已写入，但无法移入导出目录：{{error}}。",
       "python_missing": "本机没有可用的 Python。请安装 Python 3.10 或更高版本后重试。",
       "read_failed": "无法读取：{{reason}}",
@@ -4629,6 +4634,53 @@ export default interface Resources {
       "projectFailed": "没能存进项目里的 {{file}}：{{reason}}",
       "projectSkipped": "没有写入项目里的 {{file}}：按下保存之后切换了排版或项目。回到那份排版再保存一次。",
       "skippedSwitched": "按下保存之后切换了排版或项目，这次没有写进项目。回到那份排版再保存一次。"
+    },
+    "scan": {
+      "cancel": "取消检查",
+      "deps": {
+        "declared": "依赖声明：{{files}}（{{count}} 条），尚未检查是否已安装。"
+      },
+      "details": "详情",
+      "env": {
+        "none": "没有找到环境线索，选定脚本后再检查。",
+        "some": "找到 {{count}} 个可能的 Python 环境线索，都还没有核验。选定脚本后再检查。"
+      },
+      "issue": {
+        "asset_limit": "图很多，只数了一部分。",
+        "cancelled": "检查被取消了。",
+        "depth_limit": "{{path}} 层级较深，没有进入检查。",
+        "entry_budget": "项目文件很多，检查在中途停下了。",
+        "file_too_large": "{{path}} 太大，没有分析。",
+        "more_issues": "另外还有 {{count}} 处没看全。",
+        "parse_budget": "{{path}} 结构过于复杂，没有分析。",
+        "placeholder_file": "{{path}} 是还没下载到本机的云盘文件，没有读取。",
+        "script_limit": "脚本很多，只列出了一部分。",
+        "source_byte_budget": "脚本总量较大，后面的脚本没有分析。",
+        "symlinked_dir": "{{path}} 是链接或重定向项，未检查其目标。",
+        "time_budget": "检查用时较长，在中途停下了。",
+        "unreadable_dir": "没能读取目录 {{path}}。",
+        "unreadable_file": "没能读取文件 {{path}}。"
+      },
+      "line": {
+        "already_connected": "绘图脚本都已连接，图可以直接编辑。",
+        "cancelled": "已取消检查。已有的图仍可排版。",
+        "choose_target": "发现 {{count}} 个可能的绘图脚本，尚未连接。选一个来准备。",
+        "failed": "检查没有完成。已有的图仍可排版，可以重新检查。",
+        "nothing_found": "这个项目里还没有图和脚本。",
+        "scanning": "正在检查项目结构，已发现 {{scripts}} 个脚本、{{assets}} 张图。图可以先排版。",
+        "static_source": "没有发现脚本，图可以直接排版。",
+        "target_found": "发现绘图脚本 {{script}}。已有的图可直接排版；要编辑它生成的图，需要先准备并运行。",
+        "unchecked": "没能检查完整个项目（{{issues}} 处没看全），所以不能说这里没有脚本。已有的图仍可排版。"
+      },
+      "openAssets": "打开素材库",
+      "partialNote": "部分内容没有检查完。",
+      "rescan": "重新检查",
+      "role": {
+        "auxiliary": "辅助脚本",
+        "plot": "绘图脚本",
+        "unknown": "未核验"
+      },
+      "run": "试运行"
     },
     "scrim": {
       "collapse": "收起侧栏"
