@@ -2,6 +2,7 @@ import {
   forwardRef,
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useRef,
   useState,
@@ -455,9 +456,18 @@ export function ColorField({
   onGestureEnd,
   className,
   ariaLabel,
+  mixed,
 }: {
   value: string
   onChange: (v: string) => void
+  /**
+   * 多选且颜色不一致（2026-10-07 审计 §9.2 P0）：色块**不画任何一个颜色**——画成中性底 +
+   * 居中一道短横（与开关的「多个值」同一个记号），title 与可达描述都说「多个值」。
+   * 此时 `value` 只当取色盘的起点（调用方给第一个成员的真色即可），绝不被画出来；
+   * 之前批量行把 mixed 画成 #000000、标注画成 #1B1B18，色块在谎报一个谁都不是的公共色。
+   * 取色照旧写给全部成员（由调用方的 onChange 决定）。
+   */
+  mixed?: boolean
   /**
    * 这一轮取色结束（取色盘失焦）。取色是连续动作：系统取色盘拖着走会发一串
    * change，调用方靠它把整轮压成一条历史 + 一次定稿渲染。原生对话框不保证发
@@ -479,7 +489,8 @@ export function ColorField({
   // 不是黑色（#427 之前 `to_hex` 丢掉 alpha，透明黑显示成 #000000，检查器摆出一条
   // 并不存在的黑边）。色块画成「无」：白底一道红斜线，与画布图形「无填充」同一个记号；
   // 取色盘本身只吃合法色号，喂它黑色当起点，用户一取色就是一个真的颜色。
-  const none = value === NO_COLOR
+  const none = !mixed && value === NO_COLOR
+  const mixedId = useId()
   return (
     // 只剩一块色块（2026-09-11 用户反馈：去掉色号框，点色块取色）。
     // 取色盘是**透明盖在色块上的真控件**，自带一圈 focus ring——纯键盘 Tab 到它
@@ -487,11 +498,17 @@ export function ColorField({
     // 当前色号走 title：鼠标悬停仍看得到精确值。
     <div className={cn('flex h-7 items-center', className)}>
       <div
-        title={none ? t('colorField.none') : value.toUpperCase()}
+        title={mixed ? t('mixed') : none ? t('colorField.none') : value.toUpperCase()}
         data-none={none || undefined}
+        data-mixed={mixed || undefined}
         className="relative h-5 w-8 shrink-0 overflow-hidden rounded-sm border border-border transition-colors hover:border-border-strong has-[:focus-visible]:focus-ring"
       >
-        {none ? (
+        {mixed ? (
+          // 中性底 + 居中短横：不是任何一个成员的颜色；记号是装饰，名字在下面的描述里
+          <div className="absolute inset-0 flex items-center justify-center bg-surface-2" aria-hidden="true">
+            <span className="h-0.5 w-3 rounded-full bg-ink-3" />
+          </div>
+        ) : none ? (
           <div
             className="absolute inset-0 bg-white"
             style={{
@@ -504,12 +521,18 @@ export function ColorField({
         )}
         <input
           type="color"
-          value={none ? '#000000' : value}
+          value={none || value === NO_COLOR ? '#000000' : value}
           onChange={(e) => onChange(e.target.value)}
           onBlur={onGestureEnd}
           aria-label={t('colorField.picker', { label: ariaLabel })}
+          aria-describedby={mixed ? mixedId : undefined}
           className="absolute inset-0 opacity-0"
         />
+        {mixed && (
+          <span id={mixedId} className="sr-only">
+            {t('mixed')}
+          </span>
+        )}
       </div>
     </div>
   )

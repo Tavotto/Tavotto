@@ -266,11 +266,11 @@ function literal(src: string, re: RegExp): string {
 }
 const block1 = (src: string, re: RegExp) => literal(src, re).replace(/['\n,]/g, ' ')
 function buttonVariant(name: string): string {
-  const table = literal(ui('ui/Button.tsx'), /const VARIANTS: Record<Variant, string> = \{([\s\S]*?)\n\}/)
+  const table = literal(ui('ui/buttonClass.ts'), /const VARIANTS: Record<Variant, string> = \{([\s\S]*?)\n\}/)
   return literal(table, new RegExp(`\\b${name}:\\s*('[^']*'(?:\\s*\\+\\s*'[^']*')*|\\n\\s*'[^']*')`)).replace(/['\n+]/g, ' ')
 }
 function buttonSize(name: string): string {
-  const table = literal(ui('ui/Button.tsx'), /const SIZES: Record<Size, string> = \{([\s\S]*?)\n\}/)
+  const table = literal(ui('ui/buttonClass.ts'), /export const BUTTON_SIZES: Record<Size, string> = \{([\s\S]*?)\n\}/)
   return literal(table, new RegExp(`(?:^|\\n)\\s*'?${name}'?:\\s*'([^']*)'`))
 }
 const hasClass = (classes: string, cls: string) => classes.split(/\s+/).includes(cls)
@@ -279,7 +279,7 @@ describe('DESIGN.md 的 spacing / components 是组件源码的镜像', () => {
   it('spacing.control 等于 Button 唯一那档高度；setting-row 等于 SettingRow 的行高', () => {
     const spacing = flatMap('spacing')
     expect(Object.keys(spacing).sort()).toEqual(['control', 'setting-row'])
-    const sizes = literal(ui('ui/Button.tsx'), /const SIZES: Record<Size, string> = \{([\s\S]*?)\n\}/)
+    const sizes = literal(ui('ui/buttonClass.ts'), /export const BUTTON_SIZES: Record<Size, string> = \{([\s\S]*?)\n\}/)
     // icon-xs（20px 行内小钮）是 28 之外唯一的一档（2026-09-15 审计 B08），只给行内 ?、清除、×；
     // 这里量的是「控件档」——把它那一行摘掉再比
     const heights = [...sizes.replace(/'icon-xs':[^\n]*/, '').matchAll(/\bh-(\d+)\b/g)].map((m) => m[1])

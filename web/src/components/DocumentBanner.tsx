@@ -10,7 +10,8 @@ import {
   useDocumentStore,
 } from '@/store/documentStore'
 import { useProjectStore } from '@/store/projectStore'
-import { useUiStore } from '@/store/uiStore'
+import { msg } from '@/i18n'
+import { askConfirm, useUiStore } from '@/store/uiStore'
 import { Button } from './ui/Button'
 
 /**
@@ -34,7 +35,7 @@ export function DocumentBanner() {
   if (saveState === 'conflict') {
     const disk = saveIssue?.disk
     return (
-      <Banner icon={<TriangleAlert size={ICON_SIZE.sm} className="shrink-0 text-danger" />}>
+      <Banner urgent icon={<TriangleAlert size={ICON_SIZE.sm} className="shrink-0 text-danger" />}>
         <span className="min-w-0 flex-1 truncate">
           {t(saveIssue?.kind === 'stale' ? 'docBanner.conflictStale' : 'docBanner.conflictExternal')}
         </span>
@@ -47,18 +48,34 @@ export function DocumentBanner() {
               })
             : t('docBanner.conflictDiskUnknown')}
         </span>
-        <Button size="sm" className="shrink-0" onClick={() => void reloadFromDisk()}>
+        {/* 三个出口分轻重（2026-10-07 审计 P0）：「重新加载」是安全的那条（先把本机编辑存成恢复副本
+            再读盘），给实心黑；「另存为」两份都留，次按钮；「覆盖」会丢掉磁盘上那份，排最后、
+            ghost，并且先问一句（`confirmOverwriteDisk`）。此前三颗同形同重，一下就点没了 */}
+        <Button
+          variant="primary"
+          size="sm"
+          className="shrink-0"
+          data-doc-conflict-action="reload"
+          onClick={() => void reloadFromDisk()}
+        >
           {t('docBanner.reload')}
         </Button>
-        <Button size="sm" className="shrink-0" onClick={() => void overwriteDisk()}>
-          {t('docBanner.overwrite')}
+        <Button
+          variant="secondary"
+          size="sm"
+          className="shrink-0"
+          data-doc-conflict-action="save-as"
+          onClick={() => useUiStore.getState().setLayoutOpen(true, 'save')}
+        >
+          {t('docBanner.saveAs')}
         </Button>
         <Button
           size="sm"
           className="shrink-0"
-          onClick={() => useUiStore.getState().setLayoutOpen(true, 'save')}
+          data-doc-conflict-action="overwrite"
+          onClick={() => confirmOverwriteDisk(saveIssue?.kind === 'stale')}
         >
-          {t('docBanner.saveAs')}
+          {t('docBanner.overwrite')}
         </Button>
       </Banner>
     )
@@ -66,7 +83,7 @@ export function DocumentBanner() {
 
   if (saveState === 'save_error') {
     return (
-      <Banner icon={<TriangleAlert size={ICON_SIZE.sm} className="shrink-0 text-danger" />}>
+      <Banner urgent icon={<TriangleAlert size={ICON_SIZE.sm} className="shrink-0 text-danger" />}>
         <span className="min-w-0 flex-1 truncate">{t('docBanner.saveErrorBody')}</span>
         {/* 唯一出口，给实心黑：白底条上只有它是要按的 */}
         <Button variant="primary" size="sm" className="shrink-0" onClick={() => void saveNow()}>
@@ -96,6 +113,32 @@ export function DocumentBanner() {
   }
 
   return <LastDocumentBanner />
+}
+
+/**
+ * 「用这个窗口的覆盖」之前先问一句：它会让磁盘上那份（另一个窗口存的较新版本 / 外部改过的文件）
+ * 被这个窗口的内容替换掉，而且不像「重新加载」那样先留恢复副本。危险档确认框。
+ *
+ * 等用户回答的那段时间里冲突可能已经被别处裁决了（另一颗按钮、换了文档）：回答之后**冲突还在、
+ * 还是同一份文档**才覆盖，否则什么都不做。导出给用例直接驱动。
+ */
+async function confirmOverwriteDisk(stale: boolean): Promise<boolean> {
+  const before = useDocumentStore.getState().documentId
+  const ok = await askConfirm({
+    title: msg('docBanner.overwriteConfirmTitle', undefined, 'workspace'),
+    body: msg(
+      stale ? 'docBanner.overwriteConfirmBodyStale' : 'docBanner.overwriteConfirmBodyExternal',
+      undefined,
+      'workspace',
+    ),
+    confirmLabel: msg('docBanner.overwrite', undefined, 'workspace'),
+    danger: true,
+  })
+  if (!ok) return false
+  const now = useDocumentStore.getState()
+  if (now.saveState !== 'conflict' || now.documentId !== before) return false
+  await overwriteDisk()
+  return true
 }
 
 /**
@@ -142,13 +185,20 @@ function LastDocumentBanner() {
 export function Banner({
   icon,
   children,
+  urgent = false,
 }: {
   icon: React.ReactNode
   children: React.ReactNode
+  /**
+   * 需要用户裁决、不处理就会丢编辑的那几条（冲突、保存失败）：`role="alert"`，读屏器立刻打断说。
+   * 其余照旧 `role="status"`。role 只是给读屏器的，**用例不认它**（web/AGENTS.md），认 `data-doc-banner`。
+   */
+  urgent?: boolean
 }) {
   return (
     <div
-      role="status"
+      role={urgent ? 'alert' : 'status'}
+      data-doc-banner={urgent ? 'urgent' : ''}
       className="flex min-h-8 shrink-0 items-center gap-2 border-b border-border bg-surface-2 px-3 text-xs text-ink"
     >
       {icon}

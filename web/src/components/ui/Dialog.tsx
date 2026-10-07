@@ -17,6 +17,13 @@ interface DialogProps {
   description?: ReactNode
   children: ReactNode
   footer?: ReactNode
+  /**
+   * 正文与脚部之间一块**不随正文滚**的状态区（进度 / 冲突 / 拒绝 / 结果）。给「点了脚部
+   * 按钮之后的回应」用：放在可滚正文的最末尾的话，正文一长它就在视口外，用户点完
+   * 什么都没看见（2026-10-07 设计审计 §10.2 P0）。自己有高度上限，超了在区内滚。
+   * 不给（或给 null / false）就不占位。
+   */
+  status?: ReactNode
   size?: DialogSize
   /** 特殊场合才用；常规尺寸走 size */
   width?: number
@@ -70,6 +77,7 @@ export function Dialog({
   description,
   children,
   footer,
+  status,
   size = 'md',
   width,
   height,
@@ -178,6 +186,14 @@ export function Dialog({
               )}
             >
               {children}
+            </div>
+          )}
+          {status != null && status !== false && (
+            <div
+              data-dialog-status
+              className="max-h-[30vh] shrink-0 overflow-y-auto border-t border-border px-5 pb-2 pt-3"
+            >
+              {status}
             </div>
           )}
           {footer && (

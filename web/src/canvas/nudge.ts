@@ -119,7 +119,7 @@ const held = new Set<string>()
 const inFastEdit = () => useWorkspaceStore.getState().mode === 'fast_edit'
 const interaction = () => useInteractionStore.getState()
 const status = (key: string) =>
-  useUiStore.getState().setStatus(msg(`status.${key}`, undefined, 'workspace'))
+  useUiStore.getState().setStatus(msg(`status.${key}`, undefined, 'workspace'), 'info')
 
 /**
  * 选中的图内元素都不能动：只选了一个时说出**为什么**（与拖动同一句话，`immovableMessage`，
@@ -131,14 +131,14 @@ function announceUnmovable(b: FigureBurst): void {
   // 选中的组不能整体变换：按原因说，与拖它时同一句（`explainBlockedGroupDrag`）
   const [blocked] = blockedGroupsIn(panel, manifest, b.gids)
   if (blocked) {
-    useUiStore.getState().setStatus(groupBlockedMessage(blocked.reason))
+    useUiStore.getState().setStatus(groupBlockedMessage(blocked.reason), 'info')
     return
   }
   const el = b.gids.length === 1 ? manifest?.elements.find((e) => e.gid === b.gids[0]) : undefined
   // 锁定 / 隐藏的不动是另一回事（用户自己锁的），不按「按设计」解释
   const own =
     el && el.gid !== 'figure' && !(panel?.lockedGids ?? []).includes(el.gid) && !isElementHidden(el)
-  if (own) useUiStore.getState().setStatus(immovableMessage(el))
+  if (own) useUiStore.getState().setStatus(immovableMessage(el), 'info')
   else status('nudgeNotMovable')
 }
 

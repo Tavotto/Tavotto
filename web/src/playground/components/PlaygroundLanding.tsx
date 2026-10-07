@@ -12,6 +12,7 @@
  * 路径最终都走同一个 onLaunch——启动逻辑（真 Pyodide 会话）在 PlaygroundApp。
  */
 import { useRef, useState } from 'react'
+import { buttonClass } from '@/components/ui/buttonClass'
 import { Download } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { RELEASES_LATEST_URL } from '@/lib/brand'
@@ -68,10 +69,7 @@ export function PlaygroundLanding({
         <footer className="flex flex-col gap-2 border-t border-border pt-4">
           <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
             <p className="text-xs leading-relaxed text-ink-2">{pg('privacyNote')}</p>
-            <a
-              href={RELEASES_LATEST_URL}
-              className="flex h-7 shrink-0 items-center gap-1.5 rounded-sm border border-border px-2.5 text-xs text-ink-2 transition-colors hover:border-ink-faint hover:text-ink"
-            >
+            <a href={RELEASES_LATEST_URL} className={buttonClass({ variant: 'secondary', size: 'md' })}>
               <Download size={ICON_SIZE.sm} aria-hidden />
               {pg('downloadDesktop')}
             </a>
@@ -82,7 +80,7 @@ export function PlaygroundLanding({
               .map(([n, v]) => `${n} ${v}`)
               .join(' · ')}
           </p>
-          <p className="font-mono text-xs text-ink-faint">
+          <p className="font-mono text-xs text-ink-3">
             {pg('cdnNote', { version: PYODIDE_VERSION })}
           </p>
         </footer>

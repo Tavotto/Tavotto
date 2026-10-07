@@ -11,6 +11,7 @@ import {
   ShieldQuestionMark,
   TriangleAlert,
 } from '@/components/ui/icons'
+import { Button, IconButton } from '@/components/ui/Button'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { Checkbox } from '@/components/ui/Checkbox'
 import { CanvasStage } from '@/canvas/CanvasStage'
@@ -188,10 +189,10 @@ export function McpApp({
         </span>
 
         <span className="mx-1 h-4 w-px bg-border" />
-        <IconButton label={translate('topbar.undo', { ns: 'workspace' })} disabled={!canUndo} onClick={() => undo()}>
+        <IconButton label={translate('topbar.undo', { ns: 'workspace' })} disabled={!canUndo} onClick={() => void undo()}>
           <Undo2 size={ICON_SIZE.md} />
         </IconButton>
-        <IconButton label={translate('topbar.redo', { ns: 'workspace' })} disabled={!canRedo} onClick={() => redo()}>
+        <IconButton label={translate('topbar.redo', { ns: 'workspace' })} disabled={!canRedo} onClick={() => void redo()}>
           <Redo2 size={ICON_SIZE.md} />
         </IconButton>
 
@@ -204,8 +205,9 @@ export function McpApp({
           loading={busy === 'preflight'}
           onClick={() => void runPreflight()}
         />
-        <button
-          className="flex h-7 shrink-0 items-center gap-1.5 rounded-sm bg-ink px-2.5 text-xs text-white disabled:opacity-40"
+        <Button
+          variant="primary"
+          size="sm"
           disabled={busy != null || pending || (needsConfirm && !confirmForced)}
           title={
             pending
@@ -218,7 +220,7 @@ export function McpApp({
         >
           {busy === 'export' ? <LoaderCircle size={ICON_SIZE.sm} className="animate-spin" /> : <Download size={ICON_SIZE.sm} />}
           {mc('exportBoth')}
-        </button>
+        </Button>
       </header>
 
       {needsConfirm && (
@@ -265,30 +267,6 @@ export function McpApp({
         </aside>
       </div>
     </div>
-  )
-}
-
-function IconButton({
-  label,
-  disabled,
-  onClick,
-  children,
-}: {
-  label: string
-  disabled?: boolean
-  onClick: () => void
-  children: React.ReactNode
-}) {
-  return (
-    <button
-      aria-label={label}
-      title={label}
-      disabled={disabled}
-      onClick={onClick}
-      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-ink-2 hover:bg-surface-2 disabled:opacity-40"
-    >
-      {children}
-    </button>
   )
 }
 
@@ -351,16 +329,11 @@ function PreflightPill({
   const nv = counts.not_verifiable ?? 0
   const clean = err + warn + nv === 0
   return (
-    <button
+    <Button
+      variant="secondary"
+      size="sm"
       onClick={onClick}
-      className={cn(
-        'flex h-7 shrink-0 items-center gap-1.5 rounded-sm border px-2 text-xs',
-        stale
-          ? 'border-border bg-surface-2 text-ink-3'
-          : err
-            ? 'border-danger/40 text-danger'
-            : 'border-border text-ink-2',
-      )}
+      className={stale ? 'text-ink-3' : err ? 'text-danger' : 'text-ink-2'}
       title={stale ? mc('pillStaleTitle') : mc('pillTitle')}
     >
       {loading ? (
@@ -377,7 +350,7 @@ function PreflightPill({
         : clean
           ? mc('pillClean')
           : mc('pillCounts', { errors: err, warnings: warn, notVerifiable: nv })}
-    </button>
+    </Button>
   )
 }
 
@@ -433,7 +406,7 @@ function IssueList({
               <button
                 disabled={!gids.length}
                 onClick={() => setSelectedGids(gids)}
-                className="flex w-full items-start gap-1.5 text-left text-xs leading-relaxed text-ink-2 disabled:cursor-default"
+                className="flex w-full items-start gap-1.5 rounded-xs text-left text-xs leading-relaxed text-ink-2 outline-none focus-visible:focus-ring disabled:cursor-default"
               >
                 <Icon
                   size={ICON_SIZE.sm}

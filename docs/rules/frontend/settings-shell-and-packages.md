@@ -110,7 +110,9 @@
   版本」——`LastCheckVerdict` 按**真实存在的时间戳**二选一（没查过 → 「无法判断」，查过 →
   「{时间} 检查时没有发现新版本」），判据认 `data-update-verdict`，不认那两句散文。桌面通道的
   时间戳 `desktopCheckedAtMs` **只在检查成功时**写。下载进度只显示壳真给的数，拿不到就走不确定
-  态、绝不编百分比。升级失败要看得出是失败（`applyFailed` + danger）且重试入口留着；pip 那条
+  态、绝不编百分比。细进度条只有 `ui/ProgressBar` 一份（更新弹窗 / 更新页 / 修复下载 / 包作业）：
+  轨道 `border` 档（放在 `surface-2` 面板里也看得见）、不确定态是 `animate-sweep`，不是呼吸块。
+  包作业面板（`JobPanel`）紧跟安装框、在包表之上——反馈落在用户点的地方（2026-10-07 设计审计 P0）。升级失败要看得出是失败（`applyFailed` + danger）且重试入口留着；pip 那条
   失败走 500、原因在响应体的 `log` 里而 `error` 是空的，得自己取出来。五态覆盖在
   `components/settings/updateStates.test.tsx` + `store/updateStore.test.ts`。
 * **同意是三档，控件也得是三档**（审计 T49）：`unset` / `enabled` / `disabled` 在界面上必须可辨，

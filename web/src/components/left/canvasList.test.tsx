@@ -202,6 +202,59 @@ describe('列表里能管理画布', () => {
   })
 })
 
+describe('行内改名', () => {
+  const openBtn = (i: number) =>
+    container.querySelectorAll<HTMLButtonElement>('[data-canvas-open]')[i]
+  const renameBox = () => container.querySelector<HTMLInputElement>('[data-canvas-rename]')
+  const key = async (el: Element, k: string) => {
+    await act(async () => {
+      el.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }))
+    })
+  }
+  const type = async (el: HTMLInputElement, value: string) => {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+    await act(async () => {
+      setter.call(el, value)
+      el.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+  }
+
+  it('F2 开始改名；改名框不嵌在按钮里（兄弟，不是父子）', async () => {
+    await mount()
+    await key(openBtn(0), 'F2')
+    const box = renameBox()!
+    expect(box).not.toBeNull()
+    expect(box.closest('button')).toBeNull()
+    expect(box.closest('[data-canvas-row]')).toBe(
+      container.querySelectorAll('[data-canvas-row]')[0],
+    )
+    // 改名期间这一行的「打开」按钮让位
+    expect(container.querySelectorAll('[data-canvas-open]')).toHaveLength(2)
+  })
+
+  it('Enter 提交新名字，焦点回到这一行的按钮', async () => {
+    await mount()
+    await key(openBtn(0), 'F2')
+    await type(renameBox()!, '新名字')
+    await key(renameBox()!, 'Enter')
+    expect(renameBox()).toBeNull()
+    expect(names()[0]).toBe('新名字')
+    expect(document.activeElement).toBe(openBtn(0))
+  })
+
+  it('Esc 放弃后再改名，草稿从当前名字重新起步', async () => {
+    await mount()
+    const before = names()[1]
+    await key(openBtn(1), 'F2')
+    await type(renameBox()!, '没提交的草稿')
+    await key(renameBox()!, 'Escape')
+    expect(renameBox()).toBeNull()
+    expect(names()[1]).toBe(before)
+    await key(openBtn(1), 'F2')
+    expect(renameBox()!.value).toBe(before)
+  })
+})
+
 describe('拖动重排', () => {
   const rows = () => [...container.querySelectorAll<HTMLElement>('[data-canvas-row]')]
   const fire = async (el: Element, type: string) => {
