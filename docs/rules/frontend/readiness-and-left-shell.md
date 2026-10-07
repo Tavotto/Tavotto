@@ -94,6 +94,11 @@
   `components/left/elementTreeRerender.test.tsx`（A1 无关提交零重画 / A2 新 manifest 零重画、
   单行 label 或行名变只重画那一行 / A3 selected·tabbable·hidden·locked·expanded 各自只重画
   那一行并显示新状态；观测点是 `<li>` 上 React 记的 props 对象，读不到直接抛）。
+- **元素树与图层树是 ARIA 树（2026-10-07 设计审计 §10.3）**：`role="tree"`，每行 `aria-level` / `aria-posinset` /
+  `aria-setsize`；每行一份 `ui/RowMenu`（⋯ / 右键 / ⇧F10，行有焦点时 ⋯ 进 Tab 顺序；开菜单不改选区）。图层行的键位：
+  Enter = 只选这一个（主操作，此前是改名）· F2 改名 · ⌥↑↓ 改层级 · Esc 清选区；拖放落点是 `dropLineClass`。元素树的
+  「只看这一支」是搜索行里的一枚 chip（`data-element-isolate`，× 退出），不再是一条横幅；`ElementTree` 有 `chrome`
+  （`drawer` 缺省 / `bare`：别处借用时搜索行自己留边，playground 侧栏用它）。
 - **元素树的父级只有 `roles/hierarchy.structuralParent` 一份（ADR 0102）**：先认 manifest 的显式
   `parent_gid`（指向的元素或组确实在），再按 gid 路径回退；组（`Manifest.groups`）挂在整张图下。
   组是**真实节点**（可选中、进面包屑，选中 = 成员一起平移 / 缩放），抽屉是**视图容器**（不可选中、
@@ -104,8 +109,13 @@
   保留 cax 的可执行 `ax` 关联方式，不由颜色关系推父级（#792）。
   看护：`components/left/elementTreeGroups.test.tsx`、`inspector/groupInspector.test.tsx`、
   `roles/hierarchy.test.ts`、`inspector/colorScalePanels.test.tsx`、`e2e/shared-colorbar-group.spec.ts`。
-- **左栏「工作区」抽屉（2026-09-24）**：切项目的列表**只有一份**，住在
-  `components/left/WorkspaceList.tsx`（当前 · 收藏 · 最近，最近不截断）。顶栏项目名
+- **左栏「项目」抽屉（2026-09-24；轨名 2026-10-07 起与短名同为「项目」）**：切项目的列表**只有一份**，住在
+  `components/left/WorkspaceList.tsx`（当前 · 收藏 · 最近，最近不截断）。**行只有一种**：`ProjectPickerRow.ProjectRow`，
+  抽屉用 `density="drawer"`（44px）、Project Picker「全部项目」用 `density="page"`（52px + 文件夹记号），两处同一份菜单
+  （`ui/RowMenu`：⋯ / 右键 / ⇧F10）、同一套键位（一列一个 Tab 停靠点 `left/rovingList`，↑↓ / Home / End 走行，Enter 打开，
+  收藏行 ⌥↑ / ⌥↓ 与菜单的上移 / 下移、拖动同一个按路径的 move，拖动时画 `dropLineClass` 落点线）。当前项目是顶上一张
+  `Card appearance="subtle"`，**不再在收藏区重复**（此前被收藏时一屏画两次选中）。页脚是左栏统一的页脚语法
+  （`border-t px-1.5 py-1`、抽屉底、28px ghost 钮）。Project Picker 不在工作台的 TooltipProvider 里，「全部项目」自己包一层。顶栏项目名
   （`ProjectSwitcher`）只做 `railClick('workspace')`，不再自己弹菜单——两处各列一遍
   就是两套判据。同名区分 / 筛选 / 失效分组共用 `lib/recentProjects`；「打开文件夹 /
   新建项目」与 Project Picker 共用 `useProjectEntry`（桌面走系统选择器）。收藏的事实
@@ -116,7 +126,7 @@
   收藏队列、一条切项目队列（`projectStore.serialQueue`），切换期间所有「打开」入口置灰；
   `init` / `refreshRecent` 回来时若收藏修订号已变就不写 `pinned`。界面以回包为准、失败
   不动列表；PUT/POST 前先解析 pj，失效时 409 且配置不变。与最近列表互相独立（从最近
-  移除不取消收藏）。行与当前卡片的右键开出与「…」**同一份**清单（`PointMenu`，一份 JSX 两个入口）；
+  移除不取消收藏）。行与当前卡片的右键 / ⇧F10 开出与「…」**同一份**清单（`ui/RowMenu`）；
   其中「在 Finder 中打开」只在桌面壳摆出（`lib/desktop.canRevealInFileManager`，文案按
   `fileManagerKind` 分三档），失败把完整路径说出口。收藏里是用户的项目路径：诊断包的条数化与路径记号两处都要带上它。
   看护：`components/left/workspaceList.test.tsx`、`store/projectSwitchSerial.test.ts`、`tests/test_projects.py` 的 pinned 六条、
@@ -125,8 +135,9 @@
   **当前图**与问题面板同一个判据（`useCurrentFigure`）；面板**不判规范、也不显示问题**（用户 2026-09-26：
   行尾的等级记号去掉，字号被阻断这类情况样式页不提示，问题只在左侧图标栏带计数角标的「问题」面板里看）。数字是**页面上
   的 pt**（× `panelScale`，写入 ÷ 回去，与样式应用同一个换算）；图内元素经 `useTextStyleAdapter`、画布标注经
-  `useCanvasTypography` 写（Inspector 同一条路，一次改动一次 commit）；多个值是「多个值」不压扁。底部是**画布跟随
-  样式**（ADR 0081，唯一编排 `store/styleBinding.ts`；在途计数与欠账唯一持有者是叶子 `store/styleWork.ts`，原图准入直接读同一份）：选一套 = 绑定并立刻对齐整张画布（一次 commit）；已绑定时各格
+  `useCanvasTypography` 写（Inspector 同一条路，一次改动一次 commit）；多个值是「多个值」不压扁。滚动区最后一节是可折叠的
+  **画布跟随样式**（2026-10-07 设计审计 §10.3：此前是钉在底部的约 150px 页脚；节头收起时仍说此刻跟着哪一套 / 有几处不一致，
+  开合按本机记）（ADR 0081，唯一编排 `store/styleBinding.ts`；在途计数与欠账唯一持有者是叶子 `store/styleWork.ts`，原图准入直接读同一份）：选一套 = 绑定并立刻对齐整张画布（一次 commit）；已绑定时各格
   的改动改的是**这套样式本身**（先存库、存成功再一次 commit 对齐改了的那一项，内置样式先复制一份再改绑）；「不跟随
   样式」只解绑；「恢复原样」清整张画布样式管得到的 override 并解绑。写入前一律过 `effectiveChanges`，已合样式的图零
   commit。设置 › 样式页的「用于当前画布」调同一个 `bindCanvasStyle`；样式对话框只编辑、不应用。
@@ -138,8 +149,9 @@
   `updateObject` / 混排对齐 / 一键修复写过的那一条当场注销；老文档、老引擎不让位；恢复原样连样式写的孤儿（gid 已不在 manifest 里）一起清，解绑只清孤儿；恢复原样挑「样式管得到的」要求此刻 manifest 确实暴露这条属性（用户的孤儿不删）；按 (gid, prop) 取 override 一律走 `effectiveOverride`（重复条目 last-wins，#587），`styleOverrideLookup.test.ts` 按 TS AST 结构性看护（不用源码正则）。
   **能改哪些、怎么排**（2026-09-26 用户反馈）：文字各行 = 字体 + 字号 + 粗体 / 斜体（`FIGURE_TEXT_ROWS.faceRole`；
   图例的在 `legend_text` 上；刻度文字的引擎字段没有 `weight` / `style`，不摆开关；画布标注写 `bold` / `italic`，
-  绑定时存成样式里的 boolean），线条 = 数据线宽 / 边框线宽 / 刻度方向 / 刻度长度 / 刻度线宽。行是两列固定网格：
-  标签列 `4rem`、控件列（字号 / 线宽 / 方向这类「值」格同一个宽 `VALUE_W`，从左缘起排）；没有状态列，控件行里只有
+  绑定时存成样式里的 boolean），线条 = 数据线宽 / 边框线宽 / 刻度方向 / 刻度长度 / 刻度线宽。行是两列固定网格，
+  与属性栏同一副（2026-10-07 设计审计 §9.2 / §10.3）：标签列 `var(--insp-label)`（属性栏那一期定义之前退回同一个
+  `clamp(88px, 28%, 112px)`）、列间 8、控件列（字号 / 线宽 / 方向这类「值」格同一个宽 `VALUE_W`，从左缘起排）；没有状态列，控件行里只有
   控件（`data-style-cell` / `data-style-face`），框只有 `fieldBox` 一副。绑定时的写入排队存库（`editBoundStyle` 返回 Promise），每一格记住最后一次排进去、
   还没落定的值（`usePendingWrites`），显示与「在当前值上做」的动作（粗 / 斜体开关、↑↓ 步进）都按它算，落定后放掉
   （Codex #662 P2：否则连点两下加粗会排进两次 `bold`）。文字颜色、线条 / 边框颜色没进面板：取色是连续手势，绑定时每一下都要存一次库，得先有「一轮取色 = 一次

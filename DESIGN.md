@@ -238,6 +238,7 @@ disabled 统一 `opacity-40 + cursor-not-allowed`。光标一律箭头（可拖�
 - **Do** 用角色（`type-*`）定字体层级，用 token 定时长与层级（`z-*`），用 `IconButton` 的 `label` 同时给可达名与气泡。
 - **Do** 卡片用 `ui/Card`，状态说明用 `Notice` / `StatusPill`，对话框页脚用三槽。
 - **Do** 让品牌名只来自 `web/src/lib/brand.ts`。
+- **Do** 左侧抽屉的「+ / 刷新 / ⋯」放标题行动作槽（`left/DrawerHeader`），搜索行只放搜索；列表与树的每一行用 `listRowClass` + `RowMenu`，键位同一套（**宪法第二十六节「左侧外壳与抽屉」**）。
 
 ### Don't:
 - **Don't** 给蓝色大块背景或按钮填色；不用实心红按钮。
