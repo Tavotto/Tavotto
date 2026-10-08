@@ -790,3 +790,134 @@ def test_argparse_response_files_are_refused(project, pool, token):
     assert body["code"] == "argv_path_out_of_scope"
     assert pool.runs == []
     assert runconfig.configs_of(str(project), "fig1.py") == before
+
+
+# ------------------------------------------------ r4221289208..31：重拉 worker 的复核 / 任意响应文件前缀
+def _scope_code(project, argv):
+    try:
+        bridge._check_argv_scope(argv, str(project), "fig1.py")
+    except bridge.BridgeError as exc:
+        return exc.code
+    return None
+
+
+def _set_script(project, body):
+    (Path(project) / "fig1.py").write_text(body, encoding="utf-8")
+
+
+ARGPARSE_PCT = (
+    "import argparse\n"
+    "p = argparse.ArgumentParser(fromfile_prefix_chars='%+')\n"
+    "p.add_argument('--freq', type=float)\n"
+    "args = p.parse_args()\n"
+)
+
+
+@pytest.mark.parametrize(
+    "token", ["%args.txt", "+args.txt", "--out=%args.txt", "-o+args.txt", "@args.txt", "%"]
+)
+def test_declared_response_file_prefixes_are_refused(project, pool, token):
+    """脚本声明 `fromfile_prefix_chars='%+'`：以这些字符（及恒拒的 @）开头的整项 / `--x=值` / `-oVALUE` 都拒。"""
+    _set_script(project, ARGPARSE_PCT)
+    body = _open(project, argv=["--freq", "1", token])["structuredContent"]
+    assert body["code"] == "argv_path_out_of_scope"
+    assert pool.runs == []
+
+
+@pytest.mark.parametrize("token", ["%x", "+1", "--k=%x", "-k+x", "$y", "~", " lead"])
+@pytest.mark.parametrize(
+    "script",
+    [
+        # 前缀不是字面量
+        "import argparse\nPFX='%'\np = argparse.ArgumentParser(fromfile_prefix_chars=PFX)\np.parse_args()\n",
+        # 关键字藏在 **cfg 里
+        "import argparse\ncfg={}\np = argparse.ArgumentParser(**cfg)\np.parse_args()\n",
+        # 没有 argparse 证据（解析器可能在别的模块里造）
+        "from helper import make_parser\nmake_parser().parse_args()\n",
+        # 语法错误
+        "def (:\n",
+    ],
+)
+def test_unprovable_script_refuses_any_symbol_led_token(project, script, token):
+    _set_script(project, script)
+    assert _scope_code(project, [token]) == "argv_path_out_of_scope"
+
+
+@pytest.mark.parametrize(
+    "token", ["2", "-1", "--freq", "--freq=2", "-f2", "中 文", "", "a/b.csv", "./x", "_x", "--"]
+)
+@pytest.mark.parametrize(
+    "script",
+    [
+        ARGPARSE_PCT.replace("'%+'", "'#'"),
+        "from helper import make_parser\nmake_parser().parse_args()\n",
+    ],
+)
+def test_ordinary_values_still_pass(project, script, token):
+    _set_script(project, script)
+    assert _scope_code(project, [token]) is None
+
+
+def test_exact_prefix_set_does_not_over_reject_other_symbols(project):
+    """可证明的前缀集合 = `%+`：`#x` 不在其中，放行；conservative 口径只用于说不准的脚本。"""
+    _set_script(project, ARGPARSE_PCT)
+    assert _scope_code(project, ["#x"]) is None
+    assert _scope_code(project, ["%x"]) == "argv_path_out_of_scope"
+
+
+def test_worker_respawn_rechecks_the_frozen_run(project_cwd, pool, tmp_path_factory, monkeypatch):
+    """打开时在根内的相对路径，之后符号链接改指根外：worker 被淘汰 / 死亡后 `Session.acquire()` 重建前必须重查，
+    一次性重放（`verify_replay`）同理；池一次都不许被调。"""
+    one_shots: list = []
+    monkeypatch.setattr(
+        bridge.engine_pool, "one_shot", lambda *a, **k: one_shots.append(k) or pool.worker
+    )
+    retarget = _link_escape(project_cwd, tmp_path_factory)
+    first = _open(project_cwd, argv=["--out", "later/out.txt"])["structuredContent"]
+    assert first.get("ok") is True
+    sid = first["session_id"]
+    session = bridge.get_session(sid)
+    spawned = len(pool.runs)
+    assert session.acquire() is pool.worker  # 没变：照常
+    assert len(pool.runs) == spawned + 1
+    retarget()
+    with pytest.raises(bridge.BridgeError) as exc:
+        session.acquire()
+    assert exc.value.code == "argv_path_out_of_scope"
+    assert len(pool.runs) == spawned + 1
+    with pytest.raises(bridge.BridgeError) as exc:
+        bridge.verify_replay(sid)
+    assert exc.value.code == "argv_path_out_of_scope"
+    assert one_shots == []
+
+
+def test_bridge_has_a_single_worker_spawn_point():
+    """结构性看护：`engine_pool.get` / `.one_shot` 在桥里只许出现在 `_spawn_worker` 里；
+    新入口想直接调池会红，必须改走带复核的那一个函数。"""
+    import ast
+
+    tree = ast.parse(Path(bridge.__file__).read_text(encoding="utf-8"))
+    hits: list[tuple[str, str]] = []
+
+    class V(ast.NodeVisitor):
+        def __init__(self):
+            self.fn = [""]
+
+        def visit_FunctionDef(self, node):
+            self.fn.append(node.name)
+            self.generic_visit(node)
+            self.fn.pop()
+
+        visit_AsyncFunctionDef = visit_FunctionDef
+
+        def visit_Attribute(self, node):
+            if (
+                isinstance(node.value, ast.Name)
+                and node.value.id == "engine_pool"
+                and node.attr in {"get", "one_shot", "EngineWorker", "_spawn_spec"}
+            ):
+                hits.append((self.fn[-1], node.attr))
+            self.generic_visit(node)
+
+    V().visit(tree)
+    assert {fn for fn, _ in hits} == {"_spawn_worker"}, hits

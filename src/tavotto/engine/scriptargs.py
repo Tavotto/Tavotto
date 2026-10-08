@@ -746,6 +746,44 @@ def analyze(source: str) -> dict:
     }
 
 
+def response_file_prefixes(path: str | os.PathLike) -> tuple[frozenset[str], bool]:
+    """脚本里 argparse `fromfile_prefix_chars` 的字面量并集：`(前缀字符集, 是否可证明)`。
+
+    **只给 MCP 桥拒绝响应文件用**（Codex #818 r4221289231）：前缀可以是任意字符（`%`、`+`……），argparse 会把以它
+    开头的 token 当文件名读出内容再展开。第二个值为 False = 说不准（读不了 / 语法错 / 没有 argparse 证据——
+    解析器可能在别的模块里造 / `fromfile_prefix_chars` 不是字面量），调用方必须按保守口径处理。
+    不执行任何东西：只 `ast.parse`，沿用 `analyze_file` 的有界读取与缓存。"""
+    schema = analyze_file(path)
+    if schema.get("status") not in (STATUS_COMPLETE, STATUS_PARTIAL):
+        return frozenset(), False
+    try:
+        with open(path, "rb") as fh:
+            tree = ast.parse(fh.read(MAX_SOURCE_BYTES).decode("utf-8", errors="replace"))
+    except (OSError, SyntaxError, ValueError):
+        return frozenset(), False
+    chars: set[str] = set()
+    exact = True
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        for kw in node.keywords:
+            if kw.arg is None:
+                # `ArgumentParser(**cfg)`：关键字藏在运行时的字典里，说不准；别的调用的 `**kw` 与解析器无关
+                func = node.func
+                name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")
+                if "Parser" in name:
+                    exact = False
+            elif kw.arg == "fromfile_prefix_chars":
+                ok, value = _literal(kw.value)
+                if ok and value is None:
+                    continue
+                if ok and isinstance(value, str):
+                    chars.update(value)
+                else:
+                    exact = False
+    return frozenset(chars), exact
+
+
 def _reads_argv_outside_parse(source: str) -> bool:
     """`sys.argv` 除了 `parse_args(sys.argv[1:])` 之外还被直接读过。"""
     tree = ast.parse(source)

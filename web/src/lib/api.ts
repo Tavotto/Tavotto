@@ -4653,9 +4653,11 @@ async function requireEngineFeature(feature: string): Promise<void> {
 
 /** 试运行：真的跑一遍脚本，按它**实际产出**的文件名登记（冷启动可能要几分钟） */
 export const probeScript = async (script: string, cost?: string, args?: ScriptArgs) => {
-  // run_config（答案管理对已有配置的复跑）优先于 argv，不走能力协商；只有新给的非空 argv 才先确认引擎宣告了 script-argv
+  // run_config（答案管理对已有配置的复跑）优先于 argv。**任何非 null 的 run_config 与任何非空 argv 都要先过
+  // script-argv 能力协商**：旧引擎会静默忽略 `run_config` 字段、无参数跑脚本，还可能登记一张「看着对、其实错」的图
+  // （Codex #818 r4221289208）。只有 `run_config: null`（明确「不带参数」）与无参数不需要。
   const argv = args?.run_config === undefined && args?.argv && args.argv.length > 0 ? [...args.argv] : null
-  if (argv) await requireEngineFeature(ENGINE_FEATURE_SCRIPT_ARGV)
+  if (argv || typeof args?.run_config === 'string') await requireEngineFeature(ENGINE_FEATURE_SCRIPT_ARGV)
   return jsonFetch<ProbeResult>('/api/registry/probe', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -4966,11 +4968,15 @@ export const stopScriptInput = (id: string) =>
 
 export const fetchScriptAnswers = () => jsonFetch<ScriptAnswersResponse>('/api/script_input/answers')
 
-export const updateScriptAnswer = (script: string, index: number, answer: string, runConfig: string | null = null) =>
-  postJson<ScriptAnswersResponse>('/api/script_input/answers', { script, index, answer, run_config: runConfig })
+export const updateScriptAnswer = async (script: string, index: number, answer: string, runConfig: string | null = null) => {
+  if (runConfig) await requireEngineFeature(ENGINE_FEATURE_SCRIPT_ARGV)
+  return postJson<ScriptAnswersResponse>('/api/script_input/answers', { script, index, answer, run_config: runConfig })
+}
 
-export const forgetScriptAnswer = (script: string, index: number, runConfig: string | null = null) =>
-  postJson<ScriptAnswersResponse>('/api/script_input/answers', { script, index, forget: true, run_config: runConfig })
+export const forgetScriptAnswer = async (script: string, index: number, runConfig: string | null = null) => {
+  if (runConfig) await requireEngineFeature(ENGINE_FEATURE_SCRIPT_ARGV)
+  return postJson<ScriptAnswersResponse>('/api/script_input/answers', { script, index, forget: true, run_config: runConfig })
+}
 
 export const cancelProbe = (script: string) =>
   jsonFetch<{ cancelling: boolean }>('/api/registry/probe/cancel', {
@@ -5047,15 +5053,18 @@ export interface RuntimeStatus {
  * 查询 runtime 素材的 stale 状态。**只读**：后端绝不因此执行脚本。
  * `source` 是文档里持久化的描述块，注册表条目丢失时作恢复线索。
  */
-export const fetchRuntimeStatus = (
+export const fetchRuntimeStatus = async (
   id: string,
   source?: { script: string; stem: string; run_config?: string },
-) =>
-  jsonFetch<RuntimeStatus>('/api/runtime/status', {
+) => {
+  // 带运行配置引用的判定，旧引擎会忽略 run_config 去比无参数那份：先过能力协商（r4221289208）
+  if (source?.run_config) await requireEngineFeature(ENGINE_FEATURE_SCRIPT_ARGV)
+  return jsonFetch<RuntimeStatus>('/api/runtime/status', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id, source }),
   })
+}
 
 /**
  * 素材库「图」区的一条 RuntimeFigureAsset（`runtimeasset.list_assets` 原样）。

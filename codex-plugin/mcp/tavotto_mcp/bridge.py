@@ -233,7 +233,44 @@ def _run_cwd(project: str, script: str) -> str | None:
     return run_cwd(project, script, mode)
 
 
-def _argv_path_escapes(value: str, roots: list[str], cwds: list[str] | None) -> str | None:
+#: 无法证明脚本的 `fromfile_prefix_chars` 时，token 首字符只许这些（字母 / 数字 / `-` `.` `/` `_`）；其余首字符
+#: （`@` `%` `+` `~` 空白……）都按「可能是响应文件前缀」拒。代价：这类脚本在 MCP 里不能传以符号开头的值。
+_SAFE_ARGV_LEAD = frozenset("-./_")
+
+
+def _response_file_prefixes(project: str, script: str) -> tuple[frozenset[str], bool]:
+    """脚本声明的 argparse 响应文件前缀：`(字符集, 是否可证明)`。静态读源码（`scriptargs`，不执行）；
+    引擎太旧没有 `scriptargs`、读不了、前缀不是字面量 → `(空, False)`，调用方走保守口径。"""
+    scriptargs = _optional_engine("scriptargs")
+    if scriptargs is None or not hasattr(scriptargs, "response_file_prefixes"):
+        return frozenset(), False
+    try:
+        path = Path(project, engine_figcapture.normalize_relative_script(script))
+        return scriptargs.response_file_prefixes(path)
+    except Exception:  # noqa: BLE001 - 读不了就当说不准，绝不放行
+        return frozenset(), False
+
+
+def _is_response_file_ref(value: str, prefixes: tuple[frozenset[str], bool]) -> bool:
+    """这段值会不会被 argparse 当成响应文件引用（首字符是 `fromfile_prefix_chars` 之一）。
+
+    `@` 恒拒（最常见的写法，不依赖静态分析）；可证明的前缀集合 -> 首字符在集合里就拒；
+    说不准 -> 首字符不在安全集里就拒。"""
+    lead = value[0]
+    if lead == "@":
+        return True
+    chars, exact = prefixes
+    if exact:
+        return lead in chars
+    return not (lead.isalnum() or lead in _SAFE_ARGV_LEAD)
+
+
+def _argv_path_escapes(
+    value: str,
+    roots: list[str],
+    cwds: list[str] | None,
+    prefixes: tuple[frozenset[str], bool] = (frozenset(), False),
+) -> str | None:
     """这段文字若会指到已授权根之外，返回规范化后的路径（或原文）；否则 None。
 
     什么算「像路径」：**所有**非空值都按路径验——绝对（含 `~` / 盘符 / UNC）按原样；其余一律当作
@@ -243,9 +280,9 @@ def _argv_path_escapes(value: str, roots: list[str], cwds: list[str] | None) -> 
     沙盒是空的新目录，相对值只剩 `..` 能出去，仍按文字拒。"""
     if not value or "\0" in value:
         return None
-    if value.startswith("@"):
-        # argparse `fromfile_prefix_chars='@'`：`@/x`、`@rel` 会被脚本去掉 @ 后读文件（内容还能再给出越界目标）。
-        # 不递归展开校验，MCP 来源的 argv 里一律拒（Codex #818 r4221135439）。
+    if _is_response_file_ref(value, prefixes):
+        # argparse `fromfile_prefix_chars`（任意字符，不止 `@`）：以它开头的 token 会被脚本当文件名读出内容再展开，
+        # 内容还能再给出越界目标。不递归展开校验，MCP 来源的 argv 里一律拒（Codex #818 r4221135439 / r4221289231）。
         return value
     if value.startswith("~") or os.path.isabs(value) or _WIN_ABS_RE.match(value):
         if _WIN_ABS_RE.match(value) and not os.path.isabs(value):
@@ -281,11 +318,12 @@ def _check_argv_scope(argv: list | None, project: str, script: str) -> None:
             cwds.append(
                 str(Path(project, engine_figcapture.normalize_relative_script(script)).parent)
             )
+    prefixes = _response_file_prefixes(project, script)
     for token in argv:
         if not isinstance(token, str):
             continue  # 形状错误交给 validate_argv 报 invalid_argv
         for cand in _argv_path_candidates(token):
-            bad = _argv_path_escapes(cand, roots, cwds)
+            bad = _argv_path_escapes(cand, roots, cwds, prefixes)
             if bad is not None:
                 raise BridgeError(
                     "argv 里有一项指到了已授权的工作区之外，这次没有运行脚本，也没有登记这份参数。",
@@ -550,16 +588,29 @@ class Session:
         而且没有任何办法恢复。`pool.get()` 本来就负责「死了就重建」，
         每次问它一遍即可，代价是一次字典查找。
         """
-        # 无配置时调用形状与旧版一致（旧引擎的 `pool.get` 不认识 `run=`）
-        context = {"run": self.run} if self.run is not None else {}
         try:
-            return engine_pool.get(self.script, self.project, self.entry, **context)
+            return _spawn_worker(self, one_shot=False)
         except engine_pool.WorkerError as exc:
             raise _bridge_error_from_worker(exc, project=self.project, script=self.script) from exc
 
     @property
     def run_config_id(self) -> str | None:
         return getattr(self.run, "config_id", None)
+
+
+def _spawn_worker(session: "Session", *, one_shot: bool):
+    """**桥里唯一**能起 / 取回执行用户脚本的 worker 的地方（`engine_pool.get` / `.one_shot` 只在这里出现，
+    `tests/test_mcp_compat.py::test_bridge_has_a_single_worker_spawn_point` 用 AST 钉住）。
+
+    进程创建前**先**对会话冻结的运行配置按当下的真实 cwd 重查范围（`_recheck_run`）：worker 被池淘汰 / 死掉后重建、
+    一次性重放，都是「再跑一遍脚本」，登记之后符号链接可能已改指根外（Codex #818 r4221289223）。新增任何
+    取 worker 的入口都必须走这里，不许直接调池。"""
+    run = session.run
+    _recheck_run(run, session.project, session.script)
+    # 无配置时调用形状与旧版一致（旧引擎的池函数不认识 `run=`）
+    context = {"run": run} if run is not None else {}
+    fn = engine_pool.one_shot if one_shot else engine_pool.get
+    return fn(session.script, session.project, session.entry, **context)
 
 
 def _answer_workdir(project: str, mode: str) -> None:
@@ -3198,8 +3249,7 @@ def verify_replay(session_id: str) -> dict:
     session = get_session(session_id)
     if session.manifest is None:
         raise BridgeError("会话还没有 manifest", code="no_manifest")
-    context = {"run": session.run} if session.run is not None else {}
-    worker = engine_pool.one_shot(session.script, session.project, session.entry, **context)
+    worker = _spawn_worker(session, one_shot=True)
     try:
         resp = worker.override(session.stem, session.patches, None, inline_svg=False)
         fresh = resp["manifest"]
