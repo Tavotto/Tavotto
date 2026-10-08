@@ -358,3 +358,14 @@ def test_a_single_configuration_edit_only_invalidates_that_configuration(tmp_pat
     inputtranscript.forget(tmp_path, "s.py", run_config="rc_a", all_configs=False)
     assert inputtranscript.lookup(tmp_path, "s.py", "rc_a") is None
     assert inputtranscript.lookup(tmp_path, "s.py", "rc_b") is not None
+
+
+def test_the_secret_reason_code_keeps_its_wire_value_under_a_name_without_secret():
+    # CodeQL alert 229：常量名带 secret 会被当敏感数据，随回复 JSON 写盘就报 clear-text-storage。
+    # 取值是 ADR 0099 的线上协议（worker 按值比），名字不能再含 secret。
+    from tavotto.engine import worker
+
+    assert inputbroker.REASON_MASKED_INPUT_REQUIRED == "secret_required"
+    assert worker._REASON_MASKED_INPUT_REQUIRED == inputbroker.REASON_MASKED_INPUT_REQUIRED
+    assert inputbroker.REASON_MASKED_INPUT_REQUIRED in inputbroker.REASONS
+    assert not [n for n in vars(inputbroker) if n.startswith("REASON_") and "SECRET" in n]

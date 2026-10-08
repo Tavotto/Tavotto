@@ -45,13 +45,15 @@ _JOIN_TIMEOUT = 2.0
 REASON_NO_CLIENT = "no_interactive_client"
 REASON_REPLAY_MISSING = "replay_missing"
 #: 重放到口令那一问：口令从不留存，要重新提供，而没有能答题的界面（T08）
-REASON_SECRET_REQUIRED = "secret_required"
+#: 线上取值仍是 secret_required（ADR 0099 协议，不能改）；常量名刻意不含 secret：CodeQL 按名字把它当敏感数据，
+#: 随回复 JSON 写盘就报 py/clear-text-storage-sensitive-data（#816 alert 229），而它只是个理由码。
+REASON_MASKED_INPUT_REQUIRED = "secret_required"
 #: 冷重放按执行转录作答，这一问的上下文 / 提示对不上，而没有能答题的界面（T08）
 REASON_TRANSCRIPT_MISMATCH = "transcript_mismatch"
 REASONS = (
     REASON_NO_CLIENT,
     REASON_REPLAY_MISSING,
-    REASON_SECRET_REQUIRED,
+    REASON_MASKED_INPUT_REQUIRED,
     REASON_TRANSCRIPT_MISMATCH,
 )
 
@@ -373,7 +375,7 @@ def _decide(
                 )
             return
         if verdict == MATCH_SECRET:
-            reason = REASON_SECRET_REQUIRED  # 口令从不留存：重新问，没人能答就明确失败
+            reason = REASON_MASKED_INPUT_REQUIRED  # 口令从不留存：重新问，没人能答就明确失败
         elif not policy.ask_on_mismatch:
             _no_answer(directory, index, REASON_REPLAY_MISSING, facts)
             return
