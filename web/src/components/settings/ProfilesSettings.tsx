@@ -193,10 +193,19 @@ export function ProfilesSettings({
 
   // 选中项换了就重置草稿。**不做 merge**：把上一条的编辑内容带到下一条上，
   // 是那种"我明明没改它"的 bug 里最难查的一种。
-  useEffect(() => {
+  // `loaded` 也是键：清单没回来之前 store 里是前端的内置占位（`builtinSpecRecords`），它与后端那份**同 id、
+  // 同 revision**、data 却不一定相同——只认 id + revision 的话占位的 data 会一直留在草稿里，页面显示旧值、
+  // 导航挂上「没存」的点、切页弹放弃确认，而用户什么都没改（e2e 350px 用例撞出）。占位只有只读内置，
+  // 那一刻没有可丢的编辑，所以在它换成真清单时重置是安全的。
+  // 在渲染里换（React 的「随 props 调整 state」写法），不放 effect：effect 晚一拍，键变了的那一帧草稿还是旧的，
+  // `changed` 先报一次 true 再撤——导航上的点闪一下，恰好在那一帧点切页就会弹放弃确认。
+  const draftKey = selected ? `${selected.id}\u0000${selected.revision}\u0000${loaded}` : `none\u0000${loaded}`
+  const [draftFor, setDraftFor] = useState<string | null>(null)
+  if (draftFor !== draftKey) {
+    setDraftFor(draftKey)
     setDraft(selected ? structuredClone(selected.data) : null)
     setName(selected ? profileName(selected) : '')
-  }, [selected?.id, selected?.revision]) // eslint-disable-line react-hooks/exhaustive-deps
+  }
 
   const editable = !!selected && !selected.read_only
   // 空名字不算「改好了」：让它可保存的话，保存会静默跳过改名那一步
