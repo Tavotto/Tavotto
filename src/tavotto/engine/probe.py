@@ -611,9 +611,7 @@ def was_captured(figures_dir: str | Path, script: str, stem: str) -> bool:
     return any(runtimeasset.load_metadata(figures_dir, asset_id) is not None for asset_id in ids)
 
 
-def linked_scripts(
-    figures_dir: str | Path, stems_by_script: dict[str, list[str]]
-) -> set[str]:
+def linked_scripts(figures_dir: str | Path, stems_by_script: dict[str, list[str]]) -> set[str]:
     """登记了、**而且**至少一张登记的图此刻真有东西可编辑的脚本：项目根一层有这个图名的原件
     （`figcapture.find_original_artifact`——与 handoff / probe 找原件是同一份判据；递归素材清单里的 `archive/fig.pdf`
     不是这个脚本的原件，不算，#819 P2），或这张图被某次执行捕获过（`was_captured`）。「已关联」只有这一份判据：
