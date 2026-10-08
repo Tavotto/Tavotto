@@ -399,3 +399,62 @@ def test_bind_refuses_an_explicit_missing_basis_and_basis_read_is_strict(tmp_pat
 
     with pytest.raises(ValueError):
         inputtranscript.basis(tmp_path, "s.py", None)
+
+
+def _raises(exc, fn):
+    import pytest
+
+    with pytest.raises(exc):
+        fn()
+
+
+def test_bind_on_an_unreadable_store_neither_binds_nor_erases_the_tokens(tmp_path):
+    # r4224295365：读失败不能折成「空令牌」——否则会绑上旧答案，或在写回时抹掉刚写的作废令牌
+    inputtranscript.forget(tmp_path, "s.py", run_config=None, all_configs=True)  # 令牌已写
+    path = inputtranscript.store_path(tmp_path)
+    good = path.read_text("utf-8")
+    data = json.loads(good)
+    data["bindings"] = "oops"  # 形状坏了：读不出来
+    broken = json.dumps(data)
+    path.write_text(broken, "utf-8")
+    _raises(
+        OSError,
+        lambda: inputtranscript.bind(tmp_path, "s.py", None, [_rec(1, "x")], basis=[None, None]),
+    )
+    assert path.read_text("utf-8") == broken  # 没写任何东西，令牌还在
+    assert json.loads(broken)["generations"]
+
+
+def test_lookup_treats_a_corrupt_store_as_absent(tmp_path):
+    inputtranscript.bind(tmp_path, "s.py", None, [_rec(1, "old")])
+    path = inputtranscript.store_path(tmp_path)
+    data = json.loads(path.read_text("utf-8"))
+    data["generations"] = "garbled"  # 旧实现把它读成空令牌，基线 [None, None] 对得上 → 旧值被重放
+    path.write_text(json.dumps(data), "utf-8")
+    assert inputtranscript.lookup(tmp_path, "s.py", None) is None
+    path.write_text("{broken", "utf-8")
+    assert inputtranscript.lookup(tmp_path, "s.py", None) is None
+
+
+def test_forget_on_an_unreadable_store_aborts_instead_of_writing_empty_tokens(tmp_path):
+    inputtranscript.forget(tmp_path, "s.py", run_config=None, all_configs=True)
+    path = inputtranscript.store_path(tmp_path)
+    path.write_text("{broken", "utf-8")
+    _raises(
+        OSError, lambda: inputtranscript.forget(tmp_path, "t.py", run_config=None, all_configs=True)
+    )
+    assert path.read_text("utf-8") == "{broken"
+
+
+def test_a_blocked_write_never_deletes_a_store_that_holds_tokens(tmp_path, monkeypatch):
+    # 删整份存储会让基线回到「没人改过」：有令牌时只能明确失败
+    inputtranscript.forget(tmp_path, "s.py", run_config=None, all_configs=True)
+    path = inputtranscript.store_path(tmp_path)
+    basis = inputtranscript.basis(tmp_path, "s.py", None)
+    _block_replace(monkeypatch)
+    _raises(
+        OSError,
+        lambda: inputtranscript.bind(tmp_path, "s.py", None, [_rec(1, "new")], basis=basis),
+    )
+    monkeypatch.undo()
+    assert path.exists() and inputtranscript.basis(tmp_path, "s.py", None) == basis

@@ -77,34 +77,40 @@ def _key(script: str, run_config: str | None) -> str:
     return f"{script}{_SEP}{run_config or ''}"
 
 
-def _read(project_root: str | Path) -> dict:
+class StoreUnreadable(OSError, ValueError):
+    """存储读不出来 / 损坏 / 是更新版本写的。**不是「空」**：凡是据此做决定的读（比基线、决定绑不绑、
+    lookup 是否成立）都必须把它当失败——不绑、lookup 当没有；写也不能在这种读上「读-改-写」（会抹掉令牌）。"""
+
+
+def _load(project_root: str | Path) -> tuple[dict, dict]:
+    """严格读：(绑定表, 作废令牌表)。**只有文件不存在才是初始状态**（空）；读失败 / 非 JSON / 形状不对 /
+    更新版本写的一律抛 `StoreUnreadable`，绝不折成空值（Codex #816 r4224223190 / r4224295365）。"""
     try:
-        data = json.loads(store_path(project_root).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
+        text = store_path(project_root).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return {}, {}
+    except OSError as exc:
+        raise StoreUnreadable(f"转录存储读不出来: {exc!r}") from exc
+    try:
+        data = json.loads(text)
+    except ValueError as exc:
+        raise StoreUnreadable(f"转录存储损坏: {exc!r}") from exc
     if not isinstance(data, dict):
-        return {}
+        raise StoreUnreadable("转录存储形状不对")
     version = data.get("version")
     if isinstance(version, int) and version > FORMAT_VERSION:
-        return {}  # 更新版本写的：读不懂就当没有（冷重放回到上下文匹配，不会静默套用）
-    bindings = data.get("bindings")
-    return bindings if isinstance(bindings, dict) else {}
+        raise StoreUnreadable("转录存储是更新版本写的")  # 读不懂：不套用，也不覆盖
+    bindings = data.get("bindings", {})
+    gens = data.get("generations", {})
+    if not isinstance(bindings, dict) or not isinstance(gens, dict):
+        raise StoreUnreadable("转录存储形状不对")
+    return bindings, gens
 
 
-def _read_gens(project_root: str | Path) -> dict:
-    try:
-        data = json.loads(store_path(project_root).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    gens = data.get("generations") if isinstance(data, dict) else None
-    return gens if isinstance(gens, dict) else {}
-
-
-def _write(project_root: str | Path, bindings: dict, gens: dict | None = None) -> None:
+def _write(project_root: str | Path, bindings: dict, gens: dict) -> None:
+    """写必须带着**严格读到的** `gens`（读-改-写），没有「缺省去读」——读失败时调用方已经中止，绝不写 `{}`。"""
     path = store_path(project_root)
     path.parent.mkdir(parents=True, exist_ok=True)
-    if gens is None:
-        gens = _read_gens(project_root)
     atomicio.write_json(
         path, {"version": FORMAT_VERSION, "bindings": bindings, "generations": gens}
     )
@@ -120,12 +126,8 @@ def basis(project_root: str | Path, script: str, run_config: str | None) -> list
     **严格读**：存储文件不存在 = 还没人改过（空令牌）；读不出来 / 损坏 = 抛错——不能把「读失败」当成
     「没人改过」，否则之后绑定会把基线误当成当前（Codex #816 r4224223190）。调用方拿不到基线就不绑转录。"""
     with _LOCK:
-        try:
-            data = json.loads(store_path(project_root).read_text(encoding="utf-8"))
-        except FileNotFoundError:
-            return [None, None]
-        gens = data.get("generations") if isinstance(data, dict) else None
-        return _basis_of(gens if isinstance(gens, dict) else {}, script, run_config)
+        _bindings, gens = _load(project_root)
+        return _basis_of(gens, script, run_config)
 
 
 class _CurrentBasis:
@@ -139,24 +141,27 @@ class StaleTranscriptError(OSError):
     """新转录没落盘、旧绑定也没能作废：这次执行不能算「已绑定」（冷重放可能套上旧值）。"""
 
 
-def _commit(project_root: str | Path, bindings: dict, key: str) -> None:
-    """写回绑定表；写不下去（`os.replace` 被占、磁盘满）就**保证旧绑定不再可用**：先试去掉这一条重写，
-    再不行就删掉整份存储（别的绑定丢了只是回到上下文匹配，不会套错）。作废成功 → 重抛原错（新转录没落盘，
-    调用方如实记一笔）；连作废都失败 → `StaleTranscriptError`，调用方不能当成功（Codex #816 r4221584222）。"""
+def _commit(project_root: str | Path, bindings: dict, gens: dict, key: str) -> None:
+    """写回绑定表（带着严格读到的令牌）；写不下去（`os.replace` 被占、磁盘满）就**保证旧绑定不再可用**：先试
+    去掉这一条重写；再不行，只有**没有任何令牌**时才删掉整份存储（删了不丢令牌）——有令牌就不能删（会让
+    之后的基线回到「没人改过」），明确失败。作废成功 → 重抛原错；作废不了 → `StaleTranscriptError`。"""
     try:
-        _write(project_root, bindings)
+        _write(project_root, bindings, gens)
         return
     except OSError as exc:
         original = exc
     try:
-        rest = {k: v for k, v in bindings.items() if k != key}
-        _write(project_root, rest)
-    except OSError:
-        try:
-            store_path(project_root).unlink(missing_ok=True)
-        except OSError as inval:
+        _write(project_root, {k: v for k, v in bindings.items() if k != key}, gens)
+    except OSError as inval:
+        if gens:
             raise StaleTranscriptError(
                 f"转录写入失败且旧绑定无法作废: {original!r}; {inval!r}"
+            ) from original
+        try:
+            store_path(project_root).unlink(missing_ok=True)
+        except OSError as inval2:
+            raise StaleTranscriptError(
+                f"转录写入失败且旧绑定无法作废: {original!r}; {inval2!r}"
             ) from original
     raise original
 
@@ -200,7 +205,8 @@ def bind(
     entries = _clean(records)
     key = _key(script, run_config)
     with _LOCK:
-        current = _basis_of(_read_gens(project_root), script, run_config)
+        bindings, gens = _load(project_root)  # 读不出来 / 损坏 = 抛错：不绑，也不写
+        current = _basis_of(gens, script, run_config)
         if basis is None:
             return None  # 没取到 build 开始时的基线：无法证明答案没被改过，不绑（绝不退回「用当前令牌」）
         if isinstance(basis, _CurrentBasis):
@@ -208,13 +214,9 @@ def bind(
         elif list(basis) != current:
             return None  # build 在飞时答案被改过：这份转录基于旧答案，不绑（读者也会拒收）
         if not entries:
-            if not store_path(project_root).exists():
-                return None
-            bindings = _read(project_root)
             if bindings.pop(key, None) is not None:
-                _commit(project_root, bindings, key)
+                _commit(project_root, bindings, gens, key)
             return None
-        bindings = _read(project_root)
         prev = bindings.get(key)
         if (
             isinstance(prev, dict)
@@ -235,15 +237,19 @@ def bind(
             oldest = sorted(bindings, key=lambda k: float(bindings[k].get("created_at") or 0))
             for k in oldest[: len(bindings) - MAX_BINDINGS]:
                 bindings.pop(k, None)
-        _commit(project_root, bindings, key)
+        _commit(project_root, bindings, gens, key)
     return Transcript(tid, tuple(entries))
 
 
 def lookup(project_root: str | Path, script: str, run_config: str | None) -> Transcript | None:
     """这批产物（脚本 + 运行配置）最近一次成功执行的转录；没有 = None。"""
     with _LOCK:
-        rec = _read(project_root).get(_key(script, run_config))
-        current_basis = _basis_of(_read_gens(project_root), script, run_config)
+        try:
+            bindings, gens = _load(project_root)
+        except StoreUnreadable:
+            return None  # 读不出来 / 损坏：当没有转录（回到项目答案 + 上下文匹配），绝不重放
+        rec = bindings.get(_key(script, run_config))
+        current_basis = _basis_of(gens, script, run_config)
     if not isinstance(rec, dict) or not isinstance(rec.get("id"), str):
         return None
     # 读者校验：转录的基线对不上当前答案状态 = 当它不存在（不重放旧值）
@@ -265,8 +271,10 @@ def forget(
     """明确重算：默认作废整个脚本；单条答案管理只作废它那份配置（包括无参数）的转录。"""
     prefix = script + _SEP
     with _LOCK:
-        bindings = _read(project_root)
-        gens = dict(_read_gens(project_root))
+        bindings, gens = _load(
+            project_root
+        )  # 读不出来 = 抛错、不写：不在读失败的基础上抹掉别的令牌
+        gens = dict(gens)
         # 先换令牌：之后任何基于旧答案的转录（含 build 在飞、稍后才绑定的）读者都不认
         gens[script if all_configs else _key(script, run_config)] = "g_" + secrets.token_hex(8)
         drop = [

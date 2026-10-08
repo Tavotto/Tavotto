@@ -325,3 +325,22 @@ def test_normal_edit_commits_both_files(answers):
     assert recall(answers, "rc_a", "ctx:alpha") == "ALPHA2"
     scriptanswers.remember(answers, "s.py", 2, "q: ", "x", context="c2")
     assert scriptanswers.recall(answers, "s.py", 2, "q: ", context="c2").answer == "x"
+
+
+def test_answers_read_modify_write_aborts_on_an_unreadable_file(tmp_path):
+    # r4224295365：读不出来的答案文件不能被当成空表写回（会抹掉其它答案）
+    import pytest
+
+    from tavotto.engine import scriptanswers
+
+    scriptanswers.remember(tmp_path, "a.py", 1, "p: ", "1")
+    path = scriptanswers.answers_path(tmp_path)
+    path.write_text("{broken", "utf-8")
+    with pytest.raises(OSError):
+        scriptanswers.remember(tmp_path, "b.py", 1, "p: ", "2")
+    with pytest.raises(OSError):
+        scriptanswers.update(tmp_path, "a.py", 1, "9")
+    with pytest.raises(OSError):
+        scriptanswers.forget(tmp_path, "a.py", 1)
+    assert path.read_text("utf-8") == "{broken"
+    assert scriptanswers.load(tmp_path) == {}  # 纯读仍当没有：重新问，不套值
