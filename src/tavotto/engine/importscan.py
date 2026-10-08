@@ -51,6 +51,7 @@ import ast
 import dataclasses
 import os
 import re
+import stat
 import sys
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
@@ -211,6 +212,77 @@ PRELOADED_STDLIB: frozenset[str] = frozenset(
         "_sitebuiltins",
     }
 )
+#: Tavotto 的执行 wrapper 在把用户目录插进 `sys.path` **之前**已经 import 的标准库顶层模块。用户脚本的
+#: `import json` 命中 `sys.modules` 里 wrapper 先装好的那份，项目里的 `json.py` 到不了。
+#: 单一出处；`tests/test_import_origin_wrapper_preloaded.py` 用 AST 重算这两张表（wrapper 自己模块层的
+#: import + 它们在用户路径之前装的引擎模块的模块层 import），wrapper 改了而这里没同步就红。
+#: 不含 matplotlib / numpy 等第三方库自己传递带进来的标准库（它们随第三方版本变，静态量不出）。
+#: * safe：`engine/worker.py` + 它的 `_ENGINE_MODULES`（一次装完）；
+#: * native：`engine/bridge_runner.py` + `bridgeboot` + 它的 `_PHASE1`（第二阶段在用户 import 之后才装）。
+WRAPPER_PRELOADED: dict[str, frozenset[str]] = {
+    figcapture.PROFILE_SAFE: frozenset(
+        {
+            "__future__",
+            "argparse",
+            "ast",
+            "base64",
+            "builtins",
+            "collections",
+            "contextlib",
+            "contextvars",
+            "copy",
+            "dataclasses",
+            "faulthandler",
+            "filecmp",
+            "functools",
+            "hashlib",
+            "hmac",
+            "importlib",
+            "inspect",
+            "io",
+            "json",
+            "math",
+            "numbers",
+            "os",
+            "pathlib",
+            "platform",
+            "re",
+            "shutil",
+            "subprocess",
+            "sys",
+            "sysconfig",
+            "threading",
+            "time",
+            "traceback",
+            "typing",
+            "weakref",
+        }
+    ),
+    figcapture.PROFILE_NATIVE: frozenset(
+        {
+            "__future__",
+            "argparse",
+            "builtins",
+            "contextlib",
+            "dataclasses",
+            "hashlib",
+            "importlib",
+            "inspect",
+            "io",
+            "json",
+            "math",
+            "os",
+            "pathlib",
+            "re",
+            "socket",
+            "sys",
+            "threading",
+            "traceback",
+            "types",
+            "weakref",
+        }
+    ),
+}
 #: 宿主上是内建、但不在上面恒成立表里的名字（`itertools` / `gc` / `pwd` …）：别的构建上它们可能是
 #: 文件，所以没拿到目标解释器的内建名单时，本地同名文件对它们的遮蔽是 `ambiguous`。
 HOST_BUILTIN_EXTRA: frozenset[str] = (
@@ -790,6 +862,11 @@ class _Finder:
             return None
         sub: _Listing | None = None
         if name in ls.dirs:
+            blocked = self.dir_guard(d / name)
+            if blocked:
+                # 目录项是链接 / 路径替身：不 scandir 它（目标可能在项目外，Windows 上可能是 UNC / WebDAV）。
+                # 不知道里面是常规包还是命名空间目录，按「命中了但不能读」处理
+                return _Hit("package", d / name, blocked=blocked)
             sub = self.listing(d / name)
             if sub is not None:
                 if "__init__" in sub.ext:
@@ -800,9 +877,23 @@ class _Finder:
             return self._hit("extension", d / ls.ext[name])
         if name in ls.py:
             return self._hit("module", d / f"{name}.py")
-        if sub is not None and sub.has_python():
+        if name in ls.dirs:
+            # 任何同名、无 `__init__` 的目录都是命名空间部分（FileFinder：空目录、只有数据文件的目录也算）
             return self._hit("namespace", d / name)
         return None
+
+    def dir_guard(self, p: Path) -> str:
+        """目录项在 `scandir` 之前的守卫：先**不跟随**地 `lstat` 它本身。链接 / 路径替身：no_follow 下一律不下探；
+        跟随模式下 POSIX 符号链接按实体是否在项目内判，junction 等路径替身不跟随（realpath 本身就可能联网）。"""
+        try:
+            st = os.lstat(p)
+        except OSError:
+            return ""
+        if not scanbudget.is_redirect(st):
+            return ""
+        if self.no_follow or not stat.S_ISLNK(st.st_mode):
+            return "redirect"
+        return "" if projectenv.within(self.root, p) else "outside_project"
 
     def _hit(self, kind: str, path: Path) -> _Hit:
         return _Hit(kind, path, blocked=self.guard(path))
@@ -917,6 +1008,7 @@ class _Scanner:
         self.tree_given = tree
         self.entry = entry
         self.builtin_names = BUILTIN_NAMES | (frozenset(builtin) if builtin else frozenset())
+        self.wrapper_preloaded = WRAPPER_PRELOADED.get(entry.profile, frozenset())
         self.ambiguous_builtin = HOST_BUILTIN_EXTRA if builtin is None else frozenset()
         self.no_follow = no_follow
         self.budget = budget if budget is not None else scanbudget.Budget()
@@ -1070,7 +1162,12 @@ class _Scanner:
         """顶级名的查找：内建 / 冻结 / 启动即加载的 stdlib 先于文件系统；然后沿 `sys.path` 的搜索根
         （常规命中立即胜出，命名空间目录继续往后找）；最后才是 importer 自己目录里的兄弟文件（Python 3
         里并不在 `sys.path` 上，标 implicit）。"""
-        if name in self.builtin_names or name in FROZEN_NAMES or name in PRELOADED_STDLIB:
+        if (
+            name in self.builtin_names
+            or name in FROZEN_NAMES
+            or name in PRELOADED_STDLIB
+            or name in self.wrapper_preloaded
+        ):
             kind = (
                 "builtin"
                 if name in self.builtin_names
@@ -1439,7 +1536,7 @@ class _Scanner:
                 }[top.kind]
             )
             if top.ignored_local:
-                warns.append("local_file_never_imported")
+                warns.append("local_file_never_imported")  # 本地同名文件被内建 / wrapper 预加载遮蔽
             kind = {
                 "builtin": ORIGIN_BUILTIN,
                 "frozen": ORIGIN_FROZEN,
@@ -1451,6 +1548,7 @@ class _Scanner:
                 resolution_status=STATUS_RESOLVED,
                 evidence=tuple(evidence),
                 warnings=tuple(warns),
+                shadowing=BUCKET_STDLIB if top.ignored_local else "",
                 **base,
             )
 

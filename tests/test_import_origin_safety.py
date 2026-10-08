@@ -229,6 +229,7 @@ _ALLOWED_IMPORTS = {
     "dataclasses",
     "os",
     "re",
+    "stat",
     "sys",
     "pathlib",
     "__future__",
@@ -237,7 +238,7 @@ _ALLOWED_SIBLINGS = {"depresolve", "execspec", "figcapture", "projectenv", "scan
 #: 对兄弟模块只许用这些属性（projectenv 里有起解释器的 `probe_environment`，不许碰）。
 _ALLOWED_ATTRS = {
     "projectenv": {"within"},
-    "figcapture": {"PROFILE_SAFE", "unused_imports", "reaches_main"},
+    "figcapture": {"PROFILE_SAFE", "PROFILE_NATIVE", "unused_imports", "reaches_main"},
     "execspec": {
         "TARGET_SCRIPT",
         "TARGET_MODULE",
@@ -262,6 +263,7 @@ _ALLOWED_ATTRS = {
         "ISSUE_TOO_LARGE",
         "ISSUE_SYMLINK_DIR",
         "is_placeholder",
+        "is_redirect",
         "read_regular_text",
         "redirected_component",
     },
