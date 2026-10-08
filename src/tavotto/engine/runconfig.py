@@ -147,10 +147,45 @@ def store_path(project_root: str | Path) -> Path:
     return _digest_path(project_identity(project_root))
 
 
+def _on_disk_spelling(path: str) -> str:
+    """逐级按父目录列表取出磁盘上的真实大小写拼写（取不到的层原样保留）。
+    只在回落读旧登记时调用，不在热路径上。"""
+    parts = Path(path).parts
+    if not parts:
+        return path
+    cur = Path(parts[0])
+    for name in parts[1:]:
+        real = name
+        try:
+            entries = os.listdir(cur)
+        except OSError:
+            entries = []
+        if name not in entries:
+            folded = name.casefold()
+            real = next((e for e in entries if e.casefold() == folded), name)
+        cur = cur / real
+    return str(cur)
+
+
+def _legacy_store_paths(project_root: str | Path) -> list[Path]:
+    """#812 首版按 `os.path.normcase` 算的文件名（只在 Windows 折叠大小写）。旧文件里没记项目路径，
+    无法枚举所有曾用拼写；候选 = 传入拼写 + 磁盘真实拼写（当初多半经文件对话框拿到规范大小写）。
+    新文件不存在时依次回落读它们，下一次写入落到新名；不迁移删除，旧文件留着无害。"""
+    given = os.path.normpath(os.path.abspath(str(project_root)))
+    spellings = [given]
+    canonical = _on_disk_spelling(given)
+    if canonical != given:
+        spellings.append(canonical)
+    out: list[Path] = []
+    for sp in spellings:
+        p = _digest_path(os.path.normcase(sp))
+        if p not in out:
+            out.append(p)
+    return out
+
+
 def _legacy_store_path(project_root: str | Path) -> Path:
-    """#812 首版按 `os.path.normcase` 算的文件名（只在 Windows 折叠大小写）。新文件不存在时回落读它，
-    下一次写入落到新名；不迁移删除，旧文件留着无害。"""
-    return _digest_path(os.path.normcase(os.path.normpath(os.path.abspath(str(project_root)))))
+    return _legacy_store_paths(project_root)[0]
 
 
 def _read(project_root: str | Path) -> dict:
@@ -159,9 +194,13 @@ def _read(project_root: str | Path) -> dict:
     try:
         raw = store_path(project_root).read_text(encoding="utf-8")
     except OSError:
-        try:
-            raw = _legacy_store_path(project_root).read_text(encoding="utf-8")
-        except OSError:
+        for legacy in _legacy_store_paths(project_root):
+            try:
+                raw = legacy.read_text(encoding="utf-8")
+                break
+            except OSError:
+                continue
+        else:
             return {"configs": {}, "defaults": {}}
     try:
         data = json.loads(raw)

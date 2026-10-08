@@ -203,6 +203,36 @@ class TestRunConfigStore:
         assert runconfig._legacy_store_path(root) == legacy or os.name == "nt"
         assert runconfig.get(root, cfg.id).argv == ("--k", "1")
 
+    def test_a_legacy_registry_is_found_through_a_case_alias_of_the_root(
+        self, tmp_path, monkeypatch
+    ):
+        # Codex r4214097447：旧登记按当初的拼写（Plots）算哈希；现在以别名（plots）打开，
+        # 回落候选要含磁盘真实拼写。模拟版：所有平台都跑得到。
+        from tavotto.engine import config as engine_config
+
+        real, alias = tmp_path / "Plots", tmp_path / "plots"
+        monkeypatch.setattr(engine_config, "path_is_case_insensitive", lambda p: False)
+        cfg = runconfig.put(real, "s.py", ["--k", "1"])
+        runconfig.set_default(real, "s.py", cfg.id)
+        legacy = runconfig.store_path(real)
+        monkeypatch.setattr(engine_config, "path_is_case_insensitive", lambda p: True)
+        monkeypatch.setattr(runconfig, "_on_disk_spelling", lambda p: p.replace("plots", "Plots"))
+        assert legacy.exists() and runconfig.store_path(alias) != legacy
+        assert runconfig.get(alias, cfg.id).argv == ("--k", "1")
+        assert runconfig.default_selection(alias, "s.py").config_id == cfg.id
+        runconfig.put(alias, "s.py", ["--k", "2"])  # 下次写入落新名
+        assert runconfig.store_path(alias).exists()
+
+    def test_on_disk_spelling_recovers_real_case(self, tmp_path):
+        (tmp_path / "Plots" / "Sub").mkdir(parents=True)
+        assert runconfig._on_disk_spelling(str(tmp_path / "missing" / "X")) == str(
+            tmp_path / "missing" / "X"
+        )
+        if not (tmp_path / "plots").exists():
+            pytest.skip("大小写敏感的卷：别名不存在，模拟版用例已覆盖")
+        got = runconfig._on_disk_spelling(str(tmp_path / "plots" / "SUB"))
+        assert got == str(tmp_path / "Plots" / "Sub")
+
     def test_a_newer_format_is_refused_by_this_reader(self, tmp_path):
         cfg = runconfig.put(tmp_path, "s.py", ["a"])
         path = runconfig.store_path(tmp_path)
