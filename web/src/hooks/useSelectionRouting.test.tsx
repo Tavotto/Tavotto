@@ -374,6 +374,44 @@ describe('selection routing keeps the active drawer workflow', () => {
     expect(useUiStore.getState().leftOpen).toBe(false)
   })
 
+  it.each(['pointercancel', 'lostpointercapture'] as const)('%s ends real tracking before a stale release', event => {
+    openElements()
+    pointer(treeRow(gids[0]))
+    act(() => node('[data-canvas-track]').dispatchEvent(new PointerEvent('pointerdown', {
+      bubbles: true, button: 0, pointerId: 9,
+    })))
+    try {
+      expect(useInteractionStore.getState().kind).toBe('element')
+      act(() => document.dispatchEvent(new PointerEvent(event, { bubbles: true, pointerId: 9 })))
+      expect(useInteractionStore.getState().kind).toBe('none')
+      expectTreeSelection([gids[0]])
+    } finally {
+      act(() => document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 9 })))
+    }
+    expectTreeSelection([gids[0]])
+    pointer('[data-canvas-same]')
+    expect(useUiStore.getState().rightOpen).toBe(true)
+    expect(useUiStore.getState().leftOpen).toBe(false)
+  })
+
+  it('normal release completes the handoff through real pointer tracking', () => {
+    openElements()
+    pointer(treeRow(gids[0]))
+    act(() => node('[data-canvas-track]').dispatchEvent(new PointerEvent('pointerdown', {
+      bubbles: true, button: 0, pointerId: 9,
+    })))
+    try {
+      expect(useInteractionStore.getState().kind).toBe('element')
+      expectTreeSelection([gids[0]])
+    } finally {
+      act(() => document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 9 })))
+    }
+    expect(useInteractionStore.getState().kind).toBe('none')
+    expect(useUiStore.getState().selectedGids).toEqual([gids[0]])
+    expect(useUiStore.getState().rightOpen).toBe(true)
+    expect(useUiStore.getState().leftOpen).toBe(false)
+  })
+
   it.each(['move', 'resize', 'element'] as const)('%s defers sidebar routing until tracking ends', kind => {
     openElements()
     pointer(treeRow(gids[0]))
