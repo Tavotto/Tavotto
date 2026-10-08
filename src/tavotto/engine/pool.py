@@ -1286,6 +1286,11 @@ def resolve_worker_python(
     """
     if figures_dir is None:
         return select_worker_python()
+    scoped = _scoped_pin(figures_dir)
+    if scoped is not None:
+        if not scoped.matches(scoped.python):
+            raise _environment_changed()
+        return scoped.python, scoped.source
     if explicit_worker_python():
         # 显式选择还在：交给老链条（它会挑中这条，用不了就抛 `explicit_python_unusable`），
         # 不做任何自动决策。`explicit_worker_python()` 已把 `bootstrap.install()` 自建的那条
@@ -1605,6 +1610,7 @@ class EngineWorker:
         *,
         artifact_source=None,
         run=None,
+        pinned: EnvironmentDecision | None = None,
     ):
         self.script_name = script_name
         self.figures_dir = figures_dir
@@ -1657,8 +1663,10 @@ class EngineWorker:
         self._log = open(self.log_path, "ab", buffering=0)
         # **项目级**解释器决策：同一台机器上 A 项目可能用内置 runtime，
         # B 项目用它自己的 .venv（ADR 0018）。两条控制面都从这一个出处取。
-        python, self.python_source = resolve_worker_python(figures_dir, script=script_name)
+        python, self.python_source = _resolve_for_worker(figures_dir, script_name, pinned)
         self.python = python
+        #: 起会话那一刻这条解释器所在环境的「代」：写回重放 / 冷重放据此钉住热会话自己的环境
+        self.python_generation = projectenv.environment_generation(python)
         # 内置 runtime 装在安装目录里（可能是 Program Files），一个字节都不往
         # 那儿写：.pyc 与 matplotlib 字体缓存改道到数据目录。Tavotto 自己的环境
         # （受管环境 / worker-env）的缓存同样落回数据目录（`runtime.owned_env`）。
@@ -2358,6 +2366,7 @@ class WorkerdWorker:
         extra_env: dict | None = None,
         artifact_source=None,
         run=None,
+        pinned: EnvironmentDecision | None = None,
     ):
         from . import workerd_client
 
@@ -2404,8 +2413,9 @@ class WorkerdWorker:
             raise WorkerdUnavailable("workerd 不可用")
         # 与 EngineWorker 同源：项目级解释器决策的唯一出处是
         # `resolve_worker_python`，换控制面不换答案。
-        python, self.python_source = resolve_worker_python(figures_dir, script=script_name)
+        python, self.python_source = _resolve_for_worker(figures_dir, script_name, pinned)
         self.python = python
+        self.python_generation = projectenv.environment_generation(python)
         # 与 EngineWorker 同源：改指表的代次与规则同一刻取（ADR 0106 §五）
         self.remap_generation, remap_rules = inputremap.snapshot(figures_dir)
         # 与 EngineWorker 同形：两条控制面都持一份 ExecutionSpec（唯一权威
@@ -2805,6 +2815,62 @@ class EnvironmentDecision:
         )
 
 
+def pin_of_worker(worker) -> EnvironmentDecision:
+    """热会话自己的解释器（路径 + 来源 + 起会话那一刻的环境代）——写回重放、冷重放要钉的就是它，不是项目此刻的记录。"""
+    return EnvironmentDecision(
+        python=getattr(worker, "python", "") or "",
+        source=getattr(worker, "python_source", "") or "",
+        generation=getattr(worker, "python_generation", "") or "",
+    )
+
+
+def _environment_changed() -> WorkerError:
+    return WorkerError(
+        "这个项目的解释器在检测之后变了，请重新准备再运行。", code=ENVIRONMENT_CHANGED
+    )
+
+
+#: 本线程当前钉住的解释器（`pinned_interpreter` 的作用域）：(项目键, EnvironmentDecision)。
+_pin_scope = threading.local()
+
+
+@contextlib.contextmanager
+def pinned_interpreter(figures_dir: str | Path, decision: EnvironmentDecision | None):
+    """在这个作用域里，同一项目的 `resolve_worker_python()` 回钉下的解释器，**不再读共享的项目记录**。
+
+    起会话的依赖门（`SPAWN_GATES` → 联合计划 → 目标解释器）解析点多而深；决定已经落地之后它们必须看到同一个
+    解释器，否则第一个脚本会为第二个脚本的解释器弹出依赖授权（Codex #820 r4221133355）。钉下的环境代对不上了
+    （被重建）→ `environment_changed`，不替用户换。"""
+    if decision is None or not decision.pinned:
+        yield
+        return
+    prev = getattr(_pin_scope, "pin", None)
+    _pin_scope.pin = (projectenv._key(figures_dir), decision)
+    try:
+        yield
+    finally:
+        _pin_scope.pin = prev
+
+
+def _scoped_pin(figures_dir) -> EnvironmentDecision | None:
+    cur = getattr(_pin_scope, "pin", None)
+    if cur is not None and figures_dir is not None and cur[0] == projectenv._key(figures_dir):
+        return cur[1]
+    return None
+
+
+def _resolve_for_worker(
+    figures_dir: str, script_name: str, pinned: EnvironmentDecision | None
+) -> tuple[str, str]:
+    """会话构造函数取解释器的唯一入口：给了钉下的值就只认它（环境代对不上 → `environment_changed`），
+    否则才解析项目记录。"""
+    if pinned is not None and pinned.pinned:
+        if not pinned.matches(pinned.python):
+            raise _environment_changed()
+        return pinned.python, pinned.source
+    return resolve_worker_python(figures_dir, script=script_name)
+
+
 def register_environment_decider(decider) -> None:
     if decider not in ENVIRONMENT_DECIDERS:
         ENVIRONMENT_DECIDERS.append(decider)
@@ -2823,7 +2889,15 @@ def _workdir_gate(figures_dir: str, script_name: str) -> None:
         raise err from None
 
 
-def _new_worker(script_name: str, figures_dir: str, entry: str, *, artifact_source=None, run=None):
+def _new_worker(
+    script_name: str,
+    figures_dir: str,
+    entry: str,
+    *,
+    artifact_source=None,
+    run=None,
+    pinned: EnvironmentDecision | None = None,
+):
     """按可用性挑控制面。**任何失败都回退 Python 池**——渲染不能因为一个
     可选的加速件起不来就整个不可用。
 
@@ -2838,15 +2912,22 @@ def _new_worker(script_name: str, figures_dir: str, entry: str, *, artifact_sour
     # 第二道门：依赖（U04，ADR 0061 §六）。判据住在 `deprepair`（它 import 本模块，所以这里
     # 不能反过来 import 它——它在 import 时把自己的门登记进 `SPAWN_GATES`）。门要问就抛带
     # `dependency_preparation` 载荷的 WorkerError；放行就什么都不做。
-    for spawn_gate in SPAWN_GATES:
-        spawn_gate(figures_dir, script_name)
+    # 检测钉下的解释器（`pinned`）：门里的一切解析与两个构造函数都只认它，不再读共享的项目记录
+    # （Codex #820 r4221133355：否则会为另一个脚本的解释器弹授权，甚至先起在它上面再被拒）
+    with pinned_interpreter(figures_dir, pinned):
+        for spawn_gate in SPAWN_GATES:
+            spawn_gate(figures_dir, script_name)
     context = {"artifact_source": artifact_source} if artifact_source is not None else {}
     if run is not None:
         context["run"] = run
+    if pinned is not None and pinned.pinned:
+        context["pinned"] = pinned
     if workerd_client.find_workerd():
         try:
             return WorkerdWorker(script_name, figures_dir, entry, **context)
         except (WorkerdUnavailable, WorkerError, OSError) as exc:
+            if getattr(exc, "code", "") == ENVIRONMENT_CHANGED:
+                raise  # 钉下的环境变了：回退到 Python 池也一样，不静默换
             LOG.warning("workerd 会话建立失败，回退到 Python 渲染池: %s", exc)
     return EngineWorker(script_name, figures_dir, entry, **context)
 
@@ -2859,6 +2940,7 @@ def one_shot(
     script_inputs=None,
     artifact_source=None,
     run=None,
+    pinned: EnvironmentDecision | None = None,
 ):
     """一次性 worker：**不进池、目录独立、用完即毁**。写回前的干净重放用。
 
@@ -2896,6 +2978,9 @@ def one_shot(
         if run is not None:
             # T03：冷重放跑的是**原来那条配置**（调用方从热会话 `worker.run` 取），不是项目此刻的任何配置
             context["run"] = run
+        if pinned is not None and pinned.pinned:
+            # 写回重放钉热会话自己的解释器与环境代：项目记录可能已被同项目的另一个脚本换成别的（#820 r4221133372）
+            context["pinned"] = pinned
         worker = None
         if workerd_client.find_workerd():
             try:
@@ -2908,6 +2993,8 @@ def one_shot(
                     **context,
                 )
             except (WorkerdUnavailable, WorkerError, OSError) as exc:
+                if getattr(exc, "code", "") == ENVIRONMENT_CHANGED:
+                    raise
                 LOG.warning("workerd 一次性会话建立失败，回退到 Python 渲染池: %s", exc)
         if worker is None:
             worker = EngineWorker(script_name, figures_dir, entry, base_dir=base, **context)
@@ -3222,7 +3309,7 @@ def acquire(
                 )
                 if run is not None:
                     context["run"] = run
-                w = _new_worker(script_name, figures_dir, entry, **context)
+                w = _new_worker(script_name, figures_dir, entry, pinned=pin, **context)
                 if pin is not None and not pin.matches(getattr(w, "python", pin.python)):
                     # 会话构造时解析到的不是这次检测钉下的那一个（记录在两次解析之间被换了 / 环境被重建）：
                     # 不替用户悄悄换解释器——收掉这条刚起的会话，按 `environment_changed` 让调用方重新准备

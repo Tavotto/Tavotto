@@ -440,6 +440,139 @@ def test_the_plan_snapshot_keeps_the_detected_interpreter_and_goes_stale_when_th
     )
 
 
+# ---- 真 `_new_worker` / 真 `one_shot`：只把「起进程」换成记账（Codex #820 r4221133355 / r4221133372） ----
+_REAL_RESOLVE = engine_pool.resolve_worker_python  # 在任何夹具替换它之前取下
+
+
+class _FakeProc:
+    pid = 4242
+    stdin = stdout = None
+
+    def poll(self):
+        return None
+
+    def kill(self):
+        pass
+
+    def terminate(self):
+        pass
+
+    def wait(self, timeout=None):
+        return 0
+
+
+@pytest.fixture
+def real_spawn(tmp_path, monkeypatch):
+    """共享的项目记录是另一个脚本的解释器 Y；第一个脚本检测钉下的是 X。解析、门、构造函数全是真的，只有起进程是记账。"""
+    from tavotto.engine import workerd_client
+
+    root = tmp_path / "proj"
+    root.mkdir()
+    x = _touch(tmp_path / "env-x" / "bin" / "python")
+    y = _touch(tmp_path / "env-y" / "bin" / "python")
+    monkeypatch.setattr(engine_pool, "resolve_worker_python", _REAL_RESOLVE)
+    monkeypatch.setattr(engine_pool, "_has_matplotlib", lambda p: True)
+    monkeypatch.setattr(workerd_client, "find_workerd", lambda: None)
+    monkeypatch.setattr(engine_pool, "_schedule_prune", lambda: None)
+    launched: list[str] = []
+
+    def popen(argv, **kw):
+        launched.append(argv[0])
+        return _FakeProc()
+
+    monkeypatch.setattr(engine_pool.subprocess, "Popen", popen)
+    # 没有真进程可优雅关停：shutdown 只做逻辑标记
+    monkeypatch.setattr(
+        engine_pool.EngineWorker, "shutdown", lambda self: setattr(self, "_dead", True)
+    )
+    gate_saw: list[str] = []
+
+    def spy_gate(figures_dir, script_name):
+        gate_saw.append(engine_pool.resolve_worker_python(figures_dir, script=script_name)[0])
+
+    monkeypatch.setattr(engine_pool, "SPAWN_GATES", [spy_gate])
+    # 共享记录此刻是 Y（另一个脚本的检测刚落地）
+    assert projectenv.remember(
+        str(root), y, automatic=True, trigger=projectenv.TRIGGER_AUTO_DETECTED
+    )
+    pin = engine_pool.EnvironmentDecision(
+        python=x,
+        source=engine_pool.SOURCE_SYSTEM,
+        generation=projectenv.environment_generation(x),
+    )
+    yield {
+        "root": str(root),
+        "x": x,
+        "y": y,
+        "pin": pin,
+        "launched": launched,
+        "gate_saw": gate_saw,
+    }
+    for w in list(engine_pool._workers.values()):
+        w.shutdown()
+    engine_pool._workers.clear()
+
+
+def test_real_new_worker_hands_the_pinned_interpreter_to_the_gate_and_the_constructor(real_spawn):
+    """修复前：依赖门与 `EngineWorker` 构造函数各自再解析一遍共享记录，拿到的是 Y——第一个脚本会为 Y 弹依赖授权、
+    甚至先起在 Y 上再被拒。修复后：钉下的决定作为参数一路传进门和构造函数。"""
+    w = engine_pool._new_worker("fig.py", real_spawn["root"], "__main__", pinned=real_spawn["pin"])
+    try:
+        assert real_spawn["gate_saw"] == [real_spawn["x"]]
+        assert real_spawn["launched"] == [real_spawn["x"]]
+        assert w.python == real_spawn["x"]
+    finally:
+        w.shutdown()
+
+
+def test_real_new_worker_without_a_pin_still_follows_the_shared_record(real_spawn):
+    """对照：不钉就是原来的行为（共享记录 = Y），证明上面那条不是夹具本来就只会回 X。"""
+    w = engine_pool._new_worker("fig.py", real_spawn["root"], "__main__")
+    try:
+        assert real_spawn["gate_saw"] == [real_spawn["y"]] and w.python == real_spawn["y"]
+    finally:
+        w.shutdown()
+
+
+def test_a_rebuilt_pinned_environment_fails_before_anything_is_started(real_spawn):
+    Path(real_spawn["x"]).unlink()
+    _touch(Path(real_spawn["x"]))  # 同一路径删了重建：环境代换了
+    os.utime(real_spawn["x"], (1, 1))
+    with pytest.raises(engine_pool.WorkerError) as caught:
+        engine_pool._new_worker("fig.py", real_spawn["root"], "__main__", pinned=real_spawn["pin"])
+    assert caught.value.code == engine_pool.ENVIRONMENT_CHANGED
+    assert real_spawn["launched"] == []
+
+
+def test_one_shot_replays_on_the_hot_workers_interpreter_not_the_current_record(real_spawn):
+    """写回的全量重放要和热态同一个解释器；同项目另一个脚本把记录换成 Y 之后，重放仍是 X（修复前是 Y）。"""
+    hot = type("Hot", (), {})()
+    hot.python, hot.python_source = real_spawn["x"], engine_pool.SOURCE_SYSTEM
+    hot.python_generation = projectenv.environment_generation(real_spawn["x"])
+    fresh = engine_pool.one_shot(
+        "fig.py", real_spawn["root"], "__main__", pinned=engine_pool.pin_of_worker(hot)
+    )
+    try:
+        assert fresh.python == real_spawn["x"] and real_spawn["launched"] == [real_spawn["x"]]
+    finally:
+        engine_pool.discard(fresh)
+    # 对照：不钉就是共享记录
+    other = engine_pool.one_shot("fig.py", real_spawn["root"], "__main__")
+    try:
+        assert other.python == real_spawn["y"]
+    finally:
+        engine_pool.discard(other)
+
+
+def test_a_live_worker_records_its_environment_generation(real_spawn):
+    w = engine_pool._new_worker("fig.py", real_spawn["root"], "__main__", pinned=real_spawn["pin"])
+    try:
+        assert w.python_generation == projectenv.environment_generation(real_spawn["x"])
+        assert engine_pool.pin_of_worker(w).matches(real_spawn["x"])
+    finally:
+        w.shutdown()
+
+
 # ===========================================================================
 # 报告里的「换过」：由生效的前后推导，作废→默认链条也算（Codex #820 r4220794183）
 # ===========================================================================

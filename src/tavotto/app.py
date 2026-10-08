@@ -5868,6 +5868,8 @@ def _write_source_files(
         worker.figures_dir,
         worker.entry,
         script_inputs=getattr(worker, "last_build_script_inputs", None) or [],
+        # 解释器也钉热会话自己的：同项目另一个脚本可能已把共享的项目记录换成别的（#820 r4221133372）
+        pinned=engine_pool.pin_of_worker(worker),
         # T03：重放跑的是**热会话自己冻结的那份运行配置**（argv），与热态一致才谈得上"重放 == 热态"；
         # 不读项目此刻的默认配置——之后用户换了参数也不能让这次验证拿另一组参数去比
         **({"run": worker.run} if getattr(worker, "run", None) is not None else {}),
