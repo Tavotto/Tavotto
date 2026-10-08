@@ -25,6 +25,7 @@ import dataclasses
 import hashlib
 import json
 import os
+import re
 import secrets
 import threading
 import time
@@ -33,6 +34,9 @@ from pathlib import Path
 from . import atomicio, config, execspec
 
 ID_PREFIX = "rc_"
+#: `put` 生成的引用形状（`ID_PREFIX` + 12 位小写十六进制）。登记校验、`get` 与资产 id 后缀解析
+#: （`runtimeasset._RUN_CONFIG_TAIL`）共用这一个，不各写一份。
+ID_RE = re.compile(re.escape(ID_PREFIX) + r"[0-9a-f]{12}")
 FORMAT_VERSION = 1
 #: 单个项目最多记多少条配置（超出丢最老的**未被磁盘面板默认引用**的；被丢的引用之后得到 `run_config_missing`，不会静默换成别的）
 MAX_CONFIGS = 400
@@ -277,7 +281,7 @@ def _schema_ok(configs, defaults) -> bool:
     if not isinstance(configs, dict) or not isinstance(defaults, dict):
         return False
     for cid, rec in configs.items():
-        if not isinstance(cid, str) or not cid.startswith(ID_PREFIX) or not isinstance(rec, dict):
+        if not isinstance(cid, str) or not ID_RE.fullmatch(cid) or not isinstance(rec, dict):
             return False
         if not isinstance(rec.get("script"), str) or not isinstance(rec.get("source"), str):
             return False
@@ -296,7 +300,7 @@ def _schema_ok(configs, defaults) -> bool:
             except InvalidArgv:
                 return False
     for script, cid in defaults.items():
-        if not isinstance(script, str) or not isinstance(cid, str) or not cid.startswith(ID_PREFIX):
+        if not isinstance(script, str) or not isinstance(cid, str) or not ID_RE.fullmatch(cid):
             return False
     return True
 

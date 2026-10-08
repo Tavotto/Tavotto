@@ -881,6 +881,35 @@ def structured_missing_module(value) -> str:
     return ""
 
 
+def structured_missing_dependency(fields) -> tuple[bool, str]:
+    """worker 错误字段（`error` 对象 / `extra`）里的缺依赖事实 → `(是不是缺依赖, 模块名或空串)`。
+
+    敏感运行里模块名只在能归因到脚本静态 import 时才带；没有名字时只剩分类标志，调用方仍按
+    `missing_dependency` 处理（`module == ""`，界面走通用缺依赖提示）。形状不对一律当没有。"""
+    if not isinstance(fields, dict):
+        return False, ""
+    module = structured_missing_module(fields.get("missing_module"))
+    return bool(module) or fields.get("missing_dependency") is True, module
+
+
+def _missing_dependency_error(mod: str, traceback_text: str) -> "WorkerError":
+    if mod:
+        return WorkerError(
+            f"脚本用到的 {mod} 在当前渲染环境里没有。"
+            f"可以在这张图的提示里一键装上，或在设置 → 诊断 → 技术详情里改用你自己装了 {mod} 的 "
+            f"Python / Conda 环境。",
+            traceback_text,
+            code="missing_dependency",
+            module=mod,
+        )
+    return WorkerError(
+        "脚本用到的某个依赖包在当前渲染环境里没有（这次运行含敏感参数，不显示包名）。"
+        "可以在设置 → 诊断 → 技术详情里改用装齐了依赖的 Python / Conda 环境。",
+        traceback_text,
+        code="missing_dependency",
+    )
+
+
 def is_frozen() -> bool:
     """是否跑在 PyInstaller 打出的独立应用里（.app / .exe）。"""
     return runtime.is_frozen()
@@ -1840,18 +1869,11 @@ class EngineWorker:
             code = ""
         # missing_dependency 优先于协议 code：worker 那边它只是一个普通的
         # script_error，但对用户来说「缺包」是完全不同的一件事（有可执行出口）。
-        mod = missing_module(f"{msg}\n{tb}") or (
-            structured_missing_module(err.get("missing_module")) if isinstance(err, dict) else ""
-        )
-        if mod:
-            exc = WorkerError(
-                f"脚本用到的 {mod} 在当前渲染环境里没有。"
-                f"可以在这张图的提示里一键装上，或在设置 → 诊断 → 技术详情里改用你自己装了 {mod} 的 "
-                f"Python / Conda 环境。",
-                tb,
-                code="missing_dependency",
-                module=mod,
-            )
+        mod = missing_module(f"{msg}\n{tb}")
+        structured, structured_mod = structured_missing_dependency(err)
+        mod = mod or structured_mod
+        if mod or structured:
+            exc = _missing_dependency_error(mod, tb)
             # **谁的脚本缺这个包**：依赖修复要按 (项目, 脚本) 记轮次、按脚本
             # 所在目录找依赖声明。异常一路抛到 app 层时那边只剩下 exc。
             exc.script_name = self.script_name
@@ -2241,18 +2263,11 @@ def _worker_error(
     （有可执行出口：换成自己的环境）。前端认的是这个 code，不能因为换了控制面
     就变成一段没人能用的通用错误。
     """
-    mod = missing_module(f"{message}\n{traceback_text}") or structured_missing_module(
-        (extra or {}).get("missing_module")
-    )
-    if mod:
-        return WorkerError(
-            f"脚本用到的 {mod} 在当前渲染环境里没有。"
-            f"可以在这张图的提示里一键装上，或在设置 → 诊断 → 技术详情里改用你自己装了 {mod} 的 "
-            f"Python / Conda 环境。",
-            traceback_text,
-            code="missing_dependency",
-            module=mod,
-        )
+    mod = missing_module(f"{message}\n{traceback_text}")
+    structured, structured_mod = structured_missing_dependency(extra)
+    mod = mod or structured_mod
+    if mod or structured:
+        return _missing_dependency_error(mod, traceback_text)
     err = WorkerError(message, traceback_text, code=code)
     if extra:
         # worker 多带的字段（unknown_stem 的 `known` 之类）留给上层

@@ -136,16 +136,92 @@ def test_sensitive_missing_dependency_keeps_its_classification(worker_factory):
 def test_sensitive_missing_dependency_never_carries_an_argv_value_as_the_module_name(
     worker_factory,
 ):
-    """脚本把 argv 值塞进 ModuleNotFoundError.name 也夹带不出去：名字等于某个 token 就不带名字。"""
+    """脚本把 argv 值塞进 ModuleNotFoundError.name 也夹带不出去：名字不是静态 import 来的就不带名字，
+    但「缺依赖」分类保留（通用提示）。"""
     worker = worker_factory(
         "import sys\nraise ModuleNotFoundError('x', name=sys.argv[-1])\n", ["--value", "secretpkg"]
     )
     with pytest.raises(pool.WorkerError) as caught:
         worker.ensure_built()
     error = caught.value
-    assert error.code != "missing_dependency"
+    assert error.code == "missing_dependency"
+    assert error.module == ""
     assert "secretpkg" not in str(error)
+    assert "secretpkg" not in error.traceback_text
     assert "secretpkg" not in json.dumps(error.extra)
+
+
+@pytest.mark.parametrize(
+    ("source", "tokens"),
+    [
+        # 动态 import 前把敏感 token 变形：加子模块后缀 -> name 是 "privatepkg"（整串 != token）
+        (
+            "import sys, importlib\nimportlib.import_module(sys.argv[-1] + '.submodule')\n",
+            ["--value", "privatepkg"],
+        ),
+        # 从 `--plugin=privatepkg` 里切出值 -> name == "privatepkg"
+        (
+            "import sys, importlib\nimportlib.import_module(sys.argv[-1].split('=', 1)[1])\n",
+            ["--plugin=privatepkg"],
+        ),
+    ],
+)
+def test_sensitive_missing_dependency_hides_names_derived_from_argv(worker_factory, source, tokens):
+    worker = worker_factory(source, tokens)
+    with pytest.raises(pool.WorkerError) as caught:
+        worker.ensure_built()
+    error = caught.value
+    assert error.code == "missing_dependency"  # 分类仍在
+    assert error.module == ""  # 名字不可独立归因到脚本 -> 不带
+    assert "privatepkg" not in str(error)
+    assert "privatepkg" not in error.traceback_text
+    assert "privatepkg" not in json.dumps(getattr(error, "extra", {}) or {})
+    assert "privatepkg" not in worker.log_path.read_text(encoding="utf-8")
+
+
+def test_sensitive_missing_dependency_names_only_static_imports(worker_factory):
+    """静态 `import x` 缺失仍带名字；`from x.y import z` 与函数里的 import 同样算入口脚本自己写的。"""
+    worker = worker_factory(
+        "import sys\ndef go():\n    from tavotto_absent_pkg_abc.sub import thing\ngo()\n",
+        ["--value", SECRET],
+    )
+    with pytest.raises(pool.WorkerError) as caught:
+        worker.ensure_built()
+    assert caught.value.code == "missing_dependency"
+    assert caught.value.module == "tavotto_absent_pkg_abc"
+
+
+def test_static_import_roots_fail_closed(tmp_path):
+    from tavotto.engine import worker as engine_worker
+
+    good = tmp_path / "g.py"
+    good.write_text("import a.b as c, d\nfrom e.f import g\nfrom . import h\n", encoding="utf-8")
+    assert engine_worker._static_import_roots(good) == {"a", "d", "e"}
+    bad = tmp_path / "b.py"
+    bad.write_text("def (:\n", encoding="utf-8")
+    assert engine_worker._static_import_roots(bad) == frozenset()
+    assert engine_worker._static_import_roots(tmp_path / "missing.py") == frozenset()
+    big = tmp_path / "big.py"
+    big.write_text("import a\n" + "#" * engine_worker._STATIC_IMPORT_SCAN_LIMIT, encoding="utf-8")
+    assert engine_worker._static_import_roots(big) == frozenset()
+
+
+def test_parent_handles_a_nameless_missing_dependency_without_crashing():
+    """无模块名的 missing_dependency：两条父进程路径都分类对；错误响应不带 module / 依赖修复，不崩。"""
+    from tavotto import app
+
+    err = pool._worker_error(
+        "Sensitive run failed", "script_error", "", {"missing_dependency": True}
+    )
+    assert (err.code, err.module) == ("missing_dependency", "")
+    assert pool.try_project_env("/nonexistent", "s.py", err.module)["ok"] is False
+    body = app._worker_error_payload(err)
+    assert body["code"] == "missing_dependency"
+    assert "module" not in body
+    assert "dependency_repair" not in body
+    # 非法形状一律当没有
+    other = pool._worker_error("x", "script_error", "", {"missing_dependency": "yes"})
+    assert other.code == "script_error"
 
 
 def test_sensitive_native_and_child_output_is_suppressed_without_breaking_protocol(worker_factory):

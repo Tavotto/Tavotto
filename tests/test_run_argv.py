@@ -274,6 +274,12 @@ class TestRunConfigStore:
             lambda d, c: d["defaults"].__setitem__("s.py", None),
             lambda d, c: d["defaults"].__setitem__("s.py", ["rc_x"]),
             lambda d, c: d["defaults"].__setitem__("s.py", "not_an_rc_id"),
+            # 只有前缀 / 大写 / 位数不对：resolve 只认 rc_ + 12 位小写十六进制，写出去就是死引用
+            lambda d, c: d["defaults"].__setitem__("s.py", "rc_bad"),
+            lambda d, c: d["defaults"].__setitem__("s.py", "rc_0123456789AB"),
+            lambda d, c: d["defaults"].__setitem__("s.py", "rc_0123456789abc"),
+            lambda d, c: d["configs"].__setitem__("rc_bad", d["configs"][c]),
+            lambda d, c: d["configs"].__setitem__("rc_0123456789ag", d["configs"][c]),
             lambda d, c: d.__setitem__("version", "1"),
             lambda d, c: d.__setitem__("version", True),
             lambda d, c: d.__setitem__("version", 0),
@@ -316,6 +322,13 @@ class TestRunConfigStore:
             runconfig.put(tmp_path, "s.py", ["b"])  # 写路径同样失败关闭，不隔离重建
         assert path.read_bytes() == before
         assert not list(path.parent.glob(path.name + ".corrupt-*"))
+
+    def test_the_id_shape_has_one_source_shared_with_the_asset_resolver(self, tmp_path):
+        from tavotto.engine import runtimeasset
+
+        assert runtimeasset._RUN_CONFIG_TAIL is runconfig.ID_RE
+        assert runconfig.ID_RE.fullmatch(runconfig.put(tmp_path, "s.py", ["a"]).id)
+        assert not runconfig.ID_RE.fullmatch("rc_bad")
 
     def test_a_default_pointing_at_an_unknown_id_is_missing_not_unreadable(self, tmp_path):
         runconfig.put(tmp_path, "s.py", ["a"])

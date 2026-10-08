@@ -47,7 +47,6 @@ import hashlib
 import json
 import logging
 import os
-import re
 import shutil
 from pathlib import Path
 
@@ -134,7 +133,7 @@ def resolve(asset_id: str, registry) -> dict | None:
     return found[0] if len(found) == 1 else None
 
 
-_RUN_CONFIG_TAIL = re.compile(re.escape(runconfig.ID_PREFIX) + r"[0-9a-f]{12}")
+_RUN_CONFIG_TAIL = runconfig.ID_RE
 
 
 def run_selection(project_root: str | Path, info: dict):
