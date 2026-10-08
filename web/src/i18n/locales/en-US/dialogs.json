@@ -1024,6 +1024,7 @@
       "copyReport": "Copy diagnostics",
       "envNote": "The rendering environment that ships with {{product}} is read-only. Installing packages creates a separate “this project’s {{product}} environment”; the two track state separately.",
       "fetchedAt": "Data on this page was read at {{time}}",
+      "fetchFailed": "Couldn’t read the check results. Choose “Fetch again” to retry.",
       "healthTitle": "Health",
       "hidePreview": "Hide",
       "nextStep": {
@@ -1040,6 +1041,7 @@
       "reportTitle": "Diagnostic report",
       "summaryFailing": "{{count}} problem(s)",
       "summaryOk": "Runtime environment checks passed",
+      "summaryUnavailable": "Couldn’t check",
       "perfRow": "Record drag performance",
       "perfStart": "Start",
       "devTitle": "For developers",

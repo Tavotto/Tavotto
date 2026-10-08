@@ -232,7 +232,8 @@ export function SettingsDialog() {
     if (!pendingAnchor) return
     const el = pendingAnchor
       .map((id) => contentRef.current?.querySelector<HTMLElement>(`[data-settings-anchor="${id}"]`))
-      .find(Boolean)
+      // 收起中的折叠组（Reveal 退场动画那几帧还挂着）里的行看不见：滚过去、亮一下都落空，退到下一个锚点（组本身）
+      .find((a) => a && !a.closest('[data-reveal][data-state="closed"]'))
     setPendingAnchor(null)
     if (!el) return
     el.scrollIntoView?.({ block: 'center' })

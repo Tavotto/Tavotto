@@ -1371,6 +1371,7 @@ export default interface Resources {
         "copyReport": "复制诊断",
         "devTitle": "给开发者",
         "envNote": "「{{product}} 自带的渲染环境」随安装包附带，只读。装包会另建「本项目的 {{product}} 环境」，两者状态各自独立。",
+        "fetchFailed": "没能取到检查结果，可点「重新获取」再试",
         "fetchedAt": "本页数据取自 {{time}}",
         "healthTitle": "健康状态",
         "hidePreview": "收起",
@@ -1393,6 +1394,7 @@ export default interface Resources {
         "summaryFailing": "{{count}} 项异常",
         "summaryLabel": "诊断摘要",
         "summaryOk": "运行环境检查通过",
+        "summaryUnavailable": "未能检测",
         "verdictLabel": "运行环境"
       },
       "export": {
