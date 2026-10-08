@@ -107,6 +107,7 @@ from .engine import (
     runtime as engine_runtime,
     runtimeasset as engine_runtimeasset,
     scriptanswers as engine_scriptanswers,
+    scriptargs as engine_scriptargs,
     scriptbackup as engine_scriptbackup,
     scriptedit as engine_scriptedit,
     scriptlock as engine_scriptlock,
@@ -6481,6 +6482,22 @@ def api_engine_input_remap_get():
     """当前项目的只读改指表（ADR 0106）。"""
     root = str(require_project())
     return jsonify({"ok": True, "input_remap": engine_inputremap.state(root)})
+
+
+@app.get("/api/engine/script-arguments")
+def api_engine_script_arguments():
+    """脚本参数的静态 schema（T07，`engine/scriptargs.py`）：只读源码，不执行、不 import、不调 `--help`。
+
+    给「运行参数」编辑器的表单视图用；它是建议，token 列表仍是权威。脚本路径与试运行同一道越权检查。"""
+    ctx = current_ctx()
+    script, rejected = _resolve_project_script(ctx, str(request.args.get("script") or "").strip())
+    if rejected is not None:
+        return rejected
+    # 负数 token 的文法随 worker 的 Python 版本变（3.14 起更宽）：带上项目记住的版本（只读、不体检；没有就不带，
+    # 前端取较窄的旧规则）
+    version = str(engine_projectenv.state(str(ctx.path)).get("python_version") or "") or None
+    schema = {**engine_scriptargs.analyze_file(ctx.path / script), "python_version": version}
+    return jsonify({"ok": True, "script": script, "arguments": schema})
 
 
 #: 渲染失败里「会话按此刻的表 build 完了、只是图名对不上 / 一张没有」的码：据此重新登记

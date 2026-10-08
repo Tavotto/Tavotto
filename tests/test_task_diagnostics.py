@@ -678,7 +678,7 @@ def test_a_stale_plan_failure_keeps_its_closed_reason(
     pj = _open(client, root)
     calls = {"n": 0}
 
-    def stale(plan):
+    def stale(plan, **_kw):
         # 第 1 次是会话认领动作前的复核（通过），第 2 次是执行线程起会话前的（作废）
         calls["n"] += 1
         return (preparation.STALE_GRANT, {}) if calls["n"] >= 2 else None
