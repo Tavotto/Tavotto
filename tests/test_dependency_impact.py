@@ -492,6 +492,61 @@ class TestAdoptionFence:
             projectenv.remembered(project), projectenv.interpreter_of(venv)
         )
 
+    def test_adopting_another_environment_while_the_plan_is_being_made_rejects_the_plan(
+        self, tmp_path, house, offline_managed_env, held_generation, monkeypatch
+    ):
+        """Codex r4217232862：`create_joint_plan` 的长事实探测期间用户（另一个标签页）采用了别的环境——目标 / 影响是按
+        旧决定算的，不能让晚到的 `selection_signature` 把新决定记在这份计划上而通过执行前的比对。"""
+        _gate, calls = held_generation
+        project = _project(tmp_path, ALPHA)
+        venv = real_venv(project)
+        real_plan = deprepair.depplan.plan
+
+        def _plan_then_adopt(*args, **kwargs):
+            joint = real_plan(*args, **kwargs)
+            _adopt(project, venv)  # 探测 / 解析进行中，别处完成了采用
+            return joint
+
+        monkeypatch.setattr(deprepair.depplan, "plan", _plan_then_adopt)
+        with pytest.raises(deprepair.RepairError) as err:
+            deprepair.create_joint_plan(project, "figure.py")
+        assert err.value.code == deprepair.ERROR_PLAN_STALE
+        assert not deprepair._joint_plans  # 没有发出任何可执行的计划
+        assert calls == []
+        # 重新开始（决定已经稳定）就能得到按新决定算的计划，且它记的是新签名
+        monkeypatch.setattr(deprepair.depplan, "plan", real_plan)
+        fresh = deprepair.create_joint_plan(project, "figure.py")
+        assert fresh.selection == deprepair.selection_signature(project) != ()
+
+    def test_adopting_another_environment_while_a_single_package_plan_is_made_rejects_it(
+        self, tmp_path, house, offline_managed_env, monkeypatch
+    ):
+        """同形状的单包计划（`create_plan`）：目标解析期间决定变了 → `repair_plan_stale`，不发计划。"""
+        project = _project(tmp_path, ALPHA)
+        venv = real_venv(project)
+        real_offer = deprepair._private_python_offer
+
+        def _offer_then_adopt():
+            out = real_offer()
+            _adopt(project, venv)
+            return out
+
+        monkeypatch.setattr(deprepair, "_private_python_offer", _offer_then_adopt)
+        with pytest.raises(deprepair.RepairError) as err:
+            deprepair.create_plan(
+                project, "figure.py", ALPHA[1], target_kind=deprepair.TARGET_MANAGED
+            )
+        assert err.value.code == deprepair.ERROR_PLAN_STALE
+        assert not deprepair._plans
+
+    def test_a_joint_plan_records_the_selection_it_was_computed_under(
+        self, tmp_path, house, offline_managed_env
+    ):
+        project = _project(tmp_path, ALPHA)
+        before = deprepair.selection_signature(project)
+        plan = deprepair.create_joint_plan(project, "figure.py")
+        assert plan.selection == before == ()
+
     def test_the_install_s_own_record_does_not_make_a_sibling_plan_stale(self, tmp_path):
         """依赖安装自己写下的项目环境记录不算"用户的决定"（否则同时形成的第二份计划得到的是含糊的
         `repair_plan_stale`，而不是更具体的 `dependency_already_attempted`）。"""
@@ -685,9 +740,11 @@ class TestTaskDiagnostic:
         plan = client.post("/api/engine/dependencies/plan", json={"script": "figure.py"})
         assert plan.status_code == 200, plan.get_json()
         payload = plan.get_json()["plan"]
-        body = {"plan_id": payload["plan_id"]}
-        if impact_digest is not None:
-            body["impact_digest"] = impact_digest
+        # `impact_digest` 必填（Codex r4217232854）：默认回显用户看到的（计划自己的）那份
+        body = {
+            "plan_id": payload["plan_id"],
+            "impact_digest": payload["impact_digest"] if impact_digest is None else impact_digest,
+        }
         resp = client.post("/api/engine/dependencies/prepare", json=body)
         assert resp.status_code == 200, resp.get_json()
         return payload["plan_id"]
@@ -764,6 +821,37 @@ class TestTaskDiagnostic:
             for pid in [p for p, c in list(m.PROJECTS.items()) if str(c.path) == str(project)]:
                 m.close_project(pid, wait=True)
 
+    def test_the_prepare_endpoint_requires_the_displayed_digest(
+        self, client, tmp_path, house, offline_managed_env
+    ):
+        """Codex r4217232854：只带 plan_id 不行——缺 impact_digest → 400 `dependency_impact_required`，
+        什么都没认领、没装；对不上仍是 409 `dependency_impact_changed`。"""
+        project = _project(tmp_path, ALPHA)
+        m = self._open(client, project)
+        try:
+            plan = client.post("/api/engine/dependencies/plan", json={"script": "figure.py"})
+            payload = plan.get_json()["plan"]
+            for body in (
+                {"plan_id": payload["plan_id"]},
+                {"plan_id": payload["plan_id"], "impact_digest": ""},
+                {"plan_id": payload["plan_id"], "impact_digest": None},
+                {"plan_id": payload["plan_id"], "impact_digest": 7},
+            ):
+                resp = client.post("/api/engine/dependencies/prepare", json=body)
+                assert resp.status_code == 400, body
+                assert resp.get_json()["code"] == "dependency_impact_required"
+                assert not deprepair.is_running(payload["plan_id"])
+            assert managedenv.python_of(project) is None
+            wrong = client.post(
+                "/api/engine/dependencies/prepare",
+                json={"plan_id": payload["plan_id"], "impact_digest": "e" * 32},
+            )
+            assert wrong.status_code == 409
+            assert wrong.get_json()["code"] == "dependency_impact_changed"
+        finally:
+            for pid in [p for p, c in list(m.PROJECTS.items()) if str(c.path) == str(project)]:
+                m.close_project(pid, wait=True)
+
     def test_the_prepare_endpoint_checks_an_echoed_digest_before_claiming(
         self, client, tmp_path, house, offline_managed_env
     ):
@@ -783,7 +871,7 @@ class TestTaskDiagnostic:
             assert body["impact_digest"] == payload["impact_digest"]
             assert not deprepair.is_running(payload["plan_id"])
             assert managedenv.python_of(project) is None
-            # 对的摘要（或旧客户端不带摘要）照常
+            # 对的摘要照常（不带摘要见 test_the_prepare_endpoint_requires_the_displayed_digest）
             good = client.post(
                 "/api/engine/dependencies/prepare",
                 json={"plan_id": payload["plan_id"], "impact_digest": payload["impact_digest"]},
