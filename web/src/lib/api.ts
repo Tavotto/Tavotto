@@ -196,10 +196,13 @@ export interface UnsupportedAsset {
 export class ApiError extends Error {
   status: number
   body: Record<string, unknown>
-  constructor(message: string, status: number, body: Record<string, unknown>) {
+  /** 响应头 `X-Tavotto-Diagnostic-Ref`：错误体不是对象时后端把诊断引用放在这里（T04）；没有 = null */
+  diagnosticRef: string | null
+  constructor(message: string, status: number, body: Record<string, unknown>, diagnosticRef: string | null = null) {
     super(message)
     this.status = status
     this.body = body
+    this.diagnosticRef = diagnosticRef
   }
 }
 
@@ -362,7 +365,7 @@ async function jsonFetch<T>(url: string, init?: RequestInit, pj?: string | null)
       /* 非 JSON 错误体，保留状态码 */
     }
     noteProjectGone(res.status, body)
-    throw new ApiError(detail, res.status, body)
+    throw new ApiError(detail, res.status, body, res.headers?.get('X-Tavotto-Diagnostic-Ref') || null)
   }
   return res.json() as Promise<T>
 }
