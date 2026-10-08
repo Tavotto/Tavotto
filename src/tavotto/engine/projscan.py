@@ -44,6 +44,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import stat
 import threading
 import time
@@ -197,7 +198,26 @@ def _registered_stems(root: Path) -> dict[str, list[str]]:
     return {script: list(reg.stems_of(script)) for script in reg.all_scripts()}
 
 
-def _linked_scripts(root: Path) -> set[str]:
+def _no_follow_isfile(budget: scanbudget.Budget):
+    """扫描路径给 `figcapture.find_original_artifact(isfile=…)` 的谓词：只 lstat、不跟随，每问一次记一次预算。
+
+    符号链接 / Windows 路径替身（junction、指向 UNC 的重解析点）一律不算原件——与素材清单拒绝这类重定向是
+    同一条规则（`scanbudget.is_redirect`），目标（可能是不可达的 UNC）不被探。预算用完 / 取消 / 超时后一律 False。
+    GUI 库路径不传它，仍用默认的跟随式 `os.path.isfile`。"""
+
+    def isfile(path) -> bool:
+        if not budget.charge_entry():
+            return False
+        try:
+            st = os.lstat(path)
+        except OSError:
+            return False
+        return not scanbudget.is_redirect(st) and stat.S_ISREG(st.st_mode)
+
+    return isfile
+
+
+def _linked_scripts(root: Path, budget: scanbudget.Budget | None = None) -> set[str]:
     """登记了、**而且**至少一张登记的图此刻真有东西可编辑的脚本：项目里有同名的图文件，或这张图被某次执行捕获过
     （`probe.was_captured`：runtime cache 里有物化记录）。「有同名的图文件」只认 `figcapture.find_original_artifact`
     ——项目根一层、`ARTIFACT_EXTS`——与 handoff / probe 找原件是同一份判据，不另立「素材在哪」的第二条规则
@@ -206,15 +226,19 @@ def _linked_scripts(root: Path) -> set[str]:
     打开项目时的静态扫描会先把字面量 savefig 的图名写进注册表（T00 deliberate-boundary）——那只是猜测，脚本一次都没
     跑过、什么都打不开。只按「注册表里有」就报 `already_connected`（「素材已可编辑」）是假话，而且会把只有脚本的项目的
     「准备并运行」入口藏起来（T11 真首跑发现）。只读：文件名比对 + 数据目录里的 cache 元数据，不执行、不起解释器。"""
-    return {
-        script
-        for script, stems in _registered_stems(root).items()
-        if any(
-            figcapture.find_original_artifact(str(root), stem) is not None
-            or probe.was_captured(root, script, stem)
-            for stem in stems
-        )
-    }
+    isfile = _no_follow_isfile(budget) if budget is not None else os.path.isfile
+
+    def linked(script: str, stems: list[str]) -> bool:
+        for stem in stems:
+            if budget is not None and budget.stop_reason() is not None:
+                return False
+            if figcapture.find_original_artifact(str(root), stem, isfile=isfile) is not None:
+                return True
+            if probe.was_captured(root, script, stem):
+                return True
+        return False
+
+    return {script for script, stems in _registered_stems(root).items() if linked(script, stems)}
 
 
 def _rel_dir_posix(root: Path, directory: Path) -> str:
@@ -668,7 +692,7 @@ def scan(
 
     # 已停止的遍历不再起新的文件系统发现：停了就退回「注册表里有」的粗判（不碰磁盘）
     linked = (
-        _linked_scripts(root)
+        _linked_scripts(root, budget)
         if budget.stop_reason() is None
         else {i["script"] for i in items if i["registered"]}
     )

@@ -1219,3 +1219,81 @@ def test_a_redirected_scope_marker_is_not_probed_and_is_partial(tmp_path, monkey
         i["code"] == "unreadable_file" and i["path"] == "requirements.txt" for i in report["issues"]
     )
     assert report["state"] == "partial"
+
+
+# ---------------------------------------------------------------- 已连接判据不跟随链接（#819 r4220955963）
+def _registered_fig(root: Path) -> None:
+    _write(root, "fig.py", PLOT.format(stem="fig"))
+    _write(
+        root,
+        "tavotto_registry.json",
+        json.dumps({"version": 1, "scripts": {"fig.py": {"entry": "__main__", "stems": ["fig"]}}}),
+    )
+
+
+@posix_only
+def test_a_stem_that_is_a_symlink_to_an_outside_file_is_not_linked(tmp_path):
+    """#819 P2：`fig.pdf` 是指向项目外的符号链接。扫描路径不跟随它，不能判成「已连接」而藏起「准备」入口。"""
+    root = _project(tmp_path)
+    _registered_fig(root)
+    outside = tmp_path / "outside.pdf"
+    outside.write_bytes(b"%PDF-1.4\n")
+    (root / "fig.pdf").symlink_to(outside)
+
+    report = projscan.scan(root)
+
+    (target,) = report["targets"]
+    assert target["linked"] is False
+    assert report["outcome"]["kind"] != "already_connected"
+    assert any(a["kind"] == "prepare" for a in report["actions"])
+
+
+def test_reparse_metadata_stem_never_reaches_the_follow_up_isfile(tmp_path, monkeypatch):
+    """合成 Windows 路径替身（同 junction 用例的 lstat 元数据）：目标不被 `isfile` 探。"""
+    root = _project(tmp_path)
+    _registered_fig(root)
+    _asset(root, "fig.pdf")
+    root = Path(os.path.realpath(root))
+    victim = os.path.normcase(str(root / "fig.pdf"))
+
+    class _Reparse:
+        st_mode = 0o100644
+        st_file_attributes = 0x400
+        st_reparse_tag = 0xA000000C  # IO_REPARSE_TAG_SYMLINK
+
+    real_lstat = os.lstat
+    monkeypatch.setattr(
+        os,
+        "lstat",
+        lambda p, *a, **k: (
+            _Reparse() if os.path.normcase(os.fspath(p)) == victim else real_lstat(p, *a, **k)
+        ),
+    )
+    hits: list[str] = []
+    real_isfile = os.path.isfile
+
+    def spy(p):
+        if os.path.normcase(os.fspath(p)) == victim:
+            hits.append(os.fspath(p))
+        return real_isfile(p)
+
+    monkeypatch.setattr(os.path, "isfile", spy)
+
+    report = projscan.scan(root)
+
+    assert hits == []
+    (target,) = report["targets"]
+    assert target["linked"] is False
+
+
+def test_linked_check_stops_on_an_expired_budget_and_returns_partial(tmp_path):
+    """预算用完后不再探原件：返回已得到的部分（这里为空），不继续碰磁盘。"""
+    root = _project(tmp_path)
+    _registered_fig(root)
+    _asset(root, "fig.pdf")
+    budget = scanbudget.Budget(cancel=lambda: True)
+
+    assert projscan._linked_scripts(root, budget) == set()
+    assert budget.stopped == scanbudget.ISSUE_CANCELLED
+    # 无预算（非扫描路径）仍照旧跟随式判据
+    assert projscan._linked_scripts(root) == {"fig.py"}
