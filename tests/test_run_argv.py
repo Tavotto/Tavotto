@@ -311,8 +311,11 @@ class TestRunConfigStore:
             runconfig.get(tmp_path, cfg.id)
         with pytest.raises(runconfig.RunConfigUnreadable):
             runconfig.selection(tmp_path, cfg.id)
-        runconfig.put(tmp_path, "s.py", ["b"])  # 写路径：备份后重建
-        assert list(path.parent.glob(path.name + ".corrupt-*"))
+        before = path.read_bytes()
+        with pytest.raises(runconfig.RunConfigUnreadable):
+            runconfig.put(tmp_path, "s.py", ["b"])  # 写路径同样失败关闭，不隔离重建
+        assert path.read_bytes() == before
+        assert not list(path.parent.glob(path.name + ".corrupt-*"))
 
     def test_a_default_pointing_at_an_unknown_id_is_missing_not_unreadable(self, tmp_path):
         runconfig.put(tmp_path, "s.py", ["a"])
@@ -331,19 +334,24 @@ class TestRunConfigStore:
         with pytest.raises(runconfig.RunConfigMissing):
             runconfig.get(tmp_path, "rc_000000000000")
 
-    def test_writing_over_a_damaged_store_keeps_the_original_beside_it(self, tmp_path):
-        runconfig.put(tmp_path, "s.py", ["a"])
+    def test_writing_over_a_damaged_store_is_refused_and_leaves_the_file_untouched(self, tmp_path):
+        other = runconfig.put(tmp_path, "other.py", ["x"])
+        runconfig.set_default(tmp_path, "other.py", other.id)
         path = runconfig.store_path(tmp_path)
         path.write_text('{"version": 1, "configs": {"rc_x"', encoding="utf-8")
-        cfg = runconfig.put(tmp_path, "s.py", ["b"])  # 用户重新输入参数 → 从空登记写起
-        assert runconfig.get(tmp_path, cfg.id).argv == ("b",)
-        backups = list(path.parent.glob(path.name + ".corrupt-*"))
-        assert len(backups) == 1
-        assert backups[0].read_text(encoding="utf-8") == '{"version": 1, "configs": {"rc_x"'
-        # set_default 同一纪律
-        path.write_text("garbage", encoding="utf-8")
-        runconfig.set_default(tmp_path, "s.py", cfg.id)
-        assert len(list(path.parent.glob(path.name + ".corrupt-*"))) == 2
+        before = path.read_bytes()
+        with pytest.raises(runconfig.RunConfigUnreadable):
+            runconfig.put(tmp_path, "s.py", ["b"])
+        with pytest.raises(runconfig.RunConfigUnreadable):
+            runconfig.set_default(tmp_path, "s.py", other.id)
+        assert path.read_bytes() == before  # 文件字节不变
+        assert not list(path.parent.glob(path.name + ".corrupt-*"))  # 没有隔离备份
+        with pytest.raises(runconfig.RunConfigUnreadable):  # 别的脚本的默认仍显式报错，不是 None
+            runconfig.default_selection(tmp_path, "other.py")
+        # 无参数运行不依赖登记：不抛、不碰文件
+        assert runconfig.put(tmp_path, "s.py", []) is None
+        runconfig.set_default(tmp_path, "s.py", None)
+        assert path.read_bytes() == before
 
     def test_a_damaged_legacy_store_is_unreadable_too(self, tmp_path, monkeypatch):
         legacy = tmp_path / "legacy.json"
@@ -351,9 +359,10 @@ class TestRunConfigStore:
         monkeypatch.setattr(runconfig, "_legacy_store_paths", lambda _root: [legacy])
         with pytest.raises(runconfig.RunConfigUnreadable):
             runconfig.default_selection(tmp_path, "s.py")
-        runconfig.put(tmp_path, "s.py", ["z"])  # 写路径：旧坏文件挪走，新名落盘
-        assert not legacy.exists()
-        assert list(tmp_path.glob("legacy.json.corrupt-*"))
+        with pytest.raises(runconfig.RunConfigUnreadable):  # 写路径同样拒绝，旧文件原样留着
+            runconfig.put(tmp_path, "s.py", ["z"])
+        assert legacy.read_text(encoding="utf-8") == "{broken"
+        assert not list(tmp_path.glob("legacy.json.corrupt-*"))
 
     def test_the_disk_panel_default_follows_the_last_explicit_run(self, tmp_path):
         a = runconfig.put(tmp_path, "s.py", ["a"])

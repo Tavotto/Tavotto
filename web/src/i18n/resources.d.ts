@@ -2033,7 +2033,7 @@ export default interface Resources {
       "revision_unreadable": "磁盘上的这份文件读不出来（没有读取权限，或被其他程序占用），无法确认它的内容，这次没有写入。改动仍在本机；恢复读取权限后再保存。",
       "run_config_missing": "这台机器上没有这张图当初用的运行参数（可能来自另一台机器，或记录已清理）。请重新输入参数后再运行。",
       "run_config_secret_missing": "这次运行含敏感参数，Tavotto 没有保存它。请重新输入后再运行。",
-      "run_config_unreadable": "这个项目保存的运行参数记录已损坏，Tavotto 没有拿它去运行（否则可能用错参数画出一张看似正常的图）。请重新输入参数后再运行；损坏的原文件已留作备份。",
+      "run_config_unreadable": "这个项目保存的运行参数记录已损坏，Tavotto 没有拿它去运行（否则可能用错参数画出一张看似正常的图）。Tavotto 不会自动覆盖或删除它。请修复或删除该项目的运行参数记录文件后再重试（无参数运行不受影响）。",
       "run_config_unsupported": "这份运行参数记录来自更新版本的 Tavotto，当前版本读不懂。请升级后再试，不会改用空参数运行。",
       "runtime_asset_has_no_original_artifact": "运行时素材没有原始图文件，无法写回。磁盘上有同名文件时，请从素材库写回。",
       "runtime_asset_unknown": "运行时素材没有记录：{{id}}。重新运行该脚本即可重新建立关联。",

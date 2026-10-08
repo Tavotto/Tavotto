@@ -220,50 +220,18 @@ def _locate(project_root: str | Path) -> tuple[Path, str] | None:
     return None
 
 
-def _read(project_root: str | Path, *, quarantine: bool = False) -> dict:
+def _read(project_root: str | Path) -> dict:
     """读登记（整份）。**不存在 = 空**；**读不出 / 格式坏 = `RunConfigUnreadable`**（显式失败，
     绝不当空：否则磁盘面板默认参数悄悄丢掉、下次按空 argv 重跑）；**更新版本写的文件拒绝**
     （`RunConfigUnsupported`）。
 
-    `quarantine=True` 只给写路径：坏文件先改名挪到旁边（`<名>.corrupt-<时间戳>`，原文保留可人工找回）
-    再从空登记写起——用户重新输入参数就能恢复，不会永远卡在读错上，也不会静默覆盖掉原文。
-    更新版本的文件不在此列，仍然拒绝。"""
-    found = _locate_or_quarantine(project_root, quarantine)
+    读写两条路径同一纪律：写路径（`put` / `set_default`）遇到坏登记也失败关闭，**不改动磁盘文件**
+    ——不自动隔离重建（重建会让别的脚本的默认配置凭空消失，下次按空 argv 重跑）。
+    恢复由用户显式进行：修复或删除该登记文件后重试。"""
+    found = _locate(project_root)
     if found is None:
         return {"configs": {}, "defaults": {}}
-    path, raw = found
-    try:
-        data = _parse(raw)
-    except RunConfigUnreadable:
-        if not quarantine:
-            raise
-        _quarantine_file(path)
-        return {"configs": {}, "defaults": {}}
-    return data
-
-
-def _locate_or_quarantine(project_root: str | Path, quarantine: bool):
-    try:
-        return _locate(project_root)
-    except RunConfigUnreadable:
-        if not quarantine:
-            raise
-        # 读不了的文件（非 UTF-8 / 权限）：挪走能挪的那一份，挪不动就保持拒绝
-        for path in [store_path(project_root), *_legacy_store_paths(project_root)]:
-            if path.exists():
-                _quarantine_file(path)
-                break
-        return None
-
-
-def _quarantine_file(path: Path) -> None:
-    target = path.with_name(f"{path.name}.corrupt-{int(time.time())}-{secrets.token_hex(2)}")
-    try:
-        os.replace(path, target)
-    except OSError as exc:
-        raise RunConfigUnreadable(
-            "这个项目的运行参数记录已损坏，且无法备份后重建；已停止运行", reason="quarantine_failed"
-        ) from exc
+    return _parse(found[1])
 
 
 def _parse(raw: str) -> dict:
@@ -380,7 +348,7 @@ def put(
         return None
     root = _norm_project(project_root)
     with _LOCK:
-        data = _read(project_root, quarantine=True)
+        data = _read(project_root)
         configs = data["configs"]
         for cid, rec in configs.items():
             cfg = _record_to_config(project_root, cid, rec)
@@ -484,7 +452,13 @@ def set_default(project_root: str | Path, script: str, config_id: str | None) ->
     只能按脚本找配置。`runtime:` 素材**从不**读它——那些产物的资产 id 里自带冻结的配置引用。
     热会话 / 写回重放用的是会话自己冻结的 `worker.run`，与这里之后的变化无关。"""
     with _LOCK:
-        data = _read(project_root, quarantine=True)
+        try:
+            data = _read(project_root)
+        except RunConfigError:
+            if config_id is None:
+                # 无参数运行不依赖登记：坏登记不阻断它，也不去动文件（磁盘面板之后读默认时照常显式报错）
+                return
+            raise
         if config_id is None:
             if script not in data["defaults"]:
                 return
