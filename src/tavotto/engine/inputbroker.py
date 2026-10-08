@@ -470,6 +470,18 @@ def _retire_timed_out(directory: Path) -> None:
             discard(p.id, "timed_out")
 
 
+TRANSCRIPT_FAILED_CODE = "script_input_transcript_failed"
+
+
+def _transcript_failure(exc: BaseException):
+    """转录存储读不出来：这次 build 的失败（稳定 code，界面有文案）。懒导入：`pool` 在加载时导入本模块。"""
+    from .pool import WorkerError
+
+    return WorkerError(
+        f"脚本输入的执行记录读不出来，这次运行没有开始：{exc}", code=TRANSCRIPT_FAILED_CODE
+    )
+
+
 def _frozen_policy(worker) -> "ReplayAnswers | None":
     """这一次 build 的答案策略，进门时冻结：显式给的（写回 verify）原样；池会话有执行转录就按转录重放（T08）。"""
     policy = getattr(worker, "script_input_policy", None)
@@ -483,7 +495,9 @@ def _frozen_policy(worker) -> "ReplayAnswers | None":
         found = inputtranscript.lookup(
             str(worker.figures_dir), str(worker.script_name), _run_config_of(worker)
         )
-    except (OSError, AttributeError, TypeError):
+    except OSError as exc:
+        raise _transcript_failure(exc) from exc
+    except (AttributeError, TypeError):
         return None
     return ReplayAnswers.transcript(found) if found is not None else None
 
@@ -523,12 +537,16 @@ def serving(worker):
     """在 `worker` 这一次 build 期间当它的答题方。退出时关掉还在等的问、删掉会合目录；这一次的问答去向
     （`InputFacts.payload()`）挂在 `worker.last_input_facts` 上，build 失败时也挂在异常的 `input_facts` 上。"""
     # 答案状态基线在 build 开始时取（读者校验，见 inputtranscript）：build 期间被改的答案，这次的转录不认
-    # 取不到（读失败）就明确置 None：`finished()` 看到 None 不绑转录，不会在事后拿「当前状态」冒充基线
+    # 取不到（读失败 / 存储损坏）= **这次 build 直接失败**（`script_input_transcript_failed`）：不存在「没有基线还在
+    # 跑」的 build，之后也就不会有人在没有基线的情况下绑定 / 重放（Codex #816 r4224357981）
     try:
         worker.transcript_basis = inputtranscript.basis(
             str(worker.figures_dir), str(worker.script_name), _run_config_of(worker)
         )
-    except (OSError, ValueError, AttributeError, TypeError):
+    except (OSError, ValueError) as exc:
+        raise _transcript_failure(exc) from exc
+    except (AttributeError, TypeError):
+        # 没有 figures_dir / script_name 的替身 worker：本来就没有转录可言；基线置空，bind 收到空基线会作废旧绑定
         with contextlib.suppress(AttributeError):
             worker.transcript_basis = None
     out_dir = getattr(worker, "out_dir", None)

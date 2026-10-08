@@ -205,10 +205,22 @@ def bind(
     entries = _clean(records)
     key = _key(script, run_config)
     with _LOCK:
-        bindings, gens = _load(project_root)  # 读不出来 / 损坏 = 抛错：不绑，也不写
+        try:
+            bindings, gens = _load(project_root)  # 读不出来 / 损坏 = 抛错：不绑，也不写
+        except StoreUnreadable as exc:
+            if basis is None:
+                raise StaleTranscriptError(f"没有基线且存储读不出来: {exc!r}") from exc
+            raise
         current = _basis_of(gens, script, run_config)
         if basis is None:
-            return None  # 没取到 build 开始时的基线：无法证明答案没被改过，不绑（绝不退回「用当前令牌」）
+            # 防御层（正常不会发生：取不到基线 build 就失败了）：无法证明答案没被改过——不绑，而且**作废这份
+            # (脚本, 配置) 现有的绑定**，否则冷重放会继续用旧值；作废不了就明确失败（Codex #816 r4224357981）
+            if key in bindings:
+                try:
+                    _write(project_root, {k: v for k, v in bindings.items() if k != key}, gens)
+                except OSError as exc:
+                    raise StaleTranscriptError(f"没有基线且旧绑定无法作废: {exc!r}") from exc
+            return None
         if isinstance(basis, _CurrentBasis):
             basis = current
         elif list(basis) != current:

@@ -372,22 +372,37 @@ def test_the_secret_reason_code_keeps_its_wire_value_under_a_name_without_secret
     assert not [n for n in vars(inputbroker) if n.startswith("REASON_") and "SECRET" in n]
 
 
-def test_a_build_without_a_captured_basis_never_binds(tmp_path, monkeypatch):
-    # r4224223190：build 开始时 basis() 读失败 → 用户期间改了答案 → build 结束不绑，冷重放不用旧值
-    inputtranscript.bind(tmp_path, "s.py", None, [_rec(1, "older")])
+def test_a_build_whose_basis_cannot_be_captured_fails(tmp_path, monkeypatch):
+    # r4224357981：build 开始时 basis() 读失败 → build 直接失败（稳定 code），不存在没有基线的 build
+    import pytest
+
+    from tavotto.engine.pool import WorkerError
+
     w = _Worker(tmp_path)
 
     def boom(*_a, **_k):
         raise OSError("transient")
 
-    real = inputtranscript.basis
     monkeypatch.setattr(inputtranscript, "basis", boom)
-    with inputbroker.serving(w):
-        monkeypatch.setattr(inputtranscript, "basis", real)
-        inputtranscript.forget(tmp_path, "s.py", run_config=None, all_configs=True)  # 用户改答案
-    assert w.transcript_basis is None
-    inputbroker.finished(w, [_rec(1, "old")])
-    assert inputtranscript.lookup(tmp_path, "s.py", None) is None
+    with pytest.raises(WorkerError) as ei:
+        with inputbroker.serving(w):
+            pytest.fail("build must not start")
+    assert ei.value.code == "script_input_transcript_failed"
+
+
+def test_bind_without_a_basis_retires_the_existing_binding(tmp_path, monkeypatch):
+    inputtranscript.bind(tmp_path, "s.py", None, [_rec(1, "old")])
+    inputtranscript.bind(tmp_path, "s.py", "rc_b", [_rec(1, "keep")])
+    assert inputtranscript.bind(tmp_path, "s.py", None, [_rec(1, "x")], basis=None) is None
+    assert inputtranscript.lookup(tmp_path, "s.py", None) is None  # 旧绑定作废
+    assert inputtranscript.lookup(tmp_path, "s.py", "rc_b") is not None  # 别的配置不动
+    # 作废不了就明确失败
+    inputtranscript.bind(tmp_path, "s.py", None, [_rec(1, "old2")])
+    _block_replace(monkeypatch)
+    _raises(
+        inputtranscript.StaleTranscriptError,
+        lambda: inputtranscript.bind(tmp_path, "s.py", None, [_rec(1, "x")], basis=None),
+    )
 
 
 def test_bind_refuses_an_explicit_missing_basis_and_basis_read_is_strict(tmp_path):
