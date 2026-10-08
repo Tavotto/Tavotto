@@ -419,6 +419,12 @@
   会改用户自己环境的动作必须回显摘要（会话 400 `preparation_impact_unconfirmed`）；使用（采用）环境不含修改权限。
   **`POST …/prepare` 一律必填 `impact_digest`**（缺 → 400 `dependency_impact_required`）：前端回显的是 offer 里**用户看到的**那份，不是刚绑回来的计划自己的；
   只带 plan_id 会让「包名不变、环境代 / 约束变了」的计划通过名字比对、执行没人看过的影响。
+  **所有「执行依赖变更」的入口同一道门**（Codex r4217992305，同一类缺口第二次）：`POST /api/engine/dependency/install`（单包）同样必填 `impact_digest`
+  并作 `install_async(confirmed_impact=)`；MCP `tavotto_open_figure(prepare_dependencies=tavotto_managed|project_venv)` 必须同带 `prepare_impact_digest`
+  （缺 → `dependency_impact_required`，不符 → `dependency_impact_changed`）；准备会话的动作认领走 `start_confirmed(digest)`。前端：单包执行发的是 UI 展示过的那份计划的摘要，
+  `planMatchesDisclosure` 在卡片说过摘要时按摘要比对（包名相同、约束变了 → 停在确认页重新披露，不执行）。
+  结构性守卫：`tests/test_dependency_impact.py::TestEveryExecutionEntryRequiresTheDigest` 扫 app.py / MCP 桥里每处 `install_async` / `prepare_async` / `prepare(` 调用必带 `confirmed_impact=`。
+  不在此列：`/packages/run`（作业 = 用户自己敲的 op + 包名，作业内容已完整展示，环境指纹变了即 stale）、`managed/rebuild`（按账重放，不是新的授权影响）、采用 / 选回环境（不装包）。
 - **认领幂等**：`_claim` 在起线程之前、锁内，联合准备与单包修复（`install_async` / `install`）一样；`start_confirmed` 在 `_lock` 里比较 + 认领，同一份摘要的在途作业
   （`_joined`）被另一个标签页 / 会话确认时认领原作业（`started=False, joined=True`，`add_listener` 追加监听），不起第二个 pip；不同摘要撞同一环境由 `envlease` 报忙。
 - **采用与安装互斥**：`unless_installing(project, action)`（与 `_claim` 同一把锁）包住项目范围的采用 / 选回默认；候选环境本身在被改动时也拒；计划记

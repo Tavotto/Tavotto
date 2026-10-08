@@ -215,6 +215,21 @@ class _Widened:
 
 
 @dataclasses.dataclass(frozen=True)
+class PipInputs:
+    """交给 pip 的全部输入——**披露（`impact`）与执行（`_GenerationJob` / 原地 pip）读的是同一份**。
+
+    以前 `impact` 与执行各自从计划字段拼一遍，约束漏进披露三次（r4217… / r4218254708 一族）。现在每种计划
+    只有 `pip_inputs` 这一处决定「pip 会收到什么」：影响摘要从它派生，执行端的作业也从它构造；
+    再加一个输入（索引来源、额外参数……）只能加在这里，两边同时看见。"""
+
+    requirements: tuple[str, ...]
+    constraints: tuple[str, ...]
+    hashes: dict
+    require_hashes: bool
+    adapter: tuple[str, ...]
+
+
+@dataclasses.dataclass(frozen=True)
 class RepairPlan:
     """一次修复的完整描述——**执行端只认它，不读请求体里的任何别的字段**。
 
@@ -247,16 +262,30 @@ class RepairPlan:
     selection: tuple = ()
 
     @property
+    def pip_inputs(self) -> PipInputs:
+        """pip 会收到的全部输入（单包 = 只有那一条 + 联合求解出的约束；披露与执行共用，见 `PipInputs`）。"""
+        wide = self.widened if self.target_kind == TARGET_MANAGED else None
+        return PipInputs(
+            requirements=self.requirements,
+            constraints=tuple(wide.constraints) if wide is not None else (),
+            hashes={},
+            require_hashes=False,
+            adapter=tuple(depplan.ADAPTER_REQUIREMENTS)
+            if self.target_kind == TARGET_MANAGED
+            else (),
+        )
+
+    @property
     def impact(self) -> dict:
-        """这份授权的实际影响（`impact_of`）；摘要见 `impact_digest`。"""
+        """这份授权的实际影响（`impact_of`）；摘要见 `impact_digest`。输入集合来自 `pip_inputs`。"""
         wide = self.widened
-        managed = self.target_kind == TARGET_MANAGED
+        pi = self.pip_inputs
         return impact_of(
             target_kind=self.target_kind,
-            requirements=self.requirements,
-            constraints=wide.constraints if wide is not None else (),
-            require_hashes=bool(wide.hashes) if wide is not None else False,
-            adapter=depplan.ADAPTER_REQUIREMENTS if managed else (),
+            requirements=pi.requirements,
+            constraints=pi.constraints,
+            require_hashes=pi.require_hashes,
+            adapter=pi.adapter,
             groups=wide.groups if wide is not None else (),
             creates_environment=self.creates_environment,
             private_python=self.private_python,
@@ -550,7 +579,7 @@ def offer_impact(root: str, joint, kind: str, python: str, scope_policy: str = "
         private_python=private,
         env_fingerprint=_fingerprint(kind, bound if kind == TARGET_MANAGED else python, root),
         scope_policy=scope_policy,
-        **_effects(root, joint.requirements, scope_policy),
+        **_effects(root, joint.requirements, joint.constraints, scope_policy),
     )
 
 
@@ -678,18 +707,34 @@ def _with_scope_check(
     )
 
 
-def _switch_effects(root: str, requirements) -> tuple[tuple[str, ...], tuple[str, ...]]:
+def _switch_effects(
+    root: str, requirements, constraints=()
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """换成本作用域时对账上现有内容的影响 `(drops, changes)`（规范化名）：`drops` = 不在新集合里、不再出现在
     active 环境里的包；`changes` = 新集合里还有、但账上记的版本不满足新声明、所以版本会变的包。都要告诉用户——
-    别的作用域的脚本下次在新环境里会缺它们 / 拿到另一个版本。"""
+    别的作用域的脚本下次在新环境里会缺它们 / 拿到另一个版本。
+
+    「新声明」= pip 实际会收到的 `-r` 需求**与** `-c` 约束一起（Codex #814 r4218254708）：需求写得没有版本、
+    约束写 `beta>=2` 而账上是 `beta==1` 时，pip 会把它换成 >=2，披露就必须说出来。约束只收紧"装进来的包"，
+    所以只对需求里出现的名字生效（约束里单独出现的名字 pip 不会因它而装）。"""
     requirements_mod, _markers, specifiers, _utils, _version = depresolve._pkg()
-    wanted: dict[str, str] = {}
+    wanted: dict[str, list[str]] = {}
     for text in requirements:
         try:
             req = requirements_mod.Requirement(text)
         except Exception:  # noqa: BLE001 — 认不出的串别的闸会拦
             continue
-        wanted[depresolve.normalize_distribution(req.name)] = str(req.specifier)
+        wanted.setdefault(depresolve.normalize_distribution(req.name), []).append(
+            str(req.specifier)
+        )
+    for text in constraints:
+        try:
+            con = requirements_mod.Requirement(text)
+        except Exception:  # noqa: BLE001 — 认不出的串别的闸会拦
+            continue
+        name = depresolve.normalize_distribution(con.name)
+        if name in wanted:
+            wanted[name].append(str(con.specifier))
     drops: set[str] = set()
     changes: set[str] = set()
     for entry in managedenv.ledger_entries(root):
@@ -699,21 +744,27 @@ def _switch_effects(root: str, requirements) -> tuple[tuple[str, ...], tuple[str
         if name not in wanted:
             drops.add(name)
             continue
-        spec, version = wanted[name], str(entry.get("resolved_version") or "")
-        if spec and version:
+        version = str(entry.get("resolved_version") or "")
+        if not version:
+            continue
+        for spec in wanted[name]:
+            if not spec:
+                continue
             try:
                 if not specifiers.SpecifierSet(spec).contains(version, prereleases=True):
                     changes.add(name)
+                    break
             except specifiers.InvalidSpecifier:
                 continue
     return tuple(sorted(drops)), tuple(sorted(changes))
 
 
-def _effects(root: str, requirements, scope_policy: str) -> dict:
-    """`impact_of` 的 `drops` / `changes` 两个参数（只有"换成本作用域"才有）。"""
+def _effects(root: str, requirements, constraints, scope_policy: str) -> dict:
+    """`impact_of` 的 `drops` / `changes` 两个参数（只有"换成本作用域"才有）。需求与约束都要给——
+    它们是 pip 收到的全部输入（见 `_switch_effects`）。"""
     if scope_policy != SCOPE_POLICY_SWITCH:
         return {"drops": (), "changes": ()}
-    drops, changes = _switch_effects(root, requirements)
+    drops, changes = _switch_effects(root, requirements, constraints)
     return {"drops": drops, "changes": changes}
 
 
@@ -1182,7 +1233,7 @@ def cancel(plan_id: str) -> bool:
     return cancel_status(plan_id)["accepted"]
 
 
-def install_async(plan_id: str, on_event=None, *, confirmed_impact: str | None = None) -> bool:
+def install_async(plan_id: str, on_event=None, *, confirmed_impact: str | None) -> bool:
     """起线程执行一份单包修复计划；回 False = 这份计划已在执行（不再起第二个线程）。认领在起线程之前
     （T06：联合准备早有的 `_claim` 纪律，单包路径同样——两个标签页点同一个「安装」只跑一个 pip）。"""
     pid = str(plan_id or "")
@@ -1193,6 +1244,7 @@ def install_async(plan_id: str, on_event=None, *, confirmed_impact: str | None =
         project_id=getattr(plan, "project_id", ""),
         digest=getattr(plan, "impact_digest", ""),
         flow=FLOW_SINGLE,
+        scope=_plan_scope(plan),
     ):
         return False
     _register_cancel(pid)
@@ -1204,12 +1256,14 @@ def install_async(plan_id: str, on_event=None, *, confirmed_impact: str | None =
     return True
 
 
-def _install_guarded(plan_id: str, on_event, *, claimed: bool = False) -> dict:
+def _install_guarded(
+    plan_id: str, on_event, *, claimed: bool = False, confirmed_impact: str | None = None
+) -> dict:
     # 计划是一次性的：`install()` 的 finally 会把它从表里摘掉，失败的终态要在这之前拿住它——
     # 终态上的 `retryable`（pip 跑成之后再失败的不给重试）按计划里的项目与需求算（Codex #709）
     plan = get_plan(plan_id)
     try:
-        return install(plan_id, on_event, claimed=claimed)
+        return install(plan_id, on_event, claimed=claimed, confirmed_impact=confirmed_impact)
     except RepairError as exc:
         _log_repair_failure("依赖修复", plan_id, exc.code)
         pinned = (exc.extra or {}).get("pinned")
@@ -1227,7 +1281,9 @@ def _install_guarded(plan_id: str, on_event, *, claimed: bool = False) -> dict:
         return _emit(plan_id, STATE_FAILED, on_event, plan=plan, code=ERROR_FAILED, error=str(exc))
 
 
-def install(plan_id: str, on_event=None, *, claimed: bool = False) -> dict:
+def install(
+    plan_id: str, on_event=None, *, claimed: bool = False, confirmed_impact: str | None
+) -> dict:
     """执行一个计划。**这是唯一一处会往磁盘上装包的代码。**
 
     执行端只认 `plan_id`：装什么、装到哪、哪个项目，全部来自计划本身
@@ -1236,15 +1292,20 @@ def install(plan_id: str, on_event=None, *, claimed: bool = False) -> dict:
 
     同一份计划只认领一次（T06，联合准备早有的 `_claim` 纪律）：已在执行的再来一次得
     `dependency_install_not_allowed`，不起第二个 pip。
+
+    `confirmed_impact` 是**必传**的关键字参数：调用方回显的、它给用户看过的影响摘要（见 `_check_confirmed`）。
+    只有 `claimed=True`（入口已在认领前核过摘要、这里是线程体）时可以传 None。
     """
     pid = str(plan_id or "")
     if not claimed:
         plan0 = get_plan(pid)
+        _check_confirmed(plan0, confirmed_impact)
         if not _claim(
             pid,
             project_id=getattr(plan0, "project_id", ""),
             digest=getattr(plan0, "impact_digest", ""),
             flow=FLOW_SINGLE,
+            scope=_plan_scope(plan0),
         ):
             raise RepairError(ERROR_NOT_ALLOWED, "这份修复计划已经在执行")
     try:
@@ -1318,14 +1379,15 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
         # 验完再切 active。这里不再往 active 那一代原地 pip。从空 venv 新建第一代时集合是脚本开跑
         # 要的全部（`plan.widened`）；往已有账上加一个包时 delta 只有那一条。
         wide = plan.widened
+        pi = plan.pip_inputs
         job = _GenerationJob(
             progress_id=plan.plan_id,
             project=project,
             script=script,
-            delta=plan.requirements,
-            constraints=wide.constraints if wide else (),
-            hashes={},
-            require_hashes=False,
+            delta=pi.requirements,
+            constraints=pi.constraints,
+            hashes=pi.hashes,
+            require_hashes=pi.require_hashes,
             needed_imports=wide.needed_imports
             if wide
             else ((req.import_name,) if req.import_name else ()),
@@ -1355,6 +1417,8 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
             # 计划里带着下载 = 事实来自替身：供应之后按真解释器重算，那时仍要把用户点的这一个并进去
             groups=wide.groups if wide else (),
             replan=bool(wide and plan.private_python is not None),
+            confirmed_inputs=pi,
+            confirmed_impact=plan.impact,
             inputs_digest=wide.inputs_digest if wide else "",
             requested=req if wide else None,
         )
@@ -1404,9 +1468,11 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
     if already:
         raise RepairError(ERROR_ALREADY_ATTEMPTED, "同一个环境上的同一个需求这一轮已经装过了")
     _emit(plan.plan_id, STATE_INSTALLING, on_event, plan=plan)
+    # 项目 venv 原地：pip 只收到这一条需求（没有约束文件）——`pip_inputs` 也只披露这一条
+    (in_place_requirement,) = plan.pip_inputs.requirements
     code, out = _pip_install(
         python,
-        req.requirement(),
+        in_place_requirement,
         cancel_ev,
         lambda text: _append_log(plan.plan_id, text, on_event),
         on_mirror=lambda url: _note_mirror(plan.plan_id, url, on_event),
@@ -2355,6 +2421,7 @@ def _emit(
     error: str | None = None,
     result: dict | None = None,
     pinned: dict | None = None,
+    impact: dict | None = None,
 ) -> dict:
     with _lock:
         rec = dict(_progress.get(plan_id) or {"log": ""})
@@ -2394,6 +2461,10 @@ def _emit(
             if source is not None:
                 rec["impact"] = source.impact
                 rec["impact_digest"] = source.impact_digest
+        if impact is not None:
+            # 供应私有 Python 之后重算出的、与用户确认的不同的实际影响：终态上带着它与新摘要，界面 / MCP 据此重新披露
+            rec["impact"] = impact
+            rec["impact_digest"] = impact_digest(impact)
         # 最后一个非终态的阶段：失败 / 取消的终态覆盖了 `state`，「坏在哪一步」靠它
         if state not in TERMINAL_STATES:
             rec["stage"] = state
@@ -3585,14 +3656,27 @@ class JointRepairPlan:
     changes: tuple[str, ...] = ()
 
     @property
-    def impact(self) -> dict:
-        """这份授权的实际影响（`impact_of`）：跑前的门显示的就是同一个函数算出的同一份（`offer_impact`）。"""
-        return impact_of(
-            target_kind=self.target_kind,
+    def pip_inputs(self) -> PipInputs:
+        """pip 会收到的全部输入（披露与执行共用，见 `PipInputs`）。"""
+        return PipInputs(
             requirements=self.requirements,
             constraints=self.constraints,
+            hashes=self.hashes,
             require_hashes=self.require_hashes,
             adapter=self.adapter,
+        )
+
+    @property
+    def impact(self) -> dict:
+        """这份授权的实际影响（`impact_of`）：跑前的门显示的就是同一个函数算出的同一份（`offer_impact`）。
+        输入集合来自 `pip_inputs`——执行端（作业 / 原地 pip）读的也是它。"""
+        pi = self.pip_inputs
+        return impact_of(
+            target_kind=self.target_kind,
+            requirements=pi.requirements,
+            constraints=pi.constraints,
+            require_hashes=pi.require_hashes,
+            adapter=pi.adapter,
             groups=self.groups,
             creates_environment=self.creates_environment,
             private_python=self.private_python,
@@ -3876,8 +3960,7 @@ def create_joint_plan(
         inputs_digest=joint.inputs_digest,
         selection=selection0,
         scope_policy=scope_policy,
-        drops=_effects(root, joint.requirements, scope_policy)["drops"],
-        changes=_effects(root, joint.requirements, scope_policy)["changes"],
+        **_effects(root, joint.requirements, joint.constraints, scope_policy),
     )
     _prune_plans()
     with _lock:
@@ -3905,22 +3988,36 @@ _running: set[str] = set()
 _active_jobs: dict[str, dict] = {}
 #: 同一份已确认影响摘要的在途作业：(项目指纹, 摘要) → plan_id。第二个提交者（另一个标签页 / 另一个会话）
 #: 认领原作业而不是再起一个（T06）。
-_joined: dict[tuple[str, str], str] = {}
+_joined: dict[tuple[str, str, str], str] = {}
 #: 在途作业的追加进度监听者：plan_id → [callable(snapshot)]（认领了原作业的另一方也要看到终局）。
 _listeners: dict[str, list] = {}
 FLOW_JOINT = "joint"
 FLOW_SINGLE = "single"
 
 
-def _claim(plan_id: str, *, project_id: str = "", digest: str = "", flow: str = FLOW_JOINT) -> bool:
-    """认领一份计划：回 True = 这次认领成功；False = 已有人在跑。**在起线程之前**。"""
+def _claim(
+    plan_id: str,
+    *,
+    project_id: str = "",
+    digest: str = "",
+    flow: str = FLOW_JOINT,
+    scope: str = "",
+) -> bool:
+    """认领一份计划：回 True = 这次认领成功；False = 已有人在跑。**在起线程之前**。
+    `scope` = 依赖作用域（脚本所在目录，`scope_of`）：同项目同摘要、不同目录的两次授权是两份作业，账上的归属
+    记在各自的作用域里（Codex r4218802492）——合并键必须带它。"""
     with _lock:
         if plan_id in _running:
             return False
         _running.add(plan_id)
-        _active_jobs[plan_id] = {"project_id": project_id, "digest": digest, "flow": flow}
+        _active_jobs[plan_id] = {
+            "project_id": project_id,
+            "digest": digest,
+            "flow": flow,
+            "scope": scope,
+        }
         if project_id and digest:
-            _joined[(project_id, digest)] = plan_id
+            _joined[(project_id, scope, digest)] = plan_id
         return True
 
 
@@ -3930,7 +4027,7 @@ def _release(plan_id: str) -> None:
         _running.discard(plan_id)
         meta = _active_jobs.pop(plan_id, None)
         if meta and meta.get("project_id") and meta.get("digest"):
-            key = (meta["project_id"], meta["digest"])
+            key = (meta["project_id"], meta.get("scope", ""), meta["digest"])
             if _joined.get(key) == plan_id:
                 _joined.pop(key, None)
         # 监听者不在这里清：失败终态常在作业返回之后才由 `_prepare_guarded` / `_install_guarded` 发出，
@@ -3977,10 +4074,24 @@ def add_listener(plan_id: str, fn) -> bool:
         return True
 
 
+def _plan_scope(plan) -> str:
+    """计划的依赖作用域（脚本所在目录）；没有脚本的计划 = 空。"""
+    script = getattr(plan, "script", "") or ""
+    return scope_of(script) if script else ""
+
+
 def _check_confirmed(plan, confirmed_impact: str | None) -> None:
-    """已确认的影响摘要与计划此刻的实际影响对不上 → `dependency_impact_changed`，零副作用。
-    `confirmed_impact=None` 表示调用方没有绑定摘要（旧客户端：计划 id 本身就是它看到的那份计划）。"""
-    if confirmed_impact is None or plan is None:
+    """执行入口的唯一一道门（Codex r4217992305 / r4218802478）：**调用方必须回显它给用户看的影响摘要**。
+
+    * 缺 / 空 / 非字符串 -> `dependency_impact_required`，零副作用。**不再有「None = 旧客户端、不绑定」**：
+      服务端自己持有的摘要（计划、动作、缓存里的）一律不得代替调用方回显——那等于没有确认。
+    * 与计划此刻的实际影响对不上 -> `dependency_impact_changed`，零副作用。
+    """
+    if not isinstance(confirmed_impact, str) or not confirmed_impact:
+        raise RepairError(
+            ERROR_IMPACT_REQUIRED, "执行安装需要带上你确认时看到的影响摘要，请重新查看再确认。"
+        )
+    if plan is None:
         return
     if plan.impact_digest != confirmed_impact:
         raise RepairError(
@@ -3991,14 +4102,14 @@ def _check_confirmed(plan, confirmed_impact: str | None) -> None:
         )
 
 
-def prepare_async(plan_id: str, on_event=None, *, confirmed_impact: str | None = None) -> bool:
+def prepare_async(plan_id: str, on_event=None, *, confirmed_impact: str | None) -> bool:
     """起线程执行一份联合计划；回 False = 这份计划已在执行，**不再起第二个线程**（调用方把
     在途的进度原样交回去）。**认领与取消句柄都在起线程之前**：调用方一回 202 用户就可能取消，
     那时线程可能还在重算事实、还没拿锁——句柄不在表里的话 `cancel_status` 只能回 `not_found`，
     安装照常改环境（Codex #470 P1）。`prepare()` 复用这一个句柄。
 
-    `confirmed_impact`（T06）：调用方给了它就必须等于计划此刻的 `impact_digest`，否则 `dependency_impact_changed`
-    （认领之前、零副作用）。"""
+    `confirmed_impact`（T06）：**必传**，且必须等于计划此刻的 `impact_digest`；缺 -> `dependency_impact_required`，
+    对不上 -> `dependency_impact_changed`（均在认领之前、零副作用）。"""
     pid = str(plan_id or "")
     plan = get_joint_plan(pid)
     _check_confirmed(plan, confirmed_impact)
@@ -4006,6 +4117,7 @@ def prepare_async(plan_id: str, on_event=None, *, confirmed_impact: str | None =
         pid,
         project_id=getattr(plan, "project_id", ""),
         digest=getattr(plan, "impact_digest", ""),
+        scope=_plan_scope(plan),
     ):
         return False
     _register_cancel(pid)
@@ -4041,7 +4153,11 @@ def start_confirmed(
     选中）；不接受路径。"""
     root = str(Path(project))
     pj = managedenv.project_fingerprint(root)
-    key = (pj, str(confirmed_digest or ""))
+    # 回显的摘要是**调用方给的**，不是服务端缓存的：缺 -> dependency_impact_required，零副作用（r4218802478）
+    if not isinstance(confirmed_digest, str) or not confirmed_digest:
+        _check_confirmed(None, confirmed_digest)
+    # 合并键带依赖作用域：同项目同摘要、不同目录的两次授权不能合并成一个作业（账上归属只记在第一个作用域里）
+    key = (pj, scope_of(script), confirmed_digest)
     joined = _join_running(key, on_event)
     if joined:
         return {"plan_id": joined, "started": False, "joined": True, "progress": progress(joined)}
@@ -4051,7 +4167,7 @@ def start_confirmed(
     else:
         plan = create_joint_plan(root, script, target_kind=target_kind, scope_policy=scope_policy)
     try:
-        _check_confirmed(plan, key[1])
+        _check_confirmed(plan, key[2])
     except RepairError:
         _discard_plan(plan.plan_id)
         raise
@@ -4060,7 +4176,7 @@ def start_confirmed(
         if again is not None and again in _running:
             claimed = False
         else:
-            claimed = _claim(plan.plan_id, project_id=pj, digest=key[1], flow=flow)
+            claimed = _claim(plan.plan_id, project_id=pj, digest=key[2], flow=flow, scope=key[1])
     if not claimed:
         _discard_plan(plan.plan_id)
         joined = _join_running(key, on_event)
@@ -4100,7 +4216,7 @@ def preview_impact(
         _discard_plan(plan.plan_id)
 
 
-def _join_running(key: tuple[str, str], on_event) -> str:
+def _join_running(key: tuple[str, str, str], on_event) -> str:
     """同一份摘要在途的作业：回它的 plan_id 并（作业还没到终态时）追加监听；没有回空串。"""
     with _lock:
         pid = _joined.get(key)
@@ -4149,9 +4265,11 @@ def _facts_for_plan(
     return run, install
 
 
-def _prepare_guarded(plan_id: str, on_event, *, claimed: bool = False) -> dict:
+def _prepare_guarded(
+    plan_id: str, on_event, *, claimed: bool = False, confirmed_impact: str | None = None
+) -> dict:
     try:
-        return prepare(plan_id, on_event, claimed=claimed)
+        return prepare(plan_id, on_event, claimed=claimed, confirmed_impact=confirmed_impact)
     except RepairError as exc:
         _log_repair_failure("联合依赖准备", plan_id, exc.code)
         return _emit(plan_id, STATE_FAILED, on_event, code=exc.code, error=str(exc))
@@ -4161,7 +4279,7 @@ def _prepare_guarded(plan_id: str, on_event, *, claimed: bool = False) -> dict:
 
 
 def prepare(
-    plan_id: str, on_event=None, *, claimed: bool = False, confirmed_impact: str | None = None
+    plan_id: str, on_event=None, *, claimed: bool = False, confirmed_impact: str | None
 ) -> dict:
     """执行一份联合计划。执行端只认 `plan_id`；执行前重算环境指纹与事实（`repair_plan_stale`）。
 
@@ -4178,6 +4296,7 @@ def prepare(
             pid,
             project_id=getattr(plan0, "project_id", ""),
             digest=getattr(plan0, "impact_digest", ""),
+            scope=_plan_scope(plan0),
         ):
             raise RepairError(ERROR_NOT_ALLOWED, "这份准备计划已经在执行")
     cancel_ev = _register_cancel(pid)
@@ -4208,14 +4327,15 @@ def prepare(
                 result={"activated": False},
             )
         if plan.target_kind == TARGET_MANAGED:
+            pi = plan.pip_inputs
             job = _GenerationJob(
                 progress_id=plan.plan_id,
                 project=plan.project,
                 script=plan.script,
-                delta=plan.requirements,
-                constraints=plan.constraints,
-                hashes=plan.hashes,
-                require_hashes=plan.require_hashes,
+                delta=pi.requirements,
+                constraints=pi.constraints,
+                hashes=pi.hashes,
+                require_hashes=pi.require_hashes,
                 needed_imports=plan.needed_imports,
                 record=plan.record,
                 reason=managedenv.REASON_MISSING_DEPENDENCY,
@@ -4227,6 +4347,8 @@ def prepare(
                 private_plan=plan.private_python,
                 groups=plan.groups,
                 replan=plan.replan,
+                confirmed_inputs=pi,
+                confirmed_impact=plan.impact,
                 inputs_digest=plan.inputs_digest,
                 replace_ledger=plan.scope_policy == SCOPE_POLICY_SWITCH,
                 refuse_pinned=True,
@@ -4254,16 +4376,17 @@ def _run_joint_in_place(plan: JointRepairPlan, on_event, cancel_ev: threading.Ev
     if rc != 0:
         raise RepairError(ERROR_PIP_UNAVAILABLE, _sanitize(out)[-800:])
     _emit(plan.plan_id, STATE_INSTALLING, on_event, joint=plan)
+    pi = plan.pip_inputs
     with tempfile.TemporaryDirectory(prefix="tavotto-joint-") as tmp:
         req_file, con_file = write_plan_files(
-            Path(tmp), plan.requirements, plan.constraints, hashes=plan.hashes
+            Path(tmp), pi.requirements, pi.constraints, hashes=pi.hashes
         )
         code, out = _run_pip_install(
             lambda index_url: pip_install_joint_argv(
                 python,
                 req_file,
                 con_file,
-                require_hashes=plan.require_hashes,
+                require_hashes=pi.require_hashes,
                 index_url=index_url,
             ),
             python,
@@ -4344,6 +4467,10 @@ class _GenerationJob:
     private_plan: dict | None = None
     #: 计划的事实来自替身：供应之后按真解释器重算 delta / 关键 import / 记账（`_replan_on_base`）。
     replan: bool = False
+    #: 用户确认的那份 pip 输入与影响（`plan.pip_inputs` / `plan.impact`）：替身重算之后的真输入必须与之逐项
+    #: 相同，否则 `dependency_impact_changed`、不装（Codex #814 r4218254708 后续，`_replan_on_base`）。
+    confirmed_inputs: "PipInputs | None" = None
+    confirmed_impact: dict | None = None
     #: 单包修复才有：`_attempted` 的键 (项目指纹, 环境 key, 需求串)。**只在 pip 退出码 0 之后**登记
     #: （#466 的纪律；下载私有 Python 失败 / 取消 / pip 没跑成都不算「装过」）；其余三条路为空。
     attempted: tuple = ()
@@ -4664,6 +4791,43 @@ def _private_runtime_of(base: str) -> str:
     return source.id if same else ""
 
 
+def _verify_replanned_inputs(job: _GenerationJob, new: _GenerationJob, adapter) -> None:
+    """重算出的真 pip 输入（同一个 `PipInputs`）必须与用户确认的逐项相同；不同 = 用户授权的不是这件事：
+    把此刻的实际影响与新摘要记进进度终态（界面 / MCP 重新披露），抛 `dependency_impact_changed`，一个字节不装。"""
+    confirmed = job.confirmed_inputs
+    if confirmed is None:
+        return
+    actual = PipInputs(
+        requirements=tuple(new.delta),
+        constraints=tuple(new.constraints),
+        hashes={k: tuple(v) for k, v in new.hashes.items()},
+        require_hashes=new.require_hashes,
+        adapter=tuple(adapter),
+    )
+
+    def view(pi: PipInputs) -> tuple:
+        return (
+            sorted(pi.requirements),
+            sorted(pi.constraints),
+            sorted((k, tuple(v)) for k, v in pi.hashes.items()),
+            bool(pi.require_hashes),
+            sorted(pi.adapter),
+        )
+
+    if view(actual) == view(confirmed):
+        return
+    now = {
+        **(job.confirmed_impact or {}),
+        "installs": sorted(actual.requirements),
+        "constraints": sorted(actual.constraints),
+        "adapter": sorted(actual.adapter),
+        "require_hashes": bool(actual.require_hashes),
+    }
+    message = "私有 Python 就位后重算出的安装内容与你确认的不一致，请重新查看再确认"
+    job.emit(STATE_FAILED, code=ERROR_IMPACT_CHANGED, error=message, impact=now)
+    raise RepairError(ERROR_IMPACT_CHANGED, message, impact=now, impact_digest=impact_digest(now))
+
+
 def _replan_on_base(job: _GenerationJob, base: str) -> _GenerationJob:
     """替身算的计划在真解释器上重算一遍：delta / 关键 import / 记账 / 身份都换成真量的（U05 PR B）。
 
@@ -4693,7 +4857,7 @@ def _replan_on_base(job: _GenerationJob, base: str) -> _GenerationJob:
         wide = _fold_requested(job.requested, plan)
         if wide is None:
             raise RepairError(ERROR_PLAN_BLOCKED, "联合计划不可执行", joint=plan.to_payload())
-        return dataclasses.replace(
+        new = dataclasses.replace(
             job,
             delta=wide.requirements,
             constraints=wide.constraints,
@@ -4704,7 +4868,12 @@ def _replan_on_base(job: _GenerationJob, base: str) -> _GenerationJob:
             identity="",
             replan=False,
         )
-    return dataclasses.replace(
+        # 单包的 adapter 是常量（`generation_requirements` 恒并入），与确认时同一份
+        _verify_replanned_inputs(
+            job, new, job.confirmed_inputs.adapter if job.confirmed_inputs else ()
+        )
+        return new
+    new = dataclasses.replace(
         job,
         delta=tuple(plan.requirements),
         constraints=tuple(plan.constraints),
@@ -4722,6 +4891,8 @@ def _replan_on_base(job: _GenerationJob, base: str) -> _GenerationJob:
         identity=plan.identity,
         replan=False,
     )
+    _verify_replanned_inputs(job, new, plan.adapter)
+    return new
 
 
 def _provision_private_base(job: _GenerationJob, cancel_ev: threading.Event) -> dict:

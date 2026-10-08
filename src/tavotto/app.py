@@ -7863,7 +7863,8 @@ def api_dependency_plan():
 def api_dependency_install():
     """执行一个已经形成的计划。进度经 SSE `engine.dependency` 推送。
 
-    **请求体里只有 plan_id**：解释器、包名、版本、目标环境全部来自计划本身。
+    **请求体里是 plan_id + impact_digest**：解释器、包名、版本、目标环境全部来自计划本身；摘要是用户
+    看到的那一份影响的回显（必填，对不上就不执行）。
     用户看到的是「把 lmfit 装进 项目 .venv」，点下去执行的就必须是那一件事。
     """
     require_project()
@@ -7882,8 +7883,24 @@ def api_dependency_install():
         return jsonify(
             {"error": "这个修复计划不属于当前项目。", "code": engine_deprepair.ERROR_NOT_ALLOWED}
         ), 409
+    # `impact_digest`（必填，ADR 0115 / Codex r4217992305）：与联合准备同一道门。只带 plan_id 不行——点之前次要依赖的
+    # 约束可能变了（beta<2 → beta>=2），计划 id 照样有效，包名也没变，用户却没看过新的约束。缺 → 400，
+    # 对不上 → 409 `dependency_impact_changed`（认领之前、零副作用）
+    echoed = body.get("impact_digest")
+    if not isinstance(echoed, str) or not echoed:
+        return jsonify(
+            {
+                "error": "执行安装需要带上你确认时看到的影响摘要，请重新查看再确认。",
+                "code": engine_deprepair.ERROR_IMPACT_REQUIRED,
+            }
+        ), 400
     # 同一份计划只认领一次：另一个标签页先点了，这里得到的是在途的进度（`started: false`），不起第二个 pip
-    started = engine_deprepair.install_async(plan_id, _dependency_event_sink(current_ctx()))
+    try:
+        started = engine_deprepair.install_async(
+            plan_id, _dependency_event_sink(current_ctx()), confirmed_impact=echoed
+        )
+    except engine_deprepair.RepairError as exc:
+        return _repair_error(exc, 409)
     return jsonify({"started": started, **engine_deprepair.progress(plan_id)})
 
 
