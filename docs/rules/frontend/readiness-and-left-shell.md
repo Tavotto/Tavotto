@@ -27,6 +27,10 @@
 - **开关只有 `uiStore.registryOpen`**（`RegistryDialog` 的文件名与导出名保留）。
   就绪度 store 只管 `focusId`；`focusPanel(fileId)` 是 17/18 复用的入口。
   关闭后的焦点归位归 `ui/Dialog`，**别再记第二份**。
+  正文 `ReadinessBody` 按**项目代际（`scriptRunStore.epoch`）× 打开代际（每次关 → 开 +1）**重挂：开着换项目、或关掉后
+  Radix Presence 留着同一份正文放退场动画（data-state=closed，到 `animationend`）时换项目 / 重新打开，上一份的注册表视图、
+  试运行结果（runtime 描述符与「添加到画布」）、待重跑的门都不带过来，视图重取；在飞的试运行 / 重取回来时项目代际已变就
+  不落地（#831 Codex P1 + 维护者复审）。测试用 `getComputedStyle` 按 data-state 报动画名来模拟退场，生产动画不改。
 - **「没测量」三档不许压扁**：`conflicts` 的 `null`、`project.registry_valid`
   的 `null`、`PanelInfo.capability` 的 `undefined`。第三档的界面表现是
   **什么都不显示**——补成 `layout_only` 就是替后端撒谎。
@@ -43,7 +47,8 @@
   写状态与写偏好共用它。
 - **首开的那一次确认（U03，ADR 0057 §三）**：渲染以 `workdir_confirmation_required` 回来时
   它不是错误块，是缺一个决定——`renderStore` 把 `EngineError.confirmation` 交给
-  `envStore.requestWorkdirConfirmation`，`WorkdirConfirmDialog` 渲染三档（项目根 / 脚本目录 /
+  `envStore.requestWorkdirConfirmation`，`WorkdirConfirmDialog`（md，三档是可选的 `Card`，推荐项是 ok 的 `Badge`，写出文件的后果是
+  一行警示 `Notice` + 「详情」气泡，主按钮「在这里运行」，2026-10-07 设计审计 §10.2）渲染三档（项目根 / 脚本目录 /
   继续沙盒）与各档找得到的文件；**推荐项只在后端 `recommended` 有值时预选，歧义时不预选**
   （机器不裁决，界面只翻译）；「运行」= `setWorkdirMode(mode, { confirmed: true })`（一次 PATCH，
   不再弹第二层确认框，成功后 `retryEnvironmentFailures` 把这批面板重排）；「稍后」只关框，载荷

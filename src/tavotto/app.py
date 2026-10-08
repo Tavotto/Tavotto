@@ -3729,13 +3729,16 @@ def api_registry_probe_cancel():
     body = request.get_json(force=True)
     script = str(body.get("script") or "").strip()
     key = (ctx.id, script)
+    # 取消标志与运行配置必须在**同一把锁**里一起取：分两次加锁的话，带参数的试运行恰好在两次之间收尾
+    # （finally 把两张表都删了），run 会被读成 None，force_cancel 就打到同脚本无参数的 worker 上，
+    # 误杀别的面板的活会话。条目已经不在了 = 输了赛跑，按「没有在跑的」返回，什么也不杀。
     with _PROBES_LOCK:
         ev = _PROBES.get(key)
+        run = _PROBE_RUNS.get(key)
     if ev is None:
         return jsonify({"cancelling": False})
     ev.set()  # 先置标志再杀：probe 醒来时答案已经在了
     with _PROBES_LOCK:
-        run = _PROBE_RUNS.get(key)
         owner = _PROBE_OWNERS.get(key) if _PROBES.get(key) is ev else None
     if owner is not None and owner[1] is not False:
         worker = owner[0]
@@ -4960,7 +4963,13 @@ def _retire_hot_worker(worker) -> bool:
     if engine_enginesession.is_native(worker):
         LOG.warning("按规范修图后热态不可信，但 native 会话不作废: %s", worker)
         return False
-    engine_pool.invalidate(worker.script_name, worker.figures_dir)
+    # 热态不可信的只是这一条会话（它冻结的那份运行配置）；同脚本别的 argv 变体的会话不动
+    if getattr(worker, "artifact_source", None) is None:
+        engine_pool.invalidate(
+            worker.script_name, worker.figures_dir, getattr(worker, "run", None), only_run=True
+        )
+    else:  # 选定产物的会话键里带产物身份，按脚本整体作废（旧行为）
+        engine_pool.invalidate(worker.script_name, worker.figures_dir)
     LOG.warning("按规范修图后热态不可信，作废会话: %s", worker.script_name)
     return True
 
@@ -5176,8 +5185,10 @@ def api_engine_invalidate():
         if info is None:
             abort(404)
         script = info["script"]
-        run = None
-    engine_pool.invalidate(script, root, **({"run": run} if run is not None else {}))
+        # 磁盘面板重跑用的就是脚本最近一次明确运行的那份配置（与 `_resolve_engine_worker` 同一判据）
+        run = _disk_panel_run(script)
+    # `only_run=True`：只作废**这一份**配置的会话（无参数变体 = run=None 那条），不是同脚本全部变体
+    engine_pool.invalidate(script, root, run, only_run=True)
     LOG.info("引擎会话作废（用户重新构建）: %s", script)
     return jsonify({"invalidated": True})
 
@@ -6573,7 +6584,11 @@ def _resync_registration(ctx, worker) -> bool:
     # 只对账**已登记**的脚本：没登记过的不在这里替它登记（那是试运行 / 发现的事）
     if not script or not root or registry is None or script not in registry.all_scripts():
         return False
-    if not engine_inputremap.registration_stale(root, script):
+    # 带运行配置的会话只是这个脚本的**另一份配置**：对账与登记都按这一份来（与 `probe.register_probed`
+    # 同一判据），不许把同脚本别的 argv 变体登记的图名换掉、也不许把它们一并标成已对账（Codex 评 #812 P2）
+    run = getattr(worker, "run", None)
+    variant = str(getattr(run, "config_id", "") or "") if run is not None else ""
+    if not engine_inputremap.registration_stale(root, script, variant):
         return False
     stems = sorted(
         {
@@ -6592,8 +6607,10 @@ def _resync_registration(ctx, worker) -> bool:
     try:
         with engine_inputremap.landing(root, getattr(worker, "remap_generation", None)):
             # cost 给空串：`register` 保留磁盘上原来那个值
-            engine_discover.register(root, script, stems, entry=worker.entry, cost="")
-            engine_inputremap.record_registration(root, script)
+            engine_discover.register(
+                root, script, stems, entry=worker.entry, cost="", append=bool(variant)
+            )
+            engine_inputremap.record_registration(root, script, variant)
     except engine_inputremap.RemapChanged:
         return False
     LOG.info("改指表变了，按这次 build 的产出重新登记: %s → %s", script, stems)
@@ -8598,10 +8615,20 @@ def api_layouts():
         for p in d.glob("*.json"):
             if not engine_documents.is_user_document_stem(p.stem):
                 continue
-            if p.stem not in seen:
+            if p.stem in seen:
+                continue
+            # 逐个 stat：断开的符号链接、读不了的、glob 与 stat 之间被删掉的，
+            # 都只跳过这一条（它本来也打不开），不能让整张列表 500。跳过而不是
+            # 记下名字：同名的旧位置文件还能顶上，`GET /api/layouts/<name>` 也是
+            # 按 `exists()` 往下找的。
+            try:
                 seen[p.stem] = p.stat().st_mtime
+            except OSError:
+                continue
     names = sorted(seen, key=lambda n: seen[n], reverse=True)
-    return jsonify({"layouts": names})
+    # `modified`（加字段，老前端不认也无妨）：每份文档的修改时间（epoch 秒），
+    # 「打开」列表在名字旁写「几分钟前」——只是展示，排序仍以 `layouts` 的顺序为准
+    return jsonify({"layouts": names, "modified": {n: seen[n] for n in names}})
 
 
 def serve_document(path: Path):

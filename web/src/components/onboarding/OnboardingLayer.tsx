@@ -78,6 +78,37 @@ interface Measured {
   container: HTMLElement
   /** 锚点 DOM 节点（有的话），用来滚进视野 */
   el: Element | null
+  /** 锚点自己的圆角（px）：高亮环的圆角 = 它 + 环与锚点之间那 4px（外层 = 内层 + 间距） */
+  radius: number
+}
+
+/** 环与锚点之间的间距（px）：环画在锚点外面 4px 处 */
+const RING_GAP = 4
+
+/**
+ * 环的圆角类：锚点圆角 + 间距，落到最近的圆角 token 上（圆角只走 token，门禁不许内联 borderRadius）。
+ * 体系里的圆角就是 4 / 6 / 8 / 12 / 16 / full，「外层 = 内层 + 间距」落在 token 上几乎是精确的（8 → 12、12 → 16）
+ */
+const RING_RADIUS: [number, string][] = [
+  [4, 'rounded-xs'],
+  [6, 'rounded-sm'],
+  [8, 'rounded-md'],
+  [12, 'rounded-lg'],
+  [16, 'rounded-panel'],
+]
+function ringRadiusClass(anchorRadius: number): string {
+  if (anchorRadius >= 999) return 'rounded-full'
+  const want = anchorRadius + RING_GAP
+  return RING_RADIUS.reduce((best, cur) => (Math.abs(cur[0] - want) < Math.abs(best[0] - want) ? cur : best))[1]
+}
+
+/** 锚点的圆角：取左上角那一个（锚点几乎都是四角同圆角的控件 / 卡片）；量不到按 0 */
+function radiusOf(el: Element | null): number {
+  if (!el) return 0
+  const cs = getComputedStyle(el)
+  // 简写没展开的环境（jsdom）里长写是空串：退回简写
+  const v = parseFloat(cs.borderTopLeftRadius || cs.borderRadius)
+  return Number.isFinite(v) ? v : 0
 }
 
 const bodyContainer = () => document.body
@@ -96,14 +127,14 @@ function boxOf(el: Element): Box | null {
 
 /** 找锚点。回 `null` = 此刻不在 DOM 里 */
 function measure(spec: AnchorSpec): Measured | null {
-  if (spec.kind === 'none') return { box: null, container: bodyContainer(), el: null }
+  if (spec.kind === 'none') return { box: null, container: bodyContainer(), el: null, radius: 0 }
   if (spec.kind === 'selector') {
     const el = document.querySelector(spec.selector)
     if (!el) return null
     const box = boxOf(el)
     if (!box) return null
     const dialog = el.closest<HTMLElement>('[role="dialog"]:not([data-onboarding-coachmark])')
-    return { box, container: dialog ?? bodyContainer(), el }
+    return { box, container: dialog ?? bodyContainer(), el, radius: radiusOf(el) }
   }
   const host = document.querySelector(`[data-element-svg="${CSS.escape(spec.panelId)}"]`)
   if (!host) return null
@@ -114,6 +145,8 @@ function measure(spec: AnchorSpec): Measured | null {
     box: { x: r.left + fx * r.width, y: r.top + fy * r.height, w: fw * r.width, h: fh * r.height },
     container: bodyContainer(),
     el: host,
+    // 图内元素没有自己的圆角（manifest 里的一块 bbox）：环用最小那一档
+    radius: 0,
   }
 }
 
@@ -134,6 +167,9 @@ function hiddenInStage(m: Measured): boolean {
 
 const ob = (key: string, values?: Record<string, unknown>) =>
   translate(`onboarding.${key}`, { ns: 'dialogs', ...(values ?? {}) })
+
+/** 上一张卡片卸载时焦点在不在它里面（换步骤 = `ActiveStep` 按 key 重挂，状态只能放在模块里传过去） */
+const handoff = { pending: false }
 
 export function OnboardingLayer() {
   const status = useOnboardingStore((s) => s.status)
@@ -167,6 +203,27 @@ function ActiveStep({ stepId }: { stepId: StepId }) {
   const [moveSeq, setMoveSeq] = useState(0)
   const [waitedOut, setWaitedOut] = useState(false)
   const revealed = useRef(false)
+
+  // 换步骤时的焦点交接（2026-10-07 设计审计 §10.2）：用户在上一张卡片里按了「跳过 / 返回 / 主动作」，
+  // 那张卡片随步骤卸掉、焦点摔到 body——键盘用户当场失去位置。焦点**原本在卡片里**才交接到新卡片上；
+  // 在画布 / 输入框里的焦点不抢（教程只是贴在旁边说话）
+  useLayoutEffect(() => {
+    const card = cardRef.current
+    if (handoff.pending && card) card.focus({ preventScroll: true })
+    handoff.pending = false
+    return () => {
+      // 卸载那一刻焦点还在这张卡片里、而且是**直接换到下一步**（教程仍 active、步骤已变）：下一张接手。
+      // 暂停 / 完成 / 跳过整个教程也会卸掉这张卡片，那不是交接——不记下，否则过一阵「继续教程」时
+      // 新挂上的卡片会把用户已经放在别处的焦点抢走（#831 Codex P2）
+      const s = useOnboardingStore.getState()
+      handoff.pending =
+        s.status === 'active' &&
+        s.currentStep !== stepId &&
+        !!card &&
+        card.contains(document.activeElement)
+    }
+    // `ActiveStep` 按 stepId 重挂，stepId 在一个实例里不变：这仍是「挂载 / 卸载各一次」
+  }, [stepId])
 
   // 每次相关状态变化重新组装上下文并重测；再加一个兜底的低频重测
   const refresh = useCallback(() => {
@@ -363,15 +420,17 @@ function ActiveStep({ stepId }: { stepId: StepId }) {
         : `left ${DURATION.fast}ms ${EASE_STANDARD}, top ${DURATION.fast}ms ${EASE_STANDARD}`,
     ...(moving ? { pointerEvents: 'none' as const } : {}),
   }
-  const ring =
-    measured?.box && !inDialog
-      ? {
-          left: measured.box.x - 4,
-          top: measured.box.y - 4,
-          width: measured.box.w + 8,
-          height: measured.box.h + 8,
-        }
-      : null
+  // 高亮环：对话框里也画（2026-10-07 设计审计 §10.2：此前锚点在导出对话框里时一圈都没有）。
+  // 在对话框里换算成对话框内的坐标、跟卡片一起 portal 进去；圆角跟着锚点走（锚点圆角 + 4）
+  const frame = inDialog ? container.getBoundingClientRect() : null
+  const ring = measured?.box
+    ? {
+        left: measured.box.x - (frame?.left ?? 0) - RING_GAP,
+        top: measured.box.y - (frame?.top ?? 0) - RING_GAP,
+        width: measured.box.w + RING_GAP * 2,
+        height: measured.box.h + RING_GAP * 2,
+      }
+    : null
 
   return createPortal(
     <>
@@ -385,7 +444,9 @@ function ActiveStep({ stepId }: { stepId: StepId }) {
           aria-hidden
           data-onboarding-ring
           className={cn(
-            'pointer-events-none fixed z-onboarding-ring rounded-md border-2 border-accent',
+            'pointer-events-none z-onboarding-ring border-2 border-accent',
+            inDialog ? 'absolute' : 'fixed',
+            ringRadiusClass(measured?.radius ?? 0),
             !reduced && 'animate-fade-in',
           )}
           style={ring}
@@ -405,6 +466,7 @@ function ActiveStep({ stepId }: { stepId: StepId }) {
           )
         }
         progress={progress}
+        step={index >= 0 && index < REAL_STEPS ? { n: index + 1, total: REAL_STEPS } : null}
         side={placement?.side ?? 'center'}
         primary={primary}
         secondary={secondary}

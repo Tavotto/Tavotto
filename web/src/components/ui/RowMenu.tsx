@@ -34,6 +34,7 @@ export function RowMenu({
   visible = 'hover',
   tabStop = true,
   className,
+  onCloseAutoFocus,
   ...rest
 }: {
   state: RowMenuState
@@ -45,6 +46,8 @@ export function RowMenu({
   /** false = ⋯ 不进 Tab 顺序（行聚焦时也不进）；默认行聚焦 / 菜单开着时进 */
   tabStop?: boolean
   className?: string
+  /** 透传给 `Menu`：菜单项打开了要接焦点的输入框时，关菜单不把焦点还给 ⋯ */
+  onCloseAutoFocus?: (e: Event) => void
 } & Record<`data-${string}`, string | number | boolean | undefined>) {
   if (!state.enabled) return null
   const { mode, setMode, focusWithin } = state
@@ -56,6 +59,7 @@ export function RowMenu({
         width={width}
         open={mode === 'button'}
         onOpenChange={(v) => setMode(v ? 'button' : null)}
+        onCloseAutoFocus={onCloseAutoFocus}
         trigger={
           <IconButton
             {...rest}

@@ -440,7 +440,7 @@
     "workdirChooseConflicts": "Files that differ between the two: {{files}}",
     "workdirChooseLater": "Later",
     "workdirChooseRootEvidence": "The data {{script}} reads is only found under the project root. Pick a working directory; this project is asked once.",
-    "workdirChooseRun": "Run",
+    "workdirChooseRun": "Run here",
     "workdirChooseScriptDirEvidence": "{{script}} looks for its data files in the current directory (glob / listdir / exists), which finds nothing in the sandbox; it needs to run in its own directory. Pick a working directory; this project is asked once.",
     "workdirChooseSuggest": "This figure hasn't been assigned a working directory yet.",
     "workdirChooseTitle": "Which directory should the script run in?",
@@ -649,7 +649,11 @@
     "projectEnvRecommended": "The project environment {{venv}} already has {{module}} and can run this. Switch to it?",
     "userEnvSource_project_venv": "the project’s {{label}} environment",
     "userEnvUnchecked": "Not checked yet. “Check and use” checks it first and switches only if everything is there.",
-    "userEnvCheckUse": "Check and use"
+    "userEnvCheckUse": "Check and use",
+    "workdirChooseWritesShort": "In a real directory, files the script writes land in the project.",
+    "workdirChooseWritesMore": "Details",
+    "dependencyPrepareHeading": "Prepare environment",
+    "missingInputStep": "{{n}}/{{total}}"
   },
   "preflight": {
     "axisLabelFormat": "The axis title “{{label}}” isn't in the profile's “{{want}}” form.",
