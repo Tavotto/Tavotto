@@ -253,6 +253,37 @@ def test_a_script_whose_figure_was_captured_before_counts_as_connected(tmp_path)
     assert report["targets"][0]["linked"] is True
 
 
+@pytest.mark.parametrize("newer", [False, True])
+def test_unreadable_run_configs_do_not_fail_the_scan(tmp_path, newer):
+    """r4220769153：运行配置登记坏了 / 来自新版本，`_linked_scripts` 的「是否捕获过」证据只当无证据，不炸整次扫描；
+    无参数那一份证据仍算数。（读不出配置时用空 argv 运行由 run_config_unreadable 另行拦住，这里不碰。）"""
+    from tavotto.engine import figcapture, runconfig, runtimeasset
+
+    root = _project(tmp_path)
+    _write(root, "fig.py", PLOT.format(stem="fig"))
+    _write(
+        root,
+        "tavotto_registry.json",
+        json.dumps({"version": 1, "scripts": {"fig.py": {"entry": "__main__", "stems": ["fig"]}}}),
+    )
+    store = runconfig.store_path(root)
+    store.parent.mkdir(parents=True, exist_ok=True)
+    store.write_text(
+        json.dumps({"version": 999, "configs": {}, "defaults": {}})
+        if newer
+        else '{"version": 1, "conf',
+        encoding="utf-8",
+    )
+    # 没有任何捕获证据：扫描照常完成，目标未连接
+    assert projscan.scan(root)["targets"][0]["linked"] is False
+    svg = tmp_path / "fig.svg"
+    svg.write_text("<svg xmlns='http://www.w3.org/2000/svg'/>", encoding="utf-8")
+    assert runtimeasset.materialize(
+        root, {"asset_id": figcapture.runtime_asset_id("fig.py", "fig"), "script": "fig.py"}, svg
+    )
+    assert projscan.scan(root)["targets"][0]["linked"] is True
+
+
 def test_connected_plot_scripts_do_not_nag(tmp_path):
     """已经登记、并且真有可编辑的图（项目里有它产出的同名图文件）的绘图脚本：没有要准备的目标，也不要求用户选。"""
     root = _project(tmp_path)

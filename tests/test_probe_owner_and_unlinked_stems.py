@@ -85,6 +85,57 @@ def test_a_registered_name_that_was_never_captured_is_not_reported(tmp_path):
     assert _registry(root)["scripts"]["fig.py"]["stems"] == ["fig"]  # 替换语义不变
 
 
+def _corrupt_run_configs(root: Path, *, newer: bool = False) -> None:
+    """让这个项目的运行配置登记文件读不出（截断）或来自新版本——`configs_of` 会抛 RunConfigError。"""
+    from tavotto.engine import runconfig
+
+    path = runconfig.store_path(root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({"version": 999, "configs": {}, "defaults": {}})
+        if newer
+        else '{"version": 1, "conf',
+        encoding="utf-8",
+    )
+
+
+@pytest.mark.parametrize("newer", [False, True])
+def test_unreadable_run_configs_do_not_fail_registration_after_the_registry_moved(tmp_path, newer):
+    """r4220769153：无参数运行替换旧图名时，运行配置文件坏了 / 来自新版本——证据判断不得炸在注册表已改写之后。
+    读不出的配置只当「没有这份证据」（宁可少说）：登记照常完成，无参数那一份证据（此前无参数捕获过）仍算数。"""
+    root = _project(tmp_path, "p")
+    _write_registry(root, ["fig", "fig_old", "fig_never"])
+    _captured_before(root, "fig_old", tmp_path)
+    _corrupt_run_configs(root, newer=newer)
+    got = engine_probe.register_probed(
+        root,
+        "fig.py",
+        {"script": "fig.py", "entry": "__main__", "stems": ["fig"], "descriptors": []},
+    )
+    assert got["registered"] is True and "error" not in got
+    assert got["unlinked_stems"] == ["fig_old"]
+    assert _registry(root)["scripts"]["fig.py"]["stems"] == ["fig"]
+
+
+def test_a_failing_evidence_check_leaves_the_registry_bytes_untouched(tmp_path, monkeypatch):
+    """r4220769153：证据在注册表提交之前算完——它无论怎么失败，注册表文件字节都不变。"""
+    root = _project(tmp_path, "p")
+    _write_registry(root, ["fig", "fig_old"])
+    before = (root / "tavotto_registry.json").read_bytes()
+
+    def boom(*_a, **_k):
+        raise RuntimeError("evidence failed")
+
+    monkeypatch.setattr(engine_probe, "was_captured", boom)
+    with pytest.raises(RuntimeError):
+        engine_probe.register_probed(
+            root,
+            "fig.py",
+            {"script": "fig.py", "entry": "__main__", "stems": ["fig"], "descriptors": []},
+        )
+    assert (root / "tavotto_registry.json").read_bytes() == before
+
+
 def test_a_run_with_a_configuration_merges_and_replaces_nothing(tmp_path):
     root = _project(tmp_path, "p")
     _write_registry(root, ["fig", "fig_scaled"])

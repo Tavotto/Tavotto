@@ -569,6 +569,13 @@ def register_probed(
             # 无参数运行整条替换（T03 已知缺口）：替换之前这个脚本名下、这次没产出的图名会就此失去关联——多半是此前**带参数**
             # 产出的。记下来如实告诉用户（`unlinked_stems`），用原参数再运行一次即可并回来；不改注册表格式（T09b）
             before = [] if append else discover.registered_stems(figures_dir, script)
+            # 「替换掉了哪些此前真捕获过的图名」的证据在**注册表提交之前**算完：任何环节在这里失败，整次登记失败、
+            # 注册表字节不变——绝不能出现「端点报失败、注册表却已丢了旧 stem」（r4220769153）
+            unlinked = sorted(
+                s
+                for s in set(before) - set(result["stems"])
+                if was_captured(figures_dir, script, s)
+            )
             discover.register(
                 figures_dir,
                 script,
@@ -591,9 +598,6 @@ def register_probed(
             "registered": False,
             "error": _err(inputremap.ERROR_CHANGED, str(exc)),
         }
-    unlinked = sorted(
-        s for s in set(before) - set(result["stems"]) if was_captured(figures_dir, script, s)
-    )
     return {**result, "registered": True, **({"unlinked_stems": unlinked} if unlinked else {})}
 
 
@@ -603,10 +607,17 @@ def was_captured(figures_dir: str | Path, script: str, stem: str) -> bool:
     注册表里的图名不全是执行结果——打开项目时的静态扫描会把字面量 `savefig` 的名字先登记上（T00 deliberate-boundary），
     条件分支里的那张从没产出过。对它说「此前带其他参数生成的……已不再关联」是假话（T11：第一次无参数运行就报）。
     cache 被按体积回收过的旧图会漏报——宁可少说，不说假话。导入即扫描判「这个脚本已经连着可编辑的图」也用它
-    （`projscan._linked_scripts`），一份判据两处用。"""
+    （`projscan._linked_scripts`），一份判据两处用。
+
+    运行配置登记读不出 / 来自新版本（`RunConfigError`）时，带配置那几份变体当**没有证据**：这是「是否捕获过」的
+    证据判断，宁可少说，不能因此炸掉扫描或登记。它**不**放行任何执行——读不出配置却要按空 argv 运行，由执行侧的
+    `run_config_unreadable` 显式拒绝（那条不在这里）。"""
+    try:
+        configs = runconfig.configs_of(figures_dir, script)
+    except runconfig.RunConfigError:
+        configs = []
     ids = [figcapture.runtime_asset_id(script, stem)] + [
-        figcapture.runtime_asset_id(script, stem, cfg.id)
-        for cfg in runconfig.configs_of(figures_dir, script)
+        figcapture.runtime_asset_id(script, stem, cfg.id) for cfg in configs
     ]
     return any(runtimeasset.load_metadata(figures_dir, asset_id) is not None for asset_id in ids)
 
