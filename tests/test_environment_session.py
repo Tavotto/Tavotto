@@ -9,6 +9,7 @@
 # ruff: noqa: F811 — 夹具（client / fake_pool）从 test_preparation_api 导入复用，参数名与导入名相同
 from __future__ import annotations
 
+from support import envworld
 from tavotto.engine import deprepair, pool as engine_pool, prepsession, projectenv
 from test_preparation_api import (  # noqa: F401 — 夹具与替身复用，不重写第二套
     _open,
@@ -29,7 +30,7 @@ from test_preparation_session import (  # noqa: F401
 
 def _project_with_venv(tmp_path):
     root = _project(tmp_path, "p")
-    py = root / ".venv" / "bin" / "python"
+    py = envworld.venv_python(root / ".venv")
     py.parent.mkdir(parents=True)
     py.write_text("#!/bin/sh\n", "utf-8")
     (root / ".venv" / "pyvenv.cfg").write_text("home = /x\n", "utf-8")

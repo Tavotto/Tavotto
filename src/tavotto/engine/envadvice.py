@@ -83,6 +83,9 @@ BUILTIN_ID = "builtin"
 #: 候选是顺序检查的——取消 / 时限在两个候选之间生效，不会杀正在跑的那一个之外的东西。
 CHECK_MAX_CANDIDATES = 6
 CHECK_DEADLINE_S = 180.0
+#: 剩余预算低于它就不再起新的探测：几秒钟连解释器冷启动 + import matplotlib 都不够，起了只会得到一个
+#: 超时的「不可用」假结论。直接记 `deadline`（没检查 ≠ 检查过不行）。
+MIN_PROBE_BUDGET_S = 5.0
 SCOPE_PROJECT = "project"
 SCOPE_MACHINE = "machine"
 SCOPE_ALL = "all"
@@ -321,13 +324,15 @@ def check(
     deadline_s: float = CHECK_DEADLINE_S,
     cancel: threading.Event | None = None,
     probe: Callable[..., dict] | None = None,
+    clock: Callable[[], float] = time.monotonic,
 ) -> dict:
     """对**被点名范围**里的候选运行健康探测（这是起候选解释器的唯一入口），回更新后的建议 + 这次检查的账。
 
     * 范围：`ids` 点名的候选；没点名按 `scope`（默认只查项目自己的线索——用户自己的环境、最便宜）。内置 /
       默认链条不在其中（它不是候选解释器）。最多 `CHECK_MAX_CANDIDATES` 个，超出的列在 `skipped`；
     * `include_login_shell=True`：先问一次用户的登录 shell（读他的 rc 文件，所以只有这里会问），答案并进候选；
-    * 预算：整次 `deadline_s`、每个候选 `PROBE_TIMEOUT_S`；`cancel` 在两个候选之间生效（已经起的那个探测
+    * 预算：整次 `deadline_s`、每个候选 `PROBE_TIMEOUT_S`——**总时限同样约束正在起的那个探测**：单个探测的超时取
+      `min(PROBE_TIMEOUT_S, 剩余)`，剩余不足 `MIN_PROBE_BUDGET_S` 就不起，剩余候选记 `deadline`；`cancel` 在两个候选之间生效（已经起的那个探测
       跑完它自己的超时，不留孤儿——探测本身是 `subprocess.run`）；到限 / 取消的剩余候选记入 `skipped`；
     * 检查 ≠ 采用：这里不写项目设置。结论只进进程内缓存（键带环境代，路径被重建就对不上）。
     """
@@ -341,13 +346,15 @@ def check(
             raise CheckBusy(key)
         _running[key] = own
     try:
-        return _check(root, script, ids, scope, include_login_shell, deadline_s, own, probe)
+        return _check(root, script, ids, scope, include_login_shell, deadline_s, own, probe, clock)
     finally:
         with _lock:
             _running.pop(key, None)
 
 
-def _check(root, script, ids, scope, include_login_shell, deadline_s, cancel, probe) -> dict:
+def _check(
+    root, script, ids, scope, include_login_shell, deadline_s, cancel, probe, clock=time.monotonic
+) -> dict:
     if include_login_shell:
         userenvs.login_shell_pythons()  # 明确动作：问一次，答案进缓存，`_rows` 随后读得到
     probe_fn = probe or projectenv.probe_environment
@@ -363,7 +370,7 @@ def _check(root, script, ids, scope, include_login_shell, deadline_s, cancel, pr
             )
         )
     ]
-    started = time.monotonic()
+    started = clock()
     checked: list[str] = []
     skipped: list[dict] = []
     cancelled = False
@@ -371,7 +378,7 @@ def _check(root, script, ids, scope, include_login_shell, deadline_s, cancel, pr
         reason = ""
         if cancel.is_set():
             cancelled, reason = True, "cancelled"
-        elif time.monotonic() - started >= deadline_s:
+        elif deadline_s - (clock() - started) < MIN_PROBE_BUDGET_S:
             reason = "deadline"
         elif len(checked) >= CHECK_MAX_CANDIDATES:
             reason = "limit"
@@ -380,7 +387,8 @@ def _check(root, script, ids, scope, include_login_shell, deadline_s, cancel, pr
             continue
         python = row["_python"]
         generation = projectenv.environment_generation(python)
-        health = probe_fn(python)
+        remaining = deadline_s - (clock() - started)
+        health = probe_fn(python, timeout=min(projectenv.PROBE_TIMEOUT_S, remaining))
         _store_verdict(python, generation, health)
         checked.append(row["id"])
     return {

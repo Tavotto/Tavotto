@@ -4003,6 +4003,8 @@ export interface DependencyRepairPlan extends DependencyRequirementInfo {
   /** 这次授权真正要装的全部包（规范串）：新建第一代时多于用户点的那一个；老后端没有这个字段 */
   requirements?: string[]
   target_kind: 'project_venv' | 'tavotto_managed'
+  /** 这份计划的影响摘要（执行请求必须回显它；老后端没有） */
+  impact_digest?: string
   python: string
   creates_environment: boolean
   modifies_user_environment: boolean
@@ -4062,11 +4064,12 @@ export const createDependencyPlan = (body: {
     body: JSON.stringify(body),
   })
 
-export const installDependencyPlan = (planId: string) =>
+/** 执行单包修复计划：`impactDigest` 必填，是用户看到的那份影响的摘要（对不上后端回 409 dependency_impact_changed） */
+export const installDependencyPlan = (planId: string, impactDigest: string) =>
   jsonFetch<{ started: boolean } & DependencyProgress>('/api/engine/dependency/install', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ plan_id: planId }),
+    body: JSON.stringify({ plan_id: planId, impact_digest: impactDigest }),
   })
 
 export const cancelDependencyPlan = (planId: string) =>
@@ -4230,6 +4233,8 @@ export interface JointDependencyRepairPlan {
   network_required: boolean
   expires_at: number
   joint: JointDependencyPlan
+  /** 这份计划此刻的实际影响摘要（ADR 0115）；与 offer 里用户看到的那份比对。老后端没有 */
+  impact_digest?: string
   /** 这次授权包含先下载私有 Python（U05）；`replan` = 计划的事实是替身，供应后按真解释器重算 */
   private_python?: PrivatePythonOffer | null
   replan?: boolean
@@ -4251,11 +4256,15 @@ export const createJointDependencyPlan = (body: {
     body: JSON.stringify(body),
   })
 
-export const prepareJointDependencies = (planId: string) =>
+/**
+ * 执行一份联合计划。`impactDigest` 必填：用户**看到并确认**的那份影响摘要（offer.impact_digest）——后端核它与计划此刻的
+ * 实际影响一致（不一致 `dependency_impact_changed`，缺失 `dependency_impact_required`），不能只靠计划 id 或包名。
+ */
+export const prepareJointDependencies = (planId: string, impactDigest: string) =>
   jsonFetch<{ started: boolean } & DependencyProgress>('/api/engine/dependencies/prepare', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ plan_id: planId }),
+    body: JSON.stringify({ plan_id: planId, impact_digest: impactDigest }),
   })
 
 /** 取消；过了提交点（受管环境已切 active）回 accepted=false, reason=committed */
