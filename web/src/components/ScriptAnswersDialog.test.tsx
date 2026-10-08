@@ -626,6 +626,7 @@ describe('批量保存涉及多份配置：逐份真的重跑（Codex #816 P1）
     await flush()
     await flush()
     expect(mockProbe.mock.calls.map((c) => c[2])).toEqual([{ run_config: 'rc_a' }, { run_config: 'rc_b' }])
-    expect(useUiStore.getState().status?.tone).toBe('error')
+    expect(useUiStore.getState().statusTone).toBe('error')
+    expect(JSON.stringify(useUiStore.getState().status)).toContain('manageRerunFailed')
   })
 })
