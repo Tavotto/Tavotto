@@ -135,6 +135,7 @@ COMPAT_CODES = frozenset(
         "metadata_incomplete",
         "path_entries_not_followed",
         "metadata_scan_incomplete",
+        "layer_order_unresolved",
     }
 )
 
@@ -195,6 +196,9 @@ class _Dist:
         default_factory=set
     )  # RECORD 里有 `<top>/__init__.py` 的顶级包，或单文件 / 扩展模块
     metadata_ok: bool = True
+    # 只有 `top_level.txt`（没有可读 RECORD）的顶级名：从该层磁盘上的模块形状推出的
+    # 「regular」（包 / 单文件 / 扩展）/「namespace」（无 `__init__` 的目录）/「unknown」（推不出）
+    disk_shape: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -213,6 +217,9 @@ class Candidate:
     duplicate_versions: bool = False
     metadata_ok: bool = True
     order: int = 0
+    shape_unknown: bool = (
+        False  # 没有 RECORD、磁盘形状也推不出：不知道它是常规提供者还是 namespace portion
+    )
 
     @property
     def key(self) -> str:
@@ -238,6 +245,7 @@ class Lookup:
     module_present: bool  # site-packages 目录清单里有这个名字的包 / 模块 / 扩展
     complete: bool
     uncovered_paths: int
+    order_unresolved: bool = False  # 跨层谁遮蔽谁推不出（有候选的形状未知）：不替 Python 挑
 
 
 class Index:
@@ -296,7 +304,16 @@ class Index:
         # 按 Python PathFinder 的真实语义算遮蔽：沿 sys.path 第一个**常规**提供者（包 / 单文件 / 扩展）胜出——
         # 它之前的 namespace portion 不算提供者（被丢弃）、它之后的一切被遮蔽；没有常规提供者时所有 namespace
         # portion 都是提供者（跨层也一样，下层 portion 不被上层遮蔽）
+        # 形状未知的候选（只有 top_level.txt、磁盘上也推不出）可能是常规提供者也可能是 namespace portion：
+        # 最靠前的「可能常规」若是它，谁遮蔽谁就不确定——什么都不标遮蔽，并让解析器按歧义处理
         first_regular = min((c.order for c in cands if not c.namespace), default=None)
+        unresolved = (
+            first_regular is not None
+            and any(c.shape_unknown and c.order == first_regular for c in cands)
+            and any(c.order != first_regular for c in cands)
+        )
+        if unresolved:
+            first_regular = None
         if first_regular is not None:
             cands = [
                 replace(c, shadowed=True)
@@ -305,7 +322,7 @@ class Index:
                 for c in cands
             ]
         present = any(module in names for names in self._names)
-        return Lookup(tuple(cands), present, self.complete, self.uncovered_paths)
+        return Lookup(tuple(cands), present, self.complete, self.uncovered_paths, unresolved)
 
     def _merge(self, ds: list[_Dist], module: str, *, shadowed: bool, order: int) -> Candidate:
         first = ds[0]
@@ -316,7 +333,9 @@ class Index:
         if not evidence:
             evidence = {EV_NAME_ONLY}
         # 本模块在这个发行包里的所有提供者都没有 `<top>/__init__.py` 时，才说它是命名空间式的
-        namespace = EV_RECORD in evidence and module not in set().union(*(d.regular for d in ds))
+        kinds = [_shape_of(d, module) for d in ds]
+        namespace = all(k == "namespace" for k in kinds)
+        shape_unknown = not namespace and "regular" not in kinds
         provenance = first.provenance
         for d in ds:
             if d.provenance != PROV_INDEX:
@@ -336,7 +355,19 @@ class Index:
             duplicate_versions=len(versions) > 1,
             metadata_ok=all(d.metadata_ok for d in ds),
             order=order,
+            shape_unknown=shape_unknown,
         )
+
+
+def _shape_of(d: _Dist, module: str) -> str:
+    """这个发行包对 `module` 的提供形状：RECORD 说了算；只有 `top_level.txt` 的看磁盘（`disk_shape`）；
+    别的证据（finder / conda-meta / 目录名）一向按常规提供者算。"""
+    ev = d.modules.get(module, set())
+    if EV_RECORD in ev:
+        return "regular" if module in d.regular else "namespace"
+    if ev == {EV_TOP_LEVEL}:
+        return d.disk_shape.get(module, "unknown")
+    return "regular"
 
 
 # ---------------------------------------------------------------- 布局：从环境前缀静态推 site-packages
@@ -442,6 +473,7 @@ class _Reader:
         self.budget = budget
         self.complete = True
         self.uncovered = 0
+        self.kinds: dict[int, dict[str, set[str]]] = {}  # root.order → 顶级名 → {"dir"|"py"|"ext"}
 
     def note(self, code: str, root: SiteRoot, rel: str, *, scope: str = "file") -> None:
         self.budget.note(code, scope=scope, path="/".join(p for p in (root.rel, rel) if p))
@@ -630,6 +662,7 @@ def _list_root(
     egg_links: list[str] = []
     pths: list[str] = []
     names: set[str] = set()
+    kinds = rd.kinds.setdefault(root.order, {})
     try:
         it = os.scandir(root.path)
     except OSError:
@@ -666,13 +699,44 @@ def _list_root(
             elif stat.S_ISDIR(st.st_mode):
                 if _IDENT_RE.match(name):
                     names.add(name)
+                    kinds.setdefault(name, set()).add("dir")
             elif name.endswith(".py") and _IDENT_RE.match(name[:-3]):
                 names.add(name[:-3])
+                kinds.setdefault(name[:-3], set()).add("py")
             else:
                 m = _EXT_RE.match(name)
                 if m:
                     names.add(m.group(1))
+                    kinds.setdefault(m.group(1), set()).add("ext")
     return sorted(dist_infos), sorted(egg_infos), sorted(egg_links), sorted(pths), names
+
+
+_INIT_RE = re.compile(r"^__init__(?:\.py|\.pyc|(?:\.[A-Za-z0-9_-]+)*\.(?:so|pyd))$")
+MAX_PROBE_ENTRIES = 4096
+
+
+def _probe_shape(rd: _Reader, root: SiteRoot, module: str) -> str:
+    """没有 RECORD 时，从该层 site-packages 里 `module` 的磁盘形状推它是不是常规提供者（只看目录清单，不执行）。
+    FileFinder 的顺序：带 `__init__` 的包 > 单文件 / 扩展 > 无 `__init__` 的目录（namespace portion）。推不出回 "unknown"。"""
+    kinds = rd.kinds.get(root.order, {}).get(module)
+    if not kinds:
+        return "unknown"  # 元数据说有、磁盘上没有：不知道真实提供者在哪
+    if kinds & {"py", "ext"}:
+        return "regular"
+    full = os.path.join(root.path, module)
+    try:
+        if scanbudget.is_redirect(os.lstat(full)):
+            return "unknown"
+        it = os.scandir(full)
+    except OSError:
+        return "unknown"
+    with it:
+        for n, e in enumerate(it):
+            if n >= MAX_PROBE_ENTRIES or not rd.budget.charge_entry():
+                return "unknown"
+            if _INIT_RE.match(e.name):
+                return "regular"
+    return "namespace"
 
 
 def _read_dist_info(rd: _Reader, root: SiteRoot, entry: str, kind: str) -> _Dist | None:
@@ -902,6 +966,10 @@ def build_index(
                     )
                 )
         _apply_pth(rd, root, pths, dists)
+    for d in dists:
+        for m, ev in d.modules.items():
+            if ev == {EV_TOP_LEVEL}:
+                d.disk_shape[m] = _probe_shape(rd, roots[d.root], m)
     if prefix is not None:
         dists += _read_conda_meta(rd, os.path.normpath(os.fspath(prefix)), roots)
     index = Index(roots, dists, names)
@@ -1034,7 +1102,9 @@ def resolve_module(
         evidence += _dedupe(e for c in solid for e in c.evidence)
         if dec_req and dec_req in inst_keys:
             compat.append("declared_matches_installed_candidate")
-        if len(keys) > 1:
+        if look is not None and look.order_unresolved:
+            compat.append("layer_order_unresolved")
+        if len(keys) > 1 or (look is not None and look.order_unresolved):
             evidence.append(EV_MULTIPLE)
             return finish(
                 {

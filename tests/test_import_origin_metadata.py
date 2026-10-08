@@ -599,6 +599,10 @@ class TestSeveralProviders:
         )
         _dist(site, "numpy", "2.0.0", top="numpy\n")
         _dist(base_site, "numpy", "1.26.0", top="numpy\n")
+        _write(
+            site / "numpy" / "__init__.py"
+        )  # 只有 top_level.txt 时形状看磁盘：真实安装里包目录当然在
+        _write(base_site / "numpy" / "__init__.py")
         idx = _index(prefix, include_base=True)
         got = _scan(tmp_path, "import numpy\n", idx)["numpy"]
         assert got.observed_version == "2.0.0" and got.selected_distribution == "numpy"
@@ -671,6 +675,104 @@ class TestSeveralProviders:
         got = _scan(tmp_path, "import lyr\n", _index(prefix, include_base=True))["lyr"]
         assert got.distribution_status == "module_origin_ambiguous"
         assert [c["shadowed"] for c in got.distribution_candidates] == [False, False]
+
+    # ---- 只有 top_level.txt（没有可读 RECORD）的提供者跨层：形状看磁盘，推不出就不替 Python 挑 ----
+
+    @staticmethod
+    def _top_only_layer(site: Path, kind: str, tag: str) -> None:
+        """同 `_layer`，但元数据只有 `top_level.txt`。pkg / mod / ns / ext（扩展）/ none（磁盘上没有这个名字）。"""
+        files = {
+            "ns": ["lyr/part_{t}/__init__.py"],
+            "pkg": ["lyr/__init__.py"],
+            "mod": ["lyr.py"],
+            "ext": ["lyr.cpython-312-darwin.so"],
+            "none": [],
+        }[kind]
+        for f in files:
+            _write(site / f.format(t=tag), "")
+        _dist(site, f"dist-{tag}", "1", top="lyr\n")
+
+    @pytest.mark.parametrize("upper", ["ns", "pkg", "mod", "ext"])
+    @pytest.mark.parametrize("lower", ["ns", "pkg", "mod", "ext"])
+    def test_top_level_only_cross_layer_providers_match_the_real_interpreters_path_finder(
+        self, tmp_path, upper, lower
+    ):
+        base = tmp_path / "base"
+        base_site = base / SP_REL
+        base_site.mkdir(parents=True)
+        (base / "bin").mkdir()
+        prefix, site = _env(tmp_path)
+        _write(
+            prefix / "pyvenv.cfg", f"home = {base / 'bin'}\ninclude-system-site-packages = true\n"
+        )
+        self._top_only_layer(site, upper, "u")
+        self._top_only_layer(base_site, lower, "l")
+        idx = _index(prefix, include_base=True)
+        look = idx.lookup("lyr")
+        assert not look.order_unresolved
+        ours = {c.order for c in look.candidates if not c.shadowed}
+        if upper == "ext" or lower == "ext":
+            # 假扩展不是真共享库，真解释器加载会失败——这里只核我们的判定与「ns 不遮蔽 / 常规遮蔽下层」一致
+            assert ours == ({0, 1} if upper == lower == "ns" else {0} if upper != "ns" else {1})
+        else:
+            assert ours == self._real_providers([site, base_site])
+
+    def test_two_top_level_only_namespace_portions_are_both_providers_not_one_confirmed(
+        self, tmp_path
+    ):
+        base = tmp_path / "base"
+        base_site = base / SP_REL
+        base_site.mkdir(parents=True)
+        (base / "bin").mkdir()
+        prefix, site = _env(tmp_path)
+        _write(
+            prefix / "pyvenv.cfg", f"home = {base / 'bin'}\ninclude-system-site-packages = true\n"
+        )
+        self._top_only_layer(site, "ns", "u")
+        self._top_only_layer(base_site, "ns", "l")
+        got = _scan(tmp_path, "import lyr\n", _index(prefix, include_base=True))["lyr"]
+        assert got.distribution_status == "module_origin_ambiguous"
+        assert [c["shadowed"] for c in got.distribution_candidates] == [False, False]
+
+    @pytest.mark.parametrize("upper", ["none", "ns", "pkg"])
+    def test_a_top_level_only_provider_whose_shape_cannot_be_read_is_ambiguous_never_unique(
+        self, tmp_path, upper
+    ):
+        base = tmp_path / "base"
+        base_site = base / SP_REL
+        base_site.mkdir(parents=True)
+        (base / "bin").mkdir()
+        prefix, site = _env(tmp_path)
+        _write(
+            prefix / "pyvenv.cfg", f"home = {base / 'bin'}\ninclude-system-site-packages = true\n"
+        )
+        # 上层元数据说有 lyr、磁盘上却没有（或形状读不了）；下层是常规包
+        self._top_only_layer(site, "none", "u")
+        if upper == "pkg":
+            os.symlink(tmp_path, site / "lyr")  # 目录链接：拒绝跟进 = 形状推不出
+        elif upper == "ns":
+            (site / "lyr").mkdir()
+            os.chmod(site / "lyr", 0)
+        self._top_only_layer(base_site, "pkg", "l")
+        try:
+            idx = _index(prefix, include_base=True)
+            look = idx.lookup("lyr")
+            assert look.order_unresolved
+            assert not any(c.shadowed for c in look.candidates)
+            got = _scan(tmp_path, "import lyr\n", idx)["lyr"]
+            assert got.distribution_status == "module_origin_ambiguous"
+            assert "layer_order_unresolved" in got.compatibility
+        finally:
+            if upper == "ns":
+                os.chmod(site / "lyr", 0o755)
+
+    def test_a_single_top_level_only_provider_with_an_unknown_shape_is_still_the_one_candidate(
+        self, tmp_path
+    ):
+        prefix, site = _env(tmp_path)
+        self._top_only_layer(site, "none", "u")
+        look = _index(prefix).lookup("lyr")
+        assert not look.order_unresolved and len(look.candidates) == 1
 
     def test_two_versions_of_one_distribution_in_one_site_packages_are_reported_not_resolved(
         self, tmp_path
