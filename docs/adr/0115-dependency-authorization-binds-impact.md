@@ -31,7 +31,7 @@
 * 集合 / 目标 / 环境代 / 写入范围 / 私有 Python 下载任一变了摘要就变——旧同意**不覆盖**新增范围；以后新增一类影响要升 `IMPACT_VERSION`，
   旧版本摘要永远对不上；
 * 对不上 → `dependency_impact_changed`（HTTP 409；会话里 `preparation_impact_changed`），**认领之前、零副作用**，响应带此刻的实际影响让用户对着它重新确认；
-* 会改用户自己环境的动作（`modifies_user_environment`）必须**回显**它看到的摘要（`impact_digest`），光"点了一下"不够；使用（采用）环境不含修改权限，不变。`POST /api/engine/dependencies/prepare` 对所有计划都必填 `impact_digest`（缺 → 400 `dependency_impact_required`）。
+* 会改用户自己环境的动作（`modifies_user_environment`）必须**回显**它看到的摘要（`impact_digest`），光"点了一下"不够；使用（采用）环境不含修改权限，不变。`POST /api/engine/dependencies/prepare` 对所有计划都必填 `impact_digest`（缺 → 400 `dependency_impact_required`）。 单包 `POST /api/engine/dependency/install` 与 MCP `prepare_dependencies=`（`prepare_impact_digest`）同一道门：每一个会执行依赖变更的入口都要求并校验摘要，不止联合准备端点。
 
 ### 二、准备会话的 `prepare_dependencies` 动作
 

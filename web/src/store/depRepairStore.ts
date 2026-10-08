@@ -167,6 +167,12 @@ export interface RepairDisclosure {
   requirements?: string[]
   target_kind: 'tavotto_managed'
   private_python: PrivatePythonOffer | null
+  /**
+   * 用户看到的那份计划的影响摘要（卡片预读的计划 / 确认页上的计划）。有它就必须与新形成的计划**逐字相同**——
+   * 光比包名不够：次要依赖的约束（beta<2 → beta>=2）、环境代、写入范围变了，包名都不变，用户却没看过
+   * （Codex r4217992305）。没有 = 卡片没读过计划，没有可比的摘要，以新计划自己的摘要为准（用户点的就是它）
+   */
+  impact_digest?: string
 }
 
 /**
@@ -181,6 +187,8 @@ export const requirementKey = (requirement: string): string =>
 export function planMatchesDisclosure(plan: DependencyRepairPlan, seen: RepairDisclosure): boolean {
   if (plan.target_kind !== seen.target_kind || plan.modifies_user_environment) return false
   if (plan.requirement !== seen.requirement) return false
+  // 摘要变了 = 实际影响超出了用户看到的（约束 / 环境代 / 范围），哪怕包名一个没变
+  if (seen.impact_digest && plan.impact_digest !== seen.impact_digest) return false
   // 没说过全部清单 = 只披露了 `requirement` 这一个：计划里多出的任何包（脚本 / 声明在点击前多了一个、或 offer
   // 时算不出而计划时算得出）都不在授权之内，停在确认页。按包名比（extras / 版本写法不算另一个包）
   const allowed = new Set((seen.requirements ?? [seen.requirement]).map(requirementKey))
@@ -545,6 +553,8 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
           ...(plan.requirements && plan.requirements.length > 1 ? { requirements: plan.requirements } : {}),
           target_kind: 'tavotto_managed',
           private_python: plan.private_python ?? null,
+          // 重试沿用它：之后计划的影响再变（约束 / 环境代），同样回到确认页
+          ...(plan.impact_digest ? { impact_digest: plan.impact_digest } : {}),
         },
       })
     }
@@ -565,7 +575,8 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
           script: get().request?.script,
         },
       })
-      await installDependencyPlan(plan.plan_id)
+      // 带上**界面上这份计划**的摘要（确认页 / 一次授权里已逐字比对过的那份）：后端据此拒绝执行用户没看过的影响
+      await installDependencyPlan(plan.plan_id, plan.impact_digest ?? '')
       if (epoch !== projectEpoch) return
       set({ busy: false })
     } catch (e) {

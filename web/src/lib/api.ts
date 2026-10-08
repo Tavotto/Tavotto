@@ -4002,6 +4002,8 @@ export interface DependencyRepairPlan extends DependencyRequirementInfo {
   /** 这次授权真正要装的全部包（规范串）：新建第一代时多于用户点的那一个；老后端没有这个字段 */
   requirements?: string[]
   target_kind: 'project_venv' | 'tavotto_managed'
+  /** 这份计划的影响摘要（执行请求必须回显它；老后端没有） */
+  impact_digest?: string
   python: string
   creates_environment: boolean
   modifies_user_environment: boolean
@@ -4061,11 +4063,12 @@ export const createDependencyPlan = (body: {
     body: JSON.stringify(body),
   })
 
-export const installDependencyPlan = (planId: string) =>
+/** 执行单包修复计划：`impactDigest` 必填，是用户看到的那份影响的摘要（对不上后端回 409 dependency_impact_changed） */
+export const installDependencyPlan = (planId: string, impactDigest: string) =>
   jsonFetch<{ started: boolean } & DependencyProgress>('/api/engine/dependency/install', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ plan_id: planId }),
+    body: JSON.stringify({ plan_id: planId, impact_digest: impactDigest }),
   })
 
 export const cancelDependencyPlan = (planId: string) =>

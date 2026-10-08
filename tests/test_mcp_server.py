@@ -3911,8 +3911,8 @@ def test_open_with_prepare_dependencies_runs_the_same_transaction_then_opens(
         calls.append(("create", script, target_kind))
         return _Plan()
 
-    def _prepare(plan_id, on_event=None):
-        calls.append(("prepare", plan_id))
+    def _prepare(plan_id, on_event=None, *, claimed=False, confirmed_impact=None):
+        calls.append(("prepare", plan_id, confirmed_impact))
         return {
             "ok": True,
             "target_kind": "tavotto_managed",
@@ -3925,11 +3925,19 @@ def test_open_with_prepare_dependencies_runs_the_same_transaction_then_opens(
     out = _body(
         _call(
             "tavotto_open_figure",
-            {"project_path": str(project), "prepare_dependencies": "tavotto_managed"},
+            {
+                "project_path": str(project),
+                "prepare_dependencies": "tavotto_managed",
+                "prepare_impact_digest": "d" * 32,
+            },
         )
     )
     assert out["ok"] is True
-    assert calls == [("create", "fig1.py", "tavotto_managed"), ("prepare", "jp-1")]
+    # 用户授权时看到的摘要原样交给执行端核对（Codex r4217992305）
+    assert calls == [
+        ("create", "fig1.py", "tavotto_managed"),
+        ("prepare", "jp-1", "d" * 32),
+    ]
     assert out["prepared"] == {
         "target_kind": "tavotto_managed",
         "generation": "gabc",
@@ -3957,7 +3965,11 @@ def test_prepare_dependencies_target_is_a_closed_set_and_failures_are_structured
     monkeypatch.setattr(deprepair, "create_joint_plan", _blocked)
     result = _call(
         "tavotto_open_figure",
-        {"project_path": str(project), "prepare_dependencies": "tavotto_managed"},
+        {
+            "project_path": str(project),
+            "prepare_dependencies": "tavotto_managed",
+            "prepare_impact_digest": "d" * 32,
+        },
     )
     assert result["isError"] is True
     body = _body(result)
@@ -3983,6 +3995,57 @@ def test_prepare_dependencies_target_is_a_closed_set_and_failures_are_structured
                 "prepare_dependencies": "tavotto_managed",
             },
         )
+
+
+@pytest.mark.parametrize("target", ["tavotto_managed", "project_venv"])
+def test_prepare_dependencies_requires_and_binds_the_displayed_digest(
+    project, fake_pool, monkeypatch, target
+):
+    """Codex r4217992305：MCP 入口与 HTTP 同一道门——会改环境的目标缺摘要 → `dependency_impact_required`，
+    摘要与此刻计划对不上 → `dependency_impact_changed`（带此刻的摘要），两种都**一个字节没装**。"""
+    from tavotto.engine import deprepair
+
+    created: list = []
+    executed: list = []
+
+    class _Plan:
+        plan_id = "jp-2"
+        requirements = ("six==1.17.0",)
+        impact_digest = "a" * 32
+
+    def _create(root, script, *, target_kind, groups=None):
+        created.append(target_kind)
+        return _Plan()
+
+    def _prepare(plan_id, on_event=None, *, claimed=False, confirmed_impact=None):
+        if confirmed_impact != _Plan.impact_digest:
+            raise deprepair.RepairError(
+                deprepair.ERROR_IMPACT_CHANGED,
+                "影响变了",
+                impact={"installs": 1},
+                impact_digest=_Plan.impact_digest,
+            )
+        executed.append(plan_id)
+        return {"ok": True, "target_kind": target, "generation": "g", "installed": {}}
+
+    monkeypatch.setattr(deprepair, "create_joint_plan", _create)
+    monkeypatch.setattr(deprepair, "prepare", _prepare)
+    base = {"project_path": str(project), "prepare_dependencies": target}
+    for extra in ({}, {"prepare_impact_digest": ""}):
+        result = _call("tavotto_open_figure", {**base, **extra})
+        assert result["isError"] is True
+        assert _body(result)["code"] == "dependency_impact_required"
+    assert created == [] and executed == []  # 缺摘要连计划都不形成
+    result = _call("tavotto_open_figure", {**base, "prepare_impact_digest": "b" * 32})
+    assert result["isError"] is True
+    body = _body(result)
+    assert body["code"] == "dependency_impact_changed"
+    assert body["impact_digest"] == "a" * 32  # 把此刻的实际影响交回去，Codex 请用户重新确认
+    assert executed == []
+    with pytest.raises(rpc.RpcError):
+        _call("tavotto_open_figure", {**base, "prepare_impact_digest": 5})
+    ok = _body(_call("tavotto_open_figure", {**base, "prepare_impact_digest": "a" * 32}))
+    assert ok["ok"] is True and executed == ["jp-2"]
 
 
 def test_raster_old_worker_remains_viewable_without_fabricating_geometry(project, raster_pool):

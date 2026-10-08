@@ -881,3 +881,101 @@ class TestTaskDiagnostic:
         finally:
             for pid in [p for p, c in list(m.PROJECTS.items()) if str(c.path) == str(project)]:
                 m.close_project(pid, wait=True)
+
+
+# ===========================================================================
+# 执行依赖变更的入口：一律要求并校验用户看到的影响摘要（Codex r4217232854 / r4217992305）
+# ===========================================================================
+class TestEveryExecutionEntryRequiresTheDigest:
+    """同一类缺口抓到第二次：联合准备端点补了摘要，单包端点 `/dependency/install` 仍只认 plan_id——
+    点之前次要依赖的约束变了，包名不变，装进用户没看过的约束。入口清单与逐个用例见 `reports/814-r4.md`。"""
+
+    def _single_plan(self, client, project):
+        from tavotto import app as m
+
+        real_venv(project)
+        (project / "requirements.txt").write_text("tavotto-test-missing-dep\n", encoding="utf-8")
+        m.open_project(str(project))
+        resp = client.post(
+            "/api/engine/dependency/plan",
+            json={
+                "module": "tavotto_test_missing_dep",
+                "script": "figure.py",
+                "target": "project_venv",
+            },
+        )
+        assert resp.status_code == 200, resp.get_json()
+        return m, resp.get_json()["plan"]
+
+    def test_the_single_package_endpoint_requires_the_displayed_digest(
+        self, client, project, monkeypatch
+    ):
+        ran: list[str] = []
+        monkeypatch.setattr(
+            deprepair, "_run_install", lambda p, *a, **k: ran.append(p.plan_id) or {"ok": True}
+        )
+        m, plan = self._single_plan(client, project)
+        pid = plan["plan_id"]
+        assert plan["impact_digest"]
+        # 缺 / 空 / null / 非字符串：400，什么都没认领、没执行
+        for body in (
+            {"plan_id": pid},
+            {"plan_id": pid, "impact_digest": ""},
+            {"plan_id": pid, "impact_digest": None},
+            {"plan_id": pid, "impact_digest": 7},
+        ):
+            resp = client.post("/api/engine/dependency/install", json=body)
+            assert resp.status_code == 400, body
+            assert resp.get_json()["code"] == deprepair.ERROR_IMPACT_REQUIRED
+            assert not deprepair.is_running(pid)
+        # 用户看到的是另一份（例如次要依赖约束 beta<2 → beta>=2 之前的摘要）：409，仍然什么都没执行
+        resp = client.post(
+            "/api/engine/dependency/install", json={"plan_id": pid, "impact_digest": "d" * 32}
+        )
+        assert resp.status_code == 409
+        body = resp.get_json()
+        assert body["code"] == deprepair.ERROR_IMPACT_CHANGED
+        assert (
+            body["impact_digest"] == plan["impact_digest"]
+        )  # 把此刻的实际影响交回去，界面据此重新确认
+        assert not deprepair.is_running(pid)
+        assert ran == []
+        # 对的摘要才执行
+        ok = client.post(
+            "/api/engine/dependency/install",
+            json={"plan_id": pid, "impact_digest": plan["impact_digest"]},
+        )
+        assert ok.status_code == 200 and ok.get_json()["started"] is True
+        _wait_until(lambda: ran)
+        _wait_until(lambda: not deprepair.is_running(pid))
+
+    def test_every_dependency_executing_call_in_the_entry_layers_binds_the_digest(self):
+        """结构性不变量：app.py 与 MCP 桥里每一处调用 `install_async` / `prepare_async` / `prepare(` 的地方都必须
+        传 `confirmed_impact=`；起依赖作业的 `start_confirmed` 本身以摘要为必填位置参数。新增入口忘了摘要 → 红。"""
+        import ast
+
+        root = Path(deprepair.__file__).resolve().parents[3]
+        files = [
+            root / "src" / "tavotto" / "app.py",
+            root / "codex-plugin" / "mcp" / "tavotto_mcp" / "bridge.py",
+        ]
+        guarded = {"install_async", "prepare_async", "prepare", "install", "run_prepare"}
+        found: list[str] = []
+        bad: list[str] = []
+        for path in files:
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+                if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+                    continue
+                recv = node.func.value
+                if not (isinstance(recv, ast.Name) and recv.id == "engine_deprepair"):
+                    continue
+                if node.func.attr not in guarded:
+                    continue
+                found.append(f"{path.name}:{node.func.attr}")
+                if "confirmed_impact" not in {k.arg for k in node.keywords}:
+                    bad.append(f"{path.name}:{node.lineno} {node.func.attr}")
+        # 钉住扫描没有落空：三个已知调用点都被看到了
+        assert sorted(found) == sorted(
+            ["app.py:install_async", "app.py:prepare_async", "bridge.py:prepare"]
+        ), found
+        assert not bad, f"这些入口执行依赖变更却没绑定摘要: {bad}"
