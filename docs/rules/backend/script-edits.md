@@ -89,3 +89,7 @@
   三种实测 ENOENT 形态与归因、底座的拒绝 / 失败无残留 / 权限位 / 保留、HTTP 全流程与会话绑定、真 worker 的
   探路与 C++ 读取器、Agent 侧代码不许点名提交 / 复原端点的 AST 门禁）、`tests/test_mcp_server.py`
   （`recovery` 指向界面里的确认改写）。
+
+## 速查表原要点（#815 精简时迁入，原文照搬）
+
+- 只有用户在界面里看过 diff、勾选确认才写；两处备份落盘才替换；令牌绑会话 cookie，MCP / Agent 调不了；「判一次再写」整段持 `scriptlock.script_guard`，写脚本字节只经 `write_script`（持有者清单在 `scriptlock` 说明里）

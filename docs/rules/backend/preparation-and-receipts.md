@@ -237,3 +237,9 @@ input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/pr
 id = `plan_id` = 会话报告的 `provider.attempt_id`）。白名单：目标类别、argv 个数与 `rc_…` 引用、计划那一刻的环境来源 / 版本、
 阶段轨迹（不含 `facts`）、回执的控制面 / 来源 / 完整度、`error.code` + 闭集 `reason`、取消事实、起止时间；**不含**脚本路径、
 入口名、解释器与项目路径、`error.message`、`note`、`required_input` 内容。完整规则见 `diagnostics.md`「任务绑定诊断」。
+
+## 速查表原要点（#815 精简时迁入，原文照搬）
+
+速查表那一格为让 Codex 自动拼接留出余量而收成索引；下面是当时的全文，与上文同等有效。
+
+- 计划与观测分开；执行只走 `pool.build`；过期计划 `preparation_plan_stale` 不执行；会话 phase 纯派生、`unknown` 不当通过、动作在会话锁内一次认领
