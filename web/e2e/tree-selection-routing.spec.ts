@@ -163,6 +163,11 @@ for (const width of [820, 1100, 1366]) {
       await assertSelection(page, [title], false)
       await expect(page.locator('[data-inspector-panel]')).toHaveAttribute('data-state', 'open')
       await page.setViewportSize({ width: 1100, height: 900 })
+      // Resizing returns before the native resize event has settled the sidebar state.
+      // Both panes were open in wide mode; medium first closes the tree by design.
+      await expect(rail(page)).toHaveAttribute('aria-expanded', 'false')
+      await expect(page.locator('[data-left-drawer]')).toHaveCount(0)
+      await expect(page.locator('[data-inspector-panel]')).toHaveAttribute('data-state', 'open')
       await openTree(page)
       await row(page, title).click()
       await assertSelection(page, [title], exclusive)
