@@ -40,6 +40,11 @@ import { ScriptInputDialog } from '@/components/ScriptInputDialog'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useProjectPreparationStore } from '@/store/projectPreparationStore'
 import { useRenderStore } from '@/store/renderStore'
+import { useDocumentStore } from '@/store/documentStore'
+import { useEnvStore } from '@/store/envStore'
+import { renderKeyOf } from '@/store/renderStore'
+import { seedExactRender } from '@/test/renderFixtures'
+import type { PanelObject } from '@/types/document'
 import { useScriptInputStore } from '@/store/scriptInputStore'
 import { useUiStore } from '@/store/uiStore'
 import { addRuntimePanelToCanvas, openFastEdit } from '@/store/workspace'
@@ -264,7 +269,27 @@ beforeEach(() => {
   useProjectPreparationStore.getState().clear()
   useScriptInputStore.setState({ queue: [], presenters: [], busy: false, error: null })
   useRenderStore.setState({ byKey: {} })
+  useDocumentStore.setState((st) => ({ doc: { ...st.doc, objects: [] } }))
+  // 入口动作做完之后，画布上有这张图的面板（真实实现由 `addRuntimePanelToCanvas` / `openFastEdit` 完成）
+  vi.mocked(openFastEdit).mockImplementation((id: string) => {
+    putPanel(id)
+    return 'editing'
+  })
+  vi.mocked(addRuntimePanelToCanvas).mockImplementation(((d: CapturedFigureDescriptor) => putPanel(d.asset_id)) as never)
 })
+
+const panelFor = (fileId: string): PanelObject =>
+  ({
+    id: `panel-${fileId}`, type: 'panel', x: 0, y: 0, w: 100, h: 80, fileId, fileKind: 'png',
+    nativeW: 100, nativeH: 80, script: 'plot.py', overrides: [],
+  }) as unknown as PanelObject
+function putPanel(fileId: string): PanelObject {
+  const p = panelFor(fileId)
+  useDocumentStore.setState((st) => ({
+    doc: { ...st.doc, objects: [...st.doc.objects.filter((o) => o.id !== p.id), p] },
+  }))
+  return p
+}
 
 afterEach(async () => {
   await act(async () => root?.unmount())
@@ -359,19 +384,59 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
     expect(vi.mocked(probeScript)).not.toHaveBeenCalled()
     expect(mockCreate).toHaveBeenCalledTimes(1) // 只有打开时那一次只读检查
     expect(panel().dataset.prepState).toBe('edit_opening')
-    await act(async () => {
-      useRenderStore.setState({
-        byKey: {
-          [`runtime:plot.py#a`]: {
-            ...(useRenderStore.getState().byKey['x'] ?? {}),
-            fileId: 'runtime:plot.py#a',
-            status: 'ready',
-            manifest: { elements: [] } as never,
-          } as never,
-        },
-      })
-    })
+    await act(async () => seedExactRender(panelFor('runtime:plot.py#a'), { elements: [] } as never))
     expect(panel().dataset.prepState).toBe('edit_ready')
+  })
+})
+
+describe('「已进入编辑」只认入口动作创建的那个面板的精确新渲染', () => {
+  it('markStale() 留下的旧渲染、同文件别的变体，都不算；该键上非 stale 的精确 manifest 才算', async () => {
+    await mount()
+    await openWith(report(STATES.completed))
+    const stalePanel = panelFor('runtime:plot.py#a')
+    // 点击之前，画布上这张图已经有一份被 markStale() 留下的旧渲染，以及一个别的 override 变体的就绪渲染
+    useRenderStore.getState().patch(renderKeyOf(stalePanel), {
+      fileId: 'runtime:plot.py#a', status: 'ready', manifest: { elements: [] } as never, stale: true,
+      lastPatches: '[]', wantPatches: '[]',
+    })
+    useRenderStore.getState().patch('runtime:plot.py#a|other-variant', {
+      fileId: 'runtime:plot.py#a', status: 'ready', manifest: { elements: [] } as never, stale: false,
+      lastPatches: '[{"x":1}]', wantPatches: '[{"x":1}]',
+    })
+    await act(async () => primary()!.click())
+    expect(panel().dataset.prepState).toBe('edit_opening')
+    // 新渲染到了（同一键上非 stale、与 overrides 对得上）才说已进入编辑
+    await act(async () => seedExactRender(stalePanel, { elements: [] } as never))
+    expect(panel().dataset.prepState).toBe('edit_ready')
+  })
+})
+
+describe('「改用内置环境」只在需求允许选环境时给', () => {
+  const lockedEnv = () => {
+    const base = STATES.env.requirements![0] as { payload: { decision: Record<string, unknown> } }
+    return {
+      ...STATES.env,
+      requirements: [{ ...base, payload: { ...base.payload, decision: { ...base.payload.decision, locked_by: { source: 'global' } } } }],
+    } as Partial<PreparationReport>
+  }
+
+  it('locked_by 在：详情里没有这个按钮（点了只会丢掉项目偏好而环境不变）', async () => {
+    await mount()
+    await openWith(report(lockedEnv()))
+    const labels = Array.from(panel().querySelectorAll('button')).map((b) => b.textContent)
+    expect(labels).not.toContain('改用内置环境')
+  })
+
+  it('没锁时有；设置失败要显示出来', async () => {
+    await mount()
+    await openWith(report(STATES.env))
+    const btn = panel().querySelector('[data-prep-use-builtin]') as HTMLButtonElement
+    expect(btn).not.toBeNull()
+    const spy = vi.spyOn(useEnvStore.getState(), 'setProjectPython').mockResolvedValueOnce('设置失败了')
+    useEnvStore.setState({ setProjectPython: spy as never })
+    await act(async () => btn.click())
+    expect(spy).toHaveBeenCalledWith(null)
+    expect(panel().querySelector('[data-prep-env-error]')?.textContent).toBe('设置失败了')
   })
 })
 

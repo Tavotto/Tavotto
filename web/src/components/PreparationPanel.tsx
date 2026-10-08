@@ -13,9 +13,11 @@ import {
   draftDiffers,
   scriptTarget,
   useProjectPreparationStore,
+  type EditRender,
   type PrepEntry,
 } from '@/store/projectPreparationStore'
-import { useRenderStore } from '@/store/renderStore'
+import { exactPanelRender, renderKeyOf, useRenderStore } from '@/store/renderStore'
+import { findFigurePanel } from '@/store/documentStore'
 import { useScriptArgvStore } from '@/store/scriptArgvStore'
 import { useScriptInputStore } from '@/store/scriptInputStore'
 import { useUiStore } from '@/store/uiStore'
@@ -32,10 +34,31 @@ const pt = (key: string, values?: Record<string, unknown>) =>
 /** 展示面的名字（`scriptInputStore.claimPresentation`）：面板挂着且正展示那一问时，原对话框让开 */
 const SURFACE = 'prep-panel'
 
-/** 加进画布的图首次编辑渲染好了没有：渲染态里那张图有了精确 manifest（这是前端自己观察到的事实，不是后端判据） */
-function useEditReady(ids: string[]): boolean {
+/**
+ * 入口动作为这张图创建 / 复用的面板与渲染键（动作做完、面板已在文档里的那一刻记下）。
+ * 文档里找不到面板就没有可观察的渲染——不猜。
+ */
+function editRenderOf(assetId: string): EditRender | undefined {
+  const found = findFigurePanel(assetId)
+  return found ? { panelId: found.panel.id, renderKey: renderKeyOf(found.panel) } : undefined
+}
+
+/** 记入编辑记录：资产 id + 它在画布上那个面板的渲染键 */
+function noteEditingFor(entryKey: string, assetId: string): void {
+  useProjectPreparationStore.getState().noteEditing(entryKey, assetId, editRenderOf(assetId))
+}
+
+/**
+ * 加进画布的图首次编辑渲染好了没有（这是前端自己观察到的事实，不是后端判据）：只认入口动作记下的那个面板、
+ * 那把渲染键上的**非 stale 精确 manifest**（`exactPanelRender`）。按文件 id 扫会把 `markStale()` 留下的旧渲染、
+ * 或同一文件别的 override 变体当成这一次。
+ */
+function useEditReady(renders: Record<string, EditRender>): boolean {
   return useRenderStore((s) =>
-    ids.some((id) => Object.values(s.byKey).some((r) => r.fileId === id && r.status === 'ready' && r.manifest !== null)),
+    Object.entries(renders).some(([assetId, r]) => {
+      const found = findFigurePanel(assetId, r.panelId)
+      return !!found && renderKeyOf(found.panel) === r.renderKey && exactPanelRender(s, found.panel) !== null
+    }),
   )
 }
 
@@ -65,7 +88,7 @@ export function PreparationPanel() {
   const entry = useProjectPreparationStore((s) => (s.focus ? s.entries[s.focus] : undefined))
   // 草稿变了要重新渲染（参数改了 → 「按新参数检查」）
   useScriptArgvStore((s) => s.drafts)
-  const editReady = useEditReady(entry?.editing ?? [])
+  const editReady = useEditReady(entry?.editRenders ?? {})
   if (!open || !focus || !entry) return null
   const argsChanged = draftDiffers(entry.target)
   const v = prepView(entry, { argsChanged, editReady })
@@ -115,7 +138,7 @@ function PanelBody({ entry, view }: { entry: PrepEntry; view: PrepView }) {
           addRuntimePanelToCanvas(d)
         }
         openFastEdit(d.asset_id)
-        store.noteEditing(entry.key, d.asset_id)
+        noteEditingFor(entry.key, d.asset_id)
         return
       }
       case 'reopen':
@@ -179,7 +202,7 @@ function PanelBody({ entry, view }: { entry: PrepEntry; view: PrepView }) {
           dropped={0}
           open={resultsOpen}
           onOpenChange={setResultsOpen}
-          onAdded={(d) => useProjectPreparationStore.getState().noteEditing(entry.key, d.asset_id)}
+          onAdded={(d) => noteEditingFor(entry.key, d.asset_id)}
         />
       )}
     </section>
@@ -240,6 +263,9 @@ function PanelDetails({ entry, view }: { entry: PrepEntry; view: PrepView }) {
   useTranslation(['workspace', 'errors'])
   const report = entry.report
   const store = useProjectPreparationStore.getState()
+  const [envError, setEnvError] = useState<string | null>(null)
+  // 报告换了（新修订 / 新观察）就把上一次「改用内置」的失败收起
+  useEffect(() => setEnvError(null), [report?.config_revision, report?.observation_seq])
   const primary = view.primary && view.primary.kind === 'action' ? view.primary.action : null
   const secondary = (['recheck', 'cancel'] as const).filter(
     (k) => k !== primary && report?.actions.some((a) => a.kind === k),
@@ -276,15 +302,26 @@ function PanelDetails({ entry, view }: { entry: PrepEntry; view: PrepView }) {
             </span>
           </div>
         )}
-        {env && (
-          <div>
+        {/* 全局显式解释器压着（`locked_by`）时选环境不会生效：不给这个动作（点了只会丢掉项目原偏好而环境不变） */}
+        {env && !env.payload?.decision?.locked_by && (
+          <div className="flex flex-col gap-1">
             <Button
               variant="secondary"
               size="sm"
-              onClick={() => void useEnvStore.getState().setProjectPython(null)}
+              data-prep-use-builtin
+              onClick={async () => {
+                setEnvError(null)
+                const err = await useEnvStore.getState().setProjectPython(null)
+                if (err) setEnvError(err)
+              }}
             >
               {pt('btn.useBuiltin')}
             </Button>
+            {envError && (
+              <p className="text-danger" data-prep-env-error>
+                {envError}
+              </p>
+            )}
           </div>
         )}
         {!view.argsOpen && !('id' in entry.target) && <ScriptArgvEditor script={entry.target.script} />}

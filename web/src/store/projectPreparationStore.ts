@@ -71,6 +71,16 @@ export interface PrepEntry {
   pending: PreparationActionKind | 'check' | null
   /** 用户点「进入编辑」加进画布的图（`first_edit_ready` 由渲染态观察，不是后端事实） */
   editing: string[]
+  /**
+   * 入口动作为每张图创建 / 复用的面板与渲染键：「编辑渲染可用」只认这把键的非 stale 精确 manifest
+   * （按文件 id 扫会把 `markStale()` 留下的旧渲染、别的 override 变体当成这一次）。
+   */
+  editRenders: Record<string, EditRender>
+}
+
+export interface EditRender {
+  panelId: string
+  renderKey: string
 }
 
 interface PreparationState {
@@ -91,8 +101,8 @@ interface PreparationState {
   act: (key: string, kind: PreparationActionKind) => Promise<void>
   /** 环境 / 运行目录 / 数据位置答完了：空闲的会话只读地重新检查（不运行） */
   recheckIdle: () => void
-  /** 「进入编辑」：记下加进画布的那张图（呈现层用它观察首次编辑渲染） */
-  noteEditing: (key: string, assetId: string) => void
+  /** 「进入编辑」：记下加进画布的那张图与它的面板 / 渲染键（呈现层用它观察首次编辑渲染） */
+  noteEditing: (key: string, assetId: string, render?: EditRender) => void
   /** 换项目：属于旧项目的一切原地丢掉，在途响应失去落地资格；**后端什么都不取消** */
   clear: () => void
 }
@@ -205,11 +215,26 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
     if (e.report && e.report.session_id !== report.session_id && !opts?.session) return
     if (!newer(e.report, report)) return
     const before = e.report
+    // 同一目标的后端状态前进了（更高修订 / 换了会话 / 开了新一轮尝试）：上一轮的「进入编辑」记录属于旧结果，
+    // 不许让新一轮跑完的 `completed` 把旧资产当成当前结果、压掉「进入编辑」
+    const newRound =
+      !!before &&
+      (before.session_id !== report.session_id ||
+        report.config_revision > before.config_revision ||
+        (report.provider.attempt_id ?? null) !== (before.provider.attempt_id ?? null))
+    const attemptChanged =
+      !!before &&
+      before.session_id === report.session_id &&
+      (report.provider.attempt_id ?? null) !== (before.provider.attempt_id ?? null)
     // 动态 import 之后项目 / 代可能已经换了：回调带着发起时的归属，落地前复核
     const owner: Owner = { epoch: get().epoch, pj: e.pj }
     // `rejection` 不在这里清：被拒之后重读到的新修订正是要配着那一句看的；下一次动作 / 重新打开才收起它
-    patch(key, () => ({ report, connection: 'ok' }))
-    if (report.phase === 'completed' && before?.phase !== 'completed') void onCompleted(report, owner)
+    patch(key, () => ({
+      report,
+      connection: 'ok',
+      ...(newRound ? { editing: [], editRenders: {}, ...(before?.session_id === report.session_id ? { restarted: false } : {}) } : {}),
+    }))
+    if (report.phase === 'completed' && (before?.phase !== 'completed' || attemptChanged)) void onCompleted(report, owner)
     // 同一会话里的依赖作业刚装完（T09b）：画布上因「要先准备依赖」停着的渲染与原授权框作答之后一样重排——同一份
     // 需求两个展示面，下游效果只有一种（重排的是渲染请求，不是脚本首跑；首跑仍由用户点报告里的 run）
     const depDone = (r: PreparationReport | null) =>
@@ -295,6 +320,7 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
             pending: null,
             // 「进入编辑」的记录属于那份目标的结果：换了参数就是另一批图，旧图的编辑不许混进新结果的判断
             editing: sameTarget ? (prev?.editing ?? []) : [],
+            editRenders: sameTarget ? (prev?.editRenders ?? {}) : {},
           },
         },
       }))
@@ -404,8 +430,11 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
       }
     },
 
-    noteEditing: (key, assetId) =>
-      patch(key, (e) => ({ editing: e.editing.includes(assetId) ? e.editing : [...e.editing, assetId] })),
+    noteEditing: (key, assetId, render) =>
+      patch(key, (e) => ({
+        editing: e.editing.includes(assetId) ? e.editing : [...e.editing, assetId],
+        editRenders: render ? { ...e.editRenders, [assetId]: render } : e.editRenders,
+      })),
 
     clear: () => {
       stopAllTimers()
