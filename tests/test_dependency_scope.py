@@ -352,3 +352,65 @@ class TestSessionReport:
             for pid in [p for p, c in list(m.PROJECTS.items()) if str(c.path) == str(project)]:
                 m.close_project(pid, wait=True)
             prepsession.SESSIONS.reset_for_tests()
+
+
+class TestSwitchDisclosureCoversConstraints:
+    """Codex #814 r4218254708：换成本作用域的披露（`changes`）必须由 pip 实际收到的需求**与**约束一起算出。"""
+
+    def test_a_constraint_alone_that_the_ledger_violates_is_disclosed_as_a_change(self, two_scopes):
+        import dataclasses
+
+        project = two_scopes
+        # 账上：beta 1.0（为 a 装的）。b 的需求里 beta 没有版本，版本要求只在约束里（>=2）
+        _scope(project, "b", f"{BETA[0]}\n{GAMMA[0]}\n", [BETA[1], GAMMA[1]])
+        depplan.reset_cache()
+        joint, _kind, _python = deprepair.joint_plan_for(
+            project, "b/figure.py", scope_policy=deprepair.SCOPE_POLICY_SWITCH
+        )
+        assert joint.status == depplan.STATUS_READY
+        joint = dataclasses.replace(joint, constraints=(f"{BETA[0]}>=2",))
+        impact = deprepair.offer_impact(
+            str(project),
+            joint,
+            deprepair.TARGET_MANAGED,
+            managedenv.python_of(project) or "",
+            deprepair.SCOPE_POLICY_SWITCH,
+        )
+        assert impact["constraints"] == [f"{BETA[0]}>=2"]
+        assert impact["changes"] == ["tavotto-test-beta"]  # pip 会把 1.0 换成 >=2
+        # 同一份计划去掉约束，披露不同（约束进了摘要）
+        bare = deprepair.offer_impact(
+            str(project),
+            dataclasses.replace(joint, constraints=()),
+            deprepair.TARGET_MANAGED,
+            managedenv.python_of(project) or "",
+            deprepair.SCOPE_POLICY_SWITCH,
+        )
+        assert bare["changes"] == []
+        assert deprepair.impact_digest(bare) != deprepair.impact_digest(impact)
+
+    def test_the_bound_plan_discloses_the_same_changes_as_the_offer(self, two_scopes, monkeypatch):
+        """绑定出的计划（`create_joint_plan`）与跑前的门走同一个 `_effects`：约束同样进 drops/changes。"""
+        project = two_scopes
+        _scope(project, "b", f"{BETA[0]}\n{GAMMA[0]}\n", [BETA[1], GAMMA[1]])
+        depplan.reset_cache()
+        real = deprepair._with_scope_check
+
+        def with_constraint(*a, **kw):
+            import dataclasses
+
+            joint = real(*a, **kw)
+            return dataclasses.replace(joint, constraints=(f"{BETA[0]}>=2",))
+
+        monkeypatch.setattr(deprepair, "_with_scope_check", with_constraint)
+        joint, kind, python = deprepair.joint_plan_for(
+            project, "b/figure.py", scope_policy=deprepair.SCOPE_POLICY_SWITCH
+        )
+        offered = deprepair.offer_impact(
+            str(project), joint, kind, python, deprepair.SCOPE_POLICY_SWITCH
+        )
+        plan = deprepair.create_joint_plan(
+            project, "b/figure.py", scope_policy=deprepair.SCOPE_POLICY_SWITCH
+        )
+        assert plan.impact["changes"] == ["tavotto-test-beta"]
+        assert offered == plan.impact and deprepair.impact_digest(offered) == plan.impact_digest

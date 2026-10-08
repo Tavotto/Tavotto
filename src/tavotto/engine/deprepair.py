@@ -215,6 +215,21 @@ class _Widened:
 
 
 @dataclasses.dataclass(frozen=True)
+class PipInputs:
+    """交给 pip 的全部输入——**披露（`impact`）与执行（`_GenerationJob` / 原地 pip）读的是同一份**。
+
+    以前 `impact` 与执行各自从计划字段拼一遍，约束漏进披露三次（r4217… / r4218254708 一族）。现在每种计划
+    只有 `pip_inputs` 这一处决定「pip 会收到什么」：影响摘要从它派生，执行端的作业也从它构造；
+    再加一个输入（索引来源、额外参数……）只能加在这里，两边同时看见。"""
+
+    requirements: tuple[str, ...]
+    constraints: tuple[str, ...]
+    hashes: dict
+    require_hashes: bool
+    adapter: tuple[str, ...]
+
+
+@dataclasses.dataclass(frozen=True)
 class RepairPlan:
     """一次修复的完整描述——**执行端只认它，不读请求体里的任何别的字段**。
 
@@ -247,16 +262,30 @@ class RepairPlan:
     selection: tuple = ()
 
     @property
+    def pip_inputs(self) -> PipInputs:
+        """pip 会收到的全部输入（单包 = 只有那一条 + 联合求解出的约束；披露与执行共用，见 `PipInputs`）。"""
+        wide = self.widened if self.target_kind == TARGET_MANAGED else None
+        return PipInputs(
+            requirements=self.requirements,
+            constraints=tuple(wide.constraints) if wide is not None else (),
+            hashes={},
+            require_hashes=False,
+            adapter=tuple(depplan.ADAPTER_REQUIREMENTS)
+            if self.target_kind == TARGET_MANAGED
+            else (),
+        )
+
+    @property
     def impact(self) -> dict:
-        """这份授权的实际影响（`impact_of`）；摘要见 `impact_digest`。"""
+        """这份授权的实际影响（`impact_of`）；摘要见 `impact_digest`。输入集合来自 `pip_inputs`。"""
         wide = self.widened
-        managed = self.target_kind == TARGET_MANAGED
+        pi = self.pip_inputs
         return impact_of(
             target_kind=self.target_kind,
-            requirements=self.requirements,
-            constraints=wide.constraints if wide is not None else (),
-            require_hashes=bool(wide.hashes) if wide is not None else False,
-            adapter=depplan.ADAPTER_REQUIREMENTS if managed else (),
+            requirements=pi.requirements,
+            constraints=pi.constraints,
+            require_hashes=pi.require_hashes,
+            adapter=pi.adapter,
             groups=wide.groups if wide is not None else (),
             creates_environment=self.creates_environment,
             private_python=self.private_python,
@@ -550,7 +579,7 @@ def offer_impact(root: str, joint, kind: str, python: str, scope_policy: str = "
         private_python=private,
         env_fingerprint=_fingerprint(kind, bound if kind == TARGET_MANAGED else python, root),
         scope_policy=scope_policy,
-        **_effects(root, joint.requirements, scope_policy),
+        **_effects(root, joint.requirements, joint.constraints, scope_policy),
     )
 
 
@@ -678,18 +707,34 @@ def _with_scope_check(
     )
 
 
-def _switch_effects(root: str, requirements) -> tuple[tuple[str, ...], tuple[str, ...]]:
+def _switch_effects(
+    root: str, requirements, constraints=()
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """换成本作用域时对账上现有内容的影响 `(drops, changes)`（规范化名）：`drops` = 不在新集合里、不再出现在
     active 环境里的包；`changes` = 新集合里还有、但账上记的版本不满足新声明、所以版本会变的包。都要告诉用户——
-    别的作用域的脚本下次在新环境里会缺它们 / 拿到另一个版本。"""
+    别的作用域的脚本下次在新环境里会缺它们 / 拿到另一个版本。
+
+    「新声明」= pip 实际会收到的 `-r` 需求**与** `-c` 约束一起（Codex #814 r4218254708）：需求写得没有版本、
+    约束写 `beta>=2` 而账上是 `beta==1` 时，pip 会把它换成 >=2，披露就必须说出来。约束只收紧"装进来的包"，
+    所以只对需求里出现的名字生效（约束里单独出现的名字 pip 不会因它而装）。"""
     requirements_mod, _markers, specifiers, _utils, _version = depresolve._pkg()
-    wanted: dict[str, str] = {}
+    wanted: dict[str, list[str]] = {}
     for text in requirements:
         try:
             req = requirements_mod.Requirement(text)
         except Exception:  # noqa: BLE001 — 认不出的串别的闸会拦
             continue
-        wanted[depresolve.normalize_distribution(req.name)] = str(req.specifier)
+        wanted.setdefault(depresolve.normalize_distribution(req.name), []).append(
+            str(req.specifier)
+        )
+    for text in constraints:
+        try:
+            con = requirements_mod.Requirement(text)
+        except Exception:  # noqa: BLE001 — 认不出的串别的闸会拦
+            continue
+        name = depresolve.normalize_distribution(con.name)
+        if name in wanted:
+            wanted[name].append(str(con.specifier))
     drops: set[str] = set()
     changes: set[str] = set()
     for entry in managedenv.ledger_entries(root):
@@ -699,21 +744,27 @@ def _switch_effects(root: str, requirements) -> tuple[tuple[str, ...], tuple[str
         if name not in wanted:
             drops.add(name)
             continue
-        spec, version = wanted[name], str(entry.get("resolved_version") or "")
-        if spec and version:
+        version = str(entry.get("resolved_version") or "")
+        if not version:
+            continue
+        for spec in wanted[name]:
+            if not spec:
+                continue
             try:
                 if not specifiers.SpecifierSet(spec).contains(version, prereleases=True):
                     changes.add(name)
+                    break
             except specifiers.InvalidSpecifier:
                 continue
     return tuple(sorted(drops)), tuple(sorted(changes))
 
 
-def _effects(root: str, requirements, scope_policy: str) -> dict:
-    """`impact_of` 的 `drops` / `changes` 两个参数（只有"换成本作用域"才有）。"""
+def _effects(root: str, requirements, constraints, scope_policy: str) -> dict:
+    """`impact_of` 的 `drops` / `changes` 两个参数（只有"换成本作用域"才有）。需求与约束都要给——
+    它们是 pip 收到的全部输入（见 `_switch_effects`）。"""
     if scope_policy != SCOPE_POLICY_SWITCH:
         return {"drops": (), "changes": ()}
-    drops, changes = _switch_effects(root, requirements)
+    drops, changes = _switch_effects(root, requirements, constraints)
     return {"drops": drops, "changes": changes}
 
 
@@ -1318,14 +1369,15 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
         # 验完再切 active。这里不再往 active 那一代原地 pip。从空 venv 新建第一代时集合是脚本开跑
         # 要的全部（`plan.widened`）；往已有账上加一个包时 delta 只有那一条。
         wide = plan.widened
+        pi = plan.pip_inputs
         job = _GenerationJob(
             progress_id=plan.plan_id,
             project=project,
             script=script,
-            delta=plan.requirements,
-            constraints=wide.constraints if wide else (),
-            hashes={},
-            require_hashes=False,
+            delta=pi.requirements,
+            constraints=pi.constraints,
+            hashes=pi.hashes,
+            require_hashes=pi.require_hashes,
             needed_imports=wide.needed_imports
             if wide
             else ((req.import_name,) if req.import_name else ()),
@@ -1404,9 +1456,11 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
     if already:
         raise RepairError(ERROR_ALREADY_ATTEMPTED, "同一个环境上的同一个需求这一轮已经装过了")
     _emit(plan.plan_id, STATE_INSTALLING, on_event, plan=plan)
+    # 项目 venv 原地：pip 只收到这一条需求（没有约束文件）——`pip_inputs` 也只披露这一条
+    (in_place_requirement,) = plan.pip_inputs.requirements
     code, out = _pip_install(
         python,
-        req.requirement(),
+        in_place_requirement,
         cancel_ev,
         lambda text: _append_log(plan.plan_id, text, on_event),
         on_mirror=lambda url: _note_mirror(plan.plan_id, url, on_event),
@@ -3585,14 +3639,27 @@ class JointRepairPlan:
     changes: tuple[str, ...] = ()
 
     @property
-    def impact(self) -> dict:
-        """这份授权的实际影响（`impact_of`）：跑前的门显示的就是同一个函数算出的同一份（`offer_impact`）。"""
-        return impact_of(
-            target_kind=self.target_kind,
+    def pip_inputs(self) -> PipInputs:
+        """pip 会收到的全部输入（披露与执行共用，见 `PipInputs`）。"""
+        return PipInputs(
             requirements=self.requirements,
             constraints=self.constraints,
+            hashes=self.hashes,
             require_hashes=self.require_hashes,
             adapter=self.adapter,
+        )
+
+    @property
+    def impact(self) -> dict:
+        """这份授权的实际影响（`impact_of`）：跑前的门显示的就是同一个函数算出的同一份（`offer_impact`）。
+        输入集合来自 `pip_inputs`——执行端（作业 / 原地 pip）读的也是它。"""
+        pi = self.pip_inputs
+        return impact_of(
+            target_kind=self.target_kind,
+            requirements=pi.requirements,
+            constraints=pi.constraints,
+            require_hashes=pi.require_hashes,
+            adapter=pi.adapter,
             groups=self.groups,
             creates_environment=self.creates_environment,
             private_python=self.private_python,
@@ -3876,8 +3943,7 @@ def create_joint_plan(
         inputs_digest=joint.inputs_digest,
         selection=selection0,
         scope_policy=scope_policy,
-        drops=_effects(root, joint.requirements, scope_policy)["drops"],
-        changes=_effects(root, joint.requirements, scope_policy)["changes"],
+        **_effects(root, joint.requirements, joint.constraints, scope_policy),
     )
     _prune_plans()
     with _lock:
@@ -4208,14 +4274,15 @@ def prepare(
                 result={"activated": False},
             )
         if plan.target_kind == TARGET_MANAGED:
+            pi = plan.pip_inputs
             job = _GenerationJob(
                 progress_id=plan.plan_id,
                 project=plan.project,
                 script=plan.script,
-                delta=plan.requirements,
-                constraints=plan.constraints,
-                hashes=plan.hashes,
-                require_hashes=plan.require_hashes,
+                delta=pi.requirements,
+                constraints=pi.constraints,
+                hashes=pi.hashes,
+                require_hashes=pi.require_hashes,
                 needed_imports=plan.needed_imports,
                 record=plan.record,
                 reason=managedenv.REASON_MISSING_DEPENDENCY,
@@ -4254,16 +4321,17 @@ def _run_joint_in_place(plan: JointRepairPlan, on_event, cancel_ev: threading.Ev
     if rc != 0:
         raise RepairError(ERROR_PIP_UNAVAILABLE, _sanitize(out)[-800:])
     _emit(plan.plan_id, STATE_INSTALLING, on_event, joint=plan)
+    pi = plan.pip_inputs
     with tempfile.TemporaryDirectory(prefix="tavotto-joint-") as tmp:
         req_file, con_file = write_plan_files(
-            Path(tmp), plan.requirements, plan.constraints, hashes=plan.hashes
+            Path(tmp), pi.requirements, pi.constraints, hashes=pi.hashes
         )
         code, out = _run_pip_install(
             lambda index_url: pip_install_joint_argv(
                 python,
                 req_file,
                 con_file,
-                require_hashes=plan.require_hashes,
+                require_hashes=pi.require_hashes,
                 index_url=index_url,
             ),
             python,

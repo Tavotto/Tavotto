@@ -979,3 +979,151 @@ class TestEveryExecutionEntryRequiresTheDigest:
             ["app.py:install_async", "app.py:prepare_async", "bridge.py:prepare"]
         ), found
         assert not bad, f"这些入口执行依赖变更却没绑定摘要: {bad}"
+
+
+# ===========================================================================
+# 结构性守卫：披露所用的输入 == 交给 pip 的输入（Codex #814 r4218254708，同一主题第四次）
+# ===========================================================================
+def _assert_impact_covers(impact: dict, *, requirements, constraints, require_hashes, adapter=()):
+    """执行端实际收到的需求 / 约束 / hash 模式 / adapter，披露里一条不少、一条不多（约束与 hash 模式严格相等）。"""
+    assert set(requirements) <= set(impact["installs"]), (requirements, impact["installs"])
+    assert sorted(constraints) == impact["constraints"], (constraints, impact["constraints"])
+    assert bool(require_hashes) is impact["require_hashes"]
+    assert set(adapter) <= set(impact["adapter"]), (adapter, impact["adapter"])
+
+
+class TestDisclosureIsDerivedFromWhatPipReceives:
+    """每种计划类型各一条：把执行端**真正交给** `_GenerationJob` / `write_plan_files` / `_pip_install` 的东西截下来，
+    与该计划 `impact` 逐项对。约束放进计划里（不只是空集），否则"漏了约束"这种漂移测不出来。"""
+
+    CONSTRAINT = "tavotto-test-beta>=1"
+
+    @staticmethod
+    def _generation_inputs(project, job):
+        final = deprepair.generation_requirements(
+            project, job.delta, hash_mode=job.require_hashes, replace=job.replace_ledger
+        )
+        return final
+
+    def _capture_generation(self, monkeypatch, attr):
+        seen = {}
+
+        def fake(job, *a, **kw):
+            seen["job"] = job
+            raise deprepair.RepairError("captured")
+
+        monkeypatch.setattr(deprepair, attr, fake)
+        return seen
+
+    def test_joint_plan_into_a_managed_generation(
+        self, tmp_path, house, offline_managed_env, monkeypatch
+    ):
+        import dataclasses
+
+        project = _project(tmp_path, ALPHA, BETA)
+        plan = deprepair.create_joint_plan(project, "figure.py")
+        plan = dataclasses.replace(plan, constraints=(self.CONSTRAINT,))
+        deprepair._joint_plans[plan.plan_id] = plan
+        seen = self._capture_generation(monkeypatch, "_run_generation")
+        with pytest.raises(deprepair.RepairError, match="captured"):
+            deprepair.prepare(plan.plan_id)
+        job = seen["job"]
+        final = self._generation_inputs(str(project), job)
+        _assert_impact_covers(
+            plan.impact,
+            requirements=final,
+            constraints=job.constraints,
+            require_hashes=job.require_hashes,
+            adapter=deprepair.depplan.ADAPTER_REQUIREMENTS,
+        )
+        assert plan.impact["constraints"] == [self.CONSTRAINT]
+
+    def test_single_package_plan_into_a_managed_generation(
+        self, tmp_path, house, offline_managed_env, monkeypatch
+    ):
+        import dataclasses
+
+        project = _project(tmp_path, ALPHA, BETA)
+        plan = deprepair.create_plan(
+            str(project), "figure.py", ALPHA[1], target_kind=deprepair.TARGET_MANAGED
+        )
+        assert plan.widened is not None
+        plan = dataclasses.replace(
+            plan, widened=dataclasses.replace(plan.widened, constraints=(self.CONSTRAINT,))
+        )
+        deprepair._plans[plan.plan_id] = plan
+        seen = self._capture_generation(monkeypatch, "_run_generation_locked")
+        with pytest.raises(deprepair.RepairError, match="captured"):
+            deprepair._run_install(plan, "k", None, threading.Event())
+        job = seen["job"]
+        final = self._generation_inputs(str(project), job)
+        _assert_impact_covers(
+            plan.impact,
+            requirements=final,
+            constraints=job.constraints,
+            require_hashes=job.require_hashes,
+            adapter=deprepair.depplan.ADAPTER_REQUIREMENTS,
+        )
+        assert plan.impact["constraints"] == [self.CONSTRAINT]
+
+    def test_joint_plan_in_place_in_the_project_venv(
+        self, tmp_path, house, offline_managed_env, monkeypatch
+    ):
+        import dataclasses
+
+        project = _project(tmp_path, ALPHA, BETA)
+        _adopt(project, real_venv(project))
+        plan = deprepair.create_joint_plan(project, "figure.py")
+        assert plan.target_kind == deprepair.TARGET_PROJECT_VENV
+        plan = dataclasses.replace(plan, constraints=(self.CONSTRAINT,))
+        seen: dict = {}
+
+        def fake(build_argv, python, cancel_ev, *a, **kw):
+            argv = build_argv(None)
+            seen["requirements"] = Path(argv[argv.index("-r") + 1]).read_text().split()
+            seen["constraints"] = Path(argv[argv.index("-c") + 1]).read_text().split()
+            seen["require_hashes"] = "--require-hashes" in argv
+            raise deprepair.RepairError("captured")
+
+        monkeypatch.setattr(deprepair, "_run_pip_install", fake)
+        with pytest.raises(deprepair.RepairError, match="captured"):
+            deprepair._run_joint_in_place(plan, None, threading.Event())
+        _assert_impact_covers(
+            plan.impact,
+            requirements=seen["requirements"],
+            constraints=seen["constraints"],
+            require_hashes=seen["require_hashes"],
+        )
+        assert plan.impact["constraints"] == [self.CONSTRAINT]
+
+    def test_single_package_plan_in_place_in_the_project_venv(
+        self, tmp_path, house, offline_managed_env, monkeypatch
+    ):
+        project = _project(tmp_path, ALPHA, BETA)
+        _adopt(project, real_venv(project))
+        plan = deprepair.create_plan(
+            str(project), "figure.py", ALPHA[1], target_kind=deprepair.TARGET_PROJECT_VENV
+        )
+        seen: dict = {}
+
+        def fake(python, requirement, *a, **kw):
+            seen["requirement"] = requirement
+            raise deprepair.RepairError("captured")
+
+        monkeypatch.setattr(deprepair, "_pip_install", fake)
+        with pytest.raises(deprepair.RepairError, match="captured"):
+            deprepair._run_install(plan, "k", None, threading.Event())
+        # 原地只传一条需求、没有约束文件：披露同样只说这一条、没有约束
+        _assert_impact_covers(
+            plan.impact, requirements=[seen["requirement"]], constraints=[], require_hashes=False
+        )
+
+    def test_every_plan_type_exposes_one_pip_inputs_and_the_impact_reads_it(self):
+        """结构：`impact` 的 requirements / constraints / hash / adapter 四项只从 `pip_inputs` 读。"""
+        import inspect
+
+        for cls in (deprepair.RepairPlan, deprepair.JointRepairPlan):
+            assert isinstance(getattr(cls, "pip_inputs"), property)
+            src = inspect.getsource(cls.impact.fget)
+            for field in ("requirements", "constraints", "require_hashes", "adapter"):
+                assert f"{field}=pi.{field}" in src, (cls.__name__, field)
