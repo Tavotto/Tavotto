@@ -292,9 +292,9 @@ function LayerRow({
 }: RowProps) {
   useTranslation('workspace')
   const [editing, setEditing] = useState(false)
-  const pointerFocusing = useRef(false)
   const Icon = iconFor(obj)
   const isScript = obj.type === 'panel' && !!obj.script
+  const pointerFocusing = useRef(false)
   // 可编辑（能进图内编辑）与隐藏 / 锁定一样进可达名：角标只是视觉记号
   const stateLabel = [
     isScript && lt('editableState'),
