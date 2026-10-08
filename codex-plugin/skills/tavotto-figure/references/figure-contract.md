@@ -55,6 +55,23 @@ fig.savefig(OUT / "Fig1_removal_rate.pdf")
 
 随机数固定种子（`rng = np.random.default_rng(20260818)`）；**不要 `plt.show()`**。
 
+## 6. 脚本是「被 Tavotto 导入的」，不是独立程序
+
+用户常让你「写个脚本画图」，默认写出来的是独立运行版（弹窗选文件、Pillow 画图、
+`plt.show()`），放进 Tavotto 全跑不起来。按下面写：
+
+* **只用 Matplotlib 画图**。Tavotto 只捕获 Matplotlib figure；Pillow / OpenCV 直接画出的
+  图片只能当位图导入排版，不能逐元素编辑。
+* **不弹窗、不等输入**：不用 tkinter / Qt 文件对话框、`input()`、argparse 必填参数。数据文件
+  放项目里用相对路径（`Path(__file__).resolve().parent / "data" / "x.csv"`），或写成脚本
+  顶部的常量；路径别从运行期交互得来。
+* **不 `plt.show()`**（会阻塞渲染 worker），只 `savefig`。
+* **依赖只假设 numpy / scipy / pandas / matplotlib / seaborn / pillow**（内置环境清单的唯一
+  出处是 `packaging/runtime-lock.json` 的 `top_level`，`tests/test_codex_plugin.py` 看护本行与它一致）。
+  其他依赖，尤其 ROOT 这种不在 PyPI 的：要么让用户在 Tavotto 里选自己的 Python，要么把重计算
+  拆成**单独的脚本**先导出 CSV，画图脚本只读 CSV、不 import 那个库。
+* **改造用户已有脚本**：保留原有计算与配色，只换掉上面这些独立运行的部分，不顺手重写。
+
 ## 模板
 
 ```python

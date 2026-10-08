@@ -289,6 +289,22 @@ def test_skill_routes_each_reference_explicitly():
     assert "用到才读" in text
 
 
+def test_figure_contract_bundled_packages_match_runtime_lock():
+    """figure-contract 第 6 节手抄的内置包清单必须与 runtime-lock 的 top_level 一致。
+
+    唯一出处是 packaging/runtime-lock.json；换包时这里红了就同步改文案。
+    """
+    lock = json.loads((ROOT / "packaging" / "runtime-lock.json").read_text(encoding="utf-8"))
+    text = (SKILL_DIR / "references" / "figure-contract.md").read_text(encoding="utf-8")
+    m = re.search(r"依赖只假设([^，。（]+)", text)
+    assert m, "figure-contract 第 6 节缺内置包清单"
+    named = {x.strip().strip("*") for x in m.group(1).split("/")}
+    assert named == set(lock["top_level"])
+    assert "packaging/runtime-lock.json" in text
+    skill = _skill_text()
+    assert "figure-contract.md` 第 6 节" in skill
+
+
 def test_skill_files_issues_only_with_consent():
     """撞上 Tavotto 的缺陷时写复现 issue，但外发必须经用户明确允许。
 
