@@ -629,4 +629,34 @@ describe('批量保存涉及多份配置：逐份真的重跑（Codex #816 P1）
     expect(useUiStore.getState().statusTone).toBe('error')
     expect(JSON.stringify(useUiStore.getState().status)).toContain('manageRerunFailed')
   })
+
+  it('第一份停在运行目录门上：后面的挂起，门有了答案后两份各用自己的 run_config 重跑（Codex #816 r4221169169）', async () => {
+    const confirmation = {
+      kind: 'workdir', code: 'workdir_confirmation_required', script: 'pick.py', reason: 'script_dir_evidence',
+      recommended: 'project', options: [], conflicts: [], reads: [],
+    }
+    mockProbe
+      .mockResolvedValueOnce({
+        descriptors: [],
+        error: { code: 'workdir_confirmation_required', message: 'x', confirmation },
+      } as never)
+      .mockResolvedValue({ descriptors: [] } as never)
+    await openTwoConfigs()
+    await click(saveButton())
+    await flush()
+    await flush()
+    // 门没答之前不发 rc_b（否则它会盖掉停在门上的 rc_a）
+    expect(mockProbe.mock.calls.map((c) => c[2])).toEqual([{ run_config: 'rc_a' }])
+    expect(useScriptRunStore.getState().byScript['pick.py']?.phase).toBe('needs_workdir')
+    expect(JSON.stringify(useUiStore.getState().status)).not.toContain('manageRerunFailed')
+    await act(async () => useScriptRunStore.getState().rerunGated('needs_workdir'))
+    await flush()
+    await flush()
+    expect(mockProbe.mock.calls.map((c) => c[2])).toEqual([
+      { run_config: 'rc_a' },
+      { run_config: 'rc_a' },
+      { run_config: 'rc_b' },
+    ])
+    expect(useScriptRunStore.getState().byScript['pick.py']?.runConfig).toBe('rc_b')
+  })
 })
