@@ -115,8 +115,15 @@ def _emit(event: str, project_root: str, data: dict) -> None:
         LOG.exception("脚本输入事件发送失败: %s", event)
 
 
-def _reply(directory: Path, index: int, payload: dict) -> None:
-    atomicio.write_json(directory / scriptinput.reply_name(index), payload)
+def _reply(directory: Path, index: int, payload: dict, *, private: bool = False) -> None:
+    """写回复。敏感会话的答案是明文：临时文件权限收成 0600（POSIX），读它的 worker 读完即删（Codex #812 P1）；
+    写失败由 `atomicio` 清掉临时文件，异常照常上抛。"""
+    path = directory / scriptinput.reply_name(index)
+    data = atomicio.dumps_json(payload)
+    if private:
+        atomicio.write_bytes(path, data, mode=0o600)
+    else:
+        atomicio.write_bytes(path, data)
 
 
 def pending() -> list[Pending]:
@@ -169,7 +176,7 @@ def answer(pending_id: str, text: str | None, *, eof: bool = False) -> Pending |
     if eof or text is None:
         _reply(p.directory, p.index, {"eof": True})
     else:
-        _reply(p.directory, p.index, {"answer": text})
+        _reply(p.directory, p.index, {"answer": text}, private=p.private or p.kind == "getpass")
     LOG.info("脚本输入：第 %d 问已作答", p.index)
     p.done.set()
     _emit("script.input_closed", p.project_root, {"id": p.id, "reason": "answered"})
