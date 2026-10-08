@@ -172,6 +172,22 @@ def test_failed_preparation_is_counted_and_records_missing_dependency(
     assert [r["import_name"] for r in proj["missing_dependencies"]] == ["adjustText"]
 
 
+def test_failed_preparation_carries_repair_offer_in_missing_dependency(
+    prep_client, tmp_path, run_aware_pool, sessions
+):
+    """准备路径的缺依赖现场带修复 offer（与试运行路径同一个 `deprepair.offer`），不是恒为 null。"""
+    client, fake_pool = prep_client, run_aware_pool
+    root = _project(tmp_path, "p")
+    (root / "tavotto_registry.json").unlink()
+    (root / "fig.pdf").unlink()
+    pj = _open(client, root)
+    fake_pool["error"] = _missing("scipy")
+    _run_session(client, pj, {"script": "fig.py"})
+    (dep,) = _report(client, pj)["project"]["missing_dependencies"]
+    assert dep["import_name"] == "scipy"
+    assert dep["repair"] is not None
+
+
 def test_run_summary_is_scoped_to_its_project_and_kind(opened, monkeypatch):
     client, pj, _root = opened
     _fail_build(monkeypatch, _missing("adjustText"))

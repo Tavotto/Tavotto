@@ -683,7 +683,22 @@ class PreparationService:
                 return
             error = {"code": getattr(exc, "code", "") or "worker_error", "message": str(exc)}
             # 诊断包的「最近缺依赖现场」：准备路径把 WorkerError 接在这里，不经 `app._worker_error`
-            deprepair.note_missing_dependency_of(plan.project_root, exc, script=plan.script or "")
+            # 修复 offer 与试运行路径（probe.py）同一个函数、同样的入参：只读判断，不起解释器、不联网，
+            # 复用异常里已体检好的 project_env；算不出来不许盖掉原始错误（线程里不能抛）
+            repair_offer = None
+            if getattr(exc, "code", "") == "missing_dependency" and getattr(exc, "module", ""):
+                try:
+                    repair_offer = deprepair.offer(
+                        plan.project_root,
+                        plan.script or "",
+                        exc.module,
+                        getattr(exc, "project_env", None),
+                    )
+                except Exception:  # noqa: BLE001
+                    repair_offer = None
+            deprepair.note_missing_dependency_of(
+                plan.project_root, exc, script=plan.script or "", offer=repair_offer
+            )
             module = getattr(exc, "module", "")
             if module:
                 error["module"] = module
