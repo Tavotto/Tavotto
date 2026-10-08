@@ -465,6 +465,53 @@ describe('selection routing keeps the active drawer workflow', () => {
     expect(useUiStore.getState().rightOpen).toBe(true)
   })
 
+  it.each(['medium', 'narrow'] as const)('%s tree selection shows properties when entering wide layout', layout => {
+    openElements(layout)
+    pointer(treeRow(gids[0]))
+    expectTreeSelection([gids[0]])
+    act(() => useUiStore.getState().setLayout('wide'))
+    expect(useUiStore.getState().selectedGids).toEqual([gids[0]])
+    expect(useUiStore.getState().leftOpen).toBe(true)
+    expect(useUiStore.getState().rightOpen).toBe(true)
+  })
+
+  it('layer tree selection shows properties when entering wide layout', () => {
+    pointer('[data-layer="p1"]')
+    expect(useUiStore.getState().rightOpen).toBe(false)
+    act(() => useUiStore.getState().setLayout('wide'))
+    expect(useSelectionStore.getState().ids).toEqual(['p1'])
+    expect(useUiStore.getState().leftOpen).toBe(true)
+    expect(useUiStore.getState().rightOpen).toBe(true)
+  })
+
+  it('entering wide layout respects an explicitly dismissed tree handoff', () => {
+    openElements('wide')
+    pointer(treeRow(gids[0]))
+    act(() => useUiStore.getState().toggleRight())
+    act(() => useUiStore.getState().setLayout('medium'))
+    act(() => useUiStore.getState().setLayout('wide'))
+    expect(useUiStore.getState().selectedGids).toEqual([gids[0]])
+    expect(useUiStore.getState().leftOpen).toBe(true)
+    expect(useUiStore.getState().rightOpen).toBe(false)
+  })
+
+  it('entering wide layout defers the tree handoff until real tracking ends', () => {
+    openElements()
+    pointer(treeRow(gids[0]))
+    act(() => node('[data-canvas-track]').dispatchEvent(new PointerEvent('pointerdown', {
+      bubbles: true, button: 0, pointerId: 9,
+    })))
+    try {
+      act(() => useUiStore.getState().setLayout('wide'))
+      expectTreeSelection([gids[0]])
+    } finally {
+      act(() => document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 9 })))
+    }
+    expect(useUiStore.getState().selectedGids).toEqual([gids[0]])
+    expect(useUiStore.getState().leftOpen).toBe(true)
+    expect(useUiStore.getState().rightOpen).toBe(true)
+  })
+
   it('explicit properties editing still takes precedence', () => {
     openElements()
     pointer(treeRow(gids[0]))

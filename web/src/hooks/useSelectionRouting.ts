@@ -34,12 +34,15 @@ export function useSelectionRouting() {
     }
   }), [])
 
-  // 原生菜单没有 DOM 事件；右栏收起也取消尚未完成的自动交接请求。
+  // 原生菜单没有 DOM 事件；右栏收起取消交接，进入宽窗恢复仍有效的树交接。
   useEffect(() => useUiStore.subscribe((state, prev) => {
     if (prev.rightOpen && !state.rightOpen) {
       treeHandoff.current = false
       canvasPointer.current = null
       pendingRouting.current = false
+    }
+    if (prev.layout !== 'wide' && state.layout === 'wide' && treeHandoff.current) {
+      setInteractionEnd(n => n + 1)
     }
   }), [])
 

@@ -157,6 +157,15 @@ for (const width of [820, 1100, 1366]) {
       await assertSelection(page, [title], exclusive)
       const afterCancel = await page.locator('[data-canvas-stage]').boundingBox()
       expect(afterCancel?.x).toBe(beforeCancel!.x)
+
+      // Expanding out of the exclusive breakpoint restores properties beside the tree.
+      await page.setViewportSize({ width: 1366, height: 900 })
+      await assertSelection(page, [title], false)
+      await expect(page.locator('[data-inspector-panel]')).toHaveAttribute('data-state', 'open')
+      await page.setViewportSize({ width: 1100, height: 900 })
+      await openTree(page)
+      await row(page, title).click()
+      await assertSelection(page, [title], exclusive)
     }
 
     // Focus remains in the tree while the same element is clicked on the canvas.
