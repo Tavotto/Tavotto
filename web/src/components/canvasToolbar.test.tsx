@@ -10,7 +10,7 @@
  */
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { CanvasTabs } from '@/components/CanvasTabs'
 import { CanvasToolbar } from '@/components/CanvasToolbar'
@@ -186,6 +186,16 @@ describe('浮动工具条：工具 vs 动作', () => {
   // Codex #833：鼠标打开标注菜单、点「插入形状」——Radix 关菜单时默认把焦点还给触发器，下一个 ← / → 就被
   // 工具条吃掉（换焦点），推不动刚插入的形状。指针打开的回到打开前的焦点；键盘打开的照旧回到触发器
   describe('标注菜单关掉后的焦点', () => {
+    // Radix FocusScope 在卸载后的 setTimeout(0) 里归还焦点；act 只保证 React 更新，
+    // 菜单已移除不代表焦点已归还。固定并推进这一步，鼠标侧的否定断言也不能提前假绿。
+    beforeEach(() => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] }))
+    afterEach(async () => {
+      try {
+        await act(async () => { await vi.runOnlyPendingTimersAsync() })
+      } finally {
+        vi.useRealTimers()
+      }
+    })
     const trigger = () => q('[data-tool-menu="annotate"]')!
     const firstShape = () =>
       [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((el) =>
@@ -206,6 +216,7 @@ describe('浮动工具条：工具 vs 动作', () => {
       })
       expect(document.body.querySelector('[role="menu"]'), '菜单没打开').toBeTruthy()
       await act(async () => firstShape().click())
+      await act(async () => { await vi.runOnlyPendingTimersAsync() })
       expect(document.body.querySelector('[role="menu"]')).toBeNull()
       expect(shapes()).toBe(1)
       expect(document.activeElement).not.toBe(trigger())
@@ -220,6 +231,7 @@ describe('浮动工具条：工具 vs 动作', () => {
       })
       expect(document.body.querySelector('[role="menu"]'), '菜单没打开').toBeTruthy()
       await act(async () => firstShape().click())
+      await act(async () => { await vi.runOnlyPendingTimersAsync() })
       expect(document.body.querySelector('[role="menu"]')).toBeNull()
       expect(shapes()).toBe(1)
       expect(document.activeElement).toBe(trigger())
