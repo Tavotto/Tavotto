@@ -19,6 +19,7 @@ export function useSelectionRouting() {
   const active = hasSelection || inElement
   const inDrawer = useRef<boolean | null>(null)
   const treeHandoff = useRef(false)
+  const canvasPointer = useRef<number | null>(null)
   const pendingRouting = useRef(false)
   const [canvasPress, setCanvasPress] = useState(0)
   const [interactionEnd, setInteractionEnd] = useState(0)
@@ -35,6 +36,7 @@ export function useSelectionRouting() {
   useEffect(() => useUiStore.subscribe((state, prev) => {
     if (prev.rightOpen && !state.rightOpen) {
       treeHandoff.current = false
+      canvasPointer.current = null
       pendingRouting.current = false
     }
   }), [])
@@ -54,16 +56,27 @@ export function useSelectionRouting() {
         ui.tool === 'select' && !useViewportStore.getState().spaceDown) {
         // Space 平移 / 绘图起手不是换选；新对象真被选中后由下面的选择 effect 路由。
         // 同一选区只在从树交接时请求路由；普通换选已有下面的 effect，不能请求两次。
-        const handoff = treeHandoff.current
-        treeHandoff.current = false
-        if (handoff) setCanvasPress(n => n + 1)
+        // capture 的 effect 可能先于 target 起拖；按住时不能交换侧栏。
+        if (treeHandoff.current) canvasPointer.current = e.pointerId
       }
     }
+    const release = (e: PointerEvent) => {
+      if (canvasPointer.current === null || canvasPointer.current !== e.pointerId) return
+      canvasPointer.current = null
+      if (e.type !== 'pointerup') return
+      treeHandoff.current = false
+      inDrawer.current = false
+      setCanvasPress(n => n + 1)
+    }
     document.addEventListener('pointerdown', remember, true)
+    document.addEventListener('pointerup', release, true)
+    document.addEventListener('pointercancel', release, true)
     document.addEventListener('focusin', remember, true)
     document.addEventListener('keydown', remember, true)
     return () => {
       document.removeEventListener('pointerdown', remember, true)
+      document.removeEventListener('pointerup', release, true)
+      document.removeEventListener('pointercancel', release, true)
       document.removeEventListener('focusin', remember, true)
       document.removeEventListener('keydown', remember, true)
     }
@@ -79,6 +92,7 @@ export function useSelectionRouting() {
     const ui = useUiStore.getState()
     if (!active) {
       treeHandoff.current = false
+      canvasPointer.current = null
       ui.autoHideProperties()
       return
     }

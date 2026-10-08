@@ -94,6 +94,9 @@ function pointer(selector: string, modifiers: PointerEventInit = {}) {
   act(() => node(selector).dispatchEvent(new PointerEvent('pointerdown', {
     bubbles: true, button: 0, ...modifiers,
   })))
+  act(() => document.dispatchEvent(new PointerEvent('pointerup', {
+    bubbles: true, button: 0, ...modifiers,
+  })))
 }
 function treeRow(gid: string) { return `[data-el="${gid}"]` }
 function openElements(layout: WorkspaceLayout = 'medium') {
