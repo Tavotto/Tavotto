@@ -398,6 +398,60 @@ describe('主按钮就是后端给的那件事', () => {
       expect(primary()?.textContent).toBe('Run anyway')
     })
 
+    const manyReport = (n: number, truncated: boolean, kinds: Array<'file' | 'prompt'> = ['file']) =>
+      report({
+        requirements: [
+          {
+            id: 'interaction',
+            kind: 'gui_dialog',
+            code: 'script_uses_gui_dialog',
+            blocking: false,
+            payload: {
+              calls: Array.from({ length: n }, (_, i) => ({
+                api: 'tkinter.filedialog.askopenfilename',
+                kind: kinds[i % kinds.length],
+                line: i + 1,
+              })),
+              truncated,
+            },
+          },
+        ],
+      })
+
+    it('4–8 处弹窗：详情里全部列出，不再只给前 3 处', async () => {
+      await mount()
+      await openWith(manyReport(8, false))
+      await toggleDetails()
+      expect(details()?.querySelectorAll('[data-prep-row="dialog-call"]').length).toBe(8)
+      expect(details()?.querySelector('[data-prep-dialog-more]')).toBeNull()
+    })
+
+    it('后端说还有更多（truncated）：详情里明确写出，中英都有', async () => {
+      await mount()
+      await openWith(manyReport(8, true))
+      await toggleDetails()
+      expect(details()?.querySelector('[data-prep-dialog-more]')?.textContent).toContain('还有更多处未列出')
+    })
+
+    it('truncated 英文提示', async () => {
+      await i18n.changeLanguage('en-US')
+      await mount()
+      await openWith(manyReport(8, true))
+      await toggleDetails()
+      expect(details()?.querySelector('[data-prep-dialog-more]')?.textContent).toContain('More places are not listed')
+    })
+
+    it('选文件与询问都有：标题一句话涵盖两者，详情里两种改法各一条', async () => {
+      await mount()
+      await openWith(manyReport(2, false, ['file', 'prompt']))
+      expect(panel().dataset.prepState).toBe('gui_dialog')
+      expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('脚本会弹窗选文件和询问，这里弹不出来，请把路径和答案写进脚本')
+      expect(primary()?.textContent).toBe('仍然运行')
+      await toggleDetails()
+      expect(details()?.querySelector('[data-prep-dialog-how="file"]')?.textContent).toContain('相对路径')
+      expect(details()?.querySelector('[data-prep-dialog-how="prompt"]')?.textContent).toContain('别用弹窗问')
+    })
+
     it('没有 run 动作就没有按钮（不替用户造入口）', async () => {
       await mount()
       await openWith(dialogReport('file', { actions: [action('recheck')] }))

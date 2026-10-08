@@ -962,17 +962,20 @@ function ArgsBlock({ script, schema, expanded }: { script: string; schema: Scrip
 /** 详情里的弹窗提示：怎么改（把路径 / 答案写进脚本）+ 在哪几行、是哪个调用。标题那一句话已经说了结论，这里只放细节 */
 function GuiDialogHint({ payload }: { payload: GuiDialogPayload }) {
   const file = payload.calls.some((c) => c.kind === 'file')
+  const ask = payload.calls.some((c) => c.kind === 'prompt')
   return (
     <div className="flex flex-col gap-1.5" data-prep-dialog>
-      <p data-prep-dialog-how>{pt(file ? 'dialog.howFile' : 'dialog.howAsk')}</p>
-      {payload.calls.slice(0, 3).map((c) => (
+      {file && <p data-prep-dialog-how="file">{pt('dialog.howFile')}</p>}
+      {ask && <p data-prep-dialog-how="prompt">{pt('dialog.howAsk')}</p>}
+      {payload.calls.map((c, i) => (
         <Row
-          key={`${c.line}:${c.api}`}
+          key={`${i}:${c.line}:${c.api}`}
           k={pt('dialog.where', { line: c.line })}
           v={<span className="font-mono">{c.api}</span>}
           attr="dialog-call"
         />
       ))}
+      {payload.truncated && <p data-prep-dialog-more>{pt('dialog.more')}</p>}
     </div>
   )
 }

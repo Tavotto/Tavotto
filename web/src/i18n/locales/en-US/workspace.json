@@ -902,6 +902,7 @@
       "ready": "Ready to run",
       "dialogFile": "This script opens a file picker that can't appear here, so put the file path in the script",
       "dialogAsk": "This script opens a prompt that can't appear here, so put the answer in the script",
+      "dialogBoth": "This script opens file pickers and prompts that can't appear here, so put the paths and answers in the script",
       "completed_one": "Drew 1 figure",
       "completed_other": "Drew {{count}} figures",
       "completedNoList": "Done, figures are in the library",
@@ -1042,7 +1043,8 @@
     "dialog": {
       "howFile": "Write the file path straight into the script. Keep the data in the project and use a relative path, such as data/points.csv.",
       "howAsk": "Write the value straight into the script instead of asking in a pop-up.",
-      "where": "Line {{line}}"
+      "where": "Line {{line}}",
+      "more": "More places are not listed. Check again after fixing these."
     },
     "row": {
       "checking": "Checking",

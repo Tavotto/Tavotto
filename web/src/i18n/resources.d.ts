@@ -4713,6 +4713,7 @@ export default interface Resources {
       "dialog": {
         "howAsk": "把要填的内容直接写进脚本，别用弹窗问。",
         "howFile": "把文件路径直接写进脚本；数据放在项目里，用相对路径，比如 data/points.csv。",
+        "more": "还有更多处未列出，改完后重新检查。",
         "where": "第 {{line}} 行"
       },
       "env": {
@@ -4754,6 +4755,7 @@ export default interface Resources {
         "depsScope": "组件版本冲突",
         "depsUnknown": "运行时缺 {{module}}，找不到安装包",
         "dialogAsk": "脚本会弹窗询问，这里弹不出来，请把答案写进脚本",
+        "dialogBoth": "脚本会弹窗选文件和询问，这里弹不出来，请把路径和答案写进脚本",
         "dialogFile": "脚本会弹窗选文件，这里弹不出来，请把文件路径写进脚本",
         "editOpening": "正在打开编辑…",
         "editReady": "已进入编辑",

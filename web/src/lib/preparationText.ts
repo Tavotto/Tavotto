@@ -190,7 +190,10 @@ function fromReport(report: PreparationReport, entry: PrepEntry, ctx: PrepContex
       const dialog = find(report, 'gui_dialog')
       if (dialog) {
         const file = dialog.payload.calls.some((c) => c.kind === 'file')
-        return view('gui_dialog', file ? 'dialogFile' : 'dialogAsk', v, has(report, 'run') ? act('run', 'runAnyway') : null, {
+        const ask = dialog.payload.calls.some((c) => c.kind === 'prompt')
+        // 选文件与询问都有：一句话涵盖两者，不塌成只讲文件
+        const key = file && ask ? 'dialogBoth' : file ? 'dialogFile' : 'dialogAsk'
+        return view('gui_dialog', key, v, has(report, 'run') ? act('run', 'runAnyway') : null, {
           slot: 'ready',
           tone: 'bad',
         })
