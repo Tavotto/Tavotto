@@ -60,6 +60,7 @@ import json
 import os
 import re
 import sys
+import time
 from pathlib import Path
 
 # Windows 上 stdout 一旦不是真控制台（被 CI 捕获 / 管道 / 重定向）就退回系统区域
@@ -351,7 +352,9 @@ def _exemption_for(login: str, policy: dict) -> dict | None:
     return None
 
 
-def signed_logins(provider_checks: list | None, policy: dict) -> tuple[set[str], str | None]:
+def signed_logins(
+    provider_checks: list | None, policy: dict, context: dict | None = None
+) -> tuple[set[str], str | None]:
     """从 provider 的 check-run 结论里读出「谁算已签」。
 
     返回 (已签 login 的小写集合, 不可用原因)。provider 未配置时永远是
@@ -375,6 +378,8 @@ def signed_logins(provider_checks: list | None, policy: dict) -> tuple[set[str],
     if provider_checks is None:
         return set(), "provider_checks_unavailable"
     want, want_slug, want_id = prov["check_name"], prov["app_slug"], prov["app_id"]
+    if prov.get("protocol") == "tavotto-cla-v1":
+        return _service_verdict(provider_checks, policy, context)
     impostor = False
     for run in provider_checks:
         if not isinstance(run, dict):
@@ -395,6 +400,62 @@ def signed_logins(provider_checks: list | None, policy: dict) -> tuple[set[str],
     if impostor:
         return set(), "provider_check_wrong_app"
     return set(), "provider_check_missing"
+
+
+def _service_verdict(checks: list, policy: dict, context: dict | None):
+    """Short-lived service proof. A previous green never overrides a newer failure.
+
+    This is a point-in-time check, NOT an expiring GitHub branch-protection grant.
+    Activation must additionally arrange a fresh merge-candidate verification.
+    """
+    prov = policy["provider"]
+    binding = ("base_sha",) if context and context.get("kind") == "merge_group" else ("pr",)
+    if not context or any(
+        context.get(k) is None for k in binding + ("head_sha", "repository_id", "not_before", "now")
+    ):
+        return set(), "provider_verification_context_missing"
+    own = [
+        r
+        for r in checks
+        if isinstance(r, dict)
+        and r.get("name") == prov["check_name"]
+        and (r.get("app") or {}).get("id") == prov["app_id"]
+        and (r.get("app") or {}).get("slug") == prov["app_slug"]
+    ]
+    if not own or any(type(r.get("id")) is not int for r in own):
+        return set(), "provider_check_missing_or_invalid"
+    run = max(own, key=lambda r: r["id"])
+    if run.get("status") != "completed" or run.get("conclusion") != "success":
+        return set(), "provider_latest_check_not_success"
+    try:
+        prefix, raw = run["output"]["text"].split("\n", 1)
+        proof = json.loads(raw)
+        trusted = {k: policy[k] for k in ("agreements", "exemptions")}
+        digest = hashlib.sha256(
+            json.dumps(trusted, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+        ).hexdigest()
+        if prefix != "tavotto-cla-v1" or proof["protocol"] != prefix:
+            raise ValueError("protocol")
+        if proof["policy_sha256"] != digest or run["head_sha"] != context["head_sha"]:
+            raise ValueError("binding")
+        if context.get("kind") == "merge_group":
+            if proof.get("kind") != "merge_group" or not proof.get("members"):
+                raise ValueError("candidate membership")
+        elif proof.get("kind") == "merge_group":
+            raise ValueError("wrong verification kind")
+        for key in binding + ("head_sha", "repository_id"):
+            if proof[key] != context[key]:
+                raise ValueError("context")
+        issued, expires = proof["issued_at"], proof["expires_at"]
+        if type(issued) is not int or type(expires) is not int:
+            raise ValueError("timestamp")
+        if not context["not_before"] <= issued <= context["now"] < expires <= issued + 120:
+            raise ValueError("freshness")
+        if type(proof["revision"]) is not int or proof["revision"] < 0:
+            raise ValueError("revision")
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return set(), "provider_proof_invalid_or_stale"
+    return {"*"}, None
 
 
 def _unqualified_detail(reason: str | None, policy: dict) -> str:
@@ -437,10 +498,27 @@ def decide(
     provider_checks: list | None,
     contributors: list[dict],
     unresolved: list[dict] | None = None,
+    context: dict | None = None,
 ) -> dict:
     """核心判定。只做纯计算，不碰环境——单测才测得动每一格。"""
     unresolved = unresolved or []
 
+    if (
+        event == "merge_group"
+        and policy["provider"].get("configured")
+        and policy["provider"].get("protocol") == "tavotto-cla-v1"
+    ):
+        signed, why = signed_logins(provider_checks, policy, context)
+        valid = "*" in signed and context and context.get("kind") == "merge_group"
+        return {
+            "event": event,
+            "status": "success" if valid else "failure",
+            "reason": "fresh_merge_candidate_qualified"
+            if valid
+            else "fresh_merge_verification_required",
+            "contributors": [],
+            "problems": [] if valid else [why or "Candidate context missing"],
+        }
     if event == "merge_group":
         # 队列候选上没有 PR 上下文；资格在 PR 阶段验过了。
         # **必须成功，不能 skipped**：fast gate 把 skipped 当失败。
@@ -455,10 +533,18 @@ def decide(
     if event not in KNOWN_EVENTS:
         raise ConfigError(f"事件 `{event}` 没有定义过的 CLA 判定——只支持 {'/'.join(KNOWN_EVENTS)}")
 
-    signed, why = signed_logins(provider_checks, policy)
+    signed, why = signed_logins(provider_checks, policy, context)
     detail_for_missing = _unqualified_detail(why, policy)
 
     problems: list[str] = []
+    service_mode = (
+        policy["provider"].get("configured")
+        and policy["provider"].get("protocol") == "tavotto-cla-v1"
+    )
+    if service_mode and "*" not in signed:
+        # A login exemption is not an identity proof. The independent service must
+        # verify pinned immutable IDs even when every visible login is exempt.
+        problems.append(why or "authoritative_service_verdict_required")
     for u in unresolved:
         # **认不出账号一律红，但必须红得可操作**：说清是哪个 commit、哪个身份、
         # 为什么解析不出、以及维护者可以怎么处置。只有一句 "CLA check failed"
@@ -622,6 +708,15 @@ def main(argv: list[str] | None = None) -> int:
         help="这个 PR 声明的提交数（PR 对象的 `commits` 字段）。对不上就失败"
         "——防「分页只取到第一页、静默按不完整的贡献者名单判绿」",
     )
+    ap.add_argument("--verification-pr", type=int)
+    ap.add_argument("--verification-head")
+    ap.add_argument("--verification-base")
+    ap.add_argument("--verification-repository-id", type=int)
+    ap.add_argument(
+        "--verification-not-before",
+        type=int,
+        help="Trusted workflow/candidate start time; service proof must be issued after it",
+    )
     ap.add_argument("--repo-root", default=".", help="核对协议正文哈希时的仓库根")
     ap.add_argument(
         "--refresh-hashes",
@@ -652,19 +747,27 @@ def main(argv: list[str] | None = None) -> int:
         if doc_problems:
             raise ConfigError("；".join(doc_problems))
 
+        checks = None
+        if args.provider_checks_json:
+            raw = load_json(Path(args.provider_checks_json), "provider check-runs JSON")
+            checks = raw.get("check_runs", []) if isinstance(raw, dict) else raw
+        context = {
+            "kind": args.event,
+            "pr": args.verification_pr,
+            "head_sha": args.verification_head,
+            "base_sha": args.verification_base,
+            "repository_id": args.verification_repository_id,
+            "not_before": args.verification_not_before,
+            "now": int(time.time()),
+        }
         if args.event == "merge_group":
-            verdict = decide(args.event, policy, None, [])
+            verdict = decide(args.event, policy, checks, [], context=context)
         else:
             commits = []
             if args.commits_json:
                 commits = load_commits(Path(args.commits_json), args.expected_commits)
-            checks = None
-            if args.provider_checks_json:
-                raw = load_json(Path(args.provider_checks_json), "provider check-runs JSON")
-                # GitHub 的 check-runs 响应是 {"check_runs": [...]}；也接受裸数组。
-                checks = raw.get("check_runs", []) if isinstance(raw, dict) else raw
             contributors, unresolved = collect_contributors(args.pr_author, commits)
-            verdict = decide(args.event, policy, checks, contributors, unresolved)
+            verdict = decide(args.event, policy, checks, contributors, unresolved, context)
     except ConfigError as exc:
         verdict = {
             "event": args.event,
