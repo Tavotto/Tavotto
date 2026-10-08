@@ -627,7 +627,8 @@ export function ProfilesSettings({
                   <Badge>{selected.built_in ? st('readOnlyBuiltinBadge') : st('readOnlyBadge')}</Badge>
                 </>
               )}
-              <span className="ml-auto flex items-center gap-1.5">
+              {/* 动作簇自己也折行：极窄（~350 CSS px）时「在用」+ 两颗按钮比组还宽，不折就越出组右缘被裁掉（Codex #828 P2 同族） */}
+              <span className="ml-auto flex max-w-full flex-wrap items-center justify-end gap-1.5">
                 {kind === 'spec' &&
                   (bound ? (
                     <>

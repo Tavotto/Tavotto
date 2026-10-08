@@ -18,7 +18,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { t } from '@/i18n'
 import { CONTENT_MAX_WIDTH, CONTENT_MODE, SECTIONS, SettingsDialog } from '@/components/SettingsDialog'
 import { TooltipProvider } from '@/components/ui/Tooltip'
-import { SETTING_CONTROL_WIDTH } from '@/components/settings/SettingRow'
+import {
+  SETTING_CONTROL_WIDTH,
+  SETTING_ROW_STACK_BELOW,
+  settingControlStacked,
+  settingRowStacked,
+  settingValueStacked,
+} from '@/components/settings/SettingRow'
 import { useEnvStore } from '@/store/envStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useTelemetryStore } from '@/store/telemetryStore'
@@ -512,6 +518,15 @@ describe('SettingRow 布局稳定', () => {
     }
     expect(rows).toBeGreaterThan(10)
     expect([...widths]).toEqual([`${SETTING_CONTROL_WIDTH}px`])
+  })
+
+  it('窄组叠放的阈值与算式同源：类名里的字面量 = 标题最小 + 间距 + 控件列 + 组内边距（Codex #828 P2）', () => {
+    // 真布局（叠放后控件不越出行）在 e2e/settings-shell.spec.ts 的 ~350px 用例里量；这里只钉「字面量没漂」：
+    // Tailwind 只认字面量，改了 SETTING_CONTROL_WIDTH 却忘了改类名，阈值就悄悄错位
+    const variants = `${settingRowStacked} ${settingControlStacked} ${settingValueStacked}`.match(/@max-\[(\d+)px\]/g) ?? []
+    expect(variants.length).toBeGreaterThan(0)
+    expect(new Set(variants)).toEqual(new Set([`@max-[${SETTING_ROW_STACK_BELOW}px]`]))
+    expect(settingControlStacked).toContain(`[--setting-control:min(${SETTING_CONTROL_WIDTH}px,100%)]`)
   })
 
   it('普通分区的内容有最大宽度，只有包管理铺满（样式 / 规范自 2026-09-15 打磨批次 B 起是普通分区）', async () => {
