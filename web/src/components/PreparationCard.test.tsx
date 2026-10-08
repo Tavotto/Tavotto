@@ -228,6 +228,36 @@ const STATES: Record<string, Partial<PreparationReport>> = {
       attempts: 1,
       dependency: {
         plan_id: 'dp-1', joined: false, origin: 'runtime_missing', state: 'failed', code: 'dependency_not_found',
+        committed: false, impact_digest: 'imp-3', module: 'mylab', unverified_same_name: ['mylab'], failed_distribution: 'mylab',
+      },
+    },
+  },
+  // 首个受管代次装的是脚本要的全部依赖：不可得的是批次里别的需求（pip 点名它），不是同名候选
+  depsSameNameUnavailableOther: {
+    phase: 'action_required',
+    outcome: { kind: 'failed', code: 'dependency_not_found', reason: 'dependency_preparation' },
+    actions: [action('recheck')],
+    provider: {
+      plan_id: 'p',
+      attempt_id: 'prep-1',
+      attempts: 1,
+      dependency: {
+        plan_id: 'dp-1', joined: false, origin: 'runtime_missing', state: 'failed', code: 'dependency_not_found',
+        committed: false, impact_digest: 'imp-3', module: 'mylab', unverified_same_name: ['mylab'], failed_distribution: 'other-pkg',
+      },
+    },
+  },
+  // 后端点不出是哪个包失败（没有 failed_distribution）
+  depsSameNameUnavailableUnattributed: {
+    phase: 'action_required',
+    outcome: { kind: 'failed', code: 'dependency_requires_build', reason: 'dependency_preparation' },
+    actions: [action('recheck')],
+    provider: {
+      plan_id: 'p',
+      attempt_id: 'prep-1',
+      attempts: 1,
+      dependency: {
+        plan_id: 'dp-1', joined: false, origin: 'runtime_missing', state: 'failed', code: 'dependency_requires_build',
         committed: false, impact_digest: 'imp-3', module: 'mylab', unverified_same_name: ['mylab'],
       },
     },
@@ -460,6 +490,29 @@ describe('主按钮就是后端给的那件事', () => {
     expect(panel().dataset.prepState).toBe('deps_same_name_unavailable')
     expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('PyPI 上装不了 mylab，请选一个装了 mylab 的 Python 环境')
     expect(primary()?.dataset.prepPrimary).toBe('open_environment')
+  })
+
+  it('失败的是批次里别的需求（failed_distribution 不是候选）：不怪同名候选，保留通用「没装好」', async () => {
+    await mount()
+    await openWith(report(STATES.depsSameNameUnavailableOther))
+    expect(panel().dataset.prepState).toBe('deps_failed')
+    expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('没装好，原有文件没动')
+  })
+
+  it('后端点不出是哪个包失败（缺 failed_distribution）：同样保留通用「没装好」', async () => {
+    await mount()
+    await openWith(report(STATES.depsSameNameUnavailableUnattributed))
+    expect(panel().dataset.prepState).toBe('deps_failed')
+    expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('没装好，原有文件没动')
+  })
+
+  it('failed_distribution 按 PEP 503 规范化比较（My_Lab 与 mylab 是同一个包）', async () => {
+    await mount()
+    const r = report(STATES.depsSameNameUnavailable)
+    r.provider.dependency!.failed_distribution = 'MY.Lab'
+    r.provider.dependency!.unverified_same_name = ['my_lab']
+    await openWith(r)
+    expect(panel().dataset.prepState).toBe('deps_same_name_unavailable')
   })
 
   it('同名候选的其他失败（断网）仍是普通的「没装好」，可重新检查', async () => {

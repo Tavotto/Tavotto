@@ -1225,6 +1225,7 @@ def _install_guarded(plan_id: str, on_event, *, claimed: bool = False) -> dict:
             code=exc.code,
             error=str(exc),
             pinned=pinned if isinstance(pinned, dict) else None,
+            failed_distribution=str((exc.extra or {}).get("failed_distribution") or ""),
         )
     except Exception as exc:  # noqa: BLE001
         LOG.exception("依赖安装线程异常")
@@ -1424,7 +1425,13 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
     if code == ERROR_CANCELLED:
         return _finish_cancelled(plan, on_event, python)
     if code:
-        raise RepairError(code, _sanitize(out)[-800:])
+        raise RepairError(
+            code,
+            _sanitize(out)[-800:],
+            failed_distribution=failed_distribution_of(out, (req.requirement(),))
+            if code in (ERROR_NOT_FOUND, ERROR_REQUIRES_BUILD)
+            else "",
+        )
     # pip 退出码 0 **之后**才记「试过了」（#466）：这条黑名单挡的是「装完还缺、
     # 再装还缺」的循环——同一需求再装一遍改不了任何东西。网络断掉 / 用户取消的
     # 那次 pip 没跑成，再来一次是有意义的；以前写在 pip 之前，失败文案说
@@ -1680,6 +1687,32 @@ def classify_pip_failure(text: str) -> str:
     if "could not find a version" in low or "no matching distribution" in low:
         return ERROR_NOT_FOUND if "from versions: none" in low else ERROR_REQUIRES_BUILD
     return ERROR_FAILED
+
+
+#: pip 点名失败的发行包：`No matching distribution found for X` / `Could not find a version that satisfies the
+#: requirement X (from versions: …)`。X 后面可能跟版本约束；传递依赖失败时 pip 会在后面注明 `(from 父包)`，
+#: 那种照样点名的是**失败的那个**包（不是用户点的候选），所以只取第一个名字、由调用方拿去和候选比。
+_PIP_FAILED_DIST_RE = re.compile(
+    r"(?:no matching distribution found for|could not find a version that satisfies the requirement)"
+    r"\s+([A-Za-z0-9][A-Za-z0-9._-]*)",
+    re.IGNORECASE,
+)
+
+
+def failed_distribution_of(text: str, requirements=()) -> str:
+    """pip 失败输出 → 失败的那个发行包（规范化名）；认不出回 ""。
+
+    归因只来自 pip 自己点名的那一行；没点名时，**这一批只有一个需求**才算它（别无他选），
+    多于一个就不猜——前端据此在「别的需求引起的失败」时回落通用文案，不冤枉同名候选。"""
+    found = _PIP_FAILED_DIST_RE.findall(text or "")
+    if found:
+        return depresolve.normalize_distribution(found[0])
+    reqs = [r for r in requirements if r]
+    if len(reqs) == 1:
+        parsed = depresolve.parse_requirement(reqs[0])
+        if parsed is not None:
+            return depresolve.normalize_distribution(parsed[0])
+    return ""
 
 
 def pip_install_argv(
@@ -2364,12 +2397,18 @@ def _emit(
     error: str | None = None,
     result: dict | None = None,
     pinned: dict | None = None,
+    failed_distribution: str = "",
 ) -> dict:
     with _lock:
         rec = dict(_progress.get(plan_id) or {"log": ""})
         rec.update(
             plan_id=plan_id, state=state, code=code, error=error, result=result or rec.get("result")
         )
+        if failed_distribution:
+            # pip 点名失败的发行包（规范化名）：只在「找不到 / 没有轮子」类失败上有；卡片据此判断能不能怪同名候选
+            rec["failed_distribution"] = failed_distribution
+        else:
+            rec.pop("failed_distribution", None)
         if pinned is not None:
             # 租约里复查到全局固定而失败：界面要的是那条固定（谁、来源、变量），
             # 只有 code 的话它给不出「恢复自动检测」那一步
@@ -4525,7 +4564,15 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
         managedenv.mark_generation(
             project, generation, managedenv.GEN_STATE_INCOMPLETE, f"安装失败: {code}"
         )
-        raise RepairError(code, _sanitize(out)[-800:])
+        # 首个受管代次装的是脚本要的全部依赖：「找不到 / 没有轮子」可能是别的需求引起的，
+        # 所以带上 pip 点名的那个包（点不出名、批次又只有一条时才算那一条），由卡片决定能不能怪同名候选
+        raise RepairError(
+            code,
+            _sanitize(out)[-800:],
+            failed_distribution=failed_distribution_of(out, requirements)
+            if code in (ERROR_NOT_FOUND, ERROR_REQUIRES_BUILD)
+            else "",
+        )
     if job.attempted:
         # pip 跑成了：从这里起「再装一遍同一个需求」改变不了任何东西（验证没过也一样），
         # 防循环的黑名单这时才登记——与项目 venv 那条路 `_run_install` 的登记点同一语义

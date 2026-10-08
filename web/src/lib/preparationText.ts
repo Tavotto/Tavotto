@@ -298,6 +298,11 @@ function needsSomething(report: PreparationReport, script: string): PrepView {
 /** 同名候选装不上的两种：软件源里没有这个名字 / 没有适合的预编译版本——同样落到「选自己的 Python」 */
 const SAME_NAME_UNAVAILABLE = new Set(['dependency_not_found', 'dependency_requires_build'])
 
+/** 发行包名按 PEP 503 规范化后比较（`Scikit_Learn` 与 `scikit-learn` 是同一个包）；空 = 没有 */
+function sameDist(name: string | undefined): string {
+  return (name ?? '').toLowerCase().replace(/[-_.]+/g, '-')
+}
+
 /** 依赖没装好：同名候选（运行时缺的模块按同名装）的两种失败说清楚，其余照旧「没装好，原有文件没动」 */
 function depsFailed(report: PreparationReport, v: { script: string }, script: string, fallback: PrepPrimary | null): PrepView {
   const dep = report.provider.dependency
@@ -308,7 +313,9 @@ function depsFailed(report: PreparationReport, v: { script: string }, script: st
     if (dep.code === 'dependency_same_name_mismatch') {
       return view('deps_same_name_mismatch', 'depsSameNameMismatch', values, { kind: 'open_environment' }, { tone: 'bad' })
     }
-    if (SAME_NAME_UNAVAILABLE.has(dep.code)) {
+    // 首个受管代次装的是脚本要的全部依赖：「找不到 / 没有轮子」可能是别的需求引起的。只有后端指认失败的就是
+    // 这个同名候选（pip 点名，或这一批只有它）才说「PyPI 上装不了它」；否则回落通用依赖失败文案
+    if (SAME_NAME_UNAVAILABLE.has(dep.code) && sameDist(dep.failed_distribution) === sameDist(dist)) {
       return view('deps_same_name_unavailable', 'depsSameNameUnavailable', values, { kind: 'open_environment' }, { tone: 'bad' })
     }
   }

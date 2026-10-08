@@ -4793,6 +4793,8 @@ export interface PreparationReport {
       /** 运行时缺的模块名与其中按同名装的 PyPI 包（失败时卡片说清「PyPI 上的 X 不是脚本要的 Y」）；老后端没有 */
       module?: string
       unverified_same_name?: string[]
+      /** pip 点名安装失败的发行包（规范化名，后端事实）；缺 = 点不出名，卡片不把失败算到同名候选头上；老后端没有 */
+      failed_distribution?: string
     } | null
   }
   dependency_delta?: Record<string, unknown> | null

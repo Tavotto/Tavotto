@@ -1023,6 +1023,7 @@ class SessionService:
                 "code": str(snap.get("code") or ""),
                 "retryable": snap.get("retryable"),
                 "committed": bool(snap.get("committed")),
+                "failed_distribution": str(snap.get("failed_distribution") or ""),
             }
         if state == deprepair.STATE_DONE:
             threading.Thread(
@@ -1380,6 +1381,11 @@ class SessionService:
             # 不是脚本要的 Y」（用户自己授权页上看过的两个名字，不是遥测）
             "module": dep.module,
             "unverified_same_name": list(dep.impact.get("unverified_same_name") or ()),
+            # pip 点名失败的发行包（后端事实）：首个受管代次装的是脚本要的全部依赖，「找不到 / 没有轮子」不一定是同名
+            # 候选引起的；卡片只在它等于候选时才怪候选。没有 = 点不出名、批次也不止一条——卡片回落通用文案
+            "failed_distribution": (dep.finished or {}).get("failed_distribution")
+            or rec.get("failed_distribution")
+            or "",
         }
 
     def _missing_info(self, sess: Session) -> dict | None:

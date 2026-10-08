@@ -320,6 +320,73 @@ class TestVerifiedInstall:
         assert final["code"] == deprepair.ERROR_NOT_FOUND, final
         assert managedenv.python_of(project) is None
 
+    def _install_batch(self, project, modules: list[str], declared: str):
+        """脚本 import 了 `modules`；`declared` 在 requirements.txt 里声明（所以首个受管代次把它们一起装）。"""
+        (project / "requirements.txt").write_text(f"{declared}\n", encoding="utf-8")
+        _script(project, modules[0])
+        script = (project / "figure.py").read_text(encoding="utf-8")
+        (project / "figure.py").write_text(
+            "".join(f"import {m}\n" for m in modules[1:]) + script, encoding="utf-8"
+        )
+        plan = deprepair.create_plan(
+            str(project), "figure.py", modules[0], target_kind=deprepair.TARGET_MANAGED
+        )
+        assert deprepair.install_async(plan.plan_id, confirmed_impact=plan.impact_digest)
+        return wait_for(plan.plan_id), plan
+
+    def test_a_failure_caused_by_another_requirement_in_the_batch_names_that_package(
+        self, project, house, offline_managed_env
+    ):
+        """首个受管代次一起装脚本要的全部依赖：同名候选（wheelhouse 里有）没问题，批次里另一个声明依赖不可得——
+        pip 点名的是后者，失败载荷的 `failed_distribution` 就是后者，不是同名候选。"""
+        final, plan = self._install_batch(
+            project, [UNLISTED, "tavotto_test_declared"], "tavotto-test-declared"
+        )
+        assert final["state"] == deprepair.STATE_FAILED
+        assert final["code"] == deprepair.ERROR_NOT_FOUND, final
+        assert plan.widened is not None and len(plan.requirements) > 1
+        assert final["failed_distribution"] == "tavotto-test-declared"
+        assert final["failed_distribution"] != depresolve.normalize_distribution(UNLISTED)
+
+    def test_a_failure_of_the_same_name_candidate_names_the_candidate(
+        self, project, house, offline_managed_env
+    ):
+        """同一批里，不可得的恰好是同名候选本身（另一个声明依赖在 wheelhouse 里）→ 点名的就是它。"""
+        build_wheel(house, name="tavotto-test-declared", import_name="tavotto_test_declared")
+        final, plan = self._install_batch(
+            project, [GHOST, "tavotto_test_declared"], "tavotto-test-declared"
+        )
+        assert final["state"] == deprepair.STATE_FAILED
+        assert final["code"] == deprepair.ERROR_NOT_FOUND, final
+        assert len(plan.requirements) > 1
+        assert final["failed_distribution"] == depresolve.normalize_distribution(GHOST)
+
+    def test_a_single_candidate_batch_is_attributable_even_when_pip_names_nothing(self):
+        """批次只有那一个候选时别无他选；批次多于一个、pip 又没点名时不猜（卡片回落通用文案）。"""
+        assert deprepair.failed_distribution_of("boom", ("Ghost_Pkg>=1",)) == "ghost-pkg"
+        assert deprepair.failed_distribution_of("boom", ("a", "b")) == ""
+        assert deprepair.failed_distribution_of("boom", ()) == ""
+        assert deprepair.failed_distribution_of("", ("a", "b")) == ""
+
+    @pytest.mark.parametrize(
+        ("text", "want"),
+        [
+            ("ERROR: No matching distribution found for Foo_Bar", "foo-bar"),
+            ("ERROR: No matching distribution found for foo>=1.2,<2", "foo"),
+            (
+                "ERROR: Could not find a version that satisfies the requirement lxml (from versions: none)\n"
+                "ERROR: No matching distribution found for lxml",
+                "lxml",
+            ),
+            (
+                "ERROR: Could not find a version that satisfies the requirement bar>=1 (from foo) (from versions: 0.1)",
+                "bar",
+            ),
+        ],
+    )
+    def test_pip_output_names_the_failed_distribution(self, text, want):
+        assert deprepair.failed_distribution_of(text, ("a", "b")) == want
+
     def test_the_install_is_wheels_only(self):
         """同名候选走的就是既有的安装命令：只装 wheel、不 `--upgrade`（`--only-binary=:all:` 不变）。"""
         argv = deprepair.pip_install_argv("/env/bin/python", UNLISTED)

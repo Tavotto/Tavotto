@@ -631,6 +631,22 @@ class TestRealRoundTrip:
         assert managedenv.active_generation(proj) is None, "核验不过的一代不许激活"
         assert managedenv.state(proj)["installed"] == []
 
+    def test_a_same_name_package_pypi_does_not_have_reports_the_failed_distribution(
+        self, client, house, offline_managed_env, opened
+    ):
+        """真往返：wheelhouse 里没有这个名字 → `dependency_not_found`，会话报告里带 pip 点名的发行包，卡片据此才怪同名候选。"""
+        proj, pending = self._runtime_missing_offer(client, opened, "tavotto_test_ghost_mod")
+        assert _act(client, pending, "prepare_dependencies").status_code == 202
+        failed = _wait(
+            client,
+            pending["session_id"],
+            lambda r: r["outcome"].get("reason") == "dependency_preparation",
+        )
+        dep = failed["provider"]["dependency"]
+        assert dep["code"] == "dependency_not_found", failed
+        assert dep["failed_distribution"] == "tavotto-test-ghost-mod"
+        assert managedenv.active_generation(proj) is None
+
     def test_a_same_name_package_that_is_the_module_installs_after_the_user_clicks(
         self, client, house, offline_managed_env, opened
     ):
