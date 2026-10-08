@@ -265,12 +265,13 @@ describe('脚本行：开跑前要先准备依赖', () => {
     expect(host.querySelector('[data-script-preparation]')).toBeNull()
   })
 
-  it('默认折叠的详情里仍能选择「不准备，直接运行」，然后重跑脚本', async () => {
+  it('页脚 start 槽的「不准备，直接运行」，然后重跑脚本', async () => {
     mockProbe.mockResolvedValue(preparationResult(offerOf()))
     vi.mocked(skipDependencyPreparation).mockResolvedValue({ ok: true, script: SCRIPT, skipped: true })
     await mountAndRun()
     const skip = dialog()!.querySelector<HTMLButtonElement>('[data-dependency-skip]')!
-    expect(skip.closest('details')!.hasAttribute('open')).toBe(false)
+    // 2026-10-07 设计审计 §10.2：不再埋在「详情」里，是页脚 start 槽的次要入口
+    expect(skip.closest('[data-dialog-footer]')).not.toBeNull()
     mockProbe.mockClear()
     succeedProbe()
     await act(async () => skip.click())

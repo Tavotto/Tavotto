@@ -207,24 +207,38 @@ def landing(root: str | os.PathLike, *generations: int | None):
 REGISTERED_KEY = "input_remap_registered"
 
 
-def record_registration(root: str | os.PathLike, script: str) -> None:
-    """试运行按此刻的改指表登记了 `script` 的 stems：记下这张表的指纹（在 `landing()` 里调）。"""
+def _mark_key(script: str, variant: str = "") -> str:
+    """登记标记的键：脚本，或「脚本 + 运行配置」。同一脚本的不同 argv 变体各有各的对账记录——
+    一个变体对完账不许把别的变体也算成已对账（Codex 评 #812 P2）。"""
+    return f"{script}\x00{variant}" if variant else script
+
+
+def record_registration(root: str | os.PathLike, script: str, variant: str = "") -> None:
+    """试运行按此刻的改指表登记了 `script` 的 stems：记下这张表的指纹（在 `landing()` 里调）。
+
+    `variant` 给运行配置 id 时只记**这一份配置**的标记，不动脚本级标记。"""
     with project_mutex(root):
         raw = config.project_settings(str(root)).get(REGISTERED_KEY)
         marks = dict(raw) if isinstance(raw, dict) else {}
-        marks[script] = fingerprint(root)
+        marks[_mark_key(script, variant)] = fingerprint(root)
         config.set_project_settings(str(root), {REGISTERED_KEY: marks})
 
 
-def registration_stale(root: str | os.PathLike, script: str) -> bool:
+def registration_stale(root: str | os.PathLike, script: str, variant: str = "") -> bool:
     """`script` 的 stems 是在另一张改指表下试运行登记的（stems 可能由数据决定）。
 
     没有标记的（这个机制之前登记的、或别处登记的）按**保守对账**处理：项目里有任何改指规则就算过期——
     不知道它是在哪张表下登记的，就当不是这一张，下一次 build 按真实产出重新登记一次；没有规则时
-    维持原样（它只可能是在「无表」下登记的，Codex 评 #716 P1）。"""
+    维持原样（它只可能是在「无表」下登记的，Codex 评 #716 P1）。
+
+    `variant`（运行配置 id）：先看这一份配置自己的标记，没有再回落到脚本级标记。"""
     raw = config.project_settings(str(root)).get(REGISTERED_KEY)
     current = fingerprint(root)
-    if not isinstance(raw, dict) or script not in raw:
+    if not isinstance(raw, dict):
+        return bool(current)
+    if variant and _mark_key(script, variant) in raw:
+        return raw[_mark_key(script, variant)] != current
+    if script not in raw:
         return bool(current)
     return raw[script] != current
 

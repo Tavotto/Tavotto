@@ -567,6 +567,8 @@ def register_probed(
             registry.load(figures_dir)
             # stems 可能由数据决定：记下是在哪张改指表下登记的，表变了渲染时据此重新登记
             inputremap.record_registration(figures_dir, script)
+            if result.get("run_config"):
+                inputremap.record_registration(figures_dir, script, result["run_config"])
     except inputremap.RemapChanged as exc:
         LOG.info("试运行结果作废（%s）: %s", exc, script)
         return {

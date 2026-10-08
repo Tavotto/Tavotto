@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { CircleCheck, CircleDashed, CircleMinus, Ellipsis, LoaderCircle, Play, Plus, RefreshCw, TriangleAlert } from '@/components/ui/icons'
+import { CircleCheck, CircleDashed, CircleMinus, Ellipsis, Play, Plus, RefreshCw, TriangleAlert } from '@/components/ui/icons'
 import { Details, Summary } from '@/components/ui/Details'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { RetryImg } from '@/components/ui/RetryImg'
@@ -38,6 +38,7 @@ import { scriptTarget, useProjectPreparationStore } from '@/store/projectPrepara
 import {
   isBusyPhase,
   isGatePhase,
+  scriptRunEpoch,
   useScriptRunStore,
   type ScriptRunState,
 } from '@/store/scriptRunStore'
@@ -49,6 +50,7 @@ import { Button, IconButton } from './ui/Button'
 import { Dialog } from './ui/Dialog'
 import { EmptyState } from './ui/EmptyState'
 import { Menu, MenuItem, MenuSub } from './ui/Menu'
+import { Notice } from './ui/Notice'
 import { Select } from './ui/Select'
 import { TextInput } from './ui/Input'
 
@@ -93,10 +95,22 @@ const rd = (key: string, values?: Record<string, unknown>) =>
 export function RegistryDialog() {
   useTranslation('dialogs')
   const open = useUiStore((s) => s.registryOpen)
-  if (!open) return null
+  // 正文按**项目代际 × 打开代际**重挂（#831 Codex P1 / 维护者复审）。关掉之后 Radix Presence 会把同一份正文
+  // 留到退场动画结束（约 90 ms，data-state=closed）；这段时间里换了项目再打开，不重挂的话还是那一份：
+  // 上一个项目的注册表视图、试运行结果（含可以「添加到画布」的 runtime 描述符）都还在，注册表也不重取。
+  // 项目代际 = `scriptRunStore.epoch`（每次换项目 +1，A → B → A 也换），覆盖开着时换项目；
+  // 打开代际每次「关 → 开」+1，覆盖退场动画里重新打开
+  const epoch = useScriptRunStore((s) => s.epoch)
+  const [openGen, setOpenGen] = useState(0)
+  const [wasOpen, setWasOpen] = useState(open)
+  if (open !== wasOpen) {
+    setWasOpen(open)
+    if (open) setOpenGen((g) => g + 1)
+  }
   return (
     <Dialog
-      open
+      // 常驻挂载（Dialog 的常驻写法）：正文只在开着时由 Radix 挂上，关的时候放完退场动画才卸（见上：按代际重挂）
+      open={open}
       onOpenChange={(v) => {
         if (!v) useProjectReadinessStore.getState().closeCenter()
       }}
@@ -106,7 +120,7 @@ export function RegistryDialog() {
       size="lg"
       anchor="readiness"
     >
-      <ReadinessBody />
+      <ReadinessBody key={`${epoch}:${openGen}`} />
     </Dialog>
   )
 }
@@ -171,8 +185,11 @@ function ReadinessBody() {
   }, [byScript])
 
   const reloadView = async () => {
+    const epoch = scriptRunEpoch()
     try {
-      setView(await fetchRegistry())
+      const next = await fetchRegistry()
+      // 在飞时换了项目：这份视图属于上一个项目（正文已按代际重挂，这里再挡一道）
+      if (scriptRunEpoch() === epoch) setView(next)
     } catch (e) {
       // 高级段取不回来**不算这个对话框失败**：主体那份事实来自另一个端点，
       // 它在的话每一行照常显示与操作
@@ -191,15 +208,18 @@ function ReadinessBody() {
    * 素材清单、画布上面板的派生元数据都在它后面，这里不手拼任何状态。
    */
   const run = async (key: string, fn: () => Promise<void>) => {
+    const epoch = scriptRunEpoch()
     setBusy(key)
     setError(null)
     try {
       await fn()
+      // 在飞时换了项目：结果属于上一个项目，不重取、不刷新、不报错
+      if (scriptRunEpoch() !== epoch) return
       await reloadView()
       // `force`：用户刚写过盘，绝不能复用一个**写之前**就发出的在途请求
       await refreshAssetsAndSync({ force: true })
     } catch (e) {
-      setError(backendErrorText(e))
+      if (scriptRunEpoch() === epoch) setError(backendErrorText(e))
     } finally {
       setBusy(null)
     }
@@ -276,7 +296,7 @@ function ReadinessBody() {
         />
       )
     }
-    return <p className="py-6 text-center text-xs text-ink-3">{rd('loading')}</p>
+    return <p className="text-shimmer py-6 text-center text-ink-3">{rd('loading')}</p>
   }
 
   const groups: { key: 'pending' | 'editable' | 'layout_only'; panels: ReadinessPanel[] }[] = [
@@ -292,25 +312,25 @@ function ReadinessBody() {
     <div className="flex flex-col gap-3">
       <div className="flex min-h-7 items-center justify-between gap-3">
         <SummaryStrip report={report} />
+        {/* 忙碌态由按钮自己说（`loading`：转圈换掉图标），不另做一个转动的图标 */}
         <Button
           variant="secondary"
           size="sm"
           className="shrink-0"
+          data-registry-rescan
+          loading={busy === 'scan'}
           disabled={busy !== null || !report.project.can_rescan}
           onClick={() => void scan()}
         >
-          <RefreshCw size={ICON_SIZE.sm} className={cn(busy === 'scan' && 'animate-spin')} />
+          {busy !== 'scan' && <RefreshCw size={ICON_SIZE.sm} />}
           {rd('rescan')}
         </Button>
       </div>
 
       <ProjectNotices report={report} staleError={loadError} refreshing={loading} />
 
-      {error && (
-        <p role="alert" className="text-xs leading-relaxed text-danger">
-          {error}
-        </p>
-      )}
+      {/* 项目级说明与动作失败都是摘要下面的 Notice（2026-10-07 设计审计 §10.2：此前一块灰底列表 + 一行红字） */}
+      {error && <Notice tone="danger">{error}</Notice>}
 
       {report.summary.total === 0 ? (
         <EmptyState icon={EditableFigureIcon} title={rd('emptyTitle')} hint={rd('emptyHint')} />
@@ -380,7 +400,7 @@ function SummaryStrip({ report }: { report: ReadinessReport }) {
   // 判据与横幅共用一份（`lib/readinessText.allEditable`）。
   if (allEditable(s)) {
     return (
-      <p className="flex min-w-0 flex-1 items-center gap-1.5 text-xs text-ink">
+      <p className="flex min-w-0 flex-1 items-center gap-1.5 text-ink">
         <CircleCheck size={ICON_SIZE.sm} className="shrink-0 text-ok" aria-hidden />
         <span className="tabular-nums">{rd('allEditable', { count: s.total })}</span>
       </p>
@@ -397,7 +417,7 @@ function SummaryStrip({ report }: { report: ReadinessReport }) {
       {cells.map((c) => (
         <div key={c.key} className="flex items-baseline gap-1">
           <dt className="type-meta">{rd(`summary.${c.key}`)}</dt>
-          <dd className="text-xs tabular-nums text-ink">{c.value}</dd>
+          <dd className="text-sm tabular-nums text-ink">{c.value}</dd>
         </div>
       ))}
     </dl>
@@ -437,14 +457,17 @@ function ProjectNotices({
   if (staleError && !refreshing) notes.push(rd('staleReport'))
   if (!notes.length) return null
   return (
-    <ul className="flex flex-col gap-1 rounded-sm bg-surface-2 px-2 py-1.5">
-      {notes.map((n) => (
-        <li key={n} className="type-caption flex items-start gap-1.5">
-          <TriangleAlert size={ICON_SIZE.sm} className="mt-px shrink-0 text-warn-content" aria-hidden />
-          {n}
-        </li>
-      ))}
-    </ul>
+    <Notice tone="warn" data-readiness-notices>
+      {notes.length === 1 ? (
+        notes[0]
+      ) : (
+        <ul className="flex list-outside list-disc flex-col gap-0.5 pl-4">
+          {notes.map((n) => (
+            <li key={n}>{n}</li>
+          ))}
+        </ul>
+      )}
+    </Notice>
   )
 }
 
@@ -571,14 +594,14 @@ function PanelRow({
       tabIndex={-1}
       data-panel-row={panel.id}
       className={cn(
-        '-mx-2 rounded-sm px-2 py-2 outline-none transition-colors duration-fast focus-visible:focus-ring',
+        '-mx-2 rounded-md px-2 py-2 outline-none transition-colors duration-fast focus-visible:focus-ring',
         highlight && 'bg-selected',
       )}
     >
       <div className="flex items-center gap-3">
         <PanelThumb panel={panel} />
         <div className="min-w-0 flex-1">
-          <p className="truncate text-xs text-ink" title={panel.id}>
+          <p className="truncate text-ink" title={panel.id}>
             {fileName(panel.id)}
           </p>
           <p className="type-meta mt-0.5 flex min-w-0 items-center gap-1">
@@ -808,15 +831,14 @@ function ProbePicker({
       <Button
         variant="secondary"
         size="sm"
+        data-registry-probe={script}
+        loading={busyKey === script}
+        loadingLabel={rd('running')}
         disabled={disabled}
         onClick={() => onProbe(script)}
       >
-        {busyKey === script ? (
-          <LoaderCircle size={ICON_SIZE.sm} className="animate-spin" />
-        ) : (
-          <Play size={ICON_SIZE.sm} />
-        )}
-        {rd(busyKey === script ? 'running' : 'probeAndLink')}
+        <Play size={ICON_SIZE.sm} />
+        {rd('probeAndLink')}
       </Button>
     </>
   )
@@ -878,7 +900,7 @@ function AllScriptsSection({
   useTranslation('dialogs')
   return (
     <Details className="border-t border-border pt-2">
-      <Summary className="type-section h-7 gap-1 rounded-sm px-1 hover:text-ink-2">
+      <Summary className="type-section h-7 gap-1 rounded-md px-1 hover:text-ink-2">
         {rd('allScriptsTitle')}
         <span className="type-meta tabular-nums">{scripts.length}</span>
       </Summary>
@@ -886,7 +908,7 @@ function AllScriptsSection({
         {scripts.map((s) => (
           <li key={s.script} className="flex flex-col gap-0.5 border-t border-border px-1 py-1.5">
             <div className="flex items-center gap-2">
-              <span className="min-w-0 flex-1 truncate font-mono text-xs text-ink" title={s.script}>
+              <span className="min-w-0 flex-1 truncate font-mono text-sm text-ink" title={s.script}>
                 {s.script}
               </span>
               <span className="type-meta shrink-0">
@@ -897,13 +919,15 @@ function AllScriptsSection({
                   variant="ghost"
                   size="sm"
                   className="-my-1 text-ink-2 hover:text-ink"
+                  data-registry-probe={s.script}
+                  loading={busy === s.script}
                   disabled={busy !== null}
                   onClick={() => onProbe(s.script)}
                   /* 「任选一个试运行，按它实际画出的图建立关系」从展开后常驻的两行说明
                       搬到这颗钮的气泡里（全面打磨 D34）：它解释的是这个动作 */
                   title={rd('allScriptsHint')}
                 >
-                  {rd(busy === s.script ? 'running' : s.registered ? 'reprobe' : 'probeAndLink')}
+                  {rd(s.registered ? 'reprobe' : 'probeAndLink')}
                 </Button>
               )}
             </div>

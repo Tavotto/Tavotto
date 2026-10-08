@@ -27,6 +27,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
 import {
   ApiError,
   createPreparationSession,
+  WORKDIR_CONFIRMATION_CODE,
   fetchPanels,
   fetchReadiness,
   fetchRegistry,
@@ -42,6 +43,7 @@ import {
   pickableStems,
   sourceOptions,
 } from '@/components/RegistryDialog'
+import { WorkdirConfirmDialog } from '@/components/WorkdirConfirmDialog'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { resetAssetLoadBookkeeping, useAssetStore } from '@/store/assetStore'
 import {
@@ -303,6 +305,36 @@ describe('六个状态', () => {
     // 那句话现在由素材卡与图内能力说明负责，看护在 AssetBrowser.readiness.test.tsx /
     // panelCapabilityNote.test.tsx；这里只守「不画成错误」。
     expect(row.textContent).toContain('仅版面')
+  })
+})
+
+describe('嵌套对话框（2026-10-07 设计审计 §10.2）', () => {
+  it('接入中心上再弹运行目录确认：只有栈底那一层画遮罩，不叠成两层暗', async () => {
+    await open(reportOf(SIX))
+    const extra = document.createElement('div')
+    document.body.appendChild(extra)
+    const second = createRoot(extra)
+    await act(async () => {
+      second.render(<WorkdirConfirmDialog />)
+    })
+    await act(async () => {
+      useEnvStore.getState().requestWorkdirConfirmation({
+        kind: 'workdir',
+        code: WORKDIR_CONFIRMATION_CODE,
+        script: 'dyn.py',
+        reason: 'project_root_evidence',
+        recommended: 'project_root',
+        options: [],
+        conflicts: [],
+        reads: [],
+      } as never)
+    })
+    expect(document.querySelectorAll('[data-dialog]').length).toBe(2)
+    // 两层都有遮罩元素（点外面的判定仍落在它上面），但只有一层是有颜色的那一个
+    expect(document.querySelectorAll('[data-dialog-scrim]').length).toBe(1)
+    await act(async () => useEnvStore.getState().dismissWorkdirConfirmation())
+    await act(async () => second.unmount())
+    extra.remove()
   })
 })
 
@@ -966,5 +998,203 @@ describe('可编辑图的动作层级', () => {
     expect(firstLevelButtons('Auto.pdf')).toContain('自动连接')
     expect(firstLevelButtons('Mystery.pdf').join(' ')).toContain('试运行并连接')
     expect(firstLevelButtons('Dup.pdf').join(' ')).toContain('用 old.py')
+  })
+})
+
+describe('换项目 / 重新打开（#831 Codex P1 + 维护者复审：退场动画里留着的那份正文）', () => {
+  const RT_A = { asset_id: 'rt-a', stem: 'Mystery', script: 'dyn.py' } as never
+  const VIEW_B = {
+    ...REGISTRY_VIEW,
+    scripts: {},
+    candidates: [],
+    all_scripts: [
+      { script: 'b_only.py', registered: false, static_stems: ['Bee'], entry_candidates: ['main'], reason: 'static_candidate' as const, can_probe: true },
+      // 同名脚本：B 里也有一个 dyn.py——A 的试运行结果按脚本名挂上去就会冒在 B 的这一行上
+      { script: 'dyn.py', registered: false, static_stems: [], entry_candidates: ['main'], reason: 'dynamic_stems' as const, can_probe: true },
+    ],
+  }
+  const REPORT_B = reportOf([P({ id: 'Bee.pdf', stem: 'Bee' })], { project_id: 'pj-b' })
+  const PROBED_A = { script: 'dyn.py', entry: 'main', stems: ['Mystery'], descriptors: [RT_A], error: null, tried: [] }
+
+  /** 与 projectStore 换项目同序的那三步：会话认领 B、脚本运行换代、就绪度清掉；然后 B 的报告落地 */
+  const switchToB = async () => {
+    mockReadiness.mockResolvedValue(REPORT_B)
+    mockRegistry.mockResolvedValue(VIEW_B)
+    await act(async () => {
+      setCurrentProjectId('p2')
+      useScriptRunStore.getState().clear()
+      useProjectReadinessStore.getState().clear()
+    })
+    await act(async () => {
+      useProjectReadinessStore.setState({ report: REPORT_B })
+      await new Promise((r) => setTimeout(r, 0))
+    })
+  }
+  const settle = () =>
+    act(async () => {
+      await new Promise((r) => setTimeout(r, 0))
+    })
+  const reopen = async () => {
+    await act(async () => {
+      useUiStore.setState({ registryOpen: true })
+    })
+    await settle()
+  }
+  /** A 的东西：A 才有的脚本（auto.py 只在 A 的注册表视图里）、A 的试运行结果与它的「添加到画布」 */
+  const showsA = () => {
+    const text = dialog().textContent ?? ''
+    return text.includes('auto.py') || text.includes('添加到画布') || text.includes('已连接')
+  }
+  const addButtons = () =>
+    [...dialog().querySelectorAll('button')].filter((b) => (b.textContent ?? '').includes('添加到画布'))
+
+  /**
+   * 退场动画（生产代码一行不改）：jsdom 不算样式，`animationName` 永远是空、Radix Presence 当场卸载。
+   * 这里让 `getComputedStyle` 按节点此刻的 `data-state` 报动画名（开 = fade-in、关 = fade-out）——
+   * Presence 拿到的是同一个样式对象、关的那一刻读到名字变了，就把内容留到 `animationend`，与浏览器一致
+   */
+  let styleSpy: { mockRestore: () => void } | null = null
+  const simulateExitAnimation = () => {
+    const real = window.getComputedStyle.bind(window)
+    styleSpy = vi.spyOn(window, 'getComputedStyle').mockImplementation((el, pseudo) => {
+      const base = real(el, pseudo)
+      if (!(el instanceof HTMLElement) || !el.hasAttribute('data-state')) return base
+      return new Proxy(base, {
+        get(t, k) {
+          if (k === 'animationName') return el.getAttribute('data-state') === 'closed' ? 'fade-out' : 'fade-in'
+          const v = Reflect.get(t, k, t)
+          return typeof v === 'function' ? v.bind(t) : v
+        },
+      })
+    })
+  }
+  /** 退场动画放完：给留着的节点发 animationend（jsdom 没有 AnimationEvent，名字挂在普通 Event 上） */
+  const finishExit = () =>
+    act(async () => {
+      for (const el of document.querySelectorAll('[data-state="closed"]')) {
+        const e = new Event('animationend')
+        Object.defineProperty(e, 'animationName', { value: 'fade-out' })
+        el.dispatchEvent(e)
+      }
+    })
+  /** 关掉：退场动画里同一份正文还挂着（data-state=closed）——这条前提不成立的话下面的用例量不到东西 */
+  const closeRetained = async () => {
+    await act(async () => useProjectReadinessStore.getState().closeCenter())
+    const retained = document.querySelector('[role="dialog"]')
+    expect(retained, '退场动画没有留住正文：模拟失效').not.toBeNull()
+    expect(retained!.getAttribute('data-state')).toBe('closed')
+  }
+
+  afterEach(() => {
+    styleSpy?.mockRestore()
+    styleSpy = null
+    setCurrentProjectId(null)
+  })
+
+  it('A 里试运行过、对话框开着换到 B：高级段与试运行结果都是 B 的，没有 A 的「添加到画布」', async () => {
+    legacyPath() // 这条保护的是试运行结果不跨项目：默认走准备面板时接入中心不发试运行，只有旧路径（开关关闭）会落描述符
+    setCurrentProjectId('p1')
+    mockProbe.mockResolvedValue(PROBED_A)
+    await open(reportOf(SIX))
+    await clickIn(rowOf('Mystery.pdf')!, '试运行并连接')
+    await settle()
+    expect(dialog().textContent).toContain('把 Mystery 添加到画布')
+    const fetches = mockRegistry.mock.calls.length
+    await switchToB()
+    expect(mockRegistry.mock.calls.length, 'B 的注册表视图没有重取').toBeGreaterThan(fetches)
+    expect(dialog().textContent).toContain('b_only.py')
+    expect(showsA(), 'B 里还显示着 A 的脚本 / 试运行结果').toBe(false)
+  })
+
+  it('A 里试运行 → 关 → 退场动画没放完就换到 B 并重新打开：重取 B 的视图，没有 A 的描述符与「添加到画布」', async () => {
+    legacyPath() // 这条保护的是试运行结果不跨项目：默认走准备面板时接入中心不发试运行，只有旧路径（开关关闭）会落描述符
+    simulateExitAnimation()
+    setCurrentProjectId('p1')
+    mockProbe.mockResolvedValue(PROBED_A)
+    await open(reportOf(SIX))
+    await clickIn(rowOf('Mystery.pdf')!, '试运行并连接')
+    await settle()
+    expect(addButtons().length, "A 的试运行结果应先出现").toBeGreaterThan(0)
+    await closeRetained()
+    const fetches = mockRegistry.mock.calls.length
+    await switchToB()
+    await reopen()
+    expect(dialog().getAttribute('data-state')).toBe('open')
+    expect(mockRegistry.mock.calls.length, '重新打开没有重取注册表视图').toBeGreaterThan(fetches)
+    expect(dialog().textContent).toContain('b_only.py')
+    expect(addButtons(), 'A 的 runtime 描述符留在了 B 的对话框里').toHaveLength(0)
+    expect(showsA()).toBe(false)
+  })
+
+  it('对照：退场动画先放完（正文已卸）再换到 B、重新打开——同样只有 B 的', async () => {
+    simulateExitAnimation()
+    setCurrentProjectId('p1')
+    mockProbe.mockResolvedValue(PROBED_A)
+    await open(reportOf(SIX))
+    await clickIn(rowOf('Mystery.pdf')!, '试运行并连接')
+    await settle()
+    await closeRetained()
+    await finishExit()
+    expect(document.querySelector('[role="dialog"]'), 'animationend 之后正文应已卸载').toBeNull()
+    const fetches = mockRegistry.mock.calls.length
+    await switchToB()
+    await reopen()
+    expect(mockRegistry.mock.calls.length).toBeGreaterThan(fetches)
+    expect(dialog().textContent).toContain('b_only.py')
+    expect(showsA()).toBe(false)
+  })
+
+  it('同一个项目里关掉、退场动画没放完又打开：也是新的一次打开——重取视图，上一次的试运行结果不带过来', async () => {
+    legacyPath() // 这条保护的是试运行结果不跨项目：默认走准备面板时接入中心不发试运行，只有旧路径（开关关闭）会落描述符
+    simulateExitAnimation()
+    setCurrentProjectId('p1')
+    mockProbe.mockResolvedValue(PROBED_A)
+    await open(reportOf(SIX))
+    await clickIn(rowOf('Mystery.pdf')!, '试运行并连接')
+    await settle()
+    expect(addButtons().length, "A 的试运行结果应先出现").toBeGreaterThan(0)
+    await closeRetained()
+    const fetches = mockRegistry.mock.calls.length
+    await reopen()
+    expect(mockRegistry.mock.calls.length, '重新打开没有重取注册表视图').toBeGreaterThan(fetches)
+    // T09b 起试运行状态归素材库那台状态机（`scriptRunStore`，按项目代际清空），不再是本对话框的局部状态：
+    // 同一个项目里重新打开，同一个脚本只有一份运行状态——结果仍在，且不是上一次正文的残留（上面已重取视图）。
+    // 跨项目的不带过来由上面几条（换到 B）钉住
+    expect(addButtons().length, '同项目里重开：运行状态应仍是那台状态机里的那一份').toBeGreaterThan(0)
+  })
+
+  it('A 的试运行在飞时换到 B（对话框开着）：迟到的结果不落进 B 的对话框', async () => {
+    legacyPath() // 这条保护的是试运行结果不跨项目：默认走准备面板时接入中心不发试运行，只有旧路径（开关关闭）会落描述符
+    setCurrentProjectId('p1')
+    let finish!: (v: Awaited<ReturnType<typeof probeScript>>) => void
+    mockProbe.mockReturnValueOnce(new Promise((r) => (finish = r)))
+    await open(reportOf(SIX))
+    await clickIn(rowOf('Mystery.pdf')!, '试运行并连接')
+    await switchToB()
+    await act(async () => {
+      finish(PROBED_A as never)
+      await new Promise((r) => setTimeout(r, 0))
+    })
+    expect(dialog().textContent).toContain('b_only.py')
+    expect(showsA(), 'A 迟到的试运行结果落进了 B').toBe(false)
+  })
+
+  it('A 的试运行在飞 → 关 → 退场动画里换到 B 并重新打开 → A 的结果才回来：不落地', async () => {
+    simulateExitAnimation()
+    setCurrentProjectId('p1')
+    let finish!: (v: Awaited<ReturnType<typeof probeScript>>) => void
+    mockProbe.mockReturnValueOnce(new Promise((r) => (finish = r)))
+    await open(reportOf(SIX))
+    await clickIn(rowOf('Mystery.pdf')!, '试运行并连接')
+    await closeRetained()
+    await switchToB()
+    await reopen()
+    await act(async () => {
+      finish(PROBED_A as never)
+      await new Promise((r) => setTimeout(r, 0))
+    })
+    expect(dialog().textContent).toContain('b_only.py')
+    expect(addButtons(), 'A 迟到的描述符落进了 B').toHaveLength(0)
+    expect(showsA()).toBe(false)
   })
 })

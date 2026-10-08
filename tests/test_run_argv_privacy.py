@@ -267,9 +267,14 @@ fig.savefig('plot.pdf')
 def test_sensitive_native_writer_holding_the_gil_cannot_deadlock_the_drain(
     worker_factory, monkeypatch
 ):
+    # Windows: write through the *UCRT* (`ucrtbase`), the CRT that CPython and
+    # the worker's `os.dup2` use, so fd 2 is the redirected drain pipe. The
+    # legacy `msvcrt.dll` keeps its own descriptor table that never saw the
+    # dup2, so `_write(2, ...)` there fails (-1) and the script dies, which a
+    # sensitive run reports only as "script diagnostics were omitted".
     worker = worker_factory(
         """import ctypes, os, sys
-library = ctypes.PyDLL('msvcrt' if os.name == 'nt' else None)
+library = ctypes.PyDLL('ucrtbase' if os.name == 'nt' else None)
 write = library._write if os.name == 'nt' else library.write
 write.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_uint if os.name == 'nt' else ctypes.c_size_t]
 data = (sys.argv[-1] * 100000).encode()

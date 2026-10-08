@@ -441,7 +441,7 @@
     "workdirChooseConflicts": "两处内容不同的文件：{{files}}",
     "workdirChooseLater": "稍后",
     "workdirChooseRootEvidence": "{{script}} 读的数据只有在项目根目录下才找得到。选一个运行目录，这个项目只问这一次。",
-    "workdirChooseRun": "运行",
+    "workdirChooseRun": "在这里运行",
     "workdirChooseScriptDirEvidence": "{{script}} 在当前目录里查找数据文件（glob / listdir / exists），在沙盒里找不到——它要在自己的目录里运行。选一个运行目录，这个项目只问这一次。",
     "workdirChooseSuggest": "这张图还没决定在哪个目录里运行。",
     "workdirChooseTitle": "脚本在哪个目录里运行？",
@@ -650,7 +650,11 @@
     "projectEnvRecommended": "项目环境 {{venv}} 已经装着 {{module}}，可以用它来运行。要改用吗？",
     "userEnvSource_project_venv": "项目里的 {{label}} 环境",
     "userEnvUnchecked": "还没检查：点「检查并使用」时会先检查，装齐了才改用",
-    "userEnvCheckUse": "检查并使用"
+    "userEnvCheckUse": "检查并使用",
+    "workdirChooseWritesShort": "在真实目录里运行时，脚本写出的文件会落进项目目录。",
+    "workdirChooseWritesMore": "详情",
+    "dependencyPrepareHeading": "准备环境",
+    "missingInputStep": "{{n}}/{{total}}"
   },
   "preflight": {
     "axisLabelFormat": "坐标轴标题「{{label}}」不是规范的「{{want}}」形式",
