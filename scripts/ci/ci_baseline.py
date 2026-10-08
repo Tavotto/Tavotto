@@ -339,6 +339,7 @@ _STEP_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "test",
         re.compile(
+            r"^CLA service contract tests \(isolated\)$|"
             r"^pytest$|^Run pnpm (test|lint|i18n:check)|^Run cargo |^Ruff |^CompatBench|"
             r"^Playwright|^冒烟|^不变式|^结构性不变式|^断言|^校验|^判定$|^聚合判定|"
             r"^依赖真实插件|^核心验收|^解包并验证候选|^发行生成物|^大图预览|^架构核对|"

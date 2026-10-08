@@ -93,8 +93,8 @@ def test_phase_derivation_matches_the_golden_vectors(vector):
 
 def test_the_vector_file_covers_every_phase_this_stage_can_produce():
     produced = {v["expect"]["phase"] for v in json.loads(VECTORS.read_text("utf-8"))["vectors"]}
-    # scanning（T02 的有界扫描）与 preparing_environment（T06 的联合安装）本阶段不产生，词汇已收进闭集
-    assert produced == set(prepsession.PHASES) - {"scanning", "preparing_environment"}
+    # scanning（T02 的有界扫描）不由 derive 产生；preparing_environment 自 T06 起由依赖作业的事实产生
+    assert produced == set(prepsession.PHASES) - {"scanning"}
     assert set(prepsession.PHASES) >= produced
 
 
@@ -111,44 +111,53 @@ def test_derivation_never_reads_the_clock_or_a_provider(monkeypatch):
 
 
 @pytest.mark.parametrize("code", ["missing_dependency", "script_error"])
-def test_error_result_waits_until_the_session_callback_finalizes(
+def test_error_results_wait_for_session_finalization_before_publishing_recovery(
     client, tmp_path, fake_pool, sessions, monkeypatch, code
 ):
-    """Provider terminal status must not expose retry actions before session finalization."""
+    """A provider error is not settled while its recovery offer is still being assembled."""
     _open(client, _project(tmp_path, "p"))
     fake_pool["error"] = engine_pool.WorkerError("failed", code=code, module="alpha")
     entered, release = threading.Event(), threading.Event()
-    original_start = preparation.SERVICE.start
 
-    def held_start(*args, **kwargs):
-        original_done = kwargs["on_done"]
+    def observe_missing(*_args):
+        entered.set()
+        assert release.wait(10), "test did not release the finalizer"
+        if code != "missing_dependency":
+            return None
+        return {
+            "module": "alpha",
+            "installable": True,
+            "impact": {"installs_packages": True},
+            "impact_digest": "confirmed-impact",
+        }
 
-        def held_done(plan, result):
-            entered.set()
-            assert release.wait(10), "test did not release the finalizer"
-            original_done(plan, result)
-
-        return original_start(*args, **{**kwargs, "on_done": held_done})
-
-    monkeypatch.setattr(preparation.SERVICE, "start", held_start)
+    monkeypatch.setattr(prepsession.SESSIONS, "_observe_missing", observe_missing)
     report = _create(client, {"script": "fig.py"}).get_json()
     sid = report["session_id"]
     try:
-        response = _act(client, sid, _action(report, "run")["id"], report["config_revision"])
-        assert response.status_code == 202
+        started = _act(client, sid, _action(report, "run")["id"], report["config_revision"])
+        assert started.status_code == 202
         assert entered.wait(10)
         pending = _get(client, sid).get_json()
         assert pending["result"]["status"] == preparation.STATUS_ERROR
         assert pending["phase"] == "running", pending
         assert pending["outcome"] == {"kind": "running"}
-        assert not {"run", "recheck"} & {action["kind"] for action in pending["actions"]}
+        assert not {"run", "prepare_dependencies", "recheck"} & {
+            action["kind"] for action in pending["actions"]
+        }
     finally:
         release.set()
         live = prepsession.SESSIONS.get(sid, report["project_id"])
         assert preparation.SERVICE.wait(live.attempts[-1].attempt_id, 10)
+
     done = _get(client, sid).get_json()
-    assert done["phase"] == "action_required", done
+    expected = "awaiting_confirmation" if code == "missing_dependency" else "action_required"
+    assert done["phase"] == expected, done
     assert done["outcome"]["code"] == code
+    if code == "missing_dependency":
+        assert (
+            _action(done, "prepare_dependencies")["impact"]["impact_digest"] == "confirmed-impact"
+        )
 
 
 def test_cancelled_provider_does_not_wait_for_a_shared_worker_finalizer():

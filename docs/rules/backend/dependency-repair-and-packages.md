@@ -20,7 +20,8 @@
   失败结构的 `system` 键上；`deprepair.offer()` 把健康的列成 `system_interpreter`
   目标排在最前，**采用一个字节都不装**，走项目环境 PATCH（`scope=project` +
   `module`，采用时连缺的那个包再验一次）。它刻意不进 `TARGETS`，`create_plan`
-  对它一律拒绝。**缺包时无提示自动采用（ADR 0107，2026-09-28 推翻原「不无感切换」）**：项目里没有 venv、
+  对它一律拒绝。**缺包时无提示自动采用（ADR 0107，2026-09-28 推翻原「不无感切换」；ADR 0114 起默认收回为「只建议」，
+  下面这段是 `TAVOTTO_ENV_ADOPTION=auto` 兼容开关下的行为）**：项目里没有 venv、
   第一个健康者 `projectenv.auto_adoptable_system_candidate`（支持档 `AUTO_ADOPT_SUPPORT` = verified /
   unverified_but_compatible、`requested_module_ok is True`）、此刻的解释器是机器替用户挑的
   （`pool.machine_chosen_interpreter`，与跑前的门共用；项目记录那一半 `projectenv.record_allows_auto_adopt` 在
@@ -30,7 +31,8 @@
   不合格的（包有、Python 版本不支持 / 没 matplotlib / 起不来）单列
   `system_rejected`，界面要说出原因。offer 在渲染失败的响应路径上**不起任何
   解释器**——结论只读接手那一步的体检表。
-- **跑前的门先找用户自己的环境（ADR 0079）**：联合计划 `ready` 时，`deprepair.user_environment_offer()`
+- **跑前的门先找用户自己的环境（ADR 0079；ADR 0114 起「直接改用」收回为只建议，候选仍随载荷交给用户点，下面的
+  `decide_environment` / `_auto_adopt` 是兼容开关下的行为）**：联合计划 `ready` 时，`deprepair.user_environment_offer()`
   拿 `engine/userenvs.discover()`（项目线索 / 登录 shell / Conda 全部环境 / pyenv 全部版本，只读磁盘记录）
   + 老链条系统解释器，逐个 `probe_environment(python, modules=缺的 import)`——**装齐按 import 判**，
   「环境健康」与「装没装齐」分开报；正缺包的解释器不体检。装齐的里按 `userenvs.rank()` 挑最好的
@@ -283,7 +285,7 @@
 - **交给安装器的字符串一律 `requirement_string()` 重新序列化**（名字 PEP 503、extras PEP 685、specifier 规范串）；
   原文不进 argv / 需求文件。
 - 状态闭集 `nothing_needed` / `ready` / `blocked`，**blocked 优先于 nothing_needed**（不完整的计划什么都不缺也是
-  blocked）；blocked 理由闭集 `BLOCK_REASONS`（四条）。`identity` 只由意图
+  blocked）；blocked 理由闭集 `BLOCK_REASONS`（五条，第五条 `dependency_scope_conflict` 由 `deprepair` 对着账加，见下「授权影响摘要」）。`identity` 只由意图
   决定、不含路径（受管环境代目录按它命名，PR B）。
 - 看护：`tests/test_dependency_plan.py`（语法 / include 边界 / PEP 723 / PEP 735 / Poetry / 3.10 无 tomllib 的分支 /
   上下文 × 桶 / 选择 / 计划的每一条「不装」）+ `tests/test_execution_receipt.py::TestDependencyIntent`。
@@ -359,7 +361,7 @@
   `confirmation` 也接上，此前试运行把两道门都压成 `script_probe_failed`）、MCP `_bridge_error_from_worker`
   （`structuredContent.dependency_preparation` + `recovery`）。
 - **端点**：`GET /api/engine/dependencies?script=`、`POST …/plan`（非 ready → 409 `dependency_plan_blocked` + `joint`）、
-  `POST …/prepare`（只发 `plan_id`，进度 SSE `engine.dependency` `flow: joint`）、`POST …/cancel`
+  `POST …/prepare`（`plan_id` + 必填 `impact_digest`〔用户看到的摘要，缺 → 400 `dependency_impact_required`〕，进度 SSE `engine.dependency` `flow: joint`）、`POST …/cancel`
   （`accepted / reason`，过提交点 `committed`）、`POST …/skip`、`PATCH /api/engine/dependencies`（`groups`，改了就
   `reset_state(project)`）。`script` 参数按试运行端点同一份判据（realpath 之后在项目内、`.py`、存在），三个
   code 同一闭集。全部在会话认证之内。
@@ -373,6 +375,74 @@
 - 看护：`tests/test_foundation_dependencies.py`、`tests/test_preparation_api.py`（门的两种终局）、
   `tests/test_dependency_repair_e2e.py`（门之后 skip 再走运行后那条路）、`tests/test_mcp_server.py`（投影 /
   `prepare_dependencies` 闭集 / 批量拒绝）、`web/src/components/DependencyPrepareDialog.test.tsx`。
+
+## 环境建议 / 检查 / 采用（T05，ADR 0114，2026-10-05）
+
+> 推荐与采用曾是同一步（ADR 0057 第 4 档首开采用、0079 门里直接改用、0107 缺包后无提示采用）。ADR 0114 拆成三个动作、三种授权。
+
+- **建议 `engine/envadvice.py::recommend()` 纯读**：候选来自 `projscan.environment_evidence(private=True)`（T02 同一个候选证据入口，
+  不另写 onboarding resolver）+ 项目记录 + 检查留下的结论；不起进程、不问登录 shell、不写任何东西。标签闭集 / 排序
+  `selected > remembered_legacy > project_hint > checked_compatible > machine_hint > bundled`，**只看证据层次，不看 Python 新旧**；
+  `unchecked` 如实写。`decision.needs_decision` = 有项目范围线索、没有项目级决定、没有全局锁。公开形态不带机器路径（项目内给相对路径，
+  项目外只有不透明 id）。
+- **检查 `envadvice.check()` 是起候选解释器的唯一入口**：`POST /api/engine/environment/check`（范围 `candidates` / `scope`，
+  `include_login_shell` 才问登录 shell），候选数 / 总时限 / 每个候选超时都有上限（单个探测超时取 min(单探测上限, 剩余总预算)，剩余不足 `MIN_PROBE_BUDGET_S` 不再起、记 deadline），`DELETE` 取消，同一项目单飞（`CheckBusy`）。
+  结论缓存键 = (解释器路径, 环境代)。**不写项目设置**。
+- **采用 = `PATCH /api/engine/environment {scope: project, candidate, expected_generation}`**：id 只换本机自己枚举出来的路径；
+  `expected_generation` 必填（缺 → 400 `environment_generation_required`）；环境代对不上 409 `environment_changed`（体检之后、`remember` 之前紧贴再比一次，体检期间被重建同样 409、不落盘）；全局显式选择压着 409 `environment_locked`（是谁锁的在建议里的 `decision.locked_by`）；现场再体检仍是
+  `probe_environment`，通过才 `remember(automatic=False, trigger=recommended)` 并存 `generation`。采用不带安装授权：没有 pip，
+  内置 runtime 只读。
+- **环境代 `projectenv.environment_generation`**：解释器路径 `lstat` + `pyvenv.cfg` 各自的 (inode, mtime_ns, size) 摘要（不含 ctime / 权限位）；重建换代，装包 / chmod / 扩展属性不换。
+  `pool.resolve_worker_python` 第 3 档：用户选的记录环境代变了 → `project_python_unusable(reason=rebuilt)`（不降级）；机器记的 → 作废。
+  `preparation.plan_for` 记 `environment.generation`，`_stale_reason` 起会话前再比。
+- **确认模式下的三个自动采用点只产出建议**：`pool` 第 4 档不发现 / 不体检 / 不记；`deprepair.decide_environment` 直接回 None；
+  `pool.try_project_env` 项目 venv 体检通过时回 `environment_confirmation_required` + `recommended`，`deprepair.offer()` 把它列成
+  `system_interpreter` 目标（项目相对路径）等用户点；`_adopt_system_interpreter` 不采用。依赖门的候选表在确认模式下多一个
+  `project_venv` 来源（`userenvs.SOURCE_PROJECT_VENV`），登录 shell 只读检查动作已问出的答案。**唯一开关**
+  `projectenv.silent_adoption_enabled()`（`TAVOTTO_ENV_ADOPTION=auto`，保留一版，退出条件见 ADR 0114 §五）。
+- **GET `/api/engine/environment` 不起解释器**：`pool.peek_project_resolution` 只 `stat`；`project.consent`（`confirmed` / `legacy_auto` /
+  `none`）与 `project.recommendation` 是后端投影，`envStore` 原样保存。
+- **迁移**：`automatic=False` 记录 = 已确认，不重新询问；`automatic=True` 的历史记录照用但只是 `legacy_auto`，不当显式确认；没有环境代的
+  老记录不追溯。
+- **会话**：`prepsession.checks_of` 的 `environment` 检查项在 `needs_decision` 时 `needs_action`（`environment_choice_required`），
+  `requirements[].kind = environment_choice`，载荷是 `recommendation`；回答走采用端点 / 选回内置，再 `recheck`。
+
+## 授权影响摘要 / 认领 / 采用互斥 / 多作用域互斥（T06，ADR 0115，2026-10-05）
+
+> 用户确认的是**这次安装的实际影响**，不是某个 plan_id。全文与取舍见 ADR 0115；这里是规则。
+
+- **摘要只有一处算**：`deprepair.impact_of`（目标与作用域、具体安装集合 / 约束 / hash 模式 / adapter / 组、是否新建环境、私有 Python 下载、
+  写入范围、回滚性质、目标环境与代〔不透明引用〕、`IMPACT_VERSION`）；`impact_digest` 是它的摘要。**不在里面**：进度 / 文案 / 计划 id / 有效期 /
+  事实 digest / 规划输入指纹。门显示的（`offer_impact`）与绑定出的计划（`JointRepairPlan.impact` / `RepairPlan.impact`）共用 `_managed_scope`，逐字相同。
+  新增一类影响要升 `IMPACT_VERSION`。
+- **对不上就是 `dependency_impact_changed`，认领之前、零副作用**：`prepare_async(confirmed_impact=)` / `start_confirmed(digest)`；响应带此刻的实际影响。
+  会改用户自己环境的动作必须回显摘要（会话 400 `preparation_impact_unconfirmed`）；使用（采用）环境不含修改权限。
+  **`POST …/prepare` 一律必填 `impact_digest`**（缺 → 400 `dependency_impact_required`）：前端回显的是 offer 里**用户看到的**那份，不是刚绑回来的计划自己的；
+  只带 plan_id 会让「包名不变、环境代 / 约束变了」的计划通过名字比对、执行没人看过的影响。
+  **所有「执行依赖变更」的入口同一道门**（Codex r4217992305，同一类缺口第二次）：`POST /api/engine/dependency/install`（单包）同样必填 `impact_digest`
+  并作 `install_async(confirmed_impact=)`；MCP `tavotto_open_figure(prepare_dependencies=tavotto_managed|project_venv)` 必须同带 `prepare_impact_digest`
+  （缺 → `dependency_impact_required`，不符 → `dependency_impact_changed`）；准备会话的动作认领走 `start_confirmed(digest)`。前端：单包执行发的是 UI 展示过的那份计划的摘要，
+  `planMatchesDisclosure` 在卡片说过摘要时按摘要比对（包名相同、约束变了 → 停在确认页重新披露，不执行）。
+  结构性守卫：`tests/test_dependency_impact.py::TestEveryExecutionEntryRequiresTheDigest` 扫 app.py / MCP 桥里每处 `install_async` / `prepare_async` / `prepare(` 调用必带 `confirmed_impact=`。
+  不在此列：`/packages/run`（作业 = 用户自己敲的 op + 包名，作业内容已完整展示，环境指纹变了即 stale）、`managed/rebuild`（按账重放，不是新的授权影响）、采用 / 选回环境（不装包）。
+- **认领幂等**：`_claim` 在起线程之前、锁内，联合准备与单包修复（`install_async` / `install`）一样；`start_confirmed` 在 `_lock` 里比较 + 认领，同一份摘要的在途作业
+  （`_joined`）被另一个标签页 / 会话确认时认领原作业（`started=False, joined=True`，`add_listener` 追加监听），不起第二个 pip；不同摘要撞同一环境由 `envlease` 报忙。
+- **采用与安装互斥**：`unless_installing(project, action)`（与 `_claim` 同一把锁）包住项目范围的采用 / 选回默认；候选环境本身在被改动时也拒；计划记
+  `selection_signature`，执行前再比（`repair_plan_stale`）；`trigger=dependency_repair` 的记录不算用户的决定。**签名在目标解析 / 事实探测之前取**
+  （`create_joint_plan` / `create_plan`），形成计划前再比一次，变了 → `repair_plan_stale`、不发计划（不把晚到的新签名记到按旧决定算的计划上）。
+- **两张作业表不同名**：`deprepair._jobs` 是包管理的 `PackageJob`（`create_package_job` / `get_package_job`），`_active_jobs` 是在途依赖作业元数据（`_claim` / `installing` / `unless_installing`）；`reset_state()` 两张都清。
+- **准备会话**：动作 `prepare_dependencies` 引用 `deprepair.start_confirmed`，phase `preparing_environment` 由依赖作业事实派生；终态 `done` 后同一会话按新环境重新检查，
+  只重算差额（`dependency_delta`）；失败 / 取消在报告里带码并给**新的**授权动作；运行时缺包 = 新的一次尝试（outcome `needs_dependencies`）。认领了别人先起的作业不拥有它（不提供取消）。
+- **多作用域互斥（D04）**：账的每一笔记 `scope`（脚本所在目录）；`_with_scope_check` 对着账核：已装但不满足本作用域声明的 / 需求 / 约束与别的作用域装的版本互斥 → `blocked`
+  `dependency_scope_conflict`（带冲突项与出路）。老账无归属、同作用域改声明都不算。出路：`scope_policy=switch`（只对受管环境；新一代装本作用域全集、账换掉、`drops` / `changes` 进摘要、
+  失败不动 active 与账）/ 子目录当独立项目。
+- **全局显式解释器压着（E05）**：联合准备与单包修复一样不形成计划（`create_joint_plan` 先 `_refuse_if_pinned`）、门放行（`gate` 见 `offer.pinned` 回 None，不先让用户确认一次必败的安装）、
+  offer 的 `impact` 为空并只带 `pinned = {source, variable}`（不带路径）、准备会话的 `dependencies` 检查项 `blocked`/`dependency_interpreter_pinned` 且不给授权动作；租约在手之后再复查一次
+  （`_GenerationJob.refuse_pinned` / 原地路径 / 单包受管分支），确认窗口里被钉上也一个字节不装。
+- **计划 / 作业 id 带前缀 `dp-`**（`new_plan_id`）：裸 `token_urlsafe` 约 1/32 以 `-` / `_` 开头，而 `taskdiag.ident` 要求首字符字母数字——那些作业的终局快照会悄悄存不进去。
+- **终局进任务诊断**：`taskdiag.KIND_DEPENDENCY`，`deprepair.diagnostic_projection` 白名单（计数 / 闭集 / 稳定码 / 不透明摘要；包名、路径、pip 原文、镜像地址不进）。
+- 看护：`tests/test_dependency_impact.py`、`tests/test_dependency_scope.py`、`tests/test_preparation_session_dependencies.py`、黄金向量
+  `tests/golden/preparation_session_vectors.json`（新增依赖事实 8 条）。
 
 ## 速查表原要点（2026-09-25 迁入，#608）
 

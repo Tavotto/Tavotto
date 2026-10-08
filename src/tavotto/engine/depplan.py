@@ -61,11 +61,16 @@ BLOCK_UNSUPPORTED = "dependency_declaration_unsupported"
 BLOCK_CONFLICT = "dependency_conflict"
 BLOCK_HASHES_INCOMPLETE = "dependency_hashes_incomplete"
 BLOCK_TARGET_UNAVAILABLE = "dependency_target_unavailable"
+#: 受管环境是项目级的、账上有别的作用域（脚本所在目录）装进去的版本，本次要装的与它们互斥——不硬合并
+#: （T06 / D04）。这一条不是 `depplan.plan` 产出的（它只看声明与目标事实），由 `deprepair` 对着账加上；
+#: 用户的下一步：换成这个作用域（`scope_policy=switch`，新一代、旧代留着直到没人用）或把子目录当独立项目。
+BLOCK_SCOPE_CONFLICT = "dependency_scope_conflict"
 BLOCK_REASONS = (
     BLOCK_UNSUPPORTED,
     BLOCK_CONFLICT,
     BLOCK_HASHES_INCOMPLETE,
     BLOCK_TARGET_UNAVAILABLE,
+    BLOCK_SCOPE_CONFLICT,
 )
 
 #: worker 侧需要的科学栈（scientific adapter 约束）。**与 `pyproject.toml` 的

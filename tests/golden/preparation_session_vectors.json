@@ -1288,6 +1288,418 @@
         "execution_finished": null,
         "figure_captured": null
       }
+    },
+    {
+      "name": "a dependency job in flight is preparing the environment",
+      "facts": {
+        "target_kind": "script",
+        "has_script": true,
+        "checks": [
+          {
+            "id": "target",
+            "status": "ok"
+          },
+          {
+            "id": "environment",
+            "status": "ok"
+          },
+          {
+            "id": "workdir",
+            "status": "ok"
+          },
+          {
+            "id": "dependencies",
+            "status": "needs_action",
+            "code": "dependency_preparation_required"
+          },
+          {
+            "id": "data",
+            "status": "ok"
+          }
+        ],
+        "stale": null,
+        "attempt": null,
+        "awaiting_input": false,
+        "dependency": {
+          "running": true,
+          "state": "running",
+          "code": "",
+          "joined": false
+        }
+      },
+      "expect": {
+        "phase": "preparing_environment",
+        "outcome": {
+          "kind": "running"
+        },
+        "runnable": false,
+        "execution_finished": null,
+        "figure_captured": null
+      }
+    },
+    {
+      "name": "joining someone else's dependency job says so",
+      "facts": {
+        "target_kind": "script",
+        "has_script": true,
+        "checks": [
+          {
+            "id": "target",
+            "status": "ok"
+          },
+          {
+            "id": "environment",
+            "status": "ok"
+          },
+          {
+            "id": "workdir",
+            "status": "ok"
+          },
+          {
+            "id": "dependencies",
+            "status": "needs_action",
+            "code": "dependency_preparation_required"
+          },
+          {
+            "id": "data",
+            "status": "ok"
+          }
+        ],
+        "stale": null,
+        "attempt": null,
+        "awaiting_input": false,
+        "dependency": {
+          "running": true,
+          "state": "running",
+          "code": "",
+          "joined": true
+        }
+      },
+      "expect": {
+        "phase": "preparing_environment",
+        "outcome": {
+          "kind": "running",
+          "reason": "joined_existing"
+        },
+        "runnable": false,
+        "execution_finished": null,
+        "figure_captured": null
+      }
+    },
+    {
+      "name": "an installed job is still preparing until the re-check is absorbed",
+      "facts": {
+        "target_kind": "script",
+        "has_script": true,
+        "checks": [
+          {
+            "id": "target",
+            "status": "ok"
+          },
+          {
+            "id": "environment",
+            "status": "ok"
+          },
+          {
+            "id": "workdir",
+            "status": "ok"
+          },
+          {
+            "id": "dependencies",
+            "status": "needs_action",
+            "code": "dependency_preparation_required"
+          },
+          {
+            "id": "data",
+            "status": "ok"
+          }
+        ],
+        "stale": null,
+        "attempt": null,
+        "awaiting_input": false,
+        "dependency": {
+          "running": true,
+          "state": "done",
+          "code": "",
+          "joined": false,
+          "reason": "rechecking"
+        }
+      },
+      "expect": {
+        "phase": "preparing_environment",
+        "outcome": {
+          "kind": "running",
+          "reason": "rechecking"
+        },
+        "runnable": false,
+        "execution_finished": null,
+        "figure_captured": null
+      }
+    },
+    {
+      "name": "a failed dependency job is action_required with its own code",
+      "facts": {
+        "target_kind": "script",
+        "has_script": true,
+        "checks": [
+          {
+            "id": "target",
+            "status": "ok"
+          },
+          {
+            "id": "environment",
+            "status": "ok"
+          },
+          {
+            "id": "workdir",
+            "status": "ok"
+          },
+          {
+            "id": "dependencies",
+            "status": "needs_action",
+            "code": "dependency_preparation_required"
+          },
+          {
+            "id": "data",
+            "status": "ok"
+          }
+        ],
+        "stale": null,
+        "attempt": null,
+        "awaiting_input": false,
+        "dependency": {
+          "running": false,
+          "state": "failed",
+          "code": "dependency_not_found",
+          "joined": false
+        }
+      },
+      "expect": {
+        "phase": "action_required",
+        "outcome": {
+          "kind": "failed",
+          "code": "dependency_not_found",
+          "reason": "dependency_preparation"
+        },
+        "runnable": false,
+        "execution_finished": null,
+        "figure_captured": null
+      }
+    },
+    {
+      "name": "a cancelled dependency job waits for a fresh confirmation, not a failure",
+      "facts": {
+        "target_kind": "script",
+        "has_script": true,
+        "checks": [
+          {
+            "id": "target",
+            "status": "ok"
+          },
+          {
+            "id": "environment",
+            "status": "ok"
+          },
+          {
+            "id": "workdir",
+            "status": "ok"
+          },
+          {
+            "id": "dependencies",
+            "status": "needs_action",
+            "code": "dependency_preparation_required"
+          },
+          {
+            "id": "data",
+            "status": "ok"
+          }
+        ],
+        "stale": null,
+        "attempt": null,
+        "awaiting_input": false,
+        "dependency": {
+          "running": false,
+          "state": "cancelled",
+          "code": "dependency_install_cancelled",
+          "joined": false
+        }
+      },
+      "expect": {
+        "phase": "awaiting_confirmation",
+        "outcome": {
+          "kind": "cancelled",
+          "code": "dependency_install_cancelled",
+          "reason": "dependency_preparation"
+        },
+        "runnable": false,
+        "execution_finished": null,
+        "figure_captured": null
+      }
+    },
+    {
+      "name": "a missing package found while running keeps the execution fact and needs a rerun",
+      "facts": {
+        "target_kind": "script",
+        "has_script": true,
+        "checks": [
+          {
+            "id": "target",
+            "status": "ok"
+          },
+          {
+            "id": "environment",
+            "status": "ok"
+          },
+          {
+            "id": "workdir",
+            "status": "ok"
+          },
+          {
+            "id": "dependencies",
+            "status": "ok"
+          },
+          {
+            "id": "data",
+            "status": "ok"
+          }
+        ],
+        "stale": null,
+        "attempt": {
+          "status": "error",
+          "error": {
+            "code": "missing_dependency"
+          },
+          "required_input_code": "",
+          "finalized": true,
+          "finalize": null,
+          "captured_count": 0,
+          "cancel_requested": false,
+          "missing_installable": true
+        },
+        "awaiting_input": false
+      },
+      "expect": {
+        "phase": "awaiting_confirmation",
+        "outcome": {
+          "kind": "needs_dependencies",
+          "code": "missing_dependency",
+          "reason": "rerun_required"
+        },
+        "runnable": false,
+        "execution_finished": true,
+        "figure_captured": false
+      }
+    },
+    {
+      "name": "a missing package that cannot be authorised here stays a plain failure",
+      "facts": {
+        "target_kind": "script",
+        "has_script": true,
+        "checks": [
+          {
+            "id": "target",
+            "status": "ok"
+          },
+          {
+            "id": "environment",
+            "status": "ok"
+          },
+          {
+            "id": "workdir",
+            "status": "ok"
+          },
+          {
+            "id": "dependencies",
+            "status": "ok"
+          },
+          {
+            "id": "data",
+            "status": "ok"
+          }
+        ],
+        "stale": null,
+        "attempt": {
+          "status": "error",
+          "error": {
+            "code": "missing_dependency"
+          },
+          "required_input_code": "",
+          "finalized": true,
+          "finalize": null,
+          "captured_count": 0,
+          "cancel_requested": false,
+          "missing_installable": false
+        },
+        "awaiting_input": false
+      },
+      "expect": {
+        "phase": "action_required",
+        "outcome": {
+          "kind": "failed",
+          "code": "missing_dependency"
+        },
+        "runnable": false,
+        "execution_finished": false,
+        "figure_captured": false
+      }
+    },
+    {
+      "name": "a dependency job newer than the failed run outranks the old failure",
+      "facts": {
+        "target_kind": "script",
+        "has_script": true,
+        "checks": [
+          {
+            "id": "target",
+            "status": "ok"
+          },
+          {
+            "id": "environment",
+            "status": "ok"
+          },
+          {
+            "id": "workdir",
+            "status": "ok"
+          },
+          {
+            "id": "dependencies",
+            "status": "ok"
+          },
+          {
+            "id": "data",
+            "status": "ok"
+          }
+        ],
+        "stale": null,
+        "attempt": {
+          "status": "error",
+          "error": {
+            "code": "missing_dependency"
+          },
+          "required_input_code": "",
+          "finalized": true,
+          "finalize": null,
+          "captured_count": 0,
+          "cancel_requested": false,
+          "missing_installable": true
+        },
+        "awaiting_input": false,
+        "dependency": {
+          "running": true,
+          "state": "running",
+          "code": "",
+          "joined": false
+        }
+      },
+      "expect": {
+        "phase": "preparing_environment",
+        "outcome": {
+          "kind": "running"
+        },
+        "runnable": false,
+        "execution_finished": null,
+        "figure_captured": null
+      }
     }
   ]
 }

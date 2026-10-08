@@ -69,6 +69,7 @@ const BLOCKED_TEXT: Record<string, string> = {
   dependency_declaration_unsupported: 'engine.dependencyBlocked_dependency_declaration_unsupported',
   dependency_conflict: 'engine.dependencyBlocked_dependency_conflict',
   dependency_hashes_incomplete: 'engine.dependencyBlocked_dependency_hashes_incomplete',
+  dependency_scope_conflict: 'engine.dependencyBlocked_dependency_scope_conflict',
   dependency_target_unavailable: 'engine.dependencyBlocked_dependency_target_unavailable',
 }
 
@@ -115,7 +116,9 @@ export function DependencyPrepareDialog() {
   }, [current])
   if (!offer) return null
   const complete = (offer.user_environments ?? []).filter((e) => e.satisfies)
-  const partial = (offer.user_environments ?? []).filter((e) => e.ok && !e.satisfies)
+  // 候选解释器不在没有用户动作时被起（ADR 0114）：没检查过的单列，选它 = 「检查并使用」，后端现场体检、装齐才改用
+  const unchecked = (offer.user_environments ?? []).filter((e) => e.checked === false)
+  const partial = (offer.user_environments ?? []).filter((e) => e.checked !== false && e.ok && !e.satisfies)
   const envChosen = choice.startsWith('env:') ? choice.slice(4) : null
   const target = (envChosen ? offer.target_kind : choice) as Target
   const en = (key: string, values?: Record<string, unknown>) => t(key, values)
@@ -146,7 +149,7 @@ export function DependencyPrepareDialog() {
     <>
       <fieldset className="flex flex-col gap-0.5" data-dependency-target>
         <legend className="sr-only">
-          {en(complete.length ? 'engine.userEnvLegend' : 'engine.dependencyPrepareTargetLegend')}
+          {en(complete.length || unchecked.length ? 'engine.userEnvLegend' : 'engine.dependencyPrepareTargetLegend')}
         </legend>
         {complete.map((env) => {
           const value: Choice = `env:${env.id}`
@@ -174,6 +177,37 @@ export function DependencyPrepareDialog() {
                 <span className="mt-0.5 block text-sm text-ink-3">
                   {en('engine.userEnvVersion', { version: env.python_version })} ·{' '}
                   {en('engine.userEnvComplete')}
+                </span>
+              </span>
+            </label>
+          )
+        })}
+        {unchecked.map((env) => {
+          const value: Choice = `env:${env.id}`
+          const selected = choice === value
+          return (
+            <label
+              key={env.id}
+              className={cn(
+                'flex items-start gap-2 rounded-sm px-2 py-1.5',
+                selected ? 'bg-selected' : 'hover:bg-surface-hover',
+              )}
+              data-user-env={env.source}
+              data-user-env-unchecked
+            >
+              <Radio
+                name="dependency-target"
+                className="mt-0.5"
+                checked={selected}
+                disabled={busy || running}
+                onChange={() => setChoice(value)}
+              />
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm text-ink first-letter:uppercase">
+                  {userEnvironmentName(env)}
+                </span>
+                <span className="mt-0.5 block text-xs leading-relaxed text-ink-3">
+                  {en('engine.userEnvUnchecked')}
                 </span>
               </span>
             </label>
@@ -259,9 +293,9 @@ export function DependencyPrepareDialog() {
           </p>
         )}
       </div>
-      {((offer.user_environments && complete.length === 0) || partial.length > 0) && (
+      {((offer.user_environments && complete.length === 0 && unchecked.length === 0) || partial.length > 0) && (
         <div className="flex flex-col gap-1 text-sm text-ink-3">
-          {offer.user_environments && complete.length === 0 && <p data-user-env-none>{en('engine.userEnvNone')}</p>}
+          {offer.user_environments && complete.length === 0 && unchecked.length === 0 && <p data-user-env-none>{en('engine.userEnvNone')}</p>}
           {partial.length > 0 && (
             <div data-user-env-partial>
               <p className="text-ink-2">{en('engine.userEnvPartial')}</p>
@@ -361,7 +395,7 @@ export function DependencyPrepareDialog() {
                   disabled={busy}
                   onClick={() => void adoptEnv(envChosen, offer.script)}
                 >
-                  {en('engine.userEnvUse')}
+                  {unchecked.some((e) => e.id === envChosen) ? en('engine.userEnvCheckUse') : en('engine.userEnvUse')}
                 </Button>
               ) : (
                 <Button

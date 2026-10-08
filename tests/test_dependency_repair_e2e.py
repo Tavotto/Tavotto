@@ -68,8 +68,14 @@ def _plan(
     return resp.get_json()["plan"]
 
 
-def _install(client, plan_id: str) -> dict:
-    resp = client.post("/api/engine/dependency/install", json={"plan_id": plan_id})
+def _install(client, plan_id: str, digest: str = "") -> dict:
+    resp = client.post(
+        "/api/engine/dependency/install",
+        json={
+            "plan_id": plan_id,
+            "impact_digest": digest or deprepair.get_plan(plan_id).impact_digest,
+        },
+    )
     assert resp.status_code == 200, resp.get_json()
     return wait_for(plan_id)
 
@@ -100,6 +106,13 @@ def test_golden_path_install_into_the_project_venv(client, project, wheelhouse):
     from tavotto import app as m
 
     venv = real_venv(project)
+    # ADR 0114：项目 venv 不再被静默采用——这条路径的前提是用户已经在环境建议上采用了它
+    assert projectenv.remember(
+        project,
+        projectenv.interpreter_of(venv),
+        automatic=False,
+        trigger=projectenv.TRIGGER_RECOMMENDED,
+    )
     # 项目自己声明过这个依赖 —— 最可信的那一档解析
     (project / "requirements.txt").write_text(f"{FIXTURE_DIST}\n", encoding="utf-8")
     m.open_project(str(project))
@@ -422,7 +435,10 @@ def test_cancelling_leaves_the_managed_environment_marked_incomplete(
         return deprepair.ERROR_CANCELLED, "已取消"
 
     monkeypatch.setattr(deprepair, "_pip_install", _slow)
-    client.post("/api/engine/dependency/install", json={"plan_id": plan["plan_id"]})
+    client.post(
+        "/api/engine/dependency/install",
+        json={"plan_id": plan["plan_id"], "impact_digest": plan["impact_digest"]},
+    )
     deadline = time.time() + 60
     while (
         deprepair.progress(plan["plan_id"]).get("state") != deprepair.STATE_INSTALLING
@@ -453,6 +469,13 @@ def test_the_old_worker_is_gone_and_the_new_one_uses_the_new_interpreter(
     from tavotto import app as m
 
     venv = real_venv(project)
+    # ADR 0114：项目 venv 不再被静默采用——这条路径的前提是用户已经在环境建议上采用了它
+    assert projectenv.remember(
+        project,
+        projectenv.interpreter_of(venv),
+        automatic=False,
+        trigger=projectenv.TRIGGER_RECOMMENDED,
+    )
     (project / "requirements.txt").write_text(f"{FIXTURE_DIST}\n", encoding="utf-8")
     m.open_project(str(project))
     # U04 的门会先问（声明了、venv 里没有）；这条要握住的是**缺包状态下**的旧会话，所以明确 skip
@@ -460,7 +483,7 @@ def test_the_old_worker_is_gone_and_the_new_one_uses_the_new_interpreter(
     client.post("/api/engine/dependencies/skip", json={"script": "figure.py"})
     _probe(client)
 
-    # 修复之前先起一个会话，握在手里。U03 起首开就采用项目 venv（发现 + 体检前移），
+    # 修复之前先起一个会话，握在手里。用户采用了项目 venv（ADR 0114 之前是 U03 的首开自动采用），
     # 所以这条会话跑的**正是**将要被安装写入的那个环境——「安装期间那个环境上的旧会话
     # 必须先停掉」这条判据在新世界里更直接：旧会话与安装目标是同一个解释器。
     old = engine_pool.get("figure.py", str(project), "__main__")

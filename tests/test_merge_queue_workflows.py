@@ -3211,6 +3211,10 @@ with patch.object(m, 'version', side_effect=lambda name: versions[name]), patch.
             isinstance(node, ast.FunctionDef) and node.name == "main" for node in ast.walk(tree)
         )
         result = subprocess.run(
-            [sys.executable, "-c", program], cwd=ROOT, capture_output=True, text=True
+            [sys.executable, "-c", program],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
         )
         assert result.returncode == 0, result.stdout + result.stderr
