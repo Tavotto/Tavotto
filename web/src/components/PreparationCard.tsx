@@ -873,6 +873,11 @@ function InstallLine({ report }: { report: PreparationReport | null }) {
   return (
     <p className="text-sm text-ink-2" data-prep-install>
       {what} · {pt(impact.modifies_user_environment ? 'install.toUser' : 'install.toManaged')}
+      {(impact.unverified_same_name?.length ?? 0) > 0 && (
+        <span className="block" data-prep-unverified>
+          {pt('install.unverified')}
+        </span>
+      )}
     </p>
   )
 }
@@ -1021,6 +1026,9 @@ function SessionDetails({ entry, view }: { entry: PrepEntry; view: PrepView }) {
       )}
       {prepare && (prepare.impact.installs?.length ?? 0) > 0 && (
         <Row k={pt('detail.installs')} v={(prepare.impact.installs ?? []).join(', ')} attr="installs" />
+      )}
+      {(prepare?.impact.unverified_same_name?.length ?? 0) > 0 && (
+        <Row k={pt('detail.unverified')} v={(prepare?.impact.unverified_same_name ?? []).join(', ')} attr="unverified" />
       )}
       {prepare && (
         <Row

@@ -251,8 +251,18 @@ function needsSomething(report: PreparationReport, script: string): PrepView {
   if (deps) {
     const prepare = has(report, 'prepare_dependencies') ? act('prepare_dependencies', 'install') : null
     if (deps.origin === 'runtime_missing') {
-      const p = (deps.payload ?? {}) as { module?: string; installable?: boolean }
+      const p = (deps.payload ?? {}) as {
+        module?: string
+        installable?: boolean
+        requirement?: { distribution?: string; resolution_source?: string }
+      }
       if (!p.installable) return view('deps_unknown', 'depsUnknown', { script, module: p.module ?? '' }, { kind: 'open_environment' })
+      // 表外的名字按同名候选装（未经 Tavotto 核对）：一句话说清「将从 PyPI 安装 X」，仍是一个主按钮
+      if (p.requirement?.resolution_source === 'same_name_unverified') {
+        return view('deps_same_name', 'depsSameName', { script, module: p.module ?? '', dist: p.requirement.distribution ?? '' }, prepare, {
+          slot: 'install',
+        })
+      }
       return view('deps_runtime', 'depsRuntime', { script, module: p.module ?? '' }, prepare, { slot: 'install' })
     }
     return view('deps', 'install', v, prepare, { slot: 'install' })
@@ -276,13 +286,33 @@ function needsSomething(report: PreparationReport, script: string): PrepView {
       }
       return view('blocked', 'blocked', v, fallback)
     case 'failed':
-      if (report.outcome.reason === 'dependency_preparation') return view('deps_failed', 'depsFailed', v, fallback, { tone: 'bad' })
+      if (report.outcome.reason === 'dependency_preparation') return depsFailed(report, v, script, fallback)
       return view('failed', 'failed', v, has(report, 'run') ? act('run', 'retry') : fallback, { tone: 'bad', step: 1 })
     case 'cancelled':
       return view('cancelled', 'depsCancelled', v, fallback, { tone: 'mute' })
     default:
       return view('attention', 'attention', v, has(report, 'run') ? act('run', 'run') : fallback)
   }
+}
+
+/** 同名候选装不上的两种：软件源里没有这个名字 / 没有适合的预编译版本——同样落到「选自己的 Python」 */
+const SAME_NAME_UNAVAILABLE = new Set(['dependency_not_found', 'dependency_requires_build'])
+
+/** 依赖没装好：同名候选（运行时缺的模块按同名装）的两种失败说清楚，其余照旧「没装好，原有文件没动」 */
+function depsFailed(report: PreparationReport, v: { script: string }, script: string, fallback: PrepPrimary | null): PrepView {
+  const dep = report.provider.dependency
+  const dist = dep?.unverified_same_name?.[0] ?? ''
+  const module = dep?.module ?? ''
+  if (dep && dist && module) {
+    const values = { script, dist, module }
+    if (dep.code === 'dependency_same_name_mismatch') {
+      return view('deps_same_name_mismatch', 'depsSameNameMismatch', values, { kind: 'open_environment' }, { tone: 'bad' })
+    }
+    if (SAME_NAME_UNAVAILABLE.has(dep.code)) {
+      return view('deps_same_name_unavailable', 'depsSameNameUnavailable', values, { kind: 'open_environment' }, { tone: 'bad' })
+    }
+  }
+  return view('deps_failed', 'depsFailed', v, fallback, { tone: 'bad' })
 }
 
 /**

@@ -1376,6 +1376,10 @@ class SessionService:
             "code": (dep.finished or {}).get("code") or rec.get("code") or "",
             "committed": bool(rec.get("committed")),
             "impact_digest": dep.impact_digest,
+            # 运行时缺的那个模块，以及其中按同名装的、未经 Tavotto 核对的 PyPI 包：失败时卡片要说清「PyPI 上的 X
+            # 不是脚本要的 Y」（用户自己授权页上看过的两个名字，不是遥测）
+            "module": dep.module,
+            "unverified_same_name": list(dep.impact.get("unverified_same_name") or ()),
         }
 
     def _missing_info(self, sess: Session) -> dict | None:

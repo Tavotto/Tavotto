@@ -95,15 +95,21 @@ def test_pdf_stitching_imports_resolve_as_installable(tmp_path, import_name):
     assert req.installable
 
 
-def test_an_unknown_import_is_never_installable(tmp_path):
-    """**负向反证 #3**：未知 import 不许按同名装。
+def test_an_unlisted_import_is_only_ever_an_unverified_same_name_candidate(tmp_path):
+    """**负向反证 #3（2026-10-08 改写）**：表外的 import 名只能是「同名候选」，永远不是 curated / 项目声明。
 
-    把 `depresolve.resolve` 改成 `return DependencyRequirement(m, m, ...)`
-    这条就红——那正是「pip install <traceback 里的字符串>」这条供应链路径。
+    旧规则「未知 import 一律不装」被维护者裁决推翻（白名单过窄，lxml 等常用包装不上）；防线换成
+    同名禁区 + 用户确认 + 仅 wheel + 装后核验回滚（`test_same_name_install.py`）。这里钉住的是
+    候选的**身份**：来源必须是 `same_name_unverified`，不许被抬成高可信的 curated——把 `resolve`
+    改成 `resolution_source=SOURCE_CURATED` 这条就红。禁区里的名字仍然什么都不是。
     """
     for name in ("my_lab_tools", "internal_utils", "totally_made_up_xyz"):
-        assert depresolve.resolve(tmp_path, name) is None
+        req = depresolve.resolve(tmp_path, name)
+        assert req.resolution_source == depresolve.SOURCE_SAME_NAME_UNVERIFIED
+        assert req.confidence == depresolve.CONFIDENCE_UNVERIFIED and req.needs_verification
         assert depresolve.curated_distribution(name) is None
+    for name in ("dotenv", "utils"):
+        assert depresolve.resolve(tmp_path, name) is None
 
 
 def test_project_declared_wins_and_carries_the_specifier(tmp_path):
@@ -121,8 +127,8 @@ def test_project_declared_wins_and_carries_the_specifier(tmp_path):
 
 
 def test_a_private_package_becomes_installable_once_the_project_declares_it(tmp_path):
-    """私有包 curated 里当然没有——但项目自己声明过就是可信证据。"""
-    assert depresolve.resolve(tmp_path, "my_lab_tools") is None
+    """私有包 curated 里当然没有——但项目自己声明过就是可信证据（比同名候选高一档，且不需要核验）。"""
+    assert depresolve.resolve(tmp_path, "my_lab_tools").needs_verification
     (tmp_path / "requirements.txt").write_text("my-lab-tools==2.1\n", encoding="utf-8")
     req = depresolve.resolve(tmp_path, "my_lab_tools")
     assert req.resolution_source == depresolve.SOURCE_PROJECT_DECLARED
@@ -404,14 +410,14 @@ def test_repair_rounds_are_capped(project, monkeypatch):
 
 
 def test_an_unresolvable_module_gets_no_install_target(project):
-    """解析不出包名时**不提供**一键安装，只给手动出口。"""
-    offer = deprepair.offer(str(project), "figure.py", "my_lab_tools", None)
+    """解析不出包名（同名禁区）时**不提供**一键安装，只给手动出口。"""
+    offer = deprepair.offer(str(project), "figure.py", "dotenv", None)
     assert offer["requirement"] is None
     assert offer["code"] == deprepair.ERROR_UNRESOLVED
     assert offer["targets"] == []
     with pytest.raises(deprepair.RepairError) as err:
         deprepair.create_plan(
-            str(project), "figure.py", "my_lab_tools", target_kind=deprepair.TARGET_MANAGED
+            str(project), "figure.py", "dotenv", target_kind=deprepair.TARGET_MANAGED
         )
     assert err.value.code == deprepair.ERROR_UNRESOLVED
 
@@ -1006,7 +1012,7 @@ def test_a_rejected_system_interpreter_is_explained_not_hidden(project):
 
 
 def test_system_adoption_needs_neither_a_package_name_nor_repair_rounds(project, monkeypatch):
-    """采用什么都不装：解析不出包名（私有模块）/ 轮次用完时照样列出，且说明照样给。
+    """采用什么都不装：解析不出包名（同名禁区）/ 轮次用完时照样列出，且说明照样给。
 
     Codex 评审 P2：以前这一段排在两个提前返回之后，私有模块的用户明明有一个能
     import 它的解释器，界面却只剩「指定安装包」，得手填同一条路径。
@@ -1022,7 +1028,7 @@ def test_system_adoption_needs_neither_a_package_name_nor_repair_rounds(project,
         )
     ]
     detail = {"code": projectenv.ERROR_NOT_FOUND, "system": system + rejected}
-    offer = deprepair.offer(str(project), "figure.py", "my_lab_tools", detail)
+    offer = deprepair.offer(str(project), "figure.py", "dotenv", detail)
     assert offer["requirement"] is None and offer["code"] == deprepair.ERROR_UNRESOLVED
     assert [t["kind"] for t in offer["targets"]] == [deprepair.TARGET_SYSTEM]
     assert offer["system_rejected"][0]["python"] == "/usr/bin/python3"

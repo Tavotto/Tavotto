@@ -2298,6 +2298,7 @@ export default interface Resources {
         "dependency_plan_blocked": "这份依赖计划不能执行（见上方原因）。",
         "dependency_repair_rounds_exhausted": "脚本的自动依赖修复次数已用完。",
         "dependency_requires_build": "该依赖没有适合当前 Python 的预编译版本。可换 Python 环境，或在终端里手动安装。",
+        "dependency_same_name_mismatch": "PyPI 上同名的包不是这个脚本要的那个，环境没有切换。请选一个装了它的 Python 环境。",
         "dependency_unresolved": "无法确定该模块对应哪个安装包。",
         "dependency_worker_selftest_failed": "安装后环境仍无法运行。",
         "environment_mutating": "Python 环境正在安装依赖，请稍后再试。",
@@ -2351,6 +2352,7 @@ export default interface Resources {
         "dependency_plan_blocked": "这些依赖现在没法一次装好，原因在详情里。",
         "dependency_repair_rounds_exhausted": "自动修复次数用完了，在详情里换一个装好它的环境。",
         "dependency_requires_build": "这个包没有适合的预编译版本，在详情里换一个 Python 环境。",
+        "dependency_same_name_mismatch": "PyPI 上同名的包不是这个脚本要的那个，环境没换，在详情里选一个装了它的 Python 环境。",
         "dependency_unresolved": "{{product}} 认不出该装哪个包，在详情里手动指定包名。",
         "dependency_worker_selftest_failed": "装好后环境仍跑不起来，完整输出在详情里。",
         "environment_mutating": "环境正在装别的东西，稍后点重试。",
@@ -2426,6 +2428,7 @@ export default interface Resources {
       "repairSystemUnverified": "matplotlib 版本未经 Tavotto 验证",
       "repairTitle": "项目还缺少 {{module}}",
       "repairUnresolved": "Tavotto 无法确定「{{module}}」对应哪个安装包，不会安装。指定安装包，或换一个已装好它的 Python 环境。",
+      "repairUnverified": "未经 Tavotto 核对的同名包，只装预编译版，装完核对不过就还原。",
       "repairUseManaged": "安装到 Tavotto 环境",
       "repairUseOtherPythonShort": "或者使用你已有的 Python 环境",
       "repairUseProjectEnv": "安装到项目环境",
@@ -4706,6 +4709,7 @@ export default interface Resources {
         "noFigureWhy": "没有调用 savefig，也没留下 Figure。",
         "script": "脚本",
         "unlinked": "此前带其他参数生成的 {{names}} 已不再关联，用原参数再运行一次即可恢复。",
+        "unverified": "未经 Tavotto 核对的同名包",
         "usedBy": "用的是",
         "workdir": "运行目录"
       },
@@ -4730,7 +4734,8 @@ export default interface Resources {
         "runtime": "运行组件",
         "toManaged": "装到 Tavotto 目录",
         "toUser": "装到你电脑上已有的那套",
-        "toUserLong": "你电脑上已有的那套，装坏了不能完整回滚"
+        "toUserLong": "你电脑上已有的那套，装坏了不能完整回滚",
+        "unverified": "未经 Tavotto 核对的同名包，只装预编译版，装完核对不过就还原"
       },
       "line": {
         "argsMissing_other": "还差 {{count}} 个参数",
@@ -4745,6 +4750,9 @@ export default interface Resources {
         "depsCancelled": "安装已停止",
         "depsFailed": "没装好，原有文件没动",
         "depsRuntime": "运行时缺 {{module}}",
+        "depsSameName": "将从 PyPI 安装 {{dist}}",
+        "depsSameNameMismatch": "PyPI 上的 {{dist}} 不是这个脚本要的 {{module}}，请选一个装了它的 Python 环境",
+        "depsSameNameUnavailable": "PyPI 上装不了 {{dist}}，请选一个装了 {{module}} 的 Python 环境",
         "depsScope": "组件版本冲突",
         "depsUnknown": "运行时缺 {{module}}，找不到安装包",
         "editOpening": "正在打开编辑…",

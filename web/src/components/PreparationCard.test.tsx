@@ -188,6 +188,64 @@ const STATES: Record<string, Partial<PreparationReport>> = {
     ],
     actions: [action('prepare_dependencies', { installs: ['scipy'], impact_digest: 'imp-2' }), action('recheck')],
   },
+  // 表外的名字按同名装（未经 Tavotto 核对）：一句「将从 PyPI 安装 X」+ 一个主按钮；授权页面亮出未核对
+  depsSameName: {
+    phase: 'awaiting_confirmation',
+    outcome: { kind: 'needs_dependencies', code: 'missing_dependency', reason: 'rerun_required' },
+    requirements: [
+      {
+        id: 'dependencies',
+        kind: 'dependency_authorization',
+        origin: 'runtime_missing',
+        code: 'missing_dependency',
+        payload: { module: 'lxml', installable: true, requirement: { distribution: 'lxml', resolution_source: 'same_name_unverified' } },
+      },
+    ],
+    actions: [action('prepare_dependencies', { installs: ['lxml'], unverified_same_name: ['lxml'], impact_digest: 'imp-3' }), action('recheck')],
+  },
+  // 装完核验不过 / PyPI 没有这个名字：说清「不是脚本要的」，落到「选自己的 Python」
+  depsSameNameMismatch: {
+    phase: 'action_required',
+    outcome: { kind: 'failed', code: 'dependency_same_name_mismatch', reason: 'dependency_preparation' },
+    actions: [action('recheck')],
+    provider: {
+      plan_id: 'p',
+      attempt_id: 'prep-1',
+      attempts: 1,
+      dependency: {
+        plan_id: 'dp-1', joined: false, origin: 'runtime_missing', state: 'failed', code: 'dependency_same_name_mismatch',
+        committed: false, impact_digest: 'imp-3', module: 'lxml', unverified_same_name: ['lxml'],
+      },
+    },
+  },
+  depsSameNameUnavailable: {
+    phase: 'action_required',
+    outcome: { kind: 'failed', code: 'dependency_not_found', reason: 'dependency_preparation' },
+    actions: [action('recheck')],
+    provider: {
+      plan_id: 'p',
+      attempt_id: 'prep-1',
+      attempts: 1,
+      dependency: {
+        plan_id: 'dp-1', joined: false, origin: 'runtime_missing', state: 'failed', code: 'dependency_not_found',
+        committed: false, impact_digest: 'imp-3', module: 'mylab', unverified_same_name: ['mylab'],
+      },
+    },
+  },
+  depsFailedPlain: {
+    phase: 'action_required',
+    outcome: { kind: 'failed', code: 'dependency_network_unavailable', reason: 'dependency_preparation' },
+    actions: [action('recheck')],
+    provider: {
+      plan_id: 'p',
+      attempt_id: 'prep-1',
+      attempts: 1,
+      dependency: {
+        plan_id: 'dp-1', joined: false, origin: 'runtime_missing', state: 'failed', code: 'dependency_network_unavailable',
+        committed: false, impact_digest: 'imp-3', module: 'lxml', unverified_same_name: ['lxml'],
+      },
+    },
+  },
   depsUnknown: {
     phase: 'awaiting_confirmation',
     outcome: { kind: 'needs_dependencies', code: 'missing_dependency' },
@@ -358,6 +416,57 @@ describe('主按钮就是后端给的那件事', () => {
       expected_config_revision: 1,
       impact_digest: 'imp-1',
     })
+  })
+
+  it('表外的包按同名装：一句「将从 PyPI 安装 lxml」+ 主按钮「安装」；一行与详情里都亮出「未经 Tavotto 核对」', async () => {
+    await mount()
+    await openWith(report(STATES.depsSameName))
+    expect(panel().dataset.prepState).toBe('deps_same_name')
+    expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('将从 PyPI 安装 lxml')
+    expect(primary()?.dataset.prepPrimary).toBe('prepare_dependencies')
+    expect(primary()?.textContent).toBe('安装')
+    expect(panel().querySelector('[data-prep-unverified]')?.textContent).toContain('未经 Tavotto 核对的同名包')
+    await toggleDetails()
+    expect(details()?.querySelector('[data-prep-row="unverified"]')?.textContent).toContain('lxml')
+    mockAct.mockResolvedValueOnce({ claimed: true, report: report({ phase: 'preparing_environment', observation_seq: 2 }) })
+    await act(async () => primary()!.click())
+    expect(mockAct.mock.calls[0][1]).toEqual({
+      action_id: 'act-prepare_dependencies',
+      expected_config_revision: 1,
+      impact_digest: 'imp-3',
+    })
+  })
+
+  it('已核对的包（curated）没有「未经核对」字样', async () => {
+    await mount()
+    await openWith(report(STATES.depsRuntime))
+    expect(panel().dataset.prepState).toBe('deps_runtime')
+    expect(panel().querySelector('[data-prep-unverified]')).toBeNull()
+  })
+
+  it('同名包核验不过：说清「PyPI 上的 lxml 不是脚本要的 lxml」，落到选自己的 Python（不是重试安装）', async () => {
+    await mount()
+    await openWith(report(STATES.depsSameNameMismatch))
+    expect(panel().dataset.prepState).toBe('deps_same_name_mismatch')
+    expect(panel().querySelector('[data-prep-line]')?.textContent).toBe(
+      'PyPI 上的 lxml 不是这个脚本要的 lxml，请选一个装了它的 Python 环境',
+    )
+    expect(primary()?.dataset.prepPrimary).toBe('open_environment')
+  })
+
+  it('PyPI 上没有这个名字：同样落到选自己的 Python', async () => {
+    await mount()
+    await openWith(report(STATES.depsSameNameUnavailable))
+    expect(panel().dataset.prepState).toBe('deps_same_name_unavailable')
+    expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('PyPI 上装不了 mylab，请选一个装了 mylab 的 Python 环境')
+    expect(primary()?.dataset.prepPrimary).toBe('open_environment')
+  })
+
+  it('同名候选的其他失败（断网）仍是普通的「没装好」，可重新检查', async () => {
+    await mount()
+    await openWith(report(STATES.depsFailedPlain))
+    expect(panel().dataset.prepState).toBe('deps_failed')
+    expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('没装好，原有文件没动')
   })
 
   it('运行中：主按钮「放到后台」只缩成角标（不取消）；「停止」是文字按钮、认领 cancel', async () => {

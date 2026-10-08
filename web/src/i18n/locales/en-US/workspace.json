@@ -916,6 +916,9 @@
       "depsScope": "Component versions conflict",
       "depsUnknown": "{{module}} is missing and no package provides it",
       "depsRuntime": "{{module}} is missing",
+      "depsSameName": "Will install {{dist}} from PyPI",
+      "depsSameNameMismatch": "{{dist}} on PyPI isn’t the {{module}} this script needs. Pick a Python environment that has it",
+      "depsSameNameUnavailable": "{{dist}} can’t be installed from PyPI. Pick a Python environment that has {{module}}",
       "install": "Install missing components first",
       "needsArgs": "The script needs arguments",
       "missingData": "Can't find the data it reads",
@@ -1005,7 +1008,8 @@
       "toUser": "into the one already on your computer",
       "toUserLong": "The one already on your computer; a failed install can't be fully undone",
       "download": "Needs a download of about {{mb}} MB.",
-      "managedPlace": "Tavotto's folder"
+      "managedPlace": "Tavotto's folder",
+      "unverified": "Same-named package not checked by Tavotto; prebuilt wheels only, undone if the check after install fails"
     },
     "env": {
       "builtin": "Tavotto's own",
@@ -1027,6 +1031,7 @@
       "argsHidden_other": "{{count}} (has a password, hidden)",
       "installs": "Installs",
       "installTo": "Into",
+      "unverified": "Same-named package, not checked by Tavotto",
       "noFigureWhy": "It never called savefig and left no Figure open.",
       "unlinked": "{{names}}, made earlier with other arguments, is no longer linked. Run again with those arguments to restore it."
     },

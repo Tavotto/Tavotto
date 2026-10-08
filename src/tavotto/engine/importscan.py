@@ -12,8 +12,9 @@
   `project_root` 档还加项目根，两处都按「import 系统会先在这里找到」的顺序判；
 * **第三方**：不是上面两种、且能经**可信解析**（项目声明 / curated 表，`depresolve.resolve`
   同一优先级）映射到一个 distribution；
-* **未知**：不是 stdlib、不是本地、也映射不到——**永远不装、不猜同名**（FO-034），只报出来
-  让用户指定。
+* **未知**：不是 stdlib、不是本地、也映射不到——**跑前不装、不猜同名**（FO-034），只报出来
+  让用户指定。（运行时真的 import 失败之后，`depresolve.resolve` 才有「同名候选 + 装后核验」，
+  ADR 0061 2026-10-08 修订——这里没有「它真的缺」的证据，所以有意不对称。）
 
 上下文决定「要不要在跑之前就准备」：只有**模块层无条件**的 import 会让脚本一开跑就死
 （`needed`）；`try:` 里的（可选依赖）、`if TYPE_CHECKING:` 里的（仅类型）、函数 / 类体内的
@@ -651,7 +652,7 @@ def _module_files(path: Path) -> list[Path]:
 
 
 def map_distribution(import_name: str, declared: dict[str, str]) -> tuple[str, str]:
-    """import 名 → `(distribution, 来源)`；映射不到回 `("", "")`——**不猜同名**。
+    """import 名 → `(distribution, 来源)`；映射不到回 `("", "")`——跑前**不猜同名**（`depresolve.resolve` 的运行时同名候选不在这里）。
 
     与 `depresolve.resolve` 同一优先级：项目声明过（经 curated 表或同名对上）>
     curated；都没有就是未知。回的 distribution 是规范化名。

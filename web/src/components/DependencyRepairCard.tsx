@@ -322,6 +322,7 @@ export function DependencyRepairCard({
           requirement: requirementList.length ? listJoin(requirementList) : (offer.requirement?.requirement ?? pkg),
         })}
       </p>
+      {offer.requirement?.unverified && <p data-repair-unverified>{en('repairUnverified')}</p>}
       <p data-one-click-cost {...(disclosed ? { 'data-dependency-private-python': '' } : {})}>
         {checking ? en('oneClickChecking') : downloadFact(disclosed)}
       </p>

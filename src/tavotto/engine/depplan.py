@@ -28,7 +28,7 @@ matplotlib / numpy，`ADAPTER_REQUIREMENTS`，与 `pyproject.toml` 的 `worker` 
 
 只有**模块层无条件**的 import 进 `needed`（`importscan` 的判据）；条件 / 延后 / 可选 / 动态
 的只列在 `possible`——缺了在运行后由有界重计划接手。unknown 的 import（映射不到
-distribution）列在 `unknown`，**永远不装、不猜**（FO-034）。
+distribution）列在 `unknown`，**跑前不装、不猜**（FO-034；运行时缺包的同名候选见 `depresolve.resolve`）。
 
 纯标准库 + `packaging`（经 `depresolve`）；`target_facts` 起一个子进程（按解释器缓存）。
 """

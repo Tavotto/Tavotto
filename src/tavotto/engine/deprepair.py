@@ -91,6 +91,9 @@ ERROR_NOT_FOUND = "dependency_not_found"
 ERROR_NETWORK = "dependency_network_unavailable"
 ERROR_CONFLICT = "dependency_conflict"
 ERROR_IMPORT_STILL_FAILED = "dependency_import_still_failed"
+#: 同名候选（`depresolve.SOURCE_SAME_NAME_UNVERIFIED`）装完核验不过：PyPI 上那个同名发行包不提供脚本要的这个模块
+#: （或导入不了 / 超时）——这一代不激活，上一代原样（维护者 2026-10-08 裁决，ADR 0061 FO-034 修订）。
+ERROR_SAME_NAME_MISMATCH = "dependency_same_name_mismatch"
 ERROR_SELFTEST_FAILED = "dependency_worker_selftest_failed"
 ERROR_REQUIREMENT_INVALID = "package_requirement_invalid"
 ERROR_PIP_UNAVAILABLE = "pip_unavailable"
@@ -261,6 +264,9 @@ class RepairPlan:
             creates_environment=self.creates_environment,
             private_python=self.private_python,
             env_fingerprint=self.env_fingerprint,
+            unverified_same_name=(
+                (self.requirement.distribution,) if self.requirement.needs_verification else ()
+            ),
         )
 
     @property
@@ -408,7 +414,8 @@ def _prune_plans() -> None:
 #   旧同意**不覆盖**新的范围（`ERROR_IMPACT_CHANGED`，零副作用）；
 # * 新增一类影响要加 `IMPACT_VERSION`——旧版本摘要永远对不上，未知的新范围不会被旧同意继承。
 # ---------------------------------------------------------------------------
-IMPACT_VERSION = 1
+#: 2（2026-10-08）：影响摘要多了 `unverified_same_name`——同名候选（未经 Tavotto 核对的 PyPI 包）要在授权页面看得出来。
+IMPACT_VERSION = 2
 #: 依赖安装结束时 `projectenv.remember` 的 trigger（两处写入点共用这一个字面量）
 TRIGGER_DEPENDENCY_REPAIR = "dependency_repair"
 SCOPE_MANAGED_GENERATION = "managed_generation"
@@ -456,6 +463,7 @@ def impact_of(
     scope_policy: str = "",
     drops=(),
     changes=(),
+    unverified_same_name=(),
 ) -> dict:
     """一次依赖安装授权的实际影响（公开形态：没有机器路径，环境只给不透明引用）。
 
@@ -481,6 +489,8 @@ def impact_of(
         "scope_policy": scope_policy,
         "drops": sorted(drops),
         "changes": sorted(changes),
+        # 其中哪些是「按 import 名同名装的、未经 Tavotto 核对的 PyPI 包」（装完会核验，不过就回滚）：授权页面据此亮出来
+        "unverified_same_name": sorted(unverified_same_name),
         # 目标环境与它的代：重建 / 换代 / 换成别的环境都换引用（只由指纹算出，不泄露路径）
         "environment_ref": _opaque(env_fingerprint),
     }
@@ -807,11 +817,7 @@ def offer(project: str | Path, script: str, module: str, project_env: dict | Non
     )
     # 建议带着「看到它那一刻」的候选 id 与环境代：缺一个都不列成目标——没有绑定的「改用」只能退回按路径采用，
     # 环境在看到之后被重建，就会静默采用用户没看过的那一代（与 `MissingDependencyCard` 同一条纪律）
-    if (
-        isinstance(recommended, dict)
-        and recommended.get("id")
-        and recommended.get("generation")
-    ):
+    if isinstance(recommended, dict) and recommended.get("id") and recommended.get("generation"):
         # 确认模式（ADR 0114）：项目自己的 venv 体检通过、缺的包也在里面——不再无提示接手，列成一个
         # 「改用」目标，用户点一次才记进项目设置（与系统解释器同一个采用端点、同一次现场体检）。项目内的
         # 解释器给项目相对路径：采用端点把它钉回项目根之内
@@ -875,7 +881,8 @@ def offer(project: str | Path, script: str, module: str, project_env: dict | Non
     # 正是「找到了、Python 与 matplotlib 都行、就是没有这个包」。其他失败码
     # （没有 matplotlib / 版本不支持 / 起不来）**不该**提供安装——往一个跑不起
     # worker 的环境里装包，装完还是跑不起来。
-    if detail.get("code") == projectenv.ERROR_MODULE_MISSING:
+    # 同名候选（未经核对）绝不往用户自己的 venv 里装：用户的环境不是我们的，装错了不能完整回滚（维护者 2026-10-08）
+    if detail.get("code") == projectenv.ERROR_MODULE_MISSING and not requirement.needs_verification:
         venv = detail.get("venv") or ""
         # `venv` 来自调用方交来的体检结果：照样钉在项目根之内再用（与 `_pick_project_venv` 同一条纪律）
         python = projectenv.interpreter_of(venv, root=root) if venv else None
@@ -982,6 +989,11 @@ def create_plan(
             raise RepairError(ERROR_UNRESOLVED, f"无法确定 {module} 对应哪个安装包")
     if not requirement.installable:
         raise RepairError(ERROR_REQUIREMENT_INVALID, "这个需求不可安装")
+    if requirement.needs_verification and target_kind != TARGET_MANAGED:
+        # 同名候选只进 Tavotto 受管环境的新一代（装完核验、不过回滚）；用户自己的 venv 不往里装
+        raise RepairError(
+            ERROR_NOT_ALLOWED, "未经核对的同名包只会装进 Tavotto 自己的环境，不会装进你的 Python"
+        )
 
     python = ""
     creates = False
@@ -1349,6 +1361,11 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
             replan=bool(wide and plan.private_python is not None),
             inputs_digest=wide.inputs_digest if wide else "",
             requested=req if wide else None,
+            verify_same_name=(
+                ((req.import_name, req.distribution),)
+                if req.needs_verification and req.import_name
+                else ()
+            ),
         )
         outcome = _run_generation_locked(job, cancel_ev, env_key)
         if not outcome.get("ok"):
@@ -4347,6 +4364,8 @@ class _GenerationJob:
     #: 租约在手之后复查全局显式解释器（E05）：装进去也不会被用的环境，一个字节都不装（联合准备用；重建 / 包管理
     #: 首装是用户对受管环境本身的明确动作，不查）。
     refuse_pinned: bool = False
+    #: 同名候选（`(import 名, 发行包名)`）：装完在新一代里核验「这个发行包确实提供这个模块、且 import 得进」，不过不激活
+    verify_same_name: tuple[tuple[str, str], ...] = ()
 
 
 def generation_requirements(
@@ -4514,6 +4533,15 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
             _attempted.add(job.attempted)
     # ---- 验：三层，任一步不过就是 incomplete，active 不动 ----
     job.emit(STATE_VERIFYING)
+    if job.verify_same_name:
+        # 同名候选先核验、再做别的：发行包若不提供这个模块，连 import 都不跑（不执行一个不认账的包的代码）
+        try:
+            _verify_same_name(python, job.verify_same_name)
+        except RepairError as exc:
+            managedenv.mark_generation(
+                project, generation, managedenv.GEN_STATE_INCOMPLETE, "同名包核验未通过"
+            )
+            raise exc
     rc, out = _run(pip_check_argv(python), PIP_PROBE_TIMEOUT_S)
     if rc != 0:
         managedenv.mark_generation(
@@ -4903,6 +4931,115 @@ def probe_imports(python: str, names: tuple[str, ...] | list[str]) -> dict[str, 
     except (ValueError, IndexError):
         return {n: (proc.stderr or "起不来")[:200] for n in names}
     return {n: str(data.get(n, "no result")) for n in names}
+
+
+#: 同名核验的子进程预算：只做 import 一次 + 读元数据，比通用探测更紧（超时 = 核不了 = 不激活）
+SAME_NAME_VERIFY_TIMEOUT_S = 60
+
+_SAME_NAME_PROBE_SRC = r"""
+import json, re, sys
+import importlib.metadata as md
+
+
+def tops(dist):
+    names = set()
+    try:
+        text = dist.read_text("top_level.txt") or ""
+    except Exception:
+        text = ""
+    for line in text.splitlines():
+        line = line.strip()
+        if line:
+            names.add(line.replace("/", ".").split(".")[0])
+    for f in dist.files or ():
+        parts = getattr(f, "parts", ()) or ()
+        if not parts:
+            continue
+        head = parts[0]
+        if head in ("..", "__pycache__") or head.endswith((".dist-info", ".egg-info", ".data")):
+            continue
+        if len(parts) == 1:
+            head = head.split(".")[0]
+        names.add(head)
+    return names
+
+
+out = {}
+for module, dist_name in json.loads(sys.argv[1]):
+    rec = {"installed": False, "provided": False, "import": ""}
+    try:
+        dist = md.distribution(dist_name)
+        rec["installed"] = True
+        rec["provided"] = module in tops(dist)
+    except Exception as exc:
+        rec["import"] = "%s: %s" % (type(exc).__name__, exc)
+    if rec["provided"]:
+        try:
+            __import__(module)
+        except BaseException as exc:
+            rec["import"] = "%s: %s" % (type(exc).__name__, exc)
+    out[module] = rec
+sys.stdout.write(json.dumps(out))
+"""
+
+
+def probe_same_name(python: str, pairs: tuple[tuple[str, str], ...]) -> dict[str, dict]:
+    """在（新一代的）解释器里核对同名候选：每个 `(模块, 发行包)` 回
+    `{"installed", "provided", "import": 错误串（空 = import 成功）}`。**隔离子进程 + 超时**：启动条件与
+    `probe_imports` 一致（`-B`、env 继承、cwd 空目录）；超时 / 起不来 = 每一项都按「没核过」回（`provided` 假）。
+    发行包不提供这个模块时**不 import**。"""
+    pairs = tuple((m, d) for m, d in pairs if projectenv.valid_module_name(m))
+    if not pairs:
+        return {}
+    unverified = {
+        m: {"installed": False, "provided": False, "import": "not verified"} for m, _ in pairs
+    }
+    scratch = ""
+    try:
+        scratch = projectenv._probe_scratch_dir()
+        proc = subprocess.run(
+            [str(python), *runtime.probe_args(), "-c", _SAME_NAME_PROBE_SRC, json.dumps(pairs)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=SAME_NAME_VERIFY_TIMEOUT_S,
+            stdin=subprocess.DEVNULL,
+            cwd=scratch,
+            env=runtime.owned_env(python),
+            creationflags=runtime.CREATE_NO_WINDOW,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {m: {**rec, "import": str(exc)[:200]} for m, rec in unverified.items()}
+    finally:
+        if scratch:
+            shutil.rmtree(scratch, ignore_errors=True)
+    try:
+        data = json.loads((proc.stdout or "").strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        return {
+            m: {**rec, "import": (proc.stderr or "起不来")[:200]} for m, rec in unverified.items()
+        }
+    return {
+        m: data.get(m) if isinstance(data.get(m), dict) else rec for m, rec in unverified.items()
+    }
+
+
+def _verify_same_name(python: str, pairs: tuple[tuple[str, str], ...]) -> None:
+    """同名候选的装后核验：发行包装上了、**确实提供这个顶层模块**（`top_level.txt` / RECORD）、import 得进。
+    任一项不过抛 `ERROR_SAME_NAME_MISMATCH`（带 `module` / `distribution`，供卡片说清是哪一个）。"""
+    results = probe_same_name(python, pairs)
+    for module, distribution in pairs:
+        rec = results.get(module) or {}
+        if rec.get("installed") and rec.get("provided") and not rec.get("import"):
+            continue
+        raise RepairError(
+            ERROR_SAME_NAME_MISMATCH,
+            f"PyPI 上的 {distribution} 不提供 {module}"
+            + (f"（{rec['import']}）" if rec.get("import") else ""),
+            module=module,
+            distribution=distribution,
+        )
 
 
 def _verify_imports(python: str, names: tuple[str, ...]) -> None:

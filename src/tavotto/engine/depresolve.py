@@ -48,12 +48,24 @@ SOURCE_PROJECT_DECLARED = "project_declared"
 SOURCE_CURATED = "curated"
 #: 用户在界面上手动输入的包名。
 SOURCE_USER_SPECIFIED = "user_specified"
+#: 表外的 import 名按**同名**当 PyPI 包名的候选（维护者 2026-10-08 裁决，ADR 0061 FO-034 修订）：
+#: 不是 Tavotto 核对过的映射，只有用户点了才装、只装 wheel、装完要核验（见 `resolve` 与 deprepair 的核验）。
+SOURCE_SAME_NAME_UNVERIFIED = "same_name_unverified"
 
-#: 允许「一键安装」的来源。**guessed 不在其中，也没有 guessed 这一档**。
-INSTALLABLE_SOURCES = (SOURCE_PROJECT_DECLARED, SOURCE_CURATED, SOURCE_USER_SPECIFIED)
+#: 允许「一键安装」的来源。**没有 guessed 这一档**——同名候选有自己的名字，且带着核验义务。
+INSTALLABLE_SOURCES = (
+    SOURCE_PROJECT_DECLARED,
+    SOURCE_CURATED,
+    SOURCE_USER_SPECIFIED,
+    SOURCE_SAME_NAME_UNVERIFIED,
+)
 
 CONFIDENCE_HIGH = "high"
 CONFIDENCE_LOW = "low"
+#: 同名候选的可信度：可以装（用户确认后），但不是 Tavotto 核对过的。
+CONFIDENCE_UNVERIFIED = "unverified"
+#: `installable` 认的可信度（`low` 不在其中）。
+INSTALLABLE_CONFIDENCES = (CONFIDENCE_HIGH, CONFIDENCE_UNVERIFIED)
 
 # ---------------------------------------------------------------------------
 # curated 映射
@@ -183,6 +195,75 @@ SAME_NAME: frozenset[str] = frozenset(
 )
 
 
+# ---------------------------------------------------------------------------
+# 同名禁区（维护者 2026-10-08 裁决的第一道防线）
+#
+# 表外 import 名按同名候选之前，先排除「同名一定是错包 / 空壳」的名字：
+#   * `CURATED` 的键——import 名与发行包名不同，PyPI 上的同名项目是另一个东西
+#     （`docx` ≠ python-docx，`sklearn` 是个弃用的占位包，`cv2` / `yaml` / `PIL` 同理）；
+#   * 下面这张小表：同一类「import 名 ≠ 发行包名」，来源是各项目文档里写的安装名
+#     （`pip install python-dotenv` 而不是 `dotenv`），以及几乎总是用户自己本地文件的通用模块名。
+# 表只增不减；漏登记的后果是兜底（装完核验不过就回滚），多登记的后果只是让用户去选自己的 Python。
+# ---------------------------------------------------------------------------
+NO_SAME_NAME: frozenset[str] = frozenset(
+    {
+        # import 名 ≠ 发行包名（官方安装名在注释里）
+        "attr",  # attrs
+        "dotenv",  # python-dotenv
+        "git",  # GitPython
+        "jwt",  # PyJWT
+        "magic",  # python-magic
+        "slugify",  # python-slugify
+        "Crypto",  # pycryptodome
+        "Cryptodome",  # pycryptodomex
+        "nacl",  # PyNaCl
+        "MySQLdb",  # mysqlclient
+        "OpenGL",  # PyOpenGL
+        "jose",  # python-jose
+        "ldap",  # python-ldap
+        "socks",  # PySocks
+        "telegram",  # python-telegram-bot
+        "discord",  # discord.py
+        "Xlib",  # python-xlib
+        "cairo",  # pycairo
+        "bson",  # pymongo 自带；PyPI 上的 bson 是另一个项目
+        "kafka",  # kafka-python
+        "ruamel",  # ruamel.yaml（命名空间包）
+        "google",  # google-cloud-* 等（命名空间包）
+        "pkg_resources",  # setuptools 自带
+        "win32api",  # pywin32
+        "win32con",
+        "win32com",
+        "win32gui",
+        "pythoncom",
+        "pywintypes",
+        # 通用模块名：几乎总是用户自己的本地文件（缺了说明文件没跟过来），PyPI 上同名的是别人的项目
+        "utils",
+        "util",
+        "helpers",
+        "helper",
+        "common",
+        "config",
+        "settings",
+        "tools",
+        "lib",
+        "main",
+        "data",
+        "model",
+        "models",
+        "test",
+        "tests",
+    }
+)
+
+
+def same_name_forbidden(import_name: str) -> bool:
+    """这个 import 名绝不按同名装：`CURATED` 的键（含大小写不同的写法——Windows / macOS 的文件系统不分大小写，
+    但 PyPI 上 `Docx` 与 `docx` 照样是同一个同名陷阱）+ `NO_SAME_NAME`。"""
+    key = normalize_distribution(str(import_name or ""))
+    return any(key == normalize_distribution(n) for n in (*CURATED, *NO_SAME_NAME))
+
+
 def curated_distribution(import_name: str) -> str | None:
     """curated 两张表的合并查询；查不到回 None（**不猜同名**）。"""
     name = str(import_name or "")
@@ -303,9 +384,14 @@ class DependencyRequirement:
         return (
             bool(self.distribution)
             and self.resolution_source in INSTALLABLE_SOURCES
-            and self.confidence == CONFIDENCE_HIGH
+            and self.confidence in INSTALLABLE_CONFIDENCES
             and parse_requirement(self.requirement()) is not None
         )
+
+    @property
+    def needs_verification(self) -> bool:
+        """同名候选：装完必须核验「这个发行包确实提供这个 import 名」（deprepair 的代事务里做，不过不激活）。"""
+        return self.resolution_source == SOURCE_SAME_NAME_UNVERIFIED
 
     def requirement(self) -> str:
         """交给 pip 的那一个参数（`lmfit>=1.3`）。"""
@@ -320,6 +406,7 @@ class DependencyRequirement:
             "resolution_source": self.resolution_source,
             "confidence": self.confidence,
             "installable": self.installable,
+            "unverified": self.needs_verification,
         }
 
 
@@ -1429,8 +1516,17 @@ def resolve(
        `Pillow>=10` 时要先经 curated 才知道两者是同一个包，所以这一档同样
        查表，只是**版本约束用项目的那一份**。
     2. **curated** —— Tavotto 维护的科研包映射（含同名白名单）。
-    3. 解析不到 —— 回 None。调用方据此给「指定安装包…」的手动出口，
-       **绝不**拿 import 名当包名装。
+    3. **同名候选**（维护者 2026-10-08 裁决，ADR 0061 FO-034 修订）—— 表外的 import 名
+       （不在 `CURATED` / `SAME_NAME` / 同名禁区 `same_name_forbidden`）按同名当 PyPI 包名，
+       来源 `same_name_unverified`、可信度 `unverified`。它**只是候选**：用户点了才装、只装 wheel、
+       只进 Tavotto 受管环境的新一代，装完在新一代里 import 一次并核对该发行包确实提供这个顶层模块，
+       不过就不激活（deprepair 的代事务）。
+    4. 解析不到（同名禁区、名字语法不合）—— 回 None。调用方据此给「指定安装包…」与「选自己的
+       Python」的手动出口。
+
+    只在**运行时真的 import 失败**（`missing_dependency`）之后问到这里：跑前的联合扫描
+    （`importscan.map_distribution`）刻意不做这一步——没有「它真的缺」的证据，不为一个也许是
+    私有 / 动态 / 本地的名字去猜包。
     """
     if not valid_import_name(import_name):
         return None
@@ -1456,7 +1552,17 @@ def resolve(
             resolution_source=SOURCE_CURATED,
             confidence=CONFIDENCE_HIGH,
         )
-    return None
+    if same_name_forbidden(import_name):
+        return None
+    if parse_requirement(import_name) is None:
+        return None
+    return DependencyRequirement(
+        import_name=import_name,
+        distribution=import_name,
+        specifier="",
+        resolution_source=SOURCE_SAME_NAME_UNVERIFIED,
+        confidence=CONFIDENCE_UNVERIFIED,
+    )
 
 
 def from_user_input(import_name: str, text: str) -> DependencyRequirement | None:

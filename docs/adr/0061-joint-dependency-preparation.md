@@ -2,6 +2,9 @@
 
 日期：2026-09-21 · 状态：**Accepted**（U04 阶段；分三个叠栈 PR 落地，§八 记每一节落在哪个 PR；后续阶段按 §九 修订）
 
+修订（2026-10-08，维护者裁决）：**FO-034「不猜同名」收窄为只管跑前扫描**——运行时真的 import 失败的表外名字，改按「同名候选 + 装完核验」安装，
+见 §二 末尾「同名候选（2026-10-08 修订）」；`docs/rules/backend/dependency-repair-and-packages.md` 同步。
+
 相关：[0019 受控依赖修复](0019-controlled-dependency-repair.md)（本 ADR 修订它的 §二 / §五 / §九 / §十）、
 [0021 tavotto run 产品契约](0021-tavotto-run-product-contract.md)（§6 envlease 一张表）、[0038 设置外壳与包管理](0038-settings-shell-agents-packages.md)、
 [0044 系统解释器候选](0044-system-interpreter-as-repair-candidate.md)、[0053 U01 合同](0053-foundation-contracts-and-preparation.md)、
@@ -76,7 +79,28 @@ specifier 规范串），原文一个字节不进 argv / 需求文件——与 A
 | stdlib | 在**目标解释器**的 `sys.stdlib_module_names`（宿主的只是默认） | 不装 |
 | local | 脚本目录或项目根下有同名 `.py` / 包目录 / 命名空间目录 / 扩展模块（`_within` 项目根） | **永远不装**（FO-031 / FO19）；跟进它 import 的东西 |
 | third_party | 能经可信解析映射到 distribution：项目声明（经 curated 或同名对上）> curated | 进联合计划 |
-| unknown | 都不是 | **不装、不猜同名**（FO-034）；列出来让用户指定（走既有 `user_specified`） |
+| unknown | 都不是 | **跑前不装、不猜同名**（FO-034，跑前扫描无「它真的缺」的证据）；列出来让用户指定（走既有 `user_specified`）。运行时真的 import 失败之后的同名候选见下 |
+
+**同名候选（2026-10-08 修订，推翻原「没有同名试试看这一档」）。** 真实事故：Windows beta 用户的脚本缺 `lxml`，卡片说「找不到安装包」——
+`lxml` 不在 `CURATED` / `SAME_NAME`，旧规则一律 unknown、不装。用户（维护者）2026-10-08 裁决：白名单过窄导致 lxml 等常用包装不上，
+**白名单之外的包也要能装——同名装 + 装完核验**。规则（`depresolve.resolve` 是唯一出处）：
+
+1. 已知改名的查 `CURATED`（`PIL`→Pillow、`docx`→python-docx、`sklearn`→scikit-learn…）；**`CURATED` 的键与 `NO_SAME_NAME` 小表是同名禁区**
+   （`docx` / `sklearn` / `cv2` / `yaml` / `PIL` 的同名包是错包或空壳；`NO_SAME_NAME` 收「import 名 ≠ 发行包名」的常见几个〔`dotenv` / `jwt` / `git`…〕
+   与几乎总是用户自己本地文件的通用名〔`utils` / `config`…〕，来源写在表旁注释；漏登记的兜底是第 4 条，多登记的代价只是让用户选自己的 Python）。
+2. 表外的名字（非 stdlib、非本地模块、非禁区、名字合 PEP 508 语法）→ 来源 `same_name_unverified`、可信度 `unverified`，按**同名**当 PyPI 包名的候选。
+   **只在运行时真的 import 失败（`missing_dependency`）之后**问到这里；跑前扫描（`importscan.map_distribution`）刻意不做——没有「它真的缺」的证据，
+   不为一个也许是私有 / 动态 / 本地的名字去猜。所以 `resolve` 与 `map_distribution` 不再是同一口径，这是**有意的不对称**（`test_pre_run_scan_still_does_not_guess` 钉着）。
+3. 用户点了才装：沿用 ADR 0114 / 0115 的授权——同一个 `prepare_dependencies` 动作、同一份影响摘要；摘要多一项 `unverified_same_name`（`IMPACT_VERSION` 升到 2），
+   授权页面据此亮出「未经 Tavotto 核对的同名包」。卡片只露「将从 PyPI 安装 {{dist}}」一句 + 一个主按钮。
+4. **装完核验**（`deprepair._verify_same_name`，在新一代里、`pip check` 之前）：隔离子进程 + 超时，先读发行包元数据确认**它确实提供这个顶层模块**
+   （`top_level.txt` / RECORD），不提供就连 import 都不跑（不执行一个不认账的包的代码），提供再 `import` 一次。任一不过 → `dependency_same_name_mismatch`，
+   这一代标 incomplete、**不激活**（上一代原样），卡片说「PyPI 上的 {{dist}} 不是这个脚本要的 {{module}}，请选一个装了它的 Python 环境」。
+   PyPI 上没有该名字（`dependency_not_found`）或没有预编译版本（`dependency_requires_build`）→ 同样落到「装不了，选自己的 Python」。
+5. 只装 wheel（`--only-binary=:all:` 不变）、只进受管环境的新一代；**用户自己的 Python（项目 venv）不往里装**——`offer` 不给该目标，`create_plan` 拒绝（`dependency_install_not_allowed`）。
+
+理由：白名单永远追不上用户脚本里的包；对「抢注攻击」的防线从「不给机会」换成「用户确认 + 同名禁区 + 仅 wheel + 装后核验回滚」，
+其中核验是结构性的（不是文案）：被抢注的同名空壳装得上，但过不了「提供这个模块」这一关。
 
 | 上下文 | 例 | 跑前装？ |
 |---|---|---|
@@ -328,7 +352,7 @@ MCP `tavotto_open_figure(prepare_dependencies=tavotto_managed | project_venv | s
 
 * Poetry `^` / `~` 与 pixi / conda 锁的转换、命名 Conda 环境的发现（X01）；`-e .` / 本地路径 / URL / VCS 的安装
   （X01：新环境里构建本地代码要另一档授权）；`${VAR}` 展开（pip 特性，涉及凭据，不做）。
-* 不做 lockfile 级复现（ADR 0019 §九 不变）；不做 sdist 构建（`--only-binary=:all:` 不变）；不猜同名（FO-034）。
+* 不做 lockfile 级复现（ADR 0019 §九 不变）；不做 sdist 构建（`--only-binary=:all:` 不变）；跑前扫描不猜同名（FO-034；运行时缺包的同名候选见 §二 末尾，2026-10-08）。
 * 原生扩展的 ABI 资格（FO13）：纯 Python 包装成功不算 ABI 资格；真实二进制 wheel 的隔离证据留在 integration lane
   （台账 `planned`，理由写在 enrollment）。
 * 不对项目根之外的文件求 include；不读用户 pip 配置里的 index（那是 pip 自己的事，我们只记 `custom_package_index: bool`）。

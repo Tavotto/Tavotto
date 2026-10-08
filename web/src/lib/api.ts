@@ -3883,10 +3883,12 @@ export interface DependencyRequirementInfo {
   distribution: string
   specifier: string
   requirement: string
-  /** project_declared / curated / user_specified —— 没有「猜的」这一档 */
-  resolution_source: 'project_declared' | 'curated' | 'user_specified' | ''
+  /** project_declared / curated / user_specified / same_name_unverified（表外的名字按同名装，未经核对，装完核验） */
+  resolution_source: 'project_declared' | 'curated' | 'user_specified' | 'same_name_unverified' | ''
   confidence: string
   installable: boolean
+  /** 同名候选：装完要核验「这个发行包确实提供这个模块」，不过不激活；老后端没有 */
+  unverified?: boolean
 }
 
 /** 一个可选的安装目标 */
@@ -4171,6 +4173,8 @@ export interface DependencyImpact {
   scope_policy: '' | 'switch'
   drops: string[]
   changes: string[]
+  /** 其中按 import 名同名装的、未经 Tavotto 核对的 PyPI 包（装完核验，不过就回滚）；老后端没有 */
+  unverified_same_name?: string[]
   environment_ref: string
 }
 
@@ -4786,6 +4790,9 @@ export interface PreparationReport {
       code: string
       committed: boolean
       impact_digest: string
+      /** 运行时缺的模块名与其中按同名装的 PyPI 包（失败时卡片说清「PyPI 上的 X 不是脚本要的 Y」）；老后端没有 */
+      module?: string
+      unverified_same_name?: string[]
     } | null
   }
   dependency_delta?: Record<string, unknown> | null

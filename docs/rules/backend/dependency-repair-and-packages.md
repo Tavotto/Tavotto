@@ -105,10 +105,17 @@
   看护：`tests/test_environment_health_parity.py`。
   解释器去重 / 缓存键**按路径字符串不 realpath**（`.venv/bin/python` 是指向基础
   解释器的软链接，realpath 会把 venv 与它的基础 Python 判成同一个）。
-- **import 名不是包名**。只认 `project_declared` / `curated` 两档高置信解析，
-  外加用户手填的 `user_specified`。**没有「同名试试看」这一档**——那是抢注
-  攻击的入口。依赖声明只读：不改 requirements.txt / pyproject.toml，不
-  `pip install -r`。
+- **import 名不是包名**。高置信解析只有 `project_declared` / `curated`，外加用户手填的 `user_specified`。
+  依赖声明只读：不改 requirements.txt / pyproject.toml，不 `pip install -r`。
+- **同名候选（`same_name_unverified`，ADR 0061 §二 2026-10-08 修订，推翻原「没有同名试试看这一档」）**：运行时真的 import 失败、
+  名字又不在 `CURATED` / `SAME_NAME` 里，`depresolve.resolve` 回「按同名装」的候选（可信度 `unverified`）——不再是 unknown。
+  五道防线缺一不可：①**同名禁区** `same_name_forbidden`（`CURATED` 的键 + `NO_SAME_NAME` 小表，来源写在表旁；`docx` / `sklearn` /
+  `cv2` / `yaml` / `PIL` 绝不同名装）；②**用户点了才装**，沿用 ADR 0115 的影响摘要，摘要里 `unverified_same_name` 亮出「未经 Tavotto 核对」
+  （`IMPACT_VERSION` = 2）；③只装 wheel、只进受管环境的新一代，**用户自己的 venv 不装**（`offer` 不给目标、`create_plan` 拒绝）；
+  ④**装完核验** `deprepair._verify_same_name`：新一代里隔离子进程 + 超时，发行包元数据必须提供这个顶层模块才 import，
+  不过 → `dependency_same_name_mismatch`、这一代 incomplete 不激活、上一代原样；⑤PyPI 没有该名字 / 没有 wheel →
+  `dependency_not_found` / `dependency_requires_build`，同样不激活。**跑前扫描 `importscan.map_distribution` 不做同名候选**（有意不对称：
+  没有「它真的缺」的证据）。看护：`tests/test_same_name_install.py`。
 - **包名语法是安全边界不是输入校验**：`shell=False` 挡不住 pip 自己把 `-r` /
   `--index-url` / `--target` 解析成选项。白名单语法在
   `depresolve.parse_requirement`，安装前在 `_pip_install` 里**再验一次**。
@@ -264,7 +271,7 @@
   `pep723:<脚本>`。默认只选任何层级的 `requirements.txt`、pyproject 主依赖、PEP 723（`default_group`）；其余组
   由项目设置 `dependency_groups` 点名；约束不分组、永远生效。
 - **「需要」按 import 的上下文判**（`importscan`）：四个桶（stdlib / local / third_party / unknown）× 六种上下文；只有
-  **模块层无条件**的第三方 import 是 `needed`；本地模块永远不装、unknown 永远不猜；经本地模块的 import 取两处里较弱
+  **模块层无条件**的第三方 import 是 `needed`；本地模块永远不装、unknown 在跑前永远不猜（运行时缺包的同名候选见上）；经本地模块的 import 取两处里较弱
   的上下文。stdlib 名字表按**目标解释器**的（`depplan.target_facts`），不按宿主。
 - **import 了却从未用到的不算「需要」（ADR 0061 §二 2026-09-24 修订）**：`importscan` 按 `figcapture.unused_imports`
   （唯一判据，只收 AST 能证明的：起了别名、不带点的 `import X as Y`——裸 `import X` 可能是为了副作用，一律不收；X 还必须在无副作用名单 `figcapture.SIDE_EFFECT_FREE_IMPORTS` 里（别名也可能只为副作用，评审 #555 两条 P1）——判据是进程级副作用快照 `tests/support/import_side_effects.py`（matplotlib / 环境变量 / warnings / logging / 导入钩子 / 信号 / excepthook / atexit / builtins / codec 与 locale……任何一项变了就不进），扩名单要用它实测；不在 `try` / `with` 里、绑定名与 X 在别处一次都不出现、
@@ -424,7 +431,7 @@
 - **摘要只有一处算**：`deprepair.impact_of`（目标与作用域、具体安装集合 / 约束 / hash 模式 / adapter / 组、是否新建环境、私有 Python 下载、
   写入范围、回滚性质、目标环境与代〔不透明引用〕、`IMPACT_VERSION`）；`impact_digest` 是它的摘要。**不在里面**：进度 / 文案 / 计划 id / 有效期 /
   事实 digest / 规划输入指纹。门显示的（`offer_impact`）与绑定出的计划（`JointRepairPlan.impact` / `RepairPlan.impact`）共用 `_managed_scope`，逐字相同。
-  新增一类影响要升 `IMPACT_VERSION`。
+  新增一类影响要升 `IMPACT_VERSION`（2026-10-08 升到 2：多了 `unverified_same_name`）。
 - **对不上就是 `dependency_impact_changed`，认领之前、零副作用**：`prepare_async(confirmed_impact=)` / `start_confirmed(digest)`；响应带此刻的实际影响。
   会改用户自己环境的动作必须回显摘要（会话 400 `preparation_impact_unconfirmed`）；使用（采用）环境不含修改权限。
 - **认领幂等**：`_claim` 在起线程之前、锁内，联合准备与单包修复（`install_async` / `install`）一样；`start_confirmed` 在 `_lock` 里比较 + 认领，同一份摘要的在途作业
@@ -460,6 +467,6 @@
 - 查找走 `pip index versions`、`--retries 1` 是判据一部分
 - 体检执行的是 `worker.py` 文件本身（不是清单、也不是 `import worker`），全局与项目路径同一份体检（#435）
 - **声明无损读法只有一份**（`packaging`，unknown / unsupported 不是空依赖，选中组里有就 `blocked`）
-- 「需要」按 import 上下文判，本地模块永不装、unknown 永不猜
+- 「需要」按 import 上下文判，本地模块永不装、跑前 unknown 永不猜（运行时缺包的同名候选 + 装后核验，ADR 0061 2026-10-08）
 - 交给安装器的串一律重新序列化
 - 跑前的门先找用户自己的环境（ADR 0079）：只读磁盘记录 + 问一次登录 shell，装齐按 import 判，装齐的里按 `userenvs.rank()` 挑最好的自动改用，用户显式决定过的一个都不碰（`_auto_adopt_allowed`），载荷与 SSE 只带 `env_id` 不带路径

@@ -568,10 +568,11 @@ class TestRealRoundTrip:
         assert doc["snapshot"]["error"] == {"code": "dependency_not_found"}
         assert doc["snapshot"]["stage"]["last"] == "installing"
 
-    def test_an_unmapped_import_found_while_running_is_never_guessed_into_a_pip_install(
+    def test_an_unlisted_import_found_while_running_is_offered_as_an_unverified_same_name_install(
         self, client, house, offline_managed_env, opened, monkeypatch
     ):
-        """D02：映射不到包名的 import 不自动 `pip install <import 名>`；差异计划说清不能在会话里授权，并给可执行的出路。"""
+        """D02（2026-10-08 改写）：映射不到包名的 import 不再判 unknown——按同名当候选，但**不自动 pip install**：
+        差异计划亮出「未经核对的同名包」、给 `prepare_dependencies` 等用户点；没点之前一个字节不装。"""
         installs: list[str] = []
         real = deprepair._run_generation
         monkeypatch.setattr(
@@ -584,10 +585,85 @@ class TestRealRoundTrip:
         report = _create(client, {"script": "figure.py"})
         sid = report["session_id"]
         assert _act(client, report, "run").status_code == 202
+        pending = _wait(client, sid, lambda r: r["phase"] not in ("running", "ready_to_run"))
+        assert pending["phase"] == "awaiting_confirmation"
+        (req,) = [r for r in pending["requirements"] if r.get("origin") == "runtime_missing"]
+        assert req["payload"]["module"] == "tavotto_test_unmapped"
+        assert req["payload"]["installable"] is True
+        assert req["payload"]["requirement"]["resolution_source"] == "same_name_unverified"
+        assert req["payload"]["requirement"]["distribution"] == "tavotto_test_unmapped"
+        assert req["payload"]["impact"]["unverified_same_name"] == ["tavotto_test_unmapped"]
+        assert req["payload"]["impact"]["modifies_user_environment"] is False
+        assert "prepare_dependencies" in _kinds(pending)
+        assert installs == [], "用户没点之前不许装"
+
+    def _runtime_missing_offer(self, client, opened, module: str):
+        proj = opened([], script_body=f"def _load():\n    import {module}\n\n_load()\n")
+        report = _create(client, {"script": "figure.py"})
+        assert _act(client, report, "run").status_code == 202
+        pending = _wait(
+            client, report["session_id"], lambda r: r["phase"] not in ("running", "ready_to_run")
+        )
+        assert pending["phase"] == "awaiting_confirmation", pending
+        return proj, pending
+
+    def test_a_same_name_package_that_is_not_the_module_is_rolled_back_in_the_session(
+        self, client, house, offline_managed_env, opened
+    ):
+        """真往返：用户点了「安装」→ pip 退出码 0（同名发行包在 wheelhouse 里）→ 装完核验发现它不提供脚本要的模块
+        → 这一代不激活、会话报告带 `dependency_same_name_mismatch` 与卡片要说的两个名字，不再给安装动作。"""
+        build_wheel(house, name="tavotto-test-squat", import_name="tavotto_test_something_else")
+        proj, pending = self._runtime_missing_offer(client, opened, "tavotto_test_squat")
+        assert _act(client, pending, "prepare_dependencies").status_code == 202
+        failed = _wait(
+            client,
+            pending["session_id"],
+            lambda r: r["outcome"].get("reason") == "dependency_preparation",
+        )
+        assert failed["outcome"]["kind"] == "failed"
+        assert failed["outcome"]["code"] == "dependency_same_name_mismatch"
+        dep = failed["provider"]["dependency"]
+        assert (dep["code"], dep["module"], dep["unverified_same_name"]) == (
+            "dependency_same_name_mismatch",
+            "tavotto_test_squat",
+            ["tavotto_test_squat"],
+        )
+        assert managedenv.active_generation(proj) is None, "核验不过的一代不许激活"
+        assert managedenv.state(proj)["installed"] == []
+
+    def test_a_same_name_package_that_is_the_module_installs_after_the_user_clicks(
+        self, client, house, offline_managed_env, opened
+    ):
+        build_wheel(house, name="tavotto-test-unlisted-ok", import_name="tavotto_test_unlisted_ok")
+        proj, pending = self._runtime_missing_offer(client, opened, "tavotto_test_unlisted_ok")
+        assert managedenv.active_generation(proj) is None
+        assert _act(client, pending, "prepare_dependencies").status_code == 202
+        _wait_until(lambda: managedenv.active_generation(proj) is not None, timeout=300)
+        _wait_idle()
+        assert {e["distribution"] for e in managedenv.state(proj)["installed"]} == {
+            "tavotto_test_unlisted_ok"
+        }
+
+    def test_a_forbidden_same_name_import_found_while_running_is_never_guessed_into_a_pip_install(
+        self, client, house, offline_managed_env, opened, monkeypatch
+    ):
+        """同名禁区（`MySQLdb` 的发行包叫 mysqlclient）：差异计划说清不能在会话里授权，并给可执行的出路。"""
+        installs: list[str] = []
+        real = deprepair._run_generation
+        monkeypatch.setattr(
+            deprepair, "_run_generation", lambda job, ev: (installs.append("x"), real(job, ev))[1]
+        )
+        opened(
+            [],
+            script_body="def _load():\n    import MySQLdb\n\n_load()\n",
+        )
+        report = _create(client, {"script": "figure.py"})
+        sid = report["session_id"]
+        assert _act(client, report, "run").status_code == 202
         failed = _wait(client, sid, lambda r: r["phase"] not in ("running", "ready_to_run"))
         assert failed["phase"] == "action_required" and failed["outcome"]["kind"] == "failed"
         (req,) = [r for r in failed["requirements"] if r.get("origin") == "runtime_missing"]
-        assert req["payload"]["module"] == "tavotto_test_unmapped"
+        assert req["payload"]["module"] == "MySQLdb"
         assert req["payload"]["installable"] is False
         assert req["payload"]["code"] == "dependency_unresolved"
         assert req["payload"]["options"] == ["specify_package", "choose_environment"]
