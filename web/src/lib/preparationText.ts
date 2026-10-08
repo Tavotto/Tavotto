@@ -253,12 +253,11 @@ function needsSomething(report: PreparationReport, script: string): PrepView {
   if (deps) {
     const prepare = has(report, 'prepare_dependencies') ? act('prepare_dependencies', 'install') : null
     if (deps.origin === 'runtime_missing') {
-      const p = (deps.payload ?? {}) as { module?: string; installable?: boolean; route?: string; tk_file_dialog_only?: boolean }
+      const p = (deps.payload ?? {}) as { module?: string; installable?: boolean; route?: string }
       if (!p.installable) {
         // 三类缺依赖的另外两类（按后端的稳定字段 `route`，不看文案）：标准库缺了（内置环境没带，如 Windows 上的 tkinter）/ 映射不到安装包（如 ROOT）。
         // pip 都装不了——主按钮只有一个：换用自己的 Python，且直接落在选环境那一步
-        // `tk_file_dialog_only`：后端读了脚本，确认它对 tkinter 的用法仅是弹窗选文件（写路径才去得掉 import）；缺省 = 不确定 = 不给这条建议
-        const values = { script, module: p.module ?? '', tkFileDialogOnly: p.tk_file_dialog_only === true }
+        const values = { script, module: p.module ?? '' }
         const pick: PrepPrimary = { kind: 'pick_environment' }
         if (p.route === 'stdlib_missing') {
           const builtin = report.environment?.kind === 'builtin'

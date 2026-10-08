@@ -1004,9 +1004,6 @@ function SessionDetails({ entry, view }: { entry: PrepEntry; view: PrepView }) {
       {dep && report?.outcome.reason === 'dependency_preparation' && (
         <TaskDiagnostic key={dep.plan_id} kind="dependency" refId={dep.plan_id} folded={false} />
       )}
-      {view.state === 'deps_stdlib' && view.sentence.values.module === 'tkinter' && view.sentence.values.tkFileDialogOnly === true && (
-        <p data-prep-tk-note>{pt('detail.tkNote')}</p>
-      )}
       {view.state === 'no_figure' && <p data-prep-nofigure-why>{pt('detail.noFigureWhy')}</p>}
       {(report?.unlinked_stems ?? []).length > 0 && report?.phase === 'completed' && (
         <p data-prep-unlinked>{pt('detail.unlinked', { names: listJoin(report.unlinked_stems ?? []) })}</p>
