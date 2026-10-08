@@ -290,17 +290,30 @@ def test_skill_routes_each_reference_explicitly():
 
 
 def test_figure_contract_bundled_packages_match_runtime_lock():
-    """figure-contract 第 6 节手抄的内置包清单必须与 runtime-lock 的 top_level 一致。
+    """figure-contract 第 6 节手抄的两份依赖清单必须与各自出处一致。
 
-    唯一出处是 packaging/runtime-lock.json；换包时这里红了就同步改文案。
+    便携集（处处可用）= pyproject.toml 的 worker extra；桌面版内置 = runtime-lock 的 top_level。
+    换包时这里红了就同步改文案。
     """
+    import tomllib
+    from packaging.requirements import Requirement
+
     lock = json.loads((ROOT / "packaging" / "runtime-lock.json").read_text(encoding="utf-8"))
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    worker = {
+        Requirement(r).name.lower() for r in pyproject["project"]["optional-dependencies"]["worker"]
+    }
     text = (SKILL_DIR / "references" / "figure-contract.md").read_text(encoding="utf-8")
-    m = re.search(r"依赖只假设([^，。（]+)", text)
-    assert m, "figure-contract 第 6 节缺内置包清单"
-    named = {x.strip().strip("*") for x in m.group(1).split("/")}
-    assert named == set(lock["top_level"])
+    m = re.search(r"处处可用的只有([^（；]+)", text)
+    assert m, "figure-contract 第 6 节缺便携依赖清单"
+    portable = {x.strip() for x in m.group(1).split("/")}
+    m = re.search(r"；([^；（]+)仅桌面版内置环境有", text)
+    assert m, "figure-contract 第 6 节缺桌面版独有清单"
+    desktop_only = {x.strip() for x in m.group(1).split("/")}
+    assert portable == worker
+    assert portable | desktop_only == set(lock["top_level"])
     assert "packaging/runtime-lock.json" in text
+    assert "pyproject.toml" in text
     skill = _skill_text()
     assert "figure-contract.md` 第 6 节" in skill
 

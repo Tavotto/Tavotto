@@ -66,10 +66,11 @@ fig.savefig(OUT / "Fig1_removal_rate.pdf")
   放项目里用相对路径（`Path(__file__).resolve().parent / "data" / "x.csv"`），或写成脚本
   顶部的常量；路径别从运行期交互得来。
 * **不 `plt.show()`**（会阻塞渲染 worker），只 `savefig`。
-* **依赖只假设 numpy / scipy / pandas / matplotlib / seaborn / pillow**（内置环境清单的唯一
-  出处是 `packaging/runtime-lock.json` 的 `top_level`，`tests/test_codex_plugin.py` 看护本行与它一致）。
-  其他依赖，尤其 ROOT 这种不在 PyPI 的：要么让用户在 Tavotto 里选自己的 Python，要么把重计算
-  拆成**单独的脚本**先导出 CSV，画图脚本只读 CSV、不 import 那个库。
+* **依赖分两档**：处处可用的只有 numpy / matplotlib（插件/worker 便携依赖集，出处 `pyproject.toml` 的
+  `worker` extra）；scipy / pandas / seaborn / pillow 仅桌面版内置环境有（出处 `packaging/runtime-lock.json`
+  的 `top_level`），其他环境可能要用户授权安装。`tests/test_codex_plugin.py` 看护两处与出处一致。
+* **默认环境里没有的包**（如 ROOT）：用户在 Tavotto 里选了装有它的 Python，就照常 import 做计算、
+  Matplotlib 出图，别删用户环境里能用的计算；否则把重计算拆成**单独脚本**先导出 CSV，画图脚本只读 CSV。
 * **改造用户已有脚本**：保留原有计算与配色，只换掉上面这些独立运行的部分，不顺手重写。
 
 ## 模板

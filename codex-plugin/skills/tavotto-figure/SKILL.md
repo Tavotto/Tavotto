@@ -101,9 +101,10 @@ python3 scripts/prefs.py --set font="Times New Roman" --set legend_frame=off --j
 3. **产物名写成静态可解析的字面量**，不来自 argv/时间戳/随机串；一图一 stem。
 4. **交付物是矢量 PDF**（`imshow` 的位图除外，≥300 dpi）。
 5. **可复现**：固定随机种子，不 `plt.show()`。
-6. **只用 Matplotlib、不弹窗不等输入、不依赖内置环境之外的包**：tkinter / Qt 对话框、Pillow
-   直接画图、`import ROOT` 这类独立运行写法在 Tavotto 里都跑不起来；改用户已有脚本时保留
-   原计算与配色。细则见 `references/figure-contract.md` 第 6 节。
+6. **只用 Matplotlib 出图、不弹窗不等输入**：tkinter / Qt 对话框、`input()`、Pillow 直接画图
+   在 Tavotto 里跑不起来。依赖：处处可用的只有 numpy / matplotlib；默认环境没有的包（如 ROOT），
+   要么用户在 Tavotto 里选了装有它的 Python，要么拆成先导出 CSV 的单独脚本。改用户已有脚本时
+   保留原计算与配色。细则见 `references/figure-contract.md` 第 6 节。
 
 展开说明与模板在 `references/figure-contract.md`；出版默认值（尺寸/字号/线宽/
 刻度/色系）、克制原则（数据之外的效果一个都不擅自加）与多子图组图规则在
