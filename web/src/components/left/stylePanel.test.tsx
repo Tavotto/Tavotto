@@ -373,10 +373,28 @@ describe('问题只在「问题」面板里看（用户 2026-09-26）：样式�
         ).toBe(true)
       }
     }
-    // 行只有两列：标签 + 控件列
+    // 行只有两列：标签 + 控件列；标签列与属性栏同一副行网格（`--insp-label`，2026-10-07 审计 §9.2 / §10.3）
     const row = container.querySelector('[data-style-row="title"]')!
     expect(row.children).toHaveLength(2)
-    expect(row.className).toContain('grid-cols-[4rem_minmax(0,1fr)]')
+    expect(row.className).toContain('grid-cols-[var(--insp-label')
+  })
+})
+
+describe('「跟随样式」是可折叠的一节（2026-10-07 设计审计 §10.3）', () => {
+  it('在滚动区里（不是钉在底部的页脚）；收起后节头仍说此刻跟着哪一套，展开回来控件都在', async () => {
+    await seed()
+    await mount()
+    const section = container.querySelector<HTMLElement>('[data-style-apply]')!
+    expect(section.parentElement!.className).toContain('overflow-y-auto')
+    const toggle = section.querySelector<HTMLButtonElement>('[data-style-apply-toggle]')!
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    expect(section.querySelector('[data-style-manage]')).toBeTruthy()
+    await act(async () => toggle.click())
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(section.querySelector('[data-style-manage]')).toBeNull()
+    expect(section.querySelector('[data-style-apply-summary]')!.textContent).not.toBe('')
+    await act(async () => toggle.click())
+    expect(section.querySelector('[data-style-manage]')).toBeTruthy()
   })
 })
 

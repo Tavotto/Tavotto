@@ -1,10 +1,7 @@
-import { useState, type ComponentType, type CSSProperties, type ReactNode } from 'react'
+import { useContext, useState, type ComponentType, type CSSProperties, type FocusEvent, type ReactNode } from 'react'
 import {
-  ArrowLeft,
   Blend,
   ChartLine,
-  ChevronRight,
-  CircleDashed,
   CircleQuestionMark,
   FileExclamationPoint,
   Fullscreen,
@@ -13,11 +10,12 @@ import {
   Type,
 } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
+import { listRowClass, rowMetaClass } from '@/components/ui/listRow'
+import { TreeChevron, treeIndent } from '@/components/ui/TreeRow'
 import { engineLabel } from '@/components/inspector/roles/registry'
 import { t as translate } from '@/i18n'
 import { figureOfPanel, figureThumbSrc } from '@/lib/exportFigures'
 import { useRetryingSrc } from '@/lib/imgRetry'
-import { problemContextNow } from '@/lib/problemContext'
 import {
   drillKey,
   isSplit,
@@ -30,26 +28,29 @@ import type { Severity } from '@/lib/profile'
 import type { SubplotPart } from '@/lib/subplotParts'
 import { cn } from '@/lib/utils'
 import type { ProblemCategory, ValidationIssue } from '@/lib/validation'
-import { issueTitle } from '@/lib/validationText'
+import { SEVERITY_ICON, SEVERITY_INK } from '@/lib/validationText'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
-import { useUiStore } from '@/store/uiStore'
 import type { PanelObject } from '@/types/document'
-import { Button } from '../ui/Button'
-import { runBatchFix, useBatchable } from './IssueFixButton'
+import { useBatchable } from './IssueFixButton'
+import { ProblemTreeContext, TRAIL_PAD, useHot, useIssueHover, type ProblemTreeCtx } from './problemTree'
+import { FixCountButton, TrailCell } from './ProblemTreeRows'
 
 /** 本组文案在 errors:problems.* 下 */
 const pr = (key: string, values?: Record<string, unknown>) =>
   translate(`problems.${key}`, { ns: 'errors', ...(values ?? {}) })
 
 /*
- * 问题面板的**卡片层**（2026-09-28 用户反馈：一屏 178 行逐条铺开太吵）。
+ * 问题树的**分桶层**（2026-09-28 卡片层 → 2026-10-07 设计审计 §9.4 披露树）。
  *
- * 先分类、再批量：一张卡片是一个子图（按图）或一类问题（按类别），只说
- * 「多少项、有没有阻断、最主要的是什么」+ 这张卡的「修复 N」；点卡片才进
- * `ProblemPanel` 原来那份逐组清单。卡片只是**同一份清单的另一种切法**：分桶
- * 判据全在 `lib/problemList.ts`，修复集合全走 `batchable()`（组件里 `useBatchable`），这里不做任何判断。
+ * 先分类、再批量：一个节点是一张图 / 一个子图（按图）或一类问题（按类别），只说
+ * 「多少项、有没有阻断」+ 这一支的「修复 N」；**就地展开**才是按规则聚合的逐组清单
+ * （不再整页钻进去：此前点卡片换一屏、返回再换回来）。节点只是**同一份清单的另一种切法**：
+ * 分桶判据全在 `lib/problemList.ts`，修复集合全走 `batchable()`（组件里 `useBatchable`），这里不做任何判断。
+ *
+ * 机器标识照旧（新手教程与 e2e 认它们）：`li[data-problem-card=<kind>]` 的**第一个子元素是展开钮**
+ * （`> button:first-child`），`data-problem-card-key` = `drillKey()`，`-rules` / `-objects` / `-count` 是内容。
  */
 
 /* --------------------------------- 名字 ----------------------------------- */
@@ -63,7 +64,7 @@ const CATEGORY_LABEL: Record<ProblemCategory, () => string> = {
   other: () => pr('category.other'),
 }
 
-const CATEGORY_ICON: Record<ProblemCategory, ComponentType<{ size?: number }>> = {
+const CATEGORY_ICON: Record<ProblemCategory, ComponentType<{ size?: number; className?: string }>> = {
   text: Type,
   lines: ChartLine,
   layout: Fullscreen,
@@ -82,6 +83,12 @@ export const figureName = (f: Pick<FigureBucket, 'objectId' | 'issues'>): string
 export const partName = (part: SubplotPart | null): string =>
   part ? (part.tag ? pr('partTag', { tag: part.tag }) : engineLabel(part.label)) : pr('partWhole')
 
+const useTree = (): ProblemTreeCtx => {
+  const ctx = useContext(ProblemTreeContext)
+  if (!ctx) throw new Error('ProblemTreeContext missing')
+  return ctx
+}
+
 /* -------------------------------- 缩略图 ---------------------------------- */
 
 function usePanelObject(objectId: string | null): PanelObject | null {
@@ -97,15 +104,17 @@ function usePanelObject(objectId: string | null): PanelObject | null {
 /**
  * 认出是哪张图 / 哪个子图就够：画的是素材的分档缩略图（与导出对话框同一个地址，
  * `figureThumbSrc`），子图按 `SubplotPart.bbox` 裁成方块——不为缩略图新跑渲染。
- * 取不到图就退回图标，不摆一个裂图。
+ * 取不到图就退回图标，不摆一个裂图。尺寸两档：图行 24、子图行 20，圆角 4（缩略图半径族 4 / 6）。
  */
 export function ProblemThumb({
   objectId,
   part,
+  size = 'md',
   fallback: Fallback = Image,
 }: {
   objectId: string | null
   part?: SubplotPart | null
+  size?: 'md' | 'sm'
   fallback?: ComponentType<{ size?: number }>
 }) {
   const panel = usePanelObject(objectId)
@@ -118,17 +127,21 @@ export function ProblemThumb({
   // PDF / 浏览器画不了的位图走 `/api/render`：一次 503 可能只是背压，先按共享的退避表
   // 重取（`lib/imgRetry`），真取不到了才退回图标
   const retry = useRetryingSrc(src ?? '', () => setFailed(src))
-  const frame = 'relative flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-xs'
+  const frame = cn(
+    'relative flex shrink-0 items-center justify-center overflow-hidden rounded-xs',
+    size === 'md' ? 'size-6' : 'size-5',
+  )
   if (!src || failed === src) {
     return (
-      <span aria-hidden className={cn(frame, 'bg-surface-2 text-ink-2')}>
-        <Fallback size={ICON_SIZE.md} />
+      <span aria-hidden className={cn(frame, 'bg-surface-hover text-ink-2')}>
+        <Fallback size={ICON_SIZE.sm} />
       </span>
     )
   }
   const crop = part && figure?.sizeMm ? cropStyle(part.bbox, figure.sizeMm) : null
   return (
-    <span aria-hidden data-problem-thumb className={cn(frame, 'border border-border bg-white')}>
+    // 缩略图里是图本身（纸），底色用纸白；外框一圈 border 把它从行底上切开
+    <span aria-hidden data-problem-thumb className={cn(frame, 'bg-white inset-ring inset-ring-border')}>
       <img
         src={retry.src}
         alt=""
@@ -163,109 +176,86 @@ function cropStyle(
   return { width: pct(W), height: pct(H), left: pct(side / 2 - cx), top: pct(side / 2 - cy) }
 }
 
-/* --------------------------------- 卡片 ----------------------------------- */
+/* ---------------------------------- 节点 ---------------------------------- */
 
-/** 等级色只在缩略图 / 图标角上的一颗点里（颜色不是唯一表达：卡片副标题写着「N 项阻断」） */
-const SEVERITY_DOT: Partial<Record<Severity, string>> = {
-  error: 'bg-danger',
-  warn: 'bg-warn',
-}
-
-function CategoryGlyph({ category, severity }: { category: ProblemCategory; severity: Severity }) {
-  const Icon = CATEGORY_ICON[category]
-  return (
-    <span aria-hidden className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-sm bg-surface-2 text-ink-2">
-      <Icon size={ICON_SIZE.md} />
-      <SeverityDot severity={severity} />
-    </span>
-  )
-}
-
-function SeverityDot({ severity }: { severity: Severity }) {
-  const color = SEVERITY_DOT[severity]
-  if (!color) return null
-  return <span className={cn('absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full ring-2 ring-surface', color)} />
-}
-
-/**
- * 图 / 子图卡片的第二行：各等级几项（「6 项阻断 · 2 项警告」）。一张子图卡片上最要紧的
- * 是「有没有会拦住导出的」，检查项名字在点进去之后（2026-09-28 实测：「阻断 + 规则名」
- * 在 300px 的抽屉里被截成「字号低于…」，两样都没说清）。
- */
-function severityLine(issues: readonly ValidationIssue[]): ReactNode {
+/** 各等级几项，给可达名与 title 用（「阻断 6 · 警告 2」）；视觉上尾随格只说阻断数与总数 */
+function severityDetail(issues: readonly ValidationIssue[]): string {
   const n = (s: Severity) => issues.filter((i) => i.severity === s).length
-  const parts = [
-    n('error') > 0 && <span key="e" className="text-danger">{pr('cardBlocking', { count: n('error') })}</span>,
-    n('warn') > 0 && <span key="w">{pr('cardWarn', { count: n('warn') })}</span>,
-    n('suggestion') > 0 && <span key="s">{pr('cardSuggestion', { count: n('suggestion') })}</span>,
-  ].filter(Boolean)
-  return parts.flatMap((p, i) => (i ? [<span key={`d${i}`} aria-hidden> · </span>, p] : [p]))
-}
-
-/** 类别卡片的第二行：阻断数（有才说）· 最主要的那条检查项（「等 N 种」）· 可选的补充 */
-function metaLine(issues: readonly ValidationIssue[], extra?: string): ReactNode {
-  const blocking = issues.filter((i) => i.severity === 'error').length
-  const counts = new Map<string, { n: number; first: ValidationIssue }>()
-  for (const i of issues) {
-    const c = counts.get(i.ruleCode)
-    if (c) c.n += 1
-    else counts.set(i.ruleCode, { n: 1, first: i })
-  }
-  // 最主要的 = 等级最高里项数最多的；同样多就按清单里先出现的
-  const rank = (s: Severity) => ['error', 'warn', 'not_verifiable', 'suggestion'].indexOf(s)
-  const top = [...counts.values()].sort(
-    (a, b) => rank(a.first.severity) - rank(b.first.severity) || b.n - a.n,
-  )[0]
-  const title = top ? issueTitle(top.first) : ''
-  const kinds = counts.size > 1 ? pr('cardKinds', { title, count: counts.size }) : title
-  return (
-    <>
-      {blocking > 0 && (
-        <>
-          <span className="text-danger">{pr('cardBlocking', { count: blocking })}</span>
-          <span aria-hidden> · </span>
-        </>
-      )}
-      <span>{kinds}</span>
-      {extra && (
-        <>
-          <span aria-hidden> · </span>
-          <span>{extra}</span>
-        </>
-      )}
-    </>
-  )
+  return [
+    n('error') > 0 && pr('cardBlocking', { count: n('error') }),
+    n('warn') > 0 && pr('cardWarn', { count: n('warn') }),
+    n('suggestion') > 0 && pr('cardSuggestion', { count: n('suggestion') }),
+  ]
+    .filter(Boolean)
+    .join(' · ')
 }
 
 /**
- * 一张卡片。**整张卡是一颗「查看详情」按钮，「修复 N」是它的兄弟节点**——按钮套
- * 按钮在辅助技术里读不出来（与清单行同一个理由）。修复钮在右、箭头在最右。
- *
- * `data-problem-card-key`：这是哪张卡片（`drillKey`，新手教程按 `drillKeysOf(issue)`
- * 找「那条问题所在的卡片」）；`-rules` / `-objects`：卡里有哪些规则、哪些对象（空格
- * 分隔，配 `~=`，给 e2e 按内容找卡片）。都是机器标识，不是文案。
+ * 一个分桶节点（图 / 子图 / 类别 / 无法核验）。**行是一颗展开钮，「修复 N」是它的兄弟节点**——按钮套
+ * 按钮在辅助技术里读不出来。尾随格静止时是「⬣ 阻断数 · 总数」，指到 / 聚焦时同一格换成「修复 N」。
  */
-function ProblemCard({
+function BucketNode({
   drill,
   title,
   glyph,
   issues,
-  meta,
-  activeCanvasId,
+  depth,
+  big = false,
+  muted = false,
+  dflt = false,
+  objectId = null,
+  withFix = true,
+  children,
 }: {
   drill: ProblemDrill
   title: string
   glyph: ReactNode
   issues: ValidationIssue[]
-  meta: ReactNode
-  activeCanvasId: string
+  depth: number
+  /** 图那一层是 32，其余 28 */
+  big?: boolean
+  /** 「无法核验」那一行：次一档的墨色 */
+  muted?: boolean
+  dflt?: boolean
+  /** 指着这一行时画布上描哪个对象（图 / 子图行） */
+  objectId?: string | null
+  withFix?: boolean
+  /** 展开后的内容；不给就是这一支的逐组清单 */
+  children?: ReactNode
 }) {
-  const fixing = useUiStore((s) => s.fixing)
-  // 点名一张卡片 = 点名这一堆：建议档一起修（与组头「全部修复」同一个口径）
-  const fixable = useBatchable(issues, activeCanvasId, { includeSuggestions: true })
-  const manual = issues.every((i) => i.fixKind === 'none')
+  const tree = useTree()
+  const open = tree.isOpen(drill, dflt)
+  // 点名一支 = 点名这一堆：建议档一起修（与组的「修复 N」同一个口径）
+  const fixable = useBatchable(issues, tree.activeCanvasId, { includeSuggestions: true })
+  const { hot, bind } = useHot()
   const rules = [...new Set(issues.map((i) => i.ruleCode))]
   const objects = [...new Set(issues.map((i) => i.objectRef.objectId).filter(Boolean))]
+  const blocking = issues.filter((i) => i.severity === 'error').length
+  const hover = useIssueHover()
+  const point = (on: boolean) => {
+    if (objectId) hover(on ? { objectId, gid: null } : null)
+  }
+  const rowBind = {
+    ...bind,
+    onPointerEnter: () => {
+      bind.onPointerEnter()
+      point(true)
+    },
+    onPointerLeave: () => {
+      bind.onPointerLeave()
+      point(false)
+    },
+    // 键盘（方向键漫游）走到这一支也要描轮廓，与对象行同一条路（Codex #832）：撤一律比对后再清
+    onFocus: () => {
+      bind.onFocus()
+      point(true)
+    },
+    onBlur: (e: FocusEvent) => {
+      bind.onBlur(e)
+      point(false)
+    },
+  }
+  const detail = severityDetail(issues)
   return (
     <li
       data-problem-card={drill.kind}
@@ -273,207 +263,138 @@ function ProblemCard({
       data-problem-card-count={issues.length}
       data-problem-card-rules={rules.join(' ')}
       data-problem-card-objects={objects.join(' ')}
-      className="relative rounded-lg bg-surface shadow-card"
+      className="relative"
     >
       <button
         type="button"
-        onClick={() => useUiStore.getState().setProblemDrill(drill, problemContextNow())}
-        aria-label={pr('cardOpen', { name: title, count: issues.length })}
+        {...rowBind}
+        onClick={() => tree.toggle(drill, dflt)}
+        aria-expanded={open}
+        aria-label={pr('nodeLabel', { name: title, count: issues.length, detail })}
+        title={detail || undefined}
+        style={treeIndent(depth)}
         className={cn(
-          'flex w-full items-center gap-2.5 rounded-md py-2 pl-2 text-left outline-none',
-          'transition-colors duration-fast hover:bg-surface-hover focus-visible:focus-ring',
-          fixable.length > 0 || manual ? 'pr-24' : 'pr-7',
+          listRowClass({ size: 'sm', muted }),
+          big && 'h-8 text-sm',
+          TRAIL_PAD,
+          'w-[calc(100%-0.5rem)] gap-1.5 text-left',
         )}
       >
+        <TreeChevron expanded={open} />
         {glyph}
-        <span className="min-w-0 flex-1">
-          <span className="flex items-baseline gap-1.5">
-            <span className="min-w-0 truncate text-sm font-medium leading-5 text-ink">{title}</span>
-            <span className="type-meta shrink-0 tabular-nums">{issues.length}</span>
-          </span>
-          <span className="type-meta block truncate leading-4">{meta}</span>
-        </span>
+        <span className={cn('min-w-0 flex-1 truncate', big && 'font-medium')}>{title}</span>
       </button>
-      <span className="pointer-events-none absolute inset-y-0 right-1 flex items-center gap-0.5">
-        {fixable.length > 0 ? (
-          <Button
-            size="sm"
-            variant="ghost"
-            className="pointer-events-auto tabular-nums text-ink-2 hover:text-ink"
-            disabled={fixing}
-            title={pr('cardFixTip', { count: fixable.length })}
-            onClick={() => void runBatchFix(fixable, { includeSuggestions: true })}
-          >
-            {pr('cardFix', { count: fixable.length })}
-          </Button>
-        ) : manual ? (
-          <span className="pointer-events-auto px-1.5 text-xs text-ink-3">
-            {pr('cardManual')}
+      <TrailCell
+        hot={hot}
+        bind={rowBind}
+        height={big ? 'h-8' : 'h-7'}
+        rest={
+          <span className={cn(rowMetaClass(), 'flex items-center gap-1')}>
+            {blocking > 0 && (
+              <span className="flex items-center gap-0.5 text-danger-content">
+                <SeverityGlyph severity="error" />
+                {blocking}
+                <span aria-hidden className="text-ink-faint">
+                  ·
+                </span>
+              </span>
+            )}
+            {issues.length}
           </span>
-        ) : null}
-        <ChevronRight size={ICON_SIZE.xs} aria-hidden className="text-ink-3" />
-      </span>
+        }
+        action={withFix && fixable.length > 0 ? <FixCountButton issues={fixable} /> : undefined}
+      />
+      {open && (
+        <ul data-problem-tier={drill.kind === 'unverifiable' ? 'unverifiable' : 'actionable'}>
+          {children ?? tree.body(drill, depth + 1)}
+        </ul>
+      )}
     </li>
   )
+}
+
+/** 等级记号：一张表（`SEVERITY_ICON` / `SEVERITY_INK`），全面板同一副 */
+export function SeverityGlyph({ severity, size = 'xs' }: { severity: Severity; size?: 'xs' | 'sm' }) {
+  const Icon = SEVERITY_ICON[severity]
+  return <Icon size={ICON_SIZE[size]} aria-hidden className={cn('shrink-0', SEVERITY_INK[severity])} />
 }
 
 /* -------------------------------- 两种切法 -------------------------------- */
 
 /**
- * 按图。一张图拆得出子图时，每个子图一张卡；「整份排版」下（或清单里不止一张图时）
- * 子图卡片挂在一行图头下面。清单里不止一张图时图头才有「修复本图」——只有一张图时
- * 那颗就是顶上的「全部处理」，不再摆第二颗。拆不出子图的图就是一张整图卡。
+ * 按图。一张图拆得出子图时，每个子图一支；「整份排版」下（或清单里不止一张图时）子图挂在
+ * 一行图头下面（图头默认开着——它只是个分组头）。清单里不止一张图时图头才有「修复 N」——只有
+ * 一张图时那颗就是顶上的「全部修复」，不再摆第二颗。拆不出子图的图就是一支。
  */
-export function FigureCards({
-  figures,
-  withHeaders,
-  activeCanvasId,
-}: {
-  figures: FigureBucket[]
-  withHeaders: boolean
-  activeCanvasId: string
-}) {
+export function FigureCards({ figures, withHeaders }: { figures: FigureBucket[]; withHeaders: boolean }) {
   return (
     <>
       {figures.map((f) => {
         const name = figureName(f)
         if (!isSplit(f)) {
           return (
-            <ProblemCard
+            <BucketNode
               key={f.key}
               drill={{ kind: 'figure', key: f.key }}
               title={name}
               issues={f.issues}
-              meta={severityLine(f.issues)}
-              activeCanvasId={activeCanvasId}
-              glyph={
-                <Glyph severity={f.severity}>
-                  <ProblemThumb objectId={f.objectId} fallback={f.objectId ? Image : LayoutGrid} />
-                </Glyph>
-              }
+              depth={0}
+              big
+              objectId={f.objectId}
+              glyph={<ProblemThumb objectId={f.objectId} fallback={f.objectId ? Image : LayoutGrid} />}
             />
           )
         }
-        const parts = f.parts.map((p) => (
-          <PartCard key={p.key} figure={f} part={p} activeCanvasId={activeCanvasId} />
-        ))
+        const parts = f.parts.map((p) => <PartNode key={p.key} figure={f} part={p} depth={withHeaders ? 1 : 0} />)
         if (!withHeaders) return parts
         return (
-          <li key={f.key} data-problem-figure className="flex flex-col gap-1.5">
-            <FigureHeader figure={f} name={name} activeCanvasId={activeCanvasId} withFix={figures.length > 1} />
-            <ul className="ml-4 flex flex-col gap-1.5 border-l border-border pl-2.5">{parts}</ul>
-          </li>
+          <BucketNode
+            key={f.key}
+            drill={{ kind: 'figure', key: f.key }}
+            title={name}
+            issues={f.issues}
+            depth={0}
+            big
+            dflt
+            objectId={f.objectId}
+            withFix={figures.length > 1}
+            glyph={<ProblemThumb objectId={f.objectId} />}
+          >
+            {parts}
+          </BucketNode>
         )
       })}
     </>
   )
 }
 
-function PartCard({
-  figure,
-  part,
-  activeCanvasId,
-}: {
-  figure: FigureBucket
-  part: PartBucket
-  activeCanvasId: string
-}) {
+function PartNode({ figure, part, depth }: { figure: FigureBucket; part: PartBucket; depth: number }) {
   return (
-    <ProblemCard
+    <BucketNode
       drill={{ kind: 'part', figure: figure.key, key: part.key }}
       title={partName(part.part)}
       issues={part.issues}
-      meta={severityLine(part.issues)}
-      activeCanvasId={activeCanvasId}
-      glyph={
-        <Glyph severity={part.severity}>
-          <ProblemThumb objectId={figure.objectId} part={part.part} />
-        </Glyph>
-      }
+      depth={depth}
+      objectId={figure.objectId}
+      glyph={<ProblemThumb objectId={figure.objectId} part={part.part} size="sm" />}
     />
   )
 }
 
-function Glyph({ severity, children }: { severity: Severity; children: ReactNode }) {
-  return (
-    <span className="relative shrink-0">
-      {children}
-      <SeverityDot severity={severity} />
-    </span>
-  )
-}
-
-function FigureHeader({
-  figure,
-  name,
-  activeCanvasId,
-  withFix,
-}: {
-  figure: FigureBucket
-  name: string
-  activeCanvasId: string
-  /** 清单里只有这一张图时，「修复本图」就是顶上的「全部处理」，不摆第二颗 */
-  withFix: boolean
-}) {
-  const fixing = useUiStore((s) => s.fixing)
-  const fixable = useBatchable(figure.issues, activeCanvasId, { includeSuggestions: true })
-  const parts = figure.parts.filter((p) => p.part).length
-  return (
-    <div className="flex items-center gap-1 pr-1">
-      <button
-        type="button"
-        onClick={() => useUiStore.getState().setProblemDrill({ kind: 'figure', key: figure.key }, problemContextNow())}
-        aria-label={pr('cardOpen', { name, count: figure.issues.length })}
-        className={cn(
-          'flex min-w-0 flex-1 items-center gap-2.5 rounded-sm py-1 pl-1 pr-1.5 text-left outline-none',
-          'transition-colors duration-fast hover:bg-surface-hover focus-visible:focus-ring',
-        )}
-      >
-        <ProblemThumb objectId={figure.objectId} />
-        <span className="min-w-0 flex-1">
-          <span className="type-section block truncate leading-5">{name}</span>
-          <span className="type-meta block leading-4 tabular-nums">
-            {pr('figureMeta', { count: figure.issues.length, parts })}
-          </span>
-        </span>
-      </button>
-      {withFix && fixable.length > 0 && (
-        <Button
-          size="sm"
-          variant="ghost"
-          className="shrink-0 tabular-nums text-ink-2 hover:text-ink"
-          disabled={fixing}
-          title={pr('cardFixTip', { count: fixable.length })}
-          onClick={() => void runBatchFix(fixable, { includeSuggestions: true })}
-        >
-          {`${pr('fixFigure')} ${fixable.length}`}
-        </Button>
-      )}
-    </div>
-  )
-}
-
-/** 按类别：一类一张，副标题补一句「涉及几个子图 / 几张图」 */
-export function CategoryCards({
-  categories,
-  activeCanvasId,
-}: {
-  categories: CategoryBucket[]
-  activeCanvasId: string
-}) {
+/** 按类别：一类一支 */
+export function CategoryCards({ categories }: { categories: CategoryBucket[] }) {
   return (
     <>
       {categories.map((c) => {
-        const parts = new Set(c.issues.map((i) => `${i.objectRef.objectId}|${i.subject.part?.key ?? ''}`)).size
+        const Icon = CATEGORY_ICON[c.key]
         return (
-          <ProblemCard
+          <BucketNode
             key={c.key}
             drill={{ kind: 'category', key: c.key }}
             title={categoryLabel(c.key)}
             issues={c.issues}
-            meta={metaLine(c.issues, parts > 1 ? pr('cardParts', { count: parts }) : undefined)}
-            activeCanvasId={activeCanvasId}
-            glyph={<CategoryGlyph category={c.key} severity={c.severity} />}
+            depth={0}
+            glyph={<Icon size={ICON_SIZE.sm} aria-hidden className="shrink-0 text-ink-3" />}
           />
         )
       })}
@@ -481,127 +402,19 @@ export function CategoryCards({
   )
 }
 
-/** 「无法自动检查」那一段在卡片层只占一行：它们要的是人眼确认，不是修复 */
-export function UnverifiableEntry({ count }: { count: number }) {
-  return (
-    <li>
-      <button
-        type="button"
-        data-problem-card="unverifiable"
-        data-problem-card-key={drillKey({ kind: 'unverifiable' })}
-        onClick={() => useUiStore.getState().setProblemDrill({ kind: 'unverifiable' }, problemContextNow())}
-        className={cn(
-          'flex h-8 w-full items-center gap-2 rounded-sm px-2 text-left text-xs text-ink-2 outline-none',
-          'transition-colors duration-fast hover:bg-surface-hover hover:text-ink focus-visible:focus-ring',
-        )}
-      >
-        <CircleDashed size={ICON_SIZE.sm} aria-hidden className="shrink-0 text-ink-3" />
-        <span className="min-w-0 flex-1 truncate tabular-nums">{pr('unverifiableEntry', { count })}</span>
-        <ChevronRight size={ICON_SIZE.xs} aria-hidden className="shrink-0 text-ink-3" />
-      </button>
-    </li>
-  )
-}
-
-/* ---------------------------------- 详情 ---------------------------------- */
-
 /**
- * 点进一张卡片之后的头：返回、这张卡是谁、它的「修复」。这里的修复是这一屏
- * 唯一的填色主动作（总览里那颗「全部处理」此时不在）。
+ * 「无法自动检查」在树底只占一行（它们要的是人眼确认，不是修复）：虚线圆 + 项数，展开是它自己的清单。
  */
-export function DrillHeader({
-  drill,
-  figures,
-  issues,
-  activeCanvasId,
-}: {
-  drill: ProblemDrill
-  figures: FigureBucket[]
-  issues: ValidationIssue[]
-  activeCanvasId: string
-}) {
-  const fixing = useUiStore((s) => s.fixing)
-  const view = useUiStore((s) => s.problemView)
-  const batch = useBatchable(issues, activeCanvasId, { includeSuggestions: true })
-  const fixable = drill.kind === 'unverifiable' ? [] : batch
-  const figure = drill.kind === 'part' || drill.kind === 'figure'
-    ? figures.find((f) => f.key === (drill.kind === 'part' ? drill.figure : drill.key)) ?? null
-    : null
-  const part = drill.kind === 'part' ? (figure?.parts.find((p) => p.key === drill.key) ?? null) : null
-  const objectId = figure?.objectId ?? (drill.kind === 'part' || drill.kind === 'figure' ? objectOf(drill) : null)
-  let title: string
-  let glyph: ReactNode
-  let fixLabel: string
-  if (drill.kind === 'category') {
-    title = categoryLabel(drill.key)
-    glyph = <CategoryGlyph category={drill.key} severity="suggestion" />
-    fixLabel = pr('fixCategory')
-  } else if (drill.kind === 'unverifiable') {
-    title = pr('tierUnverifiable')
-    glyph = (
-      <span aria-hidden className="flex h-8 w-8 shrink-0 items-center justify-center rounded-sm bg-surface-2 text-ink-2">
-        <CircleDashed size={ICON_SIZE.md} />
-      </span>
-    )
-    fixLabel = ''
-  } else if (drill.kind === 'part') {
-    title = partName(part?.part ?? issues[0]?.subject.part ?? null)
-    glyph = <ProblemThumb objectId={objectId} part={part?.part ?? issues[0]?.subject.part ?? null} />
-    fixLabel = pr('fixPart')
-  } else {
-    title = figure ? figureName(figure) : issues[0] ? figureName({ objectId, issues }) : pr('subjectPanel')
-    glyph = <ProblemThumb objectId={objectId} fallback={objectId ? Image : LayoutGrid} />
-    fixLabel = pr('fixFigure')
-  }
-  const kinds = new Set(issues.map((i) => i.ruleCode)).size
+export function UnverifiableEntry({ issues }: { issues: ValidationIssue[] }) {
   return (
-    <div className="shrink-0 px-2 pb-2 pt-1.5">
-      <button
-        type="button"
-        data-problem-back
-        onClick={() => {
-          const ui = useUiStore.getState()
-          ui.setProblemDrill(null)
-          ui.setProblemCursor(null)
-        }}
-        className={cn(
-          'flex h-7 items-center gap-1 rounded-sm px-1.5 text-xs text-ink-2 outline-none',
-          'transition-colors duration-fast hover:bg-surface-hover hover:text-ink focus-visible:focus-ring',
-        )}
-      >
-        <ArrowLeft size={ICON_SIZE.sm} aria-hidden />
-        {view === 'category' ? pr('backCategories') : pr('backFigures')}
-      </button>
-      <div className="mt-1.5 flex items-center gap-2.5 px-1">
-        {glyph}
-        <div className="min-w-0 flex-1">
-          <h3 className="type-title truncate">{title}</h3>
-          {issues.length > 0 && (
-            <p className="type-meta leading-4 tabular-nums">
-              {pr('drillMeta', { count: issues.length, kinds })}
-            </p>
-          )}
-        </div>
-        {fixable.length > 0 && (
-          <Button
-            size="md"
-            variant="primary"
-            className="shrink-0"
-            disabled={fixing}
-            title={pr('cardFixTip', { count: fixable.length })}
-            onClick={() => void runBatchFix(fixable, { includeSuggestions: true })}
-          >
-            {fixing ? pr('fixing') : fixLabel}
-          </Button>
-        )}
-      </div>
-    </div>
+    <BucketNode
+      drill={{ kind: 'unverifiable' }}
+      title={pr('tierUnverifiable')}
+      issues={issues}
+      depth={0}
+      muted
+      withFix={false}
+      glyph={<SeverityGlyph severity="not_verifiable" size="sm" />}
+    />
   )
 }
-
-/** 卡片被修空之后图桶也没了：从键里取回面板 id，头上的缩略图不至于变成图标 */
-const objectOf = (drill: Extract<ProblemDrill, { kind: 'part' | 'figure' }>): string | null => {
-  const key = drill.kind === 'part' ? drill.figure : drill.key
-  return key.startsWith('page:') ? null : key
-}
-

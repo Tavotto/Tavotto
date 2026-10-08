@@ -1,3 +1,4 @@
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { perfCount } from '@/perf/core'
 import { Pin } from '@/components/ui/icons'
@@ -12,6 +13,7 @@ import { IconButton } from '../ui/Button'
 import { AssetBrowser } from './AssetBrowser'
 import { CanvasList } from './CanvasList'
 import { DrawerCount } from './DrawerCount'
+import { DrawerSlotsContext } from './drawerSlots'
 import { ElementTree } from './ElementTree'
 import { LayerTree } from './LayerTree'
 import { ProblemPanel } from './ProblemPanel'
@@ -37,6 +39,10 @@ export function LeftPanel({
   const pinned = useUiStore((s) => s.leftPinned)
   const wide = useUiStore((s) => s.layout === 'wide')
   const objectCount = useDocumentStore((s) => s.doc.objects.length)
+  // 标题行的两个槽（`DrawerHeader`）：节点进 state，抽屉在下一帧把自己的动作 portal 进来
+  const [metaSlot, setMetaSlot] = useState<HTMLElement | null>(null)
+  const [actionsSlot, setActionsSlot] = useState<HTMLElement | null>(null)
+  const slots = useMemo(() => ({ meta: metaSlot, actions: actionsSlot }), [metaSlot, actionsSlot])
 
   const motion = drawerMotion({ state, overlay, width, side: 'left' })
 
@@ -68,31 +74,31 @@ export function LeftPanel({
           元素 / 修改，不是让视觉上多四个字。
           标题是分区标题那一档（type-section 12/500）：此前 11px，比它下面的
           「图 3」分区标题还小一号，层级倒挂（左栏审计 L01） */}
-      <div className="flex h-9 shrink-0 items-center gap-1.5 px-3">
-        <h2 className="type-section">{t(`rail.${tab}`)}</h2>
+      <div className="flex h-9 shrink-0 items-center gap-1.5 pl-3 pr-1.5">
+        <h2 className="type-section shrink-0">{t(`rail.${tab}`)}</h2>
         {tab === 'layers' && objectCount > 0 && (
           <DrawerCount value={objectCount} label={t('layerTree.count', { count: objectCount })} />
         )}
         {tab === 'elements' && <ElementCount />}
-        {/* 问题面板的标题不再带计数（二审 C2，拍板「乙」）：页签「当前图 13 · 整份排版 14」
-            已经把两个范围各说了一遍，轨道角标说的是整份排版；标题再来一个 13 就是
-            一个概念三个数字 */}
+        {/* meta 槽：抽屉自己的计数 / 范围（问题面板的「当前图 13 ▾」胶囊，审计 §9.4：范围并入标题行） */}
+        <span ref={setMetaSlot} data-drawer-meta className="flex min-w-0 items-center gap-1.5 empty:hidden" />
         <span className="flex-1" />
-        {/* 面板头的图标钮走默认档（16px 图标）：`sm` 只给与 11–12px 文字并排的行内小钮
-            （宪法第四节）；此前面板头 14、画布页「+」16、版本 × 16 三处三样（左栏审计 L13） */}
+        {/* actions 槽（审计 §10.3）：「+」「刷新」「⋯」进标题行，搜索行只放搜索。
+            面板头的图标钮走默认档（16px 图标）：`sm` 只给与 11–12px 文字并排的行内小钮（宪法第四节） */}
+        <span ref={setActionsSlot} data-drawer-actions className="flex shrink-0 items-center gap-0.5 empty:hidden" />
         {wide && (
           <IconButton
             side="bottom"
             label={pinned ? t('drawer.unpin') : t('drawer.pin')}
             active={pinned}
             aria-pressed={pinned}
-            className="-mr-1.5"
             onClick={() => useUiStore.getState().setLeftPinned(!pinned)}
           >
             <Pin size={ICON_SIZE.md} filled={pinned} className={pinned ? 'text-ink' : 'text-ink-3'} />
           </IconButton>
         )}
       </div>
+      <DrawerSlotsContext.Provider value={slots}>
       {tab === 'workspace' ? (
         <WorkspaceList />
       ) : tab === 'canvases' ? (
@@ -108,6 +114,7 @@ export function LeftPanel({
       ) : (
         <ElementTree />
       )}
+      </DrawerSlotsContext.Provider>
       </div>
       <WidthHandle />
     </aside>
@@ -165,9 +172,20 @@ function WidthHandle() {
         ui.setLeftWidth(ui.leftWidth + (e.key === 'ArrowRight' ? 16 : -16))
       }}
       // 整条都在抽屉内侧：外层 overflow-hidden（开合动效要用）会把伸到外面的部分剪掉。
-      // hover 只把边界加深一档：accent 小面积只给焦点 / 链接 / AI / 选择框，一条 8px 的
-      // 蓝带不在其中（宪法第一节；左栏审计 L38），键盘聚焦时才用 accent
-      className="absolute inset-y-0 right-0 z-canvas-chrome w-2 cursor-col-resize outline-none hover:bg-border-strong focus-visible:bg-accent/30"
-    />
+      // 命中区仍是 8px，**看得见的只有右缘一根 1px 发丝线**（2026-10-07 设计审计 §4.1：此前是整条 8px
+      // 灰块，透明时又完全看不出可拖）：hover 画 border-strong 发丝线，键盘聚焦时发丝线换 accent、加宽到 2px
+      className={cn(
+        'group/resize absolute inset-y-0 right-0 z-canvas-chrome flex w-2 cursor-col-resize justify-end outline-none',
+      )}
+    >
+      <span
+        aria-hidden
+        data-drawer-resize-line
+        className={cn(
+          'h-full w-px bg-transparent transition-colors duration-fast',
+          'group-hover/resize:bg-border-strong group-focus-visible/resize:w-0.5 group-focus-visible/resize:bg-accent',
+        )}
+      />
+    </div>
   )
 }
