@@ -164,6 +164,20 @@
   `\\wsl.localhost\…` 上的路径 `_redact_text` 只认主目录、一个字都不动）；
   `empty` 标出「进程一个字没留下就没了」（硬崩溃的形状）。整段再过同一道
   `_redact_obj`。看护：`tests/test_diagnostics_worker_evidence.py`。
+- **块外被略去的行留结构摘要（`[structure] …`，`_structure_summaries`）**：真实 Windows 诊断包
+  `omitted: 4`、`tail` 为空——日志有内容但没有一段凑得齐 traceback 块（头被截在这一代起点之前、只剩
+  一句裸 `ModuleNotFoundError: …`……），于是看不出死于什么。判据的主语：*worker 子进程*（含用户脚本
+  stdout/stderr）写进 `worker.log` 的行，*导出那一刻*，按行的**形状**判。对 `_scan_evidence` 交出的
+  `orphans`（块外的帧行与不缩进的行，**块内源码行不收**）按白名单抽：异常类型只认 `builtins` 异常
+  （点分名取最后一段；Warning 家族与用户自定义名一律不出）；`No module named 'X'` 的 X 经
+  `_import_name_for_export`（标准库 / 已知包原样、其余 `mod:<sha1 前 10 位>`，与 `missing_dependencies`
+  同一个函数）；帧只出个数与分类（`user` / `engine` / `runtime` / `site:<已知包>` / `site:other`），
+  **绝不出路径、文件名、函数名、源码**。其余仍略去并计入 `omitted`（原行不出，摘要是另给的）。最多留最后
+  `STRUCTURE_MAX_SUMMARIES` 条，接在证据块后面，以 `[structure] ` 标明是摘要而非原文。
+  **敏感运行**：日志里出现排空器写的 `[sensitive run: script output omitted]`（`_SENSITIVE_NOTICE`，与
+  `worker._PRIVATE_OUTPUT_NOTICE` 同源对，测试钉相等）= 这一代是敏感运行，摘要只出异常类型名，
+  不出模块名与帧分类。`lxml` 为此加进 `_KNOWN_SITE_PACKAGES`（python-docx 的依赖，缺它是高频失败）。
+  tail 仍是字符串，**不升 bundle schema**。看护：`tests/test_diagnostics_worker_structure.py`。
 
 ## 速查表原要点（2026-09-25 迁入，#608）
 

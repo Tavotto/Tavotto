@@ -1010,7 +1010,7 @@ _KNOWN_SITE_PACKAGES = frozenset(
     {
         "matplotlib", "mpl_toolkits", "numpy", "pandas", "scipy", "seaborn", "PIL",
         "contourpy", "cycler", "fontTools", "kiwisolver", "packaging", "pyparsing", "dateutil",
-        "six", "click", "typer", "docopt", "fire", "IPython", "matplotlib_inline",
+        "six", "click", "typer", "docopt", "fire", "IPython", "matplotlib_inline", "lxml",
     }
 )  # fmt: skip
 #: 引擎目录里真实存在的文件名（一次性读，进程内不会变）。
@@ -1175,6 +1175,19 @@ def _closer_for_export(line: str) -> str:
 def evidence_blocks(tail: list[str]) -> tuple[list[list[str]], int]:
     """worker.log 尾巴 → (可进诊断包的证据块, 略去的行数)。
 
+    只是 `_scan_evidence` 的前两项；第三项（被略去的行里的结构线索）只给 `worker_log_tails`。
+    """
+    blocks, dropped, _orphans = _scan_evidence(tail)
+    return blocks, dropped
+
+
+def _scan_evidence(tail: list[str]) -> tuple[list[list[str]], int, list[str]]:
+    """`evidence_blocks` 的本体，多交一份 `orphans`：**块外**被略去的行里与结构有关的原行
+    （帧行、不缩进的行），给 `_structure_summaries` 提取「异常类型 / 模块 / 帧分类」用。
+
+    orphans 是**原行**，不会进包：它只经 `_structure_summaries` 的闭集白名单变成摘要。
+    块内的源码行（缩进的非帧行）与帧行之外的缩进行不收——那是用户源码。
+
     只认上面说的两种结构块；留下的行里绝对路径缩成 `…/site-packages/pkg/mod.py` 或
     `…/文件名`。块外的一切（脚本自己 print 的、matplotlib 的噪音、引擎的标记行）
     都略去只计数。按块交出去是为了让调用方**按块截尾**：一个块被拦腰截断之后
@@ -1182,6 +1195,7 @@ def evidence_blocks(tail: list[str]) -> tuple[list[list[str]], int]:
     """
     blocks: list[list[str]] = []
     dropped = 0
+    orphans: list[str] = []
     i = 0
     n = len(tail)
     #: 上一个非空行是不是刚收尾的 traceback 块——链接语只在这时才算数
@@ -1193,6 +1207,7 @@ def evidence_blocks(tail: list[str]) -> tuple[list[list[str]], int]:
             continue
         if _TB_HEADER.match(ln):
             block = [ln]
+            raw_block: list[str] = []  # 凑不齐时交给结构摘要的原行（帧行 / 收尾行）
             frames = 0
             i += 1
             closed = False
@@ -1205,6 +1220,7 @@ def evidence_blocks(tail: list[str]) -> tuple[list[list[str]], int]:
                 if cur[:1].isspace():
                     if _TB_FRAME.match(cur):
                         block.append(_frame_for_export(cur))
+                        raw_block.append(cur)
                         frames += 1
                     else:
                         dropped += 1
@@ -1212,12 +1228,14 @@ def evidence_blocks(tail: list[str]) -> tuple[list[list[str]], int]:
                     continue
                 if _TB_CLOSER.match(cur):
                     block.append(_closer_for_export(cur))  # 收尾的异常行
+                    raw_block.append(cur)
                     i += 1
                     closed = True
                 break
             if not (closed and frames):
                 # 没凑齐「头 + 帧 + 收尾」的不是 traceback，是长得像的用户输出
                 dropped += len(block)
+                orphans.extend(raw_block)
                 just_closed_tb = False
                 continue
             # 链式异常：上一块以链接语结尾时，这一块并进去（它们本来就是一段）
@@ -1264,13 +1282,113 @@ def evidence_blocks(tail: list[str]) -> tuple[list[list[str]], int]:
             i += 1
             continue
         dropped += 1
+        if _TB_FRAME.match(ln) or not ln[:1].isspace():
+            orphans.append(ln)
         just_closed_tb = False
         i += 1
     # 以链接语收尾却没等到下一段 traceback（尾巴正好截在中间）：链接语本身不是证据
     if blocks and _TB_CHAIN.match(blocks[-1][-1]):
         blocks[-1].pop()
         dropped += 1
-    return blocks, dropped
+    return blocks, dropped, orphans
+
+
+#: 结构摘要行的前缀——明确标出「这是 Tavotto 从被略去的行里提取的结构，不是日志原文」。
+STRUCTURE_PREFIX = "[structure] "
+#: 敏感运行里 worker 把脚本输出改道给排空器，排空器往 worker.log 写的就是这句。**与
+#: `worker._PRIVATE_OUTPUT_NOTICE.strip()` 同源对**（worker 只在子进程里，父进程不能 import，
+#: 靠 `tests/test_diagnostics_worker_evidence.py` 钉住两边相等）。日志里出现它 = 这一代是敏感运行。
+_SENSITIVE_NOTICE = "[sensitive run: script output omitted]"
+#: 一次最多留几行摘要（取最后几条——最新的失败）。
+STRUCTURE_MAX_SUMMARIES = 3
+#: 自由行里的「异常行」：整行只能是 `[限定前缀.]类型名[: 文本]`，类型名（最后一段）必须是 builtins
+#: 里的异常类——用户自定义的异常名可能含业务词，一个字不出。Warning 家族不收（那是警告行不是失败）。
+_STRUCT_CLOSER = re.compile(r"^(?:[A-Za-z_][\w]*\.)*(?P<name>[A-Za-z_]\w*)(?::\s*(?P<msg>.*))?$")
+_STRUCT_MODULE_ERRORS = frozenset({"ModuleNotFoundError", "ImportError"})
+_STRUCT_NO_MODULE = re.compile(
+    r"^No module named '(?P<name>[A-Za-z_][\w.]*)'(?:; '[A-Za-z_][\w.]*' is not a package)?$"
+)
+
+
+def _is_trusted_package(top: str) -> bool:
+    return top in _KNOWN_SITE_PACKAGES or top in depresolve.CURATED or top in depresolve.SAME_NAME
+
+
+def _frame_class(path: str) -> str:
+    """帧行里的文件名 → 只出分类：`user` / `engine`（Tavotto 引擎）/ `runtime`（标准库、冻结模块）/
+    `site:<已知包>` / `site:other`。**路径、文件名一个字都不出**；分类只可能把别的归错，不会多露。"""
+    if path.startswith("<frozen"):
+        return "runtime"
+    parts = [seg for seg in re.split(r"[\\/]+", path) if seg]
+    lowered = [seg.lower() for seg in parts]
+    if "site-packages" in lowered:
+        idx = len(lowered) - 1 - lowered[::-1].index("site-packages")
+        rest = parts[idx + 1 :]
+        if rest:
+            top = rest[0].split(".", 1)[0] if len(rest) == 1 else rest[0]
+            return f"site:{top}" if _is_trusted_package(top) else "site:other"
+        return "site:other"
+    if len(parts) >= 3 and lowered[-3] == "tavotto" and lowered[-2] == "engine":
+        return "engine"
+    for i, seg in enumerate(lowered[:-1]):
+        nxt = parts[i + 1].split(".", 1)[0]
+        if re.fullmatch(r"python3(?:\.\d+)?t?", seg) or (seg == "lib" and nxt in _STDLIB_MODULES):
+            return "runtime"
+    return "user"
+
+
+def _frame_breakdown(classes: list[str]) -> str:
+    order = {"user": 0, "engine": 1, "runtime": 2}
+    counts: dict[str, int] = {}
+    for c in classes:
+        counts[c] = counts.get(c, 0) + 1
+    items = sorted(counts.items(), key=lambda kv: (order.get(kv[0], 3), kv[0]))
+    return ", ".join(f"{k}={v}" for k, v in items)
+
+
+def _structure_summary(
+    exc_name: str | None, message: str | None, frames: list[str], *, sensitive: bool
+) -> str:
+    """一条摘要。每一段要么是闭集成员（builtins 异常名、已知包名、帧分类）、要么是哈希、要么是个数。"""
+    parts = [exc_name or "no-exception-line"]
+    if sensitive:
+        # 敏感运行：只出异常类型名——模块名可能来自敏感参数，帧分类也一并收起
+        return f"{STRUCTURE_PREFIX}{parts[0]} (sensitive run: details withheld)"
+    if exc_name in _STRUCT_MODULE_ERRORS and message is not None:
+        m = _STRUCT_NO_MODULE.match(message.strip())
+        if m:
+            parts.append("module=" + _import_name_for_export(m.group("name")))
+    if frames:
+        parts.append(f"frames={len(frames)} ({_frame_breakdown(frames)})")
+    return STRUCTURE_PREFIX + " ".join(parts)
+
+
+def _structure_summaries(orphans: list[str], *, sensitive: bool) -> list[str]:
+    """被整行略去的行 → 结构摘要（白名单提取，原行不出）。
+
+    按出现顺序走：帧行累计成「待配帧」，遇到异常行就与待配帧合成一条；末尾剩下的帧单独一条
+    （`no-exception-line`）。异常类型只认 builtins 的（最后一段）；`No module named 'X'` 的 X 经
+    `_import_name_for_export`（标准库 / 已知包原样、其余 `mod:<哈希>`）。其余一律不出。"""
+    out: list[str] = []
+    pending: list[str] = []
+    for raw in orphans:
+        fm = _TB_FRAME.match(raw)
+        if fm:
+            pending.append(_frame_class(fm.group("path")))
+            continue
+        m = _STRUCT_CLOSER.match(raw.strip())
+        if not m:
+            continue
+        name = m.group("name")
+        if name not in _BUILTIN_EXCEPTIONS or issubclass(getattr(builtins, name), Warning):
+            continue
+        out.append(_structure_summary(name, m.group("msg"), pending, sensitive=sensitive))
+        pending = []
+    if pending:
+        out.append(_structure_summary(None, None, pending, sensitive=sensitive))
+    # 相邻重复的合并，取最后几条
+    dedup = [s for i, s in enumerate(out) if i == 0 or s != out[i - 1]]
+    return dedup[-STRUCTURE_MAX_SUMMARIES:]
 
 
 def evidence_lines(tail: list[str]) -> tuple[list[str], int]:
@@ -1346,8 +1464,10 @@ def worker_log_tails(
             continue
         all_lines = text.splitlines()
         scanned = all_lines[_scan_start(all_lines) :]
-        blocks, omitted = evidence_blocks(scanned)
+        blocks, omitted, orphans = _scan_evidence(scanned)
         kept = last_blocks_within(blocks, lines)
+        sensitive = any(t.strip() == _SENSITIVE_NOTICE for t in scanned)
+        summaries = _structure_summaries(orphans, sensitive=sensitive)
         out.append(
             {
                 # README 承诺文件名一律换成不可逆的短哈希：目录名里带着脚本名，只出哈希。
@@ -1358,7 +1478,7 @@ def worker_log_tails(
                 "modified": _iso(mtime),
                 "empty": not any(t.strip() for t in scanned),
                 "omitted": omitted,
-                "tail": "\n".join(ln for block in kept for ln in block),
+                "tail": "\n".join([ln for block in kept for ln in block] + summaries),
             }
         )
     return out
@@ -1707,7 +1827,8 @@ def _readme(
         "  （report.json 的 render.worker_logs 段：渲染进程日志里的 Python 报错块与崩溃栈——\n"
         "  只留 traceback 的帧行（文件名换成哈希 + 行号，函数名不带；第三方库的文件多留一个\n"
         "  包名）与异常类型名；崩溃栈只留故障名与帧行、扩展模块只留计数；报错文字、脚本自己\n"
-        "  打印的内容与源码行已略去）\n"
+        "  打印的内容与源码行已略去；不成块的报错行另给一行 [structure] 摘要：只含内置异常类型名、\n"
+        "  缺的模块名（公开常见包原样、其余哈希）与帧数分类，不含路径、文件名和文字）\n"
         "  （report.json 的 project.missing_dependencies 段：最近几次「缺依赖」的现场——缺的包名\n"
         "  （只有公开的常见科研包原样，其余换成哈希）、脚本文件名哈希、当时用的是哪类 Python、\n"
         "  体检过的其他 Python 的版本与结论、一键修复各选项能否使用；路径按段换成哈希）\n"
@@ -1724,7 +1845,9 @@ def _readme(
         "  function names; files of known third-party libraries also carry the package name)\n"
         "  and the exception type; crash stacks keep the fault name, frames and the\n"
         "  extension-module count; error messages, anything your script printed, and source\n"
-        "  lines are left out)\n"
+        "  lines are left out; error lines that are not a complete block get one [structure]\n"
+        "  summary line: built-in exception type, missing module (hashed unless a well-known\n"
+        "  package) and frame counts by category — never paths, file names or message text)\n"
         "  (report.json, project.missing_dependencies: the last few missing-dependency failures —\n"
         "  the missing package (well-known public packages by name, anything else hashed), the\n"
         "  hashed script name, which kind of Python was rendering, the version and verdict of\n"
