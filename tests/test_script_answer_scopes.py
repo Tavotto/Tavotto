@@ -251,3 +251,74 @@ def test_case_aliases_of_a_project_share_the_local_stores(tmp_path, monkeypatch)
     monkeypatch.setattr(engine_config, "path_is_case_insensitive", lambda p: False)
     assert inputtranscript.store_path(upper) != inputtranscript.store_path(lower)
     assert scriptanswers.contexts_path(upper) != scriptanswers.contexts_path(lower)
+
+
+def _block_sidecar(monkeypatch):
+    real = scriptanswers.atomicio.write_json
+
+    def blocked(path, *a, **kw):
+        if "scriptanswer-contexts" in str(path):
+            raise PermissionError("sidecar blocked")
+        return real(path, *a, **kw)
+
+    monkeypatch.setattr(scriptanswers.atomicio, "write_json", blocked)
+
+
+def test_remember_and_update_fail_closed_when_the_context_sidecar_cannot_be_written(
+    answers, monkeypatch
+):
+    """r4221045313: 侧表写不动 = 请求失败，项目文件字节不变（不是「文件已改、请求报错」）。"""
+    before = scriptanswers.answers_path(answers).read_bytes()
+    _block_sidecar(monkeypatch)
+    with pytest.raises(PermissionError):
+        scriptanswers.update(answers, "s.py", 1, "ALPHA2", run_config="rc_a")
+    assert scriptanswers.answers_path(answers).read_bytes() == before
+    with pytest.raises(PermissionError):
+        scriptanswers.remember(
+            answers, "s.py", 1, "p: ", "NEW", context="ctx:new", run_config="rc_a"
+        )
+    assert scriptanswers.answers_path(answers).read_bytes() == before
+    monkeypatch.undo()
+    assert recall(answers, "rc_a", "ctx:alpha") == "alpha"
+
+
+def test_a_failing_project_write_restores_the_sidecar(answers, monkeypatch):
+    real = scriptanswers.atomicio.write_json
+
+    def blocked(path, *a, **kw):
+        if str(path).endswith("_script_inputs.json"):
+            raise PermissionError("project file blocked")
+        return real(path, *a, **kw)
+
+    monkeypatch.setattr(scriptanswers.atomicio, "write_json", blocked)
+    with pytest.raises(PermissionError):
+        scriptanswers.update(answers, "s.py", 1, "ALPHA2", run_config="rc_a")
+    monkeypatch.undo()
+    assert recall(answers, "rc_a", "ctx:alpha") == "alpha"
+
+
+def test_http_edit_reports_failure_and_keeps_the_project_file_when_the_sidecar_is_blocked(
+    client, answers, monkeypatch
+):
+    before = scriptanswers.answers_path(answers).read_bytes()
+    _block_sidecar(monkeypatch)
+    assert _post_edit(client).status_code >= 500
+    assert scriptanswers.answers_path(answers).read_bytes() == before
+
+
+def test_forget_commits_on_the_project_file_and_tolerates_an_orphaned_sidecar(
+    answers, monkeypatch
+):
+    _block_sidecar(monkeypatch)
+    assert scriptanswers.forget(answers, "s.py", 1, run_config="rc_a") is True
+    monkeypatch.undo()
+    assert [e["run_config"] for e in scriptanswers.entries(answers, "s.py")] != []
+    assert all(e["answer"] != "alpha" for e in scriptanswers.entries(answers, "s.py"))
+    assert scriptanswers.recall(answers, "s.py", 1, "p: ", context="ctx:alpha", run_config="rc_a").answer is None
+
+
+def test_normal_edit_commits_both_files(answers):
+    assert scriptanswers.update(answers, "s.py", 1, "ALPHA2", run_config="rc_a")
+    assert recall(answers, "rc_a", "ctx:alpha") == "ALPHA2"
+    scriptanswers.remember(answers, "s.py", 2, "q: ", "x", context="c2")
+    assert scriptanswers.recall(answers, "s.py", 2, "q: ", context="c2").answer == "x"

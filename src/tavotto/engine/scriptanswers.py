@@ -150,6 +150,28 @@ def _write_contexts(project_root: str | Path, items: dict[str, dict]) -> None:
     atomicio.write_json(path, {"version": CONTEXTS_FORMAT_VERSION, "entries": items})
 
 
+def _commit(
+    project_root: str | Path,
+    scripts: dict[str, list[dict]],
+    old_contexts: dict[str, dict],
+    new_contexts: dict[str, dict],
+) -> None:
+    """两份文件的提交：**先写本机侧表、后写项目文件**。
+
+    侧表里的上下文带答案标签，读的时候要和项目文件里的答案对得上才作数，所以「侧表已新、项目文件还旧」
+    只会让旧答案暂时对不上上下文（退回「建议重新确认」），不会套错。侧表写不动就直接抛，项目文件一个字节都没动
+    （请求报失败 = 确实什么都没改）；项目文件写不动则尽力把侧表还原成旧的，再抛。"""
+    _write_contexts(project_root, new_contexts)
+    try:
+        _write(project_root, scripts)
+    except BaseException:
+        try:
+            _write_contexts(project_root, old_contexts)
+        except OSError:
+            pass  # 还原不动也无妨：标签对不上的上下文不会被采用
+        raise
+
+
 def _local_context(contexts: dict[str, dict], script: str, entry: dict) -> str | None:
     side = contexts.get(
         _ctx_key(script, entry["run_config"], entry["index"], entry["kind"], entry["prompt"])
@@ -265,17 +287,16 @@ def remember(
             }
         )
         scripts[script] = sorted(kept, key=lambda e: (e["index"], e["run_config"] or ""))
-        _write(project_root, scripts)
-        contexts = _read_contexts(project_root)
+        old_contexts = _read_contexts(project_root)
         prefix = _SEP.join((script, run_config or "", str(index))) + _SEP
-        contexts = {k: v for k, v in contexts.items() if not k.startswith(prefix)}
+        contexts = {k: v for k, v in old_contexts.items() if not k.startswith(prefix)}
         if context:
             contexts[_ctx_key(script, run_config, index, kind, prompt)] = {
                 "context": context,
                 "answer": _answer_tag(answer),
                 "t": time.time(),
             }
-        _write_contexts(project_root, contexts)
+        _commit(project_root, scripts, old_contexts, contexts)
 
 
 def update(
@@ -286,7 +307,8 @@ def update(
     with _LOCK:
         scripts = _read(project_root)
         found = False
-        contexts = _read_contexts(project_root)
+        old_contexts = _read_contexts(project_root)
+        contexts = dict(old_contexts)
         for e in scripts.get(script, []):
             if e["index"] == index and e["run_config"] == run_config:
                 local = _local_context(contexts, script, e)
@@ -296,8 +318,7 @@ def update(
                     key = _ctx_key(script, e["run_config"], index, e["kind"], e["prompt"])
                     contexts[key] = {**contexts[key], "answer": _answer_tag(answer)}
         if found:
-            _write(project_root, scripts)
-            _write_contexts(project_root, contexts)
+            _commit(project_root, scripts, old_contexts, contexts)
         return found
 
 
@@ -322,15 +343,19 @@ def forget(
         if len(after) == len(before):
             return False
         scripts[script] = after
-        _write(project_root, scripts)
+        _write(project_root, scripts)  # 先删答案：这是唯一的提交点，之后的侧表清理失败不影响结果
         prefix = script + _SEP
         mine = (
             (lambda k: k.startswith(prefix))
             if index is None
             else (lambda k: k.startswith(_SEP.join((script, run_config or "", str(index))) + _SEP))
         )
-        contexts = _read_contexts(project_root)
-        _write_contexts(project_root, {k: v for k, v in contexts.items() if not mine(k)})
+        # 上下文最后删：答案已经没了，留下的上下文无人引用（读取总是从答案出发），清不掉也只是一份孤儿
+        try:
+            contexts = _read_contexts(project_root)
+            _write_contexts(project_root, {k: v for k, v in contexts.items() if not mine(k)})
+        except OSError:
+            pass
         return True
 
 
