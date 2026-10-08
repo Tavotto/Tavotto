@@ -4716,6 +4716,8 @@ export interface GuiDialogCall {
 
 export interface GuiDialogPayload {
   calls: GuiDialogCall[]
+  /** 按全部检测到的调用算的 kind（有序去重）；样本被截断时 calls 可能缺某一种。旧载荷没有，回落到从 calls 推 */
+  kinds?: Array<GuiDialogCall['kind']>
   truncated: boolean
 }
 

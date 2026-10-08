@@ -403,7 +403,11 @@ def requirements_of(
                 "kind": "gui_dialog",
                 "code": _GUI_DIALOG_CODE,
                 "blocking": False,
-                "payload": {"calls": dialogs["calls"], "truncated": dialogs["truncated"]},
+                "payload": {
+                    "calls": dialogs["calls"],
+                    "kinds": dialogs["kinds"],
+                    "truncated": dialogs["truncated"],
+                },
             }
         )
     return out

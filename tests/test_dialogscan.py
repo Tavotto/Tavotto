@@ -132,6 +132,19 @@ def test_report_is_capped_and_says_so():
     assert len(out["calls"]) == dialogscan.MAX_CALLS and out["truncated"] is True
 
 
+def test_kinds_cover_all_calls_and_sample_keeps_every_kind_when_capped():
+    src = (
+        "from tkinter import filedialog, simpledialog\n"
+        + "filedialog.askopenfilename()\n" * 9
+        + "simpledialog.askstring('a', 'b')\n"
+    )
+    out = dialogscan.analyze(src)
+    assert out["kinds"] == ["file", "prompt"] and out["truncated"] is True
+    assert len(out["calls"]) == dialogscan.MAX_CALLS
+    assert [c["kind"] for c in out["calls"]].count("prompt") == 1
+    assert [c["line"] for c in out["calls"]] == sorted(c["line"] for c in out["calls"])
+
+
 def test_file_reading_is_bounded_and_cached(tmp_path, monkeypatch):
     p = tmp_path / "a.py"
     p.write_text("from tkinter import filedialog\nfiledialog.askopenfilename()\n", encoding="utf-8")

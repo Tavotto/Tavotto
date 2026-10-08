@@ -452,6 +452,18 @@ describe('主按钮就是后端给的那件事', () => {
       expect(details()?.querySelector('[data-prep-dialog-how="prompt"]')?.textContent).toContain('别用弹窗问')
     })
 
+    it('样本里只有选文件、但 kinds 说还有询问：标题与改法仍按两种来（读 kinds，不只看 calls）', async () => {
+      await mount()
+      const r = manyReport(8, true)
+      const req = r.requirements.find((q) => q.kind === 'gui_dialog')
+      if (req?.kind === 'gui_dialog') req.payload.kinds = ['file', 'prompt']
+      await openWith(r)
+      expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('脚本会弹窗选文件和询问，这里弹不出来，请把路径和答案写进脚本')
+      await toggleDetails()
+      expect(details()?.querySelector('[data-prep-dialog-how="file"]')).not.toBeNull()
+      expect(details()?.querySelector('[data-prep-dialog-how="prompt"]')).not.toBeNull()
+    })
+
     it('没有 run 动作就没有按钮（不替用户造入口）', async () => {
       await mount()
       await openWith(dialogReport('file', { actions: [action('recheck')] }))

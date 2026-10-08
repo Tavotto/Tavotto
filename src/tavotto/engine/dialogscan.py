@@ -146,7 +146,7 @@ class _Finder(ast.NodeVisitor):
 
 
 def analyze(source: str) -> dict:
-    """源码 → `{"status", "calls": [{api, kind, line}…], "truncated"}`；语法错误 / 看不懂 → `status="unknown"`，不猜。"""
+    """源码 → `{"status", "calls": [{api, kind, line}…], "kinds", "truncated"}`；语法错误 / 看不懂 → `status="unknown"`，不猜。"""
     try:
         tree = ast.parse(source)
     except (SyntaxError, ValueError, RecursionError, MemoryError):
@@ -159,9 +159,26 @@ def analyze(source: str) -> dict:
     calls = sorted(finder.calls, key=lambda c: (c["line"], c["api"]))
     return {
         "status": "found" if calls else "none",
-        "calls": calls[:MAX_CALLS],
+        "calls": _sample(calls),
+        # 按**全部**检测到的调用算（有序去重）：样本被截断时，另一种 kind 的唯一证据也不丢
+        "kinds": list(dict.fromkeys(c["kind"] for c in calls)),
         "truncated": len(calls) > MAX_CALLS,
     }
+
+
+def _sample(calls: list[dict]) -> list[dict]:
+    """至多 MAX_CALLS 条样本，且每种 kind 至少一条（各取最靠前的），再按行号顺序补满。"""
+    if len(calls) <= MAX_CALLS:
+        return calls
+    keep = {
+        id(next(c for c in calls if c["kind"] == k))
+        for k in dict.fromkeys(c["kind"] for c in calls)
+    }
+    for c in calls:
+        if len(keep) >= MAX_CALLS:
+            break
+        keep.add(id(c))
+    return [c for c in calls if id(c) in keep]
 
 
 _CACHE_SIZE = 64

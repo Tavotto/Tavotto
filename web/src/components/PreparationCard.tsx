@@ -30,7 +30,7 @@ import { formatMessage, t as translate } from '@/i18n'
 import { listJoin } from '@/i18n/format'
 import { markAutoShown, wasAutoShown } from '@/lib/guideCardSeen'
 import { preparationPanelEnabled } from '@/lib/preparationFlag'
-import { prepRowKey, prepView, targetName, type PrepPrimary, type PrepTone, type PrepView } from '@/lib/preparationText'
+import { dialogKinds, prepRowKey, prepView, targetName, type PrepPrimary, type PrepTone, type PrepView } from '@/lib/preparationText'
 import { dependenciesLine, issueLine, roleLabel, scanCard, scanLine, type ScanCardKind } from '@/lib/projectScanText'
 import { missingRequired, readTokens, type ScriptArgsSchema } from '@/lib/scriptArgsForm'
 import { cn } from '@/lib/utils'
@@ -961,8 +961,7 @@ function ArgsBlock({ script, schema, expanded }: { script: string; schema: Scrip
 /** 默认收起的「详情」：脚本、用的是哪一套、运行目录、参数；要装什么；结果的三件事；错误原文与那一次的诊断 */
 /** 详情里的弹窗提示：怎么改（把路径 / 答案写进脚本）+ 在哪几行、是哪个调用。标题那一句话已经说了结论，这里只放细节 */
 function GuiDialogHint({ payload }: { payload: GuiDialogPayload }) {
-  const file = payload.calls.some((c) => c.kind === 'file')
-  const ask = payload.calls.some((c) => c.kind === 'prompt')
+  const { file, ask } = dialogKinds(payload)
   return (
     <div className="flex flex-col gap-1.5" data-prep-dialog>
       {file && <p data-prep-dialog-how="file">{pt('dialog.howFile')}</p>}

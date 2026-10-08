@@ -16,6 +16,7 @@
  */
 import type {
   EnvCandidate,
+  GuiDialogPayload,
   MissingInputOffer,
   PreparationActionKind,
   PreparationReport,
@@ -113,6 +114,12 @@ const view = (
 })
 
 /** 报告里的目标名（脚本相对路径；已知素材用图名） */
+/** 弹窗有哪几种：优先读后端按全部调用算的 `kinds`；旧载荷没有就从（可能被截断的）calls 推 */
+export function dialogKinds(payload: GuiDialogPayload): { file: boolean; ask: boolean } {
+  const kinds = payload.kinds ?? payload.calls.map((c) => c.kind)
+  return { file: kinds.includes('file'), ask: kinds.includes('prompt') }
+}
+
 export const targetName = (entry: PrepEntry): string => {
   const t = entry.report?.target
   if (t?.script) return t.script
@@ -189,8 +196,7 @@ function fromReport(report: PreparationReport, entry: PrepEntry, ctx: PrepContex
       // 不另造「让助手改脚本」的入口——叠栈里没有现成的
       const dialog = find(report, 'gui_dialog')
       if (dialog) {
-        const file = dialog.payload.calls.some((c) => c.kind === 'file')
-        const ask = dialog.payload.calls.some((c) => c.kind === 'prompt')
+        const { file, ask } = dialogKinds(dialog.payload)
         // 选文件与询问都有：一句话涵盖两者，不塌成只讲文件
         const key = file && ask ? 'dialogBoth' : file ? 'dialogFile' : 'dialogAsk'
         return view('gui_dialog', key, v, has(report, 'run') ? act('run', 'runAnyway') : null, {
